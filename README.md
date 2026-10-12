@@ -9,8 +9,9 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | Milestone | État |
 |-----------|------|
 | **M0** — fondations + hello-ROM | ✅ **fait et vérifié** (build `romtool is_kick=ok` + boot FS-UAE écran vert) |
-| **M1** — spec de boot (piste analyse) | en cours |
-| **M2+** — exec.library puis le reste | à venir (voir `docs/PLAN.md`) |
+| **M1** — spec de boot (piste analyse) | ✅ fait (4 specs clean-room dans `docs/analysis/`) |
+| **M2.0** — exec coldstart + squelette ExecBase | ✅ **fait et vérifié** (boot → écran blanc, auto-vérification ExecBase) |
+| **M2.1+** — jump table LVO, fonctions exec, tâches, scan résidents | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 
@@ -25,9 +26,10 @@ publiques (RKRM / NDK / `.fd`) + AROS (référence lecture seule).
 Prérequis : `vasmm68k_mot` + `vlink` dans le PATH, **amitools** (`romtool`), `python3`, **FS-UAE** + **Xvfb**.
 
 ```sh
-make hello            # -> build/kick13-hello.rom (vasm -> mkrom.py)
-make verify           # taille 256K + romtool info (is_kick = ok)
-tests/boot_test.sh    # boot headless FS-UAE + contrôle écran vert
+make                  # -> build/kick13.rom  (ROM principale : exec coldstart)
+make verify           # taille 256K + romtool is_kick=ok
+tests/boot_test.sh    # boot headless FS-UAE ; écran BLANC attendu (succès exec)
+make hello            # -> build/kick13-hello.rom (smoke test M0, écran vert)
 ```
 
 Installation de la toolchain (vasm/vlink se compilent depuis les sources) : voir `docs/HARDWARE.md`.

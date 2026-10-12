@@ -10,8 +10,9 @@
 # Usage : tests/boot_test.sh [chemin/vers/rom] [secondes_de_boot]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ROM="${1:-$ROOT/build/kick13-hello.rom}"
+ROM="${1:-$ROOT/build/kick13.rom}"
 WAIT="${2:-10}"
+EXPECT="${3:-FFFFFF}"   # couleur de succès attendue (hex RRGGBB) ; défaut blanc
 OUT="$ROOT/build/boot"
 mkdir -p "$OUT"
 
@@ -72,15 +73,15 @@ xwd -root -display "$DISP" -silent 2>/dev/null | convert xwd:- "$OUT/screen.png"
 
 # Fraction de pixels verts sur la zone active (vert -> blanc, reste -> noir, moyenne).
 FRAC=$(convert "$OUT/screen.png" -crop 700x540+10+14 +repage \
-        -fuzz 20% -fill white -opaque '#00FF00' -fill black +opaque white \
+        -fuzz 20% -fill white -opaque "#$EXPECT" -fill black +opaque white \
         -colorspace Gray -format '%[fx:mean]' info: 2>/dev/null)
-echo "fraction verte (zone active) = ${FRAC:-?}"
+echo "fraction couleur #$EXPECT (zone active) = ${FRAC:-?}"
 grep -iE 'kickstart|rom |error|fatal' "$OUT/fs-uae.log" | head -10
 echo "capture : $OUT/screen.png"
 
 if [ -n "${FRAC:-}" ] && awk "BEGIN{exit !(${FRAC:-0} > 0.5)}"; then
-  echo "OK : écran majoritairement vert → le code M0 s'exécute."
+  echo "OK : écran majoritairement #$EXPECT → exécution jusqu'à la phase de succès."
   exit 0
 fi
-echo "ECHEC : vert non dominant (régression ou ROM ne pose pas COLOR00)."
+echo "ECHEC : #$EXPECT non dominante (régression ou phase bloquée en amont)."
 exit 1

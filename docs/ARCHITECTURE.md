@@ -41,4 +41,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 
 ## État
 
-M0 (hello-ROM) livré et vérifié. Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
+- **M0** (hello-ROM) : livré, vérifié (`is_kick` + boot écran vert).
+- **M2.0** (exec coldstart, `src/exec/coldstart.s`) : livré, vérifié. Le reset entre en `$FC00D2`,
+  passe superviseur + gèle le matériel, **coupe l'overlay** (RAM chip à `$0`), pose une pile à
+  `$80000`, bâtit un **squelette ExecBase** en `$400` (nœud library 34.2, `ChkBase=~base`,
+  `MaxLocMem=$80000`, `AttnFlags=0`, `VBlankFrequency=50`, 9 listes système `NEWLIST`), publie
+  `SysBase` en `$4`, puis **auto-vérifie** la cohérence (écran blanc = OK, magenta = échec). Phases
+  tracées en couleur (rouge→bleu→cyan→blanc) comme débogueur visuel tant que le série n'est pas capturé.
+  Pas encore : jump table LVO, fonctions exec, tâches/scheduler, scan des résidents (→ M2.1+).
+
+Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
