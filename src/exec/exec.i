@@ -29,6 +29,8 @@ TST_N1       EQU $00000440
 TST_N2       EQU $00000460
 HEAP_LOWER   EQU $00001000     ; tas géré
 HEAP_UPPER   EQU $0007D000
+FTEST_LO     EQU $0007D000     ; région DISJOINTE du tas pour le test multi-header
+FTEST_HI     EQU $0007E000     ; (selftest M2.4a) ; = base basse de pile ensuite
 EXECBASE     EQU $0007F000     ; SysBase (table V34 complète en dessous)
 EXEC_NEGSIZE EQU $276          ; 105 vecteurs V34 (cf docs/exec-lvo-table.md)
 EXEC_BLOCK   EQU EXECBASE-EXEC_NEGSIZE   ; bas de la jump table
@@ -61,6 +63,7 @@ LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
 EB_CHKBASE    EQU $26
 EB_MAXLOCMEM  EQU $3E
+EB_THISTASK   EQU $114         ; tâche courante (struct Task *)
 EB_IDNEST     EQU $126
 EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
@@ -93,6 +96,24 @@ MH_SIZE       EQU 32          ; sizeof(struct MemHeader)
 MC_NEXT       EQU 0
 MC_BYTES      EQU 4
 
+; struct Task (exec/tasks.i) — base à LN_SIZE=14
+NT_TASK       EQU 1
+TS_RUN        EQU 2           ; tâche en cours d'exécution
+TS_READY      EQU 3
+TC_FLAGS      EQU 14
+TC_STATE      EQU 15
+TC_IDNESTCNT  EQU 16
+TC_TDNESTCNT  EQU 17
+TC_SIGALLOC   EQU 18
+TC_SIGWAIT    EQU 22
+TC_SIGRECVD   EQU 26
+TC_SIGEXCEPT  EQU 30
+TC_SPREG      EQU 54
+TC_SPLOWER    EQU 58
+TC_SPUPPER    EQU 62
+TC_SIZE       EQU 92
+SYS_SIGALLOC  EQU $FFFF        ; signaux 0-15 pré-alloués (réservés système)
+
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
@@ -112,6 +133,12 @@ LVO_REMHEAD  EQU -258
 LVO_REMTAIL  EQU -264
 LVO_ENQUEUE  EQU -270
 LVO_FINDNAME EQU -276
+LVO_FINDTASK   EQU -294
+LVO_SETTASKPRI EQU -300
+LVO_SETSIGNAL  EQU -306
+LVO_SIGNAL     EQU -324
+LVO_ALLOCSIGNAL EQU -330
+LVO_FREESIGNAL EQU -336
 LVO_TYPEOFMEM EQU -534
 
                 endc

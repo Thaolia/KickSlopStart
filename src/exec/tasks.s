@@ -1,0 +1,145 @@
+; src/exec/tasks.s — exec.library : tâches + signaux, PARTIE NON BLOQUANTE (M2.4b).
+;   init_task   : crée le TCB « boot task » (ThisTask) depuis le tas.
+;   FindTask    : NULL -> tâche courante ; sinon recherche dans TaskReady/TaskWait.
+;   AllocSignal/FreeSignal/SetSignal : gestion des bits de signaux de ThisTask.
+;   Signal      : pose les bits dans TC_SIGRECVD de la tâche cible.
+;   SetTaskPri  : change LN_PRI, retourne l'ancienne.
+; DIFFÉRÉ À M3 (ordonnanceur/interruptions) : Wait, WaitPort, AddTask, RemTask,
+;   dispatch (Switch/Dispatch/Cause), et le RÉVEIL d'une tâche en attente sur Signal.
+; « Vert » ici = structures manipulées correctement, PAS « les tâches tournent ».
+; Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
+; Piste IMPLÉMENTATION (« clean ») : includes NDK exec/tasks.i (ABI publique).
+
+                include "exec.i"
+
+                xdef    init_task
+                xdef    exec_FindTask
+                xdef    exec_AllocSignal
+                xdef    exec_FreeSignal
+                xdef    exec_SetSignal
+                xdef    exec_Signal
+                xdef    exec_SetTaskPri
+
+; init_task : alloue le TCB de la tâche de boot et le publie dans ThisTask.
+; Appelé par coldstart APRÈS init_memory (AllocMem dispo) et AVANT selftest
+; (sinon AllocSignal déréférencerait un ThisTask NULL -> écriture dans les
+; vecteurs d'exception $0-$3FF). a6 = SysBase.
+init_task:
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a0                ; TCB (supposé non-NULL au boot)
+        move.b  #NT_TASK,LN_TYPE(a0)
+        move.b  #0,LN_PRI(a0)
+        move.l  #task_name,LN_NAME(a0)
+        move.b  #TS_RUN,TC_STATE(a0)
+        move.b  #-1,TC_IDNESTCNT(a0) ; copies par-tâche (save/restore au switch M3)
+        move.b  #-1,TC_TDNESTCNT(a0)
+        move.l  #SYS_SIGALLOC,TC_SIGALLOC(a0)
+        move.l  #FTEST_HI,TC_SPLOWER(a0)   ; bornes pile superviseur (informatif)
+        move.l  #STACKTOP,TC_SPUPPER(a0)
+        move.l  a0,EB_THISTASK(a6)
+        rts
+
+; FindTask(name a1) -> d0 = task | 0 ; a1 == NULL -> tâche courante
+exec_FindTask:
+        move.l  a1,d0
+        bne.s   .ft_named
+        move.l  EB_THISTASK(a6),d0
+        rts
+.ft_named:
+        move.l  a2,-(sp)
+        move.l  a1,a2                ; conserve le nom (FindName clobbe a1)
+        lea     EB_TASKREADY(a6),a0
+        move.l  a2,a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        bne.s   .ft_done
+        lea     EB_TASKWAIT(a6),a0
+        move.l  a2,a1
+        jsr     LVO_FINDNAME(a6)
+.ft_done:
+        move.l  (sp)+,a2
+        rts
+
+; AllocSignal(signum d0.l) -> d0 = n° de bit alloué | -1
+; signum == -1 : alloue le plus petit bit libre ; sinon alloue ce bit précis.
+; Le bit alloué est effacé dans SIGWAIT/SIGRECVD/SIGEXCEPT (départ propre).
+exec_AllocSignal:
+        move.l  d2,-(sp)
+        move.l  EB_THISTASK(a6),a0
+        move.l  TC_SIGALLOC(a0),d1   ; masque des bits alloués
+        tst.l   d0
+        bpl.s   .as_spec             ; bit précis demandé
+        moveq   #0,d0                ; cherche le plus petit bit libre
+.as_scan:
+        btst    d0,d1
+        beq.s   .as_got
+        addq.l  #1,d0
+        cmp.l   #32,d0
+        bne.s   .as_scan
+        moveq   #-1,d0               ; aucun libre
+        move.l  (sp)+,d2
+        rts
+.as_spec:
+        btst    d0,d1
+        bne.s   .as_fail             ; déjà alloué
+.as_got:
+        bset    d0,d1
+        move.l  d1,TC_SIGALLOC(a0)
+        moveq   #1,d2
+        lsl.l   d0,d2                ; masque = 1<<bit
+        not.l   d2
+        and.l   d2,TC_SIGWAIT(a0)
+        and.l   d2,TC_SIGRECVD(a0)
+        and.l   d2,TC_SIGEXCEPT(a0)
+        move.l  (sp)+,d2
+        rts
+.as_fail:
+        moveq   #-1,d0
+        move.l  (sp)+,d2
+        rts
+
+; FreeSignal(signum d0)
+exec_FreeSignal:
+        move.l  EB_THISTASK(a6),a0
+        move.l  TC_SIGALLOC(a0),d1
+        bclr    d0,d1
+        move.l  d1,TC_SIGALLOC(a0)
+        rts
+
+; SetSignal(newSignals d0, signalSet d1) -> d0 = anciens TC_SIGRECVD
+exec_SetSignal:
+        move.l  d2,-(sp)
+        move.l  EB_THISTASK(a6),a0
+        move.l  TC_SIGRECVD(a0),d2   ; anciens
+        and.l   d1,d0                ; newSignals & mask
+        not.l   d1                   ; ~mask
+        and.l   d2,d1                ; old & ~mask
+        or.l    d1,d0                ; new = (old&~mask) | (newSignals&mask)
+        move.l  d0,TC_SIGRECVD(a0)
+        move.l  d2,d0                ; retourne les anciens
+        move.l  (sp)+,d2
+        rts
+
+; Signal(task a1, signalSet d0) : pose les bits dans TC_SIGRECVD de la tâche.
+exec_Signal:
+        or.l    d0,TC_SIGRECVD(a1)
+        ; M3 : si la tâche est TS_WAIT et attend l'un de ces bits (TC_SIGWAIT),
+        ; la rendre TS_READY et la ré-ordonnancer. Réveil différé (pas d'ordonnanceur).
+        rts
+
+; SetTaskPri(task a1, pri d0.b) -> d0 = ancienne priorité (longword signé)
+exec_SetTaskPri:
+        moveq   #0,d1
+        move.b  LN_PRI(a1),d1
+        ext.w   d1
+        ext.l   d1                   ; ancienne pri, signée
+        move.b  d0,LN_PRI(a1)        ; nouvelle
+        move.l  d1,d0
+        ; M3 : re-Enqueue si la tâche est dans TaskReady (maintien de l'ordre). Différé.
+        rts
+
+task_name:
+        dc.b    "exec.task",0
+        EVEN

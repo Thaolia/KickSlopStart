@@ -31,6 +31,12 @@
                 xref    exec_FreeMem
                 xref    exec_AvailMem
                 xref    exec_TypeOfMem
+                xref    exec_FindTask    ; tasks.s
+                xref    exec_SetTaskPri
+                xref    exec_SetSignal
+                xref    exec_Signal
+                xref    exec_AllocSignal
+                xref    exec_FreeSignal
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -80,6 +86,18 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_AvailMem,LVO_AVAILMEM+2(a6)
         move.w  #$4EF9,LVO_TYPEOFMEM(a6)
         move.l  #exec_TypeOfMem,LVO_TYPEOFMEM+2(a6)
+        move.w  #$4EF9,LVO_FINDTASK(a6)
+        move.l  #exec_FindTask,LVO_FINDTASK+2(a6)
+        move.w  #$4EF9,LVO_SETTASKPRI(a6)
+        move.l  #exec_SetTaskPri,LVO_SETTASKPRI+2(a6)
+        move.w  #$4EF9,LVO_SETSIGNAL(a6)
+        move.l  #exec_SetSignal,LVO_SETSIGNAL+2(a6)
+        move.w  #$4EF9,LVO_SIGNAL(a6)
+        move.l  #exec_Signal,LVO_SIGNAL+2(a6)
+        move.w  #$4EF9,LVO_ALLOCSIGNAL(a6)
+        move.l  #exec_AllocSignal,LVO_ALLOCSIGNAL+2(a6)
+        move.w  #$4EF9,LVO_FREESIGNAL(a6)
+        move.l  #exec_FreeSignal,LVO_FREESIGNAL+2(a6)
         rts
 
 _unimpl:

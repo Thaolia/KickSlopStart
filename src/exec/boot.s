@@ -16,12 +16,8 @@
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
-
-; Région DISJOINTE du tas chip [HEAP_LOWER,HEAP_UPPER) réservée au test
-; multi-MemHeader (selftest M2.4a). Doit rester hors du tas (sinon l'owner-search
-; par plage d'adresse serait ambigu) et sous STACKTOP. FTEST_LO = HEAP_UPPER.
-FTEST_LO     EQU $0007D000
-FTEST_HI     EQU $0007E000     ; 4 Kio, disjoint du tas, bien sous STACKTOP
+                xref    init_task        ; tasks.s
+; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
 ; (cf. Makefile), son CODE porte donc le reset vector. hdr_start = offset 0 de la
@@ -101,6 +97,7 @@ coldstart:                        ; $FC00D2
 
         jsr     build_jumptable
         jsr     init_memory
+        jsr     init_task            ; TCB « boot task » -> ThisTask (avant selftest)
 
         ; --- Phase 4 : publie SysBase, auto-vérif, auto-test ---
         move.l  a6,($4).w
@@ -161,7 +158,13 @@ ser_puts:
 ; Exerce le dispatch jump-table et le comportement des fonctions.
 ; Retour : d0 = 0 (tout OK) / 1 (échec).
 selftest:
-        movem.l a2-a4,-(sp)
+        movem.l d7/a2-a5,-(sp)
+        ; baseline du tas chip : 1er chunk libre APRÈS les allocations permanentes
+        ; de boot (TCB ThisTask...). Les asserts de coalescing comparent à cette
+        ; baseline (robuste aux allocations permanentes, pas au tas vide).
+        lea     MH_CHIP,a0
+        move.l  MH_FIRST(a0),a5     ; a5 = adresse baseline du 1er chunk
+        move.l  MC_BYTES(a5),d7     ; d7 = taille baseline
         ; Forbid : TDNestCnt -1 -> 0 ; Permit : 0 -> -1
         jsr     LVO_FORBID(a6)
         cmp.b   #0,EB_TDNEST(a6)
@@ -262,13 +265,13 @@ selftest:
         move.l  #256,d0
         jsr     LVO_FREEMEM(a6)
 
-        ; coalescing : après tous les free, le tas doit être redevenu UN seul chunk
-        lea     MH_CHIP,a2
-        move.l  MH_FIRST(a2),d0
-        cmp.l   #HEAP_LOWER,d0
+        ; coalescing : après tous les free, le tas doit être revenu à sa baseline
+        lea     MH_CHIP,a0
+        move.l  MH_FIRST(a0),d0
+        cmp.l   a5,d0
         bne.w   .bad
         move.l  d0,a0
-        cmp.l   #(HEAP_UPPER-HEAP_LOWER),MC_BYTES(a0)
+        cmp.l   MC_BYTES(a0),d7
         bne.w   .bad
 
         ; ===== M2.4a : multi-MemHeader + primitives de listes =====
@@ -407,13 +410,103 @@ selftest:
         move.l  #(3*16),d0
         jsr     LVO_FREEMEM(a6)
 
-        ; invariant final : le tas chip est de nouveau UN seul chunk plein
-        lea     MH_CHIP,a2
-        move.l  MH_FIRST(a2),d0
-        cmp.l   #HEAP_LOWER,d0
+        ; ===== M2.4b : tâches + signaux (non bloquants) =====
+        ; FindTask(NULL) == ThisTask
+        sub.l   a1,a1
+        jsr     LVO_FINDTASK(a6)
+        cmp.l   EB_THISTASK(a6),d0
+        bne.w   .bad
+        ; AllocSignal(-1) -> 16 (bits 0-15 pré-alloués via SYS_SIGALLOC)
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        cmp.l   #16,d0
+        bne.w   .bad
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        cmp.l   #17,d0
+        bne.w   .bad
+        moveq   #16,d0               ; libère 16 -> redevient le plus petit libre
+        jsr     LVO_FREESIGNAL(a6)
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        cmp.l   #16,d0
+        bne.w   .bad
+        ; AllocSignal efface un SIGRECVD rémanent sur le bit alloué
+        move.l  EB_THISTASK(a6),a2
+        or.l    #$00100000,TC_SIGRECVD(a2)   ; bit 20 rémanent
+        moveq   #20,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        cmp.l   #20,d0
+        bne.w   .bad
+        move.l  TC_SIGRECVD(a2),d0
+        and.l   #$00100000,d0
+        bne.w   .bad                 ; le bit 20 doit avoir été effacé
+        ; SetSignal : pose le bit 16, retourne l'ancien jeu
+        move.l  #$00010000,d0
+        move.l  #$00010000,d1
+        jsr     LVO_SETSIGNAL(a6)
+        move.l  TC_SIGRECVD(a2),d0
+        and.l   #$00010000,d0
+        beq.w   .bad
+        ; Signal(ThisTask, bit 17) -> bit posé dans SIGRECVD
+        move.l  a2,a1
+        move.l  #$00020000,d0
+        jsr     LVO_SIGNAL(a6)
+        move.l  TC_SIGRECVD(a2),d0
+        and.l   #$00020000,d0
+        beq.w   .bad
+        ; SetTaskPri(ThisTask,5) -> ancienne 0 ; LN_PRI == 5 ; puis restaure 0
+        move.l  a2,a1
+        moveq   #5,d0
+        jsr     LVO_SETTASKPRI(a6)
+        tst.l   d0
+        bne.w   .bad
+        cmp.b   #5,LN_PRI(a2)
+        bne.w   .bad
+        move.l  a2,a1
+        moveq   #0,d0
+        jsr     LVO_SETTASKPRI(a6)
+        moveq   #16,d0               ; nettoie les signaux de test (16,17,20)
+        jsr     LVO_FREESIGNAL(a6)
+        moveq   #17,d0
+        jsr     LVO_FREESIGNAL(a6)
+        moveq   #20,d0
+        jsr     LVO_FREESIGNAL(a6)
+        move.l  #0,TC_SIGRECVD(a2)   ; remet SIGRECVD propre
+
+        ; FindTask(nom) : nœud tâche factice dans TaskReady
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a3                ; tâche factice
+        move.b  #NT_TASK,LN_TYPE(a3)
+        move.l  #task_test_name,LN_NAME(a3)
+        lea     EB_TASKREADY(a6),a0
+        move.l  a3,a1
+        jsr     LVO_ADDTAIL(a6)
+        move.l  #task_test_name,a1
+        jsr     LVO_FINDTASK(a6)
+        cmp.l   a3,d0
+        bne.w   .bad
+        move.l  #str_gamma,a1        ; nom inconnu -> 0
+        jsr     LVO_FINDTASK(a6)
+        tst.l   d0
+        bne.w   .bad
+        move.l  a3,a1                ; retire + libère la tâche factice
+        jsr     LVO_REMOVE(a6)
+        move.l  a3,a1
+        move.l  #TC_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+
+        ; invariant final : tas chip revenu à la baseline (chunk unique)
+        lea     MH_CHIP,a0
+        move.l  MH_FIRST(a0),d0
+        cmp.l   a5,d0
         bne.w   .bad
         move.l  d0,a0
-        cmp.l   #(HEAP_UPPER-HEAP_LOWER),MC_BYTES(a0)
+        cmp.l   MC_BYTES(a0),d7
         bne.w   .bad
 
         moveq   #0,d0
@@ -421,7 +514,7 @@ selftest:
 .bad:
         moveq   #1,d0
 .out:
-        movem.l (sp)+,a2-a4
+        movem.l (sp)+,d7/a2-a5
         rts
 
 ; ============================ données ==============================
@@ -435,6 +528,8 @@ str_beta:
         dc.b    "beta",0
 str_gamma:
         dc.b    "gamma",0
+task_test_name:
+        dc.b    "testtask",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
