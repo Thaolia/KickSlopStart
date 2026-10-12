@@ -1,0 +1,15 @@
+# Artefacts de build
+/build/
+__pycache__/
+*.pyc
+*.o
+*.obj
+
+# Scratch d'orchestration (ledgers superpowers)
+/.superpowers/
+
+# ROM Kickstart propriétaire — NE JAMAIS committer ni distribuer.
+# Chaque utilisateur fournit sa propre copie dans assets/ (cf. README).
+/assets/kick34005.A500
+/assets/*.rom
+/assets/*.bin
