@@ -1,20 +1,28 @@
-# Makefile — build des images ROM (chaîne vasm -> mkrom -> romtool)
+# Makefile — build des images ROM
 #
 #   kick  : ROM principale (exec coldstart, M2+) — cible par défaut.
-#   hello : hello-ROM M0 (écran vert) — smoke test de la chaîne.
-# vlink entrera quand plusieurs objets relogeables (C + asm) devront être liés.
+#           chaîne : vasm -Fvobj (un objet par module) -> vlink -> mkrom -> romtool.
+#   hello : hello-ROM M0 (écran vert) — smoke test, fichier unique vasm -Fbin.
 
 VASM    ?= vasmm68k_mot
+VLINK   ?= vlink
 PYTHON  ?= python3
 ROMTOOL ?= romtool
 
 BUILD   := build
 MKROM   := src/rom/mkrom.py
 
+# --- ROM principale : modules exec reliés par vlink ---
+EXEC_DIR  := src/exec
+EXEC_INC  := $(EXEC_DIR)/exec.i
+LDSCRIPT  := $(EXEC_DIR)/kick.ld
+# ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o
+KICK_ROM  := $(BUILD)/kick13.rom
+
+# --- hello-ROM (smoke test M0) ---
 HELLO_SRC := src/rom/start.s
 HELLO_ROM := $(BUILD)/kick13-hello.rom
-KICK_SRC  := src/exec/coldstart.s
-KICK_ROM  := $(BUILD)/kick13.rom
 
 .PHONY: all kick hello verify clean
 
@@ -25,8 +33,13 @@ hello: $(HELLO_ROM)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/kick.bin: $(KICK_SRC) | $(BUILD)
-	$(VASM) -Fbin -m68000 -o $@ $<
+# Un objet relogeable (vobj) par module exec ; dépend de l'include partagé.
+$(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
+	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -o $@ $<
+
+# Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
+$(BUILD)/kick.bin: $(EXEC_OBJ) $(LDSCRIPT)
+	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ)
 $(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
 	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
 
