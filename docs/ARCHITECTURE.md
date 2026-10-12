@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes), `boot.s` (en-tête/reset, coldstart, ExecBase, publish, selftest), `lists.s` (newlist/AddHead/AddTail/Remove/FindName), `memory.s` (AllocMem/FreeMem/init_memory), `library.s` (Open/Close/Expunge/Forbid/Permit/Disable/Enable, jump table) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -53,6 +53,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   FindName, AllocMem/FreeMem), initialise un **MemHeader chip** + MemList, publie `SysBase` en `$4`,
   puis **auto-vérifie** et **auto-teste** les fonctions via la jump table (dispatch + comportement +
   coalescing). Phases tracées en couleur (rouge→bleu→cyan→blanc ; magenta = échec).
-  Pas encore : tâches/scheduler, signaux, ports, parcours multi-MemHeader, scan des résidents.
+- **M2.4** : mémoire **multi-MemHeader** (sélection par attribut, AvailMem, TypeOfMem) ;
+  primitives de listes (Enqueue tri par priorité, Insert, RemHead, RemTail) ; **tâches + signaux**
+  non bloquants (TCB `ThisTask`, FindTask, AllocSignal/FreeSignal/SetSignal/Signal, SetTaskPri) ;
+  **ports/messages** non bloquants (AddPort/RemPort/FindPort, PutMsg+Signal, GetMsg FIFO, ReplyMsg).
+  ⚠️ « vert » = structures manipulées correctement, PAS ordonnancement réel. **Différé à M3**
+  (exige les interruptions) : `Wait`/`WaitPort` bloquants, `AddTask`/`RemTask`, dispatch
+  (`Switch`/`Dispatch`/`Cause`), réveil d'une tâche sur signal.
+  Pas encore : scan des résidents.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

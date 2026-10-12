@@ -13,7 +13,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M2.0** — exec coldstart + squelette ExecBase | ✅ **fait et vérifié** (boot → écran blanc, auto-vérification ExecBase) |
 | **M2.1/M2.2** — jump table LVO V34 (105 vec.), fonctions exec, allocateur + coalescing | ✅ **fait et vérifié** (auto-test via jump table → blanc) |
 | **M2.3** — découpage en modules (`src/exec/*.s`) + vlink | ✅ **fait et vérifié** (relink vlink, boot blanc inchangé) |
-| **M2.4+** — tâches, signaux, ports, multi-MemHeader, scan résidents | à venir (voir `docs/PLAN.md`) |
+| **M2.4** — multi-MemHeader, listes (Enqueue…), tâches+signaux+ports (non bloquants) | ✅ **fait et vérifié** (auto-test → blanc ; ordonnancement réel = M3) |
+| **M3+** — interruptions/timing → `Wait`/dispatch, scan résidents, graphics, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 
