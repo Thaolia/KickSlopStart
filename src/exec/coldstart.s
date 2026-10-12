@@ -37,11 +37,11 @@ TST_N1       EQU $00000440
 TST_N2       EQU $00000460
 HEAP_LOWER   EQU $00001000     ; tas géré (M2.1b)
 HEAP_UPPER   EQU $0007D000
-STACKTOP     EQU $0007EF00     ; pile superviseur (gap de garde avant la table)
-EXEC_BLOCK   EQU $0007F000     ; bas de la jump table
-EXEC_NEGSIZE EQU $120          ; 48 entrées de 6 octets
-EXECBASE     EQU $0007F120     ; SysBase = EXEC_BLOCK + EXEC_NEGSIZE
+EXECBASE     EQU $0007F000     ; SysBase (table V34 complète en dessous)
+EXEC_NEGSIZE EQU $276          ; 105 vecteurs V34 (cf docs/exec-lvo-table.md)
+EXEC_BLOCK   EQU EXECBASE-EXEC_NEGSIZE   ; bas de la jump table
 EXEC_POSSIZE EQU $230
+STACKTOP     EQU EXEC_BLOCK-$80 ; pile superviseur (gap de garde avant la table)
 
 ; --- Phases (RGB 12 bits) ---
 C_RED    EQU $0F00

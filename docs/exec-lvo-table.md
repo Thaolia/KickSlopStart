@@ -1,127 +1,122 @@
 # Table LVO exec.library — V34 (Kickstart 1.3)
 
-> **Piste CLEAN / référence d'ABI.** Offsets dérivés de l'ordre de la functionlist
-> d'AROS (`rom/exec/exec.conf`, référence lecture seule) + marqueurs `.version`, **recoupés**
-> contre nos ancres confirmés (analyse ROM + tutoriels publics). Mapping : `Open`=-6,
-> `Close`=-12, puis bias 30 depuis `Supervisor`=-30 (offset = -(30+6·(idx-2)) pour idx≥2).
-> `Expunge` (-18) et le vecteur réservé (-24) ne sont pas dans la functionlist AROS.
+> **Référence d'ABI (piste CLEAN).** Offsets et ordre issus du **NDK 3.2 `FD/exec_lib.fd`**
+> (consulté, non redistribué) : `##bias 30`, donc 1re fonction `Supervisor` = -30 ;
+> offset(i) = -(30+6·i). Les vecteurs standard `Open`-6/`Close`-12/`Expunge`-18/réservé-24
+> précèdent (non listés par le fd). Recoupé avec AROS `exec.conf` et nos ancres d'analyse.
 
-**V34 : jusqu'à `CopyMemQuick` (-630). `lib_NegSize` V34 = 630 (0x276), soit 105 vecteurs de 6 octets.**
+**Frontière V34 (dernière fonction < V36) : `CopyMemQuick` (-630).** `lib_NegSize` V34 = **630 (0x276)**, soit **105 vecteurs** de 6 o.
 
-**Conflit de queue à trancher** : notre analyse ROM situait la frontière V34 à ~102 LVO
-(`AddMemList`/`CopyMem`/`CopyMemQuick` exclus) ; les marqueurs `.version` d'AROS les donnent V33
-(donc présents en V34, d'où 105). À confirmer contre le **vrai `exec_lib.fd` V34 (NDK)** avant de
-figer `lib_NegSize` en M2.2. Sans impact sur M2.1 : les fonctions implémentées (jusqu'à
-`FindName` -276) ont des offsets **certains** (recoupés par 3 sources).
+Ceci tranche le conflit noté en M2.1 : `AddMemList`/`CopyMem`/`CopyMemQuick` sont bien V34
+(V33+, cf. le fd) ; `CacheClearU` (-636) est la 1re V36. Notre analyse ROM (~102) sous-estimait.
 
-| LVO | offset | ver | fonction | M2.1 |
-|----:|-------:|----:|----------|:----:|
-|   1 |    -6 |  33 | Open | ✅ |
-|   2 |   -12 |  33 | Close | ✅ |
-|   3 |   -18 |  33 | Expunge | ✅ |
-|   4 |   -24 |  33 | *(réservé)* | — |
-|   5 |   -30 |  33 | Supervisor |  |
-|   6 |   -36 |  33 | ExitIntr |  |
-|   7 |   -42 |  33 | Schedule |  |
-|   8 |   -48 |  33 | Reschedule |  |
-|   9 |   -54 |  33 | Switch |  |
-|  10 |   -60 |  33 | Dispatch |  |
-|  11 |   -66 |  33 | Exception |  |
-|  12 |   -72 |  33 | InitCode |  |
-|  13 |   -78 |  33 | InitStruct |  |
-|  14 |   -84 |  33 | MakeLibrary |  |
-|  15 |   -90 |  33 | MakeFunctions |  |
-|  16 |   -96 |  33 | FindResident |  |
-|  17 |  -102 |  33 | InitResident |  |
-|  18 |  -108 |  33 | Alert |  |
-|  19 |  -114 |  33 | Debug |  |
-|  20 |  -120 |  33 | Disable | ✅ |
-|  21 |  -126 |  33 | Enable | ✅ |
-|  22 |  -132 |  33 | Forbid | ✅ |
-|  23 |  -138 |  33 | Permit | ✅ |
-|  24 |  -144 |  33 | SetSR |  |
-|  25 |  -150 |  33 | SuperState |  |
-|  26 |  -156 |  33 | UserState |  |
-|  27 |  -162 |  33 | SetIntVector |  |
-|  28 |  -168 |  33 | AddIntServer |  |
-|  29 |  -174 |  33 | RemIntServer |  |
-|  30 |  -180 |  33 | Cause |  |
-|  31 |  -186 |  33 | Allocate |  |
-|  32 |  -192 |  33 | Deallocate |  |
-|  33 |  -198 |  33 | AllocMem | ✅ |
-|  34 |  -204 |  33 | AllocAbs |  |
-|  35 |  -210 |  33 | FreeMem | ✅ |
-|  36 |  -216 |  33 | AvailMem |  |
-|  37 |  -222 |  33 | AllocEntry |  |
-|  38 |  -228 |  33 | FreeEntry |  |
-|  39 |  -234 |  33 | Insert |  |
-|  40 |  -240 |  33 | AddHead | ✅ |
-|  41 |  -246 |  33 | AddTail | ✅ |
-|  42 |  -252 |  33 | Remove | ✅ |
-|  43 |  -258 |  33 | RemHead |  |
-|  44 |  -264 |  33 | RemTail |  |
-|  45 |  -270 |  33 | Enqueue |  |
-|  46 |  -276 |  33 | FindName | ✅ |
-|  47 |  -282 |  33 | AddTask |  |
-|  48 |  -288 |  33 | RemTask |  |
-|  49 |  -294 |  33 | FindTask |  |
-|  50 |  -300 |  33 | SetTaskPri |  |
-|  51 |  -306 |  33 | SetSignal |  |
-|  52 |  -312 |  33 | SetExcept |  |
-|  53 |  -318 |  33 | Wait |  |
-|  54 |  -324 |  33 | Signal |  |
-|  55 |  -330 |  33 | AllocSignal |  |
-|  56 |  -336 |  33 | FreeSignal |  |
-|  57 |  -342 |  33 | AllocTrap |  |
-|  58 |  -348 |  33 | FreeTrap |  |
-|  59 |  -354 |  33 | AddPort |  |
-|  60 |  -360 |  33 | RemPort |  |
-|  61 |  -366 |  33 | PutMsg |  |
-|  62 |  -372 |  33 | GetMsg |  |
-|  63 |  -378 |  33 | ReplyMsg |  |
-|  64 |  -384 |  33 | WaitPort |  |
-|  65 |  -390 |  33 | FindPort |  |
-|  66 |  -396 |  33 | AddLibrary |  |
-|  67 |  -402 |  33 | RemLibrary |  |
-|  68 |  -408 |  33 | OldOpenLibrary |  |
-|  69 |  -414 |  33 | CloseLibrary |  |
-|  70 |  -420 |  33 | SetFunction |  |
-|  71 |  -426 |  33 | SumLibrary |  |
-|  72 |  -432 |  33 | AddDevice |  |
-|  73 |  -438 |  33 | RemDevice |  |
-|  74 |  -444 |  33 | OpenDevice |  |
-|  75 |  -450 |  33 | CloseDevice |  |
-|  76 |  -456 |  33 | DoIO |  |
-|  77 |  -462 |  33 | SendIO |  |
-|  78 |  -468 |  33 | CheckIO |  |
-|  79 |  -474 |  33 | WaitIO |  |
-|  80 |  -480 |  33 | AbortIO |  |
-|  81 |  -486 |  33 | AddResource |  |
-|  82 |  -492 |  33 | RemResource |  |
-|  83 |  -498 |  33 | OpenResource |  |
-|  84 |  -504 |  33 | RawIOInit |  |
-|  85 |  -510 |  33 | RawMayGetChar |  |
-|  86 |  -516 |  33 | RawPutChar |  |
-|  87 |  -522 |  33 | RawDoFmt |  |
-|  88 |  -528 |  33 | GetCC |  |
-|  89 |  -534 |  33 | TypeOfMem |  |
-|  90 |  -540 |  33 | Procure |  |
-|  91 |  -546 |  33 | Vacate |  |
-|  92 |  -552 |  33 | OpenLibrary |  |
-|  93 |  -558 |  33 | InitSemaphore |  |
-|  94 |  -564 |  33 | ObtainSemaphore |  |
-|  95 |  -570 |  33 | ReleaseSemaphore |  |
-|  96 |  -576 |  33 | AttemptSemaphore |  |
-|  97 |  -582 |  33 | ObtainSemaphoreList |  |
-|  98 |  -588 |  33 | ReleaseSemaphoreList |  |
-|  99 |  -594 |  33 | FindSemaphore |  |
-| 100 |  -600 |  33 | AddSemaphore |  |
-| 101 |  -606 |  33 | RemSemaphore |  |
-| 102 |  -612 |  33 | SumKickData |  |
-| 103 |  -618 |  33 | AddMemList |  |
-| 104 |  -624 |  33 | CopyMem |  |
-| 105 |  -630 |  33 | CopyMemQuick |  |
+| offset | fonction | vis. | M2.1 |
+|-------:|----------|:----:|:----:|
+|     -6 | Open | pub | ✅ |
+|    -12 | Close | pub | ✅ |
+|    -18 | Expunge | pub | ✅ |
+|    -24 | *(réservé)* | pub | — |
+|    -30 | Supervisor | pub |  |
+|    -36 | execPrivate1 | priv |  |
+|    -42 | execPrivate2 | priv |  |
+|    -48 | execPrivate3 | priv |  |
+|    -54 | execPrivate4 | priv |  |
+|    -60 | execPrivate5 | priv |  |
+|    -66 | execPrivate6 | priv |  |
+|    -72 | InitCode | pub |  |
+|    -78 | InitStruct | pub |  |
+|    -84 | MakeLibrary | pub |  |
+|    -90 | MakeFunctions | pub |  |
+|    -96 | FindResident | pub |  |
+|   -102 | InitResident | pub |  |
+|   -108 | Alert | pub |  |
+|   -114 | Debug | pub |  |
+|   -120 | Disable | pub | ✅ |
+|   -126 | Enable | pub | ✅ |
+|   -132 | Forbid | pub | ✅ |
+|   -138 | Permit | pub | ✅ |
+|   -144 | SetSR | pub |  |
+|   -150 | SuperState | pub |  |
+|   -156 | UserState | pub |  |
+|   -162 | SetIntVector | pub |  |
+|   -168 | AddIntServer | pub |  |
+|   -174 | RemIntServer | pub |  |
+|   -180 | Cause | pub |  |
+|   -186 | Allocate | pub |  |
+|   -192 | Deallocate | pub |  |
+|   -198 | AllocMem | pub | ✅ |
+|   -204 | AllocAbs | pub |  |
+|   -210 | FreeMem | pub | ✅ |
+|   -216 | AvailMem | pub |  |
+|   -222 | AllocEntry | pub |  |
+|   -228 | FreeEntry | pub |  |
+|   -234 | Insert | pub |  |
+|   -240 | AddHead | pub | ✅ |
+|   -246 | AddTail | pub | ✅ |
+|   -252 | Remove | pub | ✅ |
+|   -258 | RemHead | pub |  |
+|   -264 | RemTail | pub |  |
+|   -270 | Enqueue | pub |  |
+|   -276 | FindName | pub | ✅ |
+|   -282 | AddTask | pub |  |
+|   -288 | RemTask | pub |  |
+|   -294 | FindTask | pub |  |
+|   -300 | SetTaskPri | pub |  |
+|   -306 | SetSignal | pub |  |
+|   -312 | SetExcept | pub |  |
+|   -318 | Wait | pub |  |
+|   -324 | Signal | pub |  |
+|   -330 | AllocSignal | pub |  |
+|   -336 | FreeSignal | pub |  |
+|   -342 | AllocTrap | pub |  |
+|   -348 | FreeTrap | pub |  |
+|   -354 | AddPort | pub |  |
+|   -360 | RemPort | pub |  |
+|   -366 | PutMsg | pub |  |
+|   -372 | GetMsg | pub |  |
+|   -378 | ReplyMsg | pub |  |
+|   -384 | WaitPort | pub |  |
+|   -390 | FindPort | pub |  |
+|   -396 | AddLibrary | pub |  |
+|   -402 | RemLibrary | pub |  |
+|   -408 | OldOpenLibrary | pub |  |
+|   -414 | CloseLibrary | pub |  |
+|   -420 | SetFunction | pub |  |
+|   -426 | SumLibrary | pub |  |
+|   -432 | AddDevice | pub |  |
+|   -438 | RemDevice | pub |  |
+|   -444 | OpenDevice | pub |  |
+|   -450 | CloseDevice | pub |  |
+|   -456 | DoIO | pub |  |
+|   -462 | SendIO | pub |  |
+|   -468 | CheckIO | pub |  |
+|   -474 | WaitIO | pub |  |
+|   -480 | AbortIO | pub |  |
+|   -486 | AddResource | pub |  |
+|   -492 | RemResource | pub |  |
+|   -498 | OpenResource | pub |  |
+|   -504 | execPrivate7 | priv |  |
+|   -510 | execPrivate8 | priv |  |
+|   -516 | execPrivate9 | priv |  |
+|   -522 | RawDoFmt | pub |  |
+|   -528 | GetCC | pub |  |
+|   -534 | TypeOfMem | pub |  |
+|   -540 | Procure | pub |  |
+|   -546 | Vacate | pub |  |
+|   -552 | OpenLibrary | pub |  |
+|   -558 | InitSemaphore | pub |  |
+|   -564 | ObtainSemaphore | pub |  |
+|   -570 | ReleaseSemaphore | pub |  |
+|   -576 | AttemptSemaphore | pub |  |
+|   -582 | ObtainSemaphoreList | pub |  |
+|   -588 | ReleaseSemaphoreList | pub |  |
+|   -594 | FindSemaphore | pub |  |
+|   -600 | AddSemaphore | pub |  |
+|   -606 | RemSemaphore | pub |  |
+|   -612 | SumKickData | pub |  |
+|   -618 | AddMemList | pub |  |
+|   -624 | CopyMem | pub |  |
+|   -630 | CopyMemQuick | pub |  |
 
-## Fonctions POST-V34 (NE PAS exposer pour une cible 1.3)
-
-CacheClearU (-636, V36), CacheClearE (-642, V36), CacheControl (-648, V36), CreateIORequest (-654, V36), DeleteIORequest (-660, V36), CreateMsgPort (-666, V36), DeleteMsgPort (-672, V36), ObtainSemaphoreShared (-678, V36), AllocVec (-684, V36), FreeVec (-690, V36), CreatePool (-696, V36), DeletePool (-702, V36), AllocPooled (-708, V36), FreePooled (-714, V36), AttemptSemaphoreShared (-720, V36), ColdReboot (-726, V36), StackSwap (-732, V36), ChildFree (-738, V36), ChildOrphan (-744, V36), ChildStatus (-750, V36), ChildWait (-756, V36), CachePreDMA (-762, V36), CachePostDMA (-768, V36), AddMemHandler (-774, V39), RemMemHandler (-780, V39), ObtainQuickVector (-786, V39), NewStackSwap (-792, V39), TaggedOpenLibrary (-798, V39), ReadGayle (-804, V39), VNewRawDoFmt (-810, V50), NewMinList (-816, V45), AVL_AddNode (-822, V45), AVL_RemNodeByAddress (-828, V45), AVL_RemNodeByKey (-834, V45), AVL_FindNode (-840, V45), AVL_FindPrevNodeByAddress (-846, V45), AVL_FindPrevNodeByKey (-852, V45), AVL_FindNextNodeByAddress (-858, V45), AVL_FindNextNodeByKey (-864, V45), AVL_FindFirstNode (-870, V45), AVL_FindLastNode (-876, V45), NewCreateTaskA (-882, V50), FindTaskByPID (-888, V50), AddResetCallback (-894, V50), RemResetCallback (-900, V50), AllocVecPooled (-906, V50), FreeVecPooled (-912, V50), ShutdownA (-918, V50), NewAllocEntry (-924, V50), NewAddTask (-930, V50)
+## Post-V34 (NE PAS exposer en 1.3)
+CacheClearU (-636), CacheClearE (-642), CacheControl (-648), CreateIORequest (-654), DeleteIORequest (-660), CreateMsgPort (-666), DeleteMsgPort (-672), ObtainSemaphoreShared (-678), AllocVec (-684), FreeVec (-690), CreatePool (-696), DeletePool (-702), AllocPooled (-708), FreePooled (-714), AttemptSemaphoreShared (-720), ColdReboot (-726), StackSwap (-732), execPrivate10 (-738), execPrivate11 (-744), execPrivate12 (-750), execPrivate13 (-756), CachePreDMA (-762), CachePostDMA (-768), AddMemHandler (-774), RemMemHandler (-780), ObtainQuickVector (-786), execPrivate14 (-792), execPrivate15 (-798), execPrivate16 (-804), execPrivate17 (-810), execPrivate18 (-816), execPrivate19 (-822), NewMinList (-828), execPrivate20 (-834), execPrivate21 (-840), execPrivate22 (-846), execPrivate23 (-852), execPrivate24 (-858), execPrivate25 (-864), execPrivate26 (-870), execPrivate27 (-876), execPrivate28 (-882), execPrivate29 (-888), execPrivate30 (-894), execPrivate31 (-900), execPrivate32 (-906), execPrivate33 (-912)

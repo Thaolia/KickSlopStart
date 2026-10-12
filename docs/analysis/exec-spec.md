@@ -185,6 +185,9 @@ privé V36). La piste implémentation doit refuser/ignorer ces LVO pour rester f
 ## 5. Incertitudes
 - Le layout d'ExecBase (section 2) est de l'ABI publique ; non vérifiable champ par champ dans la
   ROM (structure RAM runtime). La **frontière V34 à ~0x22E** est le point le plus important du delta.
-- Compte de LVO exec : ~102 (±1 sur la queue). Pour figer exactement la dernière entrée, la piste
+- Compte de LVO exec : ~102 (±1 sur la queue). **RÉSOLU** par le NDK `exec_lib.fd` V34 →
+  **105 vecteurs, `lib_NegSize` = `$276`**, frontière à `CopyMemQuick` (-630) ; `AddMemList`/`CopyMem`/
+  `CopyMemQuick` sont V33 (donc présents en V34), contrairement à l'inférence ci-dessous. Voir
+  `docs/exec-lvo-table.md`. L'histogramme ROM avait sous-estimé la queue. Pour figer exactement la dernière entrée, la piste
   implémentation peut recouper le `exec_lib.fd` **V34** officiel ; les offsets des primitives
   demandées sont certains et confirmés par usage dans la ROM.
