@@ -77,8 +77,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Assemble une image ROM Kickstart brute.")
     ap.add_argument("--in", dest="src", required=True, help="binaire vasm -Fbin")
     ap.add_argument("--out", dest="dst", required=True, help="image ROM de sortie")
-    ap.add_argument("--size", type=int, default=256, choices=(256, 512),
-                    help="taille en Kio (defaut 256)")
+    # 256K seulement : l'en-tete (ROMBASE=$FC0000, ROM-ID 0x1111) est specifique
+    # au 256K. Une image 512K est basee a $F80000 avec un autre ROM-ID -> milestone
+    # ulterieur (il faudra parametrer base + ROM-ID), pas un simple changement de taille.
+    ap.add_argument("--size", type=int, default=256, choices=(256,),
+                    help="taille en Kio (256 uniquement pour l'instant)")
     args = ap.parse_args()
 
     with open(args.src, "rb") as f:

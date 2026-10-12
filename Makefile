@@ -36,7 +36,13 @@ verify: $(HELLO_ROM)
 	@sz=$$(stat -c%s $(HELLO_ROM)); \
 	 if [ "$$sz" = "262144" ]; then echo "taille OK : 262144 o"; \
 	 else echo "ECHEC taille : $$sz != 262144"; exit 1; fi
-	@command -v $(ROMTOOL) >/dev/null && { echo "--- romtool info ---"; $(ROMTOOL) info $(HELLO_ROM) || true; } || true
+	@if command -v $(ROMTOOL) >/dev/null; then \
+	   info=$$($(ROMTOOL) info $(HELLO_ROM)); echo "$$info"; \
+	   if echo "$$info" | grep -qE '^is_kick[[:space:]]+ok' \
+	   && echo "$$info" | grep -qE '^chk_sum[[:space:]]+ok'; then \
+	     echo "romtool OK : is_kick + chk_sum"; \
+	   else echo "ECHEC romtool : is_kick/chk_sum != ok"; exit 1; fi; \
+	 else echo "note : $(ROMTOOL) absent — gate romtool sautée"; fi
 
 clean:
 	rm -rf $(BUILD)
