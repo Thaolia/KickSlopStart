@@ -406,19 +406,53 @@ exec_AllocMem:
         movem.l (sp)+,d2-d4/a2-a3
         rts
 
-; FreeMem(ptr a1, size d0) -- prepend simple (coalescing -> M2.2, mais correct)
+; FreeMem(ptr a1, size d0) -- insertion en ordre d'adresse + coalescing bilatéral
 exec_FreeMem:
         move.l  a1,d1
-        beq.s   .fm_ret              ; ptr NULL
+        beq.w   .fm_ret              ; ptr NULL
         tst.l   d0
-        beq.s   .fm_ret              ; size 0
+        beq.w   .fm_ret              ; size 0
+        movem.l d2-d3/a2-a3,-(sp)
         addq.l  #7,d0
-        and.l   #-8,d0               ; arrondi 8
-        lea     MH_CHIP,a0
-        move.l  MH_FIRST(a0),(a1)    ; chunk->Next = ancien premier
-        move.l  d0,MC_BYTES(a1)      ; chunk->Bytes = size
-        move.l  a1,MH_FIRST(a0)      ; mh_First = chunk
-        add.l   d0,MH_FREE(a0)       ; mh_Free += size
+        and.l   #-8,d0               ; d0 = taille arrondie
+        lea     MH_CHIP,a2
+        add.l   d0,MH_FREE(a2)       ; mh_Free += size
+        lea     MH_FIRST(a2),a3      ; a3 = maillon précédent (&mh_First au départ)
+.fm_find:
+        move.l  (a3),a0              ; a0 = chunk courant
+        move.l  a0,d2
+        beq.s   .fm_ins              ; fin de liste
+        cmp.l   a1,a0
+        bhi.s   .fm_ins              ; chunk > ptr -> insérer avant
+        move.l  a0,a3                ; prev = &chunk->mc_Next
+        bra.s   .fm_find
+.fm_ins:
+        move.l  a0,(a1)              ; new->Next = chunk courant
+        move.l  d0,MC_BYTES(a1)
+        move.l  a1,(a3)              ; *prev = new
+        ; coalescing avec le SUIVANT : (new + size) == courant ?
+        move.l  a1,d2
+        add.l   d0,d2
+        cmp.l   a0,d2
+        bne.s   .fm_noNext
+        move.l  (a0),(a1)            ; new->Next = courant->Next
+        move.l  MC_BYTES(a0),d3
+        add.l   d3,MC_BYTES(a1)      ; new->Bytes += courant->Bytes
+.fm_noNext:
+        ; coalescing avec le PRÉCÉDENT (si a3 n'est pas la sentinelle mh_First)
+        lea     MH_FIRST(a2),a0
+        cmp.l   a0,a3
+        beq.s   .fm_done
+        move.l  a3,a0                ; a0 = prevchunk (a3 = &prevchunk->mc_Next)
+        move.l  a0,d2
+        add.l   MC_BYTES(a0),d2      ; d2 = fin du prevchunk
+        cmp.l   a1,d2
+        bne.s   .fm_done
+        move.l  (a1),(a0)            ; prev->Next = new->Next
+        move.l  MC_BYTES(a1),d3
+        add.l   d3,MC_BYTES(a0)      ; prev->Bytes += new->Bytes
+.fm_done:
+        movem.l (sp)+,d2-d3/a2-a3
 .fm_ret:
         rts
 
@@ -580,6 +614,15 @@ selftest:
         move.l  a3,a1
         move.l  #256,d0
         jsr     LVO_FREEMEM(a6)
+
+        ; coalescing : après tous les free, le tas doit être redevenu UN seul chunk
+        lea     MH_CHIP,a2
+        move.l  MH_FIRST(a2),d0
+        cmp.l   #HEAP_LOWER,d0
+        bne.w   .bad
+        move.l  d0,a0
+        cmp.l   #(HEAP_UPPER-HEAP_LOWER),MC_BYTES(a0)
+        bne.w   .bad
 
         moveq   #0,d0
         bra.s   .out
