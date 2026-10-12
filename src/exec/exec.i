@@ -48,9 +48,10 @@ ROMBASE  EQU $FC0000
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
 LN_PRED      EQU 4
+LN_TYPE      EQU 8
+LN_PRI       EQU 9           ; priorité (BYTE signé) — tri Enqueue
 LN_NAME      EQU 10
 LH_TAIL      EQU 4
-LN_TYPE      EQU 8
 NT_LIBRARY   EQU 9
 LIB_NEGSIZE  EQU $10
 LIB_POSSIZE  EQU $12
@@ -79,12 +80,16 @@ EB_SEMLIST      EQU $214
 NT_MEMORY     EQU 10
 MEMF_PUBLIC   EQU $1
 MEMF_CHIP     EQU $2
+MEMF_FAST     EQU $4
+MEMF_TYPEMASK EQU $7           ; bits de TYPE mémoire en V34 (PUBLIC|CHIP|FAST)
 MEMF_CLEAR    EQU $10000
+MEMF_LARGEST  EQU $20000       ; AvailMem : plus grand bloc contigu (pas la somme)
 MH_ATTRIBUTES EQU 14
 MH_FIRST      EQU 16          ; -> struct MemChunk
 MH_LOWER      EQU 20
 MH_UPPER      EQU 24
 MH_FREE       EQU 28
+MH_SIZE       EQU 32          ; sizeof(struct MemHeader)
 MC_NEXT       EQU 0
 MC_BYTES      EQU 4
 
@@ -98,9 +103,15 @@ LVO_FORBID   EQU -132
 LVO_PERMIT   EQU -138
 LVO_ALLOCMEM EQU -198
 LVO_FREEMEM  EQU -210
+LVO_AVAILMEM EQU -216
+LVO_INSERT   EQU -234
 LVO_ADDHEAD  EQU -240
 LVO_ADDTAIL  EQU -246
 LVO_REMOVE   EQU -252
+LVO_REMHEAD  EQU -258
+LVO_REMTAIL  EQU -264
+LVO_ENQUEUE  EQU -270
 LVO_FINDNAME EQU -276
+LVO_TYPEOFMEM EQU -534
 
                 endc

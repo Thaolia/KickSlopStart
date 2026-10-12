@@ -8,7 +8,11 @@
                 xdef    newlist
                 xdef    exec_AddHead
                 xdef    exec_AddTail
+                xdef    exec_Insert
                 xdef    exec_Remove
+                xdef    exec_RemHead
+                xdef    exec_RemTail
+                xdef    exec_Enqueue
                 xdef    exec_FindName
 
 ; newlist : struct List vide (a1 = &List ; conserve a6 ; clobbers a0)
@@ -42,6 +46,18 @@ exec_AddTail:
         move.l  a1,(a0)              ; old_TailPred.Succ = node
         rts
 
+; Insert(list a0, node a1, pred a2) : insère node APRÈS pred ; pred NULL -> AddHead
+exec_Insert:
+        move.l  a2,d0
+        beq.s   exec_AddHead         ; pred NULL -> tête
+        move.l  (a2),d0              ; succ = pred->Succ
+        move.l  d0,(a1)              ; node->Succ = succ
+        move.l  a2,LN_PRED(a1)       ; node->Pred = pred
+        move.l  a1,(a2)              ; pred->Succ = node
+        move.l  d0,a0                ; a0 = succ
+        move.l  a1,LN_PRED(a0)       ; succ->Pred = node
+        rts
+
 ; Remove(node a1)
 exec_Remove:
         move.l  (a1),d0              ; Succ
@@ -49,6 +65,54 @@ exec_Remove:
         move.l  d0,(a0)              ; Pred.Succ = Succ
         move.l  d0,a0                ; a0 = Succ
         move.l  LN_PRED(a1),LN_PRED(a0) ; Succ.Pred = Pred
+        rts
+
+; RemHead(list a0) -> d0 = node retiré | 0 (liste vide)
+exec_RemHead:
+        move.l  (a0),a1              ; node = lh_Head
+        move.l  (a1),d0              ; succ = node->Succ
+        beq.s   .rh_none             ; Succ==0 -> node est la sentinelle = vide
+        move.l  d0,(a0)              ; lh_Head = succ
+        exg     d0,a1                ; a1 = succ, d0 = node (à retourner)
+        move.l  a0,LN_PRED(a1)       ; succ->Pred = &lh_Head (= list)
+        rts
+.rh_none:
+        moveq   #0,d0
+        rts
+
+; RemTail(list a0) -> d0 = node retiré | 0 (liste vide)
+exec_RemTail:
+        move.l  8(a0),a1             ; node = lh_TailPred
+        move.l  LN_PRED(a1),d0       ; pred = node->Pred
+        beq.s   .rt_none             ; Pred==0 -> node est la sentinelle = vide
+        move.l  d0,8(a0)             ; lh_TailPred = pred
+        exg     d0,a1                ; a1 = pred, d0 = node (à retourner)
+        lea     LH_TAIL(a0),a0       ; a0 = &lh_Tail (= list+4)
+        move.l  a0,(a1)              ; pred->Succ = &lh_Tail
+        rts
+.rt_none:
+        moveq   #0,d0
+        rts
+
+; Enqueue(list a0, node a1) : insertion triée par LN_PRI décroissant (FIFO à pri égale)
+exec_Enqueue:
+        move.b  LN_PRI(a1),d1        ; d1.b = priorité du nouveau noeud (signée)
+        move.l  (a0),a0              ; a0 = cur = lh_Head (1er noeud ou sentinelle)
+.eq_loop:
+        move.l  (a0),d0              ; cur->Succ
+        beq.s   .eq_insert           ; cur = sentinelle tail -> insérer avant
+        move.b  LN_PRI(a0),d0        ; priorité de cur
+        cmp.b   d1,d0                ; cur - new (signé)
+        blt.s   .eq_insert           ; cur->pri < new->pri -> insérer avant cur
+        move.l  (a0),a0              ; cur = cur->Succ
+        bra.s   .eq_loop
+.eq_insert:
+        move.l  LN_PRED(a0),d0       ; P = cur->Pred
+        move.l  d0,LN_PRED(a1)       ; new->Pred = P
+        move.l  a0,(a1)              ; new->Succ = cur
+        move.l  a1,LN_PRED(a0)       ; cur->Pred = new
+        move.l  d0,a0                ; a0 = P
+        move.l  a1,(a0)              ; P->Succ = new
         rts
 
 ; FindName(list a0, name a1) -> d0 = node | 0

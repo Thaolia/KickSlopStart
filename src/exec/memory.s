@@ -1,30 +1,47 @@
-; src/exec/memory.s — exec.library : allocateur mémoire (AllocMem first-fit +
-; split + MEMF_CLEAR ; FreeMem avec coalescing bilatéral) + init_memory
-; (MemHeader chip unique). Un seul MemHeader en V34 courant ; le parcours
-; multi-MemHeader viendra. Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = base.
+; src/exec/memory.s — exec.library : allocateur mémoire multi-MemHeader.
+;   AllocMem : parcourt la MemList, sélectionne le 1er header satisfaisant les
+;              bits de TYPE demandés, puis first-fit + split sur ce header.
+;   FreeMem  : retrouve le header propriétaire (par plage d'adresse) puis
+;              coalescing bilatéral (corps IDENTIQUE à M2.2, vérifié).
+;   AvailMem : somme le libre des headers compatibles (ou plus grand bloc).
+;   TypeOfMem: attributs du header contenant une adresse (0 si aucun).
+;   init_memory : MemHeader chip unique @ MH_CHIP.
+; Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
 ; Piste IMPLÉMENTATION (« clean ») : docs/analysis/exec-spec.md + ABI publique.
 
                 include "exec.i"
 
                 xdef    exec_AllocMem
                 xdef    exec_FreeMem
+                xdef    exec_AvailMem
+                xdef    exec_TypeOfMem
                 xdef    init_memory
 
-; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (first-fit + split, MEMF_CLEAR)
-; Un seul MemHeader (chip, MH_CHIP) ; parcours de MemList -> ultérieur.
+; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (multi-header, first-fit + split)
 exec_AllocMem:
-        movem.l d2-d4/a2-a3,-(sp)
-        move.l  d1,d4                ; flags
+        movem.l d2-d5/a2-a4,-(sp)
+        move.l  d1,d4                ; flags (pour MEMF_CLEAR)
+        move.l  d1,d5
+        and.w   #MEMF_TYPEMASK,d5    ; reqType = bits de TYPE demandés (V34)
         addq.l  #7,d0
         and.l   #-8,d0               ; arrondi 8 octets
         move.l  d0,d2                ; size
         beq     .am_fail
-        lea     MH_CHIP,a2
+        lea     EB_MEMLIST(a6),a4
+        move.l  (a4),a4              ; a4 = premier noeud (lh_Head)
+.am_hdr:
+        move.l  (a4),d0              ; a4->Succ
+        beq     .am_fail             ; sentinelle tail -> aucun header satisfaisant
+        move.w  MH_ATTRIBUTES(a4),d0
+        and.w   d5,d0
+        cmp.w   d5,d0
+        bne     .am_nexth            ; (MH_ATTR & reqType) != reqType
+        move.l  a4,a2                ; a2 = header candidat
         lea     MH_FIRST(a2),a3      ; a3 = &mh_First (maillon précédent)
 .am_scan:
         move.l  (a3),a0              ; chunk = *prev
         move.l  a0,d0
-        beq     .am_fail             ; fin de liste -> pas de place
+        beq     .am_nexth            ; header épuisé -> header suivant
         move.l  MC_BYTES(a0),d3
         cmp.l   d2,d3
         bcs.s   .am_next             ; mc_Bytes < size
@@ -52,17 +69,20 @@ exec_AllocMem:
         bne.s   .am_clr
 .am_ok:
         move.l  a0,d0                ; résultat
-        movem.l (sp)+,d2-d4/a2-a3
+        movem.l (sp)+,d2-d5/a2-a4
         rts
 .am_next:
         move.l  a0,a3                ; prev = &chunk->mc_Next
         bra     .am_scan
+.am_nexth:
+        move.l  (a4),a4              ; header = header->Succ
+        bra     .am_hdr
 .am_fail:
         moveq   #0,d0
-        movem.l (sp)+,d2-d4/a2-a3
+        movem.l (sp)+,d2-d5/a2-a4
         rts
 
-; FreeMem(ptr a1, size d0) -- insertion en ordre d'adresse + coalescing bilatéral
+; FreeMem(ptr a1, size d0) -- header propriétaire + coalescing bilatéral (M2.2)
 exec_FreeMem:
         move.l  a1,d1
         beq.w   .fm_ret              ; ptr NULL
@@ -71,7 +91,21 @@ exec_FreeMem:
         movem.l d2-d3/a2-a3,-(sp)
         addq.l  #7,d0
         and.l   #-8,d0               ; d0 = taille arrondie
-        lea     MH_CHIP,a2
+        ; recherche du header propriétaire : MH_LOWER <= ptr < MH_UPPER
+        lea     EB_MEMLIST(a6),a2
+        move.l  (a2),a2              ; premier noeud
+.fm_hdr:
+        move.l  (a2),d2              ; Succ
+        beq     .fm_done             ; aucun header propriétaire -> ignore
+        cmp.l   MH_LOWER(a2),a1
+        bcs.s   .fm_nexth            ; ptr < MH_LOWER
+        cmp.l   MH_UPPER(a2),a1
+        bcc.s   .fm_nexth            ; ptr >= MH_UPPER
+        bra.s   .fm_found
+.fm_nexth:
+        move.l  (a2),a2
+        bra.s   .fm_hdr
+.fm_found:
         add.l   d0,MH_FREE(a2)       ; mh_Free += size
         lea     MH_FIRST(a2),a3      ; a3 = maillon précédent (&mh_First au départ)
 .fm_find:
@@ -110,6 +144,67 @@ exec_FreeMem:
 .fm_done:
         movem.l (sp)+,d2-d3/a2-a3
 .fm_ret:
+        rts
+
+; AvailMem(requirements d1) -> d0 = octets libres compatibles (ou plus grand bloc)
+exec_AvailMem:
+        movem.l d2-d4,-(sp)
+        move.l  d1,d2                ; requirements
+        move.l  d1,d3
+        and.w   #MEMF_TYPEMASK,d3    ; reqType
+        moveq   #0,d4                ; accumulateur
+        lea     EB_MEMLIST(a6),a0
+        move.l  (a0),a0              ; premier noeud
+.av_hdr:
+        move.l  (a0),d0              ; Succ
+        beq.s   .av_done
+        move.w  MH_ATTRIBUTES(a0),d0
+        and.w   d3,d0
+        cmp.w   d3,d0
+        bne.s   .av_nexth            ; header non compatible
+        btst    #17,d2               ; MEMF_LARGEST ($20000) ?
+        bne.s   .av_largest
+        add.l   MH_FREE(a0),d4       ; somme du libre
+        bra.s   .av_nexth
+.av_largest:
+        move.l  MH_FIRST(a0),a1      ; parcourt les chunks -> max MC_BYTES
+.av_lchunk:
+        move.l  a1,d0
+        beq.s   .av_nexth
+        move.l  MC_BYTES(a1),d0
+        cmp.l   d4,d0
+        bls.s   .av_lnext
+        move.l  d0,d4
+.av_lnext:
+        move.l  (a1),a1
+        bra.s   .av_lchunk
+.av_nexth:
+        move.l  (a0),a0
+        bra.s   .av_hdr
+.av_done:
+        move.l  d4,d0
+        movem.l (sp)+,d2-d4
+        rts
+
+; TypeOfMem(address a1) -> d0 = attributs du header contenant l'adresse | 0
+exec_TypeOfMem:
+        lea     EB_MEMLIST(a6),a0
+        move.l  (a0),a0              ; premier noeud
+.tom_hdr:
+        move.l  (a0),d0              ; Succ
+        beq.s   .tom_none
+        cmp.l   MH_LOWER(a0),a1
+        bcs.s   .tom_nexth           ; a1 < MH_LOWER
+        cmp.l   MH_UPPER(a0),a1
+        bcc.s   .tom_nexth           ; a1 >= MH_UPPER
+        moveq   #0,d0
+        move.w  MH_ATTRIBUTES(a0),d0 ; trouvé -> attributs
+        rts
+.tom_nexth:
+        move.l  (a0),a0
+        bra.s   .tom_hdr
+.tom_none:
+        moveq   #0,d0
         rts
 
 ; init_memory : MemHeader chip @ MH_CHIP + chunk initial couvrant le tas

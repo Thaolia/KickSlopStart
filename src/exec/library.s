@@ -21,10 +21,16 @@
 
                 xref    exec_AddHead     ; lists.s
                 xref    exec_AddTail
+                xref    exec_Insert
                 xref    exec_Remove
+                xref    exec_RemHead
+                xref    exec_RemTail
+                xref    exec_Enqueue
                 xref    exec_FindName
                 xref    exec_AllocMem    ; memory.s
                 xref    exec_FreeMem
+                xref    exec_AvailMem
+                xref    exec_TypeOfMem
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -54,14 +60,26 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_AddHead,LVO_ADDHEAD+2(a6)
         move.w  #$4EF9,LVO_ADDTAIL(a6)
         move.l  #exec_AddTail,LVO_ADDTAIL+2(a6)
+        move.w  #$4EF9,LVO_INSERT(a6)
+        move.l  #exec_Insert,LVO_INSERT+2(a6)
         move.w  #$4EF9,LVO_REMOVE(a6)
         move.l  #exec_Remove,LVO_REMOVE+2(a6)
+        move.w  #$4EF9,LVO_REMHEAD(a6)
+        move.l  #exec_RemHead,LVO_REMHEAD+2(a6)
+        move.w  #$4EF9,LVO_REMTAIL(a6)
+        move.l  #exec_RemTail,LVO_REMTAIL+2(a6)
+        move.w  #$4EF9,LVO_ENQUEUE(a6)
+        move.l  #exec_Enqueue,LVO_ENQUEUE+2(a6)
         move.w  #$4EF9,LVO_FINDNAME(a6)
         move.l  #exec_FindName,LVO_FINDNAME+2(a6)
         move.w  #$4EF9,LVO_ALLOCMEM(a6)
         move.l  #exec_AllocMem,LVO_ALLOCMEM+2(a6)
         move.w  #$4EF9,LVO_FREEMEM(a6)
         move.l  #exec_FreeMem,LVO_FREEMEM+2(a6)
+        move.w  #$4EF9,LVO_AVAILMEM(a6)
+        move.l  #exec_AvailMem,LVO_AVAILMEM+2(a6)
+        move.w  #$4EF9,LVO_TYPEOFMEM(a6)
+        move.l  #exec_TypeOfMem,LVO_TYPEOFMEM+2(a6)
         rts
 
 _unimpl:
