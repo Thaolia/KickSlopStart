@@ -158,7 +158,7 @@ ser_puts:
 ; Exerce le dispatch jump-table et le comportement des fonctions.
 ; Retour : d0 = 0 (tout OK) / 1 (échec).
 selftest:
-        movem.l d7/a2-a5,-(sp)
+        movem.l d6-d7/a2-a5,-(sp)
         ; baseline du tas chip : 1er chunk libre APRÈS les allocations permanentes
         ; de boot (TCB ThisTask...). Les asserts de coalescing comparent à cette
         ; baseline (robuste aux allocations permanentes, pas au tas vide).
@@ -500,6 +500,105 @@ selftest:
         move.l  #TC_SIZE,d0
         jsr     LVO_FREEMEM(a6)
 
+        ; ===== M2.4c : ports / messages (non bloquants) =====
+        moveq   #-1,d0               ; bit de signal pour le port
+        jsr     LVO_ALLOCSIGNAL(a6)
+        move.l  d0,d6                ; d6 = n° de bit
+        move.l  #MP_SIZE,d0          ; port principal depuis le tas
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a2                ; a2 = port
+        lea     MP_MSGLIST(a2),a1    ; le caller initialise la file
+        jsr     newlist
+        move.l  #str_port,LN_NAME(a2)
+        move.b  #PA_SIGNAL,MP_FLAGS(a2)
+        move.b  d6,MP_SIGBIT(a2)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a2)
+        move.l  a2,a1
+        jsr     LVO_ADDPORT(a6)
+        ; FindPort(nom) == port ; FindPort(inconnu) == 0
+        move.l  #str_port,a1
+        jsr     LVO_FINDPORT(a6)
+        cmp.l   a2,d0
+        bne.w   .bad
+        move.l  #str_gamma,a1
+        jsr     LVO_FINDPORT(a6)
+        tst.l   d0
+        bne.w   .bad
+        ; 2 messages depuis le tas (msg1=+0, msg2=+MN_SIZE)
+        move.l  #(2*MN_SIZE),d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a3
+        ; PutMsg(msg1) doit poser le bit du port dans SIGRECVD de ThisTask
+        move.l  EB_THISTASK(a6),a0
+        clr.l   TC_SIGRECVD(a0)
+        move.l  a2,a0
+        move.l  a3,a1
+        jsr     LVO_PUTMSG(a6)
+        move.l  EB_THISTASK(a6),a0
+        move.l  TC_SIGRECVD(a0),d0
+        moveq   #1,d1
+        lsl.l   d6,d1
+        and.l   d1,d0
+        beq.w   .bad                 ; bit du port non posé
+        ; PutMsg(msg2) ; GetMsg FIFO : msg1, msg2, puis 0 (vide)
+        move.l  a2,a0
+        lea     MN_SIZE(a3),a1
+        jsr     LVO_PUTMSG(a6)
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)
+        cmp.l   a3,d0
+        bne.w   .bad
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)
+        lea     MN_SIZE(a3),a1
+        cmp.l   a1,d0
+        bne.w   .bad
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        bne.w   .bad
+        ; ReplyMsg : msg1 revient sur un reply port avec le type NT_REPLYMSG
+        move.l  #MP_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a4                ; a4 = reply port
+        lea     MP_MSGLIST(a4),a1
+        jsr     newlist
+        move.b  #PA_IGNORE,MP_FLAGS(a4)   ; pas de signal au reply
+        move.l  a4,MN_REPLYPORT(a3)
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)
+        move.l  a4,a0
+        jsr     LVO_GETMSG(a6)
+        cmp.l   a3,d0                ; msg1 revenu sur le reply port
+        bne.w   .bad
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        bne.w   .bad
+        ; nettoyage : RemPort(x2), free messages + ports + signal
+        move.l  a2,a1
+        jsr     LVO_REMPORT(a6)
+        move.l  a4,a1
+        jsr     LVO_REMPORT(a6)
+        move.l  a3,a1
+        move.l  #(2*MN_SIZE),d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  a4,a1
+        move.l  #MP_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  a2,a1
+        move.l  #MP_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d6,d0
+        jsr     LVO_FREESIGNAL(a6)
+
         ; invariant final : tas chip revenu à la baseline (chunk unique)
         lea     MH_CHIP,a0
         move.l  MH_FIRST(a0),d0
@@ -514,7 +613,7 @@ selftest:
 .bad:
         moveq   #1,d0
 .out:
-        movem.l (sp)+,d7/a2-a5
+        movem.l (sp)+,d6-d7/a2-a5
         rts
 
 ; ============================ données ==============================
@@ -530,6 +629,8 @@ str_gamma:
         dc.b    "gamma",0
 task_test_name:
         dc.b    "testtask",0
+str_port:
+        dc.b    "testport",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:

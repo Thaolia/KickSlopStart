@@ -37,6 +37,12 @@
                 xref    exec_Signal
                 xref    exec_AllocSignal
                 xref    exec_FreeSignal
+                xref    exec_AddPort     ; ports.s
+                xref    exec_RemPort
+                xref    exec_PutMsg
+                xref    exec_GetMsg
+                xref    exec_ReplyMsg
+                xref    exec_FindPort
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -98,6 +104,18 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_AllocSignal,LVO_ALLOCSIGNAL+2(a6)
         move.w  #$4EF9,LVO_FREESIGNAL(a6)
         move.l  #exec_FreeSignal,LVO_FREESIGNAL+2(a6)
+        move.w  #$4EF9,LVO_ADDPORT(a6)
+        move.l  #exec_AddPort,LVO_ADDPORT+2(a6)
+        move.w  #$4EF9,LVO_REMPORT(a6)
+        move.l  #exec_RemPort,LVO_REMPORT+2(a6)
+        move.w  #$4EF9,LVO_PUTMSG(a6)
+        move.l  #exec_PutMsg,LVO_PUTMSG+2(a6)
+        move.w  #$4EF9,LVO_GETMSG(a6)
+        move.l  #exec_GetMsg,LVO_GETMSG+2(a6)
+        move.w  #$4EF9,LVO_REPLYMSG(a6)
+        move.l  #exec_ReplyMsg,LVO_REPLYMSG+2(a6)
+        move.w  #$4EF9,LVO_FINDPORT(a6)
+        move.l  #exec_FindPort,LVO_FINDPORT+2(a6)
         rts
 
 _unimpl:

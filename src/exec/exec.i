@@ -114,6 +114,23 @@ TC_SPUPPER    EQU 62
 TC_SIZE       EQU 92
 SYS_SIGALLOC  EQU $FFFF        ; signaux 0-15 pré-alloués (réservés système)
 
+; struct MsgPort (exec/ports.i) — base à LN_SIZE=14
+NT_MSGPORT    EQU 4
+NT_MESSAGE    EQU 5
+NT_REPLYMSG   EQU 7
+MP_FLAGS      EQU 14
+MP_SIGBIT     EQU 15
+MP_SIGTASK    EQU 16
+MP_MSGLIST    EQU 20          ; struct List
+MP_SIZE       EQU 34
+PF_ACTION     EQU 3           ; masque des bits d'action
+PA_SIGNAL     EQU 0
+PA_IGNORE     EQU 2
+; struct Message (exec/ports.i)
+MN_REPLYPORT  EQU 14
+MN_LENGTH     EQU 18
+MN_SIZE       EQU 20
+
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
@@ -139,6 +156,12 @@ LVO_SETSIGNAL  EQU -306
 LVO_SIGNAL     EQU -324
 LVO_ALLOCSIGNAL EQU -330
 LVO_FREESIGNAL EQU -336
+LVO_ADDPORT    EQU -354
+LVO_REMPORT    EQU -360
+LVO_PUTMSG     EQU -366
+LVO_GETMSG     EQU -372
+LVO_REPLYMSG   EQU -378
+LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
 
                 endc
