@@ -83,6 +83,19 @@ EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
 
+; struct MemHeader / MemChunk + attributs mémoire (exec/memory.i, V34)
+NT_MEMORY     EQU 10
+MEMF_PUBLIC   EQU $1
+MEMF_CHIP     EQU $2
+MEMF_CLEAR    EQU $10000
+MH_ATTRIBUTES EQU 14
+MH_FIRST      EQU 16          ; -> struct MemChunk
+MH_LOWER      EQU 20
+MH_UPPER      EQU 24
+MH_FREE       EQU 28
+MC_NEXT       EQU 0
+MC_BYTES      EQU 4
+
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md)
 LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
@@ -172,6 +185,7 @@ coldstart:                        ; $FC00D2
         bsr     newlist
 
         bsr     build_jumptable
+        bsr     init_memory
 
         ; --- Phase 4 : publie SysBase, auto-vérif, auto-test ---
         move.l  a6,($4).w
@@ -185,9 +199,8 @@ coldstart:                        ; $FC00D2
         not.l   d0
         cmp.l   EB_CHKBASE(a6),d0
         bne     eb_fail
-        lea     EB_MEMLIST(a6),a0
-        lea     LH_TAIL(a0),a1
-        cmp.l   (a0),a1              ; lh_Head == &lh_Tail ?
+        move.l  EB_MEMLIST(a6),d0    ; lh_Head doit pointer sur le MemHeader ajouté
+        cmp.l   #MH_CHIP,d0
         bne     eb_fail
 
         bsr     selftest             ; d0 = 0 (OK) / !=0 (échec)
@@ -239,6 +252,10 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_Remove,LVO_REMOVE+2(a6)
         move.w  #$4EF9,LVO_FINDNAME(a6)
         move.l  #exec_FindName,LVO_FINDNAME+2(a6)
+        move.w  #$4EF9,LVO_ALLOCMEM(a6)
+        move.l  #exec_AllocMem,LVO_ALLOCMEM+2(a6)
+        move.w  #$4EF9,LVO_FREEMEM(a6)
+        move.l  #exec_FreeMem,LVO_FREEMEM+2(a6)
         rts
 
 _unimpl:
@@ -337,6 +354,97 @@ exec_FindName:
         moveq   #0,d0
         rts
 
+; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (first-fit + split, MEMF_CLEAR)
+; M2.1b : un seul MemHeader (chip, MH_CHIP) ; parcours de MemList -> M2.2.
+exec_AllocMem:
+        movem.l d2-d4/a2-a3,-(sp)
+        move.l  d1,d4                ; flags
+        addq.l  #7,d0
+        and.l   #-8,d0               ; arrondi 8 octets
+        move.l  d0,d2                ; size
+        beq     .am_fail
+        lea     MH_CHIP,a2
+        lea     MH_FIRST(a2),a3      ; a3 = &mh_First (maillon précédent)
+.am_scan:
+        move.l  (a3),a0              ; chunk = *prev
+        move.l  a0,d0
+        beq     .am_fail             ; fin de liste -> pas de place
+        move.l  MC_BYTES(a0),d3
+        cmp.l   d2,d3
+        bcs.s   .am_next             ; mc_Bytes < size
+        beq.s   .am_whole
+        move.l  a0,a1                ; split : nouveau chunk = chunk + size
+        add.l   d2,a1
+        move.l  (a0),(a1)            ; new->Next = chunk->Next
+        sub.l   d2,d3
+        move.l  d3,MC_BYTES(a1)      ; new->Bytes = reste
+        move.l  a1,(a3)              ; *prev = new
+        bra.s   .am_alloc
+.am_whole:
+        move.l  (a0),(a3)            ; retire le chunk entier
+.am_alloc:
+        sub.l   d2,MH_FREE(a2)
+        move.l  d4,d0
+        and.l   #MEMF_CLEAR,d0
+        beq.s   .am_ok
+        move.l  a0,a1                ; MEMF_CLEAR : met le bloc à zéro
+        move.l  d2,d0
+        lsr.l   #2,d0
+.am_clr:
+        clr.l   (a1)+
+        subq.l  #1,d0
+        bne.s   .am_clr
+.am_ok:
+        move.l  a0,d0                ; résultat
+        movem.l (sp)+,d2-d4/a2-a3
+        rts
+.am_next:
+        move.l  a0,a3                ; prev = &chunk->mc_Next
+        bra     .am_scan
+.am_fail:
+        moveq   #0,d0
+        movem.l (sp)+,d2-d4/a2-a3
+        rts
+
+; FreeMem(ptr a1, size d0) -- prepend simple (coalescing -> M2.2, mais correct)
+exec_FreeMem:
+        move.l  a1,d1
+        beq.s   .fm_ret              ; ptr NULL
+        tst.l   d0
+        beq.s   .fm_ret              ; size 0
+        addq.l  #7,d0
+        and.l   #-8,d0               ; arrondi 8
+        lea     MH_CHIP,a0
+        move.l  MH_FIRST(a0),(a1)    ; chunk->Next = ancien premier
+        move.l  d0,MC_BYTES(a1)      ; chunk->Bytes = size
+        move.l  a1,MH_FIRST(a0)      ; mh_First = chunk
+        add.l   d0,MH_FREE(a0)       ; mh_Free += size
+.fm_ret:
+        rts
+
+; init_memory : MemHeader chip @ MH_CHIP + chunk initial couvrant le tas
+init_memory:                         ; a6 = SysBase (jump table déjà bâtie)
+        lea     MH_CHIP,a0
+        moveq   #7,d0                ; 32 octets à zéro
+        move.l  a0,a1
+.im_z:
+        clr.l   (a1)+
+        dbf     d0,.im_z
+        move.b  #NT_MEMORY,LN_TYPE(a0)
+        move.l  #mh_name,LN_NAME(a0)
+        move.w  #(MEMF_CHIP|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
+        move.l  #HEAP_LOWER,MH_LOWER(a0)
+        move.l  #HEAP_UPPER,MH_UPPER(a0)
+        move.l  #(HEAP_UPPER-HEAP_LOWER),MH_FREE(a0)
+        move.l  #HEAP_LOWER,a1       ; chunk initial = tout le tas
+        clr.l   MC_NEXT(a1)
+        move.l  #(HEAP_UPPER-HEAP_LOWER),MC_BYTES(a1)
+        move.l  a1,MH_FIRST(a0)
+        lea     EB_MEMLIST(a6),a0    ; AddTail(MemList, MemHeader)
+        lea     MH_CHIP,a1
+        jsr     LVO_ADDTAIL(a6)
+        rts
+
 ; newlist : struct List vide (a1 = &List ; conserve a6 ; clobbers a0)
 newlist:
         move.l  a1,a0
@@ -372,6 +480,7 @@ ser_puts:
 ; Exerce le dispatch jump-table et le comportement des fonctions.
 ; Retour : d0 = 0 (tout OK) / 1 (échec).
 selftest:
+        movem.l a2/a3,-(sp)
         ; Forbid : TDNestCnt -1 -> 0 ; Permit : 0 -> -1
         jsr     LVO_FORBID(a6)
         cmp.b   #0,EB_TDNEST(a6)
@@ -435,10 +544,49 @@ selftest:
         tst.w   LIB_OPENCNT(a6)
         bne.w   .bad
 
+        ; --- mémoire : AllocMem / FreeMem ---
+        move.l  #256,d0
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a2                ; p1
+        move.l  #256,d0
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a3                ; p2
+        move.l  #$11111111,(a2)      ; non-recouvrement par motif
+        move.l  #$22222222,(a3)
+        cmp.l   #$11111111,(a2)
+        bne.w   .bad
+        cmp.l   #$22222222,(a3)
+        bne.w   .bad
+        move.l  #$DEADBEEF,(a2)      ; dirty p1, free, realloc CLEAR -> zéro
+        move.l  a2,a1
+        move.l  #256,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  #256,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .bad
+        move.l  d0,a1
+        tst.l   (a1)                 ; MEMF_CLEAR -> 1er longword == 0
+        bne.w   .bad
+        move.l  #256,d0              ; libère le bloc CLEAR puis p2
+        jsr     LVO_FREEMEM(a6)
+        move.l  a3,a1
+        move.l  #256,d0
+        jsr     LVO_FREEMEM(a6)
+
         moveq   #0,d0
-        rts
+        bra.s   .out
 .bad:
         moveq   #1,d0
+.out:
+        movem.l (sp)+,a2/a3
         rts
 
 ; ============================ données ==============================
@@ -452,6 +600,8 @@ str_beta:
         dc.b    "beta",0
 str_gamma:
         dc.b    "gamma",0
+mh_name:
+        dc.b    "chip memory",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
