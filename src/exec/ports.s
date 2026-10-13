@@ -19,16 +19,27 @@
                 xdef    exec_GetMsg
                 xdef    exec_ReplyMsg
 
+; M3c : AddPort/RemPort/PutMsg/GetMsg/ReplyMsg enveloppés en Forbid/Permit — la
+; PortList et les files MP_MSGLIST sont partagées (émetteur vs propriétaire). Forbid
+; (exclusion tâche-vs-tâche) suffit ce milestone : aucun service d'interruption n'y
+; touche encore ; l'UPGRADE en Disable (protection interruption, pour les devices
+; pilotés par IRQ) est différé à l'arrivée du code device + save/restore par-TCB du
+; nesting. FindPort/FindName restent arbitrés par l'APPELANT (contrat exec V34).
+
 ; AddPort(port a1) : type NT_MSGPORT puis Enqueue dans PortList (ordre de priorité).
 exec_AddPort:
         move.b  #NT_MSGPORT,LN_TYPE(a1)
+        jsr     LVO_FORBID(a6)
         lea     EB_PORTLIST(a6),a0
         jsr     LVO_ENQUEUE(a6)
+        jsr     LVO_PERMIT(a6)
         rts
 
 ; RemPort(port a1) : retire de PortList.
 exec_RemPort:
+        jsr     LVO_FORBID(a6)
         jsr     LVO_REMOVE(a6)
+        jsr     LVO_PERMIT(a6)
         rts
 
 ; FindPort(name a1) -> d0 = port | 0 (recherche dans PortList).
@@ -41,6 +52,7 @@ exec_FindPort:
 exec_PutMsg:
         move.l  a2,-(sp)
         move.l  a0,a2                ; a2 = port
+        jsr     LVO_FORBID(a6)       ; {chaînage + signal} atomique vs le propriétaire
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         lea     MP_MSGLIST(a2),a0    ; AddTail(&port->MsgList, msg)
         jsr     LVO_ADDTAIL(a6)
@@ -58,24 +70,30 @@ exec_PutMsg:
         move.l  d1,d0
         jsr     LVO_SIGNAL(a6)       ; Signal(task a1, sigmask d0)
 .pm_done:
+        jsr     LVO_PERMIT(a6)       ; sortie unique
         move.l  (sp)+,a2
         rts
 
 ; GetMsg(port a0) -> d0 = message | 0 (RemHead de la file, FIFO).
 exec_GetMsg:
+        jsr     LVO_FORBID(a6)
         lea     MP_MSGLIST(a0),a0
-        jsr     LVO_REMHEAD(a6)
+        jsr     LVO_REMHEAD(a6)      ; d0 = message | 0
+        jsr     LVO_PERMIT(a6)       ; préserve d0
         rts
 
 ; ReplyMsg(message a1) : renvoie au MN_REPLYPORT (si présent), type NT_REPLYMSG.
 exec_ReplyMsg:
         move.l  a2,-(sp)
         move.l  a1,a2                ; a2 = message (PutMsg clobbe a1 scratch)
+        jsr     LVO_FORBID(a6)       ; {renvoi + marquage} atomique : le propriétaire ne
+                                     ; doit pas GetMsg le message avant son type NT_REPLYMSG
         move.l  MN_REPLYPORT(a1),d0
         beq.s   .rm_mark             ; pas de reply port -> juste marquer
         move.l  d0,a0                ; a0 = reply port
-        jsr     LVO_PUTMSG(a6)       ; AddTail + signal (met NT_MESSAGE)
+        jsr     LVO_PUTMSG(a6)       ; AddTail + signal (PutMsg imbrique Forbid/Permit)
 .rm_mark:
         move.b  #NT_REPLYMSG,LN_TYPE(a2)   ; écrase -> type « répondu »
+        jsr     LVO_PERMIT(a6)
         move.l  (sp)+,a2
         rts

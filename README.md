@@ -16,7 +16,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M2.4** — multi-MemHeader, listes (Enqueue…), tâches+signaux+ports (non bloquants) | ✅ **fait et vérifié** (auto-test → blanc ; ordonnancement réel = M3) |
 | **M3a** — plomberie d'interruptions (VBlank armé) | ✅ **fait et vérifié** (série « VBlank interrupts live » ; RED→GREEN) |
 | **M3b** — ordonnanceur préemptif (switch de tâches superviseur) | ✅ **fait et vérifié** (2 tâches alternent sur le série, contexte préservé) |
-| **M3c+** — Forbid/exclusion, tâches user-mode, `Wait`/réveil, scan résidents, graphics, dos | à venir (voir `docs/PLAN.md`) |
+| **M3c** — exclusion mutuelle : `Forbid()` honoré par le scheduler + sections critiques exec enveloppées | ✅ **fait et vérifié** (série « M3C LIVE » ; RED garde Forbid → `FAILED`, RED Permit manquant → selftest échoue) |
+| **M3c+** — tâches user-mode, `Wait`/réveil-sur-signal, yield-sur-`Permit`, dispatcher par niveau, scan résidents, graphics, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 

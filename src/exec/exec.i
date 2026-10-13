@@ -54,6 +54,8 @@ INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
+FORBID_CTR   EQU $00000508    ; compteur partagé — preuve M3c que Forbid est honoré
+DEMO_STAT    EQU $0000050C    ; bits d'état démo M3c (b0=A ok, b1=B vivant, b2=LIVE émis)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

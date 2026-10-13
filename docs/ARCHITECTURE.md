@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…), `interrupts.s` (init_ints + handler VBlank) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -70,10 +70,29 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   préemption : round-robin (sauve SP de la sortante dans `TC_SPREG`, Enqueue en `TaskReady`, RemHead
   l'entrante, restaure son SP + GPR, `RTE`). `AddTask` (-282) pose la frame initiale miroir du pop
   dispatcher. Prouvé par 2 tâches démo qui **alternent** sur le série (preemption) **en préservant
-  leur contexte** (sentinelles de registres). ⚠️ Préemption **inconditionnelle** : `Disable()`
-  protège (coupe INTEN) mais `Forbid()` pas encore honoré, et les sections critiques exec ne sont pas
-  encore protégées — **prérequis M3c**. À venir : tâches user-mode (frame USP/SSP), dispatcher par
-  niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), `Wait`/`WaitPort` + réveil-sur-signal,
-  quantum `SFB_TQE`, priorité réelle, puis scan des résidents.
+  leur contexte** (sentinelles de registres).
+- **M3c** (exclusion mutuelle, prérequis #1) : `Forbid()` est désormais **honoré** par le scheduler.
+  Le handler VBlank défère le switch si une section critique est active — double-garde `EB_TDNEST >= 0`
+  (Forbid) **ou** `EB_IDNEST >= 0` (Disable, ferme la fenêtre `addq`/`INTENA`). Ces compteurs sont
+  **globaux** (ExecBase) : licite car une tâche interdite n'est jamais commutée, donc `EB_TDNEST`
+  reflète toujours la tâche courante ; le switch ne touchant pas ces compteurs, aucune tâche n'est
+  reprise avec le compte d'une autre. Modèle **défère-au-prochain-VBlank** (pas de yield immédiat sur
+  `Permit` ce milestone) : le switch différé est repris au tick suivant, jamais perdu (`Permit`/`Enable`
+  restent de simples dé/incréments). Sections critiques exec enveloppées en **Forbid/Permit** (exclusion
+  tâche-vs-tâche ; `Disable` n'est PAS employé ce milestone — il perturberait `INTENA` pendant le
+  selftest pré-interruptions) à **sortie unique** : `AllocMem`/`FreeMem`/`AvailMem`/`TypeOfMem`
+  (listes mémoire) + `AddPort`/`RemPort`/`PutMsg`/`GetMsg`/`ReplyMsg` (PortList + files de messages).
+  Les primitives de listes brutes et `FindName`/`FindPort` restent **non enveloppées** (briques
+  arbitrées par l'appelant, contrat exec V34 ; et le handler les appelle -> wrapper = ré-entrée).
+  Prouvé **déterministe** (compteur partagé observé à travers une fenêtre interdite, indépendant du
+  cadencement série) : `M3C LIVE` émis ssi Forbid honoré (A) ET pas de starvation (B). RED vérifiés :
+  garde Forbid retirée -> `FAILED` ; `Permit` retiré -> dérive `EB_TDNEST` attrapée dès l'assertion
+  Forbid/Permit du selftest.
+- **À venir (M3c+)** : tâches user-mode (frame USP/SSP), dispatcher par niveau
+  (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), `Wait`/`WaitPort` + réveil-sur-signal +
+  **yield immédiat sur Permit** (requis dès qu'une tâche réveillée prioritaire doit tourner sans
+  attendre un tick), **upgrade des ports en Disable** (dès qu'un device piloté par IRQ appelle
+  `PutMsg`/`ReplyMsg`), save/restore par-TCB du nesting, quantum `SFB_TQE`, priorité réelle, puis
+  scan des résidents.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

@@ -142,8 +142,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   data-driven. Vérif : exec vit jusqu'au scan résident **en machine complète (UAE)** — c'est là que se
   valide le bringup d'exec ; `vamos` fournit SON propre exec/dos et **ne peut pas héberger le nôtre**.
   Assertions via log série ; sondes oracle là où observable.
+  **État (suivi fin dans le ledger + README)** : coldstart/ExecBase/jump table V34/mémoire multi-header/
+  listes/tâches+signaux+ports non bloquants = livrés (sous-jalons M2.0→M2.4). Plomberie d'interruptions
+  VBlank (M3a), **ordonnanceur préemptif superviseur** (M3b) et **exclusion mutuelle** — `Forbid()`
+  honoré + sections critiques exec enveloppées (M3c) = livrés et vérifiés par boot FS-UAE. Reste pour
+  clore le bringup exec : tâches user-mode, `Wait`/`WaitPort` + réveil-sur-signal (+ yield immédiat sur
+  `Permit`), dispatcher par niveau, quantum/priorité réelle, puis `InitResident` + scan auto-config.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
-  `keymap.resource` ; plomberie d'interruptions.
+  `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.
 - **M5 — intuition minimal → écran « insert Workbench disk »** (la main iconique du boot KS 1.3).
 - **M6 — dos + trackdisk + FS + strap/romboot → boot disquette jusqu'au CLI.** La `dos.library` 1.3 est

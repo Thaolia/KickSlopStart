@@ -3,7 +3,8 @@
 ;   init_ints   : installe l'autovecteur 68000 niveau 3 (VBlank), active VERTB +
 ;                 le maître INTEN, abaisse le masque IPL -> les interruptions passent.
 ;   vbl_handler : point de préemption. SCHED_ON=0 -> compte juste VBL_COUNT (M3a).
-;                 SCHED_ON=1 -> switch round-robin entre les tâches de TaskReady.
+;                 SCHED_ON=1 -> switch round-robin, SAUF si Forbid()/Disable() actif
+;                 (M3c : EB_TDNEST/EB_IDNEST >= 0 -> switch déféré au prochain VBlank).
 ; Tâches en SUPERVISEUR : leur pile EST la pile superviseur, donc la frame {SR,PC}
 ; poussée par le CPU est déjà sur la pile de la tâche -> le switch est un simple
 ; échange de SP (pas de jonglage USP/SSP ; user-mode = M3c). Au IPL 3 : pas de
@@ -35,6 +36,14 @@ vbl_handler:
         addq.l  #1,(a0)             ; compteur (preuve M3a conservée)
         tst.b   SCHED_ON
         beq.s   .vbl_ret            ; ordonnanceur non armé -> juste compter
+        ; M3c : honore Forbid/Disable. TC_TDNESTCNT/IDNESTCNT sont GLOBAUX (ExecBase),
+        ; pas par-TCB (le switch ne sauve/restaure que SP) ; comme une tâche interdite
+        ; n'est jamais commutée, EB_TDNEST reflète toujours l'état de la tâche courante.
+        ; -1 = permis (négatif -> bge non pris -> on switche) ; 0/+ = interdit -> on défère.
+        tst.b   EB_TDNEST(a6)       ; Forbid() actif ?
+        bge.s   .vbl_ret            ; oui -> pas de switch (repris au prochain VBlank)
+        tst.b   EB_IDNEST(a6)       ; Disable() actif ? (ferme la fenêtre addq/INTENA de Disable)
+        bge.s   .vbl_ret
         move.l  EB_TASKREADY(a6),a0 ; lh_Head de TaskReady
         move.l  (a0),d0             ; head->Succ ; 0 => liste vide
         beq.s   .vbl_ret            ; aucune autre tâche prête -> pas de switch

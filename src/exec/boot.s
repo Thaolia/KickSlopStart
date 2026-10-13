@@ -19,7 +19,7 @@
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
 
-DEMO_STK     EQU 1024         ; taille de pile des tâches de démo M3b
+DEMO_STK     EQU 2048         ; pile des tâches démo (M3c : appels imbriqués Forbid+AllocMem)
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -656,10 +656,10 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
-; ============================ démo ordonnanceur (M3b) ===============
+; ============================ démo ordonnanceur (M3b/M3c) ===========
 ; Crée 2 tâches superviseur A et B (TCB + pile depuis le tas) et les met dans
-; TaskReady via AddTask. Scaffolding de PREUVE du switch (comme le selftest) :
-; sera remplacé par la suite d'init exec (scan résidents) plus tard.
+; TaskReady via AddTask. Scaffolding de PREUVE (comme le selftest) : sera remplacé
+; par la suite d'init exec (scan résidents) plus tard.
 setup_demo_tasks:                    ; a6 = SysBase
         ; --- tâche A ---
         move.l  #TC_SIZE,d0
@@ -695,54 +695,120 @@ setup_demo_tasks:                    ; a6 = SysBase
         jsr     LVO_ADDTASK(a6)
         rts
 
-; Corps des tâches de démo. Chacune charge des SENTINELLES de contexte (un reg de
-; données + un reg d'adresse) une fois, puis vérifie à CHAQUE itération qu'elles
-; ont survécu avant d'émettre sa lettre. Si le switch corrompait le save/restore
-; (reg oublié, mauvais ordre), la sentinelle serait fausse après préemption ->
-; émission de 'F'. Donc 'A'/'B' alternés = non seulement l'ordonnancement MAIS
-; AUSSI la fidélité du contexte à travers les préemptions.
+; Corps des tâches de démo M3c — PREUVE DÉTERMINISTE que Forbid() est honoré par le
+; scheduler, INDÉPENDANTE du cadencement série (l'émulateur n'émet PAS au baud réel :
+; M3b montrait ~5000 car entre deux préemptions, donc une « rafale contiguë » ne
+; discriminerait rien). Méthode = compteur partagé FORBID_CTR observé à travers une
+; fenêtre interdite.
+;   task_b : incrémente FORBID_CTR (si B tourne, ça bouge) ; martèle AllocMem/FreeMem
+;            (exercice concurrent des sections critiques) ; 'B' périodique (vivant).
+;   task_a : Forbid ; snapshot FORBID_CTR ; SPIN fixe ~33 ticks (NON cadencé série,
+;            enjambe plusieurs VBlank) ; relit FORBID_CTR ; Permit ; 'G' si inchangé
+;            (B n'a pas pu tourner = Forbid honoré), sinon chaîne « FAILED ».
+; check_live émet « M3C LIVE » UNE fois quand A ET B ont progressé -> marqueur de
+; succès du harnais : présent ssi Forbid honoré (A) ET pas de starvation (B, donc
+; Permits équilibrés dans les sections critiques enveloppées).
+; RED (garde TDNest retirée du handler) : B tourne pendant la fenêtre -> « FAILED ».
+; RED (Permit manquant) : EB_TDNEST dérive -> handler défère toujours -> B starve ->
+; « M3C LIVE » jamais émis (bit B non posé) -> échec harnais (marqueur absent).
 task_a:
-        move.l  #$A1A1A1A1,d5
-        move.l  #$A2A2A2A2,a5
+        move.l  ($4).w,a6            ; SysBase (les tâches démarrent a6=0, cf. frame AddTask)
 .a_loop:
-        cmp.l   #$A1A1A1A1,d5        ; sentinelle data intacte ?
-        bne.s   .a_fail
-        cmp.l   #$A2A2A2A2,a5        ; sentinelle adresse intacte ?
-        bne.s   .a_fail
-.a_wait:
-        move.w  SERDATR,d1
-        btst    #13,d1
-        beq.s   .a_wait              ; attend TBE (contexte tâche : spin autorisé)
-        move.w  #$0141,SERDAT        ; 'A' (bit stop bit 8)
-        bra.s   .a_loop
-.a_fail:
-        move.w  SERDATR,d1
-        btst    #13,d1
-        beq.s   .a_fail
-        move.w  #$0146,SERDAT        ; 'F' : contexte corrompu par le switch
-        bra.s   .a_fail
+        jsr     LVO_FORBID(a6)       ; fenêtre interdite : le scheduler ne doit PAS préempter
+        move.l  FORBID_CTR,d5        ; snapshot du compteur partagé
+        move.l  #$00040000,d6        ; spin fixe (~33 ticks à 7 MHz, non cadencé série)
+.a_spin:
+        subq.l  #1,d6
+        bne.s   .a_spin
+        move.l  FORBID_CTR,d4        ; relecture après la fenêtre interdite
+        jsr     LVO_PERMIT(a6)
+        cmp.l   d5,d4
+        bne.w   .a_violated          ; B a tourné pendant -> Forbid NON honoré
+        moveq   #$47,d0              ; 'G' : fenêtre interdite préservée
+        bsr     task_putc
+        bset    #0,DEMO_STAT         ; A a prouvé Forbid
+        bsr     check_live
+        ; exercice des sections critiques (chemin échec + alloc/free, concurrent avec B)
+        move.l  #$10000000,d0        ; énorme -> doit échouer (chemin .am_fail sous Forbid)
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  #96,d0
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.w   .a_loop              ; tas plein (improbable) -> reboucle
+        move.l  d0,a1
+        move.l  #96,d0
+        jsr     LVO_FREEMEM(a6)
+        ; fenêtre PERMISE délibérée (>= 1 tick) : sans elle, avec le modèle « défère au
+        ; prochain VBlank », A (interdit l'essentiel du temps) monopoliserait le CPU et
+        ; B starverait. Ce spin PERMIS laisse un VBlank préempter A -> B obtient du temps.
+        move.l  #$00010000,d6        ; ~8 ticks, préemptible
+.a_yield:
+        subq.l  #1,d6
+        bne.s   .a_yield
+        bra.w   .a_loop
+.a_violated:
+        jsr     LVO_FORBID(a6)       ; fige l'émission (chaîne non fractionnée par préemption)
+        lea     msg_forbidfail(pc),a0
+        bsr     ser_puts
+.a_vhang:
+        bra.s   .a_vhang             ; reste interdit : la preuve d'échec (FAILED) est capturée
 task_b:
-        move.l  #$B1B1B1B1,d5
-        move.l  #$B2B2B2B2,a5
+        move.l  ($4).w,a6            ; SysBase
+        moveq   #0,d2                ; compteur local (cadence du 'B')
 .b_loop:
-        cmp.l   #$B1B1B1B1,d5
-        bne.s   .b_fail
-        cmp.l   #$B2B2B2B2,a5
-        bne.s   .b_fail
-.b_wait:
-        move.w  SERDATR,d1
-        btst    #13,d1
-        beq.s   .b_wait
-        move.w  #$0142,SERDAT        ; 'B'
+        addq.l  #1,FORBID_CTR        ; si B tourne, le compteur bouge (détecteur RED pour A)
+        bset    #1,DEMO_STAT         ; B est vivant
+        bsr     check_live
+        move.l  #48,d0               ; martèle AllocMem/FreeMem (concurrent avec A)
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .b_cadence
+        move.l  d0,a1
+        move.l  #48,d0
+        jsr     LVO_FREEMEM(a6)
+.b_cadence:
+        addq.l  #1,d2
+        move.l  d2,d3
+        and.l   #$00000FFF,d3        ; 'B' de loin en loin (preuve de vie / non-starvation)
+        bne.s   .b_loop
+        moveq   #$42,d0              ; 'B'
+        bsr     task_putc
         bra.s   .b_loop
-.b_fail:
-        move.w  SERDATR,d1
-        btst    #13,d1
-        beq.s   .b_fail
-        move.w  #$0146,SERDAT        ; 'F'
-        bra.s   .b_fail
 task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
         bra.s   task_exit
+
+; task_putc : émet d0.b sur le série depuis un contexte TÂCHE. Attente TBE NON bornée
+; (le spin est préemptible ; si TBE n'arrivait jamais, c'est une vraie panne série).
+; Clobbe d1 et modifie d0 (ajoute le bit stop). N'utilise pas a6.
+task_putc:
+        move.w  SERDATR,d1
+        btst    #13,d1
+        beq.s   task_putc
+        and.w   #$00FF,d0
+        or.w    #$0100,d0
+        move.w  d0,SERDAT
+        rts
+
+; check_live : émet « M3C LIVE » UNE SEULE fois quand DEMO_STAT porte les bits A+B.
+; bset #2 = test-and-set atomique (Z = ancien bit) : un seul appelant émet, même si
+; A et B passent le test en concurrence. Émission sous Forbid -> chaîne non fractionnée.
+; a6 = SysBase. Clobbe d0.
+check_live:
+        move.b  DEMO_STAT,d0
+        and.b   #3,d0
+        cmp.b   #3,d0
+        bne.s   .cl_ret              ; A et B pas encore tous deux prouvés
+        bset    #2,DEMO_STAT         ; Z=1 si bit2 était 0 (1re fois)
+        bne.s   .cl_ret              ; déjà émis
+        jsr     LVO_FORBID(a6)
+        lea     msg_m3clive(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.cl_ret:
+        rts
 
 ; ============================ données ==============================
 exec_name:
@@ -783,4 +849,8 @@ msg_vblok:
         dc.b    "M3 VBlank interrupts live",13,10,0
 msg_vbltimeout:
         dc.b    "M3 VBL timeout",13,10,0
+msg_m3clive:
+        dc.b    "M3C LIVE: Forbid honored, no starvation",13,10,0
+msg_forbidfail:
+        dc.b    "M3C FAILED: Forbid violated (task ran inside forbidden region)",13,10,0
         EVEN

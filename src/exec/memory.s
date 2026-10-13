@@ -18,8 +18,13 @@
                 xdef    init_memory
 
 ; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (multi-header, first-fit + split)
+; M3c : enveloppé en Forbid/Permit — la MemList + les listes de chunks sont
+; partagées entre tâches ; une préemption mid-split corromprait le tas. Section à
+; SORTIE UNIQUE (.am_exit) : chaque chemin (succès, échec taille, header épuisé)
+; passe par le même Permit, sinon EB_TDNEST dériverait et figerait le scheduler.
 exec_AllocMem:
         movem.l d2-d5/a2-a4,-(sp)
+        jsr     LVO_FORBID(a6)
         move.l  d1,d4                ; flags (pour MEMF_CLEAR)
         move.l  d1,d5
         and.w   #MEMF_TYPEMASK,d5    ; reqType = bits de TYPE demandés (V34)
@@ -69,8 +74,7 @@ exec_AllocMem:
         bne.s   .am_clr
 .am_ok:
         move.l  a0,d0                ; résultat
-        movem.l (sp)+,d2-d5/a2-a4
-        rts
+        bra.s   .am_exit
 .am_next:
         move.l  a0,a3                ; prev = &chunk->mc_Next
         bra     .am_scan
@@ -79,16 +83,22 @@ exec_AllocMem:
         bra     .am_hdr
 .am_fail:
         moveq   #0,d0
+.am_exit:
+        jsr     LVO_PERMIT(a6)       ; sortie unique ; Permit ne touche pas d0
         movem.l (sp)+,d2-d5/a2-a4
         rts
 
 ; FreeMem(ptr a1, size d0) -- header propriétaire + coalescing bilatéral (M2.2)
+; M3c : FreeMem enveloppé en Forbid/Permit (coalescing mute la liste de chunks
+; partagée). Les gardes NULL/size-0 sortent AVANT le Forbid (aucune section
+; critique) ; le corps a une sortie unique (.fm_done) -> un seul Permit.
 exec_FreeMem:
         move.l  a1,d1
         beq.w   .fm_ret              ; ptr NULL
         tst.l   d0
         beq.w   .fm_ret              ; size 0
         movem.l d2-d3/a2-a3,-(sp)
+        jsr     LVO_FORBID(a6)
         addq.l  #7,d0
         and.l   #-8,d0               ; d0 = taille arrondie
         ; recherche du header propriétaire : MH_LOWER <= ptr < MH_UPPER
@@ -142,6 +152,7 @@ exec_FreeMem:
         move.l  MC_BYTES(a1),d3
         add.l   d3,MC_BYTES(a0)      ; prev->Bytes += new->Bytes
 .fm_done:
+        jsr     LVO_PERMIT(a6)
         movem.l (sp)+,d2-d3/a2-a3
 .fm_ret:
         rts
@@ -149,6 +160,7 @@ exec_FreeMem:
 ; AvailMem(requirements d1) -> d0 = octets libres compatibles (ou plus grand bloc)
 exec_AvailMem:
         movem.l d2-d4,-(sp)
+        jsr     LVO_FORBID(a6)       ; M3c : lecture cohérente des chunks partagés
         move.l  d1,d2                ; requirements
         move.l  d1,d3
         and.w   #MEMF_TYPEMASK,d3    ; reqType
@@ -182,12 +194,15 @@ exec_AvailMem:
         move.l  (a0),a0
         bra.s   .av_hdr
 .av_done:
+        jsr     LVO_PERMIT(a6)       ; sortie unique ; Permit ne touche pas d4
         move.l  d4,d0
         movem.l (sp)+,d2-d4
         rts
 
 ; TypeOfMem(address a1) -> d0 = attributs du header contenant l'adresse | 0
+; M3c : Forbid/Permit (parcourt la MemList partagée). Sortie unique .tom_done.
 exec_TypeOfMem:
+        jsr     LVO_FORBID(a6)
         lea     EB_MEMLIST(a6),a0
         move.l  (a0),a0              ; premier noeud
 .tom_hdr:
@@ -199,12 +214,14 @@ exec_TypeOfMem:
         bcc.s   .tom_nexth           ; a1 >= MH_UPPER
         moveq   #0,d0
         move.w  MH_ATTRIBUTES(a0),d0 ; trouvé -> attributs
-        rts
+        bra.s   .tom_done
 .tom_nexth:
         move.l  (a0),a0
         bra.s   .tom_hdr
 .tom_none:
         moveq   #0,d0
+.tom_done:
+        jsr     LVO_PERMIT(a6)       ; préserve d0
         rts
 
 ; init_memory : MemHeader chip @ MH_CHIP + chunk initial couvrant le tas
