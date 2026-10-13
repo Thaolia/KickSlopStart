@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…), `interrupts.s` (init_ints + handler VBlank) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -63,6 +63,10 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   ⚠️ « vert » = structures manipulées correctement, PAS ordonnancement réel. **Différé à M3**
   (exige les interruptions) : `Wait`/`WaitPort` bloquants, `AddTask`/`RemTask`, dispatch
   (`Switch`/`Dispatch`/`Cause`), réveil d'une tâche sur signal.
+- **M3a** : **plomberie d'interruptions**. Autovecteur 68000 niveau 3 (`$6C`) → handler VBlank,
+  `INTENA = VERTB|INTEN` ($C020), `SR=$2000` → la chaîne d'interruptions tourne (compteur VBlank qui
+  avance, prouvé par le série). Dispatcher complet par niveau (décodage `INTREQR`, `IntVects`,
+  `SetIntVector`/`AddIntServer`) et l'ordonnanceur (`Switch`/`Dispatch`, quantum `SFB_TQE`) → M3b.
   Pas encore : scan des résidents.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
