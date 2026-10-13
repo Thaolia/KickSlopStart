@@ -151,9 +151,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   yield + préemption** — les deux chemins de switch unifiés coexistent sans corruption (M3f) et
   **machinerie de scan des résidents** — `build_reslist`/`FindResident`/`InitResident`/`InitCode`
   prouvés par 3 résidents démo initialisés en ordre de priorité (M4) = livrés et vérifiés par boot
-  FS-UAE. Reste pour clore le bringup exec : **AUTOINIT (MakeLibrary + InitStruct)** puis les VRAIS
-  modules résidents (le handoff de boot reste la démo M3f codée en dur d'ici là), dispatcher par
-  niveau, tâches user-mode, quantum/priorité réelle.
+  FS-UAE, ainsi que **AUTOINIT** — `MakeLibrary`/`MakeFunctions`/`InitStruct` + chemin AUTOINIT de
+  `InitResident`, prouvés par un résident AUTOINIT démo (M5a). Reste pour clore le bringup exec : les
+  VRAIS modules résidents `cia.resource` (direct-init) + `timer.device` (AUTOINIT) — premiers vrais
+  résidents, retrait des démos (le handoff de boot reste la démo M3f codée en dur d'ici là) — puis
+  dispatcher par niveau, tâches user-mode, quantum/priorité réelle.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

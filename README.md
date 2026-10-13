@@ -21,7 +21,9 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M3e** — yield immédiat sur `Permit`/`Enable` (reschedule synchrone vers une réveillée prioritaire) | ✅ **fait et vérifié** (série « M3E LIVE » ; démo coopérative pri 10/0 ; RED yield désactivé → starvation franche) |
 | **M3f** — recombinaison yield + préemption (switchs unifiés, coexistence sans corruption) | ✅ **fait et vérifié** (série « M3F LIVE » ; 3 tâches `SCHED_ON=1` + sentinelles de contexte ; RED préemption off → starvation) |
 | **M4** — scan des résidents (ROMTags) + `FindResident`/`InitResident`/`InitCode` | ✅ **fait et vérifié** (série « M4 RESIDENTS OK » ; 3 résidents démo initialisés en ordre de priorité ; RED tri cassé / dispatch cassé → `FAILED`) |
-| **M4+** — AUTOINIT (MakeLibrary), vrais modules → `cia.resource`/`timer.device`, dispatcher par niveau, user-mode, graphics, dos | à venir (voir `docs/PLAN.md`) |
+| **M5a** — AUTOINIT : `MakeLibrary` + `MakeFunctions` + `InitStruct` (chemin AUTOINIT de `InitResident`) | ✅ **fait et vérifié** (série « M5A AUTOINIT OK » ; lib démo créée, jump table + InitStruct + init func + ajout LibList ; RED InitStruct/init cassés → `FAILED`) |
+| **M5b/M5c** — `cia.resource` (direct-init) + `timer.device` (AUTOINIT) = premiers vrais résidents | à venir (voir `docs/PLAN.md`) |
+| **M5+** — dispatcher par niveau, upgrade ports→Disable, user-mode, graphics, dos | à venir |
 
 ## ⚠️ Légal / clean-room
 

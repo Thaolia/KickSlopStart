@@ -166,10 +166,32 @@ coldstart:                        ; $FC00D2
         jsr     LVO_FINDRESIDENT(a6)
         cmp.l   #res_mid,d0
         bne     res_fail
-        cmp.l   #3,RES_COUNT         ; les 3 résidents démo initialisés ?
+        cmp.l   #3,RES_COUNT         ; les 3 résidents démo direct-init initialisés ?
         bne     res_fail
         lea     msg_res_ok(pc),a0
         bsr     ser_puts             ; « M4 RESIDENTS OK »
+
+        ; --- M5a : vérifier le résident AUTOINIT (demo.autolib) créé par MakeLibrary ---
+        lea     EB_LIBLIST(a6),a0    ; la lib doit avoir été ajoutée à LibList
+        lea     autolib_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     auto_fail            ; lib absente -> AUTOINIT/add KO
+        move.l  d0,a2                ; a2 = base de la lib
+        cmp.w   #40,LIB_VERSION(a2)  ; InitStruct (INITWORD) a posé la version ?
+        bne     auto_fail
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) a posé le type ?
+        bne     auto_fail
+        cmp.w   #$5A,LIB_REVISION(a2) ; l'init function a tourné (a posé la révision) ?
+        bne     auto_fail
+        move.l  a6,-(sp)             ; sauve SysBase
+        move.l  a2,a6                ; a6 = base de la lib (convention d'appel)
+        jsr     -6(a6)               ; appelle func0 via la jump table -> d0 (MakeFunctions OK ?)
+        move.l  (sp)+,a6             ; restaure SysBase
+        cmp.l   #$5A,d0
+        bne     auto_fail
+        lea     msg_auto_ok(pc),a0
+        bsr     ser_puts             ; « M5A AUTOINIT OK »
 
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
@@ -890,11 +912,65 @@ res_demo_common:
         moveq   #0,d0
         rts
 
-res_fail:                            ; échec M4 (ordre, OU FindResident/RES_COUNT) -> fige
+res_fail:                            ; échec M4 (scan/ordre/dispatch) -> fige
         lea     msg_res_fail(pc),a0
         bsr     ser_puts
 .resf_hang:
         bra.s   .resf_hang
+auto_fail:                           ; échec M5a (AUTOINIT/MakeLibrary) -> fige
+        lea     msg_auto_fail(pc),a0
+        bsr     ser_puts
+.autof_hang:
+        bra.s   .autof_hang
+
+; ============================ résident AUTOINIT démo (M5a) =========
+; ROMTag RTF_AUTOINIT (pri 40) -> InitResident appelle MakeLibrary avec la table de 4 longs.
+; Prouve : jump table bâtie (func0 rend $5A), InitStruct pose version/type, init func pose
+; la révision + le nom, lib ajoutée à LibList. Table de vecteurs ABSOLUE (longwords, -1).
+; Data table = INITWORD(LIB_VERSION,40) + INITBYTE(LN_TYPE,NT_LIBRARY). Le nom (adresse) est
+; posé par l'init func (PC-relative), pas par InitStruct (une adresse relogée ne peut pas être
+; scindée en deux mots à l'assemblage).
+        EVEN
+res_auto:
+        dc.w    RTC_MATCHWORD
+        dc.l    res_auto             ; RT_MATCHTAG = self
+        dc.l    res_auto_end         ; RT_ENDSKIP
+        dc.b    RTF_AUTOINIT,1,NT_LIBRARY,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.l    autolib_name         ; RT_NAME
+        dc.l    autolib_name         ; RT_IDSTRING
+        dc.l    autolib_inittab      ; RT_INIT -> table AUTOINIT (4 longs)
+autolib_name:
+        dc.b    "demo.autolib",0
+        EVEN
+autolib_inittab:
+        dc.l    LIB_SIZE             ; dataSize (base mini)
+        dc.l    autolib_vectors      ; funcTable
+        dc.l    autolib_datatab      ; dataTable (InitStruct)
+        dc.l    autolib_initfunc     ; initFunc
+autolib_vectors:                     ; table RELATIVE (exerce la détection + l'arithmétique word)
+        dc.w    -1                            ; marqueur : déplacements word relatifs à cette base
+        dc.w    autolib_func0-autolib_vectors ; LVO -6
+        dc.w    autolib_func1-autolib_vectors ; LVO -12
+        dc.w    -1                            ; terminateur (word)
+autolib_datatab:
+        dc.w    $D000,LIB_VERSION,40          ; INITWORD(LIB_VERSION, 40)
+        dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8) ; INITBYTE(LN_TYPE, NT_LIBRARY)
+        dc.b    0                             ; terminateur du flux InitStruct
+        EVEN
+autolib_func0:                       ; appelée via jsr -6(base) -> preuve MakeFunctions
+        moveq   #$5A,d0
+        rts
+autolib_func1:                       ; LVO -12 (non exercée)
+        moveq   #0,d0
+        rts
+autolib_initfunc:                    ; (D0=base, A0=segList, A6=ExecBase) -> D0 = base
+        move.l  d0,a1                ; a1 = base
+        move.w  #$5A,LIB_REVISION(a1) ; preuve : l'init func a tourné
+        lea     autolib_name(pc),a0
+        move.l  a0,LN_NAME(a1)       ; nom (adresse, PC-relative) -> OpenLibrary/FindName
+        rts                          ; d0 = base inchangé
+        EVEN
+res_auto_end:
 
 ; ============================ données ==============================
 exec_name:
@@ -943,8 +1019,12 @@ msg_m3ffail:
         dc.b    "M3F FAILED: context sentinel corrupted across a switch",13,10,0
 msg_res_ok:
         dc.b    "M4 RESIDENTS OK (scan + InitResident in priority order)",13,10,0
+msg_auto_ok:
+        dc.b    "M5A AUTOINIT OK (MakeLibrary + MakeFunctions + InitStruct)",13,10,0
 msg_res_fail:
         dc.b    "M4 FAILED: resident scan/init incorrect",13,10,0
+msg_auto_fail:
+        dc.b    "M5A FAILED: AUTOINIT/MakeLibrary incorrect",13,10,0
 msg_crlf:
         dc.b    13,10,0
         EVEN

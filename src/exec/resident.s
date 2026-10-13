@@ -116,7 +116,10 @@ exec_FindResident:
 ; convention ABI (AutoDoc exec InitResident) : D0 = 0, A0 = segList, A6 = ExecBase ;
 ; le pointeur resident N'EST PAS passé (la routine d'init se connaît statiquement). Sa
 ; valeur de retour (d0) est renvoyée. Pour un module ROM, segList = NULL.
-; AUTOINIT (RT_INIT -> table ; MakeLibrary + InitStruct) : DIFFÉRÉ -> no-op (d0=0).
+; AUTOINIT (RTF_AUTOINIT) : RT_INIT -> 4 longs {dataSize, funcTable, dataTable, initFunc}
+; passés à MakeLibrary ; la base rendue est Enqueue'd dans la liste système selon RT_TYPE
+; (NT_LIBRARY->LibList, NT_DEVICE->DeviceList, NT_RESOURCE->ResourceList). V34 : les champs
+; name/type/version du nœud ne sont PAS remplis depuis le ROMTag (le module le fait).
 exec_InitResident:
         cmp.w   #RTC_MATCHWORD,(a1)
         bne.s   .ir_fail             ; pas un ROMTag -> 0
@@ -130,8 +133,43 @@ exec_InitResident:
         move.l  (sp)+,a2
         rts
 .ir_autoinit:
-        moveq   #0,d0                ; MakeLibrary/InitStruct différés (aucun module AUTOINIT encore)
+        ; RT_INIT -> 4 longs {dataSize, funcTable, dataTable, initFunc} passés à MakeLibrary.
+        movem.l d2-d3/a2-a3,-(sp)
+        move.l  d1,d3                ; d3 = segList (préservé)
+        move.l  a1,a3                ; a3 = resident (pour l'ajout par type)
+        move.l  RT_INIT(a1),a2       ; a2 = table AUTOINIT
+        move.l  (a2),d0              ; dataSize
+        move.l  4(a2),a0             ; funcTable (vectors)
+        move.l  8(a2),a1             ; dataTable (structure InitStruct)
+        move.l  12(a2),a2           ; initFunc
+        move.l  d3,d1                ; segList
+        jsr     LVO_MAKELIBRARY(a6)  ; -> d0 = base | 0
+        tst.l   d0
+        beq.s   .ira_fail
+        ; V34 : ne PAS remplir name/type/version du nœud depuis le ROMTag (le module l'a fait).
+        ; Ajout à la liste système selon RT_TYPE.
+        move.l  d0,a1                ; a1 = base (nœud)
+        move.b  RT_TYPE(a3),d1
+        cmp.b   #NT_DEVICE,d1
+        beq.s   .ira_dev
+        cmp.b   #NT_RESOURCE,d1
+        beq.s   .ira_res
+        lea     EB_LIBLIST(a6),a0    ; NT_LIBRARY (défaut)
+        bra.s   .ira_add
+.ira_dev:
+        lea     EB_DEVICELIST(a6),a0
+        bra.s   .ira_add
+.ira_res:
+        lea     EB_RESOURCELIST(a6),a0
+.ira_add:
+        jsr     LVO_ENQUEUE(a6)      ; Enqueue(list a0, node a1=base) ; a1 préservé
+        move.l  a1,d0                ; d0 = base (valeur de retour)
+.ira_done:
+        movem.l (sp)+,d2-d3/a2-a3
         rts
+.ira_fail:
+        moveq   #0,d0
+        bra.s   .ira_done
 .ir_fail:
         moveq   #0,d0
         rts

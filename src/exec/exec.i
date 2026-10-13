@@ -76,6 +76,7 @@ LIB_VERSION  EQU $14
 LIB_REVISION EQU $16
 LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
+LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
 EB_CHKBASE    EQU $26
 EB_MAXLOCMEM  EQU $3E
 EB_THISTASK   EQU $114         ; tâche courante (struct Task *)
@@ -154,6 +155,7 @@ MN_SIZE       EQU 20
 RTC_MATCHWORD EQU $4AFC        ; RT_MATCHWORD : signature d'un ROMTag
 RTF_AUTOINIT  EQU $80          ; RT_FLAGS bit 7 : RT_INIT -> table auto-init (MakeLibrary)
 RTF_COLDSTART EQU $01
+NT_DEVICE     EQU 3
 NT_RESOURCE   EQU 8
 RT_MATCHWORD  EQU 0            ; UWORD
 RT_MATCHTAG   EQU 2            ; APTR -> self (valide le match vs un $4AFC fortuit)
@@ -175,6 +177,9 @@ LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
 LVO_EXPUNGE  EQU -18
 LVO_INITCODE     EQU -72
+LVO_INITSTRUCT   EQU -78
+LVO_MAKELIBRARY  EQU -84
+LVO_MAKEFUNCTIONS EQU -90
 LVO_FINDRESIDENT EQU -96
 LVO_INITRESIDENT EQU -102
 LVO_DISABLE  EQU -120
