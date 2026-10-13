@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones via `dispatch_head` commun) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -115,11 +115,26 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   preuve : task_L (pri 0, ne bloque jamais) `Forbid`/`Signal(task_H)`/`Permit` ; task_H (pri 10) boucle
   `Wait`. Le SEUL dispatcher de task_H est le `reschedule` de `Permit` → `M3E LIVE` émis après 500 yields
   ⟺ yield-sur-Permit correct. RED : yield désactivé dans `Permit` → task_H starve (marqueur absent).
-- **À venir (M3e+)** : **recombiner yield + préemption** (`vbl_handler` doit effacer `AttnResched` quand
-  il switche, sinon un `Permit` postérieur à un tick ferait un `reschedule` redondant — inoffensif mais à
-  nettoyer) ; dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des
-  ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`), save/restore par-TCB
-  du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum `SFB_TQE`, priorité réelle,
-  puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
+- **M3f** (recombinaison yield + préemption) : la préemption périodique (`SCHED_ON=1`) et le
+  yield-sur-`Permit` **coexistent sans corruption de contexte**. Les trois chemins de switch sont
+  unifiés : `dispatch_head` (RemHead + bascule + `rte`, commun aux trois) et `requeue_and_dispatch`
+  (requeue round-robin de la sortante + `clr AttnResched` + `dispatch_head`, partagé par le handler et
+  `reschedule`). Le handler **efface `AttnResched` à chaque switch** (un tick satisfait une demande de
+  yield en attente → pas de `reschedule` redondant au `Permit` suivant) ; `reschedule` re-teste
+  `AttnResched` à IPL 7 (idempotent, ferme la course lecture-IPL0/appel). Prouvé par 3 tâches
+  (`SCHED_ON=1`) : task_H (pri 10, cible du yield), task_L (pri 0, signale+yield), task_S (pri 0,
+  spinner pur dispatché UNIQUEMENT par la préemption). Sentinelle de contexte (d7) vérifiée après
+  chaque switch dans les trois tâches → `M3F FAILED` si corrompue. `M3F LIVE` émis quand `WP_CONS`≥100
+  (yield répété) ET `WP_SPIN`≥5 (task_S a tourné via préemption). **Préemption confirmée load-bearing**
+  par le RED (`SCHED_ON=0` → task_S monopolise → task_L ne signale plus task_H → `WP_CONS` gèle →
+  marqueur absent). Portée de la preuve : M3f valide la **mécanique** du yield et la coexistence sans
+  corruption ; la **nécessité** du yield reste prouvée par M3e (démo coopérative, commit 18cba43), car
+  sous `SCHED_ON=1` un tick dispatcherait task_H de toute façon (preuve non isolable en un seul mode).
+  Le code anti-course (handler efface un `AttnResched` posé, branche `.rs_none`) est correct par
+  inspection mais **inerte** dans cette démo (task_L signale sous Forbid → le tick défère).
+- **À venir (M3f+)** : dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`),
+  **upgrade des ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`),
+  save/restore par-TCB du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum
+  `SFB_TQE`, priorité réelle, puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

@@ -147,9 +147,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   VBlank (M3a), **ordonnanceur préemptif superviseur** (M3b), **exclusion mutuelle** — `Forbid()`
   honoré + sections critiques exec enveloppées (M3c), **`Wait`/`WaitPort` + réveil-sur-signal** —
   blocage réel d'une tâche via switch synchrone (M3d) et **yield immédiat sur `Permit`/`Enable`** —
-  reschedule synchrone vers une réveillée prioritaire (M3e, prouvé en coopératif) = livrés et vérifiés
-  par boot FS-UAE. Reste pour clore le bringup exec : recombiner yield + préemption, dispatcher par
-  niveau, tâches user-mode, quantum/priorité réelle, puis `InitResident` + scan auto-config.
+  reschedule synchrone vers une réveillée prioritaire (M3e, prouvé en coopératif) et **recombinaison
+  yield + préemption** — les deux chemins de switch unifiés coexistent sans corruption (M3f) = livrés et
+  vérifiés par boot FS-UAE. Reste pour clore le bringup exec : dispatcher par niveau, tâches user-mode,
+  quantum/priorité réelle, puis `InitResident` + scan auto-config.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

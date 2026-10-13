@@ -54,9 +54,11 @@ INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
-WP_HTASK     EQU $00000508    ; démo M3e : TCB de task_H (pour que task_L la signale)
-WP_CONS      EQU $0000050C    ; démo M3e : réveils consommés par task_H (haute priorité)
-WP_PROD      EQU $00000510    ; démo M3e : itérations de task_L (producteur, ne bloque jamais)
+WP_HTASK     EQU $00000508    ; démo M3e/f : TCB de task_H (pour que task_L la signale)
+WP_CONS      EQU $0000050C    ; démo M3e/f : réveils consommés par task_H (via yield-sur-Permit)
+WP_PROD      EQU $00000510    ; démo M3e/f : itérations de task_L (producteur, ne bloque jamais)
+WP_SPIN      EQU $00000514    ; démo M3f : itérations de task_S (dispatchée SEULEMENT par préemption)
+WP_STAT      EQU $00000518    ; démo M3f : b0 = marqueur « M3F LIVE » déjà émis
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

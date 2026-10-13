@@ -19,10 +19,14 @@
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
 
-DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch synchrone)
-M3E_THRESH   EQU 500          ; réveils de task_H avant « M3E LIVE » (yield soutenu)
+DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
-DEMO_PRI_H   EQU 10           ; task_H : haute priorité (préempte task_L au yield-sur-Permit)
+DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
+CONS_THRESH  EQU 100          ; réveils de task_H (via yield) requis pour « M3F LIVE »
+SPIN_THRESH  EQU 5            ; itérations de task_S (via préemption) requises pour « M3F LIVE »
+SENT_H       EQU $CAFE0010    ; sentinelles de contexte (doivent survivre à TOUT switch)
+SENT_L       EQU $CAFE0020
+SENT_S       EQU $CAFE0030
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -145,20 +149,23 @@ coldstart:                        ; $FC00D2
         lea     msg_ok(pc),a0
         bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
 
-        ; --- M3e : démo yield-sur-Permit (COOPÉRATIF : SCHED_ON reste 0) ---
-        ; Mode coopératif DÉLIBÉRÉ : pas de préemption périodique -> le SEUL moyen pour
-        ; task_H (prioritaire) de tourner est le yield-sur-Permit de task_L. Isole la
-        ; preuve (yield cassé = starvation franche, pas « tourne un tick plus tard »).
+        ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
+        ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
+        ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
+        ; task_S (pri 0, spinner pur). WP_CONS n'avance que si la préemption laisse task_L
+        ; tourner (malgré task_S qui monopoliserait sans préemption) ET si le yield
+        ; dispatche task_H -> preuve de coexistence.
         move.w  #$2700,sr            ; masque les interruptions pendant le setup
-        bsr     setup_demo_tasks     ; crée task_H (pri 10) + task_L (pri 0)
+        bsr     setup_demo_tasks     ; task_H (pri 10) + task_L (pri 0) + task_S (pri 0)
+        move.b  #1,SCHED_ON          ; ARME la préemption périodique
         lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
-        jsr     LVO_REMHEAD(a6)      ; tête = task_H (plus haute priorité) -> elle Wait d'abord
+        jsr     LVO_REMHEAD(a6)      ; tête = task_H (pri 10) -> elle Wait d'abord
         move.l  d0,a1
         move.l  a1,EB_THISTASK(a6)
         move.b  #TS_RUN,TC_STATE(a1)
         move.l  TC_SPREG(a1),sp      ; bascule sur la pile de la 1re tâche
         movem.l (sp)+,d0-d7/a0-a6
-        rte                          ; -> task_H (SR=$2000 : VBlank compte, pas de switch)
+        rte                          ; -> task_H (SR=$2000 : VBlank préempte + yield actif)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -661,97 +668,126 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
-; ============================ démo yield-sur-Permit (M3e) ===========
-; Crée 2 tâches superviseur (task_H pri 10, task_L pri 0) et les met dans TaskReady.
-; Scaffolding de PREUVE (comme le selftest) : sera remplacé par la suite d'init exec
-; (scan résidents) plus tard. Signal CÂBLÉ EN DUR (DEMO_SIG=16, hors 0-15 réservés)
-; plutôt qu'AllocSignal (qui opère sur ThisTask = tâche de boot, pas sur H/L ; Wait/
-; Signal ne consultent que le MASQUE). task_L signale task_H via son TCB publié dans
-; WP_HTASK (posé AVANT lancement -> toujours valide quand les tâches tournent).
-setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + a2-a4 (sauvés)
-        movem.l a2-a4,-(sp)
+; ============================ démo recombinaison (M3f) ==============
+; Crée 3 tâches superviseur et les met dans TaskReady. Scaffolding de PREUVE (comme le
+; selftest) : sera remplacé par la suite d'init exec (scan résidents) plus tard. Signal
+; CÂBLÉ EN DUR (DEMO_SIG=16, hors 0-15 réservés) plutôt qu'AllocSignal (qui opère sur
+; ThisTask = tâche de boot ; Wait/Signal ne consultent que le MASQUE). task_L signale
+; task_H via son TCB publié dans WP_HTASK (posé AVANT lancement -> toujours valide).
+;   task_H (pri 10) : cible du yield. task_L/task_S (pri 0) : round-robin préemptif.
+setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a4 (sauvés)
+        movem.l d2/a2-a4,-(sp)
         clr.l   WP_HTASK             ; RAM basse non garantie nulle au power-on -> explicite
         clr.l   WP_CONS
         clr.l   WP_PROD
-        ; --- task_H (serveur, haute priorité) ---
-        move.l  #TC_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; a4 = TCB H (AllocMem/AddTask préservent a4)
-        move.l  #task_h_name,LN_NAME(a4)
-        move.b  #DEMO_PRI_H,LN_PRI(a4)  ; pri 10 : tête de TaskReady (Enqueue trie) + préempte
-        move.l  a4,WP_HTASK          ; publié pour que task_L la signale
-        move.l  #DEMO_STK,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,TC_SPLOWER(a4)
-        add.l   #DEMO_STK,d0
-        move.l  d0,TC_SPUPPER(a4)
-        move.l  a4,a1
-        lea     task_h(pc),a2
-        lea     task_exit(pc),a3
-        jsr     LVO_ADDTASK(a6)
-        ; --- task_L (producteur, basse priorité, ne bloque JAMAIS) ---
-        move.l  #TC_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; a4 = TCB L (LN_PRI=0 via MEMF_CLEAR)
-        move.l  #task_l_name,LN_NAME(a4)
-        move.l  #DEMO_STK,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,TC_SPLOWER(a4)
-        add.l   #DEMO_STK,d0
-        move.l  d0,TC_SPUPPER(a4)
-        move.l  a4,a1
-        lea     task_l(pc),a2
-        lea     task_exit(pc),a3
-        jsr     LVO_ADDTASK(a6)
-        movem.l (sp)+,a2-a4
+        clr.l   WP_SPIN
+        clr.l   WP_STAT
+        lea     task_h(pc),a2        ; task_H (pri 10) -> tête (Enqueue trie), publiée
+        lea     task_h_name(pc),a3
+        moveq   #DEMO_PRI_H,d2
+        bsr     mk_demo_task
+        move.l  a4,WP_HTASK
+        lea     task_l(pc),a2        ; task_L (pri 0) : signale+yield+spin préemptible
+        lea     task_l_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
+        lea     task_s(pc),a2        ; task_S (pri 0) : spinner pur (dispatché par préemption)
+        lea     task_s_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
+        movem.l (sp)+,d2/a2-a4
         rts
 
-; Corps des tâches de démo M3e — PREUVE que Permit YIELD immédiatement vers une tâche
-; réveillée PRIORITAIRE. COOPÉRATIF (SCHED_ON=0) : aucune préemption périodique, donc
-; task_H ne peut tourner QUE si le Permit de task_L la dispatche. Déterministe et
-; indépendant du cadencement série (WP_CONS avance par le yield, pas par l'émission).
-;   task_H (pri 10) : boucle Wait(DEMO_SIG) ; WP_CONS++ ; « M3E LIVE » au seuil. BLOQUE.
-;   task_L (pri 0)  : boucle Forbid ; Signal(task_H) ; Permit (<- yield) ; WP_PROD++.
-;                     Ne BLOQUE jamais.
-; Déroulé : task_H dispatchée d'abord -> Wait -> dispatch_head -> task_L. task_L Signal
-; (réveille task_H + pose AttnResched car pri 10 > 0) ; Permit -> reschedule -> task_H.
-; task_H consomme, re-Wait -> dispatch_head -> task_L (requeue), qui reprend après Permit.
-; « M3E LIVE » émis UNE fois à WP_CONS == M3E_THRESH = yields répétés corrects.
-; RED (yield désactivé dans Permit) : task_L Signal task_H (prête) mais Permit ne switch
-; pas ; task_L ne bloque jamais et SCHED_ON=0 -> task_H JAMAIS dispatchée -> WP_CONS reste
-; 0 -> « M3E LIVE » jamais émis (absent) = starvation franche.
-task_h:                              ; serveur, haute priorité (les tâches démarrent a6=0)
+; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
+; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
+mk_demo_task:
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4                ; a4 = TCB
+        move.l  a3,LN_NAME(a4)
+        move.b  d2,LN_PRI(a4)
+        move.l  #DEMO_STK,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,TC_SPLOWER(a4)
+        add.l   #DEMO_STK,d0
+        move.l  d0,TC_SPUPPER(a4)
+        move.l  a4,a1
+        lea     task_exit(pc),a3     ; finalPC (a3 = nom écrasé, déjà posé dans LN_NAME)
+        jsr     LVO_ADDTASK(a6)      ; AddTask(a1=task, a2=initPC, a3=finalPC)
+        rts
+
+; Corps des tâches de démo M3f — PREUVE que préemption périodique et yield-sur-Permit
+; COEXISTENT (SCHED_ON=1), sans corruption de contexte. Déterministe, indépendant du
+; cadencement série (les compteurs avancent par l'ordonnancement, pas par l'émission).
+;   task_H (pri 10) : boucle Wait(DEMO_SIG) ; WP_CONS++. Dispatchée par le yield de task_L.
+;   task_L (pri 0)  : boucle Forbid/Signal(task_H)/Permit(<-yield) ; WP_PROD++. Ne bloque jamais.
+;   task_S (pri 0)  : spinner PUR (WP_SPIN++) ; ne bloque/signale/yield JAMAIS -> ne tourne
+;                     que si la PRÉEMPTION partage le CPU (sinon il monopoliserait -> RED).
+; Chaque tâche garde une sentinelle en d7 (préservé par tout switch) et la revérifie :
+; corruption -> « M3F FAILED ». « M3F LIVE » émis UNE fois quand WP_CONS >= CONS_THRESH
+; (yield répété) ET WP_SPIN >= SPIN_THRESH (task_S a tourné via préemption).
+; RED (SCHED_ON=0 = préemption OFF) : task_S (ou task_L) monopolise le CPU -> task_L ne
+; peut plus signaler task_H -> WP_CONS gèle -> « M3F LIVE » jamais émis (absent).
+task_h:                              ; haute priorité (les tâches démarrent a6=0)
         move.l  ($4).w,a6            ; SysBase (cf. frame AddTask qui zéro-remplit les GPR)
+        move.l  #SENT_H,d7           ; sentinelle de contexte
 .h_loop:
         moveq   #1,d0
         moveq   #DEMO_SIG,d1
         lsl.l   d1,d0               ; masque = 1 << DEMO_SIG (décalage registre : 68000 immédiat <= 8)
-        jsr     LVO_WAIT(a6)         ; BLOQUE jusqu'au signal de task_L
+        jsr     LVO_WAIT(a6)         ; BLOQUE jusqu'au signal de task_L (dispatch via yield)
+        cmp.l   #SENT_H,d7
+        bne.w   demo_fail            ; contexte corrompu par un switch
         addq.l  #1,WP_CONS
+        btst    #0,WP_STAT
+        bne.s   .h_loop              ; marqueur déjà émis
         move.l  WP_CONS,d0
-        cmp.l   #M3E_THRESH,d0
-        bne.s   .h_loop
+        cmp.l   #CONS_THRESH,d0
+        bcs.s   .h_loop              ; WP_CONS < seuil -> continuer
+        move.l  WP_SPIN,d0
+        cmp.l   #SPIN_THRESH,d0
+        bcs.s   .h_loop              ; WP_SPIN < seuil -> préemption pas encore prouvée
+        bset    #0,WP_STAT           ; marque émis (une seule fois)
         jsr     LVO_FORBID(a6)       ; émission non fractionnée
-        lea     msg_m3elive(pc),a0
+        lea     msg_m3flive(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
         bra.s   .h_loop
-task_l:                              ; producteur, basse priorité, ne bloque jamais
+task_l:                              ; basse priorité, ne bloque jamais
         move.l  ($4).w,a6            ; SysBase
+        move.l  #SENT_L,d7
 .l_loop:
         jsr     LVO_FORBID(a6)       ; Signal sous Forbid -> yield reporté au Permit
         move.l  WP_HTASK,a1
         moveq   #1,d0
         moveq   #DEMO_SIG,d1
-        lsl.l   d1,d0               ; masque = 1 << DEMO_SIG (décalage registre)
+        lsl.l   d1,d0
         jsr     LVO_SIGNAL(a6)       ; réveille task_H + pose AttnResched (pri 10 > 0)
         jsr     LVO_PERMIT(a6)       ; <- YIELD : dispatche task_H immédiatement
-        addq.l  #1,WP_PROD           ; (exécuté quand task_L est re-dispatchée après task_H)
+        cmp.l   #SENT_L,d7
+        bne.w   demo_fail
+        addq.l  #1,WP_PROD
         bra.s   .l_loop
+task_s:                              ; basse priorité, spinner PUR (jamais de blocage/yield)
+        move.l  ($4).w,a6            ; SysBase
+        move.l  #SENT_S,d7
+.s_loop:
+        cmp.l   #SENT_S,d7
+        bne.w   demo_fail            ; contexte corrompu par une PRÉEMPTION
+        addq.l  #1,WP_SPIN
+        move.l  #$00001000,d0
+.s_spin:
+        subq.l  #1,d0
+        bne.s   .s_spin
+        bra.s   .s_loop
+demo_fail:                           ; sentinelle KO -> preuve de corruption
+        jsr     LVO_FORBID(a6)
+        lea     msg_m3ffail(pc),a0
+        bsr     ser_puts
+.df_hang:
+        bra.s   .df_hang
 task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
         bra.s   task_exit
 
@@ -774,6 +810,8 @@ task_h_name:
         dc.b    "demo.H",0
 task_l_name:
         dc.b    "demo.L",0
+task_s_name:
+        dc.b    "demo.S",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -794,6 +832,8 @@ msg_vblok:
         dc.b    "M3 VBlank interrupts live",13,10,0
 msg_vbltimeout:
         dc.b    "M3 VBL timeout",13,10,0
-msg_m3elive:
-        dc.b    "M3E LIVE: yield-on-Permit OK (high-pri task dispatched)",13,10,0
+msg_m3flive:
+        dc.b    "M3F LIVE: preemption + yield coexist (both scheduling paths OK)",13,10,0
+msg_m3ffail:
+        dc.b    "M3F FAILED: context sentinel corrupted across a switch",13,10,0
         EVEN
