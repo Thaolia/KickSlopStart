@@ -24,7 +24,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M5a** — AUTOINIT : `MakeLibrary` + `MakeFunctions` + `InitStruct` (chemin AUTOINIT de `InitResident`) | ✅ **fait et vérifié** (série « M5A AUTOINIT OK » ; lib démo créée, jump table + InitStruct + init func + ajout LibList ; RED InitStruct/init cassés → `FAILED`) |
 | **M5b** — `cia.resource` (ciaa/ciab) = 1er vrai module résident (direct-init via `MakeLibrary`) | ✅ **fait et vérifié** (série « M5B CIA OK » ; `OpenResource`+`AbleICR`+`AddICRVector` ; RED AddResource/AbleICR cassés → `FAILED`) |
 | **M5c** — `timer.device` (AUTOINIT) = 2e vrai résident (1er device) | ✅ **fait et vérifié** (série « M5C TIMER OK » ; créé+nommé+listé DeviceList, Open ; RED nom/Open cassés → `FAILED`) |
-| **M6+** — timer VBLANK fonctionnel (file de requêtes), dispatch CIA INT2/INT6, dispatcher par niveau, user-mode, graphics, dos | à venir (voir `docs/PLAN.md`) |
+| **M6a** — unité VBLANK de `timer.device` fonctionnelle (requête temporisée + répondue par le handler VBlank) | ✅ **fait et vérifié** (série « M6A TIMER OK » ; requête répondue après ~5 ticks + `exec_Signal` depuis l'IRQ ; RED hook/reply coupés → timeout) |
+| **M6b+** — dispatch CIA INT2/INT6, timer bloquant (Wait→wake), dispatcher par niveau, user-mode, graphics, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 

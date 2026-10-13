@@ -32,6 +32,7 @@ init_ints:
         lea     VBL_COUNT,a0
         clr.l   (a0)                              ; compteur à zéro
         clr.b   SCHED_ON                          ; ordonnanceur désarmé (count-only)
+        clr.l   VBL_SVC                           ; aucun service VBlank tant que timer non init
         move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
         move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB),INTENA   ; active VERTB + maître
@@ -45,6 +46,12 @@ vbl_handler:
         move.w  #INTF_VERTB,INTREQ  ; acquitte VERTB
         lea     VBL_COUNT,a0
         addq.l  #1,(a0)             ; compteur (preuve M3a conservée)
+        move.l  VBL_SVC,d0          ; M6a : service timer VBLANK enregistré ?
+        beq.s   .vbl_nosvc
+        move.l  VBL_SVCDATA,a1
+        move.l  d0,a0
+        jsr     (a0)                ; service(a1=base device, a6=SysBase) ; transparent (a6 préservé)
+.vbl_nosvc:
         tst.b   SCHED_ON
         beq.s   .vbl_ret            ; ordonnanceur non armé -> juste compter
         ; M3c : honore Forbid/Disable. TC_TDNESTCNT/IDNESTCNT sont GLOBAUX (ExecBase),

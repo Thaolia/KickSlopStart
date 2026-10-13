@@ -1,15 +1,25 @@
-; src/exec/timer.s — timer.device — M5c.
-; 2e vrai module résident, et 1er DEVICE, créé par le chemin AUTOINIT de InitResident :
-; ROMTag RTF_AUTOINIT (pri 50) -> InitResident appelle MakeLibrary avec la table de 4 longs,
-; puis Enqueue la base dans DeviceList (RT_TYPE = NT_DEVICE). Quirk V34 : InitResident ne
-; remplit PAS les champs du nœud -> la data table (InitStruct) pose LN_TYPE + LIB_VERSION et
-; l'init func pose LN_NAME="timer.device" (sinon OpenDevice/FindName ne le trouverait pas).
-; PÉRIMÈTRE M5c : device CRÉÉ + NOMMÉ + AJOUTÉ + jump table fonctionnelle (Open incrémente
-; LIB_OPENCNT). DIFFÉRÉ (ledgeré) : unités (VBLANK/MICROHZ/ECLOCK), file de requêtes, BeginIO
-; fonctionnel (nécessitent la dispatch CIA INT2/INT6, elle-même différée). BeginIO/AbortIO = stubs.
-; Table de vecteurs ABSOLUE. Piste CLEAN : AutoDocs timer.device + exec. AUCUNE lecture ROM.
+; src/exec/timer.s — timer.device — M5c (création AUTOINIT) + M6a (unité VBLANK fonctionnelle).
+; 2e vrai module résident, 1er DEVICE. ROMTag RTF_AUTOINIT (pri 50) -> chemin AUTOINIT de
+; InitResident (MakeLibrary + Enqueue DeviceList). Quirk V34 : la data table pose LN_TYPE +
+; LIB_VERSION et l'init func pose LN_NAME="timer.device" + initialise l'unité VBLANK + enregistre
+; le service VBlank (hook VBL_SVC appelé par le handler VBlank chaque tick).
+;
+; M6a — UNITÉ VBLANK FONCTIONNELLE (sans CIA) :
+;   BeginIO(TR_ADDREQUEST) : convertit la timeval en TICKS (secs*50 + micro/20000), stocke le
+;     décompte dans TR_TIME, enqueue la requête sur la file de l'unité VBLANK. Disable autour de
+;     la manip (la file est partagée avec le handler VBlank = interruption, pas juste des tâches).
+;   timer_vblank_service : appelé depuis le handler VBlank (IPL 3) chaque tick. Décrémente chaque
+;     requête ; à 0 -> la retire et la « répond ». La réponse utilise des PRIMITIVES BRUTES
+;     (AddTail au reply port + exec_Signal) et NON PutMsg/ReplyMsg : ces derniers appellent Permit
+;     qui ferait un reschedule SYNCHRONE au milieu de l'interruption. Signal pose AttnResched sans
+;     rescheduler -> le switch se fait à la fin du handler (round-robin existant).
+; DIFFÉRÉ (ledgeré) : unités MICROHZ/ECLOCK (nécessitent la dispatch CIA), OpenDevice (la preuve
+;   remplit IO_DEVICE à la main), conversion timeval complète (mulu suppose secs petit).
+; Piste IMPLÉMENTATION (« clean ») : AutoDocs timer.device + exec. AUCUNE lecture ROM.
 
                 include "exec.i"
+
+                xref    newlist           ; lists.s (NEWLIST de la file d'unité)
 
 ; --- ROMTag timer.device (scanné par build_reslist) ---
         EVEN
@@ -25,7 +35,7 @@ timer_name:
         dc.b    "timer.device",0
         EVEN
 timer_inittab:
-        dc.l    LIB_SIZE             ; dataSize (base device mini)
+        dc.l    TD_SIZE              ; dataSize (Library + file d'unité VBLANK)
         dc.l    timer_vectors        ; funcTable
         dc.l    timer_datatab        ; dataTable (InitStruct)
         dc.l    timer_initfunc       ; initFunc
@@ -43,32 +53,116 @@ timer_datatab:
         dc.b    0
         EVEN
 
-; Open(device a6, iorequest a1, unit d0, flags d1) : stub M5c -> incrémente le compte d'ouverture.
+; Open(device a6, iorequest a1, unit d0, flags d1) : incrémente le compte d'ouverture.
 timer_open:
         addq.w  #1,LIB_OPENCNT(a6)
         rts
-; Close(device a6, iorequest a1) -> d0
 timer_close:
         subq.w  #1,LIB_OPENCNT(a6)
         moveq   #0,d0
         rts
 timer_expunge:
-        moveq   #0,d0                ; ne s'expulse pas
+        moveq   #0,d0
         rts
 timer_null:
         moveq   #0,d0
         rts
-; BeginIO(iorequest a1) a6=device : STUB (gestion d'unité/requête différée).
+
+; BeginIO(device a6, iorequest a1) : M6a — enqueue une requête TR_ADDREQUEST sur l'unité VBLANK.
+; Convertit la timeval en ticks (secs*50 + micro/20000, mini 1), stocke le décompte dans TV_SECS.
+; Disable autour (file partagée avec le handler VBlank).
 timer_beginio:
+        movem.l d2/a2-a3,-(sp)
+        move.l  a6,a2                ; a2 = base device
+        move.l  a1,a3                ; a3 = iorequest
+        move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
+        jsr     LVO_DISABLE(a6)
+        move.l  TV_SECS(a3),d0
+        mulu    #50,d0               ; secs*50 (suppose secs petit)
+        move.l  TV_MICRO(a3),d1
+        divu    #20000,d1            ; micro/20000 (0..49)
+        and.l   #$0000FFFF,d1        ; quotient (mot bas)
+        add.l   d1,d0                ; ticks
+        bne.s   .bio_store
+        moveq   #1,d0                ; mini 1 tick (évite expiration immédiate)
+.bio_store:
+        move.l  d0,TV_SECS(a3)       ; décompte en ticks (TV_SECS réutilisé)
+        clr.l   TV_MICRO(a3)
+        move.b  #NT_MESSAGE,LN_TYPE(a3)
+        lea     TIMER_VBLQ(a2),a0    ; AddTail(&unité VBLANK, requête)
+        move.l  a3,a1
+        jsr     LVO_ADDTAIL(a6)
+        jsr     LVO_ENABLE(a6)
+        move.l  a2,a6                ; restaure a6 = base device
+        movem.l (sp)+,d2/a2-a3
         rts
 timer_abortio:
         moveq   #0,d0
         rts
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom (quirk V34).
+
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom (quirk V34),
+; NEWLIST l'unité VBLANK, enregistre le service VBlank.
 timer_initfunc:
-        move.l  d0,a1
+        move.l  d0,a1                ; a1 = base
         lea     timer_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        move.l  d0,-(sp)             ; sauve la base
+        lea     TIMER_VBLQ(a1),a1    ; a1 = &file d'unité VBLANK
+        jsr     newlist              ; NEWLIST (clobbe a0 ; a6 préservé)
+        move.l  (sp)+,d0             ; base
+        move.l  #timer_vblank_service,VBL_SVC   ; enregistre le hook
+        move.l  d0,VBL_SVCDATA       ; data = base device
+        rts                          ; d0 = base inchangé
+
+; timer_vblank_service(a1 = base device, a6 = SysBase) : appelé par le handler VBlank chaque tick.
+; TRANSPARENT (sauve tout ce qu'il clobbe, préserve a6). Décrémente chaque requête de la file ;
+; à 0 -> Remove + reply (bas-niveau, sans Permit -> pas de reschedule mid-interruption).
+timer_vblank_service:
+        movem.l d0-d2/a0-a4,-(sp)
+        move.l  a1,a2                ; a2 = base device
+        lea     TIMER_VBLQ(a2),a4
+        move.l  (a4),a3              ; a3 = lh_Head (1re requête ou sentinelle)
+.svc_loop:
+        move.l  (a3),d2              ; d2 = a3->Succ ; 0 => sentinelle tail -> fin
+        beq.s   .svc_done
+        subq.l  #1,TV_SECS(a3)       ; décompte ce tick
+        bgt.s   .svc_cont            ; > 0 -> pas encore expiré
+        move.l  a3,a1                ; expiré : Remove(a3)
+        jsr     LVO_REMOVE(a6)
+        move.l  a3,a1                ; reply(a3) en bas-niveau
+        bsr.s   timer_reply
+.svc_cont:
+        move.l  d2,a3                ; a3 = Succ sauvé (valide même après Remove)
+        bra.s   .svc_loop
+.svc_done:
+        movem.l (sp)+,d0-d2/a0-a4
+        rts
+
+; timer_reply(a1 = requête/message, a6 = SysBase) : répond SANS PutMsg/ReplyMsg (pas de Permit).
+; Marque NT_REPLYMSG, AddTail au MN_REPLYPORT, Signal la tâche cible si PA_SIGNAL.
+timer_reply:
+        move.b  #NT_REPLYMSG,LN_TYPE(a1)
+        move.l  MN_REPLYPORT(a1),d0
+        beq.s   .tr_ret              ; pas de reply port
+        move.l  d0,a0                ; a0 = reply port
+        movem.l a0/a1,-(sp)
+        lea     MP_MSGLIST(a0),a0    ; AddTail(&port->MsgList, msg)
+        jsr     LVO_ADDTAIL(a6)
+        movem.l (sp)+,a0/a1
+        moveq   #0,d0                ; action du port
+        move.b  MP_FLAGS(a0),d0
+        and.b   #PF_ACTION,d0
+        bne.s   .tr_ret              ; != PA_SIGNAL -> pas de signal
+        move.l  MP_SIGTASK(a0),d0
+        beq.s   .tr_ret
+        move.l  d0,a1                ; a1 = tâche à signaler
+        moveq   #0,d0
+        move.b  MP_SIGBIT(a0),d0
+        moveq   #1,d1
+        lsl.l   d0,d1
+        move.l  d1,d0
+        jsr     LVO_SIGNAL(a6)       ; pose les bits + AttnResched (PAS de reschedule ici)
+.tr_ret:
         rts
         EVEN
 timer_end:

@@ -157,9 +157,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   **`timer.device`** (AUTOINIT, 2e vrai résident / 1er device, M5c). L'OS instancie donc désormais de
   VRAIS modules résidents — mais `cia.resource`/`timer.device` sont encore des **squelettes** (nommés,
   créés, listés ; aucun travail fonctionnel : cia sans dispatch d'interruption, timer sans unités/BeginIO).
-  Reste : 1er chemin FONCTIONNEL = unité **VBLANK** de timer pilotée par le handler VBlank existant (file
-  de requêtes → `ReplyMsg`), **dispatch CIA INT2/INT6**, retrait éventuel des démos (le handoff de boot
-  reste la démo M3f codée en dur d'ici là), dispatcher par niveau, tâches user-mode, quantum/priorité.
+  Le 1er chemin FONCTIONNEL est livré : unité **VBLANK** de timer pilotée par le handler VBlank
+  existant (file de requêtes, décrément au VBlank, reply bas-niveau à l'expiration, M6a) = 1er
+  comportement OS observable (timer+interruption+messages+`exec_Signal` depuis l'IRQ). Reste :
+  **dispatch CIA INT2/INT6** (M6b), tâche bloquant sur timer (Wait→wake), retrait éventuel des démos
+  (le handoff de boot reste la démo M3f codée en dur d'ici là), dispatcher par niveau, tâches
+  user-mode, quantum/priorité.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

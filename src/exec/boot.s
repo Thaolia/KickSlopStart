@@ -243,6 +243,73 @@ coldstart:                        ; $FC00D2
         lea     msg_timer_ok(pc),a0
         bsr     ser_puts             ; « M5C TIMER OK »
 
+        ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
+        ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
+        ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
+        ; d7 = VBL_COUNT au départ (préservés par AllocMem/newlist/GetMsg).
+        lea     EB_DEVICELIST(a6),a0
+        lea     timer_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,d6                ; d6 = base timer.device
+        beq     m6a_fail
+        move.l  #MP_SIZE,d0          ; reply port (PA_IGNORE : boot interroge par GetMsg)
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m6a_fail
+        move.l  d0,a2                ; a2 = port
+        lea     MP_MSGLIST(a2),a1
+        jsr     newlist
+        move.b  #PA_SIGNAL,MP_FLAGS(a2)   ; PA_SIGNAL -> exerce exec_Signal DEPUIS le handler
+        move.b  #16,MP_SIGBIT(a2)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a2)  ; signale la boot task (TS_RUN -> no-wake)
+        move.l  #TR_SIZE,d0          ; timerequest
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m6a_fail
+        move.l  d0,a3                ; a3 = timerequest
+        move.l  a2,MN_REPLYPORT(a3)
+        move.l  d6,IO_DEVICE(a3)
+        move.w  #TR_ADDREQUEST,IO_COMMAND(a3)
+        clr.l   TV_SECS(a3)
+        move.l  #100000,TV_MICRO(a3) ; 100000 us / 20000 = 5 ticks
+        move.l  EB_THISTASK(a6),a0   ; efface le bit 16 de SIGRECVD (on le veut posé par la reply)
+        move.l  TC_SIGRECVD(a0),d0
+        bclr    #16,d0
+        move.l  d0,TC_SIGRECVD(a0)
+        move.l  VBL_COUNT,d7         ; T0
+        move.l  a6,-(sp)             ; BeginIO (a6 = base timer, a1 = requête)
+        move.l  d6,a6
+        move.l  a3,a1
+        jsr     TD_BEGINIO(a6)
+        move.l  (sp)+,a6
+.m6a_wait:
+        move.l  VBL_COUNT,d0         ; garde-fou timeout (~4 s)
+        sub.l   d7,d0
+        cmp.l   #200,d0
+        bcc     m6a_fail
+        move.l  a2,a0                ; GetMsg(port) ?
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        beq.s   .m6a_wait
+        cmp.l   a3,d0                ; le reply doit être NOTRE requête
+        bne     m6a_fail
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)  ; marquée répondue ?
+        bne     m6a_fail
+        move.l  VBL_COUNT,d0         ; délai ≈ 5 ticks ? (marge [3..40])
+        sub.l   d7,d0
+        cmp.l   #3,d0
+        bcs     m6a_fail
+        cmp.l   #40,d0
+        bhi     m6a_fail
+        move.l  EB_THISTASK(a6),a0   ; exec_Signal (depuis le handler) a-t-il posé le bit 16 ?
+        move.l  TC_SIGRECVD(a0),d0
+        btst    #16,d0
+        beq     m6a_fail
+        lea     msg_m6a_ok(pc),a0
+        bsr     ser_puts             ; « M6A TIMER OK »
+
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
         ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
@@ -982,6 +1049,11 @@ timer_fail:                          ; échec M5c (timer.device) -> fige
         bsr     ser_puts
 .tmrf_hang:
         bra.s   .tmrf_hang
+m6a_fail:                            ; échec M6a (unité VBLANK timer) -> fige
+        lea     msg_m6a_fail(pc),a0
+        bsr     ser_puts
+.m6af_hang:
+        bra.s   .m6af_hang
 cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
         dc.l    0,0,0,0,0
 
@@ -1095,6 +1167,10 @@ msg_timer_ok:
         dc.b    "M5C TIMER OK (timer.device AUTOINIT -> DeviceList, Open works)",13,10,0
 msg_timer_fail:
         dc.b    "M5C FAILED: timer.device incorrect",13,10,0
+msg_m6a_ok:
+        dc.b    "M6A TIMER OK (VBLANK unit: request replied after ~5 ticks)",13,10,0
+msg_m6a_fail:
+        dc.b    "M6A FAILED: timer VBLANK unit incorrect",13,10,0
 ciab_test_name:
         dc.b    "ciab.resource",0
 timer_test_name:

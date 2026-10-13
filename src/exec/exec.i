@@ -61,6 +61,8 @@ WP_SPIN      EQU $00000514    ; démo M3f : itérations de task_S (dispatchée S
 WP_STAT      EQU $00000518    ; démo M3f : b0 = marqueur « M3F LIVE » déjà émis
 RES_LASTPRI  EQU $0000051C    ; démo M4 : dernière RT_PRI initée (vérif ordre décroissant)
 RES_COUNT    EQU $00000520    ; démo M4 : nombre de résidents démo initialisés
+VBL_SVC      EQU $00000524    ; M6a : routine de service VBlank (0 = aucune ; appelée chaque tick)
+VBL_SVCDATA  EQU $00000528    ; M6a : donnée passée au service en a1 (base du timer.device)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -77,6 +79,8 @@ LIB_REVISION EQU $16
 LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
 LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
+TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
+TD_SIZE      EQU LIB_SIZE+14   ; taille de la base timer.device (Library + List)
 EB_CHKBASE    EQU $26
 EB_MAXLOCMEM  EQU $3E
 EB_THISTASK   EQU $114         ; tâche courante (struct Task *)
@@ -150,6 +154,20 @@ PA_IGNORE     EQU 2
 MN_REPLYPORT  EQU 14
 MN_LENGTH     EQU 18
 MN_SIZE       EQU 20
+
+; struct IORequest (exec/io.i) / timerequest (devices/timer.i)
+IO_DEVICE    EQU 20          ; struct Device *
+IO_UNIT      EQU 24          ; struct Unit *
+IO_COMMAND   EQU 28          ; UWORD
+IO_FLAGS     EQU 30          ; UBYTE
+IO_ERROR     EQU 31          ; BYTE
+IO_SIZE      EQU 32
+TR_TIME      EQU 32          ; struct timeval (dans une timerequest)
+TV_SECS      EQU 32
+TV_MICRO     EQU 36
+TR_SIZE      EQU 40
+TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
+TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device
 
 ; struct Resident (exec/resident.i, V34) — ROMTag scanné au boot pour bâtir l'OS
 RTC_MATCHWORD EQU $4AFC        ; RT_MATCHWORD : signature d'un ROMTag
