@@ -17,7 +17,7 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---

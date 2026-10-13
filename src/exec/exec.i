@@ -47,6 +47,13 @@ C_FAIL   EQU $0F0F
 SERPER_9600_PAL EQU 368
 ROMBASE  EQU $FC0000
 
+; --- Interruptions (hardware/intbits.i + autovecteurs 68000) ---
+INTF_SETCLR  EQU $8000        ; INTENA/INTREQ : 1 = pose les bits, 0 = les efface
+INTF_INTEN   EQU $4000        ; maître (INTEN)
+INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
+AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
+VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
+
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
 LN_PRED      EQU 4

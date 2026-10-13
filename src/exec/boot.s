@@ -17,6 +17,7 @@
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
                 xref    init_task        ; tasks.s
+                xref    init_ints        ; interrupts.s
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -118,6 +119,23 @@ coldstart:                        ; $FC00D2
         bsr     selftest             ; d0 = 0 (OK) / !=0 (échec)
         tst.l   d0
         bne     eb_fail
+
+        ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
+        jsr     init_ints
+        move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
+.vbl_wait:
+        lea     VBL_COUNT,a0
+        move.l  (a0),d0              ; chargement DANS la boucle (le compteur évolue)
+        cmp.l   #5,d0
+        bcc.s   .vbl_live
+        subq.l  #1,d1
+        bne.s   .vbl_wait
+        lea     msg_vbltimeout(pc),a0  ; interruptions mortes -> échec
+        bsr     ser_puts
+        bra     eb_fail
+.vbl_live:
+        lea     msg_vblok(pc),a0
+        bsr     ser_puts
 
         move.w  #C_WHITE,COLOR00
         lea     msg_ok(pc),a0
@@ -657,4 +675,8 @@ chk_m24b:
         dc.b    "chk m24b",13,10,0
 chk_m24c:
         dc.b    "chk m24c",13,10,0
+msg_vblok:
+        dc.b    "M3 VBlank interrupts live",13,10,0
+msg_vbltimeout:
+        dc.b    "M3 VBL timeout",13,10,0
         EVEN
