@@ -227,6 +227,8 @@ selftest:
         jsr     LVO_CLOSE(a6)
         tst.w   LIB_OPENCNT(a6)
         bne.w   .bad
+        lea     chk_core(pc),a0      ; checkpoint série : groupe « core » passé
+        bsr     ser_puts
 
         ; --- mémoire : AllocMem / FreeMem ---
         move.l  #256,d0
@@ -273,6 +275,8 @@ selftest:
         move.l  d0,a0
         cmp.l   MC_BYTES(a0),d7
         bne.w   .bad
+        lea     chk_mem(pc),a0       ; checkpoint : mémoire M2.1/M2.2 + coalescing
+        bsr     ser_puts
 
         ; ===== M2.4a : multi-MemHeader + primitives de listes =====
         ; (1) 2e MemHeader « fast » sur la région DISJOINTE [FTEST_LO,FTEST_HI).
@@ -409,6 +413,8 @@ selftest:
         move.l  a3,a1
         move.l  #(3*16),d0
         jsr     LVO_FREEMEM(a6)
+        lea     chk_m24a(pc),a0      ; checkpoint : multi-header + listes
+        bsr     ser_puts
 
         ; ===== M2.4b : tâches + signaux (non bloquants) =====
         ; FindTask(NULL) == ThisTask
@@ -499,6 +505,8 @@ selftest:
         move.l  a3,a1
         move.l  #TC_SIZE,d0
         jsr     LVO_FREEMEM(a6)
+        lea     chk_m24b(pc),a0      ; checkpoint : tâches + signaux
+        bsr     ser_puts
 
         ; ===== M2.4c : ports / messages (non bloquants) =====
         moveq   #-1,d0               ; bit de signal pour le port
@@ -598,6 +606,8 @@ selftest:
         jsr     LVO_FREEMEM(a6)
         move.l  d6,d0
         jsr     LVO_FREESIGNAL(a6)
+        lea     chk_m24c(pc),a0      ; checkpoint : ports + messages
+        bsr     ser_puts
 
         ; invariant final : tas chip revenu à la baseline (chunk unique)
         lea     MH_CHIP,a0
@@ -637,4 +647,14 @@ msg_ok:
         dc.b    "EXEC ExecBase + jump table OK, self-test passed",13,10,0
 msg_fail:
         dc.b    "EXEC self-check/self-test FAILED",13,10,0
+chk_core:
+        dc.b    "chk core",13,10,0
+chk_mem:
+        dc.b    "chk mem",13,10,0
+chk_m24a:
+        dc.b    "chk m24a",13,10,0
+chk_m24b:
+        dc.b    "chk m24b",13,10,0
+chk_m24c:
+        dc.b    "chk m24c",13,10,0
         EVEN

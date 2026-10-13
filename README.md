@@ -31,9 +31,16 @@ Prérequis : `vasmm68k_mot` + `vlink` dans le PATH, **amitools** (`romtool`), `p
 ```sh
 make                  # -> build/kick13.rom  (ROM principale : exec coldstart)
 make verify           # taille 256K + romtool is_kick=ok
-tests/boot_test.sh    # boot headless FS-UAE ; écran BLANC attendu (succès exec)
-make hello            # -> build/kick13-hello.rom (smoke test M0, écran vert)
+tests/boot_test.sh    # boot headless FS-UAE ; assertion sur le LOG SÉRIE (marqueur
+                      #   « self-test passed ») capturé via un pont PTY socat ;
+                      #   repli couleur si aucune émission série. -> build/boot/serial.log
+make hello            # -> build/kick13-hello.rom (smoke test M0)
+tests/boot_test.sh build/kick13-hello.rom 10 00FF00 HELLO   # test hello (marqueur « HELLO »)
 ```
+
+Le log série émet des **checkpoints** (`chk core` → `chk mem` → `chk m24a/b/c` →
+`self-test passed`) : en cas d'échec, le dernier checkpoint capturé localise le groupe fautif.
+Prérequis supplémentaire pour le série : `socat`.
 
 Installation de la toolchain (vasm/vlink se compilent depuis les sources) : voir `docs/HARDWARE.md`.
 

@@ -39,7 +39,10 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 2. **hello-ROM** (`make hello`) : fichier unique via `vasmm68k_mot -Fbin` (smoke test M0).
 3. `src/rom/mkrom.py` complète à 256K, écrit footer + champ taille + checksum.
 4. `romtool info` valide le conteneur (`is_kick = ok`, `chk_sum = ok`) — gate dur de `make verify`.
-5. `tests/boot_test.sh` boote l'image sous FS-UAE et contrôle l'écran (blanc = succès ; série dès que capturable).
+5. `tests/boot_test.sh` boote l'image sous FS-UAE et assère le **log série** (canal primaire, capturé
+   via un pont PTY `socat` sur `serial_port`) : marqueur de succès présent + marqueur d'échec absent ;
+   repli automatique sur la couleur d'écran si aucune émission série (ex. hello-ROM). La ROM émet des
+   checkpoints (`chk core`/`chk mem`/`chk m24a|b|c` → `self-test passed`) localisant tout échec.
 
 ## État
 
