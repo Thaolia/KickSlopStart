@@ -3,8 +3,8 @@
 ;   PutMsg   : AddTail du message + Signal de la tâche cible (si PA_SIGNAL).
 ;   GetMsg   : RemHead du 1er message (FIFO) ou NULL.
 ;   ReplyMsg : renvoie le message à son MN_REPLYPORT, type NT_REPLYMSG.
-; DIFFÉRÉ À M3 : WaitPort (bloquant) -> _unimpl.
-; « Vert » ici = file de messages manipulée correctement, pas de concurrence réelle.
+;   WaitPort : M3d — BLOQUE jusqu'à ce qu'un message soit présent ; rend le 1er (sans le
+;              retirer : c'est GetMsg qui le retire).
 ; Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
 ; Piste IMPLÉMENTATION (« clean ») : includes NDK exec/ports.i (ABI publique).
 ; Le caller initialise MP_MSGLIST (NEWLIST) et MP_FLAGS/MP_SIGBIT/MP_SIGTASK
@@ -18,6 +18,7 @@
                 xdef    exec_PutMsg
                 xdef    exec_GetMsg
                 xdef    exec_ReplyMsg
+                xdef    exec_WaitPort
 
 ; M3c : AddPort/RemPort/PutMsg/GetMsg/ReplyMsg enveloppés en Forbid/Permit — la
 ; PortList et les files MP_MSGLIST sont partagées (émetteur vs propriétaire). Forbid
@@ -95,5 +96,30 @@ exec_ReplyMsg:
 .rm_mark:
         move.b  #NT_REPLYMSG,LN_TYPE(a2)   ; écrase -> type « répondu »
         jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a2
+        rts
+
+; WaitPort(port a0) -> d0 = 1er message (lh_Head), SANS le retirer. Bloque tant que la
+; file est vide, via Wait(1<<MP_SIGBIT). Pas de lost-wakeup : PutMsg fait AddTail AVANT
+; Signal, et le recheck SIGRECVD de Wait est atomique (IPL 7) -> un message arrivé juste
+; avant/pendant le Wait est soit vu par le test de file, soit par le bit déjà posé (Wait
+; rend immédiatement), puis la boucle relit la file. a2 préservé à travers Wait (sauvé/
+; restauré dans la frame de blocage, intouché sur le fast-path).
+exec_WaitPort:
+        move.l  a2,-(sp)
+        move.l  a0,a2                ; a2 = port (survit à Wait)
+.wp_loop:
+        move.l  MP_MSGLIST(a2),a0    ; lh_Head de la file du port
+        tst.l   (a0)                 ; (lh_Head)==0 <=> file vide
+        bne.s   .wp_has              ; non vide -> au moins un message
+        moveq   #0,d0                ; file vide -> Wait sur le bit du port
+        move.b  MP_SIGBIT(a2),d0
+        moveq   #1,d1
+        lsl.l   d0,d1                ; 1 << MP_SIGBIT
+        move.l  d1,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .wp_loop
+.wp_has:
+        move.l  MP_MSGLIST(a2),d0    ; d0 = lh_Head = 1er message (non retiré)
         move.l  (sp)+,a2
         rts

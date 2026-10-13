@@ -54,8 +54,11 @@ INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
-FORBID_CTR   EQU $00000508    ; compteur partagé — preuve M3c que Forbid est honoré
-DEMO_STAT    EQU $0000050C    ; bits d'état démo M3c (b0=A ok, b1=B vivant, b2=LIVE émis)
+WP_APORT     EQU $00000508    ; démo M3d : port serveur (task_a) — handshake pré-lancement
+WP_BPORT     EQU $0000050C    ; démo M3d : port client (task_b)
+WP_MSG       EQU $00000510    ; démo M3d : message réutilisé (requête -> réponse)
+WP_CONS      EQU $00000514    ; démo M3d : messages consommés par task_a (serveur)
+WP_PROD      EQU $00000518    ; démo M3d : aller-retours bouclés par task_b (client)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -110,6 +113,7 @@ MC_BYTES      EQU 4
 NT_TASK       EQU 1
 TS_RUN        EQU 2           ; tâche en cours d'exécution
 TS_READY      EQU 3
+TS_WAIT       EQU 4           ; tâche bloquée (Wait/WaitPort) -> liste TaskWait
 TC_FLAGS      EQU 14
 TC_STATE      EQU 15
 TC_IDNESTCNT  EQU 16
@@ -164,6 +168,7 @@ LVO_ADDTASK    EQU -282
 LVO_FINDTASK   EQU -294
 LVO_SETTASKPRI EQU -300
 LVO_SETSIGNAL  EQU -306
+LVO_WAIT       EQU -318
 LVO_SIGNAL     EQU -324
 LVO_ALLOCSIGNAL EQU -330
 LVO_FREESIGNAL EQU -336
@@ -172,6 +177,7 @@ LVO_REMPORT    EQU -360
 LVO_PUTMSG     EQU -366
 LVO_GETMSG     EQU -372
 LVO_REPLYMSG   EQU -378
+LVO_WAITPORT   EQU -384
 LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
 

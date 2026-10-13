@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (FindTask, signaux, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait = switch synchrone) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -88,11 +88,27 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   cadencement série) : `M3C LIVE` émis ssi Forbid honoré (A) ET pas de starvation (B). RED vérifiés :
   garde Forbid retirée -> `FAILED` ; `Permit` retiré -> dérive `EB_TDNEST` attrapée dès l'assertion
   Forbid/Permit du selftest.
-- **À venir (M3c+)** : tâches user-mode (frame USP/SSP), dispatcher par niveau
-  (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), `Wait`/`WaitPort` + réveil-sur-signal +
-  **yield immédiat sur Permit** (requis dès qu'une tâche réveillée prioritaire doit tourner sans
-  attendre un tick), **upgrade des ports en Disable** (dès qu'un device piloté par IRQ appelle
-  `PutMsg`/`ReplyMsg`), save/restore par-TCB du nesting, quantum `SFB_TQE`, priorité réelle, puis
-  scan des résidents.
+- **M3d** (`Wait`/`WaitPort` + réveil-sur-signal) : une tâche peut désormais se **bloquer**.
+  `Wait(sigset)` fait un **switch SYNCHRONE** (volontaire) : si aucun signal attendu n'est présent,
+  il pose sur SA pile une frame **miroir exact** de celle de `vbl_handler` (`[d0-d7/a0-a6][SR][PC]`),
+  passe la tâche en `TS_WAIT` dans `TaskWait`, `RemHead` l'entrante de `TaskReady` et bascule — les
+  deux chemins de dispatch (préemptif + volontaire) partagent ce format et `interrupts.s`. Toute la
+  surgery est à **IPL 7** (atomique vs VBlank). `WaitPort(port)` boucle `Wait(1<<MP_SIGBIT)` tant que
+  la file est vide ; pas de lost-wakeup (PutMsg fait `AddTail` AVANT `Signal`, et le recheck de `Wait`
+  est atomique). `Signal` **réveille** une tâche `TS_WAIT` dont les bits attendus arrivent
+  (`TaskWait` → `TaskReady`, `TS_READY`) ; la réveillée tourne au **prochain point d'ordonnancement**
+  (modèle « défère », cf. yield-sur-Permit ci-dessous). Prouvé **déterministe** par un **ping-pong
+  requête/réponse** à 2 ports (deadlock-free : exactement une tâche prête à chaque blocage) :
+  `M3D LIVE` émis après `M3D_THRESH` aller-retours (blocages+réveils répétés corrects) ; invariant
+  `GetMsg != NULL` après `WaitPort`. RED vérifiés : réveil désactivé (`Signal`) → deadlock, marqueur
+  absent ; blocage désactivé (`WaitPort` rend sur file vide) → `GetMsg` NULL → `M3D FAILED`.
+  Hypothèse V34 assumée : `Wait` appelé hors `Forbid`/`Disable` (qu'il romprait) ; retour à IPL 0.
+- **À venir (M3d+)** : **yield immédiat sur Permit** (soft-trigger VERTB) — requis dès qu'une tâche
+  réveillée **prioritaire** doit tourner sans attendre un tick ; aujourd'hui une réveillée part en
+  `TaskReady` et tourne au prochain switch (correct en round-robin, lacune de latence sous priorité).
+  Puis : dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des
+  ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`), save/restore
+  par-TCB du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum `SFB_TQE`,
+  priorité réelle, puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

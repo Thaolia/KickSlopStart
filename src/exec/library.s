@@ -38,11 +38,13 @@
                 xref    exec_Signal
                 xref    exec_AllocSignal
                 xref    exec_FreeSignal
+                xref    exec_Wait        ; interrupts.s (scheduler : switch synchrone)
                 xref    exec_AddPort     ; ports.s
                 xref    exec_RemPort
                 xref    exec_PutMsg
                 xref    exec_GetMsg
                 xref    exec_ReplyMsg
+                xref    exec_WaitPort
                 xref    exec_FindPort
 
 ; ============================ jump table ============================
@@ -101,6 +103,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_SetTaskPri,LVO_SETTASKPRI+2(a6)
         move.w  #$4EF9,LVO_SETSIGNAL(a6)
         move.l  #exec_SetSignal,LVO_SETSIGNAL+2(a6)
+        move.w  #$4EF9,LVO_WAIT(a6)
+        move.l  #exec_Wait,LVO_WAIT+2(a6)
         move.w  #$4EF9,LVO_SIGNAL(a6)
         move.l  #exec_Signal,LVO_SIGNAL+2(a6)
         move.w  #$4EF9,LVO_ALLOCSIGNAL(a6)
@@ -117,6 +121,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_GetMsg,LVO_GETMSG+2(a6)
         move.w  #$4EF9,LVO_REPLYMSG(a6)
         move.l  #exec_ReplyMsg,LVO_REPLYMSG+2(a6)
+        move.w  #$4EF9,LVO_WAITPORT(a6)
+        move.l  #exec_WaitPort,LVO_WAITPORT+2(a6)
         move.w  #$4EF9,LVO_FINDPORT(a6)
         move.l  #exec_FindPort,LVO_FINDPORT+2(a6)
         rts

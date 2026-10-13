@@ -19,7 +19,10 @@
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
 
-DEMO_STK     EQU 2048         ; pile des tâches démo (M3c : appels imbriqués Forbid+AllocMem)
+DEMO_STK     EQU 2048         ; pile des tâches démo (frames Wait + chaînes PutMsg/ReplyMsg)
+M3D_THRESH   EQU 500          ; aller-retours avant d'émettre « M3D LIVE » (preuve soutenue)
+DEMO_SIGA    EQU 16           ; bit de signal du port serveur (hors 0-15 réservés système)
+DEMO_SIGB    EQU 17           ; bit de signal du port client
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -142,9 +145,9 @@ coldstart:                        ; $FC00D2
         lea     msg_ok(pc),a0
         bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
 
-        ; --- M3b : démo ordonnanceur préemptif (2 tâches superviseur A/B) ---
+        ; --- M3d : démo Wait/WaitPort + réveil-sur-signal (ping-pong 2 tâches) ---
         move.w  #$2700,sr            ; masque les interruptions pendant le setup
-        bsr     setup_demo_tasks     ; crée A et B dans TaskReady
+        bsr     setup_demo_tasks     ; crée A (serveur) + B (client) + 2 ports + 1 message
         move.b  #1,SCHED_ON          ; arme l'ordonnanceur
         lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
         jsr     LVO_REMHEAD(a6)
@@ -656,16 +659,26 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
-; ============================ démo ordonnanceur (M3b/M3c) ===========
-; Crée 2 tâches superviseur A et B (TCB + pile depuis le tas) et les met dans
+; ============================ démo ordonnanceur (M3d) ===============
+; Crée 2 tâches superviseur + 2 ports + 1 message réutilisé, puis les met dans
 ; TaskReady via AddTask. Scaffolding de PREUVE (comme le selftest) : sera remplacé
 ; par la suite d'init exec (scan résidents) plus tard.
-setup_demo_tasks:                    ; a6 = SysBase
-        ; --- tâche A ---
+; Les signaux sont CÂBLÉS EN DUR (DEMO_SIGA/B, hors 0-15 réservés) plutôt qu'alloués :
+; AllocSignal opère sur ThisTask (ici = tâche de boot), pas sur A/B. Wait/Signal ne
+; consultent que le MASQUE (pas TC_SIGALLOC) -> câblage direct correct pour la démo.
+; Ports NON publics (pas d'AddPort) : référencés par pointeur (WP_APORT/WP_BPORT).
+setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + a2-a4 (sauvés)
+        movem.l a2-a4,-(sp)
+        clr.l   WP_APORT             ; RAM basse non garantie nulle au power-on -> explicite
+        clr.l   WP_BPORT
+        clr.l   WP_MSG
+        clr.l   WP_CONS
+        clr.l   WP_PROD
+        ; --- tâche A (serveur) ---
         move.l  #TC_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; TCB A
+        move.l  d0,a4                ; a4 = TCB A (AllocMem/AddTask/newlist préservent a4)
         move.l  #task_a_name,LN_NAME(a4)
         move.l  #DEMO_STK,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
@@ -677,11 +690,22 @@ setup_demo_tasks:                    ; a6 = SysBase
         lea     task_a(pc),a2
         lea     task_exit(pc),a3
         jsr     LVO_ADDTASK(a6)
-        ; --- tâche B ---
+        ; port serveur (a_port) : propriétaire = TCB A, signal = DEMO_SIGA
+        move.l  #MP_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a2                ; a2 = a_port
+        lea     MP_MSGLIST(a2),a1
+        jsr     newlist
+        move.b  #PA_SIGNAL,MP_FLAGS(a2)
+        move.b  #DEMO_SIGA,MP_SIGBIT(a2)
+        move.l  a4,MP_SIGTASK(a2)    ; signale la tâche A
+        move.l  a2,WP_APORT
+        ; --- tâche B (client) ---
         move.l  #TC_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; TCB B
+        move.l  d0,a4                ; a4 = TCB B
         move.l  #task_b_name,LN_NAME(a4)
         move.l  #DEMO_STK,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
@@ -690,125 +714,96 @@ setup_demo_tasks:                    ; a6 = SysBase
         add.l   #DEMO_STK,d0
         move.l  d0,TC_SPUPPER(a4)
         move.l  a4,a1
-        lea     task_b(pc),a2
+        lea     task_b(pc),a2        ; (a2 = a_port écrasé ici, mais WP_APORT déjà posé)
         lea     task_exit(pc),a3
         jsr     LVO_ADDTASK(a6)
+        ; port client (b_port) : propriétaire = TCB B, signal = DEMO_SIGB
+        move.l  #MP_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a3                ; a3 = b_port
+        lea     MP_MSGLIST(a3),a1
+        jsr     newlist
+        move.b  #PA_SIGNAL,MP_FLAGS(a3)
+        move.b  #DEMO_SIGB,MP_SIGBIT(a3)
+        move.l  a4,MP_SIGTASK(a3)    ; signale la tâche B
+        move.l  a3,WP_BPORT
+        ; message partagé (requête -> réponse ; reply port = b_port)
+        move.l  #MN_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a2                ; a2 = message
+        move.l  a3,MN_REPLYPORT(a2)  ; réponse renvoyée sur b_port
+        move.b  #NT_MESSAGE,LN_TYPE(a2)
+        move.l  a2,WP_MSG
+        movem.l (sp)+,a2-a4
         rts
 
-; Corps des tâches de démo M3c — PREUVE DÉTERMINISTE que Forbid() est honoré par le
-; scheduler, INDÉPENDANTE du cadencement série (l'émulateur n'émet PAS au baud réel :
-; M3b montrait ~5000 car entre deux préemptions, donc une « rafale contiguë » ne
-; discriminerait rien). Méthode = compteur partagé FORBID_CTR observé à travers une
-; fenêtre interdite.
-;   task_b : incrémente FORBID_CTR (si B tourne, ça bouge) ; martèle AllocMem/FreeMem
-;            (exercice concurrent des sections critiques) ; 'B' périodique (vivant).
-;   task_a : Forbid ; snapshot FORBID_CTR ; SPIN fixe ~33 ticks (NON cadencé série,
-;            enjambe plusieurs VBlank) ; relit FORBID_CTR ; Permit ; 'G' si inchangé
-;            (B n'a pas pu tourner = Forbid honoré), sinon chaîne « FAILED ».
-; check_live émet « M3C LIVE » UNE fois quand A ET B ont progressé -> marqueur de
-; succès du harnais : présent ssi Forbid honoré (A) ET pas de starvation (B, donc
-; Permits équilibrés dans les sections critiques enveloppées).
-; RED (garde TDNest retirée du handler) : B tourne pendant la fenêtre -> « FAILED ».
-; RED (Permit manquant) : EB_TDNEST dérive -> handler défère toujours -> B starve ->
-; « M3C LIVE » jamais émis (bit B non posé) -> échec harnais (marqueur absent).
-task_a:
-        move.l  ($4).w,a6            ; SysBase (les tâches démarrent a6=0, cf. frame AddTask)
+; Corps des tâches de démo M3d — PREUVE que WaitPort BLOQUE réellement et que Signal
+; RÉVEILLE la tâche bloquée, via un ping-pong requête/réponse. Déterministe et
+; indépendant du cadencement série : les compteurs avancent par la logique de
+; blocage/réveil (pas par l'émission série), et « M3D LIVE » est émis sur seuil.
+; Deadlock-free par construction : exactement UNE tâche prête à chaque blocage
+; (celle qu'on vient de réveiller) -> TaskReady jamais vide quand l'autre Wait.
+;   task_a (serveur) : WaitPort(a_port) ; GetMsg ; (assert != NULL) ; ReplyMsg.
+;   task_b (client)  : PutMsg initial ; boucle WaitPort(b_port) ; GetMsg ; PutMsg.
+; « M3D LIVE » émis UNE fois quand WP_CONS atteint M3D_THRESH = beaucoup d'aller-retours
+; réussis (donc blocages + réveils répétés corrects). Marqueur de succès du harnais.
+; RED (réveil cassé : Signal ne re-queue pas) : 1er blocage -> deadlock -> marqueur
+; jamais émis (absent). RED (blocage cassé : WaitPort rend sans message) : GetMsg NULL
+; -> « M3D FAILED » émis.
+task_a:                              ; serveur — possède a_port (les tâches démarrent a6=0)
+        move.l  ($4).w,a6            ; SysBase (cf. frame AddTask qui zéro-remplit les GPR)
 .a_loop:
-        jsr     LVO_FORBID(a6)       ; fenêtre interdite : le scheduler ne doit PAS préempter
-        move.l  FORBID_CTR,d5        ; snapshot du compteur partagé
-        move.l  #$00040000,d6        ; spin fixe (~33 ticks à 7 MHz, non cadencé série)
-.a_spin:
-        subq.l  #1,d6
-        bne.s   .a_spin
-        move.l  FORBID_CTR,d4        ; relecture après la fenêtre interdite
-        jsr     LVO_PERMIT(a6)
-        cmp.l   d5,d4
-        bne.w   .a_violated          ; B a tourné pendant -> Forbid NON honoré
-        moveq   #$47,d0              ; 'G' : fenêtre interdite préservée
-        bsr     task_putc
-        bset    #0,DEMO_STAT         ; A a prouvé Forbid
-        bsr     check_live
-        ; exercice des sections critiques (chemin échec + alloc/free, concurrent avec B)
-        move.l  #$10000000,d0        ; énorme -> doit échouer (chemin .am_fail sous Forbid)
-        moveq   #MEMF_CHIP,d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  #96,d0
-        moveq   #MEMF_CHIP,d1
-        jsr     LVO_ALLOCMEM(a6)
+        move.l  WP_APORT,a0
+        jsr     LVO_WAITPORT(a6)     ; BLOQUE jusqu'à l'arrivée d'une requête
+        move.l  WP_APORT,a0
+        jsr     LVO_GETMSG(a6)       ; retire la requête
         tst.l   d0
-        beq.w   .a_loop              ; tas plein (improbable) -> reboucle
-        move.l  d0,a1
-        move.l  #96,d0
-        jsr     LVO_FREEMEM(a6)
-        ; fenêtre PERMISE délibérée (>= 1 tick) : sans elle, avec le modèle « défère au
-        ; prochain VBlank », A (interdit l'essentiel du temps) monopoliserait le CPU et
-        ; B starverait. Ce spin PERMIS laisse un VBlank préempter A -> B obtient du temps.
-        move.l  #$00010000,d6        ; ~8 ticks, préemptible
-.a_yield:
-        subq.l  #1,d6
-        bne.s   .a_yield
-        bra.w   .a_loop
-.a_violated:
-        jsr     LVO_FORBID(a6)       ; fige l'émission (chaîne non fractionnée par préemption)
-        lea     msg_forbidfail(pc),a0
+        beq.w   .a_fail              ; WaitPort a rendu sans message -> BLOCAGE cassé
+        move.l  d0,a1                ; a1 = message (survit à l'émission ci-dessous)
+        addq.l  #1,WP_CONS
+        move.l  WP_CONS,d0
+        cmp.l   #M3D_THRESH,d0
+        bne.s   .a_reply
+        jsr     LVO_FORBID(a6)       ; émission non fractionnée par préemption
+        lea     msg_m3dlive(pc),a0
         bsr     ser_puts
-.a_vhang:
-        bra.s   .a_vhang             ; reste interdit : la preuve d'échec (FAILED) est capturée
-task_b:
+        jsr     LVO_PERMIT(a6)
+.a_reply:
+        jsr     LVO_REPLYMSG(a6)     ; renvoie au reply port (b_port) -> réveille task_b
+        bra.w   .a_loop
+.a_fail:
+        jsr     LVO_FORBID(a6)
+        lea     msg_waitfail(pc),a0
+        bsr     ser_puts
+.a_hang:
+        bra.s   .a_hang
+task_b:                              ; client — possède b_port
         move.l  ($4).w,a6            ; SysBase
-        moveq   #0,d2                ; compteur local (cadence du 'B')
+        move.l  WP_MSG,a1            ; requête initiale -> amorce le ping-pong
+        move.l  WP_APORT,a0
+        jsr     LVO_PUTMSG(a6)       ; réveille task_a
 .b_loop:
-        addq.l  #1,FORBID_CTR        ; si B tourne, le compteur bouge (détecteur RED pour A)
-        bset    #1,DEMO_STAT         ; B est vivant
-        bsr     check_live
-        move.l  #48,d0               ; martèle AllocMem/FreeMem (concurrent avec A)
-        moveq   #MEMF_CHIP,d1
-        jsr     LVO_ALLOCMEM(a6)
+        move.l  WP_BPORT,a0
+        jsr     LVO_WAITPORT(a6)     ; BLOQUE jusqu'à la réponse
+        move.l  WP_BPORT,a0
+        jsr     LVO_GETMSG(a6)       ; retire la réponse
         tst.l   d0
-        beq.s   .b_cadence
-        move.l  d0,a1
-        move.l  #48,d0
-        jsr     LVO_FREEMEM(a6)
-.b_cadence:
-        addq.l  #1,d2
-        move.l  d2,d3
-        and.l   #$00000FFF,d3        ; 'B' de loin en loin (preuve de vie / non-starvation)
-        bne.s   .b_loop
-        moveq   #$42,d0              ; 'B'
-        bsr     task_putc
+        beq.w   .b_fail
+        move.l  d0,a1                ; = WP_MSG, revenu en réponse
+        addq.l  #1,WP_PROD
+        move.l  WP_APORT,a0
+        jsr     LVO_PUTMSG(a6)       ; renvoie la requête -> réveille task_a
         bra.s   .b_loop
+.b_fail:
+        jsr     LVO_FORBID(a6)
+        lea     msg_waitfail(pc),a0
+        bsr     ser_puts
+.b_hang:
+        bra.s   .b_hang
 task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
         bra.s   task_exit
-
-; task_putc : émet d0.b sur le série depuis un contexte TÂCHE. Attente TBE NON bornée
-; (le spin est préemptible ; si TBE n'arrivait jamais, c'est une vraie panne série).
-; Clobbe d1 et modifie d0 (ajoute le bit stop). N'utilise pas a6.
-task_putc:
-        move.w  SERDATR,d1
-        btst    #13,d1
-        beq.s   task_putc
-        and.w   #$00FF,d0
-        or.w    #$0100,d0
-        move.w  d0,SERDAT
-        rts
-
-; check_live : émet « M3C LIVE » UNE SEULE fois quand DEMO_STAT porte les bits A+B.
-; bset #2 = test-and-set atomique (Z = ancien bit) : un seul appelant émet, même si
-; A et B passent le test en concurrence. Émission sous Forbid -> chaîne non fractionnée.
-; a6 = SysBase. Clobbe d0.
-check_live:
-        move.b  DEMO_STAT,d0
-        and.b   #3,d0
-        cmp.b   #3,d0
-        bne.s   .cl_ret              ; A et B pas encore tous deux prouvés
-        bset    #2,DEMO_STAT         ; Z=1 si bit2 était 0 (1re fois)
-        bne.s   .cl_ret              ; déjà émis
-        jsr     LVO_FORBID(a6)
-        lea     msg_m3clive(pc),a0
-        bsr     ser_puts
-        jsr     LVO_PERMIT(a6)
-.cl_ret:
-        rts
 
 ; ============================ données ==============================
 exec_name:
@@ -849,8 +844,8 @@ msg_vblok:
         dc.b    "M3 VBlank interrupts live",13,10,0
 msg_vbltimeout:
         dc.b    "M3 VBL timeout",13,10,0
-msg_m3clive:
-        dc.b    "M3C LIVE: Forbid honored, no starvation",13,10,0
-msg_forbidfail:
-        dc.b    "M3C FAILED: Forbid violated (task ran inside forbidden region)",13,10,0
+msg_m3dlive:
+        dc.b    "M3D LIVE: WaitPort block+wake OK (ping-pong)",13,10,0
+msg_waitfail:
+        dc.b    "M3D FAILED: WaitPort returned with empty port",13,10,0
         EVEN

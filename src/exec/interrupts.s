@@ -7,14 +7,18 @@
 ;                 (M3c : EB_TDNEST/EB_IDNEST >= 0 -> switch déféré au prochain VBlank).
 ; Tâches en SUPERVISEUR : leur pile EST la pile superviseur, donc la frame {SR,PC}
 ; poussée par le CPU est déjà sur la pile de la tâche -> le switch est un simple
-; échange de SP (pas de jonglage USP/SSP ; user-mode = M3c). Au IPL 3 : pas de
+; échange de SP (pas de jonglage USP/SSP ; user-mode différé). Au IPL 3 : pas de
 ; ré-entrée mid-switch. À VENIR : dispatcher par niveau (décodage INTREQR),
-; IntVects/SetIntVector/AddIntServer, Wait/WaitPort, réveil-sur-signal, quantum TQE.
+; IntVects/SetIntVector/AddIntServer, yield immédiat sur Permit, quantum TQE.
+; M3d : exec_Wait (ci-dessous) = switch SYNCHRONE depuis une tâche (blocage). Sa frame
+; de reprise est le MIROIR EXACT de celle que vbl_handler sauve/restaure -> les deux
+; chemins de dispatch (préemptif + volontaire) partagent le même format et ce fichier.
 ; Piste IMPLÉMENTATION (« clean ») : hardware/intbits.i (ABI publique) + HRM.
 
                 include "exec.i"
 
                 xdef    init_ints
+                xdef    exec_Wait
 
 ; init_ints : arme l'interruption VBlank. a6 = SysBase. Clobbers d0/a0.
 init_ints:
@@ -61,3 +65,54 @@ vbl_handler:
 .vbl_ret:
         movem.l (sp)+,d0-d7/a0-a6   ; restaure les GPR (entrante, ou courante si no-switch)
         rte                         ; dépile {SR,PC} de l'entrante
+
+; Wait(signalSet d0.l) -> d0 = signaux reçus ayant provoqué le réveil.
+; Bloque ThisTask jusqu'à réception d'au moins un bit de signalSet. C'est un switch
+; VOLONTAIRE : la tâche ne peut pas continuer, on doit donc commuter IMMÉDIATEMENT
+; (pas « au prochain VBlank »). La frame de reprise posée ici = miroir exact de
+; vbl_handler : [d0-d7/a0-a6 (60 o)][SR word][PC long]. Au réveil, le dispatcher
+; (vbl_handler OU un autre Wait) restaure via le MÊME movem+rte -> on reprend en
+; .wa_resume. Le retour de l'appelant (empilé par jsr avant l'appel) joue le rôle du
+; finalPC de AddTask (pas besoin de le reposer). IPL 7 autour de la surgery =
+; atomicité vs VBlank. Hypothèse V34 : appel hors Forbid/Disable (Wait les romprait) ;
+; on revient à IPL 0 (toutes les tâches tournent IPL 0 superviseur ce jalon).
+exec_Wait:
+        move.w  #$2700,sr           ; IPL 7 : section scheduler atomique vs VBlank
+        move.l  EB_THISTASK(a6),a1
+        move.l  d0,TC_SIGWAIT(a1)   ; mémorise les signaux attendus
+.wa_check:
+        move.l  TC_SIGRECVD(a1),d0
+        and.l   TC_SIGWAIT(a1),d0
+        bne.s   .wa_got             ; un signal attendu est déjà présent -> pas de blocage
+        move.l  EB_TASKREADY(a6),a0 ; une autre tâche est-elle prête ?
+        tst.l   (a0)                ; (lh_Head)==0 <=> TaskReady vide
+        beq.s   .wa_idle            ; personne d'autre -> idle-spin (dégénéré, documenté)
+        pea     .wa_resume(pc)      ; --- blocage : frame miroir dispatcher ---
+        move.w  #$2000,-(sp)        ; SR de reprise (superviseur, IPL 0)
+        movem.l d0-d7/a0-a6,-(sp)   ; GPR (comme vbl_handler)
+        move.l  sp,TC_SPREG(a1)     ; contexte sauvé
+        move.b  #TS_WAIT,TC_STATE(a1)
+        lea     EB_TASKWAIT(a6),a0
+        jsr     LVO_ADDTAIL(a6)     ; ThisTask (a1) -> TaskWait (a1 préservé)
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_REMHEAD(a6)     ; d0 = entrante (TaskReady non vide : testé plus haut)
+        move.l  d0,a1
+        move.l  a1,EB_THISTASK(a6)
+        move.b  #TS_RUN,TC_STATE(a1)
+        move.l  TC_SPREG(a1),sp     ; bascule sur la pile de l'entrante
+        movem.l (sp)+,d0-d7/a0-a6
+        rte                         ; -> entrante (reprend SA frame)
+.wa_resume:                         ; re-planifiée ici : GPR/a6 restaurés, SR=$2000
+        move.w  #$2700,sr
+        move.l  EB_THISTASK(a6),a1
+        bra.s   .wa_check           ; re-teste (robuste à un réveil spurious -> re-bloque)
+.wa_got:
+        eor.l   d0,TC_SIGRECVD(a1)  ; efface les bits qui réveillent (d0 ⊆ SIGRECVD)
+        clr.l   TC_SIGWAIT(a1)
+        move.w  #$2000,sr           ; ré-autorise les interruptions
+        rts
+.wa_idle:                           ; aucune tâche prête : attendre un Signal d'IRQ
+        move.w  #$2000,sr           ; fenêtre IPL 0 -> une interruption peut Signal
+        nop
+        move.w  #$2700,sr
+        bra.s   .wa_check

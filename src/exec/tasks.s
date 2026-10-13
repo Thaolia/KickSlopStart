@@ -2,11 +2,11 @@
 ;   init_task   : crée le TCB « boot task » (ThisTask) depuis le tas.
 ;   FindTask    : NULL -> tâche courante ; sinon recherche dans TaskReady/TaskWait.
 ;   AllocSignal/FreeSignal/SetSignal : gestion des bits de signaux de ThisTask.
-;   Signal      : pose les bits dans TC_SIGRECVD de la tâche cible.
+;   Signal      : pose les bits dans TC_SIGRECVD + RÉVEILLE la tâche si TS_WAIT (M3d).
 ;   SetTaskPri  : change LN_PRI, retourne l'ancienne.
-; DIFFÉRÉ À M3 (ordonnanceur/interruptions) : Wait, WaitPort, AddTask, RemTask,
-;   dispatch (Switch/Dispatch/Cause), et le RÉVEIL d'une tâche en attente sur Signal.
-; « Vert » ici = structures manipulées correctement, PAS « les tâches tournent ».
+; M3b : AddTask (contexte initial + TaskReady). M3d : réveil-sur-Signal (ici) + Wait/
+;   WaitPort (interrupts.s / ports.s). DIFFÉRÉ : RemTask, dispatch explicite
+;   (Switch/Dispatch/Cause), re-Enqueue de SetTaskPri, yield immédiat sur Permit.
 ; Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
 ; Piste IMPLÉMENTATION (« clean ») : includes NDK exec/tasks.i (ABI publique).
 
@@ -145,11 +145,28 @@ exec_SetSignal:
         move.l  (sp)+,d2
         rts
 
-; Signal(task a1, signalSet d0) : pose les bits dans TC_SIGRECVD de la tâche.
+; Signal(task a1, signalSet d0) : pose les bits dans TC_SIGRECVD de la tâche ; si elle
+; est bloquée (TS_WAIT) sur l'un de ces bits, la réveille (TaskWait -> TaskReady).
+; M3d : le réveil (manip de deux listes) doit être atomique vs le scheduler (VBlank) ->
+; IPL 7 le temps de la surgery, puis restauration de l'état d'interruption de l'appelant
+; (Signal est scratch sur d0/d1/a0/a1 ; Remove/Enqueue préservent le registre a1).
+; La tâche réveillée part en TaskReady : elle tournera au prochain point d'ordonnancement
+; (modèle « défère » ; le yield immédiat sur Permit est le jalon suivant).
 exec_Signal:
+        move.w  sr,-(sp)
+        move.w  #$2700,sr
         or.l    d0,TC_SIGRECVD(a1)
-        ; M3 : si la tâche est TS_WAIT et attend l'un de ces bits (TC_SIGWAIT),
-        ; la rendre TS_READY et la ré-ordonnancer. Réveil différé (pas d'ordonnanceur).
+        cmp.b   #TS_WAIT,TC_STATE(a1)
+        bne.s   .sig_done            ; pas en attente -> juste poser les bits
+        move.l  TC_SIGRECVD(a1),d0
+        and.l   TC_SIGWAIT(a1),d0
+        beq.s   .sig_done            ; en attente, mais pas sur ces bits-là
+        move.b  #TS_READY,TC_STATE(a1)
+        jsr     LVO_REMOVE(a6)       ; retire la cible (a1) de TaskWait
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_ENQUEUE(a6)      ; insère la cible (a1) dans TaskReady (par priorité)
+.sig_done:
+        move.w  (sp)+,sr
         rts
 
 ; SetTaskPri(task a1, pri d0.b) -> d0 = ancienne priorité (longword signé)
