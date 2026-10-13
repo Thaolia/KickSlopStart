@@ -65,8 +65,15 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   (`Switch`/`Dispatch`/`Cause`), réveil d'une tâche sur signal.
 - **M3a** : **plomberie d'interruptions**. Autovecteur 68000 niveau 3 (`$6C`) → handler VBlank,
   `INTENA = VERTB|INTEN` ($C020), `SR=$2000` → la chaîne d'interruptions tourne (compteur VBlank qui
-  avance, prouvé par le série). Dispatcher complet par niveau (décodage `INTREQR`, `IntVects`,
-  `SetIntVector`/`AddIntServer`) et l'ordonnanceur (`Switch`/`Dispatch`, quantum `SFB_TQE`) → M3b.
-  Pas encore : scan des résidents.
+  avance, prouvé par le série).
+- **M3b** : **ordonnanceur préemptif** (tâches **superviseur**). Le handler VBlank est le point de
+  préemption : round-robin (sauve SP de la sortante dans `TC_SPREG`, Enqueue en `TaskReady`, RemHead
+  l'entrante, restaure son SP + GPR, `RTE`). `AddTask` (-282) pose la frame initiale miroir du pop
+  dispatcher. Prouvé par 2 tâches démo qui **alternent** sur le série (preemption) **en préservant
+  leur contexte** (sentinelles de registres). ⚠️ Préemption **inconditionnelle** : `Disable()`
+  protège (coupe INTEN) mais `Forbid()` pas encore honoré, et les sections critiques exec ne sont pas
+  encore protégées — **prérequis M3c**. À venir : tâches user-mode (frame USP/SSP), dispatcher par
+  niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), `Wait`/`WaitPort` + réveil-sur-signal,
+  quantum `SFB_TQE`, priorité réelle, puis scan des résidents.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
