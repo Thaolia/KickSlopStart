@@ -23,8 +23,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M4** — scan des résidents (ROMTags) + `FindResident`/`InitResident`/`InitCode` | ✅ **fait et vérifié** (série « M4 RESIDENTS OK » ; 3 résidents démo initialisés en ordre de priorité ; RED tri cassé / dispatch cassé → `FAILED`) |
 | **M5a** — AUTOINIT : `MakeLibrary` + `MakeFunctions` + `InitStruct` (chemin AUTOINIT de `InitResident`) | ✅ **fait et vérifié** (série « M5A AUTOINIT OK » ; lib démo créée, jump table + InitStruct + init func + ajout LibList ; RED InitStruct/init cassés → `FAILED`) |
 | **M5b** — `cia.resource` (ciaa/ciab) = 1er vrai module résident (direct-init via `MakeLibrary`) | ✅ **fait et vérifié** (série « M5B CIA OK » ; `OpenResource`+`AbleICR`+`AddICRVector` ; RED AddResource/AbleICR cassés → `FAILED`) |
-| **M5c** — `timer.device` (AUTOINIT) = 2e vrai résident | à venir (voir `docs/PLAN.md`) |
-| **M5+** — dispatch CIA INT2/INT6, dispatcher par niveau, upgrade ports→Disable, user-mode, graphics, dos | à venir |
+| **M5c** — `timer.device` (AUTOINIT) = 2e vrai résident (1er device) | ✅ **fait et vérifié** (série « M5C TIMER OK » ; créé+nommé+listé DeviceList, Open ; RED nom/Open cassés → `FAILED`) |
+| **M6+** — timer VBLANK fonctionnel (file de requêtes), dispatch CIA INT2/INT6, dispatcher par niveau, user-mode, graphics, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 

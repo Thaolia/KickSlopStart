@@ -220,6 +220,29 @@ coldstart:                        ; $FC00D2
         lea     msg_cia_ok(pc),a0
         bsr     ser_puts             ; « M5B CIA OK »
 
+        ; --- M5c : vérifier timer.device (AUTOINIT, 2e vrai module résident) ---
+        lea     EB_DEVICELIST(a6),a0 ; le device doit avoir été ajouté à DeviceList
+        lea     timer_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)     ; (= ce que fait OpenDevice en interne)
+        tst.l   d0
+        beq     timer_fail
+        move.l  d0,a2                ; a2 = base device
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        bne     timer_fail
+        cmp.b   #NT_DEVICE,LN_TYPE(a2)  ; InitStruct (INITBYTE) ?
+        bne     timer_fail
+        move.l  a6,-(sp)             ; Open via la jump table du device -> LIB_OPENCNT++
+        move.l  a2,a6                ; a6 = base device (convention)
+        suba.l  a1,a1                ; iorequest = NULL (stub l'ignore)
+        moveq   #0,d0                ; unit 0
+        moveq   #0,d1                ; flags
+        jsr     -6(a6)
+        move.l  (sp)+,a6
+        cmp.w   #1,LIB_OPENCNT(a2)   ; Open a bien incrémenté ?
+        bne     timer_fail
+        lea     msg_timer_ok(pc),a0
+        bsr     ser_puts             ; « M5C TIMER OK »
+
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
         ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
@@ -954,6 +977,11 @@ cia_fail:                            ; échec M5b (cia.resource) -> fige
         bsr     ser_puts
 .ciaf_hang:
         bra.s   .ciaf_hang
+timer_fail:                          ; échec M5c (timer.device) -> fige
+        lea     msg_timer_fail(pc),a0
+        bsr     ser_puts
+.tmrf_hang:
+        bra.s   .tmrf_hang
 cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
         dc.l    0,0,0,0,0
 
@@ -1063,8 +1091,14 @@ msg_cia_ok:
         dc.b    "M5B CIA OK (cia.resource: OpenResource + AbleICR + AddICRVector)",13,10,0
 msg_cia_fail:
         dc.b    "M5B FAILED: cia.resource incorrect",13,10,0
+msg_timer_ok:
+        dc.b    "M5C TIMER OK (timer.device AUTOINIT -> DeviceList, Open works)",13,10,0
+msg_timer_fail:
+        dc.b    "M5C FAILED: timer.device incorrect",13,10,0
 ciab_test_name:
         dc.b    "ciab.resource",0
+timer_test_name:
+        dc.b    "timer.device",0
 msg_crlf:
         dc.b    13,10,0
         EVEN

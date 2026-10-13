@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -173,10 +173,24 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   déclenchent pas — Paula INTENA PORTS/EXTER + autovecteurs `$68`/`$78` non posés → inerte et sûr).
   `SetICR` est un stub (status d'interruption différée). Table de vecteurs CIA **absolue** (la démo
   AUTOINIT M5a étant relative, les deux branches de `MakeFunctions` restent exercées).
-- **À venir (M5c puis M5+)** : `timer.device` (**AUTOINIT** — sa table/init func doit poser `LN_NAME`=
-  "timer.device" + `LN_TYPE`=NT_DEVICE vu le quirk V34) comme 2e vrai résident (retrait éventuel des
-  résidents démo). Puis **dispatch CIA INT2/INT6** (rendre les vecteurs ICR fonctionnels), dispatcher
-  par niveau, **upgrade des ports en Disable**, save/restore par-TCB du nesting + `Wait`, tâches
-  user-mode, `RemTask`, quantum, priorité réelle.
+- **M5c** (`timer.device` — 2e vrai résident, 1er device) : ROMTag `timer.device` **AUTOINIT** (pri 50)
+  scanné puis créé par le chemin AUTOINIT de `InitResident` (`MakeLibrary` + Enqueue `DeviceList` par
+  `RT_TYPE`=NT_DEVICE). Sa data table (`InitStruct`) pose `LN_TYPE`=NT_DEVICE + `LIB_VERSION` ; son init
+  func pose `LN_NAME`="timer.device" (quirk V34 : `InitResident` ne remplit pas les champs). Vecteurs
+  device standard (Open/Close/Expunge/ExtFunc/BeginIO/AbortIO), stubs. Prouvé : `FindName(DeviceList,
+  "timer.device")` trouve la base, `LIB_VERSION`/`LN_TYPE` (InitStruct), `Open` via `jsr -6(base)`
+  incrémente `LIB_OPENCNT`. RED : nom non posé → introuvable ; `Open` cassé → compte KO. ⚠️ **PÉRIMÈTRE** :
+  device **créé + nommé + listé + jump table (Open)**. **DIFFÉRÉ** : unités (VBLANK/MICROHZ/ECLOCK),
+  file de requêtes, `BeginIO` fonctionnel (stub). Le scan produit ainsi l'OS en instanciant de VRAIS
+  modules résidents — mais ni `cia.resource` ni `timer.device` ne font encore de travail fonctionnel
+  (squelettes nommés/listés). Les résidents **démo** (`demo.res.*` + `demo.autolib`) sont **conservés**
+  dans le scan comme couverture de non-régression M4/M5a (ils s'intercalent par priorité et renforcent
+  la preuve du tri) — à retirer quand les vrais modules couvriront ces preuves.
+- **À venir (M6+)** : premier chemin **fonctionnel** — l'unité **VBLANK** de `timer.device` peut être
+  pilotée par le handler VBlank EXISTANT (sans CIA) : file de `timerequest`, décrément au VBlank,
+  `ReplyMsg` à l'expiration = 1er comportement OS observable (exerce ports/messages + scheduler). En
+  parallèle : **dispatch CIA INT2/INT6** (autovecteurs `$68`/`$78` + INTENA PORTS/EXTER + handler ICR)
+  pour rendre les vecteurs CIA et l'unité MICROHZ fonctionnels. Puis dispatcher par niveau, upgrade des
+  ports en Disable, save/restore par-TCB du nesting, user-mode, `RemTask`, quantum, priorité réelle.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
