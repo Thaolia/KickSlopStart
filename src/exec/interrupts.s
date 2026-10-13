@@ -9,16 +9,19 @@
 ; poussée par le CPU est déjà sur la pile de la tâche -> le switch est un simple
 ; échange de SP (pas de jonglage USP/SSP ; user-mode différé). Au IPL 3 : pas de
 ; ré-entrée mid-switch. À VENIR : dispatcher par niveau (décodage INTREQR),
-; IntVects/SetIntVector/AddIntServer, yield immédiat sur Permit, quantum TQE.
-; M3d : exec_Wait (ci-dessous) = switch SYNCHRONE depuis une tâche (blocage). Sa frame
-; de reprise est le MIROIR EXACT de celle que vbl_handler sauve/restaure -> les deux
-; chemins de dispatch (préemptif + volontaire) partagent le même format et ce fichier.
+; IntVects/SetIntVector/AddIntServer, quantum TQE, priorité réelle.
+; M3d : exec_Wait = switch SYNCHRONE depuis une tâche (blocage). M3e : reschedule =
+; yield synchrone SANS blocage (yield-sur-Permit : requeue la courante, bascule sur la
+; réveillée prioritaire). Leurs frames de reprise sont le MIROIR EXACT de celle que
+; vbl_handler sauve/restaure -> les trois chemins de dispatch (préemptif + Wait +
+; reschedule) partagent le format ET la queue de switch commune (dispatch_head).
 ; Piste IMPLÉMENTATION (« clean ») : hardware/intbits.i (ABI publique) + HRM.
 
                 include "exec.i"
 
                 xdef    init_ints
                 xdef    exec_Wait
+                xdef    reschedule
 
 ; init_ints : arme l'interruption VBlank. a6 = SysBase. Clobbers d0/a0.
 init_ints:
@@ -94,14 +97,7 @@ exec_Wait:
         move.b  #TS_WAIT,TC_STATE(a1)
         lea     EB_TASKWAIT(a6),a0
         jsr     LVO_ADDTAIL(a6)     ; ThisTask (a1) -> TaskWait (a1 préservé)
-        lea     EB_TASKREADY(a6),a0
-        jsr     LVO_REMHEAD(a6)     ; d0 = entrante (TaskReady non vide : testé plus haut)
-        move.l  d0,a1
-        move.l  a1,EB_THISTASK(a6)
-        move.b  #TS_RUN,TC_STATE(a1)
-        move.l  TC_SPREG(a1),sp     ; bascule sur la pile de l'entrante
-        movem.l (sp)+,d0-d7/a0-a6
-        rte                         ; -> entrante (reprend SA frame)
+        bra     dispatch_head       ; tail commun (RemHead TaskReady + bascule sur la tête)
 .wa_resume:                         ; re-planifiée ici : GPR/a6 restaurés, SR=$2000
         move.w  #$2700,sr
         move.l  EB_THISTASK(a6),a1
@@ -116,3 +112,45 @@ exec_Wait:
         nop
         move.w  #$2700,sr
         bra.s   .wa_check
+
+; dispatch_head : TAIL COMMUN des switchs volontaires (Wait, reschedule). Bascule sur la
+; TÊTE de TaskReady (la plus haute priorité). L'appelant a déjà rangé la tâche sortante
+; (TaskWait pour Wait, TaskReady pour reschedule) et sauvé sa frame dans TC_SPREG.
+; TaskReady NON vide garanti par l'appelant. a6 = SysBase, IPL 7.
+dispatch_head:
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_REMHEAD(a6)     ; d0 = entrante
+        move.l  d0,a1
+        move.l  a1,EB_THISTASK(a6)
+        move.b  #TS_RUN,TC_STATE(a1)
+        move.l  TC_SPREG(a1),sp     ; bascule sur la pile de l'entrante
+        movem.l (sp)+,d0-d7/a0-a6
+        rte                         ; -> entrante (reprend SA frame)
+
+; reschedule : YIELD synchrone volontaire SANS blocage (= yield-sur-Permit, M3e). Requeue
+; la tâche courante dans TaskReady (round-robin par priorité) et bascule sur la tête (donc
+; la tâche réveillée prioritaire qui a posé AttnResched). Appelé par Permit/Enable quand
+; AttnResched est posé ET le nesting déverrouillé. Frame de reprise = miroir dispatcher
+; (comme Wait) ; au retour en .rs_resume, rts vers l'appelant (Permit/Enable) une fois la
+; tâche re-dispatchée. Fonctionne indépendamment de SCHED_ON (switch direct, pas d'IRQ).
+reschedule:
+        move.w  #$2700,sr           ; IPL 7 : atomique vs VBlank
+        move.l  EB_TASKREADY(a6),a0
+        tst.l   (a0)                ; TaskReady vide ? (défensif : AttnResched sans prête)
+        beq.s   .rs_none
+        clr.w   EB_ATTNRESCHED(a6)  ; demande consommée
+        move.l  EB_THISTASK(a6),a1
+        pea     .rs_resume(pc)      ; frame miroir dispatcher (PC de reprise)
+        move.w  #$2000,-(sp)        ; SR de reprise (superviseur, IPL 0)
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  sp,TC_SPREG(a1)
+        move.b  #TS_READY,TC_STATE(a1)
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_ENQUEUE(a6)     ; requeue la courante par priorité (a1 préservé)
+        bra     dispatch_head       ; -> la tête (réveillée prioritaire)
+.rs_none:                           ; rien à réveiller -> on reste courante
+        clr.w   EB_ATTNRESCHED(a6)
+        move.w  #$2000,sr
+        rts
+.rs_resume:                         ; re-dispatchée : GPR/a6 restaurés, SR=$2000 -> retour Permit
+        rts

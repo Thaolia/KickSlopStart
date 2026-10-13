@@ -54,11 +54,9 @@ INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
-WP_APORT     EQU $00000508    ; démo M3d : port serveur (task_a) — handshake pré-lancement
-WP_BPORT     EQU $0000050C    ; démo M3d : port client (task_b)
-WP_MSG       EQU $00000510    ; démo M3d : message réutilisé (requête -> réponse)
-WP_CONS      EQU $00000514    ; démo M3d : messages consommés par task_a (serveur)
-WP_PROD      EQU $00000518    ; démo M3d : aller-retours bouclés par task_b (client)
+WP_HTASK     EQU $00000508    ; démo M3e : TCB de task_H (pour que task_L la signale)
+WP_CONS      EQU $0000050C    ; démo M3e : réveils consommés par task_H (haute priorité)
+WP_PROD      EQU $00000510    ; démo M3e : itérations de task_L (producteur, ne bloque jamais)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -80,6 +78,8 @@ EB_THISTASK   EQU $114         ; tâche courante (struct Task *)
 EB_IDNEST     EQU $126
 EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
+EB_ATTNRESCHED EQU $12A         ; UWORD : reschedule en attente (posé par Signal, consommé
+                                ; par Permit/Enable au déverrouillage du nesting = yield)
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E

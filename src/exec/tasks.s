@@ -2,7 +2,8 @@
 ;   init_task   : crée le TCB « boot task » (ThisTask) depuis le tas.
 ;   FindTask    : NULL -> tâche courante ; sinon recherche dans TaskReady/TaskWait.
 ;   AllocSignal/FreeSignal/SetSignal : gestion des bits de signaux de ThisTask.
-;   Signal      : pose les bits dans TC_SIGRECVD + RÉVEILLE la tâche si TS_WAIT (M3d).
+;   Signal      : pose les bits dans TC_SIGRECVD + RÉVEILLE la tâche si TS_WAIT (M3d) +
+;                 demande un reschedule si la réveillée est prioritaire (M3e, AttnResched).
 ;   SetTaskPri  : change LN_PRI, retourne l'ancienne.
 ; M3b : AddTask (contexte initial + TaskReady). M3d : réveil-sur-Signal (ici) + Wait/
 ;   WaitPort (interrupts.s / ports.s). DIFFÉRÉ : RemTask, dispatch explicite
@@ -165,6 +166,14 @@ exec_Signal:
         jsr     LVO_REMOVE(a6)       ; retire la cible (a1) de TaskWait
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)      ; insère la cible (a1) dans TaskReady (par priorité)
+        ; M3e : si la réveillée est PLUS prioritaire que la tâche courante, demander un
+        ; reschedule (consommé au prochain Permit/Enable = yield). Sinon la réveillée
+        ; attend son tour (round-robin). a1 = réveillée (préservée par Remove/Enqueue).
+        move.l  EB_THISTASK(a6),a0
+        move.b  LN_PRI(a1),d0        ; priorité de la réveillée (octet signé)
+        cmp.b   LN_PRI(a0),d0        ; réveillée - courante
+        ble.s   .sig_done            ; réveillée <= courante -> pas de préemption
+        move.w  #1,EB_ATTNRESCHED(a6)
 .sig_done:
         move.w  (sp)+,sr
         rts

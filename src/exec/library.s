@@ -39,6 +39,7 @@
                 xref    exec_AllocSignal
                 xref    exec_FreeSignal
                 xref    exec_Wait        ; interrupts.s (scheduler : switch synchrone)
+                xref    reschedule       ; interrupts.s (yield-sur-Permit : switch synchrone)
                 xref    exec_AddPort     ; ports.s
                 xref    exec_RemPort
                 xref    exec_PutMsg
@@ -147,16 +148,33 @@ exec_Expunge:
 exec_Forbid:
         addq.b  #1,EB_TDNEST(a6)
         rts
+; Permit : déverrouille le Forbid ; au retour à l'état permis (TDNest < 0) ET non Disabled,
+; si un reschedule est en attente (AttnResched, posé par Signal pour une réveillée
+; prioritaire) -> yield SYNCHRONE immédiat (M3e). Sinon la réveillée attendrait un tick.
 exec_Permit:
         subq.b  #1,EB_TDNEST(a6)
+        bge.s   .pm_ret             ; nesting : encore interdit -> rien
+        tst.b   EB_IDNEST(a6)
+        bge.s   .pm_ret             ; encore Disabled -> Enable fera le yield
+        tst.w   EB_ATTNRESCHED(a6)
+        beq.s   .pm_ret
+        jsr     reschedule          ; revient ici quand la courante est re-dispatchée
+.pm_ret:
         rts
 exec_Disable:
         addq.b  #1,EB_IDNEST(a6)
         move.w  #$4000,INTENA        ; clear INTEN (bit14)
         rts
+; Enable : symétrique de Permit côté Disable. Ré-active INTEN puis, si permis ET non
+; Forbidden ET reschedule en attente -> yield.
 exec_Enable:
         subq.b  #1,EB_IDNEST(a6)
-        bge.s   .nest
+        bge.s   .en_ret             ; nesting : encore Disabled -> ne pas toucher INTENA
         move.w  #$C000,INTENA        ; SET + INTEN
-.nest:
+        tst.b   EB_TDNEST(a6)
+        bge.s   .en_ret             ; encore Forbidden -> Permit fera le yield
+        tst.w   EB_ATTNRESCHED(a6)
+        beq.s   .en_ret
+        jsr     reschedule
+.en_ret:
         rts

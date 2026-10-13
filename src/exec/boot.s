@@ -19,10 +19,10 @@
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
 
-DEMO_STK     EQU 2048         ; pile des tâches démo (frames Wait + chaînes PutMsg/ReplyMsg)
-M3D_THRESH   EQU 500          ; aller-retours avant d'émettre « M3D LIVE » (preuve soutenue)
-DEMO_SIGA    EQU 16           ; bit de signal du port serveur (hors 0-15 réservés système)
-DEMO_SIGB    EQU 17           ; bit de signal du port client
+DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch synchrone)
+M3E_THRESH   EQU 500          ; réveils de task_H avant « M3E LIVE » (yield soutenu)
+DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
+DEMO_PRI_H   EQU 10           ; task_H : haute priorité (préempte task_L au yield-sur-Permit)
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -145,18 +145,20 @@ coldstart:                        ; $FC00D2
         lea     msg_ok(pc),a0
         bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
 
-        ; --- M3d : démo Wait/WaitPort + réveil-sur-signal (ping-pong 2 tâches) ---
+        ; --- M3e : démo yield-sur-Permit (COOPÉRATIF : SCHED_ON reste 0) ---
+        ; Mode coopératif DÉLIBÉRÉ : pas de préemption périodique -> le SEUL moyen pour
+        ; task_H (prioritaire) de tourner est le yield-sur-Permit de task_L. Isole la
+        ; preuve (yield cassé = starvation franche, pas « tourne un tick plus tard »).
         move.w  #$2700,sr            ; masque les interruptions pendant le setup
-        bsr     setup_demo_tasks     ; crée A (serveur) + B (client) + 2 ports + 1 message
-        move.b  #1,SCHED_ON          ; arme l'ordonnanceur
+        bsr     setup_demo_tasks     ; crée task_H (pri 10) + task_L (pri 0)
         lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
-        jsr     LVO_REMHEAD(a6)
+        jsr     LVO_REMHEAD(a6)      ; tête = task_H (plus haute priorité) -> elle Wait d'abord
         move.l  d0,a1
         move.l  a1,EB_THISTASK(a6)
         move.b  #TS_RUN,TC_STATE(a1)
         move.l  TC_SPREG(a1),sp      ; bascule sur la pile de la 1re tâche
         movem.l (sp)+,d0-d7/a0-a6
-        rte                          ; -> tâche A (SR=$2000 : VBlank réactivé, préemptible)
+        rte                          ; -> task_H (SR=$2000 : VBlank compte, pas de switch)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -659,27 +661,26 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
-; ============================ démo ordonnanceur (M3d) ===============
-; Crée 2 tâches superviseur + 2 ports + 1 message réutilisé, puis les met dans
-; TaskReady via AddTask. Scaffolding de PREUVE (comme le selftest) : sera remplacé
-; par la suite d'init exec (scan résidents) plus tard.
-; Les signaux sont CÂBLÉS EN DUR (DEMO_SIGA/B, hors 0-15 réservés) plutôt qu'alloués :
-; AllocSignal opère sur ThisTask (ici = tâche de boot), pas sur A/B. Wait/Signal ne
-; consultent que le MASQUE (pas TC_SIGALLOC) -> câblage direct correct pour la démo.
-; Ports NON publics (pas d'AddPort) : référencés par pointeur (WP_APORT/WP_BPORT).
+; ============================ démo yield-sur-Permit (M3e) ===========
+; Crée 2 tâches superviseur (task_H pri 10, task_L pri 0) et les met dans TaskReady.
+; Scaffolding de PREUVE (comme le selftest) : sera remplacé par la suite d'init exec
+; (scan résidents) plus tard. Signal CÂBLÉ EN DUR (DEMO_SIG=16, hors 0-15 réservés)
+; plutôt qu'AllocSignal (qui opère sur ThisTask = tâche de boot, pas sur H/L ; Wait/
+; Signal ne consultent que le MASQUE). task_L signale task_H via son TCB publié dans
+; WP_HTASK (posé AVANT lancement -> toujours valide quand les tâches tournent).
 setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + a2-a4 (sauvés)
         movem.l a2-a4,-(sp)
-        clr.l   WP_APORT             ; RAM basse non garantie nulle au power-on -> explicite
-        clr.l   WP_BPORT
-        clr.l   WP_MSG
+        clr.l   WP_HTASK             ; RAM basse non garantie nulle au power-on -> explicite
         clr.l   WP_CONS
         clr.l   WP_PROD
-        ; --- tâche A (serveur) ---
+        ; --- task_H (serveur, haute priorité) ---
         move.l  #TC_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; a4 = TCB A (AllocMem/AddTask/newlist préservent a4)
-        move.l  #task_a_name,LN_NAME(a4)
+        move.l  d0,a4                ; a4 = TCB H (AllocMem/AddTask préservent a4)
+        move.l  #task_h_name,LN_NAME(a4)
+        move.b  #DEMO_PRI_H,LN_PRI(a4)  ; pri 10 : tête de TaskReady (Enqueue trie) + préempte
+        move.l  a4,WP_HTASK          ; publié pour que task_L la signale
         move.l  #DEMO_STK,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -687,26 +688,15 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + a2-a4 (
         add.l   #DEMO_STK,d0
         move.l  d0,TC_SPUPPER(a4)
         move.l  a4,a1
-        lea     task_a(pc),a2
+        lea     task_h(pc),a2
         lea     task_exit(pc),a3
         jsr     LVO_ADDTASK(a6)
-        ; port serveur (a_port) : propriétaire = TCB A, signal = DEMO_SIGA
-        move.l  #MP_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a2                ; a2 = a_port
-        lea     MP_MSGLIST(a2),a1
-        jsr     newlist
-        move.b  #PA_SIGNAL,MP_FLAGS(a2)
-        move.b  #DEMO_SIGA,MP_SIGBIT(a2)
-        move.l  a4,MP_SIGTASK(a2)    ; signale la tâche A
-        move.l  a2,WP_APORT
-        ; --- tâche B (client) ---
+        ; --- task_L (producteur, basse priorité, ne bloque JAMAIS) ---
         move.l  #TC_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; a4 = TCB B
-        move.l  #task_b_name,LN_NAME(a4)
+        move.l  d0,a4                ; a4 = TCB L (LN_PRI=0 via MEMF_CLEAR)
+        move.l  #task_l_name,LN_NAME(a4)
         move.l  #DEMO_STK,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -714,94 +704,54 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + a2-a4 (
         add.l   #DEMO_STK,d0
         move.l  d0,TC_SPUPPER(a4)
         move.l  a4,a1
-        lea     task_b(pc),a2        ; (a2 = a_port écrasé ici, mais WP_APORT déjà posé)
+        lea     task_l(pc),a2
         lea     task_exit(pc),a3
         jsr     LVO_ADDTASK(a6)
-        ; port client (b_port) : propriétaire = TCB B, signal = DEMO_SIGB
-        move.l  #MP_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a3                ; a3 = b_port
-        lea     MP_MSGLIST(a3),a1
-        jsr     newlist
-        move.b  #PA_SIGNAL,MP_FLAGS(a3)
-        move.b  #DEMO_SIGB,MP_SIGBIT(a3)
-        move.l  a4,MP_SIGTASK(a3)    ; signale la tâche B
-        move.l  a3,WP_BPORT
-        ; message partagé (requête -> réponse ; reply port = b_port)
-        move.l  #MN_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a2                ; a2 = message
-        move.l  a3,MN_REPLYPORT(a2)  ; réponse renvoyée sur b_port
-        move.b  #NT_MESSAGE,LN_TYPE(a2)
-        move.l  a2,WP_MSG
         movem.l (sp)+,a2-a4
         rts
 
-; Corps des tâches de démo M3d — PREUVE que WaitPort BLOQUE réellement et que Signal
-; RÉVEILLE la tâche bloquée, via un ping-pong requête/réponse. Déterministe et
-; indépendant du cadencement série : les compteurs avancent par la logique de
-; blocage/réveil (pas par l'émission série), et « M3D LIVE » est émis sur seuil.
-; Deadlock-free par construction : exactement UNE tâche prête à chaque blocage
-; (celle qu'on vient de réveiller) -> TaskReady jamais vide quand l'autre Wait.
-;   task_a (serveur) : WaitPort(a_port) ; GetMsg ; (assert != NULL) ; ReplyMsg.
-;   task_b (client)  : PutMsg initial ; boucle WaitPort(b_port) ; GetMsg ; PutMsg.
-; « M3D LIVE » émis UNE fois quand WP_CONS atteint M3D_THRESH = beaucoup d'aller-retours
-; réussis (donc blocages + réveils répétés corrects). Marqueur de succès du harnais.
-; RED (réveil cassé : Signal ne re-queue pas) : 1er blocage -> deadlock -> marqueur
-; jamais émis (absent). RED (blocage cassé : WaitPort rend sans message) : GetMsg NULL
-; -> « M3D FAILED » émis.
-task_a:                              ; serveur — possède a_port (les tâches démarrent a6=0)
+; Corps des tâches de démo M3e — PREUVE que Permit YIELD immédiatement vers une tâche
+; réveillée PRIORITAIRE. COOPÉRATIF (SCHED_ON=0) : aucune préemption périodique, donc
+; task_H ne peut tourner QUE si le Permit de task_L la dispatche. Déterministe et
+; indépendant du cadencement série (WP_CONS avance par le yield, pas par l'émission).
+;   task_H (pri 10) : boucle Wait(DEMO_SIG) ; WP_CONS++ ; « M3E LIVE » au seuil. BLOQUE.
+;   task_L (pri 0)  : boucle Forbid ; Signal(task_H) ; Permit (<- yield) ; WP_PROD++.
+;                     Ne BLOQUE jamais.
+; Déroulé : task_H dispatchée d'abord -> Wait -> dispatch_head -> task_L. task_L Signal
+; (réveille task_H + pose AttnResched car pri 10 > 0) ; Permit -> reschedule -> task_H.
+; task_H consomme, re-Wait -> dispatch_head -> task_L (requeue), qui reprend après Permit.
+; « M3E LIVE » émis UNE fois à WP_CONS == M3E_THRESH = yields répétés corrects.
+; RED (yield désactivé dans Permit) : task_L Signal task_H (prête) mais Permit ne switch
+; pas ; task_L ne bloque jamais et SCHED_ON=0 -> task_H JAMAIS dispatchée -> WP_CONS reste
+; 0 -> « M3E LIVE » jamais émis (absent) = starvation franche.
+task_h:                              ; serveur, haute priorité (les tâches démarrent a6=0)
         move.l  ($4).w,a6            ; SysBase (cf. frame AddTask qui zéro-remplit les GPR)
-.a_loop:
-        move.l  WP_APORT,a0
-        jsr     LVO_WAITPORT(a6)     ; BLOQUE jusqu'à l'arrivée d'une requête
-        move.l  WP_APORT,a0
-        jsr     LVO_GETMSG(a6)       ; retire la requête
-        tst.l   d0
-        beq.w   .a_fail              ; WaitPort a rendu sans message -> BLOCAGE cassé
-        move.l  d0,a1                ; a1 = message (survit à l'émission ci-dessous)
+.h_loop:
+        moveq   #1,d0
+        moveq   #DEMO_SIG,d1
+        lsl.l   d1,d0               ; masque = 1 << DEMO_SIG (décalage registre : 68000 immédiat <= 8)
+        jsr     LVO_WAIT(a6)         ; BLOQUE jusqu'au signal de task_L
         addq.l  #1,WP_CONS
         move.l  WP_CONS,d0
-        cmp.l   #M3D_THRESH,d0
-        bne.s   .a_reply
-        jsr     LVO_FORBID(a6)       ; émission non fractionnée par préemption
-        lea     msg_m3dlive(pc),a0
+        cmp.l   #M3E_THRESH,d0
+        bne.s   .h_loop
+        jsr     LVO_FORBID(a6)       ; émission non fractionnée
+        lea     msg_m3elive(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
-.a_reply:
-        jsr     LVO_REPLYMSG(a6)     ; renvoie au reply port (b_port) -> réveille task_b
-        bra.w   .a_loop
-.a_fail:
-        jsr     LVO_FORBID(a6)
-        lea     msg_waitfail(pc),a0
-        bsr     ser_puts
-.a_hang:
-        bra.s   .a_hang
-task_b:                              ; client — possède b_port
+        bra.s   .h_loop
+task_l:                              ; producteur, basse priorité, ne bloque jamais
         move.l  ($4).w,a6            ; SysBase
-        move.l  WP_MSG,a1            ; requête initiale -> amorce le ping-pong
-        move.l  WP_APORT,a0
-        jsr     LVO_PUTMSG(a6)       ; réveille task_a
-.b_loop:
-        move.l  WP_BPORT,a0
-        jsr     LVO_WAITPORT(a6)     ; BLOQUE jusqu'à la réponse
-        move.l  WP_BPORT,a0
-        jsr     LVO_GETMSG(a6)       ; retire la réponse
-        tst.l   d0
-        beq.w   .b_fail
-        move.l  d0,a1                ; = WP_MSG, revenu en réponse
-        addq.l  #1,WP_PROD
-        move.l  WP_APORT,a0
-        jsr     LVO_PUTMSG(a6)       ; renvoie la requête -> réveille task_a
-        bra.s   .b_loop
-.b_fail:
-        jsr     LVO_FORBID(a6)
-        lea     msg_waitfail(pc),a0
-        bsr     ser_puts
-.b_hang:
-        bra.s   .b_hang
+.l_loop:
+        jsr     LVO_FORBID(a6)       ; Signal sous Forbid -> yield reporté au Permit
+        move.l  WP_HTASK,a1
+        moveq   #1,d0
+        moveq   #DEMO_SIG,d1
+        lsl.l   d1,d0               ; masque = 1 << DEMO_SIG (décalage registre)
+        jsr     LVO_SIGNAL(a6)       ; réveille task_H + pose AttnResched (pri 10 > 0)
+        jsr     LVO_PERMIT(a6)       ; <- YIELD : dispatche task_H immédiatement
+        addq.l  #1,WP_PROD           ; (exécuté quand task_L est re-dispatchée après task_H)
+        bra.s   .l_loop
 task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
         bra.s   task_exit
 
@@ -820,10 +770,10 @@ task_test_name:
         dc.b    "testtask",0
 str_port:
         dc.b    "testport",0
-task_a_name:
-        dc.b    "demo.A",0
-task_b_name:
-        dc.b    "demo.B",0
+task_h_name:
+        dc.b    "demo.H",0
+task_l_name:
+        dc.b    "demo.L",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -844,8 +794,6 @@ msg_vblok:
         dc.b    "M3 VBlank interrupts live",13,10,0
 msg_vbltimeout:
         dc.b    "M3 VBL timeout",13,10,0
-msg_m3dlive:
-        dc.b    "M3D LIVE: WaitPort block+wake OK (ping-pong)",13,10,0
-msg_waitfail:
-        dc.b    "M3D FAILED: WaitPort returned with empty port",13,10,0
+msg_m3elive:
+        dc.b    "M3E LIVE: yield-on-Permit OK (high-pri task dispatched)",13,10,0
         EVEN

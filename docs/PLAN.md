@@ -145,10 +145,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   **État (suivi fin dans le ledger + README)** : coldstart/ExecBase/jump table V34/mémoire multi-header/
   listes/tâches+signaux+ports non bloquants = livrés (sous-jalons M2.0→M2.4). Plomberie d'interruptions
   VBlank (M3a), **ordonnanceur préemptif superviseur** (M3b), **exclusion mutuelle** — `Forbid()`
-  honoré + sections critiques exec enveloppées (M3c) et **`Wait`/`WaitPort` + réveil-sur-signal** —
-  blocage réel d'une tâche via switch synchrone (M3d) = livrés et vérifiés par boot FS-UAE. Reste pour
-  clore le bringup exec : **yield immédiat sur `Permit`** (soft-trigger VERTB), dispatcher par niveau,
-  tâches user-mode, quantum/priorité réelle, puis `InitResident` + scan auto-config.
+  honoré + sections critiques exec enveloppées (M3c), **`Wait`/`WaitPort` + réveil-sur-signal** —
+  blocage réel d'une tâche via switch synchrone (M3d) et **yield immédiat sur `Permit`/`Enable`** —
+  reschedule synchrone vers une réveillée prioritaire (M3e, prouvé en coopératif) = livrés et vérifiés
+  par boot FS-UAE. Reste pour clore le bringup exec : recombiner yield + préemption, dispatcher par
+  niveau, tâches user-mode, quantum/priorité réelle, puis `InitResident` + scan auto-config.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

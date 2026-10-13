@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid…/Disable…, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait = switch synchrone) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones via `dispatch_head` commun) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -103,12 +103,23 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   `GetMsg != NULL` après `WaitPort`. RED vérifiés : réveil désactivé (`Signal`) → deadlock, marqueur
   absent ; blocage désactivé (`WaitPort` rend sur file vide) → `GetMsg` NULL → `M3D FAILED`.
   Hypothèse V34 assumée : `Wait` appelé hors `Forbid`/`Disable` (qu'il romprait) ; retour à IPL 0.
-- **À venir (M3d+)** : **yield immédiat sur Permit** (soft-trigger VERTB) — requis dès qu'une tâche
-  réveillée **prioritaire** doit tourner sans attendre un tick ; aujourd'hui une réveillée part en
-  `TaskReady` et tourne au prochain switch (correct en round-robin, lacune de latence sous priorité).
-  Puis : dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des
-  ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`), save/restore
-  par-TCB du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum `SFB_TQE`,
-  priorité réelle, puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
+- **M3e** (yield immédiat sur `Permit`) : une tâche réveillée **prioritaire** tourne désormais **dès le
+  `Permit`** qui ferme la section critique du réveilleur, au lieu d'attendre le prochain tick. `Signal`,
+  quand il réveille une tâche de priorité > la courante, pose `EB_ATTNRESCHED` (ABI exec `$12A`).
+  `Permit`/`Enable`, au retour à l'état permis (`TDNest`/`IDNest` < 0, l'autre non verrouillé), si
+  `AttnResched` est posé, appellent `reschedule` : un **switch SYNCHRONE sans blocage** qui requeue la
+  courante dans `TaskReady` (round-robin par priorité) et bascule sur la tête (la réveillée prioritaire).
+  `reschedule` réutilise la **queue de switch commune `dispatch_head`** (partagée avec `Wait`) et pose la
+  même frame miroir dispatcher ; il fonctionne **indépendamment de `SCHED_ON`** (switch direct, pas
+  d'IRQ). Prouvé en régime **COOPÉRATIF** (`SCHED_ON=0`, pas de préemption périodique) pour **isoler** la
+  preuve : task_L (pri 0, ne bloque jamais) `Forbid`/`Signal(task_H)`/`Permit` ; task_H (pri 10) boucle
+  `Wait`. Le SEUL dispatcher de task_H est le `reschedule` de `Permit` → `M3E LIVE` émis après 500 yields
+  ⟺ yield-sur-Permit correct. RED : yield désactivé dans `Permit` → task_H starve (marqueur absent).
+- **À venir (M3e+)** : **recombiner yield + préemption** (`vbl_handler` doit effacer `AttnResched` quand
+  il switche, sinon un `Permit` postérieur à un tick ferait un `reschedule` redondant — inoffensif mais à
+  nettoyer) ; dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des
+  ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`), save/restore par-TCB
+  du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum `SFB_TQE`, priorité réelle,
+  puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
