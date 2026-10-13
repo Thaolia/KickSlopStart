@@ -46,6 +46,8 @@
                 xref    exec_MakeLibrary ; libinit.s (création lib/device, chemin AUTOINIT)
                 xref    exec_MakeFunctions
                 xref    exec_InitStruct
+                xref    exec_AddResource ; resident.s (resources)
+                xref    exec_OpenResource
                 xref    exec_AddPort     ; ports.s
                 xref    exec_RemPort
                 xref    exec_PutMsg
@@ -78,6 +80,10 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_MakeLibrary,LVO_MAKELIBRARY+2(a6)
         move.w  #$4EF9,LVO_MAKEFUNCTIONS(a6)
         move.l  #exec_MakeFunctions,LVO_MAKEFUNCTIONS+2(a6)
+        move.w  #$4EF9,LVO_ADDRESOURCE(a6)
+        move.l  #exec_AddResource,LVO_ADDRESOURCE+2(a6)
+        move.w  #$4EF9,LVO_OPENRESOURCE(a6)
+        move.l  #exec_OpenResource,LVO_OPENRESOURCE+2(a6)
         move.w  #$4EF9,LVO_FINDRESIDENT(a6)
         move.l  #exec_FindResident,LVO_FINDRESIDENT+2(a6)
         move.w  #$4EF9,LVO_INITRESIDENT(a6)

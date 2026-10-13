@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -161,10 +161,22 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   $5A via `jsr -6(base)`, l'ordre des vecteurs est load-bearing), `InitStruct` pose version+type, init
   func pose révision+nom, lib trouvée dans `LibList`. RED : `InitStruct` désactivé → version KO ; appel
   init func retiré → nom KO.
-- **À venir (M5b/M5c puis M5+)** : `cia.resource` (**direct-init** confirmé : pose ses noms + `AddResource`
-  — il faut exposer `AddResource` -486) et `timer.device` (**AUTOINIT** — sa table/init func doit poser
-  `LN_NAME`/`LN_TYPE` vu le quirk V34) comme **premiers vrais résidents** (retrait des résidents démo).
-  Puis dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des ports
-  en Disable**, save/restore par-TCB du nesting + `Wait`, tâches user-mode, `RemTask`, quantum, priorité.
+- **M5b** (`cia.resource` — 1er vrai module résident) : ROMTag `cia.resource` (direct-init, pri 80)
+  scanné par `build_reslist` ; `cia_init` crée `ciaa.resource` + `ciab.resource` via `MakeLibrary`
+  (base library-like + jump table `AddICRVector`/`RemICRVector`/`AbleICR`/`SetICR`), les nomme, pose la
+  base matérielle CIA (`$BFE001`/`$BFD000`), `AddResource`. Exec expose `AddResource` (-486, Enqueue
+  `ResourceList`) et `OpenResource` (-498, `FindName`). Les fonctions gèrent les 5 slots de vecteurs ICR
+  + le shadow du masque ICR + le registre ICR du chip (`AbleICR` bit7=enable). Prouvé : `OpenResource`
+  (« ciab.resource ») trouve la base, base matérielle correcte, `AbleICR($81)` pose le bit0 du shadow,
+  `AddICRVector` enregistre (rend NULL, slot libre). RED : `AddResource` cassé → introuvable ; `AbleICR`
+  cassé → shadow KO. ⚠️ **DIFFÉRÉ** : la **dispatch INT2/INT6** (les vecteurs enregistrés ne se
+  déclenchent pas — Paula INTENA PORTS/EXTER + autovecteurs `$68`/`$78` non posés → inerte et sûr).
+  `SetICR` est un stub (status d'interruption différée). Table de vecteurs CIA **absolue** (la démo
+  AUTOINIT M5a étant relative, les deux branches de `MakeFunctions` restent exercées).
+- **À venir (M5c puis M5+)** : `timer.device` (**AUTOINIT** — sa table/init func doit poser `LN_NAME`=
+  "timer.device" + `LN_TYPE`=NT_DEVICE vu le quirk V34) comme 2e vrai résident (retrait éventuel des
+  résidents démo). Puis **dispatch CIA INT2/INT6** (rendre les vecteurs ICR fonctionnels), dispatcher
+  par niveau, **upgrade des ports en Disable**, save/restore par-TCB du nesting + `Wait`, tâches
+  user-mode, `RemTask`, quantum, priorité réelle.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

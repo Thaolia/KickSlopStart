@@ -17,6 +17,8 @@
                 xdef    exec_FindResident
                 xdef    exec_InitResident
                 xdef    exec_InitCode
+                xdef    exec_AddResource
+                xdef    exec_OpenResource
 
 ; build_reslist : a6 = SysBase. Alloue le tableau, scanne [RESSCAN_LO,RESSCAN_HI), trie,
 ; publie ExecBase->ResModules. Un ROMTag = mot $4AFC à adresse PAIRE dont RT_MATCHTAG
@@ -197,4 +199,20 @@ exec_InitCode:
         bra.s   .ic_loop
 .ic_done:
         movem.l (sp)+,d2-d3/a2
+        rts
+
+; AddResource(resource a1) : type NT_RESOURCE puis Enqueue dans ResourceList (Forbid-enveloppé,
+; comme AddPort : liste partagée). OpenResource s'en sert pour retrouver le resource par nom.
+exec_AddResource:
+        move.b  #NT_RESOURCE,LN_TYPE(a1)
+        jsr     LVO_FORBID(a6)
+        lea     EB_RESOURCELIST(a6),a0
+        jsr     LVO_ENQUEUE(a6)
+        jsr     LVO_PERMIT(a6)
+        rts
+
+; OpenResource(name a1) -> d0 = resource | 0 (recherche dans ResourceList ; pas de CloseResource).
+exec_OpenResource:
+        lea     EB_RESOURCELIST(a6),a0
+        jsr     LVO_FINDNAME(a6)
         rts

@@ -193,6 +193,33 @@ coldstart:                        ; $FC00D2
         lea     msg_auto_ok(pc),a0
         bsr     ser_puts             ; « M5A AUTOINIT OK »
 
+        ; --- M5b : vérifier cia.resource (1er vrai module résident, direct-init) ---
+        lea     ciab_test_name(pc),a1  ; OpenResource("ciab.resource")
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq     cia_fail             ; resource absent -> KO
+        move.l  d0,a2                ; a2 = base ciab
+        cmp.l   #CIAB_HW,CIAR_HWBASE(a2)  ; bonne base matérielle ?
+        bne     cia_fail
+        move.l  a6,-(sp)             ; AbleICR($81 = enable bit0) via la jump table du resource
+        move.l  a2,a6                ; a6 = base resource (convention d'appel)
+        moveq   #$81,d0
+        jsr     CIA_ABLEICR(a6)
+        move.l  (sp)+,a6
+        move.b  CIAR_ICRMASK(a2),d0  ; le shadow doit avoir le bit0 posé
+        and.b   #1,d0
+        beq     cia_fail
+        move.l  a6,-(sp)             ; AddICRVector(bit1, dummy) -> doit rendre NULL (slot libre)
+        move.l  a2,a6
+        moveq   #1,d0
+        lea     cia_dummy_int(pc),a1
+        jsr     CIA_ADDICRVECTOR(a6)
+        move.l  (sp)+,a6
+        tst.l   d0
+        bne     cia_fail
+        lea     msg_cia_ok(pc),a0
+        bsr     ser_puts             ; « M5B CIA OK »
+
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
         ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
@@ -922,6 +949,13 @@ auto_fail:                           ; échec M5a (AUTOINIT/MakeLibrary) -> fige
         bsr     ser_puts
 .autof_hang:
         bra.s   .autof_hang
+cia_fail:                            ; échec M5b (cia.resource) -> fige
+        lea     msg_cia_fail(pc),a0
+        bsr     ser_puts
+.ciaf_hang:
+        bra.s   .ciaf_hang
+cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
+        dc.l    0,0,0,0,0
 
 ; ============================ résident AUTOINIT démo (M5a) =========
 ; ROMTag RTF_AUTOINIT (pri 40) -> InitResident appelle MakeLibrary avec la table de 4 longs.
@@ -1025,6 +1059,12 @@ msg_res_fail:
         dc.b    "M4 FAILED: resident scan/init incorrect",13,10,0
 msg_auto_fail:
         dc.b    "M5A FAILED: AUTOINIT/MakeLibrary incorrect",13,10,0
+msg_cia_ok:
+        dc.b    "M5B CIA OK (cia.resource: OpenResource + AbleICR + AddICRVector)",13,10,0
+msg_cia_fail:
+        dc.b    "M5B FAILED: cia.resource incorrect",13,10,0
+ciab_test_name:
+        dc.b    "ciab.resource",0
 msg_crlf:
         dc.b    13,10,0
         EVEN

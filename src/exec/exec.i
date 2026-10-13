@@ -213,5 +213,20 @@ LVO_REPLYMSG   EQU -378
 LVO_WAITPORT   EQU -384
 LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
+LVO_ADDRESOURCE  EQU -486
+LVO_OPENRESOURCE EQU -498
+
+; cia.resource (M5b) — fonctions a6-relatives (base resource), struct, matériel.
+CIA_ADDICRVECTOR EQU -6
+CIA_REMICRVECTOR EQU -12
+CIA_ABLEICR      EQU -18
+CIA_SETICR       EQU -24
+CIAR_HWBASE      EQU LIB_SIZE        ; APTR base matérielle CIA (après le nœud Library)
+CIAR_ICRMASK     EQU LIB_SIZE+4      ; UBYTE shadow du masque ICR activé (+pad)
+CIAR_VECTORS     EQU LIB_SIZE+6      ; 5 APTR : slots struct Interrupt* (timerA/B/TOD/ser/flag)
+CIAR_SIZE        EQU LIB_SIZE+6+20
+CIAA_HW          EQU $BFE001         ; base CIA-A
+CIAB_HW          EQU $BFD000         ; base CIA-B
+CIA_ICR_OFF      EQU $D00            ; offset du registre ICR (registre $D) depuis la base CIA
 
                 endc
