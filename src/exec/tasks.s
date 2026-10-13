@@ -13,6 +13,7 @@
                 include "exec.i"
 
                 xdef    init_task
+                xdef    exec_AddTask
                 xdef    exec_FindTask
                 xdef    exec_AllocSignal
                 xdef    exec_FreeSignal
@@ -39,6 +40,28 @@ init_task:
         move.l  #FTEST_HI,TC_SPLOWER(a0)   ; bornes pile superviseur (informatif)
         move.l  #STACKTOP,TC_SPUPPER(a0)
         move.l  a0,EB_THISTASK(a6)
+        rts
+
+; AddTask(task a1, initialPC a2, finalPC a3) : prépare le contexte initial et met
+; la tâche dans TaskReady. M3b : tâches SUPERVISEUR (SR initial $2000, préemptible).
+; Le contexte posé sur la pile de la tâche est le MIROIR EXACT de ce que le
+; dispatcher (vbl_handler) restaure : [d0-d7/a0-a6 = 0 (60 o)][SR word][PC long]
+; [finalPC long], TC_SPREG -> les GPR. Le caller remplit TC_SPLOWER/TC_SPUPPER.
+; (User-mode = M3c : SR initial $0000 + relocation de frame USP/SSP.)
+exec_AddTask:
+        move.b  #NT_TASK,LN_TYPE(a1)
+        move.b  #TS_READY,TC_STATE(a1)
+        move.l  TC_SPUPPER(a1),a0    ; haut de pile de la tâche
+        move.l  a3,-(a0)             ; finalPC (retour si la tâche fait RTS)
+        move.l  a2,-(a0)             ; PC initial
+        move.w  #$2000,-(a0)         ; SR initial (superviseur, IPL0)
+        moveq   #14,d0
+.at_zero:
+        clr.l   -(a0)                ; 15 longs GPR = 0
+        dbf     d0,.at_zero
+        move.l  a0,TC_SPREG(a1)      ; contexte -> GPR
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_ENQUEUE(a6)      ; Enqueue(TaskReady, task)
         rts
 
 ; FindTask(name a1) -> d0 = task | 0 ; a1 == NULL -> tâche courante

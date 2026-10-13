@@ -53,6 +53,7 @@ INTF_INTEN   EQU $4000        ; maître (INTEN)
 INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
+SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -157,6 +158,7 @@ LVO_REMHEAD  EQU -258
 LVO_REMTAIL  EQU -264
 LVO_ENQUEUE  EQU -270
 LVO_FINDNAME EQU -276
+LVO_ADDTASK    EQU -282
 LVO_FINDTASK   EQU -294
 LVO_SETTASKPRI EQU -300
 LVO_SETSIGNAL  EQU -306

@@ -18,6 +18,8 @@
                 xref    init_memory      ; memory.s
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
+
+DEMO_STK     EQU 1024         ; taille de pile des tâches de démo M3b
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -119,7 +121,6 @@ coldstart:                        ; $FC00D2
         bsr     selftest             ; d0 = 0 (OK) / !=0 (échec)
         tst.l   d0
         bne     eb_fail
-
         ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
         jsr     init_ints
         move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
@@ -139,9 +140,20 @@ coldstart:                        ; $FC00D2
 
         move.w  #C_WHITE,COLOR00
         lea     msg_ok(pc),a0
-        bsr     ser_puts
-freeze:
-        bra.s   freeze
+        bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
+
+        ; --- M3b : démo ordonnanceur préemptif (2 tâches superviseur A/B) ---
+        move.w  #$2700,sr            ; masque les interruptions pendant le setup
+        bsr     setup_demo_tasks     ; crée A et B dans TaskReady
+        move.b  #1,SCHED_ON          ; arme l'ordonnanceur
+        lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
+        jsr     LVO_REMHEAD(a6)
+        move.l  d0,a1
+        move.l  a1,EB_THISTASK(a6)
+        move.b  #TS_RUN,TC_STATE(a1)
+        move.l  TC_SPREG(a1),sp      ; bascule sur la pile de la 1re tâche
+        movem.l (sp)+,d0-d7/a0-a6
+        rte                          ; -> tâche A (SR=$2000 : VBlank réactivé, préemptible)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -608,10 +620,10 @@ selftest:
         bne.w   .bad
         cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
         bne.w   .bad
-        ; nettoyage : RemPort(x2), free messages + ports + signal
+        ; nettoyage : RemPort du port PUBLIC seulement (rport n'a jamais été
+        ; AddPort'd -> le retirer appellerait Remove sur un noeud non chaîné, qui
+        ; écrirait dans la low RAM $0/$4). free messages + ports + signal.
         move.l  a2,a1
-        jsr     LVO_REMPORT(a6)
-        move.l  a4,a1
         jsr     LVO_REMPORT(a6)
         move.l  a3,a1
         move.l  #(2*MN_SIZE),d0
@@ -644,6 +656,94 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
+; ============================ démo ordonnanceur (M3b) ===============
+; Crée 2 tâches superviseur A et B (TCB + pile depuis le tas) et les met dans
+; TaskReady via AddTask. Scaffolding de PREUVE du switch (comme le selftest) :
+; sera remplacé par la suite d'init exec (scan résidents) plus tard.
+setup_demo_tasks:                    ; a6 = SysBase
+        ; --- tâche A ---
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4                ; TCB A
+        move.l  #task_a_name,LN_NAME(a4)
+        move.l  #DEMO_STK,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,TC_SPLOWER(a4)
+        add.l   #DEMO_STK,d0
+        move.l  d0,TC_SPUPPER(a4)
+        move.l  a4,a1
+        lea     task_a(pc),a2
+        lea     task_exit(pc),a3
+        jsr     LVO_ADDTASK(a6)
+        ; --- tâche B ---
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4                ; TCB B
+        move.l  #task_b_name,LN_NAME(a4)
+        move.l  #DEMO_STK,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,TC_SPLOWER(a4)
+        add.l   #DEMO_STK,d0
+        move.l  d0,TC_SPUPPER(a4)
+        move.l  a4,a1
+        lea     task_b(pc),a2
+        lea     task_exit(pc),a3
+        jsr     LVO_ADDTASK(a6)
+        rts
+
+; Corps des tâches de démo. Chacune charge des SENTINELLES de contexte (un reg de
+; données + un reg d'adresse) une fois, puis vérifie à CHAQUE itération qu'elles
+; ont survécu avant d'émettre sa lettre. Si le switch corrompait le save/restore
+; (reg oublié, mauvais ordre), la sentinelle serait fausse après préemption ->
+; émission de 'F'. Donc 'A'/'B' alternés = non seulement l'ordonnancement MAIS
+; AUSSI la fidélité du contexte à travers les préemptions.
+task_a:
+        move.l  #$A1A1A1A1,d5
+        move.l  #$A2A2A2A2,a5
+.a_loop:
+        cmp.l   #$A1A1A1A1,d5        ; sentinelle data intacte ?
+        bne.s   .a_fail
+        cmp.l   #$A2A2A2A2,a5        ; sentinelle adresse intacte ?
+        bne.s   .a_fail
+.a_wait:
+        move.w  SERDATR,d1
+        btst    #13,d1
+        beq.s   .a_wait              ; attend TBE (contexte tâche : spin autorisé)
+        move.w  #$0141,SERDAT        ; 'A' (bit stop bit 8)
+        bra.s   .a_loop
+.a_fail:
+        move.w  SERDATR,d1
+        btst    #13,d1
+        beq.s   .a_fail
+        move.w  #$0146,SERDAT        ; 'F' : contexte corrompu par le switch
+        bra.s   .a_fail
+task_b:
+        move.l  #$B1B1B1B1,d5
+        move.l  #$B2B2B2B2,a5
+.b_loop:
+        cmp.l   #$B1B1B1B1,d5
+        bne.s   .b_fail
+        cmp.l   #$B2B2B2B2,a5
+        bne.s   .b_fail
+.b_wait:
+        move.w  SERDATR,d1
+        btst    #13,d1
+        beq.s   .b_wait
+        move.w  #$0142,SERDAT        ; 'B'
+        bra.s   .b_loop
+.b_fail:
+        move.w  SERDATR,d1
+        btst    #13,d1
+        beq.s   .b_fail
+        move.w  #$0146,SERDAT        ; 'F'
+        bra.s   .b_fail
+task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
+        bra.s   task_exit
+
 ; ============================ données ==============================
 exec_name:
         dc.b    "exec.library",0
@@ -659,6 +759,10 @@ task_test_name:
         dc.b    "testtask",0
 str_port:
         dc.b    "testport",0
+task_a_name:
+        dc.b    "demo.A",0
+task_b_name:
+        dc.b    "demo.B",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
