@@ -310,6 +310,45 @@ coldstart:                        ; $FC00D2
         lea     msg_m6a_ok(pc),a0
         bsr     ser_puts             ; « M6A TIMER OK »
 
+        ; --- M6b : dispatch d'interruption CIA (INT2 via CIA-A Timer A) ---
+        ; SCHED_ON encore 0 ici -> le VBlank ne switche pas si jamais il préempte l'INT2-handler
+        ; (imbrication inoffensive). On nettoie (RemICRVector + stop timer + disable PORTS) avant M3f.
+        clr.l   CIA_FIRED
+        lea     ciaa_test_name(pc),a1
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq     cia_int_fail
+        move.l  d0,a2                ; a2 = base ciaa (survit au spin + cleanup)
+        move.l  a6,-(sp)             ; AddICRVector(bit0=timerA, &cia_test_int) ; a6=base resource
+        move.l  a2,a6
+        moveq   #0,d0
+        lea     cia_test_int(pc),a1
+        jsr     CIA_ADDICRVECTOR(a6)
+        move.l  (sp)+,a6
+        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-A Timer A, one-shot, latch $1000
+        move.b  #$00,CIA_TALO(a0)
+        move.b  #$10,CIA_TAHI(a0)    ; latch = $1000
+        move.b  #$19,CIA_CRA(a0)     ; START (b0) + one-shot (b3) + LOAD (b4 : charge explicitement)
+        move.l  VBL_COUNT,d7         ; T0 (timeout)
+.m6b_wait:
+        move.l  VBL_COUNT,d0
+        sub.l   d7,d0
+        cmp.l   #100,d0
+        bcc     cia_int_fail         ; timeout -> aucune interruption CIA dispatchée
+        tst.l   CIA_FIRED
+        beq.s   .m6b_wait
+        move.l  a6,-(sp)             ; déclenché -> cleanup : RemICRVector(bit0)
+        move.l  a2,a6
+        moveq   #0,d0
+        suba.l  a1,a1
+        jsr     CIA_REMICRVECTOR(a6)
+        move.l  (sp)+,a6
+        move.l  CIAR_HWBASE(a2),a0
+        move.b  #$00,CIA_CRA(a0)     ; stop Timer A
+        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS (clear) -> pas d'INT2 pendant M3f
+        lea     msg_m6b_ok(pc),a0
+        bsr     ser_puts             ; « M6B CIA INT OK »
+
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
         ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
@@ -1054,6 +1093,20 @@ m6a_fail:                            ; échec M6a (unité VBLANK timer) -> fige
         bsr     ser_puts
 .m6af_hang:
         bra.s   .m6af_hang
+cia_int_fail:                        ; échec M6b (dispatch interruption CIA) -> fige
+        lea     msg_m6b_fail(pc),a0
+        bsr     ser_puts
+.m6bf_hang:
+        bra.s   .m6bf_hang
+; struct Interrupt de test (M6b) : IS_CODE -> cia_test_vec (incrémente CIA_FIRED).
+        EVEN
+cia_test_int:
+        dcb.b   14,0                 ; LN (non chaîné)
+        dc.l    0                    ; IS_DATA
+        dc.l    cia_test_vec         ; IS_CODE
+cia_test_vec:                        ; serveur ICR (a1=data, a5=code, a6=SysBase)
+        addq.l  #1,CIA_FIRED
+        rts
 cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
         dc.l    0,0,0,0,0
 
@@ -1171,6 +1224,12 @@ msg_m6a_ok:
         dc.b    "M6A TIMER OK (VBLANK unit: request replied after ~5 ticks)",13,10,0
 msg_m6a_fail:
         dc.b    "M6A FAILED: timer VBLANK unit incorrect",13,10,0
+msg_m6b_ok:
+        dc.b    "M6B CIA INT OK (INT2 dispatch: CIA-A timer fired registered vector)",13,10,0
+msg_m6b_fail:
+        dc.b    "M6B FAILED: CIA interrupt dispatch incorrect",13,10,0
+ciaa_test_name:
+        dc.b    "ciaa.resource",0
 ciab_test_name:
         dc.b    "ciab.resource",0
 timer_test_name:

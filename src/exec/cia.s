@@ -15,6 +15,8 @@
                 include "exec.i"
 
                 xdef    cia_init
+                xdef    int2_handler      ; autovecteur INT2 (CIA-A) — installé par init_ints
+                xdef    int6_handler      ; autovecteur INT6 (CIA-B)
 
 ; --- ROMTag cia.resource (scanné par build_reslist) ---
         EVEN
@@ -69,7 +71,13 @@ cia_make:
         move.l  a2,LN_NAME(a1)
         move.b  #NT_RESOURCE,LN_TYPE(a1)
         move.l  d2,CIAR_HWBASE(a1)
-        jsr     LVO_ADDRESOURCE(a6)  ; AddResource(a1=base)
+        jsr     LVO_ADDRESOURCE(a6)  ; AddResource(a1=base) (préserve a1 et d2)
+        cmp.l   #CIAA_HW,d2          ; publie le pointeur de base pour le handler d'interruption
+        bne.s   .cm_notA
+        move.l  a1,CIAA_PTR
+        bra.s   .cm_ret
+.cm_notA:
+        move.l  a1,CIAB_PTR
 .cm_ret:
         rts
 
@@ -143,6 +151,57 @@ cia_AbleICR:
 ; le status). À compléter avec la dispatch.
 cia_SetICR:
         moveq   #0,d0
+        rts
+
+; --- dispatch d'interruption CIA (M6b) ---
+; int2_handler ($68 / INT2 / CIA-A), int6_handler ($78 / INT6 / CIA-B) : lisent le registre
+; ICR du chip UNE fois (ACK + efface TOUS les bits pending d'un coup), dispatchent chaque bit
+; posé vers son vecteur enregistré, puis acquittent Paula. IPL 7 à l'entrée (pas d'imbrication
+; avec le VBlank : son switch sauverait le SP du handler, pas d'une tâche). Convention serveur
+; (Amiga) : peut clobber d0-d1/a0-a1/a5 ; préserve d2-d7/a2-a4 -> état de boucle en d2/d3/a2.
+int2_handler:
+        move.w  #$2700,sr
+        movem.l d0-d3/a0-a2/a5/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  CIAA_PTR,a2
+        bsr     cia_dispatch
+        move.w  #INTF_PORTS,INTREQ   ; ack Paula INT2
+        movem.l (sp)+,d0-d3/a0-a2/a5/a6
+        rte
+int6_handler:
+        move.w  #$2700,sr
+        movem.l d0-d3/a0-a2/a5/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  CIAB_PTR,a2
+        bsr     cia_dispatch
+        move.w  #INTF_EXTER,INTREQ   ; ack Paula INT6
+        movem.l (sp)+,d0-d3/a0-a2/a5/a6
+        rte
+cia_dispatch:                        ; a2 = base resource (0 ok), a6 = SysBase
+        move.l  a2,d0
+        beq.s   .cd_ret
+        move.l  CIAR_HWBASE(a2),a0
+        move.b  CIA_ICR_OFF(a0),d3   ; LECTURE ICR : pending (b7=IR, b0-4 sources) + ACK chip
+        and.b   #$1F,d3
+        beq.s   .cd_ret
+        moveq   #0,d2                ; bit 0..4
+.cd_loop:
+        btst    d2,d3
+        beq.s   .cd_next
+        move.l  d2,d0
+        lsl.l   #2,d0
+        lea     CIAR_VECTORS(a2),a0
+        move.l  0(a0,d0.l),d0        ; struct Interrupt* du slot
+        beq.s   .cd_next
+        move.l  d0,a0
+        move.l  IS_DATA(a0),a1
+        move.l  IS_CODE(a0),a5
+        jsr     (a5)                 ; serveur (a1=data, a5=code, a6=SysBase)
+.cd_next:
+        addq.l  #1,d2
+        cmp.l   #5,d2
+        bne.s   .cd_loop
+.cd_ret:
         rts
         EVEN
 cia_end:

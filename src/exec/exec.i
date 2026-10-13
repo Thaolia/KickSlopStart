@@ -51,7 +51,18 @@ ROMBASE  EQU $FC0000
 INTF_SETCLR  EQU $8000        ; INTENA/INTREQ : 1 = pose les bits, 0 = les efface
 INTF_INTEN   EQU $4000        ; maître (INTEN)
 INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
+INTF_PORTS   EQU $0008        ; INT2 / CIA-A
+INTF_EXTER   EQU $2000        ; INT6 / CIA-B
+AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
+AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B)
+; struct Interrupt (exec/interrupts.i) — vecteur ICR
+IS_DATA      EQU 14           ; APTR passé en a1 au serveur
+IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase)
+; CIA timer A — registres (offsets depuis la base CIA = registre<<8)
+CIA_TALO     EQU $400         ; timer A low
+CIA_TAHI     EQU $500         ; timer A high (l'écriture charge le latch)
+CIA_CRA      EQU $E00         ; control register A (b0=START, b3=RUNMODE 1-shot, b4=LOAD)
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
 WP_HTASK     EQU $00000508    ; démo M3e/f : TCB de task_H (pour que task_L la signale)
@@ -63,6 +74,9 @@ RES_LASTPRI  EQU $0000051C    ; démo M4 : dernière RT_PRI initée (vérif ordr
 RES_COUNT    EQU $00000520    ; démo M4 : nombre de résidents démo initialisés
 VBL_SVC      EQU $00000524    ; M6a : routine de service VBlank (0 = aucune ; appelée chaque tick)
 VBL_SVCDATA  EQU $00000528    ; M6a : donnée passée au service en a1 (base du timer.device)
+CIAA_PTR     EQU $0000052C    ; M6b : base ciaa.resource (0 tant que non créé)
+CIAB_PTR     EQU $00000530    ; M6b : base ciab.resource
+CIA_FIRED    EQU $00000534    ; M6b : compteur — un vecteur ICR a été servi (preuve)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

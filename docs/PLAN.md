@@ -159,10 +159,13 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   créés, listés ; aucun travail fonctionnel : cia sans dispatch d'interruption, timer sans unités/BeginIO).
   Le 1er chemin FONCTIONNEL est livré : unité **VBLANK** de timer pilotée par le handler VBlank
   existant (file de requêtes, décrément au VBlank, reply bas-niveau à l'expiration, M6a) = 1er
-  comportement OS observable (timer+interruption+messages+`exec_Signal` depuis l'IRQ). Reste :
-  **dispatch CIA INT2/INT6** (M6b), tâche bloquant sur timer (Wait→wake), retrait éventuel des démos
-  (le handoff de boot reste la démo M3f codée en dur d'ici là), dispatcher par niveau, tâches
-  user-mode, quantum/priorité.
+  comportement OS observable (timer+interruption+messages+`exec_Signal` depuis l'IRQ). La **dispatch
+  d'interruption CIA** (INT2/CIA-A : les vecteurs ICR enregistrés se déclenchent, prouvé bout-en-bout
+  par un timer CIA, M6b) est aussi livrée. Reste : **nest-count d'interruption** — prérequis DUR pour
+  que les interruptions CIA coexistent avec l'ordonnanceur préemptif (sinon un VBlank préemptant un
+  handler CIA corromprait la pile) ; puis unité MICROHZ du timer (via CIA), tâche bloquant sur timer
+  (Wait→wake), retrait éventuel des démos (le handoff de boot reste la démo M3f codée en dur d'ici là),
+  dispatcher par niveau, user-mode, quantum/priorité.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

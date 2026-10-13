@@ -27,16 +27,27 @@
                 xdef    exec_Wait
                 xdef    reschedule
 
+                xref    int2_handler     ; cia.s (autovecteur INT2 / CIA-A)
+                xref    int6_handler     ; cia.s (autovecteur INT6 / CIA-B)
+
 ; init_ints : arme l'interruption VBlank. a6 = SysBase. Clobbers d0/a0.
 init_ints:
         lea     VBL_COUNT,a0
         clr.l   (a0)                              ; compteur à zéro
         clr.b   SCHED_ON                          ; ordonnanceur désarmé (count-only)
         clr.l   VBL_SVC                           ; aucun service VBlank tant que timer non init
-        move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler
+        clr.l   CIAA_PTR                          ; M6b : handlers CIA no-op tant que cia non créé
+        clr.l   CIAB_PTR
+        clr.l   CIA_FIRED
+        move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler VBlank
+        move.l  #int2_handler,AUTOVEC_L2          ; M6b : INT2 (CIA-A / PORTS)
+        move.l  #int6_handler,AUTOVEC_L6          ; M6b : INT6 (CIA-B / EXTER) — câblé, non activé
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
-        move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB),INTENA   ; active VERTB + maître
-        move.w  #$2000,sr                         ; superviseur, IPL=0 -> VERTB passe
+        ; active VERTB + PORTS (INT2) + maître. EXTER(INT6) non activé : niveau 6 > VBlank(3)
+        ; préempterait le VBlank -> imbrication-switch non gérée (nest-count différé) ; CIA-B
+        ; n'a de toute façon aucune source ICR activée. INT2 (niveau 2 < 3) ne préempte pas le VBlank.
+        move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB|INTF_PORTS),INTENA
+        move.w  #$2000,sr                         ; superviseur, IPL=0 -> les interruptions passent
         rts
 
 ; vbl_handler : interruption VBlank (niveau 3) = point de préemption.
