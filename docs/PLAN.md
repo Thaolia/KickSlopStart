@@ -147,10 +147,13 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   VBlank (M3a), **ordonnanceur préemptif superviseur** (M3b), **exclusion mutuelle** — `Forbid()`
   honoré + sections critiques exec enveloppées (M3c), **`Wait`/`WaitPort` + réveil-sur-signal** —
   blocage réel d'une tâche via switch synchrone (M3d) et **yield immédiat sur `Permit`/`Enable`** —
-  reschedule synchrone vers une réveillée prioritaire (M3e, prouvé en coopératif) et **recombinaison
-  yield + préemption** — les deux chemins de switch unifiés coexistent sans corruption (M3f) = livrés et
-  vérifiés par boot FS-UAE. Reste pour clore le bringup exec : dispatcher par niveau, tâches user-mode,
-  quantum/priorité réelle, puis `InitResident` + scan auto-config.
+  reschedule synchrone vers une réveillée prioritaire (M3e, prouvé en coopératif), **recombinaison
+  yield + préemption** — les deux chemins de switch unifiés coexistent sans corruption (M3f) et
+  **machinerie de scan des résidents** — `build_reslist`/`FindResident`/`InitResident`/`InitCode`
+  prouvés par 3 résidents démo initialisés en ordre de priorité (M4) = livrés et vérifiés par boot
+  FS-UAE. Reste pour clore le bringup exec : **AUTOINIT (MakeLibrary + InitStruct)** puis les VRAIS
+  modules résidents (le handoff de boot reste la démo M3f codée en dur d'ici là), dispatcher par
+  niveau, tâches user-mode, quantum/priorité réelle.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

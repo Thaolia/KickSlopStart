@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -132,9 +132,25 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   sous `SCHED_ON=1` un tick dispatcherait task_H de toute façon (preuve non isolable en un seul mode).
   Le code anti-course (handler efface un `AttnResched` posé, branche `.rs_none`) est correct par
   inspection mais **inerte** dans cette démo (task_L signale sous Forbid → le tick défère).
-- **À venir (M3f+)** : dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`),
-  **upgrade des ports en Disable** (dès qu'un device piloté par IRQ appelle `PutMsg`/`ReplyMsg`),
-  save/restore par-TCB du nesting + `Wait`, tâches user-mode (frame USP/SSP), `RemTask`, quantum
-  `SFB_TQE`, priorité réelle, puis `InitResident` + scan des résidents → `cia.resource`/`timer.device`.
+- **M4** (scan des résidents + InitResident) : la **machinerie de découverte data-driven** des modules.
+  `build_reslist` (`resident.s`) scanne `[RESSCAN_LO,RESSCAN_HI)` (toute la ROM) pour les ROMTags —
+  mot `RTC_MATCHWORD` ($4AFC) à adresse paire dont `RT_MATCHTAG` pointe sur lui-même (rejette un
+  `$4AFC` fortuit, p. ex. l'immédiat du `cmp.w` du scan lui-même) — reprend à `RT_ENDSKIP`, bâtit le
+  tableau NUL-terminé `ExecBase->ResModules` trié par `RT_PRI` **décroissant** (tri à bulles stable).
+  `InitCode` le parcourt et appelle `InitResident` sur chaque module (filtre version). `InitResident`
+  valide le matchword puis, en direct-init (RTF_AUTOINIT clair), saute à `RT_INIT` avec la convention
+  ABI **`D0=0, A0=segList, A6=ExecBase`** (le resident n'est pas passé) ; **AUTOINIT (MakeLibrary +
+  InitStruct) est DIFFÉRÉ** (no-op). `FindResident` cherche par nom dans `ResModules`. Prouvé par 3
+  résidents démo (pri 60/10/-20) **rangés en mémoire dans un ordre différent** (mid, lo, hi) pour que
+  le tri soit load-bearing : noms émis `hi→mid→lo` (ordre de priorité), `RES_COUNT==3`, FindResident
+  retrouve le bon. RED : tri désactivé → init en ordre de scan → échec du contrôle d'ordre ; dispatch
+  `InitResident` désactivé → `RES_COUNT=0`. ⚠️ **Ce n'est PAS encore le handoff de boot** : la phase M4
+  tourne puis la démo M3f codée en dur s'exécute (le vrai lancement par un résident viendra avec les
+  vrais modules). Convention direct-init **vérifiée** contre l'AutoDoc exec (corrigée en cours de route).
+- **À venir (M4+)** : **AUTOINIT (MakeLibrary + InitStruct)** — bloqueur immédiat car `timer.device` (et
+  les devices en général) sont AUTOINIT ; vérifier si `cia.resource` est direct-init ou AUTOINIT. Puis
+  dispatcher par niveau (`INTREQR`/`IntVects`/`SetIntVector`/`AddIntServer`), **upgrade des ports en
+  Disable**, save/restore par-TCB du nesting + `Wait`, tâches user-mode, `RemTask`, quantum `SFB_TQE`,
+  priorité réelle, puis les vrais résidents → `cia.resource`/`timer.device` (retrait des résidents démo).
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

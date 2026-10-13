@@ -59,6 +59,8 @@ WP_CONS      EQU $0000050C    ; démo M3e/f : réveils consommés par task_H (vi
 WP_PROD      EQU $00000510    ; démo M3e/f : itérations de task_L (producteur, ne bloque jamais)
 WP_SPIN      EQU $00000514    ; démo M3f : itérations de task_S (dispatchée SEULEMENT par préemption)
 WP_STAT      EQU $00000518    ; démo M3f : b0 = marqueur « M3F LIVE » déjà émis
+RES_LASTPRI  EQU $0000051C    ; démo M4 : dernière RT_PRI initée (vérif ordre décroissant)
+RES_COUNT    EQU $00000520    ; démo M4 : nombre de résidents démo initialisés
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -82,6 +84,7 @@ EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
 EB_ATTNRESCHED EQU $12A         ; UWORD : reschedule en attente (posé par Signal, consommé
                                 ; par Permit/Enable au déverrouillage du nesting = yield)
+EB_RESMODULES EQU $12C          ; APTR : tableau NUL-terminé de struct Resident* (pri-trié)
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E
@@ -147,10 +150,33 @@ MN_REPLYPORT  EQU 14
 MN_LENGTH     EQU 18
 MN_SIZE       EQU 20
 
+; struct Resident (exec/resident.i, V34) — ROMTag scanné au boot pour bâtir l'OS
+RTC_MATCHWORD EQU $4AFC        ; RT_MATCHWORD : signature d'un ROMTag
+RTF_AUTOINIT  EQU $80          ; RT_FLAGS bit 7 : RT_INIT -> table auto-init (MakeLibrary)
+RTF_COLDSTART EQU $01
+NT_RESOURCE   EQU 8
+RT_MATCHWORD  EQU 0            ; UWORD
+RT_MATCHTAG   EQU 2            ; APTR -> self (valide le match vs un $4AFC fortuit)
+RT_ENDSKIP    EQU 6            ; APTR -> reprise du scan (fin du module)
+RT_FLAGS      EQU 10           ; UBYTE
+RT_VERSION    EQU 11           ; UBYTE
+RT_TYPE       EQU 12           ; UBYTE
+RT_PRI        EQU 13           ; BYTE signé (ordre d'init décroissant)
+RT_NAME       EQU 14           ; APTR
+RT_IDSTRING   EQU 18           ; APTR
+RT_INIT       EQU 22           ; APTR -> routine d'init (ou table si AUTOINIT)
+RT_SIZE       EQU 26
+RESSCAN_LO    EQU ROMBASE          ; plage de scan des ROMTags = toute la ROM
+RESSCAN_HI    EQU ROMBASE+$40000   ; (256K ; le padding/footer ne contient pas de ROMTag valide)
+RESMAX        EQU 16              ; capacité du tableau ResModules (résidents + terminateur NUL)
+
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
 LVO_EXPUNGE  EQU -18
+LVO_INITCODE     EQU -72
+LVO_FINDRESIDENT EQU -96
+LVO_INITRESIDENT EQU -102
 LVO_DISABLE  EQU -120
 LVO_ENABLE   EQU -126
 LVO_FORBID   EQU -132

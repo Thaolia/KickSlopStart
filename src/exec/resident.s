@@ -1,0 +1,162 @@
+; src/exec/resident.s — exec.library : découverte des modules résidents (M4).
+;   build_reslist   : scanne la ROM pour les ROMTags (struct Resident), bâtit le tableau
+;                     NUL-terminé ExecBase->ResModules trié par RT_PRI décroissant.
+;   FindResident    : recherche un résident par nom dans ResModules.
+;   InitResident    : initialise UN résident (matchword vérifié ; chemin direct-init ;
+;                     AUTOINIT/MakeLibrary DIFFÉRÉ -> no-op ce milestone).
+;   InitCode        : parcourt ResModules et InitResident chacun (filtre version).
+; C'est la colonne vertébrale du boot Amiga : l'OS se construit en scannant des ROMTags
+; et en les initialisant par priorité décroissante (au lieu d'un dispatch codé en dur).
+; Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
+; Piste IMPLÉMENTATION (« clean ») : NDK exec/resident.i + AutoDocs (ABI publique).
+; AUCUNE lecture de la ROM propriétaire ; priorités des résidents démo = arbitraires.
+
+                include "exec.i"
+
+                xdef    build_reslist
+                xdef    exec_FindResident
+                xdef    exec_InitResident
+                xdef    exec_InitCode
+
+; build_reslist : a6 = SysBase. Alloue le tableau, scanne [RESSCAN_LO,RESSCAN_HI), trie,
+; publie ExecBase->ResModules. Un ROMTag = mot $4AFC à adresse PAIRE dont RT_MATCHTAG
+; pointe sur lui-même (rejette les $4AFC fortuits). Reprise du scan à RT_ENDSKIP.
+build_reslist:
+        movem.l d2-d6/a2-a4,-(sp)
+        move.l  #(RESMAX+1)*4,d0     ; RESMAX pointeurs + 1 terminateur NUL
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a3                ; a3 = base du tableau
+        move.l  d0,EB_RESMODULES(a6)
+        move.l  d0,a4                ; a4 = curseur d'écriture
+        moveq   #0,d2                ; d2 = compte de résidents
+        move.l  #RESSCAN_LO,a2       ; a2 = p (pointeur de scan, toujours pair)
+.scan:
+        cmp.l   #RESSCAN_HI,a2
+        bcc.s   .sort                ; p >= fin -> scan terminé
+        cmp.w   #RTC_MATCHWORD,(a2)
+        bne.s   .scan_next
+        move.l  RT_MATCHTAG(a2),d0
+        cmp.l   a2,d0
+        bne.s   .scan_next           ; RT_MATCHTAG != self -> $4AFC fortuit
+        cmp.w   #RESMAX,d2
+        bcc.s   .scan_skip           ; tableau plein (défensif) -> ne pas enregistrer
+        move.l  a2,(a4)+             ; array[count++] = p
+        addq.l  #1,d2
+.scan_skip:
+        move.l  RT_ENDSKIP(a2),d0    ; reprendre après le corps du module
+        cmp.l   a2,d0
+        bls.s   .scan_next           ; ENDSKIP <= p (non-avançant) -> avance de 2 (défensif)
+        move.l  d0,a2
+        bra.s   .scan
+.scan_next:
+        addq.l  #2,a2
+        bra.s   .scan
+.sort:
+        ; tri à bulles décroissant par RT_PRI (N petit ; pas d'échange à pri égale -> stable
+        ; = FIFO dans l'ordre de scan = ordre d'adresse). array = a3, count = d2.
+        cmp.l   #2,d2
+        bcs.s   .done                ; 0 ou 1 résident -> déjà trié
+.sort_pass:
+        moveq   #0,d4                ; drapeau d'échange
+        move.l  a3,a0                ; a0 = &array[0]
+        moveq   #1,d3                ; j = 1
+.sort_j:
+        cmp.l   d2,d3
+        bcc.s   .sort_passend        ; j >= count -> fin de passe
+        move.l  (a0),a1              ; array[j-1]
+        move.l  4(a0),a2             ; array[j]
+        move.b  RT_PRI(a1),d5
+        move.b  RT_PRI(a2),d6
+        cmp.b   d6,d5                ; pri[j-1] - pri[j] (signé)
+        bge.s   .sort_noswap         ; pri[j-1] >= pri[j] -> ordre décroissant respecté
+        move.l  a2,(a0)              ; échange array[j-1] <-> array[j]
+        move.l  a1,4(a0)
+        moveq   #1,d4
+.sort_noswap:
+        addq.l  #4,a0
+        addq.l  #1,d3
+        bra.s   .sort_j
+.sort_passend:
+        tst.l   d4
+        bne.s   .sort_pass           ; un échange eu lieu -> repasse
+.done:
+        movem.l (sp)+,d2-d6/a2-a4
+        rts
+
+; FindResident(name a1) -> d0 = struct Resident* | 0. Recherche dans ResModules.
+exec_FindResident:
+        movem.l d2/a2/a3,-(sp)
+        move.l  a1,a2                ; a2 = nom recherché
+        move.l  EB_RESMODULES(a6),a3
+        move.l  a3,d0
+        beq.s   .fr_none             ; pas de tableau
+.fr_loop:
+        move.l  (a3)+,d0             ; prochain Resident* (d0 conservé = valeur de retour)
+        beq.s   .fr_none             ; terminateur NUL -> non trouvé
+        move.l  d0,a0
+        move.l  RT_NAME(a0),a0       ; nom du résident
+        move.l  a2,a1                ; nom recherché
+.fr_cmp:
+        move.b  (a0)+,d1
+        move.b  (a1)+,d2
+        cmp.b   d1,d2
+        bne.s   .fr_loop             ; divergence -> résident suivant
+        tst.b   d1
+        bne.s   .fr_cmp              ; pas la fin -> continuer
+        bra.s   .fr_done             ; égalité complète -> d0 = ce Resident*
+.fr_none:
+        moveq   #0,d0
+.fr_done:
+        movem.l (sp)+,d2/a2/a3
+        rts
+
+; InitResident(resident a1, segList d1) -> d0. Valide le matchword puis appelle l'init.
+; Chemin direct-init (RTF_AUTOINIT clair) : RT_INIT est une routine appelée avec, par
+; convention ABI (AutoDoc exec InitResident) : D0 = 0, A0 = segList, A6 = ExecBase ;
+; le pointeur resident N'EST PAS passé (la routine d'init se connaît statiquement). Sa
+; valeur de retour (d0) est renvoyée. Pour un module ROM, segList = NULL.
+; AUTOINIT (RT_INIT -> table ; MakeLibrary + InitStruct) : DIFFÉRÉ -> no-op (d0=0).
+exec_InitResident:
+        cmp.w   #RTC_MATCHWORD,(a1)
+        bne.s   .ir_fail             ; pas un ROMTag -> 0
+        btst    #7,RT_FLAGS(a1)      ; RTF_AUTOINIT ?
+        bne.s   .ir_autoinit
+        move.l  a2,-(sp)
+        move.l  RT_INIT(a1),a2       ; routine d'init
+        move.l  d1,a0                ; a0 = segList (convention)
+        moveq   #0,d0                ; d0 = 0 (convention)
+        jsr     (a2)                 ; init(d0=0, a0=segList, a6=SysBase) -> d0
+        move.l  (sp)+,a2
+        rts
+.ir_autoinit:
+        moveq   #0,d0                ; MakeLibrary/InitStruct différés (aucun module AUTOINIT encore)
+        rts
+.ir_fail:
+        moveq   #0,d0
+        rts
+
+; InitCode(startClass d0, version d1) : parcourt ResModules (déjà pri-trié) et appelle
+; InitResident sur chaque résident de RT_VERSION >= version. Le filtre par CLASSE
+; (startClass : COLDSTART vs AFTERDOS) est SIMPLIFIÉ ce milestone (tout en phase coldstart,
+; dos absent) -> startClass ignoré. segList = 0 (nos ROMTags n'ont pas de seglist).
+exec_InitCode:
+        movem.l d2-d3/a2,-(sp)
+        move.l  d1,d3                ; version minimale
+        move.l  EB_RESMODULES(a6),a2
+        move.l  a2,d0
+        beq.s   .ic_done             ; pas de tableau
+.ic_loop:
+        move.l  (a2)+,d0             ; Resident*
+        beq.s   .ic_done             ; terminateur NUL
+        move.l  d0,a1                ; a1 = resident (pour InitResident)
+        moveq   #0,d2
+        move.b  RT_VERSION(a1),d2
+        cmp.l   d3,d2
+        bcs.s   .ic_loop             ; RT_VERSION < version -> sauter
+        moveq   #0,d1                ; segList = 0
+        jsr     LVO_INITRESIDENT(a6)
+        bra.s   .ic_loop
+.ic_done:
+        movem.l (sp)+,d2-d3/a2
+        rts

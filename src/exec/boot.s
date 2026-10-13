@@ -18,6 +18,7 @@
                 xref    init_memory      ; memory.s
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
+                xref    build_reslist    ; resident.s (scan des ROMTags)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -148,6 +149,27 @@ coldstart:                        ; $FC00D2
         move.w  #C_WHITE,COLOR00
         lea     msg_ok(pc),a0
         bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
+
+        ; --- M4 : scan des résidents + InitCode (machinerie data-driven) ---
+        ; Prouve la MACHINERIE de découverte de modules (scan ROM des ROMTags -> ResModules
+        ; pri-trié -> InitResident/InitCode de chacun en ordre décroissant) avec des résidents
+        ; DÉMO. N'EST PAS le handoff de boot : le handoff reste la démo M3f codée en dur
+        ; ci-dessous (rte qui ne revient jamais) tant qu'aucun vrai module (cia/timer...)
+        ; n'existe. Les résidents démo ne font qu'émettre leur nom ; rien n'est lancé par eux.
+        move.l  #127,RES_LASTPRI     ; borne haute (toute RT_PRI <= 127 passe)
+        clr.l   RES_COUNT
+        jsr     build_reslist        ; scanne [RESSCAN_LO,HI) -> ExecBase->ResModules
+        moveq   #0,d0                ; startClass (0 = toutes classes, phase coldstart)
+        moveq   #0,d1                ; version minimale 0
+        jsr     LVO_INITCODE(a6)     ; init chaque résident démo (émet son nom en ordre de pri)
+        lea     res_mid_name(pc),a1  ; FindResident(nom) doit retrouver le bon résident
+        jsr     LVO_FINDRESIDENT(a6)
+        cmp.l   #res_mid,d0
+        bne     res_fail
+        cmp.l   #3,RES_COUNT         ; les 3 résidents démo initialisés ?
+        bne     res_fail
+        lea     msg_res_ok(pc),a0
+        bsr     ser_puts             ; « M4 RESIDENTS OK »
 
         ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
         ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
@@ -791,6 +813,89 @@ demo_fail:                           ; sentinelle KO -> preuve de corruption
 task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
         bra.s   task_exit
 
+; ============================ résidents démo (M4) ==================
+; 3 ROMTags scannés par build_reslist puis initialisés par InitCode en ordre de PRIORITÉ
+; DÉCROISSANTE (hi=60, mid=10, lo=-20). Chacun partage res_demo_init, qui vérifie que sa
+; RT_PRI n'est PAS supérieure à la précédente (ordre décroissant maintenu) puis émet son
+; nom. Preuve : noms émis hi->mid->lo dans le log + RES_COUNT==3.
+; IMPORTANT : rangés en mémoire dans un ordre (mid, lo, hi) DIFFÉRENT de l'ordre de
+; priorité, pour que le TRI de build_reslist soit load-bearing (sinon l'ordre de scan
+; suffirait). ROMTags non-AUTOINIT (direct-init). Alignement PAIR obligatoire (le scan
+; lit des mots à adresses paires ; RT_ENDSKIP doit rester pair).
+        EVEN
+res_mid:
+        dc.w    RTC_MATCHWORD
+        dc.l    res_mid              ; RT_MATCHTAG = self (valide le match)
+        dc.l    res_mid_end          ; RT_ENDSKIP
+        dc.b    0,1,NT_RESOURCE,10   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.l    res_mid_name         ; RT_NAME
+        dc.l    res_mid_name         ; RT_IDSTRING
+        dc.l    res_mid_init         ; RT_INIT (routine propre au module)
+res_mid_name:
+        dc.b    "demo.res.mid",0
+        EVEN
+res_mid_end:
+res_lo:
+        dc.w    RTC_MATCHWORD
+        dc.l    res_lo
+        dc.l    res_lo_end
+        dc.b    0,1,NT_RESOURCE,-20
+        dc.l    res_lo_name
+        dc.l    res_lo_name
+        dc.l    res_lo_init
+res_lo_name:
+        dc.b    "demo.res.lo",0
+        EVEN
+res_lo_end:
+res_hi:
+        dc.w    RTC_MATCHWORD
+        dc.l    res_hi
+        dc.l    res_hi_end
+        dc.b    0,1,NT_RESOURCE,60
+        dc.l    res_hi_name
+        dc.l    res_hi_name
+        dc.l    res_hi_init
+res_hi_name:
+        dc.b    "demo.res.hi",0
+        EVEN
+res_hi_end:
+
+; Routines d'init des résidents démo. Appelées par InitResident avec la convention ABI
+; direct-init (D0=0, A0=segList, A6=SysBase) : le pointeur resident n'est PAS fourni, donc
+; chaque routine connaît STATIQUEMENT sa priorité et son nom (comme un vrai module). Elles
+; passent (d0=pri signée, a1=nom) à res_demo_common.
+res_hi_init:
+        moveq   #60,d0
+        lea     res_hi_name(pc),a1
+        bra.s   res_demo_common
+res_mid_init:
+        moveq   #10,d0
+        lea     res_mid_name(pc),a1
+        bra.s   res_demo_common
+res_lo_init:
+        moveq   #-20,d0
+        lea     res_lo_name(pc),a1
+        ; tombe dans res_demo_common
+; res_demo_common : d0 = RT_PRI (signée, longword via moveq), a1 = nom. Vérifie l'ordre
+; décroissant via RES_LASTPRI, compte dans RES_COUNT, émet le nom + CRLF. Retourne d0=0.
+res_demo_common:
+        cmp.l   RES_LASTPRI,d0
+        bgt     res_fail             ; pri > précédente -> ordre CROISSANT = scan/tri FAUX
+        move.l  d0,RES_LASTPRI
+        addq.l  #1,RES_COUNT
+        move.l  a1,a0                ; nom
+        bsr     ser_puts             ; émet le nom (ordre visible hi->mid->lo)
+        lea     msg_crlf(pc),a0
+        bsr     ser_puts
+        moveq   #0,d0
+        rts
+
+res_fail:                            ; échec M4 (ordre, OU FindResident/RES_COUNT) -> fige
+        lea     msg_res_fail(pc),a0
+        bsr     ser_puts
+.resf_hang:
+        bra.s   .resf_hang
+
 ; ============================ données ==============================
 exec_name:
         dc.b    "exec.library",0
@@ -836,4 +941,10 @@ msg_m3flive:
         dc.b    "M3F LIVE: preemption + yield coexist (both scheduling paths OK)",13,10,0
 msg_m3ffail:
         dc.b    "M3F FAILED: context sentinel corrupted across a switch",13,10,0
+msg_res_ok:
+        dc.b    "M4 RESIDENTS OK (scan + InitResident in priority order)",13,10,0
+msg_res_fail:
+        dc.b    "M4 FAILED: resident scan/init incorrect",13,10,0
+msg_crlf:
+        dc.b    13,10,0
         EVEN

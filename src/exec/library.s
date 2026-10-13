@@ -40,6 +40,9 @@
                 xref    exec_FreeSignal
                 xref    exec_Wait        ; interrupts.s (scheduler : switch synchrone)
                 xref    reschedule       ; interrupts.s (yield-sur-Permit : switch synchrone)
+                xref    exec_InitCode    ; resident.s (scan + init des modules résidents)
+                xref    exec_FindResident
+                xref    exec_InitResident
                 xref    exec_AddPort     ; ports.s
                 xref    exec_RemPort
                 xref    exec_PutMsg
@@ -64,6 +67,12 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_Close,LVO_CLOSE+2(a6)
         move.w  #$4EF9,LVO_EXPUNGE(a6)
         move.l  #exec_Expunge,LVO_EXPUNGE+2(a6)
+        move.w  #$4EF9,LVO_INITCODE(a6)
+        move.l  #exec_InitCode,LVO_INITCODE+2(a6)
+        move.w  #$4EF9,LVO_FINDRESIDENT(a6)
+        move.l  #exec_FindResident,LVO_FINDRESIDENT+2(a6)
+        move.w  #$4EF9,LVO_INITRESIDENT(a6)
+        move.l  #exec_InitResident,LVO_INITRESIDENT+2(a6)
         move.w  #$4EF9,LVO_DISABLE(a6)
         move.l  #exec_Disable,LVO_DISABLE+2(a6)
         move.w  #$4EF9,LVO_ENABLE(a6)

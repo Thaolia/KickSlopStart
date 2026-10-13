@@ -20,7 +20,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M3d** — `Wait`/`WaitPort` + réveil-sur-signal (switch synchrone, blocage réel d'une tâche) | ✅ **fait et vérifié** (série « M3D LIVE » ; ping-pong 2 ports ; RED réveil cassé → deadlock, RED blocage cassé → `FAILED`) |
 | **M3e** — yield immédiat sur `Permit`/`Enable` (reschedule synchrone vers une réveillée prioritaire) | ✅ **fait et vérifié** (série « M3E LIVE » ; démo coopérative pri 10/0 ; RED yield désactivé → starvation franche) |
 | **M3f** — recombinaison yield + préemption (switchs unifiés, coexistence sans corruption) | ✅ **fait et vérifié** (série « M3F LIVE » ; 3 tâches `SCHED_ON=1` + sentinelles de contexte ; RED préemption off → starvation) |
-| **M3f+** — dispatcher par niveau, tâches user-mode, quantum/priorité réelle, scan résidents → `cia`/`timer`, graphics, dos | à venir (voir `docs/PLAN.md`) |
+| **M4** — scan des résidents (ROMTags) + `FindResident`/`InitResident`/`InitCode` | ✅ **fait et vérifié** (série « M4 RESIDENTS OK » ; 3 résidents démo initialisés en ordre de priorité ; RED tri cassé / dispatch cassé → `FAILED`) |
+| **M4+** — AUTOINIT (MakeLibrary), vrais modules → `cia.resource`/`timer.device`, dispatcher par niveau, user-mode, graphics, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 
