@@ -168,10 +168,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   TaskReady à IPL3, préemptable par INT6 (niveau 6) dont l'`exec_Signal` touche la même liste. Fermé en
   montant IPL7 autour de la seule section critique (+ `timer_reply` AddTail IPL7). Livré avec l'**unité
   MICROHZ** (CIA-B/INT6) et une **tâche qui bloque sur un timer** (Wait→wake), prouvé par un détecteur
-  structurel `VBL_CLASH==0` (RED : gate retiré → clash) + yield re-prouvé en coopératif. Reste : hazard
-  de pile user-mode (SSP partagée — le vrai « nest-count » devient nécessaire là), dispatcher par niveau
-  (`SetIntVector`/`AddIntServer`), upgrade des ports en Disable, retrait éventuel des démos (le handoff de
-  boot reste la démo M3f/M7a codée en dur d'ici là), user-mode, quantum/priorité, calibration µs MICROHZ.
+  structurel `VBL_CLASH==0` (RED : gate retiré → clash) + yield re-prouvé en coopératif. **M7b** livre le
+  **dispatcher d'interruption par numéro** : `IntVects`/`SetIntVector` (vecteur exclusif)/`AddIntServer`
+  (chaîne de serveurs par priorité, marchée par `intr_chain_walker`) ; les autovecteurs CIA hardcodés sont
+  remplacés par `int2_dispatch`/`int6_dispatch` génériques et cia.resource devient un SERVEUR PORTS/EXTER
+  (comme le vrai exec). Reste : hazard de pile user-mode (SSP partagée — le vrai « nest-count » devient
+  nécessaire là), fidélité IPL-par-niveau (VERTB en chaîne + switch-sur-sortie-d'IRQ), upgrade des ports en
+  Disable, retrait éventuel des démos (le handoff de boot reste la démo M3f/M7a codée en dur d'ici là),
+  user-mode, quantum/priorité, calibration µs MICROHZ.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

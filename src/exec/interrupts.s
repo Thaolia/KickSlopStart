@@ -30,9 +30,12 @@
                 xdef    init_ints
                 xdef    exec_Wait
                 xdef    reschedule
+                xdef    exec_SetIntVector  ; M7b : dispatcher par numéro (vecteur exclusif)
+                xdef    exec_AddIntServer  ; M7b : dispatcher par numéro (chaîne de serveurs)
 
-                xref    int2_handler     ; cia.s (autovecteur INT2 / CIA-A)
-                xref    int6_handler     ; cia.s (autovecteur INT6 / CIA-B)
+                xref    newlist          ; lists.s (NEWLIST d'une chaîne de serveurs)
+                xref    exec_Enqueue     ; lists.s (AddIntServer : insertion par priorité)
+                xref    exec_AllocMem    ; memory.s (alloc du bloc IntVects à init_ints)
 
 ; init_ints : arme l'interruption VBlank. a6 = SysBase. Clobbers d0/a0.
 init_ints:
@@ -45,9 +48,13 @@ init_ints:
         clr.l   CIA_FIRED
         clr.b   VBL_INSURG                        ; M7a : aucune chirurgie en cours au départ
         clr.l   VBL_CLASH                         ; M7a : compteur de clashs de ré-entrance
-        move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler VBlank
-        move.l  #int2_handler,AUTOVEC_L2          ; M6b : INT2 (CIA-A / PORTS)
-        move.l  #int6_handler,AUTOVEC_L6          ; M6b/M7a : INT6 (CIA-B / EXTER)
+        move.l  #INTVECTS_TOTAL,d0                ; M7b : bloc IntVects (16 vecteurs + 16 svlist)
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)                  ; (préserve a6 ; CLEAR -> IV_CODE=0 = aucun handler)
+        move.l  d0,EB_INTVECTS(a6)
+        move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler VBlank (scheduler)
+        move.l  #int2_dispatch,AUTOVEC_L2         ; M7b : INT2/PORTS -> dispatcher générique par numéro
+        move.l  #int6_dispatch,AUTOVEC_L6         ; M7b : INT6/EXTER -> dispatcher générique par numéro
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
         ; active VERTB + PORTS (INT2) + maître. EXTER(INT6, niveau 6 > VBlank 3) est activé
         ; PLUS TARD, au bringup de l'unité MICROHZ (boot.s M7a) : il peut désormais préempter le
@@ -196,4 +203,130 @@ reschedule:
         move.w  #$2000,sr
         rts
 .rs_resume:                         ; re-dispatchée : GPR/a6 restaurés, SR=$2000 -> retour Permit
+        rts
+
+; ============================ dispatcher par numéro (M7b) ==========
+; SetIntVector/AddIntServer + autovecteurs génériques INT2(PORTS)/INT6(EXTER) + walker de chaîne.
+; CAVEAT (ledgeré) : dispatch PAR NUMÉRO (lookup IntVects[n] + chaîne de serveurs), PAS la fidélité
+; IPL-PAR-NIVEAU (tourner à l'IPL de l'interruption) — on garde IPL7 à l'entrée comme les handlers CIA
+; M6b/M7a (préserve la discipline du gate M7a). VERTB garde son handler dédié (vbl_handler) : le
+; refactor VERTB->chaîne + switch-sur-sortie-d'IRQ est un jalon distinct (M7c).
+
+; int2_dispatch ($68, niveau 2) : seule source de niveau 2 = PORTS -> dispatche IntVects[INTB_PORTS].
+int2_dispatch:
+        move.w  #$2700,sr           ; IPL7 (discipline M6b/M7a ; caveat ci-dessus)
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  ($4).w,a6
+        moveq   #INTB_PORTS,d0
+        bsr     intr_dispatch_number
+        move.w  #INTF_PORTS,INTREQ  ; ack Paula INT2
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+; int6_dispatch ($78, niveau 6) : seule source de niveau 6 = EXTER -> dispatche IntVects[INTB_EXTER].
+int6_dispatch:
+        move.w  #$2700,sr
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  ($4).w,a6
+        moveq   #INTB_EXTER,d0
+        bsr     intr_dispatch_number
+        move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+
+; intr_dispatch_number(d0.l = numéro ; a6 = SysBase) : appelle le handler de IntVects[n]. Vecteur
+; exclusif (SetIntVector) -> appel direct ; chaîne (AddIntServer) -> IV_CODE = intr_chain_walker.
+; Convention (AutoDoc) : a0=$DFF000, a1=IS_DATA (ou &svlist), a5=IS_CODE (ou walker), a6=SysBase.
+intr_dispatch_number:
+        move.l  EB_INTVECTS(a6),a1
+        move.l  a1,d1
+        beq.s   .idn_ret            ; table non allouée (défensif)
+        lsl.l   #3,d0               ; n * IV_SIZE(8)
+        add.l   d0,a1               ; a1 = &IntVects[n]
+        move.l  IV_CODE(a1),a5
+        move.l  a5,d1
+        beq.s   .idn_ret            ; aucun handler pour ce numéro
+        move.l  IV_DATA(a1),a1      ; a1 = IS_DATA (ou &svlist)
+        lea     CUSTOM,a0           ; a0 = $DFF000 (convention serveur)
+        jsr     (a5)
+.idn_ret:
+        rts
+
+; intr_chain_walker(a1 = &svlist, a0=$DFF000, a6=SysBase) : marche la chaîne par priorité (tête = plus
+; haute pri, posée par Enqueue). Appelle chaque serveur jusqu'à Z clair (!=0 = « géré, stop ») ; Z mis
+; (==0) = continue (AutoDoc AddIntServer ; les serveurs « call-all » type VERTB retournent Z mis).
+; a2/a3 = marche, a4 = SysBase stashé — préservés par les serveurs (convention d2-d7/a2-a4).
+intr_chain_walker:
+        movem.l d2/a2-a4,-(sp)
+        move.l  a6,a4               ; stash SysBase (a4 préservé par les serveurs)
+        move.l  (a1),a2             ; a2 = lh_Head (1er noeud)
+.cw_loop:
+        move.l  (a2),d2             ; d2 = node->Succ (registre DONNÉES -> pose les flags ;
+        beq.s   .cw_done            ; MOVEA vers Ax n'affecterait PAS les CC -> beq faux). 0 => tail.
+        movea.l d2,a3               ; a3 = Succ (préservé par les serveurs : d2-d7/a2-a4)
+        move.l  IS_DATA(a2),a1      ; a1 = IS_DATA du serveur
+        move.l  IS_CODE(a2),a5
+        lea     CUSTOM,a0           ; re-fournit a0=$DFF000 (un serveur a pu le clobber)
+        move.l  a4,a6               ; re-fournit a6=SysBase
+        jsr     (a5)
+        bne.s   .cw_done            ; Z clair -> serveur a « géré » -> stop la chaîne
+        movea.l a3,a2               ; noeud suivant
+        bra.s   .cw_loop
+.cw_done:
+        movem.l (sp)+,d2/a2-a4
+        rts
+
+; SetIntVector(intNum d0, interrupt a1) -> d0 = ancien Interrupt (SIMPLIFIÉ : 0, cf. ledger). Vecteur
+; EXCLUSIF : copie IS_DATA/IS_CODE dans IntVects[n] (a1=NULL -> efface). a6=SysBase.
+exec_SetIntVector:
+        move.l  EB_INTVECTS(a6),a0
+        move.l  a0,d1
+        beq.s   .siv_ret
+        lsl.l   #3,d0               ; n * IV_SIZE
+        add.l   d0,a0               ; a0 = &IntVects[n]
+        move.l  a1,d1
+        beq.s   .siv_null
+        move.l  IS_DATA(a1),IV_DATA(a0)
+        move.l  IS_CODE(a1),IV_CODE(a0)
+        bra.s   .siv_ret
+.siv_null:
+        clr.l   IV_DATA(a0)
+        clr.l   IV_CODE(a0)
+.siv_ret:
+        moveq   #0,d0               ; ancien Interrupt (non suivi -> 0)
+        rts
+
+; AddIntServer(intNum d0, interrupt a1) -> void. Ajoute le serveur à la chaîne du numéro, trié par
+; LN_PRI. 1er serveur : NEWLIST la svlist, pose IV_DATA=&svlist / IV_CODE=intr_chain_walker. a6=SysBase.
+exec_AddIntServer:
+        movem.l d2/a2/a3,-(sp)
+        move.l  a1,a2               ; a2 = interrupt (préservé par newlist/Enqueue)
+        move.l  EB_INTVECTS(a6),a3  ; a3 = base table
+        move.l  a3,d1
+        beq.s   .ais_ret            ; table absente (défensif)
+        move.l  d0,d2               ; d2 = numéro
+        move.l  d2,d1               ; &IntVects[n] = base + n*8
+        lsl.l   #3,d1
+        lea     0(a3,d1.l),a0       ; a0 = &IntVects[n]
+        cmp.l   #intr_chain_walker,IV_CODE(a0)
+        beq.s   .ais_enq            ; déjà une chaîne
+        move.l  d2,d1               ; 1er serveur : &svlist[n] = base + SVOFF + n*14
+        mulu    #IV_LIST_SIZE,d1
+        add.l   #INTVECTS_SVOFF,d1
+        lea     0(a3,d1.l),a1       ; a1 = &svlist[n]
+        move.l  a0,-(sp)            ; sauve &IntVects[n]
+        move.l  a1,-(sp)            ; sauve &svlist[n]
+        jsr     newlist             ; NEWLIST(a1) (clobbe a0)
+        move.l  (sp)+,a1
+        move.l  (sp)+,a0
+        move.l  a1,IV_DATA(a0)
+        move.l  #intr_chain_walker,IV_CODE(a0)
+.ais_enq:
+        move.l  d2,d1               ; &svlist[n] (robuste aux deux chemins)
+        mulu    #IV_LIST_SIZE,d1
+        add.l   #INTVECTS_SVOFF,d1
+        lea     0(a3,d1.l),a0       ; a0 = &svlist[n]
+        move.l  a2,a1               ; a1 = interrupt
+        jsr     LVO_ENQUEUE(a6)     ; insère par LN_PRI (tête = plus haute pri)
+.ais_ret:
+        movem.l (sp)+,d2/a2/a3
         rts

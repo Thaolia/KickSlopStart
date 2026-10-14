@@ -27,7 +27,8 @@ Réimplémentation open-source, **clean-room**, d'un Kickstart compatible **Amig
 | **M6a** — unité VBLANK de `timer.device` fonctionnelle (requête temporisée + répondue par le handler VBlank) | ✅ **fait et vérifié** (série « M6A TIMER OK » ; requête répondue après ~5 ticks + `exec_Signal` depuis l'IRQ ; RED hook/reply coupés → timeout) |
 | **M6b** — dispatch d'interruption CIA (INT2/CIA-A : les vecteurs ICR enregistrés se déclenchent) | ✅ **fait et vérifié** (série « M6B CIA INT OK » ; timer CIA-A → INT2 → vecteur ; RED vecteur/activation-chip coupés → timeout) |
 | **M7a** — gate de ré-entrance des listes scheduler (IPL7) + unité MICROHZ (CIA-B/INT6) + tâche bloquant sur un timer (Wait→wake) | ✅ **fait et vérifié** (série « M7A TIMER OK » ; task réveillée par l'IRQ MICROHZ sous préemption, `VBL_CLASH==0` ; RED gate retiré → clash « M7A FAILED », RED réveil cassé → tâche figée ; yield re-prouvé en coopératif `SCHED_ON=0`) |
-| **M7b+** — dispatcher par niveau (`SetIntVector`/`AddIntServer`), hazard de pile user-mode (SSP partagée, latent), quantum/priorité réelle, graphics, intuition, dos | à venir (voir `docs/PLAN.md`) |
+| **M7b** — dispatcher d'interruption par numéro : `IntVects` + `SetIntVector` (vecteur exclusif) + `AddIntServer` (chaîne de serveurs par priorité) ; cia.resource ré-exprimé en serveurs PORTS/EXTER | ✅ **fait et vérifié** (série « M7B PORTS OK » : chaîne 2 serveurs en ordre de priorité ; M7A/M3F toujours OK à travers le dispatcher ; RED serveur-non-ajouté → FAILED, RED vecteur-EXTER-retiré → M7A absent, gate M7a re-prouvé via EXTER) |
+| **M7c+** — hazard de pile user-mode (SSP partagée, latent), fidélité IPL-par-niveau (VERTB en chaîne + switch-sur-sortie-d'IRQ), quantum/priorité réelle, graphics, intuition, dos | à venir (voir `docs/PLAN.md`) |
 
 ## ⚠️ Légal / clean-room
 

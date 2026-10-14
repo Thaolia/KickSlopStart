@@ -40,6 +40,8 @@
                 xref    exec_FreeSignal
                 xref    exec_Wait        ; interrupts.s (scheduler : switch synchrone)
                 xref    reschedule       ; interrupts.s (yield-sur-Permit : switch synchrone)
+                xref    exec_SetIntVector ; interrupts.s (dispatcher par numéro : vecteur exclusif)
+                xref    exec_AddIntServer ; interrupts.s (dispatcher par numéro : chaîne de serveurs)
                 xref    exec_InitCode    ; resident.s (scan + init des modules résidents)
                 xref    exec_FindResident
                 xref    exec_InitResident
@@ -150,6 +152,10 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_WaitPort,LVO_WAITPORT+2(a6)
         move.w  #$4EF9,LVO_FINDPORT(a6)
         move.l  #exec_FindPort,LVO_FINDPORT+2(a6)
+        move.w  #$4EF9,LVO_SETINTVECTOR(a6)
+        move.l  #exec_SetIntVector,LVO_SETINTVECTOR+2(a6)
+        move.w  #$4EF9,LVO_ADDINTSERVER(a6)
+        move.l  #exec_AddIntServer,LVO_ADDINTSERVER+2(a6)
         rts
 
 _unimpl:

@@ -20,6 +20,8 @@
                 xref    init_ints        ; interrupts.s
                 xref    build_reslist    ; resident.s (scan des ROMTags)
                 xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
+                xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
+                xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -320,44 +322,70 @@ coldstart:                        ; $FC00D2
         lea     msg_m6a_ok(pc),a0
         bsr     ser_puts             ; « M6A TIMER OK »
 
-        ; --- M6b : dispatch d'interruption CIA (INT2 via CIA-A Timer A) ---
-        ; SCHED_ON encore 0 ici -> le VBlank ne switche pas si jamais il préempte l'INT2-handler
-        ; (imbrication inoffensive). On nettoie (RemICRVector + stop timer + disable PORTS) avant M3f.
+        ; --- M7b : dispatcher par numéro — chaîne PORTS (INT2) via AddIntServer ---
+        ; SCHED_ON encore 0 (aucune interaction scheduler/gate ; INT2 niveau 2 < 3 de toute façon).
+        ; Enregistre DEUX serveurs sur PORTS : ciaa_server (pri 10, lit+acquitte l'ICR ciaa ->
+        ; cia_test_vec incrémente CIA_FIRED) et int2_srv2 (pri 0, incrémente INT2_SRV2). La chaîne les
+        ; appelle DANS L'ORDRE DE PRIORITÉ (cia avant srv2) -> prouve AddIntServer + walker + ordre.
+        ; Structs serveur en RAM (Enqueue les chaîne). CIA-A Timer A en CONTINU déclenche INT2.
+        ; Généralise M6b : cia.resource EST le handler PORTS (serveur), plus un autovecteur hardcodé.
         clr.l   CIA_FIRED
-        lea     ciaa_test_name(pc),a1
+        clr.l   INT2_SRV2
+        clr.l   INT2_ORDER_SNAP
+        lea     ciaa_test_name(pc),a1   ; OpenResource("ciaa.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
-        beq     cia_int_fail
+        beq     m7b_fail
         move.l  d0,a2                ; a2 = base ciaa (survit au spin + cleanup)
-        move.l  a6,-(sp)             ; AddICRVector(bit0=timerA, &cia_test_int) ; a6=base resource
+        move.l  #(2*IS_STRIDE),d0    ; 2 struct Interrupt RAM alignées (Enqueue les chaîne -> pas en ROM)
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7b_fail
+        move.l  d0,a3                ; a3 = bloc serveurs : srvA=+0, srvB=+IS_STRIDE (aligné)
+        move.b  #10,LN_PRI(a3)       ; srvA = ciaa_server, pri 10 (appelé en 1er)
+        move.l  #ciaa_server,IS_CODE(a3)
+        move.b  #0,IS_STRIDE+LN_PRI(a3) ; srvB = int2_srv2, pri 0 (appelé en 2e)
+        move.l  #int2_srv2,IS_STRIDE+IS_CODE(a3)
+        moveq   #INTB_PORTS,d0       ; AddIntServer(PORTS, srvA)
+        move.l  a3,a1
+        jsr     LVO_ADDINTSERVER(a6)
+        moveq   #INTB_PORTS,d0       ; AddIntServer(PORTS, srvB)
+        lea     IS_STRIDE(a3),a1
+        jsr     LVO_ADDINTSERVER(a6)
+        move.l  a6,-(sp)             ; AddICRVector(ciaa, bit0=timerA, &cia_test_int)
         move.l  a2,a6
         moveq   #0,d0
         lea     cia_test_int(pc),a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-A Timer A, one-shot, latch $1000
-        move.b  #$00,CIA_TALO(a0)
-        move.b  #$10,CIA_TAHI(a0)    ; latch = $1000
-        move.b  #$19,CIA_CRA(a0)     ; START (b0) + one-shot (b3) + LOAD (b4 : charge explicitement)
+        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-A Timer A CONTINU, latch $00FF (~360 us/IRQ)
+        move.b  #$FF,CIA_TALO(a0)
+        move.b  #$00,CIA_TAHI(a0)
+        move.b  #$11,CIA_CRA(a0)     ; START(b0)+LOAD(b4), continu (b3=0) -> INT2 périodique
         move.l  VBL_COUNT,d7         ; T0 (timeout)
-.m6b_wait:
+.m7b_wait:
         move.l  VBL_COUNT,d0
         sub.l   d7,d0
-        cmp.l   #100,d0
-        bcc     cia_int_fail         ; timeout -> aucune interruption CIA dispatchée
-        tst.l   CIA_FIRED
-        beq.s   .m6b_wait
-        move.l  a6,-(sp)             ; déclenché -> cleanup : RemICRVector(bit0)
+        cmp.l   #150,d0
+        bcc     m7b_fail             ; timeout -> chaîne non dispatchée
+        tst.l   CIA_FIRED            ; 1er serveur (ciaa) appelé via la chaîne ?
+        beq.s   .m7b_wait
+        tst.l   INT2_SRV2            ; 2e serveur de la chaîne appelé ?
+        beq.s   .m7b_wait
+        move.l  CIAR_HWBASE(a2),a0   ; les deux tournent -> cleanup matériel
+        move.b  #$00,CIA_CRA(a0)     ; stop Timer A
+        move.l  a6,-(sp)             ; RemICRVector(bit0)
         move.l  a2,a6
         moveq   #0,d0
         suba.l  a1,a1
         jsr     CIA_REMICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.l  CIAR_HWBASE(a2),a0
-        move.b  #$00,CIA_CRA(a0)     ; stop Timer A
-        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS (clear) -> pas d'INT2 pendant la démo
-        lea     msg_m6b_ok(pc),a0
-        bsr     ser_puts             ; « M6B CIA INT OK »
+        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS -> pas d'INT2 pendant la démo
+        tst.l   INT2_ORDER_SNAP      ; ordre : ciaa (pri 10) a tourné AVANT srv2 (pri 0) ?
+        beq     m7b_fail
+        lea     msg_m7b_ok(pc),a0
+        bsr     ser_puts             ; « M7B PORTS OK »
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -374,6 +402,9 @@ coldstart:                        ; $FC00D2
         tst.l   d0
         beq     m7a_fail
         move.l  d0,a2                ; a2 = base ciab
+        moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int) : vecteur EXCLUSIF ->
+        lea     ciab_server_int(pc),a1  ; INT6 passe par le dispatcher par numéro (ciab_server/cia_dispatch)
+        jsr     LVO_SETINTVECTOR(a6)
         move.l  a6,-(sp)             ; AddICRVector(ciab, bit0 = timer A, &timer_micro_int)
         move.l  a2,a6
         moveq   #0,d0
@@ -1207,11 +1238,11 @@ m6a_fail:                            ; échec M6a (unité VBLANK timer) -> fige
         bsr     ser_puts
 .m6af_hang:
         bra.s   .m6af_hang
-cia_int_fail:                        ; échec M6b (dispatch interruption CIA) -> fige
-        lea     msg_m6b_fail(pc),a0
+m7b_fail:                            ; échec M7b (dispatcher par numéro / chaîne PORTS) -> fige
+        lea     msg_m7b_fail(pc),a0
         bsr     ser_puts
-.m6bf_hang:
-        bra.s   .m6bf_hang
+.m7bf_hang:
+        bra.s   .m7bf_hang
 m7a_fail:                            ; échec M7a (gate de ré-entrance / unité MICROHZ) -> fige
         jsr     LVO_FORBID(a6)       ; émission non fractionnée (atteint depuis le contexte tâche)
         lea     msg_m7a_fail(pc),a0
@@ -1229,6 +1260,35 @@ cia_test_vec:                        ; serveur ICR (a1=data, a5=code, a6=SysBase
         rts
 cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
         dc.l    0,0,0,0,0
+
+; int2_srv2 (M7b) : 2e serveur de la chaîne PORTS (pri 0, après ciaa_server pri 10). Incrémente
+; INT2_SRV2 et capture l'ordre (CIA_FIRED > 0 au 1er appel => ciaa_server a tourné avant = pri OK).
+; a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0 + mémoire). Z MIS (continue).
+int2_srv2:
+        addq.l  #1,INT2_SRV2
+        tst.l   INT2_ORDER_SNAP      ; déjà capturé ?
+        bne.s   .s2_z
+        move.l  CIA_FIRED,d0         ; ciaa_server (pri 10) a-t-il déjà tourné dans CET INT2 ?
+        beq.s   .s2_z                ; pas encore -> on capturera à un INT2 ultérieur
+        move.l  d0,INT2_ORDER_SNAP   ; > 0 -> ordre de priorité confirmé (ciaa avant srv2)
+.s2_z:
+        moveq   #0,d0                ; Z set -> continue la chaîne
+        rts
+
+; ciab_server_int (M7b) : vecteur EXCLUSIF EXTER installé par SetIntVector -> ciab_server. Non chaîné
+; (SetIntVector copie IS_DATA/IS_CODE) -> peut rester en ROM. IS_DATA inutilisé (ciab_server lit CIAB_PTR).
+        EVEN
+ciab_server_int:
+        dc.l    0                    ; LN_SUCC
+        dc.l    0                    ; LN_PRED
+        dc.b    0                    ; LN_TYPE
+        dc.b    0                    ; LN_PRI (inusité : vecteur exclusif)
+        dc.l    srv_ciab_name        ; LN_NAME
+        dc.l    0                    ; IS_DATA
+        dc.l    ciab_server          ; IS_CODE
+srv_ciab_name:
+        dc.b    "ciab.exter",0
+        EVEN
 
 ; ============================ résident AUTOINIT démo (M5a) =========
 ; ROMTag RTF_AUTOINIT (pri 40) -> InitResident appelle MakeLibrary avec la table de 4 longs.
@@ -1346,10 +1406,10 @@ msg_m6a_ok:
         dc.b    "M6A TIMER OK (VBLANK unit: request replied after ~5 ticks)",13,10,0
 msg_m6a_fail:
         dc.b    "M6A FAILED: timer VBLANK unit incorrect",13,10,0
-msg_m6b_ok:
-        dc.b    "M6B CIA INT OK (INT2 dispatch: CIA-A timer fired registered vector)",13,10,0
-msg_m6b_fail:
-        dc.b    "M6B FAILED: CIA interrupt dispatch incorrect",13,10,0
+msg_m7b_ok:
+        dc.b    "M7B PORTS OK (per-number dispatch: AddIntServer chain, 2 servers in pri order)",13,10,0
+msg_m7b_fail:
+        dc.b    "M7B FAILED: per-number interrupt dispatch / server chain incorrect",13,10,0
 msg_m7a_ok:
         dc.b    "M7A TIMER OK (MICROHZ via CIA-B/INT6: task woke on timer, reentrancy gate held)",13,10,0
 msg_m7a_fail:

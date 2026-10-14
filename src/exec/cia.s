@@ -4,9 +4,10 @@
 ; MakeLibrary (base library-like + jump table AddICRVector/RemICRVector/AbleICR/SetICR),
 ; les nomme (ciaa/ciab), pose la base matérielle, AddResource. Les fonctions gèrent les
 ; slots de vecteurs ICR (5 par CIA) + le shadow du masque ICR + le registre ICR du chip.
-; DIFFÉRÉ (ledgeré) : la DISPATCH d'interruption INT2/INT6. Les vecteurs enregistrés ne se
-; déclenchent pas encore (Paula INTENA PORTS/EXTER fermés + autovecteurs $68/$78 non posés
-; -> aucune IRQ CIA n'atteint le CPU -> activer le masque ICR du chip est inerte et sûr).
+; DISPATCH D'INTERRUPTION : cia_dispatch lit l'ICR du chip une fois (ACK + efface tous les pending) et
+; appelle le vecteur de chaque bit posé. En M7b, cia_server (wrappe cia_dispatch) est enregistré comme
+; SERVEUR PORTS/EXTER via le dispatcher par numéro d'exec (AddIntServer/SetIntVector) au lieu d'un
+; autovecteur hardcodé -> cia.resource EST le handler PORTS/EXTER, comme dans le vrai exec.
 ; Convention : fonctions appelées avec a6 = base resource ; scratch = d0/d1/a0/a1.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs cia.resource + exec. AUCUNE lecture de la ROM.
 ; Table de vecteurs ABSOLUE ici (la démo AUTOINIT M5a est relative -> les deux branches de
@@ -15,8 +16,8 @@
                 include "exec.i"
 
                 xdef    cia_init
-                xdef    int2_handler      ; autovecteur INT2 (CIA-A) — installé par init_ints
-                xdef    int6_handler      ; autovecteur INT6 (CIA-B)
+                xdef    ciaa_server       ; M7b : serveur PORTS (ciaa) — IS_CODE d'un serveur enregistré
+                xdef    ciab_server       ; M7b : serveur EXTER (ciab)
 
 ; --- ROMTag cia.resource (scanné par build_reslist) ---
         EVEN
@@ -153,30 +154,25 @@ cia_SetICR:
         moveq   #0,d0
         rts
 
-; --- dispatch d'interruption CIA (M6b) ---
-; int2_handler ($68 / INT2 / CIA-A), int6_handler ($78 / INT6 / CIA-B) : lisent le registre
-; ICR du chip UNE fois (ACK + efface TOUS les bits pending d'un coup), dispatchent chaque bit
-; posé vers son vecteur enregistré, puis acquittent Paula. IPL 7 à l'entrée (pas d'imbrication
-; avec le VBlank : son switch sauverait le SP du handler, pas d'une tâche). Convention serveur
-; (Amiga) : peut clobber d0-d1/a0-a1/a5 ; préserve d2-d7/a2-a4 -> état de boucle en d2/d3/a2.
-int2_handler:
-        move.w  #$2700,sr
-        movem.l d0-d3/a0-a2/a5/a6,-(sp)
-        move.l  ($4).w,a6
-        move.l  CIAA_PTR,a2
-        bsr     cia_dispatch
-        move.w  #INTF_PORTS,INTREQ   ; ack Paula INT2
-        movem.l (sp)+,d0-d3/a0-a2/a5/a6
-        rte
-int6_handler:
-        move.w  #$2700,sr
-        movem.l d0-d3/a0-a2/a5/a6,-(sp)
-        move.l  ($4).w,a6
-        move.l  CIAB_PTR,a2
-        bsr     cia_dispatch
-        move.w  #INTF_EXTER,INTREQ   ; ack Paula INT6
-        movem.l (sp)+,d0-d3/a0-a2/a5/a6
-        rte
+; --- serveur d'interruption CIA (M6b -> M7b) ---
+; ciaa_server / ciab_server : serveurs PORTS / EXTER appelés par le dispatcher générique par numéro
+; (interrupts.s). La base resource N'EST PAS prise de IS_DATA (une struct Interrupt chaînée vit en RAM,
+; mais le vecteur exclusif EXTER vit en ROM -> impossible d'y figer un pointeur runtime) : chaque
+; wrapper lit CIAA_PTR / CIAB_PTR (publiés par cia_make). Lit+acquitte l'ICR du chip via cia_dispatch.
+; Convention serveur : préserve d2-d7/a2-a4 ; cia_dispatch clobbe d2/d3/a2 -> on les sauve. Retourne
+; Z MIS (d0=0) = « continue la chaîne » (type serveur VERTB : laisse les autres serveurs tourner aussi).
+ciaa_server:
+        move.l  CIAA_PTR,a1          ; base ciaa (0 si non créé -> cia_dispatch no-op)
+        bra.s   cia_server_common
+ciab_server:
+        move.l  CIAB_PTR,a1          ; base ciab
+cia_server_common:
+        movem.l d2/d3/a2,-(sp)
+        move.l  a1,a2                ; a2 = base resource
+        bsr.s   cia_dispatch
+        movem.l (sp)+,d2/d3/a2
+        moveq   #0,d0                ; Z set -> continue la chaîne
+        rts
 cia_dispatch:                        ; a2 = base resource (0 ok), a6 = SysBase
         move.l  a2,d0
         beq.s   .cd_ret

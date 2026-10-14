@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched` et **monte IPL7 autour de la chirurgie de listes** = gate de ré-entrance vs une interruption de niveau > 3, M7a), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + handlers INT2/INT6 + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched` et **monte IPL7 autour de la chirurgie de listes** = gate de ré-entrance vs une interruption de niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker` + autovecteurs génériques `int2_dispatch`/`int6_dispatch`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -236,8 +236,24 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   **coopératif** (`SCHED_ON=0`, `task_S` retiré → `task_timer` réveillée par le seul yield) : ma modif
   des tails partagés n'a pas régressé le reschedule. `int6_handler`/EXTER désormais **activés et testés**.
   MICROHZ ici = « 1 tick = 1 IRQ CIA-B » (chemin IRQ/réveil prouvé, **calibration µs E-clock différée**).
-- **À venir (M7b+)** : dispatcher par niveau (`SetIntVector`/`AddIntServer`), **hazard de pile user-mode**
-  (SSP partagée, latent — le vrai « nest-count » devient nécessaire ici), upgrade des ports en Disable,
-  user-mode, `RemTask`, quantum, priorité réelle, puis les modules graphiques → écran.
+- **M7b** (dispatcher d'interruption PAR NUMÉRO) : table `IntVects[16]` (AllocMem'd, pointeur dans
+  `EB_INTVECTS`) + `SetIntVector` (vecteur exclusif : copie IS_DATA/IS_CODE) + `AddIntServer` (chaîne de
+  serveurs triée par `LN_PRI`, marchée par `intr_chain_walker` ; retour Z clair = « géré, stop », Z mis =
+  continue, cf. AutoDoc). Les autovecteurs hardcodés `int2_handler`/`int6_handler` sont remplacés par
+  `int2_dispatch` ($68/PORTS) / `int6_dispatch` ($78/EXTER) **génériques** qui dispatchent via `IntVects`.
+  cia.resource est ré-exprimé en SERVEURS : `ciaa_server` (PORTS, via `AddIntServer`) et `ciab_server`
+  (EXTER, via `SetIntVector`) — c.-à-d. cia.resource EST le handler PORTS/EXTER, comme dans le vrai exec.
+  CAVEAT : dispatch par NUMÉRO + chaîne, PAS la fidélité IPL-PAR-NIVEAU (les handlers restent IPL7 à
+  l'entrée, discipline du gate M7a) ; VERTB garde `vbl_handler` dédié (refactor VERTB→chaîne + switch-sur-
+  sortie-d'IRQ différé). PREUVE : GREEN « M7B PORTS OK » (chaîne [ciaa_server pri 10, srv2 pri 0], les 2
+  appelés dans l'ordre) + « M7A TIMER OK » désormais via `SetIntVector`/EXTER + « M3F LIVE ». RED : 2e
+  serveur non ajouté → M7B FAILED ; vecteur EXTER retiré → M7A absent ; gate M7a (IPL7 retiré) re-prouvé
+  à travers le nouveau chemin EXTER → `VBL_CLASH>0` → M7A FAILED. Deux bugs attrapés au bringup :
+  (1) vasm tronque un opérande d'EQU à l'espace -> `INTVECTS_TOTAL` sous-évalué (128 au lieu de 352) ->
+  sous-allocation ; (2) `move.l (an),Ax` = MOVEA qui N'AFFECTE PAS les CC -> `beq` sur flags périmés ->
+  lire `node->Succ` dans un registre de DONNÉES d'abord.
+- **À venir (M7c+)** : **hazard de pile user-mode** (SSP partagée, latent — le vrai « nest-count » devient
+  nécessaire ici), fidélité IPL-par-niveau (VERTB en chaîne + switch-sur-sortie-d'IRQ), upgrade des ports
+  en Disable, user-mode, `RemTask`, quantum, priorité réelle, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

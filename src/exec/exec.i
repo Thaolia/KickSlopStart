@@ -53,12 +53,27 @@ INTF_INTEN   EQU $4000        ; maître (INTEN)
 INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 INTF_PORTS   EQU $0008        ; INT2 / CIA-A
 INTF_EXTER   EQU $2000        ; INT6 / CIA-B
-AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A)
+AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
-AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B)
-; struct Interrupt (exec/interrupts.i) — vecteur ICR
+AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
+INTB_PORTS   EQU 3            ; numéro d'interruption Paula PORTS (INT2) — cf. hardware/intbits.i
+INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
+; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
 IS_DATA      EQU 14           ; APTR passé en a1 au serveur
-IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase)
+IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase, a0=$DFF000)
+IS_SIZE      EQU 22           ; sizeof(struct Interrupt) = LN(14) + IS_DATA(4) + IS_CODE(4)
+IS_STRIDE    EQU 24           ; IS_SIZE arrondi à un multiple de 4 (nœuds alignés dans un tableau)
+; M7b — dispatcher par numéro : table IntVects (SetIntVector/AddIntServer). Chaque entrée IntVects[n]
+; = {IV_DATA, IV_CODE} ; pour une chaîne (AddIntServer) IV_DATA=&svlist[n], IV_CODE=intr_chain_walker ;
+; pour un vecteur exclusif (SetIntVector) IV_DATA/IV_CODE = IS_DATA/IS_CODE copiés. Les svlist[n] (struct
+; List de serveurs, triés par LN_PRI) suivent les 16 vecteurs dans le même bloc AllocMem'd.
+IV_DATA      EQU 0
+IV_CODE      EQU 4
+IV_SIZE      EQU 8
+INTVECTS_NVEC EQU 16          ; numéros 0..15 (14 = INTEN inusité, 15 = NMI)
+IV_LIST_SIZE EQU 14           ; sizeof(struct List) d'une chaîne de serveurs
+INTVECTS_SVOFF EQU (INTVECTS_NVEC*IV_SIZE)                       ; offset des svlist dans le bloc
+INTVECTS_TOTAL EQU (INTVECTS_NVEC*IV_SIZE+INTVECTS_NVEC*IV_LIST_SIZE) ; 128+224=352 (PAS d'espace : vasm tronque l'opérande à l'espace)
 ; CIA timer A — registres (offsets depuis la base CIA = registre<<8)
 CIA_TALO     EQU $400         ; timer A low
 CIA_TAHI     EQU $500         ; timer A high (l'écriture charge le latch)
@@ -83,6 +98,8 @@ VBL_INSURG   EQU $0000053C    ; M7a : UBYTE — chirurgie de listes du scheduler
                               ; invisible à INT6). Une source de niveau > 3 (INT6/CIA-B) qui l'observe
                               ; posée a préempté la chirurgie = hazard de ré-entrance -> incrémente VBL_CLASH.
 VBL_CLASH    EQU $00000540    ; M7a : compteur de clashs observés (0 si le gate IPL7 tient ; > 0 en RED)
+INT2_SRV2    EQU $00000544    ; M7b : compteur du 2e serveur de la chaîne PORTS (prouve AddIntServer)
+INT2_ORDER_SNAP EQU $00000548 ; M7b : CIA_FIRED au 1er appel du 2e serveur (> 0 => cia pri 10 avant srv2 pri 0)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -124,6 +141,8 @@ EB_TASKWAIT     EQU $1A4
 EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
+EB_INTVECTS     EQU $222        ; M7b : APTR -> bloc IntVects (16 vecteurs + 16 svlist), AllocMem'd
+                                ; à init_ints. Tient dans la zone positive ($222+4 <= EXEC_POSSIZE $230).
 
 ; struct MemHeader / MemChunk + attributs mémoire (exec/memory.i, V34)
 NT_MEMORY     EQU 10
@@ -227,6 +246,9 @@ LVO_DISABLE  EQU -120
 LVO_ENABLE   EQU -126
 LVO_FORBID   EQU -132
 LVO_PERMIT   EQU -138
+LVO_SETINTVECTOR EQU -162
+LVO_ADDINTSERVER EQU -168
+LVO_REMINTSERVER EQU -174
 LVO_ALLOCMEM EQU -198
 LVO_FREEMEM  EQU -210
 LVO_AVAILMEM EQU -216
