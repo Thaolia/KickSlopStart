@@ -18,6 +18,7 @@
                 xref    init_memory      ; memory.s
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
+                xref    dispatch_in      ; interrupts.s (M7c : lancement 1re tâche = transition user-mode)
                 xref    build_reslist    ; resident.s (scan des ROMTags)
                 xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
@@ -418,14 +419,16 @@ coldstart:                        ; $FC00D2
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a)
         move.b  #1,SCHED_ON          ; ARME la préemption périodique
-        lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
+        ; --- M7c : LANCEMENT de la 1re tâche = transition SUPERVISEUR -> USER mode ---
+        ; La pile boot (STACKTOP) devient la SSP PARTAGÉE des interruptions ; chaque tâche a sa pile
+        ; user (AllocMem'd). On réinitialise la SSP à STACKTOP (abandonne le contexte boot), on réserve
+        ; un slot de frame, et dispatch_in relocalise la frame user de task_H -> SSP puis rte en USER mode.
+        move.l  #STACKTOP,sp         ; SSP partagée propre (le contexte boot ne reprend jamais)
+        lea     -FRAME_SIZE(sp),sp   ; slot 66 o pour dispatch_in (movem+rte ramènent sp à STACKTOP)
+        lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite
         jsr     LVO_REMHEAD(a6)      ; tête = task_H (pri 10) -> elle Wait d'abord
         move.l  d0,a1
-        move.l  a1,EB_THISTASK(a6)
-        move.b  #TS_RUN,TC_STATE(a1)
-        move.l  TC_SPREG(a1),sp      ; bascule sur la pile de la 1re tâche
-        movem.l (sp)+,d0-d7/a0-a6
-        rte                          ; -> task_H (SR=$2000 : VBlank + INT6 + yield actifs)
+        bra     dispatch_in          ; -> task_H en USER mode (SR=$0000 ; VBlank + INT6 + yield actifs)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -1019,6 +1022,11 @@ task_h:                              ; haute priorité (les tâches démarrent a
         jsr     LVO_FORBID(a6)       ; émission non fractionnée
         lea     msg_m3flive(pc),a0
         bsr     ser_puts
+        tst.b   WP_UMODE             ; M7c : une tâche s'est observée en USER mode (SR bit S == 0) ?
+        beq.s   .h_noum
+        lea     msg_m7c_ok(pc),a0
+        bsr     ser_puts             ; « M7C USERMODE OK » (user-mode + relocation + préemption prouvés)
+.h_noum:
         jsr     LVO_PERMIT(a6)
         bra.s   .h_loop
 task_l:                              ; basse priorité, ne bloque jamais
@@ -1039,6 +1047,10 @@ task_l:                              ; basse priorité, ne bloque jamais
 task_s:                              ; basse priorité, spinner PUR (jamais de blocage/yield)
         move.l  ($4).w,a6            ; SysBase
         move.l  #SENT_S,d7
+        move.w  sr,d0                ; M7c : preuve DIRECTE du user-mode (MOVE from SR non privilégié
+        and.w   #$2000,d0            ; sur 68000) -> bit S attendu à 0
+        bne.w   demo_fail            ; S=1 => tâche en superviseur => régression user-mode (sentinelle KO)
+        move.b  #1,WP_UMODE          ; user mode confirmé (consommé par task_H -> « M7C USERMODE OK »)
 .s_loop:
         cmp.l   #SENT_S,d7
         bne.w   demo_fail            ; contexte corrompu par une PRÉEMPTION
@@ -1094,8 +1106,9 @@ task_timer:
         bne     m7a_fail
         tst.l   VBL_CLASH            ; le gate IPL7 a-t-il été violé ? (RED -> != 0)
         bne     m7a_fail
-        clr.l   TV_SECS(a2)          ; (ré)arme une requête courte : 1 tick CIA-B
-        move.l  #20000,TV_MICRO(a2)  ; 20000/20000 = 1 tick -> expire au 1er INT6 suivant
+        clr.l   TV_SECS(a2)          ; (ré)arme une requête MICROHZ réaliste : 20 ticks CIA-B (~7 ms)
+        move.l  #400000,TV_MICRO(a2) ; 400000/20000 = 20 ticks -> ~140 réveils/s (coexiste avec la démo M3f ;
+                                     ; 1 tick préemptait ~2800/s via le dispatch différé et starverait task_s/L)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
         move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
         move.l  a4,a6
@@ -1414,6 +1427,8 @@ msg_m7a_ok:
         dc.b    "M7A TIMER OK (MICROHZ via CIA-B/INT6: task woke on timer, reentrancy gate held)",13,10,0
 msg_m7a_fail:
         dc.b    "M7A FAILED: MICROHZ wake or scheduler-list reentrancy gate",13,10,0
+msg_m7c_ok:
+        dc.b    "M7C USERMODE OK (user-mode tasks on shared SSP, deferred Dispatch survives preemption)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

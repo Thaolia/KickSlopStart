@@ -22,6 +22,8 @@
                 xdef    exec_Signal
                 xdef    exec_SetTaskPri
 
+                xref    raw_enable       ; library.s (M7c : Signal = section critique NUE)
+
 ; init_task : alloue le TCB de la tâche de boot et le publie dans ThisTask.
 ; Appelé par coldstart APRÈS init_memory (AllocMem dispo) et AVANT selftest
 ; (sinon AllocSignal déréférencerait un ThisTask NULL -> écriture dans les
@@ -43,19 +45,22 @@ init_task:
         move.l  a0,EB_THISTASK(a6)
         rts
 
-; AddTask(task a1, initialPC a2, finalPC a3) : prépare le contexte initial et met
-; la tâche dans TaskReady. M3b : tâches SUPERVISEUR (SR initial $2000, préemptible).
-; Le contexte posé sur la pile de la tâche est le MIROIR EXACT de ce que le
-; dispatcher (vbl_handler) restaure : [d0-d7/a0-a6 = 0 (60 o)][SR word][PC long]
-; [finalPC long], TC_SPREG -> les GPR. Le caller remplit TC_SPLOWER/TC_SPUPPER.
-; (User-mode = M3c : SR initial $0000 + relocation de frame USP/SSP.)
+; AddTask(task a1, initialPC a2, finalPC a3) : prépare le contexte initial et met la tâche dans
+; TaskReady. M7c : tâches USER-MODE (SR initial $0000, bit S = 0) sur leur pile user. Le contexte
+; posé sur la pile de la tâche = MIROIR EXACT de ce que dispatch/dispatch_in relocalisent :
+; [d0-d7/a0-a6 = 0 (60 o)][SR=$0000 (word)][PC=initialPC (long)][finalPC (long)]. TC_SPREG -> les GPR ;
+; USP à la 1re entrée = TC_SPREG+FRAME_SIZE -> pointe sur finalPC (retour si la tâche fait RTS).
+; Nesting PAR-TÂCHE initialisé à -1 (permis & enabled) — SANS ça MEMF_CLEAR laisserait 0 = Disabled/
+; Forbidden au réveil (latent avant M7c car le scheduler lisait le nesting GLOBAL). Caller : SPLOWER/UPPER.
 exec_AddTask:
         move.b  #NT_TASK,LN_TYPE(a1)
         move.b  #TS_READY,TC_STATE(a1)
-        move.l  TC_SPUPPER(a1),a0    ; haut de pile de la tâche
+        move.b  #-1,TC_IDNESTCNT(a1) ; nesting par-tâche : enabled
+        move.b  #-1,TC_TDNESTCNT(a1) ; permis
+        move.l  TC_SPUPPER(a1),a0    ; haut de pile user de la tâche
         move.l  a3,-(a0)             ; finalPC (retour si la tâche fait RTS)
         move.l  a2,-(a0)             ; PC initial
-        move.w  #$2000,-(a0)         ; SR initial (superviseur, IPL0)
+        move.w  #$0000,-(a0)         ; SR initial = USER mode, IPL0 (bit S = 0)
         moveq   #14,d0
 .at_zero:
         clr.l   -(a0)                ; 15 longs GPR = 0
@@ -146,16 +151,17 @@ exec_SetSignal:
         move.l  (sp)+,d2
         rts
 
-; Signal(task a1, signalSet d0) : pose les bits dans TC_SIGRECVD de la tâche ; si elle
-; est bloquée (TS_WAIT) sur l'un de ces bits, la réveille (TaskWait -> TaskReady).
-; M3d : le réveil (manip de deux listes) doit être atomique vs le scheduler (VBlank) ->
-; IPL 7 le temps de la surgery, puis restauration de l'état d'interruption de l'appelant
-; (Signal est scratch sur d0/d1/a0/a1 ; Remove/Enqueue préservent le registre a1).
-; La tâche réveillée part en TaskReady : elle tournera au prochain point d'ordonnancement
-; (modèle « défère » ; le yield immédiat sur Permit est le jalon suivant).
+; Signal(task a1, signalSet d0) : pose les bits dans TC_SIGRECVD de la tâche ; si elle est bloquée
+; (TS_WAIT) sur l'un de ces bits, la réveille (TaskWait -> TaskReady).
+; M7c : appelée depuis une tâche USER-MODE OU depuis une interruption (service timer). L'atomicité
+; vs le scheduler passe par une SECTION CRITIQUE NUE : Disable nu à l'entrée (INTENA, user-safe),
+; raw_enable à la sortie — PAS exec_Enable, dont la queue déclencherait reschedule->trap en contexte
+; IRQ (ré-entrance du scheduler, cf. ledger M7c). Signal ne switche jamais : il POSE AttnResched (si
+; la réveillée est prioritaire), consommé par le prochain Permit/Enable (yield) ou tick VBlank.
+; Remove/Enqueue préservent a1. La réveillée part en TaskReady (modèle « défère »).
 exec_Signal:
-        move.w  sr,-(sp)
-        move.w  #$2700,sr
+        addq.b  #1,EB_IDNEST(a6)     ; Disable NU (section critique vs scheduler)
+        move.w  #INTF_INTEN,INTENA   ; INTEN off (bit14)
         or.l    d0,TC_SIGRECVD(a1)
         cmp.b   #TS_WAIT,TC_STATE(a1)
         bne.s   .sig_done            ; pas en attente -> juste poser les bits
@@ -166,16 +172,14 @@ exec_Signal:
         jsr     LVO_REMOVE(a6)       ; retire la cible (a1) de TaskWait
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)      ; insère la cible (a1) dans TaskReady (par priorité)
-        ; M3e : si la réveillée est PLUS prioritaire que la tâche courante, demander un
-        ; reschedule (consommé au prochain Permit/Enable = yield). Sinon la réveillée
-        ; attend son tour (round-robin). a1 = réveillée (préservée par Remove/Enqueue).
+        ; M3e : si la réveillée est PLUS prioritaire que la courante, demander un reschedule différé.
         move.l  EB_THISTASK(a6),a0
         move.b  LN_PRI(a1),d0        ; priorité de la réveillée (octet signé)
         cmp.b   LN_PRI(a0),d0        ; réveillée - courante
         ble.s   .sig_done            ; réveillée <= courante -> pas de préemption
         move.w  #1,EB_ATTNRESCHED(a6)
 .sig_done:
-        move.w  (sp)+,sr
+        bsr     raw_enable           ; sortie NUE (INTEN on si IDNest<0 ; pas de queue reschedule)
         rts
 
 ; SetTaskPri(task a1, pri d0.b) -> d0 = ancienne priorité (longword signé)

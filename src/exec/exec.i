@@ -56,6 +56,12 @@ INTF_EXTER   EQU $2000        ; INT6 / CIA-B
 AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
+TRAP0_VEC    EQU $80          ; M7c : vecteur TRAP #0 (switch volontaire style Wait : sortante déjà rangée)
+TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeue sortante -> TaskReady)
+; M7c — frame de contexte (miroir movem d0-d7/a0-a6 + {SR,PC} du CPU), posée sur la pile de la tâche.
+; 15 longs GPR (60 o) + SR (mot, offset 60) + PC (long, offset 62) = 66 o (pair -> copie mot par mot).
+FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
+FRAME_SIZE   EQU 66           ; taille totale de la frame relocalisée (GPR+SR+PC)
 INTB_PORTS   EQU 3            ; numéro d'interruption Paula PORTS (INT2) — cf. hardware/intbits.i
 INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
 ; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
@@ -100,6 +106,10 @@ VBL_INSURG   EQU $0000053C    ; M7a : UBYTE — chirurgie de listes du scheduler
 VBL_CLASH    EQU $00000540    ; M7a : compteur de clashs observés (0 si le gate IPL7 tient ; > 0 en RED)
 INT2_SRV2    EQU $00000544    ; M7b : compteur du 2e serveur de la chaîne PORTS (prouve AddIntServer)
 INT2_ORDER_SNAP EQU $00000548 ; M7b : CIA_FIRED au 1er appel du 2e serveur (> 0 => cia pri 10 avant srv2 pri 0)
+WP_HEART     EQU $0000054C    ; M7c : battement de la tâche user-mode (first-light : survit aux préemptions)
+WP_UMODE     EQU $00000550    ; M7c : UBYTE — une tâche s'est observée en USER mode (SR bit S == 0)
+M7C_STAT     EQU $00000554    ; M7c : UBYTE — b0 = marqueur « M7C USERMODE OK » déjà émis
+WP_UPREEMPT  EQU $00000558    ; M7c : préemptions observées (VBL_COUNT au démarrage de la preuve)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

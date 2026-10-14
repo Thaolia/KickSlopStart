@@ -18,6 +18,7 @@
                 xdef    exec_Permit
                 xdef    exec_Disable
                 xdef    exec_Enable
+                xdef    raw_enable       ; M7c : Enable NU (Signal réactive sans la queue reschedule)
 
                 xref    exec_AddHead     ; lists.s
                 xref    exec_AddTail
@@ -195,12 +196,21 @@ exec_Disable:
         addq.b  #1,EB_IDNEST(a6)
         move.w  #$4000,INTENA        ; clear INTEN (bit14)
         rts
-; Enable : symétrique de Permit côté Disable. Ré-active INTEN puis, si permis ET non
+; raw_enable : Enable NU — décrémente le nesting et réactive INTEN si on repasse permis, SANS la
+; queue reschedule. Partagé par exec_Enable et exec_Signal : Signal est appelé AUSSI depuis une
+; interruption, où déclencher reschedule->trap serait une ré-entrance du scheduler (cf. ledger M7c).
+raw_enable:
+        subq.b  #1,EB_IDNEST(a6)
+        bge.s   .re_ret             ; encore Disabled (nesting) -> ne pas toucher INTENA
+        move.w  #$C000,INTENA        ; SETCLR + INTEN (réactive le maître)
+.re_ret:
+        rts
+; Enable : symétrique de Permit côté Disable. raw_enable puis, si on vient de ré-habiliter ET non
 ; Forbidden ET reschedule en attente -> yield.
 exec_Enable:
-        subq.b  #1,EB_IDNEST(a6)
-        bge.s   .en_ret             ; nesting : encore Disabled -> ne pas toucher INTENA
-        move.w  #$C000,INTENA        ; SET + INTEN
+        bsr     raw_enable
+        tst.b   EB_IDNEST(a6)
+        bge.s   .en_ret             ; encore Disabled (nesting) -> pas de yield
         tst.b   EB_TDNEST(a6)
         bge.s   .en_ret             ; encore Forbidden -> Permit fera le yield
         tst.w   EB_ATTNRESCHED(a6)

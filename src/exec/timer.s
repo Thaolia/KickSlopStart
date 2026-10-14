@@ -30,6 +30,7 @@
                 xdef    timer_micro_int   ; M7a : struct Interrupt de l'unité MICROHZ (vecteur ICR CIA-B)
 
                 xref    newlist           ; lists.s (NEWLIST de la file d'unité)
+                xref    raw_enable        ; library.s (M7c : timer_reply = section critique NUE)
 
 ; --- ROMTag timer.device (scanné par build_reslist) ---
         EVEN
@@ -164,10 +165,13 @@ timer_reply:
         move.l  d0,a0                ; a0 = reply port
         movem.l a0/a1,-(sp)
         lea     MP_MSGLIST(a0),a0    ; AddTail(&port->MsgList, msg)
-        move.w  sr,-(sp)             ; M7a : le msglist peut être partagé entre l'unité VBLANK (IPL3)
-        move.w  #$2700,sr            ; et l'unité MICROHZ (INT6) -> AddTail atomique vs interruption > 3
+        ; M7c : section critique NUE (Disable INTENA, user-safe) — timer_reply est appelé AUSSI depuis
+        ; timer_beginio en USER mode (reply immédiat time==0) où « move #imm,sr » trapperait. Le msglist
+        ; peut être partagé entre l'unité VBLANK (IPL3) et MICROHZ (INT6) -> AddTail atomique vs INT6.
+        addq.b  #1,EB_IDNEST(a6)
+        move.w  #INTF_INTEN,INTENA   ; INTEN off (bit14)
         jsr     LVO_ADDTAIL(a6)
-        move.w  (sp)+,sr
+        bsr     raw_enable           ; INTEN on si IDNest<0 (sortie NUE, pas de queue reschedule)
         movem.l (sp)+,a0/a1
         moveq   #0,d0                ; action du port
         move.b  MP_FLAGS(a0),d0

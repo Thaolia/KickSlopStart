@@ -172,10 +172,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   **dispatcher d'interruption par numéro** : `IntVects`/`SetIntVector` (vecteur exclusif)/`AddIntServer`
   (chaîne de serveurs par priorité, marchée par `intr_chain_walker`) ; les autovecteurs CIA hardcodés sont
   remplacés par `int2_dispatch`/`int6_dispatch` génériques et cia.resource devient un SERVEUR PORTS/EXTER
-  (comme le vrai exec). Reste : hazard de pile user-mode (SSP partagée — le vrai « nest-count » devient
-  nécessaire là), fidélité IPL-par-niveau (VERTB en chaîne + switch-sur-sortie-d'IRQ), upgrade des ports en
-  Disable, retrait éventuel des démos (le handoff de boot reste la démo M3f/M7a codée en dur d'ici là),
-  user-mode, quantum/priorité, calibration µs MICROHZ.
+  (comme le vrai exec). **M7c** fait passer les tâches en **user-mode** (SR S=0, pile user par tâche) sur une
+  **SSP partagée** et remplace le swap de `sp` par un **switch DIFFÉRÉ à relocalisation de frame** (`dispatch`
+  relocalise SSP↔pile user, nesting par-tâche, INTENA synchronisé ; switch volontaire via `trap`) — c'est là
+  que le hazard de SSP partagée devient réel et que le nest-count (bit S de la SR sauvée) devient load-bearing.
+  Dérivé du spec public « Exec Microkernel » (AROS) + manuel 68000 (zéro code transcrit). Un **flag de dispatch
+  différé** à la sortie d'IRQ réveille promptement une tâche prioritaire signalée depuis une interruption.
+  Reste (**M7d+**) : fidélité IPL-par-niveau (VERTB en chaîne + tourner à l'IPL natif), décodage INTREQR
+  multi-source, upgrade des ports (`PutMsg`/`GetMsg`/`ReplyMsg`) en Disable interrupt-safe, `RemTask`,
+  quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste la
+  démo M3f/M7a/M7c codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

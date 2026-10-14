@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched` et **monte IPL7 autour de la chirurgie de listes** = gate de ré-entrance vs une interruption de niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker` + autovecteurs génériques `int2_dispatch`/`int6_dispatch`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handlers VBlank/INT2/INT6/TRAP partageant un **prologue commun** `movem`+IPL7 et un **épilogue commun** `intr_exit` ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; préemption round-robin au VBlank + **flag de dispatch différé** à la sortie d'IRQ quand un serveur réveille une tâche prioritaire ; IPL7 du prologue = gate de ré-entrance des listes vs niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -252,8 +252,26 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   (1) vasm tronque un opérande d'EQU à l'espace -> `INTVECTS_TOTAL` sous-évalué (128 au lieu de 352) ->
   sous-allocation ; (2) `move.l (an),Ax` = MOVEA qui N'AFFECTE PAS les CC -> `beq` sur flags périmés ->
   lire `node->Succ` dans un registre de DONNÉES d'abord.
-- **À venir (M7c+)** : **hazard de pile user-mode** (SSP partagée, latent — le vrai « nest-count » devient
-  nécessaire ici), fidélité IPL-par-niveau (VERTB en chaîne + switch-sur-sortie-d'IRQ), upgrade des ports
-  en Disable, user-mode, `RemTask`, quantum, priorité réelle, puis les modules graphiques → écran.
+- **M7c** (tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ) : les tâches tournent en user-mode
+  (SR bit S=0), chacune sur **sa pile user** ; interruptions + noyau sur **UNE pile superviseur partagée**
+  (région STACKTOP). Dérivé du spec public « The Exec Microkernel » (AROS) + mécanique 68000, zéro code
+  transcrit. Prologue commun (IPL7 + `movem` → frame `[GPR][SR][PC]` 66 o sur la SSP) ; épilogue `intr_exit`
+  dispatche SEULEMENT à la **frontière user** (bit S de la SR sauvée == 0 = on interrompait une tâche user,
+  pas une IRQ imbriquée — c'est le nest-count, lu dans le bit S). `dispatch` **relocalise** la frame SSP→pile
+  user de la sortante (`TC_SPREG` pointe désormais dans une pile user), sauve/restaure le nesting PAR-TÂCHE
+  (`TC_IDNESTCNT`/`TC_TDNESTCNT`↔`EB_*`) et synchronise INTENA → la SSP n'est JAMAIS partagée entre contextes
+  de tâches (hazard neutralisé). Switch VOLONTAIRE (Wait/reschedule) via `trap #0`/`#1`. `AddTask` pose SR=$0000
+  + nesting=-1. `exec_Signal`/`exec_Wait`/`timer_reply` passent de l'atomicité SR à une **section critique nue**
+  (Disable INTENA + `raw_enable`, user-safe, appelables depuis une IRQ sans ré-entrance du scheduler). Lancement
+  de la 1re tâche = transition superviseur→user. **Flag de dispatch différé** (spec exec) : un serveur d'IRQ qui
+  réveille une tâche prioritaire (AttnResched posé par Signal) provoque le switch à la SORTIE d'interruption,
+  sans attendre un Permit ou le VBlank — sinon le réveil dépend du hasard de phase (résonance). PREUVE : GREEN
+  « M7C USERMODE OK » (user-mode prouvé par `move sr` → bit S==0, + N préemptions survécues) avec M3F/M7A/M7B
+  toujours GREEN sur le nouveau modèle (7/7 runs, `VBL_CLASH==0`, sentinelles d7 intactes). RED : tâches en
+  superviseur ($2000) → hang ; relocation bypassée (sp-swap inline sur SSP partagée) → crash ; IPL7 du prologue
+  retiré → crash. Coopératif (SCHED_ON=0, task_s retiré) re-prouvé : M3F LIVE via le yield seul + M7A.
+- **À venir (M7d+)** : **fidélité IPL-par-niveau** (VERTB en chaîne + tourner à l'IPL natif de l'interruption),
+  décodage INTREQR multi-source, upgrade des ports (`PutMsg`/`GetMsg`/`ReplyMsg`) en Disable interrupt-safe,
+  `RemTask`, quantum SFB_TQE, priorité réelle, calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
