@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched`), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + handlers INT2/INT6 + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK fonctionnelle) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handler VBlank honorant Forbid/Disable + Wait/reschedule = switchs synchrones ; les 3 chemins partagent `dispatch_head`, préemption et reschedule partagent `requeue_and_dispatch` qui efface `AttnResched` et **monte IPL7 autour de la chirurgie de listes** = gate de ré-entrance vs une interruption de niveau > 3, M7a), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + handlers INT2/INT6 + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -213,18 +213,31 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   coupé → timeout ; **activation ICR du chip coupée → timeout** (ce RED prouve toute la chaîne, car il ne
   peut passer que si le CIA ému pilote réellement l'interruption). Nettoyage après preuve (RemICRVector +
   stop timer + désactivation PORTS).
-  ⚠️ **GATE CRITIQUE (ledgeré)** : interruptions CIA et ordonnanceur préemptif ne coexistent **PAS encore
-  en sécurité**. INT2 (niveau 2) ne préempte pas le VBlank (niveau 3), mais si une source CIA reste
-  activée sous `SCHED_ON=1` (ex. unité MICROHZ gardant CIA-B en route), un VBlank préemptant le
-  handler CIA ferait un `reschedule` qui sauverait la pile d'interruption comme `TC_SPREG` d'une tâche →
-  corruption. La preuve M6b est sûre car en contexte **coopératif** (`SCHED_ON=0`) + CIA désactivée avant
-  M3f. Le **nest-count d'interruption / Switch différé** est le vrai prérequis AVANT qu'une source CIA
-  reste active sous préemption (c'est le vrai gate de l'unité MICROHZ, plus que « câbler le timer CIA »).
-  `int6_handler`/EXTER (CIA-B) sont **câblés mais non activés/non testés** (niveau 6 > VBlank → même
-  problème d'imbrication).
-- **À venir (M7+)** : nest-count d'interruption (coexistence CIA + préemption), unité MICROHZ du timer
-  (via CIA-B), tâche bloquant sur un timer (`Wait`→wake), dispatcher par niveau (`SetIntVector`/
-  `AddIntServer`), upgrade des ports en Disable, user-mode, `RemTask`, quantum, priorité réelle, puis
-  les modules graphiques → écran.
+  ⚠️ **Gate (M6b → requalifié par M7a)** : M6b tournait en contexte **coopératif** (`SCHED_ON=0`) +
+  CIA désactivée avant M3f, car une source CIA de niveau > 3 active sous préemption posait un hazard
+  (voir M7a pour sa nature exacte, qui n'était pas celle écrite ici à l'origine). `int6_handler`/EXTER
+  (CIA-B) restaient câblés mais non activés. **M7a lève ce blocage pour la ré-entrance des listes.**
+- **M7a** (gate de ré-entrance des listes + unité MICROHZ via CIA-B/INT6 + tâche bloquant sur un timer) :
+  **le vrai hazard n'était pas la pile** (dans le modèle tâches-superviseur-même-pile, les frames
+  d'interruption se dépilent correctement ; la corruption de pile par SSP partagée reste **latente**
+  jusqu'au user-mode = M7c). Le vrai hazard = **ré-entrance des listes du scheduler** : `vbl_handler`
+  faisait son `Enqueue`/`RemHead` TaskReady à **IPL3**, donc INT6/CIA-B (niveau 6 > 3) pouvait le
+  préempter en plein milieu, et l'`exec_Signal` du réveil MICROHZ faisait aussi `Enqueue(TaskReady)` sur
+  la même liste à moitié mise à jour → corruption. **Fix 1** : `requeue_and_dispatch` monte IPL7 autour
+  de la seule section critique (pas tout `vbl_handler` — INT6 doit préempter le VBlank ailleurs) ;
+  `exec_Wait`/`reschedule` y entraient déjà à IPL7. **Fix 2** : `timer_reply` fait son `AddTail`
+  (msglist de reply-port, partageable entre unités VBLANK et MICROHZ) à IPL7. L'**unité MICROHZ**
+  (2e file `TIMER_MICROQ`, décrémentée par `timer_micro_service` enregistré comme vecteur ICR du timer A
+  de CIA-B) réveille une **tâche bloquée** (`task_timer` : `BeginIO`→`Wait`→wake par l'IRQ). Preuve
+  **structurelle** via `VBL_INSURG`/`VBL_CLASH` : à IPL7 INT6 est masqué pendant la chirurgie →
+  `VBL_CLASH==0` est **garanti** (pas probabiliste). GREEN « M7A TIMER OK » (réveils + `VBL_CLASH==0` +
+  time-gate 5 s). RED#1 (gate retiré, IPL3) → clash < 1 s → « M7A FAILED ». RED#2 (réveil cassé) →
+  `task_timer` figée, « M3F LIVE » toujours présent → isole le chemin de réveil. Yield re-prouvé en
+  **coopératif** (`SCHED_ON=0`, `task_S` retiré → `task_timer` réveillée par le seul yield) : ma modif
+  des tails partagés n'a pas régressé le reschedule. `int6_handler`/EXTER désormais **activés et testés**.
+  MICROHZ ici = « 1 tick = 1 IRQ CIA-B » (chemin IRQ/réveil prouvé, **calibration µs E-clock différée**).
+- **À venir (M7b+)** : dispatcher par niveau (`SetIntVector`/`AddIntServer`), **hazard de pile user-mode**
+  (SSP partagée, latent — le vrai « nest-count » devient nécessaire ici), upgrade des ports en Disable,
+  user-mode, `RemTask`, quantum, priorité réelle, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

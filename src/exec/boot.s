@@ -19,15 +19,24 @@
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
                 xref    build_reslist    ; resident.s (scan des ROMTags)
+                xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
 DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
+DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
 CONS_THRESH  EQU 100          ; réveils de task_H (via yield) requis pour « M3F LIVE »
 SPIN_THRESH  EQU 5            ; itérations de task_S (via préemption) requises pour « M3F LIVE »
+TCONS_THRESH EQU 50           ; réveils de task_timer (via l'IRQ MICROHZ) requis pour « M7A TIMER OK »
+M7A_MINTICKS EQU 250          ; ET délai minimum (ticks VBlank = 5 s) écoulé avant d'émettre OK :
+                              ; le détecteur de clash tourne à chaque INT6 (~2/s), donc en RED un
+                              ; clash tombe BIEN AVANT 5 s -> « M7A FAILED » précède, OK n'apparaît pas.
 SENT_H       EQU $CAFE0010    ; sentinelles de contexte (doivent survivre à TOUT switch)
 SENT_L       EQU $CAFE0020
 SENT_S       EQU $CAFE0030
+SENT_T       EQU $CAFE0040    ; sentinelle de task_timer (M7a)
+CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
+CIAB_LATCH_LO EQU $FF
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -271,6 +280,7 @@ coldstart:                        ; $FC00D2
         move.l  d0,a3                ; a3 = timerequest
         move.l  a2,MN_REPLYPORT(a3)
         move.l  d6,IO_DEVICE(a3)
+        move.l  #UNIT_VBLANK,IO_UNIT(a3)  ; unité VBLANK (le défaut de BeginIO est MICROHZ depuis M7a)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a3)
         clr.l   TV_SECS(a3)
         move.l  #100000,TV_MICRO(a3) ; 100000 us / 20000 = 5 ticks
@@ -345,18 +355,37 @@ coldstart:                        ; $FC00D2
         move.l  (sp)+,a6
         move.l  CIAR_HWBASE(a2),a0
         move.b  #$00,CIA_CRA(a0)     ; stop Timer A
-        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS (clear) -> pas d'INT2 pendant M3f
+        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS (clear) -> pas d'INT2 pendant la démo
         lea     msg_m6b_ok(pc),a0
         bsr     ser_puts             ; « M6B CIA INT OK »
 
-        ; --- M3f : démo recombinaison yield + préemption (SCHED_ON=1) ---
-        ; Préemption périodique RÉARMÉE, coexistant avec le yield-sur-Permit. 3 tâches :
-        ; task_H (pri 10, cible du yield), task_L (pri 0, signale+yield+spin préemptible),
-        ; task_S (pri 0, spinner pur). WP_CONS n'avance que si la préemption laisse task_L
-        ; tourner (malgré task_S qui monopoliserait sans préemption) ET si le yield
-        ; dispatche task_H -> preuve de coexistence.
-        move.w  #$2700,sr            ; masque les interruptions pendant le setup
-        bsr     setup_demo_tasks     ; task_H (pri 10) + task_L (pri 0) + task_S (pri 0)
+        ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
+        ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
+        ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ via CIA-B/INT6 +
+        ; task_timer qui bloque dessus -> prouve (a) une TÂCHE réveillée par un timer d'interruption
+        ; (Wait->wake) et (b) le GATE DE RÉ-ENTRANCE : INT6 (niveau 6) préempte vbl_handler, dont la
+        ; chirurgie de listes est désormais IPL7 -> VBL_CLASH reste 0 (RED : IPL3 -> VBL_CLASH>0).
+        ; M3f (rejoué, non-régression) : task_H/L/S prouvent la coexistence préemption + yield
+        ; (marqueur « M3F LIVE »). GREEN = « M7A TIMER OK » émis, VBL_CLASH==0, sentinelles intactes.
+        move.w  #$2700,sr            ; masque les interruptions pendant TOUT le setup
+        clr.l   VBL_CLASH
+        lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq     m7a_fail
+        move.l  d0,a2                ; a2 = base ciab
+        move.l  a6,-(sp)             ; AddICRVector(ciab, bit0 = timer A, &timer_micro_int)
+        move.l  a2,a6
+        moveq   #0,d0
+        move.l  #timer_micro_int,a1
+        jsr     CIA_ADDICRVECTOR(a6)
+        move.l  (sp)+,a6
+        move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; active Paula EXTER (INT6, niveau 6 > VBlank 3)
+        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-B Timer A en CONTINU (IRQ périodique rapide)
+        move.b  #CIAB_LATCH_LO,CIA_TALO(a0)
+        move.b  #CIAB_LATCH_HI,CIA_TAHI(a0)   ; l'écriture de TAHI charge le latch
+        move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
+        bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a)
         move.b  #1,SCHED_ON          ; ARME la préemption périodique
         lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite (abandonne le contexte boot)
         jsr     LVO_REMHEAD(a6)      ; tête = task_H (pri 10) -> elle Wait d'abord
@@ -365,7 +394,7 @@ coldstart:                        ; $FC00D2
         move.b  #TS_RUN,TC_STATE(a1)
         move.l  TC_SPREG(a1),sp      ; bascule sur la pile de la 1re tâche
         movem.l (sp)+,d0-d7/a0-a6
-        rte                          ; -> task_H (SR=$2000 : VBlank préempte + yield actif)
+        rte                          ; -> task_H (SR=$2000 : VBlank + INT6 + yield actifs)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -882,6 +911,7 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         clr.l   WP_PROD
         clr.l   WP_SPIN
         clr.l   WP_STAT
+        clr.l   WP_TCONS             ; M7a : réveils de task_timer
         lea     task_h(pc),a2        ; task_H (pri 10) -> tête (Enqueue trie), publiée
         lea     task_h_name(pc),a3
         moveq   #DEMO_PRI_H,d2
@@ -895,6 +925,10 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_s_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
+        lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
+        lea     task_t_name(pc),a3
+        moveq   #DEMO_PRI_T,d2
+        bsr     mk_demo_task
         movem.l (sp)+,d2/a2-a4
         rts
 
@@ -907,6 +941,7 @@ mk_demo_task:
         move.l  d0,a4                ; a4 = TCB
         move.l  a3,LN_NAME(a4)
         move.b  d2,LN_PRI(a4)
+        move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)  ; bits 0-15 réservés -> AllocSignal rend 16+ (task_timer)
         move.l  #DEMO_STK,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -982,6 +1017,85 @@ task_s:                              ; basse priorité, spinner PUR (jamais de b
         subq.l  #1,d0
         bne.s   .s_spin
         bra.s   .s_loop
+
+; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ (CIA-B/INT6). À chaque tour, arme une
+; requête courte (1 tick CIA-B), Wait sur le reply port, vérifie la réponse. Prouve qu'une TÂCHE
+; se réveille sur un timer d'interruption (Wait->wake par l'IRQ MICROHZ) ET surveille VBL_CLASH :
+; si INT6 a préempté la chirurgie de listes de vbl_handler (gate violé en RED), VBL_CLASH>0 ->
+; « M7A FAILED ». GREEN = TCONS_THRESH réveils accumulés avec VBL_CLASH toujours == 0.
+; Setup en contexte tâche (AllocSignal opère bien sur task_timer). a4=base timer, a3=reply port,
+; a2=timerequest, d6=bit de signal, d7=sentinelle — tous préservés par les appels exec (vérifié).
+task_timer:
+        move.l  ($4).w,a6            ; SysBase
+        move.l  #SENT_T,d7           ; sentinelle de contexte
+        lea     EB_DEVICELIST(a6),a0 ; base timer.device
+        lea     timer_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     m7a_fail
+        move.l  d0,a4                ; a4 = base timer.device
+        moveq   #-1,d0               ; AllocSignal -> bit du reply port (task_timer a SYS_SIGALLOC)
+        jsr     LVO_ALLOCSIGNAL(a6)
+        move.l  d0,d6                ; d6 = n° de bit
+        move.l  #MP_SIZE,d0          ; reply port
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7a_fail
+        move.l  d0,a3                ; a3 = reply port
+        lea     MP_MSGLIST(a3),a1
+        jsr     newlist
+        move.b  #PA_SIGNAL,MP_FLAGS(a3)
+        move.b  d6,MP_SIGBIT(a3)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a3)   ; se signale elle-même
+        move.l  #TR_SIZE,d0          ; timerequest
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7a_fail
+        move.l  d0,a2                ; a2 = timerequest
+        move.l  a3,MN_REPLYPORT(a2)
+        move.l  a4,IO_DEVICE(a2)
+        move.l  #UNIT_MICROHZ,IO_UNIT(a2)   ; unité MICROHZ (CIA-B/INT6)
+        move.l  VBL_COUNT,d5         ; T0 (ticks VBlank au départ ; d5 préservé par les appels exec)
+.tt_loop:
+        cmp.l   #SENT_T,d7           ; contexte intact après chaque switch ?
+        bne     m7a_fail
+        tst.l   VBL_CLASH            ; le gate IPL7 a-t-il été violé ? (RED -> != 0)
+        bne     m7a_fail
+        clr.l   TV_SECS(a2)          ; (ré)arme une requête courte : 1 tick CIA-B
+        move.l  #20000,TV_MICRO(a2)  ; 20000/20000 = 1 tick -> expire au 1er INT6 suivant
+        move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
+        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
+        move.l  a4,a6
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        move.l  (sp)+,a6
+        moveq   #1,d0                ; Wait(1<<bit) : BLOQUE jusqu'au réveil MICROHZ
+        move.l  d6,d1
+        lsl.l   d1,d0
+        jsr     LVO_WAIT(a6)
+        move.l  a3,a0                ; GetMsg(reply port)
+        jsr     LVO_GETMSG(a6)
+        cmp.l   a2,d0                ; doit être NOTRE requête
+        bne     m7a_fail
+        addq.l  #1,WP_TCONS          ; un réveil MICROHZ réussi de plus
+        btst    #1,WP_STAT
+        bne     .tt_loop             ; marqueur déjà émis (branche word : corps de boucle long)
+        move.l  WP_TCONS,d0
+        cmp.l   #TCONS_THRESH,d0
+        bcs     .tt_loop             ; pas encore assez de réveils
+        move.l  VBL_COUNT,d0         ; ET assez de temps écoulé ? (fenêtre où un clash RED serait tombé)
+        sub.l   d5,d0
+        cmp.l   #M7A_MINTICKS,d0
+        bcs     .tt_loop
+        bset    #1,WP_STAT           ; émet « M7A TIMER OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7a_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+        bra     .tt_loop
+
 demo_fail:                           ; sentinelle KO -> preuve de corruption
         jsr     LVO_FORBID(a6)
         lea     msg_m3ffail(pc),a0
@@ -1098,6 +1212,12 @@ cia_int_fail:                        ; échec M6b (dispatch interruption CIA) ->
         bsr     ser_puts
 .m6bf_hang:
         bra.s   .m6bf_hang
+m7a_fail:                            ; échec M7a (gate de ré-entrance / unité MICROHZ) -> fige
+        jsr     LVO_FORBID(a6)       ; émission non fractionnée (atteint depuis le contexte tâche)
+        lea     msg_m7a_fail(pc),a0
+        bsr     ser_puts
+.m7af_hang:
+        bra.s   .m7af_hang
 ; struct Interrupt de test (M6b) : IS_CODE -> cia_test_vec (incrémente CIA_FIRED).
         EVEN
 cia_test_int:
@@ -1180,6 +1300,8 @@ task_l_name:
         dc.b    "demo.L",0
 task_s_name:
         dc.b    "demo.S",0
+task_t_name:
+        dc.b    "demo.timer",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -1228,6 +1350,10 @@ msg_m6b_ok:
         dc.b    "M6B CIA INT OK (INT2 dispatch: CIA-A timer fired registered vector)",13,10,0
 msg_m6b_fail:
         dc.b    "M6B FAILED: CIA interrupt dispatch incorrect",13,10,0
+msg_m7a_ok:
+        dc.b    "M7A TIMER OK (MICROHZ via CIA-B/INT6: task woke on timer, reentrancy gate held)",13,10,0
+msg_m7a_fail:
+        dc.b    "M7A FAILED: MICROHZ wake or scheduler-list reentrancy gate",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

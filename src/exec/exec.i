@@ -77,6 +77,12 @@ VBL_SVCDATA  EQU $00000528    ; M6a : donnée passée au service en a1 (base du 
 CIAA_PTR     EQU $0000052C    ; M6b : base ciaa.resource (0 tant que non créé)
 CIAB_PTR     EQU $00000530    ; M6b : base ciab.resource
 CIA_FIRED    EQU $00000534    ; M6b : compteur — un vecteur ICR a été servi (preuve)
+WP_TCONS     EQU $00000538    ; M7a démo : réveils de task_timer (bloque sur l'unité MICROHZ)
+VBL_INSURG   EQU $0000053C    ; M7a : UBYTE — chirurgie de listes du scheduler EN COURS (vbl_handler).
+                              ; Posé AVANT l'Enqueue/RemHead TaskReady, effacé APRÈS, à IPL7 (donc
+                              ; invisible à INT6). Une source de niveau > 3 (INT6/CIA-B) qui l'observe
+                              ; posée a préempté la chirurgie = hazard de ré-entrance -> incrémente VBL_CLASH.
+VBL_CLASH    EQU $00000540    ; M7a : compteur de clashs observés (0 si le gate IPL7 tient ; > 0 en RED)
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -94,7 +100,10 @@ LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
 LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
 TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
-TD_SIZE      EQU LIB_SIZE+14   ; taille de la base timer.device (Library + List)
+TIMER_MICROQ EQU LIB_SIZE+14   ; M7a : liste de requêtes de l'unité MICROHZ (CIA-B/INT6) (struct List)
+TD_SIZE      EQU LIB_SIZE+28   ; taille de la base timer.device (Library + 2 listes d'unité)
+UNIT_MICROHZ EQU 0             ; sélecteur d'unité dans IO_UNIT (= numérotation réelle timer.device)
+UNIT_VBLANK  EQU 1             ; (OpenDevice poserait un struct Unit* ; notre impl minimale = l'index)
 EB_CHKBASE    EQU $26
 EB_MAXLOCMEM  EQU $3E
 EB_THISTASK   EQU $114         ; tâche courante (struct Task *)

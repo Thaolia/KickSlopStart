@@ -161,11 +161,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   existant (file de requêtes, décrément au VBlank, reply bas-niveau à l'expiration, M6a) = 1er
   comportement OS observable (timer+interruption+messages+`exec_Signal` depuis l'IRQ). La **dispatch
   d'interruption CIA** (INT2/CIA-A : les vecteurs ICR enregistrés se déclenchent, prouvé bout-en-bout
-  par un timer CIA, M6b) est aussi livrée. Reste : **nest-count d'interruption** — prérequis DUR pour
-  que les interruptions CIA coexistent avec l'ordonnanceur préemptif (sinon un VBlank préemptant un
-  handler CIA corromprait la pile) ; puis unité MICROHZ du timer (via CIA), tâche bloquant sur timer
-  (Wait→wake), retrait éventuel des démos (le handoff de boot reste la démo M3f codée en dur d'ici là),
-  dispatcher par niveau, user-mode, quantum/priorité.
+  par un timer CIA, M6b) est aussi livrée. **M7a** : le vrai gate qui bloquait la coexistence CIA +
+  préemption n'était PAS la pile (dans le modèle tâches-superviseur-même-pile les frames d'interruption
+  se dépilent correctement ; la corruption de pile par SSP partagée reste **latente** jusqu'au user-mode)
+  mais la **ré-entrance des listes du scheduler** : `vbl_handler` faisait son `Enqueue`/`RemHead`
+  TaskReady à IPL3, préemptable par INT6 (niveau 6) dont l'`exec_Signal` touche la même liste. Fermé en
+  montant IPL7 autour de la seule section critique (+ `timer_reply` AddTail IPL7). Livré avec l'**unité
+  MICROHZ** (CIA-B/INT6) et une **tâche qui bloque sur un timer** (Wait→wake), prouvé par un détecteur
+  structurel `VBL_CLASH==0` (RED : gate retiré → clash) + yield re-prouvé en coopératif. Reste : hazard
+  de pile user-mode (SSP partagée — le vrai « nest-count » devient nécessaire là), dispatcher par niveau
+  (`SetIntVector`/`AddIntServer`), upgrade des ports en Disable, retrait éventuel des démos (le handoff de
+  boot reste la démo M3f/M7a codée en dur d'ici là), user-mode, quantum/priorité, calibration µs MICROHZ.
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

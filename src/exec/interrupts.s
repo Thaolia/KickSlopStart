@@ -7,9 +7,13 @@
 ;                 (M3c : EB_TDNEST/EB_IDNEST >= 0 -> switch déféré au prochain VBlank).
 ; Tâches en SUPERVISEUR : leur pile EST la pile superviseur, donc la frame {SR,PC}
 ; poussée par le CPU est déjà sur la pile de la tâche -> le switch est un simple
-; échange de SP (pas de jonglage USP/SSP ; user-mode différé). Au IPL 3 : pas de
-; ré-entrée mid-switch. À VENIR : dispatcher par niveau (décodage INTREQR),
-; IntVects/SetIntVector/AddIntServer, quantum TQE, priorité réelle.
+; échange de SP (pas de jonglage USP/SSP ; user-mode différé). À VENIR : dispatcher
+; par niveau (décodage INTREQR), IntVects/SetIntVector/AddIntServer, quantum TQE, priorité réelle.
+; M7a (GATE DE RÉ-ENTRANCE) : vbl_handler (niveau 3) faisait sa chirurgie de listes du scheduler
+; (Enqueue/RemHead TaskReady) à IPL3 -> une source de niveau > 3 (INT6/CIA-B, l'unité MICROHZ) pouvait
+; la préempter et corrompre la liste via son propre exec_Signal. Fix : IPL7 autour de la SEULE section
+; critique (requeue_and_dispatch -> dispatch_head), pas tout le handler (INT6 doit préempter le VBlank
+; ailleurs). Détecteur VBL_INSURG/VBL_CLASH prouve l'invariant (cf. exec.i).
 ; M3d : exec_Wait = switch SYNCHRONE depuis une tâche (blocage). M3e : reschedule =
 ; yield synchrone SANS blocage (yield-sur-Permit : requeue la courante, bascule sur la
 ; réveillée prioritaire). M3f (recombinaison) : les TROIS chemins de dispatch (préemption
@@ -39,13 +43,16 @@ init_ints:
         clr.l   CIAA_PTR                          ; M6b : handlers CIA no-op tant que cia non créé
         clr.l   CIAB_PTR
         clr.l   CIA_FIRED
+        clr.b   VBL_INSURG                        ; M7a : aucune chirurgie en cours au départ
+        clr.l   VBL_CLASH                         ; M7a : compteur de clashs de ré-entrance
         move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler VBlank
         move.l  #int2_handler,AUTOVEC_L2          ; M6b : INT2 (CIA-A / PORTS)
-        move.l  #int6_handler,AUTOVEC_L6          ; M6b : INT6 (CIA-B / EXTER) — câblé, non activé
+        move.l  #int6_handler,AUTOVEC_L6          ; M6b/M7a : INT6 (CIA-B / EXTER)
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
-        ; active VERTB + PORTS (INT2) + maître. EXTER(INT6) non activé : niveau 6 > VBlank(3)
-        ; préempterait le VBlank -> imbrication-switch non gérée (nest-count différé) ; CIA-B
-        ; n'a de toute façon aucune source ICR activée. INT2 (niveau 2 < 3) ne préempte pas le VBlank.
+        ; active VERTB + PORTS (INT2) + maître. EXTER(INT6, niveau 6 > VBlank 3) est activé
+        ; PLUS TARD, au bringup de l'unité MICROHZ (boot.s M7a) : il peut désormais préempter le
+        ; VBlank sans danger car la chirurgie de listes de vbl_handler est IPL7 (gate M7a), mais on
+        ; le laisse éteint tant qu'aucune source CIA-B n'existe -> M4..M6 restent inchangés.
         move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB|INTF_PORTS),INTENA
         move.w  #$2000,sr                         ; superviseur, IPL=0 -> les interruptions passent
         rts
@@ -134,6 +141,15 @@ exec_Wait:
 ; yield redondant au prochain Permit), puis tombe dans dispatch_head. Partagé par vbl_handler
 ; (préemption périodique) ET reschedule (yield-sur-Permit). a6 = SysBase, IPL >= 3.
 requeue_and_dispatch:
+        ; M7a — GATE DE RÉ-ENTRANCE : la chirurgie des listes du scheduler (Enqueue ici +
+        ; RemHead dans dispatch_head) DOIT être atomique vs une interruption de niveau > 3.
+        ; vbl_handler (niveau 3) y entrait à IPL3 ; INT6/CIA-B (niveau 6) pouvait donc le
+        ; préempter en plein Enqueue(TaskReady) pendant que son propre exec_Signal faisait
+        ; aussi Enqueue(TaskReady) sur la même liste à moitié mise à jour -> corruption. On
+        ; monte à IPL7 pour la SEULE section critique (pas tout vbl_handler : INT6 doit pouvoir
+        ; préempter le VBlank ailleurs). reschedule/exec_Wait y entrent déjà à IPL7 (idempotent).
+        move.w  #$2700,sr
+        move.b  #1,VBL_INSURG       ; fenêtre de chirurgie ouverte (détecteur de clash, cf. exec.i)
         move.b  #TS_READY,TC_STATE(a1)
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)     ; round-robin : requeue la sortante (a1 préservé)
@@ -150,9 +166,10 @@ dispatch_head:
         move.l  d0,a1
         move.l  a1,EB_THISTASK(a6)
         move.b  #TS_RUN,TC_STATE(a1)
+        clr.b   VBL_INSURG          ; M7a : chirurgie des listes terminée (RemHead fait)
         move.l  TC_SPREG(a1),sp     ; bascule sur la pile de l'entrante
         movem.l (sp)+,d0-d7/a0-a6
-        rte                         ; -> entrante (reprend SA frame)
+        rte                         ; -> entrante (reprend SA frame ; le rte restaure son SR/IPL)
 
 ; reschedule : YIELD synchrone volontaire SANS blocage (= yield-sur-Permit, M3e). Requeue la
 ; tâche courante dans TaskReady (round-robin par priorité) et bascule sur la tête (la réveillée

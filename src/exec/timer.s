@@ -13,11 +13,21 @@
 ;     (AddTail au reply port + exec_Signal) et NON PutMsg/ReplyMsg : ces derniers appellent Permit
 ;     qui ferait un reschedule SYNCHRONE au milieu de l'interruption. Signal pose AttnResched sans
 ;     rescheduler -> le switch se fait à la fin du handler (round-robin existant).
-; DIFFÉRÉ (ledgeré) : unités MICROHZ/ECLOCK (nécessitent la dispatch CIA), OpenDevice (la preuve
-;   remplit IO_DEVICE à la main), conversion timeval complète (mulu suppose secs petit).
+; M7a — UNITÉ MICROHZ (via CIA-B / INT6) :
+;   2e file d'unité (TIMER_MICROQ) décrémentée par timer_micro_service, enregistré comme vecteur
+;   ICR du timer A de ciab.resource (déclenché à chaque underflow CIA-B -> INT6 niveau 6). BeginIO
+;   route par IO_UNIT (0=MICROHZ, 1=VBLANK). Prouve une TÂCHE qui BLOQUE sur un timer (Wait->wake
+;   par l'IRQ MICROHZ) ET le GATE DE RÉ-ENTRANCE : INT6 (niveau 6 > VBlank 3) peut préempter
+;   vbl_handler ; sa chirurgie de listes est désormais IPL7 (interrupts.s). Le service pose le
+;   détecteur VBL_CLASH si jamais il observe vbl_handler en pleine chirurgie (= 0 avec le fix).
+; DIFFÉRÉ (ledgeré) : unité ECLOCK, calibration µs réelle de MICROHZ (latch E-clock : ici « 1 tick
+;   = 1 interruption CIA-B », le chemin IRQ/réveil est prouvé, pas la résolution microseconde),
+;   OpenDevice (la preuve remplit IO_DEVICE/IO_UNIT à la main), conversion timeval complète.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs timer.device + exec. AUCUNE lecture ROM.
 
                 include "exec.i"
+
+                xdef    timer_micro_int   ; M7a : struct Interrupt de l'unité MICROHZ (vecteur ICR CIA-B)
 
                 xref    newlist           ; lists.s (NEWLIST de la file d'unité)
 
@@ -89,9 +99,13 @@ timer_beginio:
         move.l  d0,TV_SECS(a3)       ; décompte en ticks (TV_SECS réutilisé)
         clr.l   TV_MICRO(a3)
         move.b  #NT_MESSAGE,LN_TYPE(a3)
-        lea     TIMER_VBLQ(a2),a0    ; AddTail(&unité VBLANK, requête)
+        lea     TIMER_MICROQ(a2),a0  ; route par IO_UNIT : défaut MICROHZ (unité 0, CIA-B/INT6)
+        cmp.l   #UNIT_VBLANK,IO_UNIT(a3)
+        bne.s   .bio_q
+        lea     TIMER_VBLQ(a2),a0    ; unité VBLANK (le handler VBlank décrémente cette file)
+.bio_q:
         move.l  a3,a1
-        jsr     LVO_ADDTAIL(a6)
+        jsr     LVO_ADDTAIL(a6)      ; enqueue (sous Disable -> atomique vs VBlank ET INT6)
         jsr     LVO_ENABLE(a6)
         move.l  a2,a6                ; restaure a6 = base device
         movem.l (sp)+,d2/a2-a3
@@ -107,11 +121,14 @@ timer_initfunc:
         lea     timer_name(pc),a0
         move.l  a0,LN_NAME(a1)
         move.l  d0,-(sp)             ; sauve la base
-        lea     TIMER_VBLQ(a1),a1    ; a1 = &file d'unité VBLANK
-        jsr     newlist              ; NEWLIST (clobbe a0 ; a6 préservé)
+        lea     TIMER_VBLQ(a1),a1    ; NEWLIST file d'unité VBLANK
+        jsr     newlist              ; (clobbe a0 ; a6 préservé)
+        move.l  (sp),a1              ; relit la base (sans dépiler)
+        lea     TIMER_MICROQ(a1),a1  ; M7a : NEWLIST file d'unité MICROHZ (CIA-B/INT6)
+        jsr     newlist
         move.l  (sp)+,d0             ; base
-        move.l  #timer_vblank_service,VBL_SVC   ; enregistre le hook
-        move.l  d0,VBL_SVCDATA       ; data = base device
+        move.l  #timer_vblank_service,VBL_SVC   ; enregistre le hook VBlank (unité VBLANK)
+        move.l  d0,VBL_SVCDATA       ; data = base device (lue aussi par timer_micro_service)
         rts                          ; d0 = base inchangé
 
 ; timer_vblank_service(a1 = base device, a6 = SysBase) : appelé par le handler VBlank chaque tick.
@@ -147,7 +164,10 @@ timer_reply:
         move.l  d0,a0                ; a0 = reply port
         movem.l a0/a1,-(sp)
         lea     MP_MSGLIST(a0),a0    ; AddTail(&port->MsgList, msg)
+        move.w  sr,-(sp)             ; M7a : le msglist peut être partagé entre l'unité VBLANK (IPL3)
+        move.w  #$2700,sr            ; et l'unité MICROHZ (INT6) -> AddTail atomique vs interruption > 3
         jsr     LVO_ADDTAIL(a6)
+        move.w  (sp)+,sr
         movem.l (sp)+,a0/a1
         moveq   #0,d0                ; action du port
         move.b  MP_FLAGS(a0),d0
@@ -164,5 +184,48 @@ timer_reply:
         jsr     LVO_SIGNAL(a6)       ; pose les bits + AttnResched (PAS de reschedule ici)
 .tr_ret:
         rts
+
+; timer_micro_service(a6 = SysBase ; a1 = IS_DATA, inutilisé) : M7a — vecteur ICR de l'unité
+; MICROHZ, appelé par cia_dispatch depuis int6_handler (CIA-B / INT6, IPL7) à chaque underflow
+; du timer CIA-B. Miroir de timer_vblank_service mais sur TIMER_MICROQ ; la base device est lue
+; dans VBL_SVCDATA. AVANT toute manip : détecte si on a préempté la chirurgie de listes de
+; vbl_handler (VBL_INSURG posé) = hazard de ré-entrance de niveau > 3 -> VBL_CLASH++ (= preuve
+; que le gate IPL7 de M7a est load-bearing : ce compteur reste 0 avec le fix, > 0 sans).
+; Convention serveur ICR : préserve d2/d3/a2 (variables de boucle de cia_dispatch) -> ne
+; sauve/clobbe que d0-d2/a0-a4 et ne touche jamais d3/a5.
+timer_micro_service:
+        tst.b   VBL_INSURG          ; vbl_handler est-il en pleine chirurgie de listes ?
+        beq.s   .mic_ok
+        addq.l  #1,VBL_CLASH        ; OUI -> INT6 a préempté la section critique = gate violé (RED)
+.mic_ok:
+        movem.l d0-d2/a0-a4,-(sp)
+        move.l  VBL_SVCDATA,a2      ; a2 = base device (lue depuis le hook VBLANK, même base)
+        move.l  a2,d0
+        beq.s   .mic_done           ; timer non initialisé -> rien
+        lea     TIMER_MICROQ(a2),a4
+        move.l  (a4),a3             ; a3 = lh_Head (1re requête ou sentinelle)
+.mic_loop:
+        move.l  (a3),d2             ; d2 = a3->Succ ; 0 => sentinelle tail -> fin
+        beq.s   .mic_done
+        subq.l  #1,TV_SECS(a3)      ; décompte ce tick CIA-B
+        bgt.s   .mic_cont           ; > 0 -> pas encore expiré
+        move.l  a3,a1               ; expiré : Remove(a3)
+        jsr     LVO_REMOVE(a6)
+        move.l  a3,a1               ; reply(a3) bas-niveau (AddTail IPL7 + Signal, sans Permit)
+        bsr     timer_reply
+.mic_cont:
+        move.l  d2,a3              ; a3 = Succ sauvé (valide même après Remove)
+        bra.s   .mic_loop
+.mic_done:
+        movem.l (sp)+,d0-d2/a0-a4
+        rts
+
+; struct Interrupt de l'unité MICROHZ : enregistrée sur ciab.resource (ICR bit 0 = timer A) via
+; AddICRVector. IS_CODE -> timer_micro_service. IS_DATA inutilisé (le service lit VBL_SVCDATA).
+        EVEN
+timer_micro_int:
+        dcb.b   14,0                ; struct Node (non chaîné ; AddICRVector ne stocke que le ptr)
+        dc.l    0                   ; IS_DATA
+        dc.l    timer_micro_service ; IS_CODE
         EVEN
 timer_end:
