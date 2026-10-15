@@ -23,6 +23,7 @@
                 xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
+                xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -464,6 +465,9 @@ coldstart:                        ; $FC00D2
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
+        bsr     gfx_display_init     ; M4a : premier affichage (copper list chip RAM -> COLOR00 vert)
+        lea     msg_m4a(pc),a0       ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est
+        bsr     ser_puts             ; l'écran vert via FRAC, pas ce marqueur : gfx_display_init tourne pareil)
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
                 endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
@@ -1816,6 +1820,8 @@ msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
+msg_m4a:
+        dc.b    "M4A INIT (copper list built in chip RAM; display is proven on screen, not here)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

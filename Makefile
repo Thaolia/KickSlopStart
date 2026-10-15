@@ -18,6 +18,10 @@ EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
 EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/timer.o
+# --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
+GFX_DIR   := src/graphics
+GFX_INC   := $(GFX_DIR)/graphics.i
+GFX_OBJ   := $(BUILD)/gfx.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -37,9 +41,13 @@ $(BUILD):
 $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -o $@ $<
 
+# Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
+$(BUILD)/gfx.o: $(GFX_DIR)/gfx.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
+	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
+
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
-$(BUILD)/kick.bin: $(EXEC_OBJ) $(LDSCRIPT)
-	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ)
+$(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(LDSCRIPT)
+	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ)
 $(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
 	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
 

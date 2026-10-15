@@ -90,11 +90,15 @@ sleep "$WAIT"
 sync
 
 # Capture écran (diagnostic + repli couleur).
+# FRAC = fraction de pixels de la zone active proches (fuzz 20%) de #EXPECT. ORDRE CRITIQUE :
+# noircir d'abord les NON-matchs (+opaque), PUIS blanchir les matchs (-opaque), sinon le blanc
+# préexistant survit et FRAC renvoie ~la fraction d'écran quelle que soit la couleur (bug M4a : un
+# écran blanc matchait « vert » à 0.67). Discriminant correct pour toute couleur, y compris non-blanche.
 xwd -root -display "$DISP" -silent 2>/dev/null | convert xwd:- "$OUT/screen.png" 2>/dev/null
 FRAC=""
 if [ -s "$OUT/screen.png" ]; then
   FRAC=$(convert "$OUT/screen.png" -crop 700x540+10+14 +repage \
-          -fuzz 20% -fill white -opaque "#$EXPECT" -fill black +opaque white \
+          -fuzz 20% -fill black +opaque "#$EXPECT" -fill white -opaque "#$EXPECT" \
           -colorspace Gray -format '%[fx:mean]' info: 2>/dev/null)
 fi
 echo "fraction couleur #$EXPECT (zone active) = ${FRAC:-?}"

@@ -229,6 +229,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.
+  Décomposition (user, 2026-10-15) : **M4a** fond de couleur piloté **Copper-only** (prouve le Copper DMA seul,
+  sans bitplane) ; **M4b** pixels **bitplane** pilotés Copper (vrai premier affichage) ; **M4c** démarrer l'**ABI
+  graphics.library** (GfxBase + View/ViewPort générant la copperlist). **M4a FAIT** : `src/graphics/gfx.s` — copper
+  list en chip RAM (le Copper ne lit QUE la chip, pas la ROM) posant la fenêtre display + 0 bitplane + COLOR00 =
+  vert de preuve ; écran VERT ⟺ Copper DMA actif. Premier jalon où le canal **VISUEL** est load-bearing (l'écran
+  EST le livrable). RED `M4A_NO_COPPER` = pas de COPEN → Copper inerte → écran blanc → vert absent. A aussi
+  corrigé un bug du discriminant couleur de `tests/boot_test.sh` (ordre `-opaque`/`+opaque` : le blanc préexistant
+  faussait FRAC ; masqué jusqu'ici car le défaut `EXPECT=FFFFFF` ne l'exposait pas).
 - **M5 — intuition minimal → écran « insert Workbench disk »** (la main iconique du boot KS 1.3).
 - **M6 — dos + trackdisk + FS + strap/romboot → boot disquette jusqu'au CLI.** La `dos.library` 1.3 est
   un portage **BCPL/TRIPOS** : il faut répliquer les quirks d'ABI (**BPTR** word-based, global vector,
