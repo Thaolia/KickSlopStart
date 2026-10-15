@@ -210,6 +210,30 @@ M7J_DEMO         EQU 0
 ; « M7J REMTASK OK » absent. Prouve que le FreeMem pile+TCB est load-bearing.
 M7J_NOFREE       EQU 0
 
+; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par l'underflow du timer A de CIA-B
+; (latch $00FF = 255 ticks E-clock). Horloge E PAL = 709379 Hz (= horloge CPU 7,09379 MHz / 10), donc
+; 255 / 709379 ≈ 359,5 µs par interruption, soit ≈ 2782 interruptions/s. timer_beginio convertit désormais
+; TV_MICRO en interruptions CIA-B via ces constantes (au lieu du facteur VBLANK /20000 qui faisait d'une
+; requête « 400000 µs » ~7 ms au lieu de 400 ms). Résolution = 1 interruption ≈ 360 µs (la bande de preuve
+; absorbe ~±10 %) ; la résolution sub-interruption (lecture live du latch E) reste différée (« ECLOCK »).
+; Hypothèse PAL, cohérente avec /20000=50 Hz et M7A_MINTICKS=250=5 s.
+US_PER_INT     EQU 359        ; µs réelles par interruption CIA-B (255 ticks E / 709379 Hz)
+INTS_PER_SEC   EQU 2782       ; interruptions CIA-B par seconde (709379 / 255)
+; Preuve = inter-horloges : une requête MICROHZ LONGUE connue, mesurée contre l'horloge VBLANK (50 Hz,
+; indépendante : raster display vs E-clock CPU). 0,5 s doit s'écouler en ~25 ticks VBLANK. NON tautologique
+; (les deux horloges dérivent de matériels différents) : valide la constante E à ~±10 %.
+M7L_CAL_US     EQU 500000     ; durée de la requête de calibration (µs) = 0,5 s
+M7L_LO         EQU 22         ; bande basse (ticks VBLANK) ; 0,5 s = 25 ticks ; RED OLD_CONV -> ~0-1
+M7L_HI         EQU 28         ; bande haute ; la latence d'ordonnancement ne fait qu'INFLATER (jamais < 25)
+M7L_VBL_BEFORE EQU $000005E8  ; long : VBL_COUNT au départ de la requête de calibration (T0)
+M7L_ELAPSED    EQU $000005EC  ; long : ticks VBLANK écoulés pendant la calibration (mesure)
+M7L_STAT       EQU $000005F0  ; UBYTE : b0 = marqueur « M7L MICROHZ CALIB OK » déjà émis
+; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
+; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
+; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms
+; sous les deux conversions -> RED chirurgical : seul M7L tombe, M3F..M7G restent verts.
+M7L_OLD_CONV   EQU 0
+
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
 LN_PRED      EQU 4

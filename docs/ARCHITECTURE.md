@@ -188,7 +188,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   la preuve du tri) — à retirer quand les vrais modules couvriront ces preuves.
 - **M6a** (unité VBLANK de `timer.device` **fonctionnelle**, sans CIA) : **premier comportement OS
   observable** produit par la machinerie résidente + interruption + messages. `BeginIO(TR_ADDREQUEST)`
-  convertit la timeval en ticks (`secs*50 + micro/20000`), stocke le décompte dans `TR_TIME`, enqueue
+  convertit la timeval en ticks (`secs*50 + micro/20000` pour l'unité VBLANK ; M7l sépare la conversion de
+  l'unité MICROHZ en µs réelles, cf. bullet M7l), stocke le décompte dans `TR_TIME`, enqueue
   la requête sur la file de l'unité VBLANK (sous `Disable` — file partagée avec le handler). Le handler
   VBlank appelle `timer_vblank_service` chaque tick (hook `VBL_SVC` à l'origine ; **M7f** : devenu un
   serveur de la chaîne VERTB) ; le service décrémente chaque requête et, à 0, la retire et la **répond**.
@@ -236,7 +237,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   `task_timer` figée, « M3F LIVE » toujours présent → isole le chemin de réveil. Yield re-prouvé en
   **coopératif** (`SCHED_ON=0`, `task_S` retiré → `task_timer` réveillée par le seul yield) : ma modif
   des tails partagés n'a pas régressé le reschedule. `int6_handler`/EXTER désormais **activés et testés**.
-  MICROHZ ici = « 1 tick = 1 IRQ CIA-B » (chemin IRQ/réveil prouvé, **calibration µs E-clock différée**).
+  MICROHZ en M7a = « 1 tick = 1 IRQ CIA-B » (chemin IRQ/réveil prouvé ; **calibration µs réelle livrée en M7l**).
 - **M7b** (dispatcher d'interruption PAR NUMÉRO) : table `IntVects[16]` (AllocMem'd, pointeur dans
   `EB_INTVECTS`) + `SetIntVector` (vecteur exclusif : copie IS_DATA/IS_CODE) + `AddIntServer` (chaîne de
   serveurs triée par `LN_PRI`, marchée par `intr_chain_walker` ; retour Z clair = « géré, stop », Z mis =
@@ -403,7 +404,31 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   + coopérative ; RED (`M7J_NOFREE=1`, FreeMem sauté) -> `AvailMem` ne remonte pas -> « M7J » absent 2/2,
   SANS crash (task_rm bien retirée de l'ordonnancement, seule la mémoire fuit). **Limites** : non-self par
   inspection (la démo exerce le self) ; `tc_MemEntry` non libéré (aucune tâche démo n'en alloue) -> hors scope.
-- **À venir (M7k+)** : décodage INTREQR des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle
-  de MICROHZ, puis les modules graphiques → écran (M4 Copper/Blitter, M5 intuition, M6 dos/trackdisk).
+- **M7l** (CALIBRATION µs RÉELLE MICROHZ) : avant M7l, `timer_beginio` convertissait `TV_MICRO` en ticks via
+  `/20000` (le facteur VBLANK 50 Hz) pour les DEUX unités -> sur l'unité MICROHZ (CIA-B, latch `$00FF` = 255
+  ticks E-clock) `TV_MICRO` ne valait PAS des µs réelles (une requête « 400000 µs » durait ~7 ms, pas 400 ms).
+  M7l SÉPARE la conversion par unité : MICROHZ compte en interruptions CIA-B via `US_PER_INT`=359 /
+  `INTS_PER_SEC`=2782 (E-clock PAL 709379 Hz = CPU/10, latch 255 -> ~359,5 µs/int) ; VBLANK garde `/20000`.
+  `TV_MICRO` signifie donc des µs réelles, à la résolution d'une interruption (~360 µs). PREUVE = INTER-HORLOGES
+  (NON tautologique : E-clock CPU vs raster display, matériels différents) : une requête MICROHZ de 0,5 s doit
+  s'écouler en ~25 ticks VBLANK (horloge 50 Hz indépendante). GREEN « M7L MICROHZ CALIB OK » = elapsed ∈ bande
+  [22,28] (3/3). RED (`M7L_OLD_CONV=1`, conversion VBLANK rétablie sur MICROHZ) : la requête de 0,5 s expire en
+  ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> elapsed ~0-1 -> M7L ABSENT, M3F..M7G verts (2/2, RED chirurgical :
+  la valeur de requête de la boucle `task_timer` est gatée en parallèle via `TT_MICRO_REQ` pour garder la PÉRIODE
+  ~7 ms sous les deux conversions). COOP : non-régression de tous les marqueurs antérieurs (M3F/M6A/M7A/M7E/M7F/
+  M7G, 0 FAILED) ; M7L est une preuve du build PAR DÉFAUT (comme M7C/M7D dépendent des spinners, M7H de
+  l'isolation) : en coopératif la latence de réveil (task_timer pri 10 ne préempte pas task_h pri 10 — Signal à
+  pri égale ne pose pas AttnResched -> attend le yield de task_h) gonfle la fenêtre VBLANK mesurée au-delà de la
+  bande serrée -> M7L non émis. C'est un artefact de MESURE, pas d'erreur de calibration — PROUVÉ PAR CONSTRUCTION :
+  le décompte est 1392 interruptions CIA-B sur le timer matériel (latch `$00FF`, non gaté, identique dans TOUT
+  build) donc l'achèvement est fixé à ~0,5 s ≈ 25 ticks quel que soit `SCHED_ON` ; donc `elapsed = 25 + head(<1) +
+  latence-réveil`, et seule la latence-réveil diffère entre préemptif et coopératif (magnitude immatérielle, mécanisme
+  déductif ; confirmé empiriquement aussi : bande élargie [22,250] -> M7L réapparaît en coop). **Limites** : résolution
+  sub-interruption (< 360 µs, lecture live du latch E) + unité ECLOCK différées ; le chemin `secs` de la conversion
+  n'est pas exercé par les démos (les deux requêtes ont secs=0) -> correct par construction, non prouvé empiriquement.
+- **À venir** : **M4 graphics** (Copper/Blitter → premier affichage), puis M5 intuition, M6 dos/trackdisk.
+  **M7k reporté** (décision 2026-10-15) : le décodage INTREQR des niveaux INT1/INT4/INT5 n'a aucun consommateur
+  réel aujourd'hui (audio=M4+, disk=M6, serial plus tard) -> replié dans le sous-système concerné quand il
+  arrivera, avec un vrai consommateur et un vrai test (pas un self-test synthétique jetable).
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

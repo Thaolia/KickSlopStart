@@ -57,6 +57,11 @@ SENT_RM      EQU $CAFE0070    ; sentinelle de task_rm (M7j, tâche qui se termin
 M7H_MINTICKS EQU 150          ; ticks VBlank min avant d'émettre « M7H QUANTUM OK » (ratio stable, ~3 s)
 CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
 CIAB_LATCH_LO EQU $FF
+                ifne    M7L_OLD_CONV
+TT_MICRO_REQ EQU 400000       ; RED M7L_OLD_CONV : /20000 -> 20 int -> ~7,2 ms (période inchangée)
+                else
+TT_MICRO_REQ EQU 7000         ; M7l : 7000 µs RÉELS -> /359 -> 19 int -> ~6,8 ms (≈ ancien débit ~140/s)
+                endc
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
 ; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
@@ -1275,15 +1280,49 @@ task_timer:
         move.l  a3,MN_REPLYPORT(a2)
         move.l  a4,IO_DEVICE(a2)
         move.l  #UNIT_MICROHZ,IO_UNIT(a2)   ; unité MICROHZ (CIA-B/INT6)
+        ; M7l — CALIBRATION µs RÉELLE (une fois, avant la boucle) : une requête MICROHZ LONGUE connue
+        ; (M7L_CAL_US = 0,5 s), mesurée contre l'horloge VBLANK (50 Hz, INDÉPENDANTE : raster display vs
+        ; E-clock CPU). 0,5 s de µs réelles doit s'écouler en ~25 ticks VBLANK. Hors bande -> M7L non émis
+        ; (RED OLD_CONV : la requête expire en ~0-1 tick) ; on tombe quand même dans la boucle (M7A reste prouvable).
+        move.l  VBL_COUNT,M7L_VBL_BEFORE    ; T0 sur l'horloge VBLANK
+        clr.l   TV_SECS(a2)
+        move.l  #M7L_CAL_US,TV_MICRO(a2)
+        move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
+        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
+        move.l  a4,a6
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        move.l  (sp)+,a6
+        moveq   #1,d0                ; Wait(1<<bit) : BLOQUE jusqu'à expiration de la requête de calibration
+        move.l  d6,d1
+        lsl.l   d1,d0
+        jsr     LVO_WAIT(a6)
+        move.l  a3,a0                ; GetMsg(reply port) -> doit être NOTRE requête
+        jsr     LVO_GETMSG(a6)
+        cmp.l   a2,d0
+        bne     m7a_fail
+        move.l  VBL_COUNT,d0         ; T1 ; élapsed = T1 - T0 (ticks VBLANK pendant 0,5 s MICROHZ)
+        sub.l   M7L_VBL_BEFORE,d0
+        move.l  d0,M7L_ELAPSED
+        cmp.l   #M7L_LO,d0           ; dans la bande [M7L_LO, M7L_HI] ? (0,5 s ≈ 25 ticks)
+        bcs.s   .tt_cal_done         ; trop rapide (RED OLD_CONV) -> M7L non émis, on continue
+        cmp.l   #M7L_HI+1,d0
+        bcc.s   .tt_cal_done         ; trop lent (constante grossièrement fausse) -> M7L non émis
+        bset    #0,M7L_STAT          ; émet « M7L MICROHZ CALIB OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7l_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_cal_done:
         move.l  VBL_COUNT,d5         ; T0 (ticks VBlank au départ ; d5 préservé par les appels exec)
 .tt_loop:
         cmp.l   #SENT_T,d7           ; contexte intact après chaque switch ?
         bne     m7a_fail
         tst.l   VBL_CLASH            ; le gate IPL7 a-t-il été violé ? (RED -> != 0)
         bne     m7a_fail
-        clr.l   TV_SECS(a2)          ; (ré)arme une requête MICROHZ réaliste : 20 ticks CIA-B (~7 ms)
-        move.l  #400000,TV_MICRO(a2) ; 400000/20000 = 20 ticks -> ~140 réveils/s (coexiste avec la démo M3f ;
-                                     ; 1 tick préemptait ~2800/s via le dispatch différé et starverait task_s/L)
+        clr.l   TV_SECS(a2)          ; (ré)arme une requête MICROHZ ~7 ms (TT_MICRO_REQ µs RÉELLES depuis M7l)
+        move.l  #TT_MICRO_REQ,TV_MICRO(a2) ; 7000 us / 359 = 19 int CIA-B -> ~140 réveils/s (coexiste avec M3f ;
+                                     ; 1 int seule préempterait ~2800/s via le dispatch différé et starverait task_s/L)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
         move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
         move.l  a4,a6
@@ -1775,6 +1814,8 @@ msg_m7h_ok:
         dc.b    "M7H QUANTUM OK (isolation: 2 equal-pri spinners rotate every ~QUANTUM ticks, not every tick)",13,10,0
 msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
+msg_m7l_ok:
+        dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

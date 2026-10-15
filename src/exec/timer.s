@@ -22,8 +22,11 @@
 ;   par l'IRQ MICROHZ) ET le GATE DE RÉ-ENTRANCE : INT6 (niveau 6 > VBlank 3) peut préempter
 ;   vbl_handler ; sa chirurgie de listes est désormais IPL7 (interrupts.s). Le service pose le
 ;   détecteur VBL_CLASH si jamais il observe vbl_handler en pleine chirurgie (= 0 avec le fix).
-; DIFFÉRÉ (ledgeré) : unité ECLOCK, calibration µs réelle de MICROHZ (latch E-clock : ici « 1 tick
-;   = 1 interruption CIA-B », le chemin IRQ/réveil est prouvé, pas la résolution microseconde),
+; M7l — CALIBRATION µs RÉELLE MICROHZ : timer_beginio convertit TV_MICRO en interruptions CIA-B via
+;   US_PER_INT/INTS_PER_SEC (E-clock PAL 709379 Hz / latch 255 ≈ 359 µs/int) au lieu du facteur VBLANK
+;   /20000. TV_MICRO signifie donc des µs réelles, à la résolution d'une interruption (≈ 360 µs). Prouvé
+;   par inter-horloges : une requête de 0,5 s s'écoule en ~25 ticks VBLANK (horloge display indépendante).
+; DIFFÉRÉ (ledgeré) : unité ECLOCK + résolution SUB-interruption (lecture live du latch E, < 360 µs),
 ;   OpenDevice (la preuve remplit IO_DEVICE/IO_UNIT à la main), conversion timeval complète.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs timer.device + exec. AUCUNE lecture ROM.
 
@@ -89,23 +92,35 @@ timer_beginio:
         move.l  a1,a3                ; a3 = iorequest
         move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
         jsr     LVO_DISABLE(a6)
+        ; M7l — conversion timeval -> décompte SELON l'unité (et choix de la file dans la même branche).
+        ; MICROHZ (défaut) : décompte en interruptions CIA-B (1 int ≈ US_PER_INT µs réelles) ; TV_MICRO
+        ; signifie donc des µs réelles. VBLANK : décompte en ticks 50 Hz (1 tick = 20000 µs).
         move.l  TV_SECS(a3),d0
-        mulu    #50,d0               ; secs*50 (suppose secs petit)
         move.l  TV_MICRO(a3),d1
-        divu    #20000,d1            ; micro/20000 (0..49)
-        and.l   #$0000FFFF,d1        ; quotient (mot bas)
-        add.l   d1,d0                ; ticks
+        lea     TIMER_MICROQ(a2),a0  ; défaut : unité MICROHZ (CIA-B/INT6)
+        cmp.l   #UNIT_VBLANK,IO_UNIT(a3)
+        beq.s   .bio_vbl
+                ifne    M7L_OLD_CONV
+        mulu    #50,d0               ; RED M7L_OLD_CONV : ancienne conversion VBLANK (fausse) sur MICROHZ
+        divu    #20000,d1
+                else
+        mulu    #INTS_PER_SEC,d0     ; secs * interruptions CIA-B/s
+        divu    #US_PER_INT,d1       ; + µs / µs-par-interruption -> nb d'interruptions CIA-B
+                endc
+        bra.s   .bio_conv
+.bio_vbl:
+        lea     TIMER_VBLQ(a2),a0    ; unité VBLANK (le handler VBlank décrémente cette file)
+        mulu    #50,d0               ; secs * 50 (1 tick = 1/50 s)
+        divu    #20000,d1            ; + µs / 20000 (1 tick = 20000 µs)
+.bio_conv:
+        and.l   #$0000FFFF,d1        ; quotient divu (mot bas)
+        add.l   d1,d0                ; décompte
         bne.s   .bio_store
-        moveq   #1,d0                ; mini 1 tick (évite expiration immédiate)
+        moveq   #1,d0                ; mini 1 (évite expiration immédiate)
 .bio_store:
-        move.l  d0,TV_SECS(a3)       ; décompte en ticks (TV_SECS réutilisé)
+        move.l  d0,TV_SECS(a3)       ; décompte (TV_SECS réutilisé)
         clr.l   TV_MICRO(a3)
         move.b  #NT_MESSAGE,LN_TYPE(a3)
-        lea     TIMER_MICROQ(a2),a0  ; route par IO_UNIT : défaut MICROHZ (unité 0, CIA-B/INT6)
-        cmp.l   #UNIT_VBLANK,IO_UNIT(a3)
-        bne.s   .bio_q
-        lea     TIMER_VBLQ(a2),a0    ; unité VBLANK (le handler VBlank décrémente cette file)
-.bio_q:
         move.l  a3,a1
         jsr     LVO_ADDTAIL(a6)      ; enqueue (sous Disable -> atomique vs VBlank ET INT6)
         jsr     LVO_ENABLE(a6)

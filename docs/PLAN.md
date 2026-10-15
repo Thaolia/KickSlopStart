@@ -217,8 +217,15 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   FreeMem en contexte tâche. Prouvé « M7J REMTASK OK » (AvailMem remonte après l'auto-retrait de task_rm) :
   GREEN 2/2 + non-rég défaut 3/3 + coop ; RED M7J_NOFREE (FreeMem sauté -> fuite -> AvailMem ne remonte pas).
   Non-self par-inspection ; tc_MemEntry hors scope. CLÔT la séquence M7e..M7j pré-autorisée.
-  Reste (**M7k+**) : décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait éventuel des
-  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g/M7j codée en dur d'ici là).
+  **M7l** livre la **calibration µs réelle MICROHZ** : `timer_beginio` sépare la conversion par unité et
+  compte l'unité MICROHZ en interruptions CIA-B via `US_PER_INT`=359 / `INTS_PER_SEC`=2782 (E-clock PAL
+  709379 Hz, latch 255) au lieu du facteur VBLANK `/20000` -> `TV_MICRO` = µs réelles (résolution ~360 µs).
+  Preuve INTER-HORLOGES : une requête de 0,5 s s'écoule en ~25 ticks VBLANK (horloge display indépendante) ;
+  GREEN « M7L MICROHZ CALIB OK » 3/3 + RED `M7L_OLD_CONV` (requête trop rapide, M7L absent, chirurgical) 2/2
+  + non-régression coop. **M7k REPORTÉ** (décision 2026-10-15) : le décodage INTREQR des niveaux INT1/INT4/INT5
+  est de la plomberie sans consommateur réel (audio=M4+, disk=M6, serial plus tard) -> replié dans le
+  sous-système concerné quand il arrivera, avec un vrai test. Reste : **M4 graphics** (ci-dessous), puis
+  retrait éventuel des démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g/M7j+M7l d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.
