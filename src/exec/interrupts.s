@@ -30,13 +30,13 @@
 ;   #imm,sr » = interne CPU, INSTANTANÉ) autour de l'Enqueue/RemHead. PAS par INTENA-off : l'écriture
 ;   INTENA a un délai de propagation (quirk Amiga modélisé par FS-UAE) -> un INT6 déjà asserté chevauche
 ;   la fenêtre (prouvé, RED1). VBL_INSURG/VBL_CLASH = détecteur d'OVERLAP (INT6 chevauche la fenêtre),
-;   PAS un détecteur de corruption ; l'overlap est la PRÉCONDITION de corruption (INT6->timer_reply->
+;   PAS un détecteur de corruption ; l'overlap est la PRÉCONDITION de corruption (INT6->ReplyMsg->
 ;   Signal Enqueue la même TaskReady que la chirurgie marche). M7e : VBL_INBODY/VBL_PREEMPT_COUNT prouvent
 ;   qu'INT6 préempte BIEN le corps de vbl (IPL3 natif) sans jamais chevaucher la chirurgie (IPL7). La
 ;   relocalisation de frame (SSP->pile user) tourne à l'IPL natif sans masque : INT6 s'imbrique sous sp,
 ;   la frame sortante est intacte.
 ; - HONNÊTETÉ (cohérence M7d) : la fenêtre write-delay touche TOUTE section masquée par INTENA appelable
-;   en USER mode — Signal, PutMsg/GetMsg (ports M7d), Wait, timer_reply — car une tâche user ne peut pas
+;   en USER mode — Signal, PutMsg/GetMsg/ReplyMsg (ports M7d), Wait — car une tâche user ne peut pas
 ;   monter l'IPL (« move to SR » privilégié, manuel 68000). Elles gardent donc ce caveat, toléré par le
 ;   re-check (Wait re-teste au réveil) et empiriquement bénin pour les ports M7d même en contention-max.
 ;   SEUL le switch côté superviseur a été promu à l'IPL7 (il le peut : il tourne en superviseur).

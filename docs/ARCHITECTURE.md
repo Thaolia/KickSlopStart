@@ -190,12 +190,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   observable** produit par la machinerie résidente + interruption + messages. `BeginIO(TR_ADDREQUEST)`
   convertit la timeval en ticks (`secs*50 + micro/20000`), stocke le décompte dans `TR_TIME`, enqueue
   la requête sur la file de l'unité VBLANK (sous `Disable` — file partagée avec le handler). Le handler
-  VBlank appelle un **hook de service** (`VBL_SVC`) chaque tick ; `timer_vblank_service` décrémente
-  chaque requête et, à 0, la retire et la **répond**. POINT CLÉ : la réponse en contexte interruption
-  utilise des **primitives brutes** (`AddTail` au reply port + `exec_Signal`) et **jamais**
-  `PutMsg`/`ReplyMsg` — ces derniers appellent `Permit`, qui ferait un `reschedule` **synchrone au
-  milieu de l'interruption** ; `exec_Signal` pose seulement `AttnResched` (le switch se fait en fin de
-  handler). Le service est transparent (sauve d0-d2/a0-a4, préserve a6). Prouvé : une requête de
+  VBlank appelle `timer_vblank_service` chaque tick (hook `VBL_SVC` à l'origine ; **M7f** : devenu un
+  serveur de la chaîne VERTB) ; le service décrémente chaque requête et, à 0, la retire et la **répond**.
+  POINT CLÉ (à l'origine M6a) : la réponse en contexte interruption ne pouvait PAS utiliser `PutMsg`/
+  `ReplyMsg` car ils appelaient `Permit` -> `reschedule` **synchrone au milieu de l'interruption** ;
+  M6a utilisait donc une routine bespoke (`timer_reply`) qui ne posait qu'`AttnResched`. **M7d** a rendu
+  `PutMsg`/`ReplyMsg` interrupt-safe (Disable/`raw_enable`, sans yield) et **M7i** a supprimé `timer_reply`
+  au profit de `ReplyMsg` direct (cf. bullet M7i). Prouvé (M6a) : une requête de
   100000 µs (= 5 ticks) est répondue après ~5 VBlank (délai mesuré ∈ [3..40]) **et** `exec_Signal`
   depuis le handler pose bien le bit (vérifié dans `TC_SIGRECVD` de la boot task). RED : hook coupé →
   timeout ; reply retiré → timeout. **PORTÉE** : prouvé = timer+interruption+messages+`exec_Signal`
@@ -370,8 +371,21 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   `QUANTUM_EXPIRE_N≈VBL_COUNT` -> discriminant échoue -> « M7H » absent 2/2 ; coopérative OK. Framing
   honnête : quantum FIDÈLE, observable seulement isolé ; quasi-no-op en défaut = conséquence correcte de
   l'archi (INT6 co-pilote), pas une faiblesse.
-- **À venir (M7i+)** : conversion `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire),
-  `RemTask`, décodage INTREQR des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de
-  MICROHZ, puis les modules graphiques → écran.
+- **M7i** (`timer_reply` -> `ReplyMsg`) : la routine de réponse bespoke `timer_reply` (M7c) est SUPPRIMÉE.
+  Elle existait parce qu'à l'époque `PutMsg`/`ReplyMsg` appelaient `Permit` -> reschedule SYNCHRONE
+  interdit au milieu d'une interruption. M7d a rendu ces primitives interrupt-safe (Disable INTENA +
+  `raw_enable`, SANS tail Permit/yield) -> le hack n'a plus de raison d'être. Les 2 services qui
+  répondaient (timer_vblank_service / timer_micro_service, chemin interruption) appellent désormais
+  directement `LVO_REPLYMSG` (AddTail + Signal + marque NT_REPLYMSG, atomique, aucun yield en IRQ).
+  `timer_beginio` n'était PAS un appelant (il force min 1 tick -> reply différé, et tourne en contexte
+  tâche). Register-safe : ReplyMsg clobbe d0/d1/a0/a1, préserve d2-d7/a2-a6 (les invariants de boucle
+  d2/a2/a4, et d3/a5 pour le chemin micro, survivent). PREUVE = ÉQUIVALENCE : jeu de marqueurs
+  IDENTIQUE à la démo par défaut M7h (M3F/M6A/M7A/M7C/M7D/M7E/M7F/M7G, 0 FAILED) sur GREEN 3/3 +
+  coopérative — le swap est observablement inerte (refactor, pas nouveau mécanisme ; aucun RED à part un
+  bug planté). La justification inversée (« on n'utilise PAS ReplyMsg car Permit yield ») a été corrigée
+  partout (en-tête timer.s, commentaires des services, ce document).
+- **À venir (M7j+)** : `RemTask` (retrait des listes + FreeMem pile/TCB + auto-RemTask), décodage INTREQR
+  des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de MICROHZ, puis les modules
+  graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

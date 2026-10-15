@@ -10,10 +10,11 @@
 ;     décompte dans TR_TIME, enqueue la requête sur la file de l'unité VBLANK. Disable autour de
 ;     la manip (la file est partagée avec le handler VBlank = interruption, pas juste des tâches).
 ;   timer_vblank_service : appelé depuis le handler VBlank (IPL 3) chaque tick. Décrémente chaque
-;     requête ; à 0 -> la retire et la « répond ». La réponse utilise des PRIMITIVES BRUTES
-;     (AddTail au reply port + exec_Signal) et NON PutMsg/ReplyMsg : ces derniers appellent Permit
-;     qui ferait un reschedule SYNCHRONE au milieu de l'interruption. Signal pose AttnResched sans
-;     rescheduler -> le switch se fait à la fin du handler (round-robin existant).
+;     requête ; à 0 -> la retire et répond via ReplyMsg (M7i). HISTORIQUE : jusqu'en M7h la réponse
+;     utilisait une routine bespoke (timer_reply) car PutMsg/ReplyMsg appelaient Permit (reschedule
+;     SYNCHRONE interdit en interruption). M7d a rendu PutMsg/ReplyMsg interrupt-safe (Disable INTENA +
+;     raw_enable, SANS tail Permit/yield) -> M7i a supprimé timer_reply et appelle directement ReplyMsg.
+;     Signal (via PutMsg) pose AttnResched sans rescheduler -> le switch se fait à la sortie du handler.
 ; M7a — UNITÉ MICROHZ (via CIA-B / INT6) :
 ;   2e file d'unité (TIMER_MICROQ) décrémentée par timer_micro_service, enregistré comme vecteur
 ;   ICR du timer A de ciab.resource (déclenché à chaque underflow CIA-B -> INT6 niveau 6). BeginIO
@@ -31,7 +32,6 @@
                 xdef    timer_micro_int   ; M7a : struct Interrupt de l'unité MICROHZ (vecteur ICR CIA-B)
 
                 xref    newlist           ; lists.s (NEWLIST de la file d'unité)
-                xref    raw_enable        ; library.s (M7c : timer_reply = section critique NUE)
 
 ; --- ROMTag timer.device (scanné par build_reslist) ---
         EVEN
@@ -143,9 +143,9 @@ timer_initfunc:
         rts
 
 ; timer_vblank_service(a1 = IS_DATA = base device, a6 = SysBase) : M7f — SERVEUR de la chaîne VERTB
-; (plus un hook). Décrémente chaque requête de la file VBLANK ; à 0 -> Remove + reply (bas-niveau, sans
-; Permit). Convention serveur : préserve d2-d7/a2-a4 (movem d0-d2/a0-a4 couvre d2/a2-a4 ; ne touche PAS
-; d3-d7/a5) et retourne Z-SET (d0=0) = « continue la chaîne » (call-all).
+; (plus un hook). Décrémente chaque requête de la file VBLANK ; à 0 -> Remove + ReplyMsg (M7i :
+; interrupt-safe, sans Permit). Convention serveur : préserve d2-d7/a2-a4 (movem d0-d2/a0-a4 couvre
+; d2/a2-a4 ; ne touche PAS d3-d7/a5) et retourne Z-SET (d0=0) = « continue la chaîne » (call-all).
 timer_vblank_service:
         movem.l d0-d2/a0-a4,-(sp)
         move.l  a1,a2                ; a2 = base device
@@ -158,8 +158,8 @@ timer_vblank_service:
         bgt.s   .svc_cont            ; > 0 -> pas encore expiré
         move.l  a3,a1                ; expiré : Remove(a3)
         jsr     LVO_REMOVE(a6)
-        move.l  a3,a1                ; reply(a3) en bas-niveau
-        bsr.s   timer_reply
+        move.l  a3,a1                ; M7i : ReplyMsg(a3) — interrupt-safe depuis M7d (Disable/raw_enable,
+        jsr     LVO_REPLYMSG(a6)     ; PAS de Permit/yield) ; préserve d2/a2/a4 (invariants de boucle)
 .svc_cont:
         move.l  d2,a3                ; a3 = Succ sauvé (valide même après Remove)
         bra.s   .svc_loop
@@ -168,38 +168,10 @@ timer_vblank_service:
         moveq   #0,d0               ; M7f : Z-SET -> « continue la chaîne » (serveur call-all VERTB)
         rts
 
-; timer_reply(a1 = requête/message, a6 = SysBase) : répond SANS PutMsg/ReplyMsg (pas de Permit).
-; Marque NT_REPLYMSG, AddTail au MN_REPLYPORT, Signal la tâche cible si PA_SIGNAL.
-timer_reply:
-        move.b  #NT_REPLYMSG,LN_TYPE(a1)
-        move.l  MN_REPLYPORT(a1),d0
-        beq.s   .tr_ret              ; pas de reply port
-        move.l  d0,a0                ; a0 = reply port
-        movem.l a0/a1,-(sp)
-        lea     MP_MSGLIST(a0),a0    ; AddTail(&port->MsgList, msg)
-        ; M7c : section critique NUE (Disable INTENA, user-safe) — timer_reply est appelé AUSSI depuis
-        ; timer_beginio en USER mode (reply immédiat time==0) où « move #imm,sr » trapperait. Le msglist
-        ; peut être partagé entre l'unité VBLANK (IPL3) et MICROHZ (INT6) -> AddTail atomique vs INT6.
-        addq.b  #1,EB_IDNEST(a6)
-        move.w  #INTF_INTEN,INTENA   ; INTEN off (bit14)
-        jsr     LVO_ADDTAIL(a6)
-        bsr     raw_enable           ; INTEN on si IDNest<0 (sortie NUE, pas de queue reschedule)
-        movem.l (sp)+,a0/a1
-        moveq   #0,d0                ; action du port
-        move.b  MP_FLAGS(a0),d0
-        and.b   #PF_ACTION,d0
-        bne.s   .tr_ret              ; != PA_SIGNAL -> pas de signal
-        move.l  MP_SIGTASK(a0),d0
-        beq.s   .tr_ret
-        move.l  d0,a1                ; a1 = tâche à signaler
-        moveq   #0,d0
-        move.b  MP_SIGBIT(a0),d0
-        moveq   #1,d1
-        lsl.l   d0,d1
-        move.l  d1,d0
-        jsr     LVO_SIGNAL(a6)       ; pose les bits + AttnResched (PAS de reschedule ici)
-.tr_ret:
-        rts
+; M7i : timer_reply (routine bespoke M7c) SUPPRIMÉE — remplacée par ReplyMsg. M7d a rendu PutMsg/GetMsg/
+; ReplyMsg interrupt-safe (Disable INTENA + raw_enable, SANS tail Permit/yield), donc le hack bas-niveau
+; qui évitait le reschedule synchrone de Permit n'a plus de raison d'être : les services VBLANK/MICROHZ
+; appellent directement LVO_REPLYMSG (AddTail + Signal + marque NT_REPLYMSG, atomique, aucun yield en IRQ).
 
 ; timer_micro_service(a6 = SysBase ; a1 = IS_DATA, inutilisé) : M7a — vecteur ICR de l'unité
 ; MICROHZ, appelé par cia_dispatch depuis int6_dispatch (CIA-B / INT6, IPL natif 6 depuis M7e) à chaque
@@ -234,8 +206,8 @@ timer_micro_service:
         bgt.s   .mic_cont           ; > 0 -> pas encore expiré
         move.l  a3,a1               ; expiré : Remove(a3)
         jsr     LVO_REMOVE(a6)
-        move.l  a3,a1               ; reply(a3) bas-niveau (AddTail Disable + Signal, sans Permit)
-        bsr     timer_reply
+        move.l  a3,a1               ; M7i : ReplyMsg(a3) — interrupt-safe (Disable/raw_enable, pas de yield) ;
+        jsr     LVO_REPLYMSG(a6)    ; préserve d2/d3/a2 (ne touche pas d3/a5 -> convention cia_dispatch OK)
 .mic_cont:
         move.l  d2,a3              ; a3 = Succ sauvé (valide même après Remove)
         bra.s   .mic_loop

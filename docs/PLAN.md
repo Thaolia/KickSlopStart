@@ -207,9 +207,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   2 spinners pri 0) : en démo normale INT6 reset ELAPSED ~140/s -> quasi-no-op (non-rég M3F..M7G OK, le
   quantum n'est pas load-bearing pour la rotation que pilote INT6). Prouvé « M7H QUANTUM OK »
   (QUANTUM_EXPIRE_N*2<VBL_COUNT) GREEN-iso 2/2 + RED-iso (QUANTUM=1 -> chaque tick) 2/2 + non-rég + coop.
-  Reste (**M7i+**) : conversion `timer_reply`→`ReplyMsg`, `RemTask`, décodage INTREQR des autres niveaux,
-  calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste la démo
-  M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
+  **M7i** convertit `timer_reply`→`ReplyMsg` : la routine bespoke (créée en M7c pour éviter le Permit/yield
+  de ReplyMsg en interruption) est supprimée ; M7d ayant rendu ReplyMsg interrupt-safe (Disable/raw_enable,
+  sans yield), les services VBLANK/MICROHZ appellent directement ReplyMsg. Prouvé par ÉQUIVALENCE (jeu de
+  marqueurs identique à M7h défaut, GREEN 3/3 + coop) ; justification inversée corrigée partout.
+  Reste (**M7j+**) : `RemTask`, décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait
+  éventuel des démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.
