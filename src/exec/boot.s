@@ -53,6 +53,7 @@ SENT_S       EQU $CAFE0030
 SENT_T       EQU $CAFE0040    ; sentinelle de task_timer (M7a)
 SENT_P       EQU $CAFE0050    ; sentinelle de task_port (M7d)
 SENT_Q2      EQU $CAFE0060    ; sentinelle de task_q2 (M7h, spinner-2 d'isolation)
+SENT_RM      EQU $CAFE0070    ; sentinelle de task_rm (M7j, tâche qui se termine)
 M7H_MINTICKS EQU 150          ; ticks VBlank min avant d'émettre « M7H QUANTUM OK » (ratio stable, ~3 s)
 CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
 CIAB_LATCH_LO EQU $FF
@@ -992,6 +993,8 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         clr.l   QUANTUM_EXPIRE_N     ; M7h : expirations de quantum
         clr.l   Q2_RUNS              ; M7h : itérations du 2e spinner
         clr.b   M7H_STAT             ; M7h : marqueur « M7H QUANTUM OK » pas encore émis
+        clr.l   RM_RUNS              ; M7j : itérations de task_rm
+        clr.b   M7J_STAT             ; M7j : marqueur « M7J REMTASK OK » pas encore émis
                 ifne    M7H_QUANTUM_DEMO
         ; === M7h : démo d'ISOLATION du quantum — SEULEMENT 2 spinners pri 0, aucun préempteur ===
         ; prioritaire ni yield -> la rotation n'est pilotée QUE par le quantum VBlank (observable).
@@ -1028,6 +1031,17 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_p_name(pc),a3
         moveq   #DEMO_PRI_P,d2
         bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
+                endc
+                ifne    M7J_DEMO
+        ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
+        ; doit remonter d'au moins M7J_RECOVER (pile+TCB libérés). task_timer vérifie la remontée.
+        moveq   #0,d1                ; AvailMem(requirements=0) -> total libre
+        jsr     LVO_AVAILMEM(a6)
+        move.l  d0,M7J_AVAIL_BEFORE
+        lea     task_rm(pc),a2       ; tâche à durée de vie finie (RTS -> task_exit -> RemTask self)
+        lea     task_rm_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
                 endc
                 endc
         movem.l (sp)+,d2/a2-a4
@@ -1201,6 +1215,27 @@ task_q2:
         bne.s   .q2_delay
         bra.s   .q2_loop
 
+; task_rm (M7j, pri 0 ; config M7J_DEMO seulement) : tâche à DURÉE DE VIE FINIE. Tourne RM_THRESH fois
+; (RM_RUNS++) puis fait RTS -> finalPC task_exit -> RemTask(self) -> libère sa pile + TCB et bascule.
+; Prouve le cycle de vie : AvailMem remonte après son auto-retrait (vérifié par task_timer).
+task_rm:
+        move.l  ($4).w,a6
+        move.l  #SENT_RM,d7
+.rm_loop:
+        cmp.l   #SENT_RM,d7
+        bne.w   demo_fail            ; contexte corrompu par une préemption
+        addq.l  #1,RM_RUNS
+        move.l  RM_RUNS,d0
+        cmp.l   #RM_THRESH,d0
+        bcc.s   .rm_done             ; RM_RUNS >= RM_THRESH -> se terminer (RTS)
+        move.l  #$00008000,d0        ; délai (laisse les compteurs des autres avancer)
+.rm_delay:
+        subq.l  #1,d0
+        bne.s   .rm_delay
+        bra.s   .rm_loop
+.rm_done:
+        rts                          ; -> task_exit -> RemTask(self) (ne revient pas)
+
 ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ (CIA-B/INT6). À chaque tour, arme une
 ; requête courte (1 tick CIA-B), Wait sur le reply port, vérifie la réponse. Prouve qu'une TÂCHE
 ; se réveille sur un timer d'interruption (Wait->wake par l'IRQ MICROHZ) ET surveille VBL_CLASH :
@@ -1288,13 +1323,30 @@ task_timer:
         jsr     LVO_PERMIT(a6)
 .tt_m7f_done:
         btst    #0,M7G_STAT          ; M7g : marqueur multi-source déjà émis ?
-        bne.s   .tt_m7a
+        bne.s   .tt_m7g_done
         move.l  COPER_FIRED,d0       ; la 2e source de niveau 3 (COPER) a-t-elle été servie via le décodage ?
         cmp.l   #COPER_THRESH,d0
-        bcs.s   .tt_m7a              ; pas encore assez d'appels coper_test
+        bcs.s   .tt_m7g_done         ; pas encore assez d'appels coper_test (mais checker M7J)
         bset    #0,M7G_STAT          ; émet « M7G MULTISRC OK » une seule fois
         jsr     LVO_FORBID(a6)
         lea     msg_m7g_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_m7g_done:
+        btst    #0,M7J_STAT          ; M7j : marqueur cycle-de-vie déjà émis ?
+        bne.s   .tt_m7a
+        move.l  RM_RUNS,d0           ; task_rm a-t-elle fini ses itérations (puis s'est auto-retirée) ?
+        cmp.l   #RM_THRESH,d0
+        bcs.s   .tt_m7a              ; pas encore -> attendre (en RED NOFREE on reste ici : AvailMem gelé)
+        moveq   #0,d1                ; AvailMem(now)
+        jsr     LVO_AVAILMEM(a6)     ; (préserve d2-d7/a2-a6 ; clobbe d0/d1/a0/a1)
+        move.l  M7J_AVAIL_BEFORE,d1
+        sub.l   #M7J_RECOVER,d1      ; seuil = baseline - M7J_RECOVER
+        cmp.l   d1,d0                ; AvailMem(now) >= baseline - RECOVER ? (pile+TCB bien libérés)
+        bcs.s   .tt_m7a              ; < seuil -> pas remonté (fuite = RED) -> pas prouvé
+        bset    #0,M7J_STAT          ; émet « M7J REMTASK OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7j_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7a:
@@ -1380,8 +1432,11 @@ demo_fail:                           ; sentinelle KO -> preuve de corruption
         bsr     ser_puts
 .df_hang:
         bra.s   .df_hang
-task_exit:                           ; filet si une tâche faisait RTS (ne doit pas arriver)
-        bra.s   task_exit
+task_exit:                           ; M7j : finalPC — une tâche a fait RTS (fin de corps) -> se retire
+        move.l  ($4).w,a6            ; elle-même via RemTask(self). RemTask ne revient pas (bascule).
+        suba.l  a1,a1                ; a1 = 0 -> RemTask interprète NULL comme la tâche courante
+        jsr     LVO_REMTASK(a6)
+        bra.s   task_exit            ; filet (ne doit jamais être atteint)
 
 ; ============================ résidents démo (M4) ==================
 ; 3 ROMTags scannés par build_reslist puis initialisés par InitCode en ordre de PRIORITÉ
@@ -1650,6 +1705,8 @@ task_p_name:
         dc.b    "demo.port",0
 task_q2_name:
         dc.b    "demo.q2",0
+task_rm_name:
+        dc.b    "demo.rm",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -1716,6 +1773,8 @@ msg_m7g_ok:
         dc.b    "M7G MULTISRC OK (int3 decodes INTREQR, services each pending level-3 source; COPER, not just VERTB)",13,10,0
 msg_m7h_ok:
         dc.b    "M7H QUANTUM OK (isolation: 2 equal-pri spinners rotate every ~QUANTUM ticks, not every tick)",13,10,0
+msg_m7j_ok:
+        dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

@@ -211,8 +211,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   de ReplyMsg en interruption) est supprimée ; M7d ayant rendu ReplyMsg interrupt-safe (Disable/raw_enable,
   sans yield), les services VBLANK/MICROHZ appellent directement ReplyMsg. Prouvé par ÉQUIVALENCE (jeu de
   marqueurs identique à M7h défaut, GREEN 3/3 + coop) ; justification inversée corrigée partout.
-  Reste (**M7j+**) : `RemTask`, décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait
-  éventuel des démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
+  **M7j** livre `RemTask` (cycle de vie) : retrait d'une tâche + FreeMem pile/TCB. Self-removal (tâche qui
+  se termine via task_exit) = trap #2 -> superviseur (sur la SSP, la pile user est libérable) -> FreeMem
+  (Forbid externe neutralise le yield du Permit interne) -> bascule (dispatch_in). Non-self = Remove +
+  FreeMem en contexte tâche. Prouvé « M7J REMTASK OK » (AvailMem remonte après l'auto-retrait de task_rm) :
+  GREEN 2/2 + non-rég défaut 3/3 + coop ; RED M7J_NOFREE (FreeMem sauté -> fuite -> AvailMem ne remonte pas).
+  Non-self par-inspection ; tc_MemEntry hors scope. CLÔT la séquence M7e..M7j pré-autorisée.
+  Reste (**M7k+**) : décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait éventuel des
+  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g/M7j codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

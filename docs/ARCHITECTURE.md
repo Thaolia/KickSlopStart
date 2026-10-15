@@ -384,8 +384,26 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   coopérative — le swap est observablement inerte (refactor, pas nouveau mécanisme ; aucun RED à part un
   bug planté). La justification inversée (« on n'utilise PAS ReplyMsg car Permit yield ») a été corrigée
   partout (en-tête timer.s, commentaires des services, ce document).
-- **À venir (M7j+)** : `RemTask` (retrait des listes + FreeMem pile/TCB + auto-RemTask), décodage INTREQR
-  des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de MICROHZ, puis les modules
-  graphiques → écran.
+- **M7j** (`RemTask` — CYCLE DE VIE) : `RemTask(task a1)` retire une tâche et libère sa pile
+  (`TC_SPLOWER..TC_SPUPPER`) + son TCB (`TC_SIZE`). Deux chemins. **SELF** (`a1`=0 ou ThisTask — le cas
+  « une tâche se termine » : son corps RTS -> `task_exit` -> `RemTask(self)`) : `trap #2` -> superviseur.
+  Réalisation d'option (D) de l'advisor : une fois en superviseur on tourne sur la **SSP partagée**, donc
+  la pile user de la sortante n'est PLUS utilisée et est libérable ; on `FreeMem` pile puis TCB, puis on
+  bascule sur la tâche suivante exactement comme le lancement de la 1re tâche (`RemHead` + `dispatch_in`,
+  NE REVIENT PAS). **Pièges traités** : (1) `FreeMem` utilise Forbid/Permit et Permit YIELD -> on enveloppe
+  le teardown dans un `Forbid` EXTERNE (le Permit interne voit TDNEST>=0 -> pas de yield) + IPL7 (masque
+  IRQ) ; (2) on efface `EB_THISTASK` AVANT `FreeMem(TCB)` car `dispatch_in` le lit (cmp QUANTUM_ELAPSED M7h)
+  -> pas de lecture de TCB libéré ; (3) QUANTUM_ELAPSED est global -> `dispatch_in` le reset sur le switch
+  (note M7h close). **NON-SELF** (`a1` != ThisTask, tâche ready/waiting) : pas de trap ni switch — Forbid
+  (anti-yield) + Disable (vs IRQ) + `Remove` + `FreeMem` pile+TCB + raw_enable + Permit, retour au caller.
+  PREUVE : « M7J REMTASK OK » — task_rm (pri 0) tourne `RM_THRESH` fois puis RTS -> `task_exit` ->
+  `RemTask(self)` ; task_timer (survivante) capture `AvailMem` AVANT création de task_rm, puis confirme
+  qu'après l'auto-retrait `AvailMem` est remonté d'au moins `M7J_RECOVER` (pile 2048 + TCB) = free réussi.
+  GREEN 2/2 + non-régression défaut (M3F..M7G, 0 FAILED, M7J absent car task_rm hors config par défaut) 3/3
+  + coopérative ; RED (`M7J_NOFREE=1`, FreeMem sauté) -> `AvailMem` ne remonte pas -> « M7J » absent 2/2,
+  SANS crash (task_rm bien retirée de l'ordonnancement, seule la mémoire fuit). **Limites** : non-self par
+  inspection (la démo exerce le self) ; `tc_MemEntry` non libéré (aucune tâche démo n'en alloue) -> hors scope.
+- **À venir (M7k+)** : décodage INTREQR des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle
+  de MICROHZ, puis les modules graphiques → écran (M4 Copper/Blitter, M5 intuition, M6 dos/trackdisk).
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

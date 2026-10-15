@@ -83,6 +83,7 @@ init_ints:
         move.l  #int6_dispatch,AUTOVEC_L6         ; M7b : INT6/EXTER -> dispatcher générique par numéro
         move.l  #trap0_handler,TRAP0_VEC          ; M7c : TRAP #0 = switch volontaire style Wait
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
+        move.l  #trap2_handler,TRAP2_VEC          ; M7j : TRAP #2 = RemTask(self) (libère + bascule)
         ; M7f : enregistre le serveur SCHEDULER (quantum round-robin) sur la chaîne VERTB. Faithful :
         ; le vrai exec a un serveur VBlank qui pose la flag AttnResched. pri 20 -> tête de chaîne.
         clr.l   SCHED_INT+LN_SUCC                 ; (RAM basse réservée, non garantie nulle au power-on)
@@ -345,6 +346,47 @@ trap1_handler:
         moveq   #1,d7
         moveq   #1,d6               ; requeue sortante -> TaskReady
         bra     intr_exit
+
+; trap2_handler (TRAP #2) : M7j — RemTask(self). La sortante se RETIRE : on NE sauve PAS son contexte
+; (il est jeté). En superviseur, sur la SSP -> la pile user de la sortante n'est plus utilisée = libérable.
+; Forbid externe (le Permit interne de FreeMem ne yield pas) + IPL7 (masque IRQ pendant le teardown).
+; Clear EB_THISTASK AVANT FreeMem(TCB) (dispatch_in lit EB_THISTASK). Puis bascule comme le lancement de
+; la 1re tâche (RemHead + dispatch_in). NE REVIENT PAS. d4-d6 préservés par FreeMem.
+trap2_handler:
+        move.w  #$2700,sr           ; IPL7 (superviseur -> légal) : masque les IRQ pendant le teardown
+        move.l  ($4).w,a6           ; SysBase
+        jsr     LVO_FORBID(a6)      ; Forbid externe -> FreeMem.Permit voit TDNEST>=0 -> pas de yield
+        move.l  EB_THISTASK(a6),a1  ; sortante à libérer
+        move.l  TC_SPLOWER(a1),d4
+        move.l  TC_SPUPPER(a1),d5
+        sub.l   d4,d5               ; d5 = taille pile user
+        move.l  a1,d6               ; d6 = TCB
+                ifeq    M7J_NOFREE
+        move.l  d4,a1               ; FreeMem(pile user) — sûr : on tourne sur la SSP, pas sur cette pile
+        move.l  d5,d0
+        jsr     LVO_FREEMEM(a6)
+                endc
+        clr.l   EB_THISTASK(a6)     ; AVANT FreeMem(TCB) : dispatch_in compare EB_THISTASK (QUANTUM_ELAPSED)
+                ifeq    M7J_NOFREE
+        move.l  d6,a1               ; FreeMem(TCB)
+        move.l  #TC_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+                endc
+        move.l  #STACKTOP,sp        ; bascule définitive : SSP propre + slot 66 o (comme boot.s)
+        lea     -FRAME_SIZE(sp),sp
+.t2_pick:
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_REMHEAD(a6)
+        tst.l   d0
+        bne.s   .t2_have
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA ; aucune tâche prête -> idle (Signal d'IRQ ; non atteint
+        move.w  #$2000,sr           ; en démo : d'autres tâches sont prêtes). IPL0 -> IRQ passe (S=1 -> pas
+        nop                         ; de dispatch imbriqué), IPL7, re-RemHead.
+        move.w  #$2700,sr
+        bra.s   .t2_pick
+.t2_have:
+        move.l  d0,a1
+        bra     dispatch_in         ; charge l'entrante + rte (IPL/INTEN/nesting par-tâche restaurés)
 
 ; ============================ dispatcher par numéro (M7b) ==========
 ; SetIntVector/AddIntServer + autovecteurs génériques INT2(PORTS)/INT6(EXTER) + walker de chaîne.

@@ -15,6 +15,7 @@
 
                 xdef    init_task
                 xdef    exec_AddTask
+                xdef    exec_RemTask
                 xdef    exec_FindTask
                 xdef    exec_AllocSignal
                 xdef    exec_FreeSignal
@@ -69,6 +70,46 @@ exec_AddTask:
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)      ; Enqueue(TaskReady, task)
         rts
+
+; RemTask(task a1) : retire une tâche et libère sa pile (TC_SPLOWER..TC_SPUPPER) + son TCB (TC_SIZE).
+; a1 = 0 ou ThisTask -> SELF : passe en superviseur via trap #2 (libère sur la SSP puis bascule sur la
+; tâche suivante, NE REVIENT PAS). Sinon NON-SELF (tâche ready/waiting) : Remove de sa liste + FreeMem,
+; en contexte tâche. FreeMem utilise Forbid/Permit (Permit yield) -> on l'enveloppe dans un Forbid EXTERNE
+; (le Permit interne voit TDNEST>=0 -> pas de yield) + Disable (atomique vs une IRQ touchant les listes).
+; tc_MemEntry non géré (aucune tâche démo n'en alloue) -> hors scope M7j.
+exec_RemTask:
+        move.l  a1,d0
+        bne.s   .rt_chk
+        move.l  EB_THISTASK(a6),a1   ; NULL -> self
+.rt_chk:
+        cmp.l   EB_THISTASK(a6),a1
+        beq.s   .rt_self
+        ; --- NON-SELF : la cible n'est pas courante (sur TaskReady ou TaskWait) ---
+        movem.l d4-d6,-(sp)
+        move.l  TC_SPLOWER(a1),d4    ; bornes pile AVANT tout free
+        move.l  TC_SPUPPER(a1),d5
+        sub.l   d4,d5                ; d5 = taille pile
+        move.l  a1,d6                ; d6 = TCB
+        jsr     LVO_FORBID(a6)       ; Forbid externe -> suppr. yield du Permit interne de FreeMem
+        addq.b  #1,EB_IDNEST(a6)     ; Disable -> Remove atomique vs une IRQ (Signal) touchant les listes
+        move.w  #INTF_INTEN,INTENA
+        move.l  d6,a1                ; Remove(a1) de sa liste (SUCC/PRED du noeud -> liste quelconque)
+        jsr     LVO_REMOVE(a6)
+                ifeq    M7J_NOFREE
+        move.l  d4,a1                ; FreeMem(pile)
+        move.l  d5,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d6,a1                ; FreeMem(TCB)
+        move.l  #TC_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+                endc
+        bsr     raw_enable           ; INTEN on (sortie nue, pas de queue reschedule)
+        jsr     LVO_PERMIT(a6)       ; fin du Forbid externe (yield ici OK : contexte tâche, après RemTask)
+        movem.l (sp)+,d4-d6
+        rts
+.rt_self:
+        trap    #2                   ; -> trap2_handler (superviseur : libère + bascule, NE REVIENT PAS)
+        rts                          ; filet (jamais atteint)
 
 ; FindTask(name a1) -> d0 = task | 0 ; a1 == NULL -> tâche courante
 exec_FindTask:

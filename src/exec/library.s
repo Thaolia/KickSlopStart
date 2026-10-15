@@ -33,6 +33,7 @@
                 xref    exec_AvailMem
                 xref    exec_TypeOfMem
                 xref    exec_AddTask     ; tasks.s
+                xref    exec_RemTask     ; tasks.s (M7j)
                 xref    exec_FindTask
                 xref    exec_SetTaskPri
                 xref    exec_SetSignal
@@ -125,6 +126,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_TypeOfMem,LVO_TYPEOFMEM+2(a6)
         move.w  #$4EF9,LVO_ADDTASK(a6)
         move.l  #exec_AddTask,LVO_ADDTASK+2(a6)
+        move.w  #$4EF9,LVO_REMTASK(a6)
+        move.l  #exec_RemTask,LVO_REMTASK+2(a6)
         move.w  #$4EF9,LVO_FINDTASK(a6)
         move.l  #exec_FindTask,LVO_FINDTASK+2(a6)
         move.w  #$4EF9,LVO_SETTASKPRI(a6)

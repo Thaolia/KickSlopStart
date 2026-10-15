@@ -62,6 +62,7 @@ AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
 TRAP0_VEC    EQU $80          ; M7c : vecteur TRAP #0 (switch volontaire style Wait : sortante déjà rangée)
 TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeue sortante -> TaskReady)
+TRAP2_VEC    EQU $88          ; M7j : vecteur TRAP #2 (RemTask-self : libère + bascule définitivement)
 ; M7c — frame de contexte (miroir movem d0-d7/a0-a6 + {SR,PC} du CPU), posée sur la pile de la tâche.
 ; 15 longs GPR (60 o) + SR (mot, offset 60) + PC (long, offset 62) = 66 o (pair -> copie mot par mot).
 FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
@@ -196,6 +197,18 @@ M7H_QUANTUM     EQU 4
 ; M7H_QUANTUM_DEMO=1 : démo d'ISOLATION (2 spinners pri 0, PAS d'autres tâches) pour rendre le quantum
 ; observable (aucun préempteur prioritaire ; INT6 tourne mais ne Signale personne -> ne fait pas tourner).
 M7H_QUANTUM_DEMO EQU 0
+; M7j — RemTask (cycle de vie) : preuve qu'une tâche qui se termine libère sa pile + TCB (AvailMem remonte)
+RM_RUNS          EQU $000005DC ; long : itérations de task_rm avant qu'elle ne RTS (-> task_exit -> RemTask self)
+M7J_AVAIL_BEFORE EQU $000005E0 ; long : AvailMem capturé AVANT la création de task_rm (baseline)
+M7J_STAT         EQU $000005E4 ; UBYTE : b0 = marqueur « M7J REMTASK OK » déjà émis
+RM_THRESH        EQU 20        ; itérations de task_rm avant auto-retrait
+M7J_RECOVER      EQU 1024      ; AvailMem doit remonter d'au moins ça (pile 2048 + TCB) pour prouver le free
+; M7J_DEMO=1 : ajoute task_rm (tâche qui tourne RM_THRESH fois puis RTS -> RemTask self) et la preuve
+; AvailMem dans une tâche survivante. Défaut 0 (RemTask compilé mais non exercé -> non-régression).
+M7J_DEMO         EQU 0
+; M7J_NOFREE=1 (RED) : RemTask marque/retire mais SAUTE les FreeMem -> AvailMem ne remonte pas (fuite) ->
+; « M7J REMTASK OK » absent. Prouve que le FreeMem pile+TCB est load-bearing.
+M7J_NOFREE       EQU 0
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
@@ -262,6 +275,7 @@ NT_TASK       EQU 1
 TS_RUN        EQU 2           ; tâche en cours d'exécution
 TS_READY      EQU 3
 TS_WAIT       EQU 4           ; tâche bloquée (Wait/WaitPort) -> liste TaskWait
+TS_REMOVED    EQU 5           ; M7j : tâche en cours de retrait (RemTask)
 TC_FLAGS      EQU 14
 TC_STATE      EQU 15
 TC_IDNESTCNT  EQU 16
@@ -357,6 +371,7 @@ LVO_REMTAIL  EQU -264
 LVO_ENQUEUE  EQU -270
 LVO_FINDNAME EQU -276
 LVO_ADDTASK    EQU -282
+LVO_REMTASK    EQU -288         ; M7j
 LVO_FINDTASK   EQU -294
 LVO_SETTASKPRI EQU -300
 LVO_SETSIGNAL  EQU -306
