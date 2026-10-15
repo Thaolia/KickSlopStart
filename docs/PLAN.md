@@ -231,7 +231,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.
   Décomposition (user, 2026-10-15) : **M4a** fond de couleur piloté **Copper-only** (prouve le Copper DMA seul,
   sans bitplane) ; **M4b** pixels **bitplane** pilotés Copper (vrai premier affichage) ; **M4c** démarrer l'**ABI
-  graphics.library** (GfxBase + View/ViewPort générant la copperlist). **M4a + M4b FAITS** (`src/graphics/gfx.s`,
+  graphics.library** (GfxBase + View/ViewPort générant la copperlist ; décomposé : **M4c1** squelette résident
+  [FAIT : `src/graphics/graphics_lib.s`, ROMTag AUTOINIT pri 65 → `MakeLibrary`/LibList, 1re branche NT_LIBRARY
+  exercée, prouvé FindName+Open comme M5c ; RED `M4C1_WRONG_TYPE` route vers DeviceList → absent] → **M4c2**
+  moteur d'affichage MakeVPort/MrgCop/LoadView générant la copperlist). **M4a + M4b FAITS** (`src/graphics/gfx.s`,
   copper list + bitplane en chip RAM — le Copper ET le bitplane DMA ne lisent QUE la chip, pas la ROM) : premier
   jalon où le canal **VISUEL** est load-bearing (l'écran EST le livrable).
   **M4a** = fond piloté Copper-only (COLOR00 = vert) ; écran VERT ⟺ Copper DMA actif ; RED `M4A_NO_COPPER` (pas de

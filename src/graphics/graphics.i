@@ -55,3 +55,9 @@ GFX_DMA_BITS    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER)
 GFX_BPLCON0     EQU $0000      ; BPU=0 -> aucun bitplane
 GFX_DMA_BITS    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER)
                 endc
+
+; M4c1 : graphics.library comme module résident. M4C1_WRONG_TYPE=1 (RED) : RT_TYPE du ROMTag = NT_DEVICE au
+; lieu de NT_LIBRARY -> le chemin AUTOINIT route GfxBase vers DeviceList (pas LibList) -> FindName(LibList)
+; échoue -> « M4C1 GFX LIB OK » absent. Isole la branche de routage NT_LIBRARY->LibList (neuve : seul
+; NT_DEVICE était exercé jusqu'ici). Défaut 0 (inerte).
+M4C1_WRONG_TYPE EQU 0

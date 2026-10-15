@@ -278,6 +278,30 @@ coldstart:                        ; $FC00D2
         lea     msg_timer_ok(pc),a0
         bsr     ser_puts             ; « M5C TIMER OK »
 
+        ; --- M4c1 : vérifier graphics.library (AUTOINIT, 1er LIBRARY -> LibList) ---
+        ; Miroir de la preuve M5c, mais sur EB_LIBLIST (branche NT_LIBRARY->LibList, neuve). Skip-on-fail :
+        ; en RED (RT_TYPE=NT_DEVICE) GfxBase est routée vers DeviceList -> FindName(LibList) rate -> marqueur
+        ; absent, sans « FAILED » (le reste du boot continue).
+        lea     EB_LIBLIST(a6),a0
+        lea     graphics_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   m4c1_done
+        move.l  d0,a2                ; a2 = GfxBase
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        bne.s   m4c1_done
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ? (device mal routé ne passerait pas ici non plus)
+        bne.s   m4c1_done
+        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a2,a6
+        jsr     -6(a6)
+        move.l  (sp)+,a6
+        cmp.w   #1,LIB_OPENCNT(a2)
+        bne.s   m4c1_done
+        lea     msg_m4c1_ok(pc),a0
+        bsr     ser_puts             ; « M4C1 GFX LIB OK »
+m4c1_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -1788,6 +1812,8 @@ msg_cia_fail:
         dc.b    "M5B FAILED: cia.resource incorrect",13,10,0
 msg_timer_ok:
         dc.b    "M5C TIMER OK (timer.device AUTOINIT -> DeviceList, Open works)",13,10,0
+msg_m4c1_ok:
+        dc.b    "M4C1 GFX LIB OK (graphics.library AUTOINIT -> LibList, NT_LIBRARY routing, Open works)",13,10,0
 msg_timer_fail:
         dc.b    "M5C FAILED: timer.device incorrect",13,10,0
 msg_m6a_ok:
@@ -1828,6 +1854,8 @@ ciab_test_name:
         dc.b    "ciab.resource",0
 timer_test_name:
         dc.b    "timer.device",0
+graphics_test_name:
+        dc.b    "graphics.library",0
 msg_crlf:
         dc.b    13,10,0
         EVEN

@@ -21,7 +21,7 @@ EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
-GFX_OBJ   := $(BUILD)/gfx.o
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -42,7 +42,7 @@ $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -o $@ $<
 
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
-$(BUILD)/gfx.o: $(GFX_DIR)/gfx.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
+$(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
