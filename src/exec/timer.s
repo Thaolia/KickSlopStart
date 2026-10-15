@@ -221,6 +221,38 @@ timer_micro_service:
         move.l  d2,a3              ; a3 = Succ sauvé (valide même après Remove)
         bra.s   .mic_loop
 .mic_done:
+        ; M7d : stress du PORT PARTAGÉ (producteur INTERRUPTION) -> course vs task_port (consommateur
+        ; TÂCHE). GetMsg/PutMsg sont interrupt-safe (Disable) depuis M7d -> aucune corruption. En RED
+        ; (ports remis en Forbid) cette course corrompt la liste du port. Scratch d0/a0/a1 (dans le
+        ; budget movem d0-d2/a0-a4 ; a6=SysBase ; la marche de file est terminée -> a2-a4/d2 libres).
+        move.l  WP_SPORT,d0
+        beq.s   .mic_ret            ; port pas encore créé
+        addq.b  #1,STRESS_TICK      ; rate-limit : 1 INT6 sur 4 (allège la charge sur task_timer sans
+        move.b  STRESS_TICK,d1      ; tuer le taux de collision ; le RED se joue sur une longue fenêtre)
+                ifne    M7D_STRESS_MAX
+        and.b   #0,d1               ; RED A/B : chaque INT6 (contention max)
+                else
+        and.b   #3,d1               ; normal : 1 INT6 sur 4
+                endc
+        bne.s   .mic_ret
+        move.l  d0,a0
+        jsr     LVO_GETMSG(a6)      ; GetMsg(SP)
+        tst.l   d0
+        beq.s   .mic_ret            ; vide (les 2 acteurs tiennent tout) -> rien
+        move.l  d0,a1
+        cmp.l   #STRESS_MAGIC,MSG_MAGIC_OFF(a1)
+        bne.s   .mic_pfail          ; mauvais pointeur -> corruption de liste
+        tst.l   MSG_INHAND_OFF(a1)
+        bne.s   .mic_pfail          ; déjà « en main » -> doublon = corruption
+        move.l  #1,MSG_INHAND_OFF(a1)
+        clr.l   MSG_INHAND_OFF(a1)
+        move.l  WP_SPORT,a0
+        jsr     LVO_PUTMSG(a6)      ; PutMsg(SP, msg)
+        addq.l  #1,WP_PORTI
+        bra.s   .mic_ret
+.mic_pfail:
+        st      WP_PORTFAIL         ; corruption détectée côté interruption
+.mic_ret:
         movem.l (sp)+,d0-d2/a0-a4
         rts
 

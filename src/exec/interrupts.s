@@ -17,11 +17,13 @@
 ; - Switch VOLONTAIRE (user-mode) : trap #0 (Wait : sortante déjà rangée) / trap #1 (yield : requeue
 ;   sortante->Ready). Le trap entre en superviseur (frame user sur SSP) et rejoint l'épilogue commun.
 ; - PRÉEMPTION : round-robin par tick VBlank (SCHED_ON && !Forbid && !Disable && TaskReady non vide).
-;   int2/int6 ne switchent JAMAIS directement : leurs serveurs Signal -> réveil consommé au prochain
-;   VBlank (ou Permit/Enable). => « réveil MICROHZ -> switch au prochain VBlank » (M7a) préservé.
+;   FLAG DE DISPATCH DIFFÉRÉ (M7c) : int2/int6, si un serveur a réveillé une tâche PRIORITAIRE (Signal a
+;   posé EB_ATTNRESCHED), demandent un switch à la SORTIE d'interruption (d7<-AttnResched) au lieu
+;   d'attendre un Permit ou le prochain VBlank -> réveil déterministe (sans ça : résonance de phase).
+;   Signal ne RESCHEDULE jamais depuis l'IRQ (pas de ré-entrance) : il POSE le flag, l'épilogue le consomme.
 ; - GATE M7a : le prologue commun monte IPL7, donc toute la chirurgie de listes du switch est atomique
 ;   vs une source de niveau > 3 (INT6/CIA-B). VBL_INSURG/VBL_CLASH reste le détecteur (cf. exec.i).
-; À VENIR (M7d) : fidélité IPL-par-niveau, VERTB en chaîne de serveurs, décodage INTREQR, quantum, RemTask.
+; À VENIR (M7e) : fidélité IPL-par-niveau, VERTB en chaîne de serveurs, décodage INTREQR, quantum, RemTask.
 ; Piste IMPLÉMENTATION (« clean ») : hardware/intbits.i (ABI publique) + HRM + spec AROS public.
 
                 include "exec.i"

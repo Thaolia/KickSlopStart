@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/PutMsg/GetMsg/ReplyMsg/WaitPort…, sections critiques Forbid-enveloppées), `interrupts.s` (init_ints + handlers VBlank/INT2/INT6/TRAP partageant un **prologue commun** `movem`+IPL7 et un **épilogue commun** `intr_exit` ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; préemption round-robin au VBlank + **flag de dispatch différé** à la sortie d'IRQ quand un serveur réveille une tâche prioritaire ; IPL7 du prologue = gate de ré-entrance des listes vs niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers VBlank/INT2/INT6/TRAP partageant un **prologue commun** `movem`+IPL7 et un **épilogue commun** `intr_exit` ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; préemption round-robin au VBlank + **flag de dispatch différé** à la sortie d'IRQ quand un serveur réveille une tâche prioritaire ; IPL7 du prologue = gate de ré-entrance des listes vs niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -270,8 +270,21 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   toujours GREEN sur le nouveau modèle (7/7 runs, `VBL_CLASH==0`, sentinelles d7 intactes). RED : tâches en
   superviseur ($2000) → hang ; relocation bypassée (sp-swap inline sur SSP partagée) → crash ; IPL7 du prologue
   retiré → crash. Coopératif (SCHED_ON=0, task_s retiré) re-prouvé : M3F LIVE via le yield seul + M7A.
-- **À venir (M7d+)** : **fidélité IPL-par-niveau** (VERTB en chaîne + tourner à l'IPL natif de l'interruption),
-  décodage INTREQR multi-source, upgrade des ports (`PutMsg`/`GetMsg`/`ReplyMsg`) en Disable interrupt-safe,
+- **M7d** (ports INTERRUPT-SAFE) : `PutMsg`/`GetMsg`/`ReplyMsg` manipulent `MP_MSGLIST`, qui peut être touché
+  depuis une INTERRUPTION (device piloté par IRQ). Forbid (TDNest) ne masque PAS les interruptions -> une IRQ
+  qui `PutMsg`/`ReplyMsg` peut s'entrelacer avec le `GetMsg` d'une tâche sur la même liste doublement chaînée
+  (RemHead vs AddTail) -> corruption. FIX : section critique NUE (Disable INTENA + `raw_enable`, sans queue
+  reschedule -> pas de ré-entrance du scheduler depuis l'IRQ), qui masque AUSSI les interruptions. AddPort/
+  RemPort restent Forbid (PortList non touchée par IRQ). Nesting ReplyMsg->PutMsg->Signal : seul le `raw_enable`
+  le plus externe rallume INTEN. PREUVE : série « M7D PORTS OK » — un port partagé (K=4 messages, MAGIC +
+  IN_HAND + détecteur de nœuds perdus) martelé par task_port (TÂCHE) ET timer_micro_service (INTERRUPTION,
+  GetMsg+PutMsg à chaque INT6) en coexistence avec M3F/M7A/M7C (4/4 runs, zéro corruption). RED (A/B sous
+  CONTENTION MAX dédiée — task_port pri haute, sans rate-limit, fenêtre 90 s) : ports en Forbid -> « M7D FAILED:
+  shared-port list corrupted » ; MÊME contention, ports en Disable -> propre. La course est statistique
+  (fenêtre RemHead/AddTail sub-µs, corruption CUMULATIVE sur liste doublement chaînée) : déterministe sous
+  contention max + fenêtre longue, non déclenchée par la démo de coexistence allégée.
+- **À venir (M7e+)** : **fidélité IPL-par-niveau** (VERTB en chaîne + tourner à l'IPL natif de l'interruption),
+  décodage INTREQR multi-source, conversion `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire),
   `RemTask`, quantum SFB_TQE, priorité réelle, calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

@@ -178,10 +178,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   que le hazard de SSP partagée devient réel et que le nest-count (bit S de la SR sauvée) devient load-bearing.
   Dérivé du spec public « Exec Microkernel » (AROS) + manuel 68000 (zéro code transcrit). Un **flag de dispatch
   différé** à la sortie d'IRQ réveille promptement une tâche prioritaire signalée depuis une interruption.
-  Reste (**M7d+**) : fidélité IPL-par-niveau (VERTB en chaîne + tourner à l'IPL natif), décodage INTREQR
-  multi-source, upgrade des ports (`PutMsg`/`GetMsg`/`ReplyMsg`) en Disable interrupt-safe, `RemTask`,
-  quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste la
-  démo M3f/M7a/M7c codée en dur d'ici là).
+  **M7d** rend les ports INTERRUPT-SAFE : `PutMsg`/`GetMsg`/`ReplyMsg` passent de Forbid (tâche-vs-tâche) à
+  Disable (masque aussi les interruptions), prouvé par un port partagé martelé par une TÂCHE et une INTERRUPTION
+  (coexistence GREEN + A/B sous contention max : Forbid corrompt la liste, Disable non). Débloque l'I/O device
+  piloté par IRQ. Reste (**M7e+**) : fidélité IPL-par-niveau (VERTB en chaîne + tourner à l'IPL natif), décodage
+  INTREQR multi-source, conversion `timer_reply`→`ReplyMsg`, `RemTask`, quantum/priorité réelle, calibration µs
+  MICROHZ, retrait éventuel des démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

@@ -110,6 +110,22 @@ WP_HEART     EQU $0000054C    ; M7c : battement de la tâche user-mode (first-li
 WP_UMODE     EQU $00000550    ; M7c : UBYTE — une tâche s'est observée en USER mode (SR bit S == 0)
 M7C_STAT     EQU $00000554    ; M7c : UBYTE — b0 = marqueur « M7C USERMODE OK » déjà émis
 WP_UPREEMPT  EQU $00000558    ; M7c : préemptions observées (VBL_COUNT au démarrage de la preuve)
+; M7d — preuve de concurrence ports interrupt-safe : port partagé martelé par une TÂCHE et une INTERRUPTION
+WP_SPORT     EQU $0000055C    ; APTR : port de stress partagé (0 tant que non créé)
+WP_PORTT     EQU $00000560    ; itérations GetMsg+PutMsg de task_port (consommateur TÂCHE)
+WP_PORTI     EQU $00000564    ; itérations GetMsg+PutMsg du service MICROHZ (producteur INTERRUPTION)
+WP_PORTFAIL  EQU $00000568    ; != 0 : corruption détectée côté interruption (MAGIC/IN_HAND KO)
+M7D_STAT     EQU $0000056C    ; UBYTE : b0 = « M7D PORTS OK » déjà émis
+STRESS_TICK  EQU $0000056D    ; UBYTE : compteur pour rate-limiter le stress côté INT6 (1 sur 4)
+; M7D_STRESS_MAX : 0 = démo de COEXISTENCE (task_port pri 0 + stress rate-limité 1/4, coexiste avec
+; M3f/M7a/M7c). 1 = CONTENTION MAXIMALE (task_port pri haute + stress à chaque INT6) : config dédiée au
+; RED A/B des ports interrupt-safe (Forbid corrompt la liste du port / Disable non). Défaut 0 (arbre).
+M7D_STRESS_MAX EQU 0
+; message de stress : struct Message (MN_SIZE=20) + MAGIC + IN_HAND (détecteurs de corruption de liste)
+MSG_MAGIC_OFF  EQU 20         ; sentinelle : un GetMsg corrompu (mauvais pointeur) la rate
+MSG_INHAND_OFF EQU 24         ; 1 = message « en main » hors liste ; un GetMsg qui le rend = doublon = corruption
+STRESS_MSG_SIZE EQU 28
+STRESS_MAGIC  EQU $5D7C0DE5   ; valeur MAGIC attendue
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

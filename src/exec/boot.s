@@ -34,10 +34,20 @@ TCONS_THRESH EQU 50           ; réveils de task_timer (via l'IRQ MICROHZ) requi
 M7A_MINTICKS EQU 250          ; ET délai minimum (ticks VBlank = 5 s) écoulé avant d'émettre OK :
                               ; le détecteur de clash tourne à chaque INT6 (~2/s), donc en RED un
                               ; clash tombe BIEN AVANT 5 s -> « M7A FAILED » précède, OK n'apparaît pas.
+                ifne    M7D_STRESS_MAX
+DEMO_PRI_P   EQU 20           ; RED A/B : task_port martèle le port (contention max vs IRQ)
+                else
+DEMO_PRI_P   EQU 0            ; task_port (M7d) : pri 0 -> partage le CPU équitablement avec task_S/L
+                endc
+STRESS_K     EQU 4            ; nb de messages de stress circulant sur le port partagé
+PORTT_THRESH EQU 60           ; itérations GetMsg+PutMsg de task_port requises pour « M7D PORTS OK »
+PORTI_THRESH EQU 300          ; itérations côté interruption requises (producteur rapide ~INT6)
+PEMPTY_LIMIT EQU 50000        ; M7d : GetMsg vides consécutifs = nœuds perdus (corruption) ; GREEN ~0
 SENT_H       EQU $CAFE0010    ; sentinelles de contexte (doivent survivre à TOUT switch)
 SENT_L       EQU $CAFE0020
 SENT_S       EQU $CAFE0030
 SENT_T       EQU $CAFE0040    ; sentinelle de task_timer (M7a)
+SENT_P       EQU $CAFE0050    ; sentinelle de task_port (M7d)
 CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
 CIAB_LATCH_LO EQU $FF
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
@@ -417,7 +427,8 @@ coldstart:                        ; $FC00D2
         move.b  #CIAB_LATCH_LO,CIA_TALO(a0)
         move.b  #CIAB_LATCH_HI,CIA_TAHI(a0)   ; l'écriture de TAHI charge le latch
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
-        bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a)
+        bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
+        bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
         move.b  #1,SCHED_ON          ; ARME la préemption périodique
         ; --- M7c : LANCEMENT de la 1re tâche = transition SUPERVISEUR -> USER mode ---
         ; La pile boot (STACKTOP) devient la SSP PARTAGÉE des interruptions ; chaque tâche a sa pile
@@ -963,7 +974,50 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_t_name(pc),a3
         moveq   #DEMO_PRI_T,d2
         bsr     mk_demo_task
+        lea     task_port(pc),a2     ; task_port (pri 0, M7d) : martèle le port partagé (consommateur TÂCHE)
+        lea     task_p_name(pc),a3
+        moveq   #DEMO_PRI_P,d2
+        bsr     mk_demo_task
         movem.l (sp)+,d2/a2-a4
+        rts
+
+; setup_stress_port (M7d) : crée le port partagé + STRESS_K messages (MAGIC + IN_HAND=0), tous AddTail'd
+; sur le port. a6 = SysBase. WP_SPORT est écrit EN DERNIER (une fois le port prêt) pour que le service
+; MICROHZ (qui teste WP_SPORT) ne le voie qu'entièrement construit. clobbers scratch + d2/a2 (sauvés).
+setup_stress_port:
+        movem.l d2/a2,-(sp)
+        clr.l   WP_SPORT             ; (RAM basse non garantie nulle)
+        clr.l   WP_PORTT
+        clr.l   WP_PORTI
+        clr.l   WP_PORTFAIL
+        clr.b   M7D_STAT
+        move.l  #MP_SIZE,d0          ; alloue le port
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7d_fail
+        move.l  d0,a2                ; a2 = port
+        move.b  #NT_MSGPORT,LN_TYPE(a2)
+        move.b  #PA_IGNORE,MP_FLAGS(a2)   ; action != PA_SIGNAL -> PutMsg saute la voie de signal
+        move.l  a2,a1                ; NEWLIST(&port->MsgList)
+        lea     MP_MSGLIST(a2),a1
+        jsr     newlist
+        moveq   #STRESS_K,d2         ; d2 = compteur de messages à créer
+.sp_loop:
+        move.l  #STRESS_MSG_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m7d_fail
+        move.l  d0,a1                ; a1 = message
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        move.l  #STRESS_MAGIC,MSG_MAGIC_OFF(a1)   ; MAGIC ; IN_HAND déjà 0 (MEMF_CLEAR)
+        lea     MP_MSGLIST(a2),a0    ; AddTail(&port->MsgList, msg)
+        jsr     LVO_ADDTAIL(a6)
+        subq.l  #1,d2
+        bne.s   .sp_loop
+        move.l  a2,WP_SPORT          ; port prêt -> publié EN DERNIER
+        movem.l (sp)+,d2/a2
         rts
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
@@ -1139,6 +1193,66 @@ task_timer:
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
         bra     .tt_loop
+
+; task_port (pri 0, M7d) : CONSOMMATEUR TÂCHE du port de stress partagé. Boucle serrée GetMsg+PutMsg ;
+; le PRODUCTEUR est timer_micro_service (INTERRUPTION). Ports interrupt-safe (Disable) -> la course
+; GetMsg(tâche)/PutMsg(IRQ) sur le même MP_MSGLIST est sûre. En RED (ports remis en Forbid) elle corrompt
+; la liste. Vérifie MAGIC (mauvais pointeur) + IN_HAND==0 (doublon) à chaque message. a4 = port (préservé
+; par GetMsg/PutMsg = scratch d0/d1/a0/a1). Émet « M7D PORTS OK » quand les 2 compteurs passent sans fail.
+task_port:
+        move.l  ($4).w,a6
+        move.l  #SENT_P,d7
+        moveq   #0,d6                ; d6 = compteur de GetMsg vides CONSÉCUTIFs (détecteur de nœuds perdus)
+.pp_wait:
+        move.l  WP_SPORT,a4          ; attendre que le port existe (créé pré-handoff -> déjà prêt)
+        move.l  a4,d0
+        beq.s   .pp_wait
+.pp_loop:
+        cmp.l   #SENT_P,d7
+        bne.w   demo_fail            ; contexte corrompu par un switch
+        move.l  a4,a0                ; GetMsg(SP)
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        beq.s   .pp_empty            ; vide -> compter (K messages circulent, le port n'est quasi
+        move.l  d0,a1                ; jamais vide ; vide PROLONGÉ = nœuds perdus par corruption)
+        cmp.l   #STRESS_MAGIC,MSG_MAGIC_OFF(a1)
+        bne     m7d_fail             ; mauvais pointeur -> corruption de liste
+        tst.l   MSG_INHAND_OFF(a1)
+        bne     m7d_fail             ; déjà « en main » -> doublon = corruption
+        move.l  #1,MSG_INHAND_OFF(a1)
+        clr.l   MSG_INHAND_OFF(a1)
+        move.l  a4,a0                ; PutMsg(SP, msg)
+        jsr     LVO_PUTMSG(a6)
+        addq.l  #1,WP_PORTT
+        moveq   #0,d6                ; message obtenu -> reset du compteur de vides
+        bra.s   .pp_emit
+.pp_empty:
+        addq.l  #1,d6
+        cmp.l   #PEMPTY_LIMIT,d6
+        bcc     m7d_fail             ; port vide trop longtemps -> nœuds perdus = corruption
+.pp_emit:
+        btst    #0,M7D_STAT
+        bne     .pp_loop             ; marqueur déjà émis
+        tst.l   WP_PORTFAIL          ; corruption vue côté interruption ?
+        bne     m7d_fail
+        move.l  WP_PORTT,d0
+        cmp.l   #PORTT_THRESH,d0
+        bcs     .pp_loop             ; pas assez d'itérations côté tâche
+        move.l  WP_PORTI,d0
+        cmp.l   #PORTI_THRESH,d0
+        bcs     .pp_loop             ; pas assez côté interruption (producteur)
+        bset    #0,M7D_STAT
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7d_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+        bra     .pp_loop
+m7d_fail:                            ; corruption de liste de port (RED) -> preuve
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7d_fail(pc),a0
+        bsr     ser_puts
+.m7df_hang:
+        bra.s   .m7df_hang
 
 demo_fail:                           ; sentinelle KO -> preuve de corruption
         jsr     LVO_FORBID(a6)
@@ -1375,6 +1489,8 @@ task_s_name:
         dc.b    "demo.S",0
 task_t_name:
         dc.b    "demo.timer",0
+task_p_name:
+        dc.b    "demo.port",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -1429,6 +1545,10 @@ msg_m7a_fail:
         dc.b    "M7A FAILED: MICROHZ wake or scheduler-list reentrancy gate",13,10,0
 msg_m7c_ok:
         dc.b    "M7C USERMODE OK (user-mode tasks on shared SSP, deferred Dispatch survives preemption)",13,10,0
+msg_m7d_ok:
+        dc.b    "M7D PORTS OK (interrupt-safe PutMsg/GetMsg: task vs IRQ race on shared port, no corruption)",13,10,0
+msg_m7d_fail:
+        dc.b    "M7D FAILED: shared-port list corrupted (task GetMsg vs IRQ PutMsg race)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
