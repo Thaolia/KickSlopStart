@@ -12,6 +12,8 @@ CUSTOM   EQU $DFF000
 DMACON   EQU CUSTOM+$096
 INTENA   EQU CUSTOM+$09A
 INTREQ   EQU CUSTOM+$09C
+INTENAR  EQU CUSTOM+$01C      ; M7g : lecture des interruptions activées
+INTREQR  EQU CUSTOM+$01E      ; M7g : lecture des interruptions en attente
 SERDAT   EQU CUSTOM+$030
 SERPER   EQU CUSTOM+$032
 SERDATR  EQU CUSTOM+$018
@@ -50,7 +52,9 @@ ROMBASE  EQU $FC0000
 ; --- Interruptions (hardware/intbits.i + autovecteurs 68000) ---
 INTF_SETCLR  EQU $8000        ; INTENA/INTREQ : 1 = pose les bits, 0 = les efface
 INTF_INTEN   EQU $4000        ; maître (INTEN)
+INTF_COPER   EQU $0010        ; M7g : Copper (niveau 3, bit 4)
 INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
+INTF_BLIT    EQU $0040        ; M7g : Blitter (niveau 3, bit 6)
 INTF_PORTS   EQU $0008        ; INT2 / CIA-A
 INTF_EXTER   EQU $2000        ; INT6 / CIA-B
 AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
@@ -63,7 +67,9 @@ TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeu
 FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
 FRAME_SIZE   EQU 66           ; taille totale de la frame relocalisée (GPR+SR+PC)
 INTB_PORTS   EQU 3            ; numéro d'interruption Paula PORTS (INT2) — cf. hardware/intbits.i
+INTB_COPER   EQU 4            ; M7g : numéro COPER (INT3) — INTF_COPER=$0010=bit4
 INTB_VERTB   EQU 5            ; M7f : numéro VERTB (INT3) — INTF_VERTB=$0020=bit5
+INTB_BLIT    EQU 6            ; M7g : numéro BLIT (INT3) — INTF_BLIT=$0040=bit6
 INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
 ; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
 IS_DATA      EQU 14           ; APTR passé en a1 au serveur
@@ -164,6 +170,16 @@ VERTB_CHAIN_THRESH EQU 50     ; parcours complets de chaîne requis pour « M7F 
 ;   VERTB_CHAIN_N figé + unité VBLANK morte (M6A échoue tôt). Prouve la sémantique « call-all » (Z-set)
 ;   de la chaîne = la marche dispatche BIEN les serveurs suivants en séquence.
 M7F_SCHED_STOPS_CHAIN EQU 0
+; M7g — décodage INTREQR multi-source : preuve qu'int3 dispatche une 2e source de niveau 3 (COPER)
+COPER_FIRED    EQU $000005C8 ; long : appels de coper_test (2e source niveau 3, servie via le décodage)
+COPER_TICK     EQU $000005CC ; UBYTE : rate-limiteur du déclenchement logiciel de COPER (1 VBlank sur 4)
+M7G_STAT       EQU $000005CD ; UBYTE : b0 = marqueur « M7G MULTISRC OK » déjà émis
+COPER_THRESH   EQU 20        ; appels de coper_test requis pour « M7G MULTISRC OK »
+; Gate A/B M7g (reproductibilité ; défaut 0 = GREEN) :
+; M7G_MONO_SOURCE=1 (RED) : int3 décode ET acke COPER/BLIT mais NE les DISPATCHE PAS (comportement
+;   mono-dispatch) -> COPER_FIRED figé, pas de storm (COPER reste ackée), tout le reste identique ->
+;   « M7G MULTISRC OK » absent. Prouve que le DISPATCH par source décodée est load-bearing.
+M7G_MONO_SOURCE EQU 0
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

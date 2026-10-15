@@ -196,9 +196,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   OK » (`VERTB_CHAIN_N` = parcours complet sched/timer/tail en ordre) + scheduler/timer OK via la chaîne, GREEN
   3/3 + RED (sched stoppe la chaîne en Z-clair -> « M6A FAILED » timer VBLANK mort) + coopératif. Découverte :
   retirer le seul quantum VBlank ne stoppe pas la préemption (INT6 co-pilote le round-robin via le dispatch différé).
-  Reste (**M7g+**) : décodage INTREQR multi-source (INT3 reste mono-source VERTB en M7f), conversion
-  `timer_reply`→`ReplyMsg`, `RemTask`, quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des
-  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f codée en dur d'ici là).
+  **M7g** livre le **décodage INTREQR multi-source** : int3_dispatch lit INTREQR & INTENAR et dispatche+acke
+  CHAQUE source de niveau 3 en attente (COPER/VERTB/BLIT) via IntVects[n], au lieu de supposer VERTB seule
+  (int2/int6 restent mono-source, correct). Prouvé « M7G MULTISRC OK » : une 2e source niveau 3 (COPER,
+  déclenchée par logiciel INTREQ=SETCLR|COPER, sans graphics) est servie via le décodage ; GREEN 3/3 + RED
+  (M7G_MONO_SOURCE=1 : décode+acke mais ne dispatche pas -> COPER_FIRED figé, pas de storm) + coopératif.
+  Reste (**M7h+**) : quantum/priorité réelle (SFB_TQE, raffine sched_server), conversion `timer_reply`→
+  `ReplyMsg`, `RemTask`, décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait éventuel des
+  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

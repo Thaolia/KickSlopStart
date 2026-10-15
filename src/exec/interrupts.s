@@ -104,9 +104,13 @@ init_ints:
 
 ; int3_dispatch (AUTOVEC_L3, niveau 3) : M7f — VERTB (seule source de niveau 3 utilisée, mono-source
 ; comme int2/int6) passe par le dispatcher PAR NUMÉRO + chaîne de serveurs, au lieu d'un handler dédié.
-; Corps = compteur M3a (inline) + marche de la chaîne VERTB (sched_server pose AttnResched, timer_vblank
-; sert l'unité VBLANK, vbl_tail = preuve de parcours). Épilogue = intr_isr_defer (consomme AttnResched).
-; La fenêtre VBL_INBODY (gate M7e) couvre la marche de chaîne (= le « corps », préemptible par INT6).
+; Corps = M7g DÉCODAGE MULTI-SOURCE : lit INTREQR & INTENAR, dispatche+acke CHAQUE source de niveau 3
+; en attente (COPER bit4, VERTB bit5, BLIT bit6) via IntVects[n], au lieu de supposer VERTB seule.
+; VERTB -> compteur M3a + chaîne (sched/timer/tail). Épilogue = intr_isr_defer (consomme AttnResched).
+; VBL_INBODY (gate M7e) couvre tout le corps (préemptible par INT6). Bonus : sur un INT3 SPURIOUS (délai
+; de propagation d'ack, cf. M7e) les 3 btst échouent -> on ne dispatche RIEN (plus correct que M7f qui
+; dispatchait VERTB inconditionnellement). d2 = masque des sources en attente, PRÉSERVÉ par la convention
+; serveur (walker: movem d2/a2-a4 ; coper_test: ne touche que COPER_FIRED) à travers les dispatch.
 int3_dispatch:
                 ifne    M7E_PROLOGUE_IPL7
         move.w  #$2700,sr           ; RED2 M7e : modèle M7a (tout le handler IPL7) -> INT6 ne préempte PAS
@@ -114,15 +118,39 @@ int3_dispatch:
                 endc
         movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 3) — INT6 (6) peut préempter CE corps
         move.l  ($4).w,a6           ; a6 = SysBase
-        st      VBL_INBODY          ; M7e : fenêtre préemptible = marche de la chaîne VERTB (détecteur INT6)
+        st      VBL_INBODY          ; M7e : fenêtre préemptible = décodage+dispatch niveau 3 (détecteur INT6)
         move.w  sr,d0               ; M7e value-check : IPL natif observé (doit == 3, pas 7 ; « move from
         lsr.w   #8,d0               ; SR » non privilégié sur 68000, superviseur ici)
         and.w   #7,d0
         move.b  d0,VBL_IPL
-        addq.l  #1,VBL_COUNT        ; compteur M3a (inline : émis AVANT que la chaîne ne soit peuplée)
-        moveq   #INTB_VERTB,d0      ; marche la chaîne VERTB (sched_server + timer_vblank + vbl_tail)
-        bsr     intr_dispatch_number
-        move.w  #INTF_VERTB,INTREQ  ; ack VERTB APRÈS la marche (cohérent int2/int6)
+        move.w  INTREQR,d2          ; M7g : sources en attente ...
+        and.w   INTENAR,d2          ; ... ET activées (d2 préservé à travers les dispatch)
+        btst    #INTB_VERTB,d2      ; --- VERTB (bit 5) ---
+        beq.s   .i3_coper
+        move.w  #INTF_VERTB,INTREQ  ; ack VERTB (SETCLR=0 -> efface ce seul bit)
+        addq.l  #1,VBL_COUNT        ; compteur M3a (SEULEMENT si VERTB réellement en attente)
+        moveq   #INTB_VERTB,d0
+        bsr     intr_dispatch_number ; chaîne VERTB (sched + timer_vblank + vbl_tail)
+        move.l  ($4).w,a6           ; recharge a6 (le walker ne le restaure pas)
+.i3_coper:
+        btst    #INTB_COPER,d2      ; --- COPER (bit 4) ---
+        beq.s   .i3_blit
+        move.w  #INTF_COPER,INTREQ  ; ack COPER (toujours, même en RED -> pas de storm)
+                ifeq    M7G_MONO_SOURCE
+        moveq   #INTB_COPER,d0
+        bsr     intr_dispatch_number ; dispatch IntVects[COPER] (= coper_test en démo)
+        move.l  ($4).w,a6
+                endc                ; RED M7G_MONO_SOURCE=1 : ackée mais NON dispatchée -> COPER_FIRED figé
+.i3_blit:
+        btst    #INTB_BLIT,d2       ; --- BLIT (bit 6 ; non utilisé en démo -> dormant) ---
+        beq.s   .i3_done
+        move.w  #INTF_BLIT,INTREQ   ; ack BLIT
+                ifeq    M7G_MONO_SOURCE
+        moveq   #INTB_BLIT,d0
+        bsr     intr_dispatch_number ; dispatch IntVects[BLIT]
+        move.l  ($4).w,a6
+                endc
+.i3_done:
         clr.b   VBL_INBODY          ; M7e : fin de la fenêtre avant dispatch (disjointe de VBL_INSURG)
         bra     intr_isr_defer      ; tail commun : recharge a6 + dispatch différé si AttnResched (S=0)
 

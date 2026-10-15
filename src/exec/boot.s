@@ -426,6 +426,15 @@ coldstart:                        ; $FC00D2
         moveq   #INTB_VERTB,d0
         lea     VBL_TAIL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
+        ; M7g : 2e source de NIVEAU 3 (COPER) pour prouver le décodage INTREQR multi-source d'int3.
+        ; coper_test (vecteur EXCLUSIF) incrémente COPER_FIRED ; vbl_tail déclenche COPER par logiciel.
+        clr.l   COPER_FIRED
+        clr.b   COPER_TICK
+        clr.b   M7G_STAT
+        moveq   #INTB_COPER,d0          ; SetIntVector(COPER, &coper_int)
+        lea     coper_int(pc),a1
+        jsr     LVO_SETINTVECTOR(a6)
+        move.w  #(INTF_SETCLR|INTF_COPER),INTENA ; active COPER (niveau 3) ; vbl_tail la déclenche
         lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
@@ -1215,13 +1224,24 @@ task_timer:
         jsr     LVO_PERMIT(a6)
 .tt_m7e_done:
         btst    #0,M7F_STAT          ; M7f : marqueur chaîne VERTB déjà émis ?
-        bne.s   .tt_m7a
+        bne.s   .tt_m7f_done         ; -> tombe sur le check M7G (ne PAS sauter)
         move.l  VERTB_CHAIN_N,d0     ; le walker a-t-il parcouru la chaîne VERTB jusqu'à la QUEUE (vbl_tail) ?
         cmp.l   #VERTB_CHAIN_THRESH,d0  ; (prouve sched_server pri 20 + timer_vblank pri 0 AVANT vbl_tail pri -10)
-        bcs.s   .tt_m7a              ; pas encore assez de parcours complets de chaîne
+        bcs.s   .tt_m7f_done         ; pas encore assez de parcours complets de chaîne (mais checker M7G)
         bset    #0,M7F_STAT          ; émet « M7F VERTB OK » une seule fois
         jsr     LVO_FORBID(a6)
         lea     msg_m7f_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_m7f_done:
+        btst    #0,M7G_STAT          ; M7g : marqueur multi-source déjà émis ?
+        bne.s   .tt_m7a
+        move.l  COPER_FIRED,d0       ; la 2e source de niveau 3 (COPER) a-t-elle été servie via le décodage ?
+        cmp.l   #COPER_THRESH,d0
+        bcs.s   .tt_m7a              ; pas encore assez d'appels coper_test
+        bset    #0,M7G_STAT          ; émet « M7G MULTISRC OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7g_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7a:
@@ -1454,8 +1474,37 @@ int2_srv2:
 ; tourné AVANT lui). a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0+mémoire).
 vbl_tail_server:
         addq.l  #1,VERTB_CHAIN_N
+        ; M7g : déclenche COPER par LOGICIEL (2e source niveau 3), rate-limité 1 VBlank sur 4, pour prouver
+        ; le décodage multi-source d'int3 (COPER sera servie au prochain INT3). Scratch d0 (préserve d2-d7/a2-a4).
+        addq.b  #1,COPER_TICK
+        move.b  COPER_TICK,d0
+        and.b   #3,d0
+        bne.s   .vt_z
+        move.w  #(INTF_SETCLR|INTF_COPER),INTREQ ; pose la requête COPER (Paula)
+.vt_z:
         moveq   #0,d0                ; Z set -> continue (dernier noeud : fin de chaîne de toute façon)
         rts
+
+; coper_test (M7g) : handler EXCLUSIF de la source COPER (niveau 3), installé par SetIntVector. Prouve
+; que le décodage INTREQR d'int3 dispatche une 2e source de niveau 3. a0=$DFF000, a1=IS_DATA (inutilisé),
+; a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que COPER_FIRED -> d2 de int3_dispatch survit).
+coper_test:
+        addq.l  #1,COPER_FIRED
+        rts
+
+; coper_int (M7g) : struct Interrupt du vecteur EXCLUSIF COPER (SetIntVector copie IS_DATA/IS_CODE ->
+; peut rester en ROM). IS_CODE -> coper_test. IS_DATA inutilisé.
+        EVEN
+coper_int:
+        dc.l    0                    ; LN_SUCC
+        dc.l    0                    ; LN_PRED
+        dc.b    0                    ; LN_TYPE
+        dc.b    0                    ; LN_PRI (inusité : vecteur exclusif)
+        dc.l    coper_int_name       ; LN_NAME
+        dc.l    0                    ; IS_DATA
+        dc.l    coper_test           ; IS_CODE
+coper_int_name:
+        dc.b    "test.coper",0
 
 ; ciab_server_int (M7b) : vecteur EXCLUSIF EXTER installé par SetIntVector -> ciab_server. Non chaîné
 ; (SetIntVector copie IS_DATA/IS_CODE) -> peut rester en ROM. IS_DATA inutilisé (ciab_server lit CIAB_PTR).
@@ -1608,6 +1657,8 @@ msg_m7e_ok:
         dc.b    "M7E IPL OK (native-IPL: INT6 preempts vbl body; scheduler surgery IPL7-atomic, no overlap)",13,10,0
 msg_m7f_ok:
         dc.b    "M7F VERTB OK (VERTB is a server chain: sched+timer+tail walked in pri order via int3_dispatch)",13,10,0
+msg_m7g_ok:
+        dc.b    "M7G MULTISRC OK (int3 decodes INTREQR, services each pending level-3 source; COPER, not just VERTB)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

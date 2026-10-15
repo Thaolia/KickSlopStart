@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers INT2/INT3/INT6/TRAP partageant un **prologue commun** `movem` (à l'IPL **natif** depuis M7e) et un **épilogue commun** `intr_exit` ; M7f : les 3 autovecteurs utilisés sont UNIFORMES — `int2_dispatch`(PORTS)/`int3_dispatch`(VERTB)/`int6_dispatch`(EXTER) passent par `intr_dispatch_number` -> chaîne de serveurs ; la décision round-robin est `sched_server`, serveur de la chaîne VERTB ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; **flag de dispatch différé** `intr_isr_defer` à la sortie d'IRQ quand un serveur pose `AttnResched` ; M7e : section critique du switch montée à **IPL7 bref** = gate de ré-entrance des listes, instantané vs le délai de propagation d'INTENA ; dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers INT2/INT3/INT6/TRAP partageant un **prologue commun** `movem` (à l'IPL **natif** depuis M7e) et un **épilogue commun** `intr_exit` ; M7f : les 3 autovecteurs utilisés sont UNIFORMES — `int2_dispatch`(PORTS)/`int3_dispatch`(niveau 3)/`int6_dispatch`(EXTER) passent par `intr_dispatch_number` -> chaîne de serveurs ; la décision round-robin est `sched_server`, serveur de la chaîne VERTB ; M7g : `int3_dispatch` décode `INTREQR` et dispatche CHAQUE source de niveau 3 en attente (COPER/VERTB/BLIT) ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; **flag de dispatch différé** `intr_isr_defer` à la sortie d'IRQ quand un serveur pose `AttnResched` ; M7e : section critique du switch montée à **IPL7 bref** = gate de ré-entrance des listes, instantané vs le délai de propagation d'INTENA ; dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -331,8 +331,29 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   tâches de pri égale. Le quantum VBlank est donc redondant avec un timer INT6 rapide dans cette démo ; il
   reste la bonne place (fidèle) pour la décision, mais son effet n'est pas isolable ici. HORS SCOPE
   (M7g+) : INT3 reste mono-source VERTB (pas de décodage INTREQR COPER/BLIT).
-- **À venir (M7g+)** : décodage INTREQR multi-source (INT3 = VERTB+COPER+BLIT), conversion
-  `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire), `RemTask`, quantum SFB_TQE, priorité réelle,
-  calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
+- **M7g** (DÉCODAGE INTREQR MULTI-SOURCE) : `int3_dispatch` ne suppose plus VERTB seule — il lit
+  `INTREQR & INTENAR` et dispatche+acke CHAQUE source de niveau 3 en attente (COPER bit4 / VERTB bit5 /
+  BLIT bit6) via `IntVects[n]`. VERTB -> compteur M3a + chaîne (M7f) ; COPER/BLIT -> leur vecteur. `int2`
+  (PORTS) / `int6` (EXTER) restent mono-source : leur niveau n'a qu'UNE source Paula (optimisation correcte,
+  pas une boucle générique). Le masque des sources en attente est tenu dans `d2`, préservé à travers les
+  dispatch par la convention serveur (walker `movem d2/a2-a4` ; `coper_test` ne touche que son compteur) ;
+  `a6` est rechargé après chaque dispatch (leçon M7f). **Bonus de correction** : sur un INT3 SPURIOUS (délai
+  de propagation d'ack, cf. M7e) les 3 `btst` échouent -> aucun dispatch, vs le dispatch VERTB inconditionnel
+  de M7f. PREUVE : une 2e source de niveau 3 (COPER) est DÉCLENCHÉE PAR LOGICIEL (`INTREQ=SETCLR|COPER`
+  depuis le serveur VERTB `vbl_tail`, rate-limité 1/4 ; pas de graphics requis) ; `IntVects[COPER]` =
+  `coper_test` (vecteur exclusif) incrémente `COPER_FIRED`. Série « M7G MULTISRC OK » gated sur
+  `COPER_FIRED>=seuil` -> int3 sert CHAQUE source de niveau 3 en attente (COPER sur son propre INT3, VERTB
+  sur le sien), plus seulement VERTB. **Portée exacte** : le per-source SÉQUENTIEL est prouvé (vbl_tail pose
+  COPER PENDANT l'INT3 VERTB -> d2 est déjà échantillonné -> COPER servie à l'INT3 SUIVANT) ; le cas
+  co-pending (VERTB+COPER sur le MÊME INT3) n'est PAS isolé. BLIT : chemin présent mais par-inspection
+  seulement (aucune source BLIT en démo ; identique au chemin COPER prouvé). GREEN 3/3 (0 FAILED) ;
+  RED (`M7G_MONO_SOURCE=1`) -> int3 décode+acke COPER mais NE la dispatche PAS -> « M7G » absent,
+  `COPER_FIRED` figé, tout le reste identique SANS storm (preuve : le dispatch par source décodée est
+  load-bearing). Note : un vrai mono-source (acke VERTB seul) LIVELOCKERAIT la machine (COPER niveau 3
+  pending-non-ackée -> INT3 en boucle) ; d'où le RED « dispatch-skip » qui isole proprement la variable.
+  Non-régression M3f + coopérative + M7a..M7f re-prouvés dans le même boot.
+- **À venir (M7h+)** : quantum SFB_TQE + priorité réelle (raffine `sched_server`), conversion
+  `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire), `RemTask`, décodage INTREQR des
+  autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
