@@ -352,8 +352,26 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   load-bearing). Note : un vrai mono-source (acke VERTB seul) LIVELOCKERAIT la machine (COPER niveau 3
   pending-non-ackée -> INT3 en boucle) ; d'où le RED « dispatch-skip » qui isole proprement la variable.
   Non-régression M3f + coopérative + M7a..M7f re-prouvés dans le même boot.
-- **À venir (M7h+)** : quantum SFB_TQE + priorité réelle (raffine `sched_server`), conversion
-  `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire), `RemTask`, décodage INTREQR des
-  autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
+- **M7h** (QUANTUM RÉEL) : `sched_server` ne pose plus `AttnResched` à CHAQUE tick — il compte
+  `QUANTUM_ELAPSED` et ne préempte qu'après `M7H_QUANTUM` ticks de time-slice (défaut 4, comme
+  SysBase.Quantum d'exec). `dispatch_in` reset `QUANTUM_ELAPSED` sur un changement RÉEL de tâche
+  (entrante != sortante ; pas de reset sur dispatch-vers-soi). La priorité stricte était DÉJÀ correcte
+  (RemHead pick la plus haute pri, Enqueue requeue par pri, Signal préempte sur réveil prioritaire) ->
+  pas de gap priorité, M7h = quantum seul. **Observabilité (conséquence directe de M7f)** : en démo
+  NORMALE, INT6 (task_timer ~140/s) dispatche -> `dispatch_in` reset `QUANTUM_ELAPSED` avant qu'il
+  n'atteigne le quantum -> le quantum ne se déclenche QUASI JAMAIS (QUANTUM_EXPIRE_N≈0) ; c'est un
+  quasi-no-op et la rotation reste pilotée par INT6 (non-régression M3F..M7G OK). Le quantum n'est
+  OBSERVABLE qu'en ISOLATION (`M7H_QUANTUM_DEMO=1`) : `setup_demo_tasks` ne crée que task_s + task_q2
+  (2 spinners pri 0, aucun préempteur prioritaire ni yield ; INT6 tourne mais ne Signale personne ->
+  ne rotate pas) -> le quantum VBlank devient le SEUL rotateur. PREUVE : « M7H QUANTUM OK » gated sur
+  `QUANTUM_EXPIRE_N*2 < VBL_COUNT` (débit ≈ VBL/4 pour QUANTUM=4 -> quantum > ~2 ticks) ET `WP_SPIN>0`
+  (task_s a tourné = rotation réelle, pas monopolisé). GREEN-défaut 3/3 (non-rég, M7H absent) ;
+  GREEN-isolation 2/2 (« M7H QUANTUM OK ») ; RED-isolation `M7H_QUANTUM=1` -> rotation chaque tick ->
+  `QUANTUM_EXPIRE_N≈VBL_COUNT` -> discriminant échoue -> « M7H » absent 2/2 ; coopérative OK. Framing
+  honnête : quantum FIDÈLE, observable seulement isolé ; quasi-no-op en défaut = conséquence correcte de
+  l'archi (INT6 co-pilote), pas une faiblesse.
+- **À venir (M7i+)** : conversion `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire),
+  `RemTask`, décodage INTREQR des autres niveaux (INT4 audio, INT5, INT1), calibration µs réelle de
+  MICROHZ, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

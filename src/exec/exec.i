@@ -180,6 +180,22 @@ COPER_THRESH   EQU 20        ; appels de coper_test requis pour « M7G MULTISRC 
 ;   mono-dispatch) -> COPER_FIRED figé, pas de storm (COPER reste ackée), tout le reste identique ->
 ;   « M7G MULTISRC OK » absent. Prouve que le DISPATCH par source décodée est load-bearing.
 M7G_MONO_SOURCE EQU 0
+; M7h — quantum réel : sched_server préempte après M7H_QUANTUM ticks (comme exec, défaut 4) au lieu de
+; chaque tick. QUANTUM_ELAPSED = ticks depuis le dernier changement de tâche (reset par dispatch_in sur
+; changement RÉEL). QUANTUM_EXPIRE_N = nombre d'expirations (preuve du débit). Observable SEULEMENT en
+; isolation (M7H_QUANTUM_DEMO) : dans la démo par défaut INT6 dispatche ~140/s -> ELAPSED reset avant
+; d'atteindre le quantum -> quasi-no-op (non-régression : M3F passe via la rotation INT6, découverte M7f).
+QUANTUM_ELAPSED EQU $000005CE ; UBYTE : ticks VBlank du time-slice courant
+QUANTUM_EXPIRE_N EQU $000005D0 ; long : expirations de quantum (débit : ~VBL_COUNT/QUANTUM en isolation)
+Q2_RUNS        EQU $000005D4 ; long : itérations du 2e spinner d'isolation (prouve la rotation réelle)
+M7H_STAT       EQU $000005D8 ; UBYTE : b0 = marqueur « M7H QUANTUM OK » déjà émis
+; M7H_QUANTUM : longueur du time-slice en ticks VBlank. GREEN=4 (fidèle exec). RED=1 (préemption chaque
+; tick = ancien comportement M7f) -> en isolation, rotation chaque tick -> QUANTUM_EXPIRE_N≈VBL_COUNT ->
+; le discriminant (EXPIRE_N*2 < VBL_COUNT) échoue -> « M7H QUANTUM OK » absent.
+M7H_QUANTUM     EQU 4
+; M7H_QUANTUM_DEMO=1 : démo d'ISOLATION (2 spinners pri 0, PAS d'autres tâches) pour rendre le quantum
+; observable (aucun préempteur prioritaire ; INT6 tourne mais ne Signale personne -> ne fait pas tourner).
+M7H_QUANTUM_DEMO EQU 0
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

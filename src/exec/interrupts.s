@@ -170,7 +170,13 @@ sched_server:
         move.l  EB_TASKREADY(a6),a1 ; TaskReady non vide ? (a1 = IS_DATA, libre) M7e : torn read possible
         tst.l   (a1)                ; vs un AddTail d'INT6 -> bénin (demande spurious/manquée ; RemHead protégé)
         beq.s   .sched_cont
-        move.w  #1,EB_ATTNRESCHED(a6) ; demande un reschedule différé (round-robin ; consommé intr_isr_defer)
+        ; M7h : QUANTUM — ne préempte qu'après M7H_QUANTUM ticks de time-slice (pas chaque tick).
+        addq.b  #1,QUANTUM_ELAPSED  ; +1 tick pour la tâche courante
+        cmp.b   #M7H_QUANTUM,QUANTUM_ELAPSED
+        bcs.s   .sched_cont         ; ELAPSED < QUANTUM -> le time-slice continue (pas de reschedule)
+        clr.b   QUANTUM_ELAPSED     ; quantum écoulé -> reset + demande un reschedule différé (round-robin)
+        addq.l  #1,QUANTUM_EXPIRE_N ; preuve du débit (≈ VBL_COUNT/QUANTUM en isolation ; ≈0 en démo par défaut)
+        move.w  #1,EB_ATTNRESCHED(a6) ; consommé par intr_isr_defer (à la sortie d'IRQ)
 .sched_cont:
                 ifne    M7F_SCHED_STOPS_CHAIN
         moveq   #1,d0               ; RED2 M7f : Z-CLAIR -> le walker ARRÊTE la chaîne après sched
@@ -254,6 +260,10 @@ dispatch:
 ; dispatch_in : demi-restauration — charge l'entrante (a1) et rte en USER mode. Aussi utilisée par le
 ; LANCEMENT de la 1re tâche (boot.s), qui réalise la transition superviseur->user. sp = slot 66 o SSP.
 dispatch_in:
+        cmp.l   EB_THISTASK(a6),a1  ; M7h : changement RÉEL de tâche (entrante != sortante) ?
+        beq.s   .di_samequantum
+        clr.b   QUANTUM_ELAPSED     ; oui -> nouveau time-slice (pas de reset sur dispatch-vers-soi)
+.di_samequantum:
         move.l  a1,EB_THISTASK(a6)
         move.b  #TS_RUN,TC_STATE(a1)
         move.b  TC_IDNESTCNT(a1),EB_IDNEST(a6)  ; restaure le nesting de l'entrante

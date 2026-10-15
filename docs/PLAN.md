@@ -201,9 +201,15 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   (int2/int6 restent mono-source, correct). Prouvé « M7G MULTISRC OK » : une 2e source niveau 3 (COPER,
   déclenchée par logiciel INTREQ=SETCLR|COPER, sans graphics) est servie via le décodage ; GREEN 3/3 + RED
   (M7G_MONO_SOURCE=1 : décode+acke mais ne dispatche pas -> COPER_FIRED figé, pas de storm) + coopératif.
-  Reste (**M7h+**) : quantum/priorité réelle (SFB_TQE, raffine sched_server), conversion `timer_reply`→
-  `ReplyMsg`, `RemTask`, décodage INTREQR des autres niveaux, calibration µs MICROHZ, retrait éventuel des
-  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
+  **M7h** livre le **quantum réel** : sched_server préempte après M7H_QUANTUM ticks (défaut 4, comme exec)
+  au lieu de chaque tick ; QUANTUM_ELAPSED reset sur changement réel de tâche. Priorité stricte déjà
+  correcte (RemHead/Enqueue par pri) -> quantum seul. Observable SEULEMENT en isolation (M7H_QUANTUM_DEMO :
+  2 spinners pri 0) : en démo normale INT6 reset ELAPSED ~140/s -> quasi-no-op (non-rég M3F..M7G OK, le
+  quantum n'est pas load-bearing pour la rotation que pilote INT6). Prouvé « M7H QUANTUM OK »
+  (QUANTUM_EXPIRE_N*2<VBL_COUNT) GREEN-iso 2/2 + RED-iso (QUANTUM=1 -> chaque tick) 2/2 + non-rég + coop.
+  Reste (**M7i+**) : conversion `timer_reply`→`ReplyMsg`, `RemTask`, décodage INTREQR des autres niveaux,
+  calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste la démo
+  M3f/M7a/M7c/M7d/M7e/M7f/M7g codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

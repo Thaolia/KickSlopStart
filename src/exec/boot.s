@@ -52,6 +52,8 @@ SENT_L       EQU $CAFE0020
 SENT_S       EQU $CAFE0030
 SENT_T       EQU $CAFE0040    ; sentinelle de task_timer (M7a)
 SENT_P       EQU $CAFE0050    ; sentinelle de task_port (M7d)
+SENT_Q2      EQU $CAFE0060    ; sentinelle de task_q2 (M7h, spinner-2 d'isolation)
+M7H_MINTICKS EQU 150          ; ticks VBlank min avant d'émettre « M7H QUANTUM OK » (ratio stable, ~3 s)
 CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
 CIAB_LATCH_LO EQU $FF
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
@@ -986,6 +988,22 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         clr.l   WP_SPIN
         clr.l   WP_STAT
         clr.l   WP_TCONS             ; M7a : réveils de task_timer
+        clr.b   QUANTUM_ELAPSED      ; M7h : time-slice courant
+        clr.l   QUANTUM_EXPIRE_N     ; M7h : expirations de quantum
+        clr.l   Q2_RUNS              ; M7h : itérations du 2e spinner
+        clr.b   M7H_STAT             ; M7h : marqueur « M7H QUANTUM OK » pas encore émis
+                ifne    M7H_QUANTUM_DEMO
+        ; === M7h : démo d'ISOLATION du quantum — SEULEMENT 2 spinners pri 0, aucun préempteur ===
+        ; prioritaire ni yield -> la rotation n'est pilotée QUE par le quantum VBlank (observable).
+        lea     task_s(pc),a2        ; spinner-1 (compteur WP_SPIN)
+        lea     task_s_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
+        lea     task_q2(pc),a2       ; spinner-2 (compteur Q2_RUNS + émet « M7H QUANTUM OK »)
+        lea     task_q2_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
+                else
         lea     task_h(pc),a2        ; task_H (pri 10) -> tête (Enqueue trie), publiée
         lea     task_h_name(pc),a3
         moveq   #DEMO_PRI_H,d2
@@ -1010,6 +1028,7 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_p_name(pc),a3
         moveq   #DEMO_PRI_P,d2
         bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
+                endc
                 endc
         movem.l (sp)+,d2/a2-a4
         rts
@@ -1147,6 +1166,40 @@ task_s:                              ; basse priorité, spinner PUR (jamais de b
         subq.l  #1,d0
         bne.s   .s_spin
         bra.s   .s_loop
+
+; task_q2 (M7h) : 2e spinner d'ISOLATION (pri 0 ; config M7H_QUANTUM_DEMO seulement). Rotation avec task_s
+; pilotée UNIQUEMENT par le quantum VBlank (aucun préempteur prioritaire). Émet « M7H QUANTUM OK » quand
+; le débit d'expirations prouve un quantum > 1 tick : QUANTUM_EXPIRE_N*2 < VBL_COUNT (GREEN N=4 : ~VBL/4 ;
+; RED N=1 : ~VBL -> échoue). Vérifie aussi que task_s a tourné (WP_SPIN>0) = rotation réelle.
+task_q2:
+        move.l  ($4).w,a6            ; SysBase
+        move.l  #SENT_Q2,d7
+.q2_loop:
+        cmp.l   #SENT_Q2,d7
+        bne.w   demo_fail            ; contexte corrompu par une PRÉEMPTION
+        addq.l  #1,Q2_RUNS
+        btst    #0,M7H_STAT
+        bne.s   .q2_spin             ; déjà émis -> juste spinner
+        move.l  VBL_COUNT,d0
+        cmp.l   #M7H_MINTICKS,d0     ; assez de ticks pour un ratio stable ?
+        bcs.s   .q2_spin
+        tst.l   WP_SPIN              ; task_s (spinner-1) a-t-il tourné ? (rotation réelle, pas monopolisé)
+        beq.s   .q2_spin
+        move.l  QUANTUM_EXPIRE_N,d1
+        add.l   d1,d1                ; EXPIRE_N * 2
+        cmp.l   VBL_COUNT,d1         ; EXPIRE_N*2 >= VBL_COUNT ? (quantum ~1 tick -> RED)
+        bcc.s   .q2_spin             ; oui -> quantum trop court -> pas prouvé
+        bset    #0,M7H_STAT          ; EXPIRE_N*2 < VBL_COUNT -> quantum > ~2 ticks prouvé
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7h_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.q2_spin:
+        move.l  #$00001000,d0
+.q2_delay:
+        subq.l  #1,d0
+        bne.s   .q2_delay
+        bra.s   .q2_loop
 
 ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ (CIA-B/INT6). À chaque tour, arme une
 ; requête courte (1 tick CIA-B), Wait sur le reply port, vérifie la réponse. Prouve qu'une TÂCHE
@@ -1595,6 +1648,8 @@ task_t_name:
         dc.b    "demo.timer",0
 task_p_name:
         dc.b    "demo.port",0
+task_q2_name:
+        dc.b    "demo.q2",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_ok:
@@ -1659,6 +1714,8 @@ msg_m7f_ok:
         dc.b    "M7F VERTB OK (VERTB is a server chain: sched+timer+tail walked in pri order via int3_dispatch)",13,10,0
 msg_m7g_ok:
         dc.b    "M7G MULTISRC OK (int3 decodes INTREQR, services each pending level-3 source; COPER, not just VERTB)",13,10,0
+msg_m7h_ok:
+        dc.b    "M7H QUANTUM OK (isolation: 2 equal-pri spinners rotate every ~QUANTUM ticks, not every tick)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
