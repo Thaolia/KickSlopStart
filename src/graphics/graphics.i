@@ -38,23 +38,64 @@ GFX_BPL_ROWS    EQU 256
 GFX_BPL_SIZE    EQU GFX_BPL_BYTES*GFX_BPL_ROWS   ; 10240 o
 GFX_STRIPE_WORD EQU $FF00      ; motif de remplissage : 8 px « 1 » (vert) + 8 px « 0 » (bleu) -> rayures verticales
 
-; M4A_NO_COPPER=1 (RED M4a) : gfx_display_init construit tout mais SAUTE l'activation de DMACON -> le Copper
-; reste inerte -> COLOR00 garde la dernière valeur CPU (blanc) -> écran BLANC. Prouve le Copper DMA. Défaut 0.
-M4A_NO_COPPER   EQU 0
-; M4B_NO_BITPLANE=1 (RED M4b) : BPLCON0 BPU=0 + pas de DMAF_RASTER -> aucun bitplane fetché -> fenêtre = fond
-; bleu uni (COLOR00), les rayures vertes (COLOR01) sont ABSENTES. Prouve que le bitplane DMA est load-bearing.
-M4B_NO_BITPLANE EQU 0
-; Valeurs gatées : BPLCON0 (BPU) et bits DMACON. Trois états cohérents du display selon les gates :
-;   défaut (0/0)            -> bleu + rayures vertes (M4b complet)
-;   M4B_NO_BITPLANE=1       -> bleu uni (Copper OK, pas de bitplane)
-;   M4A_NO_COPPER=1         -> blanc (Copper off)
-                ifeq    M4B_NO_BITPLANE
-GFX_BPLCON0     EQU $1200      ; BPU=1 (bit 12) + COLOR (bit 9) ; ni HIRES/HAM/DBLPF
-GFX_DMA_BITS    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER)
-                else
-GFX_BPLCON0     EQU $0000      ; BPU=0 -> aucun bitplane
-GFX_DMA_BITS    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER)
-                endc
+; M4c2 : l'affichage est désormais GÉNÉRÉ par l'ABI graphics.library (MakeVPort/MrgCop/LoadView) depuis les
+; structures View/ViewPort/BitMap/ColorMap — le template copper codé en dur de M4a/M4b est SUPPRIMÉ. La preuve
+; « GREEN=rayures » vaut par ÉLIMINATION : plus aucun autre chemin ne dessine les rayures. Les gates M4A_NO_COPPER
+; et M4B_NO_BITPLANE (qui gataient ce template) sont donc RETIRÉS.
+GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER)  ; activé par LoadView
+GFX_COLOR_BIT EQU $0200        ; BPLCON0 bit 9 (COLOR composite) ; BPLCON0 généré = (depth<<12) | GFX_COLOR_BIT
+; M4C2_NO_MRGCOP=1 (RED M4c2) : MrgCop ne fusionne PAS les fragments vp_DspIns -> v_LOFCprList ne contient que
+; le WAIT final -> LoadView installe une liste vide -> COLOR00 garde le blanc CPU -> écran BLANC, rayures absentes.
+; Prouve que la génération de la copper list par l'ABI est load-bearing. Défaut 0 (inerte).
+M4C2_NO_MRGCOP EQU 0
+
+; --- Offsets structures graphics (view.i/gfx.i ; champs de base, stables V34) ---
+v_ViewPort   EQU 0            ; View
+v_LOFCprList EQU 4
+v_SIZEOF     EQU 18
+vp_Next      EQU 0            ; ViewPort
+vp_ColorMap  EQU 4
+vp_DspIns    EQU 8
+vp_DWidth    EQU 24
+vp_DHeight   EQU 26
+vp_Modes     EQU 32
+vp_RasInfo   EQU 36
+vp_SIZEOF    EQU 40
+ri_BitMap    EQU 4            ; RasInfo
+ri_SIZEOF    EQU 12
+bm_BytesPerRow EQU 0          ; BitMap
+bm_Rows      EQU 2
+bm_Depth     EQU 5
+bm_Planes    EQU 8            ; bm_Planes[0..7] (APTR x8)
+bm_SIZEOF    EQU 40
+cm_Count     EQU 2            ; ColorMap (début V34 : Flags/Type/Count/ColorTable)
+cm_ColorTable EQU 4
+GCM_SIZEOF   EQU 8
+
+; --- LVO graphics.library (lvo/graphics_lib.fd) ---
+LVO_INITVPORT EQU -204
+LVO_MRGCOP    EQU -210
+LVO_MAKEVPORT EQU -216
+LVO_LOADVIEW  EQU -222
+
+; --- GfxBase : champs minimaux (au-delà de la base Library) ---
+gb_ActiView  EQU LIB_SIZE     ; APTR : View actif (posé par LoadView)
+gb_LOFlist   EQU LIB_SIZE+4   ; APTR : copper list courante
+GFXBASE_SIZE EQU LIB_SIZE+8
+
+; --- Tailles des listes copper générées (chip RAM) ---
+GFX_FRAG_WORDS EQU 22         ; fragment MakeVPort : 11 MOVEs (DIW/DDF/BPLCON0/1/BPL1MOD/BPL1PT/COLOR00-01)
+GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
+GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+4   ; + WAIT final ajouté par MrgCop
+
+; --- Layout du bloc de structures AllocMem'd par gfx_display_init ---
+GFX_O_VIEW     EQU 0
+GFX_O_VP       EQU 20         ; après View (v_SIZEOF 18, aligné pair)
+GFX_O_RASINFO  EQU 60         ; après ViewPort (vp_SIZEOF 40)
+GFX_O_BITMAP   EQU 72         ; après RasInfo (ri_SIZEOF 12)
+GFX_O_COLORMAP EQU 112        ; après BitMap (bm_SIZEOF 40)
+GFX_O_COLORTAB EQU 120        ; après ColorMap (8)
+GFX_STRUCT_SIZE EQU 124
 
 ; M4c1 : graphics.library comme module résident. M4C1_WRONG_TYPE=1 (RED) : RT_TYPE du ROMTag = NT_DEVICE au
 ; lieu de NT_LIBRARY -> le chemin AUTOINIT route GfxBase vers DeviceList (pas LibList) -> FindName(LibList)

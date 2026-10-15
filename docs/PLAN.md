@@ -234,15 +234,18 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   graphics.library** (GfxBase + View/ViewPort générant la copperlist ; décomposé : **M4c1** squelette résident
   [FAIT : `src/graphics/graphics_lib.s`, ROMTag AUTOINIT pri 65 → `MakeLibrary`/LibList, 1re branche NT_LIBRARY
   exercée, prouvé FindName+Open comme M5c ; RED `M4C1_WRONG_TYPE` route vers DeviceList → absent] → **M4c2**
-  moteur d'affichage MakeVPort/MrgCop/LoadView générant la copperlist). **M4a + M4b FAITS** (`src/graphics/gfx.s`,
+  [FAIT : `MakeVPort`/`MrgCop`/`LoadView` (graphics_lib.s) génèrent la copper list depuis les structures
+  BitMap/ViewPort/View/ColorMap, appelées via la jump table GfxBase ; le template copper M4a/M4b et ses gates
+  M4A_NO_COPPER/M4B_NO_BITPLANE sont SUPPRIMÉS → preuve par ÉLIMINATION (rien d'autre ne dessine les rayures) ;
+  RED `M4C2_NO_MRGCOP` → MrgCop ne fusionne pas → liste vide → écran blanc]). **M4 COMPLET.** **M4a + M4b FAITS** (`src/graphics/gfx.s`,
   copper list + bitplane en chip RAM — le Copper ET le bitplane DMA ne lisent QUE la chip, pas la ROM) : premier
   jalon où le canal **VISUEL** est load-bearing (l'écran EST le livrable).
   **M4a** = fond piloté Copper-only (COLOR00 = vert) ; écran VERT ⟺ Copper DMA actif ; RED `M4A_NO_COPPER` (pas de
   COPEN) → écran blanc. **M4b** = 1 bitplane 320×256 rempli de rayures verticales (`$FF00`) ; COLOR00 bleu / COLOR01
   vert → **rayures vertes** à l'écran ⟺ bitplane DMA actif ; RED `M4B_NO_BITPLANE` (BPU=0, pas de RASTER) → bleu uni.
-  3 états de gate cohérents : blanc (`M4A_NO_COPPER`) / bleu uni (`M4B_NO_BITPLANE`) / bleu + rayures (défaut).
-  M4a a aussi corrigé un bug du discriminant couleur de `tests/boot_test.sh` (ordre `-opaque`/`+opaque` : le blanc
-  préexistant faussait FRAC ; masqué jusqu'ici car le défaut `EXPECT=FFFFFF` ne l'exposait pas).
+  (M4a/M4b utilisaient un template copper codé en dur, gaté par `M4A_NO_COPPER`/`M4B_NO_BITPLANE` — **tout supprimé
+  en M4c2**, l'affichage passe par l'ABI.) M4a a aussi corrigé un bug du discriminant couleur de `tests/boot_test.sh`
+  (ordre `-opaque`/`+opaque` : le blanc préexistant faussait FRAC ; masqué car le défaut `EXPECT=FFFFFF` ne l'exposait pas).
 - **M5 — intuition minimal → écran « insert Workbench disk »** (la main iconique du boot KS 1.3).
 - **M6 — dos + trackdisk + FS + strap/romboot → boot disquette jusqu'au CLI.** La `dos.library` 1.3 est
   un portage **BCPL/TRIPOS** : il faut répliquer les quirks d'ABI (**BPTR** word-based, global vector,

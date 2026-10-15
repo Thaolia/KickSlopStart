@@ -30,15 +30,21 @@ graphics_name:
         dc.b    "graphics.library",0
         EVEN
 graphics_inittab:
-        dc.l    LIB_SIZE                 ; dataSize : base Library minimale (étendue en M4c2)
+        dc.l    GFXBASE_SIZE             ; dataSize : base Library + champs GfxBase minimaux (gb_ActiView/LOFlist)
         dc.l    graphics_vectors         ; funcTable
         dc.l    graphics_datatab         ; dataTable (InitStruct)
         dc.l    graphics_initfunc        ; initFunc
-graphics_vectors:                        ; table ABSOLUE terminée par -1 (ordre LVO standard)
-        dc.l    graphics_open            ; LVO -6
-        dc.l    graphics_close           ; LVO -12
-        dc.l    graphics_expunge         ; LVO -18
-        dc.l    graphics_null            ; LVO -24 (réservé)
+; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. On remplit jusqu'à LoadView (-222 = vecteur 37) ; les
+; vecteurs 5..34 (-30..-204) non implémentés pointent sur graphics_null (dcb évite tout miscount manuel).
+graphics_vectors:
+        dc.l    graphics_open            ; 1 : LVO -6
+        dc.l    graphics_close           ; 2 : LVO -12
+        dc.l    graphics_expunge         ; 3 : LVO -18
+        dc.l    graphics_null            ; 4 : LVO -24 (réservé)
+        dcb.l   30,graphics_null         ; 5..34 : LVO -30..-204 (non implémentés : InitVPort -204 inclus)
+        dc.l    gfx_MrgCop               ; 35 : LVO -210
+        dc.l    gfx_MakeVPort            ; 36 : LVO -216
+        dc.l    gfx_LoadView             ; 37 : LVO -222
         dc.l    -1
 graphics_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -67,5 +73,111 @@ graphics_initfunc:
         move.l  d0,a1
         lea     graphics_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        rts
+
+; === M4c2 : moteur d'affichage (copper list GÉNÉRÉE depuis les structures) ===
+; Convention Amiga pour les 3 fonctions : a6 = GfxBase, préservent d2-d7/a2-a6, scratch d0/d1/a0/a1.
+; AllocMem demande a6 = SysBase -> on sauve/restaure a6 et on prend SysBase via ($4).w.
+
+; gfx_MakeVPort(view a0, vp a1) : génère le fragment copper de la ViewPort dans vp_DspIns (chip RAM).
+; BPLCON0 depuis BitMap.Depth, BPL1PT depuis BitMap.Planes[0] (via RasInfo), COLOR00/01 depuis ColorMap.
+; view inutilisé (1 seule ViewPort ce milestone). Pas de WAIT final (ajouté par MrgCop).
+gfx_MakeVPort:
+        movem.l d2/d3/a2/a3/a6,-(sp)
+        move.l  a1,a2                ; a2 = ViewPort
+        move.l  ($4).w,a6            ; a6 = SysBase
+        move.l  #GFX_FRAG_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .mv_ret              ; alloc KO -> vp_DspIns reste 0
+        move.l  d0,a3                ; a3 = fragment (chip)
+        move.l  a3,a1                ; a1 = ptr d'écriture
+        move.w  #DIWSTRT-CUSTOM,(a1)+
+        move.w  #GFX_DIWSTRT,(a1)+
+        move.w  #DIWSTOP-CUSTOM,(a1)+
+        move.w  #GFX_DIWSTOP,(a1)+
+        move.w  #DDFSTRT-CUSTOM,(a1)+
+        move.w  #GFX_DDFSTRT,(a1)+
+        move.w  #DDFSTOP-CUSTOM,(a1)+
+        move.w  #GFX_DDFSTOP,(a1)+
+        move.l  vp_RasInfo(a2),a0    ; RasInfo
+        move.l  ri_BitMap(a0),a0     ; a0 = BitMap
+        moveq   #0,d2
+        move.b  bm_Depth(a0),d2      ; depth
+        lsl.w   #8,d2
+        lsl.w   #4,d2                ; depth << 12
+        or.w    #GFX_COLOR_BIT,d2    ; | COLOR
+        move.w  #BPLCON0-CUSTOM,(a1)+
+        move.w  d2,(a1)+
+        move.w  #BPLCON1-CUSTOM,(a1)+
+        move.w  #0,(a1)+
+        move.w  #BPL1MOD-CUSTOM,(a1)+
+        move.w  #0,(a1)+
+        move.l  bm_Planes(a0),d2     ; d2 = adresse du plan 0 (a0 = BitMap)
+        move.w  #BPL1PTH-CUSTOM,(a1)+
+        move.l  d2,d3
+        swap    d3
+        move.w  d3,(a1)+             ; mot HAUT de l'adresse
+        move.w  #BPL1PTL-CUSTOM,(a1)+
+        move.w  d2,(a1)+             ; mot BAS
+        move.l  vp_ColorMap(a2),a0   ; ColorMap
+        move.l  cm_ColorTable(a0),a0 ; a0 = ColorTable
+        move.w  #COLOR00-CUSTOM,(a1)+
+        move.w  (a0)+,(a1)+          ; COLOR00 = ColorTable[0]
+        move.w  #COLOR01-CUSTOM,(a1)+
+        move.w  (a0)+,(a1)+          ; COLOR01 = ColorTable[1]
+        move.l  a3,vp_DspIns(a2)     ; publie le fragment
+.mv_ret:
+        movem.l (sp)+,d2/d3/a2/a3/a6
+        rts
+
+; gfx_MrgCop(view a1) : fusionne le fragment vp_DspIns de chaque ViewPort dans v_LOFCprList (master, chip RAM)
+; + WAIT final. 1 ViewPort ici. Gaté M4C2_NO_MRGCOP (RED) : saute la fusion -> master = WAIT seul -> écran blanc.
+gfx_MrgCop:
+        movem.l d2/a2/a3/a4/a6,-(sp)
+        move.l  a1,a2                ; a2 = View
+        move.l  ($4).w,a6            ; SysBase
+        move.l  #GFX_MASTER_SIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .mc_ret
+        move.l  d0,a3                ; a3 = master
+        move.l  a3,a4                ; a4 = ptr d'écriture
+                ifeq    M4C2_NO_MRGCOP
+        move.l  v_ViewPort(a2),a0    ; 1re ViewPort
+.mc_vp:
+        move.l  a0,d2
+        beq.s   .mc_end
+        move.l  vp_DspIns(a0),a1     ; fragment de cette ViewPort
+        move.l  a1,d2
+        beq.s   .mc_next             ; pas de fragment
+        move.w  #(GFX_FRAG_SIZE/2)-1,d2
+.mc_copy:
+        move.w  (a1)+,(a4)+
+        dbf     d2,.mc_copy
+.mc_next:
+        move.l  vp_Next(a0),a0       ; ViewPort suivante
+        bra.s   .mc_vp
+.mc_end:
+                endc
+        move.w  #$FFFF,(a4)+         ; WAIT $FFFF,$FFFE = fin de liste
+        move.w  #$FFFE,(a4)+
+        move.l  a3,v_LOFCprList(a2) ; publie le master
+.mc_ret:
+        movem.l (sp)+,d2/a2/a3/a4/a6
+        rts
+
+; gfx_LoadView(view a1) : installe v_LOFCprList (COP1LC) + active Copper/bitplane DMA + pose gb_ActiView.
+gfx_LoadView:
+        move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view
+        move.l  v_LOFCprList(a1),d0
+        beq.s   .lv_ret              ; pas de copper list -> rien
+        move.l  d0,gb_LOFlist(a6)
+        move.l  d0,COP1LC            ; COP1LC = master (longword)
+        move.w  #GFX_DMA_ON,DMACON   ; DMA maître + Copper + bitplane
+        move.w  #0,COPJMP1           ; strobe COP1
+.lv_ret:
         rts
 graphics_end:

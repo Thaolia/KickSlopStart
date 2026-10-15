@@ -1,86 +1,89 @@
-; src/graphics/gfx.s — M4a/M4b : PREMIER AFFICHAGE piloté par le Copper.
-; M4a prouvait le COPPER DMA (fond de couleur). M4b ajoute un vrai BITPLANE : le chipset va chercher les
-; données de pixels en chip RAM (DMA bitplane) et les composite -> on affiche de vrais PIXELS. Motif = rayures
-; verticales (mots $FF00) : 8 px « 1 » = COLOR01 vert, 8 px « 0 » = COLOR00 bleu. Rayures vertes à l'écran
-; ⟺ bitplane DMA actif (le vert $0F0 n'est AUCUNE couleur écrite par le CPU). Canal de preuve = VISUEL.
+; src/graphics/gfx.s — M4c2 : bootstrap de l'affichage VIA L'ABI graphics.library.
+; gfx_display_init monte les structures BitMap/RasInfo/ColorMap/ViewPort/View (le bitplane rayé de M4b est
+; réutilisé comme plan de la BitMap), ouvre graphics.library (FindName), puis appelle MakeVPort/MrgCop/LoadView
+; VIA LA JUMP TABLE -> la copper list est GÉNÉRÉE depuis les structures (plus de template codé en dur). Preuve
+; par ÉLIMINATION : les rayures à l'écran ne peuvent venir que de l'ABI, puisqu'aucun template ne subsiste.
+; Historique : M4a (fond Copper) / M4b (bitplane) utilisaient un template copper hardcodé -> SUPPRIMÉ en M4c2.
 ;
-; CONTRAINTE MATÉRIELLE : le Copper ET le bitplane DMA (Agnus) lisent UNIQUEMENT la chip RAM, jamais la ROM
-; ($FC0000 = bus CPU). Copper list ET bitplane sont donc AllocMem(MEMF_CHIP). Le pointeur bitplane (BPL1PT)
-; vit DANS la copper list (rechargé à chaque VBlank, car il auto-incrémente pendant la frame) -> on le patche
-; au runtime dans la copie chip avec l'adresse du bitplane alloué.
-;
-; Piste IMPLÉMENTATION (« clean ») : Amiga Hardware Reference Manual + AutoDocs graphics. AUCUNE lecture ROM.
+; CONTRAINTE : Copper et bitplane DMA (Agnus) lisent UNIQUEMENT la chip RAM -> bitplane, structures et listes
+; copper générées sont toutes AllocMem(MEMF_CHIP).
+; Piste IMPLÉMENTATION (« clean ») : AutoDocs graphics.library + HRM. AUCUNE lecture ROM.
 
                 include "exec.i"
                 include "graphics.i"
 
                 xdef    gfx_display_init
 
-; --- Template copper list (ROM), copié en chip RAM. Un MOVE vise l'OFFSET custom (reg-CUSTOM, bit0=0). ---
-; Placé AVANT la fonction -> les labels de patch se résolvent en références arrière. Fenêtre display standard,
-; BPU=1 (gaté), BPL1PT patché au runtime, COLOR00=bleu/COLOR01=vert, WAIT $FFFF,$FFFE (fin de liste).
-        EVEN
-gfx_cop:
-        dc.w    DIWSTRT-CUSTOM,GFX_DIWSTRT
-        dc.w    DIWSTOP-CUSTOM,GFX_DIWSTOP
-        dc.w    DDFSTRT-CUSTOM,GFX_DDFSTRT
-        dc.w    DDFSTOP-CUSTOM,GFX_DDFSTOP
-        dc.w    BPLCON0-CUSTOM,GFX_BPLCON0
-        dc.w    BPLCON1-CUSTOM,$0000
-        dc.w    BPL1MOD-CUSTOM,$0000
-gfx_cop_bpl1h:
-        dc.w    BPL1PTH-CUSTOM,$0000       ; patché : mot HAUT de l'adresse du bitplane
-gfx_cop_bpl1l:
-        dc.w    BPL1PTL-CUSTOM,$0000       ; patché : mot BAS
-        dc.w    COLOR00-CUSTOM,GFX_BG_COLOR
-        dc.w    COLOR01-CUSTOM,GFX_PROOF_COLOR
-        dc.w    $FFFF,$FFFE
-gfx_cop_end:
-        EVEN
-
-GFX_COP_SIZE EQU gfx_cop_end-gfx_cop        ; octets de la liste
-GFX_P_BPL1H  EQU gfx_cop_bpl1h+2-gfx_cop    ; offset du mot-donnée BPL1PTH dans la liste (patch)
-GFX_P_BPL1L  EQU gfx_cop_bpl1l+2-gfx_cop    ; offset du mot-donnée BPL1PTL
-
-; gfx_display_init(a6 = SysBase) : alloue bitplane + copper list en chip RAM, remplit les rayures, patche le
-; pointeur bitplane dans la liste, pointe COP1LC et active Copper + bitplane DMA. PRÉSERVE a6 (le handoff
-; scheduler juste après en dépend) ; scratch d0/d1/a0/a1 + d2/d3/a2/a3 (sauvés). Non fatal si AllocMem échoue.
+; gfx_display_init(a6 = SysBase) : alloue bitplane + bloc de structures, monte View/ViewPort/BitMap/ColorMap,
+; FindName("graphics.library"), puis MakeVPort/MrgCop/LoadView via la jump table GfxBase. RESTAURE a6 = SysBase
+; en sortie (le handoff scheduler en dépend). Scratch d0/d1/a0/a1 + d2/d3/a2/a3/a5 (sauvés). Non fatal si KO.
 gfx_display_init:
-        movem.l d2/d3/a2/a3,-(sp)
-        move.l  #GFX_BPL_SIZE,d0            ; 1. bitplane en chip RAM
+        movem.l d2/d3/a2/a3/a5,-(sp)
+        move.l  #GFX_BPL_SIZE,d0            ; 1. bitplane chip + rayures ($FF00)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .gfx_ret
+        beq     .gfx_ret
         move.l  d0,a3                        ; a3 = bitplane
-        move.l  a3,a1                         ; 2. remplir les rayures ($FF00 : 8 px vert / 8 px bleu)
+        move.l  a3,a1
         move.w  #(GFX_BPL_SIZE/2)-1,d2
         move.w  #GFX_STRIPE_WORD,d3
 .gfx_fill:
         move.w  d3,(a1)+
         dbf     d2,.gfx_fill
-        move.l  #GFX_COP_SIZE,d0             ; 3. copper list en chip RAM
+        move.l  #GFX_STRUCT_SIZE,d0         ; 2. bloc de structures chip (View/VP/RasInfo/BitMap/ColorMap/Table)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .gfx_ret                     ; (bitplane fuit mais non fatal)
-        move.l  d0,a2                         ; a2 = copper list (chip)
-        lea     gfx_cop(pc),a0               ; 4. copier le template ROM -> chip
-        move.l  a2,a1
-        move.w  #(GFX_COP_SIZE/2)-1,d2
-.gfx_copy:
-        move.w  (a0)+,(a1)+
-        dbf     d2,.gfx_copy
-        move.l  a3,d0                         ; 5. patcher BPL1PT avec l'adresse du bitplane (hi/lo)
-        move.w  d0,GFX_P_BPL1L(a2)           ; mot BAS -> entrée BPL1PTL ($0E2)
-        swap    d0
-        move.w  d0,GFX_P_BPL1H(a2)           ; mot HAUT -> entrée BPL1PTH ($0E0)
-        move.l  a2,COP1LC                     ; 6. activer : COP1LC = liste chip
-                ifeq    M4A_NO_COPPER
-        move.w  #GFX_DMA_BITS,DMACON         ; DMA maître + Copper (+ bitplane RASTER sauf RED M4b) ; gaté M4a
-                endc
-        move.w  #0,COPJMP1                    ; strobe COP1 (no-op si COPEN off = RED M4a)
-        move.l  a2,GFX_COPLIST_PTR           ; publie la liste
+        beq     .gfx_ret
+        move.l  d0,a2                        ; a2 = bloc de structures
+        ; BitMap
+        move.w  #GFX_BPL_BYTES,GFX_O_BITMAP+bm_BytesPerRow(a2)
+        move.w  #GFX_BPL_ROWS,GFX_O_BITMAP+bm_Rows(a2)
+        move.b  #1,GFX_O_BITMAP+bm_Depth(a2)
+        move.l  a3,GFX_O_BITMAP+bm_Planes(a2)      ; Planes[0] = bitplane
+        ; RasInfo -> BitMap
+        lea     GFX_O_BITMAP(a2),a0
+        move.l  a0,GFX_O_RASINFO+ri_BitMap(a2)
+        ; ColorTable [bleu, vert] + ColorMap
+        move.w  #GFX_BG_COLOR,GFX_O_COLORTAB(a2)
+        move.w  #GFX_PROOF_COLOR,GFX_O_COLORTAB+2(a2)
+        move.w  #2,GFX_O_COLORMAP+cm_Count(a2)
+        lea     GFX_O_COLORTAB(a2),a0
+        move.l  a0,GFX_O_COLORMAP+cm_ColorTable(a2)
+        ; ViewPort
+        move.w  #320,GFX_O_VP+vp_DWidth(a2)
+        move.w  #256,GFX_O_VP+vp_DHeight(a2)
+        lea     GFX_O_RASINFO(a2),a0
+        move.l  a0,GFX_O_VP+vp_RasInfo(a2)
+        lea     GFX_O_COLORMAP(a2),a0
+        move.l  a0,GFX_O_VP+vp_ColorMap(a2)
+        ; View -> ViewPort
+        lea     GFX_O_VP(a2),a0
+        move.l  a0,GFX_O_VIEW+v_ViewPort(a2)
+        ; 3. FindName("graphics.library")
+        lea     EB_LIBLIST(a6),a0
+        lea     gfx_libname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .gfx_ret                     ; pas de graphics.library -> pas d'affichage
+        move.l  d0,a5                        ; a5 = GfxBase
+        ; 4. MakeVPort(view,vp) ; MrgCop(view) ; LoadView(view) VIA LA JUMP TABLE
+        lea     GFX_O_VIEW(a2),a0
+        lea     GFX_O_VP(a2),a1
+        move.l  a5,a6
+        jsr     LVO_MAKEVPORT(a6)
+        move.l  a5,a6
+        lea     GFX_O_VIEW(a2),a1
+        jsr     LVO_MRGCOP(a6)
+        move.l  a5,a6
+        lea     GFX_O_VIEW(a2),a1
+        jsr     LVO_LOADVIEW(a6)
 .gfx_ret:
-        movem.l (sp)+,d2/d3/a2/a3
+        move.l  ($4).w,a6                    ; restaure a6 = SysBase (handoff scheduler)
+        movem.l (sp)+,d2/d3/a2/a3/a5
         rts
+
+gfx_libname:
+        dc.b    "graphics.library",0
+        EVEN

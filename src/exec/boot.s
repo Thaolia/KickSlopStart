@@ -489,8 +489,8 @@ m4c1_done:
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        bsr     gfx_display_init     ; M4a/M4b : premier affichage (copper list + bitplane en chip RAM)
-        lea     msg_m4b(pc),a0       ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est
+        bsr     gfx_display_init     ; M4c2 : affichage GÉNÉRÉ par l'ABI graphics.library (MakeVPort/MrgCop/LoadView)
+        lea     msg_m4c2(pc),a0      ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est
         bsr     ser_puts             ; l'écran via FRAC, pas ce marqueur : gfx_display_init tourne pareil)
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
@@ -1846,8 +1846,8 @@ msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
-msg_m4b:
-        dc.b    "M4B INIT (copper list + bitplane built in chip RAM; display is proven on screen, not here)",13,10,0
+msg_m4c2:
+        dc.b    "M4C2 INIT (display generated via graphics.library ABI: MakeVPort/MrgCop/LoadView; proven on screen)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
