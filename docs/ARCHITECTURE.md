@@ -26,7 +26,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 | Dossier | Contenu prévu |
 |---------|---------------|
 | `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers VBlank/INT2/INT6/TRAP partageant un **prologue commun** `movem`+IPL7 et un **épilogue commun** `intr_exit` ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; préemption round-robin au VBlank + **flag de dispatch différé** à la sortie d'IRQ quand un serveur réveille une tâche prioritaire ; IPL7 du prologue = gate de ré-entrance des listes vs niveau > 3, M7a ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
+| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers VBlank/INT2/INT6/TRAP partageant un **prologue commun** `movem` (à l'IPL **natif** depuis M7e) et un **épilogue commun** `intr_exit` ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; préemption round-robin au VBlank + **flag de dispatch différé** à la sortie d'IRQ quand un serveur réveille une tâche prioritaire ; M7e : section critique du switch montée à **IPL7 bref** = gate de ré-entrance des listes, instantané vs le délai de propagation d'INTENA ; + dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6) ; script linker `kick.ld` |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
@@ -283,8 +283,30 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   shared-port list corrupted » ; MÊME contention, ports en Disable -> propre. La course est statistique
   (fenêtre RemHead/AddTail sub-µs, corruption CUMULATIVE sur liste doublement chaînée) : déterministe sous
   contention max + fenêtre longue, non déclenchée par la démo de coexistence allégée.
-- **À venir (M7e+)** : **fidélité IPL-par-niveau** (VERTB en chaîne + tourner à l'IPL natif de l'interruption),
-  décodage INTREQR multi-source, conversion `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire),
-  `RemTask`, quantum SFB_TQE, priorité réelle, calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
+- **M7e** (fidélité IPL-PAR-NIVEAU) : les handlers ne montent plus IPL7 au prologue — ils tournent à leur IPL
+  **natif** (VBlank=3, PORTS=2, EXTER=6, posé par le CPU à la prise d'autovecteur). Conséquence : une source de
+  niveau supérieur préempte le **corps** d'un handler inférieur (INT6 préempte le corps de `vbl_handler`). La
+  section critique du switch (`dispatch` : relocalisation puis Enqueue/RemHead TaskReady) est masquée par **IPL7
+  bref** (`move #imm,sr`), PAS par INTENA-off. **Découverte empirique (FS-UAE)** : masquer par INTENA-off laisse
+  une course — l'écriture d'INTENA a un **délai de propagation** (quirk Amiga), donc un INT6 déjà asserté sur les
+  lignes IPL chevauche la fenêtre de chirurgie. L'écriture SR (IPL) est, elle, **interne au CPU = instantanée**.
+  **Argument de privilège** (pourquoi IPL ici mais INTENA ailleurs) : la chirurgie tourne en SUPERVISEUR (atteinte
+  via `intr_exit`/trap) → `move to SR` légal → IPL7 possible. `Signal`/`PutMsg`/`GetMsg`/`Wait`/`timer_reply` sont
+  appelables depuis une tâche USER-MODE où `move to SR` est **privilégié** (manuel 68000) → ils ne peuvent pas monter
+  l'IPL → ils gardent INTENA-Disable. **Honnêteté (cohérence M7d)** : la fenêtre write-delay touche donc TOUTE section
+  masquée par INTENA appelable en user-mode — Signal, les ports M7d, Wait, timer_reply — par nécessité ; elle est
+  tolérée par le re-check (Wait re-teste au réveil) et empiriquement bénigne pour les ports M7d même en contention
+  max. SEUL le switch côté superviseur a été promu à l'IPL. La relocalisation de frame (SSP→pile user) reste à l'IPL
+  natif sans masque : INT6 s'imbrique SOUS `sp`, la frame sortante `[sp,sp+66)` est intacte. PREUVE : série
+  « M7E IPL OK » gated sur `VBL_PREEMPT_COUNT>0` (INT6 préempte le corps de vbl, détecteur `timer_micro_service`) ET
+  `VBL_CLASH==0` (zéro chevauchement INT6/chirurgie — `VBL_CLASH` est un proxy d'OVERLAP, précondition de corruption,
+  PAS un détecteur de corruption). GREEN 3/3 ; RED1 (`M7E_SURGERY_INTENA=1`, surgery en INTENA-off) → `VBL_CLASH>0`
+  « M7A FAILED » 3/3 (prouve l'IPL7 load-bearing) ; RED2 (`M7E_PROLOGUE_IPL7=1`, IPL7 au prologue) → `M7E IPL OK`
+  absent 2/2 sans crash (prouve l'IPL natif load-bearing, pas cosmétique) ; non-régression coopérative
+  (`M7E_COOP=1`, `SCHED_ON=0`, yield-only) re-prouvée. L'idle du dispatcher (atteint seulement si TaskReady vide
+  après un Wait) n'est pas exercé par ces démos (les tâches round-robin/spin gardent TaskReady peuplée) — documenté.
+- **À venir (M7f+)** : VERTB en **chaîne** de serveurs, décodage INTREQR multi-source, conversion
+  `timer_reply`->`ReplyMsg` (le hack bas-niveau n'est plus nécessaire), `RemTask`, quantum SFB_TQE, priorité réelle,
+  calibration µs réelle de MICROHZ, puis les modules graphiques → écran.
 
 Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.

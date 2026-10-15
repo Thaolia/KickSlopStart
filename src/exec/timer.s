@@ -190,18 +190,25 @@ timer_reply:
         rts
 
 ; timer_micro_service(a6 = SysBase ; a1 = IS_DATA, inutilisé) : M7a — vecteur ICR de l'unité
-; MICROHZ, appelé par cia_dispatch depuis int6_handler (CIA-B / INT6, IPL7) à chaque underflow
-; du timer CIA-B. Miroir de timer_vblank_service mais sur TIMER_MICROQ ; la base device est lue
-; dans VBL_SVCDATA. AVANT toute manip : détecte si on a préempté la chirurgie de listes de
-; vbl_handler (VBL_INSURG posé) = hazard de ré-entrance de niveau > 3 -> VBL_CLASH++ (= preuve
-; que le gate IPL7 de M7a est load-bearing : ce compteur reste 0 avec le fix, > 0 sans).
+; MICROHZ, appelé par cia_dispatch depuis int6_dispatch (CIA-B / INT6, IPL natif 6 depuis M7e) à chaque
+; underflow du timer CIA-B. Miroir de timer_vblank_service mais sur TIMER_MICROQ ; la base device est
+; lue dans VBL_SVCDATA. AVANT toute manip, DEUX détecteurs exclusifs (M7a + M7e) :
+;   - VBL_INSURG posé -> INT6 a préempté la CHIRURGIE du switch -> VBL_CLASH++ (doit rester 0 : le Disable
+;     la rend atomique vs tout IPL ; > 0 = RED1, Disable retiré).
+;   - sinon VBL_INBODY posé -> INT6 a préempté le CORPS de vbl -> VBL_PREEMPT_COUNT++ (doit être > 0 :
+;     preuve que vbl tourne bien à IPL3 natif, pas IPL7 ; == 0 = RED2, IPL7 remis au prologue).
 ; Convention serveur ICR : préserve d2/d3/a2 (variables de boucle de cia_dispatch) -> ne
 ; sauve/clobbe que d0-d2/a0-a4 et ne touche jamais d3/a5.
 timer_micro_service:
-        tst.b   VBL_INSURG          ; vbl_handler est-il en pleine chirurgie de listes ?
+        tst.b   VBL_INSURG          ; vbl_handler est-il en pleine CHIRURGIE de listes ?
+        beq.s   .mic_notsurg
+        addq.l  #1,VBL_CLASH        ; OUI -> INT6 a préempté la section critique = Disable violé (RED1)
+        bra.s   .mic_ok             ; doit rester 0 : le Disable rend la chirurgie atomique vs tout IPL
+.mic_notsurg:
+        tst.b   VBL_INBODY          ; M7e : sinon, vbl est-il dans son CORPS (hors chirurgie) ?
         beq.s   .mic_ok
-        addq.l  #1,VBL_CLASH        ; OUI -> INT6 a préempté la section critique = gate violé (RED)
-.mic_ok:
+        addq.l  #1,VBL_PREEMPT_COUNT ; OUI -> INT6(6) a préempté le CORPS de vbl(3) = fidélité IPL-par-niveau
+.mic_ok:                            ; (doit être > 0 en GREEN ; == 0 si on remet IPL7 au prologue = RED2)
         movem.l d0-d2/a0-a4,-(sp)
         move.l  VBL_SVCDATA,a2      ; a2 = base device (lue depuis le hook VBLANK, même base)
         move.l  a2,d0
@@ -215,7 +222,7 @@ timer_micro_service:
         bgt.s   .mic_cont           ; > 0 -> pas encore expiré
         move.l  a3,a1               ; expiré : Remove(a3)
         jsr     LVO_REMOVE(a6)
-        move.l  a3,a1               ; reply(a3) bas-niveau (AddTail IPL7 + Signal, sans Permit)
+        move.l  a3,a1               ; reply(a3) bas-niveau (AddTail Disable + Signal, sans Permit)
         bsr     timer_reply
 .mic_cont:
         move.l  d2,a3              ; a3 = Succ sauvé (valide même après Remove)

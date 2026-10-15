@@ -29,7 +29,11 @@ DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés sy
 DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
 DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
 CONS_THRESH  EQU 100          ; réveils de task_H (via yield) requis pour « M3F LIVE »
+                ifne    M7E_COOP
+SPIN_THRESH  EQU 0            ; coopératif : pas de task_S -> « M3F LIVE » par le seul yield
+                else
 SPIN_THRESH  EQU 5            ; itérations de task_S (via préemption) requises pour « M3F LIVE »
+                endc
 TCONS_THRESH EQU 50           ; réveils de task_timer (via l'IRQ MICROHZ) requis pour « M7A TIMER OK »
 M7A_MINTICKS EQU 250          ; ET délai minimum (ticks VBlank = 5 s) écoulé avant d'émettre OK :
                               ; le détecteur de clash tourne à chaque INT6 (~2/s), donc en RED un
@@ -402,12 +406,16 @@ coldstart:                        ; $FC00D2
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
         ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ via CIA-B/INT6 +
         ; task_timer qui bloque dessus -> prouve (a) une TÂCHE réveillée par un timer d'interruption
-        ; (Wait->wake) et (b) le GATE DE RÉ-ENTRANCE : INT6 (niveau 6) préempte vbl_handler, dont la
-        ; chirurgie de listes est désormais IPL7 -> VBL_CLASH reste 0 (RED : IPL3 -> VBL_CLASH>0).
-        ; M3f (rejoué, non-régression) : task_H/L/S prouvent la coexistence préemption + yield
-        ; (marqueur « M3F LIVE »). GREEN = « M7A TIMER OK » émis, VBL_CLASH==0, sentinelles intactes.
+        ; (Wait->wake) et (b) la fidélité IPL-par-niveau (M7e) : INT6 (niveau 6) préempte le CORPS de
+        ; vbl_handler (IPL natif 3) -> VBL_PREEMPT_COUNT>0, MAIS la chirurgie de listes du switch reste
+        ; atomique (IPL7 bref) -> VBL_CLASH==0 (overlap, pas corruption). RED1 (M7E_SURGERY_INTENA=1 :
+        ; INTENA-off au lieu d'IPL7) -> VBL_CLASH>0 ; RED2 (M7E_PROLOGUE_IPL7=1 : IPL7 au prologue) ->
+        ; VBL_PREEMPT_COUNT==0. M3f (rejoué, non-régression) : task_H/L/S prouvent
+        ; la coexistence préemption + yield (« M3F LIVE »). GREEN = « M7A TIMER OK » + « M7E IPL OK ».
         move.w  #$2700,sr            ; masque les interruptions pendant TOUT le setup
         clr.l   VBL_CLASH
+        clr.l   VBL_PREEMPT_COUNT    ; M7e : baseline des préemptions du corps de vbl (INT6 armé juste après)
+        clr.b   M7E_STAT             ; M7e : marqueur « M7E IPL OK » pas encore émis
         lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
@@ -429,7 +437,9 @@ coldstart:                        ; $FC00D2
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        move.b  #1,SCHED_ON          ; ARME la préemption périodique
+                ifeq    M7E_COOP
+        move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
+                endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
         ; --- M7c : LANCEMENT de la 1re tâche = transition SUPERVISEUR -> USER mode ---
         ; La pile boot (STACKTOP) devient la SSP PARTAGÉE des interruptions ; chaque tâche a sa pile
         ; user (AllocMem'd). On réinitialise la SSP à STACKTOP (abandonne le contexte boot), on réserve
@@ -966,18 +976,22 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_l_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
+                ifeq    M7E_COOP
         lea     task_s(pc),a2        ; task_S (pri 0) : spinner pur (dispatché par préemption)
         lea     task_s_name(pc),a3
         moveq   #0,d2
-        bsr     mk_demo_task
+        bsr     mk_demo_task         ; M7E_COOP=1 : retiré (monopoliserait sans préemption)
+                endc
         lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
         lea     task_t_name(pc),a3
         moveq   #DEMO_PRI_T,d2
         bsr     mk_demo_task
+                ifeq    M7E_COOP
         lea     task_port(pc),a2     ; task_port (pri 0, M7d) : martèle le port partagé (consommateur TÂCHE)
         lea     task_p_name(pc),a3
         moveq   #DEMO_PRI_P,d2
-        bsr     mk_demo_task
+        bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
+                endc
         movem.l (sp)+,d2/a2-a4
         rts
 
@@ -1178,6 +1192,18 @@ task_timer:
         cmp.l   a2,d0                ; doit être NOTRE requête
         bne     m7a_fail
         addq.l  #1,WP_TCONS          ; un réveil MICROHZ réussi de plus
+        btst    #0,M7E_STAT          ; M7e : marqueur IPL-par-niveau déjà émis ? (testé à chaque réveil,
+        bne.s   .tt_m7a              ; indépendamment du flag M7a -> survit à l'émission de « M7A TIMER OK »)
+        move.l  VBL_PREEMPT_COUNT,d0 ; INT6(6) a-t-il déjà préempté le CORPS de vbl(3) ? (fidélité IPL natif)
+        beq.s   .tt_m7a              ; pas encore observé -> pas prouvé
+        tst.l   VBL_CLASH            ; ET la chirurgie du switch est-elle restée atomique ? (doit == 0)
+        bne.s   .tt_m7a              ; clash -> le check en tête de boucle prendra m7a_fail au prochain tour
+        bset    #0,M7E_STAT          ; émet « M7E IPL OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7e_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_m7a:
         btst    #1,WP_STAT
         bne     .tt_loop             ; marqueur déjà émis (branche word : corps de boucle long)
         move.l  WP_TCONS,d0
@@ -1549,6 +1575,8 @@ msg_m7d_ok:
         dc.b    "M7D PORTS OK (interrupt-safe PutMsg/GetMsg: task vs IRQ race on shared port, no corruption)",13,10,0
 msg_m7d_fail:
         dc.b    "M7D FAILED: shared-port list corrupted (task GetMsg vs IRQ PutMsg race)",13,10,0
+msg_m7e_ok:
+        dc.b    "M7E IPL OK (native-IPL: INT6 preempts vbl body; scheduler surgery IPL7-atomic, no overlap)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

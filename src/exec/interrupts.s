@@ -1,12 +1,14 @@
 ; src/exec/interrupts.s — exec.library : plomberie d'interruptions + ordonnanceur
-; préemptif (M3a..M7b) + M7c : tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ.
+; préemptif (M3a..M7b) + M7c : tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ + M7e : IPL-par-niveau.
 ;
-; MODÈLE M7c (dérivé du spec public « The Exec Microkernel » d'AROS + mécanique 68000) :
+; MODÈLE M7c/M7e (dérivé du spec public « The Exec Microkernel » d'AROS + mécanique 68000) :
 ; - Les tâches tournent en USER mode (SR bit S = 0), chacune sur SA pile user (USP). Les
 ;   interruptions et le noyau tournent sur UNE pile superviseur PARTAGÉE (SSP = région STACKTOP).
 ; - Le contexte d'une tâche vit sur SA pile user ; TC_SPREG pointe dessus.
-; - PROLOGUE commun (vbl/int2/int6/trap) : IPL7 + movem.l d0-d7/a0-a6,-(sp) -> frame contiguë
-;   [GPR 60][SR 2][PC 4] = 66 o sur la SSP. ÉPILOGUE commun (intr_exit) : si un switch est demandé
+; - PROLOGUE commun (vbl/int2/int6/trap) : movem.l d0-d7/a0-a6,-(sp) -> frame contiguë [GPR 60][SR 2]
+;   [PC 4] = 66 o sur la SSP. M7e : les handlers tournent à leur IPL NATIF (vbl=3, int2=2, int6=6, posé
+;   par le CPU ; plus de montée IPL7) -> INT6 peut préempter le corps de vbl/int2. ÉPILOGUE commun
+;   (intr_exit) : si un switch est demandé
 ;   ET la SR SAUVÉE a S=0 (on interrompait une tâche user = frontière externe, pas une IRQ imbriquée),
 ;   -> dispatch ; sinon movem+rte (reprend l'interrompu). S=1 => imbriqué/noyau => jamais de switch
 ;   (le contexte user n'est pas disponible) : c'est le NEST-COUNT, lu directement dans le bit S.
@@ -21,9 +23,21 @@
 ;   posé EB_ATTNRESCHED), demandent un switch à la SORTIE d'interruption (d7<-AttnResched) au lieu
 ;   d'attendre un Permit ou le prochain VBlank -> réveil déterministe (sans ça : résonance de phase).
 ;   Signal ne RESCHEDULE jamais depuis l'IRQ (pas de ré-entrance) : il POSE le flag, l'épilogue le consomme.
-; - GATE M7a : le prologue commun monte IPL7, donc toute la chirurgie de listes du switch est atomique
-;   vs une source de niveau > 3 (INT6/CIA-B). VBL_INSURG/VBL_CLASH reste le détecteur (cf. exec.i).
-; À VENIR (M7e) : fidélité IPL-par-niveau, VERTB en chaîne de serveurs, décodage INTREQR, quantum, RemTask.
+; - GATE M7a/M7e : la chirurgie de listes du switch (dispatch) est rendue atomique par IPL7 (« move
+;   #imm,sr » = interne CPU, INSTANTANÉ) autour de l'Enqueue/RemHead. PAS par INTENA-off : l'écriture
+;   INTENA a un délai de propagation (quirk Amiga modélisé par FS-UAE) -> un INT6 déjà asserté chevauche
+;   la fenêtre (prouvé, RED1). VBL_INSURG/VBL_CLASH = détecteur d'OVERLAP (INT6 chevauche la fenêtre),
+;   PAS un détecteur de corruption ; l'overlap est la PRÉCONDITION de corruption (INT6->timer_reply->
+;   Signal Enqueue la même TaskReady que la chirurgie marche). M7e : VBL_INBODY/VBL_PREEMPT_COUNT prouvent
+;   qu'INT6 préempte BIEN le corps de vbl (IPL3 natif) sans jamais chevaucher la chirurgie (IPL7). La
+;   relocalisation de frame (SSP->pile user) tourne à l'IPL natif sans masque : INT6 s'imbrique sous sp,
+;   la frame sortante est intacte.
+; - HONNÊTETÉ (cohérence M7d) : la fenêtre write-delay touche TOUTE section masquée par INTENA appelable
+;   en USER mode — Signal, PutMsg/GetMsg (ports M7d), Wait, timer_reply — car une tâche user ne peut pas
+;   monter l'IPL (« move to SR » privilégié, manuel 68000). Elles gardent donc ce caveat, toléré par le
+;   re-check (Wait re-teste au réveil) et empiriquement bénin pour les ports M7d même en contention-max.
+;   SEUL le switch côté superviseur a été promu à l'IPL7 (il le peut : il tourne en superviseur).
+; À VENIR (M7f) : VERTB en chaîne de serveurs, décodage INTREQR multi-source, quantum, RemTask.
 ; Piste IMPLÉMENTATION (« clean ») : hardware/intbits.i (ABI publique) + HRM + spec AROS public.
 
                 include "exec.i"
@@ -51,6 +65,10 @@ init_ints:
         clr.l   CIA_FIRED
         clr.b   VBL_INSURG                        ; M7a : aucune chirurgie en cours au départ
         clr.l   VBL_CLASH                         ; M7a : compteur de clashs de ré-entrance
+        clr.b   VBL_INBODY                        ; M7e : corps de vbl pas encore entré
+        clr.b   VBL_IPL                           ; M7e : IPL observé (rempli par vbl)
+        clr.l   VBL_PREEMPT_COUNT                 ; M7e : préemptions du corps de vbl par INT6
+        clr.l   IDLE_ENTERED                      ; M7e : épisodes d'idle du dispatcher
         move.l  #INTVECTS_TOTAL,d0                ; M7b : bloc IntVects (16 vecteurs + 16 svlist)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)                  ; (préserve a6 ; CLEAR -> IV_CODE=0 = aucun handler)
@@ -62,9 +80,10 @@ init_ints:
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
         ; active VERTB + PORTS (INT2) + maître. EXTER(INT6, niveau 6 > VBlank 3) est activé
-        ; PLUS TARD, au bringup de l'unité MICROHZ (boot.s M7a) : il peut désormais préempter le
-        ; VBlank sans danger car la chirurgie de listes de vbl_handler est IPL7 (gate M7a), mais on
-        ; le laisse éteint tant qu'aucune source CIA-B n'existe -> M4..M6 restent inchangés.
+        ; PLUS TARD, au bringup de l'unité MICROHZ (boot.s M7a) : il préempte désormais le CORPS de
+        ; vbl_handler (IPL natif 3 depuis M7e), mais la chirurgie de listes du switch reste atomique car
+        ; la section critique du switch (dispatch) monte brièvement IPL7. On le laisse éteint tant qu'aucune
+        ; source CIA-B n'existe -> M4..M6 restent inchangés.
         move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB|INTF_PORTS),INTENA
         move.w  #$2000,sr                         ; superviseur, IPL=0 -> les interruptions passent
         rts
@@ -72,10 +91,19 @@ init_ints:
 ; vbl_handler : interruption VBlank (niveau 3). Prologue commun -> corps (compteur + service timer
 ; + décision round-robin) -> épilogue commun (intr_exit). Ne switche plus inline.
 vbl_handler:
-        move.w  #$2700,sr           ; PROLOGUE : IPL7 (légal, superviseur) -> gate M7a + atomicité
-        movem.l d0-d7/a0-a6,-(sp)   ; frame [GPR][SR][PC] sur la SSP partagée
+                ifne    M7E_PROLOGUE_IPL7
+        move.w  #$2700,sr           ; RED2 : modèle M7a (tout le handler IPL7) -> INT6 ne préempte PAS
+                                    ; le corps -> VBL_PREEMPT_COUNT==0 -> « M7E IPL OK » jamais émis.
+                endc
+        movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 3, posé par le CPU) — plus de
+                                    ; montée IPL7. INT6 (niveau 6) peut désormais préempter CE corps.
         move.l  ($4).w,a6           ; a6 = SysBase
         move.w  #INTF_VERTB,INTREQ  ; acquitte VERTB
+        st      VBL_INBODY          ; M7e : corps de vbl en cours = fenêtre préemptible (détecteur INT6)
+        move.w  sr,d0               ; M7e value-check : IPL natif réellement observé (doit == 3, pas 7 ;
+        lsr.w   #8,d0               ; « move from SR » non privilégié sur 68000, superviseur ici)
+        and.w   #7,d0
+        move.b  d0,VBL_IPL
         lea     VBL_COUNT,a0
         addq.l  #1,(a0)             ; compteur (preuve M3a conservée)
         move.l  VBL_SVC,d0          ; M6a : service timer VBLANK enregistré ?
@@ -91,13 +119,16 @@ vbl_handler:
         bge.s   .vbl_exit
         tst.b   EB_IDNEST(a6)       ; Disable() actif ?
         bge.s   .vbl_exit
-        move.l  EB_TASKREADY(a6),a0 ; TaskReady non vide ?
-        tst.l   (a0)                ; (lh_Head)->Succ==0 <=> vide (MOVEA ne pose pas les flags -> tst)
+        move.l  EB_TASKREADY(a6),a0 ; TaskReady non vide ? M7e : cette lecture de tête tourne à IPL3 et
+        tst.l   (a0)                ; peut être préemptée par un AddTail d'INT6 (Signal) -> torn read POSSIBLE.
+                                    ; BÉNIN : au pire une DEMANDE de switch spurious/manquée ; le vrai RemHead
+                                    ; (dispatch) est Disable-protégé. Même classe que le WaitPort check-tête différé.
         beq.s   .vbl_exit
         moveq   #1,d7               ; préemption round-robin demandée
         moveq   #1,d6               ; -> dispatch requeue la sortante dans TaskReady
 .vbl_exit:
-        bra     intr_exit
+        clr.b   VBL_INBODY          ; M7e : fin du CORPS avant dispatch -> jamais en chevauchement avec
+        bra     intr_exit           ; VBL_INSURG (posé plus tard dans dispatch) : les 2 fenêtres sont disjointes
 
 ; intr_exit : ÉPILOGUE commun (vbl/int2/int6/trap). d7 = switch demandé. On switche SEULEMENT à la
 ; FRONTIÈRE USER : bit S de la SR SAUVÉE (FRAME_SR) == 0. S=1 (IRQ imbriquée / noyau) => contexte user
@@ -115,7 +146,8 @@ intr_exit:
 
 ; dispatch : RELOCALISE la frame de la sortante (SSP -> sa pile user) puis charge l'entrante. Entrée :
 ; sp = frame 66 o sur la SSP ; a6=SysBase ; d6=1 -> requeue la sortante dans TaskReady (round-robin),
-; d6=0 -> sortante déjà rangée (Wait sur TaskWait). IPL7. Ne retourne pas (rte vers l'entrante).
+; d6=0 -> sortante déjà rangée (Wait sur TaskWait). M7e : relocalisation à l'IPL natif de l'appelant,
+; puis chirurgie masquée par IPL7 bref. Ne retourne pas (rte vers l'entrante, à l'IPL/S de la SR restaurée).
 dispatch:
         move.l  EB_THISTASK(a6),a1  ; sortante
         move.b  EB_IDNEST(a6),TC_IDNESTCNT(a1)  ; nesting PAR-TÂCHE : sauve l'état de la sortante
@@ -127,7 +159,19 @@ dispatch:
         moveq   #(FRAME_SIZE/2)-1,d0
 .d_save:
         move.w  (a2)+,(a3)+         ; relocalise 66 o SSP -> pile user (33 mots, aucun long à cheval sur SR)
-        dbf     d0,.d_save
+        dbf     d0,.d_save          ; (relocalisation SÛRE à l'IPL natif : INT6 s'imbrique SOUS sp, frame intacte)
+        ; M7e : masque la chirurgie par IPL7 (écriture SR = interne CPU, INSTANTANÉE). PAS INTENA-off :
+        ; l'écriture INTENA a un DÉLAI DE PROPAGATION (quirk Amiga modélisé par FS-UAE) -> un INT6 déjà
+        ; asserté sur les lignes IPL chevauche la fenêtre VBL_INSURG = clash (prouvé empiriquement, RED1).
+        ; POURQUOI l'IPL ici mais INTENA ailleurs (Signal/ports/Wait) : la chirurgie tourne en SUPERVISEUR
+        ; (atteinte via intr_exit/trap) -> « move #imm,sr » LÉGAL. Signal/PutMsg/GetMsg/Wait sont appelables
+        ; depuis une tâche USER-MODE où « move to SR » est PRIVILÉGIÉ (manuel 68000) -> impossible de monter
+        ; l'IPL -> ils doivent utiliser INTENA-Disable, qui porte donc le caveat write-delay (cf. en-tête).
+                ifne    M7E_SURGERY_INTENA
+        move.w  #INTF_INTEN,INTENA  ; RED1 : masque par INTENA-off (délai de propagation) -> clash observé
+                else
+        move.w  #$2700,sr           ; GREEN : masque par IPL7 (instantané)
+                endc
         move.b  #1,VBL_INSURG       ; chirurgie des listes (Enqueue/RemHead) = section contendue (détect. M7a)
         tst.b   d6
         beq.s   .d_pick             ; sortante déjà rangée (Wait) -> pas de requeue
@@ -140,11 +184,15 @@ dispatch:
         jsr     LVO_REMHEAD(a6)     ; d0 = entrante | 0
         tst.l   d0
         bne.s   .d_have
-        clr.b   VBL_INSURG          ; attente idle -> pas de surgery en cours (pas de faux clash)
+        addq.l  #1,IDLE_ENTERED     ; M7e : instrumentation (épisode d'idle ; doit être > 0 dans un run normal)
 .d_idle:                            ; personne de prêt (Wait sans autre tâche prête) : attendre un Signal
-        move.w  #$2000,sr           ; IPL0 superviseur -> IRQ passe (frame imbriquée, S=1 -> pas de dispatch)
+        clr.b   VBL_INSURG          ; attente idle -> pas de surgery en cours (pas de faux clash)
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA ; M7e : ré-active INTEN pour recevoir le Signal réveilleur
+                                    ; (le chemin Wait->idle arrive INTEN-off depuis exec_Wait -> nécessaire)
+        move.w  #$2000,sr           ; IPL0 superviseur -> toute IRQ passe (frame imbriquée, S=1 -> pas de dispatch)
         nop
-        move.w  #$2700,sr
+        move.w  #$2700,sr           ; IPL7 : masque la chirurgie du RemHead (instantané, cf. non-idle)
+        move.b  #1,VBL_INSURG
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_REMHEAD(a6)
         tst.l   d0
@@ -223,15 +271,16 @@ reschedule:
 ; trap0_handler (TRAP #0) : switch volontaire style Wait — la sortante est DÉJÀ rangée (TaskWait).
 ; trap1_handler (TRAP #1) : yield — dispatch requeue la sortante dans TaskReady (round-robin).
 ; Le CPU a poussé {SR user, PC} au trap -> la SR sauvée a S=0 -> l'épilogue dispatch garanti.
+; M7e : plus de montée IPL7 — le trap entre à l'IPL de la tâche (0) ; l'atomicité du switch repose
+; ENTIÈREMENT sur le Disable de dispatch. trap0 (Wait) arrive déjà Disabled (exec_Wait a fait INTEN-off
+; avant trap #0) -> Disable idempotent. trap1 (yield) arrive INTEN-on -> Disable neuf mais correct.
 trap0_handler:
-        move.w  #$2700,sr
         movem.l d0-d7/a0-a6,-(sp)
         move.l  ($4).w,a6
         moveq   #1,d7
         moveq   #0,d6               ; NE PAS requeue (sortante sur TaskWait)
         bra     intr_exit
 trap1_handler:
-        move.w  #$2700,sr
         movem.l d0-d7/a0-a6,-(sp)
         move.l  ($4).w,a6
         moveq   #1,d7
@@ -240,20 +289,20 @@ trap1_handler:
 
 ; ============================ dispatcher par numéro (M7b) ==========
 ; SetIntVector/AddIntServer + autovecteurs génériques INT2(PORTS)/INT6(EXTER) + walker de chaîne.
-; CAVEAT (ledgeré) : dispatch PAR NUMÉRO (lookup IntVects[n] + chaîne de serveurs), PAS la fidélité
-; IPL-PAR-NIVEAU (tourner à l'IPL de l'interruption) — on garde IPL7 à l'entrée (prologue commun).
-; M7c : int2/int6 partagent le prologue (IPL7 + movem) et l'épilogue (intr_exit). FLAG DE DISPATCH
+; M7e : dispatch PAR NUMÉRO (lookup IntVects[n] + chaîne de serveurs) À L'IPL NATIF — int2 tourne à
+; IPL2, int6 à IPL6 (plus de montée IPL7). INT6 peut donc préempter int2 et le corps de vbl. L'atomicité
+; du scheduler ne vient plus de l'IPL mais du Disable (INTEN off) autour de la chirurgie dans dispatch.
+; M7c : int2/int6 partagent le prologue (movem) et l'épilogue (intr_exit). FLAG DE DISPATCH
 ; DIFFÉRÉ (spec AROS « The Exec Microkernel ») : si un serveur a réveillé une tâche PRIORITAIRE (Signal
 ; a posé EB_ATTNRESCHED), l'épilogue dispatche IMMÉDIATEMENT à la sortie d'interruption (à la frontière
 ; user S=0) au lieu d'attendre un Permit/Enable ou le prochain VBlank. Sans ça, une tâche réveillée par
 ; IRQ dépend du hasard de phase (quelle tâche tourne + appelle Permit) -> réveil erratique (résonance).
 ; Signal ne RESCHEDULE jamais lui-même depuis l'interruption (pas de ré-entrance) : il POSE le flag,
-; l'épilogue le consomme. VERTB garde son handler dédié (vbl_handler) : VERTB->chaîne = M7d.
+; l'épilogue le consomme. VERTB garde son handler dédié (vbl_handler) : VERTB->chaîne = M7f.
 
 ; int2_dispatch ($68, niveau 2) : seule source de niveau 2 = PORTS -> dispatche IntVects[INTB_PORTS].
 int2_dispatch:
-        move.w  #$2700,sr           ; PROLOGUE commun (IPL7)
-        movem.l d0-d7/a0-a6,-(sp)
+        movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 2) — préemptible par vbl(3)/int6(6)
         move.l  ($4).w,a6
         moveq   #INTB_PORTS,d0
         bsr     intr_dispatch_number
@@ -261,8 +310,8 @@ int2_dispatch:
         bra.s   intr_isr_defer
 ; int6_dispatch ($78, niveau 6) : seule source de niveau 6 = EXTER -> dispatche IntVects[INTB_EXTER].
 int6_dispatch:
-        move.w  #$2700,sr
-        movem.l d0-d7/a0-a6,-(sp)
+        movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 6) — niveau max utilisé, jamais préempté
+        move.l  ($4).w,a6
         move.l  ($4).w,a6
         moveq   #INTB_EXTER,d0
         bsr     intr_dispatch_number

@@ -181,9 +181,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   **M7d** rend les ports INTERRUPT-SAFE : `PutMsg`/`GetMsg`/`ReplyMsg` passent de Forbid (tâche-vs-tâche) à
   Disable (masque aussi les interruptions), prouvé par un port partagé martelé par une TÂCHE et une INTERRUPTION
   (coexistence GREEN + A/B sous contention max : Forbid corrompt la liste, Disable non). Débloque l'I/O device
-  piloté par IRQ. Reste (**M7e+**) : fidélité IPL-par-niveau (VERTB en chaîne + tourner à l'IPL natif), décodage
-  INTREQR multi-source, conversion `timer_reply`→`ReplyMsg`, `RemTask`, quantum/priorité réelle, calibration µs
-  MICROHZ, retrait éventuel des démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d codée en dur d'ici là).
+  piloté par IRQ. **M7e** livre la **fidélité IPL-par-niveau** : les handlers tournent à leur IPL natif (VBlank=3,
+  PORTS=2, EXTER=6) au lieu d'IPL7 uniforme — une source de niveau supérieur préempte le CORPS d'un handler
+  inférieur (INT6 préempte le corps de vbl, `VBL_PREEMPT_COUNT>0`). La section critique du switch est masquée par
+  IPL7 bref (SR = instantané) et NON par INTENA-off : découverte empirique que l'écriture INTENA a un délai de
+  propagation (course observée en RED1) ; le choix IPL-vs-INTENA est imposé par le privilège (le switch tourne
+  superviseur ; Signal/ports/Wait sont user-mode et ne peuvent pas monter l'IPL -> gardent INTENA-Disable + son
+  caveat write-delay, toléré/bénin). Prouvé GREEN 3/3 + RED1 3/3 (clash) + RED2 2/2 (M7E absent) + coopératif.
+  Reste (**M7f+**) : VERTB en chaîne de serveurs, décodage INTREQR multi-source, conversion `timer_reply`→`ReplyMsg`,
+  `RemTask`, quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste
+  la démo M3f/M7a/M7c/M7d/M7e codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

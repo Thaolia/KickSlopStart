@@ -126,6 +126,28 @@ MSG_MAGIC_OFF  EQU 20         ; sentinelle : un GetMsg corrompu (mauvais pointeu
 MSG_INHAND_OFF EQU 24         ; 1 = message « en main » hors liste ; un GetMsg qui le rend = doublon = corruption
 STRESS_MSG_SIZE EQU 28
 STRESS_MAGIC  EQU $5D7C0DE5   ; valeur MAGIC attendue
+; M7e — fidélité IPL-par-niveau : les handlers tournent à leur IPL NATIF (vbl=3, int2=2, int6=6)
+; au lieu d'IPL7 uniforme. Preuve SÉLECTIVE : INT6 (niveau 6) préempte le CORPS de vbl (niveau 3)
+; MAIS la chirurgie de listes du scheduler reste atomique (section critique du switch montée à IPL7).
+VBL_INBODY       EQU $0000056E ; UBYTE : corps de vbl_handler en cours (fenêtre préemptible par INT6)
+VBL_IPL          EQU $0000056F ; UBYTE : IPL lu par vbl via « move sr » (value-check : doit == 3, pas 7)
+VBL_PREEMPT_COUNT EQU $00000570 ; long : INT6 a observé VBL_INBODY posé (préempté le corps) -> > 0 en GREEN
+IDLE_ENTERED     EQU $00000574 ; long : épisodes d'idle du dispatcher (instrumentation ; > 0 dans un run normal)
+M7E_STAT         EQU $00000578 ; UBYTE : b0 = marqueur « M7E IPL OK » déjà émis
+; Gates A/B M7e (reproductibilité ; défaut 0 = GREEN en arbre, comme M7D_STRESS_MAX) :
+; M7E_SURGERY_INTENA=1 (RED1) : la chirurgie du switch est masquée par INTENA-off AU LIEU d'IPL7 ->
+;   l'écriture INTENA a un délai de propagation -> INT6 chevauche la fenêtre VBL_INSURG -> VBL_CLASH>0
+;   (overlap, précondition de corruption ; « M7A FAILED »). Prouve que l'IPL7 est load-bearing.
+; M7E_PROLOGUE_IPL7=1 (RED2) : le prologue vbl remonte IPL7 (modèle M7a, tout le handler IPL7) -> INT6
+;   ne préempte plus le CORPS de vbl -> VBL_PREEMPT_COUNT==0 -> « M7E IPL OK » jamais émis. Prouve que
+;   l'IPL natif (absence d'IPL7 au prologue) est load-bearing, pas cosmétique.
+M7E_SURGERY_INTENA EQU 0
+M7E_PROLOGUE_IPL7  EQU 0
+; M7E_COOP=1 : non-régression COOPÉRATIVE (SCHED_ON=0, préemption OFF). Retire les 2 spinners purs
+; (task_S, task_port) qui monopoliseraient sans préemption, et met SPIN_THRESH=0 -> « M3F LIVE » émis
+; par le seul chemin YIELD (trap1->dispatch->switch). Prouve que la voie yield->dispatch tient sans
+; préemption après M7e. Défaut 0 (build préemptif complet M3f/M7a/M7c/M7d/M7e).
+M7E_COOP           EQU 0
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0
