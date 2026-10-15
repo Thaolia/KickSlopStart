@@ -1,13 +1,16 @@
-; src/exec/interrupts.s — exec.library : plomberie d'interruptions + ordonnanceur
-; préemptif (M3a..M7b) + M7c : tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ + M7e : IPL-par-niveau.
+; src/exec/interrupts.s — exec.library : plomberie d'interruptions + ordonnanceur préemptif (M3a..M7b)
+; + M7c : tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ + M7e : IPL-par-niveau + M7f : VERTB en chaîne.
 ;
-; MODÈLE M7c/M7e (dérivé du spec public « The Exec Microkernel » d'AROS + mécanique 68000) :
+; MODÈLE M7c/M7e/M7f (dérivé du spec public « The Exec Microkernel » d'AROS + mécanique 68000) :
 ; - Les tâches tournent en USER mode (SR bit S = 0), chacune sur SA pile user (USP). Les
 ;   interruptions et le noyau tournent sur UNE pile superviseur PARTAGÉE (SSP = région STACKTOP).
 ; - Le contexte d'une tâche vit sur SA pile user ; TC_SPREG pointe dessus.
-; - PROLOGUE commun (vbl/int2/int6/trap) : movem.l d0-d7/a0-a6,-(sp) -> frame contiguë [GPR 60][SR 2]
-;   [PC 4] = 66 o sur la SSP. M7e : les handlers tournent à leur IPL NATIF (vbl=3, int2=2, int6=6, posé
-;   par le CPU ; plus de montée IPL7) -> INT6 peut préempter le corps de vbl/int2. ÉPILOGUE commun
+; - M7f : les 3 autovecteurs utilisés sont UNIFORMES — int2_dispatch(PORTS)/int3_dispatch(VERTB)/
+;   int6_dispatch(EXTER) passent tous par intr_dispatch_number(n) -> chaîne de serveurs IntVects[n].
+;   La décision d'ordonnancement (quantum round-robin) est sched_server, un serveur de la chaîne VERTB.
+; - PROLOGUE commun : movem.l d0-d7/a0-a6,-(sp) -> frame contiguë [GPR 60][SR 2][PC 4] = 66 o sur la SSP.
+;   M7e : les handlers tournent à leur IPL NATIF (int2=2, int3/vbl=3, int6=6, posé par le CPU ; plus de
+;   montée IPL7) -> INT6 peut préempter le corps de vbl/int2. ÉPILOGUE commun
 ;   (intr_exit) : si un switch est demandé
 ;   ET la SR SAUVÉE a S=0 (on interrompait une tâche user = frontière externe, pas une IRQ imbriquée),
 ;   -> dispatch ; sinon movem+rte (reprend l'interrompu). S=1 => imbriqué/noyau => jamais de switch
@@ -54,12 +57,12 @@
                 xref    exec_AllocMem    ; memory.s (alloc du bloc IntVects à init_ints)
                 xref    raw_enable       ; library.s (Enable NU : Wait réactive sans la queue reschedule)
 
-; init_ints : arme l'interruption VBlank. a6 = SysBase. Clobbers d0/a0.
+; init_ints : arme l'interruption VBlank + enregistre sched_server sur la chaîne VERTB (M7f).
+; a6 = SysBase. Clobbers d0/d1/a0/a1 (via AllocMem + AddIntServer).
 init_ints:
         lea     VBL_COUNT,a0
         clr.l   (a0)                              ; compteur à zéro
         clr.b   SCHED_ON                          ; ordonnanceur désarmé (count-only)
-        clr.l   VBL_SVC                           ; aucun service VBlank tant que timer non init
         clr.l   CIAA_PTR                          ; M6b : handlers CIA no-op tant que cia non créé
         clr.l   CIAB_PTR
         clr.l   CIA_FIRED
@@ -69,66 +72,84 @@ init_ints:
         clr.b   VBL_IPL                           ; M7e : IPL observé (rempli par vbl)
         clr.l   VBL_PREEMPT_COUNT                 ; M7e : préemptions du corps de vbl par INT6
         clr.l   IDLE_ENTERED                      ; M7e : épisodes d'idle du dispatcher
+        clr.l   VERTB_CHAIN_N                     ; M7f : parcours complets de la chaîne VERTB
+        clr.b   M7F_STAT                          ; M7f : marqueur « M7F VERTB OK » pas encore émis
         move.l  #INTVECTS_TOTAL,d0                ; M7b : bloc IntVects (16 vecteurs + 16 svlist)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)                  ; (préserve a6 ; CLEAR -> IV_CODE=0 = aucun handler)
         move.l  d0,EB_INTVECTS(a6)
-        move.l  #vbl_handler,AUTOVEC_L3           ; autovecteur niveau 3 -> handler VBlank (scheduler)
+        move.l  #int3_dispatch,AUTOVEC_L3         ; M7f : VERTB (INT3) -> dispatcher générique par numéro
         move.l  #int2_dispatch,AUTOVEC_L2         ; M7b : INT2/PORTS -> dispatcher générique par numéro
         move.l  #int6_dispatch,AUTOVEC_L6         ; M7b : INT6/EXTER -> dispatcher générique par numéro
         move.l  #trap0_handler,TRAP0_VEC          ; M7c : TRAP #0 = switch volontaire style Wait
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
+        ; M7f : enregistre le serveur SCHEDULER (quantum round-robin) sur la chaîne VERTB. Faithful :
+        ; le vrai exec a un serveur VBlank qui pose la flag AttnResched. pri 20 -> tête de chaîne.
+        clr.l   SCHED_INT+LN_SUCC                 ; (RAM basse réservée, non garantie nulle au power-on)
+        clr.l   SCHED_INT+IS_DATA                 ; serveur scheduler : IS_DATA inutilisé (lit les globals)
+        move.b  #20,SCHED_INT+LN_PRI              ; pri 20 : s'exécute avant timer_vblank(0)/vbl_tail(-10)
+        move.l  #sched_server,SCHED_INT+IS_CODE
+        moveq   #INTB_VERTB,d0                    ; AddIntServer(VERTB, &SCHED_INT)
+        lea     SCHED_INT,a1
+        bsr     exec_AddIntServer
         move.w  #INTF_VERTB,INTREQ                ; efface un VERTB pendant
         ; active VERTB + PORTS (INT2) + maître. EXTER(INT6, niveau 6 > VBlank 3) est activé
         ; PLUS TARD, au bringup de l'unité MICROHZ (boot.s M7a) : il préempte désormais le CORPS de
-        ; vbl_handler (IPL natif 3 depuis M7e), mais la chirurgie de listes du switch reste atomique car
-        ; la section critique du switch (dispatch) monte brièvement IPL7. On le laisse éteint tant qu'aucune
+        ; int3_dispatch (chaîne VERTB, IPL natif 3), mais la chirurgie de listes du switch reste atomique
+        ; car la section critique du switch (dispatch) monte brièvement IPL7. On le laisse éteint tant qu'aucune
         ; source CIA-B n'existe -> M4..M6 restent inchangés.
         move.w  #(INTF_SETCLR|INTF_INTEN|INTF_VERTB|INTF_PORTS),INTENA
         move.w  #$2000,sr                         ; superviseur, IPL=0 -> les interruptions passent
         rts
 
-; vbl_handler : interruption VBlank (niveau 3). Prologue commun -> corps (compteur + service timer
-; + décision round-robin) -> épilogue commun (intr_exit). Ne switche plus inline.
-vbl_handler:
+; int3_dispatch (AUTOVEC_L3, niveau 3) : M7f — VERTB (seule source de niveau 3 utilisée, mono-source
+; comme int2/int6) passe par le dispatcher PAR NUMÉRO + chaîne de serveurs, au lieu d'un handler dédié.
+; Corps = compteur M3a (inline) + marche de la chaîne VERTB (sched_server pose AttnResched, timer_vblank
+; sert l'unité VBLANK, vbl_tail = preuve de parcours). Épilogue = intr_isr_defer (consomme AttnResched).
+; La fenêtre VBL_INBODY (gate M7e) couvre la marche de chaîne (= le « corps », préemptible par INT6).
+int3_dispatch:
                 ifne    M7E_PROLOGUE_IPL7
-        move.w  #$2700,sr           ; RED2 : modèle M7a (tout le handler IPL7) -> INT6 ne préempte PAS
+        move.w  #$2700,sr           ; RED2 M7e : modèle M7a (tout le handler IPL7) -> INT6 ne préempte PAS
                                     ; le corps -> VBL_PREEMPT_COUNT==0 -> « M7E IPL OK » jamais émis.
                 endc
-        movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 3, posé par le CPU) — plus de
-                                    ; montée IPL7. INT6 (niveau 6) peut désormais préempter CE corps.
+        movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 3) — INT6 (6) peut préempter CE corps
         move.l  ($4).w,a6           ; a6 = SysBase
-        move.w  #INTF_VERTB,INTREQ  ; acquitte VERTB
-        st      VBL_INBODY          ; M7e : corps de vbl en cours = fenêtre préemptible (détecteur INT6)
-        move.w  sr,d0               ; M7e value-check : IPL natif réellement observé (doit == 3, pas 7 ;
-        lsr.w   #8,d0               ; « move from SR » non privilégié sur 68000, superviseur ici)
+        st      VBL_INBODY          ; M7e : fenêtre préemptible = marche de la chaîne VERTB (détecteur INT6)
+        move.w  sr,d0               ; M7e value-check : IPL natif observé (doit == 3, pas 7 ; « move from
+        lsr.w   #8,d0               ; SR » non privilégié sur 68000, superviseur ici)
         and.w   #7,d0
         move.b  d0,VBL_IPL
-        lea     VBL_COUNT,a0
-        addq.l  #1,(a0)             ; compteur (preuve M3a conservée)
-        move.l  VBL_SVC,d0          ; M6a : service timer VBLANK enregistré ?
-        beq.s   .vbl_nosvc
-        move.l  VBL_SVCDATA,a1
-        move.l  d0,a0
-        jsr     (a0)                ; service(a1=base device, a6=SysBase) ; transparent (a6 préservé)
-.vbl_nosvc:
-        moveq   #0,d7               ; d7 = switch demandé ? (0=non) ; d6 = requeue sortante ?
+        addq.l  #1,VBL_COUNT        ; compteur M3a (inline : émis AVANT que la chaîne ne soit peuplée)
+        moveq   #INTB_VERTB,d0      ; marche la chaîne VERTB (sched_server + timer_vblank + vbl_tail)
+        bsr     intr_dispatch_number
+        move.w  #INTF_VERTB,INTREQ  ; ack VERTB APRÈS la marche (cohérent int2/int6)
+        clr.b   VBL_INBODY          ; M7e : fin de la fenêtre avant dispatch (disjointe de VBL_INSURG)
+        bra     intr_isr_defer      ; tail commun : recharge a6 + dispatch différé si AttnResched (S=0)
+
+; sched_server : serveur VERTB de l'ORDONNANCEUR (quantum round-robin). Pose EB_ATTNRESCHED quand une
+; préemption est due — SCHED_ON && !Forbid && !Disable && TaskReady non vide (mêmes gardes que l'ancien
+; vbl_handler : le round-robin RESPECTE Forbid/Disable). Faithful : le vrai exec a un serveur VBlank qui
+; pose la flag AttnResched ; intr_isr_defer la consomme à la sortie d'IRQ (comme un réveil INT6).
+; Convention serveur : a6=SysBase (re-fourni par le walker), a1=IS_DATA (libre), préserve d2-d7/a2-a4 ;
+; retourne Z-SET (d0=0) = « continue la chaîne » (serveur call-all).
+sched_server:
         tst.b   SCHED_ON
-        beq.s   .vbl_exit           ; ordonnanceur non armé -> juste compter (M3a)
-        tst.b   EB_TDNEST(a6)       ; Forbid() actif ? (préemption INVOLONTAIRE -> on respecte)
-        bge.s   .vbl_exit
+        beq.s   .sched_cont         ; ordonnanceur non armé -> ne rien demander (M3a/count-only)
+        tst.b   EB_TDNEST(a6)       ; Forbid() actif ? (préemption INVOLONTAIRE respectée)
+        bge.s   .sched_cont
         tst.b   EB_IDNEST(a6)       ; Disable() actif ?
-        bge.s   .vbl_exit
-        move.l  EB_TASKREADY(a6),a0 ; TaskReady non vide ? M7e : cette lecture de tête tourne à IPL3 et
-        tst.l   (a0)                ; peut être préemptée par un AddTail d'INT6 (Signal) -> torn read POSSIBLE.
-                                    ; BÉNIN : au pire une DEMANDE de switch spurious/manquée ; le vrai RemHead
-                                    ; (dispatch) est Disable-protégé. Même classe que le WaitPort check-tête différé.
-        beq.s   .vbl_exit
-        moveq   #1,d7               ; préemption round-robin demandée
-        moveq   #1,d6               ; -> dispatch requeue la sortante dans TaskReady
-.vbl_exit:
-        clr.b   VBL_INBODY          ; M7e : fin du CORPS avant dispatch -> jamais en chevauchement avec
-        bra     intr_exit           ; VBL_INSURG (posé plus tard dans dispatch) : les 2 fenêtres sont disjointes
+        bge.s   .sched_cont
+        move.l  EB_TASKREADY(a6),a1 ; TaskReady non vide ? (a1 = IS_DATA, libre) M7e : torn read possible
+        tst.l   (a1)                ; vs un AddTail d'INT6 -> bénin (demande spurious/manquée ; RemHead protégé)
+        beq.s   .sched_cont
+        move.w  #1,EB_ATTNRESCHED(a6) ; demande un reschedule différé (round-robin ; consommé intr_isr_defer)
+.sched_cont:
+                ifne    M7F_SCHED_STOPS_CHAIN
+        moveq   #1,d0               ; RED2 M7f : Z-CLAIR -> le walker ARRÊTE la chaîne après sched
+                else
+        moveq   #0,d0               ; Z-SET -> continue la chaîne (call-all : timer_vblank + vbl_tail après)
+                endc
+        rts
 
 ; intr_exit : ÉPILOGUE commun (vbl/int2/int6/trap). d7 = switch demandé. On switche SEULEMENT à la
 ; FRONTIÈRE USER : bit S de la SR SAUVÉE (FRAME_SR) == 0. S=1 (IRQ imbriquée / noyau) => contexte user
@@ -298,7 +319,8 @@ trap1_handler:
 ; user S=0) au lieu d'attendre un Permit/Enable ou le prochain VBlank. Sans ça, une tâche réveillée par
 ; IRQ dépend du hasard de phase (quelle tâche tourne + appelle Permit) -> réveil erratique (résonance).
 ; Signal ne RESCHEDULE jamais lui-même depuis l'interruption (pas de ré-entrance) : il POSE le flag,
-; l'épilogue le consomme. VERTB garde son handler dédié (vbl_handler) : VERTB->chaîne = M7f.
+; l'épilogue le consomme. M7f : VERTB passe AUSSI par ce dispatcher (int3_dispatch -> chaîne VERTB :
+; sched_server + timer_vblank + vbl_tail) -> modèle UNIFORME PORTS(int2)/VERTB(int3)/EXTER(int6).
 
 ; int2_dispatch ($68, niveau 2) : seule source de niveau 2 = PORTS -> dispatche IntVects[INTB_PORTS].
 int2_dispatch:
@@ -312,12 +334,14 @@ int2_dispatch:
 int6_dispatch:
         movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 6) — niveau max utilisé, jamais préempté
         move.l  ($4).w,a6
-        move.l  ($4).w,a6
         moveq   #INTB_EXTER,d0
         bsr     intr_dispatch_number
         move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6
-; intr_isr_defer : tail commun int2/int6 — flag de dispatch différé (EB_ATTNRESCHED).
+; intr_isr_defer : tail commun int2/int3/int6 — flag de dispatch différé (EB_ATTNRESCHED).
 intr_isr_defer:
+        move.l  ($4).w,a6           ; M7f : RECHARGE a6=SysBase — le walker ne restaure PAS a6 après le
+                                    ; dernier serveur, qui a pu le clobber (convention préserve d2-d7/a2-a4
+                                    ; seulement). Sans ça, les lectures EB_* ci-dessous liraient du garbage.
         moveq   #1,d6               ; round-robin : requeue la tâche interrompue si on dispatche
         moveq   #0,d7
         tst.w   EB_ATTNRESCHED(a6)  ; un serveur a-t-il réveillé une tâche prioritaire ?

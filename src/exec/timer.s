@@ -2,7 +2,8 @@
 ; 2e vrai module résident, 1er DEVICE. ROMTag RTF_AUTOINIT (pri 50) -> chemin AUTOINIT de
 ; InitResident (MakeLibrary + Enqueue DeviceList). Quirk V34 : la data table pose LN_TYPE +
 ; LIB_VERSION et l'init func pose LN_NAME="timer.device" + initialise l'unité VBLANK + enregistre
-; le service VBlank (hook VBL_SVC appelé par le handler VBlank chaque tick).
+; le service VBlank (M7f : timer_vblank_service est un SERVEUR de la chaîne VERTB via AddIntServer,
+; dispatché par int3_dispatch — plus l'ancien hook VBL_SVC).
 ;
 ; M6a — UNITÉ VBLANK FONCTIONNELLE (sans CIA) :
 ;   BeginIO(TR_ADDREQUEST) : convertit la timeval en TICKS (secs*50 + micro/20000), stocke le
@@ -128,13 +129,23 @@ timer_initfunc:
         lea     TIMER_MICROQ(a1),a1  ; M7a : NEWLIST file d'unité MICROHZ (CIA-B/INT6)
         jsr     newlist
         move.l  (sp)+,d0             ; base
-        move.l  #timer_vblank_service,VBL_SVC   ; enregistre le hook VBlank (unité VBLANK)
-        move.l  d0,VBL_SVCDATA       ; data = base device (lue aussi par timer_micro_service)
-        rts                          ; d0 = base inchangé
+        move.l  d0,VBL_SVCDATA       ; data = base device (lue aussi par timer_micro_service, INT6)
+        ; M7f : timer_vblank devient un SERVEUR de la chaîne VERTB (remplace l'ancien hook VBL_SVC).
+        ; struct Interrupt en RAM basse réservée (AddIntServer l'Enqueue). pri 0 : après sched_server(20).
+        move.b  #0,TIMER_VBL_INT+LN_PRI
+        move.l  d0,TIMER_VBL_INT+IS_DATA        ; IS_DATA = base device -> passée en a1 au service
+        move.l  #timer_vblank_service,TIMER_VBL_INT+IS_CODE
+        move.l  d0,-(sp)             ; sauve la base (AddIntServer clobbe d0/d1/a0/a1)
+        moveq   #INTB_VERTB,d0       ; AddIntServer(VERTB, &TIMER_VBL_INT)
+        lea     TIMER_VBL_INT,a1
+        jsr     LVO_ADDINTSERVER(a6)
+        move.l  (sp)+,d0             ; d0 = base (valeur de retour inchangée)
+        rts
 
-; timer_vblank_service(a1 = base device, a6 = SysBase) : appelé par le handler VBlank chaque tick.
-; TRANSPARENT (sauve tout ce qu'il clobbe, préserve a6). Décrémente chaque requête de la file ;
-; à 0 -> Remove + reply (bas-niveau, sans Permit -> pas de reschedule mid-interruption).
+; timer_vblank_service(a1 = IS_DATA = base device, a6 = SysBase) : M7f — SERVEUR de la chaîne VERTB
+; (plus un hook). Décrémente chaque requête de la file VBLANK ; à 0 -> Remove + reply (bas-niveau, sans
+; Permit). Convention serveur : préserve d2-d7/a2-a4 (movem d0-d2/a0-a4 couvre d2/a2-a4 ; ne touche PAS
+; d3-d7/a5) et retourne Z-SET (d0=0) = « continue la chaîne » (call-all).
 timer_vblank_service:
         movem.l d0-d2/a0-a4,-(sp)
         move.l  a1,a2                ; a2 = base device
@@ -154,6 +165,7 @@ timer_vblank_service:
         bra.s   .svc_loop
 .svc_done:
         movem.l (sp)+,d0-d2/a0-a4
+        moveq   #0,d0               ; M7f : Z-SET -> « continue la chaîne » (serveur call-all VERTB)
         rts
 
 ; timer_reply(a1 = requête/message, a6 = SysBase) : répond SANS PutMsg/ReplyMsg (pas de Permit).

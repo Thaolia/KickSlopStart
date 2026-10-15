@@ -63,6 +63,7 @@ TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeu
 FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
 FRAME_SIZE   EQU 66           ; taille totale de la frame relocalisée (GPR+SR+PC)
 INTB_PORTS   EQU 3            ; numéro d'interruption Paula PORTS (INT2) — cf. hardware/intbits.i
+INTB_VERTB   EQU 5            ; M7f : numéro VERTB (INT3) — INTF_VERTB=$0020=bit5
 INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
 ; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
 IS_DATA      EQU 14           ; APTR passé en a1 au serveur
@@ -93,8 +94,8 @@ WP_SPIN      EQU $00000514    ; démo M3f : itérations de task_S (dispatchée S
 WP_STAT      EQU $00000518    ; démo M3f : b0 = marqueur « M3F LIVE » déjà émis
 RES_LASTPRI  EQU $0000051C    ; démo M4 : dernière RT_PRI initée (vérif ordre décroissant)
 RES_COUNT    EQU $00000520    ; démo M4 : nombre de résidents démo initialisés
-VBL_SVC      EQU $00000524    ; M6a : routine de service VBlank (0 = aucune ; appelée chaque tick)
-VBL_SVCDATA  EQU $00000528    ; M6a : donnée passée au service en a1 (base du timer.device)
+; $00000524 : ex-VBL_SVC (hook VBlank M6a) — RETIRÉ en M7f (timer_vblank est un serveur de chaîne VERTB)
+VBL_SVCDATA  EQU $00000528    ; M6a : base du timer.device (passée en a1 au serveur ; lue par timer_micro_service)
 CIAA_PTR     EQU $0000052C    ; M6b : base ciaa.resource (0 tant que non créé)
 CIAB_PTR     EQU $00000530    ; M6b : base ciab.resource
 CIA_FIRED    EQU $00000534    ; M6b : compteur — un vecteur ICR a été servi (preuve)
@@ -148,6 +149,21 @@ M7E_PROLOGUE_IPL7  EQU 0
 ; par le seul chemin YIELD (trap1->dispatch->switch). Prouve que la voie yield->dispatch tient sans
 ; préemption après M7e. Défaut 0 (build préemptif complet M3f/M7a/M7c/M7d/M7e).
 M7E_COOP           EQU 0
+; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
+; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
+SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
+TIMER_VBL_INT  EQU $00000596 ; struct Interrupt du serveur VBLANK timer.device, pri 0
+VBL_TAIL_INT   EQU $000005AC ; struct Interrupt du serveur de preuve (queue de chaîne), pri -10
+VERTB_CHAIN_N  EQU $000005C2 ; long : incréments du serveur de queue -> prouve que le walker parcourt
+                             ; TOUTE la chaîne VERTB (donc >= 2 serveurs avant lui)
+M7F_STAT       EQU $000005C6 ; UBYTE : b0 = marqueur « M7F VERTB OK » déjà émis
+VERTB_CHAIN_THRESH EQU 50     ; parcours complets de chaîne requis pour « M7F VERTB OK »
+; Gate A/B M7f (reproductibilité ; défaut 0 = GREEN) :
+; M7F_SCHED_STOPS_CHAIN=1 (RED) : sched_server retourne Z-CLAIR (« géré, stop ») au lieu de Z-set ->
+;   le walker ARRÊTE la chaîne après sched -> timer_vblank + serveur de queue jamais appelés ->
+;   VERTB_CHAIN_N figé + unité VBLANK morte (M6A échoue tôt). Prouve la sémantique « call-all » (Z-set)
+;   de la chaîne = la marche dispatche BIEN les serveurs suivants en séquence.
+M7F_SCHED_STOPS_CHAIN EQU 0
 
 ; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
 LN_SUCC      EQU 0

@@ -188,9 +188,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   propagation (course observée en RED1) ; le choix IPL-vs-INTENA est imposé par le privilège (le switch tourne
   superviseur ; Signal/ports/Wait sont user-mode et ne peuvent pas monter l'IPL -> gardent INTENA-Disable + son
   caveat write-delay, toléré/bénin). Prouvé GREEN 3/3 + RED1 3/3 (clash) + RED2 2/2 (M7E absent) + coopératif.
-  Reste (**M7f+**) : VERTB en chaîne de serveurs, décodage INTREQR multi-source, conversion `timer_reply`→`ReplyMsg`,
-  `RemTask`, quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des démos (le handoff de boot reste
-  la démo M3f/M7a/M7c/M7d/M7e codée en dur d'ici là).
+  **M7f** livre **VERTB EN CHAÎNE DE SERVEURS** : le `vbl_handler` dédié devient `int3_dispatch` générique
+  (miroir int2/int6) -> `intr_dispatch_number(VERTB)` -> chaîne de serveurs par priorité (modèle UNIFORME
+  PORTS/VERTB/EXTER). Le quantum round-robin devient `sched_server` (pose AttnResched, gardes Forbid/Disable
+  conservées) ; `timer.device` passe de son hook `VBL_SVC` à `AddIntServer(VERTB, timer_vblank)`. Risque clé :
+  le walker ne restaure pas `a6` après le dernier serveur -> `intr_isr_defer` recharge `a6`. Prouvé « M7F VERTB
+  OK » (`VERTB_CHAIN_N` = parcours complet sched/timer/tail en ordre) + scheduler/timer OK via la chaîne, GREEN
+  3/3 + RED (sched stoppe la chaîne en Z-clair -> « M6A FAILED » timer VBLANK mort) + coopératif. Découverte :
+  retirer le seul quantum VBlank ne stoppe pas la préemption (INT6 co-pilote le round-robin via le dispatch différé).
+  Reste (**M7g+**) : décodage INTREQR multi-source (INT3 reste mono-source VERTB en M7f), conversion
+  `timer_reply`→`ReplyMsg`, `RemTask`, quantum/priorité réelle, calibration µs MICROHZ, retrait éventuel des
+  démos (le handoff de boot reste la démo M3f/M7a/M7c/M7d/M7e/M7f codée en dur d'ici là).
 - **M3 — resources & timing** : `cia.resource`, `timer.device`, `misc`/`potgo`/`disk.resource`,
   `keymap.resource` ; plomberie d'interruptions (VBlank déjà en place depuis le bringup exec).
 - **M4 — graphics.library + affichage minimal** : Copper/Blitter/View suffisants pour afficher.

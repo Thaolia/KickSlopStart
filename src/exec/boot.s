@@ -416,6 +416,16 @@ coldstart:                        ; $FC00D2
         clr.l   VBL_CLASH
         clr.l   VBL_PREEMPT_COUNT    ; M7e : baseline des préemptions du corps de vbl (INT6 armé juste après)
         clr.b   M7E_STAT             ; M7e : marqueur « M7E IPL OK » pas encore émis
+        clr.l   VERTB_CHAIN_N        ; M7f : baseline des parcours de chaîne VERTB
+        clr.b   M7F_STAT             ; M7f : marqueur « M7F VERTB OK » pas encore émis
+        ; M7f : enregistre vbl_tail_server (serveur de PREUVE, pri -10) en QUEUE de la chaîne VERTB
+        ; (après sched_server pri 20 + timer_vblank pri 0). Son compteur VERTB_CHAIN_N prouve le parcours complet.
+        move.b  #-10,VBL_TAIL_INT+LN_PRI
+        clr.l   VBL_TAIL_INT+IS_DATA
+        move.l  #vbl_tail_server,VBL_TAIL_INT+IS_CODE
+        moveq   #INTB_VERTB,d0
+        lea     VBL_TAIL_INT,a1
+        jsr     LVO_ADDINTSERVER(a6)
         lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
@@ -1193,14 +1203,25 @@ task_timer:
         bne     m7a_fail
         addq.l  #1,WP_TCONS          ; un réveil MICROHZ réussi de plus
         btst    #0,M7E_STAT          ; M7e : marqueur IPL-par-niveau déjà émis ? (testé à chaque réveil,
-        bne.s   .tt_m7a              ; indépendamment du flag M7a -> survit à l'émission de « M7A TIMER OK »)
+        bne.s   .tt_m7e_done         ; indépendamment du flag M7a ; -> tombe sur le check M7F (ne PAS sauter)
         move.l  VBL_PREEMPT_COUNT,d0 ; INT6(6) a-t-il déjà préempté le CORPS de vbl(3) ? (fidélité IPL natif)
-        beq.s   .tt_m7a              ; pas encore observé -> pas prouvé
+        beq.s   .tt_m7e_done         ; pas encore observé -> pas prouvé (mais checker quand même M7F)
         tst.l   VBL_CLASH            ; ET la chirurgie du switch est-elle restée atomique ? (doit == 0)
-        bne.s   .tt_m7a              ; clash -> le check en tête de boucle prendra m7a_fail au prochain tour
+        bne.s   .tt_m7e_done         ; clash -> le check en tête de boucle prendra m7a_fail au prochain tour
         bset    #0,M7E_STAT          ; émet « M7E IPL OK » une seule fois
         jsr     LVO_FORBID(a6)
         lea     msg_m7e_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_m7e_done:
+        btst    #0,M7F_STAT          ; M7f : marqueur chaîne VERTB déjà émis ?
+        bne.s   .tt_m7a
+        move.l  VERTB_CHAIN_N,d0     ; le walker a-t-il parcouru la chaîne VERTB jusqu'à la QUEUE (vbl_tail) ?
+        cmp.l   #VERTB_CHAIN_THRESH,d0  ; (prouve sched_server pri 20 + timer_vblank pri 0 AVANT vbl_tail pri -10)
+        bcs.s   .tt_m7a              ; pas encore assez de parcours complets de chaîne
+        bset    #0,M7F_STAT          ; émet « M7F VERTB OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_m7f_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7a:
@@ -1428,6 +1449,14 @@ int2_srv2:
         moveq   #0,d0                ; Z set -> continue la chaîne
         rts
 
+; vbl_tail_server (M7f) : serveur VERTB de plus basse priorité (-10). Incrémente VERTB_CHAIN_N ->
+; prouve que le walker parcourt TOUTE la chaîne VERTB (sched_server pri 20 + timer_vblank pri 0 ont donc
+; tourné AVANT lui). a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0+mémoire).
+vbl_tail_server:
+        addq.l  #1,VERTB_CHAIN_N
+        moveq   #0,d0                ; Z set -> continue (dernier noeud : fin de chaîne de toute façon)
+        rts
+
 ; ciab_server_int (M7b) : vecteur EXCLUSIF EXTER installé par SetIntVector -> ciab_server. Non chaîné
 ; (SetIntVector copie IS_DATA/IS_CODE) -> peut rester en ROM. IS_DATA inutilisé (ciab_server lit CIAB_PTR).
         EVEN
@@ -1577,6 +1606,8 @@ msg_m7d_fail:
         dc.b    "M7D FAILED: shared-port list corrupted (task GetMsg vs IRQ PutMsg race)",13,10,0
 msg_m7e_ok:
         dc.b    "M7E IPL OK (native-IPL: INT6 preempts vbl body; scheduler surgery IPL7-atomic, no overlap)",13,10,0
+msg_m7f_ok:
+        dc.b    "M7F VERTB OK (VERTB is a server chain: sched+timer+tail walked in pri order via int3_dispatch)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
