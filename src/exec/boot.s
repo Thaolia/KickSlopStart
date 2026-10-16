@@ -442,6 +442,65 @@ m6d_ds_pop:
         lea     12(sp),sp            ; libère le buffer (échec DateStamp)
 m6d_done:
 
+        ; --- M6t : vérifier trackdisk.device (squelette résident + validation d'unité) ---
+        ; FindName(DeviceList) + version 34 + NT_DEVICE + Open(unité 0) OK (OpenCnt==1, io_Error==0, io_Unit ==
+        ; base+LIB_SIZE = aire EXACTE de l'unité 0, io_Device==base) + Open(unité 4) ÉCHOUE (io_Error!=0,
+        ; io_Device==0, OpenCnt inchangé). RED TD_NO_UNITCHECK : unité 4 ouvre à tort -> M6T absent. a6=ExecBase.
+        lea     EB_DEVICELIST(a6),a0
+        lea     trackdisk_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     m6t_done
+        move.l  d0,a2                ; a2 = TDBase
+        cmp.w   #34,LIB_VERSION(a2)
+        bne     m6t_done
+        cmp.b   #NT_DEVICE,LN_TYPE(a2)
+        bne     m6t_done
+        lea     -32(sp),sp           ; IORequest sur la pile (IO_SIZE=32), mis à 0
+        move.l  sp,a3                ; a3 = ioreq
+        moveq   #(32/4)-1,d0
+        move.l  a3,a0
+.m6t_clr:
+        clr.l   (a0)+
+        dbf     d0,.m6t_clr
+        move.l  a6,-(sp)             ; Open(unité 0) via le vecteur -6 (a6=dev, a1=ioreq, d0=unit, d1=flags)
+        move.l  a2,a6
+        move.l  a3,a1
+        moveq   #0,d0
+        moveq   #0,d1
+        jsr     -6(a6)               ; trackdisk Open (LVO -6, littéral : boot.s n'inclut qu'exec.i)
+        move.l  (sp)+,a6
+        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt==1 ?
+        bne.s   m6t_pop
+        tst.b   IO_ERROR(a3)         ; io_Error==0 ?
+        bne.s   m6t_pop
+        move.l  IO_DEVICE(a3),d0     ; io_Device==TDBase ?
+        cmp.l   a2,d0
+        bne.s   m6t_pop
+        lea     LIB_SIZE(a2),a0      ; attendu io_Unit = base + TDU_UNIT0 (TDU_UNIT0 = LIB_SIZE = 34)
+        cmp.l   IO_UNIT(a3),a0       ; io_Unit == base+TDU_UNIT0 ? (prouve l'offset de base + io_Unit posé ; le stride
+        bne.s   m6t_pop              ;   par-unité est placeholder, re-prouvé quand les unités seront réelles en B2)
+        move.l  a6,-(sp)             ; Open(unité 4) -> doit ÉCHOUER
+        move.l  a2,a6
+        move.l  a3,a1
+        moveq   #4,d0
+        moveq   #0,d1
+        jsr     -6(a6)
+        move.l  (sp)+,a6
+        tst.b   IO_ERROR(a3)         ; io_Error != 0 (échec) ?
+        beq.s   m6t_pop              ; RED TD_NO_UNITCHECK : io_Error==0 -> ouvre à tort -> M6T absent
+        move.l  IO_DEVICE(a3),d0     ; io_Device == 0 (échec OpenDevice) ?
+        bne.s   m6t_pop
+        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt toujours 1 (unité 4 n'a pas compté) ?
+        bne.s   m6t_pop
+        lea     32(sp),sp            ; libère l'IORequest (succès)
+        lea     msg_m6t_ok(pc),a0
+        bsr     ser_puts             ; « M6T TRACKDISK OK »
+        bra.s   m6t_done
+m6t_pop:
+        lea     32(sp),sp            ; libère l'IORequest (échec)
+m6t_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -1996,6 +2055,8 @@ msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
+msg_m6t_ok:
+        dc.b    "M6T TRACKDISK OK (trackdisk.device AUTOINIT -> DeviceList; Open unit 0 OK + io_Unit=base+34; Open unit 4 -> OpenDevice fail: io_Error, io_Device=0)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:
@@ -2012,6 +2073,8 @@ ciab_test_name:
         dc.b    "ciab.resource",0
 timer_test_name:
         dc.b    "timer.device",0
+trackdisk_test_name:
+        dc.b    "trackdisk.device",0
 graphics_test_name:
         dc.b    "graphics.library",0
 intuition_test_name:

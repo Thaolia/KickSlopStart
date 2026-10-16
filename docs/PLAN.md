@@ -312,6 +312,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     DOUBLE : série M6R + VISUEL (couleurs ~19017 écran
     chaton). RED `STRAP_FAKE_BOOTDEV` (strap croit booter → d0≠0) → ni M6R ni M6S ni écran (couleurs basses),
     marqueurs boot M3F..M7 intacts → isole la décision strap. COOP non-rég. PROCHAIN : incrément B trackdisk.device.
+  - **B / M6t — trackdisk.device squelette + validation d'unité (FAIT).** B trop gros pour un incrément → re-décomposé :
+    B1 squelette (CETTE tranche) → B2 contrôle drive CIA + lecture piste MFM brute (Paula DMA, sync `$4489`) → B3
+    décodage MFM (piste → 11 secteurs × 512 o + checksums) → B4 `CMD_READ`. `src/exec/trackdisk.s` : 2e device, ROMTag
+    AUTOINIT NT_DEVICE pri 20 → DeviceList ; `Open(unité)` valide le numéro (DF0-3 → io_Unit = base+TDU_UNIT0+unit*8,
+    io_Device = base, OpenCnt++ ; unité ≥ 4 → échec OpenDevice io_Error/io_Device=0). `BeginIO` stub `IOERR_NOCMD`
+    (garde-fou advisor : devra ReplyMsg dès qu'un consommateur réel l'appellera, sinon DoIO hang). Unités =
+    placeholders (→ Unit+MsgPort en B2). Garde-fous advisor : assertion `io_Unit == base+TDU_UNIT0` (adresse EXACTE,
+    pas « ≠0 » non-load-bearing) ; ne pas figer le layout d'unité ; ne pas toucher le strap (FindName load-bearing en
+    C). Preuve série **M6T** : FindName(DeviceList) + version + NT_DEVICE + Open(0) OK + Open(4) échoue. RED
+    `TD_NO_UNITCHECK` (unité 4 ouvre à tort) → M6T absent. COOP non-rég. ⚠️ B1 n'est PAS encore la lecture (= B2-B4) ;
+    heads-up B2 : CIA-B partagé avec l'unité MICROHZ M7a. PROCHAIN : B2 (checkpoint user — le plus dur).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
