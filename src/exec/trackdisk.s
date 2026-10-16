@@ -93,12 +93,84 @@ trackdisk_null:
         moveq   #0,d0
         rts
 
-; BeginIO(device a6, iorequest a1) : STUB B1 — aucune commande trackdisk implémentée (CMD_READ/TD_MOTOR... = B2+).
-; ⚠️ COMPAT-AVANT : un vrai BeginIO sur une requête NON quick DOIT faire ReplyMsg, sinon un appelant qui fait DoIO
-; attend pour toujours. Ici PERSONNE ne l'appelle (inerte) ; dès qu'un consommateur réel existera (strap CMD_READ,
-; incrément C), CE STUB DEVRA ReplyMsg après avoir posé io_Error.
+; BeginIO(device a6, iorequest a1) : B4 — traite CMD_READ (lecture de secteurs logiques via td_read_track0 +
+; td_decode_track, copie vers io_Data). Autres commandes -> IOERR_NOCMD. ReplyMsg si la requête n'est PAS quick
+; (garde-fou B1 tenu : sinon DoIO attend pour toujours). Limité à la piste 0 (offset+length <= 11*512) tant que
+; le step/seek (B2b) n'existe pas. a6 = device base en entrée/sortie.
 trackdisk_beginio:
-        move.b  #IOERR_NOCMD,IO_ERROR(a1)
+        movem.l d2-d5/a2-a4,-(sp)
+        move.l  a1,a2                ; a2 = ioreq
+        clr.l   IO_ACTUAL(a2)
+                ifeq    TD_READ_NOCMD
+        cmp.w   #CMD_READ,IO_COMMAND(a2)
+        beq.s   .td_read
+                endc                 ; RED TD_READ_NOCMD : saute la reconnaissance -> IOERR_NOCMD
+        move.b  #IOERR_NOCMD,IO_ERROR(a2)
+        bra     .td_reply
+.td_read:
+        move.l  a6,a4                ; a4 = device base (sauvé ; a6 -> SysBase pour les appels exec)
+        move.l  ($4).w,a6
+        bsr     td_read_track0       ; d0 = rawbuf chip | 0
+        move.l  d0,d3
+        bne.s   .td_haveraw
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)   ; pas de disque / lecture KO
+        bra     .td_restore
+.td_haveraw:
+        move.l  #512*11,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,d4                ; d4 = sectorbuf
+        bne.s   .td_havebuf
+        move.l  d3,a1                ; plus de RAM -> libère rawbuf
+        move.l  #$1900*2,d0
+        jsr     LVO_FREEMEM(a6)
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        bra     .td_restore
+.td_havebuf:
+        move.l  d3,a0
+        move.l  d4,a1
+        bsr     td_decode_track      ; décode la piste (secteurs rangés par n°)
+        move.l  IO_OFFSET(a2),d5     ; offset octet
+        move.l  IO_LENGTH(a2),d2     ; longueur octet
+        move.l  d5,d0
+        add.l   d2,d0
+        cmp.l   #512*11,d0           ; offset+length dans la piste 0 ?
+        bhi     .td_badrange         ; hors piste 0 (seek = B2b) -> erreur
+        move.l  d4,a0
+        add.l   d5,a0                ; src = sectorbuf + offset
+        move.l  IO_DATA(a2),a1       ; dest = io_Data
+        move.l  d2,d0
+        lsr.l   #2,d0                ; octets -> longs (length multiple de 512)
+        beq.s   .td_copied
+        subq.l  #1,d0
+.td_copy:
+        move.l  (a0)+,(a1)+
+        dbra    d0,.td_copy
+.td_copied:
+        move.l  d2,IO_ACTUAL(a2)     ; octets transférés
+        clr.b   IO_ERROR(a2)
+        bra     .td_freebufs
+.td_badrange:
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+.td_freebufs:
+        move.l  d4,a1                ; libère sectorbuf
+        move.l  #512*11,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d3,a1                ; libère rawbuf
+        move.l  #$1900*2,d0
+        jsr     LVO_FREEMEM(a6)
+.td_restore:
+        move.l  a4,a6                ; restaure a6 = device base
+.td_reply:
+        btst    #0,IO_FLAGS(a2)      ; IOF_QUICK (bit 0) ?
+        bne.s   .td_bdone
+        move.l  a6,-(sp)             ; non quick -> ReplyMsg(ioreq)
+        move.l  ($4).w,a6
+        move.l  a2,a1
+        jsr     LVO_REPLYMSG(a6)
+        move.l  (sp)+,a6
+.td_bdone:
+        movem.l (sp)+,d2-d5/a2-a4
         rts
 trackdisk_abortio:
         moveq   #0,d0

@@ -56,3 +56,15 @@ MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632 : buffer des secteurs décodés 
 ; -> « M6V TRACKDISK DECODE OK » absent (les checksums, calculés sur le MFM BRUT, passent quand même -> isole
 ; spécifiquement la correction du décodage des données). Défaut 0.
 MFM_BAD_DECODE EQU 0
+
+; --- CMD_READ (B4) : BeginIO device ---
+CMD_READ      EQU 2            ; commande standard de lecture (io.i : INVALID=0, RESET=1, READ=2)
+IOF_QUICK     EQU $01          ; io_Flags bit 0 : I/O synchrone (pas de ReplyMsg)
+IO_ACTUAL     EQU 32           ; IOStdReq : octets réellement transférés
+IO_LENGTH     EQU 36           ; octets demandés
+IO_DATA       EQU 40           ; APTR buffer destination
+IO_OFFSET     EQU 44           ; offset octet sur le disque (secteur logique * 512)
+TDERR_NotSpec EQU 20           ; erreur trackdisk générique (trackdisk.i : TDERR_NotSpecified)
+; TD_READ_NOCMD=1 (RED B4) : BeginIO ne reconnaît PAS CMD_READ (retombe sur IOERR_NOCMD) -> io_Data reste à 0 ->
+; secteur lu != « DOS\0 » -> « M6W TRACKDISK CMD_READ OK » absent. Isole le handler de commande. Défaut 0.
+TD_READ_NOCMD EQU 0

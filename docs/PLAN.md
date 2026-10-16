@@ -350,6 +350,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     SECTORS reste 11 mais secteur 0 != DOS) → M6V absent : isole la correction du décodage data. Contrôle sans disque
     → M6V absent. COOP non-rég. Fixes build : branches `.s`→word (routine grande), `lsl.l #9` interdit (max 8) →
     `lsl #8`+`add`. PROCHAIN : B4 (CMD_READ) puis B2b (step/side).
+  - **B4 / M6w — CMD_READ device (FAIT).** `trackdisk_beginio` (le stub B1 `IOERR_NOCMD`) devient un vrai handler :
+    CMD_READ -> td_read_track0 + td_decode_track + copie io_Length octets depuis sectorbuf+io_Offset vers io_Data,
+    pose io_Actual/io_Error ; autres commandes -> IOERR_NOCMD. **ReplyMsg si NON quick** écrit (dette B1) MAIS ⚠️ seul
+    le chemin QUICK est prouvé par M6W ; le non-quick sera exercé par un vrai DoIO (strap/dos) en C.
+    Limité à la piste 0 (offset+length <= 11*512) tant que B2b n'existe pas. Constantes disk.i : CMD_READ=2, IOF_QUICK,
+    IO_ACTUAL/LENGTH/DATA/OFFSET (IOStdReq 32/36/40/44). Preuve série **M6W** : IOStdReq (CMD_READ, offset 0, length
+    512, IOF_QUICK) -> BeginIO via vecteur -30 -> io_Error==0 & io_Actual==512 & secteur lu == « DOS\0 ». RED
+    `TD_READ_NOCMD` (BeginIO ne reconnaît pas CMD_READ) -> M6W absent. ⚠️ M6W fait une LECTURE -> gaté sur « disque
+    présent » (flag d4 posé par la lecture fusionnée M6U/M6V) pour éviter un 2e timeout sans disque (sinon M7A décalé) :
+    M6W ne tourne qu'avec disque (lecture rapide). Fix build : branches .s->word (routine BeginIO grande). PROCHAIN : B2b.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

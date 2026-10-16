@@ -507,9 +507,11 @@ m6t_done:
         ; td_read_track0 lit la piste brute ; M6U compte les mots de synchro $4489 (impossibles en MFM normal -> 0
         ; faux positif), M6V décode les secteurs (combine odd/even) + vérifie les checksums en-tête ET data. UNE
         ; seule lecture pour les deux (un 2e timeout sans disque décalerait la preuve M7A). Sans disque -> rien, sans FAILED.
+        moveq   #0,d4                ; d4 = flag « disque présent » (gate M6W : évite un 2e timeout sans disque)
         bsr     td_read_track0
         tst.l   d0
         beq     m6uv_done
+        moveq   #1,d4                ; disque présent
         move.l  d0,a4                ; a4 = rawbuf chip (piste brute ; préservé jusqu'au FreeMem)
         ; M6U : compter les mots de synchro
         move.l  a4,a0
@@ -564,6 +566,50 @@ m6t_done:
         move.l  #$1900*2,d0
         jsr     LVO_FREEMEM(a6)
 m6uv_done:
+
+        ; --- M6w : trackdisk CMD_READ (B4) — SEULEMENT si disque présent (d4=1 ; évite un 2e timeout sans disque) ---
+        ; Monte un IOStdReq (CMD_READ, offset 0, length 512, IOF_QUICK), appelle BeginIO via le vecteur -30, vérifie
+        ; io_Error==0 + io_Actual==512 + secteur lu == « DOS\0 ». RED TD_READ_NOCMD -> io_Data reste vide -> absent.
+        tst.l   d4
+        beq     m6w_done
+        lea     EB_DEVICELIST(a6),a0
+        lea     trackdisk_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     m6w_done
+        move.l  d0,a2                ; a2 = trackdisk base
+        move.l  #48+512,d0           ; IOStdReq (48) + databuf (512)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   m6w_done
+        move.l  d0,a3                ; a3 = ioreq
+        move.l  a2,IO_DEVICE(a3)     ; io_Device = trackdisk
+        move.w  #2,IO_COMMAND(a3)    ; CMD_READ (= 2)
+        move.l  #512,36(a3)          ; IO_LENGTH (offset 36) = 512
+        lea     48(a3),a0
+        move.l  a0,40(a3)            ; IO_DATA (offset 40) = databuf (ioreq+48)
+        clr.l   44(a3)               ; IO_OFFSET (offset 44) = 0 (secteur logique 0)
+        move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK -> BeginIO ne fait pas ReplyMsg
+        move.l  a6,-(sp)             ; BeginIO via le vecteur -30 (a6 = trackdisk, a1 = ioreq)
+        move.l  a2,a6
+        move.l  a3,a1
+        jsr     -30(a6)
+        move.l  (sp)+,a6
+        tst.b   IO_ERROR(a3)         ; io_Error == 0 ?
+        bne.s   .m6w_free
+        cmp.l   #512,32(a3)          ; IO_ACTUAL (offset 32) == 512 octets transférés ?
+        bne.s   .m6w_free
+        lea     48(a3),a0            ; databuf
+        cmp.l   #$444F5300,(a0)      ; secteur 0 lu == « DOS\0 » (bootblock) ?
+        bne.s   .m6w_free
+        lea     msg_m6w_ok(pc),a0
+        bsr     ser_puts             ; « M6W TRACKDISK CMD_READ OK »
+.m6w_free:
+        move.l  a3,a1
+        move.l  #48+512,d0
+        jsr     LVO_FREEMEM(a6)
+m6w_done:
 
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
@@ -2159,6 +2205,8 @@ msg_m6v_sect:
         dc.b    "M6V SECTORS=",0
 msg_m6v_ok:
         dc.b    "M6V TRACKDISK DECODE OK (MFM decoded: 11 sectors, header+data checksums valid, sector 0 = DOS bootblock)",13,10,0
+msg_m6w_ok:
+        dc.b    "M6W TRACKDISK CMD_READ OK (BeginIO CMD_READ: 512 bytes read from DF0 sector 0 = DOS bootblock)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:
