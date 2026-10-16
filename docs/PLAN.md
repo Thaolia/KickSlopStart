@@ -360,6 +360,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     `TD_READ_NOCMD` (BeginIO ne reconnaît pas CMD_READ) -> M6W absent. ⚠️ M6W fait une LECTURE -> gaté sur « disque
     présent » (flag d4 posé par la lecture fusionnée M6U/M6V) pour éviter un 2e timeout sans disque (sinon M7A décalé) :
     M6W ne tourne qu'avec disque (lecture rapide). Fix build : branches .s->word (routine BeginIO grande). PROCHAIN : B2b.
+  - **B2b / M6x — step/seek + side-select (FAIT ; trackdisk COMPLET).** Les polarités DSKDIREC/DSKSIDE différées depuis
+    B2 (non vérifiables de mémoire) — guessées puis validées à l'émulateur DU 1ER COUP. `td_read_track0` -> `td_read_track(d0=
+    n° de piste)` : recalibration cylindre 0 (step OUT, direc bit1=1, jusqu'à DSKTRACK0, cap 85) + step IN (direc bit1=0)
+    jusqu'au cylindre=piste/2 + side-select (DSKSIDE bit2 : face 0 = $77, face 1 = $73) ; pulse DSKSTEP (front 1->0) +
+    settle busy-loop ; td_read_track0 = wrapper piste 0 (M6U/M6V/BeginIO inchangés : track 0 -> 0 pas -> pas de régression).
+    td_decode_track renvoie d1 = n° de piste décodé (oracle). Preuve série **M6X** + diagnostic « M6X TRACK=XXXX » : lire la
+    piste 2 -> TRACK=0002 + 11 secteurs avec track==2 (valide le seek ET le side : un mauvais side lirait la piste 3). RED
+    SEEK_NOSTEP (pas de step-in -> reste piste 0 -> TRACK=0000) -> M6X absent. Gaté sur disque présent (d4) -> M7A intact.
+    trackdisk.device COMPLET : lit n'importe quel secteur logique de n'importe quelle piste de DF0. PROCHAIN : C (strap
+    lit+exécute le bootblock, jalon « ça boote ! »). Reste pour C : wiring CMD_READ multi-piste + validation bootblock.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

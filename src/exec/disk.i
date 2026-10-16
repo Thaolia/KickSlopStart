@@ -68,3 +68,7 @@ TDERR_NotSpec EQU 20           ; erreur trackdisk générique (trackdisk.i : TDE
 ; TD_READ_NOCMD=1 (RED B4) : BeginIO ne reconnaît PAS CMD_READ (retombe sur IOERR_NOCMD) -> io_Data reste à 0 ->
 ; secteur lu != « DOS\0 » -> « M6W TRACKDISK CMD_READ OK » absent. Isole le handler de commande. Défaut 0.
 TD_READ_NOCMD EQU 0
+
+; SEEK_NOSTEP=1 (RED B2b) : td_read_track saute le step-in -> la tête reste à la piste 0 -> lire la piste 2 renvoie
+; en fait la piste 0 -> le n° de piste décodé != 2 -> « M6X TRACKDISK SEEK OK » absent. Isole le seek. Défaut 0.
+SEEK_NOSTEP EQU 0

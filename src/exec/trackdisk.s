@@ -15,6 +15,7 @@
                 include "disk.i"
 
                 xdef    td_read_track0
+                xdef    td_read_track
                 xdef    td_decode_track
 
 ; --- constantes trackdisk (devices/trackdisk.i) + erreurs exec io (io.i) ---
@@ -190,9 +191,14 @@ trackdisk_initfunc:
 ; tête = piste 0 au reset) ; poll INTREQR DSKBLK avec timeout (jamais de hang). PAS de step ni side-select
 ; (polarités non vérifiées -> incrément ultérieur ; le compte de syncs se fiche de quelle piste est lue).
 ; N'écrit QUE CIA-B PRB/DDRB (ports) -> les timers CIA-B (unité MICROHZ/M7a) ne sont pas touchés.
+; B2b : td_read_track(d0 = n° de piste) seek d'abord vers la piste ; td_read_track0 = lit la piste 0 (wrapper pour
+; les appelants existants : M6U/M6V, BeginIO). piste = cylindre*2 + face.
 td_read_track0:
-        movem.l d2/d3/a2,-(sp)
-        move.l  #TD_RAWBYTES,d0        ; buffer piste brute en chip RAM (le DMA ne lit QUE la chip)
+        moveq   #0,d0                 ; piste 0
+td_read_track:
+        movem.l d2/d3/d6/a2,-(sp)
+        move.l  d0,d6                 ; d6 = piste cible
+        move.l  #TD_RAWBYTES,d0       ; buffer piste brute en chip RAM (le DMA ne lit QUE la chip)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
@@ -205,9 +211,45 @@ td_read_track0:
         move.l  #$00040000,d2         ; spin-up : busy-loop + poll DSKRDY (timeout, poursuit)
 .rd_spin:
         btst    #DSKB_RDY,CIAA_PRA_HW ; DSKRDY = 0 quand prêt
-        beq.s   .rd_dma
+        beq.s   .rd_seek
         subq.l  #1,d2
         bne.s   .rd_spin
+.rd_seek:
+        ; --- seek vers la piste d6 : recalibration cylindre 0 (step OUT) + step IN + side-select ---
+        ; Piste 0 -> on SAUTE la recalibration (sinon, SANS disque, si DSKTRACK0 ne s'asserte pas, elle busy-looperait
+        ; 85 fois et décalerait la preuve M7A). ⚠️ DETTE : suppose la tête à la piste 0 — vrai au boot et dans la
+        ; séquence de preuve (aucune lecture piste-0 ne suit un seek), mais FAUX en général : si une lecture piste-0
+        ; suivait un seek, on lirait la mauvaise piste SILENCIEUSEMENT. Vrai fix (pour C) : tracker le cylindre courant
+        ; en RAM et stepper le delta. Polarités DSKDIREC/DSKSIDE validées à l'émulateur par M6X (piste 2 -> track==2).
+        tst.w   d6
+        beq.s   .rd_side             ; piste 0 -> pas de recalibration (face 0 par défaut)
+        move.w  #85,d2               ; cap de recalibration (évite de steper à l'infini si polarité fausse)
+.rd_recal:
+        btst    #DSKB_TRACK0,CIAA_PRA_HW   ; tête sur la piste 0 ?
+        beq.s   .rd_seekin
+        move.b  #$77,CIAB_PRB        ; direc OUT (bit1=1), step=1
+        move.b  #$76,CIAB_PRB        ; step=0 : le front descendant déclenche un pas
+        move.b  #$77,CIAB_PRB        ; step=1
+        bsr     .rd_settle
+        dbra    d2,.rd_recal
+.rd_seekin:
+                ifeq    SEEK_NOSTEP
+        move.w  d6,d2
+        lsr.w   #1,d2               ; cylindre cible = piste / 2
+        beq.s   .rd_side
+.rd_stepin:
+        move.b  #$75,CIAB_PRB       ; direc IN (bit1=0), step=1
+        move.b  #$74,CIAB_PRB       ; step=0 : pas vers l'intérieur
+        move.b  #$75,CIAB_PRB       ; step=1
+        bsr     .rd_settle
+        subq.w  #1,d2
+        bne.s   .rd_stepin
+                endc                ; RED SEEK_NOSTEP : pas de step-in -> reste à la piste 0
+.rd_side:
+        move.b  #$77,CIAB_PRB       ; face 0 (DSKSIDE=1, bit2=1 ; piste paire)
+        btst    #0,d6
+        beq.s   .rd_dma
+        move.b  #$73,CIAB_PRB       ; face 1 (DSKSIDE=0, bit2=0 ; piste impaire)
 .rd_dma:
         move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
         move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
@@ -237,13 +279,19 @@ td_read_track0:
         bsr.s   .rd_stop
         move.l  a2,d0                ; d0 = buffer (succès)
 .rd_ret:
-        movem.l (sp)+,d2/d3/a2
+        movem.l (sp)+,d2/d3/d6/a2
         rts
 .rd_stop:
         move.w  #$4000,DSKLEN        ; disable DMA disque
         move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
         move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
         move.b  #PRB_OFF,CIAB_PRB    ; moteur off + déselect
+        rts
+.rd_settle:
+        move.l  #$00008000,d3        ; délai de stabilisation du pas (settle ; préserve d2 = compteur de pas)
+.rd_sloop:
+        subq.l  #1,d3
+        bne.s   .rd_sloop
         rts
 
 ; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs décodés+vérifiés (checksums en-tête ET data OK).
@@ -256,6 +304,7 @@ td_decode_track:
         move.l  a1,a4                ; a4 = base sectorbuf
         lea     (TD_RAWBYTES-1200)(a0),a2  ; a2 = fin de scan (laisse 1200 o pour le dernier secteur)
         moveq   #0,d7                ; d7 = compteur de secteurs valides
+        moveq   #0,d5                ; d5 = n° de piste du dernier secteur valide (renvoyé en d1 -> oracle seek B2b)
 .sc_loop:
         cmp.l   a2,a0
         bcc     .sc_done             ; p >= fin -> terminé
@@ -273,6 +322,7 @@ td_decode_track:
         move.l  4(a3),d1
         and.l   #MFM_MASK,d1
         or.l    d1,d0                ; d0 = info décodé
+        move.l  d0,d4                ; d4 = info (survit aux boucles checksum ; sert au n° de piste si valide)
         move.l  d0,d1
         rol.l   #8,d1
         cmp.b   #$FF,d1              ; format == $FF ?
@@ -339,13 +389,17 @@ td_decode_track:
         dbra    d1,.sc_data
         move.l  (sp)+,a0            ; restaure le pointeur de scan
         addq.l  #1,d7              ; secteur valide
+        move.l  d4,d5              ; n° de piste de ce secteur = (info>>16)&$FF
+        swap    d5
+        and.l   #$FF,d5            ; d5 = track (oracle du seek : doit valoir la piste demandée)
         lea     1080(a3),a0        ; saute ce secteur (header 56 + data 1024) -> scan vers le sync suivant
         bra     .sc_loop
 .sc_adv:
         addq.l  #2,a0
         bra     .sc_loop
 .sc_done:
-        move.l  d7,d0
+        move.l  d7,d0              ; d0 = nombre de secteurs valides
+        move.l  d5,d1              ; d1 = n° de piste (du dernier secteur valide) -> oracle du seek B2b
         movem.l (sp)+,d2-d7/a2-a5
         rts
 trackdisk_end:

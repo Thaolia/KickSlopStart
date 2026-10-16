@@ -27,6 +27,7 @@
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
+                xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -610,6 +611,50 @@ m6uv_done:
         move.l  #48+512,d0
         jsr     LVO_FREEMEM(a6)
 m6w_done:
+
+        ; --- M6x : trackdisk SEEK + side-select (B2b) — lire la PISTE 2 (cylindre 1, face 0) ---
+        ; td_read_track(2) seek vers cylindre 1 + face 0 ; td_decode_track renvoie d1 = n° de piste des secteurs.
+        ; Succès = 11 secteurs valides ET track == 2 (prouve le seek ET le side : un mauvais side lirait la piste 3).
+        ; Gaté sur d4 (disque présent) : pas de 2e timeout sans disque. RED SEEK_NOSTEP -> reste piste 0 -> absent.
+        tst.l   d4
+        beq     m6x_done
+        moveq   #2,d0
+        bsr     td_read_track        ; d0 = rawbuf (piste 2) | 0
+        tst.l   d0
+        beq     m6x_done
+        move.l  d0,a4                ; a4 = rawbuf
+        move.l  #512*11,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .m6x_freeraw
+        move.l  d0,a3                ; a3 = sectorbuf
+        move.l  a4,a0
+        move.l  a3,a1
+        bsr     td_decode_track      ; d0 = nb secteurs valides, d1 = n° de piste lu
+        move.l  d1,d5                ; d5 = piste lue (sauvée avant que d1 soit clobbé)
+        move.l  d0,d2                ; d2 = count (sauvé : ser_puthex clobbe d0-d3)
+        lea     msg_m6x_track(pc),a0
+        bsr     ser_puts             ; « M6X TRACK= » (diagnostic : piste réellement atteinte par le seek)
+        move.w  d5,d0
+        bsr     ser_puthex
+        lea     msg_crlf(pc),a0
+        bsr     ser_puts
+        cmp.l   #11,d2               ; 11 secteurs valides ?
+        bne.s   .m6x_free
+        cmp.l   #2,d5                ; piste lue == 2 (seek + side corrects) ?
+        bne.s   .m6x_free
+        lea     msg_m6x_ok(pc),a0
+        bsr     ser_puts             ; « M6X TRACKDISK SEEK OK »
+.m6x_free:
+        move.l  a3,a1
+        move.l  #512*11,d0
+        jsr     LVO_FREEMEM(a6)
+.m6x_freeraw:
+        move.l  a4,a1
+        move.l  #$1900*2,d0
+        jsr     LVO_FREEMEM(a6)
+m6x_done:
 
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
@@ -2207,6 +2252,10 @@ msg_m6v_ok:
         dc.b    "M6V TRACKDISK DECODE OK (MFM decoded: 11 sectors, header+data checksums valid, sector 0 = DOS bootblock)",13,10,0
 msg_m6w_ok:
         dc.b    "M6W TRACKDISK CMD_READ OK (BeginIO CMD_READ: 512 bytes read from DF0 sector 0 = DOS bootblock)",13,10,0
+msg_m6x_track:
+        dc.b    "M6X TRACK=",0
+msg_m6x_ok:
+        dc.b    "M6X TRACKDISK SEEK OK (step/seek + side-select: read track 2, decoded sectors report track==2)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:
