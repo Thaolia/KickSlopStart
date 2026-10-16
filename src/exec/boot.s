@@ -383,6 +383,64 @@ m5i_done:
         bsr     ser_puts             ; « M5O OPENLIB OK »
 m5o_done:
 
+        ; --- M6 : vérifier dos.library (squelette résident + convention BPTR + DateStamp) ---
+        ; Miroir des preuves M4c1/M5 sur EB_LIBLIST, étendu de deux vérifs : (a) round-trip BPTR — dl_Root (APTR) ->
+        ; RootNode, rn_Info (BPTR) <<2 doit égaler &DosInfo (lu via le scaffold DL_DISHADOW, en compute-then-compare,
+        ; SANS déréférencer le pointeur décodé : en RED l'échec est un mismatch d'adresse, jamais un bus error) ;
+        ; (b) DateStamp(-192) remplit (0,0,0) « horloge non réglée » et renvoie le pointeur. Skip-on-fail : toute
+        ; vérif ratée (ou RED M6D_BAD_BPTR) -> « M6D DOS LIB OK » absent, sans FAILED. a6 = ExecBase.
+        lea     EB_LIBLIST(a6),a0
+        lea     dos_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     m6d_done
+        move.l  d0,a2                ; a2 = DosBase
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        bne     m6d_done
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ?
+        bne     m6d_done
+        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a2,a6
+        jsr     LVO_OPEN(a6)
+        move.l  (sp)+,a6
+        cmp.w   #1,LIB_OPENCNT(a2)
+        bne     m6d_done
+        ; (a) round-trip BPTR — AUCUN déréférencement du pointeur décodé
+        move.l  LIB_SIZE(a2),a3      ; a3 = dl_Root (DL_ROOT = LIB_SIZE = 34) = RootNode (APTR)
+        move.l  a3,d0
+        beq     m6d_done             ; RootNode alloué ?
+        move.l  70(a2),d2            ; d2 = DL_DISHADOW (offset 70) = &DosInfo (APTR brut, connu)
+        beq     m6d_done             ; DosInfo alloué ?
+        move.l  24(a3),d0            ; d0 = rn_Info (RN_INFO = 24) ; lecture sûre (a3 = RootNode valide, GREEN et RED)
+        lsl.l   #2,d0                ; BPTR -> APTR
+        cmp.l   d2,d0                ; == &DosInfo ?  RED M6D_BAD_BPTR : rn_Info brut -> 4*&DosInfo != shadow
+        bne     m6d_done
+        ; (b) DateStamp -> (0,0,0) + renvoie le pointeur. Buffer de 12 octets sur la pile, pré-sali.
+        lea     -12(sp),sp           ; buf = sp (DS_SIZEOF = 12)
+        move.l  #$5A5A5A5A,(sp)      ; salit les 3 longs : « mis à 0 » devient discriminant
+        move.l  #$5A5A5A5A,4(sp)
+        move.l  #$5A5A5A5A,8(sp)
+        move.l  sp,d1                ; d1 = &date (convention dos : arg en d1)
+        move.l  a6,-(sp)             ; swap a6 -> DosBase (décale sp de 4 ; d1 = adresse absolue, inchangée)
+        move.l  a2,a6
+        jsr     -192(a6)             ; LVO_DATESTAMP = -192 ; d0 = &date, date = {0,0,0}
+        move.l  (sp)+,a6             ; restore a6 = ExecBase (sp revient au buffer)
+        cmp.l   sp,d0                ; renvoie bien le pointeur passé ?
+        bne.s   m6d_ds_pop
+        tst.l   (sp)                 ; ds_Days == 0 ?
+        bne.s   m6d_ds_pop
+        tst.l   4(sp)               ; ds_Minute == 0 ?
+        bne.s   m6d_ds_pop
+        tst.l   8(sp)               ; ds_Tick == 0 ?
+        bne.s   m6d_ds_pop
+        lea     12(sp),sp            ; libère le buffer (succès)
+        lea     msg_m6d_ok(pc),a0
+        bsr     ser_puts             ; « M6D DOS LIB OK »
+        bra.s   m6d_done
+m6d_ds_pop:
+        lea     12(sp),sp            ; libère le buffer (échec DateStamp)
+m6d_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -1933,6 +1991,8 @@ msg_m5i_ok:
         dc.b    "M5I INTUI LIB OK (intuition.library AUTOINIT -> LibList; ViewAddress -294 returns &ib_ViewLord)",13,10,0
 msg_m5o_ok:
         dc.b    "M5O OPENLIB OK (OpenLibrary by name + version gate + Open vector; too-high ver -> 0; OldOpenLibrary; CloseLibrary)",13,10,0
+msg_m6d_ok:
+        dc.b    "M6D DOS LIB OK (dos.library AUTOINIT -> LibList; rn_Info BPTR round-trips &DosInfo; DateStamp -192 -> 0,0,0 unset + returns ptr)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
@@ -1945,6 +2005,8 @@ intuition_test_name:
         dc.b    "intuition.library",0
 noexist_test_name:
         dc.b    "inexistante.library",0
+dos_test_name:
+        dc.b    "dos.library",0
 msg_crlf:
         dc.b    13,10,0
         EVEN

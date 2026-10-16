@@ -272,6 +272,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   un portage **BCPL/TRIPOS** : il faut répliquer les quirks d'ABI (**BPTR** word-based, global vector,
   convention d'appel BCPL, **DOS packets**, segments `LoadSeg`). Approche retenue = **réécriture ANSI C
   en conservant `BPTR`/packets** (ce qu'ont fait AROS `rom/dos/` — à lire — et Commodore en 2.0).
+  - **M6d — squelette dos.library résident + convention BPTR + DateStamp (FAIT, 1er incrément M6).** Cadrage
+    (décision user + advisor, 2026-10-16) : playbook M4c1/M5I. ROMTag AUTOINIT pri 0 → `MakeLibrary` crée `DosBase`
+    dans `LibList`. initfunc alloue `RootNode` et `DosInfo` **séparément via AllocMem** (⚠️ garde-fou advisor :
+    `BPTR=addr>>2` n'est réversible que sur adresses long-alignées — NE PAS embarquer les structs dans `DosBase`
+    comme ViewLord en M5I, sinon le round-trip perd des bits), câble `dl_Root` (APTR) et `rn_Info` (BPTR=&DosInfo>>2).
+    `DateStamp`(-192, arg en d1) remplit (0,0,0) « horloge non réglée » (fidèle AutoDoc V34 : dl_TimeReq/battclock
+    différés) et renvoie le pointeur. Déviation clean-room assumée : init C-style au lieu du glue BCPL d'origine.
+    Preuve série **M6D** : FindName+version 34+NT_LIBRARY+Open→OpenCnt==1 + round-trip BPTR `rn_Info<<2==&DosInfo`
+    (compute-then-compare via scaffold `DL_DISHADOW`, **sans déréférencer** le pointeur décodé → RED échoue en
+    mismatch, pas en bus error) + DateStamp→(0,0,0)+ptr. RED `M6D_BAD_BPTR` (rn_Info en APTR brut) → M6D absent,
+    tous les autres marqueurs présents (isolation chirurgicale). FRAC 0.299635 identique GREEN/RED/COOP. Rebuild
+    byte-identique, checksum `0x929C804F`. Différé : packets/LoadSeg/handlers, Open/Read/Lock, strap/trackdisk/FS,
+    écran insert-disk (image `assets/boot_screen/cat_amiga_kickslopstart.jpg` choisie, affichée à l'incrément strap
+    quand le vrai déclencheur « aucun volume bootable » existera).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

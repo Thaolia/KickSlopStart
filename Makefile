@@ -26,6 +26,10 @@ GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
 INT_OBJ   := $(BUILD)/intuition_lib.o
+# --- piste dos (M6+) : objets reliés APRÈS intuition ---
+DOS_DIR   := src/dos
+DOS_INC   := $(DOS_DIR)/dos.i
+DOS_OBJ   := $(BUILD)/dos_lib.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -53,9 +57,13 @@ $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
 $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(INT_DIR) -o $@ $<
 
+# Module(s) dos (src/dos) : include exec.i (ABI/LVO/AllocMem) + dos.i (layout DosLibrary/RootNode/DosInfo, BPTR).
+$(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)
+	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
-$(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(LDSCRIPT)
-	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ)
+$(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
+	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ)
 $(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
 	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
 
