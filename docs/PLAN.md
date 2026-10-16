@@ -300,6 +300,18 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     multi-bitplane sans casser le boot. COOP non-rég. Checksum GREEN `0x92E3ACA7`. ROM ~177 Ko libres. ⚠️ Affiché
     INCONDITIONNELLEMENT au handoff : le vrai déclencheur « aucun volume bootable » reste à l'incrément strap.
     Lancer soi-même : `tests/run_fsuae.sh` (FS-UAE fenêtré, WSLg).
+  - **M6r — strap (romboot) + vrai déclencheur insert-disk, 3e incrément M6 (FAIT, 1er maillon boot disquette).**
+    Cadrage advisor : (1) le « ça boote ! » visera un bootblock CUSTOM après A+B+C (sans dos) ; (2) le déclencheur
+    insert-disk doit venir de l'ÉCHEC d'accès à DF0:, pas d'une liste vide (sinon synthétique comme M5/M6d) ;
+    (3) OFS+dos+CLI = UN sous-système packets, re-décomposer plus tard ; (4) ne pas sur-spécifier B→F ; (5) `AddBootNode`
+    est V36/2.0+, PAS 1.3 → mécanisme interne clean-room libre, comportement 1.3-compatible. `src/exec/strap.s` :
+    `strap_boot(a6)` = ÉCHAFAUDAGE, renvoie toujours 0 = aucun volume bootable (FindName(trackdisk) + CMD_READ +
+    validation/exécution du bootblock = incréments B/C). boot.s : si 0 → l'affichage de l'écran de boot (insert-disk)
+    est ROUTÉ par cette décision + marqueur M6R, sinon (jamais en GREEN) saute l'écran. ⚠️ Le VRAI déclencheur
+    (écran parce que la lecture de DF0: échoue) vient avec B/C ; A ne fait que router l'écran par le strap. Preuve
+    DOUBLE : série M6R + VISUEL (couleurs ~19017 écran
+    chaton). RED `STRAP_FAKE_BOOTDEV` (strap croit booter → d0≠0) → ni M6R ni M6S ni écran (couleurs basses),
+    marqueurs boot M3F..M7 intacts → isole la décision strap. COOP non-rég. PROCHAIN : incrément B trackdisk.device.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

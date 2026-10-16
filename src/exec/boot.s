@@ -24,6 +24,7 @@
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
+                xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -628,9 +629,19 @@ m6d_done:
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) généré par l'ABI graphics.library
-        lea     msg_m6s_ok(pc),a0    ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est VISUEL —
-        bsr     ser_puts             ; RMSE capture vs référence — pas ce marqueur : gfx_display_init tourne pareil)
+        ; --- M6r : strap (romboot) — l'affichage de l'écran de boot est ROUTÉ par la décision du strap ---
+        ; strap_boot -> d0=0 = aucun volume bootable (A : toujours ; le vrai déclencheur « DF0: ne lit pas » = B/C)
+        ; -> on affiche l'ÉCRAN DE BOOT (insert-disk). RED STRAP_FAKE_BOOTDEV : d0!=0 -> strap croit booter -> NI
+        ; insert-disk NI écran (comportement faux) -> M6R/M6S absents + écran vide. Prouve le ROUTAGE boot<->strap.
+        bsr     strap_boot
+        tst.l   d0
+        bne.s   .m6r_booted
+        lea     msg_m6r_ok(pc),a0
+        bsr     ser_puts             ; « M6R STRAP OK (no bootable volume -> insert-disk) »
+        bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
+        lea     msg_m6s_ok(pc),a0
+        bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
+.m6r_booted:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
                 endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
@@ -1985,6 +1996,8 @@ msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
+msg_m6r_ok:
+        dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:
         dc.b    "M6S BOOTSCR OK (boot screen 320x256x5 = 32-color image displayed via graphics.library ABI; visual proof = RMSE vs reference)",13,10,0
 msg_m5i_ok:
