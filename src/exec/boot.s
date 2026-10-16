@@ -628,9 +628,9 @@ m6d_done:
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        bsr     gfx_display_init     ; M4c2 : affichage GÉNÉRÉ par l'ABI graphics.library (MakeVPort/MrgCop/LoadView)
-        lea     msg_m4c2(pc),a0      ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est
-        bsr     ser_puts             ; l'écran via FRAC, pas ce marqueur : gfx_display_init tourne pareil)
+        bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) généré par l'ABI graphics.library
+        lea     msg_m6s_ok(pc),a0    ; liveness SEULEMENT (sort en GREEN ET RED ; le discriminant est VISUEL —
+        bsr     ser_puts             ; RMSE capture vs référence — pas ce marqueur : gfx_display_init tourne pareil)
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
                 endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
@@ -1985,8 +1985,8 @@ msg_m7j_ok:
         dc.b    "M7J REMTASK OK (task ended -> RemTask self freed its stack+TCB, AvailMem recovered)",13,10,0
 msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
-msg_m4c2:
-        dc.b    "M4C2 INIT (display generated via graphics.library ABI: MakeVPort/MrgCop/LoadView; proven on screen)",13,10,0
+msg_m6s_ok:
+        dc.b    "M6S BOOTSCR OK (boot screen 320x256x5 = 32-color image displayed via graphics.library ABI; visual proof = RMSE vs reference)",13,10,0
 msg_m5i_ok:
         dc.b    "M5I INTUI LIB OK (intuition.library AUTOINIT -> LibList; ViewAddress -294 returns &ib_ViewLord)",13,10,0
 msg_m5o_ok:

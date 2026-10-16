@@ -21,7 +21,8 @@ EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
-GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o
+# bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
@@ -52,6 +53,8 @@ $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
+# bootscreen_data.s fait un incbin de bootscreen.raw : relier la dépendance pour rebuild sur régénération.
+$(BUILD)/bootscreen_data.o: $(GFX_DIR)/bootscreen.raw
 
 # Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase).
 $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)

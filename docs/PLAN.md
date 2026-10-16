@@ -286,6 +286,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     byte-identique, checksum `0x929C804F`. Différé : packets/LoadSeg/handlers, Open/Read/Lock, strap/trackdisk/FS,
     écran insert-disk (image `assets/boot_screen/cat_amiga_kickslopstart.jpg` choisie, affichée à l'incrément strap
     quand le vrai déclencheur « aucun volume bootable » existera).
+  - **M6s — écran de boot (image chaton « KickSlopStart »), 2e incrément M6 (FAIT).** Demande user : afficher son
+    image au démarrage. Pipeline `src/graphics/mk_bootscreen.py` (Pillow, auto-vérifié : JPEG → 352×272 → quantize
+    32 couleurs → 5 bitplanes planar, plan 0 = LSB, bit 7 = pixel gauche, palette RGB444 ; reconstruit + asserte) →
+    `bootscreen.raw` + `bootscreen_data.s` (palette OCS + incbin) + PNG de référence. ABI : `gfx_MakeVPort` rendu
+    GÉNÉRIQUE (N pointeurs de plan + `cm_Count` couleurs + BPL2MOD) ; `gfx_display_init` fait évoluer les rayures
+    M4b → l'image (5 plans/32 couleurs copiés ROM→chip), affichée via MakeVPort/MrgCop/LoadView au handoff. Overscan
+    352×272 (DIW/DDF élargis) pour remplir l'écran bord-à-bord (demande user : « n'occupe pas tout l'écran »). Preuve
+    (garde-fous advisor : valider le discriminant sur valeurs réelles GREEN+RED avant seuil ; planariseur auto-vérif ;
+    référence depuis les vraies données ROM) : marqueur série **M6S** = liveness ; discriminant VISUEL = nombre de
+    couleurs uniques en zone active (GREEN ~19017 vs RED one-plane ~151, séparation ~126×, seuil 1000). RED
+    `BOOTSCR_ONE_PLANE` (depth=1 → 2 couleurs → image détruite) ; marqueurs série TOUS présents → isole le rendu
+    multi-bitplane sans casser le boot. COOP non-rég. Checksum GREEN `0x92E3ACA7`. ROM ~177 Ko libres. ⚠️ Affiché
+    INCONDITIONNELLEMENT au handoff : le vrai déclencheur « aucun volume bootable » reste à l'incrément strap.
+    Lancer soi-même : `tests/run_fsuae.sh` (FS-UAE fenêtré, WSLg).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

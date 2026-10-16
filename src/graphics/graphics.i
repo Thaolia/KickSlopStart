@@ -11,10 +11,11 @@ DDFSTRT  EQU CUSTOM+$092      ; display data fetch start
 DDFSTOP  EQU CUSTOM+$094      ; display data fetch stop
 BPLCON0  EQU CUSTOM+$100      ; bitplane control ; bits 14-12 = BPU (nb de bitplanes) ; 0 = fond COLOR00 seul
 BPLCON1  EQU CUSTOM+$102      ; scroll fin (0 = pas de décalage)
-BPL1MOD  EQU CUSTOM+$108      ; modulo bitplane impair (0 = bitplane contigu)
-BPL1PTH  EQU CUSTOM+$0E0      ; pointeur bitplane 1, mot HAUT (patché au runtime dans la copper list)
+BPL1MOD  EQU CUSTOM+$108      ; modulo bitplane impair (plans 1,3,5 ; 0 = plans contigus)
+BPL2MOD  EQU CUSTOM+$10A      ; modulo bitplane pair (plans 2,4,6 ; 0 = plans contigus)
+BPL1PTH  EQU CUSTOM+$0E0      ; pointeur bitplane 1, mot HAUT ; BPLxPTH = BPL1PTH + (x-1)*4 (généré au runtime)
 BPL1PTL  EQU CUSTOM+$0E2      ; pointeur bitplane 1, mot BAS
-COLOR01  EQU CUSTOM+$182      ; couleur du pixel « 1 » (1er bitplane)
+COLOR01  EQU CUSTOM+$182      ; couleur du pixel « 1 » (1er bitplane) ; COLORxx = COLOR00 + xx*2
 
 ; --- bits DMACON (dmabits.i) ---
 DMAF_SETCLR EQU $8000         ; 1 = positionne les bits à 1 ; 0 = les met à 0
@@ -22,21 +23,36 @@ DMAF_COPPER EQU $0080         ; canal DMA Copper
 DMAF_RASTER EQU $0100         ; canal DMA bitplane (fetch des données de pixels depuis la chip RAM)
 DMAF_MASTER EQU $0200         ; DMA maître (requis pour que TOUT canal DMA fonctionne)
 
-; --- valeurs d'init display standard (HRM) : fenêtre lores ~320x256 PAL, 0 bitplane en M4a ---
-GFX_DIWSTRT  EQU $2C81        ; vstart=$2C (44), hstart=$81 (129)
-GFX_DIWSTOP  EQU $2CC1        ; PAL : vstop field $2C -> 300 (V8 = complément de V7), hstop $C1 -> 449
-GFX_DDFSTRT  EQU $0038        ; lores
-GFX_DDFSTOP  EQU $00D0        ; lores
+; --- valeurs d'init display (HRM) : OVERSCAN lores 352x272 PAL (remplit l'écran bord-à-bord pour l'écran de boot) ---
+; hstart=$71 (113), hstop=113+352=465=$1D1 (H8 forcé 1) ; vstart=$24 (36), vstop=36+272=308=$134 (V8=~V7).
+GFX_DIWSTRT  EQU $2471        ; vstart=$24 (36), hstart=$71 (113)
+GFX_DIWSTOP  EQU $34D1        ; vstop field $34 -> $134=308 (V8=~V7) ; hstop $D1 -> $1D1=465
+GFX_DDFSTRT  EQU $0030        ; lores : (hstart-17)/2 = (113-17)/2 = 48
+GFX_DDFSTOP  EQU $00D8        ; lores : DDFSTRT + 8*(words-1) = $30 + 8*21 = $D8 (22 mots = 352 px)
 ; Couleur de preuve : vert 12-bit $0F0. JAMAIS écrite par le CPU (cf. C_RED/BLUE/CYAN/WHITE/FAIL) -> sa
 ; présence à l'écran ⟺ l'affichage chipset la produit. En M4b elle est portée par COLOR01 (pixel bitplane).
 GFX_PROOF_COLOR EQU $0F0       ; COLOR01 : pixel « 1 » (preuve M4b)
 GFX_BG_COLOR    EQU $00F       ; COLOR00 : fond bleu (M4b) ; le vert vient alors UNIQUEMENT du bitplane
 
-; --- M4b : bitplane 320x256x1 plan (lores, fenêtre display standard) ---
+; --- bitplane 320x256 (lores, fenêtre display standard) ; 1 plan en M4b/stripes, 5 plans pour l'écran de boot ---
 GFX_BPL_BYTES   EQU 40         ; octets par ligne (320 px / 8)
 GFX_BPL_ROWS    EQU 256
-GFX_BPL_SIZE    EQU GFX_BPL_BYTES*GFX_BPL_ROWS   ; 10240 o
-GFX_STRIPE_WORD EQU $FF00      ; motif de remplissage : 8 px « 1 » (vert) + 8 px « 0 » (bleu) -> rayures verticales
+GFX_BPL_SIZE    EQU GFX_BPL_BYTES*GFX_BPL_ROWS   ; 10240 o (un plan)
+GFX_STRIPE_WORD EQU $FF00      ; motif de remplissage M4b : 8 px « 1 » + 8 px « 0 » -> rayures (historique)
+
+; --- Écran de boot (image chaton « KickSlopStart », générée par src/graphics/mk_bootscreen.py) ---
+; Résolution overscan 352x272 (doit coïncider avec WIDTH/HEIGHT de mk_bootscreen.py et avec GFX_DIWSTRT/DDF* ci-dessus).
+GFX_BOOT_DEPTH    EQU 5                         ; 5 bitplanes = 32 couleurs (OCS lores)
+GFX_BOOT_NCOLORS  EQU 32
+GFX_BOOT_W        EQU 352                       ; largeur display (overscan)
+GFX_BOOT_H        EQU 272                       ; hauteur display (overscan)
+GFX_BOOT_BYTES    EQU GFX_BOOT_W/8              ; 44 octets par ligne
+GFX_BOOT_PLANE_SZ EQU GFX_BOOT_BYTES*GFX_BOOT_H ; 11968 o (un plan)
+GFX_BOOT_PLANES_SZ EQU GFX_BOOT_PLANE_SZ*GFX_BOOT_DEPTH  ; 59840 o (5 plans contigus en chip RAM)
+; BOOTSCR_ONE_PLANE=1 (RED) : gfx_display_init pose bm_Depth=1 (plan 0 seul) -> l'ABI n'émet qu'un pointeur de
+; plan + 2 couleurs -> l'image chaton est détruite (2 couleurs, structure fausse) -> la preuve VISUELLE (RMSE
+; capture vs référence) échoue, sans toucher le boot (marqueurs série intacts). Isole le rendu multi-bitplane.
+BOOTSCR_ONE_PLANE EQU 0
 
 ; M4c2 : l'affichage est désormais GÉNÉRÉ par l'ABI graphics.library (MakeVPort/MrgCop/LoadView) depuis les
 ; structures View/ViewPort/BitMap/ColorMap — le template copper codé en dur de M4a/M4b est SUPPRIMÉ. La preuve
@@ -84,7 +100,10 @@ gb_LOFlist   EQU LIB_SIZE+4   ; APTR : copper list courante
 GFXBASE_SIZE EQU LIB_SIZE+8
 
 ; --- Tailles des listes copper générées (chip RAM) ---
-GFX_FRAG_WORDS EQU 22         ; fragment MakeVPort : 11 MOVEs (DIW/DDF/BPLCON0/1/BPL1MOD/BPL1PT/COLOR00-01)
+; MakeVPort est générique : DIW/DDF (4) + BPLCON0/1/BPL1MOD/BPL2MOD (4) + depth*2 (pointeurs de plan) + Count
+; (couleurs) MOVEs. Dimensionné pour le pire cas de ce projet (6 plans + 32 couleurs = 52 MOVEs = 104 mots) ;
+; MrgCop copie le fragment entier -> le reliquat mis à 0 (MEMF_CLEAR) = MOVEs inertes vers BLTDDAT, inoffensifs.
+GFX_FRAG_WORDS EQU 104
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
 GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+4   ; + WAIT final ajouté par MrgCop
 
@@ -95,7 +114,7 @@ GFX_O_RASINFO  EQU 60         ; après ViewPort (vp_SIZEOF 40)
 GFX_O_BITMAP   EQU 72         ; après RasInfo (ri_SIZEOF 12)
 GFX_O_COLORMAP EQU 112        ; après BitMap (bm_SIZEOF 40)
 GFX_O_COLORTAB EQU 120        ; après ColorMap (8)
-GFX_STRUCT_SIZE EQU 124
+GFX_STRUCT_SIZE EQU GFX_O_COLORTAB+GFX_BOOT_NCOLORS*2  ; 184 : ColorTable de 32 couleurs (écran de boot)
 
 ; M4c1 : graphics.library comme module résident. M4C1_WRONG_TYPE=1 (RED) : RT_TYPE du ROMTag = NT_DEVICE au
 ; lieu de NT_LIBRARY -> le chemin AUTOINIT route GfxBase vers DeviceList (pas LibList) -> FindName(LibList)

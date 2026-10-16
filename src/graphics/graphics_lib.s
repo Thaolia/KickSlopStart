@@ -80,17 +80,19 @@ graphics_initfunc:
 ; AllocMem demande a6 = SysBase -> on sauve/restaure a6 et on prend SysBase via ($4).w.
 
 ; gfx_MakeVPort(view a0, vp a1) : génère le fragment copper de la ViewPort dans vp_DspIns (chip RAM).
-; BPLCON0 depuis BitMap.Depth, BPL1PT depuis BitMap.Planes[0] (via RasInfo), COLOR00/01 depuis ColorMap.
-; view inutilisé (1 seule ViewPort ce milestone). Pas de WAIT final (ajouté par MrgCop).
+; GÉNÉRIQUE (comme la vraie graphics.library) : BPLCON0 depuis BitMap.Depth ; UN pointeur BPLxPT par plan
+; (BitMap.Planes[0..depth-1], BPLxPT = BPL1PT + (x-1)*4) ; cm_Count couleurs COLOR00..COLOR(Count-1) depuis
+; ColorTable. Supporte donc 1 plan/2 couleurs (rayures) comme 5 plans/32 couleurs (écran de boot). view
+; inutilisé (1 seule ViewPort). Pas de WAIT final (ajouté par MrgCop).
 gfx_MakeVPort:
-        movem.l d2/d3/a2/a3/a6,-(sp)
+        movem.l d2/d3/d4/d5/a2/a3/a4/a6,-(sp)
         move.l  a1,a2                ; a2 = ViewPort
         move.l  ($4).w,a6            ; a6 = SysBase
         move.l  #GFX_FRAG_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .mv_ret              ; alloc KO -> vp_DspIns reste 0
+        beq     .mv_ret              ; alloc KO -> vp_DspIns reste 0
         move.l  d0,a3                ; a3 = fragment (chip)
         move.l  a3,a1                ; a1 = ptr d'écriture
         move.w  #DIWSTRT-CUSTOM,(a1)+
@@ -102,9 +104,10 @@ gfx_MakeVPort:
         move.w  #DDFSTOP-CUSTOM,(a1)+
         move.w  #GFX_DDFSTOP,(a1)+
         move.l  vp_RasInfo(a2),a0    ; RasInfo
-        move.l  ri_BitMap(a0),a0     ; a0 = BitMap
-        moveq   #0,d2
-        move.b  bm_Depth(a0),d2      ; depth
+        move.l  ri_BitMap(a0),a4     ; a4 = BitMap
+        moveq   #0,d4
+        move.b  bm_Depth(a4),d4      ; d4 = depth (compteur de plans)
+        move.w  d4,d2
         lsl.w   #8,d2
         lsl.w   #4,d2                ; depth << 12
         or.w    #GFX_COLOR_BIT,d2    ; | COLOR
@@ -114,22 +117,37 @@ gfx_MakeVPort:
         move.w  #0,(a1)+
         move.w  #BPL1MOD-CUSTOM,(a1)+
         move.w  #0,(a1)+
-        move.l  bm_Planes(a0),d2     ; d2 = adresse du plan 0 (a0 = BitMap)
-        move.w  #BPL1PTH-CUSTOM,(a1)+
-        move.l  d2,d3
-        swap    d3
-        move.w  d3,(a1)+             ; mot HAUT de l'adresse
-        move.w  #BPL1PTL-CUSTOM,(a1)+
-        move.w  d2,(a1)+             ; mot BAS
-        move.l  vp_ColorMap(a2),a0   ; ColorMap
+        move.w  #BPL2MOD-CUSTOM,(a1)+
+        move.w  #0,(a1)+
+        ; pointeurs de bitplane : un BPLxPTH/L par plan (plans contigus, Planes[i])
+        lea     bm_Planes(a4),a0     ; a0 = &Planes[0]
+        move.w  #BPL1PTH-CUSTOM,d3   ; d3 = offset du registre BPLxPTH courant
+.mv_plane:
+        move.l  (a0)+,d5             ; d5 = adresse du plan i
+        move.w  d3,(a1)+             ; BPLxPTH
+        move.l  d5,d2
+        swap    d2
+        move.w  d2,(a1)+             ; mot HAUT
+        addq.w  #2,d3                ; -> BPLxPTL
+        move.w  d3,(a1)+
+        move.w  d5,(a1)+             ; mot BAS
+        addq.w  #2,d3                ; -> BPL(x+1)PTH
+        subq.w  #1,d4
+        bne.s   .mv_plane
+        ; couleurs : cm_Count MOVEs COLOR00..COLOR(Count-1)
+        move.l  vp_ColorMap(a2),a0
+        move.w  cm_Count(a0),d4      ; d4 = nombre de couleurs
         move.l  cm_ColorTable(a0),a0 ; a0 = ColorTable
-        move.w  #COLOR00-CUSTOM,(a1)+
-        move.w  (a0)+,(a1)+          ; COLOR00 = ColorTable[0]
-        move.w  #COLOR01-CUSTOM,(a1)+
-        move.w  (a0)+,(a1)+          ; COLOR01 = ColorTable[1]
+        move.w  #COLOR00-CUSTOM,d3   ; d3 = offset du registre COLORxx courant
+.mv_color:
+        move.w  d3,(a1)+
+        move.w  (a0)+,(a1)+          ; COLORxx = ColorTable[xx]
+        addq.w  #2,d3
+        subq.w  #1,d4
+        bne.s   .mv_color
         move.l  a3,vp_DspIns(a2)     ; publie le fragment
 .mv_ret:
-        movem.l (sp)+,d2/d3/a2/a3/a6
+        movem.l (sp)+,d2/d3/d4/d5/a2/a3/a4/a6
         rts
 
 ; gfx_MrgCop(view a1) : fusionne le fragment vp_DspIns de chaque ViewPort dans v_LOFCprList (master, chip RAM)
