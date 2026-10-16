@@ -13,3 +13,5 @@ __pycache__/
 /assets/kick34005.A500
 /assets/*.rom
 /assets/*.bin
+# ADF de test — régénérables (tests/mk_boot_adf.sh, xdftool) ; pas de binaires dans le dépôt.
+/assets/*.adf

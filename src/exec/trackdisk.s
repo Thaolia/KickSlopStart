@@ -187,12 +187,12 @@ trackdisk_initfunc:
 
 ; td_read_track0(a6=SysBase) -> d0 = buffer chip (piste MFM brute) | 0 (timeout / pas de disque). B2 MINIMAL :
 ; DDRB=$FF (suspect n°1 : sans ça PRB ne pilote rien) ; moteur-on + select DF0 (latch moteur via front SEL0) ;
-; spin-up (busy-loop + poll DSKRDY avec timeout, poursuit) ; DMA WORDSYNC d'une piste (position COURANTE de la
-; tête = piste 0 au reset) ; poll INTREQR DSKBLK avec timeout (jamais de hang). PAS de step ni side-select
-; (polarités non vérifiées -> incrément ultérieur ; le compte de syncs se fiche de quelle piste est lue).
+; spin-up (busy-loop + poll DSKRDY avec timeout, poursuit) ; seek (recalibration cyl 0 + step-in + side) ;
+; DMA WORDSYNC d'une piste ; poll INTREQR DSKBLK avec timeout (jamais de hang).
 ; N'écrit QUE CIA-B PRB/DDRB (ports) -> les timers CIA-B (unité MICROHZ/M7a) ne sont pas touchés.
 ; B2b : td_read_track(d0 = n° de piste) seek d'abord vers la piste ; td_read_track0 = lit la piste 0 (wrapper pour
-; les appelants existants : M6U/M6V, BeginIO). piste = cylindre*2 + face.
+; les appelants existants : M6U/M6V, BeginIO). piste = cylindre*2 + face. C : la recalibration est TOUJOURS faite
+; (lecture depuis une position connue) -> td_read_track0 lit la piste 0 correctement même après un seek précédent.
 td_read_track0:
         moveq   #0,d0                 ; piste 0
 td_read_track:
@@ -208,22 +208,33 @@ td_read_track:
         move.b  #$FF,CIAB_DDRB        ; port B = SORTIES avant d'écrire PRB
         move.b  #PRB_MOTOR_ON,CIAB_PRB ; moteur on (intention), tout déselectionné
         move.b  #PRB_SEL0_ON,CIAB_PRB  ; select DF0 -> le front SEL0 latche moteur=on
-        move.l  #$00040000,d2         ; spin-up : busy-loop + poll DSKRDY (timeout, poursuit)
+        move.l  #$00040000,d2         ; spin-up : busy-loop + poll DSKRDY (timeout = lecteur absent/vide)
 .rd_spin:
         btst    #DSKB_RDY,CIAA_PRA_HW ; DSKRDY = 0 quand prêt
         beq.s   .rd_seek
         subq.l  #1,d2
         bne.s   .rd_spin
+        ; timeout DSKRDY : aucun disque prêt (lecteur absent ou vide) -> inutile de recalibrer (85x) et d'armer le
+        ; DMA (tout timeouterait) ; moteur off + libère le buffer + renvoie 0. Rend le probe « sans disque » rapide.
+        ; ⚠️ DETTE vraie-A500 (C) : ce gate est désormais PORTEUR (avant B2 : timeout -> on continuait, le sync DMA
+        ; était le signal de présence). Nouvelle hypothèse : un disque lisible asserte DSKRDY dans la fenêtre du
+        ; timeout spin-up. CONFIRMÉ sous FS-UAE, mais la marge timeout(accès CIA, ~2us/it) vs spin-up moteur MÉCANIQUE
+        ; (~0,3-0,5 s) n'est PAS vérifiée sur vrai lecteur -> un DSKRDY lent pourrait rejeter un disque valide (M7).
+        move.b  #PRB_OFF,CIAB_PRB
+        move.l  a2,a1
+        move.l  #TD_RAWBYTES,d0
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra     .rd_ret
 .rd_seek:
-        ; --- seek vers la piste d6 : recalibration cylindre 0 (step OUT) + step IN + side-select ---
-        ; Piste 0 -> on SAUTE la recalibration (sinon, SANS disque, si DSKTRACK0 ne s'asserte pas, elle busy-looperait
-        ; 85 fois et décalerait la preuve M7A). ⚠️ DETTE : suppose la tête à la piste 0 — vrai au boot et dans la
-        ; séquence de preuve (aucune lecture piste-0 ne suit un seek), mais FAUX en général : si une lecture piste-0
-        ; suivait un seek, on lirait la mauvaise piste SILENCIEUSEMENT. Vrai fix (pour C) : tracker le cylindre courant
-        ; en RAM et stepper le delta. Polarités DSKDIREC/DSKSIDE validées à l'émulateur par M6X (piste 2 -> track==2).
-        tst.w   d6
-        beq.s   .rd_side             ; piste 0 -> pas de recalibration (face 0 par défaut)
-        move.w  #85,d2               ; cap de recalibration (évite de steper à l'infini si polarité fausse)
+        ; --- seek vers la piste d6 : recalibration cylindre 0 (step OUT jusqu'à DSKTRACK0) + step IN + side-select ---
+        ; Recalibration TOUJOURS effectuée (y compris piste 0) : on lit toujours depuis une position CONNUE, quelle
+        ; que soit la position laissée par une lecture précédente (ex. le strap lit la piste 0 APRÈS que M6X ait
+        ; seeké au cylindre 1 — sans recalibration on lirait la mauvaise piste SILENCIEUSEMENT). C'est le « vrai
+        ; fix » promis en C : correctness > performance (un vrai lecteur mémoriserait le cylindre courant et
+        ; stepperait le delta ; on recalibre à chaque lecture — correct, juste plus lent). Le cap 85 évite un
+        ; busy-loop infini SANS lecteur (DSKTRACK0 jamais asserté). Polarités DSKDIREC/DSKSIDE validées par M6X.
+        move.w  #85,d2               ; cap de recalibration (évite de steper à l'infini si polarité fausse / pas de lecteur)
 .rd_recal:
         btst    #DSKB_TRACK0,CIAA_PRA_HW   ; tête sur la piste 0 ?
         beq.s   .rd_seekin

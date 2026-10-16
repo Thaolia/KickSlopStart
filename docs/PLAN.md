@@ -368,8 +368,21 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     td_decode_track renvoie d1 = n° de piste décodé (oracle). Preuve série **M6X** + diagnostic « M6X TRACK=XXXX » : lire la
     piste 2 -> TRACK=0002 + 11 secteurs avec track==2 (valide le seek ET le side : un mauvais side lirait la piste 3). RED
     SEEK_NOSTEP (pas de step-in -> reste piste 0 -> TRACK=0000) -> M6X absent. Gaté sur disque présent (d4) -> M7A intact.
-    trackdisk.device COMPLET : lit n'importe quel secteur logique de n'importe quelle piste de DF0. PROCHAIN : C (strap
-    lit+exécute le bootblock, jalon « ça boote ! »). Reste pour C : wiring CMD_READ multi-piste + validation bootblock.
+    trackdisk.device COMPLET : lit n'importe quel secteur logique de n'importe quelle piste de DF0.
+  - **C / M6y — « ça boote ! » : le strap lit, valide et EXÉCUTE le bootblock (FAIT).** `strap_boot` lit les secteurs 0+1
+    de DF0: (`CMD_READ` offset 0 len 1024 = bootblock, DANS la piste 0 -> pas besoin du wiring multi-piste pour C), valide
+    magic « DOS » + **checksum additif** (somme à retenue circulaire des 256 longs == `$FFFFFFFF` — ADDITIF, piège classique
+    vs le XOR des checksums MFM ; algo porté puis simulé en Python avant usage), puis **JSR au boot code à +12** (A6=SysBase,
+    A1=IORequest ; A0 de handoff dos IGNORÉ = déviation assumée sans dos). Bootable -> « bouté » (**M6Y**, pas d'insert-disk) ;
+    checksum invalide (ADF formaté = checksum 0, vérifié empiriquement) ou pas de disque -> 0 -> insert-disk (**M6R**) = VRAI
+    déclencheur 1.3. Preuve : marqueur **CBOOT** émis par le bootblock LUI-MÊME (prouve le saut). 6 scénarios : GREEN+ADF
+    bootable (CBOOT+M6Y), GREEN+ADF formaté (M6R, checksum rejette), sans disque (M6R+M7A ok), RED STRAP_NO_EXEC (M6Y sans
+    CBOOT = isole l'exécution), RED STRAP_BAD_CSUM (bon bloc rejeté = isole la validation), COOP. Correctif trackdisk requis
+    pour C : recalibration TOUJOURS faite (lecture depuis position connue — un read piste-0 après seek lisait la mauvaise
+    piste silencieusement) + détection lecteur absent via timeout DSKRDY (probe no-disk rapide). ADF bootable custom
+    régénérable : `tests/mk_boot_adf.sh` (xdftool format + `tests/bootblock_c.s` assemblé en binaire brut + `tests/patch_bootblock.py`
+    qui pose le checksum et round-trip la bootabilité ; sortie `assets/boot_c.adf`, gitignorée). PROCHAIN : D (vraie dos.library,
+    packets) — prérequis = wiring `CMD_READ` offset->piste multi-piste pour lire le filesystem au-delà de la piste 0.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

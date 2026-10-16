@@ -843,10 +843,14 @@ m6x_done:
         move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        ; --- M6r : strap (romboot) — l'affichage de l'écran de boot est ROUTÉ par la décision du strap ---
-        ; strap_boot -> d0=0 = aucun volume bootable (A : toujours ; le vrai déclencheur « DF0: ne lit pas » = B/C)
-        ; -> on affiche l'ÉCRAN DE BOOT (insert-disk). RED STRAP_FAKE_BOOTDEV : d0!=0 -> strap croit booter -> NI
-        ; insert-disk NI écran (comportement faux) -> M6R/M6S absents + écran vide. Prouve le ROUTAGE boot<->strap.
+        ; --- M6r/M6y : strap (romboot) — lit, valide et EXÉCUTE le bootblock de DF0: (jalon C « ça boote ! ») ---
+        ; strap_boot lit les secteurs 0+1 (bootblock) de DF0:, valide magic « DOS » + checksum additif, et saute
+        ; au boot code à +12. d0=0 = aucun volume bootable (pas de disque, ou checksum invalide = formaté non
+        ; installé) -> ÉCRAN DE BOOT insert-disk (M6R). d0!=0 = bootblock exécuté -> PAS d'insert-disk (M6Y) ;
+        ; le marqueur « CBOOT » est émis par le bootblock LUI-MÊME pendant son exécution (preuve du saut).
+        ; Les deux branches convergent vers SCHED_ON (le set M7 complet suit dans les deux cas).
+        ; RED STRAP_FAKE_BOOTDEV : d0!=0 sans lire -> M6Y présent mais CBOOT absent. RED STRAP_NO_EXEC : valide
+        ; mais ne saute pas -> CBOOT absent, M6Y présent. RED STRAP_BAD_CSUM : rejette un bon bloc -> M6R.
         bsr     strap_boot
         tst.l   d0
         bne.s   .m6r_booted
@@ -855,7 +859,11 @@ m6x_done:
         bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
         lea     msg_m6s_ok(pc),a0
         bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
+        bra.s   .strap_done
 .m6r_booted:
+        lea     msg_m6y_ok(pc),a0
+        bsr     ser_puts             ; « M6Y STRAP BOOTED OK » (bootblock exécuté ; CBOOT émis par le bootblock)
+.strap_done:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
                 endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
@@ -2257,9 +2265,11 @@ msg_m6x_track:
 msg_m6x_ok:
         dc.b    "M6X TRACKDISK SEEK OK (step/seek + side-select: read track 2, decoded sectors report track==2)",13,10,0
 msg_m6r_ok:
-        dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
+        dc.b    "M6R STRAP OK (strap read DF0: bootblock and found NO bootable volume -> insert-disk; real 1.3 trigger: DOS-magic+additive-checksum invalid, or no disk)",13,10,0
 msg_m6s_ok:
         dc.b    "M6S BOOTSCR OK (boot screen 320x256x5 = 32-color image displayed via graphics.library ABI; visual proof = RMSE vs reference)",13,10,0
+msg_m6y_ok:
+        dc.b    "M6Y STRAP BOOTED OK (strap read+validated+executed DF0: bootblock; CBOOT marker came from the bootblock itself; no insert-disk)",13,10,0
 msg_m5i_ok:
         dc.b    "M5I INTUI LIB OK (intuition.library AUTOINIT -> LibList; ViewAddress -294 returns &ib_ViewLord)",13,10,0
 msg_m5o_ok:
