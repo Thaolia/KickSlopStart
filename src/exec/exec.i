@@ -414,6 +414,14 @@ LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
+LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)
+LVO_CLOSELIBRARY   EQU -414
+LVO_OPENLIBRARY    EQU -552      ; OpenLibrary(libName a1, version d0)
+
+; OPENLIB_NO_VERCHECK=1 (RED OpenLibrary) : exec_OpenLibrary saute la gate de version -> une ouverture
+; en version trop haute réussit À TORT au lieu de renvoyer 0. Isole la branche de comparaison de version.
+; Défaut 0 (arbre).
+OPENLIB_NO_VERCHECK EQU 0
 
 ; cia.resource (M5b) — fonctions a6-relatives (base resource), struct, matériel.
 CIA_ADDICRVECTOR EQU -6

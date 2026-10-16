@@ -160,6 +160,12 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_SetIntVector,LVO_SETINTVECTOR+2(a6)
         move.w  #$4EF9,LVO_ADDINTSERVER(a6)
         move.l  #exec_AddIntServer,LVO_ADDINTSERVER+2(a6)
+        move.w  #$4EF9,LVO_OPENLIBRARY(a6)
+        move.l  #exec_OpenLibrary,LVO_OPENLIBRARY+2(a6)
+        move.w  #$4EF9,LVO_OLDOPENLIBRARY(a6)
+        move.l  #exec_OldOpenLibrary,LVO_OLDOPENLIBRARY+2(a6)
+        move.w  #$4EF9,LVO_CLOSELIBRARY(a6)
+        move.l  #exec_CloseLibrary,LVO_CLOSELIBRARY+2(a6)
         rts
 
 _unimpl:
@@ -177,6 +183,57 @@ exec_Close:
         rts
 exec_Expunge:
         moveq   #0,d0                ; exec ne s'expulse jamais
+        rts
+
+; OpenLibrary(libName a1, version d0) -> d0 = base (ou 0). Forbid-gardé : FindName(LibList) + gate de
+; version (lib_Version >= version demandée, sinon 0) + appel du vecteur Open (-6) de la lib (OpenCnt++).
+; Chargement disque via ramlib si non-résidente = différé (M6) : non trouvée -> 0. Préserve d2/a2.
+exec_OpenLibrary:
+        movem.l d2/a2,-(sp)
+        move.w  d0,d2                ; d2 = version demandée (UWORD)
+        move.l  a1,a2                ; a2 = nom (préservé sur Forbid/FindName)
+        jsr     LVO_FORBID(a6)
+        lea     EB_LIBLIST(a6),a0
+        move.l  a2,a1
+        jsr     LVO_FINDNAME(a6)     ; d0 = nœud lib (ou 0)
+        tst.l   d0
+        beq.s   .ol_fail             ; non trouvée
+        move.l  d0,a2                ; a2 = base lib
+                ifeq    OPENLIB_NO_VERCHECK
+        cmp.w   LIB_VERSION(a2),d2   ; demandée (d2) > disponible (lib_Version) ?
+        bhi.s   .ol_fail             ; version trop récente demandée -> échec
+                endc
+        move.l  a6,-(sp)             ; appel du vecteur Open de la lib (a6 = lib)
+        move.l  a2,a6
+        jsr     LVO_OPEN(a6)         ; -6 : OpenCnt++, d0 = base
+        move.l  (sp)+,a6
+        bra.s   .ol_done
+.ol_fail:
+        moveq   #0,d0
+.ol_done:
+        move.l  d0,-(sp)             ; préserve le résultat à travers Permit (qui peut yield)
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,d0
+        movem.l (sp)+,d2/a2
+        rts
+
+; OldOpenLibrary(libName a1) -> d0 = base (ou 0) : OpenLibrary sans gate de version (forme pré-V33).
+exec_OldOpenLibrary:
+        moveq   #0,d0                ; version 0 -> la gate passe toujours
+        bra.s   exec_OpenLibrary
+
+; CloseLibrary(library a1) : Forbid-gardé, appel du vecteur Close (-12) de la lib (OpenCnt--). d0 = 0.
+exec_CloseLibrary:
+        movem.l a2,-(sp)
+        move.l  a1,a2                ; a2 = lib
+        jsr     LVO_FORBID(a6)
+        move.l  a6,-(sp)
+        move.l  a2,a6
+        jsr     LVO_CLOSE(a6)        ; -12 : OpenCnt--
+        move.l  (sp)+,a6
+        jsr     LVO_PERMIT(a6)
+        moveq   #0,d0
+        movem.l (sp)+,a2
         rts
 
 exec_Forbid:

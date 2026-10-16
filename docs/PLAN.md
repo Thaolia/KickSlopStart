@@ -259,7 +259,15 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   (= `&ib_ViewLord`). RED `M5I_BAD_VIEWADDR` → ViewAddress renvoie 0 → M5I absent (isole la primitive neuve ; le
   routage NT_LIBRARY→LibList est déjà RED-prouvé par `M4C1_WRONG_TYPE`). Non-régression : FRAC **0.299635 identique**
   GREEN/RED/COOP (le résident pri-10 décale le tas mais l'affichage M4 est intact). Différé : OpenScreen/OpenWindow/
-  DisplayAlert, rendu de texte, écran insert-disk (→ M6). **Prochain pré-autorisé : `OpenLibrary` exec réel.**
+  DisplayAlert, rendu de texte, écran insert-disk (→ M6).
+- **`OpenLibrary` exec (consolidation M2) — FAIT.** `src/exec/library.s` : `OpenLibrary(libName,version)` (-552),
+  `CloseLibrary` (-414), `OldOpenLibrary` (-408), patchés dans `build_jumptable`. Ouverture par nom = `Forbid` +
+  `FindName(LibList)` + **gate de version** (`lib_Version >= version` demandée, sinon 0) + appel du vecteur Open/-6
+  de la lib (OpenCnt++) ; `CloseLibrary` appelle le vecteur Close/-12. Preuve série **M5O** : OpenLibrary(intuition,34)
+  == base & OpenCnt+1 ; version 99 → 0 (gate) ; lib inexistante → 0 ; CloseLibrary → OpenCnt-1. RED
+  `OPENLIB_NO_VERCHECK` → gate sautée → version 99 ouvre à tort → M5O absent (isole la gate). FRAC 0.299635 identique
+  GREEN/RED/COOP. Différé : chargement disque ramlib (M6, non-résidente → 0) ; delayed-expunge sur Close (résidentes
+  → Close renvoie 0). Les preuves M4c1/M5 (FindName+Open à la main) sont candidates à refactorer sur `OpenLibrary`.
 - **M6 — dos + trackdisk + FS + strap/romboot → boot disquette jusqu'au CLI.** La `dos.library` 1.3 est
   un portage **BCPL/TRIPOS** : il faut répliquer les quirks d'ABI (**BPTR** word-based, global vector,
   convention d'appel BCPL, **DOS packets**, segments `LoadSeg`). Approche retenue = **réécriture ANSI C

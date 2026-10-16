@@ -333,6 +333,56 @@ m4c1_done:
         bsr     ser_puts             ; « M5I INTUI LIB OK »
 m5i_done:
 
+        ; --- OpenLibrary : ouverture par nom + gate de version (exec) ---
+        ; 1) OpenLibrary("intuition.library",34) == base & OpenCnt+1 ; 2) version 99 -> 0 (gate de version) ;
+        ; 3) lib inexistante -> 0 ; 3b) OldOpenLibrary == base (sans gate) ; 4) CloseLibrary -> OpenCnt-1.
+        ; RED OPENLIB_NO_VERCHECK : (2) ouvre À TORT
+        ; (d0 != 0) -> assertion échoue -> « M5O OPENLIB OK » absent. a2 = IntuitionBase, d3 = OpenCnt baseline.
+        lea     EB_LIBLIST(a6),a0
+        lea     intuition_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   m5o_done
+        move.l  d0,a2                ; a2 = IntuitionBase
+        move.w  LIB_OPENCNT(a2),d3   ; d3 = OpenCnt baseline (N)
+        lea     intuition_test_name(pc),a1   ; 1) succès version 34
+        moveq   #34,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        cmp.l   a2,d0                ; == IntuitionBase ?
+        bne.s   m5o_done
+        move.w  LIB_OPENCNT(a2),d0
+        subq.w  #1,d0
+        cmp.w   d3,d0                ; OpenCnt == N+1 ?
+        bne.s   m5o_done
+        lea     intuition_test_name(pc),a1   ; 2) version 99 trop haute -> 0, OpenCnt inchangé
+        move.w  #99,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        bne.s   m5o_done             ; RED OPENLIB_NO_VERCHECK : renvoie base != 0 -> M5O absent
+        move.w  LIB_OPENCNT(a2),d0
+        subq.w  #1,d0
+        cmp.w   d3,d0                ; toujours N+1 (aucune ouverture) ?
+        bne.s   m5o_done
+        lea     noexist_test_name(pc),a1     ; 3) lib inexistante -> 0
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        bne.s   m5o_done
+        lea     intuition_test_name(pc),a1   ; 3b) OldOpenLibrary (pré-V33, sans gate de version) == base
+        jsr     LVO_OLDOPENLIBRARY(a6)
+        cmp.l   a2,d0
+        bne.s   m5o_done
+        move.l  a2,a1                ; rééquilibre l'ouverture 3b (net zéro) avant le step 4
+        jsr     LVO_CLOSELIBRARY(a6)
+        move.l  a2,a1                ; 4) CloseLibrary -> OpenCnt revient à N
+        jsr     LVO_CLOSELIBRARY(a6)
+        move.w  LIB_OPENCNT(a2),d0
+        cmp.w   d3,d0                ; OpenCnt == N ?
+        bne.s   m5o_done
+        lea     msg_m5o_ok(pc),a0
+        bsr     ser_puts             ; « M5O OPENLIB OK »
+m5o_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -1881,6 +1931,8 @@ msg_m4c2:
         dc.b    "M4C2 INIT (display generated via graphics.library ABI: MakeVPort/MrgCop/LoadView; proven on screen)",13,10,0
 msg_m5i_ok:
         dc.b    "M5I INTUI LIB OK (intuition.library AUTOINIT -> LibList; ViewAddress -294 returns &ib_ViewLord)",13,10,0
+msg_m5o_ok:
+        dc.b    "M5O OPENLIB OK (OpenLibrary by name + version gate + Open vector; too-high ver -> 0; OldOpenLibrary; CloseLibrary)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
@@ -1891,6 +1943,8 @@ graphics_test_name:
         dc.b    "graphics.library",0
 intuition_test_name:
         dc.b    "intuition.library",0
+noexist_test_name:
+        dc.b    "inexistante.library",0
 msg_crlf:
         dc.b    13,10,0
         EVEN
