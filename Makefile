@@ -22,6 +22,10 @@ EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o
+# --- piste intuition (M5+) : objets reliés APRÈS graphics ---
+INT_DIR   := src/intuition
+INT_INC   := $(INT_DIR)/intuition.i
+INT_OBJ   := $(BUILD)/intuition_lib.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -45,9 +49,13 @@ $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 
+# Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase).
+$(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)
+	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(INT_DIR) -o $@ $<
+
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
-$(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(LDSCRIPT)
-	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ)
+$(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(LDSCRIPT)
+	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ)
 $(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
 	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
 

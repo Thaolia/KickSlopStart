@@ -246,7 +246,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
   (M4a/M4b utilisaient un template copper codé en dur, gaté par `M4A_NO_COPPER`/`M4B_NO_BITPLANE` — **tout supprimé
   en M4c2**, l'affichage passe par l'ABI.) M4a a aussi corrigé un bug du discriminant couleur de `tests/boot_test.sh`
   (ordre `-opaque`/`+opaque` : le blanc préexistant faussait FRAC ; masqué car le défaut `EXPECT=FFFFFF` ne l'exposait pas).
-- **M5 — intuition minimal → écran « insert Workbench disk »** (la main iconique du boot KS 1.3).
+- **M5 — intuition minimal.** Cadrage (décision user + advisor, 2026-10-16) : l'écran « insert Workbench disk »
+  n'a **pas de vrai déclencheur avant M6** (il s'affiche quand le boot ne trouve aucun volume bootable =
+  DOS/trackdisk), et `intuition.doc` confirme qu'il n'est **pas une fonction intuition** (seuls les événements
+  IDCMP `DISKINSERTED` et les requesters DOS « Please insert volume XXX » le sont) → le dessiner maintenant en le
+  forçant via intuition serait un artefact synthétique (même logique que **M7k reporté**). Le cœur M5 honnête et
+  prouvable = le **squelette résident `intuition.library`** + une primitive 1re-gen réelle. **FAIT**
+  (`src/intuition/intuition_lib.s`, `intuition.i`) : ROMTag AUTOINIT **pri 10** → `MakeLibrary`/`LibList` (branche
+  NT_LIBRARY, comme M4c1) ; funcTable 49 vecteurs (Open/Close/Expunge + `ViewAddress` au vecteur 49 = LVO **-294**,
+  LVO autoritatifs NDK) ; `IntuitionBase` posée (ViewLord embarqué, `INTUITIONBASE_SIZE`=80). Preuve série
+  (marqueur **M5I**) : FindName + version 34 + type NT_LIBRARY + Open→OpenCnt==1 + **`ViewAddress()==IntuitionBase+34`**
+  (= `&ib_ViewLord`). RED `M5I_BAD_VIEWADDR` → ViewAddress renvoie 0 → M5I absent (isole la primitive neuve ; le
+  routage NT_LIBRARY→LibList est déjà RED-prouvé par `M4C1_WRONG_TYPE`). Non-régression : FRAC **0.299635 identique**
+  GREEN/RED/COOP (le résident pri-10 décale le tas mais l'affichage M4 est intact). Différé : OpenScreen/OpenWindow/
+  DisplayAlert, rendu de texte, écran insert-disk (→ M6). **Prochain pré-autorisé : `OpenLibrary` exec réel.**
 - **M6 — dos + trackdisk + FS + strap/romboot → boot disquette jusqu'au CLI.** La `dos.library` 1.3 est
   un portage **BCPL/TRIPOS** : il faut répliquer les quirks d'ABI (**BPTR** word-based, global vector,
   convention d'appel BCPL, **DOS packets**, segments `LoadSeg`). Approche retenue = **réécriture ANSI C

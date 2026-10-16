@@ -302,6 +302,37 @@ coldstart:                        ; $FC00D2
         bsr     ser_puts             ; « M4C1 GFX LIB OK »
 m4c1_done:
 
+        ; --- M5 : vérifier intuition.library (squelette résident + ViewAddress) ---
+        ; Miroir de la preuve M4c1 sur EB_LIBLIST, étendu d'un appel ABI RÉEL : ViewAddress (LVO -294) doit
+        ; renvoyer &ib_ViewLord (= IntuitionBase + IB_VIEWLORD). Skip-on-fail : si l'une des vérifs échoue
+        ; (ou RED M5I_BAD_VIEWADDR -> ViewAddress=0), le marqueur « M5I INTUI LIB OK » est absent, sans FAILED.
+        lea     EB_LIBLIST(a6),a0
+        lea     intuition_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   m5i_done
+        move.l  d0,a2                ; a2 = IntuitionBase
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        bne.s   m5i_done
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ? (device mal routé ne passerait pas FindName non plus)
+        bne.s   m5i_done
+        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a2,a6
+        jsr     LVO_OPEN(a6)
+        move.l  (sp)+,a6
+        cmp.w   #1,LIB_OPENCNT(a2)
+        bne.s   m5i_done
+        move.l  a6,-(sp)             ; ViewAddress() via la jump table (a6 = IntuitionBase)
+        move.l  a2,a6
+        jsr     -294(a6)             ; LVO_VIEWADDRESS = -294 (littéral : boot.s n'inclut qu'exec.i)
+        move.l  (sp)+,a6
+        lea     LIB_SIZE(a2),a1      ; attendu : &ib_ViewLord (IB_VIEWLORD = LIB_SIZE : le ViewLord suit la base Library)
+        cmp.l   a1,d0
+        bne.s   m5i_done
+        lea     msg_m5i_ok(pc),a0
+        bsr     ser_puts             ; « M5I INTUI LIB OK »
+m5i_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -1848,6 +1879,8 @@ msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
 msg_m4c2:
         dc.b    "M4C2 INIT (display generated via graphics.library ABI: MakeVPort/MrgCop/LoadView; proven on screen)",13,10,0
+msg_m5i_ok:
+        dc.b    "M5I INTUI LIB OK (intuition.library AUTOINIT -> LibList; ViewAddress -294 returns &ib_ViewLord)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:
@@ -1856,6 +1889,8 @@ timer_test_name:
         dc.b    "timer.device",0
 graphics_test_name:
         dc.b    "graphics.library",0
+intuition_test_name:
+        dc.b    "intuition.library",0
 msg_crlf:
         dc.b    13,10,0
         EVEN
