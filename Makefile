@@ -49,6 +49,8 @@ $(BUILD):
 # Un objet relogeable (vobj) par module exec ; dépend de l'include partagé.
 $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -o $@ $<
+# trackdisk.s inclut aussi disk.i (registres disque B2).
+$(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
 
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)

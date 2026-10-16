@@ -12,6 +12,9 @@
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs trackdisk.device + exec + devices/trackdisk.i (public). AUCUNE lecture ROM.
 
                 include "exec.i"
+                include "disk.i"
+
+                xdef    td_read_track0
 
 ; --- constantes trackdisk (devices/trackdisk.i) + erreurs exec io (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
@@ -106,5 +109,67 @@ trackdisk_initfunc:
         move.l  d0,a1
         lea     trackdisk_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        rts
+
+; td_read_track0(a6=SysBase) -> d0 = buffer chip (piste MFM brute) | 0 (timeout / pas de disque). B2 MINIMAL :
+; DDRB=$FF (suspect n°1 : sans ça PRB ne pilote rien) ; moteur-on + select DF0 (latch moteur via front SEL0) ;
+; spin-up (busy-loop + poll DSKRDY avec timeout, poursuit) ; DMA WORDSYNC d'une piste (position COURANTE de la
+; tête = piste 0 au reset) ; poll INTREQR DSKBLK avec timeout (jamais de hang). PAS de step ni side-select
+; (polarités non vérifiées -> incrément ultérieur ; le compte de syncs se fiche de quelle piste est lue).
+; N'écrit QUE CIA-B PRB/DDRB (ports) -> les timers CIA-B (unité MICROHZ/M7a) ne sont pas touchés.
+td_read_track0:
+        movem.l d2/d3/a2,-(sp)
+        move.l  #TD_RAWBYTES,d0        ; buffer piste brute en chip RAM (le DMA ne lit QUE la chip)
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .rd_ret               ; pas de chip -> 0
+        move.l  d0,a2                 ; a2 = buffer
+        move.w  #INTF_DSKBLK,INTENA   ; s'assure que DSKBLK est MASQUÉ (on poll INTREQR, pas d'IRQ INT1 spurious)
+        move.b  #$FF,CIAB_DDRB        ; port B = SORTIES avant d'écrire PRB
+        move.b  #PRB_MOTOR_ON,CIAB_PRB ; moteur on (intention), tout déselectionné
+        move.b  #PRB_SEL0_ON,CIAB_PRB  ; select DF0 -> le front SEL0 latche moteur=on
+        move.l  #$00040000,d2         ; spin-up : busy-loop + poll DSKRDY (timeout, poursuit)
+.rd_spin:
+        btst    #DSKB_RDY,CIAA_PRA_HW ; DSKRDY = 0 quand prêt
+        beq.s   .rd_dma
+        subq.l  #1,d2
+        bne.s   .rd_spin
+.rd_dma:
+        move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
+        move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
+                ifeq    TD_NO_DMA
+        move.w  #(ADKF_SETCLR|ADKF_WORDSYNC),ADKCON   ; $8400 : SETCLR | WORDSYNC (DD, FAST=0)
+        move.w  #TD_SYNC,DSKSYNC      ; $4489
+        move.l  a2,DSKPT             ; pointeur DMA = buffer (longword)
+        move.w  #$4000,DSKLEN        ; reset/disable (quirk avant armement)
+        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON  ; $8210 : DMA maître + disque
+        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; arme la lecture (DMAEN|len)
+        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; écrit 2x pour démarrer (quirk hardware)
+                endc                 ; RED TD_NO_DMA : DMA non armé -> buffer reste à 0 -> aucun sync
+        move.l  #$00080000,d2        ; poll DSKBLK avec timeout (jamais de hang si pas de disque)
+.rd_wait:
+        move.w  INTREQR,d3
+        btst    #1,d3                ; DSKBLK (bit 1) ?
+        bne.s   .rd_done
+        subq.l  #1,d2
+        bne.s   .rd_wait
+        bsr.s   .rd_stop             ; timeout -> libère le buffer, renvoie 0
+        move.l  a2,a1
+        move.l  #TD_RAWBYTES,d0
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra.s   .rd_ret
+.rd_done:
+        bsr.s   .rd_stop
+        move.l  a2,d0                ; d0 = buffer (succès)
+.rd_ret:
+        movem.l (sp)+,d2/d3/a2
+        rts
+.rd_stop:
+        move.w  #$4000,DSKLEN        ; disable DMA disque
+        move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
+        move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
+        move.b  #PRB_OFF,CIAB_PRB    ; moteur off + déselect
         rts
 trackdisk_end:

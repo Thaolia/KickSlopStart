@@ -25,6 +25,7 @@
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
+                xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -501,6 +502,36 @@ m6t_pop:
         lea     32(sp),sp            ; libère l'IORequest (échec)
 m6t_done:
 
+        ; --- M6u : trackdisk LECTURE DE PISTE MFM BRUTE (B2) ---
+        ; td_read_track0 lit une piste brute de DF0 (nécessite un ADF de test en DF0) ; on compte les mots de
+        ; synchro $4489 ($4489 ne peut PAS apparaître dans du MFM normal -> zéro faux positif ; buffer MEMF_CLEAR).
+        ; Émet « M6U SYNCS=XXXX » (compte réel, pour inspection) puis « M6U TRACKDISK READ OK » si compte >= seuil.
+        ; Sans disque (suites normales) -> td renvoie 0 -> M6U absent, sans FAILED (lecture = incrément floppy).
+        bsr     td_read_track0
+        tst.l   d0
+        beq     m6u_done
+        move.l  d0,a2                ; a2 = buffer piste brute
+        move.l  #$1900-1,d2          ; TD_RAWWORDS-1 (disk.i) : parcourt les mots (6399 < 65535 -> dbra OK)
+        moveq   #0,d3               ; compteur de syncs
+        move.l  a2,a0
+.m6u_scan:
+        cmp.w   #$4489,(a0)+         ; TD_SYNC (disk.i)
+        bne.s   .m6u_next
+        addq.l  #1,d3
+.m6u_next:
+        dbra    d2,.m6u_scan
+        lea     msg_m6u_syncs(pc),a0
+        bsr     ser_puts             ; « M6U SYNCS= »
+        move.w  d3,d0
+        bsr     ser_puthex           ; compte réel en hexa
+        lea     msg_crlf(pc),a0
+        bsr     ser_puts
+        cmp.l   #5,d3                ; seuil : au moins 5 syncs (une piste formatée en a ~20)
+        blt.s   m6u_done
+        lea     msg_m6u_ok(pc),a0
+        bsr     ser_puts             ; « M6U TRACKDISK READ OK »
+m6u_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -742,6 +773,36 @@ ser_puts:
         bra.s   .lp
 .done:
         movem.l (sp)+,d0/d1/d2/a0
+        rts
+
+; ser_puthex(d0.w) : émet les 4 chiffres hexa de d0 (mot) sur le série (MSB d'abord). Scratch sauvé (d0-d3).
+ser_puthex:
+        movem.l d0-d3,-(sp)
+        move.w  d0,d3                ; d3 = valeur à afficher
+        moveq   #3,d2                ; 4 nibbles
+.ph_nib:
+        rol.w   #4,d3                ; amène le nibble de poids fort suivant en bits 0-3
+        move.w  #$2000,d1            ; timeout TBE
+.ph_wt:
+        move.w  SERDATR,d0
+        btst    #13,d0               ; TBE (transmit buffer empty) ?
+        bne.s   .ph_send
+        dbra    d1,.ph_wt
+        bra.s   .ph_next             ; timeout -> saute ce chiffre
+.ph_send:
+        move.w  d3,d0
+        and.w   #$000F,d0
+        add.w   #'0',d0
+        cmp.w   #'9',d0
+        bls.s   .ph_out
+        addq.w  #7,d0                ; 'A'..'F'
+.ph_out:
+        and.w   #$00FF,d0
+        or.w    #$0100,d0            ; 8 bits
+        move.w  d0,SERDAT
+.ph_next:
+        dbra    d2,.ph_nib
+        movem.l (sp)+,d0-d3
         rts
 
 ; ============================ auto-test (M2.1a+) ====================
@@ -2057,6 +2118,10 @@ msg_m7l_ok:
         dc.b    "M7L MICROHZ CALIB OK (TV_MICRO = real us: 0.5s MICROHZ request elapsed ~25 VBLANK ticks)",13,10,0
 msg_m6t_ok:
         dc.b    "M6T TRACKDISK OK (trackdisk.device AUTOINIT -> DeviceList; Open unit 0 OK + io_Unit=base+34; Open unit 4 -> OpenDevice fail: io_Error, io_Device=0)",13,10,0
+msg_m6u_syncs:
+        dc.b    "M6U SYNCS=",0
+msg_m6u_ok:
+        dc.b    "M6U TRACKDISK READ OK (raw MFM track read from DF0 via disk DMA; $4489 sync words found)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:

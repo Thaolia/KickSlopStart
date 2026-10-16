@@ -8,13 +8,15 @@
 # (ex. hello-ROM M0 qui ne fait qu'écrire COLOR00).
 #
 # Codes de sortie : 0 = succès ; 1 = régression/capture vide ; 2 = prérequis manquant.
-# Usage : tests/boot_test.sh [rom] [secondes] [couleur_hex] [marqueur_succès]
+# Usage : tests/boot_test.sh [rom] [secondes] [couleur_hex] [marqueur_succès] [adf]
+# [adf] optionnel : insère une disquette dans DF0 (floppy_drive_count=1) — requis pour les tests de lecture (B2+).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"
 WAIT="${2:-10}"
 EXPECT="${3:-FFFFFF}"                 # couleur de succès (repli) ; défaut blanc
 MARKER="${4:-self-test passed}"       # marqueur série de succès
+ADF="${5:-}"                          # disquette optionnelle en DF0
 FAILMARK="FAILED"                     # marqueur série d'échec
 OUT="$ROOT/build/boot"
 mkdir -p "$OUT"
@@ -69,6 +71,13 @@ for _ in $(seq 1 50); do
 done
 [ "$ready" = 1 ] || { echo "Xvfb non prêt sur $DISP"; exit 2; }
 
+FDCOUNT=0
+FLOPPY0=""
+if [ -n "$ADF" ]; then
+  [ -f "$ADF" ] || { echo "ADF absent : $ADF"; exit 2; }
+  FDCOUNT=1
+  FLOPPY0="floppy_drive_0 = $ADF"
+fi
 CFG="$OUT/hello.fs-uae"
 cat > "$CFG" <<EOF
 [fs-uae]
@@ -76,7 +85,8 @@ amiga_model = A500
 kickstart_file = $ROM
 chip_memory = 512
 fast_memory = 0
-floppy_drive_count = 0
+floppy_drive_count = $FDCOUNT
+$FLOPPY0
 fullscreen = 0
 window_width = 720
 window_height = 568

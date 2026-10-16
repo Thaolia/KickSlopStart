@@ -323,6 +323,21 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     C). Preuve série **M6T** : FindName(DeviceList) + version + NT_DEVICE + Open(0) OK + Open(4) échoue. RED
     `TD_NO_UNITCHECK` (unité 4 ouvre à tort) → M6T absent. COOP non-rég. ⚠️ B1 n'est PAS encore la lecture (= B2-B4) ;
     heads-up B2 : CIA-B partagé avec l'unité MICROHZ M7a. PROCHAIN : B2 (checkpoint user — le plus dur).
+  - **B2 / M6u — lecture d'une piste MFM brute de DF0 (FAIT, le plus dur).** La ROM accède pour la 1re fois au
+    matériel disque. `src/exec/disk.i` (registres Paula/CIA disque clean-room HRM+NDK) + `td_read_track0` dans
+    trackdisk.s. Garde-fous advisor (ont tout débloqué du 1er coup) : (1) **CIA-B DDRB=$FF** avant d'écrire PRB
+    (sinon PRB ne pilote rien — jamais posé avant, suspect n°1) ; (2) séquence MINIMALE d'abord (moteur+select+DMA),
+    SANS step ni side-select (polarités DSKDIREC/DSKSIDE non vérifiables de mémoire — reportées ; la tête est à track
+    0 au reset ; le compte de syncs se fiche de la piste) ; (3) de-risquer le montage ADF (confirmé par la lecture
+    elle-même) ; (4) ADKCON=$8400 (SETCLR|WORDSYNC, DD) ; DSKRDY timeout+poursuit ; DSKBLK masqué dans INTENA
+    (poll INTREQR) ; timeout sur CHAQUE boucle. Séquence : DDRB=$FF, PRB moteur-on+select DF0 (latch via front SEL0),
+    spin-up, disk DMA (DSKSYNC=$4489, DSKPT=buf chip, DSKLEN×2, DMACON DSKEN), poll DSKBLK timeout, stop (clear
+    SEULEMENT DSKEN, pas MASTER=affichage). N'écrit que CIA-B PRB -> timers MICROHZ/M7a intacts. Preuve série
+    **M6U** + compte de syncs émis (routine `ser_puthex` ajoutée) : **SYNCS=0016 = 22 mots `$4489`** lus (= 11
+    secteurs × 2 syncs d'en-tête ; `$4489` impossible dans du MFM normal + buffer MEMF_CLEAR -> 0 faux positif).
+    RED `TD_NO_DMA` (DMA non armé -> buffer à 0 -> 0 sync) -> M6U absent. Contrôle sans disque -> timeout -> M6U
+    absent (prouve que M6U vient du disque). COOP non-rég. `tests/boot_test.sh` étendu : 5e arg ADF optionnel en DF0.
+    PROCHAIN : B2b (step/side vers une piste précise) puis B3 (décodage MFM). Checkpoint user.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
