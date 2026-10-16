@@ -26,6 +26,7 @@
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
+                xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -502,18 +503,18 @@ m6t_pop:
         lea     32(sp),sp            ; libère l'IORequest (échec)
 m6t_done:
 
-        ; --- M6u : trackdisk LECTURE DE PISTE MFM BRUTE (B2) ---
-        ; td_read_track0 lit une piste brute de DF0 (nécessite un ADF de test en DF0) ; on compte les mots de
-        ; synchro $4489 ($4489 ne peut PAS apparaître dans du MFM normal -> zéro faux positif ; buffer MEMF_CLEAR).
-        ; Émet « M6U SYNCS=XXXX » (compte réel, pour inspection) puis « M6U TRACKDISK READ OK » si compte >= seuil.
-        ; Sans disque (suites normales) -> td renvoie 0 -> M6U absent, sans FAILED (lecture = incrément floppy).
+        ; --- M6u/M6v : lecture brute (B2) + décodage MFM (B3) — UNE SEULE lecture de DF0 ---
+        ; td_read_track0 lit la piste brute ; M6U compte les mots de synchro $4489 (impossibles en MFM normal -> 0
+        ; faux positif), M6V décode les secteurs (combine odd/even) + vérifie les checksums en-tête ET data. UNE
+        ; seule lecture pour les deux (un 2e timeout sans disque décalerait la preuve M7A). Sans disque -> rien, sans FAILED.
         bsr     td_read_track0
         tst.l   d0
-        beq     m6u_done
-        move.l  d0,a2                ; a2 = buffer piste brute
-        move.l  #$1900-1,d2          ; TD_RAWWORDS-1 (disk.i) : parcourt les mots (6399 < 65535 -> dbra OK)
-        moveq   #0,d3               ; compteur de syncs
-        move.l  a2,a0
+        beq     m6uv_done
+        move.l  d0,a4                ; a4 = rawbuf chip (piste brute ; préservé jusqu'au FreeMem)
+        ; M6U : compter les mots de synchro
+        move.l  a4,a0
+        move.l  #$1900-1,d2          ; TD_RAWWORDS-1 (disk.i) : 6399 < 65535 -> dbra OK
+        moveq   #0,d3
 .m6u_scan:
         cmp.w   #$4489,(a0)+         ; TD_SYNC (disk.i)
         bne.s   .m6u_next
@@ -523,14 +524,46 @@ m6t_done:
         lea     msg_m6u_syncs(pc),a0
         bsr     ser_puts             ; « M6U SYNCS= »
         move.w  d3,d0
-        bsr     ser_puthex           ; compte réel en hexa
+        bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
-        cmp.l   #5,d3                ; seuil : au moins 5 syncs (une piste formatée en a ~20)
-        blt.s   m6u_done
+        cmp.l   #5,d3                ; seuil : au moins 5 syncs (une piste formatée en a ~22)
+        blt.s   .m6v_decode
         lea     msg_m6u_ok(pc),a0
         bsr     ser_puts             ; « M6U TRACKDISK READ OK »
-m6u_done:
+.m6v_decode:
+        ; M6V : décoder la piste en secteurs 512 o + vérifier les checksums
+        move.l  #512*11,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .m6uv_freeraw        ; pas de RAM -> libère juste rawbuf
+        move.l  d0,a3                ; a3 = sectorbuf
+        move.l  a4,a0
+        move.l  a3,a1
+        bsr     td_decode_track      ; d0 = nombre de secteurs décodés+vérifiés
+        move.l  d0,d5
+        lea     msg_m6v_sect(pc),a0
+        bsr     ser_puts             ; « M6V SECTORS= »
+        move.w  d5,d0
+        bsr     ser_puthex
+        lea     msg_crlf(pc),a0
+        bsr     ser_puts
+        cmp.l   #11,d5               ; 11 secteurs valides ?
+        bne.s   .m6v_free
+        cmp.l   #$444F5300,(a3)      ; secteur 0 décodé == « DOS\0 » (bootblock OFS) ?
+        bne.s   .m6v_free
+        lea     msg_m6v_ok(pc),a0
+        bsr     ser_puts             ; « M6V TRACKDISK DECODE OK »
+.m6v_free:
+        move.l  a3,a1                ; libère sectorbuf
+        move.l  #512*11,d0
+        jsr     LVO_FREEMEM(a6)
+.m6uv_freeraw:
+        move.l  a4,a1                ; libère rawbuf (TD_RAWBYTES = $1900*2)
+        move.l  #$1900*2,d0
+        jsr     LVO_FREEMEM(a6)
+m6uv_done:
 
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
@@ -2122,6 +2155,10 @@ msg_m6u_syncs:
         dc.b    "M6U SYNCS=",0
 msg_m6u_ok:
         dc.b    "M6U TRACKDISK READ OK (raw MFM track read from DF0 via disk DMA; $4489 sync words found)",13,10,0
+msg_m6v_sect:
+        dc.b    "M6V SECTORS=",0
+msg_m6v_ok:
+        dc.b    "M6V TRACKDISK DECODE OK (MFM decoded: 11 sectors, header+data checksums valid, sector 0 = DOS bootblock)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (romboot scaffold: boot-screen routed by strap decision; no bootable volume -> insert-disk; real DF0:-read trigger comes with trackdisk in increment B/C)",13,10,0
 msg_m6s_ok:

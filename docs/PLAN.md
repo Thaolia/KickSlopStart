@@ -338,6 +338,18 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     RED `TD_NO_DMA` (DMA non armé -> buffer à 0 -> 0 sync) -> M6U absent. Contrôle sans disque -> timeout -> M6U
     absent (prouve que M6U vient du disque). COOP non-rég. `tests/boot_test.sh` étendu : 5e arg ADF optionnel en DF0.
     PROCHAIN : B2b (step/side vers une piste précise) puis B3 (décodage MFM). Checkpoint user.
+  - **B3 / M6v — décodage MFM de la piste (FAIT, cœur algorithmique).** User : « go B3 » (+ B4 + B2b enchaînés).
+    Garde-fou : l'algorithme MFM Amiga (split odd/even + checksums) = fait à NE PAS coder de mémoire → VERROUILLÉ
+    d'abord par round-trip Python (`scratchpad/mfm_ref.py`) : decode `((odd&$55555555)<<1)|(even&$55555555)` (odd en
+    1er), checksums en-tête/data = XOR des longs MFM & masque. `td_decode_track(rawbuf, sectorbuf)` : scanne les syncs
+    $4489, décode info (format=$FF, n° secteur < 11), vérifie checksum en-tête (XOR 10 longs info+label) ET checksum
+    data (XOR 256 longs), décode 512 o vers sectorbuf+n°*512, renvoie le nombre de secteurs valides. Offsets secteur
+    (depuis info_odd) : +0 info +8 label +40 hdrchk +48 datachk +56 data_odd +568 data_even, fin +1080. Preuve série
+    **M6V** + compte émis : **SECTORS=000B = 11** secteurs décodés+vérifiés ET secteur 0 == « DOS\0 » (bootblock OFS).
+    RED `MFM_BAD_DECODE` (saute le <<1 du combine data → données fausses mais checksums (sur MFM brut) toujours OK →
+    SECTORS reste 11 mais secteur 0 != DOS) → M6V absent : isole la correction du décodage data. Contrôle sans disque
+    → M6V absent. COOP non-rég. Fixes build : branches `.s`→word (routine grande), `lsl.l #9` interdit (max 8) →
+    `lsl #8`+`add`. PROCHAIN : B4 (CMD_READ) puis B2b (step/side).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

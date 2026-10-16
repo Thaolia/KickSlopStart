@@ -15,6 +15,7 @@
                 include "disk.i"
 
                 xdef    td_read_track0
+                xdef    td_decode_track
 
 ; --- constantes trackdisk (devices/trackdisk.i) + erreurs exec io (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
@@ -171,5 +172,108 @@ td_read_track0:
         move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
         move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
         move.b  #PRB_OFF,CIAB_PRB    ; moteur off + déselect
+        rts
+
+; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs décodés+vérifiés (checksums en-tête ET data OK).
+; Scanne la piste brute à la recherche des syncs $4489 ; pour chaque secteur : décode info (combine odd/even),
+; vérifie format=$FF et numéro de secteur < 11, vérifie le checksum en-tête (XOR des 10 longs MFM info+label & MASK
+; == checksum stocké décodé) et le checksum data (XOR des 256 longs MFM data & MASK), puis décode les 512 o de
+; données vers sectorbuf + numéro*512. Format verrouillé par round-trip Python. a6 non utilisé.
+td_decode_track:
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a1,a4                ; a4 = base sectorbuf
+        lea     (TD_RAWBYTES-1200)(a0),a2  ; a2 = fin de scan (laisse 1200 o pour le dernier secteur)
+        moveq   #0,d7                ; d7 = compteur de secteurs valides
+.sc_loop:
+        cmp.l   a2,a0
+        bcc     .sc_done             ; p >= fin -> terminé
+        cmp.w   #$4489,(a0)
+        bne     .sc_adv              ; pas un sync -> avance de 2
+.sc_skipsync:
+        addq.l  #2,a0                ; saute les $4489 consécutifs (2 mots de sync)
+        cmp.w   #$4489,(a0)
+        beq.s   .sc_skipsync
+        move.l  a0,a3                ; a3 = en-tête du secteur (info_odd)
+        ; décode info = combine(info_odd, info_even)
+        move.l  (a3),d0
+        and.l   #MFM_MASK,d0
+        add.l   d0,d0                ; <<1
+        move.l  4(a3),d1
+        and.l   #MFM_MASK,d1
+        or.l    d1,d0                ; d0 = info décodé
+        move.l  d0,d1
+        rol.l   #8,d1
+        cmp.b   #$FF,d1              ; format == $FF ?
+        bne     .sc_adv
+        move.l  d0,d6
+        lsr.l   #8,d6
+        and.l   #$FF,d6              ; d6 = numéro de secteur
+        cmp.l   #MFM_NSECT,d6
+        bcc     .sc_adv              ; secteur >= 11 -> ignore
+        ; checksum en-tête : XOR des 10 longs (info+label) & MASK
+        moveq   #0,d2
+        move.l  a3,a5
+        moveq   #10-1,d1
+.sc_hc:
+        move.l  (a5)+,d3
+        eor.l   d3,d2
+        dbra    d1,.sc_hc
+        and.l   #MFM_MASK,d2         ; d2 = checksum en-tête calculé
+        move.l  40(a3),d0            ; stocké décodé = combine(hdrchk_odd, hdrchk_even)
+        and.l   #MFM_MASK,d0
+        add.l   d0,d0
+        move.l  44(a3),d1
+        and.l   #MFM_MASK,d1
+        or.l    d1,d0
+        cmp.l   d2,d0
+        bne     .sc_adv              ; checksum en-tête invalide -> ignore
+        ; checksum data : XOR des 256 longs (data odd+even) & MASK
+        moveq   #0,d2
+        lea     56(a3),a5
+        move.w  #256-1,d1
+.sc_dc:
+        move.l  (a5)+,d3
+        eor.l   d3,d2
+        dbra    d1,.sc_dc
+        and.l   #MFM_MASK,d2         ; d2 = checksum data calculé
+        move.l  48(a3),d0           ; stocké décodé = combine(datachk_odd, datachk_even)
+        and.l   #MFM_MASK,d0
+        add.l   d0,d0
+        move.l  52(a3),d1
+        and.l   #MFM_MASK,d1
+        or.l    d1,d0
+        cmp.l   d2,d0
+        bne     .sc_adv              ; checksum data invalide -> ignore
+        ; décode les 512 o de data (128 longs) vers sectorbuf + secteur*512
+        move.l  a0,-(sp)            ; sauve le pointeur de scan (a0 réutilisé comme walker even)
+        move.l  d6,d0
+        lsl.l   #8,d0               ; secteur * 256
+        add.l   d0,d0               ; * 2 -> secteur * 512 (lsl #9 interdit : max #8)
+        move.l  a4,a1
+        add.l   d0,a1               ; a1 = destination
+        lea     56(a3),a5          ; a5 = data_odd[0]
+        lea     (56+512)(a3),a0    ; a0 = data_even[0]
+        move.w  #128-1,d1
+.sc_data:
+        move.l  (a5)+,d0
+        and.l   #MFM_MASK,d0
+                ifeq    MFM_BAD_DECODE
+        add.l   d0,d0               ; <<1 (combine correct)
+                endc                ; RED MFM_BAD_DECODE : saute le <<1 -> données fausses -> secteur 0 != "DOS\0"
+        move.l  (a0)+,d3
+        and.l   #MFM_MASK,d3
+        or.l    d3,d0
+        move.l  d0,(a1)+
+        dbra    d1,.sc_data
+        move.l  (sp)+,a0            ; restaure le pointeur de scan
+        addq.l  #1,d7              ; secteur valide
+        lea     1080(a3),a0        ; saute ce secteur (header 56 + data 1024) -> scan vers le sync suivant
+        bra     .sc_loop
+.sc_adv:
+        addq.l  #2,a0
+        bra     .sc_loop
+.sc_done:
+        move.l  d7,d0
+        movem.l (sp)+,d2-d7/a2-a5
         rts
 trackdisk_end:

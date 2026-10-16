@@ -43,3 +43,16 @@ TD_SYNC      EQU $4489         ; mot de synchro MFM standard Amiga (impossible d
 ; TD_NO_DMA=1 (RED B2) : la lecture n'arme PAS le DMA disque (ni DMACON DSKEN ni DSKLEN start) -> le buffer
 ; MEMF_CLEAR reste à 0 -> aucun mot $4489 -> « M6U TRACKDISK READ OK » absent. Isole l'armement du DMA. Défaut 0.
 TD_NO_DMA EQU 0
+
+; --- décodage MFM (B3) ---
+MFM_MASK      EQU $55555555   ; masque des bits de DONNÉES (les bits d'horloge MFM sont en $AAAAAAAA)
+MFM_SECTSZ    EQU 512         ; octets de données décodées par secteur
+MFM_NSECT     EQU 11          ; secteurs par piste (DD)
+MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632 : buffer des secteurs décodés (indexés par numéro logique)
+; offsets dans un secteur MFM depuis info_odd (format public Amiga/ADF-FAQ ; verrouillé par round-trip Python) :
+;   +0 info(odd,even,2 longs) +8 label(4 odd+4 even,8 longs) +40 hdrchk(odd,even) +48 datachk(odd,even)
+;   +56 data_odd(128 longs=512o) +568 data_even(128 longs=512o) ; fin du secteur à +1080
+; MFM_BAD_DECODE=1 (RED B3) : saute le <<1 du combine des DATA -> données décodées fausses -> secteur 0 != « DOS\0 »
+; -> « M6V TRACKDISK DECODE OK » absent (les checksums, calculés sur le MFM BRUT, passent quand même -> isole
+; spécifiquement la correction du décodage des données). Défaut 0.
+MFM_BAD_DECODE EQU 0
