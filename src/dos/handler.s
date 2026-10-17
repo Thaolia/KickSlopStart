@@ -15,6 +15,9 @@
 
                 xdef    dos_handler_df0
                 xref    ofs_read_file
+                xref    ofs_name_to_block    ; LOCATE_OBJECT : chemin -> bloc
+                xref    ofs_fill_fib         ; EXAMINE_OBJECT : bloc -> FIB
+                xref    ofs_dir_next         ; EXAMINE_NEXT : entrée suivante du répertoire
 
 HND_FILEMAX     EQU DOS_FILEMAX       ; taille max d'un fichier bufferisé par le handler (cap-bump 32K, exec.i)
 HS_BUF          EQU 0                ; état : APTR buffer du fichier
@@ -48,6 +51,14 @@ dos_handler_df0:
                 beq     .end
                 cmp.l   #ACTION_SEEK,d0
                 beq     .seek
+                cmp.l   #ACTION_LOCATE_OBJECT,d0
+                beq     .locate
+                cmp.l   #ACTION_FREE_LOCK,d0
+                beq     .freelock
+                cmp.l   #ACTION_EXAMINE_OBJECT,d0
+                beq     .examine
+                cmp.l   #ACTION_EXAMINE_NEXT,d0
+                beq     .exnext
                 move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -140,10 +151,10 @@ dos_handler_df0:
                 move.l  DP_ARG1(a4),a0
                 add.l   d2,HS_POS(a0)                 ; pos += n
                 move.l  d2,DP_RES1(a4)                ; RES1 = octets lus
-                bra.s   .reply
+                bra     .reply
 .rd_eof:
                 clr.l   DP_RES1(a4)                   ; 0 = EOF
-                bra.s   .reply
+                bra     .reply
 
 .seek:                                                ; Seek(ARG1=état, ARG2=position, ARG3=mode) -> RES1 = ancienne pos
                 ifne    HND_NO_SEEK
@@ -178,6 +189,103 @@ dos_handler_df0:
 .sk_err:
                 move.l  #-1,DP_RES1(a4)
                 move.l  #ERROR_SEEK_ERROR,DP_RES2(a4)
+                bra     .reply
+
+.locate:                                              ; Lock : (ARG2 BSTR nom, ARG3 mode) -> RES1 = BPTR FileLock
+                lea     -112(sp),sp                   ; BSTR nom -> C-string sur la pile
+                move.l  DP_ARG2(a4),d0
+                lsl.l   #2,d0
+                move.l  d0,a0                          ; BADDR(ARG2)
+                move.l  sp,a1
+                moveq   #0,d1
+                move.b  (a0)+,d1                      ; longueur BCPL
+.lo_ncpy:
+                tst.l   d1
+                beq.s   .lo_ndone
+                move.b  (a0)+,(a1)+
+                subq.l  #1,d1
+                bra.s   .lo_ncpy
+.lo_ndone:
+                clr.b   (a1)                          ; C-string terminée
+                move.l  sp,a0                          ; a0 = nom
+                jsr     ofs_name_to_block              ; d0 = bloc | 0 (a6 = SysBase ; préserve a2/a3/a4)
+                lea     112(sp),sp
+                tst.l   d0
+                beq.s   .lo_fail                       ; objet introuvable
+                move.l  d0,d2                          ; d2 = bloc (préservé par AllocMem)
+                move.l  #FL_SIZEOF,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq.s   .lo_fail                       ; pas de RAM
+                move.l  d0,a0                          ; a0 = FileLock
+                move.l  d2,FL_KEY(a0)                 ; bloc locké
+                move.l  DP_ARG3(a4),FL_ACCESS(a0)     ; mode (SHARED/EXCLUSIVE)
+                move.l  a2,FL_TASK(a0)                ; port du handler (= notre pr_MsgPort) -> source UnLock/Examine
+                move.l  d0,d1                          ; FL_LINK/FL_VOLUME/curseur = 0 (MEMF_CLEAR)
+                lsr.l   #2,d1                          ; BPTR(lock)
+                move.l  d1,DP_RES1(a4)
+                bra     .reply
+.lo_fail:
+                move.l  #DOSFALSE,DP_RES1(a4)
+                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
+                bra     .reply
+
+.freelock:                                            ; UnLock : (ARG1 BPTR lock) -> libère
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                beq.s   .frl_ok                        ; lock 0 -> no-op
+                move.l  d0,a1
+                move.l  #FL_SIZEOF,d0
+                jsr     LVO_FREEMEM(a6)
+.frl_ok:
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+
+.examine:                                             ; Examine : (ARG1 BPTR lock, ARG2 BPTR fib) -> remplit le FIB
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                beq.s   .ex_fail
+                move.l  d0,a0                          ; a0 = FileLock
+                move.l  FL_KEY(a0),d0                 ; bloc de l'objet locké
+                clr.l   FLP_BUCKET(a0)                ; reset du curseur d'énumération (Examine -> début)
+                clr.l   FLP_CHAIN(a0)
+                move.l  DP_ARG2(a4),d1
+                lsl.l   #2,d1
+                move.l  d1,a1                          ; a1 = fib
+                jsr     ofs_fill_fib                   ; d0 = 1/0 (préserve a2/a3/a4/a6)
+                tst.l   d0
+                beq.s   .ex_fail
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+.ex_fail:
+                move.l  #DOSFALSE,DP_RES1(a4)
+                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
+                bra     .reply
+
+.exnext:                                              ; ExNext : (ARG1 BPTR lock, ARG2 BPTR fib) -> entrée suivante
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                beq.s   .exn_end
+                move.l  d0,a0                          ; a0 = FileLock
+                move.l  FL_KEY(a0),d0                 ; bloc répertoire
+                move.l  FLP_BUCKET(a0),d1             ; curseur bucket
+                move.l  FLP_CHAIN(a0),d2              ; curseur chaîne
+                move.l  DP_ARG2(a4),d3
+                lsl.l   #2,d3
+                move.l  d3,a1                          ; a1 = fib
+                move.l  a0,-(sp)                       ; ofs_dir_next ne préserve PAS a0 -> sauver le lock
+                jsr     ofs_dir_next                   ; d0=found, d1=bucket màj, d2=chain màj (préserve a2-a5)
+                move.l  (sp)+,a0
+                move.l  d1,FLP_BUCKET(a0)             ; réécrit le curseur dans le lock
+                move.l  d2,FLP_CHAIN(a0)
+                tst.l   d0
+                beq.s   .exn_end
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+.exn_end:
+                move.l  #DOSFALSE,DP_RES1(a4)
+                move.l  #ERROR_NO_MORE_ENTRIES,DP_RES2(a4)
                 bra     .reply
 
 .end:

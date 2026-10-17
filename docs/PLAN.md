@@ -538,7 +538,7 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     console (fh_Type=DOS_CONPORT) -> Output() rend ce BPTR -> Write(Output(),msg) -> le marqueur est émis PAR le Write
     via con_handler (prouve les 4 d'un coup). RED `DOS_NO_WRITE`. GREEN ADF (DOS WRITE OK + M6D + EXPANSION + GAMEPORT
     + DISK VALID + M7, 0 FAILED), md5 `f4e3af995dd7ea908220b02b627be860`. **Write via CONSOLE** (pas fichier : OFS
-    read-only). **Lock/Examine/ExNext** (FileLock + FileInfoBlock + lecture répertoire OFS) = prochain incrément dédié.
+    read-only).
   - **LoadSeg cap-bump 16K -> 32K FAIT** (PAS du streaming). Le cap de lecture était le buffer whole-file du handler
     (HND_FILEMAX) + celui de LoadSeg (LS_LOADMAX), 16 Ko chacun. Relevés à un `DOS_FILEMAX`=32 Ko partagé (exec.i ;
     handler.s/dos_lib.s/loadseg.s le référencent). Advisor : le vrai streaming (lecture incrémentale OFS sur HS_POS)
@@ -549,6 +549,22 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     bigseg tronque -> absent ; d3dtest petit OK). Non-rég ADF : D3E + E3 + D1 + M6Z + DOS WRITE, 0 FAILED, layout ADF
     préservé (blocs 10/11 spanning non perturbés par bigseg). md5 `9b279b64b48f65b3a30a8e5ea3c323c8`. 2 buffers
     concurrents = 64 Ko transitoire (sûr). **Streaming réel (incrémental OFS) reste différé** avec Lock/Examine.
+  - **Lock(-84) + UnLock(-90) + Examine(-102) + ExNext(-108) FAIT.** `dos_lib.s`/`handler.s`/`ofs.s`/`ofs.i`/`dospkt.i`.
+    Locks + lecture de répertoire OFS. Lock résout DF0: → port handler, nom → BSTR long-aligné, `ACTION_LOCATE_OBJECT` ;
+    le handler résout le chemin via `ofs_name_to_block` (préfixe `xxx:` ignoré, vide/« : » → racine, sous-rép
+    `/`-séparés, final fichier OU dir), alloue un `FileLock` {fl_Key=bloc, fl_Access=mode, fl_Task=port, curseur privé
+    flp_Bucket/flp_ChainBlk} → BPTR. UnLock : port via `fl_Task` → `ACTION_FREE_LOCK` (FreeMem). Examine : `ofs_fill_fib`
+    (DiskKey/DirEntryType=sec_type/FileName BCPL→C/Size=byte_size@324 si fichier) + reset curseur. ExNext : `ofs_dir_next`
+    (parcourt la chaîne hash courante puis avance bucket par bucket dans la hashtable, remplit le FIB, fait avancer le
+    curseur DANS le lock). Vecteurs 14/15/17/18 (DateStamp -192 reste vecteur 32 = canary). **Offset OFSB_FILESIZE=324
+    vérifié sur l'ADF (kickslop bloc 866 → 1024) AVANT build**, reconfirmé par l'assertion de boot. Preuve **DOS LOCK
+    EXAMINE OK** (`d3i_client` pri 5, émet sous ser_lock) : (A) Lock("kickslop")→Examine → DirEntryType<0 + fib_Size==1024
+    (oracle) ; (B) Lock(":")→Examine (répertoire)→ExNext boucle trouve l'entrée fichier de 1024 o (= kickslop). RED
+    `OFS_NO_DIRNEXT` (found=0 d'emblée → marqueur absent, **D1 OFS READ reste VERT** = isole l'énumération). GREEN ADF
+    (DOS LOCK EXAMINE OK + non-rég D1/D3E/DOS IOERR SEEK/DOS WRITE/LOADSEG BIG/M6Z/E3/F1BOOTOK, 0 FAILED), md5
+    `5e87d941e436cd29769959d0711c21e2`. **Déviation ASSUMÉE** : curseur d'ExNext dans le lock (pas dans le FIB comme le
+    vrai OS) → un lock = une énumération (suffisant pour le harnais, documenté). **Streaming OFS réel** + sortir le
+    harnais du chemin de boot (`make kick-prod`) restent les dettes différées.
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par

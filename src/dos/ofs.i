@@ -15,6 +15,9 @@ OFSB_FIRSTDATA  EQU 16            ; long[4] : first_data (file header)
 OFSB_NEXT       EQU 16            ; long[4] : next_data (data block OFS) — même offset
 OFSB_HASHTAB    EQU 24            ; long[6] : début de la table de hash (header)
 OFSB_DATA       EQU 24            ; data block OFS : octets de données @ +24
+OFSB_FILESIZE   EQU 324           ; long[81] (= BSIZE-188) : byte_size d'un file header (taille en octets).
+                                  ; Vérifié sur l'ADF de test : kickslop (bloc 866) -> 1024. L'assertion de boot
+                                  ; fib_Size==1024 reconfirme (read@324 -> write@124 -> readback). AUCUNE lecture ROM.
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)) : nom BCPL (octet longueur + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)) : hash_chain (prochain header même bucket)
 OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)) : type secondaire (ST_FILE=-3)
@@ -45,3 +48,9 @@ OFS_NO_SUBDIR   EQU 0
 ; OFS_NO_DATACHAIN=1 (RED D1) : la lecture ne suit PAS la chaîne next_data -> seul le 1er data block (488 o) copié
 ; -> taille retournée == 488 != 1024 -> « D1 OFS READ OK » absent. Isole le chaînage des data blocks OFS. Défaut 0.
 OFS_NO_DATACHAIN EQU 0
+
+; OFS_NO_DIRNEXT=1 (RED Lock/Examine) : ofs_dir_next renvoie immédiatement found=0 (fin) -> ExNext ne trouve JAMAIS
+; d'entrée -> la partie énumération de « DOS LOCK EXAMINE OK » échoue -> marqueur absent. ofs_read_file (D1) et
+; ofs_name_to_block/ofs_fill_fib restent intacts -> « D1 OFS READ OK » VERT = isole l'énumération de répertoire du
+; chemin de lecture prouvé. Défaut 0.
+OFS_NO_DIRNEXT  EQU 0

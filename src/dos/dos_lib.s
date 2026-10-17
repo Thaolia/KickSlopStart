@@ -56,7 +56,15 @@ dos_vectors:
         dc.l    dos_fn_input             ; 9  : LVO -54 Input() -> BPTR pr_CIS
         dc.l    dos_fn_output            ; 10 : LVO -60 Output() -> BPTR pr_COS
         dc.l    dos_fn_seek              ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
-        dcb.l   9,dos_null               ; 12..20 : LVO -72..-120 (DeleteFile, Rename, Lock, Examine... non impl.)
+        dc.l    dos_null                 ; 12 : LVO -72  (DeleteFile non impl.)
+        dc.l    dos_null                 ; 13 : LVO -78  (Rename non impl.)
+        dc.l    dos_fn_lock              ; 14 : LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
+        dc.l    dos_fn_unlock            ; 15 : LVO -90  UnLock(lock d1)
+        dc.l    dos_null                 ; 16 : LVO -96  (DupLock non impl.)
+        dc.l    dos_fn_examine           ; 17 : LVO -102 Examine(lock d1, fib d2)
+        dc.l    dos_fn_exnext            ; 18 : LVO -108 ExNext(lock d1, fib d2)
+        dc.l    dos_null                 ; 19 : LVO -114 (Info non impl.)
+        dc.l    dos_null                 ; 20 : LVO -120 (CreateDir non impl.)
         dc.l    dos_fn_currentdir        ; 21 : LVO -126 CurrentDir(lock d1) -> ancien lock
         dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
         dcb.l   2,dos_null               ; 23..24 : LVO -138/-144 (CreateProc, Exit non impl.)
@@ -399,6 +407,126 @@ dos_fn_unloadseg:
         jsr     dos_unloadseg          ; (loadseg.o loin -> jsr) ; d0=0 -> no-op
         moveq   #0,d0
         move.l  (sp)+,a6
+        rts
+
+; --- Lock / UnLock / Examine / ExNext (vecteurs LVO -84 / -90 / -102 / -108) : locks + lecture de répertoire OFS ---
+; Appelées depuis un PROCESS (dos_sendpkt = reply port = ThisTask->pr_MsgPort). Le handler DF0: (handler.s) alloue
+; le FileLock, remplit le FileInfoBlock et énumère via la machinerie OFS (ofs_name_to_block/ofs_fill_fib/ofs_dir_next).
+
+; Lock(name d1 [C-string], mode d2 [SHARED_LOCK/EXCLUSIVE_LOCK]) -> d0 = BPTR FileLock | 0. Résout le device (1er
+; DeviceNode = DF0:, comme Open) pour le port du handler, convertit le nom en BSTR LONG-ALIGNÉ (BPTR exige l'alignement),
+; envoie ACTION_LOCATE_OBJECT (ARG1=lock parent 0 = racine ; le handler résout le chemin complet). a6 = DosBase.
+dos_fn_lock:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,a4                   ; a4 = nom (C-string)
+        move.l  d2,d7                   ; d7 = mode
+        move.l  DL_ROOT(a6),a0          ; RootNode
+        move.l  RN_INFO(a0),d0          ; BPTR DosInfo
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  DI_DEVINFO(a0),d0       ; BPTR DeviceNode (tête)
+        lsl.l   #2,d0
+        beq     .lk_fail                ; aucun device monté
+        move.l  d0,a0
+        move.l  DN_TASK(a0),a3          ; a3 = port du handler
+        move.l  a3,d0
+        beq     .lk_fail                ; handler non démarré
+        move.l  ($4).w,a6               ; SysBase
+        lea     -48(sp),sp             ; zone BSTR sur la pile
+        move.l  sp,d0
+        addq.l  #3,d0
+        and.l   #-4,d0                  ; arrondi au long supérieur -> BSTR long-aligné (BPTR réversible)
+        move.l  d0,a5                   ; a5 = BSTR
+        lea     1(a5),a1               ; a1 -> caractères
+        moveq   #0,d3                   ; d3 = longueur
+.lk_ncpy:
+        move.b  (a4)+,d0
+        beq.s   .lk_ndone
+        move.b  d0,(a1)+
+        addq.l  #1,d3
+        cmp.l   #38,d3                  ; borne du buffer
+        bcs.s   .lk_ncpy
+.lk_ndone:
+        move.b  d3,(a5)                 ; octet de longueur BCPL
+        lea     -SP_SIZEOF(sp),sp       ; StandardPacket
+        move.l  sp,a0
+        move.l  a3,a1                   ; port du handler
+        move.l  #ACTION_LOCATE_OBJECT,d0
+        moveq   #0,d1                   ; ARG1 = lock parent 0 (racine)
+        move.l  a5,d2
+        lsr.l   #2,d2                   ; ARG2 = BPTR(nom BSTR)
+        move.l  d7,d3                   ; ARG3 = mode
+        jsr     dos_sendpkt             ; d0 = dp_Res1 (BPTR lock | 0)
+        lea     SP_SIZEOF(sp),sp
+        lea     48(sp),sp              ; libère la zone BSTR
+        bra.s   .lk_ret
+.lk_fail:
+        moveq   #0,d0
+.lk_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; UnLock(lock d1 [BPTR]) -> d0 = 0. Récupère le port du handler via fl_Task du lock, envoie ACTION_FREE_LOCK.
+dos_fn_unlock:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,d4                   ; BPTR lock
+        move.l  d4,d0
+        lsl.l   #2,d0
+        beq.s   .ul_ret                 ; lock 0 -> no-op
+        move.l  d0,a2                   ; BADDR(lock)
+        move.l  FL_TASK(a2),a3          ; port du handler
+        move.l  a3,d0
+        beq.s   .ul_ret
+        move.l  ($4).w,a6               ; SysBase
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a3,a1
+        move.l  #ACTION_FREE_LOCK,d0
+        move.l  d4,d1                   ; ARG1 = BPTR lock
+        moveq   #0,d2
+        moveq   #0,d3
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+.ul_ret:
+        moveq   #0,d0
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; Examine(lock d1 [BPTR], fib d2 [APTR long-aligné]) -> d0 = DOSTRUE/DOSFALSE. ExNext même signature (entrée suivante).
+; Port via fl_Task du lock. ARG2 = BPTR(fib) (le FIB doit être long-aligné -> AllocMem côté appelant). a6 = DosBase.
+dos_fn_examine:
+        move.l  #ACTION_EXAMINE_OBJECT,d0
+        bra.s   dos_examine_pkt
+dos_fn_exnext:
+        move.l  #ACTION_EXAMINE_NEXT,d0
+dos_examine_pkt:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d0,d6                   ; d6 = code action
+        move.l  d1,d4                   ; BPTR lock
+        move.l  d2,d5                   ; APTR fib
+        move.l  d4,d0
+        lsl.l   #2,d0
+        beq.s   .exc_fail
+        move.l  d0,a2                   ; BADDR(lock)
+        move.l  FL_TASK(a2),a3          ; port du handler
+        move.l  a3,d0
+        beq.s   .exc_fail
+        move.l  ($4).w,a6               ; SysBase
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a3,a1
+        move.l  d6,d0                   ; action (EXAMINE_OBJECT / EXAMINE_NEXT)
+        move.l  d4,d1                   ; ARG1 = BPTR lock
+        move.l  d5,d2
+        lsr.l   #2,d2                   ; ARG2 = BPTR(fib)
+        moveq   #0,d3
+        jsr     dos_sendpkt             ; d0 = dp_Res1 (DOSTRUE/DOSFALSE)
+        lea     SP_SIZEOF(sp),sp
+        bra.s   .exc_ret
+.exc_fail:
+        moveq   #0,d0                   ; DOSFALSE
+.exc_ret:
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom, alloue RootNode + DosInfo séparément

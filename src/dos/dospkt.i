@@ -81,12 +81,18 @@ ACTION_READ        EQU 82          ; 'R'
 ACTION_WRITE       EQU 87          ; 'W'
 ACTION_SEEK        EQU 1008
 ACTION_END         EQU 1007
-ACTION_LOCATE_OBJECT EQU 8
-ACTION_FREE_LOCK   EQU 15
+ACTION_LOCATE_OBJECT EQU 8          ; Lock : (ARG1 parent lock, ARG2 BSTR nom, ARG3 mode) -> RES1 = BPTR lock
+ACTION_FREE_LOCK   EQU 15          ; UnLock : (ARG1 BPTR lock) -> libère le lock
+ACTION_EXAMINE_OBJECT EQU 23       ; Examine : (ARG1 BPTR lock, ARG2 BPTR fib) -> remplit le FileInfoBlock
+ACTION_EXAMINE_NEXT   EQU 24       ; ExNext : (ARG1 BPTR lock, ARG2 BPTR fib) -> entrée suivante du répertoire
 
 MODE_OLDFILE     EQU 1005
 MODE_NEWFILE     EQU 1006
 MODE_READWRITE   EQU 1004
+
+; modes d'accès d'un lock (dos.i)
+SHARED_LOCK      EQU -2            ; lock partagé (lecture concurrente)
+EXCLUSIVE_LOCK   EQU -1            ; lock exclusif (écriture)
 
 DOSTRUE          EQU -1
 DOSFALSE         EQU 0
@@ -103,6 +109,10 @@ DOS_LVO_CURRENTDIR EQU -126        ; CurrentDir(lock d1) -> ancien pr_CurrentDir
 DOS_LVO_LOADSEG  EQU -150          ; LoadSeg(name d1) -> BPTR seglist | 0 (ouvre+lit+parse hunk+reloc via Open/Read)
 DOS_LVO_UNLOADSEG EQU -156         ; UnLoadSeg(seglist d1) -> libère la chaîne de segments
 DOS_LVO_IOERR    EQU -132          ; IoErr() -> d0 = pr_Result2 (code d'erreur du dernier packet)
+DOS_LVO_LOCK     EQU -84           ; Lock(name d1, mode d2) -> BPTR lock | 0
+DOS_LVO_UNLOCK   EQU -90           ; UnLock(lock d1) -> libère
+DOS_LVO_EXAMINE  EQU -102          ; Examine(lock d1, fib d2) -> DOSTRUE/DOSFALSE
+DOS_LVO_EXNEXT   EQU -108          ; ExNext(lock d1, fib d2) -> DOSTRUE/DOSFALSE (DOSFALSE + IoErr=232 -> fin)
 
 ; Seek : modes (dos.i) + codes d'erreur (dos.i) utilisés par le handler/IoErr
 OFFSET_BEGINNING EQU -1            ; Seek depuis le début
@@ -110,6 +120,29 @@ OFFSET_CURRENT   EQU 0             ; Seek relatif à la position courante
 OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
 ERROR_SEEK_ERROR EQU 303           ; dos/dos.i : Seek hors bornes
+ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoire (fin d'énumération normale)
+
+; --- FileLock (dos.i) : préfixe public V34 + curseur d'énumération PRIVÉ ---
+; Déviation clean-room ASSUMÉE : le vrai AmigaDOS garde le curseur d'ExNext dans le FIB (fib_DiskKey) ; on le garde
+; dans le lock (flp_Bucket/flp_ChainBlk). Conséquence : Examine d'un lock dans un FIB puis ExNext via un AUTRE FIB
+; désynchroniserait un appelant qui mélange les FIB. Suffisant pour notre harnais (un lock = une énumération).
+FL_LINK          EQU 0             ; BPTR : lock suivant (on garde 0 : pas de chaînage)
+FL_KEY           EQU 4             ; LONG : bloc header de l'objet locké
+FL_ACCESS        EQU 8             ; LONG : SHARED_LOCK / EXCLUSIVE_LOCK
+FL_TASK          EQU 12            ; APTR : MsgPort du handler (source du port pour UnLock/Examine/ExNext)
+FL_VOLUME        EQU 16            ; BPTR : noeud volume (on garde 0)
+FLP_BUCKET       EQU 20            ; LONG privé : index de bucket courant dans la hashtable du répertoire
+FLP_CHAIN        EQU 24            ; LONG privé : bloc courant dans la chaîne hash (0 = passer au bucket suivant)
+FL_SIZEOF        EQU 28
+
+; --- FileInfoBlock (dos.i) : rempli minimalement (DiskKey/DirEntryType/FileName/Size) ---
+FIB_DISKKEY      EQU 0             ; LONG : clé disque (= bloc header de l'entrée)
+FIB_DIRENTRYTYPE EQU 4            ; LONG : <0 fichier (ST_FILE=-3), >0 répertoire (ST_ROOT=1/ST_USERDIR=2)
+FIB_FILENAME     EQU 8             ; char[108] : nom en C-string (NUL-terminé ; copié du nom BCPL)
+FIB_PROTECTION   EQU 116           ; LONG (non peuplé ce milestone)
+FIB_ENTRYTYPE    EQU 120           ; LONG (= DirEntryType sur le vrai OS ; non peuplé)
+FIB_SIZE         EQU 124           ; LONG : taille du fichier en octets (0 pour un répertoire)
+FIB_SIZEOF       EQU 260
 
 ; DOS_NO_IOERR=1 (RED) : dos_sendpkt NE copie PAS dp_Res2 -> pr_Result2 -> IoErr renvoie 0 même après un Open
 ; raté -> « DOS IOERR SEEK OK » absent. Isole le câblage IoErr (dp_Res2 du packet -> pr_Result2). Défaut 0.

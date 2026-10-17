@@ -14,8 +14,12 @@
                 include "exec.i"
                 include "disk.i"
                 include "ofs.i"
+                include "dospkt.i"       ; FIB_* (remplissage du FileInfoBlock par ofs_fib_fill)
 
                 xdef    ofs_read_file
+                xdef    ofs_name_to_block    ; résout un chemin -> bloc header (Lock)
+                xdef    ofs_fill_fib         ; remplit un FIB depuis un bloc header (Examine)
+                xdef    ofs_dir_next         ; énumère l'entrée suivante d'un répertoire (ExNext)
 
 ; ofs_read_file(a6=SysBase, a0=path NUL-terminé, a1=dest, d0=max octets) -> d0 = taille lue | 0.
 ; Résout un CHEMIN à composants séparés par '/' (ex. « s/startup-sequence ») : traverse les sous-répertoires
@@ -308,6 +312,243 @@ ofs_namecmp:
                 moveq   #1,d0                        ; différent -> pose Z=0
 .nc_ret:
                 movem.l (sp)+,d2/a0/a1               ; movem ne modifie pas le CCR
+                rts
+
+; ofs_fib_fill(d0=bloc header, a1=fib ; bloc DÉJÀ lu dans IOREQ_SZ(a3)) : remplit le FileInfoBlock.
+; DiskKey = bloc ; DirEntryType = sec_type (<0 fichier, >0 répertoire) ; Size = byte_size@324 si fichier sinon 0 ;
+; FileName = nom BCPL converti en C-string (cappé 30 chars, borne anti-corruption). Clobbe d0/d1/a0/a1 (a1 réassigné).
+ofs_fib_fill:
+                move.l  d0,FIB_DISKKEY(a1)
+                lea     IOREQ_SZ(a3),a0              ; a0 = buffer du bloc header
+                move.l  OFSB_SECTYPE(a0),d0          ; type secondaire
+                move.l  d0,FIB_DIRENTRYTYPE(a1)
+                tst.l   d0
+                bpl.s   .ff_dir                      ; >= 0 -> répertoire (ST_ROOT/USERDIR) : taille 0
+                move.l  OFSB_FILESIZE(a0),FIB_SIZE(a1)   ; fichier : byte_size
+                bra.s   .ff_name
+.ff_dir:
+                clr.l   FIB_SIZE(a1)
+.ff_name:
+                lea     OFSB_NAME(a0),a0             ; a0 = nom BCPL (octet longueur + chars)
+                moveq   #0,d0
+                move.b  (a0)+,d0                     ; longueur stockée
+                lea     FIB_FILENAME(a1),a1          ; dest (a1 réassigné -> plus de champ fib base après)
+                cmp.l   #30,d0                       ; borne (nom AmigaDOS <= 30 ; garde anti-corruption)
+                bls.s   .ff_ncap
+                moveq   #30,d0
+.ff_ncap:
+                move.l  d0,d1
+                beq.s   .ff_nend
+.ff_ncpy:
+                move.b  (a0)+,(a1)+
+                subq.l  #1,d1
+                bne.s   .ff_ncpy
+.ff_nend:
+                clr.b   (a1)                         ; NUL-termine la C-string
+                rts
+
+; ofs_name_to_block(a0=chemin NUL-term, a6=SysBase) -> d0 = bloc header de l'objet | 0. Résout un chemin : préfixe
+; « xxx: » ignoré (un seul volume DF0:) ; vide / « : » -> racine (OFS_ROOTBLK). Sinon traverse les sous-répertoires
+; USERDIR ('/'-séparés) comme ofs_read_file, MAIS le composant FINAL peut être un fichier OU un répertoire (Lock
+; d'un dir autorisé). Réutilise ofs_split / ofs_dir_lookup / ofs_read_block. Setup trackdisk/ioreq interne.
+ofs_name_to_block:
+                movem.l d2-d7/a2-a5,-(sp)
+                move.l  a0,a1                        ; a1 = scan de préfixe « xxx: »
+.n2b_colon:
+                move.b  (a1)+,d0
+                beq.s   .n2b_nocolon                 ; NUL -> pas de ':'
+                cmp.b   #':',d0
+                bne.s   .n2b_colon
+                move.l  a1,a0                         ; a0 = juste après le ':'
+.n2b_nocolon:
+                tst.b   (a0)
+                bne.s   .n2b_resolve
+                move.l  #OFS_ROOTBLK,d0              ; chemin vide (ou « : ») -> racine (pas d'alloc)
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+.n2b_resolve:
+                lea     -OFS_FRAME(sp),sp            ; frame local (comp + curseur path + flag dernier)
+                move.l  a0,LF_PATHCUR(sp)
+                lea     EB_DEVICELIST(a6),a0
+                lea     ofs_td_name(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq     .n2b_fail                    ; pas de trackdisk (rien alloué)
+                move.l  d0,a2
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq     .n2b_fail                    ; pas de RAM (rien à free)
+                move.l  d0,a3
+                move.l  #OFS_ROOTBLK,d4             ; d4 = répertoire courant (racine)
+.n2b_nextcomp:
+                lea     LF_COMP(sp),a4
+                move.l  LF_PATHCUR(sp),a0
+                bsr     ofs_split                    ; (a4) = composant ; a0 avance ; d0 = 1 si dernier
+                move.l  a0,LF_PATHCUR(sp)
+                move.b  d0,LF_LAST(sp)
+                bsr     ofs_dir_lookup               ; (d4, a4) -> d0 = bloc | 0 (préserve d4/a4)
+                tst.l   d0
+                beq.s   .n2b_notfound                ; composant introuvable
+                move.l  d0,d4                         ; d4 = bloc du composant
+                tst.b   LF_LAST(sp)
+                bne.s   .n2b_hit                      ; dernier -> objet final (fichier OU dir)
+                move.l  d4,d0                         ; intermédiaire : doit être un USERDIR
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .n2b_notfound
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_ST_USERDIR,OFSB_SECTYPE(a0)
+                bne.s   .n2b_notfound                ; pas un sous-rép -> chemin invalide
+                bra.s   .n2b_nextcomp
+.n2b_hit:
+                move.l  d4,d7                         ; d7 = bloc résultat
+                bra.s   .n2b_free
+.n2b_notfound:
+                moveq   #0,d7
+.n2b_free:
+                move.l  a3,a1                         ; libère ioreq + buffer
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                jsr     LVO_FREEMEM(a6)
+                move.l  d7,d0
+                lea     OFS_FRAME(sp),sp
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+.n2b_fail:
+                moveq   #0,d0                         ; échec avant/pendant alloc -> rien à libérer
+                lea     OFS_FRAME(sp),sp
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+
+; ofs_fill_fib(d0=bloc header, a1=fib, a6=SysBase) -> d0 = 1 OK / 0 KO. Lit le bloc puis remplit le FIB
+; (ofs_fib_fill). Setup trackdisk/ioreq interne. Le reset du curseur d'énumération est à la charge de l'appelant.
+ofs_fill_fib:
+                movem.l d2-d7/a2-a5,-(sp)
+                moveq   #0,d7                         ; résultat par défaut
+                move.l  d0,d4                         ; d4 = bloc
+                move.l  a1,a5                         ; a5 = fib
+                lea     EB_DEVICELIST(a6),a0
+                lea     ofs_td_name(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq.s   .fib_ret                     ; pas de trackdisk (rien alloué)
+                move.l  d0,a2
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq.s   .fib_ret                     ; pas de RAM (rien à free)
+                move.l  d0,a3
+                move.l  d4,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .fib_free                    ; lecture KO
+                move.l  d4,d0
+                move.l  a5,a1
+                bsr     ofs_fib_fill
+                moveq   #1,d7
+.fib_free:
+                move.l  a3,a1
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                jsr     LVO_FREEMEM(a6)
+.fib_ret:
+                move.l  d7,d0
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+
+; ofs_dir_next(d0=dirblock, d1=bucket, d2=chain, a1=fib, a6=SysBase) -> d0 = 1 trouvé / 0 fin ; d1 = bucket màj,
+; d2 = chain màj (curseur à repasser tel quel au prochain appel). Parcourt la chaîne hash courante puis avance de
+; bucket en bucket dans la hashtable du répertoire ; remplit le FIB de l'entrée trouvée. Setup trackdisk/ioreq
+; interne. Réutilise ofs_read_block / ofs_blk_valid / ofs_fib_fill. Préserve d3-d7/a2-a5 ; retours en d0/d1/d2
+; (hors movem). RED OFS_NO_DIRNEXT : renvoie found=0 d'emblée (ExNext ne trouve jamais rien).
+ofs_dir_next:
+                movem.l d3-d7/a2-a5,-(sp)
+                move.l  d0,d4                         ; d4 = dirblock
+                move.l  d1,d5                         ; d5 = bucket
+                move.l  d2,d6                         ; d6 = chain
+                move.l  a1,a5                         ; a5 = fib
+                ifne    OFS_NO_DIRNEXT
+                moveq   #0,d0                         ; RED : fin immédiate (rien alloué)
+                move.l  d5,d1
+                move.l  d6,d2
+                movem.l (sp)+,d3-d7/a2-a5
+                rts
+                endc
+                lea     EB_DEVICELIST(a6),a0
+                lea     ofs_td_name(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq     .dn_noalloc
+                move.l  d0,a2
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq     .dn_noalloc
+                move.l  d0,a3
+.dn_loop:
+                tst.l   d6                            ; chaîne courante non vide ?
+                beq.s   .dn_advbucket
+                move.l  d6,d2                         ; valider le bloc de chaîne
+                bsr     ofs_blk_valid
+                beq.s   .dn_chainend                  ; invalide -> fin de chaîne -> avance bucket
+                move.l  d6,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .dn_end_notfound
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_HASHCHAIN(a0),d3         ; d3 = chaîne suivante (avant que fib_fill ne touche le buffer)
+                move.l  d6,d0                         ; bloc courant = DiskKey
+                move.l  a5,a1
+                bsr     ofs_fib_fill
+                move.l  d3,d6                         ; le curseur chaîne avance
+                moveq   #1,d7                         ; trouvé
+                bra.s   .dn_end
+.dn_chainend:
+                moveq   #0,d6                         ; force l'avance de bucket
+.dn_advbucket:
+                move.l  d4,d0                         ; (re)lire le dir block : ht_size + hashtab[bucket]
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .dn_end_notfound
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
+                bne.s   .dn_end_notfound              ; pas un bloc répertoire
+                move.l  OFSB_HTSIZE(a0),d7            ; ht_size (root stocké ; userdir long[3]=0 -> défaut)
+                beq.s   .dn_htdef
+                cmp.l   #OFS_HTMAX,d7
+                blo.s   .dn_scan
+.dn_htdef:
+                moveq   #OFS_HTDEF,d7
+.dn_scan:
+                cmp.l   d7,d5                         ; bucket >= ht_size ?
+                bhs.s   .dn_end_notfound              ; buckets épuisés -> fin d'énumération
+                lea     IOREQ_SZ(a3),a0
+                move.l  d5,d0
+                lsl.l   #2,d0
+                lea     OFSB_HASHTAB(a0),a0
+                move.l  0(a0,d0.l),d6                 ; chaîne = hashtab[bucket]
+                addq.l  #1,d5                         ; bucket++ (ne re-scanne pas le bucket courant)
+                tst.l   d6
+                beq.s   .dn_scan                      ; bucket vide -> suivant
+                bra.s   .dn_loop                      ; chaîne non vide -> émettre
+.dn_end_notfound:
+                moveq   #0,d7
+.dn_end:
+                move.l  a3,a1                         ; libère ioreq + buffer
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                jsr     LVO_FREEMEM(a6)
+                move.l  d7,d0                         ; found
+                move.l  d5,d1                         ; bucket màj
+                move.l  d6,d2                         ; chain màj
+                movem.l (sp)+,d3-d7/a2-a5
+                rts
+.dn_noalloc:
+                moveq   #0,d0
+                move.l  d5,d1
+                move.l  d6,d2
+                movem.l (sp)+,d3-d7/a2-a5
                 rts
 
 ofs_td_name:

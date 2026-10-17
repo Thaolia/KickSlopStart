@@ -2423,6 +2423,14 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3i : client prouvant Lock(-84)/UnLock(-90)/Examine(-102)/ExNext(-108). pri 5 (même discipline : tôt, hors
+        ; fenêtre startup, émet sous ser_lock). Lock("kickslop")->Examine (fichier, 1024 o) ; Lock(":")->ExNext trouve
+        ; kickslop par énumération du répertoire racine.
+        lea     d3i_cname(pc),a0
+        lea     d3i_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2993,6 +3001,120 @@ d3h_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .h_block
+
+; d3i_client : prouve Lock(-84) + UnLock(-90) + Examine(-102) + ExNext(-108) via les vrais vecteurs LVO. a6 = SysBase
+; à l'entrée (corps de process). (A) Lock("kickslop") -> Examine -> fib : DirEntryType < 0 (fichier) ET Size == 1024
+; (ORACLE byte_size@324 confirmé sur l'ADF). (B) Lock(":") [racine] -> Examine -> DirEntryType > 0 (répertoire) ->
+; ExNext en boucle -> trouve l'entrée fichier de 1024 octets (= kickslop spécifiquement, note advisor). Le curseur
+; d'énumération vit dans le lock (flp_Bucket/flp_ChainBlk) -> déviation documentée (le vrai OS le garde dans le FIB).
+d3i_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .i_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  ($4).w,a6            ; FileInfoBlock long-aligné (AllocMem -> BPTR réversible)
+        move.l  #FIB_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .i_closelib
+        move.l  d0,a5                ; a5 = fib
+        ; --- (A) Examine un FICHIER : Lock("kickslop") ---
+        move.l  a4,a6
+        lea     ofs_test_name(pc),a0 ; "kickslop"
+        move.l  a0,d1
+        move.l  #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)     ; -84 -> BPTR lock
+        tst.l   d0
+        beq     .i_freefib
+        move.l  d0,d6                ; d6 = BPTR lock (fichier)
+        move.l  a4,a6
+        move.l  d6,d1
+        move.l  a5,d2               ; fib
+        jsr     DOS_LVO_EXAMINE(a6)  ; -102
+        tst.l   d0
+        beq     .i_unlockfile
+        move.l  FIB_DIRENTRYTYPE(a5),d0
+        bpl     .i_unlockfile        ; >= 0 -> pas un fichier
+        move.l  FIB_SIZE(a5),d0
+        cmp.l   #1024,d0            ; ORACLE : taille lue @324 -> write@124 -> readback
+        bne     .i_unlockfile
+        moveq   #1,d3               ; d3 = (A) fichier OK
+        bra.s   .i_fileok
+.i_unlockfile:
+        moveq   #0,d3
+.i_fileok:
+        move.l  a4,a6               ; UnLock(fichier)
+        move.l  d6,d1
+        jsr     DOS_LVO_UNLOCK(a6)   ; -90
+        tst.l   d3
+        beq     .i_freefib
+        ; --- (B) Examine + ExNext un RÉPERTOIRE : Lock(":") ---
+        move.l  a4,a6
+        lea     d3i_rootname(pc),a0  ; ":"
+        move.l  a0,d1
+        move.l  #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        tst.l   d0
+        beq     .i_freefib
+        move.l  d0,d6               ; d6 = BPTR lock (racine)
+        move.l  a4,a6               ; Examine racine -> doit être un répertoire
+        move.l  d6,d1
+        move.l  a5,d2
+        jsr     DOS_LVO_EXAMINE(a6)
+        tst.l   d0
+        beq     .i_unlockroot
+        move.l  FIB_DIRENTRYTYPE(a5),d0
+        ble     .i_unlockroot        ; <= 0 -> pas un répertoire
+        moveq   #0,d4               ; d4 = flag « kickslop trouvé par ExNext »
+        moveq   #24,d5              ; cap d'itérations (anti-boucle)
+.i_exloop:
+        move.l  a4,a6
+        move.l  d6,d1
+        move.l  a5,d2
+        jsr     DOS_LVO_EXNEXT(a6)   ; -108
+        tst.l   d0
+        beq.s   .i_exdone            ; DOSFALSE -> fin d'énumération (ERROR_NO_MORE_ENTRIES)
+        move.l  FIB_DIRENTRYTYPE(a5),d0
+        bpl.s   .i_exnextit          ; répertoire -> pas kickslop
+        move.l  FIB_SIZE(a5),d0
+        cmp.l   #1024,d0            ; entrée fichier de 1024 octets = kickslop (unique sur l'ADF)
+        bne.s   .i_exnextit
+        moveq   #1,d4
+.i_exnextit:
+        subq.l  #1,d5
+        bne.s   .i_exloop
+.i_exdone:
+        move.l  a4,a6               ; UnLock(racine)
+        move.l  d6,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+        tst.l   d4
+        beq.s   .i_freefib           ; énumération n'a pas trouvé kickslop
+        bsr     ser_lock             ; (A) && (B) OK -> émet sous ser_lock (atomicité série)
+        lea     msg_d3i_ok(pc),a0
+        bsr     ser_puts             ; « DOS LOCK EXAMINE OK »
+        bsr     ser_unlock
+        bra.s   .i_freefib
+.i_unlockroot:
+        move.l  a4,a6
+        move.l  d6,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.i_freefib:
+        move.l  ($4).w,a6
+        move.l  a5,a1
+        move.l  #FIB_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.i_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.i_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .i_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -3926,6 +4048,12 @@ d3h_cname:
         dc.b    "dos.bigclient",0
 d3h_fname:
         dc.b    "bigseg",0
+d3i_cname:
+        dc.b    "dos.lockclient",0
+d3i_rootname:
+        dc.b    ":",0                ; racine du volume (ACTION_LOCATE_OBJECT -> OFS_ROOTBLK)
+msg_d3i_ok:
+        dc.b    "DOS LOCK EXAMINE OK (Lock -84 'kickslop' -> Examine -102: file, size 1024@fib_Size; Lock ':' -> ExNext -108 enumerates root, finds kickslop; UnLock -90)",13,10,0
         even
 ; marqueur émis PAR le Write lui-même (con_handler), pas NUL-terminé (Write utilise une longueur explicite).
 msg_dos_write:
