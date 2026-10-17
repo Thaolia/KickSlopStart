@@ -35,7 +35,7 @@ DOS_INC   := $(DOS_DIR)/dos.i
 # process.o : Process + CreateProc + dos_sendpkt (D3) ; include exec.i + dospkt.i.
 # handler.o : process file-handler DF0: (D3b) ; include exec.i + ofs.i + dospkt.i.
 # conhandler.o : process handler console-série (E1) ; shell.o : shell interactif (E2). include exec.i + dospkt.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o $(BUILD)/feeder.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---

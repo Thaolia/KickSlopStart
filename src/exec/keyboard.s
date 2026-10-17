@@ -171,8 +171,23 @@ kbd_interrupt:
 .ki_key:
                 btst    #7,d0
                 bne   .ki_out              ; touche normale key-up -> ignore
+                ; --- raw tap -> feeder ring (intégration F, item 1) : snapshot (KBD_QUAL<<8 | keycode) par frappe,
+                ; au MÊME point que le push cuit (après filtre qualifieurs) -> une seule autorité qualifieur ---
+                move.w  KBD_FTAIL,d0
+                move.w  d0,d1
+                addq.w  #2,d1
+                and.w   #KBD_FRMASK,d1
+                cmp.w   KBD_FHEAD,d1
+                beq.s   .ki_cooked           ; feed ring plein -> saute le feed, continue le chemin cuit
+                move.w  KBD_QUAL,d3
+                lsl.w   #8,d3
+                move.b  d2,d3                ; d3 = (qualifieurs << 8) | keycode
+                lea     KBD_FEEDRING,a0
+                move.w  d3,0(a0,d0.w)        ; écrit l'entrée AVANT de publier TAIL
+                move.w  d1,KBD_FTAIL
+.ki_cooked:
                 ifne    F2B_NO_FEED
-                bra   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring (isole le câblage)
+                bra   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring cuit (isole le câblage)
                 endc
                 move.b  d2,d0                ; keycode
                 move.w  KBD_QUAL,d1          ; qualifieurs courants

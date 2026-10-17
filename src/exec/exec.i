@@ -183,6 +183,12 @@ KEYMAP_AZERTY      EQU 0
 ; KM_NO_SHIFT=1 (RED #5) : kbd_cook ignore le qualifieur SHIFT (toujours la table non-shiftée) -> l'assertion
 ; q+SHIFT=='Q' du test échoue -> « KEYMAP OK » absent. Isole la gestion des qualifieurs. Défaut 0.
 KM_NO_SHIFT        EQU 0
+; FEEDER_NO_WRITEEVENT=1 (RED feeder) : le feeder draine le ring mais N'APPELLE PAS IND_WRITEEVENT -> input.device
+; ne reçoit rien -> console.device ne reçoit rien -> « FEEDER OK » absent. Isole le feeder -> input.device. Défaut 0.
+FEEDER_NO_WRITEEVENT EQU 0
+; SHELL_ON_SCREEN=1 : le shell (Initial CLI) est branché sur le handler console backé par console.device (écran +
+; miroir série + clavier via le feeder) au lieu du con_handler série. Défaut 0 (shell sur série ; = contrôle/RED du swap).
+SHELL_ON_SCREEN    EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -296,6 +302,12 @@ KMR_SIZE     EQU LIB_SIZE+8
 KQ_SHIFT     EQU $03           ; masque ie_Qualifier : LSHIFT | RSHIFT
 KQB_CAPS     EQU 2             ; bit CAPSLOCK dans ie_Qualifier ($04)
 KQB_CTRL     EQU 3             ; bit CONTROL dans ie_Qualifier ($08)
+; feeder clavier -> input.device (intégration F, item 1) : ring BRUT alimenté par kbd_interrupt (raw tap au même
+; point que le push cuit, après filtre qualifieurs), drainé par le process feeder -> IND_WRITEEVENT(RAWKEY).
+KBD_FHEAD    EQU $0000065E ; word : tête (consommateur = feeder)
+KBD_FTAIL    EQU $00000660 ; word : queue (producteur = kbd_interrupt) ; indices = OFFSETS OCTET (pas de 2)
+KBD_FEEDRING EQU $00000662 ; 32 octets : 16 entrées word = (KBD_QUAL<<8 | keycode) snapshotées par frappe
+KBD_FRMASK   EQU $1E       ; masque d'offset octet (taille 32 - 2)
 
 ; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
 CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)

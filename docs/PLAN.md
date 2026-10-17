@@ -620,8 +620,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **F2b E2E « ver » rejoué sur les DEUX ROMs** (cuisson live non-régressée) ; RED `KM_NO_SHIFT` (SHIFT ignoré ->
     marqueur absent). ROM AZERTY = `make kick` avec `KEYMAP_AZERTY=1` (-> `build/kick13-azerty.rom`). Déviation assumée :
     représentation simplifiée (2 tables + règles caps/ctrl) au lieu de la struct KeyMap V34 complète (dead-keys différés).
-  - **À venir** : requesters Intuition (insert-disk cliquable) ; feeder clavier->input.device + swap écran (intégration F).
-    Le shell RESTE sur le con_handler série (canal de preuve).
+  - **Feeder clavier -> input.device (intégration F, item 1) FAIT.** `src/dos/feeder.s` : process (poll COOP sur tick
+    timer.device MICROHZ) qui draine le **ring BRUT** du clavier (`KBD_FEEDRING`, alimenté par `kbd_interrupt` via un
+    raw tap AU MÊME POINT que le push cuit -> snapshot `(KBD_QUAL<<8 | keycode)`, une seule autorité qualifieur) et
+    injecte chaque frappe comme un InputEvent RAWKEY dans input.device (`IND_WRITEEVENT`) -> input.device est la SOURCE
+    unique du clavier ; `console.device`'s handler cuit. Non-cassant : le ring CUIT (`KBD_RING`) + con_handler série
+    restent (transitoire ; après le swap écran ils ne sont plus le chemin du shell). Preuve (self-test ifeq
+    SHELL_ON_SCREEN) : taper 'v' -> « FEEDER OK=v » ; **Shift+v -> « FEEDER OK=V »** (prouve le snapshot qualifieur +
+    le cook shift via le feeder) ; RED `FEEDER_NO_WRITEEVENT` (pas d'injection -> marqueur absent) ; F2b E2E « ver »
+    non-régressé. Mécanisme : timer-poll (pas de Signal depuis l'ICR CIA). Clean-room : AutoDocs input/timer. AUCUNE lecture ROM.
+  - **À venir** : swap écran du shell (item 2 : `DOS_CONPORT` -> handler console backé par console.device, écran +
+    miroir série + clavier via le feeder, gaté `SHELL_ON_SCREEN`) ; requesters Intuition (insert-disk cliquable).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

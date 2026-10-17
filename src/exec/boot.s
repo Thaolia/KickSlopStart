@@ -44,6 +44,7 @@
                 xref    ls_load_hunks    ; dos/loadseg.s (D3d : parse hunk depuis un buffer lu via dos)
                 xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
                 xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
+                xref    feeder_main      ; dos/feeder.s (intégration F : feeder clavier -> input.device)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
@@ -1989,6 +1990,13 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_CONPORT       ; publie le port du handler console
+        ; --- feeder clavier -> input.device (intégration F, item 1) : INFRASTRUCTURE, créé inconditionnellement.
+        ; Draine le ring brut du clavier (KBD_FEEDRING) et injecte les RAWKEY dans input.device (IND_WRITEEVENT).
+        lea     fd_cname(pc),a0
+        move.l  #feeder_main,a1      ; absolu : feeder.o lié hors portée lea(pc) 16 bits
+        moveq   #4,d0                ; pri 4 (sous le handler console)
+        move.l  #D3_STK,d1
+        jsr     proc_create
 .d3c_noclient:
                 ifne    M7J_DEMO
         ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
@@ -3125,6 +3133,8 @@ e1_hname:
         dc.b    "con.handler",0
 sh_cname:
         dc.b    "shell",0
+fd_cname:
+        dc.b    "feeder",0
         even
 d3a_hname:
         dc.b    "dos.handler.echo",0
