@@ -161,6 +161,10 @@ M7E_COOP           EQU 0
 ; émulé stalle après le 1er octet -> $FE (terminate power-up) jamais reçu -> « F2 KBD OK » absent. Isole le
 ; handshake (load-bearing : sans ack, le flux clavier ne progresse pas). Défaut 0.
 F2A_NO_HANDSHAKE   EQU 0
+; F2B_NO_FEED=1 (RED F2b) : kbd_interrupt décode+handshake mais NE pousse PAS l'ASCII dans le ring clavier ->
+; une commande tapée au clavier n'atteint jamais le shell -> « E2 SHELL ver OK » absent après injection. Isole
+; le câblage clavier->console (load-bearing). La réception/décodage (F2a « F2 KBD OK ») reste intacte. Défaut 0.
+F2B_NO_FEED        EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -240,6 +244,13 @@ TD_CURCYL       EQU $00000600 ; trackdisk : word — cylindre courant de la têt
 TD_CYLVALID     EQU $00000602 ; trackdisk : byte — 0 = position inconnue (recalibrer) ; !=0 = TD_CURCYL fiable
 DOS_CONPORT     EQU $00000604 ; E1 : long — APTR du pr_MsgPort du process handler console-série (publié par le setup)
 CON_STATE       EQU $00000608 ; E1 : long — APTR du bloc d'état du handler console (timer.device + reply port + requête)
+; F2b : ring clavier SPSC (producteur = kbd_interrupt/INT2 ; consommateur = con_handler READ). Lock-free :
+; le producteur écrit la donnée puis avance KBD_TAIL ; le consommateur lit puis avance KBD_HEAD. Pas de masquage.
+KBD_RING        EQU $0000060C ; F2b : 64 octets — tampon circulaire d'ASCII décodé du clavier
+KBD_RSIZE       EQU 64        ; taille du ring (puissance de 2)
+KBD_RMASK       EQU 63        ; masque d'index (KBD_RSIZE-1)
+KBD_HEAD        EQU $0000064C ; F2b : word — index de LECTURE (consommateur : con_handler)
+KBD_TAIL        EQU $0000064E ; F2b : word — index d'ÉCRITURE (producteur : kbd_interrupt)
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms

@@ -6,7 +6,8 @@
 ; Actions servies :
 ;   FINDINPUT / FINDOUTPUT (ouvrir « CON: ») -> RES1 = clé non-nulle (console globale, pas d'état par-handle).
 ;   WRITE (ARG1=clé, ARG2=src, ARG3=len)     -> émet len octets sur le série (TX, poll TBE borné). RES1 = len.
-;   READ  (ARG1=clé, ARG2=dest, ARG3=len)    -> lit UNE LIGNE depuis le série (RX) jusqu'au CR, avec écho. RES1 = octets.
+;   READ  (ARG1=clé, ARG2=dest, ARG3=len)    -> lit UNE LIGNE jusqu'au CR, avec écho. RES1 = octets. Sources
+;                                               d'entrée : le ring clavier LIVE (F2b, con_ring_get) PUIS le RBF série.
 ;   END (fermer)                              -> RES1 = DOSTRUE.
 ;
 ; READ bloque PROPREMENT (COOP-safe) : poll sur tick timer.device MICROHZ (BeginIO TR_ADDREQUEST + Wait, précédent
@@ -146,11 +147,14 @@ con_handler:
 .rd_tick:
                 bsr     con_poll_wait        ; ~20 ms (préserve a2/a3/a4/a6)
 .rd_drain:
+                bsr     con_ring_get         ; F2b : clavier LIVE d'abord (ring SPSC, consommateur)
+                bne.s   .rd_got              ; une touche dispo -> d0.b = ASCII
                 move.w  SERDATR,d0
-                btst    #14,d0               ; RBF : octet reçu ?
-                beq.s   .rd_tick             ; rien ce tick -> attendre le prochain
-                and.w   #$00FF,d0            ; octet reçu
+                btst    #14,d0               ; sinon RBF série : octet reçu ?
+                beq.s   .rd_tick             ; rien des deux ce tick -> attendre le prochain
+                and.w   #$00FF,d0            ; octet reçu (série)
                 move.w  #INTF_RBF,INTREQ     ; acquitte RBF
+.rd_got:
                 move.l  d0,d4                ; d4 = octet (survit con_putc)
                 bsr     con_putc             ; écho
                 cmp.b   #13,d4
@@ -212,6 +216,27 @@ con_poll_wait:
                 move.l  CS_RPORT(a2),a0
                 jsr     LVO_GETMSG(a6)       ; retire la réponse (requête réutilisée au tick suivant)
                 movem.l (sp)+,d0-d2/a0-a4
+                rts
+
+; con_ring_get : F2b — retire un octet du ring clavier (consommateur SPSC). -> d0.b = ASCII (propre), Z=0
+; (obtenu) | Z=1 (ring vide). Lit KBD_HEAD/KBD_TAIL, avance KBD_HEAD. Lock-free (pas de masquage : le
+; producteur kbd_interrupt écrit la donnée AVANT d'avancer KBD_TAIL). Clobbe d0/d1/a0 (réassignés par la boucle READ).
+con_ring_get:
+                move.w  KBD_HEAD,d1
+                cmp.w   KBD_TAIL,d1
+                beq.s   .crg_empty           ; HEAD==TAIL -> vide
+                lea     KBD_RING,a0
+                moveq   #0,d0
+                move.b  0(a0,d1.w),d0        ; d0 = octet lu
+                addq.w  #1,d1
+                and.w   #KBD_RMASK,d1
+                move.w  d1,KBD_HEAD          ; avance HEAD (publie la consommation)
+                moveq   #1,d1
+                tst.b   d1                   ; Z=0 -> octet obtenu
+                rts
+.crg_empty:
+                moveq   #0,d1
+                tst.b   d1                   ; Z=1 -> ring vide
                 rts
 
 con_timername:

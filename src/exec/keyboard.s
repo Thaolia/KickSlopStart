@@ -1,4 +1,4 @@
-; src/exec/keyboard.s — F2a : réception + décodage des scancodes clavier via CIA-A.
+; src/exec/keyboard.s — F2a/F2b : réception, décodage et driver LIVE du clavier via CIA-A.
 ;
 ; Le clavier Amiga transmet chaque scancode en série sur la ligne SP de CIA-A (horloge CNT). Quand 8 bits sont
 ; reçus, CIA-A pose l'ICR bit 3 (SP). L'octet brut dans SDR est le keycode INVERSÉ et tourné d'1 bit ->
@@ -11,7 +11,12 @@
 ; la voie de réception+décodage+handshake SANS injecteur (le clavier émulé envoie sa séquence power-up au reset).
 ; Autonome (ne dépend pas de SysBase). Clobbe d0-d4/a0-a1. Piste IMPLÉMENTATION : HRM (CIA/clavier). AUCUNE lecture ROM.
 ;
-; La version LIVE interrupt-driven (AddICRVector sur SP) + le câblage clavier->console = F2b.
+; F2b = driver LIVE interrupt-driven : kbd_install enregistre kbd_interrupt sur l'ICR bit 3 (SP) via
+; AddICRVector (cia.resource) + ré-active PORTS/INT2 ; à chaque scancode reçu, cia_dispatch (via ciaa_server,
+; chaîne PORTS) appelle kbd_interrupt qui décode, handshake, ignore les key-up, mappe keycode -> ASCII (keymap
+; US minimal) et pousse dans un ring SPSC (producteur). con_handler (READ) draine ce ring (consommateur) EN PLUS
+; du RBF série -> le CLI est pilotable au vrai clavier. Keycodes mesurés sous FS-UAE : v=$34 e=$12 r=$13 Return=$44
+; space=$40 a=$20 (bit 7 = up). Lock-free (producteur avance TAIL en dernier, consommateur avance HEAD).
 
                 include "exec.i"
 
@@ -72,3 +77,103 @@ kbd_selftest:
                 dbra    d4,.poll              ; borne resends : reprend le poll avec le budget restant
 .done:
                 rts
+
+; ============================ F2b : driver clavier LIVE (interrupt-driven) ============================
+                xdef    kbd_install
+
+; kbd_install() [a6=SysBase] -> d0 = 0 (ok) | !=0 (échec OpenResource). Installe le driver LIVE :
+; vide le ring, SP en ENTRÉE, AddICRVector(bit 3 = SP) -> kbd_interrupt, ré-active PORTS/INT2 (coupé après
+; la démo M7B). ciaa_server (resté sur la chaîne PORTS) acquitte l'ICR et route le bit 3 vers kbd_interrupt.
+; Clobbe d0/d1/a0/a1 (a2/a6 préservés).
+kbd_install:
+                movem.l a2/a6,-(sp)
+                clr.w   KBD_HEAD             ; RAM basse non garantie nulle au power-on
+                clr.w   KBD_TAIL
+                lea     kbd_ciaa_name(pc),a1
+                jsr     LVO_OPENRESOURCE(a6) ; OpenResource("ciaa.resource")
+                tst.l   d0
+                beq.s   .ki_fail
+                move.l  d0,a2                ; a2 = base ciaa.resource
+                move.b  CIAA_CRA,d0          ; SP en ENTRÉE (b6=0) pour recevoir
+                and.b   #$BF,d0
+                move.b  d0,CIAA_CRA
+                move.l  a2,a6                ; a6 = base resource pour AddICRVector
+                moveq   #3,d0                ; CIA-A SP = ICR bit 3 (clavier)
+                lea     kbd_int(pc),a1
+                jsr     CIA_ADDICRVECTOR(a6) ; -> d0 = 0 (ok) | struct occupant le bit
+                move.w  #(INTF_SETCLR|INTF_PORTS),INTENA ; ré-active Paula PORTS/INT2 (coupé après M7B)
+                bra.s   .ki_ret              ; d0 = résultat AddICRVector (0 = ok)
+.ki_fail:
+                moveq   #-1,d0
+.ki_ret:
+                movem.l (sp)+,a2/a6
+                rts
+
+; kbd_interrupt : handler ICR bit 3 (SP clavier). Appelé par cia_dispatch via jsr (a5) : d2/d3 (index bit +
+; ICR) et a2 (base resource) sont VIVANTS à travers l'appel -> on save/restore d0-d3/a0-a1 et on ne touche NI
+; a2 NI a6. Décode (F2a) ; HANDSHAKE obligatoire ; ignore les key-up (bit 7) ; mappe keycode -> ASCII ; pousse
+; dans le ring SPSC (producteur : écrit la donnée puis avance TAIL en dernier -> consommateur jamais en avance).
+kbd_interrupt:
+                movem.l d0-d3/a0-a1,-(sp)
+                move.b  CIAA_SDR,d0          ; octet brut reçu
+                ror.b   #1,d0
+                not.b   d0                   ; d0.b = keycode (bit 7 = up/down)
+                move.b  CIAA_CRA,d1          ; handshake : pulse SPMODE sortie ~75us puis entrée
+                or.b    #$40,d1
+                move.b  d1,CIAA_CRA
+                move.w  #KBD_HSDELAY,d1
+.ki_hs:
+                dbra    d1,.ki_hs
+                move.b  CIAA_CRA,d1
+                and.b   #$BF,d1
+                move.b  d1,CIAA_CRA
+                btst    #7,d0
+                bne.s   .ki_out              ; key-up -> ignore (une seule émission par frappe)
+                ifne    F2B_NO_FEED
+                bra.s   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring ->
+                endc                         ; la commande tapée n'atteint jamais le shell (isole le câblage)
+                and.w   #$007F,d0            ; keycode 0..127 (mot propre pour l'index keymap)
+                lea     kbd_keymap(pc),a0
+                move.b  0(a0,d0.w),d1        ; d1.b = ASCII (0 = non mappé : qualifieurs, F-keys, etc.)
+                beq.s   .ki_out
+                move.w  KBD_TAIL,d0          ; push ASCII dans le ring
+                move.w  d0,d2
+                addq.w  #1,d2
+                and.w   #KBD_RMASK,d2        ; d2 = TAIL suivant
+                cmp.w   KBD_HEAD,d2
+                beq.s   .ki_out              ; ring plein -> drop (borné)
+                lea     KBD_RING,a0
+                move.b  d1,0(a0,d0.w)        ; écrit la donnée AVANT de publier TAIL
+                move.w  d2,KBD_TAIL
+.ki_out:
+                movem.l (sp)+,d0-d3/a0-a1
+                rts
+
+; keymap US minimal : keycode brut (0..127, key-down) -> ASCII non-shifté (0 = non mappé). Piste IMPLÉMENTATION :
+; table de keycodes bruts HRM (Appendix clavier), vérifiée contre les keycodes réels mesurés sous FS-UAE.
+; Shift/Caps/Ctrl non gérés ce jalon (keymap.resource = longue traîne) -> saisie minuscule.
+                EVEN
+kbd_keymap:
+                ;      $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7 $x8 $x9 $xA $xB $xC $xD $xE $xF
+                dc.b   $60,$31,$32,$33,$34,$35,$36,$37,$38,$39,$30,$2D,$3D,$5C,$00,$30 ; $00 ` 1..0 - = \  . kp0
+                dc.b   $71,$77,$65,$72,$74,$79,$75,$69,$6F,$70,$5B,$5D,$00,$31,$32,$33 ; $10 q w e r t y u i o p [ ] . kp1-3
+                dc.b   $61,$73,$64,$66,$67,$68,$6A,$6B,$6C,$3B,$27,$00,$00,$34,$35,$36 ; $20 a s d f g h j k l ; ' . . kp4-6
+                dc.b   $00,$7A,$78,$63,$76,$62,$6E,$6D,$2C,$2E,$2F,$00,$2E,$37,$38,$39 ; $30 . z x c v b n m , . / . kp. kp7-9
+                dc.b   $20,$08,$09,$0D,$0D,$1B,$7F,$00,$00,$00,$2D,$00,$00,$00,$00,$00 ; $40 spc bs tab kpEnt Ret esc del . . . kp-
+                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$28,$29,$2F,$2A,$2B,$00 ; $50 F1-F10 . kp( kp) kp/ kp* kp+
+                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 ; $60 qualifieurs (shift/ctrl/alt/amiga)
+                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 ; $70 réservés
+
+                EVEN
+kbd_int:                                     ; struct Interrupt en ROM (AddICRVector ne stocke qu'un pointeur)
+                dc.l    0                    ; LN_SUCC
+                dc.l    0                    ; LN_PRED
+                dc.b    2                    ; LN_TYPE = NT_INTERRUPT
+                dc.b    0                    ; LN_PRI
+                dc.l    0                    ; LN_NAME
+                dc.l    0                    ; IS_DATA (inutilisé : le handler lit des globals + adresses fixes)
+                dc.l    kbd_interrupt        ; IS_CODE
+kbd_ciaa_name:
+                dc.b    "ciaa.resource",0
+                EVEN
+

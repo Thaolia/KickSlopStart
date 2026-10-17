@@ -28,6 +28,7 @@
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
                 xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
+                xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -952,6 +953,13 @@ d2_done:
         beq     m7b_fail
         lea     msg_m7b_ok(pc),a0
         bsr     ser_puts             ; « M7B PORTS OK »
+
+        jsr     kbd_install          ; F2b : installe le driver clavier LIVE (AddICRVector bit 3 -> kbd_interrupt)
+        tst.l   d0
+        bne.s   .f2b_nokbd
+        lea     msg_f2bkbd(pc),a0
+        bsr     ser_puts             ; « F2B KBD OK » (driver clavier live installé ; le CLI est pilotable au clavier)
+.f2b_nokbd:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2695,6 +2703,8 @@ msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
 msg_f2kbd:
         dc.b    "F2 KBD OK (CIA-A keyboard: power-up stream received+decoded, $FD initiate + $FE terminate; handshake drives the stream)",13,10,0
+msg_f2bkbd:
+        dc.b    "F2B KBD OK (live keyboard driver: AddICRVector SP bit3 -> kbd_interrupt -> keymap -> ring; console READ drains it)",13,10,0
 msg_ok:
         dc.b    "EXEC ExecBase + jump table OK, self-test passed",13,10,0
 msg_fail:
