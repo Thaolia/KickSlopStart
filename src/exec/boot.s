@@ -2369,6 +2369,14 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
                                      ; la fenêtre tardive startup-sequence (sinon son marqueur entrelace « E3 CMD RAN OK »)
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3f : client prouvant IoErr(-132) + Seek(-66). pri 5 + émet sous Forbid (même discipline que d3e : tôt,
+        ; hors fenêtre startup, atomique). IoErr : Open absent -> 0 + IoErr != 0 ; Open d3dtest -> IoErr 0. Seek :
+        ; Read 4 -> Seek(0,BEGINNING) -> Read 4 identiques (repositionnement).
+        lea     d3f_cname(pc),a0
+        lea     d3f_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2748,6 +2756,90 @@ d3e_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .e_block
+
+; d3f_client : prouve IoErr(-132) + Seek(-66) via les vrais vecteurs LVO. a6 = SysBase à l'entrée (corps de process).
+d3f_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .f_block
+        move.l  d0,a4                ; a4 = DosBase
+        ; IoErr : Open d'un nom ABSENT -> 0 puis IoErr != 0
+        move.l  a4,a6
+        lea     d3f_badname(pc),a0
+        move.l  a0,d1
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        tst.l   d0
+        bne     .f_closelib          ; a ouvert à tort un nom absent -> abort
+        move.l  a4,a6
+        jsr     DOS_LVO_IOERR(a6)    ; doit être != 0 (ERROR_OBJECT_NOT_FOUND) ; RED DOS_NO_IOERR -> 0
+        tst.l   d0
+        beq     .f_closelib
+        ; Open d3dtest ; IoErr doit repasser à 0
+        move.l  a4,a6
+        lea     d3d_fname(pc),a0
+        move.l  a0,d1
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        tst.l   d0
+        beq     .f_closelib
+        move.l  d0,d7                ; d7 = BPTR fh
+        move.l  a4,a6
+        jsr     DOS_LVO_IOERR(a6)    ; doit être 0 après un Open réussi
+        tst.l   d0
+        bne     .f_close
+        ; Seek : Read 4 @0 -> Seek(0,BEGINNING) -> Read 4 identiques
+        lea     -8(sp),sp            ; 2 buffers de 4 octets (buf1=sp, buf2=sp+4)
+        move.l  a4,a6
+        move.l  d7,d1
+        move.l  sp,d2
+        moveq   #4,d3
+        jsr     DOS_LVO_READ(a6)     ; lit 4 @ pos 0 -> buf1
+        cmp.l   #4,d0
+        bne     .f_free8
+        move.l  a4,a6                ; Seek(fh, 0, OFFSET_BEGINNING) -> ancienne pos (= 4)
+        move.l  d7,d1
+        moveq   #0,d2
+        moveq   #OFFSET_BEGINNING,d3
+        jsr     DOS_LVO_SEEK(a6)
+        cmp.l   #4,d0                ; Seek rend l'ANCIENNE position (4) ; RED HND_NO_SEEK -> 4 aussi mais pos pas remise
+        bne     .f_free8
+        move.l  a4,a6                ; Read 4 à nouveau -> buf2
+        move.l  d7,d1
+        move.l  sp,d2
+        addq.l  #4,d2
+        moveq   #4,d3
+        jsr     DOS_LVO_READ(a6)
+        cmp.l   #4,d0
+        bne     .f_free8
+        move.l  (sp),d0              ; buf1 == buf2 ? (Seek a bien ramené au début)
+        cmp.l   4(sp),d0
+        bne     .f_free8
+        lea     8(sp),sp
+        move.l  ($4).w,a6            ; succès -> émet sous Forbid (atomicité série)
+        jsr     LVO_FORBID(a6)
+        lea     msg_d3f_ok(pc),a0
+        bsr     ser_puts             ; « DOS IOERR SEEK OK »
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        bra.s   .f_close
+.f_free8:
+        lea     8(sp),sp
+.f_close:
+        move.l  a4,a6
+        move.l  d7,d1
+        jsr     DOS_LVO_CLOSE(a6)
+.f_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.f_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .f_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -3669,6 +3761,12 @@ d3e_cname:
         dc.b    "dos.loadsegclient",0
 msg_d3e_loadseg:
         dc.b    "D3E LOADSEG LVO OK (dos.library LoadSeg -150: file opened+read+hunk-parsed+relocated via real LVO -> seglist; UnLoadSeg -156)",13,10,0
+d3f_cname:
+        dc.b    "dos.ioseekclient",0
+d3f_badname:
+        dc.b    "nosuchfile",0
+msg_d3f_ok:
+        dc.b    "DOS IOERR SEEK OK (IoErr -132 reflects Open-not-found then 0; Seek -66 ACTION_SEEK rewinds, re-read matches)",13,10,0
         even
 e1_hname:
         dc.b    "con.handler",0

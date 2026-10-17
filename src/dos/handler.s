@@ -46,6 +46,8 @@ dos_handler_df0:
                 beq     .read
                 cmp.l   #ACTION_END,d0
                 beq     .end
+                cmp.l   #ACTION_SEEK,d0
+                beq     .seek
                 move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -97,6 +99,7 @@ dos_handler_df0:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 .fi_fail_state:
+                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)  ; fichier introuvable -> IoErr (via dp_Res2)
                 move.l  d6,a1
                 move.l  #HND_STATE_SIZE,d0
                 jsr     LVO_FREEMEM(a6)
@@ -141,6 +144,41 @@ dos_handler_df0:
 .rd_eof:
                 clr.l   DP_RES1(a4)                   ; 0 = EOF
                 bra.s   .reply
+
+.seek:                                                ; Seek(ARG1=état, ARG2=position, ARG3=mode) -> RES1 = ancienne pos
+                ifne    HND_NO_SEEK
+                move.l  DP_ARG1(a4),a0                ; RED HND_NO_SEEK : lit l'état mais NE repositionne PAS HS_POS
+                move.l  HS_POS(a0),DP_RES1(a4)
+                bra     .reply
+                endc
+                move.l  DP_ARG1(a4),a0                ; a0 = état
+                move.l  HS_POS(a0),d3                 ; d3 = ancienne position (valeur de retour)
+                move.l  DP_ARG2(a4),d1                ; position (signée)
+                move.l  DP_ARG3(a4),d2                ; mode (OFFSET_BEGINNING -1 / CURRENT 0 / END 1)
+                tst.l   d2
+                blt.s   .sk_begin
+                beq.s   .sk_current
+                move.l  HS_SIZE(a0),d0                ; END : taille + position
+                add.l   d1,d0
+                bra.s   .sk_bounds
+.sk_begin:
+                move.l  d1,d0                         ; BEGINNING : position absolue
+                bra.s   .sk_bounds
+.sk_current:
+                move.l  d3,d0                         ; CURRENT : ancienne + position
+                add.l   d1,d0
+.sk_bounds:
+                tst.l   d0
+                bmi.s   .sk_err
+                cmp.l   HS_SIZE(a0),d0
+                bhi.s   .sk_err                       ; hors [0, taille]
+                move.l  d0,HS_POS(a0)                 ; repositionne
+                move.l  d3,DP_RES1(a4)                ; renvoie l'ANCIENNE position
+                bra     .reply
+.sk_err:
+                move.l  #-1,DP_RES1(a4)
+                move.l  #ERROR_SEEK_ERROR,DP_RES2(a4)
+                bra     .reply
 
 .end:
                 move.l  DP_ARG1(a4),a5                ; a5 = état (survit à FreeMem)

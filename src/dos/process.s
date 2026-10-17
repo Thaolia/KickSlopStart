@@ -111,5 +111,9 @@ dos_sendpkt:
                 jsr     LVO_GETMSG(a6)       ; récupère notre packet (répondu par le handler)
                 move.l  DP_RES1(a4),d0
                 move.l  DP_RES2(a4),d1
+                ifeq    DOS_NO_IOERR
+                move.l  EB_THISTASK(a6),a0   ; IoErr : pr_Result2 = dp_Res2 du packet (faithful ; a6 = SysBase)
+                move.l  d1,PR_RESULT2(a0)
+                endc                         ; RED DOS_NO_IOERR : ne propage pas -> IoErr renvoie 0 même en échec
                 movem.l (sp)+,d4/a2-a4
                 rts

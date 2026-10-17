@@ -520,6 +520,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     en **v37** (KS 2.0) → gate V34 renvoie 0 → branche expansion sautée (tolérée) → ce module ne débloque PAS
     Lemmings, c'est de la parité. Différé : ConfigBoard/ReadExpansionRom (probe HW), MakeDosNode/AddBootNode (montage).
     15/16 ROMTags (RESMAX ; 1 slot de marge).
+  - **Fonctions dos manquantes : IoErr(-132) + Seek(-66) FAIT.** `dos_lib.s`/`process.s`/`handler.s`. IoErr renvoie
+    `pr_Result2` ; `dos_sendpkt` copie `dp_Res2 → pr_Result2` après chaque packet (faithful, un seul point) ; le
+    handler pose `DP_RES2=ERROR_OBJECT_NOT_FOUND`(205) sur Open introuvable (vérifié AVANT de bâtir — il posait 0,
+    IoErr aurait été creux). Seek envoie `ACTION_SEEK` → le handler ajuste `HS_POS` (bufferise tout le fichier),
+    borné, rend l'ANCIENNE position. Vecteurs 11/22 câblés (DateStamp -192 reste vecteur 32 = canary). Preuve **DOS
+    IOERR SEEK OK** (`d3f_client` pri 5, émet sous Forbid) : Open absent→0 + IoErr≠0 ; Open d3dtest→IoErr 0 ; Read 4
+    → Seek(0,BEGINNING) → Read 4 identiques. REDs `DOS_NO_IOERR` (pas de propagation dp_Res2) + `HND_NO_SEEK` (handler
+    ignore SEEK). GREEN ADF (74s : DOS IOERR SEEK OK + EXPANSION + D3C/D3D/D3E + E3 + M7, 0 FAILED), md5
+    `6a24da8be3eee8a03126e86e0b715122`. **Write(-48) différé** (advisor) : OFS lecture seule → Write-fichier ne
+    prouverait que l'échec propre ; un vrai Write = câblage console (con_handler + Output -60), hors périmètre de cet
+    incrément. Autres dos (Lock/Examine/CurrentDir/Input/Output...) toujours non impl.
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par

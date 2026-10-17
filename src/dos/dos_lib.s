@@ -52,7 +52,11 @@ dos_vectors:
         dc.l    dos_fn_open              ; 5 : LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
         dc.l    dos_fn_close             ; 6 : LVO -36 Close(fh d1)
         dc.l    dos_fn_read              ; 7 : LVO -42 Read(fh d1, buf d2, len d3) -> octets
-        dcb.l   17,dos_null              ; 8..24 : LVO -48..-144 (Write, Lock, IoErr, CreateProc... non impl.)
+        dcb.l   3,dos_null               ; 8..10  : LVO -48/-54/-60 (Write, Input, Output non impl.)
+        dc.l    dos_fn_seek              ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
+        dcb.l   10,dos_null              ; 12..21 : LVO -72..-126 (DeleteFile, Lock, Examine... non impl.)
+        dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
+        dcb.l   2,dos_null               ; 23..24 : LVO -138/-144 (CreateProc, Exit non impl.)
                 ifeq    LOADSEG_LVO_UNWIRED
         dc.l    dos_fn_loadseg           ; 25 : LVO -150 LoadSeg(name d1) -> BPTR seglist
                 endc
@@ -225,6 +229,44 @@ dos_fn_close:
         jsr     LVO_FREEMEM(a6)
         moveq   #-1,d0                  ; DOSTRUE
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; Seek(fh d1 [BPTR FileHandle], position d2, mode d3 [OFFSET_BEGINNING/-CURRENT/-END]) -> d0 = ancienne position | -1.
+; Envoie ACTION_SEEK au handler (ARG1=clé, ARG2=position, ARG3=mode). Le handler bufferise tout le fichier -> le
+; repositionnement est un simple ajustement de HS_POS. a6 = DosBase à l'entrée. Depuis un PROCESS (comme Read).
+dos_fn_seek:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d2,d5                   ; position
+        move.l  d3,d6                   ; mode
+        move.l  d1,d4
+        lsl.l   #2,d4
+        move.l  d4,a2                   ; a2 = BADDR(fh)
+        move.l  FH_TYPE(a2),a3          ; port du handler
+        move.l  a3,d0
+        beq.s   .sk_err                 ; non routé
+        move.l  FH_ARG1(a2),d4          ; clé du fichier
+        move.l  ($4).w,a6               ; SysBase
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a3,a1
+        move.l  #ACTION_SEEK,d0
+        move.l  d4,d1                   ; ARG1 = clé
+        move.l  d5,d2                   ; ARG2 = position
+        move.l  d6,d3                   ; ARG3 = mode
+        jsr     dos_sendpkt             ; d0 = dp_Res1 (ancienne pos | -1) ; pr_Result2 posé par dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        bra.s   .sk_ret
+.sk_err:
+        moveq   #-1,d0
+.sk_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; IoErr() -> d0 = pr_Result2 de ThisTask (code d'erreur du dernier packet dos). a6 = DosBase (non utilisé).
+dos_fn_ioerr:
+        move.l  ($4).w,a0              ; SysBase
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_RESULT2(a0),d0
         rts
 
 ; --- LoadSeg / UnLoadSeg (vecteurs LVO -150 / -156) : chargement d'exécutable hunk VIA LES VRAIS Open/Read ---
