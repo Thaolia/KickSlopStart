@@ -157,6 +157,10 @@ M7E_PROLOGUE_IPL7  EQU 0
 ; par le seul chemin YIELD (trap1->dispatch->switch). Prouve que la voie yield->dispatch tient sans
 ; préemption après M7e. Défaut 0 (build préemptif complet M3f/M7a/M7c/M7d/M7e).
 M7E_COOP           EQU 0
+; F2A_NO_HANDSHAKE=1 (RED F2a) : kbd_selftest NE fait PAS le handshake clavier (pulse CRA bit 6) -> le clavier
+; émulé stalle après le 1er octet -> $FE (terminate power-up) jamais reçu -> « F2 KBD OK » absent. Isole le
+; handshake (load-bearing : sans ack, le flux clavier ne progresse pas). Défaut 0.
+F2A_NO_HANDSHAKE   EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20

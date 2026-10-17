@@ -27,6 +27,7 @@
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
+                xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -117,6 +118,16 @@ coldstart:                        ; $FC00D2
         move.w  #SERPER_9600_PAL,SERPER
         lea     msg_cold(pc),a0
         bsr     ser_puts
+
+        ; --- F2a : réception+décodage clavier CIA-A (TÔT, interruptions encore masquées -> pas de course avec le
+        ; cia_wrapper qui clearait le flag SP). Décode le flux power-up du clavier émulé ($FD initiate + $FE terminate),
+        ; prouvant la voie clavier SANS injecteur. d0 = flags ; d0==3 = les deux vus. ---
+        jsr     kbd_selftest         ; keyboard.o lié loin -> jsr absolu
+        cmp.b   #3,d0
+        bne.s   .f2a_nokbd
+        lea     msg_f2kbd(pc),a0
+        bsr     ser_puts             ; « F2 KBD OK »
+.f2a_nokbd:
 
         ; --- Phase 3 : ExecBase + jump table ---
         move.w  #C_CYAN,COLOR00
@@ -2682,6 +2693,8 @@ task_rm_name:
         dc.b    "demo.rm",0
 msg_cold:
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
+msg_f2kbd:
+        dc.b    "F2 KBD OK (CIA-A keyboard: power-up stream received+decoded, $FD initiate + $FE terminate; handshake drives the stream)",13,10,0
 msg_ok:
         dc.b    "EXEC ExecBase + jump table OK, self-test passed",13,10,0
 msg_fail:

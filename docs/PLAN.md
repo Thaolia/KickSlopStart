@@ -542,10 +542,23 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     READY » + non-rég + 0 FAILED ; **GATING** (CTRL-NODISK) → « M6R » insert-disk, « E2 SHELL READY » ABSENT (Initial CLI
     gaté) ; RED `F1_NO_STARTUP` (CLI créé mais script sauté → F1BOOTOK/E3 CMD absents, bannière présente) ; COOP.
     PROCHAIN : F2 keyboard.device réel (spike injection de touches FS-UAE requis, cf. E spike RX).
-  - **À venir (F2+)** : keyboard.device (CIA-A) + input.device + console.device réel (rendu écran — canal de preuve à
-    décider, hors série/couleur) ; disk-validator (bitmap OFS) ; requesters Intuition (insert-disk cliquable) ; traversée
-    de sous-répertoires OFS (`s/startup-sequence` réel). En F on remplace le handler console-série par un console.device
-    SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
+  - **F2a — réception + décodage clavier CIA-A (FAIT).** SPIKE préalable (le spike d'injection demandé par l'advisor) :
+    SANS aucun injecteur (xdotool absent, pas de session interactive), la ROM REÇOIT des octets du clavier émulé via
+    CIA-A — le clavier émulé envoie sa **séquence power-up handshake au reset**. `src/exec/keyboard.s` : `kbd_selftest`
+    appelé TRÈS TÔT au boot (interruptions masquées -> pas de course avec le `cia_wrapper` qui clearait le flag SP) ;
+    poll borné du CIA-A (ICR bit 3 = SP), lit SDR, décode `keycode = NOT(ROR.b #1, brut)`, **handshake** (pulse CRA
+    bit 6 ~75us), collecte le flux power-up. Assère `$FD` (initiate) + `$FE` (terminate) -> « F2 KBD OK ». Registres
+    CIA-A : SDR=$BFEC01, ICR=$BFED01, CRA=$BFEE01 (bit 6 = SPMODE). RED `F2A_NO_HANDSHAKE` (pas de handshake -> le
+    clavier stalle après 1 octet -> $FE jamais vu -> marqueur absent ; isole le handshake). Prouve la voie
+    réception+décodage+handshake SANS injecteur.
+  - **À venir (F2b+)** : driver clavier LIVE **interrupt-driven** (`AddICRVector` sur le bit SP de CIA-A, coopère avec
+    le `cia_dispatch` existant) + **keymap** (keycode->ASCII) + câbler le clavier -> le READ du handler console (le CLI
+    pilotable au vrai clavier). ⚠️ **Blocage de preuve E2E** : taper une VRAIE commande exige d'injecter un keypress ;
+    FS-UAE headless n'a pas d'injecteur (record/playback existe mais format à RE). Composants prouvables sans injection
+    (driver fire sur le flux power-up, keymap sur keycodes synthétiques, drain du ring) ; le « taper au clavier » E2E
+    reste bloqué. Puis : input.device, console.device réel (rendu écran — canal de preuve à décider), disk-validator
+    (bitmap OFS), requesters Intuition (insert-disk cliquable), traversée sous-rép OFS (`s/startup-sequence` réel). En F
+    on remplace le handler console-série par un console.device SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
