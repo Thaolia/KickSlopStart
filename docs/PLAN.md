@@ -529,6 +529,23 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Cible « CLI interactif » ATTEINTE** : la ROM présente une invite, lit des commandes tapées, dispatche des
     builtins ET charge+exécute des commandes externes depuis le disque. E CLÔT.
   - **NE PAS** construire en E : BCPL `CommandLineInterface`/`pr_CLI`, `Execute()`, startup-sequence → Bootstrap réel (F).
+- **F — Bootstrap réel.** Faire du boot un VRAI bootstrap : l'Initial CLI est créé PAR LE CHEMIN DE BOOT, gaté sur un
+  disque bootable (pas un process démo), et exécute une startup-sequence avant l'invite. Décision archi (advisor) : la
+  ligne F vs « E4 » = **le gating sur le boot**, pas le fait de lire un fichier. Décomposé :
+  - **F1 — Initial CLI + startup-sequence (FAIT).** Le shell (`shell_main`) n'est plus créé inconditionnellement dans
+    `setup_demo_tasks` : il est créé dans la branche `.m6r_booted` de boot.s (APRÈS `strap_boot`, SEULEMENT si un disque
+    bootable est présent ; sur un disque non bootable → M6R insert-disk, AUCUN Initial CLI). Le shell exécute d'abord
+    `sh_run_startup` : `Open`/`Read` « startup-sequence » (RACINE du disque ; sous-rép `s/` différé, déviation documentée)
+    via dos, puis `sh_dispatch_line` (extrait de la boucle) sur chaque ligne (builtins + commandes externes, lignes vides
+    et « ; » ignorées), PUIS passe à l'invite interactive. Script de test (racine ADF) : `echo F1BOOTOK` + `e3cmd`. Preuve :
+    GREEN (ADF bootable, script auto-exécuté sans injection) → « M6Y » + « F1BOOTOK » + « E3 CMD RAN OK » + « E2 SHELL
+    READY » + non-rég + 0 FAILED ; **GATING** (CTRL-NODISK) → « M6R » insert-disk, « E2 SHELL READY » ABSENT (Initial CLI
+    gaté) ; RED `F1_NO_STARTUP` (CLI créé mais script sauté → F1BOOTOK/E3 CMD absents, bannière présente) ; COOP.
+    PROCHAIN : F2 keyboard.device réel (spike injection de touches FS-UAE requis, cf. E spike RX).
+  - **À venir (F2+)** : keyboard.device (CIA-A) + input.device + console.device réel (rendu écran — canal de preuve à
+    décider, hors série/couleur) ; disk-validator (bitmap OFS) ; requesters Intuition (insert-disk cliquable) ; traversée
+    de sous-répertoires OFS (`s/startup-sequence` réel). En F on remplace le handler console-série par un console.device
+    SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

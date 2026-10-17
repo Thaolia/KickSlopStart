@@ -128,3 +128,8 @@ E2_NO_DISPATCH   EQU 0
 ; mais NON EXÉCUTÉE (saute le JSR au seglist) -> le marqueur de la commande absent (pas de « ? » non plus : elle est
 ; trouvée). Isole l'exécution de la commande tapée (le chargement/reloc reste prouvé par D2/D3d). Défaut 0.
 E3_NO_EXEC       EQU 0
+
+; F1_NO_STARTUP=1 (RED F1) : l'Initial CLI NE lit/exécute PAS la startup-sequence (va directement à l'invite
+; interactive) -> marqueurs du script (« F1BOOTOK », e3cmd) absents, mais le shell interactif marche encore. Isole
+; l'exécution de la startup-sequence au boot (la création gatée-sur-boot de l'Initial CLI reste, elle). Défaut 0.
+F1_NO_STARTUP    EQU 0

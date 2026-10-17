@@ -1016,6 +1016,14 @@ d2_done:
 .m6r_booted:
         lea     msg_m6y_ok(pc),a0
         bsr     ser_puts             ; « M6Y STRAP BOOTED OK » (bootblock exécuté ; CBOOT émis par le bootblock)
+        ; --- F1 : disque BOOTABLE -> créer l'Initial CLI (shell). GATÉ sur le boot (c'est la ligne F vs E) :
+        ; sur un disque non bootable (branche M6R insert-disk), AUCUN Initial CLI n'est créé. Le shell exécute
+        ; d'abord s:startup-sequence (racine) puis passe à l'invite interactive. a6 = SysBase (strap l'a restauré).
+        lea     sh_cname(pc),a0
+        move.l  #shell_main,a1       ; absolu : shell.o lié hors portée lea(pc) 16 bits
+        moveq   #2,d0                ; Initial CLI pri 2 (consommateur unique de la console)
+        move.l  #D3_STK,d1
+        jsr     proc_create
 .strap_done:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
@@ -1680,18 +1688,14 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #3,d0                ; pri 3 (sous le client D3c)
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; --- E1/E2 : handler console-série (pri 6, comme le handler OFS) + shell interactif (pri 2, sous d3d) ---
+        ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
+        ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
         move.l  #con_handler,a1      ; absolu : conhandler.o lié hors portée lea(pc) 16 bits
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_CONPORT       ; publie le port du handler console
-        lea     sh_cname(pc),a0
-        move.l  #shell_main,a1       ; absolu : shell.o lié hors portée lea(pc) 16 bits
-        moveq   #2,d0                ; shell pri 2 (sous tous les clients D3 ; consommateur unique de la console)
-        move.l  #D3_STK,d1
-        jsr     proc_create
 .d3c_noclient:
                 ifne    M7J_DEMO
         ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem

@@ -47,6 +47,10 @@ python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$VASM" -Fhunk -m68000 -o "$TMP/e3.o" "$ROOT/tests/cmd_e3.s" >/dev/null
 "$VLINK" -s -bamigahunk -o "$TMP/e3cmd" "$TMP/e3.o"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/e3cmd" e3cmd >/dev/null
+# F1 : startup-sequence (RACINE du disque ; sous-rép « s/ » différé). Lignes CR-terminées : « echo F1BOOTOK » prouve
+# la lecture+exécution du script (builtin echo) ; « e3cmd » prouve une commande EXTERNE lancée depuis le script.
+printf 'echo F1BOOTOK\re3cmd\r' > "$TMP/startup-sequence"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/startup-sequence" startup-sequence >/dev/null
 
 # 3) boot code custom -> binaire brut
 "$VASM" -Fbin -m68000 -o "$TMP/bb.bin" "$ROOT/tests/bootblock_c.s"
