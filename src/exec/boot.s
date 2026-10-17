@@ -47,6 +47,10 @@
                 xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
                 xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
                 xref    feeder_main      ; dos/feeder.s (intégration F : feeder clavier -> input.device)
+                xref    gp_delta8        ; exec/gameport.s (souris : delta signé avec wraparound 8 bits)
+                xref    gp_poll          ; exec/gameport.s (souris : logique poll -> InputEvent RAWMOUSE via IND_WRITEEVENT)
+                xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
+                xref    pointer_input_handler ; intuition/pointer.s (accumulateur deltas relatifs -> position absolue)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
@@ -1334,6 +1338,209 @@ d2_done:
         rts
 .req_done:
 
+        ; --- gameport.device (souris matérielle) : LOGIQUE prouvée par snapshots SYNTHÉTIQUES de registres ---
+        ; (headless : JOY0DAT non pilotable + framebuffer invisible -> on prouve la LOGIQUE, pas le matériel ; le
+        ; serveur VBlank est prouvé séparément, LIVE, par GP_POLLS dans le système tournant). (1) gp_delta8 :
+        ; vecteurs de wraparound 8 bits. (2) gp_poll : mouvement (dx incl. wrap) + edge bouton, capturés par un
+        ; handler sur input.device (IND_WRITEEVENT = la vraie voie d'injection, comme le feeder clavier).
+        moveq   #5,d0                   ; gp_delta8(cur,prev) : (5,2) -> +3
+        moveq   #2,d1
+        jsr     gp_delta8
+        cmp.w   #3,d0
+        bne     .gp_done
+        moveq   #2,d0                   ; (2,5) -> -3
+        moveq   #5,d1
+        jsr     gp_delta8
+        cmp.w   #-3,d0
+        bne     .gp_done
+        move.w  #$01,d0                 ; ($01,$FE) -> +3 (wrap bas->haut)
+        move.w  #$FE,d1
+        jsr     gp_delta8
+        cmp.w   #3,d0
+        bne     .gp_done
+        move.w  #$FE,d0                 ; ($FE,$01) -> -3 (wrap haut->bas)
+        move.w  #$01,d1
+        jsr     gp_delta8
+        cmp.w   #-3,d0
+        bne     .gp_done
+        lea     EB_DEVICELIST(a6),a0    ; capture via un handler sur input.device
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .gp_done
+        move.l  d0,a4                   ; a4 = input.device base
+        move.l  d0,GP_INPUTBASE         ; cible d'injection de gp_poll
+        move.l  #72,d0                  ; bloc : gp_int(24) + ioreq(48@24)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .gp_done
+        move.l  d0,a3                   ; a3 = bloc
+        move.b  #0,LN_PRI(a3)           ; gp_int : handler de capture pri 0
+        move.l  #gp_cap_handler,IS_CODE(a3)
+        lea     24(a3),a1               ; ADDHANDLER gp_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .gp_bio
+        move.w  #$00FE,GP_PREV_JOY      ; mouvement+wrap : prev (X=$FE,Y=$00), poll JOY=$0001 (X=$01,Y=$00) -> dx=+3 dy=0
+        clr.b   GP_PREV_BTN
+        clr.w   GP_CAP_N
+        move.w  #$0001,d0
+        move.w  #$00FF,d1               ; CIAA_PRA bit6=1 -> bouton relâché
+        jsr     gp_poll
+        cmp.w   #1,GP_CAP_N             ; un event (mouvement pur)
+        bne.s   .gp_cfree
+        cmp.w   #IECODE_NOBUTTON,GP_CAP_CODE
+        bne.s   .gp_cfree
+        cmp.w   #3,GP_CAP_DX            ; dx=+3 au passage $FE->$01 (RED GP_NO_WRAP -> -253)
+        bne.s   .gp_cfree
+        tst.w   GP_CAP_DY               ; dy=0
+        bne.s   .gp_cfree
+        move.w  #$1234,GP_PREV_JOY      ; edge bouton : position CONSTANTE (cur==prev -> dx=dy=0) pour isoler le front
+        clr.b   GP_PREV_BTN             ; relâché au départ
+        clr.w   GP_CAP_N
+        move.w  #$1234,d0               ; A : pressé (bit6=0, $BF) -> front -> LBUTTON down
+        move.w  #$00BF,d1
+        jsr     gp_poll
+        move.w  #$1234,d0               ; B : tenu -> GREEN rien / RED GP_NO_EDGE un 2e down
+        move.w  #$00BF,d1
+        jsr     gp_poll
+        move.w  #$1234,d0               ; C : tenu -> GREEN rien / RED un 3e down
+        move.w  #$00BF,d1
+        jsr     gp_poll
+        move.w  #$1234,d0               ; D : relâché (bit6=1) -> front -> LBUTTON up
+        move.w  #$00FF,d1
+        jsr     gp_poll
+        cmp.w   #2,GP_CAP_N             ; exactement 2 events (down + up) ; RED GP_NO_EDGE -> 3
+        bne.s   .gp_cfree
+        cmp.w   #(IECODE_LBUTTON|IECODE_UP_PREFIX),GP_CAP_CODE  ; dernier = up ($E8)
+        bne.s   .gp_cfree
+        lea     msg_gameport_ok(pc),a0
+        bsr     ser_puts                ; « GAMEPORT OK »
+.gp_cfree:
+        lea     24(a3),a1               ; REMHANDLER
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .gp_bio
+        clr.l   GP_INPUTBASE            ; gp_install la re-publiera pour le serveur live
+        move.l  a3,a1
+        move.l  #72,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .gp_done
+.gp_bio:                                ; input BeginIO(a1=ioreq) + recharge SysBase. a4=input base.
+        move.l  a4,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        rts
+.gp_done:
+
+        ; --- câblage M6R LIVE : deltas RAWMOUSE RELATIFS -> accumulateur de pointeur (absolu, clampé) -> requester ---
+        ; Le chaînon live : pointer_input_handler (pri 50) intègre les deltas en position absolue clampée et réécrit
+        ; ie_X/ie_Y -> req_input_handler (pri 0, INCHANGÉ) hit-teste en absolu. La voie JOY->RAWMOUSE est prouvée au
+        ; bloc GAMEPORT ; ici on injecte des RAWMOUSE relatifs (= la sortie de gameport) via IND_WRITEEVENT.
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .m6r_done
+        move.l  d0,a4                   ; a4 = input.device base
+        move.l  #120,d0                 ; bloc : ptr_int(24) + req_int(24@24) + ioreq(48@48) + event(22@96)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .m6r_done
+        move.l  d0,a3                   ; a3 = bloc
+        move.b  #50,LN_PRI(a3)          ; ptr_int : accumulateur pri 50 (AVANT le requester dans la chaîne)
+        move.l  #pointer_input_handler,IS_CODE(a3)
+        move.b  #0,LN_PRI+24(a3)        ; req_int : requester pri 0
+        move.l  #req_input_handler,IS_CODE+24(a3)
+        lea     48(a3),a1               ; ADDHANDLER ptr_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .m6r_bio
+        lea     48(a3),a1               ; ADDHANDLER req_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
+        lea     24(a3),a0
+        move.l  a0,INP_IO_DATA(a1)
+        bsr     .m6r_bio
+        move.w  #10,PTR_X               ; départ (10,10)
+        move.w  #10,PTR_Y
+        lea     96(a3),a0               ; event RAWMOUSE relatif (-50,-50) NOBUTTON -> clamp (0,0)
+        clr.l   IE_NEXTEVENT(a0)
+        move.b  #IECLASS_RAWMOUSE,IE_CLASS(a0)
+        move.w  #IECODE_NOBUTTON,IE_CODE(a0)
+        move.w  #-50,IE_X(a0)
+        move.w  #-50,IE_Y(a0)
+        bsr     .m6r_write
+        lea     96(a3),a0               ; mouvement +160,+112 -> (160,112) sur le gadget
+        move.w  #IECODE_NOBUTTON,IE_CODE(a0)
+        move.w  #160,IE_X(a0)
+        move.w  #112,IE_Y(a0)
+        clr.l   IE_NEXTEVENT(a0)
+        bsr     .m6r_write
+        cmp.w   #160,PTR_X              ; position absolue correcte (RED PTR_NO_CLAMP -> 120 : base -40)
+        bne.s   .m6r_free
+        cmp.w   #112,PTR_Y              ; (RED -> 72)
+        bne.s   .m6r_free
+        clr.w   REQ_HIT                 ; clic LBUTTON (delta nul) -> pointeur réécrit abs (160,112) -> hit-test DANS
+        lea     96(a3),a0
+        move.w  #IECODE_LBUTTON,IE_CODE(a0)
+        move.w  #0,IE_X(a0)
+        move.w  #0,IE_Y(a0)
+        clr.l   IE_NEXTEVENT(a0)
+        bsr     .m6r_write
+        cmp.w   #1,REQ_HIT              ; clic DANS le gadget -> REQ_HIT posé
+        bne.s   .m6r_free
+        lea     96(a3),a0               ; déplace HORS : (160,112) -155 -> (5,112)
+        move.w  #IECODE_NOBUTTON,IE_CODE(a0)
+        move.w  #-155,IE_X(a0)
+        move.w  #0,IE_Y(a0)
+        clr.l   IE_NEXTEVENT(a0)
+        bsr     .m6r_write
+        clr.w   REQ_HIT
+        lea     96(a3),a0               ; clic HORS (5,112) : x<120 -> miss
+        move.w  #IECODE_LBUTTON,IE_CODE(a0)
+        move.w  #0,IE_X(a0)
+        move.w  #0,IE_Y(a0)
+        clr.l   IE_NEXTEVENT(a0)
+        bsr     .m6r_write
+        tst.w   REQ_HIT                 ; clic HORS -> REQ_HIT reste 0
+        bne.s   .m6r_free
+        lea     msg_m6r_live_ok(pc),a0
+        bsr     ser_puts                ; « M6R LIVE OK »
+.m6r_free:
+        lea     48(a3),a1               ; REMHANDLER ptr_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .m6r_bio
+        lea     48(a3),a1               ; REMHANDLER req_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a1)
+        lea     24(a3),a0
+        move.l  a0,INP_IO_DATA(a1)
+        bsr     .m6r_bio
+        move.l  a3,a1
+        move.l  #120,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .m6r_done
+.m6r_write:                             ; IND_WRITEEVENT(event @ 96(a3)) ; a4=input base, a3=bloc. Clobbe a0/a1.
+        lea     48(a3),a1
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a1)
+        lea     96(a3),a0
+        move.l  a0,INP_IO_DATA(a1)
+.m6r_bio:
+        move.l  a4,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        rts
+.m6r_done:
+
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
         ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ via CIA-B/INT6 +
@@ -1358,6 +1565,10 @@ d2_done:
         moveq   #INTB_VERTB,d0
         lea     VBL_TAIL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
+        ; souris matérielle : arme le poller gameport.device (gp_vblank_server) sur la chaîne VERTB du système
+        ; tournant — câblage LIVE PERSISTANT (pendant du feeder clavier). GP_POLLS avancera sur les VBlanks réels ;
+        ; headless (JOY0DAT statique) le poller n'injecte rien (prev primé = courant) -> inerte vis-à-vis de M7.
+        bsr     gp_install
         ; M7g : 2e source de NIVEAU 3 (COPER) pour prouver le décodage INTREQR multi-source d'int3.
         ; coper_test (vecteur EXCLUSIF) incrémente COPER_FIRED ; vbl_tail déclenche COPER par logiciel.
         clr.l   COPER_FIRED
@@ -1404,6 +1615,7 @@ d2_done:
         bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
         lea     msg_m6s_ok(pc),a0
         bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
+        bsr     m6r_wire_requester   ; câblage LIVE : handlers pointeur+requester PERSISTANTS sur input.device
         bra.s   .strap_done
 .m6r_booted:
         lea     msg_m6y_ok(pc),a0
@@ -2705,6 +2917,17 @@ task_timer:
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7g_done:
+        btst    #0,GP_LIVE_STAT      ; gameport : serveur souris VBlank live déjà prouvé ?
+        bne.s   .tt_gp_done          ; -> tombe sur le check M7J (ne PAS sauter)
+        move.l  GP_POLLS,d0          ; gp_vblank_server tourne-t-il sur les VBlanks RÉELS du système tournant ?
+        cmp.l   #GP_POLLS_THRESH,d0
+        bcs.s   .tt_gp_done          ; pas encore assez de polls (checker M7J quand même)
+        bset    #0,GP_LIVE_STAT      ; émet « GP VBLANK LIVE OK » une seule fois
+        jsr     LVO_FORBID(a6)
+        lea     msg_gp_live_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.tt_gp_done:
         btst    #0,M7J_STAT          ; M7j : marqueur cycle-de-vie déjà émis ?
         bne.s   .tt_m7a
         move.l  RM_RUNS,d0           ; task_rm a-t-elle fini ses itérations (puis s'est auto-retirée) ?
@@ -2964,6 +3187,97 @@ input_test_h2:
         move.l  a0,d0
         rts
 
+; gp_cap_handler(a0 = liste d'InputEvents, a1 = is_Data) -> d0 = liste : handler de capture du bloc GAMEPORT.
+; Compte les RAWMOUSE vus (GP_CAP_N) et mémorise ie_Code/ie_X/ie_Y du dernier (events injectés unitaires -> tête
+; seule). Scratch d0/d1/a1 uniquement (préserve d2-d7/a2-a4, convention handler).
+gp_cap_handler:
+        move.l  a0,d1
+        beq.s   .gc_ret
+        move.l  a0,a1
+        cmp.b   #IECLASS_RAWMOUSE,IE_CLASS(a1)
+        bne.s   .gc_ret
+        addq.w  #1,GP_CAP_N
+        move.w  IE_CODE(a1),GP_CAP_CODE
+        move.w  IE_X(a1),GP_CAP_DX
+        move.w  IE_Y(a1),GP_CAP_DY
+.gc_ret:
+        move.l  a0,d0
+        rts
+
+; m6r_wire_requester : câble les handlers CONSOMMATEURS (pointeur pri 50 + requester pri 0) PERSISTANTS sur
+; input.device (PAS de teardown) -> la chaîne gameport -> input.device -> pointeur -> requester vit dans le
+; système tournant (symétrique du producteur gp_vblank_server persistant). Puis self-check SYNCHRONE : injecte via
+; les handlers persistants un move relatif -> gadget puis un clic -> REQ_HIT -> « M6R WIRED OK ». a6 = SysBase.
+; Appelé une fois dans la branche M6R insert-disk (IRQ masquées ; IND_WRITEEVENT est synchrone). Préserve a2-a4.
+m6r_wire_requester:
+        movem.l a2-a4,-(sp)
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .mw_ret
+        move.l  d0,a4                    ; a4 = input.device base
+        clr.l   PTR_INT+LN_SUCC          ; struct Interrupt pointeur (pri 50), RAM basse réservée
+        move.b  #50,PTR_INT+LN_PRI
+        clr.l   PTR_INT+IS_DATA
+        move.l  #pointer_input_handler,PTR_INT+IS_CODE
+        clr.l   REQ_INT+LN_SUCC          ; struct Interrupt requester (pri 0)
+        clr.b   REQ_INT+LN_PRI
+        clr.l   REQ_INT+IS_DATA
+        move.l  #req_input_handler,REQ_INT+IS_CODE
+        lea     -48(sp),sp               ; IOStdReq scratch
+        move.l  sp,a2                    ; a2 = ioreq
+        lea     PTR_INT,a0               ; ADDHANDLER pointeur (PERSISTANT, pas de REMHANDLER)
+        bsr.s   .mw_add
+        lea     REQ_INT,a0               ; ADDHANDLER requester (PERSISTANT)
+        bsr.s   .mw_add
+        clr.w   PTR_X                    ; self-check : les handlers persistants répondent-ils ?
+        clr.w   PTR_Y
+        clr.w   REQ_HIT
+        lea     -24(sp),sp               ; InputEvent scratch
+        move.l  sp,a3                    ; a3 = event
+        move.b  #IECLASS_RAWMOUSE,IE_CLASS(a3)
+        clr.b   IE_SUBCLASS(a3)
+        clr.w   IE_QUALIFIER(a3)
+        clr.l   IE_NEXTEVENT(a3)
+        move.w  #IECODE_NOBUTTON,IE_CODE(a3)  ; move relatif -> (160,112) sur le gadget
+        move.w  #160,IE_X(a3)
+        move.w  #112,IE_Y(a3)
+        bsr.s   .mw_write
+        move.w  #IECODE_LBUTTON,IE_CODE(a3)   ; clic (delta nul) -> hit-test (160,112) -> REQ_HIT
+        clr.w   IE_X(a3)
+        clr.w   IE_Y(a3)
+        clr.l   IE_NEXTEVENT(a3)
+        bsr.s   .mw_write
+        lea     24(sp),sp                ; libère l'event scratch
+        cmp.w   #1,REQ_HIT               ; les handlers PERSISTANTS ont traité le clic ?
+        bne.s   .mw_done
+        lea     msg_m6r_wired(pc),a0
+        bsr     ser_puts                 ; « M6R WIRED OK »
+.mw_done:
+        clr.w   PTR_X                    ; remet le pointeur à zéro pour la vraie souris (handlers RESTENT câblés)
+        clr.w   PTR_Y
+        clr.w   REQ_HIT
+        lea     48(sp),sp                ; libère l'ioreq scratch
+.mw_ret:
+        movem.l (sp)+,a2-a4
+        rts
+.mw_add:                                 ; IND_ADDHANDLER(a0 = struct Interrupt) ; a2=ioreq, a4=input base
+        move.l  a4,IO_DEVICE(a2)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a2)
+        move.l  a0,INP_IO_DATA(a2)
+        bra.s   .mw_bio
+.mw_write:                               ; IND_WRITEEVENT(a3 = event) ; a2=ioreq, a4=input base
+        move.l  a4,IO_DEVICE(a2)
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a2)
+        move.l  a3,INP_IO_DATA(a2)
+.mw_bio:
+        move.l  a2,a1
+        move.l  a4,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        rts
+
 ; vbl_tail_server (M7f) : serveur VERTB de plus basse priorité (-10). Incrémente VERTB_CHAIN_N ->
 ; prouve que le walker parcourt TOUTE la chaîne VERTB (sched_server pri 20 + timer_vblank pri 0 ont donc
 ; tourné AVANT lui). a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0+mémoire).
@@ -3120,6 +3434,14 @@ msg_req_drawn:
         dc.b    "REQUESTER DRAWN OK (insert-disk requester: border + text rendered via font8x8; bitplane readback matches)",13,10,0
 msg_req_click:
         dc.b    "REQUESTER CLICK OK (RAWMOUSE via input.device: click inside gadget -> hit, click outside -> miss)",13,10,0
+msg_gameport_ok:
+        dc.b    "GAMEPORT OK (gameport.device logic: gp_delta8 8-bit wraparound, button edge-detect, RAWMOUSE emitted via IND_WRITEEVENT)",13,10,0
+msg_m6r_live_ok:
+        dc.b    "M6R LIVE OK (relative RAWMOUSE deltas -> pointer accumulator -> absolute clamped pos -> requester hit-test: on gadget -> hit, off -> miss)",13,10,0
+msg_gp_live_ok:
+        dc.b    "GP VBLANK LIVE OK (gameport VBlank server runs on real frame interrupts in the running system: GP_POLLS advancing)",13,10,0
+msg_m6r_wired:
+        dc.b    "M6R WIRED OK (pointer+requester handlers registered PERSISTENTLY on input.device in the running system; injected click -> REQ_HIT)",13,10,0
         EVEN
 con_test_str:
         dc.b    "CONSOLE WRITE OK 0123456789"

@@ -647,10 +647,28 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     requester (bord haut/bas + texte « INSERT DISK » + label « RETRY » via la police 8x8) dans un bitplane. Preuves :
     **REQUESTER DRAWN OK** (readback : bord haut + glyphe 'I' == font8x8) ; **REQUESTER CLICK OK** (IND_WRITEEVENT d'un
     RAWMOUSE DANS le gadget -> hit ; HORS -> miss) ; RED `REQ_NO_HITTEST` (hit-test coupé -> CLICK absent, DRAWN intact).
-    Souris MATÉRIELLE (gameport/JOY0DAT deltas relatifs) + câblage M6R LIVE (clic réel sur écran invisible headless)
-    DIFFÉRÉS (non observables dans ce harnais) ; preuve du clic = chemin PUBLIC IND_WRITEEVENT (comme console.device).
-    Clean-room : NDK intuition.i (Gadget/Requester) + inputevent.i + police hand-authored. AUCUNE lecture ROM.
-  - **À venir** : souris matérielle (gameport.device) + câblage M6R live (sur vrai display) ; keymap dead-keys/compose ; parité modules.
+    Preuve du clic = chemin PUBLIC IND_WRITEEVENT (comme console.device). Souris matérielle + câblage M6R live désormais
+    FAITS (entrée gameport.device ci-dessous). Clean-room : NDK intuition.i + inputevent.i + police hand-authored. AUCUNE lecture ROM.
+  - **gameport.device (souris matérielle) + câblage M6R live FAIT.** `src/exec/gameport.s` (device résident AUTOINIT
+    NT_DEVICE pri 60) + `src/intuition/pointer.s`. Souris non observable headless (deltas JOY0DAT RELATIFS + pas de
+    mouvement injectable + framebuffer invisible) -> on FACTORISE la logique pure du shim matériel. `gp_delta8(cur,prev)` :
+    delta signé avec wraparound 8 bits (`sub.b`+`ext.w`, les compteurs quadrature wrappent). `gp_poll(JOY0DAT,CIAA_PRA)` :
+    dx/dy via gp_delta8, edge-detect du bouton gauche (CIAA PRA bit 6 actif-bas), et si mouvement/front -> InputEvent
+    RAWMOUSE ($68 down / $E8 up / $FF mouvement) injecté dans input.device via IND_WRITEEVENT (pattern du feeder clavier ;
+    pas d'input.task, déviation documentée). `gp_vblank_server` : shim matériel mince (lit les vrais registres -> gp_poll),
+    enregistré par `gp_install` sur la chaîne VERTB du système tournant = câblage LIVE persistant (pendant du feeder clavier) ;
+    `GP_PREV_JOY` primé à la lecture courante (évite le parasite frame 1). `pointer_input_handler` (intuition, pri 50 > requester 0) :
+    accumule les deltas RELATIFS en position ABSOLUE `PTR_X/PTR_Y` clampée écran et réécrit ie_X/ie_Y -> le `req_input_handler`
+    (pri 0, INCHANGÉ) hit-teste en absolu = le câblage live. Preuves : **GAMEPORT OK** (gp_delta8 wraparound + edge bouton +
+    event capturé via IND_WRITEEVENT) ; **M6R LIVE OK** (deltas RAWMOUSE relatifs -> accumulateur -> position absolue clampée
+    -> hit-test gadget : sur le gadget->hit, hors->miss) ; **GP VBLANK LIVE OK** (gp_vblank_server tourne sur les VBlanks RÉELS
+    du système tournant : GP_POLLS avance). REDs : `GP_NO_WRAP` (sub mot sans sign-extend -> delta faux au wrap -> GAMEPORT OK
+    absent), `GP_NO_EDGE` (event à chaque poll tenu -> compteur edge 2->3 -> GAMEPORT OK absent), `PTR_NO_CLAMP` (pas d'écrêtage
+    -> position hors écran -> hit-test rate -> M6R LIVE OK absent). Headless JOY0DAT statique -> le serveur live n'injecte rien
+    (prev primé = courant) -> inerte vis-à-vis de M7 (non-rég M7A/M7E/M7F/M7G + E3 CMD RAN OK/F1BOOTOK, 0 FAILED). Clean-room :
+    HRM (JOY0DAT/CIAA PRA) + NDK gameport.i/inputevent.i. AUCUNE lecture ROM. Différé : bouton DROIT (POTINP, bit flou) +
+    clic réel sur écran affiché (invérifiables headless ; attendent un vrai display).
+  - **À venir** : bouton droit souris (POTINP) + clic réel sur display ; keymap dead-keys/compose ; parité modules.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

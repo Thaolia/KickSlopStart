@@ -17,7 +17,7 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
@@ -26,7 +26,7 @@ GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o $
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
-INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/requester.o
+INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/requester.o $(BUILD)/pointer.o
 # --- piste dos (M6+) : objets reliés APRÈS intuition ---
 DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i

@@ -18,6 +18,7 @@ SERDAT   EQU CUSTOM+$030
 SERPER   EQU CUSTOM+$032
 SERDATR  EQU CUSTOM+$018
 COLOR00  EQU CUSTOM+$180
+JOY0DAT  EQU CUSTOM+$00A      ; compteurs quadrature souris port 0 (octet bas = X, octet haut = Y ; 8 bits wrap)
 
 ; --- CIA-A (overlay / LED) ---
 CIAA_PRA  EQU $BFE001
@@ -283,6 +284,8 @@ IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents 
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
 IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
+IECODE_NOBUTTON EQU $FF          ; ie_Code : event de mouvement pur (aucun bouton)
+IECODE_UP_PREFIX EQU $80         ; ie_Code : relâchement (code bouton | $80)
 IE_NEXTEVENT    EQU 0            ; struct InputEvent : APTR event suivant
 IE_CLASS        EQU 4            ; UBYTE classe
 IE_SUBCLASS     EQU 5            ; UBYTE sous-classe
@@ -313,6 +316,45 @@ KBD_FTAIL    EQU $00000660 ; word : queue (producteur = kbd_interrupt) ; indices
 KBD_FEEDRING EQU $00000662 ; 32 octets : 16 entrées word = (KBD_QUAL<<8 | keycode) snapshotées par frappe
 KBD_FRMASK   EQU $1E       ; masque d'offset octet (taille 32 - 2)
 REQ_HIT      EQU $00000682 ; word : requester — gadget touché par un clic (posé par req_input_handler, preuve)
+
+; --- gameport.device (souris matérielle) + accumulateur de pointeur Intuition (câblage M6R live) ---
+; gameport lit JOY0DAT (deltas quadrature) + CIAA_PRA bit 6 (bouton gauche, actif-bas) chaque VBlank, calcule
+; les deltas signés (wraparound 8 bits), détecte les fronts de bouton, et injecte des InputEvents RAWMOUSE dans
+; input.device via IND_WRITEEVENT (pattern du feeder clavier ; pas d'input.task — déviation documentée). Le
+; pointer_input_handler (intuition, pri 50) accumule ces deltas RELATIFS en position ABSOLUE clampée à l'écran et
+; réécrit ie_X/ie_Y -> le req_input_handler (pri 0) existant hit-teste en absolu, inchangé = le câblage live.
+PTR_XMAX     EQU 320            ; bornes écran pour le clamp du pointeur (320x256 : console/bootscreen)
+PTR_YMAX     EQU 256
+GP_POLLS_THRESH EQU 25          ; polls VBlank (~0,5 s) avant « GP VBLANK LIVE OK » (serveur vit dans le système)
+PTR_X        EQU $00000684 ; word : pointeur absolu X (accumulé par pointer_input_handler, clampé)
+PTR_Y        EQU $00000686 ; word : pointeur absolu Y
+GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
+GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé) +pad $68B
+GP_POLLS     EQU $0000068C ; long : compteur de polls de gp_vblank_server (preuve live : avance sur VBlanks réels)
+GP_INPUTBASE EQU $00000690 ; long : base input.device pour l'injection RAWMOUSE (0 = pas d'injection)
+GP_CAP_N     EQU $00000694 ; word : events RAWMOUSE vus par le handler de capture (tests gameport)
+GP_CAP_CODE  EQU $00000696 ; word : dernier ie_Code capturé
+GP_CAP_DX    EQU $00000698 ; word : dernier ie_X (delta) capturé
+GP_CAP_DY    EQU $0000069A ; word : dernier ie_Y (delta) capturé
+GP_LIVE_STAT EQU $0000069C ; byte : b0 = « GP VBLANK LIVE OK » déjà émis +pad $69D
+GP_VBL_INT   EQU $000006A0 ; struct Interrupt (IS_SIZE=22) du serveur gameport VBlank -> $6A0..$6B5
+; Handlers CONSOMMATEURS du requester, enregistrés PERSISTANTS sur input.device dans la branche M6R insert-disk
+; (pas de teardown) -> la chaîne gameport->input.device->pointeur->requester est VIVANTE dans le système tournant
+; (symétrique du serveur producteur gp_vblank_server). structs Interrupt en RAM basse réservée.
+PTR_INT      EQU $000006B6 ; struct Interrupt (22) de pointer_input_handler (pri 50) -> $6B6..$6CB
+REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) -> $6CC..$6E1
+; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
+; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
+; test gp_poll échoue). Isole le modèle de wraparound 8 bits des compteurs quadrature (load-bearing). Défaut 0.
+GP_NO_WRAP   EQU 0
+; GP_NO_EDGE=1 (RED) : gp_poll émet un event bouton à CHAQUE poll où le bouton est pressé (pas de front) -> un
+; bouton TENU produit N events au lieu d'1 -> le compteur du test edge (2 attendus) passe à 3 -> « GAMEPORT OK »
+; absent. Isole l'edge-detection (load-bearing : sans elle, flood d'events down). Défaut 0.
+GP_NO_EDGE   EQU 0
+; PTR_NO_CLAMP=1 (RED) : pointer_input_handler n'écrête PAS la position aux bornes écran -> un mouvement qui
+; dépasse un bord sort de l'écran (négatif) -> la position accumulée est fausse -> le hit-test du gadget rate ->
+; « M6R LIVE OK » absent. Isole le clamp (load-bearing). Défaut 0.
+PTR_NO_CLAMP EQU 0
 
 ; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
 CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)
