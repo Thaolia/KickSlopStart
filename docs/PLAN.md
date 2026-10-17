@@ -447,6 +447,21 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
       RED `D3A_NO_REPLY` (handler ne `ReplyMsg` pas → driver bloqué) → D3A absent. GREEN-BOOT (D3A + non-rég
       D1/D2/M3F/M7A/M7C/M7D, 0 FAILED) + RED + COOP (D3A exercé COOPÉRATIVEMENT, SCHED_ON=0) + CTRL-NODISK (D3A
       présent, disk-indépendant ; D1/D2 absents). checksum GREEN `0x47B39093`. PROCHAIN : D3b (handler OFS).
+    - **D3b — process file-handler DF0: + dos_sendpkt (FAIT).** `src/dos/handler.s` (`dos_handler_df0`) : un vrai
+      process qui boucle `WaitPort`/`GetMsg` et sert `ACTION_FINDINPUT`/`READ`/`END` via `ofs_read_file` (D1).
+      `FINDINPUT` (ARG1=BPTR FileHandle, ARG3=BSTR nom) lit le fichier ENTIER dans un buffer handler (simplification
+      assumée : lectures incrémentales OFS différées), pose `fh_Arg1`=état{buffer,taille,pos} ; `READ`(clé,buf,len)
+      copie+avance (RES1=octets, 0=EOF) ; `END` libère. Helper `dos_sendpkt` (process.s) : monte le StandardPacket,
+      `PutMsg`+`WaitPort`/`GetMsg` sur `ThisTask->pr_MsgPort` (pas de DoPkt public V34). Preuve **D3B** : un fs-driver
+      ouvre/lit/ferme « kickslop » À TRAVERS le handler par packets → 1024 o + marqueurs @0/@488/@976. RED
+      `D3B_NO_READ` (handler ne sert pas READ → EOF) → octets faux → D3B absent (FINDINPUT/END marchent). GREEN-BOOT
+      (D3B + D3A + non-rég D1/D2/M3F/M7C/M7D, 0 FAILED) + RED + CTRL-NODISK (D3A présent disk-indép, D3B absent) +
+      COOP. **Découverte (advisor-anticipée)** : notre trackdisk est CPU-BOUND (busy-loops recalibration, pas
+      interrupt-driven) → le handler (pri 6) affame les tâches de pri inférieure pendant sa longue lecture → les
+      markers de pri<6 arrivent TARD → **WAIT≈280 s** requis. Fix d'entrelacement série : la paire echo (D3a) passe
+      pri 8/7 (> paire OFS 6/5) → D3A émis TÔT, D3B tard → émissions non concurrentes. checksum GREEN `0x927FC4D9`.
+      ⚠️ La lenteur CPU-bound va dépasser 5 min avec D3c/D3d → **cylinder-tracking = incrément dédié AVANT D3c**
+      (advisor : ne pas le bundler ici ; il re-vérifie toutes les preuves disque). PROCHAIN : cylinder-tracking, puis D3c.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

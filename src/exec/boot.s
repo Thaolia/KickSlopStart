@@ -33,9 +33,17 @@
                 xref    dos_loadseg      ; dos/loadseg.s (D2 : charger un exécutable hunk de l'OFS + reloc)
                 xref    dos_unloadseg    ; dos/loadseg.s (D2 : libérer une seglist)
                 xref    proc_create      ; dos/process.s (D3 : créer un Process + pr_MsgPort)
+                xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet + WaitPort/GetMsg)
+                xref    dos_handler_df0  ; dos/handler.s (D3b : process file-handler DF0: OFS)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
+; D3b : bloc du fs-driver (une seule AllocMem, sous-parties long-alignées pour les BPTR)
+FSD_SP       EQU 0            ; StandardPacket (68)
+FSD_FH       EQU 68           ; FileHandle (44)
+FSD_BUF      EQU 112          ; buffer de lecture (2048)
+FSD_NAME     EQU 2160         ; BSTR nom (len + "kickslop")
+FSD_TOTAL    EQU 2176
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
 DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
 DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
@@ -1610,15 +1618,29 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         ; --- D3a : créer le process file-handler (echo) + le process driver (tournent après dispatch_in) ---
         ; Créés dans les DEUX modes (GREEN SCHED_ON=1 ET COOP) : driver/handler bloquent sur WaitPort (switch
         ; synchrone M3d) -> round-trip packet coopératif. proc_create via jsr (process.o hors portée bsr).
+        ; Paire echo PRIORITAIRE (8/7) au-dessus de la paire OFS (6/5) : son round-trip (rapide, sans disque)
+        ; s'achève TÔT -> « D3A » émis bien avant la lecture OFS lente -> pas d'émission série concurrente avec D3B.
         lea     d3a_hname(pc),a0
         lea     d3a_handler(pc),a1
-        moveq   #6,d0                ; handler pri 6 (> spinner 0 ; bloque de toute façon)
+        moveq   #8,d0                ; echo handler pri 8
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_HANDLERPORT   ; publie le port du handler pour le driver
         lea     d3a_dname(pc),a0
         lea     d3a_driver(pc),a1
-        moveq   #5,d0                ; driver pri 5
+        moveq   #7,d0                ; echo driver pri 7
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        ; --- D3b : créer le process file-handler DF0: (OFS) + le fs-driver (open/read/close par packets) ---
+        lea     d3b_hname(pc),a0
+        move.l  #dos_handler_df0,a1  ; absolu : handler.o lié hors portée lea(pc) 16 bits
+        moveq   #6,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        move.l  d0,DOS_FSPORT        ; publie le port du file-handler OFS
+        lea     d3b_dname(pc),a0
+        lea     dos_fsdriver(pc),a1
+        moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
                 ifne    M7J_DEMO
@@ -1727,8 +1749,10 @@ d3a_driver:
         lea     SP_PKT(a2),a3
         cmp.l   #$D3A0CAFE,DP_RES1(a3)    ; echo correct ?
         bne.s   .d_free
+        jsr     LVO_FORBID(a6)       ; émission atomique (évite l'entrelacement série avec le fs-driver)
         lea     msg_d3a_ok(pc),a0
         bsr     ser_puts             ; « D3A ... OK »
+        jsr     LVO_PERMIT(a6)
 .d_free:
         move.l  a2,a1
         move.l  #SP_SIZEOF,d0
@@ -1737,6 +1761,88 @@ d3a_driver:
         moveq   #0,d0                ; terminé -> bloque pour toujours (ne spinne pas)
         jsr     LVO_WAIT(a6)
         bra.s   .d_block
+
+; --- D3b : corps du fs-driver — ouvre/lit/ferme « kickslop » À TRAVERS le process file-handler DF0: via packets ---
+; FINDINPUT(BPTR fh, 0, BSTR nom) -> DOSTRUE + fh_Arg1 = clé ; READ(clé, buf, 1024) -> 1024 + marqueurs ;
+; END(clé). Émet « D3B » si tout OK. Utilise dos_sendpkt (process.s). a5 = bloc, d6 = flag succès, d7 = clé.
+dos_fsdriver:
+        move.l  ($4).w,a6
+        move.l  #FSD_TOTAL,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .fd_block
+        move.l  d0,a5                ; a5 = bloc (persistant)
+        moveq   #0,d6                ; d6 = flag succès
+        ; construire le BSTR nom {8,"kickslop"} à a5+FSD_NAME
+        lea     FSD_NAME(a5),a1
+        move.b  #8,(a1)+
+        lea     fsd_name_src(pc),a0
+        moveq   #8-1,d0
+.fd_ncpy:
+        move.b  (a0)+,(a1)+
+        dbra    d0,.fd_ncpy
+        ; --- FINDINPUT : arg1 = BPTR(fh), arg2 = 0, arg3 = BPTR(nom) ---
+        lea     FSD_SP(a5),a0
+        move.l  DOS_FSPORT,a1
+        move.l  #ACTION_FINDINPUT,d0
+        move.l  a5,d1
+        add.l   #FSD_FH,d1
+        lsr.l   #2,d1                ; BPTR(FileHandle)
+        moveq   #0,d2                ; lock 0 (racine)
+        move.l  a5,d3
+        add.l   #FSD_NAME,d3
+        lsr.l   #2,d3                ; BPTR(nom)
+        jsr     dos_sendpkt          ; d0 = dp_Res1
+        cmp.l   #DOSTRUE,d0
+        bne     .fd_free
+        move.l  a5,a0                ; clé = fh.FH_ARG1 (posée par le handler)
+        add.l   #FSD_FH,a0
+        move.l  FH_ARG1(a0),d7       ; d7 = clé du fichier
+        ; --- READ : arg1 = clé, arg2 = buffer (APTR), arg3 = 1024 ---
+        lea     FSD_SP(a5),a0
+        move.l  DOS_FSPORT,a1
+        move.l  #ACTION_READ,d0
+        move.l  d7,d1
+        move.l  a5,d2
+        add.l   #FSD_BUF,d2          ; dest = buffer (APTR, PAS un BPTR)
+        move.l  #1024,d3
+        jsr     dos_sendpkt          ; d0 = octets lus
+        cmp.l   #1024,d0
+        bne.s   .fd_close
+        lea     FSD_BUF(a5),a0       ; vérifier les marqueurs (mêmes que D1 : @0/@488/@976)
+        cmp.l   #$44314F46,(a0)      ; "D1OF"
+        bne.s   .fd_close
+        cmp.l   #$534F4B30,4(a0)     ; "SOK0"
+        bne.s   .fd_close
+        cmp.l   #$534F4B31,492(a0)   ; "SOK1"
+        bne.s   .fd_close
+        cmp.l   #$534F4B32,980(a0)   ; "SOK2"
+        bne.s   .fd_close
+        moveq   #1,d6                ; succès
+.fd_close:
+        ; --- END : arg1 = clé (ferme toujours, même si READ a échoué) ---
+        lea     FSD_SP(a5),a0
+        move.l  DOS_FSPORT,a1
+        move.l  #ACTION_END,d0
+        move.l  d7,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        jsr     dos_sendpkt
+        tst.l   d6
+        beq.s   .fd_free
+        jsr     LVO_FORBID(a6)       ; émission atomique (évite l'entrelacement série avec l'echo-driver)
+        lea     msg_d3b_ok(pc),a0
+        bsr     ser_puts             ; « D3B ... OK »
+        jsr     LVO_PERMIT(a6)
+.fd_free:
+        move.l  a5,a1
+        move.l  #FSD_TOTAL,d0
+        jsr     LVO_FREEMEM(a6)
+.fd_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .fd_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -2487,10 +2593,18 @@ msg_d1_ok:
         dc.b    "D1 OFS READ OK (read file 'KickSlop' by name from DF0: via OFS root->hash->header->data chain; 1024 bytes, case-insensitive, 3 OFS data blocks)",13,10,0
 msg_d3a_ok:
         dc.b    "D3A PACKET OK (Process+CreateProc; driver -> StandardPacket PutMsg -> handler process -> ReplyMsg -> driver got echo)",13,10,0
+msg_d3b_ok:
+        dc.b    "D3B HANDLER OK (file-handler process served FINDINPUT/READ/END packets; read 'kickslop' 1024 bytes via OFS, markers match)",13,10,0
 d3a_hname:
         dc.b    "dos.handler.echo",0
 d3a_dname:
         dc.b    "dos.driver",0
+d3b_hname:
+        dc.b    "dos.handler.df0",0
+d3b_dname:
+        dc.b    "dos.fsdriver",0
+fsd_name_src:
+        dc.b    "kickslop"
         even
 ofs_test_name:
         dc.b    "kickslop",0

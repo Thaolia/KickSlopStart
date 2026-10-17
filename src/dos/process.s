@@ -12,6 +12,7 @@
                 include "dospkt.i"
 
                 xdef    proc_create
+                xdef    dos_sendpkt
 
 ; proc_create(a6=SysBase, a0=nom, a1=entryPC, d0=priorité.b, d1=taille pile) -> d0 = APTR &pr_MsgPort | 0.
 proc_create:
@@ -76,3 +77,39 @@ proc_exit:
                 moveq   #0,d0
                 jsr     LVO_WAIT(a6)
                 bra.s   .pe
+
+; dos_sendpkt(a6=SysBase, a0=StandardPacket, a1=port du handler, d0=dp_Type, d1=arg1, d2=arg2, d3=arg3)
+;   -> d0 = dp_Res1, d1 = dp_Res2. Pas de DoPkt public en V34 -> cet équivalent interne monte le packet, PutMsg au
+;   handler, puis WaitPort/GetMsg sur le pr_MsgPort de l'APPELANT (qui DOIT être un Process). Convention dos :
+;   dp_Port/mn_ReplyPort = &appelant.pr_MsgPort. Réutilisé par le driver de preuve (D3b) et par dos Open/Read (D3c).
+dos_sendpkt:
+                movem.l d4/a2-a4,-(sp)
+                move.l  a0,a2                ; a2 = StandardPacket (&sp_Msg)
+                move.l  a1,a3                ; a3 = port du handler
+                lea     SP_PKT(a2),a4        ; a4 = &sp_Pkt (DosPacket)
+                move.l  EB_THISTASK(a6),a0
+                lea     PR_MSGPORT(a0),a0    ; a0 = port de réponse = ThisTask->pr_MsgPort
+                move.l  a0,d4                ; d4 = port de réponse (sauvé pour WaitPort)
+                move.b  #NT_MESSAGE,LN_TYPE(a2)
+                move.l  a0,MN_REPLYPORT(a2)
+                move.w  #DP_SIZEOF,MN_LENGTH(a2)
+                move.l  a4,LN_NAME(a2)       ; sp_Msg.ln_Name -> sp_Pkt (le handler y lit le packet)
+                move.l  a2,DP_LINK(a4)
+                move.l  a0,DP_PORT(a4)
+                move.l  d0,DP_TYPE(a4)
+                move.l  d1,DP_ARG1(a4)
+                move.l  d2,DP_ARG2(a4)
+                move.l  d3,DP_ARG3(a4)
+                clr.l   DP_RES1(a4)
+                clr.l   DP_RES2(a4)
+                move.l  a3,a0                ; PutMsg(handlerPort, &sp_Msg)
+                move.l  a2,a1
+                jsr     LVO_PUTMSG(a6)
+                move.l  d4,a0                ; WaitPort(reply) -> switch synchrone vers le handler
+                jsr     LVO_WAITPORT(a6)
+                move.l  d4,a0
+                jsr     LVO_GETMSG(a6)       ; récupère notre packet (répondu par le handler)
+                move.l  DP_RES1(a4),d0
+                move.l  DP_RES2(a4),d1
+                movem.l (sp)+,d4/a2-a4
+                rts

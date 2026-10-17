@@ -93,3 +93,7 @@ DOSFALSE         EQU 0
 ; D3A_NO_REPLY=1 (RED D3a) : le handler echo ne fait PAS ReplyMsg -> le driver reste bloqué sur WaitPort ->
 ; « D3A ... OK » jamais émis. Isole l'aller-retour packet (le chemin PutMsg->serve->ReplyMsg->WaitPort). Défaut 0.
 D3A_NO_REPLY     EQU 0
+
+; D3B_NO_READ=1 (RED D3b) : le handler file DF0: ne sert PAS ACTION_READ (renvoie EOF=0) -> le driver lit 0 octet
+; -> marqueurs absents -> « D3B ... OK » absent (FINDINPUT/END marchent encore). Isole le service READ. Défaut 0.
+D3B_NO_READ      EQU 0

@@ -32,8 +32,9 @@ DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i
 # ofs.o : lecture seule OFS (D1) — s'appuie sur trackdisk CMD_READ (disk.i) ; include exec.i + disk.i + ofs.i.
 # loadseg.o : LoadSeg (D2) — charge un exécutable hunk depuis l'OFS + relocation ; include exec.i + ofs.i.
-# process.o : Process + CreateProc (D3) ; include exec.i + dospkt.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o
+# process.o : Process + CreateProc + dos_sendpkt (D3) ; include exec.i + dospkt.i.
+# handler.o : process file-handler DF0: (D3b) ; include exec.i + ofs.i + dospkt.i.
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o $(BUILD)/handler.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -77,6 +78,8 @@ $(BUILD)/ofs.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
 $(BUILD)/loadseg.o: $(DOS_DIR)/ofs.i
 # process.o inclut dospkt.i : relier la dépendance pour rebuild.
 $(BUILD)/process.o: $(DOS_DIR)/dospkt.i
+# handler.o inclut ofs.i + dospkt.i : relier les dépendances pour rebuild.
+$(BUILD)/handler.o: $(DOS_DIR)/ofs.i $(DOS_DIR)/dospkt.i
 
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
