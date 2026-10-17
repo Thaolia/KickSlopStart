@@ -57,6 +57,7 @@ FH_FUNC3         EQU 32
 FH_ARG1          EQU 36            ; LONG = clé privée du fichier côté handler
 FH_ARG2          EQU 40
 FH_SIZEOF        EQU 44
+DOS_FH_ALLOC     EQU FH_SIZEOF+40  ; D3c : FileHandle + buffer BSTR du nom (à FH_SIZEOF, long-aligné) en 1 AllocMem
 
 ; --- DeviceNode (44 o ; chaîné dans DosInfo.di_DevInfo) ---
 DN_NEXT          EQU 0             ; BPTR
@@ -90,6 +91,11 @@ MODE_READWRITE   EQU 1004
 DOSTRUE          EQU -1
 DOSFALSE         EQU 0
 
+; LVO dos.library (sous-ensemble D3c) — vecteur N = -6*N
+DOS_LVO_OPEN     EQU -30           ; Open(name d1, mode d2) -> BPTR FileHandle
+DOS_LVO_CLOSE    EQU -36           ; Close(fh d1)
+DOS_LVO_READ     EQU -42           ; Read(fh d1, buf d2, len d3) -> octets
+
 ; D3A_NO_REPLY=1 (RED D3a) : le handler echo ne fait PAS ReplyMsg -> le driver reste bloqué sur WaitPort ->
 ; « D3A ... OK » jamais émis. Isole l'aller-retour packet (le chemin PutMsg->serve->ReplyMsg->WaitPort). Défaut 0.
 D3A_NO_REPLY     EQU 0
@@ -97,3 +103,8 @@ D3A_NO_REPLY     EQU 0
 ; D3B_NO_READ=1 (RED D3b) : le handler file DF0: ne sert PAS ACTION_READ (renvoie EOF=0) -> le driver lit 0 octet
 ; -> marqueurs absents -> « D3B ... OK » absent (FINDINPUT/END marchent encore). Isole le service READ. Défaut 0.
 D3B_NO_READ      EQU 0
+
+; D3C_NO_FHTYPE=1 (RED D3c) : dos Open ne pose PAS fh_Type (le port du handler) dans le FileHandle -> dos Read
+; voit fh_Type=0 et ne route pas le packet (renvoie 0) -> contenu non lu -> « D3C ... OK » absent. Isole le câblage
+; de la route Open->Read (fh_Type). Pas de crash (Read garde-fou fh_Type==0). Défaut 0.
+D3C_NO_FHTYPE    EQU 0

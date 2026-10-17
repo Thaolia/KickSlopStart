@@ -56,8 +56,10 @@ $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
 # trackdisk.s inclut aussi disk.i (registres disque B2).
 $(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
-# boot.s inclut dospkt.i (scaffold de preuve D3) : relier la dépendance pour rebuild.
-$(BUILD)/boot.o: $(DOS_DIR)/dospkt.i
+# boot.s inclut dospkt.i + dos.i (scaffold de preuve D3, montage DeviceNode) : relier les dépendances.
+$(BUILD)/boot.o: $(DOS_DIR)/dospkt.i $(DOS_DIR)/dos.i
+# dos_lib.o inclut dospkt.i (D3c : Open/Read/Close via packets) : relier la dépendance.
+$(BUILD)/dos_lib.o: $(DOS_DIR)/dospkt.i
 
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)

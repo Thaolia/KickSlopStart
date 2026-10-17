@@ -476,6 +476,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     absent (seek toujours RED-prouvé). COOP (WAIT=90) + CTRL-NODISK (seek non atteint sans disque). checksum GREEN
     `0xC422E669`. DETTE restante : pas d'invalidation sur disk-change (eject/swap réel + recal périodique = M7).
     PROCHAIN : D3c (dos Open/Read/Close user-facing via packets).
+  - **D3c — dos Open/Read/Close user-facing (LVO) via packets (FAIT).** `dos_lib.s` : vecteurs `Open`(-30)/`Close`
+    (-36)/`Read`(-42) implémentés. `Open(name,mode)` résout le handler via `DosInfo.di_DevInfo` → 1er `DeviceNode`
+    → `dn_Task`, alloue un `FileHandle` (+buffer BSTR du nom), pose `fh_Type`=port handler, envoie `FINDINPUT`
+    (ARG1=BPTR(fh), ARG3=BPTR(nom)) via `dos_sendpkt`, renvoie BPTR(fh). `Read` route via `fh_Type`/`fh_Arg1`
+    (ACTION_READ). `Close` : `END` + FreeMem. a6 bascule DosBase↔SysBase ; StandardPacket sur la pile du process ;
+    appelé depuis un PROCESS (pr_MsgPort = port de réponse). Setup boot : monte un `DeviceNode` (dn_Task=DOS_FSPORT)
+    dans `di_DevInfo`. Preuve **D3C** : un process client `OpenLibrary(dos)` + `Open`/`Read`/`Close` « kickslop » par
+    les LVO → 1024 o + marqueurs. RED `D3C_NO_FHTYPE` (Open ne pose pas `fh_Type` → Read garde-fou renvoie 0) → D3C
+    absent (isole le câblage de la route Open→Read). GREEN @WAIT=90 (D3C + non-rég D1/D2/D3A/D3B/M3F/CBOOT/M6Y, 0
+    FAILED) + RED + CTRL-NODISK + COOP. checksum GREEN `0x7329BBD6`. PROCHAIN : D3d (LoadSeg via dos + run).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

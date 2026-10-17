@@ -13,6 +13,7 @@
 
                 include "exec.i"
                 include "dospkt.i"       ; D3 : constantes Process/packet pour le scaffold de preuve
+                include "dos.i"          ; D3c : DL_ROOT/RN_INFO/DI_DEVINFO (montage DeviceNode)
 
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
@@ -1644,6 +1645,33 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; --- D3c : monter un DeviceNode DF0: dans DosInfo.di_DevInfo (dn_Task = port du handler OFS) + client dos ---
+        lea     EB_LIBLIST(a6),a0
+        lea     dos_libname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .d3c_noclient        ; pas de dos.library (ne devrait pas) -> pas de client
+        move.l  d0,a2                ; a2 = DosBase
+        move.l  #DN_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .d3c_noclient
+        move.l  d0,a3                ; a3 = DeviceNode
+        move.l  DOS_FSPORT,DN_TASK(a3)   ; dn_Task = port du process file-handler OFS
+        move.l  DL_ROOT(a2),a0       ; RootNode (APTR)
+        move.l  RN_INFO(a0),d0       ; BPTR DosInfo
+        lsl.l   #2,d0
+        move.l  d0,a0                ; DosInfo
+        move.l  a3,d0
+        lsr.l   #2,d0                ; BPTR(DeviceNode)
+        move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open résout DF0: par ce nœud
+        lea     d3c_cname(pc),a0
+        lea     d3c_client(pc),a1
+        moveq   #4,d0                ; client pri 4 (bloque sur packets ; sous echo/OFS)
+        move.l  #D3_STK,d1
+        jsr     proc_create
+.d3c_noclient:
                 ifne    M7J_DEMO
         ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
         ; doit remonter d'au moins M7J_RECOVER (pile+TCB libérés). task_timer vérifie la remontée.
@@ -1844,6 +1872,67 @@ dos_fsdriver:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .fd_block
+
+; --- D3c : corps du process client dos — OpenLibrary(dos) + Open/Read/Close « kickslop » via les LVO dos ---
+; Prouve la couche dos user-facing (Open/Read/Close fabriquent les packets vers le handler, appelées depuis un
+; PROCESS qui fournit son pr_MsgPort comme port de réponse). a4 = DosBase, a5 = buffer, d6 = octets, d7 = BPTR fh.
+d3c_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)  ; DosBase | 0
+        tst.l   d0
+        beq     .c_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  #2048,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .c_closelib
+        move.l  d0,a5                ; a5 = buffer de lecture
+        move.l  a4,a6                ; a6 = DosBase pour les appels dos
+        lea     ofs_test_name(pc),a0
+        move.l  a0,d1                ; name = « kickslop » (C-string)
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)     ; d0 = BPTR FileHandle | 0
+        tst.l   d0
+        beq     .c_free
+        move.l  d0,d7                ; d7 = BPTR fh
+        move.l  d7,d1
+        move.l  a5,d2
+        move.l  #1024,d3
+        jsr     DOS_LVO_READ(a6)     ; d0 = octets lus
+        move.l  d0,d6
+        move.l  d7,d1
+        jsr     DOS_LVO_CLOSE(a6)
+        move.l  ($4).w,a6            ; -> SysBase (ser_puts / Forbid / FreeMem)
+        cmp.l   #1024,d6             ; fichier complet lu via dos ?
+        bne.s   .c_free
+        cmp.l   #$44314F46,(a5)      ; « D1OF »
+        bne.s   .c_free
+        cmp.l   #$534F4B30,4(a5)     ; « SOK0 »
+        bne.s   .c_free
+        cmp.l   #$534F4B31,492(a5)   ; « SOK1 »
+        bne.s   .c_free
+        cmp.l   #$534F4B32,980(a5)   ; « SOK2 »
+        bne.s   .c_free
+        jsr     LVO_FORBID(a6)
+        lea     msg_d3c_ok(pc),a0
+        bsr     ser_puts             ; « D3C ... OK »
+        jsr     LVO_PERMIT(a6)
+.c_free:
+        move.l  ($4).w,a6
+        move.l  a5,a1
+        move.l  #2048,d0
+        jsr     LVO_FREEMEM(a6)
+.c_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.c_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .c_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -2596,6 +2685,13 @@ msg_d3a_ok:
         dc.b    "D3A PACKET OK (Process+CreateProc; driver -> StandardPacket PutMsg -> handler process -> ReplyMsg -> driver got echo)",13,10,0
 msg_d3b_ok:
         dc.b    "D3B HANDLER OK (file-handler process served FINDINPUT/READ/END packets; read 'kickslop' 1024 bytes via OFS, markers match)",13,10,0
+msg_d3c_ok:
+        dc.b    "D3C DOS OK (client process: dos.library Open/Read/Close 'kickslop' via packets -> DeviceNode handler; 1024 bytes, markers match)",13,10,0
+dos_libname:
+        dc.b    "dos.library",0
+d3c_cname:
+        dc.b    "dos.client",0
+        even
 d3a_hname:
         dc.b    "dos.handler.echo",0
 d3a_dname:
