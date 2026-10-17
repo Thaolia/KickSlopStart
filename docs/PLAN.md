@@ -486,6 +486,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     les LVO → 1024 o + marqueurs. RED `D3C_NO_FHTYPE` (Open ne pose pas `fh_Type` → Read garde-fou renvoie 0) → D3C
     absent (isole le câblage de la route Open→Read). GREEN @WAIT=90 (D3C + non-rég D1/D2/D3A/D3B/M3F/CBOOT/M6Y, 0
     FAILED) + RED + CTRL-NODISK + COOP. checksum GREEN `0x7329BBD6`. PROCHAIN : D3d (LoadSeg via dos + run).
+  - **D3d — LoadSeg À TRAVERS dos + exécuter une commande (FAIT ; CLÔT D3).** Refactor `loadseg.s` : le parser hunk
+    est extrait en `ls_load_hunks(filebuf, taille)` (ne lit/ne libère PAS le fichier) ; `dos_loadseg` (D2) devient
+    un wrapper (ofs read + ls_load_hunks). Client D3d (process) : `OpenLibrary(dos)` → `Open`/`Read`/`Close`
+    « d3dtest » PAR LES LVO DOS (packets → handler → OFS) dans un filebuf → `ls_load_hunks` → `JSR (seglist<<2)+4`.
+    La commande (`tests/loadseg_d3d.s`, hunk avec RELOC32) émet elle-même **D3D LOADSEG-VIA-DOS OK** depuis la RAM
+    → prouve toute la chaîne « charger+exécuter une commande via dos » (lecture par packets + reloc + run). RED
+    `D3D_NO_RUN` (charge mais saute le JSR) → commande pas exécutée → D3D absent (isole l'exécution). GREEN @WAIT=90
+    (D3D + non-rég D1/D2/D3A/D3B/D3C/M3F, 0 FAILED) + RED + CTRL-NODISK + COOP. Exécutable `D3DTest` écrit sur l'ADF
+    (mk_boot_adf.sh). **Cible « exécuter une commande » ATTEINTE.** Différé (E/F) : CLI interactif, bootstrap réel
+    (Initial CLI, startup-sequence, console, requesters), lectures incrémentales OFS, Write/Lock/Seek.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

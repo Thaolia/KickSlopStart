@@ -36,6 +36,7 @@
                 xref    proc_create      ; dos/process.s (D3 : créer un Process + pr_MsgPort)
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet + WaitPort/GetMsg)
                 xref    dos_handler_df0  ; dos/handler.s (D3b : process file-handler DF0: OFS)
+                xref    ls_load_hunks    ; dos/loadseg.s (D3d : parse hunk depuis un buffer lu via dos)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
@@ -1671,6 +1672,12 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #4,d0                ; client pri 4 (bloque sur packets ; sous echo/OFS)
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3d : client qui charge+exécute « D3DTest » À TRAVERS dos (Open/Read par packets -> ls_load_hunks -> run)
+        lea     d3d_cname(pc),a0
+        lea     d3d_client(pc),a1
+        moveq   #3,d0                ; pri 3 (sous le client D3c)
+        move.l  #D3_STK,d1
+        jsr     proc_create
 .d3c_noclient:
                 ifne    M7J_DEMO
         ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
@@ -1933,6 +1940,72 @@ d3c_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .c_block
+
+; --- D3d : corps du client — charge « D3DTest » À TRAVERS dos (Open/Read par packets) puis l'EXÉCUTE ---
+; OpenLibrary(dos) ; dos Open/Read/Close « d3dtest » dans un filebuf ; ls_load_hunks(filebuf,size) -> seglist ;
+; JSR (seglist<<2)+4 -> la commande émet « D3D LOADSEG-VIA-DOS OK » depuis la RAM. Prouve la chaîne complète
+; « charger une commande via dos ». a4=DosBase, a5=filebuf, d6=size, d7=fh puis BPTR seglist.
+d3d_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .q_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  #16384,d0            ; filebuf (>= taille d'un exécutable hunk)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .q_closelib
+        move.l  d0,a5                ; a5 = filebuf
+        move.l  a4,a6                ; a6 = DosBase pour les appels dos
+        lea     d3d_fname(pc),a0
+        move.l  a0,d1                ; « d3dtest »
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0
+        tst.l   d0
+        beq     .q_free
+        move.l  d0,d7                ; d7 = BPTR fh
+        move.l  d7,d1
+        move.l  a5,d2                ; buffer
+        move.l  #16384,d3            ; len (le handler renvoie la taille réelle)
+        jsr     DOS_LVO_READ(a6)     ; d0 = octets lus = taille fichier
+        move.l  d0,d6
+        move.l  d7,d1
+        jsr     DOS_LVO_CLOSE(a6)
+        move.l  ($4).w,a6            ; -> SysBase
+        tst.l   d6
+        beq     .q_free              ; rien lu
+        move.l  a5,a0
+        move.l  d6,d0
+        jsr     ls_load_hunks        ; d0 = BPTR seglist | 0 (jsr : loadseg.o loin)
+        tst.l   d0
+        beq     .q_free
+        move.l  d0,d7                ; d7 = BPTR seglist
+                ifeq    D3D_NO_RUN
+        move.l  d7,d0                ; entry = (seglist<<2)+4 = contenu du 1er hunk (CODE)
+        lsl.l   #2,d0
+        addq.l  #4,d0
+        move.l  d0,a0
+        jsr     (a0)                 ; exécute D3DTest -> émet « D3D LOADSEG-VIA-DOS OK »
+        move.l  ($4).w,a6            ; recharge SysBase (le code chargé a pu clobber a6)
+                endc                 ; RED D3D_NO_RUN : saute le run -> commande pas exécutée -> D3D absent
+        move.l  d7,d0
+        jsr     dos_unloadseg        ; libère le seglist
+.q_free:
+        move.l  ($4).w,a6
+        move.l  a5,a1
+        move.l  #16384,d0
+        jsr     LVO_FREEMEM(a6)
+.q_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.q_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .q_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -2691,6 +2764,10 @@ dos_libname:
         dc.b    "dos.library",0
 d3c_cname:
         dc.b    "dos.client",0
+d3d_cname:
+        dc.b    "dos.cmdclient",0
+d3d_fname:
+        dc.b    "d3dtest",0
         even
 d3a_hname:
         dc.b    "dos.handler.echo",0

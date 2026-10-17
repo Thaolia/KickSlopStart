@@ -39,6 +39,10 @@ python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$VASM" -Fhunk -m68000 -o "$TMP/d2.o" "$ROOT/tests/loadseg_d2.s" >/dev/null
 "$VLINK" -s -bamigahunk -o "$TMP/d2test" "$TMP/d2.o"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/d2test" D2Test >/dev/null
+# D3d : même exécutable hunk mais marqueur distinct, chargé À TRAVERS dos (Open/Read par packets) puis exécuté.
+"$VASM" -Fhunk -m68000 -o "$TMP/d3d.o" "$ROOT/tests/loadseg_d3d.s" >/dev/null
+"$VLINK" -s -bamigahunk -o "$TMP/d3dtest" "$TMP/d3d.o"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/d3dtest" D3DTest >/dev/null
 
 # 3) boot code custom -> binaire brut
 "$VASM" -Fbin -m68000 -o "$TMP/bb.bin" "$ROOT/tests/bootblock_c.s"

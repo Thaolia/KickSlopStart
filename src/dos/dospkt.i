@@ -108,3 +108,8 @@ D3B_NO_READ      EQU 0
 ; voit fh_Type=0 et ne route pas le packet (renvoie 0) -> contenu non lu -> « D3C ... OK » absent. Isole le câblage
 ; de la route Open->Read (fh_Type). Pas de crash (Read garde-fou fh_Type==0). Défaut 0.
 D3C_NO_FHTYPE    EQU 0
+
+; D3D_NO_RUN=1 (RED D3d) : le client charge la commande via dos (Open/Read -> ls_load_hunks) mais NE l'EXÉCUTE PAS
+; (saute le JSR au seglist) -> la commande n'émet pas son marqueur -> « D3D ... OK » absent. Isole l'exécution de
+; la commande chargée-par-dos (le chargement/reloc reste prouvé par D2). Défaut 0.
+D3D_NO_RUN       EQU 0

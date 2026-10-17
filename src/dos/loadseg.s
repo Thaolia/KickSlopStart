@@ -24,6 +24,7 @@
 
                 xdef    dos_loadseg
                 xdef    dos_unloadseg
+                xdef    ls_load_hunks
                 xref    ofs_read_file
 
 HUNK_HEADER     EQU $3F3
@@ -40,27 +41,51 @@ LS_MAXHUNKS     EQU 64            ; borne du nombre de hunks (anti-corruption)
 ; SANS bus error. Isole l'application des relocations. Défaut 0.
 D2_NO_RELOC     EQU 0
 
-; dos_loadseg(a6=SysBase, a0=filename NUL-terminé) -> d0 = BPTR 1er segment | 0 (échec).
-; a5=filebuf, a4=contentAddr[], a2=curseur, a3=fin fichier, d2=index/hidx, d4=hunkcount,
-; d5=BPTR 1er segment, d6=bloc précédent (chaînage), d7=scratch.
+; dos_loadseg(a6=SysBase, a0=filename NUL-terminé) -> d0 = BPTR 1er segment | 0. Wrapper : lit le fichier ENTIER
+; via ofs_read_file (D1) dans un filebuf, puis ls_load_hunks le parse. (D3d appelle ls_load_hunks directement sur
+; un buffer lu via dos Open/Read -> chargement À TRAVERS les packets/handler.)
 dos_loadseg:
-                movem.l d2-d7/a2-a5,-(sp)
-                move.l  a0,d2                ; d2 = filename (temporaire)
+                movem.l d2/a2,-(sp)
+                move.l  a0,d2                ; d2 = filename
                 move.l  #LS_FILEMAX,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq     .fail0               ; rien alloué
-                move.l  d0,a5                ; a5 = filebuf
+                beq.s   .dl_fail0
+                move.l  d0,a2                ; a2 = filebuf
                 move.l  d2,a0                ; filename
-                move.l  a5,a1                ; dest
-                move.l  #LS_FILEMAX,d0       ; max
-                jsr     ofs_read_file        ; d0 = taille lue | 0
+                move.l  a2,a1                ; dest
+                move.l  #LS_FILEMAX,d0
+                jsr     ofs_read_file        ; d0 = taille | 0
                 tst.l   d0
-                beq     .fail_fb             ; introuvable / vide
-                move.l  a5,a2                ; curseur = début
-                move.l  a5,a3
-                add.l   d0,a3                ; a3 = fin
+                beq.s   .dl_freefb           ; introuvable / vide
+                move.l  a2,a0                ; a0 = filebuf, d0 = taille
+                bsr     ls_load_hunks        ; d0 = BPTR seglist | 0
+                move.l  d0,d2                ; sauve seglist
+                move.l  a2,a1                ; libère filebuf
+                move.l  #LS_FILEMAX,d0
+                jsr     LVO_FREEMEM(a6)
+                move.l  d2,d0                ; renvoie seglist
+                bra.s   .dl_ret
+.dl_freefb:
+                move.l  a2,a1
+                move.l  #LS_FILEMAX,d0
+                jsr     LVO_FREEMEM(a6)
+.dl_fail0:
+                moveq   #0,d0
+.dl_ret:
+                movem.l (sp)+,d2/a2
+                rts
+
+; ls_load_hunks(a6=SysBase, a0=filebuf, d0=taille) -> d0 = BPTR 1er segment | 0. Parse le format hunk depuis le
+; buffer. NE libère PAS filebuf (l'appelant en est propriétaire). Partagé par dos_loadseg (lecture ofs, D2) et
+; par le client D3d (buffer lu via dos Open/Read = chargement par packets). a2=curseur, a3=fin, a4=contentAddr[],
+; d2=hidx, d4=hunkcount, d5=BPTR 1er segment, d6=bloc précédent, d7=scratch.
+ls_load_hunks:
+                movem.l d2-d7/a2-a5,-(sp)
+                move.l  a0,a2                ; curseur = filebuf
+                move.l  a0,a3
+                add.l   d0,a3                ; fin = filebuf + taille
                 ; --- HUNK_HEADER ---
                 bsr     ls_rdl
                 cmp.l   #HUNK_HEADER,d0
@@ -190,27 +215,20 @@ dos_loadseg:
                 bne.s   .rl_off
                 bra.s   .b_reloc             ; bloc (count,ref,offsets) suivant
 .body_done:
-                ; succès : libérer contentAddr + filebuf, renvoyer d5 (BPTR 1er segment)
-                move.l  a4,a1
+                move.l  a4,a1                ; succès : libère contentAddr (temp) ; filebuf appartient à l'appelant
                 move.l  d4,d0
                 lsl.l   #2,d0
                 jsr     LVO_FREEMEM(a6)
-                move.l  a5,a1
-                move.l  #LS_FILEMAX,d0
-                jsr     LVO_FREEMEM(a6)
-                move.l  d5,d0
+                move.l  d5,d0                ; renvoie BPTR 1er segment
                 bra.s   .ret
 .fail_segs:
-                move.l  d5,d0                ; libérer les segments déjà alloués (chaîne BPTR)
+                move.l  d5,d0                ; libère les segments déjà alloués (chaîne BPTR)
                 bsr     dos_unloadseg
-                move.l  a4,a1                ; libérer contentAddr
+                move.l  a4,a1                ; libère contentAddr
                 move.l  d4,d0
                 lsl.l   #2,d0
                 jsr     LVO_FREEMEM(a6)
-.fail_fb:
-                move.l  a5,a1                ; libérer filebuf
-                move.l  #LS_FILEMAX,d0
-                jsr     LVO_FREEMEM(a6)
+.fail_fb:                                    ; échec d'en-tête (rien alloué hormis filebuf, à l'appelant)
 .fail0:
                 moveq   #0,d0
 .ret:
