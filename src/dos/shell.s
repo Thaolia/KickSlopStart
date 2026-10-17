@@ -42,7 +42,7 @@ shell_main:
                 move.l  #sh_banner_len,d4
                 bsr     sh_write
                 ifeq    F1_NO_STARTUP
-                bsr     sh_run_startup       ; F1 : exécuter s:startup-sequence (racine) AVANT l'interactif
+                bsr     sh_run_startup       ; F1 : exécuter s/startup-sequence (sous-rép OFS) AVANT l'interactif
                 endc                         ; RED F1_NO_STARTUP : saute le script -> directement interactif
 .loop:
                 move.l  #sh_prompt,a4        ; invite « > »
@@ -228,7 +228,7 @@ sh_exec_cmd:
                 movem.l (sp)+,d2-d7/a2-a6
                 rts
 
-; sh_run_startup() : F1 — lit « startup-sequence » (racine du disque boot) via dos et exécute chaque ligne via
+; sh_run_startup() : F1 — lit « s/startup-sequence » (sous-répertoire OFS du disque boot) via dos et exécute chaque ligne via
 ; sh_dispatch_line (mêmes builtins + chargement de commandes externes que l'interactif). Pas de startup-sequence ->
 ; rien (OK). Lignes vides et commentaires « ; » ignorés. Préserve tout (movem). Simplification F1 : fichier en
 ; RACINE (pas « s/ ») -> la traversée de sous-répertoires OFS est différée (déviation documentée, cf. strap.s).
@@ -329,7 +329,7 @@ sh_run_startup:
 sh_doslib:
                 dc.b    "dos.library",0
 sh_startupname:
-                dc.b    "startup-sequence",0
+                dc.b    "s/startup-sequence",0
                 EVEN
 sh_banner:
                 dc.b    "E2 SHELL READY (interactive shell: prompt, read line via console handler, parse, dispatch)",13,10

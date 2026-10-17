@@ -561,10 +561,18 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     émulé → écho « ver » + « E2 SHELL ver OK » ; harnais `tests/boot_test_kbd.sh`) ; GREEN non-rég + « F2B KBD OK » ;
     NODISK (install sans disque) ; COOP ; RED `F2B_NO_FEED` (handler décode mais ne nourrit pas le ring → « E2 SHELL ver
     OK » absent alors que « F2 KBD OK »/« F2B KBD OK » restent → câblage clavier→console load-bearing). 0 FAILED.
+  - **Sous-répertoires OFS — `s/startup-sequence` réel (FAIT).** `ofs_read_file` résout désormais un CHEMIN à
+    composants '/'-séparés : `ofs_split` découpe composant par composant, `ofs_dir_lookup(dir, comp)` hashe+parcourt
+    la chaîne du répertoire courant (USERDIR intermédiaire -> fichier final). Détail mesuré sur l'ADF : un bloc
+    USERDIR laisse `ht_size` (long[3]) à 0 -> fallback `OFS_HTDEF`=72 (= BSIZE/4-56) ; sectype USERDIR=2. Le shell
+    ouvre « s/startup-sequence » (sous-rép `s/` créé par mk_boot_adf via xdftool makedir). Preuve : GREEN (F1BOOTOK
+    + E3 CMD RAN OK **sourcés du sous-rép**, + D1/D3D/e3cmd = lookups racine via le même driver = non-rég, 0 FAILED) ;
+    RED `OFS_NO_SUBDIR` ('/' = char normal -> chemin entier cherché en racine -> introuvable -> F1BOOTOK/E3 absents,
+    D1 OFS READ OK + E2 SHELL READY intacts). Clean-room : format OFS public + ADF de test (asset). AUCUNE lecture ROM.
   - **À venir (reste de M6/M7+)** : input.device, console.device réel (rendu écran — canal de preuve à décider),
-    disk-validator (bitmap OFS), requesters Intuition (insert-disk cliquable), traversée sous-rép OFS
-    (`s/startup-sequence` réel), keymap complet (shift/ctrl/caps → keymap.resource). En F on remplace le handler
-    console-série par un console.device SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
+    disk-validator (bitmap OFS), requesters Intuition (insert-disk cliquable), keymap complet (shift/ctrl/caps →
+    keymap.resource, + variante AZERTY). En F on remplace le handler console-série par un console.device SANS
+    toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

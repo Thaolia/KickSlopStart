@@ -6,7 +6,8 @@
 ; (type 8, data_size, next_data, données @+24). Clean-room : ADF-FAQ / AmigaDOS Technical Reference (public)
 ; + AROS rom/filesys (lecture seule). AUCUNE lecture ROM.
 ;
-; Déviations/portée D1 ASSUMÉES : lecture seule ; répertoire racine seulement (pas de sous-répertoires) ;
+; Déviations/portée ASSUMÉES : lecture seule ; traversée de sous-répertoires via chemins '/'-séparés (USERDIR
+; intermédiaires -> fichier final ; ht_size des USERDIR = 72 par défaut, long[3] non peuplé = mesuré sur l'ADF) ;
 ; nom insensible à la casse ASCII a-z (OFS non-international) ; les boucles hash-chain/data sont CAPPÉES
 ; (anti-hang sur disque corrompu). FFS (pas de header de data block) non supporté (1.3 boote en OFS).
 
@@ -16,69 +17,54 @@
 
                 xdef    ofs_read_file
 
-; ofs_read_file(a6=SysBase, a0=name NUL-terminé, a1=dest, d0=max octets) -> d0 = taille lue | 0.
-; name est comparé SANS tenir compte de la casse (toupper des deux côtés). Lit via trackdisk.device (FindName).
+; ofs_read_file(a6=SysBase, a0=path NUL-terminé, a1=dest, d0=max octets) -> d0 = taille lue | 0.
+; Résout un CHEMIN à composants séparés par '/' (ex. « s/startup-sequence ») : traverse les sous-répertoires
+; USERDIR intermédiaires puis lit le FICHIER final. Un chemin mono-composant (« kickslop ») = lookup racine
+; (compat D1). Noms comparés SANS tenir compte de la casse. Lit via trackdisk.device (FindName).
 ofs_read_file:
                 movem.l d2-d7/a2-a5,-(sp)
-                move.l  a0,a4                ; a4 = name (query)
-                move.l  a1,a5                ; a5 = dest (avance à chaque data block)
-                move.l  d0,d7                ; d7 = max octets restant (garde buffer)
-                moveq   #0,d6                ; d6 = total lu (valeur de retour)
+                lea     -OFS_FRAME(sp),sp           ; frame local : [comp buf][curseur path][flag dernier]
+                move.l  a0,LF_PATHCUR(sp)           ; curseur path initial (a0 = chemin)
+                move.l  a1,a5                        ; a5 = dest (avance à chaque data block)
+                move.l  d0,d7                        ; d7 = max octets restant (garde buffer)
+                moveq   #0,d6                        ; d6 = total lu (valeur de retour)
                 lea     EB_DEVICELIST(a6),a0
                 lea     ofs_td_name(pc),a1
                 jsr     LVO_FINDNAME(a6)
                 tst.l   d0
-                beq     .fail_nofree         ; pas de trackdisk.device
-                move.l  d0,a2                ; a2 = trackdisk base
+                beq     .fail_nofree                 ; pas de trackdisk.device
+                move.l  d0,a2                        ; a2 = trackdisk base
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .fail_nofree
-                move.l  d0,a3                ; a3 = ioreq ; block buffer = a3 + IOREQ_SZ
-                ; --- lire le root block (880) ---
-                move.l  #OFS_ROOTBLK,d0
-                bsr     ofs_read_block
+                move.l  d0,a3                        ; a3 = ioreq ; block buffer = a3 + IOREQ_SZ
+                move.l  #OFS_ROOTBLK,d4             ; d4 = bloc répertoire courant (démarre à la racine)
+.nextcomp:
+                lea     LF_COMP(sp),a4             ; a4 = buffer composant (NUL-terminé par ofs_split)
+                move.l  LF_PATHCUR(sp),a0          ; a0 = curseur path
+                bsr     ofs_split                    ; copie le composant -> (a4) ; a0 avance ; d0 = 1 si dernier
+                move.l  a0,LF_PATHCUR(sp)
+                move.b  d0,LF_LAST(sp)
+                bsr     ofs_dir_lookup               ; (d4=dir, a4=comp) -> d0 = bloc header trouvé | 0
                 tst.l   d0
-                beq     .exit                ; lecture KO
-                lea     IOREQ_SZ(a3),a0
-                cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)   ; valider type primaire
-                bne     .exit
-                move.l  OFSB_HTSIZE(a0),d3           ; d3 = hash_table_size
-                tst.l   d3
-                beq     .exit                        ; 0 -> éviter divu par 0
-                cmp.l   #OFS_HTMAX,d3
-                bhs     .exit                        ; > 127 -> root corrompu
-                bsr     ofs_hash                     ; a4=name, d3=ht_size -> d1 = idx
-                lea     IOREQ_SZ(a3),a0
-                lsl.l   #2,d1                        ; idx * 4 (octets)
-                lea     OFSB_HASHTAB(a0),a0
-                move.l  0(a0,d1.l),d2                ; d2 = header block courant (bucket)
-                ; --- parcourir la chaîne de hash (cappée) ---
-                move.w  #OFS_NBLK,d5                 ; cap anti-boucle (généreux)
-.chain:
-                bsr     ofs_blk_valid
-                beq     .exit                        ; bloc 0 / hors [2,1760) -> fin de chaîne, pas trouvé
-                move.l  d2,d0
+                beq     .exit                        ; composant introuvable -> échec
+                move.l  d0,d4                        ; d4 = bloc du composant trouvé
+                move.l  d4,d0                         ; relire ce bloc (sectype ; et file header si dernier)
                 bsr     ofs_read_block
                 tst.l   d0
                 beq     .exit
                 lea     IOREQ_SZ(a3),a0
-                lea     OFSB_NAME(a0),a1             ; nom BCPL stocké (longueur + chars)
-                move.l  a4,a0                        ; query
-                bsr     ofs_namecmp                  ; Z=1 si égal (insensible casse)
-                bne.s   .nextchain
-                lea     IOREQ_SZ(a3),a0
-                cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0) ; nom OK -> doit être un FICHIER
-                beq.s   .found
-.nextchain:
-                lea     IOREQ_SZ(a3),a0
-                move.l  OFSB_HASHCHAIN(a0),d2        ; prochain header du même bucket
-                subq.w  #1,d5
-                bne.s   .chain
-                bra     .exit                        ; cap atteint -> pas trouvé
-.found:
-                lea     IOREQ_SZ(a3),a0
+                tst.b   LF_LAST(sp)
+                bne.s   .comp_last
+                cmp.l   #OFS_ST_USERDIR,OFSB_SECTYPE(a0) ; composant intermédiaire -> doit être un RÉPERTOIRE
+                bne     .exit
+                bra     .nextcomp                    ; descend : d4 = ce userdir, composant suivant
+.comp_last:
+                cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)    ; dernier composant -> doit être un FICHIER
+                bne     .exit
+                ; --- lire la chaîne de data (le file header est déjà dans le buffer) ---
                 move.l  OFSB_FIRSTDATA(a0),d2        ; premier data block
                 move.w  #OFS_NBLK,d5                 ; cap chaîne data
 .dloop:
@@ -122,7 +108,93 @@ ofs_read_file:
 .fail_nofree:
                 moveq   #0,d0
 .ret:
+                lea     OFS_FRAME(sp),sp             ; libère le frame local
                 movem.l (sp)+,d2-d7/a2-a5
+                rts
+
+; ofs_dir_lookup(d4=bloc répertoire, a4=composant NUL-term ; a2=trackdisk, a3=ioreq, a6=SysBase) -> d0 = bloc
+; header du nom (fichier OU sous-rép) | 0. Match par NOM (unique dans un répertoire) ; le driver vérifie le
+; sectype. ht_size : lu du bloc (root=72) ; 0 (userdir) ou >=128 (corrompu) -> défaut OFS_HTDEF. Préserve
+; d4/d6/d7/a4/a5 ; clobbe d0-d3/d5/a0/a1 (ofs_read_block préserve d2-d7/a2-a5).
+ofs_dir_lookup:
+                move.l  d4,d0
+                bsr     ofs_read_block               ; lit le bloc répertoire courant
+                tst.l   d0
+                beq.s   .dl_fail
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
+                bne.s   .dl_fail
+                move.l  OFSB_HTSIZE(a0),d3           ; hash_table_size stocké
+                beq.s   .dl_htdef                    ; 0 (userdir : long[3] non peuplé) -> défaut
+                cmp.l   #OFS_HTMAX,d3
+                blo.s   .dl_hthave
+.dl_htdef:
+                moveq   #OFS_HTDEF,d3                ; 72 = BSIZE/4 - 56
+.dl_hthave:
+                bsr     ofs_hash                     ; a4=comp, d3=ht_size -> d1 = idx
+                lea     IOREQ_SZ(a3),a0
+                lsl.l   #2,d1                        ; idx * 4 (octets)
+                lea     OFSB_HASHTAB(a0),a0
+                move.l  0(a0,d1.l),d2                ; d2 = header block courant (bucket)
+                move.w  #OFS_NBLK,d5                 ; cap anti-boucle
+.dl_chain:
+                bsr     ofs_blk_valid
+                beq.s   .dl_fail                     ; bloc 0 / hors [2,1760) -> fin de chaîne, pas trouvé
+                move.l  d2,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .dl_fail
+                lea     IOREQ_SZ(a3),a0
+                lea     OFSB_NAME(a0),a1             ; nom BCPL stocké
+                move.l  a4,a0                        ; query = composant
+                bsr     ofs_namecmp                  ; Z=1 si égal (insensible casse)
+                beq.s   .dl_hit
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_HASHCHAIN(a0),d2        ; prochain header du même bucket
+                subq.w  #1,d5
+                bne.s   .dl_chain
+.dl_fail:
+                moveq   #0,d0
+                rts
+.dl_hit:
+                move.l  d2,d0                        ; bloc header trouvé (nom OK ; sectype vérifié par le driver)
+                rts
+
+; ofs_split(a0=curseur path, a4=buffer dest) -> copie le composant [a0..] (jusqu'à '/' ou NUL) dans (a4) et
+; NUL-termine ; a0 avance APRÈS le '/' (ou reste au NUL) ; d0 = 1 si dernier composant (terminé par NUL), 0 sinon.
+; Cap OFS_COMPMAX-1 chars (le reste du composant trop long est avalé). Clobbe d0/d1/a0/a1 (a4 préservé).
+; RED OFS_NO_SUBDIR : '/' traité comme char normal -> le chemin entier devient un seul composant (dernier).
+ofs_split:
+                move.l  a4,a1                        ; a1 = dest (a4 préservé)
+                moveq   #OFS_COMPMAX-1,d1            ; cap
+.sp_lp:
+                move.b  (a0),d0
+                beq.s   .sp_nul
+                ifeq    OFS_NO_SUBDIR
+                cmp.b   #'/',d0
+                beq.s   .sp_slash
+                endc
+                move.b  d0,(a1)+
+                addq.l  #1,a0
+                subq.l  #1,d1
+                bne.s   .sp_lp
+.sp_eat:                                             ; cap atteint : avale le reste du composant (jusqu'à '/' ou NUL)
+                move.b  (a0),d0
+                beq.s   .sp_nul
+                ifeq    OFS_NO_SUBDIR
+                cmp.b   #'/',d0
+                beq.s   .sp_slash
+                endc
+                addq.l  #1,a0
+                bra.s   .sp_eat
+.sp_slash:
+                addq.l  #1,a0                        ; passe le '/'
+                clr.b   (a1)                         ; NUL-termine le composant
+                moveq   #0,d0                        ; pas le dernier
+                rts
+.sp_nul:
+                clr.b   (a1)                         ; NUL-termine le composant
+                moveq   #1,d0                        ; dernier composant (terminé par NUL)
                 rts
 
 ; ofs_read_block(d0=block num, a2=trackdisk, a3=ioreq, a6=SysBase) -> d0 = 1 OK / 0 KO ; remplit a3+IOREQ_SZ.

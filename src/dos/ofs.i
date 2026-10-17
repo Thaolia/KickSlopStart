@@ -22,8 +22,21 @@ OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)) : type secondaire (ST_
 OFS_T_SHORT     EQU 2             ; type primaire root/header
 OFS_T_DATA      EQU 8             ; type primaire data block OFS
 OFS_ST_FILE     EQU -3            ; type secondaire d'un fichier
+OFS_ST_ROOT     EQU 1             ; type secondaire du root block
+OFS_ST_USERDIR  EQU 2             ; type secondaire d'un répertoire utilisateur (sous-rép)
 OFS_DMAX        EQU 488           ; octets de données max par data block OFS (BSIZE-24)
 OFS_HTMAX       EQU 128           ; borne de hash_table_size (doit être 72 ; rejette un root corrompu)
+OFS_HTDEF       EQU 72            ; hash_table_size par défaut (BSIZE/4-56) : les USERDIR laissent long[3]=0 (mesuré)
+
+; traversée de chemin (sous-répertoires, '/'-séparés) — frame local d'ofs_read_file
+OFS_COMPMAX     EQU 32            ; longueur max d'un composant de chemin (+NUL) ; noms AmigaDOS <= 30
+LF_COMP         EQU 0             ; buffer composant NUL-terminé (OFS_COMPMAX octets)
+LF_PATHCUR      EQU 32            ; LONG : curseur courant dans le chemin
+LF_LAST         EQU 36            ; BYTE : 1 si le composant courant est le dernier (-> fichier, sinon -> userdir)
+OFS_FRAME       EQU 40            ; taille du frame local (pair)
+; OFS_NO_SUBDIR=1 (RED) : ofs_split ne traite PAS '/' comme séparateur -> le chemin entier = 1 composant cherché
+; dans la racine -> « s/startup-sequence » introuvable -> startup-sequence non lue -> F1BOOTOK/E3 absents. Défaut 0.
+OFS_NO_SUBDIR   EQU 0
 
 ; OFS_NO_DATACHAIN=1 (RED D1) : la lecture ne suit PAS la chaîne next_data -> seul le 1er data block (488 o) copié
 ; -> taille retournée == 488 != 1024 -> « D1 OFS READ OK » absent. Isole le chaînage des data blocks OFS. Défaut 0.
