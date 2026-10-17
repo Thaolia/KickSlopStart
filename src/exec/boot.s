@@ -28,6 +28,7 @@
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
+                xref    ofs_read_file    ; dos/ofs.s (D1 : lecture seule OFS -> lire un fichier par nom)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -731,6 +732,43 @@ m6x_done:
         move.l  #48+1024,d0
         jsr     LVO_FREEMEM(a6)
 m6z_done:
+
+        ; --- D1 : OFS lecture seule — lire le fichier « KickSlop » de DF0: PAR NOM (gaté disque d4) ---
+        ; ofs_read_file parcourt le filesystem OFS (root 880 -> hash -> header via chaîne de hash -> chaîne de
+        ; data blocks) en s'appuyant sur trackdisk CMD_READ (M6z). Preuve : taille retournée == 1024 (RED
+        ; OFS_NO_DATACHAIN -> 488) ET marqueurs aux frontières de data block OFS : @0 « D1OFSOK0 », @488
+        ; « D1OFSOK1 » (2e block, 488 o/bloc OFS), @976 « D1OFSOK2 » (3e block). Prouve trouvé-PAR-NOM — requête
+        ; « kickslop » vs stocké « KickSlop » exerce le toupper hash + compare insensible à la casse — ET la
+        ; chaîne data complète. RED OFS_NO_DATACHAIN -> taille 488 -> D1 absent (isole le chaînage).
+        tst.l   d4
+        beq     d1_done
+        move.l  #2048,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     d1_done
+        move.l  d0,a4                ; a4 = buffer destination (préservé par ofs_read_file : movem d2-d7/a2-a5)
+        lea     ofs_test_name(pc),a0 ; « kickslop » (casse différente du nom stocké)
+        move.l  a4,a1
+        move.l  #2048,d0             ; max octets (garde buffer)
+        jsr     ofs_read_file        ; d0 = taille lue | 0 (jsr absolu : ofs.o lié hors portée bsr 16 bits)
+        cmp.l   #1024,d0             ; fichier complet lu ?
+        bne.s   .d1_free
+        cmp.l   #$44314F46,(a4)      ; @0 « D1OF »
+        bne.s   .d1_free
+        cmp.l   #$534F4B30,4(a4)     ; @0 « SOK0 »
+        bne.s   .d1_free
+        cmp.l   #$534F4B31,492(a4)   ; @488 « SOK1 » (2e data block OFS)
+        bne.s   .d1_free
+        cmp.l   #$534F4B32,980(a4)   ; @976 « SOK2 » (3e data block OFS)
+        bne.s   .d1_free
+        lea     msg_d1_ok(pc),a0
+        bsr     ser_puts             ; « D1 OFS READ OK »
+.d1_free:
+        move.l  a4,a1
+        move.l  #2048,d0
+        jsr     LVO_FREEMEM(a6)
+d1_done:
 
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
@@ -2342,6 +2380,11 @@ msg_m6x_ok:
         dc.b    "M6X TRACKDISK SEEK OK (step/seek + side-select: read track 2, decoded sectors report track==2)",13,10,0
 msg_m6z_ok:
         dc.b    "M6Z TRACKDISK CMD_READ MULTI-TRACK OK (offset->track: block 880 = root block @track 80; spanning read blocks 10+11 crosses track 0/1 boundary)",13,10,0
+msg_d1_ok:
+        dc.b    "D1 OFS READ OK (read file 'KickSlop' by name from DF0: via OFS root->hash->header->data chain; 1024 bytes, case-insensitive, 3 OFS data blocks)",13,10,0
+ofs_test_name:
+        dc.b    "kickslop",0
+        even
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (strap read DF0: bootblock and found NO bootable volume -> insert-disk; real 1.3 trigger: DOS-magic+additive-checksum invalid, or no disk)",13,10,0
 msg_m6s_ok:

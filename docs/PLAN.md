@@ -398,6 +398,22 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     M6Z absent (isole le mapping offset->piste, discipline M6D_BAD_BPTR). GREEN-BOOT : M6Z + non-rég (M6U/V/W/X, CBOOT/M6Y, M7A/M7L,
     set M3F..M7F complet, 0 FAILED). RED : M6Z absent, reste intact. CTRL-NODISK : M6Z gaté (d4), aucun timeout ajouté, M6R+M7A ok.
     PROCHAIN : dos.library proprement dite (modèle packets BCPL / `LoadSeg` / handlers / OFS) — à re-décomposer + checkpoint user.
+  - **D1 — OFS lecture seule (FAIT).** `src/dos/ofs.s` + `ofs.i` : `ofs_read_file(name, dest, max)` lit un fichier
+    par nom depuis DF0: en parcourant le filesystem OFS — **machinerie INTERNE** (PAS encore de packets/handler BCPL
+    = D3), s'appuie sur trackdisk `CMD_READ` (M6z). Algorithme OFS **verrouillé empiriquement** sur un ADF de test
+    (asset, PAS la ROM, discipline du round-trip MFM B3) : root@880 ; hash `h=len ; h=(h*13+toupper(c))&$7FF ;
+    idx=h%ht_size` ; table de hash -> header (nom BCPL @long108, sec_type @long127=ST_FILE, first_data @long4,
+    hash_chain @long124) ; data block OFS (type 8, data_size @long3, next @long4, données @+24). Insensible à la
+    casse (toupper ASCII a-z, OFS non-international). Gardes (coding-principles « valider avant d'utiliser ») : type
+    T_SHORT/T_DATA, sec_type ST_FILE, bornes de bloc [2,1760), ht_size<128, data_size<=488, garde buffer `max` ;
+    boucles hash-chain/data **cappées** (anti-hang disque corrompu). Appel inter-module via `jsr` (ofs.o lié hors
+    portée `bsr` 16 bits). Preuve série **D1** : taille retournée == 1024 (discriminant primaire) + marqueurs aux
+    frontières de data block (@0/@488/@976) -> prouve trouvé-par-nom (« kickslop » vs stocké « KickSlop » exerce le
+    case-folding) ET chaîne data complète (3 blocks). RED `OFS_NO_DATACHAIN` (ne suit pas next_data) -> taille 488
+    -> D1 absent (isole le chaînage). GREEN-BOOT (D1 + non-rég M6U..M6Z/CBOOT/M6Y/M7A, 0 FAILED) + RED + CTRL-NODISK
+    (D1 gaté d4) + COOP (D1 + M3F). ⚠️ Lenteur : chaque bloc = 1 lecture de piste avec recalibration (dette : pas de
+    tracking de cylindre) -> le boot disquette complet demande ~40 s sous FS-UAE (WAIT=60). FFS + sous-répertoires
+    + écriture hors scope. Fichier de test écrit par `tests/mk_ofs_testfile.py` + `xdftool write` (mk_boot_adf.sh).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

@@ -30,7 +30,8 @@ INT_OBJ   := $(BUILD)/intuition_lib.o
 # --- piste dos (M6+) : objets reliés APRÈS intuition ---
 DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i
-DOS_OBJ   := $(BUILD)/dos_lib.o
+# ofs.o : lecture seule OFS (D1) — s'appuie sur trackdisk CMD_READ (disk.i) ; include exec.i + disk.i + ofs.i.
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -65,6 +66,8 @@ $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)
 # Module(s) dos (src/dos) : include exec.i (ABI/LVO/AllocMem) + dos.i (layout DosLibrary/RootNode/DosInfo, BPTR).
 $(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+# ofs.o inclut aussi disk.i (CMD_READ) + ofs.i (constantes OFS) : relier les dépendances pour rebuild.
+$(BUILD)/ofs.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
 
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
