@@ -95,7 +95,11 @@ DOSFALSE         EQU 0
 DOS_LVO_OPEN     EQU -30           ; Open(name d1, mode d2) -> BPTR FileHandle
 DOS_LVO_CLOSE    EQU -36           ; Close(fh d1)
 DOS_LVO_READ     EQU -42           ; Read(fh d1, buf d2, len d3) -> octets
+DOS_LVO_WRITE    EQU -48           ; Write(fh d1, buf d2, len d3) -> octets écrits | -1
+DOS_LVO_INPUT    EQU -54           ; Input() -> BPTR FileHandle d'entrée (pr_CIS)
+DOS_LVO_OUTPUT   EQU -60           ; Output() -> BPTR FileHandle de sortie (pr_COS)
 DOS_LVO_SEEK     EQU -66           ; Seek(fh d1, position d2, mode d3) -> ancienne position | -1
+DOS_LVO_CURRENTDIR EQU -126        ; CurrentDir(lock d1) -> ancien pr_CurrentDir
 DOS_LVO_LOADSEG  EQU -150          ; LoadSeg(name d1) -> BPTR seglist | 0 (ouvre+lit+parse hunk+reloc via Open/Read)
 DOS_LVO_UNLOADSEG EQU -156         ; UnLoadSeg(seglist d1) -> libère la chaîne de segments
 DOS_LVO_IOERR    EQU -132          ; IoErr() -> d0 = pr_Result2 (code d'erreur du dernier packet)
@@ -114,6 +118,9 @@ DOS_NO_IOERR     EQU 0
 ; la 2e lecture repart de la position courante au lieu du début -> octets différents -> « DOS IOERR SEEK OK »
 ; absent. Isole le repositionnement. Défaut 0.
 HND_NO_SEEK      EQU 0
+; DOS_NO_WRITE=1 (RED) : dos_fn_write N'ENVOIE PAS le packet ACTION_WRITE -> con_handler n'émet rien -> le marqueur
+; « DOS WRITE OK » (émis PAR le Write via la console) est absent. Isole le routage Write -> handler. Défaut 0.
+DOS_NO_WRITE     EQU 0
 
 ; LOADSEG_LVO_UNWIRED=1 (RED LoadSeg) : le vecteur LoadSeg (-150) pointe sur dos_null au lieu de dos_fn_loadseg
 ; -> jsr -150(a6) renvoie 0 -> le client d3e n'obtient pas de seglist -> « D3E LOADSEG LVO OK » + le run du

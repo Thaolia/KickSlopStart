@@ -2408,6 +2408,14 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3g : client prouvant CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). pri 5. CurrentDir/Input
+        ; round-trip, puis pr_COS = FileHandle console (fh_Type = DOS_CONPORT) ; Write(Output(), marqueur) -> le
+        ; marqueur « DOS WRITE OK » est émis PAR le Write via con_handler (prouve les 4 d'un coup).
+        lea     d3g_cname(pc),a0
+        lea     d3g_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2873,6 +2881,74 @@ d3f_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .f_block
+
+; d3g_client : prouve CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). a6 = SysBase à l'entrée (process).
+d3g_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .g_block
+        move.l  d0,a4                ; a4 = DosBase
+        ; CurrentDir round-trip : pose $1234, puis 0 (doit rendre $1234)
+        move.l  a4,a6
+        move.l  #$1234,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        move.l  a4,a6
+        moveq   #0,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        cmp.l   #$1234,d0
+        bne     .g_closelib
+        ; Input : pose pr_CIS = $5678, relit via Input()
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  #$5678,PR_CIS(a0)
+        move.l  a4,a6
+        jsr     DOS_LVO_INPUT(a6)
+        cmp.l   #$5678,d0
+        bne     .g_closelib
+        ; FileHandle console (fh_Type = DOS_CONPORT) pour Output/Write
+        move.l  DOS_CONPORT,d7
+        tst.l   d7
+        beq     .g_closelib          ; pas de console
+        move.l  ($4).w,a6
+        move.l  #FH_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .g_closelib
+        move.l  d0,a5                ; a5 = FileHandle
+        move.l  d7,FH_TYPE(a5)       ; fh_Type = port con_handler
+        move.l  ($4).w,a0            ; pr_COS = BPTR(a5)
+        move.l  EB_THISTASK(a0),a0
+        move.l  a5,d0
+        lsr.l   #2,d0
+        move.l  d0,PR_COS(a0)
+        move.l  a4,a6                ; Output() doit rendre BPTR(a5)
+        jsr     DOS_LVO_OUTPUT(a6)
+        move.l  a5,d1
+        lsr.l   #2,d1
+        cmp.l   d1,d0
+        bne.s   .g_free
+        move.l  d0,d1                ; Write(Output() [BPTR], msg, len)
+        move.l  #msg_dos_write,d2
+        move.l  #msg_dos_write_len,d3
+        move.l  a4,a6
+        jsr     DOS_LVO_WRITE(a6)    ; con_handler émet « DOS WRITE OK » sur série (= le marqueur)
+.g_free:
+        move.l  ($4).w,a6
+        move.l  a5,a1
+        move.l  #FH_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.g_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.g_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .g_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -3800,6 +3876,14 @@ d3f_badname:
         dc.b    "nosuchfile",0
 msg_d3f_ok:
         dc.b    "DOS IOERR SEEK OK (IoErr -132 reflects Open-not-found then 0; Seek -66 ACTION_SEEK rewinds, re-read matches)",13,10,0
+d3g_cname:
+        dc.b    "dos.ioclient",0
+        even
+; marqueur émis PAR le Write lui-même (con_handler), pas NUL-terminé (Write utilise une longueur explicite).
+msg_dos_write:
+        dc.b    "DOS WRITE OK (dos Write -48 -> ACTION_WRITE -> con_handler -> serial; Input -54/Output -60/CurrentDir -126 ok)",13,10
+msg_dos_write_end:
+msg_dos_write_len EQU msg_dos_write_end-msg_dos_write
         even
 e1_hname:
         dc.b    "con.handler",0

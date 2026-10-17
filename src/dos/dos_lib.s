@@ -52,9 +52,12 @@ dos_vectors:
         dc.l    dos_fn_open              ; 5 : LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
         dc.l    dos_fn_close             ; 6 : LVO -36 Close(fh d1)
         dc.l    dos_fn_read              ; 7 : LVO -42 Read(fh d1, buf d2, len d3) -> octets
-        dcb.l   3,dos_null               ; 8..10  : LVO -48/-54/-60 (Write, Input, Output non impl.)
+        dc.l    dos_fn_write             ; 8  : LVO -48 Write(fh d1, buf d2, len d3) -> octets écrits
+        dc.l    dos_fn_input             ; 9  : LVO -54 Input() -> BPTR pr_CIS
+        dc.l    dos_fn_output            ; 10 : LVO -60 Output() -> BPTR pr_COS
         dc.l    dos_fn_seek              ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
-        dcb.l   10,dos_null              ; 12..21 : LVO -72..-126 (DeleteFile, Lock, Examine... non impl.)
+        dcb.l   9,dos_null               ; 12..20 : LVO -72..-120 (DeleteFile, Rename, Lock, Examine... non impl.)
+        dc.l    dos_fn_currentdir        ; 21 : LVO -126 CurrentDir(lock d1) -> ancien lock
         dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
         dcb.l   2,dos_null               ; 23..24 : LVO -138/-144 (CreateProc, Exit non impl.)
                 ifeq    LOADSEG_LVO_UNWIRED
@@ -267,6 +270,63 @@ dos_fn_ioerr:
         move.l  ($4).w,a0              ; SysBase
         move.l  EB_THISTASK(a0),a0
         move.l  PR_RESULT2(a0),d0
+        rts
+
+; Write(fh d1 [BPTR FileHandle], buf d2, len d3) -> d0 = octets écrits | -1. Envoie ACTION_WRITE au handler
+; (ARG1=clé, ARG2=buf, ARG3=len). Vers con_handler -> émission série ; vers l'OFS DF0: (lecture seule) -> erreur.
+; a6 = DosBase à l'entrée. Depuis un PROCESS (comme Read). Mirror de dos_fn_read.
+dos_fn_write:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d2,d5                   ; buf
+        move.l  d3,d6                   ; len
+        move.l  d1,d4
+        lsl.l   #2,d4
+        move.l  d4,a2                   ; a2 = BADDR(fh)
+        move.l  FH_TYPE(a2),a3          ; port du handler
+        move.l  a3,d0
+        beq.s   .wr_err                 ; non routé
+        move.l  FH_ARG1(a2),d4          ; clé
+                ifne    DOS_NO_WRITE
+        moveq   #0,d0                   ; RED DOS_NO_WRITE : n'envoie pas -> rien émis
+        bra.s   .wr_ret
+                endc
+        move.l  ($4).w,a6               ; SysBase
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a3,a1
+        move.l  #ACTION_WRITE,d0
+        move.l  d4,d1                   ; ARG1 = clé
+        move.l  d5,d2                   ; ARG2 = buf
+        move.l  d6,d3                   ; ARG3 = len
+        jsr     dos_sendpkt             ; d0 = octets écrits ; pr_Result2 posé par dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        bra.s   .wr_ret
+.wr_err:
+        moveq   #-1,d0
+.wr_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; Input() -> d0 = BPTR pr_CIS de ThisTask (FileHandle d'entrée standard). a6 = DosBase (non utilisé).
+dos_fn_input:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_CIS(a0),d0
+        rts
+
+; Output() -> d0 = BPTR pr_COS de ThisTask (FileHandle de sortie standard). a6 = DosBase (non utilisé).
+dos_fn_output:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_COS(a0),d0
+        rts
+
+; CurrentDir(lock d1 [BPTR]) -> d0 = ANCIEN pr_CurrentDir. Pose le nouveau lock du répertoire courant. a6 = DosBase.
+dos_fn_currentdir:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_CURRENTDIR(a0),d0    ; ancien (valeur de retour)
+        move.l  d1,PR_CURRENTDIR(a0)    ; nouveau
         rts
 
 ; --- LoadSeg / UnLoadSeg (vecteurs LVO -150 / -156) : chargement d'exécutable hunk VIA LES VRAIS Open/Read ---

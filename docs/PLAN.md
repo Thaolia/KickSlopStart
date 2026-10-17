@@ -531,6 +531,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     `6a24da8be3eee8a03126e86e0b715122`. **Write(-48) différé** (advisor) : OFS lecture seule → Write-fichier ne
     prouverait que l'échec propre ; un vrai Write = câblage console (con_handler + Output -60), hors périmètre de cet
     incrément. Autres dos (Lock/Examine/CurrentDir/Input/Output...) toujours non impl.
+  - **Fonctions dos : Write(-48) + Input(-54) + Output(-60) + CurrentDir(-126) FAIT.** `dos_lib.s`. Write envoie
+    ACTION_WRITE au port fh_Type (con_handler -> série ; OFS read-only -> erreur). Input/Output = pr_CIS/pr_COS de
+    ThisTask. CurrentDir pose pr_CurrentDir + rend l'ancien. Vecteurs 8/9/10/21 (DateStamp -192 reste vecteur 32 =
+    canary M6D intact). Preuve **DOS WRITE OK** (d3g_client) : CurrentDir round-trip + Input relu + pr_COS = FileHandle
+    console (fh_Type=DOS_CONPORT) -> Output() rend ce BPTR -> Write(Output(),msg) -> le marqueur est émis PAR le Write
+    via con_handler (prouve les 4 d'un coup). RED `DOS_NO_WRITE`. GREEN ADF (DOS WRITE OK + M6D + EXPANSION + GAMEPORT
+    + DISK VALID + M7, 0 FAILED), md5 `f4e3af995dd7ea908220b02b627be860`. **Write via CONSOLE** (pas fichier : OFS
+    read-only). **Lock/Examine/ExNext** (FileLock + FileInfoBlock + lecture répertoire OFS) = prochain incrément dédié.
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par
