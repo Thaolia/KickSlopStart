@@ -54,3 +54,21 @@ OFS_NO_DATACHAIN EQU 0
 ; ofs_name_to_block/ofs_fill_fib restent intacts -> « D1 OFS READ OK » VERT = isole l'énumération de répertoire du
 ; chemin de lecture prouvé. Défaut 0.
 OFS_NO_DIRNEXT  EQU 0
+
+; --- état de STREAMING OFS (un par FileHandle ouvert sur DF0:) : lecture incrémentale data-block par data-block,
+; SANS buffer whole-file. Un seul AllocMem (SS_ALLOC) détient les champs + l'IOStdReq + un block buffer de 512 o.
+; Le handler ne plafonne plus la taille d'un fichier (l'ancien cap DOS_FILEMAX était le buffer whole-file).
+SS_TRACKDISK    EQU 0             ; APTR : base trackdisk.device (FindName à l'ouverture)
+SS_SIZE         EQU 4             ; LONG : byte_size total (du file header @324)
+SS_POS          EQU 8             ; LONG : position absolue courante de lecture
+SS_FIRSTDATA    EQU 12            ; LONG : premier data block (rewind sur seek arrière)
+SS_CURBLK       EQU 16            ; LONG : data block courant (celui qui commence à SS_BLKBASE)
+SS_BLKBASE      EQU 20            ; LONG : offset absolu du début des données de SS_CURBLK
+SS_IOREQ        EQU 24            ; IOStdReq (IOREQ_SZ o) ; le block buffer suit à +IOREQ_SZ (OFS_BSIZE o)
+SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; taille AllocMem totale de l'état
+
+; STREAM_CAP32K=1 (RED streaming) : ofs_stream_read re-plafonne la lecture à 32768 o (= l'ancien cap whole-file)
+; -> un fichier > 32 Ko (BigData, 48000 o) est tronqué -> « OFS STREAM OK » absent. Tous les fichiers < 32 Ko
+; (kickslop/d3dtest/e3cmd/bigseg/startup-sequence) restent lus en ENTIER -> D3B/D3C/D3D/E3/F1/D3E/LOADSEG BIG
+; restent VERTS = isole PRÉCISÉMENT le relèvement du cap (le payoff du streaming) du reste du chemin de lecture. Défaut 0.
+STREAM_CAP32K   EQU 0

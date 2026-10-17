@@ -52,6 +52,12 @@ python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$VASM" -Fhunk -m68000 -o "$TMP/big.o" "$ROOT/tests/loadseg_big.s" >/dev/null
 "$VLINK" -s -bamigahunk -o "$TMP/bigseg" "$TMP/big.o"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/bigseg" bigseg >/dev/null
+# Streaming OFS réel : fichier de DONNÉES « BigData » > 32 Ko (48000 o, > ancien cap whole-file DOS_FILEMAX) ->
+# prouve la lecture incrémentale data-block par data-block (le handler ne bufferise plus le fichier entier). Lu par
+# d3j_client via dos Open/Read (PAS LoadSeg, dont le buffer reste plafonné). xdftool l'alloue haut (934+) -> blocs
+# 10/11 (marqueurs spanning M6Z) non perturbés (vérifié).
+python3 -I "$ROOT/tests/mk_bigdata.py" "$TMP/bigdata.bin"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/bigdata.bin" BigData >/dev/null
 # F1 + sous-rép OFS : startup-sequence dans le sous-répertoire « s/ » (chemin AmigaDOS réel « s/startup-sequence »,
 # résolu par la traversée de sous-répertoires d'ofs_read_file). Lignes CR-terminées : « echo F1BOOTOK » prouve la
 # lecture+exécution du script (builtin echo) ; « e3cmd » prouve une commande EXTERNE lancée depuis le script.

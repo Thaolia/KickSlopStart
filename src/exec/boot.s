@@ -71,6 +71,9 @@ FSD_NAME     EQU 2160         ; BSTR nom (len + "kickslop")
 FSD_TOTAL    EQU 2176
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
 DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
+FB_SIG       EQU 17           ; bit de signal de task_fb (preuve atomicité Forbid ; hors 0-15, != DEMO_SIG)
+FB_PRI_FA    EQU 3            ; task_fa : priorité basse (tient le Forbid)
+FB_PRI_FB    EQU 7            ; task_fb : priorité HAUTE (préempterait fa si Forbid n'était pas respecté)
 DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
 CONS_THRESH  EQU 100          ; réveils de task_H (via yield) requis pour « M3F LIVE »
                 ifne    M7E_COOP
@@ -2283,6 +2286,8 @@ selftest:
 setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a4 (sauvés)
         movem.l d2/a2-a4,-(sp)
         clr.l   WP_HTASK             ; RAM basse non garantie nulle au power-on -> explicite
+        clr.l   FB_TASK              ; preuve atomicité Forbid : TCB de task_fb (posé à la création)
+        clr.l   FORBID_TEST_FLAG     ; flag « fb a tourné » (task_fa le ré-efface avant son test)
         clr.l   WP_CONS
         clr.l   WP_PROD
         clr.l   WP_SPIN
@@ -2320,6 +2325,17 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_s_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task         ; M7E_COOP=1 : retiré (monopoliserait sans préemption)
+        ; preuve atomicité Forbid (SCHED_ON=1 seulement) : fb (pri 7) créée+publiée AVANT fa (pri 3) pour être en
+        ; Wait quand fa la signale sous Forbid. fa vérifie que fb ne préempte PAS son Forbid -> « FORBID ATOMIC OK ».
+        lea     task_fb(pc),a2       ; task_fb (pri 7) : victime prioritaire
+        lea     task_fb_name(pc),a3
+        moveq   #FB_PRI_FB,d2
+        bsr     mk_demo_task
+        move.l  a4,FB_TASK           ; publie le TCB de fb (fa le signale)
+        lea     task_fa(pc),a2       ; task_fa (pri 3) : tient le Forbid + signale fb + vérifie l'atomicité
+        lea     task_fa_name(pc),a3
+        moveq   #FB_PRI_FA,d2
+        bsr     mk_demo_task
                 endc
         lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
         lea     task_t_name(pc),a3
@@ -2428,6 +2444,13 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         ; kickslop par énumération du répertoire racine.
         lea     d3i_cname(pc),a0
         lea     d3i_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        ; D3j : client prouvant le STREAMING OFS RÉEL. pri 5. Ouvre « BigData » (48000 o > ancien cap 32 Ko), le lit
+        ; en entier par chunks (lecture incrémentale sans buffer whole-file) + seek cross-block -> « OFS STREAM OK ».
+        lea     d3j_cname(pc),a0
+        lea     d3j_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
@@ -3116,6 +3139,96 @@ d3i_client:
         jsr     LVO_WAIT(a6)
         bra.s   .i_block
 
+D3J_BUFSZ       EQU 4096             ; taille des chunks de lecture (non-multiple de 488 -> traverse les data blocks)
+D3J_SIZE        EQU 48000            ; taille de BigData (> ancien cap 32 Ko)
+
+; d3j_client : prouve le STREAMING OFS RÉEL. Ouvre « BigData » (48000 o, > ancien cap whole-file DOS_FILEMAX=32 Ko)
+; via dos Open, le lit INTÉGRALEMENT en chunks de 4096 o (12 Read, le curseur avance dans l'état de streaming entre
+; chaque appel), vérifie total == 48000 ET sentinelle $B16B00B5 aux 4 derniers octets. Puis Seek(500, BEGINNING) +
+; Read(4) == $A5EE3780 (seek cross-block : rewind + marche avant jusqu'au bloc contenant l'octet 500). Ancien handler
+; whole-file aurait tronqué à 32 Ko -> preuve auto-suffisante du cap levé. a6 = SysBase à l'entrée. pri 5, sous ser_lock.
+d3j_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .j_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  ($4).w,a6
+        move.l  #D3J_BUFSZ,d0        ; buffer de lecture
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .j_closelib
+        move.l  d0,a5               ; a5 = buffer
+        move.l  a4,a6
+        lea     d3j_fname(pc),a0     ; « BigData »
+        move.l  a0,d1
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        tst.l   d0
+        beq     .j_freebuf
+        move.l  d0,d7               ; d7 = BPTR fh
+        moveq   #0,d5               ; d5 = total lu
+        moveq   #0,d4               ; d4 = 4 derniers octets du flux
+.j_rloop:
+        move.l  a4,a6
+        move.l  d7,d1
+        move.l  a5,d2
+        move.l  #D3J_BUFSZ,d3
+        jsr     DOS_LVO_READ(a6)    ; lit un chunk incrémental (data-block par data-block côté handler)
+        tst.l   d0
+        ble.s   .j_rdone            ; 0 (EOF) ou erreur
+        add.l   d0,d5               ; total += n
+        cmp.l   #4,d0
+        blo.s   .j_rloop            ; chunk < 4 o (ne peut pas arriver ici) -> continue
+        move.l  d0,d1
+        subq.l  #4,d1               ; offset des 4 derniers octets de ce chunk
+        move.l  0(a5,d1.l),d4       ; d4 = 4 derniers octets (= sentinelle au dernier chunk)
+        bra.s   .j_rloop
+.j_rdone:
+        cmp.l   #D3J_SIZE,d5        ; total == 48000 ? (ancien handler aurait tronqué à 32768)
+        bne     .j_close
+        cmp.l   #$B16B00B5,d4       ; sentinelle lue jusqu'au bout ?
+        bne     .j_close
+        move.l  a4,a6               ; seek cross-block : Seek(500, BEGINNING)
+        move.l  d7,d1
+        move.l  #500,d2
+        moveq   #OFFSET_BEGINNING,d3
+        jsr     DOS_LVO_SEEK(a6)
+        move.l  a4,a6               ; Read(4) @500
+        move.l  d7,d1
+        move.l  a5,d2
+        moveq   #4,d3
+        jsr     DOS_LVO_READ(a6)
+        cmp.l   #4,d0
+        bne.s   .j_close
+        move.l  (a5),d0             ; long@500 attendu $A5EE3780 (pattern déterministe)
+        cmp.l   #$A5EE3780,d0
+        bne.s   .j_close
+        bsr     ser_lock            ; tout OK -> émet sous ser_lock
+        lea     msg_d3j_ok(pc),a0
+        bsr     ser_puts            ; « OFS STREAM OK »
+        bsr     ser_unlock
+.j_close:
+        move.l  a4,a6
+        move.l  d7,d1
+        jsr     DOS_LVO_CLOSE(a6)
+.j_freebuf:
+        move.l  ($4).w,a6
+        move.l  a5,a1
+        move.l  #D3J_BUFSZ,d0
+        jsr     LVO_FREEMEM(a6)
+.j_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.j_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .j_block
+
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
 mk_demo_task:
@@ -3210,6 +3323,47 @@ task_s:                              ; basse priorité, spinner PUR (jamais de b
         subq.l  #1,d0
         bne.s   .s_spin
         bra.s   .s_loop
+
+; task_fb (pri 7, preuve atomicité Forbid) : BLOQUE sur FB_SIG ; quand elle tourne, pose FORBID_TEST_FLAG=1.
+; Si elle tourne PENDANT le Forbid de task_fa (pri 3), c'est que la préemption n'a PAS respecté Forbid (bug).
+task_fb:
+        move.l  ($4).w,a6            ; SysBase (GPR zéro-remplis par la frame AddTask)
+.fb_loop:
+        moveq   #1,d0
+        moveq   #FB_SIG,d1
+        lsl.l   d1,d0                ; masque = 1 << FB_SIG (décalage REGISTRE : count > 8 OK sur 68000)
+        jsr     LVO_WAIT(a6)         ; bloque jusqu'au signal de task_fa
+        move.l  #1,FORBID_TEST_FLAG  ; « j'ai tourné » (observé par task_fa)
+        bra.s   .fb_loop
+
+; task_fa (pri 3, preuve atomicité Forbid) : prend Forbid, réveille task_fb (pri 7 > 3 -> arme AttnResched),
+; attend 2 VBlanks SOUS Forbid (garantit >= 1 sortie d'IRQ pendant le Forbid, où intr_isr_defer pourrait switcher).
+; Si FORBID_TEST_FLAG est resté 0 -> task_fb n'a PAS préempté sous Forbid -> « FORBID ATOMIC OK ». Tourne UNE fois
+; puis bloque (pas de monopolisation). RED SCHED_NO_FORBID_GATE : fb préempte pendant le Forbid -> flag=1 -> absent.
+task_fa:
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)       ; section d'émission atomique à prouver
+        clr.l   FORBID_TEST_FLAG
+        move.l  FB_TASK,a1           ; réveille task_fb (pri 7 > courante 3 -> exec_Signal pose AttnResched)
+        moveq   #1,d0
+        moveq   #FB_SIG,d1
+        lsl.l   d1,d0
+        jsr     LVO_SIGNAL(a6)
+        move.l  VBL_COUNT,d2         ; attend que VBL_COUNT avance de 2 (>= 1 IRQ-exit VBlank pendant le Forbid)
+        addq.l  #2,d2
+.fa_wait:
+        cmp.l   VBL_COUNT,d2
+        bhi.s   .fa_wait             ; VBL_COUNT incrémenté par l'IRQ VBlank (fire même sous Forbid)
+        tst.l   FORBID_TEST_FLAG     ; task_fb a-t-elle tourné pendant le Forbid ?
+        bne.s   .fa_perm             ; oui -> Forbid violé -> ne PAS émettre
+        lea     msg_forbid_ok(pc),a0
+        bsr     ser_puts             ; « FORBID ATOMIC OK » (sous le Forbid tenu -> émission atomique)
+.fa_perm:
+        jsr     LVO_PERMIT(a6)       ; yield -> task_fb tourne enfin (pose le flag, trop tard pour fausser la preuve)
+.fa_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .fa_block
 
 ; task_q2 (M7h) : 2e spinner d'ISOLATION (pri 0 ; config M7H_QUANTUM_DEMO seulement). Rotation avec task_s
 ; pilotée UNIQUEMENT par le quantum VBlank (aucun préempteur prioritaire). Émet « M7H QUANTUM OK » quand
@@ -3884,6 +4038,10 @@ task_t_name:
         dc.b    "demo.timer",0
 task_p_name:
         dc.b    "demo.port",0
+task_fa_name:
+        dc.b    "demo.forbidA",0
+task_fb_name:
+        dc.b    "demo.forbidB",0
 task_q2_name:
         dc.b    "demo.q2",0
 task_rm_name:
@@ -3948,6 +4106,8 @@ msg_vbltimeout:
         dc.b    "M3 VBL timeout",13,10,0
 msg_m3flive:
         dc.b    "M3F LIVE: preemption + yield coexist (both scheduling paths OK)",13,10,0
+msg_forbid_ok:
+        dc.b    "FORBID ATOMIC OK (deferred reschedule honors Forbid: pri-7 task signaled under a pri-3 Forbid did NOT preempt it; intr_isr_defer gates on TDNestCnt)",13,10,0
 msg_m3ffail:
         dc.b    "M3F FAILED: context sentinel corrupted across a switch",13,10,0
 msg_res_ok:
@@ -4054,6 +4214,12 @@ d3i_rootname:
         dc.b    ":",0                ; racine du volume (ACTION_LOCATE_OBJECT -> OFS_ROOTBLK)
 msg_d3i_ok:
         dc.b    "DOS LOCK EXAMINE OK (Lock -84 'kickslop' -> Examine -102: file, size 1024@fib_Size; Lock ':' -> ExNext -108 enumerates root, finds kickslop; UnLock -90)",13,10,0
+d3j_cname:
+        dc.b    "dos.streamclient",0
+d3j_fname:
+        dc.b    "BigData",0
+msg_d3j_ok:
+        dc.b    "OFS STREAM OK (dos Open/Read 'BigData' 48000 bytes > 32K old cap, incremental per-datablock stream, sentinel reached; Seek -66 cross-block re-reads @500)",13,10,0
         even
 ; marqueur émis PAR le Write lui-même (con_handler), pas NUL-terminé (Write utilise une longueur explicite).
 msg_dos_write:

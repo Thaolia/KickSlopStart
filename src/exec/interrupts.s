@@ -424,6 +424,15 @@ intr_isr_defer:
                                     ; seulement). Sans ça, les lectures EB_* ci-dessous liraient du garbage.
         moveq   #1,d6               ; round-robin : requeue la tâche interrompue si on dispatche
         moveq   #0,d7
+                ifeq    SCHED_NO_FORBID_GATE
+        tst.b   EB_TDNEST(a6)       ; Forbid() actif ? -> dispatch différé SUPPRIMÉ au point de CONSOMMATION :
+        bge.s   intr_isr_exit       ;   AttnResched peut avoir été posé AVANT le Forbid (quantum périmé) ou par
+        tst.b   EB_IDNEST(a6)       ;   Signal() d'une tâche prioritaire PENDANT le Forbid -> ne PAS switcher ici.
+        bge.s   intr_isr_exit       ; Disable() actif ? -> idem (section critique vs scheduler). AttnResched reste
+                                    ;   pending -> consommé au prochain IRQ-exit non-forbidden, ou par le yield
+                                    ;   volontaire de Permit/Enable (trap #1, non gardé). Mêmes gardes que sched_server.
+                endc                ; RED SCHED_NO_FORBID_GATE : gardes retirées -> switch même sous Forbid (bug d'origine :
+                                    ;   un émetteur série sous Forbid se faisait préempter -> marqueurs entrelacés).
         tst.w   EB_ATTNRESCHED(a6)  ; un serveur a-t-il réveillé une tâche prioritaire ?
         beq.s   intr_isr_exit
         moveq   #1,d7               ; flag de dispatch différé -> switch à la sortie (si S=0)

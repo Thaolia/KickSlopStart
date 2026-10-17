@@ -20,6 +20,9 @@
                 xdef    ofs_name_to_block    ; résout un chemin -> bloc header (Lock)
                 xdef    ofs_fill_fib         ; remplit un FIB depuis un bloc header (Examine)
                 xdef    ofs_dir_next         ; énumère l'entrée suivante d'un répertoire (ExNext)
+                xdef    ofs_stream_open      ; ouvre un fichier en streaming (état -> premier data block)
+                xdef    ofs_stream_read      ; lecture incrémentale (data-block par data-block, sans buffer whole-file)
+                xdef    ofs_stream_seek      ; repositionne le curseur de streaming
 
 ; ofs_read_file(a6=SysBase, a0=path NUL-terminé, a1=dest, d0=max octets) -> d0 = taille lue | 0.
 ; Résout un CHEMIN à composants séparés par '/' (ex. « s/startup-sequence ») : traverse les sous-répertoires
@@ -549,6 +552,147 @@ ofs_dir_next:
                 move.l  d5,d1
                 move.l  d6,d2
                 movem.l (sp)+,d3-d7/a2-a5
+                rts
+
+; ofs_stream_open(a0=chemin NUL-term, a1=état SS_*, a6=SysBase) -> d0 = 1 OK / 0 KO. Résout le chemin -> bloc header
+; (doit être un FICHIER), FindName trackdisk -> SS_TRACKDISK, lit le header via l'ioreq de l'état, stocke SS_SIZE
+; (byte_size) + SS_FIRSTDATA, initialise le curseur (POS=0, CURBLK=first_data, BLKBASE=0). N'alloue RIEN (l'état,
+; ioreq + block buffer inclus, est alloué par l'appelant = le handler).
+ofs_stream_open:
+                movem.l d2-d7/a2-a5,-(sp)
+                move.l  a1,a5                        ; a5 = état
+                bsr     ofs_name_to_block            ; (a0=chemin) -> d0 = bloc | 0 (préserve a5)
+                tst.l   d0
+                beq.s   .so_fail
+                move.l  d0,d4                         ; d4 = bloc header
+                lea     EB_DEVICELIST(a6),a0
+                lea     ofs_td_name(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq.s   .so_fail
+                move.l  d0,SS_TRACKDISK(a5)
+                move.l  d0,a2                         ; a2 = trackdisk
+                lea     SS_IOREQ(a5),a3               ; a3 = ioreq de l'état (block buffer à +IOREQ_SZ)
+                move.l  d4,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .so_fail
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
+                bne.s   .so_fail                      ; pas un header
+                cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)
+                bne.s   .so_fail                      ; pas un FICHIER (dir -> échec, comme l'ancien ofs_read_file)
+                move.l  OFSB_FILESIZE(a0),SS_SIZE(a5)
+                move.l  OFSB_FIRSTDATA(a0),d0
+                move.l  d0,SS_FIRSTDATA(a5)
+                move.l  d0,SS_CURBLK(a5)
+                clr.l   SS_POS(a5)
+                clr.l   SS_BLKBASE(a5)
+                moveq   #1,d0
+                bra.s   .so_ret
+.so_fail:
+                moveq   #0,d0
+.so_ret:
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+
+; ofs_stream_read(a1=état, a2=dest, d0=len, a6=SysBase) -> d0 = octets copiés (0 = EOF). Boucle incrémentale : charge
+; le data block courant (512 o), avance de bloc en bloc via next_data quand le bloc est épuisé, copie min(reste du
+; bloc, reste demandé, reste jusqu'à EOF). Maintient le curseur (POS/CURBLK/BLKBASE) dans l'état entre les appels.
+; Préserve d2-d7/a2-a5 (dest réassigné a4) ; un seul buffer 512 o, JAMAIS de buffer whole-file.
+ofs_stream_read:
+                movem.l d2-d7/a2-a5,-(sp)
+                move.l  a1,a5                         ; a5 = état
+                move.l  a2,a4                         ; a4 = dest (avance)
+                move.l  d0,d6                         ; d6 = reste demandé
+                moveq   #0,d5                         ; d5 = total copié
+                move.l  SS_SIZE(a5),d7                ; d7 = taille effective (EOF)
+                ifne    STREAM_CAP32K
+                cmp.l   #32768,d7
+                bls.s   .sr_capok                     ; RED : re-plafonne la lecture à 32 Ko -> fichier > 32 Ko tronqué
+                move.l  #32768,d7
+.sr_capok:
+                endc
+                move.l  SS_TRACKDISK(a5),a2           ; a2 = trackdisk
+                lea     SS_IOREQ(a5),a3               ; a3 = ioreq (buffer à +IOREQ_SZ)
+.sr_loop:
+                tst.l   d6
+                beq     .sr_done                      ; plus rien demandé
+                move.l  SS_POS(a5),d0
+                cmp.l   d7,d0
+                bhs     .sr_done                      ; pos >= taille effective -> EOF
+                move.l  SS_CURBLK(a5),d2
+                bsr     ofs_blk_valid
+                beq     .sr_done                      ; bloc invalide (0 / hors bornes) -> fin
+                move.l  SS_CURBLK(a5),d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq     .sr_done
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_T_DATA,OFSB_TYPE(a0)
+                bne     .sr_done                      ; pas un data block OFS -> fin
+                move.l  OFSB_DSIZE(a0),d3             ; data_size du bloc
+                cmp.l   #OFS_DMAX,d3
+                bls.s   .sr_dsok
+                move.l  #OFS_DMAX,d3                  ; data_size absurde -> borne (anti-corruption)
+.sr_dsok:
+                move.l  SS_POS(a5),d0
+                sub.l   SS_BLKBASE(a5),d0             ; within = pos - blkbase
+                cmp.l   d3,d0
+                blo.s   .sr_haveblock                 ; within < data_size -> copier depuis ce bloc
+                add.l   d3,SS_BLKBASE(a5)             ; bloc épuisé -> avance au suivant
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_NEXT(a0),SS_CURBLK(a5)
+                bra     .sr_loop
+.sr_haveblock:
+                move.l  d3,d4
+                sub.l   d0,d4                         ; avail = data_size - within
+                cmp.l   d6,d4
+                bls.s   .sr_clampeof
+                move.l  d6,d4                         ; n = min(avail, reste demandé)
+.sr_clampeof:
+                move.l  d7,d1
+                sub.l   SS_POS(a5),d1                 ; reste jusqu'à EOF
+                cmp.l   d1,d4
+                bls.s   .sr_copy
+                move.l  d1,d4                         ; n = min(n, reste EOF)
+.sr_copy:
+                lea     IOREQ_SZ(a3),a0
+                lea     OFSB_DATA(a0),a0
+                add.l   d0,a0                         ; src = buffer + données + within
+                move.l  d4,d1
+                beq     .sr_loop                      ; n == 0 (garde) -> re-boucle (EOF/avance au prochain tour)
+.sr_cpy:
+                move.b  (a0)+,(a4)+
+                subq.l  #1,d1
+                bne.s   .sr_cpy
+                add.l   d4,SS_POS(a5)                 ; pos += n
+                add.l   d4,d5                         ; total += n
+                sub.l   d4,d6                         ; reste demandé -= n
+                move.l  d0,d1                          ; d1 = within (d0) + n (d4)
+                add.l   d4,d1
+                cmp.l   d3,d1                          ; atteint le bord du bloc (within+n == data_size) ?
+                blo     .sr_loop                      ; non -> re-boucle (EOF ou reste demandé épuisé, SANS re-lecture)
+                add.l   d3,SS_BLKBASE(a5)             ; bord atteint -> avance via le buffer DÉJÀ chargé (pas de re-read)
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_NEXT(a0),SS_CURBLK(a5)
+                bra     .sr_loop                      ; (le haut de boucle gère aussi l'avance après un seek : within >= data_size)
+.sr_done:
+                move.l  d5,d0
+                movem.l (sp)+,d2-d7/a2-a5
+                rts
+
+; ofs_stream_seek(a1=état, d0=position absolue cible, a6=SysBase). Repositionne le curseur. Stratégie « dumb seek » :
+; si la cible est AVANT le début du bloc courant -> rewind au premier data block ; puis POS = cible. La marche avant
+; (parcours des data blocks jusqu'au bloc contenant la cible) est faite paresseusement par la boucle d'avance de
+; ofs_stream_read (within >= data_size) au prochain Read. Bornage [0, SS_SIZE] à la charge de l'appelant (handler).
+ofs_stream_seek:
+                cmp.l   SS_BLKBASE(a1),d0
+                bhs.s   .sk_setpos                    ; cible >= début du bloc courant -> marche avant au prochain Read
+                move.l  SS_FIRSTDATA(a1),SS_CURBLK(a1)   ; cible en arrière -> rewind au premier data block
+                clr.l   SS_BLKBASE(a1)
+.sk_setpos:
+                move.l  d0,SS_POS(a1)
                 rts
 
 ofs_td_name:

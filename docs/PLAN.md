@@ -563,8 +563,28 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     `OFS_NO_DIRNEXT` (found=0 d'emblée → marqueur absent, **D1 OFS READ reste VERT** = isole l'énumération). GREEN ADF
     (DOS LOCK EXAMINE OK + non-rég D1/D3E/DOS IOERR SEEK/DOS WRITE/LOADSEG BIG/M6Z/E3/F1BOOTOK, 0 FAILED), md5
     `5e87d941e436cd29769959d0711c21e2`. **Déviation ASSUMÉE** : curseur d'ExNext dans le lock (pas dans le FIB comme le
-    vrai OS) → un lock = une énumération (suffisant pour le harnais, documenté). **Streaming OFS réel** + sortir le
-    harnais du chemin de boot (`make kick-prod`) restent les dettes différées.
+    vrai OS) → un lock = une énumération (suffisant pour le harnais, documenté).
+  - **Streaming OFS RÉEL FAIT** (dette levée). `ofs.s`/`handler.s`/`ofs.i`. Le handler DF0: ne bufferise PLUS le
+    fichier entier à FINDINPUT : primitives `ofs_stream_open`/`ofs_stream_read`/`ofs_stream_seek`, un état SS_* par
+    FileHandle (1 AllocMem = champs + ioreq + block buffer 512 o) avec curseur {byte_size, pos, first_data, cur_block,
+    blk_base}. Lecture incrémentale data-block par data-block (empreinte O(1) = 512 o au lieu de O(taille)) ; « dumb
+    seek » (rewind si cible en arrière, la marche avant est faite par la boucle de READ). Plus AUCUN cap de taille
+    (`HND_FILEMAX` retiré du handler ; `DOS_FILEMAX` reste pour LoadSeg). `ofs_read_file`(D1)+`dos_loadseg`(D2) intacts.
+    Preuve **OFS STREAM OK** : `d3j_client` ouvre « BigData » (48000 o > ancien cap 32 Ko, 99 data blocks), lit tout en
+    chunks de 4096 (12 Read) → total==48000 + sentinelle $B16B00B5 + Seek(500) cross-block == $A5EE3780. Auto-suffisant
+    (l'ancien code aurait tronqué à 32 Ko). RED `STREAM_CAP32K` (re-plafonne 32 Ko → BigData tronque → absent ; <32 Ko
+    verts). Fichier `tests/mk_bigdata.py` ajouté à l'ADF sans perturber le layout (blocs 10/11 vérifiés).
+  - **Atomicité Forbid au point de préemption FAIT** (bug PRÉ-EXISTANT révélé par le streaming). `interrupts.s`. Le
+    chemin de préemption (`intr_isr_defer`, tail int2/int3/int6) consommait `EB_ATTNRESCHED` (posé avant le Forbid par
+    un quantum périmé, ou par `exec_Signal` d'une tâche prioritaire pendant le Forbid) et switchait à la sortie d'IRQ
+    en ne testant QUE le bit S — PAS `EB_TDNEST`. Donc une tâche sous Forbid pouvait être préemptée en plein `ser_puts`
+    → marqueurs entrelacés (le streaming a allongé les fenêtres d'émission → collision visible D3B/DOS-IOERR). Fix :
+    garde `EB_TDNEST`/`EB_IDNEST` dans `intr_isr_defer` (si Forbid/Disable actif → pas de dispatch différé ; AttnResched
+    reste pending → consommé au prochain IRQ non-forbidden ou par le yield volontaire de Permit via `trap #1`, non gardé).
+    Preuve DÉTERMINISTE **FORBID ATOMIC OK** (task_fa pri 3 : Forbid → Signal(task_fb pri 7) → attend 2 VBlanks sous
+    Forbid → fb n'a PAS préempté). RED `SCHED_NO_FORBID_GATE` (retire la garde → fb préempte → absent ; M3F LIVE reste
+    vert). ⚠️ Corrige la croyance « ser_lock = atomicité totale » (c'était de la séparation temporelle). **Reste différé** :
+    sortir le harnais du chemin de boot (`make kick-prod`).
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par

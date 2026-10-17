@@ -343,10 +343,19 @@ GP_VBL_INT   EQU $000006A0 ; struct Interrupt (IS_SIZE=22) du serveur gameport V
 ; (symétrique du serveur producteur gp_vblank_server). structs Interrupt en RAM basse réservée.
 PTR_INT      EQU $000006B6 ; struct Interrupt (22) de pointer_input_handler (pri 50) -> $6B6..$6CB
 REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) -> $6CC..$6E1
+FORBID_TEST_FLAG EQU $000006E2 ; long : preuve d'atomicité Forbid — task_fb le pose à 1 quand elle tourne
+FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
 ; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
 ; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
 ; test gp_poll échoue). Isole le modèle de wraparound 8 bits des compteurs quadrature (load-bearing). Défaut 0.
 GP_NO_WRAP   EQU 0
+
+; SCHED_NO_FORBID_GATE=1 (RED atomicité Forbid) : retire la garde EB_TDNEST/EB_IDNEST d'intr_isr_defer -> un
+; dispatch différé (AttnResched) se produit MÊME sous Forbid -> une tâche émettrice sous Forbid est préemptée en
+; plein ser_puts -> « FORBID ATOMIC OK » absent (task_fb préempte task_fa pendant son Forbid et pose le flag).
+; M3F LIVE reste présent (la fenêtre Forbid de task_l est courte + son yield-sur-Permit veut justement task_h).
+; Isole la garde Forbid au point de consommation de la préemption. Défaut 0.
+SCHED_NO_FORBID_GATE EQU 0
 ; GP_NO_EDGE=1 (RED) : gp_poll émet un event bouton à CHAQUE poll où le bouton est pressé (pas de front) -> un
 ; bouton TENU produit N events au lieu d'1 -> le compteur du test edge (2 attendus) passe à 3 -> « GAMEPORT OK »
 ; absent. Isole l'edge-detection (load-bearing : sans elle, flood d'events down). Défaut 0.
