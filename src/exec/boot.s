@@ -48,6 +48,7 @@ D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts
 INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
 INPUT_TESTBLK EQU 120         ; #2 : bloc de test input.device = ioreq(48)+h1(24)+h2(24)+event(22), arrondi pair
 CMD_WRITE_BO EQU 3            ; #3a : io_Command CMD_WRITE (EQU local)
+CMD_READ_BO  EQU 2            ; #3b : io_Command CMD_READ (EQU local)
 IO_LEN_BO    EQU 36           ; #3a : IOStdReq io_Length (EQU local)
 ; D3b : bloc du fs-driver (une seule AllocMem, sous-parties long-alignées pour les BPTR)
 FSD_SP       EQU 0            ; StandardPacket (68)
@@ -1098,6 +1099,70 @@ d2_done:
         move.l  #64,d0
         jsr     LVO_FREEMEM(a6)
 .con_done:
+
+        ; --- console.device READ via input.device (#3b) : IND_WRITEEVENT RAWKEY -> handler console -> CMD_READ ---
+        ; Le handler de console.device (enregistré sur input.device à l'init) cuit le RAWKEY -> ASCII -> read buffer ;
+        ; CMD_READ le ressert. On injecte un RAWKEY 'v' ($34) par le chemin PUBLIC IND_WRITEEVENT (celui d'Intuition)
+        ; -> la chaîne #2 devient load-bearing avec console comme vrai consommateur. (Feeder clavier->input.device = F.)
+        lea     EB_DEVICELIST(a6),a0
+        lea     console_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .conr_done
+        move.l  d0,a2                    ; a2 = base console.device
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .conr_done
+        move.l  d0,a4                    ; a4 = base input.device
+        move.l  #96,d0                   ; bloc : ioreq@0(48) + event@48(22) + readbuf@80
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .conr_done
+        move.l  d0,a3                    ; a3 = bloc
+        move.l  a2,IO_DEVICE(a3)         ; draine le read buffer (restes du test #2)
+        move.w  #CMD_READ_BO,IO_COMMAND(a3)
+        lea     80(a3),a0
+        move.l  a0,INP_IO_DATA(a3)
+        move.l  #16,IO_LEN_BO(a3)
+        bsr     .conr_bio_con
+        lea     48(a3),a0               ; construit l'event RAWKEY 'v' ($34)
+        move.b  #IECLASS_RAWKEY,IE_CLASS(a0)
+        move.w  #$0034,IE_CODE(a0)
+        clr.l   IE_NEXTEVENT(a0)
+        move.l  a4,IO_DEVICE(a3)        ; IND_WRITEEVENT -> input.device -> chaîne -> handler console
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a3)
+        lea     48(a3),a0
+        move.l  a0,INP_IO_DATA(a3)
+        move.l  a3,a1
+        move.l  a4,a6
+        jsr     -30(a6)                 ; input BeginIO WRITEEVENT
+        move.l  ($4).w,a6
+        clr.b   80(a3)                  ; console CMD_READ 1 octet -> doit être 'v' cuit
+        move.l  a2,IO_DEVICE(a3)
+        move.w  #CMD_READ_BO,IO_COMMAND(a3)
+        lea     80(a3),a0
+        move.l  a0,INP_IO_DATA(a3)
+        move.l  #1,IO_LEN_BO(a3)
+        bsr     .conr_bio_con
+        cmp.b   #'v',80(a3)             ; char rendu par CMD_READ == le keycode cuit ?
+        bne.s   .conr_free
+        lea     msg_conread_ok(pc),a0
+        bsr     ser_puts                ; « CONSOLE READ=v »
+.conr_free:
+        move.l  a3,a1
+        move.l  #96,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .conr_done
+.conr_bio_con:                          ; helper : console BeginIO(a3=ioreq) + recharge SysBase. a2=base console.
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        rts
+.conr_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2866,6 +2931,8 @@ msg_console_ok:
         dc.b    "CONSOLE WRITE OK (console.device CMD_WRITE: 8x8 glyph blitter into bitplane; readback matches font)",13,10,0
 console_dev_name:
         dc.b    "console.device",0
+msg_conread_ok:
+        dc.b    "CONSOLE READ=v (console.device input handler on input.device cooked a RAWKEY -> read buffer -> CMD_READ)",13,10,0
         EVEN
 con_test_str:
         dc.b    "CONSOLE WRITE OK 0123456789"

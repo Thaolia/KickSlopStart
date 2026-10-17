@@ -171,6 +171,9 @@ INPUT_NO_PROPAGATE EQU 0
 ; CON_NO_BLIT=1 (RED #3a) : CMD_WRITE avance le curseur mais NE blitte PAS le glyphe -> le bitplane reste à 0 ->
 ; le readback des cellules non-espace ne correspond pas aux glyphes -> « CONSOLE WRITE OK » absent. Isole le blitter. Défaut 0.
 CON_NO_BLIT        EQU 0
+; CON_NO_READBUF=1 (RED #3b) : console_input_handler cuit le RAWKEY mais NE le pousse PAS dans le read buffer ->
+; CMD_READ ne rend rien -> « CONSOLE READ=v » absent. Isole le câblage input.device->console READ. Défaut 0.
+CON_NO_READBUF     EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -286,7 +289,14 @@ CONB_BWIDTH  EQU LIB_SIZE+4    ; UWORD octets/ligne (stride)
 CONB_PXROWS  EQU LIB_SIZE+6    ; UWORD hauteur px
 CONB_CURX    EQU LIB_SIZE+8    ; UWORD colonne char courante (0..CON_COLS-1)
 CONB_CURY    EQU LIB_SIZE+10   ; UWORD ligne pixel courante (0,8,16,... multiple de 8)
-CONDEV_SIZE  EQU LIB_SIZE+12
+; #3b : buffer de lecture (clavier via input.device) + struct Interrupt du handler enregistré sur input.device
+CONB_RHEAD   EQU LIB_SIZE+12   ; UWORD index de lecture du read buffer (consommateur = CMD_READ)
+CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD index d'écriture (producteur = console_input_handler)
+CONB_RBUF    EQU LIB_SIZE+16   ; 16 octets : ring ASCII cuit depuis les RAWKEY reçus via input.device
+CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) du handler enregistré via IND_ADDHANDLER
+CONDEV_SIZE  EQU LIB_SIZE+56
+CON_RBSIZE   EQU 16            ; taille du read buffer (puissance de 2)
+CON_RBMASK   EQU 15
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms

@@ -80,6 +80,7 @@ kbd_selftest:
 
 ; ============================ F2b : driver clavier LIVE (interrupt-driven) ============================
                 xdef    kbd_install
+                xdef    kbd_keymap       ; #3b : réutilisé par console_input_handler (cook keycode->ASCII)
 
 ; kbd_install() [a6=SysBase] -> d0 = 0 (ok) | !=0 (échec OpenResource). Installe le driver LIVE :
 ; vide le ring, SP en ENTRÉE, AddICRVector(bit 3 = SP) -> kbd_interrupt, ré-active PORTS/INT2 (coupé après

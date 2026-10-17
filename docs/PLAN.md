@@ -588,11 +588,23 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     on écrit une string connue puis on relit chaque cellule du bitplane et on la compare au glyphe attendu -> « CONSOLE
     WRITE OK » (valide le math d'adresse du blitter + la police, sans affichage ni Xvfb) ; RED `CON_NO_BLIT` (blit
     sauté -> readback != police -> marqueur absent). Clean-room : AutoDocs console.device + NDK public. AUCUNE lecture ROM.
-  - **À venir** : #3 (suite) rendu À L'ÉCRAN (pointer le Copper sur le bitplane texte, confirmation xwd) + console.device
-    READ (#3b : clavier LIVE -> input.device -> handler console -> read) ; disk-validator (bitmap OFS) ; requesters
-    Intuition (insert-disk cliquable) ; keymap complet (shift/ctrl/caps → keymap.resource, + variante AZERTY). Le shell
-    RESTE sur le con_handler série (ne pas aveugler le canal de preuve) ; le swap écran est une intégration F ultérieure
-    (avec miroir série). En F on remplace le handler console-série par un console.device SANS toucher au binaire shell.
+  - **console.device READ via input.device : #3b FAIT.** `console.device` enregistre (à l'`initfunc`) un handler sur
+    input.device via `IND_ADDHANDLER` (`console_input_handler`, struct Interrupt `CONB_INT` dans la base) : chaque
+    RAWKEY key-down reçu est cuit keycode->ASCII (réutilise `kbd_keymap` de F2b) et poussé dans un **read buffer** de
+    console (`CONB_RBUF` ring) ; `CMD_READ` le ressert. Preuve : `IND_WRITEEVENT` d'un RAWKEY 'v' ($34) par le chemin
+    PUBLIC (celui d'Intuition) -> chaîne input.device -> handler console -> cook -> read buffer -> `CMD_READ` -> « CONSOLE
+    READ=v ». La chaîne d'input.device (#2) devient ainsi **load-bearing** avec console.device comme VRAI consommateur.
+    RED `CON_NO_READBUF` (handler cuit mais ne bufferise pas -> CMD_READ vide -> marqueur absent). Le FEEDER
+    clavier->input.device (kbd_interrupt -> IND_WRITEEVENT depuis une tâche) est l'intégration F ultérieure (unifier
+    l'entrée clavier des deux consoles via input.device) ; le clavier atteint déjà la ROM (F2b) et WRITEEVENT propage (#2).
+  - **Rendu À L'ÉCRAN (#3, visuel) — différé (limite harnais).** `gfx_text_display` (Copper sur le bitplane texte via
+    le pipeline graphics de M6S) écrit mais FS-UAE sous Xvfb n'affiche pas le framebuffer Amiga dans une fenêtre X
+    capturable (vérifié : la capture du kitten M6S connu-bon est identique) -> pixel-verification non viable en CI
+    headless. Le rendu est prouvé CORRECT par readback (#3a). Visuel = tâche graphics sur vrai display, hors CI.
+  - **À venir** : disk-validator (bitmap OFS) ; requesters Intuition (insert-disk cliquable) ; keymap complet
+    (shift/ctrl/caps → keymap.resource, + variante AZERTY). Le shell RESTE sur le con_handler série (ne pas aveugler le
+    canal de preuve) ; le swap écran est une intégration F ultérieure. En F on remplace le handler console-série par un
+    console.device SANS toucher au binaire shell.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
