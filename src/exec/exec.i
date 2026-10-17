@@ -168,6 +168,9 @@ F2B_NO_FEED        EQU 0
 ; INPUT_NO_PROPAGATE=1 (RED #2) : IND_WRITEEVENT ne parcourt PAS la chaîne de handlers -> l'event injecté
 ; n'atteint aucun handler -> « INPUT OK » absent (ADDHANDLER a pourtant réussi). Isole la propagation. Défaut 0.
 INPUT_NO_PROPAGATE EQU 0
+; CON_NO_BLIT=1 (RED #3a) : CMD_WRITE avance le curseur mais NE blitte PAS le glyphe -> le bitplane reste à 0 ->
+; le readback des cellules non-espace ne correspond pas aux glyphes -> « CONSOLE WRITE OK » absent. Isole le blitter. Défaut 0.
+CON_NO_BLIT        EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -271,6 +274,19 @@ INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (pa
 INPUT_H1_ORD    EQU $00000652 ; word : ordre où le handler pri-haute a tourné (doit = 1)
 INPUT_H2_ORD    EQU $00000654 ; word : ordre où le handler pri-basse a tourné (doit = 2)
 INPUT_CODE      EQU $00000656 ; word : ie_Code vu par les handlers (doit = keycode synthétique injecté)
+
+; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
+CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)
+CON_BYTEW    EQU 40            ; octets par ligne du bitplane (= CON_COLS, 1 octet = 8 px = 1 glyphe de large)
+CON_PXH      EQU 256           ; hauteur du bitplane en pixels (32 lignes de texte)
+CON_BMSIZE   EQU CON_BYTEW*CON_PXH ; 10240 octets : taille du bitplane (chip RAM)
+; base console.device = Library + état texte
+CONB_BITMAP  EQU LIB_SIZE      ; APTR bitplane
+CONB_BWIDTH  EQU LIB_SIZE+4    ; UWORD octets/ligne (stride)
+CONB_PXROWS  EQU LIB_SIZE+6    ; UWORD hauteur px
+CONB_CURX    EQU LIB_SIZE+8    ; UWORD colonne char courante (0..CON_COLS-1)
+CONB_CURY    EQU LIB_SIZE+10   ; UWORD ligne pixel courante (0,8,16,... multiple de 8)
+CONDEV_SIZE  EQU LIB_SIZE+12
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms

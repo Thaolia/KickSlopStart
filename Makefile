@@ -17,12 +17,12 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 # bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
-GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i

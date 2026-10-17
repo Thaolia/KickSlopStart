@@ -579,10 +579,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     marqueur absent, device + ADDHANDLER intacts). Le câblage clavier LIVE -> input.device -> console se fait en #3
     (console.device = consommateur naturel d'IND_ADDHANDLER ; évite de re-toucher l'INT2). Clean-room : AutoDocs
     input.device + includes NDK publics. AUCUNE lecture ROM.
-  - **À venir (reste de M6/M7+)** : console.device réel (rendu écran — canal de preuve à décider ; y brancher le
-    clavier via input.device), disk-validator (bitmap OFS), requesters Intuition (insert-disk cliquable), keymap
-    complet (shift/ctrl/caps → keymap.resource, + variante AZERTY). En F on remplace le handler console-série par un
-    console.device SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
+  - **console.device — rendu texte (WRITE) : #3a FAIT.** `src/exec/console.s` : device résident AUTOINIT NT_DEVICE
+    pri 20. `initfunc` alloue un bitplane 1-plan (chip RAM). `CMD_WRITE` interprète le flux : imprimable -> BLIT du
+    glyphe 8x8 (copie CPU de 8 octets depuis `font8x8` dans le bitplane à (curx,cury)) + avance colonne ; CR -> col 0 ;
+    LF/wrap -> ligne +8 (clampée, pas de scroll ce milestone). graphics.library n'ayant pas de `Text()`, le rendu est
+    fait ici. **Police 8x8 HAND-AUTHORED** (domaine public, `tests/mk_font8x8.py` -> `src/graphics/font8x8.s`) —
+    JAMAIS la topaz de la ROM (piège clean-room : interdit de l'extraire). Preuve = **READBACK** (headless, série) :
+    on écrit une string connue puis on relit chaque cellule du bitplane et on la compare au glyphe attendu -> « CONSOLE
+    WRITE OK » (valide le math d'adresse du blitter + la police, sans affichage ni Xvfb) ; RED `CON_NO_BLIT` (blit
+    sauté -> readback != police -> marqueur absent). Clean-room : AutoDocs console.device + NDK public. AUCUNE lecture ROM.
+  - **À venir** : #3 (suite) rendu À L'ÉCRAN (pointer le Copper sur le bitplane texte, confirmation xwd) + console.device
+    READ (#3b : clavier LIVE -> input.device -> handler console -> read) ; disk-validator (bitmap OFS) ; requesters
+    Intuition (insert-disk cliquable) ; keymap complet (shift/ctrl/caps → keymap.resource, + variante AZERTY). Le shell
+    RESTE sur le con_handler série (ne pas aveugler le canal de preuve) ; le swap écran est une intégration F ultérieure
+    (avec miroir série). En F on remplace le handler console-série par un console.device SANS toucher au binaire shell.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

@@ -29,6 +29,7 @@
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
                 xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
                 xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
+                xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -46,6 +47,8 @@ DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
 INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
 INPUT_TESTBLK EQU 120         ; #2 : bloc de test input.device = ioreq(48)+h1(24)+h2(24)+event(22), arrondi pair
+CMD_WRITE_BO EQU 3            ; #3a : io_Command CMD_WRITE (EQU local)
+IO_LEN_BO    EQU 36           ; #3a : IOStdReq io_Length (EQU local)
 ; D3b : bloc du fs-driver (une seule AllocMem, sous-parties long-alignées pour les BPTR)
 FSD_SP       EQU 0            ; StandardPacket (68)
 FSD_FH       EQU 68           ; FileHandle (44)
@@ -1032,6 +1035,69 @@ d2_done:
         move.l  ($4).w,a6               ; recharge a6 = SysBase (BeginIO ressort avec a6 = base device)
         rts
 .input_done:
+
+        ; --- console.device (#3a) : CMD_WRITE d'une string -> blit glyphes 8x8 -> READBACK du bitplane ---
+        ; Prouve le blitter + la police SANS affichage : on écrit une string connue via CMD_WRITE puis on relit
+        ; chaque cellule du bitplane et on la compare au glyphe de font8x8. Correct math d'adresse + bons octets
+        ; = « CONSOLE WRITE OK ». Headless (série, pas de Xvfb) ; RED CON_NO_BLIT -> readback != glyphes -> absent.
+        lea     EB_DEVICELIST(a6),a0
+        lea     console_dev_name(pc),a1  ; FindName("console.device")
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .con_done
+        move.l  d0,a2                    ; a2 = base console.device
+        move.l  CONB_BITMAP(a2),d0       ; bitplane alloué à l'init ?
+        beq     .con_done
+        move.l  #64,d0                   ; ioreq (48 -> arrondi 64)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .con_done
+        move.l  d0,a3                    ; a3 = ioreq (survit jusqu'au free)
+        move.l  a2,IO_DEVICE(a3)
+        move.w  #CMD_WRITE_BO,IO_COMMAND(a3)
+        lea     con_test_str(pc),a0
+        move.l  a0,INP_IO_DATA(a3)       ; io_Data = string
+        move.l  #con_test_end-con_test_str,IO_LEN_BO(a3)  ; io_Length
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -30(a6)                  ; console BeginIO (CMD_WRITE -> blit dans le bitplane)
+        move.l  ($4).w,a6
+        ; readback : chaque cellule (col, lignes 0..7) == glyphe de font8x8 du char correspondant ?
+        move.l  CONB_BITMAP(a2),a5       ; a5 = bitplane
+        moveq   #0,d4
+        move.w  CONB_BWIDTH(a2),d4       ; d4 = stride
+        lea     con_test_str(pc),a4      ; a4 = string rendue
+        moveq   #0,d5                    ; d5 = colonne
+.con_rb:
+        moveq   #0,d0
+        move.b  (a4)+,d0
+        beq.s   .con_match               ; fin de string (NUL) -> toutes cellules OK
+        subi.w  #$20,d0
+        lsl.l   #3,d0                    ; (char-0x20)*8
+        move.l  #font8x8,a0
+        add.l   d0,a0                    ; a0 = glyphe
+        move.l  a5,a1
+        add.l   d5,a1                    ; a1 = bitplane + col (cury=0)
+        moveq   #7,d2                    ; 8 lignes
+.con_rbrow:
+        move.b  (a0)+,d0                 ; octet glyphe attendu
+        cmp.b   (a1),d0                  ; octet réellement blitté
+        bne.s   .con_mismatch
+        add.w   d4,a1                    ; ligne suivante (+stride)
+        dbra    d2,.con_rbrow
+        addq.l  #1,d5                    ; colonne suivante
+        bra.s   .con_rb
+.con_mismatch:
+        bra.s   .con_free                ; une cellule diffère -> pas de marqueur
+.con_match:
+        lea     msg_console_ok(pc),a0
+        bsr     ser_puts                 ; « CONSOLE WRITE OK »
+.con_free:
+        move.l  a3,a1
+        move.l  #64,d0
+        jsr     LVO_FREEMEM(a6)
+.con_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2796,6 +2862,15 @@ msg_input_ok:
         dc.b    "INPUT OK (input.device: IND_ADDHANDLER pri-sorted chain + IND_WRITEEVENT propagates RAWKEY; 2 handlers in pri order, keycode relayed)",13,10,0
 input_dev_name:
         dc.b    "input.device",0
+msg_console_ok:
+        dc.b    "CONSOLE WRITE OK (console.device CMD_WRITE: 8x8 glyph blitter into bitplane; readback matches font)",13,10,0
+console_dev_name:
+        dc.b    "console.device",0
+        EVEN
+con_test_str:
+        dc.b    "CONSOLE WRITE OK 0123456789"
+con_test_end:
+        dc.b    0
         EVEN
 msg_ok:
         dc.b    "EXEC ExecBase + jump table OK, self-test passed",13,10,0
