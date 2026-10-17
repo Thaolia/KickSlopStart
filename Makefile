@@ -34,7 +34,8 @@ DOS_INC   := $(DOS_DIR)/dos.i
 # loadseg.o : LoadSeg (D2) — charge un exécutable hunk depuis l'OFS + relocation ; include exec.i + ofs.i.
 # process.o : Process + CreateProc + dos_sendpkt (D3) ; include exec.i + dospkt.i.
 # handler.o : process file-handler DF0: (D3b) ; include exec.i + ofs.i + dospkt.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o $(BUILD)/handler.o
+# conhandler.o : process handler console-série (E1) ; include exec.i + dospkt.i.
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -82,6 +83,8 @@ $(BUILD)/loadseg.o: $(DOS_DIR)/ofs.i
 $(BUILD)/process.o: $(DOS_DIR)/dospkt.i
 # handler.o inclut ofs.i + dospkt.i : relier les dépendances pour rebuild.
 $(BUILD)/handler.o: $(DOS_DIR)/ofs.i $(DOS_DIR)/dospkt.i
+# conhandler.o inclut dospkt.i (E1) : relier la dépendance pour rebuild.
+$(BUILD)/conhandler.o: $(DOS_DIR)/dospkt.i
 
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)

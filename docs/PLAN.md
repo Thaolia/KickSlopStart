@@ -496,6 +496,26 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (D3D + non-rég D1/D2/D3A/D3B/D3C/M3F, 0 FAILED) + RED + CTRL-NODISK + COOP. Exécutable `D3DTest` écrit sur l'ADF
     (mk_boot_adf.sh). **Cible « exécuter une commande » ATTEINTE.** Différé (E/F) : CLI interactif, bootstrap réel
     (Initial CLI, startup-sequence, console, requesters), lectures incrémentales OFS, Write/Lock/Seek.
+- **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
+  SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
+  console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par
+  un process **handler console-série** (même forme que `dos_handler_df0`) — en F on remplace ce handler par un
+  console.device sans toucher au shell. Prérequis prouvé : **spike RX** (FS-UAE livre l'entrée série hôte→Paula via
+  SERDATR bit 14 RBF ; harnais `tests/boot_test_interactive.sh` injecte dans `ser_cap`). Décomposé E1→E3 :
+  - **E1 — handler console-série (FAIT).** `src/dos/conhandler.s` : process servant `FINDINPUT`(open)/`WRITE`(émet
+    sur série, poll TBE borné)/`READ`(lit une ligne depuis RX avec écho)/`END`. READ bloque PROPREMENT via poll sur
+    tick timer.device MICROHZ (BeginIO TR_ADDREQUEST + Wait, précédent `task_timer`) — PAS de busy-poll (COOP-safe),
+    PAS d'interrupt RBF niveau-5 (différé F, cf. M7k). Monté comme port global `DOS_CONPORT`. Preuves : **WRITE +
+    packets** dans les 4 scénarios standard (handler en Wait = idle propre sans entrée) : GREEN « E1 CON WRITE OK » +
+    non-rég D1/D2/D3A/D3B/D3C/D3D/M3F (0 FAILED) + RED `E1_NO_WRITE` (marqueur absent, round-trip intact) +
+    CTRL-NODISK (console marche SANS disque) + COOP. **READ** prouvé en harnais interactif : injecter « hello\r » →
+    « E1 CON READ=hello » (round-trip RX→handler→ligne→écho→client). checksum GREEN `ad9f0f37`.
+    PROCHAIN : E2 (process shell : boucle prompt → read ligne → parse → dispatch + builtins).
+  - **E2 — shell (À FAIRE).** Process qui ouvre in/out console, boucle prompt → read ligne → parse → dispatch ; 2
+    builtins (echo, help/bannière). Preuve interactive : injecter « echo HELLO\r » → voir HELLO.
+  - **E3 — exécuter une commande externe tapée (À FAIRE ; CLÔT E).** Commande inconnue → load DF0: via dos (Open/Read
+    → ls_load_hunks → run) comme D3d mais déclenché par le nom tapé. Preuve : injecter un nom de commande → son marqueur.
+  - **NE PAS** construire en E : BCPL `CommandLineInterface`/`pr_CLI`, `Execute()`, startup-sequence → Bootstrap réel (F).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

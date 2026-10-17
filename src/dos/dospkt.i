@@ -113,3 +113,8 @@ D3C_NO_FHTYPE    EQU 0
 ; (saute le JSR au seglist) -> la commande n'émet pas son marqueur -> « D3D ... OK » absent. Isole l'exécution de
 ; la commande chargée-par-dos (le chargement/reloc reste prouvé par D2). Défaut 0.
 D3D_NO_RUN       EQU 0
+
+; E1_NO_WRITE=1 (RED E1) : le handler console ne sert PAS ACTION_WRITE (renvoie le compte mais N'ÉMET RIEN sur le
+; série) -> « E1 CON WRITE OK » absent (le client ouvre/ferme encore, le round-trip packet marche). Isole le service
+; WRITE du handler console (dispatch packet -> émission série via le handler). Défaut 0.
+E1_NO_WRITE      EQU 0

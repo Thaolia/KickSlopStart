@@ -57,6 +57,7 @@ INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
 INTF_BLIT    EQU $0040        ; M7g : Blitter (niveau 3, bit 6)
 INTF_PORTS   EQU $0008        ; INT2 / CIA-A
 INTF_EXTER   EQU $2000        ; INT6 / CIA-B
+INTF_RBF     EQU $0800        ; E1 : bit 11 = RBF (serial receive buffer full) ; acquitter -> efface SERDATR bit 14
 AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
@@ -233,6 +234,8 @@ DOS_HANDLERPORT EQU $000005F8 ; D3a : long — APTR du pr_MsgPort du process han
 DOS_FSPORT      EQU $000005FC ; D3b : long — APTR du pr_MsgPort du process file-handler DF0: (OFS)
 TD_CURCYL       EQU $00000600 ; trackdisk : word — cylindre courant de la tête (valide ssi TD_CYLVALID != 0)
 TD_CYLVALID     EQU $00000602 ; trackdisk : byte — 0 = position inconnue (recalibrer) ; !=0 = TD_CURCYL fiable
+DOS_CONPORT     EQU $00000604 ; E1 : long — APTR du pr_MsgPort du process handler console-série (publié par le setup)
+CON_STATE       EQU $00000608 ; E1 : long — APTR du bloc d'état du handler console (timer.device + reply port + requête)
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms
