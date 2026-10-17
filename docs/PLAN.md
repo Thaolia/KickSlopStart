@@ -601,10 +601,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     le pipeline graphics de M6S) écrit mais FS-UAE sous Xvfb n'affiche pas le framebuffer Amiga dans une fenêtre X
     capturable (vérifié : la capture du kitten M6S connu-bon est identique) -> pixel-verification non viable en CI
     headless. Le rendu est prouvé CORRECT par readback (#3a). Visuel = tâche graphics sur vrai display, hors CI.
-  - **À venir** : disk-validator (bitmap OFS) ; requesters Intuition (insert-disk cliquable) ; keymap complet
-    (shift/ctrl/caps → keymap.resource, + variante AZERTY). Le shell RESTE sur le con_handler série (ne pas aveugler le
-    canal de preuve) ; le swap écran est une intégration F ultérieure. En F on remplace le handler console-série par un
-    console.device SANS toucher au binaire shell.
+  - **disk-validator OFS (#4) FAIT.** `src/dos/diskvalidator.s` : `dv_validate` valide le bitmap d'allocation de DF0: —
+    (1) checksum OFS du rootblock (somme des 128 longs == 0), (2) sec_type = ST_ROOT, (3) bm_flag == $FFFFFFFF (bitmap
+    marqué valide), (4) checksum OFS du bloc bitmap (bm_pages[0]), (5) COHÉRENCE : le rootblock (880) marqué ALLOUÉ
+    (bit=0) dans le bitmap (idx=878 -> long[28] bit 14, LSB-first). Offsets/convention vérifiés sur l'ADF de test
+    (bm_flag@312, bm_pages@316, bits 1=libre/0=alloué). Preuve : GREEN (ADF) « DISK VALID OK » ; RED `DV_CORRUPT`
+    (flip d'un octet du bloc bitmap après lecture -> checksum KO -> rejet -> marqueur absent) ; NODISK -> pas de disque
+    -> absent. La REVALIDATION (bm_flag=0 -> reconstruire le bitmap depuis l'arbre) est différée. Clean-room : format OFS
+    public + ADF de test (asset). AUCUNE lecture ROM.
+  - **À venir** : requesters Intuition (insert-disk cliquable) ; keymap complet (shift/ctrl/caps → keymap.resource,
+    + variante AZERTY) ; feeder clavier->input.device + swap écran (intégration F). Le shell RESTE sur le con_handler série.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

@@ -30,6 +30,7 @@
                 xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
                 xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
                 xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
+                xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -1163,6 +1164,15 @@ d2_done:
         move.l  ($4).w,a6
         rts
 .conr_done:
+
+        ; --- disk-validator (#4) : valide le bitmap d'allocation OFS de DF0: ---
+        ; (sur ADF : rootblock+bitmap checksums OFS + bm_flag valide + root marqué alloué ; NODISK : pas de disque -> 0)
+        jsr     dv_validate          ; diskvalidator.o lié loin -> jsr absolu
+        tst.l   d0
+        beq.s   .dv4_done
+        lea     msg_diskvalid(pc),a0
+        bsr     ser_puts             ; « DISK VALID OK »
+.dv4_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2933,6 +2943,8 @@ console_dev_name:
         dc.b    "console.device",0
 msg_conread_ok:
         dc.b    "CONSOLE READ=v (console.device input handler on input.device cooked a RAWKEY -> read buffer -> CMD_READ)",13,10,0
+msg_diskvalid:
+        dc.b    "DISK VALID OK (disk-validator: OFS rootblock+bitmap checksums, bm_flag valid, rootblock allocated in bitmap)",13,10,0
         EVEN
 con_test_str:
         dc.b    "CONSOLE WRITE OK 0123456789"

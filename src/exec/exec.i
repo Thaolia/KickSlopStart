@@ -174,6 +174,9 @@ CON_NO_BLIT        EQU 0
 ; CON_NO_READBUF=1 (RED #3b) : console_input_handler cuit le RAWKEY mais NE le pousse PAS dans le read buffer ->
 ; CMD_READ ne rend rien -> « CONSOLE READ=v » absent. Isole le câblage input.device->console READ. Défaut 0.
 CON_NO_READBUF     EQU 0
+; DV_CORRUPT=1 (RED #4) : le disk-validator corrompt le bloc bitmap après lecture (flip d'un octet) -> son checksum
+; OFS (somme des longs == 0) échoue -> dv_validate rejette -> « DISK VALID OK » absent. Isole la vérif d'intégrité. Défaut 0.
+DV_CORRUPT         EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20

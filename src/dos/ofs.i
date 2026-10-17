@@ -18,6 +18,10 @@ OFSB_DATA       EQU 24            ; data block OFS : octets de données @ +24
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)) : nom BCPL (octet longueur + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)) : hash_chain (prochain header même bucket)
 OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)) : type secondaire (ST_FILE=-3)
+; bitmap d'allocation (root block) — disk-validator (#4), offsets vérifiés sur l'ADF de test
+OFSB_BMFLAG     EQU 312           ; long[78] (= BSIZE-200) : bm_flag ($FFFFFFFF = bitmap valide ; 0 = à revalider)
+OFSB_BMPAGES    EQU 316           ; long[79] (= BSIZE-196) : bm_pages[0] = n° du 1er bloc bitmap
+OFSB_BMBITS     EQU 4             ; bloc bitmap : long[0] = checksum ; les bits démarrent au long[1] (@4)
 
 OFS_T_SHORT     EQU 2             ; type primaire root/header
 OFS_T_DATA      EQU 8             ; type primaire data block OFS
