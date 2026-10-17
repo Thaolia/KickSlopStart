@@ -14,6 +14,8 @@
                 xref    dos_sendpkt
                 xref    ls_load_hunks        ; dos/loadseg.s (E3 : parse hunk d'un buffer lu via dos)
                 xref    dos_unloadseg        ; dos/loadseg.s (E3 : libérer la seglist)
+                xref    ser_lock             ; exec/boot.s (émission série atomique)
+                xref    ser_unlock
 
 SH_CMDBUF       EQU 16384            ; buffer de chargement d'une commande externe (E3)
 SH_SCRIPTMAX    EQU 2048             ; taille max de la startup-sequence lue (F1)
@@ -209,7 +211,9 @@ sh_exec_cmd:
                 lsl.l   #2,d0
                 addq.l  #4,d0
                 move.l  d0,a0
+                jsr     ser_lock             ; la commande chargée émet sous Forbid -> marqueur atomique (pas d'entrelacement)
                 jsr     (a0)                 ; exécute la commande tapée
+                jsr     ser_unlock
                 move.l  ($4).w,a6            ; recharge SysBase (le code a pu clobber a6)
                 endc                         ; RED E3_NO_EXEC : saute le JSR -> commande chargée mais pas exécutée
                 move.l  d7,d0

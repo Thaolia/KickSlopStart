@@ -53,6 +53,9 @@
                 xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
                 xref    pointer_input_handler ; intuition/pointer.s (accumulateur deltas relatifs -> position absolue)
 
+                xdef    ser_lock         ; émission série atomique (Forbid gated SCHED_ON) — utilisé par conhandler/feeder/shell
+                xdef    ser_unlock
+
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
 INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
@@ -1721,6 +1724,7 @@ eb_fail:
 ; ser_puts : chaîne NUL-terminée sur le série (a0) ; timeout borné sur TBE
 ser_puts:
         movem.l d0/d1/d2/a0,-(sp)
+        bsr     ser_lock             ; émission ATOMIQUE (aucun autre émetteur ne s'entrelace)
 .lp:
         move.b  (a0)+,d0
         beq.s   .done
@@ -1737,12 +1741,38 @@ ser_puts:
         move.w  d0,SERDAT
         bra.s   .lp
 .done:
+        bsr     ser_unlock
         movem.l (sp)+,d0/d1/d2/a0
+        rts
+
+; ser_lock / ser_unlock : rendent TOUTE émission série atomique entre tâches (Forbid gated SCHED_ON — no-op avant
+; le multitâche). Mécanisme = exclusion mutuelle par Forbid (aucun switch de tâche pendant l'émission), déjà éprouvé
+; (task_timer). Préservent TOUS les registres (Forbid/Permit les préservent ; seul a6 est touché, sauvé/restauré).
+; Tous les émetteurs concurrents (ser_puts, ser_puthex, con_handler WRITE, feeder, binaires chargés via le Forbid de
+; leur appelant) les utilisent -> plus d'entrelacement octet-à-octet des marqueurs (plus de faux-GREEN).
+ser_lock:
+        tst.b   SCHED_ON
+        beq.s   .slk_ret
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        move.l  (sp)+,a6
+.slk_ret:
+        rts
+ser_unlock:
+        tst.b   SCHED_ON
+        beq.s   .sulk_ret
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
+.sulk_ret:
         rts
 
 ; ser_puthex(d0.w) : émet les 4 chiffres hexa de d0 (mot) sur le série (MSB d'abord). Scratch sauvé (d0-d3).
 ser_puthex:
         movem.l d0-d3,-(sp)
+        bsr     ser_lock             ; émission atomique
         move.w  d0,d3                ; d3 = valeur à afficher
         moveq   #3,d2                ; 4 nibbles
 .ph_nib:
@@ -1767,6 +1797,7 @@ ser_puthex:
         move.w  d0,SERDAT
 .ph_next:
         dbra    d2,.ph_nib
+        bsr     ser_unlock
         movem.l (sp)+,d0-d3
         rts
 
@@ -2702,7 +2733,9 @@ d3d_client:
         lsl.l   #2,d0
         addq.l  #4,d0
         move.l  d0,a0
+        bsr     ser_lock             ; le binaire chargé émet sous Forbid -> son marqueur reste atomique
         jsr     (a0)                 ; exécute D3DTest -> émet « D3D LOADSEG-VIA-DOS OK »
+        bsr     ser_unlock
         move.l  ($4).w,a6            ; recharge SysBase (le code chargé a pu clobber a6)
                 endc                 ; RED D3D_NO_RUN : saute le run -> commande pas exécutée -> D3D absent
         move.l  d7,d0

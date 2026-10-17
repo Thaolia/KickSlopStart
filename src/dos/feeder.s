@@ -14,6 +14,8 @@
                 include "dospkt.i"
 
                 xdef    feeder_main
+                xref    ser_lock             ; exec/boot.s (émission série atomique)
+                xref    ser_unlock
 
 IO_DATA2     EQU 40               ; IOStdReq io_Data (local : feeder.s n'inclut pas disk.i)
 IO_LENGTH    EQU 36               ; IOStdReq io_Length
@@ -175,6 +177,7 @@ fd_selftest:
                 tst.l   IO_ACTUAL(a3)
                 beq.s   .st_ret              ; rien lu ce tick -> réessaie au prochain
                 st      FD_DONE(a5)          ; self-test émis une seule fois
+                jsr     ser_lock             ; marqueur entier atomique (pas d'entrelacement)
                 lea     fd_msg_ok(pc),a0     ; « FEEDER OK= »
                 bsr     fd_puts
                 move.b  FD_RDBUF(a5),d0      ; le char cuit
@@ -183,6 +186,7 @@ fd_selftest:
                 bsr     fd_putc
                 moveq   #10,d0
                 bsr     fd_putc
+                jsr     ser_unlock
 .st_ret:
                 rts
 

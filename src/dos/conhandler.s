@@ -19,6 +19,8 @@
                 include "dospkt.i"
 
                 xdef    con_handler
+                xref    ser_lock             ; exec/boot.s (émission série atomique)
+                xref    ser_unlock
 
 CON_POLL_US     EQU 20000            ; 20 ms par tick de poll RX (latence d'entrée ~1 tick)
 ERROR_ACTION_NOT_KNOWN EQU 209       ; dos/dos.i : action non supportée
@@ -163,11 +165,13 @@ con_handler:
                 move.l  DP_ARG3(a4),d3       ; len (d3 survit à con_putc)
                 tst.l   d3
                 beq     .reply
+                jsr     ser_lock             ; buffer entier atomique sur le série (pas d'entrelacement de marqueur)
 .wr_lp:
                 move.b  (a5)+,d0
                 bsr     con_putc
                 subq.l  #1,d3
                 bne.s   .wr_lp
+                jsr     ser_unlock
                 bra     .reply
 
 .read:
