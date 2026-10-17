@@ -519,8 +519,15 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     scénarios) ; interactif : « ver\r » → « E2 SHELL ver OK » (parse+dispatch), « echo E2ECHOOK\r » → « E2ECHOOK » ;
     RED `E2_NO_DISPATCH` (« ver » → « ? », marqueur absent) ; NODISK (bannière sans disque) ; COOP. checksum GREEN
     `aa9e1b78`. PROCHAIN : E3 (commande inconnue → load+run DF0: via dos).
-  - **E3 — exécuter une commande externe tapée (À FAIRE ; CLÔT E).** Commande inconnue → load DF0: via dos (Open/Read
-    → ls_load_hunks → run) comme D3d mais déclenché par le nom tapé. Preuve : injecter un nom de commande → son marqueur.
+  - **E3 — exécuter une commande externe tapée (FAIT ; CLÔT E).** La branche « commande inconnue » du shell null-termine
+    le 1er mot et appelle `sh_exec_cmd` : `OpenLibrary(dos)` → `Open`/`Read` du nom depuis DF0: (packets → OFS handler →
+    trackdisk) → `ls_load_hunks` → reloc → `JSR` au seglist → `UnLoadSeg` ; renvoie « trouvée » (sinon le shell émet
+    « ? »). Même pile que D3d mais déclenchée par le NOM TAPÉ. Commande de test `tests/cmd_e3.s` (hunk, écrite « e3cmd »
+    sur l'ADF) émet « E3 CMD RAN OK ». Preuve : injecter « e3cmd\r » au shell → « E3 CMD RAN OK » (chaîne complète
+    taper → charger du disque via dos → reloc → run). RED `E3_NO_EXEC` (chargée mais saute le JSR → marqueur absent,
+    pas de « ? » car trouvée) ; « bogus\r » → « ? » (introuvable) ; GREEN-standard/NODISK/COOP (bannière + non-rég).
+    **Cible « CLI interactif » ATTEINTE** : la ROM présente une invite, lit des commandes tapées, dispatche des
+    builtins ET charge+exécute des commandes externes depuis le disque. E CLÔT.
   - **NE PAS** construire en E : BCPL `CommandLineInterface`/`pr_CLI`, `Execute()`, startup-sequence → Bootstrap réel (F).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

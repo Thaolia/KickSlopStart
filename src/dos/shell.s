@@ -12,6 +12,10 @@
 
                 xdef    shell_main
                 xref    dos_sendpkt
+                xref    ls_load_hunks        ; dos/loadseg.s (E3 : parse hunk d'un buffer lu via dos)
+                xref    dos_unloadseg        ; dos/loadseg.s (E3 : libérer la seglist)
+
+SH_CMDBUF       EQU 16384            ; buffer de chargement d'une commande externe (E3)
 
 SHELL_LINEMAX   EQU 128              ; taille max d'une ligne lue
 SH_ECHO_ARGOFF  EQU 5                ; offset des args après « echo » + 1 espace
@@ -42,7 +46,7 @@ shell_main:
                 bsr     sh_write
                 bsr     sh_readline          ; -> d6 = octets, ligne en (a3)
                 ifne    E2_NO_DISPATCH
-                bra     .unknown             ; RED E2 : pas de dispatch -> tout inconnu
+                bra     .extern              ; RED E2 : pas de dispatch builtin -> traité comme commande externe
                 endc
                 lea     sh_cmd_ver(pc),a0    ; « ver » ?
                 move.l  a3,a1
@@ -58,7 +62,7 @@ shell_main:
                 move.l  a3,a1
                 bsr     sh_match
                 tst.l   d0
-                beq.s   .unknown
+                beq.s   .extern
                 ; args = ligne + SH_ECHO_ARGOFF, len = d6 - SH_ECHO_ARGOFF (si > 0)
                 move.l  d6,d4
                 sub.l   #SH_ECHO_ARGOFF,d4
@@ -67,8 +71,27 @@ shell_main:
                 add.l   #SH_ECHO_ARGOFF,a4
                 bsr     sh_write
                 bra     .loop
-.unknown:
-                move.l  #sh_unknown,a4
+.extern:
+                ; E3 : commande inconnue -> tenter de la charger+exécuter depuis DF0: via dos.
+                ; null-terminer le 1er mot de la ligne en place (frontière espace/CR).
+                move.l  a3,a0
+.nt_lp:
+                move.b  (a0),d0
+                beq.s   .nt_done
+                cmp.b   #' ',d0
+                beq.s   .nt_cut
+                cmp.b   #13,d0
+                beq.s   .nt_cut
+                addq.l  #1,a0
+                bra.s   .nt_lp
+.nt_cut:
+                clr.b   (a0)                 ; termine le nom en C-string
+.nt_done:
+                move.l  a3,a0                ; a0 = nom de commande C-string
+                bsr     sh_exec_cmd          ; d0 = 1 si trouvée+chargée, 0 sinon
+                tst.l   d0
+                bne     .loop                ; trouvée (exécutée, ou chargée si RED E3) -> retour au prompt
+                move.l  #sh_unknown,a4       ; non trouvée -> « ? »
                 move.l  #sh_unknown_len,d4
                 bsr     sh_write
                 bra     .loop
@@ -124,6 +147,78 @@ sh_match:
                 moveq   #1,d0
                 rts
 
+; sh_exec_cmd(a0 = nom C-string) : charge+exécute une commande depuis DF0: via dos (comme D3d) ->
+;   d0 = 1 si trouvée + chargée (exécutée en GREEN), 0 si introuvable/non chargeable. Préserve tout le
+;   contexte shell (movem d2-d7/a2-a6). a6 restauré à SysBase en sortie. Drapeau « trouvée » sur la PILE
+;   (survit aux appels et au JSR de la commande, qui pourrait clobber un registre).
+sh_exec_cmd:
+                movem.l d2-d7/a2-a6,-(sp)
+                clr.l   -(sp)                ; [sp] = drapeau « trouvée » = 0
+                move.l  a0,d5                ; d5 = nom
+                move.l  ($4).w,a6            ; SysBase
+                lea     sh_doslib(pc),a1
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq     .x_ret
+                move.l  d0,a4                ; a4 = DosBase
+                move.l  #SH_CMDBUF,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq     .x_closelib
+                move.l  d0,a5                ; a5 = filebuf
+                move.l  a4,a6                ; a6 = DosBase
+                move.l  d5,d1                ; nom
+                move.l  #MODE_OLDFILE,d2
+                jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0 (0 = introuvable)
+                tst.l   d0
+                beq     .x_free
+                move.l  d0,d7                ; d7 = BPTR fh
+                move.l  d7,d1
+                move.l  a5,d2
+                move.l  #SH_CMDBUF,d3
+                jsr     DOS_LVO_READ(a6)     ; d0 = octets lus
+                move.l  d0,d6                ; d6 = taille
+                move.l  d7,d1
+                jsr     DOS_LVO_CLOSE(a6)
+                move.l  ($4).w,a6            ; SysBase
+                tst.l   d6
+                beq.s   .x_free              ; rien lu
+                move.l  a5,a0
+                move.l  d6,d0
+                jsr     ls_load_hunks        ; d0 = BPTR seglist | 0
+                tst.l   d0
+                beq.s   .x_free
+                move.l  d0,d7                ; d7 = BPTR seglist
+                move.l  #1,(sp)              ; TROUVÉE + chargée (drapeau pile)
+                ifeq    E3_NO_EXEC
+                move.l  d7,d0                ; entry = (seglist<<2)+4
+                lsl.l   #2,d0
+                addq.l  #4,d0
+                move.l  d0,a0
+                jsr     (a0)                 ; exécute la commande tapée
+                move.l  ($4).w,a6            ; recharge SysBase (le code a pu clobber a6)
+                endc                         ; RED E3_NO_EXEC : saute le JSR -> commande chargée mais pas exécutée
+                move.l  d7,d0
+                jsr     dos_unloadseg
+.x_free:
+                move.l  ($4).w,a6
+                move.l  a5,a1
+                move.l  #SH_CMDBUF,d0
+                jsr     LVO_FREEMEM(a6)
+.x_closelib:
+                move.l  ($4).w,a6
+                move.l  a4,a1
+                jsr     LVO_CLOSELIBRARY(a6)
+.x_ret:
+                move.l  (sp)+,d0             ; dépile le drapeau trouvée -> d0 (survit au movem)
+                movem.l (sp)+,d2-d7/a2-a6
+                rts
+
+sh_doslib:
+                dc.b    "dos.library",0
+                EVEN
 sh_banner:
                 dc.b    "E2 SHELL READY (interactive shell: prompt, read line via console handler, parse, dispatch)",13,10
 sh_banner_end:

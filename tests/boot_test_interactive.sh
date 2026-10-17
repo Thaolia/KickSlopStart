@@ -22,6 +22,7 @@ MARKER="${5:-E1 CON READ=hello}"
 ADF="${6:-}"
 PCMS="${7:-50}"                      # ms entre octets injectés (anti-overrun)
 SETTLE="${8:-1}"                     # s d'attente après le marqueur « prêt » (laisse le boot se taire)
+POSTWAIT="${9:-3}"                    # s d'attente APRÈS l'injection (laisse la commande se charger/s'exécuter)
 FAILMARK="FAILED"
 OUT="$ROOT/build/boot_itx"
 mkdir -p "$OUT"
@@ -96,7 +97,7 @@ for ch in s:
     time.sleep(ms/1000.0)
 PYEOF
 exec 7>&-
-sleep 2
+sleep "$POSTWAIT"                    # laisse la commande injectée se charger/exécuter (load disque = lent)
 
 echo "=== serial.log (fin) ==="
 tr -cd '\11\12\15\40-\176\n' < "$SERLOG" | tail -8 | sed 's/^/  [ser] /'

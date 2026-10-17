@@ -123,3 +123,8 @@ E1_NO_WRITE      EQU 0
 ; « E2 SHELL ver OK » absent sur « ver », « echo X » non renvoyé. Isole le parse/dispatch (la banner + le read-echo
 ; marchent encore). Défaut 0.
 E2_NO_DISPATCH   EQU 0
+
+; E3_NO_EXEC=1 (RED E3) : une commande tapée inconnue est bien TROUVÉE + CHARGÉE depuis DF0: via dos (ls_load_hunks)
+; mais NON EXÉCUTÉE (saute le JSR au seglist) -> le marqueur de la commande absent (pas de « ? » non plus : elle est
+; trouvée). Isole l'exécution de la commande tapée (le chargement/reloc reste prouvé par D2/D3d). Défaut 0.
+E3_NO_EXEC       EQU 0

@@ -43,6 +43,10 @@ python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$VASM" -Fhunk -m68000 -o "$TMP/d3d.o" "$ROOT/tests/loadseg_d3d.s" >/dev/null
 "$VLINK" -s -bamigahunk -o "$TMP/d3dtest" "$TMP/d3d.o"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/d3dtest" D3DTest >/dev/null
+# E3 : commande tapée au shell ; nom « e3cmd » sur le disque, chargée+exécutée par le shell depuis DF0: via dos.
+"$VASM" -Fhunk -m68000 -o "$TMP/e3.o" "$ROOT/tests/cmd_e3.s" >/dev/null
+"$VLINK" -s -bamigahunk -o "$TMP/e3cmd" "$TMP/e3.o"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/e3cmd" e3cmd >/dev/null
 
 # 3) boot code custom -> binaire brut
 "$VASM" -Fbin -m68000 -o "$TMP/bb.bin" "$ROOT/tests/bootblock_c.s"
