@@ -2416,6 +2416,13 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3h : client prouvant le cap-bump LoadSeg. Charge « bigseg » (> 16 Ko) via LoadSeg(-150) + l'exécute :
+        ; le binaire vérifie une sentinelle en fin de son gros DATA et émet « LOADSEG BIG OK » si tout a été lu.
+        lea     d3h_cname(pc),a0
+        lea     d3h_client(pc),a1
+        moveq   #5,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2949,6 +2956,43 @@ d3g_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .g_block
+
+; d3h_client : prouve le cap-bump LoadSeg. Charge « bigseg » (> 16 Ko) via LoadSeg(-150) + l'exécute (le binaire
+; vérifie la sentinelle en fin de son gros DATA -> émet « LOADSEG BIG OK » SSI tout a été lu). a6 = SysBase à l'entrée.
+d3h_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .h_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  a4,a6
+        lea     d3h_fname(pc),a0     ; « bigseg »
+        move.l  a0,d1
+        jsr     DOS_LVO_LOADSEG(a6)  ; -150 : charge l'exécutable > 16 Ko (cap 32 Ko)
+        tst.l   d0
+        beq.s   .h_closelib
+        move.l  d0,d7                ; d7 = BPTR seglist
+        move.l  d7,d0                ; entry = (seglist<<2)+4
+        lsl.l   #2,d0
+        addq.l  #4,d0
+        move.l  d0,a0
+        bsr     ser_lock             ; le binaire émet sous Forbid -> marqueur atomique
+        jsr     (a0)                 ; exécute bigseg -> « LOADSEG BIG OK » si la sentinelle (fin du gros DATA) est bonne
+        bsr     ser_unlock
+        move.l  ($4).w,a6
+        move.l  a4,a6
+        move.l  d7,d1
+        jsr     DOS_LVO_UNLOADSEG(a6)
+.h_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.h_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .h_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -3878,6 +3922,10 @@ msg_d3f_ok:
         dc.b    "DOS IOERR SEEK OK (IoErr -132 reflects Open-not-found then 0; Seek -66 ACTION_SEEK rewinds, re-read matches)",13,10,0
 d3g_cname:
         dc.b    "dos.ioclient",0
+d3h_cname:
+        dc.b    "dos.bigclient",0
+d3h_fname:
+        dc.b    "bigseg",0
         even
 ; marqueur émis PAR le Write lui-même (con_handler), pas NUL-terminé (Write utilise une longueur explicite).
 msg_dos_write:

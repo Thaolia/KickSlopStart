@@ -47,6 +47,11 @@ python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$VASM" -Fhunk -m68000 -o "$TMP/e3.o" "$ROOT/tests/cmd_e3.s" >/dev/null
 "$VLINK" -s -bamigahunk -o "$TMP/e3cmd" "$TMP/e3.o"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/e3cmd" e3cmd >/dev/null
+# Cap-bump LoadSeg : exécutable hunk > 16 Ko (« bigseg », gros hunk DATA + sentinelle en fin) -> prouve le
+# relèvement du cap de LECTURE (handler HS_BUF + LoadSeg buffer, 16K->32K). Chargé via LoadSeg(-150) par d3h_client.
+"$VASM" -Fhunk -m68000 -o "$TMP/big.o" "$ROOT/tests/loadseg_big.s" >/dev/null
+"$VLINK" -s -bamigahunk -o "$TMP/bigseg" "$TMP/big.o"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/bigseg" bigseg >/dev/null
 # F1 + sous-rép OFS : startup-sequence dans le sous-répertoire « s/ » (chemin AmigaDOS réel « s/startup-sequence »,
 # résolu par la traversée de sous-répertoires d'ofs_read_file). Lignes CR-terminées : « echo F1BOOTOK » prouve la
 # lecture+exécution du script (builtin echo) ; « e3cmd » prouve une commande EXTERNE lancée depuis le script.

@@ -33,7 +33,7 @@ HUNK_DATA       EQU $3EA
 HUNK_BSS        EQU $3EB
 HUNK_RELOC32    EQU $3EC
 HUNK_END        EQU $3F2
-LS_FILEMAX      EQU 16384         ; taille max d'un exécutable hunk chargé (buffer de lecture)
+LS_FILEMAX      EQU DOS_FILEMAX    ; taille max d'un exécutable hunk chargé (cap-bump 32K, exec.i)
 LS_MAXHUNKS     EQU 64            ; borne du nombre de hunks (anti-corruption)
 
 ; D2_NO_RELOC=1 (RED D2) : lit les relocations mais ne les APPLIQUE PAS -> le pointeur absolu reste l'offset

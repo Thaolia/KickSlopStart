@@ -21,7 +21,7 @@
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
 
-LS_LOADMAX      EQU 16384            ; buffer de lecture LoadSeg (>= taille d'un exécutable hunk ; cf. LS_FILEMAX)
+LS_LOADMAX      EQU DOS_FILEMAX       ; buffer de lecture LoadSeg (cap-bump 32K, exec.i ; cf. HND_FILEMAX)
 
 ; --- ROMTag dos.library (scanné par build_reslist) ---
         EVEN

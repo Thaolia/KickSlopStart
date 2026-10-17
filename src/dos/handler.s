@@ -16,7 +16,7 @@
                 xdef    dos_handler_df0
                 xref    ofs_read_file
 
-HND_FILEMAX     EQU 16384            ; taille max d'un fichier bufferisé par le handler
+HND_FILEMAX     EQU DOS_FILEMAX       ; taille max d'un fichier bufferisé par le handler (cap-bump 32K, exec.i)
 HS_BUF          EQU 0                ; état : APTR buffer du fichier
 HS_SIZE         EQU 4                ; LONG taille lue
 HS_POS          EQU 8                ; LONG position de lecture courante

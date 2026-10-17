@@ -356,6 +356,20 @@ GP_NO_EDGE   EQU 0
 ; « M6R LIVE OK » absent. Isole le clamp (load-bearing). Défaut 0.
 PTR_NO_CLAMP EQU 0
 
+; --- Taille max d'un fichier bufferisé (handler HS_BUF + LoadSeg) : cap-bump 16K -> 32K (PAS du streaming) ---
+; Le cap de LECTURE est le buffer whole-file du handler (HND_FILEMAX) + celui de LoadSeg (LS_LOADMAX). On le relève
+; à 32 Ko (handles un exécutable jusqu'à 32 Ko, était 16 Ko) ; 2 buffers concurrents = 64 Ko transitoire (sûr sur le
+; tas A500 ~500 Ko). La lecture incrémentale OFS réelle (streaming, pas de buffer whole-file) reste une DETTE différée.
+; LOADSEG_CAP16K=1 (RED) : re-plafonne à 16 Ko -> un exécutable > 16 Ko (bigseg) tronque à FINDINPUT -> ne charge/tourne
+; pas -> « LOADSEG BIG OK » absent (D3E/d3dtest, petit, reste OK). Isole le cap-bump (prouve qu'il est load-bearing). Défaut 0.
+LOADSEG_CAP16K EQU 0
+                ifne    LOADSEG_CAP16K
+DOS_FILEMAX  EQU 16384
+                endc
+                ifeq    LOADSEG_CAP16K
+DOS_FILEMAX  EQU 32768
+                endc
+
 ; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
 CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)
 CON_BYTEW    EQU 40            ; octets par ligne du bitplane (= CON_COLS, 1 octet = 8 px = 1 glyphe de large)

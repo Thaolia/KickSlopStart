@@ -539,6 +539,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     via con_handler (prouve les 4 d'un coup). RED `DOS_NO_WRITE`. GREEN ADF (DOS WRITE OK + M6D + EXPANSION + GAMEPORT
     + DISK VALID + M7, 0 FAILED), md5 `f4e3af995dd7ea908220b02b627be860`. **Write via CONSOLE** (pas fichier : OFS
     read-only). **Lock/Examine/ExNext** (FileLock + FileInfoBlock + lecture répertoire OFS) = prochain incrément dédié.
+  - **LoadSeg cap-bump 16K -> 32K FAIT** (PAS du streaming). Le cap de lecture était le buffer whole-file du handler
+    (HND_FILEMAX) + celui de LoadSeg (LS_LOADMAX), 16 Ko chacun. Relevés à un `DOS_FILEMAX`=32 Ko partagé (exec.i ;
+    handler.s/dos_lib.s/loadseg.s le référencent). Advisor : le vrai streaming (lecture incrémentale OFS sur HS_POS)
+    = gros blast radius sur ACTION_READ prouvé (D1/D3B/D3C/D3D/E3/F1) pour rien de consommable maintenant -> DETTE
+    différée ; faire un cap-bump honnête + prouvé. Preuve **LOADSEG BIG OK** : `tests/loadseg_big.s` (hunk > 16 Ko :
+    24 Ko DATA + sentinelle en fin + 1 RELOC32) écrit sur l'ADF (`bigseg`), chargé par `d3h_client` via LoadSeg(-150)
+    + exécuté -> vérifie la sentinelle (tout le gros DATA lu) -> émet. RED `LOADSEG_CAP16K` (re-plafonne 16 Ko ->
+    bigseg tronque -> absent ; d3dtest petit OK). Non-rég ADF : D3E + E3 + D1 + M6Z + DOS WRITE, 0 FAILED, layout ADF
+    préservé (blocs 10/11 spanning non perturbés par bigseg). md5 `9b279b64b48f65b3a30a8e5ea3c323c8`. 2 buffers
+    concurrents = 64 Ko transitoire (sûr). **Streaming réel (incrémental OFS) reste différé** avec Lock/Examine.
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par
