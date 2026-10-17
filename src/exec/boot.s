@@ -14,6 +14,7 @@
                 include "exec.i"
                 include "dospkt.i"       ; D3 : constantes Process/packet pour le scaffold de preuve
                 include "dos.i"          ; D3c : DL_ROOT/RN_INFO/DI_DEVINFO (montage DeviceNode)
+                include "expansion.i"    ; expansion.library : EXP_LVO_*/ConfigDev (preuve round-trip)
 
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
@@ -489,6 +490,73 @@ m5o_done:
 m6d_ds_pop:
         lea     12(sp),sp            ; libère le buffer (échec DateStamp)
 m6d_done:
+
+        ; --- expansion.library : gate de version v37 + round-trip de la liste ConfigDev (Alloc->Add->Find) ---
+        ; (1) OpenLibrary("expansion.library", 37) DOIT échouer (gate KS 2.0 ; c'est ce qui fait sauter la branche
+        ; expansion du bootblock Lemmings sur notre V34) ; OpenLibrary(..., 34) réussit. (2) AllocConfigDev -> pose
+        ; manufacturer/product -> AddConfigDev -> FindConfigDev les retrouve (exact + wildcard produit) + un ID absent
+        ; ne matche pas -> « EXPANSION OK ». Cleanup robuste : Remove UNIQUEMENT si le nœud est chaîné (ln_Succ!=0),
+        ; sinon (RED EXP_NO_ENQUEUE : pas ajouté) on free seulement. Synchrone (fonctions lib pures, pas de packets).
+        lea     expansion_test_name(pc),a1
+        moveq   #37,d0               ; v37 (KS 2.0) -> DOIT renvoyer 0 sur notre V34
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        bne     exp_done             ; v37 ouvre à tort (gate cassé) -> ne pas émettre
+        lea     expansion_test_name(pc),a1
+        moveq   #34,d0               ; V34 -> doit réussir
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     exp_done
+        move.l  d0,a2                ; a2 = ExpansionBase (préservé par exec + les fonctions exp_*)
+        move.l  a2,a6
+        jsr     EXP_LVO_ALLOCCONFIGDEV(a6)   ; d0 = ConfigDev | 0
+        tst.l   d0
+        beq     exp_close1
+        move.l  d0,a3                ; a3 = ConfigDev
+        move.w  #$0202,ER_MANUFACTURER(a3)   ; IDs de test (manufacturer word + product byte)
+        move.b  #$42,ER_PRODUCT(a3)
+        move.l  a2,a6                ; AddConfigDev(cd a0)
+        move.l  a3,a0
+        jsr     EXP_LVO_ADDCONFIGDEV(a6)
+        move.l  a2,a6                ; FindConfigDev(0, $0202, $42) -> doit == a3
+        suba.l  a0,a0
+        move.l  #$0202,d0
+        move.l  #$42,d1
+        jsr     EXP_LVO_FINDCONFIGDEV(a6)
+        cmp.l   a3,d0
+        bne     exp_rem
+        move.l  a2,a6                ; FindConfigDev(0, $0202, -1) wildcard produit -> a3
+        suba.l  a0,a0
+        move.l  #$0202,d0
+        moveq   #-1,d1
+        jsr     EXP_LVO_FINDCONFIGDEV(a6)
+        cmp.l   a3,d0
+        bne     exp_rem
+        move.l  a2,a6                ; FindConfigDev(0, $9999, $42) -> pas de match -> 0
+        suba.l  a0,a0
+        move.l  #$9999,d0
+        move.l  #$42,d1
+        jsr     EXP_LVO_FINDCONFIGDEV(a6)
+        tst.l   d0
+        bne     exp_rem
+        lea     msg_expansion_ok(pc),a0
+        bsr     ser_puts             ; « EXPANSION OK »
+exp_rem:
+        tst.l   (a3)                 ; ln_Succ != 0 -> le ConfigDev est bien chaîné dans la liste
+        beq.s   exp_freeonly
+        move.l  ($4).w,a6
+        move.l  a3,a1
+        jsr     LVO_REMOVE(a6)       ; Remove(cd) avant free
+exp_freeonly:
+        move.l  a2,a6
+        move.l  a3,a0
+        jsr     EXP_LVO_FREECONFIGDEV(a6)
+exp_close1:
+        move.l  ($4).w,a6
+        move.l  a2,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+exp_done:
+        move.l  ($4).w,a6            ; restaure a6 = ExecBase pour la suite (M6t)
 
         ; --- M6t : vérifier trackdisk.device (squelette résident + validation d'unité) ---
         ; FindName(DeviceList) + version 34 + NT_DEVICE + Open(unité 0) OK (OpenCnt==1, io_Error==0, io_Unit ==
@@ -3638,6 +3706,11 @@ msg_m5o_ok:
         dc.b    "M5O OPENLIB OK (OpenLibrary by name + version gate + Open vector; too-high ver -> 0; OldOpenLibrary; CloseLibrary)",13,10,0
 msg_m6d_ok:
         dc.b    "M6D DOS LIB OK (dos.library AUTOINIT -> LibList; rn_Info BPTR round-trips &DosInfo; DateStamp -192 -> 0,0,0 unset + returns ptr)",13,10,0
+expansion_test_name:
+        dc.b    "expansion.library",0
+        EVEN
+msg_expansion_ok:
+        dc.b    "EXPANSION OK (expansion.library: OpenLibrary v37 gated->0 / v34 ok; AllocConfigDev->AddConfigDev->FindConfigDev exact+wildcard, absent ID miss)",13,10,0
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

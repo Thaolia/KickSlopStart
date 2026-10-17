@@ -509,6 +509,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     vrai chemin LVO ; whole-file bufferisé (≤ 16 Ko, pas de streaming), handler OFS DF0: seul → ne suffit PAS à exécuter
     du logiciel commercial (manquent `Lock`/`Seek`/`Examine`/`Write`, `expansion.library`, streaming ; et boot.s est un
     harnais de dev). `sh_exec_cmd` (E3) garde son load inline (non touché : ne pas risquer E3/F1/F2b).
+  - **expansion.library (autoconfig, parité) FAIT.** `src/exec/expansion.s` : résident AUTOINIT NT_LIBRARY pri 110.
+    ExpansionBase (Library + eb_Flags@34 + liste ConfigDev). Fonctions réelles aux offsets LVO confirmés sur AROS
+    `expansion.conf` (OpenLib slot0 ; AddConfigDev slot4=-30, AllocConfigDev slot7=-48, FindConfigDev slot11=-72,
+    FreeConfigDev slot13=-84 ; LVO=-6*(slot+1)) ; reste = exp_null. Preuve **EXPANSION OK** (synchrone early) :
+    OpenLibrary v37→0 (gate) / v34→base ; AllocConfigDev→AddConfigDev→FindConfigDev exact+wildcard+miss ; cleanup
+    gardé (Remove ssi ln_Succ≠0). RED `EXP_NO_ENQUEUE`. Non-rég scan résident (M4 RESIDENTS OK) + ADF complète,
+    0 FAILED, md5 `b0bb2f2f92f21b84be18a0ab49665ef3`. **Offsets vérifiés via AROS, PAS de mémoire** (le résumé
+    WebSearch s'était trompé en plaçant AddBootNode en premier). **Twist Lemmings** : le bootblock ouvre expansion
+    en **v37** (KS 2.0) → gate V34 renvoie 0 → branche expansion sautée (tolérée) → ce module ne débloque PAS
+    Lemmings, c'est de la parité. Différé : ConfigBoard/ReadExpansionRom (probe HW), MakeDosNode/AddBootNode (montage).
+    15/16 ROMTags (RESMAX ; 1 slot de marge).
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par
