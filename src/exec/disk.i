@@ -76,6 +76,12 @@ TD_READ_NOCMD EQU 0
 ; en fait la piste 0 -> le n° de piste décodé != 2 -> « M6X TRACKDISK SEEK OK » absent. Isole le seek. Défaut 0.
 SEEK_NOSTEP EQU 0
 
+; TD_NO_CYLTRACK=1 (RED cylinder-tracking) : force la recalibration (step OUT jusqu'à DSKTRACK0) à CHAQUE lecture
+; au lieu de stepper le delta depuis TD_CURCYL -> lectures LENTES (ancien comportement C). Correct mais lent :
+; sous l'ordonnanceur, le boot disquette complet ne tient plus dans WAIT=90 -> « D3B HANDLER OK » absent à ce WAIT.
+; Isole le GAIN de vitesse du cylinder-tracking (discriminant = D3B présent à WAIT serré). Défaut 0.
+TD_NO_CYLTRACK EQU 0
+
 ; TD_NOSEEK=1 (RED M6z) : BeginIO CMD_READ ignore la composante PISTE de l'offset et lit TOUJOURS la piste 0 (le
 ; secteur-dans-piste et l'octet-dans-piste restent corrects -> la lecture aboutit, pas de hors-borne). Une lecture
 ; du root block (bloc 880 = piste 80) renvoie alors la piste 0 (bootblock) -> « DOS\0 » != T_SHORT ; une lecture

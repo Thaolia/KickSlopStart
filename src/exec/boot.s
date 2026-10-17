@@ -518,6 +518,7 @@ m6t_pop:
         lea     32(sp),sp            ; libère l'IORequest (échec)
 m6t_done:
 
+        clr.b   TD_CYLVALID         ; cylinder-tracking : position tête inconnue avant la 1re lecture -> recalibrer
         ; --- M6u/M6v : lecture brute (B2) + décodage MFM (B3) — UNE SEULE lecture de DF0 ---
         ; td_read_track0 lit la piste brute ; M6U compte les mots de synchro $4489 (impossibles en MFM normal -> 0
         ; faux positif), M6V décode les secteurs (combine odd/even) + vérifie les checksums en-tête ET data. UNE

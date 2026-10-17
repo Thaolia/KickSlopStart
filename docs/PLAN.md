@@ -462,6 +462,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
       pri 8/7 (> paire OFS 6/5) → D3A émis TÔT, D3B tard → émissions non concurrentes. checksum GREEN `0x927FC4D9`.
       ⚠️ La lenteur CPU-bound va dépasser 5 min avec D3c/D3d → **cylinder-tracking = incrément dédié AVANT D3c**
       (advisor : ne pas le bundler ici ; il re-vérifie toutes les preuves disque). PROCHAIN : cylinder-tracking, puis D3c.
+  - **Cylinder-tracking (trackdisk, incrément dédié — FAIT).** Résout la dette « recalibration à chaque lecture »
+    (devenue bloquante : boots > 5 min sous l'ordonnanceur avec D3b). `td_read_track` suit le cylindre courant
+    (`TD_CURCYL`, fiable ssi `TD_CYLVALID`) et steppe le **delta** vers la cible (IN/OUT selon le signe) au lieu de
+    recalibrer à 0 à chaque lecture ; recalibration (step OUT jusqu'à DSKTRACK0, cap 85) SEULEMENT si position
+    inconnue. Corrige PROPREMENT le bug C (lire après un seek lisait la mauvaise piste) : le delta ramène la tête au
+    bon cylindre. Bug attrapé en route : `.rd_settle` clobbait **d3** (que le nouveau code utilise pour le cylindre
+    cible) → `TD_CURCYL` stocké faux → le seek suivant allait au mauvais cylindre (M6X lisait bien mais M6Z/D1/D2
+    décalés d'1) ; fix : `.rd_settle` compte en d0. Preuve : à **WAIT=90** (impossible avant — il fallait 280) toute
+    la suite disque est correcte (M6X TRACK=0002, M6Z, D1, D2, CBOOT/M6Y, D3A, **D3B**, M3F, 0 FAILED). RED
+    `TD_NO_CYLTRACK` (force la recalibration à chaque lecture = ancien comportement) → D3B absent à WAIT=90 (trop
+    lent) → isole le GAIN de vitesse. Re-vérif correction : RED `SEEK_NOSTEP` → M6X TRACK=0000, « M6X SEEK OK »
+    absent (seek toujours RED-prouvé). COOP (WAIT=90) + CTRL-NODISK (seek non atteint sans disque). checksum GREEN
+    `0xC422E669`. DETTE restante : pas d'invalidation sur disk-change (eject/swap réel + recal périodique = M7).
+    PROCHAIN : D3c (dos Open/Read/Close user-facing via packets).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

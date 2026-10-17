@@ -238,8 +238,8 @@ trackdisk_initfunc:
 ; DMA WORDSYNC d'une piste ; poll INTREQR DSKBLK avec timeout (jamais de hang).
 ; N'écrit QUE CIA-B PRB/DDRB (ports) -> les timers CIA-B (unité MICROHZ/M7a) ne sont pas touchés.
 ; B2b : td_read_track(d0 = n° de piste) seek d'abord vers la piste ; td_read_track0 = lit la piste 0 (wrapper pour
-; les appelants existants : M6U/M6V, BeginIO). piste = cylindre*2 + face. C : la recalibration est TOUJOURS faite
-; (lecture depuis une position connue) -> td_read_track0 lit la piste 0 correctement même après un seek précédent.
+; les appelants existants : M6U/M6V, BeginIO). piste = cylindre*2 + face. CYLINDER-TRACKING : on suit TD_CURCYL et on
+; steppe le DELTA vers la cible (recalibration à 0 seulement si TD_CYLVALID==0) -> correct ET rapide (cf. .rd_seek).
 td_read_track0:
         moveq   #0,d0                 ; piste 0
 td_read_track:
@@ -274,35 +274,59 @@ td_read_track:
         moveq   #0,d0
         bra     .rd_ret
 .rd_seek:
-        ; --- seek vers la piste d6 : recalibration cylindre 0 (step OUT jusqu'à DSKTRACK0) + step IN + side-select ---
-        ; Recalibration TOUJOURS effectuée (y compris piste 0) : on lit toujours depuis une position CONNUE, quelle
-        ; que soit la position laissée par une lecture précédente (ex. le strap lit la piste 0 APRÈS que M6X ait
-        ; seeké au cylindre 1 — sans recalibration on lirait la mauvaise piste SILENCIEUSEMENT). C'est le « vrai
-        ; fix » promis en C : correctness > performance (un vrai lecteur mémoriserait le cylindre courant et
-        ; stepperait le delta ; on recalibre à chaque lecture — correct, juste plus lent). Le cap 85 évite un
-        ; busy-loop infini SANS lecteur (DSKTRACK0 jamais asserté). Polarités DSKDIREC/DSKSIDE validées par M6X.
-        move.w  #85,d2               ; cap de recalibration (évite de steper à l'infini si polarité fausse / pas de lecteur)
+        ; --- seek vers la piste d6 avec SUIVI DU CYLINDRE (cylinder-tracking) ---
+        ; On mémorise le cylindre courant (TD_CURCYL, fiable ssi TD_CYLVALID) et on steppe le DELTA vers la cible
+        ; (IN si plus profond, OUT si plus près de 0) au lieu de recalibrer à zéro à CHAQUE lecture. Recalibration
+        ; (step OUT jusqu'à DSKTRACK0, cap 85) SEULEMENT si la position est inconnue. Corrige PROPREMENT le bug C
+        ; (lire la piste 0 après un seek lisait la mauvaise piste) : le delta ramène la tête au bon cylindre quelle
+        ; que soit sa position. Beaucoup plus rapide (pas 85 pas par lecture) -> débloque le boot disquette sous
+        ; l'ordonnanceur. Side-select indépendant du cylindre. DETTE vraie-A500 : pas d'invalidation sur disk-change
+        ; (position supposée persistante ; OK sous FS-UAE, à revoir pour l'eject/swap réel + recal périodique).
+        move.w  d6,d3               ; d3 = cylindre cible = piste / 2
+        lsr.w   #1,d3
+                ifne    TD_NO_CYLTRACK
+        clr.b   TD_CYLVALID         ; RED : force la recalibration à CHAQUE lecture (ancien comportement lent)
+                endc
+        tst.b   TD_CYLVALID         ; position connue ?
+        bne.s   .rd_known
+        move.w  #85,d2              ; recalibration : step OUT jusqu'à DSKTRACK0 (cap 85)
 .rd_recal:
-        btst    #DSKB_TRACK0,CIAA_PRA_HW   ; tête sur la piste 0 ?
-        beq.s   .rd_seekin
-        move.b  #$77,CIAB_PRB        ; direc OUT (bit1=1), step=1
-        move.b  #$76,CIAB_PRB        ; step=0 : le front descendant déclenche un pas
-        move.b  #$77,CIAB_PRB        ; step=1
+        btst    #DSKB_TRACK0,CIAA_PRA_HW
+        beq.s   .rd_recdone
+        move.b  #$77,CIAB_PRB       ; direc OUT (bit1=1), step=1
+        move.b  #$76,CIAB_PRB       ; step=0 : front descendant = un pas
+        move.b  #$77,CIAB_PRB       ; step=1
         bsr     .rd_settle
         dbra    d2,.rd_recal
-.rd_seekin:
+.rd_recdone:
+        clr.w   TD_CURCYL           ; position connue = cylindre 0
+        st      TD_CYLVALID
+.rd_known:
                 ifeq    SEEK_NOSTEP
-        move.w  d6,d2
-        lsr.w   #1,d2               ; cylindre cible = piste / 2
-        beq.s   .rd_side
-.rd_stepin:
-        move.b  #$75,CIAB_PRB       ; direc IN (bit1=0), step=1
-        move.b  #$74,CIAB_PRB       ; step=0 : pas vers l'intérieur
-        move.b  #$75,CIAB_PRB       ; step=1
+        move.w  TD_CURCYL,d2
+        sub.w   d3,d2               ; d2 = courant - cible
+        beq.s   .rd_side            ; déjà sur le bon cylindre
+        bmi.s   .rd_stepin          ; courant < cible -> stepper IN
+.rd_stepout:                        ; courant > cible -> stepper OUT (vers 0) d2 fois
+        move.b  #$77,CIAB_PRB       ; direc OUT, step=1
+        move.b  #$76,CIAB_PRB
+        move.b  #$77,CIAB_PRB
         bsr     .rd_settle
         subq.w  #1,d2
-        bne.s   .rd_stepin
-                endc                ; RED SEEK_NOSTEP : pas de step-in -> reste à la piste 0
+        bne.s   .rd_stepout
+        bra.s   .rd_seekdone
+.rd_stepin:
+        neg.w   d2                  ; |delta|
+.rd_stepin_l:
+        move.b  #$75,CIAB_PRB       ; direc IN (bit1=0), step=1
+        move.b  #$74,CIAB_PRB
+        move.b  #$75,CIAB_PRB
+        bsr     .rd_settle
+        subq.w  #1,d2
+        bne.s   .rd_stepin_l
+.rd_seekdone:
+        move.w  d3,TD_CURCYL        ; position = cible
+                endc                ; RED SEEK_NOSTEP : pas de step (ni MAJ TD_CURCYL) -> reste sur place
 .rd_side:
         move.b  #$77,CIAB_PRB       ; face 0 (DSKSIDE=1, bit2=1 ; piste paire)
         btst    #0,d6
@@ -346,9 +370,9 @@ td_read_track:
         move.b  #PRB_OFF,CIAB_PRB    ; moteur off + déselect
         rts
 .rd_settle:
-        move.l  #$00008000,d3        ; délai de stabilisation du pas (settle ; préserve d2 = compteur de pas)
-.rd_sloop:
-        subq.l  #1,d3
+        move.l  #$00008000,d0        ; délai de stabilisation du pas (settle). Compteur en d0 (libre dans le seek) :
+.rd_sloop:                           ; préserve d2 (compteur de pas) ET d3 (cylindre cible du cylinder-tracking).
+        subq.l  #1,d0
         bne.s   .rd_sloop
         rts
 
