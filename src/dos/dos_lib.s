@@ -18,6 +18,10 @@
                 include "dospkt.i"       ; D3c : FileHandle / DosPacket / ACTION_* / DeviceNode / PR_MSGPORT
 
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
+                xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
+                xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
+
+LS_LOADMAX      EQU 16384            ; buffer de lecture LoadSeg (>= taille d'un exécutable hunk ; cf. LS_FILEMAX)
 
 ; --- ROMTag dos.library (scanné par build_reslist) ---
         EVEN
@@ -38,7 +42,8 @@ dos_inittab:
         dc.l    dos_datatab              ; dataTable (InitStruct)
         dc.l    dos_initfunc             ; initFunc
 ; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. D3c : Open(-30,v5)/Close(-36,v6)/Read(-42,v7) implémentés
-; (via packets vers le file-handler). Les autres vecteurs 8..31 pointent sur dos_null (non impl.).
+; (via packets vers le file-handler). LoadSeg(-150,v25)/UnLoadSeg(-156,v26) composent Open/Read + ls_load_hunks.
+; Les autres vecteurs pointent sur dos_null (non impl.).
 dos_vectors:
         dc.l    dos_open                 ; 1 : LVO -6  (Open LIBRAIRIE : OpenCnt++)
         dc.l    dos_close                ; 2 : LVO -12 (Close LIBRAIRIE)
@@ -47,7 +52,15 @@ dos_vectors:
         dc.l    dos_fn_open              ; 5 : LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
         dc.l    dos_fn_close             ; 6 : LVO -36 Close(fh d1)
         dc.l    dos_fn_read              ; 7 : LVO -42 Read(fh d1, buf d2, len d3) -> octets
-        dcb.l   24,dos_null              ; 8..31 : LVO -48..-186 (Write, Lock, IoErr, DeviceProc... non impl.)
+        dcb.l   17,dos_null              ; 8..24 : LVO -48..-144 (Write, Lock, IoErr, CreateProc... non impl.)
+                ifeq    LOADSEG_LVO_UNWIRED
+        dc.l    dos_fn_loadseg           ; 25 : LVO -150 LoadSeg(name d1) -> BPTR seglist
+                endc
+                ifne    LOADSEG_LVO_UNWIRED
+        dc.l    dos_null                 ; RED LOADSEG_LVO_UNWIRED : LoadSeg non câblé -> jsr -150 renvoie 0
+                endc
+        dc.l    dos_fn_unloadseg         ; 26 : LVO -156 UnLoadSeg(seglist d1)
+        dcb.l   5,dos_null               ; 27..31 : LVO -162..-186 (non impl.)
         dc.l    dos_DateStamp            ; 32 : LVO -192
         dc.l    -1
 dos_datatab:
@@ -212,6 +225,78 @@ dos_fn_close:
         jsr     LVO_FREEMEM(a6)
         moveq   #-1,d0                  ; DOSTRUE
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; --- LoadSeg / UnLoadSeg (vecteurs LVO -150 / -156) : chargement d'exécutable hunk VIA LES VRAIS Open/Read ---
+; Appelées depuis un PROCESS (comme Open/Read : dos_sendpkt utilise ThisTask->pr_MsgPort comme reply port).
+
+; LoadSeg(name d1 [C-string]) -> d0 = BPTR seglist | 0. Ouvre le fichier via dos Open (-30, MODE_OLDFILE), le lit
+; ENTIER via dos Read (-42, boucle jusqu'à EOF ; le file-handler est séquentiel) dans un buffer AllocMem'd, le parse
+; (ls_load_hunks : hunks CODE/DATA/BSS + relocations RELOC32 -> seglist BPTR), referme (-36), libère le buffer. Portée
+; milestone (cf. Lemmings) : charge NOS exécutables hunk via le vrai chemin LVO ; whole-file bufferisé (<= LS_LOADMAX,
+; pas de streaming), handler OFS DF0: seul -> ne suffit PAS à exécuter du logiciel commercial (Lock/Seek/Examine/Write,
+; expansion.library, streaming... manquent). a4 = DosBase (préservé par Open/Read/Close/ls_load_hunks/AllocMem).
+dos_fn_loadseg:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a4                  ; a4 = DosBase (survit à tous les appels)
+        move.l  #MODE_OLDFILE,d2       ; Open(name d1 [déjà posé], mode d2 = ACTION_FINDINPUT)
+        bsr     dos_fn_open            ; d0 = BPTR fh | 0 ; a6 restauré = DosBase
+        move.l  d0,d7                  ; d7 = BPTR fh
+        beq     .ls_fail0
+        move.l  ($4).w,a6              ; SysBase pour AllocMem
+        move.l  #LS_LOADMAX,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ls_close              ; pas de RAM -> referme fh, 0
+        move.l  d0,a2                  ; a2 = buffer de lecture
+        moveq   #0,d5                  ; d5 = total lu
+.ls_rloop:
+        move.l  #LS_LOADMAX,d6
+        sub.l   d5,d6                  ; restant
+        ble.s   .ls_rdone              ; buffer plein -> stop
+        move.l  a4,a6                  ; Read via DosBase
+        move.l  d7,d1                  ; fh
+        move.l  a2,d2
+        add.l   d5,d2                  ; buf + total (le handler avance HS_POS)
+        move.l  d6,d3                  ; restant
+        bsr     dos_fn_read            ; d0 = octets lus (0 = EOF)
+        tst.l   d0
+        ble.s   .ls_rdone              ; 0 (EOF) ou <0 (err) -> stop
+        add.l   d0,d5
+        bra.s   .ls_rloop
+.ls_rdone:
+        move.l  ($4).w,a6              ; ls_load_hunks attend a6 = SysBase
+        move.l  a2,a0                  ; buffer
+        move.l  d5,d0                  ; taille lue
+        jsr     ls_load_hunks          ; d0 = BPTR seglist | 0 (loadseg.o loin -> jsr)
+        move.l  d0,d6                  ; d6 = seglist
+        move.l  a2,a1                  ; libère le buffer
+        move.l  #LS_LOADMAX,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  a4,a6                  ; referme fh via DosBase
+        move.l  d7,d1
+        bsr     dos_fn_close
+        move.l  d6,d0                  ; renvoie seglist
+        bra.s   .ls_ret
+.ls_close:
+        move.l  a4,a6
+        move.l  d7,d1
+        bsr     dos_fn_close
+.ls_fail0:
+        moveq   #0,d0
+.ls_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; UnLoadSeg(seglist d1 [BPTR]) -> d0 = 0. Libère la chaîne de segments (dos_unloadseg : d0 = BPTR, a6 = SysBase).
+dos_fn_unloadseg:
+        move.l  a6,-(sp)
+        move.l  d1,d0                  ; d0 = BPTR seglist
+        move.l  ($4).w,a6             ; SysBase (FreeMem)
+        jsr     dos_unloadseg          ; (loadseg.o loin -> jsr) ; d0=0 -> no-op
+        moveq   #0,d0
+        move.l  (sp)+,a6
         rts
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom, alloue RootNode + DosInfo séparément

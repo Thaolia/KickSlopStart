@@ -2292,6 +2292,14 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #3,d0                ; pri 3 (sous le client D3c)
         move.l  #D3_STK,d1
         jsr     proc_create
+        ; D3e : client qui charge « D3DTest » via le VRAI vecteur LVO LoadSeg(-150) de dos.library (qui compose
+        ; Open/Read/Close + ls_load_hunks EN INTERNE) puis UnLoadSeg(-156). Prouve LoadSeg par vecteur LVO ; d3d
+        ; (load inline) reste la baseline indépendante de la couche en-dessous -> RED LOADSEG_LVO_UNWIRED isole d3e.
+        lea     d3e_cname(pc),a0
+        lea     d3e_client(pc),a1
+        moveq   #2,d0                ; pri 2 (sous le client D3d)
+        move.l  #D3_STK,d1
+        jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2635,6 +2643,38 @@ d3d_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .q_block
+
+; d3e_client : charge « D3DTest » via le VRAI vecteur LVO LoadSeg(-150) de dos.library (qui ouvre/lit/parse/reloc
+; EN INTERNE via Open/Read), prouve un seglist non nul (« D3E LOADSEG LVO OK »), puis UnLoadSeg(-156). Ne RE-exécute
+; pas le programme (d3d le fait déjà) -> pas de double marqueur. a6 = SysBase à l'entrée (corps de process).
+d3e_client:
+        move.l  ($4).w,a6
+        lea     dos_libname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq.s   .e_block
+        move.l  d0,a4                ; a4 = DosBase
+        move.l  a4,a6
+        lea     d3d_fname(pc),a0     ; « d3dtest » (même exécutable que d3d, prouvé chargeable)
+        move.l  a0,d1
+        jsr     DOS_LVO_LOADSEG(a6)  ; -150 : ouvre+lit+parse hunk+reloc via Open/Read -> BPTR seglist | 0
+        tst.l   d0
+        beq.s   .e_closelib          ; RED LOADSEG_LVO_UNWIRED : -150 = dos_null -> 0 -> pas de marqueur
+        move.l  d0,d7                ; d7 = BPTR seglist (non nul = chargé+relocalisé via le vecteur LVO)
+        lea     msg_d3e_loadseg(pc),a0
+        bsr     ser_puts             ; « D3E LOADSEG LVO OK »
+        move.l  a4,a6
+        move.l  d7,d1
+        jsr     DOS_LVO_UNLOADSEG(a6) ; -156 : libère le seglist
+.e_closelib:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+.e_block:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .e_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -3552,6 +3592,10 @@ d3d_cname:
         dc.b    "dos.cmdclient",0
 d3d_fname:
         dc.b    "d3dtest",0
+d3e_cname:
+        dc.b    "dos.loadsegclient",0
+msg_d3e_loadseg:
+        dc.b    "D3E LOADSEG LVO OK (dos.library LoadSeg -150: file opened+read+hunk-parsed+relocated via real LVO -> seglist; UnLoadSeg -156)",13,10,0
         even
 e1_hname:
         dc.b    "con.handler",0

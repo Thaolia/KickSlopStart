@@ -496,6 +496,19 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (D3D + non-rég D1/D2/D3A/D3B/D3C/M3F, 0 FAILED) + RED + CTRL-NODISK + COOP. Exécutable `D3DTest` écrit sur l'ADF
     (mk_boot_adf.sh). **Cible « exécuter une commande » ATTEINTE.** Différé (E/F) : CLI interactif, bootstrap réel
     (Initial CLI, startup-sequence, console, requesters), lectures incrémentales OFS, Write/Lock/Seek.
+  - **D3e — LoadSeg / UnLoadSeg via les VRAIS vecteurs LVO (FAIT).** `dos_lib.s` : `dos_fn_loadseg` (vecteur 25 →
+    **LVO -150**) + `dos_fn_unloadseg` (vecteur 26 → **LVO -156**). LoadSeg ouvre via le vrai `Open`(-30, MODE_OLDFILE),
+    lit ENTIER via le vrai `Read`(-42, boucle jusqu'à EOF ; handler séquentiel) dans un buffer, parse via `ls_load_hunks`
+    (hunks + reloc → seglist BPTR), referme via `Close`(-36). Scinde le `dcb.l 24` de la jump table en 17/LoadSeg/
+    UnLoadSeg/5 (canary **M6D** : DateStamp -192 reste vecteur 32 → table non décalée). Preuve **D3E LOADSEG LVO OK** :
+    `d3e_client` (process pri 2) charge « D3DTest » par `jsr DOS_LVO_LOADSEG(a6)` → seglist non nul → UnLoadSeg. `d3d_client`
+    (load inline) RESTE la baseline indépendante (advisor : ne pas refactorer un test prouvé — add+prove) ; RED
+    `LOADSEG_LVO_UNWIRED` (-150 → dos_null) → D3E absent, **D3D baseline vert** → isole le câblage du vecteur LVO. GREEN
+    (ADF) : M6D + D3C + D3D + D3E + GAMEPORT/M6R/GP-LIVE + DISK VALID + KEYMAP + F1BOOTOK + M7A/M7E/M7F, 0 FAILED ; md5
+    `8d9517af1ea696af8334e35b171c00ac`. **Portée (révélée par le test Lemmings)** : charge NOS exécutables hunk via le
+    vrai chemin LVO ; whole-file bufferisé (≤ 16 Ko, pas de streaming), handler OFS DF0: seul → ne suffit PAS à exécuter
+    du logiciel commercial (manquent `Lock`/`Seek`/`Examine`/`Write`, `expansion.library`, streaming ; et boot.s est un
+    harnais de dev). `sh_exec_cmd` (E3) garde son load inline (non touché : ne pas risquer E3/F1/F2b).
 - **E — CLI interactif (sur série, via FileHandles DOS).** Décision archi (advisor + firewall) : le canal IO est la
   SÉRIE (tout le harnais de preuve est série ; pas de console.device/keyboard ; « Bootstrap réel » = là où vivent
   console.device/keyboard/requesters). Le CLI fait TOUT son IO via des FileHandles DOS (`pr_CIS`/`pr_COS`) servis par

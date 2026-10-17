@@ -95,6 +95,14 @@ DOSFALSE         EQU 0
 DOS_LVO_OPEN     EQU -30           ; Open(name d1, mode d2) -> BPTR FileHandle
 DOS_LVO_CLOSE    EQU -36           ; Close(fh d1)
 DOS_LVO_READ     EQU -42           ; Read(fh d1, buf d2, len d3) -> octets
+DOS_LVO_LOADSEG  EQU -150          ; LoadSeg(name d1) -> BPTR seglist | 0 (ouvre+lit+parse hunk+reloc via Open/Read)
+DOS_LVO_UNLOADSEG EQU -156         ; UnLoadSeg(seglist d1) -> libère la chaîne de segments
+
+; LOADSEG_LVO_UNWIRED=1 (RED LoadSeg) : le vecteur LoadSeg (-150) pointe sur dos_null au lieu de dos_fn_loadseg
+; -> jsr -150(a6) renvoie 0 -> le client d3e n'obtient pas de seglist -> « D3E LOADSEG LVO OK » + le run du
+; programme chargé absents. d3d_client (load inline Open/Read/ls_load_hunks) reste VERT -> isole le câblage du
+; vecteur LVO LoadSeg (prouve que LoadSeg est bien atteignable via -150, pas seulement via la machinerie interne). Défaut 0.
+LOADSEG_LVO_UNWIRED EQU 0
 
 ; D3A_NO_REPLY=1 (RED D3a) : le handler echo ne fait PAS ReplyMsg -> le driver reste bloqué sur WaitPort ->
 ; « D3A ... OK » jamais émis. Isole l'aller-retour packet (le chemin PutMsg->serve->ReplyMsg->WaitPort). Défaut 0.
