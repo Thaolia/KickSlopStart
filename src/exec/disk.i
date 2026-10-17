@@ -48,7 +48,10 @@ TD_NO_DMA EQU 0
 MFM_MASK      EQU $55555555   ; masque des bits de DONNÉES (les bits d'horloge MFM sont en $AAAAAAAA)
 MFM_SECTSZ    EQU 512         ; octets de données décodées par secteur
 MFM_NSECT     EQU 11          ; secteurs par piste (DD)
-MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632 : buffer des secteurs décodés (indexés par numéro logique)
+MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632 : buffer des secteurs décodés (indexés par numéro logique) = octets/piste
+; --- géométrie DD (M6z : CMD_READ multi-piste) ---
+TD_NTRACKS    EQU 160                    ; 80 cylindres x 2 faces (pistes 0..159)
+TD_DISKBYTES  EQU TD_NTRACKS*MFM_SECBUF  ; 901120 : taille totale du disque DD (garde de borne CMD_READ)
 ; offsets dans un secteur MFM depuis info_odd (format public Amiga/ADF-FAQ ; verrouillé par round-trip Python) :
 ;   +0 info(odd,even,2 longs) +8 label(4 odd+4 even,8 longs) +40 hdrchk(odd,even) +48 datachk(odd,even)
 ;   +56 data_odd(128 longs=512o) +568 data_even(128 longs=512o) ; fin du secteur à +1080
@@ -72,3 +75,10 @@ TD_READ_NOCMD EQU 0
 ; SEEK_NOSTEP=1 (RED B2b) : td_read_track saute le step-in -> la tête reste à la piste 0 -> lire la piste 2 renvoie
 ; en fait la piste 0 -> le n° de piste décodé != 2 -> « M6X TRACKDISK SEEK OK » absent. Isole le seek. Défaut 0.
 SEEK_NOSTEP EQU 0
+
+; TD_NOSEEK=1 (RED M6z) : BeginIO CMD_READ ignore la composante PISTE de l'offset et lit TOUJOURS la piste 0 (le
+; secteur-dans-piste et l'octet-dans-piste restent corrects -> la lecture aboutit, pas de hors-borne). Une lecture
+; du root block (bloc 880 = piste 80) renvoie alors la piste 0 (bootblock) -> « DOS\0 » != T_SHORT ; une lecture
+; spanning renvoie des secteurs de la piste 0 -> marqueurs faux -> « M6Z ... OK » absent. Isole le mapping
+; offset->piste SANS crash (discipline RED M6D_BAD_BPTR : la lecture aboutit, c'est la comparaison qui échoue). Défaut 0.
+TD_NOSEEK EQU 0

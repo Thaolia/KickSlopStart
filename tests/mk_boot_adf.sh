@@ -3,7 +3,9 @@
 # Formate un ADF DD (xdftool), assemble tests/bootblock_c.s en binaire brut (vasm -Fbin), puis patche le
 # bootblock (checksum additif valide + boot code custom) via tests/patch_bootblock.py avec round-trip.
 # Sortie : assets/boot_c.adf (NON committé — régénérable). L'ADF reste un filesystem OFS valide (la piste 2
-# reste lisible par M6X, le secteur 0 garde le magic « DOS\0 » lu par M6W).
+# reste lisible par M6X, le secteur 0 garde le magic « DOS\0 » lu par M6W). patch_bootblock.py pose aussi des
+# marqueurs spanning (« SPAN0010 »/« SPAN0011 » en tête des blocs libres 10/11 = frontière piste 0/1) consommés
+# par la preuve M6Z (lecture CMD_READ multi-piste, prérequis D).
 #
 # Usage : tests/mk_boot_adf.sh [chemin_sortie.adf]
 set -euo pipefail

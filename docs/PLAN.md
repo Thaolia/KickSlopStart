@@ -383,6 +383,21 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     régénérable : `tests/mk_boot_adf.sh` (xdftool format + `tests/bootblock_c.s` assemblé en binaire brut + `tests/patch_bootblock.py`
     qui pose le checksum et round-trip la bootabilité ; sortie `assets/boot_c.adf`, gitignorée). PROCHAIN : D (vraie dos.library,
     packets) — prérequis = wiring `CMD_READ` offset->piste multi-piste pour lire le filesystem au-delà de la piste 0.
+  - **M6z — CMD_READ MULTI-PISTE (prérequis D, FAIT).** `trackdisk_beginio` (B4 : piste 0 seulement) devient multi-piste :
+    l'offset octet -> (piste, secteur) via `bloc=offset/512`, `piste=bloc/11` (`DIVU #11`), `secteur=bloc%11` ; la boucle lit
+    CHAQUE piste touchée (`td_read_track`+`td_decode_track`, sectorbuf réutilisé), copie jusqu'à la fin de piste et avance -> une
+    requête qui TRAVERSE une frontière de piste est servie en plusieurs lectures (dos pourra lire le filesystem au-delà de la piste 0).
+    Contrat trackdisk honoré : `io_Offset`/`io_Length` multiples de TD_SECTOR (512) -> garde `IOERR_BADLENGTH` ; garde de borne
+    `TD_DISKBYTES` (1760*512). Registres : la boucle garde son état en d2-d7/a2-a5 (tous préservés par `td_read_track`
+    [sauve d2/d3/d6/a2, n'écrit pas le reste] ET `td_decode_track` [sauve d2-d7/a2-a5]). Preuve série **M6Z** = 2 lectures via
+    `BeginIO` (le vrai chemin device) : (1) root block @ **bloc 880 = piste 80** (cyl 40) -> type primaire +0 == 2 (T_SHORT) ET
+    type secondaire +508 == 1 (ST_ROOT) — un mauvais mapping renverrait la piste 0 (bootblock) ; (2) lecture **SPANNING** offset
+    `10*512` length 1024 = blocs 10+11 -> TRAVERSE la frontière piste 0/1, assemble « SPAN0010 » (bloc 10 = piste 0 sect 10) +
+    « SPAN0011 » (bloc 11 = piste 1 sect 0) posés par `patch_bootblock.py` dans des blocs libres (round-trip Python). RED
+    `TD_NOSEEK` (lit toujours la piste 0, secteur/octet corrects -> lecture aboutit sans crash) -> les deux contrôles échouent ->
+    M6Z absent (isole le mapping offset->piste, discipline M6D_BAD_BPTR). GREEN-BOOT : M6Z + non-rég (M6U/V/W/X, CBOOT/M6Y, M7A/M7L,
+    set M3F..M7F complet, 0 FAILED). RED : M6Z absent, reste intact. CTRL-NODISK : M6Z gaté (d4), aucun timeout ajouté, M6R+M7A ok.
+    PROCHAIN : dos.library proprement dite (modèle packets BCPL / `LoadSeg` / handlers / OFS) — à re-décomposer + checkpoint user.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

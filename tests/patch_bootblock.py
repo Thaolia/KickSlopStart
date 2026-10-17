@@ -13,6 +13,13 @@ BB_LEN = 1024
 BB_ENTRY = 12          # offset du boot code
 CSUM_OFF = 4           # offset du champ checksum
 
+# Marqueurs spanning (M6z) : 8 octets en tête des blocs logiques 10 et 11. Le bloc 10 est le DERNIER secteur de
+# la piste 0, le bloc 11 le PREMIER de la piste 1 -> une lecture CMD_READ de l'offset 10*512 sur 1024 octets
+# TRAVERSE la frontière piste 0/1 et doit assembler les deux pistes. Blocs libres (zéros) sur un OFS vide : les
+# écrire n'altère ni le bootblock (0-1) ni le root block (880) ; le filesystem n'est pas monté par M6z.
+SECTOR = 512
+SPAN_BLOCKS = {10: b"SPAN0010", 11: b"SPAN0011"}
+
 
 def ones_complement_sum(block):
     """Somme à retenue circulaire des 256 longs d'un bloc de 1024 o."""
@@ -57,6 +64,18 @@ def main():
         sys.exit("ECHEC round-trip : le bootblock patché n'est pas bootable")
 
     img[:BB_LEN] = bb
+
+    # marqueurs spanning (M6z) : posés sur des blocs libres, vérifiés après écriture
+    for blk, mark in SPAN_BLOCKS.items():
+        off = blk * SECTOR
+        if any(img[off:off + len(mark)]):
+            sys.exit(f"ANOMALIE : bloc {blk} non libre avant marqueur (0x{img[off:off+len(mark)].hex()})")
+        img[off:off + len(mark)] = mark
+    for blk, mark in SPAN_BLOCKS.items():
+        off = blk * SECTOR
+        if img[off:off + len(mark)] != mark:
+            sys.exit(f"ECHEC round-trip marqueur bloc {blk}")
+
     open(adf_out, "wb").write(img)
 
     # contrôle négatif : l'ADF formaté d'origine NE doit PAS être bootable (checksum=0)
@@ -65,6 +84,7 @@ def main():
     print(f"boot code     : {len(code)} o -> offset +{BB_ENTRY}")
     print(f"checksum posé : 0x{csum:08X}")
     print(f"patché bootable : {is_bootable(bb)}  (attendu True)")
+    print(f"marqueurs spanning : blocs {sorted(SPAN_BLOCKS)} posés + round-trip OK")
     print(f"ADF formaté d'origine bootable : {orig_bootable}  (attendu False)")
     print(f"écrit : {adf_out} ({len(img)} o)")
     if orig_bootable:

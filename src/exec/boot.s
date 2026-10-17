@@ -656,6 +656,82 @@ m6w_done:
         jsr     LVO_FREEMEM(a6)
 m6x_done:
 
+        ; --- M6z : CMD_READ MULTI-PISTE (prérequis D) — SEULEMENT si disque présent (d4=1) ---
+        ; Deux lectures via BeginIO (le vrai chemin device que dos appellera) prouvent le mapping offset->piste :
+        ;  (1) root block @ bloc 880 = piste 80 (cyl 40) -> type primaire +0 == 2 (T_SHORT) ET type secondaire
+        ;      +508 == 1 (ST_ROOT). Un mauvais mapping renverrait la piste 0 (bootblock « DOS\0 ») -> échoue.
+        ;  (2) lecture SPANNING : offset 10*512, length 1024 = blocs 10+11 -> TRAVERSE la frontière piste 0/1.
+        ;      Le bloc 10 (piste 0, secteur 10) porte « SPAN0010 », le bloc 11 (piste 1, secteur 0) « SPAN0011 »
+        ;      (posés par patch_bootblock.py). Les deux marqueurs présents <=> la boucle a lu DEUX pistes et les
+        ;      a assemblées. RED TD_NOSEEK (lit toujours la piste 0) -> les deux contrôles échouent -> M6Z absent.
+        tst.l   d4
+        beq     m6z_done
+        lea     EB_DEVICELIST(a6),a0
+        lea     trackdisk_test_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     m6z_done
+        move.l  d0,a2                ; a2 = trackdisk base
+        move.l  #48+1024,d0          ; IOStdReq (48) + databuf (1024 = lecture spanning 2 blocs)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     m6z_done
+        move.l  d0,a3                ; a3 = ioreq ; databuf = a3+48
+        move.l  a2,IO_DEVICE(a3)
+        move.w  #2,IO_COMMAND(a3)    ; CMD_READ
+        ; (1) root block @ bloc 880 (piste 80)
+        move.l  #512,36(a3)          ; IO_LENGTH = 512
+        lea     48(a3),a0
+        move.l  a0,40(a3)            ; IO_DATA = databuf
+        move.l  #880*512,44(a3)      ; IO_OFFSET = bloc 880 (piste 80, cyl 40)
+        move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK
+        move.l  a6,-(sp)             ; BeginIO via le vecteur -30
+        move.l  a2,a6
+        move.l  a3,a1
+        jsr     -30(a6)
+        move.l  (sp)+,a6
+        tst.b   IO_ERROR(a3)
+        bne     .m6z_free
+        cmp.l   #512,32(a3)          ; io_Actual == 512 ?
+        bne     .m6z_free
+        lea     48(a3),a0            ; databuf = root block
+        cmp.l   #2,(a0)              ; +0 == T_SHORT (0x00000002) ?
+        bne.s   .m6z_free
+        cmp.l   #1,508(a0)           ; +508 == ST_ROOT (0x00000001) ?
+        bne.s   .m6z_free
+        ; (2) lecture spanning piste 0/1 : blocs 10+11 (offset 10*512, length 1024)
+        move.l  #1024,36(a3)         ; IO_LENGTH = 1024
+        lea     48(a3),a0
+        move.l  a0,40(a3)            ; IO_DATA = databuf
+        move.l  #10*512,44(a3)       ; IO_OFFSET = bloc 10 (dernier secteur de la piste 0)
+        move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK
+        move.l  a6,-(sp)
+        move.l  a2,a6
+        move.l  a3,a1
+        jsr     -30(a6)
+        move.l  (sp)+,a6
+        tst.b   IO_ERROR(a3)
+        bne.s   .m6z_free
+        cmp.l   #1024,32(a3)         ; io_Actual == 1024 ?
+        bne.s   .m6z_free
+        lea     48(a3),a0           ; databuf : [0..511]=bloc 10 (piste 0), [512..1023]=bloc 11 (piste 1)
+        cmp.l   #$5350414E,(a0)      ; bloc 10 « SPAN » ?
+        bne.s   .m6z_free
+        cmp.l   #$30303130,4(a0)     ; bloc 10 « 0010 » ?
+        bne.s   .m6z_free
+        cmp.l   #$5350414E,512(a0)   ; bloc 11 « SPAN » (piste 1) ?
+        bne.s   .m6z_free
+        cmp.l   #$30303131,516(a0)   ; bloc 11 « 0011 » ?
+        bne.s   .m6z_free
+        lea     msg_m6z_ok(pc),a0
+        bsr     ser_puts             ; « M6Z TRACKDISK CMD_READ MULTI-TRACK OK »
+.m6z_free:
+        move.l  a3,a1
+        move.l  #48+1024,d0
+        jsr     LVO_FREEMEM(a6)
+m6z_done:
+
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
         ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
@@ -2264,6 +2340,8 @@ msg_m6x_track:
         dc.b    "M6X TRACK=",0
 msg_m6x_ok:
         dc.b    "M6X TRACKDISK SEEK OK (step/seek + side-select: read track 2, decoded sectors report track==2)",13,10,0
+msg_m6z_ok:
+        dc.b    "M6Z TRACKDISK CMD_READ MULTI-TRACK OK (offset->track: block 880 = root block @track 80; spanning read blocks 10+11 crosses track 0/1 boundary)",13,10,0
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (strap read DF0: bootblock and found NO bootable volume -> insert-disk; real 1.3 trigger: DOS-magic+additive-checksum invalid, or no disk)",13,10,0
 msg_m6s_ok:

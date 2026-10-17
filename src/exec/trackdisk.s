@@ -22,6 +22,7 @@
 NUMUNITS       EQU 4                 ; DF0..DF3
 IOERR_OPENFAIL EQU -1                ; OpenDevice a échoué
 IOERR_NOCMD    EQU -3                ; commande non supportée
+IOERR_BADLENGTH EQU -4               ; io_Offset/io_Length pas un multiple de la taille de secteur (M6z)
 TDU_UNIT0      EQU LIB_SIZE          ; 34 : début de l'aire des unités (placeholder, -> Unit+MsgPort en B2)
 TDU_UNITSZ     EQU 8                 ; octets par unité (placeholder)
 TDBASE_SIZE    EQU TDU_UNIT0+NUMUNITS*TDU_UNITSZ   ; 66 : Library + 4 aires d'unité
@@ -94,12 +95,19 @@ trackdisk_null:
         moveq   #0,d0
         rts
 
-; BeginIO(device a6, iorequest a1) : B4 — traite CMD_READ (lecture de secteurs logiques via td_read_track0 +
-; td_decode_track, copie vers io_Data). Autres commandes -> IOERR_NOCMD. ReplyMsg si la requête n'est PAS quick
-; (garde-fou B1 tenu : sinon DoIO attend pour toujours). Limité à la piste 0 (offset+length <= 11*512) tant que
-; le step/seek (B2b) n'existe pas. a6 = device base en entrée/sortie.
+; BeginIO(device a6, iorequest a1) : traite CMD_READ. Autres commandes -> IOERR_NOCMD. ReplyMsg si la requête
+; n'est PAS quick (garde-fou B1 tenu : sinon DoIO attend pour toujours). a6 = device base en entrée/sortie.
+; M6z (prérequis D) : lecture MULTI-PISTE. L'offset octet est converti en (piste, secteur-dans-piste) via
+; bloc = offset/512, piste = bloc/11, secteur = bloc%11 ; la boucle lit chaque piste touchée (td_read_track +
+; td_decode_track), copie jusqu'à la fin de piste, et avance -> une requête qui TRAVERSE une frontière de piste
+; est servie en plusieurs lectures (dos lira le filesystem au-delà de la piste 0). Contrat trackdisk : io_Offset
+; et io_Length multiples de TD_SECTOR (512) -> garde IOERR_BADLENGTH sinon ; garde de borne TD_DISKBYTES.
+; DETTE (à traiter quand dos s'appuiera sur ce chemin) : sectorbuf est MEMF_CLEAR une fois AVANT la boucle, pas
+; par itération, et on ne vérifie PAS le count de td_decode_track -> un secteur illisible dans une lecture
+; multi-piste renverrait des octets PÉRIMÉS de la piste précédente (pas 0 ni erreur). Sous-ensemble de la dette
+; « pas de gestion de secteur défectueux » déjà différée ; sans impact sur un disque propre (chaque secteur réécrit).
 trackdisk_beginio:
-        movem.l d2-d5/a2-a4,-(sp)
+        movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a2                ; a2 = ioreq
         clr.l   IO_ACTUAL(a2)
                 ifeq    TD_READ_NOCMD
@@ -111,55 +119,94 @@ trackdisk_beginio:
 .td_read:
         move.l  a6,a4                ; a4 = device base (sauvé ; a6 -> SysBase pour les appels exec)
         move.l  ($4).w,a6
-        bsr     td_read_track0       ; d0 = rawbuf chip | 0
-        move.l  d0,d3
-        bne.s   .td_haveraw
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)   ; pas de disque / lecture KO
+        move.l  IO_OFFSET(a2),d3     ; d3 = offset courant (octets ; avance par piste)
+        move.l  IO_LENGTH(a2),d2     ; d2 = longueur restante (octets)
+        moveq   #0,d4               ; d4 = octets transférés (io_Actual accumulé)
+        ; garde d'alignement : offset ET length multiples de TD_SECTOR (512) — contrat trackdisk
+        move.l  d3,d0
+        or.l    d2,d0
+        and.l   #MFM_SECTSZ-1,d0
+        beq.s   .td_aligned
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a2)
         bra     .td_restore
-.td_haveraw:
-        move.l  #512*11,d0
+.td_aligned:
+        ; garde de borne : offset+length <= taille disque
+        move.l  d3,d0
+        add.l   d2,d0
+        cmp.l   #TD_DISKBYTES,d0
+        bhi     .td_badrange
+        move.l  #MFM_SECBUF,d0       ; sectorbuf (une piste décodée), réutilisé à chaque itération
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,d4                ; d4 = sectorbuf
-        bne.s   .td_havebuf
-        move.l  d3,a1                ; plus de RAM -> libère rawbuf
-        move.l  #$1900*2,d0
+        tst.l   d0
+        beq     .td_nomem
+        move.l  d0,a3                ; a3 = sectorbuf
+        move.l  IO_DATA(a2),a5       ; a5 = destination (avance)
+.td_bio_loop:
+        tst.l   d2
+        beq     .td_done_ok          ; plus rien à lire -> succès
+        ; bloc logique -> (piste, secteur-dans-piste, octet-dans-piste)
+        move.l  d3,d0
+        lsr.l   #8,d0
+        lsr.l   #1,d0                ; d0 = bloc = offset / 512  (< 1760)
+        divu.w  #MFM_NSECT,d0        ; d0.w = piste (quotient) ; mot haut = secteur-dans-piste (reste)
+        move.l  d0,d1
+        clr.w   d1
+        swap    d1                   ; d1 = secteur-dans-piste (0..10)
+        and.l   #$FFFF,d0            ; d0 = piste (0..159)
+        lsl.l   #8,d1
+        add.l   d1,d1                ; d1 = secteur*512 = octet-dans-piste (lsl #9 interdit sur 68000)
+        move.l  d1,d6                ; d6 = octet-dans-piste (préservé pour la copie)
+        move.l  #MFM_SECBUF,d5       ; n = min(longueur restante, octets jusqu'à la fin de la piste)
+        sub.l   d6,d5                ; d5 = dispo jusqu'à la fin de la piste
+        cmp.l   d2,d5
+        bls.s   .td_n_ok
+        move.l  d2,d5                ; sinon n = longueur restante
+.td_n_ok:                           ; d5 = n (multiple de 512)
+                ifne    TD_NOSEEK
+        moveq   #0,d0               ; RED TD_NOSEEK : force la piste 0 -> lecture aboutit, mauvais contenu
+                endc
+        bsr     td_read_track        ; d0 = rawbuf chip | 0  (a6 = SysBase ; piste en d0)
+        tst.l   d0
+        beq     .td_noread           ; pas de disque / timeout
+        move.l  d0,d7                ; d7 = rawbuf
+        move.l  d0,a0
+        move.l  a3,a1
+        bsr     td_decode_track      ; décode la piste dans sectorbuf (count/track non requis ici)
+        move.l  d7,a1                ; libère rawbuf
+        move.l  #TD_RAWBYTES,d0
         jsr     LVO_FREEMEM(a6)
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)
-        bra     .td_restore
-.td_havebuf:
-        move.l  d3,a0
-        move.l  d4,a1
-        bsr     td_decode_track      ; décode la piste (secteurs rangés par n°)
-        move.l  IO_OFFSET(a2),d5     ; offset octet
-        move.l  IO_LENGTH(a2),d2     ; longueur octet
+        move.l  a3,a0                ; copie n octets : src = sectorbuf + octet-dans-piste, dst = a5
+        add.l   d6,a0
+        move.l  a5,a1
         move.l  d5,d0
-        add.l   d2,d0
-        cmp.l   #512*11,d0           ; offset+length dans la piste 0 ?
-        bhi     .td_badrange         ; hors piste 0 (seek = B2b) -> erreur
-        move.l  d4,a0
-        add.l   d5,a0                ; src = sectorbuf + offset
-        move.l  IO_DATA(a2),a1       ; dest = io_Data
-        move.l  d2,d0
-        lsr.l   #2,d0                ; octets -> longs (length multiple de 512)
-        beq.s   .td_copied
+        lsr.l   #2,d0                ; n/4 longs (n multiple de 512 -> de 4) ; n/4 <= 1408 < 65536
         subq.l  #1,d0
 .td_copy:
         move.l  (a0)+,(a1)+
         dbra    d0,.td_copy
-.td_copied:
-        move.l  d2,IO_ACTUAL(a2)     ; octets transférés
+        add.l   d5,a5                ; dst += n
+        add.l   d5,d3                ; offset += n
+        add.l   d5,d4                ; actual += n
+        sub.l   d5,d2                ; longueur restante -= n
+        bra     .td_bio_loop
+.td_done_ok:
+        move.l  d4,IO_ACTUAL(a2)     ; octets transférés
         clr.b   IO_ERROR(a2)
-        bra     .td_freebufs
+        bra.s   .td_freebuf
+.td_noread:
+        move.l  d4,IO_ACTUAL(a2)     ; octets transférés avant l'échec (0 si la 1re piste échoue)
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+.td_freebuf:
+        move.l  a3,a1                ; libère sectorbuf
+        move.l  #MFM_SECBUF,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .td_restore
 .td_badrange:
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
-.td_freebufs:
-        move.l  d4,a1                ; libère sectorbuf
-        move.l  #512*11,d0
-        jsr     LVO_FREEMEM(a6)
-        move.l  d3,a1                ; libère rawbuf
-        move.l  #$1900*2,d0
-        jsr     LVO_FREEMEM(a6)
+        bra.s   .td_restore
+.td_nomem:
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)
 .td_restore:
         move.l  a4,a6                ; restaure a6 = device base
 .td_reply:
@@ -171,7 +218,7 @@ trackdisk_beginio:
         jsr     LVO_REPLYMSG(a6)
         move.l  (sp)+,a6
 .td_bdone:
-        movem.l (sp)+,d2-d5/a2-a4
+        movem.l (sp)+,d2-d7/a2-a5
         rts
 trackdisk_abortio:
         moveq   #0,d0
