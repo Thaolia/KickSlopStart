@@ -569,10 +569,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     + E3 CMD RAN OK **sourcés du sous-rép**, + D1/D3D/e3cmd = lookups racine via le même driver = non-rég, 0 FAILED) ;
     RED `OFS_NO_SUBDIR` ('/' = char normal -> chemin entier cherché en racine -> introuvable -> F1BOOTOK/E3 absents,
     D1 OFS READ OK + E2 SHELL READY intacts). Clean-room : format OFS public + ADF de test (asset). AUCUNE lecture ROM.
-  - **À venir (reste de M6/M7+)** : input.device, console.device réel (rendu écran — canal de preuve à décider),
-    disk-validator (bitmap OFS), requesters Intuition (insert-disk cliquable), keymap complet (shift/ctrl/caps →
-    keymap.resource, + variante AZERTY). En F on remplace le handler console-série par un console.device SANS
-    toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
+  - **input.device — chaîne de handlers d'InputEvents (FAIT).** `src/exec/input.s` : device résident AUTOINIT
+    NT_DEVICE pri 40. `BeginIO` dispatche par io_Command : `IND_ADDHANDLER`/`IND_REMHANDLER` (Enqueue/Remove le
+    struct Interrupt du handler dans la chaîne triée par LN_PRI) ; `IND_WRITEEVENT` (parcourt la chaîne : chaque
+    handler reçoit a0=liste d'InputEvents, a1=is_Data, a5=is_Code, rend d0=liste pour le suivant). `IND_WRITEEVENT`
+    est le point d'injection PUBLIC (celui qu'Intuition utilise) -> la preuve en isolation exerce le MÉCANISME réel,
+    pas un mock. Preuve : OpenDevice (FindName) + 2 handlers pri 10/0 + `IND_WRITEEVENT` d'un RAWKEY ($34) -> « INPUT
+    OK » (handlers appelés dans l'ordre de pri + keycode relayé) ; RED `INPUT_NO_PROPAGATE` (chaîne non parcourue ->
+    marqueur absent, device + ADDHANDLER intacts). Le câblage clavier LIVE -> input.device -> console se fait en #3
+    (console.device = consommateur naturel d'IND_ADDHANDLER ; évite de re-toucher l'INT2). Clean-room : AutoDocs
+    input.device + includes NDK publics. AUCUNE lecture ROM.
+  - **À venir (reste de M6/M7+)** : console.device réel (rendu écran — canal de preuve à décider ; y brancher le
+    clavier via input.device), disk-validator (bitmap OFS), requesters Intuition (insert-disk cliquable), keymap
+    complet (shift/ctrl/caps → keymap.resource, + variante AZERTY). En F on remplace le handler console-série par un
+    console.device SANS toucher au binaire shell (l'IO passe déjà par FileHandles DOS).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

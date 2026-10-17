@@ -44,6 +44,8 @@
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
+INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
+INPUT_TESTBLK EQU 120         ; #2 : bloc de test input.device = ioreq(48)+h1(24)+h2(24)+event(22), arrondi pair
 ; D3b : bloc du fs-driver (une seule AllocMem, sous-parties long-alignées pour les BPTR)
 FSD_SP       EQU 0            ; StandardPacket (68)
 FSD_FH       EQU 68           ; FileHandle (44)
@@ -960,6 +962,76 @@ d2_done:
         lea     msg_f2bkbd(pc),a0
         bsr     ser_puts             ; « F2B KBD OK » (driver clavier live installé ; le CLI est pilotable au clavier)
 .f2b_nokbd:
+
+        ; --- input.device (#2) : OpenDevice (FindName) + IND_ADDHANDLER x2 (pri) + IND_WRITEEVENT -> chaîne ---
+        ; Prouve EN ISOLATION le cœur d'input.device : la chaîne de handlers triée par pri + la propagation d'un
+        ; InputEvent via IND_WRITEEVENT (point d'injection public, celui qu'Intuition utilise). Deux handlers à
+        ; pri 10 / 0 : l'ordre d'appel (h1 avant h2) prouve le tri ; le keycode relayé prouve la propagation.
+        clr.w   INPUT_SEQ
+        clr.w   INPUT_H1_ORD
+        clr.w   INPUT_H2_ORD
+        clr.w   INPUT_CODE
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1   ; FindName("input.device") (= ce que fait OpenDevice en interne)
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .input_done             ; pas d'input.device (ne devrait pas arriver) -> skip
+        move.l  d0,a2                   ; a2 = base input.device (survit aux BeginIO)
+        move.l  #INPUT_TESTBLK,d0       ; bloc RAM : ioreq(48) + h1(24) + h2(24) + event(22) -> structs writables
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .input_done
+        move.l  d0,a3                   ; a3 = bloc ; ioreq=+0, h1=+48, h2=+72, event=+96
+        lea     48(a3),a0               ; h1 : handler pri 10 (appelé 1er)
+        move.b  #10,LN_PRI(a0)
+        move.l  #input_test_h1,IS_CODE(a0)
+        lea     72(a3),a0               ; h2 : handler pri 0 (appelé 2e)
+        move.l  #input_test_h2,IS_CODE(a0)
+        lea     96(a3),a0               ; event : RAWKEY, code $34 ('v')
+        move.b  #IECLASS_RAWKEY,IE_CLASS(a0)
+        move.w  #$0034,IE_CODE(a0)
+        move.l  a2,IO_DEVICE(a3)
+        lea     48(a3),a0               ; ADDHANDLER h1
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a3)
+        move.l  a0,INP_IO_DATA(a3)
+        bsr     .input_beginio
+        lea     72(a3),a0               ; ADDHANDLER h2
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a3)
+        move.l  a0,INP_IO_DATA(a3)
+        bsr     .input_beginio
+        lea     96(a3),a0               ; WRITEEVENT event -> parcourt la chaîne
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a3)
+        move.l  a0,INP_IO_DATA(a3)
+        bsr     .input_beginio
+        cmp.w   #$0034,INPUT_CODE       ; keycode relayé par la chaîne ?
+        bne.s   .input_free
+        cmp.w   #1,INPUT_H1_ORD         ; h1 (pri 10) a tourné en 1er ?
+        bne.s   .input_free
+        cmp.w   #2,INPUT_H2_ORD         ; h2 (pri 0) a tourné en 2e ?
+        bne.s   .input_free
+        lea     msg_input_ok(pc),a0
+        bsr     ser_puts                ; « INPUT OK »
+.input_free:
+        lea     48(a3),a0               ; REMHANDLER h1 (nettoyage)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a3)
+        move.l  a0,INP_IO_DATA(a3)
+        bsr     .input_beginio
+        lea     72(a3),a0               ; REMHANDLER h2
+        move.w  #IND_REMHANDLER,IO_COMMAND(a3)
+        move.l  a0,INP_IO_DATA(a3)
+        bsr     .input_beginio
+        move.l  a3,a1
+        move.l  #INPUT_TESTBLK,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .input_done
+.input_beginio:                         ; helper : BeginIO(input, a3=ioreq) + recharge SysBase. a2=device base.
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -30(a6)                 ; input_beginio (LVO -30)
+        move.l  ($4).w,a6               ; recharge a6 = SysBase (BeginIO ressort avec a6 = base device)
+        rts
+.input_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2569,6 +2641,21 @@ int2_srv2:
         moveq   #0,d0                ; Z set -> continue la chaîne
         rts
 
+; input_test_h1 / input_test_h2 (#2) : handlers input.device de test. Convention : a0 = liste d'InputEvents,
+; a1 = is_Data ; rend d0 = liste (pass-through). h1 (pri 10) tourne avant h2 (pri 0) -> INPUT_SEQ ordonne.
+; h1 relève aussi le keycode du 1er event (preuve de propagation). Clobbe d0 (+ mémoire) ; préserve a0-a6/d1-d7.
+input_test_h1:
+        addq.w  #1,INPUT_SEQ
+        move.w  INPUT_SEQ,INPUT_H1_ORD   ; ordre d'appel (doit = 1)
+        move.w  IE_CODE(a0),INPUT_CODE   ; keycode relayé par la chaîne
+        move.l  a0,d0                    ; rend la liste inchangée
+        rts
+input_test_h2:
+        addq.w  #1,INPUT_SEQ
+        move.w  INPUT_SEQ,INPUT_H2_ORD   ; ordre d'appel (doit = 2)
+        move.l  a0,d0
+        rts
+
 ; vbl_tail_server (M7f) : serveur VERTB de plus basse priorité (-10). Incrémente VERTB_CHAIN_N ->
 ; prouve que le walker parcourt TOUTE la chaîne VERTB (sched_server pri 20 + timer_vblank pri 0 ont donc
 ; tourné AVANT lui). a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0+mémoire).
@@ -2705,6 +2792,11 @@ msg_f2kbd:
         dc.b    "F2 KBD OK (CIA-A keyboard: power-up stream received+decoded, $FD initiate + $FE terminate; handshake drives the stream)",13,10,0
 msg_f2bkbd:
         dc.b    "F2B KBD OK (live keyboard driver: AddICRVector SP bit3 -> kbd_interrupt -> keymap -> ring; console READ drains it)",13,10,0
+msg_input_ok:
+        dc.b    "INPUT OK (input.device: IND_ADDHANDLER pri-sorted chain + IND_WRITEEVENT propagates RAWKEY; 2 handlers in pri order, keycode relayed)",13,10,0
+input_dev_name:
+        dc.b    "input.device",0
+        EVEN
 msg_ok:
         dc.b    "EXEC ExecBase + jump table OK, self-test passed",13,10,0
 msg_fail:

@@ -165,6 +165,9 @@ F2A_NO_HANDSHAKE   EQU 0
 ; une commande tapée au clavier n'atteint jamais le shell -> « E2 SHELL ver OK » absent après injection. Isole
 ; le câblage clavier->console (load-bearing). La réception/décodage (F2a « F2 KBD OK ») reste intacte. Défaut 0.
 F2B_NO_FEED        EQU 0
+; INPUT_NO_PROPAGATE=1 (RED #2) : IND_WRITEEVENT ne parcourt PAS la chaîne de handlers -> l'event injecté
+; n'atteint aucun handler -> « INPUT OK » absent (ADDHANDLER a pourtant réussi). Isole la propagation. Défaut 0.
+INPUT_NO_PROPAGATE EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -251,6 +254,23 @@ KBD_RSIZE       EQU 64        ; taille du ring (puissance de 2)
 KBD_RMASK       EQU 63        ; masque d'index (KBD_RSIZE-1)
 KBD_HEAD        EQU $0000064C ; F2b : word — index de LECTURE (consommateur : con_handler)
 KBD_TAIL        EQU $0000064E ; F2b : word — index d'ÉCRITURE (producteur : kbd_interrupt)
+
+; --- input.device + InputEvent (#2) — ABI publique (devices/input.i, devices/inputevent.i) ---
+IND_ADDHANDLER  EQU 9            ; io_Command : ajoute un handler (struct Interrupt) à la chaîne
+IND_REMHANDLER  EQU 10           ; io_Command : retire un handler de la chaîne
+IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents dans la chaîne de handlers
+IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
+IE_NEXTEVENT    EQU 0            ; struct InputEvent : APTR event suivant
+IE_CLASS        EQU 4            ; UBYTE classe
+IE_SUBCLASS     EQU 5            ; UBYTE sous-classe
+IE_CODE         EQU 6            ; UWORD code (keycode pour RAWKEY)
+IE_QUALIFIER    EQU 8            ; UWORD qualifieurs
+IE_SIZEOF       EQU 22           ; sizeof(struct InputEvent)
+; proof globals input.device (#2), RAM basse réservée (positionnés par les handlers de test de boot.s)
+INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (parcours de chaîne)
+INPUT_H1_ORD    EQU $00000652 ; word : ordre où le handler pri-haute a tourné (doit = 1)
+INPUT_H2_ORD    EQU $00000654 ; word : ordre où le handler pri-basse a tourné (doit = 2)
+INPUT_CODE      EQU $00000656 ; word : ie_Code vu par les handlers (doit = keycode synthétique injecté)
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms
