@@ -80,7 +80,7 @@ kbd_selftest:
 
 ; ============================ F2b : driver clavier LIVE (interrupt-driven) ============================
                 xdef    kbd_install
-                xdef    kbd_keymap       ; #3b : réutilisé par console_input_handler (cook keycode->ASCII)
+                xref    kbd_cook         ; #5 : exec/keymap.s — cook keycode(+qualifiers)->ASCII (US/AZERTY)
 
 ; kbd_install() [a6=SysBase] -> d0 = 0 (ok) | !=0 (échec OpenResource). Installe le driver LIVE :
 ; vide le ring, SP en ENTRÉE, AddICRVector(bit 3 = SP) -> kbd_interrupt, ré-active PORTS/INT2 (coupé après
@@ -90,6 +90,7 @@ kbd_install:
                 movem.l a2/a6,-(sp)
                 clr.w   KBD_HEAD             ; RAM basse non garantie nulle au power-on
                 clr.w   KBD_TAIL
+                clr.w   KBD_QUAL             ; #5 : état des qualifieurs
                 lea     kbd_ciaa_name(pc),a1
                 jsr     LVO_OPENRESOURCE(a6) ; OpenResource("ciaa.resource")
                 tst.l   d0
@@ -112,8 +113,9 @@ kbd_install:
 
 ; kbd_interrupt : handler ICR bit 3 (SP clavier). Appelé par cia_dispatch via jsr (a5) : d2/d3 (index bit +
 ; ICR) et a2 (base resource) sont VIVANTS à travers l'appel -> on save/restore d0-d3/a0-a1 et on ne touche NI
-; a2 NI a6. Décode (F2a) ; HANDSHAKE obligatoire ; ignore les key-up (bit 7) ; mappe keycode -> ASCII ; pousse
-; dans le ring SPSC (producteur : écrit la donnée puis avance TAIL en dernier -> consommateur jamais en avance).
+; a2 NI a6. Décode (F2a) ; HANDSHAKE obligatoire. #5 : SUIVI DES QUALIFIEURS (shift/caps/ctrl, keycodes $60-$67)
+; dans KBD_QUAL, puis cuisson keycode(+KBD_QUAL)->ASCII via kbd_cook (keymap US/AZERTY) ; push dans le ring SPSC
+; (producteur : écrit la donnée puis avance TAIL en dernier -> consommateur jamais en avance).
 kbd_interrupt:
                 movem.l d0-d3/a0-a1,-(sp)
                 move.b  CIAA_SDR,d0          ; octet brut reçu
@@ -128,42 +130,68 @@ kbd_interrupt:
                 move.b  CIAA_CRA,d1
                 and.b   #$BF,d1
                 move.b  d1,CIAA_CRA
+                move.b  d0,d2                ; d2 = raw (bit7=up/down)
+                and.b   #$7F,d2              ; d2 = keycode
+                cmp.b   #$60,d2
+                blo   .ki_key              ; < $60 -> touche normale
+                cmp.b   #$68,d2
+                bhs   .ki_out              ; >= $68 -> qualifieur non géré (ALT/AMIGA) -> ignore
+                cmp.b   #$62,d2
+                beq   .ki_caps             ; $62 = CAPSLOCK (toggle)
+                moveq   #0,d1                ; $60/$61 = shift L/R ; $63 = ctrl
+                cmp.b   #$60,d2
+                bne.s   .kq1
+                moveq   #$01,d1
+                bra.s   .ki_qmod
+.kq1:
+                cmp.b   #$61,d2
+                bne.s   .kq2
+                moveq   #$02,d1
+                bra.s   .ki_qmod
+.kq2:
+                cmp.b   #$63,d2
+                bne   .ki_out              ; $64-$67 (alt/amiga) -> ignore
+                moveq   #$08,d1
+.ki_qmod:
+                btst    #7,d0                ; down -> set le bit, up -> clear
+                bne.s   .ki_qclr
+                or.w    d1,KBD_QUAL
+                bra   .ki_out
+.ki_qclr:
+                not.w   d1
+                and.w   d1,KBD_QUAL
+                bra   .ki_out
+.ki_caps:
+                btst    #7,d0                ; CAPS : toggle sur key-down seulement
+                bne   .ki_out
+                move.w  KBD_QUAL,d1
+                eori.w  #$04,d1
+                move.w  d1,KBD_QUAL
+                bra   .ki_out
+.ki_key:
                 btst    #7,d0
-                bne.s   .ki_out              ; key-up -> ignore (une seule émission par frappe)
+                bne   .ki_out              ; touche normale key-up -> ignore
                 ifne    F2B_NO_FEED
-                bra.s   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring ->
-                endc                         ; la commande tapée n'atteint jamais le shell (isole le câblage)
-                and.w   #$007F,d0            ; keycode 0..127 (mot propre pour l'index keymap)
-                lea     kbd_keymap(pc),a0
-                move.b  0(a0,d0.w),d1        ; d1.b = ASCII (0 = non mappé : qualifieurs, F-keys, etc.)
-                beq.s   .ki_out
-                move.w  KBD_TAIL,d0          ; push ASCII dans le ring
+                bra   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring (isole le câblage)
+                endc
+                move.b  d2,d0                ; keycode
+                move.w  KBD_QUAL,d1          ; qualifieurs courants
+                jsr     kbd_cook             ; -> d0.b = ASCII (préserve d2/a0/a1)
+                tst.b   d0
+                beq   .ki_out              ; non mappé
+                move.b  d0,d1                ; d1 = ASCII à pousser
+                move.w  KBD_TAIL,d0          ; push dans le ring SPSC
                 move.w  d0,d2
                 addq.w  #1,d2
-                and.w   #KBD_RMASK,d2        ; d2 = TAIL suivant
+                and.w   #KBD_RMASK,d2
                 cmp.w   KBD_HEAD,d2
-                beq.s   .ki_out              ; ring plein -> drop (borné)
+                beq   .ki_out              ; ring plein -> drop (borné)
                 lea     KBD_RING,a0
                 move.b  d1,0(a0,d0.w)        ; écrit la donnée AVANT de publier TAIL
                 move.w  d2,KBD_TAIL
 .ki_out:
                 movem.l (sp)+,d0-d3/a0-a1
                 rts
-
-; keymap US minimal : keycode brut (0..127, key-down) -> ASCII non-shifté (0 = non mappé). Piste IMPLÉMENTATION :
-; table de keycodes bruts HRM (Appendix clavier), vérifiée contre les keycodes réels mesurés sous FS-UAE.
-; Shift/Caps/Ctrl non gérés ce jalon (keymap.resource = longue traîne) -> saisie minuscule.
-                EVEN
-kbd_keymap:
-                ;      $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7 $x8 $x9 $xA $xB $xC $xD $xE $xF
-                dc.b   $60,$31,$32,$33,$34,$35,$36,$37,$38,$39,$30,$2D,$3D,$5C,$00,$30 ; $00 ` 1..0 - = \  . kp0
-                dc.b   $71,$77,$65,$72,$74,$79,$75,$69,$6F,$70,$5B,$5D,$00,$31,$32,$33 ; $10 q w e r t y u i o p [ ] . kp1-3
-                dc.b   $61,$73,$64,$66,$67,$68,$6A,$6B,$6C,$3B,$27,$00,$00,$34,$35,$36 ; $20 a s d f g h j k l ; ' . . kp4-6
-                dc.b   $00,$7A,$78,$63,$76,$62,$6E,$6D,$2C,$2E,$2F,$00,$2E,$37,$38,$39 ; $30 . z x c v b n m , . / . kp. kp7-9
-                dc.b   $20,$08,$09,$0D,$0D,$1B,$7F,$00,$00,$00,$2D,$00,$00,$00,$00,$00 ; $40 spc bs tab kpEnt Ret esc del . . . kp-
-                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$28,$29,$2F,$2A,$2B,$00 ; $50 F1-F10 . kp( kp) kp/ kp* kp+
-                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 ; $60 qualifieurs (shift/ctrl/alt/amiga)
-                dc.b   $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00 ; $70 réservés
 
                 EVEN
 kbd_int:                                     ; struct Interrupt en ROM (AddICRVector ne stocke qu'un pointeur)

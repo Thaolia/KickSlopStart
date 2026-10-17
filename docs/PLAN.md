@@ -609,8 +609,19 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (flip d'un octet du bloc bitmap après lecture -> checksum KO -> rejet -> marqueur absent) ; NODISK -> pas de disque
     -> absent. La REVALIDATION (bm_flag=0 -> reconstruire le bitmap depuis l'arbre) est différée. Clean-room : format OFS
     public + ADF de test (asset). AUCUNE lecture ROM.
-  - **À venir** : requesters Intuition (insert-disk cliquable) ; keymap complet (shift/ctrl/caps → keymap.resource,
-    + variante AZERTY) ; feeder clavier->input.device + swap écran (intégration F). Le shell RESTE sur le con_handler série.
+  - **keymap complet + keymap.resource + ROM AZERTY (#5) FAIT.** `src/exec/keymap.s` : `keymap.resource` résidente
+    (direct-init pri 100) détient la keymap par défaut (US QWERTY, ou FR AZERTY si `KEYMAP_AZERTY=1`) et publie
+    `KM_RESBASE`. `kbd_cook(keycode, qualifiers) -> ASCII` applique **SHIFT** (table `_hi`), **CAPS** (majuscule des
+    lettres), **CTRL** (char & $1F). Tables US/AZERTY HAND-AUTHORED (`tests/mk_keymaps.py` -> `src/exec/keymapdata.s`,
+    96 octets lo/hi par layout) — JAMAIS la ROM. `kbd_cook` est câblé LIVE : `kbd_interrupt` suit les qualifieurs
+    (shift/caps/ctrl, keycodes $60-$67 dans `KBD_QUAL`) puis cuit via `kbd_cook` ; `console_input_handler` (#3b) cuit
+    via `kbd_cook(keycode, ie_Qualifier)`. Preuves : GREEN US « KEYMAP OK » (q/Q/Q via shift/caps, 1/!, ctrl-C=$03) ;
+    GREEN AZERTY « KEYMAP AZERTY OK » (mêmes keycodes -> 'a', '&'/'1', 'é' -> prouve que la table pilote la cuisson) ;
+    **F2b E2E « ver » rejoué sur les DEUX ROMs** (cuisson live non-régressée) ; RED `KM_NO_SHIFT` (SHIFT ignoré ->
+    marqueur absent). ROM AZERTY = `make kick` avec `KEYMAP_AZERTY=1` (-> `build/kick13-azerty.rom`). Déviation assumée :
+    représentation simplifiée (2 tables + règles caps/ctrl) au lieu de la struct KeyMap V34 complète (dead-keys différés).
+  - **À venir** : requesters Intuition (insert-disk cliquable) ; feeder clavier->input.device + swap écran (intégration F).
+    Le shell RESTE sur le con_handler série (canal de preuve).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

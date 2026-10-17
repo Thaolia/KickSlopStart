@@ -177,6 +177,12 @@ CON_NO_READBUF     EQU 0
 ; DV_CORRUPT=1 (RED #4) : le disk-validator corrompt le bloc bitmap après lecture (flip d'un octet) -> son checksum
 ; OFS (somme des longs == 0) échoue -> dv_validate rejette -> « DISK VALID OK » absent. Isole la vérif d'intégrité. Défaut 0.
 DV_CORRUPT         EQU 0
+; KEYMAP_AZERTY=1 : la keymap.resource installe par défaut la keymap FR AZERTY (sinon US QWERTY). Produit la
+; variante AZERTY de la ROM (kbd_cook cuit selon AZERTY). Défaut 0 (US). Build : make kick après avoir mis à 1.
+KEYMAP_AZERTY      EQU 0
+; KM_NO_SHIFT=1 (RED #5) : kbd_cook ignore le qualifieur SHIFT (toujours la table non-shiftée) -> l'assertion
+; q+SHIFT=='Q' du test échoue -> « KEYMAP OK » absent. Isole la gestion des qualifieurs. Défaut 0.
+KM_NO_SHIFT        EQU 0
 ; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
 ; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
 SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
@@ -280,6 +286,16 @@ INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (pa
 INPUT_H1_ORD    EQU $00000652 ; word : ordre où le handler pri-haute a tourné (doit = 1)
 INPUT_H2_ORD    EQU $00000654 ; word : ordre où le handler pri-basse a tourné (doit = 2)
 INPUT_CODE      EQU $00000656 ; word : ie_Code vu par les handlers (doit = keycode synthétique injecté)
+
+; --- keymap.resource + cook (#5) : keycode(+qualifiers) -> ASCII, keymaps US/AZERTY ---
+KBD_QUAL     EQU $00000658 ; word : état des qualifieurs suivi par kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
+KM_RESBASE   EQU $0000065A ; long : base keymap.resource (publiée à l'init ; lue par kbd_cook)
+KMR_LO       EQU LIB_SIZE      ; base keymap.resource : APTR table non-shiftée (km_xx_lo)
+KMR_HI       EQU LIB_SIZE+4    ; APTR table shiftée (km_xx_hi)
+KMR_SIZE     EQU LIB_SIZE+8
+KQ_SHIFT     EQU $03           ; masque ie_Qualifier : LSHIFT | RSHIFT
+KQB_CAPS     EQU 2             ; bit CAPSLOCK dans ie_Qualifier ($04)
+KQB_CTRL     EQU 3             ; bit CONTROL dans ie_Qualifier ($08)
 
 ; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
 CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)

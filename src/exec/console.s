@@ -17,7 +17,7 @@
                 include "exec.i"
 
                 xref    font8x8          ; graphics/font8x8.s (glyphes 8x8, ASCII 0x20..0x7F)
-                xref    kbd_keymap       ; exec/keyboard.s (#3b : table keycode->ASCII, cook des RAWKEY)
+                xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
 
 CMD_READ     EQU 2                ; io_Command standard (io.i : READ=2, WRITE=3)
 CMD_WRITE    EQU 3
@@ -199,8 +199,10 @@ console_input_handler:
         btst    #7,d2
         bne.s   .cih_next            ; key-up -> ignore
         and.w   #$007F,d2
-        move.l  #kbd_keymap,a0
-        move.b  0(a0,d2.w),d2        ; d2.b = ASCII (0 = non mappé)
+        move.l  d2,d0                ; d0 = keycode
+        move.w  IE_QUALIFIER(a3),d1  ; d1 = qualifieurs de l'event (shift/caps/ctrl)
+        jsr     kbd_cook             ; #5 : cuisson via keymap active (préserve d2/a0/a1)
+        move.b  d0,d2                ; d2.b = ASCII cuit (0 = non mappé)
         beq.s   .cih_next
                 ifeq    CON_NO_READBUF
         move.w  CONB_RTAIL(a2),d0    ; push ASCII dans le read buffer

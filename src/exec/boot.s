@@ -31,6 +31,7 @@
                 xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
                 xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
                 xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
+                xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -1173,6 +1174,66 @@ d2_done:
         lea     msg_diskvalid(pc),a0
         bsr     ser_puts             ; « DISK VALID OK »
 .dv4_done:
+
+        ; --- keymap (#5) : cook keycode(+qualifiers) via keymap.resource (US QWERTY ou FR AZERTY selon le build) ---
+                ifeq    KEYMAP_AZERTY
+        moveq   #$10,d0             ; 'q' non-shifté
+        moveq   #0,d1
+        jsr     kbd_cook
+        cmp.b   #'q',d0
+        bne     .km5_done
+        moveq   #$10,d0             ; SHIFT -> 'Q'
+        moveq   #$01,d1
+        jsr     kbd_cook
+        cmp.b   #'Q',d0
+        bne     .km5_done
+        moveq   #$10,d0             ; CAPS -> 'Q'
+        moveq   #$04,d1
+        jsr     kbd_cook
+        cmp.b   #'Q',d0
+        bne     .km5_done
+        moveq   #$01,d0             ; '1' non-shifté ; SHIFT -> '!'
+        moveq   #0,d1
+        jsr     kbd_cook
+        cmp.b   #'1',d0
+        bne     .km5_done
+        moveq   #$01,d0
+        moveq   #$01,d1
+        jsr     kbd_cook
+        cmp.b   #'!',d0
+        bne     .km5_done
+        moveq   #$33,d0             ; CTRL+'c' -> $03
+        moveq   #$08,d1
+        jsr     kbd_cook
+        cmp.b   #3,d0
+        bne     .km5_done
+        lea     msg_keymap_ok(pc),a0
+        bsr     ser_puts            ; « KEYMAP OK »
+                else
+        moveq   #$10,d0             ; AZERTY : keycode $10 -> 'a'
+        moveq   #0,d1
+        jsr     kbd_cook
+        cmp.b   #'a',d0
+        bne     .km5_done
+        moveq   #$01,d0             ; AZERTY : $01 non-shifté -> '&'
+        moveq   #0,d1
+        jsr     kbd_cook
+        cmp.b   #'&',d0
+        bne     .km5_done
+        moveq   #$01,d0             ; SHIFT -> '1'
+        moveq   #$01,d1
+        jsr     kbd_cook
+        cmp.b   #'1',d0
+        bne     .km5_done
+        moveq   #$02,d0             ; AZERTY : $02 non-shifté -> 'é' ($E9)
+        moveq   #0,d1
+        jsr     kbd_cook
+        cmp.b   #$E9,d0
+        bne     .km5_done
+        lea     msg_keymap_azerty(pc),a0
+        bsr     ser_puts            ; « KEYMAP AZERTY OK »
+                endc
+.km5_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -2945,6 +3006,10 @@ msg_conread_ok:
         dc.b    "CONSOLE READ=v (console.device input handler on input.device cooked a RAWKEY -> read buffer -> CMD_READ)",13,10,0
 msg_diskvalid:
         dc.b    "DISK VALID OK (disk-validator: OFS rootblock+bitmap checksums, bm_flag valid, rootblock allocated in bitmap)",13,10,0
+msg_keymap_ok:
+        dc.b    "KEYMAP OK (keymap.resource US QWERTY: kbd_cook keycode+SHIFT/CAPS/CTRL -> q/Q/Q, 1/!, ctrl-C=$03)",13,10,0
+msg_keymap_azerty:
+        dc.b    "KEYMAP AZERTY OK (keymap.resource FR AZERTY: kbd_cook keycode $10->a, $01->& (SHIFT->1), $02->e-acute)",13,10,0
         EVEN
 con_test_str:
         dc.b    "CONSOLE WRITE OK 0123456789"
