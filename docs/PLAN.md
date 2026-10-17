@@ -511,8 +511,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     CTRL-NODISK (console marche SANS disque) + COOP. **READ** prouvé en harnais interactif : injecter « hello\r » →
     « E1 CON READ=hello » (round-trip RX→handler→ligne→écho→client). checksum GREEN `ad9f0f37`.
     PROCHAIN : E2 (process shell : boucle prompt → read ligne → parse → dispatch + builtins).
-  - **E2 — shell (À FAIRE).** Process qui ouvre in/out console, boucle prompt → read ligne → parse → dispatch ; 2
-    builtins (echo, help/bannière). Preuve interactive : injecter « echo HELLO\r » → voir HELLO.
+  - **E2 — shell interactif (FAIT).** `src/dos/shell.s` : `shell_main` = process qui ouvre la console (handler E1 via
+    DOS packets), émet une bannière, boucle invite `> ` → read ligne → parse 1er mot → dispatch. Builtins `ver`
+    (bannière de version) et `echo <args>` (ré-émet les args) ; sinon `?`. Remplace le client de preuve E1 comme
+    consommateur UNIQUE de la console (une seule console série = un lecteur à la fois) ; le handler E1 est réutilisé
+    tel quel. PAS de CLI BCPL (pr_CLI/Execute = F). Preuves : GREEN « E2 SHELL READY » + non-rég D1/D2/D3*/M3F (4
+    scénarios) ; interactif : « ver\r » → « E2 SHELL ver OK » (parse+dispatch), « echo E2ECHOOK\r » → « E2ECHOOK » ;
+    RED `E2_NO_DISPATCH` (« ver » → « ? », marqueur absent) ; NODISK (bannière sans disque) ; COOP. checksum GREEN
+    `aa9e1b78`. PROCHAIN : E3 (commande inconnue → load+run DF0: via dos).
   - **E3 — exécuter une commande externe tapée (À FAIRE ; CLÔT E).** Commande inconnue → load DF0: via dos (Open/Read
     → ls_load_hunks → run) comme D3d mais déclenché par le nom tapé. Preuve : injecter un nom de commande → son marqueur.
   - **NE PAS** construire en E : BCPL `CommandLineInterface`/`pr_CLI`, `Execute()`, startup-sequence → Bootstrap réel (F).

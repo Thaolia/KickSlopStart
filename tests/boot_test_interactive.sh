@@ -21,6 +21,7 @@ INJECT="${4:-hello\r}"
 MARKER="${5:-E1 CON READ=hello}"
 ADF="${6:-}"
 PCMS="${7:-50}"                      # ms entre octets injectés (anti-overrun)
+SETTLE="${8:-1}"                     # s d'attente après le marqueur « prêt » (laisse le boot se taire)
 FAILMARK="FAILED"
 OUT="$ROOT/build/boot_itx"
 mkdir -p "$OUT"
@@ -81,8 +82,8 @@ for _ in $(seq 1 $((WAIT*4))); do
   sleep 0.25
 done
 echo "prêt (« $READY » vu) = $ready"
-sleep 1                              # settle : laisse le client pri basse atteindre son READ bloquant
-                                     # (handler en boucle de poll stable) avant d'injecter le 1er octet
+sleep "$SETTLE"                      # settle : laisse les marqueurs boot se taire + le client pri basse
+                                     # atteindre son READ bloquant (handler en poll stable) avant d'injecter
 
 # INJECTION octet par octet, avec cadence (anti-overrun)
 exec 7>"$OUT/ser_cap"

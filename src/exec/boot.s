@@ -38,6 +38,7 @@
                 xref    dos_handler_df0  ; dos/handler.s (D3b : process file-handler DF0: OFS)
                 xref    ls_load_hunks    ; dos/loadseg.s (D3d : parse hunk depuis un buffer lu via dos)
                 xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
+                xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
@@ -1679,16 +1680,16 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #3,d0                ; pri 3 (sous le client D3c)
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; --- E1 : handler console-série (pri 6, comme le handler OFS) + client (pri 2, sous d3d) ---
+        ; --- E1/E2 : handler console-série (pri 6, comme le handler OFS) + shell interactif (pri 2, sous d3d) ---
         lea     e1_hname(pc),a0
         move.l  #con_handler,a1      ; absolu : conhandler.o lié hors portée lea(pc) 16 bits
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_CONPORT       ; publie le port du handler console
-        lea     e1_cname(pc),a0
-        lea     e1_client(pc),a1
-        moveq   #2,d0                ; client E1 pri 2 (sous tous les clients D3)
+        lea     sh_cname(pc),a0
+        move.l  #shell_main,a1       ; absolu : shell.o lié hors portée lea(pc) 16 bits
+        moveq   #2,d0                ; shell pri 2 (sous tous les clients D3 ; consommateur unique de la console)
         move.l  #D3_STK,d1
         jsr     proc_create
 .d3c_noclient:
@@ -2019,65 +2020,6 @@ d3d_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .q_block
-
-; --- E1 : client console — ouvre « CON: » (FINDINPUT), WRITE le marqueur (prouve ACTION_WRITE via packet ->
-; série), puis READ une ligne (bloque jusqu'au CR injecté : ABSENT dans les 4 scénarios standard sans injection ;
-; en harnais interactif -> « E1 CON READ=<ligne> »), la ré-émet, ferme. Tout l'IO passe par des DOS packets vers
-; le handler console (DOS_CONPORT) — jamais directement sur SERDAT. a2 = StandardPacket (pile), a3 = buffer READ
-; (pile), d7 = clé, d6 = octets lus. dos_sendpkt préserve a2-a4/d5-d7.
-E1_RBUF_MAX  EQU 128
-e1_client:
-        move.l  ($4).w,a6
-        lea     -(SP_SIZEOF+E1_RBUF_MAX)(sp),sp   ; StandardPacket (68) + buffer READ sur la pile
-        move.l  sp,a2                ; a2 = StandardPacket
-        lea     SP_SIZEOF(sp),a3     ; a3 = buffer READ
-        move.l  DOS_CONPORT,a1       ; ouvrir la console
-        move.l  a2,a0
-        move.l  #ACTION_FINDINPUT,d0
-        moveq   #0,d1
-        moveq   #0,d2
-        moveq   #0,d3
-        jsr     dos_sendpkt          ; d0 = clé
-        move.l  d0,d7                ; d7 = clé
-        move.l  DOS_CONPORT,a1       ; WRITE « E1 CON WRITE OK ... »
-        move.l  a2,a0
-        move.l  #ACTION_WRITE,d0
-        move.l  d7,d1
-        move.l  #e1_wmsg,d2
-        move.l  #e1_wmsg_len,d3
-        jsr     dos_sendpkt
-        move.l  DOS_CONPORT,a1       ; READ une ligne (bloque jusqu'au CR injecté)
-        move.l  a2,a0
-        move.l  #ACTION_READ,d0
-        move.l  d7,d1
-        move.l  a3,d2                ; dest
-        move.l  #E1_RBUF_MAX,d3
-        jsr     dos_sendpkt          ; d0 = octets lus
-        move.l  d0,d6
-        move.l  DOS_CONPORT,a1       ; WRITE le préfixe « E1 CON READ= »
-        move.l  a2,a0
-        move.l  #ACTION_WRITE,d0
-        move.l  d7,d1
-        move.l  #e1_rprefix,d2
-        move.l  #e1_rprefix_len,d3
-        jsr     dos_sendpkt
-        move.l  DOS_CONPORT,a1       ; WRITE la ligne lue (a3, d6 octets)
-        move.l  a2,a0
-        move.l  #ACTION_WRITE,d0
-        move.l  d7,d1
-        move.l  a3,d2
-        move.l  d6,d3
-        jsr     dos_sendpkt
-        move.l  DOS_CONPORT,a1       ; fermer
-        move.l  a2,a0
-        move.l  #ACTION_END,d0
-        move.l  d7,d1
-        jsr     dos_sendpkt
-        lea     (SP_SIZEOF+E1_RBUF_MAX)(sp),sp    ; restaure la pile
-.e1_block:
-        moveq   #0,d0
-        jsr     LVO_WAIT(a6)
-        bra.s   .e1_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -2843,17 +2785,8 @@ d3d_fname:
         even
 e1_hname:
         dc.b    "con.handler",0
-e1_cname:
-        dc.b    "con.client",0
-        even
-e1_wmsg:
-        dc.b    "E1 CON WRITE OK (console handler serves ACTION_WRITE through DOS packets -> serial TX)",13,10
-e1_wmsg_end:
-e1_wmsg_len  EQU e1_wmsg_end-e1_wmsg
-e1_rprefix:
-        dc.b    "E1 CON READ="
-e1_rprefix_end:
-e1_rprefix_len EQU e1_rprefix_end-e1_rprefix
+sh_cname:
+        dc.b    "shell",0
         even
 d3a_hname:
         dc.b    "dos.handler.echo",0

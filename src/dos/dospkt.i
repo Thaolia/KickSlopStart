@@ -118,3 +118,8 @@ D3D_NO_RUN       EQU 0
 ; série) -> « E1 CON WRITE OK » absent (le client ouvre/ferme encore, le round-trip packet marche). Isole le service
 ; WRITE du handler console (dispatch packet -> émission série via le handler). Défaut 0.
 E1_NO_WRITE      EQU 0
+
+; E2_NO_DISPATCH=1 (RED E2) : le shell lit la ligne mais NE DISPATCHE PAS les builtins (tout -> « ? » inconnu) ->
+; « E2 SHELL ver OK » absent sur « ver », « echo X » non renvoyé. Isole le parse/dispatch (la banner + le read-echo
+; marchent encore). Défaut 0.
+E2_NO_DISPATCH   EQU 0
