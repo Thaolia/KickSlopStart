@@ -629,8 +629,18 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     SHELL_ON_SCREEN) : taper 'v' -> « FEEDER OK=v » ; **Shift+v -> « FEEDER OK=V »** (prouve le snapshot qualifieur +
     le cook shift via le feeder) ; RED `FEEDER_NO_WRITEEVENT` (pas d'injection -> marqueur absent) ; F2b E2E « ver »
     non-régressé. Mécanisme : timer-poll (pas de Signal depuis l'ICR CIA). Clean-room : AutoDocs input/timer. AUCUNE lecture ROM.
-  - **À venir** : swap écran du shell (item 2 : `DOS_CONPORT` -> handler console backé par console.device, écran +
-    miroir série + clavier via le feeder, gaté `SHELL_ON_SCREEN`) ; requesters Intuition (insert-disk cliquable).
+  - **Swap écran du shell (intégration F, item 2) FAIT.** Réalisé par GATING de `con_handler` avec `SHELL_ON_SCREEN`
+    (pas de nouveau handler ni de repoint : `DOS_CONPORT` reste `con_handler`, qui devient le handler ÉCRAN). Flag=1 :
+    WRITE rend le buffer à l'écran via `console.device CMD_WRITE` (#3a) **+ miroir série inconditionnel** (canal de
+    preuve) ; READ source `console.device CMD_READ` (clavier via le feeder -> input.device -> console.device) au lieu du
+    `KBD_RING` cuit, avec écho écran+série et discipline de ligne (CR/LF). Le binaire shell est INTACT (IO via
+    FileHandles DOS). Preuve : (b) GREEN SHELL_ON_SCREEN=1 -> taper « ver » -> « E2 SHELL ver OK » (miroir série ;
+    le shell est piloté par le clavier via feeder->input.device->console.device) ; (c) RED SHELL_ON_SCREEN=1 +
+    FEEDER_NO_WRITEEVENT=1 -> input coupé au feeder -> « E2 SHELL ver OK » ABSENT (E3 CMD RAN OK présent = boot/shell
+    intacts) -> DISCRIMINE que l'input du shell passe bien par le nouveau chemin ; (a) flag off -> con_handler série
+    inchangé (contrôle). ROM écran = `make kick` avec `SHELL_ON_SCREEN=1`. Rendu écran prouvé CORRECT par le readback
+    #3a (console.device CMD_WRITE) ; le pixel à l'écran reste non-capturable headless (cf. [[console-keymap-screen-harness]]).
+  - **À venir** : requesters Intuition (insert-disk cliquable) ; keymap complet (dead-keys/compose) ; parité modules.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

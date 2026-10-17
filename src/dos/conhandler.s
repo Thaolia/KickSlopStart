@@ -22,6 +22,11 @@
 
 CON_POLL_US     EQU 20000            ; 20 ms par tick de poll RX (latence d'entrée ~1 tick)
 ERROR_ACTION_NOT_KNOWN EQU 209       ; dos/dos.i : action non supportée
+CON_CMD_READ    EQU 2                ; io_Command CMD_READ (console.device)
+CON_CMD_WRITE   EQU 3                ; io_Command CMD_WRITE
+CON_IODATA      EQU 40               ; IOStdReq io_Data (local : conhandler n'inclut pas disk.i)
+CON_IOLEN       EQU 36               ; IOStdReq io_Length
+CON_IOACT       EQU 32               ; IOStdReq io_Actual
 
 ; bloc d'état (AllocMem au démarrage, pointeur publié dans CON_STATE)
 CS_TBASE        EQU 0                ; APTR base timer.device
@@ -31,7 +36,12 @@ CS_SIGMASK      EQU 12               ; LONG masque du signal du reply port
 CS_DEST         EQU 16               ; APTR destination READ courante
 CS_MAX          EQU 20               ; LONG taille max READ
 CS_CNT          EQU 24               ; LONG octets accumulés par READ
-CS_SIZE         EQU 28
+; SHELL_ON_SCREEN (intégration F, item 2) : le handler rend AUSSI à l'écran via console.device + lit le clavier
+; via console.device (alimenté par le feeder). Champs toujours présents (coût négligeable si le flag est off).
+CS_CONBASE      EQU 28               ; APTR base console.device
+CS_ECHO         EQU 32               ; BYTE tampon d'écho 1 octet (CMD_WRITE écran)
+CS_CONIO        EQU 36               ; IOStdReq (48) pour BeginIO console.device
+CS_SIZE         EQU 84
 
 ; con_handler : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
 con_handler:
@@ -84,6 +94,12 @@ con_handler:
                 move.l  CS_RPORT(a4),MN_REPLYPORT(a1)
                 move.l  CS_TBASE(a4),IO_DEVICE(a1)
                 move.l  #UNIT_MICROHZ,IO_UNIT(a1)
+                ifne    SHELL_ON_SCREEN
+                lea     EB_DEVICELIST(a6),a0 ; item 2 : base console.device (rendu écran + lecture clavier via feeder)
+                lea     con_consolename(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                move.l  d0,CS_CONBASE(a4)    ; 0 si absent -> WRITE/READ écran se dégradent proprement
+                endc
                 move.l  a4,CON_STATE         ; publie l'état -> READ activé
 .setup_done:
                 move.l  EB_THISTASK(a6),a2
@@ -125,9 +141,26 @@ con_handler:
                 move.l  DP_ARG3(a4),DP_RES1(a4)  ; RED E1_NO_WRITE : prétend écrire, n'émet rien
                 bra     .reply
                 endc
+                move.l  DP_ARG3(a4),DP_RES1(a4)  ; RES1 = len
+                ifne    SHELL_ON_SCREEN
+                ; item 2 : rend le buffer ENTIER à l'écran via console.device CMD_WRITE (le miroir série suit)
+                move.l  CON_STATE,a0
+                move.l  a0,d0
+                beq.s   .wr_mirror
+                move.l  CS_CONBASE(a0),d0
+                beq.s   .wr_mirror
+                lea     CS_CONIO(a0),a1
+                move.l  d0,IO_DEVICE(a1)
+                move.w  #CON_CMD_WRITE,IO_COMMAND(a1)
+                move.l  DP_ARG2(a4),CON_IODATA(a1)
+                move.l  DP_ARG3(a4),CON_IOLEN(a1)
+                move.l  d0,a6                ; a6 = base console.device pour BeginIO
+                jsr     -30(a6)              ; console BeginIO (CMD_WRITE écran)
+                move.l  ($4).w,a6            ; restaure a6 = SysBase
+.wr_mirror:
+                endc
                 move.l  DP_ARG2(a4),a5       ; src (a5 survit à con_putc)
                 move.l  DP_ARG3(a4),d3       ; len (d3 survit à con_putc)
-                move.l  d3,DP_RES1(a4)       ; RES1 = len
                 tst.l   d3
                 beq     .reply
 .wr_lp:
@@ -147,6 +180,10 @@ con_handler:
 .rd_tick:
                 bsr     con_poll_wait        ; ~20 ms (préserve a2/a3/a4/a6)
 .rd_drain:
+                ifne    SHELL_ON_SCREEN
+                bsr     con_scr_read         ; item 2 : source = console.device CMD_READ (clavier via feeder)
+                beq.s   .rd_tick             ; rien ce tick -> attendre le prochain
+                else
                 bsr     con_ring_get         ; F2b : clavier LIVE d'abord (ring SPSC, consommateur)
                 bne.s   .rd_got              ; une touche dispo -> d0.b = ASCII
                 move.w  SERDATR,d0
@@ -154,13 +191,22 @@ con_handler:
                 beq.s   .rd_tick             ; rien des deux ce tick -> attendre le prochain
                 and.w   #$00FF,d0            ; octet reçu (série)
                 move.w  #INTF_RBF,INTREQ     ; acquitte RBF
+                endc
 .rd_got:
                 move.l  d0,d4                ; d4 = octet (survit con_putc)
-                bsr     con_putc             ; écho
+                bsr     con_putc             ; écho série (miroir)
+                ifne    SHELL_ON_SCREEN
+                move.b  d4,d0
+                bsr     con_scr_emit         ; écho écran
+                endc
                 cmp.b   #13,d4
                 bne.s   .rd_store
                 moveq   #10,d0               ; CR -> aussi LF pour l'affichage
                 bsr     con_putc
+                ifne    SHELL_ON_SCREEN
+                moveq   #10,d0
+                bsr     con_scr_emit         ; CR -> LF à l'écran aussi
+                endc
 .rd_store:
                 move.l  CON_STATE,a0
                 move.l  CS_CNT(a0),d1
@@ -238,6 +284,68 @@ con_ring_get:
                 moveq   #0,d1
                 tst.b   d1                   ; Z=1 -> ring vide
                 rts
+
+                ifne    SHELL_ON_SCREEN
+; con_scr_read (item 2) : lit 1 octet via console.device CMD_READ (clavier cuit par son handler, via le feeder).
+; -> d0.b = octet, Z=0 (obtenu) | Z=1 (rien ce tick). a6=SysBase. Préserve d4/a2-a4 (console BeginIO les sauve).
+con_scr_read:
+                move.l  CON_STATE,a1
+                move.l  a1,d0
+                beq.s   .sr_empty
+                move.l  CS_CONBASE(a1),d0
+                beq.s   .sr_empty
+                lea     CS_CONIO(a1),a0
+                move.l  d0,IO_DEVICE(a0)
+                move.w  #CON_CMD_READ,IO_COMMAND(a0)
+                move.l  a1,d1
+                add.l   #CS_ECHO,d1
+                move.l  d1,CON_IODATA(a0)    ; io_Data = &CS_ECHO (1 octet)
+                move.l  #1,CON_IOLEN(a0)
+                clr.l   CON_IOACT(a0)
+                move.l  d0,a6                ; a6 = base console.device
+                move.l  a0,a1
+                jsr     -30(a6)              ; console BeginIO (CMD_READ)
+                move.l  ($4).w,a6            ; restaure SysBase
+                move.l  CON_STATE,a0
+                lea     CS_CONIO(a0),a1
+                move.l  CON_IOACT(a1),d0     ; octets réellement lus
+                beq.s   .sr_empty
+                moveq   #0,d0
+                move.b  CS_ECHO(a0),d0       ; d0.b = octet lu
+                moveq   #1,d1
+                tst.b   d1                   ; Z=0 -> obtenu
+                rts
+.sr_empty:
+                moveq   #0,d1
+                tst.b   d1                   ; Z=1 -> rien
+                rts
+
+; con_scr_emit (item 2) : écrit d0.b à l'écran via console.device CMD_WRITE (1 octet). a6=SysBase. Préserve d4/a2-a4.
+con_scr_emit:
+                move.l  CON_STATE,a1
+                move.l  a1,d1
+                beq.s   .se_ret
+                move.l  CS_CONBASE(a1),d1
+                beq.s   .se_ret
+                move.b  d0,CS_ECHO(a1)
+                lea     CS_CONIO(a1),a0
+                move.l  d1,IO_DEVICE(a0)
+                move.w  #CON_CMD_WRITE,IO_COMMAND(a0)
+                move.l  a1,d0
+                add.l   #CS_ECHO,d0
+                move.l  d0,CON_IODATA(a0)
+                move.l  #1,CON_IOLEN(a0)
+                move.l  d1,a6                ; a6 = base console.device
+                move.l  a0,a1
+                jsr     -30(a6)              ; console BeginIO (CMD_WRITE 1 octet)
+                move.l  ($4).w,a6
+.se_ret:
+                rts
+
+con_consolename:
+                dc.b    "console.device",0
+                EVEN
+                endc
 
 con_timername:
                 dc.b    "timer.device",0
