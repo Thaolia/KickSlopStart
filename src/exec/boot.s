@@ -2297,7 +2297,8 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         ; (load inline) reste la baseline indépendante de la couche en-dessous -> RED LOADSEG_LVO_UNWIRED isole d3e.
         lea     d3e_cname(pc),a0
         lea     d3e_client(pc),a1
-        moveq   #2,d0                ; pri 2 (sous le client D3d)
+        moveq   #5,d0                ; pri 5 : AU-DESSUS du shell (Initial CLI pri 2) -> d3e charge+émet TÔT, hors de
+                                     ; la fenêtre tardive startup-sequence (sinon son marqueur entrelace « E3 CMD RAN OK »)
         move.l  #D3_STK,d1
         jsr     proc_create
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
@@ -2662,8 +2663,12 @@ d3e_client:
         tst.l   d0
         beq.s   .e_closelib          ; RED LOADSEG_LVO_UNWIRED : -150 = dos_null -> 0 -> pas de marqueur
         move.l  d0,d7                ; d7 = BPTR seglist (non nul = chargé+relocalisé via le vecteur LVO)
+        move.l  ($4).w,a6            ; émet le marqueur sous Forbid (atomicité vs les autres émetteurs série)
+        jsr     LVO_FORBID(a6)
         lea     msg_d3e_loadseg(pc),a0
         bsr     ser_puts             ; « D3E LOADSEG LVO OK »
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
         move.l  a4,a6
         move.l  d7,d1
         jsr     DOS_LVO_UNLOADSEG(a6) ; -156 : libère le seglist
