@@ -12,6 +12,7 @@
 ; cyan=build ExecBase+table, blanc=SUCCÈS, magenta=échec d'une vérification.
 
                 include "exec.i"
+                include "dospkt.i"       ; D3 : constantes Process/packet pour le scaffold de preuve
 
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
@@ -31,8 +32,10 @@
                 xref    ofs_read_file    ; dos/ofs.s (D1 : lecture seule OFS -> lire un fichier par nom)
                 xref    dos_loadseg      ; dos/loadseg.s (D2 : charger un exécutable hunk de l'OFS + reloc)
                 xref    dos_unloadseg    ; dos/loadseg.s (D2 : libérer une seglist)
+                xref    proc_create      ; dos/process.s (D3 : créer un Process + pr_MsgPort)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
+D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
 DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
 DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
@@ -1604,6 +1607,20 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #DEMO_PRI_P,d2
         bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
                 endc
+        ; --- D3a : créer le process file-handler (echo) + le process driver (tournent après dispatch_in) ---
+        ; Créés dans les DEUX modes (GREEN SCHED_ON=1 ET COOP) : driver/handler bloquent sur WaitPort (switch
+        ; synchrone M3d) -> round-trip packet coopératif. proc_create via jsr (process.o hors portée bsr).
+        lea     d3a_hname(pc),a0
+        lea     d3a_handler(pc),a1
+        moveq   #6,d0                ; handler pri 6 (> spinner 0 ; bloque de toute façon)
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        move.l  d0,DOS_HANDLERPORT   ; publie le port du handler pour le driver
+        lea     d3a_dname(pc),a0
+        lea     d3a_driver(pc),a1
+        moveq   #5,d0                ; driver pri 5
+        move.l  #D3_STK,d1
+        jsr     proc_create
                 ifne    M7J_DEMO
         ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
         ; doit remonter d'au moins M7J_RECOVER (pile+TCB libérés). task_timer vérifie la remontée.
@@ -1657,6 +1674,69 @@ setup_stress_port:
         move.l  a2,WP_SPORT          ; port prêt -> publié EN DERNIER
         movem.l (sp)+,d2/a2
         rts
+
+; --- D3a : corps du process file-handler ECHO + du process driver (preuve process + round-trip packet) ---
+; Les corps démarrent GPR à zéro (frame AddTask) -> rechargent SysBase depuis ($4).w. Le handler boucle
+; WaitPort/GetMsg sur SON pr_MsgPort et renvoie dp_Res1 = dp_Arg1 (echo). Le driver monte un StandardPacket,
+; PutMsg au port du handler, WaitPort(son port)/GetMsg, vérifie l'echo, émet « D3A », puis bloque pour toujours.
+; Round-trip via WaitPort = switch SYNCHRONE (M3d) -> fonctionne en GREEN (préemption) ET en COOP.
+d3a_handler:
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a2
+        lea     PR_MSGPORT(a2),a2    ; a2 = pr_MsgPort du handler (le sien)
+.h_loop:
+        move.l  a2,a0
+        jsr     LVO_WAITPORT(a6)     ; bloque jusqu'à l'arrivée d'un message
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)       ; d0 = Message | 0
+        tst.l   d0
+        beq.s   .h_loop
+        move.l  d0,a1                ; a1 = Message (= &sp_Msg)
+        move.l  LN_NAME(a1),a3       ; a3 = &sp_Pkt (convention : msg->ln_Name -> DosPacket)
+                ifeq    D3A_NO_REPLY
+        move.l  DP_ARG1(a3),DP_RES1(a3)   ; ECHO : res1 = arg1
+        jsr     LVO_REPLYMSG(a6)     ; renvoie au mn_ReplyPort (port du driver)
+                endc                 ; RED D3A_NO_REPLY : ne répond pas -> le driver reste bloqué -> « D3A » absent
+        bra.s   .h_loop
+d3a_driver:
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a4
+        lea     PR_MSGPORT(a4),a4    ; a4 = pr_MsgPort du driver (port de réponse)
+        move.l  #SP_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .d_block
+        move.l  d0,a2                ; a2 = StandardPacket (&sp_Msg)
+        lea     SP_PKT(a2),a3        ; a3 = &sp_Pkt (DosPacket)
+        move.b  #NT_MESSAGE,LN_TYPE(a2)
+        move.l  a4,MN_REPLYPORT(a2)  ; ReplyMsg reviendra ici
+        move.w  #DP_SIZEOF,MN_LENGTH(a2)
+        move.l  a3,LN_NAME(a2)       ; sp_Msg.ln_Name -> sp_Pkt
+        move.l  a2,DP_LINK(a3)
+        move.l  a4,DP_PORT(a3)
+        move.l  #ACTION_READ,DP_TYPE(a3)   ; valeur de test (echo ne l'interprète pas)
+        move.l  #$D3A0CAFE,DP_ARG1(a3)     ; magic à echoer
+        move.l  DOS_HANDLERPORT,a0
+        move.l  a2,a1
+        jsr     LVO_PUTMSG(a6)       ; PutMsg(handlerPort, &sp_Msg) -> signale le handler
+        move.l  a4,a0
+        jsr     LVO_WAITPORT(a6)     ; attend la réponse (switch synchrone -> handler)
+        move.l  a4,a0
+        jsr     LVO_GETMSG(a6)
+        lea     SP_PKT(a2),a3
+        cmp.l   #$D3A0CAFE,DP_RES1(a3)    ; echo correct ?
+        bne.s   .d_free
+        lea     msg_d3a_ok(pc),a0
+        bsr     ser_puts             ; « D3A ... OK »
+.d_free:
+        move.l  a2,a1
+        move.l  #SP_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.d_block:
+        moveq   #0,d0                ; terminé -> bloque pour toujours (ne spinne pas)
+        jsr     LVO_WAIT(a6)
+        bra.s   .d_block
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -2405,6 +2485,13 @@ msg_m6z_ok:
         dc.b    "M6Z TRACKDISK CMD_READ MULTI-TRACK OK (offset->track: block 880 = root block @track 80; spanning read blocks 10+11 crosses track 0/1 boundary)",13,10,0
 msg_d1_ok:
         dc.b    "D1 OFS READ OK (read file 'KickSlop' by name from DF0: via OFS root->hash->header->data chain; 1024 bytes, case-insensitive, 3 OFS data blocks)",13,10,0
+msg_d3a_ok:
+        dc.b    "D3A PACKET OK (Process+CreateProc; driver -> StandardPacket PutMsg -> handler process -> ReplyMsg -> driver got echo)",13,10,0
+d3a_hname:
+        dc.b    "dos.handler.echo",0
+d3a_dname:
+        dc.b    "dos.driver",0
+        even
 ofs_test_name:
         dc.b    "kickslop",0
         even

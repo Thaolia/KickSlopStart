@@ -433,6 +433,20 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     absent, D1+reste intacts) + CTRL-NODISK (D2 gaté) + COOP (D2 + M3F). Exécutable de test : `tests/loadseg_d2.s`
     -> `vasm -Fhunk` + `vlink -s -bamigahunk` -> `xdftool write D2Test` (mk_boot_adf.sh). ⚠️ WAIT>=90 (I/O disque).
     PROCHAIN : D3 = cœur architectural (modèle packets BCPL + file-handler DF0: + CreateProc + CLI) -> checkpoint user.
+  - **D3 — dos packets / handler / process → « exécuter une commande » (en cours).** Cadrage user+advisor
+    (2026-10-17) : approche 1 (ABI packet observable fidèle, processes en C, pas de runtime BCPL). Piste ANALYSE
+    lancée d'emblée (agent isolé) → `docs/analysis/dos-v34-spec.md` + `dos-boot-sequence.md` (relues, porte de
+    revue clean-room passée). Design : `docs/D3-dos-design.md`. Décomposé D3a→D3d, prouvés depuis le scaffold de
+    boot comme vrais processes (phase ordonnancée, après `dispatch_in`).
+    - **D3a — Process + CreateProc + round-trip packet (FAIT).** `src/dos/process.s` (`proc_create`) + `dospkt.i`
+      (layout V34 Process/DosPacket/StandardPacket/FileHandle/DeviceNode + ACTION_*). `proc_create` bâtit un
+      `Process` (Task exec + `pr_MsgPort` embarqué @0x5C), initialise ENTIÈREMENT le port dans le parent (sigbit
+      réservé `DOS_PORTSIG=8` = SIGB_DOS, pré-alloué via TC_SIGALLOC → pas de handshake, pas de race), `AddTask`,
+      renvoie l'APTR du port. Preuve **D3A** : un process driver monte un StandardPacket, `PutMsg` au port d'un
+      process handler echo, `WaitPort`/`GetMsg` la réponse (round-trip via switch synchrone M3d) → echo correct.
+      RED `D3A_NO_REPLY` (handler ne `ReplyMsg` pas → driver bloqué) → D3A absent. GREEN-BOOT (D3A + non-rég
+      D1/D2/M3F/M7A/M7C/M7D, 0 FAILED) + RED + COOP (D3A exercé COOPÉRATIVEMENT, SCHED_ON=0) + CTRL-NODISK (D3A
+      présent, disk-indépendant ; D1/D2 absents). checksum GREEN `0x47B39093`. PROCHAIN : D3b (handler OFS).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

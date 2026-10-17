@@ -229,6 +229,7 @@ M7L_VBL_BEFORE EQU $000005E8  ; long : VBL_COUNT au départ de la requête de ca
 M7L_ELAPSED    EQU $000005EC  ; long : ticks VBLANK écoulés pendant la calibration (mesure)
 M7L_STAT       EQU $000005F0  ; UBYTE : b0 = marqueur « M7L MICROHZ CALIB OK » déjà émis
 GFX_COPLIST_PTR EQU $000005F4 ; M4a : long — adresse chip de la copper list (publiée par gfx_display_init)
+DOS_HANDLERPORT EQU $000005F8 ; D3 : long — APTR du pr_MsgPort du process file-handler DF0: (publié par le setup)
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
 ; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
 ; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms

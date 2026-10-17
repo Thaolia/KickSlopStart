@@ -32,7 +32,8 @@ DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i
 # ofs.o : lecture seule OFS (D1) — s'appuie sur trackdisk CMD_READ (disk.i) ; include exec.i + disk.i + ofs.i.
 # loadseg.o : LoadSeg (D2) — charge un exécutable hunk depuis l'OFS + relocation ; include exec.i + ofs.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o
+# process.o : Process + CreateProc (D3) ; include exec.i + dospkt.i.
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/process.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---
@@ -49,10 +50,13 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 # Un objet relogeable (vobj) par module exec ; dépend de l'include partagé.
+# -I src/dos : boot.s inclut dospkt.i (constantes Process/packet D3 pour le scaffold de preuve).
 $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -o $@ $<
+	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
 # trackdisk.s inclut aussi disk.i (registres disque B2).
 $(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
+# boot.s inclut dospkt.i (scaffold de preuve D3) : relier la dépendance pour rebuild.
+$(BUILD)/boot.o: $(DOS_DIR)/dospkt.i
 
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
@@ -71,6 +75,8 @@ $(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)
 $(BUILD)/ofs.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
 # loadseg.o inclut ofs.i (IOREQ/constantes) : relier la dépendance pour rebuild.
 $(BUILD)/loadseg.o: $(DOS_DIR)/ofs.i
+# process.o inclut dospkt.i : relier la dépendance pour rebuild.
+$(BUILD)/process.o: $(DOS_DIR)/dospkt.i
 
 # Link à $FC0000 (script) -> binaire brut ; mkrom complète + footer/checksum.
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
