@@ -29,6 +29,8 @@
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
                 xref    ofs_read_file    ; dos/ofs.s (D1 : lecture seule OFS -> lire un fichier par nom)
+                xref    dos_loadseg      ; dos/loadseg.s (D2 : charger un exécutable hunk de l'OFS + reloc)
+                xref    dos_unloadseg    ; dos/loadseg.s (D2 : libérer une seglist)
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
@@ -769,6 +771,27 @@ m6z_done:
         move.l  #2048,d0
         jsr     LVO_FREEMEM(a6)
 d1_done:
+
+        ; --- D2 : LoadSeg — charger « D2Test » de l'OFS, relocaliser, EXÉCUTER (gaté disque d4) ---
+        ; dos_loadseg lit l'exécutable hunk via ofs_read_file (D1), alloue les segments, APPLIQUE les relocations
+        ; et renvoie le BPTR de la seglist. On exécute le code chargé : entry = (BPTR<<2)+4. Le code émet LUI-MÊME
+        ; « D2LOADSEG OK » (preuve qu'il tourne depuis la RAM AVEC relocation appliquée — même logique que CBOOT en
+        ; C). RED D2_NO_RELOC : load OK mais pointeur non relocaté -> le code lit la RAM basse -> marqueur absent.
+        tst.l   d4
+        beq     d2_done
+        lea     ls_test_name(pc),a0
+        jsr     dos_loadseg          ; d0 = BPTR 1er segment | 0 (jsr absolu : loadseg.o hors portée bsr)
+        tst.l   d0
+        beq.s   d2_done              ; échec de chargement -> pas de marqueur
+        move.l  d0,-(sp)             ; BPTR sur la pile (survit au code chargé)
+        lsl.l   #2,d0
+        addq.l  #4,d0                ; entry = (BPTR<<2)+4 = contenu du 1er hunk (CODE)
+        move.l  d0,a0
+        jsr     (a0)                 ; exécute le code chargé (A6=SysBase) -> émet « D2LOADSEG OK »
+        move.l  ($4).w,a6            ; recharge SysBase (le code chargé a pu clobber a6)
+        move.l  (sp)+,d0             ; BPTR
+        jsr     dos_unloadseg        ; libère les segments
+d2_done:
 
         ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
         ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
@@ -2384,6 +2407,9 @@ msg_d1_ok:
         dc.b    "D1 OFS READ OK (read file 'KickSlop' by name from DF0: via OFS root->hash->header->data chain; 1024 bytes, case-insensitive, 3 OFS data blocks)",13,10,0
 ofs_test_name:
         dc.b    "kickslop",0
+        even
+ls_test_name:
+        dc.b    "d2test",0
         even
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (strap read DF0: bootblock and found NO bootable volume -> insert-disk; real 1.3 trigger: DOS-magic+additive-checksum invalid, or no disk)",13,10,0

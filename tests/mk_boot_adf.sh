@@ -13,9 +13,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/assets/boot_c.adf}"
 VASM="${VASM:-vasmm68k_mot}"
+VLINK="${VLINK:-vlink}"
 XDFTOOL="${XDFTOOL:-xdftool}"
 
-for t in "$VASM" "$XDFTOOL" python3; do
+for t in "$VASM" "$VLINK" "$XDFTOOL" python3; do
   command -v "$t" >/dev/null || { echo "outil absent : $t"; exit 2; }
 done
 
@@ -32,6 +33,12 @@ mkdir -p "$(dirname "$OUT")"
 #    -> blocs 10/11 restent libres pour les marqueurs spanning (garde dans patch_bootblock.py).
 python3 -I "$ROOT/tests/mk_ofs_testfile.py" "$TMP/kickslop.bin"
 "$XDFTOOL" "$TMP/fmt.adf" write "$TMP/kickslop.bin" KickSlop >/dev/null
+
+# 2b) exécutable HUNK de test « D2Test » (preuve D2 : LoadSeg). vasm -Fhunk -> objet ; vlink -s -bamigahunk ->
+#     load file strippé (HEADER/CODE/RELOC32/END/DATA/END, pas de SYMBOL). Écrit sur le disque, lu par LoadSeg.
+"$VASM" -Fhunk -m68000 -o "$TMP/d2.o" "$ROOT/tests/loadseg_d2.s" >/dev/null
+"$VLINK" -s -bamigahunk -o "$TMP/d2test" "$TMP/d2.o"
+"$XDFTOOL" "$TMP/fmt.adf" write "$TMP/d2test" D2Test >/dev/null
 
 # 3) boot code custom -> binaire brut
 "$VASM" -Fbin -m68000 -o "$TMP/bb.bin" "$ROOT/tests/bootblock_c.s"

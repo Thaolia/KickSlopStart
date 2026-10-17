@@ -414,6 +414,25 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (D1 gaté d4) + COOP (D1 + M3F). ⚠️ Lenteur : chaque bloc = 1 lecture de piste avec recalibration (dette : pas de
     tracking de cylindre) -> le boot disquette complet demande ~40 s sous FS-UAE (WAIT=60). FFS + sous-répertoires
     + écriture hors scope. Fichier de test écrit par `tests/mk_ofs_testfile.py` + `xdftool write` (mk_boot_adf.sh).
+  - **D2 — LoadSeg (FAIT).** `src/dos/loadseg.s` : `dos_loadseg(name)` -> BPTR seglist | 0 + `dos_unloadseg(BPTR)`.
+    Charge un exécutable AmigaDOS **« hunk »** depuis l'OFS (via `ofs_read_file` D1), alloue un segment par hunk,
+    copie le contenu, **APPLIQUE les relocations**, bâtit la seglist BPTR et la renvoie. Machinerie INTERNE (pas de
+    packets = D3). Format hunk **verrouillé empiriquement** (binaire `vlink -s -bamigahunk`, PAS la ROM) :
+    HUNK_HEADER (resident libs=0, table_size, first, last, N tailles [bits 30-31 = flags mémoire masqués]) ; corps
+    par hunk : CODE/DATA (nlongs + data) ou BSS (nlongs, pas de data), **HUNK_RELOC32 ($3EC** — vlink n'émet PAS la
+    variante compacte $3FC : on gère $3EC, et $3FC/SYMBOL/DEBUG -> échec PROPRE, jamais de skip silencieux de
+    relocation), HUNK_END. Seglist (convention AmigaDOS, vérifiée vs AROS InternalLoadSeg) : bloc `[LONG taille][BPTR
+    next][contenu]` ; le BPTR pointe sur le champ next (bloc+4) -> contenu à `(BPTR<<2)+4` = bloc+8. Déviations D2
+    assumées : flags chip/fast ignorés (MEMF_PUBLIC) ; first!=0 / SYMBOL / resident libs / $3FC / overlays non
+    supportés (échec propre). Preuve série **D2LOADSEG** : exécutable de test `D2Test` (section CODE + DATA + 1
+    relocation 32 bits CODE->DATA) chargé + relocalisé + EXÉCUTÉ -> le code émet LUI-MÊME « D2LOADSEG OK » depuis la
+    RAM (même logique que CBOOT en C : le marqueur vient du code chargé = preuve qu'il tourne AVEC relocation). RED
+    `D2_NO_RELOC` : load OK mais relocation NON appliquée -> le pointeur absolu reste l'offset link-time (0) -> le
+    code lit la RAM basse (adresse 0 = octet nul -> rien émis) -> « D2LOADSEG OK » absent, SANS bus error -> isole
+    l'application des relocations. GREEN-BOOT (D2 + non-rég D1/M6*/CBOOT/M6Y/M7A, 42 lignes, 0 FAILED) + RED (D2
+    absent, D1+reste intacts) + CTRL-NODISK (D2 gaté) + COOP (D2 + M3F). Exécutable de test : `tests/loadseg_d2.s`
+    -> `vasm -Fhunk` + `vlink -s -bamigahunk` -> `xdftool write D2Test` (mk_boot_adf.sh). ⚠️ WAIT>=90 (I/O disque).
+    PROCHAIN : D3 = cœur architectural (modèle packets BCPL + file-handler DF0: + CreateProc + CLI) -> checkpoint user.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
