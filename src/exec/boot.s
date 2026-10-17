@@ -32,6 +32,8 @@
                 xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
                 xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
                 xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
+                xref    req_draw         ; intuition/requester.s (requester : rendu bord+texte)
+                xref    req_input_handler ; intuition/requester.s (requester : handler clic sur input.device)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
@@ -1235,6 +1237,102 @@ d2_done:
         bsr     ser_puts            ; « KEYMAP AZERTY OK »
                 endc
 .km5_done:
+
+        ; --- requester Intuition « insert disk » cliquable : rendu (readback) + clic (RAWMOUSE via input.device) ---
+        ; (1) req_draw -> bord + texte dans un bitplane -> readback (bord haut + glyphe 'I'). (2) req_input_handler sur
+        ; input.device -> IND_WRITEEVENT d'un RAWMOUSE DANS le gadget (hit) puis HORS (miss) -> prouve le hit-test.
+        move.l  #CON_BMSIZE,d0          ; bitplane de test (chip, effacé)
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .req_done
+        move.l  d0,a2                   ; a2 = bitplane (survit)
+        move.l  a2,a0
+        moveq   #CON_BYTEW,d0
+        jsr     req_draw                ; dessine le requester
+        move.l  a2,a0
+        cmp.b   #$FF,(64*CON_BYTEW)+10(a0)  ; bord haut (row 64, octet 10) tracé ?
+        bne     .req_dfree
+        move.l  #font8x8,a1             ; glyphe 'I' attendu
+        move.l  #('I'-$20)*8,d0
+        add.l   d0,a1
+        lea     (72*CON_BYTEW)+12(a0),a3    ; cellule rendue (col 12, row 72)
+        moveq   #7,d2
+.req_rb:
+        move.b  (a1)+,d0
+        cmp.b   (a3),d0
+        bne.s   .req_dfree
+        add.w   #CON_BYTEW,a3
+        dbra    d2,.req_rb
+        lea     msg_req_drawn(pc),a0
+        bsr     ser_puts                ; « REQUESTER DRAWN OK »
+.req_dfree:
+        move.l  a2,a1
+        move.l  #CON_BMSIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        lea     EB_DEVICELIST(a6),a0    ; clic via input.device
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .req_done
+        move.l  d0,a4                   ; a4 = input.device base
+        move.l  #96,d0                  ; bloc : req_int(24) + ioreq(48@24) + event(22@72)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .req_done
+        move.l  d0,a3                   ; a3 = bloc
+        move.b  #0,LN_PRI(a3)           ; req_int : handler pri 0
+        move.l  #req_input_handler,IS_CODE(a3)
+        lea     24(a3),a1              ; ADDHANDLER req_int
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .req_bio
+        lea     72(a3),a0              ; event RAWMOUSE DANS le gadget (160,112)
+        move.b  #IECLASS_RAWMOUSE,IE_CLASS(a0)
+        move.w  #IECODE_LBUTTON,IE_CODE(a0)
+        move.w  #160,IE_X(a0)
+        move.w  #112,IE_Y(a0)
+        clr.w   REQ_HIT
+        lea     24(a3),a1             ; WRITEEVENT (clic dans)
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a1)
+        lea     72(a3),a0
+        move.l  a0,INP_IO_DATA(a1)
+        bsr     .req_bio
+        cmp.w   #1,REQ_HIT            ; clic DANS -> doit avoir posé REQ_HIT
+        bne.s   .req_cfree
+        lea     72(a3),a0            ; event RAWMOUSE HORS (5,5)
+        move.w  #5,IE_X(a0)
+        move.w  #5,IE_Y(a0)
+        clr.w   REQ_HIT
+        lea     24(a3),a1
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a1)
+        lea     72(a3),a0
+        move.l  a0,INP_IO_DATA(a1)
+        bsr     .req_bio
+        tst.w   REQ_HIT              ; clic HORS -> REQ_HIT doit rester 0
+        bne.s   .req_cfree
+        lea     msg_req_click(pc),a0
+        bsr     ser_puts             ; « REQUESTER CLICK OK »
+.req_cfree:
+        lea     24(a3),a1            ; REMHANDLER
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a1)
+        move.l  a3,INP_IO_DATA(a1)
+        bsr     .req_bio
+        move.l  a3,a1
+        move.l  #96,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .req_done
+.req_bio:                            ; helper : input BeginIO(a1=ioreq) + recharge SysBase. a4=input base.
+        move.l  a4,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        rts
+.req_done:
 
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
@@ -3018,6 +3116,10 @@ msg_keymap_ok:
         dc.b    "KEYMAP OK (keymap.resource US QWERTY: kbd_cook keycode+SHIFT/CAPS/CTRL -> q/Q/Q, 1/!, ctrl-C=$03)",13,10,0
 msg_keymap_azerty:
         dc.b    "KEYMAP AZERTY OK (keymap.resource FR AZERTY: kbd_cook keycode $10->a, $01->& (SHIFT->1), $02->e-acute)",13,10,0
+msg_req_drawn:
+        dc.b    "REQUESTER DRAWN OK (insert-disk requester: border + text rendered via font8x8; bitplane readback matches)",13,10,0
+msg_req_click:
+        dc.b    "REQUESTER CLICK OK (RAWMOUSE via input.device: click inside gadget -> hit, click outside -> miss)",13,10,0
         EVEN
 con_test_str:
         dc.b    "CONSOLE WRITE OK 0123456789"

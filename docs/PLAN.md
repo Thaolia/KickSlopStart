@@ -640,7 +640,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     intacts) -> DISCRIMINE que l'input du shell passe bien par le nouveau chemin ; (a) flag off -> con_handler série
     inchangé (contrôle). ROM écran = `make kick` avec `SHELL_ON_SCREEN=1`. Rendu écran prouvé CORRECT par le readback
     #3a (console.device CMD_WRITE) ; le pixel à l'écran reste non-capturable headless (cf. [[console-keymap-screen-harness]]).
-  - **À venir** : requesters Intuition (insert-disk cliquable) ; keymap complet (dead-keys/compose) ; parité modules.
+  - **Requester Intuition « insert disk » cliquable FAIT.** `src/intuition/requester.s` : struct Requester + struct
+    Gadget (layout NDK : LeftEdge/TopEdge/Width/Height/GadgetType) ; `req_hittest(x,y)` = hit-test de la box ABSOLUE
+    du gadget (le cœur du « cliquable ») ; `req_input_handler` enregistré sur input.device -> sur un clic BOUTON
+    GAUCHE (IECLASS_RAWMOUSE, ie_Code==IECODE_LBUTTON) hit-teste ie_X/ie_Y et pose `REQ_HIT` ; `req_draw` rend le
+    requester (bord haut/bas + texte « INSERT DISK » + label « RETRY » via la police 8x8) dans un bitplane. Preuves :
+    **REQUESTER DRAWN OK** (readback : bord haut + glyphe 'I' == font8x8) ; **REQUESTER CLICK OK** (IND_WRITEEVENT d'un
+    RAWMOUSE DANS le gadget -> hit ; HORS -> miss) ; RED `REQ_NO_HITTEST` (hit-test coupé -> CLICK absent, DRAWN intact).
+    Souris MATÉRIELLE (gameport/JOY0DAT deltas relatifs) + câblage M6R LIVE (clic réel sur écran invisible headless)
+    DIFFÉRÉS (non observables dans ce harnais) ; preuve du clic = chemin PUBLIC IND_WRITEEVENT (comme console.device).
+    Clean-room : NDK intuition.i (Gadget/Requester) + inputevent.i + police hand-authored. AUCUNE lecture ROM.
+  - **À venir** : souris matérielle (gameport.device) + câblage M6R live (sur vrai display) ; keymap dead-keys/compose ; parité modules.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

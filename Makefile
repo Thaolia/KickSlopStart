@@ -26,7 +26,7 @@ GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o $
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
-INT_OBJ   := $(BUILD)/intuition_lib.o
+INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/requester.o
 # --- piste dos (M6+) : objets reliés APRÈS intuition ---
 DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i

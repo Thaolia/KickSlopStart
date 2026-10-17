@@ -281,11 +281,15 @@ IND_ADDHANDLER  EQU 9            ; io_Command : ajoute un handler (struct Interr
 IND_REMHANDLER  EQU 10           ; io_Command : retire un handler de la chaîne
 IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents dans la chaîne de handlers
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
+IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
+IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
 IE_NEXTEVENT    EQU 0            ; struct InputEvent : APTR event suivant
 IE_CLASS        EQU 4            ; UBYTE classe
 IE_SUBCLASS     EQU 5            ; UBYTE sous-classe
-IE_CODE         EQU 6            ; UWORD code (keycode pour RAWKEY)
+IE_CODE         EQU 6            ; UWORD code (keycode pour RAWKEY ; bouton pour RAWMOUSE)
 IE_QUALIFIER    EQU 8            ; UWORD qualifieurs
+IE_X            EQU 10           ; WORD ie_position.ie_xy.ie_x (position souris ; absolue dans notre injection)
+IE_Y            EQU 12           ; WORD ie_position.ie_xy.ie_y
 IE_SIZEOF       EQU 22           ; sizeof(struct InputEvent)
 ; proof globals input.device (#2), RAM basse réservée (positionnés par les handlers de test de boot.s)
 INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (parcours de chaîne)
@@ -308,6 +312,7 @@ KBD_FHEAD    EQU $0000065E ; word : tête (consommateur = feeder)
 KBD_FTAIL    EQU $00000660 ; word : queue (producteur = kbd_interrupt) ; indices = OFFSETS OCTET (pas de 2)
 KBD_FEEDRING EQU $00000662 ; 32 octets : 16 entrées word = (KBD_QUAL<<8 | keycode) snapshotées par frappe
 KBD_FRMASK   EQU $1E       ; masque d'offset octet (taille 32 - 2)
+REQ_HIT      EQU $00000682 ; word : requester — gadget touché par un clic (posé par req_input_handler, preuve)
 
 ; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
 CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)

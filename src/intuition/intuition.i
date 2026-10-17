@@ -18,6 +18,29 @@ INTUITIONBASE_SIZE EQU IB_MICROS+4     ; 80 : dataSize pour MakeLibrary
 ; --- LVO intuition.library (lvo/intuition_lib.i, autoritatif) ---
 LVO_VIEWADDRESS  EQU -294              ; ViewAddress() -> View courant (vecteur 49)
 
+; --- struct Gadget / struct Requester (NDK intuition/intuition.i) — requester insert-disk cliquable ---
+GG_NEXTGADGET EQU 0
+GG_LEFTEDGE   EQU 4             ; WORD (relatif au requester)
+GG_TOPEDGE    EQU 6             ; WORD
+GG_WIDTH      EQU 8             ; WORD
+GG_HEIGHT     EQU 10            ; WORD
+GG_FLAGS      EQU 12            ; UWORD
+GG_ACTIVATION EQU 14           ; UWORD
+GG_GADGETTYPE EQU 16           ; UWORD
+GG_SIZEOF     EQU 44
+BOOLGADGET    EQU 1             ; gg_GadgetType : bouton booléen
+RQ_OLDERREQ   EQU 0
+RQ_LEFTEDGE   EQU 4             ; WORD
+RQ_TOPEDGE    EQU 6             ; WORD
+RQ_WIDTH      EQU 8             ; WORD
+RQ_HEIGHT     EQU 10            ; WORD
+RQ_REQGADGET  EQU 16           ; APTR liste de gadgets
+RQ_REQTEXT    EQU 24           ; APTR texte
+RQ_SIZEOF     EQU 112
+; REQ_NO_HITTEST=1 (RED requester) : req_input_handler ne fait PAS le hit-test -> un clic DANS le gadget ne pose pas
+; REQ_HIT -> « REQUESTER CLICK OK » absent. Isole le hit-test du gadget. Défaut 0.
+REQ_NO_HITTEST EQU 0
+
 ; M5 : intuition.library comme module résident (squelette + ViewAddress). M5I_BAD_VIEWADDR=1 (RED) : ViewAddress
 ; renvoie 0 au lieu de &ib_ViewLord -> la preuve « ViewAddress()==IntuitionBase+34 » échoue -> « M5I INTUI LIB OK »
 ; absent. Isole la primitive neuve (le routage NT_LIBRARY->LibList est déjà RED-prouvé par M4C1_WRONG_TYPE).
