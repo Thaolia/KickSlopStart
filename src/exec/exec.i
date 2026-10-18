@@ -365,6 +365,8 @@ PTR_INT      EQU $000006B6 ; struct Interrupt (22) de pointer_input_handler (pri
 REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) -> $6CC..$6E1
 FORBID_TEST_FLAG EQU $000006E2 ; long : preuve d'atomicité Forbid — task_fb le pose à 1 quand elle tourne
 FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
+TD_CACHEBUF  EQU $000006EA ; trackdisk : long — buffer persistant d'UNE piste décodée (0 = pas encore alloué)
+TD_CACHETRK  EQU $000006EE ; trackdisk : word — piste contenue dans TD_CACHEBUF ($FFFF = cache invalide)
 ; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
 ; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
 ; test gp_poll échoue). Isole le modèle de wraparound 8 bits des compteurs quadrature (load-bearing). Défaut 0.

@@ -6,7 +6,8 @@
 # harnais série (socat), l'entrée arrive par le VRAI clavier émulé. XTEST (pas XSendEvent/--window que SDL ignore).
 #
 # Usage : boot_test_kbd.sh <rom> <adf> <ready_marker> <keys...> <success_marker> [wait] [settle] [postwait]
-#   keys : séquence de noms de touches xdotool séparés par des espaces (ex. "v e r Return").
+#   keys : séquence de noms de touches xdotool séparés par des espaces (ex. "v e r Return") ; jetons spéciaux :
+#          « click » = bouton gauche souris, « sleep:N » = pause de N secondes.
 # Codes de sortie : 0 = succès ; 1 = régression/absent ; 2 = prérequis manquant.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,6 +63,8 @@ window_height = 568
 fade_in_duration = 0
 serial_port = $OUT/ser_uae
 EOF
+# Lignes de config FS-UAE supplémentaires (ex. BOOT_TEST_EXTRA_CFG='slow_memory = 512'), comme boot_test.sh.
+if [ -n "${BOOT_TEST_EXTRA_CFG:-}" ]; then printf '%s\n' "${BOOT_TEST_EXTRA_CFG}" >> "$CFG"; fi
 
 DISPLAY="$DISP" fs-uae "$CFG" >"$OUT/fs-uae.log" 2>&1 &
 FPID=$!
@@ -87,10 +90,19 @@ fi
 
 echo "=== injection clavier (XTEST) : $KEYS ==="
 for k in $KEYS; do
-  DISPLAY="$DISP" xdotool key --clearmodifiers "$k" 2>/dev/null
+  case "$k" in
+    click)   # bouton gauche souris Amiga, TENU 200 ms : un programme qui sonde CIA-A PRA une fois par frame
+             # (20 ms) rate un clic xdotool instantané
+             DISPLAY="$DISP" xdotool mousedown 1 2>/dev/null; sleep 0.2
+             DISPLAY="$DISP" xdotool mouseup 1 2>/dev/null ;;
+    sleep:*) sleep "${k#sleep:}" ;;                                   # pause (ex. sleep:5) entre deux écrans
+    *)       DISPLAY="$DISP" xdotool key --clearmodifiers "$k" 2>/dev/null ;;
+  esac
   sleep 0.22
 done
 sleep "$POSTWAIT"
+# Capture écran finale (diagnostic : état affiché après l'injection).
+xwd -root -display "$DISP" -silent 2>/dev/null | convert xwd:- "$OUT/screen.png" 2>/dev/null
 
 echo "=== serial.log (fin) ==="
 tr -cd '\11\12\15\40-\176\n' < "$SERLOG" | tail -14 | sed 's/^/  [ser] /'

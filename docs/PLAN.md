@@ -767,6 +767,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     refondre en API `begin(nom)`/`progress()`/`end()` appelée depuis `dos_loadseg` (doit RETOURNER, libérer ses allocs,
     réutiliser l'affichage courant) pour déclencher l'écran automatiquement sur un vrai chargement.
 - **Trackdisk timing-exact (WinUAE) — FIX FAST FAIT** (4590cb1) + loadscreen DMA-cut (bitplane/copper coupés pendant la lecture) prouvé WinUAE. **À venir** : chargement complet du jeu Lemmings sur WinUAE (bloque ~secteur 46) → aligner la lecture sur l'officielle (fin DMA par interruption, settles 1 ms/15 ms, délai moteur fixe 500 ms).
+- **Holiday Lemmings — le jeu DÉMARRE FAIT** : slow RAM `$C00000` en tête de MemList, shell à buffer taille-fichier,
+    LoadSeg respectant les flags mémoire (CHIP/FAST, flags dans l'id de hunk), cache de piste trackdisk (invalidé par
+    `/CHNG`). Cracktro → clic → menu du jeu prouvé sous FS-UAE. **À venir** : confirmation WinUAE par l'utilisateur ;
+    prouver une partie (clic PLAY → chargement d'un niveau) ; borner l'offset RELOC32 (dette loadseg).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

@@ -35,6 +35,8 @@ PRB_OFF        EQU $FF         ; tout haut : moteur off + déselectionné
 CIAA_PRA_HW    EQU CIAA_HW     ; = $BFE001
 DSKB_RDY       EQU 5           ; DSKRDY (0 = prêt)
 DSKB_TRACK0    EQU 4           ; DSKTRACK0 (0 = tête sur piste 0)
+DSKB_CHANGE    EQU 2           ; /CHNG (0 = disque retiré/changé depuis le dernier pas)
+PRB_SEL0_OFF   EQU $F7         ; SEL0=0 moteur=1 : sélectionne DF0 en latchant moteur OFF (lecture /CHNG)
 
 ; --- lecture de piste brute ---
 TD_RAWWORDS  EQU $1900         ; mots lus = 6400 (12800 o, > une piste DD) ; tient dans un compteur dbra 16 bits

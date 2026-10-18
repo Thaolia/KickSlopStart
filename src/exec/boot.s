@@ -19,6 +19,7 @@
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
+                xref    add_slow_memory  ; memory.s (slow RAM $C00000 en tête de MemList)
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c : lancement 1re tâche = transition user-mode)
@@ -223,6 +224,16 @@ coldstart:                        ; $FC00D2
         bsr     selftest             ; d0 = 0 (OK) / !=0 (échec)
         tst.l   d0
         bne     eb_fail
+        jsr     add_slow_memory      ; après le selftest mémoire (qui suppose la chip en tête de liste)
+        lsr.l   #8,d0                ; octets -> Ko (512 Ko = $0200)
+        lsr.l   #2,d0
+        move.w  d0,d2
+        lea     msg_memslow(pc),a0
+        bsr     ser_puts             ; « MEM SLOW KB= »
+        move.w  d2,d0
+        bsr     ser_puthex
+        lea     msg_crlf(pc),a0
+        bsr     ser_puts
         ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
         jsr     init_ints
         move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
@@ -4311,6 +4322,9 @@ noexist_test_name:
         dc.b    "inexistante.library",0
 dos_test_name:
         dc.b    "dos.library",0
+msg_memslow:
+        dc.b    "MEM SLOW KB=",0
+        EVEN
 msg_crlf:
         dc.b    13,10,0
         EVEN

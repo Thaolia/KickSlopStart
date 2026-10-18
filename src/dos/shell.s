@@ -17,7 +17,6 @@
                 xref    ser_lock             ; exec/boot.s (émission série atomique)
                 xref    ser_unlock
 
-SH_CMDBUF       EQU 16384            ; buffer de chargement d'une commande externe (E3)
 SH_SCRIPTMAX    EQU 2048             ; taille max de la startup-sequence lue (F1)
 
 SHELL_LINEMAX   EQU 128              ; taille max d'une ligne lue
@@ -176,35 +175,83 @@ sh_exec_cmd:
                 tst.l   d0
                 beq     .x_ret
                 move.l  d0,a4                ; a4 = DosBase
-                move.l  #SH_CMDBUF,d0
+                ; --- taille réelle du fichier : Lock + Examine (plus de buffer fixe 16 Ko qui tronquait) ---
+                move.l  #FIB_SIZEOF,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .x_closelib
-                move.l  d0,a5                ; a5 = filebuf
-                move.l  a4,a6                ; a6 = DosBase
-                move.l  d5,d1                ; nom
-                move.l  #MODE_OLDFILE,d2
-                jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0 (0 = introuvable)
+                move.l  d0,a5                ; a5 = FileInfoBlock
+                moveq   #0,d4                ; d4 = taille (0 = introuvable / illisible)
+                move.l  a4,a6
+                move.l  d5,d1
+                moveq   #SHARED_LOCK,d2
+                jsr     DOS_LVO_LOCK(a6)     ; BPTR lock | 0
                 tst.l   d0
-                beq     .x_free
-                move.l  d0,d7                ; d7 = BPTR fh
+                beq.s   .x_nolock
+                move.l  d0,d7                ; d7 = lock
                 move.l  d7,d1
                 move.l  a5,d2
-                move.l  #SH_CMDBUF,d3
-                jsr     DOS_LVO_READ(a6)     ; d0 = octets lus
-                move.l  d0,d6                ; d6 = taille
+                jsr     DOS_LVO_EXAMINE(a6)
+                tst.l   d0
+                beq.s   .x_unlock
+                move.l  FIB_SIZE(a5),d4
+.x_unlock:
+                move.l  d7,d1
+                jsr     DOS_LVO_UNLOCK(a6)
+.x_nolock:
+                move.l  ($4).w,a6
+                move.l  a5,a1
+                move.l  #FIB_SIZEOF,d0
+                jsr     LVO_FREEMEM(a6)
+                tst.l   d4
+                beq     .x_closelib
+                ; --- buffer à la taille du fichier, MEMF_PUBLIC : en slow RAM si présente (la chip reste au programme) ---
+                move.l  d4,d0
+                move.l  #MEMF_PUBLIC,d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq     .x_closelib
+                move.l  d0,a5                ; a5 = filebuf (d4 octets)
+                moveq   #0,d7                ; d7 = 0 tant qu'aucune seglist (Open raté -> rien à exécuter)
+                move.l  a4,a6
+                move.l  d5,d1
+                move.l  #MODE_OLDFILE,d2
+                jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0
+                tst.l   d0
+                beq.s   .x_freebuf
+                move.l  d0,d7                ; d7 = BPTR fh
+                moveq   #0,d6                ; d6 = octets lus
+.x_rd:                                       ; le file-handler est séquentiel : boucle jusqu'à EOF / plein
+                move.l  d7,d1
+                move.l  a5,d2
+                add.l   d6,d2
+                move.l  d4,d3
+                sub.l   d6,d3
+                beq.s   .x_rddone
+                jsr     DOS_LVO_READ(a6)     ; d0 = octets lus (0 = EOF, -1 = erreur)
+                tst.l   d0
+                ble.s   .x_rddone
+                add.l   d0,d6
+                bra.s   .x_rd
+.x_rddone:
                 move.l  d7,d1
                 jsr     DOS_LVO_CLOSE(a6)
                 move.l  ($4).w,a6            ; SysBase
+                moveq   #0,d7                ; d7 = seglist (0 = échec)
                 tst.l   d6
-                beq.s   .x_free              ; rien lu
+                beq.s   .x_freebuf           ; rien lu
                 move.l  a5,a0
                 move.l  d6,d0
                 jsr     ls_load_hunks        ; d0 = BPTR seglist | 0
-                tst.l   d0
-                beq.s   .x_free
-                move.l  d0,d7                ; d7 = BPTR seglist
+                move.l  d0,d7
+.x_freebuf:
+                move.l  ($4).w,a6            ; libère le buffer AVANT d'exécuter : rend la mémoire au programme
+                move.l  a5,a1
+                move.l  d4,d0
+                jsr     LVO_FREEMEM(a6)
+                tst.l   d7
+                beq.s   .x_closelib
                 move.l  #1,(sp)              ; TROUVÉE + chargée (drapeau pile)
                 ifeq    E3_NO_EXEC
                 move.l  d7,d0                ; entry = (seglist<<2)+4
@@ -218,11 +265,6 @@ sh_exec_cmd:
                 endc                         ; RED E3_NO_EXEC : saute le JSR -> commande chargée mais pas exécutée
                 move.l  d7,d0
                 jsr     dos_unloadseg
-.x_free:
-                move.l  ($4).w,a6
-                move.l  a5,a1
-                move.l  #SH_CMDBUF,d0
-                jsr     LVO_FREEMEM(a6)
 .x_closelib:
                 move.l  ($4).w,a6
                 move.l  a4,a1

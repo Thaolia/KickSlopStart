@@ -102,10 +102,10 @@ trackdisk_null:
 ; td_decode_track), copie jusqu'à la fin de piste, et avance -> une requête qui TRAVERSE une frontière de piste
 ; est servie en plusieurs lectures (dos lira le filesystem au-delà de la piste 0). Contrat trackdisk : io_Offset
 ; et io_Length multiples de TD_SECTOR (512) -> garde IOERR_BADLENGTH sinon ; garde de borne TD_DISKBYTES.
-; DETTE (à traiter quand dos s'appuiera sur ce chemin) : sectorbuf est MEMF_CLEAR une fois AVANT la boucle, pas
-; par itération, et on ne vérifie PAS le count de td_decode_track -> un secteur illisible dans une lecture
-; multi-piste renverrait des octets PÉRIMÉS de la piste précédente (pas 0 ni erreur). Sous-ensemble de la dette
-; « pas de gestion de secteur défectueux » déjà différée ; sans impact sur un disque propre (chaque secteur réécrit).
+; sectorbuf est PERSISTANT (alloué au 1er CMD_READ) et sert de CACHE DE PISTE (TD_CACHETRK) : valide seulement si
+; les 11 secteurs ont été décodés ET portent le n° de piste demandé ; invalidé par /CHNG (td_check_change).
+; DETTE : une piste partiellement décodée n'est pas cachée mais ses secteurs illisibles renvoient des octets
+; PÉRIMÉS (pas d'erreur) — dette « pas de gestion de secteur défectueux » ; sans impact sur un disque propre.
 trackdisk_beginio:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a2                ; a2 = ioreq
@@ -135,11 +135,16 @@ trackdisk_beginio:
         add.l   d2,d0
         cmp.l   #TD_DISKBYTES,d0
         bhi     .td_badrange
-        move.l  #MFM_SECBUF,d0       ; sectorbuf (une piste décodée), réutilisé à chaque itération
+        bsr     td_check_change      ; disque changé/retiré -> invalide cache + position de tête
+        move.l  TD_CACHEBUF,d0       ; sectorbuf persistant (= cache de piste), alloué au premier CMD_READ
+        bne.s   .td_havebuf
+        move.l  #MFM_SECBUF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .td_nomem
+        move.l  d0,TD_CACHEBUF
+.td_havebuf:
         move.l  d0,a3                ; a3 = sectorbuf
         move.l  IO_DATA(a2),a5       ; a5 = destination (avance)
 .td_bio_loop:
@@ -166,16 +171,31 @@ trackdisk_beginio:
                 ifne    TD_NOSEEK
         moveq   #0,d0               ; RED TD_NOSEEK : force la piste 0 -> lecture aboutit, mauvais contenu
                 endc
+        ; Cache de piste : chaque bloc OFS de 512 o relisait une piste ENTIÈRE (spin-up moteur + seek + DMA)
+        ; -> un exécutable de 145 Ko (~300 blocs) prenait plusieurs minutes. La piste décodée reste dans
+        ; sectorbuf ; une requête sur la même piste est servie sans accès disque.
+        cmp.w   TD_CACHETRK,d0
+        beq.s   .td_cached
+        move.w  #$FFFF,TD_CACHETRK   ; sectorbuf va être réécrit -> cache invalide tant que non vérifié
+        move.w  d0,-(sp)             ; piste demandée (survit aux appels)
         bsr     td_read_track        ; d0 = rawbuf chip | 0  (a6 = SysBase ; piste en d0)
         tst.l   d0
-        beq     .td_noread           ; pas de disque / timeout
+        beq     .td_noread_pop       ; pas de disque / timeout
         move.l  d0,d7                ; d7 = rawbuf
         move.l  d0,a0
         move.l  a3,a1
-        bsr     td_decode_track      ; décode la piste dans sectorbuf (count/track non requis ici)
+        bsr     td_decode_track      ; d0 = secteurs valides, d1 = piste du dernier secteur valide
+        cmp.w   #MFM_NSECT,d0        ; 11 = piste complète (le scan ne peut pas compter un secteur deux fois)
+        bne.s   .td_nocache
+        cmp.w   (sp),d1              ; et c'est bien la piste demandée (pas un mauvais seek)
+        bne.s   .td_nocache
+        move.w  d1,TD_CACHETRK
+.td_nocache:
+        addq.l  #2,sp
         move.l  d7,a1                ; libère rawbuf
         move.l  #TD_RAWBYTES,d0
         jsr     LVO_FREEMEM(a6)
+.td_cached:
         move.l  a3,a0                ; copie n octets : src = sectorbuf + octet-dans-piste, dst = a5
         add.l   d6,a0
         move.l  a5,a1
@@ -193,15 +213,12 @@ trackdisk_beginio:
 .td_done_ok:
         move.l  d4,IO_ACTUAL(a2)     ; octets transférés
         clr.b   IO_ERROR(a2)
-        bra.s   .td_freebuf
-.td_noread:
+        bra.s   .td_restore
+.td_noread_pop:
+        addq.l  #2,sp                ; dépile la piste demandée
         move.l  d4,IO_ACTUAL(a2)     ; octets transférés avant l'échec (0 si la 1re piste échoue)
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
-.td_freebuf:
-        move.l  a3,a1                ; libère sectorbuf
-        move.l  #MFM_SECBUF,d0
-        jsr     LVO_FREEMEM(a6)
-        bra.s   .td_restore
+        bra.s   .td_restore          ; sectorbuf = cache persistant : jamais libéré
 .td_badrange:
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
         bra.s   .td_restore
@@ -227,9 +244,28 @@ trackdisk_abortio:
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom (quirk V34). Les aires d'unité placeholder
 ; ne nécessitent pas d'init en B1 (deviendront Unit+MsgPort à initialiser en B2).
 trackdisk_initfunc:
+        clr.l   TD_CACHEBUF
+        move.w  #$FFFF,TD_CACHETRK
         move.l  d0,a1
         lea     trackdisk_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        rts
+
+; td_check_change() : sélectionne DF0 en latchant moteur OFF et lit /CHNG (bas = disque retiré/changé depuis le
+; dernier pas de tête ; seul un pas avec disque présent le relâche). Bas -> invalide le cache de piste ET la
+; position de tête (recalibration). Clobbe d0. Coût : 3 écritures PRB, sans spin-up.
+td_check_change:
+        move.b  #$FF,CIAB_DDRB
+        move.b  #PRB_OFF,CIAB_PRB
+        move.b  #PRB_SEL0_OFF,CIAB_PRB
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        sne     d0                   ; d0 = $FF si /CHNG haut (pas de changement)
+        move.b  #PRB_OFF,CIAB_PRB
+        tst.b   d0
+        bne.s   .cc_ret
+        move.w  #$FFFF,TD_CACHETRK
+        clr.b   TD_CYLVALID
+.cc_ret:
         rts
 
 ; td_read_track0(a6=SysBase) -> d0 = buffer chip (piste MFM brute) | 0 (timeout / pas de disque). B2 MINIMAL :

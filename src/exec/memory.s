@@ -16,6 +16,7 @@
                 xdef    exec_AvailMem
                 xdef    exec_TypeOfMem
                 xdef    init_memory
+                xdef    add_slow_memory
 
 ; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (multi-header, first-fit + split)
 ; M3c : enveloppé en Forbid/Permit — la MemList + les listes de chunks sont
@@ -246,6 +247,77 @@ init_memory:                         ; a6 = SysBase (jump table déjà bâtie)
         lea     MH_CHIP,a1
         jsr     LVO_ADDTAIL(a6)
         rts
+
+; add_slow_memory : détecte la RAM « slow » A500 (trapdoor, $C00000..) et l'ajoute EN TÊTE de la MemList
+; (MEMF_FAST|MEMF_PUBLIC) -> les allocations sans MEMF_CHIP y vont d'abord ; la chip reste au DMA. Un jeu qui
+; demande ~400 Ko de CHIP (Lemmings) ne tient qu'à cette condition sur une config 512K chip + 512K slow.
+; Sans slow RAM, la zone peut refléter les registres custom ($DFF000, décodage partiel) : chaque sonde est à
+; l'offset $1FE/$3FE d'un bloc (= registre NO-OP si miroir -> écriture inoffensive). Deux motifs croisés écrits
+; sur DEUX adresses avant relecture : un bus flottant qui retient la dernière valeur écrite ne passe pas.
+; Blocs suivants : refus si alias du bloc 0 (décodage incomplet). a6 = SysBase. Appelé après le selftest
+; mémoire (qui suppose la chip en tête de liste). Renvoie d0 = octets de slow RAM détectés (0 = aucune).
+SLOW_BASE       EQU $00C00000
+SLOW_STEP       EQU $00080000        ; granularité 512 Ko
+SLOW_MAXBLK     EQU 3                ; jusqu'à 1,5 Mo ($C00000-$D7FFFF)
+add_slow_memory:
+        movem.l d2-d4/a2-a3,-(sp)
+        moveq   #0,d2                ; d2 = taille détectée
+.as_blk:
+        cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d2
+        beq.s   .as_add
+        lea     SLOW_BASE,a2
+        add.l   d2,a2                ; a2 = bloc candidat
+        move.w  #$5A3C,$1FE(a2)
+        move.w  #$A5C3,$3FE(a2)
+        cmp.w   #$5A3C,$1FE(a2)
+        bne.s   .as_add
+        move.w  #$A5C3,$1FE(a2)
+        move.w  #$5A3C,$3FE(a2)
+        cmp.w   #$A5C3,$1FE(a2)
+        bne.s   .as_add
+        tst.l   d2                   ; bloc 0 : pas d'alias possible
+        beq.s   .as_ok
+        lea     SLOW_BASE,a3
+        move.w  #$1234,$1FE(a3)      ; marque le bloc 0...
+        move.w  #$4321,$1FE(a2)      ; ...écrit le bloc courant...
+        cmp.w   #$1234,$1FE(a3)      ; ...le bloc 0 a-t-il changé ? -> alias
+        bne.s   .as_add
+.as_ok:
+        add.l   #SLOW_STEP,d2
+        bra.s   .as_blk
+.as_add:
+        move.l  d2,d4                ; d4 = taille détectée (valeur de retour)
+        beq.s   .as_ret              ; pas de slow RAM : rien à faire
+        lea     SLOW_BASE,a0         ; MemHeader au début de la zone, 1er chunk juste après
+        moveq   #(MH_SIZE/4)-1,d0
+        move.l  a0,a1
+.as_z:
+        clr.l   (a1)+
+        dbf     d0,.as_z
+        move.b  #NT_MEMORY,LN_TYPE(a0)
+        move.l  #slow_name,LN_NAME(a0)
+        move.w  #(MEMF_FAST|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
+        lea     MH_SIZE(a0),a1       ; a1 = 1er chunk
+        move.l  a1,MH_LOWER(a0)
+        move.l  a1,MH_FIRST(a0)
+        move.l  d2,d3
+        add.l   a0,d3
+        move.l  d3,MH_UPPER(a0)
+        sub.l   #MH_SIZE,d2          ; d2 = octets libres
+        move.l  d2,MH_FREE(a0)
+        clr.l   MC_NEXT(a1)
+        move.l  d2,MC_BYTES(a1)
+        move.l  a0,a1                ; AddHead(MemList, header)
+        lea     EB_MEMLIST(a6),a0
+        jsr     LVO_ADDHEAD(a6)
+.as_ret:
+        move.l  d4,d0
+        movem.l (sp)+,d2-d4/a2-a3
+        rts
+
+slow_name:
+        dc.b    "slow memory",0
+        EVEN
 
 mh_name:
         dc.b    "chip memory",0

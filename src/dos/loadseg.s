@@ -11,13 +11,13 @@
 ;
 ; Seglist (convention AmigaDOS) : chaque segment = bloc AllocMem [LONG taille][BPTR next][contenu...] ; le BPTR
 ; pointe sur le champ next (bloc+4) -> contenu à (BPTR<<2)+4 = bloc+8 ; taille à bloc+0 (pour UnLoadSeg).
-; Déviations/portée D2 ASSUMÉES : flags mémoire chip/fast ignorés (tout en MEMF_PUBLIC) ; first != 0, hunks SYMBOL/
+; Flags mémoire du HUNK_HEADER respectés (bit 30 -> MEMF_CHIP, bit 31 -> MEMF_FAST ; 11 = attributs étendus V37 ->
+; échec propre). Déviations/portée D2 ASSUMÉES : first != 0, hunks SYMBOL/
 ; DEBUG, resident libs, RELOC32SHORT, overlays -> non supportés (échec propre). Suffit pour charger nos exécutables.
-; DETTE (à durcir quand D3 chargera des binaires de disque ARBITRAIRES) : la boucle RELOC32 ne VALIDE PAS le hunk
-; référencé (`ref < hunkcount`) ni l'offset (`offset < taille du hunk`) -> un binaire corrompu provoquerait un
-; wild-write. Même classe que la dette sectorbuf d'ofs.s ; sans impact sur nos binaires de test (contrôlés).
-; Prouvé seulement sur la forme minimale (1 CODE + 1 DATA + 1 RELOC32 count=1, pas de BSS/multi-ref/multi-hunk) :
-; les chemins BSS / multi-reloc / multi-hunk sont écrits mais non exercés.
+; Gardes anti-corruption : index du hunk courant et hunk référencé par RELOC32 < hunkcount. DETTE : l'offset de
+; relocation (`offset < taille du hunk`) et la taille du contenu ne sont pas bornés -> un binaire corrompu peut
+; encore écrire hors de son hunk. Prouvé sur un vrai binaire de disque (HolidayLemmings : 4 hunks, BSS chip de
+; 363 Ko, hunks CODE chip/any, RELOC32 multi-références, ids de hunk portant les flags mémoire).
 
                 include "exec.i"
                 include "ofs.i"
@@ -122,11 +122,24 @@ ls_load_hunks:
                 cmp.l   d4,d2
                 bhs.s   .alloc_done
                 bsr     ls_rdl               ; champ taille (longs + flags mémoire)
-                and.l   #$3FFFFFFF,d0        ; masque bits 30-31 (chip/fast)
+                move.l  d0,d3
+                rol.l   #2,d3
+                and.l   #3,d3                ; d3 = bits 31-30 -> 1-0 : bit0 = CHIP, bit1 = FAST
+                cmp.w   #3,d3
+                beq     .fail_segs           ; 11 = attributs étendus (V37+) -> non supporté en 1.3
+                and.l   #$3FFFFFFF,d0
                 lsl.l   #2,d0                ; octets de contenu
                 addq.l  #8,d0                ; + en-tête [taille][next]
                 move.l  d0,d7                ; d7 = taille d'alloc (sauvée)
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                btst    #0,d3
+                beq.s   .no_chip
+                or.l    #MEMF_CHIP,d1        ; hunk CHIP (BSS/données DMA du programme)
+.no_chip:
+                btst    #1,d3
+                beq.s   .no_fast
+                or.l    #MEMF_FAST,d1
+.no_fast:
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .fail_segs           ; alloc KO -> libérer les segments déjà faits
@@ -160,6 +173,7 @@ ls_load_hunks:
                 cmp.l   a3,a2
                 bhs     .body_done           ; fichier consommé
                 bsr     ls_rdl               ; id de hunk
+                and.l   #$3FFFFFFF,d0        ; l'id recopie les flags mémoire (ex. $400003EB = BSS chip)
                 cmp.l   #HUNK_CODE,d0
                 beq.s   .b_content
                 cmp.l   #HUNK_DATA,d0
@@ -178,6 +192,8 @@ ls_load_hunks:
                 addq.l  #1,d2                ; hunk suivant
                 bra.s   .body_loop
 .b_content:
+                cmp.l   d4,d2
+                bhs     .fail_segs           ; plus de hunks de contenu que déclarés -> corrompu
                 bsr     ls_rdl               ; nlongs
                 move.l  d2,d1
                 lsl.l   #2,d1
@@ -198,7 +214,11 @@ ls_load_hunks:
                 tst.l   d0
                 beq.s   .body_loop           ; 0 -> fin du bloc RELOC32
                 move.l  d0,d7                ; d7 = count
+                cmp.l   d4,d2
+                bhs     .fail_segs           ; RELOC32 hors d'un hunk déclaré -> corrompu
                 bsr     ls_rdl               ; hunk référencé
+                cmp.l   d4,d0
+                bhs     .fail_segs           ; référence vers un hunk inexistant -> corrompu
                 lsl.l   #2,d0
                 move.l  0(a4,d0.l),d1        ; d1 = contentAddr[ref] (addend)
                 move.l  d2,d0
