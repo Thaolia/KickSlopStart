@@ -39,10 +39,23 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
 1. **ROM principale** (`make kick`) : `vasmm68k_mot -Fvobj` assemble chaque module exec en objet
    relogeable, puis `vlink -b rawbin1 -T src/exec/kick.ld` les lie à `$FC0000` en image brute.
    **Ordre load-bearing** : `boot.o` est passé en premier → son CODE porte l'en-tête de reset à `$FC0000`.
-2. **hello-ROM** (`make hello`) : fichier unique via `vasmm68k_mot -Fbin` (smoke test M0).
-3. `src/rom/mkrom.py` complète à 256K, écrit footer + champ taille + checksum.
-4. `romtool info` valide le conteneur (`is_kick = ok`, `chk_sum = ok`) — gate dur de `make verify`.
-5. `tests/boot_test.sh` boote l'image sous FS-UAE et assère le **log série** (canal primaire, capturé
+2. **ROM de production** (`make kick-prod`) : même pipeline avec `-DPROD=1` (flag `PROD` dans
+   `src/exec/exec.i`, défaut 0 protégé par `ifnd` → surcharge sans édition de source). Objets isolés
+   dans `build/prod/`, image `build/kick13-prod.rom` ; la ROM de dév reste **byte-identique**. Les gates
+   `ifeq PROD` de `boot.s` retirent du chemin de boot le **harnais RUNTIME** : tâches démo M7
+   (`task_h/l/s/timer/port/fa/fb`, spinners), clients/drivers de test D3 (echo `d3a`, fs-driver `d3b`,
+   `d3c_client`, `d3d..d3j` — lisent des fichiers de test absents d'un vrai disque), sondes de preuve
+   (serveur de queue VERTB `vbl_tail`, source COPER), stress port M7d (neutralisé via `ifne PROD`).
+   **Gardé** : tout l'OS réel — `build_reslist`+`InitCode` monte TOUS les vrais modules (le « scan M4 »
+   couvre toute la ROM, pas que des résidents démo), timer CIA-B/MICROHZ, gameport live, montage DF0:
+   (handler OFS + DeviceNode), con_handler, feeder, strap (boot floppy OU écran insert-disk), Initial CLI.
+   Le hand-off final (`RemHead(TASKREADY)`+`dispatch_in`) est générique ; en prod le système idle via
+   `.d_idle` au lieu de spinner. `kick-prod` **retire le harnais, n'ajoute aucune capacité OS** : booter
+   un jeu complet reste un jalon séparé (identique dev/prod — cf. smoke-test Lemmings dans le ledger).
+3. **hello-ROM** (`make hello`) : fichier unique via `vasmm68k_mot -Fbin` (smoke test M0).
+4. `src/rom/mkrom.py` complète à 256K, écrit footer + champ taille + checksum.
+5. `romtool info` valide le conteneur (`is_kick = ok`, `chk_sum = ok`) — gate dur de `make verify`.
+6. `tests/boot_test.sh` boote l'image sous FS-UAE et assère le **log série** (canal primaire, capturé
    via un pont PTY `socat` sur `serial_port`) : marqueur de succès présent + marqueur d'échec absent ;
    repli automatique sur la couleur d'écran si aucune émission série (ex. hello-ROM). La ROM émet des
    checkpoints (`chk core`/`chk mem`/`chk m24a|b|c` → `self-test passed`) localisant tout échec.

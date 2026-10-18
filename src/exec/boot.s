@@ -1626,6 +1626,7 @@ d2_done:
         ; VBL_PREEMPT_COUNT==0. M3f (rejoué, non-régression) : task_H/L/S prouvent
         ; la coexistence préemption + yield (« M3F LIVE »). GREEN = « M7A TIMER OK » + « M7E IPL OK ».
         move.w  #$2700,sr            ; masque les interruptions pendant TOUT le setup
+                ifeq    PROD            ; PROD : vbl_tail est un serveur de PREUVE (M7e/M7f) -> hors prod
         clr.l   VBL_CLASH
         clr.l   VBL_PREEMPT_COUNT    ; M7e : baseline des préemptions du corps de vbl (INT6 armé juste après)
         clr.b   M7E_STAT             ; M7e : marqueur « M7E IPL OK » pas encore émis
@@ -1639,10 +1640,12 @@ d2_done:
         moveq   #INTB_VERTB,d0
         lea     VBL_TAIL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
+                endc                    ; fin bloc preuve VERTB (PROD=0)
         ; souris matérielle : arme le poller gameport.device (gp_vblank_server) sur la chaîne VERTB du système
         ; tournant — câblage LIVE PERSISTANT (pendant du feeder clavier). GP_POLLS avancera sur les VBlanks réels ;
         ; headless (JOY0DAT statique) le poller n'injecte rien (prev primé = courant) -> inerte vis-à-vis de M7.
         bsr     gp_install
+                ifeq    PROD            ; PROD : COPER = source de PREUVE (M7g multi-source int3) -> hors prod
         ; M7g : 2e source de NIVEAU 3 (COPER) pour prouver le décodage INTREQR multi-source d'int3.
         ; coper_test (vecteur EXCLUSIF) incrémente COPER_FIRED ; vbl_tail déclenche COPER par logiciel.
         clr.l   COPER_FIRED
@@ -1652,6 +1655,7 @@ d2_done:
         lea     coper_int(pc),a1
         jsr     LVO_SETINTVECTOR(a6)
         move.w  #(INTF_SETCLR|INTF_COPER),INTENA ; active COPER (niveau 3) ; vbl_tail la déclenche
+                endc                    ; fin source COPER de preuve (PROD=0) ; MICROHZ/CIA-B conservé ci-dessous
         lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
@@ -2311,6 +2315,7 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #0,d2
         bsr     mk_demo_task
                 else
+                ifeq    PROD            ; PROD : tâches démo M7 (scheduler proofs : H/L/S/timer/port/fa/fb) -> hors prod
         lea     task_h(pc),a2        ; task_H (pri 10) -> tête (Enqueue trie), publiée
         lea     task_h_name(pc),a3
         moveq   #DEMO_PRI_H,d2
@@ -2347,11 +2352,13 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #DEMO_PRI_P,d2
         bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
                 endc
+                endc                    ; fin tâches démo M7 (PROD=0)
         ; --- D3a : créer le process file-handler (echo) + le process driver (tournent après dispatch_in) ---
         ; Créés dans les DEUX modes (GREEN SCHED_ON=1 ET COOP) : driver/handler bloquent sur WaitPort (switch
         ; synchrone M3d) -> round-trip packet coopératif. proc_create via jsr (process.o hors portée bsr).
         ; Paire echo PRIORITAIRE (8/7) au-dessus de la paire OFS (6/5) : son round-trip (rapide, sans disque)
         ; s'achève TÔT -> « D3A » émis bien avant la lecture OFS lente -> pas d'émission série concurrente avec D3B.
+                ifeq    PROD            ; PROD : paire echo D3a = preuve round-trip packet (D3A) -> hors prod
         lea     d3a_hname(pc),a0
         lea     d3a_handler(pc),a1
         moveq   #8,d0                ; echo handler pri 8
@@ -2363,18 +2370,22 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #7,d0                ; echo driver pri 7
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; --- D3b : créer le process file-handler DF0: (OFS) + le fs-driver (open/read/close par packets) ---
+                endc                    ; fin paire echo D3a (PROD=0)
+        ; --- D3b : créer le process file-handler DF0: (OFS) — INFRASTRUCTURE (le CLI résout DF0: par lui). Le
+        ; fs-driver qui suit est un CLIENT de PREUVE (lit « kickslop » -> « D3B HANDLER OK ») -> gaté en prod. ---
         lea     d3b_hname(pc),a0
         move.l  #dos_handler_df0,a1  ; absolu : handler.o lié hors portée lea(pc) 16 bits
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_FSPORT        ; publie le port du file-handler OFS
+                ifeq    PROD            ; PROD : fs-driver = client de preuve D3b (lit kickslop) -> hors prod ; le handler reste
         lea     d3b_dname(pc),a0
         lea     dos_fsdriver(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+                endc                    ; fin fs-driver de preuve D3b (PROD=0)
         ; --- D3c : monter un DeviceNode DF0: dans DosInfo.di_DevInfo (dn_Task = port du handler OFS) + client dos ---
         lea     EB_LIBLIST(a6),a0
         lea     dos_libname(pc),a1
@@ -2396,6 +2407,8 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         move.l  a3,d0
         lsr.l   #2,d0                ; BPTR(DeviceNode)
         move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open résout DF0: par ce nœud
+                ifeq    PROD            ; PROD : clients de test D3 (d3c..d3j lisent kickslop/D3DTest/bigseg/BigData,
+                                        ; absents d'un vrai disque Workbench) -> hors prod ; le MONTAGE DF0: ci-dessus reste
         lea     d3c_cname(pc),a0
         lea     d3c_client(pc),a1
         moveq   #4,d0                ; client pri 4 (bloque sur packets ; sous echo/OFS)
@@ -2454,6 +2467,7 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
+                endc                    ; fin clients de test D3 (PROD=0)
         ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
         ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
         lea     e1_hname(pc),a0
@@ -2489,6 +2503,10 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
 ; sur le port. a6 = SysBase. WP_SPORT est écrit EN DERNIER (une fois le port prêt) pour que le service
 ; MICROHZ (qui teste WP_SPORT) ne le voie qu'entièrement construit. clobbers scratch + d2/a2 (sauvés).
 setup_stress_port:
+                ifne    PROD            ; PROD : pas de stress M7d ; efface WP_SPORT -> le service MICROHZ le voit
+        clr.l   WP_SPORT             ; nul et saute la voie de stress (sinon valeur power-up aléatoire = crash)
+        rts
+                endc
         movem.l d2/a2,-(sp)
         clr.l   WP_SPORT             ; (RAM basse non garantie nulle)
         clr.l   WP_PORTT

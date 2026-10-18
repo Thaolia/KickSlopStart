@@ -96,7 +96,9 @@ publiques (RKRM / NDK / `.fd`) + AROS (référence lecture seule).
 Prérequis : `vasmm68k_mot` + `vlink` dans le PATH, **amitools** (`romtool`), `python3`, **FS-UAE** + **Xvfb**.
 
 ```sh
-make                  # -> build/kick13.rom  (ROM principale : exec coldstart)
+make                  # -> build/kick13.rom  (ROM de DÉV : exec coldstart + harnais de preuve)
+make kick-prod        # -> build/kick13-prod.rom  (ROM de PRODUCTION : -DPROD=1, harnais de dev
+                      #   retiré du chemin de boot ; objets isolés dans build/prod/ ; dev inchangée)
 make verify           # taille 256K + romtool is_kick=ok
 tests/boot_test.sh    # boot headless FS-UAE ; assertion sur le LOG SÉRIE (marqueur
                       #   « self-test passed ») capturé via un pont PTY socat ;
@@ -104,6 +106,16 @@ tests/boot_test.sh    # boot headless FS-UAE ; assertion sur le LOG SÉRIE (marq
 make hello            # -> build/kick13-hello.rom (smoke test M0)
 tests/boot_test.sh build/kick13-hello.rom 10 00FF00 HELLO   # test hello (marqueur « HELLO »)
 ```
+
+**ROM de dév vs production** — `build/kick13.rom` embarque le **harnais de preuve** (tâches démo
+M7, clients de test D3, sondes de preuve, marqueurs série de milestone) qui pilote la vérif par boot.
+`make kick-prod` (`-DPROD=1`, flag dans `src/exec/exec.i`) **sort ce harnais du chemin de boot** :
+plus de tâches démo (spinners qui brûlent le 68000 à jamais) ni de clients de test (lectures de
+fichiers fantômes) — c'est la variante **gravable EPROM**. Elle **garde** tout l'OS réel (scan
+résident → cia/timer/gfx/intuition/dos/trackdisk…, montage DF0:, con_handler, feeder, strap → boot
+floppy ou écran insert-disk, Initial CLI). La ROM de dév reste **byte-identique** (le flag défaut 0).
+*Portée :* `kick-prod` retire le harnais, il n'ajoute **aucune** capacité OS — booter un **jeu**
+complet (graphics/copper/blitter, trackloader du jeu) reste un jalon séparé non atteint (dev comme prod).
 
 Le log série émet des **checkpoints** (`chk core` → `chk mem` → `chk m24a/b/c` →
 `self-test passed`) : en cas d'échec, le dernier checkpoint capturé localise le groupe fautif.

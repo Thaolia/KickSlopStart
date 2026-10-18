@@ -158,6 +158,17 @@ M7E_PROLOGUE_IPL7  EQU 0
 ; par le seul chemin YIELD (trap1->dispatch->switch). Prouve que la voie yield->dispatch tient sans
 ; préemption après M7e. Défaut 0 (build préemptif complet M3f/M7a/M7c/M7d/M7e).
 M7E_COOP           EQU 0
+; PROD=1 : ROM de PRODUCTION — sort le HARNAIS DE DÉVELOPPEMENT du chemin de boot. Gaté : tâches démo M7
+; (task_h/l/s/timer/port/fa/fb), clients de test D3 (echo d3a, d3c_client, d3d..d3j), port de stress M7d,
+; instrumentation de preuve (serveur de queue VERTB vbl_tail, source COPER de test). GARDÉ : init exec +
+; scan résident -> TOUS les vrais modules (cia/timer/gfx/intuition/dos/trackdisk...), timer CIA-B/MICROHZ,
+; gameport live, montage DF0: (handler OFS + driver + DeviceNode), con_handler, feeder, strap (boot floppy
+; OU écran insert-disk), Initial CLI. Les marqueurs série de diagnostic restent (POST ; émis par le chemin
+; RÉEL, pas par le harnais). Défaut 0 = ROM dev prouvée, byte-identique. SURCHARGÉ par -DPROD=1 (make
+; kick-prod) -> aucune édition de source pour produire la variante prod. Le `ifnd` protège le défaut.
+        ifnd    PROD
+PROD               EQU 0
+        endif
 ; F2A_NO_HANDSHAKE=1 (RED F2a) : kbd_selftest NE fait PAS le handshake clavier (pulse CRA bit 6) -> le clavier
 ; émulé stalle après le 1er octet -> $FE (terminate power-up) jamais reçu -> « F2 KBD OK » absent. Isole le
 ; handshake (load-bearing : sans ack, le flux clavier ne progresse pas). Défaut 0.

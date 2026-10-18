@@ -8,6 +8,9 @@ VASM    ?= vasmm68k_mot
 VLINK   ?= vlink
 PYTHON  ?= python3
 ROMTOOL ?= romtool
+# VASMDEF : defines passés à vasm (vide = ROM dev). `make kick-prod` met -DPROD=1 -> variante production
+# (sort le harnais de dev du chemin de boot ; cf. src/exec/exec.i). Aucune édition de source requise.
+VASMDEF ?=
 
 BUILD   := build
 MKROM   := src/rom/mkrom.py
@@ -42,11 +45,16 @@ KICK_ROM  := $(BUILD)/kick13.rom
 HELLO_SRC := src/rom/start.s
 HELLO_ROM := $(BUILD)/kick13-hello.rom
 
-.PHONY: all kick hello verify clean
+.PHONY: all kick kick-prod hello verify clean
 
 all: kick
 kick: $(KICK_ROM)
 hello: $(HELLO_ROM)
+
+# kick-prod : ROM de PRODUCTION (-DPROD=1) — sort le harnais de dev du chemin de boot (cf. src/exec/exec.i).
+# Objets isolés dans build/prod/ (la ROM dev build/*.o reste intacte) ; image finale build/kick13-prod.rom.
+kick-prod:
+	$(MAKE) BUILD=build/prod VASMDEF=-DPROD=1 KICK_ROM=build/kick13-prod.rom kick
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -54,7 +62,7 @@ $(BUILD):
 # Un objet relogeable (vobj) par module exec ; dépend de l'include partagé.
 # -I src/dos : boot.s inclut dospkt.i (constantes Process/packet D3 pour le scaffold de preuve).
 $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
 # trackdisk.s inclut aussi disk.i (registres disque B2).
 $(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
 # expansion.s inclut expansion.i (ExpansionBase/ConfigDev/LVO) : relier la dépendance pour rebuild.
@@ -66,17 +74,17 @@ $(BUILD)/dos_lib.o: $(DOS_DIR)/dospkt.i
 
 # Module(s) graphiques (src/graphics) : include exec.i (ABI/LVO) + graphics.i (registres display).
 $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 # bootscreen_data.s fait un incbin de bootscreen.raw : relier la dépendance pour rebuild sur régénération.
 $(BUILD)/bootscreen_data.o: $(GFX_DIR)/bootscreen.raw
 
 # Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase).
 $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(INT_DIR) -o $@ $<
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(INT_DIR) -o $@ $<
 
 # Module(s) dos (src/dos) : include exec.i (ABI/LVO/AllocMem) + dos.i (layout DosLibrary/RootNode/DosInfo, BPTR).
 $(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
 # ofs.o inclut aussi disk.i (CMD_READ) + ofs.i (constantes OFS) : relier les dépendances pour rebuild.
 $(BUILD)/ofs.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
 $(BUILD)/diskvalidator.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
