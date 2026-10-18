@@ -93,6 +93,11 @@ window_height = 568
 fade_in_duration = 0
 serial_port = $OUT/ser_uae
 EOF
+# Lignes de config supplémentaires (ex. cycle-exact pour approcher un vrai A500) via l'env BOOT_TEST_EXTRA_CFG.
+# Exemple : BOOT_TEST_EXTRA_CFG=$'cpu_cycle_exact = 1\nblitter_cycle_exact = 1' tests/boot_test.sh ...
+if [ -n "${BOOT_TEST_EXTRA_CFG:-}" ]; then
+  printf '%s\n' "${BOOT_TEST_EXTRA_CFG}" >> "$CFG"
+fi
 
 DISPLAY="$DISP" fs-uae "$CFG" >"$OUT/fs-uae.log" 2>&1 &
 FPID=$!

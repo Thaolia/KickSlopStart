@@ -261,18 +261,13 @@ td_read_track:
         beq.s   .rd_seek
         subq.l  #1,d2
         bne.s   .rd_spin
-        ; timeout DSKRDY : aucun disque prêt (lecteur absent ou vide) -> inutile de recalibrer (85x) et d'armer le
-        ; DMA (tout timeouterait) ; moteur off + libère le buffer + renvoie 0. Rend le probe « sans disque » rapide.
-        ; ⚠️ DETTE vraie-A500 (C) : ce gate est désormais PORTEUR (avant B2 : timeout -> on continuait, le sync DMA
-        ; était le signal de présence). Nouvelle hypothèse : un disque lisible asserte DSKRDY dans la fenêtre du
-        ; timeout spin-up. CONFIRMÉ sous FS-UAE, mais la marge timeout(accès CIA, ~2us/it) vs spin-up moteur MÉCANIQUE
-        ; (~0,3-0,5 s) n'est PAS vérifiée sur vrai lecteur -> un DSKRDY lent pourrait rejeter un disque valide (M7).
-        move.b  #PRB_OFF,CIAB_PRB
-        move.l  a2,a1
-        move.l  #TD_RAWBYTES,d0
-        jsr     LVO_FREEMEM(a6)
-        moveq   #0,d0
-        bra     .rd_ret
+        ; DSKRDY pas asservi dans la fenêtre de spin-up. CORRECTION (dette vraie-A500 levée) : sur un vrai A500 /
+        ; WinUAE timing-exact, /RDY est LENT ou ne s'asserte JAMAIS dans cette fenêtre alors que le disque TOURNE
+        ; -> l'ancien gate dur « moteur off + renvoie 0 » rejetait TOUT disque valide (toutes lectures KO sous
+        ; WinUAE timing-exact, prouvé stage=2). On NE FAIL PLUS ici : la boucle a déjà laissé ~0,5-1 s de spin-up
+        ; moteur ; on POURSUIT vers le seek+DMA, où le sync WORDSYNC du DMA est le VRAI test de présence (le
+        ; comportement d'avant B2). Sans disque -> pas de sync -> timeout DMA plus bas -> renvoie 0 (plus lent que
+        ; l'ancien probe « sans disque » mais CORRECT). /RDY reste le chemin RAPIDE via le « beq.s .rd_seek » plus haut.
 .rd_seek:
         ; SECTION CRITIQUE du seek : les pulses de pas écrivent CIAB_PRB, et la source MICROHZ (timer A de
         ; CIA-B, INT6) partage la MÊME puce. Une IRQ INT6 tombant entre les écritures PRB d'un pas corrompt le
@@ -300,9 +295,7 @@ td_read_track:
 .rd_recal:
         btst    #DSKB_TRACK0,CIAA_PRA_HW
         beq.s   .rd_recdone
-        move.b  #$77,CIAB_PRB       ; direc OUT (bit1=1), step=1
-        move.b  #$76,CIAB_PRB       ; step=0 : front descendant = un pas
-        move.b  #$77,CIAB_PRB       ; step=1
+        bsr     .rd_step_out        ; un pas OUT (pulse élargi : compatible drive strict / vrai A500)
         bsr     .rd_settle
         dbra    d2,.rd_recal
 .rd_recdone:
@@ -315,9 +308,7 @@ td_read_track:
         beq.s   .rd_side            ; déjà sur le bon cylindre
         bmi.s   .rd_stepin          ; courant < cible -> stepper IN
 .rd_stepout:                        ; courant > cible -> stepper OUT (vers 0) d2 fois
-        move.b  #$77,CIAB_PRB       ; direc OUT, step=1
-        move.b  #$76,CIAB_PRB
-        move.b  #$77,CIAB_PRB
+        bsr     .rd_step_out        ; un pas OUT (pulse élargi)
         bsr     .rd_settle
         subq.w  #1,d2
         bne.s   .rd_stepout
@@ -325,9 +316,7 @@ td_read_track:
 .rd_stepin:
         neg.w   d2                  ; |delta|
 .rd_stepin_l:
-        move.b  #$75,CIAB_PRB       ; direc IN (bit1=0), step=1
-        move.b  #$74,CIAB_PRB
-        move.b  #$75,CIAB_PRB
+        bsr     .rd_step_in         ; un pas IN (pulse élargi)
         bsr     .rd_settle
         subq.w  #1,d2
         bne.s   .rd_stepin_l
@@ -344,7 +333,12 @@ td_read_track:
         move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
         move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
                 ifeq    TD_NO_DMA
-        move.w  #(ADKF_SETCLR|ADKF_WORDSYNC),ADKCON   ; $8400 : SETCLR | WORDSYNC (DD, FAST=0)
+        ; $9500 = SETCLR|MFMPREC|FAST|WORDSYNC. Le bit FAST (débit 2 us/bit, standard DD) est le FIX WinUAE :
+        ; sans lui (ancien $8400, FAST=0 = 4 us/bit) Paula échantillonne le flux au MAUVAIS rythme -> les octets
+        ; s'assemblent (DSKBYT) mais le bitstream est garbage -> $4489 ne se forme jamais -> WORDEQUAL jamais ->
+        ; lecture KO (prouvé stage=$53 sur WinUAE). FS-UAE lâche décodait quand même. $9500 = mode lecture officiel
+        ; KS1.3 ($9100 = SETCLR|MFMPREC|FAST) + WORDSYNC. Cf. docs/analysis/trackdisk-official-timing.md.
+        move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST|ADKF_WORDSYNC),ADKCON   ; $9500
         move.w  #TD_SYNC,DSKSYNC      ; $4489
         move.l  a2,DSKPT             ; pointeur DMA = buffer (longword)
         move.w  #$4000,DSKLEN        ; reset/disable (quirk avant armement)
@@ -382,6 +376,33 @@ td_read_track:
 .rd_sloop:                           ; préserve d2 (compteur de pas) ET d3 (cylindre cible du cylinder-tracking).
         subq.l  #1,d0
         bne.s   .rd_sloop
+        rts
+
+; Un pas à PULSE ÉLARGI (compatibilité drive STRICT / vrai A500). Le modèle floppy cycle-exact de WinUAE IGNORE
+; un /STEP trop bref (3 écritures CIAB_PRB dos-à-dos = ~1,4 us de bas) : la tête ne bouge pas -> aucune piste
+; valide sous la tête -> pas de sync $4489 (prouvé : toutes lectures stage=3/$53, recal forcée inefficace). On
+; pose la DIRECTION, on la laisse se stabiliser, puis on tient /STEP bas TD_STEP_DLY avant de relâcher -> chaque
+; pas est reçu. Clobbe d0 ; préserve d2 (compteur de pas) et d3 (cylindre cible). FS-UAE inchangé (edge identique).
+TD_STEP_DLY   EQU $40               ; ~160 us de largeur (très au-dessus du minimum drive ; << settle 82 ms)
+.rd_step_out:
+        move.b  #$77,CIAB_PRB       ; direc OUT (bit1=1), step=1 : pose la direction
+        bsr.s   .rd_stepdly         ; setup : direction stable avant le front de pas
+        move.b  #$76,CIAB_PRB       ; step=0 : front descendant = le pas
+        bsr.s   .rd_stepdly         ; maintient /STEP bas (largeur du pulse)
+        move.b  #$77,CIAB_PRB       ; step=1 : relâche
+        rts
+.rd_step_in:
+        move.b  #$75,CIAB_PRB       ; direc IN (bit1=0), step=1
+        bsr.s   .rd_stepdly
+        move.b  #$74,CIAB_PRB       ; step=0 : le pas
+        bsr.s   .rd_stepdly
+        move.b  #$75,CIAB_PRB       ; step=1
+        rts
+.rd_stepdly:
+        move.l  #TD_STEP_DLY,d0
+.rd_sdloop:
+        subq.l  #1,d0
+        bne.s   .rd_sdloop
         rts
 
 ; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs décodés+vérifiés (checksums en-tête ET data OK).

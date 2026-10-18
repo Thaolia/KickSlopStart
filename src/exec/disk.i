@@ -14,7 +14,8 @@ DMAF_MASTER   EQU $0200        ; DMA maître
 DMAF_SETCLR   EQU $8000
 ADKF_SETCLR   EQU $8000
 ADKF_WORDSYNC EQU $0400        ; active la recherche du mot DSKSYNC par le DMA de lecture
-ADKF_FAST     EQU $0100        ; 2 us/bit (à essayer si WORDSYNC seul ne synchronise pas)
+ADKF_FAST     EQU $0100        ; débit disque : 1 = 2 us/bit (standard DD) ; 0 = 4 us/bit -> mauvais rythme = garbage
+ADKF_MFMPREC  EQU $1000        ; MFM precompensation (mode lecture par défaut du KS1.3 officiel = $9100)
 INTF_DSKBLK   EQU $0002        ; INTREQ/INTREQR : fin du DMA bloc disque (niveau 1)
 
 ; --- CIA-B PRB (contrôle drive, $BFD100) — toutes les lignes sont ACTIVES BAS (0 = asserté) ---
