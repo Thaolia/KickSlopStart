@@ -350,12 +350,17 @@ ofs_fib_fill:
                 clr.b   (a1)                         ; NUL-termine la C-string
                 rts
 
-; ofs_name_to_block(a0=chemin NUL-term, a6=SysBase) -> d0 = bloc header de l'objet | 0. Résout un chemin : préfixe
-; « xxx: » ignoré (un seul volume DF0:) ; vide / « : » -> racine (OFS_ROOTBLK). Sinon traverse les sous-répertoires
-; USERDIR ('/'-séparés) comme ofs_read_file, MAIS le composant FINAL peut être un fichier OU un répertoire (Lock
-; d'un dir autorisé). Réutilise ofs_split / ofs_dir_lookup / ofs_read_block. Setup trackdisk/ioreq interne.
+; ofs_name_to_block(a0=chemin NUL-term, d0=bloc du répertoire de départ (0 = racine), a6=SysBase) -> d0 = bloc header
+; de l'objet | 0. Sémantique AmigaDOS : préfixe « xxx: » -> part de la RACINE (dos a déjà choisi le volume) ; sinon
+; part du répertoire donné (clé du lock parent). Chemin vide -> le répertoire de départ lui-même. Composants
+; '/'-séparés ; un composant VIDE (« / » en tête ou « // ») remonte au PARENT ; un '/' final après un nom est neutre.
+; Le composant final peut être un fichier OU un répertoire. Réutilise ofs_split / ofs_dir_lookup / ofs_read_block.
 ofs_name_to_block:
                 movem.l d2-d7/a2-a5,-(sp)
+                move.l  d0,d4                        ; d4 = répertoire courant
+                bne.s   .n2b_start
+                move.l  #OFS_ROOTBLK,d4
+.n2b_start:
                 move.l  a0,a1                        ; a1 = scan de préfixe « xxx: »
 .n2b_colon:
                 move.b  (a1)+,d0
@@ -363,10 +368,11 @@ ofs_name_to_block:
                 cmp.b   #':',d0
                 bne.s   .n2b_colon
                 move.l  a1,a0                         ; a0 = juste après le ':'
+                move.l  #OFS_ROOTBLK,d4              ; « xxx: » -> racine du volume
 .n2b_nocolon:
                 tst.b   (a0)
                 bne.s   .n2b_resolve
-                move.l  #OFS_ROOTBLK,d0              ; chemin vide (ou « : ») -> racine (pas d'alloc)
+                move.l  d4,d0                         ; chemin vide -> le répertoire de départ (pas d'alloc)
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 .n2b_resolve:
@@ -384,14 +390,30 @@ ofs_name_to_block:
                 tst.l   d0
                 beq     .n2b_fail                    ; pas de RAM (rien à free)
                 move.l  d0,a3
-                move.l  #OFS_ROOTBLK,d4             ; d4 = répertoire courant (racine)
+                moveq   #0,d6                         ; d6 = 0 tant qu'aucun composant n'a été traité
 .n2b_nextcomp:
                 lea     LF_COMP(sp),a4
                 move.l  LF_PATHCUR(sp),a0
                 bsr     ofs_split                    ; (a4) = composant ; a0 avance ; d0 = 1 si dernier
                 move.l  a0,LF_PATHCUR(sp)
                 move.b  d0,LF_LAST(sp)
-                bsr     ofs_dir_lookup               ; (d4, a4) -> d0 = bloc | 0 (préserve d4/a4)
+                tst.b   (a4)
+                bne.s   .n2b_lookup
+                tst.b   LF_LAST(sp)                  ; composant vide :
+                beq.s   .n2b_parent                  ;   au milieu (« / », « // ») -> parent
+                tst.l   d6
+                bne.s   .n2b_hit                     ;   final après un nom (« dir/ ») -> neutre
+.n2b_parent:
+                move.l  d4,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .n2b_notfound
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_PARENT(a0),d4           ; remonte d'un niveau
+                beq.s   .n2b_notfound                ; parent du root -> invalide
+                bra.s   .n2b_compdone
+.n2b_lookup:
+                bsr     ofs_dir_lookup               ; (d4, a4) -> d0 = bloc | 0 (préserve d4/d6/a4)
                 tst.l   d0
                 beq.s   .n2b_notfound                ; composant introuvable
                 move.l  d0,d4                         ; d4 = bloc du composant
@@ -404,7 +426,10 @@ ofs_name_to_block:
                 lea     IOREQ_SZ(a3),a0
                 cmp.l   #OFS_ST_USERDIR,OFSB_SECTYPE(a0)
                 bne.s   .n2b_notfound                ; pas un sous-rép -> chemin invalide
-                bra.s   .n2b_nextcomp
+.n2b_compdone:
+                moveq   #1,d6
+                tst.b   LF_LAST(sp)
+                beq.s   .n2b_nextcomp
 .n2b_hit:
                 move.l  d4,d7                         ; d7 = bloc résultat
                 bra.s   .n2b_free
@@ -554,14 +579,15 @@ ofs_dir_next:
                 movem.l (sp)+,d3-d7/a2-a5
                 rts
 
-; ofs_stream_open(a0=chemin NUL-term, a1=état SS_*, a6=SysBase) -> d0 = 1 OK / 0 KO. Résout le chemin -> bloc header
+; ofs_stream_open(a0=chemin NUL-term, a1=état SS_*, d0=répertoire de départ (0 = racine), a6=SysBase) -> d0 = 1 OK /
+; 0 KO. Résout le chemin -> bloc header
 ; (doit être un FICHIER), FindName trackdisk -> SS_TRACKDISK, lit le header via l'ioreq de l'état, stocke SS_SIZE
 ; (byte_size) + SS_FIRSTDATA, initialise le curseur (POS=0, CURBLK=first_data, BLKBASE=0). N'alloue RIEN (l'état,
 ; ioreq + block buffer inclus, est alloué par l'appelant = le handler).
 ofs_stream_open:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                        ; a5 = état
-                bsr     ofs_name_to_block            ; (a0=chemin) -> d0 = bloc | 0 (préserve a5)
+                bsr     ofs_name_to_block            ; (a0=chemin, d0=départ) -> d0 = bloc | 0 (préserve a5)
                 tst.l   d0
                 beq.s   .so_fail
                 move.l  d0,d4                         ; d4 = bloc header

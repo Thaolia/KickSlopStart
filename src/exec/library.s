@@ -59,6 +59,7 @@
                 xref    exec_ReplyMsg
                 xref    exec_WaitPort
                 xref    exec_FindPort
+                xref    exec_RawDoFmt    ; rawdofmt.s
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -168,6 +169,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_OldOpenLibrary,LVO_OLDOPENLIBRARY+2(a6)
         move.w  #$4EF9,LVO_CLOSELIBRARY(a6)
         move.l  #exec_CloseLibrary,LVO_CLOSELIBRARY+2(a6)
+        move.w  #$4EF9,LVO_RAWDOFMT(a6)
+        move.l  #exec_RawDoFmt,LVO_RAWDOFMT+2(a6)
         rts
 
 _unimpl:

@@ -16,6 +16,7 @@
                 xref    dos_unloadseg        ; dos/loadseg.s (E3 : libérer la seglist)
                 xref    ser_lock             ; exec/boot.s (émission série atomique)
                 xref    ser_unlock
+                xref    dos_boot_assigns     ; dos/dos_lib.s (assigns + volume + répertoire courant)
 
 SH_SCRIPTMAX    EQU 2048             ; taille max de la startup-sequence lue (F1)
 
@@ -38,6 +39,33 @@ shell_main:
                 moveq   #0,d3
                 jsr     dos_sendpkt
                 move.l  d0,d7                ; d7 = clé
+                ; FileHandle console -> pr_CIS/pr_COS : Input()/Output() des commandes lancées écrivent sur la console
+                move.l  #FH_SIZEOF,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq.s   .nofh
+                move.l  d0,a0
+                move.l  DOS_CONPORT,FH_TYPE(a0)
+                move.l  d7,FH_ARG1(a0)
+                move.l  #DOSTRUE,FH_INTERACTIVE(a0)
+                lsr.l   #2,d0
+                move.l  EB_THISTASK(a6),a0
+                move.l  d0,PR_CIS(a0)
+                move.l  d0,PR_COS(a0)
+.nofh:
+                bsr     sh_make_cli          ; pr_CLI : sans lui les commandes se croient lancées par le Workbench
+                lea     sh_doslib(pc),a1     ; assigns SYS: C: S: L: ... + répertoire courant = racine du disque
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq.s   .noassign
+                move.l  d0,a6
+                jsr     dos_boot_assigns
+                move.l  a6,a1
+                move.l  ($4).w,a6
+                jsr     LVO_CLOSELIBRARY(a6)
+.noassign:
                 ; bannière (prouve : l'Initial CLI démarre + console WRITE)
                 move.l  #sh_banner,a4
                 move.l  #sh_banner_len,d4
@@ -83,22 +111,32 @@ sh_dispatch_line:
 .dl_ret:
                 rts
 .dl_extern:
-                ; commande inconnue -> charger+exécuter depuis DF0: via dos. null-terminer le 1er mot en place.
+                ; commande externe -> charger+exécuter via dos. Termine le 1er mot en place ; le reste = arguments.
                 move.l  a3,a0
 .dl_nt:
                 move.b  (a0),d0
-                beq.s   .dl_nt_done
+                beq.s   .dl_noargs
                 cmp.b   #' ',d0
-                beq.s   .dl_nt_cut
+                beq.s   .dl_cut_sp
                 cmp.b   #13,d0
-                beq.s   .dl_nt_cut
+                beq.s   .dl_cut
                 cmp.b   #10,d0               ; LF (ligne de script) aussi = frontière
-                beq.s   .dl_nt_cut
+                beq.s   .dl_cut
                 addq.l  #1,a0
                 bra.s   .dl_nt
-.dl_nt_cut:
-                clr.b   (a0)                 ; termine le nom en C-string
-.dl_nt_done:
+.dl_cut_sp:
+                clr.b   (a0)+                ; termine le nom ; les arguments suivent l'espace
+                move.l  a0,a1
+                move.l  a3,d1
+                add.l   d6,d1
+                sub.l   a0,d1                ; d1 = longueur restante de la ligne
+                bra.s   .dl_call
+.dl_cut:
+                clr.b   (a0)
+.dl_noargs:
+                move.l  a0,a1
+                moveq   #0,d1                ; pas d'arguments
+.dl_call:
                 move.l  a3,a0                ; a0 = nom de commande C-string
                 bsr     sh_exec_cmd          ; d0 = 1 si trouvée+chargée, 0 sinon
                 tst.l   d0
@@ -160,14 +198,28 @@ sh_match:
                 moveq   #1,d0
                 rts
 
-; sh_exec_cmd(a0 = nom C-string) : charge+exécute une commande depuis DF0: via dos (comme D3d) ->
-;   d0 = 1 si trouvée + chargée (exécutée en GREEN), 0 si introuvable/non chargeable. Préserve tout le
-;   contexte shell (movem d2-d7/a2-a6). a6 restauré à SysBase en sortie. Drapeau « trouvée » sur la PILE
-;   (survit aux appels et au JSR de la commande, qui pourrait clobber un registre).
+; sh_exec_cmd(a0 = nom C-string, a1 = arguments bruts, d1 = longueur des arguments) : charge+exécute une commande via
+; dos -> d0 = 1 si trouvée + chargée, 0 sinon. Recherche : le nom tel quel (répertoire courant, ou « device: »/assign),
+; puis « C:<nom> » si le nom n'a pas de ':'. Convention d'appel CLI : a0 = arguments terminés par '\n', d0 = leur
+; longueur, 4(sp) = taille de pile. La commande peut écraser tous les registres : seglist, DosBase et drapeau vivent
+; dans un cadre sur la pile. Préserve le contexte shell (movem d2-d7/a2-a6) ; a6 = SysBase en sortie.
+XF_FLAG         EQU 0                ; LONG : 1 si trouvée + chargée
+XF_SEG          EQU 4                ; LONG : BPTR seglist
+XF_DOS          EQU 8                ; APTR : DosBase
+XF_ARGLEN       EQU 12               ; LONG : longueur des arguments (avec le '\n')
+XF_NAME         EQU 16               ; « C:<nom> » (SH_NAMEMAX)
+SH_NAMEMAX      EQU 64
+XF_ARGS         EQU XF_NAME+SH_NAMEMAX   ; arguments filtrés (SH_ARGMAX)
+SH_ARGMAX       EQU 256
+XF_SIZE         EQU XF_ARGS+SH_ARGMAX
 sh_exec_cmd:
                 movem.l d2-d7/a2-a6,-(sp)
-                clr.l   -(sp)                ; [sp] = drapeau « trouvée » = 0
+                lea     -XF_SIZE(sp),sp
+                clr.l   XF_FLAG(sp)
                 move.l  a0,d5                ; d5 = nom
+                lea     XF_ARGS(sp),a2
+                bsr     sh_build_args        ; (a1, d1) -> arguments filtrés en (a2) ; d0 = longueur
+                move.l  d0,XF_ARGLEN(sp)
                 move.l  ($4).w,a6            ; SysBase
                 lea     sh_doslib(pc),a1
                 moveq   #0,d0
@@ -175,7 +227,8 @@ sh_exec_cmd:
                 tst.l   d0
                 beq     .x_ret
                 move.l  d0,a4                ; a4 = DosBase
-                ; --- taille réelle du fichier : Lock + Examine (plus de buffer fixe 16 Ko qui tronquait) ---
+                move.l  d0,XF_DOS(sp)
+                ; --- taille réelle du fichier : Lock + Examine ---
                 move.l  #FIB_SIZEOF,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
@@ -188,13 +241,44 @@ sh_exec_cmd:
                 moveq   #SHARED_LOCK,d2
                 jsr     DOS_LVO_LOCK(a6)     ; BPTR lock | 0
                 tst.l   d0
+                bne.s   .x_locked
+                move.l  d5,a0                ; repli « C:<nom> » seulement pour un nom sans ':'
+.x_colon:
+                move.b  (a0)+,d0
+                beq.s   .x_tryc
+                cmp.b   #':',d0
+                bne.s   .x_colon
+                bra.s   .x_nolock
+.x_tryc:
+                lea     XF_NAME(sp),a1
+                move.b  #'C',(a1)+
+                move.b  #':',(a1)+
+                move.l  d5,a0
+                moveq   #SH_NAMEMAX-3,d1
+.x_ccpy:
+                move.b  (a0)+,(a1)+
+                beq.s   .x_cdone
+                subq.l  #1,d1
+                bne.s   .x_ccpy
+                clr.b   (a1)                 ; nom tronqué
+.x_cdone:
+                lea     XF_NAME(sp),a0
+                move.l  a0,d1
+                moveq   #SHARED_LOCK,d2
+                jsr     DOS_LVO_LOCK(a6)
+                tst.l   d0
                 beq.s   .x_nolock
+                lea     XF_NAME(sp),a0
+                move.l  a0,d5                ; le fichier sera ouvert sous ce nom
+.x_locked:
                 move.l  d0,d7                ; d7 = lock
                 move.l  d7,d1
                 move.l  a5,d2
                 jsr     DOS_LVO_EXAMINE(a6)
                 tst.l   d0
                 beq.s   .x_unlock
+                tst.l   FIB_DIRENTRYTYPE(a5)
+                bpl.s   .x_unlock            ; répertoire -> pas exécutable
                 move.l  FIB_SIZE(a5),d4
 .x_unlock:
                 move.l  d7,d1
@@ -252,26 +336,192 @@ sh_exec_cmd:
                 jsr     LVO_FREEMEM(a6)
                 tst.l   d7
                 beq.s   .x_closelib
-                move.l  #1,(sp)              ; TROUVÉE + chargée (drapeau pile)
+                move.l  d7,XF_SEG(sp)
+                move.l  #1,XF_FLAG(sp)       ; TROUVÉE + chargée
+                move.l  d5,a0
+                move.l  d7,d0
+                bsr     sh_cli_begin         ; cli_CommandName = nom, cli_Module = seglist
                 ifeq    E3_NO_EXEC
-                move.l  d7,d0                ; entry = (seglist<<2)+4
+                jsr     ser_lock             ; la commande chargée émet sous Forbid -> marqueur atomique (pas d'entrelacement)
+                move.l  XF_SEG(sp),d0        ; entry = (seglist<<2)+4
                 lsl.l   #2,d0
                 addq.l  #4,d0
-                move.l  d0,a0
-                jsr     ser_lock             ; la commande chargée émet sous Forbid -> marqueur atomique (pas d'entrelacement)
-                jsr     (a0)                 ; exécute la commande tapée
+                move.l  d0,a1
+                lea     XF_ARGS(sp),a0       ; a0 = arguments
+                move.l  XF_ARGLEN(sp),d0     ; d0 = longueur
+                move.l  #SH_STK,-(sp)        ; 4(sp) à l'entrée = taille de pile (convention CLI)
+                move.l  ($4).w,a2
+                move.l  EB_THISTASK(a2),a2
+                move.l  sp,PR_RETURNADDR(a2) ; pr_ReturnAddr -> ce long : exit() y retrouve la pile d'entrée
+                jsr     (a1)                 ; exécute la commande
+                addq.l  #4,sp
+                move.l  ($4).w,a2
+                move.l  EB_THISTASK(a2),a2
+                clr.l   PR_RETURNADDR(a2)
+                bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0
                 jsr     ser_unlock
-                move.l  ($4).w,a6            ; recharge SysBase (le code a pu clobber a6)
                 endc                         ; RED E3_NO_EXEC : saute le JSR -> commande chargée mais pas exécutée
-                move.l  d7,d0
+                move.l  ($4).w,a6
+                move.l  XF_SEG(sp),d0
                 jsr     dos_unloadseg
 .x_closelib:
                 move.l  ($4).w,a6
-                move.l  a4,a1
+                move.l  XF_DOS(sp),a1
                 jsr     LVO_CLOSELIBRARY(a6)
 .x_ret:
-                move.l  (sp)+,d0             ; dépile le drapeau trouvée -> d0 (survit au movem)
+                move.l  XF_FLAG(sp),d0
+                lea     XF_SIZE(sp),sp
                 movem.l (sp)+,d2-d7/a2-a6
+                rts
+
+; sh_make_cli() : alloue une CommandLineInterface + ses BSTR (nom de commande, SetName, prompt) et la publie dans
+; pr_CLI de ThisTask. Flux = pr_CIS/pr_COS, pile par défaut = SH_STK, FailLevel 10. Préserve tout.
+SH_CLIBSTR      EQU 256              ; taille d'un buffer BSTR de la CLI
+SH_CLIALLOC     EQU CLI_SIZEOF+3*SH_CLIBSTR
+sh_make_cli:
+                movem.l d0-d1/a0-a1/a6,-(sp)
+                move.l  ($4).w,a6
+                move.l  #SH_CLIALLOC,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq.s   .mc_ret
+                move.l  d0,a0                ; a0 = CLI
+                lea     CLI_SIZEOF(a0),a1
+                move.l  a1,d1
+                lsr.l   #2,d1
+                move.l  d1,CLI_COMMANDNAME(a0)
+                add.l   #SH_CLIBSTR/4,d1
+                move.l  d1,CLI_SETNAME(a0)
+                add.l   #SH_CLIBSTR/4,d1
+                move.l  d1,CLI_PROMPT(a0)
+                lsl.l   #2,d1
+                move.l  d1,a1
+                move.l  #$023E2000,(a1)      ; prompt BSTR « > » (longueur 2)
+                move.l  #10,CLI_FAILLEVEL(a0)
+                move.l  #SH_STK/4,CLI_DEFAULTSTACK(a0)
+                move.l  #DOSTRUE,CLI_INTERACTIVE(a0)
+                move.l  EB_THISTASK(a6),a1
+                move.l  PR_CIS(a1),d1
+                move.l  d1,CLI_STANDARDINPUT(a0)
+                move.l  d1,CLI_CURRENTINPUT(a0)
+                move.l  PR_COS(a1),d1
+                move.l  d1,CLI_STANDARDOUTPUT(a0)
+                move.l  d1,CLI_CURRENTOUTPUT(a0)
+                lsr.l   #2,d0
+                move.l  d0,PR_CLI(a1)
+.mc_ret:
+                movem.l (sp)+,d0-d1/a0-a1/a6
+                rts
+
+; sh_cli_begin(a0 = nom C-string, d0 = BPTR seglist) : renseigne cli_CommandName (BSTR) et cli_Module. Clobbe d0-d1/a0-a1.
+sh_cli_begin:
+                move.l  a2,-(sp)
+                bsr.s   sh_cli_ptr           ; a1 = CLI | 0
+                beq.s   .cb_ret
+                move.l  d0,CLI_MODULE(a1)
+                move.l  CLI_COMMANDNAME(a1),d0
+                lsl.l   #2,d0
+                move.l  d0,a2                ; a2 = BSTR
+                moveq   #0,d1
+.cb_cpy:
+                move.b  (a0)+,d0
+                beq.s   .cb_len
+                move.b  d0,1(a2,d1.l)
+                addq.l  #1,d1
+                cmp.l   #SH_CLIBSTR-1,d1
+                bcs.s   .cb_cpy
+.cb_len:
+                move.b  d1,(a2)
+.cb_ret:
+                move.l  (sp)+,a2
+                rts
+
+; sh_cli_end(d0 = code retour de la commande) : cli_ReturnCode = d0, cli_Module = 0. Préserve tout sauf a1.
+sh_cli_end:
+                move.l  d0,-(sp)
+                bsr.s   sh_cli_ptr
+                beq.s   .ce_ret
+                move.l  (sp),CLI_RETURNCODE(a1)
+                clr.l   CLI_MODULE(a1)
+.ce_ret:
+                move.l  (sp)+,d0
+                rts
+
+; sh_cli_ptr() -> a1 = CLI de ThisTask (Z = 1 si aucune). Préserve d0.
+sh_cli_ptr:
+                move.l  d0,-(sp)
+                move.l  ($4).w,a1
+                move.l  EB_THISTASK(a1),a1
+                move.l  PR_CLI(a1),d0
+                lsl.l   #2,d0
+                move.l  d0,a1
+                movem.l (sp)+,d0             ; movem ne touche pas le CCR : Z vient du lsl
+                rts
+
+; sh_build_args(a1 = arguments bruts, d1 = longueur, a2 = destination SH_ARGMAX) -> d0 = longueur écrite (avec '\n').
+; Copie jusqu'à CR/LF/NUL, retire les redirections (« >x », « <x » en début de mot : pas encore de redirection
+; réelle, la commande écrit sur la console) et le commentaire « ; » hors guillemets ; termine par '\n' puis NUL.
+; Clobbe d0-d4/a0/a2.
+sh_build_args:
+                move.l  a1,a0
+                moveq   #0,d2                ; d2 = octets écrits
+                moveq   #1,d3                ; d3 != 0 : début de mot
+                moveq   #0,d4                ; bit0 = entre guillemets, bit1 = saute une redirection
+.ba_lp:
+                tst.l   d1
+                ble.s   .ba_end
+                move.b  (a0)+,d0
+                subq.l  #1,d1
+                cmp.b   #13,d0
+                beq.s   .ba_end
+                cmp.b   #10,d0
+                beq.s   .ba_end
+                tst.b   d0
+                beq.s   .ba_end
+                btst    #1,d4
+                beq.s   .ba_noskip
+                cmp.b   #' ',d0
+                bne.s   .ba_lp
+                bclr    #1,d4                ; fin du mot de redirection
+                moveq   #1,d3
+                bra.s   .ba_lp
+.ba_noskip:
+                cmp.b   #'"',d0
+                bne.s   .ba_noquote
+                bchg    #0,d4
+                moveq   #0,d3
+                bra.s   .ba_put
+.ba_noquote:
+                btst    #0,d4
+                bne.s   .ba_plain
+                cmp.b   #';',d0
+                beq.s   .ba_end              ; commentaire
+                tst.l   d3
+                beq.s   .ba_plain
+                cmp.b   #'>',d0
+                beq.s   .ba_redir
+                cmp.b   #'<',d0
+                bne.s   .ba_plain
+.ba_redir:
+                bset    #1,d4
+                bra.s   .ba_lp
+.ba_plain:
+                moveq   #0,d3
+                cmp.b   #' ',d0
+                bne.s   .ba_put
+                moveq   #1,d3
+.ba_put:
+                cmp.l   #SH_ARGMAX-2,d2
+                bhs.s   .ba_lp               ; plein : le reste est ignoré
+                move.b  d0,(a2)+
+                addq.l  #1,d2
+                bra.s   .ba_lp
+.ba_end:
+                move.b  #10,(a2)+
+                clr.b   (a2)
+                addq.l  #1,d2
+                move.l  d2,d0
                 rts
 
 ; sh_run_startup() : F1 — lit « s/startup-sequence » (sous-répertoire OFS du disque boot) via dos et exécute chaque ligne via

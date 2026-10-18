@@ -57,7 +57,8 @@ FH_FUNC3         EQU 32
 FH_ARG1          EQU 36            ; LONG = clé privée du fichier côté handler
 FH_ARG2          EQU 40
 FH_SIZEOF        EQU 44
-DOS_FH_ALLOC     EQU FH_SIZEOF+40  ; D3c : FileHandle + buffer BSTR du nom (à FH_SIZEOF, long-aligné) en 1 AllocMem
+DOS_NAMEMAX      EQU 255           ; longueur max d'un nom BSTR (octet de longueur)
+DOS_FH_ALLOC     EQU FH_SIZEOF+DOS_NAMEMAX+1 ; FileHandle + buffer BSTR du nom (à FH_SIZEOF, long-aligné) en 1 AllocMem
 
 ; --- DeviceNode (44 o ; chaîné dans DosInfo.di_DevInfo) ---
 DN_NEXT          EQU 0             ; BPTR
@@ -72,6 +73,11 @@ DN_SEGLIST       EQU 32            ; BPTR
 DN_GLOBALVEC     EQU 36
 DN_NAME          EQU 40            ; BSTR
 DN_SIZEOF        EQU 44
+; types de nœud de la DosList (dn_Type / dol_Type) : même layout pour device, assign et volume (dol_Task @8,
+; dol_Lock @12, dol_Name @40). Un assign (DLT_DIRECTORY) porte un lock dans dol_Lock ; dol_Task = port du handler.
+DLT_DEVICE       EQU 0
+DLT_DIRECTORY    EQU 1
+DLT_VOLUME       EQU 2
 
 ; --- codes ACTION_* (= mode d'Open pour les FIND*) ---
 ACTION_FINDUPDATE  EQU 1004
@@ -119,6 +125,7 @@ OFFSET_BEGINNING EQU -1            ; Seek depuis le début
 OFFSET_CURRENT   EQU 0             ; Seek relatif à la position courante
 OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
+ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de la DosList
 ERROR_SEEK_ERROR EQU 303           ; dos/dos.i : Seek hors bornes
 ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoire (fin d'énumération normale)
 
@@ -126,6 +133,26 @@ ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoir
 ; Déviation clean-room ASSUMÉE : le vrai AmigaDOS garde le curseur d'ExNext dans le FIB (fib_DiskKey) ; on le garde
 ; dans le lock (flp_Bucket/flp_ChainBlk). Conséquence : Examine d'un lock dans un FIB puis ExNext via un AUTRE FIB
 ; désynchroniserait un appelant qui mélange les FIB. Suffisant pour notre harnais (un lock = une énumération).
+; --- struct CommandLineInterface (dos/dosextens.i, public) : pointée en BPTR par pr_CLI. Le code de démarrage des
+; commandes teste pr_CLI : 0 = lancé par le Workbench (attend le message WBStartup sur pr_MsgPort) ; sinon lit
+; cli_CommandName (nom de la commande en cours) et les flux.
+CLI_RESULT2         EQU 0          ; LONG
+CLI_SETNAME         EQU 4          ; BSTR : nom du répertoire courant
+CLI_COMMANDDIR      EQU 8          ; BPTR : liste de chemins de recherche
+CLI_RETURNCODE      EQU 12         ; LONG : code retour de la dernière commande
+CLI_COMMANDNAME     EQU 16         ; BSTR : nom de la commande en cours
+CLI_FAILLEVEL       EQU 20         ; LONG
+CLI_PROMPT          EQU 24         ; BSTR
+CLI_STANDARDINPUT   EQU 28         ; BPTR FileHandle
+CLI_CURRENTINPUT    EQU 32         ; BPTR FileHandle
+CLI_COMMANDFILE     EQU 36         ; BSTR
+CLI_INTERACTIVE     EQU 40         ; LONG booléen
+CLI_BACKGROUND      EQU 44         ; LONG booléen
+CLI_CURRENTOUTPUT   EQU 48         ; BPTR FileHandle
+CLI_DEFAULTSTACK    EQU 52         ; LONG : pile par défaut EN LONGS
+CLI_STANDARDOUTPUT  EQU 56         ; BPTR FileHandle
+CLI_MODULE          EQU 60         ; BPTR : seglist de la commande en cours
+CLI_SIZEOF          EQU 64
 FL_LINK          EQU 0             ; BPTR : lock suivant (on garde 0 : pas de chaînage)
 FL_KEY           EQU 4             ; LONG : bloc header de l'objet locké
 FL_ACCESS        EQU 8             ; LONG : SHARED_LOCK / EXCLUSIVE_LOCK

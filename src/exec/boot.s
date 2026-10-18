@@ -234,6 +234,7 @@ coldstart:                        ; $FC00D2
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
+        bsr     rdf_selftest         ; RawDoFmt (-522) : formatage comparé à une chaîne attendue
         ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
         jsr     init_ints
         move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
@@ -1724,7 +1725,7 @@ d2_done:
         lea     sh_cname(pc),a0
         move.l  #shell_main,a1       ; absolu : shell.o lié hors portée lea(pc) 16 bits
         moveq   #2,d0                ; Initial CLI pri 2 (consommateur unique de la console)
-        move.l  #D3_STK,d1
+        move.l  #SH_STK,d1           ; les commandes lancées tournent sur cette pile
         jsr     proc_create
 .strap_done:
                 ifeq    M7E_COOP
@@ -2413,13 +2414,18 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         tst.l   d0
         beq     .d3c_noclient        ; pas de dos.library (ne devrait pas) -> pas de client
         move.l  d0,a2                ; a2 = DosBase
-        move.l  #DN_SIZEOF,d0
+        move.l  #DN_SIZEOF+4,d0      ; + BSTR « DF0 » juste après le nœud (long-aligné : BPTR)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .d3c_noclient
-        move.l  d0,a3                ; a3 = DeviceNode
+        move.l  d0,a3                ; a3 = DeviceNode (dn_Type = DLT_DEVICE = 0 via MEMF_CLEAR)
         move.l  DOS_FSPORT,DN_TASK(a3)   ; dn_Task = port du process file-handler OFS
+        move.l  #$03444630,DN_SIZEOF(a3) ; BSTR : longueur 3, « DF0 »
+        lea     DN_SIZEOF(a3),a0
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NAME(a3)       ; dn_Name -> dos résout « DF0: » par ce nœud
         move.l  DL_ROOT(a2),a0       ; RootNode (APTR)
         move.l  RN_INFO(a0),d0       ; BPTR DosInfo
         lsl.l   #2,d0
@@ -4324,6 +4330,60 @@ dos_test_name:
         dc.b    "dos.library",0
 msg_memslow:
         dc.b    "MEM SLOW KB=",0
+        EVEN
+
+; rdf_selftest : RawDoFmt via la jump table (LVO -522) dans un tampon pile, comparé octet à octet (NUL compris) à
+; rdf_expect -> « RAWDOFMT OK » ou « RAWDOFMT FAILED ». Couvre d/ld signés, largeur, cadrage gauche, remplissage
+; '0' avec signe, x, s, c, et la restitution de a3. a6 = SysBase. Préserve tout.
+rdf_selftest:
+        movem.l d0-d1/a0-a3,-(sp)
+        lea     -64(sp),sp
+        lea     rdf_fmt(pc),a0
+        lea     rdf_data(pc),a1
+        lea     rdf_putch(pc),a2
+        move.l  sp,a3
+        jsr     LVO_RAWDOFMT(a6)
+        cmp.l   sp,a3                ; a3 doit être restitué (convention d'appel)
+        bne.s   .rdf_bad
+        move.l  sp,a0
+        lea     rdf_expect(pc),a1
+.rdf_cmp:
+        move.b  (a1)+,d0
+        cmp.b   (a0)+,d0
+        bne.s   .rdf_bad
+        tst.b   d0
+        bne.s   .rdf_cmp
+        lea     msg_rdf_ok(pc),a0
+        bra.s   .rdf_out
+.rdf_bad:
+        lea     msg_rdf_bad(pc),a0
+.rdf_out:
+        bsr     ser_puts
+        lea     64(sp),sp
+        movem.l (sp)+,d0-d1/a0-a3
+        rts
+rdf_putch:
+        move.b  d0,(a3)+
+        rts
+rdf_fmt:
+        dc.b    "%d|%5ld|%-3x|%s|%04x|%c|%05ld",0
+rdf_expect:
+        dc.b    "-42| 1234|AB |hi|001F|Z|-0007",0
+rdf_hi:
+        dc.b    "hi",0
+        EVEN
+rdf_data:
+        dc.w    -42
+        dc.l    1234
+        dc.w    $AB
+        dc.l    rdf_hi
+        dc.w    $1F
+        dc.w    'Z'
+        dc.l    -7
+msg_rdf_ok:
+        dc.b    "RAWDOFMT OK (exec RawDoFmt -522: d/ld, width, left-justify, zero-pad with sign, x, s, c)",13,10,0
+msg_rdf_bad:
+        dc.b    "RAWDOFMT FAILED",13,10,0
         EVEN
 msg_crlf:
         dc.b    13,10,0

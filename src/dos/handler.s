@@ -4,7 +4,7 @@
 ; ofs_fill_fib / ofs_dir_next). Machinerie INTERNE (pas de dos.library user-facing = D3c).
 ;
 ; Protocole (docs/analysis/dos-v34-spec.md §2) : msg->ln_Name -> DosPacket. Sur FINDINPUT (ARG1=BPTR FileHandle,
-; ARG2=lock ignoré, ARG3=BSTR nom) le handler alloue un état de STREAMING (SS_*, ofs.i : un seul AllocMem incluant
+; ARG2=lock du répertoire de départ, ARG3=BSTR nom) le handler alloue un état de STREAMING (SS_*, ofs.i : un seul AllocMem incluant
 ; l'ioreq + un block buffer de 512 o), l'ouvre via ofs_stream_open (résout le chemin -> premier data block, SANS
 ; lire le fichier), pose fh_Arg1 = état dans le FileHandle (BADDR(ARG1)), renvoie DOSTRUE. READ (ARG1=fh_Arg1,
 ; ARG2=dest, ARG3=len) lit INCRÉMENTALEMENT via ofs_stream_read (data-block par data-block, le curseur avance dans
@@ -86,6 +86,8 @@ dos_handler_df0:
                 bra.s   .fi_ncpy
 .fi_ndone:
                 clr.b   (a1)                          ; termine en C-string
+                move.l  DP_ARG2(a4),d0                ; lock du répertoire de départ (0 = racine)
+                bsr     hnd_lockkey                    ; d0 = bloc du répertoire | 0
                 move.l  sp,a0                         ; a0 = chemin, a1 = état
                 move.l  d6,a1
                 jsr     ofs_stream_open                ; d0 = 1/0 (résout + init curseur, SANS lire le fichier)
@@ -172,6 +174,8 @@ dos_handler_df0:
                 bra.s   .lo_ncpy
 .lo_ndone:
                 clr.b   (a1)                          ; C-string terminée
+                move.l  DP_ARG1(a4),d0                ; lock parent (0 = racine)
+                bsr     hnd_lockkey
                 move.l  sp,a0                          ; a0 = nom
                 jsr     ofs_name_to_block              ; d0 = bloc | 0 (a6 = SysBase ; préserve a2/a3/a4)
                 lea     112(sp),sp
@@ -262,3 +266,12 @@ dos_handler_df0:
                 move.l  a3,a1
                 jsr     LVO_REPLYMSG(a6)              ; renvoie au mn_ReplyPort de l'appelant
                 bra     .hl
+
+; hnd_lockkey(d0 = BPTR FileLock | 0) -> d0 = bloc header verrouillé (fl_Key) | 0 (= racine pour ofs_*). Clobbe a0.
+hnd_lockkey:
+                lsl.l   #2,d0
+                beq.s   .lk_root
+                move.l  d0,a0
+                move.l  FL_KEY(a0),d0
+.lk_root:
+                rts

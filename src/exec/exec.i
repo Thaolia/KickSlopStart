@@ -365,6 +365,7 @@ PTR_INT      EQU $000006B6 ; struct Interrupt (22) de pointer_input_handler (pri
 REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) -> $6CC..$6E1
 FORBID_TEST_FLAG EQU $000006E2 ; long : preuve d'atomicité Forbid — task_fb le pose à 1 quand elle tourne
 FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
+SH_STK       EQU 8192       ; pile du CLI initial (shell.s) : les commandes lancées tournent dessus
 TD_CACHEBUF  EQU $000006EA ; trackdisk : long — buffer persistant d'UNE piste décodée (0 = pas encore alloué)
 TD_CACHETRK  EQU $000006EE ; trackdisk : word — piste contenue dans TD_CACHEBUF ($FFFF = cache invalide)
 ; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
@@ -455,6 +456,7 @@ EB_ATTNFLAGS  EQU $128
 EB_ATTNRESCHED EQU $12A         ; UWORD : reschedule en attente (posé par Signal, consommé
                                 ; par Permit/Enable au déverrouillage du nesting = yield)
 EB_RESMODULES EQU $12C          ; APTR : tableau NUL-terminé de struct Resident* (pri-trié)
+EB_TASKTRAPCODE EQU $130        ; APTR : gestionnaire de traps par défaut des tâches
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E
@@ -500,6 +502,8 @@ TC_SIGALLOC   EQU 18
 TC_SIGWAIT    EQU 22
 TC_SIGRECVD   EQU 26
 TC_SIGEXCEPT  EQU 30
+TC_TRAPDATA   EQU 46          ; APTR : donnée libre du gestionnaire de traps de la tâche
+TC_TRAPCODE   EQU 50          ; APTR : gestionnaire des exceptions CPU de la tâche (0 -> TaskTrapCode)
 TC_SPREG      EQU 54
 TC_SPLOWER    EQU 58
 TC_SPUPPER    EQU 62
@@ -607,6 +611,7 @@ LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
 LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)
 LVO_CLOSELIBRARY   EQU -414
+LVO_RAWDOFMT       EQU -522     ; RawDoFmt(fmt a0, data a1, putch a2, putchdata a3)
 LVO_OPENLIBRARY    EQU -552      ; OpenLibrary(libName a1, version d0)
 
 ; OPENLIB_NO_VERCHECK=1 (RED OpenLibrary) : exec_OpenLibrary saute la gate de version -> une ouverture

@@ -20,6 +20,7 @@ OFSB_FILESIZE   EQU 324           ; long[81] (= BSIZE-188) : byte_size d'un file
                                   ; fib_Size==1024 reconfirme (read@324 -> write@124 -> readback). AUCUNE lecture ROM.
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)) : nom BCPL (octet longueur + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)) : hash_chain (prochain header même bucket)
+OFSB_PARENT     EQU 500           ; long[125] (= (128-3)) : bloc du répertoire parent (0 pour le root)
 OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)) : type secondaire (ST_FILE=-3)
 ; bitmap d'allocation (root block) — disk-validator (#4), offsets vérifiés sur l'ADF de test
 OFSB_BMFLAG     EQU 312           ; long[78] (= BSIZE-200) : bm_flag ($FFFFFFFF = bitmap valide ; 0 = à revalider)

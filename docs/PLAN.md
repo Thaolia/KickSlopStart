@@ -769,8 +769,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
 - **Trackdisk timing-exact (WinUAE) — FIX FAST FAIT** (4590cb1) + loadscreen DMA-cut (bitplane/copper coupés pendant la lecture) prouvé WinUAE. **À venir** : chargement complet du jeu Lemmings sur WinUAE (bloque ~secteur 46) → aligner la lecture sur l'officielle (fin DMA par interruption, settles 1 ms/15 ms, délai moteur fixe 500 ms).
 - **Holiday Lemmings — le jeu DÉMARRE FAIT** : slow RAM `$C00000` en tête de MemList, shell à buffer taille-fichier,
     LoadSeg respectant les flags mémoire (CHIP/FAST, flags dans l'id de hunk), cache de piste trackdisk (invalidé par
-    `/CHNG`). Cracktro → clic → menu du jeu prouvé sous FS-UAE. **À venir** : confirmation WinUAE par l'utilisateur ;
-    prouver une partie (clic PLAY → chargement d'un niveau) ; borner l'offset RELOC32 (dette loadseg).
+    `/CHNG`). Cracktro → clic → menu du jeu prouvé sous FS-UAE ; **lancement d'un niveau confirmé par l'utilisateur**
+    (2026-10-18). **À venir** : borner l'offset RELOC32 (dette loadseg).
+- **Workbench 1.3.3 — étape 1 FAITE** : résolution `device:`/assign/volume/répertoire courant, assigns de boot
+    (SYS: C: S: L: DEVS: LIBS: FONTS:), CLI initial avec `pr_CLI`/`pr_CIS`/`pr_COS`/`pr_ReturnAddr`, arguments,
+    exceptions CPU vers `tc_TrapCode` (forme compatible SetPatch), `RawDoFmt`. `c:SetPatch` tourne en entier.
+    **Étape 2 (en cours)** : runtime BCPL de dos.library (vecteur global, appel/retour A5/A6, pile BCPL) pour les
+    commandes `c:` BCPL (AddBuffers, CD, Path, Execute, Run, Wait, Resident, Mount, EndCLI, l:Shell-Seg).
+    **Ensuite** : `SetFunction`, NIL:/redirections, Mount/handlers, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

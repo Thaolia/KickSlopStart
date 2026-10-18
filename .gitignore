@@ -15,3 +15,6 @@ __pycache__/
 /assets/*.bin
 # ADF de test — régénérables (tests/mk_boot_adf.sh, xdftool) ; pas de binaires dans le dépôt.
 /assets/*.adf
+
+# AROS : référence en LECTURE SEULE (APL, jamais copiée dans src/), clone partiel non versionné
+third_party/aros/

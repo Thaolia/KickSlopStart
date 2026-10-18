@@ -20,6 +20,7 @@
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
+                xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
 
 LS_LOADMAX      EQU DOS_FILEMAX       ; buffer de lecture LoadSeg (cap-bump 32K, exec.i ; cf. HND_FILEMAX)
 
@@ -115,25 +116,17 @@ dos_DateStamp:
 ; Appelées depuis un PROCESS (dos_sendpkt utilise ThisTask->pr_MsgPort comme port de réponse). a6 = DosBase à
 ; l'entrée (convention librairie) ; on bascule a6 = SysBase pour les appels exec (AllocMem/FreeMem/dos_sendpkt).
 ; Pas de DoPkt public V34 : dos_sendpkt est l'équivalent interne. Convention d'args BCPL-dérivée (D1, D2, D3...).
-; Portée D3c : résolution device = 1er DeviceNode de di_DevInfo (un seul handler monté = DF0:) ; nom pris tel quel
-; (pas de parsing de préfixe « DFx: »). StandardPacket local à la pile de l'appelant (process).
+; Résolution du nom par dos_resolve (préfixe device/assign/volume, sinon répertoire courant). StandardPacket local à
+; la pile de l'appelant (process).
 
 ; Open(name d1 [C-string], accessMode d2 [= code ACTION_FIND*]) -> d0 = BPTR FileHandle | 0.
 dos_fn_open:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,a4                   ; a4 = nom (C-string)
         move.l  d2,d7                   ; d7 = mode (= dp_Type ACTION_FINDINPUT)
-        move.l  DL_ROOT(a6),a0          ; RootNode (APTR)
-        move.l  RN_INFO(a0),d0          ; BPTR DosInfo
-        lsl.l   #2,d0
-        move.l  d0,a0                   ; DosInfo
-        move.l  DI_DEVINFO(a0),d0       ; BPTR DeviceNode (tête de liste device)
-        lsl.l   #2,d0
-        beq     .op_fail_early          ; aucun device monté
-        move.l  d0,a0                   ; DeviceNode
-        move.l  DN_TASK(a0),a3          ; a3 = port du handler (APTR)
+        bsr     dos_resolve             ; a3 = port du handler, d6 = lock de départ, a4 = nom à transmettre
         move.l  a3,d0
-        beq     .op_fail_early          ; handler non démarré
+        beq     .op_fail_early          ; device inconnu / handler non démarré
         move.l  ($4).w,a6               ; -> SysBase pour les appels exec
         move.l  #DOS_FH_ALLOC,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -149,7 +142,7 @@ dos_fn_open:
         beq.s   .op_ndone
         move.b  d0,(a1)+
         addq.l  #1,d3
-        cmp.l   #38,d3                  ; borne du buffer
+        cmp.l   #DOS_NAMEMAX,d3         ; borne du buffer (BSTR)
         bcs.s   .op_ncpy
 .op_ndone:
         move.b  d3,(a5)                 ; octet de longueur BCPL
@@ -162,7 +155,7 @@ dos_fn_open:
         move.l  d7,d0                   ; dp_Type = mode (ACTION_FINDINPUT)
         move.l  a2,d1
         lsr.l   #2,d1                   ; ARG1 = BPTR(FileHandle) (le handler y pose fh_Arg1)
-        moveq   #0,d2                   ; ARG2 = lock 0 (racine)
+        move.l  d6,d2                   ; ARG2 = lock du répertoire de départ
         move.l  a5,d3
         lsr.l   #2,d3                   ; ARG3 = BPTR(nom BSTR)
         jsr     dos_sendpkt             ; d0 = dp_Res1
@@ -189,6 +182,7 @@ dos_fn_read:
         move.l  d3,d6                   ; len
         move.l  d1,d4
         lsl.l   #2,d4
+        beq.s   .rd_err                 ; fh nul -> erreur (pas de lecture de l'adresse $8)
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
@@ -205,6 +199,9 @@ dos_fn_read:
         jsr     dos_sendpkt             ; d0 = octets lus
         lea     SP_SIZEOF(sp),sp
         bra.s   .rd_ret
+.rd_err:
+        moveq   #-1,d0
+        bra.s   .rd_ret
 .rd_zero:
         moveq   #0,d0
 .rd_ret:
@@ -216,6 +213,7 @@ dos_fn_close:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,d4
         lsl.l   #2,d4
+        beq.s   .cl_null                ; fh nul -> rien à fermer
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3
         move.l  a3,d0
@@ -238,6 +236,7 @@ dos_fn_close:
         move.l  a2,a1                   ; libère le FileHandle
         move.l  #DOS_FH_ALLOC,d0
         jsr     LVO_FREEMEM(a6)
+.cl_null:
         moveq   #-1,d0                  ; DOSTRUE
         movem.l (sp)+,d2-d7/a2-a6
         rts
@@ -251,6 +250,7 @@ dos_fn_seek:
         move.l  d3,d6                   ; mode
         move.l  d1,d4
         lsl.l   #2,d4
+        beq.s   .sk_err                 ; fh nul
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
@@ -289,6 +289,7 @@ dos_fn_write:
         move.l  d3,d6                   ; len
         move.l  d1,d4
         lsl.l   #2,d4
+        beq.s   .wr_err                 ; fh nul
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
@@ -413,26 +414,18 @@ dos_fn_unloadseg:
 ; Appelées depuis un PROCESS (dos_sendpkt = reply port = ThisTask->pr_MsgPort). Le handler DF0: (handler.s) alloue
 ; le FileLock, remplit le FileInfoBlock et énumère via la machinerie OFS (ofs_name_to_block/ofs_fill_fib/ofs_dir_next).
 
-; Lock(name d1 [C-string], mode d2 [SHARED_LOCK/EXCLUSIVE_LOCK]) -> d0 = BPTR FileLock | 0. Résout le device (1er
-; DeviceNode = DF0:, comme Open) pour le port du handler, convertit le nom en BSTR LONG-ALIGNÉ (BPTR exige l'alignement),
-; envoie ACTION_LOCATE_OBJECT (ARG1=lock parent 0 = racine ; le handler résout le chemin complet). a6 = DosBase.
+; Lock(name d1 [C-string], mode d2 [SHARED_LOCK/EXCLUSIVE_LOCK]) -> d0 = BPTR FileLock | 0. dos_resolve donne le port
+; du handler et le lock parent, le nom est converti en BSTR LONG-ALIGNÉ (BPTR exige l'alignement), puis
+; ACTION_LOCATE_OBJECT (ARG1 = lock parent, ARG2 = nom, ARG3 = mode). a6 = DosBase.
 dos_fn_lock:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,a4                   ; a4 = nom (C-string)
         move.l  d2,d7                   ; d7 = mode
-        move.l  DL_ROOT(a6),a0          ; RootNode
-        move.l  RN_INFO(a0),d0          ; BPTR DosInfo
-        lsl.l   #2,d0
-        move.l  d0,a0
-        move.l  DI_DEVINFO(a0),d0       ; BPTR DeviceNode (tête)
-        lsl.l   #2,d0
-        beq     .lk_fail                ; aucun device monté
-        move.l  d0,a0
-        move.l  DN_TASK(a0),a3          ; a3 = port du handler
+        bsr     dos_resolve             ; a3 = port du handler, d6 = lock parent, a4 = nom à transmettre
         move.l  a3,d0
-        beq     .lk_fail                ; handler non démarré
+        beq     .lk_fail                ; device inconnu / handler non démarré
         move.l  ($4).w,a6               ; SysBase
-        lea     -48(sp),sp             ; zone BSTR sur la pile
+        lea     -(DOS_NAMEMAX+5)(sp),sp ; zone BSTR sur la pile (taille paire : SP reste pair)
         move.l  sp,d0
         addq.l  #3,d0
         and.l   #-4,d0                  ; arrondi au long supérieur -> BSTR long-aligné (BPTR réversible)
@@ -444,7 +437,7 @@ dos_fn_lock:
         beq.s   .lk_ndone
         move.b  d0,(a1)+
         addq.l  #1,d3
-        cmp.l   #38,d3                  ; borne du buffer
+        cmp.l   #DOS_NAMEMAX,d3         ; borne du buffer (BSTR)
         bcs.s   .lk_ncpy
 .lk_ndone:
         move.b  d3,(a5)                 ; octet de longueur BCPL
@@ -452,13 +445,13 @@ dos_fn_lock:
         move.l  sp,a0
         move.l  a3,a1                   ; port du handler
         move.l  #ACTION_LOCATE_OBJECT,d0
-        moveq   #0,d1                   ; ARG1 = lock parent 0 (racine)
+        move.l  d6,d1                   ; ARG1 = lock parent
         move.l  a5,d2
         lsr.l   #2,d2                   ; ARG2 = BPTR(nom BSTR)
         move.l  d7,d3                   ; ARG3 = mode
         jsr     dos_sendpkt             ; d0 = dp_Res1 (BPTR lock | 0)
         lea     SP_SIZEOF(sp),sp
-        lea     48(sp),sp              ; libère la zone BSTR
+        lea     DOS_NAMEMAX+5(sp),sp    ; libère la zone BSTR
         bra.s   .lk_ret
 .lk_fail:
         moveq   #0,d0
@@ -528,6 +521,257 @@ dos_examine_pkt:
 .exc_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+; dos_resolve(a4 = nom C-string, a6 = DosBase) -> a3 = port du handler | 0, d6 = BPTR lock de départ, a4 = nom à
+; transmettre au handler. Sémantique AmigaDOS : « xxx:reste » -> nœud « xxx » de la DosList (insensible à la casse) :
+; assign (DLT_DIRECTORY) -> son lock + son handler, on transmet « reste » ; device/volume -> son handler, lock 0, nom
+; complet (le handler ignore le préfixe et part de la racine). « :reste » -> volume du répertoire courant, racine.
+; Sans ':' -> relatif à pr_CurrentDir (lock 0 = racine du handler par défaut pr_FileSystemTask, sinon DF0:).
+; Préfixe inconnu -> a3 = 0 et IoErr = ERROR_DEVICE_NOT_MOUNTED. Clobbe d0-d2/a0-a1.
+dos_resolve:
+        movem.l d3-d4/a2,-(sp)
+        move.l  a4,a0
+.rs_scan:
+        move.b  (a0)+,d0
+        beq     .rs_rel                 ; pas de ':' -> relatif au répertoire courant
+        cmp.b   #':',d0
+        bne.s   .rs_scan
+        move.l  a0,d3
+        sub.l   a4,d3
+        subq.l  #1,d3                   ; d3 = longueur du préfixe
+        beq.s   .rs_volroot             ; « :reste »
+        move.l  DL_ROOT(a6),a2
+        move.l  RN_INFO(a2),d0
+        lsl.l   #2,d0
+        move.l  d0,a2
+        move.l  DI_DEVINFO(a2),d0
+.rs_node:
+        lsl.l   #2,d0
+        beq.s   .rs_unknown
+        move.l  d0,a2                   ; a2 = nœud courant
+        move.l  DN_NAME(a2),d0
+        lsl.l   #2,d0
+        beq.s   .rs_next
+        move.l  d0,a0
+        moveq   #0,d4
+        move.b  (a0)+,d4                ; longueur du nom du nœud
+        cmp.l   d3,d4
+        bne.s   .rs_next
+        move.l  a4,a1
+.rs_cmp:
+        move.b  (a0)+,d0
+        bsr     dos_upper
+        move.b  d0,d1
+        move.b  (a1)+,d0
+        bsr     dos_upper
+        cmp.b   d0,d1
+        bne.s   .rs_next
+        subq.l  #1,d4
+        bne.s   .rs_cmp
+        cmp.l   #DLT_DIRECTORY,DN_TYPE(a2)
+        bne.s   .rs_devvol
+        move.l  DN_LOCK(a2),d6          ; assign : lock du répertoire assigné
+        move.l  d6,d0
+        lsl.l   #2,d0
+        beq.s   .rs_unknown
+        move.l  d0,a0
+        move.l  FL_TASK(a0),a3
+        lea     1(a4,d3.l),a4           ; transmet ce qui suit le ':'
+        bra.s   .rs_ret
+.rs_devvol:
+        moveq   #0,d6
+        move.l  DN_TASK(a2),a3
+        bra.s   .rs_ret
+.rs_next:
+        move.l  DN_NEXT(a2),d0
+        bra.s   .rs_node
+.rs_unknown:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  #ERROR_DEVICE_NOT_MOUNTED,PR_RESULT2(a0)
+        sub.l   a3,a3
+        bra.s   .rs_ret
+.rs_volroot:
+        bsr     dos_cdport
+        moveq   #0,d6                   ; le handler repart de la racine (il ignore le ':')
+        bra.s   .rs_ret
+.rs_rel:
+        bsr     dos_cdport
+.rs_ret:
+        movem.l (sp)+,d3-d4/a2
+        rts
+
+; dos_cdport() -> d6 = pr_CurrentDir de ThisTask, a3 = port du handler qui porte ce lock (lock 0 -> pr_FileSystemTask,
+; ou le file-handler DF0: si non posé). Clobbe d0/a0.
+dos_cdport:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_CURRENTDIR(a0),d6
+        move.l  d6,d0
+        lsl.l   #2,d0
+        beq.s   .cd_default
+        move.l  d0,a0
+        move.l  FL_TASK(a0),a3
+        rts
+.cd_default:
+        move.l  PR_FILESYSTEMTASK(a0),a3
+        move.l  a3,d0
+        bne.s   .cd_ret
+        move.l  DOS_FSPORT,a3
+.cd_ret:
+        rts
+
+; dos_upper(d0.b) -> d0.b en majuscule (ASCII a-z seulement).
+dos_upper:
+        cmp.b   #'a',d0
+        blo.s   .up_ret
+        cmp.b   #'z',d0
+        bhi.s   .up_ret
+        sub.b   #'a'-'A',d0
+.up_ret:
+        rts
+
+; dos_boot_assigns(a6 = DosBase) : appelé par le CLI initial (process) une fois le disque de boot monté. Crée le nœud
+; VOLUME (nom lu par Examine de la racine), l'assign SYS: (racine) et les assigns C: S: L: DEVS: LIBS: FONTS: pour
+; chaque répertoire présent sur DF0:, puis pose pr_CurrentDir = racine. Sans disque lisible -> rien. Préserve tout.
+dos_boot_assigns:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  a6,a5                   ; a5 = DosBase
+        lea     ba_root(pc),a0
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+        move.l  d0,d7                   ; d7 = lock racine (conservé par SYS:)
+        beq     .ba_ret
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  FL_TASK(a0),a4          ; a4 = port du handler DF0:
+        move.l  ($4).w,a6
+        move.l  #FIB_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a3                   ; a3 = FIB | 0
+        tst.l   d0
+        beq.s   .ba_sys
+        move.l  a5,a6
+        move.l  d7,d1
+        move.l  a3,d2
+        bsr     dos_fn_examine
+        tst.l   d0
+        beq.s   .ba_nofib
+        moveq   #DLT_VOLUME,d0
+        moveq   #0,d1
+        lea     FIB_FILENAME(a3),a0
+        move.l  a4,a1
+        bsr     ba_addnode              ; volume « <nom du disque> »
+.ba_nofib:
+        move.l  ($4).w,a6
+        move.l  a3,a1
+        move.l  #FIB_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.ba_sys:
+        moveq   #DLT_DIRECTORY,d0
+        move.l  d7,d1
+        lea     ba_sysname(pc),a0
+        move.l  a4,a1
+        bsr     ba_addnode
+        lea     ba_tab(pc),a2           ; paires (nom d'assign, chemin) terminées par un nom vide
+.ba_loop:
+        tst.b   (a2)
+        beq.s   .ba_cd
+        move.l  a2,a3                   ; a3 = nom d'assign
+.ba_skip1:
+        tst.b   (a2)+
+        bne.s   .ba_skip1               ; a2 = chemin
+        move.l  a5,a6
+        move.l  a2,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+.ba_skip2:
+        tst.b   (a2)+
+        bne.s   .ba_skip2               ; a2 = paire suivante
+        tst.l   d0
+        beq.s   .ba_loop                ; répertoire absent -> pas d'assign
+        move.l  d0,d1
+        moveq   #DLT_DIRECTORY,d0
+        move.l  a3,a0
+        move.l  a4,a1
+        bsr     ba_addnode
+        bra.s   .ba_loop
+.ba_cd:
+        move.l  a5,a6                   ; répertoire courant initial = racine du disque de boot
+        lea     ba_root(pc),a0
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+        move.l  d0,d1
+        beq.s   .ba_ret
+        bsr     dos_fn_currentdir
+.ba_ret:
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+; ba_addnode(d0 = type, d1 = BPTR lock, a0 = nom C-string, a1 = port du handler) : alloue un nœud DosList (+ BSTR du
+; nom juste après, long-aligné) et l'insère en tête de di_DevInfo sous Forbid. Clobbe d0-d2/a0-a1.
+BA_NAMEMAX      EQU 31
+ba_addnode:
+        movem.l d3-d4/a2/a6,-(sp)
+        move.l  d0,d3
+        move.l  d1,d4
+        move.l  a0,a2
+        move.l  a1,-(sp)
+        move.l  ($4).w,a6
+        move.l  #DN_SIZEOF+BA_NAMEMAX+1,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  (sp)+,a1
+        tst.l   d0
+        beq.s   .an_ret
+        move.l  d0,a0                   ; a0 = nœud
+        move.l  d3,DN_TYPE(a0)
+        move.l  a1,DN_TASK(a0)
+        move.l  d4,DN_LOCK(a0)
+        lea     DN_SIZEOF(a0),a1        ; BSTR du nom
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NAME(a0)
+        moveq   #0,d1
+.an_cpy:
+        move.b  (a2)+,d0
+        beq.s   .an_len
+        move.b  d0,1(a1,d1.l)
+        addq.l  #1,d1
+        cmp.l   #BA_NAMEMAX-1,d1
+        bcs.s   .an_cpy
+.an_len:
+        move.b  d1,(a1)
+        jsr     LVO_FORBID(a6)
+        move.l  DL_ROOT(a5),a1
+        move.l  RN_INFO(a1),d0
+        lsl.l   #2,d0
+        move.l  d0,a1                   ; DosInfo
+        move.l  DI_DEVINFO(a1),DN_NEXT(a0)
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DI_DEVINFO(a1)
+        jsr     LVO_PERMIT(a6)
+.an_ret:
+        movem.l (sp)+,d3-d4/a2/a6
+        rts
+
+ba_root:
+        dc.b    "DF0:",0
+ba_sysname:
+        dc.b    "SYS",0
+ba_tab:
+        dc.b    "C",0,"DF0:c",0
+        dc.b    "S",0,"DF0:s",0
+        dc.b    "L",0,"DF0:l",0
+        dc.b    "DEVS",0,"DF0:devs",0
+        dc.b    "LIBS",0,"DF0:libs",0
+        dc.b    "FONTS",0,"DF0:fonts",0
+        dc.b    0
+        EVEN
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom, alloue RootNode + DosInfo séparément
 ; (AllocMem -> long-alignés), câble dl_Root (APTR) et rn_Info (BPTR = &DosInfo>>2), stocke le scaffold DL_DISHADOW.

@@ -85,6 +85,7 @@ init_ints:
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
         move.l  #trap2_handler,TRAP2_VEC          ; M7j : TRAP #2 = RemTask(self) (libère + bascule)
         move.l  #trap3_handler,TRAP3_VEC          ; TRAP #3 = exec Supervisor (exécute a5 en mode superviseur)
+        bsr     init_traps                        ; exceptions CPU + TRAP #4-15 -> tc_TrapCode de la tâche
         ; M7f : enregistre le serveur SCHEDULER (quantum round-robin) sur la chaîne VERTB. Faithful :
         ; le vrai exec a un serveur VBlank qui pose la flag AttnResched. pri 20 -> tête de chaîne.
         clr.l   SCHED_INT+LN_SUCC                 ; (RAM basse réservée, non garantie nulle au power-on)
@@ -544,3 +545,201 @@ exec_AddIntServer:
 .ais_ret:
         movem.l (sp)+,d2/a2/a3
         rts
+
+; --- Exceptions CPU (modèle exec, RKRM « Traps ») ---------------------------------------------------------------
+; Chaque vecteur (erreur de bus/adresse, illégale, division par zéro, CHK, TRAPV, privilège, trace, line-A, line-F,
+; TRAP #4-#15) empile le numéro de trap (LONG) au-dessus du frame d'exception puis saute, en superviseur et registres
+; intacts, au tc_TrapCode de ThisTask (0 -> ExecBase.TaskTrapCode). Sans gestionnaire, une exception faisait sauter
+; le CPU à une adresse quelconque et gelait toute la machine.
+TRAPVEC_FIRST   EQU 2                ; erreur de bus
+TRAPVEC_CPULAST EQU 11               ; line-F
+TRAPVEC_T4      EQU 36               ; TRAP #4
+TRAPVEC_T15     EQU 47               ; TRAP #15
+init_traps:
+        move.l  #exc_default,EB_TASKTRAPCODE(a6)
+        moveq   #TRAPVEC_FIRST,d0
+.it_cpu:
+        bsr.s   .it_set
+        cmp.w   #TRAPVEC_CPULAST,d0
+        bls.s   .it_cpu
+        moveq   #TRAPVEC_T4,d0
+.it_trap:
+        bsr.s   .it_set
+        cmp.w   #TRAPVEC_T15,d0
+        bls.s   .it_trap
+        rts
+.it_set:                             ; vecteur d0 -> exc_table + 2*(d0-2) ; avance d0
+        moveq   #0,d1
+        move.w  d0,d1
+        lsl.w   #2,d1
+        move.l  d1,a1                ; a1 = adresse du vecteur
+        move.w  d0,d1
+        subq.w  #TRAPVEC_FIRST,d1
+        add.w   d1,d1
+        lea     exc_table(pc),a0
+        add.w   d1,a0
+        move.l  a0,(a1)
+        addq.w  #1,d0
+        rts
+
+; Forme IMPOSÉE par les clients (SetPatch 1.3x) : le vecteur n pointe sur un « bsr.s exc_entry » de exc_table
+; (2 octets par vecteur, vecteurs 2..47). exc_entry ramène l'adresse de retour à 2*n par une soustraction de
+; 6 octets, puis « lsr.w 2(sp) » donne n. SetPatch lit le vecteur $14, en déduit exc_entry+6, y vérifie le mot
+; $E2EF (lsr.w d16(a7)) — sinon il plante volontairement — et y fait sauter ses propres stubs FPU (vecteurs 48-63)
+; avec 2*n sur la pile. Ne pas changer les tailles : subi.l = 6 octets, lsr.w 2(sp) = $E2EF $0002.
+exc_table:
+                rept    TRAPVEC_T15-TRAPVEC_FIRST+1
+        bsr.s   exc_entry
+                endr
+        dc.w    0                    ; séparateur : un bsr.s de déplacement nul encoderait un bsr.w (jamais exécuté)
+exc_entry:
+        subi.l  #exc_table-2,(sp)    ; adresse de retour de l'entrée n -> 2*n
+        lsr.w   2(sp)                ; -> n = numéro de trap (LONG en (sp))
+
+; exc_common : (sp) = n° de trap. Saute au gestionnaire de la tâche sans toucher un seul registre.
+exc_common:
+        subq.l  #4,sp                ; emplacement de l'adresse cible
+        move.l  a0,-(sp)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  TC_TRAPCODE(a0),a0
+        move.l  a0,4(sp)
+        bne.s   .ec_go
+        move.l  ($4).w,a0
+        move.l  EB_TASKTRAPCODE(a0),4(sp)
+.ec_go:
+        move.l  (sp)+,a0
+        rts                          ; -> gestionnaire, pile = [n° de trap][frame]
+
+; exc_default : gestionnaire par défaut. Émet « SOFTWARE FAILURE trap=XXXX pc=XXXXXXXX task=<nom> » sur le série
+; (équivalent du requester Software Failure du vrai OS) puis MET LA TÂCHE EN ATTENTE : le frame est réécrit pour
+; que le RTE reprenne en mode utilisateur dans exc_hold (Wait(0) à jamais) ; les autres tâches continuent. Une
+; exception survenue en mode superviseur (interruption, Supervisor) est irrécupérable : message puis arrêt.
+exc_default:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     exc_msg1(pc),a0
+        bsr     exc_puts
+        move.l  20(sp),d1            ; n° de trap
+        move.l  d1,d0
+        bsr     exc_puthex
+        lea     24(sp),a1            ; a1 = frame
+        cmp.l   #3,d1
+        bhi.s   .ed_short
+        addq.l  #8,a1                ; erreur de bus/adresse : 8 octets de plus avant SR/PC (68000)
+.ed_short:
+        lea     exc_msg2(pc),a0
+        bsr     exc_puts
+        move.l  2(a1),d0             ; PC empilé
+        swap    d0
+        bsr     exc_puthex
+        swap    d0
+        bsr     exc_puthex
+        cmp.l   #3,d1
+        bhi.s   .ed_nofault
+        lea     exc_msg4(pc),a0      ; erreur de bus/adresse : adresse d'accès fautive
+        bsr     exc_puts
+        move.l  24+2(sp),d0
+        swap    d0
+        bsr     exc_puthex
+        swap    d0
+        bsr     exc_puthex
+.ed_nofault:
+        lea     exc_msg5(pc),a0      ; mots de code autour du PC (localiser l'instruction)
+        bsr     exc_puts
+        move.l  2(a1),d0
+        and.l   #$FFFFFE,d0          ; PC pair, 24 bits
+        move.l  d0,a0
+        subq.l  #8,a0
+        moveq   #7,d2
+.ed_code:
+        move.w  (a0)+,d0
+        bsr     exc_puthex
+        dbra    d2,.ed_code
+        lea     exc_msg3(pc),a0
+        bsr     exc_puts
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  LN_NAME(a0),d0
+        beq.s   .ed_noname
+        move.l  d0,a0
+        bsr     exc_puts
+.ed_noname:
+        lea     exc_crlf(pc),a0
+        bsr     exc_puts
+        btst    #5,(a1)              ; bit S du SR empilé (octet haut du mot SR)
+        bne.s   .ed_fatal
+        clr.w   (a1)                 ; reprise en mode utilisateur, IPL 0
+        move.l  #exc_hold,2(a1)
+        movem.l (sp)+,d0-d2/a0-a1
+        cmp.l   #3,(sp)
+        bhi.s   .ed_pop
+        addq.l  #8,sp                ; erreur de bus/adresse : retire aussi les 8 octets en trop du frame
+.ed_pop:
+        addq.l  #4,sp                ; retire le n° de trap -> pile = [SR][PC]
+        rte
+.ed_fatal:
+        move.w  #$2700,sr
+.ed_stop:
+        stop    #$2700
+        bra.s   .ed_stop
+
+; exc_hold : point de reprise (mode utilisateur) d'une tâche fautive : dort pour toujours.
+exc_hold:
+        move.l  ($4).w,a6
+.eh_lp:
+        moveq   #0,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .eh_lp
+
+; exc_puts(a0) / exc_puthex(d0.w) : émission série BRUTE (polling TBE), sans Forbid/Permit — utilisable depuis
+; un contexte d'exception. Clobbent d0 (puthex préserve d0), a0.
+exc_puts:
+        move.b  (a0)+,d0
+        beq.s   .xp_ret
+        bsr.s   exc_putc
+        bra.s   exc_puts
+.xp_ret:
+        rts
+exc_puthex:
+        movem.l d0-d2,-(sp)
+        move.w  d0,d2
+        moveq   #3,d1
+.xh_lp:
+        rol.w   #4,d2
+        move.w  d2,d0
+        and.w   #$000F,d0
+        add.b   #'0',d0
+        cmp.b   #'9',d0
+        bls.s   .xh_out
+        addq.b  #7,d0
+.xh_out:
+        bsr.s   exc_putc
+        dbra    d1,.xh_lp
+        movem.l (sp)+,d0-d2
+        rts
+exc_putc:
+        move.l  d1,-(sp)
+        move.w  #$2000,d1
+.xc_wt:
+        btst    #5,SERDATR           ; TBE = bit 13 du mot = bit 5 de l'octet haut
+        bne.s   .xc_tx
+        dbra    d1,.xc_wt
+.xc_tx:
+        and.w   #$00FF,d0
+        or.w    #$0100,d0
+        move.w  d0,SERDAT
+        move.l  (sp)+,d1
+        rts
+exc_msg1:
+        dc.b    13,10,"SOFTWARE FAILURE trap=",0
+exc_msg2:
+        dc.b    " pc=",0
+exc_msg3:
+        dc.b    " task=",0
+exc_msg4:
+        dc.b    " addr=",0
+exc_msg5:
+        dc.b    " code(pc-8)=",0
+exc_crlf:
+        dc.b    13,10,0
+        even
