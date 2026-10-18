@@ -133,7 +133,12 @@ loadscreen_demo:
         move.l  d2,a1                        ; a1 = état
         move.l  d3,a2                        ; a2 = dest
         move.l  #LS_CHUNK,d0
+        ; Coupe le DMA AFFICHAGE (bitplane+copper) PENDANT la lecture disque : sur WinUAE (timing-exact), le DMA
+        ; bitplane en marche affame le DMA disque -> lecture KO (buffer vide, prouvé). FS-UAE ne modélise pas cette
+        ; contention. Le cracktro Lemmings lit bien sur WinUAE car il n'a pas notre affichage monté pendant la lecture.
+        move.w  #(DMAF_RASTER|DMAF_COPPER),DMACON   ; clear BPLEN+COPEN (écran noir bref)
         jsr     ofs_stream_read               ; d0 = octets copiés (0 = EOF) ; préserve d2/d3/a3/a4
+        move.w  #(DMAF_SETCLR|DMAF_RASTER|DMAF_COPPER),DMACON  ; rallume l'affichage pour peindre le '#'
         tst.l   d0
         beq.s   .done
         lea     ls_hash(pc),a0              ; un '#' de progression
