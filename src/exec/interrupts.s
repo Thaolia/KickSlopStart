@@ -84,6 +84,7 @@ init_ints:
         move.l  #trap0_handler,TRAP0_VEC          ; M7c : TRAP #0 = switch volontaire style Wait
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
         move.l  #trap2_handler,TRAP2_VEC          ; M7j : TRAP #2 = RemTask(self) (libère + bascule)
+        move.l  #trap3_handler,TRAP3_VEC          ; TRAP #3 = exec Supervisor (exécute a5 en mode superviseur)
         ; M7f : enregistre le serveur SCHEDULER (quantum round-robin) sur la chaîne VERTB. Faithful :
         ; le vrai exec a un serveur VBlank qui pose la flag AttnResched. pri 20 -> tête de chaîne.
         clr.l   SCHED_INT+LN_SUCC                 ; (RAM basse réservée, non garantie nulle au power-on)
@@ -346,6 +347,13 @@ trap1_handler:
         moveq   #1,d7
         moveq   #1,d6               ; requeue sortante -> TaskReady
         bra     intr_exit
+
+; trap3_handler (TRAP #3) : exec Supervisor — PAS un switch de tâche. Le trap a poussé {SR user, PC} sur la SSP
+; et nous a mis en superviseur. On saute directement à la routine utilisateur (a5), qui tourne en superviseur
+; et se termine par RTE : le RTE dépile {SR,PC} -> reprise dans exec_Supervisor en mode user. On ne touche à
+; aucun contexte (le code appelé est responsable de préserver le frame SSP du trap, contrat Supervisor).
+trap3_handler:
+        jmp     (a5)
 
 ; trap2_handler (TRAP #2) : M7j — RemTask(self). La sortante se RETIRE : on NE sauve PAS son contexte
 ; (il est jeté). En superviseur, sur la SSP -> la pile user de la sortante n'est plus utilisée = libérable.

@@ -45,6 +45,10 @@ graphics_vectors:
         dc.l    gfx_MrgCop               ; 35 : LVO -210
         dc.l    gfx_MakeVPort            ; 36 : LVO -216
         dc.l    gfx_LoadView             ; 37 : LVO -222
+        dc.l    gfx_WaitBlit             ; 38 : LVO -228 (attend le blitter idle)
+        dcb.l   37,graphics_null         ; 39..75 : LVO -234..-450 (non implémentés)
+        dc.l    gfx_OwnBlitter           ; 76 : LVO -456 (arbitrage blitter : attend idle)
+        dc.l    gfx_DisownBlitter        ; 77 : LVO -462 (relâche le blitter : no-op mono-tâche)
         dc.l    -1
 graphics_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -187,9 +191,14 @@ gfx_MrgCop:
         movem.l (sp)+,d2/a2/a3/a4/a6
         rts
 
-; gfx_LoadView(view a1) : installe v_LOFCprList (COP1LC) + active Copper/bitplane DMA + pose gb_ActiView.
+; gfx_LoadView(view a1) : a1 != 0 -> installe v_LOFCprList (COP1LC) + active Copper/bitplane DMA + pose
+; gb_ActiView. a1 == 0 (vue NULLE) -> BLANCHIT l'affichage : coupe le DMA bitplane (RASTER) ET copper du
+; système, pour que l'appelant (ex. flt-intro) pose SON propre COP1LC + bitplanes sans que notre copper de
+; boot les écrase. REQUIS par flt-intro, qui fait LoadView(NULL) avant de prendre la main sur le hardware.
 gfx_LoadView:
-        move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view
+        move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view (0 si NULL)
+        move.l  a1,d0
+        beq.s   .lv_null             ; vue NULLE -> stopper l'affichage système
         move.l  v_LOFCprList(a1),d0
         beq.s   .lv_ret              ; pas de copper list -> rien
         move.l  d0,gb_LOFlist(a6)
@@ -197,5 +206,24 @@ gfx_LoadView:
         move.w  #GFX_DMA_ON,DMACON   ; DMA maître + Copper + bitplane
         move.w  #0,COPJMP1           ; strobe COP1
 .lv_ret:
+        rts
+.lv_null:
+        move.w  #(DMAF_RASTER|DMAF_COPPER),DMACON  ; clear (SETCLR=0) DMA bitplane + copper -> affichage système
+        rts                                        ; stoppé (flt-intro installera son propre COP1LC/bitplanes)
+
+; gfx_WaitBlit() : attend que le blitter soit idle (poll DMACONR, bit 14 = BBUSY). Double-lecture (quirk A1000).
+gfx_WaitBlit:
+        btst    #6,CUSTOM+$002       ; DMACONR octet haut, bit 6 = bit 14 (BBUSY) — lecture bidon (quirk)
+.wb_loop:
+        btst    #6,CUSTOM+$002
+        bne.s   .wb_loop
+        rts
+
+; gfx_OwnBlitter() : prend le blitter. Mono-tâche (l'appelant possède la machine) -> on garantit juste l'idle.
+gfx_OwnBlitter:
+        bra.s   gfx_WaitBlit
+
+; gfx_DisownBlitter() : relâche le blitter. Pas d'arbitrage multi-tâche ici -> no-op.
+gfx_DisownBlitter:
         rts
 graphics_end:

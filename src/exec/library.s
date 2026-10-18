@@ -70,6 +70,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.w  #$4EF9,(a0)+
         move.l  d1,(a0)+
         dbf     d0,.fill
+        move.w  #$4EF9,LVO_SUPERVISOR(a6)      ; -30 : exec Supervisor (requis par le cracktro flt-intro)
+        move.l  #exec_Supervisor,LVO_SUPERVISOR+2(a6)
         move.w  #$4EF9,LVO_OPEN(a6)
         move.l  #exec_Open,LVO_OPEN+2(a6)
         move.w  #$4EF9,LVO_CLOSE(a6)
@@ -170,6 +172,15 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
 
 _unimpl:
         moveq   #0,d0                ; LVO non implémenté : retour neutre
+        rts
+
+; exec_Supervisor(a5 = routine) : exécute a5 en mode SUPERVISEUR, puis revient à l'appelant. Appelée en mode
+; USER par le code chargé (ex. le cracktro flt-intro qui pilote le hardware/copper en superviseur). trap #3 ->
+; superviseur -> trap3_handler fait jmp (a5) ; a5 (par convention Supervisor) se termine par RTE, qui dépile le
+; frame {SR user, PC} poussé par le trap -> reprend ICI en mode user -> rts à l'appelant. a5 doit préserver le
+; frame SSP du trap (contrat AutoDoc Supervisor).
+exec_Supervisor:
+        trap    #3
         rts
 
 ; ============================ fonctions exec ========================

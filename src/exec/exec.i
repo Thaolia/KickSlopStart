@@ -65,6 +65,8 @@ AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER
 TRAP0_VEC    EQU $80          ; M7c : vecteur TRAP #0 (switch volontaire style Wait : sortante déjà rangée)
 TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeue sortante -> TaskReady)
 TRAP2_VEC    EQU $88          ; M7j : vecteur TRAP #2 (RemTask-self : libère + bascule définitivement)
+TRAP3_VEC    EQU $8C          ; vecteur TRAP #3 (exec_Supervisor : exécute a5 en mode superviseur)
+LVO_SUPERVISOR EQU -30        ; exec Supervisor() : appelle une routine (a5) en mode superviseur (requis par flt-intro)
 ; M7c — frame de contexte (miroir movem d0-d7/a0-a6 + {SR,PC} du CPU), posée sur la pile de la tâche.
 ; 15 longs GPR (60 o) + SR (mot, offset 60) + PC (long, offset 62) = 66 o (pair -> copie mot par mot).
 FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
