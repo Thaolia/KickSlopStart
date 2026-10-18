@@ -274,6 +274,13 @@ td_read_track:
         moveq   #0,d0
         bra     .rd_ret
 .rd_seek:
+        ; SECTION CRITIQUE du seek : les pulses de pas écrivent CIAB_PRB, et la source MICROHZ (timer A de
+        ; CIA-B, INT6) partage la MÊME puce. Une IRQ INT6 tombant entre les écritures PRB d'un pas corrompt le
+        ; positionnement de la tête -> la lecture suivante se vautre (hang observé sur un gros seek vers un bloc
+        ; haut, ex. « flt-intro » sur le disque Lemmings ; invisible tant que le boot ne lit que des blocs bas).
+        ; Prouvé par bissection : un DÉLAI inter-pas pur ne corrige PAS (donc pas un défaut de settle), masquer
+        ; les IRQ, OUI (3/3). On masque le seul SEEK (court) ; le DMA en aval poll INTREQR -> pas d'IRQ requise.
+        jsr     LVO_DISABLE(a6)     ; a6 = SysBase ; équilibré par LVO_ENABLE à .rd_dma
         ; --- seek vers la piste d6 avec SUIVI DU CYLINDRE (cylinder-tracking) ---
         ; On mémorise le cylindre courant (TD_CURCYL, fiable ssi TD_CYLVALID) et on steppe le DELTA vers la cible
         ; (IN si plus profond, OUT si plus près de 0) au lieu de recalibrer à zéro à CHAQUE lecture. Recalibration
@@ -333,6 +340,7 @@ td_read_track:
         beq.s   .rd_dma
         move.b  #$73,CIAB_PRB       ; face 1 (DSKSIDE=0, bit2=0 ; piste impaire)
 .rd_dma:
+        jsr     LVO_ENABLE(a6)      ; fin de la section critique du seek (IRQ ré-autorisées avant le DMA)
         move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
         move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
                 ifeq    TD_NO_DMA
