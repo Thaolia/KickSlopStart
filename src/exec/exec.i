@@ -171,6 +171,13 @@ M7E_COOP           EQU 0
         ifnd    PROD
 PROD               EQU 0
         endif
+; LOADSCREEN_DEMO=1 (-DLOADSCREEN_DEMO=1) : après l'init, affiche un ÉCRAN DE CHARGEMENT (src/graphics/
+; loadscreen.s) — monte une View sur le bitplane texte de la console, écrit « Chargement bigseg... » + une
+; barre de progression pendant la lecture STREAMING de « bigseg », puis « OK ». NE REVIENT PAS (tient l'écran).
+; Démo autonome du feedback visuel de chargement. Défaut 0 (boot normal).
+        ifnd    LOADSCREEN_DEMO
+LOADSCREEN_DEMO    EQU 0
+        endif
 ; F2A_NO_HANDSHAKE=1 (RED F2a) : kbd_selftest NE fait PAS le handshake clavier (pulse CRA bit 6) -> le clavier
 ; émulé stalle après le 1er octet -> $FE (terminate power-up) jamais reçu -> « F2 KBD OK » absent. Isole le
 ; handshake (load-bearing : sans ack, le flux clavier ne progresse pas). Défaut 0.

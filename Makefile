@@ -26,6 +26,11 @@ GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 # bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
 GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
+# loadscreen.o : écran de chargement — démo gatée. Lié UNIQUEMENT quand VASMDEF active LOADSCREEN_DEMO,
+# pour que la ROM par défaut reste sans code mort (byte-identique). `make VASMDEF=-DLOADSCREEN_DEMO=1 kick`.
+ifneq (,$(findstring LOADSCREEN_DEMO,$(VASMDEF)))
+GFX_OBJ   += $(BUILD)/loadscreen.o
+endif
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
@@ -77,6 +82,9 @@ $(BUILD)/%.o: $(GFX_DIR)/%.s $(EXEC_INC) $(GFX_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 # bootscreen_data.s fait un incbin de bootscreen.raw : relier la dépendance pour rebuild sur régénération.
 $(BUILD)/bootscreen_data.o: $(GFX_DIR)/bootscreen.raw
+# loadscreen.o (écran de chargement) inclut aussi ofs.i (src/dos, streaming) -> règle dédiée avec -I src/dos.
+$(BUILD)/loadscreen.o: $(GFX_DIR)/loadscreen.s $(EXEC_INC) $(GFX_INC) $(DOS_DIR)/ofs.i | $(BUILD)
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -I $(DOS_DIR) -o $@ $<
 
 # Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase).
 $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)

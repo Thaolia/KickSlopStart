@@ -48,6 +48,9 @@
                 xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
                 xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
                 xref    feeder_main      ; dos/feeder.s (intégration F : feeder clavier -> input.device)
+                ifne    LOADSCREEN_DEMO
+                xref    loadscreen_demo  ; graphics/loadscreen.s (écran de chargement, gaté LOADSCREEN_DEMO)
+                endc
                 xref    gp_delta8        ; exec/gameport.s (souris : delta signé avec wraparound 8 bits)
                 xref    gp_poll          ; exec/gameport.s (souris : logique poll -> InputEvent RAWMOUSE via IND_WRITEEVENT)
                 xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
@@ -1615,6 +1618,12 @@ d2_done:
         rts
 .m6r_done:
 
+                ifne    LOADSCREEN_DEMO
+        ; DÉMO écran de chargement : tous les modules sont up (console/graphics/trackdisk) + disque en DF0:.
+        ; loadscreen_demo monte l'affichage, lit « bigseg » en streaming avec barre de progression, tient l'écran.
+        move.l  ($4).w,a6            ; a6 = SysBase
+        jsr     loadscreen_demo      ; NE REVIENT PAS
+                endc
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
         ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ via CIA-B/INT6 +

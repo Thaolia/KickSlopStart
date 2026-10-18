@@ -758,6 +758,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     HRM (JOY0DAT/CIAA PRA) + NDK gameport.i/inputevent.i. AUCUNE lecture ROM. Différé : bouton DROIT (POTINP, bit flou) +
     clic réel sur écran affiché (invérifiables headless ; attendent un vrai display).
   - **À venir** : bouton droit souris (POTINP) + clic réel sur display ; keymap dead-keys/compose ; parité modules.
+- **Écran de chargement (gros fichier) — DÉMO GATÉE FAITE.** `src/graphics/loadscreen.s` (flag `LOADSCREEN_DEMO`,
+    lié uniquement sous `make VASMDEF=-DLOADSCREEN_DEMO=1 kick` → ROM par défaut byte-identique, zéro code mort).
+    `loadscreen_demo` monte une View sur le bitplane console (352×272, stride 44) via `MakeVPort`/`MrgCop`/`LoadView`,
+    écrit « Chargement <nom>... » + barre de progression (un '#' par chunk de 4 Ko) pendant un `ofs_stream_read` RÉEL,
+    puis « OK ». Preuve boot FS-UAE : capture `loadscreen_final.png` (texte blanc lisible sur fond bleu nuit). DÉMO
+    autonome (nom `bigseg` en dur, tient l'écran, NE REVIENT PAS) — PAS câblée dans `dos_loadseg`. **À venir (wiring live)** :
+    refondre en API `begin(nom)`/`progress()`/`end()` appelée depuis `dos_loadseg` (doit RETOURNER, libérer ses allocs,
+    réutiliser l'affichage courant) pour déclencher l'écran automatiquement sur un vrai chargement.
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 
