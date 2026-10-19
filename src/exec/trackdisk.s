@@ -101,8 +101,9 @@ trackdisk_null:
 ; td_decode_track), copie jusqu'à la fin de piste, et avance -> une requête qui TRAVERSE une frontière de piste
 ; est servie en plusieurs lectures (dos lira le filesystem au-delà de la piste 0). Contrat trackdisk : io_Offset
 ; et io_Length multiples de TD_SECTOR (512) -> garde IOERR_BADLENGTH sinon ; garde de borne TD_DISKBYTES.
-; sectorbuf est PERSISTANT (alloué au 1er CMD_READ) et sert de CACHE DE PISTE (TD_CACHETRK) : valide seulement si
-; les 11 secteurs ont été décodés ET portent le n° de piste demandé ; invalidé par /CHNG (td_check_change).
+; Cache LRU de TD_NCACHE pistes décodées (TD_CACHEBUF, alloué au 1er CMD_READ ; 1 emplacement si la mémoire manque) :
+; une piste n'y entre que si ses 11 secteurs ont été décodés ET portent le n° demandé ; vidé par /CHNG
+; (td_check_change). Le moteur reste allumé entre les lectures (td_motor_server l'éteint après 2 s d'inactivité).
 ; DETTE : une piste partiellement décodée n'est pas cachée mais ses secteurs illisibles renvoient des octets
 ; PÉRIMÉS (pas d'erreur) — dette « pas de gestion de secteur défectueux » ; sans impact sur un disque propre.
 trackdisk_beginio:
@@ -135,16 +136,24 @@ trackdisk_beginio:
         cmp.l   #TD_DISKBYTES,d0
         bhi     .td_badrange
         bsr     td_check_change      ; disque changé/retiré -> invalide cache + position de tête
-        move.l  TD_CACHEBUF,d0       ; sectorbuf persistant (= cache de piste), alloué au premier CMD_READ
+        tst.l   TD_CACHEBUF          ; cache de pistes, alloué au premier CMD_READ (TD_NCACHE emplacements, 1 au pire)
         bne.s   .td_havebuf
-        move.l  #MFM_SECBUF,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  #MFM_SECBUF*TD_NCACHE,d0
+        moveq   #MEMF_PUBLIC,d1
         jsr     LVO_ALLOCMEM(a6)
+        move.w  #TD_NCACHE,TD_CNSLOTS
+        tst.l   d0
+        bne.s   .td_gotcache
+        move.l  #MFM_SECBUF,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.w  #1,TD_CNSLOTS
         tst.l   d0
         beq     .td_nomem
+.td_gotcache:
         move.l  d0,TD_CACHEBUF
+        bsr     td_cache_flush
 .td_havebuf:
-        move.l  d0,a3                ; a3 = sectorbuf
         move.l  IO_DATA(a2),a5       ; a5 = destination (avance)
 .td_bio_loop:
         tst.l   d2
@@ -170,12 +179,15 @@ trackdisk_beginio:
                 ifne    TD_NOSEEK
         moveq   #0,d0               ; RED TD_NOSEEK : force la piste 0 -> lecture aboutit, mauvais contenu
                 endc
-        ; Cache de piste : chaque bloc OFS de 512 o relisait une piste ENTIÈRE (spin-up moteur + seek + DMA)
-        ; -> un exécutable de 145 Ko (~300 blocs) prenait plusieurs minutes. La piste décodée reste dans
-        ; sectorbuf ; une requête sur la même piste est servie sans accès disque.
-        cmp.w   TD_CACHETRK,d0
+        ; Cache LRU de pistes décodées : chaque bloc OFS de 512 o relisait une piste ENTIÈRE ; et l'OFS alterne sans
+        ; cesse entre la piste des répertoires et celles des données (mesuré : 222 lectures pour 58 pistes au boot du
+        ; Workbench avec une seule piste en cache). Une piste en cache est servie sans accès disque.
+        bsr     td_cache_slot        ; d1 = n° d'emplacement, a3 = son tampon ; Z = trouvée en cache
         beq.s   .td_cached
-        move.w  #$FFFF,TD_CACHETRK   ; sectorbuf va être réécrit -> cache invalide tant que non vérifié
+        lea     TD_CTRK,a0
+        add.w   d1,d1
+        move.w  #$FFFF,0(a0,d1.w)    ; l'emplacement va être réécrit : vide tant que la piste n'est pas vérifiée
+        move.w  d1,-(sp)             ; offset de l'emplacement (survit aux appels)
         move.w  d0,-(sp)             ; piste demandée (survit aux appels)
         bsr     td_read_track        ; d0 = rawbuf chip | 0  (a6 = SysBase ; piste en d0)
         tst.l   d0
@@ -188,9 +200,11 @@ trackdisk_beginio:
         bne.s   .td_nocache
         cmp.w   (sp),d1              ; et c'est bien la piste demandée (pas un mauvais seek)
         bne.s   .td_nocache
-        move.w  d1,TD_CACHETRK
+        lea     TD_CTRK,a0
+        move.w  2(sp),d0
+        move.w  d1,0(a0,d0.w)        ; emplacement valide pour cette piste
 .td_nocache:
-        addq.l  #2,sp
+        addq.l  #4,sp
         move.l  d7,a1                ; libère rawbuf
         move.l  #TD_RAWBYTES,d0
         jsr     LVO_FREEMEM(a6)
@@ -214,7 +228,7 @@ trackdisk_beginio:
         clr.b   IO_ERROR(a2)
         bra.s   .td_restore
 .td_noread_pop:
-        addq.l  #2,sp                ; dépile la piste demandée
+        addq.l  #4,sp                ; dépile la piste demandée et l'emplacement
         move.l  d4,IO_ACTUAL(a2)     ; octets transférés avant l'échec (0 si la 1re piste échoue)
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
         bra.s   .td_restore          ; sectorbuf = cache persistant : jamais libéré
@@ -236,6 +250,7 @@ trackdisk_beginio:
 .td_bdone:
         movem.l (sp)+,d2-d7/a2-a5
         rts
+        even
 trackdisk_abortio:
         moveq   #0,d0
         rts
@@ -244,25 +259,143 @@ trackdisk_abortio:
 ; ne nécessitent pas d'init en B1 (deviendront Unit+MsgPort à initialiser en B2).
 trackdisk_initfunc:
         clr.l   TD_CACHEBUF
-        move.w  #$FFFF,TD_CACHETRK
+        move.w  #1,TD_CNSLOTS
+        bsr     td_cache_flush
+        sf      TD_MOTORON
+        sf      TD_BUSY
+        clr.w   TD_MOTORCNT
+        movem.l d0/a1,-(sp)          ; serveur VBlank d'extinction du moteur inactif
+        lea     TD_VBLINT,a1
+        clr.l   LN_SUCC(a1)
+        clr.l   LN_PRED(a1)
+        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        clr.b   LN_PRI(a1)
+        lea     trackdisk_name(pc),a0
+        move.l  a0,LN_NAME(a1)
+        clr.l   IS_DATA(a1)
+        move.l  #td_motor_server,IS_CODE(a1)
+        moveq   #INTB_VERTB,d0
+        jsr     LVO_ADDINTSERVER(a6)
+        movem.l (sp)+,d0/a1
         move.l  d0,a1
         lea     trackdisk_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        rts
+
+; td_cache_flush() : vide tous les emplacements du cache (disque changé, init). Préserve tout.
+td_cache_flush:
+        movem.l d0/a0,-(sp)
+        lea     TD_CTRK,a0
+        moveq   #TD_NCACHE-1,d0
+.cf_lp:
+        move.w  #$FFFF,(a0)+
+        dbra    d0,.cf_lp
+        movem.l (sp)+,d0/a0
+        rts
+
+; td_cache_slot(d0.w = piste) -> d1.w = n° d'emplacement, a3 = son tampon (TD_CACHEBUF + n*5632), Z = 1 si la piste y
+; est (succès) ; sinon emplacement à remplir : un vide, à défaut le moins récemment utilisé. Marque l'accès (LRU :
+; TD_CAGE suit TD_CTRK). Débordement de l'horloge : âges remis à 0. Préserve d0/d2-d7/a0-a2/a4-a6.
+td_cache_slot:
+        movem.l d2-d5/a0,-(sp)
+        addq.w  #1,TD_CTICK
+        bne.s   .cs_tick
+        lea     TD_CAGE,a0           ; horloge repassée à 0 : repart d'âges nuls
+        moveq   #TD_NCACHE-1,d1
+.cs_clr:
+        clr.w   (a0)+
+        dbra    d1,.cs_clr
+        move.w  #1,TD_CTICK
+.cs_tick:
+        move.w  TD_CNSLOTS,d2        ; d2 = nombre d'emplacements
+        lea     TD_CTRK,a0
+        moveq   #0,d1
+.cs_find:
+        cmp.w   (a0)+,d0
+        beq.s   .cs_hit
+        addq.w  #1,d1
+        cmp.w   d2,d1
+        blo.s   .cs_find
+        lea     TD_CTRK,a0           ; absente : premier emplacement vide, sinon le plus ancien
+        moveq   #0,d1
+        moveq   #0,d3                ; d3 = victime
+        move.w  #$FFFF,d4            ; d4 = âge de la victime
+.cs_vict:
+        cmp.w   #$FFFF,(a0)
+        beq.s   .cs_miss             ; vide : d1
+        move.w  TD_CAGE-TD_CTRK(a0),d5
+        cmp.w   d4,d5
+        bhs.s   .cs_vnext
+        move.w  d5,d4
+        move.w  d1,d3
+.cs_vnext:
+        addq.l  #2,a0
+        addq.w  #1,d1
+        cmp.w   d2,d1
+        blo.s   .cs_vict
+        move.w  d3,d1
+.cs_miss:
+        moveq   #1,d5                ; Z = 0 : à lire
+        bra.s   .cs_mark
+.cs_hit:
+        moveq   #0,d5                ; Z = 1 : en cache
+.cs_mark:
+        move.w  d1,d3
+        add.w   d3,d3
+        lea     TD_CAGE,a0
+        move.w  TD_CTICK,0(a0,d3.w)
+        moveq   #0,d3
+        move.w  d1,d3
+        mulu    #MFM_SECBUF,d3
+        move.l  TD_CACHEBUF,a3
+        add.l   d3,a3
+        tst.l   d5
+        movem.l (sp)+,d2-d5/a0       ; movem ne touche pas le CCR
+        rts
+
+; td_motor_server (serveur VERTB) : éteint le moteur DF0 après TD_MOTORIDLE ticks sans accès (le trackdisk d'origine
+; coupe aussi le moteur par minuterie). Ignoré pendant un accès (TD_BUSY). Extinction = sélection avec le bit moteur
+; haut (latch off) puis déselection. -> d0 = 0 (Z : la chaîne continue).
+td_motor_server:
+        tst.b   TD_MOTORON
+        beq.s   .ms_ret
+        tst.b   TD_BUSY
+        bne.s   .ms_ret
+        subq.w  #1,TD_MOTORCNT
+        bgt.s   .ms_ret
+        move.b  #PRB_OFF,CIAB_PRB
+        move.b  #PRB_SEL0_OFF,CIAB_PRB
+        move.b  #PRB_OFF,CIAB_PRB
+        sf      TD_MOTORON
+.ms_ret:
+        moveq   #0,d0
         rts
 
 ; td_check_change() : sélectionne DF0 en latchant moteur OFF et lit /CHNG (bas = disque retiré/changé depuis le
 ; dernier pas de tête ; seul un pas avec disque présent le relâche). Bas -> invalide le cache de piste ET la
 ; position de tête (recalibration). Clobbe d0. Coût : 3 écritures PRB, sans spin-up.
 td_check_change:
+        st      TD_BUSY
         move.b  #$FF,CIAB_DDRB
+        tst.b   TD_MOTORON           ; la sélection relatche l'état du moteur : garder l'état courant
+        bne.s   .cc_on
         move.b  #PRB_OFF,CIAB_PRB
         move.b  #PRB_SEL0_OFF,CIAB_PRB
         btst    #DSKB_CHANGE,CIAA_PRA_HW
         sne     d0                   ; d0 = $FF si /CHNG haut (pas de changement)
         move.b  #PRB_OFF,CIAB_PRB
+        bra.s   .cc_read
+.cc_on:
+        move.b  #PRB_MOTOR_ON,CIAB_PRB
+        move.b  #PRB_SEL0_ON,CIAB_PRB
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        sne     d0
+        move.b  #PRB_MOTOR_ON,CIAB_PRB
+.cc_read:
+        sf      TD_BUSY
         tst.b   d0
         bne.s   .cc_ret
-        move.w  #$FFFF,TD_CACHETRK
+        bsr     td_cache_flush
         clr.b   TD_CYLVALID
 .cc_ret:
         rts
@@ -286,10 +419,14 @@ td_read_track:
         tst.l   d0
         beq     .rd_ret               ; pas de chip -> 0
         move.l  d0,a2                 ; a2 = buffer
+        st      TD_BUSY               ; le serveur VBlank ne touche plus au lecteur
         move.w  #INTF_DSKBLK,INTENA   ; s'assure que DSKBLK est MASQUÉ (on poll INTREQR, pas d'IRQ INT1 spurious)
         move.b  #$FF,CIAB_DDRB        ; port B = SORTIES avant d'écrire PRB
         move.b  #PRB_MOTOR_ON,CIAB_PRB ; moteur on (intention), tout déselectionné
         move.b  #PRB_SEL0_ON,CIAB_PRB  ; select DF0 -> le front SEL0 latche moteur=on
+        tst.b   TD_MOTORON            ; moteur resté allumé depuis la lecture précédente : déjà à vitesse
+        bne.s   .rd_seek
+        st      TD_MOTORON
         move.l  #$00040000,d2         ; spin-up : busy-loop + poll DSKRDY (timeout = lecteur absent/vide)
 .rd_spin:
         btst    #DSKB_RDY,CIAA_PRA_HW ; DSKRDY = 0 quand prêt
@@ -331,9 +468,10 @@ td_read_track:
         btst    #DSKB_TRACK0,CIAA_PRA_HW
         beq.s   .rd_recdone
         bsr     .rd_step_out        ; un pas OUT (pulse élargi : compatible drive strict / vrai A500)
-        bsr     .rd_settle
+        bsr     .rd_stepwait
         dbra    d2,.rd_recal
 .rd_recdone:
+        bsr     .rd_settle
         clr.w   TD_CURCYL           ; position connue = cylindre 0
         st      TD_CYLVALID
 .rd_known:
@@ -344,7 +482,7 @@ td_read_track:
         bmi.s   .rd_stepin          ; courant < cible -> stepper IN
 .rd_stepout:                        ; courant > cible -> stepper OUT (vers 0) d2 fois
         bsr     .rd_step_out        ; un pas OUT (pulse élargi)
-        bsr     .rd_settle
+        bsr     .rd_stepwait
         subq.w  #1,d2
         bne.s   .rd_stepout
         bra.s   .rd_seekdone
@@ -352,10 +490,11 @@ td_read_track:
         neg.w   d2                  ; |delta|
 .rd_stepin_l:
         bsr     .rd_step_in         ; un pas IN (pulse élargi)
-        bsr     .rd_settle
+        bsr     .rd_stepwait
         subq.w  #1,d2
         bne.s   .rd_stepin_l
 .rd_seekdone:
+        bsr     .rd_settle          ; stabilisation de la tête UNE fois, après le dernier pas
         move.w  d3,TD_CURCYL        ; position = cible
                 endc                ; RED SEEK_NOSTEP : pas de step (ni MAJ TD_CURCYL) -> reste sur place
 .rd_side:
@@ -404,11 +543,21 @@ td_read_track:
         move.w  #$4000,DSKLEN        ; disable DMA disque
         move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
         move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
-        move.b  #PRB_OFF,CIAB_PRB    ; moteur off + déselect
+        move.b  #PRB_MOTOR_ON,CIAB_PRB ; déselect, moteur laissé allumé (latché) : la lecture suivante évite le spin-up
+        move.w  #TD_MOTORIDLE,TD_MOTORCNT ; le serveur VBlank l'éteindra après TD_MOTORIDLE ticks d'inactivité
+        sf      TD_BUSY
         rts
+; Délais de la tête (boucles subq/bne ≈ 2,54 us par tour à 7,09 MHz) : 3 ms entre deux pas (débit de pas d'un lecteur
+; DD) et 18 ms de stabilisation UNE fois après le dernier pas. Avant : ~83 ms après CHAQUE pas (3,3 s pour 40 cyl).
+; Compteur en d0 : préserve d2 (compteur de pas) ET d3 (cylindre cible du cylinder-tracking).
+TD_STEPWAIT   EQU 1180              ; 3 ms
+TD_SETTLE     EQU 7090              ; 18 ms
+.rd_stepwait:
+        move.l  #TD_STEPWAIT,d0
+        bra.s   .rd_sloop
 .rd_settle:
-        move.l  #$00008000,d0        ; délai de stabilisation du pas (settle). Compteur en d0 (libre dans le seek) :
-.rd_sloop:                           ; préserve d2 (compteur de pas) ET d3 (cylindre cible du cylinder-tracking).
+        move.l  #TD_SETTLE,d0
+.rd_sloop:
         subq.l  #1,d0
         bne.s   .rd_sloop
         rts

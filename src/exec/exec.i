@@ -372,8 +372,17 @@ REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) 
 FORBID_TEST_FLAG EQU $000006E2 ; long : preuve d'atomicité Forbid — task_fb le pose à 1 quand elle tourne
 FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
 SH_STK       EQU 8192       ; pile du CLI initial (shell.s) : les commandes lancées tournent dessus
-TD_CACHEBUF  EQU $000006EA ; trackdisk : long — buffer persistant d'UNE piste décodée (0 = pas encore alloué)
-TD_CACHETRK  EQU $000006EE ; trackdisk : word — piste contenue dans TD_CACHEBUF ($FFFF = cache invalide)
+TD_CACHEBUF  EQU $000006EA ; trackdisk : long — cache de pistes décodées (TD_CNSLOTS x 5632 o ; 0 = pas encore alloué)
+TD_CNSLOTS   EQU $000006EE ; trackdisk : word — nombre d'emplacements du cache (TD_NCACHE, ou 1 si mémoire juste)
+TD_MOTORON   EQU $00000700 ; trackdisk : byte — moteur DF0 allumé (latché) : pas de spin-up à la prochaine lecture
+TD_BUSY      EQU $00000701 ; trackdisk : byte — accès au lecteur en cours (le serveur VBlank ne coupe pas le moteur)
+TD_MOTORCNT  EQU $00000702 ; trackdisk : word — ticks VBlank avant extinction du moteur inactif
+TD_VBLINT    EQU $00000704 ; trackdisk : struct Interrupt (22 o) du serveur VBlank d'extinction du moteur
+TD_MOTORIDLE EQU 100       ; 2 s d'inactivité (50 Hz) avant extinction, comme le délai du trackdisk d'origine
+TD_CTICK     EQU $0000071A ; trackdisk : word — horloge LRU du cache de pistes
+TD_CTRK      EQU $00000720 ; trackdisk : TD_NCACHE words — piste de chaque emplacement ($FFFF = vide)
+TD_CAGE      EQU $00000730 ; trackdisk : TD_NCACHE words — dernier accès (TD_CTICK) de chaque emplacement
+TD_NCACHE    EQU 8         ; pistes gardées en cache (8 x 5632 = 44 Ko ; 16 : gain marginal mesuré, 87 s -> 83 s)
 DOS_DOSBASE  EQU $000006F0 ; long : DosBase (posé par dos initFunc) — le runtime BCPL n'a pas a6 = DosBase
 ; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
 ; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
@@ -501,6 +510,7 @@ MC_BYTES      EQU 4
 
 ; struct Task (exec/tasks.i) — base à LN_SIZE=14
 NT_TASK       EQU 1
+NT_INTERRUPT  EQU 2
 TS_RUN        EQU 2           ; tâche en cours d'exécution
 TS_READY      EQU 3
 TS_WAIT       EQU 4           ; tâche bloquée (Wait/WaitPort) -> liste TaskWait

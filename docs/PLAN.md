@@ -786,6 +786,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     50 ; AUX: (serial.device du disque) et NEWCON: prouvés.
     **Étape 5 — résident workbench.task FAITE** : LoadWB lance un Workbench minimal (process « Workbench », réponse
     au message de démarrage, port public) ; InitCode filtré par classe (RTF_COLDSTART) ; AddPort initialise la file.
+    **Lecture disquette ×5 FAITE** (trackdisk : moteur maintenu 2 s, pas de 3 ms + 18 ms de stabilisation, cache
+    LRU de 8 pistes) : boot complet WB 1.3.3 de > 400 s à 87 s. À valider sur WinUAE timing-exact.
     **Étape 6 (bureau visible)** : écran Workbench (OpenScreen/GetScreenData), layers.library, fenêtres Intuition
     réelles (rastport, rendu), graphics Text/OpenFont, mathffp.library, InitGels ; puis le Workbench réel (icônes
     de disques par icon.library, menus, lancement d'outils). Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101),
