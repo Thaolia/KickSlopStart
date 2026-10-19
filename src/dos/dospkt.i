@@ -93,6 +93,9 @@ ACTION_FREE_LOCK   EQU 15          ; UnLock : (ARG1 BPTR lock) -> libère le loc
 ACTION_EXAMINE_OBJECT EQU 23       ; Examine : (ARG1 BPTR lock, ARG2 BPTR fib) -> remplit le FileInfoBlock
 ACTION_EXAMINE_NEXT   EQU 24       ; ExNext : (ARG1 BPTR lock, ARG2 BPTR fib) -> entrée suivante du répertoire
 ACTION_PARENT      EQU 29          ; ParentDir : (ARG1 BPTR lock) -> lock du parent | 0
+ACTION_DELETE_OBJECT EQU 16        ; DeleteFile : (ARG1 lock, ARG2 BSTR nom) -> RES1 booléen
+ACTION_RENAME_OBJECT EQU 17        ; Rename : (ARG1 lock, ARG2 BSTR nom, ARG3 lock, ARG4 BSTR nouveau nom)
+ACTION_CREATE_DIR  EQU 22          ; CreateDir : (ARG1 lock, ARG2 BSTR nom) -> RES1 = BPTR lock
 ACTION_COPY_DIR    EQU 19          ; DupLock : (ARG1 BPTR lock) -> nouveau lock sur le même objet
 
 MODE_OLDFILE     EQU 1005
@@ -119,6 +122,10 @@ DOS_LVO_LOADSEG  EQU -150          ; LoadSeg(name d1) -> BPTR seglist | 0 (ouvre
 DOS_LVO_DELAY    EQU -198          ; Delay(ticks d1)
 DOS_LVO_UNLOADSEG EQU -156         ; UnLoadSeg(seglist d1) -> libère la chaîne de segments
 DOS_LVO_IOERR    EQU -132          ; IoErr() -> d0 = pr_Result2 (code d'erreur du dernier packet)
+DOS_LVO_DELETEFILE EQU -72         ; DeleteFile(name d1) -> booléen
+DOS_LVO_CREATEDIR EQU -120         ; CreateDir(name d1) -> BPTR lock | 0
+DOS_LVO_DATESTAMP EQU -192         ; DateStamp(ds d1 APTR) -> ds
+DOS_LVO_RENAME   EQU -78           ; Rename(ancien d1, nouveau d2) -> booléen
 DOS_LVO_LOCK     EQU -84           ; Lock(name d1, mode d2) -> BPTR lock | 0
 DOS_LVO_UNLOCK   EQU -90           ; UnLock(lock d1) -> libère
 DOS_LVO_EXAMINE  EQU -102          ; Examine(lock d1, fib d2) -> DOSTRUE/DOSFALSE
@@ -131,6 +138,7 @@ OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
 ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i : action/fonction non supportée
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de la DosList
+ERROR_RENAME_ACROSS_DEVICES EQU 215
 ERROR_SEEK_ERROR EQU 303           ; dos/dos.i : Seek hors bornes
 ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoire (fin d'énumération normale)
 

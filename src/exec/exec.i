@@ -445,7 +445,9 @@ LIB_OPENCNT  EQU $20
 LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
 TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
 TIMER_MICROQ EQU LIB_SIZE+14   ; M7a : liste de requêtes de l'unité MICROHZ (CIA-B/INT6) (struct List)
-TD_SIZE      EQU LIB_SIZE+28   ; taille de la base timer.device (Library + 2 listes d'unité)
+TIMER_SYSSECS EQU LIB_SIZE+28  ; heure système : secondes à la référence (TR_SETSYSTIME)
+TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT à la référence
+TD_SIZE      EQU LIB_SIZE+36   ; taille de la base timer.device (Library + 2 listes d'unité + heure système)
 UNIT_MICROHZ EQU 0             ; sélecteur d'unité dans IO_UNIT (= numérotation réelle timer.device)
 UNIT_VBLANK  EQU 1             ; (OpenDevice poserait un struct Unit* ; notre impl minimale = l'index)
 EB_CHKBASE    EQU $26
@@ -535,11 +537,18 @@ IO_COMMAND   EQU 28          ; UWORD
 IO_FLAGS     EQU 30          ; UBYTE
 IO_ERROR     EQU 31          ; BYTE
 IO_SIZE      EQU 32
+IOSTD_ACTUAL EQU 32          ; struct IOStdReq
+IOSTD_LENGTH EQU 36
+IOSTD_DATA   EQU 40
+IOSTD_OFFSET EQU 44
 TR_TIME      EQU 32          ; struct timeval (dans une timerequest)
 TV_SECS      EQU 32
 TV_MICRO     EQU 36
 TR_SIZE      EQU 40
 TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
+TR_GETSYSTIME EQU 10
+TR_SETSYSTIME EQU 11
+IOERR_NOCMD  EQU -3
 TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device
 
 ; struct Resident (exec/resident.i, V34) — ROMTag scanné au boot pour bâtir l'OS
@@ -608,6 +617,15 @@ LVO_REPLYMSG   EQU -378
 LVO_WAITPORT   EQU -384
 LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
+LVO_OPENDEVICE   EQU -444
+LVO_CLOSEDEVICE  EQU -450
+LVO_DOIO         EQU -456
+LVO_SENDIO       EQU -462
+LVO_CHECKIO      EQU -468
+LVO_WAITIO       EQU -474
+LVO_ABORTIO      EQU -480
+LVO_COPYMEM      EQU -624
+LVO_COPYMEMQUICK EQU -630
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
 LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)

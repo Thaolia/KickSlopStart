@@ -91,6 +91,53 @@ timer_beginio:
         move.l  a6,a2                ; a2 = base device
         move.l  a1,a3                ; a3 = iorequest
         move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
+        clr.b   IO_ERROR(a3)
+        move.w  IO_COMMAND(a3),d0
+        cmp.w   #TR_ADDREQUEST,d0
+        beq.s   .bio_add
+        cmp.w   #TR_GETSYSTIME,d0
+        beq.s   .bio_get
+        cmp.w   #TR_SETSYSTIME,d0
+        beq.s   .bio_set
+        move.b  #IOERR_NOCMD,IO_ERROR(a3)
+        bra.s   .bio_done
+.bio_set:                            ; heure système = TV_SECS + (VBL_COUNT - référence) / 50
+        move.l  TV_MICRO(a3),d0
+        divu    #20000,d0
+        and.l   #$0000FFFF,d0
+        move.l  VBL_COUNT,d1
+        sub.l   d0,d1
+        move.l  d1,TIMER_SYSVBL(a2)
+        move.l  TV_SECS(a3),TIMER_SYSSECS(a2)
+        bra.s   .bio_done
+.bio_get:
+        move.l  VBL_COUNT,d0
+        sub.l   TIMER_SYSVBL(a2),d0  ; ticks écoulés depuis la référence (division 32/16 en deux temps)
+        swap    d0
+        moveq   #0,d1
+        move.w  d0,d1
+        divu    #50,d1               ; mot haut
+        move.w  d1,d2
+        swap    d2
+        swap    d0
+        move.w  d0,d1                ; reste:mot bas
+        divu    #50,d1
+        move.w  d1,d2                ; d2 = secondes écoulées
+        swap    d1
+        mulu    #20000,d1            ; reste (ticks) -> µs
+        add.l   TIMER_SYSSECS(a2),d2
+        move.l  d2,TV_SECS(a3)
+        move.l  d1,TV_MICRO(a3)
+.bio_done:
+        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK : terminé sur place ; sinon réponse au reply port
+        bne.s   .bio_ret
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)
+.bio_ret:
+        move.l  a2,a6
+        movem.l (sp)+,d2/a2-a3
+        rts
+.bio_add:
         jsr     LVO_DISABLE(a6)
         ; M7l — conversion timeval -> décompte SELON l'unité (et choix de la file dans la même branche).
         ; MICROHZ (défaut) : décompte en interruptions CIA-B (1 int ≈ US_PER_INT µs réelles) ; TV_MICRO
@@ -121,6 +168,7 @@ timer_beginio:
         move.l  d0,TV_SECS(a3)       ; décompte (TV_SECS réutilisé)
         clr.l   TV_MICRO(a3)
         move.b  #NT_MESSAGE,LN_TYPE(a3)
+        bclr    #0,IO_FLAGS(a3)      ; requête mise en file : jamais rapide (DoIO attendra la réponse)
         move.l  a3,a1
         jsr     LVO_ADDTAIL(a6)      ; enqueue (sous Disable -> atomique vs VBlank ET INT6)
         jsr     LVO_ENABLE(a6)

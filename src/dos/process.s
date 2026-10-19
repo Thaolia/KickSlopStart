@@ -78,18 +78,19 @@ proc_exit:
                 jsr     LVO_WAIT(a6)
                 bra.s   .pe
 
-; dos_sendpkt(a6=SysBase, a0=StandardPacket, a1=port du handler, d0=dp_Type, d1=arg1, d2=arg2, d3=arg3)
+; dos_sendpkt(a6=SysBase, a0=StandardPacket, a1=port du handler, d0=dp_Type, d1=arg1, d2=arg2, d3=arg3, d4=arg4)
 ;   -> d0 = dp_Res1, d1 = dp_Res2. Pas de DoPkt public en V34 -> cet équivalent interne monte le packet, PutMsg au
 ;   handler, puis WaitPort/GetMsg sur le pr_MsgPort de l'APPELANT (qui DOIT être un Process). Convention dos :
 ;   dp_Port/mn_ReplyPort = &appelant.pr_MsgPort. Réutilisé par le driver de preuve (D3b) et par dos Open/Read (D3c).
 dos_sendpkt:
-                movem.l d4/a2-a4,-(sp)
+                movem.l a2-a5,-(sp)
                 move.l  a0,a2                ; a2 = StandardPacket (&sp_Msg)
                 move.l  a1,a3                ; a3 = port du handler
                 lea     SP_PKT(a2),a4        ; a4 = &sp_Pkt (DosPacket)
                 move.l  EB_THISTASK(a6),a0
                 lea     PR_MSGPORT(a0),a0    ; a0 = port de réponse = ThisTask->pr_MsgPort
-                move.l  a0,d4                ; d4 = port de réponse (sauvé pour WaitPort)
+                move.l  a0,a5                ; a5 = port de réponse (sauvé pour WaitPort)
+                move.l  d4,DP_ARG4(a4)
                 move.b  #NT_MESSAGE,LN_TYPE(a2)
                 move.l  a0,MN_REPLYPORT(a2)
                 move.w  #DP_SIZEOF,MN_LENGTH(a2)
@@ -105,9 +106,9 @@ dos_sendpkt:
                 move.l  a3,a0                ; PutMsg(handlerPort, &sp_Msg)
                 move.l  a2,a1
                 jsr     LVO_PUTMSG(a6)
-                move.l  d4,a0                ; WaitPort(reply) -> switch synchrone vers le handler
+                move.l  a5,a0                ; WaitPort(reply) -> switch synchrone vers le handler
                 jsr     LVO_WAITPORT(a6)
-                move.l  d4,a0
+                move.l  a5,a0
                 jsr     LVO_GETMSG(a6)       ; récupère notre packet (répondu par le handler)
                 move.l  DP_RES1(a4),d0
                 move.l  DP_RES2(a4),d1
@@ -115,5 +116,5 @@ dos_sendpkt:
                 move.l  EB_THISTASK(a6),a0   ; IoErr : pr_Result2 = dp_Res2 du packet (faithful ; a6 = SysBase)
                 move.l  d1,PR_RESULT2(a0)
                 endc                         ; RED DOS_NO_IOERR : ne propage pas -> IoErr renvoie 0 même en échec
-                movem.l (sp)+,d4/a2-a4
+                movem.l (sp)+,a2-a5
                 rts

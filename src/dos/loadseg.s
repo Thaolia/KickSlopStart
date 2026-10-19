@@ -5,15 +5,15 @@
 ; Format hunk VERROUILLÉ empiriquement (binaire vlink -s -bamigahunk, PAS la ROM) : HUNK_HEADER (resident libs=0,
 ; table_size, first, last, N tailles [bits 30-31 = flags mémoire à masquer]) ; corps = par hunk : CODE/DATA (nlongs
 ; + data) ou BSS (nlongs, pas de data), relocations HUNK_RELOC32 ($3EC : répété [count][hunk_ref][offsets...], 0 =
-; fin), HUNK_END. vlink émet RELOC32 ($3EC), PAS la variante compacte $3FC -> on gère $3EC ; $3FC et SYMBOL/DEBUG
-; (strippés) -> échec propre (pas de skip silencieux de relocation). Clean-room : AmigaDOS Technical Reference /
+; fin), HUNK_END ; NAME/SYMBOL/DEBUG ignorés (sans effet sur le chargement). $3FC (RELOC32 compact) -> échec propre
+; (pas de skip silencieux de relocation). Clean-room : AmigaDOS Technical Reference /
 ; RKRM (format hunk public) + AROS rom/dos InternalLoadSeg (lecture seule). AUCUNE lecture ROM.
 ;
 ; Seglist (convention AmigaDOS) : chaque segment = bloc AllocMem [LONG taille][BPTR next][contenu...] ; le BPTR
 ; pointe sur le champ next (bloc+4) -> contenu à (BPTR<<2)+4 = bloc+8 ; taille à bloc+0 (pour UnLoadSeg).
 ; Flags mémoire du HUNK_HEADER respectés (bit 30 -> MEMF_CHIP, bit 31 -> MEMF_FAST ; 11 = attributs étendus V37 ->
-; échec propre). Déviations/portée D2 ASSUMÉES : first != 0, hunks SYMBOL/
-; DEBUG, resident libs, RELOC32SHORT, overlays -> non supportés (échec propre). Suffit pour charger nos exécutables.
+; échec propre). Déviations/portée D2 ASSUMÉES : first != 0, resident libs,
+; RELOC32SHORT, overlays -> non supportés (échec propre). Suffit pour charger nos exécutables.
 ; Gardes anti-corruption : index du hunk courant et hunk référencé par RELOC32 < hunkcount. DETTE : l'offset de
 ; relocation (`offset < taille du hunk`) et la taille du contenu ne sont pas bornés -> un binaire corrompu peut
 ; encore écrire hors de son hunk. Prouvé sur un vrai binaire de disque (HolidayLemmings : 4 hunks, BSS chip de
@@ -33,6 +33,9 @@ HUNK_DATA       EQU $3EA
 HUNK_BSS        EQU $3EB
 HUNK_RELOC32    EQU $3EC
 HUNK_END        EQU $3F2
+HUNK_NAME       EQU $3E8
+HUNK_SYMBOL     EQU $3F0
+HUNK_DEBUG      EQU $3F1
 LS_FILEMAX      EQU DOS_FILEMAX    ; taille max d'un exécutable hunk chargé (cap-bump 32K, exec.i)
 LS_MAXHUNKS     EQU 64            ; borne du nombre de hunks (anti-corruption)
 
@@ -184,7 +187,26 @@ ls_load_hunks:
                 beq.s   .b_reloc
                 cmp.l   #HUNK_END,d0
                 beq.s   .b_end
-                bra     .fail_segs           ; hunk non supporté ($3FC/SYMBOL/DEBUG...) -> échec propre
+                cmp.l   #HUNK_NAME,d0
+                beq.s   .b_skip
+                cmp.l   #HUNK_DEBUG,d0
+                beq.s   .b_skip
+                cmp.l   #HUNK_SYMBOL,d0
+                beq.s   .b_symbol
+                bra     .fail_segs           ; hunk non supporté ($3FC, overlay...) -> échec propre
+.b_skip:                                     ; NAME / DEBUG : [nlongs][données] ignorés
+                bsr     ls_rdl
+                lsl.l   #2,d0
+                add.l   d0,a2
+                bra     .body_loop
+.b_symbol:                                   ; SYMBOL : ([nlongs du nom][nom][valeur])* puis 0, ignoré
+                bsr     ls_rdl
+                tst.l   d0
+                beq     .body_loop
+                addq.l  #1,d0                ; nom + valeur
+                lsl.l   #2,d0
+                add.l   d0,a2
+                bra.s   .b_symbol
 .b_bss:
                 bsr     ls_rdl               ; nlongs (pas de data ; mémoire déjà CLEAR)
                 bra.s   .body_loop
@@ -203,16 +225,16 @@ ls_load_hunks:
                 lsl.l   #2,d0
                 add.l   d0,a2                ; avance le curseur après le contenu
                 tst.l   d1
-                beq.s   .body_loop
+                beq     .body_loop
 .b_copy:
                 move.l  (a0)+,(a1)+
                 subq.l  #1,d1
                 bne.s   .b_copy              ; copie longword (long-safe, pas de limite 64K)
-                bra.s   .body_loop
+                bra     .body_loop
 .b_reloc:
                 bsr     ls_rdl               ; count
                 tst.l   d0
-                beq.s   .body_loop           ; 0 -> fin du bloc RELOC32
+                beq     .body_loop           ; 0 -> fin du bloc RELOC32
                 move.l  d0,d7                ; d7 = count
                 cmp.l   d4,d2
                 bhs     .fail_segs           ; RELOC32 hors d'un hunk déclaré -> corrompu

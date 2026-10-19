@@ -778,9 +778,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     injection des arguments) ; AddBuffers, CD, Resident, Mount, Failat, Wait tournent ; **createproc + Run** : le CLI
     de fond (Shell-Seg) exécute Execute et les `resident` de StartupII. Delay bloquant (timer.device), FIB complet
     (BSTR côté packet), FileHandles getvec, getlong/putlong indexés en longs.
-    **Étape 3** : démarrage de handlers BCPL (globale 112 starthandler + 13 makeglobvec) pour **RAM:**
-    (`L:Ram-Handler`, bloquant `makedir ram:t`) puis NEWCON:/AUX:/PIPE: ; execute (101), writef tamponné, C:FAULT.
-    **Ensuite** : `SetFunction`, NIL:/redirections, Mount/handlers, LoadWB (workbench, icon.library, layers).
+    **Étape 3 — handlers de device FAITE** : starthandler (112, handlers BCPL et C) + makeglobvec (13), nœud RAM,
+    exec OpenDevice/DoIO/SendIO/WaitIO/CopyMem, timer GET/SETSYSTIME, DeleteFile/Rename/CreateDir ; la
+    startup-sequence complète du WB 1.3.3 s'exécute (StartupII sur RAM:, break, MountMF) ; PIPE: prouvé.
+    **Étape 4** : NEWCON: (openwindow 50, console.device sur fenêtre Intuition), chargement de devices depuis DEVS:
+    (AUX:/SER:/PAR:/PRT:), nœuds CON/RAW de la ROM, execute (101), writef tamponné, C:FAULT ; puis LoadWB.
+    **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
 

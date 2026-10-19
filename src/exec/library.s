@@ -60,6 +60,15 @@
                 xref    exec_WaitPort
                 xref    exec_FindPort
                 xref    exec_RawDoFmt    ; rawdofmt.s
+                xref    exec_OpenDevice  ; io.s
+                xref    exec_CloseDevice
+                xref    exec_DoIO
+                xref    exec_SendIO
+                xref    exec_CheckIO
+                xref    exec_WaitIO
+                xref    exec_AbortIO
+                xref    exec_CopyMem
+                xref    exec_CopyMemQuick
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -171,6 +180,24 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_CloseLibrary,LVO_CLOSELIBRARY+2(a6)
         move.w  #$4EF9,LVO_RAWDOFMT(a6)
         move.l  #exec_RawDoFmt,LVO_RAWDOFMT+2(a6)
+        move.w  #$4EF9,LVO_OPENDEVICE(a6)
+        move.l  #exec_OpenDevice,LVO_OPENDEVICE+2(a6)
+        move.w  #$4EF9,LVO_CLOSEDEVICE(a6)
+        move.l  #exec_CloseDevice,LVO_CLOSEDEVICE+2(a6)
+        move.w  #$4EF9,LVO_DOIO(a6)
+        move.l  #exec_DoIO,LVO_DOIO+2(a6)
+        move.w  #$4EF9,LVO_SENDIO(a6)
+        move.l  #exec_SendIO,LVO_SENDIO+2(a6)
+        move.w  #$4EF9,LVO_CHECKIO(a6)
+        move.l  #exec_CheckIO,LVO_CHECKIO+2(a6)
+        move.w  #$4EF9,LVO_WAITIO(a6)
+        move.l  #exec_WaitIO,LVO_WAITIO+2(a6)
+        move.w  #$4EF9,LVO_ABORTIO(a6)
+        move.l  #exec_AbortIO,LVO_ABORTIO+2(a6)
+        move.w  #$4EF9,LVO_COPYMEM(a6)
+        move.l  #exec_CopyMem,LVO_COPYMEM+2(a6)
+        move.w  #$4EF9,LVO_COPYMEMQUICK(a6)
+        move.l  #exec_CopyMemQuick,LVO_COPYMEMQUICK+2(a6)
         rts
 
 _unimpl:

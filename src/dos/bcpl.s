@@ -21,6 +21,7 @@
                 xdef    bcpl_call            ; registre A5 des programmes BCPL
                 xdef    bcpl_ret             ; registre A6
                 xdef    bcpl_cli_setup       ; GV + segarray d'un process CLI
+                xdef    bcpl_starthandler
                 xdef    bcpl_cli_register    ; slot de rn_TaskArray + pr_TaskNum du CLI initial
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
@@ -162,6 +163,263 @@ bcpl_cli_setup:
         move.l  d0,PR_SEGLIST(a3)
 .cs_ret:
         movem.l (sp)+,d0-d2/a0-a3
+        rts
+
+; rt_makeglobvec(d1 = segarray BPTR, a6 = SysBase) -> d0 = BPTR du slot 0 d'un GV neuf | 0 (Result2 = 103). Taille =
+; plus grand « max » des segments de V!1..V!n (plancher 15), + 50 slots négatifs ; GV[0] = ce max (spec §8.1, 13).
+; Les slots -50..150 reçoivent les stubs de diagnostic (la ROM les laisse indéfinis), au-delà 0. Préserve d1-d7/a2-a6.
+rt_makeglobvec:
+        movem.l d1-d4/a0-a1,-(sp)
+        moveq   #15,d3               ; d3 = max retenu
+        lsl.l   #2,d1
+        beq.s   .mg_alloc
+        move.l  d1,a0
+        move.l  (a0)+,d2             ; n
+        bra.s   .mg_next
+.mg_seglp:
+        move.l  (a0)+,d1             ; V!i : chaîne de hunks
+.mg_hunk:
+        lsl.l   #2,d1
+        beq.s   .mg_next
+        move.l  d1,a1
+        move.l  (a1),d1              ; hunk suivant
+        move.l  4(a1),d4             ; N (longs)
+        lsl.l   #2,d4
+        move.l  0(a1,d4.l),d4        ; dernier long = max
+        cmp.l   d3,d4
+        ble.s   .mg_hunk
+        move.l  d4,d3
+        bra.s   .mg_hunk
+.mg_next:
+        subq.l  #1,d2
+        bpl.s   .mg_seglp
+.mg_alloc:
+        move.l  d3,d1
+        add.l   #GV_NEGSLOTS,d1      ; slots -50..max
+        bsr     rt_getvec_raw
+        tst.l   d0
+        beq.s   .mg_fail
+        move.l  d0,d4
+        lsl.l   #2,d0
+        move.l  d0,a0                ; a0 = slot -50
+        lea     bcpl_stubs(pc),a1
+        move.l  d3,d2
+        add.l   #GV_NEGSLOTS,d2      ; d2 = nombre de slots - 1
+        moveq   #-GV_NEGSLOTS,d1     ; d1 = n° du slot courant
+.mg_fill:
+        cmp.l   #GV_MAX,d1
+        bgt.s   .mg_zero
+        move.l  a1,(a0)+
+        addq.l  #BCPL_STUBSZ,a1
+        bra.s   .mg_fnext
+.mg_zero:
+        clr.l   (a0)+
+.mg_fnext:
+        addq.l  #1,d1
+        dbra    d2,.mg_fill
+        move.l  d4,d0
+        add.l   #GV_NEGSLOTS,d0      ; BPTR du slot 0
+        move.l  d0,a0
+        add.l   a0,a0
+        add.l   a0,a0
+        move.l  d3,(a0)              ; GV[0] = max
+        bra.s   .mg_ret
+.mg_fail:
+        moveq   #103,d0
+        bsr     rt_setr2
+        moveq   #0,d0
+.mg_ret:
+        movem.l (sp)+,d1-d4/a0-a1
+        rts
+
+; bcpl_starthandler(a2 = DeviceNode, a0 = nom complet C (ex. « NEWCON:0/0/640/200/T »)) -> d0 = MsgPort du handler
+; | 0 (Result2 = erreur), Result2 := dn_Lock en cas de succès. Spec §13.3 (globale 112) : charge dn_Handler dans
+; dn_SegList s'il est vide (une seule fois) ; dn_GlobalVec = -1 -> handler C (process lancé directement sur le code
+; du premier hunk, pile dn_StackSize en OCTETS) ; sinon handler BCPL : segarray [3, runtime, 0, dn_SegList], GV =
+; dn_GlobalVec (partagé) ou makeglobvec, createproc (pile en LONGS, pri dn_Priority, nom dn_Name). Puis packet de
+; démarrage synchrone : Arg1 = BSTR du nom complet, Arg2 = dn_Startup, Arg3 = BPTR du nœud, Res2 = GV (BCPL) ;
+; succès si le handler répond Res1 != 0. dn_Task n'est pas écrit ici (c'est au handler de le faire). L'appelant doit
+; être un process (la réponse arrive sur son pr_MsgPort). Préserve d1-d7/a0-a6.
+bcpl_starthandler:
+        movem.l d1-d7/a0-a6,-(sp)
+        move.l  a0,a5                ; a5 = nom complet
+        move.l  ($4).w,a6
+        move.l  DN_SEGLIST(a2),d0
+        bne.s   .sh_seg
+        lea     -256(sp),sp
+        move.l  DN_HANDLER(a2),d1
+        move.l  sp,a0
+        bsr     rt_cstr
+        move.l  sp,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_LOADSEG(a6)
+        move.l  ($4).w,a6
+        lea     256(sp),sp
+        tst.l   d0
+        beq     .sh_fail0            ; Result2 laissé par LoadSeg
+        move.l  d0,DN_SEGLIST(a2)
+.sh_seg:
+        move.l  d0,d3                ; d3 = seglist du handler
+        moveq   #3,d1                ; segarray [3, runtime, 0, seglist]
+        bsr     rt_getvec_raw
+        move.l  d0,d5
+        beq     .sh_nomem
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  #3,(a0)+
+        lea     bcpl_rtseg(pc),a1
+        move.l  a1,d1
+        lsr.l   #2,d1
+        move.l  d1,(a0)+
+        clr.l   (a0)+
+        move.l  d3,(a0)
+        move.l  a5,a0                ; BSTR du nom complet (getvec, libéré après la réponse)
+        moveq   #0,d4
+.sh_len:
+        tst.b   (a0)+
+        beq.s   .sh_lend
+        addq.l  #1,d4
+        cmp.l   #255,d4
+        bcs.s   .sh_len
+.sh_lend:
+        move.l  d4,d1
+        lsr.l   #2,d1                ; (L+1)/4 arrondi : getvec(L/4) = L/4+1 longs >= L+1 octets
+        bsr     rt_getvec_raw
+        move.l  d0,a4                ; a4 = BPTR du BSTR
+        tst.l   d0
+        beq     .sh_nomem
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.b  d4,(a0)+
+        move.l  a5,a1
+        bra.s   .sh_cnext
+.sh_ccpy:
+        move.b  (a1)+,(a0)+
+.sh_cnext:
+        dbra    d4,.sh_ccpy
+        move.l  DN_PRIORITY(a2),d7
+        move.l  DN_STACKSIZE(a2),d6
+        move.l  DN_GLOBALVEC(a2),d1
+        cmp.l   #-1,d1
+        beq.s   .sh_chandler
+        lsl.l   #2,d6                ; BCPL : pile en longs
+        add.l   #CP_STKEXTRA,d6
+        lsl.l   #2,d1
+        bne.s   .sh_gv
+        move.l  d5,d1
+        bsr     rt_makeglobvec
+        tst.l   d0
+        beq     .sh_freename
+        move.l  d0,d1
+        lsl.l   #2,d1
+.sh_gv:
+        move.l  d1,d2
+        lsr.l   #2,d2                ; d2 = Res2 du packet = BPTR du GV
+        move.l  DN_NAME(a2),d4
+        bsr     rt_createproc        ; d0 = port | 0
+        tst.l   d0
+        beq     .sh_freename
+        bra.s   .sh_started
+.sh_chandler:                        ; handler C : process direct sur le code, nom C = dn_Name (NUL garanti)
+        move.l  DN_NAME(a2),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        addq.l  #1,a0
+        move.l  d3,d0
+        lsl.l   #2,d0
+        move.l  d0,a1
+        addq.l  #4,a1                ; entrée = premier hunk
+        move.l  d7,d0
+        move.l  d6,d1
+        jsr     LVO_FORBID(a6)
+        jsr     proc_create
+        move.l  d0,d4                ; d4 = port (Permit écrase d0/d1)
+        beq.s   .sh_cfail
+        move.l  d0,a0
+        lea     -PR_MSGPORT(a0),a0
+        move.l  d5,PR_SEGLIST(a0)
+        bsr     rt_this
+        move.l  PR_CONSOLETASK(a3),PR_CONSOLETASK(a0)
+        move.l  PR_FILESYSTEMTASK(a3),PR_FILESYSTEMTASK(a0)
+        move.l  PR_WINDOWPTR(a3),PR_WINDOWPTR(a0)
+        jsr     LVO_PERMIT(a6)
+        move.l  d4,d0
+        moveq   #0,d2                ; Res2 = 0 (pas de GV)
+        bra.s   .sh_started
+.sh_cfail:
+        jsr     LVO_PERMIT(a6)
+        moveq   #103,d0
+        bsr     rt_setr2
+        bra     .sh_freename
+.sh_started:
+        move.l  d0,a3                ; a3 = port du handler
+        lea     -SP_SIZEOF(sp),sp    ; packet de démarrage
+        move.l  sp,a0
+        moveq   #SP_SIZEOF/2-1,d0
+.sh_pclr:
+        clr.w   (a0)+
+        dbra    d0,.sh_pclr
+        move.l  sp,a1                ; a1 = message
+        lea     SP_PKT(a1),a0        ; a0 = packet
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        move.w  #DP_SIZEOF,MN_LENGTH(a1)
+        move.l  a0,LN_NAME(a1)
+        move.l  a1,DP_LINK(a0)
+        move.l  EB_THISTASK(a6),d0
+        add.l   #PR_MSGPORT,d0
+        move.l  d0,d6                ; d6 = notre port de réponse
+        move.l  d0,MN_REPLYPORT(a1)
+        move.l  d0,DP_PORT(a0)
+        move.l  a4,DP_ARG1(a0)
+        move.l  DN_STARTUP(a2),DP_ARG2(a0)
+        move.l  a2,d0
+        lsr.l   #2,d0
+        move.l  d0,DP_ARG3(a0)
+        move.l  d2,DP_RES2(a0)
+        move.l  a3,a0
+        jsr     LVO_PUTMSG(a6)       ; PutMsg(port a0, message a1)
+.sh_wait:
+        move.l  d6,a0
+        jsr     LVO_WAITPORT(a6)
+        move.l  d6,a0
+        jsr     LVO_GETMSG(a6)
+        cmp.l   sp,d0
+        bne.s   .sh_wait
+        move.l  SP_PKT+DP_RES1(sp),d7
+        move.l  SP_PKT+DP_RES2(sp),d2
+        lea     SP_SIZEOF(sp),sp
+        bsr.s   .sh_free_a4
+        tst.l   d7
+        beq.s   .sh_refused
+        move.l  DN_LOCK(a2),d0
+        bsr     rt_setr2
+        move.l  a3,d0
+        bra.s   .sh_ret
+.sh_refused:
+        move.l  d2,d0
+        bsr     rt_setr2
+        moveq   #0,d0
+        bra.s   .sh_ret
+.sh_nomem:
+        moveq   #103,d0
+        bsr     rt_setr2
+        bra.s   .sh_fail0
+.sh_freename:
+        bsr.s   .sh_free_a4
+.sh_fail0:
+        moveq   #0,d0
+.sh_ret:
+        movem.l (sp)+,d1-d7/a0-a6
+        rts
+.sh_free_a4:                         ; libère le BSTR du nom complet (a4 = BPTR | 0)
+        move.l  a4,d0
+        lsl.l   #2,d0
+        beq.s   .sh_fr
+        move.l  d0,a1
+        subq.l  #4,a1
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.sh_fr:
         rts
 
 ; bcpl_cli_register(a0 = Process) : prend le premier slot libre de rn_TaskArray pour ce CLI (taskid = MsgPort) et
@@ -679,9 +937,10 @@ g_parentdir:
         moveq   #0,d1
         BLEAVE
 
-; 114 errorreq(...) : requester d'erreur disque -> FALSE (« annuler ») : pas de requester Intuition à ce stade.
+; 114 errorreq(...) : requester d'erreur disque -> TRUE = abandon, FALSE = réessayer (observé dans c:Dir, qui reboucle
+; sur ExNext tant qu'errorreq rend 0). Pas de requester Intuition à ce stade : toujours TRUE.
 g_errorreq:
-        moveq   #0,d1
+        moveq   #-1,d1
         jmp     (a6)
 
 ; 17 level() -> frame de l'appelant (APTR) ; 18 longjump(level, label) : reprend à label dans la frame level.
@@ -803,13 +1062,44 @@ g_calllib:
         move.l  d0,d1
         BLEAVE
 
-; 90 deleteobj(nom) / 125 createdir(nom) -> 0 : filesystem en lecture seule (IoErr = action inconnue).
+; 90 deleteobj(nom) -> booléen (ACTION_DELETE_OBJECT) / 125 createdir(nom) -> lock | 0 (ACTION_CREATE_DIR) : nom BSTR,
+; par les LVO DeleteFile / CreateDir (résolution du nom et démarrage du handler compris).
 g_deleteobj:
+        moveq   #DOS_LVO_DELETEFILE,d0
+        bra.s   g_namelvo
 g_createdir:
-        move.l  #ERROR_ACTION_NOT_KNOWN,d0
-        bsr     rt_setr2
-        moveq   #0,d1
-        jmp     (a6)
+        moveq   #DOS_LVO_CREATEDIR,d0
+g_namelvo:
+        BENTER
+        lea     -256(sp),sp
+        move.l  d0,d7
+        move.l  sp,a0
+        bsr     rt_cstr
+        move.l  sp,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     0(a6,d7.w)
+        move.l  d0,d1
+        lea     256(sp),sp
+        BLEAVE
+
+; 91 rename(ancien, nouveau) : noms BSTR -> booléen (LVO Rename : ACTION_RENAME_OBJECT ; handlers différents ->
+; Result2 = 215).
+g_rename:
+        BENTER
+        lea     -512(sp),sp
+        move.l  sp,a0
+        bsr     rt_cstr
+        move.l  d2,d1
+        lea     256(sp),a0
+        bsr     rt_cstr
+        move.l  sp,d1
+        lea     256(sp),a0
+        move.l  a0,d2
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_RENAME(a6)
+        move.l  d0,d1
+        lea     512(sp),sp
+        BLEAVE
 
 ; 113 copydir(lock) -> DupLock (ACTION_COPY_DIR au handler du lock) ; 0 -> 0.
 g_copydir:
@@ -996,12 +1286,24 @@ g_isinteractive:
 ; Forbid jusqu'à ce que les champs soient posés. -> taskid (MsgPort) | 0 (Result2 = 103).
 g_createproc:
         BENTER
-        move.l  ($4).w,a6
         move.l  d1,d5                ; segarray
         move.l  d2,d6
         lsl.l   #2,d6                ; pile en octets
-        add.l   #CP_STKEXTRA,d6      ; + marge : notre runtime utilise la pile 68000 (tampons, packets) là où la ROM
-        move.l  d3,d7                ; pri          ; n'utilise que les frames BCPL (qui montent depuis le bas)
+        add.l   #CP_STKEXTRA,d6      ; marge : notre runtime utilise la pile 68000 (tampons, packets)
+        move.l  d3,d7                ; pri
+        move.l  16(a4),d1            ; gv (5e argument)
+        lsl.l   #2,d1
+        bsr     rt_createproc
+        move.l  d0,d1
+        BLEAVE
+
+; rt_createproc(d1 = GV APTR (0 -> GV du créateur), d4 = nom BSTR, d5 = segarray BPTR, d6 = pile en octets, d7 = pri)
+; -> d0 = taskid (MsgPort) | 0 (Result2 = 103). Process démarrant dans bcpl_proc_entry ; hérite ConsoleTask,
+; FileSystemTask, WindowPtr du créateur ; champs posés sous Forbid. Préserve d1-d7/a0-a6.
+rt_createproc:
+        movem.l d1-d2/a0-a1/a3/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  d1,d2                ; d2 = GV
         moveq   #32,d0               ; nom C (vit autant que le process)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -1023,37 +1325,42 @@ g_createproc:
 .cp_ncpy:
         dbra    d1,.cp_nlp
 .cp_named:
-        move.l  d0,a0                ; a0 = nom C
+        move.l  d0,-(sp)             ; nom C (libéré si la création échoue)
+        move.l  d0,a0
         jsr     LVO_FORBID(a6)
         lea     bcpl_proc_entry(pc),a1
         move.l  d7,d0
         move.l  d6,d1
         jsr     proc_create          ; d0 = &pr_MsgPort | 0
+        move.l  (sp)+,a3             ; (Permit peut écraser a0/a1)
         tst.l   d0
         beq.s   .cp_failp
         move.l  d0,a0
         lea     -PR_MSGPORT(a0),a0   ; a0 = nouveau process
         bsr     rt_this              ; a3 = créateur
         move.l  d5,PR_SEGLIST(a0)
-        move.l  16(a4),d1            ; gv (5e argument)
-        lsl.l   #2,d1
+        tst.l   d2
         bne.s   .cp_gv
-        move.l  PR_GLOBVEC(a3),d1
+        move.l  PR_GLOBVEC(a3),d2
 .cp_gv:
-        move.l  d1,PR_GLOBVEC(a0)
+        move.l  d2,PR_GLOBVEC(a0)
         move.l  PR_CONSOLETASK(a3),PR_CONSOLETASK(a0)
         move.l  PR_FILESYSTEMTASK(a3),PR_FILESYSTEMTASK(a0)
         move.l  PR_WINDOWPTR(a3),PR_WINDOWPTR(a0)
         jsr     LVO_PERMIT(a6)
-        move.l  d0,d1
-        BLEAVE
+        bra.s   .cp_ret
 .cp_failp:
         jsr     LVO_PERMIT(a6)
+        move.l  a3,a1
+        moveq   #32,d0
+        jsr     LVO_FREEMEM(a6)
 .cp_fail:
         moveq   #103,d0
         bsr     rt_setr2
-        moveq   #0,d1
-        BLEAVE
+        moveq   #0,d0
+.cp_ret:
+        movem.l (sp)+,d1-d2/a0-a1/a3/a6
+        rts
 
 ; 34 endtask() : fin du process courant.
 g_endtask:
@@ -1241,6 +1548,97 @@ g_testflags:
         sne     d1
         ext.w   d1
         ext.l   d1
+        BLEAVE
+
+; 36 setflags(taskid, m) : Signal des bits CTRL de m (bit0 = CTRL-C ... bit3 = CTRL-F) au process dont taskid est le
+; MsgPort (sa tâche = mp_SigTask). taskid 0 : rien.
+g_setflags:
+        BENTER
+        tst.l   d1
+        beq.s   .sf_ret
+        move.l  d1,a0
+        move.l  MP_SIGTASK(a0),a1
+        moveq   #12,d0
+        lsl.l   d0,d2
+        move.l  d2,d0
+        move.l  ($4).w,a6
+        jsr     LVO_SIGNAL(a6)
+.sf_ret:
+        BLEAVE
+
+; 6 setio(iob, cmd, data, len, offset) : iob BPTR d'une IOStdReq ; io_Command (mot) := cmd, io_Data := BADDR(data),
+; io_Length := len, io_Offset := offset (5e argument).
+g_setio:
+        lsl.l   #2,d1
+        move.l  d1,a3
+        move.w  d2,IO_COMMAND(a3)
+        lsl.l   #2,d3
+        move.l  d3,IOSTD_DATA(a3)
+        move.l  d4,IOSTD_LENGTH(a3)
+        move.l  16(a1),IOSTD_OFFSET(a3)
+        jmp     (a6)
+
+; 21 doio(iob) -> io_Error (DoIO) ; 22 sendio(iob, pkt) : lie la requête au packet (ln_Name = packet, dp_Link =
+; requête : taskwait rendra ce packet à la réponse) puis SendIO ; 32 closedevice(iob).
+g_doio:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a1
+        move.l  ($4).w,a6
+        jsr     LVO_DOIO(a6)
+        move.l  d0,d1
+        BLEAVE
+g_sendio:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a1
+        lsl.l   #2,d2
+        move.l  d2,LN_NAME(a1)
+        move.l  d2,a0
+        move.l  a1,DP_LINK(a0)
+        move.l  ($4).w,a6
+        jsr     LVO_SENDIO(a6)
+        BLEAVE
+g_closedevice:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a1
+        move.l  ($4).w,a6
+        jsr     LVO_CLOSEDEVICE(a6)
+        BLEAVE
+
+; 31 opendevice(iob, nom, unité, flags) : nom BSTR suivi d'un NUL ; ln_Name := nom, port de réponse := MsgPort du
+; process, mn_Length := 12 (valeurs V34) -> -1 succès | 0.
+g_opendevice:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a1
+        lsl.l   #2,d2
+        addq.l  #1,d2
+        move.l  d2,a0                ; nom C
+        move.l  a0,LN_NAME(a1)
+        bsr     rt_this
+        lea     PR_MSGPORT(a3),a3
+        move.l  a3,MN_REPLYPORT(a1)
+        move.w  #12,MN_LENGTH(a1)
+        move.l  d3,d0
+        move.l  d4,d1
+        move.l  ($4).w,a6
+        jsr     LVO_OPENDEVICE(a6)
+        tst.l   d0
+        seq     d1
+        ext.w   d1
+        ext.l   d1
+        BLEAVE
+
+; 86 datstamp(v) : DateStamp dans v!0..v!2 (jours, minutes, ticks) -> v.
+g_datstamp:
+        BENTER
+        move.l  d1,d5
+        lsl.l   #2,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_DATESTAMP(a6)
+        move.l  d5,d1
         BLEAVE
 
 ; 39 rootstruct() -> BPTR du RootNode.
@@ -2005,6 +2403,29 @@ g_rdargs:
         moveq   #0,d1
         BLEAVE
 
+; 13 makeglobvec(segarray) -> BPTR du slot 0 d'un GV neuf | 0 (Result2 = 103).
+g_makeglobvec:
+        BENTER
+        move.l  ($4).w,a6
+        bsr     rt_makeglobvec
+        move.l  d0,d1
+        BLEAVE
+
+; 112 starthandler(nœud, nom) : nœud = BPTR du DeviceNode, nom = BSTR complet -> MsgPort | 0 ; Result2 = dn_Lock.
+g_starthandler:
+        BENTER
+        lea     -256(sp),sp
+        move.l  d1,d5                ; nœud
+        move.l  d2,d1
+        move.l  sp,a0
+        bsr     rt_cstr
+        lsl.l   #2,d5
+        move.l  d5,a2
+        bsr     bcpl_starthandler
+        move.l  d0,d1
+        lea     256(sp),sp
+        BLEAVE
+
 ; 89 findsegarray() -> pr_SegList (BPTR du segarray)
 g_findsegarray:
         bsr     rt_this
@@ -2137,17 +2558,24 @@ bcpl_rtdata:
         GLOB    -2,g_copyvec
         GLOB    -1,g_copen
         GLOB    2,g_stop
+        GLOB    6,g_setio
         GLOB    10,g_result2
+        GLOB    13,g_makeglobvec
         GLOB    14,g_taskid
         GLOB    17,g_level
         GLOB    18,g_longjump
         GLOB    19,g_getmem
+        GLOB    21,g_doio
+        GLOB    22,g_sendio
         GLOB    28,g_globin
         GLOB    29,g_getvec
         GLOB    30,g_freevec
+        GLOB    31,g_opendevice
+        GLOB    32,g_closedevice
         GLOB    33,g_createproc
         GLOB    34,g_endtask
         GLOB    35,g_parentdir
+        GLOB    36,g_setflags
         GLOB    37,g_testflags
         GLOB    39,g_rootstruct
         GLOB    40,g_readbytes
@@ -2186,9 +2614,11 @@ bcpl_rtdata:
         GLOB    81,g_load
         GLOB    82,g_unloadseg
         GLOB    85,g_makedevnode
+        GLOB    86,g_datstamp
         GLOB    88,g_callexec
         GLOB    89,g_findsegarray
         GLOB    90,g_deleteobj
+        GLOB    91,g_rename
         GLOB    93,g_endstream
         GLOB    102,g_deviceproc
         GLOB    103,g_calllib
@@ -2198,6 +2628,7 @@ bcpl_rtdata:
         GLOB    109,g_freeobj
         GLOB    110,g_getlong
         GLOB    111,g_putlong
+        GLOB    112,g_starthandler
         GLOB    113,g_copydir
         GLOB    114,g_errorreq
         GLOB    115,g_copystring

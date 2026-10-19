@@ -24,7 +24,6 @@ CMD_WRITE    EQU 3
 IO_DATA2     EQU 40               ; IOStdReq io_Data (local : console.s n'inclut pas disk.i)
 IO_LEN2      EQU 36               ; IOStdReq io_Length
 IO_ACTUAL2   EQU 32               ; IOStdReq io_Actual
-IOERR_NOCMD  EQU -3               ; commande io non reconnue
 
 ; --- ROMTag console.device (scanné par build_reslist) ---
                 EVEN

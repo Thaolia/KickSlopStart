@@ -18,7 +18,6 @@
                 xref    newlist          ; lists.s (NEWLIST de la chaîne de handlers)
 
 IO_DATA2        EQU 40               ; IOStdReq : io_Data (APTR) — défini localement (évite d'inclure disk.i)
-IOERR_NOCMD     EQU -3               ; io_Error : commande io non reconnue
 ID_HANDLERS     EQU LIB_SIZE         ; base input.device : struct List (chaîne des handlers) après le nœud Library
 INPUT_SIZE      EQU LIB_SIZE+14      ; Library + 1 struct List
 

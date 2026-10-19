@@ -24,7 +24,6 @@
                 xdef    gameport_dev_name
 
 IO_DATA2        EQU 40               ; IOStdReq io_Data (APTR) — local (évite d'inclure disk.i)
-IOERR_NOCMD     EQU -3               ; io_Error : commande io non reconnue
 GAMEPORT_SIZE   EQU LIB_SIZE         ; base gameport.device : nœud Library seul (pas d'état device propre)
 
 ; --- ROMTag gameport.device (scanné par build_reslist ; pri 60 = place roadmap gameport) ---

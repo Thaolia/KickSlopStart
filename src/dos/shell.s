@@ -121,7 +121,27 @@ sh_dispatch_line:
                 rts
 .dl_extern:
                 ; commande externe -> charger+exécuter via dos. Termine le 1er mot en place ; le reste = arguments.
+                ; Espaces de tête ignorés ; ligne vide ou commentaire seul (ex. suite de ligne « ;... ») -> rien.
                 move.l  a3,a0
+.dl_lead:
+                move.b  (a0),d0
+                cmp.b   #' ',d0
+                beq.s   .dl_skip
+                cmp.b   #9,d0
+                bne.s   .dl_first
+.dl_skip:
+                addq.l  #1,a0
+                bra.s   .dl_lead
+.dl_first:
+                tst.b   d0
+                beq     .dl_ret
+                cmp.b   #';',d0
+                beq     .dl_ret
+                cmp.b   #13,d0
+                beq     .dl_ret
+                cmp.b   #10,d0
+                beq     .dl_ret
+                move.l  a0,-(sp)             ; début du nom de commande
 .dl_nt:
                 move.b  (a0),d0
                 beq.s   .dl_noargs
@@ -146,7 +166,7 @@ sh_dispatch_line:
                 move.l  a0,a1
                 moveq   #0,d1                ; pas d'arguments
 .dl_call:
-                move.l  a3,a0                ; a0 = nom de commande C-string
+                move.l  (sp)+,a0             ; a0 = nom de commande C-string
                 bsr     sh_exec_cmd          ; d0 = 1 si trouvée+chargée, 0 sinon
                 tst.l   d0
                 bne.s   .dl_ret2

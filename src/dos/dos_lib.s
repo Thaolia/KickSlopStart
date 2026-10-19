@@ -21,6 +21,7 @@
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
                 xref    newlist          ; exec/lists.s (NEWLIST du port de Delay)
+                xref    bcpl_starthandler ; dos/bcpl.s (démarrage du handler d'un DeviceNode)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
 
@@ -59,15 +60,15 @@ dos_vectors:
         dc.l    dos_fn_input             ; 9  : LVO -54 Input() -> BPTR pr_CIS
         dc.l    dos_fn_output            ; 10 : LVO -60 Output() -> BPTR pr_COS
         dc.l    dos_fn_seek              ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
-        dc.l    dos_null                 ; 12 : LVO -72  (DeleteFile non impl.)
-        dc.l    dos_null                 ; 13 : LVO -78  (Rename non impl.)
+        dc.l    dos_fn_deletefile        ; 12 : LVO -72  DeleteFile(name d1)
+        dc.l    dos_fn_rename            ; 13 : LVO -78  Rename(ancien d1, nouveau d2)
         dc.l    dos_fn_lock              ; 14 : LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
         dc.l    dos_fn_unlock            ; 15 : LVO -90  UnLock(lock d1)
         dc.l    dos_null                 ; 16 : LVO -96  (DupLock non impl.)
         dc.l    dos_fn_examine           ; 17 : LVO -102 Examine(lock d1, fib d2)
         dc.l    dos_fn_exnext            ; 18 : LVO -108 ExNext(lock d1, fib d2)
         dc.l    dos_null                 ; 19 : LVO -114 (Info non impl.)
-        dc.l    dos_null                 ; 20 : LVO -120 (CreateDir non impl.)
+        dc.l    dos_fn_createdir         ; 20 : LVO -120 CreateDir(name d1) -> BPTR lock
         dc.l    dos_fn_currentdir        ; 21 : LVO -126 CurrentDir(lock d1) -> ancien lock
         dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
         dcb.l   2,dos_null               ; 23..24 : LVO -138/-144 (CreateProc, Exit non impl.)
@@ -451,12 +452,29 @@ dos_fn_unloadseg:
 ; du handler et le lock parent, le nom est converti en BSTR LONG-ALIGNÉ (BPTR exige l'alignement), puis
 ; ACTION_LOCATE_OBJECT (ARG1 = lock parent, ARG2 = nom, ARG3 = mode). a6 = DosBase.
 dos_fn_lock:
+        move.l  d2,d3                   ; ARG3 = mode
+        move.l  #ACTION_LOCATE_OBJECT,d0
+        bra.s   dos_namepkt
+
+; CreateDir(name d1) -> BPTR lock du répertoire créé | 0 (ACTION_CREATE_DIR). DeleteFile(name d1) -> DOSTRUE/DOSFALSE
+; (ACTION_DELETE_OBJECT). a6 = DosBase.
+dos_fn_createdir:
+        move.l  #ACTION_CREATE_DIR,d0
+        bra.s   dos_namepkt
+dos_fn_deletefile:
+        move.l  #ACTION_DELETE_OBJECT,d0
+
+; dos_namepkt(d0 = action, d1 = nom C, d3 = ARG3, a6 = DosBase) -> d0 = dp_Res1 (0 si le nom ne résout pas ; IoErr
+; posé). Résout le nom (dos_resolve : démarre le handler au besoin), puis envoie ARG1 = lock de départ, ARG2 =
+; BPTR du nom restant en BSTR, ARG3 au handler.
+dos_namepkt:
         movem.l d2-d7/a2-a6,-(sp)
+        move.l  d0,d5                   ; d5 = action
         move.l  d1,a4                   ; a4 = nom (C-string)
-        move.l  d2,d7                   ; d7 = mode
+        move.l  d3,d7                   ; d7 = ARG3
         bsr     dos_resolve             ; a3 = port du handler, d6 = lock parent, a4 = nom à transmettre
         move.l  a3,d0
-        beq     .lk_fail                ; device inconnu / handler non démarré
+        beq     .np_fail                ; device inconnu / handler impossible à démarrer
         move.l  ($4).w,a6               ; SysBase
         lea     -(DOS_NAMEMAX+5)(sp),sp ; zone BSTR sur la pile (taille paire : SP reste pair)
         move.l  sp,d0
@@ -465,31 +483,103 @@ dos_fn_lock:
         move.l  d0,a5                   ; a5 = BSTR
         lea     1(a5),a1               ; a1 -> caractères
         moveq   #0,d3                   ; d3 = longueur
-.lk_ncpy:
+.np_ncpy:
         move.b  (a4)+,d0
-        beq.s   .lk_ndone
+        beq.s   .np_ndone
         move.b  d0,(a1)+
         addq.l  #1,d3
         cmp.l   #DOS_NAMEMAX,d3         ; borne du buffer (BSTR)
-        bcs.s   .lk_ncpy
-.lk_ndone:
+        bcs.s   .np_ncpy
+.np_ndone:
         move.b  d3,(a5)                 ; octet de longueur BCPL
         lea     -SP_SIZEOF(sp),sp       ; StandardPacket
         move.l  sp,a0
         move.l  a3,a1                   ; port du handler
-        move.l  #ACTION_LOCATE_OBJECT,d0
+        move.l  d5,d0
         move.l  d6,d1                   ; ARG1 = lock parent
         move.l  a5,d2
         lsr.l   #2,d2                   ; ARG2 = BPTR(nom BSTR)
-        move.l  d7,d3                   ; ARG3 = mode
-        jsr     dos_sendpkt             ; d0 = dp_Res1 (BPTR lock | 0)
+        move.l  d7,d3                   ; ARG3
+        jsr     dos_sendpkt             ; d0 = dp_Res1
         lea     SP_SIZEOF(sp),sp
         lea     DOS_NAMEMAX+5(sp),sp    ; libère la zone BSTR
-        bra.s   .lk_ret
-.lk_fail:
+        bra.s   .np_ret
+.np_fail:
         moveq   #0,d0
-.lk_ret:
+.np_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; Rename(ancien d1, nouveau d2) -> DOSTRUE/DOSFALSE : ACTION_RENAME_OBJECT (ARG1 lock, ARG2 BSTR ancien nom, ARG3
+; lock, ARG4 BSTR nouveau nom) au handler commun ; handlers différents -> IoErr = ERROR_RENAME_ACROSS_DEVICES.
+DOS_RNFRAME     EQU 2*(DOS_NAMEMAX+1)+4    ; deux BSTR de 256 octets + marge d'alignement
+dos_fn_rename:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d2,d7                   ; d7 = nouveau nom
+        move.l  d1,a4
+        bsr     dos_resolve
+        move.l  a3,d0
+        beq     .rn_fail
+        move.l  a3,a5                   ; a5 = port, d5 = lock, a2 = nom (ancien)
+        move.l  d6,d5
+        move.l  a4,a2
+        move.l  d7,a4
+        bsr     dos_resolve
+        move.l  a3,d0
+        beq     .rn_fail
+        cmp.l   a3,a5
+        beq.s   .rn_same
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  #ERROR_RENAME_ACROSS_DEVICES,PR_RESULT2(a0)
+        bra     .rn_fail
+.rn_same:
+        lea     -DOS_RNFRAME(sp),sp
+        move.l  sp,d0
+        addq.l  #3,d0
+        and.l   #-4,d0
+        move.l  d0,a0                   ; BSTR ancien nom (long-aligné)
+        move.l  a2,a1
+        bsr     dos_c2bstr
+        move.l  a0,d2
+        lsr.l   #2,d2                   ; ARG2
+        lea     DOS_NAMEMAX+1(a0),a0    ; BSTR nouveau nom (+256 : reste long-aligné)
+        move.l  a4,a1
+        bsr     dos_c2bstr
+        move.l  a0,d4
+        lsr.l   #2,d4                   ; ARG4
+        move.l  d5,d1                   ; ARG1
+        move.l  d6,d3                   ; ARG3
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a5,a1
+        move.l  #ACTION_RENAME_OBJECT,d0
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF+DOS_RNFRAME(sp),sp
+        bra.s   .rn_ret
+.rn_fail:
+        moveq   #0,d0
+.rn_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; dos_c2bstr(a0 = destination long-alignée, a1 = C-string) : BSTR (DOS_NAMEMAX caractères max). Préserve a0 ; a1
+; avancé.
+dos_c2bstr:
+        movem.l d0-d1/a2,-(sp)
+        lea     1(a0),a2
+        moveq   #0,d1
+.cb_lp:
+        move.b  (a1)+,d0
+        beq.s   .cb_end
+        move.b  d0,(a2)+
+        addq.l  #1,d1
+        cmp.l   #DOS_NAMEMAX,d1
+        bcs.s   .cb_lp
+.cb_end:
+        move.b  d1,(a0)
+        movem.l (sp)+,d0-d1/a2
         rts
 
 ; UnLock(lock d1 [BPTR]) -> d0 = 0. Récupère le port du handler via fl_Task du lock, envoie ACTION_FREE_LOCK.
@@ -725,7 +815,7 @@ dos_resolve:
         move.l  a0,d3
         sub.l   a4,d3
         subq.l  #1,d3                   ; d3 = longueur du préfixe
-        beq.s   .rs_volroot             ; « :reste »
+        beq     .rs_volroot             ; « :reste »
         move.l  DL_ROOT(a6),a2
         move.l  RN_INFO(a2),d0
         lsl.l   #2,d0
@@ -767,6 +857,14 @@ dos_resolve:
 .rs_devvol:
         moveq   #0,d6
         move.l  DN_TASK(a2),a3
+        move.l  a3,d0
+        bne.s   .rs_ret
+        tst.l   DN_TYPE(a2)             ; device sans tâche : démarre son handler (spec BCPL §13.3)
+        bne.s   .rs_ret
+        move.l  a4,a0                   ; nom complet (le handler peut y lire des paramètres : NEWCON:x/y/l/h/titre)
+        jsr     bcpl_starthandler       ; d0 = port | 0 (Result2 posé)
+        move.l  d0,a3
+        move.l  DN_LOCK(a2),d6
         bra.s   .rs_ret
 .rs_next:
         move.l  DN_NEXT(a2),d0
@@ -823,6 +921,7 @@ dos_upper:
 dos_boot_assigns:
         movem.l d0-d7/a0-a6,-(sp)
         move.l  a6,a5                   ; a5 = DosBase
+        bsr     ba_ramnode
         lea     ba_root(pc),a0
         move.l  a0,d1
         moveq   #SHARED_LOCK,d2
@@ -896,6 +995,48 @@ dos_boot_assigns:
 .ba_ret:
         movem.l (sp)+,d0-d7/a0-a6
         rts
+
+; ba_ramnode(a5 = DosBase) : nœud device « RAM » (handler BCPL L:RAM-HANDLER chargé au premier accès, pile 300 longs,
+; pri 0, GV neuf : spec handlers §1) inséré en tête de di_DevInfo. Le handler écrit lui-même dn_Task et crée le
+; volume « RAM DISK ». Clobbe d0-d1/a0-a1.
+ba_ramnode:
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  #DN_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .rn_ret
+        move.l  d0,a0
+        lea     ba_ramhandler(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_HANDLER(a0)
+        move.l  #300,DN_STACKSIZE(a0)
+        lea     ba_ramname(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NAME(a0)
+        jsr     LVO_FORBID(a6)
+        move.l  DL_ROOT(a5),a1
+        move.l  RN_INFO(a1),d0
+        lsl.l   #2,d0
+        move.l  d0,a1
+        move.l  DI_DEVINFO(a1),DN_NEXT(a0)
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DI_DEVINFO(a1)
+        jsr     LVO_PERMIT(a6)
+.rn_ret:
+        move.l  (sp)+,a6
+        rts
+        cnop    0,4
+ba_ramhandler:
+        dc.b    13,"L:RAM-HANDLER",0
+        cnop    0,4
+ba_ramname:
+        dc.b    3,"RAM",0
+        EVEN
 
 ; ba_addnode(d0 = type, d1 = BPTR lock, a0 = nom C-string, a1 = port du handler) : alloue un nœud DosList (+ BSTR du
 ; nom juste après, long-aligné) et l'insère en tête de di_DevInfo sous Forbid. Clobbe d0-d2/a0-a1.
