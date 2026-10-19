@@ -15,7 +15,7 @@ intuition_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    intuition_romtag         ; RT_MATCHTAG = self
         dc.l    intuition_end            ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_LIBRARY,10  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (10 : place roadmap intuition)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,10  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (10 : place roadmap intuition)
         dc.l    intuition_name           ; RT_NAME
         dc.l    intuition_name           ; RT_IDSTRING
         dc.l    intuition_inittab        ; RT_INIT -> table AUTOINIT

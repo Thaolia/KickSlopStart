@@ -19,9 +19,9 @@ graphics_romtag:
         dc.l    graphics_romtag          ; RT_MATCHTAG = self
         dc.l    graphics_end             ; RT_ENDSKIP
                 ifne    M4C1_WRONG_TYPE
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,65   ; RED : RT_TYPE device -> routé DeviceList -> absent de LibList
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,65   ; RED : RT_TYPE device -> routé DeviceList -> absent de LibList
                 else
-        dc.b    RTF_AUTOINIT,34,NT_LIBRARY,65  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (65 : entre cia 80 / timer 50)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,65  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (65 : entre cia 80 / timer 50)
                 endc
         dc.l    graphics_name            ; RT_NAME
         dc.l    graphics_name            ; RT_IDSTRING

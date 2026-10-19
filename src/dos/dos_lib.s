@@ -34,7 +34,7 @@ dos_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    dos_romtag               ; RT_MATCHTAG = self
         dc.l    dos_end                  ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_LIBRARY,0   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (0 : place roadmap dos)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,0   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (0 : place roadmap dos)
         dc.l    dos_name                 ; RT_NAME
         dc.l    dos_name                 ; RT_IDSTRING
         dc.l    dos_inittab              ; RT_INIT -> table AUTOINIT

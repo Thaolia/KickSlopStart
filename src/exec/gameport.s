@@ -32,7 +32,7 @@ gameport_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    gameport_romtag      ; RT_MATCHTAG = self
         dc.l    gameport_end         ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,60  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,60  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    gameport_dev_name    ; RT_NAME
         dc.l    gameport_dev_name    ; RT_IDSTRING
         dc.l    gameport_inittab     ; RT_INIT -> table AUTOINIT

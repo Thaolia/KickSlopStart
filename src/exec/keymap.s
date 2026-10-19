@@ -24,7 +24,7 @@ km_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    km_romtag            ; RT_MATCHTAG = self
         dc.l    km_end               ; RT_ENDSKIP
-        dc.b    0,34,NT_RESOURCE,100 ; RT_FLAGS (0 = direct-init), RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_COLDSTART,34,NT_RESOURCE,100 ; RT_FLAGS (COLDSTART, init directe), RT_VERSION, RT_TYPE, RT_PRI
         dc.l    km_name              ; RT_NAME
         dc.l    km_name              ; RT_IDSTRING
         dc.l    km_init              ; RT_INIT (direct-init)

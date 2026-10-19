@@ -177,11 +177,12 @@ exec_InitResident:
         rts
 
 ; InitCode(startClass d0, version d1) : parcourt ResModules (déjà pri-trié) et appelle
-; InitResident sur chaque résident de RT_VERSION >= version. Le filtre par CLASSE
-; (startClass : COLDSTART vs AFTERDOS) est SIMPLIFIÉ ce milestone (tout en phase coldstart,
-; dos absent) -> startClass ignoré. segList = 0 (nos ROMTags n'ont pas de seglist).
+; InitResident sur chaque résident dont RT_FLAGS a un bit commun avec startClass (RTF_COLDSTART...)
+; et de RT_VERSION >= version. Un résident sans drapeau de classe (workbench.task) reste dans
+; ResModules sans être initialisé. segList = 0 (nos ROMTags n'ont pas de seglist).
 exec_InitCode:
-        movem.l d2-d3/a2,-(sp)
+        movem.l d2-d4/a2,-(sp)
+        move.b  d0,d4                ; d4 = classe de démarrage (RTF_COLDSTART...)
         move.l  d1,d3                ; version minimale
         move.l  EB_RESMODULES(a6),a2
         move.l  a2,d0
@@ -190,6 +191,9 @@ exec_InitCode:
         move.l  (a2)+,d0             ; Resident*
         beq.s   .ic_done             ; terminateur NUL
         move.l  d0,a1                ; a1 = resident (pour InitResident)
+        move.b  RT_FLAGS(a1),d2
+        and.b   d4,d2
+        beq.s   .ic_loop             ; pas de cette classe (ex. workbench.task, lancé par LoadWB) -> sauter
         moveq   #0,d2
         move.b  RT_VERSION(a1),d2
         cmp.l   d3,d2
@@ -198,7 +202,7 @@ exec_InitCode:
         jsr     LVO_INITRESIDENT(a6)
         bra.s   .ic_loop
 .ic_done:
-        movem.l (sp)+,d2-d3/a2
+        movem.l (sp)+,d2-d4/a2
         rts
 
 ; AddResource(resource a1) : type NT_RESOURCE puis Enqueue dans ResourceList (Forbid-enveloppé,

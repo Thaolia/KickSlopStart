@@ -31,7 +31,7 @@ console_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    console_romtag       ; RT_MATCHTAG = self
         dc.l    console_end          ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,20  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20 : place roadmap console)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,20  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20 : place roadmap console)
         dc.l    console_name         ; RT_NAME
         dc.l    console_name         ; RT_IDSTRING
         dc.l    console_inittab      ; RT_INIT -> table AUTOINIT

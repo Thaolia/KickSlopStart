@@ -784,8 +784,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Étape 4 — devices de DEVS:, AUX:, NEWCON: FAITE** : ramlib (LIBS:/DEVS:), AddDevice/AddLibrary, InitStruct
     complet, autovecteurs 1/4/5, misc.resource, GetPrefs, OpenWindow minimal, console.device asynchrone, globale
     50 ; AUX: (serial.device du disque) et NEWCON: prouvés.
-    **Étape 5** : résident workbench.task (LoadWB), écran Workbench + layers.library (fenêtres visibles), nœuds
-    CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT.
+    **Étape 5 — résident workbench.task FAITE** : LoadWB lance un Workbench minimal (process « Workbench », réponse
+    au message de démarrage, port public) ; InitCode filtré par classe (RTF_COLDSTART) ; AddPort initialise la file.
+    **Étape 6 (bureau visible)** : écran Workbench (OpenScreen/GetScreenData), layers.library, fenêtres Intuition
+    réelles (rastport, rendu), graphics Text/OpenFont, mathffp.library, InitGels ; puis le Workbench réel (icônes
+    de disques par icon.library, menus, lancement d'outils). Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101),
+    writef tamponné, C:FAULT.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

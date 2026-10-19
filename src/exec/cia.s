@@ -25,7 +25,7 @@ cia_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    cia_romtag           ; RT_MATCHTAG = self
         dc.l    cia_end              ; RT_ENDSKIP
-        dc.b    0,34,NT_RESOURCE,80  ; RT_FLAGS (0 = direct-init), RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_COLDSTART,34,NT_RESOURCE,80  ; RT_FLAGS (COLDSTART, init directe), RT_VERSION, RT_TYPE, RT_PRI
         dc.l    cia_resname          ; RT_NAME
         dc.l    cia_resname          ; RT_IDSTRING
         dc.l    cia_init             ; RT_INIT (direct-init)

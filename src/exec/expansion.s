@@ -22,7 +22,7 @@ expansion_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    expansion_romtag         ; RT_MATCHTAG = self
         dc.l    expansion_end            ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_LIBRARY,110  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (110 : place roadmap)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,110  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (110 : place roadmap)
         dc.l    expansion_name           ; RT_NAME
         dc.l    expansion_name           ; RT_IDSTRING
         dc.l    expansion_inittab        ; RT_INIT -> table AUTOINIT

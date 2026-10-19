@@ -15,7 +15,7 @@ misc_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    misc_romtag          ; RT_MATCHTAG = self
         dc.l    misc_end             ; RT_ENDSKIP
-        dc.b    0,34,NT_RESOURCE,70  ; RT_FLAGS (init directe), RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_COLDSTART,34,NT_RESOURCE,70  ; RT_FLAGS (COLDSTART, init directe), RT_VERSION, RT_TYPE, RT_PRI
         dc.l    misc_name            ; RT_NAME
         dc.l    misc_name            ; RT_IDSTRING
         dc.l    misc_init            ; RT_INIT

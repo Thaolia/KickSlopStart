@@ -33,6 +33,11 @@
 ; AddPort(port a1) : type NT_MSGPORT puis Enqueue dans PortList (ordre de priorité).
 exec_AddPort:
         move.b  #NT_MSGPORT,LN_TYPE(a1)
+        lea     MP_MSGLIST(a1),a0    ; AutoDoc : AddPort initialise aussi la liste de messages (NEWLIST)
+        move.l  a0,8(a0)             ; lh_TailPred = &lh_Head
+        clr.l   4(a0)                ; lh_Tail = 0
+        move.l  a0,(a0)
+        addq.l  #4,(a0)              ; lh_Head = &lh_Tail
         jsr     LVO_FORBID(a6)
         lea     EB_PORTLIST(a6),a0
         jsr     LVO_ENQUEUE(a6)

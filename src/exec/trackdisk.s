@@ -36,7 +36,7 @@ trackdisk_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    trackdisk_romtag     ; RT_MATCHTAG = self
         dc.l    trackdisk_end        ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,20   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20 : place roadmap trackdisk)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,20   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20 : place roadmap trackdisk)
         dc.l    trackdisk_name       ; RT_NAME
         dc.l    trackdisk_name       ; RT_IDSTRING
         dc.l    trackdisk_inittab    ; RT_INIT -> table AUTOINIT

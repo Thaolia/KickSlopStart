@@ -42,7 +42,7 @@ timer_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    timer_romtag         ; RT_MATCHTAG = self
         dc.l    timer_end            ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,50  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,50  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    timer_name           ; RT_NAME
         dc.l    timer_name           ; RT_IDSTRING
         dc.l    timer_inittab        ; RT_INIT -> table AUTOINIT

@@ -27,7 +27,7 @@ input_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    input_romtag         ; RT_MATCHTAG = self
         dc.l    input_end            ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,34,NT_DEVICE,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (40 : place roadmap input)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (40 : place roadmap input)
         dc.l    input_name           ; RT_NAME
         dc.l    input_name           ; RT_IDSTRING
         dc.l    input_inittab        ; RT_INIT -> table AUTOINIT

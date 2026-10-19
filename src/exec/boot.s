@@ -267,7 +267,7 @@ coldstart:                        ; $FC00D2
         move.l  #127,RES_LASTPRI     ; borne haute (toute RT_PRI <= 127 passe)
         clr.l   RES_COUNT
         jsr     build_reslist        ; scanne [RESSCAN_LO,HI) -> ExecBase->ResModules
-        moveq   #0,d0                ; startClass (0 = toutes classes, phase coldstart)
+        moveq   #RTF_COLDSTART,d0    ; startClass : résidents de démarrage à froid
         moveq   #0,d1                ; version minimale 0
         jsr     LVO_INITCODE(a6)     ; init chaque résident démo (émet son nom en ordre de pri)
         lea     res_mid_name(pc),a1  ; FindResident(nom) doit retrouver le bon résident
@@ -3727,7 +3727,7 @@ res_mid:
         dc.w    RTC_MATCHWORD
         dc.l    res_mid              ; RT_MATCHTAG = self (valide le match)
         dc.l    res_mid_end          ; RT_ENDSKIP
-        dc.b    0,1,NT_RESOURCE,10   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_COLDSTART,1,NT_RESOURCE,10   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    res_mid_name         ; RT_NAME
         dc.l    res_mid_name         ; RT_IDSTRING
         dc.l    res_mid_init         ; RT_INIT (routine propre au module)
@@ -3739,7 +3739,7 @@ res_lo:
         dc.w    RTC_MATCHWORD
         dc.l    res_lo
         dc.l    res_lo_end
-        dc.b    0,1,NT_RESOURCE,-20
+        dc.b    RTF_COLDSTART,1,NT_RESOURCE,-20
         dc.l    res_lo_name
         dc.l    res_lo_name
         dc.l    res_lo_init
@@ -3751,7 +3751,7 @@ res_hi:
         dc.w    RTC_MATCHWORD
         dc.l    res_hi
         dc.l    res_hi_end
-        dc.b    0,1,NT_RESOURCE,60
+        dc.b    RTF_COLDSTART,1,NT_RESOURCE,60
         dc.l    res_hi_name
         dc.l    res_hi_name
         dc.l    res_hi_init
@@ -4022,7 +4022,7 @@ res_auto:
         dc.w    RTC_MATCHWORD
         dc.l    res_auto             ; RT_MATCHTAG = self
         dc.l    res_auto_end         ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT,1,NT_LIBRARY,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,1,NT_LIBRARY,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    autolib_name         ; RT_NAME
         dc.l    autolib_name         ; RT_IDSTRING
         dc.l    autolib_inittab      ; RT_INIT -> table AUTOINIT (4 longs)
