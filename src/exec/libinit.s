@@ -71,7 +71,7 @@ exec_MakeLibrary:
                 mulu    #6,d0               ; negSize = nombre * 6
                 move.l  d0,d4               ; d4 = negSize
                 add.l   d2,d0               ; total = negSize + dataSize
-                move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1 ; pas de DMA : slow RAM d'abord si présente (la chip reste aux programmes)
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq.s   .ml_fail

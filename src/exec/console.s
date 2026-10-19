@@ -325,7 +325,18 @@ con_putglyph:
         bhi     .cpg_ret
                 ifeq    CON_NO_BLIT
         move.l  CONB_BITMAP(a2),d1
+        bne.s   .cpg_have
+        movem.l d0/a6,-(sp)          ; bitplane de l'unité sans fenêtre : alloué à la première écriture (10 Ko de
+        move.l  ($4).w,a6            ; chip que les systèmes à fenêtres n'utilisent jamais)
+        move.l  #CON_BMSIZE,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,CONB_BITMAP(a2)
+        move.l  d0,d1
+        movem.l (sp)+,d0/a6
+        tst.l   d1
         beq.s   .cpg_advance         ; pas de bitplane (alloc échouée) -> n'écrit pas, avance quand même
+.cpg_have:
         movem.l d2/d3,-(sp)
         moveq   #0,d1
         move.b  d0,d1
@@ -451,10 +462,6 @@ console_initfunc:
         clr.w   CONB_CURY(a2)
         clr.w   CONB_RHEAD(a2)
         clr.w   CONB_RTAIL(a2)
-        move.l  #CON_BMSIZE,d0       ; bitplane : chip RAM, effacé (fond 0)
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,CONB_BITMAP(a2)   ; 0 si l'alloc échoue -> garde dans con_putglyph
         lea     EB_LIBLIST(a6),a0    ; GfxBase (graphics.library, pri 65, initialisée avant console, pri 20)
         lea     console_gfxname(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -503,9 +510,9 @@ console_gfxname:
 ; Zone de texte = intérieur de la fenêtre (bordures exclues), cellules 8x8. Contrôles : BEL ignoré, BS, TAB (tous les
 ; 8), LF (avec retour en colonne 0), VT, FF (efface), CR, ESC c (réinitialise), $84 IND, $85 NEL, $8D RI. CSI
 ; (ESC [ ou $9B) : A B C D E F (déplacements), H f (position), J K (effacements), L M (insertion / suppression de
-; lignes), m (stylos 30-37/40-47, inversion 7, 0 = défaut), SPACE p (curseur visible ou non). CSI P (suppression de
-; caractères) efface jusqu'à la fin de la ligne (pas de décalage horizontal) ; @, t, u, x, y, q ignorés. Retour à
-; la ligne automatique en écrivant au-delà de la dernière colonne, défilement d'une ligne en bas de zone. Curseur :
+; lignes), m (stylos 30-37/40-47, inversion 7, 0 = défaut : texte stylo 2, fond 0), SPACE p (curseur visible ou
+; non). CSI P (suppression de caractères) efface jusqu'à la fin de la ligne (pas de décalage horizontal) ; @, t, u,
+; x, y, q ignorés. Retour à la ligne automatique en écrivant au-delà de la dernière colonne, défilement d'une ligne en bas de zone. Curseur :
 ; cellule inversée (mode COMPLEMENT), retirée avant chaque écriture et redessinée après.
 CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
 CU_XCP          EQU 38
@@ -530,6 +537,7 @@ CU_CUROFF       EQU 304              ; privé : curseur masqué (CSI 0 SPACE p)
 CU_CURVIS       EQU 305              ; privé : curseur actuellement dessiné
 CU_INV          EQU 306              ; privé : vidéo inverse (CSI 7 m)
 CU_SIZE         EQU 308
+CU_DEFFG        EQU 2                ; stylo du texte par défaut : noir sur le fond vert (thème du projet ; 1.3 : 1)
 
 ; cu_init(a0 = ConUnit effacée, a1 = Window) : bornes de la zone de texte depuis la géométrie de la fenêtre.
 ; Préserve tout sauf d0/d1.
@@ -576,7 +584,7 @@ cu_init:
         add.w   CU_YRORIGIN(a0),d0
         subq.w  #1,d0
         move.w  d0,CU_YREXTANT(a0)
-        move.b  #1,CU_FGPEN(a0)
+        move.b  #CU_DEFFG,CU_FGPEN(a0)
         clr.b   CU_BGPEN(a0)
         rts
 
@@ -855,7 +863,7 @@ cu_ctl:
         beq.s   .ct_csistart
         cmp.b   #'c',d0              ; RIS : réinitialisation (stylos, curseur, effacement)
         bne     .ct_ret
-        move.b  #1,CU_FGPEN(a5)
+        move.b  #CU_DEFFG,CU_FGPEN(a5)
         clr.b   CU_BGPEN(a5)
         clr.b   CU_INV(a5)
         clr.b   CU_CUROFF(a5)
@@ -1032,7 +1040,7 @@ cu_ctl:
 .ct_sgr:
         tst.w   d0
         bne.s   .sg_n0
-        move.b  #1,CU_FGPEN(a5)
+        move.b  #CU_DEFFG,CU_FGPEN(a5)
         clr.b   CU_BGPEN(a5)
         clr.b   CU_INV(a5)
         rts
@@ -1044,7 +1052,7 @@ cu_ctl:
 .sg_n7:
         cmp.w   #39,d0
         bne.s   .sg_n39
-        move.b  #1,CU_FGPEN(a5)
+        move.b  #CU_DEFFG,CU_FGPEN(a5)
         rts
 .sg_n39:
         cmp.w   #49,d0

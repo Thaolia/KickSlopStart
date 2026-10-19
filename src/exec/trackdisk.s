@@ -17,6 +17,7 @@
                 xdef    td_read_track0
                 xdef    td_read_track
                 xdef    td_decode_track
+                xdef    td_disk_present
 
 ; --- constantes trackdisk (devices/trackdisk.i) + erreurs exec io (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
@@ -587,6 +588,52 @@ TD_STEP_DLY   EQU $40               ; ~160 us de largeur (très au-dessus du min
 .rd_sdloop:
         subq.l  #1,d0
         bne.s   .rd_sdloop
+        rts
+
+; td_disk_present() -> d0 = -1 si une disquette est dans DF0, 0 sinon. /CHNG haut : disquette présente. Bas : une
+; impulsion de pas réarme le verrou si une disquette a été insérée (le lecteur « clique » comme un Kickstart en attente
+; de disquette), puis /CHNG est relu. Moteur coupé ; la position de tête est ensuite tenue pour inconnue.
+; Appelé hors de toute lecture (écran insert-disk), sous Disable (impulsions de pas sur CIA-B). a6 = SysBase.
+; Clobbe d0/d1.
+td_disk_present:
+        jsr     LVO_DISABLE(a6)
+        move.b  #$FF,CIAB_DDRB
+        move.b  #PRB_OFF,CIAB_PRB
+        move.b  #PRB_SEL0_OFF,CIAB_PRB  ; DF0 sélectionné, moteur latché OFF
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        bne.s   .dp_yes
+        moveq   #$F7-$F7,d1          ; un pas : vers l'intérieur sur la piste 0, sinon vers l'extérieur
+        btst    #DSKB_TRACK0,CIAA_PRA_HW
+        bne.s   .dp_out
+        moveq   #2,d1                ; direction IN = bit 1 à 0
+.dp_out:
+        move.b  #$F7,d0
+        sub.b   d1,d0
+        move.b  d0,CIAB_PRB          ; direction posée, /STEP haut
+        bsr.s   .dp_dly
+        subq.b  #1,d0
+        move.b  d0,CIAB_PRB          ; /STEP bas : le pas
+        bsr.s   .dp_dly
+        addq.b  #1,d0
+        move.b  d0,CIAB_PRB          ; /STEP relâché
+        bsr.s   .dp_dly
+        clr.b   TD_CYLVALID
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        bne.s   .dp_yes
+        move.b  #PRB_OFF,CIAB_PRB
+        jsr     LVO_ENABLE(a6)
+        moveq   #0,d0
+        rts
+.dp_yes:
+        move.b  #PRB_OFF,CIAB_PRB
+        jsr     LVO_ENABLE(a6)
+        moveq   #-1,d0
+        rts
+.dp_dly:
+        move.l  #TD_STEP_DLY,d1
+.dp_dl:
+        subq.l  #1,d1
+        bne.s   .dp_dl
         rts
 
 ; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs décodés+vérifiés (checksums en-tête ET data OK).

@@ -97,6 +97,9 @@ $(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) $(GFX_INC) | $(BUILD)
 # Module(s) dos (src/dos) : include exec.i (ABI/LVO/AllocMem) + dos.i (layout DosLibrary/RootNode/DosInfo, BPTR).
 $(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+# workbench.o inclut aussi intuition.i + graphics.i (fenêtre de fond, icônes) -> règle dédiée.
+$(BUILD)/workbench.o: $(DOS_DIR)/workbench.s $(EXEC_INC) $(DOS_DIR)/dospkt.i $(INT_DIR)/intuition.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(DOS_DIR) -I $(INT_DIR) -I $(GFX_DIR) -o $@ $<
 # ofs.o inclut aussi disk.i (CMD_READ) + ofs.i (constantes OFS) : relier les dépendances pour rebuild.
 $(BUILD)/ofs.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i
 $(BUILD)/diskvalidator.o: $(DOS_DIR)/ofs.i $(EXEC_DIR)/disk.i

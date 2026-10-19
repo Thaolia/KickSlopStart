@@ -16,7 +16,8 @@ IB_MICROS        EQU IB_SECONDS+4      ; 76
 ; champs privés (au-delà de la partie publique) :
 IB_GFXBASE       EQU IB_MICROS+4       ; 80 : GfxBase (trouvée à l'init)
 IB_WBSCREEN      EQU IB_GFXBASE+4      ; 84 : écran Workbench ouvert (0 sinon)
-INTUITIONBASE_SIZE EQU IB_WBSCREEN+4   ; 88 : dataSize pour MakeLibrary
+IB_PTRSS         EQU IB_WBSCREEN+4     ; 88 : SimpleSprite du pointeur (canal 0)
+INTUITIONBASE_SIZE EQU IB_PTRSS+12     ; 100 : dataSize pour MakeLibrary
 
 ; --- struct NewScreen / struct Screen (intuition/screens.h V34) ---
 NS_LEFTEDGE     EQU 0
@@ -110,6 +111,7 @@ WD_BORDERTOP    EQU 55
 WD_BORDERRIGHT  EQU 56
 WD_BORDERBOTTOM EQU 57
 WD_IDCMPFLAGS   EQU 82
+WD_USERPORT     EQU 86
 WD_DETAILPEN    EQU 98
 WD_BLOCKPEN     EQU 99
 WD_GZZWIDTH     EQU 112
@@ -126,6 +128,38 @@ SIZEBBOTTOM     EQU $0020
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
 WINDOWACTIVE    EQU $2000
+
+; --- struct IntuiMessage (intuition/intuition.h) et classes IDCMP ---
+IM_CLASS        EQU 20               ; après la struct Message
+IM_CODE         EQU 24
+IM_QUALIFIER    EQU 26
+IM_IADDRESS     EQU 28
+IM_MOUSEX       EQU 32
+IM_MOUSEY       EQU 34
+IM_SECONDS      EQU 36
+IM_MICROS       EQU 40
+IM_IDCMPWINDOW  EQU 44
+IM_SIZEOF       EQU 52
+REFRESHWINDOW   EQU $00000004
+MOUSEBUTTONS    EQU $00000008
+CLOSEWINDOW     EQU $00000200
+SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS
+SELECTUP        EQU $E8
+
+; --- struct Image et struct Remember (intuition/intuition.h) ---
+IG_LEFTEDGE     EQU 0
+IG_TOPEDGE      EQU 2
+IG_WIDTH        EQU 4
+IG_HEIGHT       EQU 6
+IG_DEPTH        EQU 8
+IG_IMAGEDATA    EQU 10
+IG_PLANEPICK    EQU 14
+IG_PLANEONOFF   EQU 15
+IG_NEXTIMAGE    EQU 16
+RM_NEXTREMEMBER EQU 0
+RM_REMEMBERSIZE EQU 4
+RM_MEMORY       EQU 8
+RM_SIZEOF       EQU 12
 
 ; --- LVO intuition.library (lvo/intuition_lib.i, autoritatif) ---
 LVO_VIEWADDRESS  EQU -294              ; ViewAddress() -> View courant (vecteur 49)

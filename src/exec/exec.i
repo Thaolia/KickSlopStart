@@ -354,6 +354,7 @@ PTR_YMAX     EQU 256
 GP_POLLS_THRESH EQU 25          ; polls VBlank (~0,5 s) avant « GP VBLANK LIVE OK » (serveur vit dans le système)
 PTR_X        EQU $00000684 ; word : pointeur absolu X (accumulé par pointer_input_handler, clampé)
 PTR_Y        EQU $00000686 ; word : pointeur absolu Y
+INT_IBASE    EQU $00000740 ; long : IntuitionBase (posé à son init) — le handler de pointeur y déplace le sprite
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé) +pad $68B
 GP_POLLS     EQU $0000068C ; long : compteur de polls de gp_vblank_server (preuve live : avance sur VBlanks réels)

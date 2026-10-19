@@ -1,6 +1,8 @@
-; src/dos/shell.s — shell interactif minimal (E2). Corps d'un Process : ouvre la console (handler E1 via DOS
-; packets vers DOS_CONPORT), émet une bannière, puis boucle : écrit l'invite, lit UNE LIGNE, parse le 1er mot,
-; dispatche vers un builtin. Builtins : « ver » (bannière de version) et « echo <args> » (ré-émet les args) ;
+; src/dos/shell.s — shell interactif minimal (E2). Corps d'un Process : ouvre la console « CON:0/0/640/200/
+; AmigaSlopDOS » (handler E1 via DOS packets vers DOS_CONPORT : fenêtre sur l'écran Workbench + miroir série), émet une
+; bannière de test sur le série, exécute la startup-sequence (fenêtre fermée si EndCLI a passé le CLI en arrière-plan),
+; puis boucle : écrit l'invite, lit UNE LIGNE, parse le 1er mot, dispatche vers un builtin. Builtins : « ver »
+; (bannière de version) et « echo <args> » (comme c:Echo : sans guillemets englobants, puis saut de ligne) ;
 ; tout le reste -> « ? ». PAS de CLI BCPL (pr_CLI/CommandLineInterface/Execute = Bootstrap réel F).
 ;
 ; Tout l'IO passe par des FileHandles DOS (ici la clé renvoyée par FINDINPUT) vers le handler console — jamais
@@ -11,6 +13,7 @@
                 include "dospkt.i"
 
                 xdef    shell_main
+                xref    ser_puts             ; exec/boot.s (bannière de test sur le série)
                 xref    dos_sendpkt
                 xref    ls_load_hunks        ; dos/loadseg.s (E3 : parse hunk d'un buffer lu via dos)
                 xref    dos_unloadseg        ; dos/loadseg.s (E3 : libérer la seglist)
@@ -40,7 +43,8 @@ shell_main:
                 move.l  #ACTION_FINDINPUT,d0
                 moveq   #0,d1
                 moveq   #0,d2
-                moveq   #0,d3
+                move.l  #sh_conname,d3       ; « CON:0/0/640/200/AmigaSlopDOS » : fenêtre de la console initiale
+                lsr.l   #2,d3
                 jsr     dos_sendpkt
                 move.l  d0,d7                ; d7 = clé
                 ; FileHandle console -> pr_CIS/pr_COS : Input()/Output() des commandes lancées écrivent sur la console
@@ -75,13 +79,23 @@ shell_main:
                 move.l  ($4).w,a6
                 jsr     LVO_CLOSELIBRARY(a6)
 .noassign:
-                ; bannière (prouve : l'Initial CLI démarre + console WRITE)
-                move.l  #sh_banner,a4
-                move.l  #sh_banner_len,d4
-                bsr     sh_write
+                ; bannière de test (marqueur série du harnais : l'Initial CLI démarre ; pas dans la fenêtre)
+                lea     sh_banner(pc),a0
+                jsr     ser_puts
                 ifeq    F1_NO_STARTUP
                 bsr     sh_run_startup       ; F1 : exécuter s/startup-sequence (sous-rép OFS) AVANT l'interactif
                 endc                         ; RED F1_NO_STARTUP : saute le script -> directement interactif
+                bsr     sh_cli_ptr           ; EndCLI a passé le CLI en arrière-plan : sa fenêtre se ferme (END) ;
+                beq.s   .loop                ; l'invite de secours continue sur le série
+                tst.l   CLI_BACKGROUND(a1)
+                beq.s   .loop
+                move.l  DOS_CONPORT,a1
+                move.l  a2,a0
+                move.l  #ACTION_END,d0
+                move.l  d7,d1
+                moveq   #0,d2
+                moveq   #0,d3
+                jsr     dos_sendpkt
 .loop:
                 move.l  #sh_prompt,a4        ; invite « > »
                 move.l  #sh_prompt_len,d4
@@ -116,6 +130,30 @@ sh_dispatch_line:
                 bls.s   .dl_ret              ; « echo » sans args
                 move.l  a3,a4
                 add.l   #SH_ECHO_ARGOFF,a4
+.dl_etrim:                           ; comme c:Echo : sans fin de ligne ni guillemets englobants, puis saut de ligne
+                move.b  -1(a4,d4.l),d0
+                cmp.b   #13,d0
+                beq.s   .dl_ecut
+                cmp.b   #10,d0
+                bne.s   .dl_equote
+.dl_ecut:
+                subq.l  #1,d4
+                bne.s   .dl_etrim
+                bra.s   .dl_enl
+.dl_equote:
+                cmp.l   #2,d4
+                blo.s   .dl_eout
+                cmp.b   #'"',(a4)
+                bne.s   .dl_eout
+                cmp.b   #'"',-1(a4,d4.l)
+                bne.s   .dl_eout
+                addq.l  #1,a4
+                subq.l  #2,d4
+.dl_eout:
+                bsr     sh_write
+.dl_enl:
+                lea     sh_crlf(pc),a4
+                moveq   #2,d4
                 bsr     sh_write
 .dl_ret:
                 rts
@@ -759,10 +797,15 @@ sh_doslib:
 sh_startupname:
                 dc.b    "s/startup-sequence",0
                 EVEN
+                cnop    0,4                  ; BSTR passé en BPTR
+sh_conname:
+                dc.b    sh_conname_end-sh_conname-1,"CON:0/0/640/200/AmigaSlopDOS"
+sh_conname_end:
+                even
 sh_banner:
-                dc.b    "E2 SHELL READY (interactive shell: prompt, read line via console handler, parse, dispatch)",13,10
-sh_banner_end:
-sh_banner_len   EQU sh_banner_end-sh_banner
+                dc.b    "E2 SHELL READY (interactive shell: prompt, read line via console handler, parse, dispatch)",13,10,0
+sh_crlf:
+                dc.b    13,10
 sh_prompt:
                 dc.b    "> "
 sh_prompt_end:

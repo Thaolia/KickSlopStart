@@ -19,6 +19,11 @@
                 xdef    intuition_GetScreenData
                 xdef    intuition_OpenWindow
                 xdef    intuition_CloseWindow
+                xdef    intuition_DrawImage
+                xdef    intuition_AllocRemember
+                xdef    intuition_FreeRemember
+                xdef    intuition_DoubleClick
+                xdef    it_button
 
 ; extension privée derrière la struct Screen (même allocation)
 SCX_RASINFO     EQU SC_SIZEOF        ; struct RasInfo (12)
@@ -29,15 +34,19 @@ SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
 SC_BARH         EQU 9                ; BarHeight : la barre de titre couvre les lignes 0..9
 SC_GADW         EQU 23               ; largeur d'un gadget de profondeur
+SC_BGCOLOR      EQU $7C3             ; couleur 0 : vert pomme (thème AmigaSlopDOS)
 ; fenêtre : struct Window + RastPort + Layer (même allocation)
 WDX_RPORT       EQU WD_SIZE
 WDX_LAYER       EQU WDX_RPORT+rp_SIZEOF
-WDX_SIZE        EQU WDX_LAYER+lr_SIZEOF
+WDX_IMSG        EQU WDX_LAYER+lr_SIZEOF ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
+WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
+WDX_NEMSG       EQU 4
+WDX_SIZE        EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF
 WD_TBARH        EQU 10               ; hauteur de la barre de titre d'une fenêtre (BorderTop)
 WD_CLOSEW       EQU 20               ; largeur du gadget de fermeture
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Alloue la struct, la BitMap (plans chip effacés, sauf CUSTOMBITMAP),
-; la palette par défaut (2^profondeur couleurs, 32 au plus), dessine la barre de titre (sauf SCREENQUIET), place
+; la palette par défaut (32 couleurs, dont celles du pointeur), dessine la barre de titre (sauf SCREENQUIET), place
 ; l'écran en tête de liste et l'affiche.
 intuition_OpenScreen:
         movem.l d2-d7/a2-a5,-(sp)
@@ -121,15 +130,8 @@ intuition_OpenScreen:
         beq     .os_nomem
         dbra    d3,.os_plane
 .os_bmok:
-        ; palette : 2^profondeur couleurs (32 au plus) depuis la table par défaut
-        moveq   #1,d0
-        move.b  SC_BITMAP+bm_Depth(a3),d1
-        lsl.w   d1,d0
-        cmp.w   #SC_MAXCOLORS,d0
-        bls.s   .os_ncol
-        moveq   #SC_MAXCOLORS,d0
-.os_ncol:
-        move.w  d0,SCX_COLORMAP+cm_Count(a3)
+        ; palette : 32 couleurs quelle que soit la profondeur (les couleurs 17-19 sont celles du pointeur)
+        move.w  #SC_MAXCOLORS,SCX_COLORMAP+cm_Count(a3)
         lea     SCX_COLORTAB(a3),a0
         move.l  a0,SCX_COLORMAP+cm_ColorTable(a3)
         lea     sc_palette(pc),a1
@@ -582,9 +584,31 @@ intuition_OpenWindow:
         add.w   d7,d5
         subq.w  #1,d5
         move.w  d5,lr_MaxY(a0)
-        bsr     wn_drawframe
         move.l  ($4).w,a6
+        tst.l   WD_IDCMPFLAGS(a3)
+        beq.s   .ow_noport
+        bsr     wn_mkport            ; port IDCMP (signal de la tâche appelante)
+        tst.l   WD_USERPORT(a3)
+        bne.s   .ow_noport
+        move.l  a3,a1                ; pas de port : échec
+        move.l  #WDX_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        bra     .ow_fail
+.ow_noport:
         jsr     LVO_FORBID(a6)
+        btst    #0,WD_FLAGS+2(a3)    ; BACKDROP ($100) : derrière toutes les fenêtres (fin de liste)
+        beq.s   .ow_front
+        lea     SC_FIRSTWINDOW(a4),a0
+.ow_tail:
+        tst.l   (a0)
+        beq.s   .ow_link
+        move.l  (a0),a0              ; WD_NEXTWINDOW à l'offset 0
+        bra.s   .ow_tail
+.ow_link:
+        move.l  a3,(a0)
+        clr.l   WD_NEXTWINDOW(a3)
+        bra.s   .ow_linked
+.ow_front:
         move.l  SC_FIRSTWINDOW(a4),WD_NEXTWINDOW(a3)
         move.l  a3,SC_FIRSTWINDOW(a4)
         move.l  IB_ACTIVEWINDOW(a5),d0
@@ -593,7 +617,10 @@ intuition_OpenWindow:
         and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
 .ow_noact:
         move.l  a3,IB_ACTIVEWINDOW(a5)
+.ow_linked:
         jsr     LVO_PERMIT(a6)
+        bsr     it_clearvis          ; fond : seulement ce qu'aucune fenêtre placée devant ne couvre
+        bsr     wn_border
         move.l  a3,d0
         bra.s   .ow_ret
 .ow_fail:
@@ -603,14 +630,12 @@ intuition_OpenWindow:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; wn_drawframe(a3 = Window, a5 = IntuitionBase) : efface la fenêtre au stylo 0, puis (sauf BORDERLESS) cadre au
-; stylo BlockPen, barre de titre pleine au stylo BlockPen avec le titre au stylo DetailPen, gadget de fermeture,
-; gadgets de profondeur, gadget de redimensionnement. Clobbe d0-d7/a0/a1/a6.
-wn_drawframe:
+; wn_border(a3 = Window, a5 = IntuitionBase) : sauf BORDERLESS, cadre au stylo BlockPen, barre de titre pleine au
+; stylo BlockPen avec le titre au stylo DetailPen, gadget de fermeture, gadgets de profondeur, gadget de
+; redimensionnement ; puis état de dessin JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
+wn_border:
         move.l  IB_GFXBASE(a5),a6
         move.l  WD_RPORT(a3),a1
-        moveq   #0,d0
-        jsr     LVO_SETRAST(a6)
         move.l  WD_FLAGS(a3),d7      ; d7 = drapeaux
         btst    #11,d7
         bne     .df_ret
@@ -718,19 +743,22 @@ wn_drawframe:
         jsr     LVO_SETDRMD(a6)
         rts
 
-; CloseWindow(fenêtre a0) : retire la fenêtre de son écran, efface sa zone au stylo 0 et la libère.
+; CloseWindow(fenêtre a0) : efface au stylo 0 la partie visible de la fenêtre (ce que les fenêtres placées devant ne
+; couvrent pas), la retire de son écran, puis répare ce qu'elle découvrait sans layers.library : barre de titre de
+; l'écran et cadres des fenêtres situées derrière, redessinés s'ils ne sont pas recouverts ; ces fenêtres reçoivent
+; REFRESHWINDOW si elles l'ont demandé (leur contenu est à redessiner par leur propriétaire). Libère son port IDCMP.
 intuition_CloseWindow:
-        movem.l a3-a6,-(sp)
+        movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
         move.l  a0,a3
         move.l  a0,d0
-        beq.s   .cw_ret
+        beq     .cw_ret
+        move.l  WD_WSCREEN(a3),a4    ; a4 = écran
+        bsr     it_clearvis
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
-        move.l  WD_WSCREEN(a3),d0
-        beq.s   .cw_unl
-        move.l  d0,a0
-        lea     SC_FIRSTWINDOW(a0),a0 ; maillon précédent (WD_NEXTWINDOW à l'offset 0)
+        move.l  WD_NEXTWINDOW(a3),a2 ; a2 = première fenêtre située derrière
+        lea     SC_FIRSTWINDOW(a4),a0 ; maillon précédent (WD_NEXTWINDOW à l'offset 0)
 .cw_find:
         move.l  (a0),d0
         beq.s   .cw_unl
@@ -739,41 +767,544 @@ intuition_CloseWindow:
         move.l  d0,a0
         bra.s   .cw_find
 .cw_hit:
-        move.l  WD_NEXTWINDOW(a3),(a0)
+        move.l  a2,(a0)
 .cw_unl:
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .cw_act
         clr.l   IB_ACTIVEWINDOW(a5)
 .cw_act:
         jsr     LVO_PERMIT(a6)
-        move.l  WD_RPORT(a3),d0
-        beq.s   .cw_free
-        move.l  d0,a1
-        move.l  IB_GFXBASE(a5),a6
-        moveq   #0,d0
-        jsr     LVO_SETRAST(a6)
+        bsr     wn_rect              ; d4..d7 = rectangle libéré
+        cmp.w   #SC_BARH,d5          ; barre de l'écran découverte et libre de toute fenêtre
+        bgt.s   .cw_back
+        movem.l d4-d7/a3,-(sp)
+        moveq   #0,d4
+        moveq   #0,d5
+        move.w  SC_WIDTH(a4),d6
+        subq.w  #1,d6
+        moveq   #SC_BARH,d7
+        sub.l   a3,a3                ; toutes les fenêtres restantes
+        bsr     it_covered
+        bne.s   .cw_nobar
+        move.l  a4,a3
+        bsr     sc_drawbar
+.cw_nobar:
+        movem.l (sp)+,d4-d7/a3
+.cw_back:
+        move.l  a2,d0                ; fenêtres situées derrière, touchées par le rectangle
+        beq.s   .cw_port
+        move.l  a2,a0
+        bsr     wn_hits
+        beq.s   .cw_nextb
+        movem.l d4-d7/a3,-(sp)
+        move.l  a2,a3
+        bsr     wn_refreshmsg
+        bsr     wn_rect
+        bsr     it_covered           ; devant elle (a3) : rien ne recouvre son rectangle ?
+        bne.s   .cw_nob
+        bsr     wn_border
+.cw_nob:
+        movem.l (sp)+,d4-d7/a3
+.cw_nextb:
+        move.l  WD_NEXTWINDOW(a2),a2
+        bra.s   .cw_back
+.cw_port:
         move.l  ($4).w,a6
-.cw_free:
+        bsr     wn_freeport
         move.l  a3,a1
         move.l  #WDX_SIZE,d0
         jsr     LVO_FREEMEM(a6)
 .cw_ret:
-        movem.l (sp)+,a3-a6
+        movem.l (sp)+,d2-d7/a2-a6
         rts
+
+; wn_rect(a3 = fenêtre) -> d4..d7 = son rectangle à l'écran (x0, y0, x1, y1). Ne touche que d4-d7.
+wn_rect:
+        move.w  WD_LEFTEDGE(a3),d4
+        move.w  WD_TOPEDGE(a3),d5
+        move.w  d4,d6
+        add.w   WD_WIDTH(a3),d6
+        subq.w  #1,d6
+        move.w  d5,d7
+        add.w   WD_HEIGHT(a3),d7
+        subq.w  #1,d7
+        rts
+
+; wn_hits(a0 = fenêtre, d4..d7 = rectangle) -> Z = 0 si la fenêtre intersecte le rectangle. Ne touche que d0/d1.
+wn_hits:
+        move.w  WD_LEFTEDGE(a0),d0
+        cmp.w   d6,d0
+        bgt.s   .wh_no
+        add.w   WD_WIDTH(a0),d0
+        subq.w  #1,d0
+        cmp.w   d4,d0
+        blt.s   .wh_no
+        move.w  WD_TOPEDGE(a0),d0
+        cmp.w   d7,d0
+        bgt.s   .wh_no
+        add.w   WD_HEIGHT(a0),d0
+        subq.w  #1,d0
+        cmp.w   d5,d0
+        blt.s   .wh_no
+        moveq   #1,d0                ; Z = 0
+        rts
+.wh_no:
+        moveq   #0,d0                ; Z = 1
+        rts
+
+; it_covered(a4 = écran, a3 = fenêtre de référence | 0, d4..d7 = rectangle) -> Z = 0 si une fenêtre placée devant a3
+; (toutes si a3 = 0) intersecte le rectangle. Ne touche que d0/d1/a0.
+it_covered:
+        move.l  SC_FIRSTWINDOW(a4),a0
+.cv_lp:
+        move.l  a0,d0
+        beq.s   .cv_no
+        cmp.l   a3,a0
+        beq.s   .cv_no               ; atteint la référence : le reste est derrière
+        bsr.s   wn_hits
+        bne.s   .cv_yes
+        move.l  WD_NEXTWINDOW(a0),a0
+        bra.s   .cv_lp
+.cv_yes:
+        moveq   #1,d0
+        rts
+.cv_no:
+        moveq   #0,d0
+        rts
+
+; it_clearvis(a3 = fenêtre de la liste de son écran, a5 = IntuitionBase) : remplit au stylo 0 la partie de son
+; rectangle qu'aucune fenêtre placée devant elle ne couvre (balayage ligne par ligne, segments libres). Préserve
+; d2-d7/a2-a6.
+it_clearvis:
+        movem.l d2-d7/a2/a4/a6,-(sp)
+        move.l  WD_WSCREEN(a3),a4
+        move.l  IB_GFXBASE(a5),a6
+        lea     SC_RASTPORT(a4),a1
+        moveq   #0,d0
+        jsr     LVO_SETAPEN(a6)
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     wn_rect
+        move.w  d5,d3                ; d3 = ligne courante
+.cl_row:
+        cmp.w   d7,d3
+        bgt.s   .cl_ret
+        move.w  d4,d2                ; d2 = x courant
+.cl_x:
+        cmp.w   d6,d2
+        bgt.s   .cl_next
+        move.w  d6,d1                ; d1 = fin du segment libre
+        move.l  SC_FIRSTWINDOW(a4),a0
+.cl_win:
+        cmp.l   a3,a0
+        beq.s   .cl_fill             ; plus de fenêtre devant
+        cmp.w   WD_TOPEDGE(a0),d3
+        blt.s   .cl_wn
+        move.w  WD_TOPEDGE(a0),d0
+        add.w   WD_HEIGHT(a0),d0
+        cmp.w   d0,d3
+        bge.s   .cl_wn               ; cette fenêtre ne couvre pas la ligne
+        move.w  WD_LEFTEDGE(a0),d0
+        cmp.w   d2,d0
+        bgt.s   .cl_after
+        add.w   WD_WIDTH(a0),d0      ; couvre x : sauter après elle et recommencer
+        cmp.w   d2,d0
+        ble.s   .cl_wn
+        move.w  d0,d2
+        bra.s   .cl_x
+.cl_after:
+        subq.w  #1,d0                ; commence après x : le segment s'arrête avant elle
+        cmp.w   d1,d0
+        bge.s   .cl_wn
+        move.w  d0,d1
+.cl_wn:
+        move.l  WD_NEXTWINDOW(a0),a0
+        bra.s   .cl_win
+.cl_fill:
+        movem.w d1-d3,-(sp)
+        move.w  d2,d0                ; RectFill(x, y, fin, y)
+        move.w  d1,d2
+        move.w  d3,d1
+        lea     SC_RASTPORT(a4),a1
+        jsr     LVO_RECTFILL(a6)
+        movem.w (sp)+,d1-d3
+        move.w  d1,d2
+        addq.w  #1,d2
+        bra.s   .cl_x
+.cl_next:
+        addq.w  #1,d3
+        bra.s   .cl_row
+.cl_ret:
+        movem.l (sp)+,d2-d7/a2/a4/a6
+        rts
+
+; wn_refreshmsg(a3 = fenêtre) : si elle a demandé REFRESHWINDOW et que son message n'est pas en attente, le lui
+; envoie (sans port de réponse : ReplyMsg le marque répondu, il est réutilisé). Préserve d2-d7/a2-a6.
+wn_refreshmsg:
+        move.l  WD_USERPORT(a3),d0
+        beq.s   .rf_ret
+        moveq   #REFRESHWINDOW,d1
+        and.l   WD_IDCMPFLAGS(a3),d1
+        beq.s   .rf_ret
+        lea     WDX_IMSG(a3),a1
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        beq.s   .rf_ret              ; le précédent n'a pas été lu : il suffit
+        move.l  a6,-(sp)
+        move.l  d0,-(sp)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        clr.l   MN_REPLYPORT(a1)
+        move.w  #IM_SIZEOF,MN_LENGTH(a1)
+        move.l  #REFRESHWINDOW,IM_CLASS(a1)
+        clr.l   IM_CODE(a1)
+        move.l  a3,IM_IADDRESS(a1)
+        move.l  a3,IM_IDCMPWINDOW(a1)
+        move.l  (sp)+,a0
+        move.l  ($4).w,a6
+        jsr     LVO_PUTMSG(a6)
+        move.l  (sp)+,a6
+.rf_ret:
+        rts
+
+; wn_mkport(a3 = fenêtre, a6 = SysBase) : port IDCMP (WD_USERPORT) signalant la tâche appelante ; laissé à 0 si
+; plus de signal ou de mémoire. Préserve d2-d7/a2-a6.
+wn_mkport:
+        move.l  a2,-(sp)
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        tst.b   d0
+        bmi.s   .mp_ret
+        move.l  d0,-(sp)
+        moveq   #MP_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  (sp)+,d1
+        tst.l   d0
+        bne.s   .mp_ok
+        move.l  d1,d0
+        jsr     LVO_FREESIGNAL(a6)
+        bra.s   .mp_ret
+.mp_ok:
+        move.l  d0,a2
+        move.b  #NT_MSGPORT,LN_TYPE(a2)
+        move.b  #PA_SIGNAL,MP_FLAGS(a2)
+        move.b  d1,MP_SIGBIT(a2)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a2)
+        lea     MP_MSGLIST(a2),a0    ; NEWLIST
+        move.l  a0,8(a0)
+        addq.l  #4,a0
+        move.l  a0,-4(a0)
+        move.l  a2,WD_USERPORT(a3)
+.mp_ret:
+        move.l  (sp)+,a2
+        rts
+
+; wn_freeport(a3 = fenêtre, a6 = SysBase) : retire du port le message en attente éventuel, libère le signal et le port.
+; Préserve d2-d7/a2-a6.
+wn_freeport:
+        move.l  WD_USERPORT(a3),d0
+        beq.s   .fp_ret
+        move.l  a2,-(sp)
+        move.l  d0,a2
+        jsr     LVO_DISABLE(a6)
+        move.l  d2,-(sp)
+        lea     WDX_IMSG(a3),a1      ; messages encore en file : retirés avant de libérer la fenêtre
+        moveq   #WDX_NEMSG,d2
+.fp_lp:
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .fp_nomsg
+        move.l  a1,-(sp)
+        jsr     LVO_REMOVE(a6)
+        move.l  (sp)+,a1
+.fp_nomsg:
+        lea     IM_SIZEOF(a1),a1
+        dbra    d2,.fp_lp
+        move.l  (sp)+,d2
+        jsr     LVO_ENABLE(a6)
+        moveq   #0,d0
+        move.b  MP_SIGBIT(a2),d0
+        jsr     LVO_FREESIGNAL(a6)
+        move.l  a2,a1
+        moveq   #MP_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  (sp)+,a2
+.fp_ret:
+        rts
+
+; DrawImage(rp a0, image a1, x d0, y d1) : dessine la chaîne d'Images (struct Image) à (x + LeftEdge, y + TopEdge).
+; Chaque Image devient une BitMap temporaire de 8 plans : plan d'image i -> i-ème plan désigné par PlanePick, les autres
+; plans valent 0 ou 1 selon PlaneOnOff (pointeurs NULL / -1) ; un seul BltBitMapRastPort la copie dans le RastPort.
+intuition_DrawImage:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  IB_GFXBASE(a6),a6
+        move.l  a0,a2                ; a2 = RastPort
+        move.l  a1,a3                ; a3 = Image courante
+        movem.w d0-d1,-(sp)          ; (sp) = x, 2(sp) = y de base
+        lea     -bm_SIZEOF(sp),sp
+        move.l  sp,a4                ; a4 = BitMap temporaire
+.di_img:
+        move.l  a3,d0
+        beq     .di_done
+        move.w  IG_WIDTH(a3),d0      ; octets par ligne = mots entiers
+        add.w   #15,d0
+        lsr.w   #4,d0
+        add.w   d0,d0
+        move.w  d0,bm_BytesPerRow(a4)
+        move.w  IG_HEIGHT(a3),bm_Rows(a4)
+        move.b  #8,bm_Depth(a4)
+        mulu    IG_HEIGHT(a3),d0     ; d0 = taille d'un plan d'image
+        move.l  IG_IMAGEDATA(a3),a0
+        moveq   #0,d1                ; d1 = plan de la BitMap
+        moveq   #0,d2                ; d2 = plans d'image consommés
+        lea     bm_Planes(a4),a1
+.di_plane:
+        btst    d1,IG_PLANEPICK(a3)
+        beq.s   .di_onoff
+        cmp.w   IG_DEPTH(a3),d2
+        bge.s   .di_zero             ; plan choisi sans données : 0
+        move.l  a0,(a1)+
+        add.l   d0,a0
+        addq.w  #1,d2
+        bra.s   .di_pnext
+.di_onoff:
+        btst    d1,IG_PLANEONOFF(a3)
+        beq.s   .di_zero
+        move.l  #-1,(a1)+
+        bra.s   .di_pnext
+.di_zero:
+        clr.l   (a1)+
+.di_pnext:
+        addq.w  #1,d1
+        cmp.w   #8,d1
+        blo.s   .di_plane
+        move.l  a4,a0                ; BltBitMapRastPort(bm, 0, 0, rp, x, y, l, h, copie)
+        moveq   #0,d0
+        moveq   #0,d1
+        move.l  a2,a1
+        move.w  bm_SIZEOF(sp),d2
+        add.w   IG_LEFTEDGE(a3),d2
+        move.w  bm_SIZEOF+2(sp),d3
+        add.w   IG_TOPEDGE(a3),d3
+        move.w  IG_WIDTH(a3),d4
+        move.w  IG_HEIGHT(a3),d5
+        move.l  #$C0,d6
+        jsr     LVO_BLTBITMAPRASTPORT(a6)
+        move.l  IG_NEXTIMAGE(a3),a3
+        bra     .di_img
+.di_done:
+        lea     bm_SIZEOF+4(sp),sp
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; AllocRemember(clé a0, taille d0, drapeaux d1) -> d0 = mémoire | 0 : alloue et chaîne un nœud Remember en tête de
+; *clé. FreeRemember(clé a0, oublier d0) : libère les nœuds (et leur mémoire si oublier != 0), *clé := 0.
+intuition_AllocRemember:
+        movem.l d2-d3/a2/a6,-(sp)
+        move.l  a0,a2
+        move.l  d0,d2
+        move.l  d1,d3
+        move.l  ($4).w,a6
+        moveq   #RM_SIZEOF,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ar_ret
+        move.l  d0,-(sp)
+        move.l  d2,d0
+        move.l  d3,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  (sp)+,a1
+        tst.l   d0
+        bne.s   .ar_ok
+        moveq   #RM_SIZEOF,d0        ; mémoire refusée : rend le nœud
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra.s   .ar_ret
+.ar_ok:
+        move.l  (a2),RM_NEXTREMEMBER(a1)
+        move.l  d2,RM_REMEMBERSIZE(a1)
+        move.l  d0,RM_MEMORY(a1)
+        move.l  a1,(a2)
+.ar_ret:
+        movem.l (sp)+,d2-d3/a2/a6
+        rts
+intuition_FreeRemember:
+        movem.l d2/a2-a3/a6,-(sp)
+        move.l  a0,a2
+        move.l  d0,d2
+        move.l  ($4).w,a6
+        move.l  (a2),a3
+.fr_lp:
+        move.l  a3,d0
+        beq.s   .fr_done
+        tst.l   d2
+        beq.s   .fr_node
+        move.l  RM_MEMORY(a3),a1
+        move.l  RM_REMEMBERSIZE(a3),d0
+        jsr     LVO_FREEMEM(a6)
+.fr_node:
+        move.l  a3,a1
+        move.l  RM_NEXTREMEMBER(a3),a3
+        moveq   #RM_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .fr_lp
+.fr_done:
+        clr.l   (a2)
+        movem.l (sp)+,d2/a2-a3/a6
+        rts
+
+; it_button(d0.w = ie_Code d'un bouton) : appelé par le handler de pointeur. Fenêtre la plus en avant sous le pointeur
+; (écran de tête) : bouton gauche enfoncé sur le gadget de fermeture -> CLOSEWINDOW ; sinon la fenêtre devient active
+; et reçoit MOUSEBUTTONS (SELECTDOWN / SELECTUP, coordonnées relatives à la fenêtre) si elle l'a demandé.
+; Contexte : tâche input.device. Préserve tout.
+it_button:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.w  d0,d7                ; d7 = code
+        move.l  INT_IBASE,d0
+        beq     .bt_ret
+        move.l  d0,a5
+        move.l  IB_FIRSTSCREEN(a5),d0
+        beq     .bt_ret
+        move.l  d0,a4
+        move.w  PTR_X,d4             ; position à l'écran (HIRES : x doublé)
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .bt_lo
+        add.w   d4,d4
+.bt_lo:
+        move.w  PTR_Y,d5
+        move.l  SC_FIRSTWINDOW(a4),a3
+.bt_find:
+        move.l  a3,d0
+        beq     .bt_ret
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2   ; d2/d3 = position relative à la fenêtre
+        bmi.s   .bt_nxt
+        cmp.w   WD_WIDTH(a3),d2
+        bge.s   .bt_nxt
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        bmi.s   .bt_nxt
+        cmp.w   WD_HEIGHT(a3),d3
+        blt.s   .bt_hit
+.bt_nxt:
+        move.l  WD_NEXTWINDOW(a3),a3
+        bra.s   .bt_find
+.bt_hit:
+        cmp.w   #IECODE_LBUTTON,d7
+        bne.s   .bt_mb
+        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE : clic sur le gadget de fermeture ?
+        beq.s   .bt_act
+        cmp.w   #WD_TBARH,d3
+        bge.s   .bt_act
+        cmp.w   #WD_CLOSEW+3,d2
+        bgt.s   .bt_act
+        move.l  #CLOSEWINDOW,d0
+        moveq   #0,d1
+        bsr     wn_sendmsg
+        bra.s   .bt_ret
+.bt_act:
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq.s   .bt_set
+        move.l  d0,a0
+        and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
+.bt_set:
+        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
+        move.l  a3,IB_ACTIVEWINDOW(a5)
+.bt_mb:
+        move.l  #MOUSEBUTTONS,d0
+        moveq   #SELECTDOWN,d1
+        cmp.w   #IECODE_LBUTTON,d7
+        beq.s   .bt_send
+        move.w  #SELECTUP,d1
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne.s   .bt_ret
+.bt_send:
+        bsr     wn_sendmsg
+.bt_ret:
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+; wn_sendmsg(a3 = fenêtre, d0 = classe IDCMP, d1.w = code, d2.w/d3.w = souris relative) : si la fenêtre a demandé
+; cette classe, prend un IntuiMessage libre de sa réserve, l'horodate (compteur VBlank : 50 Hz) et l'envoie sur son
+; UserPort ; réserve épuisée : événement perdu. Clobbe d0/d1/a0/a1/a6.
+wn_sendmsg:
+        move.l  WD_USERPORT(a3),d6
+        beq     .sm_ret
+        and.l   WD_IDCMPFLAGS(a3),d0
+        beq.s   .sm_ret
+        lea     WDX_EMSG(a3),a1
+        moveq   #WDX_NEMSG-1,d6
+.sm_find:
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .sm_free
+        lea     IM_SIZEOF(a1),a1
+        dbra    d6,.sm_find
+        bra.s   .sm_ret
+.sm_free:
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        clr.l   MN_REPLYPORT(a1)
+        move.w  #IM_SIZEOF,MN_LENGTH(a1)
+        move.l  d0,IM_CLASS(a1)
+        move.w  d1,IM_CODE(a1)
+        clr.w   IM_QUALIFIER(a1)
+        move.l  a3,IM_IADDRESS(a1)
+        move.w  d2,IM_MOUSEX(a1)
+        move.w  d3,IM_MOUSEY(a1)
+        move.l  GP_POLLS,d0          ; secondes / microsecondes depuis le démarrage (VBlanks)
+        moveq   #0,d1
+        swap    d0
+        move.w  d0,d1
+        divu    #50,d1               ; division longue en deux temps (le quotient peut dépasser 16 bits)
+        move.w  d1,d6
+        swap    d6
+        swap    d0
+        move.w  d0,d1
+        divu    #50,d1
+        move.w  d1,d6                ; d6 = secondes
+        swap    d1
+        mulu    #20000,d1            ; reste (1/50 s) -> microsecondes
+        move.l  d6,IM_SECONDS(a1)
+        move.l  d1,IM_MICROS(a1)
+        move.l  a3,IM_IDCMPWINDOW(a1)
+        move.l  WD_USERPORT(a3),a0
+        move.l  ($4).w,a6
+        jsr     LVO_PUTMSG(a6)
+.sm_ret:
+        rts
+
+; DoubleClick(secondes d0, micros d1, secondes d2, micros d3) -> d0 = TRUE si le second clic suit le premier de moins
+; que le délai de double-clic des préférences.
+intuition_DoubleClick:
+        sub.l   d0,d2                ; d2 = écart en secondes
+        bmi.s   .dc_no
+        cmp.l   #2,d2
+        bhs.s   .dc_no
+        mulu    #15625,d2            ; secondes -> microsecondes (15625 * 64)
+        lsl.l   #6,d2
+        add.l   d3,d2
+        sub.l   d1,d2                ; d2 = écart en microsecondes
+        bmi.s   .dc_no
+        cmp.l   #IT_DBLCLICK,d2
+        bhs.s   .dc_no
+        moveq   #-1,d0
+        rts
+.dc_no:
+        moveq   #0,d0
+        rts
+IT_DBLCLICK     EQU 1000000          ; délai de double-clic (Preferences par défaut : 1 s)
 
 ; NewScreen du Workbench
 sc_wbnewscreen:
         dc.w    0,0,640,256,2        ; LeftEdge, TopEdge, Width, Height, Depth
-        dc.b    0,1                  ; DetailPen, BlockPen
+        dc.b    2,1                  ; DetailPen (titres et gadgets : noir), BlockPen (barres : blanc)
         dc.w    V_HIRES              ; ViewModes
         dc.w    WBENCHSCREEN         ; Type
         dc.l    0                    ; Font
         dc.l    sc_wbtitle           ; DefaultTitle
         dc.l    0,0                  ; Gadgets, CustomBitMap
-; palette par défaut : 4 couleurs des préférences 1.3 (bleu, blanc, noir, orange), puis couleurs de remplissage
-; (16..19 : pointeur)
+; palette par défaut : thème du projet (fond vert pomme au lieu du bleu des préférences 1.3, blanc, noir, orange), puis
+; couleurs de remplissage (16..19 : pointeur)
 sc_palette:
-        dc.w    $05A,$FFF,$002,$F80,$00F,$F0F,$0FF,$FFF
+        dc.w    SC_BGCOLOR,$FFF,$000,$F80,$00F,$F0F,$0FF,$FFF
         dc.w    $620,$E50,$9F1,$EB0,$55F,$92F,$0F8,$CCC
         dc.w    $000,$E44,$000,$EEC,$444,$555,$666,$777
         dc.w    $888,$999,$AAA,$BBB,$CCC,$DDD,$EEE,$FFF

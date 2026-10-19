@@ -11,6 +11,8 @@ DDFSTRT  EQU CUSTOM+$092      ; display data fetch start
 DDFSTOP  EQU CUSTOM+$094      ; display data fetch stop
 BPLCON0  EQU CUSTOM+$100      ; bitplane control ; bits 14-12 = BPU (nb de bitplanes) ; 0 = fond COLOR00 seul
 BPLCON1  EQU CUSTOM+$102      ; scroll fin (0 = pas de décalage)
+BPLCON2  EQU CUSTOM+$104      ; priorités sprites / playfields
+GFX_BPLCON2 EQU $0024         ; PF2P = PF1P = 4 : tous les sprites devant les playfields
 BPL1MOD  EQU CUSTOM+$108      ; modulo bitplane impair (plans 1,3,5 ; 0 = plans contigus)
 BPL2MOD  EQU CUSTOM+$10A      ; modulo bitplane pair (plans 2,4,6 ; 0 = plans contigus)
 BPL1PTH  EQU CUSTOM+$0E0      ; pointeur bitplane 1, mot HAUT ; BPLxPTH = BPL1PTH + (x-1)*4 (généré au runtime)
@@ -58,7 +60,7 @@ BOOTSCR_ONE_PLANE EQU 0
 ; structures View/ViewPort/BitMap/ColorMap — le template copper codé en dur de M4a/M4b est SUPPRIMÉ. La preuve
 ; « GREEN=rayures » vaut par ÉLIMINATION : plus aucun autre chemin ne dessine les rayures. Les gates M4A_NO_COPPER
 ; et M4B_NO_BITPLANE (qui gataient ce template) sont donc RETIRÉS.
-GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER)  ; activé par LoadView
+GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER|DMAF_SPRITE)  ; activé par LoadView
 GFX_HIRES_BIT EQU $8000        ; BPLCON0 bit 15 (HIRES), posé si vp_Modes a le bit HIRES ($8000)
 GFX_COLOR_BIT EQU $0200        ; BPLCON0 bit 9 (COLOR composite) ; BPLCON0 généré = (depth<<12) | GFX_COLOR_BIT
 ; M4C2_NO_MRGCOP=1 (RED M4c2) : MrgCop ne fusionne PAS les fragments vp_DspIns -> v_LOFCprList ne contient que
@@ -135,20 +137,40 @@ LVO_SETDRMD   EQU -354
 LVO_INITBITMAP EQU -390
 LVO_SCROLLRASTER EQU -396
 LVO_FREEVPORTCOPLISTS EQU -540
+LVO_GETSPRITE EQU -408
+LVO_BLTBITMAPRASTPORT EQU -606
+LVO_CHANGESPRITE EQU -420
+LVO_MOVESPRITE EQU -426
 V_HIRES       EQU $8000        ; vp_Modes : haute résolution (640 px)
 
 ; --- GfxBase : champs minimaux (au-delà de la base Library) ---
 gb_ActiView  EQU LIB_SIZE     ; APTR : View actif (posé par LoadView)
 gb_LOFlist   EQU LIB_SIZE+4   ; APTR : copper list courante
-GFXBASE_SIZE EQU LIB_SIZE+8
+; champs privés : sprites matériels
+gb_SprNull   EQU LIB_SIZE+8   ; APTR : sprite vide (chip, POS/CTL = 0) pour les canaux sans image
+gb_SprCop    EQU LIB_SIZE+12  ; APTR : mot de valeur de SPR0PTH dans la liste copper chargée (0 = aucune)
+gb_SprData   EQU LIB_SIZE+16  ; 8 x APTR : données (POS/CTL + image) de chaque canal, 0 = sprite vide
+gb_SprUsed   EQU LIB_SIZE+48  ; WORD : canaux réservés par GetSprite (bit n = canal n)
+GFXBASE_SIZE EQU LIB_SIZE+50
+
+; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---
+ss_posctldata EQU 0           ; APTR : POS, CTL, image (2 mots par ligne), 0, 0
+ss_height    EQU 4
+ss_x         EQU 6
+ss_y         EQU 8
+ss_num       EQU 10
+ss_SIZEOF    EQU 12
+SPR0PTH      EQU CUSTOM+$120  ; SPRxPTH = SPR0PTH + x*4
+DMAF_SPRITE  EQU $0020
 
 ; --- Tailles des listes copper générées (chip RAM) ---
-; MakeVPort est générique : DIW/DDF (4) + BPLCON0/1/BPL1MOD/BPL2MOD (4) + depth*2 (pointeurs de plan) + Count
-; (couleurs) MOVEs. Dimensionné pour le pire cas de ce projet (6 plans + 32 couleurs = 52 MOVEs = 104 mots) ;
+; MakeVPort est générique : DIW/DDF (4) + BPLCON0/1/2/BPL1MOD/BPL2MOD (5) + depth*2 (pointeurs de plan) + Count
+; (couleurs) MOVEs. Dimensionné pour le pire cas de ce projet (6 plans + 32 couleurs = 53 MOVEs = 106 mots) ;
 ; MrgCop copie le fragment entier -> le reliquat mis à 0 (MEMF_CLEAR) = MOVEs inertes vers BLTDDAT, inoffensifs.
-GFX_FRAG_WORDS EQU 104
+GFX_FRAG_WORDS EQU 106
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
-GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+4   ; + WAIT final ajouté par MrgCop
+GFX_SPRCOP_SIZE EQU 8*2*4            ; SPR0PTH/L..SPR7PTH/L : 16 MOVEs ajoutés par MrgCop
+GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+GFX_SPRCOP_SIZE+4   ; + WAIT final ajouté par MrgCop
 
 ; --- Layout du bloc de structures AllocMem'd par gfx_display_init ---
 GFX_O_VIEW     EQU 0

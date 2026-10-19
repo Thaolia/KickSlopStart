@@ -26,7 +26,7 @@
 build_reslist:
         movem.l d2-d6/a2-a4,-(sp)
         move.l  #(RESMAX+1)*4,d0     ; RESMAX pointeurs + 1 terminateur NUL
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,a3                ; a3 = base du tableau
         move.l  d0,EB_RESMODULES(a6)

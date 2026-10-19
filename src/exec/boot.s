@@ -39,6 +39,7 @@
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
                 xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
+                xref    td_disk_present  ; exec/trackdisk.s (écran insert-disk : disquette insérée ?)
                 xref    ofs_read_file    ; dos/ofs.s (D1 : lecture seule OFS -> lire un fichier par nom)
                 xref    dos_loadseg      ; dos/loadseg.s (D2 : charger un exécutable hunk de l'OFS + reloc)
                 xref    dos_unloadseg    ; dos/loadseg.s (D2 : libérer une seglist)
@@ -1147,8 +1148,6 @@ d2_done:
         tst.l   d0
         beq     .con_done
         move.l  d0,a2                    ; a2 = base console.device
-        move.l  CONB_BITMAP(a2),d0       ; bitplane alloué à l'init ?
-        beq     .con_done
         move.l  #64,d0                   ; ioreq (48 -> arrondi 64)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -1165,7 +1164,9 @@ d2_done:
         jsr     -30(a6)                  ; console BeginIO (CMD_WRITE -> blit dans le bitplane)
         move.l  ($4).w,a6
         ; readback : chaque cellule (col, lignes 0..7) == glyphe de font8x8 du char correspondant ?
-        move.l  CONB_BITMAP(a2),a5       ; a5 = bitplane
+        move.l  CONB_BITMAP(a2),d0       ; bitplane alloué par la 1re écriture ?
+        beq     .con_free
+        move.l  d0,a5                    ; a5 = bitplane
         moveq   #0,d4
         move.w  CONB_BWIDTH(a2),d4       ; d4 = stride
         lea     con_test_str(pc),a4      ; a4 = string rendue
@@ -1717,10 +1718,16 @@ d2_done:
         lea     msg_m6s_ok(pc),a0
         bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
         bsr     m6r_wire_requester   ; câblage LIVE : handlers pointeur+requester PERSISTANTS sur input.device
+        lea     dw_name(pc),a0       ; surveillance de DF0: : une disquette insérée redémarre la machine (boot)
+        move.l  #disk_watch,a1
+        moveq   #-1,d0
+        move.l  #DW_STK,d1
+        jsr     proc_create
         bra.s   .strap_done
 .m6r_booted:
         lea     msg_m6y_ok(pc),a0
         bsr     ser_puts             ; « M6Y STRAP BOOTED OK » (bootblock exécuté ; CBOOT émis par le bootblock)
+        bsr     ptr_wire             ; souris : pointeur à l'écran (sprite) dans le système tournant
         ; --- F1 : disque BOOTABLE -> créer l'Initial CLI (shell). GATÉ sur le boot (c'est la ligne F vs E) :
         ; sur un disque non bootable (branche M6R insert-disk), AUCUN Initial CLI n'est créé. Le shell exécute
         ; d'abord s:startup-sequence (racine) puis passe à l'invite interactive. a6 = SysBase (strap l'a restauré).
@@ -3279,14 +3286,14 @@ d3j_client:
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
 mk_demo_task:
         move.l  #TC_SIZE,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1 ; pas de DMA : slow RAM d'abord (la chip reste aux programmes)
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,a4                ; a4 = TCB
         move.l  a3,LN_NAME(a4)
         move.b  d2,LN_PRI(a4)
         move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)  ; bits 0-15 réservés -> AllocSignal rend 16+ (task_timer)
         move.l  #DEMO_STK,d0
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,TC_SPLOWER(a4)
         add.l   #DEMO_STK,d0
@@ -3884,6 +3891,73 @@ gp_cap_handler:
         move.l  a0,d0
         rts
 
+; disk_watch : process de l'écran insert-disk (pri -1). Toutes les DW_TICKS : td_disk_present ; une disquette
+; insérée (lecteur vu vide auparavant) -> redémarrage à froid (Supervisor : RESET puis saut à l'entrée de la ROM) : le boot la trouve alors comme
+; à la mise sous tension. Ne revient pas.
+DW_TICKS        EQU 25               ; 0,5 s entre deux sondages
+DW_STK          EQU 1024
+disk_watch:
+        move.l  ($4).w,a6
+        moveq   #0,d7                ; d7 != 0 : lecteur vu vide (une disquette non amorçable déjà présente ne
+.dw_lp:                              ; redémarre pas la machine : il faut la retirer puis en insérer une)
+        move.l  DOS_DOSBASE,a6
+        moveq   #DW_TICKS,d1
+        jsr     DOS_LVO_DELAY(a6)
+        move.l  ($4).w,a6
+        jsr     td_disk_present
+        tst.l   d0
+        bne.s   .dw_in
+        moveq   #-1,d7
+        bra.s   .dw_lp
+.dw_in:
+        tst.l   d7
+        beq.s   .dw_lp
+        lea     dw_reboot(pc),a5
+        jsr     LVO_SUPERVISOR(a6)   ; ne revient pas
+        bra.s   .dw_lp
+; dw_reboot (superviseur) : RESET réinitialise les puces (l'overlay remet la ROM en $0) ; le JMP doit être dans le
+; même mot long que le RESET (déjà préchargé). Entrée = PC initial de la ROM (long en $FC0004).
+        cnop    0,4
+dw_reboot:
+        move.w  #$2700,sr
+        move.l  ($FC0004).l,a0
+        bra.s   dw_rst
+        cnop    0,4
+dw_rst:
+        reset
+        jmp     (a0)
+dw_name:
+        dc.b    "DF0 watch",0
+        even
+
+; ptr_wire : installe le handler de pointeur PERSISTANT (PTR_INT, pri 50) sur input.device : deltas RAWMOUSE ->
+; position absolue PTR_X/PTR_Y + sprite du pointeur. Appelé sur les deux branches de boot (insert-disk et disquette).
+; a6 = SysBase. Préserve d2-d7/a2-a6.
+ptr_wire:
+        movem.l a2/a4,-(sp)
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .pw_ret
+        move.l  d0,a4
+        clr.l   PTR_INT+LN_SUCC          ; struct Interrupt pointeur (pri 50), RAM basse réservée
+        move.b  #50,PTR_INT+LN_PRI
+        clr.l   PTR_INT+IS_DATA
+        move.l  #pointer_input_handler,PTR_INT+IS_CODE
+        lea     -48(sp),sp               ; IOStdReq scratch
+        move.l  sp,a1
+        move.l  a4,IO_DEVICE(a1)
+        move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
+        move.l  #PTR_INT,INP_IO_DATA(a1)
+        move.l  a4,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        lea     48(sp),sp
+.pw_ret:
+        movem.l (sp)+,a2/a4
+        rts
+
 ; m6r_wire_requester : câble les handlers CONSOMMATEURS (pointeur pri 50 + requester pri 0) PERSISTANTS sur
 ; input.device (PAS de teardown) -> la chaîne gameport -> input.device -> pointeur -> requester vit dans le
 ; système tournant (symétrique du producteur gp_vblank_server persistant). Puis self-check SYNCHRONE : injecte via
@@ -3897,18 +3971,13 @@ m6r_wire_requester:
         tst.l   d0
         beq     .mw_ret
         move.l  d0,a4                    ; a4 = input.device base
-        clr.l   PTR_INT+LN_SUCC          ; struct Interrupt pointeur (pri 50), RAM basse réservée
-        move.b  #50,PTR_INT+LN_PRI
-        clr.l   PTR_INT+IS_DATA
-        move.l  #pointer_input_handler,PTR_INT+IS_CODE
+        bsr     ptr_wire                 ; handler pointeur pri 50 (PERSISTANT)
         clr.l   REQ_INT+LN_SUCC          ; struct Interrupt requester (pri 0)
         clr.b   REQ_INT+LN_PRI
         clr.l   REQ_INT+IS_DATA
         move.l  #req_input_handler,REQ_INT+IS_CODE
         lea     -48(sp),sp               ; IOStdReq scratch
         move.l  sp,a2                    ; a2 = ioreq
-        lea     PTR_INT,a0               ; ADDHANDLER pointeur (PERSISTANT, pas de REMHANDLER)
-        bsr.s   .mw_add
         lea     REQ_INT,a0               ; ADDHANDLER requester (PERSISTANT)
         bsr.s   .mw_add
         clr.w   PTR_X                    ; self-check : les handlers persistants répondent-ils ?

@@ -4,7 +4,8 @@
 ; handler par un console.device sans toucher au binaire shell (le shell fait tout son IO via FileHandles DOS).
 ;
 ; Actions servies :
-;   FINDINPUT / FINDOUTPUT (ouvrir « CON: ») -> RES1 = clé non-nulle (console globale, pas d'état par-handle).
+;   FINDINPUT / FINDOUTPUT (ouvrir « CON: ») -> RES1 = clé non-nulle (console globale, pas d'état par-handle). Un nom
+;                                               « CON:x/y/l/h/titre » ouvre en plus la fenêtre console (con_openwin).
 ;   WRITE (ARG1=clé, ARG2=src, ARG3=len)     -> émet len octets sur le série (TX, poll TBE borné). RES1 = len.
 ;   READ  (ARG1=clé, ARG2=dest, ARG3=len)    -> lit UNE LIGNE jusqu'au CR, avec écho. RES1 = octets. Sources
 ;                                               d'entrée : le ring clavier LIVE (F2b, con_ring_get) PUIS le RBF série.
@@ -42,7 +43,27 @@ CS_CNT          EQU 24               ; LONG octets accumulés par READ
 CS_CONBASE      EQU 28               ; APTR base console.device
 CS_ECHO         EQU 32               ; BYTE tampon d'écho 1 octet (CMD_WRITE écran)
 CS_CONIO        EQU 36               ; IOStdReq (48) pour BeginIO console.device
-CS_SIZE         EQU 84
+; fenêtre console (ouverture d'un nom « CON:x/y/l/h/titre », ex. le CLI initial « AmigaSlopDOS ») : sortie et écho
+; rendus dans la fenêtre par console.device (le miroir série reste) ; fermée au dernier END d'un flux nommé.
+CS_WIN          EQU 84               ; APTR Window | 0
+CS_OPENS        EQU 88               ; LONG flux nommés ouverts
+CS_NOKBD        EQU 92               ; BYTE fenêtre fermée (endcli) : READ ne lit plus le clavier, seulement le série
+CS_WECHO        EQU 93               ; BYTE tampon d'écho 1 octet (fenêtre)
+CS_WIO          EQU 96               ; IOStdReq (48) console.device sur la fenêtre
+CS_NW           EQU 144              ; NewWindow (48)
+CS_TITLE        EQU 192              ; titre (chaîne C, CS_TITLEMAX octets)
+CS_TITLEMAX     EQU 32
+CS_SIZE         EQU CS_TITLE+CS_TITLEMAX
+; NewWindow (intuition/intuition.h) et constantes de fenêtre console
+NW_LEFTEDGE     EQU 0
+NW_DETAILPEN    EQU 8
+NW_FLAGS        EQU 14
+NW_TITLE        EQU 26
+NW_MINWIDTH     EQU 38
+NW_TYPE         EQU 46
+CON_WINFLAGS    EQU $00021007        ; SIZING, DRAG, DEPTH, ACTIVATE, NOCAREREFRESH (fenêtre CON: standard)
+CON_WBSCREEN    EQU 1                ; nw_Type WBENCHSCREEN
+IOF_QUICK       EQU 1
 
 ; con_handler : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
 con_handler:
@@ -132,9 +153,26 @@ con_handler:
 
 .open:
                 move.l  #1,DP_RES1(a4)       ; clé non-nulle (console globale)
+                move.l  CON_STATE,d0
+                beq     .reply
+                move.l  d0,a0
+                move.l  DP_ARG3(a4),d0       ; nom (BSTR) : seules les ouvertures nommées sont comptées
+                beq     .reply
+                addq.l  #1,CS_OPENS(a0)
+                tst.l   CS_WIN(a0)
+                bne     .reply
+                bsr     con_openwin          ; « CON:x/y/l/h/titre » -> fenêtre (sinon rien)
                 bra     .reply
 .end:
                 move.l  #DOSTRUE,DP_RES1(a4)
+                move.l  CON_STATE,d0
+                beq     .reply
+                move.l  d0,a0
+                tst.l   CS_OPENS(a0)
+                beq     .reply
+                subq.l  #1,CS_OPENS(a0)
+                bne     .reply
+                bsr     con_closewin         ; dernier flux nommé fermé (endcli du CLI initial)
                 bra     .reply
 
 .write:
@@ -143,6 +181,9 @@ con_handler:
                 bra     .reply
                 endc
                 move.l  DP_ARG3(a4),DP_RES1(a4)  ; RES1 = len
+                move.l  DP_ARG2(a4),a0
+                move.l  DP_ARG3(a4),d0
+                bsr     con_win_write        ; fenêtre console (si ouverte)
                 ifne    SHELL_ON_SCREEN
                 ; item 2 : rend le buffer ENTIER à l'écran via console.device CMD_WRITE (le miroir série suit)
                 move.l  CON_STATE,a0
@@ -187,8 +228,12 @@ con_handler:
                 bsr     con_scr_read         ; item 2 : source = console.device CMD_READ (clavier via feeder)
                 beq.s   .rd_tick             ; rien ce tick -> attendre le prochain
                 else
+                move.l  CON_STATE,a0
+                tst.b   CS_NOKBD(a0)
+                bne.s   .rd_ser              ; fenêtre fermée : le clavier appartient aux fenêtres de l'écran
                 bsr     con_ring_get         ; F2b : clavier LIVE d'abord (ring SPSC, consommateur)
                 bne.s   .rd_got              ; une touche dispo -> d0.b = ASCII
+.rd_ser:
                 move.w  SERDATR,d0
                 btst    #14,d0               ; sinon RBF série : octet reçu ?
                 beq.s   .rd_tick             ; rien des deux ce tick -> attendre le prochain
@@ -198,6 +243,8 @@ con_handler:
 .rd_got:
                 move.l  d0,d4                ; d4 = octet (survit con_putc)
                 bsr     con_putc             ; écho série (miroir)
+                move.b  d4,d0
+                bsr     con_win_emit         ; écho fenêtre
                 ifne    SHELL_ON_SCREEN
                 move.b  d4,d0
                 bsr     con_scr_emit         ; écho écran
@@ -206,6 +253,8 @@ con_handler:
                 bne.s   .rd_store
                 moveq   #10,d0               ; CR -> aussi LF pour l'affichage
                 bsr     con_putc
+                moveq   #10,d0
+                bsr     con_win_emit
                 ifne    SHELL_ON_SCREEN
                 moveq   #10,d0
                 bsr     con_scr_emit         ; CR -> LF à l'écran aussi
@@ -350,6 +399,171 @@ con_consolename:
                 EVEN
                 endc
 
+; con_openwin(a0 = état, d0 = BPTR du nom BSTR) : nom « CON:x/y/l/h/titre » -> NewWindow (pens de l'écran, drapeaux
+; d'une fenêtre CON:, écran Workbench) + OpenWindow + console.device sur la fenêtre (CS_WIO). Autre nom ou échec :
+; rien (la sortie reste sur le série). a6 = SysBase. Préserve d2-d7/a2-a6.
+con_openwin:
+                movem.l d2-d4/a2-a3/a5,-(sp)
+                move.l  a0,a5                ; a5 = état
+                lsl.l   #2,d0
+                move.l  d0,a2                ; a2 = BSTR
+                moveq   #0,d3
+                move.b  (a2)+,d3             ; d3 = longueur restante
+                cmp.w   #4,d3
+                blo     .ow_ret
+                move.b  (a2)+,d0             ; préfixe « CON: » (insensible à la casse)
+                and.b   #$DF,d0
+                cmp.b   #'C',d0
+                bne     .ow_ret
+                move.b  (a2)+,d0
+                and.b   #$DF,d0
+                cmp.b   #'O',d0
+                bne     .ow_ret
+                move.b  (a2)+,d0
+                and.b   #$DF,d0
+                cmp.b   #'N',d0
+                bne     .ow_ret
+                cmp.b   #':',(a2)+
+                bne     .ow_ret
+                subq.w  #4,d3
+                lea     CS_NW(a5),a3         ; 4 nombres décimaux séparés par '/' -> Left, Top, Width, Height
+                moveq   #3,d4
+.ow_num:
+                moveq   #0,d1
+.ow_dig:
+                tst.w   d3
+                beq     .ow_ret              ; spécification incomplète
+                subq.w  #1,d3
+                moveq   #0,d0
+                move.b  (a2)+,d0
+                cmp.b   #'/',d0
+                beq.s   .ow_sep
+                sub.b   #'0',d0
+                cmp.b   #9,d0
+                bhi     .ow_ret
+                mulu    #10,d1
+                add.w   d0,d1
+                bra.s   .ow_dig
+.ow_sep:
+                move.w  d1,(a3)+
+                dbra    d4,.ow_num
+                lea     CS_TITLE(a5),a0      ; titre = le reste
+                moveq   #CS_TITLEMAX-2,d0
+.ow_tcpy:
+                tst.w   d3
+                beq.s   .ow_tend
+                subq.w  #1,d3
+                move.b  (a2)+,(a0)+
+                dbra    d0,.ow_tcpy
+.ow_tend:
+                clr.b   (a0)
+                lea     CS_NW(a5),a0
+                move.w  #$FFFF,NW_DETAILPEN(a0)  ; DetailPen = BlockPen = -1 : ceux de l'écran
+                move.l  #CON_WINFLAGS,NW_FLAGS(a0)
+                lea     CS_TITLE(a5),a1
+                move.l  a1,NW_TITLE(a0)
+                move.l  #$00780032,NW_MINWIDTH(a0)   ; MinWidth 120, MinHeight 50
+                move.l  #$FFFFFFFF,NW_MINWIDTH+4(a0) ; MaxWidth/MaxHeight sans limite
+                move.w  #CON_WBSCREEN,NW_TYPE(a0)
+                lea     con_intname(pc),a1
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq.s   .ow_ret
+                move.l  d0,a3                ; a3 = IntuitionBase
+                lea     CS_NW(a5),a0
+                move.l  a6,-(sp)
+                move.l  a3,a6
+                jsr     LVO_OPENWINDOW(a6)
+                move.l  (sp)+,a6
+                tst.l   d0
+                beq.s   .ow_close
+                move.l  d0,d2                ; d2 = fenêtre
+                lea     CS_WIO(a5),a1
+                move.l  d2,CON_IODATA(a1)
+                lea     con_cdevname(pc),a0
+                moveq   #0,d0
+                moveq   #0,d1
+                jsr     LVO_OPENDEVICE(a6)
+                tst.l   d0
+                bne.s   .ow_nodev
+                move.l  d2,CS_WIN(a5)
+                bra.s   .ow_close            ; IntuitionBase reste ouverte par la fenêtre (CloseWindow)
+.ow_nodev:
+                move.l  d2,a0
+                move.l  a6,-(sp)
+                move.l  a3,a6
+                jsr     LVO_CLOSEWINDOW(a6)
+                move.l  (sp)+,a6
+.ow_close:
+.ow_ret:
+                movem.l (sp)+,d2-d4/a2-a3/a5
+                rts
+
+; con_closewin(a0 = état) : ferme console.device et la fenêtre ; READ cesse ensuite de lire le clavier.
+; a6 = SysBase. Préserve d2-d7/a2-a6.
+con_closewin:
+                movem.l a2-a3,-(sp)
+                move.l  a0,a2
+                move.l  CS_WIN(a2),d0
+                beq.s   .cw_ret
+                lea     CS_WIO(a2),a1
+                jsr     LVO_CLOSEDEVICE(a6)
+                lea     con_intname(pc),a1
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq.s   .cw_ret
+                move.l  d0,a3
+                move.l  CS_WIN(a2),a0
+                clr.l   CS_WIN(a2)
+                st      CS_NOKBD(a2)
+                move.l  a6,-(sp)
+                move.l  a3,a6
+                jsr     LVO_CLOSEWINDOW(a6)
+                move.l  (sp)+,a6
+                move.l  a3,a1
+                jsr     LVO_CLOSELIBRARY(a6)
+.cw_ret:
+                movem.l (sp)+,a2-a3
+                rts
+
+; con_win_write(a0 = données, d0 = longueur) : CMD_WRITE sur la fenêtre console (IOF_QUICK : terminé au retour).
+; a6 = SysBase. Préserve d2-d7/a2-a6.
+con_win_write:
+                move.l  CON_STATE,d1
+                beq.s   .ww_ret
+                move.l  d1,a1
+                tst.l   CS_WIN(a1)
+                beq.s   .ww_ret
+                lea     CS_WIO(a1),a1
+                move.w  #CON_CMD_WRITE,IO_COMMAND(a1)
+                move.b  #IOF_QUICK,IO_FLAGS(a1)
+                move.l  a0,CON_IODATA(a1)
+                move.l  d0,CON_IOLEN(a1)
+                move.l  a6,-(sp)
+                move.l  IO_DEVICE(a1),a6
+                jsr     -30(a6)              ; BeginIO
+                move.l  (sp)+,a6
+.ww_ret:
+                rts
+
+; con_win_emit(d0.b) : un octet sur la fenêtre console. Préserve d2-d7/a2-a6.
+con_win_emit:
+                move.l  CON_STATE,d1
+                beq.s   .we_ret
+                move.l  d1,a1
+                move.b  d0,CS_WECHO(a1)
+                lea     CS_WECHO(a1),a0
+                moveq   #1,d0
+                bra.s   con_win_write
+.we_ret:
+                rts
+
+con_intname:
+                dc.b    "intuition.library",0
+con_cdevname:
+                dc.b    "console.device",0
 con_timername:
                 dc.b    "timer.device",0
                 EVEN

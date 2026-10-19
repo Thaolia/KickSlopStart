@@ -26,6 +26,7 @@
                 xdef    gfx_SetFont
                 xdef    gfx_InitRastPort
                 xdef    gfx_InitBitMap
+                xdef    gfx_BltBitMapRastPort
                 xref    font8x8
 
 ; --- contexte de dessin (sur la pile, pointé par a5) ---
@@ -721,4 +722,163 @@ gfx_ScrollRaster:
         not.b   d0
         and.b   d0,(a3)
         or.b    d1,(a3)+
+        rts
+
+; BltBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, largeur d4, hauteur d5, minterm d6) :
+; copie le rectangle source dans le RastPort (relatif au Layer, découpé au contexte), plan par plan selon rp_Mask.
+; Seul le minterm de copie ($C0) est rendu (les autres sont traités comme une copie). Plan source NULL = tout à 0,
+; -1 = tout à 1 (les plans au-delà de la profondeur source valent 0). Rendu CPU octet par octet, bords masqués.
+gfx_BltBitMapRastPort:
+        movem.l d2-d7/a2-a5,-(sp)
+        lea     -DC_SIZE(sp),sp
+        move.l  sp,a5
+        move.l  a0,a4                ; a4 = BitMap source
+        movem.w d0-d1,-(sp)
+        bsr     dr_ctx
+        movem.w (sp)+,d0-d1
+        add.w   DC_OX(a5),d2
+        add.w   DC_OY(a5),d3
+        move.w  DC_MINX(a5),d6       ; découpage gauche/haut : décale aussi la source
+        sub.w   d2,d6
+        ble.s   .bb_l
+        add.w   d6,d0
+        sub.w   d6,d4
+        add.w   d6,d2
+.bb_l:
+        move.w  DC_MINY(a5),d6
+        sub.w   d3,d6
+        ble.s   .bb_t
+        add.w   d6,d1
+        sub.w   d6,d5
+        add.w   d6,d3
+.bb_t:
+        move.w  DC_MAXX(a5),d6       ; découpage droit/bas
+        sub.w   d2,d6
+        addq.w  #1,d6
+        cmp.w   d6,d4
+        ble.s   .bb_r
+        move.w  d6,d4
+.bb_r:
+        move.w  DC_MAXY(a5),d6
+        sub.w   d3,d6
+        addq.w  #1,d6
+        cmp.w   d6,d5
+        ble.s   .bb_b
+        move.w  d6,d5
+.bb_b:
+        tst.w   d4
+        ble     .bb_ret
+        tst.w   d5
+        ble     .bb_ret
+        move.l  DC_BM(a5),a3         ; a3 = BitMap destination
+        moveq   #0,d7                ; d7 = plan
+.bb_plane:
+        moveq   #0,d6
+        move.b  bm_Depth(a3),d6
+        cmp.w   d6,d7
+        bge     .bb_ret
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d6
+        btst    d7,d6
+        beq     .bb_pnext
+        moveq   #0,d6                ; a2 = plan source (0 / -1 / adresse)
+        move.b  bm_Depth(a4),d6
+        sub.l   a2,a2
+        cmp.w   d6,d7
+        bge.s   .bb_src
+        move.w  d7,d6
+        lsl.w   #2,d6
+        move.l  bm_Planes(a4,d6.w),a2
+.bb_src:
+        movem.l d0-d5/d7/a2,-(sp)    ; lignes : d1 = ligne source, d3 = ligne destination, d5 = compteur
+.bb_row:
+        movem.l d0-d5/d7/a2,-(sp)
+        move.l  a2,d6                ; adresse de la ligne source (sauf plan constant)
+        beq.s   .bb_const
+        cmp.l   #-1,d6
+        beq.s   .bb_const
+        moveq   #0,d6
+        move.w  bm_BytesPerRow(a4),d6
+        mulu    d1,d6
+        add.l   d6,a2
+.bb_const:
+        move.w  d7,d6                ; a1 = ligne destination
+        lsl.w   #2,d6
+        move.l  bm_Planes(a3,d6.w),a1
+        moveq   #0,d6
+        move.w  bm_BytesPerRow(a3),d6
+        mulu    d3,d6
+        add.l   d6,a1
+        bsr     .bb_bits
+        movem.l (sp)+,d0-d5/d7/a2
+        addq.w  #1,d1
+        addq.w  #1,d3
+        subq.w  #1,d5
+        bne.s   .bb_row
+        movem.l (sp)+,d0-d5/d7/a2
+.bb_pnext:
+        addq.w  #1,d7
+        bra     .bb_plane
+.bb_ret:
+        lea     DC_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a2-a5
+        rts
+; .bb_bits(a2 = ligne source | 0 | -1, d0 = bit source, a1 = ligne destination, d2 = bit destination, d4 = largeur) :
+; copie d4 bits. Pour chaque octet destination : 8 bits source alignés (deux octets lus puis décalés), masques de bord
+; calculés une fois. Clobbe d0-d7/a0.
+.bb_bits:
+        move.w  d2,d5
+        lsr.w   #3,d5                ; d5 = octet destination courant (le premier)
+        move.w  d5,-(sp)             ; (sp) = premier octet
+        move.w  d2,d7
+        add.w   d4,d7
+        subq.w  #1,d7                ; d7 = dernier bit destination
+        moveq   #-1,d1               ; d1.b = masque du premier octet : pixels >= destX
+        move.w  d2,d3
+        and.w   #7,d3
+        lsr.b   d3,d1
+        move.w  d7,d3                ; d2.b = masque du dernier octet : pixels <= dernier bit
+        and.w   #7,d3
+        moveq   #7,d4
+        sub.w   d3,d4
+        sub.w   d2,d0                ; d0 = bit source - bit destination
+        moveq   #-1,d2
+        lsl.b   d4,d2
+        lsr.w   #3,d7                ; d7 = dernier octet destination
+.bt_byte:
+        moveq   #-1,d6               ; d6.b = masque de l'octet
+        cmp.w   (sp),d5
+        bne.s   .bt_nf
+        and.b   d1,d6
+.bt_nf:
+        cmp.w   d7,d5
+        bne.s   .bt_nl
+        and.b   d2,d6
+.bt_nl:
+        move.l  a2,d4
+        beq.s   .bt_put              ; plan source nul : 0
+        moveq   #-1,d4
+        cmp.l   a2,d4
+        beq.s   .bt_put              ; plan source -1 : 1
+        move.w  d5,d3                ; bit source du pixel de gauche de l'octet
+        lsl.w   #3,d3
+        add.w   d0,d3
+        move.w  d3,d4
+        asr.w   #3,d4                ; octet source (-1 possible au bord gauche : bits masqués)
+        lea     0(a2,d4.w),a0
+        move.b  (a0)+,d4
+        lsl.w   #8,d4
+        move.b  (a0),d4
+        and.w   #7,d3
+        lsl.w   d3,d4
+        lsr.w   #8,d4
+.bt_put:
+        and.b   d6,d4
+        not.b   d6
+        and.b   d6,0(a1,d5.w)
+        or.b    d4,0(a1,d5.w)
+        addq.w  #1,d5
+        cmp.w   d7,d5
+        ble.s   .bt_byte
+        addq.l  #2,sp
         rts

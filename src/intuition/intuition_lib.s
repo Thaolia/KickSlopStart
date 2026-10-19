@@ -15,6 +15,11 @@
                 xref    intuition_GetScreenData
                 xref    intuition_OpenWindow
                 xref    intuition_CloseWindow
+                xref    it_ptrinit               ; pointer.s : sprite du pointeur
+                xref    intuition_DrawImage      ; screens.s
+                xref    intuition_AllocRemember
+                xref    intuition_FreeRemember
+                xref    intuition_DoubleClick
 
 ; --- ROMTag intuition.library (scanné par build_reslist) ---
         EVEN
@@ -44,7 +49,11 @@ intuition_vectors:
         dcb.l   6,intuition_null         ; 5..10 : LVO -30..-60 (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
-        dcb.l   8,intuition_null         ; 13..20 : LVO -78..-120 (non impl. : DisplayAlert -90 inclus)
+        dcb.l   4,intuition_null         ; 13..16 : LVO -78..-96 (non impl. : DisplayAlert -90 inclus)
+        dc.l    intuition_DoubleClick    ; 17 : LVO -102 DoubleClick(s1 d0, µs1 d1, s2 d2, µs2 d3)
+        dc.l    intuition_null           ; 18 : LVO -108 DrawBorder (non impl.)
+        dc.l    intuition_DrawImage      ; 19 : LVO -114 DrawImage(rp a0, image a1, x d0, y d1)
+        dc.l    intuition_null           ; 20 : LVO -120 EndRequest (non impl.)
         dc.l    intuition_GetPrefs       ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
         dcb.l   10,intuition_null        ; 23..32 : LVO -138..-192 (non impl.)
@@ -53,7 +62,11 @@ intuition_vectors:
         dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
         dcb.l   13,intuition_null        ; 36..48 : LVO -216..-288 (non impl.)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
-        dcb.l   21,intuition_null        ; 50..70 : LVO -300..-420 (non impl.)
+        dcb.l   16,intuition_null        ; 50..65 : LVO -300..-390 (non impl.)
+        dc.l    intuition_AllocRemember  ; 66 : LVO -396 AllocRemember(clé a0, taille d0, drapeaux d1)
+        dc.l    intuition_null           ; 67 : LVO -402 AlohaWorkbench (non impl.)
+        dc.l    intuition_FreeRemember   ; 68 : LVO -408 FreeRemember(clé a0, oublier d0)
+        dcb.l   2,intuition_null         ; 69..70 : LVO -414..-420 (non impl.)
         dc.l    intuition_GetScreenData  ; 71 : LVO -426 GetScreenData(buffer a0, taille d0, type d1, écran a1)
         dcb.l   7,intuition_null         ; 72..78 : LVO -432..-468 (non impl. : jeu V34 complet, jusqu'à NewModifyProp)
         dc.l    -1
@@ -141,8 +154,8 @@ intuition_ViewAddress:
         endc
         rts
 
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34) et retient GfxBase
-; (graphics.library, pri 65, est initialisée avant intuition, pri 10).
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34), retient GfxBase
+; (graphics.library, pri 65, est initialisée avant intuition, pri 10) et installe le pointeur.
 intuition_initfunc:
         move.l  a2,-(sp)
         move.l  d0,a2
@@ -152,6 +165,7 @@ intuition_initfunc:
         lea     intuition_gfxname(pc),a1
         jsr     LVO_FINDNAME(a6)
         move.l  d0,IB_GFXBASE(a2)
+        jsr     it_ptrinit           ; pointer.s : sprite du pointeur
         move.l  a2,d0
         move.l  (sp)+,a2
         rts

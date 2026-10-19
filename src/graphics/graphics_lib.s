@@ -29,6 +29,7 @@
                 xref    gfx_SetDrMd
                 xref    gfx_InitBitMap
                 xref    gfx_ScrollRaster
+                xref    gfx_BltBitMapRastPort
 graphics_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    graphics_romtag          ; RT_MATCHTAG = self
@@ -81,13 +82,20 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dcb.l   5,graphics_null         ; 60..64 : LVO -360..-384 (non implémentés)
         dc.l    gfx_InitBitMap           ; 65 : LVO -390
         dc.l    gfx_ScrollRaster         ; 66 : LVO -396
-        dcb.l   9,graphics_null         ; 67..75 : LVO -402..-450 (non implémentés)
+        dc.l    graphics_null            ; 67 : LVO -402 WaitBOVP (non implémenté)
+        dc.l    gfx_GetSprite            ; 68 : LVO -408
+        dc.l    graphics_null            ; 69 : LVO -414 FreeSprite (non implémenté)
+        dc.l    gfx_ChangeSprite         ; 70 : LVO -420
+        dc.l    gfx_MoveSprite           ; 71 : LVO -426
+        dcb.l   4,graphics_null         ; 72..75 : LVO -432..-450 (non implémentés)
         dc.l    gfx_OwnBlitter           ; 76 : LVO -456
         dc.l    gfx_DisownBlitter        ; 77 : LVO -462
         dcb.l   11,graphics_null         ; 78..88 : LVO -468..-528 (non implémentés)
         dc.l    graphics_null            ; 89 : LVO -534 DisposeRegion (non implémenté)
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
-        dcb.l   16,graphics_null         ; 91..106 : LVO -546..-636 (non implémentés)
+        dcb.l   10,graphics_null         ; 91..100 : LVO -546..-600 (non implémentés)
+        dc.l    gfx_BltBitMapRastPort    ; 101 : LVO -606
+        dcb.l   5,graphics_null          ; 102..106 : LVO -612..-636 (non implémentés)
         dc.l    -1
 graphics_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -111,11 +119,18 @@ graphics_null:
         moveq   #0,d0
         rts
 
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34).
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34) et alloue le sprite vide.
 graphics_initfunc:
-        move.l  d0,a1
+        move.l  a2,-(sp)
+        move.l  d0,a2
         lea     graphics_name(pc),a0
-        move.l  a0,LN_NAME(a1)
+        move.l  a0,LN_NAME(a2)
+        moveq   #8,d0                ; sprite vide (POS/CTL = 0 : canal éteint), lu par le DMA -> chip
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,gb_SprNull(a2)
+        move.l  a2,d0
+        move.l  (sp)+,a2
         rts
 
 ; === M4c2 : moteur d'affichage (copper list GÉNÉRÉE depuis les structures) ===
@@ -189,6 +204,8 @@ gfx_MakeVPort:
         move.w  d2,(a1)+
         move.w  #BPLCON1-CUSTOM,(a1)+
         move.w  #0,(a1)+
+        move.w  #BPLCON2-CUSTOM,(a1)+
+        move.w  #GFX_BPLCON2,(a1)+   ; sprites devant les deux playfields (pointeur visible partout)
         move.w  #BPL1MOD-CUSTOM,(a1)+
         move.w  d5,(a1)+
         move.w  #BPL2MOD-CUSTOM,(a1)+
@@ -250,7 +267,8 @@ gfx_FreeVPortCopLists:
 ; gfx_MrgCop(view a1) : fusionne le fragment vp_DspIns de chaque ViewPort dans v_LOFCprList (master, chip RAM)
 ; + WAIT final. Une liste déjà présente est réutilisée. 1 ViewPort ici. Gaté M4C2_NO_MRGCOP (RED) : saute la fusion -> master = WAIT seul -> écran blanc.
 gfx_MrgCop:
-        movem.l d2/a2/a3/a4/a6,-(sp)
+        movem.l d2/a2/a3/a4/a5/a6,-(sp)
+        move.l  a6,a5                ; a5 = GfxBase
         move.l  a1,a2                ; a2 = View
         move.l  v_LOFCprList(a2),d0  ; liste déjà allouée : réécrite sur place (taille fixe)
         bne.s   .mc_have
@@ -263,6 +281,7 @@ gfx_MrgCop:
 .mc_have:
         move.l  d0,a3                ; a3 = master
         move.l  a3,a4                ; a4 = ptr d'écriture
+        bsr     gfx_sprmoves         ; en tête : SPR0PT..SPR7PT (position fixe, réécrite par LoadView/ChangeSprite)
                 ifeq    M4C2_NO_MRGCOP
         move.l  v_ViewPort(a2),a0    ; 1re ViewPort
 .mc_vp:
@@ -284,10 +303,33 @@ gfx_MrgCop:
         move.w  #$FFFE,(a4)+
         move.l  a3,v_LOFCprList(a2) ; publie le master
 .mc_ret:
-        movem.l (sp)+,d2/a2/a3/a4/a6
+        movem.l (sp)+,d2/a2/a3/a4/a5/a6
         rts
 
-; gfx_LoadView(view a1) : a1 != 0 -> installe v_LOFCprList (COP1LC) + active Copper/bitplane DMA + pose
+; gfx_sprmoves(a4 = écriture, a5 = GfxBase) : 8 paires de MOVEs SPRxPTH/SPRxPTL (gb_SprData[x], sinon le sprite vide) ;
+; a4 avance de GFX_SPRCOP_SIZE. Clobbe d0-d2/a0.
+gfx_sprmoves:
+        lea     gb_SprData(a5),a0
+        move.w  #SPR0PTH-CUSTOM,d1
+        moveq   #7,d2
+.sm_lp:
+        move.l  (a0)+,d0
+        bne.s   .sm_have
+        move.l  gb_SprNull(a5),d0
+.sm_have:
+        move.w  d1,(a4)+             ; SPRxPTH
+        swap    d0
+        move.w  d0,(a4)+
+        addq.w  #2,d1
+        move.w  d1,(a4)+             ; SPRxPTL
+        swap    d0
+        move.w  d0,(a4)+
+        addq.w  #2,d1
+        dbra    d2,.sm_lp
+        rts
+
+; gfx_LoadView(view a1) : a1 != 0 -> réécrit les pointeurs de sprite de v_LOFCprList, l'installe (COP1LC) + active
+; Copper/bitplane/sprite DMA + pose
 ; gb_ActiView. a1 == 0 (vue NULLE) -> BLANCHIT l'affichage : coupe le DMA bitplane (RASTER) ET copper du
 ; système, pour que l'appelant (ex. flt-intro) pose SON propre COP1LC + bitplanes sans que notre copper de
 ; boot les écrase. REQUIS par flt-intro, qui fait LoadView(NULL) avant de prendre la main sur le hardware.
@@ -298,13 +340,23 @@ gfx_LoadView:
         move.l  v_LOFCprList(a1),d0
         beq.s   .lv_ret              ; pas de copper list -> rien
         move.l  d0,gb_LOFlist(a6)
+        movem.l a4/a5,-(sp)          ; pointeurs de sprite courants (une liste construite plus tôt est à jour)
+        move.l  d0,a4
+        move.l  a6,a5
+        bsr     gfx_sprmoves
+        movem.l (sp)+,a4/a5
+        move.l  gb_LOFlist(a6),d0
+        addq.l  #2,d0
+        move.l  d0,gb_SprCop(a6)     ; mot de valeur de SPR0PTH
+        subq.l  #2,d0
         move.l  d0,COP1LC            ; COP1LC = master (longword)
         move.w  #GFX_DMA_ON,DMACON   ; DMA maître + Copper + bitplane
         move.w  #0,COPJMP1           ; strobe COP1
 .lv_ret:
         rts
 .lv_null:
-        move.w  #(DMAF_RASTER|DMAF_COPPER),DMACON  ; clear (SETCLR=0) DMA bitplane + copper -> affichage système
+        clr.l   gb_SprCop(a6)
+        move.w  #(DMAF_RASTER|DMAF_COPPER|DMAF_SPRITE),DMACON  ; clear (SETCLR=0) DMA bitplane + copper + sprites -> affichage système
         rts                                        ; stoppé (flt-intro installera son propre COP1LC/bitplanes)
 
 ; gfx_WaitBlit() : attend que le blitter soit idle (poll DMACONR, bit 14 = BBUSY). Double-lecture (quirk A1000).
@@ -322,4 +374,115 @@ gfx_OwnBlitter:
 ; gfx_DisownBlitter() : relâche le blitter. Pas d'arbitrage multi-tâche ici -> no-op.
 gfx_DisownBlitter:
         rts
+; GetSprite(sprite a0, n° d0) -> d0 = canal réservé | -1. d0 = -1 : premier canal libre (0 réservé au pointeur).
+gfx_GetSprite:
+        move.w  gb_SprUsed(a6),d1
+        tst.w   d0
+        bpl.s   .gs_one
+        moveq   #1,d0
+.gs_find:
+        btst    d0,d1
+        beq.s   .gs_take
+        addq.w  #1,d0
+        cmp.w   #8,d0
+        blo.s   .gs_find
+        bra.s   .gs_fail
+.gs_one:
+        cmp.w   #8,d0
+        bhs.s   .gs_fail
+        btst    d0,d1
+        bne.s   .gs_fail
+.gs_take:
+        bset    d0,d1
+        move.w  d1,gb_SprUsed(a6)
+        move.w  d0,ss_num(a0)
+        ext.l   d0
+        rts
+.gs_fail:
+        moveq   #-1,d0
+        rts
+
+; ChangeSprite(vp a0, sprite a1, données a2) : nouvelle image du canal ss_num (POS/CTL recalculés à ss_x/ss_y) ;
+; le pointeur du canal est aussi écrit dans la liste copper chargée.
+gfx_ChangeSprite:
+        movem.l a2-a3,-(sp)
+        move.l  a2,ss_posctldata(a1)
+        move.w  ss_num(a1),d0
+        and.w   #7,d0
+        move.w  d0,d1
+        lsl.w   #2,d1
+        lea     gb_SprData(a6),a3
+        move.l  a2,0(a3,d1.w)
+        move.l  gb_SprCop(a6),d1
+        beq.s   .cs_move
+        move.l  d1,a3
+        lsl.w   #3,d0                ; 8 octets par canal (2 MOVEs)
+        add.w   d0,a3
+        move.l  a2,d1
+        swap    d1
+        move.w  d1,(a3)              ; SPRxPTH
+        swap    d1
+        move.w  d1,4(a3)             ; SPRxPTL
+.cs_move:
+        movem.l (sp)+,a2-a3
+        move.w  ss_x(a1),d0
+        move.w  ss_y(a1),d1
+        bra.s   gfx_MoveSprite
+
+; MoveSprite(vp a0, sprite a1, x d0, y d1) : place le sprite ; coordonnées en pixels basse résolution, relatives au
+; coin haut-gauche de la fenêtre d'affichage de la ViewPort (vp, sinon celle de la View active).
+gfx_MoveSprite:
+        movem.l d2-d4,-(sp)
+        move.w  d0,ss_x(a1)
+        move.w  d1,ss_y(a1)
+        move.l  ss_posctldata(a1),d2
+        beq.s   .ms_ret
+        move.w  #$80,d2              ; origines : fenêtre standard (DIWSTRT $2C81)
+        move.w  #$2C,d3
+        move.l  a0,d4
+        bne.s   .ms_vp
+        move.l  gb_ActiView(a6),d4
+        beq.s   .ms_org
+        move.l  d4,a0
+        move.l  v_ViewPort(a0),a0
+        move.l  a0,d4
+        beq.s   .ms_org
+.ms_vp:
+        tst.w   vp_Modes(a0)
+        bmi.s   .ms_org              ; HIRES : fenêtre standard
+        cmp.w   #320,vp_DWidth(a0)
+        bls.s   .ms_org
+        move.w  #(GFX_DIWSTRT&$FF)-1,d2 ; overscan basse résolution
+        move.w  #GFX_DIWSTRT>>8,d3
+.ms_org:
+        add.w   d0,d2                ; d2 = hstart
+        add.w   d1,d3                ; d3 = vstart
+        move.w  d3,d4
+        add.w   ss_height(a1),d4     ; d4 = vstop
+        move.l  ss_posctldata(a1),a0
+        move.w  d3,d0                ; POS = vstart(7..0) << 8 | hstart(8..1)
+        lsl.w   #8,d0
+        move.w  d2,d1
+        lsr.w   #1,d1
+        move.b  d1,d0
+        move.w  d0,(a0)+
+        move.w  d4,d0                ; CTL = vstop(7..0) << 8 | vstart(8) << 2 | vstop(8) << 1 | hstart(0)
+        lsl.w   #8,d0
+        btst    #8,d3
+        beq.s   .ms_v8
+        bset    #2,d0
+.ms_v8:
+        btst    #8,d4
+        beq.s   .ms_e8
+        bset    #1,d0
+.ms_e8:
+        btst    #0,d2
+        beq.s   .ms_h0
+        bset    #0,d0
+.ms_h0:
+        move.w  d0,(a0)
+.ms_ret:
+        movem.l (sp)+,d2-d4
+        rts
+
 graphics_end:

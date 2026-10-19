@@ -792,10 +792,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     MakeVPort générique HIRES), intuition (OpenScreen/OpenWorkBench/GetScreenData, OpenWindow/CloseWindow dessinés),
     console.device rendue dans la fenêtre (ConUnit, CSI, défilement, curseur), dos Open("*"), packets alignés,
     fl_Volume ; NewShell ouvre une fenêtre AmigaShell utilisable au clavier.
-    **Étape 7 (bureau)** : layers.library (recouvrement, rafraîchissement, déplacement), pointeur souris (sprite),
-    IDCMP, OpenFont/topaz, mathffp.library, InitGels ; puis le Workbench réel (icônes de disques par icon.library,
-    menus, lancement d'outils). Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4
-    (Run vers PIPE: depuis le CLI initial).
+    **Étape 7 — AmigaSlopDOS au démarrage et bureau FAITE** : fenêtre AmigaSlopDOS (console du CLI initial, fermée à
+    endcli), thème vert pomme / texte noir, effacement et réparation sans layers + REFRESHWINDOW/IDCMP minimal,
+    DrawImage (BltBitMapRastPort), AllocRemember, pointeur souris (sprites), fenêtre de fond avec l'icône du disque
+    (icon.library), clic / double-clic -> fenêtre du disque et ses icônes, CLOSEWINDOW ; disquette insérée sur
+    l'écran insert-disk -> redémarrage et boot.
+    **Étape 8 (interaction)** : tiroirs imbriqués (double-clic sur un tiroir), lancement d'outils (Shell, Clock…),
+    menus Workbench, déplacement des fenêtres ; layers.library (recouvrement réel), OpenFont/topaz, mathffp.library,
+    InitGels. Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4 (Run vers PIPE:).
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
