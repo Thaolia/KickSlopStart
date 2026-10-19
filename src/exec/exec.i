@@ -368,6 +368,7 @@ FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
 SH_STK       EQU 8192       ; pile du CLI initial (shell.s) : les commandes lancées tournent dessus
 TD_CACHEBUF  EQU $000006EA ; trackdisk : long — buffer persistant d'UNE piste décodée (0 = pas encore alloué)
 TD_CACHETRK  EQU $000006EE ; trackdisk : word — piste contenue dans TD_CACHEBUF ($FFFF = cache invalide)
+DOS_DOSBASE  EQU $000006F0 ; long : DosBase (posé par dos initFunc) — le runtime BCPL n'a pas a6 = DosBase
 ; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
 ; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
 ; test gp_poll échoue). Isole le modèle de wraparound 8 bits des compteurs quadrature (load-bearing). Défaut 0.

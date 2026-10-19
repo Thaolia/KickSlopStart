@@ -24,7 +24,7 @@
                 xref    ofs_stream_read      ; READ : lecture incrémentale data-block par data-block
                 xref    ofs_stream_seek      ; SEEK : repositionne le curseur de streaming
 
-ERROR_ACTION_NOT_KNOWN EQU 209       ; dos/dos.i : action non supportée
+ACTION_MORE_CACHE EQU 18             ; AddBuffers : ajoute des tampons au filesystem
 
 ; dos_handler_df0 : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
 ; a2 = pr_MsgPort (persistant) ; a3 = Message courant ; a4 = DosPacket courant.
@@ -59,6 +59,12 @@ dos_handler_df0:
                 beq     .examine
                 cmp.l   #ACTION_EXAMINE_NEXT,d0
                 beq     .exnext
+                cmp.l   #ACTION_MORE_CACHE,d0
+                beq     .morecache
+                cmp.l   #ACTION_PARENT,d0
+                beq     .parent
+                cmp.l   #ACTION_COPY_DIR,d0
+                beq     .copydir
                 move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -257,6 +263,44 @@ dos_handler_df0:
                 move.l  #ERROR_NO_MORE_ENTRIES,DP_RES2(a4)
                 bra     .reply
 
+.copydir:                                            ; DupLock : (ARG1 BPTR lock) -> nouveau lock, même bloc
+                move.l  DP_ARG1(a4),d0
+                bsr     hnd_lockkey
+                tst.l   d0
+                bne.s   .cd_key
+                move.l  #OFS_ROOTBLK,d0                ; lock 0 = racine
+.cd_key:
+                move.l  d0,d2
+                bra.s   .pa_alloc
+.parent:                                             ; ParentDir : (ARG1 BPTR lock) -> lock du parent | 0 (racine)
+                move.l  DP_ARG1(a4),d0
+                bsr     hnd_lockkey
+                lea     hnd_slash(pc),a0               ; « / » = parent du répertoire de départ
+                jsr     ofs_name_to_block
+                tst.l   d0
+                beq.s   .pa_root                       ; parent de la racine : 0 sans erreur
+                move.l  d0,d2
+.pa_alloc:                                             ; d2 = bloc -> nouveau FileLock partagé
+                move.l  #FL_SIZEOF,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq.s   .pa_root
+                move.l  d0,a0
+                move.l  d2,FL_KEY(a0)
+                move.l  #SHARED_LOCK,FL_ACCESS(a0)
+                move.l  a2,FL_TASK(a0)
+                lsr.l   #2,d0
+                move.l  d0,DP_RES1(a4)
+                bra     .reply
+.pa_root:
+                clr.l   DP_RES1(a4)
+                bra     .reply
+
+.morecache:                                          ; AddBuffers : pas de cache de blocs FS (le trackdisk garde la piste)
+                move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepté sans effet
+                bra     .reply
+
 .end:
                 move.l  DP_ARG1(a4),a1                ; a1 = état de streaming (un seul AllocMem)
                 move.l  #SS_ALLOC,d0
@@ -275,3 +319,6 @@ hnd_lockkey:
                 move.l  FL_KEY(a0),d0
 .lk_root:
                 rts
+hnd_slash:
+                dc.b    "/",0
+                even

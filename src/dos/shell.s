@@ -17,6 +17,10 @@
                 xref    ser_lock             ; exec/boot.s (émission série atomique)
                 xref    ser_unlock
                 xref    dos_boot_assigns     ; dos/dos_lib.s (assigns + volume + répertoire courant)
+                xref    bcpl_call            ; dos/bcpl.s (A5/A6 des commandes BCPL)
+                xref    bcpl_ret
+                xref    bcpl_cli_setup
+                xref    bcpl_cli_register
 
 SH_SCRIPTMAX    EQU 2048             ; taille max de la startup-sequence lue (F1)
 
@@ -40,15 +44,20 @@ shell_main:
                 jsr     dos_sendpkt
                 move.l  d0,d7                ; d7 = clé
                 ; FileHandle console -> pr_CIS/pr_COS : Input()/Output() des commandes lancées écrivent sur la console
-                move.l  #FH_SIZEOF,d0
+                move.l  #FH_SIZEOF+4,d0      ; bloc getvec [taille][FileHandle] : Close le libère par l'en-tête
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq.s   .nofh
                 move.l  d0,a0
+                move.l  #FH_SIZEOF+4,(a0)+
+                move.l  a0,d0
                 move.l  DOS_CONPORT,FH_TYPE(a0)
                 move.l  d7,FH_ARG1(a0)
                 move.l  #DOSTRUE,FH_INTERACTIVE(a0)
+                moveq   #-1,d1
+                move.l  d1,FH_POS(a0)        ; fh_Pos = fh_End = -1 : tampon vide, la 1re lecture BCPL remplit
+                move.l  d1,FH_END(a0)
                 lsr.l   #2,d0
                 move.l  EB_THISTASK(a6),a0
                 move.l  d0,PR_CIS(a0)
@@ -211,7 +220,16 @@ XF_NAME         EQU 16               ; « C:<nom> » (SH_NAMEMAX)
 SH_NAMEMAX      EQU 64
 XF_ARGS         EQU XF_NAME+SH_NAMEMAX   ; arguments filtrés (SH_ARGMAX)
 SH_ARGMAX       EQU 256
-XF_SIZE         EQU XF_ARGS+SH_ARGMAX
+XF_STK          EQU XF_ARGS+SH_ARGMAX    ; APTR : pile dédiée de la commande
+XF_STKSZ        EQU XF_STK+4         ; LONG : sa taille en octets
+XF_ABUF         EQU XF_STKSZ+4       ; APTR : tampon d'arguments de la CLI (aligné : BPTR)
+XF_FH           EQU XF_ABUF+4        ; APTR : FileHandle d'entrée (injection des arguments)
+XF_SBUF         EQU XF_FH+4          ; fh_Buf / fh_Pos / fh_End sauvés
+XF_SPOS         EQU XF_SBUF+4
+XF_SEND         EQU XF_SPOS+4
+XF_RC           EQU XF_SEND+4        ; LONG : code retour
+XF_SIZE         EQU XF_RC+4
+SH_DEFSTACK     EQU 1000             ; pile par défaut d'une commande, en longs (cli_DefaultStack)
 sh_exec_cmd:
                 movem.l d2-d7/a2-a6,-(sp)
                 lea     -XF_SIZE(sp),sp
@@ -335,7 +353,7 @@ sh_exec_cmd:
                 move.l  d4,d0
                 jsr     LVO_FREEMEM(a6)
                 tst.l   d7
-                beq.s   .x_closelib
+                beq     .x_closelib
                 move.l  d7,XF_SEG(sp)
                 move.l  #1,XF_FLAG(sp)       ; TROUVÉE + chargée
                 move.l  d5,a0
@@ -343,21 +361,111 @@ sh_exec_cmd:
                 bsr     sh_cli_begin         ; cli_CommandName = nom, cli_Module = seglist
                 ifeq    E3_NO_EXEC
                 jsr     ser_lock             ; la commande chargée émet sous Forbid -> marqueur atomique (pas d'entrelacement)
-                move.l  XF_SEG(sp),d0        ; entry = (seglist<<2)+4
+                ; --- pile dédiée de cli_DefaultStack longs (comme runcommand) : le stub BCPL calcule la base de ses
+                ; frames depuis 4(sp) = taille -> la commande doit démarrer au SOMMET d'un bloc de cette taille ---
+                move.l  #SH_DEFSTACK*4,d0
+                bsr     sh_cli_ptr
+                beq.s   .x_stk
+                move.l  CLI_DEFAULTSTACK(a1),d0
                 lsl.l   #2,d0
-                addq.l  #4,d0
-                move.l  d0,a1
-                lea     XF_ARGS(sp),a0       ; a0 = arguments
-                move.l  XF_ARGLEN(sp),d0     ; d0 = longueur
-                move.l  #SH_STK,-(sp)        ; 4(sp) à l'entrée = taille de pile (convention CLI)
+.x_stk:
+                move.l  d0,XF_STKSZ(sp)
+                move.l  #MEMF_PUBLIC,d1
+                move.l  ($4).w,a6
+                jsr     LVO_ALLOCMEM(a6)
+                move.l  d0,XF_STK(sp)
+                beq     .x_nostack
+                ; --- arguments : copie dans le tampon aligné de la CLI, injectée dans le FileHandle d'entrée ---
+                bsr     sh_cli_ptr
+                lea     SH_ARGBUF(a1),a1
+                move.l  a1,XF_ABUF(sp)
+                lea     XF_ARGS(sp),a0
+                move.l  XF_ARGLEN(sp),d0
+                bra.s   .x_acnext
+.x_acpy:
+                move.b  (a0)+,(a1)+
+.x_acnext:
+                dbra    d0,.x_acpy
                 move.l  ($4).w,a2
-                move.l  EB_THISTASK(a2),a2
-                move.l  sp,PR_RETURNADDR(a2) ; pr_ReturnAddr -> ce long : exit() y retrouve la pile d'entrée
-                jsr     (a1)                 ; exécute la commande
+                move.l  EB_THISTASK(a2),a2   ; a2 = process
+                clr.l   PR_RESULT2(a2)
+                move.l  PR_CIS(a2),d0        ; entrée de la commande = cli_StandardInput (spec §4.2.3), pas pr_CIS
+                bsr     sh_cli_ptr           ; (qu'une commande précédente a pu sélectionner puis fermer : Mount)
+                beq.s   .x_inpok
+                move.l  CLI_STANDARDINPUT(a1),d0
+                move.l  d0,PR_CIS(a2)        ; selectinput(stdin) avant la commande
+                move.l  CLI_STANDARDOUTPUT(a1),PR_COS(a2)
+.x_inpok:
+                lsl.l   #2,d0
+                move.l  d0,XF_FH(sp)
+                beq.s   .x_noinj
+                move.l  d0,a0
+                move.l  FH_BUF(a0),XF_SBUF(sp)
+                move.l  FH_POS(a0),XF_SPOS(sp)
+                move.l  FH_END(a0),XF_SEND(sp)
+                move.l  XF_ABUF(sp),d0
+                lsr.l   #2,d0
+                move.l  d0,FH_BUF(a0)
+                clr.l   FH_POS(a0)
+                move.l  XF_ARGLEN(sp),FH_END(a0)
+.x_noinj:
+                ; registres d'entrée (spec §4.3) : a0/d0 = arguments, 4(sp) = taille de pile, A1 = frame BCPL du CLI
+                ; (bas de SA pile), A2 = GV du CLI, A3 = segment, A4 = point d'entrée, A5/A6 = appel/retour BCPL
+                move.l  XF_SEG(sp),d0
+                lsl.l   #2,d0
+                move.l  d0,a3                ; a3 = segment
+                lea     4(a3),a4             ; a4 = point d'entrée
+                move.l  XF_STK(sp),a5
+                add.l   XF_STKSZ(sp),a5      ; a5 = sommet de la pile de la commande
+                move.l  sp,-(a5)             ; 8(sp) à l'entrée : ancien SP (restauré au retour)
+                move.l  XF_STKSZ(sp),-(a5)   ; 4(sp) : taille de la pile en octets
+                move.l  a5,PR_RETURNADDR(a2) ; pr_ReturnAddr -> ce long : exit()/stop y retrouvent la pile
+                move.l  XF_ABUF(sp),d2
+                move.l  XF_ARGLEN(sp),d0
+                move.l  PR_GLOBVEC(a2),a1
+                move.l  TC_SPLOWER(a2),d1
+                move.l  a1,a2                ; a2 = GV
+                move.l  d1,a1                ; a1 = bas de la pile du CLI = frame BCPL de l'appelant
+                move.l  a5,sp                ; bascule sur la pile de la commande (plus d'accès XF_* jusqu'au retour)
+                move.l  d2,a0
+                moveq   #0,d1
+                lea     bcpl_call,a5
+                lea     bcpl_ret,a6
+                jsr     (a4)                 ; exécute la commande ; d0 = code retour
                 addq.l  #4,sp
+                move.l  (sp),sp              ; retour sur la pile du shell
+                move.l  d0,XF_RC(sp)
                 move.l  ($4).w,a2
                 move.l  EB_THISTASK(a2),a2
                 clr.l   PR_RETURNADDR(a2)
+                bsr     sh_cli_ptr           ; après la commande (spec §4.4) : selectoutput(cli_StandardOutput),
+                beq.s   .x_noresel           ; selectinput(cli_CurrentInput) — la commande a pu changer ou fermer ses flux
+                move.l  CLI_STANDARDOUTPUT(a1),PR_COS(a2)
+                move.l  CLI_CURRENTINPUT(a1),PR_CIS(a2)
+.x_noresel:
+                move.l  XF_FH(sp),d0         ; restaure le tampon d'entrée (spec §4.2.6)
+                beq.s   .x_norest
+                move.l  d0,a0
+                move.l  XF_ABUF(sp),d0
+                lsr.l   #2,d0
+                cmp.l   FH_BUF(a0),d0
+                bne.s   .x_rbuf
+                move.l  XF_SBUF(sp),FH_BUF(a0)
+.x_rbuf:
+                move.l  XF_SPOS(sp),FH_POS(a0)
+                tst.l   FH_END(a0)
+                beq.s   .x_norest            ; fh_End = 0 : EOF forcé par la commande (EndCLI) -> conservé
+                move.l  XF_SEND(sp),FH_END(a0)
+.x_norest:
+                move.l  XF_STK(sp),a1
+                move.l  XF_STKSZ(sp),d0
+                move.l  ($4).w,a6
+                jsr     LVO_FREEMEM(a6)
+                move.l  XF_RC(sp),d0
+                bra.s   .x_ran
+.x_nostack:
+                moveq   #-1,d0               ; pile impossible : code spécial « impossible de lancer »
+.x_ran:
                 bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0
                 jsr     ser_unlock
                 endc                         ; RED E3_NO_EXEC : saute le JSR -> commande chargée mais pas exécutée
@@ -377,7 +485,8 @@ sh_exec_cmd:
 ; sh_make_cli() : alloue une CommandLineInterface + ses BSTR (nom de commande, SetName, prompt) et la publie dans
 ; pr_CLI de ThisTask. Flux = pr_CIS/pr_COS, pile par défaut = SH_STK, FailLevel 10. Préserve tout.
 SH_CLIBSTR      EQU 256              ; taille d'un buffer BSTR de la CLI
-SH_CLIALLOC     EQU CLI_SIZEOF+3*SH_CLIBSTR
+SH_ARGBUF       EQU CLI_SIZEOF+3*SH_CLIBSTR  ; tampon d'arguments injectés (aligné long : fh_Buf est un BPTR)
+SH_CLIALLOC     EQU SH_ARGBUF+SH_ARGMAX
 sh_make_cli:
                 movem.l d0-d1/a0-a1/a6,-(sp)
                 move.l  ($4).w,a6
@@ -385,7 +494,7 @@ sh_make_cli:
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq.s   .mc_ret
+                beq     .mc_ret
                 move.l  d0,a0                ; a0 = CLI
                 lea     CLI_SIZEOF(a0),a1
                 move.l  a1,d1
@@ -399,7 +508,7 @@ sh_make_cli:
                 move.l  d1,a1
                 move.l  #$023E2000,(a1)      ; prompt BSTR « > » (longueur 2)
                 move.l  #10,CLI_FAILLEVEL(a0)
-                move.l  #SH_STK/4,CLI_DEFAULTSTACK(a0)
+                move.l  #SH_DEFSTACK,CLI_DEFAULTSTACK(a0)
                 move.l  #DOSTRUE,CLI_INTERACTIVE(a0)
                 move.l  EB_THISTASK(a6),a1
                 move.l  PR_CIS(a1),d1
@@ -410,6 +519,9 @@ sh_make_cli:
                 move.l  d1,CLI_CURRENTOUTPUT(a0)
                 lsr.l   #2,d0
                 move.l  d0,PR_CLI(a1)
+                move.l  a1,a0                ; vecteur global BCPL + segarray du runtime (commandes c: BCPL)
+                jsr     bcpl_cli_setup
+                jsr     bcpl_cli_register    ; slot 1 de rn_TaskArray, pr_TaskNum = 1 (Run prend les suivants)
 .mc_ret:
                 movem.l (sp)+,d0-d1/a0-a1/a6
                 rts

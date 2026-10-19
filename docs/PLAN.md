@@ -774,8 +774,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
 - **Workbench 1.3.3 — étape 1 FAITE** : résolution `device:`/assign/volume/répertoire courant, assigns de boot
     (SYS: C: S: L: DEVS: LIBS: FONTS:), CLI initial avec `pr_CLI`/`pr_CIS`/`pr_COS`/`pr_ReturnAddr`, arguments,
     exceptions CPU vers `tc_TrapCode` (forme compatible SetPatch), `RawDoFmt`. `c:SetPatch` tourne en entier.
-    **Étape 2 (en cours)** : runtime BCPL de dos.library (vecteur global, appel/retour A5/A6, pile BCPL) pour les
-    commandes `c:` BCPL (AddBuffers, CD, Path, Execute, Run, Wait, Resident, Mount, EndCLI, l:Shell-Seg).
+    **Étape 2 — runtime BCPL FAITE** : GV + segarray + segment runtime, ~60 globales, runcommand (pile dédiée,
+    injection des arguments) ; AddBuffers, CD, Resident, Mount, Failat, Wait tournent ; **createproc + Run** : le CLI
+    de fond (Shell-Seg) exécute Execute et les `resident` de StartupII. Delay bloquant (timer.device), FIB complet
+    (BSTR côté packet), FileHandles getvec, getlong/putlong indexés en longs.
+    **Étape 3** : démarrage de handlers BCPL (globale 112 starthandler + 13 makeglobvec) pour **RAM:**
+    (`L:Ram-Handler`, bloquant `makedir ram:t`) puis NEWCON:/AUX:/PIPE: ; execute (101), writef tamponné, C:FAULT.
     **Ensuite** : `SetFunction`, NIL:/redirections, Mount/handlers, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

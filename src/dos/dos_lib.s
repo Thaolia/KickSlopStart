@@ -20,7 +20,9 @@
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
+                xref    newlist          ; exec/lists.s (NEWLIST du port de Delay)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
+                xdef    dos_resolve      ; runtime BCPL (deviceproc)
 
 LS_LOADMAX      EQU DOS_FILEMAX       ; buffer de lecture LoadSeg (cap-bump 32K, exec.i ; cf. HND_FILEMAX)
 
@@ -78,6 +80,11 @@ dos_vectors:
         dc.l    dos_fn_unloadseg         ; 26 : LVO -156 UnLoadSeg(seglist d1)
         dcb.l   5,dos_null               ; 27..31 : LVO -162..-186 (non impl.)
         dc.l    dos_DateStamp            ; 32 : LVO -192
+        dc.l    dos_fn_delay             ; 33 : LVO -198 Delay(ticks d1)
+        dc.l    dos_fn_waitforchar       ; 34 : LVO -204 WaitForChar(fh d1, µs d2)
+        dc.l    dos_fn_parentdir         ; 35 : LVO -210 ParentDir(lock d1)
+        dc.l    dos_fn_isinteractive     ; 36 : LVO -216 IsInteractive(fh d1)
+        dc.l    dos_fn_execute           ; 37 : LVO -222 Execute(cmd d1, in d2, out d3) — dernier LVO V34
         dc.l    -1
 dos_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -128,12 +135,13 @@ dos_fn_open:
         move.l  a3,d0
         beq     .op_fail_early          ; device inconnu / handler non démarré
         move.l  ($4).w,a6               ; -> SysBase pour les appels exec
-        move.l  #DOS_FH_ALLOC,d0
+        move.l  #DOS_FH_ALLOC+4,d0      ; FileHandle au format getvec : [taille][FileHandle + nom]
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.s   .op_fail_early
-        move.l  d0,a2                   ; a2 = FileHandle
+        move.l  d0,a2
+        move.l  #DOS_FH_ALLOC+4,(a2)+   ; a2 = FileHandle (long-aligné : BPTR)
         lea     FH_SIZEOF(a2),a5        ; a5 = buffer BSTR du nom (long-aligné)
         lea     1(a5),a1                ; a1 -> caractères
         moveq   #0,d3                   ; d3 = longueur
@@ -162,12 +170,15 @@ dos_fn_open:
         lea     SP_SIZEOF(sp),sp
         cmp.l   #DOSTRUE,d0
         bne.s   .op_fail_free
+        moveq   #-1,d0
+        move.l  d0,FH_POS(a2)           ; fh_Pos = fh_End = -1 : tampon BCPL vide (rdch remplira par Read)
+        move.l  d0,FH_END(a2)
         move.l  a2,d0                   ; succès -> BPTR(FileHandle)
         lsr.l   #2,d0
         bra.s   .op_ret
 .op_fail_free:
-        move.l  a2,a1
-        move.l  #DOS_FH_ALLOC,d0
+        lea     -4(a2),a1
+        move.l  #DOS_FH_ALLOC+4,d0
         jsr     LVO_FREEMEM(a6)
 .op_fail_early:
         moveq   #0,d0
@@ -213,7 +224,7 @@ dos_fn_close:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,d4
         lsl.l   #2,d4
-        beq.s   .cl_null                ; fh nul -> rien à fermer
+        beq     .cl_null                ; fh nul -> rien à fermer
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3
         move.l  a3,d0
@@ -233,8 +244,30 @@ dos_fn_close:
 .cl_free:
         move.l  ($4).w,a6
 .cl_free2:
-        move.l  a2,a1                   ; libère le FileHandle
-        move.l  #DOS_FH_ALLOC,d0
+        ; FileHandle = bloc getvec (taille à -4, spec BCPL §5.1) : ceux construits par les programmes BCPL (ex. le
+        ; FileHandle mémoire de c:Run) arrivent ici aussi -> libération par la taille de l'en-tête, jamais une taille fixe.
+        ; fh_Buf n'est libéré que s'il appartient au runtime (tampon getvec de rdch, HORS du bloc du FileHandle).
+        move.l  -4(a2),d5               ; d5 = taille du bloc du FileHandle (en-tête compris)
+        move.l  FH_BUF(a2),d0
+        lsl.l   #2,d0
+        beq.s   .cl_nobuf
+        move.l  d0,a1
+        move.l  a2,d1
+        subq.l  #4,d1                   ; début du bloc du FileHandle
+        cmp.l   d1,a1
+        bcs.s   .cl_bufown
+        add.l   d5,d1
+        cmp.l   d1,a1
+        bcs.s   .cl_nobuf               ; tampon interne au bloc (FileHandle mémoire) : rien à libérer
+.cl_bufown:
+        cmp.l   #(RT_FHBUFLONGS+2)*4,-4(a1)
+        bne.s   .cl_nobuf               ; pas un tampon du runtime : ne pas y toucher
+        subq.l  #4,a1
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.cl_nobuf:
+        lea     -4(a2),a1               ; libère le FileHandle (bloc getvec)
+        move.l  d5,d0
         jsr     LVO_FREEMEM(a6)
 .cl_null:
         moveq   #-1,d0                  ; DOSTRUE
@@ -515,11 +548,164 @@ dos_examine_pkt:
         moveq   #0,d3
         jsr     dos_sendpkt             ; d0 = dp_Res1 (DOSTRUE/DOSFALSE)
         lea     SP_SIZEOF(sp),sp
+        tst.l   d0
+        beq.s   .exc_ret
+        move.l  d5,a0                   ; le handler rend des BSTR : l'API C veut des chaînes NUL-terminées
+        lea     FIB_FILENAME(a0),a0
+        bsr.s   dos_bstr2c
+        move.l  d5,a0
+        lea     FIB_COMMENT(a0),a0
+        bsr.s   dos_bstr2c
         bra.s   .exc_ret
 .exc_fail:
         moveq   #0,d0                   ; DOSFALSE
 .exc_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; dos_bstr2c(a0 = BSTR) : convertit sur place en chaîne C (décale les caractères d'un octet, NUL final).
+; Préserve d0. Clobbe d1/a0/a1.
+dos_bstr2c:
+        moveq   #0,d1
+        move.b  (a0),d1
+        lea     1(a0),a1
+        bra.s   .b2c_next
+.b2c_cpy:
+        move.b  (a1)+,(a0)+
+.b2c_next:
+        dbra    d1,.b2c_cpy
+        clr.b   (a0)
+        rts
+
+; --- LVO -198..-222 : la table s'arrêtait à DateStamp ; un appel au-delà (SetClock : Delay, Execute) tombait dans la
+; mémoire sous la jump table. ---
+
+; Delay(ticks d1) : attend d1 cinquantièmes de seconde en BLOQUANT la tâche sur une requête timer.device (unité
+; VBLANK, port et requête sur la pile) : une attente active affamerait les process de même priorité (Wait du
+; startup-sequence pendant que le CLI de fond de Run exécute StartupII). Repli en attente active seulement si
+; aucun signal n'est libre ou si timer.device est absent. a6 = DosBase.
+DL_MAXTICKS     EQU 65535*50         ; TV_SECS est converti par mulu (16 bits)
+DL_FRAME        EQU MP_SIZE+TR_SIZE
+dos_fn_delay:
+        movem.l d2-d3/a2-a4/a6,-(sp)
+        move.l  d1,d2
+        ble     .dl_done
+        cmp.l   #DL_MAXTICKS,d2
+        bls.s   .dl_ticks
+        move.l  #DL_MAXTICKS,d2
+.dl_ticks:
+        move.l  ($4).w,a6
+        lea     EB_DEVICELIST(a6),a0
+        lea     dl_timername(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq     .dl_busy
+        move.l  d0,a4                ; a4 = timer.device
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        move.l  d0,d3
+        bmi     .dl_busy
+        lea     -DL_FRAME(sp),sp
+        move.l  sp,a0
+        moveq   #DL_FRAME/2-1,d0
+.dl_clr:
+        clr.w   (a0)+
+        dbra    d0,.dl_clr
+        move.l  sp,a3                ; a3 = reply port
+        lea     MP_SIZE(sp),a2       ; a2 = timerequest
+        move.b  #NT_MSGPORT,LN_TYPE(a3)
+        move.b  #PA_SIGNAL,MP_FLAGS(a3)
+        move.b  d3,MP_SIGBIT(a3)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a3)
+        lea     MP_MSGLIST(a3),a1
+        jsr     newlist
+        move.l  a3,MN_REPLYPORT(a2)
+        move.l  a4,IO_DEVICE(a2)
+        move.l  #UNIT_VBLANK,IO_UNIT(a2)
+        move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
+        divu    #50,d2
+        moveq   #0,d0
+        move.w  d2,d0
+        move.l  d0,TV_SECS(a2)
+        swap    d2
+        mulu    #20000,d2
+        move.l  d2,TV_MICRO(a2)
+        move.l  a6,-(sp)
+        move.l  a4,a6
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        move.l  (sp)+,a6
+.dl_wait:
+        moveq   #0,d0
+        bset    d3,d0
+        jsr     LVO_WAIT(a6)
+        move.l  a3,a0
+        jsr     LVO_GETMSG(a6)
+        cmp.l   a2,d0
+        bne.s   .dl_wait
+        lea     DL_FRAME(sp),sp
+        move.l  d3,d0
+        jsr     LVO_FREESIGNAL(a6)
+        bra.s   .dl_done
+.dl_busy:
+        move.l  VBL_COUNT,d0
+        add.l   d2,d0
+.dl_spin:
+        cmp.l   VBL_COUNT,d0
+        bgt.s   .dl_spin
+.dl_done:
+        moveq   #0,d0
+        movem.l (sp)+,d2-d3/a2-a4/a6
+        rts
+dl_timername:
+        dc.b    "timer.device",0
+        even
+
+; WaitForChar(fh d1, µs d2) -> DOSFALSE : pas de caractère disponible (la console ne gère pas encore ce packet).
+dos_fn_waitforchar:
+        moveq   #0,d0
+        rts
+
+; ParentDir(lock d1) -> lock du parent | 0 (racine) : ACTION_PARENT au handler du lock. a6 = DosBase.
+dos_fn_parentdir:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,d0
+        lsl.l   #2,d0
+        beq.s   .pd_zero
+        move.l  d0,a0
+        move.l  FL_TASK(a0),a1
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        moveq   #ACTION_PARENT,d0
+        moveq   #0,d2
+        moveq   #0,d3
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        bra.s   .pd_ret
+.pd_zero:
+        moveq   #0,d0
+.pd_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; IsInteractive(fh d1) -> fh_Interactive (brut, comme la V34 : non normalisé à -1).
+dos_fn_isinteractive:
+        move.l  d1,d0
+        lsl.l   #2,d0
+        beq.s   .ii_ret
+        move.l  d0,a0
+        move.l  FH_INTERACTIVE(a0),d0
+.ii_ret:
+        rts
+
+; Execute(cmd d1, in d2, out d3) -> DOSFALSE. Non implémenté : la V34 lance C:Run avec la commande (spec BCPL §8.2,
+; globale 101) ; demande un CLI de fond (Run/createproc) que nous n'avons pas encore. IoErr = action inconnue.
+dos_fn_execute:
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  #ERROR_ACTION_NOT_KNOWN,PR_RESULT2(a0)
+        moveq   #0,d0
         rts
 
 ; dos_resolve(a4 = nom C-string, a6 = DosBase) -> a3 = port du handler | 0, d6 = BPTR lock de départ, a4 = nom à
@@ -778,6 +964,7 @@ ba_tab:
 dos_initfunc:
         movem.l d3/a2,-(sp)         ; a2/d3 non-scratch : préservés pour MakeLibrary (AllocMem les préserve aussi)
         move.l  d0,a2               ; a2 = DosBase
+        move.l  d0,DOS_DOSBASE      ; publié pour le runtime BCPL (pas de a6 = DosBase dans le code BCPL)
         lea     dos_name(pc),a0
         move.l  a0,LN_NAME(a2)      ; pose le nom (quirk V34)
         moveq   #RN_SIZEOF,d0       ; alloue RootNode
@@ -787,6 +974,16 @@ dos_initfunc:
         beq.s   .out                ; alloc échoue -> dl_Root reste 0 (preuve M6D échouera proprement)
         move.l  d0,DL_ROOT(a2)      ; dl_Root = RootNode (APTR, PAS BPTR)
         move.l  d0,d3               ; d3 = RootNode (APTR)
+        move.l  #(RN_TASKSLOTS+1)*4,d0  ; rn_TaskArray : [taille, slots] (Run y prend un slot libre)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .out
+        move.l  d0,a0
+        move.l  #RN_TASKSLOTS,(a0)
+        lsr.l   #2,d0
+        move.l  d3,a0
+        move.l  d0,RN_TASKARRAY(a0)
         moveq   #DOSINFO_SIZE,d0    ; alloue DosInfo (champs pointeurs ; verrous différés)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)

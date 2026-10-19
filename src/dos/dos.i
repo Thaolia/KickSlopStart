@@ -22,6 +22,9 @@ DOSBASE_DATASIZE EQU DL_DISHADOW+4     ; 74 : dataSize pour MakeLibrary (base Li
 
 ; --- RootNode (dosextens.i) : seul rn_Info est câblé ce milestone ---
 ; offset 0 rn_TaskArray(BPTR) · 4 rn_ConsoleSegment(BPTR) · 8 rn_Time(DateStamp,12) · 20 rn_RestartSeg(LONG)
+RN_TASKARRAY     EQU 0                 ; BPTR -> [taille, taskid CLI 1, taskid CLI 2, ...] (slots des CLI : Run, EndCLI)
+RN_CONSOLESEG    EQU 4                 ; BPTR : segment CLI par défaut de Run quand aucun résident « CLI » (0 ici)
+RN_TASKSLOTS     EQU 20                ; nombre de CLI simultanés (taille du tableau)
 RN_INFO          EQU 24                ; BPTR -> DosInfo (Info structure)
 RN_SIZEOF        EQU 56                ; struct RootNode complète (rn_CliList/rn_Flags... mis à 0)
 

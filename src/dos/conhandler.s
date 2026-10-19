@@ -23,7 +23,6 @@
                 xref    ser_unlock
 
 CON_POLL_US     EQU 20000            ; 20 ms par tick de poll RX (latence d'entrée ~1 tick)
-ERROR_ACTION_NOT_KNOWN EQU 209       ; dos/dos.i : action non supportée
 CON_CMD_READ    EQU 2                ; io_Command CMD_READ (console.device)
 CON_CMD_WRITE   EQU 3                ; io_Command CMD_WRITE
 CON_IODATA      EQU 40               ; IOStdReq io_Data (local : conhandler n'inclut pas disk.i)

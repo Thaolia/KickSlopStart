@@ -54,7 +54,10 @@ init_task:
 ; Nesting PAR-TÂCHE initialisé à -1 (permis & enabled) — SANS ça MEMF_CLEAR laisserait 0 = Disabled/
 ; Forbidden au réveil (latent avant M7c car le scheduler lisait le nesting GLOBAL). Caller : SPLOWER/UPPER.
 exec_AddTask:
+        tst.b   LN_TYPE(a1)          ; ln_Type est posé par l'appelant (CreateProc -> NT_PROCESS) : ne PAS l'écraser
+        bne.s   .at_typed            ; (les programmes testent NT_PROCESS pour savoir s'ils peuvent appeler dos)
         move.b  #NT_TASK,LN_TYPE(a1)
+.at_typed:
         move.b  #TS_READY,TC_STATE(a1)
         move.b  #-1,TC_IDNESTCNT(a1) ; nesting par-tâche : enabled
         move.b  #-1,TC_TDNESTCNT(a1) ; permis

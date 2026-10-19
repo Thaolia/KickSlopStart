@@ -44,6 +44,7 @@
 ; Piste IMPLÉMENTATION (« clean ») : hardware/intbits.i (ABI publique) + HRM + spec AROS public.
 
                 include "exec.i"
+                include "dospkt.i"       ; pr_CLI / cli_CommandName (nom de commande dans SOFTWARE FAILURE)
 
                 xdef    init_ints
                 xdef    exec_Wait
@@ -664,6 +665,54 @@ exc_default:
         move.l  d0,a0
         bsr     exc_puts
 .ed_noname:
+        move.l  ($4).w,a0            ; process CLI : nom de la commande en cours (cli_CommandName)
+        move.l  EB_THISTASK(a0),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .ed_nocmd
+        move.l  PR_CLI(a0),d0
+        lsl.l   #2,d0
+        beq.s   .ed_nocmd
+        move.l  d0,a0
+        move.l  CLI_COMMANDNAME(a0),d0
+        lsl.l   #2,d0
+        beq.s   .ed_nocmd
+        move.l  d0,a0
+        moveq   #0,d2
+        move.b  (a0)+,d2             ; longueur BSTR
+        beq.s   .ed_nocmd
+        move.l  a0,-(sp)
+        lea     exc_msg6(pc),a0
+        bsr     exc_puts
+        move.l  (sp)+,a0
+        subq.w  #1,d2
+.ed_cmd:
+        move.b  (a0)+,d0
+        bsr     exc_putc
+        dbra    d2,.ed_cmd
+.ed_nocmd:
+        lea     exc_msg7(pc),a0      ; a6 (base de bibliothèque probable) et (usp) (retour du dernier jsr)
+        bsr     exc_puts
+        move.l  a6,d0
+        swap    d0
+        bsr     exc_puthex
+        swap    d0
+        bsr     exc_puthex
+        lea     exc_msg8(pc),a0
+        bsr     exc_puts
+        move.l  usp,a0
+        move.l  (a0),d0
+        swap    d0
+        bsr     exc_puthex
+        swap    d0
+        bsr     exc_puthex
+        lea     exc_msg9(pc),a0      ; registres BCPL : a1 = frame, a2 = GV, a4 = routine en cours
+        bsr     exc_puts
+        move.l  16(sp),d0            ; a1 sauvé par le movem d'entrée
+        bsr.s   .ed_hex32
+        move.l  a2,d0
+        bsr.s   .ed_hex32
+        move.l  a4,d0
+        bsr.s   .ed_hex32
         lea     exc_crlf(pc),a0
         bsr     exc_puts
         btst    #5,(a1)              ; bit S du SR empilé (octet haut du mot SR)
@@ -677,6 +726,13 @@ exc_default:
 .ed_pop:
         addq.l  #4,sp                ; retire le n° de trap -> pile = [SR][PC]
         rte
+.ed_hex32:
+        swap    d0
+        bsr     exc_puthex
+        swap    d0
+        bsr     exc_puthex
+        moveq   #' ',d0
+        bra     exc_putc
 .ed_fatal:
         move.w  #$2700,sr
 .ed_stop:
@@ -740,6 +796,14 @@ exc_msg4:
         dc.b    " addr=",0
 exc_msg5:
         dc.b    " code(pc-8)=",0
+exc_msg6:
+        dc.b    " cmd=",0
+exc_msg7:
+        dc.b    " a6=",0
+exc_msg8:
+        dc.b    " (usp)=",0
+exc_msg9:
+        dc.b    " a1/a2/a4=",0
 exc_crlf:
         dc.b    13,10,0
         even

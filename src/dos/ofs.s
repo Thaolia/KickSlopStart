@@ -317,37 +317,69 @@ ofs_namecmp:
                 movem.l (sp)+,d2/a0/a1               ; movem ne modifie pas le CCR
                 rts
 
-; ofs_fib_fill(d0=bloc header, a1=fib ; bloc DÉJÀ lu dans IOREQ_SZ(a3)) : remplit le FileInfoBlock.
-; DiskKey = bloc ; DirEntryType = sec_type (<0 fichier, >0 répertoire) ; Size = byte_size@324 si fichier sinon 0 ;
-; FileName = nom BCPL converti en C-string (cappé 30 chars, borne anti-corruption). Clobbe d0/d1/a0/a1 (a1 réassigné).
+; ofs_fib_fill(d0=bloc header, a1=fib ; bloc DÉJÀ lu dans IOREQ_SZ(a3)) : remplit le FileInfoBlock comme un handler
+; de packets : DiskKey = bloc ; DirEntryType = EntryType = sec_type (<0 fichier, >0 répertoire) ; FileName et Comment
+; en BSTR (octet longueur + chars + NUL ; dos.library les convertit en chaînes C pour Examine/ExNext, les clients
+; BCPL qui envoient le packet eux-mêmes lisent le BSTR) ; Protection, DateStamp ; fichier : Size = byte_size et
+; NumBlocks = blocs de données OFS. La racine (ST_ROOT) n'a ni protection ni commentaire à ces offsets (bm_pages).
+; Noms cappés (30 / 79 chars, borne anti-corruption). Clobbe d0/d1/a0/a1.
 ofs_fib_fill:
+                move.l  d2,-(sp)
                 move.l  d0,FIB_DISKKEY(a1)
                 lea     IOREQ_SZ(a3),a0              ; a0 = buffer du bloc header
                 move.l  OFSB_SECTYPE(a0),d0          ; type secondaire
                 move.l  d0,FIB_DIRENTRYTYPE(a1)
-                tst.l   d0
-                bpl.s   .ff_dir                      ; >= 0 -> répertoire (ST_ROOT/USERDIR) : taille 0
-                move.l  OFSB_FILESIZE(a0),FIB_SIZE(a1)   ; fichier : byte_size
-                bra.s   .ff_name
-.ff_dir:
+                move.l  d0,FIB_ENTRYTYPE(a1)
+                move.l  OFSB_DAYS(a0),FIB_DATE(a1)
+                move.l  OFSB_MINS(a0),FIB_DATE+4(a1)
+                move.l  OFSB_TICKS(a0),FIB_DATE+8(a1)
                 clr.l   FIB_SIZE(a1)
+                clr.l   FIB_NUMBLOCKS(a1)
+                clr.l   FIB_PROTECTION(a1)
+                clr.b   FIB_COMMENT(a1)
+                clr.b   FIB_COMMENT+1(a1)
+                cmp.l   #OFS_ST_ROOT,d0
+                beq.s   .ff_name
+                move.l  OFSB_PROTECT(a0),FIB_PROTECTION(a1)
+                movem.l a0-a1,-(sp)
+                lea     OFSB_COMMENT(a0),a0
+                lea     FIB_COMMENT(a1),a1
+                moveq   #79,d2
+                bsr.s   ofs_fib_bstr
+                movem.l (sp)+,a0-a1
+                tst.l   FIB_DIRENTRYTYPE(a1)
+                bpl.s   .ff_name                     ; répertoire : taille 0
+                move.l  OFSB_FILESIZE(a0),d0
+                move.l  d0,FIB_SIZE(a1)
+                add.l   #OFS_DMAX-1,d0               ; blocs de données = ceil(taille / 488)
+                divu    #OFS_DMAX,d0
+                and.l   #$0000FFFF,d0
+                move.l  d0,FIB_NUMBLOCKS(a1)
 .ff_name:
-                lea     OFSB_NAME(a0),a0             ; a0 = nom BCPL (octet longueur + chars)
+                lea     OFSB_NAME(a0),a0
+                lea     FIB_FILENAME(a1),a1
+                moveq   #30,d2
+                bsr.s   ofs_fib_bstr
+                move.l  (sp)+,d2
+                rts
+
+; ofs_fib_bstr(a0 = BSTR source, a1 = dest, d2 = longueur max) : copie le BSTR (longueur cappée) + un NUL final.
+; Clobbe d0/d1/a0/a1.
+ofs_fib_bstr:
                 moveq   #0,d0
-                move.b  (a0)+,d0                     ; longueur stockée
-                lea     FIB_FILENAME(a1),a1          ; dest (a1 réassigné -> plus de champ fib base après)
-                cmp.l   #30,d0                       ; borne (nom AmigaDOS <= 30 ; garde anti-corruption)
-                bls.s   .ff_ncap
-                moveq   #30,d0
-.ff_ncap:
+                move.b  (a0)+,d0
+                cmp.l   d2,d0
+                bls.s   .fb_cap
+                move.l  d2,d0
+.fb_cap:
+                move.b  d0,(a1)+
                 move.l  d0,d1
-                beq.s   .ff_nend
-.ff_ncpy:
+                bra.s   .fb_next
+.fb_cpy:
                 move.b  (a0)+,(a1)+
-                subq.l  #1,d1
-                bne.s   .ff_ncpy
-.ff_nend:
-                clr.b   (a1)                         ; NUL-termine la C-string
+.fb_next:
+                dbra    d1,.fb_cpy
+                clr.b   (a1)
                 rts
 
 ; ofs_name_to_block(a0=chemin NUL-term, d0=bloc du répertoire de départ (0 = racine), a6=SysBase) -> d0 = bloc header

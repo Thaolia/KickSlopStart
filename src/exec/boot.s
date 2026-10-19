@@ -57,6 +57,8 @@
                 xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
                 xref    pointer_input_handler ; intuition/pointer.s (accumulateur deltas relatifs -> position absolue)
 
+                xdef    ser_puts         ; émission série (diagnostics du runtime BCPL)
+                xdef    ser_puthex
                 xdef    ser_lock         ; émission série atomique (Forbid gated SCHED_ON) — utilisé par conhandler/feeder/shell
                 xdef    ser_unlock
 

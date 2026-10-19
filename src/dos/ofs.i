@@ -18,6 +18,11 @@ OFSB_DATA       EQU 24            ; data block OFS : octets de données @ +24
 OFSB_FILESIZE   EQU 324           ; long[81] (= BSIZE-188) : byte_size d'un file header (taille en octets).
                                   ; Vérifié sur l'ADF de test : kickslop (bloc 866) -> 1024. L'assertion de boot
                                   ; fib_Size==1024 reconfirme (read@324 -> write@124 -> readback). AUCUNE lecture ROM.
+OFSB_PROTECT    EQU 320           ; long[80] (= BSIZE-192) : bits de protection (header fichier / répertoire)
+OFSB_COMMENT    EQU 328           ; long[82] (= BSIZE-184) : commentaire BCPL (octet longueur + 79 chars max)
+OFSB_DAYS       EQU 420           ; long[105] (= BSIZE-92) : DateStamp de modification (jours, minutes, ticks)
+OFSB_MINS       EQU 424
+OFSB_TICKS      EQU 428
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)) : nom BCPL (octet longueur + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)) : hash_chain (prochain header même bucket)
 OFSB_PARENT     EQU 500           ; long[125] (= (128-3)) : bloc du répertoire parent (0 pour le root)

@@ -59,6 +59,7 @@ FH_ARG2          EQU 40
 FH_SIZEOF        EQU 44
 DOS_NAMEMAX      EQU 255           ; longueur max d'un nom BSTR (octet de longueur)
 DOS_FH_ALLOC     EQU FH_SIZEOF+DOS_NAMEMAX+1 ; FileHandle + buffer BSTR du nom (à FH_SIZEOF, long-aligné) en 1 AllocMem
+RT_FHBUFLONGS    EQU 49            ; tampon d'un FileHandle du runtime BCPL : getvec(49) = 200 octets (rdch ; libéré par Close)
 
 ; --- DeviceNode (44 o ; chaîné dans DosInfo.di_DevInfo) ---
 DN_NEXT          EQU 0             ; BPTR
@@ -91,6 +92,8 @@ ACTION_LOCATE_OBJECT EQU 8          ; Lock : (ARG1 parent lock, ARG2 BSTR nom, A
 ACTION_FREE_LOCK   EQU 15          ; UnLock : (ARG1 BPTR lock) -> libère le lock
 ACTION_EXAMINE_OBJECT EQU 23       ; Examine : (ARG1 BPTR lock, ARG2 BPTR fib) -> remplit le FileInfoBlock
 ACTION_EXAMINE_NEXT   EQU 24       ; ExNext : (ARG1 BPTR lock, ARG2 BPTR fib) -> entrée suivante du répertoire
+ACTION_PARENT      EQU 29          ; ParentDir : (ARG1 BPTR lock) -> lock du parent | 0
+ACTION_COPY_DIR    EQU 19          ; DupLock : (ARG1 BPTR lock) -> nouveau lock sur le même objet
 
 MODE_OLDFILE     EQU 1005
 MODE_NEWFILE     EQU 1006
@@ -113,6 +116,7 @@ DOS_LVO_OUTPUT   EQU -60           ; Output() -> BPTR FileHandle de sortie (pr_C
 DOS_LVO_SEEK     EQU -66           ; Seek(fh d1, position d2, mode d3) -> ancienne position | -1
 DOS_LVO_CURRENTDIR EQU -126        ; CurrentDir(lock d1) -> ancien pr_CurrentDir
 DOS_LVO_LOADSEG  EQU -150          ; LoadSeg(name d1) -> BPTR seglist | 0 (ouvre+lit+parse hunk+reloc via Open/Read)
+DOS_LVO_DELAY    EQU -198          ; Delay(ticks d1)
 DOS_LVO_UNLOADSEG EQU -156         ; UnLoadSeg(seglist d1) -> libère la chaîne de segments
 DOS_LVO_IOERR    EQU -132          ; IoErr() -> d0 = pr_Result2 (code d'erreur du dernier packet)
 DOS_LVO_LOCK     EQU -84           ; Lock(name d1, mode d2) -> BPTR lock | 0
@@ -125,6 +129,7 @@ OFFSET_BEGINNING EQU -1            ; Seek depuis le début
 OFFSET_CURRENT   EQU 0             ; Seek relatif à la position courante
 OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
+ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i : action/fonction non supportée
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de la DosList
 ERROR_SEEK_ERROR EQU 303           ; dos/dos.i : Seek hors bornes
 ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoire (fin d'énumération normale)
@@ -165,10 +170,13 @@ FL_SIZEOF        EQU 28
 ; --- FileInfoBlock (dos.i) : rempli minimalement (DiskKey/DirEntryType/FileName/Size) ---
 FIB_DISKKEY      EQU 0             ; LONG : clé disque (= bloc header de l'entrée)
 FIB_DIRENTRYTYPE EQU 4            ; LONG : <0 fichier (ST_FILE=-3), >0 répertoire (ST_ROOT=1/ST_USERDIR=2)
-FIB_FILENAME     EQU 8             ; char[108] : nom en C-string (NUL-terminé ; copié du nom BCPL)
-FIB_PROTECTION   EQU 116           ; LONG (non peuplé ce milestone)
-FIB_ENTRYTYPE    EQU 120           ; LONG (= DirEntryType sur le vrai OS ; non peuplé)
+FIB_FILENAME     EQU 8             ; char[108] : BSTR côté packet ; chaîne C après Examine/ExNext (dos convertit)
+FIB_PROTECTION   EQU 116           ; LONG : bits de protection (RWED inversés + p, s, a)
+FIB_ENTRYTYPE    EQU 120           ; LONG (= DirEntryType)
 FIB_SIZE         EQU 124           ; LONG : taille du fichier en octets (0 pour un répertoire)
+FIB_NUMBLOCKS    EQU 128           ; LONG : nombre de blocs de données
+FIB_DATE         EQU 132           ; DateStamp (3 LONG : jours, minutes, ticks)
+FIB_COMMENT      EQU 144           ; char[80] : BSTR côté packet ; chaîne C après Examine/ExNext
 FIB_SIZEOF       EQU 260
 
 ; DOS_NO_IOERR=1 (RED) : dos_sendpkt NE copie PAS dp_Res2 -> pr_Result2 -> IoErr renvoie 0 même après un Open
