@@ -1,13 +1,20 @@
 ; src/intuition/intuition_lib.s — intuition.library (M5 : squelette résident + ViewAddress).
 ; Calqué sur graphics_lib.s (M4c1) : ROMTag RTF_AUTOINIT NT_LIBRARY, pri 10 (place roadmap, init en dernier),
 ; auto-scanné par build_reslist -> MakeLibrary crée IntuitionBase, Enqueue dans EB_LIBLIST (branche NT_LIBRARY).
-; Livre Open/Close/Expunge + ViewAddress (vecteur 49 = LVO -294) -> renvoie &ib_ViewLord (le View embarqué).
-; Hors M5 (différé) : OpenScreen/OpenWindow/DisplayAlert, rendu, écran insert-disk (-> M6, vrai déclencheur).
+; Livre Open/Close/Expunge, ViewAddress (-> &ib_ViewLord, le View embarqué), GetPrefs/GetDefPrefs ; écrans et
+; fenêtres dans screens.s (OpenScreen/CloseScreen/OpenWorkBench/GetScreenData/OpenWindow/CloseWindow).
 ;
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + NDK includes/.fd (public). AUCUNE lecture ROM.
 
                 include "exec.i"
                 include "intuition.i"
+
+                xref    intuition_OpenScreen     ; screens.s : écrans et fenêtres
+                xref    intuition_CloseScreen
+                xref    intuition_OpenWorkBench
+                xref    intuition_GetScreenData
+                xref    intuition_OpenWindow
+                xref    intuition_CloseWindow
 
 ; --- ROMTag intuition.library (scanné par build_reslist) ---
         EVEN
@@ -27,22 +34,28 @@ intuition_inittab:
         dc.l    intuition_vectors        ; funcTable
         dc.l    intuition_datatab        ; dataTable (InitStruct)
         dc.l    intuition_initfunc       ; initFunc
-; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. On remplit jusqu'à ViewAddress (-294 = vecteur 49) ; les
-; vecteurs 5..48 (-30..-288) non implémentés pointent sur intuition_null (dcb évite tout miscount manuel).
+; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N ; les vecteurs non implémentés pointent sur intuition_null
+; (dcb évite tout miscount manuel).
 intuition_vectors:
         dc.l    intuition_open           ; 1 : LVO -6
         dc.l    intuition_close          ; 2 : LVO -12
         dc.l    intuition_expunge        ; 3 : LVO -18
         dc.l    intuition_null           ; 4 : LVO -24 (réservé)
-        dcb.l   7,intuition_null         ; 5..11 : LVO -30..-66 (non impl.)
+        dcb.l   6,intuition_null         ; 5..10 : LVO -30..-60 (non impl.)
+        dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
         dcb.l   8,intuition_null         ; 13..20 : LVO -78..-120 (non impl. : DisplayAlert -90 inclus)
         dc.l    intuition_GetPrefs       ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
-        dcb.l   11,intuition_null        ; 23..33 : LVO -138..-198 (non impl. : OpenScreen -198 inclus)
+        dcb.l   10,intuition_null        ; 23..32 : LVO -138..-192 (non impl.)
+        dc.l    intuition_OpenScreen     ; 33 : LVO -198 OpenScreen(newscreen a0)
         dc.l    intuition_OpenWindow     ; 34 : LVO -204 OpenWindow(newwindow a0)
-        dcb.l   14,intuition_null        ; 35..48 : LVO -210..-288 (non impl.)
+        dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
+        dcb.l   13,intuition_null        ; 36..48 : LVO -216..-288 (non impl.)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
+        dcb.l   21,intuition_null        ; 50..70 : LVO -300..-420 (non impl.)
+        dc.l    intuition_GetScreenData  ; 71 : LVO -426 GetScreenData(buffer a0, taille d0, type d1, écran a1)
+        dcb.l   7,intuition_null         ; 72..78 : LVO -432..-468 (non impl. : jeu V34 complet, jusqu'à NewModifyProp)
         dc.l    -1
 intuition_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -64,77 +77,6 @@ intuition_expunge:
         rts
 intuition_null:
         moveq   #0,d0
-        rts
-
-; OpenWindow(newwindow a0) -> d0 = Window | 0. Fenêtre MINIMALE : structure Window (mise en page intuition.h V34)
-; allouée et remplie depuis la NewWindow (position, taille, limites, titre, drapeaux, IDCMP, pinceaux), bordures
-; nulles ; ni layer, ni rastport, ni port IDCMP, ni rendu à l'écran (pas de layers.library). Suffit aux clients
-; qui passent la fenêtre à console.device (NEWCON:). CloseWindow(fenêtre a0) la libère.
-WD_LEFTEDGE     EQU 4
-WD_TOPEDGE      EQU 6
-WD_WIDTH        EQU 8
-WD_HEIGHT       EQU 10
-WD_MINWIDTH     EQU 16
-WD_MINHEIGHT    EQU 18
-WD_MAXWIDTH     EQU 20
-WD_MAXHEIGHT    EQU 22
-WD_FLAGS        EQU 24
-WD_TITLE        EQU 32
-WD_IDCMPFLAGS   EQU 82
-WD_DETAILPEN    EQU 98
-WD_BLOCKPEN     EQU 99
-WD_GZZWIDTH     EQU 112
-WD_GZZHEIGHT    EQU 114
-WD_SIZE         EQU 132
-NW_LEFTEDGE     EQU 0
-NW_TOPEDGE      EQU 2
-NW_WIDTH        EQU 4
-NW_HEIGHT       EQU 6
-NW_DETAILPEN    EQU 8
-NW_BLOCKPEN     EQU 9
-NW_IDCMPFLAGS   EQU 10
-NW_FLAGS        EQU 14
-NW_TITLE        EQU 26
-NW_MINWIDTH     EQU 38
-NW_MINHEIGHT    EQU 40
-NW_MAXWIDTH     EQU 42
-NW_MAXHEIGHT    EQU 44
-intuition_OpenWindow:
-        movem.l a2/a6,-(sp)
-        move.l  a0,a2
-        move.l  ($4).w,a6
-        move.l  #WD_SIZE,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq.s   .ow_ret
-        move.l  d0,a0
-        move.l  NW_LEFTEDGE(a2),WD_LEFTEDGE(a0)   ; LeftEdge + TopEdge
-        move.l  NW_WIDTH(a2),WD_WIDTH(a0)         ; Width + Height
-        move.w  NW_WIDTH(a2),WD_GZZWIDTH(a0)
-        move.w  NW_HEIGHT(a2),WD_GZZHEIGHT(a0)
-        move.w  NW_MINWIDTH(a2),WD_MINWIDTH(a0)
-        move.w  NW_MINHEIGHT(a2),WD_MINHEIGHT(a0)
-        move.w  NW_MAXWIDTH(a2),WD_MAXWIDTH(a0)
-        move.w  NW_MAXHEIGHT(a2),WD_MAXHEIGHT(a0)
-        move.l  NW_FLAGS(a2),WD_FLAGS(a0)
-        move.l  NW_TITLE(a2),WD_TITLE(a0)
-        move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a0)
-        move.b  NW_DETAILPEN(a2),WD_DETAILPEN(a0)
-        move.b  NW_BLOCKPEN(a2),WD_BLOCKPEN(a0)
-.ow_ret:
-        movem.l (sp)+,a2/a6
-        rts
-intuition_CloseWindow:
-        move.l  a6,-(sp)
-        move.l  a0,d0
-        beq.s   .cw_ret
-        move.l  a0,a1
-        move.l  #WD_SIZE,d0
-        move.l  ($4).w,a6
-        jsr     LVO_FREEMEM(a6)
-.cw_ret:
-        move.l  (sp)+,a6
         rts
 
 ; GetPrefs / GetDefPrefs(buffer a0, taille d0) -> d0 = buffer : copie min(taille, 232) octets des Preferences
@@ -199,10 +141,21 @@ intuition_ViewAddress:
         endc
         rts
 
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34).
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Pose le nom (quirk V34) et retient GfxBase
+; (graphics.library, pri 65, est initialisée avant intuition, pri 10).
 intuition_initfunc:
-        move.l  d0,a1
+        move.l  a2,-(sp)
+        move.l  d0,a2
         lea     intuition_name(pc),a0
-        move.l  a0,LN_NAME(a1)
+        move.l  a0,LN_NAME(a2)
+        lea     EB_LIBLIST(a6),a0
+        lea     intuition_gfxname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,IB_GFXBASE(a2)
+        move.l  a2,d0
+        move.l  (sp)+,a2
         rts
+intuition_gfxname:
+        dc.b    "graphics.library",0
+        EVEN
 intuition_end:

@@ -357,13 +357,18 @@ bcpl_starthandler:
         bra     .sh_freename
 .sh_started:
         move.l  d0,a3                ; a3 = port du handler
-        lea     -SP_SIZEOF(sp),sp    ; packet de démarrage
-        move.l  sp,a0
+        lea     -(SP_SIZEOF+2)(sp),sp ; packet de démarrage, aligné sur un long (le handler le reçoit en BPTR)
+        move.l  sp,d0
+        btst    #1,d0
+        beq.s   .sh_palign
+        addq.l  #2,d0
+.sh_palign:
+        move.l  d0,a1                ; a1 = message
+        move.l  d0,a0
         moveq   #SP_SIZEOF/2-1,d0
 .sh_pclr:
         clr.w   (a0)+
         dbra    d0,.sh_pclr
-        move.l  sp,a1                ; a1 = message
         lea     SP_PKT(a1),a0        ; a0 = packet
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         move.w  #DP_SIZEOF,MN_LENGTH(a1)
@@ -387,11 +392,17 @@ bcpl_starthandler:
         jsr     LVO_WAITPORT(a6)
         move.l  d6,a0
         jsr     LVO_GETMSG(a6)
-        cmp.l   sp,d0
+        move.l  sp,d1
+        btst    #1,d1
+        beq.s   .sh_galign
+        addq.l  #2,d1
+.sh_galign:
+        cmp.l   d1,d0
         bne.s   .sh_wait
-        move.l  SP_PKT+DP_RES1(sp),d7
-        move.l  SP_PKT+DP_RES2(sp),d2
-        lea     SP_SIZEOF(sp),sp
+        move.l  d0,a0
+        move.l  SP_PKT+DP_RES1(a0),d7
+        move.l  SP_PKT+DP_RES2(a0),d2
+        lea     SP_SIZEOF+2(sp),sp
         bsr.s   .sh_free_a4
         tst.l   d7
         beq.s   .sh_refused
@@ -1413,8 +1424,9 @@ g_taskwait:
         lsr.l   #2,d1
         BLEAVE
 
-; 42 qpkt(pkt) : envoie le packet à dp_Port ; dp_Port := port du process (la réponse reviendra ici). dp_Link <= 0
-; -> 0 (Result2 = 101) ; sinon -1. 49 returnpkt(pkt, res1, res2) : pose les résultats puis qpkt (retour à l'émetteur).
+; 42 qpkt(pkt) : envoie le packet à dp_Port (message dp_Link, ln_Name := packet) ; dp_Port := port du process (la
+; réponse reviendra ici). dp_Link <= 0 -> 0 (Result2 = 101) ; sinon -1.
+; 49 returnpkt(pkt, res1, res2) : pose les résultats puis qpkt (retour à l'émetteur).
 g_returnpkt:
         move.l  d1,d0
         lsl.l   #2,d0
@@ -1430,6 +1442,7 @@ g_qpkt:
         bsr     rt_this
         lea     PR_MSGPORT(a3),a3    ; a3 = port du process
         move.l  d0,a1                ; message
+        move.l  a4,LN_NAME(a1)       ; message -> packet
         move.l  DP_PORT(a4),a0       ; destination
         move.l  a3,DP_PORT(a4)
         move.l  a3,MN_REPLYPORT(a1)
@@ -2570,6 +2583,16 @@ g_findcli:
         move.l  PR_CLI(a3),d1
         jmp     (a6)
 
+; consoletask() (105) / filesystemtask() (106) -> pr_ConsoleTask / pr_FileSystemTask du process (ports des handlers)
+g_consoletask:
+        bsr     rt_this
+        move.l  PR_CONSOLETASK(a3),d1
+        jmp     (a6)
+g_filesystemtask:
+        bsr     rt_this
+        move.l  PR_FILESYSTEMTASK(a3),d1
+        jmp     (a6)
+
 ft_msg:
         dc.b    "Error code ",0
 ra_colon:
@@ -2660,6 +2683,8 @@ bcpl_rtdata:
         GLOB    102,g_deviceproc
         GLOB    103,g_calllib
         GLOB    104,g_fault
+        GLOB    105,g_consoletask
+        GLOB    106,g_filesystemtask
         GLOB    107,g_splitname
         GLOB    108,g_locateobj
         GLOB    109,g_freeobj

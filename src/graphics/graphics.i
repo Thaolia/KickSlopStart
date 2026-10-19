@@ -59,6 +59,7 @@ BOOTSCR_ONE_PLANE EQU 0
 ; « GREEN=rayures » vaut par ÉLIMINATION : plus aucun autre chemin ne dessine les rayures. Les gates M4A_NO_COPPER
 ; et M4B_NO_BITPLANE (qui gataient ce template) sont donc RETIRÉS.
 GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER)  ; activé par LoadView
+GFX_HIRES_BIT EQU $8000        ; BPLCON0 bit 15 (HIRES), posé si vp_Modes a le bit HIRES ($8000)
 GFX_COLOR_BIT EQU $0200        ; BPLCON0 bit 9 (COLOR composite) ; BPLCON0 généré = (depth<<12) | GFX_COLOR_BIT
 ; M4C2_NO_MRGCOP=1 (RED M4c2) : MrgCop ne fusionne PAS les fragments vp_DspIns -> v_LOFCprList ne contient que
 ; le WAIT final -> LoadView installe une liste vide -> COLOR00 garde le blanc CPU -> écran BLANC, rayures absentes.
@@ -84,6 +85,34 @@ bm_Rows      EQU 2
 bm_Depth     EQU 5
 bm_Planes    EQU 8            ; bm_Planes[0..7] (APTR x8)
 bm_SIZEOF    EQU 40
+rp_Layer     EQU 0            ; RastPort (graphics/rastport.i, V34)
+rp_BitMap    EQU 4
+rp_Mask      EQU 24
+rp_FgPen     EQU 25
+rp_BgPen     EQU 26
+rp_AOlPen    EQU 27
+rp_DrawMode  EQU 28
+rp_LinePtrn  EQU 34
+rp_cp_x      EQU 36
+rp_cp_y      EQU 38
+rp_Font      EQU 52
+rp_TxHeight  EQU 58
+rp_TxWidth   EQU 60
+rp_TxBaseline EQU 62
+rp_SIZEOF    EQU 100
+lr_rp        EQU 12           ; Layer : RastPort de la couche
+lr_MinX      EQU 16           ; Layer : bounds (struct Rectangle) — seul champ exploité (décalage + découpage)
+lr_MinY      EQU 18
+lr_MaxX      EQU 20
+lr_MaxY      EQU 22
+lr_SIZEOF    EQU 160          ; struct Layer V34 (champs au-delà de bounds non utilisés ici)
+JAM1         EQU 0            ; rp_DrawMode
+JAM2         EQU 1
+COMPLEMENT   EQU 2
+INVERSVID    EQU 4
+GFX_FONTW    EQU 8            ; police 8x8 de la ROM (font8x8) : largeur, hauteur, ligne de base
+GFX_FONTH    EQU 8
+GFX_FONTBASE EQU 6
 cm_Count     EQU 2            ; ColorMap (début V34 : Flags/Type/Count/ColorTable)
 cm_ColorTable EQU 4
 GCM_SIZEOF   EQU 8
@@ -93,6 +122,20 @@ LVO_INITVPORT EQU -204
 LVO_MRGCOP    EQU -210
 LVO_MAKEVPORT EQU -216
 LVO_LOADVIEW  EQU -222
+LVO_TEXT      EQU -60
+LVO_SETFONT   EQU -66
+LVO_INITRASTPORT EQU -198
+LVO_SETRAST   EQU -234
+LVO_MOVE      EQU -240
+LVO_DRAW      EQU -246
+LVO_RECTFILL  EQU -306
+LVO_SETAPEN   EQU -342
+LVO_SETBPEN   EQU -348
+LVO_SETDRMD   EQU -354
+LVO_INITBITMAP EQU -390
+LVO_SCROLLRASTER EQU -396
+LVO_FREEVPORTCOPLISTS EQU -540
+V_HIRES       EQU $8000        ; vp_Modes : haute résolution (640 px)
 
 ; --- GfxBase : champs minimaux (au-delà de la base Library) ---
 gb_ActiView  EQU LIB_SIZE     ; APTR : View actif (posé par LoadView)

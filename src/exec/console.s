@@ -15,6 +15,8 @@
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs console.device + includes NDK publics. AUCUNE lecture ROM.
 
                 include "exec.i"
+                include "graphics.i"
+                include "intuition.i"
 
                 xref    font8x8          ; graphics/font8x8.s (glyphes 8x8, ASCII 0x20..0x7F)
                 xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
@@ -57,21 +59,53 @@ console_datatab:
         dc.b    0
         EVEN
 
-; Open(iorequest a1, unité d0, flags d1) : io_Data = fenêtre (NEWCON:, CON:). L'unité ouverte est marquée dans
-; io_Unit (la fenêtre, ou la base si io_Data = 0) : les requêtes d'une unité ouverte suivent la sémantique exec
-; standard (réponse ReplyMsg hors IOF_QUICK, CMD_READ mis en attente tant qu'aucun caractère n'est arrivé). Toutes
-; les fenêtres partagent le même bitplane (pas de fenêtrage réel : ni layers ni rastport par fenêtre).
+; Open(iorequest a1, unité d0, flags d1) : io_Data = fenêtre (NEWCON:, CON:) -> io_Unit = ConUnit allouée pour
+; cette fenêtre (devices/conunit.h : cu_Window, curseur, bornes de la zone de texte) ; io_Data = 0 -> io_Unit = la
+; base (bitplane partagé, sans fenêtre). Les requêtes d'une unité ouverte suivent la sémantique exec standard
+; (réponse ReplyMsg hors IOF_QUICK, CMD_READ mis en attente tant qu'aucun caractère n'est arrivé).
 console_open:
-        addq.w  #1,LIB_OPENCNT(a6)
-        clr.b   IO_ERROR(a1)
-        move.l  IO_DATA2(a1),d0
+        movem.l a2/a6,-(sp)
+        move.l  a1,a2
+        clr.b   IO_ERROR(a2)
+        move.l  IO_DATA2(a2),d0
+        bne.s   .co_win
+        move.l  a6,IO_UNIT(a2)
+        bra.s   .co_ok
+.co_win:
+        move.l  ($4).w,a6
+        move.l  #CU_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  4(sp),a6             ; a6 = base console
+        tst.l   d0
         bne.s   .co_unit
-        move.l  a6,d0
+        move.b  #-1,IO_ERROR(a2)     ; IOERR_OPENFAIL
+        bra.s   .co_ret
 .co_unit:
-        move.l  d0,IO_UNIT(a1)
+        move.l  d0,a0
+        move.l  IO_DATA2(a2),a1
+        bsr     cu_init
+        move.l  a0,IO_UNIT(a2)
+.co_ok:
+        addq.w  #1,LIB_OPENCNT(a6)
+.co_ret:
+        movem.l (sp)+,a2/a6
         rts
+; Close(iorequest a1) : libère la ConUnit d'une unité fenêtre.
 console_close:
         subq.w  #1,LIB_OPENCNT(a6)
+        move.l  IO_UNIT(a1),d0
+        beq.s   .cc_ret
+        cmp.l   a6,d0
+        beq.s   .cc_ret
+        clr.l   IO_UNIT(a1)
+        move.l  a6,-(sp)
+        move.l  d0,a1
+        move.l  #CU_SIZE,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+        move.l  (sp)+,a6
+.cc_ret:
         moveq   #0,d0
         rts
 console_expunge:
@@ -168,7 +202,27 @@ console_beginio:
 .bu_write:
         move.l  IO_DATA2(a3),a4
         move.l  IO_LEN2(a3),d4
+        cmp.l   #-1,d4               ; io_Length = -1 : chaîne terminée par 0
+        bne.s   .bu_len
+        moveq   #0,d4
+        move.l  a4,a0
+.bu_strlen:
+        tst.b   (a0)+
+        beq.s   .bu_len
+        addq.l  #1,d4
+        bra.s   .bu_strlen
+.bu_len:
         move.l  d4,IO_ACTUAL2(a3)
+        move.l  IO_UNIT(a3),a0
+        cmp.l   a2,a0
+        beq.s   .bu_wl               ; unité sans fenêtre : bitplane partagé
+        move.l  CU_WINDOW(a0),a1
+        tst.l   WD_RPORT(a1)
+        beq.s   .bu_wl               ; fenêtre sans RastPort : bitplane partagé
+        tst.l   CONB_GFXBASE(a2)
+        beq.s   .bu_wl
+        bsr     cu_write
+        bra     .bu_reply
 .bu_wl:
         tst.l   d4
         beq.s   .bu_reply
@@ -194,7 +248,7 @@ console_beginio:
 .bu_link:
         move.l  a3,(a0)
         jsr     LVO_ENABLE(a6)
-        bra.s   .bi_done
+        bra     .bi_done
 .bu_rgot:
         jsr     LVO_ENABLE(a6)
 .bu_reply:
@@ -401,6 +455,10 @@ console_initfunc:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,CONB_BITMAP(a2)   ; 0 si l'alloc échoue -> garde dans con_putglyph
+        lea     EB_LIBLIST(a6),a0    ; GfxBase (graphics.library, pri 65, initialisée avant console, pri 20)
+        lea     console_gfxname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,CONB_GFXBASE(a2)
         ; prépare le struct Interrupt du handler (dans la base) + enregistre sur input.device
         move.b  #0,CONB_INT+LN_PRI(a2)
         move.l  #console_input_handler,CONB_INT+IS_CODE(a2)
@@ -437,5 +495,598 @@ console_initfunc:
 
 console_inputdev:
         dc.b    "input.device",0
+console_gfxname:
+        dc.b    "graphics.library",0
         EVEN
+
+; === unités fenêtre (ConUnit) : rendu dans le RastPort de la fenêtre via graphics.library ===
+; Zone de texte = intérieur de la fenêtre (bordures exclues), cellules 8x8. Contrôles : BEL ignoré, BS, TAB (tous les
+; 8), LF (avec retour en colonne 0), VT, FF (efface), CR, ESC c (réinitialise), $84 IND, $85 NEL, $8D RI. CSI
+; (ESC [ ou $9B) : A B C D E F (déplacements), H f (position), J K (effacements), L M (insertion / suppression de
+; lignes), m (stylos 30-37/40-47, inversion 7, 0 = défaut), SPACE p (curseur visible ou non). CSI P (suppression de
+; caractères) efface jusqu'à la fin de la ligne (pas de décalage horizontal) ; @, t, u, x, y, q ignorés. Retour à
+; la ligne automatique en écrivant au-delà de la dernière colonne, défilement d'une ligne en bas de zone. Curseur :
+; cellule inversée (mode COMPLEMENT), retirée avant chaque écriture et redessinée après.
+CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
+CU_XCP          EQU 38
+CU_YCP          EQU 40
+CU_XMAX         EQU 42
+CU_YMAX         EQU 44
+CU_XRSIZE       EQU 46
+CU_YRSIZE       EQU 48
+CU_XRORIGIN     EQU 50
+CU_YRORIGIN     EQU 52
+CU_XREXTANT     EQU 54
+CU_YREXTANT     EQU 56
+CU_FGPEN        EQU 259
+CU_BGPEN        EQU 260
+CU_ESC          EQU 296              ; privé : 0 normal, 1 après ESC, 2 dans un CSI
+CU_NPAR         EQU 297              ; privé : index du paramètre CSI courant (0..1)
+CU_PSEEN        EQU 298              ; privé : un chiffre a été lu pour le paramètre 0
+CU_INTER        EQU 299              ; privé : octet intermédiaire du CSI ($20..$2F)
+CU_PAR0         EQU 300              ; privé : paramètres CSI
+CU_PAR1         EQU 302
+CU_CUROFF       EQU 304              ; privé : curseur masqué (CSI 0 SPACE p)
+CU_CURVIS       EQU 305              ; privé : curseur actuellement dessiné
+CU_INV          EQU 306              ; privé : vidéo inverse (CSI 7 m)
+CU_SIZE         EQU 308
+
+; cu_init(a0 = ConUnit effacée, a1 = Window) : bornes de la zone de texte depuis la géométrie de la fenêtre.
+; Préserve tout sauf d0/d1.
+cu_init:
+        move.l  a1,CU_WINDOW(a0)
+        move.w  #GFX_FONTW,CU_XRSIZE(a0)
+        move.w  #GFX_FONTH,CU_YRSIZE(a0)
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a1),d0
+        move.w  d0,CU_XRORIGIN(a0)
+        move.b  WD_BORDERTOP(a1),d0
+        move.w  d0,CU_YRORIGIN(a0)
+        move.w  WD_WIDTH(a1),d0
+        moveq   #0,d1
+        move.b  WD_BORDERLEFT(a1),d1
+        sub.w   d1,d0
+        move.b  WD_BORDERRIGHT(a1),d1
+        sub.w   d1,d0
+        asr.w   #3,d0
+        subq.w  #1,d0
+        bpl.s   .ci_x
+        moveq   #0,d0
+.ci_x:
+        move.w  d0,CU_XMAX(a0)
+        addq.w  #1,d0
+        lsl.w   #3,d0
+        add.w   CU_XRORIGIN(a0),d0
+        subq.w  #1,d0
+        move.w  d0,CU_XREXTANT(a0)
+        move.w  WD_HEIGHT(a1),d0
+        moveq   #0,d1
+        move.b  WD_BORDERTOP(a1),d1
+        sub.w   d1,d0
+        move.b  WD_BORDERBOTTOM(a1),d1
+        sub.w   d1,d0
+        asr.w   #3,d0
+        subq.w  #1,d0
+        bpl.s   .ci_y
+        moveq   #0,d0
+.ci_y:
+        move.w  d0,CU_YMAX(a0)
+        addq.w  #1,d0
+        lsl.w   #3,d0
+        add.w   CU_YRORIGIN(a0),d0
+        subq.w  #1,d0
+        move.w  d0,CU_YREXTANT(a0)
+        move.b  #1,CU_FGPEN(a0)
+        clr.b   CU_BGPEN(a0)
+        rts
+
+; cu_write(a0 = ConUnit, a4 = données, d4 = longueur, a2 = base console) : interprète le flux dans la fenêtre.
+; Préserve d2-d7/a2-a6 (a4/d4 consommés : sauvés).
+cu_write:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a0,a5                ; a5 = ConUnit
+        move.l  CONB_GFXBASE(a2),a6  ; a6 = GfxBase
+        move.l  CU_WINDOW(a5),a0
+        move.l  WD_RPORT(a0),a3      ; a3 = RastPort
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     cu_setpens
+        bsr     cu_curoff
+.cw_lp:
+        tst.l   d4
+        beq.s   .cw_end
+        tst.b   CU_ESC(a5)
+        bne.s   .cw_ctl
+        move.b  (a4),d0
+        bsr     cu_isprint
+        beq.s   .cw_print
+.cw_ctl:
+        move.b  (a4)+,d0
+        subq.l  #1,d4
+        bsr     cu_ctl
+        bra.s   .cw_lp
+.cw_print:
+        move.w  CU_XCP(a5),d0        ; colonne au-delà de la dernière : retour à la ligne avant d'écrire
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .cw_fit
+        clr.w   CU_XCP(a5)
+        bsr     cu_lf
+.cw_fit:
+        move.w  CU_XMAX(a5),d3
+        sub.w   CU_XCP(a5),d3
+        addq.w  #1,d3                ; d3 = cellules restantes sur la ligne
+        move.l  a4,a2                ; a2 = début de la plage
+        moveq   #0,d2                ; d2 = longueur de la plage
+.cw_cnt:
+        cmp.w   d3,d2
+        bge.s   .cw_out
+        tst.l   d4
+        beq.s   .cw_out
+        move.b  (a4),d0
+        bsr     cu_isprint
+        bne.s   .cw_out
+        addq.l  #1,a4
+        subq.l  #1,d4
+        addq.w  #1,d2
+        bra.s   .cw_cnt
+.cw_out:
+        bsr     cu_cellxy
+        addq.w  #GFX_FONTBASE,d1
+        move.l  a3,a1
+        jsr     LVO_MOVE(a6)
+        move.l  a2,a0
+        move.w  d2,d0
+        move.l  a3,a1
+        jsr     LVO_TEXT(a6)
+        add.w   d2,CU_XCP(a5)
+        bra.s   .cw_lp
+.cw_end:
+        bsr     cu_curon
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; cu_isprint(d0.b) -> Z = 1 si caractère imprimable ($20..$7E, $A0..$FF). Ne touche que les codes conditions.
+cu_isprint:
+        cmp.b   #$20,d0
+        blo.s   .ip_no
+        cmp.b   #$7F,d0
+        blo.s   .ip_yes
+        cmp.b   #$A0,d0
+        blo.s   .ip_no
+.ip_yes:
+        move.w  #4,ccr               ; Z = 1
+        rts
+.ip_no:
+        move.w  #0,ccr               ; Z = 0
+        rts
+
+; cu_cellxy(a5) -> d0.w/d1.w = coin haut-gauche de la cellule du curseur (coordonnées de la fenêtre).
+cu_cellxy:
+        move.w  CU_XCP(a5),d0
+        lsl.w   #3,d0
+        add.w   CU_XRORIGIN(a5),d0
+        move.w  CU_YCP(a5),d1
+        lsl.w   #3,d1
+        add.w   CU_YRORIGIN(a5),d1
+        rts
+
+; cu_setpens(a5, a3 = RastPort, a6 = GfxBase) : stylos A/B effectifs (permutés en vidéo inverse). Clobbe d0/d1/a0/a1.
+cu_setpens:
+        moveq   #0,d0
+        move.b  CU_FGPEN(a5),d0
+        moveq   #0,d1
+        move.b  CU_BGPEN(a5),d1
+        tst.b   CU_INV(a5)
+        beq.s   .sp_n
+        exg     d0,d1
+.sp_n:
+        move.l  d1,-(sp)
+        move.l  a3,a1
+        jsr     LVO_SETAPEN(a6)
+        move.l  (sp)+,d0
+        move.l  a3,a1
+        jmp     LVO_SETBPEN(a6)
+
+; cu_curoff / cu_curon(a5, a3, a6) : retire / dessine le curseur (cellule inversée). Clobbe d0-d3/a0/a1.
+cu_curoff:
+        tst.b   CU_CURVIS(a5)
+        beq.s   cu_ret
+        clr.b   CU_CURVIS(a5)
+        bra.s   cu_cplcell
+cu_curon:
+        tst.b   CU_CUROFF(a5)
+        bne.s   cu_ret
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        bgt.s   cu_ret               ; en attente de retour à la ligne : pas de cellule
+        st      CU_CURVIS(a5)
+cu_cplcell:
+        move.l  a3,a1
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     cu_cellxy
+        move.w  d0,d2
+        addq.w  #GFX_FONTW-1,d2
+        move.w  d1,d3
+        addq.w  #GFX_FONTH-1,d3
+        move.l  a3,a1
+        jsr     LVO_RECTFILL(a6)
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        jmp     LVO_SETDRMD(a6)
+cu_ret:
+        rts
+
+; cu_fill(d0..d3 = rectangle, a3, a6) : remplit au stylo de fond effectif. Clobbe d0-d3/a0/a1.
+cu_fill:
+        movem.w d0-d3,-(sp)
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  CU_BGPEN(a5),d0
+        tst.b   CU_INV(a5)
+        beq.s   .fl_n
+        move.b  CU_FGPEN(a5),d0
+.fl_n:
+        jsr     LVO_SETAPEN(a6)
+        movem.w (sp)+,d0-d3
+        move.l  a3,a1
+        jsr     LVO_RECTFILL(a6)
+        bra     cu_setpens
+
+; cu_scroll(d1.w = dy en pixels, d3.w = première ligne en pixels, a3, a6) : décale [d3 .. YRExtant] de la zone de
+; texte (vers le haut si dy > 0), bande libérée au stylo B. Clobbe d0-d3/a0/a1.
+cu_scroll:
+        movem.l d4/d5,-(sp)
+        moveq   #0,d0
+        move.w  CU_XRORIGIN(a5),d2
+        move.w  CU_XREXTANT(a5),d4
+        move.w  CU_YREXTANT(a5),d5
+        move.l  a3,a1
+        jsr     LVO_SCROLLRASTER(a6)
+        movem.l (sp)+,d4/d5
+        rts
+
+; cu_lf(a5, a3, a6) : ligne suivante ; en bas de zone, défilement d'une ligne. Clobbe d0-d3/a0/a1.
+cu_lf:
+        move.w  CU_YCP(a5),d0
+        cmp.w   CU_YMAX(a5),d0
+        bge.s   .lf_scroll
+        addq.w  #1,CU_YCP(a5)
+        rts
+.lf_scroll:
+        move.w  CU_YMAX(a5),CU_YCP(a5)
+        moveq   #GFX_FONTH,d1
+        move.w  CU_YRORIGIN(a5),d3
+        bra.s   cu_scroll
+
+; cu_eol(a5, a3, a6) : efface de la cellule du curseur à la fin de la ligne. Clobbe d0-d3/a0/a1.
+cu_eol:
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        bgt.s   cu_ret
+        bsr     cu_cellxy
+        move.w  CU_XREXTANT(a5),d2
+        move.w  d1,d3
+        addq.w  #GFX_FONTH-1,d3
+        bra.s   cu_fill
+
+; cu_ctl(d0.b = octet de contrôle ou de séquence, a5, a3, a6) : contrôles et séquences ESC / CSI.
+; Clobbe d0-d3/d5-d7/a0/a1.
+cu_ctl:
+        move.b  CU_ESC(a5),d1
+        beq.s   .ct_plain
+        subq.b  #1,d1
+        beq     .ct_esc
+        bra     .ct_csi
+.ct_plain:
+        cmp.b   #$1B,d0
+        bne.s   .ct_n1b
+        move.b  #1,CU_ESC(a5)
+        rts
+.ct_n1b:
+        cmp.b   #$9B,d0
+        beq     .ct_csistart
+        cmp.b   #8,d0
+        bne.s   .ct_nbs
+        tst.w   CU_XCP(a5)
+        beq.s   .ct_ret
+        move.w  CU_XCP(a5),d0        ; après une ligne pleine, BS revient sur la dernière colonne
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .ct_bs
+        move.w  CU_XMAX(a5),CU_XCP(a5)
+        rts
+.ct_bs:
+        subq.w  #1,CU_XCP(a5)
+.ct_ret:
+        rts
+.ct_nbs:
+        cmp.b   #9,d0
+        bne.s   .ct_ntab
+        move.w  CU_XCP(a5),d0
+        or.w    #7,d0
+        addq.w  #1,d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .ct_tab
+        move.w  CU_XMAX(a5),d0
+.ct_tab:
+        move.w  d0,CU_XCP(a5)
+        rts
+.ct_ntab:
+        cmp.b   #10,d0
+        bne.s   .ct_nlf
+        clr.w   CU_XCP(a5)
+        bra     cu_lf
+.ct_nlf:
+        cmp.b   #11,d0
+        bne.s   .ct_nvt
+        tst.w   CU_YCP(a5)
+        beq.s   .ct_ret
+        subq.w  #1,CU_YCP(a5)
+        rts
+.ct_nvt:
+        cmp.b   #12,d0
+        beq     .ct_ff
+        cmp.b   #13,d0
+        bne.s   .ct_ncr
+        clr.w   CU_XCP(a5)
+        rts
+.ct_ncr:
+        cmp.b   #$84,d0              ; IND
+        beq     cu_lf
+        cmp.b   #$85,d0              ; NEL
+        bne.s   .ct_nnel
+        clr.w   CU_XCP(a5)
+        bra     cu_lf
+.ct_nnel:
+        cmp.b   #$8D,d0              ; RI : ligne précédente, défilement vers le bas en haut de zone
+        bne.s   .ct_ret
+        tst.w   CU_YCP(a5)
+        beq.s   .ct_ri
+        subq.w  #1,CU_YCP(a5)
+        rts
+.ct_ri:
+        moveq   #-GFX_FONTH,d1
+        move.w  CU_YRORIGIN(a5),d3
+        bra     cu_scroll
+.ct_esc:                             ; après ESC
+        clr.b   CU_ESC(a5)
+        cmp.b   #'[',d0
+        beq.s   .ct_csistart
+        cmp.b   #'c',d0              ; RIS : réinitialisation (stylos, curseur, effacement)
+        bne     .ct_ret
+        move.b  #1,CU_FGPEN(a5)
+        clr.b   CU_BGPEN(a5)
+        clr.b   CU_INV(a5)
+        clr.b   CU_CUROFF(a5)
+        bsr     cu_setpens
+.ct_ff:
+        clr.l   CU_XCP(a5)           ; XCP = YCP = 0
+        move.w  CU_XRORIGIN(a5),d0
+        move.w  CU_YRORIGIN(a5),d1
+        move.w  CU_XREXTANT(a5),d2
+        move.w  CU_YREXTANT(a5),d3
+        bra     cu_fill
+.ct_csistart:
+        move.b  #2,CU_ESC(a5)
+        clr.l   CU_PAR0(a5)          ; PAR0 = PAR1 = 0
+        clr.b   CU_NPAR(a5)
+        clr.b   CU_PSEEN(a5)
+        clr.b   CU_INTER(a5)
+        rts
+.ct_csi:                             ; dans un CSI : paramètres, intermédiaires, octet final
+        cmp.b   #'0',d0
+        blo.s   .ct_nd
+        cmp.b   #'9',d0
+        bhi.s   .ct_nd
+        and.w   #$000F,d0
+        lea     CU_PAR0(a5),a0
+        tst.b   CU_NPAR(a5)
+        beq.s   .ct_p0
+        lea     CU_PAR1(a5),a0
+        bra.s   .ct_pacc
+.ct_p0:
+        st      CU_PSEEN(a5)
+.ct_pacc:
+        move.w  (a0),d1
+        mulu    #10,d1
+        add.w   d0,d1
+        cmp.w   #999,d1
+        bls.s   .ct_pst
+        move.w  #999,d1
+.ct_pst:
+        move.w  d1,(a0)
+        rts
+.ct_nd:
+        cmp.b   #';',d0
+        bne.s   .ct_nsc
+        move.b  #1,CU_NPAR(a5)
+        rts
+.ct_nsc:
+        cmp.b   #$40,d0
+        bhs.s   .ct_final
+        cmp.b   #$20,d0
+        blo.s   .ct_abort
+        move.b  d0,CU_INTER(a5)      ; intermédiaire ($20..$3F hors chiffres et ';')
+        rts
+.ct_abort:
+        clr.b   CU_ESC(a5)           ; octet de contrôle dans un CSI : séquence abandonnée
+        rts
+.ct_final:
+        clr.b   CU_ESC(a5)
+        move.w  CU_PAR0(a5),d6       ; d6 = n (paramètre 0, au moins 1 pour les déplacements)
+        bne.s   .ct_n1
+        moveq   #1,d6
+.ct_n1:
+        cmp.b   #'A',d0
+        bne.s   .ct_nA
+        move.w  CU_YCP(a5),d1
+        sub.w   d6,d1
+        bra     .ct_sety
+.ct_nA:
+        cmp.b   #'B',d0
+        bne.s   .ct_nB
+        move.w  CU_YCP(a5),d1
+        add.w   d6,d1
+        bra     .ct_sety
+.ct_nB:
+        cmp.b   #'C',d0
+        bne.s   .ct_nC
+        move.w  CU_XCP(a5),d1
+        add.w   d6,d1
+        bra     .ct_setx
+.ct_nC:
+        cmp.b   #'D',d0
+        bne.s   .ct_nD
+        move.w  CU_XCP(a5),d1
+        sub.w   d6,d1
+        bra     .ct_setx
+.ct_nD:
+        cmp.b   #'E',d0
+        bne.s   .ct_nE
+        clr.w   CU_XCP(a5)
+        move.w  CU_YCP(a5),d1
+        add.w   d6,d1
+        bra     .ct_sety
+.ct_nE:
+        cmp.b   #'F',d0
+        bne.s   .ct_nF
+        clr.w   CU_XCP(a5)
+        move.w  CU_YCP(a5),d1
+        sub.w   d6,d1
+        bra     .ct_sety
+.ct_nF:
+        cmp.b   #'H',d0
+        beq.s   .ct_pos
+        cmp.b   #'f',d0
+        bne.s   .ct_nH
+.ct_pos:
+        move.w  CU_PAR1(a5),d1       ; colonne (1 par défaut)
+        bne.s   .ct_pc
+        moveq   #1,d1
+.ct_pc:
+        subq.w  #1,d1
+        bsr     .ct_setx
+        move.w  d6,d1
+        subq.w  #1,d1
+        bra     .ct_sety
+.ct_nH:
+        cmp.b   #'J',d0
+        bne.s   .ct_nJ
+        bsr     cu_eol
+        move.w  CU_YCP(a5),d1        ; puis les lignes suivantes
+        cmp.w   CU_YMAX(a5),d1
+        bge     .ct_ret2
+        addq.w  #1,d1
+        lsl.w   #3,d1
+        add.w   CU_YRORIGIN(a5),d1
+        move.w  CU_XRORIGIN(a5),d0
+        move.w  CU_XREXTANT(a5),d2
+        move.w  CU_YREXTANT(a5),d3
+        bra     cu_fill
+.ct_nJ:
+        cmp.b   #'K',d0
+        beq     cu_eol
+        cmp.b   #'P',d0
+        beq     cu_eol
+        cmp.b   #'L',d0
+        beq.s   .ct_lines
+        cmp.b   #'M',d0
+        bne.s   .ct_nM
+.ct_lines:                           ; L : insère n lignes (vers le bas) ; M : en supprime n (vers le haut)
+        move.w  d6,d1
+        lsl.w   #3,d1
+        cmp.b   #'L',d0
+        bne.s   .ct_lm
+        neg.w   d1
+.ct_lm:
+        move.w  CU_YCP(a5),d3
+        lsl.w   #3,d3
+        add.w   CU_YRORIGIN(a5),d3
+        bra     cu_scroll
+.ct_nM:
+        cmp.b   #'m',d0
+        bne.s   .ct_nm
+        move.w  CU_PAR0(a5),d0
+        bsr.s   .ct_sgr
+        tst.b   CU_NPAR(a5)
+        beq.s   .ct_sgrdone
+        move.w  CU_PAR1(a5),d0
+        bsr.s   .ct_sgr
+.ct_sgrdone:
+        bra     cu_setpens
+.ct_nm:
+        cmp.b   #'p',d0
+        bne.s   .ct_ret2
+        cmp.b   #' ',CU_INTER(a5)
+        bne.s   .ct_ret2
+        clr.b   CU_CUROFF(a5)        ; CSI SPACE p : visible ; CSI 0 SPACE p : masqué
+        tst.b   CU_PSEEN(a5)
+        beq.s   .ct_ret2
+        tst.w   CU_PAR0(a5)
+        bne.s   .ct_ret2
+        st      CU_CUROFF(a5)
+.ct_ret2:
+        rts
+; .ct_sgr(d0.w = paramètre SGR) : 0 défaut, 7 inverse, 30..37 / 39 premier plan, 40..47 / 49 fond.
+.ct_sgr:
+        tst.w   d0
+        bne.s   .sg_n0
+        move.b  #1,CU_FGPEN(a5)
+        clr.b   CU_BGPEN(a5)
+        clr.b   CU_INV(a5)
+        rts
+.sg_n0:
+        cmp.w   #7,d0
+        bne.s   .sg_n7
+        st      CU_INV(a5)
+        rts
+.sg_n7:
+        cmp.w   #39,d0
+        bne.s   .sg_n39
+        move.b  #1,CU_FGPEN(a5)
+        rts
+.sg_n39:
+        cmp.w   #49,d0
+        bne.s   .sg_n49
+        clr.b   CU_BGPEN(a5)
+        rts
+.sg_n49:
+        sub.w   #30,d0
+        bcs.s   .sg_ret
+        cmp.w   #7,d0
+        bhi.s   .sg_bg
+        move.b  d0,CU_FGPEN(a5)
+        rts
+.sg_bg:
+        sub.w   #10,d0
+        bcs.s   .sg_ret
+        cmp.w   #7,d0
+        bhi.s   .sg_ret
+        move.b  d0,CU_BGPEN(a5)
+.sg_ret:
+        rts
+; .ct_setx / .ct_sety(d1.w = position voulue) : bornée à la zone de texte.
+.ct_setx:
+        tst.w   d1
+        bpl.s   .sx_lo
+        moveq   #0,d1
+.sx_lo:
+        cmp.w   CU_XMAX(a5),d1
+        ble.s   .sx_hi
+        move.w  CU_XMAX(a5),d1
+.sx_hi:
+        move.w  d1,CU_XCP(a5)
+        rts
+.ct_sety:
+        tst.w   d1
+        bpl.s   .sy_lo
+        moveq   #0,d1
+.sy_lo:
+        cmp.w   CU_YMAX(a5),d1
+        ble.s   .sy_hi
+        move.w  CU_YMAX(a5),d1
+.sy_hi:
+        move.w  d1,CU_YCP(a5)
+        rts
 console_end:

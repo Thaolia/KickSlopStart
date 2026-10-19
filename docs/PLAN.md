@@ -788,10 +788,14 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     au message de démarrage, port public) ; InitCode filtré par classe (RTF_COLDSTART) ; AddPort initialise la file.
     **Lecture disquette ×5 FAITE** (trackdisk : moteur maintenu 2 s, pas de 3 ms + 18 ms de stabilisation, cache
     LRU de 8 pistes) : boot complet WB 1.3.3 de > 400 s à 87 s. À valider sur WinUAE timing-exact.
-    **Étape 6 (bureau visible)** : écran Workbench (OpenScreen/GetScreenData), layers.library, fenêtres Intuition
-    réelles (rastport, rendu), graphics Text/OpenFont, mathffp.library, InitGels ; puis le Workbench réel (icônes
-    de disques par icon.library, menus, lancement d'outils). Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101),
-    writef tamponné, C:FAULT.
+    **Étape 6 — écran Workbench et fenêtres visibles FAITE** : graphics (primitives de dessin, Text, ScrollRaster,
+    MakeVPort générique HIRES), intuition (OpenScreen/OpenWorkBench/GetScreenData, OpenWindow/CloseWindow dessinés),
+    console.device rendue dans la fenêtre (ConUnit, CSI, défilement, curseur), dos Open("*"), packets alignés,
+    fl_Volume ; NewShell ouvre une fenêtre AmigaShell utilisable au clavier.
+    **Étape 7 (bureau)** : layers.library (recouvrement, rafraîchissement, déplacement), pointeur souris (sprite),
+    IDCMP, OpenFont/topaz, mathffp.library, InitGels ; puis le Workbench réel (icônes de disques par icon.library,
+    menus, lancement d'outils). Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4
+    (Run vers PIPE: depuis le CLI initial).
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

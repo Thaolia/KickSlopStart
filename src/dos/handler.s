@@ -15,6 +15,7 @@
                 include "exec.i"
                 include "ofs.i"
                 include "dospkt.i"
+                include "dos.i"
 
                 xdef    dos_handler_df0
                 xref    ofs_name_to_block    ; LOCATE_OBJECT : chemin -> bloc
@@ -197,7 +198,9 @@ dos_handler_df0:
                 move.l  d2,FL_KEY(a0)                 ; bloc locké
                 move.l  DP_ARG3(a4),FL_ACCESS(a0)     ; mode (SHARED/EXCLUSIVE)
                 move.l  a2,FL_TASK(a0)                ; port du handler (= notre pr_MsgPort) -> source UnLock/Examine
-                move.l  d0,d1                          ; FL_LINK/FL_VOLUME/curseur = 0 (MEMF_CLEAR)
+                move.l  DOS_DOSBASE,a1
+                move.l  DL_VOLUME(a1),FL_VOLUME(a0)   ; nœud volume (0 avant sa création par le CLI initial)
+                move.l  d0,d1                          ; FL_LINK/curseur = 0 (MEMF_CLEAR)
                 lsr.l   #2,d1                          ; BPTR(lock)
                 move.l  d1,DP_RES1(a4)
                 bra     .reply
@@ -290,6 +293,8 @@ dos_handler_df0:
                 move.l  d2,FL_KEY(a0)
                 move.l  #SHARED_LOCK,FL_ACCESS(a0)
                 move.l  a2,FL_TASK(a0)
+                move.l  DOS_DOSBASE,a1
+                move.l  DL_VOLUME(a1),FL_VOLUME(a0)
                 lsr.l   #2,d0
                 move.l  d0,DP_RES1(a4)
                 bra     .reply

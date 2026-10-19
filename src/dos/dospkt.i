@@ -170,7 +170,7 @@ FL_LINK          EQU 0             ; BPTR : lock suivant (on garde 0 : pas de ch
 FL_KEY           EQU 4             ; LONG : bloc header de l'objet locké
 FL_ACCESS        EQU 8             ; LONG : SHARED_LOCK / EXCLUSIVE_LOCK
 FL_TASK          EQU 12            ; APTR : MsgPort du handler (source du port pour UnLock/Examine/ExNext)
-FL_VOLUME        EQU 16            ; BPTR : noeud volume (on garde 0)
+FL_VOLUME        EQU 16            ; BPTR : noeud volume (DosBase DL_VOLUME)
 FLP_BUCKET       EQU 20            ; LONG privé : index de bucket courant dans la hashtable du répertoire
 FLP_CHAIN        EQU 24            ; LONG privé : bloc courant dans la chaîne hash (0 = passer au bucket suivant)
 FL_SIZEOF        EQU 28

@@ -82,9 +82,21 @@ proc_exit:
 ;   -> d0 = dp_Res1, d1 = dp_Res2. Pas de DoPkt public en V34 -> cet équivalent interne monte le packet, PutMsg au
 ;   handler, puis WaitPort/GetMsg sur le pr_MsgPort de l'APPELANT (qui DOIT être un Process). Convention dos :
 ;   dp_Port/mn_ReplyPort = &appelant.pr_MsgPort. Réutilisé par le driver de preuve (D3b) et par dos Open/Read (D3c).
+;   Le packet circule en BPTR (taskwait d'un handler BCPL le rend par ln_Name >> 2) : il doit être aligné sur un long.
+;   Un StandardPacket fourni sur une pile alignée sur un mot seulement (programmes C) est remplacé par une réserve
+;   alignée de la trame de dos_sendpkt.
 dos_sendpkt:
-                movem.l a2-a5,-(sp)
-                move.l  a0,a2                ; a2 = StandardPacket (&sp_Msg)
+                movem.l d5/a2-a5,-(sp)
+                lea     -(SP_SIZEOF+2)(sp),sp
+                move.l  a0,d5
+                btst    #1,d5
+                beq.s   .sp_aligned
+                move.l  sp,d5                ; réserve : sp ou sp+2 est aligné sur un long
+                btst    #1,d5
+                beq.s   .sp_aligned
+                addq.l  #2,d5
+.sp_aligned:
+                move.l  d5,a2                ; a2 = StandardPacket (&sp_Msg)
                 move.l  a1,a3                ; a3 = port du handler
                 lea     SP_PKT(a2),a4        ; a4 = &sp_Pkt (DosPacket)
                 move.l  EB_THISTASK(a6),a0
@@ -116,5 +128,6 @@ dos_sendpkt:
                 move.l  EB_THISTASK(a6),a0   ; IoErr : pr_Result2 = dp_Res2 du packet (faithful ; a6 = SysBase)
                 move.l  d1,PR_RESULT2(a0)
                 endc                         ; RED DOS_NO_IOERR : ne propage pas -> IoErr renvoie 0 même en échec
-                movem.l (sp)+,a2-a5
+                lea     SP_SIZEOF+2(sp),sp
+                movem.l (sp)+,d5/a2-a5
                 rts

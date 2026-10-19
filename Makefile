@@ -25,7 +25,7 @@ EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 # bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
-GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/draw.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
 # loadscreen.o : écran de chargement — démo gatée. Lié UNIQUEMENT quand VASMDEF active LOADSCREEN_DEMO,
 # pour que la ROM par défaut reste sans code mort (byte-identique). `make VASMDEF=-DLOADSCREEN_DEMO=1 kick`.
 ifneq (,$(findstring LOADSCREEN_DEMO,$(VASMDEF)))
@@ -34,7 +34,7 @@ endif
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
-INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/requester.o $(BUILD)/pointer.o
+INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/screens.o $(BUILD)/requester.o $(BUILD)/pointer.o
 # --- piste dos (M6+) : objets reliés APRÈS intuition ---
 DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i
@@ -68,6 +68,9 @@ $(BUILD):
 # -I src/dos : boot.s inclut dospkt.i (constantes Process/packet D3 pour le scaffold de preuve).
 $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(DOS_DIR) -o $@ $<
+# console.s inclut aussi graphics.i + intuition.i (rendu dans les fenêtres : RastPort, struct Window).
+$(BUILD)/console.o: $(EXEC_DIR)/console.s $(EXEC_INC) $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
 # trackdisk.s inclut aussi disk.i (registres disque B2).
 $(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
 # expansion.s inclut expansion.i (ExpansionBase/ConfigDev/LVO) : relier la dépendance pour rebuild.
@@ -86,9 +89,10 @@ $(BUILD)/bootscreen_data.o: $(GFX_DIR)/bootscreen.raw
 $(BUILD)/loadscreen.o: $(GFX_DIR)/loadscreen.s $(EXEC_INC) $(GFX_INC) $(DOS_DIR)/ofs.i | $(BUILD)
 	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -I $(DOS_DIR) -o $@ $<
 
-# Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase).
-$(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) | $(BUILD)
-	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(INT_DIR) -o $@ $<
+# Module(s) intuition (src/intuition) : include exec.i (ABI/LVO) + intuition.i (layout IntuitionBase) + graphics.i
+# (structures de dessin et LVO graphics : écrans et fenêtres).
+$(BUILD)/%.o: $(INT_DIR)/%.s $(EXEC_INC) $(INT_INC) $(GFX_INC) | $(BUILD)
+	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(INT_DIR) -I $(GFX_DIR) -o $@ $<
 
 # Module(s) dos (src/dos) : include exec.i (ABI/LVO/AllocMem) + dos.i (layout DosLibrary/RootNode/DosInfo, BPTR).
 $(BUILD)/%.o: $(DOS_DIR)/%.s $(EXEC_INC) $(DOS_INC) | $(BUILD)

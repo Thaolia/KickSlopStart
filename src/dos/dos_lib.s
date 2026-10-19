@@ -129,14 +129,30 @@ dos_DateStamp:
 ; Résolution du nom par dos_resolve (préfixe device/assign/volume, sinon répertoire courant). StandardPacket local à
 ; la pile de l'appelant (process).
 
-; Open(name d1 [C-string], accessMode d2 [= code ACTION_FIND*]) -> d0 = BPTR FileHandle | 0.
+; Open(name d1 [C-string], accessMode d2 [= code ACTION_FIND*]) -> d0 = BPTR FileHandle | 0. Le nom « * » désigne la
+; console du process : le packet va à pr_ConsoleTask (lock 0, nom « * » transmis), comme sous AmigaDOS. Toute
+; valeur non nulle de dp_Res1 vaut succès.
 dos_fn_open:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,a4                   ; a4 = nom (C-string)
         move.l  d2,d7                   ; d7 = mode (= dp_Type ACTION_FINDINPUT)
+        cmp.b   #'*',(a4)
+        bne.s   .op_resolve
+        tst.b   1(a4)
+        bne.s   .op_resolve
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_CONSOLETASK(a0),a3
+        moveq   #0,d6
+        move.l  a3,d0
+        bne.s   .op_port
+        move.l  #ERROR_OBJECT_NOT_FOUND,PR_RESULT2(a0)
+        bra     .op_fail_early          ; pas de console
+.op_resolve:
         bsr     dos_resolve             ; a3 = port du handler, d6 = lock de départ, a4 = nom à transmettre
         move.l  a3,d0
         beq     .op_fail_early          ; device inconnu / handler non démarré
+.op_port:
         move.l  ($4).w,a6               ; -> SysBase pour les appels exec
         move.l  #DOS_FH_ALLOC+4,d0      ; FileHandle au format getvec : [taille][FileHandle + nom]
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -171,8 +187,8 @@ dos_fn_open:
         lsr.l   #2,d3                   ; ARG3 = BPTR(nom BSTR)
         jsr     dos_sendpkt             ; d0 = dp_Res1
         lea     SP_SIZEOF(sp),sp
-        cmp.l   #DOSTRUE,d0
-        bne.s   .op_fail_free
+        tst.l   d0
+        beq.s   .op_fail_free
         moveq   #-1,d0
         move.l  d0,FH_POS(a2)           ; fh_Pos = fh_End = -1 : tampon BCPL vide (rdch remplira par Read)
         move.l  d0,FH_END(a2)
@@ -1027,7 +1043,23 @@ dos_boot_assigns:
         moveq   #0,d1
         lea     FIB_FILENAME(a3),a0
         move.l  a4,a1
-        bsr     ba_addnode              ; volume « <nom du disque> »
+        bsr     ba_addnode              ; volume « <nom du disque> » (en tête de la liste)
+        move.l  DL_ROOT(a5),a0          ; fl_Volume des locks DF0: = ce nœud (dont le lock racine déjà créé)
+        move.l  RN_INFO(a0),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  DI_DEVINFO(a0),d0
+        lsl.l   #2,d0
+        beq.s   .ba_nofib
+        move.l  d0,a0
+        cmp.l   #DLT_VOLUME,DN_TYPE(a0)
+        bne.s   .ba_nofib               ; nœud non créé (mémoire)
+        lsr.l   #2,d0
+        move.l  d0,DL_VOLUME(a5)
+        move.l  d7,d1
+        lsl.l   #2,d1
+        move.l  d1,a0
+        move.l  d0,FL_VOLUME(a0)
 .ba_nofib:
         move.l  ($4).w,a6
         move.l  a3,a1

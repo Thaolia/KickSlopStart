@@ -6,13 +6,15 @@
 ;   - le process doit répondre au message de LoadWB (28 octets : +$14 = BPTR du chemin, +$18 = drapeau -debug) dès son
 ;     initialisation, sinon LoadWB reste bloqué ; il se nomme « Workbench » (LoadWB le retrouve par FindTask) et
 ;     tourne en priorité 1.
-; Portée : Workbench MINIMAL — pas de bureau (ni écran, ni fenêtre, ni icônes : layers.library, mathffp.library et
-; les fenêtres Intuition réelles manquent). Le process vit indéfiniment comme le vrai et répond à tout message reçu
-; sur son port public « Workbench ».
+; Portée : Workbench MINIMAL — ouvre l'écran Workbench (OpenWorkBench), sans bureau (ni fenêtre de fond, ni icônes :
+; layers.library et icon.library/mathffp.library manquent). Le process vit indéfiniment comme le vrai et répond à
+; tout message reçu sur son port public « Workbench ».
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup). AUCUNE lecture ROM.
 
                 include "exec.i"
                 include "dospkt.i"
+
+LVO_OPENWORKBENCH EQU -210           ; intuition.library (intuition_lib.fd)
 
 WB_MSGPATH      EQU $14              ; message de LoadWB : BPTR du chemin (-> cli_CommandDir)
 
@@ -54,6 +56,15 @@ wb_entry:                            ; ROMTag+44 : point d'entrée du process cr
         move.l  WB_MSGPATH(a1),CLI_COMMANDDIR(a3)
 .we_reply:
         jsr     LVO_REPLYMSG(a6)     ; réponse immédiate : LoadWB continue
+        lea     wb_intname(pc),a1    ; écran Workbench (les fenêtres CON:/NEWCON: s'y ouvrent)
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq.s   .we_noscr
+        move.l  d0,a6
+        jsr     LVO_OPENWORKBENCH(a6)
+        move.l  ($4).w,a6
+.we_noscr:
         moveq   #MP_SIZE,d0          ; port public « Workbench »
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -89,6 +100,8 @@ wb_entry:                            ; ROMTag+44 : point d'entrée du process cr
 
 wb_taskname:
         dc.b    "workbench.task",0
+wb_intname:
+        dc.b    "intuition.library",0
 wb_procname:
         dc.b    "Workbench",0
 wb_idstring:

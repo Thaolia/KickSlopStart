@@ -436,7 +436,8 @@ CONB_RBUF    EQU LIB_SIZE+16   ; 16 octets : ring ASCII cuit depuis les RAWKEY r
 CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) du handler enregistré via IND_ADDHANDLER
 CONB_ESC     EQU LIB_SIZE+56   ; UBYTE état du filtre de séquences : 0 normal, 1 après ESC, 2 dans un CSI
 CONB_RQ      EQU LIB_SIZE+60   ; APTR file des CMD_READ en attente (chaînée par LN_SUCC), unités ouvertes
-CONDEV_SIZE  EQU LIB_SIZE+64
+CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase : rendu dans le RastPort des fenêtres (unités ConUnit)
+CONDEV_SIZE  EQU LIB_SIZE+68
 CON_RBSIZE   EQU 16            ; taille du read buffer (puissance de 2)
 CON_RBMASK   EQU 15
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
