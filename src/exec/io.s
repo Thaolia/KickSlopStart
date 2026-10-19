@@ -3,7 +3,7 @@
 ; Requis par les handlers BCPL du disque (L:Newcon-Handler, L:Aux-Handler, L:Port-Handler : globales opendevice,
 ; doio, sendio) et par tout programme qui ouvre un device.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs exec (OpenDevice/DoIO/SendIO/CheckIO/WaitIO/AbortIO) + exec/io.i.
-; AUCUNE lecture ROM. Portée : OpenDevice ne cherche que dans la DeviceList (pas de chargement depuis DEVS:).
+; AUCUNE lecture ROM.
 
                 include "exec.i"
 
@@ -16,6 +16,11 @@
                 xdef    exec_AbortIO
                 xdef    exec_CopyMem
                 xdef    exec_CopyMemQuick
+                xdef    exec_AddLibrary
+                xdef    exec_RemLibrary
+                xdef    exec_AddDevice
+                xdef    exec_RemDevice
+                xref    ram_loadmodule   ; ramlib.s
 
 IOF_QUICK       EQU 1
 IOERR_OPENFAIL  EQU -1
@@ -26,18 +31,32 @@ DEV_ABORTIO     EQU -36
 
 ; OpenDevice(nom a0, unité d0, iorequest a1, flags d1) -> d0 = io_Error (0 = succès). Sous Forbid : FindName dans la
 ; DeviceList, io_Device := device, io_Error := 0, puis le vecteur Open du device (a6 = device, a1/d0/d1 transmis).
-; Device absent -> io_Error = IOERR_OPENFAIL.
+; Device absent : chargé depuis DEVS: (ram_loadmodule, appelant process) ; sinon io_Error = IOERR_OPENFAIL.
 exec_OpenDevice:
-        movem.l d2-d3/a2/a6,-(sp)
+        movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a1,a2                ; a2 = iorequest
         move.l  d0,d2                ; d2 = unité
         move.l  d1,d3                ; d3 = flags
+        move.l  a0,a3                ; a3 = nom
         jsr     LVO_FORBID(a6)
-        move.l  a0,a1
         lea     EB_DEVICELIST(a6),a0
+        move.l  a3,a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.s   .od_found
+        jsr     LVO_PERMIT(a6)       ; absent : chargement depuis DEVS: (ramlib), hors Forbid
+        lea     od_devsdir(pc),a0
+        move.l  a3,a1
+        jsr     ram_loadmodule
+        jsr     LVO_FORBID(a6)
+        tst.l   d0
+        beq.s   .od_nodev
+        lea     EB_DEVICELIST(a6),a0
+        move.l  a3,a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        bne.s   .od_found
+.od_nodev:
         move.b  #IOERR_OPENFAIL,IO_ERROR(a2)
         bra.s   .od_done
 .od_found:
@@ -55,8 +74,12 @@ exec_OpenDevice:
         move.b  IO_ERROR(a2),d0
         ext.w   d0
         ext.l   d0
-        movem.l (sp)+,d2-d3/a2/a6
+        movem.l (sp)+,d2-d3/a2-a3/a6
         rts
+
+od_devsdir:
+        dc.b    "DEVS:",0
+        even
 
 ; CloseDevice(iorequest a1) : vecteur Close du device de la requête.
 exec_CloseDevice:
@@ -77,7 +100,7 @@ exec_DoIO:
         move.b  #IOF_QUICK,IO_FLAGS(a1)
         bsr.s   io_beginio
         move.l  (sp)+,a1
-        bra.s   exec_WaitIO
+        bra     exec_WaitIO
 
 ; SendIO(iorequest a1) : BeginIO asynchrone (la réponse arrivera sur mn_ReplyPort).
 exec_SendIO:
@@ -172,4 +195,32 @@ cm_bnext:
         subq.l  #1,d0
         bcc.s   cm_byte
 cm_ret:
+        rts
+
+; AddLibrary(library a1) / AddDevice(device a1) : Enqueue dans LibList / DeviceList sous Forbid (un module chargé
+; depuis le disque qui fait lui-même son MakeLibrary s'inscrit ainsi). RemLibrary / RemDevice(a1) : appel du
+; vecteur Expunge du module (a6 = module) -> d0 = seglist rendue par Expunge (0 si le module refuse).
+exec_AddLibrary:
+        lea     EB_LIBLIST(a6),a0
+        bra.s   io_addnode
+exec_AddDevice:
+        lea     EB_DEVICELIST(a6),a0
+io_addnode:
+        movem.l a0-a1,-(sp)
+        jsr     LVO_FORBID(a6)
+        movem.l (sp)+,a0-a1
+        jsr     LVO_ENQUEUE(a6)
+        jmp     LVO_PERMIT(a6)
+exec_RemLibrary:
+exec_RemDevice:
+        move.l  a6,-(sp)
+        jsr     LVO_FORBID(a6)
+        move.l  a6,-(sp)
+        move.l  a1,a6
+        jsr     -18(a6)              ; Expunge
+        move.l  (sp)+,a6
+        move.l  d0,-(sp)
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,d0
+        move.l  (sp)+,a6
         rts

@@ -129,46 +129,96 @@ count_vectors:
 .cv_done:
                 rts
 
-; InitStruct(initTable a1, memory a2, size d0) : initialise les champs de `memory` depuis un
-; flux de commandes « ddssnnnn ». Implémente le chemin des macros INITBYTE/INITWORD/INITLONG
-; (dd=11 : offset 24 bits ; ss = taille long/word/byte ; nnnn=0 : item unique) + terminateur
-; 00 + ré-alignement word après un byte. Les variantes count/repeat (dd=00/01) et offset court
-; (dd=10) ne sont PAS gérées ce milestone (nos tables n'utilisent que INITBYTE/WORD/LONG).
+; InitStruct(initTable a1, memory a2, size d0) (AutoDoc exec) : efface d'abord `size` octets de memory (0 = rien), puis
+; exécute le flux de commandes « ddssnnnn » : dd = 00 copie à la position courante, 01 répète une même valeur,
+; 10 offset sur 1 octet, 11 offset sur 3 octets ; ss = 00 long, 01 mot, 10 octet ; nnnn = nombre d'éléments - 1.
+; Le flux est réaligné sur un mot après chaque commande (octet de commande + offset 8 bits + données octets).
+; Octet de commande nul = fin.
 exec_InitStruct:
-                move.l  d2,-(sp)
-.is_loop:
-                moveq   #0,d0
-                move.b  (a1)+,d0            ; command byte ddssnnnn
-                beq.s   .is_done            ; 00 -> fin du flux
-                move.b  d0,d1
-                and.b   #$C0,d1
-                cmp.b   #$C0,d1
-                bne.s   .is_done            ; dd != 11 (variante non gérée) -> arrêt défensif
-                moveq   #0,d2               ; offset 24 bits (3 octets)
-                move.b  (a1)+,d2
-                lsl.l   #8,d2
-                move.b  (a1)+,d2
-                lsl.l   #8,d2
-                move.b  (a1)+,d2
+                movem.l d2-d4/a3,-(sp)
+                move.l  a2,a3               ; a3 = destination courante
+                move.l  d0,d1
+                beq.s   .is_cmd
                 move.l  a2,a0
-                add.l   d2,a0               ; dest = memory + offset
+.is_clr:
+                clr.b   (a0)+
+                subq.l  #1,d1
+                bne.s   .is_clr
+.is_cmd:
+                moveq   #0,d0
+                move.b  (a1)+,d0            ; ddssnnnn
+                beq     .is_done
+                moveq   #15,d3
+                and.b   d0,d3               ; d3 = nnnn (éléments - 1)
+                move.b  d0,d4
+                lsr.b   #4,d4
+                and.w   #3,d4               ; d4 = ss
                 move.b  d0,d1
-                and.b   #$30,d1             ; ss (bits 5-4)
-                beq.s   .is_long            ; 00 = long
-                cmp.b   #$10,d1
-                beq.s   .is_word            ; 01 = word
-                move.b  (a1)+,(a0)          ; 10 = byte
-                move.l  a1,d1               ; ré-aligne le flux sur un mot après un byte
-                btst    #0,d1
-                beq.s   .is_loop
+                lsr.b   #6,d1               ; d1 = dd
+                cmp.b   #2,d1
+                bcs.s   .is_data            ; 00 / 01 : position courante
+                bne.s   .is_off24
+                moveq   #0,d2               ; 10 : offset 8 bits
+                move.b  (a1)+,d2
+                bra.s   .is_setdst
+.is_off24:
+                moveq   #0,d2               ; 11 : offset 24 bits
+                move.b  (a1)+,d2
+                lsl.l   #8,d2
+                move.b  (a1)+,d2
+                lsl.l   #8,d2
+                move.b  (a1)+,d2
+.is_setdst:
+                lea     0(a2,d2.l),a3
+                moveq   #0,d1               ; offset : copie (comme dd = 00)
+.is_data:
+                cmp.w   #2,d4
+                beq.s   .is_bytes
+                move.l  a1,d2               ; données mot/long : alignées sur un mot
+                btst    #0,d2
+                beq.s   .is_aligned
                 addq.l  #1,a1
-                bra.s   .is_loop
-.is_word:
-                move.w  (a1)+,(a0)
-                bra.s   .is_loop
-.is_long:
-                move.l  (a1)+,(a0)
-                bra.s   .is_loop
+.is_aligned:
+                tst.w   d4
+                beq.s   .is_longs
+.is_words:
+                move.w  (a1),(a3)+
+                tst.b   d1                  ; 01 = répétition : la source ne bouge pas
+                bne.s   .is_wnext
+                addq.l  #2,a1
+.is_wnext:
+                dbra    d3,.is_words
+                tst.b   d1
+                beq.s   .is_cmd
+                addq.l  #2,a1
+                bra.s   .is_cmd
+.is_longs:
+                move.l  (a1),(a3)+
+                tst.b   d1
+                bne.s   .is_lnext
+                addq.l  #4,a1
+.is_lnext:
+                dbra    d3,.is_longs
+                tst.b   d1
+                beq.s   .is_cmd
+                addq.l  #4,a1
+                bra.s   .is_cmd
+.is_bytes:
+                move.b  (a1),(a3)+
+                tst.b   d1
+                bne.s   .is_bnext
+                addq.l  #1,a1
+.is_bnext:
+                dbra    d3,.is_bytes
+                tst.b   d1
+                beq.s   .is_balign
+                addq.l  #1,a1
+.is_balign:
+                move.l  a1,d2               ; réaligne le flux sur un mot
+                btst    #0,d2
+                beq     .is_cmd
+                addq.l  #1,a1
+                bra     .is_cmd
 .is_done:
-                move.l  (sp)+,d2
+                movem.l (sp)+,d2-d4/a3
                 rts

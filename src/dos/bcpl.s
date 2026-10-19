@@ -147,6 +147,10 @@ bcpl_cli_setup:
         lsr.l   #2,d1
         bsr     rt_globin            ; installe le runtime dans ce GV
         move.l  a2,PR_GLOBVEC(a3)    ; APTR (pas BPTR)
+        lea     bcpl_intuiname(pc),a1  ; GV[92] = IntuitionBase (openwindow, CloseWindow des handlers)
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,92*4(a2)
         moveq   #2,d1                ; segarray [2, runtime, 0] : Run recopie V!1 et V!2 du parent (V!2 = 0 :
         bsr     rt_getvec_raw        ; globin de 0 = rien) ; bloc getvec, libérable par freevec
         tst.l   d0
@@ -1631,6 +1635,38 @@ g_opendevice:
         ext.l   d1
         BLEAVE
 
+; 50 openwindow(x, y, l, h, titre) -> APTR Window | 0 : OpenWindow (IntuitionBase = GV[92]) avec une NewWindow sur la
+; pile (spec handlers §complément) : pinceaux $FF/$FF, IDCMP 0, Flags $00021007, titre = BADDR(titre) (chaîne C),
+; Min 120x50, Max $FFFFx$FFFF, Type WBENCHSCREEN.
+OW_NWSIZE       EQU 48
+g_openwindow:
+        BENTER
+        lea     -OW_NWSIZE(sp),sp
+        move.l  sp,a0
+        move.w  d1,(a0)+             ; LeftEdge
+        move.w  d2,(a0)+             ; TopEdge
+        move.w  d3,(a0)+             ; Width
+        move.w  d4,(a0)+             ; Height
+        move.w  #$FFFF,(a0)+         ; DetailPen, BlockPen
+        clr.l   (a0)+                ; IDCMPFlags
+        move.l  #$00021007,(a0)+     ; Flags
+        clr.l   (a0)+                ; FirstGadget
+        clr.l   (a0)+                ; CheckMark
+        move.l  16(a4),d0
+        lsl.l   #2,d0
+        move.l  d0,(a0)+             ; Title
+        clr.l   (a0)+                ; Screen
+        clr.l   (a0)+                ; BitMap
+        move.l  #(120<<16)|50,(a0)+  ; MinWidth, MinHeight
+        move.l  #$FFFFFFFF,(a0)+     ; MaxWidth, MaxHeight
+        move.w  #1,(a0)              ; Type = WBENCHSCREEN
+        move.l  sp,a0
+        move.l  92*4(a2),a6          ; IntuitionBase
+        jsr     LVO_OPENWINDOW(a6)
+        move.l  d0,d1
+        lea     OW_NWSIZE(sp),sp
+        BLEAVE
+
 ; 86 datstamp(v) : DateStamp dans v!0..v!2 (jours, minutes, ticks) -> v.
 g_datstamp:
         BENTER
@@ -2585,6 +2621,7 @@ bcpl_rtdata:
         GLOB    47,g_delay
         GLOB    48,g_sendpkt
         GLOB    49,g_returnpkt
+        GLOB    50,g_openwindow
         GLOB    51,g_currentdir
         GLOB    53,g_writet
         GLOB    54,g_rdch
@@ -2667,6 +2704,9 @@ bcpl_unimpl:
         addq.l  #4,sp                ; retire l'adresse de retour du stub
         moveq   #0,d1
         jmp     (a6)
+bcpl_intuiname:
+        dc.b    "intuition.library",0
+        EVEN
 bcpl_msg_unimpl:
         dc.b    "BCPL GLOBAL ",0
 bcpl_msg_crlf:

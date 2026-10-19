@@ -52,6 +52,17 @@ expansion_vectors:
         dc.l    exp_findconfigdev        ; 12 : LVO -72 FindConfigDev(start a0, manu d0, prod d1)
         dc.l    exp_null                 ; 13 : LVO -78 FreeBoardMem
         dc.l    exp_freeconfigdev        ; 14 : LVO -84 FreeConfigDev(cd a0)
+        dc.l    exp_null                 ; 15 : LVO -90 FreeExpansionMem
+        dc.l    exp_null                 ; 16 : LVO -96 ReadExpansionByte
+        dc.l    exp_null                 ; 17 : LVO -102 ReadExpansionRom
+        dc.l    exp_null                 ; 18 : LVO -108 RemConfigDev
+        dc.l    exp_null                 ; 19 : LVO -114 WriteExpansionByte
+        dc.l    exp_null                 ; 20 : LVO -120 ObtainConfigBinding (pas de concurrence à arbitrer)
+        dc.l    exp_null                 ; 21 : LVO -126 ReleaseConfigBinding
+        dc.l    exp_setbinding           ; 22 : LVO -132 SetCurrentBinding(binding a0, taille d0)
+        dc.l    exp_getbinding           ; 23 : LVO -138 GetCurrentBinding(binding a0, taille d0) -> taille
+        dc.l    exp_null                 ; 24 : LVO -144 MakeDosNode (échec : 0)
+        dc.l    exp_null                 ; 25 : LVO -150 AddDosNode (échec : 0)
         dc.l    -1
 expansion_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)  ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -70,6 +81,29 @@ exp_close:
 exp_expunge:
         moveq   #0,d0               ; base résidente : pas d'expunge
         rts
+; SetCurrentBinding(binding a0, taille d0) / GetCurrentBinding(binding a0, taille d0) -> d0 = taille de la structure :
+; copie min(taille, CB_SIZEOF) octets vers / depuis la CurrentBinding de la base (utilisée par BindDrivers et les
+; drivers de SYS:Expansion qu'il lance).
+exp_setbinding:
+        lea     EB_BINDING(a6),a1    ; source = argument (a0), destination = base (a1)
+        bra.s   exp_cpbinding
+exp_getbinding:
+        lea     EB_BINDING(a6),a1
+        exg     a0,a1                ; source = base (a0), destination = argument (a1)
+exp_cpbinding:
+        cmp.l   #CB_SIZEOF,d0
+        bls.s   .cb_go
+        moveq   #CB_SIZEOF,d0
+.cb_go:
+        subq.l  #1,d0
+        bmi.s   .cb_ret
+.cb_lp:
+        move.b  (a0)+,(a1)+
+        dbra    d0,.cb_lp
+.cb_ret:
+        moveq   #CB_SIZEOF,d0
+        rts
+
 exp_null:
         moveq   #0,d0
         rts

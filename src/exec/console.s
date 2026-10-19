@@ -57,8 +57,18 @@ console_datatab:
         dc.b    0
         EVEN
 
+; Open(iorequest a1, unité d0, flags d1) : io_Data = fenêtre (NEWCON:, CON:). L'unité ouverte est marquée dans
+; io_Unit (la fenêtre, ou la base si io_Data = 0) : les requêtes d'une unité ouverte suivent la sémantique exec
+; standard (réponse ReplyMsg hors IOF_QUICK, CMD_READ mis en attente tant qu'aucun caractère n'est arrivé). Toutes
+; les fenêtres partagent le même bitplane (pas de fenêtrage réel : ni layers ni rastport par fenêtre).
 console_open:
         addq.w  #1,LIB_OPENCNT(a6)
+        clr.b   IO_ERROR(a1)
+        move.l  IO_DATA2(a1),d0
+        bne.s   .co_unit
+        move.l  a6,d0
+.co_unit:
+        move.l  d0,IO_UNIT(a1)
         rts
 console_close:
         subq.w  #1,LIB_OPENCNT(a6)
@@ -70,8 +80,31 @@ console_expunge:
 console_null:
         moveq   #0,d0
         rts
+; AbortIO(iorequest a1) : retire un CMD_READ en attente (io_Error = IOERR_ABORTED) et y répond. -> d0 = 0.
 console_abortio:
+        movem.l a2/a6,-(sp)
+        move.l  a6,a2
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        lea     CONB_RQ(a2),a0       ; a0 = maillon précédent (LN_SUCC à l'offset 0)
+.ca_lp:
+        move.l  (a0),d0
+        beq.s   .ca_none
+        cmp.l   d0,a1
+        beq.s   .ca_found
+        move.l  d0,a0
+        bra.s   .ca_lp
+.ca_found:
+        move.l  (a1),(a0)            ; décroche
+        move.b  #IOERR_ABORTED,IO_ERROR(a1)
+        jsr     LVO_ENABLE(a6)
+        jsr     LVO_REPLYMSG(a6)
+        bra.s   .ca_ret
+.ca_none:
+        jsr     LVO_ENABLE(a6)
+.ca_ret:
         moveq   #0,d0
+        movem.l (sp)+,a2/a6
         rts
 
 ; console_beginio(device a6, ioreq a1) : CMD_WRITE -> rend le flux. Synchrone. a6 ressort = base device.
@@ -80,6 +113,8 @@ console_beginio:
         move.l  a6,a2                ; a2 = base device (= état console)
         move.l  a1,a3                ; a3 = ioreq
         clr.b   IO_ERROR(a3)
+        tst.l   IO_UNIT(a3)
+        bne     .bi_unit             ; unité ouverte : sémantique asynchrone
         move.w  IO_COMMAND(a3),d0
         cmp.w   #CMD_WRITE,d0
         beq.s   .bi_write
@@ -94,7 +129,7 @@ console_beginio:
         tst.l   d4
         beq.s   .bi_done
         move.b  (a4)+,d0
-        bsr.s   con_putglyph         ; rend un octet (a2 = base ; clobbe d0/d1/a0/a1)
+        bsr     con_putglyph         ; rend un octet (a2 = base ; clobbe d0/d1/a0/a1)
         subq.l  #1,d4
         bra.s   .bi_wl
 .bi_read:                            ; #3b : draine le read buffer (ASCII cuit via input.device) vers io_Data
@@ -121,10 +156,111 @@ console_beginio:
         move.l  a2,a6                ; a6 = base device (convention BeginIO)
         movem.l (sp)+,d4/a2-a4
         rts
+; --- unité ouverte (requête issue d'OpenDevice) : appelants synchrones directs = IO_UNIT nul (chemin ci-dessus) ---
+.bi_unit:
+        move.w  IO_COMMAND(a3),d0
+        cmp.w   #CMD_WRITE,d0
+        beq.s   .bu_write
+        cmp.w   #CMD_READ,d0
+        beq.s   .bu_read
+        move.b  #IOERR_NOCMD,IO_ERROR(a3)
+        bra.s   .bu_reply
+.bu_write:
+        move.l  IO_DATA2(a3),a4
+        move.l  IO_LEN2(a3),d4
+        move.l  d4,IO_ACTUAL2(a3)
+.bu_wl:
+        tst.l   d4
+        beq.s   .bu_reply
+        move.b  (a4)+,d0
+        bsr     con_putglyph
+        subq.l  #1,d4
+        bra.s   .bu_wl
+.bu_read:
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        move.l  a3,a1
+        bsr     con_fillread         ; d0 = octets copiés
+        tst.l   d0
+        bne.s   .bu_rgot
+        bclr    #0,IO_FLAGS(a3)      ; rien à lire : en attente (réponse par le handler d'input)
+        clr.l   (a3)                 ; LN_SUCC = fin de file
+        lea     CONB_RQ(a2),a0
+.bu_tail:
+        tst.l   (a0)
+        beq.s   .bu_link
+        move.l  (a0),a0
+        bra.s   .bu_tail
+.bu_link:
+        move.l  a3,(a0)
+        jsr     LVO_ENABLE(a6)
+        bra.s   .bi_done
+.bu_rgot:
+        jsr     LVO_ENABLE(a6)
+.bu_reply:
+        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK : terminé sur place
+        bne     .bi_done
+        move.l  ($4).w,a6
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)
+        bra     .bi_done
+
+; con_fillread(a1 = CMD_READ, a2 = base) : copie le read buffer dans io_Data (max io_Length) -> d0 = octets copiés
+; = io_Actual. Appelé sous Disable. Clobbe d1/a0.
+con_fillread:
+        movem.l d2/a3,-(sp)
+        move.l  IO_DATA2(a1),a3
+        move.l  IO_LEN2(a1),d2
+        moveq   #0,d0
+.cf_lp:
+        tst.l   d2
+        beq.s   .cf_done
+        move.w  CONB_RHEAD(a2),d1
+        cmp.w   CONB_RTAIL(a2),d1
+        beq.s   .cf_done
+        lea     CONB_RBUF(a2),a0
+        move.b  0(a0,d1.w),(a3)+
+        addq.w  #1,d1
+        and.w   #CON_RBMASK,d1
+        move.w  d1,CONB_RHEAD(a2)
+        addq.l  #1,d0
+        subq.l  #1,d2
+        bra.s   .cf_lp
+.cf_done:
+        move.l  d0,IO_ACTUAL2(a1)
+        movem.l (sp)+,d2/a3
+        rts
 
 ; con_putglyph(d0.b = caractère, a2 = base console) : rend un octet. Clobbe d0/d1/a0/a1 ; préserve le reste
 ; (sauve d2/d3 pour le blit). CR -> colonne 0 ; LF / wrap -> ligne suivante (+8, clampée) ; imprimable -> blit.
 con_putglyph:
+        tst.b   CONB_ESC(a2)         ; séquence ESC / CSI en cours : ignorée (pas d'interprétation ANSI)
+        beq.s   .cpg_plain
+        cmp.b   #1,CONB_ESC(a2)
+        bne.s   .cpg_csi
+        move.b  #2,CONB_ESC(a2)      ; ESC suivi de '[' = CSI ; autre caractère = fin de séquence
+        cmp.b   #'[',d0
+        beq     .cpg_ret
+        clr.b   CONB_ESC(a2)
+        rts
+.cpg_csi:
+        cmp.b   #$40,d0              ; octet final d'un CSI : $40..$7E
+        blo     .cpg_ret
+        cmp.b   #$7E,d0
+        bhi     .cpg_ret
+        clr.b   CONB_ESC(a2)
+        rts
+.cpg_plain:
+        cmp.b   #$1B,d0
+        bne.s   .cpg_n9b
+        move.b  #1,CONB_ESC(a2)
+        rts
+.cpg_n9b:
+        cmp.b   #$9B,d0
+        bne.s   .cpg_chr
+        move.b  #2,CONB_ESC(a2)
+        rts
+.cpg_chr:
         cmp.b   #13,d0
         beq     .cpg_cr
         cmp.b   #10,d0
@@ -213,6 +349,7 @@ console_input_handler:
         lea     CONB_RBUF(a2),a0
         move.b  d2,0(a0,d0.w)
         move.w  d1,CONB_RTAIL(a2)
+        bsr     con_servereads       ; un CMD_READ d'unité ouverte attendait : servi et répondu
                 endc                 ; RED CON_NO_READBUF : cuit mais ne bufferise pas -> CMD_READ vide
 .cih_next:
         move.l  IE_NEXTEVENT(a3),a3  ; event suivant
@@ -220,6 +357,30 @@ console_input_handler:
 .cih_done:
         move.l  d3,d0                ; rend la liste originale (pass-through)
         movem.l (sp)+,d2/d3/a2/a3
+        rts
+
+; con_servereads(a2 = base) : si un CMD_READ attend et que le read buffer a des octets, le remplit, le décroche
+; et y répond. Préserve d2-d7/a2-a6.
+con_servereads:
+        movem.l a3/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        move.l  CONB_RQ(a2),d0
+        beq.s   .sr_none
+        move.l  d0,a3
+        move.l  a3,a1
+        bsr     con_fillread
+        tst.l   d0
+        beq.s   .sr_none
+        move.l  (a3),CONB_RQ(a2)     ; décroche la tête de file
+        jsr     LVO_ENABLE(a6)
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)
+        bra.s   .sr_ret
+.sr_none:
+        jsr     LVO_ENABLE(a6)
+.sr_ret:
+        movem.l (sp)+,a3/a6
         rts
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom, alloue le bitplane, init l'état,

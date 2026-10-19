@@ -82,6 +82,9 @@ init_ints:
         move.l  #int3_dispatch,AUTOVEC_L3         ; M7f : VERTB (INT3) -> dispatcher générique par numéro
         move.l  #int2_dispatch,AUTOVEC_L2         ; M7b : INT2/PORTS -> dispatcher générique par numéro
         move.l  #int6_dispatch,AUTOVEC_L6         ; M7b : INT6/EXTER -> dispatcher générique par numéro
+        move.l  #int1_dispatch,AUTOVEC_L1         ; TBE / DSKBLK / SOFTINT (serial.device chargé de DEVS:)
+        move.l  #int4_dispatch,AUTOVEC_L4         ; AUD0..AUD3
+        move.l  #int5_dispatch,AUTOVEC_L5         ; RBF / DSKSYNC
         move.l  #trap0_handler,TRAP0_VEC          ; M7c : TRAP #0 = switch volontaire style Wait
         move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
         move.l  #trap2_handler,TRAP2_VEC          ; M7j : TRAP #2 = RemTask(self) (libère + bascule)
@@ -420,6 +423,50 @@ int2_dispatch:
         bsr     intr_dispatch_number
         move.w  #INTF_PORTS,INTREQ  ; ack Paula INT2
         bra.s   intr_isr_defer
+; int1/int4/int5_dispatch (autovecteurs $64/$70/$74) : sources multiples à vecteur EXCLUSIF (SetIntVector). Pour chaque
+; source du niveau en attente ET activée : handler présent -> appel (il acquitte INTREQ lui-même, RKRM « Exec :
+; Interrupts ») ; aucun handler -> acquittée ici (pas de tempête). Niveau 1 = TBE(0)/DSKBLK(1)/SOFTINT(2), niveau 4 =
+; AUD0..3(7-10), niveau 5 = RBF(11)/DSKSYNC(12). trackdisk et la console série pollent DSKBLK/RBF avec INTENA coupé :
+; ces sources ne passent pas ici.
+int1_dispatch:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.w  #INTM_L1,d3
+        bra.s   intr_multi
+int4_dispatch:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.w  #INTM_L4,d3
+        bra.s   intr_multi
+int5_dispatch:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.w  #INTM_L5,d3
+intr_multi:
+        move.l  ($4).w,a6
+        move.w  INTREQR,d2
+        and.w   INTENAR,d2
+        and.w   d3,d2                ; d2 = sources du niveau à servir
+        moveq   #0,d4                ; d4 = n° de source
+.im_lp:
+        btst    d4,d2
+        beq.s   .im_next
+        move.l  EB_INTVECTS(a6),a0
+        move.l  d4,d0
+        lsl.l   #3,d0
+        tst.l   IV_CODE(a0,d0.l)
+        bne.s   .im_call
+        moveq   #0,d0                ; pas de handler : acquitte
+        bset    d4,d0
+        move.w  d0,INTREQ
+        bra.s   .im_next
+.im_call:
+        move.l  d4,d0
+        bsr     intr_dispatch_number
+        move.l  ($4).w,a6
+.im_next:
+        addq.w  #1,d4
+        cmp.w   #13,d4
+        bcs.s   .im_lp
+        bra     intr_isr_defer
+
 ; int6_dispatch ($78, niveau 6) : seule source de niveau 6 = EXTER -> dispatche IntVects[INTB_EXTER].
 int6_dispatch:
         movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 6) — niveau max utilisé, jamais préempté
@@ -700,6 +747,8 @@ exc_default:
         lea     exc_msg8(pc),a0
         bsr     exc_puts
         move.l  usp,a0
+        move.l  a0,d0
+        bsr     .ed_hex32            ; usp
         move.l  (a0),d0
         swap    d0
         bsr     exc_puthex
@@ -801,7 +850,7 @@ exc_msg6:
 exc_msg7:
         dc.b    " a6=",0
 exc_msg8:
-        dc.b    " (usp)=",0
+        dc.b    " usp/(usp)=",0
 exc_msg9:
         dc.b    " a1/a2/a4=",0
 exc_crlf:

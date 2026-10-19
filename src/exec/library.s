@@ -68,7 +68,12 @@
                 xref    exec_WaitIO
                 xref    exec_AbortIO
                 xref    exec_CopyMem
+                xref    ram_loadmodule   ; ramlib.s (chargement depuis LIBS:/DEVS:)
                 xref    exec_CopyMemQuick
+                xref    exec_AddLibrary
+                xref    exec_RemLibrary
+                xref    exec_AddDevice
+                xref    exec_RemDevice
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -198,6 +203,14 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_CopyMem,LVO_COPYMEM+2(a6)
         move.w  #$4EF9,LVO_COPYMEMQUICK(a6)
         move.l  #exec_CopyMemQuick,LVO_COPYMEMQUICK+2(a6)
+        move.w  #$4EF9,LVO_ADDLIBRARY(a6)
+        move.l  #exec_AddLibrary,LVO_ADDLIBRARY+2(a6)
+        move.w  #$4EF9,LVO_REMLIBRARY(a6)
+        move.l  #exec_RemLibrary,LVO_REMLIBRARY+2(a6)
+        move.w  #$4EF9,LVO_ADDDEVICE(a6)
+        move.l  #exec_AddDevice,LVO_ADDDEVICE+2(a6)
+        move.w  #$4EF9,LVO_REMDEVICE(a6)
+        move.l  #exec_RemDevice,LVO_REMDEVICE+2(a6)
         rts
 
 _unimpl:
@@ -238,7 +251,20 @@ exec_OpenLibrary:
         move.l  a2,a1
         jsr     LVO_FINDNAME(a6)     ; d0 = nœud lib (ou 0)
         tst.l   d0
-        beq.s   .ol_fail             ; non trouvée
+        bne.s   .ol_found
+        jsr     LVO_PERMIT(a6)       ; absente : chargement depuis LIBS: (ramlib), hors Forbid
+        lea     ol_libsdir(pc),a0
+        move.l  a2,a1
+        jsr     ram_loadmodule
+        jsr     LVO_FORBID(a6)
+        tst.l   d0
+        beq.s   .ol_fail
+        lea     EB_LIBLIST(a6),a0
+        move.l  a2,a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .ol_fail
+.ol_found:
         move.l  d0,a2                ; a2 = base lib
                 ifeq    OPENLIB_NO_VERCHECK
         cmp.w   LIB_VERSION(a2),d2   ; demandée (d2) > disponible (lib_Version) ?
@@ -258,10 +284,14 @@ exec_OpenLibrary:
         movem.l (sp)+,d2/a2
         rts
 
+ol_libsdir:
+        dc.b    "LIBS:",0
+        even
+
 ; OldOpenLibrary(libName a1) -> d0 = base (ou 0) : OpenLibrary sans gate de version (forme pré-V33).
 exec_OldOpenLibrary:
         moveq   #0,d0                ; version 0 -> la gate passe toujours
-        bra.s   exec_OpenLibrary
+        bra     exec_OpenLibrary
 
 ; CloseLibrary(library a1) : Forbid-gardé, appel du vecteur Close (-12) de la lib (OpenCnt--). d0 = 0.
 exec_CloseLibrary:

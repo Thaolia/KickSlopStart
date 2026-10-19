@@ -11,7 +11,9 @@ EXPANSION_I     equ     1
 ; réussit — ce qui n'arrive PAS sur notre ROM V34 (gate de version renvoie 0), donc il n'écrit jamais ici.
 EB_FLAGS           EQU LIB_SIZE        ; 34 : UBYTE (+ pad)
 EB_CONFIGLIST      EQU LIB_SIZE+4      ; 38 : struct List des ConfigDev (Add/Find/FreeConfigDev)
-EXPANSIONBASE_SIZE EQU LIB_SIZE+4+14   ; 52 : dataSize pour MakeLibrary
+EB_BINDING         EQU LIB_SIZE+4+14   ; 52 : struct CurrentBinding (Set/GetCurrentBinding)
+CB_SIZEOF          EQU 16              ; cb_ConfigDev, cb_FileName, cb_ProductString, cb_ToolTypes
+EXPANSIONBASE_SIZE EQU EB_BINDING+CB_SIZEOF ; 68 : dataSize pour MakeLibrary
 
 ; --- struct ConfigDev + ExpansionRom (libraries/configregs.i) — sous-ensemble pour Add/Find/FreeConfigDev ---
 CD_NODE        EQU 0              ; struct Node (14) : chaînage dans EB_CONFIGLIST

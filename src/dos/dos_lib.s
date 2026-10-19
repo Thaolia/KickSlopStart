@@ -22,6 +22,7 @@
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
                 xref    newlist          ; exec/lists.s (NEWLIST du port de Delay)
                 xref    bcpl_starthandler ; dos/bcpl.s (démarrage du handler d'un DeviceNode)
+                xref    proc_create      ; dos/process.s (Process + pile + pr_MsgPort + AddTask)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
 
@@ -71,7 +72,8 @@ dos_vectors:
         dc.l    dos_fn_createdir         ; 20 : LVO -120 CreateDir(name d1) -> BPTR lock
         dc.l    dos_fn_currentdir        ; 21 : LVO -126 CurrentDir(lock d1) -> ancien lock
         dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
-        dcb.l   2,dos_null               ; 23..24 : LVO -138/-144 (CreateProc, Exit non impl.)
+        dc.l    dos_fn_createproc        ; 23 : LVO -138 CreateProc(nom d1, pri d2, seglist d3, pile d4)
+        dc.l    dos_null                 ; 24 : LVO -144 (Exit non impl.)
                 ifeq    LOADSEG_LVO_UNWIRED
         dc.l    dos_fn_loadseg           ; 25 : LVO -150 LoadSeg(name d1) -> BPTR seglist
                 endc
@@ -452,8 +454,7 @@ dos_fn_unloadseg:
 ; du handler et le lock parent, le nom est converti en BSTR LONG-ALIGNÉ (BPTR exige l'alignement), puis
 ; ACTION_LOCATE_OBJECT (ARG1 = lock parent, ARG2 = nom, ARG3 = mode). a6 = DosBase.
 dos_fn_lock:
-        move.l  d2,d3                   ; ARG3 = mode
-        move.l  #ACTION_LOCATE_OBJECT,d0
+        move.l  #ACTION_LOCATE_OBJECT,d0 ; ARG3 = mode (d2)
         bra.s   dos_namepkt
 
 ; CreateDir(name d1) -> BPTR lock du répertoire créé | 0 (ACTION_CREATE_DIR). DeleteFile(name d1) -> DOSTRUE/DOSFALSE
@@ -464,14 +465,15 @@ dos_fn_createdir:
 dos_fn_deletefile:
         move.l  #ACTION_DELETE_OBJECT,d0
 
-; dos_namepkt(d0 = action, d1 = nom C, d3 = ARG3, a6 = DosBase) -> d0 = dp_Res1 (0 si le nom ne résout pas ; IoErr
+; dos_namepkt(d0 = action, d1 = nom C, d2 = ARG3, a6 = DosBase) -> d0 = dp_Res1 (0 si le nom ne résout pas ; IoErr
 ; posé). Résout le nom (dos_resolve : démarre le handler au besoin), puis envoie ARG1 = lock de départ, ARG2 =
-; BPTR du nom restant en BSTR, ARG3 au handler.
+; BPTR du nom restant en BSTR, ARG3 au handler. Ne modifie aucun registre de l'appelant hors d0/d1/a0/a1 (convention
+; LVO : d2-d7/a2-a6 préservés).
 dos_namepkt:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d0,d5                   ; d5 = action
         move.l  d1,a4                   ; a4 = nom (C-string)
-        move.l  d3,d7                   ; d7 = ARG3
+        move.l  d2,d7                   ; d7 = ARG3
         bsr     dos_resolve             ; a3 = port du handler, d6 = lock parent, a4 = nom à transmettre
         move.l  a3,d0
         beq     .np_fail                ; device inconnu / handler impossible à démarrer
@@ -750,6 +752,83 @@ dos_fn_delay:
 dl_timername:
         dc.b    "timer.device",0
         even
+
+; CreateProc(nom d1 [C], pri d2, seglist d3 [BPTR], pile d4 [octets]) -> d0 = MsgPort du process | 0 (AutoDoc dos).
+; Le process démarre directement sur le code du premier segment ; nom recopié (l'appelant peut libérer le sien),
+; segarray [3, V!1, V!2 du créateur, seglist] (spec BCPL §8.3, globale -18), ConsoleTask/FileSystemTask/WindowPtr
+; hérités du créateur, répertoire courant nul. Champs posés sous Forbid avant le premier passage du process.
+CP_NAMEMAX      EQU 32
+dos_fn_createproc:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,a2                   ; a2 = nom
+        move.l  d2,d5                   ; d5 = pri
+        move.l  d3,d6                   ; d6 = seglist
+        move.l  d4,d7                   ; d7 = pile
+        move.l  ($4).w,a6
+        moveq   #CP_NAMEMAX+20,d0       ; nom (32) + segarray avec en-tête getvec (5 longs)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .cpr_fail
+        move.l  d0,a3                   ; a3 = nom recopié
+        move.l  a3,a0
+        moveq   #CP_NAMEMAX-2,d1
+.cpr_ncpy:
+        move.b  (a2)+,(a0)+
+        dbeq    d1,.cpr_ncpy
+        lea     CP_NAMEMAX(a3),a4       ; a4 = en-tête getvec du segarray
+        move.l  #20,(a4)                ; taille (pour un freevec éventuel)
+        move.l  #3,4(a4)
+        move.l  d6,16(a4)
+        move.l  EB_THISTASK(a6),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .cpr_noparent
+        move.l  PR_SEGLIST(a0),d0
+        lsl.l   #2,d0
+        beq.s   .cpr_noparent
+        move.l  d0,a1
+        cmp.l   #2,(a1)
+        blt.s   .cpr_noparent
+        move.l  4(a1),8(a4)             ; V!1, V!2 du créateur
+        move.l  8(a1),12(a4)
+.cpr_noparent:
+        jsr     LVO_FORBID(a6)
+        move.l  a3,a0
+        move.l  d6,d0
+        lsl.l   #2,d0
+        move.l  d0,a1
+        addq.l  #4,a1                   ; entrée = premier segment
+        move.l  d5,d0
+        move.l  d7,d1
+        jsr     proc_create             ; d0 = &pr_MsgPort | 0
+        move.l  d0,d4
+        beq.s   .cpr_failp
+        move.l  d0,a0
+        lea     -PR_MSGPORT(a0),a0      ; a0 = nouveau process
+        lea     4(a4),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,PR_SEGLIST(a0)
+        move.l  EB_THISTASK(a6),a1
+        cmp.b   #NT_PROCESS,LN_TYPE(a1)
+        bne.s   .cpr_started
+        move.l  PR_CONSOLETASK(a1),PR_CONSOLETASK(a0)
+        move.l  PR_FILESYSTEMTASK(a1),PR_FILESYSTEMTASK(a0)
+        move.l  PR_WINDOWPTR(a1),PR_WINDOWPTR(a0)
+.cpr_started:
+        jsr     LVO_PERMIT(a6)
+        move.l  d4,d0
+        bra.s   .cpr_ret
+.cpr_failp:
+        jsr     LVO_PERMIT(a6)
+        move.l  a3,a1
+        moveq   #CP_NAMEMAX+20,d0
+        jsr     LVO_FREEMEM(a6)
+.cpr_fail:
+        moveq   #0,d0
+.cpr_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
 
 ; WaitForChar(fh d1, µs d2) -> DOSFALSE : pas de caractère disponible (la console ne gère pas encore ce packet).
 dos_fn_waitforchar:

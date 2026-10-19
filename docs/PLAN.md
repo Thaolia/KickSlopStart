@@ -781,8 +781,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Étape 3 — handlers de device FAITE** : starthandler (112, handlers BCPL et C) + makeglobvec (13), nœud RAM,
     exec OpenDevice/DoIO/SendIO/WaitIO/CopyMem, timer GET/SETSYSTIME, DeleteFile/Rename/CreateDir ; la
     startup-sequence complète du WB 1.3.3 s'exécute (StartupII sur RAM:, break, MountMF) ; PIPE: prouvé.
-    **Étape 4** : NEWCON: (openwindow 50, console.device sur fenêtre Intuition), chargement de devices depuis DEVS:
-    (AUX:/SER:/PAR:/PRT:), nœuds CON/RAW de la ROM, execute (101), writef tamponné, C:FAULT ; puis LoadWB.
+    **Étape 4 — devices de DEVS:, AUX:, NEWCON: FAITE** : ramlib (LIBS:/DEVS:), AddDevice/AddLibrary, InitStruct
+    complet, autovecteurs 1/4/5, misc.resource, GetPrefs, OpenWindow minimal, console.device asynchrone, globale
+    50 ; AUX: (serial.device du disque) et NEWCON: prouvés.
+    **Étape 5** : résident workbench.task (LoadWB), écran Workbench + layers.library (fenêtres visibles), nœuds
+    CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

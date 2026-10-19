@@ -59,6 +59,12 @@ INTF_BLIT    EQU $0040        ; M7g : Blitter (niveau 3, bit 6)
 INTF_PORTS   EQU $0008        ; INT2 / CIA-A
 INTF_EXTER   EQU $2000        ; INT6 / CIA-B
 INTF_RBF     EQU $0800        ; E1 : bit 11 = RBF (serial receive buffer full) ; acquitter -> efface SERDATR bit 14
+AUTOVEC_L1   EQU $64          ; autovecteur niveau 1 (TBE / DSKBLK / SOFTINT)
+AUTOVEC_L4   EQU $70          ; autovecteur niveau 4 (AUD0..AUD3)
+AUTOVEC_L5   EQU $74          ; autovecteur niveau 5 (RBF / DSKSYNC)
+INTM_L1      EQU $0007        ; sources du niveau 1
+INTM_L4      EQU $0780        ; sources du niveau 4
+INTM_L5      EQU $1800        ; sources du niveau 5
 AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
@@ -419,7 +425,9 @@ CONB_RHEAD   EQU LIB_SIZE+12   ; UWORD index de lecture du read buffer (consomma
 CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD index d'écriture (producteur = console_input_handler)
 CONB_RBUF    EQU LIB_SIZE+16   ; 16 octets : ring ASCII cuit depuis les RAWKEY reçus via input.device
 CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) du handler enregistré via IND_ADDHANDLER
-CONDEV_SIZE  EQU LIB_SIZE+56
+CONB_ESC     EQU LIB_SIZE+56   ; UBYTE état du filtre de séquences : 0 normal, 1 après ESC, 2 dans un CSI
+CONB_RQ      EQU LIB_SIZE+60   ; APTR file des CMD_READ en attente (chaînée par LN_SUCC), unités ouvertes
+CONDEV_SIZE  EQU LIB_SIZE+64
 CON_RBSIZE   EQU 16            ; taille du read buffer (puissance de 2)
 CON_RBMASK   EQU 15
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
@@ -549,6 +557,7 @@ TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
 TR_GETSYSTIME EQU 10
 TR_SETSYSTIME EQU 11
 IOERR_NOCMD  EQU -3
+IOERR_ABORTED EQU -2
 TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device
 
 ; struct Resident (exec/resident.i, V34) — ROMTag scanné au boot pour bâtir l'OS
@@ -570,7 +579,7 @@ RT_INIT       EQU 22           ; APTR -> routine d'init (ou table si AUTOINIT)
 RT_SIZE       EQU 26
 RESSCAN_LO    EQU ROMBASE          ; plage de scan des ROMTags = toute la ROM
 RESSCAN_HI    EQU ROMBASE+$40000   ; (256K ; le padding/footer ne contient pas de ROMTag valide)
-RESMAX        EQU 16              ; capacité du tableau ResModules (résidents + terminateur NUL)
+RESMAX        EQU 24              ; capacité du tableau ResModules (résidents + terminateur NUL)
 
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
@@ -617,6 +626,12 @@ LVO_REPLYMSG   EQU -378
 LVO_WAITPORT   EQU -384
 LVO_FINDPORT   EQU -390
 LVO_TYPEOFMEM EQU -534
+LVO_OPENWINDOW   EQU -204         ; intuition.library
+LVO_CLOSEWINDOW  EQU -72
+LVO_ADDLIBRARY   EQU -396
+LVO_REMLIBRARY   EQU -402
+LVO_ADDDEVICE    EQU -432
+LVO_REMDEVICE    EQU -438
 LVO_OPENDEVICE   EQU -444
 LVO_CLOSEDEVICE  EQU -450
 LVO_DOIO         EQU -456
