@@ -24,6 +24,7 @@
                 xdef    bcpl_starthandler
                 xdef    bcpl_cli_register    ; slot de rn_TaskArray + pr_TaskNum du CLI initial
                 xdef    bcpl_execute         ; LVO Execute (dos_lib.s)
+                xref    rcli_seg
                 xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
@@ -153,19 +154,23 @@ bcpl_cli_setup:
         moveq   #0,d0
         jsr     LVO_OPENLIBRARY(a6)
         move.l  d0,92*4(a2)
-        moveq   #2,d1                ; segarray [2, runtime, 0] : Run recopie V!1 et V!2 du parent (V!2 = 0 :
-        bsr     rt_getvec_raw        ; globin de 0 = rien) ; bloc getvec, libérable par freevec
-        tst.l   d0
+        moveq   #4,d1                ; segarray [4, runtime, 0, 0, CLI ROM] : Run recopie V!1 et V!2 du parent (V!2 = 0 :
+        bsr     rt_getvec_raw        ; globin de 0 = rien) ; NewCLI recopie les entrées 0..4 et démarre son CLI sur
+        tst.l   d0                   ; l'entrée 4 faute de résident « CLI » ; bloc getvec, libérable par freevec
         beq     .cs_ret
         move.l  d0,a0
         add.l   a0,a0
         add.l   a0,a0
-        move.l  #2,(a0)
+        move.l  #4,(a0)
         lea     bcpl_rtseg(pc),a1
         move.l  a1,d1
         lsr.l   #2,d1
         move.l  d1,4(a0)
         clr.l   8(a0)
+        clr.l   12(a0)
+        move.l  #rcli_seg,d1
+        lsr.l   #2,d1
+        move.l  d1,16(a0)
         move.l  d0,PR_SEGLIST(a3)
 .cs_ret:
         movem.l (sp)+,d0-d2/a0-a3
@@ -1547,7 +1552,7 @@ bcpl_execute:
         move.l  (a0),d0
         bra.s   .ex_res
 .ex_cons:
-        move.l  DOS_DOSBASE,a0          ; ... ou rn_ConsoleSegment (nul ici : pas de CLI BCPL en ROM) ; sinon échec,
+        move.l  DOS_DOSBASE,a0          ; ... ou rn_ConsoleSegment (le CLI ROM de shell.s) ; sinon échec,
         move.l  DL_ROOT(a0),a0          ; comme avant le « resident CLI L:Shell-Seg » de la startup-sequence
         tst.l   RN_CONSOLESEG(a0)
         beq     .ex_fail

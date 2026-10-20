@@ -378,7 +378,10 @@ FileHandle = vecteur `getvec` de **11 longs** (44 o) + en-tête getvec, alloué 
   EOF, Result2 = 103. [O]
 - Fermeture (globale 93 = LVO Close) : vide si nécessaire, libère le tampon, envoie ACTION_END
   (1007, arg1 = fh_Args) (avec requester de retry), puis **freevec du FileHandle** (Result2
-  préservé). ⇒ les FileHandles doivent être des blocs **getvec** (en-tête de taille à −4). [O]
+  préservé). Précision : vidage, libération du tampon et ACTION_END sont le fait de la routine
+  **fh_Func3** ; endstream ne l'appelle que si elle est non nulle, puis fait toujours le freevec
+  du FileHandle (cas du FileHandle mémoire de Run, §13.6.4). [O ROM]
+  ⇒ les FileHandles doivent être des blocs **getvec** (en-tête de taille à −4). [O]
 
 ### 5.2 rdch / unrdch [O ROM]
 - **rdch()** (54) opère **toujours sur `input()`**. Si `fh_Pos < fh_End` : renvoie l'octet
@@ -680,7 +683,7 @@ Globales définies en ROM mais non caractérisées ici : 21, 46, 50, 86, 91, 94/
      internes, `fh_Pos` = 0, `fh_End` = longueur+1, aucune routine).
   2. Segarray neuf `getvec(4)` : `[4, V!1, V!2 du parent, 0, CLI]` où CLI = segment du résident
      nommé **"CLI"** s'il existe dans la liste Resident (son compteur d'usage peut être
-     incrémenté, jamais s'il vaut −1 = système ; condition exacte non élucidée [D]), sinon
+     incrémenté, jamais s'il vaut −1 = système ; condition exacte au §13.6.5 [O]), sinon
      `rn_ConsoleSegment` (RootNode +4).
   3. Sous Forbid : premier slot libre de `rn_TaskArray` (`[0]` = taille) ; échec → « Unable to
      create background process ».
@@ -695,10 +698,14 @@ Globales définies en ROM mais non caractérisées ici : 21, 46, 50, 86, 91, 94/
      pkt ; si `init` renvoie une valeur **> 0**, le CLI l'appelle comme une fonction avec
      pr_Result2 en argument (Run renvoie ainsi `qpkt` après avoir mis pkt dans Result2 → réponse
      **immédiate**, Run continue) ; une valeur **< 0** = drapeaux, le packet n'est rendu qu'à la
-     **fin** du CLI (cas Execute() synchrone). [O ROM + WB, D pour l'interprétation des bits]
+     **fin** du CLI (cas Execute() synchrone). [O ROM + WB ; bits et contrat complet : §13.6]
   7. Run affiche `"[CLI %N]\n"` (si pas de BSTR initial) puis stop(0).
   Le CLI de fond lit ses commandes dans le FileHandle mémoire ; à son EOF, étant Background, il
   se termine.
+- **NewCLI** : crée un CLI **interactif** dans une fenêtre (`"Window,From"`, défaut
+  `CON:0/0/640/100/New CLI`) ; la fenêtre est ouverte **par le nouveau process** (findinput puis
+  findoutput(`*`)) dans une routine d'init propre à NewCLI (globale 133 de son GV privé). Contrat
+  complet : **§13.7**.
 - **Resident** : liste des segments résidents = chaîne partant de **DosInfo +$10** (DosInfo = BADDR
   de rn_Info, RootNode +$18). Nœud : `!0` BPTR suivant, `!1` compteur d'usage (−1 = SYSTEM), `!2`
   seglist, `!3…` nom BSTR (octet +12). Exige le bit de protection **p** (« Pure bit not set »).
@@ -881,17 +888,361 @@ renvoie le port et l'open poursuit par ACTION_FINDINPUT/OUTPUT.
   CommandFile/SetName internes) et rangée dans pr_CLI ; puis `r = init(pkt)` :
   - `r > 0` : `r` est une routine, appelée avec **pr_Result2** comme argument (Run : init met pkt
     dans Result2 et renvoie l'adresse de `qpkt` ⇒ **réponse immédiate** au créateur) ;
-  - `r ≤ 0` : drapeaux conservés ; le packet est **rendu à la fin** du CLI (returnpkt avec
-    cli_Result2) ; les bits 0/1 de `r` décident des endread/endwrite finaux [D].
-- Ce que l'init de Run (routine passée dans dp_Type) consomme du packet : **Arg1** = CLI parent
-  (copie de Prompt, CommandDir, DefaultStack, FailLevel… [D]), **Arg2/Arg3** = entrée/sortie du
-  parent (choix de la sortie : `*` si la sortie du parent est sa StandardOutput, sinon autre flux
-  [D]), **Arg4** = FileHandle des commandes ⇒ **cli_StandardInput = cli_CurrentInput = Arg4**,
-  **Arg5** = lock dupliqué ⇒ répertoire courant, **Arg6** = BSTR de commande (0 = lancement par
-  Run depuis un CLI ⇒ réponse immédiate). Elle remet à 0 l'entrée 3 du segarray du nouveau
-  process. [O pour les champs lus, D pour la sémantique fine]
+  - `r ≤ 0` : drapeaux conservés ; le packet est **rendu à la fin** du CLI (returnpkt, Res2 =
+    cli_Result2) ; bit 1 de `r` = ne pas faire endread, bit 0 = faire endwrite (§13.6.4). [O]
+- Ce que l'init de Run (routine passée dans dp_Type) consomme du packet et écrit : voir le
+  **contrat exact du §13.6** (Arg1 = CLI parent : Prompt/SetName/DefaultStack/CommandDir copiés,
+  FailLevel **non** hérité (10) ; sortie `*` si Arg3 = StandardOutput du parent, sinon **NIL:** ;
+  Arg4 ⇒ cli_StandardInput = cli_CurrentInput ; Arg5 ⇒ répertoire courant ; Arg6 = sélecteur
+  de mode). [O]
 - Un CLI de fond dont l'entrée (FileHandle mémoire, routines nulles) s'épuise reçoit EOF ; étant
   Background il se termine (§4.5), libère son slot de rn_TaskArray et sort du process.
+- Les points [D] ci-dessus sur l'init de Run sont **remplacés** par le contrat observé du §13.6.
+
+### 13.6 Routine d'init de Run : contrat exact [O WB (c:Run, l:Shell-Seg) + O ROM (CLI, entrée 4)]
+
+Repères d'analyse : dans c:Run (hunk 1, BCPL, globale 1 seule définie, max 134), la routine
+d'init est à l'offset **$4B8** du hunk ; Run en place l'**adresse machine** (pas un BPTR) dans
+dp_Type. Elle utilise deux sous-routines locales (copie des réglages du CLI parent, copie de la
+liste de chemins). Côté CLI : start ROM à $FF9008, start de Shell-Seg = globale 1 de son hunk.
+
+#### 13.6.1 Contrat d'appel (Q1)
+- **Localisation de la CLI à remplir : exclusivement par `findcli()` (globale 134, GV +$218)
+  appelée dans le GV désigné par A2.** Elle n'utilise ni un argument du packet, ni le frame de
+  l'appelant, ni une variable fournie par start. `findcli()` doit donc renvoyer le **BPTR**
+  rangé dans **pr_CLI du process courant** (= le nouveau CLI ; process +$AC). La ROM le lit
+  brut dans le process courant (pas de conversion). [O]
+  ⇒ start doit avoir rangé la CLI dans pr_CLI **avant** l'appel, et la globale 134 du GV
+  courant doit être la *fonction* findcli (c'est le cas du GV partagé ; dans un GV de commande
+  ce slot contient une donnée, cf. §3.3 — init ne doit donc jamais tourner sur un GV privé).
+- Le **process courant** est obtenu par `taskid()` (globale 14) ; seul l'usage « mode
+  Execute » (13.6.2) s'en sert (écriture de pr_ConsoleTask par putlong). [O]
+- Hypothèses sur l'appelant (toutes nécessaires) [O pour l'usage, D pour la nécessité] :
+  - appel BCPL standard (§1.1/§1.2) : **A0 = 0**, A2 = GV (partagé) du nouveau process,
+    A5/A6 = routines d'appel/retour, **A4 = exactement l'adresse d'entrée** (= dp_Type) —
+    la routine adresse ses chaînes (`"NIL:"`, `"*"`, `"%N> "`, `"SYS:"`) et ses sous-routines
+    **relativement à A4** ;
+  - **D1 = BPTR du packet**, et le packet aussi présent au slot 0 du nouveau frame (la routine
+    relit le packet depuis ce slot : la routine d'appel doit avoir rangé D1..D4 dans le frame,
+    §1.2) ;
+  - **frame long-aligné** : une sous-routine prend le BPTR d'une de ses variables de frame
+    (queue de liste chaînée) ;
+  - **D0 suffisant** pour que le frame d'init et ceux de ses appelés (copie de chemins →
+    getvec, copydir → sendpkt) **ne recouvrent ni la CLI ni ses tampons** si ceux-ci sont dans
+    le frame de start. Profondeur propre d'init + sous-routines ≈ $30 + $34 + $24 octets avant
+    les appels runtime. Valeurs observées : **CLI ROM D0 = $1A4** (CLI à frame+$154..$193),
+    **Shell-Seg D0 = $2BC** (CLI à frame+$25C..$29B). [O]
+  - aucune lecture du frame de l'appelant, ni d'autre globale du GV que celles listées
+    ci-dessous ; **pr_CIS/pr_COS ne sont ni lus ni écrits**.
+- Globales utilisées (GV de A2) : **134** findcli, **14** taskid, **60** findoutput, **−26**
+  IsInteractive, **111** putlong, **51** currentdir, **89** findsegarray, **10** result2,
+  **29** getvec, **113** copydir ; la **valeur** du slot **42** (adresse de qpkt) est lue mais
+  pas appelée. [O]
+- Pré-requis sur la CLI : effacée sauf les 4 BPTR de tampons déjà installés et inscriptibles :
+  **cli_Prompt ($18)**, **cli_SetName ($04)**, **cli_CommandFile ($24)** (et cli_CommandName ($10),
+  non utilisé par init). Init **recopie dans** ces tampons ; elle ne les alloue pas. Tailles des
+  tampons du start ROM et Shell-Seg (identiques) : Prompt 68 o, CommandName 108 o, CommandFile
+  48 o, SetName 84 o. [O]
+
+#### 13.6.2 Champs remplis (Q2)
+Notation : `pkt` = BADDR(D1) ; Arg1..Arg6 = pkt+$14..$28 ; `par` = Arg1 (CLI parent ou 0) ;
+`cli` = findcli(). Deux modes selon **Arg6** : **Arg6 = 0 ⇒ mode Run** (lancement par c:Run
+depuis un CLI) ; **Arg6 ≠ 0 ⇒ mode Execute** (Run lancé par la globale 101 / LVO Execute,
+Arg6 = BSTR de commande). Effets dans cet ordre [O] :
+
+1. **cli_StandardInput ($1C) := Arg4** et **cli_CurrentInput ($20) := Arg4** (inconditionnel).
+2. Choix du flux de sortie `out` et des drapeaux (valeur initiale **$FFFFFFFC** = −4) :
+   - *mode Run* : si **Arg3 = par.cli_StandardOutput** (BADDR(Arg1)+$38 — Run passe son
+     output() en Arg3) ⇒ `out := findoutput("*")` ; sinon (sortie de Run redirigée)
+     ⇒ `out := findoutput("NIL:")`. Bit 0 des drapeaux mis. Arg2 est **ignoré**.
+   - *mode Execute* : si **Arg2 ≠ 0** : **cli_StandardInput := Arg2** (CurrentInput reste
+     Arg4), **pr_ConsoleTask (process +$A4) := Arg2.fh_Type** (FileHandle +$08), entrée
+     interactive := IsInteractive(Arg2) (valeur brute fh_Interactive), bit 1 mis. Puis
+     `out := Arg3` ; si Arg3 = 0 ⇒ `out := findoutput("*")` et bit 0 mis.
+3. **cli_Background ($2C) := NON( IsInteractive(out) ET entrée_interactive )** (opérations
+   bit à bit sur les valeurs brutes ; entrée_interactive = 0 en mode Run) ⇒ **toujours TRUE (−1)
+   en mode Run**.
+4. **currentdir(TRUE, Arg5)** ⇒ pr_CurrentDir := Arg5 (l'ancien n'est pas libéré).
+5. Réglages hérités (sous-routine locale, arguments cli, out, par) :
+   - si `par ≠ 0` : source Prompt = par.cli_Prompt, SetName = par.cli_SetName, pile =
+     par.cli_DefaultStack, chemin = **copie profonde** de par.cli_CommandDir (nouveaux nœuds
+     getvec(1) `[suivant, copydir(lock)]`, même ordre ; s'arrête silencieusement si getvec
+     échoue) ;
+   - si `par = 0` : Prompt `"%N> "`, SetName `"SYS:"`, pile **1000**, chemin 0 ;
+   - écrit : **cli_StandardOutput ($38) := out**, **cli_CurrentOutput ($30) := out**,
+     **cli_FailLevel ($14) := 10** (non hérité), **longueur du BSTR cli_CommandFile := 0**,
+     **cli_DefaultStack ($34)**, **cli_CommandDir ($08)**, puis **copie des octets** du BSTR
+     Prompt dans le tampon pointé par cli_Prompt et du BSTR SetName dans celui de cli_SetName
+     (longueur + texte ; aucun contrôle de taille).
+6. **Entrée 3 du segarray (findsegarray()!3) := 0**.
+7. **pr_Result2 := D1 (le packet)** (result2(TRUE, pkt)).
+
+Champs **non touchés** : cli_Result2 ($00), cli_ReturnCode ($0C), cli_CommandName ($10),
+**cli_Interactive ($28)**, cli_Module ($3C) ; pr_CIS, pr_COS ; dp_Res1/dp_Res2. [O]
+
+Correspondance avec les globales 134..149 d'un GV de commande (§3.3) : StandardInput ↔ 141,
+CurrentInput ↔ 142, Background ↔ 145, CurrentOutput ↔ 146, StandardOutput ↔ 148, FailLevel ↔
+139, DefaultStack ↔ 147, CommandDir ↔ 136, Prompt ↔ 140, SetName ↔ 135, CommandFile ↔ 143
+(init n'écrit pas via ces globales mais directement dans la structure).
+
+#### 13.6.3 Valeur de retour (Q3)
+- **Mode Run (Arg6 = 0)** : renvoie le **contenu du slot 42** du GV courant, c.-à-d. l'adresse
+  machine de **qpkt** (> 0). [O]
+- **Mode Execute (Arg6 ≠ 0)** : renvoie les drapeaux **$FFFFFFFC | bit0 | bit1**, soit **−4,
+  −3, −2 ou −1** : bit 0 = « la sortie a été ouverte par init (`*`) et devra être fermée »,
+  bit 1 = « l'entrée a été fournie par l'appelant (Arg2) et ne doit pas être fermée ». [O]
+- **Arg6** n'est utilisé **que** comme sélecteur de mode (son contenu BSTR n'est pas lu par
+  init : c'est Run lui-même qui en a fait le contenu du FileHandle Arg4). [O]
+- **Diagnostic** : −1 n'est produit que si init a lu **Arg6 ≠ 0, Arg2 ≠ 0 et Arg3 = 0**
+  (ou si le slot 42 vaut −1). Avec le packet émis par Run (Arg6 = 0, Arg3 ≠ 0), un retour −1
+  **et** une CLI intacte indiquent que les **lectures/écritures indirectes de la routine
+  n'atteignent pas les structures attendues** — toutes passent par « A0 + BPTR×4 », alors que
+  result2/qpkt passent par A2 et restent corrects. Causes compatibles avec les observations, à
+  vérifier côté appelant : **A0 ≠ 0** à l'entrée (cause unique expliquant à la fois le retour
+  −1, la CLI inchangée et un pr_Result2 correct) ; D1 non BPTR ; findcli() renvoyant une APTR, 0
+  ou la CLI d'un autre process. Effet de bord révélateur dans ce cas : pr_CurrentDir écrasé par
+  une valeur parasite (étape 4) et écritures parasites en mémoire basse ou ailleurs. [D]
+
+#### 13.6.4 Ce que start() doit faire autour de l'appel (Q4) [O ROM ≡ O Shell-Seg]
+Comportement identique dans le start du CLI ROM et dans celui de Shell-Seg :
+
+*Avant* :
+1. Réserver dans son propre frame les 4 tampons (Prompt, CommandName, CommandFile, SetName) et
+   la CLI (16 longs), **effacer la CLI** (clearvec, globale −20, 16 longs).
+2. **pr_CLI := BPTR de la CLI** (putlong sur le process courant).
+3. Installer les BPTR de tampons dans cli_Prompt, cli_CommandName, cli_CommandFile, cli_SetName.
+4. `init := pkt ? pkt.dp_Type : GV[133]` ; `r := init(pkt)` (appel BCPL, D1 = pkt, D0 = taille
+   couvrant CLI + tampons, cf. 13.6.1).
+
+*Après* :
+5. **Si r > 0** : appeler `r(result2(FALSE))` — en mode Run : qpkt(pkt) ⇒ **le packet est
+   rendu immédiatement** à Run (le dp_Port du packet reçu désigne déjà l'émetteur, car le qpkt
+   de l'émetteur a remplacé dp_Port par son propre port ; taskwait ne le modifie pas). Le
+   résultat de cet appel est ignoré ; **r reste mémorisé** (valeur > 0) pour la fin.
+6. Lire pr_TaskNum (process +$8C) pour le prompt/les messages.
+7. **Mémoriser cli_StandardOutput** (valeur posée par init) : c'est **cette copie** qui sera
+   resélectionnée comme sortie après chaque commande.
+8. **cli_Interactive := NON cli_Background ET (cli_StandardInput = cli_CurrentInput)** ⇒ FALSE
+   pour un CLI de Run (pas de prompt ni de bannière).
+9. **selectinput(cli_CurrentInput)** ⇒ **pr_CIS := Arg4** (le FileHandle mémoire des
+   commandes) ; **selectoutput(StandardOutput mémorisée)** ⇒ **pr_COS := `out`** (`*` ou NIL:).
+   C'est start, pas init, qui positionne pr_CIS/pr_COS.
+10. Si cli_Interactive : bannière/prompt (non concerné ici). Puis boucle de lecture par rdch
+    sur input() ; **à chaque tour** start resélectionne `cli_CurrentInput` en entrée et la
+    sortie mémorisée (étape 7).
+
+*Fin* (EOF au niveau supérieur) :
+- si cli_CurrentInput ≠ cli_StandardInput (fin d'un script Execute) : endread, suppression du
+  fichier cli_CommandFile s'il est non vide puis longueur := 0, CurrentInput := StandardInput,
+  FailLevel := 10, on continue ;
+- sinon, si **non Background** : le CLI continue (la console est « réarmée » : fh_End := −1,
+  fh_Args := 1 sur StandardInput) ;
+- sinon (**Background**, cas Run) : sortie du CLI :
+  - **r < 0** (mode Execute) : vider la sortie courante si fh_Pos > 0 (writebytes) puis fh_Pos
+    := 0 ; **endread() sauf si bit 1** ; **endwrite() si bit 0** ; puis **returnpkt(pkt,
+    res1, cli_Result2)** ⇒ l'appelant d'Execute() est débloqué seulement maintenant ; dans
+    Shell-Seg, res1 est la **valeur résiduelle d'une variable locale de la boucle** (ancien
+    répertoire courant sauvegardé autour d'une commande, souvent 0) : **non significative**,
+    seul dp_Res2 = cli_Result2 a un sens ;
+  - **r ≥ 0** (mode Run, r = qpkt) : **endread() et endwrite()** inconditionnels (ferme le
+    FileHandle mémoire et `out`), pas de returnpkt ;
+  - puis : freeobj(répertoire courant), libération de la liste cli_CommandDir (freeobj du lock
+    + freevec du nœud), libération des autres ressources du CLI, **rn_TaskArray[pr_TaskNum] :=
+    0**, fin du process. [O]
+
+Conséquence pour le FileHandle Arg4 construit par Run (`getvec(n/4 + 11)`, n = longueur du
+texte sans le `\n` ajouté, bloc non effacé ; tampon **en ligne** à partir de l'index 11) : fh_Link/fh_Interactive/fh_Type/fh_Pos/fh_Funcs/
+fh_Func3 = 0, fh_Buf = BPTR(FH)+11, fh_End = n+1 ; **fh_Func2 et fh_Args ne sont pas
+initialisés**. Donc : rdch à fh_Pos = fh_End doit traiter **fh_Funcs = 0 comme EOF** ;
+**endstream (globale 93)** appelle fh_Func3 seulement s'il est non nul, puis **freevec du
+FileHandle** (Result2 préservé) — le tampon en ligne part avec le bloc, rien d'autre n'est
+libéré ni envoyé ; fh_Func2/fh_Args ne doivent jamais être utilisés sur ce flux. [O ROM + WB]
+
+#### 13.6.5 Compléments sur c:Run (côté émetteur) [O WB]
+- Arg5 = copydir(lock courant) **seulement si pr_CLI de Run ≠ 0**, sinon 0.
+- Arg6 = valeur de **pr_Result2 à l'entrée de Run** (0 attendu quand le CLI lance Run comme
+  commande ⇒ le lanceur de commandes doit laisser pr_Result2 = 0 ; BSTR quand Run est lancé
+  par la globale 101).
+- Compteur d'usage du résident « CLI » : incrémenté **seulement** si Arg6 ≠ 0 **et** le BSTR
+  de commande est de longueur 0 (et compteur ≠ −1) ; décrémenté (si ≠ −1) sur le chemin
+  d'échec « Unable to create background process ». Le start de Shell-Seg met à −1 le compteur du nœud
+  résident « CLI » obtenu par une de ses sous-routines locales (non analysée). [O]
+- Dans le segarray du nouveau process, l'entrée 3 est déjà 0 côté Run ; init la remet à 0.
+- Après la réponse au packet, Run affiche `"[CLI %N]\n"` (N = slot) seulement si Arg6 = 0,
+  puis stop(0).
+
+### 13.7 NewCLI : contrat [O WB (c:NewCLI) + O ROM (findinput/findoutput, endtask)]
+
+Repères d'analyse : c:NewCLI = stub standard (§3.3) + hunk 1 BCPL de 605 longs, **max 136**,
+qui définit **deux** globales : **1** (start, offset $4) et **133** (offset **$544** : la routine
+d'init du nouveau CLI). Comme le stub installe le module dans le **GV privé**, la globale 133
+de ce GV privé (≠ cliinit) désigne la routine d'init de NewCLI ; le GV partagé n'est pas
+touché. [O]
+
+#### 13.7.1 Côté NewCLI (process appelant) — ordre des effets [O]
+1. Lit **pr_StackSize** (process +$84, octets) et le convertit en longs ; lit **pr_GlobVec**
+   (+$88, APTR) et le convertit en BPTR (accès par getlong 110 avec l'index en longs relatif au
+   taskid : 10 → +$84, 11 → +$88).
+2. **Segarray neuf `getvec(4)`** : copie des indices **0..V!0** du segarray du process courant
+   (findsegarray 89) — donc `[V!0, V!1, V!2, V!3, V!4]` du CLI appelant. **Aucun contrôle** :
+   si V!0 > 4 la copie déborde le bloc de 5 longs. [O]
+3. Segment CLI : recherche dans la liste Resident (DosInfo +$10, comparaison compstring
+   insensible à la casse avec le nom du nœud à +12) du **2e** nœud nommé **"CLI"**, à défaut du
+   **1er**. Trouvé ⇒ entrée 4 := seglist du nœud (`!2`) et compteur d'usage (`!1`) incrémenté
+   **seulement s'il vaut ≥ 1**. Pas trouvé ⇒ l'entrée 4 reste **celle du CLI appelant** (copie de
+   l'étape 2). `rn_ConsoleSegment` est lu mais **non utilisé** (≠ Run, §9.2). [O]
+4. `rdargs("Window,From", v, 50)` ; échec ⇒ freevec du segarray, `"NEWCLI failed\n"`, stop(20)
+   (pas de message spécifique). **Window absent ⇒ `"CON:0/0/640/100/New CLI"`**. [O]
+5. Sous **Forbid** : premier slot nul de `rn_TaskArray[1..[0]]` ; aucun ⇒ Permit, freevec,
+   `"Too many processes\n"`. [O]
+6. **createproc(segarray, max(pile, 800) longs, pri 0, BSTR "New CLI", GV = pr_GlobVec du
+   process NewCLI)** — c.-à-d. le **GV partagé** du CLI qui a lancé NewCLI (pr_GlobVec n'est pas
+   modifié par le stub). Pri **0 constante** (≠ Run). Échec ⇒ Permit, freevec,
+   `"Unable to create new process\n"`. Succès ⇒ `rn_TaskArray[slot] := taskid`,
+   **pr_TaskNum (+$8C) du nouveau := slot**, Permit. [O]
+7. Prépare : Arg1 = **copydir(currentdir courant)** (DupLock ; même si 0) ; Arg3 = **copie
+   profonde de la liste de chemins** lue dans la globale 136 du GV privé (= cli_CommandDir du
+   CLI appelant ; nœuds `getvec(1)` = `[suivant, copydir(lock)]`, même ordre, arrêt silencieux si
+   getvec échoue — même algorithme que Run) ; Arg5 = **filesystemtask()** (106). [O]
+8. **Packet de démarrage** (sendpkt 48, synchrone, vers le taskid du nouveau process) :
+
+| Champ | Valeur |
+|---|---|
+| dp_Type | **adresse machine** de la routine d'init (valeur de la globale 133 du GV privé) |
+| dp_Res1 | **−1 pré-rempli** par NewCLI (c'est cette valeur que voit NewCLI en cas de succès) |
+| dp_Res2 | 0 |
+| Arg1 | DupLock du répertoire courant |
+| Arg2 | **BPTR du vecteur rdargs** de NewCLI : `!0` = BSTR Window (ou le défaut), `!1` = BSTR From ou 0 (vecteur **dans la pile de NewCLI**, valide tant que NewCLI attend la réponse) |
+| Arg3 | liste de chemins copiée |
+| Arg4 | **BPTR de GV_privé[134]** : les 16 longs = copie de la CommandLineInterface du CLI appelant (§3.3 ; GV[134+i] ↔ champ CLI +4·i) |
+| Arg5 | pr_FileSystemTask de NewCLI |
+| Arg6.. | non initialisés |
+
+9. Résultat de sendpkt (= dp_Res1 de la réponse) :
+   - **≠ 0 ⇒ stop(0)**, aucun message côté NewCLI ;
+   - **= 0 ⇒ `"Unable to open new window\n"` puis `"NEWCLI failed\n"`**, `rn_TaskArray[slot] := 0`,
+     compteur d'usage du résident trouvé **décrémenté s'il ≠ −1** (même s'il n'avait pas été
+     incrémenté), **stop(20)**. Le segarray, le DupLock et la copie de chemins ne sont **pas**
+     libérés par NewCLI (le segarray l'est par endtask dans le nouveau process, cf. 13.7.3). [O]
+
+⇒ **Q2 — « Unable to open new window » = la réponse au packet de démarrage a dp_Res1 = 0.**
+Seule la routine d'init (13.7.2) produit cette réponse, dans trois cas : findinput de la
+fenêtre = 0, fenêtre non interactive (fh_Interactive = 0), ou findoutput(`*`) = 0. [O]
+
+#### 13.7.2 Routine d'init de NewCLI (dans le nouveau process) [O]
+Même contrat d'appel que l'init de Run (§13.6.1 : appelée par start avec D1 = pkt, A4 = son
+adresse, A2 = GV partagé, A0 = 0, frame aligné ; elle adresse ses chaînes `"*"`,
+`"Cannot open From file %S\n"`, `"s:cli-startup"`, `"New CLI process %N\n"` et sa sous-routine
+relativement à A4). CLI à remplir = **findcli()** (134) du GV partagé. `par` = BADDR(Arg4).
+Effets dans l'ordre :
+
+1. **currentdir(TRUE, Arg1)** ⇒ pr_CurrentDir := DupLock.
+2. **pr_FileSystemTask (+$A8) := Arg5** ; **pr_WindowPtr (+$B8) := 0** (putlong 111, index 19
+   et 23 relatifs au taskid).
+3. **Ouverture de la fenêtre = `findinput(Arg2!0)`** (globale 59, **dans le nouveau process**),
+   nom = le BSTR Window tel quel (ex. `CON:0/80/480/100/MyCLI`).
+   - **Échec A** : findinput renvoie 0 ;
+   - **Échec B** : `IsInteractive(fh)` (globale −26, valeur brute **fh_Interactive**, FH +$04)
+     = 0 ⇒ endstream(fh) puis **Result2 := 206**.
+   Dans les deux cas : **returnpkt(pkt, 0, Result2)** (⇒ NewCLI affiche « Unable to open new
+   window »), puis Result2 := taskid, et init **renvoie le contenu du slot 34 du GV** (adresse
+   de **endtask**) ⇒ start l'appelle (r > 0, §13.5) ⇒ le process se termine.
+4. Succès : **cli_StandardInput ($1C) := fh**, selectinput(fh), **pr_ConsoleTask (+$A4) :=
+   fh_Type** (FH +$08 : le port du handler qui a servi l'open).
+5. **cli_StandardOutput ($38) := findoutput("*")** (globale 60) — donc un **2e open, sur la
+   console qui vient d'être posée**. Échec (0) ⇒ endread() (ferme la fenêtre d'entrée),
+   **returnpkt(pkt, 0, Result2)** ⇒ même message « Unable to open new window », Result2 :=
+   taskid, renvoie endtask (comme 3). Succès ⇒ selectoutput(cli_StandardOutput).
+6. **cli_CurrentInput ($20) := cli_StandardInput**. Puis :
+   - **From fourni** (Arg2!1 ≠ 0) : findinput(From) ; échec ⇒ `writef("Cannot open From file
+     %S\n", From)` (dans la nouvelle fenêtre), on continue ; succès ⇒ cli_CurrentInput := ce flux ;
+   - **From absent** : sous-routine « ouverture silencieuse » : sauve pr_WindowPtr, le met à
+     **−1** (pas de requester), `findinput("s:cli-startup")`, restaure pr_WindowPtr ; résultat ≠ 0
+     ⇒ cli_CurrentInput := ce flux. (`s:cli-startup` n'est pas cherché si From est donné.)
+7. **cli_CurrentOutput ($30) := cli_StandardOutput** ; **cli_Background ($2C) := 0** (FALSE,
+   explicite, ≠ Run) ; **cli_CommandDir ($08) := Arg3** ; **cli_ReturnCode ($0C) := 0** ;
+   **cli_FailLevel ($14) := par.FailLevel** (GV[139] : **hérité**, ≠ Run qui force 10) ;
+   **cli_Result2 ($00) := 0** ; longueur du BSTR cli_CommandFile := 0 ; **cli_DefaultStack ($34)
+   := par.DefaultStack** (GV[147]) ; **cli_Module ($3C) := 0** ; copie des octets (longueur +
+   texte, sans contrôle de taille) du **Prompt** de `par` (GV[140]) dans le tampon cli_Prompt et
+   du **SetName** de `par` (GV[135]) dans le tampon cli_SetName.
+8. `writef("New CLI process %N\n", pr_TaskNum)` (sur la nouvelle fenêtre).
+9. **findsegarray()!3 := 0** ; **Result2 := pkt** ; renvoie **le contenu du slot 42** (adresse de
+   qpkt) ⇒ start fait qpkt(pkt) ⇒ réponse immédiate, **dp_Res1 = −1** (valeur pré-remplie par
+   NewCLI, init ne la modifie pas), dp_Res2 = 0. [O]
+
+Non touchés par init : cli_CommandName ($10), **cli_Interactive ($28)** (calculé ensuite par
+start : NON Background ET StandardInput = CurrentInput, §13.6.4 étape 8 ⇒ FALSE tant que
+s:cli-startup est l'entrée courante, TRUE ensuite), pr_CIS/pr_COS **sont** positionnés
+(selectinput/selectoutput) mais start les resélectionne de toute façon. [O]
+
+Globales du **GV partagé** utilisées par init (toutes doivent exister dans le GV du CLI qui
+lance NewCLI) : **10, 14, 49, 51, 59, 60, 61, 62, 63, 74, 89, 93, 110, 111, 134, −26**, et les
+**valeurs** des slots **34** (endtask) et **42** (qpkt), qui doivent être des adresses machine
+**> 0** (start les appelle comme fonctions). [O]
+
+#### 13.7.3 Démarrage et fin du nouveau CLI (Q3) [O ROM + WB]
+- Démarrage §2.4/§13.5 sur le segarray `[V!0, V!1, V!2, V!3, CLI]` : globin de V!1..V!V!0
+  **dans le GV partagé** (y compris l'entrée 3 = cliinit du parent, non encore effacée à ce
+  moment), taskwait, puis start(pkt) qui alloue la CLI, pr_CLI := elle, appelle `pkt.dp_Type`.
+- Contrat de retour identique à Run (r > 0 = fonction appelée avec Result2) mais deux valeurs
+  possibles : **qpkt** (succès, 13.7.2 étape 9) ou **endtask** (échec, étapes 3/5).
+- **endtask** (globale 34, ROM) : libère (freevec) le **segarray** (pr_SegList) du process
+  courant, libère le **GV** s'il diffère de `dl_GV` (GV partagé ⇒ non libéré), puis
+  **RemTask(courant)**. Ne revient pas. [O ; libération de la mémoire du process/pile : S]
+- **pr_ConsoleTask du nouveau process := fh_Type du flux fenêtre** (étape 4) : c'est ce qui
+  rend `*` valide dans le nouveau CLI (et chez ses fils, qui l'héritent via createproc). NewCLI
+  lui-même ne touche pas à son propre pr_ConsoleTask. [O]
+- CLI **interactif, non Background** : il ne se termine qu'à EOF après EndCLI (qui force
+  Background, §9.2) ; à la sortie, r = qpkt ≥ 0 ⇒ endread + endwrite inconditionnels (ferment les
+  deux flux fenêtre), pas de returnpkt, rn_TaskArray[slot] := 0 (§13.6.4 *Fin*). [O/D]
+
+#### 13.7.4 findinput / findoutput vus du handler (ROM, globales 59/60) [O ROM]
+Routine commune (mode 1005 / 1006) :
+- FileHandle **getmem(10, $10001)** (11 longs **effacés**), fh_Pos = fh_End = −1, routines
+  fh_Funcs/Func2/Func3 installées (Func3 selon le mode).
+- **Nom = `*`** (compstring) : port := **pr_ConsoleTask** (consoletask 105) ; **pas de
+  deviceproc** ⇒ **Arg2 = valeur résiduelle de Result2** (en pratique le dp_Res2 du dernier
+  packet reçu, non significative : **ne pas l'interpréter comme un lock**).
+- **Nom = `NIL:`** : aucun packet, fh_Type 0, routines 0, renvoie le FileHandle.
+- Sinon : deviceproc(nom) ⇒ port, Arg2 = Result2 (lock de deviceproc ; 0 pour CON:/RAW:).
+- port = 0 ⇒ freevec, renvoie 0. Sinon **fh_Type := port**, puis sendpkt(port, mode,
+  **Arg1 = BPTR du FileHandle, Arg2 = lock/résidu, Arg3 = BSTR du nom complet**).
+- **dos n'écrit ni fh_Interactive ni fh_Args** : c'est au handler de les remplir dans le
+  FileHandle reçu en Arg1. Res1 = 0 ⇒ freevec, puis `errorreq(2, Result2, port)` (114) ; Retry ⇒
+  tout recommence ; sinon renvoie 0. Res1 ≠ 0 ⇒ renvoie le FileHandle (BPTR).
+
+#### 13.7.5 Ce que le handler console doit fournir pour que NewCLI réussisse (Q4) [O/D]
+1. **Démarrage** (globale 112, packet Arg1 = `CON:0/80/480/100/MyCLI`, Arg2 = 0/1, Arg3 =
+   nœud) : ouvrir la fenêtre, **Res1 ≠ 0**. [O]
+2. **ACTION_FINDINPUT (1005)** reçu ensuite (Arg1 = FileHandle, Arg2 = 0, Arg3 = même nom) :
+   **écrire fh_Interactive (FH +$04) ≠ 0** (le console-handler ROM y met −1 [D]) et fh_Args
+   (FH +$24) = clé du flux ; répondre **Res1 = −1**. Un fh_Interactive nul ⇒ échec B ⇒ « Unable
+   to open new window » **même si la fenêtre est ouverte** (elle est alors refermée par END). [O]
+3. **ACTION_FINDOUTPUT (1006) sur le même port avec Arg3 = BSTR `"*"`** et Arg2 = résidu :
+   le handler doit l'accepter comme **un second flux sur la fenêtre déjà ouverte** (sans
+   analyser `*` comme une spécification de fenêtre, sans exiger de lock), remplir fh_Interactive
+   ≠ 0 et fh_Args, **Res1 = −1**. Refus ⇒ « Unable to open new window ». [O pour l'exigence de
+   succès, D pour le remplissage de fh_Interactive sur ce flux]
+4. **fh_Type** du flux d'entrée doit être le **port du process handler** (posé par dos, §13.7.4)
+   puisqu'il devient pr_ConsoleTask : si notre findinput range le port ailleurs que FH +$08,
+   l'étape 5 vise un mauvais port. [O]
+5. Le handler doit **rester vivant tant qu'il reste un flux ouvert** : deux ACTION_END arrivent à
+   la fin (entrée puis sortie, endread puis endwrite), plus éventuellement ceux de flux `*`
+   ouverts par les commandes. Fermer la fenêtre/terminer au premier END casse la sortie. [D]
+6. Ensuite, packets habituels de console : READ, WRITE, WAIT_CHAR (20), SCREEN_MODE (994),
+   DISK_INFO (25), END (1007) (cf. handlers-v34 §2). [O/D]
+
+Diagnostic pour notre ROM (symptôme « Unable to open new window » + « NEWCLI failed », Run/
+Execute OK) [D] : la réponse Res1 = 0 provient forcément de l'init de NewCLI exécutée **dans le
+nouveau process sur le GV partagé**. Causes à vérifier, par ordre de probabilité : (a) le
+FINDOUTPUT `"*"` vers pr_ConsoleTask est refusé par notre handler, ou notre findoutput("*") ne
+vise pas pr_ConsoleTask ; (b) fh_Interactive (+$04) ou fh_Type (+$08) du flux d'entrée non
+renseignés au retour de notre findinput ; (c) globale −26 (IsInteractive) absente/incorrecte
+dans le GV partagé ; (d) findinput(`CON:…`) échoue dans un process qui n'est pas celui d'un CLI
+« standard » (pr_CurrentDir = DupLock, pr_WindowPtr = 0, pr_FileSystemTask = Arg5 déjà posés).
+Run ne passe par aucun de ces chemins (il ouvre `*`/`NIL:` en sortie seulement, jamais une
+fenêtre en entrée), d'où la différence observée.
 
 ---
 
@@ -910,5 +1261,20 @@ Je certifie, après relecture intégrale de ce document, que :
   conventions de registres, constantes (codes d'action packets, codes d'erreur, tailles de
   tampons/piles, valeur du marqueur de globale non définie), chaînes de messages et templates
   (nécessaires à la compatibilité de sortie), et adresses ROM à titre de repère d'analyse ;
-- la ROM n'a été ni modifiée ni copiée ; seules des extractions temporaires des fichiers du
-  disque Workbench ont été faites dans le répertoire scratch de session.
+- la ROM n'a pas été modifiée ; seules des extractions temporaires des fichiers du disque
+  Workbench (et, pour le §13.6, une copie de lecture temporaire de la ROM, supprimée après
+  analyse) ont été faites dans le répertoire scratch de session, hors du dépôt.
+- **§13.6 (relu le 2026-10-20)** : le contrat de la routine d'init de c:Run et du start des CLI
+  est exprimé en entrées/sorties, champs écrits (offsets de structure et numéros de globales),
+  valeurs de retour et ordre des effets observables ; aucun encodage, aucune séquence
+  d'instructions, aucun nom de registre de travail interne n'y figure (seuls les registres de
+  la convention d'appel publique §1.1 sont cités). Les offsets de hunk/ROM ($4B8, $FF9008) et les
+  tailles de frame observées ($1A4, $2BC) sont des repères d'analyse et des éléments d'ABI
+  (dimensionnement de D0), pas du code.
+- **§13.7 (relu le 2026-10-20)** : le contrat de c:NewCLI (process appelant, routine d'init du
+  nouveau CLI, findinput/findoutput et endtask de la ROM) est exprimé en effets observables
+  ordonnés, champs écrits (offsets de Process/CLI/FileHandle, numéros de globales), contenu du
+  packet de démarrage, chaînes de messages et conditions d'échec ; aucun encodage, aucune séquence
+  d'instructions, aucun registre de travail interne. Les offsets $4/$544 du hunk sont des repères
+  d'analyse. Sources : extraction temporaire de `c/NewCLI` d'une **copie** de l'ADF dans le scratch
+  de session ; ROM lue en place, en lecture seule (non copiée, non modifiée).

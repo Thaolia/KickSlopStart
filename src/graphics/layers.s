@@ -74,6 +74,7 @@ CR_FLAGS        EQU 36               ; privé : CRF_TEMP / CRF_BORROWED
 CR_SIZE         EQU 40
 CRF_TEMP        EQU 1                ; sauvegarde provisoire (phase A -> B)
 CRF_BORROWED    EQU 2                ; BitMap appartenant à une autre ClipRect (liste de BeginUpdate)
+CRF_EXPOSE      EQU 4                ; visible, en place, en partie découverte : recopie directe en phase B
 ; --- struct Layer_Info ---
 LI_TOP          EQU 0
 LI_LOCK         EQU 24
@@ -1108,6 +1109,8 @@ lr_phasea:
         bne.s   .pa_temp
         bsr     lr_oldviscovers      ; déjà visible ici et non déplacée : l'écran est juste
         beq.s   .pa_next
+        move.b  #CRF_EXPOSE,CR_FLAGS+3(a3)   ; en place : seules les parties découvertes iront à l'écran (phase B)
+        bra.s   .pa_next
 .pa_temp:
         move.b  #CRF_TEMP,CR_FLAGS+3(a3)
 .pa_save:
@@ -1246,6 +1249,87 @@ lr_fill:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
+; lr_expose(a3 = nouvelle ClipRect visible, a4 = couche smart restée en place) : ses parties anciennement cachées
+; et sauvegardées sont recopiées de leur sauvegarde vers l'écran ; les parties sans ancien contenu (agrandissement)
+; sont effacées et abîmées. Les parties déjà visibles ne sont pas touchées.
+lr_expose:
+        movem.l d2-d7/a2-a6,-(sp)
+        clr.l   -(sp)                ; zone sans ancien contenu
+        move.l  sp,a2
+        lea     CR_MINX(a3),a1
+        bsr     rl_add
+        move.l  LY_CLIPRECT(a4),a6   ; a6 = ancienne ClipRect
+.ex_lp:
+        cmpa.w  #0,a6
+        beq     .ex_new
+        movem.w CR_MINX(a6),d0-d3
+        movem.w d0-d3,-(sp)
+        move.l  sp,a1
+        lea     8(sp),a2
+        bsr     rl_sub
+        movem.w (sp)+,d0-d3
+        tst.l   CR_LOBS(a6)
+        beq.s   .ex_next             ; anciennement visible : déjà à l'écran
+        move.l  CR_BITMAP(a6),d4
+        beq.s   .ex_next             ; cachée sans sauvegarde
+        cmp.w   CR_MINX(a3),d0       ; ∩ nouvelle ClipRect
+        bge.s   .ex_1
+        move.w  CR_MINX(a3),d0
+.ex_1:
+        cmp.w   CR_MINY(a3),d1
+        bge.s   .ex_2
+        move.w  CR_MINY(a3),d1
+.ex_2:
+        cmp.w   CR_MAXX(a3),d2
+        ble.s   .ex_3
+        move.w  CR_MAXX(a3),d2
+.ex_3:
+        cmp.w   CR_MAXY(a3),d3
+        ble.s   .ex_4
+        move.w  CR_MAXY(a3),d3
+.ex_4:
+        cmp.w   d2,d0
+        bgt.s   .ex_next
+        cmp.w   d3,d1
+        bgt.s   .ex_next
+        bsr     lr_screenbm
+        move.l  a0,a1                ; destination : l'écran, à la même place
+        move.l  d4,a0                ; source : la sauvegarde
+        sub.w   d0,d2
+        addq.w  #1,d2
+        move.w  d2,d4                ; largeur
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  d3,d5                ; hauteur
+        move.w  d0,d2
+        move.w  d1,d3
+        sub.w   CR_ORGX(a6),d0
+        sub.w   CR_ORGY(a6),d1
+        moveq   #-$40,d6             ; minterm $C0 (copie)
+        bsr     lr_blt
+.ex_next:
+        move.l  CR_NEXT(a6),a6
+        bra     .ex_lp
+.ex_new:
+        move.l  (sp),a0
+.ex_dmg:
+        cmpa.w  #0,a0
+        beq.s   .ex_free
+        movem.w RR_MINX(a0),d0-d3
+        move.l  a0,-(sp)             ; lr_damage écrase a0/a1
+        bsr     lr_screenbm
+        bsr     lr_clear
+        bsr     lr_damage
+        move.l  (sp)+,a0
+        move.l  RR_NEXT(a0),a0
+        bra.s   .ex_dmg
+.ex_free:
+        move.l  sp,a2
+        bsr     rl_free
+        addq.l  #4,sp
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
 ; lr_phaseb(a4 = couche) : écriture de l'écran pour ses ClipRects visibles.
 lr_phaseb:
         movem.l d2-d7/a2-a6,-(sp)
@@ -1259,7 +1343,13 @@ lr_phaseb:
         and.w   #LAYERSMART|LAYERSUPER,d0
         beq.s   .pb_simple
         btst    #0,CR_FLAGS+3(a3)    ; CRF_TEMP : sauvegarde provisoire -> écran, puis rendue
+        bne.s   .pb_temp
+        btst    #2,CR_FLAGS+3(a3)    ; CRF_EXPOSE
         beq     .pb_next
+        bsr     lr_expose
+        clr.b   CR_FLAGS+3(a3)
+        bra     .pb_next
+.pb_temp:
         move.l  CR_BITMAP(a3),a0
         movem.w CR_MINX(a3),d0-d3
         sub.w   d0,d2

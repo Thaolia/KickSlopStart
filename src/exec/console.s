@@ -86,6 +86,16 @@ console_open:
         move.l  IO_DATA2(a2),a1
         bsr     cu_init
         move.l  a0,IO_UNIT(a2)
+        move.l  a0,-(sp)             ; unité chaînée dans CONB_UNITS (routage des touches vers la fenêtre active)
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        move.l  4+4(sp),a1           ; a1 = base console
+        move.l  (sp),a0
+        move.l  CONB_UNITS(a1),CU_NEXT(a0)
+        move.l  a0,CONB_UNITS(a1)
+        jsr     LVO_ENABLE(a6)
+        addq.l  #4,sp
+        move.l  4(sp),a6
 .co_ok:
         addq.w  #1,LIB_OPENCNT(a6)
 .co_ret:
@@ -100,9 +110,27 @@ console_close:
         beq.s   .cc_ret
         clr.l   IO_UNIT(a1)
         move.l  a6,-(sp)
-        move.l  d0,a1
-        move.l  #CU_SIZE,d0
+        move.l  d0,-(sp)
         move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        move.l  4(sp),a0             ; a0 = base console : unité retirée de CONB_UNITS
+        lea     CONB_UNITS(a0),a0
+        move.l  (sp),d0
+.cc_find:
+        move.l  (a0),d1
+        beq.s   .cc_gone
+        cmp.l   d1,d0
+        beq.s   .cc_unl
+        move.l  d1,a0
+        lea     CU_NEXT(a0),a0
+        bra.s   .cc_find
+.cc_unl:
+        move.l  d0,a1
+        move.l  CU_NEXT(a1),(a0)
+.cc_gone:
+        jsr     LVO_ENABLE(a6)
+        move.l  (sp)+,a1
+        move.l  #CU_SIZE,d0
         jsr     LVO_FREEMEM(a6)
         move.l  (sp)+,a6
 .cc_ret:
@@ -198,7 +226,7 @@ console_beginio:
         cmp.w   #CMD_READ,d0
         beq.s   .bu_read
         move.b  #IOERR_NOCMD,IO_ERROR(a3)
-        bra.s   .bu_reply
+        bra     .bu_reply
 .bu_write:
         move.l  IO_DATA2(a3),a4
         move.l  IO_LEN2(a3),d4
@@ -233,10 +261,16 @@ console_beginio:
 .bu_read:
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
+        bsr     con_target           ; une console a la fenêtre active : seules ses lectures prennent les touches
+        beq.s   .bu_rany
+        cmp.l   IO_UNIT(a3),d0
+        bne.s   .bu_queue
+.bu_rany:
         move.l  a3,a1
         bsr     con_fillread         ; d0 = octets copiés
         tst.l   d0
         bne.s   .bu_rgot
+.bu_queue:
         bclr    #0,IO_FLAGS(a3)      ; rien à lire : en attente (réponse par le handler d'input)
         clr.l   (a3)                 ; LN_SUCC = fin de file
         lea     CONB_RQ(a2),a0
@@ -425,19 +459,31 @@ console_input_handler:
         rts
 
 ; con_servereads(a2 = base) : si un CMD_READ attend et que le read buffer a des octets, le remplit, le décroche
-; et y répond. Préserve d2-d7/a2-a6.
+; et y répond. Si la fenêtre active est celle d'une console, seule une lecture de cette unité est servie (sinon les
+; touches attendent dans le tampon) ; sinon la tête de file. Préserve d2-d7/a2-a6.
 con_servereads:
-        movem.l a3/a6,-(sp)
+        movem.l a3-a4/a6,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        move.l  CONB_RQ(a2),d0
+        bsr     con_target
+        move.l  d0,d1                ; d1 = unité visée | 0
+        lea     CONB_RQ(a2),a4       ; a4 = maillon précédent
+.sr_find:
+        move.l  (a4),d0
         beq.s   .sr_none
         move.l  d0,a3
+        tst.l   d1
+        beq.s   .sr_take
+        cmp.l   IO_UNIT(a3),d1
+        beq.s   .sr_take
+        move.l  a3,a4
+        bra.s   .sr_find
+.sr_take:
         move.l  a3,a1
         bsr     con_fillread
         tst.l   d0
         beq.s   .sr_none
-        move.l  (a3),CONB_RQ(a2)     ; décroche la tête de file
+        move.l  (a3),(a4)            ; décroche la requête servie
         jsr     LVO_ENABLE(a6)
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
@@ -445,8 +491,43 @@ con_servereads:
 .sr_none:
         jsr     LVO_ENABLE(a6)
 .sr_ret:
-        movem.l (sp)+,a3/a6
+        movem.l (sp)+,a3-a4/a6
         rts
+
+; con_target(a2 = base) -> d0 = ConUnit dont la fenêtre est la fenêtre active d'intuition, 0 sinon (Z en
+; conséquence). IntuitionBase est cherchée dans la liste des bibliothèques au premier besoin. Appelé sous Disable.
+; Préserve tout sauf d0.
+con_target:
+        movem.l d1/a0-a1/a6,-(sp)
+        move.l  CONB_IBASE(a2),d0
+        bne.s   .tg_have
+        move.l  ($4).w,a6
+        lea     EB_LIBLIST(a6),a0
+        lea     console_intname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,CONB_IBASE(a2)
+        beq.s   .tg_ret
+.tg_have:
+        move.l  d0,a0
+        move.l  52(a0),d1            ; ib_ActiveWindow (offset public)
+        beq.s   .tg_no
+        move.l  CONB_UNITS(a2),d0
+.tg_lp:
+        beq.s   .tg_ret
+        move.l  d0,a0
+        cmp.l   CU_WINDOW(a0),d1
+        beq.s   .tg_ret
+        move.l  CU_NEXT(a0),d0
+        bra.s   .tg_lp
+.tg_no:
+        moveq   #0,d0
+.tg_ret:
+        movem.l (sp)+,d1/a0-a1/a6
+        tst.l   d0
+        rts
+console_intname:
+        dc.b    "intuition.library",0
+        even
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom, alloue le bitplane, init l'état,
 ; et ENREGISTRE le handler d'input sur input.device (IND_ADDHANDLER) -> le clavier (via input.device) alimentera
@@ -536,7 +617,8 @@ CU_PAR1         EQU 302
 CU_CUROFF       EQU 304              ; privé : curseur masqué (CSI 0 SPACE p)
 CU_CURVIS       EQU 305              ; privé : curseur actuellement dessiné
 CU_INV          EQU 306              ; privé : vidéo inverse (CSI 7 m)
-CU_SIZE         EQU 308
+CU_NEXT         EQU 308              ; privé : unité suivante (liste CONB_UNITS)
+CU_SIZE         EQU 312
 CU_DEFFG        EQU 2                ; stylo du texte par défaut : noir sur le fond vert (thème du projet ; 1.3 : 1)
 
 ; cu_init(a0 = ConUnit effacée, a1 = Window) : bornes de la zone de texte depuis la géométrie de la fenêtre.

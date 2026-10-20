@@ -25,6 +25,7 @@
                 xref    intuition_BeginRefresh
                 xref    intuition_EndRefresh
                 xref    intuition_MoveWindow
+                xref    intuition_ReportMouse
                 xref    intuition_SizeWindow
                 xref    intuition_WindowLimits
                 xref    intuition_SetMenuStrip   ; menus.s
@@ -85,7 +86,9 @@ intuition_vectors:
         dc.l    intuition_OpenWindow     ; 34 : LVO -204 OpenWindow(newwindow a0)
         dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
         dc.l    intuition_PrintIText     ; 36 : LVO -216 PrintIText(rp a0, itext a1, x d0, y d1)
-        dcb.l   7,intuition_null         ; 37..43 : LVO -222..-258 (non impl.)
+        dcb.l   2,intuition_null         ; 37..38 : LVO -222..-228 (non impl.)
+        dc.l    intuition_ReportMouse    ; 39 : LVO -234 ReportMouse(drapeau d0, fenêtre a0)
+        dcb.l   4,intuition_null         ; 40..43 : LVO -240..-258 (non impl.)
         dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
         dcb.l   3,intuition_null         ; 45..47 : LVO -270..-282 (non impl.)
         dc.l    intuition_SizeWindow     ; 48 : LVO -288 SizeWindow(fenêtre a0, dx d0, dy d1)

@@ -153,6 +153,12 @@ Routine locale de cliinit (repère $FF89A8), arguments : nœud, segarray de base
   (ERROR_BAD_STREAM_NAME). Succès ⇒ **returnpkt(pkt, −1, ·)** (Res2 non significatif), puis boucle
   taskwait. Packet inconnu ⇒ Res2 = 209. Une requête d'info disque renvoie id_DiskType
   `'CON\0'` ou `'RAW\0'` et id_VolumeNode = la fenêtre [O pour les valeurs, D pour le type de packet].
+- **Second open `*` (cas NewCLI)** : après un FINDINPUT réussi sur `CON:…`, le nouveau CLI fait
+  `findoutput("*")`, qui envoie **ACTION_FINDOUTPUT au même process handler** (pr_ConsoleTask :=
+  fh_Type du flux d'entrée) avec **Arg3 = BSTR `"*"`** et **Arg2 = résidu de Result2** (pas un
+  lock). Le handler doit l'accepter comme second flux sur la fenêtre existante (fh_Interactive
+  ≠ 0, Res1 = −1) et ne se terminer qu'après le END de **tous** ses flux. Détails :
+  `bcpl-runtime-v34.md` §13.7. [O côté dos/NewCLI, D côté handler]
 - `l:Newcon-Handler` et `l:Aux-Handler` se comportent pareil au démarrage (lisent dp_Port, Arg1,
   Arg2, pas Arg3). [O WB]
 

@@ -34,6 +34,7 @@ LVO_BEGINREFRESH EQU -354
 LVO_ENDREFRESH  EQU -366
 LVO_WINDOWTOFRONT EQU -312
 LVO_DOUBLECLICK EQU -102
+LVO_REPORTMOUSE EQU -234
 ICON_LVO_GETDISKOBJECT EQU -78       ; icon.library (icon_lib.fd)
 ICON_LVO_FREEDISKOBJECT EQU -90
 DOS_LVO_CREATEPROC EQU -138
@@ -109,6 +110,7 @@ wb_entry:                            ; ROMTag+44 : point d'entrée du process cr
         beq     .we_idle
         move.l  d0,a5                ; a5 = état
         move.w  #-1,WBS_SELW(a5)
+        move.w  #-1,WBS_DRAGW(a5)
         bsr     wb_mkmenus
         moveq   #MP_SIZE,d0          ; port public « Workbench » (messages WBStartup rendus par les outils)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -193,7 +195,17 @@ WBS_SELI        EQU WBS_SELW+2       ; WORD : n° de l'icône sélectionnée
 WBS_LSEC        EQU WBS_SELI+2       ; horodatage du clic précédent (double-clic)
 WBS_LMIC        EQU WBS_LSEC+4
 WBS_SHOWN       EQU WBS_LMIC+4       ; BYTE : icône du disque dessinée
-WBS_DRAWERS     EQU WBS_SHOWN+2      ; WB_MAXDRAWERS fiches de tiroir
+WBS_GON         EQU WBS_SHOWN+1      ; BYTE : cadre fantôme du glisser affiché
+WBS_DRAGW       EQU WBS_SHOWN+2      ; WORD : fenêtre de l'icône glissée, -1 : aucun glisser
+WBS_DRAGI       EQU WBS_DRAGW+2      ; WORD : icône glissée
+WBS_DSX         EQU WBS_DRAGI+2      ; souris au clic (relative à la fenêtre)
+WBS_DSY         EQU WBS_DSX+2
+WBS_GX          EQU WBS_DSY+2        ; cadre fantôme : coin et taille (coordonnées de l'écran)
+WBS_GY          EQU WBS_GX+2
+WBS_GW          EQU WBS_GY+2
+WBS_GH          EQU WBS_GW+2
+WBS_GRP         EQU WBS_GH+2         ; RastPort de l'écran (cadre tracé en COMPLEMENT)
+WBS_DRAWERS     EQU WBS_GRP+4        ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
@@ -241,7 +253,7 @@ wb_desktop:
         move.w  SC_HEIGHT(a2),d0
         sub.w   d1,d0
         move.w  d0,NW_HEIGHT(a0)
-        move.l  #REFRESHWINDOW|MOUSEBUTTONS|MENUPICK,NW_IDCMPFLAGS(a0)
+        move.l  #REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK,NW_IDCMPFLAGS(a0)
         move.l  #BACKDROP|BORDERLESS,NW_FLAGS(a0)
         jsr     LVO_OPENWINDOW(a6)
         lea     NW_SIZEOF(sp),sp
@@ -391,11 +403,21 @@ wb_dispatch:
         bra.s   wb_dispatch
 .dp_mb:
         cmp.l   #MOUSEBUTTONS,d2
-        bne.s   .dp_menu
+        bne.s   .dp_mv
         cmp.w   #SELECTDOWN,d3
-        bne.s   wb_dispatch
+        bne.s   .dp_up
         bsr     wb_click
-        bra.s   wb_dispatch
+        bra     wb_dispatch
+.dp_up:
+        cmp.w   #SELECTUP,d3
+        bne     wb_dispatch
+        bsr     wb_dragend
+        bra     wb_dispatch
+.dp_mv:
+        cmp.l   #MOUSEMOVE,d2
+        bne.s   .dp_menu
+        bsr     wb_dragmove
+        bra     wb_dispatch
 .dp_menu:
         cmp.l   #MENUPICK,d2
         bne.s   .dp_close
@@ -659,8 +681,8 @@ wb_invert:
         rts
 
 ; wb_click(d7.w = fenêtre, d4/d5 = souris dans la fenêtre, d6/a0 = horodatage, a5) : sur une icône -> sélection (la
-; précédente est rendue normale) ; sur l'icône déjà sélectionnée dans le délai de double-clic -> ouverture ; ailleurs
-; -> désélection. Préserve d7/a5.
+; précédente est rendue normale) et début d'un glisser ; sur l'icône déjà sélectionnée dans le délai de double-clic
+; -> ouverture ; ailleurs -> désélection. Préserve d7/a5.
 wb_click:
         move.l  a0,-(sp)             ; micros
         clr.l   -(sp)                ; (sp) = icône testée
@@ -700,16 +722,19 @@ wb_click:
         jsr     LVO_DOUBLECLICK(a6)
         move.l  (sp)+,d1
         tst.l   d0
-        beq.s   .ck_stamp
+        beq.s   .ck_drag
         bsr     wb_openicon
         bra.s   .ck_stamp
 .ck_select:
         move.l  d1,-(sp)
         bsr     wb_deselect
-        move.l  (sp)+,d1
+        move.l  (sp),d1
         move.w  d7,WBS_SELW(a5)
         move.w  d1,WBS_SELI(a5)
         bsr     wb_invert
+        move.l  (sp)+,d1
+.ck_drag:
+        bsr     wb_dragstart         ; l'icône peut être glissée tant que le bouton reste enfoncé
 .ck_stamp:
         move.l  d6,WBS_LSEC(a5)
         move.l  (sp)+,WBS_LMIC(a5)
@@ -717,6 +742,224 @@ wb_click:
 .ck_none:
         addq.l  #8,sp
         bra     wb_deselect
+
+; wb_redraw1(d7.w = fenêtre, a5) : intérieur effacé au stylo 0 puis icônes redessinées. Préserve d7/a5.
+wb_redraw1:
+        movem.l d2-d6/a2-a4/a6,-(sp)
+        bsr     wb_window
+        beq.s   .r1_ret
+        move.l  WBS_GFXBASE(a5),a6
+        move.l  WD_RPORT(a3),a1
+        moveq   #0,d0
+        jsr     LVO_SETAPEN(a6)
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        moveq   #0,d1
+        move.b  WD_BORDERTOP(a3),d1
+        move.w  WD_WIDTH(a3),d2
+        moveq   #0,d3
+        move.b  WD_BORDERRIGHT(a3),d3
+        sub.w   d3,d2
+        subq.w  #1,d2
+        move.w  WD_HEIGHT(a3),d3
+        moveq   #0,d4
+        move.b  WD_BORDERBOTTOM(a3),d4
+        sub.w   d4,d3
+        subq.w  #1,d3
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        bsr     wb_drawwin
+.r1_ret:
+        movem.l (sp)+,d2-d6/a2-a4/a6
+        rts
+
+; wb_dragstart(d7.w = fenêtre, d1.w = icône, d4/d5 = souris, a5) : glisser armé ; la fenêtre reçoit les mouvements
+; (ReportMouse). Préserve d2-d7/a2-a5.
+wb_dragstart:
+        move.w  d7,WBS_DRAGW(a5)
+        move.w  d1,WBS_DRAGI(a5)
+        move.w  d4,WBS_DSX(a5)
+        move.w  d5,WBS_DSY(a5)
+        clr.b   WBS_GON(a5)
+        moveq   #1,d0
+; wb_report(d0 = drapeau, WBS_DRAGW, a5) : ReportMouse de la fenêtre du glisser. Préserve d2-d7/a2-a5.
+wb_report:
+        movem.l d7/a3-a4/a6,-(sp)
+        move.l  d0,-(sp)
+        move.w  WBS_DRAGW(a5),d7
+        bsr     wb_window
+        move.l  (sp)+,d0
+        cmpa.w  #0,a3
+        beq.s   .rp_ret
+        move.l  a3,a0
+        move.l  WBS_IBASE(a5),a6
+        jsr     LVO_REPORTMOUSE(a6)
+.rp_ret:
+        movem.l (sp)+,d7/a3-a4/a6
+        rts
+
+; wb_dragmove(d7.w = fenêtre, d4/d5 = souris, a5) : le cadre fantôme (taille de l'icône) suit le déplacement depuis
+; le clic, tracé en COMPLEMENT dans le RastPort de l'écran. Préserve d2-d7/a2-a5.
+wb_dragmove:
+        cmp.w   WBS_DRAGW(a5),d7
+        bne.s   .gm_r
+        movem.l d2-d3/a2-a4,-(sp)
+        tst.b   WBS_GON(a5)
+        beq.s   .gm_new
+        bsr     wb_ghost             ; efface l'ancien cadre
+.gm_new:
+        move.w  WBS_DRAGI(a5),d1
+        bsr     wb_iconrect
+        beq.s   .gm_out
+        sub.w   d0,d2
+        addq.w  #1,d2
+        move.w  d2,WBS_GW(a5)
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  d3,WBS_GH(a5)
+        add.w   d4,d0
+        sub.w   WBS_DSX(a5),d0
+        add.w   d5,d1
+        sub.w   WBS_DSY(a5),d1
+        movem.w d0-d1,-(sp)
+        bsr     wb_window
+        movem.w (sp)+,d0-d1
+        add.w   WD_LEFTEDGE(a3),d0
+        add.w   WD_TOPEDGE(a3),d1
+        move.w  d0,WBS_GX(a5)
+        move.w  d1,WBS_GY(a5)
+        move.l  WD_WSCREEN(a3),a0
+        lea     SC_RASTPORT(a0),a0
+        move.l  a0,WBS_GRP(a5)
+        bsr     wb_ghost             ; trace le nouveau
+.gm_out:
+        movem.l (sp)+,d2-d3/a2-a4
+.gm_r:
+        rts
+
+; wb_ghost(a5) : bascule le cadre fantôme (quatre traits d'un pixel en COMPLEMENT, coins non doublés) ; WBS_GON
+; indique s'il est affiché. Préserve d2-d7/a2-a5.
+wb_ghost:
+        movem.l d2-d5/a6,-(sp)
+        not.b   WBS_GON(a5)
+        move.l  WBS_GFXBASE(a5),a6
+        move.l  WBS_GRP(a5),a1
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        move.w  WBS_GX(a5),d4
+        move.w  WBS_GY(a5),d5
+        move.w  d4,d0                ; haut
+        move.w  d5,d1
+        move.w  d4,d2
+        add.w   WBS_GW(a5),d2
+        subq.w  #1,d2
+        move.w  d5,d3
+        bsr.s   .gh_fill
+        move.w  d5,d1                ; bas
+        add.w   WBS_GH(a5),d1
+        subq.w  #1,d1
+        move.w  d1,d3
+        bsr.s   .gh_fill
+        move.w  WBS_GH(a5),d3
+        subq.w  #3,d3
+        bmi.s   .gh_end              ; pas de côtés pour une hauteur < 3
+        move.w  d5,d1                ; gauche
+        addq.w  #1,d1
+        add.w   d1,d3
+        move.w  d4,d0
+        move.w  d4,d2
+        bsr.s   .gh_fill
+        move.w  d4,d0                ; droite
+        add.w   WBS_GW(a5),d0
+        subq.w  #1,d0
+        move.w  d0,d2
+        bsr.s   .gh_fill
+.gh_end:
+        move.l  WBS_GRP(a5),a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        movem.l (sp)+,d2-d5/a6
+        rts
+.gh_fill:                            ; RectFill(d0..d3) ; préserve d0-d5
+        movem.l d0-d3,-(sp)
+        move.l  WBS_GRP(a5),a1
+        jsr     LVO_RECTFILL(a6)
+        movem.l (sp)+,d0-d3
+        rts
+
+; wb_dragend(d7.w = fenêtre, d4/d5 = souris au relâchement, a5) : fin du glisser (cadre effacé, plus de mouvements).
+; Relâché dans la fenêtre d'origine, à au moins 3 pixels du clic : l'icône y prend sa nouvelle position (DiskObject
+; mis à jour en mémoire, non sauvé) et la fenêtre est redessinée. Préserve d7/a5.
+wb_dragend:
+        move.w  WBS_DRAGW(a5),d0
+        bmi     .de_ret
+        cmp.w   d0,d7
+        bne     .de_ret
+        tst.b   WBS_GON(a5)
+        beq.s   .de_ng
+        bsr     wb_ghost
+.de_ng:
+        moveq   #0,d0
+        bsr     wb_report
+        move.w  #-1,WBS_DRAGW(a5)
+        movem.l d2-d6/a2-a4,-(sp)
+        move.w  d4,d2
+        sub.w   WBS_DSX(a5),d2       ; d2/d3 = déplacement
+        move.w  d5,d3
+        sub.w   WBS_DSY(a5),d3
+        move.w  d2,d0
+        bpl.s   .de_ax
+        neg.w   d0
+.de_ax:
+        move.w  d3,d1
+        bpl.s   .de_ay
+        neg.w   d1
+.de_ay:
+        add.w   d1,d0
+        cmp.w   #3,d0
+        blt.s   .de_out              ; simple clic
+        bsr     wb_window
+        beq.s   .de_out
+        tst.w   d4                   ; relâché hors de la fenêtre d'origine : rien
+        bmi.s   .de_out
+        tst.w   d5
+        bmi.s   .de_out
+        cmp.w   WD_WIDTH(a3),d4
+        bge.s   .de_out
+        cmp.w   WD_HEIGHT(a3),d5
+        bge.s   .de_out
+        move.w  WBS_DRAGI(a5),d1
+        movem.w d2-d3,-(sp)
+        bsr     wb_iconrect          ; a2 = DiskObject, d0/d1 = position actuelle dans la fenêtre
+        movem.w (sp)+,d2-d3
+        beq.s   .de_out
+        add.w   d2,d0
+        add.w   d3,d1
+        tst.w   d7
+        beq.s   .de_desk
+        moveq   #0,d2                ; tiroir : DO_Current* est relatif à l'intérieur (sans les bordures)
+        move.b  WD_BORDERLEFT(a3),d2
+        sub.w   d2,d0
+        move.b  WD_BORDERTOP(a3),d2
+        sub.w   d2,d1
+.de_desk:
+        tst.w   d0
+        bpl.s   .de_x
+        moveq   #0,d0
+.de_x:
+        tst.w   d1
+        bpl.s   .de_y
+        moveq   #0,d1
+.de_y:
+        ext.l   d0
+        ext.l   d1
+        move.l  d0,DO_CURRENTX(a2)
+        move.l  d1,DO_CURRENTY(a2)
+        bsr     wb_redraw1
+.de_out:
+        movem.l (sp)+,d2-d6/a2-a4
+.de_ret:
+        rts
 
 ; wb_deselect(a5) : plus d'icône sélectionnée (rendue normale si sa fenêtre existe). Préserve d2-d7/a2-a5.
 wb_deselect:
@@ -865,7 +1108,7 @@ wb_opendrawer:
         move.l  (a1)+,NW_LEFTEDGE(a0)        ; dd_NewWindow : LeftEdge, TopEdge, Width, Height
         move.l  (a1),NW_WIDTH(a0)
 .od_geo:
-        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MENUPICK,NW_IDCMPFLAGS(a0)
+        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK,NW_IDCMPFLAGS(a0)
         move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE|WINDOWSIZING|SIZEBRIGHT,NW_FLAGS(a0)
         lea     DR_TITLE(a4),a1
         move.l  a1,NW_TITLE(a0)
@@ -1245,29 +1488,7 @@ wb_menupick:
         move.l  d7,-(sp)
         moveq   #0,d7
 .mp_rd:
-        bsr     wb_window
-        beq.s   .mp_rnx
-        move.l  WBS_GFXBASE(a5),a6   ; intérieur effacé au stylo 0
-        move.l  WD_RPORT(a3),a1
-        moveq   #0,d0
-        jsr     LVO_SETAPEN(a6)
-        moveq   #0,d0
-        move.b  WD_BORDERLEFT(a3),d0
-        moveq   #0,d1
-        move.b  WD_BORDERTOP(a3),d1
-        move.w  WD_WIDTH(a3),d2
-        moveq   #0,d3
-        move.b  WD_BORDERRIGHT(a3),d3
-        sub.w   d3,d2
-        subq.w  #1,d2
-        move.w  WD_HEIGHT(a3),d3
-        moveq   #0,d4
-        move.b  WD_BORDERBOTTOM(a3),d4
-        sub.w   d4,d3
-        subq.w  #1,d3
-        move.l  WD_RPORT(a3),a1
-        jsr     LVO_RECTFILL(a6)
-        bsr     wb_drawwin
+        bsr     wb_redraw1
 .mp_rnx:
         addq.w  #1,d7
         cmp.w   #WB_MAXDRAWERS,d7

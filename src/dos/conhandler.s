@@ -231,6 +231,8 @@ con_handler:
                 move.l  CON_STATE,a0
                 tst.b   CS_NOKBD(a0)
                 bne.s   .rd_ser              ; fenêtre fermée : le clavier appartient aux fenêtres de l'écran
+                bsr     con_kbdmine          ; une autre fenêtre est active : ses touches ne sont pas pour nous
+                beq.s   .rd_ser              ; (console.device les lui route ; l'anneau est vidé)
                 bsr     con_ring_get         ; F2b : clavier LIVE d'abord (ring SPSC, consommateur)
                 bne.s   .rd_got              ; une touche dispo -> d0.b = ASCII
 .rd_ser:
@@ -314,6 +316,35 @@ con_poll_wait:
                 move.l  CS_RPORT(a2),a0
                 jsr     LVO_GETMSG(a6)       ; retire la réponse (requête réutilisée au tick suivant)
                 movem.l (sp)+,d0-d2/a0-a4
+                rts
+
+; con_kbdmine(a0 = état) -> Z = 0 si le clavier est pour cette console : pas de fenêtre, aucune fenêtre active, ou
+; sa fenêtre est la fenêtre active d'intuition. Sinon l'anneau clavier est vidé (Z = 1). Préserve d2-d7/a2-a6.
+con_kbdmine:
+                movem.l a2/a6,-(sp)
+                move.l  CS_WIN(a0),d1
+                beq.s   .km_yes
+                move.l  ($4).w,a6
+                lea     EB_LIBLIST(a6),a0
+                lea     con_intname(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq.s   .km_yes
+                move.l  d0,a2
+                move.l  52(a2),d0            ; ib_ActiveWindow
+                beq.s   .km_yes
+                move.l  CON_STATE,a0
+                cmp.l   CS_WIN(a0),d0
+                beq.s   .km_yes
+.km_drain:
+                bsr     con_ring_get
+                bne.s   .km_drain
+                moveq   #0,d0                ; Z = 1
+                bra.s   .km_ret
+.km_yes:
+                moveq   #1,d0                ; Z = 0
+.km_ret:
+                movem.l (sp)+,a2/a6
                 rts
 
 ; con_ring_get : F2b — retire un octet du ring clavier (consommateur SPSC). -> d0.b = ASCII (propre), Z=0

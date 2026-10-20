@@ -17,6 +17,8 @@
                 include "dos.i"
                 include "dospkt.i"       ; D3c : FileHandle / DosPacket / ACTION_* / DeviceNode / PR_MSGPORT
 
+                xref    conwin_seg
+                xref    rcli_seg
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
@@ -1140,6 +1142,7 @@ dos_boot_assigns:
         movem.l d0-d7/a0-a6,-(sp)
         move.l  a6,a5                   ; a5 = DosBase
         bsr     ba_ramnode
+        bsr     ba_devnodes
         lea     ba_root(pc),a0
         move.l  a0,d1
         moveq   #SHARED_LOCK,d2
@@ -1272,6 +1275,84 @@ ba_ramname:
         dc.b    3,"RAM",0
         EVEN
 
+; ba_devnodes(a5 = DosBase) : nœuds device CON, RAW (handler console ROM conwin_seg en dn_SegList, pile 700 longs,
+; pri 5, Startup 0 / 1) puis SER, PAR, PRT (L:PORT-HANDLER chargé au premier accès, piles 800 / 800 / 1000, Startup
+; 0 / 1 / 2), tous avec le GV du CLI initial (process courant) partagé ; insérés en tête de di_DevInfo dans cet ordre
+; (spec handlers §1.2). Clobbe d0-d1/a0-a1.
+ba_devnodes:
+        movem.l d2-d3/a2-a3,-(sp)
+        lea     ba_devtab(pc),a2
+.dv_lp:
+        tst.l   (a2)
+        beq.s   .dv_ret
+        bsr.s   .dv_one
+        lea     20(a2),a2
+        bra.s   .dv_lp
+.dv_ret:
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+; une entrée : nom (BSTR), handler (BSTR | 0), segment ROM (| 0), pile, (pri << 16) | startup
+.dv_one:
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  #DN_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .do_ret
+        move.l  d0,a0
+        move.l  (a2),d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NAME(a0)
+        move.l  4(a2),d0
+        lsr.l   #2,d0
+        move.l  d0,DN_HANDLER(a0)
+        move.l  8(a2),d0
+        lsr.l   #2,d0
+        move.l  d0,DN_SEGLIST(a0)
+        move.l  12(a2),DN_STACKSIZE(a0)
+        move.w  16(a2),DN_PRIORITY+2(a0)
+        move.w  18(a2),DN_STARTUP+2(a0)
+        move.l  EB_THISTASK(a6),a1
+        move.l  PR_GLOBVEC(a1),d0
+        lsr.l   #2,d0
+        move.l  d0,DN_GLOBALVEC(a0)
+        jsr     LVO_FORBID(a6)
+        move.l  DL_ROOT(a5),a1
+        move.l  RN_INFO(a1),d0
+        lsl.l   #2,d0
+        move.l  d0,a1
+        move.l  DI_DEVINFO(a1),DN_NEXT(a0)
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DI_DEVINFO(a1)
+        jsr     LVO_PERMIT(a6)
+.do_ret:
+        move.l  (sp)+,a6
+        rts
+        cnop    0,4
+ba_devtab:
+        dc.l    ba_n_con,0,conwin_seg,700,(5<<16)|0
+        dc.l    ba_n_raw,0,conwin_seg,700,(5<<16)|1
+        dc.l    ba_n_ser,ba_porth,0,800,0
+        dc.l    ba_n_par,ba_porth,0,800,1
+        dc.l    ba_n_prt,ba_porth,0,1000,2
+        dc.l    0
+        cnop    0,4
+ba_n_con:
+        dc.b    3,"CON"
+ba_n_raw:
+        dc.b    3,"RAW"
+ba_n_ser:
+        dc.b    3,"SER"
+ba_n_par:
+        dc.b    3,"PAR"
+ba_n_prt:
+        dc.b    3,"PRT"
+ba_porth:
+        dc.b    14,"L:PORT-HANDLER",0
+        cnop    0,4
+
 ; ba_addnode(d0 = type, d1 = BPTR lock, a0 = nom C-string, a1 = port du handler) : alloue un nœud DosList (+ BSTR du
 ; nom juste après, long-aligné) et l'insère en tête de di_DevInfo sous Forbid. Clobbe d0-d2/a0-a1.
 BA_NAMEMAX      EQU 31
@@ -1359,6 +1440,9 @@ dos_initfunc:
         lsr.l   #2,d0
         move.l  d3,a0
         move.l  d0,RN_TASKARRAY(a0)
+        move.l  #rcli_seg,d0        ; rn_ConsoleSegment = CLI ROM (segment BCPL : Run / Execute sans résident « CLI »)
+        lsr.l   #2,d0
+        move.l  d0,RN_CONSOLESEG(a0)
         moveq   #DOSINFO_SIZE,d0    ; alloue DosInfo (champs pointeurs ; verrous différés)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)

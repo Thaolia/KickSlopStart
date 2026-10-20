@@ -442,7 +442,9 @@ CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) du handler enregi
 CONB_ESC     EQU LIB_SIZE+56   ; UBYTE état du filtre de séquences : 0 normal, 1 après ESC, 2 dans un CSI
 CONB_RQ      EQU LIB_SIZE+60   ; APTR file des CMD_READ en attente (chaînée par LN_SUCC), unités ouvertes
 CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase : rendu dans le RastPort des fenêtres (unités ConUnit)
-CONDEV_SIZE  EQU LIB_SIZE+68
+CONB_UNITS   EQU LIB_SIZE+68   ; APTR liste des ConUnit ouvertes (chaînées par CU_NEXT) : routage des touches
+CONB_IBASE   EQU LIB_SIZE+72   ; APTR IntuitionBase (cherchée au premier besoin : intuition s'initialise après)
+CONDEV_SIZE  EQU LIB_SIZE+76
 CON_RBSIZE   EQU 16            ; taille du read buffer (puissance de 2)
 CON_RBMASK   EQU 15
 ; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête

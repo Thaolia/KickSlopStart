@@ -36,6 +36,7 @@
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
                 xdef    it_startinput
+                xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
                 xdef    intuition_WindowLimits
                 xdef    intuition_WindowToFront
@@ -1203,7 +1204,8 @@ intuition_FreeRemember:
 
 ; it_event(d0.w = ie_Code) : appelé par le handler de pointeur (interruption VBlank) pour chaque RAWMOUSE, après la
 ; mise à jour de PTR_X/PTR_Y. Un bouton est déposé dans l'anneau avec la position du pointeur (anneau plein : perdu) ;
-; un mouvement n'est signalé que si la tâche d'entrée suit le pointeur (geste ou menu en cours). Tout le traitement
+; un mouvement n'est signalé que si la tâche d'entrée suit le pointeur (geste ou menu en cours) ou si la fenêtre
+; active demande les mouvements (REPORTMOUSE et IDCMP MOUSEMOVE). Tout le traitement
 ; (fenêtres, couches, menus) se fait dans la tâche : rien ici ne peut attendre. Préserve tout.
 it_event:
         movem.l d0-d1/a0-a1/a6,-(sp)
@@ -1215,7 +1217,15 @@ it_event:
         cmp.w   #IECODE_NOBUTTON,d0
         bne.s   .ev_btn
         tst.b   IB_TRACK(a1)
+        bne.s   .ev_mv
+        move.l  IB_ACTIVEWINDOW(a1),d1   ; fenêtre active qui demande les mouvements (REPORTMOUSE + MOUSEMOVE)
         beq.s   .ev_ret
+        move.l  d1,a0
+        btst    #1,WD_FLAGS+2(a0)    ; REPORTMOUSE
+        beq.s   .ev_ret
+        btst    #4,WD_IDCMPFLAGS+3(a0)   ; MOUSEMOVE
+        beq.s   .ev_ret
+.ev_mv:
         st      IB_MOVED(a1)
         bra.s   .ev_sig
 .ev_btn:
@@ -1364,7 +1374,7 @@ it_winat:
 ; it_dobutton(a5 = IntuitionBase, d0.w = code, d4/d5 = pointeur) : contexte tâche d'entrée. Bouton gauche enfoncé
 ; sur une fenêtre : elle devient active (y compris une fenêtre BACKDROP, pour ses menus) ; gadget de fermeture -> CLOSEWINDOW, gadgets de profondeur -> derrière /
 ; devant, barre de titre (WINDOWDRAG) ou gadget de taille -> geste avec cadre fantôme ; sinon MOUSEBUTTONS. Le
-; relâchement termine un geste en cours. Bouton droit : menus. Préserve a5.
+; relâchement termine un geste en cours, sinon il va à la fenêtre active (SELECTUP). Bouton droit : menus. Préserve a5.
 it_dobutton:
         move.w  d0,d7                ; d7 = code
         bsr     it_scrxy
@@ -1381,6 +1391,21 @@ it_dobutton:
         beq     it_menubutton
         tst.l   IB_MENUWIN(a5)
         bne     .db_ret              ; menus affichés : le bouton gauche est ignoré
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne.s   .db_down
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; relâchement : à la fenêtre active (celle du clic), où qu'il ait lieu
+        beq     .db_ret
+        move.l  d0,a3
+        cmp.l   WD_WSCREEN(a3),a4
+        bne     .db_ret
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        move.l  #MOUSEBUTTONS,d0
+        move.w  #SELECTUP,d1
+        bra     wn_sendmsg
+.db_down:
         bsr     it_winat
         beq     .db_ret
         cmp.w   #IECODE_LBUTTON,d7
@@ -1441,9 +1466,6 @@ it_dobutton:
         moveq   #SELECTDOWN,d1
         cmp.w   #IECODE_LBUTTON,d7
         beq     wn_sendmsg
-        move.w  #SELECTUP,d1
-        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
-        beq     wn_sendmsg
 .db_ret:
         rts
 
@@ -1468,7 +1490,7 @@ it_domove:
         tst.l   IB_MENUWIN(a5)
         bne     it_menumove
         move.l  IB_DRAGWIN(a5),d0
-        beq.s   .dm_ret
+        beq.s   it_reportmove
         move.l  d0,a3
         bsr     it_scrxy
         beq.s   .dm_ret
@@ -1476,6 +1498,55 @@ it_domove:
         bsr     it_dragrect
         bra     it_boxxor
 .dm_ret:
+        rts
+
+; it_reportmove(a5, d4/d5 = pointeur) : la fenêtre active qui demande les mouvements reçoit MOUSEMOVE (position
+; relative). Un MOUSEMOVE encore non répondu est mis à jour plutôt que doublé : le port ne déborde pas.
+it_reportmove:
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq.s   .rm_ret
+        move.l  d0,a3
+        btst    #1,WD_FLAGS+2(a3)    ; REPORTMOUSE
+        beq.s   .rm_ret
+        tst.l   WD_USERPORT(a3)
+        beq.s   .rm_ret
+        btst    #4,WD_IDCMPFLAGS+3(a3)   ; MOUSEMOVE
+        beq.s   .rm_ret
+        bsr     it_scrxy
+        beq.s   .rm_ret
+        cmp.l   WD_WSCREEN(a3),a4
+        bne.s   .rm_ret
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        lea     WDX_EMSG(a3),a1
+        moveq   #WDX_NEMSG-1,d6
+.rm_find:
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .rm_nx
+        cmp.l   #MOUSEMOVE,IM_CLASS(a1)
+        bne.s   .rm_nx
+        move.w  d2,IM_MOUSEX(a1)
+        move.w  d3,IM_MOUSEY(a1)
+        rts
+.rm_nx:
+        lea     IM_SIZEOF(a1),a1
+        dbra    d6,.rm_find
+        move.l  #MOUSEMOVE,d0
+        move.w  #IECODE_NOBUTTON,d1
+        bra     wn_sendmsg
+.rm_ret:
+        rts
+
+; ReportMouse(drapeau d0, fenêtre a0) : la fenêtre reçoit (ou plus) les mouvements de la souris (REPORTMOUSE).
+intuition_ReportMouse:
+        tst.w   d0
+        beq.s   .rp_off
+        or.l    #REPORTMOUSE,WD_FLAGS(a0)
+        rts
+.rp_off:
+        and.l   #~REPORTMOUSE,WD_FLAGS(a0)
         rts
 
 ; it_dragend(a5, a4 = écran, d4/d5 = pointeur au relâchement) : efface le cadre, applique le déplacement ou la
