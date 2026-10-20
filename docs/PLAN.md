@@ -807,7 +807,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Étape 9 (en cours)** : FAIT — polices (topaz 8 en TextFont, OpenFont/CloseFont/AskFont/AddFont/RemFont,
     styles logiciels, Text générique) et GELs (Bobs, collisions, animation ; VSprites matériels non affichés),
     sondes FONTS OK / GELS OK. RESTE : déplacement d'icônes, Info/Rename/Discard, nœuds CON/RAW/SER/PAR/PRT, C:FAULT,
-    slot GV +4 = globale 1 non implémentée (Run vers PIPE:), réparation plus rapide après fermeture.
+    slot GV +4 = globale 1 non implémentée (Run vers PIPE:). Fermeture de fenêtre : ~1,5 s mesurée en
+    production (DeleteLayer = recopie des sauvegardes des couches smart ; les 4-6 s vues en dev venaient des tâches
+    de démonstration) — piste : réutiliser une sauvegarde inchangée au lieu de la recopier.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).
