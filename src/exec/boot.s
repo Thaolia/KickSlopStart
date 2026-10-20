@@ -1300,6 +1300,439 @@ rgt_pts:
         dc.w    3,3,1, 6,6,0, 7,8,1, 10,10,0, 11,11,0, 12,12,1, 21,21,1, 0,0,0
 rgt_end:
 
+        ; --- polices (graphics) : OpenFont topaz 8 = police par défaut (accès compté), topaz 9 -> la plus proche (8),
+        ; nom inconnu -> 0 ; InitRastPort pose la police par défaut ; TextLength (espacement compris) ; styles
+        ; logiciels (italique refusé) ; Text en gras de « I » dans un BitMap 32x8 relu : glyphe | glyphe >> 1. ---
+FNT_RP          EQU 0                ; RastPort (100 octets)
+FNT_BM          EQU 100              ; BitMap (40)
+FNT_DATA        EQU 140              ; plan 32x8 (32)
+FNT_FRAME       EQU 172
+        movem.l d2-d3/a2-a5,-(sp)
+        lea     graphics_test_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a5                ; a5 = GfxBase
+        tst.l   d0
+        beq     fnt_done
+        exg     a5,a6                ; a6 = GfxBase, a5 = SysBase
+        lea     -FNT_FRAME(sp),sp
+        move.l  sp,a4
+        lea     fnt_ta8(pc),a0
+        jsr     -72(a6)              ; OpenFont(topaz 8)
+        move.l  d0,a2
+        cmp.l   154(a6),d0           ; gb_DefaultFont
+        bne     fnt_fail
+        tst.l   d0
+        beq     fnt_fail
+        move.w  30(a2),d3            ; tf_Accessors après l'ouverture
+        lea     fnt_ta9(pc),a0
+        jsr     -72(a6)              ; OpenFont(topaz 9) -> topaz 8
+        cmp.l   a2,d0
+        bne     fnt_fail
+        addq.w  #1,d3
+        cmp.w   30(a2),d3
+        bne     fnt_fail
+        lea     fnt_tanone(pc),a0
+        jsr     -72(a6)
+        tst.l   d0
+        bne     fnt_fail
+        move.l  a2,a1
+        jsr     -78(a6)              ; CloseFont x2
+        move.l  a2,a1
+        jsr     -78(a6)
+        subq.w  #2,d3
+        cmp.w   30(a2),d3
+        bne     fnt_fail
+        lea     FNT_RP(a4),a1
+        jsr     -198(a6)             ; InitRastPort
+        cmp.l   FNT_RP+52(a4),a2     ; rp_Font
+        bne     fnt_fail
+        cmp.l   #$00080008,FNT_RP+58(a4)   ; TxHeight, TxWidth
+        bne     fnt_fail
+        cmp.w   #6,FNT_RP+62(a4)     ; TxBaseline
+        bne     fnt_fail
+        lea     FNT_RP(a4),a1
+        lea     fnt_abc(pc),a0
+        moveq   #3,d0
+        jsr     -54(a6)              ; TextLength("Abc") = 24
+        cmp.l   #24,d0
+        bne     fnt_fail
+        move.w  #2,FNT_RP+64(a4)     ; TxSpacing = 2 -> 30
+        lea     FNT_RP(a4),a1
+        lea     fnt_abc(pc),a0
+        moveq   #3,d0
+        jsr     -54(a6)
+        cmp.l   #30,d0
+        bne     fnt_fail
+        clr.w   FNT_RP+64(a4)
+        lea     FNT_RP(a4),a1
+        jsr     -84(a6)              ; AskSoftStyle = souligné | gras
+        cmp.l   #3,d0
+        bne     fnt_fail
+        lea     FNT_RP(a4),a1
+        moveq   #6,d0                ; gras | italique
+        moveq   #-1,d1
+        jsr     -90(a6)              ; SetSoftStyle -> gras seul
+        cmp.l   #2,d0
+        bne     fnt_fail
+        cmp.b   #2,FNT_RP+56(a4)     ; rp_AlgoStyle
+        bne     fnt_fail
+        lea     FNT_BM(a4),a0
+        moveq   #1,d0
+        moveq   #32,d1
+        moveq   #8,d2
+        jsr     -390(a6)             ; InitBitMap(1 plan, 32x8)
+        lea     FNT_DATA(a4),a0
+        move.l  a0,FNT_BM+8(a4)
+        moveq   #7,d0
+fnt_clr:
+        clr.l   (a0)+
+        dbra    d0,fnt_clr
+        lea     FNT_BM(a4),a0
+        move.l  a0,FNT_RP+4(a4)      ; rp_BitMap
+        clr.b   FNT_RP+28(a4)        ; JAM1
+        move.l  #$00000006,FNT_RP+36(a4)   ; cp = (0, ligne de base 6)
+        lea     FNT_RP(a4),a1
+        lea     fnt_i(pc),a0
+        moveq   #1,d0
+        jsr     -60(a6)              ; Text("I")
+        cmp.w   #8,FNT_RP+36(a4)     ; cp_x avancé de 8
+        bne     fnt_fail
+        lea     font8x8+($49-$20)*8,a0
+        lea     FNT_DATA(a4),a1
+        moveq   #7,d2
+fnt_row:
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        move.w  d0,d1
+        lsl.w   #8,d1
+        lsl.w   #7,d0
+        or.w    d0,d1                ; gras : pixels du glyphe et leurs voisins de droite (9 pixels)
+        cmp.b   1(a1),d1
+        bne     fnt_fail
+        lsr.w   #8,d1
+        cmp.b   (a1),d1
+        bne     fnt_fail
+        tst.w   2(a1)
+        bne     fnt_fail
+        addq.l  #4,a1
+        dbra    d2,fnt_row
+        lea     msg_fonts_ok(pc),a0
+        bra.s   fnt_msg
+fnt_fail:
+        lea     msg_fonts_fail(pc),a0
+fnt_msg:
+        exg     a5,a6
+        bsr     ser_puts
+        lea     FNT_FRAME(sp),sp
+        move.l  a5,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+fnt_done:
+        movem.l (sp)+,d2-d3/a2-a5
+
+        ; --- GELs (graphics) : Bob 16x4x2 (OVERLAY + SAVEBACK, masque d'InitMasks) posé à x non aligné sur un fond
+        ; de couleur 1 et relu au pixel (zone hors masque transparente) ; collision avec un VSprite (CollMask) ->
+        ; routine 1 ; déplacement : fond d'origine restauré, nouvelle position dessinée et découpée au bord ; sortie
+        ; à droite des bornes -> routine 0 (RIGHTHIT) ; SortGList ; RemIBob restaure le fond. ---
+GLT_GI          EQU 0
+GLT_HEAD        EQU 40
+GLT_TAIL        EQU 100
+GLT_COLL        EQU 160
+GLT_VS1         EQU 224
+GLT_BOB         EQU 284
+GLT_VS2         EQU 316
+GLT_RP          EQU 376
+GLT_BM          EQU 476
+GLT_PL0         EQU 516
+GLT_PL1         EQU 580
+GLT_IMG         EQU 644
+GLT_MASK        EQU 660
+GLT_BORD        EQU 668
+GLT_SAVE        EQU 670
+GLT_MASK2       EQU 686
+GLT_OB          EQU 696              ; AnimOb (42)
+GLT_CA          EQU 740              ; AnimComp A, B (38)
+GLT_CB          EQU 780
+GLT_BA          EQU 820              ; leurs Bobs (32) et VSprites (60)
+GLT_BB          EQU 852
+GLT_VA          EQU 884
+GLT_VB          EQU 944
+GLT_KEY         EQU 1004
+GLT_SIZE        EQU 1008
+        movem.l d2-d3/a2-a5,-(sp)
+        lea     graphics_test_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a5                ; a5 = GfxBase
+        tst.l   d0
+        beq     glt_done
+        move.l  #GLT_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4
+        tst.l   d0
+        beq     glt_close
+        exg     a5,a6                ; a6 = GfxBase, a5 = SysBase
+        lea     GLT_IMG(a4),a0       ; image : plan 0 = $FF00, plan 1 = $F0F0 (couleurs 3,1,2,- par quart)
+        moveq   #3,d0
+glt_img:
+        move.w  #$FF00,(a0)
+        move.w  #$F0F0,8(a0)
+        move.w  #$FFFF,GLT_MASK2-GLT_IMG(a0)
+        addq.l  #2,a0
+        dbra    d0,glt_img
+        lea     GLT_VS1(a4),a0
+        move.w  #6,20(a0)            ; SAVEBACK | OVERLAY
+        move.l  #$00020003,22(a0)    ; Y = 2, X = 3
+        move.l  #$00040001,26(a0)    ; Height 4, Width 1 mot
+        move.w  #2,30(a0)            ; Depth
+        move.l  #$00020003,32(a0)    ; MeMask = 2, HitMask = 3 (bord + type 1)
+        lea     GLT_IMG(a4),a1
+        move.l  a1,36(a0)
+        lea     GLT_BORD(a4),a1
+        move.l  a1,40(a0)
+        lea     GLT_MASK(a4),a1
+        move.l  a1,44(a0)
+        lea     GLT_BOB(a4),a1
+        move.l  a1,52(a0)
+        move.b  #3,56(a0)            ; PlanePick
+        move.l  a0,18(a1)            ; bob->BobVSprite
+        lea     GLT_SAVE(a4),a0
+        move.l  a0,2(a1)             ; SaveBuffer
+        lea     GLT_MASK(a4),a0
+        move.l  a0,6(a1)             ; ImageShadow
+        lea     GLT_VS2(a4),a0
+        move.w  #1,20(a0)            ; VSPRITE
+        move.l  #$00040008,22(a0)    ; Y = 4, X = 8
+        move.l  #$00040001,26(a0)
+        move.l  #$00020002,32(a0)
+        lea     GLT_MASK2(a4),a1
+        move.l  a1,44(a0)
+        lea     GLT_GI(a4),a0
+        lea     GLT_COLL(a4),a1
+        move.l  a1,18(a0)            ; collHandler
+        move.l  #$0000001F,22(a0)    ; leftmost 0, rightmost 31
+        move.l  #$0000000F,26(a0)    ; topmost 0, bottommost 15
+        lea     GLT_BM(a4),a0
+        moveq   #2,d0
+        moveq   #32,d1
+        moveq   #16,d2
+        jsr     -390(a6)             ; InitBitMap
+        lea     GLT_PL0(a4),a0
+        move.l  a0,GLT_BM+8(a4)
+        lea     GLT_PL1(a4),a0
+        move.l  a0,GLT_BM+12(a4)
+        lea     GLT_RP(a4),a1
+        jsr     -198(a6)             ; InitRastPort
+        lea     GLT_BM(a4),a0
+        move.l  a0,GLT_RP+4(a4)
+        lea     GLT_GI(a4),a0
+        move.l  a0,GLT_RP+20(a4)     ; rp_GelsInfo
+        lea     GLT_RP(a4),a1
+        moveq   #1,d0
+        jsr     -234(a6)             ; SetRast(1)
+        lea     GLT_HEAD(a4),a0
+        lea     GLT_TAIL(a4),a1
+        lea     GLT_GI(a4),a2
+        jsr     -120(a6)             ; InitGels
+        lea     GLT_VS1(a4),a0
+        jsr     -126(a6)             ; InitMasks
+        cmp.l   #$FFF0FFF0,GLT_MASK(a4)
+        bne     glt_fail
+        cmp.w   #$FFF0,GLT_BORD(a4)
+        bne     glt_fail
+        moveq   #0,d0
+        lea     glt_coll0(pc),a0
+        lea     GLT_GI(a4),a1
+        jsr     -144(a6)             ; SetCollision(0)
+        moveq   #1,d0
+        lea     glt_coll1(pc),a0
+        lea     GLT_GI(a4),a1
+        jsr     -144(a6)             ; SetCollision(1)
+        lea     GLT_BOB(a4),a0
+        lea     GLT_RP(a4),a1
+        jsr     -96(a6)              ; AddBob
+        lea     GLT_RP(a4),a1
+        suba.l  a0,a0
+        jsr     -114(a6)             ; DrawGList
+        lea     glt_px1(pc),a2
+        bsr     glt_check
+        bne     glt_fail
+        lea     GLT_VS2(a4),a0
+        lea     GLT_RP(a4),a1
+        jsr     -102(a6)             ; AddVSprite
+        lea     GLT_RP(a4),a1
+        jsr     -108(a6)             ; DoCollision : Bob x VSprite -> routine 1
+        cmp.w   #1,GLT_VS1+58(a4)
+        bne     glt_fail
+        cmp.w   #1,GLT_VS2+58(a4)
+        bne     glt_fail
+        move.l  #$00080014,GLT_VS1+22(a4)   ; Y = 8, X = 20
+        lea     GLT_RP(a4),a1
+        jsr     -150(a6)             ; SortGList : VSprite (Y 4) puis Bob (Y 8)
+        lea     GLT_VS2(a4),a0
+        cmp.l   GLT_HEAD(a4),a0
+        bne     glt_fail
+        lea     GLT_RP(a4),a1
+        suba.l  a0,a0
+        jsr     -114(a6)             ; DrawGList
+        lea     glt_px2(pc),a2
+        bsr     glt_check
+        bne     glt_fail
+        lea     GLT_RP(a4),a1
+        jsr     -108(a6)             ; DoCollision : bord droit -> routine 0
+        cmp.w   #8,GLT_VS1+58(a4)    ; RIGHTHIT
+        bne     glt_fail
+        cmp.w   #1,GLT_VS2+58(a4)    ; plus de chevauchement
+        bne     glt_fail
+        lea     GLT_BOB(a4),a0
+        lea     GLT_RP(a4),a1
+        suba.l  a2,a2
+        jsr     -132(a6)             ; RemIBob
+        lea     glt_px3(pc),a2
+        bsr     glt_check
+        bne     glt_fail
+        btst    #3,GLT_BOB(a4)       ; BOBNIX
+        beq     glt_fail
+        lea     GLT_VS2(a4),a0
+        cmp.l   GLT_HEAD(a4),a0      ; head->Next = VSprite
+        bne     glt_fail
+        ; animation : composants A et B en anneau (TimeSet 2), objet en (5, 7) + 1 pixel/appel en X (fraction 6 bits)
+        lea     GLT_OB(a4),a0
+        move.l  #(5<<6)<<16|(7<<6),16(a0)  ; AnY, AnX
+        move.w  #1<<6,22(a0)         ; XVel
+        lea     GLT_CA(a4),a1
+        move.l  a1,36(a0)            ; HeadComp = A
+        lea     GLT_CB(a4),a2
+        move.w  #2,4(a1)
+        move.w  #2,4(a2)
+        move.l  a2,14(a1)            ; A.NextSeq = B
+        move.l  a1,14(a2)            ; B.NextSeq = A
+        move.l  #$00010002,26(a1)    ; A : YTrans 1, XTrans 2
+        lea     GLT_BA(a4),a0
+        move.l  a0,34(a1)
+        lea     GLT_VA(a4),a1
+        move.l  a1,18(a0)
+        lea     GLT_BB(a4),a0
+        move.l  a0,34(a2)
+        lea     GLT_VB(a4),a1
+        move.l  a1,18(a0)
+        lea     GLT_IMG(a4),a2
+        lea     GLT_VA(a4),a0
+        move.l  #$00010001,26(a0)    ; 1 ligne, 1 mot, profondeur 1
+        move.w  #1,30(a0)
+        move.l  a2,36(a0)
+        move.l  #$00010001,26(a1)
+        move.w  #1,30(a1)
+        move.l  a2,36(a1)
+        lea     GLT_OB(a4),a0
+        lea     GLT_RP(a4),a1
+        moveq   #0,d0
+        jsr     -168(a6)             ; GetGBuffers
+        tst.w   d0
+        beq     glt_fail
+        tst.l   GLT_BA+2(a4)         ; SaveBuffer
+        beq     glt_fail
+        tst.l   GLT_VB+44(a4)        ; CollMask de B
+        beq     glt_fail
+        lea     GLT_OB(a4),a0
+        jsr     -174(a6)             ; InitGMasks
+        move.l  GLT_VB+44(a4),a0
+        cmp.w   #$FF00,(a0)
+        bne     glt_fail
+        lea     GLT_OB(a4),a0
+        lea     GLT_KEY(a4),a1
+        lea     GLT_RP(a4),a2
+        jsr     -156(a6)             ; AddAnimOb
+        lea     GLT_OB(a4),a0
+        cmp.l   GLT_KEY(a4),a0
+        bne     glt_fail
+        cmp.l   #$00060009,GLT_VA+22(a4)   ; (5 + 1, 7 + 2)
+        bne     glt_fail
+        bsr     glt_anim
+        cmp.w   #10,GLT_VA+24(a4)
+        bne     glt_fail
+        cmp.w   #1,GLT_CA+2(a4)      ; Timer
+        bne     glt_fail
+        bsr     glt_anim             ; minuteur à 0 : B remplace A
+        lea     GLT_CB(a4),a0
+        cmp.l   GLT_OB+36(a4),a0
+        bne     glt_fail
+        btst    #2,GLT_BA(a4)        ; BOBSAWAY
+        beq     glt_fail
+        cmp.l   #$00050009,GLT_VB+22(a4)
+        bne     glt_fail
+        cmp.w   #2,GLT_CB+2(a4)
+        bne     glt_fail
+        cmp.l   #2,GLT_OB+8(a4)      ; Clock
+        bne     glt_fail
+        lea     GLT_RP(a4),a1
+        suba.l  a0,a0
+        jsr     -114(a6)             ; DrawGList : A retiré (BOBNIX)
+        btst    #3,GLT_BA(a4)
+        beq     glt_fail
+        lea     GLT_OB(a4),a0
+        lea     GLT_RP(a4),a1
+        moveq   #0,d0
+        jsr     -600(a6)             ; FreeGBuffers
+        tst.l   GLT_BA+2(a4)
+        bne     glt_fail
+        tst.l   GLT_VB+44(a4)
+        bne     glt_fail
+        lea     msg_gels_ok(pc),a0
+        bra.s   glt_msg
+glt_fail:
+        lea     msg_gels_fail(pc),a0
+glt_msg:
+        exg     a5,a6
+        bsr     ser_puts
+        move.l  a4,a1
+        move.l  #GLT_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+glt_close:
+        move.l  a5,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+glt_done:
+        movem.l (sp)+,d2-d3/a2-a5
+        bra     glt_end
+glt_anim:
+        lea     GLT_KEY(a4),a0
+        lea     GLT_RP(a4),a1
+        jmp     -162(a6)             ; Animate
+; glt_check(a2 = table (x, y, attendu)... terminée par -1, a4, a6 = GfxBase) : Z = 1 si chaque ReadPixel correspond.
+glt_check:
+        move.w  (a2)+,d0
+        bmi.s   glt_ck_ok
+        move.w  (a2)+,d1
+        lea     GLT_RP(a4),a1
+        jsr     -318(a6)             ; ReadPixel
+        cmp.w   (a2)+,d0
+        beq.s   glt_check
+        rts
+glt_ck_ok:
+        moveq   #0,d0
+        rts
+; routines de collision (convention C) : compte dans VUserExt (offset 58) de chaque gel ; bords : drapeaux.
+glt_coll1:
+        move.l  4(sp),a0
+        addq.w  #1,58(a0)
+        move.l  8(sp),a0
+        addq.w  #1,58(a0)
+        rts
+glt_coll0:
+        move.l  4(sp),a0
+        move.w  10(sp),58(a0)
+        rts
+glt_px1:                             ; Bob à (3, 2) : 3,3 | 1 | 2 | transparent ; fond 1 autour
+        dc.w    3,2,3, 6,2,3, 7,2,1, 10,2,1, 11,2,2, 14,2,2, 15,2,1, 18,2,1
+        dc.w    5,1,1, 5,5,3, 5,6,1, 2,3,1, -1
+glt_px2:                             ; ancien emplacement restauré ; Bob à (20, 8), découpé à x = 31
+        dc.w    3,2,1, 7,2,1, 11,2,1, 6,5,1
+        dc.w    20,8,3, 23,8,3, 24,8,1, 27,8,1, 28,8,2, 31,8,2, 20,11,3, 20,12,1, 19,8,1, -1
+glt_px3:                             ; RemIBob : fond restauré
+        dc.w    20,8,1, 24,8,1, 28,8,1, 31,11,1, -1
+glt_end:
+
         ; --- layers.library : une couche SIMPLE (L1) et une SMART (L2) sur un BitMap hors écran 64x32x2. Dessin,
         ; BehindLayer (zone simple redécouverte : effacée + dommage ; zone smart cachée : sauvegardée), dessin dans la
         ; partie cachée de L2 (lu par ReadPixel), BeginUpdate/EndUpdate de L1, UpfrontLayer (restauration), MoveLayer,
@@ -5606,6 +6039,35 @@ msg_audplay_ok:
         dc.b    "AUDIO PLAY OK (audio.device: CMD_WRITE DMA 30 cycles + queued write chained, WAITCYCLE before end, CMD_READ, channel off)",13,10,0
 msg_audplay_fail:
         dc.b    "AUDIO PLAY FAIL",13,10,0
+msg_gels_ok:
+        dc.b    "GELS OK (graphics: InitGels/InitMasks, Bob OVERLAY+SAVEBACK drawn/moved/restored at pixel level, Bob x VSprite + border collisions, SortGList, RemIBob, Get/FreeGBuffers, InitGMasks, AddAnimOb, Animate sequence switch)",13,10,0
+msg_gels_fail:
+        dc.b    "GELS FAIL",13,10,0
+msg_fonts_ok:
+        dc.b    "FONTS OK (graphics: OpenFont topaz 8/9/unknown + accessors, InitRastPort default font, TextLength + TxSpacing, soft styles, bold Text readback)",13,10,0
+msg_fonts_fail:
+        dc.b    "FONTS FAIL",13,10,0
+fnt_ta8:
+        dc.l    fnt_topaz
+        dc.w    8
+        dc.b    0,0
+fnt_ta9:
+        dc.l    fnt_topaz
+        dc.w    9
+        dc.b    0,0
+fnt_tanone:
+        dc.l    fnt_nope
+        dc.w    8
+        dc.b    0,0
+fnt_topaz:
+        dc.b    "TOPAZ.font",0
+fnt_nope:
+        dc.b    "nope.font",0
+fnt_abc:
+        dc.b    "Abc"
+fnt_i:
+        dc.b    "I"
+        even
 msg_regions_ok:
         dc.b    "REGIONS OK (graphics: Or/And/ClearRect/XorRect + Or/Xor/AndRegionRegion: areas, bounds, points vs pixel-set model)",13,10,0
 msg_regions_fail:

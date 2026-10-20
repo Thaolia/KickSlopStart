@@ -804,7 +804,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Étape 8 (interaction) FAITE** : tiroirs imbriqués, lancement d'outils et de projets (WBStartup ; Shell -> AmigaShell),
     menus Workbench (Open/Close/Redraw) et menus intuition au bouton droit, déplacement et redimensionnement des fenêtres
     (SizeWindow, WindowLimits), Execute (101), NIL:, writef tamponné.
-    **Étape 9** : OpenFont/topaz, InitGels, déplacement d'icônes, Info/Rename/Discard, nœuds CON/RAW/SER/PAR/PRT, C:FAULT,
+    **Étape 9 (en cours)** : FAIT — polices (topaz 8 en TextFont, OpenFont/CloseFont/AskFont/AddFont/RemFont,
+    styles logiciels, Text générique) et GELs (Bobs, collisions, animation ; VSprites matériels non affichés),
+    sondes FONTS OK / GELS OK. RESTE : déplacement d'icônes, Info/Rename/Discard, nœuds CON/RAW/SER/PAR/PRT, C:FAULT,
     slot GV +4 = globale 1 non implémentée (Run vers PIPE:), réparation plus rapide après fermeture.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;

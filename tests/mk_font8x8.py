@@ -106,6 +106,7 @@ G = {
 '~': [".###.##.","##.###..","........","........","........","........","........","........"],
 }
 FULL = ["########"]*8  # 0x7F -> bloc plein (sentinelle visible)
+NOTDEF = ["######..", "#....#..", "#....#..", "#....#..", "#....#..", "#....#..", "######..", "........"]  # hors LoChar..HiChar
 
 def rowbyte(s):
     b = 0
@@ -132,6 +133,20 @@ def emit():
         bytes_ = [rowbyte(r) for r in g]
         label = ch if 0x20 < code < 0x7f and ch not in (';',) else ("SPC" if code==0x20 else ("DEL" if code==0x7f else hex(code)))
         out.append("                dc.b    " + ",".join("$%02X" % b for b in bytes_) + "   ; $%02X" % code + (" '%s'" % ch if (0x21 <= code <= 0x7e and ch != ';') else ""))
+    # Même police au format « strike » d'une TextFont (graphics/text.h) : ligne r = octet r de chaque glyphe
+    # $20..$7F puis du glyphe par défaut (hors LoChar..HiChar), côte à côte ; modulo pair.
+    glyphs = [FULL if c == 0x7F else G.get(chr(c), FULL) for c in range(0x20, 0x80)] + [NOTDEF]
+    mod = (len(glyphs) + 1) & ~1
+    out.append("")
+    out.append("; topaz8_strike : tf_CharData (modulo TOPAZ8_MOD, 8 lignes) ; glyphe n à l'octet n de chaque ligne.")
+    out.append("                xdef    topaz8_strike")
+    out.append("TOPAZ8_MOD      EQU     %d" % mod)
+    out.append("                xdef    TOPAZ8_MOD")
+    out.append("topaz8_strike:")
+    for r in range(8):
+        row = [rowbyte(g[r]) for g in glyphs] + [0] * (mod - len(glyphs))
+        for i in range(0, mod, 16):
+            out.append("                dc.b    " + ",".join("$%02X" % b for b in row[i:i + 16]) + ("   ; ligne %d" % r if i == 0 else ""))
     return "\n".join(out) + "\n"
 
 sys.stdout.write(emit())

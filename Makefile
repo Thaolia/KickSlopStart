@@ -25,7 +25,7 @@ EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 # bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
-GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/draw.o $(BUILD)/regions.o $(BUILD)/layers.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/draw.o $(BUILD)/regions.o $(BUILD)/layers.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o $(BUILD)/text.o $(BUILD)/gels.o
 # loadscreen.o : écran de chargement — démo gatée. Lié UNIQUEMENT quand VASMDEF active LOADSCREEN_DEMO,
 # pour que la ROM par défaut reste sans code mort (byte-identique). `make VASMDEF=-DLOADSCREEN_DEMO=1 kick`.
 ifneq (,$(findstring LOADSCREEN_DEMO,$(VASMDEF)))

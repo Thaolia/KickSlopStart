@@ -19,6 +19,31 @@
                 xref    gfx_TextLength
                 xref    gfx_SetFont
                 xref    gfx_InitRastPort
+                xref    gfx_fontinit
+                xref    gfx_OpenFont
+                xref    gfx_CloseFont
+                xref    gfx_AskSoftStyle
+                xref    gfx_SetSoftStyle
+                xref    gfx_AskFont
+                xref    gfx_AddFont
+                xref    gfx_RemFont
+                xref    gfx_AllocRaster
+                xref    gfx_FreeRaster
+                xref    gfx_AddBob
+                xref    gfx_AddVSprite
+                xref    gfx_DoCollision
+                xref    gfx_DrawGList
+                xref    gfx_InitGels
+                xref    gfx_InitMasks
+                xref    gfx_RemIBob
+                xref    gfx_RemVSprite
+                xref    gfx_SetCollision
+                xref    gfx_SortGList
+                xref    gfx_AddAnimOb
+                xref    gfx_Animate
+                xref    gfx_GetGBuffers
+                xref    gfx_InitGMasks
+                xref    gfx_FreeGBuffers
                 xref    gfx_SetRast
                 xref    gfx_Move
                 xref    gfx_Draw
@@ -60,7 +85,7 @@ graphics_name:
         dc.b    "graphics.library",0
         EVEN
 graphics_inittab:
-        dc.l    GFXBASE_SIZE             ; dataSize : base Library + champs GfxBase minimaux (gb_ActiView/LOFlist)
+        dc.l    GFXBASE_SIZE             ; dataSize : base Library + champs GfxBase (jusqu'à gb_DefaultFont)
         dc.l    graphics_vectors         ; funcTable
         dc.l    graphics_datatab         ; dataTable (InitStruct)
         dc.l    graphics_initfunc        ; initFunc
@@ -76,7 +101,25 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_TextLength           ; 9 : LVO -54
         dc.l    gfx_Text                 ; 10 : LVO -60
         dc.l    gfx_SetFont              ; 11 : LVO -66
-        dcb.l   21,graphics_null         ; 12..32 : LVO -72..-192 (non implémentés)
+        dc.l    gfx_OpenFont             ; 12 : LVO -72
+        dc.l    gfx_CloseFont            ; 13 : LVO -78
+        dc.l    gfx_AskSoftStyle         ; 14 : LVO -84
+        dc.l    gfx_SetSoftStyle         ; 15 : LVO -90
+        dc.l    gfx_AddBob               ; 16 : LVO -96
+        dc.l    gfx_AddVSprite           ; 17 : LVO -102
+        dc.l    gfx_DoCollision          ; 18 : LVO -108
+        dc.l    gfx_DrawGList            ; 19 : LVO -114
+        dc.l    gfx_InitGels             ; 20 : LVO -120
+        dc.l    gfx_InitMasks            ; 21 : LVO -126
+        dc.l    gfx_RemIBob              ; 22 : LVO -132
+        dc.l    gfx_RemVSprite           ; 23 : LVO -138
+        dc.l    gfx_SetCollision         ; 24 : LVO -144
+        dc.l    gfx_SortGList            ; 25 : LVO -150
+        dc.l    gfx_AddAnimOb            ; 26 : LVO -156
+        dc.l    gfx_Animate              ; 27 : LVO -162
+        dc.l    gfx_GetGBuffers          ; 28 : LVO -168
+        dc.l    gfx_InitGMasks           ; 29 : LVO -174
+        dcb.l   3,graphics_null          ; 30..32 : LVO -180..-192 (ellipses, LoadRGB4 : non implémentés)
         dc.l    gfx_InitRastPort         ; 33 : LVO -198
         dc.l    graphics_null            ; 34 : LVO -204 (non implémenté)
         dc.l    gfx_MrgCop               ; 35 : LVO -210
@@ -108,7 +151,12 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dcb.l   2,graphics_null          ; 74..75 : LVO -444..-450 (non implémentés)
         dc.l    gfx_OwnBlitter           ; 76 : LVO -456
         dc.l    gfx_DisownBlitter        ; 77 : LVO -462
-        dcb.l   6,graphics_null          ; 78..83 : LVO -468..-498 (non implémentés)
+        dc.l    graphics_null            ; 78 : LVO -468 InitTmpRas (non implémenté)
+        dc.l    gfx_AskFont              ; 79 : LVO -474
+        dc.l    gfx_AddFont              ; 80 : LVO -480
+        dc.l    gfx_RemFont              ; 81 : LVO -486
+        dc.l    gfx_AllocRaster          ; 82 : LVO -492
+        dc.l    gfx_FreeRaster           ; 83 : LVO -498
         dc.l    gfx_AndRectRegion        ; 84 : LVO -504
         dc.l    gfx_OrRectRegion         ; 85 : LVO -510
         dc.l    gfx_NewRegion            ; 86 : LVO -516
@@ -118,7 +166,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
         dcb.l   2,graphics_null          ; 91..92 : LVO -546..-552 (non implémentés)
         dc.l    gfx_XorRectRegion        ; 93 : LVO -558
-        dcb.l   7,graphics_null          ; 94..100 : LVO -564..-600 (non implémentés)
+        dcb.l   6,graphics_null          ; 94..99 : LVO -564..-594 (non implémentés)
+        dc.l    gfx_FreeGBuffers         ; 100 : LVO -600
         dc.l    gfx_BltBitMapRastPort    ; 101 : LVO -606
         dc.l    gfx_OrRegionRegion       ; 102 : LVO -612
         dc.l    gfx_XorRegionRegion      ; 103 : LVO -618
@@ -157,6 +206,7 @@ graphics_initfunc:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,gb_SprNull(a2)
+        jsr     gfx_fontinit
         move.l  a2,d0
         move.l  (sp)+,a2
         rts

@@ -101,6 +101,8 @@ rp_Font      EQU 52
 rp_TxHeight  EQU 58
 rp_TxWidth   EQU 60
 rp_TxBaseline EQU 62
+rp_AlgoStyle EQU 56           ; UBYTE : styles algorithmiques (SetSoftStyle)
+rp_TxSpacing EQU 64           ; WORD : espacement ajouté après chaque caractère
 rp_SIZEOF    EQU 100
 lr_rp        EQU 12           ; Layer : RastPort de la couche
 lr_MinX      EQU 16           ; Layer : bounds (struct Rectangle) — seul champ exploité (décalage + découpage)
@@ -112,6 +114,33 @@ JAM1         EQU 0            ; rp_DrawMode
 JAM2         EQU 1
 COMPLEMENT   EQU 2
 INVERSVID    EQU 4
+; TextFont / TextAttr (graphics/text.h) : en-tête Message (mn_Node + ReplyPort + Length) puis la police
+tf_YSize     EQU 20
+tf_Style     EQU 22
+tf_Flags     EQU 23
+tf_XSize     EQU 24
+tf_Baseline  EQU 26
+tf_BoldSmear EQU 28
+tf_Accessors EQU 30
+tf_LoChar    EQU 32
+tf_HiChar    EQU 33
+tf_CharData  EQU 34
+tf_Modulo    EQU 38
+tf_CharLoc   EQU 40           ; par caractère : décalage en bits (WORD) puis largeur (WORD)
+tf_CharSpace EQU 44           ; WORD par caractère, 0 = tf_XSize pour tous
+tf_CharKern  EQU 48           ; WORD par caractère, 0 = aucun
+tf_SIZEOF    EQU 52
+ta_Name      EQU 0
+ta_YSize     EQU 4
+ta_Style     EQU 6
+ta_Flags     EQU 7
+NT_FONT      EQU 12
+FSF_UNDERLINED EQU $01
+FSF_BOLD     EQU $02
+FSF_ITALIC   EQU $04
+FPF_ROMFONT  EQU $01
+FPF_DESIGNED EQU $40
+FPB_REMOVED  EQU 7
 GFX_FONTW    EQU 8            ; police 8x8 de la ROM (font8x8) : largeur, hauteur, ligne de base
 GFX_FONTH    EQU 8
 GFX_FONTBASE EQU 6
@@ -151,7 +180,9 @@ gb_SprNull   EQU LIB_SIZE+8   ; APTR : sprite vide (chip, POS/CTL = 0) pour les 
 gb_SprCop    EQU LIB_SIZE+12  ; APTR : mot de valeur de SPR0PTH dans la liste copper chargée (0 = aucune)
 gb_SprData   EQU LIB_SIZE+16  ; 8 x APTR : données (POS/CTL + image) de chaque canal, 0 = sprite vide
 gb_SprUsed   EQU LIB_SIZE+48  ; WORD : canaux réservés par GetSprite (bit n = canal n)
-GFXBASE_SIZE EQU LIB_SIZE+50
+gb_TextFonts EQU 140          ; struct List des polices (offset public de GfxBase)
+gb_DefaultFont EQU 154        ; APTR : police par défaut des RastPort (topaz 8)
+GFXBASE_SIZE EQU 158
 
 ; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---
 ss_posctldata EQU 0           ; APTR : POS, CTL, image (2 mots par ligne), 0, 0

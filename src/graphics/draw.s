@@ -4,8 +4,8 @@
 ; relatives à la couche) et le dessin passe par ses ClipRects (layers.library) : ClipRect visible -> BitMap du
 ; RastPort ; ClipRect cachée avec sauvegarde (cr_BitMap, origine dans cr_p1) -> la sauvegarde ; cachée sans
 ; sauvegarde -> rien. Le verrou de la couche est tenu pendant le dessin (dr_ctx ... dr_end). Sans couche : une seule
-; pseudo-ClipRect = le BitMap entier. Police unique : font8x8 de la ROM
-; (8x8, ligne de base 6), dessinée en JAM1/JAM2/COMPLEMENT/INVERSVID. ScrollRaster : défilement vertical seul.
+; pseudo-ClipRect = le BitMap entier. Texte : police du RastPort (TextFont quelconque, topaz 8 par défaut),
+; dessinée en JAM1/JAM2/COMPLEMENT/INVERSVID, gras et souligné algorithmiques. ScrollRaster : défilement vertical seul.
 ; Accès mémoire OCTET par octet (une ligne de BitMap peut commencer à une adresse impaire).
 ; Au-delà de la convention (d2-d7/a2-a6), toutes ces fonctions laissent a1 (le RastPort) intact : intuition et
 ; console.device enchaînent leurs appels sur le même RastPort sans le recharger.
@@ -33,7 +33,8 @@
                 xdef    gfx_ReadPixel
                 xdef    gfx_LockLayerRom
                 xdef    gfx_UnlockLayerRom
-                xref    font8x8
+                xdef    gfx_putrow
+                xref    topaz8_font
                 xref    gfx_OrRectRegion
 
 ; --- contexte de dessin (sur la pile, pointé par a5) ---
@@ -341,19 +342,41 @@ gfx_Move:                            ; Move(rp a1, x d0, y d1)
         move.w  d0,rp_cp_x(a1)
         move.w  d1,rp_cp_y(a1)
         rts
-gfx_TextLength:                      ; TextLength(rp a1, chaîne a0, nombre d0) -> largeur en pixels
+gfx_TextLength:                      ; TextLength(rp a1, chaîne a0, nombre d0) -> largeur en pixels (comme Text)
+        movem.l d2-d3/a2-a3,-(sp)
+        bsr     tx_font
+        move.l  a0,a3
+        move.w  d0,d3
+        moveq   #0,d2
+.tl_lp:
+        subq.w  #1,d3
+        bmi.s   .tl_r
+        moveq   #0,d0
+        move.b  (a3)+,d0
+        bsr     tx_index
+        bsr     tx_metrics
+        add.w   d1,d0
+        add.w   rp_TxSpacing(a1),d0
+        add.w   d0,d2
+        bra.s   .tl_lp
+.tl_r:
+        move.w  d2,d0
         ext.l   d0
-        lsl.l   #3,d0
+        movem.l (sp)+,d2-d3/a2-a3
         rts
-gfx_SetFont:                         ; SetFont(rp a1, police a0) : police unique 8x8 (métriques fixes)
+gfx_SetFont:                         ; SetFont(rp a1, police a0) : police et métriques du RastPort (0 : ignoré)
+        move.l  a0,d0
+        beq.s   .sf_r
         move.l  a0,rp_Font(a1)
-        move.w  #GFX_FONTH,rp_TxHeight(a1)
-        move.w  #GFX_FONTW,rp_TxWidth(a1)
-        move.w  #GFX_FONTBASE,rp_TxBaseline(a1)
+        move.w  tf_YSize(a0),rp_TxHeight(a1)
+        move.w  tf_XSize(a0),rp_TxWidth(a1)
+        move.w  tf_Baseline(a0),rp_TxBaseline(a1)
+.sf_r:
         moveq   #0,d0
         rts
 
-; InitRastPort(rp a1) : RastPort à zéro, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, police 8x8.
+; InitRastPort(rp a1, a6 = GfxBase) : RastPort à zéro, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, police
+; par défaut (gb_DefaultFont).
 gfx_InitRastPort:
         move.l  a1,a0
         moveq   #rp_SIZEOF/2-1,d0
@@ -365,10 +388,11 @@ gfx_InitRastPort:
         st      rp_AOlPen(a1)
         move.b  #JAM2,rp_DrawMode(a1)
         move.w  #-1,rp_LinePtrn(a1)
-        move.w  #GFX_FONTH,rp_TxHeight(a1)
-        move.w  #GFX_FONTW,rp_TxWidth(a1)
-        move.w  #GFX_FONTBASE,rp_TxBaseline(a1)
-        rts
+        move.l  gb_DefaultFont(a6),a0
+        cmpa.w  #0,a0
+        bne.s   gfx_SetFont
+        lea     topaz8_font,a0
+        bra.s   gfx_SetFont
 
 ; InitBitMap(bm a0, profondeur d0, largeur d1, hauteur d2) : BytesPerRow = largeur arrondie au mot ; plans non touchés.
 gfx_InitBitMap:
@@ -533,8 +557,21 @@ gfx_Draw:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; dr_cellcr(d4, d5 = coin d'une cellule de police, absolu) : cherche une ClipRect utilisable qui contient toute la
-; cellule et en fait la ClipRect courante. Z = 0 si trouvée. Préserve tout sauf d0.
+; --- variables de Text, après le contexte de dessin (a5) ---
+TX_FONT         EQU DC_SIZE          ; police
+TX_W            EQU DC_SIZE+4        ; largeur du glyphe (bits, 32 au plus)
+TX_RW           EQU DC_SIZE+6        ; largeur rendue (glyphe + étalement du gras)
+TX_H            EQU DC_SIZE+8        ; hauteur (tf_YSize)
+TX_MOD          EQU DC_SIZE+10       ; tf_Modulo
+TX_SH           EQU DC_SIZE+12       ; décalage du glyphe dans son premier octet
+TX_BASE         EQU DC_SIZE+14       ; tf_Baseline
+TX_SMEAR        EQU DC_SIZE+16       ; tf_BoldSmear
+TX_ADV          EQU DC_SIZE+18       ; avance du caractère courant
+TX_STYLE        EQU DC_SIZE+20       ; byte : styles algorithmiques rendus (gras, souligné)
+TX_FRAME        EQU DC_SIZE+22
+
+; dr_cellcr(d4, d5 = coin d'une cellule de TX_W x TX_H, absolu) : cherche une ClipRect utilisable qui contient
+; toute la cellule et en fait la ClipRect courante. Z = 0 si trouvée. Préserve tout sauf d0.
 dr_cellcr:
         move.l  a0,-(sp)
         move.l  DC_FIRST(a5),a0
@@ -548,11 +585,13 @@ dr_cellcr:
         cmp.w   DC_CMINY(a5),d5
         blt.s   .cc_n
         move.w  d4,d0
-        addq.w  #GFX_FONTW-1,d0
+        add.w   TX_W(a5),d0
+        subq.w  #1,d0
         cmp.w   DC_CMAXX(a5),d0
         bgt.s   .cc_n
         move.w  d5,d0
-        addq.w  #GFX_FONTH-1,d0
+        add.w   TX_H(a5),d0
+        subq.w  #1,d0
         cmp.w   DC_CMAXY(a5),d0
         bgt.s   .cc_n
         moveq   #1,d0
@@ -566,38 +605,123 @@ dr_cellcr:
         move.l  (sp)+,a0
         rts
 
-; Text(rp a1, chaîne a0, nombre d0) : caractères de la police 8x8 à (cp_x, cp_y - ligne de base), cp_x avance de 8
-; par caractère. JAM1 : seuls les pixels du glyphe (stylo A) ; JAM2 : fond au stylo B ; COMPLEMENT : glyphe inversé ;
-; INVERSVID : glyphe et fond permutés. Caractère hors 0x20..0x7F -> '?'. Rendu par plages de pixels identiques.
+; tx_font(rp a1) -> a2 = police du RastPort, topaz 8 de la ROM s'il n'en a pas. Préserve le reste.
+tx_font:
+        move.l  rp_Font(a1),a2
+        cmpa.w  #0,a2
+        bne.s   .tf_r
+        lea     topaz8_font,a2
+.tf_r:
+        rts
+; tx_index(a2 = police, d0.w = caractère) -> d0.w = indice dans tf_CharLoc ; hors LoChar..HiChar : le glyphe par
+; défaut qui suit HiChar. Clobbe d1.
+tx_index:
+        moveq   #0,d1
+        move.b  tf_HiChar(a2),d1
+        cmp.w   d1,d0
+        bhi.s   .ti_def
+        move.b  tf_LoChar(a2),d1
+        sub.w   d1,d0
+        bcc.s   .ti_r
+.ti_def:
+        moveq   #0,d0
+        move.b  tf_HiChar(a2),d0
+        move.b  tf_LoChar(a2),d1
+        sub.w   d1,d0
+        addq.w  #1,d0
+.ti_r:
+        rts
+; tx_metrics(a2 = police, d0.w = indice) -> d0.w = espacement (tf_CharSpace ou tf_XSize), d1.w = crénage
+; (tf_CharKern ou 0). Clobbe a0.
+tx_metrics:
+        add.w   d0,d0
+        move.l  tf_CharKern(a2),d1
+        beq.s   .tm_sp
+        move.l  d1,a0
+        move.w  0(a0,d0.w),d1
+.tm_sp:
+        tst.l   tf_CharSpace(a2)
+        beq.s   .tm_fix
+        move.l  tf_CharSpace(a2),a0
+        move.w  0(a0,d0.w),d0
+        rts
+.tm_fix:
+        move.w  tf_XSize(a2),d0
+        rts
+
+; Text(rp a1, chaîne a0, nombre d0) : caractères de la police du RastPort (topaz 8 par défaut), coin haut du glyphe
+; à cp_y - tf_Baseline, à cp_x + crénage ; cp_x avance du crénage + espacement + rp_TxSpacing. JAM1 : pixels du
+; glyphe (stylo A) ; JAM2 : fond au stylo B ; COMPLEMENT : glyphe inversé ; INVERSVID : glyphe et fond permutés.
+; Styles algorithmiques (rp_AlgoStyle) : gras (glyphe étalé de tf_BoldSmear) et souligné (ligne sous la base).
+; Voie rapide : glyphe de 8 pixels aligné sur l'octet, JAM2, sans style ; sinon rendu par plages de pixels.
 gfx_Text:
         movem.l d2-d7/a2-a5,-(sp)
-        lea     -DC_SIZE(sp),sp
+        lea     -TX_FRAME(sp),sp
         move.l  sp,a5
         move.l  a0,a4                ; a4 = chaîne
         move.w  d0,d7                ; d7 = nombre restant
         bsr     dr_ctx
+        bsr     tx_font
+        move.l  a2,TX_FONT(a5)
+        move.w  tf_YSize(a2),TX_H(a5)
+        move.w  tf_Modulo(a2),TX_MOD(a5)
+        move.w  tf_Baseline(a2),TX_BASE(a5)
+        move.w  tf_BoldSmear(a2),TX_SMEAR(a5)
+        move.b  rp_AlgoStyle(a1),d0
+        and.b   #FSF_UNDERLINED|FSF_BOLD,d0
+        move.b  d0,TX_STYLE(a5)
 .tx_char:
         subq.w  #1,d7
         bmi     .tx_ret
+        move.l  TX_FONT(a5),a2
         moveq   #0,d0
         move.b  (a4)+,d0
-        cmp.b   #$20,d0
-        blo.s   .tx_bad
-        cmp.b   #$7F,d0
-        bls.s   .tx_ok
-.tx_bad:
-        moveq   #'?',d0
-.tx_ok:
-        sub.w   #$20,d0
-        lsl.w   #3,d0
-        move.l  #font8x8,a3
-        add.w   d0,a3                ; a3 = glyphe (8 octets)
+        bsr     tx_index
+        move.w  d0,d3                ; d3 = indice
+        bsr     tx_metrics
+        add.w   d1,d0
+        add.w   rp_TxSpacing(a1),d0
+        move.w  d0,TX_ADV(a5)
         move.w  rp_cp_x(a1),d4
+        add.w   d1,d4
         add.w   DC_OX(a5),d4         ; d4 = x absolu
         move.w  rp_cp_y(a1),d5
-        sub.w   #GFX_FONTBASE,d5
+        sub.w   TX_BASE(a5),d5
         add.w   DC_OY(a5),d5         ; d5 = y absolu de la première ligne
-        move.b  rp_DrawMode(a1),d0   ; voie rapide : JAM2 (± INVERSVID), x multiple de 8, cellule non découpée
+        move.l  tf_CharLoc(a2),a0
+        lsl.w   #2,d3
+        move.w  0(a0,d3.w),d1        ; décalage en bits du glyphe
+        move.w  2(a0,d3.w),d0        ; largeur
+        cmp.w   #32,d0
+        bls.s   .tx_wok
+        moveq   #32,d0
+.tx_wok:
+        move.w  d0,TX_W(a5)
+        move.w  d0,TX_RW(a5)
+        btst    #1,TX_STYLE(a5)      ; FSF_BOLD : le glyphe s'élargit de l'étalement
+        beq.s   .tx_nb
+        add.w   TX_SMEAR(a5),d0
+        cmp.w   #32,d0
+        bls.s   .tx_rw
+        moveq   #32,d0
+.tx_rw:
+        move.w  d0,TX_RW(a5)
+.tx_nb:
+        move.l  tf_CharData(a2),a3
+        move.w  d1,d0
+        and.w   #7,d0
+        move.w  d0,TX_SH(a5)
+        lsr.w   #3,d1
+        add.w   d1,a3                ; a3 = premier octet du glyphe (ligne 0)
+        tst.w   TX_RW(a5)
+        beq.s   .tx_adv
+        tst.b   TX_STYLE(a5)
+        bne.s   .tx_slow
+        tst.w   TX_SH(a5)
+        bne.s   .tx_slow
+        cmp.w   #8,TX_W(a5)
+        bne.s   .tx_slow
+        move.b  rp_DrawMode(a1),d0
         and.b   #~INVERSVID,d0
         cmp.b   #JAM2,d0
         bne.s   .tx_slow
@@ -609,26 +733,73 @@ gfx_Text:
         bsr     .tx_fast
         bra.s   .tx_adv
 .tx_slow:
-        moveq   #GFX_FONTH-1,d6
+        moveq   #0,d6                ; d6 = ligne du glyphe
 .tx_row:
-        move.b  (a3)+,d2             ; d2.b = ligne du glyphe (bit 7 = pixel gauche)
+        cmp.w   TX_H(a5),d6
+        bhs.s   .tx_adv
+        bsr     .tx_bits             ; d2.l = ligne, pixel gauche en bit 31
+        btst    #1,TX_STYLE(a5)
+        beq.s   .tx_nbold
+        move.l  d2,d0
+        move.w  TX_SMEAR(a5),d1
+        lsr.l   d1,d0
+        or.l    d0,d2
+.tx_nbold:
+        btst    #0,TX_STYLE(a5)      ; FSF_UNDERLINED : ligne pleine juste sous la base
+        beq.s   .tx_nul
+        move.w  TX_BASE(a5),d0
+        addq.w  #1,d0
+        cmp.w   d6,d0
+        bne.s   .tx_nul
+        moveq   #-1,d2
+.tx_nul:
         btst    #2,rp_DrawMode(a1)   ; INVERSVID
         beq.s   .tx_nv
-        not.b   d2
+        not.l   d2
 .tx_nv:
         bsr     .tx_runs
         addq.w  #1,d5
-        dbra    d6,.tx_row
+        addq.w  #1,d6
+        bra.s   .tx_row
 .tx_adv:
-        addq.w  #GFX_FONTW,rp_cp_x(a1)
+        move.w  TX_ADV(a5),d0
+        add.w   d0,rp_cp_x(a1)
         bra     .tx_char
 .tx_ret:
         bsr     dr_end
-        lea     DC_SIZE(sp),sp
+        lea     TX_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
         rts
-; .tx_fast : glyphe a3 à (d4, d5) aligné sur un octet, dans la ClipRect courante, mode JAM2 : chaque plan autorisé par
-; rp_Mask reçoit directement ses 8 octets (bit à 1 -> bit du stylo A, bit à 0 -> bit du stylo B). Préserve d4-d7.
+; .tx_bits(d6 = ligne, a3 = glyphe) -> d2.l = TX_W bits de la ligne, cadrés à gauche (bit 31 = pixel gauche), le
+; reste à 0. Lecture par octets (le strike peut commencer à une adresse impaire). Clobbe d0/d1/a0.
+.tx_bits:
+        move.w  d6,d0
+        mulu    TX_MOD(a5),d0
+        lea     0(a3,d0.l),a0
+        moveq   #3,d1
+.tb_lp:
+        lsl.l   #8,d2
+        move.b  (a0)+,d2
+        dbra    d1,.tb_lp
+        move.w  TX_SH(a5),d0
+        lsl.l   d0,d2
+        moveq   #0,d1
+        move.b  (a0),d1
+        lsl.w   d0,d1
+        lsr.w   #8,d1
+        or.b    d1,d2
+        move.w  TX_W(a5),d0
+        cmp.w   #32,d0
+        bhs.s   .tb_r
+        moveq   #-1,d1
+        lsr.l   d0,d1
+        not.l   d1
+        and.l   d1,d2
+.tb_r:
+        rts
+; .tx_fast : glyphe a3 (8 pixels, aligné) à (d4, d5) aligné sur un octet, dans la ClipRect courante, mode JAM2 :
+; chaque plan autorisé par rp_Mask reçoit directement ses octets (bit à 1 -> bit du stylo A, bit à 0 -> bit du
+; stylo B). Préserve d4-d7.
 .tx_fast:
         movem.l d4-d7,-(sp)
         move.l  DC_CBM(a5),a2
@@ -656,7 +827,9 @@ gfx_Text:
         add.l   d0,a0
         moveq   #0,d4                ; d4 = ligne du glyphe
 .tf_row:
-        move.b  0(a3,d4.w),d5
+        move.w  d4,d5
+        mulu    TX_MOD(a5),d5
+        move.b  0(a3,d5.l),d5
         btst    #2,rp_DrawMode(a1)   ; INVERSVID
         beq.s   .tf_ni
         not.b   d5
@@ -678,7 +851,7 @@ gfx_Text:
         move.b  d5,(a0)
         add.l   d6,a0
         addq.w  #1,d4
-        cmp.w   #GFX_FONTH,d4
+        cmp.w   TX_H(a5),d4
         blo.s   .tf_row
 .tf_next:
         lsr.b   #1,d1                ; bits des stylos et du masque pour le plan suivant
@@ -687,24 +860,24 @@ gfx_Text:
         dbra    d3,.tf_plane
         movem.l (sp)+,d4-d7
         rts
-; .tx_runs : ligne d2.b à (d4, d5) : découpe en plages de bits égaux ; bit 1 -> stylo A (ou inversion en
-; COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7.
+; .tx_runs : ligne d2.l (bit 31 = pixel gauche) de TX_RW pixels à (d4, d5) : découpe en plages de bits égaux ;
+; bit 1 -> stylo A (ou inversion en COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7.
 .tx_runs:
         movem.l d4-d7,-(sp)
-        moveq   #0,d6                ; d6 = index du pixel courant (0..7)
+        moveq   #0,d6                ; d6 = index du pixel courant
 .tr_run:
-        cmp.w   #8,d6
+        cmp.w   TX_RW(a5),d6
         bge.s   .tr_ret
         move.w  d6,d7                ; d7 = début de la plage
-        moveq   #7,d0
+        moveq   #31,d0
         sub.w   d6,d0
         btst    d0,d2
         sne     d3                   ; d3.b = valeur de la plage ($FF / 0)
 .tr_ext:
         addq.w  #1,d6
-        cmp.w   #8,d6
+        cmp.w   TX_RW(a5),d6
         bge.s   .tr_emit
-        moveq   #7,d0
+        moveq   #31,d0
         sub.w   d6,d0
         btst    d0,d2
         sne     d1
@@ -1589,6 +1762,55 @@ gfx_ReadPixel:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d4/a5
+        rts
+
+; gfx_putrow(rp a1, couleurs a0, x d0, y d1, nombre d2) : pose une ligne de pixels (un octet de couleur par pixel,
+; 255 = transparent) à (x, y) relatifs au RastPort, par plages de même couleur, à travers ses ClipRects, en JAM2
+; quel que soit rp_DrawMode (rp_Mask respecté). Sert au dessin des GELs. Préserve d2-d7/a1-a6.
+gfx_putrow:
+        movem.l d2-d7/a2-a5,-(sp)
+        lea     -DC_SIZE(sp),sp
+        move.l  sp,a5
+        move.l  a0,a2                ; a2 = couleurs
+        movem.w d0-d1,-(sp)
+        bsr     dr_ctx
+        movem.w (sp)+,d4-d5
+        add.w   DC_OX(a5),d4         ; d4 = x absolu du premier pixel
+        add.w   DC_OY(a5),d5         ; d5 = y absolu
+        move.b  rp_DrawMode(a1),d6
+        move.b  #JAM2,rp_DrawMode(a1)
+        move.w  d2,d7                ; d7 = nombre
+        moveq   #0,d0                ; d0 = index courant
+.pr_lp:
+        cmp.w   d7,d0
+        bge.s   .pr_end
+        move.b  0(a2,d0.w),d3
+        cmp.b   #$FF,d3
+        bne.s   .pr_run
+        addq.w  #1,d0
+        bra.s   .pr_lp
+.pr_run:
+        move.w  d0,d2
+.pr_ext:
+        addq.w  #1,d2
+        cmp.w   d7,d2
+        bge.s   .pr_emit
+        cmp.b   0(a2,d2.w),d3
+        beq.s   .pr_ext
+.pr_emit:                            ; plage [d0 .. d2-1]
+        move.w  d2,-(sp)
+        subq.w  #1,d2
+        add.w   d4,d0
+        add.w   d4,d2
+        move.w  d5,d1
+        bsr     dr_span
+        move.w  (sp)+,d0
+        bra.s   .pr_lp
+.pr_end:
+        move.b  d6,rp_DrawMode(a1)
+        bsr     dr_end
+        lea     DC_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a2-a5
         rts
 
 ; LockLayerRom(layer a5) / UnlockLayerRom(layer a5) : sémaphore de la couche. Préservent tous les registres, comme
