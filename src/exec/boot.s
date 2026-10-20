@@ -1303,7 +1303,8 @@ rgt_end:
         ; --- layers.library : une couche SIMPLE (L1) et une SMART (L2) sur un BitMap hors écran 64x32x2. Dessin,
         ; BehindLayer (zone simple redécouverte : effacée + dommage ; zone smart cachée : sauvegardée), dessin dans la
         ; partie cachée de L2 (lu par ReadPixel), BeginUpdate/EndUpdate de L1, UpfrontLayer (restauration), MoveLayer,
-        ; DeleteLayer (fond et couche de dessous), SizeLayer, WhichLayer. Attendus : modèle Python au pixel. ---
+        ; SizeLayer de L2 (agrandissement smart : dommage), DeleteLayer (fond et couche de dessous), SizeLayer de L1,
+        ; WhichLayer. Attendus : modèle Python au pixel. ---
         movem.l d2-d7/a2-a5,-(sp)
         lea     -16(sp),sp
         move.l  sp,a5                ; 0 BitMap, 4 L1, 8 L2, 12 Layer_Info
@@ -1429,6 +1430,16 @@ rgt_end:
         LYT_PIX 17,9,0
         LYT_PIX 20,10,0
         LYT_PIX 50,26,2
+        move.l  8(a5),a1             ; SizeLayer(L2 smart, +4, +2) : contenu gardé, partie agrandie à 0 et en dommage
+        moveq   #4,d0
+        moveq   #2,d1
+        moveq   #-66,d7
+        bsr     lyt_lcall
+        LYT_PIX 50,26,2
+        LYT_PIX 57,28,0
+        move.l  8(a5),a0
+        btst    #7,31(a0)
+        beq     lyt_fail
         move.l  4(a5),a0
         btst    #7,31(a0)
         beq     lyt_fail
@@ -2485,6 +2496,7 @@ d2_done:
         bsr     .gp_bio
         move.w  #$00FE,GP_PREV_JOY      ; mouvement+wrap : prev (X=$FE,Y=$00), poll JOY=$0001 (X=$01,Y=$00) -> dx=+3 dy=0
         clr.b   GP_PREV_BTN
+        clr.b   GP_PREV_RBTN
         clr.w   GP_CAP_N
         move.w  #$0001,d0
         move.w  #$00FF,d1               ; CIAA_PRA bit6=1 -> bouton relâché

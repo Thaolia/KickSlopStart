@@ -23,6 +23,8 @@
                 xdef    gp_install
                 xdef    gameport_dev_name
 
+GP_POTBITS      EQU $0C00            ; OUTLY | DATLY (port 0, broche 9 = bouton droit)
+POTGO_W         EQU CUSTOM+$034
 IO_DATA2        EQU 40               ; IOStdReq io_Data (APTR) — local (évite d'inclure disk.i)
 GAMEPORT_SIZE   EQU LIB_SIZE         ; base gameport.device : nœud Library seul (pas d'état device propre)
 
@@ -104,15 +106,17 @@ gp_delta8:
         ext.w   d0                  ; sign-extend octet -> mot : delta signé correct malgré le wraparound
         rts
 
-; gp_poll(d0.w = JOY0DAT courant, d1.b = CIAA_PRA courant) : cœur logique. Calcule dx/dy (vs GP_PREV_JOY, via
-; gp_delta8), détecte le front du bouton gauche (vs GP_PREV_BTN ; PRA bit 6 actif-bas), et si mouvement OU front,
-; construit un InputEvent RAWMOUSE (ie_Code = $68 down / $E8 up / $FF mouvement ; ie_X=dx ie_Y=dy) et l'injecte
+; gp_poll(d0.w = JOY0DAT courant, d1.w = CIAA_PRA courant | $100 si bouton droit pressé) : cœur logique. Calcule
+; dx/dy (vs GP_PREV_JOY, via gp_delta8), détecte le front du bouton gauche (vs GP_PREV_BTN ; PRA bit 6 actif-bas),
+; sinon celui du bouton droit (vs GP_PREV_RBTN ; un front droit simultané attend le poll suivant), et si mouvement
+; OU front, construit un InputEvent RAWMOUSE (ie_Code = $68/$69 down, $E8/$E9 up, $FF mouvement ; ie_X=dx ie_Y=dy)
+; et l'injecte
 ; dans input.device (GP_INPUTBASE) via IND_WRITEEVENT. Met GP_PREV_JOY/GP_PREV_BTN à jour. a6 = SysBase en entrée
 ; (rechargé via ($4).w), a6 = SysBase en sortie. Préserve d2-d7/a2-a4 (convention serveur VERTB).
 gp_poll:
         movem.l d2-d7/a2-a4,-(sp)
         moveq   #0,d6
-        move.b  d1,d6               ; d6 = CIAA_PRA (sauvé avant que les gp_delta8 clobbent d1)
+        move.w  d1,d6               ; d6 = CIAA_PRA + bouton droit (sauvé avant que les gp_delta8 clobbent d1)
         move.w  d0,d2               ; d2 = JOY0DAT courant
         move.w  GP_PREV_JOY,d3       ; d3 = JOY0DAT précédent
         move.b  d2,d0               ; dx = delta8(curX = octet bas, prevX = octet bas)
@@ -145,7 +149,7 @@ gp_poll:
                 endc
                 ifeq    GP_NO_EDGE
         cmp.l   d2,d7               ; front bouton ? (précédent vs courant)
-        beq.s   .gp_motion          ; pas de changement -> pas d'event bouton
+        beq.s   .gp_right           ; pas de changement -> bouton droit
         tst.l   d7
         beq.s   .gp_release
         move.w  #IECODE_LBUTTON,d3  ; relâché -> pressé : down ($68)
@@ -155,6 +159,23 @@ gp_poll:
         move.w  #(IECODE_LBUTTON|IECODE_UP_PREFIX),d3 ; pressé -> relâché : up ($E8)
         moveq   #1,d1
                 endc
+        tst.b   d1
+        bne.s   .gp_motion
+.gp_right:
+        moveq   #0,d7               ; bouton droit : même détection de front
+        btst    #8,d6
+        beq.s   .gp_rup
+        moveq   #1,d7
+.gp_rup:
+        move.b  GP_PREV_RBTN,d2
+        move.b  d7,GP_PREV_RBTN
+        cmp.b   d2,d7
+        beq.s   .gp_motion
+        move.w  #IECODE_RBUTTON,d3
+        moveq   #1,d1
+        tst.b   d7
+        bne.s   .gp_motion
+        move.w  #(IECODE_RBUTTON|IECODE_UP_PREFIX),d3
 .gp_motion:
         tst.b   d1
         bne.s   .gp_emit            ; event bouton déjà décidé -> l'émettre (avec dx/dy courants)
@@ -198,6 +219,10 @@ gp_vblank_server:
         move.w  JOY0DAT,d0          ; compteurs quadrature souris (shim matériel)
         moveq   #0,d1
         move.b  CIAA_PRA,d1         ; bouton gauche (bit 6, actif-bas)
+        btst    #10-8,POTINP        ; bouton droit (DATLY, actif-bas)
+        bne.s   .vs_noright
+        bset    #8,d1
+.vs_noright:
         bsr     gp_poll
         moveq   #0,d0               ; Z-set -> serveur call-all : continue la chaîne VERTB
         rts
@@ -222,6 +247,29 @@ gp_install:
         moveq   #1,d1
 .gi_btndone:
         move.b  d1,GP_PREV_BTN
+        lea     EB_RESOURCELIST(a6),a0 ; bouton droit (broche 9 du port 0) : OUTLY|DATLY en sortie à 1 (potgo.resource),
+        lea     gp_potgoname(pc),a1  ; l'appui tire la ligne à 0 -> DATLY lu à 0
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .gi_rawpot
+        move.l  a6,-(sp)
+        move.l  d0,a6
+        move.l  #GP_POTBITS,d0
+        jsr     -6(a6)               ; AllocPotBits
+        move.l  #GP_POTBITS,d0
+        move.l  #GP_POTBITS,d1
+        jsr     -18(a6)              ; WritePotgo
+        move.l  (sp)+,a6
+        bra.s   .gi_potok
+.gi_rawpot:
+        move.w  #GP_POTBITS,POTGO_W
+.gi_potok:
+        moveq   #0,d1
+        btst    #10-8,POTINP
+        bne.s   .gi_rdone
+        moveq   #1,d1
+.gi_rdone:
+        move.b  d1,GP_PREV_RBTN
         clr.l   GP_VBL_INT+LN_SUCC   ; struct Interrupt en RAM basse réservée (non garantie nulle au power-on)
         clr.l   GP_VBL_INT+IS_DATA
         move.b  #5,GP_VBL_INT+LN_PRI ; pri 5 : entre sched(20) et timer_vblank(0)/vbl_tail(-10) dans la chaîne VERTB
@@ -233,5 +281,7 @@ gp_install:
 
 gp_inputname:
         dc.b    "input.device",0
+gp_potgoname:
+        dc.b    "potgo.resource",0
         EVEN
 gameport_end:

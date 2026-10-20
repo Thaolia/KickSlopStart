@@ -25,6 +25,16 @@
                 xref    intuition_BeginRefresh
                 xref    intuition_EndRefresh
                 xref    intuition_MoveWindow
+                xref    intuition_SizeWindow
+                xref    intuition_WindowLimits
+                xref    intuition_SetMenuStrip   ; menus.s
+                xref    intuition_ClearMenuStrip
+                xref    intuition_ItemAddress
+                xref    intuition_OnMenu
+                xref    intuition_OffMenu
+                xref    intuition_PrintIText
+                xref    intuition_IntuiTextLength
+                xref    it_startinput            ; screens.s : tâche d'entrée (boutons, gadgets, menus)
 
 ; --- ROMTag intuition.library (scanné par build_reslist) ---
         EVEN
@@ -51,7 +61,9 @@ intuition_vectors:
         dc.l    intuition_close          ; 2 : LVO -12
         dc.l    intuition_expunge        ; 3 : LVO -18
         dc.l    intuition_null           ; 4 : LVO -24 (réservé)
-        dcb.l   6,intuition_null         ; 5..10 : LVO -30..-60 (non impl.)
+        dcb.l   4,intuition_null         ; 5..8 : LVO -30..-48 (non impl.)
+        dc.l    intuition_ClearMenuStrip ; 9 : LVO -54 ClearMenuStrip(fenêtre a0)
+        dc.l    intuition_null           ; 10 : LVO -60 ClearPointer (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
         dcb.l   4,intuition_null         ; 13..16 : LVO -78..-96 (non impl. : DisplayAlert -90 inclus)
@@ -61,18 +73,30 @@ intuition_vectors:
         dc.l    intuition_null           ; 20 : LVO -120 EndRequest (non impl.)
         dc.l    intuition_GetPrefs       ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
-        dcb.l   5,intuition_null         ; 23..27 : LVO -138..-162 (non impl.)
+        dc.l    intuition_null           ; 23 : LVO -138 InitRequester (non impl.)
+        dc.l    intuition_ItemAddress    ; 24 : LVO -144 ItemAddress(menustrip a0, code d0)
+        dcb.l   3,intuition_null         ; 25..27 : LVO -150..-162 (non impl.)
         dc.l    intuition_MoveWindow     ; 28 : LVO -168 MoveWindow(fenêtre a0, dx d0, dy d1)
-        dcb.l   4,intuition_null         ; 29..32 : LVO -174..-192 (non impl.)
+        dc.l    intuition_null           ; 29 : LVO -174 OffGadget (non impl.)
+        dc.l    intuition_OffMenu        ; 30 : LVO -180 OffMenu(fenêtre a0, code d0)
+        dc.l    intuition_null           ; 31 : LVO -186 OnGadget (non impl.)
+        dc.l    intuition_OnMenu         ; 32 : LVO -192 OnMenu(fenêtre a0, code d0)
         dc.l    intuition_OpenScreen     ; 33 : LVO -198 OpenScreen(newscreen a0)
         dc.l    intuition_OpenWindow     ; 34 : LVO -204 OpenWindow(newwindow a0)
         dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
-        dcb.l   13,intuition_null        ; 36..48 : LVO -216..-288 (non impl.)
+        dc.l    intuition_PrintIText     ; 36 : LVO -216 PrintIText(rp a0, itext a1, x d0, y d1)
+        dcb.l   7,intuition_null         ; 37..43 : LVO -222..-258 (non impl.)
+        dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
+        dcb.l   3,intuition_null         ; 45..47 : LVO -270..-282 (non impl.)
+        dc.l    intuition_SizeWindow     ; 48 : LVO -288 SizeWindow(fenêtre a0, dx d0, dy d1)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
         dc.l    intuition_null           ; 50 : LVO -300 (non impl.)
         dc.l    intuition_WindowToBack   ; 51 : LVO -306 WindowToBack(fenêtre a0)
         dc.l    intuition_WindowToFront  ; 52 : LVO -312 WindowToFront(fenêtre a0)
-        dcb.l   6,intuition_null         ; 53..58 : LVO -318..-348 (non impl.)
+        dc.l    intuition_WindowLimits   ; 53 : LVO -318 WindowLimits(fenêtre a0, minW d0, minH d1, maxW d2, maxH d3)
+        dc.l    intuition_null           ; 54 : LVO -324 SetPrefs (non impl.)
+        dc.l    intuition_IntuiTextLength ; 55 : LVO -330 IntuiTextLength(itext a0)
+        dcb.l   3,intuition_null         ; 56..58 : LVO -336..-348 (non impl.)
         dc.l    intuition_BeginRefresh   ; 59 : LVO -354 BeginRefresh(fenêtre a0)
         dc.l    intuition_null           ; 60 : LVO -360 (non impl.)
         dc.l    intuition_EndRefresh     ; 61 : LVO -366 EndRefresh(fenêtre a0, complet d0)
@@ -184,6 +208,7 @@ intuition_initfunc:
         jsr     LVO_FINDNAME(a6)     ; layers.library (pri 31) est déjà initialisée
         move.l  d0,IB_LAYERSBASE(a2)
         jsr     it_ptrinit           ; pointer.s : sprite du pointeur
+        jsr     it_startinput
         move.l  a2,d0
         move.l  (sp)+,a2
         rts

@@ -22,6 +22,8 @@
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
                 xref    newlist          ; exec/lists.s (NEWLIST du port de Delay)
                 xref    bcpl_starthandler ; dos/bcpl.s (démarrage du handler d'un DeviceNode)
+                xref    bcpl_execute     ; dos/bcpl.s (LVO Execute : C:Run + runcommand)
+                xdef    dos_bufwrite     ; écriture différée du runtime BCPL (bcpl.s)
                 xref    proc_create      ; dos/process.s (Process + pile + pr_MsgPort + AddTask)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
@@ -87,7 +89,7 @@ dos_vectors:
         dc.l    dos_fn_waitforchar       ; 34 : LVO -204 WaitForChar(fh d1, µs d2)
         dc.l    dos_fn_parentdir         ; 35 : LVO -210 ParentDir(lock d1)
         dc.l    dos_fn_isinteractive     ; 36 : LVO -216 IsInteractive(fh d1)
-        dc.l    dos_fn_execute           ; 37 : LVO -222 Execute(cmd d1, in d2, out d3) — dernier LVO V34
+        dc.l    bcpl_execute             ; 37 : LVO -222 Execute(cmd d1, in d2, out d3) — dernier LVO V34 (bcpl.s)
         dc.l    -1
 dos_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -149,6 +151,19 @@ dos_fn_open:
         move.l  #ERROR_OBJECT_NOT_FOUND,PR_RESULT2(a0)
         bra     .op_fail_early          ; pas de console
 .op_resolve:
+        move.b  (a4),d0                 ; « NIL: » (casse ignorée ; nom quelconque d'adresse impaire : octets) :
+        lsl.w   #8,d0                   ; FileHandle sans handler (fh_Type = 0) -> Read rend 0 (fin de fichier),
+        move.b  1(a4),d0                ; Write rend la longueur, Close libère
+        swap    d0
+        move.b  2(a4),d0
+        lsl.w   #8,d0
+        move.b  3(a4),d0
+        and.l   #$DFDFDFFF,d0
+        cmp.l   #$4E494C3A,d0           ; « NIL: »
+        bne.s   .op_named
+        suba.l  a3,a3
+        bra.s   .op_port
+.op_named:
         bsr     dos_resolve             ; a3 = port du handler, d6 = lock de départ, a4 = nom à transmettre
         move.l  a3,d0
         beq     .op_fail_early          ; device inconnu / handler non démarré
@@ -173,6 +188,8 @@ dos_fn_open:
         bcs.s   .op_ncpy
 .op_ndone:
         move.b  d3,(a5)                 ; octet de longueur BCPL
+        move.l  a3,d0
+        beq.s   .op_ok                  ; NIL: : aucun handler
                 ifeq    D3C_NO_FHTYPE
         move.l  a3,FH_TYPE(a2)          ; fh_Type = port du handler (route des Read/Close suivants)
                 endc                    ; RED D3C_NO_FHTYPE : fh_Type reste 0 -> Read ne route pas
@@ -189,6 +206,7 @@ dos_fn_open:
         lea     SP_SIZEOF(sp),sp
         tst.l   d0
         beq.s   .op_fail_free
+.op_ok:
         moveq   #-1,d0
         move.l  d0,FH_POS(a2)           ; fh_Pos = fh_End = -1 : tampon BCPL vide (rdch remplira par Read)
         move.l  d0,FH_END(a2)
@@ -217,6 +235,7 @@ dos_fn_read:
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
         beq.s   .rd_zero                ; fh_Type==0 (non routé) -> 0 (garde-fou RED D3C_NO_FHTYPE)
+        bsr     dos_flushfh
         move.l  FH_ARG1(a2),d4          ; clé du fichier
         move.l  ($4).w,a6               ; SysBase
         lea     -SP_SIZEOF(sp),sp
@@ -245,6 +264,17 @@ dos_fn_close:
         lsl.l   #2,d4
         beq     .cl_null                ; fh nul -> rien à fermer
         move.l  d4,a2                   ; a2 = BADDR(fh)
+        bsr     dos_flushfh             ; octets différés écrits, puis tampon rendu
+        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bne.s   .cl_nowbuf
+        move.l  FH_WBUF(a2),d0
+        beq.s   .cl_nowbuf
+        clr.l   FH_WBUF(a2)
+        move.l  d0,a1
+        move.l  #DOS_WBUF,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+.cl_nowbuf:
         move.l  FH_TYPE(a2),a3
         move.l  a3,d0
         beq.s   .cl_free                ; non routé -> juste libérer
@@ -307,6 +337,7 @@ dos_fn_seek:
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
         beq.s   .sk_err                 ; non routé
+        bsr     dos_flushfh
         move.l  FH_ARG1(a2),d4          ; clé du fichier
         move.l  ($4).w,a6               ; SysBase
         lea     -SP_SIZEOF(sp),sp
@@ -345,27 +376,111 @@ dos_fn_write:
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3          ; port du handler
         move.l  a3,d0
-        beq.s   .wr_err                 ; non routé
-        move.l  FH_ARG1(a2),d4          ; clé
+        beq.s   .wr_nil                 ; fh_Type = 0 (NIL:) : tout est « écrit »
                 ifne    DOS_NO_WRITE
         moveq   #0,d0                   ; RED DOS_NO_WRITE : n'envoie pas -> rien émis
         bra.s   .wr_ret
                 endc
-        move.l  ($4).w,a6               ; SysBase
-        lea     -SP_SIZEOF(sp),sp
-        move.l  sp,a0
-        move.l  a3,a1
-        move.l  #ACTION_WRITE,d0
-        move.l  d4,d1                   ; ARG1 = clé
-        move.l  d5,d2                   ; ARG2 = buf
-        move.l  d6,d3                   ; ARG3 = len
-        jsr     dos_sendpkt             ; d0 = octets écrits ; pr_Result2 posé par dos_sendpkt
-        lea     SP_SIZEOF(sp),sp
+        bsr     dos_flushfh             ; octets différés du runtime BCPL d'abord (ordre des écritures)
+        bsr     dos_rawwrite
         bra.s   .wr_ret
 .wr_err:
         moveq   #-1,d0
+        bra.s   .wr_ret
+.wr_nil:
+        move.l  d6,d0
 .wr_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; dos_rawwrite(a2 = FileHandle routé, d5 = tampon, d6 = longueur) -> d0 = octets écrits | -1 : ACTION_WRITE au handler.
+; Préserve d1-d7/a2-a6.
+dos_rawwrite:
+        movem.l d1-d3/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  FH_TYPE(a2),a1
+        move.l  #ACTION_WRITE,d0
+        move.l  FH_ARG1(a2),d1          ; ARG1 = clé
+        move.l  d5,d2                   ; ARG2 = tampon
+        move.l  d6,d3                   ; ARG3 = longueur
+        jsr     dos_sendpkt             ; d0 = octets écrits ; pr_Result2 posé par dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        movem.l (sp)+,d1-d3/a0-a1/a6
+        rts
+
+; Écriture différée du runtime BCPL : wrch & co écrivent octet par octet ; vers un fichier (FileHandle routé, non
+; interactif) chaque octet serait un packet. Ils s'accumulent dans un tampon (FH_WBUF, remplissage FH_WCNT), vidé quand il est plein et avant tout Write / Read / Seek / Close du
+; même FileHandle. Les consoles (interactives) restent immédiates. Seuls les FileHandles ouverts par ce dos (bloc
+; getvec de DOS_FH_ALLOC octets) ont ces champs privés.
+DOS_WBUF        EQU 512
+; dos_bufwrite(d1 = fh BPTR, d2 = tampon, d3 = longueur) -> d0 = longueur | -1. Préserve d1-d7/a0-a6.
+dos_bufwrite:
+        movem.l d1-d7/a0-a6,-(sp)
+        move.l  d2,d5
+        move.l  d3,d6
+        move.l  d1,d4
+        lsl.l   #2,d4
+        beq.s   .bw_direct
+        move.l  d4,a2
+        tst.l   FH_TYPE(a2)
+        beq.s   .bw_direct
+        tst.l   FH_INTERACTIVE(a2)
+        bne.s   .bw_direct
+        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bne.s   .bw_direct              ; pas un FileHandle de ce dos
+        cmp.l   #DOS_WBUF,d6
+        bhs.s   .bw_direct
+        tst.l   FH_WBUF(a2)
+        bne.s   .bw_have
+        move.l  ($4).w,a6
+        move.l  #DOS_WBUF,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,FH_WBUF(a2)
+        beq.s   .bw_direct
+        clr.l   FH_WCNT(a2)
+.bw_have:
+        move.l  FH_WCNT(a2),d0
+        add.l   d6,d0
+        cmp.l   #DOS_WBUF,d0
+        bls.s   .bw_copy
+        bsr.s   dos_flushfh
+.bw_copy:
+        move.l  FH_WBUF(a2),a1
+        add.l   FH_WCNT(a2),a1
+        move.l  d5,a0
+        move.w  d6,d0
+        bra.s   .bw_cnx
+.bw_cpy:
+        move.b  (a0)+,(a1)+
+.bw_cnx:
+        dbra    d0,.bw_cpy
+        add.l   d6,FH_WCNT(a2)
+        move.l  d6,d0
+        bra.s   .bw_ret
+.bw_direct:
+        movem.l (sp),d1-d3
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_WRITE(a6)
+.bw_ret:
+        movem.l (sp)+,d1-d7/a0-a6
+        rts
+
+; dos_flushfh(a2 = FileHandle) : écrit les octets différés (s'il y en a). Préserve tout.
+dos_flushfh:
+        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bne.s   .fl_ret
+        tst.l   FH_WCNT(a2)
+        beq.s   .fl_ret
+        movem.l d0/d5-d6,-(sp)
+        move.l  FH_WBUF(a2),d5
+        move.l  FH_WCNT(a2),d6
+        clr.l   FH_WCNT(a2)
+        bsr     dos_rawwrite
+        movem.l (sp)+,d0/d5-d6
+.fl_ret:
         rts
 
 ; Input() -> d0 = BPTR pr_CIS de ThisTask (FileHandle d'entrée standard). a6 = DosBase (non utilisé).
@@ -772,7 +887,7 @@ dl_timername:
 ; CreateProc(nom d1 [C], pri d2, seglist d3 [BPTR], pile d4 [octets]) -> d0 = MsgPort du process | 0 (AutoDoc dos).
 ; Le process démarre directement sur le code du premier segment ; nom recopié (l'appelant peut libérer le sien),
 ; segarray [3, V!1, V!2 du créateur, seglist] (spec BCPL §8.3, globale -18), ConsoleTask/FileSystemTask/WindowPtr
-; hérités du créateur, répertoire courant nul. Champs posés sous Forbid avant le premier passage du process.
+; et GV hérités du créateur, répertoire courant nul. Quand le code revient (rts), cpr_exit termine le process. Champs posés sous Forbid avant le premier passage du process.
 CP_NAMEMAX      EQU 32
 dos_fn_createproc:
         movem.l d2-d7/a2-a6,-(sp)
@@ -831,7 +946,10 @@ dos_fn_createproc:
         move.l  PR_CONSOLETASK(a1),PR_CONSOLETASK(a0)
         move.l  PR_FILESYSTEMTASK(a1),PR_FILESYSTEMTASK(a0)
         move.l  PR_WINDOWPTR(a1),PR_WINDOWPTR(a0)
+        move.l  PR_GLOBVEC(a1),PR_GLOBVEC(a0)   ; GV du créateur (createproc, spec §8.3) : Execute en a besoin
 .cpr_started:
+        move.l  TC_SPUPPER(a0),a1               ; adresse de retour du code (posée par AddTask sous la taille)
+        move.l  #cpr_exit,-4(a1)
         jsr     LVO_PERMIT(a6)
         move.l  d4,d0
         bra.s   .cpr_ret
@@ -845,6 +963,20 @@ dos_fn_createproc:
 .cpr_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+; cpr_exit : un process lancé par CreateProc dont le code revient (rts) : bloc nom + segarray rendu, puis RemTask (ne
+; revient pas). Sous Forbid : le nom libéré n'est plus visible avant la fin du process.
+cpr_exit:
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        move.l  EB_THISTASK(a6),a0
+        move.l  LN_NAME(a0),a1
+        moveq   #CP_NAMEMAX+20,d0
+        jsr     LVO_FREEMEM(a6)
+        sub.l   a1,a1
+        jsr     LVO_REMTASK(a6)
+.ce_hang:
+        bra.s   .ce_hang
 
 ; WaitForChar(fh d1, µs d2) -> DOSFALSE : pas de caractère disponible (la console ne gère pas encore ce packet).
 dos_fn_waitforchar:
@@ -882,15 +1014,6 @@ dos_fn_isinteractive:
         move.l  d0,a0
         move.l  FH_INTERACTIVE(a0),d0
 .ii_ret:
-        rts
-
-; Execute(cmd d1, in d2, out d3) -> DOSFALSE. Non implémenté : la V34 lance C:Run avec la commande (spec BCPL §8.2,
-; globale 101) ; demande un CLI de fond (Run/createproc) que nous n'avons pas encore. IoErr = action inconnue.
-dos_fn_execute:
-        move.l  ($4).w,a0
-        move.l  EB_THISTASK(a0),a0
-        move.l  #ERROR_ACTION_NOT_KNOWN,PR_RESULT2(a0)
-        moveq   #0,d0
         rts
 
 ; dos_resolve(a4 = nom C-string, a6 = DosBase) -> a3 = port du handler | 0, d6 = BPTR lock de départ, a4 = nom à

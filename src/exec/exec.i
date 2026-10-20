@@ -18,6 +18,7 @@ SERDAT   EQU CUSTOM+$030
 SERPER   EQU CUSTOM+$032
 SERDATR  EQU CUSTOM+$018
 COLOR00  EQU CUSTOM+$180
+POTINP   EQU CUSTOM+$016      ; POTGOR : bit 10 (DATLY) = bouton droit du port 0, actif-bas
 JOY0DAT  EQU CUSTOM+$00A      ; compteurs quadrature souris port 0 (octet bas = X, octet haut = Y ; 8 bits wrap)
 
 ; --- CIA-A (overlay / LED) ---
@@ -310,6 +311,7 @@ IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents 
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
 IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
+IECODE_RBUTTON  EQU $69          ; ie_Code : bouton droit (down ; up = | $80)
 IECODE_NOBUTTON EQU $FF          ; ie_Code : event de mouvement pur (aucun bouton)
 IECODE_UP_PREFIX EQU $80         ; ie_Code : relâchement (code bouton | $80)
 IE_NEXTEVENT    EQU 0            ; struct InputEvent : APTR event suivant
@@ -357,7 +359,8 @@ PTR_Y        EQU $00000686 ; word : pointeur absolu Y
 INT_IBASE    EQU $00000740 ; long : IntuitionBase (posé à son init) — le handler de pointeur y déplace le sprite
 KBD_DEVBASE  EQU $00000744 ; long : base keyboard.device (posée à son init) — kbd_interrupt lui remet chaque keycode
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
-GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé) +pad $68B
+GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
+GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
 GP_POLLS     EQU $0000068C ; long : compteur de polls de gp_vblank_server (preuve live : avance sur VBlanks réels)
 GP_INPUTBASE EQU $00000690 ; long : base input.device pour l'injection RAWMOUSE (0 = pas d'injection)
 GP_CAP_N     EQU $00000694 ; word : events RAWMOUSE vus par le handler de capture (tests gameport)

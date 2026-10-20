@@ -23,6 +23,8 @@
                 xdef    bcpl_cli_setup       ; GV + segarray d'un process CLI
                 xdef    bcpl_starthandler
                 xdef    bcpl_cli_register    ; slot de rn_TaskArray + pr_TaskNum du CLI initial
+                xdef    bcpl_execute         ; LVO Execute (dos_lib.s)
+                xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
                 xref    ser_puthex
@@ -618,8 +620,7 @@ rt_write:
         bsr     rt_this
         move.l  PR_COS(a3),d1
         beq     .wr_ret
-        move.l  DOS_DOSBASE,a6
-        jsr     DOS_LVO_WRITE(a6)
+        jsr     dos_bufwrite            ; dos_lib.s : différé vers un fichier, immédiat vers une console
 .wr_ret:
         movem.l (sp)+,d0-d3/a0-a1/a3/a6
         rts
@@ -1457,7 +1458,7 @@ g_qpkt:
         BLEAVE
 
 ; 121 runcommand(seg, pile, args, len) : lance le premier hunk de seg sur une pile neuve de « pile » longs (spec §4.3),
-; plus la marge CP_STKEXTRA (sans elle, un dépassement écrase le bloc voisin du tas : vu avec Execute en arrière-plan) :
+; plus la marge CP_STKEXTRA (notre runtime prend ses tampons et packets sur la pile 68000 de la commande) :
 ; a0 = BADDR(args), d0 = len, 4(sp) = taille, pr_ReturnAddr -> ce long, A1 = frame appelante, A2 = GV courant, A3 =
 ; segment, A5/A6 = appel/retour BCPL. -> code retour (d0 de la commande) ; -1 si pile impossible. Result2 intact.
 g_runcommand:
@@ -1516,6 +1517,175 @@ g_runcommand:
 .rcm_fail:
         moveq   #-1,d1
         BLEAVE
+
+; bcpl_execute : LVO Execute(cmd d1 [C], in d2, out d3) -> d0 = DOSTRUE | DOSFALSE (globale 101, spec §8.2) : charge
+; C:Run, sélectionne in/out, pr_Result2 := BSTR de la commande, runcommand(Run, 600 longs) ; Run crée un CLI de fond
+; qui exécute la commande puis lit la suite sur « in » (Execute("", fenêtre, 0) = CLI interactif dans la fenêtre).
+; L'appelant doit avoir un GV (pr_GlobVec : hérité par CreateProc). Flux et Result2 rendus au retour.
+EX_FRAME        EQU 256                 ; frame BCPL de l'appelant fabriquée sur la pile (Run y fait ses premiers appels)
+bcpl_execute:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,a4                   ; a4 = commande C
+        move.l  d2,d6                   ; d6/d7 = in/out
+        move.l  d3,d7
+        bsr     rt_this
+        tst.l   PR_GLOBVEC(a3)
+        beq     .ex_fail
+        bsr     rt_devinfo              ; le CLI de fond de Run a besoin d'un segment CLI : résident « CLI » ...
+        move.l  DI_RESLIST(a0),d0
+.ex_res:
+        lsl.l   #2,d0
+        beq.s   .ex_cons
+        move.l  d0,a0
+        cmp.b   #3,12(a0)
+        bne.s   .ex_rnx
+        move.l  12(a0),d0
+        and.l   #$FFDFDFDF,d0
+        cmp.l   #$03434C49,d0           ; BSTR « CLI » (casse ignorée)
+        beq.s   .ex_go
+.ex_rnx:
+        move.l  (a0),d0
+        bra.s   .ex_res
+.ex_cons:
+        move.l  DOS_DOSBASE,a0          ; ... ou rn_ConsoleSegment (nul ici : pas de CLI BCPL en ROM) ; sinon échec,
+        move.l  DL_ROOT(a0),a0          ; comme avant le « resident CLI L:Shell-Seg » de la startup-sequence
+        tst.l   RN_CONSOLESEG(a0)
+        beq     .ex_fail
+.ex_go:
+        move.l  ($4).w,a6
+        moveq   #64,d1                  ; BSTR de la commande (255 octets au plus) dans un vecteur getvec
+        bsr     rt_getvec_raw
+        move.l  d0,d5                   ; d5 = BPTR de la commande
+        beq     .ex_fail
+        lsl.l   #2,d0
+        move.l  d0,a0
+        lea     1(a0),a1
+        moveq   #0,d0
+.ex_cpy:
+        move.b  (a4)+,d1
+        beq.s   .ex_cpyd
+        move.b  d1,(a1)+
+        addq.b  #1,d0
+        cmp.b   #255,d0
+        bne.s   .ex_cpy
+.ex_cpyd:
+        move.b  d0,(a0)
+        move.l  DOS_DOSBASE,a6
+        move.l  #ex_runname,d1
+        jsr     DOS_LVO_LOADSEG(a6)
+        move.l  d0,d4                   ; d4 = Run
+        beq     .ex_free
+        bsr     rt_this
+        move.l  PR_SEGLIST(a3),-(sp)    ; segarray de l'appelant : pendant Run, [2, V!1, V!2] (le stub de Run fait
+        lea     -16(sp),sp              ; globin de chaque entrée : la seglist d'un programme C, entrée 3 d'un process
+        move.l  sp,d0                   ; de CreateProc, n'est pas un segment BCPL)
+        addq.l  #3,d0
+        and.w   #-4,d0                  ; aligné sur un long (BPTR)
+        move.l  d0,a0
+        move.l  #2,(a0)
+        move.l  PR_SEGLIST(a3),d1
+        lsl.l   #2,d1
+        beq.s   .ex_noseg
+        move.l  d1,a1
+        move.l  4(a1),4(a0)
+        move.l  8(a1),8(a0)
+.ex_noseg:
+        lsr.l   #2,d0
+        move.l  d0,PR_SEGLIST(a3)
+        move.l  PR_CONSOLETASK(a3),-(sp) ; console, flux et Result2 de l'appelant, rendus au retour
+        move.l  PR_CIS(a3),-(sp)
+        move.l  PR_COS(a3),-(sp)
+        move.l  PR_RESULT2(a3),-(sp)
+        move.l  d4,-(sp)
+        clr.l   -(sp)                   ; (sp) = sortie ouverte ici (à refermer si Run échoue)
+        move.l  d6,d0                   ; entrée sur un handler : il devient la console (« * ») de l'appelant, donc
+        lsl.l   #2,d0                   ; du CLI que Run crée ; sortie nulle -> « * » sur cette console (AutoDoc :
+        beq.s   .ex_streams             ; sortie dans la fenêtre courante)
+        move.l  d0,a0
+        move.l  FH_TYPE(a0),d0
+        beq.s   .ex_streams
+        move.l  d0,PR_CONSOLETASK(a3)
+        tst.l   d7
+        bne.s   .ex_streams
+        move.l  DOS_DOSBASE,a6
+        move.l  #ex_star,d1
+        move.l  #MODE_NEWFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        move.l  d0,d7
+        move.l  d0,(sp)
+        bsr     rt_this
+.ex_streams:
+        move.l  d6,PR_CIS(a3)
+        move.l  d7,PR_COS(a3)
+        move.l  d5,PR_RESULT2(a3)
+        move.l  PR_GLOBVEC(a3),a2
+        lea     -EX_FRAME(sp),sp
+        move.l  sp,a1                   ; frame BCPL : Run écrit au-dessus (vers le haut), la pile 68000 descend
+        move.l  d4,d1                   ; runcommand(Run, 600, pas d'arguments injectés : commande dans Result2)
+        move.l  #600,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        lea     .ex_back(pc),a6         ; le BLEAVE de runcommand revient par jmp (a6)
+        bra     g_runcommand
+.ex_back:
+        lea     EX_FRAME(sp),sp
+        move.l  d1,d2                   ; d2 = code retour (-1 : pile impossible)
+        move.l  (sp)+,d3                ; sortie ouverte ici
+        move.l  (sp)+,d4
+        bsr     rt_this
+        move.l  (sp)+,PR_RESULT2(a3)
+        move.l  (sp)+,PR_COS(a3)
+        move.l  (sp)+,PR_CIS(a3)
+        move.l  (sp)+,PR_CONSOLETASK(a3)
+        lea     16(sp),sp
+        move.l  (sp)+,PR_SEGLIST(a3)
+        move.l  DOS_DOSBASE,a6
+        tst.l   d2
+        bpl.s   .ex_owned               ; le CLI créé possède la sortie
+        move.l  d3,d1
+        beq.s   .ex_owned
+        jsr     DOS_LVO_CLOSE(a6)
+.ex_owned:
+        move.l  d4,d1
+        jsr     DOS_LVO_UNLOADSEG(a6)
+        bsr.s   .ex_vfree
+        moveq   #-1,d0
+        tst.l   d2
+        bpl.s   .ex_ret
+        moveq   #0,d0
+        bra.s   .ex_ret
+.ex_free:
+        bsr.s   .ex_vfree
+.ex_fail:
+        moveq   #0,d0
+.ex_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+.ex_vfree:                              ; libère le vecteur de la commande (en-tête getvec)
+        move.l  d5,d0
+        lsl.l   #2,d0
+        move.l  d0,a1
+        subq.l  #4,a1
+        move.l  (a1),d0
+        move.l  ($4).w,a6
+        jmp     LVO_FREEMEM(a6)
+ex_runname:
+        dc.b    "C:Run",0
+ex_star:
+        dc.b    "*",0
+        even
+
+; 3 mult(a, b) -> a*b ; 4 div(a, b) -> a/b (troncature vers 0) ; 5 rem(a, b) -> reste (signe du dividende).
+g_mult:
+        bsr     bcpl_mul
+        jmp     (a6)
+g_div:
+        bsr     bcpl_divmod
+        jmp     (a6)
+g_rem:
+        bsr     bcpl_divmod
+        move.l  d2,d1
+        jmp     (a6)
 
 ; -20 clearvec(v, n) : met à 0 les n+1 longs de BADDR(v).
 g_clearvec:
@@ -2619,6 +2789,9 @@ bcpl_rtdata:
         GLOB    -2,g_copyvec
         GLOB    -1,g_copen
         GLOB    2,g_stop
+        GLOB    3,g_mult
+        GLOB    4,g_div
+        GLOB    5,g_rem
         GLOB    6,g_setio
         GLOB    10,g_result2
         GLOB    13,g_makeglobvec

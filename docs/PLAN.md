@@ -801,8 +801,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     exec, regions et BltBitMap général, layers.library (simple/smart/backdrop, dommages), intuition sur layers
     (WindowToFront/Back, MoveWindow, Begin/EndRefresh) ; écrasement mémoire latent du lancement des commandes BCPL
     corrigé (pile du shell trop courte d'un long).
-    **Étape 8 (interaction)** : tiroirs imbriqués (double-clic sur un tiroir), lancement d'outils (Shell, Clock…),
-    menus Workbench, déplacement des fenêtres, SizeWindow ; OpenFont/topaz, InitGels. Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4 (Run vers PIPE:).
+    **Étape 8 (interaction) FAITE** : tiroirs imbriqués, lancement d'outils et de projets (WBStartup ; Shell -> AmigaShell),
+    menus Workbench (Open/Close/Redraw) et menus intuition au bouton droit, déplacement et redimensionnement des fenêtres
+    (SizeWindow, WindowLimits), Execute (101), NIL:, writef tamponné.
+    **Étape 9** : OpenFont/topaz, InitGels, déplacement d'icônes, Info/Rename/Discard, nœuds CON/RAW/SER/PAR/PRT, C:FAULT,
+    slot GV +4 = globale 1 non implémentée (Run vers PIPE:), réparation plus rapide après fermeture.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

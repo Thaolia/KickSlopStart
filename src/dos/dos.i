@@ -31,6 +31,7 @@ RN_SIZEOF        EQU 56                ; struct RootNode complète (rn_CliList/r
 
 ; --- DosInfo (dosextens.i) : bloc minimal (champs pointeurs) ---
 ; offset 0 di_McName(BPTR) · 4 di_DevInfo(BPTR, device list vide) · 8 di_Devices · 12 di_Handlers · 16 di_NetHand
+DI_RESLIST       EQU 16                ; BPTR -> segments résidents (!0 suivant, !1 usage, !2 seglist, BSTR à +12)
 DI_DEVINFO       EQU 4                 ; BPTR -> device list (vide : aucun handler monté ce milestone)
 DOSINFO_SIZE     EQU 20               ; squelette : champs pointeurs seulement ; 3 verrous SignalSemaphore différés
 

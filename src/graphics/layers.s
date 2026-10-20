@@ -923,7 +923,7 @@ lr_clear:
         rts
 
 ; lr_damage(a4 = couche, d0..d3 = rectangle absolu) : ajouté à la DamageList (relatif à la couche), LAYERREFRESH.
-; Préserve d0-d7/a2-a6.
+; Préserve d0-d7/a2-a6 (pas a0/a1).
 lr_damage:
         movem.l d0-d3/a6,-(sp)
         sub.w   LY_MINX(a4),d0
@@ -1234,7 +1234,9 @@ lr_fill:
         cmpa.w  #0,a0
         beq.s   .fi_free
         movem.w RR_MINX(a0),d0-d3
+        move.l  a0,-(sp)             ; lr_damage écrase a0/a1
         bsr     lr_damage
+        move.l  (sp)+,a0
         move.l  RR_NEXT(a0),a0
         bra.s   .fi_dmg
 .fi_free:

@@ -18,7 +18,33 @@ IB_GFXBASE       EQU IB_MICROS+4       ; 80 : GfxBase (trouvée à l'init)
 IB_WBSCREEN      EQU IB_GFXBASE+4      ; 84 : écran Workbench ouvert (0 sinon)
 IB_PTRSS         EQU IB_WBSCREEN+4     ; 88 : SimpleSprite du pointeur (canal 0)
 IB_LAYERSBASE    EQU IB_PTRSS+12       ; 100 : LayersBase (trouvée à l'init)
-INTUITIONBASE_SIZE EQU IB_LAYERSBASE+4 ; 104 : dataSize pour MakeLibrary
+; tâche d'entrée d'intuition : l'interruption souris dépose les boutons dans un anneau, la tâche les traite
+IB_INTASK        EQU IB_LAYERSBASE+4   ; tâche d'entrée (0 tant qu'elle n'a pas son signal)
+IB_INSIG         EQU IB_INTASK+4       ; masque du signal d'événement
+IB_EVHEAD        EQU IB_INSIG+4        ; UWORD : prochaine case écrite (interruption)
+IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD : prochaine case lue (tâche)
+IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN cases de IB_EVSZ octets : code, x, y (écran)
+IB_EVN           EQU 8
+IB_EVSZ          EQU 6
+IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE : la tâche veut aussi les mouvements (glisser, menus)
+IB_MOVED         EQU IB_TRACK+1        ; BYTE : mouvement à traiter
+IB_DRAGWIN       EQU IB_MOVED+1        ; fenêtre en cours de déplacement / redimensionnement | 0
+IB_DRAGMODE      EQU IB_DRAGWIN+4      ; UWORD : IT_DRAGMOVE / IT_DRAGSIZE
+IB_DRAGSX        EQU IB_DRAGMODE+2     ; position du pointeur au début du geste (écran)
+IB_DRAGSY        EQU IB_DRAGSX+2
+IB_BOX           EQU IB_DRAGSY+2       ; cadre fantôme affiché : x0, y0, x1, y1
+IB_BOXON         EQU IB_BOX+8          ; BYTE : cadre fantôme affiché
+IB_MENUWIN       EQU IB_BOXON+2        ; fenêtre dont la barre de menus est affichée | 0
+IB_MENUBAR       EQU IB_MENUWIN+4      ; couche de la barre de menus | 0
+IB_MENUBOX       EQU IB_MENUBAR+4      ; couche du menu déroulé | 0
+IB_MENUCUR       EQU IB_MENUBOX+4      ; Menu déroulé | 0
+IB_ITEMCUR       EQU IB_MENUCUR+4      ; MenuItem en surbrillance | 0
+IB_MENUNUM       EQU IB_ITEMCUR+4      ; UWORD : n° du menu déroulé
+IB_ITEMNUM       EQU IB_MENUNUM+2      ; UWORD : n° de l'élément en surbrillance
+IB_PICK          EQU IB_ITEMNUM+2      ; UWORD : code MENUPICK en construction
+INTUITIONBASE_SIZE EQU IB_PICK+2
+IT_DRAGMOVE      EQU 1
+IT_DRAGSIZE      EQU 2
 
 ; --- layers.library (graphics/clip.h, layers.h ; LVO de l'AutoDoc) ---
 LVO_INITLAYERS          EQU -30
@@ -27,9 +53,12 @@ LVO_CREATEBEHINDLAYER   EQU -42
 LVO_UPFRONTLAYER        EQU -48
 LVO_BEHINDLAYER         EQU -54
 LVO_MOVELAYER           EQU -60
+LVO_SIZELAYER           EQU -66
 LVO_BEGINUPDATE         EQU -78
 LVO_ENDUPDATE           EQU -84
 LVO_DELETELAYER         EQU -90
+LVO_LOCKLAYERS          EQU -108
+LVO_UNLOCKLAYERS        EQU -114
 IL_RP           EQU 12               ; struct Layer : RastPort
 IL_FLAGS        EQU 30               ; Flags (UWORD)
 IL_WINDOW       EQU 40               ; Window (réservé à l'interface utilisateur)
@@ -123,6 +152,7 @@ WD_MINHEIGHT    EQU 18
 WD_MAXWIDTH     EQU 20
 WD_MAXHEIGHT    EQU 22
 WD_FLAGS        EQU 24
+WD_MENUSTRIP    EQU 28
 WD_TITLE        EQU 32
 WD_WSCREEN      EQU 46
 WD_RPORT        EQU 50
@@ -148,6 +178,7 @@ SIZEBBOTTOM     EQU $0020
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
 WINDOWACTIVE    EQU $2000
+RMBTRAP         EQU $00010000
 
 ; --- struct IntuiMessage (intuition/intuition.h) et classes IDCMP ---
 IM_CLASS        EQU 20               ; après la struct Message
@@ -160,11 +191,49 @@ IM_SECONDS      EQU 36
 IM_MICROS       EQU 40
 IM_IDCMPWINDOW  EQU 44
 IM_SIZEOF       EQU 52
+NEWSIZE         EQU $00000002
 REFRESHWINDOW   EQU $00000004
 MOUSEBUTTONS    EQU $00000008
+MENUPICK        EQU $00000100
 CLOSEWINDOW     EQU $00000200
+MENUNULL        EQU $FFFF
 SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS
 SELECTUP        EQU $E8
+
+; --- struct Menu / struct MenuItem / struct IntuiText (intuition/intuition.h) ---
+MU_NEXTMENU     EQU 0
+MU_LEFTEDGE     EQU 4
+MU_TOPEDGE      EQU 6
+MU_WIDTH        EQU 8
+MU_HEIGHT       EQU 10
+MU_FLAGS        EQU 12
+MU_MENUNAME     EQU 14
+MU_FIRSTITEM    EQU 18
+MENUENABLED     EQU $0001
+MI_NEXTITEM     EQU 0
+MI_LEFTEDGE     EQU 4
+MI_TOPEDGE      EQU 6
+MI_WIDTH        EQU 8
+MI_HEIGHT       EQU 10
+MI_FLAGS        EQU 12
+MI_ITEMFILL     EQU 18
+MI_SELECTFILL   EQU 22
+MI_SUBITEM      EQU 28
+MI_NEXTSELECT   EQU 32
+CHECKIT         EQU $0001
+ITEMTEXT        EQU $0002
+MENUTOGGLE      EQU $0008
+ITEMENABLED     EQU $0010
+HIGHFLAGS       EQU $00C0
+HIGHNONE        EQU $00C0
+CHECKED         EQU $0100
+IT_FRONTPEN     EQU 0
+IT_BACKPEN      EQU 1
+IT_DRAWMODE     EQU 2
+IT_LEFTEDGE     EQU 4
+IT_TOPEDGE      EQU 6
+IT_ITEXT        EQU 12
+IT_NEXTTEXT     EQU 16
 
 ; --- struct Image et struct Remember (intuition/intuition.h) ---
 IG_LEFTEDGE     EQU 0

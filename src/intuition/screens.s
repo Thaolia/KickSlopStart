@@ -1,12 +1,14 @@
 ; src/intuition/screens.s — écrans et fenêtres d'intuition.library : OpenScreen/CloseScreen, OpenWorkBench,
-; GetScreenData, OpenWindow/CloseWindow, WindowToFront/WindowToBack, MoveWindow, BeginRefresh/EndRefresh.
+; GetScreenData, OpenWindow/CloseWindow, WindowToFront/WindowToBack, MoveWindow, SizeWindow, WindowLimits,
+; BeginRefresh/EndRefresh, menus (SetMenuStrip/ClearMenuStrip/ItemAddress/OnMenu/OffMenu).
 ; Un écran = struct Screen (V34) + BitMap en chip RAM + ColorMap + son Layer_Info (sc_LayerInfo) ; l'écran de tête
 ; est affiché via le View d'IntuitionBase (ib_ViewLord : MakeVPort/MrgCop/LoadView). La barre de titre de l'écran est
 ; une couche simple « backdrop » (sc_BarLayer). Chaque fenêtre est une couche de layers.library (simple, smart ou
 ; super selon ses drapeaux ; backdrop pour BACKDROP) : son RPort est celui de la couche, le recouvrement et la
 ; sauvegarde des fenêtres smart sont gérés par layers. Après une opération sur les couches, it_refresh redessine les
 ; bordures abîmées et envoie REFRESHWINDOW aux fenêtres qui l'ont demandé (sinon les dommages sont effacés).
-; La liste des fenêtres de l'écran suit l'ordre des couches (it_relist). Pas encore de SizeWindow.
+; La liste des fenêtres de l'écran suit l'ordre des couches (it_relist). Les boutons de la souris sont traités par
+; une tâche d'entrée (it_intask) : gadgets système (fermeture, profondeur, déplacement, taille) et menus.
 ; Décor (barres de titre, gadgets dessinés) : rendu propre à ce projet, aux couleurs des préférences 1.3.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + includes NDK publics (screens.h, intuition.h).
 ; AUCUNE lecture ROM.
@@ -25,7 +27,17 @@
                 xdef    intuition_AllocRemember
                 xdef    intuition_FreeRemember
                 xdef    intuition_DoubleClick
-                xdef    it_button
+                xdef    it_event
+                xdef    it_refresh           ; menus.s
+                xdef    it_title
+                xdef    it_box
+                xdef    it_scrxy
+                xdef    wn_sendmsg
+                xref    it_menubutton        ; menus.s : bouton droit
+                xref    it_menumove
+                xdef    it_startinput
+                xdef    intuition_SizeWindow
+                xdef    intuition_WindowLimits
                 xdef    intuition_WindowToFront
                 xdef    intuition_WindowToBack
                 xdef    intuition_MoveWindow
@@ -581,22 +593,19 @@ intuition_OpenWindow:
 .ow_szr:
         move.b  #18,WD_BORDERRIGHT(a3)
 .ow_bord:
-        moveq   #0,d0                ; GZZWidth / GZZHeight = intérieur
-        move.b  WD_BORDERLEFT(a3),d0
-        moveq   #0,d1
-        move.b  WD_BORDERRIGHT(a3),d1
-        add.w   d0,d1
-        move.w  d6,d0
-        sub.w   d1,d0
-        move.w  d0,WD_GZZWIDTH(a3)
-        moveq   #0,d0
-        move.b  WD_BORDERTOP(a3),d0
-        moveq   #0,d1
-        move.b  WD_BORDERBOTTOM(a3),d1
-        add.w   d0,d1
-        move.w  d7,d0
-        sub.w   d1,d0
-        move.w  d0,WD_GZZHEIGHT(a3)
+        bsr     wn_gzz
+        lea     WD_MINWIDTH(a3),a0   ; limites nulles : taille courante (AutoDoc OpenWindow)
+        moveq   #3,d1
+.ow_lim:
+        tst.w   (a0)
+        bne.s   .ow_limok
+        move.w  d6,(a0)
+        btst    #0,d1
+        bne.s   .ow_limok
+        move.w  d7,(a0)
+.ow_limok:
+        addq.l  #2,a0
+        dbra    d1,.ow_lim
         move.l  ($4).w,a6
         tst.l   WD_IDCMPFLAGS(a3)
         beq.s   .ow_noport
@@ -1192,80 +1201,604 @@ intuition_FreeRemember:
         movem.l (sp)+,d2/a2-a3/a6
         rts
 
-; it_button(d0.w = ie_Code d'un bouton) : appelé par le handler de pointeur. Fenêtre la plus en avant sous le pointeur
-; (écran de tête) : bouton gauche enfoncé sur le gadget de fermeture -> CLOSEWINDOW ; sinon la fenêtre devient active
-; et reçoit MOUSEBUTTONS (SELECTDOWN / SELECTUP, coordonnées relatives à la fenêtre) si elle l'a demandé.
-; Contexte : tâche input.device. Préserve tout.
-it_button:
-        movem.l d0-d7/a0-a6,-(sp)
-        move.w  d0,d7                ; d7 = code
-        move.l  INT_IBASE,d0
-        beq     .bt_ret
-        move.l  d0,a5
-        move.l  IB_FIRSTSCREEN(a5),d0
-        beq     .bt_ret
+; it_event(d0.w = ie_Code) : appelé par le handler de pointeur (interruption VBlank) pour chaque RAWMOUSE, après la
+; mise à jour de PTR_X/PTR_Y. Un bouton est déposé dans l'anneau avec la position du pointeur (anneau plein : perdu) ;
+; un mouvement n'est signalé que si la tâche d'entrée suit le pointeur (geste ou menu en cours). Tout le traitement
+; (fenêtres, couches, menus) se fait dans la tâche : rien ici ne peut attendre. Préserve tout.
+it_event:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  INT_IBASE,d1
+        beq.s   .ev_ret
+        move.l  d1,a1
+        tst.l   IB_INSIG(a1)
+        beq.s   .ev_ret              ; tâche pas encore prête
+        cmp.w   #IECODE_NOBUTTON,d0
+        bne.s   .ev_btn
+        tst.b   IB_TRACK(a1)
+        beq.s   .ev_ret
+        st      IB_MOVED(a1)
+        bra.s   .ev_sig
+.ev_btn:
+        move.w  IB_EVHEAD(a1),d1
+        lea     IB_EVRING(a1),a0
+        add.w   d1,a0
+        addq.w  #IB_EVSZ,d1
+        cmp.w   #IB_EVN*IB_EVSZ,d1
+        blo.s   .ev_wrap
+        moveq   #0,d1
+.ev_wrap:
+        cmp.w   IB_EVTAIL(a1),d1
+        beq.s   .ev_ret
+        move.w  d0,(a0)+
+        move.w  PTR_X,(a0)+
+        move.w  PTR_Y,(a0)
+        move.w  d1,IB_EVHEAD(a1)     ; publiée après les données
+.ev_sig:
+        move.l  IB_INSIG(a1),d0
+        move.l  IB_INTASK(a1),a1
+        move.l  ($4).w,a6
+        jsr     LVO_SIGNAL(a6)
+.ev_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; it_startinput(a2 = IntuitionBase, a6 = SysBase) : crée la tâche d'entrée (pri 20, comme celle d'input.device).
+; Sans mémoire : pas de tâche, les boutons sont ignorés. Préserve d2-d7/a2-a6.
+IT_STACK        EQU 4096
+it_startinput:
+        movem.l a2-a4,-(sp)
+        move.l  #TC_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .si_ret
         move.l  d0,a4
-        move.w  PTR_X,d4             ; position à l'écran (HIRES : x doublé)
-        tst.w   SC_VIEWPORT+vp_Modes(a4)
-        bpl.s   .bt_lo
-        add.w   d4,d4
-.bt_lo:
+        move.l  #IT_STACK,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        bne.s   .si_stk
+        move.l  a4,a1
+        move.l  #TC_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .si_ret
+.si_stk:
+        move.l  d0,TC_SPLOWER(a4)
+        add.l   #IT_STACK,d0
+        move.l  d0,TC_SPUPPER(a4)
+        lea     it_inname(pc),a0
+        move.l  a0,LN_NAME(a4)
+        move.b  #20,LN_PRI(a4)
+        move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)
+        move.l  a4,a1
+        lea     it_intask(pc),a2
+        move.l  a2,a3                ; ne revient jamais
+        jsr     LVO_ADDTASK(a6)
+.si_ret:
+        movem.l (sp)+,a2-a4
+        rts
+it_inname:
+        dc.b    "intuition input",0
+        even
+
+; it_intask : corps de la tâche d'entrée. Alloue son signal et se publie, puis traite dans l'ordre les boutons de
+; l'anneau et, quand elle suit le pointeur, son dernier mouvement.
+it_intask:
+        move.l  ($4).w,a6
+        move.l  INT_IBASE,a5
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        moveq   #0,d1
+        bset    d0,d1
+        move.l  EB_THISTASK(a6),IB_INTASK(a5)
+        move.l  d1,IB_INSIG(a5)
+.in_wait:
+        move.l  IB_INSIG(a5),d0
+        move.l  ($4).w,a6
+        jsr     LVO_WAIT(a6)
+.in_next:
+        move.w  IB_EVTAIL(a5),d1
+        cmp.w   IB_EVHEAD(a5),d1
+        beq.s   .in_move
+        lea     IB_EVRING(a5),a0
+        add.w   d1,a0
+        move.w  (a0)+,d0             ; code
+        move.w  (a0)+,d4             ; x, y (pointeur)
+        move.w  (a0),d5
+        addq.w  #IB_EVSZ,d1
+        cmp.w   #IB_EVN*IB_EVSZ,d1
+        blo.s   .in_wrap
+        moveq   #0,d1
+.in_wrap:
+        move.w  d1,IB_EVTAIL(a5)
+        bsr     it_dobutton
+        bra.s   .in_next
+.in_move:
+        tst.b   IB_MOVED(a5)
+        beq.s   .in_wait
+        clr.b   IB_MOVED(a5)
+        move.w  PTR_X,d4
         move.w  PTR_Y,d5
+        bsr     it_domove
+        bra.s   .in_next
+
+; it_scrxy(a5, d4.w/d5.w = pointeur) -> a4 = écran de tête, d4/d5 = position dans cet écran (HIRES : x doublé) ;
+; Z = 1 s'il n'y a pas d'écran. Clobbe d0.
+it_scrxy:
+        move.l  IB_FIRSTSCREEN(a5),d0
+        beq.s   .sx_ret
+        move.l  d0,a4
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .sx_lo
+        add.w   d4,d4
+.sx_lo:
+        moveq   #1,d0                ; Z = 0
+.sx_ret:
+        rts
+
+; it_winat(a4 = écran, d4/d5 = position) -> a3 = fenêtre la plus en avant sous le point, d2/d3 = position relative ;
+; Z = 1 si aucune. Clobbe d0.
+it_winat:
         move.l  SC_FIRSTWINDOW(a4),a3
-.bt_find:
+.wa_lp:
         move.l  a3,d0
-        beq     .bt_ret
+        beq.s   .wa_ret
         move.w  d4,d2
-        sub.w   WD_LEFTEDGE(a3),d2   ; d2/d3 = position relative à la fenêtre
-        bmi.s   .bt_nxt
+        sub.w   WD_LEFTEDGE(a3),d2
+        bmi.s   .wa_nxt
         cmp.w   WD_WIDTH(a3),d2
-        bge.s   .bt_nxt
+        bge.s   .wa_nxt
         move.w  d5,d3
         sub.w   WD_TOPEDGE(a3),d3
-        bmi.s   .bt_nxt
+        bmi.s   .wa_nxt
         cmp.w   WD_HEIGHT(a3),d3
-        blt.s   .bt_hit
-.bt_nxt:
+        blt.s   .wa_hit
+.wa_nxt:
         move.l  WD_NEXTWINDOW(a3),a3
-        bra.s   .bt_find
-.bt_hit:
+        bra.s   .wa_lp
+.wa_hit:
+        moveq   #1,d0                ; Z = 0
+.wa_ret:
+        rts
+
+; it_dobutton(a5 = IntuitionBase, d0.w = code, d4/d5 = pointeur) : contexte tâche d'entrée. Bouton gauche enfoncé
+; sur une fenêtre : elle devient active (y compris une fenêtre BACKDROP, pour ses menus) ; gadget de fermeture -> CLOSEWINDOW, gadgets de profondeur -> derrière /
+; devant, barre de titre (WINDOWDRAG) ou gadget de taille -> geste avec cadre fantôme ; sinon MOUSEBUTTONS. Le
+; relâchement termine un geste en cours. Bouton droit : menus. Préserve a5.
+it_dobutton:
+        move.w  d0,d7                ; d7 = code
+        bsr     it_scrxy
+        beq     .db_ret
+        tst.l   IB_DRAGWIN(a5)
+        beq.s   .db_free
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne     .db_ret
+        bra     it_dragend
+.db_free:
+        move.w  d7,d0
+        and.w   #~IECODE_UP_PREFIX,d0
+        cmp.w   #IECODE_RBUTTON,d0
+        beq     it_menubutton
+        tst.l   IB_MENUWIN(a5)
+        bne     .db_ret              ; menus affichés : le bouton gauche est ignoré
+        bsr     it_winat
+        beq     .db_ret
         cmp.w   #IECODE_LBUTTON,d7
-        bne.s   .bt_mb
-        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE : clic sur le gadget de fermeture ?
-        beq.s   .bt_act
-        cmp.w   #WD_TBARH,d3
-        bge.s   .bt_act
-        cmp.w   #WD_CLOSEW+3,d2
-        bgt.s   .bt_act
-        move.l  #CLOSEWINDOW,d0
-        moveq   #0,d1
-        bsr     wn_sendmsg
-        bra.s   .bt_ret
-.bt_act:
-        move.l  IB_ACTIVEWINDOW(a5),d0
-        beq.s   .bt_set
+        bne     .db_mb
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; la fenêtre cliquée devient active (BACKDROP compris : ses menus)
+        beq.s   .db_set
         move.l  d0,a0
         and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
-.bt_set:
+.db_set:
         or.l    #WINDOWACTIVE,WD_FLAGS(a3)
         move.l  a3,IB_ACTIVEWINDOW(a5)
-.bt_mb:
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : aucun gadget système
+        bne     .db_mb
+        cmp.b   #WD_TBARH,WD_BORDERTOP(a3)
+        bne.s   .db_size
+        cmp.w   #WD_TBARH,d3
+        bge.s   .db_size
+        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
+        beq.s   .db_nclose
+        cmp.w   #WD_CLOSEW+3,d2
+        bgt.s   .db_nclose
+        move.l  #CLOSEWINDOW,d0
+        moveq   #0,d1
+        bra     wn_sendmsg
+.db_nclose:
+        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : [W-2G, W-G-1] derrière, [W-G, W-1] devant
+        beq.s   .db_ndepth
+        move.w  WD_WIDTH(a3),d0
+        sub.w   #2*SC_GADW,d0
+        cmp.w   d0,d2
+        blt.s   .db_ndepth
+        add.w   #SC_GADW,d0
+        move.l  a3,a0
+        move.l  a5,a6
+        cmp.w   d0,d2
+        bge     intuition_WindowToFront
+        bra     intuition_WindowToBack
+.db_ndepth:
+        btst    #1,WD_FLAGS+3(a3)    ; WINDOWDRAG
+        beq.s   .db_mb
+        moveq   #IT_DRAGMOVE,d0
+        bra     it_dragstart
+.db_size:
+        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING : gadget dans le coin bas-droit (18 x 9)
+        beq.s   .db_mb
+        move.w  WD_WIDTH(a3),d0
+        sub.w   #18,d0
+        cmp.w   d0,d2
+        blt.s   .db_mb
+        move.w  WD_HEIGHT(a3),d0
+        sub.w   #9,d0
+        cmp.w   d0,d3
+        blt.s   .db_mb
+        moveq   #IT_DRAGSIZE,d0
+        bra     it_dragstart
+.db_mb:
         move.l  #MOUSEBUTTONS,d0
         moveq   #SELECTDOWN,d1
         cmp.w   #IECODE_LBUTTON,d7
-        beq.s   .bt_send
+        beq     wn_sendmsg
         move.w  #SELECTUP,d1
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
-        bne.s   .bt_ret
-.bt_send:
+        beq     wn_sendmsg
+.db_ret:
+        rts
+
+; it_dragstart(a3 = fenêtre, a4 = écran, d0 = IT_DRAGMOVE | IT_DRAGSIZE, d4/d5 = pointeur) : début d'un geste. Les
+; couches de l'écran sont verrouillées jusqu'au relâchement (personne ne dessine sous le cadre fantôme, tracé en
+; mode COMPLEMENT dans le RastPort de l'écran). Préserve a5.
+it_dragstart:
+        move.l  a3,IB_DRAGWIN(a5)
+        move.w  d0,IB_DRAGMODE(a5)
+        move.w  d4,IB_DRAGSX(a5)
+        move.w  d5,IB_DRAGSY(a5)
+        st      IB_TRACK(a5)
+        lea     SC_LAYERINFO(a4),a0
+        move.l  IB_LAYERSBASE(a5),a6
+        jsr     LVO_LOCKLAYERS(a6)
+        bsr     it_dragrect
+        st      IB_BOXON(a5)
+        bra     it_boxxor
+
+; it_domove(a5, d4/d5 = pointeur) : geste en cours -> le cadre fantôme suit le pointeur ; menus -> surbrillance.
+it_domove:
+        tst.l   IB_MENUWIN(a5)
+        bne     it_menumove
+        move.l  IB_DRAGWIN(a5),d0
+        beq.s   .dm_ret
+        move.l  d0,a3
+        bsr     it_scrxy
+        beq.s   .dm_ret
+        bsr     it_boxxor            ; efface l'ancien
+        bsr     it_dragrect
+        bra     it_boxxor
+.dm_ret:
+        rts
+
+; it_dragend(a5, a4 = écran, d4/d5 = pointeur au relâchement) : efface le cadre, applique le déplacement ou la
+; nouvelle taille, puis rend les couches.
+it_dragend:
+        move.l  IB_DRAGWIN(a5),a3
+        bsr     it_boxxor
+        clr.b   IB_BOXON(a5)
+        bsr     it_dragrect
+        move.l  a3,a0
+        move.l  a5,a6
+        cmp.w   #IT_DRAGSIZE,IB_DRAGMODE(a5)
+        beq.s   .de_size
+        movem.w IB_BOX(a5),d0-d1
+        sub.w   WD_LEFTEDGE(a3),d0
+        sub.w   WD_TOPEDGE(a3),d1
+        ext.l   d0
+        ext.l   d1
+        bsr     intuition_MoveWindow
+        bra.s   .de_done
+.de_size:
+        movem.w IB_BOX(a5),d0-d3
+        sub.w   d0,d2
+        addq.w  #1,d2
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  d2,d0
+        sub.w   WD_WIDTH(a3),d0
+        move.w  d3,d1
+        sub.w   WD_HEIGHT(a3),d1
+        ext.l   d0
+        ext.l   d1
+        bsr     intuition_SizeWindow
+.de_done:
+        clr.l   IB_DRAGWIN(a5)
+        clr.b   IB_TRACK(a5)
+        move.l  WD_WSCREEN(a3),a0
+        lea     SC_LAYERINFO(a0),a0
+        move.l  IB_LAYERSBASE(a5),a6
+        jmp     LVO_UNLOCKLAYERS(a6)
+
+; it_dragrect(a3 = fenêtre, a4 = écran, a5, d4/d5 = pointeur) : rectangle visé par le geste -> IB_BOX (x0,y0,x1,y1).
+; Déplacement : la fenêtre reste dans l'écran ; taille : bornée par les limites de la fenêtre et l'écran.
+it_dragrect:
+        movem.l d2-d7,-(sp)
+        move.w  d4,d6
+        sub.w   IB_DRAGSX(a5),d6     ; d6/d7 = déplacement du pointeur
+        move.w  d5,d7
+        sub.w   IB_DRAGSY(a5),d7
+        move.w  WD_LEFTEDGE(a3),d0
+        move.w  WD_TOPEDGE(a3),d1
+        move.w  WD_WIDTH(a3),d2
+        move.w  WD_HEIGHT(a3),d3
+        cmp.w   #IT_DRAGSIZE,IB_DRAGMODE(a5)
+        beq.s   .dr_size
+        add.w   d6,d0
+        move.w  SC_WIDTH(a4),d4
+        sub.w   d2,d4
+        bsr.s   .dr_clamp0
+        add.w   d7,d1
+        exg     d0,d1
+        move.w  SC_HEIGHT(a4),d4
+        sub.w   d3,d4
+        bsr.s   .dr_clamp0
+        exg     d0,d1
+        bra.s   .dr_out
+.dr_size:
+        add.w   d6,d2                ; largeur : [MinWidth, min(MaxWidth, écran - LeftEdge)]
+        move.w  SC_WIDTH(a4),d4
+        sub.w   d0,d4
+        cmp.w   WD_MAXWIDTH(a3),d4
+        bls.s   .dr_wmax
+        move.w  WD_MAXWIDTH(a3),d4
+.dr_wmax:
+        move.w  WD_MINWIDTH(a3),d5
+        exg     d0,d2
+        bsr.s   it_clamp
+        exg     d0,d2
+        add.w   d7,d3
+        move.w  SC_HEIGHT(a4),d4
+        sub.w   d1,d4
+        cmp.w   WD_MAXHEIGHT(a3),d4
+        bls.s   .dr_hmax
+        move.w  WD_MAXHEIGHT(a3),d4
+.dr_hmax:
+        move.w  WD_MINHEIGHT(a3),d5
+        exg     d0,d3
+        bsr.s   it_clamp
+        exg     d0,d3
+.dr_out:
+        add.w   d0,d2                ; x1 = x0 + largeur - 1
+        subq.w  #1,d2
+        add.w   d1,d3
+        subq.w  #1,d3
+        movem.w d0-d3,IB_BOX(a5)
+        movem.l (sp)+,d2-d7
+        rts
+.dr_clamp0:                          ; d0 := clamp(d0, 0, d4)
+        moveq   #0,d5
+; it_clamp : d0.w := clamp(d0, d5, d4) (d4 prime si d5 > d4).
+it_clamp:
+        cmp.w   d5,d0
+        bge.s   .cl_1
+        move.w  d5,d0
+.cl_1:
+        cmp.w   d4,d0
+        ble.s   .cl_2
+        move.w  d4,d0
+.cl_2:
+        rts
+
+; it_boxxor(a3 = fenêtre du geste, a5) : inverse le cadre IB_BOX (1 pixel) dans le RastPort de son écran ; quatre
+; segments disjoints, pour qu'un second appel l'efface exactement. Préserve d2-d7/a2-a5.
+it_boxxor:
+        movem.l d2-d7/a2,-(sp)
+        move.l  WD_WSCREEN(a3),a2
+        lea     SC_RASTPORT(a2),a2
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a2,a1
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        movem.w IB_BOX(a5),d4-d7     ; x0, y0, x1, y1
+        move.l  a2,a1                ; haut
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  d6,d2
+        move.w  d5,d3
+        jsr     LVO_RECTFILL(a6)
+        cmp.w   d5,d7
+        ble.s   .bx_done
+        move.l  a2,a1                ; bas
+        move.w  d4,d0
+        move.w  d7,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        jsr     LVO_RECTFILL(a6)
+        move.w  d7,d3
+        subq.w  #1,d3
+        cmp.w   d5,d3
+        ble.s   .bx_done
+        move.l  a2,a1                ; gauche
+        move.w  d4,d0
+        move.w  d5,d1
+        addq.w  #1,d1
+        move.w  d4,d2
+        jsr     LVO_RECTFILL(a6)
+        cmp.w   d4,d6
+        ble.s   .bx_done
+        move.l  a2,a1                ; droite
+        move.w  d6,d0
+        move.w  d5,d1
+        addq.w  #1,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        subq.w  #1,d3
+        jsr     LVO_RECTFILL(a6)
+.bx_done:
+        move.l  a2,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        movem.l (sp)+,d2-d7/a2
+        rts
+
+; SizeWindow(fenêtre a0, dx d0, dy d1) : nouvelle taille bornée (16 pixels au moins, sans sortir de l'écran). La
+; couche suit (SizeLayer) ; les anciennes bordures devenues intérieures et l'ancien gadget de taille sont effacés,
+; le cadre redessiné, NEWSIZE envoyé, puis les zones abîmées réparées (REFRESHWINDOW pour la fenêtre elle-même).
+intuition_SizeWindow:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
+        move.l  WD_WSCREEN(a3),a4
+        move.w  WD_WIDTH(a3),d6      ; d6/d7 = ancienne taille
+        move.w  WD_HEIGHT(a3),d7
+        move.w  d6,d2
+        add.w   d0,d2
+        move.w  SC_WIDTH(a4),d4
+        sub.w   WD_LEFTEDGE(a3),d4
+        moveq   #16,d5
+        exg     d0,d2
+        bsr     it_clamp
+        exg     d0,d2
+        move.w  d7,d3
+        add.w   d1,d3
+        move.w  SC_HEIGHT(a4),d4
+        sub.w   WD_TOPEDGE(a3),d4
+        exg     d0,d3
+        bsr     it_clamp
+        exg     d0,d3
+        move.w  d2,d0
+        sub.w   d6,d0                ; d0/d1 = variation effective
+        move.w  d3,d1
+        sub.w   d7,d1
+        move.w  d0,d4
+        or.w    d1,d4
+        beq     .sw_ret
+        move.w  d2,WD_WIDTH(a3)
+        move.w  d3,WD_HEIGHT(a3)
+        ext.l   d0
+        ext.l   d1
+        move.l  IB_LAYERSBASE(a5),a6
+        suba.l  a0,a0
+        move.l  WD_WLAYER(a3),a1
+        jsr     LVO_SIZELAYER(a6)
+        bsr     wn_gzz
+        bsr     wn_unborder
+        bsr     wn_border
+        move.l  #NEWSIZE,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
         bsr     wn_sendmsg
-.bt_ret:
-        movem.l (sp)+,d0-d7/a0-a6
+        bsr     it_refresh
+.sw_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; WindowLimits(fenêtre a0, minW d0, minH d1, maxW d2, maxH d3) -> d0 = TRUE : limites du gadget de taille ; une
+; valeur nulle laisse la limite inchangée.
+intuition_WindowLimits:
+        lea     WD_MINWIDTH(a0),a0
+        tst.w   d0
+        beq.s   .wl_1
+        move.w  d0,(a0)
+.wl_1:
+        tst.w   d1
+        beq.s   .wl_2
+        move.w  d1,2(a0)
+.wl_2:
+        tst.w   d2
+        beq.s   .wl_3
+        move.w  d2,4(a0)
+.wl_3:
+        tst.w   d3
+        beq.s   .wl_4
+        move.w  d3,6(a0)
+.wl_4:
+        moveq   #1,d0
+        rts
+
+; wn_gzz(a3 = fenêtre) : GZZWidth / GZZHeight = taille moins les bordures. Clobbe d0/d1.
+wn_gzz:
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        moveq   #0,d1
+        move.b  WD_BORDERRIGHT(a3),d1
+        add.w   d0,d1
+        move.w  WD_WIDTH(a3),d0
+        sub.w   d1,d0
+        move.w  d0,WD_GZZWIDTH(a3)
+        moveq   #0,d0
+        move.b  WD_BORDERTOP(a3),d0
+        moveq   #0,d1
+        move.b  WD_BORDERBOTTOM(a3),d1
+        add.w   d0,d1
+        move.w  WD_HEIGHT(a3),d0
+        sub.w   d1,d0
+        move.w  d0,WD_GZZHEIGHT(a3)
+        rts
+
+; wn_unborder(a3 = fenêtre, a5, d6/d7 = ancienne taille) : efface (stylo 0) les bandes de bordure droite / basse
+; touchées par le changement de taille, de min(ancienne, nouvelle) jusqu'aux nouveaux bords (ancienne bordure devenue
+; intérieure, ou intérieur passé sous la nouvelle bordure), et l'ancien gadget de taille ; wn_border redessine ensuite
+; le cadre. Clobbe d0-d5/a0/a1/a6.
+wn_unborder:
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : rien à effacer
+        bne     .ub_ret
+        move.l  IB_GFXBASE(a5),a6
+        move.l  WD_RPORT(a3),a1
+        moveq   #0,d0
+        jsr     LVO_SETAPEN(a6)
+        move.w  WD_WIDTH(a3),d0      ; bande droite : [min(oldW, W) - BR, W - 1] x [BT, H - 1]
+        cmp.w   d6,d0
+        ble.s   .ub_wmin
+        move.w  d6,d0
+.ub_wmin:
+        moveq   #0,d4
+        move.b  WD_BORDERRIGHT(a3),d4
+        sub.w   d4,d0
+        move.w  WD_WIDTH(a3),d2
+        subq.w  #1,d2
+        moveq   #0,d1
+        move.b  WD_BORDERTOP(a3),d1
+        move.w  WD_HEIGHT(a3),d3
+        subq.w  #1,d3
+        bsr.s   .ub_fill
+        move.w  WD_HEIGHT(a3),d1     ; bande basse : [0, W - 1] x [min(oldH, H) - BB, H - 1]
+        cmp.w   d7,d1
+        ble.s   .ub_hmin
+        move.w  d7,d1
+.ub_hmin:
+        moveq   #0,d5
+        move.b  WD_BORDERBOTTOM(a3),d5
+        sub.w   d5,d1
+        moveq   #0,d0
+        move.w  WD_WIDTH(a3),d2
+        subq.w  #1,d2
+        move.w  WD_HEIGHT(a3),d3
+        subq.w  #1,d3
+        bsr.s   .ub_fill
+.ub_gad:
+        btst    #0,WD_FLAGS+3(a3)    ; ancien gadget de taille
+        beq.s   .ub_ret
+        move.w  d6,d0
+        sub.w   #18,d0
+        move.w  d7,d1
+        sub.w   #9,d1
+        move.w  d6,d2
+        subq.w  #1,d2
+        move.w  d7,d3
+        subq.w  #1,d3
+.ub_fill:                            ; RectFill si le rectangle n'est pas vide
+        cmp.w   d0,d2
+        blt.s   .ub_ret
+        cmp.w   d1,d3
+        blt.s   .ub_ret
+        move.l  WD_RPORT(a3),a1
+        jmp     LVO_RECTFILL(a6)
+.ub_ret:
         rts
 
 ; wn_sendmsg(a3 = fenêtre, d0 = classe IDCMP, d1.w = code, d2.w/d3.w = souris relative) : si la fenêtre a demandé
 ; cette classe, prend un IntuiMessage libre de sa réserve, l'horodate (compteur VBlank : 50 Hz) et l'envoie sur son
-; UserPort ; réserve épuisée : événement perdu. Clobbe d0/d1/a0/a1/a6.
+; UserPort ; réserve épuisée : événement perdu. Clobbe d0/d1/d6/a0/a1/a6.
 wn_sendmsg:
         move.l  WD_USERPORT(a3),d6
         beq     .sm_ret

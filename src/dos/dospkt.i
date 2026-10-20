@@ -58,7 +58,9 @@ FH_ARG1          EQU 36            ; LONG = clé privée du fichier côté handl
 FH_ARG2          EQU 40
 FH_SIZEOF        EQU 44
 DOS_NAMEMAX      EQU 255           ; longueur max d'un nom BSTR (octet de longueur)
-DOS_FH_ALLOC     EQU FH_SIZEOF+DOS_NAMEMAX+1 ; FileHandle + buffer BSTR du nom (à FH_SIZEOF, long-aligné) en 1 AllocMem
+FH_WBUF          EQU FH_SIZEOF+DOS_NAMEMAX+1 ; privé (FileHandles ouverts par dos) : tampon d'écriture différée | 0
+FH_WCNT          EQU FH_WBUF+4         ; privé : octets en attente dans ce tampon
+DOS_FH_ALLOC     EQU FH_WCNT+4         ; FileHandle + buffer BSTR du nom (à FH_SIZEOF) + champs privés, en 1 AllocMem
 RT_FHBUFLONGS    EQU 49            ; tampon d'un FileHandle du runtime BCPL : getvec(49) = 200 octets (rdch ; libéré par Close)
 
 ; --- DeviceNode (44 o ; chaîné dans DosInfo.di_DevInfo) ---

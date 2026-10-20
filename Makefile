@@ -34,7 +34,7 @@ endif
 # --- piste intuition (M5+) : objets reliés APRÈS graphics ---
 INT_DIR   := src/intuition
 INT_INC   := $(INT_DIR)/intuition.i
-INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/screens.o $(BUILD)/requester.o $(BUILD)/pointer.o
+INT_OBJ   := $(BUILD)/intuition_lib.o $(BUILD)/screens.o $(BUILD)/menus.o $(BUILD)/requester.o $(BUILD)/pointer.o
 # --- piste dos (M6+) : objets reliés APRÈS intuition ---
 DOS_DIR   := src/dos
 DOS_INC   := $(DOS_DIR)/dos.i

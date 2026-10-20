@@ -31,14 +31,20 @@ proc_create:
                 move.b  d3,LN_PRI(a4)
                 move.b  #NT_PROCESS,LN_TYPE(a4)
                 move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)   ; bits 0-15 réservés (dont DOS_PORTSIG=8)
-                move.l  d4,d0                ; pile
+                addq.l  #7,d4                ; pile arrondie à 8 : RemTask rend TC_SPUPPER - TC_SPLOWER (= taille - 4)
+                and.w   #-8,d4
+                move.l  d4,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq.s   .fail_task
                 move.l  d0,TC_SPLOWER(a4)
                 add.l   d4,d0
+                subq.l  #4,d0                ; dernier long = taille de la pile : au démarrage (sp) = adresse de retour,
+                move.l  d0,a0                ; 4(sp) = taille, pr_ReturnAddr -> ce long (code de sortie des programmes C)
+                move.l  d4,(a0)
                 move.l  d0,TC_SPUPPER(a4)
+                move.l  d0,PR_RETURNADDR(a4)
                 ; --- initialiser ENTIÈREMENT pr_MsgPort dans le parent (pas de handshake) ---
                 lea     PR_MSGPORT(a4),a0    ; a0 = &pr_MsgPort
                 move.b  #NT_MSGPORT,LN_TYPE(a0)

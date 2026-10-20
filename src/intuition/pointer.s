@@ -15,7 +15,7 @@
 
                 xdef    pointer_input_handler
                 xdef    it_ptrinit
-                xref    it_button            ; screens.s : boutons -> fenêtres
+                xref    it_event             ; screens.s : boutons et mouvements -> tâche d'entrée
 
 ; pointer_input_handler(a0 = liste d'InputEvents, a1 = is_Data) : handler input.device (pri 50). Pour chaque
 ; RAWMOUSE : PTR += (ie_X, ie_Y) relatifs signés, clamp [0, PTR_?MAX-1], réécrit ie_X/ie_Y en absolu. Rend d0 =
@@ -56,12 +56,8 @@ pointer_input_handler:
                 move.w  d4,PTR_Y
                 move.w  d4,IE_Y(a3)
                 bsr     it_ptrmoved          ; sprite du pointeur + IB_MOUSEX/Y
-                move.w  IE_CODE(a3),d0       ; bouton gauche enfoncé / relâché : fenêtres (IDCMP)
-                move.w  d0,d1
-                and.w   #~IECODE_UP_PREFIX,d1
-                cmp.w   #IECODE_LBUTTON,d1
-                bne.s   .pih_next
-                jsr     it_button
+                move.w  IE_CODE(a3),d0       ; boutons et mouvements -> tâche d'entrée d'intuition
+                jsr     it_event
 .pih_next:
                 move.l  IE_NEXTEVENT(a3),a3
                 bra.s   .pih_loop

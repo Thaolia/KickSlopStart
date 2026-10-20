@@ -1189,6 +1189,73 @@ dr_bits:
         moveq   #-1,d2
         lsl.b   d4,d2
         lsr.w   #3,d7                ; d7 = dernier octet destination
+        cmp.b   #$C0,DC_MINTERM(a5)  ; voie rapide : copie d'un plan réel, décalage multiple de 8 (sauvegardes de
+        bne.s   .bt_byte             ; layers : même position des bits modulo 16) -> octets recopiés tels quels
+        move.l  a2,d4
+        beq.s   .bt_byte
+        addq.l  #1,d4
+        beq.s   .bt_byte
+        moveq   #7,d4
+        and.w   d0,d4
+        bne.s   .bt_byte
+        move.l  a1,-(sp)
+        asr.w   #3,d0
+        lea     0(a2,d0.w),a0
+        add.w   d5,a0                ; a0 = source du premier octet destination
+        add.w   d5,a1
+        cmp.w   d5,d7
+        bne.s   .bf_multi
+        and.b   d2,d1                ; un seul octet : les deux masques
+        move.b  (a0),d4
+        and.b   d1,d4
+        not.b   d1
+        and.b   d1,(a1)
+        or.b    d4,(a1)
+        bra.s   .bf_done
+.bf_multi:
+        move.b  (a0)+,d4             ; premier octet (masqué)
+        and.b   d1,d4
+        not.b   d1
+        and.b   d1,(a1)
+        or.b    d4,(a1)+
+        sub.w   d5,d7
+        subq.w  #1,d7                ; d7 = octets pleins
+        beq.s   .bf_last
+        move.w  a0,d3                ; même parité : alignement sur un mot puis copie par longs
+        move.w  a1,d4
+        eor.w   d4,d3
+        btst    #0,d3
+        bne.s   .bf_bytes
+        move.w  a0,d3
+        btst    #0,d3
+        beq.s   .bf_even
+        move.b  (a0)+,(a1)+
+        subq.w  #1,d7
+.bf_even:
+        move.w  d7,d4
+        lsr.w   #2,d4
+        and.w   #3,d7
+        bra.s   .bf_lnx
+.bf_long:
+        move.l  (a0)+,(a1)+
+.bf_lnx:
+        dbra    d4,.bf_long
+.bf_bytes:
+        subq.w  #1,d7
+        bmi.s   .bf_last
+.bf_mid:
+        move.b  (a0)+,(a1)+
+        dbra    d7,.bf_mid
+.bf_last:
+        move.b  (a0),d4              ; dernier octet (masqué)
+        and.b   d2,d4
+        not.b   d2
+        and.b   d2,(a1)
+        or.b    d4,(a1)
+.bf_done:
+        move.l  (sp)+,a1
+        addq.l  #2,sp
+        rts
 .bt_byte:
         moveq   #-1,d6               ; d6.b = masque de l'octet
         cmp.w   (sp),d5
