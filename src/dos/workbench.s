@@ -155,7 +155,7 @@ WBS_DWIN        EQU WBS_NAME+WBS_NAMEMAX ; fenêtre du disque (ouverte par doubl
 WBS_IX          EQU WBS_DWIN+4       ; position de l'icône du disque dans la fenêtre de fond
 WBS_IY          EQU WBS_IX+2
 WBS_SEL         EQU WBS_IY+2         ; BYTE : icône du disque sélectionnée
-WBS_SHOWN       EQU WBS_SEL+1        ; BYTE : icône du disque dessinée (non recouverte)
+WBS_SHOWN       EQU WBS_SEL+1        ; BYTE : icône du disque dessinée (à l'écran ou dans la sauvegarde de sa couche)
 WBS_LSEC        EQU WBS_SHOWN+1      ; horodatage du clic précédent (double-clic)
 WBS_LMIC        EQU WBS_LSEC+4
 WBS_NICON       EQU WBS_LMIC+4       ; icônes de la racine lues (fenêtre du disque)
@@ -308,19 +308,7 @@ wb_drawicons:
         move.w  d4,WBS_IX(a5)
         move.w  d5,WBS_IY(a5)
         clr.b   WBS_SHOWN(a5)
-        move.w  d4,d0                ; rectangle à l'écran (icône + nom : la ligne de texte sous l'icône)
-        add.w   WD_LEFTEDGE(a3),d0
-        move.w  d5,d1
-        add.w   WD_TOPEDGE(a3),d1
-        move.w  d0,d2
-        add.w   #WBS_NAMEMAX*GFX_FONTW/2,d2
-        move.w  d1,d3
-        add.w   d7,d3
-        add.w   #GFX_FONTH+2,d3
-        sub.w   #WBS_NAMEMAX*GFX_FONTW/4,d0
-        bsr     wb_covered
-        bne     .di_ret
-        move.l  WBS_IBASE(a5),a6     ; image
+        move.l  WBS_IBASE(a5),a6     ; image (cachée par une fenêtre : layers la range dans la sauvegarde)
         move.l  WD_RPORT(a3),a0
         move.l  DO_GADGET+GG_GADGETRENDER(a2),a1
         move.w  d4,d0
@@ -653,30 +641,17 @@ wb_loadicons:
         rts
 WB_PATHMAX      EQU 48
 
-; wb_drawdrawer(a5) : dessine les icônes de la racine dans la fenêtre du disque, aux positions de leurs .info,
-; nom centré dessous ; le dessin est borné à l'intérieur de la fenêtre (bornes de sa couche ramenées à l'intérieur le
-; temps du dessin : coordonnées relatives au coin intérieur). Préserve d2-d7/a2-a6.
+; wb_drawdrawer(a5) : dessine les icônes de la racine dans la fenêtre du disque, aux positions de leurs .info
+; (relatives au coin intérieur : décalées des bordures gauche et haute), nom centré dessous. Préserve d2-d7/a2-a6.
 wb_drawdrawer:
         movem.l d2-d7/a2-a4/a6,-(sp)
         move.l  WBS_DWIN(a5),d0
         beq     .dd_ret
         move.l  d0,a3
-        move.l  WD_WLAYER(a3),a4     ; a4 = couche : bornes sauvées puis ramenées à l'intérieur
-        move.l  lr_MinX(a4),-(sp)
-        move.l  lr_MaxX(a4),-(sp)
-        moveq   #0,d0
-        move.b  WD_BORDERLEFT(a3),d0
-        add.w   d0,lr_MinX(a4)
-        move.b  WD_BORDERTOP(a3),d0
-        add.w   d0,lr_MinY(a4)
-        move.b  WD_BORDERRIGHT(a3),d0
-        sub.w   d0,lr_MaxX(a4)
-        move.b  WD_BORDERBOTTOM(a3),d0
-        sub.w   d0,lr_MaxY(a4)
         moveq   #0,d7                ; d7 = icône
 .dd_lp:
         cmp.l   WBS_NICON(a5),d7
-        bhs     .dd_done
+        bhs     .dd_ret
         move.l  d7,d0
         lsl.l   #2,d0
         lea     WBS_ICONS(a5),a0
@@ -689,6 +664,11 @@ wb_drawdrawer:
         move.w  DO_CURRENTX+2(a2),d4
         move.w  DO_CURRENTY+2(a2),d5
 .dd_pos:
+        moveq   #0,d0                ; coordonnées intérieures -> coordonnées de la fenêtre
+        move.b  WD_BORDERLEFT(a3),d0
+        add.w   d0,d4
+        move.b  WD_BORDERTOP(a3),d0
+        add.w   d0,d5
         move.l  WBS_IBASE(a5),a6
         move.l  WD_RPORT(a3),a0
         move.l  DO_GADGET+GG_GADGETRENDER(a2),a1
@@ -724,50 +704,12 @@ wb_drawdrawer:
         move.l  a4,a0
         move.w  d2,d0
         jsr     LVO_TEXT(a6)
-        move.l  WD_WLAYER(a3),a4
         addq.l  #1,d7
         bra     .dd_lp
-.dd_done:
-        move.l  (sp)+,lr_MaxX(a4)
-        move.l  (sp)+,lr_MinX(a4)
 .dd_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 WB_GRIDX        EQU 80
-
-; wb_covered(a3 = fenêtre de fond, d0..d3 = rectangle à l'écran) -> Z = 0 si une fenêtre placée devant elle le
-; recouvre. Préserve d0-d7 ; clobbe a0.
-wb_covered:
-        move.l  d4,-(sp)
-        move.l  WD_WSCREEN(a3),a0
-        move.l  SC_FIRSTWINDOW(a0),a0
-.cv_lp:
-        move.l  a0,d4
-        beq.s   .cv_no
-        cmp.l   a3,a0
-        beq.s   .cv_no               ; le reste de la liste est derrière
-        move.w  WD_LEFTEDGE(a0),d4
-        cmp.w   d2,d4
-        bgt.s   .cv_next
-        add.w   WD_WIDTH(a0),d4
-        cmp.w   d0,d4
-        ble.s   .cv_next
-        move.w  WD_TOPEDGE(a0),d4
-        cmp.w   d3,d4
-        bgt.s   .cv_next
-        add.w   WD_HEIGHT(a0),d4
-        cmp.w   d1,d4
-        ble.s   .cv_next
-        move.l  (sp)+,d4
-        move.w  #0,ccr               ; Z = 0 : recouvert
-        rts
-.cv_next:
-        move.l  WD_NEXTWINDOW(a0),a0
-        bra.s   .cv_lp
-.cv_no:
-        move.l  (sp)+,d4
-        move.w  #4,ccr               ; Z = 1
-        rts
 
 wb_taskname:
         dc.b    "workbench.task",0

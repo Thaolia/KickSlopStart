@@ -797,9 +797,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     DrawImage (BltBitMapRastPort), AllocRemember, pointeur souris (sprites), fenêtre de fond avec l'icône du disque
     (icon.library), clic / double-clic -> fenêtre du disque et ses icônes, CLOSEWINDOW ; disquette insérée sur
     l'écran insert-disk -> redémarrage et boot.
+    **M7+ et L4 FAITS** : mathffp.library, disk.resource, potgo.resource, keyboard.device, audio.device, sémaphores
+    exec, regions et BltBitMap général, layers.library (simple/smart/backdrop, dommages), intuition sur layers
+    (WindowToFront/Back, MoveWindow, Begin/EndRefresh) ; écrasement mémoire latent du lancement des commandes BCPL
+    corrigé (pile du shell trop courte d'un long).
     **Étape 8 (interaction)** : tiroirs imbriqués (double-clic sur un tiroir), lancement d'outils (Shell, Clock…),
-    menus Workbench, déplacement des fenêtres ; layers.library (recouvrement réel), OpenFont/topaz, mathffp.library,
-    InitGels. Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4 (Run vers PIPE:).
+    menus Workbench, déplacement des fenêtres, SizeWindow ; OpenFont/topaz, InitGels. Aussi : nœuds CON/RAW/SER/PAR/PRT, execute (101), writef tamponné, C:FAULT, globale 4 (Run vers PIPE:).
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

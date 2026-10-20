@@ -1456,7 +1456,8 @@ g_qpkt:
         moveq   #0,d1
         BLEAVE
 
-; 121 runcommand(seg, pile, args, len) : lance le premier hunk de seg sur une pile neuve de « pile » longs (spec §4.3) :
+; 121 runcommand(seg, pile, args, len) : lance le premier hunk de seg sur une pile neuve de « pile » longs (spec §4.3),
+; plus la marge CP_STKEXTRA (sans elle, un dépassement écrase le bloc voisin du tas : vu avec Execute en arrière-plan) :
 ; a0 = BADDR(args), d0 = len, 4(sp) = taille, pr_ReturnAddr -> ce long, A1 = frame appelante, A2 = GV courant, A3 =
 ; segment, A5/A6 = appel/retour BCPL. -> code retour (d0 de la commande) ; -1 si pile impossible. Result2 intact.
 g_runcommand:
@@ -1466,6 +1467,7 @@ g_runcommand:
         move.l  d3,d7                ; args (BPTR)
         move.l  a4,d3                ; d3 = frame appelante (a1 est écrasé par AllocMem)
         move.l  ($4).w,a6
+        add.l   #CP_STKEXTRA/4,d6    ; marge : notre runtime utilise la pile 68000 de la commande (tampons, packets)
         move.l  d6,d1
         bsr     rt_getvec_raw
         tst.l   d0

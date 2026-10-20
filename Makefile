@@ -20,12 +20,12 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o $(BUILD)/mathffp.o $(BUILD)/diskres.o $(BUILD)/potgo.o $(BUILD)/kbddev.o $(BUILD)/audio.o $(BUILD)/semaphores.o
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
 # bootscreen_data.o : palette OCS + incbin des 5 bitplanes de l'écran de boot (généré par mk_bootscreen.py).
-GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/draw.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
+GFX_OBJ   := $(BUILD)/gfx.o $(BUILD)/graphics_lib.o $(BUILD)/draw.o $(BUILD)/regions.o $(BUILD)/layers.o $(BUILD)/bootscreen_data.o $(BUILD)/font8x8.o
 # loadscreen.o : écran de chargement — démo gatée. Lié UNIQUEMENT quand VASMDEF active LOADSCREEN_DEMO,
 # pour que la ROM par défaut reste sans code mort (byte-identique). `make VASMDEF=-DLOADSCREEN_DEMO=1 kick`.
 ifneq (,$(findstring LOADSCREEN_DEMO,$(VASMDEF)))
@@ -72,7 +72,7 @@ $(BUILD)/%.o: $(EXEC_DIR)/%.s $(EXEC_INC) | $(BUILD)
 $(BUILD)/console.o: $(EXEC_DIR)/console.s $(EXEC_INC) $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
 	$(VASM) -Fvobj -m68000 $(VASMDEF) -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
 # trackdisk.s inclut aussi disk.i (registres disque B2).
-$(BUILD)/trackdisk.o: $(EXEC_DIR)/disk.i
+$(BUILD)/trackdisk.o $(BUILD)/diskres.o: $(EXEC_DIR)/disk.i
 # expansion.s inclut expansion.i (ExpansionBase/ConfigDev/LVO) : relier la dépendance pour rebuild.
 $(BUILD)/expansion.o: $(EXEC_DIR)/expansion.i
 # boot.s inclut dospkt.i + dos.i (scaffold de preuve D3, montage DeviceNode) : relier les dépendances.

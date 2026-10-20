@@ -20,6 +20,11 @@
                 xref    intuition_AllocRemember
                 xref    intuition_FreeRemember
                 xref    intuition_DoubleClick
+                xref    intuition_WindowToBack
+                xref    intuition_WindowToFront
+                xref    intuition_BeginRefresh
+                xref    intuition_EndRefresh
+                xref    intuition_MoveWindow
 
 ; --- ROMTag intuition.library (scanné par build_reslist) ---
         EVEN
@@ -56,13 +61,22 @@ intuition_vectors:
         dc.l    intuition_null           ; 20 : LVO -120 EndRequest (non impl.)
         dc.l    intuition_GetPrefs       ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
-        dcb.l   10,intuition_null        ; 23..32 : LVO -138..-192 (non impl.)
+        dcb.l   5,intuition_null         ; 23..27 : LVO -138..-162 (non impl.)
+        dc.l    intuition_MoveWindow     ; 28 : LVO -168 MoveWindow(fenêtre a0, dx d0, dy d1)
+        dcb.l   4,intuition_null         ; 29..32 : LVO -174..-192 (non impl.)
         dc.l    intuition_OpenScreen     ; 33 : LVO -198 OpenScreen(newscreen a0)
         dc.l    intuition_OpenWindow     ; 34 : LVO -204 OpenWindow(newwindow a0)
         dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
         dcb.l   13,intuition_null        ; 36..48 : LVO -216..-288 (non impl.)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
-        dcb.l   16,intuition_null        ; 50..65 : LVO -300..-390 (non impl.)
+        dc.l    intuition_null           ; 50 : LVO -300 (non impl.)
+        dc.l    intuition_WindowToBack   ; 51 : LVO -306 WindowToBack(fenêtre a0)
+        dc.l    intuition_WindowToFront  ; 52 : LVO -312 WindowToFront(fenêtre a0)
+        dcb.l   6,intuition_null         ; 53..58 : LVO -318..-348 (non impl.)
+        dc.l    intuition_BeginRefresh   ; 59 : LVO -354 BeginRefresh(fenêtre a0)
+        dc.l    intuition_null           ; 60 : LVO -360 (non impl.)
+        dc.l    intuition_EndRefresh     ; 61 : LVO -366 EndRefresh(fenêtre a0, complet d0)
+        dcb.l   4,intuition_null         ; 62..65 : LVO -372..-390 (non impl.)
         dc.l    intuition_AllocRemember  ; 66 : LVO -396 AllocRemember(clé a0, taille d0, drapeaux d1)
         dc.l    intuition_null           ; 67 : LVO -402 AlohaWorkbench (non impl.)
         dc.l    intuition_FreeRemember   ; 68 : LVO -408 FreeRemember(clé a0, oublier d0)
@@ -165,11 +179,17 @@ intuition_initfunc:
         lea     intuition_gfxname(pc),a1
         jsr     LVO_FINDNAME(a6)
         move.l  d0,IB_GFXBASE(a2)
+        lea     EB_LIBLIST(a6),a0
+        lea     intuition_layersname(pc),a1
+        jsr     LVO_FINDNAME(a6)     ; layers.library (pri 31) est déjà initialisée
+        move.l  d0,IB_LAYERSBASE(a2)
         jsr     it_ptrinit           ; pointer.s : sprite du pointeur
         move.l  a2,d0
         move.l  (sp)+,a2
         rts
 intuition_gfxname:
         dc.b    "graphics.library",0
+intuition_layersname:
+        dc.b    "layers.library",0
         EVEN
 intuition_end:

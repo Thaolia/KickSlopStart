@@ -30,6 +30,7 @@
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
                 xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
+                xref    kbd_devevent     ; exec/kbddev.s (keyboard.device : keycode brut synthétique pour la preuve)
                 xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
                 xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
                 xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
@@ -65,6 +66,34 @@
 
 DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
 D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
+LYT_PIX      macro                    ; pixel (\1, \2) du BitMap de la sonde layers == \3, sinon échec
+        moveq   #\1,d0
+        moveq   #\2,d1
+        moveq   #\3,d2
+        bsr     lyt_px
+        bne     lyt_fail
+             endm
+LYT_RPIX     macro                    ; ReadPixel(L2, \1, \2) == \3, sinon échec
+        moveq   #\1,d0
+        moveq   #\2,d1
+        moveq   #\3,d2
+        bsr     lyt_rpx
+        bne     lyt_fail
+             endm
+AUT_KEY      EQU 32           ; IOAudio ioa_AllocKey / ioa_Data / ioa_Length / ioa_Period / ioa_Volume / ioa_Cycles
+AUT_DATA     EQU 34
+AUT_LENGTH   EQU 38
+AUT_PERIOD   EQU 42
+AUT_VOLUME   EQU 44
+AUT_CYCLES   EQU 46
+SEMT_NEST    EQU 14           ; SignalSemaphore ss_NestCount / ss_Owner / ss_QueueCount (sonde sémaphores)
+SEMT_OWNER   EQU 40
+SEMT_QC      EQU 44
+SEMT_SIZE    EQU 48
+KDT_ACTUAL   EQU 32           ; IOStdReq io_Actual / io_Length / io_Data (sonde keyboard.device)
+KDT_LENGTH   EQU 36
+KDT_DATA     EQU 40
+IOF_QUICK_K  EQU 1
 INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
 INPUT_TESTBLK EQU 120         ; #2 : bloc de test input.device = ioreq(48)+h1(24)+h2(24)+event(22), arrondi pair
 CMD_WRITE_BO EQU 3            ; #3a : io_Command CMD_WRITE (EQU local)
@@ -581,6 +610,985 @@ exp_close1:
         jsr     LVO_CLOSELIBRARY(a6)
 exp_done:
         move.l  ($4).w,a6            ; restaure a6 = ExecBase pour la suite (M6t)
+
+        ; --- mathffp.library : table de vecteurs FFP (LVO, d0, d1, résultat attendu calculé hors ROM) ---
+        ; Chaque appel passe par le vecteur LVO de la base ouverte ; un écart -> « MATHFFP FAIL » + LVO fautif.
+        ; La boucle garde son état dans d4/d5/a2/a3 : une fonction qui ne préserve pas d2-d7 casse la preuve.
+        movem.l d4-d5/a2-a3,-(sp)
+        lea     mathffp_test_name(pc),a1
+        moveq   #34,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq.s   mft_done
+        move.l  d0,a3
+        lea     mft_table(pc),a2
+        moveq   #(mft_table_end-mft_table)/14-1,d5
+mft_lp:
+        move.w  (a2)+,d4
+        move.l  (a2)+,d0
+        move.l  (a2)+,d1
+        move.l  a3,a6
+        jsr     0(a6,d4.w)
+        cmp.l   (a2)+,d0
+        bne.s   mft_fail
+        dbra    d5,mft_lp
+        lea     msg_mathffp_ok(pc),a0
+        bsr     ser_puts
+        bra.s   mft_close
+mft_fail:
+        lea     msg_mathffp_fail(pc),a0
+        bsr     ser_puts
+        move.w  d4,d0
+        bsr     ser_puthex
+        lea     msg_crlf_mft(pc),a0
+        bsr     ser_puts
+mft_close:
+        move.l  ($4).w,a6
+        move.l  a3,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+mft_done:
+        movem.l (sp)+,d4-d5/a2-a3
+        move.l  ($4).w,a6
+
+        ; --- disk.resource : AllocUnit/FreeUnit, GetUnitID, puis GetUnit/GiveUnit avec file d'attente ---
+        ; dru1 prend le contrôleur (GetUnit rend le « dernier pilote », non nul et != dru1) ; dru2 est mis en attente
+        ; (GetUnit = 0) ; GiveUnit lui fait ReplyMsg (sans port : LN_TYPE -> NT_REPLYMSG) ; dru2 retente et obtient
+        ; dru1 comme dernier pilote. Les DRU vivent sur la pile : DR_CURRENT reste ensuite un simple témoin (jamais
+        ; déréférencé hors possession du contrôleur). L'identifiant DF1 lu au démarrage est affiché.
+        movem.l d4/a2-a4,-(sp)
+        lea     diskres_test_name(pc),a1
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq     drt_done
+        move.l  d0,a2
+        lea     -176(sp),sp
+        move.l  sp,a3                ; a3 = dru1, a4 = dru2 (88 octets chacun, mis à zéro)
+        lea     88(a3),a4
+        move.l  a3,a0
+        moveq   #43,d0
+drt_clr:
+        clr.l   (a0)+
+        dbra    d0,drt_clr
+        move.l  a2,a6
+        moveq   #0,d0
+        jsr     -6(a6)               ; AllocUnit(0) -> 1
+        cmp.l   #1,d0
+        bne     drt_fail
+        moveq   #0,d0
+        jsr     -6(a6)               ; déjà prise -> 0
+        tst.l   d0
+        bne     drt_fail
+        moveq   #0,d0
+        jsr     -12(a6)              ; FreeUnit(0)
+        moveq   #0,d0
+        jsr     -6(a6)               ; de nouveau libre -> 1
+        cmp.l   #1,d0
+        bne     drt_fail
+        moveq   #0,d0
+        jsr     -12(a6)
+        moveq   #4,d0
+        jsr     -6(a6)               ; unité invalide -> 0
+        tst.l   d0
+        bne     drt_fail
+        moveq   #0,d0
+        jsr     -30(a6)              ; GetUnitID(0) = DRT_AMIGA
+        tst.l   d0
+        bne     drt_fail
+        moveq   #1,d0
+        jsr     -30(a6)
+        move.l  d0,d4                ; d4 = identifiant DF1
+        move.l  a3,a1
+        jsr     -18(a6)              ; GetUnit(dru1) : libre
+        tst.l   d0
+        beq     drt_fail
+        cmp.l   a3,d0
+        beq     drt_fail
+        move.b  #NT_MESSAGE,LN_TYPE(a4)
+        move.l  a4,a1
+        jsr     -18(a6)              ; GetUnit(dru2) : occupé -> 0, mis en attente
+        tst.l   d0
+        bne     drt_fail
+        jsr     -24(a6)              ; GiveUnit -> ReplyMsg(dru2)
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a4)
+        bne     drt_fail
+        move.l  a4,a1
+        jsr     -18(a6)              ; dru2 retente : dernier pilote = dru1
+        cmp.l   a3,d0
+        bne     drt_fail
+        jsr     -24(a6)
+        lea     msg_diskres_ok(pc),a0
+        bsr     ser_puts
+        move.l  d4,d0
+        swap    d0
+        bsr     ser_puthex
+        move.l  d4,d0
+        bsr     ser_puthex
+        lea     msg_crlf_mft(pc),a0
+        bsr     ser_puts
+        bra.s   drt_free
+drt_fail:
+        lea     msg_diskres_fail(pc),a0
+        bsr     ser_puts
+drt_free:
+        lea     176(sp),sp
+drt_done:
+        movem.l (sp)+,d4/a2-a4
+        move.l  ($4).w,a6
+
+        ; --- potgo.resource : règles d'attribution START / DATxx + conservation de l'octet haut par WritePotgo ---
+        ; (attendus : AutoDoc AllocPotBits ; un appelant peut se bloquer lui-même, la ressource ne suit pas les
+        ; propriétaires). POTGO est remis à 0 (toutes broches en entrée, valeur de reset) à la fin.
+        move.l  a2,-(sp)
+        lea     potgo_test_name(pc),a1
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq     pgt_done
+        move.l  d0,a6
+        move.l  d0,a2
+        move.w  #$0101,d0
+        jsr     -6(a6)               ; START + DATLX en entrée -> accordés
+        cmp.w   #$0101,d0
+        bne     pgt_fail
+        move.w  #$0400,d0
+        jsr     -6(a6)               ; DATLY en entrée alors que START est tenu -> refusé
+        tst.w   d0
+        bne     pgt_fail
+        move.w  #$0C00,d0
+        jsr     -6(a6)               ; DATLY en sortie -> accordé
+        cmp.w   #$0400,d0
+        bne     pgt_fail
+        move.w  #$0100,d0
+        jsr     -6(a6)               ; DATLX déjà pris -> refusé
+        tst.w   d0
+        bne     pgt_fail
+        move.w  #$0101,d0
+        jsr     -12(a6)              ; FreePotBits(START + DATLX)
+        moveq   #1,d0
+        jsr     -6(a6)               ; START : seul DATLY (sortie) reste pris -> accordé
+        cmp.w   #1,d0
+        bne     pgt_fail
+        move.w  #$0401,d0
+        jsr     -12(a6)
+        move.w  #$0C01,d0
+        move.w  #$0C01,d1
+        jsr     -18(a6)              ; WritePotgo : octet haut conservé, START non conservé
+        cmp.w   #$0C00,LIB_SIZE+2(a2)
+        bne     pgt_fail
+        moveq   #0,d0
+        move.w  #$FF00,d1
+        jsr     -18(a6)
+        tst.w   LIB_SIZE+2(a2)
+        bne     pgt_fail
+        lea     msg_potgo_ok(pc),a0
+        bsr     ser_puts
+        bra.s   pgt_done
+pgt_fail:
+        lea     msg_potgo_fail(pc),a0
+        bsr     ser_puts
+pgt_done:
+        move.l  (sp)+,a2
+        move.l  ($4).w,a6
+
+        ; --- keyboard.device : matrice, KBD_READEVENT (tampon / requête en attente rendue par l'événement),
+        ; CMD_CLEAR, AbortIO, liste des gestionnaires de reset. Keycodes SYNTHÉTIQUES remis à kbd_devevent (le même
+        ; point d'entrée que kbd_interrupt) ; la matrice est rendue vide (touches relâchées) et le tampon vidé.
+        ; Pile : IOStdReq 48 o, tampon 24 o (InputEvent / matrice), struct Interrupt 24 o.
+        movem.l a2-a3,-(sp)
+        lea     -96(sp),sp
+        move.l  sp,a3
+        move.l  a3,a0
+        moveq   #23,d0
+kdt_clr:
+        clr.l   (a0)+
+        dbra    d0,kdt_clr
+        lea     kbddev_test_name(pc),a0
+        moveq   #0,d0
+        move.l  a3,a1
+        moveq   #0,d1
+        jsr     LVO_OPENDEVICE(a6)
+        tst.b   d0
+        bne     kdt_fail0
+        move.l  IO_DEVICE(a3),a2
+        bsr     kdt_matrix           ; matrice vide au départ (touches $20-$27 = octet 4)
+        tst.l   48+4(a3)
+        bne     kdt_fail
+        moveq   #$20,d0              ; « A » enfoncée
+        jsr     kbd_devevent
+        bsr     kdt_matrix
+        cmp.b   #1,48+4(a3)
+        bne     kdt_fail
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bsr     kdt_read             ; servie depuis le tampon
+        cmp.b   #IECLASS_RAWKEY,48+IE_CLASS(a3)
+        bne     kdt_fail
+        cmp.w   #$20,48+IE_CODE(a3)
+        bne     kdt_fail
+        cmp.l   #IE_SIZEOF,KDT_ACTUAL(a3)
+        bne     kdt_fail
+        move.l  #$A0,d0              ; « A » relâchée
+        jsr     kbd_devevent
+        bsr     kdt_matrix
+        tst.b   48+4(a3)
+        bne     kdt_fail
+        bsr     kdt_clear
+        clr.b   IO_FLAGS(a3)         ; tampon vide : la requête attend un événement
+        move.b  #NT_MESSAGE,LN_TYPE(a3)
+        bsr     kdt_read
+        cmp.b   #NT_MESSAGE,LN_TYPE(a3)
+        bne     kdt_fail
+        moveq   #$45,d0              ; Échap enfoncée -> rend la requête en attente
+        jsr     kbd_devevent
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        bne     kdt_fail
+        cmp.w   #$45,48+IE_CODE(a3)
+        bne     kdt_fail
+        move.l  #$C5,d0              ; Échap relâchée (tamponnée puis effacée)
+        jsr     kbd_devevent
+        bsr     kdt_clear
+        move.b  #NT_MESSAGE,LN_TYPE(a3)
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bsr     kdt_read             ; rien en tampon : IOF_QUICK effacé, requête en attente
+        btst    #0,IO_FLAGS(a3)
+        bne     kdt_fail
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -36(a6)              ; AbortIO
+        move.l  ($4).w,a6
+        cmp.b   #IOERR_ABORTED,IO_ERROR(a3)
+        bne     kdt_fail
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        bne     kdt_fail
+        lea     72(a3),a0            ; gestionnaire de reset : ajouté puis retiré
+        move.b  #NT_INTERRUPT,LN_TYPE(a0)
+        move.l  a0,KDT_DATA(a3)
+        move.w  #11,IO_COMMAND(a3)   ; KBD_ADDRESETHANDLER
+        bsr     kdt_io
+        lea     72(a3),a0
+        cmp.l   LIB_SIZE+30(a2),a0   ; tête de la liste des gestionnaires
+        bne     kdt_fail
+        move.w  #12,IO_COMMAND(a3)   ; KBD_REMRESETHANDLER
+        bsr     kdt_io
+        move.l  LIB_SIZE+30(a2),a0
+        tst.l   (a0)                 ; liste vide : la tête est le nœud de queue
+        bne     kdt_fail
+        lea     msg_kbddev_ok(pc),a0
+        bsr     ser_puts
+        bra.s   kdt_close
+kdt_fail:
+        lea     msg_kbddev_fail(pc),a0
+        bsr     ser_puts
+kdt_close:
+        move.l  a3,a1
+        jsr     LVO_CLOSEDEVICE(a6)
+        bra.s   kdt_done
+kdt_fail0:
+        lea     msg_kbddev_fail(pc),a0
+        bsr     ser_puts
+kdt_done:
+        lea     96(sp),sp
+        movem.l (sp)+,a2-a3
+        move.l  ($4).w,a6
+        bra     kdt_end
+; sous-routines de la sonde keyboard.device (a3 = IOStdReq, a2 = device ; rendent a6 = SysBase)
+kdt_matrix:
+        move.w  #10,IO_COMMAND(a3)   ; KBD_READMATRIX
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        moveq   #16,d0
+        bra.s   kdt_rd2
+kdt_read:
+        move.w  #9,IO_COMMAND(a3)    ; KBD_READEVENT
+        moveq   #IE_SIZEOF,d0
+kdt_rd2:
+        move.l  d0,KDT_LENGTH(a3)
+        lea     48(a3),a0
+        move.l  a0,KDT_DATA(a3)
+kdt_io:
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -30(a6)              ; BeginIO
+        move.l  ($4).w,a6
+        rts
+kdt_clear:
+        move.w  #5,IO_COMMAND(a3)    ; CMD_CLEAR
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bra.s   kdt_io
+kdt_end:
+
+        ; --- audio.device : attribution (sans DMA ni interruption : synchrone au boot) ---
+        ; ioa1 = canal 0 à pri 0 ; ioa2 à pri -10 ne peut pas le voler (ALLOCFAILED) mais obtient le canal 1 par la
+        ; 2e combinaison ; ioa3 à pri 10 vole le canal 0 (la clé de ioa1 n'y vaut plus : NOALLOCATION) ; ioa3 le
+        ; verrouille ; ioa2 à pri 20 le réclame : le verrou est rendu ADIOERR_CHANNELSTOLEN et ioa2 attend ; ioa3
+        ; libère -> ioa2 est servi par le réessai. Pile : 3 IOAudio (72 o chacun).
+        movem.l a2-a3,-(sp)
+        lea     -216(sp),sp
+        move.l  sp,a3
+        move.l  a3,a0
+        moveq   #53,d0
+aut_clr:
+        clr.l   (a0)+
+        dbra    d0,aut_clr
+        lea     audio_test_name(pc),a0
+        moveq   #0,d0
+        move.l  a3,a1
+        moveq   #0,d1
+        jsr     LVO_OPENDEVICE(a6)
+        tst.b   d0
+        bne     aut_fail0
+        move.l  IO_DEVICE(a3),a2
+        tst.w   AUT_KEY(a3)
+        beq     aut_fail
+        move.l  a2,IO_DEVICE+72(a3)
+        move.l  a2,IO_DEVICE+144(a3)
+        lea     0(a3),a1             ; ioa1 : canal 0, pri 0
+        lea     aut_ch0(pc),a0
+        moveq   #0,d0
+        bsr     aut_alloc
+        bne     aut_fail
+        cmp.b   #1,IO_UNIT+3(a3)
+        bne     aut_fail
+        lea     72(a3),a1            ; ioa2 : canal 0 à pri -10 -> refusé
+        lea     aut_ch0(pc),a0
+        moveq   #-10,d0
+        bsr     aut_alloc
+        cmp.b   #-11,d0
+        bne     aut_fail
+        lea     72(a3),a1            ; ioa2 : {canal 0, canal 1} -> canal 1 (sans vol)
+        lea     aut_ch0or1(pc),a0
+        moveq   #-10,d0
+        moveq   #2,d1
+        bsr     aut_allocn
+        bne     aut_fail
+        cmp.b   #2,IO_UNIT+3+72(a3)
+        bne     aut_fail
+        move.w  AUT_KEY+72(a3),d0
+        cmp.w   AUT_KEY(a3),d0
+        beq     aut_fail             ; clés distinctes
+        lea     72(a3),a1            ; ioa2 libère le canal 1
+        moveq   #9,d0                ; ADCMD_FREE
+        bsr     aut_cmd
+        bne     aut_fail
+        lea     144(a3),a1           ; ioa3 : canal 0 à pri 10 -> vol
+        lea     aut_ch0(pc),a0
+        moveq   #10,d0
+        bsr     aut_alloc
+        bne     aut_fail
+        cmp.b   #1,IO_UNIT+3+144(a3)
+        bne     aut_fail
+        move.b  #1,IO_UNIT+3(a3)     ; ioa1 : CMD_RESET du canal volé -> NOALLOCATION
+        lea     0(a3),a1
+        moveq   #1,d0
+        bsr     aut_cmd
+        cmp.b   #-10,d0
+        bne     aut_fail
+        lea     144(a3),a1           ; ioa3 : ADCMD_LOCK (asynchrone)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        clr.b   IO_FLAGS(a1)
+        move.w  #13,IO_COMMAND(a1)
+        bsr     aut_io
+        cmp.b   #NT_MESSAGE,LN_TYPE+144(a3)
+        bne     aut_fail
+        lea     72(a3),a1            ; ioa2 : canal 0 à pri 20 -> verrou volé, attente (malgré NOWAIT)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        lea     aut_ch0(pc),a0
+        moveq   #20,d0
+        bsr     aut_alloc
+        cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
+        bne     aut_fail
+        cmp.b   #-12,IO_ERROR+144(a3)
+        bne     aut_fail
+        cmp.b   #NT_MESSAGE,LN_TYPE+72(a3)
+        bne     aut_fail
+        lea     144(a3),a1           ; ioa3 libère -> ioa2 servi
+        move.b  #1,IO_UNIT+3(a1)
+        moveq   #9,d0
+        bsr     aut_cmd
+        bne     aut_fail
+        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
+        bne     aut_fail
+        tst.b   IO_ERROR+72(a3)
+        bne     aut_fail
+        cmp.b   #1,IO_UNIT+3+72(a3)
+        bne     aut_fail
+        lea     72(a3),a1
+        moveq   #9,d0
+        bsr     aut_cmd
+        lea     msg_audio_ok(pc),a0
+        bsr     ser_puts
+        bra.s   aut_close
+aut_fail:
+        lea     msg_audio_fail(pc),a0
+        bsr     ser_puts
+aut_close:
+        move.l  a3,a1
+        jsr     LVO_CLOSEDEVICE(a6)
+        bra.s   aut_done
+aut_fail0:
+        lea     msg_audio_fail(pc),a0
+        bsr     ser_puts
+aut_done:
+        lea     216(sp),sp
+        movem.l (sp)+,a2-a3
+        move.l  ($4).w,a6
+        bra     aut_end
+; sous-routines (a1 = IOAudio, a2 = device) -> d0.b = io_Error, codes conditions posés ; a6 = SysBase en sortie
+aut_alloc:
+        moveq   #1,d1
+aut_allocn:
+        move.b  d0,LN_PRI(a1)
+        move.l  a0,AUT_DATA(a1)
+        move.l  d1,AUT_LENGTH(a1)
+        moveq   #32,d0               ; ADCMD_ALLOCATE
+aut_cmd:
+        move.w  d0,IO_COMMAND(a1)
+        move.b  #$41,IO_FLAGS(a1)    ; IOF_QUICK | ADIOF_NOWAIT
+aut_io:
+        move.l  a1,-(sp)
+        move.l  a2,a6
+        jsr     -30(a6)
+        move.l  ($4).w,a6
+        move.l  (sp)+,a1
+        move.b  IO_ERROR(a1),d0
+        rts
+aut_ch0:
+        dc.b    $01
+aut_ch0or1:
+        dc.b    $01,$02
+        EVEN
+aut_end:
+
+        ; --- sémaphores d'exec : publication (Add/Find), Attempt + Obtain imbriqués, Release jusqu'à libre. En dev,
+        ; le sémaphore reste PRIS pour task_semw (bloquée dans Obtain) que task_semr débloque par Release. ---
+        move.l  a2,-(sp)
+        moveq   #SEMT_SIZE,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     semt_done
+        move.l  d0,a2
+        lea     semt_name(pc),a0
+        move.l  a0,LN_NAME(a2)
+        move.l  a2,a1
+        jsr     LVO_ADDSEMAPHORE(a6)
+        lea     semt_name(pc),a1
+        jsr     LVO_FINDSEMAPHORE(a6)
+        cmp.l   a2,d0
+        bne     semt_fail
+        cmp.w   #-1,SEMT_QC(a2)
+        bne     semt_fail
+        move.l  a2,a0
+        jsr     LVO_ATTEMPTSEMAPHORE(a6)
+        cmp.l   #1,d0
+        bne     semt_fail
+        move.l  a2,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)    ; imbriqué : ne bloque pas
+        cmp.w   #2,SEMT_NEST(a2)
+        bne     semt_fail
+        cmp.w   #1,SEMT_QC(a2)
+        bne     semt_fail
+        move.l  a2,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        move.l  a2,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        cmp.w   #-1,SEMT_QC(a2)
+        bne     semt_fail
+        tst.w   SEMT_NEST(a2)
+        bne     semt_fail
+        tst.l   SEMT_OWNER(a2)
+        bne     semt_fail
+        lea     msg_sem_ok(pc),a0
+        bsr     ser_puts
+                ifeq    PROD
+        move.l  a2,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)    ; tenu pour la preuve d'attente (task_semw / task_semr)
+        bra.s   semt_done
+                else
+        bra.s   semt_free
+                endc
+semt_fail:
+        lea     msg_sem_fail(pc),a0
+        bsr     ser_puts
+semt_free:
+        move.l  a2,a1
+        jsr     LVO_REMSEMAPHORE(a6)
+        move.l  a2,a1
+        moveq   #SEMT_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+semt_done:
+        move.l  (sp)+,a2
+
+        ; --- graphics Regions : Or/And/ClearRect/Xor sur rectangles puis Or/Xor/And de régions ; aires, bornes et
+        ; appartenance de points comparées à un modèle par ensembles de pixels (calcul hors ROM). ---
+        movem.l d2/a2-a5,-(sp)
+        lea     graphics_test_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a5                ; a5 = GfxBase
+        tst.l   d0
+        beq     rgt_done
+        exg     a5,a6
+        jsr     -516(a6)             ; R1 = NewRegion
+        move.l  d0,a2
+        jsr     -516(a6)             ; R2
+        move.l  d0,a3
+        jsr     -516(a6)             ; R3
+        move.l  d0,a4
+        move.l  a2,d0
+        beq     rgt_fail
+        move.l  a3,d0
+        beq     rgt_fail
+        move.l  a4,d0
+        beq     rgt_fail
+        lea     rgt_rects(pc),a1
+        move.l  a2,a0
+        jsr     -510(a6)             ; R1 |= (0,0,9,9)
+        lea     rgt_rects+8(pc),a1
+        move.l  a2,a0
+        jsr     -510(a6)             ; R1 |= (5,5,14,14)
+        move.l  #175,d2
+        bsr     rgt_check1
+        bne     rgt_fail
+        lea     rgt_rects+16(pc),a1
+        move.l  a2,a0
+        jsr     -504(a6)             ; R1 &= (3,3,11,11)
+        moveq   #73,d2
+        bsr     rgt_check1
+        bne     rgt_fail
+        lea     rgt_rects+24(pc),a1
+        move.l  a2,a0
+        jsr     -522(a6)             ; R1 -= (6,6,7,7)
+        moveq   #69,d2
+        bsr     rgt_check1
+        bne     rgt_fail
+        lea     rgt_rects+32(pc),a1
+        move.l  a2,a0
+        jsr     -558(a6)             ; R1 ^= (10,10,21,21)
+        move.l  #205,d2
+        bsr     rgt_check1
+        bne     rgt_fail
+        cmp.l   #$00030003,(a2)      ; bornes (3,3,21,21)
+        bne     rgt_fail
+        cmp.l   #$00150015,4(a2)
+        bne     rgt_fail
+        lea     rgt_pts(pc),a1       ; points : (x, y, attendu)
+        moveq   #7,d2
+rgt_pt:
+        move.w  (a1)+,d0
+        move.w  (a1)+,d1
+        move.l  a2,a0
+        bsr     rgt_has
+        cmp.w   (a1)+,d0
+        bne     rgt_fail
+        dbra    d2,rgt_pt
+        lea     rgt_rects+40(pc),a1
+        move.l  a3,a0
+        jsr     -510(a6)             ; R2 = (3,3,4,4) | (30,0,31,1)
+        lea     rgt_rects+48(pc),a1
+        move.l  a3,a0
+        jsr     -510(a6)
+        move.l  a2,a0
+        move.l  a4,a1
+        jsr     -612(a6)             ; R3 = R1
+        move.l  a3,a0
+        move.l  a4,a1
+        jsr     -612(a6)             ; R3 |= R2
+        move.l  a4,a0
+        bsr     rgt_area
+        cmp.l   #209,d0
+        bne     rgt_fail
+        cmp.l   #$00030000,(a4)      ; bornes (3,0,31,21)
+        bne     rgt_fail
+        cmp.l   #$001F0015,4(a4)
+        bne     rgt_fail
+        move.l  a4,a0
+        jsr     -528(a6)             ; ClearRegion(R3)
+        tst.l   8(a4)
+        bne     rgt_fail
+        move.l  a2,a0
+        move.l  a4,a1
+        jsr     -612(a6)             ; R3 = R1
+        move.l  a3,a0
+        move.l  a4,a1
+        jsr     -618(a6)             ; R3 ^= R2
+        move.l  a4,a0
+        bsr     rgt_area
+        cmp.l   #205,d0
+        bne     rgt_fail
+        move.l  a3,a0
+        move.l  a2,a1
+        jsr     -624(a6)             ; R1 &= R2
+        move.l  a2,a0
+        bsr     rgt_area
+        cmp.l   #4,d0
+        bne     rgt_fail
+        cmp.l   #$00030003,(a2)
+        bne     rgt_fail
+        cmp.l   #$00040004,4(a2)
+        bne     rgt_fail
+        lea     msg_regions_ok(pc),a0
+        bra.s   rgt_msg
+rgt_fail:
+        lea     msg_regions_fail(pc),a0
+rgt_msg:
+        exg     a5,a6
+        bsr     ser_puts
+        exg     a5,a6
+        move.l  a2,a0
+        jsr     -534(a6)             ; DisposeRegion (0 accepté)
+        move.l  a3,a0
+        jsr     -534(a6)
+        move.l  a4,a0
+        jsr     -534(a6)
+        exg     a5,a6
+        move.l  a5,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+rgt_done:
+        movem.l (sp)+,d2/a2-a5
+        bra     rgt_end
+; rgt_check1 : aire de R1 (a2) comparée à d2 -> Z si égale.
+rgt_check1:
+        move.l  a2,a0
+        bsr.s   rgt_area
+        cmp.l   d2,d0
+        rts
+; rgt_area(a0 = région) -> d0 = somme des aires de ses rectangles.
+rgt_area:
+        moveq   #0,d0
+        move.l  8(a0),a0
+rgt_ar:
+        cmpa.w  #0,a0
+        beq.s   rgt_ar_r
+        move.w  14(a0),d1
+        sub.w   10(a0),d1
+        addq.w  #1,d1
+        move.w  d1,-(sp)             ; hauteur
+        move.w  12(a0),d1
+        sub.w   8(a0),d1
+        addq.w  #1,d1                ; largeur
+        mulu    (sp)+,d1
+        add.l   d1,d0
+        move.l  (a0),a0
+        bra.s   rgt_ar
+rgt_ar_r:
+        rts
+; rgt_has(a0 = région, d0 = x, d1 = y) -> d0.w = 1 si le point est dans la région, sinon 0. Préserve a1.
+rgt_has:
+        sub.w   (a0),d0
+        sub.w   2(a0),d1
+        move.l  8(a0),a0
+rgt_hl:
+        cmpa.w  #0,a0
+        beq.s   rgt_hno
+        cmp.w   8(a0),d0
+        blt.s   rgt_hn
+        cmp.w   12(a0),d0
+        bgt.s   rgt_hn
+        cmp.w   10(a0),d1
+        blt.s   rgt_hn
+        cmp.w   14(a0),d1
+        bgt.s   rgt_hn
+        moveq   #1,d0
+        rts
+rgt_hn:
+        move.l  (a0),a0
+        bra.s   rgt_hl
+rgt_hno:
+        moveq   #0,d0
+        rts
+rgt_rects:
+        dc.w    0,0,9,9, 5,5,14,14, 3,3,11,11, 6,6,7,7, 10,10,21,21, 3,3,4,4, 30,0,31,1
+rgt_pts:
+        dc.w    3,3,1, 6,6,0, 7,8,1, 10,10,0, 11,11,0, 12,12,1, 21,21,1, 0,0,0
+rgt_end:
+
+        ; --- layers.library : une couche SIMPLE (L1) et une SMART (L2) sur un BitMap hors écran 64x32x2. Dessin,
+        ; BehindLayer (zone simple redécouverte : effacée + dommage ; zone smart cachée : sauvegardée), dessin dans la
+        ; partie cachée de L2 (lu par ReadPixel), BeginUpdate/EndUpdate de L1, UpfrontLayer (restauration), MoveLayer,
+        ; DeleteLayer (fond et couche de dessous), SizeLayer, WhichLayer. Attendus : modèle Python au pixel. ---
+        movem.l d2-d7/a2-a5,-(sp)
+        lea     -16(sp),sp
+        move.l  sp,a5                ; 0 BitMap, 4 L1, 8 L2, 12 Layer_Info
+        clr.l   (a5)
+        clr.l   4(a5)
+        clr.l   8(a5)
+        clr.l   12(a5)
+        lea     graphics_test_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a2                ; a2 = GfxBase
+        lea     layers_test_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a3                ; a3 = LayersBase
+        move.l  a2,d0
+        beq     lyt_fail0
+        move.l  a3,d0
+        beq     lyt_fail0
+        move.l  #40+512,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,(a5)
+        beq     lyt_fail0
+        move.l  d0,a0
+        moveq   #2,d0
+        moveq   #64,d1
+        moveq   #32,d2
+        exg     a2,a6
+        jsr     -390(a6)             ; InitBitMap(bm, 2, 64, 32)
+        exg     a2,a6
+        move.l  (a5),a0
+        lea     40(a0),a1
+        move.l  a1,8(a0)             ; plans
+        lea     256(a1),a1
+        move.l  a1,12(a0)
+        exg     a3,a6
+        jsr     -144(a6)             ; NewLayerInfo
+        exg     a3,a6
+        move.l  d0,12(a5)
+        beq     lyt_fail
+        moveq   #0,d0                ; L1 = simple (0,0)-(31,15)
+        moveq   #0,d1
+        moveq   #31,d2
+        moveq   #15,d3
+        moveq   #1,d4
+        bsr     lyt_create
+        move.l  d0,4(a5)
+        beq     lyt_fail
+        moveq   #1,d0
+        bsr     lyt_setrast1
+        moveq   #16,d0               ; L2 = smart (16,8)-(47,23)
+        moveq   #8,d1
+        moveq   #47,d2
+        moveq   #23,d3
+        moveq   #2,d4
+        bsr     lyt_create
+        move.l  d0,8(a5)
+        beq     lyt_fail
+        move.l  8(a5),a1
+        move.l  12(a1),a1
+        moveq   #2,d0
+        exg     a2,a6
+        jsr     -234(a6)             ; SetRast(L2, 2)
+        exg     a2,a6
+        LYT_PIX 20,10,2
+        LYT_PIX 5,5,1
+        LYT_PIX 40,20,2
+        LYT_PIX 50,5,0
+        move.l  4(a5),a1             ; L1 : RectFill 3 sur toute la couche (seule sa partie visible change)
+        moveq   #3,d0
+        bsr     lyt_fill
+        LYT_PIX 20,10,2
+        LYT_PIX 5,5,3
+        move.l  8(a5),a1
+        moveq   #-54,d7              ; BehindLayer(L2)
+        bsr     lyt_lcall
+        LYT_PIX 20,10,0
+        LYT_PIX 5,5,3
+        LYT_PIX 40,20,2
+        move.l  4(a5),a0
+        btst    #7,31(a0)            ; L1 : LAYERREFRESH
+        beq     lyt_fail
+        LYT_RPIX 4,2,2
+        move.l  8(a5),a1             ; dessin dans la partie cachée de L2 : (0,0)-(7,3) au stylo 1
+        moveq   #1,d0
+        moveq   #0,d4
+        moveq   #0,d5
+        moveq   #7,d6
+        moveq   #3,d7
+        bsr     lyt_rect
+        LYT_PIX 20,10,0
+        LYT_RPIX 4,2,1
+        move.l  4(a5),a0             ; BeginUpdate(L1) + RectFill 3 + EndUpdate(L1, TRUE)
+        exg     a3,a6
+        jsr     -78(a6)
+        exg     a3,a6
+        move.l  4(a5),a1
+        moveq   #3,d0
+        bsr     lyt_fill
+        move.l  4(a5),a0
+        moveq   #1,d0
+        exg     a3,a6
+        jsr     -84(a6)
+        exg     a3,a6
+        LYT_PIX 20,10,3
+        LYT_PIX 5,5,3
+        move.l  4(a5),a0
+        btst    #7,31(a0)
+        bne     lyt_fail
+        move.l  8(a5),a1
+        moveq   #-48,d7              ; UpfrontLayer(L2) : contenu restauré depuis la sauvegarde
+        bsr     lyt_lcall
+        LYT_PIX 20,10,1
+        LYT_PIX 30,14,2
+        LYT_PIX 5,5,3
+        move.l  8(a5),a1             ; MoveLayer(L2, +8, +4)
+        moveq   #8,d0
+        moveq   #4,d1
+        moveq   #-60,d7
+        bsr     lyt_lcall
+        LYT_PIX 28,14,1
+        LYT_PIX 17,9,0
+        LYT_PIX 20,10,0
+        LYT_PIX 50,26,2
+        move.l  4(a5),a0
+        btst    #7,31(a0)
+        beq     lyt_fail
+        bsr     lyt_clrdmg
+        move.l  8(a5),a1             ; DeleteLayer(L2)
+        moveq   #-90,d7
+        bsr     lyt_lcall
+        clr.l   8(a5)
+        LYT_PIX 28,14,0
+        LYT_PIX 50,20,0
+        LYT_PIX 5,5,3
+        move.l  4(a5),a0
+        btst    #7,31(a0)
+        beq     lyt_fail
+        bsr     lyt_clrdmg
+        move.l  4(a5),a1             ; SizeLayer(L1, +8, +4)
+        moveq   #8,d0
+        moveq   #4,d1
+        moveq   #-66,d7
+        bsr     lyt_lcall
+        LYT_PIX 35,17,0
+        LYT_PIX 5,5,3
+        move.l  4(a5),a0
+        btst    #7,31(a0)
+        beq     lyt_fail
+        move.l  12(a5),a0            ; WhichLayer
+        moveq   #5,d0
+        moveq   #5,d1
+        exg     a3,a6
+        jsr     -132(a6)
+        exg     a3,a6
+        cmp.l   4(a5),d0
+        bne     lyt_fail
+        move.l  12(a5),a0
+        moveq   #60,d0
+        moveq   #30,d1
+        exg     a3,a6
+        jsr     -132(a6)
+        exg     a3,a6
+        tst.l   d0
+        bne     lyt_fail
+        lea     msg_layers_ok(pc),a0
+        bra.s   lyt_msg
+lyt_fail:
+        lea     msg_layers_fail(pc),a0
+lyt_msg:
+        bsr     ser_puts
+        moveq   #8,d6                ; couches restantes supprimées, puis Layer_Info et BitMap rendus
+lyt_del:
+        move.l  0(a5,d6.w),d0
+        beq.s   lyt_deln
+        move.l  d0,a1
+        moveq   #-90,d7
+        bsr     lyt_lcall
+lyt_deln:
+        subq.w  #4,d6
+        bne.s   lyt_del
+        move.l  12(a5),d0
+        beq.s   lyt_nli
+        move.l  d0,a0
+        exg     a3,a6
+        jsr     -150(a6)             ; DisposeLayerInfo
+        exg     a3,a6
+lyt_nli:
+        move.l  (a5),a1
+        move.l  #40+512,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   lyt_close
+lyt_fail0:
+        lea     msg_layers_fail(pc),a0
+        bsr     ser_puts
+lyt_close:
+        move.l  a2,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+        move.l  a3,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+        lea     16(sp),sp
+        movem.l (sp)+,d2-d7/a2-a5
+        bra     lyt_end
+; sous-routines de la sonde layers (a2 = GfxBase, a3 = LayersBase, a5 = cadre, a6 = SysBase)
+lyt_create:                          ; CreateUpfrontLayer(li, bm, d0..d3, flags d4) -> d0
+        move.l  12(a5),a0
+        move.l  (a5),a1
+        movem.l a2,-(sp)
+        suba.l  a2,a2
+        exg     a3,a6
+        jsr     -36(a6)
+        exg     a3,a6
+        movem.l (sp)+,a2
+        rts
+lyt_setrast1:                        ; SetRast(L1, d0)
+        move.l  4(a5),a1
+        move.l  12(a1),a1
+        exg     a2,a6
+        jsr     -234(a6)
+        exg     a2,a6
+        rts
+lyt_fill:                            ; a1 = couche, d0 = stylo : RectFill de toute la couche initiale (0,0)-(31,15)
+        moveq   #0,d4
+        moveq   #0,d5
+        moveq   #31,d6
+        moveq   #15,d7
+lyt_rect:                            ; a1 = couche, d0 = stylo, d4..d7 = rectangle relatif
+        move.l  12(a1),a1
+        exg     a2,a6
+        jsr     -342(a6)             ; SetAPen
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        jsr     -306(a6)             ; RectFill
+        exg     a2,a6
+        rts
+lyt_lcall:                           ; layers(dummy a0, couche a1, d0, d1) au LVO d7
+        suba.l  a0,a0
+        exg     a3,a6
+        jsr     0(a6,d7.w)
+        exg     a3,a6
+        rts
+lyt_clrdmg:                          ; dommages de L1 effacés (BeginUpdate + EndUpdate TRUE)
+        move.l  4(a5),a0
+        exg     a3,a6
+        jsr     -78(a6)
+        move.l  4(a5),a0
+        moveq   #1,d0
+        jsr     -84(a6)
+        exg     a3,a6
+        rts
+; lyt_px(d0 = x, d1 = y) -> d0 = couleur lue directement dans les deux plans du BitMap ; d2 = attendu -> Z si égal.
+lyt_px:
+        move.l  (a5),a0
+        lsl.w   #3,d1                ; 8 octets par ligne
+        move.w  d0,d3
+        lsr.w   #3,d3
+        add.w   d3,d1
+        not.w   d0
+        and.w   #7,d0
+        moveq   #0,d3
+        move.l  12(a0),a1
+        btst    d0,0(a1,d1.w)
+        beq.s   lyt_p1
+        moveq   #2,d3
+lyt_p1:
+        move.l  8(a0),a1
+        btst    d0,0(a1,d1.w)
+        beq.s   lyt_p2
+        addq.w  #1,d3
+lyt_p2:
+        cmp.w   d2,d3
+        rts
+; lyt_rpx(d0 = x, d1 = y relatifs à L2) : ReadPixel(L2) comparé à d2.
+lyt_rpx:
+        move.l  8(a5),a1
+        move.l  12(a1),a1
+        exg     a2,a6
+        jsr     -318(a6)
+        exg     a2,a6
+        cmp.w   d2,d0
+        rts
+lyt_end:
 
         ; --- M6t : vérifier trackdisk.device (squelette résident + validation d'unité) ---
         ; FindName(DeviceList) + version 34 + NT_DEVICE + Open(unité 0) OK (OpenCnt==1, io_Error==0, io_Unit ==
@@ -1714,7 +2722,7 @@ d2_done:
         bne.s   .m6r_booted
         lea     msg_m6r_ok(pc),a0
         bsr     ser_puts             ; « M6R STRAP OK (no bootable volume -> insert-disk) »
-        bsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
+        jsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
         lea     msg_m6s_ok(pc),a0
         bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
         bsr     m6r_wire_requester   ; câblage LIVE : handlers pointeur+requester PERSISTANTS sur input.device
@@ -2372,6 +3380,18 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         moveq   #FB_PRI_FA,d2
         bsr     mk_demo_task
                 endc
+        lea     task_semw(pc),a2     ; task_semw (pri 5) : bloque dans ObtainSemaphore (sémaphore tenu par le boot)
+        lea     task_semw_name(pc),a3
+        moveq   #5,d2
+        bsr     mk_demo_task
+        lea     task_semr(pc),a2     ; task_semr (pri 0) : ReleaseSemaphore -> transmet à task_semw
+        lea     task_semr_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
+        lea     task_aud(pc),a2      ; task_aud (pri 0) : lecture DMA par audio.device (« AUDIO PLAY OK »)
+        lea     task_aud_name(pc),a3
+        moveq   #0,d2
+        bsr     mk_demo_task
         lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
         lea     task_t_name(pc),a3
         moveq   #DEMO_PRI_T,d2
@@ -3281,6 +4301,183 @@ d3j_client:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .j_block
+
+; task_semw : bloque sur « kicksem.test » (pris au boot) ; réveillée, elle doit en être propriétaire avec une
+; imbrication de 1. Elle le libère puis le retire et le rend.
+task_semw:
+        move.l  ($4).w,a6
+        lea     semt_name(pc),a1
+        jsr     LVO_FINDSEMAPHORE(a6)
+        tst.l   d0
+        beq.s   .sw_fail
+        move.l  d0,a2
+        move.l  a2,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  EB_THISTASK(a6),d0
+        cmp.l   SEMT_OWNER(a2),d0
+        bne.s   .sw_fail
+        cmp.w   #1,SEMT_NEST(a2)
+        bne.s   .sw_fail
+        move.l  a2,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        cmp.w   #-1,SEMT_QC(a2)
+        bne.s   .sw_fail
+        move.l  a2,a1
+        jsr     LVO_REMSEMAPHORE(a6)
+        move.l  a2,a1
+        moveq   #SEMT_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        lea     msg_semw_ok(pc),a0
+        bra.s   .sw_out
+.sw_fail:
+        lea     msg_semw_fail(pc),a0
+.sw_out:
+        jsr     LVO_FORBID(a6)
+        bsr     ser_puts
+        jmp     LVO_PERMIT(a6)
+; task_semr : libère la prise du boot (le propriétaire n'est pas vérifié, comme en V34).
+task_semr:
+        move.l  ($4).w,a6
+        lea     semt_name(pc),a1
+        jsr     LVO_FINDSEMAPHORE(a6)
+        tst.l   d0
+        beq.s   .sr_r
+        move.l  d0,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.sr_r:
+        rts
+
+; task_aud : CMD_WRITE réel sur le canal 0 (volume 0 : DMA et interruptions sans son audible). w1 puis w2 (30 cycles
+; chacun) en file ; ADCMD_WAITCYCLE doit être rendu avant w1 (fin du 1er cycle), w1 avant w2 (enchaînement
+; par la file), CMD_READ rend w1 pendant la lecture puis 0, et le DMA du canal est coupé à la fin.
+; Pile : 3 IOAudio (ioa1 = commandes, w1, w2). d5 = constats d'ordre (b0 WAITCYCLE avant w1, b1 w1 avant w2).
+task_aud:
+        move.l  ($4).w,a6
+        lea     -216(sp),sp
+        move.l  sp,a3
+        move.l  a3,a0
+        moveq   #53,d0
+.ta_clr:
+        clr.l   (a0)+
+        dbra    d0,.ta_clr
+        moveq   #64,d0
+        move.l  #MEMF_CHIP|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4                ; a4 = échantillon (64 o de zéros en chip)
+        tst.l   d0
+        beq     .ta_fail0
+        lea     audio_test_name(pc),a0
+        moveq   #0,d0
+        move.l  a3,a1
+        moveq   #0,d1
+        jsr     LVO_OPENDEVICE(a6)
+        tst.b   d0
+        bne     .ta_fail1
+        move.l  IO_DEVICE(a3),a2
+        move.l  a3,a1
+        lea     aut_ch0(pc),a0
+        moveq   #0,d0
+        bsr     aut_alloc
+        bne     .ta_fail
+        lea     72(a3),a1            ; w1 et w2 : même device, clé et canal que ioa1
+        moveq   #30,d2               ; ~210 ms : bien plus qu'un quantum de préemption
+        bsr     .ta_mkw
+        lea     144(a3),a1
+        moveq   #30,d2               ; fenêtre « w1 rendu, w2 en cours » de ~210 ms, observable malgré la préemption
+        bsr     .ta_mkw
+        jsr     LVO_FORBID(a6)       ; lancement + CMD_READ + WAITCYCLE sans préemption (les IRQ restent actives)
+        lea     72(a3),a1
+        bsr     aut_io               ; CMD_WRITE w1 (démarre)
+        lea     144(a3),a1
+        bsr     aut_io               ; CMD_WRITE w2 (en file)
+        move.l  a3,a1
+        moveq   #2,d0                ; CMD_READ -> w1
+        bsr     aut_cmd
+        lea     72(a3),a0
+        cmp.l   AUT_DATA(a3),a0
+        bne     .ta_failp
+        move.l  a3,a1                ; ADCMD_WAITCYCLE (asynchrone)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        clr.b   IO_FLAGS(a1)
+        move.w  #14,IO_COMMAND(a1)
+        bsr     aut_io
+        jsr     LVO_PERMIT(a6)
+        moveq   #0,d5
+        move.l  #2000000,d4
+.ta_poll:
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        bne.s   .ta_p1
+        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
+        beq.s   .ta_p1
+        bset    #0,d5                ; WAITCYCLE rendu, w1 encore en cours
+.ta_p1:
+        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
+        bne.s   .ta_p2
+        cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
+        beq.s   .ta_p2
+        bset    #1,d5                ; w1 rendu, w2 encore en cours
+.ta_p2:
+        cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
+        beq.s   .ta_end
+        subq.l  #1,d4
+        bne.s   .ta_poll
+        bra     .ta_fail
+.ta_end:
+        cmp.b   #3,d5
+        bne     .ta_fail
+        tst.b   IO_ERROR+72(a3)
+        bne     .ta_fail
+        tst.b   IO_ERROR+144(a3)
+        bne     .ta_fail
+        btst    #0,$DFF003           ; DMACONR AUD0EN : canal coupé
+        bne     .ta_fail
+        move.l  a3,a1
+        move.b  #1,IO_UNIT+3(a1)
+        moveq   #2,d0                ; CMD_READ -> plus d'écriture
+        bsr     aut_cmd
+        tst.l   AUT_DATA(a3)
+        bne     .ta_fail
+        jsr     LVO_FORBID(a6)
+        lea     msg_audplay_ok(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+        bra.s   .ta_free
+.ta_failp:
+        jsr     LVO_PERMIT(a6)
+.ta_fail:
+        jsr     LVO_FORBID(a6)
+        lea     msg_audplay_fail(pc),a0
+        bsr     ser_puts
+        jsr     LVO_PERMIT(a6)
+.ta_free:
+        move.l  a3,a1
+        move.b  #1,IO_UNIT+3(a1)
+        moveq   #9,d0                ; ADCMD_FREE
+        bsr     aut_cmd
+        move.l  a3,a1
+        jsr     LVO_CLOSEDEVICE(a6)
+.ta_fail1:
+        move.l  a4,a1
+        moveq   #64,d0
+        jsr     LVO_FREEMEM(a6)
+.ta_fail0:
+        lea     216(sp),sp
+        rts
+; .ta_mkw : a1 = IOAudio à préparer en CMD_WRITE de d2 cycles (période 400, volume 0, ADIOF_PERVOL).
+.ta_mkw:
+        move.l  a2,IO_DEVICE(a1)
+        move.w  AUT_KEY(a3),AUT_KEY(a1)
+        move.b  #1,IO_UNIT+3(a1)
+        move.w  #3,IO_COMMAND(a1)
+        move.b  #$10,IO_FLAGS(a1)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        move.l  a4,AUT_DATA(a1)
+        moveq   #64,d0
+        move.l  d0,AUT_LENGTH(a1)
+        move.w  #400,AUT_PERIOD(a1)
+        clr.w   AUT_VOLUME(a1)
+        move.w  d2,AUT_CYCLES(a1)
+        rts
 
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
@@ -4383,6 +5580,108 @@ expansion_test_name:
         EVEN
 msg_expansion_ok:
         dc.b    "EXPANSION OK (expansion.library: OpenLibrary v37 gated->0 / v34 ok; AllocConfigDev->AddConfigDev->FindConfigDev exact+wildcard, absent ID miss)",13,10,0
+mathffp_test_name:
+        dc.b    "mathffp.library",0
+msg_mathffp_ok:
+        dc.b    "MATHFFP OK (mathffp.library: SPFlt/SPFix/SPAdd/SPSub/SPMul/SPDiv/SPCmp/SPTst/SPNeg/SPFloor/SPCeil + div0 overflow)",13,10,0
+msg_mathffp_fail:
+        dc.b    "MATHFFP FAIL LVO ",0
+msg_crlf_mft:
+        dc.b    13,10,0
+task_aud_name:
+        dc.b    "task_aud",0
+msg_audplay_ok:
+        dc.b    "AUDIO PLAY OK (audio.device: CMD_WRITE DMA 30 cycles + queued write chained, WAITCYCLE before end, CMD_READ, channel off)",13,10,0
+msg_audplay_fail:
+        dc.b    "AUDIO PLAY FAIL",13,10,0
+msg_regions_ok:
+        dc.b    "REGIONS OK (graphics: Or/And/ClearRect/XorRect + Or/Xor/AndRegionRegion: areas, bounds, points vs pixel-set model)",13,10,0
+msg_regions_fail:
+        dc.b    "REGIONS FAIL",13,10,0
+layers_test_name:
+        dc.b    "layers.library",0
+msg_layers_ok:
+        dc.b    "LAYERS OK (layers.library: simple+smart layers, behind/upfront backing store, damage+BeginUpdate, move, delete, size, WhichLayer)",13,10,0
+msg_layers_fail:
+        dc.b    "LAYERS FAIL",13,10,0
+semt_name:
+        dc.b    "kicksem.test",0
+msg_sem_ok:
+        dc.b    "SEM OK (exec semaphores: Add/FindSemaphore, Attempt + nested Obtain, Release to free)",13,10,0
+msg_sem_fail:
+        dc.b    "SEM FAIL",13,10,0
+msg_semw_ok:
+        dc.b    "SEM WAIT OK (blocked ObtainSemaphore handed over by ReleaseSemaphore: owner + nest set, woken)",13,10,0
+msg_semw_fail:
+        dc.b    "SEM WAIT FAIL",13,10,0
+task_semw_name:
+        dc.b    "task_semw",0
+task_semr_name:
+        dc.b    "task_semr",0
+audio_test_name:
+        dc.b    "audio.device",0
+msg_audio_ok:
+        dc.b    "AUDIO ALLOC OK (audio.device: precedence, combo order, steal + key invalidation, lock stolen, wait + retry on free)",13,10,0
+msg_audio_fail:
+        dc.b    "AUDIO ALLOC FAIL",13,10,0
+kbddev_test_name:
+        dc.b    "keyboard.device",0
+msg_kbddev_ok:
+        dc.b    "KBDDEV OK (keyboard.device: READMATRIX, READEVENT buffered + pending replied by event, CMD_CLEAR, AbortIO, ADD/REMRESETHANDLER)",13,10,0
+msg_kbddev_fail:
+        dc.b    "KBDDEV FAIL",13,10,0
+potgo_test_name:
+        dc.b    "potgo.resource",0
+msg_potgo_ok:
+        dc.b    "POTGO OK (potgo.resource: AllocPotBits START/DATxx in/out rules, FreePotBits, WritePotgo keeps high byte not START)",13,10,0
+msg_potgo_fail:
+        dc.b    "POTGO FAIL",13,10,0
+diskres_test_name:
+        dc.b    "disk.resource",0
+msg_diskres_ok:
+        dc.b    "DISKRES OK (disk.resource: AllocUnit/FreeUnit, GetUnitID(0)=DRT_AMIGA, GetUnit busy->queue, GiveUnit->ReplyMsg) DF1 ID=",0
+msg_diskres_fail:
+        dc.b    "DISKRES FAIL",13,10,0
+        EVEN
+; LVO.w, d0.l, d1.l, attendu.l — 3.0=$C0000042, -10.0=$A00000C4, 1.0=$80000041, -2.5=$A00000C2.
+mft_table:
+        dc.w    -36
+        dc.l    3,0,$C0000042                    ; SPFlt(3)
+        dc.w    -36
+        dc.l    -10,0,$A00000C4                  ; SPFlt(-10)
+        dc.w    -78
+        dc.l    $C0000042,$A00000C4,$F00000C5    ; SPMul(3,-10) = -30
+        dc.w    -30
+        dc.l    $F00000C5,0,-30                  ; SPFix(-30.0)
+        dc.w    -84
+        dc.l    $80000041,$C0000042,$AAAAAB3F    ; SPDiv : 1/3 arrondi au plus près
+        dc.w    -78
+        dc.l    $AAAAAB3F,$C0000042,$80000041    ; SPMul(1/3,3) = 1.0 après arrondi
+        dc.w    -66
+        dc.l    $C0000042,$A00000C4,$E00000C3    ; SPAdd(3,-10) = -7
+        dc.w    -72
+        dc.l    $C0000042,$A00000C4,$D0000044    ; SPSub : 3 - (-10) = 13
+        dc.w    -42
+        dc.l    $C0000042,$A00000C4,1            ; SPCmp(3,-10) -> +1
+        dc.w    -42
+        dc.l    $A00000C4,$C0000042,-1           ; SPCmp(-10,3) -> -1
+        dc.w    -48
+        dc.l    0,$A00000C4,-1                   ; SPTst(-10) en d1 -> -1
+        dc.w    -60
+        dc.l    $C0000042,0,$C00000C2            ; SPNeg(3) = -3
+        dc.w    -90
+        dc.l    $A00000C2,0,$C00000C2            ; SPFloor(-2.5) = -3
+        dc.w    -96
+        dc.l    $A00000C2,0,$800000C2            ; SPCeil(-2.5) = -2
+        dc.w    -90
+        dc.l    $C0000042,0,$C0000042            ; SPFloor(3) = 3
+        dc.w    -36
+        dc.l    123456,0,$F1200051               ; SPFlt(123456)
+        dc.w    -30
+        dc.l    $F1200051,0,123456               ; SPFix -> aller-retour exact
+        dc.w    -84
+        dc.l    $C0000042,0,$FFFFFF7F            ; SPDiv(3/0) -> plus grand positif
+mft_table_end:
 ciaa_test_name:
         dc.b    "ciaa.resource",0
 ciab_test_name:

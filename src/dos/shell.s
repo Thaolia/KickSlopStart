@@ -279,7 +279,7 @@ SH_NAMEMAX      EQU 64
 XF_ARGS         EQU XF_NAME+SH_NAMEMAX   ; arguments filtrés (SH_ARGMAX)
 SH_ARGMAX       EQU 256
 XF_STK          EQU XF_ARGS+SH_ARGMAX    ; APTR : pile dédiée de la commande
-XF_STKSZ        EQU XF_STK+4         ; LONG : sa taille en octets
+XF_STKSZ        EQU XF_STK+4         ; LONG : taille du bloc en octets (pile annoncée + 4)
 XF_ABUF         EQU XF_STKSZ+4       ; APTR : tampon d'arguments de la CLI (aligné : BPTR)
 XF_FH           EQU XF_ABUF+4        ; APTR : FileHandle d'entrée (injection des arguments)
 XF_SBUF         EQU XF_FH+4          ; fh_Buf / fh_Pos / fh_End sauvés
@@ -419,14 +419,16 @@ sh_exec_cmd:
                 bsr     sh_cli_begin         ; cli_CommandName = nom, cli_Module = seglist
                 ifeq    E3_NO_EXEC
                 jsr     ser_lock             ; la commande chargée émet sous Forbid -> marqueur atomique (pas d'entrelacement)
-                ; --- pile dédiée de cli_DefaultStack longs (comme runcommand) : le stub BCPL calcule la base de ses
-                ; frames depuis 4(sp) = taille -> la commande doit démarrer au SOMMET d'un bloc de cette taille ---
+                ; --- pile dédiée de cli_DefaultStack longs (comme runcommand) : le stub BCPL pose la base de ses
+                ; frames à 8(sp) - 4(sp) = (sommet - 4) - taille -> bloc d'UN long de plus que la taille annoncée,
+                ; sinon le premier frame écrase le dernier long du bloc mémoire précédent ---
                 move.l  #SH_DEFSTACK*4,d0
                 bsr     sh_cli_ptr
                 beq.s   .x_stk
                 move.l  CLI_DEFAULTSTACK(a1),d0
                 lsl.l   #2,d0
 .x_stk:
+                addq.l  #4,d0
                 move.l  d0,XF_STKSZ(sp)
                 move.l  #MEMF_PUBLIC,d1
                 move.l  ($4).w,a6
@@ -476,7 +478,9 @@ sh_exec_cmd:
                 move.l  XF_STK(sp),a5
                 add.l   XF_STKSZ(sp),a5      ; a5 = sommet de la pile de la commande
                 move.l  sp,-(a5)             ; 8(sp) à l'entrée : ancien SP (restauré au retour)
-                move.l  XF_STKSZ(sp),-(a5)   ; 4(sp) : taille de la pile en octets
+                move.l  XF_STKSZ(sp),d0
+                subq.l  #4,d0
+                move.l  d0,-(a5)             ; 4(sp) : taille de la pile en octets (sans le long de base)
                 move.l  a5,PR_RETURNADDR(a2) ; pr_ReturnAddr -> ce long : exit()/stop y retrouvent la pile
                 move.l  XF_ABUF(sp),d2
                 move.l  XF_ARGLEN(sp),d0

@@ -30,6 +30,20 @@
                 xref    gfx_InitBitMap
                 xref    gfx_ScrollRaster
                 xref    gfx_BltBitMapRastPort
+                xref    gfx_BltBitMap
+                xref    gfx_ReadPixel
+                xref    gfx_LockLayerRom
+                xref    gfx_UnlockLayerRom
+                xref    gfx_AndRectRegion
+                xref    gfx_OrRectRegion
+                xref    gfx_NewRegion
+                xref    gfx_ClearRectRegion
+                xref    gfx_ClearRegion
+                xref    gfx_DisposeRegion
+                xref    gfx_XorRectRegion
+                xref    gfx_OrRegionRegion
+                xref    gfx_XorRegionRegion
+                xref    gfx_AndRegionRegion
 graphics_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    graphics_romtag          ; RT_MATCHTAG = self
@@ -57,7 +71,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    graphics_close           ; 2 : LVO -12
         dc.l    graphics_expunge         ; 3 : LVO -18
         dc.l    graphics_null            ; 4 : LVO -24 (réservé)
-        dcb.l   4,graphics_null         ; 5..8 : LVO -30..-48 (non implémentés)
+        dc.l    gfx_BltBitMap            ; 5 : LVO -30
+        dcb.l   3,graphics_null          ; 6..8 : LVO -36..-48 (non implémentés)
         dc.l    gfx_TextLength           ; 9 : LVO -54
         dc.l    gfx_Text                 ; 10 : LVO -60
         dc.l    gfx_SetFont              ; 11 : LVO -66
@@ -73,7 +88,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_Draw                 ; 41 : LVO -246
         dcb.l   9,graphics_null         ; 42..50 : LVO -252..-300 (non implémentés)
         dc.l    gfx_RectFill             ; 51 : LVO -306
-        dcb.l   2,graphics_null         ; 52..53 : LVO -312..-318 (non implémentés)
+        dc.l    graphics_null            ; 52 : LVO -312 (non implémenté)
+        dc.l    gfx_ReadPixel            ; 53 : LVO -318
         dc.l    gfx_WritePixel           ; 54 : LVO -324
         dcb.l   2,graphics_null         ; 55..56 : LVO -330..-336 (non implémentés)
         dc.l    gfx_SetAPen              ; 57 : LVO -342
@@ -87,15 +103,27 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    graphics_null            ; 69 : LVO -414 FreeSprite (non implémenté)
         dc.l    gfx_ChangeSprite         ; 70 : LVO -420
         dc.l    gfx_MoveSprite           ; 71 : LVO -426
-        dcb.l   4,graphics_null         ; 72..75 : LVO -432..-450 (non implémentés)
+        dc.l    gfx_LockLayerRom         ; 72 : LVO -432
+        dc.l    gfx_UnlockLayerRom       ; 73 : LVO -438
+        dcb.l   2,graphics_null          ; 74..75 : LVO -444..-450 (non implémentés)
         dc.l    gfx_OwnBlitter           ; 76 : LVO -456
         dc.l    gfx_DisownBlitter        ; 77 : LVO -462
-        dcb.l   11,graphics_null         ; 78..88 : LVO -468..-528 (non implémentés)
-        dc.l    graphics_null            ; 89 : LVO -534 DisposeRegion (non implémenté)
+        dcb.l   6,graphics_null          ; 78..83 : LVO -468..-498 (non implémentés)
+        dc.l    gfx_AndRectRegion        ; 84 : LVO -504
+        dc.l    gfx_OrRectRegion         ; 85 : LVO -510
+        dc.l    gfx_NewRegion            ; 86 : LVO -516
+        dc.l    gfx_ClearRectRegion      ; 87 : LVO -522
+        dc.l    gfx_ClearRegion          ; 88 : LVO -528
+        dc.l    gfx_DisposeRegion        ; 89 : LVO -534
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
-        dcb.l   10,graphics_null         ; 91..100 : LVO -546..-600 (non implémentés)
+        dcb.l   2,graphics_null          ; 91..92 : LVO -546..-552 (non implémentés)
+        dc.l    gfx_XorRectRegion        ; 93 : LVO -558
+        dcb.l   7,graphics_null          ; 94..100 : LVO -564..-600 (non implémentés)
         dc.l    gfx_BltBitMapRastPort    ; 101 : LVO -606
-        dcb.l   5,graphics_null          ; 102..106 : LVO -612..-636 (non implémentés)
+        dc.l    gfx_OrRegionRegion       ; 102 : LVO -612
+        dc.l    gfx_XorRegionRegion      ; 103 : LVO -618
+        dc.l    gfx_AndRegionRegion      ; 104 : LVO -624
+        dcb.l   2,graphics_null          ; 105..106 : LVO -630..-636 (non implémentés)
         dc.l    -1
 graphics_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)

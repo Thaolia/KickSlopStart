@@ -74,6 +74,13 @@
                 xref    exec_RemLibrary
                 xref    exec_AddDevice
                 xref    exec_RemDevice
+                xref    exec_InitSemaphore
+                xref    exec_ObtainSemaphore
+                xref    exec_ReleaseSemaphore
+                xref    exec_AttemptSemaphore
+                xref    exec_AddSemaphore
+                xref    exec_RemSemaphore
+                xref    exec_FindSemaphore
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -211,6 +218,13 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_AddDevice,LVO_ADDDEVICE+2(a6)
         move.w  #$4EF9,LVO_REMDEVICE(a6)
         move.l  #exec_RemDevice,LVO_REMDEVICE+2(a6)
+        move.l  #exec_InitSemaphore,LVO_INITSEMAPHORE+2(a6)
+        move.l  #exec_ObtainSemaphore,LVO_OBTAINSEMAPHORE+2(a6)
+        move.l  #exec_ReleaseSemaphore,LVO_RELEASESEMAPHORE+2(a6)
+        move.l  #exec_AttemptSemaphore,LVO_ATTEMPTSEMAPHORE+2(a6)
+        move.l  #exec_FindSemaphore,LVO_FINDSEMAPHORE+2(a6)
+        move.l  #exec_AddSemaphore,LVO_ADDSEMAPHORE+2(a6)
+        move.l  #exec_RemSemaphore,LVO_REMSEMAPHORE+2(a6)
         rts
 
 _unimpl:

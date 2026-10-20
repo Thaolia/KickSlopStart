@@ -355,6 +355,7 @@ GP_POLLS_THRESH EQU 25          ; polls VBlank (~0,5 s) avant « GP VBLANK LIVE 
 PTR_X        EQU $00000684 ; word : pointeur absolu X (accumulé par pointer_input_handler, clampé)
 PTR_Y        EQU $00000686 ; word : pointeur absolu Y
 INT_IBASE    EQU $00000740 ; long : IntuitionBase (posé à son init) — le handler de pointeur y déplace le sprite
+KBD_DEVBASE  EQU $00000744 ; long : base keyboard.device (posée à son init) — kbd_interrupt lui remet chaque keycode
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé) +pad $68B
 GP_POLLS     EQU $0000068C ; long : compteur de polls de gp_vblank_server (preuve live : avance sur VBlanks réels)
@@ -591,7 +592,7 @@ RT_INIT       EQU 22           ; APTR -> routine d'init (ou table si AUTOINIT)
 RT_SIZE       EQU 26
 RESSCAN_LO    EQU ROMBASE          ; plage de scan des ROMTags = toute la ROM
 RESSCAN_HI    EQU ROMBASE+$40000   ; (256K ; le padding/footer ne contient pas de ROMTag valide)
-RESMAX        EQU 24              ; capacité du tableau ResModules (résidents + terminateur NUL)
+RESMAX        EQU 32              ; capacité du tableau ResModules (résidents + terminateur NUL)
 
 ; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
@@ -658,6 +659,13 @@ LVO_OPENRESOURCE EQU -498
 LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)
 LVO_CLOSELIBRARY   EQU -414
 LVO_RAWDOFMT       EQU -522     ; RawDoFmt(fmt a0, data a1, putch a2, putchdata a3)
+LVO_INITSEMAPHORE    EQU -558
+LVO_OBTAINSEMAPHORE  EQU -564
+LVO_RELEASESEMAPHORE EQU -570
+LVO_ATTEMPTSEMAPHORE EQU -576
+LVO_FINDSEMAPHORE    EQU -594
+LVO_ADDSEMAPHORE     EQU -600
+LVO_REMSEMAPHORE     EQU -606
 LVO_OPENLIBRARY    EQU -552      ; OpenLibrary(libName a1, version d0)
 
 ; OPENLIB_NO_VERCHECK=1 (RED OpenLibrary) : exec_OpenLibrary saute la gate de version -> une ouverture

@@ -178,7 +178,7 @@ cia_dispatch:                        ; a2 = base resource (0 ok), a6 = SysBase
         beq.s   .cd_ret
         move.l  CIAR_HWBASE(a2),a0
         move.b  CIA_ICR_OFF(a0),d3   ; LECTURE ICR : pending (b7=IR, b0-4 sources) + ACK chip
-        and.b   #$1F,d3
+        and.b   CIAR_ICRMASK(a2),d3  ; seules les sources activées : l'ICR lu signale aussi les sources masquées
         beq.s   .cd_ret
         moveq   #0,d2                ; bit 0..4
 .cd_loop:

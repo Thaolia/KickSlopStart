@@ -1,10 +1,12 @@
 ; src/intuition/screens.s — écrans et fenêtres d'intuition.library : OpenScreen/CloseScreen, OpenWorkBench,
-; GetScreenData, OpenWindow/CloseWindow.
-; Un écran = struct Screen (V34) + BitMap en chip RAM + ColorMap ; l'écran de tête est affiché via le View
-; d'IntuitionBase (ib_ViewLord : MakeVPort/MrgCop/LoadView). Une fenêtre = struct Window + son RastPort + une
-; pseudo-couche (struct Layer dont seules les bornes servent : décalage et découpage du dessin, cf. graphics/draw.s).
-; Sans layers.library : pas de recouvrement géré (une fenêtre dessine par-dessus les autres, la fermer efface sa
-; zone au stylo 0), pas de rafraîchissement, pas de déplacement ni de redimensionnement, pas de port IDCMP.
+; GetScreenData, OpenWindow/CloseWindow, WindowToFront/WindowToBack, MoveWindow, BeginRefresh/EndRefresh.
+; Un écran = struct Screen (V34) + BitMap en chip RAM + ColorMap + son Layer_Info (sc_LayerInfo) ; l'écran de tête
+; est affiché via le View d'IntuitionBase (ib_ViewLord : MakeVPort/MrgCop/LoadView). La barre de titre de l'écran est
+; une couche simple « backdrop » (sc_BarLayer). Chaque fenêtre est une couche de layers.library (simple, smart ou
+; super selon ses drapeaux ; backdrop pour BACKDROP) : son RPort est celui de la couche, le recouvrement et la
+; sauvegarde des fenêtres smart sont gérés par layers. Après une opération sur les couches, it_refresh redessine les
+; bordures abîmées et envoie REFRESHWINDOW aux fenêtres qui l'ont demandé (sinon les dommages sont effacés).
+; La liste des fenêtres de l'écran suit l'ordre des couches (it_relist). Pas encore de SizeWindow.
 ; Décor (barres de titre, gadgets dessinés) : rendu propre à ce projet, aux couleurs des préférences 1.3.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + includes NDK publics (screens.h, intuition.h).
 ; AUCUNE lecture ROM.
@@ -24,6 +26,11 @@
                 xdef    intuition_FreeRemember
                 xdef    intuition_DoubleClick
                 xdef    it_button
+                xdef    intuition_WindowToFront
+                xdef    intuition_WindowToBack
+                xdef    intuition_MoveWindow
+                xdef    intuition_BeginRefresh
+                xdef    intuition_EndRefresh
 
 ; extension privée derrière la struct Screen (même allocation)
 SCX_RASINFO     EQU SC_SIZEOF        ; struct RasInfo (12)
@@ -35,10 +42,8 @@ SC_MAXCOLORS    EQU 32
 SC_BARH         EQU 9                ; BarHeight : la barre de titre couvre les lignes 0..9
 SC_GADW         EQU 23               ; largeur d'un gadget de profondeur
 SC_BGCOLOR      EQU $7C3             ; couleur 0 : vert pomme (thème AmigaSlopDOS)
-; fenêtre : struct Window + RastPort + Layer (même allocation)
-WDX_RPORT       EQU WD_SIZE
-WDX_LAYER       EQU WDX_RPORT+rp_SIZEOF
-WDX_IMSG        EQU WDX_LAYER+lr_SIZEOF ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
+; fenêtre : struct Window + messages IDCMP (même allocation) ; RastPort et couche viennent de layers.library
+WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
 WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
 WDX_NEMSG       EQU 4
 WDX_SIZE        EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF
@@ -155,9 +160,25 @@ intuition_OpenScreen:
         jsr     LVO_INITRASTPORT(a6)
         lea     SC_BITMAP(a3),a0
         move.l  a0,SC_RASTPORT+rp_BitMap(a3)
+        move.l  IB_LAYERSBASE(a5),a6
+        lea     SC_LAYERINFO(a3),a0
+        jsr     LVO_INITLAYERS(a6)
         move.w  SC_FLAGS(a3),d0
         and.w   #SCREENQUIET,d0
         bne.s   .os_quiet
+        move.l  a2,-(sp)             ; barre de titre : couche simple backdrop, derrière les fenêtres
+        lea     SC_LAYERINFO(a3),a0
+        lea     SC_BITMAP(a3),a1
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  SC_WIDTH(a3),d2
+        subq.w  #1,d2
+        moveq   #SC_BARH,d3
+        moveq   #IL_SIMPLE|IL_BACKDROP,d4
+        suba.l  a2,a2
+        jsr     LVO_CREATEBEHINDLAYER(a6)
+        move.l  (sp)+,a2
+        move.l  d0,SC_BARLAYER(a3)
         bsr     sc_drawbar
 .os_quiet:
         move.l  ($4).w,a6
@@ -206,6 +227,11 @@ sc_free:
 sc_drawbar:
         move.l  IB_GFXBASE(a5),a6
         lea     SC_RASTPORT(a3),a1
+        move.l  SC_BARLAYER(a3),d0   ; dans la couche de barre quand elle existe (recouvrement par les fenêtres)
+        beq.s   .db_rp
+        move.l  d0,a1
+        move.l  IL_RP(a1),a1
+.db_rp:
         moveq   #0,d0
         move.b  SC_BLOCKPEN(a3),d0
         jsr     LVO_SETAPEN(a6)
@@ -380,6 +406,13 @@ intuition_CloseScreen:
 .cs_wb:
         jsr     LVO_PERMIT(a6)
         bsr     it_remake            ; d'abord réafficher : le fragment de cet écran n'est plus utilisé
+        move.l  SC_BARLAYER(a3),d0
+        beq.s   .cs_nobar
+        move.l  d0,a1
+        suba.l  a0,a0
+        move.l  IB_LAYERSBASE(a5),a6
+        jsr     LVO_DELETELAYER(a6)
+.cs_nobar:
         bsr     sc_free
 .cs_ret:
         moveq   #-1,d0
@@ -564,62 +597,76 @@ intuition_OpenWindow:
         move.w  d7,d0
         sub.w   d1,d0
         move.w  d0,WD_GZZHEIGHT(a3)
-        ; RastPort + couche
-        move.l  IB_GFXBASE(a5),a6
-        lea     WDX_RPORT(a3),a1
-        jsr     LVO_INITRASTPORT(a6)
-        lea     WDX_RPORT(a3),a1
-        lea     SC_BITMAP(a4),a0
-        move.l  a0,rp_BitMap(a1)
-        lea     WDX_LAYER(a3),a0
-        move.l  a0,rp_Layer(a1)
-        move.l  a1,lr_rp(a0)
-        move.l  a0,WD_WLAYER(a3)
-        move.l  a1,WD_RPORT(a3)
-        move.w  d4,lr_MinX(a0)
-        move.w  d5,lr_MinY(a0)
-        add.w   d6,d4
-        subq.w  #1,d4
-        move.w  d4,lr_MaxX(a0)
-        add.w   d7,d5
-        subq.w  #1,d5
-        move.w  d5,lr_MaxY(a0)
         move.l  ($4).w,a6
         tst.l   WD_IDCMPFLAGS(a3)
         beq.s   .ow_noport
         bsr     wn_mkport            ; port IDCMP (signal de la tâche appelante)
         tst.l   WD_USERPORT(a3)
-        bne.s   .ow_noport
-        move.l  a3,a1                ; pas de port : échec
+        beq     .ow_nolayer          ; pas de port : échec
+.ow_noport:
+        ; couche : simple / smart / super selon les drapeaux, backdrop pour BACKDROP (derrière les autres)
+        movem.l d4-d7/a2,-(sp)
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  d4,d2
+        add.w   d6,d2
+        subq.w  #1,d2
+        move.w  d5,d3
+        add.w   d7,d3
+        subq.w  #1,d3
+        move.l  WD_FLAGS(a3),d5
+        suba.l  a1,a1                ; a1 = SuperBitMap éventuelle
+        moveq   #IL_SMART,d4
+        moveq   #$C0,d6              ; type de rafraîchissement
+        and.l   d5,d6
+        cmp.b   #$40,d6              ; SIMPLE_REFRESH
+        bne.s   .ow_nsimple
+        moveq   #IL_SIMPLE,d4
+.ow_nsimple:
+        cmp.b   #$80,d6              ; SUPER_BITMAP
+        bne.s   .ow_nsuper
+        moveq   #IL_SMART|IL_SUPER,d4
+        move.l  NW_BITMAP(a2),a1
+.ow_nsuper:
+        move.l  a1,a2
+        lea     SC_LAYERINFO(a4),a0
+        lea     SC_BITMAP(a4),a1
+        move.l  IB_LAYERSBASE(a5),a6
+        btst    #8,d5                ; BACKDROP ($100)
+        bne.s   .ow_behind
+        jsr     LVO_CREATEUPFRONTLAYER(a6)
+        bra.s   .ow_lay
+.ow_behind:
+        or.w    #IL_BACKDROP,d4
+        jsr     LVO_CREATEBEHINDLAYER(a6)
+.ow_lay:
+        movem.l (sp)+,d4-d7/a2
+        move.l  ($4).w,a6
+        tst.l   d0
+        bne.s   .ow_haslayer
+        bsr     wn_freeport
+.ow_nolayer:
+        move.l  a3,a1
         move.l  #WDX_SIZE,d0
         jsr     LVO_FREEMEM(a6)
         bra     .ow_fail
-.ow_noport:
+.ow_haslayer:
+        move.l  d0,a0
+        move.l  a0,WD_WLAYER(a3)
+        move.l  a3,IL_WINDOW(a0)
+        move.l  IL_RP(a0),WD_RPORT(a3)
+        bsr     it_relist
+        btst    #0,WD_FLAGS+2(a3)    ; une fenêtre BACKDROP ne devient pas active
+        bne.s   .ow_linked
         jsr     LVO_FORBID(a6)
-        btst    #0,WD_FLAGS+2(a3)    ; BACKDROP ($100) : derrière toutes les fenêtres (fin de liste)
-        beq.s   .ow_front
-        lea     SC_FIRSTWINDOW(a4),a0
-.ow_tail:
-        tst.l   (a0)
-        beq.s   .ow_link
-        move.l  (a0),a0              ; WD_NEXTWINDOW à l'offset 0
-        bra.s   .ow_tail
-.ow_link:
-        move.l  a3,(a0)
-        clr.l   WD_NEXTWINDOW(a3)
-        bra.s   .ow_linked
-.ow_front:
-        move.l  SC_FIRSTWINDOW(a4),WD_NEXTWINDOW(a3)
-        move.l  a3,SC_FIRSTWINDOW(a4)
         move.l  IB_ACTIVEWINDOW(a5),d0
         beq.s   .ow_noact
         move.l  d0,a0
         and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
 .ow_noact:
         move.l  a3,IB_ACTIVEWINDOW(a5)
-.ow_linked:
         jsr     LVO_PERMIT(a6)
-        bsr     it_clearvis          ; fond : seulement ce qu'aucune fenêtre placée devant ne couvre
+.ow_linked:
         bsr     wn_border
         move.l  a3,d0
         bra.s   .ow_ret
@@ -743,72 +790,26 @@ wn_border:
         jsr     LVO_SETDRMD(a6)
         rts
 
-; CloseWindow(fenêtre a0) : efface au stylo 0 la partie visible de la fenêtre (ce que les fenêtres placées devant ne
-; couvrent pas), la retire de son écran, puis répare ce qu'elle découvrait sans layers.library : barre de titre de
-; l'écran et cadres des fenêtres situées derrière, redessinés s'ils ne sont pas recouverts ; ces fenêtres reçoivent
-; REFRESHWINDOW si elles l'ont demandé (leur contenu est à redessiner par leur propriétaire). Libère son port IDCMP.
+; CloseWindow(fenêtre a0) : supprime sa couche (layers rend la zone aux couches de derrière et au fond), la retire de
+; son écran, redessine ce qui a été abîmé (it_refresh), puis libère son port IDCMP et la fenêtre.
 intuition_CloseWindow:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
         move.l  a0,a3
         move.l  a0,d0
-        beq     .cw_ret
+        beq.s   .cw_ret
         move.l  WD_WSCREEN(a3),a4    ; a4 = écran
-        bsr     it_clearvis
+        move.l  IB_LAYERSBASE(a5),a6
+        suba.l  a0,a0
+        move.l  WD_WLAYER(a3),a1
+        jsr     LVO_DELETELAYER(a6)
         move.l  ($4).w,a6
-        jsr     LVO_FORBID(a6)
-        move.l  WD_NEXTWINDOW(a3),a2 ; a2 = première fenêtre située derrière
-        lea     SC_FIRSTWINDOW(a4),a0 ; maillon précédent (WD_NEXTWINDOW à l'offset 0)
-.cw_find:
-        move.l  (a0),d0
-        beq.s   .cw_unl
-        cmp.l   d0,a3
-        beq.s   .cw_hit
-        move.l  d0,a0
-        bra.s   .cw_find
-.cw_hit:
-        move.l  a2,(a0)
-.cw_unl:
+        bsr     it_relist
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .cw_act
         clr.l   IB_ACTIVEWINDOW(a5)
 .cw_act:
-        jsr     LVO_PERMIT(a6)
-        bsr     wn_rect              ; d4..d7 = rectangle libéré
-        cmp.w   #SC_BARH,d5          ; barre de l'écran découverte et libre de toute fenêtre
-        bgt.s   .cw_back
-        movem.l d4-d7/a3,-(sp)
-        moveq   #0,d4
-        moveq   #0,d5
-        move.w  SC_WIDTH(a4),d6
-        subq.w  #1,d6
-        moveq   #SC_BARH,d7
-        sub.l   a3,a3                ; toutes les fenêtres restantes
-        bsr     it_covered
-        bne.s   .cw_nobar
-        move.l  a4,a3
-        bsr     sc_drawbar
-.cw_nobar:
-        movem.l (sp)+,d4-d7/a3
-.cw_back:
-        move.l  a2,d0                ; fenêtres situées derrière, touchées par le rectangle
-        beq.s   .cw_port
-        move.l  a2,a0
-        bsr     wn_hits
-        beq.s   .cw_nextb
-        movem.l d4-d7/a3,-(sp)
-        move.l  a2,a3
-        bsr     wn_refreshmsg
-        bsr     wn_rect
-        bsr     it_covered           ; devant elle (a3) : rien ne recouvre son rectangle ?
-        bne.s   .cw_nob
-        bsr     wn_border
-.cw_nob:
-        movem.l (sp)+,d4-d7/a3
-.cw_nextb:
-        move.l  WD_NEXTWINDOW(a2),a2
-        bra.s   .cw_back
-.cw_port:
+        bsr     it_refresh
         move.l  ($4).w,a6
         bsr     wn_freeport
         move.l  a3,a1
@@ -818,124 +819,163 @@ intuition_CloseWindow:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; wn_rect(a3 = fenêtre) -> d4..d7 = son rectangle à l'écran (x0, y0, x1, y1). Ne touche que d4-d7.
-wn_rect:
-        move.w  WD_LEFTEDGE(a3),d4
-        move.w  WD_TOPEDGE(a3),d5
-        move.w  d4,d6
-        add.w   WD_WIDTH(a3),d6
-        subq.w  #1,d6
-        move.w  d5,d7
-        add.w   WD_HEIGHT(a3),d7
-        subq.w  #1,d7
+; it_relist(a4 = écran) : la liste des fenêtres (sc_FirstWindow / wd_NextWindow) reprend l'ordre des couches, de
+; l'avant vers l'arrière (couches sans fenêtre, comme la barre, ignorées). Préserve tout sauf d0/a0/a1.
+it_relist:
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        lea     SC_FIRSTWINDOW(a4),a1    ; maillon à remplir (wd_NextWindow est à l'offset 0)
+        move.l  SC_LAYERINFO(a4),a0      ; top_layer
+.rl_lp:
+        cmpa.w  #0,a0
+        beq.s   .rl_end
+        move.l  IL_WINDOW(a0),d0
+        beq.s   .rl_n
+        move.l  d0,(a1)
+        move.l  d0,a1
+.rl_n:
+        move.l  4(a0),a0                 ; couche suivante (back)
+        bra.s   .rl_lp
+.rl_end:
+        clr.l   (a1)
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
         rts
 
-; wn_hits(a0 = fenêtre, d4..d7 = rectangle) -> Z = 0 si la fenêtre intersecte le rectangle. Ne touche que d0/d1.
-wn_hits:
-        move.w  WD_LEFTEDGE(a0),d0
-        cmp.w   d6,d0
-        bgt.s   .wh_no
-        add.w   WD_WIDTH(a0),d0
-        subq.w  #1,d0
-        cmp.w   d4,d0
-        blt.s   .wh_no
-        move.w  WD_TOPEDGE(a0),d0
-        cmp.w   d7,d0
-        bgt.s   .wh_no
-        add.w   WD_HEIGHT(a0),d0
-        subq.w  #1,d0
-        cmp.w   d5,d0
-        blt.s   .wh_no
-        moveq   #1,d0                ; Z = 0
-        rts
-.wh_no:
-        moveq   #0,d0                ; Z = 1
-        rts
-
-; it_covered(a4 = écran, a3 = fenêtre de référence | 0, d4..d7 = rectangle) -> Z = 0 si une fenêtre placée devant a3
-; (toutes si a3 = 0) intersecte le rectangle. Ne touche que d0/d1/a0.
-it_covered:
-        move.l  SC_FIRSTWINDOW(a4),a0
-.cv_lp:
-        move.l  a0,d0
-        beq.s   .cv_no
-        cmp.l   a3,a0
-        beq.s   .cv_no               ; atteint la référence : le reste est derrière
-        bsr.s   wn_hits
-        bne.s   .cv_yes
-        move.l  WD_NEXTWINDOW(a0),a0
-        bra.s   .cv_lp
-.cv_yes:
+; it_refresh(a4 = écran, a5 = IntuitionBase) : barre et fenêtres dont la couche est abîmée (LAYERREFRESH). La barre
+; est redessinée dans sa zone abîmée. Une fenêtre voit sa bordure redessinée dans sa zone abîmée ; si elle a demandé
+; REFRESHWINDOW, ses dommages restent pour son propriétaire (BeginRefresh/EndRefresh) et le message lui est envoyé,
+; sinon ils sont effacés. Préserve d2-d7/a2-a6.
+it_refresh:
+        movem.l d2-d7/a2-a3/a6,-(sp)
+        move.l  SC_BARLAYER(a4),d0
+        beq.s   .ir_wins
+        move.l  d0,a2
+        btst    #ILB_REFRESH,IL_FLAGS+1(a2)
+        beq.s   .ir_wins
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
+        jsr     LVO_BEGINUPDATE(a6)
+        move.l  a4,a3
+        bsr     sc_drawbar
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
         moveq   #1,d0
-        rts
-.cv_no:
-        moveq   #0,d0
+        jsr     LVO_ENDUPDATE(a6)
+.ir_wins:
+        move.l  SC_FIRSTWINDOW(a4),a3
+.ir_lp:
+        cmpa.w  #0,a3
+        beq.s   .ir_r
+        move.l  WD_WLAYER(a3),a2
+        btst    #ILB_REFRESH,IL_FLAGS+1(a2)
+        beq.s   .ir_n
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
+        jsr     LVO_BEGINUPDATE(a6)
+        bsr     wn_border
+        moveq   #1,d2                ; d2 = dommages à effacer ?
+        tst.l   WD_USERPORT(a3)
+        beq.s   .ir_end
+        moveq   #REFRESHWINDOW,d0
+        and.l   WD_IDCMPFLAGS(a3),d0
+        beq.s   .ir_end
+        moveq   #0,d2                ; gardés : le propriétaire redessine
+.ir_end:
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
+        move.l  d2,d0
+        jsr     LVO_ENDUPDATE(a6)
+        tst.l   d2
+        bne.s   .ir_n
+        bsr     wn_refreshmsg
+.ir_n:
+        move.l  WD_NEXTWINDOW(a3),a3
+        bra.s   .ir_lp
+.ir_r:
+        movem.l (sp)+,d2-d7/a2-a3/a6
         rts
 
-; it_clearvis(a3 = fenêtre de la liste de son écran, a5 = IntuitionBase) : remplit au stylo 0 la partie de son
-; rectangle qu'aucune fenêtre placée devant elle ne couvre (balayage ligne par ligne, segments libres). Préserve
-; d2-d7/a2-a6.
-it_clearvis:
-        movem.l d2-d7/a2/a4/a6,-(sp)
+; WindowToFront(fenêtre a0) / WindowToBack(fenêtre a0) : couche devant / derrière (une fenêtre BACKDROP reste
+; derrière les autres), liste des fenêtres remise dans l'ordre, zones abîmées redessinées.
+intuition_WindowToFront:
+        moveq   #LVO_UPFRONTLAYER,d1
+        bra.s   wn_depth
+intuition_WindowToBack:
+        moveq   #LVO_BEHINDLAYER,d1
+wn_depth:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
         move.l  WD_WSCREEN(a3),a4
-        move.l  IB_GFXBASE(a5),a6
-        lea     SC_RASTPORT(a4),a1
-        moveq   #0,d0
-        jsr     LVO_SETAPEN(a6)
-        moveq   #JAM2,d0
-        jsr     LVO_SETDRMD(a6)
-        bsr     wn_rect
-        move.w  d5,d3                ; d3 = ligne courante
-.cl_row:
-        cmp.w   d7,d3
-        bgt.s   .cl_ret
-        move.w  d4,d2                ; d2 = x courant
-.cl_x:
-        cmp.w   d6,d2
-        bgt.s   .cl_next
-        move.w  d6,d1                ; d1 = fin du segment libre
-        move.l  SC_FIRSTWINDOW(a4),a0
-.cl_win:
-        cmp.l   a3,a0
-        beq.s   .cl_fill             ; plus de fenêtre devant
-        cmp.w   WD_TOPEDGE(a0),d3
-        blt.s   .cl_wn
-        move.w  WD_TOPEDGE(a0),d0
-        add.w   WD_HEIGHT(a0),d0
-        cmp.w   d0,d3
-        bge.s   .cl_wn               ; cette fenêtre ne couvre pas la ligne
-        move.w  WD_LEFTEDGE(a0),d0
-        cmp.w   d2,d0
-        bgt.s   .cl_after
-        add.w   WD_WIDTH(a0),d0      ; couvre x : sauter après elle et recommencer
-        cmp.w   d2,d0
-        ble.s   .cl_wn
-        move.w  d0,d2
-        bra.s   .cl_x
-.cl_after:
-        subq.w  #1,d0                ; commence après x : le segment s'arrête avant elle
-        cmp.w   d1,d0
-        bge.s   .cl_wn
-        move.w  d0,d1
-.cl_wn:
-        move.l  WD_NEXTWINDOW(a0),a0
-        bra.s   .cl_win
-.cl_fill:
-        movem.w d1-d3,-(sp)
-        move.w  d2,d0                ; RectFill(x, y, fin, y)
-        move.w  d1,d2
+        move.l  IB_LAYERSBASE(a5),a6
+        suba.l  a0,a0
+        move.l  WD_WLAYER(a3),a1
+        jsr     0(a6,d1.w)
+        bsr     it_relist
+        bsr     it_refresh
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; MoveWindow(fenêtre a0, dx d0, dy d1) : déplacement borné à l'écran, puis zones abîmées redessinées.
+intuition_MoveWindow:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
+        move.l  WD_WSCREEN(a3),a4
+        move.w  WD_LEFTEDGE(a3),d2   ; nouvelle position bornée : 0 .. taille de l'écran - taille de la fenêtre
+        add.w   d0,d2
+        bpl.s   .mw_x0
+        moveq   #0,d2
+.mw_x0:
+        move.w  SC_WIDTH(a4),d3
+        sub.w   WD_WIDTH(a3),d3
+        cmp.w   d3,d2
+        ble.s   .mw_x1
+        move.w  d3,d2
+.mw_x1:
+        move.w  WD_TOPEDGE(a3),d3
+        add.w   d1,d3
+        bpl.s   .mw_y0
+        moveq   #0,d3
+.mw_y0:
+        move.w  SC_HEIGHT(a4),d4
+        sub.w   WD_HEIGHT(a3),d4
+        cmp.w   d4,d3
+        ble.s   .mw_y1
+        move.w  d4,d3
+.mw_y1:
+        move.w  d2,d0
+        sub.w   WD_LEFTEDGE(a3),d0
         move.w  d3,d1
-        lea     SC_RASTPORT(a4),a1
-        jsr     LVO_RECTFILL(a6)
-        movem.w (sp)+,d1-d3
-        move.w  d1,d2
-        addq.w  #1,d2
-        bra.s   .cl_x
-.cl_next:
-        addq.w  #1,d3
-        bra.s   .cl_row
-.cl_ret:
-        movem.l (sp)+,d2-d7/a2/a4/a6
+        sub.w   WD_TOPEDGE(a3),d1
+        move.w  d2,WD_LEFTEDGE(a3)
+        move.w  d3,WD_TOPEDGE(a3)
+        ext.l   d0
+        ext.l   d1
+        move.l  IB_LAYERSBASE(a5),a6
+        suba.l  a0,a0
+        move.l  WD_WLAYER(a3),a1
+        jsr     LVO_MOVELAYER(a6)
+        bsr     it_refresh
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; BeginRefresh(fenêtre a0) / EndRefresh(fenêtre a0, complet d0) : BeginUpdate / EndUpdate de sa couche.
+intuition_BeginRefresh:
+        move.l  a6,-(sp)
+        move.l  WD_WLAYER(a0),a0
+        move.l  IB_LAYERSBASE(a6),a6
+        jsr     LVO_BEGINUPDATE(a6)
+        move.l  (sp)+,a6
+        rts
+intuition_EndRefresh:
+        move.l  a6,-(sp)
+        move.l  WD_WLAYER(a0),a0
+        move.l  IB_LAYERSBASE(a6),a6
+        jsr     LVO_ENDUPDATE(a6)
+        move.l  (sp)+,a6
         rts
 
 ; wn_refreshmsg(a3 = fenêtre) : si elle a demandé REFRESHWINDOW et que son message n'est pas en attente, le lui

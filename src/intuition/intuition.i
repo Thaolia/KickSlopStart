@@ -17,7 +17,27 @@ IB_MICROS        EQU IB_SECONDS+4      ; 76
 IB_GFXBASE       EQU IB_MICROS+4       ; 80 : GfxBase (trouvée à l'init)
 IB_WBSCREEN      EQU IB_GFXBASE+4      ; 84 : écran Workbench ouvert (0 sinon)
 IB_PTRSS         EQU IB_WBSCREEN+4     ; 88 : SimpleSprite du pointeur (canal 0)
-INTUITIONBASE_SIZE EQU IB_PTRSS+12     ; 100 : dataSize pour MakeLibrary
+IB_LAYERSBASE    EQU IB_PTRSS+12       ; 100 : LayersBase (trouvée à l'init)
+INTUITIONBASE_SIZE EQU IB_LAYERSBASE+4 ; 104 : dataSize pour MakeLibrary
+
+; --- layers.library (graphics/clip.h, layers.h ; LVO de l'AutoDoc) ---
+LVO_INITLAYERS          EQU -30
+LVO_CREATEUPFRONTLAYER  EQU -36
+LVO_CREATEBEHINDLAYER   EQU -42
+LVO_UPFRONTLAYER        EQU -48
+LVO_BEHINDLAYER         EQU -54
+LVO_MOVELAYER           EQU -60
+LVO_BEGINUPDATE         EQU -78
+LVO_ENDUPDATE           EQU -84
+LVO_DELETELAYER         EQU -90
+IL_RP           EQU 12               ; struct Layer : RastPort
+IL_FLAGS        EQU 30               ; Flags (UWORD)
+IL_WINDOW       EQU 40               ; Window (réservé à l'interface utilisateur)
+IL_SIMPLE       EQU 1                ; LAYERSIMPLE
+IL_SMART        EQU 2                ; LAYERSMART
+IL_SUPER        EQU 4                ; LAYERSUPER
+IL_BACKDROP     EQU $40              ; LAYERBACKDROP
+ILB_REFRESH     EQU 7                ; LAYERREFRESH (bit de l'octet bas de Flags)
 
 ; --- struct NewScreen / struct Screen (intuition/screens.h V34) ---
 NS_LEFTEDGE     EQU 0

@@ -18,7 +18,7 @@ EXPECT="${3:-FFFFFF}"                 # couleur de succès (repli) ; défaut bla
 MARKER="${4:-self-test passed}"       # marqueur série de succès
 ADF="${5:-}"                          # disquette optionnelle en DF0
 FAILMARK="FAILED"                     # marqueur série d'échec
-OUT="$ROOT/build/boot"
+OUT="${BOOT_TEST_OUT:-$ROOT/build/boot}"  # BOOT_TEST_OUT : autre répertoire (deux boots en parallèle)
 mkdir -p "$OUT"
 
 [ -f "$ROM" ] || { echo "ROM absente : $ROM (lance 'make')"; exit 2; }
@@ -83,7 +83,7 @@ cat > "$CFG" <<EOF
 [fs-uae]
 amiga_model = A500
 kickstart_file = $ROM
-chip_memory = 512
+chip_memory = ${BOOT_TEST_CHIP:-512}
 fast_memory = 0
 floppy_drive_count = $FDCOUNT
 $FLOPPY0

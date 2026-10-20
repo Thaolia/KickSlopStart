@@ -21,6 +21,7 @@
                 include "exec.i"
 
                 xdef    kbd_selftest
+                xref    kbd_devevent     ; kbddev.s : matrice + KBD_READEVENT
 
 CIAA_SDR     EQU $BFEC01          ; CIA-A reg $C : donnée série (scancode reçu)
 CIAA_ICR     EQU $BFED01          ; CIA-A reg $D : interrupt control (lecture = pending + ACK ; bit 3 = SP)
@@ -130,6 +131,7 @@ kbd_interrupt:
                 move.b  CIAA_CRA,d1
                 and.b   #$BF,d1
                 move.b  d1,CIAA_CRA
+                jsr     kbd_devevent         ; keyboard.device : matrice + événement brut (préserve tout)
                 move.b  d0,d2                ; d2 = raw (bit7=up/down)
                 and.b   #$7F,d2              ; d2 = keycode
                 cmp.b   #$60,d2
