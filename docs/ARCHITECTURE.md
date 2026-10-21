@@ -518,6 +518,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   de moins) ; diagnostic par parcours des listes d'exec au débogueur FS-UAE (4 process PIPE -> 1 après correctif).
   Limite : un handler qui, pendant son propre démarrage, ferait démarrer un AUTRE handler depuis un autre process
   bloquerait (aucun dans la 1.3 connue).
+  (4) **Requester « Please insert volume »** (dos_lib.s, `dos_volreq`, spec handlers-v34 §4.1) : préfixe inconnu
+  de la DosList, ou volume connu sans tâche (disque absent) -> AutoRequest « Please insert volume / <nom> / in any
+  drive », Retry / Cancel (DISKINSERTED vaut Retry) ; Retry relance la résolution, Cancel rend 218. Aucun
+  requester pour une simple tâche, si pr_WindowPtr = -1, ou pour « NIL: ». Comparé à la vraie KS 1.3 (sonde boîte
+  noire, `type foo:x` puis clic Cancel) : même texte, mêmes boutons, même suite (« Can't open foo:x », « type failed
+  returncode 20 »). Écarts : position de la fenêtre ; pas de FLUSH préalable au file-handler (rien en attente chez
+  nous).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

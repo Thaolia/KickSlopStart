@@ -1207,6 +1207,7 @@ dos_fn_isinteractive:
 ; Préfixe inconnu -> a3 = 0 et IoErr = ERROR_DEVICE_NOT_MOUNTED. Clobbe d0-d2/a0-a1.
 dos_resolve:
         movem.l d3-d4/a2,-(sp)
+.rs_top:
         move.l  a4,a0
 .rs_scan:
         move.b  (a0)+,d0
@@ -1254,14 +1255,14 @@ dos_resolve:
         move.l  d0,a0
         move.l  FL_TASK(a0),a3
         lea     1(a4,d3.l),a4           ; transmet ce qui suit le ':'
-        bra.s   .rs_ret
+        bra     .rs_ret
 .rs_devvol:
         moveq   #0,d6
         move.l  DN_TASK(a2),a3
         move.l  a3,d0
-        bne.s   .rs_ret
+        bne     .rs_ret
         tst.l   DN_TYPE(a2)             ; device sans tâche : démarre son handler (spec BCPL §13.3)
-        bne.s   .rs_ret
+        bne.s   .rs_absent              ; volume connu mais pas dans un lecteur
         ; un démarrage à la fois : le handler ne pose dn_Task qu'en recevant son paquet de démarrage, et le
         ; chargement de son segment est long ; deux process ouvrant le même device (« run copy x to pipe:a »
         ; puis « type pipe:a ») en lançaient chacun une instance, et lecteur et écrivain ne se voyaient pas
@@ -1285,6 +1286,27 @@ dos_resolve:
         move.l  DN_NEXT(a2),d0
         bra     .rs_node
 .rs_unknown:
+        tst.l   d3
+        beq.s   .rs_fail                ; pas de préfixe : pas de nom de volume à réclamer
+        cmp.l   #3,d3                   ; « NIL: » : jamais de requester (spec deviceproc)
+        bne.s   .rs_absent
+        move.b  (a4),d0
+        and.b   #$DF,d0
+        cmp.b   #'N',d0
+        bne.s   .rs_absent
+        move.b  1(a4),d0
+        and.b   #$DF,d0
+        cmp.b   #'I',d0
+        bne.s   .rs_absent
+        move.b  2(a4),d0
+        and.b   #$DF,d0
+        cmp.b   #'L',d0
+        beq.s   .rs_fail
+.rs_absent:
+        bsr     dos_volreq              ; « Please insert volume <préfixe> in any drive »
+        tst.l   d0
+        bne     .rs_top                 ; Retry : nouvelle résolution
+.rs_fail:
         move.l  ($4).w,a0
         move.l  EB_THISTASK(a0),a0
         move.l  #ERROR_DEVICE_NOT_MOUNTED,PR_RESULT2(a0)
@@ -1299,6 +1321,109 @@ dos_resolve:
 .rs_ret:
         movem.l (sp)+,d3-d4/a2
         rts
+
+; dos_volreq(a4 = nom, d3 = longueur du préfixe avant ':') -> d0 = vrai si l'utilisateur a choisi Retry (ou inséré un
+; disque). Requester d'intuition « Please insert volume / <préfixe> / in any drive » sur l'écran de pr_WindowPtr (à
+; défaut celui du Workbench) ; aucun pour une simple tâche ni si pr_WindowPtr = -1 (rend faux). Le FLUSH préalable de
+; la 1.3 n'est pas envoyé : notre file-handler n'a pas d'écritures en attente. Préserve d1-d7/a0-a6.
+VR_ITEXT        EQU 12               ; struct IntuiText (intuition/intuition.h)
+VR_NEXTTEXT     EQU 16
+VR_ITSIZE       EQU 20
+VR_NAME         EQU 0                ; cadre : préfixe (C-string), 5 IntuiText
+VR_IT           EQU 32
+VR_SIZE         EQU VR_IT+5*VR_ITSIZE
+LVO_AUTOREQ     EQU -348             ; intuition AutoRequest
+VR_DISKINSERTED EQU $00008000        ; classe IDCMP : un disque inséré vaut Retry
+dos_volreq:
+        movem.l d1-d7/a0-a6,-(sp)
+        moveq   #0,d7                ; d7 = réponse
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a5
+        cmp.b   #NT_PROCESS,LN_TYPE(a5)
+        bne     .vr_ret
+        move.l  PR_WINDOWPTR(a5),d6  ; d6 = fenêtre de référence | 0
+        cmp.l   #-1,d6
+        beq     .vr_ret
+        lea     vr_intname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq     .vr_ret
+        move.l  d0,a3                ; a3 = IntuitionBase
+        lea     -VR_SIZE(sp),sp
+        move.l  sp,a0                ; tout à zéro
+        moveq   #VR_SIZE/2-1,d0
+.vr_clr:
+        clr.w   (a0)+
+        dbra    d0,.vr_clr
+        move.l  a4,a0                ; préfixe, borné à 30 caractères
+        lea     VR_NAME(sp),a1
+        move.l  d3,d0
+        cmp.l   #30,d0
+        bls.s   .vr_ncp
+        moveq   #30,d0
+        bra.s   .vr_ncp
+.vr_ncl:
+        move.b  (a0)+,(a1)+
+.vr_ncp:
+        dbra    d0,.vr_ncl
+        lea     VR_IT(sp),a0         ; corps : trois lignes chaînées
+        lea     vr_l1(pc),a1
+        moveq   #4,d1
+        bsr     vr_itext
+        lea     VR_NAME(sp),a1
+        moveq   #14,d1
+        bsr     vr_itext
+        lea     vr_l3(pc),a1
+        moveq   #24,d1
+        bsr     vr_itext
+        clr.l   VR_NEXTTEXT-VR_ITSIZE(a0)
+        lea     vr_retry(pc),a1
+        moveq   #3,d1
+        bsr     vr_itext
+        clr.l   VR_NEXTTEXT-VR_ITSIZE(a0)
+        lea     vr_cancel(pc),a1
+        moveq   #3,d1
+        bsr     vr_itext
+        clr.l   VR_NEXTTEXT-VR_ITSIZE(a0)
+        move.l  d6,a0                ; AutoRequest(fenêtre, corps, Retry, Cancel, DISKINSERTED, 0, 320, 72)
+        lea     VR_IT(sp),a1
+        lea     VR_IT+3*VR_ITSIZE(sp),a2
+        lea     VR_IT+4*VR_ITSIZE(sp),a4
+        exg     a3,a4                ; a3 = Cancel, a4 = IntuitionBase
+        move.l  #VR_DISKINSERTED,d0
+        moveq   #0,d1
+        move.l  #320,d2
+        moveq   #72,d3
+        move.l  a4,a6
+        jsr     LVO_AUTOREQ(a6)
+        move.l  d0,d7
+        lea     VR_SIZE(sp),sp
+        move.l  a6,a1
+        move.l  ($4).w,a6
+        jsr     LVO_CLOSELIBRARY(a6)
+.vr_ret:
+        move.l  d7,d0
+        movem.l (sp)+,d1-d7/a0-a6
+        rts
+; vr_itext(a0 = IntuiText, a1 = texte, d1.w = haut) -> a0 = IntuiText suivante (chaînée) : stylo 2 sur 1, JAM1.
+vr_itext:
+        move.b  #2,(a0)
+        move.b  #1,1(a0)
+        clr.b   2(a0)
+        move.w  #6,4(a0)
+        move.w  d1,6(a0)
+        clr.l   8(a0)
+        move.l  a1,VR_ITEXT(a0)
+        lea     VR_ITSIZE(a0),a0
+        move.l  a0,VR_NEXTTEXT-VR_ITSIZE(a0)
+        rts
+vr_intname:     dc.b    "intuition.library",0
+vr_l1:          dc.b    "Please insert volume",0
+vr_l3:          dc.b    "in any drive",0
+vr_retry:       dc.b    "Retry",0
+vr_cancel:      dc.b    "Cancel",0
+                even
 
 ; dos_cdport() -> d6 = pr_CurrentDir de ThisTask, a3 = port du handler qui porte ce lock (lock 0 -> pr_FileSystemTask,
 ; ou le file-handler DF0: si non posé). Clobbe d0/a0.
