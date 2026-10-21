@@ -813,7 +813,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     en one-shot (le timer CIA-B continu mangeait plus de la moitié du CPU), sortie console BCPL tamponnée, Text plus
     rapide, ScrollRaster plus rapide (`type` ×10, SysInfo 1,04 × A600) ; échecs de commande et FailAt comme la 1.3 (sondés sur la vraie ROM). Gadgets texte (STRGADGET, ActivateGadget) et
     Workbench Rename faits. Restent : défilement au blitter, textes d'erreur via C:Fault,
-    Snapshot, Info du Workbench, `>>`, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    Snapshot, Info du Workbench, requester « Please insert volume X in any drive » pour un volume inconnu (la 1.3 le
+    montre, notre dos renvoie l'erreur), redirections seulement AVANT les arguments (la 1.3 refuse `echo "A" >x`),
+    lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
