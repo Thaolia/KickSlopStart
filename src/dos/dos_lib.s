@@ -22,6 +22,10 @@
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
                 xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
+                xref    timer_now        ; exec/timer.s (heure système pour DateStamp)
+                xref    timer_setnow
+                xdef    dos_now
+                xdef    dos_setnow
                 xref    newlist          ; exec/lists.s (NEWLIST du port de Delay)
                 xref    bcpl_starthandler ; dos/bcpl.s (démarrage du handler d'un DeviceNode)
                 xref    bcpl_execute     ; dos/bcpl.s (LVO Execute : C:Run + runcommand)
@@ -122,10 +126,73 @@ dos_null:
 ; FIDÈLE V34, pas un stub. Renvoie le pointeur passé (compat pré-V36). Arg en d1 (dos BCPL-dérivé : args en D1..).
 dos_DateStamp:
         move.l  d1,a0
-        clr.l   (a0)                ; ds_Days   = 0
-        clr.l   4(a0)               ; ds_Minute = 0
-        clr.l   8(a0)               ; ds_Tick   = 0
+        bsr.s   dos_now
         move.l  d1,d0               ; renvoie &date
+        rts
+
+; dos_now(a0 = DateStamp : jours, minutes, ticks) : heure système de timer.device (secondes depuis le 1er janvier 1978)
+; convertie en jours, minutes du jour et 50es de seconde de la minute. Préserve d1-d7/a0-a6.
+dos_now:
+        movem.l d1-d3/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     timer_now           ; d0 = secondes, d1 = µs
+        move.l  12(sp),a0           ; a0 d'entrée (timer_now ne le préserve pas)
+        move.l  d1,d3               ; d3 = µs
+        move.l  d0,d1
+        lsr.l   #1,d1               ; secondes / 2 : le quotient par 43200 tient sur 16 bits (divu)
+        divu    #43200,d1
+        moveq   #0,d2
+        move.w  d1,d2
+        move.l  d2,(a0)             ; ds_Days
+        clr.w   d1
+        swap    d1                  ; reste de (secondes / 2) / 43200
+        add.l   d1,d1
+        and.l   #1,d0
+        add.l   d0,d1               ; d1 = secondes du jour
+        divu    #60,d1
+        moveq   #0,d2
+        move.w  d1,d2
+        move.l  d2,4(a0)            ; ds_Minute
+        swap    d1                  ; secondes de la minute
+        mulu    #50,d1
+        divu    #20000,d3           ; µs -> 50es
+        and.l   #$FFFF,d3
+        add.l   d3,d1
+        and.l   #$FFFF,d1
+        move.l  d1,8(a0)            ; ds_Tick
+        move.l  DOS_DOSBASE,a1      ; copie dans rn_Time du RootNode (cache public de l'heure)
+        move.l  DL_ROOT(a1),a1
+        move.l  (a0),RN_TIME(a1)
+        move.l  4(a0),RN_TIME+4(a1)
+        move.l  8(a0),RN_TIME+8(a1)
+        movem.l (sp)+,d1-d3/a0-a1/a6
+        rts
+
+; dos_setnow(a0 = DateStamp) : règle l'heure système sur ces jours / minutes / ticks (sans contrôle de plage), puis
+; rafraîchit rn_Time. Préserve d2-d7/a2-a6.
+dos_setnow:
+        movem.l d2/a0/a6,-(sp)
+        move.l  (a0),d0             ; jours × 86400 = jours × 43200 × 2 (mulu 16 bits)
+        mulu    #43200,d0
+        add.l   d0,d0
+        move.l  4(a0),d1            ; + minutes × 60
+        mulu    #60,d1
+        add.l   d1,d0
+        move.l  8(a0),d1            ; + ticks / 50 ; µs = (ticks mod 50) × 20000
+        divu    #50,d1
+        moveq   #0,d2
+        move.w  d1,d2
+        add.l   d2,d0
+        clr.w   d1
+        swap    d1
+        mulu    #20000,d1
+        move.l  ($4).w,a6
+        jsr     timer_setnow
+        lea     -12(sp),sp
+        move.l  sp,a0
+        bsr     dos_now
+        lea     12(sp),sp
+        movem.l (sp)+,d2/a0/a6
         rts
 
 ; --- D3c : Open / Read / Close user-facing (via DOS packets vers le file-handler DF0:) ---

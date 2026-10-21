@@ -14,6 +14,7 @@
                 include "exec.i"
                 include "graphics.i"
 
+                xdef    gfx_BltTemplate
                 xdef    gfx_SetAPen
                 xdef    gfx_SetBPen
                 xdef    gfx_SetDrMd
@@ -647,6 +648,141 @@ tx_metrics:
         rts
 .tm_fix:
         move.w  tf_XSize(a2),d0
+        rts
+
+; BltTemplate(gabarit a0, xSrc d0, srcMod d1, rp a1, xDest d2, yDest d3, xSize d4, ySize d5) : gabarit d'un plan
+; (bit à 1 = pixel du motif), ligne i à a0 + i × srcMod, premier pixel au bit xSrc. Bits à 1 au stylo A (inversés en
+; COMPLEMENT) ; bits à 0 au stylo B en JAM2 ; INVERSVID permute. Coordonnées relatives à la couche, découpage par
+; ses ClipRects, plans filtrés par rp_Mask (dr_span). Lu par tranches de 32 pixels.
+BT_SRC          EQU DC_SIZE          ; ligne courante du gabarit
+BT_MOD          EQU DC_SIZE+4        ; WORD : srcMod
+BT_XS           EQU DC_SIZE+6        ; WORD : xSrc
+BT_X            EQU DC_SIZE+8        ; WORD : x absolu du premier pixel
+BT_Y            EQU DC_SIZE+10       ; WORD : y absolu de la ligne courante
+BT_W            EQU DC_SIZE+12       ; WORD : largeur
+BT_H            EQU DC_SIZE+14       ; WORD : lignes restantes
+BT_FRAME        EQU DC_SIZE+16
+gfx_BltTemplate:
+        movem.l d2-d7/a2-a5,-(sp)
+        lea     -BT_FRAME(sp),sp
+        move.l  sp,a5
+        move.l  a0,BT_SRC(a5)
+        move.w  d1,BT_MOD(a5)
+        move.w  d0,BT_XS(a5)
+        move.w  d4,BT_W(a5)
+        move.w  d5,BT_H(a5)
+        movem.w d2-d3,-(sp)
+        bsr     dr_ctx               ; clobbe d0/d1/a0
+        movem.w (sp)+,d2-d3
+        add.w   DC_OX(a5),d2
+        move.w  d2,BT_X(a5)
+        add.w   DC_OY(a5),d3
+        move.w  d3,BT_Y(a5)
+        tst.w   BT_W(a5)
+        ble.s   .bt_end
+.bt_row:
+        subq.w  #1,BT_H(a5)
+        bmi.s   .bt_end
+        moveq   #0,d7                ; d7 = pixel de la tranche dans la ligne
+.bt_chunk:
+        move.w  BT_W(a5),d6
+        sub.w   d7,d6                ; pixels restants
+        ble.s   .bt_next
+        cmp.w   #32,d6
+        bls.s   .bt_n
+        moveq   #32,d6
+.bt_n:
+        move.w  BT_XS(a5),d0         ; bit de départ = xSrc + d7
+        add.w   d7,d0
+        move.w  d0,d1
+        lsr.w   #3,d1
+        move.l  BT_SRC(a5),a0
+        add.w   d1,a0
+        and.w   #7,d0
+        moveq   #3,d1                ; 32 bits + l'octet suivant pour le décalage (lecture par octets)
+.bt_rd:
+        lsl.l   #8,d2
+        move.b  (a0)+,d2
+        dbra    d1,.bt_rd
+        lsl.l   d0,d2
+        moveq   #0,d1
+        move.b  (a0),d1
+        lsl.w   d0,d1
+        lsr.w   #8,d1
+        or.b    d1,d2                ; d2 = 32 pixels, le premier en bit 31
+        btst    #2,rp_DrawMode(a1)   ; INVERSVID
+        beq.s   .bt_nv
+        not.l   d2
+.bt_nv:
+        move.w  BT_X(a5),d4
+        add.w   d7,d4                ; d4 = x absolu de la tranche
+        move.w  BT_Y(a5),d5
+        bsr.s   bt_runs
+        add.w   #32,d7
+        bra.s   .bt_chunk
+.bt_next:
+        moveq   #0,d0
+        move.w  BT_MOD(a5),d0
+        ext.l   d0
+        add.l   d0,BT_SRC(a5)
+        addq.w  #1,BT_Y(a5)
+        bra.s   .bt_row
+.bt_end:
+        bsr     dr_end
+        lea     BT_FRAME(sp),sp
+        movem.l (sp)+,d2-d7/a2-a5
+        rts
+; bt_runs(d2 = pixels (bit 31 d'abord), d6.w = nombre, d4.w = x absolu, d5.w = y, a1 = rp, a5) : plages de même
+; valeur ; 1 -> stylo A, 0 -> stylo B en JAM2 seulement. Préserve d4-d7.
+bt_runs:
+        movem.l d4-d7,-(sp)
+        move.w  d6,d0
+        move.w  d0,-(sp)             ; (sp) = nombre de pixels
+        moveq   #0,d6                ; d6 = pixel courant
+.br_run:
+        cmp.w   (sp),d6
+        bge.s   .br_ret
+        move.w  d6,d7                ; début de la plage
+        moveq   #31,d0
+        sub.w   d6,d0
+        btst    d0,d2
+        sne     d3                   ; valeur de la plage
+.br_ext:
+        addq.w  #1,d6
+        cmp.w   (sp),d6
+        bge.s   .br_emit
+        moveq   #31,d0
+        sub.w   d6,d0
+        btst    d0,d2
+        sne     d1
+        cmp.b   d1,d3
+        beq.s   .br_ext
+.br_emit:
+        movem.l d2-d3,-(sp)
+        tst.b   d3
+        bne.s   .br_fg
+        move.b  rp_DrawMode(a1),d0   ; fond : seulement en JAM2 (sans COMPLEMENT)
+        and.b   #JAM2|COMPLEMENT,d0
+        cmp.b   #JAM2,d0
+        bne.s   .br_skip
+        move.b  rp_BgPen(a1),d3
+        bra.s   .br_do
+.br_fg:
+        move.b  rp_FgPen(a1),d3
+.br_do:
+        move.w  d4,d0
+        add.w   d7,d0                ; x0
+        move.w  d4,d2
+        add.w   d6,d2
+        subq.w  #1,d2                ; x1
+        move.w  d5,d1
+        bsr     dr_span
+.br_skip:
+        movem.l (sp)+,d2-d3
+        bra.s   .br_run
+.br_ret:
+        addq.l  #2,sp
+        movem.l (sp)+,d4-d7
         rts
 
 ; Text(rp a1, chaîne a0, nombre d0) : caractères de la police du RastPort (topaz 8 par défaut), coin haut du glyphe
@@ -1816,16 +1952,22 @@ gfx_putrow:
 ; LockLayerRom(layer a5) / UnlockLayerRom(layer a5) : sémaphore de la couche. Préservent tous les registres, comme
 ; l'exige l'AutoDoc.
 gfx_LockLayerRom:
+        cmpa.w  #0,a5                ; RastPort sans couche : rien à verrouiller
+        beq.s   .lock_r
         movem.l d0-d1/a0-a1/a6,-(sp)
         lea     LY_LOCK(a5),a0
         move.l  ($4).w,a6
         jsr     LVO_OBTAINSEMAPHORE(a6)
         movem.l (sp)+,d0-d1/a0-a1/a6
+.lock_r:
         rts
 gfx_UnlockLayerRom:
+        cmpa.w  #0,a5                ; RastPort sans couche : rien à verrouiller
+        beq.s   .unlo_r
         movem.l d0-d1/a0-a1/a6,-(sp)
         lea     LY_LOCK(a5),a0
         move.l  ($4).w,a6
         jsr     LVO_RELEASESEMAPHORE(a6)
         movem.l (sp)+,d0-d1/a0-a1/a6
+.unlo_r:
         rts

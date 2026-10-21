@@ -26,6 +26,7 @@
                 xdef    bcpl_execute         ; LVO Execute (dos_lib.s)
                 xref    rcli_seg
                 xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
+                xref    dos_setnow           ; dos_lib.s : règle l'heure système (setdatstamp)
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
                 xref    ser_puthex
@@ -1867,7 +1868,37 @@ g_datstamp:
         move.l  d5,d1
         BLEAVE
 
-; 39 rootstruct() -> BPTR du RootNode.
+; 128 setdatstamp(v) : règle l'heure système sur le vecteur [jours, minutes, ticks] (BPTR) ; résultat non
+; significatif. 126 compstamp(a, b) : 0 si égaux, +1 si a est plus récent que b, -1 sinon (jours, minutes, ticks).
+g_setdatstamp:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a0
+        jsr     dos_setnow
+        moveq   #0,d1
+        BLEAVE
+g_compstamp:
+        BENTER
+        lsl.l   #2,d1
+        move.l  d1,a0
+        lsl.l   #2,d2
+        move.l  d2,a1
+        moveq   #2,d3
+.cs_lp:
+        move.l  (a0)+,d0
+        cmp.l   (a1)+,d0
+        bgt.s   .cs_newer
+        blt.s   .cs_older
+        dbra    d3,.cs_lp
+        moveq   #0,d1
+        BLEAVE
+.cs_newer:
+        moveq   #1,d1
+        BLEAVE
+.cs_older:
+        moveq   #-1,d1
+        BLEAVE
+
 g_rootstruct:
         move.l  DOS_DOSBASE,a3
         move.l  DL_ROOT(a3),d1
@@ -2878,6 +2909,8 @@ bcpl_rtdata:
         GLOB    123,g_lock
         GLOB    124,g_finddevinfo
         GLOB    125,g_createdir
+        GLOB    126,g_compstamp
+        GLOB    128,g_setdatstamp
         GLOB    134,g_findcli
         dc.l    134                  ; plus grande globale du segment
 bcpl_rtend:

@@ -24,6 +24,7 @@
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
+                xref    dos_now              ; dos_lib.s : heure système en DateStamp
 
 OFS_T_LIST      EQU 16               ; bloc d'extension
 OFSB_KEY        EQU 4                ; clé (le bloc lui-même)
@@ -34,6 +35,7 @@ OFS_TABN        EQU 72               ; entrées de table d'un header / d'une ext
 OFSB_TABEND     EQU OFSB_HASHTAB+(OFS_TABN-1)*4  ; dernière entrée = premier bloc de données
 WS_MAGICV       EQU $57524954        ; « WRIT » : état d'écriture (l'état de lecture commence par la base trackdisk)
 ID_VALIDATED    EQU 82
+OFSB_VDAYS      EQU 472              ; racine : date de dernière modification du disque
 
 ; contexte d'écriture (un seul, alloué au premier besoin ; pointeur en DOS_OWCTX)
 OW_TD           EQU 0
@@ -440,8 +442,9 @@ ow_link:
         bsr     ow_wr
         tst.l   d0
         beq.s   .lnk_ret
+        lea     OW_B2(a5),a0         ; le répertoire change : sa date aussi
+        bsr     ow_stamp
         move.l  d4,d0
-        lea     OW_B2(a5),a0
         bsr     ow_wr
 .lnk_ret:
         rts
@@ -468,6 +471,37 @@ ow_clear:
 .cl_lp:
         clr.l   (a1)+
         dbra    d0,.cl_lp
+        rts
+
+; ow_stamp(a0 = bloc d'en-tête) : date de modification (+420) = maintenant ; pour la racine, aussi celle du disque
+; (+472). Préserve tout sauf d0.
+ow_stamp:
+        move.l  a0,-(sp)
+        lea     OFSB_DAYS(a0),a0
+        jsr     dos_now
+        move.l  (sp)+,a0
+        cmp.l   #OFS_ST_ROOT,OFSB_SECTYPE(a0)
+        bne.s   .st_ret
+        move.l  a0,-(sp)
+        lea     OFSB_VDAYS(a0),a0
+        jsr     dos_now
+        move.l  (sp)+,a0
+.st_ret:
+        rts
+
+; ow_touch(d0 = répertoire, a5) -> d0 = 1/0 : le répertoire (lu dans B1) reçoit la date du jour et est réécrit.
+ow_touch:
+        move.l  d0,-(sp)
+        lea     OW_B1(a5),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq.s   .to_fail
+        lea     OW_B1(a5),a0
+        bsr.s   ow_stamp
+        move.l  (sp)+,d0
+        bra     ow_wr
+.to_fail:
+        addq.l  #4,sp
         rts
 
 ; ow_freeobj(d5 = objet (en B2), a5) : rend ses blocs : header, et pour un fichier ses blocs de données et extensions.
@@ -550,6 +584,7 @@ ow_create:
         move.l  d5,OFSB_KEY(a0)
         move.l  d4,OFSB_PARENT(a0)
         move.l  d7,OFSB_SECTYPE(a0)
+        bsr     ow_stamp
         move.l  a3,a1
         bsr     ow_setname
         move.l  a3,a1
@@ -607,6 +642,10 @@ ow_delete:
         tst.l   d0
         beq     ow_fail
         bsr     ow_freeobj
+        move.l  d4,d0
+        bsr     ow_touch
+        tst.l   d0
+        beq     ow_fail
         bsr     ow_sync
         tst.l   d0
         beq     ow_fail
@@ -1028,6 +1067,7 @@ ws_close:
         moveq   #OFS_TABN,d0
 .wc_hs:
         move.l  d0,OFSB_HIGHSEQ(a0)
+        bsr     ow_stamp
         move.l  WS_HDR(a3),d0
         bsr     ow_wr
         tst.l   d0

@@ -26,6 +26,7 @@ DOSBASE_DATASIZE EQU DL_VOLUME+4       ; 78 : dataSize pour MakeLibrary (base Li
 RN_TASKARRAY     EQU 0                 ; BPTR -> [taille, taskid CLI 1, taskid CLI 2, ...] (slots des CLI : Run, EndCLI)
 RN_CONSOLESEG    EQU 4                 ; BPTR : segment CLI par défaut de Run quand aucun résident « CLI » (CLI ROM, shell.s)
 RN_TASKSLOTS     EQU 20                ; nombre de CLI simultanés (taille du tableau)
+RN_TIME          EQU 8                 ; DateStamp : cache de l'heure, mis à jour par chaque DateStamp
 RN_INFO          EQU 24                ; BPTR -> DosInfo (Info structure)
 RN_SIZEOF        EQU 56                ; struct RootNode complète (rn_CliList/rn_Flags... mis à 0)
 

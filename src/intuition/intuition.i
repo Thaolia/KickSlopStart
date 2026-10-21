@@ -241,6 +241,8 @@ IT_LEFTEDGE     EQU 4
 IT_TOPEDGE      EQU 6
 IT_ITEXT        EQU 12
 IT_NEXTTEXT     EQU 16
+IT_SIZEOF       EQU 20
+LVO_AUTOREQUEST EQU -348
 
 ; --- struct Image et struct Remember (intuition/intuition.h) ---
 IG_LEFTEDGE     EQU 0

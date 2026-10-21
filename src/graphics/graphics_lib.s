@@ -15,6 +15,7 @@
 ; --- ROMTag graphics.library (scanné par build_reslist) ---
         EVEN
 ; primitives de dessin : src/graphics/draw.s
+                xref    gfx_BltTemplate
                 xref    gfx_Text
                 xref    gfx_TextLength
                 xref    gfx_SetFont
@@ -97,7 +98,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    graphics_expunge         ; 3 : LVO -18
         dc.l    graphics_null            ; 4 : LVO -24 (réservé)
         dc.l    gfx_BltBitMap            ; 5 : LVO -30
-        dcb.l   3,graphics_null          ; 6..8 : LVO -36..-48 (non implémentés)
+        dc.l    gfx_BltTemplate          ; 6 : LVO -36 BltTemplate(src a0, xSrc d0, mod d1, rp a1, x d2, y d3, w d4, h d5)
+        dcb.l   2,graphics_null          ; 7..8 : LVO -42..-48 (ClearEOL, ClearScreen : non implémentés)
         dc.l    gfx_TextLength           ; 9 : LVO -54
         dc.l    gfx_Text                 ; 10 : LVO -60
         dc.l    gfx_SetFont              ; 11 : LVO -66

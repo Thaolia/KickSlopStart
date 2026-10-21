@@ -495,6 +495,19 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   par point d'arrêt d'écriture sur SERDAT dans le débogueur console de FS-UAE (`console_debugger`, F12+D injecté).
   **Résultat** : SysInfo 4.4 affiche toute sa page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
   EClock 709379, 50/50 Hz).
+- **ÉTAPE 10 (SUITE) — DATES, DISCARD, FASTFONTS** : (1) **heure système** : `timer_now`/`timer_setnow` (timer.s),
+  `DateStamp` réel (dos_now : jours/minutes/ticks depuis le 1-1-1978, copie dans rn_Time du RootNode) ; globales BCPL
+  **128 setdatstamp** (TR_SETSYSTIME) et **126 compstamp** (spec bcpl-runtime-v34.md §8.4) : `C:Date` règle et lit
+  l'heure. (2) **dates OFS** (`ow_stamp`/`ow_touch`) : en-tête daté à la création et à la fermeture d'un fichier écrit,
+  répertoire parent à l'ajout / à la suppression d'une entrée, racine : modification + dernière altération du disque.
+  (3) **AutoRequest** (`src/intuition/sysreq.s`, LVO -348) : fenêtre « System Request », corps PrintIText, gadgets
+  positif / négatif dimensionnés sur leur texte, réponse par GADGETUP ou drapeaux IDCMP. (4) **Workbench Discard** :
+  confirmation, suppression récursive d'un tiroir (`wb_rmtree`) et du « .info », tiroir relu (`wb_reload`). Prouvé
+  à la souris sur une copie du disque WB (tiroir Empty) et relu par xdftool. (5) **BltTemplate** (graphics -36) :
+  gabarit d'un plan aux stylos et mode courants, découpé par les ClipRects — FastFonts (C:FF de la startup WB) dessine
+  tout son texte par là : avec SetFunction réel, le texte du WB était invisible (spec `docs/analysis/fastfonts-ff.md`).
+  LockLayerRom/UnlockLayerRom ignorent une couche nulle. Constat : `list df0:` ~1 min pour 26 entrées (lenteur, pas
+  blocage) — à mesurer en ROM de production.
 - **GADGETS D'APPLICATION (intuition)** (`src/intuition/gadgets.s`) : la liste `wd_FirstGadget` (reprise de
   `nw_FirstGadget`) est dessinée avec le cadre de la fenêtre (Border via DrawBorder ou Image, IntuiText, surbrillance
   GADGHCOMP/GADGHBOX par inversion, SelectRender en GADGHIMAGE) ; positions/tailles GRELRIGHT/GRELBOTTOM/GRELWIDTH/

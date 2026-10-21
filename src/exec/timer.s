@@ -32,6 +32,8 @@
 
                 include "exec.i"
 
+                xdef    timer_now         ; heure système (dos DateStamp)
+                xdef    timer_setnow      ; réglage de l'heure système (globale BCPL setdatstamp)
                 xdef    timer_micro_int   ; M7a : struct Interrupt de l'unité MICROHZ (vecteur ICR CIA-B)
 
                 xref    newlist           ; lists.s (NEWLIST de la file d'unité)
@@ -86,31 +88,10 @@ timer_null:
 ; BeginIO(device a6, iorequest a1) : M6a — enqueue une requête TR_ADDREQUEST sur l'unité VBLANK.
 ; Convertit la timeval en ticks (secs*50 + micro/20000, mini 1), stocke le décompte dans TV_SECS.
 ; Disable autour (file partagée avec le handler VBlank).
-timer_beginio:
-        movem.l d2/a2-a3,-(sp)
-        move.l  a6,a2                ; a2 = base device
-        move.l  a1,a3                ; a3 = iorequest
-        move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
-        clr.b   IO_ERROR(a3)
-        move.w  IO_COMMAND(a3),d0
-        cmp.w   #TR_ADDREQUEST,d0
-        beq.s   .bio_add
-        cmp.w   #TR_GETSYSTIME,d0
-        beq.s   .bio_get
-        cmp.w   #TR_SETSYSTIME,d0
-        beq.s   .bio_set
-        move.b  #IOERR_NOCMD,IO_ERROR(a3)
-        bra.s   .bio_done
-.bio_set:                            ; heure système = TV_SECS + (VBL_COUNT - référence) / 50
-        move.l  TV_MICRO(a3),d0
-        divu    #20000,d0
-        and.l   #$0000FFFF,d0
-        move.l  VBL_COUNT,d1
-        sub.l   d0,d1
-        move.l  d1,TIMER_SYSVBL(a2)
-        move.l  TV_SECS(a3),TIMER_SYSSECS(a2)
-        bra.s   .bio_done
-.bio_get:
+; timer_systime(a2 = base timer.device) -> d0 = secondes, d1 = µs de l'heure système : secondes à la référence
+; (TR_SETSYSTIME) + trames écoulées depuis (50 Hz). Préserve d2-d7/a0-a6.
+timer_systime:
+        move.l  d2,-(sp)
         move.l  VBL_COUNT,d0
         sub.l   TIMER_SYSVBL(a2),d0  ; ticks écoulés depuis la référence (division 32/16 en deux temps)
         swap    d0
@@ -126,7 +107,78 @@ timer_beginio:
         swap    d1
         mulu    #20000,d1            ; reste (ticks) -> µs
         add.l   TIMER_SYSSECS(a2),d2
-        move.l  d2,TV_SECS(a3)
+        move.l  d2,d0
+        move.l  (sp)+,d2
+        rts
+
+; timer_setsys(a2 = base, d0 = secondes, d1 = µs) : nouvelle référence ; l'heure système vaut ensuite
+; d0 + (VBL_COUNT - référence) / 50. Clobbe d0/d1.
+timer_setsys:
+        move.l  d0,TIMER_SYSSECS(a2)
+        divu    #20000,d1
+        and.l   #$0000FFFF,d1
+        move.l  VBL_COUNT,d0
+        sub.l   d1,d0
+        move.l  d0,TIMER_SYSVBL(a2)
+        rts
+
+; timer_setnow(a6 = SysBase, d0 = secondes, d1 = µs) : règle l'heure système (TR_SETSYSTIME sans IORequest).
+; Préserve d2-d7/a2-a6.
+timer_setnow:
+        movem.l d0-d1/a2,-(sp)
+        lea     EB_DEVICELIST(a6),a0
+        lea     timer_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,a2
+        movem.l (sp)+,d0-d1
+        cmpa.w  #0,a2
+        beq.s   .ts_ret
+        bsr.s   timer_setsys
+.ts_ret:
+        move.l  (sp)+,a2
+        rts
+
+; timer_now(a6 = SysBase) -> d0 = secondes, d1 = µs de l'heure système (0 / 0 sans timer.device). Pour DateStamp.
+; Préserve d2-d7/a2-a6.
+timer_now:
+        move.l  a2,-(sp)
+        lea     EB_DEVICELIST(a6),a0
+        lea     timer_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .tn_none
+        move.l  d0,a2
+        bsr     timer_systime
+        move.l  (sp)+,a2
+        rts
+.tn_none:
+        moveq   #0,d1
+        move.l  (sp)+,a2
+        rts
+
+timer_beginio:
+        movem.l d2/a2-a3,-(sp)
+        move.l  a6,a2                ; a2 = base device
+        move.l  a1,a3                ; a3 = iorequest
+        move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
+        clr.b   IO_ERROR(a3)
+        move.w  IO_COMMAND(a3),d0
+        cmp.w   #TR_ADDREQUEST,d0
+        beq.s   .bio_add
+        cmp.w   #TR_GETSYSTIME,d0
+        beq.s   .bio_get
+        cmp.w   #TR_SETSYSTIME,d0
+        beq.s   .bio_set
+        move.b  #IOERR_NOCMD,IO_ERROR(a3)
+        bra.s   .bio_done
+.bio_set:
+        move.l  TV_SECS(a3),d0
+        move.l  TV_MICRO(a3),d1
+        bsr     timer_setsys
+        bra.s   .bio_done
+.bio_get:
+        bsr     timer_systime
+        move.l  d0,TV_SECS(a3)
         move.l  d1,TV_MICRO(a3)
 .bio_done:
         btst    #0,IO_FLAGS(a3)      ; IOF_QUICK : terminé sur place ; sinon réponse au reply port

@@ -808,8 +808,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     NewCLI sans résident), redirections `<`/`>`, scripts d'Execute, nœuds CON/RAW (handler ROM) et SER/PAR/PRT
     (Port-Handler), clavier routé vers la fenêtre active, MOUSEMOVE/ReportMouse, fermeture de tiroir ×2 plus rapide.
     **Étape 10 (en cours)** : écriture disquette — trackdisk (CMD_WRITE/UPDATE, MFM) et écriture OFS (création,
-    flux, suppression, renommage, protection, commentaire, Info) prouvées sous CLI ; restent l'échec intermittent de
-    `join`, `list` sur un répertoire écrit, les dates, puis Rename/Discard/Info du Workbench et `>>`.
+    flux, suppression, renommage, protection, commentaire, Info) prouvées sous CLI ; dates (DateStamp réel, C:Date,
+    en-têtes datés) ; AutoRequest ; Workbench Discard ; BltTemplate (FastFonts). Restent : gadgets texte puis Rename,
+    Snapshot, Info du Workbench, `>>`, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page

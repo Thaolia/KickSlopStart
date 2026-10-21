@@ -592,14 +592,14 @@ longueur), **APTR** (adresse octet), **taskid** = adresse du MsgPort d'un proces
 | 107 | $1AC | splitname(préfixe, car, chaîne, pos) | extrait jusqu'à `car` (≤ 30 car.) dans le BSTR préfixe ; → position après `car` ou 0 | | O | M |
 | 108 | $1B0 | locateobj(nom) | lock **partagé** (−2) via ACTION_LOCATE_OBJECT (8) | handler | O | P S H |
 | 109 | $1B4 | freeobj(lock) | ACTION_FREE_LOCK (15) au fl_Task du lock ; lock 0 → rien ; Result2 préservé | préservé | O | C P X E S H |
-| 112 | $1C0 | (démarrage du handler d'un DeviceNode) | | | S | |
+| 112 | $1C0 | starthandler(nœud, nom) (§13.3) | | | O | |
 | 113 | $1C4 | copydir(lock) | DupLock : ACTION_COPY_DIR (19) ; 0 → 0 | handler | O | R (NewCLI) |
 | 114 | $1C8 | errorreq(…) | requester d'erreur disque selon Result2 (protégé, plein, pas DOS…) → TRUE = retry | | D | C P |
 | 115 | $1CC | copystring(src, dst) | copie un BSTR (longueur+1 octets) — **ordre (source, destination)** | | O | C P M |
 | 123 | $1EC | lock(nom, mode) | appelle locateobj (le mode est ignoré : toujours partagé) | | O | C X |
 | 124 | $1F0 | (recherche dans la liste DevInfo) | | | S | M |
 | 125 | $1F4 | createdir(nom) | ACTION_CREATE_DIR (22) | handler | O | X |
-| 127 | $1FC | (requête timer interne de delay) | | | D | |
+| 127 | $1FC | timerio(cmd, iob, secs, µs) — requête timer.device synchrone (§8.4) | | | O | |
 | 133 | $214 | cliinit(pkt) | init du CLI initial (startup-sequence…) ; FailLevel 10, **DefaultStack 1000 longs** | | O | |
 
 ### 8.3 Globales négatives (ABI « C », segments ROM 2–4)
@@ -623,8 +623,185 @@ longueur), **APTR** (adresse octet), **taskid** = adresse du MsgPort d'un proces
 | −32 | −$80 | BSTR → C-string **en place** (décale d'un octet, ajoute NUL), renvoie l'APTR | O |
 | −33 | −$84 | sysrequest (entrée C) | O |
 
-Globales définies en ROM mais non caractérisées ici : 21, 46, 50, 86, 91, 94/95 (getword/putword
-16 bits, O), 112, 126, 128. Elles ne sont appelées par aucune des commandes cibles sauf 85/124 (Mount). [O]
+Globales définies en ROM et caractérisées plus loin : 21, 46, 50, 86, 91, 94/95, 126, 127, 128 →
+§8.4 ; 85/124/112 → §13. Aucune n'est appelée par les commandes cibles de §9 sauf 85/124 (Mount) ;
+**C:Date appelle 86 et 128** (§8.4.3). [O]
+
+### 8.4 Globales 21–128 et C:Date (2026-10-21)
+
+Sources : ROM `kick34005.A500` (tables globin des segments du segarray, §3.1) et `c:Date`,
+`c:SetClock` du disque Workbench 1.3.3. Contrats uniquement. Adresses ROM = repères analyse.
+
+#### 8.4.1 Où vivent ces globales [O ROM]
+
+| Gl. | Off. | Segment porteur (segarray ROM) | Repère |
+|---|---|---|---|
+| 21, 46, 86, 91, 127, 128, −25 | $054, $0B8, $158, $16C, $1FC, $200, −$64 | entrée 2 (dos « BLIB ») | $FF55D0, $FF547C, $FF7A70, $FF7E08, $FF54A4, $FF7A80, $FF7960 |
+| 94, 95, 126 | $178, $17C, $1F8 | entrée 1, 2ᵉ segment de la chaîne | $FF4AE2, $FF4AF0, $FF4C24 |
+| 50 | $0C8 | entrée 1, 3ᵉ segment (avec −33 sysrequest et 52 requester) | $FF4E3E |
+| 34 (rappel) | $088 | entrée 1, 1ᵉʳ segment | $FF44B2 |
+
+Ni 83 ni 84 ne sont définies en ROM (84 est fournie par C:Date elle-même). La globale **92** n'est
+dans aucune table globin : c'est une **donnée** (IntuitionBase, APTR) écrite par `cliinit` (133). [O]
+
+#### 8.4.2 Contrats [O ROM sauf mention]
+
+Unités comme en §8 ; « vecteur datestamp » = 3 longs consécutifs **[jours, minutes, ticks]**
+(jours depuis le 1-jan-1978, minutes depuis minuit 0..1439, ticks de 1/50 s dans la minute 0..2999).
+
+- **128 `setdatstamp(v)`** — D1 = **BPTR** d'un vecteur datestamp. Règle l'heure système :
+  1. secondes = v!0 × 86400 + v!1 × 60 + v!2 / 50 ; microsecondes = (v!2 mod 50) × 20000
+     (arithmétique 32 bits signée, **aucune validation de plage**, v n'est pas modifié) ;
+  2. **Forbid**, puis requête timer **TR_SETSYSTIME (11)** via la globale 127 (secondes,
+     microsecondes) sur un vecteur IORequest **local à sa frame** ;
+  3. relit l'heure par la globale **86** sur ce même vecteur local — ce qui **rafraîchit
+     `rn_Time` du RootNode** (cf. −25 ci-dessous) ;
+  4. **Permit**.
+  Résultat D1 : **non significatif** (résidu de l'appel Permit ; Date l'ignore). Result2 inchangé.
+  Aucun packet DOS, aucun accès à l'horloge sauvegardée (RTC $DC0000) : écrire la RTC est le
+  rôle de `SetClock save`. Appelant observé : **uniquement C:Date** (la ROM ne l'appelle pas).
+- **86 `datstamp(v)`** — D1 = BPTR d'un vecteur de 3 longs ; appelle l'adaptateur C **−25
+  (DateStamp)** sur `BADDR(v)` ; **renvoie v** (le BPTR reçu). Appelants : C:Date et le file
+  system (entrée 6).
+- **−25 `DateStamp(ds)`** (LVO −192, ABI C : D1 = APTR de 3 longs) :
+  1. requête timer **TR_GETSYSTIME (10)** via 127 → (secondes, microsecondes) de l'heure système ;
+  2. **Forbid** ; calcule jours = s / 86400, minutes = (s / 60) mod 1440,
+     ticks = (s mod 60) × 50 + µs / 20000 ;
+  3. écrit ces 3 valeurs **dans `rn_Time` du RootNode** (RootNode +$08 jours, +$0C minutes,
+     +$10 ticks), puis les recopie dans ds[0], ds[1], ds[2] ;
+  4. **Permit**.
+  Le D0 rendu à un appelant C n'est **pas** ds (résidu de Permit) — divergence avec l'AutoDoc ;
+  ne pas s'en servir. `rn_Time` n'est donc qu'un **cache** mis à jour à chaque DateStamp ;
+  la source de vérité est l'heure système de timer.device. [O]
+- **127 `timerio(cmd, iob, secs, micros)`** — requête synchrone à timer.device :
+  `iob` = BPTR d'un vecteur **d'au moins 12 longs (48 octets)** fourni par l'appelant (en pratique
+  un vecteur de sa frame BCPL). Effets dans l'ordre : `opendevice(iob, "timer.device", unité 0 =
+  UNIT_MICROHZ, flags 0)` (globale 31 : ln_Succ/ln_Pred := 0, ReplyPort = MsgPort du process,
+  mn_Length = 12 ; **résultat non testé**) ; `setio` (globale 6) : io_Command := cmd,
+  io_Length (+$24 = **tv_micro**) := micros, io_Data (+$28) et io_Offset (+$2C) reçoivent des
+  valeurs **résiduelles** (d'où l'exigence de 48 octets) ; +$20 (**tv_secs**) := secs ;
+  **doio** (21) ; **closedevice** (32). Résultat : non significatif. Au retour, +$20/+$24 contiennent
+  la réponse du timer. Le device est **ouvert et fermé à chaque appel**. Commandes utilisées :
+  **9 TR_ADDREQUEST** (delay, globale 47 : secs = ticks/50, µs = (ticks mod 50) × 20000),
+  **10 TR_GETSYSTIME** (−25), **11 TR_SETSYSTIME** (128).
+- **21 `doio(iob)`** — D1 = BPTR d'une IORequest ; exec **DoIO** (−456) ; → **io_Error** (octet +$1F,
+  non signé). Appelants : 127, console-handler, validateur.
+- **126 `compstamp(a, b)`** — deux BPTR de vecteurs datestamp ; comparaison lexicographique signée
+  (jours, puis minutes, puis ticks) ; → **0** si égaux, **+1 si a est plus récent que b**, **−1 si a
+  est plus ancien**. Pas d'effet de bord. Appelant : validateur (entrée 7).
+- **94 `getword(v, i)`** / **95 `putword(v, i, w)`** — mot 16 bits (non signé à la lecture) à
+  `BADDR(v) + 2·i`. [O]
+- **46 `unloadseg(seg)` + `endtask()`** — `unloadseg(seg)` (82) puis endtask (34) ; ne revient pas ;
+  si l'endtask revenait : `abort($87000002)`. Aucun appelant trouvé dans la ROM. [O]
+- **34 `endtask()`** (complément de §8.1) — **arguments ignorés** : freevec de `pr_SegList` (le
+  segarray) ; si `pr_GlobVec` ≠ `dl_GV`, freevec du GV (bloc complet, 50 slots négatifs compris) ;
+  puis `RemTask(0)`. [O]
+- **50 `openwindow(gauche, haut, largeur, hauteur, titre)`** — intuition **OpenWindow** (−204) avec
+  pour base la **globale 92** (IntuitionBase). NewWindow : LeftEdge/TopEdge/Width/Height = les 4
+  premiers arguments (mots), DetailPen = BlockPen = −1, IDCMPFlags = 0, Flags = **$00021007**
+  (WINDOWSIZING | WINDOWDRAG | WINDOWDEPTH | ACTIVATE | NOCAREREFRESH, smart refresh), pas de
+  gadget ni de checkmark, Title = `BADDR(5ᵉ arg)` (texte attendu terminé par NUL), Screen/BitMap =
+  0, MinWidth 120, MinHeight 50, MaxWidth = MaxHeight = $FFFF, Type = WBENCHSCREEN (1).
+  → **Window\*** (APTR) ou 0. Appelant : console-handler (entrée 5). [O]
+- **91 `renameobj(ancien, nouveau)`** — deux BSTR. `deviceproc` sur chacun (Result2 de chaque appel
+  = lock de référence) ; l'un des deux à 0 → **0** ; ports différents → **Result2 := 215**
+  (ERROR_RENAME_ACROSS_DEVICES) et **0** ; sinon `sendpkt` **ACTION_RENAME_OBJECT (17)** avec
+  Arg1 = lock ancien, Arg2 = BSTR ancien, Arg3 = lock nouveau, Arg4 = BSTR nouveau → dp_Res1.
+  Si Res1 = 0 : `errorreq` (114) ; **s'il renvoie 0 l'opération complète est relancée**, sinon
+  renvoie 0. (Sens du booléen de 114 observé ici : 0 = recommencer — à rapprocher de la ligne 114
+  de §8.2, marquée [D].) Appelant : l'adaptateur **−10 (Rename, LVO −78)**. [O]
+- **112** : voir §13.3.
+
+#### 8.4.3 C:Date (Workbench 1.3.3) [O WB]
+
+Fichier 4208 octets (md5 `16b1601e143f86663d2ec14151d6951d`) : hunk 0 = stub standard (§3.3,
+md5 `d6b59e0e…`), hunk 1 = module BCPL de 960 longs, max = **152**, paires globin
+**(84, $4D4)** et **(1, $44)**. Commande BCPL ordinaire : seules 86 et 128 la distinguent des
+commandes de §9.
+
+**Globales utilisées par le module** (liste exhaustive des accès `GV` du hunk 1) :
+
+| Gl. | Usage | Gl. | Usage |
+|---|---|---|---|
+| 1 | start (définie par Date) | 74 | writef |
+| 2 | stop(20) sur erreur | 78 | rdargs (vecteur 50 longs) |
+| 10 | result2 (lecture / écriture d'un drapeau, cf. ci-dessous) | 80 | findarg |
+| 60 | findoutput (argument TO) | **84** | restauration de la sortie (définie par Date) |
+| 62 | selectoutput | **86** | **datstamp** |
+| 64 | endwrite | **128** | **setdatstamp** |
+| 66 | output | 150 | statique : flux de sortie initial |
+| 73 | writes | 151, 152 | statiques : chaîne d'heure analysée, index de lecture |
+
+Plus, via le stub : 28, 29, 30, 89, 134 et la copie CLI 134..149. Arithmétique A5+$10/+$12.
+**Aucun accès direct** à timer.device, au RootNode ni à la RTC ; aucune globale 126/127.
+
+**Comportement** :
+1. G150 := output() ; `rdargs("TIME,DATE,TO=VER/K")`. Échec → « usage » : trois `writes`
+   (`***Bad args \n`, `- use DD-MMM-YY or <dayname> or yesterday etc. to set date\n`,
+   `      HH:MM:SS OR HH:MM to set time\n`), globale 84, **stop(20)**.
+2. TO présent : `findoutput(TO)` ; 0 → `writef("***Can't open %S\n", TO)` puis stop(20) ;
+   sinon `selectoutput`.
+3. **Ni TIME ni DATE** → lecture : `datstamp(v)` (vecteur local), conversion locale en trois
+   chaînes, puis `writef("%S %S %S\n", jour_de_semaine, date, heure)` (date `DD-MMM-YY`, heure
+   `HH:MM:SS`, jour = `Sunday…Saturday` indexé par jours mod 7, le 1-jan-1978 étant un dimanche ;
+   chaînes de repli `<unset>` / `<invalid>` présentes).
+4. Sinon, **argv!0 (TIME) puis argv!1 (DATE)** sont traités dans cet ordre, chacun selon son
+   contenu et non sa position : présence d'un `:` → **réglage d'heure**, sinon **réglage de date**.
+   - **Heure** `HH:MM[:SS]` : HH **obligatoire** ∈ 0..23 ; MM et SS ∈ 0..59 (MM/SS absents → 0 ;
+     HH absent ou toute valeur hors plage → usage + stop(20)). `datstamp(w)` (heure courante),
+     puis w!1 := HH×60+MM, w!2 := SS×50, **w!0 conservé**, puis **`setdatstamp(w)`** (128).
+   - **Date** : à l'entrée de l'analyse `result2` est mis à 0. Formes : `DD-MMM-YY` (mois
+     `Jan…Dec` ; **YY < 78 → 20YY, sinon 19YY** ; jours comptés depuis 1978 avec années
+     bissextiles = divisibles par 4), `findarg("Tomorrow,Today,Yesterday")` → jours courant +1 / 0
+     / −1, `findarg("Sunday,…,Saturday")` → jour de cette semaine-là dans les 7 jours **précédents**,
+     avec **Result2 := 1**. Les deux formes relatives exigent une date courante non nulle (jours =
+     0 → usage + stop(20)). Échec d'analyse → usage. Puis `datstamp(w)`, **w!0 := jours (+7 si
+     Result2 = 1)** — donc nom de jour = prochaine occurrence, aujourd'hui inclus [D] —, w!1/w!2
+     conservés, puis **`setdatstamp(w)`** (128).
+5. Fin : **globale 84** = si `output()` ≠ G150 : `endwrite()` puis `selectoutput(G150)`. Retour
+   normal de start (code 0).
+
+**Appel exact de la globale 128** : D1 = BPTR d'un vecteur de 3 longs (dans la frame de Date)
+déjà rempli par `datstamp` puis partiellement remplacé ; frame appelante de $34 (date) ou $30
+(heure) octets ; résultat ignoré. `date 21-Oct-26 10:00:00` ⇒ **deux** appels successifs :
+(17825, minutes courantes, ticks courants) puis (17825, 600, 0) — ce dernier règle l'heure
+système à 1 540 116 000 s ($5BCC4E20), 0 µs. Avec un GV de commande dont GV[128] garde le
+marqueur `$474C0001 + 2·128` (§3.3), le premier réglage saute à une adresse impaire. `date` sans
+argument n'exige que 86 (et donc −25/127/21).
+
+#### 8.4.4 C:SetClock (`SetClock load`) [O WB, D pour l'identification des appels de bibliothèque]
+
+Fichier 4884 octets (md5 `f2775b9198d12db532b935cb70682cd4`), **exécutable C (17 hunks, avec
+relocations), pas BCPL** : il n'utilise **aucune globale** ; il passe par dos.library (LVO) et
+timer.device. Syntaxe : `setclock load|save|reset` (sinon texte d'usage, code 0).
+
+- **Horloge** : MSM6242 en **$DC0000**, 16 registres de 4 bits, **un registre par long** (registre
+  *i* au quartet bas du long `base + 4·i`) : 0/1 secondes, 2/3 minutes, 4/5 heures, 6/7 jour,
+  8/9 mois, 10/11 année (2 chiffres), 12 jour de semaine, 13/14/15 = registres de contrôle D/E/F
+  (+$34/+$38/+$3C). Valeurs écrites en longs `$FFFxFFFx` (quartet utile répété).
+- **Détection** : lit le registre des secondes, attend ~1,5 s (appel dos de 75 ticks, D), relit ;
+  valeur changée ⇒ horloge présente. Sinon retente en **$D80000** (message
+  `Warning: Clock is at old address`) ; absente aux deux adresses ⇒ `Battery Backed up Clock not
+  found` et code retour **5**. Un `SetClock load` sans RTC émulée sort donc en 5 (startup-sequence :
+  sans conséquence si FailAt ≥ 5, cas par défaut 10).
+- **load** : gèle l'horloge (bit HOLD du registre D, attente de BUSY = 0), lit les 12 chiffres,
+  libère ; secondes depuis le 1-jan-1978 (années depuis 78, tables de mois 365/366 jours,
+  bissextile = année mod 4 = 0 ; années 00–77 non gérées) ; puis timer.device unité 0, IORequest de
+  40 octets sur un port créé pour l'occasion, **TR_SETSYSTIME (11)**, tv_secs = secondes,
+  **tv_micro = 0**, DoIO, fermeture. **Aucun passage par dos** : `rn_Time` n'est mis à jour qu'au
+  prochain DateStamp.
+- **save** : **TR_GETSYSTIME (10)** → tv_secs décomposé en date/heure, écrit dans les registres de
+  la RTC (sous HOLD). **reset** : séquence de réinitialisation des registres de contrôle D/E/F.
+
+#### 8.4.5 Conséquences pour notre runtime [D]
+
+- Une ROM qui veut faire tourner C:Date doit fournir **86** (ou −25) et **128** dans les segments
+  installés par globin ; 128 ne demande que timer.device **TR_SETSYSTIME** + la relecture qui
+  rafraîchit `rn_Time`.
+- 127 n'a pas besoin d'être exportée pour Date, mais toute implémentation de −25/128/47 doit
+  fournir un tampon IORequest ≥ 40 octets (≥ 48 si l'on reproduit `setio`).
+- Les résultats D1 de 128 et D0 de DateStamp sont non significatifs en V34 : renvoyer v / ds est
+  compatible.
 
 ---
 

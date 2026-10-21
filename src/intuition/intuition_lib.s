@@ -9,6 +9,7 @@
                 include "exec.i"
                 include "intuition.i"
 
+                xref    intuition_AutoRequest
                 xref    intuition_AddGadget
                 xref    intuition_AddGList
                 xref    intuition_RemoveGadget
@@ -111,7 +112,8 @@ intuition_vectors:
         dc.l    intuition_WindowLimits   ; 53 : LVO -318 WindowLimits(fenêtre a0, minW d0, minH d1, maxW d2, maxH d3)
         dc.l    intuition_null           ; 54 : LVO -324 SetPrefs (non impl.)
         dc.l    intuition_IntuiTextLength ; 55 : LVO -330 IntuiTextLength(itext a0)
-        dcb.l   3,intuition_null         ; 56..58 : LVO -336..-348 (non impl.)
+        dcb.l   2,intuition_null         ; 56..57 : LVO -336..-342 (non impl.)
+        dc.l    intuition_AutoRequest    ; 58 : LVO -348 AutoRequest(fenêtre a0, corps a1, oui a2, non a3, ...)
         dc.l    intuition_BeginRefresh   ; 59 : LVO -354 BeginRefresh(fenêtre a0)
         dc.l    intuition_null           ; 60 : LVO -360 (non impl.)
         dc.l    intuition_EndRefresh     ; 61 : LVO -366 EndRefresh(fenêtre a0, complet d0)

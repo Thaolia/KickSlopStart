@@ -1474,6 +1474,8 @@ wb_menupick:
         move.l  (sp)+,d7
         rts
 .mp_close:
+        cmp.w   #5,d1
+        beq     wb_discard
         cmp.w   #1,d1
         bne     .mp_ret
         tst.w   d7
@@ -1494,6 +1496,202 @@ wb_menupick:
         bls.s   .mp_rd
         move.l  (sp)+,d7
 .mp_ret:
+        rts
+
+; wb_discard(a5) : Workbench/Discard. L'icône sélectionnée d'un tiroir (pas le disque) : confirmation par
+; AutoRequest, puis l'objet (un tiroir avec tout son contenu) et son « .info » sont supprimés et le tiroir est relu.
+DS_PATH         EQU 0                ; chemin de l'objet (WB_PATHMAX)
+DS_QUEST        EQU DS_PATH+WB_PATHMAX   ; « OK to discard <nom>? »
+DS_IT           EQU DS_QUEST+WBS_NAMEMAX+16  ; 5 IntuiText : 3 lignes, « Discard », « Cancel »
+DS_SIZE         EQU DS_IT+5*IT_SIZEOF
+wb_discard:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        move.w  WBS_SELW(a5),d7
+        ble     .dc_ret              ; aucune sélection (-1) ou l'icône du disque (0)
+        move.w  WBS_SELI(a5),d6
+        bsr     wb_window
+        beq     .dc_ret
+        lea     -DS_SIZE(sp),sp
+        move.w  d6,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a2 ; a2 = nom de l'icône
+        move.l  a4,-(sp)
+        lea     DR_PATH(a4),a0
+        lea     4+DS_PATH(sp),a1
+        move.l  a2,a4
+        bsr     wb_join
+        move.l  (sp)+,a4
+        lea     DS_QUEST(sp),a1      ; question : « OK to discard <nom>? »
+        lea     wbs_dsq(pc),a0
+.dc_q1:
+        move.b  (a0)+,(a1)+
+        bne.s   .dc_q1
+        subq.l  #1,a1
+        move.l  a2,a0
+.dc_q2:
+        move.b  (a0)+,(a1)+
+        bne.s   .dc_q2
+        move.b  #'?',-1(a1)
+        clr.b   (a1)
+        lea     DS_IT(sp),a0         ; corps : trois lignes chaînées
+        lea     wbs_dsw1(pc),a1
+        moveq   #4,d1
+        bsr     wb_itext
+        lea     wbs_dsw2(pc),a1
+        moveq   #14,d1
+        bsr     wb_itext
+        lea     DS_QUEST(sp),a1
+        moveq   #24,d1
+        bsr     wb_itext
+        clr.l   IT_NEXTTEXT-IT_SIZEOF(a0)   ; fin du corps
+        lea     wbs_discard(pc),a1   ; gadgets
+        moveq   #3,d1
+        bsr     wb_itext
+        clr.l   IT_NEXTTEXT-IT_SIZEOF(a0)
+        lea     wbs_cancel(pc),a1
+        moveq   #3,d1
+        bsr     wb_itext
+        clr.l   IT_NEXTTEXT-IT_SIZEOF(a0)
+        move.l  a3,a0                ; AutoRequest(fenêtre du tiroir, corps, Discard, Cancel, 0, 0, 320, 80)
+        lea     DS_IT(sp),a1
+        lea     DS_IT+3*IT_SIZEOF(sp),a2
+        lea     DS_IT+4*IT_SIZEOF(sp),a3
+        moveq   #0,d0
+        moveq   #0,d1
+        move.l  #320,d2
+        moveq   #80,d3
+        move.l  WBS_IBASE(a5),a6
+        jsr     LVO_AUTOREQUEST(a6)
+        tst.l   d0
+        beq.s   .dc_free
+        bsr     wb_deselect
+        lea     DS_PATH(sp),a0
+        bsr     wb_rmtree
+        lea     DS_PATH(sp),a0       ; puis « <chemin>.info »
+        bsr     wb_strlen
+        cmp.w   #WB_PATHMAX-6,d0
+        bhs.s   .dc_reload
+        lea     0(a0,d0.w),a1
+        lea     wb_infosuffix(pc),a0
+.dc_inf:
+        move.b  (a0)+,(a1)+
+        bne.s   .dc_inf
+        lea     DS_PATH(sp),a0
+        move.l  a0,d1
+        move.l  WBS_DOSBASE(a5),a6
+        jsr     DOS_LVO_DELETEFILE(a6)
+.dc_reload:
+        bsr     wb_reload
+.dc_free:
+        lea     DS_SIZE(sp),sp
+.dc_ret:
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+
+; wb_itext(a0 = IntuiText, a1 = texte, d1.w = haut) -> a0 = IntuiText suivante (la NextText posée y pointe) :
+; stylo 2 sur 1, JAM1, 6 pixels à gauche. Clobbe d0.
+wb_itext:
+        move.b  #2,IT_FRONTPEN(a0)
+        move.b  #1,IT_BACKPEN(a0)
+        move.b  #JAM1,IT_DRAWMODE(a0)
+        move.w  #6,IT_LEFTEDGE(a0)
+        move.w  d1,IT_TOPEDGE(a0)
+        clr.l   8(a0)                ; ITextFont
+        move.l  a1,IT_ITEXT(a0)
+        lea     IT_SIZEOF(a0),a0
+        move.l  a0,IT_NEXTTEXT-IT_SIZEOF(a0)
+        rts
+
+; wb_rmtree(a0 = chemin, a5) -> d0 = vrai si l'objet a disparu : DeleteFile ; un répertoire non vide est d'abord vidé
+; (chaque entrée supprimée récursivement, l'énumération reprise depuis le début après chaque suppression).
+; Préserve d2-d7/a2-a6.
+wb_rmtree:
+        movem.l d2-d3/a2-a4/a6,-(sp)
+        move.l  a0,a2                ; a2 = chemin
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a2,d1
+        jsr     DOS_LVO_DELETEFILE(a6)
+        tst.l   d0
+        bne     .rt_ret
+        jsr     DOS_LVO_IOERR(a6)
+        cmp.l   #ERROR_DIRECTORY_NOT_EMPTY,d0
+        bne     .rt_fail
+        move.l  ($4).w,a6
+        move.l  #FIB_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,d3                ; d3 = FIB
+        beq     .rt_fail
+        lea     -WB_PATHMAX(sp),sp   ; chemin d'une entrée
+.rt_entry:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a2,d1
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,a3                ; a3 = verrou du répertoire
+        tst.l   d0
+        beq.s   .rt_done
+        move.l  a3,d1
+        move.l  d3,d2
+        jsr     DOS_LVO_EXAMINE(a6)
+        tst.l   d0
+        beq.s   .rt_unlock
+        move.l  a3,d1
+        move.l  d3,d2
+        jsr     DOS_LVO_EXNEXT(a6)
+        tst.l   d0
+        beq.s   .rt_unlock           ; vide : on peut supprimer le répertoire
+        move.l  d3,a4
+        lea     FIB_FILENAME(a4),a4
+        move.l  a2,a0
+        move.l  sp,a1
+        bsr     wb_join
+        move.l  a3,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+        move.l  sp,a0
+        bsr     wb_rmtree
+        tst.l   d0
+        bne.s   .rt_entry
+        bra.s   .rt_done             ; une entrée résiste : on arrête
+.rt_unlock:
+        move.l  a3,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.rt_done:
+        lea     WB_PATHMAX(sp),sp
+        move.l  ($4).w,a6
+        move.l  d3,a1
+        move.l  #FIB_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a2,d1
+        jsr     DOS_LVO_DELETEFILE(a6)
+        bra.s   .rt_ret
+.rt_fail:
+        moveq   #0,d0
+.rt_ret:
+        movem.l (sp)+,d2-d3/a2-a4/a6
+        rts
+
+; wb_reload(d7.w = tiroir, a5) : ses icônes sont rendues, l'intérieur effacé, le répertoire relu (icônes redessinées
+; au fur et à mesure). Préserve d2-d7/a2-a5.
+wb_reload:
+        movem.l d2/a2-a4/a6,-(sp)
+        bsr     wb_window
+        beq.s   .rl_ret
+        move.l  DR_NICON(a4),d2
+        clr.l   DR_NICON(a4)
+        lea     DR_ICONS(a4),a2
+        move.l  WBS_ICONBASE(a5),a6
+        bra.s   .rl_fnx
+.rl_free:
+        move.l  (a2)+,a0
+        jsr     ICON_LVO_FREEDISKOBJECT(a6)
+.rl_fnx:
+        dbra    d2,.rl_free
+        bsr     wb_redraw1
+        bsr     wb_loadicons
+.rl_ret:
+        movem.l (sp)+,d2/a2-a4/a6
         rts
 
 ; wb_mkmenus(a5) : recopie le modèle des menus dans l'état (intuition écrit dans les éléments) et y reloge les
@@ -1589,7 +1787,7 @@ wbm_tmpl:
         WBITEM  wbm_i02,wbm_i03,20,WBM_OFF,wbs_dup
         WBITEM  wbm_i03,wbm_i04,30,WBM_OFF,wbs_rename
         WBITEM  wbm_i04,wbm_i05,40,WBM_OFF,wbs_info
-        WBITEM  wbm_i05,0,50,WBM_OFF,wbs_discard
+        WBITEM  wbm_i05,0,50,WBM_ON,wbs_discard
         WBITEM  wbm_i10,wbm_i11,0,WBM_OFF,wbs_trash
         WBITEM  wbm_i11,0,10,WBM_OFF,wbs_init
         WBITEM  wbm_i20,wbm_i21,0,WBM_OFF,wbs_cleanup
@@ -1641,6 +1839,10 @@ wbs_dup:        dc.b    "Duplicate",0
 wbs_rename:     dc.b    "Rename",0
 wbs_info:       dc.b    "Info",0
 wbs_discard:    dc.b    "Discard",0
+wbs_cancel:     dc.b    "Cancel",0
+wbs_dsw1:       dc.b    "Warning: you cannot get back",0
+wbs_dsw2:       dc.b    "what you discard!",0
+wbs_dsq:        dc.b    "OK to discard ",0
 wbs_trash:      dc.b    "Empty Trash",0
 wbs_init:       dc.b    "Initialize",0
 wbs_cleanup:    dc.b    "Clean Up",0
@@ -1667,7 +1869,7 @@ wb_sysname:
 wb_diskname:
         dc.b    "SYS:Disk",0
 wb_infosuffix:
-        dc.b    ".info"
+        dc.b    ".info",0
 wb_procname:
         dc.b    "Workbench",0
 wb_idstring:
