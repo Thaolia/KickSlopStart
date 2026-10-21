@@ -46,7 +46,6 @@ DO_CURRENTX     EQU 58
 DO_CURRENTY     EQU 62
 DO_DRAWERDATA   EQU 66               ; struct DrawerData : dd_NewWindow en tête
 DO_STACKSIZE    EQU 74
-GG_GADGETRENDER EQU 18               ; struct Gadget : image
 NO_ICON_POSITION EQU $80000000
 WBDISK          EQU 1
 WBDRAWER        EQU 2

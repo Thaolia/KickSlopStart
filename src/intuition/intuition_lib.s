@@ -9,6 +9,15 @@
                 include "exec.i"
                 include "intuition.i"
 
+                xref    intuition_AddGadget
+                xref    intuition_AddGList
+                xref    intuition_RemoveGadget
+                xref    intuition_RemoveGList
+                xref    intuition_RefreshGadgets
+                xref    intuition_RefreshGList
+                xref    intuition_OnGadget
+                xref    intuition_OffGadget
+                xref    intuition_DrawBorder
                 xref    intuition_OpenScreen     ; screens.s : écrans et fenêtres
                 xref    intuition_CloseScreen
                 xref    intuition_OpenWorkBench
@@ -62,14 +71,16 @@ intuition_vectors:
         dc.l    intuition_close          ; 2 : LVO -12
         dc.l    intuition_expunge        ; 3 : LVO -18
         dc.l    intuition_null           ; 4 : LVO -24 (réservé)
-        dcb.l   4,intuition_null         ; 5..8 : LVO -30..-48 (non impl.)
+        dcb.l   2,intuition_null         ; 5..6 : LVO -30..-36 (non impl.)
+        dc.l    intuition_AddGadget      ; 7 : LVO -42 AddGadget(fenêtre a0, gadget a1, position d0)
+        dc.l    intuition_null           ; 8 : LVO -48 ClearDMRequest (non impl.)
         dc.l    intuition_ClearMenuStrip ; 9 : LVO -54 ClearMenuStrip(fenêtre a0)
         dc.l    intuition_null           ; 10 : LVO -60 ClearPointer (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
         dcb.l   4,intuition_null         ; 13..16 : LVO -78..-96 (non impl. : DisplayAlert -90 inclus)
         dc.l    intuition_DoubleClick    ; 17 : LVO -102 DoubleClick(s1 d0, µs1 d1, s2 d2, µs2 d3)
-        dc.l    intuition_null           ; 18 : LVO -108 DrawBorder (non impl.)
+        dc.l    intuition_DrawBorder     ; 18 : LVO -108 DrawBorder(rp a0, border a1, x d0, y d1)
         dc.l    intuition_DrawImage      ; 19 : LVO -114 DrawImage(rp a0, image a1, x d0, y d1)
         dc.l    intuition_null           ; 20 : LVO -120 EndRequest (non impl.)
         dc.l    intuition_GetPrefs       ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
@@ -78,15 +89,16 @@ intuition_vectors:
         dc.l    intuition_ItemAddress    ; 24 : LVO -144 ItemAddress(menustrip a0, code d0)
         dcb.l   3,intuition_null         ; 25..27 : LVO -150..-162 (non impl.)
         dc.l    intuition_MoveWindow     ; 28 : LVO -168 MoveWindow(fenêtre a0, dx d0, dy d1)
-        dc.l    intuition_null           ; 29 : LVO -174 OffGadget (non impl.)
+        dc.l    intuition_OffGadget      ; 29 : LVO -174 OffGadget(gadget a0, fenêtre a1, requester a2)
         dc.l    intuition_OffMenu        ; 30 : LVO -180 OffMenu(fenêtre a0, code d0)
-        dc.l    intuition_null           ; 31 : LVO -186 OnGadget (non impl.)
+        dc.l    intuition_OnGadget       ; 31 : LVO -186 OnGadget(gadget a0, fenêtre a1, requester a2)
         dc.l    intuition_OnMenu         ; 32 : LVO -192 OnMenu(fenêtre a0, code d0)
         dc.l    intuition_OpenScreen     ; 33 : LVO -198 OpenScreen(newscreen a0)
         dc.l    intuition_OpenWindow     ; 34 : LVO -204 OpenWindow(newwindow a0)
         dc.l    intuition_OpenWorkBench  ; 35 : LVO -210 OpenWorkBench()
         dc.l    intuition_PrintIText     ; 36 : LVO -216 PrintIText(rp a0, itext a1, x d0, y d1)
-        dcb.l   2,intuition_null         ; 37..38 : LVO -222..-228 (non impl.)
+        dc.l    intuition_RefreshGadgets ; 37 : LVO -222 RefreshGadgets(gadgets a0, fenêtre a1, requester a2)
+        dc.l    intuition_RemoveGadget   ; 38 : LVO -228 RemoveGadget(fenêtre a0, gadget a1)
         dc.l    intuition_ReportMouse    ; 39 : LVO -234 ReportMouse(drapeau d0, fenêtre a0)
         dcb.l   4,intuition_null         ; 40..43 : LVO -240..-258 (non impl.)
         dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
@@ -109,7 +121,10 @@ intuition_vectors:
         dc.l    intuition_FreeRemember   ; 68 : LVO -408 FreeRemember(clé a0, oublier d0)
         dcb.l   2,intuition_null         ; 69..70 : LVO -414..-420 (non impl.)
         dc.l    intuition_GetScreenData  ; 71 : LVO -426 GetScreenData(buffer a0, taille d0, type d1, écran a1)
-        dcb.l   7,intuition_null         ; 72..78 : LVO -432..-468 (non impl. : jeu V34 complet, jusqu'à NewModifyProp)
+        dc.l    intuition_RefreshGList   ; 72 : LVO -432 RefreshGList(gadgets a0, fenêtre a1, requester a2, nombre d0)
+        dc.l    intuition_AddGList       ; 73 : LVO -438 AddGList(fenêtre a0, gadget a1, position d0, nombre d1, req a2)
+        dc.l    intuition_RemoveGList    ; 74 : LVO -444 RemoveGList(fenêtre a0, gadget a1, nombre d0)
+        dcb.l   4,intuition_null         ; 75..78 : LVO -450..-468 (non impl. : jusqu'à NewModifyProp)
         dc.l    -1
 intuition_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)

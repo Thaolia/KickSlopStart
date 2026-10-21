@@ -813,8 +813,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page
-    (horloge, Agnus/Denise, PAL, fréquences). Suite : gadgets d'application d'intuition (GADGETUP/DOWN, AddGadget,
-    RefreshGadgets…) pour ses boutons. Chaque fin d'étape : `tests/adf_suite.sh`
+    (horloge, Agnus/Denise, PAL, fréquences) ; gadgets d'application d'intuition (GADGETUP/DOWN, AddGadget,
+    RefreshGadgets…) : ses boutons fonctionnent (SPEED). Ouverts : vitesse mesurée ~3× sous un vrai A500 (coût des
+    interruptions ?), gadgets PROP/STRING, disquettes Caesar / Scooby-Doo / bootdisk-amiga-m68k de la suite ADF. Chaque fin d'étape : `tests/adf_suite.sh`
     sur les disquettes de `assets/test_adf/`.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;

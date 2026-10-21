@@ -494,7 +494,17 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   borne balayait toute la mémoire (registres custom compris → écran gris, octets $FC/« f » sur la série). Diagnostic
   par point d'arrêt d'écriture sur SERDAT dans le débogueur console de FS-UAE (`console_debugger`, F12+D injecté).
   **Résultat** : SysInfo 4.4 affiche toute sa page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
-  EClock 709379, 50/50 Hz) ; ses boutons attendent les gadgets d'application d'intuition (non gérés).
+  EClock 709379, 50/50 Hz).
+- **GADGETS D'APPLICATION (intuition)** (`src/intuition/gadgets.s`) : la liste `wd_FirstGadget` (reprise de
+  `nw_FirstGadget`) est dessinée avec le cadre de la fenêtre (Border via DrawBorder ou Image, IntuiText, surbrillance
+  GADGHCOMP/GADGHBOX par inversion, SelectRender en GADGHIMAGE) ; positions/tailles GRELRIGHT/GRELBOTTOM/GRELWIDTH/
+  GRELHEIGHT. Bouton gauche sur un gadget actif (ni SYSGADGET ni GADGDISABLED) : sélection (bascule en TOGGLESELECT),
+  GADGETDOWN si GADGIMMEDIATE ; relâchement : désélection, GADGETUP si RELVERIFY et pointeur encore dessus ;
+  `im_IAddress` = le gadget (`wn_sendgad`) ; aucun MOUSEBUTTONS pour un clic pris par un gadget. LVO : AddGadget,
+  AddGList, RemoveGadget, RemoveGList, RefreshGadgets, RefreshGList, OnGadget, OffGadget, DrawBorder. Limites : tous
+  traités en boutons (pas de PROP/STRGADGET), pas de motif fantôme pour un gadget désactivé, surbrillance non suivie
+  pendant le glissement. Preuve : clic sur SPEED de SysInfo → test de vitesse exécuté (ROM prod : 68000 7.09 MHz,
+  169 Dhrystones, Chip 0.32 × A600 — écart de performance à étudier).
   Specs d'analyse : `docs/analysis/setpatch-138.md`, `docs/analysis/sysinfo-44.md`. Banc : `tests/adf_suite.sh`
   (boot de chaque ADF de `assets/test_adf/`, copies inscriptibles, résumé + captures).
 - **ÉTAPE 10 (EN COURS) — ÉCRITURE DISQUETTE** : (1) **trackdisk** : CMD_WRITE dans le cache de pistes (piste

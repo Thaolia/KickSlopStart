@@ -33,6 +33,11 @@
                 xdef    it_box
                 xdef    it_scrxy
                 xdef    wn_sendmsg
+                xdef    wn_sendgad
+                xref    gad_drawall          ; gadgets.s
+                xref    gad_down
+                xref    gad_up
+                xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
                 xdef    it_startinput
@@ -555,6 +560,7 @@ intuition_OpenWindow:
         move.l  d0,WD_FLAGS(a3)
         move.l  NW_TITLE(a2),WD_TITLE(a3)
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
+        move.l  NW_FIRSTGADGET(a2),WD_FIRSTGADGET(a3)
         move.l  a4,WD_WSCREEN(a3)
         move.b  NW_DETAILPEN(a2),d0  ; stylos : -1 = ceux de l'écran
         cmp.b   #-1,d0
@@ -791,6 +797,7 @@ wn_border:
         subq.w  #2,d3
         bsr     it_box
 .df_ret:
+        bsr     gad_drawall          ; gadgets d'application, redessinés avec le cadre
         move.l  WD_RPORT(a3),a1      ; état de dessin rendu aux clients : JAM2, stylos 1/0
         moveq   #1,d0
         jsr     LVO_SETAPEN(a6)
@@ -808,6 +815,7 @@ intuition_CloseWindow:
         move.l  a0,a3
         move.l  a0,d0
         beq.s   .cw_ret
+        bsr     gad_forget           ; un gadget de cette fenêtre restait enfoncé
         move.l  WD_WSCREEN(a3),a4    ; a4 = écran
         move.l  IB_LAYERSBASE(a5),a6
         suba.l  a0,a0
@@ -1393,6 +1401,8 @@ it_dobutton:
         bne     .db_ret              ; menus affichés : le bouton gauche est ignoré
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
         bne.s   .db_down
+        tst.l   IB_GADACT(a5)
+        bne     gad_up               ; un gadget d'application était enfoncé
         move.l  IB_ACTIVEWINDOW(a5),d0   ; relâchement : à la fenêtre active (celle du clic), où qu'il ait lieu
         beq     .db_ret
         move.l  d0,a3
@@ -1462,10 +1472,13 @@ it_dobutton:
         moveq   #IT_DRAGSIZE,d0
         bra     it_dragstart
 .db_mb:
+        cmp.w   #IECODE_LBUTTON,d7
+        bne.s   .db_ret
+        bsr     gad_down             ; un gadget d'application prend le clic ?
+        bne.s   .db_ret
         move.l  #MOUSEBUTTONS,d0
         moveq   #SELECTDOWN,d1
-        cmp.w   #IECODE_LBUTTON,d7
-        beq     wn_sendmsg
+        bra     wn_sendmsg
 .db_ret:
         rts
 
@@ -1869,8 +1882,11 @@ wn_unborder:
 
 ; wn_sendmsg(a3 = fenêtre, d0 = classe IDCMP, d1.w = code, d2.w/d3.w = souris relative) : si la fenêtre a demandé
 ; cette classe, prend un IntuiMessage libre de sa réserve, l'horodate (compteur VBlank : 50 Hz) et l'envoie sur son
-; UserPort ; réserve épuisée : événement perdu. Clobbe d0/d1/d6/a0/a1/a6.
+; UserPort ; réserve épuisée : événement perdu. im_IAddress = la fenêtre ; wn_sendgad : im_IAddress = a0 (le gadget
+; de GADGETDOWN / GADGETUP). Clobbe d0/d1/d6/a0/a1/a6.
 wn_sendmsg:
+        move.l  a3,a0
+wn_sendgad:
         move.l  WD_USERPORT(a3),d6
         beq     .sm_ret
         and.l   WD_IDCMPFLAGS(a3),d0
@@ -1890,7 +1906,7 @@ wn_sendmsg:
         move.l  d0,IM_CLASS(a1)
         move.w  d1,IM_CODE(a1)
         clr.w   IM_QUALIFIER(a1)
-        move.l  a3,IM_IADDRESS(a1)
+        move.l  a0,IM_IADDRESS(a1)
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
         move.l  GP_POLLS,d0          ; secondes / microsecondes depuis le démarrage (VBlanks)
