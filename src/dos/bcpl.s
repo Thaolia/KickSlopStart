@@ -26,6 +26,7 @@
                 xdef    bcpl_execute         ; LVO Execute (dos_lib.s)
                 xref    rcli_seg
                 xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
+                xref    dos_flushout
                 xref    dos_setnow           ; dos_lib.s : règle l'heure système (setdatstamp)
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
@@ -692,6 +693,11 @@ rt_rdch:
         move.l  d0,FH_BUF(a3)
         beq     .rc_fail
 .rc_read:
+        move.l  a3,-(sp)
+        bsr     rt_this
+        move.l  PR_COS(a3),d1
+        move.l  (sp)+,a3
+        jsr     dos_flushout         ; invite sans retour à la ligne : visible avant d'attendre la saisie
         move.l  a3,d1
         lsr.l   #2,d1                ; fh (BPTR)
         move.l  FH_BUF(a3),d2

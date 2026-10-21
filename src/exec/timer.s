@@ -35,6 +35,7 @@
                 xdef    timer_now         ; heure système (dos DateStamp)
                 xdef    timer_setnow      ; réglage de l'heure système (globale BCPL setdatstamp)
                 xdef    timer_micro_int   ; M7a : struct Interrupt de l'unité MICROHZ (vecteur ICR CIA-B)
+                xdef    timer_micro_start ; premier armement du one-shot MICROHZ (boot, après AddICRVector)
 
                 xref    newlist           ; lists.s (NEWLIST de la file d'unité)
 
@@ -157,7 +158,7 @@ timer_now:
         rts
 
 timer_beginio:
-        movem.l d2/a2-a3,-(sp)
+        movem.l d2/a2-a4,-(sp)
         move.l  a6,a2                ; a2 = base device
         move.l  a1,a3                ; a3 = iorequest
         move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
@@ -187,46 +188,198 @@ timer_beginio:
         jsr     LVO_REPLYMSG(a6)
 .bio_ret:
         move.l  a2,a6
-        movem.l (sp)+,d2/a2-a3
+        movem.l (sp)+,d2/a2-a4
         rts
 .bio_add:
-        jsr     LVO_DISABLE(a6)
-        ; M7l — conversion timeval -> décompte SELON l'unité (et choix de la file dans la même branche).
-        ; MICROHZ (défaut) : décompte en interruptions CIA-B (1 int ≈ US_PER_INT µs réelles) ; TV_MICRO
-        ; signifie donc des µs réelles. VBLANK : décompte en ticks 50 Hz (1 tick = 20000 µs).
-        move.l  TV_SECS(a3),d0
-        move.l  TV_MICRO(a3),d1
-        lea     TIMER_MICROQ(a2),a0  ; défaut : unité MICROHZ (CIA-B/INT6)
+        jsr     LVO_DISABLE(a6)      ; files partagées avec le serveur VBlank et l'INT6 du CIA-B
+        move.b  #NT_MESSAGE,LN_TYPE(a3)
+        bclr    #0,IO_FLAGS(a3)      ; requête mise en file : jamais rapide (DoIO attendra la réponse)
         cmp.l   #UNIT_VBLANK,IO_UNIT(a3)
         beq.s   .bio_vbl
-                ifne    M7L_OLD_CONV
-        mulu    #50,d0               ; RED M7L_OLD_CONV : ancienne conversion VBLANK (fausse) sur MICROHZ
-        divu    #20000,d1
-                else
-        mulu    #INTS_PER_SEC,d0     ; secs * interruptions CIA-B/s
-        divu    #US_PER_INT,d1       ; + µs / µs-par-interruption -> nb d'interruptions CIA-B
-                endc
-        bra.s   .bio_conv
+        bsr     tm_conv              ; MICROHZ : reste en (secondes, ticks E)
+        move.l  a3,-(sp)
+        bsr     tm_account           ; temps écoulé imputé aux requêtes déjà en file AVANT d'ajouter celle-ci
+        move.l  (sp)+,a1
+        lea     TIMER_MICROQ(a2),a0
+        jsr     LVO_ADDTAIL(a6)
+        bsr     tm_rearm
+        bra.s   .bio_queued
 .bio_vbl:
-        lea     TIMER_VBLQ(a2),a0    ; unité VBLANK (le handler VBlank décrémente cette file)
-        mulu    #50,d0               ; secs * 50 (1 tick = 1/50 s)
-        divu    #20000,d1            ; + µs / 20000 (1 tick = 20000 µs)
-.bio_conv:
+        move.l  TV_SECS(a3),d0       ; VBLANK : décompte en ticks 50 Hz (1 tick = 20000 µs)
+        move.l  TV_MICRO(a3),d1
+        mulu    #50,d0
+        divu    #20000,d1
         and.l   #$0000FFFF,d1        ; quotient divu (mot bas)
-        add.l   d1,d0                ; décompte
+        add.l   d1,d0
         bne.s   .bio_store
         moveq   #1,d0                ; mini 1 (évite expiration immédiate)
 .bio_store:
         move.l  d0,TV_SECS(a3)       ; décompte (TV_SECS réutilisé)
         clr.l   TV_MICRO(a3)
-        move.b  #NT_MESSAGE,LN_TYPE(a3)
-        bclr    #0,IO_FLAGS(a3)      ; requête mise en file : jamais rapide (DoIO attendra la réponse)
+        lea     TIMER_VBLQ(a2),a0
         move.l  a3,a1
-        jsr     LVO_ADDTAIL(a6)      ; enqueue (sous Disable -> atomique vs VBlank ET INT6)
+        jsr     LVO_ADDTAIL(a6)
+.bio_queued:
         jsr     LVO_ENABLE(a6)
         move.l  a2,a6                ; restaure a6 = base device
-        movem.l (sp)+,d2/a2-a3
+        movem.l (sp)+,d2/a2-a4
         rts
+
+; tm_div1000(d0 = dividende) -> d0 = quotient, d1 = reste de la division par 1000. Préserve d2-d7/a0-a6.
+tm_div1000:
+        move.l  d2,-(sp)
+        moveq   #0,d1
+        swap    d0
+        move.w  d0,d1
+        divu    #1000,d1             ; d1 = reste : quotient du mot haut
+        move.w  d1,d2
+        swap    d0
+        move.w  d0,d1                ; reste : mot bas
+        divu    #1000,d1
+        swap    d2
+        move.w  d1,d2                ; d2 = quotient complet
+        clr.w   d1
+        swap    d1                   ; d1 = reste
+        move.l  d2,d0
+        move.l  (sp)+,d2
+        rts
+
+; tm_conv(a3 = requête MICROHZ) : timeval -> reste (TV_SECS secondes, TV_MICRO ticks E dans la seconde), au moins
+; 1 tick. µs normalisées (>= 1 s reportées dans les secondes). Clobbe d0/d1.
+tm_conv:
+                ifne    M7L_OLD_CONV
+        move.l  TV_SECS(a3),d0       ; RED : ancienne conversion VBLANK (/20000) appliquée à des pas de 255 ticks
+        mulu    #50,d0
+        move.l  TV_MICRO(a3),d1
+        divu    #20000,d1
+        and.l   #$0000FFFF,d1
+        add.l   d1,d0
+        mulu    #255,d0
+        clr.l   TV_SECS(a3)
+                else
+        move.l  TV_MICRO(a3),d0
+        bsr.s   tm_div1000           ; d0 = ms, d1 = µs (0-999)
+        move.l  d1,-(sp)
+        bsr.s   tm_div1000           ; d0 = secondes en plus, d1 = ms (0-999)
+        add.l   d0,TV_SECS(a3)
+        move.l  d1,d0
+        mulu    #E_PER_SEC/1000,d0   ; ms -> ticks : ms × 709,379
+        mulu    #E_PER_SEC//1000,d1
+        divu    #1000,d1
+        and.l   #$0000FFFF,d1
+        add.l   d1,d0
+        move.l  (sp)+,d1
+        mulu    #E_PER_SEC/1000,d1   ; µs -> ticks : µs × 0,709
+        divu    #1000,d1
+        and.l   #$0000FFFF,d1
+        add.l   d1,d0
+                endc
+        tst.l   TV_SECS(a3)
+        bne.s   .tc_set
+        tst.l   d0
+        bne.s   .tc_set
+        moveq   #1,d0
+.tc_set:
+        move.l  d0,TV_MICRO(a3)
+        rts
+
+; tm_account(a2 = base, a6 = SysBase ; INT6 masquée) : arrête le timer A de CIA-B, impute le temps écoulé depuis son
+; armement à chaque requête MICROHZ, répond à celles qui sont échues. Clobbe d0-d2/a0/a1/a3/a4.
+tm_account:
+        move.l  TIMER_ARMED(a2),d2
+        beq.s   .ta_ret
+        clr.l   TIMER_ARMED(a2)
+        lea     CIAB_HW,a0
+        btst    #0,CIA_CRA(a0)
+        beq.s   .ta_spent            ; START retombé : le one-shot est arrivé au bout
+        move.b  #$08,CIA_CRA(a0)     ; arrêt (compteur figé)
+        moveq   #0,d0
+        move.b  CIA_TAHI(a0),d0
+        lsl.w   #8,d0
+        move.b  CIA_TALO(a0),d0
+        cmp.l   d2,d0
+        bhs.s   .ta_spent            ; compteur rechargé : arrivé au bout juste avant l'arrêt
+        sub.l   d0,d2                ; écoulé = armé - restant
+.ta_spent:
+        lea     TIMER_MICROQ(a2),a3
+        move.l  (a3),a3
+.ta_loop:
+        move.l  (a3),a4              ; a4 = suivant (0 : sentinelle de fin)
+        cmpa.w  #0,a4
+        beq.s   .ta_ret
+        move.l  TV_MICRO(a3),d0
+        sub.l   d2,d0
+        bpl.s   .ta_nb
+        add.l   #E_PER_SEC,d0        ; emprunt d'une seconde (écoulé < 1 s)
+        subq.l  #1,TV_SECS(a3)
+.ta_nb:
+        move.l  d0,TV_MICRO(a3)
+        tst.l   TV_SECS(a3)
+        bmi.s   .ta_exp
+        bne.s   .ta_next
+        tst.l   d0
+        bne.s   .ta_next
+.ta_exp:
+        move.l  a3,a1
+        jsr     LVO_REMOVE(a6)
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)     ; interrupt-safe (Disable/raw_enable, pas de yield)
+.ta_next:
+        move.l  a4,a3
+        bra.s   .ta_loop
+.ta_ret:
+        rts
+
+; tm_rearm(a2 = base ; INT6 masquée, timer arrêté par tm_account) : arme le one-shot sur l'échéance la plus proche,
+; au plus TIMER_CAP ticks. File vide : arrêté en production, TIMER_IDLE en dev (INT6 périodique des preuves M7).
+; Clobbe d0/d2/a0.
+tm_rearm:
+        lea     TIMER_MICROQ(a2),a0
+        move.l  (a0),a0
+        tst.l   (a0)
+                ifne    PROD
+        beq.s   .tr_ret
+                else
+        bne.s   .tr_some
+        move.l  #TIMER_IDLE,d2
+        bra.s   .tr_arm
+.tr_some:
+                endc
+        move.l  #TIMER_CAP,d2
+.tr_loop:
+        tst.l   (a0)
+        beq.s   .tr_arm
+        tst.l   TV_SECS(a0)
+        bne.s   .tr_next             ; au moins 1 s : plafond
+        move.l  TV_MICRO(a0),d0
+        cmp.l   d2,d0
+        bhs.s   .tr_next
+        move.l  d0,d2
+.tr_next:
+        move.l  (a0),a0
+        bra.s   .tr_loop
+.tr_arm:
+        lea     CIAB_HW,a0
+        move.b  d2,CIA_TALO(a0)
+        move.w  d2,d0
+        lsr.w   #8,d0
+        move.b  d0,CIA_TAHI(a0)      ; one-shot : l'écriture du poids fort charge le compteur
+        move.b  #$19,CIA_CRA(a0)     ; START + one-shot + LOAD
+        move.l  d2,TIMER_ARMED(a2)
+.tr_ret:
+        rts
+
+; timer_micro_start : premier armement du timer MICROHZ, une fois le vecteur ICR de CIA-B posé. Préserve tout.
+timer_micro_start:
+        movem.l d0-d2/a0-a2/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  VBL_SVCDATA,a2
+        jsr     LVO_DISABLE(a6)
+        bsr     tm_rearm
+        jsr     LVO_ENABLE(a6)
+        movem.l (sp)+,d0-d2/a0-a2/a6
+        rts
+
 timer_abortio:
         moveq   #0,d0
         rts
@@ -312,20 +465,8 @@ timer_micro_service:
         move.l  VBL_SVCDATA,a2      ; a2 = base device (lue depuis le hook VBLANK, même base)
         move.l  a2,d0
         beq.s   .mic_done           ; timer non initialisé -> rien
-        lea     TIMER_MICROQ(a2),a4
-        move.l  (a4),a3             ; a3 = lh_Head (1re requête ou sentinelle)
-.mic_loop:
-        move.l  (a3),d2             ; d2 = a3->Succ ; 0 => sentinelle tail -> fin
-        beq.s   .mic_done
-        subq.l  #1,TV_SECS(a3)      ; décompte ce tick CIA-B
-        bgt.s   .mic_cont           ; > 0 -> pas encore expiré
-        move.l  a3,a1               ; expiré : Remove(a3)
-        jsr     LVO_REMOVE(a6)
-        move.l  a3,a1               ; M7i : ReplyMsg(a3) — interrupt-safe (Disable/raw_enable, pas de yield) ;
-        jsr     LVO_REPLYMSG(a6)    ; préserve d2/d3/a2 (ne touche pas d3/a5 -> convention cia_dispatch OK)
-.mic_cont:
-        move.l  d2,a3              ; a3 = Succ sauvé (valide même après Remove)
-        bra.s   .mic_loop
+        bsr     tm_account
+        bsr     tm_rearm
 .mic_done:
         ; M7d : stress du PORT PARTAGÉ (producteur INTERRUPTION) -> course vs task_port (consommateur
         ; TÂCHE). GetMsg/PutMsg sont interrupt-safe (Disable) depuis M7d -> aucune corruption. En RED

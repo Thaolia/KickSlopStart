@@ -25,6 +25,7 @@
                 xref    dispatch_in      ; interrupts.s (M7c : lancement 1re tâche = transition user-mode)
                 xref    build_reslist    ; resident.s (scan des ROMTags)
                 xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
+                xref    timer_micro_start
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
@@ -139,12 +140,10 @@ SENT_P       EQU $CAFE0050    ; sentinelle de task_port (M7d)
 SENT_Q2      EQU $CAFE0060    ; sentinelle de task_q2 (M7h, spinner-2 d'isolation)
 SENT_RM      EQU $CAFE0070    ; sentinelle de task_rm (M7j, tâche qui se termine)
 M7H_MINTICKS EQU 150          ; ticks VBlank min avant d'émettre « M7H QUANTUM OK » (ratio stable, ~3 s)
-CIAB_LATCH_HI EQU $00         ; latch timer A CIA-B = $00FF (~255 ticks E-clock ≈ 360 us/IRQ)
-CIAB_LATCH_LO EQU $FF
                 ifne    M7L_OLD_CONV
 TT_MICRO_REQ EQU 400000       ; RED M7L_OLD_CONV : /20000 -> 20 int -> ~7,2 ms (période inchangée)
                 else
-TT_MICRO_REQ EQU 7000         ; M7l : 7000 µs RÉELS -> /359 -> 19 int -> ~6,8 ms (≈ ancien débit ~140/s)
+TT_MICRO_REQ EQU 7000         ; M7l : 7000 µs RÉELS (≈ ancien débit ~140/s)
                 endc
 ; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
 
@@ -3150,10 +3149,7 @@ d2_done:
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
         move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; active Paula EXTER (INT6, niveau 6 > VBlank 3)
-        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-B Timer A en CONTINU (IRQ périodique rapide)
-        move.b  #CIAB_LATCH_LO,CIA_TALO(a0)
-        move.b  #CIAB_LATCH_HI,CIA_TAHI(a0)   ; l'écriture de TAHI charge le latch
-        move.b  #$11,CIA_CRA(a0)     ; START(b0) + LOAD(b4) ; b3=0 -> mode CONTINU (auto-reload)
+        jsr     timer_micro_start    ; timer A de CIA-B en one-shot (dev : réarmé toutes les ~360 µs)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
         ; --- M6r/M6y : strap (romboot) — lit, valide et EXÉCUTE le bootblock de DF0: (jalon C « ça boote ! ») ---

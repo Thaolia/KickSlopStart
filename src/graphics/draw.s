@@ -789,7 +789,8 @@ bt_runs:
 ; à cp_y - tf_Baseline, à cp_x + crénage ; cp_x avance du crénage + espacement + rp_TxSpacing. JAM1 : pixels du
 ; glyphe (stylo A) ; JAM2 : fond au stylo B ; COMPLEMENT : glyphe inversé ; INVERSVID : glyphe et fond permutés.
 ; Styles algorithmiques (rp_AlgoStyle) : gras (glyphe étalé de tf_BoldSmear) et souligné (ligne sous la base).
-; Voie rapide : glyphe de 8 pixels aligné sur l'octet, JAM2, sans style ; sinon rendu par plages de pixels.
+; Voie rapide : glyphe de 8 pixels (début d'octet dans la police), JAM1 ou JAM2, à n'importe quelle abscisse, cellule
+; entière dans une ClipRect, sans style ; sinon rendu par plages de pixels.
 gfx_Text:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -TX_FRAME(sp),sp
@@ -857,12 +858,7 @@ gfx_Text:
         bne.s   .tx_slow
         cmp.w   #8,TX_W(a5)
         bne.s   .tx_slow
-        move.b  rp_DrawMode(a1),d0
-        and.b   #~INVERSVID,d0
-        cmp.b   #JAM2,d0
-        bne.s   .tx_slow
-        move.w  d4,d0
-        and.w   #7,d0
+        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT : rendu par plages
         bne.s   .tx_slow
         bsr     dr_cellcr            ; cellule entière dans une seule ClipRect utilisable ?
         beq.s   .tx_slow
@@ -937,18 +933,22 @@ gfx_Text:
 ; chaque plan autorisé par rp_Mask reçoit directement ses octets (bit à 1 -> bit du stylo A, bit à 0 -> bit du
 ; stylo B). Préserve d4-d7.
 .tx_fast:
-        movem.l d4-d7,-(sp)
+        movem.l d4-d7/a4/a6,-(sp)
         move.l  DC_CBM(a5),a2
         sub.w   DC_BX(a5),d4         ; coordonnées dans le BitMap de la ClipRect
         sub.w   DC_BY(a5),d5
         moveq   #0,d6
-        move.w  bm_BytesPerRow(a2),d6 ; d6 = pas d'une ligne
+        move.w  bm_BytesPerRow(a2),d6
+        move.l  d6,a4                ; a4 = pas d'une ligne
         move.w  d5,d0
         mulu    d6,d0
         moveq   #0,d1
         move.w  d4,d1
         lsr.w   #3,d1
-        add.l   d1,d0                ; d0 = décalage de l'octet de la première ligne
+        add.l   d1,d0                ; d0 = décalage du premier octet touché
+        move.l  d0,-(sp)
+        moveq   #7,d6
+        and.w   d4,d6                ; d6 = décalage du glyphe dans l'octet (0..7)
         moveq   #0,d3
         move.b  bm_Depth(a2),d3
         subq.w  #1,d3                ; d3 = compteur de plans (dbra)
@@ -960,41 +960,65 @@ gfx_Text:
         move.l  (a2)+,a0
         btst    #0,d7
         beq.s   .tf_next
-        add.l   d0,a0
-        moveq   #0,d4                ; d4 = ligne du glyphe
+        add.l   (sp),a0
+        move.l  a3,a6                ; a6 = ligne du glyphe
+        move.w  TX_H(a5),d4
+        subq.w  #1,d4                ; d4 = compteur de lignes (dbra)
 .tf_row:
-        move.w  d4,d5
-        mulu    TX_MOD(a5),d5
-        move.b  0(a3,d5.l),d5
+        move.b  (a6),d0              ; d0 = pixels du glyphe
         btst    #2,rp_DrawMode(a1)   ; INVERSVID
         beq.s   .tf_ni
-        not.b   d5
+        not.b   d0
 .tf_ni:
+        moveq   #0,d5                ; d5 = valeur ; d0 = pixels touchés
+        btst    #0,rp_DrawMode(a1)   ; JAM2 : toute la cellule
+        bne.s   .tf_jam2
+        btst    #0,d1                ; JAM1 : le glyphe seul, au stylo A
+        beq.s   .tf_put
+        move.b  d0,d5
+        bra.s   .tf_put
+.tf_jam2:
         btst    #0,d1
-        beq.s   .tf_nofg
+        beq.s   .tf_nf
+        move.b  d0,d5
+.tf_nf:
         btst    #0,d2
-        beq.s   .tf_put              ; stylo A seul : le glyphe
-        moveq   #-1,d5               ; A et B : plein
-        bra.s   .tf_put
-.tf_nofg:
-        btst    #0,d2
-        beq.s   .tf_zero
-        not.b   d5                   ; stylo B seul : le fond
-        bra.s   .tf_put
-.tf_zero:
-        moveq   #0,d5
+        beq.s   .tf_nb
+        not.b   d0
+        or.b    d0,d5
+.tf_nb:
+        moveq   #-1,d0
 .tf_put:
-        move.b  d5,(a0)
-        add.l   d6,a0
-        addq.w  #1,d4
-        cmp.w   TX_H(a5),d4
-        blo.s   .tf_row
+        and.w   #$FF,d0              ; pixels touchés et valeur, placés sur deux octets selon le décalage
+        and.w   #$FF,d5
+        lsl.w   #8,d0
+        lsl.w   #8,d5
+        lsr.w   d6,d0
+        lsr.w   d6,d5
+        ror.w   #8,d0                ; octet de gauche
+        ror.w   #8,d5
+        not.b   d0
+        and.b   d0,(a0)
+        or.b    d5,(a0)
+        not.b   d0
+        tst.w   d6
+        beq.s   .tf_adv
+        ror.w   #8,d0                ; octet de droite
+        ror.w   #8,d5
+        not.b   d0
+        and.b   d0,1(a0)
+        or.b    d5,1(a0)
+.tf_adv:
+        add.l   a4,a0
+        add.w   TX_MOD(a5),a6
+        dbra    d4,.tf_row
 .tf_next:
         lsr.b   #1,d1                ; bits des stylos et du masque pour le plan suivant
         lsr.b   #1,d2
         lsr.b   #1,d7
         dbra    d3,.tf_plane
-        movem.l (sp)+,d4-d7
+        addq.l  #4,sp
+        movem.l (sp)+,d4-d7/a4/a6
         rts
 ; .tx_runs : ligne d2.l (bit 31 = pixel gauche) de TX_RW pixels à (d4, d5) : découpe en plages de bits égaux ;
 ; bit 1 -> stylo A (ou inversion en COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7.

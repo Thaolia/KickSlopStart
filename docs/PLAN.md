@@ -809,14 +809,16 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (Port-Handler), clavier routé vers la fenêtre active, MOUSEMOVE/ReportMouse, fermeture de tiroir ×2 plus rapide.
     **Étape 10 (en cours)** : écriture disquette — trackdisk (CMD_WRITE/UPDATE, MFM) et écriture OFS (création,
     flux, suppression, renommage, protection, commentaire, Info) prouvées sous CLI ; dates (DateStamp réel, C:Date,
-    en-têtes datés) ; AutoRequest ; Workbench Discard ; BltTemplate (FastFonts). Restent : gadgets texte puis Rename,
+    en-têtes datés) ; AutoRequest ; Workbench Discard ; BltTemplate (FastFonts) ; performance : timer MICROHZ
+    en one-shot (le timer CIA-B continu mangeait plus de la moitié du CPU), sortie console BCPL tamponnée, Text plus
+    rapide (`type` ×7) ; échecs de commande et FailAt comme la 1.3 (sondés sur la vraie ROM). Restent : ScrollRaster
+    plus rapide, textes d'erreur via C:Fault, gadgets texte puis Rename,
     Snapshot, Info du Workbench, `>>`, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page
     (horloge, Agnus/Denise, PAL, fréquences) ; gadgets d'application d'intuition (GADGETUP/DOWN, AddGadget,
-    RefreshGadgets…) : ses boutons fonctionnent (SPEED). Ouverts : vitesse mesurée ~3× sous un vrai A500 (coût des
-    interruptions ?), gadgets PROP/STRING, disquettes Caesar / Scooby-Doo / bootdisk-amiga-m68k de la suite ADF. Chaque fin d'étape : `tests/adf_suite.sh`
+    RefreshGadgets…) : ses boutons fonctionnent (SPEED). Ouverts : gadgets PROP/STRING, disquettes Caesar / Scooby-Doo / bootdisk-amiga-m68k de la suite ADF. Chaque fin d'étape : `tests/adf_suite.sh`
     sur les disquettes de `assets/test_adf/`.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;

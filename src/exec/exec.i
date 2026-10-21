@@ -274,15 +274,15 @@ M7J_DEMO         EQU 0
 ; « M7J REMTASK OK » absent. Prouve que le FreeMem pile+TCB est load-bearing.
 M7J_NOFREE       EQU 0
 
-; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par l'underflow du timer A de CIA-B
-; (latch $00FF = 255 ticks E-clock). Horloge E PAL = 709379 Hz (= horloge CPU 7,09379 MHz / 10), donc
-; 255 / 709379 ≈ 359,5 µs par interruption, soit ≈ 2782 interruptions/s. timer_beginio convertit désormais
-; TV_MICRO en interruptions CIA-B via ces constantes (au lieu du facteur VBLANK /20000 qui faisait d'une
-; requête « 400000 µs » ~7 ms au lieu de 400 ms). Résolution = 1 interruption ≈ 360 µs (la bande de preuve
-; absorbe ~±10 %) ; la résolution sub-interruption (lecture live du latch E) reste différée (« ECLOCK »).
-; Hypothèse PAL, cohérente avec /20000=50 Hz et M7A_MINTICKS=250=5 s.
-US_PER_INT     EQU 359        ; µs réelles par interruption CIA-B (255 ticks E / 709379 Hz)
-INTS_PER_SEC   EQU 2782       ; interruptions CIA-B par seconde (709379 / 255)
+; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par le timer A de CIA-B, en mode ONE-SHOT armé
+; sur l'échéance la plus proche (au plus TIMER_CAP ticks E). Horloge E PAL = 709379 Hz (= CPU 7,09379 MHz / 10). Une
+; requête garde son reste en (secondes, ticks E dans la seconde) ; le temps écoulé est lu sur le compteur du CIA. La
+; latence entre fin du one-shot et réarmement n'est pas comptée : armer large (TIMER_CAP) la rend négligeable.
+; File vide : timer arrêté en production ; la ROM dev le réarme toutes les TIMER_IDLE ticks (~360 µs), les preuves
+; M7a/M7d/M7e exigent une INT6 périodique. (Un timer CONTINU à 255 coûtait ~55 % du CPU, mesuré le 2026-10-21.)
+E_PER_SEC      EQU 709379     ; ticks E-clock par seconde (PAL)
+TIMER_CAP      EQU $FFFF      ; armement maximal (~92 ms)
+TIMER_IDLE     EQU 255
 ; Preuve = inter-horloges : une requête MICROHZ LONGUE connue, mesurée contre l'horloge VBLANK (50 Hz,
 ; indépendante : raster display vs E-clock CPU). 0,5 s doit s'écouler en ~25 ticks VBLANK. NON tautologique
 ; (les deux horloges dérivent de matériels différents) : valide la constante E à ~±10 %.
@@ -484,7 +484,8 @@ TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité V
 TIMER_MICROQ EQU LIB_SIZE+14   ; M7a : liste de requêtes de l'unité MICROHZ (CIA-B/INT6) (struct List)
 TIMER_SYSSECS EQU LIB_SIZE+28  ; heure système : secondes à la référence (TR_SETSYSTIME)
 TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT à la référence
-TD_SIZE      EQU LIB_SIZE+36   ; taille de la base timer.device (Library + 2 listes d'unité + heure système)
+TIMER_ARMED  EQU LIB_SIZE+36   ; long : ticks E armés sur le timer A de CIA-B (0 = arrêté)
+TD_SIZE      EQU LIB_SIZE+40   ; taille de la base timer.device (Library + 2 listes d'unité + heure système + armement)
 UNIT_MICROHZ EQU 0             ; sélecteur d'unité dans IO_UNIT (= numérotation réelle timer.device)
 UNIT_VBLANK  EQU 1             ; (OpenDevice poserait un struct Unit* ; notre impl minimale = l'index)
 EB_CHKBASE    EQU $26

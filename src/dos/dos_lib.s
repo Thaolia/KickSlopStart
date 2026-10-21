@@ -30,6 +30,7 @@
                 xref    bcpl_starthandler ; dos/bcpl.s (démarrage du handler d'un DeviceNode)
                 xref    bcpl_execute     ; dos/bcpl.s (LVO Execute : C:Run + runcommand)
                 xdef    dos_bufwrite     ; écriture différée du runtime BCPL (bcpl.s)
+                xdef    dos_flushout     ; vidage de la sortie courante avant une lecture (bcpl.s)
                 xref    proc_create      ; dos/process.s (Process + pile + pr_MsgPort + AddTask)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
@@ -483,7 +484,8 @@ dos_rawwrite:
 
 ; Écriture différée du runtime BCPL : wrch & co écrivent octet par octet ; vers un fichier (FileHandle routé, non
 ; interactif) chaque octet serait un packet. Ils s'accumulent dans un tampon (FH_WBUF, remplissage FH_WCNT), vidé quand il est plein et avant tout Write / Read / Seek / Close du
-; même FileHandle. Les consoles (interactives) restent immédiates. Seuls les FileHandles ouverts par ce dos (bloc
+; même FileHandle. Une console (interactive) est en plus vidée à chaque LF/CR/FF/NUL (règle wrch V34), et la sortie
+; courante l'est avant que rdch ne relise l'entrée (invite sans retour à la ligne). Seuls les FileHandles ouverts par ce dos (bloc
 ; getvec de DOS_FH_ALLOC octets) ont ces champs privés.
 DOS_WBUF        EQU 512
 ; dos_bufwrite(d1 = fh BPTR, d2 = tampon, d3 = longueur) -> d0 = longueur | -1. Préserve d1-d7/a0-a6.
@@ -493,16 +495,14 @@ dos_bufwrite:
         move.l  d3,d6
         move.l  d1,d4
         lsl.l   #2,d4
-        beq.s   .bw_direct
+        beq     .bw_direct
         move.l  d4,a2
         tst.l   FH_TYPE(a2)
-        beq.s   .bw_direct
-        tst.l   FH_INTERACTIVE(a2)
-        bne.s   .bw_direct
+        beq     .bw_direct
         cmp.l   #DOS_FH_ALLOC+4,-4(a2)
-        bne.s   .bw_direct              ; pas un FileHandle de ce dos
+        bne     .bw_direct              ; pas un FileHandle de ce dos
         cmp.l   #DOS_WBUF,d6
-        bhs.s   .bw_direct
+        bhs     .bw_direct
         tst.l   FH_WBUF(a2)
         bne.s   .bw_have
         move.l  ($4).w,a6
@@ -510,7 +510,7 @@ dos_bufwrite:
         moveq   #MEMF_PUBLIC,d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,FH_WBUF(a2)
-        beq.s   .bw_direct
+        beq     .bw_direct
         clr.l   FH_WCNT(a2)
 .bw_have:
         move.l  FH_WCNT(a2),d0
@@ -529,6 +529,26 @@ dos_bufwrite:
 .bw_cnx:
         dbra    d0,.bw_cpy
         add.l   d6,FH_WCNT(a2)
+        tst.l   FH_INTERACTIVE(a2)
+        beq.s   .bw_done
+        move.l  d5,a0                   ; console : vidée dès qu'un LF, CR, FF ou NUL est écrit
+        move.w  d6,d0
+        bra.s   .bw_scnx
+.bw_scan:
+        move.b  (a0)+,d1
+        beq.s   .bw_flush
+        cmp.b   #10,d1
+        beq.s   .bw_flush
+        cmp.b   #12,d1
+        beq.s   .bw_flush
+        cmp.b   #13,d1
+        beq.s   .bw_flush
+.bw_scnx:
+        dbra    d0,.bw_scan
+        bra.s   .bw_done
+.bw_flush:
+        bsr     dos_flushfh
+.bw_done:
         move.l  d6,d0
         bra.s   .bw_ret
 .bw_direct:
@@ -537,6 +557,17 @@ dos_bufwrite:
         jsr     DOS_LVO_WRITE(a6)
 .bw_ret:
         movem.l (sp)+,d1-d7/a0-a6
+        rts
+
+; dos_flushout(d1 = fh BPTR | 0) : vide les octets différés de ce FileHandle. Préserve tout.
+dos_flushout:
+        movem.l d1/a2,-(sp)
+        lsl.l   #2,d1
+        beq.s   .fo_ret
+        move.l  d1,a2
+        bsr.s   dos_flushfh
+.fo_ret:
+        movem.l (sp)+,d1/a2
         rts
 
 ; dos_flushfh(a2 = FileHandle) : écrit les octets différés (s'il y en a). Préserve tout.

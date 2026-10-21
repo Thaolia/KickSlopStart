@@ -425,7 +425,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   ticks E-clock) `TV_MICRO` ne valait PAS des µs réelles (une requête « 400000 µs » durait ~7 ms, pas 400 ms).
   M7l SÉPARE la conversion par unité : MICROHZ compte en interruptions CIA-B via `US_PER_INT`=359 /
   `INTS_PER_SEC`=2782 (E-clock PAL 709379 Hz = CPU/10, latch 255 -> ~359,5 µs/int) ; VBLANK garde `/20000`.
-  `TV_MICRO` signifie donc des µs réelles, à la résolution d'une interruption (~360 µs). PREUVE = INTER-HORLOGES
+  `TV_MICRO` signifie donc des µs réelles, à la résolution d'une interruption (~360 µs). (Remplacé à l'étape 10 :
+  one-shot armé sur l'échéance, reste en ticks E — voir « ÉTAPE 10 — PERFORMANCE ».) PREUVE = INTER-HORLOGES
   (NON tautologique : E-clock CPU vs raster display, matériels différents) : une requête MICROHZ de 0,5 s doit
   s'écouler en ~25 ticks VBLANK (horloge 50 Hz indépendante). GREEN « M7L MICROHZ CALIB OK » = elapsed ∈ bande
   [22,28] (3/3). RED (`M7L_OLD_CONV=1`, conversion VBLANK rétablie sur MICROHZ) : la requête de 0,5 s expire en
@@ -495,6 +496,28 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   par point d'arrêt d'écriture sur SERDAT dans le débogueur console de FS-UAE (`console_debugger`, F12+D injecté).
   **Résultat** : SysInfo 4.4 affiche toute sa page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
   EClock 709379, 50/50 Hz).
+- **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
+  continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
+  9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
+  709 379 Hz) ; `tm_account` lit le compteur (temps écoulé depuis l'armement), décompte et répond aux requêtes échues,
+  `tm_rearm` arme le one-shot sur l'échéance la plus proche (au plus `TIMER_CAP` = $FFFF ≈ 92 ms). Appelés sous INT6
+  masquée depuis BeginIO (imputation AVANT l'ajout de la nouvelle requête) et depuis le vecteur ICR. File vide : timer
+  arrêté en production ; réarmé toutes les `TIMER_IDLE` = 255 ticks en dev (preuves M7a/M7d/M7e). Armer large compte :
+  un plafond de 255 faisait dériver M7L de plus de 12 % (latence underflow -> réarmement non comptée). (2) **Sortie
+  console BCPL tamponnée** (règle wrch V34) : `dos_bufwrite` tamponne aussi les FileHandles interactifs et les vide dès
+  qu'un LF, CR, FF ou NUL est écrit ; `rdch` vide la sortie courante avant de relire l'entrée (invite sans retour à la
+  ligne) ; la console initiale du shell est allouée comme un FileHandle de dos (`DOS_FH_ALLOC`) pour en bénéficier.
+  Avant : un paquet ACTION_WRITE par caractère (~35 ms chacun). (3) **Text** : voie rapide généralisée (toute abscisse,
+  glyphe décalé sur deux octets masqués ; JAM1 et JAM2). Mesures ROM de production (disque WB, sans FastFonts) :
+  `copy ram:x to *` 27 s -> 4,6 s ; `type ram:x` (1,4 Ko) 68 s -> 9,3 s. Reste : ScrollRaster (copie CPU octet par
+  octet, ~0,2 s par défilement).
+  (4) **Échecs de commande fidèles à la 1.3** (`sh_report`, shell.s), comportements relevés par sonde boîte noire
+  sur la vraie KS 1.3 (startup-sequence de test, captures d'écran) : commande introuvable -> « Unknown command
+  <nom> » ; fichier non chargeable (LoadSeg refuse, ex. hunk V39 $3FD) -> « Unable to load <nom>: Error code 121 »
+  (ERROR_FILE_NOT_OBJECT ; « Error code » faute de C:Fault) ; dans les deux cas un script non interactif est
+  abandonné sans autre message. Code retour >= cli_FailLevel en non interactif -> « <nom> failed returncode <n> » puis
+  abandon. Appliqué à la startup-sequence, aux scripts d'Execute et au CLI ROM. Écart restant : les messages
+  d'erreur des commandes (« Error code 205 » au lieu de « object not found » : la 1.3 obtient le texte via C:Fault).
 - **ÉTAPE 10 (SUITE) — DATES, DISCARD, FASTFONTS** : (1) **heure système** : `timer_now`/`timer_setnow` (timer.s),
   `DateStamp` réel (dos_now : jours/minutes/ticks depuis le 1-1-1978, copie dans rn_Time du RootNode) ; globales BCPL
   **128 setdatstamp** (TR_SETSYSTIME) et **126 compstamp** (spec bcpl-runtime-v34.md §8.4) : `C:Date` règle et lit

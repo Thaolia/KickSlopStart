@@ -49,13 +49,13 @@ shell_main:
                 jsr     dos_sendpkt
                 move.l  d0,d7                ; d7 = clé
                 ; FileHandle console -> pr_CIS/pr_COS : Input()/Output() des commandes lancées écrivent sur la console
-                move.l  #FH_SIZEOF+4,d0      ; bloc getvec [taille][FileHandle] : Close le libère par l'en-tête
+                move.l  #DOS_FH_ALLOC+4,d0   ; même bloc que Open (getvec [taille][FileHandle+privés]) : sortie tamponnée
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq.s   .nofh
                 move.l  d0,a0
-                move.l  #FH_SIZEOF+4,(a0)+
+                move.l  #DOS_FH_ALLOC+4,(a0)+
                 move.l  a0,d0
                 move.l  DOS_CONPORT,FH_TYPE(a0)
                 move.l  d7,FH_ARG1(a0)
@@ -103,13 +103,15 @@ shell_main:
                 move.l  #sh_prompt_len,d4
                 bsr     sh_write
                 bsr     sh_readline          ; -> d6 = octets, ligne en (a3)
-                bsr     sh_dispatch_line     ; parse le 1er mot -> builtin / commande externe / « ? »
+                bsr     sh_dispatch_line     ; parse le 1er mot -> builtin / commande externe
+                moveq   #-1,d1               ; interactif : message éventuel, jamais d'abandon
+                bsr     sh_report
                 bsr     sh_runscript
                 bra.s   .loop
 
 ; sh_dispatch_line(a3 = ligne, d6 = longueur) : builtins ver/echo, sinon commande externe (sh_extern). Appelé par la
-; boucle interactive ET par l'exécuteur de startup-sequence (F1). Clobbe d0/d1/d4 + a0/a1/a4 ; préserve d2/d3/d5/d6/d7
-; + a2/a3/a5/a6.
+; boucle interactive ET par l'exécuteur de startup-sequence (F1). -> d0/a0 comme sh_extern (builtin : d0 = -1).
+; Clobbe d0/d1/d4 + a0/a1/a4 ; préserve d2/d3/d5/d6/d7 + a2/a3/a5/a6.
 sh_dispatch_line:
                 ifne    E2_NO_DISPATCH
                 bra     .dl_extern           ; RED E2 : pas de dispatch builtin -> commande externe
@@ -122,6 +124,7 @@ sh_dispatch_line:
                 move.l  #sh_vermsg,a4
                 move.l  #sh_vermsg_len,d4
                 bsr     sh_write
+                moveq   #-1,d0
                 rts
 .dl_not_ver:
                 move.l  a3,a0                ; redirection hors guillemets : c:Echo (le builtin écrit sur la console)
@@ -177,19 +180,14 @@ sh_dispatch_line:
                 moveq   #2,d4
                 bsr     sh_write
 .dl_ret:
+                moveq   #-1,d0
                 rts
 .dl_extern:
-                bsr     sh_extern            ; -> d0 = 1 exécutée, 0 introuvable, -1 ligne vide
-                tst.l   d0
-                bne.s   .dl_ret2
-                move.l  #sh_unknown,a4       ; non trouvée -> « ? »
-                move.l  #sh_unknown_len,d4
-                bsr     sh_write
-.dl_ret2:
-                rts
+                bra     sh_extern
 
-; sh_extern(a3 = ligne, d6 = longueur) -> d0 = 1 si la commande a été trouvée et exécutée, 0 si introuvable (a0 = son
-; nom C-string, terminé en place), -1 pour une ligne vide ou un commentaire. Le 1er mot est le nom, le reste les
+; sh_extern(a3 = ligne, d6 = longueur) -> d0 = 1 si la commande a été trouvée et exécutée, 0 si introuvable, 2 si son
+; fichier n'est pas chargeable (pr_Result2 = code d'erreur) — a0 = son nom C-string, terminé en place —, -1 pour une
+; ligne vide ou un commentaire. Le 1er mot est le nom, le reste les
 ; arguments ; espaces de tête ignorés. Clobbe d1/a1 ; préserve d2-d7/a2-a6.
 sh_extern:
                 move.l  a3,a0
@@ -262,9 +260,10 @@ sh_runscript:
                 bmi.s   .sr_eof
                 clr.b   0(a3,d6.l)
                 bsr     sh_extern
+                moveq   #0,d1
+                bsr     sh_report
                 tst.l   d0
-                bne.s   .sr_lp
-                bsr     rcli_unknown
+                bne.s   .sr_eof              ; échec : le script est abandonné comme s'il était fini
                 bra.s   .sr_lp
 .sr_eof:
                 bsr     sh_cli_ptr
@@ -481,6 +480,11 @@ sh_exec_cmd:
                 move.l  d6,d0
                 jsr     ls_load_hunks        ; d0 = BPTR seglist | 0
                 move.l  d0,d7
+                bne.s   .x_freebuf
+                move.l  #2,XF_FLAG(sp)       ; lu mais refusé (type de hunk inconnu, mémoire...)
+                move.l  ($4).w,a0
+                move.l  EB_THISTASK(a0),a0
+                move.l  #ERROR_FILE_NOT_OBJECT,PR_RESULT2(a0)
 .x_freebuf:
                 move.l  ($4).w,a6            ; libère le buffer AVANT d'exécuter : rend la mémoire au programme
                 move.l  a5,a1
@@ -984,6 +988,10 @@ sh_run_startup:
                 cmp.b   #';',d0
                 beq.s   .sl_loop             ; commentaire
                 bsr     sh_dispatch_line     ; a2=StandardPacket intact, a3=ligne, d6=longueur
+                moveq   #0,d1
+                bsr     sh_report
+                tst.l   d0
+                bne.s   .sl_done             ; échec : le reste de la startup-sequence est abandonné
                 bsr     sh_runscript         ; Execute a pu basculer l'entrée du CLI sur un script
                 bra.s   .sl_loop
 .sl_done:
@@ -1023,10 +1031,6 @@ sh_vermsg:
                 dc.b    "E2 SHELL ver OK (builtin dispatched from typed command line)",13,10
 sh_vermsg_end:
 sh_vermsg_len   EQU sh_vermsg_end-sh_vermsg
-sh_unknown:
-                dc.b    "?",13,10
-sh_unknown_end:
-sh_unknown_len  EQU sh_unknown_end-sh_unknown
 sh_cantmsg:
                 dc.b    "Can't open "
 sh_cantmsg_end:
@@ -1102,9 +1106,19 @@ rcli_start:
                 bmi.s   .rs_eof
                 clr.b   0(a3,d6.l)
                 bsr     sh_extern
+                bsr     sh_cli_ptr           ; interactif = non Background et entrée standard = entrée courante
+                moveq   #0,d1
+                tst.l   CLI_BACKGROUND(a1)
+                bne.s   .rs_rep
+                move.l  CLI_STANDARDINPUT(a1),d1
+                sub.l   CLI_CURRENTINPUT(a1),d1
+                seq     d1
+                ext.w   d1
+                ext.l   d1
+.rs_rep:
+                bsr     sh_report
                 tst.l   d0
-                bne.s   .rs_loop
-                bsr     rcli_unknown         ; « <nom>: Unknown command »
+                bne.s   .rs_eof              ; échec dans un script : abandonné comme s'il était fini
                 bra.s   .rs_loop
 .rs_eof:
                 bsr     sh_cli_ptr
@@ -1342,32 +1356,124 @@ rcli_rdline:
                 movem.l (sp)+,d2-d3/a2/a6
                 rts
 
-; rcli_unknown(a0 = nom) : « <nom>: Unknown command » sur la sortie courante. Préserve d6/d7/a3.
-rcli_unknown:
-                movem.l d2-d3/a2/a6,-(sp)
+; sh_report(d0 = résultat de sh_extern, a0 = nom, d1 = interactif ≠ 0) -> d0 = 1 si un script non interactif doit
+; être abandonné. Introuvable : « Unknown command <nom> » ; non chargeable : « Unable to load <nom>: Error code <n> » ;
+; exécutée avec cli_ReturnCode >= cli_FailLevel, en non interactif seulement : « <nom> failed returncode <n> ».
+; Préserve d1-d7/a0-a6.
+sh_report:
+                movem.l d1-d3/a0-a2,-(sp)
                 move.l  a0,a2
+                move.l  d1,d3
+                tst.l   d0
+                bmi.s   .rp_ok
+                beq.s   .rp_unk
+                cmp.l   #2,d0
+                beq.s   .rp_load
+                tst.l   d3
+                bne.s   .rp_ok
+                bsr     sh_cli_ptr
+                beq.s   .rp_ok
+                move.l  CLI_RETURNCODE(a1),d2
+                cmp.l   CLI_FAILLEVEL(a1),d2
+                blt.s   .rp_ok
+                move.l  a2,a0
+                bsr     sh_puts
+                lea     sh_failmsg(pc),a0
+                bsr     sh_puts
+                move.l  d2,d0
+                bsr     sh_putdec
+                bra.s   .rp_end
+.rp_unk:
+                lea     sh_unkmsg(pc),a0
+                bsr     sh_puts
+                move.l  a2,a0
+                bsr     sh_puts
+                bra.s   .rp_end
+.rp_load:
+                move.l  ($4).w,a0            ; lu avant d'écrire : chaque Write repose pr_Result2
+                move.l  EB_THISTASK(a0),a0
+                move.l  PR_RESULT2(a0),d2
+                lea     sh_loadmsg(pc),a0
+                bsr     sh_puts
+                move.l  a2,a0
+                bsr     sh_puts
+                lea     sh_codemsg(pc),a0
+                bsr     sh_puts
+                move.l  d2,d0
+                bsr     sh_putdec
+.rp_end:
+                lea     sh_nl(pc),a0
+                bsr     sh_puts
+                moveq   #0,d0
+                tst.l   d3
+                bne.s   .rp_ret
+                moveq   #1,d0
+                bra.s   .rp_ret
+.rp_ok:
+                moveq   #0,d0
+.rp_ret:
+                movem.l (sp)+,d1-d3/a0-a2
+                rts
+
+; sh_puts(a0 = C-string) : écrite sur la sortie courante. Préserve tout.
+sh_puts:
+                movem.l d0-d3/a0-a1/a6,-(sp)
                 move.l  a0,d2
-                moveq   #0,d3
-.un_len:
-                tst.b   (a2)+
-                beq.s   .un_go
+                moveq   #-1,d3
+.pu_len:
                 addq.l  #1,d3
-                bra.s   .un_len
-.un_go:
-                move.l  DOS_DOSBASE,a6
+                tst.b   (a0)+
+                bne.s   .pu_len
                 move.l  ($4).w,a0
                 move.l  EB_THISTASK(a0),a0
                 move.l  PR_COS(a0),d1
-                beq.s   .un_ret
-                move.l  d1,-(sp)
+                beq.s   .pu_ret
+                move.l  DOS_DOSBASE,a6
                 jsr     DOS_LVO_WRITE(a6)
-                move.l  (sp)+,d1
-                move.l  #rcli_unkmsg,d2
-                moveq   #rcli_unkmsg_end-rcli_unkmsg,d3
-                jsr     DOS_LVO_WRITE(a6)
-.un_ret:
-                movem.l (sp)+,d2-d3/a2/a6
+.pu_ret:
+                movem.l (sp)+,d0-d3/a0-a1/a6
                 rts
+
+; sh_putdec(d0 = entier signé) : écrit en décimal sur la sortie courante. Préserve tout.
+sh_putdec:
+                movem.l d0-d3/a0,-(sp)
+                lea     -12(sp),sp
+                lea     12(sp),a0
+                clr.b   -(a0)
+                move.l  d0,d2                ; d2 = signe
+                bpl.s   .pd_lp
+                neg.l   d0
+.pd_lp:                                      ; d0 / 10 en deux divu (quotient sur 32 bits)
+                moveq   #0,d1
+                swap    d0
+                move.w  d0,d1
+                divu    #10,d1               ; d1 = reste : quotient du mot haut
+                move.w  d1,d3
+                swap    d0
+                move.w  d0,d1
+                divu    #10,d1               ; d1 = chiffre : quotient du mot bas
+                swap    d3
+                move.w  d1,d3                ; d3 = quotient complet
+                swap    d1
+                add.b   #'0',d1
+                move.b  d1,-(a0)
+                move.l  d3,d0
+                bne.s   .pd_lp
+                tst.l   d2
+                bpl.s   .pd_out
+                move.b  #'-',-(a0)
+.pd_out:
+                bsr     sh_puts
+                lea     12(sp),sp
+                movem.l (sp)+,d0-d3/a0
+                rts
+
+sh_unkmsg:      dc.b    "Unknown command ",0
+sh_loadmsg:     dc.b    "Unable to load ",0
+sh_codemsg:     dc.b    ": Error code ",0
+sh_failmsg:     dc.b    " failed returncode ",0
+sh_nl:          dc.b    10,0
+                even
 
 ; rcli_delcmdfile(a3 = tampon) : le fichier de commandes temporaire d'Execute (cli_CommandFile) est supprimé et le
 ; nom vidé. Préserve d6/d7/a3.
@@ -1451,9 +1557,6 @@ rcli_free:
                 jsr     LVO_FREEMEM(a6)
 .fr_ret:
                 rts
-rcli_unkmsg:
-                dc.b    ": Unknown command",10
-rcli_unkmsg_end:
                 cnop    0,4
                 dc.l    0                    ; fin de la table de globin
                 dc.l    1,rcli_start-rcli_data   ; globale 1 = start

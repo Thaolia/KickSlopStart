@@ -143,6 +143,7 @@ OFFSET_BEGINNING EQU -1            ; Seek depuis le début
 OFFSET_CURRENT   EQU 0             ; Seek relatif à la position courante
 OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
+ERROR_FILE_NOT_OBJECT EQU 121      ; dos/dos.i : fichier non chargeable (LoadSeg)
 ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i : action/fonction non supportée
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de la DosList
 ERROR_RENAME_ACROSS_DEVICES EQU 215
