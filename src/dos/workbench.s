@@ -12,9 +12,9 @@
 ; au REFRESHWINDOW (BeginRefresh/EndRefresh). Une seule icône sélectionnée à la fois (rectangle inversé). Double-clic
 ; sur un outil : lancé par CreateProc avec un message WBStartup (argument 0 = l'outil) ; sur un projet : son outil par
 ; défaut, le projet en argument 1. Le message revient sur le port « Workbench » à la fin de l'outil : segment
-; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close et Redraw actifs, le reste grisé.
-; Portée : pas de déplacement d'icônes, ni de Clean Up / Snapshot / Info / Rename / Discard / Version, ni d'icône
-; Ram Disk ni de défilement des tiroirs.
+; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard et Redraw actifs, le
+; reste grisé. Portée : ni Clean Up / Snapshot / Info / Duplicate / Version, ni icône Ram Disk, ni défilement des
+; tiroirs ; Rename et Discard ne s'appliquent qu'aux icônes d'un tiroir (pas au disque).
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup, DiskObject).
 ; AUCUNE lecture ROM.
 
@@ -1476,6 +1476,8 @@ wb_menupick:
 .mp_close:
         cmp.w   #5,d1
         beq     wb_discard
+        cmp.w   #3,d1
+        beq     wb_rename
         cmp.w   #1,d1
         bne     .mp_ret
         tst.w   d7
@@ -1586,6 +1588,160 @@ wb_discard:
         lea     DS_SIZE(sp),sp
 .dc_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+
+; wb_rename(a5) : Workbench/Rename. L'icône sélectionnée d'un tiroir (pas le disque) : fenêtre « Rename » avec un
+; gadget texte prérempli et activé ; Return renomme l'objet puis son « .info », et le tiroir est relu ; la case de
+; fermeture annule. Préserve d7/a5.
+RN_OLD          EQU 0                ; ancien chemin (WB_PATHMAX)
+RN_NEW          EQU RN_OLD+WB_PATHMAX
+RN_BUF          EQU RN_NEW+WB_PATHMAX    ; texte du gadget (nom OFS : 30 caractères)
+RN_UNDO         EQU RN_BUF+32
+RN_SI           EQU RN_UNDO+32       ; StringInfo
+RN_GAD          EQU RN_SI+36         ; Gadget
+RN_BRD          EQU RN_GAD+GG_SIZEOF ; Border puis ses 5 points
+RN_SIZE         EQU RN_BRD+16+20
+RN_MAXCHARS     EQU 31
+wb_rename:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        move.w  WBS_SELW(a5),d7
+        ble     .rn_ret              ; aucune sélection (-1) ou l'icône du disque (0)
+        move.w  WBS_SELI(a5),d6
+        bsr     wb_window
+        beq     .rn_ret
+        lea     -RN_SIZE(sp),sp
+        move.l  sp,a0                ; tout à zéro
+        move.w  #RN_SIZE/2-1,d0
+.rn_clr:
+        clr.w   (a0)+
+        dbra    d0,.rn_clr
+        move.w  d6,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a2 ; a2 = nom de l'icône
+        move.l  a4,-(sp)
+        lea     DR_PATH(a4),a0
+        lea     4+RN_OLD(sp),a1
+        move.l  a2,a4
+        bsr     wb_join
+        move.l  (sp)+,a4
+        move.l  a2,a0
+        lea     RN_BUF(sp),a1
+        moveq   #RN_MAXCHARS-1,d0
+        bsr     wb_strcpy
+        lea     RN_BUF(sp),a0
+        bsr     wb_strlen
+        lea     RN_SI(sp),a0
+        lea     RN_BUF(sp),a1
+        move.l  a1,SI_BUFFER(a0)
+        lea     RN_UNDO(sp),a1
+        move.l  a1,SI_UNDOBUFFER(a0)
+        move.w  d0,SI_BUFFERPOS(a0)  ; curseur en fin de nom
+        move.w  #RN_MAXCHARS,SI_MAXCHARS(a0)
+        lea     RN_GAD(sp),a1
+        move.l  #(10<<16)|16,GG_LEFTEDGE(a1)
+        move.l  #(280<<16)|9,GG_WIDTH(a1)
+        move.w  #RELVERIFY,GG_ACTIVATION(a1)
+        move.w  #STRGADGET,GG_GADGETTYPE(a1)
+        move.l  a0,GG_SPECIALINFO(a1)
+        lea     RN_BRD(sp),a0
+        move.l  a0,GG_GADGETRENDER(a1)
+        move.l  #$FFFEFFFE,BD_LEFTEDGE(a0)   ; cadre à 2 pixels autour du texte
+        move.b  #1,BD_FRONTPEN(a0)
+        move.b  #5,BD_COUNT(a0)
+        lea     16(a0),a1
+        move.l  a1,BD_XY(a0)
+        clr.l   (a1)+                ; (0,0) (283,0) (283,12) (0,12) (0,0)
+        move.l  #(283<<16),(a1)+
+        move.l  #(283<<16)|12,(a1)+
+        move.l  #12,(a1)+
+        lea     -NW_SIZEOF(sp),sp
+        bsr     wb_nwclear
+        move.l  #(150<<16)|60,NW_LEFTEDGE(a0)
+        move.l  #(300<<16)|32,NW_WIDTH(a0)
+        move.l  #GADGETUP|CLOSEWINDOW,NW_IDCMPFLAGS(a0)
+        move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE,NW_FLAGS(a0)
+        lea     NW_SIZEOF+RN_GAD(sp),a1
+        move.l  a1,NW_FIRSTGADGET(a0)
+        lea     wbs_rename(pc),a1
+        move.l  a1,NW_TITLE(a0)
+        move.l  WBS_IBASE(a5),a6
+        jsr     LVO_OPENWINDOW(a6)
+        lea     NW_SIZEOF(sp),sp
+        move.l  d0,d5                ; d5 = fenêtre « Rename »
+        beq     .rn_free
+        lea     RN_GAD(sp),a0
+        move.l  d5,a1
+        sub.l   a2,a2
+        jsr     LVO_ACTIVATEGADGET(a6)
+        moveq   #0,d4                ; d4 = confirmé
+.rn_wait:
+        move.l  d5,a0
+        move.l  WD_USERPORT(a0),a0
+        move.l  ($4).w,a6
+        jsr     LVO_WAITPORT(a6)
+.rn_get:
+        move.l  d5,a0
+        move.l  WD_USERPORT(a0),a0
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        beq.s   .rn_wait
+        move.l  d0,a1
+        move.l  IM_CLASS(a1),d3
+        jsr     LVO_REPLYMSG(a6)
+        cmp.l   #CLOSEWINDOW,d3
+        beq.s   .rn_close
+        cmp.l   #GADGETUP,d3
+        bne.s   .rn_get
+        moveq   #1,d4
+.rn_close:
+        move.l  d5,a0
+        move.l  WBS_IBASE(a5),a6
+        jsr     LVO_CLOSEWINDOW(a6)
+        tst.w   d4
+        beq.s   .rn_free
+        tst.b   RN_BUF(sp)           ; nom vide : rien à faire
+        beq.s   .rn_free
+        move.l  a4,-(sp)
+        lea     DR_PATH(a4),a0
+        lea     4+RN_NEW(sp),a1
+        lea     4+RN_BUF(sp),a4
+        bsr     wb_join
+        move.l  (sp)+,a4
+        move.l  WBS_DOSBASE(a5),a6
+        lea     RN_OLD(sp),a0
+        move.l  a0,d1
+        lea     RN_NEW(sp),a0
+        move.l  a0,d2
+        jsr     DOS_LVO_RENAME(a6)
+        tst.l   d0
+        beq.s   .rn_free
+        lea     RN_OLD(sp),a0        ; puis les « .info »
+        bsr     rn_info
+        lea     RN_NEW(sp),a0
+        bsr     rn_info
+        lea     RN_OLD(sp),a0
+        move.l  a0,d1
+        lea     RN_NEW(sp),a0
+        move.l  a0,d2
+        jsr     DOS_LVO_RENAME(a6)
+        bsr     wb_deselect
+        bsr     wb_reload
+.rn_free:
+        lea     RN_SIZE(sp),sp
+.rn_ret:
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+; rn_info(a0 = chemin de WB_PATHMAX octets) : « .info » ajouté s'il tient. Clobbe d0/a0/a1.
+rn_info:
+        bsr     wb_strlen
+        cmp.w   #WB_PATHMAX-6,d0
+        bhs.s   .ri_ret
+        lea     0(a0,d0.w),a1
+        lea     wb_infosuffix(pc),a0
+.ri_cp:
+        move.b  (a0)+,(a1)+
+        bne.s   .ri_cp
+.ri_ret:
         rts
 
 ; wb_itext(a0 = IntuiText, a1 = texte, d1.w = haut) -> a0 = IntuiText suivante (la NextText posée y pointe) :
@@ -1785,7 +1941,7 @@ wbm_tmpl:
         WBITEM  wbm_i00,wbm_i01,0,WBM_ON,wbs_open
         WBITEM  wbm_i01,wbm_i02,10,WBM_ON,wbs_close
         WBITEM  wbm_i02,wbm_i03,20,WBM_OFF,wbs_dup
-        WBITEM  wbm_i03,wbm_i04,30,WBM_OFF,wbs_rename
+        WBITEM  wbm_i03,wbm_i04,30,WBM_ON,wbs_rename
         WBITEM  wbm_i04,wbm_i05,40,WBM_OFF,wbs_info
         WBITEM  wbm_i05,0,50,WBM_ON,wbs_discard
         WBITEM  wbm_i10,wbm_i11,0,WBM_OFF,wbs_trash

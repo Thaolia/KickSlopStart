@@ -311,6 +311,7 @@ KBD_TAIL        EQU $0000064E ; F2b : word — index d'ÉCRITURE (producteur : k
 IND_ADDHANDLER  EQU 9            ; io_Command : ajoute un handler (struct Interrupt) à la chaîne
 IND_REMHANDLER  EQU 10           ; io_Command : retire un handler de la chaîne
 IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents dans la chaîne de handlers
+IECLASS_NULL    EQU 0            ; ie_Class : événement neutralisé (ignoré par les handlers suivants)
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
 IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
@@ -340,6 +341,7 @@ KMR_SIZE     EQU LIB_SIZE+8
 KQ_SHIFT     EQU $03           ; masque ie_Qualifier : LSHIFT | RSHIFT
 KQB_CAPS     EQU 2             ; bit CAPSLOCK dans ie_Qualifier ($04)
 KQB_CTRL     EQU 3             ; bit CONTROL dans ie_Qualifier ($08)
+KQB_RCOMMAND EQU 7             ; bit Amiga droite dans ie_Qualifier ($80)
 ; feeder clavier -> input.device (intégration F, item 1) : ring BRUT alimenté par kbd_interrupt (raw tap au même
 ; point que le push cuit, après filtre qualifieurs), drainé par le process feeder -> IND_WRITEEVENT(RAWKEY).
 KBD_FHEAD    EQU $0000065E ; word : tête (consommateur = feeder)
@@ -366,6 +368,7 @@ TD_CHGCNT    EQU $00000750 ; trackdisk : long — compteur de changements de dis
 DOS_OWCTX    EQU $00000754 ; dos : long — contexte d'écriture OFS (ofswrite.s), alloué au premier besoin
 EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logicielles en attente (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
+DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
 GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)

@@ -1,8 +1,11 @@
 ; src/intuition/gadgets.s — intuition.library : gadgets d'application des fenêtres (liste wd_FirstGadget). Rendu
 ; (Border ou Image, IntuiText, surbrillance), sélection au bouton gauche avec GADGETDOWN / GADGETUP (im_IAddress = le
 ; gadget), AddGadget/AddGList, RemoveGadget/RemoveGList, RefreshGadgets/RefreshGList, OnGadget/OffGadget, DrawBorder.
-; Les gadgets sont traités comme des boutons (BOOLGADGET) quel que soit leur type ; pas de motif « fantôme » pour un
-; gadget désactivé (il ne répond simplement plus).
+; Gadgets texte (STRGADGET, StringInfo) : activés par un clic ou ActivateGadget, ils reçoivent le clavier (routé par
+; le handler de pointeur, cf. it_keyin) : insertion, Backspace, Del, flèches (Shift : début / fin), Amiga droite + X
+; (effacer) et + Q (annuler) ; Return / Enter termine (LONGINT converti, GADGETUP si RELVERIFY), un clic ailleurs
+; désactive sans message. Texte aligné à gauche (STRINGCENTER / STRINGRIGHT ignorés). Les autres types sont traités
+; comme des boutons ; pas de motif « fantôme » pour un gadget désactivé (il ne répond simplement plus).
 ; Piste IMPLÉMENTATION (« clean ») : structures publiques intuition/intuition.h + AutoDocs intuition. AUCUNE lecture ROM.
 
                 include "exec.i"
@@ -22,6 +25,10 @@
                 xdef    gad_down
                 xdef    gad_up
                 xdef    gad_forget
+                xdef    intuition_ActivateGadget
+                xdef    str_key
+                xdef    str_clickout
+                xref    kbd_cook
                 xref    intuition_DrawImage
                 xref    intuition_PrintIText
                 xref    wn_sendgad
@@ -126,6 +133,13 @@ gad_draw:
         ext.l   d1
         jsr     intuition_PrintIText
 .gd_hl:
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #STRGADGET,d0
+        bne.s   .gd_sel
+        bsr     str_text
+        bra.s   .gd_ret
+.gd_sel:
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
         beq.s   .gd_ret
         bsr.s   gad_comp
@@ -257,6 +271,13 @@ gad_down:
         move.l  GG_NEXTGADGET(a2),a2
         bra.s   .gn_lp
 .gn_hit:
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #STRGADGET,d0
+        bne.s   .gn_bool
+        bsr     str_activate         ; d2 = abscisse du clic : place le curseur
+        bra.s   .gn_taken
+.gn_bool:
         move.l  a2,IB_GADACT(a5)
         move.l  a3,IB_GADWIN(a5)
         btst    #0,GG_ACTIVATION(a2) ; TOGGLESELECT (bit 8)
@@ -321,6 +342,13 @@ gad_up:
 ; gad_forget(a0 = fenêtre | gadget) : oublie le gadget enfoncé s'il appartient à cette fenêtre ou est ce gadget
 ; (fenêtre fermée, gadget retiré). a6 = IntuitionBase. Clobbe d0.
 gad_forget:
+        cmp.l   IB_STRWIN(a6),a0
+        beq.s   .gf_str
+        cmp.l   IB_STRGAD(a6),a0
+        bne.s   .gf_act
+.gf_str:
+        clr.l   IB_STRGAD(a6)
+.gf_act:
         cmp.l   IB_GADWIN(a6),a0
         beq.s   .gf_clr
         cmp.l   IB_GADACT(a6),a0
@@ -328,6 +356,469 @@ gad_forget:
 .gf_clr:
         clr.l   IB_GADACT(a6)
 .gf_r:
+        rts
+
+; --- gadgets texte ---------------------------------------------------------------------------------------------
+; str_len(a0 = StringInfo) -> si_NumChars recalculé (longueur du texte, bornée à MaxChars - 1), d0 = ce nombre.
+str_len:
+        move.l  a1,-(sp)
+        move.l  SI_BUFFER(a0),a1
+        moveq   #0,d0
+.sl_lp:
+        tst.b   (a1)+
+        beq.s   .sl_end
+        addq.w  #1,d0
+        bra.s   .sl_lp
+.sl_end:
+        move.w  SI_MAXCHARS(a0),d1
+        subq.w  #1,d1
+        bmi.s   .sl_set
+        cmp.w   d1,d0
+        bls.s   .sl_set
+        move.w  d1,d0
+.sl_set:
+        move.w  d0,SI_NUMCHARS(a0)
+        move.l  (sp)+,a1
+        rts
+
+; str_text(a3 = fenêtre, a2 = gadget, a5 = IntuitionBase) : zone de texte du gadget (son rectangle) effacée puis
+; remplie avec les caractères visibles depuis si_DispPos, curseur inversé s'il est actif ; la position d'affichage
+; suit le curseur. Stylos et mode du RastPort restaurés. Préserve d2-d7/a2-a6.
+str_text:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  GG_SPECIALINFO(a2),d0
+        beq     .st_ret
+        move.l  d0,a4                ; a4 = StringInfo
+        lea     -8(sp),sp
+        move.l  a2,a0
+        move.l  sp,a1
+        bsr     gad_rect
+        move.l  a4,a0
+        bsr     str_len
+        move.l  WD_RPORT(a3),a1
+        moveq   #0,d6
+        move.w  rp_TxWidth(a1),d6
+        bne.s   .st_cw
+        moveq   #8,d6
+.st_cw:
+        move.w  4(sp),d0             ; caractères visibles = largeur / largeur de caractère
+        sub.w   (sp),d0
+        addq.w  #1,d0
+        ext.l   d0
+        divu    d6,d0
+        move.w  d0,SI_DISPCOUNT(a4)
+        cmp.l   IB_STRGAD(a5),a2
+        bne.s   .st_disp
+        move.w  SI_BUFFERPOS(a4),d1  ; actif : curseur visible
+        cmp.w   SI_DISPPOS(a4),d1
+        bge.s   .st_d1
+        move.w  d1,SI_DISPPOS(a4)
+.st_d1:
+        move.w  SI_DISPPOS(a4),d2
+        add.w   d0,d2
+        cmp.w   d2,d1
+        blt.s   .st_disp
+        sub.w   d0,d1
+        addq.w  #1,d1
+        move.w  d1,SI_DISPPOS(a4)
+.st_disp:
+        move.w  SI_DISPPOS(a4),d0
+        cmp.w   SI_NUMCHARS(a4),d0
+        ble.s   .st_dok
+        clr.w   SI_DISPPOS(a4)
+.st_dok:
+        move.l  IB_GFXBASE(a5),a6
+        move.l  WD_RPORT(a3),a3      ; a3 = RastPort désormais
+        move.b  rp_FgPen(a3),-(sp)
+        move.b  rp_BgPen(a3),-(sp)
+        move.b  rp_DrawMode(a3),-(sp)
+        move.l  a3,a1
+        moveq   #0,d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        movem.w 6(sp),d0-d3          ; x0 y0 x1 y1 (sous les 3 sauvegardes, 6 octets)
+        ext.l   d0
+        ext.l   d1
+        ext.l   d2
+        ext.l   d3
+        move.l  a3,a1
+        jsr     LVO_RECTFILL(a6)
+        move.l  a3,a1
+        moveq   #1,d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d4
+        move.w  SI_NUMCHARS(a4),d4
+        sub.w   SI_DISPPOS(a4),d4    ; d4 = caractères à écrire
+        cmp.w   SI_DISPCOUNT(a4),d4
+        ble.s   .st_n
+        move.w  SI_DISPCOUNT(a4),d4
+.st_n:
+        tst.w   d4
+        ble.s   .st_cur
+        move.l  a3,a1
+        move.w  6(sp),d0
+        ext.l   d0
+        move.w  8(sp),d1
+        add.w   rp_TxBaseline(a3),d1
+        ext.l   d1
+        jsr     LVO_MOVE(a6)
+        move.l  SI_BUFFER(a4),a0
+        add.w   SI_DISPPOS(a4),a0
+        move.l  d4,d0
+        move.l  a3,a1
+        jsr     LVO_TEXT(a6)
+.st_cur:
+        cmp.l   IB_STRGAD(a5),a2
+        bne.s   .st_end
+        move.l  a3,a1
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        move.w  SI_BUFFERPOS(a4),d0
+        sub.w   SI_DISPPOS(a4),d0
+        mulu    d6,d0
+        add.w   6(sp),d0
+        move.w  d0,d2
+        add.w   d6,d2
+        subq.w  #1,d2
+        move.w  8(sp),d1
+        move.w  d1,d3
+        add.w   rp_TxHeight(a3),d3
+        subq.w  #1,d3
+        cmp.w   12(sp),d3            ; borné au bas du gadget
+        ble.s   .st_cy
+        move.w  12(sp),d3
+.st_cy:
+        ext.l   d0
+        ext.l   d1
+        ext.l   d2
+        ext.l   d3
+        move.l  a3,a1
+        jsr     LVO_RECTFILL(a6)
+.st_end:
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        jsr     LVO_SETDRMD(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        jsr     LVO_SETAPEN(a6)
+        lea     8(sp),sp
+.st_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; str_activate(a3 = fenêtre, a2 = gadget STRGADGET, a5, d2.w = abscisse du clic dans la fenêtre | -1) : le gadget
+; devient le gadget texte actif (l'ancien est désactivé), son texte est copié dans le tampon d'annulation, le curseur
+; est placé sous le clic (sinon gardé, borné au texte) ; GADGETDOWN s'il est GADGIMMEDIATE. Préserve d2-d7/a2-a6.
+str_activate:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  GG_SPECIALINFO(a2),d0
+        beq     .sa_ret
+        move.l  d0,a4
+        cmp.l   IB_STRGAD(a5),a2
+        beq.s   .sa_same
+        bsr     str_deact
+        move.l  a4,a0
+        bsr     str_len
+        move.l  SI_UNDOBUFFER(a4),d0
+        beq.s   .sa_noundo
+        move.l  d0,a1
+        move.l  SI_BUFFER(a4),a0
+        move.w  SI_MAXCHARS(a4),d0
+        bra.s   .sa_ux
+.sa_ucp:
+        move.b  (a0)+,(a1)+
+.sa_ux:
+        dbra    d0,.sa_ucp
+.sa_noundo:
+        move.w  SI_BUFFERPOS(a4),SI_UNDOPOS(a4)
+.sa_same:
+        tst.w   d2
+        bmi.s   .sa_clamp
+        lea     -8(sp),sp
+        move.l  a2,a0
+        move.l  sp,a1
+        bsr     gad_rect
+        move.w  d2,d0
+        sub.w   (sp),d0
+        lea     8(sp),sp
+        ext.l   d0
+        bpl.s   .sa_div
+        moveq   #0,d0
+.sa_div:
+        move.l  WD_RPORT(a3),a0
+        move.w  rp_TxWidth(a0),d1
+        bne.s   .sa_cw
+        moveq   #8,d1
+.sa_cw:
+        divu    d1,d0
+        add.w   SI_DISPPOS(a4),d0
+        move.w  d0,SI_BUFFERPOS(a4)
+.sa_clamp:
+        move.w  SI_BUFFERPOS(a4),d0
+        bpl.s   .sa_c1
+        clr.w   SI_BUFFERPOS(a4)
+.sa_c1:
+        cmp.w   SI_NUMCHARS(a4),d0
+        ble.s   .sa_c2
+        move.w  SI_NUMCHARS(a4),SI_BUFFERPOS(a4)
+.sa_c2:
+        move.l  a3,IB_STRWIN(a5)
+        move.l  a2,IB_STRGAD(a5)
+        bsr     str_text
+        btst    #1,GG_ACTIVATION+1(a2)   ; GADGIMMEDIATE
+        beq.s   .sa_ret
+        moveq   #GADGETDOWN,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        move.l  a2,a0
+        bsr     gad_send
+.sa_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; str_deact(a5) : le gadget texte actif (s'il y en a un) ne l'est plus ; redessiné sans curseur. Préserve tout.
+str_deact:
+        movem.l d0-d1/a0-a3,-(sp)
+        move.l  IB_STRGAD(a5),d0
+        beq.s   .sd_ret
+        move.l  d0,a2
+        move.l  IB_STRWIN(a5),a3
+        clr.l   IB_STRGAD(a5)
+        bsr     str_text
+.sd_ret:
+        movem.l (sp)+,d0-d1/a0-a3
+        rts
+
+; str_clickout(a5, d4/d5 = clic dans l'écran) : un clic hors du gadget texte actif le désactive (sans message).
+; Préserve tout.
+str_clickout:
+        movem.l d0-d3/a0-a3,-(sp)
+        move.l  IB_STRGAD(a5),d0
+        beq.s   .co_ret
+        move.l  d0,a0
+        move.l  IB_STRWIN(a5),a3
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        bsr     gad_inside
+        bne.s   .co_ret
+        bsr     str_deact
+.co_ret:
+        movem.l (sp)+,d0-d3/a0-a3
+        rts
+
+; str_key(a5, d0.w = IT_KEYCODE + keycode, d4.w = qualificatif) : tâche d'entrée — une touche pour le gadget texte
+; actif. Préserve a5.
+str_key:
+        move.l  IB_STRGAD(a5),d1
+        beq     .sk_ret
+        movem.l d2-d7/a2-a4,-(sp)
+        move.l  d1,a2
+        move.l  IB_STRWIN(a5),a3
+        move.l  GG_SPECIALINFO(a2),a4
+        and.w   #$007F,d0
+        move.w  SI_BUFFERPOS(a4),d2  ; d2 = curseur, d3 = longueur
+        move.w  SI_NUMCHARS(a4),d3
+        move.l  SI_BUFFER(a4),a0
+        cmp.w   #$4F,d0              ; flèche gauche
+        bne.s   .sk_nl
+        moveq   #0,d1
+        move.w  d4,d1
+        and.w   #KQ_SHIFT,d1
+        bne.s   .sk_home
+        tst.w   d2
+        beq     .sk_done
+        subq.w  #1,d2
+        bra     .sk_pos
+.sk_home:
+        moveq   #0,d2
+        bra     .sk_pos
+.sk_nl:
+        cmp.w   #$4E,d0              ; flèche droite
+        bne.s   .sk_nr
+        move.w  d4,d1
+        and.w   #KQ_SHIFT,d1
+        bne.s   .sk_end
+        cmp.w   d3,d2
+        bge     .sk_done
+        addq.w  #1,d2
+        bra     .sk_pos
+.sk_end:
+        move.w  d3,d2
+        bra     .sk_pos
+.sk_nr:
+        cmp.w   #$44,d0              ; Return
+        beq     .sk_enter
+        cmp.w   #$43,d0              ; Enter
+        beq     .sk_enter
+        cmp.w   #$41,d0              ; Backspace : supprime avant le curseur
+        bne.s   .sk_nbs
+        tst.w   d2
+        beq     .sk_done
+        subq.w  #1,d2
+        bra.s   .sk_del
+.sk_nbs:
+        cmp.w   #$46,d0              ; Del : supprime sous le curseur
+        bne.s   .sk_ndel
+        cmp.w   d3,d2
+        bge     .sk_done
+.sk_del:
+        lea     0(a0,d2.w),a1        ; texte décalé d'un cran vers la gauche, NUL compris
+.sk_dl:
+        move.b  1(a1),(a1)+
+        bne.s   .sk_dl
+        subq.w  #1,d3
+        bra     .sk_pos
+.sk_ndel:
+        move.w  d4,d1
+        jsr     kbd_cook             ; d0 = caractère (0 : pas de caractère)
+        and.w   #$00FF,d0
+        beq     .sk_done
+        btst    #KQB_RCOMMAND,d4
+        beq.s   .sk_char
+        or.b    #$20,d0              ; Amiga droite : X efface, Q annule
+        cmp.b   #'x',d0
+        bne.s   .sk_nx
+        clr.b   (a0)
+        moveq   #0,d2
+        moveq   #0,d3
+        clr.w   SI_DISPPOS(a4)
+        bra.s   .sk_pos
+.sk_nx:
+        cmp.b   #'q',d0
+        bne     .sk_done
+        move.l  SI_UNDOBUFFER(a4),d0
+        beq     .sk_done
+        move.l  d0,a1
+        move.w  SI_MAXCHARS(a4),d0
+        bra.s   .sk_qx
+.sk_qc:
+        move.b  (a1)+,(a0)+
+.sk_qx:
+        dbra    d0,.sk_qc
+        move.l  a4,a0
+        bsr     str_len
+        move.w  d0,d3
+        move.w  SI_UNDOPOS(a4),d2
+        cmp.w   d3,d2
+        ble.s   .sk_pos
+        move.w  d3,d2
+        bra.s   .sk_pos
+.sk_char:
+        cmp.b   #$20,d0
+        blo     .sk_done
+        cmp.b   #$7F,d0
+        beq     .sk_done
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT ($0800) : chiffres et signe seulement
+        beq.s   .sk_ins
+        cmp.b   #'-',d0
+        beq.s   .sk_ins
+        cmp.b   #'0',d0
+        blo     .sk_done
+        cmp.b   #'9',d0
+        bhi     .sk_done
+.sk_ins:
+        move.w  SI_MAXCHARS(a4),d1
+        subq.w  #1,d1
+        cmp.w   d1,d3
+        bge     .sk_done             ; plein
+        lea     0(a0,d3.w),a1        ; décale [curseur .. NUL] d'un cran vers la droite
+        move.w  d3,d1
+        sub.w   d2,d1                ; octets à décaler, NUL compris : d1 + 1
+.sk_il:
+        move.b  (a1),1(a1)
+        subq.l  #1,a1
+        dbra    d1,.sk_il
+        move.b  d0,0(a0,d2.w)
+        addq.w  #1,d2
+        addq.w  #1,d3
+.sk_pos:
+        move.w  d2,SI_BUFFERPOS(a4)
+        move.w  d3,SI_NUMCHARS(a4)
+        bsr     str_text
+.sk_done:
+        movem.l (sp)+,d2-d7/a2-a4
+.sk_ret:
+        rts
+.sk_enter:
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT : valeur décimale signée dans si_LongInt
+        beq.s   .sk_up
+        moveq   #0,d1                ; d1 = valeur, d2 = négatif
+        moveq   #0,d2
+        cmp.b   #'-',(a0)
+        bne.s   .sk_dg
+        moveq   #1,d2
+        addq.l  #1,a0
+.sk_dg:
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        sub.b   #'0',d0
+        bcs.s   .sk_dend
+        cmp.b   #9,d0
+        bhi.s   .sk_dend
+        add.l   d1,d1                ; × 10 = × 2 + × 8
+        move.l  d1,d3
+        lsl.l   #2,d3
+        add.l   d3,d1
+        add.l   d0,d1
+        bra.s   .sk_dg
+.sk_dend:
+        tst.w   d2
+        beq.s   .sk_pl
+        neg.l   d1
+.sk_pl:
+        move.l  d1,SI_LONGINT(a4)
+.sk_up:
+        bsr     str_deact
+        btst    #0,GG_ACTIVATION+1(a2)   ; RELVERIFY
+        beq.s   .sk_done
+        moveq   #GADGETUP,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        move.l  a2,a0
+        bsr     gad_send
+        bra.s   .sk_done
+
+; ActivateGadget(gadget a0, fenêtre a1, requester a2) -> d0 = TRUE si un gadget texte actif (non désactivé) de cette
+; fenêtre est devenu le gadget actif (curseur gardé), FALSE sinon.
+intuition_ActivateGadget:
+        movem.l d2/a2-a3/a5,-(sp)
+        move.l  a6,a5
+        move.l  a0,a2
+        move.l  a1,a3
+        moveq   #0,d0
+        move.l  a2,d1
+        beq.s   .ag_ret
+        move.l  a3,d1
+        beq.s   .ag_ret
+        move.w  GG_GADGETTYPE(a2),d1
+        and.w   #GTYP_MASK,d1
+        cmp.w   #STRGADGET,d1
+        bne.s   .ag_ret
+        btst    #0,GG_FLAGS(a2)      ; GADGDISABLED
+        bne.s   .ag_ret
+        moveq   #-1,d2
+        bsr     str_activate
+        moveq   #1,d0
+.ag_ret:
+        movem.l (sp)+,d2/a2-a3/a5
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------

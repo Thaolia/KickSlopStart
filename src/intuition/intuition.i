@@ -44,7 +44,10 @@ IB_ITEMNUM       EQU IB_MENUNUM+2      ; UWORD : n° de l'élément en surbrilla
 IB_PICK          EQU IB_ITEMNUM+2      ; UWORD : code MENUPICK en construction
 IB_GADACT        EQU IB_PICK+2         ; gadget d'application enfoncé (bouton gauche tenu) | 0
 IB_GADWIN        EQU IB_GADACT+4       ; sa fenêtre
-INTUITIONBASE_SIZE EQU IB_GADWIN+4
+IB_STRGAD        EQU IB_GADWIN+4       ; gadget texte actif (reçoit le clavier) | 0
+IB_STRWIN        EQU IB_STRGAD+4       ; sa fenêtre
+INTUITIONBASE_SIZE EQU IB_STRWIN+4
+IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE = touche (keycode en bits 0-6), x = qualificatif
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2
 
@@ -275,6 +278,7 @@ GG_GADGETTYPE EQU 16           ; UWORD
 GG_GADGETRENDER EQU 18         ; APTR Border ou Image (GADGIMAGE)
 GG_SELECTRENDER EQU 22         ; APTR : rendu sélectionné (GADGHIMAGE)
 GG_GADGETTEXT EQU 26           ; APTR IntuiText
+GG_SPECIALINFO EQU 34          ; APTR : StringInfo d'un STRGADGET
 GG_GADGETID   EQU 38           ; UWORD
 GG_SIZEOF     EQU 44
 ; gg_Flags
@@ -292,6 +296,7 @@ GADGDISABLED  EQU $0100
 RELVERIFY     EQU $0001
 GADGIMMEDIATE EQU $0002
 TOGGLESELECT  EQU $0100
+LONGINT       EQU $0800        ; STRGADGET : entier, converti dans si_LongInt
 ; gg_GadgetType
 SYSGADGET     EQU $8000
 ; struct Border (intuition/intuition.h)
@@ -303,6 +308,19 @@ BD_COUNT      EQU 7
 BD_XY         EQU 8
 BD_NEXTBORDER EQU 12
 BOOLGADGET    EQU 1             ; gg_GadgetType : bouton booléen
+STRGADGET     EQU 4             ; gg_GadgetType : texte éditable (SpecialInfo = StringInfo)
+GTYP_MASK     EQU $0007         ; type de base dans gg_GadgetType
+; struct StringInfo (intuition/intuition.h)
+SI_BUFFER     EQU 0             ; APTR : texte, terminé par NUL
+SI_UNDOBUFFER EQU 4             ; APTR : copie à l'activation (Amiga droite + Q) | 0
+SI_BUFFERPOS  EQU 8             ; WORD : position du curseur
+SI_MAXCHARS   EQU 10            ; WORD : taille du tampon, NUL compris
+SI_DISPPOS    EQU 12            ; WORD : premier caractère affiché
+SI_UNDOPOS    EQU 14
+SI_NUMCHARS   EQU 16
+SI_DISPCOUNT  EQU 18            ; WORD : caractères visibles
+SI_LONGINT    EQU 28            ; LONG : valeur d'un gadget LONGINT
+LVO_ACTIVATEGADGET EQU -462
 RQ_OLDERREQ   EQU 0
 RQ_LEFTEDGE   EQU 4             ; WORD
 RQ_TOPEDGE    EQU 6             ; WORD

@@ -496,6 +496,28 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   par point d'arrêt d'écriture sur SERDAT dans le débogueur console de FS-UAE (`console_debugger`, F12+D injecté).
   **Résultat** : SysInfo 4.4 affiche toute sa page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
   EClock 709379, 50/50 Hz).
+- **ÉTAPE 10 — GADGETS TEXTE ET RENAME** : (1) **STRGADGET** (gadgets.s, structures publiques StringInfo) : un clic
+  dans le gadget ou `ActivateGadget` (LVO -462) en fait le gadget texte actif (IB_STRGAD/IB_STRWIN, curseur placé sous
+  le clic, texte copié dans le tampon d'annulation, GADGETDOWN si GADGIMMEDIATE). Le **clavier** lui est routé par le
+  handler de pointeur (input.device, pri 50, avant la console) : tant qu'un gadget texte est actif, chaque RAWKEY est
+  neutralisée (IECLASS_NULL, la console ne la reçoit pas) et la touche enfoncée part dans l'anneau de la tâche
+  d'entrée d'intuition (code IT_KEYCODE + keycode, qualificatif), qui l'applique (`str_key`) : insertion (kbd_cook),
+  Backspace, Del, flèches (Shift : début / fin), Amiga droite + X (effacer) / + Q (annuler), Return / Enter
+  (LONGINT converti dans si_LongInt, GADGETUP si RELVERIFY). Un clic hors du gadget le désactive sans message ;
+  fermeture de la fenêtre / RemoveGadget l'oublient. Rendu : texte visible depuis si_DispPos (qui suit le curseur),
+  curseur en COMPLEMENT. Portée : alignement à gauche seulement (STRINGCENTER/RIGHT ignorés), pas d'ALTKEYMAP.
+  (2) **Workbench Rename** (workbench.s, `wb_rename`) : fenêtre « Rename » avec un gadget texte prérempli et activé ;
+  Return renomme l'objet puis son « .info » et relit le tiroir, la case de fermeture annule. Prouvé sous FS-UAE
+  (ROM prod, disque WB) : tiroir Empty renommé « Vide », vérifié par xdftool (Vide + Vide.info).
+  (3) **Démarrage d'un handler sérialisé** (dos_lib.s, sémaphore DOS_HSEM en RAM basse $76C) : le handler ne pose
+  dn_Task qu'à la réception de son paquet de démarrage (spec §13.3) et le chargement de son segment est long ; deux
+  process ouvrant le même device sans tâche (« run copy x to pipe:a » puis « type pipe:a ») lançaient chacun une
+  instance de L:Pipe-Handler — l'écrivain et le lecteur ne se voyaient pas, `type` attendait pour toujours. Le
+  chemin dn_Task = 0 de la résolution prend le sémaphore et relit dn_Task avant de démarrer. Course révélée par un
+  simple décalage du timing de boot (RT_ENDSKIP de workbench.task déplacé : le scan des ROMTags saute 416 octets
+  de moins) ; diagnostic par parcours des listes d'exec au débogueur FS-UAE (4 process PIPE -> 1 après correctif).
+  Limite : un handler qui, pendant son propre démarrage, ferait démarrer un AUTRE handler depuis un autre process
+  bloquerait (aucun dans la 1.3 connue).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

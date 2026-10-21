@@ -126,7 +126,9 @@ intuition_vectors:
         dc.l    intuition_RefreshGList   ; 72 : LVO -432 RefreshGList(gadgets a0, fenêtre a1, requester a2, nombre d0)
         dc.l    intuition_AddGList       ; 73 : LVO -438 AddGList(fenêtre a0, gadget a1, position d0, nombre d1, req a2)
         dc.l    intuition_RemoveGList    ; 74 : LVO -444 RemoveGList(fenêtre a0, gadget a1, nombre d0)
-        dcb.l   4,intuition_null         ; 75..78 : LVO -450..-468 (non impl. : jusqu'à NewModifyProp)
+        dcb.l   2,intuition_null         ; 75..76 : LVO -450..-456 (non impl.)
+        dc.l    intuition_ActivateGadget ; 77 : LVO -462 ActivateGadget(gadget a0, fenêtre a1, requester a2)
+        dc.l    intuition_null           ; 78 : LVO -468 NewModifyProp (non impl.)
         dc.l    -1
 intuition_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)

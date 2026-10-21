@@ -1224,11 +1224,11 @@ dos_resolve:
         move.l  DI_DEVINFO(a2),d0
 .rs_node:
         lsl.l   #2,d0
-        beq.s   .rs_unknown
+        beq     .rs_unknown
         move.l  d0,a2                   ; a2 = nœud courant
         move.l  DN_NAME(a2),d0
         lsl.l   #2,d0
-        beq.s   .rs_next
+        beq     .rs_next
         move.l  d0,a0
         moveq   #0,d4
         move.b  (a0)+,d4                ; longueur du nom du nœud
@@ -1262,14 +1262,28 @@ dos_resolve:
         bne.s   .rs_ret
         tst.l   DN_TYPE(a2)             ; device sans tâche : démarre son handler (spec BCPL §13.3)
         bne.s   .rs_ret
+        ; un démarrage à la fois : le handler ne pose dn_Task qu'en recevant son paquet de démarrage, et le
+        ; chargement de son segment est long ; deux process ouvrant le même device (« run copy x to pipe:a »
+        ; puis « type pipe:a ») en lançaient chacun une instance, et lecteur et écrivain ne se voyaient pas
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        lea     DOS_HSEM,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  DN_TASK(a2),a3          ; relu : démarré entre-temps par un autre process ?
+        move.l  a3,d0
+        bne.s   .rs_hrel
         move.l  a4,a0                   ; nom complet (le handler peut y lire des paramètres : NEWCON:x/y/l/h/titre)
         jsr     bcpl_starthandler       ; d0 = port | 0 (Result2 posé)
         move.l  d0,a3
         move.l  DN_LOCK(a2),d6
+.rs_hrel:
+        lea     DOS_HSEM,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        move.l  (sp)+,a6
         bra.s   .rs_ret
 .rs_next:
         move.l  DN_NEXT(a2),d0
-        bra.s   .rs_node
+        bra     .rs_node
 .rs_unknown:
         move.l  ($4).w,a0
         move.l  EB_THISTASK(a0),a0
@@ -1603,6 +1617,8 @@ dos_initfunc:
         move.l  d0,a2               ; a2 = DosBase
         move.l  d0,DOS_DOSBASE      ; publié pour le runtime BCPL (pas de a6 = DosBase dans le code BCPL)
         clr.l   DOS_OWCTX           ; mémoire basse non remise à zéro au reset
+        lea     DOS_HSEM,a0
+        jsr     LVO_INITSEMAPHORE(a6)
         lea     dos_name(pc),a0
         move.l  a0,LN_NAME(a2)      ; pose le nom (quirk V34)
         moveq   #RN_SIZEOF,d0       ; alloue RootNode

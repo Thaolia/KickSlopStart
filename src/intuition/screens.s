@@ -37,6 +37,9 @@
                 xref    gad_drawall          ; gadgets.s
                 xref    gad_down
                 xref    gad_up
+                xref    str_key
+                xref    str_clickout
+                xdef    it_keyin
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
@@ -1237,26 +1240,75 @@ it_event:
         st      IB_MOVED(a1)
         bra.s   .ev_sig
 .ev_btn:
-        move.w  IB_EVHEAD(a1),d1
-        lea     IB_EVRING(a1),a0
-        add.w   d1,a0
-        addq.w  #IB_EVSZ,d1
-        cmp.w   #IB_EVN*IB_EVSZ,d1
-        blo.s   .ev_wrap
-        moveq   #0,d1
-.ev_wrap:
-        cmp.w   IB_EVTAIL(a1),d1
-        beq.s   .ev_ret
-        move.w  d0,(a0)+
-        move.w  PTR_X,(a0)+
-        move.w  PTR_Y,(a0)
-        move.w  d1,IB_EVHEAD(a1)     ; publiée après les données
+        move.w  PTR_X,d1
+        swap    d1
+        move.w  PTR_Y,d1
+        bsr.s   it_push
+        bra.s   .ev_ret
 .ev_sig:
+        bsr.s   it_signal
+.ev_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (mot haut) : y (mot bas)) : case déposée dans l'anneau de la tâche
+; d'entrée, puis signal (anneau plein : perdue). Clobbe d0/d1/a0/a6.
+it_push:
+        move.l  d2,-(sp)
+        move.w  IB_EVHEAD(a1),d2
+        lea     IB_EVRING(a1),a0
+        add.w   d2,a0
+        addq.w  #IB_EVSZ,d2
+        cmp.w   #IB_EVN*IB_EVSZ,d2
+        blo.s   .pu_wrap
+        moveq   #0,d2
+.pu_wrap:
+        cmp.w   IB_EVTAIL(a1),d2
+        beq.s   .pu_full
+        move.w  d0,(a0)+
+        swap    d1
+        move.w  d1,(a0)+
+        swap    d1
+        move.w  d1,(a0)
+        move.w  d2,IB_EVHEAD(a1)     ; publiée après les données
+        move.l  (sp)+,d2
+        bra.s   it_signal
+.pu_full:
+        move.l  (sp)+,d2
+        rts
+; it_signal(a1 = IntuitionBase) : réveille la tâche d'entrée. Clobbe d0/d1/a0/a6.
+it_signal:
+        move.l  a1,-(sp)
         move.l  IB_INSIG(a1),d0
         move.l  IB_INTASK(a1),a1
         move.l  ($4).w,a6
         jsr     LVO_SIGNAL(a6)
-.ev_ret:
+        move.l  (sp)+,a1
+        rts
+
+; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Tant qu'un gadget texte est actif, le
+; clavier est à lui : l'événement est neutralisé (IECLASS_NULL, la console ne le voit pas) et chaque touche enfoncée
+; est déposée dans l'anneau (code IT_KEYCODE + keycode, x = qualificatif). Préserve tout.
+it_keyin:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  INT_IBASE,d1
+        beq.s   .ki_ret
+        move.l  d1,a1
+        tst.l   IB_INSIG(a1)
+        beq.s   .ki_ret
+        tst.l   IB_STRGAD(a1)
+        beq.s   .ki_ret
+        clr.b   IE_CLASS(a3)         ; IECLASS_NULL
+        move.w  IE_CODE(a3),d0
+        btst    #7,d0
+        bne.s   .ki_ret              ; relâchement : avalé
+        and.w   #$007F,d0
+        or.w    #IT_KEYCODE,d0
+        move.w  IE_QUALIFIER(a3),d1
+        swap    d1
+        clr.w   d1
+        bsr.s   it_push
+.ki_ret:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
@@ -1329,7 +1381,12 @@ it_intask:
         moveq   #0,d1
 .in_wrap:
         move.w  d1,IB_EVTAIL(a5)
+        cmp.w   #IT_KEYCODE,d0
+        bhs.s   .in_key
         bsr     it_dobutton
+        bra.s   .in_next
+.in_key:
+        bsr     str_key              ; d0 = touche, d4 = qualificatif
         bra.s   .in_next
 .in_move:
         tst.b   IB_MOVED(a5)
@@ -1416,6 +1473,10 @@ it_dobutton:
         move.w  #SELECTUP,d1
         bra     wn_sendmsg
 .db_down:
+        cmp.w   #IECODE_LBUTTON,d7
+        bne.s   .db_nstr
+        bsr     str_clickout         ; un clic hors du gadget texte actif le désactive
+.db_nstr:
         bsr     it_winat
         beq     .db_ret
         cmp.w   #IECODE_LBUTTON,d7
