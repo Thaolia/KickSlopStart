@@ -59,6 +59,7 @@
                 xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
                 xref    pointer_input_handler ; intuition/pointer.s (accumulateur deltas relatifs -> position absolue)
 
+                xref    exec_softint_init
                 xdef    ser_puts         ; émission série (diagnostics du runtime BCPL)
                 xdef    ser_puthex
                 xdef    ser_lock         ; émission série atomique (Forbid gated SCHED_ON) — utilisé par conhandler/feeder/shell
@@ -269,6 +270,7 @@ coldstart:                        ; $FC00D2
         bsr     rdf_selftest         ; RawDoFmt (-522) : formatage comparé à une chaîne attendue
         ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
         jsr     init_ints
+        jsr     exec_softint_init    ; file des interruptions logicielles (Cause) + serveur SOFTINT
         move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
 .vbl_wait:
         lea     VBL_COUNT,a0
@@ -3121,7 +3123,7 @@ d2_done:
         ; souris matérielle : arme le poller gameport.device (gp_vblank_server) sur la chaîne VERTB du système
         ; tournant — câblage LIVE PERSISTANT (pendant du feeder clavier). GP_POLLS avancera sur les VBlanks réels ;
         ; headless (JOY0DAT statique) le poller n'injecte rien (prev primé = courant) -> inerte vis-à-vis de M7.
-        bsr     gp_install
+        jsr     gp_install
                 ifeq    PROD            ; PROD : COPER = source de PREUVE (M7g multi-source int3) -> hors prod
         ; M7g : 2e source de NIVEAU 3 (COPER) pour prouver le décodage INTREQR multi-source d'int3.
         ; coper_test (vecteur EXCLUSIF) incrémente COPER_FIRED ; vbl_tail déclenche COPER par logiciel.
@@ -3888,7 +3890,7 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         tst.l   d0
         beq     .d3c_noclient        ; pas de dos.library (ne devrait pas) -> pas de client
         move.l  d0,a2                ; a2 = DosBase
-        move.l  #DN_SIZEOF+4,d0      ; + BSTR « DF0 » juste après le nœud (long-aligné : BPTR)
+        move.l  #DN_SIZEOF+4+FSSM_SIZEOF,d0  ; + BSTR « DF0 » + FileSysStartupMsg (long-alignés : BPTR)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
@@ -3900,6 +3902,18 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         move.l  a0,d0
         lsr.l   #2,d0
         move.l  d0,DN_NAME(a3)       ; dn_Name -> dos résout « DF0: » par ce nœud
+        lea     DN_SIZEOF+4(a3),a0   ; FileSysStartupMsg : unité 0 (MEMF_CLEAR), « trackdisk.device », géométrie DD
+        lea     df0_device(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,FSSM_DEVICE(a0)
+        lea     df0_environ(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,FSSM_ENVIRON(a0)
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_STARTUP(a3)
         move.l  DL_ROOT(a2),a0       ; RootNode (APTR)
         move.l  RN_INFO(a0),d0       ; BPTR DosInfo
         lsl.l   #2,d0
@@ -5941,6 +5955,25 @@ msg_d3b_ok:
         dc.b    "D3B HANDLER OK (file-handler process served FINDINPUT/READ/END packets; read 'kickslop' 1024 bytes via OFS, markers match)",13,10,0
 msg_d3c_ok:
         dc.b    "D3C DOS OK (client process: dos.library Open/Read/Close 'kickslop' via packets -> DeviceNode handler; 1024 bytes, markers match)",13,10,0
+; nom du device et géométrie DD du disque DF0 (dosfilehandler.i : DosEnvec), désignés par BPTR depuis le FSSM
+        cnop    0,4
+df0_device:
+        dc.b    16,"trackdisk.device",0
+        cnop    0,4
+df0_environ:
+        dc.l    12                   ; de_TableSize
+        dc.l    128                  ; de_SizeBlock (longs)
+        dc.l    0                    ; de_SecOrg
+        dc.l    2                    ; de_Surfaces
+        dc.l    1                    ; de_SectorPerBlock
+        dc.l    11                   ; de_BlocksPerTrack
+        dc.l    2                    ; de_Reserved
+        dc.l    11                   ; de_PreAlloc
+        dc.l    0                    ; de_Interleave
+        dc.l    0                    ; de_LowCyl
+        dc.l    79                   ; de_HighCyl
+        dc.l    5                    ; de_NumBuffers
+        dc.l    3                    ; de_BufMemType
 dos_libname:
         dc.b    "dos.library",0
 d3c_cname:

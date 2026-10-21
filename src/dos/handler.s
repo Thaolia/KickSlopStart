@@ -24,8 +24,18 @@
                 xref    ofs_stream_open      ; FINDINPUT : ouvre un fichier en streaming
                 xref    ofs_stream_read      ; READ : lecture incrémentale data-block par data-block
                 xref    ofs_stream_seek      ; SEEK : repositionne le curseur de streaming
+                xref    ow_create            ; écriture OFS (ofswrite.s)
+                xref    ow_delete
+                xref    ow_rename
+                xref    ow_setfield
+                xref    ow_diskinfo
+                xref    ws_open
+                xref    ws_write
+                xref    ws_close
 
 ACTION_MORE_CACHE EQU 18             ; AddBuffers : ajoute des tampons au filesystem
+WS_MAGICV       EQU $57524954        ; tête d'un état d'écriture (ofswrite.s) ; un état de lecture commence par un APTR
+HND_NAMEBUF     EQU 112              ; chaîne C d'un nom reçu en BSTR (pile)
 
 ; dos_handler_df0 : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
 ; a2 = pr_MsgPort (persistant) ; a3 = Message courant ; a4 = DosPacket courant.
@@ -45,7 +55,7 @@ dos_handler_df0:
                 clr.l   DP_RES2(a4)
                 move.l  DP_TYPE(a4),d0
                 cmp.l   #ACTION_FINDINPUT,d0
-                beq.s   .findinput
+                beq     .findinput
                 cmp.l   #ACTION_READ,d0
                 beq     .read
                 cmp.l   #ACTION_END,d0
@@ -66,6 +76,26 @@ dos_handler_df0:
                 beq     .parent
                 cmp.l   #ACTION_COPY_DIR,d0
                 beq     .copydir
+                cmp.l   #ACTION_FINDOUTPUT,d0
+                beq     .findoutput
+                cmp.l   #ACTION_FINDUPDATE,d0
+                beq     .findupdate
+                cmp.l   #ACTION_WRITE,d0
+                beq     .write
+                cmp.l   #ACTION_DELETE_OBJECT,d0
+                beq     .delete
+                cmp.l   #ACTION_RENAME_OBJECT,d0
+                beq     .rename
+                cmp.l   #ACTION_CREATE_DIR,d0
+                beq     .createdir
+                cmp.l   #ACTION_SET_PROTECT,d0
+                beq     .setprot
+                cmp.l   #ACTION_SET_COMMENT,d0
+                beq     .setcomment
+                cmp.l   #ACTION_DISK_INFO,d0
+                beq     .diskinfo
+                cmp.l   #ACTION_INFO,d0
+                beq     .info
                 move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -121,6 +151,9 @@ dos_handler_df0:
                 clr.l   DP_RES1(a4)                   ; RED D3B_NO_READ : ne sert PAS READ -> EOF immédiat
                 bra     .reply
                 endc
+                move.l  DP_ARG1(a4),a1
+                cmp.l   #WS_MAGICV,(a1)
+                beq     .rw_wrong                     ; fichier ouvert en écriture
                 move.l  a2,-(sp)                       ; a2 = pr_MsgPort du handler : sauvé (ofs_stream_read prend dest en a2)
                 move.l  DP_ARG1(a4),a1                ; a1 = état de streaming
                 move.l  DP_ARG2(a4),a2                ; a2 = dest
@@ -137,6 +170,8 @@ dos_handler_df0:
                 bra     .reply
                 endc
                 move.l  DP_ARG1(a4),a1                ; a1 = état
+                cmp.l   #WS_MAGICV,(a1)
+                beq     .sk_err                       ; pas de repositionnement en écriture
                 move.l  SS_POS(a1),d3                 ; d3 = ancienne position (valeur de retour)
                 move.l  DP_ARG2(a4),d1                ; position (signée)
                 move.l  DP_ARG3(a4),d2                ; mode (OFFSET_BEGINNING -1 / CURRENT 0 / END 1)
@@ -308,6 +343,8 @@ dos_handler_df0:
 
 .end:
                 move.l  DP_ARG1(a4),a1                ; a1 = état de streaming (un seul AllocMem)
+                cmp.l   #WS_MAGICV,(a1)
+                beq.s   .end_w
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)               ; libère l'état (ioreq + block buffer inclus)
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -315,6 +352,141 @@ dos_handler_df0:
                 move.l  a3,a1
                 jsr     LVO_REPLYMSG(a6)              ; renvoie au mn_ReplyPort de l'appelant
                 bra     .hl
+.end_w:
+                jsr     ws_close                       ; données, extension, header, bitmap écrits ; état libéré
+                move.l  d0,DP_RES1(a4)
+                bne.s   .reply
+                move.l  #ERROR_DISK_WRITE_PROTECTED,DP_RES2(a4)
+                bra.s   .reply
+.rw_wrong:
+                move.l  #-1,DP_RES1(a4)
+                move.l  #ERROR_OBJECT_WRONG_TYPE,DP_RES2(a4)
+                bra.s   .reply
+
+; --- écriture (ofswrite.s) ---
+.findupdate:                                         ; fichier existant -> lecture ; sinon créé comme FINDOUTPUT
+                lea     -HND_NAMEBUF(sp),sp
+                move.l  DP_ARG3(a4),d0
+                move.l  sp,a1
+                bsr     hnd_cstr
+                move.l  DP_ARG2(a4),d0
+                bsr     hnd_lockkey
+                move.l  sp,a0
+                jsr     ofs_name_to_block
+                lea     HND_NAMEBUF(sp),sp
+                tst.l   d0
+                bne     .findinput
+.findoutput:                                         ; (ARG1 fh, ARG2 lock, ARG3 BSTR nom) : fichier créé ou remplacé
+                lea     -HND_NAMEBUF(sp),sp
+                move.l  DP_ARG3(a4),d0
+                move.l  sp,a1
+                bsr     hnd_cstr
+                move.l  DP_ARG2(a4),d0
+                bsr     hnd_lockkey
+                move.l  sp,a0
+                jsr     ws_open                        ; d0 = état | 0, d1 = erreur
+                lea     HND_NAMEBUF(sp),sp
+                tst.l   d0
+                beq     .w_fail
+                move.l  DP_ARG1(a4),d1
+                lsl.l   #2,d1
+                move.l  d1,a1
+                move.l  d0,FH_ARG1(a1)
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+.write:                                              ; (ARG1 état, ARG2 données, ARG3 longueur) -> RES1 = longueur | -1
+                move.l  DP_ARG1(a4),a1
+                cmp.l   #WS_MAGICV,(a1)
+                bne     .rw_wrong                     ; fichier ouvert en lecture
+                move.l  DP_ARG2(a4),a0
+                move.l  DP_ARG3(a4),d0
+                jsr     ws_write
+                move.l  d0,DP_RES1(a4)
+                move.l  d1,DP_RES2(a4)
+                bra     .reply
+.delete:                                             ; (ARG1 lock, ARG2 BSTR nom)
+                lea     -HND_NAMEBUF(sp),sp
+                move.l  DP_ARG2(a4),d0
+                move.l  sp,a1
+                bsr     hnd_cstr
+                move.l  DP_ARG1(a4),d0
+                bsr     hnd_lockkey
+                move.l  sp,a0
+                jsr     ow_delete
+                bra     .w_res
+.rename:                                             ; (ARG1 lock, ARG2 BSTR ancien, ARG3 lock, ARG4 BSTR nouveau)
+                lea     -2*HND_NAMEBUF(sp),sp
+                move.l  DP_ARG2(a4),d0
+                move.l  sp,a1
+                bsr     hnd_cstr
+                move.l  DP_ARG4(a4),d0
+                lea     HND_NAMEBUF(sp),a1
+                bsr     hnd_cstr
+                move.l  DP_ARG3(a4),d0
+                bsr     hnd_lockkey
+                move.l  d0,d1
+                move.l  DP_ARG1(a4),d0
+                bsr     hnd_lockkey
+                move.l  sp,a0
+                lea     HND_NAMEBUF(sp),a1
+                jsr     ow_rename
+                lea     HND_NAMEBUF(sp),sp
+                bra     .w_res
+.createdir:                                          ; (ARG1 lock, ARG2 BSTR nom) -> RES1 = lock du répertoire
+                lea     -HND_NAMEBUF(sp),sp
+                move.l  DP_ARG2(a4),d0
+                move.l  sp,a1
+                bsr     hnd_cstr
+                move.l  DP_ARG1(a4),d0
+                bsr     hnd_lockkey
+                move.l  sp,a0
+                moveq   #OFS_ST_USERDIR,d1
+                jsr     ow_create
+                lea     HND_NAMEBUF(sp),sp
+                tst.l   d0
+                beq.s   .w_fail
+                move.l  d0,d2
+                bra     .pa_alloc
+.setprot:                                            ; (ARG2 lock, ARG3 BSTR nom, ARG4 masque)
+                moveq   #0,d1
+                bra.s   .setfield
+.setcomment:                                         ; (ARG2 lock, ARG3 BSTR nom, ARG4 BSTR commentaire)
+                moveq   #1,d1
+.setfield:
+                lea     -HND_NAMEBUF(sp),sp
+                move.l  d1,-(sp)
+                move.l  DP_ARG3(a4),d0
+                lea     4(sp),a1
+                bsr     hnd_cstr
+                move.l  DP_ARG2(a4),d0
+                bsr     hnd_lockkey
+                move.l  (sp)+,d1
+                move.l  sp,a0
+                move.l  DP_ARG4(a4),d2
+                jsr     ow_setfield
+.w_res:
+                lea     HND_NAMEBUF(sp),sp
+                tst.l   d0
+                beq.s   .w_fail
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+.w_fail:
+                move.l  #DOSFALSE,DP_RES1(a4)
+                move.l  d1,DP_RES2(a4)
+                bra     .reply
+.info:                                               ; (ARG1 lock, ARG2 BPTR InfoData)
+                move.l  DP_ARG2(a4),d0
+                bra.s   .di_go
+.diskinfo:                                           ; (ARG1 BPTR InfoData)
+                move.l  DP_ARG1(a4),d0
+.di_go:
+                lsl.l   #2,d0
+                move.l  d0,a0
+                move.l  DOS_DOSBASE,a1
+                move.l  DL_VOLUME(a1),a1
+                jsr     ow_diskinfo
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
 
 ; hnd_lockkey(d0 = BPTR FileLock | 0) -> d0 = bloc header verrouillé (fl_Key) | 0 (= racine pour ofs_*). Clobbe a0.
 hnd_lockkey:
@@ -323,6 +495,22 @@ hnd_lockkey:
                 move.l  d0,a0
                 move.l  FL_KEY(a0),d0
 .lk_root:
+                rts
+; hnd_cstr(d0 = BPTR BSTR, a1 = destination HND_NAMEBUF) : chaîne C (longueur bornée). Clobbe d0/d1/a0/a1.
+hnd_cstr:
+                lsl.l   #2,d0
+                move.l  d0,a0
+                moveq   #0,d1
+                move.b  (a0)+,d1
+                cmp.w   #HND_NAMEBUF-1,d1
+                bls.s   .cs_nx
+                moveq   #HND_NAMEBUF-1,d1
+                bra.s   .cs_nx
+.cs_cp:
+                move.b  (a0)+,(a1)+
+.cs_nx:
+                dbra    d1,.cs_cp
+                clr.b   (a1)
                 rts
 hnd_slash:
                 dc.b    "/",0

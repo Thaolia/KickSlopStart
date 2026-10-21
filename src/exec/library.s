@@ -81,6 +81,30 @@
                 xref    exec_AddSemaphore
                 xref    exec_RemSemaphore
                 xref    exec_FindSemaphore
+                xref    exec_SetFunction
+                xref    exec_SumLibrary
+                xref    exec_Cause
+                xref    exec_Alert
+                xref    exec_SetSR
+                xref    exec_SuperState
+                xref    exec_UserState
+                xref    exec_GetCC
+                xref    exec_RemIntServer
+                xref    exec_AllocEntry
+                xref    exec_FreeEntry
+                xref    exec_SetExcept
+                xref    exec_AllocTrap
+                xref    exec_FreeTrap
+                xref    exec_RemResource
+                xref    exec_RawIOInit
+                xref    exec_RawMayGetChar
+                xref    exec_RawPutChar
+                xref    exec_ObtainSemaphoreList
+                xref    exec_ReleaseSemaphoreList
+                xref    exec_Allocate
+                xref    exec_Deallocate
+                xref    exec_AllocAbs
+                xref    exec_AddMemList
 
 ; ============================ jump table ============================
 ; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
@@ -225,6 +249,56 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_FindSemaphore,LVO_FINDSEMAPHORE+2(a6)
         move.l  #exec_AddSemaphore,LVO_ADDSEMAPHORE+2(a6)
         move.l  #exec_RemSemaphore,LVO_REMSEMAPHORE+2(a6)
+        move.w  #$4EF9,-420(a6)
+        move.l  #exec_SetFunction,-420+2(a6)       ; SetFunction
+        move.w  #$4EF9,-426(a6)
+        move.l  #exec_SumLibrary,-426+2(a6)       ; SumLibrary
+        move.w  #$4EF9,-180(a6)
+        move.l  #exec_Cause,-180+2(a6)       ; Cause
+        move.w  #$4EF9,EXEC_ALERTSTUB       ; Alert passe par un relais en RAM : SetPatch 1.3 ne remplace Alert que
+        move.l  #exec_Alert,EXEC_ALERTSTUB+2 ; si l'ancien vecteur est en ROM, puis saute dans le code de la ROM 1.3
+        move.w  #$4EF9,-108(a6)
+        move.l  #EXEC_ALERTSTUB,-108+2(a6)   ; Alert
+        move.w  #$4EF9,-144(a6)
+        move.l  #exec_SetSR,-144+2(a6)       ; SetSR
+        move.w  #$4EF9,-150(a6)
+        move.l  #exec_SuperState,-150+2(a6)       ; SuperState
+        move.w  #$4EF9,-156(a6)
+        move.l  #exec_UserState,-156+2(a6)       ; UserState
+        move.w  #$4EF9,-528(a6)
+        move.l  #exec_GetCC,-528+2(a6)       ; GetCC
+        move.w  #$4EF9,-174(a6)
+        move.l  #exec_RemIntServer,-174+2(a6)       ; RemIntServer
+        move.w  #$4EF9,-222(a6)
+        move.l  #exec_AllocEntry,-222+2(a6)       ; AllocEntry
+        move.w  #$4EF9,-228(a6)
+        move.l  #exec_FreeEntry,-228+2(a6)       ; FreeEntry
+        move.w  #$4EF9,-312(a6)
+        move.l  #exec_SetExcept,-312+2(a6)       ; SetExcept
+        move.w  #$4EF9,-342(a6)
+        move.l  #exec_AllocTrap,-342+2(a6)       ; AllocTrap
+        move.w  #$4EF9,-348(a6)
+        move.l  #exec_FreeTrap,-348+2(a6)       ; FreeTrap
+        move.w  #$4EF9,-492(a6)
+        move.l  #exec_RemResource,-492+2(a6)       ; RemResource
+        move.w  #$4EF9,-504(a6)
+        move.l  #exec_RawIOInit,-504+2(a6)       ; RawIOInit
+        move.w  #$4EF9,-510(a6)
+        move.l  #exec_RawMayGetChar,-510+2(a6)       ; RawMayGetChar
+        move.w  #$4EF9,-516(a6)
+        move.l  #exec_RawPutChar,-516+2(a6)       ; RawPutChar
+        move.w  #$4EF9,-582(a6)
+        move.l  #exec_ObtainSemaphoreList,-582+2(a6)       ; ObtainSemaphoreList
+        move.w  #$4EF9,-588(a6)
+        move.l  #exec_ReleaseSemaphoreList,-588+2(a6)       ; ReleaseSemaphoreList
+        move.w  #$4EF9,-186(a6)
+        move.l  #exec_Allocate,-186+2(a6)       ; Allocate
+        move.w  #$4EF9,-192(a6)
+        move.l  #exec_Deallocate,-192+2(a6)       ; Deallocate
+        move.w  #$4EF9,-204(a6)
+        move.l  #exec_AllocAbs,-204+2(a6)       ; AllocAbs
+        move.w  #$4EF9,-618(a6)
+        move.l  #exec_AddMemList,-618+2(a6)       ; AddMemList
         rts
 
 _unimpl:

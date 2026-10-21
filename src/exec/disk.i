@@ -71,6 +71,32 @@ IO_LENGTH     EQU 36           ; octets demandés
 IO_DATA       EQU 40           ; APTR buffer destination
 IO_OFFSET     EQU 44           ; offset octet sur le disque (secteur logique * 512)
 TDERR_NotSpec EQU 20           ; erreur trackdisk générique (trackdisk.i : TDERR_NotSpecified)
+TDERR_WriteProt EQU 28         ; disquette protégée en écriture
+CMD_RESET     EQU 1
+CMD_WRITE     EQU 3
+CMD_UPDATE    EQU 4
+CMD_CLEAR     EQU 5
+CMD_STOP      EQU 6
+CMD_START     EQU 7
+CMD_FLUSH     EQU 8
+TD_MOTOR      EQU 9
+TD_SEEK       EQU 10
+TD_FORMAT     EQU 11
+TD_REMOVE     EQU 12
+TD_CHANGENUM  EQU 13
+TD_CHANGESTATE EQU 14
+TD_PROTSTATUS EQU 15
+TD_GETNUMTRACKS EQU 19
+TD_ADDCHANGEINT EQU 20
+TD_REMCHANGEINT EQU 21
+DSKB_PROT     EQU 3            ; CIA-A PRA : /WPRO (0 = disquette protégée)
+ADKF_PRECOMP140 EQU $2000      ; précompensation 140 ns (cylindres internes, >= 40)
+; écriture d'une piste : zone de garde en tête puis 11 secteurs de 1088 octets MFM (préambule, sync, en-tête, label,
+; sommes de contrôle, données) ; la piste dépasse un peu un tour : la fin recouvre la garde, jamais un secteur.
+TD_WRGAP      EQU 700
+TD_SECRAW     EQU 1088
+TD_WRBYTES    EQU TD_WRGAP+MFM_NSECT*TD_SECRAW
+TD_WRWORDS    EQU TD_WRBYTES/2
 ; TD_READ_NOCMD=1 (RED B4) : BeginIO ne reconnaît PAS CMD_READ (retombe sur IOERR_NOCMD) -> io_Data reste à 0 ->
 ; secteur lu != « DOS\0 » -> « M6W TRACKDISK CMD_READ OK » absent. Isole le handler de commande. Défaut 0.
 TD_READ_NOCMD EQU 0

@@ -481,22 +481,50 @@ lr_create:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; DeleteLayer(dummy a0, l a1) -> TRUE. Les couches de derrière et le fond récupèrent la zone.
+; DeleteLayer(dummy a0, l a1) -> TRUE. Les couches de derrière et le fond récupèrent la zone. Trois étapes appelées
+; avec leur argument sur la pile (convention C) : verrou de tout le Layer_Info, retrait de la couche, déverrou.
+; Le mot d'entrée est suivi d'un branchement vers le corps, dont les trois BSR sont les seuls de la séquence :
+; SetPatch 1.38 retrouve ainsi ces trois étapes pour son propre DeleteLayer (docs/analysis/setpatch-138.md §1.8).
 ly_DeleteLayer:
+        nop
+        bra.s   ly_dl_body
+; ly_dl_lock(Layer_Info) -> d0 = 1 : couches et Layer_Info verrouillés. Convention C (préserve d2-d7/a2-a6).
+ly_dl_lock:
+        move.l  4(sp),a0
+        bsr     ly_LockLayers
+        moveq   #1,d0
+        rts
+; ly_dl_unlock(Layer_Info).
+ly_dl_unlock:
+        move.l  4(sp),a0
+        bra     ly_UnlockLayers
+ly_dl_body:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  a6,a5
         move.l  a1,a4
         move.l  LY_LAYERINFO(a4),a3
-        move.l  a3,a0
-        bsr     ly_LockLayers
+        move.l  a3,-(sp)
+        bsr.s   ly_dl_lock
+        move.l  a4,(sp)
+        bsr.s   ly_dl_remove
+        move.l  a3,(sp)
+        bsr.s   ly_dl_unlock
+        addq.l  #4,sp
+        moveq   #-1,d0
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+; ly_dl_remove(couche, a6 = LayersBase) : la couche quitte la pile, la zone est rendue aux couches de derrière et au fond,
+; puis ses ClipRects, sa région de dommages et sa mémoire sont libérées. Le Layer_Info reste verrouillé.
+ly_dl_remove:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  44+4(sp),a4          ; couche (au-dessus des 11 registres sauvés et du retour)
+        move.l  a6,a5
+        move.l  LY_LAYERINFO(a4),a3
         bsr     lr_unlink
         move.l  a3,a0
         move.l  a4,a1                ; anciennes ClipRects de la couche supprimée : fond à découvrir
         bsr     lr_rebuild
-        lea     LY_LOCK(a4),a0
+        lea     LY_LOCK(a4),a0       ; son verrou n'est plus rendu par UnlockLayers (elle a quitté la pile)
         bsr     ly_release
-        move.l  a3,a0
-        bsr     ly_UnlockLayers
         lea     LY_CLIPRECT(a4),a2
         bsr     lr_freecrs
         move.l  LB_GFX(a5),a6
@@ -506,7 +534,6 @@ ly_DeleteLayer:
         move.l  a4,a1
         move.l  #LY_SIZE+rp_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
-        moveq   #-1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
 

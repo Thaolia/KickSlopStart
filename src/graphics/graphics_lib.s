@@ -85,7 +85,7 @@ graphics_name:
         dc.b    "graphics.library",0
         EVEN
 graphics_inittab:
-        dc.l    GFXBASE_SIZE             ; dataSize : base Library + champs GfxBase (jusqu'à gb_DefaultFont)
+        dc.l    GFXBASE_SIZE             ; dataSize : GfxBase publique V34 + champs privés
         dc.l    graphics_vectors         ; funcTable
         dc.l    graphics_datatab         ; dataTable (InitStruct)
         dc.l    graphics_initfunc        ; initFunc
@@ -206,6 +206,16 @@ graphics_initfunc:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,gb_SprNull(a2)
+        move.b  #50,gb_VBlank(a2)    ; affichage PAL (A500 européen) : valeurs publiques lues par les programmes
+        move.w  #GFX_COLOR_BIT,gb_system_bplcon0(a2)
+        move.w  #DISPF_PAL,gb_DisplayFlags(a2)
+        move.w  #312,gb_MaxDisplayRow(a2)
+        move.w  #452,gb_MaxDisplayColumn(a2)
+        move.w  #256,gb_NormalDisplayRows(a2)
+        move.w  #640,gb_NormalDisplayColumns(a2)
+        move.w  #1280,gb_NormalDPMX(a2)
+        move.w  #1280,gb_NormalDPMY(a2)
+        move.w  #64*256,gb_MicrosPerLine(a2)
         jsr     gfx_fontinit
         move.l  a2,d0
         move.l  (sp)+,a2
@@ -415,6 +425,7 @@ gfx_LoadView:
         move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view (0 si NULL)
         move.l  a1,d0
         beq.s   .lv_null             ; vue NULLE -> stopper l'affichage système
+        move.w  v_Modes(a1),gb_Modes(a6)
         move.l  v_LOFCprList(a1),d0
         beq.s   .lv_ret              ; pas de copper list -> rien
         move.l  d0,gb_LOFlist(a6)

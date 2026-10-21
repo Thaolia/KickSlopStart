@@ -111,12 +111,27 @@ trackdisk_beginio:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a2                ; a2 = ioreq
         clr.l   IO_ACTUAL(a2)
+        clr.b   IO_ERROR(a2)
+        move.w  IO_COMMAND(a2),d0
                 ifeq    TD_READ_NOCMD
-        cmp.w   #CMD_READ,IO_COMMAND(a2)
+        cmp.w   #CMD_READ,d0
         beq.s   .td_read
                 endc                 ; RED TD_READ_NOCMD : saute la reconnaissance -> IOERR_NOCMD
+        move.l  a6,a4                ; autres commandes : a4 = base, a6 = SysBase
+        move.l  ($4).w,a6
+        lea     td_cmdtab(pc),a0
+.td_cmd:
+        move.w  (a0)+,d1
+        bmi.s   .td_nocmd
+        move.w  (a0)+,d2
+        cmp.w   d1,d0
+        bne.s   .td_cmd
+        lea     td_cmdtab(pc),a0
+        jsr     0(a0,d2.w)           ; routine(a2 = requête, a6 = SysBase)
+        bra     .td_restore
+.td_nocmd:
         move.b  #IOERR_NOCMD,IO_ERROR(a2)
-        bra     .td_reply
+        bra     .td_restore
 .td_read:
         move.l  a6,a4                ; a4 = device base (sauvé ; a6 -> SysBase pour les appels exec)
         move.l  ($4).w,a6
@@ -185,30 +200,9 @@ trackdisk_beginio:
         ; Workbench avec une seule piste en cache). Une piste en cache est servie sans accès disque.
         bsr     td_cache_slot        ; d1 = n° d'emplacement, a3 = son tampon ; Z = trouvée en cache
         beq.s   .td_cached
-        lea     TD_CTRK,a0
-        add.w   d1,d1
-        move.w  #$FFFF,0(a0,d1.w)    ; l'emplacement va être réécrit : vide tant que la piste n'est pas vérifiée
-        move.w  d1,-(sp)             ; offset de l'emplacement (survit aux appels)
-        move.w  d0,-(sp)             ; piste demandée (survit aux appels)
-        bsr     td_read_track        ; d0 = rawbuf chip | 0  (a6 = SysBase ; piste en d0)
+        bsr     td_fill              ; d0 = 0 piste complète (cachée), 1 partielle, -1 illisible
         tst.l   d0
-        beq     .td_noread_pop       ; pas de disque / timeout
-        move.l  d0,d7                ; d7 = rawbuf
-        move.l  d0,a0
-        move.l  a3,a1
-        bsr     td_decode_track      ; d0 = secteurs valides, d1 = piste du dernier secteur valide
-        cmp.w   #MFM_NSECT,d0        ; 11 = piste complète (le scan ne peut pas compter un secteur deux fois)
-        bne.s   .td_nocache
-        cmp.w   (sp),d1              ; et c'est bien la piste demandée (pas un mauvais seek)
-        bne.s   .td_nocache
-        lea     TD_CTRK,a0
-        move.w  2(sp),d0
-        move.w  d1,0(a0,d0.w)        ; emplacement valide pour cette piste
-.td_nocache:
-        addq.l  #4,sp
-        move.l  d7,a1                ; libère rawbuf
-        move.l  #TD_RAWBYTES,d0
-        jsr     LVO_FREEMEM(a6)
+        bmi     .td_noread
 .td_cached:
         move.l  a3,a0                ; copie n octets : src = sectorbuf + octet-dans-piste, dst = a5
         add.l   d6,a0
@@ -228,8 +222,7 @@ trackdisk_beginio:
         move.l  d4,IO_ACTUAL(a2)     ; octets transférés
         clr.b   IO_ERROR(a2)
         bra.s   .td_restore
-.td_noread_pop:
-        addq.l  #4,sp                ; dépile la piste demandée et l'emplacement
+.td_noread:
         move.l  d4,IO_ACTUAL(a2)     ; octets transférés avant l'échec (0 si la 1re piste échoue)
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
         bra.s   .td_restore          ; sectorbuf = cache persistant : jamais libéré
@@ -260,6 +253,7 @@ trackdisk_abortio:
 ; ne nécessitent pas d'init en B1 (deviendront Unit+MsgPort à initialiser en B2).
 trackdisk_initfunc:
         clr.l   TD_CACHEBUF
+        clr.l   TD_CHGCNT
         move.w  #1,TD_CNSLOTS
         bsr     td_cache_flush
         sf      TD_MOTORON
@@ -285,13 +279,15 @@ trackdisk_initfunc:
 
 ; td_cache_flush() : vide tous les emplacements du cache (disque changé, init). Préserve tout.
 td_cache_flush:
-        movem.l d0/a0,-(sp)
+        movem.l d0/a0-a1,-(sp)
         lea     TD_CTRK,a0
+        lea     TD_CDIRTY,a1
         moveq   #TD_NCACHE-1,d0
 .cf_lp:
         move.w  #$FFFF,(a0)+
+        sf      (a1)+
         dbra    d0,.cf_lp
-        movem.l (sp)+,d0/a0
+        movem.l (sp)+,d0/a0-a1
         rts
 
 ; td_cache_slot(d0.w = piste) -> d1.w = n° d'emplacement, a3 = son tampon (TD_CACHEBUF + n*5632), Z = 1 si la piste y
@@ -398,6 +394,7 @@ td_check_change:
         bne.s   .cc_ret
         bsr     td_cache_flush
         clr.b   TD_CYLVALID
+        addq.l  #1,TD_CHGCNT
 .cc_ret:
         rts
 
@@ -420,6 +417,55 @@ td_read_track:
         tst.l   d0
         beq     .rd_ret               ; pas de chip -> 0
         move.l  d0,a2                 ; a2 = buffer
+        bsr     td_position           ; moteur, sélection, seek, face (IRQ rétablies)
+.rd_dma:
+        move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
+        move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
+                ifeq    TD_NO_DMA
+        ; $9500 = SETCLR|MFMPREC|FAST|WORDSYNC. Le bit FAST (débit 2 us/bit, standard DD) est le FIX WinUAE :
+        ; sans lui (ancien $8400, FAST=0 = 4 us/bit) Paula échantillonne le flux au MAUVAIS rythme -> les octets
+        ; s'assemblent (DSKBYT) mais le bitstream est garbage -> $4489 ne se forme jamais -> WORDEQUAL jamais ->
+        ; lecture KO (prouvé stage=$53 sur WinUAE). FS-UAE lâche décodait quand même. $9500 = mode lecture officiel
+        ; KS1.3 ($9100 = SETCLR|MFMPREC|FAST) + WORDSYNC. Cf. docs/analysis/trackdisk-official-timing.md.
+        move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST|ADKF_WORDSYNC),ADKCON   ; $9500
+        move.w  #TD_SYNC,DSKSYNC      ; $4489
+        move.l  a2,DSKPT             ; pointeur DMA = buffer (longword)
+        move.w  #$4000,DSKLEN        ; reset/disable (quirk avant armement)
+        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON  ; $8210 : DMA maître + disque
+        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; arme la lecture (DMAEN|len)
+        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; écrit 2x pour démarrer (quirk hardware)
+                endc                 ; RED TD_NO_DMA : DMA non armé -> buffer reste à 0 -> aucun sync
+        move.l  #$00080000,d2        ; poll DSKBLK avec timeout (jamais de hang si pas de disque)
+.rd_wait:
+        move.w  INTREQR,d3
+        btst    #1,d3                ; DSKBLK (bit 1) ?
+        bne.s   .rd_done
+        subq.l  #1,d2
+        bne.s   .rd_wait
+        bsr.s   .rd_stop             ; timeout -> libère le buffer, renvoie 0
+        move.l  a2,a1
+        move.l  #TD_RAWBYTES,d0
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra.s   .rd_ret
+.rd_done:
+        bsr.s   .rd_stop
+        move.l  a2,d0                ; d0 = buffer (succès)
+.rd_ret:
+        movem.l (sp)+,d2/d3/d6/a2
+        rts
+.rd_stop:
+        move.w  #$4000,DSKLEN        ; disable DMA disque
+        move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
+        move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
+        move.b  #PRB_MOTOR_ON,CIAB_PRB ; déselect, moteur laissé allumé (latché) : la lecture suivante évite le spin-up
+        move.w  #TD_MOTORIDLE,TD_MOTORCNT ; le serveur VBlank l'éteindra après TD_MOTORIDLE ticks d'inactivité
+        sf      TD_BUSY
+        rts
+; td_position(d6 = piste, a6 = SysBase) : moteur allumé (spin-up si besoin), DF0 sélectionné, tête amenée au
+; cylindre (suivi de cylindre, recalibration si position inconnue), face choisie. TD_BUSY posé (rendu par l'appelant
+; à la fin de son accès). Clobbe d0/d2/d3.
+td_position:
         st      TD_BUSY               ; le serveur VBlank ne touche plus au lecteur
         move.w  #INTF_DSKBLK,INTENA   ; s'assure que DSKBLK est MASQUÉ (on poll INTREQR, pas d'IRQ INT1 spurious)
         move.b  #$FF,CIAB_DDRB        ; port B = SORTIES avant d'écrire PRB
@@ -448,7 +494,7 @@ td_read_track:
         ; haut, ex. « flt-intro » sur le disque Lemmings ; invisible tant que le boot ne lit que des blocs bas).
         ; Prouvé par bissection : un DÉLAI inter-pas pur ne corrige PAS (donc pas un défaut de settle), masquer
         ; les IRQ, OUI (3/3). On masque le seul SEEK (court) ; le DMA en aval poll INTREQR -> pas d'IRQ requise.
-        jsr     LVO_DISABLE(a6)     ; a6 = SysBase ; équilibré par LVO_ENABLE à .rd_dma
+        jsr     LVO_DISABLE(a6)     ; a6 = SysBase ; équilibré par LVO_ENABLE à .rd_pend
         ; --- seek vers la piste d6 avec SUIVI DU CYLINDRE (cylinder-tracking) ---
         ; On mémorise le cylindre courant (TD_CURCYL, fiable ssi TD_CYLVALID) et on steppe le DELTA vers la cible
         ; (IN si plus profond, OUT si plus près de 0) au lieu de recalibrer à zéro à CHAQUE lecture. Recalibration
@@ -501,52 +547,10 @@ td_read_track:
 .rd_side:
         move.b  #$77,CIAB_PRB       ; face 0 (DSKSIDE=1, bit2=1 ; piste paire)
         btst    #0,d6
-        beq.s   .rd_dma
+        beq.s   .rd_pend
         move.b  #$73,CIAB_PRB       ; face 1 (DSKSIDE=0, bit2=0 ; piste impaire)
-.rd_dma:
-        jsr     LVO_ENABLE(a6)      ; fin de la section critique du seek (IRQ ré-autorisées avant le DMA)
-        move.w  #INTF_DSKBLK,INTREQ   ; clear DSKBLK pendant
-        move.w  #$7FFF,ADKCON         ; clear tous les bits ADKCON
-                ifeq    TD_NO_DMA
-        ; $9500 = SETCLR|MFMPREC|FAST|WORDSYNC. Le bit FAST (débit 2 us/bit, standard DD) est le FIX WinUAE :
-        ; sans lui (ancien $8400, FAST=0 = 4 us/bit) Paula échantillonne le flux au MAUVAIS rythme -> les octets
-        ; s'assemblent (DSKBYT) mais le bitstream est garbage -> $4489 ne se forme jamais -> WORDEQUAL jamais ->
-        ; lecture KO (prouvé stage=$53 sur WinUAE). FS-UAE lâche décodait quand même. $9500 = mode lecture officiel
-        ; KS1.3 ($9100 = SETCLR|MFMPREC|FAST) + WORDSYNC. Cf. docs/analysis/trackdisk-official-timing.md.
-        move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST|ADKF_WORDSYNC),ADKCON   ; $9500
-        move.w  #TD_SYNC,DSKSYNC      ; $4489
-        move.l  a2,DSKPT             ; pointeur DMA = buffer (longword)
-        move.w  #$4000,DSKLEN        ; reset/disable (quirk avant armement)
-        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON  ; $8210 : DMA maître + disque
-        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; arme la lecture (DMAEN|len)
-        move.w  #($8000|TD_RAWWORDS),DSKLEN   ; écrit 2x pour démarrer (quirk hardware)
-                endc                 ; RED TD_NO_DMA : DMA non armé -> buffer reste à 0 -> aucun sync
-        move.l  #$00080000,d2        ; poll DSKBLK avec timeout (jamais de hang si pas de disque)
-.rd_wait:
-        move.w  INTREQR,d3
-        btst    #1,d3                ; DSKBLK (bit 1) ?
-        bne.s   .rd_done
-        subq.l  #1,d2
-        bne.s   .rd_wait
-        bsr.s   .rd_stop             ; timeout -> libère le buffer, renvoie 0
-        move.l  a2,a1
-        move.l  #TD_RAWBYTES,d0
-        jsr     LVO_FREEMEM(a6)
-        moveq   #0,d0
-        bra.s   .rd_ret
-.rd_done:
-        bsr.s   .rd_stop
-        move.l  a2,d0                ; d0 = buffer (succès)
-.rd_ret:
-        movem.l (sp)+,d2/d3/d6/a2
-        rts
-.rd_stop:
-        move.w  #$4000,DSKLEN        ; disable DMA disque
-        move.w  #DMAF_DISK,DMACON    ; coupe SEULEMENT DSKEN (SETCLR=0 -> clear ; NE PAS toucher MASTER = affichage)
-        move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
-        move.b  #PRB_MOTOR_ON,CIAB_PRB ; déselect, moteur laissé allumé (latché) : la lecture suivante évite le spin-up
-        move.w  #TD_MOTORIDLE,TD_MOTORCNT ; le serveur VBlank l'éteindra après TD_MOTORIDLE ticks d'inactivité
-        sf      TD_BUSY
+.rd_pend:
+        jsr     LVO_ENABLE(a6)      ; fin de la section critique du seek
         rts
 ; Délais de la tête (boucles subq/bne ≈ 2,54 us par tour à 7,09 MHz) : 3 ms entre deux pas (débit de pas d'un lecteur
 ; DD) et 18 ms de stabilisation UNE fois après le dernier pas. Avant : ~83 ms après CHAQUE pas (3,3 s pour 40 cyl).
@@ -588,6 +592,516 @@ TD_STEP_DLY   EQU $40               ; ~160 us de largeur (très au-dessus du min
 .rd_sdloop:
         subq.l  #1,d0
         bne.s   .rd_sdloop
+        rts
+
+; table des commandes autres que CMD_READ : (commande, routine - td_cmdtab)
+TDCMD           MACRO
+        dc.w    \1,\2-td_cmdtab
+                ENDM
+td_cmdtab:
+        TDCMD   CMD_WRITE,td_cmd_write
+        TDCMD   TD_FORMAT,td_cmd_format
+        TDCMD   CMD_UPDATE,td_cmd_update
+        TDCMD   CMD_CLEAR,td_cmd_clear
+        TDCMD   TD_MOTOR,td_cmd_motor
+        TDCMD   TD_PROTSTATUS,td_cmd_prot
+        TDCMD   TD_CHANGENUM,td_cmd_chgnum
+        TDCMD   TD_CHANGESTATE,td_cmd_chgstate
+        TDCMD   TD_GETNUMTRACKS,td_cmd_ntracks
+        TDCMD   CMD_RESET,td_cmd_nop
+        TDCMD   CMD_STOP,td_cmd_nop
+        TDCMD   CMD_START,td_cmd_nop
+        TDCMD   CMD_FLUSH,td_cmd_nop
+        TDCMD   TD_SEEK,td_cmd_nop
+        TDCMD   TD_REMOVE,td_cmd_nop
+        TDCMD   TD_ADDCHANGEINT,td_cmd_nop
+        TDCMD   TD_REMCHANGEINT,td_cmd_nop
+        dc.w    -1
+
+td_cmd_nop:
+        rts
+td_cmd_ntracks:
+        move.l  #TD_NTRACKS,IO_ACTUAL(a2)
+        rts
+td_cmd_chgnum:
+        bsr     td_check_change
+        move.l  TD_CHGCNT,IO_ACTUAL(a2)
+        rts
+; TD_CHANGESTATE : io_Actual = 0 si une disquette est dans le lecteur.
+td_cmd_chgstate:
+        bsr     td_check_change
+        bsr     td_sense
+        moveq   #0,d0
+        btst    #DSKB_CHANGE,d1
+        bne.s   .cs_in
+        moveq   #1,d0
+.cs_in:
+        move.l  d0,IO_ACTUAL(a2)
+        rts
+; TD_PROTSTATUS : io_Actual != 0 si la disquette est protégée en écriture.
+td_cmd_prot:
+        bsr     td_sense
+        moveq   #0,d0
+        btst    #DSKB_PROT,d1
+        bne.s   .pr_rw
+        moveq   #-1,d0
+.pr_rw:
+        move.l  d0,IO_ACTUAL(a2)
+        rts
+; TD_MOTOR : io_Length 0 = arrêt (les pistes modifiées restent en cache jusqu'à CMD_UPDATE), 1 = marche (le moteur
+; démarre au prochain accès) ; io_Actual = état précédent.
+td_cmd_motor:
+        moveq   #0,d0
+        tst.b   TD_MOTORON
+        beq.s   .mo_was
+        moveq   #1,d0
+.mo_was:
+        move.l  d0,IO_ACTUAL(a2)
+        tst.l   IO_LENGTH(a2)
+        bne.s   .mo_ret
+        tst.b   TD_MOTORON
+        beq.s   .mo_ret
+        jsr     LVO_DISABLE(a6)
+        move.b  #PRB_OFF,CIAB_PRB
+        move.b  #PRB_SEL0_OFF,CIAB_PRB
+        move.b  #PRB_OFF,CIAB_PRB
+        sf      TD_MOTORON
+        jsr     LVO_ENABLE(a6)
+.mo_ret:
+        rts
+; CMD_CLEAR : le cache est oublié, pistes modifiées comprises.
+td_cmd_clear:
+        bra     td_cache_flush
+; CMD_UPDATE : les pistes modifiées sont écrites sur le disque.
+td_cmd_update:
+        bsr     td_flush_all
+        move.b  d0,IO_ERROR(a2)
+        rts
+
+; td_sense(a6) -> d1.b = CIA-A PRA lu avec DF0 sélectionné (état du moteur conservé) : /CHNG, /WPRO... Clobbe d0.
+td_sense:
+        jsr     LVO_DISABLE(a6)
+        move.b  #$FF,CIAB_DDRB
+        move.b  #PRB_OFF,d0          ; sélection en relatchant l'état courant du moteur
+        tst.b   TD_MOTORON
+        beq.s   .se_off
+        move.b  #PRB_MOTOR_ON,d0
+.se_off:
+        move.b  d0,CIAB_PRB
+        and.b   #$F7,d0              ; SEL0 bas
+        move.b  d0,CIAB_PRB
+        move.b  CIAA_PRA_HW,d1
+        or.b    #$08,d0
+        move.b  d0,CIAB_PRB
+        jsr     LVO_ENABLE(a6)
+        rts
+
+; CMD_WRITE (io_Offset, io_Length multiples de 512) : les secteurs vont dans les pistes du cache, marquées modifiées ;
+; une piste couverte en partie est d'abord lue. TD_FORMAT : pistes entières, jamais lues, écrites aussitôt.
+td_cmd_format:
+        moveq   #1,d7
+        bra.s   td_wr
+td_cmd_write:
+        moveq   #0,d7
+td_wr:
+        move.l  IO_OFFSET(a2),d3
+        move.l  IO_LENGTH(a2),d2
+        moveq   #0,d4
+        move.l  d3,d0
+        or.l    d2,d0
+        and.l   #MFM_SECTSZ-1,d0
+        bne     .wr_badlen
+        tst.l   d7
+        beq.s   .wr_lenok
+        move.l  d3,d0                ; TD_FORMAT : pistes entières
+        divu    #MFM_SECBUF,d0
+        swap    d0
+        tst.w   d0
+        bne     .wr_badlen
+        move.l  d2,d0
+        divu    #MFM_SECBUF,d0
+        swap    d0
+        tst.w   d0
+        bne     .wr_badlen
+.wr_lenok:
+        move.l  d3,d0
+        add.l   d2,d0
+        cmp.l   #TD_DISKBYTES,d0
+        bhi     .wr_err
+        bsr     td_check_change
+        bsr     td_sense
+        btst    #DSKB_PROT,d1
+        beq     .wr_prot
+        bsr     td_cachebuf          ; cache alloué (premier accès)
+        beq     .wr_err
+        move.l  IO_DATA(a2),a5
+.wr_loop:
+        tst.l   d2
+        beq     .wr_done
+        move.l  d3,d0                ; piste, octet dans la piste, n = jusqu'à la fin de la piste
+        lsr.l   #8,d0
+        lsr.l   #1,d0
+        divu.w  #MFM_NSECT,d0
+        move.l  d0,d1
+        clr.w   d1
+        swap    d1
+        and.l   #$FFFF,d0
+        lsl.l   #8,d1
+        add.l   d1,d1
+        move.l  d1,d6                ; d6 = octet dans la piste
+        move.l  #MFM_SECBUF,d5
+        sub.l   d6,d5
+        cmp.l   d2,d5
+        bls.s   .wr_n
+        move.l  d2,d5
+.wr_n:
+        bsr     td_cache_slot        ; d1 = emplacement, a3 = tampon ; Z = piste en cache
+        beq.s   .wr_have
+        tst.l   d6                   ; piste entière remplacée : pas de lecture
+        bne.s   .wr_read
+        cmp.l   #MFM_SECBUF,d5
+        bne.s   .wr_read
+        move.w  d0,-(sp)
+        move.w  d1,d0                ; l'emplacement repris est d'abord écrit s'il était modifié
+        bsr     td_flush_slot
+        move.w  (sp)+,d0
+        lea     TD_CTRK,a0
+        move.w  d1,d4
+        add.w   d4,d4
+        move.w  d0,0(a0,d4.w)
+        moveq   #0,d4
+        bra.s   .wr_have
+.wr_read:
+        bsr     td_fill              ; piste modifiée en partie : son contenu complet d'abord
+        tst.l   d0
+        bne.s   .wr_err              ; illisible ou incomplète : on n'écrit pas par-dessus
+.wr_have:
+        move.l  a3,a1                ; copie dans le cache
+        add.l   d6,a1
+        move.l  a5,a0
+        move.l  d5,d0
+        lsr.l   #2,d0
+        subq.l  #1,d0
+.wr_cp:
+        move.l  (a0)+,(a1)+
+        dbra    d0,.wr_cp
+        lea     TD_CDIRTY,a0
+        st      0(a0,d1.w)
+        add.l   d5,a5
+        add.l   d5,d3
+        add.l   d5,IO_ACTUAL(a2)
+        sub.l   d5,d2
+        bra     .wr_loop
+.wr_done:
+        tst.l   d7
+        beq.s   .wr_ret
+        bsr     td_flush_all         ; TD_FORMAT : écrit tout de suite
+        move.b  d0,IO_ERROR(a2)
+.wr_ret:
+        rts
+.wr_badlen:
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a2)
+        rts
+.wr_prot:
+        move.b  #TDERR_WriteProt,IO_ERROR(a2)
+        rts
+.wr_err:
+        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        rts
+
+; td_cachebuf(a6) : alloue le cache de pistes au premier accès (TD_NCACHE emplacements, 1 si la mémoire manque).
+; Z = 1 si impossible. Clobbe d0/d1/a0/a1.
+td_cachebuf:
+        tst.l   TD_CACHEBUF
+        bne.s   .cb_ok
+        move.l  #MFM_SECBUF*TD_NCACHE,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.w  #TD_NCACHE,TD_CNSLOTS
+        tst.l   d0
+        bne.s   .cb_got
+        move.l  #MFM_SECBUF,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.w  #1,TD_CNSLOTS
+        tst.l   d0
+        beq.s   .cb_ret
+.cb_got:
+        move.l  d0,TD_CACHEBUF
+        bsr     td_cache_flush
+.cb_ok:
+        moveq   #1,d0                ; Z = 0
+.cb_ret:
+        rts
+
+; td_fill(d0.w = piste, d1.w = emplacement, a3 = son tampon, a6) : l'emplacement (écrit d'abord s'il était modifié)
+; reçoit la piste lue et décodée ; il n'est déclaré valide que si ses 11 secteurs sont bons et portent cette piste.
+; -> d0 = 0 piste complète, 1 incomplète (contenu partiel, non cachée), -1 illisible. Préserve d1-d7/a2-a6.
+td_fill:
+        movem.l d1-d7/a2-a5,-(sp)
+        move.w  d0,d6                ; d6 = piste
+        move.w  d1,d5                ; d5 = emplacement
+        move.w  d5,d0
+        bsr     td_flush_slot
+        lea     TD_CTRK,a0
+        move.w  d5,d4
+        add.w   d4,d4                ; d4 = offset de l'emplacement
+        move.w  #$FFFF,0(a0,d4.w)    ; vide tant que la piste n'est pas vérifiée
+        moveq   #0,d0
+        move.w  d6,d0
+        bsr     td_read_track        ; d0 = tampon brut | 0
+        tst.l   d0
+        beq.s   .fi_none
+        move.l  d0,d7
+        move.l  d0,a0
+        move.l  a3,a1
+        bsr     td_decode_track      ; d0 = secteurs valides, d1 = piste du dernier secteur valide
+        moveq   #1,d2
+        cmp.w   #MFM_NSECT,d0
+        bne.s   .fi_free
+        cmp.w   d6,d1
+        bne.s   .fi_free
+        lea     TD_CTRK,a0
+        move.w  d6,0(a0,d4.w)
+        moveq   #0,d2
+.fi_free:
+        move.l  d7,a1
+        move.l  #TD_RAWBYTES,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d2,d0
+        bra.s   .fi_ret
+.fi_none:
+        moveq   #-1,d0
+.fi_ret:
+        movem.l (sp)+,d1-d7/a2-a5
+        rts
+
+; td_flush_all(a6) -> d0 = 0 | erreur trackdisk : écrit toutes les pistes modifiées du cache. Préserve d1-d7/a0-a6.
+td_flush_all:
+        movem.l d1-d2,-(sp)
+        moveq   #0,d2
+        moveq   #0,d0
+.fa_lp:
+        cmp.w   TD_CNSLOTS,d0
+        bhs.s   .fa_ret
+        move.l  d0,-(sp)
+        bsr.s   td_flush_slot
+        tst.l   d2
+        bne.s   .fa_keep
+        move.l  d0,d2                ; première erreur gardée
+.fa_keep:
+        move.l  (sp)+,d0
+        addq.w  #1,d0
+        bra.s   .fa_lp
+.fa_ret:
+        move.l  d2,d0
+        movem.l (sp)+,d1-d2
+        rts
+
+; td_flush_slot(d0.w = emplacement, a6) -> d0 = 0 | erreur : si l'emplacement est modifié, sa piste est codée en MFM et
+; écrite, puis déclarée propre. Préserve d1-d7/a0-a6.
+td_flush_slot:
+        movem.l d1-d7/a0-a5,-(sp)
+        move.w  d0,d5
+        lea     TD_CDIRTY,a0
+        tst.b   0(a0,d5.w)
+        beq.s   .fs_ok
+        sf      0(a0,d5.w)
+        lea     TD_CTRK,a0
+        move.w  d5,d6
+        add.w   d6,d6
+        move.w  0(a0,d6.w),d6        ; d6 = piste
+        cmp.w   #$FFFF,d6
+        beq.s   .fs_ok
+        move.l  #TD_WRBYTES,d0       ; piste MFM en mémoire chip (le DMA ne voit qu'elle)
+        move.l  #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .fs_nomem
+        move.l  d0,a4
+        moveq   #0,d0
+        move.w  d5,d0
+        mulu    #MFM_SECBUF,d0
+        move.l  TD_CACHEBUF,a0
+        add.l   d0,a0
+        move.l  a4,a1
+        move.w  d6,d0
+        bsr     td_encode_track
+        moveq   #0,d0
+        move.w  d6,d0
+        move.l  a4,a0
+        bsr     td_write_track       ; d0 = 0 | erreur
+        move.l  d0,d7
+        move.l  a4,a1
+        move.l  #TD_WRBYTES,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d7,d0
+        bra.s   .fs_ret
+.fs_nomem:
+        lea     TD_CDIRTY,a0         ; rien d'écrit : la piste reste à écrire
+        st      0(a0,d5.w)
+        moveq   #TDERR_NotSpec,d0
+        bra.s   .fs_ret
+.fs_ok:
+        moveq   #0,d0
+.fs_ret:
+        movem.l (sp)+,d1-d7/a0-a5
+        rts
+
+; td_encode_track(a0 = 11 secteurs décodés, a1 = destination TD_WRBYTES, d0.w = piste) : piste au format AmigaDOS.
+; Garde ; puis par secteur : préambule (0 codé), sync $4489 $4489, en-tête $FF.piste.secteur.(11 - secteur) et label
+; (16 o nuls) en bits impairs puis pairs, somme de contrôle de l'en-tête, somme des données, données (impairs puis
+; pairs) ; les sommes sont le OU exclusif des longs codés (bits de données). Les bits d'horloge sont ensuite posés
+; (1 entre deux bits de données nuls), sauf dans les mots de sync. Préserve d2-d7/a2-a6.
+td_encode_track:
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a0,a3                ; a3 = secteurs
+        move.l  a1,a2                ; a2 = sortie
+        move.w  d0,d7                ; d7 = piste
+        move.l  #MFM_MASK,d6
+        move.w  #TD_WRGAP/4-1,d1
+.en_gap:
+        move.l  #$AAAAAAAA,(a2)+     ; zéros codés
+        dbra    d1,.en_gap
+        moveq   #0,d5                ; d5 = secteur
+.en_sec:
+        move.l  a2,a4                ; a4 = début du secteur
+        clr.l   (a2)+                ; préambule : deux mots de zéros
+        move.l  #$44894489,(a2)+
+        moveq   #-1,d0               ; en-tête
+        move.b  d7,d0
+        lsl.w   #8,d0
+        move.b  d5,d0
+        lsl.l   #8,d0
+        moveq   #MFM_NSECT,d1
+        sub.b   d5,d1
+        move.b  d1,d0
+        bsr.s   .en_long
+        moveq   #7,d1                ; label
+.en_lab:
+        clr.l   (a2)+
+        dbra    d1,.en_lab
+        lea     8(a4),a0             ; somme de l'en-tête : 10 longs
+        moveq   #0,d0
+        moveq   #9,d1
+.en_hs:
+        move.l  (a0)+,d2
+        eor.l   d2,d0
+        dbra    d1,.en_hs
+        bsr.s   .en_long
+        lea     8(a2),a1             ; données : impairs puis pairs, somme au passage
+        lea     512(a1),a5
+        move.l  a3,a0
+        moveq   #0,d4
+        move.w  #127,d1
+.en_dat:
+        move.l  (a0)+,d0
+        move.l  d0,d2
+        lsr.l   #1,d2
+        and.l   d6,d2
+        move.l  d2,(a1)+
+        eor.l   d2,d4
+        and.l   d6,d0
+        move.l  d0,(a5)+
+        eor.l   d0,d4
+        dbra    d1,.en_dat
+        move.l  d4,d0                ; somme des données
+        bsr.s   .en_long
+        lea     1024(a2),a2
+        lea     MFM_SECTSZ(a3),a3
+        move.l  a4,a0                ; horloge : préambule (après le long précédent), puis après la sync
+        moveq   #1,d0
+        move.l  -4(a4),d1
+        bsr.s   .en_clock
+        lea     8(a4),a0
+        move.w  #(TD_SECRAW-8)/4,d0
+        move.l  #$44894489,d1
+        bsr.s   .en_clock
+        addq.w  #1,d5
+        cmp.w   #MFM_NSECT,d5
+        blo     .en_sec
+        movem.l (sp)+,d2-d7/a2-a5
+        rts
+.en_long:                            ; d0 -> (a2)+ : bits impairs puis pairs. Clobbe d2.
+        move.l  d0,d2
+        lsr.l   #1,d2
+        and.l   d6,d2
+        move.l  d2,(a2)+
+        and.l   d6,d0
+        move.l  d0,(a2)+
+        rts
+.en_clock:                           ; a0 = longs (bits de données), d0.w = nombre, d1 = long précédent
+        movem.l d2-d4,-(sp)
+        subq.w  #1,d0
+.ec_lp:
+        move.l  (a0),d2
+        and.l   d6,d2
+        move.l  d2,d3
+        add.l   d3,d3                ; voisin suivant (bit k-1 en k)
+        move.l  d2,d4
+        lsr.l   #1,d4                ; voisin précédent (bit k+1 en k)
+        or.l    d4,d3
+        and.l   #1,d1                ; bit 31 : dernier bit du long précédent
+        ror.l   #1,d1
+        or.l    d1,d3
+        not.l   d3
+        and.l   #$AAAAAAAA,d3
+        or.l    d3,d2
+        move.l  d2,(a0)+
+        move.l  d2,d1
+        dbra    d0,.ec_lp
+        movem.l (sp)+,d2-d4
+        rts
+
+; td_write_track(d0 = piste, a0 = piste MFM en chip, TD_WRBYTES, a6) -> d0 = 0 | erreur : positionnement, contrôle de la
+; protection, DMA d'écriture (précompensation 140 ns sur les cylindres internes), attente de fin puis du dernier mot.
+td_write_track:
+        movem.l d2/d3/d6/a2,-(sp)
+        move.l  d0,d6
+        move.l  a0,a2
+        bsr     td_position
+        btst    #DSKB_PROT,CIAA_PRA_HW
+        bne.s   .wt_rw
+        moveq   #TDERR_WriteProt,d2
+        bra.s   .wt_stop
+.wt_rw:
+        move.w  #INTF_DSKBLK,INTREQ
+        move.w  #$7F00,ADKCON        ; précompensation, MFM, débit, sync : effacés (bits audio intacts)
+        move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST),d0
+        cmp.w   #TD_NTRACKS/2,d6
+        blo.s   .wt_pc
+        or.w    #ADKF_PRECOMP140,d0
+.wt_pc:
+        move.w  d0,ADKCON
+        move.l  a2,DSKPT
+        move.w  #$4000,DSKLEN
+        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON
+        move.w  #($C000|TD_WRWORDS),DSKLEN   ; DMAEN | WRITE | longueur
+        move.w  #($C000|TD_WRWORDS),DSKLEN
+        move.l  #$00080000,d2
+.wt_wait:
+        move.w  INTREQR,d3
+        btst    #1,d3                ; DSKBLK
+        bne.s   .wt_end
+        subq.l  #1,d2
+        bne.s   .wt_wait
+        moveq   #TDERR_NotSpec,d2
+        bra.s   .wt_stop
+.wt_end:
+        move.l  #800,d0              ; ~2 ms : le dernier mot quitte la tête
+.wt_tail:
+        subq.l  #1,d0
+        bne.s   .wt_tail
+        moveq   #0,d2
+.wt_stop:
+        move.w  #$4000,DSKLEN
+        move.w  #DMAF_DISK,DMACON
+        move.w  #INTF_DSKBLK,INTREQ
+        move.b  #PRB_MOTOR_ON,CIAB_PRB
+        move.w  #TD_MOTORIDLE,TD_MOTORCNT
+        sf      TD_BUSY
+        move.l  d2,d0
+        movem.l (sp)+,d2/d3/d6/a2
         rts
 
 ; td_disk_present() -> d0 = -1 si une disquette est dans DF0, 0 sinon. /CHNG haut : disquette présente. Bas : une

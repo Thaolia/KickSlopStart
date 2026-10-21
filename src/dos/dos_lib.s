@@ -69,10 +69,10 @@ dos_vectors:
         dc.l    dos_fn_rename            ; 13 : LVO -78  Rename(ancien d1, nouveau d2)
         dc.l    dos_fn_lock              ; 14 : LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
         dc.l    dos_fn_unlock            ; 15 : LVO -90  UnLock(lock d1)
-        dc.l    dos_null                 ; 16 : LVO -96  (DupLock non impl.)
+        dc.l    dos_fn_duplock           ; 16 : LVO -96  DupLock(lock d1) -> nouveau lock
         dc.l    dos_fn_examine           ; 17 : LVO -102 Examine(lock d1, fib d2)
         dc.l    dos_fn_exnext            ; 18 : LVO -108 ExNext(lock d1, fib d2)
-        dc.l    dos_null                 ; 19 : LVO -114 (Info non impl.)
+        dc.l    dos_fn_info              ; 19 : LVO -114 Info(lock d1, infodata d2)
         dc.l    dos_fn_createdir         ; 20 : LVO -120 CreateDir(name d1) -> BPTR lock
         dc.l    dos_fn_currentdir        ; 21 : LVO -126 CurrentDir(lock d1) -> ancien lock
         dc.l    dos_fn_ioerr             ; 22 : LVO -132 IoErr() -> pr_Result2
@@ -85,7 +85,9 @@ dos_vectors:
         dc.l    dos_null                 ; RED LOADSEG_LVO_UNWIRED : LoadSeg non câblé -> jsr -150 renvoie 0
                 endc
         dc.l    dos_fn_unloadseg         ; 26 : LVO -156 UnLoadSeg(seglist d1)
-        dcb.l   5,dos_null               ; 27..31 : LVO -162..-186 (non impl.)
+        dcb.l   3,dos_null               ; 27..29 : LVO -162..-174 (non impl.)
+        dc.l    dos_fn_setcomment        ; 30 : LVO -180 SetComment(name d1, commentaire d2)
+        dc.l    dos_fn_setprotection     ; 31 : LVO -186 SetProtection(name d1, masque d2)
         dc.l    dos_DateStamp            ; 32 : LVO -192
         dc.l    dos_fn_delay             ; 33 : LVO -198 Delay(ticks d1)
         dc.l    dos_fn_waitforchar       ; 34 : LVO -204 WaitForChar(fh d1, µs d2)
@@ -1008,6 +1010,87 @@ dos_fn_parentdir:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
+; DupLock(lock d1) -> nouveau lock partagé sur le même objet | 0 (lock 0 -> 0) : ACTION_COPY_DIR. Info(lock d1,
+; infodata d2 [long-aligné]) -> DOSTRUE/DOSFALSE : ACTION_INFO (ARG1 lock, ARG2 BPTR InfoData), lock 0 -> DF0:.
+dos_fn_duplock:
+        tst.l   d1
+        beq.s   .dl_zero
+        moveq   #ACTION_COPY_DIR,d0
+        bra.s   dos_lockpkt
+.dl_zero:
+        moveq   #0,d0
+        rts
+dos_fn_info:
+        lsr.l   #2,d2
+        moveq   #ACTION_INFO,d0
+; dos_lockpkt(d0 = action, d1 = lock (ARG1), d2 = ARG2) -> d0 = dp_Res1 : packet au handler du lock.
+dos_lockpkt:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  DOS_FSPORT,a1
+        move.l  d1,d3
+        lsl.l   #2,d3
+        beq.s   .lp_port
+        move.l  d3,a0
+        move.l  FL_TASK(a0),a1
+.lp_port:
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        moveq   #0,d3
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; SetComment(name d1, commentaire d2 [C-string]) / SetProtection(name d1, masque d2) -> DOSTRUE/DOSFALSE :
+; ACTION_SET_COMMENT / ACTION_SET_PROTECT (ARG2 lock, ARG3 BSTR nom, ARG4 BSTR commentaire | masque). a6 = DosBase.
+dos_fn_setcomment:
+        moveq   #ACTION_SET_COMMENT,d0
+        bra.s   dos_setpkt
+dos_fn_setprotection:
+        moveq   #ACTION_SET_PROTECT,d0
+dos_setpkt:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d0,d5
+        move.l  d2,d7
+        move.l  d1,a4
+        bsr     dos_resolve             ; a3 = port, d6 = lock, a4 = nom à transmettre
+        move.l  a3,d0
+        beq.s   .sp_fail
+        lea     -DOS_RNFRAME(sp),sp
+        move.l  sp,d0
+        addq.l  #3,d0
+        and.l   #-4,d0
+        move.l  d0,a0
+        move.l  a4,a1
+        bsr     dos_c2bstr
+        move.l  a0,d3
+        lsr.l   #2,d3                   ; ARG3 = nom
+        move.l  d7,d4                   ; ARG4 = masque
+        cmp.l   #ACTION_SET_COMMENT,d5
+        bne.s   .sp_send
+        lea     DOS_NAMEMAX+1(a0),a0
+        move.l  d7,a1
+        bsr     dos_c2bstr
+        move.l  a0,d4
+        lsr.l   #2,d4                   ; ARG4 = commentaire
+.sp_send:
+        moveq   #0,d1
+        move.l  d6,d2                   ; ARG2 = lock
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  a3,a1
+        move.l  d5,d0
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF+DOS_RNFRAME(sp),sp
+        bra.s   .sp_ret
+.sp_fail:
+        moveq   #0,d0
+.sp_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
 ; IsInteractive(fh d1) -> fh_Interactive (brut, comme la V34 : non normalisé à -1).
 dos_fn_isinteractive:
         move.l  d1,d0
@@ -1421,6 +1504,7 @@ dos_initfunc:
         movem.l d3/a2,-(sp)         ; a2/d3 non-scratch : préservés pour MakeLibrary (AllocMem les préserve aussi)
         move.l  d0,a2               ; a2 = DosBase
         move.l  d0,DOS_DOSBASE      ; publié pour le runtime BCPL (pas de a6 = DosBase dans le code BCPL)
+        clr.l   DOS_OWCTX           ; mémoire basse non remise à zéro au reset
         lea     dos_name(pc),a0
         move.l  a0,LN_NAME(a2)      ; pose le nom (quirk V34)
         moveq   #RN_SIZEOF,d0       ; alloue RootNode

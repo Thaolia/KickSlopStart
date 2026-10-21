@@ -71,6 +71,7 @@ M4C2_NO_MRGCOP EQU 0
 ; --- Offsets structures graphics (view.i/gfx.i ; champs de base, stables V34) ---
 v_ViewPort   EQU 0            ; View
 v_LOFCprList EQU 4
+v_Modes      EQU 16
 v_SIZEOF     EQU 18
 vp_Next      EQU 0            ; ViewPort
 vp_ColorMap  EQU 4
@@ -172,17 +173,32 @@ LVO_CHANGESPRITE EQU -420
 LVO_MOVESPRITE EQU -426
 V_HIRES       EQU $8000        ; vp_Modes : haute résolution (640 px)
 
-; --- GfxBase : champs minimaux (au-delà de la base Library) ---
-gb_ActiView  EQU LIB_SIZE     ; APTR : View actif (posé par LoadView)
-gb_LOFlist   EQU LIB_SIZE+4   ; APTR : copper list courante
-; champs privés : sprites matériels
-gb_SprNull   EQU LIB_SIZE+8   ; APTR : sprite vide (chip, POS/CTL = 0) pour les canaux sans image
-gb_SprCop    EQU LIB_SIZE+12  ; APTR : mot de valeur de SPR0PTH dans la liste copper chargée (0 = aucune)
-gb_SprData   EQU LIB_SIZE+16  ; 8 x APTR : données (POS/CTL + image) de chaque canal, 0 = sprite vide
-gb_SprUsed   EQU LIB_SIZE+48  ; WORD : canaux réservés par GetSprite (bit n = canal n)
-gb_TextFonts EQU 140          ; struct List des polices (offset public de GfxBase)
+; --- GfxBase : disposition publique V34 (graphics/gfxbase.i) puis champs privés au-delà ---
+gb_ActiView  EQU 34           ; APTR : View actif (posé par LoadView)
+gb_copinit   EQU 38
+gb_LOFlist   EQU 50           ; APTR : copper list longue en cours d'affichage
+gb_SHFlist   EQU 54
+gb_TextFonts EQU 140          ; struct List des polices
 gb_DefaultFont EQU 154        ; APTR : police par défaut des RastPort (topaz 8)
-GFXBASE_SIZE EQU 158
+gb_Modes     EQU 158          ; UWORD : modes de la vue affichée (View->Modes)
+gb_VBlank    EQU 160          ; BYTE : fréquence de trame
+gb_system_bplcon0 EQU 164     ; WORD : bits BPLCON0 imposés par le système
+gb_DisplayFlags EQU 206       ; UWORD : NTSC 1 / GENLOC 2 / PAL 4
+gb_MaxDisplayRow EQU 212
+gb_MaxDisplayColumn EQU 214
+gb_NormalDisplayRows EQU 216
+gb_NormalDisplayColumns EQU 218
+gb_NormalDPMX EQU 220
+gb_NormalDPMY EQU 222
+gb_MicrosPerLine EQU 232      ; UWORD : 256 × durée d'une ligne en µs
+GB_PUBLIC    EQU 242          ; fin de la partie publique V34 (dont reserved[2])
+; champs privés : sprites matériels
+gb_SprNull   EQU GB_PUBLIC    ; APTR : sprite vide (chip, POS/CTL = 0) pour les canaux sans image
+gb_SprCop    EQU GB_PUBLIC+4  ; APTR : mot de valeur de SPR0PTH dans la liste copper chargée (0 = aucune)
+gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR : données (POS/CTL + image) de chaque canal, 0 = sprite vide
+gb_SprUsed   EQU GB_PUBLIC+40 ; WORD : canaux réservés par GetSprite (bit n = canal n)
+GFXBASE_SIZE EQU GB_PUBLIC+42
+DISPF_PAL    EQU 4
 
 ; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---
 ss_posctldata EQU 0           ; APTR : POS, CTL, image (2 mots par ligne), 0, 0

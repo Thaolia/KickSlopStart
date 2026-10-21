@@ -20,7 +20,7 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o $(BUILD)/mathffp.o $(BUILD)/diskres.o $(BUILD)/potgo.o $(BUILD)/kbddev.o $(BUILD)/audio.o $(BUILD)/semaphores.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o $(BUILD)/mathffp.o $(BUILD)/diskres.o $(BUILD)/potgo.o $(BUILD)/kbddev.o $(BUILD)/audio.o $(BUILD)/semaphores.o $(BUILD)/execmisc.o
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
@@ -43,7 +43,7 @@ DOS_INC   := $(DOS_DIR)/dos.i
 # process.o : Process + CreateProc + dos_sendpkt (D3) ; include exec.i + dospkt.i.
 # handler.o : process file-handler DF0: (D3b) ; include exec.i + ofs.i + dospkt.i.
 # conhandler.o : process handler console-série (E1) ; shell.o : shell interactif (E2). include exec.i + dospkt.i.
-DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/loadseg.o $(BUILD)/bcpl.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/conwin.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o $(BUILD)/feeder.o $(BUILD)/workbench.o
+DOS_OBJ   := $(BUILD)/dos_lib.o $(BUILD)/ofs.o $(BUILD)/ofswrite.o $(BUILD)/loadseg.o $(BUILD)/bcpl.o $(BUILD)/process.o $(BUILD)/handler.o $(BUILD)/conhandler.o $(BUILD)/conwin.o $(BUILD)/shell.o $(BUILD)/diskvalidator.o $(BUILD)/feeder.o $(BUILD)/workbench.o
 KICK_ROM  := $(BUILD)/kick13.rom
 
 # --- hello-ROM (smoke test M0) ---

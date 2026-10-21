@@ -49,11 +49,27 @@ cia_init:
         move.l  #CIAA_HW,d2
         lea     ciaa_name(pc),a2
         bsr.s   cia_make
+        move.l  #CIAA_HW,a0
+        bsr.s   cia_todstart
         move.l  #CIAB_HW,d2
         lea     ciab_name(pc),a2
         bsr.s   cia_make
+        move.l  #CIAB_HW,a0
+        bsr.s   cia_todstart
         moveq   #0,d0
         movem.l (sp)+,d2/a2
+        rts
+
+; cia_todstart(a0 = base CIA) : le compteur TOD (trames sur la CIA-A, lignes sur la CIA-B) reste arrêté tant que TODLO
+; n'a pas été écrit. CRB ALARM = 0 (les écritures visent l'heure, pas l'alarme), puis TODHI, TODMID, TODLO en dernier,
+; qui relance le comptage. Des programmes mesurent le temps par le TOD (SysInfo : docs/analysis/sysinfo-44.md).
+; Écritures par MOVE : CLR lit d'abord l'adresse sur 68000, et lire TODHI fige la lecture du TOD jusqu'à celle de TODLO.
+cia_todstart:
+        and.b   #$7F,$F00(a0)        ; CRB
+        moveq   #0,d0
+        move.b  d0,$A00(a0)          ; TODHI
+        move.b  d0,$900(a0)          ; TODMID
+        move.b  d0,$800(a0)          ; TODLO : départ
         rts
 
 ; cia_make : crée un resource CIA. d2 = base matérielle, a2 = nom. a6 = SysBase.

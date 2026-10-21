@@ -18,3 +18,4 @@ __pycache__/
 
 # AROS : référence en LECTURE SEULE (APL, jamais copiée dans src/), clone partiel non versionné
 third_party/aros/
+/assets/test_adf/

@@ -76,6 +76,11 @@ DN_SEGLIST       EQU 32            ; BPTR
 DN_GLOBALVEC     EQU 36
 DN_NAME          EQU 40            ; BSTR
 DN_SIZEOF        EQU 44
+FSSM_UNIT        EQU 0             ; struct FileSysStartupMsg (dosfilehandler.i)
+FSSM_DEVICE      EQU 4             ; BSTR nom du device
+FSSM_ENVIRON     EQU 8             ; BPTR DosEnvec
+FSSM_FLAGS       EQU 12
+FSSM_SIZEOF      EQU 16
 ; types de nœud de la DosList (dn_Type / dol_Type) : même layout pour device, assign et volume (dol_Task @8,
 ; dol_Lock @12, dol_Name @40). Un assign (DLT_DIRECTORY) porte un lock dans dol_Lock ; dol_Task = port du handler.
 DLT_DEVICE       EQU 0
@@ -143,6 +148,18 @@ ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de 
 ERROR_RENAME_ACROSS_DEVICES EQU 215
 ERROR_SEEK_ERROR EQU 303           ; dos/dos.i : Seek hors bornes
 ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i : ExNext a épuisé le répertoire (fin d'énumération normale)
+ERROR_OBJECT_IN_USE EQU 202
+ERROR_OBJECT_EXISTS EQU 203
+ERROR_INVALID_COMPONENT_NAME EQU 210
+ERROR_OBJECT_WRONG_TYPE EQU 212
+ERROR_DISK_NOT_VALIDATED EQU 213
+ERROR_DISK_WRITE_PROTECTED EQU 214
+ERROR_DIRECTORY_NOT_EMPTY EQU 216
+ERROR_DISK_FULL EQU 221
+ACTION_SET_PROTECT EQU 21          ; (ARG1 -, ARG2 lock, ARG3 BSTR nom, ARG4 masque)
+ACTION_SET_COMMENT EQU 28          ; (ARG1 -, ARG2 lock, ARG3 BSTR nom, ARG4 BSTR commentaire)
+ACTION_DISK_INFO EQU 25            ; (ARG1 BPTR InfoData)
+ACTION_INFO      EQU 26            ; (ARG1 lock, ARG2 BPTR InfoData)
 
 ; --- FileLock (dos.i) : préfixe public V34 + curseur d'énumération PRIVÉ ---
 ; Déviation clean-room ASSUMÉE : le vrai AmigaDOS garde le curseur d'ExNext dans le FIB (fib_DiskKey) ; on le garde

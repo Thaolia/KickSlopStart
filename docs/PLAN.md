@@ -807,8 +807,15 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     **Étape 9 FAITE** : polices (topaz TextFont, OpenFont & co), GELs, icônes déplaçables, CLI ROM BCPL (Run, Execute,
     NewCLI sans résident), redirections `<`/`>`, scripts d'Execute, nœuds CON/RAW (handler ROM) et SER/PAR/PRT
     (Port-Handler), clavier routé vers la fenêtre active, MOUSEMOVE/ReportMouse, fermeture de tiroir ×2 plus rapide.
-    **Étape 10 (proposée)** : écriture disquette (trackdisk CMD_WRITE/UPDATE + MFM, écriture OFS : bitmap, création,
-    suppression, renommage) — préalable à Rename/Discard/Snapshot ; puis Info, `>>`, SetFunction réel.
+    **Étape 10 (en cours)** : écriture disquette — trackdisk (CMD_WRITE/UPDATE, MFM) et écriture OFS (création,
+    flux, suppression, renommage, protection, commentaire, Info) prouvées sous CLI ; restent l'échec intermittent de
+    `join`, `list` sur un répertoire écrit, les dates, puis Rename/Discard/Info du Workbench et `>>`.
+    **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
+    complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
+    étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page
+    (horloge, Agnus/Denise, PAL, fréquences). Suite : gadgets d'application d'intuition (GADGETUP/DOWN, AddGadget,
+    RefreshGadgets…) pour ses boutons. Chaque fin d'étape : `tests/adf_suite.sh`
+    sur les disquettes de `assets/test_adf/`.
     **Ensuite** : `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — longue traîne** : layers, console, input, audio, gameport, mathffp, workbench.task, parité ;
   puis **EPROM vraie A500** (ROM 256K, câblage/adaptateur).

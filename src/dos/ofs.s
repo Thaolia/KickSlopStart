@@ -23,6 +23,8 @@
                 xdef    ofs_stream_open      ; ouvre un fichier en streaming (état -> premier data block)
                 xdef    ofs_stream_read      ; lecture incrémentale (data-block par data-block, sans buffer whole-file)
                 xdef    ofs_stream_seek      ; repositionne le curseur de streaming
+                xdef    ofs_hash             ; écriture OFS (ofswrite.s) : index de hachage d'un nom
+                xdef    ofs_namecmp          ; écriture OFS : comparaison de noms sans casse
 
 ; ofs_read_file(a6=SysBase, a0=path NUL-terminé, a1=dest, d0=max octets) -> d0 = taille lue | 0.
 ; Résout un CHEMIN à composants séparés par '/' (ex. « s/startup-sequence ») : traverse les sous-répertoires

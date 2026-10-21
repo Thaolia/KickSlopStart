@@ -647,7 +647,11 @@ sh_exec_cmd:
 .x_nostack:
                 moveq   #-1,d0               ; pile impossible : code spécial « impossible de lancer »
 .x_ran:
-                bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0
+                bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0 ; d1 = module à décharger
+                tst.l   d1
+                bmi.s   .x_mod
+                move.l  d1,XF_SEG(sp)        ; 0 : la commande est restée résidente
+.x_mod:
                 ifeq    PROD
                 jsr     ser_unlock
                 endc
@@ -784,12 +788,16 @@ sh_cli_begin:
                 move.l  (sp)+,a2
                 rts
 
-; sh_cli_end(d0 = code retour de la commande) : cli_ReturnCode = d0, cli_Module = 0. Préserve tout sauf a1.
+; sh_cli_end(d0 = code retour de la commande) -> d1 = cli_Module tel que la commande l'a laissé (-1 sans CLI) :
+; cli_ReturnCode = d0, puis cli_Module = 0. Une commande qui se rend résidente (SetPatch) met elle-même cli_Module à 0 :
+; seule la seglist rendue ici doit être déchargée. Préserve tout sauf d1/a1.
 sh_cli_end:
                 move.l  d0,-(sp)
+                moveq   #-1,d1
                 bsr.s   sh_cli_ptr
                 beq.s   .ce_ret
                 move.l  (sp),CLI_RETURNCODE(a1)
+                move.l  CLI_MODULE(a1),d1
                 clr.l   CLI_MODULE(a1)
 .ce_ret:
                 move.l  (sp)+,d0
@@ -807,7 +815,7 @@ sh_cli_ptr:
                 rts
 
 ; sh_build_args(a1 = arguments bruts, d1 = longueur, a2 = destination SH_ARGMAX) -> d0 = longueur écrite (avec '\n').
-; Copie jusqu'à CR/LF/NUL, retire les redirections (« >x », « <x » en début de mot hors guillemets : noms rangés dans
+; Copie jusqu'à CR/LF/NUL, retire les redirections (« >x », « <x », ou « > x », en début de mot hors guillemets : noms rangés dans
 ; XF_ROUT / XF_RIN du même cadre que la destination, qui est XF_ARGS) et le commentaire « ; » hors guillemets ; termine
 ; par '\n' puis NUL. Clobbe d0-d4/a0-a3.
 sh_build_args:
@@ -826,13 +834,17 @@ sh_build_args:
                 cmp.b   #13,d0
                 beq     .ba_end
                 cmp.b   #10,d0
-                beq.s   .ba_end
+                beq     .ba_end
                 tst.b   d0
-                beq.s   .ba_end
+                beq     .ba_end
                 btst    #1,d4
                 beq.s   .ba_noskip
                 cmp.b   #' ',d0
-                beq.s   .ba_rend
+                bne.s   .ba_rch
+                cmp.l   #SH_REDMAX-1,d3
+                bne.s   .ba_rend
+                bra.s   .ba_lp               ; espaces entre « > » et le nom (« cmd > NIL: »)
+.ba_rch:
                 subq.l  #1,d3                ; d3 = place restante du nom
                 bmi.s   .ba_lp
                 move.b  d0,(a3)+

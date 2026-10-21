@@ -83,6 +83,9 @@ INTB_COPER   EQU 4            ; M7g : numéro COPER (INT3) — INTF_COPER=$0010=
 INTB_VERTB   EQU 5            ; M7f : numéro VERTB (INT3) — INTF_VERTB=$0020=bit5
 INTB_BLIT    EQU 6            ; M7g : numéro BLIT (INT3) — INTF_BLIT=$0040=bit6
 INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
+INTB_SOFTINT EQU 2            ; interruption logicielle (niveau 1) — Cause
+INTF_SOFTINT EQU $0004
+NT_SOFTINT   EQU 11            ; exec/nodes.i : Interrupt en attente dans la file logicielle
 ; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
 IS_DATA      EQU 14           ; APTR passé en a1 au serveur
 IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase, a0=$DFF000)
@@ -358,6 +361,11 @@ PTR_X        EQU $00000684 ; word : pointeur absolu X (accumulé par pointer_inp
 PTR_Y        EQU $00000686 ; word : pointeur absolu Y
 INT_IBASE    EQU $00000740 ; long : IntuitionBase (posé à son init) — le handler de pointeur y déplace le sprite
 KBD_DEVBASE  EQU $00000744 ; long : base keyboard.device (posée à son init) — kbd_interrupt lui remet chaque keycode
+TD_CDIRTY    EQU $00000748 ; trackdisk : TD_NCACHE bytes — emplacement modifié par CMD_WRITE, pas encore écrit sur disque
+TD_CHGCNT    EQU $00000750 ; trackdisk : long — compteur de changements de disque (TD_CHANGENUM)
+DOS_OWCTX    EQU $00000754 ; dos : long — contexte d'écriture OFS (ofswrite.s), alloué au premier besoin
+EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logicielles en attente (Cause)
+EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
 GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
@@ -468,6 +476,10 @@ LIB_REVISION EQU $16
 LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
 LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
+LIB_FLAGS    EQU $0E           ; exec/libraries.i : lib_Flags
+LIB_SUM      EQU $1C           ; lib_Sum : somme de contrôle de la table de vecteurs
+LIBB_CHANGED EQU 1             ; LIBF_CHANGED : table modifiée (SetFunction), somme à recalculer
+LIBB_SUMUSED EQU 2             ; LIBF_SUMUSED : la somme est vérifiée
 TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
 TIMER_MICROQ EQU LIB_SIZE+14   ; M7a : liste de requêtes de l'unité MICROHZ (CIA-B/INT6) (struct List)
 TIMER_SYSSECS EQU LIB_SIZE+28  ; heure système : secondes à la référence (TR_SETSYSTIME)
@@ -531,6 +543,8 @@ TC_SIGALLOC   EQU 18
 TC_SIGWAIT    EQU 22
 TC_SIGRECVD   EQU 26
 TC_SIGEXCEPT  EQU 30
+TC_TRAPALLOC  EQU 34          ; UWORD : traps 0-15 attribués (AllocTrap)
+TC_TRAPABLE   EQU 36
 TC_TRAPDATA   EQU 46          ; APTR : donnée libre du gestionnaire de traps de la tâche
 TC_TRAPCODE   EQU 50          ; APTR : gestionnaire des exceptions CPU de la tâche (0 -> TaskTrapCode)
 TC_SPREG      EQU 54

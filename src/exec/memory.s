@@ -15,147 +15,271 @@
                 xdef    exec_FreeMem
                 xdef    exec_AvailMem
                 xdef    exec_TypeOfMem
+                xdef    exec_Allocate
+                xdef    exec_Deallocate
+                xdef    exec_AllocAbs
+                xdef    exec_AddMemList
                 xdef    init_memory
                 xdef    add_slow_memory
 
-; AllocMem(size d0, flags d1) -> d0 = bloc | 0  (multi-header, first-fit + split)
-; M3c : enveloppé en Forbid/Permit — la MemList + les listes de chunks sont
-; partagées entre tâches ; une préemption mid-split corromprait le tas. Section à
-; SORTIE UNIQUE (.am_exit) : chaque chemin (succès, échec taille, header épuisé)
-; passe par le même Permit, sinon EB_TDNEST dériverait et figerait le scheduler.
+; Allocate(memHeader a0, byteSize d0) -> d0 = bloc | 0 : first-fit + découpe dans les chunks d'UN MemHeader, taille
+; arrondie à 8 octets (AutoDoc : l'appelant protège le header, Forbid ou sémaphore). Clobbe d1/a0/a1.
+exec_Allocate:
+        movem.l d2-d3/a2-a3,-(sp)
+        addq.l  #7,d0
+        and.l   #-8,d0
+        move.l  d0,d2                ; d2 = taille
+        beq.s   .al_fail
+        cmp.l   MH_FREE(a0),d2
+        bhi.s   .al_fail
+        move.l  a0,a2                ; a2 = header
+        lea     MH_FIRST(a2),a3      ; a3 = maillon précédent
+.al_scan:
+        move.l  (a3),a0              ; chunk = *prev
+        move.l  a0,d0
+        beq.s   .al_fail             ; header épuisé
+        move.l  MC_BYTES(a0),d3
+        cmp.l   d2,d3
+        bcs.s   .al_next             ; mc_Bytes < taille
+        beq.s   .al_whole
+        move.l  a0,a1                ; découpe : nouveau chunk = chunk + taille
+        add.l   d2,a1
+        move.l  (a0),(a1)
+        sub.l   d2,d3
+        move.l  d3,MC_BYTES(a1)
+        move.l  a1,(a3)
+        bra.s   .al_got
+.al_whole:
+        move.l  (a0),(a3)            ; chunk entier retiré
+.al_got:
+        sub.l   d2,MH_FREE(a2)
+        move.l  a0,d0
+        bra.s   .al_ret
+.al_next:
+        move.l  a0,a3
+        bra.s   .al_scan
+.al_fail:
+        moveq   #0,d0
+.al_ret:
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+
+; AllocMem(size d0, flags d1) -> d0 = bloc | 0 : premier MemHeader dont les attributs couvrent les bits de TYPE
+; demandés et qui peut servir la taille (Allocate) ; MEMF_CLEAR met le bloc à zéro. Sous Forbid (MemList partagée),
+; sortie unique pour un seul Permit.
 exec_AllocMem:
         movem.l d2-d5/a2-a4,-(sp)
         jsr     LVO_FORBID(a6)
         move.l  d1,d4                ; flags (pour MEMF_CLEAR)
         move.l  d1,d5
         and.w   #MEMF_TYPEMASK,d5    ; reqType = bits de TYPE demandés (V34)
-        addq.l  #7,d0
-        and.l   #-8,d0               ; arrondi 8 octets
-        move.l  d0,d2                ; size
-        beq     .am_fail
+        move.l  d0,d2                ; taille demandée
         lea     EB_MEMLIST(a6),a4
-        move.l  (a4),a4              ; a4 = premier noeud (lh_Head)
+        move.l  (a4),a4              ; a4 = premier header
 .am_hdr:
-        move.l  (a4),d0              ; a4->Succ
-        beq     .am_fail             ; sentinelle tail -> aucun header satisfaisant
+        move.l  (a4),d0              ; Succ
+        beq.s   .am_fail             ; sentinelle : aucun header satisfaisant
         move.w  MH_ATTRIBUTES(a4),d0
         and.w   d5,d0
         cmp.w   d5,d0
-        bne     .am_nexth            ; (MH_ATTR & reqType) != reqType
-        move.l  a4,a2                ; a2 = header candidat
-        lea     MH_FIRST(a2),a3      ; a3 = &mh_First (maillon précédent)
-.am_scan:
-        move.l  (a3),a0              ; chunk = *prev
-        move.l  a0,d0
-        beq     .am_nexth            ; header épuisé -> header suivant
-        move.l  MC_BYTES(a0),d3
-        cmp.l   d2,d3
-        bcs.s   .am_next             ; mc_Bytes < size
-        beq.s   .am_whole
-        move.l  a0,a1                ; split : nouveau chunk = chunk + size
-        add.l   d2,a1
-        move.l  (a0),(a1)            ; new->Next = chunk->Next
-        sub.l   d2,d3
-        move.l  d3,MC_BYTES(a1)      ; new->Bytes = reste
-        move.l  a1,(a3)              ; *prev = new
-        bra.s   .am_alloc
-.am_whole:
-        move.l  (a0),(a3)            ; retire le chunk entier
-.am_alloc:
-        sub.l   d2,MH_FREE(a2)
-        move.l  d4,d0
-        and.l   #MEMF_CLEAR,d0
-        beq.s   .am_ok
-        move.l  a0,a1                ; MEMF_CLEAR : met le bloc à zéro
+        bne.s   .am_nexth            ; (MH_ATTR & reqType) != reqType
+        move.l  a4,a0
         move.l  d2,d0
-        lsr.l   #2,d0
+        bsr     exec_Allocate
+        tst.l   d0
+        bne.s   .am_got
+.am_nexth:
+        move.l  (a4),a4
+        bra.s   .am_hdr
+.am_got:
+        btst    #16,d4               ; MEMF_CLEAR ?
+        beq.s   .am_exit
+        move.l  d0,a1
+        move.l  d2,d1
+        addq.l  #7,d1
+        lsr.l   #3,d1                ; taille arrondie / 8
 .am_clr:
         clr.l   (a1)+
-        subq.l  #1,d0
+        clr.l   (a1)+
+        subq.l  #1,d1
         bne.s   .am_clr
-.am_ok:
-        move.l  a0,d0                ; résultat
         bra.s   .am_exit
-.am_next:
-        move.l  a0,a3                ; prev = &chunk->mc_Next
-        bra     .am_scan
-.am_nexth:
-        move.l  (a4),a4              ; header = header->Succ
-        bra     .am_hdr
 .am_fail:
         moveq   #0,d0
 .am_exit:
-        jsr     LVO_PERMIT(a6)       ; sortie unique ; Permit ne touche pas d0
+        jsr     LVO_PERMIT(a6)       ; Permit ne touche pas d0
         movem.l (sp)+,d2-d5/a2-a4
         rts
 
-; FreeMem(ptr a1, size d0) -- header propriétaire + coalescing bilatéral (M2.2)
-; M3c : FreeMem enveloppé en Forbid/Permit (coalescing mute la liste de chunks
-; partagée). Les gardes NULL/size-0 sortent AVANT le Forbid (aucune section
-; critique) ; le corps a une sortie unique (.fm_done) -> un seul Permit.
-exec_FreeMem:
+; Deallocate(memHeader a0, memoryBlock a1, byteSize d0) : rend le bloc à la liste de chunks triée du header, avec
+; fusion avec le chunk suivant et le précédent s'ils sont contigus. Taille arrondie à 8. Clobbe d0/d1/a0/a1.
+exec_Deallocate:
         move.l  a1,d1
-        beq.w   .fm_ret              ; ptr NULL
-        tst.l   d0
-        beq.w   .fm_ret              ; size 0
-        movem.l d2-d3/a2-a3,-(sp)
-        jsr     LVO_FORBID(a6)
+        beq.s   .de_ret
         addq.l  #7,d0
-        and.l   #-8,d0               ; d0 = taille arrondie
-        ; recherche du header propriétaire : MH_LOWER <= ptr < MH_UPPER
-        lea     EB_MEMLIST(a6),a2
-        move.l  (a2),a2              ; premier noeud
-.fm_hdr:
-        move.l  (a2),d2              ; Succ
-        beq     .fm_done             ; aucun header propriétaire -> ignore
-        cmp.l   MH_LOWER(a2),a1
-        bcs.s   .fm_nexth            ; ptr < MH_LOWER
-        cmp.l   MH_UPPER(a2),a1
-        bcc.s   .fm_nexth            ; ptr >= MH_UPPER
-        bra.s   .fm_found
-.fm_nexth:
-        move.l  (a2),a2
-        bra.s   .fm_hdr
-.fm_found:
-        add.l   d0,MH_FREE(a2)       ; mh_Free += size
-        lea     MH_FIRST(a2),a3      ; a3 = maillon précédent (&mh_First au départ)
-.fm_find:
+        and.l   #-8,d0
+        beq.s   .de_ret
+        movem.l d2-d3/a2-a3,-(sp)
+        move.l  a0,a2                ; a2 = header
+        add.l   d0,MH_FREE(a2)
+        lea     MH_FIRST(a2),a3      ; a3 = maillon précédent
+.de_find:
         move.l  (a3),a0              ; a0 = chunk courant
         move.l  a0,d2
-        beq.s   .fm_ins              ; fin de liste
+        beq.s   .de_ins              ; fin de liste
         cmp.l   a1,a0
-        bhi.s   .fm_ins              ; chunk > ptr -> insérer avant
-        move.l  a0,a3                ; prev = &chunk->mc_Next
-        bra.s   .fm_find
-.fm_ins:
-        move.l  a0,(a1)              ; new->Next = chunk courant
+        bhi.s   .de_ins              ; chunk > bloc -> insérer avant
+        move.l  a0,a3
+        bra.s   .de_find
+.de_ins:
+        move.l  a0,(a1)              ; bloc->Next = chunk courant
         move.l  d0,MC_BYTES(a1)
-        move.l  a1,(a3)              ; *prev = new
-        ; coalescing avec le SUIVANT : (new + size) == courant ?
-        move.l  a1,d2
+        move.l  a1,(a3)
+        move.l  a1,d2                ; fusion avec le SUIVANT : bloc + taille == courant ?
         add.l   d0,d2
         cmp.l   a0,d2
-        bne.s   .fm_noNext
-        move.l  (a0),(a1)            ; new->Next = courant->Next
+        bne.s   .de_nonext
+        move.l  (a0),(a1)
         move.l  MC_BYTES(a0),d3
-        add.l   d3,MC_BYTES(a1)      ; new->Bytes += courant->Bytes
-.fm_noNext:
-        ; coalescing avec le PRÉCÉDENT (si a3 n'est pas la sentinelle mh_First)
-        lea     MH_FIRST(a2),a0
+        add.l   d3,MC_BYTES(a1)
+.de_nonext:
+        lea     MH_FIRST(a2),a0      ; fusion avec le PRÉCÉDENT (s'il existe)
         cmp.l   a0,a3
-        beq.s   .fm_done
-        move.l  a3,a0                ; a0 = prevchunk (a3 = &prevchunk->mc_Next)
-        move.l  a0,d2
-        add.l   MC_BYTES(a0),d2      ; d2 = fin du prevchunk
+        beq.s   .de_done
+        move.l  a3,d2
+        add.l   MC_BYTES(a3),d2
         cmp.l   a1,d2
-        bne.s   .fm_done
-        move.l  (a1),(a0)            ; prev->Next = new->Next
+        bne.s   .de_done
+        move.l  (a1),(a3)
         move.l  MC_BYTES(a1),d3
-        add.l   d3,MC_BYTES(a0)      ; prev->Bytes += new->Bytes
+        add.l   d3,MC_BYTES(a3)
+.de_done:
+        movem.l (sp)+,d2-d3/a2-a3
+.de_ret:
+        rts
+
+; FreeMem(ptr a1, size d0) : header propriétaire (MH_LOWER <= ptr < MH_UPPER) puis Deallocate, sous Forbid. Les gardes
+; NULL / taille 0 sortent avant le Forbid.
+exec_FreeMem:
+        move.l  a1,d1
+        beq.s   .fm_ret
+        tst.l   d0
+        beq.s   .fm_ret
+        jsr     LVO_FORBID(a6)
+        bsr.s   mem_owner            ; a0 = header | 0
+        beq.s   .fm_done             ; aucun header propriétaire -> ignoré
+        bsr     exec_Deallocate
 .fm_done:
         jsr     LVO_PERMIT(a6)
-        movem.l (sp)+,d2-d3/a2-a3
 .fm_ret:
+        rts
+
+; mem_owner(a1 = adresse, a6) -> a0 = MemHeader qui la contient | 0 (Z = 1 si aucun). Préserve d0/a1.
+mem_owner:
+        lea     EB_MEMLIST(a6),a0
+        move.l  (a0),a0
+.mo_hdr:
+        tst.l   (a0)                 ; Succ
+        beq.s   .mo_none
+        cmp.l   MH_LOWER(a0),a1
+        bcs.s   .mo_next
+        cmp.l   MH_UPPER(a0),a1
+        bcs.s   .mo_found
+.mo_next:
+        move.l  (a0),a0
+        bra.s   .mo_hdr
+.mo_none:
+        sub.l   a0,a0
+.mo_found:
+        cmp.w   #0,a0                ; Z selon a0 (cmpa.w étend le mot : a0 = 0 <=> Z)
+        rts
+
+; AllocAbs(byteSize d0, location a1) -> d0 = bloc (location arrondie à 8 vers le bas) | 0 si la zone n'est pas
+; entièrement libre dans un même chunk. Sous Forbid.
+exec_AllocAbs:
+        movem.l d2-d4/a2-a3,-(sp)
+        jsr     LVO_FORBID(a6)
+        move.l  a1,d2
+        and.l   #-8,d2               ; d2 = début
+        add.l   a1,d0
+        sub.l   d2,d0
+        addq.l  #7,d0
+        and.l   #-8,d0
+        move.l  d0,d3                ; d3 = taille
+        beq.s   .aa_fail
+        move.l  d2,a1
+        bsr.s   mem_owner
+        beq.s   .aa_fail
+        move.l  a0,a2                ; a2 = header
+        lea     MH_FIRST(a2),a3      ; a3 = maillon précédent
+.aa_scan:
+        move.l  (a3),a0
+        move.l  a0,d0
+        beq.s   .aa_fail
+        cmp.l   d2,d0
+        bhi.s   .aa_fail             ; chunks triés : le début n'est dans aucun chunk libre
+        add.l   MC_BYTES(a0),d0      ; d0 = fin du chunk
+        move.l  d2,d4
+        add.l   d3,d4                ; d4 = fin demandée
+        cmp.l   d4,d0
+        bcc.s   .aa_found
+        move.l  a0,a3
+        bra.s   .aa_scan
+.aa_found:
+        sub.l   d4,d0                ; d0 = reste après la zone
+        beq.s   .aa_nosuf
+        move.l  d4,a1                ; chunk de queue
+        move.l  (a0),(a1)
+        move.l  d0,MC_BYTES(a1)
+        move.l  a1,(a0)              ; chaîné après le chunk courant
+.aa_nosuf:
+        move.l  d2,d0
+        sub.l   a0,d0                ; d0 = partie avant la zone
+        beq.s   .aa_noprefix
+        move.l  d0,MC_BYTES(a0)
+        bra.s   .aa_got
+.aa_noprefix:
+        move.l  (a0),(a3)            ; chunk courant retiré (sa queue éventuelle prend sa place)
+.aa_got:
+        sub.l   d3,MH_FREE(a2)
+        move.l  d2,d0
+        bra.s   .aa_exit
+.aa_fail:
+        moveq   #0,d0
+.aa_exit:
+        jsr     LVO_PERMIT(a6)
+        movem.l (sp)+,d2-d4/a2-a3
+        rts
+
+; AddMemList(size d0, attributes d1, pri d2, base a0, name a1) : la zone devient un MemHeader (en tête de la zone)
+; inséré dans la MemList par priorité ; un seul chunk libre la couvre après l'en-tête.
+exec_AddMemList:
+        movem.l d2-d3/a2,-(sp)
+        move.l  a0,a2
+        move.b  #NT_MEMORY,LN_TYPE(a2)
+        move.b  d2,LN_PRI(a2)
+        move.l  a1,LN_NAME(a2)
+        move.w  d1,MH_ATTRIBUTES(a2)
+        move.l  a2,d2
+        add.l   d0,d2
+        move.l  d2,MH_UPPER(a2)
+        lea     MH_SIZE+7(a2),a1
+        move.l  a1,d3
+        and.l   #-8,d3
+        move.l  d3,a1                ; a1 = premier chunk
+        move.l  a1,MH_LOWER(a2)
+        move.l  a1,MH_FIRST(a2)
+        sub.l   d3,d2
+        and.l   #-8,d2
+        move.l  d2,MH_FREE(a2)
+        clr.l   MC_NEXT(a1)
+        move.l  d2,MC_BYTES(a1)
+        jsr     LVO_FORBID(a6)
+        lea     EB_MEMLIST(a6),a0
+        move.l  a2,a1
+        jsr     LVO_ENQUEUE(a6)
+        jsr     LVO_PERMIT(a6)
+        movem.l (sp)+,d2-d3/a2
         rts
 
 ; AvailMem(requirements d1) -> d0 = octets libres compatibles (ou plus grand bloc)
