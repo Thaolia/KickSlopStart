@@ -811,9 +811,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     flux, suppression, renommage, protection, commentaire, Info) prouvées sous CLI ; dates (DateStamp réel, C:Date,
     en-têtes datés) ; AutoRequest ; Workbench Discard ; BltTemplate (FastFonts) ; performance : timer MICROHZ
     en one-shot (le timer CIA-B continu mangeait plus de la moitié du CPU), sortie console BCPL tamponnée, Text plus
-    rapide (`type` ×7) ; échecs de commande et FailAt comme la 1.3 (sondés sur la vraie ROM). Restent : ScrollRaster
-    plus rapide, textes d'erreur via C:Fault, gadgets texte puis Rename,
-    Snapshot, Info du Workbench, `>>`, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit).
+    rapide, ScrollRaster plus rapide (`type` ×10, SysInfo 1,04 × A600) ; échecs de commande et FailAt comme la 1.3 (sondés sur la vraie ROM). Restent : défilement au
+    blitter, textes d'erreur via C:Fault, gadgets texte puis Rename,
+    Snapshot, Info du Workbench, `>>`, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page

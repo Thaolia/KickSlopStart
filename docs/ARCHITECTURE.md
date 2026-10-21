@@ -509,8 +509,11 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   ligne) ; la console initiale du shell est allouée comme un FileHandle de dos (`DOS_FH_ALLOC`) pour en bénéficier.
   Avant : un paquet ACTION_WRITE par caractère (~35 ms chacun). (3) **Text** : voie rapide généralisée (toute abscisse,
   glyphe décalé sur deux octets masqués ; JAM1 et JAM2). Mesures ROM de production (disque WB, sans FastFonts) :
-  `copy ram:x to *` 27 s -> 4,6 s ; `type ram:x` (1,4 Ko) 68 s -> 9,3 s. Reste : ScrollRaster (copie CPU octet par
-  octet, ~0,2 s par défilement).
+  `copy ram:x to *` 27 s -> 4,6 s ; `type ram:x` (1,4 Ko) 68 s -> 9,3 s. SysInfo : 552 Dhrystones, 1,04 × A600 (169
+  avant) — le « 3× sous un A500 » venait du timer continu. **ScrollRaster** : milieu de ligne copié par longs quand
+  source et destination ont la même parité ; voie rapide quand une ClipRect visible contient tout le rectangle
+  (fenêtre non recouverte : plus de parcours des ClipRects à chaque ligne) -> `type` 9,3 -> 6,9 s. Un défilement
+  de la console coûte encore ~5 trames (copie CPU) : le blitter reste la vraie solution.
   (4) **Échecs de commande fidèles à la 1.3** (`sh_report`, shell.s), comportements relevés par sonde boîte noire
   sur la vraie KS 1.3 (startup-sequence de test, captures d'écran) : commande introuvable -> « Unknown command
   <nom> » ; fichier non chargeable (LoadSeg refuse, ex. hunk V39 $3FD) -> « Unable to load <nom>: Error code 121 »

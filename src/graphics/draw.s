@@ -1132,9 +1132,11 @@ gfx_ScrollRaster:
         move.w  d3,SC_YMIN(a4)
         move.w  d5,SC_YMAX(a4)
         clr.b   SC_LOST(a4)
-        tst.w   d1
+        bsr     .sc_whole
+        bne     .sc_fast
+        move.w  SC_DY(a4),d1
         bmi.s   .sc_down
-        move.w  d3,d6                ; vers le haut : ligne y <- y+dy, y croissant
+        move.w  SC_YMIN(a4),d6       ; vers le haut : ligne y <- y+dy, y croissant
 .sc_up:
         move.w  d6,d0
         add.w   d1,d0
@@ -1150,7 +1152,7 @@ gfx_ScrollRaster:
         move.w  SC_YMAX(a4),d4
         bra.s   .sc_fill
 .sc_down:
-        move.w  d5,d6                ; vers le bas : y <- y+dy (dy < 0), y décroissant
+        move.w  SC_YMAX(a4),d6       ; vers le bas : y <- y+dy (dy < 0), y décroissant
 .sc_dn:
         move.w  d6,d0
         add.w   d1,d0
@@ -1187,6 +1189,73 @@ gfx_ScrollRaster:
         bsr     dr_end
         lea     SC_SIZE+DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
+        rts
+
+; Voie rapide : une seule ClipRect visible contient tout le rectangle (fenêtre non recouverte) -> lignes copiées
+; directement, sans parcourir les ClipRects à chaque ligne.
+.sc_fast:
+        tst.w   SC_DY(a4)
+        bmi.s   .sf_down
+        move.w  SC_YMIN(a4),d6
+.sf_up:
+        move.w  d6,d0
+        add.w   SC_DY(a4),d0
+        cmp.w   SC_YMAX(a4),d0
+        bgt     .sc_fillu
+        move.w  d6,SC_Y(a4)
+        move.w  d0,SC_SY(a4)
+        move.w  SC_XMIN(a4),d2
+        move.w  SC_XMAX(a4),d4
+        bsr     .sc_copy
+        addq.w  #1,d6
+        bra.s   .sf_up
+.sf_down:
+        move.w  SC_YMAX(a4),d6
+.sf_dn:
+        move.w  d6,d0
+        add.w   SC_DY(a4),d0
+        cmp.w   SC_YMIN(a4),d0
+        blt     .sc_filld
+        move.w  d6,SC_Y(a4)
+        move.w  d0,SC_SY(a4)
+        move.w  SC_XMIN(a4),d2
+        move.w  SC_XMAX(a4),d4
+        bsr     .sc_copy
+        subq.w  #1,d6
+        bra.s   .sf_dn
+
+; .sc_whole -> Z = 0 si une ClipRect visible contient tout [SC_XMIN..SC_XMAX] x [SC_YMIN..SC_YMAX] : elle devient
+; la ClipRect courante (source) et la destination (SC_DBM/DBX/DBY). Clobbe d0/a0.
+.sc_whole:
+        move.l  DC_FIRST(a5),a0
+.sw_lp:
+        cmpa.w  #0,a0
+        beq.s   .sw_no
+        tst.l   CR_LOBS(a0)
+        bne.s   .sw_next
+        bsr     dr_crset
+        beq.s   .sw_next
+        move.w  SC_XMIN(a4),d0
+        cmp.w   DC_CMINX(a5),d0
+        blt.s   .sw_next
+        move.w  SC_XMAX(a4),d0
+        cmp.w   DC_CMAXX(a5),d0
+        bgt.s   .sw_next
+        move.w  SC_YMIN(a4),d0
+        cmp.w   DC_CMINY(a5),d0
+        blt.s   .sw_next
+        move.w  SC_YMAX(a4),d0
+        cmp.w   DC_CMAXY(a5),d0
+        bgt.s   .sw_next
+        move.l  DC_CBM(a5),SC_DBM(a4)
+        move.l  DC_BX(a5),SC_DBX(a4)
+        moveq   #1,d0
+        rts
+.sw_next:
+        move.l  CR_NEXT(a0),a0
+        bra.s   .sw_lp
+.sw_no:
+        moveq   #0,d0
         rts
 
 ; .sc_line : ligne SC_Y <- ligne SC_SY sur [SC_XMIN..SC_XMAX], ClipRect par ClipRect. Préserve d4-d7/a1.
@@ -1327,11 +1396,9 @@ gfx_ScrollRaster:
         tst.w   d7
         beq.s   .cp_pdone
         move.w  d7,d1
-        subq.w  #2,d1                ; octets pleins - 1
-        bmi.s   .cp_last
-.cp_mid:
-        move.b  (a0)+,(a1)+
-        dbra    d1,.cp_mid
+        subq.w  #1,d1                ; octets pleins
+        beq.s   .cp_last
+        bsr.s   .cp_run
 .cp_last:
         move.b  d3,d0                ; dernier octet
         bsr.s   .cp_mask
@@ -1340,6 +1407,33 @@ gfx_ScrollRaster:
         bra.s   .cp_plane
 .cp_r:
         movem.l (sp)+,d4-d7/a1-a3
+        rts
+; .cp_run(d1.w = octets, > 0) : copie (a0)+ -> (a1)+, par longs quand les deux adresses ont la même parité (cas du
+; défilement : même abscisse). Clobbe d0/d1.
+.cp_run:
+        move.l  a0,d0
+        sub.l   a1,d0
+        btst    #0,d0
+        bne.s   .cr_bx               ; parités différentes : octet par octet
+        move.w  a0,d0
+        btst    #0,d0
+        beq.s   .cr_even
+        move.b  (a0)+,(a1)+
+        subq.w  #1,d1
+.cr_even:
+        move.w  d1,d0
+        lsr.w   #2,d0
+        bra.s   .cr_lx
+.cr_l:
+        move.l  (a0)+,(a1)+
+.cr_lx:
+        dbra    d0,.cr_l
+        and.w   #3,d1
+        bra.s   .cr_bx
+.cr_b:
+        move.b  (a0)+,(a1)+
+.cr_bx:
+        dbra    d1,.cr_b
         rts
 ; .cp_mask(d0.b = masque) : dst = (dst & ~m) | (src & m) pour l'octet courant ; avance a0/a1. Clobbe d0/d1.
 .cp_mask:
