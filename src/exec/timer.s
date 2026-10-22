@@ -380,7 +380,27 @@ timer_micro_start:
         movem.l (sp)+,d0-d2/a0-a2/a6
         rts
 
+; AbortIO(device a6, iorequest a1) : une requête encore en file (ln_Type = NT_MESSAGE et IOF_QUICK à 0) est
+; retirée et rendue avec io_Error = IOERR_ABORTED ; une requête déjà terminée est laissée telle quelle. -> d0 = 0.
+; (Sans ce retrait, une requête abandonnée par un programme qui se termine expirait plus tard et répondait sur son
+; port libéré, dans de la mémoire réutilisée.)
 timer_abortio:
+        movem.l a2/a6,-(sp)
+        move.l  a1,a2
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        cmp.b   #NT_MESSAGE,LN_TYPE(a2)
+        bne.s   .ab_done
+        btst    #0,IO_FLAGS(a2)      ; IOF_QUICK : terminée sur place (DoIO), jamais mise en file -> rien à retirer
+        bne.s   .ab_done
+        move.l  a2,a1
+        jsr     LVO_REMOVE(a6)
+        move.b  #IOERR_ABORTED,IO_ERROR(a2)
+        move.l  a2,a1
+        jsr     LVO_REPLYMSG(a6)
+.ab_done:
+        jsr     LVO_ENABLE(a6)
+        movem.l (sp)+,a2/a6
         moveq   #0,d0
         rts
 

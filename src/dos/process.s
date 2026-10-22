@@ -13,6 +13,7 @@
 
                 xdef    proc_create
                 xdef    dos_sendpkt
+                xref    task_alloc           ; exec/tasks.s
 
 ; proc_create(a6=SysBase, a0=nom, a1=entryPC, d0=priorité.b, d1=taille pile) -> d0 = APTR &pr_MsgPort | 0.
 proc_create:
@@ -21,9 +22,11 @@ proc_create:
                 move.l  a1,a3                ; a3 = entryPC (corps du process)
                 move.b  d0,d3                ; d3 = priorité
                 move.l  d1,d4                ; d4 = taille pile
-                move.l  #PR_SIZEOF,d0
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
+                addq.l  #7,d4
+                and.w   #-8,d4
+                move.l  #PR_SIZEOF,d0        ; Process + pile décrits dans tc_MemEntry (RemTask les rendra)
+                move.l  d4,d1
+                jsr     task_alloc
                 tst.l   d0
                 beq     .fail
                 move.l  d0,a4                ; a4 = Process (= base Task)
@@ -31,15 +34,7 @@ proc_create:
                 move.b  d3,LN_PRI(a4)
                 move.b  #NT_PROCESS,LN_TYPE(a4)
                 move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)   ; bits 0-15 réservés (dont DOS_PORTSIG=8)
-                addq.l  #7,d4                ; pile arrondie à 8 : RemTask rend TC_SPUPPER - TC_SPLOWER (= taille - 4)
-                and.w   #-8,d4
-                move.l  d4,d0
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq.s   .fail_task
-                move.l  d0,TC_SPLOWER(a4)
-                add.l   d4,d0
+                move.l  TC_SPUPPER(a4),d0
                 subq.l  #4,d0                ; dernier long = taille de la pile : au démarrage (sp) = adresse de retour,
                 move.l  d0,a0                ; 4(sp) = taille, pr_ReturnAddr -> ce long (code de sortie des programmes C)
                 move.l  d4,(a0)
@@ -65,10 +60,6 @@ proc_create:
                 lea     PR_MSGPORT(a4),a0    ; renvoie l'APTR du port
                 move.l  a0,d0
                 bra.s   .ret
-.fail_task:
-                move.l  a4,a1
-                move.l  #PR_SIZEOF,d0
-                jsr     LVO_FREEMEM(a6)
 .fail:
                 moveq   #0,d0
 .ret:

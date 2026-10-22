@@ -16,6 +16,8 @@
                 xdef    init_task
                 xdef    exec_AddTask
                 xdef    exec_RemTask
+                xdef    task_alloc        ; tâche + pile décrites dans tc_MemEntry (dos proc_create, démos)
+                xdef    task_freemem      ; libération de tc_MemEntry (trap2_handler)
                 xdef    exec_FindTask
                 xdef    exec_AllocSignal
                 xdef    exec_FreeSignal
@@ -74,12 +76,13 @@ exec_AddTask:
         jsr     LVO_ENQUEUE(a6)      ; Enqueue(TaskReady, task)
         rts
 
-; RemTask(task a1) : retire une tâche et libère sa pile (TC_SPLOWER..TC_SPUPPER) + son TCB (TC_SIZE).
-; a1 = 0 ou ThisTask -> SELF : passe en superviseur via trap #2 (libère sur la SSP puis bascule sur la
-; tâche suivante, NE REVIENT PAS). Sinon NON-SELF (tâche ready/waiting) : Remove de sa liste + FreeMem,
-; en contexte tâche. FreeMem utilise Forbid/Permit (Permit yield) -> on l'enveloppe dans un Forbid EXTERNE
-; (le Permit interne voit TDNEST>=0 -> pas de yield) + Disable (atomique vs une IRQ touchant les listes).
-; tc_MemEntry non géré (aucune tâche démo n'en alloue) -> hors scope M7j.
+; RemTask(task a1) : retire une tâche et libère les MemLists de son tc_MemEntry (FreeEntry), et RIEN d'autre : la
+; mémoire de la structure et de la pile appartient à celui qui a créé la tâche, qui la décrit dans tc_MemEntry
+; (task_alloc, CreateProc, CreateTask d'amiga.lib) — libérer d'office TCB et pile rendait deux fois la mémoire des
+; tâches créées par les programmes. a1 = 0 ou ThisTask -> SELF : passe en superviseur via trap #2 (libère sur la
+; SSP puis bascule sur la tâche suivante, NE REVIENT PAS). Sinon NON-SELF (tâche ready/waiting) : Remove de sa
+; liste + libération, en contexte tâche, sous un Forbid EXTERNE (le Permit interne de FreeMem ne yield pas) + Disable
+; (atomique vs une IRQ touchant les listes).
 exec_RemTask:
         move.l  a1,d0
         bne.s   .rt_chk
@@ -88,10 +91,7 @@ exec_RemTask:
         cmp.l   EB_THISTASK(a6),a1
         beq.s   .rt_self
         ; --- NON-SELF : la cible n'est pas courante (sur TaskReady ou TaskWait) ---
-        movem.l d4-d6,-(sp)
-        move.l  TC_SPLOWER(a1),d4    ; bornes pile AVANT tout free
-        move.l  TC_SPUPPER(a1),d5
-        sub.l   d4,d5                ; d5 = taille pile
+        move.l  d6,-(sp)
         move.l  a1,d6                ; d6 = TCB
         jsr     LVO_FORBID(a6)       ; Forbid externe -> suppr. yield du Permit interne de FreeMem
         addq.b  #1,EB_IDNEST(a6)     ; Disable -> Remove atomique vs une IRQ (Signal) touchant les listes
@@ -99,20 +99,73 @@ exec_RemTask:
         move.l  d6,a1                ; Remove(a1) de sa liste (SUCC/PRED du noeud -> liste quelconque)
         jsr     LVO_REMOVE(a6)
                 ifeq    M7J_NOFREE
-        move.l  d4,a1                ; FreeMem(pile)
-        move.l  d5,d0
-        jsr     LVO_FREEMEM(a6)
-        move.l  d6,a1                ; FreeMem(TCB)
-        move.l  #TC_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        move.l  d6,a1
+        bsr     task_freemem
                 endc
         bsr     raw_enable           ; INTEN on (sortie nue, pas de queue reschedule)
         jsr     LVO_PERMIT(a6)       ; fin du Forbid externe (yield ici OK : contexte tâche, après RemTask)
-        movem.l (sp)+,d4-d6
+        move.l  (sp)+,d6
         rts
 .rt_self:
         trap    #2                   ; -> trap2_handler (superviseur : libère + bascule, NE REVIENT PAS)
         rts                          ; filet (jamais atteint)
+
+; task_freemem(a1 = tâche, a6) : chaque MemList de tc_MemEntry est rendue par FreeEntry. La tête de liste est DANS la
+; tâche, que la dernière MemList peut libérer : la fin de liste est l'adresse de lh_Tail, calculée avant, et chaque
+; suivant est lu avant sa libération. Liste jamais initialisée (tête nulle) : rien. Préserve d2-d7/a2-a6.
+task_freemem:
+        movem.l a2-a3,-(sp)
+        lea     TC_MEMENTRY+4(a1),a3 ; a3 = &lh_Tail (fin de liste)
+        move.l  TC_MEMENTRY(a1),a2
+.tf_lp:
+        cmpa.w  #0,a2
+        beq.s   .tf_ret
+        cmpa.l  a3,a2
+        beq.s   .tf_ret
+        move.l  a2,a0
+        move.l  (a2),a2              ; suivant
+        jsr     LVO_FREEENTRY(a6)
+        bra.s   .tf_lp
+.tf_ret:
+        movem.l (sp)+,a2-a3
+        rts
+
+; task_alloc(d0 = taille de la structure, d1 = taille de la pile, a6) -> d0 = tâche | 0 : structure et pile (publiques,
+; à zéro) obtenues par AllocEntry et décrites dans tc_MemEntry (RemTask les rendra) ; TC_SPLOWER / TC_SPUPPER posés.
+; Préserve d2-d7/a2-a6.
+task_alloc:
+        movem.l a2-a3,-(sp)
+        lea     -(ML_ME+16)(sp),sp   ; modèle de MemList à deux entrées
+        move.w  #2,ML_NUMENTRIES(sp)
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,ML_ME(sp)
+        move.l  d0,ML_ME+4(sp)
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,ML_ME+8(sp)
+        move.l  d1,ML_ME+12(sp)
+        move.l  sp,a0
+        jsr     LVO_ALLOCENTRY(a6)
+        lea     ML_ME+16(sp),sp
+        tst.l   d0
+        bmi.s   .ta_fail             ; bit 31 : échec (rien ne reste alloué)
+        move.l  d0,a2                ; a2 = MemList
+        move.l  ML_ME(a2),a3         ; a3 = structure
+        move.l  ML_ME+8(a2),d0       ; pile
+        move.l  d0,TC_SPLOWER(a3)
+        add.l   ML_ME+12(a2),d0
+        move.l  d0,TC_SPUPPER(a3)
+        lea     TC_MEMENTRY(a3),a0   ; NEWLIST(tc_MemEntry) puis AddHead(MemList)
+        move.l  a0,8(a0)             ; lh_TailPred = &lh_Head
+        clr.l   4(a0)                ; lh_Tail = 0
+        lea     4(a0),a1
+        move.l  a1,(a0)              ; lh_Head = &lh_Tail
+        move.l  a2,a1
+        jsr     LVO_ADDHEAD(a6)
+        move.l  a3,d0
+        bra.s   .ta_ret
+.ta_fail:
+        moveq   #0,d0
+.ta_ret:
+        movem.l (sp)+,a2-a3
+        rts
 
 ; FindTask(name a1) -> d0 = task | 0 ; a1 == NULL -> tâche courante
 exec_FindTask:

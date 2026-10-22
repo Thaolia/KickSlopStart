@@ -420,6 +420,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   + coopérative ; RED (`M7J_NOFREE=1`, FreeMem sauté) -> `AvailMem` ne remonte pas -> « M7J » absent 2/2,
   SANS crash (task_rm bien retirée de l'ordonnancement, seule la mémoire fuit). **Limites** : non-self par
   inspection (la démo exerce le self) ; `tc_MemEntry` non libéré (aucune tâche démo n'en alloue) -> hors scope.
+  **Corrigé à l'étape 10** (voir « Libérations mémoire fidèles ») : RemTask ne libère plus que `tc_MemEntry`, comme la
+  vraie exec ; pile et structure y sont décrites par `task_alloc`.
 - **M7l** (CALIBRATION µs RÉELLE MICROHZ) : avant M7l, `timer_beginio` convertissait `TV_MICRO` en ticks via
   `/20000` (le facteur VBLANK 50 Hz) pour les DEUX unités -> sur l'unité MICROHZ (CIA-B, latch `$00FF` = 255
   ticks E-clock) `TV_MICRO` ne valait PAS des µs réelles (une requête « 400000 µs » durait ~7 ms, pas 400 ms).
@@ -535,6 +537,33 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   arguments, sorties de l'appelant) puis le décharge ; repli « Error code <n> » si introuvable. Le shell s'en sert
   aussi pour « Unable to load X: ». Comparé à la vraie 1.3 : `copy zzz to ram:` -> « Can't open zzz for input -
   object not found » des deux côtés ; disque sans C:Fault -> « Error code 121 ».
+  (7) **Heure système au montage** (handler.s, `hnd_bootclock`, spec boot-clock-v34) : au premier packet du
+  file-handler DF0:, l'heure prend la plus récente des dates du bloc racine (répertoire racine et disque) si elle
+  est encore au premier jour et antérieure ; jamais reculée. Comparé à la vraie 1.3 : `date` au boot affiche la date
+  de dernière modification du disque des deux côtés (« <unset> » avant). Écart : fait une seule fois (pas de
+  gestion de l'insertion d'un autre disque, que la 1.3 traite par son process validateur à chaque montage).
+  (8) **Libérations mémoire fidèles (exec)**. Révélé par l'heure au montage : le boot WB plantait (« Background CLI »,
+  globale 133 absente) dès qu'une heure non nulle précédait SetClock, car un bloc de pile du CLI de fond avait été
+  réattribué. Trois causes, trouvées au traceur MEMTRACK :
+  - **RemTask ne libère que `tc_MemEntry`**, comme la vraie exec. Avant, RemTask et `trap2_handler` rendaient d'office
+    la pile et `TC_SIZE` : fuite pour un process (0xBC rendu en 0x5C), et double libération pour une tâche créée par un
+    programme, qui décrit sa mémoire dans `tc_MemEntry` ou la rend lui-même. Nos créateurs (`proc_create`, tâches de
+    démo) passent par `task_alloc` (tasks.s) : AllocEntry {structure, pile} ajoutée en tête de `tc_MemEntry`, et
+    `SPLOWER`/`SPUPPER` posés. `task_freemem` rend chaque MemList par FreeEntry, en calculant la fin de liste avant,
+    car la tête de liste vit dans la tâche que la dernière MemList libère.
+  - **FreeEntry prend la MemList dans A0** (exec_lib.fd), pas dans A1. icon.library enchaîne RemHead puis FreeEntry,
+    avec la MemList dans A0 et la liste encore dans A1. Avec A1, nous rendions l'en-tête de liste logé à l'intérieur
+    de son bloc DiskObject : 16 octets d'un bloc encore alloué (cas BindDrivers avec le `.info` invalide de
+    SYS:Expansion). Sondé sur la vraie ROM (point d'arrêt sur le vecteur FreeEntry) : A0 = MemList de 10 entrées.
+  - **Execute** (bcpl.s) perdait d5 (BPTR de la commande) à travers runcommand, d'où un freevec(0) et une fuite de
+    64 longs par appel.
+  `timer_abortio` est réel : la requête encore en file est retirée, IO_ERROR = IOERR_ABORTED, puis ReplyMsg.
+  **Traceur MEMTRACK** (memory.s, ROM de diagnostic seulement, la ROM normale est inchangée) :
+  `make BUILD=build/mt VASMDEF=-DMEMTRACK=1 KICK_ROM=build/kick13-mt.rom kick`. Chaque AllocMem ou AllocAbs réussi
+  est noté (table de 3000 entrées en mémoire chip, pointeur en `MT_TABLE`). FreeMem émet sur le série :
+  - « MTSZ adresse taille-rendue taille-notée appelant » si la taille diffère ;
+  - « MTUNK adresse taille appelant tâche » si l'adresse est inconnue.
+  Le boot WB 1.3.3 complet n'émet plus aucune ligne.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

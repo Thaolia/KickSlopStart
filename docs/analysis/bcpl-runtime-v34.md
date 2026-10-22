@@ -659,7 +659,8 @@ Unités comme en §8 ; « vecteur datestamp » = 3 longs consécutifs **[jours, 
   4. **Permit**.
   Résultat D1 : **non significatif** (résidu de l'appel Permit ; Date l'ignore). Result2 inchangé.
   Aucun packet DOS, aucun accès à l'horloge sauvegardée (RTC $DC0000) : écrire la RTC est le
-  rôle de `SetClock save`. Appelant observé : **uniquement C:Date** (la ROM ne l'appelle pas).
+  rôle de `SetClock save`. Appelants : C:Date **et le validateur de la ROM** (réglage d'heure au montage de
+  DF0:, cf. [boot-clock-v34.md](boot-clock-v34.md) — correction de la mention « la ROM ne l'appelle pas »).
 - **86 `datstamp(v)`** — D1 = BPTR d'un vecteur de 3 longs ; appelle l'adaptateur C **−25
   (DateStamp)** sur `BADDR(v)` ; **renvoie v** (le BPTR reçu). Appelants : C:Date et le file
   system (entrée 6).

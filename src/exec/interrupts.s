@@ -53,6 +53,7 @@
                 xdef    exec_SetIntVector  ; M7b : dispatcher par numéro (vecteur exclusif)
                 xdef    exec_AddIntServer  ; M7b : dispatcher par numéro (chaîne de serveurs)
 
+                xref    task_freemem      ; tasks.s
                 xref    newlist          ; lists.s (NEWLIST d'une chaîne de serveurs)
                 xref    exec_Enqueue     ; lists.s (AddIntServer : insertion par priorité)
                 xref    exec_AllocMem    ; memory.s (alloc du bloc IntVects à init_ints)
@@ -363,27 +364,16 @@ trap3_handler:
 ; trap2_handler (TRAP #2) : M7j — RemTask(self). La sortante se RETIRE : on NE sauve PAS son contexte
 ; (il est jeté). En superviseur, sur la SSP -> la pile user de la sortante n'est plus utilisée = libérable.
 ; Forbid externe (le Permit interne de FreeMem ne yield pas) + IPL7 (masque IRQ pendant le teardown).
-; Clear EB_THISTASK AVANT FreeMem(TCB) (dispatch_in lit EB_THISTASK). Puis bascule comme le lancement de
-; la 1re tâche (RemHead + dispatch_in). NE REVIENT PAS. d4-d6 préservés par FreeMem.
+; Clear EB_THISTASK AVANT de libérer tc_MemEntry (dispatch_in lit EB_THISTASK). Puis bascule comme le lancement de
+; la 1re tâche (RemHead + dispatch_in). NE REVIENT PAS.
 trap2_handler:
         move.w  #$2700,sr           ; IPL7 (superviseur -> légal) : masque les IRQ pendant le teardown
         move.l  ($4).w,a6           ; SysBase
         jsr     LVO_FORBID(a6)      ; Forbid externe -> FreeMem.Permit voit TDNEST>=0 -> pas de yield
         move.l  EB_THISTASK(a6),a1  ; sortante à libérer
-        move.l  TC_SPLOWER(a1),d4
-        move.l  TC_SPUPPER(a1),d5
-        sub.l   d4,d5               ; d5 = taille pile user
-        move.l  a1,d6               ; d6 = TCB
+        clr.l   EB_THISTASK(a6)     ; AVANT la libération : dispatch_in compare EB_THISTASK (QUANTUM_ELAPSED)
                 ifeq    M7J_NOFREE
-        move.l  d4,a1               ; FreeMem(pile user) — sûr : on tourne sur la SSP, pas sur cette pile
-        move.l  d5,d0
-        jsr     LVO_FREEMEM(a6)
-                endc
-        clr.l   EB_THISTASK(a6)     ; AVANT FreeMem(TCB) : dispatch_in compare EB_THISTASK (QUANTUM_ELAPSED)
-                ifeq    M7J_NOFREE
-        move.l  d6,a1               ; FreeMem(TCB)
-        move.l  #TC_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
+        jsr     task_freemem        ; tc_MemEntry (TCB et pile compris s'ils y sont) — sûr : on tourne sur la SSP
                 endc
         move.l  #STACKTOP,sp        ; bascule définitive : SSP propre + slot 66 o (comme boot.s)
         lea     -FRAME_SIZE(sp),sp

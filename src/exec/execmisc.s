@@ -29,8 +29,6 @@
                 xdef    exec_ReleaseSemaphoreList
 
 LVO_SUPERVISOR_X EQU -30
-ML_NUMENTRIES   EQU 14               ; exec/memory.i : struct MemList
-ML_ME           EQU 16
 ME_SIZE         EQU 8                ; struct MemEntry : me_Reqs|me_Addr, me_Length
 INTENA_INTEN    EQU 14               ; bit maître de INTENA
 
@@ -270,7 +268,8 @@ exec_RemIntServer:
         rts
 
 ; AllocEntry(memList a0) -> d0 = nouvelle MemList (adresses remplies) | exigences de l'entrée en échec avec le bit 31
-; posé (rien ne reste alloué). FreeEntry(memList a1) libère les entrées puis la MemList.
+; posé (rien ne reste alloué). FreeEntry(memList a0) libère les entrées puis la MemList (a0 comme AllocEntry : exec_lib.fd ;
+; icon.library enchaîne RemHead -> FreeEntry avec la MemList dans a0 et la liste encore dans a1).
 exec_AllocEntry:
         movem.l d2-d3/a2-a3,-(sp)
         move.l  a0,a2                ; a2 = modèle
@@ -312,7 +311,7 @@ exec_AllocEntry:
 .ae_fail:
         move.l  d1,-(sp)             ; exigences en échec
         move.w  d3,ML_NUMENTRIES(a3) ; seules les entrées obtenues sont rendues
-        move.l  a3,a1
+        move.l  a3,a0
         bsr.s   exec_FreeEntry
         move.l  (sp)+,d0
         bset    #31,d0
@@ -324,7 +323,7 @@ exec_AllocEntry:
         rts
 exec_FreeEntry:
         movem.l d2/a2,-(sp)
-        move.l  a1,a2
+        move.l  a0,a2
         moveq   #0,d2
         move.w  ML_NUMENTRIES(a2),d2
         lea     ML_ME(a2),a0

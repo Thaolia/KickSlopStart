@@ -32,6 +32,9 @@
                 xref    ws_open
                 xref    ws_write
                 xref    ws_close
+                xref    ofs_read_block       ; hnd_bootclock : lecture du bloc racine
+                xref    timer_now            ; heure système (exec/timer.s)
+                xref    timer_setnow
 
 ACTION_MORE_CACHE EQU 18             ; AddBuffers : ajoute des tampons au filesystem
 WS_MAGICV       EQU $57524954        ; tête d'un état d'écriture (ofswrite.s) ; un état de lecture commence par un APTR
@@ -41,6 +44,7 @@ HND_NAMEBUF     EQU 112              ; chaîne C d'un nom reçu en BSTR (pile)
 ; a2 = pr_MsgPort (persistant) ; a3 = Message courant ; a4 = DosPacket courant.
 dos_handler_df0:
                 move.l  ($4).w,a6
+                clr.b   HND_CLOCKED          ; RAM basse non remise à zéro au reset
                 move.l  EB_THISTASK(a6),a2
                 lea     PR_MSGPORT(a2),a2    ; a2 = son propre pr_MsgPort
 .hl:
@@ -50,6 +54,11 @@ dos_handler_df0:
                 jsr     LVO_GETMSG(a6)
                 tst.l   d0
                 beq.s   .hl
+                tst.b   HND_CLOCKED          ; premier packet = montage du disque de boot
+                bne.s   .hl_clk
+                st      HND_CLOCKED
+                bsr     hnd_bootclock
+.hl_clk:
                 move.l  d0,a3                ; a3 = Message
                 move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention : msg->ln_Name)
                 clr.l   DP_RES2(a4)
@@ -487,6 +496,97 @@ dos_handler_df0:
                 jsr     ow_diskinfo
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
+
+; hnd_bootclock(a6 = SysBase) : réglage d'heure au montage (spec boot-clock-v34) : l'heure système prend la plus
+; récente des deux dates du bloc racine (répertoire racine, longs 105-107 ; disque, longs 118-120) si elle est encore
+; au premier jour (horloge jamais réglée) et antérieure à cette date ; jamais reculée. Fait une fois, au premier
+; packet (notre handler ne gère pas encore l'insertion d'un autre disque). Préserve tout.
+HND_ROOTDATE    EQU 420              ; DateStamp de modification du répertoire racine
+HND_DISKDATE    EQU 472              ; DateStamp de modification du disque
+hnd_bootclock:
+                movem.l d0-d7/a0-a3,-(sp)
+                lea     EB_DEVICELIST(a6),a0
+                lea     hnd_tdname(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
+                beq     .bc_ret
+                move.l  d0,a2
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                tst.l   d0
+                beq     .bc_ret
+                move.l  d0,a3
+                move.l  #OFS_ROOTBLK,d0
+                jsr     ofs_read_block
+                tst.l   d0
+                beq.s   .bc_free             ; pas de disque
+                lea     IOREQ_SZ(a3),a0
+                moveq   #0,d0                ; checksum OFS : somme des 128 longs nulle
+                moveq   #OFS_BSIZE/4-1,d1
+.bc_sum:
+                add.l   (a0)+,d0
+                dbra    d1,.bc_sum
+                tst.l   d0
+                bne.s   .bc_free
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_ST_ROOT,OFSB_SECTYPE(a0)
+                bne.s   .bc_free
+                lea     HND_ROOTDATE(a0),a1
+                bsr.s   hnd_dssecs
+                move.l  d0,d2                ; d2/d3 = date retenue (secondes, µs)
+                move.l  d1,d3
+                lea     IOREQ_SZ+HND_DISKDATE(a3),a1
+                bsr.s   hnd_dssecs
+                cmp.l   d2,d0
+                bls.s   .bc_max
+                move.l  d0,d2
+                move.l  d1,d3
+.bc_max:
+                jsr     timer_now            ; d0/d1 = heure système
+                cmp.l   #86400,d0
+                bhs.s   .bc_free             ; déjà réglée (au-delà du premier jour)
+                cmp.l   d2,d0
+                bhi.s   .bc_free
+                blo.s   .bc_set
+                cmp.l   d3,d1
+                bhs.s   .bc_free
+.bc_set:
+                move.l  d2,d0
+                move.l  d3,d1
+                jsr     timer_setnow
+.bc_free:
+                move.l  a3,a1
+                move.l  #IOREQ_SZ+OFS_BSIZE,d0
+                jsr     LVO_FREEMEM(a6)
+.bc_ret:
+                movem.l (sp)+,d0-d7/a0-a3
+                rts
+
+; hnd_dssecs(a1 = DateStamp [jours, minutes, ticks]) -> d0 = secondes, d1 = µs (ticks bornés à 16 bits).
+hnd_dssecs:
+                move.l  (a1),d0
+                mulu    #1440,d0             ; jours -> minutes
+                add.l   4(a1),d0
+                move.l  d0,d1                ; × 60 = × 64 - × 4
+                lsl.l   #6,d0
+                lsl.l   #2,d1
+                sub.l   d1,d0
+                move.l  8(a1),d1
+                and.l   #$0000FFFF,d1
+                divu    #50,d1               ; d1 = reste : secondes
+                add.w   d1,d0
+                bcc.s   .ds_nc
+                add.l   #$10000,d0
+.ds_nc:
+                clr.w   d1
+                swap    d1
+                mulu    #20000,d1            ; reste (ticks) -> µs
+                rts
+hnd_tdname:
+                dc.b    "trackdisk.device",0
+                even
+
 
 ; hnd_lockkey(d0 = BPTR FileLock | 0) -> d0 = bloc header verrouillé (fl_Key) | 0 (= racine pour ofs_*). Clobbe a0.
 hnd_lockkey:

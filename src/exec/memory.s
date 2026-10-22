@@ -10,6 +10,10 @@
 ; Piste IMPLÉMENTATION (« clean ») : docs/analysis/exec-spec.md + ABI publique.
 
                 include "exec.i"
+                ifd     MEMTRACK
+                xref    ser_puts
+                xref    ser_puthex
+                endc
 
                 xdef    exec_AllocMem
                 xdef    exec_FreeMem
@@ -107,6 +111,9 @@ exec_AllocMem:
 .am_fail:
         moveq   #0,d0
 .am_exit:
+                ifd     MEMTRACK
+        bsr     mt_alloc             ; d0 = bloc | 0, d2 = taille
+                endc
         jsr     LVO_PERMIT(a6)       ; Permit ne touche pas d0
         movem.l (sp)+,d2-d5/a2-a4
         rts
@@ -166,6 +173,9 @@ exec_FreeMem:
         tst.l   d0
         beq.s   .fm_ret
         jsr     LVO_FORBID(a6)
+                ifd     MEMTRACK
+        bsr     mt_free              ; contrôle (a1, d0) contre la table ; (sp) = appelant de FreeMem
+                endc
         bsr.s   mem_owner            ; a0 = header | 0
         beq.s   .fm_done             ; aucun header propriétaire -> ignoré
         bsr     exec_Deallocate
@@ -243,6 +253,11 @@ exec_AllocAbs:
 .aa_got:
         sub.l   d3,MH_FREE(a2)
         move.l  d2,d0
+                ifd     MEMTRACK
+        exg     d2,d3
+        bsr     mt_alloc             ; d0 = bloc, d2 = taille
+        exg     d2,d3
+                endc
         bra.s   .aa_exit
 .aa_fail:
         moveq   #0,d0
@@ -351,6 +366,9 @@ exec_TypeOfMem:
 
 ; init_memory : MemHeader chip @ MH_CHIP + chunk initial couvrant le tas
 init_memory:                         ; a6 = SysBase (jump table déjà bâtie)
+                ifd     MEMTRACK
+        clr.l   MT_TABLE             ; RAM basse non remise à zéro au reset
+                endc
         lea     MH_CHIP,a0
         moveq   #7,d0                ; 32 octets à zéro
         move.l  a0,a1
@@ -446,3 +464,111 @@ slow_name:
 mh_name:
         dc.b    "chip memory",0
         EVEN
+
+                ifd     MEMTRACK
+; --- traceur d'allocations (ROM de diagnostic, -DMEMTRACK=1) : chaque AllocMem réussi est noté (adresse, taille) dans
+; une table de MT_N entrées (AllocAbs aussi) ; chaque FreeMem y est cherché : taille différente -> « MTSZ adresse taille-rendue
+; taille-notée appelant », adresse inconnue -> « MTUNK adresse taille appelant ». Sous Forbid (appelants).
+MT_N            EQU 3000
+; mt_alloc(d0 = bloc | 0, d2 = taille, a6) : préserve tout.
+mt_alloc:
+        movem.l d0-d1/a0-a1,-(sp)
+        tst.l   d0
+        beq.s   .ma_ret
+        move.l  MT_TABLE,d1
+        bne.s   .ma_have
+        cmp.l   #MT_N*8,d2           ; la table elle-même (allouée ci-dessous) n'est pas notée
+        beq.s   .ma_ret
+        move.l  #MT_N*8,d0
+        move.l  #MEMF_CHIP|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,MT_TABLE
+        beq.s   .ma_ret
+        move.l  d0,d1
+        move.l  (sp),d0
+.ma_have:
+        move.l  d1,a0
+        move.w  #MT_N-1,d1
+.ma_lp:
+        tst.l   (a0)
+        beq.s   .ma_put
+        addq.l  #8,a0
+        dbra    d1,.ma_lp
+        bra.s   .ma_ret              ; table pleine
+.ma_put:
+        move.l  d0,(a0)+
+        move.l  d2,(a0)
+.ma_ret:
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+; mt_free(a1 = bloc, d0 = taille, a6) : appelée par FreeMem après son Forbid ; 4(sp) = appelant de FreeMem.
+mt_free:
+        movem.l d0-d3/a0-a1,-(sp)
+        move.l  MT_TABLE,d1
+        beq.s   .mf_ret
+        move.l  d1,a0
+        move.w  #MT_N-1,d1
+.mf_lp:
+        cmp.l   (a0),a1
+        beq.s   .mf_found
+        addq.l  #8,a0
+        dbra    d1,.mf_lp
+        lea     mt_unk(pc),a0        ; adresse jamais allouée (ou déjà rendue)
+        jsr     ser_puts
+        move.l  a1,d0
+        bsr     mt_hex
+        move.l  (sp),d0
+        bsr     mt_hex
+        move.l  24+4(sp),d0
+        bsr     mt_hex
+        bsr     mt_task
+        bra.s   .mf_ret
+.mf_found:
+        clr.l   (a0)+
+        move.l  (a0),d2              ; taille notée
+        move.l  d0,d3
+        addq.l  #7,d3
+        and.l   #-8,d3
+        move.l  d2,d1
+        addq.l  #7,d1
+        and.l   #-8,d1
+        cmp.l   d1,d3
+        beq.s   .mf_ret
+        lea     mt_sz(pc),a0
+        jsr     ser_puts
+        move.l  a1,d0
+        bsr     mt_hex
+        move.l  (sp),d0
+        bsr     mt_hex
+        move.l  d2,d0
+        bsr     mt_hex
+        move.l  24+4(sp),d0
+        bsr     mt_hex
+.mf_ret:
+        movem.l (sp)+,d0-d3/a0-a1
+        rts
+; mt_task : « nom-de-la-tâche-courante » à la suite de la ligne (identifie le libérateur quand l'appelant est générique).
+mt_task:
+        move.l  EB_THISTASK(a6),d0
+        beq.s   .mt_tret
+        move.l  d0,a0
+        move.l  LN_NAME(a0),d0
+        beq.s   .mt_tret
+        lea     mt_sp(pc),a0
+        jsr     ser_puts
+        move.l  EB_THISTASK(a6),a0
+        move.l  LN_NAME(a0),a0
+        jsr     ser_puts
+.mt_tret:
+        rts
+mt_hex:
+        swap    d0
+        jsr     ser_puthex
+        swap    d0
+        jsr     ser_puthex
+        rts
+mt_unk: dc.b    13,10,"MTUNK ",0
+mt_sz:  dc.b    13,10,"MTSZ ",0
+mt_sp:  dc.b    " ",0
+        even
+                endc

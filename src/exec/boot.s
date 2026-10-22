@@ -26,6 +26,7 @@
                 xref    build_reslist    ; resident.s (scan des ROMTags)
                 xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
                 xref    timer_micro_start
+                xref    task_alloc
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
@@ -4937,19 +4938,13 @@ task_aud:
 ; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
 ; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
 mk_demo_task:
-        move.l  #TC_SIZE,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1 ; pas de DMA : slow RAM d'abord (la chip reste aux programmes)
-        jsr     LVO_ALLOCMEM(a6)
+        move.l  #TC_SIZE,d0          ; TCB + pile dans tc_MemEntry (pas de DMA : slow RAM d'abord)
+        move.l  #DEMO_STK,d1
+        jsr     task_alloc
         move.l  d0,a4                ; a4 = TCB
         move.l  a3,LN_NAME(a4)
         move.b  d2,LN_PRI(a4)
         move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)  ; bits 0-15 réservés -> AllocSignal rend 16+ (task_timer)
-        move.l  #DEMO_STK,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,TC_SPLOWER(a4)
-        add.l   #DEMO_STK,d0
-        move.l  d0,TC_SPUPPER(a4)
         move.l  a4,a1
         lea     task_exit(pc),a3     ; finalPC (a3 = nom écrasé, déjà posé dans LN_NAME)
         jsr     LVO_ADDTASK(a6)      ; AddTask(a1=task, a2=initPC, a3=finalPC)

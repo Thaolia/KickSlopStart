@@ -369,6 +369,8 @@ DOS_OWCTX    EQU $00000754 ; dos : long — contexte d'écriture OFS (ofswrite.s
 EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logicielles en attente (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
+HND_CLOCKED  EQU $0000079A ; byte : le file-handler DF0: a fait son réglage d'heure de montage (hnd_bootclock)
+MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
 GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
@@ -554,7 +556,12 @@ TC_TRAPCODE   EQU 50          ; APTR : gestionnaire des exceptions CPU de la tâ
 TC_SPREG      EQU 54
 TC_SPLOWER    EQU 58
 TC_SPUPPER    EQU 62
+TC_MEMENTRY   EQU 74          ; struct List : MemLists libérées par RemTask (FreeEntry)
 TC_SIZE       EQU 92
+ML_NUMENTRIES EQU 14          ; exec/memory.i : struct MemList (Node, NumEntries, MemEntry[])
+ML_ME         EQU 16
+LVO_ALLOCENTRY EQU -222
+LVO_FREEENTRY EQU -228
 SYS_SIGALLOC  EQU $FFFF        ; signaux 0-15 pré-alloués (réservés système)
 
 ; struct MsgPort (exec/ports.i) — base à LN_SIZE=14

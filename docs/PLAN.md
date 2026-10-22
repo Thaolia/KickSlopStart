@@ -813,8 +813,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     en one-shot (le timer CIA-B continu mangeait plus de la moitié du CPU), sortie console BCPL tamponnée, Text plus
     rapide, ScrollRaster plus rapide (`type` ×10, SysInfo 1,04 × A600) ; échecs de commande et FailAt comme la 1.3 (sondés sur la vraie ROM). Gadgets texte (STRGADGET, ActivateGadget),
     Workbench Rename, requester « Please insert volume » et redirections avant les arguments seulement faits. Textes d'erreur via
-    C:Fault faits. Restent : défilement au blitter,
-    Snapshot, Info du Workbench, lenteur de lecture des répertoires, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    C:Fault faits. Lecture des répertoires : même vitesse que la vraie 1.3 (3 × `list df0:` = 25 s contre ~22 s
+    chez nous : relectures physiques de pistes, comme la 1.3). Heure système prise sur le disque de boot
+    (comme la 1.3). Libérations mémoire fidèles : RemTask ne libère que `tc_MemEntry`, FreeEntry lit A0, Execute ne
+    fuit plus. Le boot WB plantait si l'heure était posée avant SetClock ; traceur MEMTRACK muet sur tout le boot WB.
+    Restent : défilement au blitter,
+    Snapshot, Info du Workbench, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois

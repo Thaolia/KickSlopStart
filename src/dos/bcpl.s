@@ -1609,6 +1609,7 @@ bcpl_execute:
         move.l  PR_CIS(a3),-(sp)
         move.l  PR_COS(a3),-(sp)
         move.l  PR_RESULT2(a3),-(sp)
+        move.l  d5,-(sp)                ; vecteur de la commande et Run : d4/d5 ne survivent pas à runcommand
         move.l  d4,-(sp)
         clr.l   -(sp)                   ; (sp) = sortie ouverte ici (à refermer si Run échoue)
         move.l  d6,d0                   ; entrée sur un handler : il devient la console (« * ») de l'appelant, donc
@@ -1645,6 +1646,7 @@ bcpl_execute:
         move.l  d1,d2                   ; d2 = code retour (-1 : pile impossible)
         move.l  (sp)+,d3                ; sortie ouverte ici
         move.l  (sp)+,d4
+        move.l  (sp)+,d5
         bsr     rt_this
         move.l  (sp)+,PR_RESULT2(a3)
         move.l  (sp)+,PR_COS(a3)
