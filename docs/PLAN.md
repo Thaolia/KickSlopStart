@@ -817,8 +817,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     chez nous : relectures physiques de pistes, comme la 1.3). Heure système prise sur le disque de boot
     (comme la 1.3). Libérations mémoire fidèles : RemTask ne libère que `tc_MemEntry`, FreeEntry lit A0, Execute ne
     fuit plus. Le boot WB plantait si l'heure était posée avant SetClock ; traceur MEMTRACK muet sur tout le boot WB.
+    Clean Up et Snapshot du Workbench faits (Clean Up identique à la vraie 1.3 sur SYS:).
     Restent : défilement au blitter,
-    Snapshot, Info du Workbench, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    Info du Workbench, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois

@@ -564,6 +564,19 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   - « MTSZ adresse taille-rendue taille-notée appelant » si la taille diffère ;
   - « MTUNK adresse taille appelant tâche » si l'adresse est inconnue.
   Le boot WB 1.3.3 complet n'émet plus aucune ligne.
+  (9) **Workbench : Clean Up et Snapshot** (workbench.s), sondés sur la vraie 1.3.
+  - Méthode de sonde : mesure à la souris et capture ; les positions sont relevées en comparant les mêmes icônes avant
+    et après, à l'échelle 100 px écran pour 96 px hires.
+  - **Clean Up** : les icônes du tiroir sont triées par position (X puis Y), puis rangées par colonnes de haut en bas.
+    Chaque cellule fait 96 px de large et l'icône y est centrée : X = 96·k + (96 − largeur)/2. Écart vertical : 11
+    sous chaque icône. Changement de colonne au-delà de la hauteur intérieure d'une fenêtre 1.3 (hauteur − 20).
+    Les positions restent en mémoire.
+  - Sur SYS: du WB 1.3.3, le résultat est identique à la vraie ROM : Utilities (11,0) et Shell (21,29), MountMF
+    (104,0), System et Prefs (203), Expansion et Empty (299).
+  - **Snapshot** : la position de l'icône sélectionnée est écrite dans son `.info` par PutDiskObject, sans
+    requester (`pr_WindowPtr` = −1). Pour le disque ou un tiroir dont la fenêtre est ouverte, la géométrie de cette
+    fenêtre va aussi dans `dd_NewWindow`.
+  - Les `.info` écrits sont relus par la vraie 1.3.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

@@ -12,9 +12,9 @@
 ; au REFRESHWINDOW (BeginRefresh/EndRefresh). Une seule icône sélectionnée à la fois (rectangle inversé). Double-clic
 ; sur un outil : lancé par CreateProc avec un message WBStartup (argument 0 = l'outil) ; sur un projet : son outil par
 ; défaut, le projet en argument 1. Le message revient sur le port « Workbench » à la fin de l'outil : segment
-; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard et Redraw actifs, le
-; reste grisé. Portée : ni Clean Up / Snapshot / Info / Duplicate / Version, ni icône Ram Disk, ni défilement des
-; tiroirs ; Rename et Discard ne s'appliquent qu'aux icônes d'un tiroir (pas au disque).
+; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard, Clean Up, Redraw et
+; Snapshot actifs, le reste grisé. Portée : ni Info / Duplicate / Version / Last Error, ni icône Ram Disk, ni
+; défilement des tiroirs, une seule icône sélectionnée ; Rename et Discard ne s'appliquent qu'aux icônes d'un tiroir.
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup, DiskObject).
 ; AUCUNE lecture ROM.
 
@@ -36,6 +36,7 @@ LVO_WINDOWTOFRONT EQU -312
 LVO_DOUBLECLICK EQU -102
 LVO_REPORTMOUSE EQU -234
 ICON_LVO_GETDISKOBJECT EQU -78       ; icon.library (icon_lib.fd)
+ICON_LVO_PUTDISKOBJECT EQU -84
 ICON_LVO_FREEDISKOBJECT EQU -90
 DOS_LVO_CREATEPROC EQU -138
 NW_SIZEOF       EQU 48               ; struct NewWindow
@@ -1486,6 +1487,10 @@ wb_menupick:
 .mp_special:
         cmp.w   #2,d0
         bne     .mp_ret
+        cmp.w   #3,d1
+        beq     wb_snapshot
+        tst.w   d1                   ; Clean Up
+        beq     wb_cleanup
         cmp.w   #2,d1                ; Redraw
         bne     .mp_ret
         move.l  d7,-(sp)
@@ -1498,6 +1503,221 @@ wb_menupick:
         bls.s   .mp_rd
         move.l  (sp)+,d7
 .mp_ret:
+        rts
+
+; wb_cleanup(d7.w = fenêtre, a5) : Special/Clean Up (sondé sur la vraie 1.3). Les icônes du tiroir, triées par position
+; actuelle (X puis Y ; sans position : en dernier), sont rangées par colonnes de haut en bas dans des cellules de
+; CU_CELL de large, chacune centrée dans sa cellule ; écart vertical CU_GAPY sous chaque icône (nom compris). Colonne
+; suivante quand l'icône dépasserait la hauteur intérieure qu'aurait la fenêtre sous la 1.3 (titre + barre de
+; défilement basse = CU_FRAMEH lignes). Positions en mémoire seulement (Snapshot les écrit). Bureau : rien.
+CU_CELL         EQU 96
+CU_GAPY         EQU 11
+CU_FRAMEH       EQU 20
+wb_cleanup:
+        movem.l d2-d7/a2-a4,-(sp)
+        tst.w   d7
+        beq     .cu_ret
+        bsr     wb_window
+        beq     .cu_ret
+        move.l  DR_NICON(a4),d6
+        beq     .cu_ret
+        lea     -WB_MAXICONS(sp),sp  ; ordre : n° d'icônes
+        moveq   #0,d0
+.cu_init:
+        move.b  d0,0(sp,d0.w)
+        addq.w  #1,d0
+        cmp.w   d6,d0
+        blt.s   .cu_init
+        moveq   #1,d2                ; tri par insertion (stable)
+.cu_si:
+        cmp.w   d6,d2
+        bge.s   .cu_sorted
+        move.b  0(sp,d2.w),d3
+        move.w  d2,d4
+.cu_sj:
+        tst.w   d4
+        beq.s   .cu_put
+        move.b  -1(sp,d4.w),d5
+        move.b  d5,d0
+        move.b  d3,d1
+        bsr     cu_less              ; d0 = 1 si l'icône d3 précède l'icône d5
+        tst.l   d0
+        beq.s   .cu_put
+        move.b  d5,0(sp,d4.w)
+        subq.w  #1,d4
+        bra.s   .cu_sj
+.cu_put:
+        move.b  d3,0(sp,d4.w)
+        addq.w  #1,d2
+        bra.s   .cu_si
+.cu_sorted:
+        move.w  WD_HEIGHT(a3),d5
+        sub.w   #CU_FRAMEH,d5        ; d5 = hauteur utile
+        moveq   #0,d2                ; d2 = gauche de la colonne
+        moveq   #0,d3                ; d3 = y courant
+        moveq   #CU_CELL,d4          ; d4 = largeur de la colonne (une icône plus large l'élargit)
+        moveq   #0,d1
+.cu_lp:
+        cmp.w   d6,d1
+        bge.s   .cu_done
+        moveq   #0,d0
+        move.b  0(sp,d1.w),d0
+        lsl.w   #2,d0
+        move.l  DR_ICONS(a4,d0.w),a2
+        tst.w   d3
+        beq.s   .cu_fit
+        move.w  d3,d0
+        add.w   DO_GADGET+GG_HEIGHT(a2),d0
+        add.w   #CU_GAPY,d0
+        cmp.w   d5,d0
+        ble.s   .cu_fit
+        add.w   d4,d2                ; colonne suivante
+        moveq   #0,d3
+        moveq   #CU_CELL,d4
+.cu_fit:
+        move.w  DO_GADGET+GG_WIDTH(a2),d0
+        cmp.w   d4,d0
+        ble.s   .cu_wok
+        move.w  d0,d4
+.cu_wok:
+        neg.w   d0
+        add.w   #CU_CELL,d0          ; marge = (cellule - largeur) / 2, nulle si l'icône est plus large
+        bpl.s   .cu_mg
+        moveq   #0,d0
+.cu_mg:
+        lsr.w   #1,d0
+        add.w   d2,d0
+        ext.l   d0
+        move.l  d0,DO_CURRENTX(a2)
+        move.w  d3,d0
+        ext.l   d0
+        move.l  d0,DO_CURRENTY(a2)
+        add.w   DO_GADGET+GG_HEIGHT(a2),d3
+        add.w   #CU_GAPY,d3
+        addq.w  #1,d1
+        bra.s   .cu_lp
+.cu_done:
+        lea     WB_MAXICONS(sp),sp
+        bsr     wb_redraw1
+.cu_ret:
+        movem.l (sp)+,d2-d7/a2-a4
+        rts
+
+; cu_less(d0.b = icône a, d1.b = icône b, a4 = fiche) -> d0 = 1 si b précède a (X puis Y ; sans position = en
+; dernier), 0 sinon. Préserve d2-d7/a1-a6.
+cu_less:
+        movem.l d2-d3,-(sp)
+        move.b  d1,-(sp)
+        bsr.s   cu_key
+        move.l  d0,d2
+        move.l  d1,d3
+        move.b  (sp)+,d0
+        bsr.s   cu_key
+        cmp.l   d2,d0
+        blt.s   .cl_yes
+        bgt.s   .cl_no
+        cmp.l   d3,d1
+        blt.s   .cl_yes
+.cl_no:
+        moveq   #0,d0
+        bra.s   .cl_ret
+.cl_yes:
+        moveq   #1,d0
+.cl_ret:
+        movem.l (sp)+,d2-d3
+        rts
+; cu_key(d0.b = icône, a4) -> d0/d1 = X/Y de tri. Clobbe a0.
+cu_key:
+        and.w   #$FF,d0
+        lsl.w   #2,d0
+        move.l  DR_ICONS(a4,d0.w),a0
+        move.l  DO_CURRENTX(a0),d0
+        move.l  DO_CURRENTY(a0),d1
+        cmp.l   #NO_ICON_POSITION,d0
+        bne.s   .ck_ret
+        move.l  #$7FFFFFFF,d0
+        move.l  d0,d1
+.ck_ret:
+        rts
+
+; wb_snapshot(a5) : Special/Snapshot. La position de l'icône sélectionnée est mise dans son DiskObject puis écrite
+; dans son « .info » (PutDiskObject) ; disque ou tiroir dont la fenêtre est ouverte : la géométrie de cette fenêtre va
+; aussi dans dd_NewWindow (rouverte au même endroit). Requesters de dos coupés pendant l'écriture (pr_WindowPtr = -1).
+wb_snapshot:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        lea     -WB_PATHMAX(sp),sp
+        move.w  WBS_SELW(a5),d7
+        bmi     .ss_ret
+        move.w  WBS_SELI(a5),d1
+        bsr     wb_iconrect          ; a2 = DiskObject, d0/d1 = coin dans la fenêtre
+        beq     .ss_ret
+        tst.w   d7
+        bne.s   .ss_dr
+        lea     wb_diskname(pc),a0   ; disque : SYS:Disk, sa fenêtre est la racine SYS:
+        move.l  sp,a1
+        movem.w d0-d1,-(sp)
+        moveq   #WB_PATHMAX-2,d0
+        bsr     wb_strcpy
+        movem.w (sp)+,d0-d1
+        lea     wb_sysname(pc),a3
+        bra.s   .ss_pos
+.ss_dr:
+        movem.w d0-d1,-(sp)
+        bsr     wb_window            ; a3 = fenêtre, a4 = fiche (d0 écrasé)
+        movem.w (sp)+,d0-d1
+        moveq   #0,d2                ; DO_Current* est relatif à l'intérieur du tiroir
+        move.b  WD_BORDERLEFT(a3),d2
+        sub.w   d2,d0
+        move.b  WD_BORDERTOP(a3),d2
+        sub.w   d2,d1
+        move.w  WBS_SELI(a5),d2
+        mulu    #WBS_NAMEMAX,d2
+        movem.w d0-d1,-(sp)
+        move.l  a4,-(sp)
+        lea     DR_PATH(a4),a0
+        lea     8(sp),a1
+        lea     DR_NAMES(a4,d2.l),a4
+        bsr     wb_join
+        move.l  (sp)+,a4
+        movem.w (sp)+,d0-d1
+        move.l  sp,a3                ; fenêtre éventuelle : celle de ce chemin
+.ss_pos:
+        ext.l   d0
+        ext.l   d1
+        move.l  d0,DO_CURRENTX(a2)
+        move.l  d1,DO_CURRENTY(a2)
+        move.l  DO_DRAWERDATA(a2),d5 ; d5 = dd_NewWindow | 0
+        beq.s   .ss_put
+        move.l  a3,d6                ; d6 = chemin dont on cherche la fenêtre
+        moveq   #1,d7
+.ss_find:
+        bsr     wb_window            ; a3 = fenêtre, a4 = fiche
+        beq.s   .ss_fnx
+        move.l  d6,a0
+        lea     DR_PATH(a4),a1
+        bsr     wb_streq
+        bne.s   .ss_fnx
+        move.l  d5,a1
+        move.l  WD_LEFTEDGE(a3),(a1)+        ; LeftEdge, TopEdge, Width, Height
+        move.l  WD_WIDTH(a3),(a1)
+        bra.s   .ss_put
+.ss_fnx:
+        addq.w  #1,d7
+        cmp.w   #WB_MAXDRAWERS,d7
+        bls.s   .ss_find
+.ss_put:
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a3
+        move.l  PR_WINDOWPTR(a3),-(sp)
+        move.l  #-1,PR_WINDOWPTR(a3)
+        lea     4(sp),a0
+        move.l  a2,a1
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_PUTDISKOBJECT(a6)
+        move.l  (sp)+,PR_WINDOWPTR(a3)
+.ss_ret:
+        lea     WB_PATHMAX(sp),sp
+        movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
 ; wb_discard(a5) : Workbench/Discard. L'icône sélectionnée d'un tiroir (pas le disque) : confirmation par
@@ -1946,10 +2166,10 @@ wbm_tmpl:
         WBITEM  wbm_i05,0,50,WBM_ON,wbs_discard
         WBITEM  wbm_i10,wbm_i11,0,WBM_OFF,wbs_trash
         WBITEM  wbm_i11,0,10,WBM_OFF,wbs_init
-        WBITEM  wbm_i20,wbm_i21,0,WBM_OFF,wbs_cleanup
+        WBITEM  wbm_i20,wbm_i21,0,WBM_ON,wbs_cleanup
         WBITEM  wbm_i21,wbm_i22,10,WBM_OFF,wbs_lasterr
         WBITEM  wbm_i22,wbm_i23,20,WBM_ON,wbs_redraw
-        WBITEM  wbm_i23,wbm_i24,30,WBM_OFF,wbs_snapshot
+        WBITEM  wbm_i23,wbm_i24,30,WBM_ON,wbs_snapshot
         WBITEM  wbm_i24,0,40,WBM_OFF,wbs_version
 wbm_end:
 WBM_SIZE        EQU wbm_end-wbm_tmpl
