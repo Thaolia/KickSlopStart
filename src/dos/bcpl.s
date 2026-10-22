@@ -24,6 +24,7 @@
                 xdef    bcpl_starthandler
                 xdef    bcpl_cli_register    ; slot de rn_TaskArray + pr_TaskNum du CLI initial
                 xdef    bcpl_execute         ; LVO Execute (dos_lib.s)
+                xdef    rt_fault             ; texte d'une erreur dos via C:FAULT (shell.s)
                 xref    rcli_seg
                 xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
                 xref    dos_flushout
@@ -2713,23 +2714,72 @@ g_deviceproc:
         lea     256(sp),sp
         BLEAVE
 
-; 104 fault(code) : code != 0 -> « Error code %N » (C:FAULT non lancé : simplification) ; Result2 := code.
+; 104 fault(code) (spec fault-v34 §2) : code != 0 -> le texte de l'erreur est écrit par C:FAULT (rt_fault).
 g_fault:
         BENTER
         move.l  d1,d0
-        bsr     rt_setr2
-        tst.l   d1
-        beq     .ft_ret
+        bsr     rt_fault
+        BLEAVE
+
+; rt_fault(d0 = code) : rien pour 0. Sinon C:FAULT est chargé sans requester (pr_WindowPtr = -1 le temps du
+; chargement, pas de liste Resident), pr_Result2 := code APRÈS le chargement (C:Fault y lit le code et n'écrit alors que
+; le texte et un saut de ligne), lancé par runcommand sur 400 longs sans arguments (sorties de l'appelant), puis
+; déchargé. Introuvable, ou runcommand rend -1 : « Error code <n> » et saut de ligne. pr_Result2 = code au retour.
+; Préserve tout.
+FT_STACK        EQU 400
+rt_fault:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  d0,d7                ; d7 = code
+        beq     .rf_ret
+        bsr     rt_this
+        move.l  PR_WINDOWPTR(a3),d6
+        moveq   #-1,d0
+        move.l  d0,PR_WINDOWPTR(a3)
+        move.l  #ft_cfault,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_LOADSEG(a6)
+        move.l  d0,d5                ; d5 = seglist | 0
+        bsr     rt_this
+        move.l  d6,PR_WINDOWPTR(a3)
+        move.l  d7,PR_RESULT2(a3)
+        tst.l   d5
+        beq.s   .rf_fallback
+        move.l  PR_GLOBVEC(a3),d0
+        beq.s   .rf_unload           ; sans vecteur global : pas de commande BCPL possible
+        move.l  d0,a2
+        movem.l d5/d7,-(sp)          ; runcommand se sert de d5-d7
+        lea     -EX_FRAME(sp),sp
+        move.l  sp,a1                ; frame BCPL de l'appelant fabriquée sur la pile
+        move.l  d5,d1
+        move.l  #FT_STACK,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        lea     .rf_back(pc),a6      ; le BLEAVE de runcommand revient par jmp (a6)
+        bra     g_runcommand
+.rf_back:
+        lea     EX_FRAME(sp),sp
+        move.l  d1,d6                ; d6 = code retour (-1 : pas lancée)
+        movem.l (sp)+,d5/d7
+        move.l  d5,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_UNLOADSEG(a6)
+        cmp.l   #-1,d6
+        bne.s   .rf_ret
+        bra.s   .rf_fallback
+.rf_unload:
+        move.l  d5,d1
+        move.l  DOS_DOSBASE,a6
+        jsr     DOS_LVO_UNLOADSEG(a6)
+.rf_fallback:
         WFOPEN
-        move.l  d1,d6
         lea     ft_msg(pc),a0
-.ft_lp:
+.rf_lp:
         move.b  (a0)+,d0
-        beq     .ft_num
+        beq     .rf_num
         bsr     wf_putc
-        bra     .ft_lp
-.ft_num:
-        move.l  d6,d1
+        bra     .rf_lp
+.rf_num:
+        move.l  d7,d1
         moveq   #0,d2
         moveq   #10,d3
         moveq   #0,d4
@@ -2737,8 +2787,11 @@ g_fault:
         moveq   #10,d0
         bsr     wf_putc
         WFCLOSE
-.ft_ret:
-        BLEAVE
+        bsr     rt_this
+        move.l  d7,PR_RESULT2(a3)
+.rf_ret:
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
 
 ; 108 locateobj(nom) / 123 lock(nom, mode) -> lock partagé | 0 ; 109 freeobj(lock).
 g_locateobj:
@@ -2809,6 +2862,8 @@ g_filesystemtask:
 
 ft_msg:
         dc.b    "Error code ",0
+ft_cfault:
+        dc.b    "C:FAULT",0
 ra_colon:
         dc.b    ": "
         EVEN

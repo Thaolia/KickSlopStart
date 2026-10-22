@@ -525,6 +525,16 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   noire, `type foo:x` puis clic Cancel) : même texte, mêmes boutons, même suite (« Can't open foo:x », « type failed
   returncode 20 »). Écarts : position de la fenêtre ; pas de FLUSH préalable au file-handler (rien en attente chez
   nous).
+  (5) **Redirections seulement avant les arguments** (shell.s, `sh_build_args`, spec §4.2) : après le premier
+  argument (ou guillemet), « > » et « < » sont des caractères ordinaires. Comparé à la vraie 1.3 : `echo "A" >ram:x`
+  -> « Invalid argument to ECHO » des deux côtés. Pas de « >> » en 1.3 (`>>x` = « > » vers un nom commençant par
+  « > »).
+  (6) **Textes d'erreur par C:FAULT** (bcpl.s, `rt_fault`, spec docs/analysis/fault-v34.md) : la globale 104
+  `fault(code)` charge C:FAULT sans requester (pr_WindowPtr = -1 le temps du chargement), pose pr_Result2 = code
+  APRÈS le chargement (C:Fault y lit le code et n'écrit alors que le texte), le lance par runcommand (400 longs, sans
+  arguments, sorties de l'appelant) puis le décharge ; repli « Error code <n> » si introuvable. Le shell s'en sert
+  aussi pour « Unable to load X: ». Comparé à la vraie 1.3 : `copy zzz to ram:` -> « Can't open zzz for input -
+  object not found » des deux côtés ; disque sans C:Fault -> « Error code 121 ».
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

@@ -23,6 +23,7 @@
                 xref    dos_boot_assigns     ; dos/dos_lib.s (assigns + volume + répertoire courant)
                 xref    bcpl_call            ; dos/bcpl.s (A5/A6 des commandes BCPL)
                 xref    bcpl_ret
+                xref    rt_fault             ; bcpl.s : texte d'une erreur dos (C:FAULT)
                 xref    bcpl_cli_setup
                 xref    bcpl_cli_register
 
@@ -819,7 +820,8 @@ sh_cli_ptr:
                 rts
 
 ; sh_build_args(a1 = arguments bruts, d1 = longueur, a2 = destination SH_ARGMAX) -> d0 = longueur écrite (avec '\n').
-; Copie jusqu'à CR/LF/NUL, retire les redirections (« >x », « <x », ou « > x », en début de mot hors guillemets : noms rangés dans
+; Copie jusqu'à CR/LF/NUL, retire les redirections (« >x », « <x », ou « > x », en début de mot hors guillemets et AVANT
+; le premier argument, comme le CLI 1.3 — ensuite « > » et « < » sont des caractères d'argument ; noms rangés dans
 ; XF_ROUT / XF_RIN du même cadre que la destination, qui est XF_ARGS) et le commentaire « ; » hors guillemets ; termine
 ; par '\n' puis NUL. Clobbe d0-d4/a0-a3.
 sh_build_args:
@@ -829,7 +831,7 @@ sh_build_args:
                 clr.b   XF_ROUT-XF_ARGS(a1)
                 moveq   #0,d2                ; d2 = octets écrits
                 moveq   #1,d3                ; d3 != 0 : début de mot
-                moveq   #0,d4                ; bit0 = entre guillemets, bit1 = saute une redirection
+                moveq   #0,d4                ; bit0 = entre guillemets, bit1 = saute une redirection, bit2 = argument vu
 .ba_lp:
                 tst.l   d1
                 ble     .ba_end
@@ -863,7 +865,7 @@ sh_build_args:
                 bne.s   .ba_noquote
                 bchg    #0,d4
                 moveq   #0,d3
-                bra.s   .ba_put
+                bra.s   .ba_arg
 .ba_noquote:
                 btst    #0,d4
                 bne.s   .ba_plain
@@ -871,6 +873,8 @@ sh_build_args:
                 beq.s   .ba_end              ; commentaire
                 tst.l   d3
                 beq.s   .ba_plain
+                btst    #2,d4
+                bne.s   .ba_plain            ; après un argument : plus de redirection
                 cmp.b   #'>',d0
                 beq.s   .ba_redir
                 cmp.b   #'<',d0
@@ -887,8 +891,11 @@ sh_build_args:
 .ba_plain:
                 moveq   #0,d3
                 cmp.b   #' ',d0
-                bne.s   .ba_put
+                bne.s   .ba_arg
                 moveq   #1,d3
+                bra.s   .ba_put
+.ba_arg:
+                bset    #2,d4
 .ba_put:
                 cmp.l   #SH_ARGMAX-2,d2
                 bhs     .ba_lp               ; plein : le reste est ignoré
@@ -1397,13 +1404,15 @@ sh_report:
                 bsr     sh_puts
                 move.l  a2,a0
                 bsr     sh_puts
-                lea     sh_codemsg(pc),a0
+                lea     sh_colsp(pc),a0
                 bsr     sh_puts
                 move.l  d2,d0
-                bsr     sh_putdec
+                jsr     rt_fault             ; texte de l'erreur (C:FAULT), saut de ligne compris
+                bra.s   .rp_stop
 .rp_end:
                 lea     sh_nl(pc),a0
                 bsr     sh_puts
+.rp_stop:
                 moveq   #0,d0
                 tst.l   d3
                 bne.s   .rp_ret
@@ -1470,7 +1479,7 @@ sh_putdec:
 
 sh_unkmsg:      dc.b    "Unknown command ",0
 sh_loadmsg:     dc.b    "Unable to load ",0
-sh_codemsg:     dc.b    ": Error code ",0
+sh_colsp:       dc.b    ": ",0
 sh_failmsg:     dc.b    " failed returncode ",0
 sh_nl:          dc.b    10,0
                 even
