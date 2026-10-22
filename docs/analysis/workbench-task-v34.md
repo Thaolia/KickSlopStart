@@ -280,6 +280,7 @@ rescan disques (§3.3), puis **AvailMem(0)** ; si la valeur change, le titre d'�
 par **RawDoFmt** avec `"Workbench release 1.2.  %ld free memory"` (tampon global +$3DA) et appliqué
 aux fenêtres (SetWindowTitles, que LoadWB 1.3.3 a détourné). Puis renvoi de la requête :
 `tv_secs = 5`, `tv_micro = 0`, **SendIO** (asynchrone, réponse sur le port A).
+Détail (drapeau « message affiché », valeur initiale −1, fenêtres concernées) : voir §6.4.
 
 ### 3.5 Boucle principale ($FEE18E) [O]
 
@@ -383,6 +384,220 @@ non nul ⇒ abandon (cohérent avec la correction « TRUE = abandon » de l'éta
 
 ---
 
+## 6. Menus Version / Last Error et titre d'écran
+
+Sources : ROM (module wb, repères ci-dessous) et `c:LoadWB` de `wb133.adf` (hunk de code n° 4,
+164 octets = le remplaçant de SetWindowTitles) ; `libs:version.library` du même disque (en-tête
+`versionlib 34.34 (05 OCT 1990)`). Globales = bloc de $4F2 octets (§2.2), adressé ci-dessous
+« G+off ».
+
+### 6.1 État partagé : deux tampons de titre et un octet de drapeaux [O]
+
+| Globale | Rôle |
+|---|---|
+| **G+$3DA** | tampon du **titre « mémoire »** (texte produit par RawDoFmt au tic, §6.4). Nul au départ (bloc MEMF_CLEAR). C'est aussi le titre d'écran passé à l'ouverture de **chaque** fenêtre du Workbench (`SetWindowTitles(win, nom, G+$3DA)`, §3.2). |
+| **G+$2EE** | pointeur du tampon du **dernier message** (erreurs, Version…). 0 au départ ; alloué paresseusement au premier message : **AllocMem(80, 0)** (MEMF_ANY, non effacé), et s'il échoue, repli sur un tampon interne G+$160. Jamais libéré. Pas de borne de longueur au formatage (80 octets). |
+| **G+$2F2** | dernière valeur AvailMem affichée (comparaison du tic). |
+| **G+$22** (octet de drapeaux) | bit 0 = Workbench « fermé » (CloseWorkBench, §4.1) ; **bit 1 = titre verrouillé** (pendant la saisie du Rename) ; **bit 2 = « un message est affiché »**. |
+
+### 6.2 Routine commune « afficher un titre » (repère $FEBA06) [O]
+
+Signature (convention C, pile) : `ShowTitle(fmt, arg1, arg2, arg3, arg4, arg5)`. Comportement :
+
+1. **`fmt == G+$3DA` (restauration du titre mémoire)** : si bit 1 (verrou) ⇒ rien. Sinon, si bit 2
+   est **clair** ⇒ rien. Sinon bit 2 := 0 et le titre mémoire est appliqué (étape 4 avec G+$3DA).
+2. **Autre `fmt` (message)** : si bit 2 est **déjà mis** ⇒ **rien** (le premier message affiché
+   gagne jusqu'à la prochaine restauration). Sinon bit 2 := 1 ; obtenir le tampon G+$2EE (allocation
+   au besoin, §6.1).
+3. Si `fmt` **diffère** du tampon de message : **DisplayBeep(écran WB)** (écran mémorisé en G+$4A4),
+   puis **RawDoFmt(fmt, &arg1, putchar « stocker l'octet », tampon)** (arguments = mots longs
+   consécutifs sur la pile). Si `fmt` **est** le tampon lui-même : ni bip ni reformatage.
+4. Application : pour **chaque objet de la liste maîtresse G+$24** (liste où la racine `"Workbench"`
+   est ajoutée par AddTail, §3.1 #4) dont le pointeur de données de tiroir (objet+$4C) est non nul
+   **et** dont la fenêtre (données+$1A4) est non nulle :
+   **`SetWindowTitles(fenêtre, (char *)−1, tampon)`** — titre de fenêtre **inchangé**, titre
+   d'**écran** = tampon. Donc **backdrop + toutes les fenêtres de tiroir/disque ouvertes**.
+
+Restauration du titre mémoire (`ShowTitle(G+$3DA)`) appelée : **au début de tout MENUPICK** (avant
+le dispatch de l'élément, $FEF37C), sur **SELECTDOWN** (clic gauche, $FEDD48), par le tic (§6.4),
+et à l'entrée du Rename (sans effet, verrou mis).
+
+### 6.3 Special/Version (code menu $F882 = menu 2, élément 4, pas de sous-élément) [O]
+
+1. (Restauration du titre mémoire, §6.2, commune à tout MENUPICK : efface le bit 2.)
+2. **Version Kickstart** : lue dans l'**en-tête de la ROM**, pas dans une base de librairie :
+   base ROM = `$1000000 − (longmot en $FFFFEC = taille ROM, $00040000)` = $FC0000 ; mots non
+   signés en **base+$0C** (= 34) et **base+$0E** (= 5), étendus en longs. (exec.library, elle,
+   est en 34.2 : ce n'est **pas** `SysBase->lib_Version/lib_Revision`.)
+3. **Version Workbench** : **OpenLibrary("version.library", 0)** ; si succès, mots non signés
+   **lib_Version (+$14)** et **lib_Revision (+$16)** de **cette base**, puis **CloseLibrary**. Si
+   l'ouverture échoue : **−1 et −1** (affichés « -1.-1 »). Pas de constante interne : avec le
+   `libs:version.library` de WB 1.3.3 (34.34) on obtient « 34.34 » ; avec un autre disque, autre
+   valeur. OpenLibrary peut charger la librairie depuis LIBS: (ramlib) [D, contrat exec].
+4. **`ShowTitle("Kickstart version %ld.%ld. Workbench version %ld.%ld", 34, 5, wbVer, wbRev)`**
+   ⇒ bip d'écran, formatage dans le tampon G+$2EE, `SetWindowTitles(w, −1, tampon)` sur toutes
+   les fenêtres WB ouvertes (§6.2 étape 4). Le titre de fenêtre n'est pas touché.
+5. **Persistance** : le bit 2 reste mis ⇒ le **tic de 5 s ne met plus à jour le titre mémoire**
+   (§6.4) ⇒ le texte Version reste affiché **indéfiniment**, quelle que soit l'évolution de la
+   mémoire, **jusqu'au prochain clic gauche (SELECTDOWN) ou au prochain MENUPICK** dans une fenêtre
+   du Workbench. Ces événements ré-appliquent le contenu **courant** de G+$3DA (la valeur mémoire
+   formatée au dernier tic qui a écrit, donc potentiellement périmée jusqu'au tic suivant). [O]
+   Le « drapeau qui bloque la mise à jour » est donc le **bit 2 de G+$22** (et le bit 1 pendant un
+   Rename).
+
+### 6.4 Tic de 5 s : détail du titre mémoire (complète §3.4) [O]
+
+- À l'ouverture du timer (§3.1 #10) : **G+$2F2 := −1**, puis premier tic immédiat. Avant ce
+  premier tic, le titre d'écran passé aux fenêtres est **G+$3DA vide** (chaîne nulle).
+- À chaque tic : si bit 0 (fermé) ⇒ ni rescan ni titre. Sinon rescan disques ; puis **si bit 2
+  est mis ⇒ pas de mise à jour du titre** (message affiché). Sinon **AvailMem(0)** (MEMF_ANY,
+  total libre) comparé à **G+$2F2** ; si **différent** : bit 2 := 1, G+$2F2 := valeur,
+  **RawDoFmt("Workbench release 1.2.  %ld free memory", valeur) → G+$3DA**, puis
+  `ShowTitle(G+$3DA)` (qui efface le bit 2 et applique à **toutes** les fenêtres WB ouvertes,
+  §6.2 étape 4 — pas seulement la backdrop). Égal ⇒ rien n'est ré-appliqué.
+- Rename : à l'ouverture de sa fenêtre de saisie, bit 1 := 1, **G+$2F2 := 0** (force le prochain
+  rafraîchissement), copie de `"Enter the new name.  Press return when done."` dans G+$3DA,
+  appliquée comme titre d'écran à la fenêtre de saisie ; à la fin, bit 1 := 0 et un tic est
+  exécuté immédiatement (sans renvoi de requête timer) qui réécrit le titre mémoire. [O]
+
+### 6.5 Special/Last Error (code menu $F822 = menu 2, élément 1) [O]
+
+1. Restauration du titre mémoire (début de MENUPICK, bit 2 := 0).
+2. **`ShowTitle(*(G+$2EE))`** : le format passé **est le tampon du dernier message lui-même** ⇒
+   **pas de bip, pas de reformatage** ; le **dernier message affiché** (quel qu'il soit : erreur,
+   texte Version, « cannot be moved… », etc.) est ré-appliqué comme titre d'écran de toutes les
+   fenêtres WB, et le bit 2 est remis (persistance identique à §6.3 point 5). Ce n'est **pas** un
+   code d'erreur relu : c'est le texte déjà formaté au moment de l'erreur. Ex. : Version puis Last
+   Error ⇒ réaffiche « Kickstart version 34.5. Workbench version 34.34 ».
+3. Aucun message encore produit (G+$2EE = 0) : le tampon est alloué à ce moment, puis, le format
+   (0) différant du tampon, **bip** + RawDoFmt avec un format à l'adresse 0 [O] ⇒ en pratique un
+   titre vide si l'octet en $0 vaut 0 [S]. Une réimplémentation peut afficher une chaîne vide.
+4. Origine des messages d'erreur [O] : une routine d'erreur prend (index d'action, nom) ; elle
+   formate dans un tampon local de 80 octets l'action choisie dans la table ci-dessous (avec le nom
+   pour `%s`), puis appelle `ShowTitle("Error while %s: %ld", action, IoErr())` — le code est
+   **dos IoErr()** au moment de l'erreur. Table (index → texte) : 0 `"examining directory"`,
+   1 `"accessing %s"`, 2 `"opening %s"`, 3 `"reading"`, 4 `"writing"`, 5 `"moving %s"`,
+   6 `"removing %s"`, 7 `"examining %s"`, 8 `"writing %s"`. Ex. : `"Error while opening Foo: 205"`.
+   Autres messages directs via ShowTitle (non détaillés ici) : `"'%s' cannot be moved out of its
+   window"`, `"Do not use '%lc' in names"`, `"Cannot read info file %s"`.
+
+### 6.6 Remplaçant de SetWindowTitles installé par LoadWB 1.3.3 [O WB]
+
+Mise en place : LoadWB alloue **162 octets MEMF_PUBLIC|MEMF_CLEAR** (jamais libérés), y copie le
+hunk n° 4, fait **SetFunction(IntuitionBase, −276, copie+4)** et range l'ancien vecteur dans le
+premier long de la copie (le remplaçant finit en sautant à l'ancien vecteur, A0/A1 préservés,
+**A2 éventuellement substitué**). Avant la copie, deux chaînes du hunk sont **désobfusquées en
+place** : chaque octet est **XOR $9E** jusqu'à l'octet 0 (le 0 terminal n'est pas chiffré).
+
+Chaînes du patch (en clair) :
+- référence non chiffrée : `"Workbench release 1.2."` (22 octets) ;
+- chiffrée 1 : `"We made Amiga, T"` (16 octets) ;
+- chiffrée 2 : `" Still a Champion"` (17 octets, espace initial).
+
+Comportement observable (seul le **titre d'écran**, argument A2, est examiné ; le titre de fenêtre
+n'est jamais modifié) :
+1. A2 = NULL ou −1 ⇒ appel original inchangé.
+2. Si l'octet **A2[20] == '2'** **et** la chaîne **commence par** `"Workbench release 1.2."` (22
+   octets comparés) ⇒ la chaîne de l'appelant est **modifiée en place** : A2[17] := `'.'`,
+   A2[18..21] := 4 espaces. `"Workbench release 1.2.  884392 free memory"` devient
+   **`"Workbench release.      884392 free memory"`** (« release. » suivi de **6 espaces** : les 4
+   écrits + les 2 du format), puis appel original avec ce même pointeur. Comme le WB réécrit
+   G+$3DA par RawDoFmt à chaque changement de mémoire, la retouche est refaite à chaque tic qui
+   écrit ; un second passage sur une chaîne déjà retouchée ne la reconnaît plus (A2[20] = espace)
+   et la laisse telle quelle.
+3. Sinon, si la chaîne **commence par** `"We made Amiga, T"` ⇒ A2 est **remplacé** par le pointeur
+   vers `" Still a Champion"` (le titre d'écran affiché devient exactement cette chaîne).
+4. Sinon ⇒ inchangé. **Aucune** transformation de « 34.xx » : le texte Version
+   (`"Kickstart version …"`) passe intact ; le « 34.34 » vient de version.library (§6.3), pas du
+   patch.
+
+Conséquence pour notre ROM [D] : pour obtenir avec ce LoadWB le même affichage que la vraie ROM,
+il suffit de passer à SetWindowTitles un titre d'écran **commençant exactement par**
+`"Workbench release 1.2."` avec un `'2'` en position 20, dans un tampon **inscriptible** (le patch
+écrit dedans), et de formater Version depuis l'en-tête ROM + version.library. Remarque : le relevé
+boîte noire « `Workbench release.    884392` » (4 espaces) est vraisemblablement un comptage visuel ;
+le calcul exact donne 6 espaces [D].
+
+### 6.7 Vecteurs de test [O sauf mention]
+
+| Action | Titre d'écran attendu (avec LoadWB 1.3.3 et version.library 34.34) |
+|---|---|
+| Démarrage, tic | `"Workbench release.      <n> free memory"` sur backdrop et tiroirs ouverts |
+| Special/Version | bip ; `"Kickstart version 34.5. Workbench version 34.34"`, figé (tics ignorés) |
+| … puis 10 s sans clic | inchangé |
+| … puis clic gauche dans une fenêtre WB | titre mémoire (valeur du dernier tic), mises à jour reprises |
+| Special/Last Error après Version | même texte Version, **sans** bip |
+| Special/Version sans version.library | `"Kickstart version 34.5. Workbench version -1.-1"` |
+
+### 6.8 Activation des fenêtres
+
+**Côté Workbench [O]**
+
+- Le module n'a que **deux** appels à OpenWindow : la routine générique des fenêtres WB (backdrop
+  `$02000B40`, tiroirs/disques `$0200027F`) et la **fenêtre de saisie du Rename**. Les seules
+  constantes de Flags de fenêtre WB sont ces deux-là : **ni la backdrop ni les tiroirs n'ont
+  ACTIVATE ($1000)**, et rien n'ajoute ce bit avant l'ouverture.
+- La **fenêtre Rename** est la **seule ouverte avec ACTIVATE** : NewWindow Left 60, Top 100,
+  Width 504, Height 11, DetailPen 3, BlockPen 1, IDCMPFlags 0 à l'ouverture, **Flags = $1000**
+  (ACTIVATE seul), FirstGadget = le gadget chaîne du nom. Ensuite `wd_UserPort := port B` et
+  **ModifyIDCMP(win, $40040)** (ACTIVEWINDOW | GADGETUP).
+- **ActivateWindow (−450)** : **un seul site d'appel**, dans la boucle modale du Rename (qui lit
+  le port B tant que la saisie n'est pas finie) :
+  - message **ACTIVEWINDOW ($40000) venant d'une autre fenêtre WB** que celle du Rename ⇒
+    **ActivateWindow(fenêtre Rename)** : le WB reprend l'activation. Les autres messages des
+    autres fenêtres sont mis de côté puis **remis dans le port B** à la fin de la saisie (sous
+    Forbid). [O ; le filtre exact des messages mis de côté est D]
+  - message **ACTIVEWINDOW de la fenêtre Rename elle-même** ⇒ **ActivateGadget(gadget, fenêtre
+    Rename, NULL)** (−462) puis ReplyMsg : le curseur passe dans le champ texte.
+  - tout autre message de la fenêtre Rename (GADGETUP, Return) termine la boucle.
+- Le Workbench **n'appelle jamais ActivateWindow** pour la backdrop ou un tiroir : ni à
+  l'ouverture de la backdrop, ni à la fermeture d'un tiroir, ni sur DISKINSERTED, ni au tic, ni
+  à la fin du Rename (la fermeture de la fenêtre Rename relève de la règle intuition ci-dessous).
+
+**Côté intuition 34.3 (ROM) : règle d'activation automatique**
+
+Champs publics de `struct Window` utilisés : **Parent +$42**, **Descendant +$46**,
+WScreen +$2E. Champs publics de `struct Screen` : FirstWindow +$04. Champs publics
+d'IntuitionBase : **ActiveWindow +$34**, ActiveScreen +$38.
+
+- **OpenWindow** [O] :
+  - la nouvelle fenêtre est ajoutée en **tête** de `Screen->FirstWindow` ;
+  - **Parent := ActiveWindow courante** (éventuellement NULL) ;
+  - la fenêtre est insérée dans la chaîne Parent/Descendant juste après cette fenêtre active
+    (`new->Descendant := active->Descendant`, avec le chaînage arrière correspondant ;
+    `active->Descendant := new`) ;
+  - elle n'est activée **que si NewWindow.Flags contient ACTIVATE**. **Pas de règle « aucune
+    fenêtre active ⇒ activer »** à l'ouverture, ni de cas particulier BACKDROP/WBENCHWINDOW.
+- **CloseWindow** [O] :
+  - la fenêtre est retirée de la chaîne Parent/Descendant : son Descendant hérite de son
+    Parent, et inversement ;
+  - elle est retirée de la liste des fenêtres de l'écran [D pour l'ordre exact] ;
+  - **si c'était l'ActiveWindow**, la nouvelle fenêtre active est :
+    1. son **Parent** (la fenêtre qui était active quand elle a été ouverte, ou, si celle-ci
+       a été fermée entre-temps, l'ancêtre qui a hérité du lien) ;
+    2. à défaut, la **première fenêtre de son écran** (`Screen->FirstWindow`, la plus
+       récemment ouverte qui reste) ;
+    3. à défaut, **ActiveWindow := NULL**.
+  - Quand une fenêtre est trouvée, ActiveWindow et ActiveScreen sont mis à jour et la routine
+    interne d'activation est appelée, la même que pour ActivateWindow. La nouvelle fenêtre
+    active reçoit donc ACTIVEWINDOW si elle l'a demandé [D].
+  - Si la fenêtre fermée n'était pas active, rien ne change.
+- **ActivateWindow** : appelle directement cette routine interne d'activation (mode 1). [O]
+
+**Application au cas observé** [D, cohérent avec la boîte noire] :
+
+1. Au boot, la fenêtre du CLI initial est active.
+2. LoadWB lance le WB, qui ouvre la backdrop sans ACTIVATE. Elle est donc ajoutée en tête de
+   FirstWindow, avec **Parent = la fenêtre CLI**.
+3. `endcli` ferme la fenêtre CLI, qui est active. Son Parent est NULL : c'était la première
+   fenêtre ouverte. Intuition prend donc **FirstWindow = la backdrop** et l'active.
+4. Le bouton droit montre alors les menus du WB sans aucun clic.
+
+Pour obtenir ce comportement, notre intuition doit seulement reproduire la règle de CloseWindow.
+Le module workbench n'a rien à activer lui-même.
+
+---
+
 ## Relecture clean-room
 
 - [x] Aucun listing, aucune suite d'instructions transcrite ni paraphrasée ligne à ligne : seules des
@@ -400,3 +615,13 @@ non nul ⇒ abandon (cohérent avec la correction « TRUE = abandon » de l'éta
 - [x] Les éléments disque (LoadWB) sont limités à l'interface (message, seglist, SetFunction) déjà
   connue de la piste implémentation.
 - [x] Correction signalée de `boot-sequence.md` (strap ne lance pas workbench.task).
+- [x] §6 (relu) : uniquement des chaînes, des offsets de globales/structures publiques
+  (lib_Version +$14, lib_Revision +$16, en-tête ROM +$0C/+$0E), des appels de librairie
+  (RawDoFmt, DisplayBeep, SetWindowTitles, OpenLibrary/CloseLibrary, AvailMem, IoErr, SetFunction)
+  et des règles de comportement (drapeaux, conditions d'affichage). Le patch LoadWB est décrit par
+  son **effet** sur la chaîne (comparaison de préfixe, octets réécrits, substitution de pointeur)
+  et la transformation XOR $9E des chaînes — aucune suite d'instructions recopiée. La §3.4 reste
+  valable ; §6.4 la précise (bit 2, G+$2F2 = −1 initial).
+- [x] §6.8 (relu) : règles d'activation décrites par leur effet (champs publics Window/Screen/
+  IntuitionBase, conditions, ordre de repli Parent → FirstWindow → NULL), aucune séquence
+  d'instructions d'intuition ni du workbench recopiée.

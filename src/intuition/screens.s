@@ -46,6 +46,8 @@
                 xdef    it_startinput
                 xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
+                xdef    intuition_SetWindowTitles
+                xdef    intuition_DisplayBeep
                 xdef    intuition_WindowLimits
                 xdef    intuition_WindowToFront
                 xdef    intuition_WindowToBack
@@ -242,6 +244,87 @@ sc_free:
         move.l  a3,a1
         move.l  #SCX_SIZE,d0
         jmp     LVO_FREEMEM(a6)
+
+; wn_scrtitle(a3 = fenêtre devenue active, a5 = IntuitionBase) : la barre de son écran montre wd_ScreenTitle, ou le titre
+; par défaut de l'écran s'il est nul ; toujours redessinée (un même tampon peut avoir changé de contenu). Préserve tout.
+wn_scrtitle:
+        movem.l d0-d3/a0-a1/a3/a6,-(sp)
+        move.l  WD_SCREENTITLE(a3),d1
+        move.l  WD_WSCREEN(a3),d0
+        beq.s   .st_ret
+        move.l  d0,a3
+        tst.l   d1
+        bne.s   .st_set
+        move.l  SC_DEFAULTTITLE(a3),d1
+.st_set:
+        move.l  d1,SC_TITLE(a3)
+        bsr     sc_drawbar
+.st_ret:
+        movem.l (sp)+,d0-d3/a0-a1/a3/a6
+        rts
+
+; intuition_SetWindowTitles(fenêtre a0, titre a1, titre d'écran a2, a6 = IntuitionBase) : -1 laisse le titre
+; inchangé. Nouveau titre de fenêtre : bordure redessinée. Nouveau titre d'écran : montré tout de suite si la fenêtre
+; est active, ou si aucune ne l'est.
+intuition_SetWindowTitles:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
+        cmp.l   #-1,a1
+        beq.s   .swt_scr
+        move.l  a1,WD_TITLE(a3)
+        move.l  a2,-(sp)
+        bsr     wn_border
+        move.l  (sp)+,a2
+.swt_scr:
+        cmp.l   #-1,a2
+        beq.s   .swt_ret
+        move.l  a2,WD_SCREENTITLE(a3)
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq.s   .swt_show
+        cmp.l   d0,a3
+        bne.s   .swt_ret
+.swt_show:
+        bsr     wn_scrtitle
+.swt_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; intuition_DisplayBeep(écran a0 | 0 = écran de tête, a6 = IntuitionBase) : signal visuel des 1.x, la couleur 0 de
+; l'écran complémentée pendant BEEP_FRAMES trames puis rétablie (attente active sur la position du faisceau).
+BEEP_FRAMES     EQU 6
+intuition_DisplayBeep:
+        movem.l d3/a2/a5,-(sp)
+        move.l  a6,a5
+        move.l  a0,d0
+        bne.s   .bp_scr
+        move.l  IB_FIRSTSCREEN(a5),d0
+        beq.s   .bp_ret
+.bp_scr:
+        move.l  d0,a2
+        move.l  SCX_COLORMAP+cm_ColorTable(a2),a0
+        eor.w   #$0FFF,(a0)
+        bsr     it_remake
+        moveq   #BEEP_FRAMES-1,d3
+.bp_frame:
+        move.l  $DFF004,d0           ; VPOSR/VHPOSR : ligne = bits 16..8
+        lsr.l   #8,d0
+        and.w   #$1FF,d0
+        cmp.w   #200,d0
+        blo.s   .bp_frame
+.bp_top:
+        move.l  $DFF004,d0
+        lsr.l   #8,d0
+        and.w   #$1FF,d0
+        cmp.w   #200,d0
+        bhs.s   .bp_top
+        dbra    d3,.bp_frame
+        move.l  SCX_COLORMAP+cm_ColorTable(a2),a0
+        eor.w   #$0FFF,(a0)          ; second complément = couleur d'origine (it_remake ne garde pas d2/d3)
+        bsr     it_remake
+.bp_ret:
+        movem.l (sp)+,d3/a2/a5
+        rts
 
 ; sc_drawbar(a3 = Screen, a5 = IntuitionBase) : barre de titre (lignes 0..BarHeight) au stylo BlockPen, titre au
 ; stylo DetailPen, deux gadgets de profondeur à droite. Clobbe d0-d3/a0/a1/a6.
@@ -559,7 +642,7 @@ intuition_OpenWindow:
         move.w  NW_MAXWIDTH(a2),WD_MAXWIDTH(a3)
         move.w  NW_MAXHEIGHT(a2),WD_MAXHEIGHT(a3)
         move.l  NW_FLAGS(a2),d0
-        or.l    #WINDOWACTIVE,d0
+        and.l   #~WINDOWACTIVE,d0    ; posé seulement si la fenêtre est activée (ACTIVATE)
         move.l  d0,WD_FLAGS(a3)
         move.l  NW_TITLE(a2),WD_TITLE(a3)
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
@@ -675,15 +758,32 @@ intuition_OpenWindow:
         move.l  a3,IL_WINDOW(a0)
         move.l  IL_RP(a0),WD_RPORT(a3)
         bsr     it_relist
-        btst    #0,WD_FLAGS+2(a3)    ; une fenêtre BACKDROP ne devient pas active
-        bne.s   .ow_linked
         jsr     LVO_FORBID(a6)
-        move.l  IB_ACTIVEWINDOW(a5),d0
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; chaîne Parent/Descendant : juste après la fenêtre active (intuition 34.3)
+        move.l  d0,WD_PARENT(a3)
+        beq.s   .ow_nopar
+        move.l  d0,a0
+        move.l  WD_DESCENDANT(a0),d1
+        move.l  d1,WD_DESCENDANT(a3)
+        move.l  a3,WD_DESCENDANT(a0)
+        tst.l   d1
+        beq.s   .ow_nopar
+        move.l  d1,a0
+        move.l  a3,WD_PARENT(a0)
+.ow_nopar:
+        btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE : seule une fenêtre qui le demande devient active
         beq.s   .ow_noact
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq.s   .ow_act
         move.l  d0,a0
         and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
-.ow_noact:
+.ow_act:
+        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
         move.l  a3,IB_ACTIVEWINDOW(a5)
+        jsr     LVO_PERMIT(a6)
+        bsr     wn_scrtitle
+        bra.s   .ow_linked
+.ow_noact:
         jsr     LVO_PERMIT(a6)
 .ow_linked:
         bsr     wn_border
@@ -817,7 +917,7 @@ intuition_CloseWindow:
         move.l  a6,a5
         move.l  a0,a3
         move.l  a0,d0
-        beq.s   .cw_ret
+        beq     .cw_ret
         bsr     gad_forget           ; un gadget de cette fenêtre restait enfoncé
         move.l  WD_WSCREEN(a3),a4    ; a4 = écran
         move.l  IB_LAYERSBASE(a5),a6
@@ -826,9 +926,40 @@ intuition_CloseWindow:
         jsr     LVO_DELETELAYER(a6)
         move.l  ($4).w,a6
         bsr     it_relist
+        jsr     LVO_FORBID(a6)
+        move.l  WD_PARENT(a3),d2     ; retirée de la chaîne Parent/Descendant
+        move.l  WD_DESCENDANT(a3),d0
+        tst.l   d2
+        beq.s   .cw_np
+        move.l  d2,a0
+        move.l  d0,WD_DESCENDANT(a0)
+.cw_np:
+        tst.l   d0
+        beq.s   .cw_nd
+        move.l  d0,a0
+        move.l  d2,WD_PARENT(a0)
+.cw_nd:
+        jsr     LVO_PERMIT(a6)
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .cw_act
-        clr.l   IB_ACTIVEWINDOW(a5)
+        clr.l   IB_ACTIVEWINDOW(a5)  ; était active : son Parent, sinon la première fenêtre de l'écran, sinon aucune
+        tst.l   d2
+        bne.s   .cw_new
+        move.l  SC_FIRSTWINDOW(a4),d2
+        bne.s   .cw_new
+        movem.l a3/a6,-(sp)          ; plus de fenêtre : la barre reprend le titre de l'écran
+        move.l  a4,a3
+        move.l  SC_DEFAULTTITLE(a3),SC_TITLE(a3)
+        bsr     sc_drawbar
+        movem.l (sp)+,a3/a6
+        bra.s   .cw_act
+.cw_new:
+        move.l  a3,-(sp)
+        move.l  d2,a3
+        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
+        move.l  a3,IB_ACTIVEWINDOW(a5)
+        bsr     wn_scrtitle
+        move.l  (sp)+,a3
 .cw_act:
         bsr     it_refresh
         move.l  ($4).w,a6
@@ -1488,6 +1619,7 @@ it_dobutton:
 .db_set:
         or.l    #WINDOWACTIVE,WD_FLAGS(a3)
         move.l  a3,IB_ACTIVEWINDOW(a5)
+        bsr     wn_scrtitle
         btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : aucun gadget système
         bne     .db_mb
         cmp.b   #WD_TBARH,WD_BORDERTOP(a3)

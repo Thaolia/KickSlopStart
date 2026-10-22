@@ -37,6 +37,8 @@
                 xref    intuition_MoveWindow
                 xref    intuition_ReportMouse
                 xref    intuition_SizeWindow
+                xref    intuition_SetWindowTitles
+                xref    intuition_DisplayBeep
                 xref    intuition_WindowLimits
                 xref    intuition_SetMenuStrip   ; menus.s
                 xref    intuition_ClearMenuStrip
@@ -79,7 +81,8 @@ intuition_vectors:
         dc.l    intuition_null           ; 10 : LVO -60 ClearPointer (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
-        dcb.l   4,intuition_null         ; 13..16 : LVO -78..-96 (non impl. : DisplayAlert -90 inclus)
+        dcb.l   3,intuition_null         ; 13..15 : LVO -78..-90 (non impl. : DisplayAlert -90 inclus)
+        dc.l    intuition_DisplayBeep    ; 16 : LVO -96 DisplayBeep(écran a0 | 0)
         dc.l    intuition_DoubleClick    ; 17 : LVO -102 DoubleClick(s1 d0, µs1 d1, s2 d2, µs2 d3)
         dc.l    intuition_DrawBorder     ; 18 : LVO -108 DrawBorder(rp a0, border a1, x d0, y d1)
         dc.l    intuition_DrawImage      ; 19 : LVO -114 DrawImage(rp a0, image a1, x d0, y d1)
@@ -103,7 +106,9 @@ intuition_vectors:
         dc.l    intuition_ReportMouse    ; 39 : LVO -234 ReportMouse(drapeau d0, fenêtre a0)
         dcb.l   4,intuition_null         ; 40..43 : LVO -240..-258 (non impl.)
         dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
-        dcb.l   3,intuition_null         ; 45..47 : LVO -270..-282 (non impl.)
+        dc.l    intuition_null           ; 45 : LVO -270 SetPointer (non impl.)
+        dc.l    intuition_SetWindowTitles ; 46 : LVO -276 SetWindowTitles(fenêtre a0, titre a1, titre d'écran a2)
+        dc.l    intuition_null           ; 47 : LVO -282 ShowTitle (non impl.)
         dc.l    intuition_SizeWindow     ; 48 : LVO -288 SizeWindow(fenêtre a0, dx d0, dy d1)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
         dc.l    intuition_null           ; 50 : LVO -300 (non impl.)

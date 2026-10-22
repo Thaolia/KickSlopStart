@@ -817,7 +817,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     chez nous : relectures physiques de pistes, comme la 1.3). Heure système prise sur le disque de boot
     (comme la 1.3). Libérations mémoire fidèles : RemTask ne libère que `tc_MemEntry`, FreeEntry lit A0, Execute ne
     fuit plus. Le boot WB plantait si l'heure était posée avant SetClock ; traceur MEMTRACK muet sur tout le boot WB.
-    Clean Up et Snapshot du Workbench faits (Clean Up identique à la vraie 1.3 sur SYS:).
+    Clean Up et Snapshot du Workbench faits (Clean Up identique à la vraie 1.3 sur SYS:). Titre d'écran (mémoire
+    libre), Version et Last Error faits ; règle d'activation des fenêtres d'intuition 34.3. Reste : messages
+    d'erreur « Error while ... » du Workbench.
     Restent : défilement au blitter,
     Info du Workbench, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).

@@ -54,7 +54,7 @@ intuition_AutoRequest:
         or.l    d5,d0
         or.l    #GADGETUP,d0
         move.l  d0,NW_IDCMPFLAGS(a0)
-        move.l  #WINDOWDRAG|WINDOWDEPTH,NW_FLAGS(a0)
+        move.l  #WINDOWDRAG|WINDOWDEPTH|ACTIVATE,NW_FLAGS(a0)
         lea     sr_title(pc),a1
         move.l  a1,NW_TITLE(a0)
         move.w  #WBENCHSCREEN,NW_TYPE(a0)

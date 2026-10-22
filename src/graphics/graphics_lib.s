@@ -431,11 +431,11 @@ gfx_LoadView:
         move.l  v_LOFCprList(a1),d0
         beq.s   .lv_ret              ; pas de copper list -> rien
         move.l  d0,gb_LOFlist(a6)
-        movem.l a4/a5,-(sp)          ; pointeurs de sprite courants (une liste construite plus tôt est à jour)
-        move.l  d0,a4
+        movem.l d2/a4/a5,-(sp)       ; pointeurs de sprite courants (une liste construite plus tôt est à jour) ;
+        move.l  d0,a4                ; d2 préservé (gfx_sprmoves l'écrase, contrat de librairie)
         move.l  a6,a5
         bsr     gfx_sprmoves
-        movem.l (sp)+,a4/a5
+        movem.l (sp)+,d2/a4/a5
         move.l  gb_LOFlist(a6),d0
         addq.l  #2,d0
         move.l  d0,gb_SprCop(a6)     ; mot de valeur de SPR0PTH

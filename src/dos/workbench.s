@@ -12,9 +12,11 @@
 ; au REFRESHWINDOW (BeginRefresh/EndRefresh). Une seule icône sélectionnée à la fois (rectangle inversé). Double-clic
 ; sur un outil : lancé par CreateProc avec un message WBStartup (argument 0 = l'outil) ; sur un projet : son outil par
 ; défaut, le projet en argument 1. Le message revient sur le port « Workbench » à la fin de l'outil : segment
-; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard, Clean Up, Redraw et
-; Snapshot actifs, le reste grisé. Portée : ni Info / Duplicate / Version / Last Error, ni icône Ram Disk, ni
-; défilement des tiroirs, une seule icône sélectionnée ; Rename et Discard ne s'appliquent qu'aux icônes d'un tiroir.
+; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard, Clean Up, Last Error,
+; Redraw, Snapshot et Version actifs, le reste grisé. Titre d'écran (spec §6) : mémoire libre au tic de 5 s, message
+; figé (Version, Last Error) jusqu'au prochain clic ou menu. Portée : ni Info / Duplicate, ni icône Ram Disk, ni
+; défilement des tiroirs, une seule icône sélectionnée, pas de messages d'erreur « Error while ... » ; Rename et
+; Discard ne s'appliquent qu'aux icônes d'un tiroir.
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup, DiskObject).
 ; AUCUNE lecture ROM.
 
@@ -28,6 +30,8 @@
                 endc
 
 LVO_DRAWIMAGE   EQU -114             ; intuition.library (intuition_lib.fd)
+LVO_SETWINDOWTITLES EQU -276
+LVO_DISPLAYBEEP EQU -96
 LVO_SETMENUSTRIP EQU -264
 LVO_CLEARMENUSTRIP EQU -54
 LVO_BEGINREFRESH EQU -354
@@ -135,6 +139,7 @@ wb_entry:                            ; ROMTag+44 : point d'entrée du process cr
         jsr     LVO_ADDPORT(a6)
         move.l  a3,WBS_PORT(a5)
         bsr     wb_desktop           ; écran Workbench, fenêtre de fond, icône du disque
+        bsr     wb_timeropen         ; tic de 5 s (titre d'écran : mémoire libre)
 .we_loop:                            ; attend le port public et les ports IDCMP de toutes les fenêtres
         move.l  ($4).w,a6
         move.l  WBS_PORT(a5),a0
@@ -158,6 +163,12 @@ wb_entry:                            ; ROMTag+44 : point d'entrée du process cr
         tst.l   d0
         beq.s   .we_wins
         move.l  d0,a1
+        lea     WBS_TREQ(a5),a0
+        cmp.l   a0,a1
+        bne.s   .we_ntick
+        bsr     wb_tick
+        bra.s   .we_drain
+.we_ntick:
         cmp.b   #NT_REPLYMSG,LN_TYPE(a1)
         bne.s   .we_foreign
         bsr     wb_toolreturn
@@ -205,7 +216,15 @@ WBS_GY          EQU WBS_GX+2
 WBS_GW          EQU WBS_GY+2
 WBS_GH          EQU WBS_GW+2
 WBS_GRP         EQU WBS_GH+2         ; RastPort de l'écran (cadre tracé en COMPLEMENT)
-WBS_DRAWERS     EQU WBS_GRP+4        ; WB_MAXDRAWERS fiches de tiroir
+WBS_TREQ        EQU WBS_GRP+4        ; timerequest du tic de 5 s (réponse sur le port public)
+WBS_MEMV        EQU WBS_TREQ+TR_SIZE ; dernière valeur d'AvailMem affichée
+WBS_TBUF        EQU WBS_MEMV+4       ; titre d'écran des fenêtres du Workbench (chaîne C)
+WBS_TBUFMAX     EQU 80
+WBS_TON         EQU WBS_TBUF+WBS_TBUFMAX ; BYTE : timer.device ouvert
+WBS_FLAGS       EQU WBS_TON+1        ; BYTE : bit 1 = titre verrouillé (Rename), bit 2 = un message est affiché
+WBS_MSGBUF      EQU WBS_TON+2        ; dernier message (Version, Last Error) : WBS_TBUFMAX octets
+WBS_MSGOK       EQU WBS_MSGBUF+WBS_TBUFMAX ; BYTE : un message a été produit
+WBS_DRAWERS     EQU WBS_MSGOK+2      ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
@@ -406,6 +425,7 @@ wb_dispatch:
         bne.s   .dp_mv
         cmp.w   #SELECTDOWN,d3
         bne.s   .dp_up
+        bsr     wb_restore           ; clic gauche : le titre mémoire revient (spec §6.2)
         bsr     wb_click
         bra     wb_dispatch
 .dp_up:
@@ -1122,6 +1142,7 @@ wb_opendrawer:
         move.w  d7,DR_ID(a4)
         move.l  d0,a0
         bsr     wb_setmenus
+        bsr     wb_titles
         bsr     wb_loadicons
 .od_ret:
         movem.l (sp)+,d2-d7/a2-a4
@@ -1455,6 +1476,7 @@ wb_freestartup:
 ; wb_menupick(d3.w = code, d7.w = fenêtre, a5) : Workbench/Open -> ouvre l'icône sélectionnée ; Workbench/Close ->
 ; ferme ce tiroir ; Special/Redraw -> efface et redessine toutes les fenêtres. Préserve d7/a5.
 wb_menupick:
+        bsr     wb_restore           ; tout choix de menu rend le titre mémoire (spec §6.2)
         cmp.w   #MENUNULL,d3
         beq     .mp_ret
         move.w  d3,d0
@@ -1491,6 +1513,10 @@ wb_menupick:
         beq     wb_snapshot
         tst.w   d1                   ; Clean Up
         beq     wb_cleanup
+        cmp.w   #4,d1
+        beq     wb_version
+        cmp.w   #1,d1
+        beq     wb_lasterr
         cmp.w   #2,d1                ; Redraw
         bne     .mp_ret
         move.l  d7,-(sp)
@@ -1504,6 +1530,195 @@ wb_menupick:
         move.l  (sp)+,d7
 .mp_ret:
         rts
+
+; wb_timeropen(a5) : timer.device (unité VBLANK) sur la timerequest de l'état, réponse sur le port public ; puis premier
+; tic. Sans timer : pas de tic (le titre d'écran reste celui de l'écran).
+wb_timeropen:
+        lea     WBS_TREQ(a5),a1
+        move.l  WBS_PORT(a5),MN_REPLYPORT(a1)
+        lea     wb_timername(pc),a0
+        moveq   #UNIT_VBLANK,d0
+        moveq   #0,d1
+        move.l  ($4).w,a6
+        jsr     LVO_OPENDEVICE(a6)
+        tst.l   d0
+        bne.s   .to_ret
+        st      WBS_TON(a5)
+        moveq   #-1,d0
+        move.l  d0,WBS_MEMV(a5)
+        bra.s   wb_tick
+.to_ret:
+        rts
+
+; wb_tick(a5) : tic de 5 s (spec workbench-task-v34 §3.4). AvailMem(0) ; si la valeur a changé, le titre d'écran est
+; reformaté (« Workbench release 1.2.  %ld free memory », que le SetWindowTitles détourné par LoadWB 1.3.3 retouche)
+; et appliqué aux fenêtres ; puis la requête repart pour 5 s. Préserve d2-d7/a2-a6.
+wb_tick:
+        movem.l a2-a3/a6,-(sp)
+        bsr.s   wb_memtitle
+        lea     WBS_TREQ(a5),a1
+        move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
+        move.l  #5,TV_SECS(a1)
+        clr.l   TV_MICRO(a1)
+        move.l  ($4).w,a6
+        jsr     LVO_SENDIO(a6)
+        movem.l (sp)+,a2-a3/a6
+        rts
+wb_putch:
+        move.b  d0,(a3)+
+        rts
+
+; wb_memtitle(a5) : partie titre du tic. Message affiché : rien. Sinon AvailMem(0) ; valeur changée : titre mémoire
+; reformaté, puis appliqué aux fenêtres sauf pendant un Rename (titre verrouillé). Préserve d2-d7/a2-a6.
+wb_memtitle:
+        btst    #2,WBS_FLAGS(a5)
+        bne.s   .mt_ret
+        movem.l a2-a3/a6,-(sp)
+        move.l  ($4).w,a6
+        moveq   #0,d1
+        jsr     LVO_AVAILMEM(a6)
+        cmp.l   WBS_MEMV(a5),d0
+        beq.s   .mt_pop
+        move.l  d0,WBS_MEMV(a5)
+        lea     wb_relfmt(pc),a0
+        lea     WBS_MEMV(a5),a1
+        lea     wb_putch(pc),a2
+        lea     WBS_TBUF(a5),a3
+        jsr     LVO_RAWDOFMT(a6)
+        btst    #1,WBS_FLAGS(a5)
+        bne.s   .mt_pop
+        bsr     wb_titles
+.mt_pop:
+        movem.l (sp)+,a2-a3/a6
+.mt_ret:
+        rts
+
+; wb_restore(a5) : un message était affiché (et le titre n'est pas verrouillé) : le titre mémoire revient sur les
+; fenêtres. Appelé au début de tout MENUPICK et sur SELECTDOWN. Préserve d2-d7/a2-a6.
+wb_restore:
+        btst    #1,WBS_FLAGS(a5)
+        bne.s   .rs_ret
+        bclr    #2,WBS_FLAGS(a5)
+        bne     wb_titles
+.rs_ret:
+        rts
+
+; wb_message(a0 = format | WBS_MSGBUF, a1 = arguments longs, a5) : un message est déjà affiché : rien (le premier
+; reste). Sinon il devient le titre d'écran de toutes les fenêtres du Workbench ; un nouveau format est précédé d'un
+; DisplayBeep puis formaté dans WBS_MSGBUF, WBS_MSGBUF lui-même est réaffiché tel quel. Le titre mémoire revient au
+; prochain clic ou choix de menu. Préserve d2-d7/a2-a6.
+wb_message:
+        bset    #2,WBS_FLAGS(a5)
+        bne.s   .ms_ret
+        movem.l a2-a3/a6,-(sp)
+        lea     WBS_MSGBUF(a5),a3
+        cmp.l   a3,a0
+        beq.s   .ms_show
+        st      WBS_MSGOK(a5)
+        movem.l a0-a1,-(sp)
+        move.l  WBS_WIN(a5),d0
+        beq.s   .ms_nobeep
+        move.l  d0,a0
+        move.l  WD_WSCREEN(a0),a0
+        move.l  WBS_IBASE(a5),a6
+        jsr     LVO_DISPLAYBEEP(a6)
+.ms_nobeep:
+        movem.l (sp)+,a0-a1
+        lea     wb_putch(pc),a2
+        move.l  ($4).w,a6
+        jsr     LVO_RAWDOFMT(a6)
+.ms_show:
+        lea     WBS_MSGBUF(a5),a2
+        bsr     wb_apply
+        movem.l (sp)+,a2-a3/a6
+.ms_ret:
+        rts
+
+; wb_version(a5) : Special/Version (spec §6.3). Kickstart : version et révision de l'en-tête de la ROM (mots en +$0C et
+; +$0E, la ROM commençant à $1000000 - sa taille, rangée en $FFFFEC). Workbench : lib_Version et lib_Revision de
+; version.library (ouverte en version 0, chargée de LIBS: au besoin), -1 et -1 sans elle.
+wb_version:
+        movem.l a6,-(sp)
+        lea     -16(sp),sp
+        move.l  #$1000000,d0
+        sub.l   $FFFFEC,d0
+        move.l  d0,a0
+        moveq   #0,d0
+        move.w  $0C(a0),d0
+        move.l  d0,(sp)
+        moveq   #0,d0
+        move.w  $0E(a0),d0
+        move.l  d0,4(sp)
+        moveq   #-1,d0
+        move.l  d0,8(sp)
+        move.l  d0,12(sp)
+        move.l  ($4).w,a6
+        lea     wb_vername(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq.s   .vr_show
+        move.l  d0,a1
+        moveq   #0,d0
+        move.w  LIB_VERSION(a1),d0
+        move.l  d0,8(sp)
+        moveq   #0,d0
+        move.w  LIB_REVISION(a1),d0
+        move.l  d0,12(sp)
+        jsr     LVO_CLOSELIBRARY(a6)
+.vr_show:
+        lea     wb_verfmt(pc),a0
+        move.l  sp,a1
+        bsr     wb_message
+        lea     16(sp),sp
+        movem.l (sp)+,a6
+        rts
+
+; wb_lasterr(a5) : Special/Last Error (spec §6.5) : le dernier message, réaffiché sans bip ; aucun encore : bip et
+; titre vide.
+wb_lasterr:
+        lea     WBS_MSGBUF(a5),a0
+        tst.b   WBS_MSGOK(a5)
+        bne     wb_message
+        lea     wb_empty(pc),a0
+        bra     wb_message
+
+; wb_titles(a5) : le titre mémoire (WBS_TBUF) sur toutes les fenêtres du Workbench ; encore vide : rien. Préserve
+; d2-d7/a2-a6.
+wb_titles:
+        tst.b   WBS_TBUF(a5)
+        beq.s   .ti_none
+        move.l  a2,-(sp)
+        lea     WBS_TBUF(a5),a2
+        bsr.s   wb_apply
+        move.l  (sp)+,a2
+.ti_none:
+        rts
+; wb_apply(a2 = titre d'écran, a5) : SetWindowTitles(fenêtre, -1, a2) sur la fenêtre de fond et chaque tiroir ouvert.
+; Préserve d2-d7/a2-a6.
+wb_apply:
+        movem.l d2/a2/a4/a6,-(sp)
+        move.l  WBS_IBASE(a5),a6
+        move.l  WBS_WIN(a5),d0
+        beq.s   .ti_dr
+        bsr.s   .ti_one
+.ti_dr:
+        lea     WBS_DRAWERS(a5),a4
+        moveq   #WB_MAXDRAWERS-1,d2
+.ti_lp:
+        move.l  DR_WIN(a4),d0
+        beq.s   .ti_nx
+        bsr.s   .ti_one
+.ti_nx:
+        lea     DR_SIZE(a4),a4
+        dbra    d2,.ti_lp
+.ti_ret:
+        movem.l (sp)+,d2/a2/a4/a6
+        rts
+.ti_one:
+        move.l  d0,a0
+        move.l  #-1,a1
+        jmp     LVO_SETWINDOWTITLES(a6)
 
 ; wb_cleanup(d7.w = fenêtre, a5) : Special/Clean Up (sondé sur la vraie 1.3). Les icônes du tiroir, triées par position
 ; actuelle (X puis Y ; sans position : en dernier), sont rangées par colonnes de haut en bas dans des cellules de
@@ -1879,7 +2094,7 @@ wb_rename:
         move.l  #(150<<16)|60,NW_LEFTEDGE(a0)
         move.l  #(300<<16)|32,NW_WIDTH(a0)
         move.l  #GADGETUP|CLOSEWINDOW,NW_IDCMPFLAGS(a0)
-        move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE,NW_FLAGS(a0)
+        move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE|ACTIVATE,NW_FLAGS(a0)
         lea     NW_SIZEOF+RN_GAD(sp),a1
         move.l  a1,NW_FIRSTGADGET(a0)
         lea     wbs_rename(pc),a1
@@ -1889,6 +2104,16 @@ wb_rename:
         lea     NW_SIZEOF(sp),sp
         move.l  d0,d5                ; d5 = fenêtre « Rename »
         beq     .rn_free
+        bset    #1,WBS_FLAGS(a5)     ; titre verrouillé : l'invite tient lieu de titre d'écran (spec §6.4)
+        clr.l   WBS_MEMV(a5)
+        lea     wb_renmsg(pc),a0
+        lea     WBS_TBUF(a5),a1
+        moveq   #WBS_TBUFMAX-2,d0
+        bsr     wb_strcpy
+        move.l  d5,a0
+        move.l  #-1,a1
+        lea     WBS_TBUF(a5),a2
+        jsr     LVO_SETWINDOWTITLES(a6)
         lea     RN_GAD(sp),a0
         move.l  d5,a1
         sub.l   a2,a2
@@ -1917,6 +2142,8 @@ wb_rename:
         move.l  d5,a0
         move.l  WBS_IBASE(a5),a6
         jsr     LVO_CLOSEWINDOW(a6)
+        bclr    #1,WBS_FLAGS(a5)     ; fin de saisie : titre mémoire refait tout de suite
+        bsr     wb_memtitle
         tst.w   d4
         beq.s   .rn_free
         tst.b   RN_BUF(sp)           ; nom vide : rien à faire
@@ -2167,10 +2394,10 @@ wbm_tmpl:
         WBITEM  wbm_i10,wbm_i11,0,WBM_OFF,wbs_trash
         WBITEM  wbm_i11,0,10,WBM_OFF,wbs_init
         WBITEM  wbm_i20,wbm_i21,0,WBM_ON,wbs_cleanup
-        WBITEM  wbm_i21,wbm_i22,10,WBM_OFF,wbs_lasterr
+        WBITEM  wbm_i21,wbm_i22,10,WBM_ON,wbs_lasterr
         WBITEM  wbm_i22,wbm_i23,20,WBM_ON,wbs_redraw
         WBITEM  wbm_i23,wbm_i24,30,WBM_ON,wbs_snapshot
-        WBITEM  wbm_i24,0,40,WBM_OFF,wbs_version
+        WBITEM  wbm_i24,0,40,WBM_ON,wbs_version
 wbm_end:
 WBM_SIZE        EQU wbm_end-wbm_tmpl
 ; décalages (dans le modèle) des pointeurs internes à reloger : menus (suivant, 1er élément), éléments (suivant non
@@ -2248,6 +2475,18 @@ wb_infosuffix:
         dc.b    ".info",0
 wb_procname:
         dc.b    "Workbench",0
+wb_timername:
+        dc.b    "timer.device",0
+wb_relfmt:
+        dc.b    "Workbench release 1.2.  %ld free memory",0
+wb_verfmt:
+        dc.b    "Kickstart version %ld.%ld. Workbench version %ld.%ld",0
+wb_vername:
+        dc.b    "version.library",0
+wb_renmsg:
+        dc.b    "Enter the new name.  Press return when done.",0
+wb_empty:
+        dc.b    0
 wb_idstring:
         dc.b    "workbench.task 34.2",13,10,0
         EVEN

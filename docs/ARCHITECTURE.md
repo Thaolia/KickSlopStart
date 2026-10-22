@@ -577,6 +577,29 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     requester (`pr_WindowPtr` = −1). Pour le disque ou un tiroir dont la fenêtre est ouverte, la géométrie de cette
     fenêtre va aussi dans `dd_NewWindow`.
   - Les `.info` écrits sont relus par la vraie 1.3.
+  (10) **Titre d'écran du Workbench, Version et Last Error** (spec workbench-task-v34 §6, relue clean-room) :
+  - **Tic de 5 s** : timerequest VBLANK, réponse sur le port « Workbench ». À chaque tic, AvailMem(0) ; si la valeur
+    a changé, `RawDoFmt("Workbench release 1.2.  %ld free memory")` puis SetWindowTitles(fenêtre, −1, titre) sur la
+    backdrop et chaque tiroir ouvert.
+  - Le SetWindowTitles détourné par le LoadWB du disque transforme le texte en « Workbench release.      N free
+    memory », comme sur la vraie ROM.
+  - **Message figé** (bit « message affiché ») : DisplayBeep, puis formatage dans un tampon propre. Le tic ne touche
+    plus au titre jusqu'au prochain clic gauche ou choix de menu.
+  - **Version** : « Kickstart version %ld.%ld. Workbench version %ld.%ld ». Les deux premiers nombres sont lus dans
+    l'en-tête ROM (mots +$0C/+$0E ; base = $1000000 − taille en $FFFFEC). Les deux autres sont lib_Version et
+    lib_Revision de version.library, chargée de LIBS:, ou −1 sans elle.
+  - **Last Error** réaffiche le dernier message, sans bip.
+  - **Rename** verrouille le titre et affiche l'invite « Enter the new name.  Press return when done. ».
+  - **Intuition** :
+    - **SetWindowTitles** (−276) et `wd_ScreenTitle` : la barre de l'écran montre le titre d'écran de la fenêtre
+      active, sinon celui de l'écran.
+    - **DisplayBeep** (−96) : la couleur 0 est complémentée pendant 6 trames.
+    - **Activation, règle d'intuition 34.3** : OpenWindow n'active que si ACTIVATE est demandé, et range la fenêtre
+      après l'active dans la chaîne Parent/Descendant. CloseWindow de la fenêtre active active son Parent, sinon la
+      première fenêtre de l'écran (chez nous, la plus en avant), sinon aucune.
+    - Conséquence : après `endcli`, la backdrop est active et ses menus répondent sans clic, comme sur la vraie ROM.
+  - **LoadView** préserve désormais d2 : il était écrasé par la réécriture des pointeurs de sprite, ce qui faussait
+    les appelants.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

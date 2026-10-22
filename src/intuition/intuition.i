@@ -166,10 +166,13 @@ WD_BORDERTOP    EQU 55
 WD_BORDERRIGHT  EQU 56
 WD_BORDERBOTTOM EQU 57
 WD_FIRSTGADGET  EQU 62
+WD_PARENT       EQU 66              ; fenêtre active à l'ouverture (activée à la fermeture de celle-ci)
+WD_DESCENDANT   EQU 70
 WD_IDCMPFLAGS   EQU 82
 WD_USERPORT     EQU 86
 WD_DETAILPEN    EQU 98
 WD_BLOCKPEN     EQU 99
+WD_SCREENTITLE  EQU 104             ; titre d'écran montré quand la fenêtre est active (0 : celui de l'écran)
 WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114
 WD_WLAYER       EQU 124
@@ -183,6 +186,7 @@ SIZEBRIGHT      EQU $0010
 SIZEBBOTTOM     EQU $0020
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
+ACTIVATE        EQU $1000           ; NewWindow : fenêtre activée à l'ouverture
 WINDOWACTIVE    EQU $2000
 RMBTRAP         EQU $00010000
 
