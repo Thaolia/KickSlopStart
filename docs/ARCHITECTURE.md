@@ -738,7 +738,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   - **Écarts restants** :
     - les tiroirs du Workbench n'ont pas de barres de défilement ;
     - pas de surbrillance par inversion pendant le clic sur un gadget système ;
-    - WindowToBack sur une fenêtre GIMMEZEROZERO (Info) reste sans effet. Le défaut existait déjà avant ce changement.
+  - **WindowToBack d'Info** : rien ne change à l'écran, exactement comme sur la vraie 1.3 (sondé). Le tiroir révélé
+    est SIMPLE_REFRESH, et seul le Workbench le redessine ; il est bloqué dans info.library tant qu'Info est ouverte.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
