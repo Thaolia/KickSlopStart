@@ -610,6 +610,19 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   - Mesure en temps émulé, 400 lignes de `type ram:` dans la fenêtre de boot : 89 s → 70 s. La vraie 1.3 met 38 s.
     Écran final identique au pixel près.
   - Le miroir série de con.handler ne compte que pour environ 3 s.
+  (12) **Messages d'erreur du Workbench** (spec workbench-task-v34 §6.9) : `wb_error(action, nom)` lit IoErr avant tout
+  autre appel dos, formate l'action (table de la 1.3), puis affiche « Error while %s: %ld » comme message figé. Le premier
+  message affiché l'emporte.
+  - **Ouverture d'un tiroir** : Lock ou Examine échoue → « examining <tiroir> » ; ExNext échoue (hors 232) →
+    « examining directory ».
+  - **Lancement** : LoadSeg échoue → « opening <nom de l'outil> » ; pour un projet, Default Tool tel quel.
+  - **Rename** : « : » ou « / » → « Do not use '%lc' in names » ; échec hors 205 → « moving <ancien nom> ».
+  - **Discard** : 205 compte comme réussi, sinon « removing <nom> », puis « removing <nom>.info ».
+  - **Snapshot** : échec de PutDiskObject → « writing <nom> ».
+  - **Écart** : pas de requester errorreq avant le message de Rename.
+  - **dos LoadSeg** pose désormais IoErr : 121 si le fichier n'est pas un exécutable, 103 sans mémoire. Le code est
+    posé après le Close, dont la réponse remettait `pr_Result2` à 0.
+  - Comparé à la vraie 1.3 (outil « Bad » non exécutable) : « Error while opening Bad: 121 » des deux côtés.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

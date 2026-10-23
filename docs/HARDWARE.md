@@ -41,6 +41,15 @@ loader Kickstart 1.x) et sorties `rawbin`/`ados`. Alternative C (modules en C pl
 (`convert`). Côté Windows, `WinUAE.exe` (interop WSL2) reste une option, surtout pour un log série robuste
 dès M2. Clés de config FS-UAE : `amiga_model`, `kickstart_file`, `chip_memory` (voir `tests/boot_test.sh`).
 
+**Amiberry** (cœur WinUAE, compilé depuis les sources dans `~/dev/tools/amiberry`, SDL3) pour un A500 fidèle au matériel :
+`--model A500 -b 2` donne 68000 cycle-exact (CPU, mémoire, blitter), OCS, PAL, 512 Ko chip + 512 Ko slow, disquette à
+vitesse réelle (`--dump-config` pour vérifier). Sans interface : `-G` sous Xvfb, `SDL_AUDIODRIVER=dummy`. Série :
+`-s serial_port=TCP://127.0.0.1:<port>/wait` (Amiberry attend la connexion de `socat -u TCP:127.0.0.1:<port> -`
+avant de démarrer ; les PTY ne marchent pas). Suite ADF : `tests/adf_suite_amiberry.sh [rom] [secondes]`.
+Recompiler : `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j` (dépendances apt : libsdl3-dev,
+libsdl3-image-dev, libflac-dev, libmpg123-dev, libpng-dev, libserialport-dev, libportmidi-dev, libenet-dev,
+libpcap-dev, libcurl4-openssl-dev, nlohmann-json3-dev, libmpeg2-4-dev).
+
 ### Analyse (piste dirty)
 **radare2 6.1.3** (`r2 -a m68k -e cfg.bigendian=true`, base `$FC0000`). Ghidra headless optionnel pour
 le décompilateur (cf. règle ghidra-mcp : une instance dédiée par binaire).

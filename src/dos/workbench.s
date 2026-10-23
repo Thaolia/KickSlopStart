@@ -15,8 +15,9 @@
 ; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard, Clean Up, Last Error,
 ; Redraw, Snapshot et Version actifs, le reste grisé. Titre d'écran (spec §6) : mémoire libre au tic de 5 s, message
 ; figé (Version, Last Error) jusqu'au prochain clic ou menu. Portée : ni Info / Duplicate, ni icône Ram Disk, ni
-; défilement des tiroirs, une seule icône sélectionnée, pas de messages d'erreur « Error while ... » ; Rename et
-; Discard ne s'appliquent qu'aux icônes d'un tiroir.
+; défilement des tiroirs, une seule icône sélectionnée ; Rename et Discard ne s'appliquent qu'aux icônes d'un
+; tiroir. Échecs signalés en titre d'écran comme la 1.3 (spec §6.9) : « Error while <action>: <IoErr> » à l'ouverture
+; d'un tiroir, au lancement, au Rename (et « Do not use ':' in names »), au Discard et au Snapshot.
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup, DiskObject).
 ; AUCUNE lecture ROM.
 
@@ -1200,12 +1201,21 @@ wb_loadicons:
         moveq   #SHARED_LOCK,d2
         jsr     DOS_LVO_LOCK(a6)
         move.l  d0,d7                ; d7 = lock
-        beq     .li_free
+        beq     .li_exerr
         move.l  d7,d1
         move.l  d6,d2
         jsr     DOS_LVO_EXAMINE(a6)
         tst.l   d0
-        beq     .li_unlock
+        bne.s   .li_next
+        bsr     .li_exam
+        bra     .li_unlock
+.li_exerr:
+        bsr     .li_exam
+        bra     .li_free
+.li_exam:                            ; « Error while examining <tiroir>: n »
+        moveq   #7,d0
+        lea     DR_TITLE(a4),a0
+        bra     wb_error
 .li_next:
         cmp.l   #WB_MAXICONS,DR_NICON(a4)
         bhs     .li_unlock
@@ -1214,7 +1224,15 @@ wb_loadicons:
         move.l  d6,d2
         jsr     DOS_LVO_EXNEXT(a6)
         tst.l   d0
+        bne.s   .li_entry
+        jsr     DOS_LVO_IOERR(a6)    ; fin normale du répertoire : pas de message
+        cmp.l   #ERROR_NO_MORE_ENTRIES,d0
         beq     .li_unlock
+        moveq   #0,d0                ; « Error while examining directory: n »
+        suba.l  a0,a0
+        bsr     wb_error
+        bra     .li_unlock
+.li_entry:
         move.l  d6,a0
         lea     FIB_FILENAME(a0),a2  ; a2 = nom
         move.l  a2,a0
@@ -1323,7 +1341,16 @@ wb_launch:
         move.l  a3,d1
         jsr     DOS_LVO_LOADSEG(a6)
         move.l  d0,d5                ; d5 = seglist
-        beq     .la_ret
+        bne.s   .la_seg
+        move.l  a3,a0                ; « Error while opening <outil>: n » : nom de l'icône d'un outil (son
+        move.l  a4,d0                ; répertoire est le répertoire courant), Default Tool tel quel d'un projet
+        bne.s   .la_named
+        bsr     wb_base
+.la_named:
+        moveq   #2,d0
+        bsr     wb_error
+        bra     .la_ret
+.la_seg:
         move.l  ($4).w,a6
         move.l  #WBSM_SIZE,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -1634,6 +1661,54 @@ wb_message:
 .ms_ret:
         rts
 
+; wb_error(d0.w = action, a0 = nom | 0, a5) : « Error while <action>: <IoErr> » en titre d'écran (spec §6.5, §6.9) ;
+; IoErr est lu avant tout autre appel dos. L'action vient de wb_errtab (%s = nom). Comme tout message : le premier
+; affiché reste jusqu'au prochain clic ou menu. Préserve d2-d7/a2-a6.
+WE_BUF          EQU 0                ; action formatée (WBS_TBUFMAX)
+WE_ARGS         EQU WE_BUF+WBS_TBUFMAX ; « Error while %s: %ld » : action, erreur
+WE_NAME         EQU WE_ARGS+8        ; argument %s de l'action
+WE_SIZE         EQU WE_NAME+4
+wb_error:
+        movem.l d2/a2-a3/a6,-(sp)
+        lea     -WE_SIZE(sp),sp
+        move.l  a0,WE_NAME(sp)
+        move.w  d0,d2
+        move.l  WBS_DOSBASE(a5),a6
+        jsr     DOS_LVO_IOERR(a6)
+        move.l  d0,WE_ARGS+4(sp)
+        lea     wb_errtab(pc),a0
+        add.w   d2,d2
+        add.w   0(a0,d2.w),a0        ; a0 = texte de l'action
+        lea     WE_NAME(sp),a1
+        lea     wb_putch(pc),a2
+        lea     WE_BUF(sp),a3
+        move.l  ($4).w,a6
+        jsr     LVO_RAWDOFMT(a6)
+        lea     WE_BUF(sp),a0
+        move.l  a0,WE_ARGS(sp)
+        lea     wb_errfmt(pc),a0
+        lea     WE_ARGS(sp),a1
+        bsr     wb_message
+        lea     WE_SIZE(sp),sp
+        movem.l (sp)+,d2/a2-a3/a6
+        rts
+
+; wb_base(a0 = chemin) -> a0 = son dernier composant (après le dernier « : » ou « / »). Clobbe d0/a1.
+wb_base:
+        move.l  a0,a1
+.bs_lp:
+        move.b  (a1)+,d0
+        beq.s   .bs_ret
+        cmp.b   #':',d0
+        beq.s   .bs_cut
+        cmp.b   #'/',d0
+        bne.s   .bs_lp
+.bs_cut:
+        move.l  a1,a0
+        bra.s   .bs_lp
+.bs_ret:
+        rts
+
 ; wb_version(a5) : Special/Version (spec §6.3). Kickstart : version et révision de l'en-tête de la ROM (mots en +$0C et
 ; +$0E, la ROM commençant à $1000000 - sa taille, rangée en $FFFFEC). Workbench : lib_Version et lib_Revision de
 ; version.library (ouverte en version 0, chargée de LIBS: au besoin), -1 et -1 sans elle.
@@ -1930,6 +2005,12 @@ wb_snapshot:
         move.l  WBS_ICONBASE(a5),a6
         jsr     ICON_LVO_PUTDISKOBJECT(a6)
         move.l  (sp)+,PR_WINDOWPTR(a3)
+        tst.l   d0
+        bne.s   .ss_ret
+        moveq   #8,d0                ; « Error while writing <nom>: n » (« Disk » pour le disque)
+        move.l  sp,a0
+        bsr     wb_base
+        bsr     wb_error
 .ss_ret:
         lea     WB_PATHMAX(sp),sp
         movem.l (sp)+,d2-d7/a2-a4/a6
@@ -2017,6 +2098,15 @@ wb_discard:
         move.l  a0,d1
         move.l  WBS_DOSBASE(a5),a6
         jsr     DOS_LVO_DELETEFILE(a6)
+        tst.l   d0
+        bne.s   .dc_reload
+        jsr     DOS_LVO_IOERR(a6)
+        cmp.l   #ERROR_OBJECT_NOT_FOUND,d0
+        beq.s   .dc_reload           ; pas de .info : rien à dire
+        moveq   #6,d0                ; « Error while removing <nom>.info: n »
+        lea     DS_PATH(sp),a0
+        bsr     wb_base
+        bsr     wb_error
 .dc_reload:
         bsr     wb_reload
 .dc_free:
@@ -2145,9 +2235,26 @@ wb_rename:
         bclr    #1,WBS_FLAGS(a5)     ; fin de saisie : titre mémoire refait tout de suite
         bsr     wb_memtitle
         tst.w   d4
-        beq.s   .rn_free
+        beq     .rn_free
         tst.b   RN_BUF(sp)           ; nom vide : rien à faire
-        beq.s   .rn_free
+        beq     .rn_free
+        lea     RN_BUF(sp),a0        ; « : » et « / » refusés dans un nom (spec §6.9)
+.rn_chk:
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        beq.s   .rn_ok
+        cmp.b   #':',d0
+        beq.s   .rn_bad
+        cmp.b   #'/',d0
+        bne.s   .rn_chk
+.rn_bad:
+        move.l  d0,-(sp)
+        lea     wb_badchar(pc),a0
+        move.l  sp,a1
+        bsr     wb_message
+        addq.l  #4,sp
+        bra     .rn_free
+.rn_ok:
         move.l  a4,-(sp)
         lea     DR_PATH(a4),a0
         lea     4+RN_NEW(sp),a1
@@ -2161,7 +2268,16 @@ wb_rename:
         move.l  a0,d2
         jsr     DOS_LVO_RENAME(a6)
         tst.l   d0
-        beq.s   .rn_free
+        bne.s   .rn_info
+        jsr     DOS_LVO_IOERR(a6)    ; objet absent (seul le .info existe) : toléré
+        cmp.l   #ERROR_OBJECT_NOT_FOUND,d0
+        beq.s   .rn_info
+        moveq   #5,d0                ; « Error while moving <ancien nom>: n »
+        lea     RN_OLD(sp),a0
+        bsr     wb_base
+        bsr     wb_error
+        bra.s   .rn_free
+.rn_info:
         lea     RN_OLD(sp),a0        ; puis les « .info »
         bsr     rn_info
         lea     RN_NEW(sp),a0
@@ -2217,8 +2333,10 @@ wb_rmtree:
         tst.l   d0
         bne     .rt_ret
         jsr     DOS_LVO_IOERR(a6)
+        cmp.l   #ERROR_OBJECT_NOT_FOUND,d0
+        beq     .rt_gone             ; déjà absent : compté comme supprimé
         cmp.l   #ERROR_DIRECTORY_NOT_EMPTY,d0
-        bne     .rt_fail
+        bne     .rt_err
         move.l  ($4).w,a6
         move.l  #FIB_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -2268,9 +2386,18 @@ wb_rmtree:
         move.l  WBS_DOSBASE(a5),a6
         move.l  a2,d1
         jsr     DOS_LVO_DELETEFILE(a6)
-        bra.s   .rt_ret
+        tst.l   d0
+        bne.s   .rt_ret
+.rt_err:                             ; « Error while removing <nom>: n » (le premier message affiché reste)
+        moveq   #6,d0
+        move.l  a2,a0
+        bsr     wb_base
+        bsr     wb_error
 .rt_fail:
         moveq   #0,d0
+        bra.s   .rt_ret
+.rt_gone:
+        moveq   #1,d0
 .rt_ret:
         movem.l (sp)+,d2-d3/a2-a4/a6
         rts
@@ -2487,6 +2614,23 @@ wb_renmsg:
         dc.b    "Enter the new name.  Press return when done.",0
 wb_empty:
         dc.b    0
+wb_errfmt:
+        dc.b    "Error while %s: %ld",0
+wb_badchar:
+        dc.b    "Do not use '%lc' in names",0
+        even
+wb_errtab:                           ; actions des messages d'erreur, par index (spec §6.5)
+        dc.w    wbe_0-wb_errtab,wbe_1-wb_errtab,wbe_2-wb_errtab,wbe_3-wb_errtab,wbe_4-wb_errtab
+        dc.w    wbe_5-wb_errtab,wbe_6-wb_errtab,wbe_7-wb_errtab,wbe_8-wb_errtab
+wbe_0:  dc.b    "examining directory",0
+wbe_1:  dc.b    "accessing %s",0
+wbe_2:  dc.b    "opening %s",0
+wbe_3:  dc.b    "reading",0
+wbe_4:  dc.b    "writing",0
+wbe_5:  dc.b    "moving %s",0
+wbe_6:  dc.b    "removing %s",0
+wbe_7:  dc.b    "examining %s",0
+wbe_8:  dc.b    "writing %s",0
 wb_idstring:
         dc.b    "workbench.task 34.2",13,10,0
         EVEN

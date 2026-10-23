@@ -628,7 +628,7 @@ dos_fn_loadseg:
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .ls_close              ; pas de RAM -> referme fh, 0
+        beq.s   .ls_close              ; pas de RAM : referme fh, IoErr = 103
         move.l  d0,a2                  ; a2 = buffer de lecture
         moveq   #0,d5                  ; d5 = total lu
 .ls_rloop:
@@ -658,11 +658,19 @@ dos_fn_loadseg:
         move.l  d7,d1
         bsr     dos_fn_close
         move.l  d6,d0                  ; renvoie seglist
+        bne.s   .ls_ret
+        move.l  ($4).w,a0              ; refusé (pas un exécutable) : IoErr = 121 comme la 1.3, posé APRÈS le
+        move.l  EB_THISTASK(a0),a0     ; Close (dont la réponse remet pr_Result2 à 0)
+        move.l  #ERROR_FILE_NOT_OBJECT,PR_RESULT2(a0)
+        moveq   #0,d0
         bra.s   .ls_ret
 .ls_close:
         move.l  a4,a6
         move.l  d7,d1
         bsr     dos_fn_close
+        move.l  ($4).w,a0              ; après le Close (sa réponse remet pr_Result2 à 0)
+        move.l  EB_THISTASK(a0),a0
+        move.l  #ERROR_NO_FREE_STORE,PR_RESULT2(a0)
 .ls_fail0:
         moveq   #0,d0
 .ls_ret:
