@@ -34,6 +34,7 @@
                 xdef    it_scrxy
                 xdef    wn_sendmsg
                 xdef    wn_sendgad
+                xdef    wn_sysgads
                 xref    gad_drawall          ; gadgets.s
                 xref    gad_rect
                 xref    gad_down
@@ -64,7 +65,6 @@ SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; taille d'un plan alloué ici (0 : BitMap 
 SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
 SC_BARH         EQU 9                ; BarHeight : la barre de titre couvre les lignes 0..9
-SC_GADW         EQU 23               ; largeur d'un gadget de profondeur
 SC_BGCOLOR      EQU $7C3             ; couleur 0 : vert pomme (thème AmigaSlopDOS)
 ; fenêtre : struct Window + messages IDCMP (même allocation) ; RastPort et couche viennent de layers.library
 WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
@@ -73,7 +73,6 @@ WDX_NEMSG       EQU 4
 WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO : couche du cadre (WD_WLAYER = l'intérieur) | 0
 WDX_SIZE        EQU WDX_BLAYER+4
 WD_TBARH        EQU 10               ; hauteur de la barre de titre d'une fenêtre (BorderTop)
-WD_CLOSEW       EQU 20               ; largeur du gadget de fermeture
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Alloue la struct, la BitMap (plans chip effacés, sauf CUSTOMBITMAP),
 ; la palette par défaut (32 couleurs, dont celles du pointeur), dessine la barre de titre (sauf SCREENQUIET), place
@@ -329,38 +328,54 @@ intuition_DisplayBeep:
         rts
 
 ; sc_drawbar(a3 = Screen, a5 = IntuitionBase) : barre de titre (lignes 0..BarHeight) au stylo BlockPen, titre au
-; stylo DetailPen, deux gadgets de profondeur à droite. Clobbe d0-d3/a0/a1/a6.
+; stylo DetailPen, gadgets de profondeur d'écran à droite (pictogrammes des fenêtres, spec intuition-frame-v34 §6).
+; Clobbe d0-d3/a0/a1/a6.
 sc_drawbar:
         move.l  IB_GFXBASE(a5),a6
-        lea     SC_RASTPORT(a3),a1
-        move.l  SC_BARLAYER(a3),d0   ; dans la couche de barre quand elle existe (recouvrement par les fenêtres)
-        beq.s   .db_rp
-        move.l  d0,a1
-        move.l  IL_RP(a1),a1
-.db_rp:
+        bsr.s   sc_barrp
         moveq   #0,d0
         move.b  SC_BLOCKPEN(a3),d0
         jsr     LVO_SETAPEN(a6)
+        bsr.s   sc_barrp
         moveq   #0,d0
         moveq   #0,d1
         move.w  SC_WIDTH(a3),d2
         subq.w  #1,d2
         moveq   #SC_BARH,d3
         jsr     LVO_RECTFILL(a6)
+        move.l  a3,a0
+        bsr     sc_geo
+        move.w  SC_WIDTH(a3),d2      ; largeur disponible pour le titre : jusqu'aux gadgets de profondeur
+        sub.w   GEO_TX1(a0),d2
+        subq.w  #5,d2
+        bsr.s   sc_barrp
         moveq   #0,d0
         move.b  SC_DETAILPEN(a3),d0
         moveq   #0,d1
         move.b  SC_BLOCKPEN(a3),d1
-        move.w  SC_WIDTH(a3),d2
-        sub.w   #2*SC_GADW+8,d2      ; largeur disponible pour le titre
         move.l  SC_TITLE(a3),a0
         moveq   #5,d3                ; x = BarHBorder
         bsr     it_title
-        move.w  SC_WIDTH(a3),d2      ; gadgets de profondeur : [W-2G-1 .. W-G-2] et [W-G .. W-1]
-        sub.w   #2*SC_GADW+1,d2
-        moveq   #0,d3
-        move.b  SC_DETAILPEN(a3),d3
-        bsr     it_depthgads
+        movem.l a2/a4,-(sp)
+        bsr.s   sc_barrp
+        move.l  a1,a4
+        move.l  a3,a0
+        bsr     sc_geo
+        move.l  a0,a2
+        move.w  SC_WIDTH(a3),d0
+        bsr     wn_depthpics
+        movem.l (sp)+,a2/a4
+        rts
+
+; sc_barrp(a3 = Screen) -> a1 = RastPort de la barre (celui de sa couche quand elle existe, recouvrement par les
+; fenêtres ; sinon celui de l'écran). Préserve tout le reste.
+sc_barrp:
+        lea     SC_RASTPORT(a3),a1
+        tst.l   SC_BARLAYER(a3)
+        beq.s   .br_ret
+        move.l  SC_BARLAYER(a3),a1
+        move.l  IL_RP(a1),a1
+.br_ret:
         rts
 
 ; it_title(a1 = RastPort, a0 = titre C | 0, d0 = stylo texte, d1 = stylo fond, d2.w = largeur max en pixels,
@@ -395,40 +410,6 @@ it_title:
         jsr     LVO_TEXT(a6)
 .tt_ret:
         move.l  (sp)+,d4
-        rts
-
-; it_depthgads(a1 = RastPort, d2.w = x du premier gadget, d3.b = stylo, a6 = GfxBase) : deux gadgets de profondeur
-; (arrière : cadre vide ; avant : cadre + carré plein) sur les lignes 1..8. Clobbe d0-d3/a0.
-it_depthgads:
-        movem.l d4/d5,-(sp)
-        move.w  d2,d4                ; d4 = x
-        move.b  d3,d5
-        moveq   #0,d0
-        move.b  d5,d0
-        jsr     LVO_SETAPEN(a6)
-        move.w  d4,d0                ; gadget arrière
-        addq.w  #4,d0
-        moveq   #2,d1
-        move.w  d0,d2
-        add.w   #13,d2
-        moveq   #7,d3
-        bsr     it_box
-        add.w   #SC_GADW,d4          ; gadget avant
-        move.w  d4,d0
-        addq.w  #4,d0
-        moveq   #2,d1
-        move.w  d0,d2
-        add.w   #13,d2
-        moveq   #7,d3
-        bsr     it_box
-        move.w  d4,d0
-        addq.w  #7,d0
-        moveq   #4,d1
-        move.w  d0,d2
-        addq.w  #7,d2
-        moveq   #6,d3
-        jsr     LVO_RECTFILL(a6)
-        movem.l (sp)+,d4/d5
         rts
 
 ; it_box(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a6 = GfxBase) : cadre de 1 pixel au stylo A. Clobbe d0-d3/a0.
@@ -797,14 +778,8 @@ intuition_OpenWindow:
 .ow_nopar:
         btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE : seule une fenêtre qui le demande devient active
         beq.s   .ow_noact
-        move.l  IB_ACTIVEWINDOW(a5),d0
-        beq.s   .ow_act
-        move.l  d0,a0
-        and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
-.ow_act:
-        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
-        move.l  a3,IB_ACTIVEWINDOW(a5)
         jsr     LVO_PERMIT(a6)
+        bsr     it_setactive         ; (la nouvelle barre est redessinée avec le cadre juste après)
         bsr     wn_scrtitle
         bra.s   .ow_linked
 .ow_noact:
@@ -951,119 +926,434 @@ wn_brp:
 .bp_ret:
         rts
 
-; wn_border(a3 = Window, a5 = IntuitionBase) : sauf BORDERLESS, cadre au stylo BlockPen, barre de titre pleine au
-; stylo BlockPen avec le titre au stylo DetailPen, gadget de fermeture, gadgets de profondeur, gadget de
-; redimensionnement ; puis état de dessin JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
+; wn_border(a3 = Window, a5 = IntuitionBase) : cadre complet (spec intuition-frame-v34 §2). Sauf BORDERLESS : bordures
+; gauche, droite et basse effacées au stylo 0, contour au BlockPen (montants de BorderLeft/2 pixels aux deux bords,
+; lignes du haut et du bas), fond de la barre de titre jusqu'à BorderTop-2, titre et motif (wn_titlebar). Puis les
+; gadgets d'application, les gadgets système par-dessus (wn_sysgads), et le voile si la fenêtre n'est pas active. État de dessin
+; rendu aux clients : JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
 wn_border:
         move.l  IB_GFXBASE(a5),a6
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS
+        bne     .df_gad
         bsr     wn_brp
-        move.l  WD_FLAGS(a3),d7      ; d7 = drapeaux
-        btst    #11,d7
-        bne     .df_ret
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
         move.w  WD_WIDTH(a3),d4
-        subq.w  #1,d4                ; d4 = x max
+        subq.w  #1,d4                ; d4 = W - 1
         move.w  WD_HEIGHT(a3),d5
-        subq.w  #1,d5                ; d5 = y max
+        subq.w  #1,d5                ; d5 = H - 1
+        moveq   #0,d0
+        bsr     .df_pen
         moveq   #0,d6
-        move.b  WD_BLOCKPEN(a3),d6   ; d6 = stylo du cadre
-        move.l  d6,d0
-        jsr     LVO_SETAPEN(a6)
-        moveq   #0,d0                ; bordures gauche/droite (2 pixels) et basse/haute (1 ligne)
+        move.b  WD_BORDERLEFT(a3),d6 ; d6 = BorderLeft
+        beq.s   .df_er
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  d6,d2
+        subq.w  #1,d2
+        move.w  d5,d3
+        bsr     .df_fill
+.df_er:
+        moveq   #0,d0
+        move.b  WD_BORDERRIGHT(a3),d0
+        beq.s   .df_eb
+        neg.w   d0
+        add.w   d4,d0
+        addq.w  #1,d0
         moveq   #0,d1
         move.w  d4,d2
         move.w  d5,d3
-        bsr     it_box
-        moveq   #1,d0
-        moveq   #1,d1
-        moveq   #1,d2
+        bsr     .df_fill
+.df_eb:
+        moveq   #0,d1
+        move.b  WD_BORDERBOTTOM(a3),d1
+        beq.s   .df_ct
+        neg.w   d1
+        add.w   d5,d1
+        addq.w  #1,d1
+        moveq   #0,d0
+        move.w  d4,d2
         move.w  d5,d3
-        jsr     LVO_RECTFILL(a6)
+        bsr     .df_fill
+.df_ct:
+        moveq   #0,d0
+        move.b  WD_BLOCKPEN(a3),d0
+        bsr     .df_pen
+        lsr.w   #1,d6                ; d6 = BorderLeft / 2
+        beq.s   .df_tb
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  d6,d2
+        subq.w  #1,d2
+        move.w  d5,d3
+        bsr     .df_fill
         move.w  d4,d0
-        subq.w  #1,d0
-        moveq   #1,d1
-        move.w  d0,d2
-        move.w  d5,d3
-        jsr     LVO_RECTFILL(a6)
-        cmp.b   #WD_TBARH,WD_BORDERTOP(a3)
-        bne     .df_size
-        moveq   #0,d0                ; barre de titre
+        sub.w   d6,d0
+        addq.w  #1,d0
         moveq   #0,d1
         move.w  d4,d2
-        moveq   #WD_TBARH-1,d3
-        jsr     LVO_RECTFILL(a6)
-        moveq   #4,d3                ; x du titre (après le gadget de fermeture s'il existe)
-        btst    #3,d7                ; WINDOWCLOSE
-        beq.s   .df_noclose
-        moveq   #0,d0
-        move.b  WD_DETAILPEN(a3),d0
-        jsr     LVO_SETAPEN(a6)
-        moveq   #4,d0
-        moveq   #2,d1
-        moveq   #15,d2
-        moveq   #7,d3
-        bsr     it_box
-        moveq   #8,d0
-        moveq   #4,d1
-        moveq   #11,d2
-        moveq   #5,d3
-        jsr     LVO_RECTFILL(a6)
-        moveq   #WD_CLOSEW+4,d3
-.df_noclose:
-        moveq   #0,d0
-        move.b  WD_DETAILPEN(a3),d0
-        move.l  d6,d1
+        move.w  d5,d3
+        bsr     .df_fill
+        move.w  d6,d0
+        moveq   #0,d1
         move.w  d4,d2
-        sub.w   d3,d2
-        btst    #2,d7                ; WINDOWDEPTH : place réservée aux gadgets
-        beq.s   .df_tw
-        sub.w   #2*SC_GADW,d2
-.df_tw:
-        move.l  WD_TITLE(a3),a0
-        bsr     wn_brp
-        bsr     it_title
-        btst    #2,d7
-        beq.s   .df_size
-        move.w  d4,d2
-        sub.w   #2*SC_GADW-1,d2
+        sub.w   d6,d2
         moveq   #0,d3
-        move.b  WD_DETAILPEN(a3),d3
-        bsr     wn_brp
-        bsr     it_depthgads
-.df_size:
-        btst    #0,d7                ; WINDOWSIZING : cadre dans le coin bas-droit
-        beq.s   .df_ret
-        bsr     wn_brp
-        move.l  d6,d0
-        jsr     LVO_SETAPEN(a6)
-        move.w  d4,d0
-        sub.w   #17,d0
+        bsr     .df_fill
+        move.w  d6,d0
         move.w  d5,d1
-        subq.w  #8,d1
         move.w  d4,d2
+        sub.w   d6,d2
         move.w  d5,d3
-        jsr     LVO_RECTFILL(a6)
+        bsr     .df_fill
+.df_tb:
+        moveq   #0,d3
+        move.b  WD_BORDERTOP(a3),d3
+        subq.w  #2,d3                ; fond jusqu'à BorderTop - 2 (la ligne suivante reste au stylo 0)
+        bmi.s   .df_gad
         moveq   #0,d0
-        move.b  WD_DETAILPEN(a3),d0
-        jsr     LVO_SETAPEN(a6)
-        move.w  d4,d0
-        sub.w   #13,d0
-        move.w  d5,d1
-        subq.w  #6,d1
+        moveq   #0,d1
         move.w  d4,d2
-        subq.w  #4,d2
-        move.w  d5,d3
-        subq.w  #2,d3
-        bsr     it_box
-.df_ret:
+        bsr     .df_fill
+        bsr     wn_titlebar
+.df_gad:
         bsr     gad_drawall          ; gadgets d'application, redessinés avec le cadre
+        btst    #3,WD_FLAGS+2(a3)    ; gadgets système (sauf BORDERLESS) en tête de liste : dessinés en dernier
+        bne.s   .df_veil
+        bsr     wn_sysgads
+.df_veil:
+        btst    #5,WD_FLAGS+2(a3)    ; WINDOWACTIVE
+        bne.s   .df_rp
+        bsr     wn_veil
+.df_rp:
         move.l  WD_RPORT(a3),a1      ; état de dessin rendu aux clients : JAM2, stylos 1/0
         moveq   #1,d0
         jsr     LVO_SETAPEN(a6)
+        move.l  WD_RPORT(a3),a1
         moveq   #0,d0
         jsr     LVO_SETBPEN(a6)
+        move.l  WD_RPORT(a3),a1
         moveq   #JAM2,d0
         jsr     LVO_SETDRMD(a6)
         rts
+.df_pen:
+        bsr     wn_brp
+        jmp     LVO_SETAPEN(a6)
+.df_fill:
+        bsr     wn_brp
+        jmp     LVO_RECTFILL(a6)
+
+; --- géométrie du cadre par résolution (spec intuition-frame-v34 §3.1, §5.2) : décalages en pixels ; les positions
+; relatives au bord droit / bas se lisent W - valeur / H - valeur.
+GEO_CX0         EQU 0                ; gadget de fermeture : x0..x1 (clic)
+GEO_CX1         EQU 2
+GEO_BACK        EQU 4                ; profondeur arrière : W - BACK .. W - FRONT - 1
+GEO_FRONT       EQU 6                ; profondeur avant : W - FRONT .. W - FEND
+GEO_FEND        EQU 8
+GEO_SW          EQU 10               ; gadget de taille : (W - SW, H - SH) jusqu'au coin
+GEO_SH          EQU 12
+GEO_TX0         EQU 14               ; début du titre avec fermeture
+GEO_TX1         EQU 16               ; fin du titre avec profondeur : W - TX1
+GEO_PCLOSE      EQU 18               ; pictogrammes
+GEO_PSIZE       EQU 22
+GEO_PBACK       EQU 26
+GEO_PFRONT      EQU 30
+wn_geo_hi:
+        dc.w    4,27,53,29,4,16,9,30,54
+        dc.l    pic_close_h,pic_size_h,pic_back_h,pic_front_h
+wn_geo_lo:
+        dc.w    0,13,34,17,1,11,10,16,35
+        dc.l    pic_close_l,pic_size_l,pic_back_l,pic_front_l
+
+; wn_geo(a3 = fenêtre) -> a0 = géométrie de la résolution de son écran ; sc_geo(a0 = écran) -> a0 idem. Préserve
+; tout le reste.
+wn_geo:
+        move.l  WD_WSCREEN(a3),a0
+        cmpa.w  #0,a0
+        beq.s   wn_geolo
+sc_geo:
+        tst.w   SC_VIEWPORT+vp_Modes(a0)
+        bpl.s   wn_geolo
+        lea     wn_geo_hi(pc),a0
+        rts
+wn_geolo:
+        lea     wn_geo_lo(pc),a0
+        rts
+
+
+; wn_titlex(a3 = fenêtre) -> d2 = début, d3 = fin de la zone de titre (spec §3.1) : après le gadget de fermeture s'il
+; existe (sinon WBorLeft de l'écran), jusqu'avant les gadgets de profondeur (sinon W - 1). Clobbe d0/a0.
+wn_titlex:
+        bsr     wn_geo
+        moveq   #0,d2
+        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
+        beq.s   .tx_bl
+        move.w  GEO_TX0(a0),d2
+        bra.s   .tx_x1
+.tx_bl:
+        move.l  WD_WSCREEN(a3),d0
+        beq.s   .tx_x1
+        move.l  d0,a0
+        move.b  SC_WBORLEFT(a0),d2
+        bsr     wn_geo
+.tx_x1:
+        move.w  WD_WIDTH(a3),d3
+        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH
+        bne.s   .tx_dp
+        subq.w  #1,d3
+        rts
+.tx_dp:
+        sub.w   GEO_TX1(a0),d3
+        rts
+
+; wn_titlebar(a3 = fenêtre, a5) : zone de titre au BlockPen, titre (DetailPen sur BlockPen, JAM2) au début de la
+; zone, puis, avec WINDOWDRAG, le motif de glissement (lignes 2, 3, 6, 7 de chaque groupe de 8 au DetailPen) du bout
+; du titre + 3 jusqu'à la fin de la zone - 3 (spec §3.2). Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+wn_titlebar:
+        movem.l d2-d7/a2,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        moveq   #0,d7
+        move.b  WD_BORDERTOP(a3),d7
+        subq.w  #2,d7                ; d7 = dernière ligne de la barre
+        bmi     .tb_ret
+        bsr     wn_titlex
+        cmp.w   d3,d2
+        bge     .tb_ret
+        move.w  d2,d4                ; d4 = début, d5 = fin
+        move.w  d3,d5
+        bsr     wn_brp
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     wn_brp
+        moveq   #0,d0
+        move.b  WD_BLOCKPEN(a3),d0
+        jsr     LVO_SETAPEN(a6)
+        bsr     wn_brp
+        move.w  d4,d0
+        moveq   #0,d1
+        move.w  d5,d2
+        move.w  d7,d3
+        jsr     LVO_RECTFILL(a6)
+        move.w  d4,d6
+        addq.w  #3,d6                ; d6 = début du motif
+        move.l  WD_TITLE(a3),d0
+        beq.s   .tb_drag
+        move.l  d0,a0
+        bsr     wn_brp
+        moveq   #0,d0
+        move.b  WD_DETAILPEN(a3),d0
+        moveq   #0,d1
+        move.b  WD_BLOCKPEN(a3),d1
+        move.w  d5,d2
+        sub.w   d4,d2
+        addq.w  #1,d2
+        move.w  d4,d3
+        bsr     it_title
+        bsr     wn_brp
+        move.w  rp_cp_x(a1),d6
+        addq.w  #3,d6
+.tb_drag:
+        btst    #1,WD_FLAGS+3(a3)    ; WINDOWDRAG
+        beq.s   .tb_ret
+        move.w  d6,d0
+        moveq   #1,d1
+        move.w  d5,d2
+        subq.w  #3,d2
+        move.w  d7,d3
+        subq.w  #1,d3                ; jusqu'à BorderTop - 3
+        lea     wn_dragpat(pc),a2
+        moveq   #3,d6
+        move.b  WD_DETAILPEN(a3),d7
+        bsr.s   wn_patfill
+.tb_ret:
+        movem.l (sp)+,d2-d7/a2
+        rts
+
+; wn_veil(a3 = fenêtre, a5) : voile d'une fenêtre inactive (spec §4.2) : un pixel sur quatre au BlockPen sur la zone
+; de titre, lignes 1 à BorderTop - 3. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+wn_veil:
+        movem.l d2-d7/a2,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        moveq   #0,d7
+        move.b  WD_BORDERTOP(a3),d7
+        subq.w  #3,d7
+        ble.s   .vl_ret
+        bsr     wn_titlex
+        move.w  d2,d0
+        moveq   #1,d1
+        move.w  d3,d2
+        move.w  d7,d3
+        lea     wn_veilpat(pc),a2
+        moveq   #2,d6
+        move.b  WD_BLOCKPEN(a3),d7
+        bsr.s   wn_patfill
+.vl_ret:
+        movem.l (sp)+,d2-d7/a2
+        rts
+
+; wn_patfill(a3 = fenêtre, a6 = GfxBase, a2 = motif, d6 = log2 de ses lignes, d7.b = stylo, d0-d3 = rectangle) :
+; RectFill à motif en JAM1 dans le RastPort du cadre, son motif d'origine rendu ensuite. Rectangle vide : rien.
+; Clobbe d0-d3/a0/a1.
+wn_patfill:
+        cmp.w   d0,d2
+        blt.s   .pf_ret
+        cmp.w   d1,d3
+        blt.s   .pf_ret
+        movem.w d0-d3,-(sp)
+        bsr     wn_brp
+        move.l  rp_AreaPtrn(a1),-(sp)
+        move.b  rp_AreaPtSz(a1),-(sp)
+        move.l  a2,rp_AreaPtrn(a1)
+        move.b  d6,rp_AreaPtSz(a1)
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     wn_brp
+        moveq   #0,d0
+        move.b  d7,d0
+        jsr     LVO_SETAPEN(a6)
+        bsr     wn_brp
+        movem.w 6(sp),d0-d3
+        jsr     LVO_RECTFILL(a6)
+        bsr     wn_brp
+        move.b  (sp)+,rp_AreaPtSz(a1)
+        move.l  (sp)+,rp_AreaPtrn(a1)
+        addq.l  #8,sp
+.pf_ret:
+        rts
+
+; wn_sysgads(a3 = fenêtre, a5) : pictogrammes des gadgets système (spec §5) : fermeture en (0,0), taille dans le coin
+; bas-droit, profondeur arrière puis avant à droite de la barre. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+wn_sysgads:
+        movem.l d2/a2/a4,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        bsr     wn_brp
+        move.l  a1,a4                ; a4 = RastPort du cadre
+        bsr     wn_geo
+        move.l  a0,a2                ; a2 = géométrie
+        move.l  WD_FLAGS(a3),d2
+        btst    #3,d2                ; WINDOWCLOSE
+        beq.s   .sg_size
+        move.l  GEO_PCLOSE(a2),a0
+        moveq   #0,d0
+        moveq   #0,d1
+        bsr.s   wn_picto
+.sg_size:
+        btst    #0,d2                ; WINDOWSIZING
+        beq.s   .sg_depth
+        move.l  GEO_PSIZE(a2),a0
+        move.w  WD_WIDTH(a3),d0
+        sub.w   GEO_SW(a2),d0
+        move.w  WD_HEIGHT(a3),d1
+        sub.w   GEO_SH(a2),d1
+        bsr.s   wn_picto
+.sg_depth:
+        btst    #2,d2                ; WINDOWDEPTH
+        beq.s   .sg_ret
+        move.w  WD_WIDTH(a3),d0
+        bsr.s   wn_depthpics
+.sg_ret:
+        movem.l (sp)+,d2/a2/a4
+        rts
+
+; wn_depthpics(a2 = géométrie, a4 = RastPort, d0.w = largeur de la fenêtre ou de l'écran, a6) : pictogrammes de
+; profondeur arrière et avant, ancrés au bord droit, ligne 0. Clobbe d0/d1/a0/a1.
+wn_depthpics:
+        move.w  d0,-(sp)
+        move.l  GEO_PBACK(a2),a0
+        sub.w   GEO_BACK(a2),d0
+        moveq   #0,d1
+        bsr.s   wn_picto
+        move.w  (sp)+,d0
+        move.l  GEO_PFRONT(a2),a0
+        sub.w   GEO_FRONT(a2),d0
+        moveq   #0,d1
+;       (suite dans wn_picto)
+
+; wn_picto(a0 = pictogramme, a4 = RastPort, d0.w/d1.w = coin haut-gauche, a6) : suite de rectangles pleins (stylo,
+; x0, y0, x1, y1 en octets, terminée par $FF) dessinés en JAM1. Clobbe d0/d1/a0/a1.
+wn_picto:
+        movem.l d2-d5/a2,-(sp)
+        move.l  a0,a2
+        move.w  d0,d4
+        move.w  d1,d5
+        move.l  a4,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+.pc_lp:
+        moveq   #0,d0
+        move.b  (a2)+,d0
+        cmp.b   #$FF,d0
+        beq.s   .pc_ret
+        move.l  a4,a1
+        jsr     LVO_SETAPEN(a6)
+        moveq   #0,d0
+        move.b  (a2)+,d0
+        add.w   d4,d0
+        moveq   #0,d1
+        move.b  (a2)+,d1
+        add.w   d5,d1
+        moveq   #0,d2
+        move.b  (a2)+,d2
+        add.w   d4,d2
+        moveq   #0,d3
+        move.b  (a2)+,d3
+        add.w   d5,d3
+        move.l  a4,a1
+        jsr     LVO_RECTFILL(a6)
+        bra.s   .pc_lp
+.pc_ret:
+        movem.l (sp)+,d2-d5/a2
+        rts
+
+; it_setactive(a3 = nouvelle fenêtre active | 0, a5) : l'ancienne fenêtre active perd WINDOWACTIVE et reçoit le
+; voile ; la nouvelle prend WINDOWACTIVE et sa barre de titre est redessinée (voile effacé) (spec §4). Préserve tout.
+it_setactive:
+        movem.l d0-d1/a0-a1/a3/a6,-(sp)
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        cmp.l   a3,d0
+        beq.s   .sa_ret
+        move.l  a3,IB_ACTIVEWINDOW(a5)
+        tst.l   d0
+        beq.s   .sa_new
+        move.l  d0,a3
+        and.l   #~WINDOWACTIVE,WD_FLAGS(a3)
+        bsr     wn_veil
+        move.l  16(sp),a3
+.sa_new:
+        move.l  a3,d0
+        beq.s   .sa_ret
+        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
+        bsr     wn_titlebar
+.sa_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a3/a6
+        rts
+
+; motifs de remplissage (SetAfPt) : glissement (8 lignes : 2, 3, 6, 7 pleines) et voile (4 lignes, un pixel sur
+; quatre, décalé d'une ligne à l'autre)
+wn_dragpat:
+        dc.w    0,0,$FFFF,$FFFF,0,0,$FFFF,$FFFF
+wn_veilpat:
+        dc.w    $8888,$2222,$8888,$2222
+
+; pictogrammes des gadgets système, dessinés librement d'après leur description géométrique (spec §5.3) : rectangles
+; pleins (stylo, x0, y0, x1, y1). Stylos : 0 fond de l'écran, 1 blanc, 2 noir.
+pic_front_h:                         ; 29 x 10 : carré noir derrière un carré creux devant
+        dc.b    1,0,0,28,9, 0,0,0,1,9, 2,4,1,7,6, 2,4,1,17,1, 0,8,2,21,8, 1,10,3,19,7, 0,24,0,25,9, $FF
+pic_back_h:                          ; 24 x 10 : carré creux derrière un rectangle noir devant
+        dc.b    1,0,0,23,9, 0,0,0,1,9, 0,4,1,17,6, 1,6,2,15,5, 2,8,3,21,8, $FF
+pic_close_h:                         ; 28 x 10 : cadre creux et petit carré noir au centre
+        dc.b    1,0,0,27,9, 0,4,0,5,9, 0,8,1,23,8, 1,10,2,21,7, 2,14,4,17,5, 0,26,0,27,9, $FF
+pic_size_h:                          ; 16 x 9 : deux rectangles creux qui se chevauchent
+        dc.b    1,0,0,15,8, 0,2,1,7,3, 1,4,2,5,2, 0,6,3,13,7, 1,8,4,11,6, $FF
+pic_front_l:                         ; 17 x 10
+        dc.b    1,0,0,16,9, 0,0,0,1,9, 2,4,1,7,6, 2,4,1,10,1, 0,8,2,14,8, 1,9,3,13,7, $FF
+pic_back_l:                          ; 17 x 10
+        dc.b    1,0,0,16,9, 0,0,0,1,9, 0,4,1,10,6, 1,5,2,9,5, 2,8,3,14,8, $FF
+pic_close_l:                         ; 14 x 10
+        dc.b    1,0,0,13,9, 0,2,1,11,8, 1,3,2,10,7, 2,6,4,7,5, $FF
+pic_size_l:                          ; 11 x 10 : deux carrés noirs qui se touchent par un coin
+        dc.b    1,0,0,10,9, 2,2,1,4,3, 2,5,4,8,8, $FF
+        even
 
 ; CloseWindow(fenêtre a0) : supprime sa couche (layers rend la zone aux couches de derrière et au fond), la retire de
 ; son écran, redessine ce qui a été abîmé (it_refresh), puis libère son port IDCMP et la fenêtre.
@@ -1117,8 +1407,7 @@ intuition_CloseWindow:
 .cw_new:
         move.l  a3,-(sp)
         move.l  d2,a3
-        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
-        move.l  a3,IB_ACTIVEWINDOW(a5)
+        bsr     it_setactive
         bsr     wn_scrtitle
         move.l  (sp)+,a3
 .cw_act:
@@ -1184,7 +1473,7 @@ it_refresh:
         move.l  SC_FIRSTWINDOW(a4),a3
 .ir_lp:
         cmpa.w  #0,a3
-        beq.s   .ir_r
+        beq     .ir_r
         move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO : le cadre, dans sa propre couche
         beq.s   .ir_inner
         move.l  d0,a2
@@ -1205,9 +1494,10 @@ it_refresh:
         move.l  IB_LAYERSBASE(a5),a6
         move.l  a2,a0
         jsr     LVO_BEGINUPDATE(a6)
-        tst.l   WDX_BLAYER(a3)       ; intérieur d'une fenêtre GIMMEZEROZERO : ses gadgets seulement
-        beq.s   .ir_bord
+        tst.l   WDX_BLAYER(a3)       ; intérieur d'une fenêtre GIMMEZEROZERO : ses gadgets seulement ; ceux du cadre
+        beq.s   .ir_bord             ; (GZZGADGET) le sont aussi, les gadgets système restent par-dessus
         bsr     gad_drawall
+        bsr     wn_sysgads
         bra.s   .ir_dmg
 .ir_bord:
         bsr     wn_border
@@ -1229,7 +1519,7 @@ it_refresh:
         bsr     wn_refreshmsg
 .ir_n:
         move.l  WD_NEXTWINDOW(a3),a3
-        bra.s   .ir_lp
+        bra     .ir_lp
 .ir_r:
         movem.l (sp)+,d2-d7/a2-a3/a6
         rts
@@ -1856,13 +2146,7 @@ it_dobutton:
         beq     .db_ret
         cmp.w   #IECODE_LBUTTON,d7
         bne     .db_mb
-        move.l  IB_ACTIVEWINDOW(a5),d0   ; la fenêtre cliquée devient active (BACKDROP compris : ses menus)
-        beq.s   .db_set
-        move.l  d0,a0
-        and.l   #~WINDOWACTIVE,WD_FLAGS(a0)
-.db_set:
-        or.l    #WINDOWACTIVE,WD_FLAGS(a3)
-        move.l  a3,IB_ACTIVEWINDOW(a5)
+        bsr     it_setactive         ; la fenêtre cliquée devient active (BACKDROP compris : ses menus)
         bsr     wn_scrtitle
         btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : aucun gadget système
         bne     .db_mb
@@ -1870,24 +2154,32 @@ it_dobutton:
         bne.s   .db_size
         cmp.w   #WD_TBARH,d3
         bge.s   .db_size
+        bsr     wn_geo               ; a0 = géométrie des gadgets système (spec intuition-frame-v34 §5.2)
         btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
         beq.s   .db_nclose
-        cmp.w   #WD_CLOSEW+3,d2
+        cmp.w   GEO_CX0(a0),d2
+        blt.s   .db_nclose
+        cmp.w   GEO_CX1(a0),d2
         bgt.s   .db_nclose
         move.l  #CLOSEWINDOW,d0
         moveq   #0,d1
         bra     wn_sendmsg
 .db_nclose:
-        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : [W-2G, W-G-1] derrière, [W-G, W-1] devant
+        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : arrière puis avant, ancrés au bord droit
         beq.s   .db_ndepth
         move.w  WD_WIDTH(a3),d0
-        sub.w   #2*SC_GADW,d0
+        sub.w   GEO_FEND(a0),d0
+        cmp.w   d0,d2
+        bgt.s   .db_ndepth           ; au-delà du gadget avant : glissement
+        move.w  WD_WIDTH(a3),d0
+        sub.w   GEO_BACK(a0),d0
         cmp.w   d0,d2
         blt.s   .db_ndepth
-        add.w   #SC_GADW,d0
+        move.w  WD_WIDTH(a3),d1
+        sub.w   GEO_FRONT(a0),d1
         move.l  a3,a0
         move.l  a5,a6
-        cmp.w   d0,d2
+        cmp.w   d1,d2
         bge     intuition_WindowToFront
         bra     intuition_WindowToBack
 .db_ndepth:
@@ -1896,14 +2188,15 @@ it_dobutton:
         moveq   #IT_DRAGMOVE,d0
         bra     it_dragstart
 .db_size:
-        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING : gadget dans le coin bas-droit (18 x 9)
+        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING : gadget dans le coin bas-droit
         beq.s   .db_mb
+        bsr     wn_geo
         move.w  WD_WIDTH(a3),d0
-        sub.w   #18,d0
+        sub.w   GEO_SW(a0),d0
         cmp.w   d0,d2
         blt.s   .db_mb
         move.w  WD_HEIGHT(a3),d0
-        sub.w   #9,d0
+        sub.w   GEO_SH(a0),d0
         cmp.w   d0,d3
         blt.s   .db_mb
         moveq   #IT_DRAGSIZE,d0

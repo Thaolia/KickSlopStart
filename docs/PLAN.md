@@ -826,7 +826,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     QUIT prouvés). Duplicate fait (identique à la 1.3), DiskCopy fonctionne (AutoRequest conforme, returnpkt du handler,
     ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
     À faire : Request/EndRequest/InitRequester (couche de requester),
-    habillage des fenêtres SIZING (bordure droite et gadget de taille comme la 1.3). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    cadre des fenêtres refait comme la 1.3 (motif, voile, pictogrammes, bordures). Restent : barres de défilement des
+    tiroirs du WB, WindowToBack d'une fenêtre GIMMEZEROZERO (sans effet), surbrillance des gadgets système au clic. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

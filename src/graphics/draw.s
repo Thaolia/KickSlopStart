@@ -443,6 +443,8 @@ gfx_RectFill:
         add.w   DC_OY(a5),d5
         add.w   DC_OY(a5),d7
         move.b  rp_FgPen(a1),d3
+        tst.l   rp_AreaPtrn(a1)
+        bne.s   .rf_pat
 .rf_lp:
         cmp.w   d7,d5
         bgt.s   .rf_ret
@@ -456,6 +458,82 @@ gfx_RectFill:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+; motif (SetAfPt) : ligne y -> mot AreaPtrn[(y - origine) & (2^AreaPtSz - 1)], bit 15 = pixel x ≡ 0 (mod 16) de la
+; couche ; plages de 1 au stylo A, plages de 0 au stylo B en JAM2 (laissées telles quelles sinon).
+RP_WORD         EQU 0                ; mot du motif de la ligne
+RP_VAL          EQU 2                ; byte : valeur de la plage (FF = bits à 1)
+RP_X0           EQU 4                ; début de la plage
+RP_X1           EQU 6                ; fin exclusive de la plage
+RP_MASK         EQU 8                ; masque des lignes du motif
+RP_SIZE         EQU 10
+.rf_pat:
+        move.l  a2,-(sp)
+        lea     -RP_SIZE(sp),sp
+        move.l  rp_AreaPtrn(a1),a2
+        moveq   #1,d0
+        move.b  rp_AreaPtSz(a1),d1
+        lsl.w   d1,d0
+        subq.w  #1,d0
+        move.w  d0,RP_MASK(sp)
+.rp_row:
+        cmp.w   d7,d5
+        bgt.s   .rp_ret
+        move.w  d5,d0
+        sub.w   DC_OY(a5),d0
+        and.w   RP_MASK(sp),d0
+        add.w   d0,d0
+        move.w  0(a2,d0.w),RP_WORD(sp)
+        move.w  d4,RP_X0(sp)
+.rp_run:
+        move.w  RP_X0(sp),d0
+        cmp.w   d6,d0
+        bgt.s   .rp_next
+        bsr.s   .rp_bit
+        sne     RP_VAL(sp)
+.rp_ext:
+        addq.w  #1,d0
+        cmp.w   d6,d0
+        bgt.s   .rp_emit
+        bsr.s   .rp_bit
+        sne     d1
+        cmp.b   RP_VAL(sp),d1
+        beq.s   .rp_ext
+.rp_emit:
+        move.w  d0,RP_X1(sp)
+        tst.b   RP_VAL(sp)
+        bne.s   .rp_fg
+        move.b  rp_DrawMode(a1),d1
+        and.b   #JAM2|COMPLEMENT,d1
+        cmp.b   #JAM2,d1
+        bne.s   .rp_skip
+        move.b  rp_BgPen(a1),d3
+        bra.s   .rp_span
+.rp_fg:
+        move.b  rp_FgPen(a1),d3
+.rp_span:
+        move.w  RP_X0(sp),d0
+        move.w  d5,d1
+        move.w  RP_X1(sp),d2
+        subq.w  #1,d2
+        bsr     dr_span
+.rp_skip:
+        move.w  RP_X1(sp),RP_X0(sp)
+        bra.s   .rp_run
+.rp_next:
+        addq.w  #1,d5
+        bra.s   .rp_row
+.rp_ret:
+        lea     RP_SIZE(sp),sp
+        move.l  (sp)+,a2
+        bra     .rf_ret
+.rp_bit:                             ; (d0 = x) -> Z = 1 si le bit du motif vaut 0. Clobbe d1/d2.
+        move.w  d0,d1
+        sub.w   DC_OX(a5),d1
+        not.w   d1
+        and.w   #15,d1
+        move.w  4+RP_WORD(sp),d2
+        btst    d1,d2
         rts
 
 ; SetRast(rp a1, stylo d0) : remplit toute la zone du RastPort (bornes du Layer, sinon le BitMap).

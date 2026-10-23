@@ -33,6 +33,7 @@
                 xref    intuition_DrawImage
                 xref    intuition_PrintIText
                 xref    wn_sendgad
+                xref    wn_sysgads
 
 ; gad_rect(a3 = fenêtre, a0 = gadget, a1 = 4 mots x0, y0, x1, y1) : rectangle du gadget en coordonnées de la fenêtre,
 ; positions et tailles relatives au bord droit / bas résolues. Gadget intérieur d'une fenêtre GIMMEZEROZERO : relatif à
@@ -1052,7 +1053,15 @@ intuition_RefreshGList:
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d2
+        cmp.l   WD_FIRSTGADGET(a3),a2    ; depuis la tête de liste : les gadgets système (en tête chez intuition 1.3)
+        seq     -(sp)                    ; sont redessinés en dernier, par-dessus
         bsr     gad_drawrev
+        tst.b   (sp)+
+        beq.s   .rf_ret
+        btst    #3,WD_FLAGS+2(a3)        ; (aucun sur une fenêtre BORDERLESS)
+        bne.s   .rf_ret
+        jsr     wn_sysgads
+.rf_ret:
         movem.l (sp)+,d2/a2-a3/a5
         rts
 

@@ -90,11 +90,13 @@ bm_Planes    EQU 8            ; bm_Planes[0..7] (APTR x8)
 bm_SIZEOF    EQU 40
 rp_Layer     EQU 0            ; RastPort (graphics/rastport.i, V34)
 rp_BitMap    EQU 4
+rp_AreaPtrn  EQU 8            ; APTR : motif de remplissage (SetAfPt) | 0
 rp_Mask      EQU 24
 rp_FgPen     EQU 25
 rp_BgPen     EQU 26
 rp_AOlPen    EQU 27
 rp_DrawMode  EQU 28
+rp_AreaPtSz  EQU 29           ; BYTE : log2 du nombre de lignes du motif
 rp_LinePtrn  EQU 34
 rp_cp_x      EQU 36
 rp_cp_y      EQU 38

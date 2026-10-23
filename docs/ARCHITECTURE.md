@@ -711,6 +711,34 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     vraie 1.3.
   - **Harnais** : le jeton `keyraw:` envoie une touche sans relâcher les modificateurs tenus. `xdotool key
     --clearmodifiers` relâchait Super avant le V.
+  (17) **Cadre des fenêtres comme intuition 34.3** (spec intuition-frame-v34, relue clean-room : géométrie seulement,
+  aucun bitmap transcrit).
+  - **graphics RectFill + SetAfPt** : un `rp_AreaPtrn` non nul fait un remplissage à motif. Le motif est ancré à
+    l'origine de la couche (ligne y modulo 2^AreaPtSz, bit 15 = x ≡ 0 modulo 16) ; les 1 vont au stylo A, les 0 au
+    stylo B en JAM2 (laissés tels quels sinon).
+  - **wn_border**, dans l'ordre de la spec :
+    1. bordures gauche, droite et basse effacées au stylo 0 ;
+    2. contour au BlockPen : montants de BorderLeft/2 pixels aux deux bords, lignes du haut et du bas. La bordure
+       droite d'une fenêtre redimensionnable paraît donc fine, comme sur la 1.3 ;
+    3. fond de la barre de titre jusqu'à BorderTop − 2 ;
+    4. titre au début de la zone de titre (30 après la fermeture en hires) ;
+    5. avec WINDOWDRAG, motif de glissement (doubles lignes au DetailPen) du bout du titre + 3 à la fin de la zone − 3 ;
+    6. gadgets d'application ;
+    7. gadgets système **par-dessus** (en tête de liste chez la 1.3) ;
+    8. sur une fenêtre inactive, voile d'un pixel sur quatre au BlockPen.
+  - **Activation** (`it_setactive`, seul point de changement) : l'ancienne fenêtre reçoit le voile, la barre de la
+    nouvelle est redessinée.
+  - **Pictogrammes système** (fermeture, profondeur arrière et avant, taille ; hires et lores) : redessinés d'après leur
+    description géométrique, en listes de rectangles. Leurs positions et les zones de clic viennent d'une table par
+    résolution (`wn_geo` / `sc_geo`), partagée par la barre d'écran.
+  - Quand RefreshGadgets part de la tête de liste, et à la réparation de l'intérieur d'une fenêtre GZZ, les gadgets
+    système sont redessinés en dernier. Sans cela, le remplisseur d'Info recouvrait le gadget de taille.
+  - Comparé à la vraie 1.3 : barre de titre (motif, voile, pictogrammes) du tiroir du disque et de la fenêtre Info ;
+    activation par clic ; fermeture et profondeur arrière sur un tiroir.
+  - **Écarts restants** :
+    - les tiroirs du Workbench n'ont pas de barres de défilement ;
+    - pas de surbrillance par inversion pendant le clic sur un gadget système ;
+    - WindowToBack sur une fenêtre GIMMEZEROZERO (Info) reste sans effet. Le défaut existait déjà avant ce changement.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
