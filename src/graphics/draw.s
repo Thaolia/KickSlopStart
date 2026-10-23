@@ -571,7 +571,10 @@ TX_BASE         EQU DC_SIZE+14       ; tf_Baseline
 TX_SMEAR        EQU DC_SIZE+16       ; tf_BoldSmear
 TX_ADV          EQU DC_SIZE+18       ; avance du caractère courant
 TX_STYLE        EQU DC_SIZE+20       ; byte : styles algorithmiques rendus (gras, souligné)
-TX_FRAME        EQU DC_SIZE+22
+TX_SOK          EQU DC_SIZE+21       ; byte : voie « chaîne » permise (JAM2, police fixe de 8 pixels, sans style)
+TX_GP           EQU DC_SIZE+22       ; TX_NMAX pointeurs de glyphes de la tranche courante
+TX_NMAX         EQU 16
+TX_FRAME        EQU DC_SIZE+22+4*TX_NMAX
 
 ; dr_cellcr(d4, d5 = coin d'une cellule de TX_W x TX_H, absolu) : cherche une ClipRect utilisable qui contient
 ; toute la cellule et en fait la ClipRect courante. Z = 0 si trouvée. Préserve tout sauf d0.
@@ -809,7 +812,30 @@ gfx_Text:
         move.b  rp_AlgoStyle(a1),d0
         and.b   #FSF_UNDERLINED|FSF_BOLD,d0
         move.b  d0,TX_STYLE(a5)
+        clr.b   TX_SOK(a5)
+        tst.b   d0
+        bne.s   .tx_char
+        move.b  rp_DrawMode(a1),d0
+        and.b   #JAM2|COMPLEMENT,d0
+        cmp.b   #JAM2,d0
+        bne.s   .tx_char
+        tst.l   tf_CharSpace(a2)
+        bne.s   .tx_char
+        tst.l   tf_CharKern(a2)
+        bne.s   .tx_char
+        cmp.w   #8,tf_XSize(a2)
+        bne.s   .tx_char
+        tst.w   rp_TxSpacing(a1)
+        bne.s   .tx_char
+        st      TX_SOK(a5)
 .tx_char:
+        tst.b   TX_SOK(a5)
+        beq.s   .tx_one
+        cmp.w   #2,d7
+        blt.s   .tx_one
+        bsr     .tx_try
+        bne.s   .tx_char
+.tx_one:
         subq.w  #1,d7
         bmi     .tx_ret
         move.l  TX_FONT(a5),a2
@@ -903,6 +929,178 @@ gfx_Text:
         bsr     dr_end
         lea     TX_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
+        rts
+; .tx_try : voie « chaîne » sur les TX_NMAX prochains caractères au plus : glyphes de 8 pixels alignés sur l'octet,
+; plage entière dans une ClipRect. Z = 0 si des caractères ont été rendus (a4, d7 et cp_x avancés). Si la plage
+; déborde de toute ClipRect, la voie est abandonnée pour le reste de l'appel. Clobbe d0-d6/a0/a2/a3.
+.tx_try:
+        move.w  d7,d6
+        cmp.w   #TX_NMAX,d6
+        bls.s   .tt_n
+        moveq   #TX_NMAX,d6
+.tt_n:
+        move.l  TX_FONT(a5),a2
+        lea     TX_GP(a5),a3
+        moveq   #0,d5                ; d5 = glyphes acceptés
+.tt_gl:
+        cmp.w   d6,d5
+        bge.s   .tt_pos
+        moveq   #0,d0
+        move.b  0(a4,d5.w),d0
+        bsr     tx_index
+        lsl.w   #2,d0
+        move.l  tf_CharLoc(a2),a0
+        cmp.w   #8,2(a0,d0.w)        ; largeur
+        bne.s   .tt_pos
+        move.w  0(a0,d0.w),d1        ; décalage en bits
+        moveq   #7,d2
+        and.w   d1,d2
+        bne.s   .tt_pos
+        lsr.w   #3,d1
+        move.l  tf_CharData(a2),a0
+        add.w   d1,a0
+        move.l  a0,(a3)+
+        addq.w  #1,d5
+        bra.s   .tt_gl
+.tt_pos:
+        move.w  d5,d6                ; d6 = caractères de la tranche
+        beq.s   .tt_none
+        move.w  rp_cp_x(a1),d4
+        add.w   DC_OX(a5),d4
+        move.w  rp_cp_y(a1),d5
+        sub.w   TX_BASE(a5),d5
+        add.w   DC_OY(a5),d5
+        move.w  d6,d0
+        lsl.w   #3,d0
+        move.w  d0,TX_W(a5)
+        bsr     dr_cellcr
+        beq.s   .tt_off
+        bsr.s   .tx_str
+        add.w   d6,a4
+        sub.w   d6,d7
+        lsl.w   #3,d6
+        add.w   d6,rp_cp_x(a1)
+        moveq   #1,d0                ; Z = 0
+        rts
+.tt_off:
+        clr.b   TX_SOK(a5)
+.tt_none:
+        moveq   #0,d0                ; Z = 1
+        rts
+; .tx_str(d6.w = n caractères, glyphes en TX_GP, d4/d5 = coin absolu, a1 = rp, ClipRect courante) : JAM2, plan par
+; plan et ligne par ligne, octet de glyphe g -> (g ET m1) OU-exclusif m2 (m1 = stylos A et B différents, m2 =
+; stylo B ; INVERSVID : m2 ^= m1), flux décalé de x & 7 ; les bits hors de la plage des deux octets de bord sont
+; conservés. Préserve tout sauf d0/d1.
+TS_N            EQU 0                ; WORD : caractères
+TS_PLW          EQU 2                ; plan suivant (bm_Planes)
+TS_PC           EQU 6                ; WORD : plans restants
+TS_FG           EQU 8                ; byte : stylo A, décalé d'un bit par plan
+TS_BG           EQU 9
+TS_MSK          EQU 10
+TS_MODE         EQU 11               ; byte : rp_DrawMode
+TS_RC           EQU 12               ; WORD : lignes restantes
+TS_DST          EQU 14               ; premier octet de la ligne courante
+TS_O0           EQU 18               ; byte : octet de gauche d'origine
+TS_SIZE         EQU 20
+.tx_str:
+        movem.l d2-d7/a1-a4/a6,-(sp)
+        lea     -TS_SIZE(sp),sp
+        move.l  sp,a3
+        move.w  d6,TS_N(a3)
+        move.b  rp_FgPen(a1),TS_FG(a3)
+        move.b  rp_BgPen(a1),TS_BG(a3)
+        move.b  rp_Mask(a1),TS_MSK(a3)
+        move.b  rp_DrawMode(a1),TS_MODE(a3)
+        move.l  DC_CBM(a5),a2
+        sub.w   DC_BX(a5),d4         ; coordonnées dans le BitMap de la ClipRect
+        sub.w   DC_BY(a5),d5
+        moveq   #0,d0
+        move.w  bm_BytesPerRow(a2),d0
+        move.l  d0,a6                ; a6 = pas d'une ligne
+        mulu    d5,d0
+        moveq   #0,d1
+        move.w  d4,d1
+        lsr.w   #3,d1
+        add.l   d1,d0
+        move.l  d0,a4                ; a4 = décalage du premier octet
+        and.w   #7,d4                ; d4 = décalage dans l'octet
+        moveq   #0,d0
+        move.b  bm_Depth(a2),d0
+        move.w  d0,TS_PC(a3)
+        pea     bm_Planes(a2)
+        move.l  (sp)+,TS_PLW(a3)
+.ts_plane:
+        subq.w  #1,TS_PC(a3)
+        bmi     .ts_ret
+        move.l  TS_PLW(a3),a2
+        move.l  (a2)+,a0
+        move.l  a2,TS_PLW(a3)
+        move.b  TS_FG(a3),d0
+        lsr.b   #1,d0
+        scs     d6                   ; (scs avant le move, qui efface C)
+        move.b  d0,TS_FG(a3)
+        move.b  TS_BG(a3),d0
+        lsr.b   #1,d0
+        scs     d7                   ; d7 = m2 = bit du stylo B
+        move.b  d0,TS_BG(a3)
+        move.b  TS_MSK(a3),d0
+        lsr.b   #1,d0
+        scs     d1
+        move.b  d0,TS_MSK(a3)
+        tst.b   d1
+        beq.s   .ts_plane            ; plan protégé par rp_Mask
+        eor.b   d7,d6                ; d6 = m1
+        btst    #2,TS_MODE(a3)       ; INVERSVID
+        beq.s   .ts_ni
+        eor.b   d6,d7
+.ts_ni:
+        add.l   a4,a0                ; a0 = premier octet, ligne 0
+        moveq   #0,d5                ; d5 = décalage de la ligne dans le glyphe
+        move.w  TX_H(a5),TS_RC(a3)
+.ts_row:
+        subq.w  #1,TS_RC(a3)
+        bmi.s   .ts_plane
+        move.l  a0,TS_DST(a3)
+        move.b  (a0),TS_O0(a3)
+        lea     TX_GP(a5),a2
+        move.w  TS_N(a3),d2
+        subq.w  #1,d2
+        moveq   #0,d3                ; d3 = octet précédent (8 bits hauts) et courant
+.ts_ch:
+        move.l  (a2)+,a1
+        move.b  0(a1,d5.l),d0
+        and.b   d6,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        move.b  d0,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        move.b  d0,(a0)+
+        dbra    d2,.ts_ch
+        tst.w   d4
+        beq.s   .ts_nx
+        lsl.w   #8,d3                ; octet de droite : fin du dernier glyphe
+        lsr.w   d4,d3
+        moveq   #-1,d0
+        lsr.b   d4,d0                ; d0 = bits de droite conservés ($FF >> décalage)
+        move.b  (a0),d1
+        and.b   d0,d1
+        or.b    d3,d1
+        move.b  d1,(a0)
+        move.l  TS_DST(a3),a0        ; octet de gauche : ses bits hors plage sont restitués
+        not.b   d0
+        and.b   TS_O0(a3),d0
+        or.b    d0,(a0)
+.ts_nx:
+        move.l  TS_DST(a3),a0
+        add.l   a6,a0
+        moveq   #0,d0
+        move.w  TX_MOD(a5),d0
+        add.l   d0,d5
+        bra.s   .ts_row
+.ts_ret:
+        lea     TS_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a1-a4/a6
         rts
 ; .tx_bits(d6 = ligne, a3 = glyphe) -> d2.l = TX_W bits de la ligne, cadrés à gauche (bit 31 = pixel gauche), le
 ; reste à 0. Lecture par octets (le strike peut commencer à une adresse impaire). Clobbe d0/d1/a0.

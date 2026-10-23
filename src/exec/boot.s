@@ -3832,9 +3832,9 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         lea     task_semr_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
-        lea     task_aud(pc),a2      ; task_aud (pri 0) : lecture DMA par audio.device (« AUDIO PLAY OK »)
-        lea     task_aud_name(pc),a3
-        moveq   #0,d2
+        lea     task_aud(pc),a2      ; task_aud (pri 5) : lecture DMA par audio.device (« AUDIO PLAY OK ») ; au-dessus
+        lea     task_aud_name(pc),a3 ; du shell et de la console, sinon un boot qui affiche beaucoup l'affame et elle
+        moveq   #5,d2                ; rate la fenêtre « w1 rendu, w2 en cours » qu'elle doit observer
         bsr     mk_demo_task
         lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
         lea     task_t_name(pc),a3

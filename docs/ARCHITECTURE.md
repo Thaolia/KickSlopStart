@@ -644,6 +644,22 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     Tout clic sur un gadget GADGHCOMP de ce chemin aurait fini en SOFTWARE FAILURE.
   - Prouvé sous FS-UAE (disque WB 1.3.3, tiroir Expansion) : fenêtre identique à la vraie 1.3. QUIT ferme la fenêtre.
     SAVE écrit le commentaire saisi, qui réapparaît à la réouverture.
+  (14) **Text : voie « chaîne »** (draw.s, `.tx_try` / `.tx_str`). Elle s'applique en JAM2 sans COMPLEMENT, sans
+  style, police fixe de 8 pixels (pas de CharSpace ni de CharKern, TxSpacing nul), et seulement si toute la plage
+  tient dans une ClipRect. C'est le cas de la console.
+  - Par tranche de 16 caractères au plus, les pointeurs de glyphes sont calculés une fois.
+  - Ensuite, plan par plan et ligne par ligne : octet = (glyphe ET m1) OU-exclusif m2. m1 vaut 1 si les stylos A et
+    B diffèrent sur ce plan, m2 est le bit du stylo B ; INVERSVID fait m2 ^= m1.
+  - Le flux est décalé de x & 7 ; les bits hors plage des deux octets de bord sont conservés.
+  - Un glyphe d'une autre largeur, ou non aligné sur l'octet, fait passer par le rendu caractère par caractère.
+    Une plage à cheval sur des ClipRects désactive la voie pour la fin de l'appel.
+  - Mesure, 400 lignes de `type` dans la fenêtre de boot (ROM de production, temps émulé) : 70 s → 45 s. La vraie
+    1.3 met 38 s. Écran final identique au pixel près.
+  - Décomposition avant correction, obtenue par variantes : sans `Text` 35 s, sans défilement 59 s.
+  - Effet de bord sur une sonde de dev : la sonde « AUDIO PLAY » (pri 0) observe par scrutation la fenêtre
+    « w1 rendu, w2 en cours » (~210 ms). Avec une console plus rapide, le boot `hnd` affiche davantage, avec sa
+    recopie série sous Forbid ; la sonde n'a plus tourné qu'environ 1 300 fois sur 420 ms et a raté la fenêtre
+    (`d5` = 1). Elle tourne maintenant à pri 5, au-dessus du shell et de la console. audio.device n'est pas en cause.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
