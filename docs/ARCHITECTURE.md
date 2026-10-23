@@ -660,6 +660,44 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     « w1 rendu, w2 en cours » (~210 ms). Avec une console plus rapide, le boot `hnd` affiche davantage, avec sa
     recopie série sous Forbid ; la sonde n'a plus tourné qu'environ 1 300 fois sur 420 ms et a raté la fenêtre
     (`d5` = 1). Elle tourne maintenant à pri 5, au-dessus du shell et de la console. audio.device n'est pas en cause.
+  (15) **Workbench Duplicate** (spec workbench-task-v34 §6.6 et §7.9, relue clean-room ; sondé sur la vraie 1.3).
+  - **Objet** (`wb_duplicate`) : CurrentDir du tiroir, Lock de l'original (échec : « accessing <nom> »), nouveau nom par
+    icon BumpRevision (−108, « copy of … », tronqué à 25 caractères).
+  - **Icône** : le WBObject de l'original est lu (GetWBObject), décalé de +30/+15 et écrit sous le nouveau nom par
+    PutWBObject (−36) **avant** les données, puis rétabli et rendu. L'icône est ensuite relue ; en cas d'échec,
+    « Cannot read info file <nom> » et rien n'est copié.
+  - **Affichage** : l'icône est ajoutée au tiroir et dessinée sans relire le tiroir ; l'original reste sélectionné.
+    Une icône du même nom déjà affichée est remplacée, et le tiroir redessiné.
+  - **Copie** (`wb_cptree`) : récursive, Open/Read/Write par tampon de 4 Ko. La 1.3 lit et écrit par 512 octets via
+    deux coroutines, ce qui ne change rien d'observable. Messages « accessing / opening / reading / writing /
+    examining » comme la 1.3. Protection, date et commentaire ne sont pas recopiés, comme dans la 1.3.
+  - **Disque** : lance son outil par défaut (DiskCopy) avec le disque en argument ; sans outil, « This disk cannot be
+    copied ».
+  - **dos DeviceProc** (−174) : rend le port du handler. IoErr vaut le verrou d'un assign, 0 sinon. DiskCopy en a besoin.
+  - Comparé à la vraie 1.3 (Duplicate du tiroir Expansion) : même nom, même `.info` (position 233,15) écrit avant le
+    répertoire. Copie de Prefs : 8 fichiers identiques octet par octet.
+  - **DiskCopy 1.4 fonctionne** depuis Duplicate du disque (spec intuition-requesters-v34 §5-§7). Trois correctifs :
+    1. **handler DF0: — réponse returnpkt** : le paquet revient vers `dp_Port` par PutMsg, et `dp_Port` reçoit le port
+       du handler. Avant, ReplyMsg passait par `mn_ReplyPort`, que DiskCopy ne remplit pas pour son ACTION_INHIBIT :
+       il attendait indéfiniment.
+    2. **ACTION_INHIBIT** (31) accepté. À l'inhibition, la bitmap modifiée est écrite ; à la levée, elle est oubliée
+       et sera relue (`ow_inhibit`).
+    3. **AutoRequest conforme à BuildSysRequest** :
+       - fenêtre en (0,0), titre de la fenêtre appelante (« System Request » sans elle), stylos de cette fenêtre ;
+       - drapeaux NOCAREREFRESH, ACTIVATE, SIMPLE_REFRESH, DEPTH, DRAG et SIZING, taille minimale 88×24 ;
+       - IDCMP pflag | nflag | GADGETUP | RAWKEY ;
+       - requester sur tout l'intérieur : fond au stylo 1, cadre en retrait d'un pixel au stylo 0 (montants de deux
+         pixels), corps à son coin ;
+       - boutons : texte + 12 de large, police + 6 de haut, positif à 14 du bord gauche, négatif à 13 du bord droit,
+         4 pixels au-dessus du bas ; filet intérieur au stylo 0 et cadre extérieur au stylo 3 ;
+       - Amiga-V / Amiga-B traités (sans effet tant que RAWKEY n'est pas acheminé vers les fenêtres).
+    - **Écart assumé** : le requester est dessiné dans la fenêtre, sans couche Request ; seule la structure interne
+      diffère. Request, EndRequest et InitRequester restent à faire.
+  - Prouvé sous FS-UAE :
+    - la demande « Put SOURCE disk » est identique à la vraie ROM, à l'habillage de fenêtre près (bordure droite et
+      gadget de taille) ;
+    - Cancel termine DiskCopy, Continue lance la lecture ;
+    - la confirmation de Discard s'affiche au nouveau format.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

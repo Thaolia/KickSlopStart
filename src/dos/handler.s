@@ -29,6 +29,7 @@
                 xref    ow_rename
                 xref    ow_setfield
                 xref    ow_diskinfo
+                xref    ow_inhibit
                 xref    ws_open
                 xref    ws_write
                 xref    ws_close
@@ -37,6 +38,7 @@
                 xref    timer_setnow
 
 ACTION_MORE_CACHE EQU 18             ; AddBuffers : ajoute des tampons au filesystem
+ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE : le disque n'est plus accédé (DiskCopy, Format)
 WS_MAGICV       EQU $57524954        ; tête d'un état d'écriture (ofswrite.s) ; un état de lecture commence par un APTR
 HND_NAMEBUF     EQU 112              ; chaîne C d'un nom reçu en BSTR (pile)
 
@@ -105,6 +107,8 @@ dos_handler_df0:
                 beq     .diskinfo
                 cmp.l   #ACTION_INFO,d0
                 beq     .info
+                cmp.l   #ACTION_INHIBIT,d0
+                beq     .inhibit
                 move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -346,6 +350,12 @@ dos_handler_df0:
                 clr.l   DP_RES1(a4)
                 bra     .reply
 
+.inhibit:
+                move.l  DP_ARG1(a4),d0
+                jsr     ow_inhibit                     ; bitmap écrite / oubliée
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
+
 .morecache:                                          ; AddBuffers : pas de cache de blocs FS (le trackdisk garde la piste)
                 move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepté sans effet
                 bra     .reply
@@ -357,9 +367,11 @@ dos_handler_df0:
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)               ; libère l'état (ioreq + block buffer inclus)
                 move.l  #DOSTRUE,DP_RES1(a4)
-.reply:
+.reply:                                              ; returnpkt : vers dp_Port (mn_ReplyPort peut
+                move.l  DP_PORT(a4),a0                ; ne pas être rempli : DiskCopy), qui reçoit
+                move.l  a2,DP_PORT(a4)                ; en retour le port du handler
                 move.l  a3,a1
-                jsr     LVO_REPLYMSG(a6)              ; renvoie au mn_ReplyPort de l'appelant
+                jsr     LVO_PUTMSG(a6)
                 bra     .hl
 .end_w:
                 jsr     ws_close                       ; données, extension, header, bitmap écrits ; état libéré

@@ -90,7 +90,8 @@ dos_vectors:
         dc.l    dos_null                 ; RED LOADSEG_LVO_UNWIRED : LoadSeg non câblé -> jsr -150 renvoie 0
                 endc
         dc.l    dos_fn_unloadseg         ; 26 : LVO -156 UnLoadSeg(seglist d1)
-        dcb.l   3,dos_null               ; 27..29 : LVO -162..-174 (non impl.)
+        dcb.l   2,dos_null               ; 27..28 : LVO -162/-168 (GetPacket/QueuePacket, privés)
+        dc.l    dos_fn_deviceproc        ; 29 : LVO -174 DeviceProc(nom d1) -> port du handler
         dc.l    dos_fn_setcomment        ; 30 : LVO -180 SetComment(name d1, commentaire d2)
         dc.l    dos_fn_setprotection     ; 31 : LVO -186 SetProtection(name d1, masque d2)
         dc.l    dos_DateStamp            ; 32 : LVO -192
@@ -1113,6 +1114,21 @@ dos_fn_parentdir:
 .pd_zero:
         moveq   #0,d0
 .pd_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; DeviceProc(nom d1) -> port du process handler du device, du volume ou de l'assign désigné | 0 ; IoErr = verrou du
+; répertoire d'un assign, 0 sinon (AutoDoc). Nom inconnu : 0, IoErr posé par dos_resolve. a6 = DosBase.
+dos_fn_deviceproc:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d1,a4
+        bsr     dos_resolve             ; a3 = port | 0, d6 = verrou de départ
+        move.l  a3,d0
+        beq.s   .dv_ret
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  d6,PR_RESULT2(a0)
+.dv_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 

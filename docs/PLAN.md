@@ -823,7 +823,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     chaînes (70 → 45 s pour 400 lignes ; vraie 1.3 : 38 s). Reste de l'écart : défilement (~11 s) et surcoût par
     ligne (paquet, curseur).
     Info du Workbench fait (info.library, fenêtres GIMMEZEROZERO, gadgets dessinés à rebours comme la 1.3 ; SAVE et
-    QUIT prouvés). Restent : Duplicate, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    QUIT prouvés). Duplicate fait (identique à la 1.3), DiskCopy fonctionne (AutoRequest conforme, returnpkt du handler,
+    ACTION_INHIBIT, DeviceProc). À faire : Request/EndRequest/InitRequester (couche de requester), RAWKEY vers les fenêtres,
+    habillage des fenêtres SIZING (bordure droite et gadget de taille comme la 1.3). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois

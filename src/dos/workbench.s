@@ -45,6 +45,10 @@ ICON_LVO_PUTDISKOBJECT EQU -84
 ICON_LVO_GETWBOBJECT EQU -30         ; icon.library 1.3 (spec workbench-task-v34 §7.8)
 ICON_LVO_FREEWBOBJECT EQU -60
 ICON_LVO_ADDFREELIST EQU -72
+ICON_LVO_PUTWBOBJECT EQU -36
+ICON_LVO_BUMPREVISION EQU -108
+WBO_CURX        EQU $54              ; WBObject : position de l'icône (LONG)
+WBO_CURY        EQU $58
 WBO_NAME        EQU $40              ; WBObject (privé, alloué par icon.library) : nom C
 WBO_DRAWER      EQU $4C              ; DrawerData du Workbench (446 octets) | 0
 WBO_FREE        EQU $8C              ; FreeList de l'objet
@@ -248,6 +252,7 @@ DR_ID           EQU DR_TITLE+WBS_NAMEMAX ; WORD : n° de la fenêtre (1..WB_MAXD
 DR_SIZE         EQU DR_ID+2
 WB_MAXICONS     EQU 16
 WB_PATHMAX      EQU 96
+WB_CPBUF        EQU 4096             ; tampon de copie de Duplicate
 WB_ICONGAP      EQU 20               ; marge droite de l'icône de disque (pas de position mémorisée)
 WB_ICONTOP      EQU 6
 WB_GRIDX        EQU 80
@@ -1534,6 +1539,8 @@ wb_menupick:
 .mp_close:
         cmp.w   #5,d1
         beq     wb_discard
+        cmp.w   #2,d1
+        beq     wb_duplicate
         cmp.w   #4,d1
         beq     wb_info
         cmp.w   #3,d1
@@ -2139,6 +2146,179 @@ wb_info:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
+; wb_duplicate(a5) : Workbench/Duplicate (spec workbench-task-v34 §7.9). Disque : son outil par défaut (DiskCopy)
+; est lancé avec le disque en argument, « This disk cannot be copied » sans outil. Autre icône : nouveau nom par
+; BumpRevision (« copy of … », 25 caractères au plus) ; l'icône de l'original, décalée de +30/+15, est écrite sous
+; ce nom par PutWBObject AVANT les données ; elle est relue (échec : « Cannot read info file <nom> », rien n'est
+; copié) et ajoutée au tiroir sans le relire, l'original restant sélectionné ; puis l'objet est copié (wb_cptree).
+DU_NEW          EQU 0                ; nouveau nom
+DU_SRC          EQU DU_NEW+WBS_NAMEMAX   ; chemin de l'original
+DU_DST          EQU DU_SRC+WB_PATHMAX    ; chemin de la copie
+DU_ARG          EQU DU_DST+WB_PATHMAX    ; argument du message « Cannot read info file %s »
+DU_SIZE         EQU DU_ARG+4
+DU_NAMEMAX      EQU 25
+wb_duplicate:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        move.w  WBS_SELW(a5),d7
+        bmi     .du_ret
+        bne.s   .du_obj
+        move.l  WBS_DOBJ(a5),d0      ; disque
+        beq     .du_ret
+        move.l  d0,a2
+        move.l  DO_DEFAULTTOOL(a2),d0
+        bne.s   .du_tool
+        lea     wb_nodiskcopy(pc),a0
+        suba.l  a1,a1
+        bsr     wb_message
+        bra     .du_ret
+.du_tool:
+        move.l  d0,a0
+        lea     wb_sysname(pc),a1
+        bsr     wb_launch
+        bra     .du_ret
+.du_obj:
+        move.w  WBS_SELI(a5),d6
+        bsr     wb_window
+        beq     .du_ret
+        lea     -DU_SIZE(sp),sp
+        move.w  d6,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a2 ; a2 = nom de l'original
+        lea     DR_PATH(a4),a0
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,d5                ; d5 = verrou du tiroir
+        beq     .du_free
+        move.l  d5,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        move.l  d0,d4                ; d4 = ancien répertoire courant
+        move.l  a2,d1
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,d3                ; d3 = verrou de l'original
+        bne.s   .du_bump
+        moveq   #1,d0                ; « accessing <nom> »
+        move.l  a2,a0
+        bsr     wb_error
+        bra     .du_cd
+.du_bump:
+        lea     DU_NEW(sp),a0
+        move.l  a2,a1
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_BUMPREVISION(a6)
+        clr.b   DU_NEW+DU_NAMEMAX(sp)
+        move.l  a2,a0                ; icône de la copie : celle de l'original, décalée, écrite sous le nouveau nom
+        jsr     ICON_LVO_GETWBOBJECT(a6)
+        tst.l   d0
+        beq     .du_unlock
+        move.l  d0,a3                ; a3 = WBObject de l'original
+        movem.l WBO_CURX(a3),d0-d1
+        movem.l d0-d1,-(sp)
+        add.l   #30,WBO_CURX(a3)
+        add.l   #15,WBO_CURY(a3)
+        move.l  WBO_NAME(a3),-(sp)
+        lea     12+DU_NEW(sp),a0
+        move.l  a0,WBO_NAME(a3)
+        move.l  a3,a1
+        jsr     ICON_LVO_PUTWBOBJECT(a6)
+        move.l  (sp)+,WBO_NAME(a3)
+        movem.l (sp)+,d0-d1
+        movem.l d0-d1,WBO_CURX(a3)
+        move.l  a3,a0
+        jsr     ICON_LVO_FREEWBOBJECT(a6)
+        move.l  a4,-(sp)             ; chemins de l'original et de la copie
+        lea     DR_PATH(a4),a0
+        lea     4+DU_DST(sp),a1
+        lea     4+DU_NEW(sp),a4
+        bsr     wb_join
+        move.l  a2,a4
+        move.l  (sp),a0
+        lea     DR_PATH(a0),a0
+        lea     4+DU_SRC(sp),a1
+        bsr     wb_join
+        move.l  (sp)+,a4
+        lea     DU_DST(sp),a0        ; relecture de l'icône de la copie
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_GETDISKOBJECT(a6)
+        tst.l   d0
+        bne.s   .du_icon
+        lea     DU_NEW(sp),a0
+        move.l  a0,DU_ARG(sp)
+        lea     wb_noinfofile(pc),a0
+        lea     DU_ARG(sp),a1
+        bsr     wb_message
+        bra     .du_unlock
+.du_icon:
+        move.l  d0,a3                ; a3 = DiskObject de la copie
+        bsr     .du_place
+        lea     DU_SRC(sp),a0
+        lea     DU_DST(sp),a1
+        bsr     wb_cptree
+.du_unlock:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d3,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.du_cd:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d4,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        move.l  d5,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.du_free:
+        lea     DU_SIZE(sp),sp
+.du_ret:
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+; .du_place(a3 = DiskObject, a4 = tiroir, d7 = son n°, nom en 4+DU_NEW(sp)) : une icône du même nom est remplacée
+; (le tiroir est alors redessiné), sinon la copie est ajoutée et dessinée. Plus de place : icône rendue.
+.du_place:
+        movem.l d2/d6/a2,-(sp)
+        moveq   #0,d6                ; d6 = indice
+.dp_find:
+        cmp.l   DR_NICON(a4),d6
+        bhs.s   .dp_add
+        move.w  d6,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a0
+        lea     16+DU_NEW(sp),a1
+        bsr     wb_streq
+        beq.s   .dp_same
+        addq.l  #1,d6
+        bra.s   .dp_find
+.dp_same:
+        move.l  d6,d0
+        lsl.l   #2,d0
+        move.l  DR_ICONS(a4,d0.l),a0
+        move.l  a3,DR_ICONS(a4,d0.l)
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_FREEDISKOBJECT(a6)
+        bsr     wb_redraw1
+        bra.s   .dp_ret
+.dp_add:
+        cmp.l   #WB_MAXICONS,d6
+        blo.s   .dp_new
+        move.l  a3,a0
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_FREEDISKOBJECT(a6)
+        bra.s   .dp_ret
+.dp_new:
+        move.w  d6,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a1
+        lea     16+DU_NEW(sp),a0
+        moveq   #WBS_NAMEMAX-1,d0
+        bsr     wb_strcpy
+        move.l  d6,d0
+        lsl.l   #2,d0
+        move.l  a3,DR_ICONS(a4,d0.l)
+        addq.l  #1,DR_NICON(a4)
+        bsr     wb_drawone
+.dp_ret:
+        movem.l (sp)+,d2/d6/a2
+        rts
+
 ; wb_discard(a5) : Workbench/Discard. L'icône sélectionnée d'un tiroir (pas le disque) : confirmation par
 ; AutoRequest, puis l'objet (un tiroir avec tout son contenu) et son « .info » sont supprimés et le tiroir est relu.
 DS_PATH         EQU 0                ; chemin de l'objet (WB_PATHMAX)
@@ -2525,6 +2705,207 @@ wb_rmtree:
         movem.l (sp)+,d2-d3/a2-a4/a6
         rts
 
+; wb_cptree(a0 = source, a1 = destination, a5) -> d0 = 1 si l'objet (et tout son contenu) est copié, 0 sinon, le
+; message d'erreur déjà affiché (spec workbench-task-v34 §6.6). Répertoire : Lock de la destination, CreateDir si
+; absente, puis chaque entrée récursivement. Fichier : Open source (MODE_OLDFILE) et destination (MODE_NEWFILE), puis
+; Read / Write par tampon de WB_CPBUF jusqu'à la taille annoncée par Examine. Préserve d2-d7/a2-a6.
+CT_SRC          EQU 0                ; chemin d'une entrée source
+CT_DST          EQU WB_PATHMAX       ; chemin de l'entrée destination
+CT_SIZE         EQU 2*WB_PATHMAX
+wb_cptree:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        move.l  a0,a2                ; a2 = source
+        move.l  a1,a3                ; a3 = destination
+        moveq   #0,d7                ; d7 = résultat
+        move.l  ($4).w,a6
+        move.l  #FIB_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,d6                ; d6 = FIB
+        beq     .ct_nomem
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a2,d1
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,d5                ; d5 = verrou de la source
+        bne.s   .ct_exam
+        moveq   #1,d0                ; « accessing <entrée> »
+        move.l  a2,a0
+        bsr     wb_base
+        bsr     wb_error
+        bra     .ct_ffib
+.ct_exam:
+        move.l  d5,d1
+        move.l  d6,d2
+        jsr     DOS_LVO_EXAMINE(a6)
+        tst.l   d0
+        bne.s   .ct_kind
+        moveq   #7,d0                ; « examining <entrée> »
+        move.l  a2,a0
+        bsr     wb_base
+        bsr     wb_error
+        bra     .ct_unlock
+.ct_kind:
+        move.l  d6,a0
+        tst.l   FIB_DIRENTRYTYPE(a0)
+        bmi     .ct_file
+        move.l  a3,d1                ; répertoire : la destination existe-t-elle ?
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        tst.l   d0
+        bne.s   .ct_dlock
+        jsr     DOS_LVO_IOERR(a6)
+        cmp.l   #ERROR_OBJECT_NOT_FOUND,d0
+        bne.s   .ct_derr
+        move.l  a3,d1
+        jsr     DOS_LVO_CREATEDIR(a6)
+        tst.l   d0
+        bne.s   .ct_dlock
+.ct_derr:
+        moveq   #1,d0                ; « accessing <destination> »
+        move.l  a3,a0
+        bsr     wb_base
+        bsr     wb_error
+        bra     .ct_unlock
+.ct_dlock:
+        move.l  d0,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+        lea     -CT_SIZE(sp),sp
+.ct_next:
+        move.l  d5,d1
+        move.l  d6,d2
+        jsr     DOS_LVO_EXNEXT(a6)
+        tst.l   d0
+        beq.s   .ct_dend
+        move.l  d6,a4
+        lea     FIB_FILENAME(a4),a4
+        move.l  a2,a0
+        lea     CT_SRC(sp),a1
+        bsr     wb_join
+        move.l  a3,a0
+        lea     CT_DST(sp),a1
+        bsr     wb_join
+        lea     CT_SRC(sp),a0
+        lea     CT_DST(sp),a1
+        bsr     wb_cptree
+        tst.l   d0
+        bne.s   .ct_next
+        bra.s   .ct_dout             ; une entrée a échoué : son message est affiché, on arrête
+.ct_dend:
+        jsr     DOS_LVO_IOERR(a6)
+        cmp.l   #ERROR_NO_MORE_ENTRIES,d0
+        beq.s   .ct_dok
+        moveq   #0,d0                ; « examining directory »
+        suba.l  a0,a0
+        bsr     wb_error
+        bra.s   .ct_dout
+.ct_dok:
+        moveq   #1,d7
+.ct_dout:
+        lea     CT_SIZE(sp),sp
+        bra     .ct_unlock
+.ct_file:
+        move.l  FIB_SIZE(a0),d4      ; d4 = octets restant à copier
+        move.l  ($4).w,a6
+        move.l  #WB_CPBUF,d0
+        moveq   #MEMF_PUBLIC,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a4                ; a4 = tampon
+        tst.l   d0
+        bne.s   .ct_open
+        bsr     .ct_oom
+        bra     .ct_unlock
+.ct_open:
+        clr.l   -(sp)                ; 4(sp) = fichier destination
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  a2,d1
+        move.l  #MODE_OLDFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        move.l  d0,-(sp)             ; (sp) = fichier source
+        bne.s   .ct_odst
+        moveq   #2,d0                ; « opening <source> »
+        move.l  a2,a0
+        bsr     wb_base
+        bsr     wb_error
+        bra.s   .ct_close
+.ct_odst:
+        move.l  a3,d1
+        move.l  #MODE_NEWFILE,d2
+        jsr     DOS_LVO_OPEN(a6)
+        move.l  d0,4(sp)
+        bne.s   .ct_rw
+        moveq   #2,d0                ; « opening <destination> »
+        move.l  a3,a0
+        bsr     wb_base
+        bsr     wb_error
+        bra.s   .ct_close
+.ct_rw:
+        tst.l   d4
+        beq.s   .ct_fok
+        move.l  d4,d3
+        cmp.l   #WB_CPBUF,d3
+        bls.s   .ct_rd
+        move.l  #WB_CPBUF,d3
+.ct_rd:
+        move.l  (sp),d1
+        move.l  a4,d2
+        jsr     DOS_LVO_READ(a6)
+        tst.l   d0
+        bgt.s   .ct_wr
+        moveq   #3,d0                ; « reading »
+        suba.l  a0,a0
+        bsr     wb_error
+        bra.s   .ct_close
+.ct_wr:
+        move.l  d0,d3
+        move.l  4(sp),d1
+        move.l  a4,d2
+        jsr     DOS_LVO_WRITE(a6)
+        cmp.l   d3,d0
+        beq.s   .ct_wok
+        moveq   #4,d0                ; « writing »
+        suba.l  a0,a0
+        bsr     wb_error
+        bra.s   .ct_close
+.ct_wok:
+        sub.l   d3,d4
+        bra.s   .ct_rw
+.ct_fok:
+        moveq   #1,d7
+.ct_close:
+        move.l  (sp)+,d1
+        beq.s   .ct_c2
+        jsr     DOS_LVO_CLOSE(a6)
+.ct_c2:
+        move.l  (sp)+,d1
+        beq.s   .ct_c3
+        jsr     DOS_LVO_CLOSE(a6)
+.ct_c3:
+        move.l  ($4).w,a6
+        move.l  a4,a1
+        move.l  #WB_CPBUF,d0
+        jsr     LVO_FREEMEM(a6)
+.ct_unlock:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d5,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.ct_ffib:
+        move.l  ($4).w,a6
+        move.l  d6,a1
+        move.l  #FIB_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .ct_ret
+.ct_nomem:
+        bsr.s   .ct_oom
+.ct_ret:
+        move.l  d7,d0
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+.ct_oom:                             ; spec §6.6 point 9
+        lea     wb_nomem(pc),a0
+        suba.l  a1,a1
+        bra     wb_message
+
 ; wb_reload(d7.w = tiroir, a5) : ses icônes sont rendues, l'intérieur effacé, le répertoire relu (icônes redessinées
 ; au fur et à mesure). Préserve d2-d7/a2-a5.
 wb_reload:
@@ -2637,7 +3018,7 @@ wbm_tmpl:
         WBMENU  wbm_m2,0,152,72,wbs_special,wbm_i20
         WBITEM  wbm_i00,wbm_i01,0,WBM_ON,wbs_open
         WBITEM  wbm_i01,wbm_i02,10,WBM_ON,wbs_close
-        WBITEM  wbm_i02,wbm_i03,20,WBM_OFF,wbs_dup
+        WBITEM  wbm_i02,wbm_i03,20,WBM_ON,wbs_dup
         WBITEM  wbm_i03,wbm_i04,30,WBM_ON,wbs_rename
         WBITEM  wbm_i04,wbm_i05,40,WBM_ON,wbs_info
         WBITEM  wbm_i05,0,50,WBM_ON,wbs_discard
@@ -2741,6 +3122,12 @@ wb_infolib:
         dc.b    "info.library",0
 wb_noinfo:
         dc.b    "Info not available",0
+wb_nodiskcopy:
+        dc.b    "This disk cannot be copied",0
+wb_noinfofile:
+        dc.b    "Cannot read info file %s",0
+wb_nomem:
+        dc.b    "Ran out of memory.  Please free some and try again.",0
 wb_diskicon:
         dc.b    "Disk",0
 wb_errfmt:

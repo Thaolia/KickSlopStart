@@ -1013,6 +1013,249 @@ anciennes chaînes et l'ancien tableau ne sont **pas** libérés.
 6. **UnLock de nos locks** (+$A4 ; +$1BA seulement s'il s'agit d'un lock distinct), puis
    **FreeWBObject(obj)**.
 
+### 7.9 Duplicate (menu Workbench, élément 2, code $F840)
+
+Comme pour tout MENUPICK, le titre mémoire est d'abord restauré (§6.2). La routine Duplicate est
+ensuite appelée pour **chaque icône sélectionnée** (même itérateur que Snapshot et Info) [D pour
+l'ordre]. Les notations G+off et WBObject sont celles de §6.1 et §7.3.
+
+#### 7.9.1 Disque et kick : lancement de DiskCopy [O]
+
+- **Cas couvert** : un type dans le masque **$0082**, c'est-à-dire **disque (1)** et **kick
+  (7)**. Ce n'est **pas** une copie faite par le Workbench : il lance l'**outil par défaut de
+  l'icône** (`+$48`, sur le disque 1.3 en général `SYS:System/DiskCopy`).
+- **Pas d'outil par défaut** : ShowTitle `"This disk cannot be copied"` (§6.9).
+- **Arguments** : un tableau de WBArg de **2 entrées** (AllocMem 2 × 8, MEMF_CLEAR) :
+  1. l'outil, d'après son nom ;
+  2. **le disque lui-même**.
+  Le glisser d'un disque sur un autre utilise la même routine avec 3 entrées : outil, source,
+  destination.
+- **Lancement** : même chemin qu'un lancement d'outil (LoadSeg, CreateProc, WBStartup), avec les
+  mêmes messages d'erreur `"opening <outil>"` (§6.9 point 2). Rien d'autre n'est fait pour un
+  disque.
+
+**Contenu exact des WBArg [O]** (routine de construction d'un WBArg, commune au lancement
+d'outils) :
+
+| Arg | wa_Lock | wa_Name |
+|---|---|---|
+| 0 : l'outil, nommé par `+$48` | si le nom contient `':'` **ailleurs qu'en première position** (cas `"SYS:System/DiskCopy"`) : **0 (NULL)** ; sinon **DupLock du lock du répertoire contenant l'icône** | **copie du nom tel quel**, donc le chemin complet `"SYS:System/DiskCopy"` quand wa_Lock = NULL |
+| 1 : le disque (type 1, et plus généralement un type du masque $0026 : disque, tiroir, poubelle) | **DupLock(DrawerData+$1BA)**, c'est-à-dire du **lock de la racine du volume** pris au scan (packet ACTION_LOCATE_OBJECT, §3.3). Si +$1BA est encore 0, le WB l'obtient d'abord, le duplique, puis le relâche et remet +$1BA à 0 | **chaîne vide `""`** (copie allouée) |
+| (icône kick, type 7) | 0 | `"<nom du device>:"` d'après la table de scan |
+
+Le volume est **celui de l'icône dupliquée**, pas forcément SYS:. Notre `Lock("SYS:")` n'est
+équivalent que pour l'icône du disque de boot.
+
+**Autres champs du lancement [O]**
+- `CreateProc(nom = la chaîne de l'outil, pri, seglist, pile)`.
+- **Pile** = `do_StackSize` de **l'icône du disque** (+$A0), ou **4096** si elle vaut 0.
+- **Priorité** = ToolType `TOOLPRI` des tool types de **l'icône du disque**, ou 0 par défaut.
+- WBStartup de 40 octets (MEMF_CLEAR) :
+  - `mn_ReplyPort` = port A ;
+  - `sm_Process`, `sm_Segment` ;
+  - `sm_NumArgs = 2` ;
+  - `sm_ArgList` ;
+  - **`sm_ToolWindow` = 0** : aucun champ ne le remplit sur ce chemin.
+- Un **rescan des disques** (§3.3) a lieu juste avant le PutMsg.
+- LoadSeg se fait avec CurrentDir = répertoire de l'icône, sans effet ici puisque le chemin est
+  absolu.
+
+**DiskCopy 1.4 (`SYS:System/DiskCopy`, `$VER: diskcopy 36.6 (7.6.90)`) : traitement des WBArg [O]**
+
+Démarrage (startup C résident) :
+- Ouvre `"dos.library"` en version 0.
+- En mode Workbench :
+  - WaitPort/GetMsg du WBStartup ;
+  - **CurrentDir(ArgList[0].wa_Lock)**, c'est-à-dire 0 ici ;
+  - si `sm_ToolWindow` ≠ 0, ouverture de cette fenêtre comme console ;
+  - mémorise `ArgList[0].wa_Name` comme nom de programme ;
+  - appelle `main(0, WBStartup)`.
+
+**Conditions de sortie AVANT toute fenêtre, donc « rien ne s'affiche » [O]** :
+1. **`DOSBase->lib_Version` (+$14) < 33** ⇒ sortie code 10. C'est la vérification faite en tout
+   premier dans main.
+2. `OpenLibrary("intuition.library", 0)` ou `("graphics.library", 0)` échoue ⇒ sortie 10.
+3. Échec de CreatePort, des deux CreateExtIO (52 octets, IOStdReq pour trackdisk), d'AllocMem
+   (512 octets CHIP|CLEAR), de 260 octets (FIB) ou de 36 octets (InfoData) ⇒ sortie 10.
+4. `OpenLibrary("icon.library", 0)` échoue ⇒ requester `"Unable to open icon.library"` (Retry
+   ou abandon).
+5. **OpenWindow** de sa fenêtre échoue ⇒ sortie 10.
+Ensuite seulement viennent SetWindowTitles (titre d'écran `"DiskCopy"`) et la lecture des
+arguments.
+
+**Choix des disques selon `sm_NumArgs` (+$1C) [O]** :
+- **2** ⇒ source = destination = **ArgList[1]** (copie sur un seul lecteur) ;
+- **3** ⇒ source = ArgList[1], destination = ArgList[2] ;
+- autre valeur ⇒ affichage de l'aide (« To duplicate a disk / select its icon and choose / Copy
+  from the / Icons menu ») [D pour le chemin exact].
+
+**Résolution du lecteur à partir d'un WBArg disque [O]** :
+1. **`wa_Name` doit être VIDE** : s'il ne l'est pas, **sortie 10 silencieuse**.
+2. **`ParentDir(wa_Lock)` doit rendre 0** : le lock doit être celui d'une **racine**. Sinon
+   UnLock du parent et **sortie 10 silencieuse**.
+3. Juste après, **`IoErr()` doit valoir 0**. Sinon message d'erreur (code interne $61) puis
+   sortie 10. **Il faut donc que notre ParentDir sur une racine rende 0 en laissant `pr_Result2`
+   à 0.**
+4. **`Info(wa_Lock, InfoData)`** puis **`Examine(wa_Lock, FIB)`** doivent réussir (sinon même
+   erreur).
+   - Source : nom affiché = `fib_FileName` (+$08), c'est-à-dire le **nom du volume**.
+   - Destination : contrôles supplémentaires `id_InUse` (+$20), avec le requester « Another
+     process has destination disk open », et `id_DiskState` (+$08) = 80 (protégé en écriture).
+5. **UnLock(wa_Lock)** et **mise à 0 du champ wa_Lock** dans le WBArg : DiskCopy libère
+   lui-même le lock reçu.
+6. **Recherche du device** :
+   - tâche du volume = `InfoData.id_VolumeNode` (+$1C, BPTR) → `dol_Task` (+$08) ;
+   - parcours de `DOSBase->dl_Root` (+$22) → `rn_Info` (+$18, BPTR) → `di_DevInfo` (+$04,
+     BPTR) → chaîne `dn_Next` (+$00, BPTR) ;
+   - pour chaque nœud **`dn_Type` (+$04) = 0** (DLT_DEVICE) dont **`dn_Task` (+$08) == la tâche
+     du volume** ;
+   - le nom `"<dn_Name>:"` est construit depuis `dn_Name` (+$28, BSTR), par exemple `"DF0:"`.
+     C'est lui qu'on voit dans « in drive %s ».
+   - Aucun nœud trouvé ⇒ erreur $61 puis sortie.
+7. Ensuite :
+   - **DeviceProc(nom)** (dos −174) pour la source et pour la destination ; un échec donne
+     l'erreur $61 ;
+   - comparaison des deux ports (même lecteur ou non) ;
+   - inhibition des handlers ;
+   - lecture de la géométrie dans **`dn_Startup` (+$1C) → `fssm_Environ` (+$08) → DosEnvec**
+     (`de_HighCyl` +$28 − `de_LowCyl` +$24 + 1, `de_BlocksPerTrack` +$14…) ;
+   - puis seulement le message « Place … ( FROM disk ) in drive %s ».
+
+**Diagnostic pour notre ROM [D]** : DiskCopy n'affiche rien et ne laisse aucune trace. Le
+coupable est donc l'une des conditions 1 à 5 d'avant la fenêtre, et **la première est le
+contrôle `DOSBase->lib_Version ≥ 33`**. Si la fenêtre s'ouvre puis se ferme, regarder dans
+l'ordre :
+- wa_Name ≠ "" ;
+- ParentDir ≠ 0 sur la racine ;
+- IoErr ≠ 0 après ParentDir ;
+- Info ou Examine refusé sur un lock de racine ;
+- `id_VolumeNode` ou `dol_Task` incohérents avec `dn_Task` du DeviceNode ;
+- DeviceProc("DF0:") en échec ;
+- `dn_Startup` / `fssm_Environ` absents.
+
+#### 7.9.2 Autres objets (tiroir, outil, projet…) : séquence complète [O sauf mention]
+
+1. **Répertoire parent.** Le WB prend le lock du répertoire qui contient l'icône. S'il n'en a
+   pas, ErrMsg(1, nom) (`"Error while accessing <nom>"`) et fin. Sinon **CurrentDir(parent)**, en
+   gardant l'ancien répertoire courant.
+2. **Lock de l'original** : **`Lock(nom, SHARED (−2))`**. En cas d'échec : ErrMsg(1, nom), puis
+   la fin commune (étape 10).
+3. **Nouveau nom** : **icon `BumpRevision` (LVO −108)** (nouveau, ancien), le nouveau nom étant
+   écrit dans le **tampon global G+$5C**. Le résultat est **tronqué à 25 caractères** (l'octet
+   d'indice 25 est mis à 0). Exemple : `"Expansion"` ⇒ `"copy of Expansion"`. Pour les règles
+   de BumpRevision lui-même (`"copy 2 of …"` etc.), voir icon.library.
+4. **Écriture du `.info` de la copie, AVANT toute copie de données** :
+   - le WBObject **original** est modifié **temporairement en mémoire** :
+     - `+$40` := le nouveau nom ;
+     - `+$54/+$58` (CurrentX/Y) : voir §7.9.3 ;
+   - puis CurrentDir(parent) et **`PutWBObject(nouveau nom, original)`** ;
+   - puis `+$40`, `+$54` et `+$58` reprennent **immédiatement** leurs valeurs d'origine.
+   C'est pourquoi le `.info` copié est identique à l'original sauf CurrentX/Y : PutWBObject
+   n'écrit pas le nom (§7.8).
+   Si PutWBObject échoue, il n'y a **ni icône ni copie des données**, et aucun message propre à
+   cette étape [O ; le message éventuel dépend d'icon.library et du requester dos].
+5. **Doublon d'icône** : si le tiroir parent contient déjà une icône portant le nouveau nom, elle
+   est **retirée de l'affichage** avant la relecture (cas d'un ancien « copy of … »).
+6. **Relecture** : CurrentDir(parent), puis **`GetWBObject(nouveau nom)`**, puis le nom est
+   alloué dans `+$40`, l'objet est ajouté à la liste maîtresse G+$24 et préparé (images…).
+   - En cas d'échec : ShowTitle `"Cannot read info file %s"` (nom = G+$5C), et **les données ne
+     sont pas copiées**.
+   - Si l'original a un lock propre en `+$A4`, la copie reçoit `DupLock` de ce lock.
+   - Le bit 4 de l'octet `+$3C` de l'original est recopié sur la copie.
+7. **Insertion dans le tiroir** (sans relire tout le tiroir) :
+   - `+$38` := tiroir parent ;
+   - si la position vaut **NO_ICON_POSITION ($80000000)**, un emplacement libre est cherché
+     (balayage par pas de 96 px) ;
+   - ajout à la liste des icônes du tiroir (DrawerData +$1AC), **rattachement à sa fenêtre**
+     (`+$50` := DrawerData +$1A4) ;
+   - calcul de la position du gadget d'après X/Y, le défilement du tiroir (DrawerData
+     +$30/+$34) et les bordures de la fenêtre ;
+   - puis rendu de l'icône [D pour « rendu » : appel en fin de routine].
+8. **Copie des données** (§7.9.4) : du lock de l'original vers le répertoire parent, sous le
+   **nouveau nom**.
+9. **Recalcul du tiroir parent** : son étendue et ses barres de défilement sont recalculées
+   d'après la nouvelle icône. Le tiroir n'est **pas relu** depuis le disque.
+10. **Fin commune** : `UnLock(lock de l'original)`, **CurrentDir(ancien répertoire)**. Retour
+    « succès » si la dernière étape a réussi.
+
+**Sélection [O, par absence]** : Duplicate n'appelle aucune routine de sélection ou de
+désélection. L'original **reste sélectionné**. La copie est créée **non sélectionnée** (objet
+neuf) [D].
+
+**Libérations [O]** : le tampon G+$5C est global (rien à libérer). Le lock de l'original est
+libéré à l'étape 10. Le WBObject de la copie appartient ensuite au tiroir (il n'est pas libéré
+ici). Les ressources de la copie des données sont libérées par celle-ci (§7.9.4).
+
+#### 7.9.3 Position de la copie [O]
+
+Le choix dépend du **bit 4 de l'octet `+$3C`** de l'original. Ce bit va de pair avec le lock
+propre `+$A4` : la routine de déplacement efface les deux ensemble. Sa signification exacte
+reste [S].
+
+- **Bit 4 à 0 (cas normal, sonde Expansion)** :
+  - pendant l'écriture du `.info`, **CurrentX += 30** et **CurrentY += 15** ;
+  - le `.info` porte donc ces valeurs (203,0 → **233,15**), et la copie relue les reprend.
+- **Bit 4 à 1** :
+  - le `.info` est écrit avec **CurrentX = CurrentY = NO_ICON_POSITION ($80000000)** ;
+  - **en mémoire**, la copie relue reçoit ensuite X+30 / Y+15 de l'original.
+
+Le décalage est **constant (+30, +15)**. Il ne dépend **ni de la taille de l'icône ni de la
+police**. Il n'y a ni recherche de chevauchement ni bornage.
+
+#### 7.9.4 Copie des données (fichiers et tiroirs) [O sauf mention]
+
+- **Coroutines.** Elle se déroule **dans le process Workbench**, avec **deux coroutines**
+  (chacune a une pile de **4096 octets** allouée par AllocMem) :
+  - un **lecteur**, qui parcourt la source ;
+  - un **écrivain**, qui crée la destination.
+  Elles se passent la main tour à tour. Un contexte de **536 octets** (MEMF_CLEAR) est alloué
+  pour l'opération.
+- **Pool de tampons.** Il est fait de **blocs de 526 octets** : 512 octets de données plus un
+  en-tête.
+  - Le WB alloue autant de blocs que la mémoire le permet, jusqu'à **limite + 30** :
+    - limite **40** si la source et la destination sont servies par **deux handlers
+      différents** ;
+    - sinon une valeur liée à l'entrée disque de la source dans la table de scan [S sur sa
+      signification].
+  - Il **rend ensuite 50 blocs** au système (ou tous, s'il en a moins de 50).
+  - S'il reste **moins de 10 blocs** : ShowTitle `"Ran out of memory.  Please free some and try
+    again."` et abandon de la copie. Le `.info` a déjà été écrit et l'icône est déjà affichée.
+  - En fin d'opération, tous les blocs, les deux piles et le contexte sont libérés.
+- **Flux.** Le lecteur parcourt l'objet récursivement (Examine/ExNext, §6.9 point 6). Il émet,
+  pour chaque entrée, un **enregistrement** (en-tête de 28 octets, marqueur $FE12) contenant :
+  - le type (fichier ou répertoire) ;
+  - la taille ;
+  - `fib_Protection` ;
+  - `fib_Date` ;
+  - le nom ;
+  - **le commentaire** ;
+  - puis, pour un fichier, les données par **morceaux de 512 octets** (Read de min(reste, 512)).
+  **Au niveau 0** (l'objet dupliqué lui-même), le nom émis est **BumpRevision(nom)**, tronqué à
+  25 caractères comme pour le `.info`.
+- **Écrivain** :
+  - fichier : `Open(nom, MODE_NEWFILE)`, Write des morceaux, Close ;
+  - répertoire : `Lock(nom)`, puis **CreateDir** si IoErr = 205, puis UnLock. La descente se fait
+    par CurrentDir.
+- **Attributs** : l'écrivain lit protection, date et commentaire dans le flux **mais ne les
+  applique pas**. Le module n'a **aucun** vecteur SetProtection, SetComment ni date de fichier
+  parmi ses appels dos (§3.6). Les fichiers copiés ont donc la **date courante**, la **protection
+  par défaut** et **aucun commentaire** [O par absence de ces LVO].
+- **Pas de `.info`** : sans WBObject, un objet n'est pas affiché par le WB 1.3, donc Duplicate ne
+  peut pas viser un fichier sans icône. À l'intérieur d'un tiroir copié, les fichiers sans `.info`
+  sont copiés comme les autres : le parcours copie **toutes** les entrées, `.info` compris, sans
+  distinction [O].
+- **Erreurs** : celles de §6.9 point 6 (`"accessing"`, `"opening"`, `"reading"`, `"writing"`).
+  La première erreur arrête la copie. Ce qui a déjà été créé est **laissé en place**.
+
+#### 7.9.5 Mémoire insuffisante [O]
+
+| Où | Message | Nettoyage |
+|---|---|---|
+| Tableau WBArg (Duplicate d'un disque) | `"Ran out of memory.  Please free some and try again."` | rien n'est lancé |
+| Contexte de 536 octets ou pile d'une coroutine (copie des données) | **aucun message** | ce qui a été alloué est libéré ; `.info` et icône de la copie restent, données non copiées |
+| Pool de moins de 10 blocs | même message | blocs, piles et contexte libérés ; `.info` et icône restent |
+| GetWBObject de la copie (allocation dans icon.library) | `"Cannot read info file copy of …"` | pas de copie des données ; `.info` présent, **icône absente** jusqu'au prochain rescan |
+
 ---
 
 ## Relecture clean-room
@@ -1051,3 +1294,9 @@ anciennes chaînes et l'ancien tableau ne sont **pas** libérés.
 - [x] §7.8 (relu) : icon.library est décrite par sa table de LVO, ses tailles d'allocation, sa
   correspondance champ DiskObject → offset WBObject et le contenu écrit dans le `.info`. Aucune
   séquence d'instructions recopiée.
+- [x] §7.9 (relu) : Duplicate est décrit par des règles (ordre des appels publics dos et icon,
+  décalage +30/+15, tailles des tampons, attributs non copiés, messages). Aucune suite
+  d'instructions recopiée.
+- [x] §7.9.1, complément DiskCopy (relu) : contenu des WBArg, champs du lancement et
+  conditions de sortie de DiskCopy, décrits par des règles et des champs dos publics. Aucune suite
+  d'instructions recopiée.

@@ -18,6 +18,7 @@
                 xdef    ow_rename
                 xdef    ow_setfield
                 xdef    ow_diskinfo
+                xdef    ow_inhibit
                 xdef    ws_open
                 xdef    ws_write
                 xdef    ws_close
@@ -138,6 +139,25 @@ ow_wr:
         move.l  (sp)+,d0
         moveq   #3,d1                ; CMD_WRITE
         bra.s   ow_io
+; ow_inhibit(d0 = Arg1 d'ACTION_INHIBIT, a6) : inhibition -> bitmap modifiée écrite (le disque va être réécrit par un
+; autre, DiskCopy) ; levée -> bitmap oubliée, relue au prochain accès (le disque a pu changer). Préserve d2-d7/a2-a6.
+ow_inhibit:
+        move.l  a5,-(sp)
+        move.l  d0,-(sp)
+        bsr     ow_ctx
+        beq.s   .ih_ret
+        tst.l   (sp)
+        beq.s   .ih_off
+        bsr.s   ow_sync
+        bra.s   .ih_ret
+.ih_off:
+        clr.l   OW_BMBLK(a5)
+        clr.l   OW_BMDIRTY(a5)
+.ih_ret:
+        addq.l  #4,sp
+        move.l  (sp)+,a5
+        rts
+
 ; ow_sync(a5) -> d0 = 1 ok / 0 : bitmap écrite si modifiée, puis CMD_UPDATE (pistes du cache vers le disque).
 ow_sync:
         tst.l   OW_BMDIRTY(a5)
