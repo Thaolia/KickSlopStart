@@ -474,6 +474,10 @@ gad_up:
 ; gad_forget(a0 = fenêtre | gadget) : oublie le gadget enfoncé s'il appartient à cette fenêtre ou est ce gadget
 ; (fenêtre fermée, gadget retiré). a6 = IntuitionBase. Clobbe d0.
 gad_forget:
+        cmp.l   IB_SYSWIN(a6),a0     ; gadget système enfoncé dans cette fenêtre : oublié
+        bne.s   .gf_sys
+        clr.w   IB_SYSACT(a6)
+.gf_sys:
         cmp.l   IB_STRWIN(a6),a0
         beq.s   .gf_str
         cmp.l   IB_STRGAD(a6),a0

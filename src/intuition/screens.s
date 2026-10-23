@@ -1305,6 +1305,120 @@ wn_picto:
         movem.l (sp)+,d2-d5/a2
         rts
 
+; wn_sysat(a3 = fenêtre, d2/d3 = point dans la fenêtre, dans la barre de titre) -> d0.w = IT_SYSCLOSE / IT_SYSBACK /
+; IT_SYSFRONT si le point est dans la boîte de ce gadget (spec intuition-frame-v34 §5.2), Z = 1 sinon. Clobbe d1/a0.
+wn_sysat:
+        bsr     wn_geo
+        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
+        beq.s   .sa_depth
+        moveq   #IT_SYSCLOSE,d0
+        cmp.w   GEO_CX0(a0),d2
+        blt.s   .sa_depth
+        cmp.w   GEO_CX1(a0),d2
+        ble.s   .sa_hit
+.sa_depth:
+        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : arrière puis avant, ancrés au bord droit
+        beq.s   .sa_none
+        move.w  WD_WIDTH(a3),d1
+        sub.w   GEO_FEND(a0),d1
+        cmp.w   d1,d2
+        bgt.s   .sa_none             ; au-delà du gadget avant : glissement
+        move.w  WD_WIDTH(a3),d1
+        sub.w   GEO_BACK(a0),d1
+        cmp.w   d1,d2
+        blt.s   .sa_none
+        moveq   #IT_SYSBACK,d0
+        move.w  WD_WIDTH(a3),d1
+        sub.w   GEO_FRONT(a0),d1
+        cmp.w   d1,d2
+        blt.s   .sa_hit
+        moveq   #IT_SYSFRONT,d0
+.sa_hit:
+        tst.w   d0                   ; Z = 0
+        rts
+.sa_none:
+        moveq   #0,d0
+        rts
+
+; wn_sysinv(a3 = fenêtre, d0.w = gadget système, a5) : inverse sa boîte (surbrillance GADGHCOMP) dans le RastPort du
+; cadre, mode de dessin rendu ensuite. Clobbe d0-d3/a0/a1/a6.
+wn_sysinv:
+        move.w  d0,d3
+        bsr     wn_geo
+        moveq   #0,d1                ; boîte : y 0..9, x selon le gadget
+        cmp.w   #IT_SYSCLOSE,d3
+        bne.s   .si_depth
+        move.w  GEO_CX0(a0),d0
+        move.w  GEO_CX1(a0),d2
+        bra.s   .si_fill
+.si_depth:
+        move.w  WD_WIDTH(a3),d0
+        move.w  d0,d2
+        cmp.w   #IT_SYSBACK,d3
+        bne.s   .si_front
+        sub.w   GEO_BACK(a0),d0
+        sub.w   GEO_FRONT(a0),d2
+        subq.w  #1,d2
+        bra.s   .si_fill
+.si_front:
+        sub.w   GEO_FRONT(a0),d0
+        sub.w   GEO_FEND(a0),d2
+.si_fill:
+        moveq   #9,d3
+        move.l  IB_GFXBASE(a5),a6
+        movem.w d0-d3,-(sp)
+        bsr     wn_brp
+        moveq   #0,d0
+        move.b  rp_DrawMode(a1),d0
+        move.w  d0,-(sp)
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     wn_brp
+        movem.w 2(sp),d0-d3
+        jsr     LVO_RECTFILL(a6)
+        bsr     wn_brp
+        move.w  (sp)+,d0
+        jsr     LVO_SETDRMD(a6)
+        addq.l  #8,sp
+        rts
+
+; it_sysup(a5, d4/d5 = pointeur écran) : relâchement d'un gadget système : sa boîte reprend son aspect, puis, si le
+; pointeur est encore dessus, l'action : CLOSEWINDOW, WindowToBack ou WindowToFront.
+it_sysup:
+        move.l  IB_SYSWIN(a5),a3
+        move.w  IB_SYSACT(a5),d0
+        clr.w   IB_SYSACT(a5)
+        move.w  d0,-(sp)
+        bsr     wn_sysinv
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        tst.w   d3
+        bmi.s   .su_out
+        moveq   #0,d0
+        move.b  WD_BORDERTOP(a3),d0
+        cmp.w   d0,d3
+        bge.s   .su_out              ; hors de la barre de titre
+        bsr     wn_sysat
+        beq.s   .su_out
+        move.w  (sp)+,d1             ; gadget enfoncé
+        cmp.w   d0,d1
+        bne.s   .su_ret              ; relâché sur un autre gadget : rien
+        move.l  a3,a0
+        move.l  a5,a6
+        cmp.w   #IT_SYSBACK,d1
+        beq     intuition_WindowToBack
+        cmp.w   #IT_SYSFRONT,d1
+        beq     intuition_WindowToFront
+        move.l  #CLOSEWINDOW,d0
+        moveq   #0,d1
+        bra     wn_sendmsg
+.su_out:
+        addq.l  #2,sp
+.su_ret:
+        rts
+
 ; it_setactive(a3 = nouvelle fenêtre active | 0, a5) : l'ancienne fenêtre active perd WINDOWACTIVE et reçoit le
 ; voile ; la nouvelle prend WINDOWACTIVE et sa barre de titre est redessinée (voile effacé) (spec §4). Préserve tout.
 it_setactive:
@@ -2123,6 +2237,8 @@ it_dobutton:
         bne     .db_ret              ; menus affichés : le bouton gauche est ignoré
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
         bne.s   .db_down
+        tst.w   IB_SYSACT(a5)
+        bne     it_sysup             ; un gadget système était enfoncé
         tst.l   IB_GADACT(a5)
         bne     gad_up               ; un gadget d'application était enfoncé
         move.l  IB_ACTIVEWINDOW(a5),d0   ; relâchement : à la fenêtre active (celle du clic), où qu'il ait lieu
@@ -2154,34 +2270,11 @@ it_dobutton:
         bne.s   .db_size
         cmp.w   #WD_TBARH,d3
         bge.s   .db_size
-        bsr     wn_geo               ; a0 = géométrie des gadgets système (spec intuition-frame-v34 §5.2)
-        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
-        beq.s   .db_nclose
-        cmp.w   GEO_CX0(a0),d2
-        blt.s   .db_nclose
-        cmp.w   GEO_CX1(a0),d2
-        bgt.s   .db_nclose
-        move.l  #CLOSEWINDOW,d0
-        moveq   #0,d1
-        bra     wn_sendmsg
-.db_nclose:
-        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : arrière puis avant, ancrés au bord droit
+        bsr     wn_sysat             ; fermeture / profondeur : boîte inversée, action au relâchement
         beq.s   .db_ndepth
-        move.w  WD_WIDTH(a3),d0
-        sub.w   GEO_FEND(a0),d0
-        cmp.w   d0,d2
-        bgt.s   .db_ndepth           ; au-delà du gadget avant : glissement
-        move.w  WD_WIDTH(a3),d0
-        sub.w   GEO_BACK(a0),d0
-        cmp.w   d0,d2
-        blt.s   .db_ndepth
-        move.w  WD_WIDTH(a3),d1
-        sub.w   GEO_FRONT(a0),d1
-        move.l  a3,a0
-        move.l  a5,a6
-        cmp.w   d1,d2
-        bge     intuition_WindowToFront
-        bra     intuition_WindowToBack
+        move.w  d0,IB_SYSACT(a5)
+        move.l  a3,IB_SYSWIN(a5)
+        bra     wn_sysinv
 .db_ndepth:
         btst    #1,WD_FLAGS+3(a3)    ; WINDOWDRAG
         beq.s   .db_mb

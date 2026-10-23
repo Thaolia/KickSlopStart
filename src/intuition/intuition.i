@@ -46,7 +46,12 @@ IB_GADACT        EQU IB_PICK+2         ; gadget d'application enfoncé (bouton g
 IB_GADWIN        EQU IB_GADACT+4       ; sa fenêtre
 IB_STRGAD        EQU IB_GADWIN+4       ; gadget texte actif (reçoit le clavier) | 0
 IB_STRWIN        EQU IB_STRGAD+4       ; sa fenêtre
-INTUITIONBASE_SIZE EQU IB_STRWIN+4
+IB_SYSACT        EQU IB_STRWIN+4       ; UWORD : gadget système enfoncé (IT_SYSCLOSE / BACK / FRONT) | 0
+IB_SYSWIN        EQU IB_SYSACT+2       ; sa fenêtre
+INTUITIONBASE_SIZE EQU IB_SYSWIN+4
+IT_SYSCLOSE      EQU 1
+IT_SYSBACK       EQU 2
+IT_SYSFRONT      EQU 3
 IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE = touche (keycode en bits 0-6), x = qualificatif
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2

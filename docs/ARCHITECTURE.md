@@ -735,9 +735,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     système sont redessinés en dernier. Sans cela, le remplisseur d'Info recouvrait le gadget de taille.
   - Comparé à la vraie 1.3 : barre de titre (motif, voile, pictogrammes) du tiroir du disque et de la fenêtre Info ;
     activation par clic ; fermeture et profondeur arrière sur un tiroir.
+  - **Clic sur un gadget système** (fermeture, profondeur) :
+    - à l'appui, sa boîte est inversée (GADGHCOMP) ; `IB_SYSACT` et `IB_SYSWIN` mémorisent le gadget et sa fenêtre ;
+    - au relâchement, la boîte reprend son aspect, et l'action (CLOSEWINDOW, WindowToBack, WindowToFront) n'a lieu
+      que si le pointeur est encore sur ce gadget ;
+    - fermer la fenêtre entre-temps oublie l'appui (`gad_forget`).
   - **Écarts restants** :
     - les tiroirs du Workbench n'ont pas de barres de défilement ;
-    - pas de surbrillance par inversion pendant le clic sur un gadget système ;
   - **WindowToBack d'Info** : rien ne change à l'écran, exactement comme sur la vraie 1.3 (sondé). Le tiroir révélé
     est SIMPLE_REFRESH, et seul le Workbench le redessine ; il est bloqué dans info.library tant qu'Info est ouverte.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
