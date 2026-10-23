@@ -824,9 +824,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     ligne (paquet, curseur).
     Info du Workbench fait (info.library, fenêtres GIMMEZEROZERO, gadgets dessinés à rebours comme la 1.3 ; SAVE et
     QUIT prouvés). Duplicate fait (identique à la 1.3), DiskCopy fonctionne (AutoRequest conforme, returnpkt du handler,
-    ACTION_INHIBIT, DeviceProc). À faire : Request/EndRequest/InitRequester (couche de requester), RAWKEY vers les fenêtres,
+    ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
+    À faire : Request/EndRequest/InitRequester (couche de requester),
     habillage des fenêtres SIZING (bordure droite et gadget de taille comme la 1.3). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
-    dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
+    dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
+    avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page

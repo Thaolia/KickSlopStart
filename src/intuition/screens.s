@@ -1626,9 +1626,10 @@ it_signal:
         move.l  (sp)+,a1
         rts
 
-; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Tant qu'un gadget texte est actif, le
-; clavier est à lui : l'événement est neutralisé (IECLASS_NULL, la console ne le voit pas) et chaque touche enfoncée
-; est déposée dans l'anneau (code IT_KEYCODE + keycode, x = qualificatif). Préserve tout.
+; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Le clavier va à un gadget texte actif, sinon à
+; la fenêtre active si elle a demandé RAWKEY : l'événement est alors neutralisé (IECLASS_NULL, la console ne le voit
+; pas) et déposé dans l'anneau (code IT_KEYCODE + code brut, relâchement compris ; x = qualificatif). Un gadget
+; texte ne reçoit que les touches enfoncées. Préserve tout.
 it_keyin:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
@@ -1636,18 +1637,28 @@ it_keyin:
         move.l  d1,a1
         tst.l   IB_INSIG(a1)
         beq.s   .ki_ret
+        move.w  IE_CODE(a3),d0
         tst.l   IB_STRGAD(a1)
+        bne.s   .ki_str
+        move.l  IB_ACTIVEWINDOW(a1),d1
+        beq.s   .ki_ret
+        move.l  d1,a0
+        move.l  WD_IDCMPFLAGS(a0),d1
+        and.l   #RAWKEY,d1
         beq.s   .ki_ret
         clr.b   IE_CLASS(a3)         ; IECLASS_NULL
-        move.w  IE_CODE(a3),d0
+        bra.s   .ki_push
+.ki_str:
+        clr.b   IE_CLASS(a3)
         btst    #7,d0
         bne.s   .ki_ret              ; relâchement : avalé
-        and.w   #$007F,d0
+.ki_push:
+        and.w   #$00FF,d0
         or.w    #IT_KEYCODE,d0
         move.w  IE_QUALIFIER(a3),d1
         swap    d1
         clr.w   d1
-        bsr.s   it_push
+        bsr     it_push
 .ki_ret:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
@@ -1726,7 +1737,14 @@ it_intask:
         bsr     it_dobutton
         bra.s   .in_next
 .in_key:
+        tst.l   IB_STRGAD(a5)
+        beq.s   .in_raw
+        btst    #7,d0                ; gadget texte : touches enfoncées seulement
+        bne.s   .in_next
         bsr     str_key              ; d0 = touche, d4 = qualificatif
+        bra.s   .in_next
+.in_raw:
+        bsr     it_rawkey
         bra.s   .in_next
 .in_move:
         tst.b   IB_MOVED(a5)
@@ -1736,6 +1754,23 @@ it_intask:
         move.w  PTR_Y,d5
         bsr     it_domove
         bra.s   .in_next
+
+; it_rawkey(a5, d0.w = IT_KEYCODE + code brut, d4.w = qualificatif) : message RAWKEY à la fenêtre active, si elle
+; l'a demandé. Préserve d2-d7/a2-a5.
+it_rawkey:
+        move.l  IB_ACTIVEWINDOW(a5),d1
+        beq.s   .rk_ret
+        movem.l d2-d3/a3,-(sp)
+        move.l  d1,a3
+        move.w  d0,d1
+        and.w   #$00FF,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        move.l  #RAWKEY,d0
+        bsr     wn_sendkey
+        movem.l (sp)+,d2-d3/a3
+.rk_ret:
+        rts
 
 ; it_scrxy(a5, d4.w/d5.w = pointeur) -> a4 = écran de tête, d4/d5 = position dans cet écran (HIRES : x doublé) ;
 ; Z = 1 s'il n'y a pas d'écran. Clobbe d0.
@@ -2293,10 +2328,16 @@ wn_unborder:
 ; wn_sendmsg(a3 = fenêtre, d0 = classe IDCMP, d1.w = code, d2.w/d3.w = souris relative) : si la fenêtre a demandé
 ; cette classe, prend un IntuiMessage libre de sa réserve, l'horodate (compteur VBlank : 50 Hz) et l'envoie sur son
 ; UserPort ; réserve épuisée : événement perdu. im_IAddress = la fenêtre ; wn_sendgad : im_IAddress = a0 (le gadget
-; de GADGETDOWN / GADGETUP). Clobbe d0/d1/d6/a0/a1/a6.
+; de GADGETDOWN / GADGETUP) ; wn_sendkey : im_Qualifier = d4.w (RAWKEY). Clobbe d0/d1/d6/a0/a1/a6.
 wn_sendmsg:
         move.l  a3,a0
 wn_sendgad:
+        clr.w   -(sp)                ; qualificatif
+        bra.s   wn_post
+wn_sendkey:
+        move.l  a3,a0
+        move.w  d4,-(sp)
+wn_post:
         move.l  WD_USERPORT(a3),d6
         beq     .sm_ret
         and.l   WD_IDCMPFLAGS(a3),d0
@@ -2315,7 +2356,7 @@ wn_sendgad:
         move.w  #IM_SIZEOF,MN_LENGTH(a1)
         move.l  d0,IM_CLASS(a1)
         move.w  d1,IM_CODE(a1)
-        clr.w   IM_QUALIFIER(a1)
+        move.w  (sp),IM_QUALIFIER(a1)
         move.l  a0,IM_IADDRESS(a1)
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
@@ -2339,6 +2380,7 @@ wn_sendgad:
         move.l  ($4).w,a6
         jsr     LVO_PUTMSG(a6)
 .sm_ret:
+        addq.l  #2,sp
         rts
 
 ; DoubleClick(secondes d0, micros d1, secondes d2, micros d3) -> d0 = TRUE si le second clic suit le premier de moins

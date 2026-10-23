@@ -698,6 +698,19 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
       gadget de taille) ;
     - Cancel termine DiskCopy, Continue lance la lecture ;
     - la confirmation de Discard s'affiche au nouveau format.
+  (16) **Clavier vers les fenêtres (RAWKEY) et qualificatifs Alt/Amiga.**
+  - **keyboard.s** : `KBD_QUAL` suit aussi Alt gauche/droite et Amiga gauche/droite ($64-$67), selon les bits publics
+    IEQUALIFIER LALT $10, RALT $20, LCOMMAND $40 et RCOMMAND $80. La conversion en caractères (kbd_cook) n'utilise
+    toujours que Shift, Caps et Ctrl.
+  - **intuition** : quand aucun gadget texte n'est actif et que la fenêtre active a demandé RAWKEY, la touche lui est
+    réservée :
+    - l'événement est neutralisé pour la console ;
+    - la touche passe par l'anneau d'entrée, relâchements compris ;
+    - elle part en IntuiMessage RAWKEY, avec le code brut et le qualificatif (`wn_sendkey`).
+  - AutoRequest répond donc à Amiga-V et Amiga-B. Prouvé par DiskCopy : Amiga-V équivaut à Continue, comme sur la
+    vraie 1.3.
+  - **Harnais** : le jeton `keyraw:` envoie une touche sans relâcher les modificateurs tenus. `xdotool key
+    --clearmodifiers` relâchait Super avant le V.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

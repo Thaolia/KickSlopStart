@@ -114,7 +114,7 @@ kbd_install:
 
 ; kbd_interrupt : handler ICR bit 3 (SP clavier). Appelé par cia_dispatch via jsr (a5) : d2/d3 (index bit +
 ; ICR) et a2 (base resource) sont VIVANTS à travers l'appel -> on save/restore d0-d3/a0-a1 et on ne touche NI
-; a2 NI a6. Décode (F2a) ; HANDSHAKE obligatoire. #5 : SUIVI DES QUALIFIEURS (shift/caps/ctrl, keycodes $60-$67)
+; a2 NI a6. Décode (F2a) ; HANDSHAKE obligatoire. #5 : SUIVI DES QUALIFIEURS (shift/caps/ctrl/alt/Amiga, $60-$67)
 ; dans KBD_QUAL, puis cuisson keycode(+KBD_QUAL)->ASCII via kbd_cook (keymap US/AZERTY) ; push dans le ring SPSC
 ; (producteur : écrit la donnée puis avance TAIL en dernier -> consommateur jamais en avance).
 kbd_interrupt:
@@ -137,7 +137,7 @@ kbd_interrupt:
                 cmp.b   #$60,d2
                 blo   .ki_key              ; < $60 -> touche normale
                 cmp.b   #$68,d2
-                bhs   .ki_out              ; >= $68 -> qualifieur non géré (ALT/AMIGA) -> ignore
+                bhs   .ki_out              ; >= $68 : codes spéciaux, ignorés
                 cmp.b   #$62,d2
                 beq   .ki_caps             ; $62 = CAPSLOCK (toggle)
                 moveq   #0,d1                ; $60/$61 = shift L/R ; $63 = ctrl
@@ -151,9 +151,13 @@ kbd_interrupt:
                 moveq   #$02,d1
                 bra.s   .ki_qmod
 .kq2:
+                moveq   #$08,d1              ; $63 = ctrl
                 cmp.b   #$63,d2
-                bne   .ki_out              ; $64-$67 (alt/amiga) -> ignore
-                moveq   #$08,d1
+                beq.s   .ki_qmod
+                moveq   #$10,d1              ; $64-$67 = alt G/D, Amiga G/D : bits $10 << (code - $64)
+                move.b  d2,d3                ; (IEQUALIFIER_LALT, RALT, LCOMMAND, RCOMMAND)
+                sub.b   #$64,d3
+                lsl.w   d3,d1
 .ki_qmod:
                 btst    #7,d0                ; down -> set le bit, up -> clear
                 bne.s   .ki_qclr

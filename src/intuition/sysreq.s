@@ -22,7 +22,6 @@
 SR_SIMPLE       EQU $0040            ; NewWindow : SIMPLE_REFRESH
 SR_NOCARE       EQU $00020000        ; NOCAREREFRESH
 SR_FLAGS        EQU SR_NOCARE|ACTIVATE|SR_SIMPLE|WINDOWDEPTH|WINDOWDRAG|WINDOWSIZING
-SR_RAWKEY       EQU $00000400
 SR_REQGAD       EQU $1000            ; GadgetType : gadget de requester
 SR_LCOMMAND     EQU $40              ; qualifier : Amiga gauche
 SR_KEYV         EQU $34              ; Amiga-V : positif
@@ -70,7 +69,7 @@ intuition_AutoRequest:
         move.w  #$FFFF,NW_DETAILPEN(a0) ; stylos de l'écran
         move.l  d4,d0
         or.l    d5,d0
-        or.l    #GADGETUP|SR_RAWKEY,d0
+        or.l    #GADGETUP|RAWKEY,d0
         move.l  d0,NW_IDCMPFLAGS(a0)
         move.l  #SR_FLAGS,NW_FLAGS(a0)
         lea     sr_title(pc),a1
@@ -129,7 +128,7 @@ intuition_AutoRequest:
         moveq   #1,d2
         bra.s   .ar_reply
 .ar_key:
-        cmp.l   #SR_RAWKEY,d0
+        cmp.l   #RAWKEY,d0
         bne.s   .ar_reply
         btst    #6,IM_QUALIFIER+1(a1) ; Amiga gauche
         beq.s   .ar_reply
