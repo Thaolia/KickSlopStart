@@ -36,6 +36,8 @@
                 xdef    gfx_UnlockLayerRom
                 xdef    gfx_putrow
                 xref    topaz8_font
+                xref    gfx_OwnBlitter
+                xref    gfx_DisownBlitter
                 xref    gfx_OrRectRegion
 
 ; --- contexte de dessin (sur la pile, pointé par a5) ---
@@ -1191,9 +1193,24 @@ gfx_ScrollRaster:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; Voie rapide : une seule ClipRect visible contient tout le rectangle (fenêtre non recouverte) -> lignes copiées
-; directement, sans parcourir les ClipRects à chaque ligne.
+; Voie rapide : une seule ClipRect visible contient tout le rectangle (fenêtre non recouverte) -> rectangle copié au
+; blitter quand les plans sont en mémoire chip, sinon lignes copiées directement sans parcourir les ClipRects.
 .sc_fast:
+        bsr     .sc_blit
+        tst.l   d0
+        beq.s   .sf_cpu
+        move.w  SC_DY(a4),d1         ; lignes découvertes, comme à la fin des boucles ligne à ligne
+        bmi.s   .sf_bdn
+        move.w  SC_YMAX(a4),d6
+        sub.w   d1,d6
+        addq.w  #1,d6
+        bra     .sc_fillu
+.sf_bdn:
+        move.w  SC_YMIN(a4),d6
+        sub.w   d1,d6
+        subq.w  #1,d6
+        bra     .sc_filld
+.sf_cpu:
         tst.w   SC_DY(a4)
         bmi.s   .sf_down
         move.w  SC_YMIN(a4),d6
@@ -1223,6 +1240,151 @@ gfx_ScrollRaster:
         bsr     .sc_copy
         subq.w  #1,d6
         bra.s   .sf_dn
+
+; .sc_blit(a6 = GfxBase) -> d0 = 1 si le rectangle déplacé ([SC_XMIN..SC_XMAX], hauteur moins |dy| lignes, au moins
+; une) a été copié au blitter dans SC_DBM (source = destination), 0 sinon (plan hors mémoire chip, rectangle trop large
+; ou trop haut pour un blit, ou entièrement découvert : rien de fait). Un blit par plan : A = $FFFF constant masqué
+; (premier/dernier mot), B = source, C = destination, D = AB + ~AC ; vers le bas : mode descendant (adresses de fin,
+; masques échangés). Blitter pris par OwnBlitter. Préserve d2-d7/a1-a6.
+BLT_CON0        EQU $040
+BLT_CON1        EQU $042
+BLT_AFWM        EQU $044
+BLT_ALWM        EQU $046
+BLT_CPT         EQU $048
+BLT_BPT         EQU $04C
+BLT_DPT         EQU $054
+BLT_SIZE        EQU $058
+BLT_CMOD        EQU $060
+BLT_BMOD        EQU $062
+BLT_DMOD        EQU $066
+BLT_ADAT        EQU $074
+BLT_DMACONR     EQU $002
+.sc_blit:
+        movem.l d2-d7/a1-a3/a6,-(sp)
+        move.l  SC_DBM(a4),a2        ; a2 = BitMap
+        move.w  SC_YMAX(a4),d4       ; d4 = lignes copiées
+        sub.w   SC_YMIN(a4),d4
+        addq.w  #1,d4
+        move.w  SC_DY(a4),d0
+        bpl.s   .bl_ady
+        neg.w   d0
+.bl_ady:
+        sub.w   d0,d4
+        ble     .bl_no               ; tout est découvert : seul le remplissage reste
+        cmp.w   #1024,d4
+        bhi     .bl_no
+        move.l  a6,a3                ; a3 = GfxBase
+        move.l  ($4).w,a6
+        moveq   #0,d6
+.bl_chip:
+        cmp.b   bm_Depth(a2),d6
+        bge.s   .bl_go
+        move.w  d6,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0                ; MEMF_CHIP : seule mémoire que le blitter atteint
+        beq     .bl_no
+        addq.w  #1,d6
+        bra.s   .bl_chip
+.bl_go:
+        move.w  SC_XMIN(a4),d2       ; colonnes relatives au BitMap
+        sub.w   SC_DBX(a4),d2
+        move.w  SC_XMAX(a4),d3
+        sub.w   SC_DBX(a4),d3
+        move.w  d2,d6
+        lsr.w   #4,d6                ; d6 = premier mot
+        move.w  d3,d5
+        lsr.w   #4,d5
+        sub.w   d6,d5
+        addq.w  #1,d5                ; d5 = mots par ligne
+        cmp.w   #64,d5
+        bhi     .bl_no
+        lsl.w   #6,d4
+        or.w    d5,d4                ; d4 = BLTSIZE (hauteur << 6 | mots ; 1024 lignes = 0)
+        and.w   #15,d2
+        moveq   #-1,d0
+        lsr.w   d2,d0
+        move.w  d0,d2                ; d2 = masque du mot de gauche
+        and.w   #15,d3
+        moveq   #15,d1
+        sub.w   d3,d1
+        moveq   #-1,d3
+        lsl.w   d1,d3                ; d3 = masque du mot de droite
+        move.w  SC_YMIN(a4),d0       ; vers le haut : destination ymin, source ymin + dy, premier mot
+        tst.w   SC_DY(a4)
+        bpl.s   .bl_rows
+        move.w  SC_YMAX(a4),d0       ; vers le bas : dernière ligne et dernier mot, en descendant
+        add.w   d5,d6
+        subq.w  #1,d6
+        exg     d2,d3                ; en descendant, le premier mot traité est celui de droite
+.bl_rows:
+        move.w  d0,d1
+        add.w   SC_DY(a4),d1
+        sub.w   SC_DBY(a4),d0
+        sub.w   SC_DBY(a4),d1
+        moveq   #0,d7
+        move.w  bm_BytesPerRow(a2),d7
+        mulu    d7,d0                ; d0 = décalage destination
+        mulu    d7,d1                ; d1 = décalage source
+        add.w   d6,d6
+        and.l   #$FFFF,d6
+        add.l   d6,d0
+        add.l   d6,d1
+        add.w   d5,d5
+        sub.w   d5,d7                ; d7 = modulo (octets sautés par ligne)
+        moveq   #0,d6                ; d6 = BLTCON1
+        tst.w   SC_DY(a4)
+        bpl.s   .bl_own
+        moveq   #2,d6                ; DESC
+.bl_own:
+        move.l  a3,a6
+        movem.l d0-d1,-(sp)
+        jsr     gfx_OwnBlitter
+        movem.l (sp)+,d0-d1
+        move.w  #$8240,DMACON        ; DMA maître + blitter
+        lea     CUSTOM,a0
+        moveq   #0,d5                ; d5 = plan
+.bl_plane:
+        cmp.b   bm_Depth(a2),d5
+        bge.s   .bl_done
+        move.w  d5,a1
+        add.w   a1,a1
+        add.w   a1,a1
+        move.l  bm_Planes(a2,a1.w),a1
+        btst    #6,BLT_DMACONR(a0)   ; lecture bidon (quirk A1000), puis attente du blit précédent
+.bl_wait:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .bl_wait
+        move.w  #$07CA,BLT_CON0(a0)  ; B, C, D actifs ; minterme AB + ~AC
+        move.w  d6,BLT_CON1(a0)
+        move.w  d2,BLT_AFWM(a0)
+        move.w  d3,BLT_ALWM(a0)
+        move.w  #$FFFF,BLT_ADAT(a0)
+        move.w  d7,BLT_BMOD(a0)
+        move.w  d7,BLT_CMOD(a0)
+        move.w  d7,BLT_DMOD(a0)
+        pea     0(a1,d1.l)
+        move.l  (sp)+,BLT_BPT(a0)
+        pea     0(a1,d0.l)
+        move.l  (sp),BLT_CPT(a0)
+        move.l  (sp)+,BLT_DPT(a0)
+        move.w  d4,BLT_SIZE(a0)
+        addq.w  #1,d5
+        bra.s   .bl_plane
+.bl_done:
+        btst    #6,BLT_DMACONR(a0)
+.bl_wend:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .bl_wend
+        jsr     gfx_DisownBlitter
+        moveq   #1,d0
+        bra.s   .bl_ret
+.bl_no:
+        moveq   #0,d0
+.bl_ret:
+        movem.l (sp)+,d2-d7/a1-a3/a6
+        rts
 
 ; .sc_whole -> Z = 0 si une ClipRect visible contient tout [SC_XMIN..SC_XMAX] x [SC_YMIN..SC_YMAX] : elle devient
 ; la ClipRect courante (source) et la destination (SC_DBM/DBX/DBY). Clobbe d0/a0.

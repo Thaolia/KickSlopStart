@@ -818,9 +818,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (comme la 1.3). Libérations mémoire fidèles : RemTask ne libère que `tc_MemEntry`, FreeEntry lit A0, Execute ne
     fuit plus. Le boot WB plantait si l'heure était posée avant SetClock ; traceur MEMTRACK muet sur tout le boot WB.
     Clean Up et Snapshot du Workbench faits (Clean Up identique à la vraie 1.3 sur SYS:). Titre d'écran (mémoire
-    libre), Version et Last Error faits ; règle d'activation des fenêtres d'intuition 34.3. Reste : messages
-    d'erreur « Error while ... » du Workbench.
-    Restent : défilement au blitter,
+    libre), Version et Last Error faits ; règle d'activation des fenêtres d'intuition 34.3. Défilement de la console au
+    blitter fait (type 89 → 70 s). Restent : messages d'erreur « Error while ... » du Workbench (spec §6.9 prête), écart de
+    vitesse de la console (70 s contre 38 s sur la vraie 1.3 pour 400 lignes ; le blit et le série ne l'expliquent pas).
+    Restent :
     Info du Workbench, échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

@@ -596,6 +596,142 @@ d'IntuitionBase : **ActiveWindow +$34**, ActiveScreen +$38.
 Pour obtenir ce comportement, notre intuition doit seulement reproduire la règle de CloseWindow.
 Le module workbench n'a rien à activer lui-même.
 
+### 6.9 Messages d'erreur : sites d'appel
+
+Rappels :
+- **« ShowTitle »** est la routine de §6.2 : le premier message affiché gagne jusqu'au prochain
+  clic ou choix de menu, et il y a un bip.
+- **« ErrMsg(i, nom) »** est la routine d'erreur de §6.5. Elle formate l'action n° i (avec `nom`
+  pour `%s`), puis appelle `ShowTitle("Error while %s: %ld", action, IoErr())`.
+- **IoErr()** est lu **dans ErrMsg**, après le formatage local, qui ne fait aucun appel dos. Il
+  n'y a donc qu'un seul appel dos entre l'échec et la lecture. La valeur affichée est celle que
+  dos a laissée dans `pr_Result2` lors de l'échec. Il y a deux exceptions, décrites plus bas, où un
+  appel intermédiaire a lieu entre-temps : le requester errorreq (§3.7) et le nettoyage d'un
+  lancement raté.
+- Les actions sans `%s` (0 `"examining directory"`, 3 `"reading"`, 4 `"writing"`) ignorent le nom.
+- Quand la **routine elle-même** affiche un message et que **son appelant** en émet un second, le
+  second est **ignoré** : le bit 2 est déjà mis (§6.2). Seul le premier est visible.
+
+**Ce qui déclenche une erreur dos, et quel message s'affiche [O sauf mention]**
+
+1. **Lecture du contenu d'un tiroir ou d'un disque** (ouverture de sa fenêtre)
+   - Échec : `Examine(lock du tiroir)`.
+     Message : ErrMsg(**7**, **nom de l'objet**) ⇒ `"Error while examining <nom>: <err>"`.
+   - Cas : le lock n'est pas un répertoire (fib_DirEntryType < 0).
+     Message : ShowTitle `"This drawer is not really a directory"`.
+   - Échec, dans la boucle de lecture (routine générique de parcours, qui fait CurrentDir sur le
+     répertoire) : `Examine` puis `ExNext` quand IoErr ≠ 232 (ERROR_NO_MORE_ENTRIES).
+     Message : ErrMsg(**0**) ⇒ `"Error while examining directory: <err>"`.
+   - Cas : la fenêtre du tiroir n'a pas pu se remplir.
+     Message : ShowTitle `"This drawer cannot be opened"` (en général masqué par le message
+     précédent). Un échec d'OpenWindow ou d'AllocMem donne à la place
+     `"Ran out of memory.  Please free some and try again."`.
+   - Un `.info` illisible pendant ce parcours est **ignoré en silence** : pas de message
+     « Cannot read info file ».
+2. **Lancer un outil ou un projet** (double-clic, ou menu Open)
+   - CurrentDir = répertoire parent de l'icône double-cliquée. Pour un projet, c'est le
+     répertoire **du projet**, et `nom` est son **Default Tool** tel qu'il est écrit dans l'icône,
+     relatif ou avec un volume.
+   - Échec : `LoadSeg(nom)`.
+     Message : ErrMsg(**2**, **nom de l'outil**) ⇒ `"Error while opening <outil>: <err>"`.
+   - Échec : AllocMem du WBStartup, ou CreateProc. Le WB fait **UnLoadSeg** (et FreeMem), puis
+     le **même** ErrMsg(2, outil). IoErr est alors lu après ces appels [D : valeur du dernier
+     appel dos].
+   - Cas : aucun outil parmi les icônes sélectionnées et aucun Default Tool.
+     Message : ShowTitle `"The icon(s) have no default tool"`.
+   - Le WB ne fait **pas de Lock** du répertoire qui puisse produire un « accessing » à ce stade.
+3. **Rename** (menu Workbench, élément 3 ; saisie dans la fenêtre Rename)
+   - Nouveau nom identique à l'ancien ⇒ rien n'est fait.
+   - Caractères interdits : **`':'` ($3A)**, puis **`'/'` ($2F)**, dans cet ordre, recherchés dans le
+     nouveau nom. Message : ShowTitle `"Do not use '%lc' in names"`, avec le caractère
+     sign-étendu en long. Exemples : `"Do not use ':' in names"`, `"Do not use '/' in names"`.
+     Aucun autre caractère n'est refusé.
+   - Fichier, tiroir, outil ou projet : renommage dans le même répertoire par un **packet
+     ACTION_RENAME_OBJECT (17)**. Il est envoyé **directement au handler du lock source** ; ce
+     n'est **pas** dos `Rename()`. Deux renommages ont lieu, `nom → nouveau`, puis
+     `nom.info → nouveau.info`.
+     - Pour le **premier** seulement, un échec avec IoErr = **205** (objet absent) est **toléré** :
+       une icône sans fichier peut quand même être renommée.
+     - Sinon, sur échec, le WB appelle **errorreq(2, lock de destination, son fl_Task)** (§3.7).
+       Retour 0 (Retry) ⇒ nouvel essai. Non nul ⇒ ErrMsg(**5**, **ancien nom**, ou
+       `ancien.info` au 2ᵉ renommage) ⇒ `"Error while moving <ancien>: <err>"`. Oui, c'est bien
+       « moving » qui s'affiche pour un Rename.
+   - Disque : **packet ACTION_RENAME_DISK (9)** au handler du volume. Sur échec, errorreq(2, …) :
+     Retry ⇒ nouvel essai, abandon ⇒ ShowTitle `"Can't rename this disk"`.
+4. **Glisser une icône dans une autre fenêtre** (déplacement)
+   - Type de l'icône hors du masque **$001C** (seuls tiroir 2, outil 3 et projet 4 peuvent
+     sortir de leur fenêtre ; pas disque 1, poubelle 5, etc.).
+     Message : ShowTitle `"'%s' cannot be moved out of its window"`, avec **nom de l'objet**.
+   - Dépôt sur une fenêtre qui n'est pas une fenêtre WB connue.
+     Message : ShowTitle `"Icons cannot be moved into this window"`.
+   - Disque déposé sur un disque, types incompatibles.
+     Message : ShowTitle `"Disks are of incompatible type and cannot be copied"`.
+   - Disque déposé sur un disque, icône sans Default Tool (DiskCopy).
+     Message : ShowTitle `"This disk cannot be copied"`.
+   - **Même volume** : même procédé que le Rename (packet 17, `nom` puis `nom.info`, tolérance 205
+     sur le premier, errorreq puis ErrMsg(**5**, **nom**)).
+   - **Autre volume** : c'est une **copie**, la source n'est pas supprimée. Si `Lock(nom)` dans le
+     répertoire source échoue (205 toléré pour le premier), message : ErrMsg(**1**, **nom**) ⇒
+     `"Error while accessing <nom>: <err>"`. La suite passe par la copie (point 6).
+5. **Discard** (menu Workbench, élément 5 ; après le requester `"ok to discard"` / `"forget it!"`)
+   - CurrentDir = répertoire parent, puis `Lock(nom de l'objet, SHARED)`. Si ce Lock échoue :
+     avec IoErr = 205, on passe directement aux DeleteFile ; avec un autre code, le Discard est
+     **abandonné sans message**. Si l'objet est un répertoire, son contenu est vidé
+     **récursivement** par la routine générique de parcours : un échec d'Examine ou d'ExNext
+     donne ErrMsg(**0**), puis l'abandon. Toute autre erreur de la récursion provoque aussi un
+     abandon silencieux du niveau supérieur (son message éventuel a déjà été affiché).
+   - Chaque fichier rencontré est supprimé par **DeleteFile** :
+     - échec avec IoErr = **205** ⇒ considéré comme réussi, aucun message ;
+     - autre échec ⇒ ErrMsg(**6**, **nom tel que passé à DeleteFile**) ⇒
+       `"Error while removing <nom>: <err>"`. C'est le **nom simple** (fib_FileName relatif au
+       répertoire courant), pas un chemin.
+   - Enfin l'objet lui-même : `DeleteFile(nom)` puis `DeleteFile(nom.info)`, mêmes règles
+     (message `"removing <nom>"` ou `"removing <nom>.info"`). L'appelant émet ensuite
+     ErrMsg(6, **nom de l'objet**), mais ce second message est **masqué** par le premier.
+   - Un Lock raté d'un sous-tiroir pendant la récursion arrête la suppression **sans message**.
+6. **Duplicate** (menu Workbench, élément 2) et copie vers un autre volume
+   - Disque : lancement de son Default Tool (DiskCopy), comme au point 4.
+   - Objet : CurrentDir = répertoire parent, puis `Lock(nom, SHARED)`. Échec ⇒ ErrMsg(**1**,
+     **nom de l'objet**).
+   - Le nouveau nom est produit par icon **BumpRevision** (`"copy of …"`). L'icône est écrite par
+     PutWBObject, puis relue. Si la relecture échoue, message : ShowTitle
+     `"Cannot read info file %s"` avec le **nouveau nom**. C'est le **seul** site de ce message.
+   - Copie récursive :
+     - sous-répertoire non verrouillable ⇒ ErrMsg(**1**, nom de l'entrée) ;
+     - `Open(source, MODE_OLDFILE 1005)` raté ⇒ ErrMsg(**2**, **nom source**) ;
+     - `Read` ≤ 0 avant d'avoir lu la taille annoncée ⇒ ErrMsg(**3**) ⇒
+       `"Error while reading: <err>"` ;
+     - côté destination, `Open(dest, MODE_NEWFILE 1006)` raté ⇒ ErrMsg(**2**, **nom
+       destination**) ;
+     - répertoire destination : `Lock(dest)`, puis `CreateDir(dest)` si IoErr = 205 ; échec
+       final ⇒ ErrMsg(**1**, nom destination) ;
+     - `Write` qui écrit moins que demandé ⇒ ErrMsg(**4**) ⇒ `"Error while writing: <err>"`.
+7. **Snapshot** (menu Special, élément 3)
+   - Pour chaque icône sélectionnée : CurrentDir = répertoire parent, puis
+     **PutWBObject(nom, objet)**, avec `"Disk"` comme nom pour une icône de disque.
+   - Échec ⇒ ErrMsg(**8**, **nom de l'objet**, le nom du volume pour un disque) ⇒
+     `"Error while writing <nom>: <err>"`.
+   - Le module n'appelle pas PutDiskObject : l'interface WB 1.x est PutWBObject.
+8. **Info** (menu Workbench, élément 4) : si `OpenLibrary("info.library", 0)` échoue, message :
+   ShowTitle `"Info not available"`.
+9. **Manque de mémoire** : plusieurs AllocMem (Duplicate, Discard, lancement, ouverture de
+   tiroir…) donnent ShowTitle `"Ran out of memory.  Please free some and try again."`.
+
+**Requesters dos et message de titre [O/D]**
+
+- Le message de titre est émis **en plus** d'un éventuel requester. Ce n'est pas l'un ou l'autre.
+- Requester **appelé explicitement par le WB** (errorreq, uniquement pour le renommage, le
+  déplacement sur le même volume et le renommage de disque) :
+  - « Retry » ⇒ l'opération est refaite, sans message ;
+  - « Cancel » ⇒ le message ErrMsg ou ShowTitle **s'affiche ensuite** ;
+  - errorreq ne présente pas de requester pour tous les codes [D, comportement dos] ; quand il
+    n'en montre pas, le message suit immédiatement ;
+  - IoErr est relu **après** errorreq. On suppose qu'errorreq ne modifie pas `pr_Result2` [S].
+- Requesters **émis par dos lui-même** pendant Lock, Open ou LoadSeg (par exemple `"Please insert
+  volume"`) : le WB a `pr_WindowPtr = 0` (requesters sur l'écran WB), sauf pendant l'écriture d'un
+  `.info`, où il vaut −1 (§3.3). Après « Cancel », l'appel échoue et le message de titre
+  correspondant s'affiche aussi [D].
+
 ---
 
 ## Relecture clean-room
@@ -625,3 +761,6 @@ Le module workbench n'a rien à activer lui-même.
 - [x] §6.8 (relu) : règles d'activation décrites par leur effet (champs publics Window/Screen/
   IntuitionBase, conditions, ordre de repli Parent → FirstWindow → NULL), aucune séquence
   d'instructions d'intuition ni du workbench recopiée.
+- [x] §6.9 (relu) : table « opération utilisateur → appel dos qui échoue → message », avec index
+  d'action, argument `%s`, codes tolérés (205, 232), packets dos (17, 9) et règles de requester.
+  Aucune séquence d'instructions transcrite.

@@ -197,7 +197,9 @@ gb_SprNull   EQU GB_PUBLIC    ; APTR : sprite vide (chip, POS/CTL = 0) pour les 
 gb_SprCop    EQU GB_PUBLIC+4  ; APTR : mot de valeur de SPR0PTH dans la liste copper chargée (0 = aucune)
 gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR : données (POS/CTL + image) de chaque canal, 0 = sprite vide
 gb_SprUsed   EQU GB_PUBLIC+40 ; WORD : canaux réservés par GetSprite (bit n = canal n)
-GFXBASE_SIZE EQU GB_PUBLIC+42
+gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 o) : propriété du blitter (OwnBlitter / DisownBlitter)
+GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
+GFXBASE_SIZE EQU GB_PUBLIC+42+46
 DISPF_PAL    EQU 4
 
 ; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---

@@ -600,6 +600,16 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     - Conséquence : après `endcli`, la backdrop est active et ses menus répondent sans clic, comme sur la vraie ROM.
   - **LoadView** préserve désormais d2 : il était écrasé par la réécriture des pointeurs de sprite, ce qui faussait
     les appelants.
+  (11) **ScrollRaster au blitter** (draw.s, `.sc_blit`) : dans la voie rapide (une seule ClipRect visible couvre le
+  rectangle), si tous les plans sont en mémoire chip (TypeOfMem), le rectangle déplacé est copié en un blit par plan.
+  - Canaux : A constant $FFFF avec les masques de premier et dernier mot, B = source, C = D = destination, minterme
+    AB + ~AC. Vers le bas, en mode descendant : adresses de fin, masques échangés.
+  - Sinon, l'ancienne copie CPU ligne à ligne s'applique.
+  - Le blitter est pris par **OwnBlitter / DisownBlitter**, désormais un vrai verrou : sémaphore privé `gb_BlitSem`
+    dans GfxBase. DisownBlitter est sans effet pour une tâche qui ne le possède pas.
+  - Mesure en temps émulé, 400 lignes de `type ram:` dans la fenêtre de boot : 89 s → 70 s. La vraie 1.3 met 38 s.
+    Écran final identique au pixel près.
+  - Le miroir série de con.handler ne compte que pour environ 3 s.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

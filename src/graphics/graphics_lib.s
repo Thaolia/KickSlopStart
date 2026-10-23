@@ -15,6 +15,8 @@
 ; --- ROMTag graphics.library (scanné par build_reslist) ---
         EVEN
 ; primitives de dessin : src/graphics/draw.s
+                xdef    gfx_OwnBlitter       ; draw.s (ScrollRaster au blitter)
+                xdef    gfx_DisownBlitter
                 xref    gfx_BltTemplate
                 xref    gfx_Text
                 xref    gfx_TextLength
@@ -218,6 +220,8 @@ graphics_initfunc:
         move.w  #1280,gb_NormalDPMX(a2)
         move.w  #1280,gb_NormalDPMY(a2)
         move.w  #64*256,gb_MicrosPerLine(a2)
+        lea     gb_BlitSem(a2),a0
+        jsr     LVO_INITSEMAPHORE(a6)
         jsr     gfx_fontinit
         move.l  a2,d0
         move.l  (sp)+,a2
@@ -458,12 +462,27 @@ gfx_WaitBlit:
         bne.s   .wb_loop
         rts
 
-; gfx_OwnBlitter() : prend le blitter. Mono-tâche (l'appelant possède la machine) -> on garantit juste l'idle.
+; gfx_OwnBlitter() : prend le blitter (sémaphore gb_BlitSem : attend qu'aucune autre tâche ne le possède), puis attend
+; qu'il soit au repos. Le système s'en sert aussi (ScrollRaster) : un programme qui le garde le garde pour tous.
 gfx_OwnBlitter:
+        move.l  a6,-(sp)
+        lea     gb_BlitSem(a6),a0
+        move.l  ($4).w,a6
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  (sp)+,a6
         bra.s   gfx_WaitBlit
 
-; gfx_DisownBlitter() : relâche le blitter. Pas d'arbitrage multi-tâche ici -> no-op.
+; gfx_DisownBlitter() : relâche le blitter. Sans effet si la tâche courante ne le possède pas.
 gfx_DisownBlitter:
+        move.l  a6,-(sp)
+        lea     gb_BlitSem(a6),a0
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),d0
+        cmp.l   GB_SS_OWNER(a0),d0
+        bne.s   .db_ret
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.db_ret:
+        move.l  (sp)+,a6
         rts
 ; GetSprite(sprite a0, n° d0) -> d0 = canal réservé | -1. d0 = -1 : premier canal libre (0 réservé au pointeur).
 gfx_GetSprite:
