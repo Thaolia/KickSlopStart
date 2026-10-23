@@ -623,6 +623,27 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   - **dos LoadSeg** pose désormais IoErr : 121 si le fichier n'est pas un exécutable, 103 sans mémoire. Le code est
     posé après le Close, dont la réponse remettait `pr_Result2` à 0.
   - Comparé à la vraie 1.3 (outil « Bad » non exécutable) : « Error while opening Bad: 121 » des deux côtés.
+  (13) **Workbench Info et fenêtres GIMMEZEROZERO** (specs workbench-task-v34 §7/§7.8 et intuition-gzz-v34, relues
+  clean-room).
+  - **Info** (`wb_info`, menu Workbench élément 4) : Lock du répertoire qui contient l'icône, OpenLibrary("info.library"),
+    CurrentDir, GetWBObject (nom « Disk » pour le disque), nom copié et rangé par AddFreeList, lock posé dans le
+    WBObject (+$A4 ; pour le disque, aussi dans le DrawerData +$1BA). Appel de la fonction −30 (A0 = A6 = InfoBase,
+    A1 = WBObject), puis FreeWBObject, répertoire courant rétabli, CloseLibrary, tiroir rechargé, UnLock.
+    Sans info.library : message « Info not available ».
+  - **Bordures agrandies par les gadgets** (toutes les fenêtres) : un gadget dont l'Activation porte LEFT/RIGHT/TOP/
+    BOTTOMBORDER élargit la bordure correspondante. Positions relatives (GREL*) : bord du domaine − 1.
+  - **GIMMEZEROZERO** (screens.s) : la couche du cadre est toujours SIMPLE ; une couche intérieure est créée devant
+    elle, et WLayer/RPort la désignent ; `wd_BorderRPort` (+58) est celui du cadre. Fermeture, profondeur,
+    déplacement et redimensionnement agissent sur les deux couches. Les gadgets GZZGADGET sont dans le cadre, les
+    autres relatifs à l'intérieur (`gad_rect`, `gad_rp`).
+  - **Ordre de dessin des gadgets comme intuition 34.3** (`gad_drawrev`) : une plage se dessine à rebours, si bien que le
+    premier gadget de la liste finit par-dessus. Ce comportement sert à OpenWindow, à la réparation du cadre et à
+    RefreshGadgets. info.library en a besoin : SAVE et QUIT sont en tête de liste, devant un remplisseur qui les
+    recouvre.
+  - **Bug corrigé** : `gad_comp` (surbrillance par complément) sauvegardait 9 registres et n'en restaurait que 8.
+    Tout clic sur un gadget GADGHCOMP de ce chemin aurait fini en SOFTWARE FAILURE.
+  - Prouvé sous FS-UAE (disque WB 1.3.3, tiroir Expansion) : fenêtre identique à la vraie 1.3. QUIT ferme la fenêtre.
+    SAVE écrit le commentaire saisi, qui réapparaît à la réouverture.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

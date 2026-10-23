@@ -42,6 +42,14 @@ LVO_DOUBLECLICK EQU -102
 LVO_REPORTMOUSE EQU -234
 ICON_LVO_GETDISKOBJECT EQU -78       ; icon.library (icon_lib.fd)
 ICON_LVO_PUTDISKOBJECT EQU -84
+ICON_LVO_GETWBOBJECT EQU -30         ; icon.library 1.3 (spec workbench-task-v34 §7.8)
+ICON_LVO_FREEWBOBJECT EQU -60
+ICON_LVO_ADDFREELIST EQU -72
+WBO_NAME        EQU $40              ; WBObject (privé, alloué par icon.library) : nom C
+WBO_DRAWER      EQU $4C              ; DrawerData du Workbench (446 octets) | 0
+WBO_FREE        EQU $8C              ; FreeList de l'objet
+WBO_LOCK        EQU $A4              ; BPTR du répertoire contenant
+WBD_LOCK        EQU $1BA             ; DrawerData : BPTR du répertoire du tiroir / disque
 ICON_LVO_FREEDISKOBJECT EQU -90
 DOS_LVO_CREATEPROC EQU -138
 NW_SIZEOF       EQU 48               ; struct NewWindow
@@ -1526,6 +1534,8 @@ wb_menupick:
 .mp_close:
         cmp.w   #5,d1
         beq     wb_discard
+        cmp.w   #4,d1
+        beq     wb_info
         cmp.w   #3,d1
         beq     wb_rename
         cmp.w   #1,d1
@@ -2013,6 +2023,119 @@ wb_snapshot:
         bsr     wb_error
 .ss_ret:
         lea     WB_PATHMAX(sp),sp
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+
+; wb_info(a5) : Workbench/Info (spec workbench-task-v34 §7). La fenêtre Info est celle de libs:info.library (disque),
+; appelée de façon synchrone : LVO -30, A0 = A6 = sa base, A1 = un WBObject. Celui-ci est fabriqué par icon.library
+; (GetWBObject, dans le répertoire de l'icône ; « Disk » pour le disque), complété du nom (inscrit dans sa FreeList) et du
+; lock du répertoire contenant (+$A4 ; disque : aussi DrawerData+$1BA). info.library change pr_CurrentDir sans le
+; rendre : le répertoire courant du Workbench est rétabli après. Sans info.library : « Info not available ». Au retour,
+; le tiroir est relu (SAVE a pu modifier l'icône) et l'objet rendu par FreeWBObject.
+wb_info:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        move.w  WBS_SELW(a5),d7
+        bmi     .if_ret
+        bne.s   .if_dr
+        lea     wb_sysname(pc),a0    ; disque : racine, icône « Disk »
+        lea     wb_diskicon(pc),a3
+        bra.s   .if_lock
+.if_dr:
+        bsr     wb_window            ; a4 = fiche du tiroir
+        beq     .if_ret
+        move.w  WBS_SELI(a5),d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a3 ; a3 = nom de l'icône
+        lea     DR_PATH(a4),a0
+.if_lock:
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        move.l  WBS_DOSBASE(a5),a6
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,d6                ; d6 = lock du répertoire contenant
+        beq     .if_ret
+        move.l  ($4).w,a6
+        lea     wb_infolib(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,d5                ; d5 = InfoBase
+        bne.s   .if_lib
+        lea     wb_noinfo(pc),a0
+        suba.l  a1,a1
+        bsr     wb_message
+        bra     .if_unlock
+.if_lib:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d6,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        move.l  d0,d4                ; d4 = répertoire courant du Workbench
+        move.l  a3,a0
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_GETWBOBJECT(a6)
+        move.l  d0,a2                ; a2 = WBObject
+        tst.l   d0
+        beq     .if_close
+        move.l  a3,a0                ; nom : copie inscrite dans la FreeList (rendue avec l'objet)
+        bsr     wb_strlen
+        addq.l  #1,d0
+        move.l  d0,d3
+        moveq   #0,d1
+        move.l  ($4).w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .if_free
+        move.l  d0,a1
+        move.l  a3,a0
+.if_cpy:
+        move.b  (a0)+,(a1)+
+        bne.s   .if_cpy
+        move.l  d0,WBO_NAME(a2)
+        move.l  a2,-(sp)
+        lea     WBO_FREE(a2),a0
+        move.l  d0,a1
+        move.l  d3,a2
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_ADDFREELIST(a6)
+        move.l  (sp)+,a2
+        tst.l   d0
+        bne.s   .if_named
+        move.l  WBO_NAME(a2),a1      ; non inscrit : rendu tout de suite, pas d'Info
+        move.l  d3,d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .if_free
+.if_named:
+        move.l  d6,WBO_LOCK(a2)
+        tst.w   d7
+        bne.s   .if_call
+        move.l  WBO_DRAWER(a2),d0    ; disque : lock de la racine aussi dans son DrawerData
+        beq.s   .if_call
+        move.l  d0,a0
+        move.l  d6,WBD_LOCK(a0)
+.if_call:
+        move.l  d5,a6
+        move.l  d5,a0
+        move.l  a2,a1
+        jsr     -30(a6)
+.if_free:
+        move.l  a2,a0
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_FREEWBOBJECT(a6)
+.if_close:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d4,d1
+        jsr     DOS_LVO_CURRENTDIR(a6)
+        move.l  ($4).w,a6
+        move.l  d5,a1
+        jsr     LVO_CLOSELIBRARY(a6)
+        tst.w   d7
+        beq.s   .if_unlock
+        bsr     wb_reload
+.if_unlock:
+        move.l  WBS_DOSBASE(a5),a6
+        move.l  d6,d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.if_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
@@ -2516,7 +2639,7 @@ wbm_tmpl:
         WBITEM  wbm_i01,wbm_i02,10,WBM_ON,wbs_close
         WBITEM  wbm_i02,wbm_i03,20,WBM_OFF,wbs_dup
         WBITEM  wbm_i03,wbm_i04,30,WBM_ON,wbs_rename
-        WBITEM  wbm_i04,wbm_i05,40,WBM_OFF,wbs_info
+        WBITEM  wbm_i04,wbm_i05,40,WBM_ON,wbs_info
         WBITEM  wbm_i05,0,50,WBM_ON,wbs_discard
         WBITEM  wbm_i10,wbm_i11,0,WBM_OFF,wbs_trash
         WBITEM  wbm_i11,0,10,WBM_OFF,wbs_init
@@ -2614,6 +2737,12 @@ wb_renmsg:
         dc.b    "Enter the new name.  Press return when done.",0
 wb_empty:
         dc.b    0
+wb_infolib:
+        dc.b    "info.library",0
+wb_noinfo:
+        dc.b    "Info not available",0
+wb_diskicon:
+        dc.b    "Disk",0
 wb_errfmt:
         dc.b    "Error while %s: %ld",0
 wb_badchar:

@@ -35,6 +35,7 @@
                 xdef    wn_sendmsg
                 xdef    wn_sendgad
                 xref    gad_drawall          ; gadgets.s
+                xref    gad_rect
                 xref    gad_down
                 xref    gad_up
                 xref    str_key
@@ -69,7 +70,8 @@ SC_BGCOLOR      EQU $7C3             ; couleur 0 : vert pomme (thème AmigaSlopD
 WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
 WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
 WDX_NEMSG       EQU 4
-WDX_SIZE        EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF
+WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO : couche du cadre (WD_WLAYER = l'intérieur) | 0
+WDX_SIZE        EQU WDX_BLAYER+4
 WD_TBARH        EQU 10               ; hauteur de la barre de titre d'une fenêtre (BorderTop)
 WD_CLOSEW       EQU 20               ; largeur du gadget de fermeture
 
@@ -686,6 +688,7 @@ intuition_OpenWindow:
 .ow_szr:
         move.b  #18,WD_BORDERRIGHT(a3)
 .ow_bord:
+        bsr     wn_gadborders
         bsr     wn_gzz
         lea     WD_MINWIDTH(a3),a0   ; limites nulles : taille courante (AutoDoc OpenWindow)
         moveq   #3,d1
@@ -730,6 +733,13 @@ intuition_OpenWindow:
         moveq   #IL_SMART|IL_SUPER,d4
         move.l  NW_BITMAP(a2),a1
 .ow_nsuper:
+        btst    #10,d5               ; GIMMEZEROZERO (hors BACKDROP) : la couche du cadre est toujours simple,
+        beq.s   .ow_type             ; l'intérieur prend le rafraîchissement demandé (wn_gzzlayer)
+        btst    #8,d5
+        bne.s   .ow_type
+        moveq   #IL_SIMPLE,d4
+        suba.l  a1,a1
+.ow_type:
         move.l  a1,a2
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
@@ -757,6 +767,20 @@ intuition_OpenWindow:
         move.l  a0,WD_WLAYER(a3)
         move.l  a3,IL_WINDOW(a0)
         move.l  IL_RP(a0),WD_RPORT(a3)
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO (sauf BACKDROP) : intérieur dans une seconde couche, devant
+        beq.s   .ow_one
+        btst    #0,WD_FLAGS+2(a3)
+        bne.s   .ow_one
+        bsr     wn_gzzlayer
+        bne.s   .ow_one
+        move.l  IB_LAYERSBASE(a5),a6 ; échec : la couche du cadre est rendue
+        suba.l  a0,a0
+        move.l  WD_WLAYER(a3),a1
+        jsr     LVO_DELETELAYER(a6)
+        move.l  ($4).w,a6
+        bsr     wn_freeport
+        bra     .ow_nolayer
+.ow_one:
         bsr     it_relist
         jsr     LVO_FORBID(a6)
         move.l  IB_ACTIVEWINDOW(a5),d0   ; chaîne Parent/Descendant : juste après la fenêtre active (intuition 34.3)
@@ -796,12 +820,143 @@ intuition_OpenWindow:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
+; wn_gadborders(a3 = fenêtre) : les gadgets d'application marqués LEFTBORDER / RIGHTBORDER / TOPBORDER / BOTTOMBORDER
+; (Activation) agrandissent la bordure correspondante pour y tenir, jamais ne la réduisent (spec intuition-gzz-v34 §1) :
+; gauche >= droite du gadget, droite >= largeur - gauche du gadget, haut >= bas du gadget, bas >= hauteur - haut du
+; gadget. Préserve d2-d7/a2-a6.
+wn_gadborders:
+        movem.l d2-d3/a2,-(sp)
+        move.l  WD_FIRSTGADGET(a3),a2
+        lea     -8(sp),sp
+.gb_lp:
+        move.l  a2,d0
+        beq.s   .gb_ret
+        moveq   #$F0,d2
+        and.b   GG_ACTIVATION+1(a2),d2
+        beq.s   .gb_nx
+        move.l  a2,a0
+        move.l  sp,a1
+        jsr     gad_rect             ; (sp) = x0, y0, x1, y1 dans la fenêtre
+        btst    #5,d2                ; LEFTBORDER
+        beq.s   .gb_r
+        move.w  4(sp),d3
+        lea     WD_BORDERLEFT(a3),a0
+        bsr.s   .gb_max
+.gb_r:
+        btst    #4,d2                ; RIGHTBORDER
+        beq.s   .gb_t
+        move.w  WD_WIDTH(a3),d3
+        sub.w   (sp),d3
+        lea     WD_BORDERRIGHT(a3),a0
+        bsr.s   .gb_max
+.gb_t:
+        btst    #6,d2                ; TOPBORDER
+        beq.s   .gb_b
+        move.w  6(sp),d3
+        lea     WD_BORDERTOP(a3),a0
+        bsr.s   .gb_max
+.gb_b:
+        btst    #7,d2                ; BOTTOMBORDER
+        beq.s   .gb_nx
+        move.w  WD_HEIGHT(a3),d3
+        sub.w   2(sp),d3
+        lea     WD_BORDERBOTTOM(a3),a0
+        bsr.s   .gb_max
+.gb_nx:
+        move.l  (a2),a2              ; gg_NextGadget
+        bra.s   .gb_lp
+.gb_ret:
+        lea     8(sp),sp
+        movem.l (sp)+,d2-d3/a2
+        rts
+.gb_max:                             ; octet (a0) := max((a0), d3) (d3 borné à 0..255)
+        tst.w   d3
+        bmi.s   .gm_ret
+        cmp.w   #255,d3
+        bls.s   .gm_cmp
+        move.w  #255,d3
+.gm_cmp:
+        moveq   #0,d0
+        move.b  (a0),d0
+        cmp.w   d0,d3
+        bls.s   .gm_ret
+        move.b  d3,(a0)
+.gm_ret:
+        rts
+
+; wn_gzzlayer(a3 = fenêtre dont WD_WLAYER est la couche entière, a5) -> Z = 0 si réussi : la couche entière devient
+; celle du cadre (WDX_BLAYER, WD_BORDERRPORT) et une couche couvrant l'intérieur (fenêtre moins bordures), de même mode
+; de rafraîchissement, est créée devant : elle devient WD_WLAYER / WD_RPORT (origine dans l'intérieur). a6 = SysBase
+; au retour. Préserve d2-d7/a2-a5.
+wn_gzzlayer:
+        movem.l d2-d5/a2,-(sp)
+        move.l  WD_WLAYER(a3),a0
+        move.l  a0,WDX_BLAYER(a3)
+        move.l  IL_RP(a0),WD_BORDERRPORT(a3)
+        moveq   #0,d5
+        move.w  WD_LEFTEDGE(a3),d0
+        move.b  WD_BORDERLEFT(a3),d5
+        add.w   d5,d0
+        move.w  WD_TOPEDGE(a3),d1
+        move.b  WD_BORDERTOP(a3),d5
+        add.w   d5,d1
+        move.w  WD_LEFTEDGE(a3),d2
+        add.w   WD_WIDTH(a3),d2
+        move.b  WD_BORDERRIGHT(a3),d5
+        sub.w   d5,d2
+        subq.w  #1,d2
+        move.w  WD_TOPEDGE(a3),d3
+        add.w   WD_HEIGHT(a3),d3
+        move.b  WD_BORDERBOTTOM(a3),d5
+        sub.w   d5,d3
+        subq.w  #1,d3
+        moveq   #IL_SMART,d4
+        moveq   #$C0,d5
+        and.b   WD_FLAGS+3(a3),d5
+        cmp.b   #$40,d5              ; SIMPLE_REFRESH
+        bne.s   .gl_type
+        moveq   #IL_SIMPLE,d4
+.gl_type:
+        suba.l  a2,a2
+        move.l  WD_WSCREEN(a3),a0
+        lea     SC_BITMAP(a0),a1
+        lea     SC_LAYERINFO(a0),a0
+        move.l  IB_LAYERSBASE(a5),a6
+        jsr     LVO_CREATEUPFRONTLAYER(a6)
+        move.l  ($4).w,a6
+        tst.l   d0
+        beq.s   .gl_fail
+        move.l  d0,a0
+        move.l  a0,WD_WLAYER(a3)
+        move.l  a3,IL_WINDOW(a0)
+        move.l  IL_RP(a0),WD_RPORT(a3)
+        moveq   #1,d0
+        bra.s   .gl_ret
+.gl_fail:
+        move.l  WDX_BLAYER(a3),WD_WLAYER(a3)   ; Z = 1
+        clr.l   WDX_BLAYER(a3)
+        clr.l   WD_BORDERRPORT(a3)
+        moveq   #0,d0
+.gl_ret:
+        movem.l (sp)+,d2-d5/a2
+        rts
+
+; wn_brp(a3 = fenêtre) -> a1 = RastPort du cadre (celui de la couche du cadre d'une fenêtre GIMMEZEROZERO, sinon le
+; RastPort de la fenêtre). Préserve tout le reste.
+wn_brp:
+        move.l  WD_BORDERRPORT(a3),a1
+        cmpa.w  #0,a1
+        bne.s   .bp_ret
+        move.l  WD_RPORT(a3),a1
+.bp_ret:
+        rts
+
 ; wn_border(a3 = Window, a5 = IntuitionBase) : sauf BORDERLESS, cadre au stylo BlockPen, barre de titre pleine au
 ; stylo BlockPen avec le titre au stylo DetailPen, gadget de fermeture, gadgets de profondeur, gadget de
 ; redimensionnement ; puis état de dessin JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
 wn_border:
         move.l  IB_GFXBASE(a5),a6
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         move.l  WD_FLAGS(a3),d7      ; d7 = drapeaux
         btst    #11,d7
         bne     .df_ret
@@ -864,7 +1019,7 @@ wn_border:
         sub.w   #2*SC_GADW,d2
 .df_tw:
         move.l  WD_TITLE(a3),a0
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         bsr     it_title
         btst    #2,d7
         beq.s   .df_size
@@ -872,12 +1027,12 @@ wn_border:
         sub.w   #2*SC_GADW-1,d2
         moveq   #0,d3
         move.b  WD_DETAILPEN(a3),d3
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         bsr     it_depthgads
 .df_size:
         btst    #0,d7                ; WINDOWSIZING : cadre dans le coin bas-droit
         beq.s   .df_ret
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         move.l  d6,d0
         jsr     LVO_SETAPEN(a6)
         move.w  d4,d0
@@ -924,6 +1079,12 @@ intuition_CloseWindow:
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_DELETELAYER(a6)
+        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO : puis la couche du cadre
+        beq.s   .cw_onel
+        move.l  d0,a1
+        suba.l  a0,a0
+        jsr     LVO_DELETELAYER(a6)
+.cw_onel:
         move.l  ($4).w,a6
         bsr     it_relist
         jsr     LVO_FORBID(a6)
@@ -984,6 +1145,10 @@ it_relist:
         beq.s   .rl_end
         move.l  IL_WINDOW(a0),d0
         beq.s   .rl_n
+        exg     d0,a1
+        cmpa.l  WD_WLAYER(a1),a0     ; couche du cadre d'une fenêtre GIMMEZEROZERO : déjà comptée
+        exg     d0,a1
+        bne.s   .rl_n
         move.l  d0,(a1)
         move.l  d0,a1
 .rl_n:
@@ -1020,13 +1185,33 @@ it_refresh:
 .ir_lp:
         cmpa.w  #0,a3
         beq.s   .ir_r
-        move.l  WD_WLAYER(a3),a2
+        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO : le cadre, dans sa propre couche
+        beq.s   .ir_inner
+        move.l  d0,a2
         btst    #ILB_REFRESH,IL_FLAGS+1(a2)
-        beq.s   .ir_n
+        beq.s   .ir_inner
         move.l  IB_LAYERSBASE(a5),a6
         move.l  a2,a0
         jsr     LVO_BEGINUPDATE(a6)
         bsr     wn_border
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
+        moveq   #1,d0
+        jsr     LVO_ENDUPDATE(a6)
+.ir_inner:
+        move.l  WD_WLAYER(a3),a2
+        btst    #ILB_REFRESH,IL_FLAGS+1(a2)
+        beq     .ir_n
+        move.l  IB_LAYERSBASE(a5),a6
+        move.l  a2,a0
+        jsr     LVO_BEGINUPDATE(a6)
+        tst.l   WDX_BLAYER(a3)       ; intérieur d'une fenêtre GIMMEZEROZERO : ses gadgets seulement
+        beq.s   .ir_bord
+        bsr     gad_drawall
+        bra.s   .ir_dmg
+.ir_bord:
+        bsr     wn_border
+.ir_dmg:
         moveq   #1,d2                ; d2 = dommages à effacer ?
         tst.l   WD_USERPORT(a3)
         beq.s   .ir_end
@@ -1062,9 +1247,23 @@ wn_depth:
         move.l  a0,a3
         move.l  WD_WSCREEN(a3),a4
         move.l  IB_LAYERSBASE(a5),a6
+        move.w  d1,d2
+        move.l  WD_WLAYER(a3),a2     ; a2 = première couche traitée, d3 = seconde | 0 (GIMMEZEROZERO : l'intérieur
+        move.l  WDX_BLAYER(a3),d3    ; doit rester devant son cadre -> devant : cadre puis intérieur ; derrière :
+        beq.s   .wd_go               ; intérieur puis cadre)
+        cmp.w   #LVO_BEHINDLAYER,d2
+        beq.s   .wd_go
+        exg     d3,a2
+.wd_go:
         suba.l  a0,a0
-        move.l  WD_WLAYER(a3),a1
-        jsr     0(a6,d1.w)
+        move.l  a2,a1
+        jsr     0(a6,d2.w)
+        tst.l   d3
+        beq.s   .wd_one
+        suba.l  a0,a0
+        move.l  d3,a1
+        jsr     0(a6,d2.w)
+.wd_one:
         bsr     it_relist
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
@@ -1107,6 +1306,16 @@ intuition_MoveWindow:
         ext.l   d0
         ext.l   d1
         move.l  IB_LAYERSBASE(a5),a6
+        move.l  d0,d2
+        move.l  d1,d3
+        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO : le cadre d'abord
+        beq.s   .mw_in
+        move.l  d4,a1
+        suba.l  a0,a0
+        jsr     LVO_MOVELAYER(a6)
+        move.l  d2,d0
+        move.l  d3,d1
+.mw_in:
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_MOVELAYER(a6)
@@ -1953,6 +2162,14 @@ intuition_SizeWindow:
         ext.l   d0
         ext.l   d1
         move.l  IB_LAYERSBASE(a5),a6
+        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO : le cadre, puis l'intérieur de la même variation (d6/d7 =
+        beq.s   .sw_in               ; ancienne taille, gardés pour wn_unborder)
+        movem.l d0-d1,-(sp)
+        move.l  d4,a1
+        suba.l  a0,a0
+        jsr     LVO_SIZELAYER(a6)
+        movem.l (sp)+,d0-d1
+.sw_in:
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_SIZELAYER(a6)
@@ -2020,7 +2237,7 @@ wn_unborder:
         btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : rien à effacer
         bne     .ub_ret
         move.l  IB_GFXBASE(a5),a6
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         moveq   #0,d0
         jsr     LVO_SETAPEN(a6)
         move.w  WD_WIDTH(a3),d0      ; bande droite : [min(oldW, W) - BR, W - 1] x [BT, H - 1]
@@ -2068,7 +2285,7 @@ wn_unborder:
         blt.s   .ub_ret
         cmp.w   d1,d3
         blt.s   .ub_ret
-        move.l  WD_RPORT(a3),a1
+        bsr     wn_brp
         jmp     LVO_RECTFILL(a6)
 .ub_ret:
         rts

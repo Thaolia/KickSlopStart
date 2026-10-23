@@ -22,6 +22,7 @@
                 xdef    intuition_OffGadget
                 xdef    intuition_DrawBorder
                 xdef    gad_drawall
+                xdef    gad_rect
                 xdef    gad_down
                 xdef    gad_up
                 xdef    gad_forget
@@ -34,25 +35,36 @@
                 xref    wn_sendgad
 
 ; gad_rect(a3 = fenêtre, a0 = gadget, a1 = 4 mots x0, y0, x1, y1) : rectangle du gadget en coordonnées de la fenêtre,
-; positions et tailles relatives au bord droit / bas résolues. Clobbe d0/d1.
+; positions et tailles relatives au bord droit / bas résolues. Gadget intérieur d'une fenêtre GIMMEZEROZERO : relatif à
+; l'intérieur (taille GZZ), puis décalé des bordures gauche et haute. Clobbe d0/d1.
 gad_rect:
+        movem.l d2-d3,-(sp)
+        move.w  WD_WIDTH(a3),d2      ; d2/d3 = taille de référence
+        move.w  WD_HEIGHT(a3),d3
+        bsr.s   gad_inner
+        beq.s   .gr_ref
+        move.w  WD_GZZWIDTH(a3),d2
+        move.w  WD_GZZHEIGHT(a3),d3
+.gr_ref:
         move.w  GG_FLAGS(a0),d1
         move.w  GG_LEFTEDGE(a0),d0
-        btst    #4,d1                ; GRELRIGHT
+        btst    #4,d1                ; GRELRIGHT : bord droit du domaine (largeur - 1) + LeftEdge
         beq.s   .gr_x
-        add.w   WD_WIDTH(a3),d0
+        add.w   d2,d0
+        subq.w  #1,d0
 .gr_x:
         move.w  d0,(a1)
         move.w  GG_TOPEDGE(a0),d0
-        btst    #3,d1                ; GRELBOTTOM
+        btst    #3,d1                ; GRELBOTTOM : bord bas du domaine (hauteur - 1) + TopEdge
         beq.s   .gr_y
-        add.w   WD_HEIGHT(a3),d0
+        add.w   d3,d0
+        subq.w  #1,d0
 .gr_y:
         move.w  d0,2(a1)
         move.w  GG_WIDTH(a0),d0
         btst    #5,d1                ; GRELWIDTH
         beq.s   .gr_w
-        add.w   WD_WIDTH(a3),d0
+        add.w   d2,d0
 .gr_w:
         add.w   (a1),d0
         subq.w  #1,d0
@@ -60,11 +72,67 @@ gad_rect:
         move.w  GG_HEIGHT(a0),d0
         btst    #6,d1                ; GRELHEIGHT
         beq.s   .gr_h
-        add.w   WD_HEIGHT(a3),d0
+        add.w   d3,d0
 .gr_h:
         add.w   2(a1),d0
         subq.w  #1,d0
         move.w  d0,6(a1)
+        bsr.s   gad_inner
+        beq.s   .gr_ret
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        add.w   d0,(a1)
+        add.w   d0,4(a1)
+        move.b  WD_BORDERTOP(a3),d0
+        add.w   d0,2(a1)
+        add.w   d0,6(a1)
+.gr_ret:
+        movem.l (sp)+,d2-d3
+        rts
+
+; gad_inner(a3 = fenêtre, a0 = gadget) -> Z = 0 si c'est un gadget de l'intérieur d'une fenêtre GIMMEZEROZERO (pas
+; GZZGADGET) : dessiné dans la couche intérieure, à l'origine de l'intérieur. Préserve tout.
+gad_inner:
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO
+        beq.s   .gn_ret
+        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP : une seule couche)
+        beq.s   .gn_ret
+        btst    #5,GG_GADGETTYPE(a0) ; GZZGADGET ($2000) : dans le cadre -> Z = 1 ; sinon Z = 0
+        eori.b  #4,ccr
+.gn_ret:
+        rts
+
+; gad_rpof(a3 = fenêtre, a2 = gadget) -> a0 = RastPort où le dessiner : celui du cadre pour un gadget GZZGADGET d'une
+; fenêtre GIMMEZEROZERO, sinon celui de la fenêtre (l'intérieur). Préserve tout le reste.
+gad_rpof:
+        move.l  WD_RPORT(a3),a0
+        btst    #2,WD_FLAGS+2(a3)
+        beq.s   .ro_ret
+        tst.l   WD_BORDERRPORT(a3)
+        beq.s   .ro_ret
+        btst    #5,GG_GADGETTYPE(a2)
+        beq.s   .ro_ret
+        move.l  WD_BORDERRPORT(a3),a0
+.ro_ret:
+        rts
+
+; gad_rp(a3 = fenêtre, a2 = gadget, a1 = rectangle de gad_rect) -> a1 inchangé, a0 = RastPort où le dessiner (gad_rpof) ;
+; le rectangle est ramené dans ce RastPort (gadget intérieur d'une fenêtre GIMMEZEROZERO : moins les bordures).
+; Clobbe d0.
+gad_rp:
+        bsr.s   gad_rpof
+        exg     a0,a2
+        bsr     gad_inner
+        exg     a0,a2
+        beq.s   .rp_ret
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        sub.w   d0,(a1)
+        sub.w   d0,4(a1)
+        move.b  WD_BORDERTOP(a3),d0
+        sub.w   d0,2(a1)
+        sub.w   d0,6(a1)
+.rp_ret:
         rts
 
 ; gad_inside(a3 = fenêtre, a0 = gadget, d2/d3 = point dans la fenêtre) -> Z = 0 si le point est dans le gadget.
@@ -72,7 +140,7 @@ gad_rect:
 gad_inside:
         lea     -8(sp),sp
         move.l  sp,a1
-        bsr.s   gad_rect
+        bsr     gad_rect
         moveq   #0,d0                ; Z = 1 par défaut (dehors)
         cmp.w   (sp),d2
         blt.s   .gi_out
@@ -89,14 +157,22 @@ gad_inside:
         rts
 
 ; gad_draw(a3 = fenêtre, a2 = gadget, a5 = IntuitionBase) : image ou bordure (SelectRender si sélectionné en
-; GADGHIMAGE), texte, puis surbrillance d'un gadget sélectionné en GADGHCOMP / GADGHBOX. Préserve d2-d7/a2-a6.
+; GADGHIMAGE), texte, puis surbrillance d'un gadget sélectionné en GADGHCOMP / GADGHBOX. gad_render : sans cette
+; surbrillance. Préserve d2-d7/a2-a6.
 gad_draw:
+        moveq   #1,d0
+        bra.s   gad_drw
+gad_render:
+        moveq   #0,d0
+gad_drw:
         movem.l d2-d7/a2-a6,-(sp)
+        move.w  d0,d7                ; d7 = surbrillance voulue
         lea     -8(sp),sp
         move.l  a2,a0
         move.l  sp,a1
         bsr     gad_rect
-        move.l  WD_RPORT(a3),a4
+        bsr     gad_rp
+        move.l  a0,a4                ; a4 = RastPort du gadget, rectangle ramené dedans
         move.l  a5,a6
         move.l  GG_GADGETRENDER(a2),a1
         move.w  GG_FLAGS(a2),d0
@@ -140,6 +216,8 @@ gad_draw:
         bsr     str_text
         bra.s   .gd_ret
 .gd_sel:
+        tst.w   d7
+        beq.s   .gd_ret
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
         beq.s   .gd_ret
         bsr.s   gad_comp
@@ -155,12 +233,14 @@ gad_comp:
         and.w   #GADGHIGHBITS,d0
         cmp.w   #GADGHBOX,d0
         bhi.s   .gc_ret              ; GADGHIMAGE / GADGHNONE : rien à inverser
-        movem.l d2-d7/a2/a6,-(sp)
+        movem.l d2-d7/a2-a3/a6,-(sp)
         move.w  d0,d7                ; d7 = 0 tout / 1 contour
-        movem.w 4+32(sp),d4-d6/a2    ; x0 y0 x1 y1 (a2 = y1, étendu)
+        bsr     gad_rpof             ; RastPort du gadget (rectangle déjà ramené dedans par l'appelant)
+        move.l  a0,a3                ; a3 = RastPort désormais
+        movem.w 4+36(sp),d4-d6/a2    ; x0 y0 x1 y1 (a2 = y1, étendu)
         move.l  a2,d3
         move.l  IB_GFXBASE(a5),a6
-        move.l  WD_RPORT(a3),a1
+        move.l  a3,a1
         moveq   #0,d0
         move.b  rp_DrawMode(a1),d0
         move.l  d0,-(sp)
@@ -197,10 +277,10 @@ gad_comp:
         move.w  d6,d2
         bsr.s   .gc_fill
 .gc_end:
-        move.l  WD_RPORT(a3),a1
+        move.l  a3,a1
         move.l  (sp)+,d0
         jsr     LVO_SETDRMD(a6)
-        movem.l (sp)+,d2-d7/a2/a6
+        movem.l (sp)+,d2-d7/a2-a3/a6
 .gc_ret:
         rts
 .gc_fill:                            ; RectFill(rp, d0, d1, d2, d3) si le rectangle n'est pas vide
@@ -209,7 +289,7 @@ gad_comp:
         cmp.w   d1,d3
         blt.s   .gf_ret
         movem.l d0-d3,-(sp)
-        move.l  WD_RPORT(a3),a1
+        move.l  a3,a1
         ext.l   d0
         ext.l   d1
         ext.l   d2
@@ -221,19 +301,69 @@ gad_comp:
 
 ; gad_drawall(a3 = fenêtre, a5 = IntuitionBase) : tous les gadgets d'application de la fenêtre. Préserve tout.
 gad_drawall:
-        movem.l d0-d1/a0-a2,-(sp)
+        movem.l d0-d2/a0-a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
-.da_lp:
-        move.l  a2,d0
-        beq.s   .da_ret
-        tst.w   GG_GADGETTYPE(a2)    ; SYSGADGET (bit 15) : dessiné avec le cadre
-        bmi.s   .da_next
-        bsr     gad_draw
-.da_next:
+        moveq   #-1,d2
+        bsr.s   gad_drawrev
+        movem.l (sp)+,d0-d2/a0-a2
+        rts
+
+; gad_drawrev(a2 = premier gadget, d2 = nombre (-1 = jusqu'à la fin), a3 = fenêtre, a5) : comme intuition 1.3, la
+; plage est rendue à rebours, du dernier au premier, si bien que le premier de la liste finit par-dessus (info.library
+; compte dessus pour que SAVE/QUIT, en tête, recouvrent leur remplisseur) ; puis, à l'endroit, la surbrillance des
+; gadgets sélectionnés. Parcours quadratique sans pile (listes courtes). Les gadgets système sont dessinés avec le
+; cadre. Clobbe d0-d2/a0-a2.
+gad_drawrev:
+        move.l  a2,a0                ; a0 = fin de plage (gadget qui suit le dernier, ou NULL)
+.dr_end:
+        move.l  a0,d0
+        beq.s   .dr_go
+        tst.l   d2
+        beq.s   .dr_go
+        subq.l  #1,d2
+        move.l  GG_NEXTGADGET(a0),a0
+        bra.s   .dr_end
+.dr_go:
+        movem.l a0/a2,-(sp)          ; fin de plage, premier gadget
+.dr_lp:
+        cmp.l   a2,a0
+        beq.s   .dr_hl               ; plage vide ou entièrement rendue
+        move.l  a2,a1                ; cherche le prédécesseur de la fin
+.dr_pred:
+        cmp.l   GG_NEXTGADGET(a1),a0
+        beq.s   .dr_got
+        move.l  GG_NEXTGADGET(a1),a1
+        bra.s   .dr_pred
+.dr_got:
+        move.l  a1,-(sp)
+        tst.w   GG_GADGETTYPE(a1)    ; SYSGADGET (bit 15)
+        bmi.s   .dr_skip
+        move.l  a1,a2
+        bsr     gad_render
+        move.l  4+4(sp),a2
+.dr_skip:
+        move.l  (sp)+,a0             ; ce gadget devient la nouvelle fin
+        bra.s   .dr_lp
+.dr_hl:
+        movem.l (sp)+,a0/a2
+.dr_hlp:
+        cmp.l   a2,a0
+        beq.s   .dr_ret
+        tst.w   GG_GADGETTYPE(a2)
+        bmi.s   .dr_hnext
+        btst    #7,GG_FLAGS+1(a2)    ; SELECTED
+        beq.s   .dr_hnext
+        move.w  GG_FLAGS(a2),d0
+        and.w   #GADGHIGHBITS,d0
+        cmp.w   #GADGHIMAGE,d0       ; SelectRender déjà rendu
+        beq.s   .dr_hnext
+        move.l  a0,-(sp)
+        bsr     gad_hilite
+        move.l  (sp)+,a0
+.dr_hnext:
         move.l  GG_NEXTGADGET(a2),a2
-        bra.s   .da_lp
-.da_ret:
-        movem.l (sp)+,d0-d1/a0-a2
+        bra.s   .dr_hlp
+.dr_ret:
         rts
 
 ; gad_hilite(a3, a2, a5) : l'état SELECTED vient de changer -> surbrillance mise à jour (inversion, ou image redessinée
@@ -247,6 +377,7 @@ gad_hilite:
         move.l  a2,a0
         move.l  sp,a1
         bsr     gad_rect
+        bsr     gad_rp
         bsr     gad_comp
         lea     8(sp),sp
         rts
@@ -393,6 +524,7 @@ str_text:
         move.l  a2,a0
         move.l  sp,a1
         bsr     gad_rect
+        bsr     gad_rp               ; rectangle ramené dans le RastPort du gadget
         move.l  a4,a0
         bsr     str_len
         move.l  WD_RPORT(a3),a1
@@ -428,7 +560,8 @@ str_text:
         clr.w   SI_DISPPOS(a4)
 .st_dok:
         move.l  IB_GFXBASE(a5),a6
-        move.l  WD_RPORT(a3),a3      ; a3 = RastPort désormais
+        bsr     gad_rpof
+        move.l  a0,a3                ; a3 = RastPort du gadget désormais
         move.b  rp_FgPen(a3),-(sp)
         move.b  rp_BgPen(a3),-(sp)
         move.b  rp_DrawMode(a3),-(sp)
@@ -919,19 +1052,7 @@ intuition_RefreshGList:
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d2
-.rf_lp:
-        move.l  a2,d0
-        beq.s   .rf_ret
-        tst.l   d2
-        beq.s   .rf_ret
-        tst.w   GG_GADGETTYPE(a2)
-        bmi.s   .rf_next
-        bsr     gad_draw
-.rf_next:
-        subq.l  #1,d2
-        move.l  GG_NEXTGADGET(a2),a2
-        bra.s   .rf_lp
-.rf_ret:
+        bsr     gad_drawrev
         movem.l (sp)+,d2/a2-a3/a5
         rts
 

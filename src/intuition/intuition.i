@@ -165,6 +165,7 @@ WD_BORDERLEFT   EQU 54
 WD_BORDERTOP    EQU 55
 WD_BORDERRIGHT  EQU 56
 WD_BORDERBOTTOM EQU 57
+WD_BORDERRPORT  EQU 58              ; GIMMEZEROZERO : RastPort de la couche du cadre (0 sinon)
 WD_FIRSTGADGET  EQU 62
 WD_PARENT       EQU 66              ; fenêtre active à l'ouverture (activée à la fermeture de celle-ci)
 WD_DESCENDANT   EQU 70
@@ -186,6 +187,7 @@ SIZEBRIGHT      EQU $0010
 SIZEBBOTTOM     EQU $0020
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
+GIMMEZEROZERO   EQU $0400           ; NewWindow : intérieur dans sa propre couche, origine dans l'intérieur
 ACTIVATE        EQU $1000           ; NewWindow : fenêtre activée à l'ouverture
 WINDOWACTIVE    EQU $2000
 RMBTRAP         EQU $00010000
@@ -314,6 +316,7 @@ BD_NEXTBORDER EQU 12
 BOOLGADGET    EQU 1             ; gg_GadgetType : bouton booléen
 STRGADGET     EQU 4             ; gg_GadgetType : texte éditable (SpecialInfo = StringInfo)
 GTYP_MASK     EQU $0007         ; type de base dans gg_GadgetType
+GZZGADGET     EQU $2000         ; gg_GadgetType : gadget du cadre d'une fenêtre GIMMEZEROZERO
 ; struct StringInfo (intuition/intuition.h)
 SI_BUFFER     EQU 0             ; APTR : texte, terminé par NUL
 SI_UNDOBUFFER EQU 4             ; APTR : copie à l'activation (Amiga droite + Q) | 0

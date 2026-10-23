@@ -734,6 +734,287 @@ Rappels :
 
 ---
 
+## 7. Workbench/Info et info.library
+
+Sources : ROM (routine Info du module wb, repère $FEFB70) et `libs/info.library` de `wb133.adf`
+(16 380 octets, 25 hunks ; extraite et relogée dans le scratch de la piste analyse). info.library
+est un **binaire du disque que nous ne réimplémentons pas** : cette section décrit **le contrat
+d'appel** et les **champs** qu'elle lit et écrit, pour que notre ROM puisse l'appeler.
+
+### 7.1 Côté Workbench (menu Workbench, élément 4, code $F880) [O]
+
+1. Comme pour tout MENUPICK, le titre mémoire est d'abord restauré (§6.2).
+2. La routine Info est appelée pour **chaque icône sélectionnée**, l'une après l'autre (même
+   itérateur que Snapshot) [D pour l'ordre].
+3. Pour une icône :
+   - **Disque** (type 1) dont le WB ne connaît pas de lock de répertoire : **rien** (pas de
+     message).
+   - Sinon **`OpenLibrary("info.library", 0)`** (version **0**).
+   - En cas d'échec : `ShowTitle("Info not available")` (§6.9 point 8).
+   - En cas de succès : appel du **LVO −30** de la base obtenue, avec **A6 = InfoBase**,
+     **A0 = InfoBase** (copie, inutilisée par la librairie) et **A1 = pointeur sur le WBObject**
+     de l'icône (structure **privée** du Workbench, §7.3). La **valeur de retour est ignorée**.
+   - Puis **`CloseLibrary(InfoBase)`**.
+4. Aucun rafraîchissement d'icône n'est fait au retour, à part la fin commune des MENUPICK. Ce
+   qu'info.library a changé dans le WBObject (outil par défaut, tool types, pile) reste en
+   mémoire tel quel.
+5. **L'appel est synchrone et modal** : info.library tourne **dans le process Workbench**, ouvre sa
+   propre fenêtre et attend ses propres événements jusqu'à SAVE ou QUIT. Pendant ce temps le WB ne
+   traite ni ses ports A et B, ni ses tics [D, conséquence directe].
+
+### 7.2 info.library : identité, vecteurs, librairies [O]
+
+- **ROMTag** : `rt_Flags = $80` (AUTOINIT), version 34, `rt_Type = 9` (NT_LIBRARY), pri 0, nom
+  `"info.library"`, IdString `"info V1.3\r\n"`.
+- Base de **$26 octets** (sizeof Library) ; **lib_Version 34**, lib_Revision 0. L'init mémorise
+  SysBase et la seglist.
+- **Vecteurs** : Open, Close, Expunge, Reserved, puis **une seule fonction publique**, le
+  **LVO −30**, que nous appelons ici `Info(wbobject)` (nom déduit [D]). Argument : **A1** =
+  WBObject. Pas de callback ni de pointeur de fonction fourni par le Workbench.
+- **Librairies ouvertes par elle-même**, toutes en **version 0**, puis refermées en sortie :
+  - `"dos.library"` : Lock, UnLock, Examine, Info, SetComment, SetProtection ;
+  - `"icon.library"` : **PutWBObject (−36)**, **AddFreeList (−72)** ;
+  - `"intuition.library"` : OpenWindow, CloseWindow, SetWindowTitles, AddGadget, RemoveGadget,
+    RefreshGadgets, ActivateGadget, DisplayBeep, SetPointer, BeginRefresh/EndRefresh,
+    AllocRemember/FreeRemember ;
+  - `"graphics.library"` : OpenFont/CloseFont (`topaz.font`, hauteurs 9 et 8), SetFont, Text,
+    Move/Draw, RectFill, SetAPen, SetDrMd, SetRast.
+- **exec** : AllocMem, FreeMem, Forbid/Permit, Insert/AddTail/Remove, **FindTask(0)**, Wait,
+  GetMsg, ReplyMsg, CloseLibrary, OpenLibrary.
+- Si une ouverture de librairie, une allocation, le Lock ou la police échoue : nettoyage et retour
+  **sans message**.
+
+### 7.3 Champs du WBObject lus ou écrits par info.library [O]
+
+L'objet est la structure privée du Workbench 1.x telle qu'icon.library 1.3 la construit
+(AllocWBObject / GetWBObject). Info utilise uniquement les champs suivants.
+
+| Off. | Taille | Sens | Accès |
+|---|---|---|---|
+| **+$38** | ptr | **objet parent** (WBObject du tiroir ou disque qui contient l'icône) | L |
+| **+$3D** | octet | **type** : 1 disque, 2 tiroir, 3 outil, 4 projet, 5 poubelle, 6 device, 7 kick | L |
+| **+$40** | ptr | **nom** (C, sans `.info`) | L |
+| **+$48** | ptr | **outil par défaut** (C, ou NULL) | L, **E** (nouvelle chaîne) |
+| **+$4C** | ptr | **DrawerData** ; seul **+$1BA** y est lu = **lock (BPTR) du répertoire** | L |
+| **+$5C** | ptr | **tool types** (`char **` terminé par NULL, ou NULL) | L, **E** (nouveau tableau ou NULL) |
+| **+$8C** | struct | **FreeList** de l'objet (passée à icon **AddFreeList**) | adresse passée |
+| **+$A0** | long | **taille de pile** (outil et projet) | L, **E** |
+| **+$A4** | BPTR | **lock du répertoire contenant**, s'il est connu directement (prioritaire) | L |
+
+Après l'appel, l'objet complet est passé à **PutWBObject**. Les champs qu'icon.library lit pour
+écrire le `.info` relèvent du contrat d'icon.library, pas de celui d'info.library.
+
+**Répertoire de travail utilisé** (ordre de priorité) :
+1. type 7 ⇒ aucun (pas d'Info utile) ;
+2. `+$A4` s'il est non nul ;
+3. pour un **disque**, son **propre** `+$4C → +$1BA` (lock de la racine) ;
+4. sinon le `+$4C → +$1BA` du **parent** (`+$38`) ;
+5. à défaut, 0.
+
+**Effet de bord [O]** : info.library **écrit ce lock directement dans `pr_CurrentDir` (+$98)** du
+process appelant (via FindTask(0)), **sans CurrentDir() et sans restauration**. Le Workbench doit
+donc être un **Process** (pas une simple Task). Son répertoire courant pointe ensuite sur ce lock,
+ce qui est sans danger puisque le WB refait CurrentDir avant chaque opération (§6.9).
+
+**Allocations attachées à l'objet** : la nouvelle chaîne d'outil par défaut, le nouveau tableau
+de tool types et chaque nouvelle chaîne de tool type sont alloués par AllocMem : flags 0 pour
+l'outil par défaut (nouvel essai avec MEMF_PUBLIC si l'allocation échoue), **MEMF_CLEAR** pour
+les tool types. Ils sont ensuite enregistrés par
+**AddFreeList(objet+$8C, mémoire, taille)**. Ils sont donc libérés avec l'objet (FreeWBObject). Les
+anciennes chaînes et l'ancien tableau ne sont **pas** libérés.
+
+### 7.4 Déroulé de `Info(objet)` [O]
+
+1. Ouverture des 4 librairies, puis une Remember-list intuition (AllocRemember, MEMF_CLEAR |
+   MEMF_CHIP) pour toutes les données internes.
+2. CurrentDir forcé (§7.3), puis **`Lock(nom, SHARED)`** avec comme nom :
+   - pour un disque, la chaîne `"disk.info"`. Si ce Lock échoue, le lock de la racine du disque
+     (`+$4C → +$1BA`) est **emprunté** à la place, et ne sera pas UnLocké ;
+   - pour les autres types, `+$40`.
+3. Lectures :
+   - disque : **`Info(lock, InfoData)`** ;
+   - les autres : **`Examine(lock, FIB)`**. Retenus : `fib_Protection` (+$74), taille, nombre de
+     blocs, **`fib_Comment` (+$90)**.
+   - outil par défaut (`+$48`), copié dans un tampon d'au moins 256 octets ;
+   - pile (`+$A0`) ;
+   - tool types (`+$5C`).
+4. Ouverture de la fenêtre :
+   - NewWindow : Left 0, Top 10, Width 604, Height 190, DetailPen −1, BlockPen 1 ;
+   - IDCMP **$244** (REFRESHWINDOW | GADGETUP | CLOSEWINDOW) ;
+   - Flags **$146F** (SIZING | DRAG | DEPTH | CLOSE | SIZEBBOTTOM | SIMPLE_REFRESH |
+     GIMMEZEROZERO | **ACTIVATE**) ;
+   - titre de fenêtre **`"Info release 1.31"`**, Min 210×50, Max 604×190, **Type WBENCHSCREEN** ;
+   - puis **`SetWindowTitles(win, −1, "Info release 1.31")`** : le **titre d'écran** devient ce
+     texte (le patch LoadWB §6.6 le laisse passer intact).
+5. Boucle d'événements sur le UserPort de **sa** fenêtre (Wait, GetMsg, ReplyMsg), avec gestion
+   des gadgets.
+6. **SAVE** :
+   - outil ou projet : `+$A0` := pile saisie ;
+   - tool types reconstruits (`+$5C`), ou NULL si la liste est vide ;
+   - si l'outil par défaut a changé : nouvelle chaîne dans `+$48` ;
+   - fichiers, pour les types autres que disque :
+     1. `SetProtection("<nom>.info", 0)` (permet l'écriture) ;
+     2. **`PutWBObject(nom, objet)`**, avec **`"Disk"`** comme nom pour un disque ;
+     3. `SetComment(nom, commentaire)` ;
+     4. `SetProtection(nom, protection saisie)` ;
+     5. `SetProtection("<nom>.info", protection & ~$10)` (bit 4, archive, retiré).
+   - Disque : seulement `PutWBObject("Disk", objet)` dans la racine.
+   - Un échec est mémorisé ; le comportement visible exact (bip ?) n'a pas été tranché [S].
+7. **QUIT**, ou gadget de fermeture : sortie sans écrire.
+8. Nettoyage : CloseWindow, CloseFont, FreeRemember(…, TRUE), UnLock du lock (sauf s'il était
+   emprunté), CloseLibrary des 4 librairies. **D0 au retour n'a pas de sens défini.**
+
+### 7.5 Ce que l'utilisateur voit (chaînes de la librairie) [O pour les chaînes, D pour la disposition]
+
+- **Libellés communs** : `NAME`, `TYPE`, `STATUS`. Boutons texte : **`"  SAVE  "`** et
+  **`"  QUIT  "`** (deux espaces de chaque côté), **`ADD`** et **`DEL`** (tool types). Police
+  topaz 8 et 9.
+- **Disque** (TYPE `"Disk"`) :
+  - `Number of Blocks`, `Number Used`, `Number Free`, `Bytes per Block`, d'après l'InfoData ;
+  - STATUS selon `id_DiskState` : `Read Only`, `Validating`, `Read/Write`, sinon
+    `I'm not sure` ;
+  - champs éditables `DEFAULT TOOL`, `TOOL TYPES` ;
+  - pas de commentaire ni de protections.
+- **Tiroir** (`"Drawer"`) : `COMMENT`, `TOOL TYPES`, protections.
+- **Outil** : taille `in bytes` et `in blocks`, `COMMENT`, `STACK`, `TOOL TYPES`, protections.
+- **Projet** (`"Project"`) : `in bytes`, `in blocks`, `COMMENT`, `STACK`, `DEFAULT TOOL`,
+  `TOOL TYPES`, protections.
+- **Poubelle** (`"Garbage"`) : `COMMENT`, `TOOL TYPES`.
+- **Device** : libellé `"Device"`.
+- **Protections** : cases `ARCHIVED`, `READABLE`, `WRITEABLE`, `DELETEABLE`, d'après les bits de
+  `fib_Protection` (sémantique 1.3 : bit à 1 = interdit, pour R, W et D).
+
+### 7.6 Disque et tiroir ouvert : différences [O]
+
+- **Disque** :
+  - le WB n'appelle Info que s'il connaît un lock pour ce disque (sinon rien) ;
+  - info.library utilise le lock de racine **du disque lui-même** (`+$4C → +$1BA`) ;
+  - elle lit les statistiques par `Info()` ;
+  - elle sauve seulement `Disk.info` (PutWBObject `"Disk"`), sans SetComment ni SetProtection.
+- **Tiroir**, ouvert ou fermé : **aucune différence** pour info.library. Elle ne regarde
+  **jamais** la fenêtre ni le DrawerData **du tiroir lui-même**, seulement celui de son
+  **parent** (ou `+$A4`). L'objet est verrouillé par son nom dans le répertoire parent et lu par
+  Examine, comme un fichier.
+
+### 7.7 Exigences pour notre ROM [D]
+
+- `OpenLibrary("info.library", 0)` doit pouvoir réussir : la librairie du disque est chargée
+  par ramlib depuis `LIBS:`.
+- **Appel** : JSR −30(A6) avec **A6 = A0 = InfoBase** et **A1 = WBObject**.
+- **WBObject** : remplir au minimum +$38, +$3D, +$40, +$48, +$4C (et +$1BA du DrawerData des
+  conteneurs), +$5C, +$8C (FreeList valide), +$A0, +$A4, avec ces offsets et ce sens. Le reste de
+  l'objet doit convenir à **PutWBObject** de l'icon.library utilisée.
+- **icon.library** : doit exposer **PutWBObject (−36)** et **AddFreeList (−72)** compatibles 1.3.
+- **Process** : le WB doit être un Process, car `pr_CurrentDir` (+$98) est écrit directement.
+
+### 7.8 Obtenir le WBObject depuis icon.library 1.3 (`libs/icon.library`, « icon 34.2 (22 Jun 1988) ») [O]
+
+**Vecteurs.** Table de pointeurs absolus, dans l'ordre du `.fd` public :
+
+| LVO | Fonction | Registres | Retour |
+|---|---|---|---|
+| −30 | **GetWBObject**(name) | A0 | WBObject* ou 0 |
+| −36 | **PutWBObject**(name, object) | A0, A1 | booléen |
+| −42 | GetIcon(name, icon, freelist) | A0, A1, A2 | booléen |
+| −48 | PutIcon(name, icon) | A0, A1 | booléen |
+| −54 | FreeFreeList(freelist) | A0 | — |
+| −60 | **FreeWBObject**(object) | A0 | — |
+| −66 | **AllocWBObject**() | — | WBObject* ou 0 |
+| −72 | AddFreeList(freelist, mem, len) | A0, A1, A2 | booléen |
+| −78 | GetDiskObject(name) | A0 | DiskObject* |
+| −84 | PutDiskObject(name, diskobj) | A0, A1 | même point d'entrée que −48 |
+| −90 | FreeDiskObject(diskobj) | A0 | — |
+| −96 | FindToolType(array, name) | A0, A1 | |
+| −102 | MatchToolValue(string, value) | A0, A1 | |
+| −108 | BumpRevision(new, old) | A0, A1 | |
+
+**AllocWBObject()**
+- Alloue **$A8 = 168 octets MEMF_CLEAR**. C'est la taille totale du WBObject : tous les offsets
+  utilisés par le WB et par info.library (≤ +$A4) y tiennent.
+- Initialise la **FreeList en +$8C**, qui occupe +$8C..+$9B : `fl_NumFree` (mot) en +$8C, puis
+  la liste des MemList en +$8E.
+- **Inscrit l'objet lui-même dans sa FreeList** (AddFreeList(objet+$8C, objet, 168)).
+
+**GetWBObject(name)**
+- Fait AllocWBObject, puis **GetIcon(name, DiskObject local, objet+$8C)**. Toutes les
+  allocations de l'icône vont donc dans la FreeList de l'objet.
+- GetIcon ouvre **`"<name>.info"` en MODE_OLDFILE relativement au répertoire courant du process
+  appelant**. L'appelant doit donc faire CurrentDir(répertoire contenant) avant l'appel ; pour un
+  disque, name = `"Disk"` dans la racine.
+- GetIcon lit l'en-tête de 78 octets et vérifie **magic $E310** et **version 1**. Pour un échec
+  d'allocation, IoErr est forcé à 103.
+- En cas d'échec, l'objet est libéré et la fonction rend 0.
+- Champs remplis, copiés depuis le DiskObject lu :
+
+| Off. WBObject | Source (champ public DiskObject) |
+|---|---|
+| +$3D (octet) | `do_Type` |
+| +$48 | `do_DefaultTool` (chaîne allouée dans la FreeList) |
+| +$4C | `do_DrawerData` (0 si l'icône n'en a pas) |
+| +$54 / +$58 | `do_CurrentX` / `do_CurrentY` |
+| +$5C | `do_ToolTypes` (tableau et chaînes alloués dans la FreeList) |
+| +$60 .. +$8B | `do_Gadget`, 44 octets (struct Gadget, images GadgetRender/SelectRender allouées en CHIP dans la FreeList) |
+| +$9C | `do_ToolWindow` |
+| +$A0 | `do_StackSize` |
+| +$8C | FreeList (contient l'objet et toutes ses allocations) |
+
+- **Non remplis, restent à 0** : **+$38** (parent), **+$40 (nom : PAS copié de l'argument)**,
+  **+$A4** (lock), ainsi que tout le reste de l'objet. Le WB 1.3 pose +$40 lui-même. Pour
+  info.library, **c'est à nous de remplir +$40, et selon le cas +$38 / +$A4.**
+- **DrawerData**, seulement si l'icône en a une (tiroir, disque, poubelle) :
+  - bloc de **$1BE = 446 octets MEMF_CLEAR|MEMF_CHIP**, alloué dans la FreeList ;
+  - les 56 premiers octets (NewWindow + CurrentX/Y) sont lus dans le fichier ;
+  - **+$1A8 := pointeur vers le WBObject** (lien arrière) ;
+  - une liste vide est initialisée en **+$1AC** ;
+  - **+$1BA..+$1BD = dernier long du bloc**, couvert par l'allocation et **laissé à 0**. C'est
+    à nous d'y mettre le lock du répertoire (BPTR) pour qu'info.library le lise (§7.3).
+
+**FreeWBObject(object)**
+- = **FreeFreeList(objet+$8C)**. Toutes les entrées sont libérées, **y compris l'objet
+  lui-même**, le DrawerData et **les chaînes et tableaux ajoutés par info.library via
+  AddFreeList** (§7.3).
+- **Ne fait ni UnLock ni rien d'autre** : aucun champ n'est examiné. Il n'y a rien à remettre à 0
+  avant l'appel. En revanche, nous devons **UnLock nous-mêmes** les locks que nous avons posés
+  (+$A4, DrawerData+$1BA), et libérer le nom de +$40 si nous l'avons alloué hors de la FreeList.
+  Le plus simple est de l'allouer puis de l'enregistrer par AddFreeList(objet+$8C, …), pour qu'il
+  parte avec l'objet.
+- Après l'appel, l'objet n'existe plus.
+
+**PutWBObject(name, object)**
+- Reconstruit un DiskObject : magic $E310, version 1, `do_Gadget` = +$60..+$8B, `do_Type` = +$3D,
+  `do_DefaultTool` = +$48, `do_ToolTypes` = +$5C, CurrentX/Y = +$54/+$58,
+  `do_DrawerData` = +$4C, `do_ToolWindow` = +$9C, `do_StackSize` = +$A0.
+- Appelle **PutIcon(name, DiskObject)**, qui écrit `"<name>.info"` en **MODE_NEWFILE dans le
+  répertoire courant**. Contenu, dans l'ordre :
+  1. l'en-tête de 78 octets ;
+  2. si DrawerData : ses **56 premiers octets seulement** (la partie privée, dont +$1A8 et +$1BA,
+     n'est jamais écrite) ;
+  3. les images du gadget (rendu, puis sélection si présente) ;
+  4. l'outil par défaut et les tool types, s'ils existent (longueur puis chaîne) ;
+  5. la ToolWindow, si elle existe.
+- **+$40, +$38, +$A4 ne sont pas utilisés** : le nom vient de l'argument.
+
+**Recette pour Workbench/Info avec notre WB [D]**
+1. CurrentDir(répertoire contenant l'icône), ou la racine pour un disque.
+2. `obj = GetWBObject(nom)`, ou `GetWBObject("Disk")` pour un disque.
+3. Remplir :
+   - **+$40** := nom (alloué puis AddFreeList dans obj+$8C) ;
+   - **+$A4** := lock du répertoire contenant (le plus simple : prioritaire dans info.library) ;
+   - **pour un disque** : +$A4 := lock de la racine. Comme +$A4 est prioritaire (§7.3),
+     info.library verrouille alors `"disk.info"` dans la racine. **Par sécurité**, poser aussi
+     **+$4C → +$1BA** := lock de la racine (sans UnLock séparé, c'est le même lock) : c'est le
+     repli d'info.library quand ce Lock échoue, et elle déréférence alors +$4C sans tester s'il
+     est nul [O]. Une icône de disque sans DrawerData (+$4C = 0) n'est donc sûre que si
+     `Disk.info` est verrouillable [D].
+   - +$38 peut rester à 0 si +$A4 est posé.
+4. Appeler info.library (§7.1).
+5. Recharger notre DiskObject depuis le disque si SAVE a pu changer l'icône (aucun signal de retour
+   ne l'indique).
+6. **UnLock de nos locks** (+$A4 ; +$1BA seulement s'il s'agit d'un lock distinct), puis
+   **FreeWBObject(obj)**.
+
+---
+
 ## Relecture clean-room
 
 - [x] Aucun listing, aucune suite d'instructions transcrite ni paraphrasée ligne à ligne : seules des
@@ -764,3 +1045,9 @@ Rappels :
 - [x] §6.9 (relu) : table « opération utilisateur → appel dos qui échoue → message », avec index
   d'action, argument `%s`, codes tolérés (205, 232), packets dos (17, 9) et règles de requester.
   Aucune séquence d'instructions transcrite.
+- [x] §7 (relu) : info.library est décrite par son contrat d'appel (registres, LVO), les champs du
+  WBObject lus et écrits (offset et sens), les appels de librairie et les chaînes affichées.
+  Aucune séquence d'instructions de la librairie ni du Workbench n'est recopiée.
+- [x] §7.8 (relu) : icon.library est décrite par sa table de LVO, ses tailles d'allocation, sa
+  correspondance champ DiskObject → offset WBObject et le contenu écrit dans le `.info`. Aucune
+  séquence d'instructions recopiée.
