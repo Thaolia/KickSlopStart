@@ -614,8 +614,8 @@ dos_fn_currentdir:
 ; LoadSeg(name d1 [C-string]) -> d0 = BPTR seglist | 0. Ouvre le fichier via dos Open (-30, MODE_OLDFILE), le lit
 ; ENTIER via dos Read (-42, boucle jusqu'à EOF ; le file-handler est séquentiel) dans un buffer AllocMem'd, le parse
 ; (ls_load_hunks : hunks CODE/DATA/BSS + relocations RELOC32 -> seglist BPTR), referme (-36), libère le buffer. Portée
-; milestone (cf. Lemmings) : charge NOS exécutables hunk via le vrai chemin LVO ; whole-file bufferisé (<= LS_LOADMAX,
-; pas de streaming), handler OFS DF0: seul -> ne suffit PAS à exécuter du logiciel commercial (Lock/Seek/Examine/Write,
+; milestone (cf. Lemmings) : charge NOS exécutables hunk via le vrai chemin LVO ; whole-file bufferisé (tampon de
+; LS_LOADMAX doublé autant que nécessaire), handler OFS DF0: seul -> ne suffit PAS à exécuter du logiciel commercial (Lock/Seek/Examine/Write,
 ; expansion.library, streaming... manquent). a4 = DosBase (préservé par Open/Read/Close/ls_load_hunks/AllocMem).
 dos_fn_loadseg:
         movem.l d2-d7/a2-a6,-(sp)
@@ -626,16 +626,36 @@ dos_fn_loadseg:
         beq     .ls_fail0
         move.l  ($4).w,a6              ; SysBase pour AllocMem
         move.l  #LS_LOADMAX,d0
+        move.l  d0,a3                  ; a3 = capacité du tampon (doublée quand il est plein)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .ls_close              ; pas de RAM : referme fh, IoErr = 103
+        beq     .ls_close              ; pas de RAM : referme fh, IoErr = 103
         move.l  d0,a2                  ; a2 = buffer de lecture
         moveq   #0,d5                  ; d5 = total lu
 .ls_rloop:
-        move.l  #LS_LOADMAX,d6
+        move.l  a3,d6
         sub.l   d5,d6                  ; restant
-        ble.s   .ls_rdone              ; buffer plein -> stop
+        bgt.s   .ls_read
+        move.l  a3,d0                  ; plein : tampon deux fois plus grand, contenu recopié
+        add.l   d0,d0
+        move.l  ($4).w,a6
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ls_nomem
+        move.l  d0,d4                  ; d4 = nouveau tampon
+        move.l  d0,a1
+        move.l  a2,a0
+        move.l  d5,d0
+        jsr     LVO_COPYMEM(a6)
+        move.l  a2,a1
+        move.l  a3,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  d4,a2
+        add.l   a3,a3
+        bra.s   .ls_rloop
+.ls_read:
         move.l  a4,a6                  ; Read via DosBase
         move.l  d7,d1                  ; fh
         move.l  a2,d2
@@ -646,6 +666,11 @@ dos_fn_loadseg:
         ble.s   .ls_rdone              ; 0 (EOF) ou <0 (err) -> stop
         add.l   d0,d5
         bra.s   .ls_rloop
+.ls_nomem:
+        move.l  a2,a1
+        move.l  a3,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .ls_close
 .ls_rdone:
         move.l  ($4).w,a6              ; ls_load_hunks attend a6 = SysBase
         move.l  a2,a0                  ; buffer
@@ -653,7 +678,7 @@ dos_fn_loadseg:
         jsr     ls_load_hunks          ; d0 = BPTR seglist | 0 (loadseg.o loin -> jsr)
         move.l  d0,d6                  ; d6 = seglist
         move.l  a2,a1                  ; libère le buffer
-        move.l  #LS_LOADMAX,d0
+        move.l  a3,d0
         jsr     LVO_FREEMEM(a6)
         move.l  a4,a6                  ; referme fh via DosBase
         move.l  d7,d1

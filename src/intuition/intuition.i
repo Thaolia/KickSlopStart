@@ -48,7 +48,11 @@ IB_STRGAD        EQU IB_GADWIN+4       ; gadget texte actif (reçoit le clavier)
 IB_STRWIN        EQU IB_STRGAD+4       ; sa fenêtre
 IB_SYSACT        EQU IB_STRWIN+4       ; UWORD : gadget système enfoncé (IT_SYSCLOSE / BACK / FRONT) | 0
 IB_SYSWIN        EQU IB_SYSACT+2       ; sa fenêtre
-INTUITIONBASE_SIZE EQU IB_SYSWIN+4
+IB_PKX           EQU IB_SYSWIN+4       ; gadget proportionnel : knob (relatif au conteneur) pendant un glissement
+IB_PKY           EQU IB_PKX+2
+IB_PMX           EQU IB_PKY+2          ; dernière position du pointeur (écran) pendant le glissement
+IB_PMY           EQU IB_PMX+2
+INTUITIONBASE_SIZE EQU IB_PMY+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -322,6 +326,24 @@ BD_XY         EQU 8
 BD_NEXTBORDER EQU 12
 BOOLGADGET    EQU 1             ; gg_GadgetType : bouton booléen
 STRGADGET     EQU 4             ; gg_GadgetType : texte éditable (SpecialInfo = StringInfo)
+PROPGADGET    EQU 3             ; gg_GadgetType : proportionnel (SpecialInfo = PropInfo)
+FOLLOWMOUSE   EQU $0008         ; gg_Activation : MOUSEMOVE pendant que le gadget est tenu
+PI_FLAGS      EQU 0             ; struct PropInfo (V34, 22 octets)
+PI_HPOT       EQU 2
+PI_VPOT       EQU 4
+PI_HBODY      EQU 6
+PI_VBODY      EQU 8
+PI_CWIDTH     EQU 10
+PI_CHEIGHT    EQU 12
+PI_HPOTRES    EQU 14
+PI_VPOTRES    EQU 16
+PI_LBORDER    EQU 18
+PI_TBORDER    EQU 20
+AUTOKNOB      EQU $0001         ; pi_Flags
+FREEHORIZ     EQU $0002
+FREEVERT      EQU $0004
+PROPBORDERLESS EQU $0008
+KNOBHIT       EQU $0100
 GTYP_MASK     EQU $0007         ; type de base dans gg_GadgetType
 GZZGADGET     EQU $2000         ; gg_GadgetType : gadget du cadre d'une fenêtre GIMMEZEROZERO
 ; struct StringInfo (intuition/intuition.h)

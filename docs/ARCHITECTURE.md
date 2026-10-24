@@ -740,10 +740,29 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     - au relâchement, la boîte reprend son aspect, et l'action (CLOSEWINDOW, WindowToBack, WindowToFront) n'a lieu
       que si le pointeur est encore sur ce gadget ;
     - fermer la fenêtre entre-temps oublie l'appui (`gad_forget`).
-  - **Écarts restants** :
-    - les tiroirs du Workbench n'ont pas de barres de défilement ;
   - **WindowToBack d'Info** : rien ne change à l'écran, exactement comme sur la vraie 1.3 (sondé). Le tiroir révélé
     est SIMPLE_REFRESH, et seul le Workbench le redessine ; il est bloqué dans info.library tant qu'Info est ouverte.
+  (18) **Gadgets proportionnels, barres de défilement des tiroirs, LoadSeg extensible** (specs intuition-prop-v34 et
+  workbench-task-v34 §8, relues clean-room : comportement et géométrie seulement).
+  - **intuition (gadgets.s)** : PROPGADGET (type 3) avec PropInfo (Flags, HPot/VPot, HBody/VBody, CWidth/CHeight,
+    HPotRes/VPotRes, LBorder/TBorder).
+    - AUTOKNOB, FREEHORIZ, FREEVERT, PROPBORDERLESS, KNOBHIT.
+    - Géométrie du knob dans la zone intérieure (`prop_prep`, `prop_knob`), dessin (`prop_render`).
+    - Clic hors du knob : déplacement d'une page. Clic sur le knob : glissement suivi en direct (`prop_track`, appelé
+      depuis le suivi des mouvements), FOLLOWMOUSE relayé.
+    - `ModifyProp` (−156) et `NewModifyProp` (−468). `gad_propinit` à OpenWindow et AddGList.
+  - **workbench.task** : chaque tiroir a 6 gadgets (barre horizontale et verticale, quatre flèches, images en CHIP)
+    et une origine de défilement (DR_SX/SY).
+    - L'étendue du contenu (`wb_content`) fixe Body et Pot (`wb_bars`) ; flèches et knob font défiler (`wb_scrollto`).
+    - L'origine est appliquée au dessin, au clic et au dépôt d'icônes, et enregistrée au snapshot (dd_CurrentX/Y).
+    - Tiroir d'un disque : jauge de remplissage (Info → InfoData, `wb_gauge`), comme sur la vraie 1.3.
+    - Comparé à la vraie ROM : positions des icônes, jauge et barres identiques ; défilement 49 px par flèche.
+  - **dos LoadSeg** : tampon de lecture extensible (32 Ko, doublé au besoin). Un fichier de plus de 32 Ko (Preferences,
+    56 180 octets) était tronqué et plantait.
+  - **Écarts restants** :
+    - le knob tenu est invisible (notre DetailPen vaut 2) ;
+    - une icône partiellement visible n'est pas dessinée (pas d'InstallClipRegion) ;
+    - les flèches ne se répètent pas (INTUITICKS absent).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

@@ -36,6 +36,8 @@
                 xdef    wn_sendgad
                 xdef    wn_sysgads
                 xref    gad_drawall          ; gadgets.s
+                xref    gad_propinit
+                xref    prop_track
                 xref    gad_rect
                 xref    gad_down
                 xref    gad_up
@@ -669,6 +671,7 @@ intuition_OpenWindow:
 .ow_szr:
         move.b  #18,WD_BORDERRIGHT(a3)
 .ow_bord:
+        jsr     gad_propinit         ; bordures des gadgets proportionnels de la NewWindow
         bsr     wn_gadborders
         bsr     wn_gzz
         lea     WD_MINWIDTH(a3),a0   ; limites nulles : taille courante (AutoDoc OpenWindow)
@@ -2325,6 +2328,12 @@ it_dragstart:
 it_domove:
         tst.l   IB_MENUWIN(a5)
         bne     it_menumove
+        jsr     prop_track           ; knob d'un gadget proportionnel tenu ; la fenêtre active reçoit aussi le
+        beq.s   .dm_np               ; mouvement si elle a REPORTMOUSE
+        move.w  PTR_X,d4
+        move.w  PTR_Y,d5
+        bra     it_reportmove
+.dm_np:
         move.l  IB_DRAGWIN(a5),d0
         beq.s   it_reportmove
         move.l  d0,a3

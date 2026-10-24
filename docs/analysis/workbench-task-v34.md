@@ -1258,6 +1258,129 @@ police**. Il n'y a ni recherche de chevauchement ni bornage.
 
 ---
 
+## 8. Fenêtres de tiroir : gadgets de défilement et jauge
+
+Notations : W, H = taille de la fenêtre ; BL/BT/BR/BB = ses bordures ; DD = DrawerData de
+l'objet (`+$4C`). Les règles de rendu intuition sont dans `intuition-prop-v34.md` et
+`intuition-frame-v34.md`.
+
+### 8.1 Fenêtre et liste de gadgets [O]
+
+- **Flags** passés à l'ouverture d'un tiroir ou d'un disque : **$0240027F**. Cela comprend
+  SIZING, DRAG, DEPTH, CLOSE, **SIZEBRIGHT, SIZEBBOTTOM**, SIMPLE_REFRESH, REPORTMOUSE,
+  WBENCHWINDOW, plus un bit $00400000 [S, rôle non identifié].
+- **Six gadgets**, copiés depuis des modèles ROM dans le DrawerData et chaînés **dans cet
+  ordre** :
+
+| # | Gadget (GadgetID) | Copie dans DD | LeftEdge, TopEdge, Width, Height | Flags | Activation | Type |
+|---|---|---|---|---|---|---|
+| 1 | barre verticale (2) | +$74 | −15, 16, 16, −31 | GRELRIGHT \| GRELHEIGHT \| GADGIMAGE ($0054) | RELVERIFY \| GADGIMMEDIATE \| RIGHTBORDER ($0013) | PROPGADGET (3) |
+| 2 | barre horizontale (1) | +$48 | 13, −8, −40, 9 | GRELBOTTOM \| GRELWIDTH \| GADGIMAGE ($002C) | RELVERIFY \| GADGIMMEDIATE \| BOTTOMBORDER ($0083) | PROPGADGET |
+| 3 | flèche gauche (3) | +$F8 | 2, −7, 12, 7 | GRELBOTTOM \| GADGIMAGE ($000C) | $0083 | BOOLGADGET (1) |
+| 4 | flèche droite (4) | +$124 | −25, −7, 12, 7 | GRELBOTTOM \| GRELRIGHT \| GADGIMAGE ($001C) | $0083 | BOOLGADGET |
+| 5 | flèche haut (5) | +$A0 | −14, 10, 14, 6 | GRELRIGHT \| GADGIMAGE ($0014) | RELVERIFY \| GADGIMMEDIATE \| RIGHTBORDER ($0013) | BOOLGADGET |
+| 6 | flèche bas (6) | +$CC | −14, −14, 14, 6 | GRELBOTTOM \| GRELRIGHT \| GADGIMAGE ($001C) | $0013 | BOOLGADGET |
+
+- **Surbrillance** : mode 0, c'est-à-dire **GADGHCOMP**, sans SelectRender.
+- **Barres** : GadgetRender = une `struct Image` vide du DD (+$164 pour la verticale, +$150 pour
+  l'horizontale), qu'intuition remplit (AUTOKNOB). SpecialInfo = un PropInfo du DD (+$18E
+  verticale, +$178 horizontale).
+- **PropInfo initiale** (modèle ROM commun) :
+  - Flags = **AUTOKNOB** ;
+  - Pots = 0 ;
+  - Bodies = **$FFFF** ;
+  - le reste à 0.
+  Puis **FREEVERT** est ajouté à la verticale et **FREEHORIZ** à l'horizontale.
+- **Flèches** : GadgetRender = 4 Images globales, préparées une fois au démarrage dans des
+  globales du WB (images copiées en mémoire CHIP). Chacune est à **1 plan utile** :
+  - PlanePick = 1, PlaneOnOff = 0 ;
+  - pixels allumés = **stylo 1** (fond blanc), pixels éteints = **stylo 0** (dessin bleu).
+- **Géométrie des flèches** (à redessiner librement) :
+  - **gauche** : image 14×8, décalée de (−2, −1) par rapport au gadget. Pointe en chevron « < »
+    vers la gauche, traits diagonaux de 3 pixels de large, avec une **hampe horizontale** sur la
+    ligne du milieu (y = 4) qui va de la pointe au bord droit ;
+  - **droite** : image 12×8, décalée de (−1, −1). Miroir de la gauche : chevron « > », hampe vers
+    la gauche ;
+  - **haut** : image 16×6, décalée de (−1, 0). Chevron « ^ » en traits de 2 pixels, avec une
+    **hampe verticale de 2 pixels** au centre (colonnes 7–8) qui descend jusqu'en bas ;
+  - **bas** : 16×6, décalée de (−1, 0). Miroir vertical : « v » avec hampe montante.
+- **Bordures qui en résultent** (§1.2 d'`intuition-gzz-v34.md`) [D] :
+  - BR = max(gadget de taille + 2, gadgets RIGHTBORDER) ;
+  - BB = max(gadget de taille + 1, gadgets BOTTOMBORDER).
+  - En hires, cela donne une bordure droite de 18 et une bordure basse de 10 environ.
+
+### 8.2 Zone de contenu et étendue [O]
+
+- **Origine du contenu** :
+  - gauche = BL, **plus 14 pour une fenêtre de disque** (la place de la jauge, §8.4) ;
+  - largeur visible = W − origine gauche − BR ;
+  - hauteur visible = H − BT − BB.
+- **DrawerData** :
+  - +$30 / +$34 = position de défilement (X / Y) ;
+  - +$38 / +$3C = minimum de l'étendue ;
+  - +$40 / +$44 = maximum de l'étendue.
+- **Recalcul de l'étendue**, à l'ouverture, après Duplicate ou après une insertion d'icône
+  (§7.9.2 point 9), et après chaque défilement :
+  - le minimum vaut la position courante, le maximum vaut position + taille visible ;
+  - puis l'étendue est **élargie à la boîte de chaque icône** du tiroir.
+  - La fenêtre racine (backdrop) n'a pas de barres : aucune mise à jour.
+
+### 8.3 Body / Pot et défilement [O]
+
+**Calcul**, en flottant mathffp, pour chaque axe, avec plage = max − min et pos = max(0,
+courant − min) :
+- **Body = Fix(65535 × visible / plage)** ;
+- **Pot** = **$7FFF** si plage = visible ; sinon **Fix(65535 × pos / (plage − visible))**.
+- Si Body ou Pot ont changé : **NewModifyProp(gadget, fenêtre, NULL, Flags inchangés, Pot, Pot,
+  Body, Body, 1)**. Les mêmes valeurs vont dans H et V ; seul l'axe libre compte. Un seul gadget
+  est redessiné.
+
+**Défilement** :
+- **GADGETDOWN** sur un des 6 gadgets : le WB note la fenêtre et le gadget.
+  - Sur une **flèche sans Shift** : il ajoute **INTUITICKS** à l'IDCMP de la fenêtre, pour la
+    répétition.
+  - Sur une **barre**, ou une **flèche avec Shift** (qualifier & 3) : mode « un coup ».
+- **Pas par événement** (INTUITICKS ou MOUSEMOVE pendant l'appui) :
+  - **flèche gauche / droite** : X −= / += **largeur visible / 8** (Shift : **±1 pixel**) ;
+  - **flèche haut / bas** : Y −= / += **hauteur visible / 8** (Shift : **±1 pixel**) ;
+  - **barre horizontale** : X = Fix(HorizPot / 65535 × (plage X − visible X)) + min X ;
+  - **barre verticale** : Y = même formule avec VertPot.
+  - Si la valeur ne change pas, rien n'est fait.
+- **Après chaque changement** : nouvelle position dans DD +$30 / +$34, puis recalcul de
+  l'étendue et des barres (ci-dessus), puis défilement et réaffichage du contenu.
+- **GADGETUP** : fin du défilement. Le drapeau est effacé et INTUITICKS est retiré de l'IDCMP
+  s'il avait été ajouté.
+
+### 8.4 Jauge de remplissage (fenêtres de disque) [O]
+
+**Emplacement** : dessinée dans le RastPort de la fenêtre, contre le bord gauche, de **x = 2 à
+x = BL + 9**. Le contenu commence à BL + 14.
+
+**Cadre** :
+- **bloc du haut** : RectFill en **stylo 2** de (2, BT−1) à (BL+9, BT+5), avec un **« F »**
+  tracé au trait (Move/Draw) en **stylo 1** : barre du haut, montant de 2 pixels à gauche,
+  barre du milieu plus courte ;
+- **bloc du bas** : RectFill en stylo 2 de (2, H−BB−6) à (BL+9, H−BB), avec un **« E »** en
+  stylo 1 (montant de 2 pixels, trois barres) ;
+- **filet** : RectFill en **stylo 1** de (BL+10, BT−1) à (BL+11, H−BB), à droite de la jauge
+  sur toute la hauteur.
+
+**Barre**, entre y0 = BT + 6 et y1 = H − BB − 7 (hauteur h = y1 − y0) :
+- **rempli = Fix(utilisés × h / total + 0,5)**, arrondi, avec utilisés = `id_NumBlocksUsed` et
+  total = `id_NumBlocks` de l'InfoData du volume ;
+- partie vide (en haut) : RectFill **stylo 2** de (2, y0) à (BL+9, y0 + h − rempli) ;
+- partie remplie (en bas) : RectFill **stylo 3** de (2, y0 + h − rempli) à (BL+9, y1).
+- Un trait au stylo 2 puis au stylo 1 marque la ligne y = H − BB, sous la jauge.
+
+**Mise à jour** :
+- à l'ouverture de la fenêtre du disque ;
+- quand l'InfoData du volume est relu (Info, par exemple après écriture ou au rescan) [D pour la
+  liste exacte].
+- Rien n'est dessiné si le Workbench est « fermé » (bit 0 de G+$22) ou si la fenêtre n'est pas
+  ouverte.
+
+---
+
 ## Relecture clean-room
 
 - [x] Aucun listing, aucune suite d'instructions transcrite ni paraphrasée ligne à ligne : seules des
@@ -1300,3 +1423,8 @@ police**. Il n'y a ni recherche de chevauchement ni bornage.
 - [x] §7.9.1, complément DiskCopy (relu) : contenu des WBArg, champs du lancement et
   conditions de sortie de DiskCopy, décrits par des règles et des champs dos publics. Aucune suite
   d'instructions recopiée.
+- [x] §8 (relu) : gadgets, PropInfo, formules Body/Pot et jauge décrits par règles, champs publics
+  et géométrie. Les images des flèches et les lettres F/E sont décrites en forme, pas en bitmap.
+  Aucune suite d'instructions recopiée. Complément à §7.9.3 [O] : le bit 4 de `+$3C` est posé
+  quand une icône est déposée sur la fenêtre racine (backdrop), avec un DupLock du répertoire
+  d'origine dans `+$A4` ; il est effacé quand elle est remise dans un tiroir.

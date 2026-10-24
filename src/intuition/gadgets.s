@@ -34,6 +34,11 @@
                 xref    intuition_PrintIText
                 xref    wn_sendgad
                 xref    wn_sysgads
+                xref    it_scrxy
+                xdef    gad_propinit
+                xdef    prop_track
+                xdef    intuition_ModifyProp
+                xdef    intuition_NewModifyProp
 
 ; gad_rect(a3 = fenêtre, a0 = gadget, a1 = 4 mots x0, y0, x1, y1) : rectangle du gadget en coordonnées de la fenêtre,
 ; positions et tailles relatives au bord droit / bas résolues. Gadget intérieur d'une fenêtre GIMMEZEROZERO : relatif à
@@ -174,6 +179,14 @@ gad_drw:
         bsr     gad_rect
         bsr     gad_rp
         move.l  a0,a4                ; a4 = RastPort du gadget, rectangle ramené dedans
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #PROPGADGET,d0
+        bne.s   .gd_nprop
+        bsr     prop_render          ; proportionnel : boîte, cadre, knob ; puis son texte
+        move.l  a5,a6
+        bra     .gd_txt
+.gd_nprop:
         move.l  a5,a6
         move.l  GG_GADGETRENDER(a2),a1
         move.w  GG_FLAGS(a2),d0
@@ -218,6 +231,8 @@ gad_drw:
         bra.s   .gd_ret
 .gd_sel:
         tst.w   d7
+        beq.s   .gd_ret
+        cmp.w   #PROPGADGET,d0       ; (proportionnel : son knob porte déjà l'état tenu)
         beq.s   .gd_ret
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
         beq.s   .gd_ret
@@ -405,10 +420,15 @@ gad_down:
 .gn_hit:
         move.w  GG_GADGETTYPE(a2),d0
         and.w   #GTYP_MASK,d0
+        cmp.w   #PROPGADGET,d0
+        beq.s   .gn_prop
         cmp.w   #STRGADGET,d0
         bne.s   .gn_bool
         bsr     str_activate         ; d2 = abscisse du clic : place le curseur
         bra.s   .gn_taken
+.gn_prop:
+        bsr     prop_down
+        bra.s   .gn_imm
 .gn_bool:
         move.l  a2,IB_GADACT(a5)
         move.l  a3,IB_GADWIN(a5)
@@ -420,6 +440,7 @@ gad_down:
         bset    #7,GG_FLAGS+1(a2)
 .gn_hl:
         bsr     gad_hilite
+.gn_imm:
         btst    #1,GG_ACTIVATION+1(a2)   ; GADGIMMEDIATE
         beq.s   .gn_taken
         moveq   #GADGETDOWN,d0
@@ -453,6 +474,13 @@ gad_up:
         sub.w   WD_LEFTEDGE(a3),d2
         move.w  d5,d3
         sub.w   WD_TOPEDGE(a3),d3
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #PROPGADGET,d0
+        bne.s   .gu_nprop
+        bsr     prop_up
+        bra.s   .gu_ret
+.gu_nprop:
         btst    #0,GG_ACTIVATION(a2) ; TOGGLESELECT : l'état basculé au clic reste
         bne.s   .gu_verify
         bclr    #7,GG_FLAGS+1(a2)
@@ -492,6 +520,719 @@ gad_forget:
 .gf_clr:
         clr.l   IB_GADACT(a6)
 .gf_r:
+        rts
+
+; --- gadgets proportionnels (spec intuition-prop-v34) ----------------------------------------------------------
+; zone de travail : boîte et conteneur en coordonnées du RastPort du gadget, knob relatif au conteneur, décalage
+; fenêtre -> RastPort
+PP_L            EQU 0
+PP_T            EQU 2
+PP_R            EQU 4
+PP_B            EQU 6
+PP_CL           EQU 8
+PP_CT           EQU 10
+PP_CW           EQU 12
+PP_CH           EQU 14
+PP_KX           EQU 16
+PP_KY           EQU 18
+PP_KW           EQU 20
+PP_KH           EQU 22
+PP_DX           EQU 24
+PP_DY           EQU 26
+PP_SIZE         EQU 28
+
+; gad_propinit(a3 = fenêtre) : bordures du PropInfo de chaque gadget proportionnel de la fenêtre, comme à l'entrée
+; d'un gadget dans une fenêtre : WBorLeft / WBorTop de l'écran, 0 / 0 si PROPBORDERLESS (spec §1). Préserve tout.
+gad_propinit:
+        movem.l d0-d1/a0-a2,-(sp)
+        move.l  WD_WSCREEN(a3),a1
+        move.l  WD_FIRSTGADGET(a3),a2
+.pi_lp:
+        move.l  a2,d0
+        beq.s   .pi_ret
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #PROPGADGET,d0
+        bne.s   .pi_next
+        move.l  GG_SPECIALINFO(a2),d0
+        beq.s   .pi_next
+        move.l  d0,a0
+        moveq   #0,d0
+        moveq   #0,d1
+        btst    #3,PI_FLAGS+1(a0)    ; PROPBORDERLESS
+        bne.s   .pi_set
+        move.l  a1,d1
+        beq.s   .pi_set
+        move.b  SC_WBORLEFT(a1),d0
+        moveq   #0,d1
+        move.b  SC_WBORTOP(a1),d1
+.pi_set:
+        move.w  d0,PI_LBORDER(a0)
+        move.w  d1,PI_TBORDER(a0)
+.pi_next:
+        move.l  GG_NEXTGADGET(a2),a2
+        bra.s   .pi_lp
+.pi_ret:
+        movem.l (sp)+,d0-d1/a0-a2
+        rts
+
+; prop_prep(a3 = fenêtre, a2 = gadget, a1 = zone PP_SIZE) -> a0 = RastPort du gadget, zone remplie (spec §2). Écrit
+; CWidth/CHeight et les PotRes du PropInfo, la taille du knob dans l'Image de rendu (AUTOKNOB) et sa position dans
+; les Images de rendu et de sélection. Préserve d2-d7/a2-a6.
+prop_prep:
+        movem.l d2-d7/a2-a4,-(sp)
+        move.l  a1,a4
+        move.l  a2,a0
+        bsr     gad_rect
+        move.l  (a4),d2              ; coin de la boîte dans la fenêtre (x, y)
+        move.l  a4,a1
+        bsr     gad_rp
+        move.l  a0,-(sp)
+        swap    d2
+        sub.w   PP_L(a4),d2
+        move.w  d2,PP_DX(a4)
+        swap    d2
+        sub.w   PP_T(a4),d2
+        move.w  d2,PP_DY(a4)
+        move.l  GG_SPECIALINFO(a2),a1
+        move.w  PI_LBORDER(a1),d4
+        move.w  PI_TBORDER(a1),d5
+        move.w  PP_L(a4),d0          ; conteneur = boîte moins les bordures du PropInfo
+        add.w   d4,d0
+        move.w  d0,PP_CL(a4)
+        move.w  PP_T(a4),d0
+        add.w   d5,d0
+        move.w  d0,PP_CT(a4)
+        move.w  PP_R(a4),d0
+        sub.w   PP_L(a4),d0
+        addq.w  #1,d0
+        sub.w   d4,d0
+        sub.w   d4,d0
+        move.w  d0,PP_CW(a4)
+        move.w  d0,PI_CWIDTH(a1)
+        move.w  PP_B(a4),d0
+        sub.w   PP_T(a4),d0
+        addq.w  #1,d0
+        sub.w   d5,d0
+        sub.w   d5,d0
+        move.w  d0,PP_CH(a4)
+        move.w  d0,PI_CHEIGHT(a1)
+        move.w  PI_HBODY(a1),d0
+        bsr     .pp_step
+        move.w  d0,PI_HPOTRES(a1)
+        move.w  PI_VBODY(a1),d0
+        bsr     .pp_step
+        move.w  d0,PI_VPOTRES(a1)
+        move.l  GG_GADGETRENDER(a2),a0   ; a0 = Image du knob
+        btst    #0,PI_FLAGS+1(a1)    ; AUTOKNOB : taille d'après Body
+        beq.s   .pp_img
+        move.w  PP_CW(a4),d4         ; largeur
+        btst    #1,PI_FLAGS+1(a1)    ; FREEHORIZ
+        beq.s   .pp_kw
+        moveq   #0,d0
+        move.w  PI_HBODY(a1),d0
+        mulu    PP_CW(a4),d0
+        swap    d0
+        addq.w  #1,d0
+        moveq   #6,d1
+        move.w  PP_CW(a4),d2
+        bsr     .pp_clamp
+        move.w  d0,d4
+.pp_kw:
+        move.w  PP_CH(a4),d5         ; hauteur
+        btst    #2,PI_FLAGS+1(a1)    ; FREEVERT
+        beq.s   .pp_kh
+        moveq   #0,d0
+        move.w  PI_VBODY(a1),d0
+        mulu    PP_CH(a4),d0
+        swap    d0
+        addq.w  #1,d0
+        moveq   #4,d1
+        move.w  PP_CH(a4),d2
+        bsr     .pp_clamp
+        move.w  d0,d5
+.pp_kh:
+        move.w  d4,IG_WIDTH(a0)
+        move.w  d5,IG_HEIGHT(a0)
+        bra.s   .pp_pos
+.pp_img:
+        move.w  IG_WIDTH(a0),d4
+        move.w  IG_HEIGHT(a0),d5
+.pp_pos:
+        move.w  d4,PP_KW(a4)
+        move.w  d5,PP_KH(a4)
+        moveq   #0,d6                ; x du knob
+        btst    #1,PI_FLAGS+1(a1)
+        beq.s   .pp_kx
+        move.w  PP_CW(a4),d0
+        sub.w   d4,d0
+        move.w  PI_HPOT(a1),d1
+        bsr     .pp_place
+        move.w  d0,d6
+.pp_kx:
+        moveq   #0,d7                ; y du knob
+        btst    #2,PI_FLAGS+1(a1)
+        beq.s   .pp_ky
+        move.w  PP_CH(a4),d0
+        sub.w   d5,d0
+        move.w  PI_VPOT(a1),d1
+        bsr     .pp_place
+        move.w  d0,d7
+.pp_ky:
+        move.w  d6,PP_KX(a4)
+        move.w  d7,PP_KY(a4)
+        move.w  d6,IG_LEFTEDGE(a0)
+        move.w  d7,IG_TOPEDGE(a0)
+        move.l  GG_SELECTRENDER(a2),d0
+        beq.s   .pp_ret
+        move.l  d0,a0
+        move.w  d6,IG_LEFTEDGE(a0)
+        move.w  d7,IG_TOPEDGE(a0)
+.pp_ret:
+        move.l  (sp)+,a0
+        movem.l (sp)+,d2-d7/a2-a4
+        rts
+.pp_step:                            ; d0.w = Body -> d0.w = pas de page ($FFFF dès Body >= $8000). Clobbe d1.
+        cmp.w   #$8000,d0
+        bhs.s   .ps_max
+        moveq   #0,d1
+        move.w  d0,d1
+        swap    d1                   ; Body << 16
+        neg.w   d0
+        subq.w  #1,d0                ; $FFFF - Body
+        divu    d0,d1
+        move.w  d1,d0
+        rts
+.ps_max:
+        moveq   #-1,d0
+        rts
+.pp_clamp:                           ; d0.w ramené à [d1, d2] puis à au moins 1
+        cmp.w   d1,d0
+        bge.s   .pc_lo
+        move.w  d1,d0
+.pc_lo:
+        cmp.w   d2,d0
+        ble.s   .pc_hi
+        move.w  d2,d0
+.pc_hi:
+        cmp.w   #1,d0
+        bge.s   .pc_r
+        moveq   #1,d0
+.pc_r:
+        rts
+.pp_place:                           ; d0.w = course, d1.w = Pot -> d0.w = (course × (Pot + 1)) >> 16 (course < 0 : 0)
+        tst.w   d0
+        bpl.s   .pl_ok
+        moveq   #0,d0
+        rts
+.pl_ok:
+        and.l   #$FFFF,d0
+        and.l   #$FFFF,d1
+        mulu    d0,d1
+        add.l   d0,d1
+        swap    d1
+        move.w  d1,d0
+        rts
+
+; prop_render(a3 = fenêtre, a2 = gadget, a5) : dessin complet (spec §3.1) : boîte au DetailPen, cadre au BlockPen
+; (montants de WBorLeft/2, traits de WBorTop/2) sauf PROPBORDERLESS, puis le knob. Préserve d2-d7/a2-a5 ; clobbe
+; d0/d1/a0/a1/a6.
+prop_render:
+        movem.l d2-d7/a4,-(sp)
+        lea     -PP_SIZE(sp),sp
+        move.l  sp,a1
+        bsr     prop_prep
+        move.l  a0,a4                ; a4 = RastPort
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a4,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  WD_DETAILPEN(a3),d0
+        move.l  a4,a1
+        jsr     LVO_SETAPEN(a6)
+        movem.w (sp),d0-d3           ; boîte
+        move.l  a4,a1
+        jsr     LVO_RECTFILL(a6)
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #3,PI_FLAGS+1(a0)    ; PROPBORDERLESS
+        bne.s   .pr_knob
+        move.l  a4,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  WD_BLOCKPEN(a3),d0
+        move.l  a4,a1
+        jsr     LVO_SETAPEN(a6)
+        move.l  WD_WSCREEN(a3),a0
+        moveq   #0,d6
+        move.b  SC_WBORLEFT(a0),d6
+        lsr.w   #1,d6                ; d6 = épaisseur des montants
+        moveq   #0,d7
+        move.b  SC_WBORTOP(a0),d7
+        lsr.w   #1,d7                ; d7 = épaisseur des traits
+        tst.w   d6
+        beq.s   .pr_h
+        movem.w (sp),d0-d3
+        move.w  d0,d2
+        add.w   d6,d2
+        subq.w  #1,d2
+        bsr.s   .pr_fill
+        movem.w (sp),d0-d3
+        move.w  d2,d0
+        sub.w   d6,d0
+        addq.w  #1,d0
+        bsr.s   .pr_fill
+.pr_h:
+        tst.w   d7
+        beq.s   .pr_knob
+        movem.w (sp),d0-d3
+        move.w  d1,d3
+        add.w   d7,d3
+        subq.w  #1,d3
+        bsr.s   .pr_fill
+        movem.w (sp),d0-d3
+        move.w  d3,d1
+        sub.w   d7,d1
+        addq.w  #1,d1
+        bsr.s   .pr_fill
+.pr_knob:
+        move.l  sp,a1
+        bsr     prop_knob
+        lea     PP_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a4
+        rts
+.pr_fill:
+        move.l  a4,a1
+        jmp     LVO_RECTFILL(a6)
+
+; prop_knob(a3 = fenêtre, a2 = gadget, a4 = RastPort, a1 = zone préparée, a5, a6 = GfxBase) : le knob (spec §3.1) :
+; AUTOKNOB = rectangle plein au BlockPen (complémenté s'il est tenu : SELECTED et KNOBHIT) ; sinon l'Image de rendu
+; (de sélection en GADGHIMAGE), inversée en GADGHCOMP quand il est tenu. Clobbe d0/d1/a0/a1 ; rend a6 = GfxBase.
+prop_knob:
+        movem.l d2-d5,-(sp)
+        move.w  PP_CL(a1),d4
+        move.w  PP_CT(a1),d5
+        move.w  PP_KX(a1),d0
+        add.w   d4,d0
+        move.w  PP_KY(a1),d1
+        add.w   d5,d1
+        move.w  d0,d2
+        add.w   PP_KW(a1),d2
+        subq.w  #1,d2
+        move.w  d1,d3
+        add.w   PP_KH(a1),d3
+        subq.w  #1,d3                ; d0-d3 = boîte du knob
+        moveq   #0,d5                ; d5 = knob tenu ?
+        btst    #7,GG_FLAGS+1(a2)    ; SELECTED
+        beq.s   .pk_held
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #0,PI_FLAGS(a0)      ; KNOBHIT
+        sne     d5
+.pk_held:
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #0,PI_FLAGS+1(a0)    ; AUTOKNOB
+        beq.s   .pk_img
+        movem.w d0-d3,-(sp)
+        move.l  a4,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  WD_BLOCKPEN(a3),d0
+        tst.b   d5
+        beq.s   .pk_pen
+        not.b   d0
+.pk_pen:
+        move.l  a4,a1
+        jsr     LVO_SETAPEN(a6)
+        movem.w (sp)+,d0-d3
+        move.l  a4,a1
+        jsr     LVO_RECTFILL(a6)
+        bra.s   .pk_ret
+.pk_img:
+        movem.w d0-d3,-(sp)
+        move.l  GG_GADGETRENDER(a2),a1
+        tst.b   d5
+        beq.s   .pk_draw
+        move.w  GG_FLAGS(a2),d0
+        and.w   #GADGHIGHBITS,d0
+        cmp.w   #GADGHIMAGE,d0
+        bne.s   .pk_draw
+        tst.l   GG_SELECTRENDER(a2)
+        beq.s   .pk_draw
+        move.l  GG_SELECTRENDER(a2),a1
+.pk_draw:
+        move.l  a4,a0                ; coin du conteneur = boîte du knob - position du knob dans l'Image
+        move.w  (sp),d0
+        move.w  2(sp),d1
+        sub.w   IG_LEFTEDGE(a1),d0
+        sub.w   IG_TOPEDGE(a1),d1
+        ext.l   d0
+        ext.l   d1
+        move.l  a5,a6
+        jsr     intuition_DrawImage
+        move.l  IB_GFXBASE(a5),a6
+        movem.w (sp)+,d0-d3
+        tst.b   d5
+        beq.s   .pk_ret
+        move.w  GG_FLAGS(a2),d4
+        and.w   #GADGHIGHBITS,d4
+        bne.s   .pk_ret              ; GADGHCOMP seulement
+        movem.w d0-d3,-(sp)
+        move.l  a4,a1
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        movem.w (sp)+,d0-d3
+        move.l  a4,a1
+        jsr     LVO_RECTFILL(a6)
+.pk_ret:
+        movem.l (sp)+,d2-d5
+        rts
+
+; prop_update(a3 = fenêtre, a2 = gadget, a5, d4-d7 = ancienne boîte du knob x0, y0, x1, y1) : le knob est redessiné
+; à sa nouvelle position, puis les parties de l'ancien qu'il ne recouvre plus sont rendues au DetailPen (spec §3.2).
+; Rien si la position n'a pas changé. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+PU_NEW          EQU PP_SIZE          ; nouvelle boîte du knob (4 mots)
+prop_update:
+        movem.l d2-d7/a4,-(sp)
+        lea     -PP_SIZE-8(sp),sp
+        move.l  sp,a1
+        bsr     prop_prep
+        move.l  a0,a4
+        move.l  IB_GFXBASE(a5),a6
+        move.w  PP_CL(sp),d0
+        add.w   PP_KX(sp),d0
+        move.w  d0,PU_NEW(sp)
+        add.w   PP_KW(sp),d0
+        subq.w  #1,d0
+        move.w  d0,PU_NEW+4(sp)
+        move.w  PP_CT(sp),d0
+        add.w   PP_KY(sp),d0
+        move.w  d0,PU_NEW+2(sp)
+        add.w   PP_KH(sp),d0
+        subq.w  #1,d0
+        move.w  d0,PU_NEW+6(sp)
+        cmp.w   PU_NEW(sp),d4
+        bne.s   .pu_draw
+        cmp.w   PU_NEW+2(sp),d5
+        beq     .pu_ret
+.pu_draw:
+        move.l  sp,a1
+        bsr     prop_knob
+        move.l  a4,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  WD_DETAILPEN(a3),d0
+        move.l  a4,a1
+        jsr     LVO_SETAPEN(a6)
+        move.w  d4,d0                ; au-dessus de la nouvelle boîte
+        move.w  d5,d1
+        move.w  d6,d2
+        move.w  PU_NEW+2(sp),d3
+        subq.w  #1,d3
+        cmp.w   d7,d3
+        ble.s   .pu_t
+        move.w  d7,d3
+.pu_t:
+        bsr     .pu_fill
+        move.w  d4,d0                ; au-dessous
+        move.w  PU_NEW+6(sp),d1
+        addq.w  #1,d1
+        cmp.w   d5,d1
+        bge.s   .pu_b
+        move.w  d5,d1
+.pu_b:
+        move.w  d6,d2
+        move.w  d7,d3
+        bsr.s   .pu_fill
+        move.w  PU_NEW+2(sp),d1      ; bande commune : à gauche et à droite
+        cmp.w   d5,d1
+        bge.s   .pu_m0
+        move.w  d5,d1
+.pu_m0:
+        move.w  PU_NEW+6(sp),d3
+        cmp.w   d7,d3
+        ble.s   .pu_m1
+        move.w  d7,d3
+.pu_m1:
+        move.w  d4,d0
+        move.w  PU_NEW(sp),d2
+        subq.w  #1,d2
+        cmp.w   d6,d2
+        ble.s   .pu_l
+        move.w  d6,d2
+.pu_l:
+        movem.w d1/d3,-(sp)
+        bsr.s   .pu_fill
+        movem.w (sp)+,d1/d3
+        move.w  PU_NEW+4(sp),d0
+        addq.w  #1,d0
+        cmp.w   d4,d0
+        bge.s   .pu_r
+        move.w  d4,d0
+.pu_r:
+        move.w  d6,d2
+        bsr.s   .pu_fill
+.pu_ret:
+        lea     PP_SIZE+8(sp),sp
+        movem.l (sp)+,d2-d7/a4
+        rts
+.pu_fill:                            ; RectFill(d0..d3) si le rectangle n'est pas vide. Clobbe d0/d1/a1.
+        cmp.w   d0,d2
+        blt.s   .pf_r
+        cmp.w   d1,d3
+        blt.s   .pf_r
+        move.l  a4,a1
+        jmp     LVO_RECTFILL(a6)
+.pf_r:
+        rts
+
+; prop_down(a3 = fenêtre, a2 = gadget, a5, d2/d3 = clic dans la fenêtre, d4/d5 = pointeur écran) : le gadget est tenu
+; (SELECTED). Clic dans le knob élargi des bordures : KNOBHIT, glissement suivi (IB_TRACK) ; ailleurs : saut d'une
+; page sur chaque axe libre, vers le clic (spec §4). Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+prop_down:
+        movem.l d2-d7/a4,-(sp)
+        move.l  a2,IB_GADACT(a5)
+        move.l  a3,IB_GADWIN(a5)
+        bset    #7,GG_FLAGS+1(a2)    ; SELECTED
+        move.w  d4,IB_PMX(a5)
+        move.w  d5,IB_PMY(a5)
+        lea     -PP_SIZE(sp),sp
+        move.l  sp,a1
+        bsr     prop_prep
+        move.l  a0,a4
+        sub.w   PP_DX(sp),d2         ; d2/d3 = clic dans le RastPort
+        sub.w   PP_DY(sp),d3
+        move.w  PP_CL(sp),d4         ; d4-d7 = boîte du knob
+        add.w   PP_KX(sp),d4
+        move.w  d4,d6
+        add.w   PP_KW(sp),d6
+        subq.w  #1,d6
+        move.w  PP_CT(sp),d5
+        add.w   PP_KY(sp),d5
+        move.w  d5,d7
+        add.w   PP_KH(sp),d7
+        subq.w  #1,d7
+        move.l  GG_SPECIALINFO(a2),a0
+        move.w  d4,d0                ; knob élargi des bordures du PropInfo
+        sub.w   PI_LBORDER(a0),d0
+        cmp.w   d0,d2
+        blt.s   .pd_page
+        move.w  d6,d0
+        add.w   PI_LBORDER(a0),d0
+        cmp.w   d0,d2
+        bgt.s   .pd_page
+        move.w  d5,d0
+        sub.w   PI_TBORDER(a0),d0
+        cmp.w   d0,d3
+        blt.s   .pd_page
+        move.w  d7,d0
+        add.w   PI_TBORDER(a0),d0
+        cmp.w   d0,d3
+        bgt.s   .pd_page
+        bset    #0,PI_FLAGS(a0)      ; KNOBHIT
+        move.w  PP_KX(sp),IB_PKX(a5)
+        move.w  PP_KY(sp),IB_PKY(a5)
+        st      IB_TRACK(a5)
+        move.l  IB_GFXBASE(a5),a6
+        move.l  sp,a1
+        bsr     prop_knob            ; knob tenu
+        bra.s   .pd_ret
+.pd_page:
+        bclr    #0,PI_FLAGS(a0)
+        btst    #1,PI_FLAGS+1(a0)    ; FREEHORIZ
+        beq.s   .pd_v
+        move.w  PI_HPOT(a0),d0
+        move.w  PI_HPOTRES(a0),d1
+        cmp.w   d4,d2
+        bge.s   .pd_hr
+        sub.w   d1,d0
+        bcc.s   .pd_hs
+        moveq   #0,d0
+        bra.s   .pd_hs
+.pd_hr:
+        cmp.w   d6,d2
+        ble.s   .pd_v
+        add.w   d1,d0
+        bcc.s   .pd_hs
+        moveq   #-1,d0
+.pd_hs:
+        move.w  d0,PI_HPOT(a0)
+.pd_v:
+        btst    #2,PI_FLAGS+1(a0)    ; FREEVERT
+        beq.s   .pd_upd
+        move.w  PI_VPOT(a0),d0
+        move.w  PI_VPOTRES(a0),d1
+        cmp.w   d5,d3
+        bge.s   .pd_vr
+        sub.w   d1,d0
+        bcc.s   .pd_vs
+        moveq   #0,d0
+        bra.s   .pd_vs
+.pd_vr:
+        cmp.w   d7,d3
+        ble.s   .pd_upd
+        add.w   d1,d0
+        bcc.s   .pd_vs
+        moveq   #-1,d0
+.pd_vs:
+        move.w  d0,PI_VPOT(a0)
+.pd_upd:
+        bsr     prop_update
+.pd_ret:
+        lea     PP_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a4
+        rts
+
+; prop_track(a5, d4/d5 = pointeur) -> Z = 0 si un knob est tenu et que ce mouvement lui revient : nouvelle position
+; = précédente + déplacement, bornée au conteneur ; Pot recalculés (spec §2.4) ; knob redessiné ; MOUSEMOVE si
+; FOLLOWMOUSE. Clobbe d0-d7/a0-a4/a6.
+prop_track:
+        move.l  IB_GADACT(a5),d0
+        beq     .pt_no
+        move.l  d0,a2
+        move.w  GG_GADGETTYPE(a2),d0
+        and.w   #GTYP_MASK,d0
+        cmp.w   #PROPGADGET,d0
+        bne     .pt_no
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #0,PI_FLAGS(a0)      ; KNOBHIT
+        beq     .pt_no
+        move.l  IB_GADWIN(a5),a3
+        jsr     it_scrxy
+        beq     .pt_yes
+        move.w  d4,d2                ; d2/d3 = déplacement
+        sub.w   IB_PMX(a5),d2
+        move.w  d5,d3
+        sub.w   IB_PMY(a5),d3
+        move.w  d4,IB_PMX(a5)
+        move.w  d5,IB_PMY(a5)
+        lea     -PP_SIZE(sp),sp
+        move.l  sp,a1
+        bsr     prop_prep
+        move.w  PP_CL(sp),d4         ; d4-d7 = boîte actuelle du knob
+        add.w   PP_KX(sp),d4
+        move.w  d4,d6
+        add.w   PP_KW(sp),d6
+        subq.w  #1,d6
+        move.w  PP_CT(sp),d5
+        add.w   PP_KY(sp),d5
+        move.w  d5,d7
+        add.w   PP_KH(sp),d7
+        subq.w  #1,d7
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #1,PI_FLAGS+1(a0)    ; FREEHORIZ
+        beq.s   .pt_v
+        move.w  PP_CW(sp),d1
+        sub.w   PP_KW(sp),d1         ; course
+        move.w  IB_PKX(a5),d0
+        add.w   d2,d0
+        bsr.s   .pt_axis
+        move.w  d0,IB_PKX(a5)
+        move.w  d1,PI_HPOT(a0)
+.pt_v:
+        btst    #2,PI_FLAGS+1(a0)    ; FREEVERT
+        beq.s   .pt_upd
+        move.w  PP_CH(sp),d1
+        sub.w   PP_KH(sp),d1
+        move.w  IB_PKY(a5),d0
+        add.w   d3,d0
+        bsr.s   .pt_axis
+        move.w  d0,IB_PKY(a5)
+        move.w  d1,PI_VPOT(a0)
+.pt_upd:
+        lea     PP_SIZE(sp),sp
+        bsr     prop_update
+        btst    #3,GG_ACTIVATION+1(a2)   ; FOLLOWMOUSE
+        beq.s   .pt_yes
+        move.w  IB_PMX(a5),d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  IB_PMY(a5),d3
+        sub.w   WD_TOPEDGE(a3),d3
+        moveq   #MOUSEMOVE,d0
+        moveq   #0,d1
+        move.l  a2,a0
+        bsr     gad_send
+.pt_yes:
+        moveq   #1,d0                ; Z = 0
+        rts
+.pt_no:
+        moveq   #0,d0                ; Z = 1
+        rts
+.pt_axis:                            ; d0.w = position voulue, d1.w = course -> d0 = position bornée, d1 = Pot
+        tst.w   d0
+        bpl.s   .pa_lo
+        moveq   #0,d0
+.pa_lo:
+        tst.w   d1
+        bgt.s   .pa_hi
+        moveq   #0,d0
+        moveq   #-1,d1               ; conteneur plein : Pot = $FFFF
+        rts
+.pa_hi:
+        cmp.w   d1,d0
+        blt.s   .pa_div
+        move.w  d1,d0
+        moveq   #-1,d1
+        rts
+.pa_div:
+        swap    d1
+        clr.w   d1
+        swap    d1                   ; d1 = course (long)
+        move.l  d0,-(sp)
+        and.l   #$FFFF,d0
+        swap    d0                   ; position << 16
+        divu    d1,d0
+        move.w  d0,d1
+        move.l  (sp)+,d0
+        rts
+
+; prop_up(a3 = fenêtre, a2 = gadget, a5, d2/d3 = pointeur dans la fenêtre) : relâchement : le gadget n'est plus tenu,
+; le suivi s'arrête, knob redessiné ; GADGETUP s'il est RELVERIFY, où que soit le pointeur.
+prop_up:
+        bclr    #7,GG_FLAGS+1(a2)
+        move.l  GG_SPECIALINFO(a2),a0
+        btst    #0,PI_FLAGS(a0)      ; KNOBHIT : glissement suivi
+        beq.s   .pu2_draw
+        clr.b   IB_TRACK(a5)
+.pu2_draw:
+        bsr     prop_render
+        btst    #0,GG_ACTIVATION+1(a2)   ; RELVERIFY
+        beq.s   .pu2_ret
+        moveq   #GADGETUP,d0
+        moveq   #0,d1
+        move.l  a2,a0
+        bsr     gad_send
+.pu2_ret:
+        rts
+
+; ModifyProp(gadget a0, fenêtre a1, requester a2, Flags d0, HorizPot d1, VertPot d2, HorizBody d3, VertBody d4) :
+; nouvelles valeurs du PropInfo, puis redessin de ce gadget jusqu'à la fin de la liste. NewModifyProp(…, nombre d5) :
+; seulement « nombre » gadgets à partir de celui-ci (spec §5).
+intuition_NewModifyProp:
+        movem.l d2-d7/a2-a3/a5,-(sp)
+        move.l  d5,d7
+        bra.s   mp_set
+intuition_ModifyProp:
+        movem.l d2-d7/a2-a3/a5,-(sp)
+        moveq   #-1,d7
+mp_set:
+        move.l  a6,a5
+        move.l  a1,a3
+        move.l  a0,a2
+        move.l  GG_SPECIALINFO(a2),a0
+        move.w  d0,PI_FLAGS(a0)
+        move.w  d1,PI_HPOT(a0)
+        move.w  d2,PI_VPOT(a0)
+        move.w  d3,PI_HBODY(a0)
+        move.w  d4,PI_VBODY(a0)
+        move.l  a3,d0
+        beq.s   .mp_ret              ; sans fenêtre : rien à redessiner
+        move.l  d7,d2
+        bsr     gad_drawrev
+.mp_ret:
+        movem.l (sp)+,d2-d7/a2-a3/a5
         rts
 
 ; --- gadgets texte ---------------------------------------------------------------------------------------------
@@ -966,7 +1707,8 @@ intuition_ActivateGadget:
 intuition_AddGadget:
         moveq   #1,d1
 intuition_AddGList:
-        movem.l d2/a2/a6,-(sp)
+        movem.l d2/a2-a3/a6,-(sp)
+        move.l  a0,a3                ; a3 = fenêtre
         move.l  a1,a2                ; a2 = dernier gadget de la chaîne à insérer
 .ag_last:
         subq.l  #1,d1
@@ -994,8 +1736,9 @@ intuition_AddGList:
         move.l  (a0),GG_NEXTGADGET(a2)
         move.l  a1,(a0)
         jsr     LVO_PERMIT(a6)
+        bsr     gad_propinit         ; bordures des gadgets proportionnels entrés dans la fenêtre
         move.l  d2,d0
-        movem.l (sp)+,d2/a2/a6
+        movem.l (sp)+,d2/a2-a3/a6
         rts
 
 ; RemoveGadget(fenêtre a0, gadget a1) -> d0 = position qu'il occupait | -1. RemoveGList(fenêtre a0, gadget a1, nombre

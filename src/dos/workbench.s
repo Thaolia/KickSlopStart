@@ -46,6 +46,10 @@ ICON_LVO_GETWBOBJECT EQU -30         ; icon.library 1.3 (spec workbench-task-v34
 ICON_LVO_FREEWBOBJECT EQU -60
 ICON_LVO_ADDFREELIST EQU -72
 ICON_LVO_PUTWBOBJECT EQU -36
+WB_LVO_NEWMODIFYPROP EQU -468       ; intuition
+DOS_LVO_INFO    EQU -114             ; Info(lock d1, InfoData d2)
+ID_NUMBLOCKS    EQU 12               ; struct InfoData
+ID_NUMBLOCKSUSED EQU 16
 ICON_LVO_BUMPREVISION EQU -108
 WBO_CURX        EQU $54              ; WBObject : position de l'icône (LONG)
 WBO_CURY        EQU $58
@@ -237,7 +241,12 @@ WBS_TON         EQU WBS_TBUF+WBS_TBUFMAX ; BYTE : timer.device ouvert
 WBS_FLAGS       EQU WBS_TON+1        ; BYTE : bit 1 = titre verrouillé (Rename), bit 2 = un message est affiché
 WBS_MSGBUF      EQU WBS_TON+2        ; dernier message (Version, Last Error) : WBS_TBUFMAX octets
 WBS_MSGOK       EQU WBS_MSGBUF+WBS_TBUFMAX ; BYTE : un message a été produit
-WBS_DRAWERS     EQU WBS_MSGOK+2      ; WB_MAXDRAWERS fiches de tiroir
+WBS_ARROWS      EQU WBS_MSGOK+2      ; 4 Images des flèches de défilement, en mémoire CHIP | 0
+WBS_MADDR       EQU WBS_ARROWS+4     ; IAddress du dernier message lu (wb_getmsg)
+WBS_MQUAL       EQU WBS_MADDR+4      ; WORD : son qualificatif
+WBS_SCRW        EQU WBS_MQUAL+2      ; WORD : tiroir en cours de défilement
+WBS_SCRG        EQU WBS_SCRW+2       ; WORD : GadgetID du gadget de défilement tenu, 0 : aucun
+WBS_DRAWERS     EQU WBS_SCRG+2       ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
@@ -249,7 +258,24 @@ DR_NAMES        EQU DR_ICONS+WB_MAXICONS*4 ; WB_MAXICONS x nom (WBS_NAMEMAX octe
 DR_PATH         EQU DR_NAMES+WB_MAXICONS*WBS_NAMEMAX ; chemin du tiroir (« SYS: », « SYS:System »...)
 DR_TITLE        EQU DR_PATH+WB_PATHMAX ; titre de la fenêtre
 DR_ID           EQU DR_TITLE+WBS_NAMEMAX ; WORD : n° de la fenêtre (1..WB_MAXDRAWERS)
-DR_SIZE         EQU DR_ID+2
+DR_SX           EQU DR_ID+2          ; WORD : position de défilement (dd_CurrentX / dd_CurrentY du .info)
+DR_SY           EQU DR_SX+2
+DR_EMINX        EQU DR_SY+2          ; WORD x 4 : étendue (rectangle visible élargi aux icônes)
+DR_EMINY        EQU DR_EMINX+2
+DR_EMAXX        EQU DR_EMINY+2
+DR_EMAXY        EQU DR_EMAXX+2
+DR_DISK         EQU DR_EMAXY+2       ; BYTE : fenêtre d'un disque (jauge à gauche)
+DR_USED         EQU DR_DISK+2        ; jauge : blocs utilisés, blocs au total (InfoData)
+DR_TOTAL        EQU DR_USED+4
+DR_GADS         EQU DR_TOTAL+4       ; 6 gadgets de défilement (spec workbench-task-v34 §8.1)
+DR_PROPS        EQU DR_GADS+6*GG_SIZEOF  ; PropInfo des barres verticale puis horizontale
+DR_KNOBS        EQU DR_PROPS+2*PI_SIZE   ; Images (vides, AUTOKNOB) de leurs knobs
+DR_SIZE         EQU DR_KNOBS+2*IG_SIZE
+PI_SIZE         EQU 22
+IG_SIZE         EQU 20
+DD_CURRENTX     EQU 48               ; DrawerData : position de défilement mémorisée
+DD_CURRENTY     EQU 52
+WB_DISKGAUGE    EQU 14               ; largeur réservée à la jauge d'une fenêtre de disque
 WB_MAXICONS     EQU 16
 WB_PATHMAX      EQU 96
 WB_CPBUF        EQU 4096             ; tampon de copie de Duplicate
@@ -421,6 +447,15 @@ wb_dispatch:
         move.l  a3,a0
         bsr     wb_getmsg            ; d2 = classe, d3 = code, d4/d5 = souris, d6 = secondes, a0 = micros
         beq     .dp_ret
+        tst.w   d7
+        beq.s   .dp_ref
+        bsr     wb_scrollev          ; gadgets de défilement d'un tiroir
+        bne     wb_dispatch
+        cmp.l   #NEWSIZE,d2
+        bne.s   .dp_ref
+        bsr     wb_bars              ; nouvelle taille : barres recalculées (le dessin suit REFRESHWINDOW)
+        bra     wb_dispatch
+.dp_ref:
         cmp.l   #REFRESHWINDOW,d2
         bne.s   .dp_mb
         bsr     wb_window
@@ -456,12 +491,12 @@ wb_dispatch:
         cmp.l   #MENUPICK,d2
         bne.s   .dp_close
         bsr     wb_menupick
-        bra.s   wb_dispatch
+        bra     wb_dispatch
 .dp_close:
         cmp.l   #CLOSEWINDOW,d2
-        bne.s   wb_dispatch
+        bne     wb_dispatch
         tst.w   d7
-        beq.s   wb_dispatch
+        beq     wb_dispatch
         bra     wb_closedrawer
 .dp_ret:
         rts
@@ -481,6 +516,8 @@ wb_getmsg:
         move.w  IM_MOUSEX(a1),d4
         move.w  IM_MOUSEY(a1),d5
         move.l  IM_SECONDS(a1),d6
+        move.l  IM_IADDRESS(a1),WBS_MADDR(a5)
+        move.w  IM_QUALIFIER(a1),WBS_MQUAL(a5)
         move.l  IM_MICROS(a1),-(sp)
         jsr     LVO_REPLYMSG(a6)
         move.l  (sp)+,a0
@@ -488,6 +525,560 @@ wb_getmsg:
         rts
 .gm_none:
         moveq   #0,d0
+        rts
+
+; --- défilement des tiroirs et jauge des disques (spec workbench-task-v34 §8) -------------------------------------
+; wb_origin(a3 = fenêtre, a4 = fiche) -> d0/d1 = coin de l'espace des icônes dans la fenêtre : bordures gauche (plus
+; la jauge d'un disque) et haute, moins la position de défilement. Préserve tout le reste.
+wb_origin:
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        tst.b   DR_DISK(a4)
+        beq.s   .or_x
+        add.w   #WB_DISKGAUGE,d0
+.or_x:
+        sub.w   DR_SX(a4),d0
+        moveq   #0,d1
+        move.b  WD_BORDERTOP(a3),d1
+        sub.w   DR_SY(a4),d1
+        rts
+
+; wb_content(a3 = fenêtre, a4 = fiche | 0) -> d0..d3 = zone visible des icônes (x0, y0, x1, y1 dans la fenêtre) : sans
+; les bordures ni la jauge d'un disque. Préserve tout le reste.
+wb_content:
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a3),d0
+        move.l  a4,d1
+        beq.s   .ct_x
+        tst.b   DR_DISK(a4)
+        beq.s   .ct_x
+        add.w   #WB_DISKGAUGE,d0
+.ct_x:
+        moveq   #0,d1
+        move.b  WD_BORDERTOP(a3),d1
+        move.l  d4,-(sp)
+        move.w  WD_WIDTH(a3),d2
+        moveq   #0,d4
+        move.b  WD_BORDERRIGHT(a3),d4
+        sub.w   d4,d2
+        subq.w  #1,d2
+        move.w  WD_HEIGHT(a3),d3
+        move.b  WD_BORDERBOTTOM(a3),d4
+        sub.w   d4,d3
+        subq.w  #1,d3
+        move.l  (sp)+,d4
+        rts
+
+; wb_mkgads(a4 = fiche) -> a0 = premier des 6 gadgets de défilement, construits dans la fiche depuis wb_gadtab :
+; barres (PropInfo AUTOKNOB, Pots 0, Bodies $FFFF, FREEVERT / FREEHORIZ ; Image de knob vide) puis flèches (Images
+; de WBS_ARROWS). Préserve d2-d7/a2-a6.
+wb_mkgads:
+        movem.l d2-d3/a2-a3,-(sp)
+        lea     DR_GADS(a4),a0
+        move.w  #6*GG_SIZEOF+2*PI_SIZE+2*IG_SIZE-1,d0
+.mg_clr:
+        clr.b   (a0)+
+        dbra    d0,.mg_clr
+        lea     wb_gadtab(pc),a2
+        lea     DR_GADS(a4),a3
+        moveq   #5,d3
+.mg_lp:
+        movem.w (a2)+,d0-d1          ; LeftEdge, TopEdge
+        move.w  d0,GG_LEFTEDGE(a3)
+        move.w  d1,GG_TOPEDGE(a3)
+        movem.w (a2)+,d0-d1          ; Width, Height
+        move.w  d0,GG_WIDTH(a3)
+        move.w  d1,GG_HEIGHT(a3)
+        move.w  (a2)+,GG_FLAGS(a3)
+        move.w  (a2)+,GG_ACTIVATION(a3)
+        move.w  (a2)+,GG_GADGETTYPE(a3)
+        move.w  (a2)+,GG_GADGETID(a3)
+        move.w  (a2)+,d2             ; rendu : 0/1 = barre verticale/horizontale, 2..5 = flèche
+        cmp.w   #2,d2
+        bhs.s   .mg_arrow
+        move.w  d2,d0
+        mulu    #PI_SIZE,d0
+        lea     DR_PROPS(a4),a0
+        add.w   d0,a0
+        move.l  a0,GG_SPECIALINFO(a3)
+        move.w  #AUTOKNOB|FREEVERT,PI_FLAGS(a0)
+        tst.w   d2
+        beq.s   .mg_pv
+        move.w  #AUTOKNOB|FREEHORIZ,PI_FLAGS(a0)
+.mg_pv:
+        moveq   #-1,d0
+        move.w  d0,PI_HBODY(a0)
+        move.w  d0,PI_VBODY(a0)
+        move.w  d2,d0
+        mulu    #IG_SIZE,d0
+        lea     DR_KNOBS(a4),a0
+        add.w   d0,a0
+        move.l  a0,GG_GADGETRENDER(a3)
+        bra.s   .mg_next
+.mg_arrow:
+        move.l  WBS_ARROWS(a5),d0
+        beq.s   .mg_next
+        subq.w  #2,d2
+        mulu    #IG_SIZE,d2
+        add.l   d2,d0
+        move.l  d0,GG_GADGETRENDER(a3)
+.mg_next:
+        lea     GG_SIZEOF(a3),a0
+        tst.w   d3
+        beq.s   .mg_last
+        move.l  a0,GG_NEXTGADGET(a3)
+.mg_last:
+        move.l  a0,a3
+        dbra    d3,.mg_lp
+        lea     DR_GADS(a4),a0
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+
+; wb_arrowsinit(a5) : les 4 Images des flèches (structures et données) recopiées une fois en mémoire CHIP, là où le
+; DMA les lit. Sans mémoire : flèches sans image. Préserve d2-d7/a2-a5.
+WB_ARROWSZ      EQU 4*IG_SIZE+(wb_arrdata_end-wb_arrdata)
+wb_arrowsinit:
+        tst.l   WBS_ARROWS(a5)
+        bne.s   .ai_ret
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  #WB_ARROWSZ,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,WBS_ARROWS(a5)
+        beq.s   .ai_pop
+        move.l  d0,a1
+        lea     wb_arrimg(pc),a0     ; structures, puis données juste après
+        moveq   #WB_ARROWSZ/2-1,d0
+.ai_cp:
+        move.w  (a0)+,(a1)+
+        dbra    d0,.ai_cp
+        move.l  WBS_ARROWS(a5),a1    ; pointeurs ImageData : décalages dans le bloc -> adresses
+        move.l  WBS_ARROWS(a5),d1
+        moveq   #3,d0
+.ai_fix:
+        add.l   d1,IG_IMAGEDATA(a1)
+        lea     IG_SIZE(a1),a1
+        dbra    d0,.ai_fix
+.ai_pop:
+        move.l  (sp)+,a6
+.ai_ret:
+        rts
+
+; wb_bars(d7.w = tiroir, a5) : étendue = zone visible à la position courante élargie à la boîte de chaque icône ;
+; puis, par axe, Body = 65535 × visible / plage et Pot = 65535 × (position - min) / (plage - visible) ($7FFF si la
+; plage est la zone visible) ; NewModifyProp d'un seul gadget si une valeur change (spec §8.2-8.3). Préserve d2-d7.
+wb_bars:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        bsr     wb_window
+        beq     .ba_ret
+        bsr     wb_content
+        sub.w   d0,d2
+        addq.w  #1,d2                ; d2 = largeur visible
+        sub.w   d1,d3
+        addq.w  #1,d3                ; d3 = hauteur visible
+        move.w  DR_SX(a4),d4         ; d4..d7 = étendue
+        move.w  DR_SY(a4),d5
+        move.w  d4,d6
+        add.w   d2,d6
+        move.w  d5,d7
+        add.w   d3,d7
+        moveq   #0,d1
+.ba_icon:
+        cmp.w   DR_NICON+2(a4),d1
+        bhs.s   .ba_props
+        move.w  d1,d0
+        lsl.w   #2,d0
+        move.l  DR_ICONS(a4,d0.w),a2
+        movem.w d2-d3,-(sp)
+        move.w  #WB_GRIDX,d2         ; position de l'icône dans l'espace du tiroir (comme wb_iconrect)
+        mulu    d1,d2
+        moveq   #4,d3
+        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a2)
+        beq.s   .ba_pos
+        move.w  DO_CURRENTX+2(a2),d2
+        move.w  DO_CURRENTY+2(a2),d3
+.ba_pos:
+        cmp.w   d4,d2
+        bge.s   .ba_x0
+        move.w  d2,d4
+.ba_x0:
+        cmp.w   d5,d3
+        bge.s   .ba_y0
+        move.w  d3,d5
+.ba_y0:
+        add.w   DO_GADGET+GG_WIDTH(a2),d2
+        cmp.w   d6,d2
+        ble.s   .ba_x1
+        move.w  d2,d6
+.ba_x1:
+        add.w   DO_GADGET+GG_HEIGHT(a2),d3
+        cmp.w   d7,d3
+        ble.s   .ba_y1
+        move.w  d3,d7
+.ba_y1:
+        movem.w (sp)+,d2-d3
+        addq.w  #1,d1
+        bra.s   .ba_icon
+.ba_props:
+        movem.w d4-d7,DR_EMINX(a4)
+        lea     DR_GADS+GG_SIZEOF(a4),a2 ; barre horizontale
+        move.w  d2,d0                ; visible
+        move.w  d6,d1
+        sub.w   d4,d1                ; plage
+        move.w  DR_SX(a4),d2
+        sub.w   d4,d2                ; position - min
+        bsr.s   .ba_set
+        lea     DR_GADS(a4),a2       ; barre verticale
+        move.w  d3,d0
+        move.w  d7,d1
+        sub.w   d5,d1
+        move.w  DR_SY(a4),d2
+        sub.w   d5,d2
+        bsr.s   .ba_set
+.ba_ret:
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+.ba_set:                             ; a2 = barre, d0 = visible, d1 = plage, d2 = position -> NewModifyProp si besoin
+        movem.l d3-d7,-(sp)
+        moveq   #-1,d3               ; d3 = Body
+        cmp.w   d0,d1
+        bls.s   .bs_pot              ; plage = visible (ou moins) : $FFFF
+        move.l  #$FFFF,d3
+        mulu    d0,d3
+        divu    d1,d3
+.bs_pot:
+        move.w  #$7FFF,d4            ; d4 = Pot
+        sub.w   d0,d1                ; plage - visible
+        bls.s   .bs_cmp
+        tst.w   d2
+        bpl.s   .bs_pos
+        moveq   #0,d2
+.bs_pos:
+        moveq   #0,d4
+        move.w  d2,d4
+        mulu    #$FFFF,d4
+        divu    d1,d4
+.bs_cmp:
+        move.l  GG_SPECIALINFO(a2),a0
+        move.w  PI_FLAGS(a0),d0
+        btst    #1,d0                ; FREEHORIZ : son axe est H, sinon V
+        beq.s   .bs_v
+        cmp.w   PI_HPOT(a0),d4
+        bne.s   .bs_mod
+        cmp.w   PI_HBODY(a0),d3
+        beq.s   .bs_ret
+        bra.s   .bs_mod
+.bs_v:
+        cmp.w   PI_VPOT(a0),d4
+        bne.s   .bs_mod
+        cmp.w   PI_VBODY(a0),d3
+        beq.s   .bs_ret
+.bs_mod:
+        move.l  a2,a0
+        move.l  a3,a1
+        move.l  a2,-(sp)
+        suba.l  a2,a2
+        move.w  d4,d1
+        move.w  d4,d2
+        move.w  d3,d4
+        moveq   #1,d5
+        move.l  WBS_IBASE(a5),a6
+        jsr     WB_LVO_NEWMODIFYPROP(a6)
+        move.l  (sp)+,a2
+.bs_ret:
+        movem.l (sp)+,d3-d7
+        rts
+
+; wb_scrollto(d7.w = tiroir, d0.w/d1.w = nouvelle position, a5) : nouvelle position de défilement, barres
+; recalculées, intérieur redessiné ; rien si elle ne change pas. Préserve d2-d7.
+wb_scrollto:
+        movem.l a3-a4,-(sp)
+        move.l  d0,-(sp)
+        bsr     wb_window
+        move.l  (sp)+,d0
+        cmp.w   DR_SX(a4),d0
+        bne.s   .st_set
+        cmp.w   DR_SY(a4),d1
+        beq.s   .st_ret
+.st_set:
+        move.w  d0,DR_SX(a4)
+        move.w  d1,DR_SY(a4)
+        bsr     wb_bars
+        bsr     wb_redraw1
+.st_ret:
+        movem.l (sp)+,a3-a4
+        rts
+
+; wb_scrollev(d7.w = tiroir, d2 = classe, a5) : GADGETDOWN sur un gadget de défilement : il devient le gadget tenu ;
+; une flèche avance d'un huitième de la zone visible (Shift : 1 pixel). MOUSEMOVE et GADGETUP sur une barre tenue :
+; la position suit son Pot ; GADGETUP termine le défilement. Z = 0 si l'événement était pour le défilement.
+wb_scrollev:
+        movem.l d2-d6/a2-a4,-(sp)
+        bsr     wb_window
+        beq     .se_no
+        cmp.l   #GADGETDOWN,d2
+        bne.s   .se_held
+        move.l  WBS_MADDR(a5),a2
+        lea     DR_GADS(a4),a0
+        cmp.l   a0,a2
+        blo     .se_no
+        lea     DR_GADS+6*GG_SIZEOF(a4),a0
+        cmp.l   a0,a2
+        bhs     .se_no
+        move.w  d7,WBS_SCRW(a5)
+        move.w  GG_GADGETID(a2),d6
+        move.w  d6,WBS_SCRG(a5)
+        cmp.w   #3,d6
+        blo     .se_yes              ; barre : la position suivra son Pot
+        bsr     wb_content           ; flèche : pas d'un huitième de la zone visible (Shift : 1)
+        sub.w   d0,d2
+        addq.w  #1,d2
+        lsr.w   #3,d2
+        sub.w   d1,d3
+        addq.w  #1,d3
+        lsr.w   #3,d3
+        move.w  WBS_MQUAL(a5),d0
+        and.w   #KQ_SHIFT,d0
+        beq.s   .se_step
+        moveq   #1,d2
+        moveq   #1,d3
+.se_step:
+        move.w  DR_SX(a4),d0
+        move.w  DR_SY(a4),d1
+        cmp.w   #3,d6
+        bne.s   .se_r
+        sub.w   d2,d0
+.se_r:
+        cmp.w   #4,d6
+        bne.s   .se_u
+        add.w   d2,d0
+.se_u:
+        cmp.w   #5,d6
+        bne.s   .se_d
+        sub.w   d3,d1
+.se_d:
+        cmp.w   #6,d6
+        bne.s   .se_go
+        add.w   d3,d1
+.se_go:
+        bsr     wb_scrollto
+        bra     .se_yes
+.se_held:
+        tst.w   WBS_SCRG(a5)
+        beq     .se_no
+        cmp.w   WBS_SCRW(a5),d7
+        bne     .se_no
+        cmp.l   #MOUSEMOVE,d2
+        bne.s   .se_up
+        bsr.s   .se_bar
+        bra     .se_yes
+.se_up:
+        cmp.l   #GADGETUP,d2
+        bne     .se_no
+        bsr.s   .se_bar
+        clr.w   WBS_SCRG(a5)         ; fin du défilement
+        bra.s   .se_yes
+.se_bar:                             ; barre tenue : position = Pot / 65535 × (plage - visible) + min
+        move.w  WBS_SCRG(a5),d6
+        cmp.w   #3,d6
+        bhs.s   .sb_ret
+        bsr     wb_content
+        sub.w   d0,d2
+        addq.w  #1,d2
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  DR_SX(a4),d0
+        move.w  DR_SY(a4),d1
+        cmp.w   #1,d6
+        bne.s   .sb_v
+        move.l  DR_GADS+GG_SIZEOF+GG_SPECIALINFO(a4),a0
+        move.w  PI_HPOT(a0),d4
+        move.w  DR_EMAXX(a4),d5
+        sub.w   DR_EMINX(a4),d5
+        sub.w   d2,d5
+        bsr.s   .sb_pos
+        add.w   DR_EMINX(a4),d4
+        move.w  d4,d0
+        bra.s   .sb_go
+.sb_v:
+        move.l  DR_GADS+GG_SPECIALINFO(a4),a0
+        move.w  PI_VPOT(a0),d4
+        move.w  DR_EMAXY(a4),d5
+        sub.w   DR_EMINY(a4),d5
+        sub.w   d3,d5
+        bsr.s   .sb_pos
+        add.w   DR_EMINY(a4),d4
+        move.w  d4,d1
+.sb_go:
+        bsr     wb_scrollto
+.sb_ret:
+        rts
+.sb_pos:                             ; d4 = Pot, d5 = plage - visible -> d4 = Pot × (plage - visible) / 65535
+        tst.w   d5
+        bgt.s   .sp_mul
+        moveq   #0,d4
+        rts
+.sp_mul:
+        and.l   #$FFFF,d4
+        mulu    d5,d4
+        divu    #$FFFF,d4
+        rts
+.se_yes:
+        moveq   #1,d0
+        bra.s   .se_out
+.se_no:
+        moveq   #0,d0
+.se_out:
+        movem.l (sp)+,d2-d6/a2-a4
+        tst.l   d0
+        rts
+
+; wb_gaugeinfo(d7.w = tiroir, a5) : blocs utilisés et total du volume du tiroir (Info), pour la jauge d'un disque.
+; Préserve d2-d7/a2-a5.
+wb_gaugeinfo:
+        movem.l d2/a2-a4/a6,-(sp)
+        bsr     wb_window
+        beq.s   .gi_ret
+        tst.b   DR_DISK(a4)
+        beq.s   .gi_ret
+        lea     -40(sp),sp
+        move.l  WBS_DOSBASE(a5),a6
+        lea     DR_PATH(a4),a0
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        jsr     DOS_LVO_LOCK(a6)
+        move.l  d0,-(sp)
+        beq.s   .gi_free
+        move.l  d0,d1
+        lea     4+3(sp),a0
+        move.l  a0,d2
+        and.b   #$FC,d2              ; InfoData long-alignée
+        move.l  d2,a2
+        jsr     DOS_LVO_INFO(a6)
+        tst.l   d0
+        beq.s   .gi_unl
+        move.l  ID_NUMBLOCKSUSED(a2),DR_USED(a4)
+        move.l  ID_NUMBLOCKS(a2),DR_TOTAL(a4)
+.gi_unl:
+        move.l  (sp),d1
+        jsr     DOS_LVO_UNLOCK(a6)
+.gi_free:
+        lea     44(sp),sp
+.gi_ret:
+        movem.l (sp)+,d2/a2-a4/a6
+        rts
+
+; wb_gauge(a3 = fenêtre, a4 = fiche, a5) : jauge de remplissage d'une fenêtre de disque, contre le bord gauche (spec
+; §8.4) : blocs « F » en haut et « E » en bas au stylo 2 (lettres au stylo 1), filet au stylo 1 à droite, barre vide
+; au stylo 2 et remplie au stylo 3 en proportion des blocs utilisés. Préserve d2-d7/a2-a5.
+wb_gauge:
+        tst.b   DR_DISK(a4)
+        beq     .ga_ret
+        movem.l d2-d7/a2/a6,-(sp)
+        move.l  WBS_GFXBASE(a5),a6
+        moveq   #0,d6
+        move.b  WD_BORDERLEFT(a3),d6
+        add.w   #9,d6                ; d6 = x de droite de la jauge
+        moveq   #0,d4
+        move.b  WD_BORDERTOP(a3),d4  ; d4 = BT
+        move.w  WD_HEIGHT(a3),d5
+        moveq   #0,d0
+        move.b  WD_BORDERBOTTOM(a3),d0
+        sub.w   d0,d5                ; d5 = H - BB
+        lea     wb_gaugetab(pc),a2   ; rectangles : stylo, x0, y0, x1, y1 (y relatifs : 0 = BT, 1 = H - BB ; x : -1 = droite)
+.ga_lp:
+        move.b  (a2)+,d0
+        bmi.s   .ga_bar
+        ext.w   d0
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_SETAPEN(a6)
+        bsr.s   .ga_x
+        move.w  d0,d2
+        bsr.s   .ga_y
+        move.w  d0,d1
+        move.w  d2,d0
+        movem.w d0-d1,-(sp)
+        bsr.s   .ga_x
+        move.w  d0,d2
+        bsr.s   .ga_y
+        move.w  d0,d3
+        movem.w (sp)+,d0-d1
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        bra.s   .ga_lp
+.ga_x:                               ; octet signé : >= 0 x absolu, < 0 décalage depuis la droite de la jauge
+        move.b  (a2)+,d0
+        ext.w   d0
+        bpl.s   .gx_r
+        add.w   d6,d0
+        addq.w  #1,d0
+.gx_r:
+        rts
+.ga_y:                               ; base (0 : BT, 1 : H - BB) puis décalage signé
+        move.b  (a2)+,d1
+        move.b  (a2)+,d0
+        ext.w   d0
+        tst.b   d1
+        bne.s   .gy_b
+        add.w   d4,d0
+        rts
+.gy_b:
+        add.w   d5,d0
+        rts
+.ga_bar:
+        moveq   #1,d0                ; filet au stylo 1, à droite de la jauge (2 pixels), sur toute sa hauteur
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_SETAPEN(a6)
+        move.w  d6,d0
+        addq.w  #1,d0
+        move.w  d4,d1
+        subq.w  #1,d1
+        move.w  d6,d2
+        addq.w  #2,d2
+        move.w  d5,d3
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        move.w  d4,d2
+        addq.w  #6,d2                ; y0
+        move.w  d5,d3
+        subq.w  #7,d3                ; y1
+        move.w  d3,d7
+        sub.w   d2,d7                ; d7 = h
+        moveq   #0,d0                ; rempli = arrondi(utilisés × h / total)
+        move.l  DR_TOTAL(a4),d1
+        beq.s   .ga_fill
+        move.l  DR_USED(a4),d0
+        mulu    d7,d0
+        add.l   d0,d0
+        add.l   d1,d0
+        add.l   d1,d1
+        divu    d1,d0
+.ga_fill:
+        move.w  d2,d4
+        add.w   d7,d4
+        sub.w   d0,d4                ; d4 = haut de la partie remplie
+        moveq   #2,d0
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_SETAPEN(a6)
+        moveq   #2,d0
+        move.w  d2,d1
+        move.w  d6,d2
+        move.w  d4,d3
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        moveq   #3,d0
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_SETAPEN(a6)
+        moveq   #2,d0
+        move.w  d4,d1
+        move.w  d6,d2
+        move.w  d5,d3
+        subq.w  #7,d3
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        movem.l (sp)+,d2-d7/a2/a6
+.ga_ret:
         rts
 
 ; wb_iconrect(d7.w = fenêtre, d1.w = n° d'icône, a5) -> a2 = DiskObject, d0..d3 = x0,y0,x1,y1 dans la fenêtre ;
@@ -524,11 +1115,12 @@ wb_iconrect:
         move.w  DO_CURRENTX+2(a2),d0
         move.w  DO_CURRENTY+2(a2),d1
 .ir_bord:
-        moveq   #0,d2
-        move.b  WD_BORDERLEFT(a1),d2
-        add.w   d2,d0
-        move.b  WD_BORDERTOP(a1),d2
-        add.w   d2,d1
+        movem.w d0-d1,-(sp)          ; position dans l'espace du tiroir -> fenêtre (wb_origin)
+        exg     a1,a3
+        bsr     wb_origin
+        exg     a1,a3
+        add.w   (sp)+,d0
+        add.w   (sp)+,d1
         move.l  (sp)+,a4
 .ir_size:
         move.w  d0,d2
@@ -583,6 +1175,7 @@ wb_drawwin:
         bsr     wb_drawicon
         bra.s   .dw_ret
 .dw_dr:
+        bsr     wb_gauge             ; fenêtre d'un disque : sa jauge
         moveq   #0,d6                ; d6 = icône
 .dw_lp:
         cmp.w   DR_NICON+2(a4),d6
@@ -617,33 +1210,29 @@ wb_drawone:
 ; wb_inside(a3 = fenêtre, d0..d3 = rectangle de l'icône) -> Z = 1 si l'icône et son nom (une ligne de texte sous elle)
 ; tiennent dans l'intérieur de la fenêtre. Clobbe a0 ; préserve d0-d3.
 wb_inside:
-        movem.l d0-d4,-(sp)
-        moveq   #0,d4
-        move.b  WD_BORDERLEFT(a3),d4
-        cmp.w   d4,d0
+        movem.l d0-d7/a4,-(sp)
+        movem.w d0-d3,-(sp)
+        tst.w   d7
+        bne.s   .in_dr
+        suba.l  a4,a4                ; bureau : pas de jauge
+.in_dr:
+        bsr     wb_content           ; d0..d3 = zone visible
+        movem.w (sp)+,d4-d7          ; d4..d7 = icône
+        cmp.w   d0,d4
         blt.s   .in_no
-        move.b  WD_BORDERTOP(a3),d4
-        cmp.w   d4,d1
+        cmp.w   d1,d5
         blt.s   .in_no
-        move.w  WD_WIDTH(a3),d4
-        moveq   #0,d0
-        move.b  WD_BORDERRIGHT(a3),d0
-        sub.w   d0,d4                ; d4 = premier x hors intérieur
-        cmp.w   d4,d2
-        bge.s   .in_no
-        move.w  WD_HEIGHT(a3),d4
-        moveq   #0,d0
-        move.b  WD_BORDERBOTTOM(a3),d0
-        sub.w   d0,d4
-        add.w   #GFX_FONTH+1,d3      ; ligne du nom
-        cmp.w   d4,d3
-        bge.s   .in_no
+        cmp.w   d2,d6
+        bgt.s   .in_no
+        add.w   #GFX_FONTH+1,d7      ; ligne du nom
+        cmp.w   d3,d7
+        bgt.s   .in_no
         moveq   #0,d0                ; Z = 1
         bra.s   .in_ret
 .in_no:
         moveq   #1,d0                ; Z = 0
 .in_ret:
-        movem.l (sp)+,d0-d4
+        movem.l (sp)+,d0-d7/a4
         rts
 
 ; wb_drawicon(a2 = DiskObject, a3 = fenêtre, a4 = nom, d4/d5 = position, d6.w = n°, d7.w = fenêtre, a5) : image de
@@ -786,20 +1375,11 @@ wb_redraw1:
         move.l  WD_RPORT(a3),a1
         moveq   #0,d0
         jsr     LVO_SETAPEN(a6)
-        moveq   #0,d0
-        move.b  WD_BORDERLEFT(a3),d0
-        moveq   #0,d1
-        move.b  WD_BORDERTOP(a3),d1
-        move.w  WD_WIDTH(a3),d2
-        moveq   #0,d3
-        move.b  WD_BORDERRIGHT(a3),d3
-        sub.w   d3,d2
-        subq.w  #1,d2
-        move.w  WD_HEIGHT(a3),d3
-        moveq   #0,d4
-        move.b  WD_BORDERBOTTOM(a3),d4
-        sub.w   d4,d3
-        subq.w  #1,d3
+        tst.w   d7
+        bne.s   .r1_dr
+        suba.l  a4,a4                ; bureau : pas de jauge
+.r1_dr:
+        bsr     wb_content
         move.l  WD_RPORT(a3),a1
         jsr     LVO_RECTFILL(a6)
         bsr     wb_drawwin
@@ -971,11 +1551,13 @@ wb_dragend:
         add.w   d3,d1
         tst.w   d7
         beq.s   .de_desk
-        moveq   #0,d2                ; tiroir : DO_Current* est relatif à l'intérieur (sans les bordures)
-        move.b  WD_BORDERLEFT(a3),d2
+        movem.w d0-d1,-(sp)          ; tiroir : DO_Current* est relatif à l'espace des icônes (wb_origin)
+        bsr     wb_origin
+        move.w  d0,d2
+        move.w  d1,d3
+        movem.w (sp)+,d0-d1
         sub.w   d2,d0
-        move.b  WD_BORDERTOP(a3),d2
-        sub.w   d2,d1
+        sub.w   d3,d1
 .de_desk:
         tst.w   d0
         bpl.s   .de_x
@@ -1132,6 +1714,16 @@ wb_opendrawer:
         lea     DR_TITLE(a4),a1
         moveq   #WBS_NAMEMAX-2,d0
         bsr     wb_strcpy
+        clr.l   DR_SX(a4)            ; position de défilement (dd_CurrentX/Y du .info), fenêtre de disque ?
+        clr.b   DR_DISK(a4)
+        clr.l   DR_NICON(a4)
+        lea     DR_PATH(a4),a0
+        bsr     wb_strlen
+        cmp.b   #':',-1(a0,d0.w)
+        seq     DR_DISK(a4)
+        bsr     wb_arrowsinit
+        bsr     wb_mkgads
+        move.l  a0,-(sp)             ; premier gadget de défilement
         lea     -NW_SIZEOF(sp),sp
         bsr     wb_nwclear
         move.l  #$000A0014,NW_LEFTEDGE(a0)   ; par défaut : 10,20 400x120
@@ -1139,25 +1731,32 @@ wb_opendrawer:
         move.l  DO_DRAWERDATA(a2),d0
         beq.s   .od_geo
         move.l  d0,a1
-        move.l  (a1)+,NW_LEFTEDGE(a0)        ; dd_NewWindow : LeftEdge, TopEdge, Width, Height
-        move.l  (a1),NW_WIDTH(a0)
+        move.l  (a1),NW_LEFTEDGE(a0)         ; dd_NewWindow : LeftEdge, TopEdge, Width, Height
+        move.l  4(a1),NW_WIDTH(a0)
+        move.w  DD_CURRENTX+2(a1),DR_SX(a4)
+        move.w  DD_CURRENTY+2(a1),DR_SY(a4)
 .od_geo:
-        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK,NW_IDCMPFLAGS(a0)
-        move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE|WINDOWSIZING|SIZEBRIGHT,NW_FLAGS(a0)
+        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK|GADGETDOWN|GADGETUP|NEWSIZE,NW_IDCMPFLAGS(a0)
+        move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE|WINDOWSIZING|SIZEBRIGHT|SIZEBBOTTOM|REPORTMOUSE,NW_FLAGS(a0)
+        move.l  NW_SIZEOF(sp),NW_FIRSTGADGET(a0)
         lea     DR_TITLE(a4),a1
         move.l  a1,NW_TITLE(a0)
         move.l  #(90<<16)|40,NW_MINWIDTH(a0)
         move.l  #(640<<16)|256,NW_MAXWIDTH(a0)
         move.l  WBS_IBASE(a5),a6
         jsr     LVO_OPENWINDOW(a6)
-        lea     NW_SIZEOF(sp),sp
+        lea     NW_SIZEOF+4(sp),sp
         move.l  d0,DR_WIN(a4)
         beq.s   .od_ret
         move.w  d7,DR_ID(a4)
         move.l  d0,a0
         bsr     wb_setmenus
         bsr     wb_titles
+        bsr     wb_gaugeinfo
+        move.l  DR_WIN(a4),a3
+        bsr     wb_gauge
         bsr     wb_loadicons
+        bsr     wb_bars
 .od_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
@@ -1972,11 +2571,13 @@ wb_snapshot:
         movem.w d0-d1,-(sp)
         bsr     wb_window            ; a3 = fenêtre, a4 = fiche (d0 écrasé)
         movem.w (sp)+,d0-d1
-        moveq   #0,d2                ; DO_Current* est relatif à l'intérieur du tiroir
-        move.b  WD_BORDERLEFT(a3),d2
+        movem.w d0-d1,-(sp)          ; DO_Current* est relatif à l'espace des icônes du tiroir (wb_origin)
+        bsr     wb_origin
+        move.w  d0,d2
+        move.w  d1,d3
+        movem.w (sp)+,d0-d1
         sub.w   d2,d0
-        move.b  WD_BORDERTOP(a3),d2
-        sub.w   d2,d1
+        sub.w   d3,d1
         move.w  WBS_SELI(a5),d2
         mulu    #WBS_NAMEMAX,d2
         movem.w d0-d1,-(sp)
@@ -2922,8 +3523,10 @@ wb_reload:
         jsr     ICON_LVO_FREEDISKOBJECT(a6)
 .rl_fnx:
         dbra    d2,.rl_free
+        bsr     wb_gaugeinfo
         bsr     wb_redraw1
         bsr     wb_loadicons
+        bsr     wb_bars
 .rl_ret:
         movem.l (sp)+,d2/a2-a4/a6
         rts
@@ -3118,6 +3721,56 @@ wb_renmsg:
         dc.b    "Enter the new name.  Press return when done.",0
 wb_empty:
         dc.b    0
+        even
+wb_gadtab:                           ; gadgets de défilement (spec §8.1) : LeftEdge, TopEdge, Width, Height, Flags,
+        ; Activation, GadgetType, GadgetID, rendu (0/1 barre verticale/horizontale, 2..5 flèche g/d/h/b)
+        dc.w    -15,16,16,-31,$0054,$0013,3,2,0
+        dc.w    13,-8,-40,9,$002C,$0083,3,1,1
+        dc.w    2,-7,12,7,$000C,$0083,1,3,2
+        dc.w    -25,-7,12,7,$001C,$0083,1,4,3
+        dc.w    -14,10,14,6,$0014,$0013,1,5,4
+        dc.w    -14,-14,14,6,$001C,$0013,1,6,5
+wb_gaugetab:                         ; jauge (spec §8.4) : stylo, x0, base y0, dy0, x1, base y1, dy1 ; x < 0 : depuis la
+        ; droite de la jauge ; base 0 = BorderTop, 1 = Height - BorderBottom ; -1 : fin
+        dc.b    2, 2,0,-1, -1,0,5            ; bloc du haut
+        dc.b    1, 4,0,0, -3,0,0             ; « F » : barre du haut
+        dc.b    1, 4,0,0, 5,0,4              ;         montant
+        dc.b    1, 4,0,2, -5,0,2             ;         barre du milieu
+        dc.b    2, 2,1,-6, -1,1,0            ; bloc du bas
+        dc.b    1, 4,1,-5, 5,1,-1            ; « E » : montant
+        dc.b    1, 4,1,-5, -3,1,-5           ;         barres
+        dc.b    1, 4,1,-3, -4,1,-3
+        dc.b    1, 4,1,-1, -3,1,-1
+        dc.b    -1                           ; (le filet à droite de la jauge est tracé à part)
+        even
+wb_arrimg:                           ; Images des flèches (1 plan : 1 = stylo 1, 0 = stylo 0 ; ImageData = décalage dans
+        ; le bloc copié en CHIP, relogé par wb_arrowsinit)
+        dc.w    -2,-1,14,8,1
+        dc.l    4*IG_SIZE+(wb_arrl-wb_arrdata)
+        dc.b    1,0
+        dc.l    0
+        dc.w    -1,-1,12,8,1
+        dc.l    4*IG_SIZE+(wb_arrr-wb_arrdata)
+        dc.b    1,0
+        dc.l    0
+        dc.w    -1,0,16,6,1
+        dc.l    4*IG_SIZE+(wb_arru-wb_arrdata)
+        dc.b    1,0
+        dc.l    0
+        dc.w    -1,0,16,6,1
+        dc.l    4*IG_SIZE+(wb_arrd-wb_arrdata)
+        dc.b    1,0
+        dc.l    0
+wb_arrdata:                          ; dessinées d'après leur description (chevron et hampe), pas recopiées
+wb_arrl:
+        dc.w    $F8FC,$F1FC,$E3FC,$C7FC,$8000,$C7FC,$E3FC,$F1FC
+wb_arrr:
+        dc.w    $F1F0,$F8F0,$FC70,$FE30,$0010,$FE30,$FC70,$F8F0
+wb_arru:
+        dc.w    $FE7F,$F81F,$E667,$9E79,$FE7F,$FE7F
+wb_arrd:
+        dc.w    $FE7F,$FE7F,$9E79,$E667,$F81F,$FE7F
+wb_arrdata_end:
 wb_infolib:
         dc.b    "info.library",0
 wb_noinfo:

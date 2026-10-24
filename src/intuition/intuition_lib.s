@@ -27,6 +27,8 @@
                 xref    intuition_CloseWindow
                 xref    it_ptrinit               ; pointer.s : sprite du pointeur
                 xref    intuition_DrawImage      ; screens.s
+                xref    intuition_ModifyProp     ; gadgets.s
+                xref    intuition_NewModifyProp
                 xref    intuition_AllocRemember
                 xref    intuition_FreeRemember
                 xref    intuition_DoubleClick
@@ -91,7 +93,9 @@ intuition_vectors:
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
         dc.l    intuition_null           ; 23 : LVO -138 InitRequester (non impl.)
         dc.l    intuition_ItemAddress    ; 24 : LVO -144 ItemAddress(menustrip a0, code d0)
-        dcb.l   3,intuition_null         ; 25..27 : LVO -150..-162 (non impl.)
+        dc.l    intuition_null           ; 25 : LVO -150 ModifyIDCMP (non impl.)
+        dc.l    intuition_ModifyProp     ; 26 : LVO -156 ModifyProp(gadget a0, fenêtre a1, requester a2, Flags d0, Pots d1/d2, Bodies d3/d4)
+        dc.l    intuition_null           ; 27 : LVO -162 MoveScreen (non impl.)
         dc.l    intuition_MoveWindow     ; 28 : LVO -168 MoveWindow(fenêtre a0, dx d0, dy d1)
         dc.l    intuition_OffGadget      ; 29 : LVO -174 OffGadget(gadget a0, fenêtre a1, requester a2)
         dc.l    intuition_OffMenu        ; 30 : LVO -180 OffMenu(fenêtre a0, code d0)
@@ -133,7 +137,7 @@ intuition_vectors:
         dc.l    intuition_RemoveGList    ; 74 : LVO -444 RemoveGList(fenêtre a0, gadget a1, nombre d0)
         dcb.l   2,intuition_null         ; 75..76 : LVO -450..-456 (non impl.)
         dc.l    intuition_ActivateGadget ; 77 : LVO -462 ActivateGadget(gadget a0, fenêtre a1, requester a2)
-        dc.l    intuition_null           ; 78 : LVO -468 NewModifyProp (non impl.)
+        dc.l    intuition_NewModifyProp  ; 78 : LVO -468 NewModifyProp(…, nombre de gadgets d5)
         dc.l    -1
 intuition_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
