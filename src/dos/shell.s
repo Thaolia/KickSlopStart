@@ -78,6 +78,7 @@ shell_main:
                 beq.s   .noassign
                 move.l  d0,a6
                 jsr     dos_boot_assigns
+                bsr     sh_sysconfig         ; Preferences du disque (DEVS: vient d'être assigné)
                 move.l  a6,a1
                 move.l  ($4).w,a6
                 jsr     LVO_CLOSELIBRARY(a6)
@@ -1018,6 +1019,70 @@ sh_run_startup:
 
 sh_doslib:
                 dc.b    "dos.library",0
+sh_sysconfname:
+                dc.b    "devs:system-configuration",0
+sh_intname:
+                dc.b    "intuition.library",0
+                even
+
+; sh_sysconfig(a6 = DOSBase) : comme le CLI initial 1.3, lit les 232 octets de devs:system-configuration et les passe
+; à SetPrefs(…, 232, TRUE). Fichier absent ou plus court : rien. Pas de requester « Please insert volume devs » sur
+; un disque sans DEVS: (jeux) : pr_WindowPtr vaut -1 le temps de l'Open. Écart voulu : les couleurs 0 à 3 restent celles des
+; Preferences courantes (thème vert pomme du projet) ; l'extension (ext_size) est ignorée, intuition V34 bornant
+; de toute façon à 232 octets. Préserve tout sauf d0/d1/a0/a1.
+SH_PREFSIZE     EQU 232
+SH_PREFCOL      EQU $6E              ; Preferences : color0..3 (4 mots)
+sh_sysconfig:
+                movem.l d2-d4/a6,-(sp)
+                lea     -(SH_PREFSIZE+SH_PREFCOL+8)(sp),sp
+                move.l  ($4).w,a0
+                move.l  EB_THISTASK(a0),a0
+                move.l  PR_WINDOWPTR(a0),-(sp)
+                moveq   #-1,d0
+                move.l  d0,PR_WINDOWPTR(a0)
+                move.l  #sh_sysconfname,d1
+                move.l  #MODE_OLDFILE,d2
+                jsr     DOS_LVO_OPEN(a6)
+                move.l  d0,d4
+                move.l  ($4).w,a0
+                move.l  EB_THISTASK(a0),a0
+                move.l  (sp)+,PR_WINDOWPTR(a0)
+                tst.l   d4
+                beq.s   .sc_ret
+                move.l  d4,d1
+                move.l  sp,d2
+                move.l  #SH_PREFSIZE,d3
+                jsr     DOS_LVO_READ(a6)
+                move.l  d0,d3
+                move.l  d4,d1
+                jsr     DOS_LVO_CLOSE(a6)
+                cmp.l   #SH_PREFSIZE,d3
+                bne.s   .sc_ret
+                move.l  ($4).w,a6
+                lea     sh_intname(pc),a1
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq.s   .sc_ret
+                move.l  d0,a6
+                lea     SH_PREFSIZE(sp),a0   ; couleurs courantes
+                move.l  #SH_PREFCOL+8,d0
+                jsr     SH_LVO_GETPREFS(a6)
+                move.l  SH_PREFSIZE+SH_PREFCOL(sp),SH_PREFCOL(sp)
+                move.l  SH_PREFSIZE+SH_PREFCOL+4(sp),SH_PREFCOL+4(sp)
+                move.l  sp,a0
+                move.l  #SH_PREFSIZE,d0
+                moveq   #1,d1
+                jsr     SH_LVO_SETPREFS(a6)
+                move.l  a6,a1
+                move.l  ($4).w,a6
+                jsr     LVO_CLOSELIBRARY(a6)
+.sc_ret:
+                lea     SH_PREFSIZE+SH_PREFCOL+8(sp),sp
+                movem.l (sp)+,d2-d4/a6
+                rts
+SH_LVO_GETPREFS EQU -132
+SH_LVO_SETPREFS EQU -324
 sh_startupname:
                 dc.b    "s/startup-sequence",0
                 EVEN

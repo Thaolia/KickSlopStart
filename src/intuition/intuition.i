@@ -52,7 +52,14 @@ IB_PKX           EQU IB_SYSWIN+4       ; gadget proportionnel : knob (relatif au
 IB_PKY           EQU IB_PKX+2
 IB_PMX           EQU IB_PKY+2          ; dernière position du pointeur (écran) pendant le glissement
 IB_PMY           EQU IB_PMX+2
-INTUITIONBASE_SIZE EQU IB_PMY+2
+IB_PREFS         EQU IB_PMY+2          ; Preferences courantes (PF_SIZE octets), lues par GetPrefs, posées par SetPrefs
+IB_PREMX         EQU IB_PREFS+PF_SIZE  ; reste du mouvement souris par axe (division par PointerTicks)
+IB_PREMY         EQU IB_PREMX+2
+IB_PTRDATA       EQU IB_PREMY+2        ; données chip du sprite du pointeur par défaut | 0
+IB_VINITX        EQU IB_PTRDATA+4      ; DxOffset / DyOffset de la vue à l'init (ViewInitX/Y des Preferences)
+IB_VINITY        EQU IB_VINITX+2
+IB_TATTR         EQU IB_VINITY+2       ; TextAttr de la police par défaut (topaz 8 ou 9 selon FontHeight)
+INTUITIONBASE_SIZE EQU IB_TATTR+8
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -201,6 +208,24 @@ ACTIVATE        EQU $1000           ; NewWindow : fenêtre activée à l'ouvertu
 WINDOWACTIVE    EQU $2000
 RMBTRAP         EQU $00010000
 
+; --- struct Preferences V34 (intuition/preferences.h, 232 octets) : champs utilisés ---
+PF_FONTHEIGHT   EQU $00
+PF_DBLCLICK     EQU $14                ; timeval : secondes, microsecondes
+PF_PTRMATRIX    EQU $1C                ; 36 mots : POS, CTL, 16 lignes (2 plans), 0, 0
+PF_XOFFSET      EQU $64                ; octets signés : décalage de l'image par rapport au point chaud
+PF_YOFFSET      EQU $65
+PF_COLOR17      EQU $66                ; couleurs 17..19 (pointeur)
+PF_PTRTICKS     EQU $6C
+PF_COLOR0       EQU $6E                ; couleurs 0..3 (Workbench)
+PF_VIEWXOFF     EQU $76                ; octets signés
+PF_VIEWYOFF     EQU $77
+PF_VIEWINITX    EQU $78
+PF_VIEWINITY    EQU $7A
+PF_EXTSIZE      EQU $E7
+PF_SIZE         EQU 232
+PF_VIEWEND      EQU PF_VIEWINITY+2     ; taille minimale pour que ViewInitX/Y soient copiés
+SC_BGCOLOR      EQU $7C3               ; couleur 0 : vert pomme (thème AmigaSlopDOS, défaut des Preferences)
+
 ; --- struct IntuiMessage (intuition/intuition.h) et classes IDCMP ---
 IM_CLASS        EQU 20               ; après la struct Message
 IM_CODE         EQU 24
@@ -222,6 +247,7 @@ REPORTMOUSE     EQU $00000200       ; WD_FLAGS : la fenêtre reçoit les mouveme
 MENUPICK        EQU $00000100
 CLOSEWINDOW     EQU $00000200
 RAWKEY          EQU $00000400
+NEWPREFS        EQU $00004000
 MENUNULL        EQU $FFFF
 SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS
 SELECTUP        EQU $E8

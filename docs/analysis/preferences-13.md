@@ -193,6 +193,120 @@ fait ReplyMsg du WBStartup et revient avec D0.
 3. DisplayAlert visible ;
 4. OpenWindow 640×200 sur l'écran WB (hauteur ≥ 200).
 
+## 5. Fenêtre principale : cadre de centrage de l'écran et son petit carré [O sauf mention]
+
+Repères (image relogée à $100000, hunks contigus alignés sur 8) : constructeur des gadgets
+$104A4C, tableaux de champs $103278… (un mot par gadget et par champ), PropInfo $1039E8 (22 octets
+chacun), Image $103B04 (20 octets chacune), dessin de fond d'un mode $1003C0, séquence initiale
+$104726…$1047DA, retour au mode principal $104F78…$104FDA.
+
+### 5.1 C'est un seul gadget proportionnel : le gadget n° 17
+
+Le grand cadre **et** le petit carré sont tous deux dessinés par **intuition**, lors du rendu de
+ce gadget. Preferences ne trace rien de spécifique dans cette zone : son seul dessin qui la touche
+est le fond général de la fenêtre, en couleur 2.
+
+| Champ `Gadget` | Valeur |
+|---|---|
+| LeftEdge, TopEdge, Width, Height | **200, 62, 240, 70** (coordonnées fenêtre) |
+| Flags | **$0007** = GADGHNONE (3) \| GADGIMAGE (4) ; aucun GRELxxx, pas SELECTED ni DISABLED |
+| Activation | **$000B** = RELVERIFY \| GADGIMMEDIATE \| FOLLOWMOUSE |
+| GadgetType | **$0003** = PROPGADGET (pas de REQGADGET, pas de GZZGADGET) |
+| GadgetRender | Image du knob (ci-dessous) |
+| SelectRender | **la même** Image (même pointeur) |
+| GadgetText, MutualExclude, UserData | NULL / 0 / NULL |
+| SpecialInfo | PropInfo ci-dessous |
+| GadgetID | 17 |
+
+| Champ `PropInfo` | Valeur initiale |
+|---|---|
+| Flags | **$0006** = FREEHORIZ \| FREEVERT ; **pas AUTOKNOB**, **pas PROPBORDERLESS** |
+| HorizPot / VertPot | calculés avant OpenWindow à partir des prefs (§5.4) |
+| HorizBody / VertBody | **$0800 / $0800** |
+| CWidth…TopBorder | 0 (remplis par intuition) |
+
+| Champ `Image` du knob | Valeur |
+|---|---|
+| LeftEdge, TopEdge | 0, 0 (réécrits par intuition à la position du knob) |
+| Width × Height × Depth | **16 × 8 × 1** |
+| ImageData | **non NULL** : copie en mémoire CHIP (AllocRemember MEMF_CHIP au démarrage, pointeur patché) |
+| PlanePick / PlaneOnOff | **1 / 0** |
+| NextImage | NULL |
+
+Géométrie des données (sans les reproduire) : la **première ligne** est entièrement à 1, et sur
+les **7 lignes suivantes** seules les **deux colonnes de gauche** sont à 1 ; tout le reste est à 0.
+Avec PlanePick 1 et PlaneOnOff 0, DrawImage donne **couleur 1 (blanc)** sur ces bits et **couleur
+0** partout ailleurs, plan 1 compris. Le knob est donc un « L » blanc (1 ligne en haut, 2 pixels
+à gauche) sur un fond de couleur 0. **Il n'est pas plein** : son intérieur a la même couleur que
+l'intérieur du conteneur, d'où l'aspect « liseré seul » sur la vraie ROM.
+
+La fenêtre est ouverte avec **NewWindow.DetailPen = BlockPen = $FF**. Intuition reprend donc
+les stylos de l'écran Workbench : **Window.DetailPen = 0**, **BlockPen = 1** [D, règle publique
+d'OpenWindow ; aucune autre valeur n'est fournie].
+
+### 5.2 Ce qui produit le fond de couleur 0 du grand cadre
+
+C'est le rendu standard d'un PROPGADGET par intuition (`intuition-prop-v34.md` §3.1), appliqué
+à ce gadget :
+1. **RectFill de toute la boîte** (200,62)–(439,131) en **Window.DetailPen = 0**, en JAM2 ⇒ fond
+   bleu ;
+2. **cadre** de la boîte en **BlockPen = 1** (blanc), puisque PROPBORDERLESS est absent. C'est le
+   « grand cadre » ;
+3. **DrawImage(GadgetRender)** à la position du knob ⇒ le « L » blanc.
+
+GADGHNONE : aucun surlignage, même quand le gadget est sélectionné.
+
+### 5.3 Ordre d'appel et moment du dessin
+
+Ouverture (§4, lignes 13 à 17) :
+1. **OpenWindow** (−204) avec FirstGadget = la liste du mode, qui contient le gadget 17. Intuition
+   y fait un premier rendu des gadgets.
+2. OpenFont / SetFont (§4).
+3. **Fond du mode** ($1003C0, rastport de la fenêtre, mode 0) :
+   - **SetDrMd(rp, JAM1)** (−354) ;
+   - pour chaque rectangle du mode : SetAPen (−342), puis **RectFill** (−306). Le premier
+     rectangle est **(1,10)–(637,198) en stylo 2** : il recouvre toute la fenêtre, gadget 17
+     compris, **et efface le premier rendu** ;
+   - les rectangles suivants (cadres stylo 1 et intérieurs stylo 0 des autres zones) **ne
+     touchent pas** la boîte du gadget 17 ;
+   - viennent ensuite des traits (Move/Draw −240/−246) et des textes (Move, SetAPen, Text −60),
+     eux aussi hors de la boîte.
+4. Dessins annexes : palette, pointeur, valeurs ($109CF0, $1005D2, $10557A), tous hors de la
+   boîte du gadget 17. Au démarrage, $10557A n'appelle pas ModifyProp.
+5. **RefreshGadgets(premier gadget du mode, fenêtre, NULL)** (−222). C'est ce rendu qui laisse
+   le fond **en couleur 0**, le cadre blanc et le knob (§5.2).
+
+Retour au mode principal depuis un autre mode ($104F78) :
+- même fond $1003C0 ;
+- **AddGadget(win, gadget i, −1)** (−42) pour i = 0…37 ;
+- dessins annexes, puis RefreshGadgets(gadget 0, win, NULL). Même résultat.
+
+Plus tard :
+- **ModifyProp(gad, win, NULL, PropInfo.Flags, HPot, VPot, HBody, VBody)** (−156) ($105616,
+  appelé par $10557A) est utilisé quand les prefs sont rechargées en bloc (boutons de
+  restauration). Il redessine le gadget, fond compris.
+- Le glissement du knob est géré par intuition (FOLLOWMOUSE + MOUSEMOVE dans l'IDCMP $70).
+  Au relâchement, Preferences recalcule ViewX/YOffset puis appelle RemakeDisplay
+  ($1057FA, §4 ligne 10).
+
+### 5.4 Pots initiaux (formule) [O]
+
+HorizPot = (31 − (129 − ViewInitX) + ViewXOffset) × 2048, et VertPot = (31 − (56 − ViewInitY) +
+ViewYOffset) × 2048, sur 16 bits. Les offsets sont bornés à −32..+31 lors de leur réécriture.
+
+### 5.5 Diagnostic de l'écart observé [D]
+
+- **Fond resté en couleur 2** : notre rendu de PROPGADGET ne remplit pas la boîte du gadget en
+  Window.DetailPen avant le cadre et le knob. Une autre possibilité est un DetailPen de fenêtre
+  qui n'est pas résolu en 0 depuis le $FF de la NewWindow. Le fond général (stylo 2) peint par
+  Preferences reste alors visible.
+- **Petit carré « plein »** : notre knob est correct (intérieur couleur 0, L blanc). Il paraît
+  plein uniquement parce qu'il est posé sur un fond de couleur 2. Une fois l'étape 1 de §5.2
+  faite, il doit se fondre dans le fond et ne laisser voir que le L.
+- Correspondance avec la capture : la boîte (200..439, 62..131) s'accorde avec x ≈ 388..636 et
+  y ≈ 246..390 de la capture, si l'on applique un décalage horizontal d'environ +188 et un
+  doublement vertical [D].
+
 ## Relecture clean-room
 
 - [x] Aucune suite d'instructions recopiée : format de fichier public (hunks), structures
@@ -201,3 +315,5 @@ fait ReplyMsg du WBStartup et revient avec D0.
 - [x] Aucune donnée du programme reproduite, hormis des chaînes et des tailles.
 - [x] §4 (relu) : séquence d'appels publics, conditions de sortie, champs de structures publiques,
   règle de choix d'OpenFont décrite par ses pondérations. Aucune suite d'instructions recopiée.
+- [x] §5 (relu) : champs publics Gadget/PropInfo/Image/NewWindow, appels de bibliothèque et ordre
+  de dessin ; image du knob décrite en géométrie seulement (aucune donnée reproduite).

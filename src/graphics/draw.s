@@ -367,15 +367,16 @@ gfx_TextLength:                      ; TextLength(rp a1, chaîne a0, nombre d0) 
         ext.l   d0
         movem.l (sp)+,d2-d3/a2-a3
         rts
-gfx_SetFont:                         ; SetFont(rp a1, police a0) : police et métriques du RastPort (0 : ignoré)
-        move.l  a0,d0
+; SetFont(rp a1, police a0) : police et métriques du RastPort (0 : ignoré). D0 n'est pas touché, comme en 1.3 :
+; Preferences teste au retour le D0 laissé par son OpenFont.
+gfx_SetFont:
+        cmpa.w  #0,a0
         beq.s   .sf_r
         move.l  a0,rp_Font(a1)
         move.w  tf_YSize(a0),rp_TxHeight(a1)
         move.w  tf_XSize(a0),rp_TxWidth(a1)
         move.w  tf_Baseline(a0),rp_TxBaseline(a1)
 .sf_r:
-        moveq   #0,d0
         rts
 
 ; InitRastPort(rp a1, a6 = GfxBase) : RastPort à zéro, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, police

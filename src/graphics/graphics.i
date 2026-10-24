@@ -71,6 +71,8 @@ M4C2_NO_MRGCOP EQU 0
 ; --- Offsets structures graphics (view.i/gfx.i ; champs de base, stables V34) ---
 v_ViewPort   EQU 0            ; View
 v_LOFCprList EQU 4
+v_DyOffset   EQU 12
+v_DxOffset   EQU 14
 v_Modes      EQU 16
 v_SIZEOF     EQU 18
 vp_Next      EQU 0            ; ViewPort

@@ -15,6 +15,8 @@
 
                 xdef    pointer_input_handler
                 xdef    it_ptrinit
+                xdef    it_ptrmoved
+                xdef    ptr_image
                 xref    it_event             ; screens.s : boutons et mouvements -> tâche d'entrée
                 xref    it_keyin
 
@@ -35,6 +37,7 @@ pointer_input_handler:
 .pih_mouse:
                 cmp.b   #IECLASS_RAWMOUSE,IE_CLASS(a3)
                 bne.s   .pih_next
+                bsr     ptr_ticks            ; deltas ramenés à la vitesse des Preferences
                 move.w  PTR_X,d3             ; X : position absolue += delta relatif
                 add.w   IE_X(a3),d3
                 ifeq    PTR_NO_CLAMP
@@ -72,8 +75,45 @@ pointer_input_handler:
                 movem.l (sp)+,d2/d3/d4/a3
                 rts
 
-; it_ptrmoved() : place le sprite du pointeur en (PTR_X, PTR_Y) et met à jour ib_MouseX/Y (coordonnées de l'écran
-; HIRES : x doublé). Rien avant l'init d'intuition. Préserve tout.
+; ptr_ticks(a3 = événement RAWMOUSE) : comme intuition 1.3, un compte de la souris vaut un pixel hires (une demi-ligne
+; en Y) divisé par PointerTicks des Preferences ; nos positions étant en pixels lores et en lignes, chaque delta est
+; divisé par 2 × PointerTicks, le reste étant reporté sur les événements suivants (IB_PREMX/Y). Rien avant l'init
+; d'intuition. Clobbe d0/d1/a0/a1.
+ptr_ticks:
+                move.l  INT_IBASE,d0
+                beq.s   .pt_ret
+                move.l  d0,a1
+                move.w  IB_PREFS+PF_PTRTICKS(a1),d1
+                ble.s   .pt_ret
+                add.w   d1,d1                ; d1 = diviseur
+                lea     IE_X(a3),a0
+                lea     IB_PREMX(a1),a1
+                bsr.s   .pt_axis
+                lea     IE_Y(a3),a0
+                addq.l  #IB_PREMY-IB_PREMX,a1
+.pt_axis:                            ; (a0) = delta, (a1) = reste : (delta + reste) = q × d1 + r, 0 <= r < d1
+                move.w  (a0),d0
+                add.w   (a1),d0
+                ext.l   d0
+                divs    d1,d0
+                swap    d0                   ; d0.w = reste (signe du dividende)
+                tst.w   d0
+                bpl.s   .pa_pos
+                add.w   d1,d0                ; reste négatif : quotient - 1, reste + diviseur
+                move.w  d0,(a1)
+                swap    d0
+                subq.w  #1,d0
+                move.w  d0,(a0)
+                rts
+.pa_pos:
+                move.w  d0,(a1)
+                swap    d0
+                move.w  d0,(a0)
+.pt_ret:
+                rts
+
+; it_ptrmoved() : place le sprite du pointeur en (PTR_X, PTR_Y) décalé de XOffset/YOffset des Preferences, et met
+; à jour ib_MouseX/Y (coordonnées de l'écran HIRES : x doublé). Rien avant l'init d'intuition. Préserve tout.
 it_ptrmoved:
                 movem.l d0-d1/a0-a1/a6,-(sp)
                 move.l  INT_IBASE,d0
@@ -86,17 +126,22 @@ it_ptrmoved:
                 move.l  IB_GFXBASE(a1),d0
                 beq.s   .pm_ret
                 move.l  d0,a6
+                move.b  IB_PREFS+PF_XOFFSET(a1),d0
+                ext.w   d0
+                add.w   PTR_X,d0
+                move.b  IB_PREFS+PF_YOFFSET(a1),d1
+                ext.w   d1
+                add.w   PTR_Y,d1
                 lea     IB_PTRSS(a1),a1
                 sub.l   a0,a0                ; ViewPort de la View active
-                move.w  PTR_X,d0
-                move.w  PTR_Y,d1
                 jsr     LVO_MOVESPRITE(a6)
 .pm_ret:
                 movem.l (sp)+,d0-d1/a0-a1/a6
                 rts
 
-; it_ptrinit(a2 = IntuitionBase, a6 = SysBase) : copie l'image du pointeur en chip, réserve le canal 0 et l'affiche à
-; la position courante ; publie IntuitionBase dans INT_IBASE. Sans GfxBase ou sans mémoire : pas de pointeur.
+; it_ptrinit(a2 = IntuitionBase, a6 = SysBase) : copie l'image du pointeur des Preferences en chip (IB_PTRDATA),
+; réserve le canal 0 et l'affiche à la position courante ; publie IntuitionBase dans INT_IBASE. Sans GfxBase ou sans
+; mémoire : pas de pointeur.
 ; Préserve d2-d7/a2-a6.
 it_ptrinit:
                 movem.l a3/a6,-(sp)
@@ -109,8 +154,9 @@ it_ptrinit:
                 tst.l   d0
                 beq.s   .pi_ret
                 move.l  d0,a3                ; a3 = données (POS, CTL, image, 0, 0)
+                move.l  d0,IB_PTRDATA(a2)
                 lea     4(a3),a1
-                lea     ptr_image(pc),a0
+                lea     IB_PREFS+PF_PTRMATRIX+4(a2),a0
                 moveq   #PTR_HEIGHT*2-1,d0
 .pi_cpy:
                 move.w  (a0)+,(a1)+

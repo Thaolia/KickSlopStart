@@ -763,6 +763,28 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     - le knob tenu est invisible (notre DetailPen vaut 2) ;
     - une icône partiellement visible n'est pas dessinée (pas d'InstallClipRegion) ;
     - les flèches ne se répètent pas (INTUITICKS absent).
+  (19) **Preferences : SetPrefs, chargement de devs:system-configuration, PointerTicks** (spec intuition-prefs-v34,
+  relue clean-room ; Preferences 34.66 s'affiche et montre les mêmes valeurs que la vraie 1.3).
+  - **graphics SetFont** ne touche plus D0 : Preferences teste au retour le D0 laissé par son OpenFont (sortie
+    silencieuse sinon). **SetRGB4** (−288) : ColorTable, MOVE du fragment de la ViewPort et de la liste maîtresse.
+  - **intuition (prefs.s)** : copie courante de 232 octets dans IntuitionBase.
+    - GetPrefs (−132) la copie ; GetDefPrefs (−126) copie les valeurs par défaut et l'image du pointeur ; copie bornée
+      signée, ViewInitX/Y remplacés par les décalages de la vue.
+    - SetPrefs (−324) : copie, ext_size à 0, puis police par défaut (topaz 8 ou 9 selon FontHeight), police de
+      l'écran WB, décalage de la vue, couleurs 0-3 et 17-19 de l'écran WB (SetRGB4), image et décalage du pointeur ;
+      `inform` : NEWPREFS à chaque fenêtre qui l'a demandé.
+    - Lus à la volée : DoubleClick (délai des Preferences), PointerTicks, XOffset/YOffset, couleurs WB à OpenScreen.
+  - **Pointeur** : un compte souris vaut un pixel hires (une demi-ligne en Y) divisé par PointerTicks, comme sur la
+    1.3 (mesuré sur la vraie ROM) ; nos positions étant lores, chaque delta est divisé par 2 × PointerTicks avec report
+    du reste. Le pointeur allait auparavant deux fois trop vite.
+  - **dos (CLI initial)** : après les assigns, `devs:system-configuration` (232 octets exactement) passe à
+    SetPrefs(…, 232, TRUE). Écarts voulus : les couleurs 0 à 3 restent celles du thème du projet ; l'extension
+    ext_size est ignorée (intuition V34 borne à 232).
+  - Valeurs par défaut de la spec, sauf couleurs (thème), couleurs et décalage du pointeur (notre image).
+  - Le cadre de centrage de Preferences (PROPGADGET sans AUTOKNOB, fond au DetailPen de la fenêtre, hérité de l'écran)
+    est noir chez nous au lieu de la couleur 0 : conséquence du thème (DetailPen 2 sur l'écran WB), pas un bug du rendu.
+  - **Non faits** : RemakeDisplay (le décalage de la vue n'a pas d'effet visible), ajustement lignes/colonnes,
+    transmission KeyRptDelay/Speed à input.device (pas de répétition clavier chez nous).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

@@ -133,7 +133,9 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_SetRast              ; 39 : LVO -234
         dc.l    gfx_Move                 ; 40 : LVO -240
         dc.l    gfx_Draw                 ; 41 : LVO -246
-        dcb.l   9,graphics_null         ; 42..50 : LVO -252..-300 (non implémentés)
+        dcb.l   6,graphics_null         ; 42..47 : LVO -252..-282 (non implémentés)
+        dc.l    gfx_SetRGB4              ; 48 : LVO -288 SetRGB4(vp a0, n d0, r d1, g d2, b d3)
+        dcb.l   2,graphics_null         ; 49..50 : LVO -294..-300 (non implémentés)
         dc.l    gfx_RectFill             ; 51 : LVO -306
         dc.l    graphics_null            ; 52 : LVO -312 (non implémenté)
         dc.l    gfx_ReadPixel            ; 53 : LVO -318
@@ -333,6 +335,52 @@ gfx_MakeVPort:
         move.l  a3,vp_DspIns(a2)     ; publie le fragment
 .mv_ret:
         movem.l (sp)+,d2/d3/d4/d5/a2/a3/a4/a6
+        rts
+
+; gfx_SetRGB4(vp a0, n d0, r d1, g d2, b d3) : ColorTable[n] = RGB 4 bits, et le MOVE COLORn déjà généré est corrigé
+; dans le fragment de la ViewPort et, si elle est la ViewPort de la vue affichée, dans la liste maîtresse.
+gfx_SetRGB4:
+        cmpa.w  #0,a0
+        beq.s   .sr_ret
+        move.l  vp_ColorMap(a0),a1
+        cmpa.w  #0,a1
+        beq.s   .sr_ret
+        and.w   #15,d1
+        lsl.w   #4,d1
+        and.w   #15,d2
+        or.w    d2,d1
+        lsl.w   #4,d1
+        and.w   #15,d3
+        or.w    d3,d1                ; d1 = $0RGB
+        cmp.w   cm_Count(a1),d0
+        bhs.s   .sr_ret
+        move.l  cm_ColorTable(a1),a1
+        add.w   d0,d0
+        move.w  d1,0(a1,d0.w)
+        add.w   #COLOR00-CUSTOM,d0   ; d0 = registre COLORn
+        move.l  vp_DspIns(a0),d2
+        beq.s   .sr_ret
+        move.l  d2,a1
+        moveq   #GFX_FRAG_WORDS/2-1,d3
+.sr_find:
+        cmp.w   (a1),d0
+        beq.s   .sr_hit
+        addq.l  #4,a1
+        dbra    d3,.sr_find
+        bra.s   .sr_ret
+.sr_hit:
+        move.w  d1,2(a1)
+        move.l  gb_ActiView(a6),d3
+        beq.s   .sr_ret
+        exg     d3,a0
+        cmp.l   v_ViewPort(a0),d3
+        bne.s   .sr_ret
+        move.l  v_LOFCprList(a0),d3
+        beq.s   .sr_ret
+        sub.l   d2,a1                ; même position dans la copie du fragment
+        add.l   d3,a1
+        move.w  d1,GFX_SPRCOP_SIZE+2(a1)
+.sr_ret:
         rts
 
 ; fenêtres d'affichage PAL : DIWSTRT, DDFSTRT, DDFSTOP, octets lus par ligne (DIWSTOP : fixe en overscan, sinon

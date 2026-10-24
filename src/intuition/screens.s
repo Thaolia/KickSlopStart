@@ -67,7 +67,6 @@ SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; taille d'un plan alloué ici (0 : BitMap 
 SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
 SC_BARH         EQU 9                ; BarHeight : la barre de titre couvre les lignes 0..9
-SC_BGCOLOR      EQU $7C3             ; couleur 0 : vert pomme (thème AmigaSlopDOS)
 ; fenêtre : struct Window + messages IDCMP (même allocation) ; RastPort et couche viennent de layers.library
 WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
 WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
@@ -170,6 +169,19 @@ intuition_OpenScreen:
 .os_pal:
         move.w  (a1)+,(a0)+
         dbra    d0,.os_pal
+        moveq   #SCREENTYPE,d0       ; écran Workbench : couleurs 0-3 et 17-19 des Preferences
+        and.w   NS_TYPE(a2),d0
+        cmp.w   #WBENCHSCREEN,d0
+        bne.s   .os_ras
+        lea     SCX_COLORTAB(a3),a0
+        lea     IB_PREFS+PF_COLOR0(a5),a1
+        move.l  (a1)+,(a0)+
+        move.l  (a1)+,(a0)+
+        lea     SCX_COLORTAB+17*2(a3),a0
+        lea     IB_PREFS+PF_COLOR17(a5),a1
+        move.l  (a1)+,(a0)+
+        move.w  (a1)+,(a0)+
+.os_ras:
         ; RasInfo, ViewPort, RastPort
         lea     SC_BITMAP(a3),a0
         move.l  a0,SCX_RASINFO+ri_BitMap(a3)
@@ -2779,25 +2791,27 @@ wn_post:
         rts
 
 ; DoubleClick(secondes d0, micros d1, secondes d2, micros d3) -> d0 = TRUE si le second clic suit le premier de moins
-; que le délai de double-clic des préférences.
+; que le délai de double-clic des Preferences (a6 = IntuitionBase).
 intuition_DoubleClick:
-        sub.l   d0,d2                ; d2 = écart en secondes
+        sub.l   d0,d2                ; (d2, d3) = écart (secondes, microsecondes)
         bmi.s   .dc_no
-        cmp.l   #2,d2
-        bhs.s   .dc_no
-        mulu    #15625,d2            ; secondes -> microsecondes (15625 * 64)
-        lsl.l   #6,d2
-        add.l   d3,d2
-        sub.l   d1,d2                ; d2 = écart en microsecondes
+        sub.l   d1,d3
+        bpl.s   .dc_cmp
+        add.l   #1000000,d3
+        subq.l  #1,d2
         bmi.s   .dc_no
-        cmp.l   #IT_DBLCLICK,d2
+.dc_cmp:
+        cmp.l   IB_PREFS+PF_DBLCLICK(a6),d2
+        bhi.s   .dc_no
+        blo.s   .dc_yes
+        cmp.l   IB_PREFS+PF_DBLCLICK+4(a6),d3
         bhs.s   .dc_no
+.dc_yes:
         moveq   #-1,d0
         rts
 .dc_no:
         moveq   #0,d0
         rts
-IT_DBLCLICK     EQU 1000000          ; délai de double-clic (Preferences par défaut : 1 s)
 
 ; NewScreen du Workbench
 sc_wbnewscreen:
