@@ -797,8 +797,9 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     directement à leur place, IoErr 103 (mémoire) ou 121 (format). Le shell charge ses commandes par LoadSeg au lieu
     de lire le fichier entier. `csr.exe` (126 Ko compactés, 657 Ko de hunks) ne tenait pas avec un tampon du fichier
     entier et sortait en « Error code 121 ».
-  - Écart dû au thème : après `caesar.boot`, l'écran WB n'a qu'un plan ; le texte de la console (stylo 2) devient
-    invisible (vert sur vert), alors qu'il reste blanc sur bleu sur la vraie 1.3.
+  - Après `caesar.boot`, l'écran WB n'a qu'un plan : le stylo 2 du thème se confondait avec le fond (texte invisible,
+    frappe « à l'aveugle »). La console prend désormais la couleur voisine du fond quand texte et fond tombent sur la
+    même couleur une fois réduits aux plans de la BitMap (blanc sur vert).
   (21) **Compatibilité exec/dos avec les intros et jeux de la suite ADF** (spec cracktros-exit, loadwb-13 ; sondes boîte
   noire `tests/memmap.s` et `tests/reslist.s` sur la vraie ROM). Scooby-Doo va jusqu'à l'écran titre, Monkey Island et
   SimCity reviennent au Workbench après leur intro, comme sur la vraie 1.3.

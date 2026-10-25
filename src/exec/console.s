@@ -882,6 +882,30 @@ cu_setpens:
         beq.s   .sp_n
         exg     d0,d1
 .sp_n:
+        move.l  d2,-(sp)             ; texte et fond confondus avec les plans de la BitMap (écran réduit à 1 plan par un
+        move.l  rp_BitMap(a3),a0     ; programme : noir du thème = fond) -> le texte prend la couleur voisine du fond
+        moveq   #0,d2
+        move.b  bm_Depth(a0),d2
+        moveq   #1,d0
+        lsl.l   d2,d0
+        subq.l  #1,d0
+        move.l  d0,d2                ; d2 = masque des stylos affichables
+        moveq   #0,d0
+        move.b  CU_FGPEN(a5),d0
+        tst.b   CU_INV(a5)
+        beq.s   .sp_m
+        move.b  CU_BGPEN(a5),d0
+.sp_m:
+        eor.l   d1,d0
+        and.l   d2,d0
+        bne.s   .sp_vis
+        move.l  d1,d0                ; confondus : fond ^ 1
+        eor.b   #1,d0
+        bra.s   .sp_ok
+.sp_vis:
+        eor.l   d1,d0                ; d0 = stylo d'origine
+.sp_ok:
+        move.l  (sp)+,d2
         move.l  d1,-(sp)
         move.l  a3,a1
         jsr     LVO_SETAPEN(a6)
