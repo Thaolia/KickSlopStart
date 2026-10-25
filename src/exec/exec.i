@@ -423,7 +423,7 @@ GP_NO_EDGE   EQU 0
 PTR_NO_CLAMP EQU 0
 
 ; --- Taille max d'un fichier bufferisé (handler HS_BUF + LoadSeg) : cap-bump 16K -> 32K (PAS du streaming) ---
-; Le cap de LECTURE est le buffer whole-file du handler (HND_FILEMAX) + celui de LoadSeg (LS_LOADMAX). On le relève
+; Le cap de LECTURE est le buffer whole-file du handler (HND_FILEMAX) + celui de dos_loadseg (D2). On le relève
 ; à 32 Ko (handles un exécutable jusqu'à 32 Ko, était 16 Ko) ; 2 buffers concurrents = 64 Ko transitoire (sûr sur le
 ; tas A500 ~500 Ko). La lecture incrémentale OFS réelle (streaming, pas de buffer whole-file) reste une DETTE différée.
 ; LOADSEG_CAP16K=1 (RED) : re-plafonne à 16 Ko -> un exécutable > 16 Ko (bigseg) tronque à FINDINPUT -> ne charge/tourne

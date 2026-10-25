@@ -20,7 +20,7 @@
                 xref    conwin_seg
                 xref    rcli_seg
                 xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet)
-                xref    ls_load_hunks    ; dos/loadseg.s (parse hunk d'un buffer -> seglist BPTR)
+                xref    ls_load_stream   ; dos/loadseg.s (parse hunk au fil de la lecture -> seglist BPTR)
                 xref    dos_unloadseg    ; dos/loadseg.s (libère une chaîne de segments)
                 xref    timer_now        ; exec/timer.s (heure système pour DateStamp)
                 xref    timer_setnow
@@ -35,7 +35,6 @@
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
 
-LS_LOADMAX      EQU DOS_FILEMAX       ; buffer de lecture LoadSeg (cap-bump 32K, exec.i ; cf. HND_FILEMAX)
 
 ; --- ROMTag dos.library (scanné par build_reslist) ---
         EVEN
@@ -56,7 +55,7 @@ dos_inittab:
         dc.l    dos_datatab              ; dataTable (InitStruct)
         dc.l    dos_initfunc             ; initFunc
 ; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. D3c : Open(-30,v5)/Close(-36,v6)/Read(-42,v7) implémentés
-; (via packets vers le file-handler). LoadSeg(-150,v25)/UnLoadSeg(-156,v26) composent Open/Read + ls_load_hunks.
+; (via packets vers le file-handler). LoadSeg(-150,v25)/UnLoadSeg(-156,v26) composent Open/Read + ls_load_stream.
 ; Les autres vecteurs pointent sur dos_null (non impl.).
 dos_vectors:
         dc.l    dos_open                 ; 1 : LVO -6  (Open LIBRAIRIE : OpenCnt++)
@@ -611,92 +610,51 @@ dos_fn_currentdir:
 ; --- LoadSeg / UnLoadSeg (vecteurs LVO -150 / -156) : chargement d'exécutable hunk VIA LES VRAIS Open/Read ---
 ; Appelées depuis un PROCESS (comme Open/Read : dos_sendpkt utilise ThisTask->pr_MsgPort comme reply port).
 
-; LoadSeg(name d1 [C-string]) -> d0 = BPTR seglist | 0. Ouvre le fichier via dos Open (-30, MODE_OLDFILE), le lit
-; ENTIER via dos Read (-42, boucle jusqu'à EOF ; le file-handler est séquentiel) dans un buffer AllocMem'd, le parse
-; (ls_load_hunks : hunks CODE/DATA/BSS + relocations RELOC32 -> seglist BPTR), referme (-36), libère le buffer. Portée
-; milestone (cf. Lemmings) : charge NOS exécutables hunk via le vrai chemin LVO ; whole-file bufferisé (tampon de
-; LS_LOADMAX doublé autant que nécessaire), handler OFS DF0: seul -> ne suffit PAS à exécuter du logiciel commercial (Lock/Seek/Examine/Write,
-; expansion.library, streaming... manquent). a4 = DosBase (préservé par Open/Read/Close/ls_load_hunks/AllocMem).
+; LoadSeg(name d1 [C-string]) -> d0 = BPTR seglist | 0. Ouvre le fichier via dos Open (-30, MODE_OLDFILE) et le
+; charge au fil de la lecture (ls_load_stream : tampon de LS_BUFSZ octets rechargé par Read, gros hunks lus
+; directement à leur place ; hunks CODE/DATA/BSS + relocations RELOC32 -> seglist BPTR), puis referme (-36). Échec :
+; IoErr = 103 (mémoire) ou 121 (pas un exécutable). Aucun tampon du fichier entier : un gros exécutable compacté
+; (Caesar, 126 Ko pour 657 Ko de hunks) tient dans 1 Mo.
 dos_fn_loadseg:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a4                  ; a4 = DosBase (survit à tous les appels)
         move.l  #MODE_OLDFILE,d2       ; Open(name d1 [déjà posé], mode d2 = ACTION_FINDINPUT)
         bsr     dos_fn_open            ; d0 = BPTR fh | 0 ; a6 restauré = DosBase
         move.l  d0,d7                  ; d7 = BPTR fh
-        beq     .ls_fail0
-        move.l  ($4).w,a6              ; SysBase pour AllocMem
-        move.l  #LS_LOADMAX,d0
-        move.l  d0,a3                  ; a3 = capacité du tampon (doublée quand il est plein)
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq     .ls_close              ; pas de RAM : referme fh, IoErr = 103
-        move.l  d0,a2                  ; a2 = buffer de lecture
-        moveq   #0,d5                  ; d5 = total lu
-.ls_rloop:
-        move.l  a3,d6
-        sub.l   d5,d6                  ; restant
-        bgt.s   .ls_read
-        move.l  a3,d0                  ; plein : tampon deux fois plus grand, contenu recopié
-        add.l   d0,d0
+        beq.s   .ls_fail0
         move.l  ($4).w,a6
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  #LS_BUFSZ,d0
+        move.l  #MEMF_PUBLIC,d1
         jsr     LVO_ALLOCMEM(a6)
+        moveq   #ERROR_NO_FREE_STORE,d6
+        moveq   #0,d5                  ; d5 = seglist
+        move.l  d0,a2                  ; a2 = tampon de lecture
         tst.l   d0
-        beq.s   .ls_nomem
-        move.l  d0,d4                  ; d4 = nouveau tampon
-        move.l  d0,a1
-        move.l  a2,a0
-        move.l  d5,d0
-        jsr     LVO_COPYMEM(a6)
+        beq.s   .ls_close
+        lea     -LR_SIZE(sp),sp        ; lecteur : le fichier est lu au fil de l'eau
+        move.l  a2,LR_BUF(sp)
+        clr.l   LR_POS(sp)
+        clr.l   LR_LEN(sp)
+        move.l  d7,LR_FH(sp)
+        move.l  a4,LR_DOS(sp)
+        move.l  #LS_BUFSZ,LR_CAP(sp)
+        move.l  sp,a0
+        jsr     ls_load_stream         ; d0 = seglist | 0, d1 = code d'erreur (loadseg.o loin -> jsr)
+        lea     LR_SIZE(sp),sp
+        move.l  d0,d5
+        move.l  d1,d6
         move.l  a2,a1
-        move.l  a3,d0
+        move.l  #LS_BUFSZ,d0
         jsr     LVO_FREEMEM(a6)
-        move.l  d4,a2
-        add.l   a3,a3
-        bra.s   .ls_rloop
-.ls_read:
-        move.l  a4,a6                  ; Read via DosBase
-        move.l  d7,d1                  ; fh
-        move.l  a2,d2
-        add.l   d5,d2                  ; buf + total (le handler avance HS_POS)
-        move.l  d6,d3                  ; restant
-        bsr     dos_fn_read            ; d0 = octets lus (0 = EOF)
-        tst.l   d0
-        ble.s   .ls_rdone              ; 0 (EOF) ou <0 (err) -> stop
-        add.l   d0,d5
-        bra.s   .ls_rloop
-.ls_nomem:
-        move.l  a2,a1
-        move.l  a3,d0
-        jsr     LVO_FREEMEM(a6)
-        bra.s   .ls_close
-.ls_rdone:
-        move.l  ($4).w,a6              ; ls_load_hunks attend a6 = SysBase
-        move.l  a2,a0                  ; buffer
-        move.l  d5,d0                  ; taille lue
-        jsr     ls_load_hunks          ; d0 = BPTR seglist | 0 (loadseg.o loin -> jsr)
-        move.l  d0,d6                  ; d6 = seglist
-        move.l  a2,a1                  ; libère le buffer
-        move.l  a3,d0
-        jsr     LVO_FREEMEM(a6)
-        move.l  a4,a6                  ; referme fh via DosBase
-        move.l  d7,d1
-        bsr     dos_fn_close
-        move.l  d6,d0                  ; renvoie seglist
-        bne.s   .ls_ret
-        move.l  ($4).w,a0              ; refusé (pas un exécutable) : IoErr = 121 comme la 1.3, posé APRÈS le
-        move.l  EB_THISTASK(a0),a0     ; Close (dont la réponse remet pr_Result2 à 0)
-        move.l  #ERROR_FILE_NOT_OBJECT,PR_RESULT2(a0)
-        moveq   #0,d0
-        bra.s   .ls_ret
 .ls_close:
         move.l  a4,a6
         move.l  d7,d1
         bsr     dos_fn_close
-        move.l  ($4).w,a0              ; après le Close (sa réponse remet pr_Result2 à 0)
+        move.l  d5,d0
+        bne.s   .ls_ret
+        move.l  ($4).w,a0              ; IoErr posé APRÈS le Close (dont la réponse remet pr_Result2 à 0)
         move.l  EB_THISTASK(a0),a0
-        move.l  #ERROR_NO_FREE_STORE,PR_RESULT2(a0)
+        move.l  d6,PR_RESULT2(a0)
 .ls_fail0:
         moveq   #0,d0
 .ls_ret:

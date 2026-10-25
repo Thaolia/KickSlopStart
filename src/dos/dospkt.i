@@ -145,6 +145,16 @@ OFFSET_END       EQU 1             ; Seek depuis la fin
 ERROR_OBJECT_NOT_FOUND EQU 205     ; dos/dos.i : fichier/objet introuvable (Open d'un nom absent)
 ERROR_FILE_NOT_OBJECT EQU 121      ; dos/dos.i : fichier non chargeable (LoadSeg)
 ERROR_NO_FREE_STORE EQU 103       ; dos/dos.i : mémoire insuffisante
+; lecteur de LoadSeg (loadseg.s ls_load_stream) : tampon rechargé par Read, ou tampon fixe si LR_FH = 0
+LR_BUF           EQU 0              ; tampon
+LR_POS           EQU 4              ; prochain octet à lire dans le tampon
+LR_LEN           EQU 8              ; octets valides dans le tampon
+LR_FH            EQU 12             ; BPTR FileHandle | 0
+LR_DOS           EQU 16             ; DOSBase (Read)
+LR_CAP           EQU 20             ; taille du tampon
+LR_EOF           EQU 24             ; WORD : fin des données atteinte
+LR_SIZE          EQU 26
+LS_BUFSZ         EQU 2048           ; tampon de lecture de LoadSeg
 ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i : action/fonction non supportée
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i : préfixe « xxx: » inconnu de la DosList
 ERROR_RENAME_ACROSS_DEVICES EQU 215

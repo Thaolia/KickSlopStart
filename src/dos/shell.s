@@ -16,7 +16,6 @@
                 xdef    shell_main
                 xref    ser_puts             ; exec/boot.s (bannière de test sur le série)
                 xref    dos_sendpkt
-                xref    ls_load_hunks        ; dos/loadseg.s (E3 : parse hunk d'un buffer lu via dos)
                 xref    dos_unloadseg        ; dos/loadseg.s (E3 : libérer la seglist)
                 xref    ser_lock             ; exec/boot.s (émission série atomique)
                 xref    ser_unlock
@@ -443,55 +442,14 @@ sh_exec_cmd:
                 jsr     LVO_FREEMEM(a6)
                 tst.l   d4
                 beq     .x_closelib
-                ; --- buffer à la taille du fichier, MEMF_PUBLIC : en slow RAM si présente (la chip reste au programme) ---
-                move.l  d4,d0
-                move.l  #MEMF_PUBLIC,d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq     .x_closelib
-                move.l  d0,a5                ; a5 = filebuf (d4 octets)
-                moveq   #0,d7                ; d7 = 0 tant qu'aucune seglist (Open raté -> rien à exécuter)
-                move.l  a4,a6
+                move.l  a4,a6                ; LoadSeg lit le fichier au fil de l'eau (pas de tampon du fichier entier)
                 move.l  d5,d1
-                move.l  #MODE_OLDFILE,d2
-                jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0
-                tst.l   d0
-                beq.s   .x_freebuf
-                move.l  d0,d7                ; d7 = BPTR fh
-                moveq   #0,d6                ; d6 = octets lus
-.x_rd:                                       ; le file-handler est séquentiel : boucle jusqu'à EOF / plein
-                move.l  d7,d1
-                move.l  a5,d2
-                add.l   d6,d2
-                move.l  d4,d3
-                sub.l   d6,d3
-                beq.s   .x_rddone
-                jsr     DOS_LVO_READ(a6)     ; d0 = octets lus (0 = EOF, -1 = erreur)
-                tst.l   d0
-                ble.s   .x_rddone
-                add.l   d0,d6
-                bra.s   .x_rd
-.x_rddone:
-                move.l  d7,d1
-                jsr     DOS_LVO_CLOSE(a6)
-                move.l  ($4).w,a6            ; SysBase
-                moveq   #0,d7                ; d7 = seglist (0 = échec)
-                tst.l   d6
-                beq.s   .x_freebuf           ; rien lu
-                move.l  a5,a0
-                move.l  d6,d0
-                jsr     ls_load_hunks        ; d0 = BPTR seglist | 0
+                jsr     DOS_LVO_LOADSEG(a6)  ; BPTR seglist | 0 (IoErr : 103 mémoire, 121 pas un exécutable)
                 move.l  d0,d7
-                bne.s   .x_freebuf
-                move.l  #2,XF_FLAG(sp)       ; lu mais refusé (type de hunk inconnu, mémoire...)
-                move.l  ($4).w,a0
-                move.l  EB_THISTASK(a0),a0
-                move.l  #ERROR_FILE_NOT_OBJECT,PR_RESULT2(a0)
-.x_freebuf:
-                move.l  ($4).w,a6            ; libère le buffer AVANT d'exécuter : rend la mémoire au programme
-                move.l  a5,a1
-                move.l  d4,d0
-                jsr     LVO_FREEMEM(a6)
+                bne.s   .x_loaded
+                move.l  #2,XF_FLAG(sp)       ; trouvée mais non chargeable
+.x_loaded:
+                move.l  ($4).w,a6
                 tst.l   d7
                 beq     .x_closelib
                 move.l  d7,XF_SEG(sp)

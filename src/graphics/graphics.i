@@ -5,6 +5,8 @@
 ; --- registres d'affichage (adresses absolues ; HRM) ---
 COP1LC   EQU CUSTOM+$080      ; pointeur Copper list 1 (longword ; rechargé par le hardware à chaque VBlank)
 COPJMP1  EQU CUSTOM+$088      ; strobe : (re)démarre le Copper sur COP1LC (write-strobe, valeur ignorée)
+COP2LC   EQU CUSTOM+$084      ; pointeur Copper list 2 (le copinit y saute par un MOVE COPJMP2)
+COPJMP2  EQU CUSTOM+$08A
 DIWSTRT  EQU CUSTOM+$08E      ; display window start (coin haut-gauche)
 DIWSTOP  EQU CUSTOM+$090      ; display window stop  (coin bas-droit)
 DDFSTRT  EQU CUSTOM+$092      ; display data fetch start
@@ -203,7 +205,8 @@ gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR : données (POS/CTL + image) de chaque 
 gb_SprUsed   EQU GB_PUBLIC+40 ; WORD : canaux réservés par GetSprite (bit n = canal n)
 gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 o) : propriété du blitter (OwnBlitter / DisownBlitter)
 GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
-GFXBASE_SIZE EQU GB_PUBLIC+42+46
+gb_VBInt     EQU GB_PUBLIC+42+46 ; struct Interrupt (IS_SIZE) du serveur VBlank : COP2LC := gb_LOFlist
+GFXBASE_SIZE EQU gb_VBInt+22
 DISPF_PAL    EQU 4
 
 ; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---

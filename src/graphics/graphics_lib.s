@@ -225,9 +225,51 @@ graphics_initfunc:
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
         jsr     gfx_fontinit
+        moveq   #GFX_COPINIT_SIZE,d0 ; copinit (COP1LC) : attente ligne 12 puis saut vers COP2LC
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,gb_copinit(a2)
+        beq.s   .gi_vb
+        move.l  d0,a0
+        lea     gfx_copinit(pc),a1
+        moveq   #GFX_COPINIT_SIZE/2-1,d0
+.gi_ci:
+        move.w  (a1)+,(a0)+
+        dbra    d0,.gi_ci
+.gi_vb:
+        lea     gb_VBInt(a2),a1
+        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        move.b  #GFX_VBPRI,LN_PRI(a1)
+        lea     graphics_name(pc),a0
+        move.l  a0,LN_NAME(a1)
+        move.l  a2,IS_DATA(a1)
+        lea     gfx_vblank(pc),a0
+        move.l  a0,IS_CODE(a1)
+        moveq   #INTB_VERTB,d0
+        jsr     LVO_ADDINTSERVER(a6)
         move.l  a2,d0
         move.l  (sp)+,a2
         rts
+
+; gfx_vblank(a1 = GfxBase) : serveur VBlank. Recharge COP2LC avec la liste de la vue affichée : un programme qui écrit
+; COP2LC interruptions coupées voit sa liste exécutée par le copinit jusqu'à ce qu'il les rétablisse (intro FLT de
+; Caesar). Rend Z = 1 (la chaîne continue).
+gfx_vblank:
+        tst.l   gb_ActiView(a1)
+        beq.s   .vb_ret
+        move.l  gb_LOFlist(a1),d0
+        beq.s   .vb_ret
+        move.l  d0,COP2LC
+.vb_ret:
+        moveq   #0,d0
+        rts
+GFX_VBPRI       EQU 10
+
+gfx_copinit:
+        dc.w    $0C01,$FFFE          ; WAIT ligne 12
+        dc.w    COPJMP2-CUSTOM,0     ; saut vers COP2LC
+        dc.w    $FFFF,$FFFE
+GFX_COPINIT_SIZE EQU 12
 
 ; === M4c2 : moteur d'affichage (copper list GÉNÉRÉE depuis les structures) ===
 ; Convention Amiga pour les 3 fonctions : a6 = GfxBase, préservent d2-d7/a2-a6, scratch d0/d1/a0/a1.
@@ -470,7 +512,8 @@ gfx_sprmoves:
         dbra    d2,.sm_lp
         rts
 
-; gfx_LoadView(view a1) : a1 != 0 -> réécrit les pointeurs de sprite de v_LOFCprList, l'installe (COP1LC) + active
+; gfx_LoadView(view a1) : a1 != 0 -> réécrit les pointeurs de sprite de v_LOFCprList, l'installe (COP2LC, derrière le
+; copinit de COP1LC) + active
 ; Copper/bitplane/sprite DMA + pose
 ; gb_ActiView. a1 == 0 (vue NULLE) -> BLANCHIT l'affichage : coupe le DMA bitplane (RASTER) ET copper du
 ; système, pour que l'appelant (ex. flt-intro) pose SON propre COP1LC + bitplanes sans que notre copper de
@@ -492,7 +535,12 @@ gfx_LoadView:
         addq.l  #2,d0
         move.l  d0,gb_SprCop(a6)     ; mot de valeur de SPR0PTH
         subq.l  #2,d0
-        move.l  d0,COP1LC            ; COP1LC = master (longword)
+        move.l  d0,COP2LC            ; COP2LC = master, exécuté via le copinit (COP1LC)
+        move.l  gb_copinit(a6),d0
+        bne.s   .lv_ci
+        move.l  gb_LOFlist(a6),d0    ; pas de copinit (mémoire) : master directement
+.lv_ci:
+        move.l  d0,COP1LC
         move.w  #GFX_DMA_ON,DMACON   ; DMA maître + Copper + bitplane
         move.w  #0,COPJMP1           ; strobe COP1
 .lv_ret:

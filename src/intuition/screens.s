@@ -27,6 +27,7 @@
                 xdef    intuition_AllocRemember
                 xdef    intuition_FreeRemember
                 xdef    intuition_DoubleClick
+                xdef    intuition_RemakeDisplay
                 xdef    it_event
                 xdef    it_refresh           ; menus.s
                 xdef    it_title
@@ -447,6 +448,15 @@ it_box:
         move.w  d5,d1
         jsr     LVO_DRAW(a6)
         movem.l (sp)+,d4-d7
+        rts
+
+; RemakeDisplay() / RethinkDisplay() (a6 = IntuitionBase) : copper list refaite depuis les structures de l'écran de
+; tête (un programme qui a changé BitMap.Depth ou les couleurs à la main est ainsi affiché tel quel).
+intuition_RemakeDisplay:
+        move.l  a5,-(sp)
+        move.l  a6,a5
+        bsr.s   it_remake
+        move.l  (sp)+,a5
         rts
 
 ; it_remake(a5 = IntuitionBase) : affiche l'écran de tête (sa ViewPort seule dans ib_ViewLord), ou coupe

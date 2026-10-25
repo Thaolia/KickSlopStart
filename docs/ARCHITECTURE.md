@@ -785,6 +785,20 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     est noir chez nous au lieu de la couleur 0 : conséquence du thème (DetailPen 2 sur l'écran WB), pas un bug du rendu.
   - **Non faits** : RemakeDisplay (le décalage de la vue n'a pas d'effet visible), ajustement lignes/colonnes,
     transmission KeyRptDelay/Speed à input.device (pas de répétition clavier chez nous).
+  (20) **Caesar se charge depuis la disquette** (spec caesar-boot, relue clean-room ; parcours identique à la vraie
+  1.3 : intro FAIRLIGHT, clic, `play caesar`, choix de la langue, écran titre, menu du jeu).
+  - **graphics, schéma copper de la 1.3** : COP1LC pointe sur un copinit (attente ligne 12, MOVE COPJMP2) ; LoadView
+    et un serveur VBlank (pri 10) écrivent COP2LC avec la liste de la vue affichée. Un programme qui écrit COP2LC
+    interruptions coupées (intro FLT de Caesar) voit sa liste affichée jusqu'à ce qu'il les rétablisse.
+  - **intuition RemakeDisplay / RethinkDisplay** (−384/−390) : liste copper refaite depuis l'écran de tête.
+    `caesar.boot` passe l'écran actif à 1 plan (Depth := 1, FreeRaster du plan 2) puis appelle RemakeDisplay ; sans
+    lui, le copper affichait le plan libéré (pixels parasites).
+  - **dos LoadSeg en flux** (`ls_load_stream`) : tampon de lecture de 2 Ko rechargé par Read, gros hunks lus
+    directement à leur place, IoErr 103 (mémoire) ou 121 (format). Le shell charge ses commandes par LoadSeg au lieu
+    de lire le fichier entier. `csr.exe` (126 Ko compactés, 657 Ko de hunks) ne tenait pas avec un tampon du fichier
+    entier et sortait en « Error code 121 ».
+  - Écart dû au thème : après `caesar.boot`, l'écran WB n'a qu'un plan ; le texte de la console (stylo 2) devient
+    invisible (vert sur vert), alors qu'il reste blanc sur bleu sur la vraie 1.3.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

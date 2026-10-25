@@ -36,6 +36,7 @@
                 xref    intuition_GetDefPrefs
                 xref    intuition_SetPrefs
                 xref    it_prefsinit
+                xref    intuition_RemakeDisplay
                 xref    intuition_WindowToBack
                 xref    intuition_WindowToFront
                 xref    intuition_BeginRefresh
@@ -130,7 +131,9 @@ intuition_vectors:
         dc.l    intuition_BeginRefresh   ; 59 : LVO -354 BeginRefresh(fenêtre a0)
         dc.l    intuition_null           ; 60 : LVO -360 (non impl.)
         dc.l    intuition_EndRefresh     ; 61 : LVO -366 EndRefresh(fenêtre a0, complet d0)
-        dcb.l   4,intuition_null         ; 62..65 : LVO -372..-390 (non impl.)
+        dcb.l   2,intuition_null         ; 62..63 : LVO -372..-378 (non impl.)
+        dc.l    intuition_RemakeDisplay  ; 64 : LVO -384 RemakeDisplay()
+        dc.l    intuition_RemakeDisplay  ; 65 : LVO -390 RethinkDisplay()
         dc.l    intuition_AllocRemember  ; 66 : LVO -396 AllocRemember(clé a0, taille d0, drapeaux d1)
         dc.l    intuition_null           ; 67 : LVO -402 AlohaWorkbench (non impl.)
         dc.l    intuition_FreeRemember   ; 68 : LVO -408 FreeRemember(clé a0, oublier d0)
