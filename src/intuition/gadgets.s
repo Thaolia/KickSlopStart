@@ -1827,9 +1827,13 @@ gad_onoff:
         bra.s   intuition_RefreshGList
 
 ; DrawBorder(rp a0, border a1, x d0, y d1) : chaque Border de la chaîne, ligne brisée de Count points (paires XY)
-; décalés de (x + LeftEdge, y + TopEdge), au stylo FrontPen dans le mode DrawMode.
+; décalés de (x + LeftEdge, y + TopEdge), au stylo FrontPen dans le mode DrawMode. Stylos et mode du RastPort rendus
+; intacts, comme en 1.3 (sondé : tests/itextstate.s).
 intuition_DrawBorder:
         movem.l d2-d7/a2-a6,-(sp)
+        move.b  rp_FgPen(a0),-(sp)
+        move.b  rp_BgPen(a0),-(sp)
+        move.b  rp_DrawMode(a0),-(sp)
         move.l  IB_GFXBASE(a6),a6
         move.l  a0,a2
         move.l  a1,a3
@@ -1867,6 +1871,9 @@ intuition_DrawBorder:
         move.l  BD_NEXTBORDER(a3),a3
         bra.s   .db_lp
 .db_ret:
+        move.b  (sp)+,rp_DrawMode(a2)
+        move.b  (sp)+,rp_BgPen(a2)
+        move.b  (sp)+,rp_FgPen(a2)
         movem.l (sp)+,d2-d7/a2-a6
         rts
 .db_pt:                              ; point suivant (a4)+ -> d0/d1 absolus, a1 = rp

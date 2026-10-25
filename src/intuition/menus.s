@@ -137,6 +137,9 @@ mn_onoff:
 ; coin haut-gauche en (x + LeftEdge, y + TopEdge). Police unique 8x8 (ITextFont ignorée).
 intuition_PrintIText:
         movem.l d2-d3/a2-a3/a6,-(sp)
+        move.b  rp_FgPen(a0),-(sp)   ; stylos et mode rendus intacts, comme en 1.3 (sondé : tests/itextstate.s)
+        move.b  rp_BgPen(a0),-(sp)
+        move.b  rp_DrawMode(a0),-(sp)
         move.l  a0,a2
         move.l  a1,a3
         move.w  d0,d2
@@ -171,6 +174,9 @@ intuition_PrintIText:
         move.l  IT_NEXTTEXT(a3),a3
         bra.s   .pt_lp
 .pt_ret:
+        move.b  (sp)+,rp_DrawMode(a2)
+        move.b  (sp)+,rp_BgPen(a2)
+        move.b  (sp)+,rp_FgPen(a2)
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 

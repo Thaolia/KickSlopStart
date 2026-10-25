@@ -1,5 +1,5 @@
 ; src/graphics/draw.s — primitives de dessin de graphics.library dans un RastPort (BitMap planaire, rendu CPU).
-; SetAPen/SetBPen/SetDrMd/Move/Draw/WritePixel/RectFill/SetRast/ScrollRaster/Text/TextLength/SetFont/
+; SetAPen/SetBPen/SetDrMd/Move/Draw/WritePixel/RectFill/SetRast/ClearEOL/ClearScreen/ScrollRaster/Text/TextLength/SetFont/
 ; InitRastPort/InitBitMap/ReadPixel/BltBitMap. Si rp_Layer est posé, ses bornes donnent le décalage (coordonnées
 ; relatives à la couche) et le dessin passe par ses ClipRects (layers.library) : ClipRect visible -> BitMap du
 ; RastPort ; ClipRect cachée avec sauvegarde (cr_BitMap, origine dans cr_p1) -> la sauvegarde ; cachée sans
@@ -23,6 +23,8 @@
                 xdef    gfx_WritePixel
                 xdef    gfx_RectFill
                 xdef    gfx_SetRast
+                xdef    gfx_ClearEOL
+                xdef    gfx_ClearScreen
                 xdef    gfx_ScrollRaster
                 xdef    gfx_Text
                 xdef    gfx_TextLength
@@ -561,6 +563,71 @@ gfx_SetRast:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+
+; ClearEOL(rp a1) : efface de la position courante au bord droit, sur la hauteur de la police (cellule posée sur la
+; ligne de base, là où Text écrirait). ClearScreen(rp a1) : ClearEOL puis toute la zone sous cette ligne. Couleur :
+; stylo B en JAM2, 0 sinon ; remplissage plein, cp inchangé.
+gfx_ClearEOL:
+        moveq   #0,d1
+        bra.s   cl_go
+gfx_ClearScreen:
+        moveq   #1,d1
+cl_go:
+        movem.l d2-d7/a5,-(sp)
+        lea     -DC_SIZE(sp),sp
+        move.l  sp,a5
+        move.w  d1,d6
+        bsr     dr_ctx
+        moveq   #0,d3
+        btst    #0,rp_DrawMode(a1)   ; JAM2
+        beq.s   .cl_pen
+        move.b  rp_BgPen(a1),d3
+.cl_pen:
+        move.b  rp_DrawMode(a1),-(sp)
+        clr.b   rp_DrawMode(a1)
+        move.w  rp_cp_x(a1),d4
+        add.w   DC_OX(a5),d4
+        move.w  rp_cp_y(a1),d5
+        sub.w   rp_TxBaseline(a1),d5
+        add.w   DC_OY(a5),d5
+        move.w  d5,d7
+        add.w   rp_TxHeight(a1),d7
+        subq.w  #1,d7
+        bsr.s   cl_box
+        tst.w   d6
+        beq.s   .cl_ret
+        move.w  DC_MINX(a5),d4
+        move.w  d7,d5
+        addq.w  #1,d5
+        move.w  DC_MAXY(a5),d7
+        bsr.s   cl_box
+.cl_ret:
+        move.b  (sp)+,rp_DrawMode(a1)
+        bsr     dr_end
+        lea     DC_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a5
+        rts
+; cl_box(a5, d3.b = stylo, d4 = x0, d5..d7 = lignes absolues) : lignes [d5..d7] ∩ zone, de x0 au bord droit.
+; Clobbe d0-d2/d5 ; d7 n'est réduit que s'il dépasse le bas de la zone.
+cl_box:
+        cmp.w   DC_MINY(a5),d5
+        bge.s   .cb_0
+        move.w  DC_MINY(a5),d5
+.cb_0:
+        cmp.w   DC_MAXY(a5),d7
+        ble.s   .cb_lp
+        move.w  DC_MAXY(a5),d7
+.cb_lp:
+        cmp.w   d7,d5
+        bgt.s   .cb_r
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  DC_MAXX(a5),d2
+        bsr     dr_span
+        addq.w  #1,d5
+        bra.s   .cb_lp
+.cb_r:
         rts
 
 ; Draw(rp a1, x d0, y d1) : segment de (cp_x, cp_y) à (x, y) au stylo A (Bresenham), puis cp := (x, y).

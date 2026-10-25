@@ -843,6 +843,14 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   coldstart met désormais à zéro toute la zone des variables de RAM basse ($500-$800). Diagnostic sous WinUAE Linux
   (Xvfb, `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1`, focus de la fenêtre) avec des jalons de couleur (COLOR00 de la
   liste copper affichée) dans l'interruption, faute de série et de débogueur.
+  (24) **PrintIText/DrawBorder rendent le RastPort intact ; ClearEOL/ClearScreen** (signalé par l'utilisateur : page
+  MEMORY de SysInfo illisible après NEXT/PREV). SysInfo efface ses valeurs en écrivant des espaces, en comptant sur
+  le stylo et le mode JAM2 réglés une fois pour toutes dans le RastPort de sa fenêtre ; le rendu du gadget cliqué
+  (PrintIText interne) y laissait stylo 1 / JAM1 -> espaces invisibles, valeurs superposées. Sonde boîte noire
+  `tests/itextstate.s` : sur la vraie 1.3, PrintIText et DrawBorder rendent stylo A, stylo B et mode intacts ; les
+  nôtres les sauvegardent et les restaurent désormais. graphics : `ClearEOL` (−42 : de cp_x au bord droit, sur la
+  hauteur de la police alignée sur la ligne de base) et `ClearScreen` (−48 : idem puis tout le dessous), couleur =
+  stylo B en JAM2, 0 sinon ; pixels identiques à la vraie ROM (sonde `tests/cleareol.s`).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

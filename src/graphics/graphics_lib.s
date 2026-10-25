@@ -18,6 +18,8 @@
                 xdef    gfx_OwnBlitter       ; draw.s (ScrollRaster au blitter)
                 xdef    gfx_DisownBlitter
                 xref    gfx_BltTemplate
+                xref    gfx_ClearEOL
+                xref    gfx_ClearScreen
                 xref    gfx_Text
                 xref    gfx_TextLength
                 xref    gfx_SetFont
@@ -101,7 +103,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    graphics_null            ; 4 : LVO -24 (réservé)
         dc.l    gfx_BltBitMap            ; 5 : LVO -30
         dc.l    gfx_BltTemplate          ; 6 : LVO -36 BltTemplate(src a0, xSrc d0, mod d1, rp a1, x d2, y d3, w d4, h d5)
-        dcb.l   2,graphics_null          ; 7..8 : LVO -42..-48 (ClearEOL, ClearScreen : non implémentés)
+        dc.l    gfx_ClearEOL             ; 7 : LVO -42
+        dc.l    gfx_ClearScreen          ; 8 : LVO -48
         dc.l    gfx_TextLength           ; 9 : LVO -54
         dc.l    gfx_Text                 ; 10 : LVO -60
         dc.l    gfx_SetFont              ; 11 : LVO -66

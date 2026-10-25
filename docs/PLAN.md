@@ -835,7 +835,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     IntVects public, ExecBase en chip basse, plus de TRAP dans exec, résident « CLI » système).
     SimCity (menu) et Monkey Island (écran titre) lancés depuis le CLI : RawKeyConvert, UCopList, LoadRGB4, DMA blitter
     permanent, Seek OFS direct. À faire : MICROHZ sur CIA-A comme la 1.3 (musique de Monkey sur le niveau 6).
-    Clavier sous WinUAE réparé (variables de RAM basse à zéro au coldstart) : Caesar et Monkey au clavier sous WinUAE. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    Clavier sous WinUAE réparé (variables de RAM basse à zéro au coldstart) : Caesar et Monkey au clavier sous WinUAE.
+    SysInfo MEMORY lisible après NEXT/PREV (PrintIText/DrawBorder restaurent stylos et mode, sondé) ; ClearEOL/ClearScreen.
+    Reste : barre de titre d'écran noire dessinée par-dessus la fenêtre de SysInfo au premier clic (absente en 1.3). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
