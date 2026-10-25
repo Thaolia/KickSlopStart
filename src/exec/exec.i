@@ -31,15 +31,19 @@ MH_CHIP      EQU $00000400     ; MemHeader chip
 TST_LIST     EQU $00000420     ; scratch auto-test (listes)
 TST_N1       EQU $00000440
 TST_N2       EQU $00000460
-HEAP_LOWER   EQU $00001000     ; tas géré
-HEAP_UPPER   EQU $0007D000
-FTEST_LO     EQU $0007D000     ; région DISJOINTE du tas pour le test multi-header
-FTEST_HI     EQU $0007E000     ; (selftest M2.4a) ; = base basse de pile ensuite
-EXECBASE     EQU $0007F000     ; SysBase (table V34 complète en dessous)
+; Zone système en CHIP BASSE, juste au-dessus des variables de RAM basse : le haut de la chip reste libre jusqu'à
+; $80000 comme sur la vraie 1.3, car des programmes y écrivent en absolu (intros : pile à $7FFFE, routines à $7F000,
+; plans à $70000+). ExecBase ne doit pas s'y trouver.
+EXEC_BLOCK   EQU $00001000     ; bas de la jump table d'exec
 EXEC_NEGSIZE EQU $276          ; 105 vecteurs V34 (cf docs/exec-lvo-table.md)
-EXEC_BLOCK   EQU EXECBASE-EXEC_NEGSIZE   ; bas de la jump table
+EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase (table V34 complète en dessous)
 EXEC_POSSIZE EQU $230
-STACKTOP     EQU EXEC_BLOCK-$80 ; pile superviseur (gap de garde avant la table)
+FTEST_LO     EQU $00001500     ; région DISJOINTE du tas pour le test multi-header (selftest M2.4a) ; libre ensuite,
+FTEST_HI     EQU $00002500     ; elle sert de marge sous la pile superviseur (un débordement n'atteint pas ExecBase)
+SSP_LOWER    EQU $00002500     ; pile superviseur partagée [SSP_LOWER, STACKTOP)
+STACKTOP     EQU $00003500
+HEAP_LOWER   EQU $00003500     ; tas géré (chip)
+HEAP_UPPER   EQU MAXCHIP
 
 ; --- Phases (RGB 12 bits) ---
 C_RED    EQU $0F00
@@ -69,10 +73,29 @@ INTM_L5      EQU $1800        ; sources du niveau 5
 AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
 AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
-TRAP0_VEC    EQU $80          ; M7c : vecteur TRAP #0 (switch volontaire style Wait : sortante déjà rangée)
-TRAP1_VEC    EQU $84          ; M7c : vecteur TRAP #1 (yield/reschedule : requeue sortante -> TaskReady)
-TRAP2_VEC    EQU $88          ; M7j : vecteur TRAP #2 (RemTask-self : libère + bascule définitivement)
-TRAP3_VEC    EQU $8C          ; vecteur TRAP #3 (exec_Supervisor : exécute a5 en mode superviseur)
+ROM_BASE     EQU $00FC0000     ; début de la ROM (256 Ko)
+PRIV_VEC     EQU $20          ; violation de privilège : entrée d'exec en superviseur (EXEC_SVC)
+SVC_MAGIC    EQU $4AFC        ; mot qui suit le « ori.w #0,sr » d'un site EXEC_SVC (ILLEGAL, jamais exécuté)
+
+; EXEC_SVC service : passe en superviseur et saute à « service » avec un cadre d'exception {SR, PC = retour}, comme
+; un TRAP. Comme la vraie exec, on n'utilise aucun vecteur TRAP (les programmes y installent souvent leur code pour
+; entrer en superviseur) : en mode user, l'instruction privilégiée déclenche le vecteur $20, dont le gestionnaire
+; reconnaît le site ; en superviseur, le cadre est construit ici.
+EXEC_SVC     macro
+        move.w  sr,-(sp)
+        btst    #5,(sp)
+        addq.l  #2,sp                ; (addq vers An : drapeaux intacts)
+        bne.s   .svs\@
+        ori.w   #0,sr
+        dc.w    SVC_MAGIC
+        dc.l    \1
+        bra.s   .svr\@
+.svs\@:
+        pea     .svr\@(pc)
+        move.w  sr,-(sp)
+        jmp     \1
+.svr\@:
+             endm
 LVO_SUPERVISOR EQU -30        ; exec Supervisor() : appelle une routine (a5) en mode superviseur (requis par flt-intro)
 ; M7c — frame de contexte (miroir movem d0-d7/a0-a6 + {SR,PC} du CPU), posée sur la pile de la tâche.
 ; 15 longs GPR (60 o) + SR (mot, offset 60) + PC (long, offset 62) = 66 o (pair -> copie mot par mot).
@@ -91,17 +114,18 @@ IS_DATA      EQU 14           ; APTR passé en a1 au serveur
 IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase, a0=$DFF000)
 IS_SIZE      EQU 22           ; sizeof(struct Interrupt) = LN(14) + IS_DATA(4) + IS_CODE(4)
 IS_STRIDE    EQU 24           ; IS_SIZE arrondi à un multiple de 4 (nœuds alignés dans un tableau)
-; M7b — dispatcher par numéro : table IntVects (SetIntVector/AddIntServer). Chaque entrée IntVects[n]
-; = {IV_DATA, IV_CODE} ; pour une chaîne (AddIntServer) IV_DATA=&svlist[n], IV_CODE=intr_chain_walker ;
-; pour un vecteur exclusif (SetIntVector) IV_DATA/IV_CODE = IS_DATA/IS_CODE copiés. Les svlist[n] (struct
-; List de serveurs, triés par LN_PRI) suivent les 16 vecteurs dans le même bloc AllocMem'd.
+; M7b — dispatcher par numéro : ExecBase.IntVects[16] public (exec/execbase.i, offset $54), entrées struct
+; IntVector {iv_Data, iv_Code, iv_Node}. Chaîne (AddIntServer) : iv_Data = &svlist[n], iv_Code =
+; intr_chain_walker ; vecteur exclusif (SetIntVector) : IS_DATA/IS_CODE copiés, iv_Node = l'Interrupt. Des
+; programmes lisent iv_Data directement (ex. IntVects[INTB_BLIT].iv_Data = GfxBase). Les svlist[n] (struct List de
+; serveurs, triés par LN_PRI) sont dans un bloc AllocMem'd (EB_INTSVL).
 IV_DATA      EQU 0
 IV_CODE      EQU 4
-IV_SIZE      EQU 8
+IV_NODE      EQU 8
+IV_SIZE      EQU 12
 INTVECTS_NVEC EQU 16          ; numéros 0..15 (14 = INTEN inusité, 15 = NMI)
 IV_LIST_SIZE EQU 14           ; sizeof(struct List) d'une chaîne de serveurs
-INTVECTS_SVOFF EQU (INTVECTS_NVEC*IV_SIZE)                       ; offset des svlist dans le bloc
-INTVECTS_TOTAL EQU (INTVECTS_NVEC*IV_SIZE+INTVECTS_NVEC*IV_LIST_SIZE) ; 128+224=352 (PAS d'espace : vasm tronque l'opérande à l'espace)
+INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 224 (PAS d'espace : vasm tronque l'opérande à l'espace)
 ; CIA timer A — registres (offsets depuis la base CIA = registre<<8)
 CIA_TALO     EQU $400         ; timer A low
 CIA_TAHI     EQU $500         ; timer A high (l'écriture charge le latch)
@@ -514,7 +538,8 @@ EB_TASKWAIT     EQU $1A4
 EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
-EB_INTVECTS     EQU $222        ; M7b : APTR -> bloc IntVects (16 vecteurs + 16 svlist), AllocMem'd
+EB_INTVECTS     EQU $54         ; IntVects[16] (struct IntVector, 12 octets) : public, jusqu'à ThisTask ($114)
+EB_INTSVL       EQU $222        ; M7b : APTR -> bloc des 16 listes de serveurs (AddIntServer), AllocMem'd
                                 ; à init_ints. Tient dans la zone positive ($222+4 <= EXEC_POSSIZE $230).
 
 ; struct MemHeader / MemChunk + attributs mémoire (exec/memory.i, V34)

@@ -94,6 +94,7 @@
                 xref    exec_FreeEntry
                 xref    exec_SetExcept
                 xref    exec_AllocTrap
+                xref    trap3_handler        ; interrupts.s (Supervisor via EXEC_SVC)
                 xref    exec_FreeTrap
                 xref    exec_RemResource
                 xref    exec_RawIOInit
@@ -306,12 +307,12 @@ _unimpl:
         rts
 
 ; exec_Supervisor(a5 = routine) : exécute a5 en mode SUPERVISEUR, puis revient à l'appelant. Appelée en mode
-; USER par le code chargé (ex. le cracktro flt-intro qui pilote le hardware/copper en superviseur). trap #3 ->
+; USER par le code chargé (ex. le cracktro flt-intro qui pilote le hardware/copper en superviseur). EXEC_SVC ->
 ; superviseur -> trap3_handler fait jmp (a5) ; a5 (par convention Supervisor) se termine par RTE, qui dépile le
-; frame {SR user, PC} poussé par le trap -> reprend ICI en mode user -> rts à l'appelant. a5 doit préserver le
-; frame SSP du trap (contrat AutoDoc Supervisor).
+; frame {SR user, PC} de EXEC_SVC -> reprend ICI en mode user -> rts à l'appelant. a5 doit préserver le
+; frame SSP (contrat AutoDoc Supervisor).
 exec_Supervisor:
-        trap    #3
+        EXEC_SVC trap3_handler
         rts
 
 ; ============================ fonctions exec ========================

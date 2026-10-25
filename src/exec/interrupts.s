@@ -19,7 +19,7 @@
 ;   TC_SPREG<-), puis charge l'entrante (copie sa frame pile user -> SSP ; usp<-fin ; movem+rte ->
 ;   repart en USER mode). Sauve/restaure le nesting PAR-TÂCHE (TC_IDNESTCNT/TC_TDNESTCNT <-> EB_*)
 ;   et synchronise INTENA. => SSP jamais partagée entre contextes de tâches (hazard neutralisé).
-; - Switch VOLONTAIRE (user-mode) : trap #0 (Wait : sortante déjà rangée) / trap #1 (yield : requeue
+; - Switch VOLONTAIRE (user-mode) : EXEC_SVC trap0_handler (Wait : sortante déjà rangée) / trap1_handler (yield : requeue
 ;   sortante->Ready). Le trap entre en superviseur (frame user sur SSP) et rejoint l'épilogue commun.
 ; - PRÉEMPTION : round-robin par tick VBlank (SCHED_ON && !Forbid && !Disable && TaskReady non vide).
 ;   FLAG DE DISPATCH DIFFÉRÉ (M7c) : int2/int6, si un serveur a réveillé une tâche PRIORITAIRE (Signal a
@@ -46,6 +46,8 @@
                 include "exec.i"
                 include "dospkt.i"       ; pr_CLI / cli_CommandName (nom de commande dans SOFTWARE FAILURE)
 
+                xdef    trap2_handler        ; tasks.s (RemTask(self), via EXEC_SVC)
+                xdef    trap3_handler        ; library.s (Supervisor, via EXEC_SVC)
                 xdef    init_ints
                 xdef    exec_Wait
                 xdef    reschedule
@@ -76,20 +78,21 @@ init_ints:
         clr.l   IDLE_ENTERED                      ; M7e : épisodes d'idle du dispatcher
         clr.l   VERTB_CHAIN_N                     ; M7f : parcours complets de la chaîne VERTB
         clr.b   M7F_STAT                          ; M7f : marqueur « M7F VERTB OK » pas encore émis
-        move.l  #INTVECTS_TOTAL,d0                ; M7b : bloc IntVects (16 vecteurs + 16 svlist)
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)                  ; (préserve a6 ; CLEAR -> IV_CODE=0 = aucun handler)
-        move.l  d0,EB_INTVECTS(a6)
+        lea     EB_INTVECTS(a6),a0                ; IntVects[] public : aucun handler au départ
+        moveq   #INTVECTS_NVEC*IV_SIZE/4-1,d0
+.ii_clr:
+        clr.l   (a0)+
+        dbra    d0,.ii_clr
+        move.l  #INTSVL_TOTAL,d0                  ; M7b : listes de serveurs (AddIntServer)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)                  ; (préserve a6)
+        move.l  d0,EB_INTSVL(a6)
         move.l  #int3_dispatch,AUTOVEC_L3         ; M7f : VERTB (INT3) -> dispatcher générique par numéro
         move.l  #int2_dispatch,AUTOVEC_L2         ; M7b : INT2/PORTS -> dispatcher générique par numéro
         move.l  #int6_dispatch,AUTOVEC_L6         ; M7b : INT6/EXTER -> dispatcher générique par numéro
         move.l  #int1_dispatch,AUTOVEC_L1         ; TBE / DSKBLK / SOFTINT (serial.device chargé de DEVS:)
         move.l  #int4_dispatch,AUTOVEC_L4         ; AUD0..AUD3
         move.l  #int5_dispatch,AUTOVEC_L5         ; RBF / DSKSYNC
-        move.l  #trap0_handler,TRAP0_VEC          ; M7c : TRAP #0 = switch volontaire style Wait
-        move.l  #trap1_handler,TRAP1_VEC          ; M7c : TRAP #1 = yield (reschedule)
-        move.l  #trap2_handler,TRAP2_VEC          ; M7j : TRAP #2 = RemTask(self) (libère + bascule)
-        move.l  #trap3_handler,TRAP3_VEC          ; TRAP #3 = exec Supervisor (exécute a5 en mode superviseur)
         bsr     init_traps                        ; exceptions CPU + TRAP #4-15 -> tc_TrapCode de la tâche
         ; M7f : enregistre le serveur SCHEDULER (quantum round-robin) sur la chaîne VERTB. Faithful :
         ; le vrai exec a un serveur VBlank qui pose la flag AttnResched. pri 20 -> tête de chaîne.
@@ -296,7 +299,7 @@ dispatch_in:
         rte                         ; dépile {SR,PC} -> repart en USER mode (SR sauvé S=0) sur sa USP
 
 ; exec_Wait(signalSet d0.l) -> d0 = signaux reçus. Bloque ThisTask (USER mode) jusqu'à réception.
-; Section critique via Disable NU (INTENA, user-safe) ; blocage via trap #0 (entre en superviseur ->
+; Section critique via Disable NU (INTENA, user-safe) ; blocage via EXEC_SVC (entre en superviseur ->
 ; dispatch relocalise). Au réveil (re-dispatché après le trap), re-teste (robuste au spurious).
 ; Sortie NUE (raw_enable) : la réveillée tourne déjà -> pas de yield (préserve la sémantique M3d).
 exec_Wait:
@@ -311,7 +314,7 @@ exec_Wait:
         move.b  #TS_WAIT,TC_STATE(a1)
         lea     EB_TASKWAIT(a6),a0
         jsr     LVO_ADDTAIL(a6)     ; ThisTask (a1) -> TaskWait (a1 préservé)
-        trap    #0                  ; -> superviseur -> dispatch (sortante déjà sur TaskWait, d6=0)
+        EXEC_SVC trap0_handler      ; -> superviseur -> dispatch (sortante déjà sur TaskWait, d6=0)
         move.l  EB_THISTASK(a6),a1  ; re-dispatchée : a6/a1 restaurés par le switch (reload défensif)
         bra.s   .wa_check           ; re-teste (spurious -> re-bloque)
 .wa_got:
@@ -321,7 +324,7 @@ exec_Wait:
         rts
 
 ; reschedule : YIELD synchrone volontaire (yield-sur-Permit, M3e). Appelé par Permit/Enable (USER mode,
-; permis & enabled, AttnResched posé). trap #1 -> dispatch requeue la courante (d6=1) + bascule sur la
+; permis & enabled, AttnResched posé). EXEC_SVC trap1_handler -> dispatch requeue la courante (d6=1) + bascule sur la
 ; réveillée prioritaire. Au retour (re-dispatchée), rts vers Permit/Enable.
 reschedule:
         tst.w   EB_ATTNRESCHED(a6)  ; encore demandé ? (un tick a pu le consommer)
@@ -329,18 +332,18 @@ reschedule:
         move.l  EB_TASKREADY(a6),a0
         tst.l   (a0)                ; une prête dispo ? (défensif)
         beq.s   .rs_none
-        trap    #1                  ; yield : dispatch requeue self->Ready + RemHead
+        EXEC_SVC trap1_handler      ; yield : dispatch requeue self->Ready + RemHead
         rts                         ; re-dispatchée -> retour Permit/Enable
 .rs_none:
         clr.w   EB_ATTNRESCHED(a6)
         rts
 
-; trap0_handler (TRAP #0) : switch volontaire style Wait — la sortante est DÉJÀ rangée (TaskWait).
-; trap1_handler (TRAP #1) : yield — dispatch requeue la sortante dans TaskReady (round-robin).
-; Le CPU a poussé {SR user, PC} au trap -> la SR sauvée a S=0 -> l'épilogue dispatch garanti.
+; trap0_handler (EXEC_SVC) : switch volontaire style Wait — la sortante est DÉJÀ rangée (TaskWait).
+; trap1_handler (EXEC_SVC) : yield — dispatch requeue la sortante dans TaskReady (round-robin).
+; Depuis une tâche, le cadre {SR user, PC} vient de la violation de privilège -> la SR sauvée a S=0 -> l'épilogue dispatch garanti.
 ; M7e : plus de montée IPL7 — le trap entre à l'IPL de la tâche (0) ; l'atomicité du switch repose
 ; ENTIÈREMENT sur le Disable de dispatch. trap0 (Wait) arrive déjà Disabled (exec_Wait a fait INTEN-off
-; avant trap #0) -> Disable idempotent. trap1 (yield) arrive INTEN-on -> Disable neuf mais correct.
+; avant EXEC_SVC) -> Disable idempotent. trap1 (yield) arrive INTEN-on -> Disable neuf mais correct.
 trap0_handler:
         movem.l d0-d7/a0-a6,-(sp)
         move.l  ($4).w,a6
@@ -354,14 +357,38 @@ trap1_handler:
         moveq   #1,d6               ; requeue sortante -> TaskReady
         bra     intr_exit
 
-; trap3_handler (TRAP #3) : exec Supervisor — PAS un switch de tâche. Le trap a poussé {SR user, PC} sur la SSP
-; et nous a mis en superviseur. On saute directement à la routine utilisateur (a5), qui tourne en superviseur
+; trap3_handler (EXEC_SVC) : exec Supervisor — PAS un switch de tâche. Le cadre {SR, PC} est sur la SSP et nous
+; sommes en superviseur. On saute directement à la routine utilisateur (a5), qui tourne en superviseur
 ; et se termine par RTE : le RTE dépile {SR,PC} -> reprise dans exec_Supervisor en mode user. On ne touche à
 ; aucun contexte (le code appelé est responsable de préserver le frame SSP du trap, contrat Supervisor).
 trap3_handler:
         jmp     (a5)
 
-; trap2_handler (TRAP #2) : M7j — RemTask(self). La sortante se RETIRE : on NE sauve PAS son contexte
+; priv_handler (vecteur $20) : violation de privilège. Un site EXEC_SVC de la ROM (« ori.w #0,sr », SVC_MAGIC, adresse
+; du service) repart vers son service, PC empilé avancé après le site ; toute autre violation suit le chemin des
+; exceptions (tc_TrapCode).
+priv_handler:
+        move.l  a0,-(sp)
+        move.l  6(sp),a0             ; PC fautif
+        cmp.l   #ROM_BASE,a0
+        blo.s   .pv_exc
+        cmp.w   #$007C,(a0)          ; ori.w #imm,sr
+        bne.s   .pv_exc
+        tst.w   2(a0)
+        bne.s   .pv_exc
+        cmp.w   #SVC_MAGIC,4(a0)
+        bne.s   .pv_exc
+        move.l  6(a0),-(sp)          ; service
+        lea     10(a0),a0
+        move.l  a0,10(sp)            ; reprise après le site
+        move.l  4(sp),a0
+        move.l  (sp)+,(sp)           ; [service][SR][PC]
+        rts
+.pv_exc:
+        move.l  (sp)+,a0
+        bra     exc_table+2*(8-TRAPVEC_FIRST)
+
+; trap2_handler (EXEC_SVC) : M7j — RemTask(self). La sortante se RETIRE : on NE sauve PAS son contexte
 ; (il est jeté). En superviseur, sur la SSP -> la pile user de la sortante n'est plus utilisée = libérable.
 ; Forbid externe (le Permit interne de FreeMem ne yield pas) + IPL7 (masque IRQ pendant le teardown).
 ; Clear EB_THISTASK AVANT de libérer tc_MemEntry (dispatch_in lit EB_THISTASK). Puis bascule comme le lancement de
@@ -438,9 +465,9 @@ intr_multi:
 .im_lp:
         btst    d4,d2
         beq.s   .im_next
-        move.l  EB_INTVECTS(a6),a0
-        move.l  d4,d0
-        lsl.l   #3,d0
+        lea     EB_INTVECTS(a6),a0
+        move.w  d4,d0
+        mulu    #IV_SIZE,d0
         tst.l   IV_CODE(a0,d0.l)
         bne.s   .im_call
         moveq   #0,d0                ; pas de handler : acquitte
@@ -477,7 +504,7 @@ intr_isr_defer:
         tst.b   EB_IDNEST(a6)       ;   Signal() d'une tâche prioritaire PENDANT le Forbid -> ne PAS switcher ici.
         bge.s   intr_isr_exit       ; Disable() actif ? -> idem (section critique vs scheduler). AttnResched reste
                                     ;   pending -> consommé au prochain IRQ-exit non-forbidden, ou par le yield
-                                    ;   volontaire de Permit/Enable (trap #1, non gardé). Mêmes gardes que sched_server.
+                                    ;   volontaire de Permit/Enable (EXEC_SVC, non gardé). Mêmes gardes que sched_server.
                 endc                ; RED SCHED_NO_FORBID_GATE : gardes retirées -> switch même sous Forbid (bug d'origine :
                                     ;   un émetteur série sous Forbid se faisait préempter -> marqueurs entrelacés).
         tst.w   EB_ATTNRESCHED(a6)  ; un serveur a-t-il réveillé une tâche prioritaire ?
@@ -490,10 +517,8 @@ intr_isr_exit:
 ; exclusif (SetIntVector) -> appel direct ; chaîne (AddIntServer) -> IV_CODE = intr_chain_walker.
 ; Convention (AutoDoc) : a0=$DFF000, a1=IS_DATA (ou &svlist), a5=IS_CODE (ou walker), a6=SysBase.
 intr_dispatch_number:
-        move.l  EB_INTVECTS(a6),a1
-        move.l  a1,d1
-        beq.s   .idn_ret            ; table non allouée (défensif)
-        lsl.l   #3,d0               ; n * IV_SIZE(8)
+        lea     EB_INTVECTS(a6),a1
+        mulu    #IV_SIZE,d0         ; n * IV_SIZE(12)
         add.l   d0,a1               ; a1 = &IntVects[n]
         move.l  IV_CODE(a1),a5
         move.l  a5,d1
@@ -528,14 +553,16 @@ intr_chain_walker:
         movem.l (sp)+,d2/a2-a4
         rts
 
-; SetIntVector(intNum d0, interrupt a1) -> d0 = ancien Interrupt (SIMPLIFIÉ : 0, cf. ledger). Vecteur
-; EXCLUSIF : copie IS_DATA/IS_CODE dans IntVects[n] (a1=NULL -> efface). a6=SysBase.
+; SetIntVector(intNum d0, interrupt a1) -> d0 = ancien Interrupt | 0. Vecteur EXCLUSIF : copie IS_DATA/IS_CODE
+; dans IntVects[n], iv_Node = l'Interrupt (a1=NULL -> efface). Masqué : une interruption ne doit pas voir une entrée
+; à moitié écrite. a6=SysBase.
 exec_SetIntVector:
-        move.l  EB_INTVECTS(a6),a0
-        move.l  a0,d1
-        beq.s   .siv_ret
-        lsl.l   #3,d0               ; n * IV_SIZE
+        lea     EB_INTVECTS(a6),a0
+        mulu    #IV_SIZE,d0
         add.l   d0,a0               ; a0 = &IntVects[n]
+        move.w  #INTF_INTEN,INTENA
+        move.l  IV_NODE(a0),d0      ; ancien Interrupt
+        move.l  a1,IV_NODE(a0)
         move.l  a1,d1
         beq.s   .siv_null
         move.l  IS_DATA(a1),IV_DATA(a0)
@@ -545,7 +572,10 @@ exec_SetIntVector:
         clr.l   IV_DATA(a0)
         clr.l   IV_CODE(a0)
 .siv_ret:
-        moveq   #0,d0               ; ancien Interrupt (non suivi -> 0)
+        tst.b   EB_IDNEST(a6)       ; sous Disable : ne pas rétablir INTEN
+        bge.s   .siv_x
+        move.w  #INTF_SETCLR|INTF_INTEN,INTENA
+.siv_x:
         rts
 
 ; AddIntServer(intNum d0, interrupt a1) -> void. Ajoute le serveur à la chaîne du numéro, trié par
@@ -553,18 +583,17 @@ exec_SetIntVector:
 exec_AddIntServer:
         movem.l d2/a2/a3,-(sp)
         move.l  a1,a2               ; a2 = interrupt (préservé par newlist/Enqueue)
-        move.l  EB_INTVECTS(a6),a3  ; a3 = base table
+        move.l  EB_INTSVL(a6),a3    ; a3 = bloc des listes de serveurs
         move.l  a3,d1
-        beq.s   .ais_ret            ; table absente (défensif)
+        beq.s   .ais_ret            ; bloc absent (défensif)
         move.l  d0,d2               ; d2 = numéro
-        move.l  d2,d1               ; &IntVects[n] = base + n*8
-        lsl.l   #3,d1
-        lea     0(a3,d1.l),a0       ; a0 = &IntVects[n]
+        move.w  d2,d1               ; &IntVects[n] = ExecBase + EB_INTVECTS + n*12
+        mulu    #IV_SIZE,d1
+        lea     EB_INTVECTS(a6,d1.l),a0
         cmp.l   #intr_chain_walker,IV_CODE(a0)
         beq.s   .ais_enq            ; déjà une chaîne
-        move.l  d2,d1               ; 1er serveur : &svlist[n] = base + SVOFF + n*14
+        move.w  d2,d1               ; 1er serveur : &svlist[n] = bloc + n*14
         mulu    #IV_LIST_SIZE,d1
-        add.l   #INTVECTS_SVOFF,d1
         lea     0(a3,d1.l),a1       ; a1 = &svlist[n]
         move.l  a0,-(sp)            ; sauve &IntVects[n]
         move.l  a1,-(sp)            ; sauve &svlist[n]
@@ -573,10 +602,10 @@ exec_AddIntServer:
         move.l  (sp)+,a0
         move.l  a1,IV_DATA(a0)
         move.l  #intr_chain_walker,IV_CODE(a0)
+        clr.l   IV_NODE(a0)
 .ais_enq:
-        move.l  d2,d1               ; &svlist[n] (robuste aux deux chemins)
+        move.w  d2,d1               ; &svlist[n] (robuste aux deux chemins)
         mulu    #IV_LIST_SIZE,d1
-        add.l   #INTVECTS_SVOFF,d1
         lea     0(a3,d1.l),a0       ; a0 = &svlist[n]
         move.l  a2,a1               ; a1 = interrupt
         jsr     LVO_ENQUEUE(a6)     ; insère par LN_PRI (tête = plus haute pri)
@@ -591,7 +620,7 @@ exec_AddIntServer:
 ; le CPU à une adresse quelconque et gelait toute la machine.
 TRAPVEC_FIRST   EQU 2                ; erreur de bus
 TRAPVEC_CPULAST EQU 11               ; line-F
-TRAPVEC_T4      EQU 36               ; TRAP #4
+TRAPVEC_T0      EQU 32               ; TRAP #0
 TRAPVEC_T15     EQU 47               ; TRAP #15
 init_traps:
         move.l  #exc_default,EB_TASKTRAPCODE(a6)
@@ -600,11 +629,12 @@ init_traps:
         bsr.s   .it_set
         cmp.w   #TRAPVEC_CPULAST,d0
         bls.s   .it_cpu
-        moveq   #TRAPVEC_T4,d0
+        moveq   #TRAPVEC_T0,d0
 .it_trap:
         bsr.s   .it_set
         cmp.w   #TRAPVEC_T15,d0
         bls.s   .it_trap
+        move.l  #priv_handler,PRIV_VEC   ; après la boucle (qui pose le vecteur 8) : entrées EXEC_SVC
         rts
 .it_set:                             ; vecteur d0 -> exc_table + 2*(d0-2) ; avance d0
         moveq   #0,d1
@@ -655,6 +685,7 @@ exc_common:
 ; exception survenue en mode superviseur (interruption, Supervisor) est irrécupérable : message puis arrêt.
 exc_default:
         movem.l d0-d2/a0-a1,-(sp)
+        move.w  #SERPER_9600_PAL,SERPER  ; un programme a pu changer la vitesse du port : message lisible
         lea     exc_msg1(pc),a0
         bsr     exc_puts
         move.l  20(sp),d1            ; n° de trap

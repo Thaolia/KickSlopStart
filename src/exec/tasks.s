@@ -18,6 +18,7 @@
                 xdef    exec_RemTask
                 xdef    task_alloc        ; tâche + pile décrites dans tc_MemEntry (dos proc_create, démos)
                 xdef    task_freemem      ; libération de tc_MemEntry (trap2_handler)
+                xref    trap2_handler     ; interrupts.s (RemTask(self) via EXEC_SVC)
                 xdef    exec_FindTask
                 xdef    exec_AllocSignal
                 xdef    exec_FreeSignal
@@ -43,7 +44,7 @@ init_task:
         move.b  #-1,TC_IDNESTCNT(a0) ; copies par-tâche (save/restore au switch M3)
         move.b  #-1,TC_TDNESTCNT(a0)
         move.l  #SYS_SIGALLOC,TC_SIGALLOC(a0)
-        move.l  #FTEST_HI,TC_SPLOWER(a0)   ; bornes pile superviseur (informatif)
+        move.l  #SSP_LOWER,TC_SPLOWER(a0)  ; bornes pile superviseur (informatif)
         move.l  #STACKTOP,TC_SPUPPER(a0)
         move.l  a0,EB_THISTASK(a6)
         rts
@@ -79,7 +80,7 @@ exec_AddTask:
 ; RemTask(task a1) : retire une tâche et libère les MemLists de son tc_MemEntry (FreeEntry), et RIEN d'autre : la
 ; mémoire de la structure et de la pile appartient à celui qui a créé la tâche, qui la décrit dans tc_MemEntry
 ; (task_alloc, CreateProc, CreateTask d'amiga.lib) — libérer d'office TCB et pile rendait deux fois la mémoire des
-; tâches créées par les programmes. a1 = 0 ou ThisTask -> SELF : passe en superviseur via trap #2 (libère sur la
+; tâches créées par les programmes. a1 = 0 ou ThisTask -> SELF : passe en superviseur via EXEC_SVC (libère sur la
 ; SSP puis bascule sur la tâche suivante, NE REVIENT PAS). Sinon NON-SELF (tâche ready/waiting) : Remove de sa
 ; liste + libération, en contexte tâche, sous un Forbid EXTERNE (le Permit interne de FreeMem ne yield pas) + Disable
 ; (atomique vs une IRQ touchant les listes).
@@ -107,7 +108,7 @@ exec_RemTask:
         move.l  (sp)+,d6
         rts
 .rt_self:
-        trap    #2                   ; -> trap2_handler (superviseur : libère + bascule, NE REVIENT PAS)
+        EXEC_SVC trap2_handler       ; -> superviseur : libère + bascule, NE REVIENT PAS
         rts                          ; filet (jamais atteint)
 
 ; task_freemem(a1 = tâche, a6) : chaque MemList de tc_MemEntry est rendue par FreeEntry. La tête de liste est DANS la

@@ -1757,14 +1757,14 @@ dos_initfunc:
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .out                ; alloc échoue -> dl_Root reste 0 (preuve M6D échouera proprement)
+        beq     .out                ; alloc échoue -> dl_Root reste 0 (preuve M6D échouera proprement)
         move.l  d0,DL_ROOT(a2)      ; dl_Root = RootNode (APTR, PAS BPTR)
         move.l  d0,d3               ; d3 = RootNode (APTR)
         move.l  #(RN_TASKSLOTS+1)*4,d0  ; rn_TaskArray : [taille, slots] (Run y prend un slot libre)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .out
+        beq     .out
         move.l  d0,a0
         move.l  #RN_TASKSLOTS,(a0)
         lsr.l   #2,d0
@@ -1777,13 +1777,28 @@ dos_initfunc:
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .out                ; DosInfo manque -> rn_Info reste 0
+        beq     .out                ; DosInfo manque -> rn_Info reste 0
         move.l  d0,DL_DISHADOW(a2)  ; scaffold : &DosInfo (APTR brut, connu de la preuve)
         move.l  d3,a0               ; a0 = RootNode
         ifeq    M6D_BAD_BPTR
         lsr.l   #2,d0               ; APTR DosInfo -> BPTR (convention dos : BPTR = addr>>2)
         endc                        ; RED M6D_BAD_BPTR : stocke l'APTR brute -> round-trip <<2 faux (mismatch, pas crash)
         move.l  d0,RN_INFO(a0)      ; rn_Info = BPTR(DosInfo)
+        moveq   #RS_SIZEOF,d0       ; liste Resident : « CLI » système (usage -1) = CLI ROM, comme la vraie 1.3
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)    ; (EndCLI décrémente l'usage du nœud « CLI » qu'il cherche : sans lui, il
+        tst.l   d0                  ; décrémentait l'adresse 4 = le pointeur ExecBase)
+        beq     .out
+        move.l  d0,a0
+        moveq   #-1,d1
+        move.l  d1,RS_USAGE(a0)
+        move.l  #rcli_seg,d1
+        lsr.l   #2,d1
+        move.l  d1,RS_SEGLIST(a0)
+        move.l  #$03434C49,RS_NAME(a0) ; BSTR « CLI »
+        lsr.l   #2,d0
+        move.l  DL_DISHADOW(a2),a0
+        move.l  d0,DI_RESLIST(a0)
 .out:
         move.l  a2,d0               ; retourne DosBase
         movem.l (sp)+,d3/a2

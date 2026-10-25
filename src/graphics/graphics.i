@@ -184,6 +184,8 @@ gb_ActiView  EQU 34           ; APTR : View actif (posé par LoadView)
 gb_copinit   EQU 38
 gb_LOFlist   EQU 50           ; APTR : copper list longue en cours d'affichage
 gb_SHFlist   EQU 54
+gb_vbsrv     EQU 74           ; struct Interrupt : serveur VBlank (COP2LC := gb_LOFlist)
+gb_bltsrv    EQU 118          ; struct Interrupt : vecteur blitter (IntVects[INTB_BLIT], is_Data = GfxBase)
 gb_TextFonts EQU 140          ; struct List des polices
 gb_DefaultFont EQU 154        ; APTR : police par défaut des RastPort (topaz 8)
 gb_Modes     EQU 158          ; UWORD : modes de la vue affichée (View->Modes)
@@ -205,8 +207,7 @@ gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR : données (POS/CTL + image) de chaque 
 gb_SprUsed   EQU GB_PUBLIC+40 ; WORD : canaux réservés par GetSprite (bit n = canal n)
 gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 o) : propriété du blitter (OwnBlitter / DisownBlitter)
 GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
-gb_VBInt     EQU GB_PUBLIC+42+46 ; struct Interrupt (IS_SIZE) du serveur VBlank : COP2LC := gb_LOFlist
-GFXBASE_SIZE EQU gb_VBInt+22
+GFXBASE_SIZE EQU GB_PUBLIC+42+46
 DISPF_PAL    EQU 4
 
 ; --- struct SimpleSprite (graphics/sprite.h) et registres sprite ---

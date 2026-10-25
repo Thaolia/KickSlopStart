@@ -830,7 +830,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     (ModifyProp/NewModifyProp) et barres de défilement des tiroirs du WB faits ; LoadSeg à tampon extensible. Restent :
     INTUITICKS (répétition des flèches), InstallClipRegion. Preferences s'affiche (SetFont préserve D0, SetPrefs,
     devs:system-configuration, PointerTicks) ; reste la répétition clavier (cadre de centrage noir = thème DetailPen 2).
-    Caesar se charge depuis la disquette (copinit/COPJMP2 + VBlank, RemakeDisplay, LoadSeg en flux). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    Caesar se charge depuis la disquette (copinit/COPJMP2 + VBlank, RemakeDisplay, LoadSeg en flux).
+    Intros de la suite ADF : Scooby (titre), Monkey 1 et SimCity (retour au WB) comme la 1.3 (ExecBase dans LibList,
+    IntVects public, ExecBase en chip basse, plus de TRAP dans exec, résident « CLI » système). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

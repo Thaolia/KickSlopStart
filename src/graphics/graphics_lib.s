@@ -237,18 +237,33 @@ graphics_initfunc:
         move.w  (a1)+,(a0)+
         dbra    d0,.gi_ci
 .gi_vb:
-        lea     gb_VBInt(a2),a1
-        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        lea     gb_vbsrv(a2),a1
         move.b  #GFX_VBPRI,LN_PRI(a1)
+        lea     gfx_vblank(pc),a0
+        bsr.s   gfx_intinit
+        moveq   #INTB_VERTB,d0
+        jsr     LVO_ADDINTSERVER(a6)
+        lea     gb_bltsrv(a2),a1     ; vecteur blitter : des programmes y retrouvent GfxBase (iv_Data)
+        lea     gfx_bltint(pc),a0
+        bsr.s   gfx_intinit
+        moveq   #INTB_BLIT,d0
+        jsr     LVO_SETINTVECTOR(a6)
+        move.l  a2,d0
+        move.l  (sp)+,a2
+        rts
+
+; gfx_intinit(interruption a1, code a0, GfxBase a2) : nœud NT_INTERRUPT nommé « graphics.library », is_Data = GfxBase.
+gfx_intinit:
+        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        move.l  a0,IS_CODE(a1)
         lea     graphics_name(pc),a0
         move.l  a0,LN_NAME(a1)
         move.l  a2,IS_DATA(a1)
-        lea     gfx_vblank(pc),a0
-        move.l  a0,IS_CODE(a1)
-        moveq   #INTB_VERTB,d0
-        jsr     LVO_ADDINTSERVER(a6)
-        move.l  a2,d0
-        move.l  (sp)+,a2
+        rts
+
+; gfx_bltint(a0 = $DFF000) : fin d'opération blitter ; nos blits sont synchrones (WaitBlit) : acquittement seul.
+gfx_bltint:
+        move.w  #INTF_BLIT,INTREQ-CUSTOM(a0)
         rts
 
 ; gfx_vblank(a1 = GfxBase) : serveur VBlank. Recharge COP2LC avec la liste de la vue affichée : un programme qui écrit

@@ -51,6 +51,7 @@
                 xref    dos_handler_df0  ; dos/handler.s (D3b : process file-handler DF0: OFS)
                 xref    ls_load_hunks    ; dos/loadseg.s (D3d : parse hunk depuis un buffer lu via dos)
                 xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
+                xref    exec_AddTail     ; exec/lists.s (ExecBase dans LibList au coldstart)
                 xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
                 xref    feeder_main      ; dos/feeder.s (intégration F : feeder clavier -> input.device)
                 ifne    LOADSCREEN_DEMO
@@ -225,6 +226,9 @@ coldstart:                        ; $FC00D2
         jsr     newlist
         lea     EB_LIBLIST(a6),a1
         jsr     newlist
+        lea     EB_LIBLIST(a6),a0    ; exec.library est la 1re bibliothèque de LibList (des programmes en
+        move.l  a6,a1                ; déduisent GfxBase : ExecBase->ln_Succ->ln_Succ, après expansion)
+        jsr     exec_AddTail
         lea     EB_PORTLIST(a6),a1
         jsr     newlist
         lea     EB_TASKREADY(a6),a1

@@ -799,6 +799,28 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     entier et sortait en « Error code 121 ».
   - Écart dû au thème : après `caesar.boot`, l'écran WB n'a qu'un plan ; le texte de la console (stylo 2) devient
     invisible (vert sur vert), alors qu'il reste blanc sur bleu sur la vraie 1.3.
+  (21) **Compatibilité exec/dos avec les intros et jeux de la suite ADF** (spec cracktros-exit, loadwb-13 ; sondes boîte
+  noire `tests/memmap.s` et `tests/reslist.s` sur la vraie ROM). Scooby-Doo va jusqu'à l'écran titre, Monkey Island et
+  SimCity reviennent au Workbench après leur intro, comme sur la vraie 1.3.
+  - **ExecBase dans LibList** (première bibliothèque, avant expansion puis graphics) : des programmes y retrouvent
+    GfxBase par `ExecBase->ln_Succ->ln_Succ` pour restaurer le copinit.
+  - **IntVects public** à ExecBase+$54 (16 × {iv_Data, iv_Code, iv_Node}) ; SetIntVector rend l'ancien Interrupt ; les
+    listes de serveurs restent dans un bloc privé (EB_INTSVL). graphics installe `bltsrv` (GfxBase+$76) par
+    SetIntVector(INTB_BLIT) avec is_Data = GfxBase et son serveur VBlank dans `vbsrv` (+$4A) : des intros lisent
+    `IntVects[INTB_BLIT].iv_Data` pour retrouver GfxBase.
+  - **ExecBase, table de sauts et pile superviseur en chip basse** : table $1000-$1276, ExecBase $1276, région du test
+    multi-header $1500-$2500 (marge sous la pile ensuite), pile superviseur $2500-$3500, tas $3500-$80000. Le haut de
+    la chip reste libre comme sur la vraie 1.3 (intros : routine à $7F000, pile à $7FFFE, plans à $70000+).
+  - **Aucun vecteur TRAP utilisé par exec** : Wait/yield/RemTask(self)/Supervisor entrent en superviseur par une
+    violation de privilège sur un site connu de la ROM (macro EXEC_SVC : `ori.w #0,sr`, mot magique, adresse du
+    service ; gestionnaire au vecteur $20). Les programmes installent souvent leur code au vecteur TRAP #0 pour passer
+    en superviseur ; TRAP #0-#15 vont désormais tous au tc_TrapCode de la tâche.
+  - **Liste Resident initiale** : nœud « CLI » système (usage -1, seglist = CLI ROM). EndCLI y décrémente le compteur
+    du nœud « CLI » qu'il cherche ; sans lui, il décrémentait l'adresse 4 (pointeur ExecBase) et tout s'écroulait
+    (fin de startup « endcli » sans `resident CLI` préalable). La vraie ROM a FileHandler, Restart et CLI ; nous n'avons
+    pas de seglists BCPL pour les deux premiers.
+  - Le gestionnaire d'exception rétablit SERPER avant d'écrire « SOFTWARE FAILURE » (un programme a pu changer la
+    vitesse du port).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
