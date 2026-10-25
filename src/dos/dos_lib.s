@@ -62,16 +62,40 @@ dos_vectors:
         dc.l    dos_close                ; 2 : LVO -12 (Close LIBRAIRIE)
         dc.l    dos_expunge              ; 3 : LVO -18
         dc.l    dos_null                 ; 4 : LVO -24 (réservé)
+                ifd     DOSTRACE
+        dc.l    dtr_open                 ; 5 : LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
+                else
         dc.l    dos_fn_open              ; 5 : LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
+                endc
+                ifd     DOSTRACE
+        dc.l    dtr_close               ; 6 : LVO -36 Close(fh d1)
+                else
         dc.l    dos_fn_close             ; 6 : LVO -36 Close(fh d1)
+                endc
+                ifd     DOSTRACE
+        dc.l    dtr_read                 ; 7 : LVO -42 Read(fh d1, buf d2, len d3) -> octets
+                else
         dc.l    dos_fn_read              ; 7 : LVO -42 Read(fh d1, buf d2, len d3) -> octets
+                endc
+                ifd     DOSTRACE
+        dc.l    dtr_write               ; 8  : LVO -48 Write(fh d1, buf d2, len d3) -> octets écrits
+                else
         dc.l    dos_fn_write             ; 8  : LVO -48 Write(fh d1, buf d2, len d3) -> octets écrits
+                endc
         dc.l    dos_fn_input             ; 9  : LVO -54 Input() -> BPTR pr_CIS
         dc.l    dos_fn_output            ; 10 : LVO -60 Output() -> BPTR pr_COS
+                ifd     DOSTRACE
+        dc.l    dtr_seek                 ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
+                else
         dc.l    dos_fn_seek              ; 11 : LVO -66 Seek(fh d1, position d2, mode d3)
+                endc
         dc.l    dos_fn_deletefile        ; 12 : LVO -72  DeleteFile(name d1)
         dc.l    dos_fn_rename            ; 13 : LVO -78  Rename(ancien d1, nouveau d2)
+                ifd     DOSTRACE
+        dc.l    dtr_lock                 ; 14 : LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
+                else
         dc.l    dos_fn_lock              ; 14 : LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
+                endc
         dc.l    dos_fn_unlock            ; 15 : LVO -90  UnLock(lock d1)
         dc.l    dos_fn_duplock           ; 16 : LVO -96  DupLock(lock d1) -> nouveau lock
         dc.l    dos_fn_examine           ; 17 : LVO -102 Examine(lock d1, fib d2)
@@ -328,6 +352,101 @@ dos_fn_read:
 .rd_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+                ifd     DOSTRACE
+; Traces de diagnostic (ROM -DDOSTRACE=1 seulement) : chaque appel émet sur le série « X args -> résultat ».
+                xref    ser_puts
+                xref    ser_puthex
+dtr_open:
+        movem.l d1-d2,-(sp)
+        bsr     dos_fn_open
+        movem.l d0/a0,-(sp)
+        lea     dtr_to(pc),a0
+        bsr     dtr_puts
+        move.l  8(sp),a0             ; nom
+        bsr     dtr_puts
+        move.l  12(sp),d0            ; mode
+        bra.s   dtr_end2
+dtr_lock:
+        movem.l d1-d2,-(sp)
+        bsr     dos_fn_lock
+        movem.l d0/a0,-(sp)
+        lea     dtr_tl(pc),a0
+        bsr     dtr_puts
+        move.l  8(sp),a0
+        bsr     dtr_puts
+        move.l  12(sp),d0
+dtr_end2:
+        bsr     dtr_hex
+        move.l  (sp),d0              ; résultat
+        bsr     dtr_hex
+        movem.l (sp)+,d0/a0
+        addq.l  #8,sp
+        rts
+dtr_close:
+        move.l  d1,-(sp)
+        bsr     dos_fn_close
+        movem.l d0/a0,-(sp)
+        lea     dtr_tc(pc),a0
+        bsr     dtr_puts
+        move.l  8(sp),d0
+        bsr     dtr_hex
+        movem.l (sp)+,d0/a0
+        addq.l  #4,sp
+        rts
+dtr_read:
+        lea     dtr_tr(pc),a0
+        pea     dos_fn_read(pc)
+        bra.s   dtr_3
+dtr_write:
+        lea     dtr_tw(pc),a0
+        pea     dos_fn_write(pc)
+        bra.s   dtr_3
+dtr_seek:
+        lea     dtr_ts(pc),a0
+        pea     dos_fn_seek(pc)
+dtr_3:                               ; (fh d1, arg d2, arg d3) : fonction en (sp), étiquette a0
+        move.l  (sp)+,a1
+        movem.l d1-d3/a0,-(sp)
+        jsr     (a1)
+        movem.l d0/a0,-(sp)
+        move.l  8+12(sp),a0
+        bsr     dtr_puts
+        move.l  8(sp),d0             ; fh
+        bsr     dtr_hex
+        move.l  8+4(sp),d0           ; position / tampon
+        bsr     dtr_hex
+        move.l  8+8(sp),d0           ; mode / longueur
+        bsr     dtr_hex
+        move.l  (sp),d0
+        bsr     dtr_hex
+        movem.l (sp)+,d0/a0
+        lea     16(sp),sp
+        rts
+dtr_hex:                             ; d0.l en 8 chiffres + espace
+        swap    d0
+        jsr     ser_puthex
+        swap    d0
+        jsr     ser_puthex
+        move.l  a0,-(sp)
+        lea     dtr_sp(pc),a0
+        bsr.s   dtr_puts
+        move.l  (sp)+,a0
+        rts
+dtr_puts:
+        movem.l d0-d1/a0-a1,-(sp)
+        jsr     ser_puts
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+dtr_to:         dc.b    10,"O ",0
+dtr_tl:         dc.b    10,"L ",0
+dtr_tc:         dc.b    10,"C ",0
+dtr_tr:         dc.b    10,"R ",0
+dtr_tw:         dc.b    10,"W ",0
+dtr_ts:         dc.b    10,"S ",0
+dtr_sp:         dc.b    " ",0
+                even
+                endc
 
 ; Close(fh d1 [BPTR FileHandle]) -> d0 = DOSTRUE.
 dos_fn_close:

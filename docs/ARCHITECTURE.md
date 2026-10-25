@@ -821,6 +821,20 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     pas de seglists BCPL pour les deux premiers.
   - Le gestionnaire d'exception rétablit SERPER avant d'écrire « SOFTWARE FAILURE » (un programme a pu changer la
     vitesse du port).
+  (22) **SimCity et Monkey Island lancés depuis le CLI** (spec monkey-startup ; trace dos `-DDOSTRACE=1`). SimCity
+  atteint son menu, Monkey Island son écran titre (« Appuyez sur ENTER », générique).
+  - **console.device** : OpenDevice en unité -1 (CONU_LIBRARY, sans fenêtre) et **RawKeyConvert** (−48) : caractère par
+    kbd_cook, séquences CSI des flèches, F1-F10 et Help (variantes Shift), 0 sur un relâchement, -1 si le tampon est
+    trop court.
+  - **graphics** : LoadRGB4 (−192) ; listes copper utilisateur **UCopperListInit** (−594), **CMove**, **CWait**, **CBump**
+    (−372/−378/−366) ; MakeVPort recopie `vp_UCopIns` en fin de fragment (WAIT ramené à la ligne réelle, passage de la
+    ligne 255, CEND), FreeVPortCopLists les libère. Monkey y place un saut COP1LC/COPJMP1 vers ses propres listes.
+    **DMA blitter actif dès l'init** : un programme qui sauve puis restaure DMACON (intro defjam) le coupait sinon
+    pour de bon, et le premier WaitBlit du jeu ne rendait jamais la main.
+  - **OFS** : Seek direct par les tables de blocs de l'en-tête et des blocs d'extension (bloc pos/488), au lieu de
+    suivre la chaîne des data blocks.
+  - Restant : le lecteur de musique de Monkey prend le vecteur $78 (niveau 6) sans chaîner ; notre MICROHZ est sur
+    CIA-B (niveau 6), la vraie timer.device sur CIA-A. Le feeder clavier et le handler console attendent sur MICROHZ.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

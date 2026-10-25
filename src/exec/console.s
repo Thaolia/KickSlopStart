@@ -52,6 +52,8 @@ console_vectors:                     ; table ABSOLUE, terminée par -1 (ordre de
         dc.l    console_null         ; LVO -24 (réservé)
         dc.l    console_beginio      ; LVO -30
         dc.l    console_abortio      ; LVO -36
+        dc.l    console_null         ; LVO -42 CDInputHandler (non impl.)
+        dc.l    console_rawkeyconvert ; LVO -48 RawKeyConvert(events a0, buffer a1, longueur d1, keymap a2)
         dc.l    -1
 console_datatab:
         dc.w    $E000,LN_TYPE,(NT_DEVICE<<8)   ; INITBYTE(LN_TYPE, NT_DEVICE)
@@ -67,8 +69,11 @@ console_open:
         movem.l a2/a6,-(sp)
         move.l  a1,a2
         clr.b   IO_ERROR(a2)
+        addq.l  #1,d0                ; unité -1 (CONU_LIBRARY) : pas de fenêtre, base seule (RawKeyConvert)
+        beq.s   .co_lib
         move.l  IO_DATA2(a2),d0
         bne.s   .co_win
+.co_lib:
         move.l  a6,IO_UNIT(a2)
         bra.s   .co_ok
 .co_win:
@@ -101,6 +106,112 @@ console_open:
 .co_ret:
         movem.l (sp)+,a2/a6
         rts
+; RawKeyConvert(events a0, buffer a1, longueur d1, keymap a2 ignorée : keymap active) -> d0 = caractères écrits, -1 si
+; le tampon est trop court. Un appui RAWKEY donne son caractère (kbd_cook : Shift/Caps/Ctrl) ; flèches, F1-F10 et Help
+; donnent leur séquence CSI ($9B) comme la console ; relâchement et autres classes : 0.
+console_rawkeyconvert:
+        movem.l d2-d3/a2,-(sp)
+        move.l  d1,d3                ; d3 = place disponible
+        moveq   #0,d0
+        cmp.b   #IECLASS_RAWKEY,IE_CLASS(a0)
+        bne.s   .rk_ret
+        move.w  IE_CODE(a0),d2
+        btst    #7,d2                ; relâchement
+        bne.s   .rk_ret
+        move.w  IE_QUALIFIER(a0),d1
+        lea     rk_seq(pc),a2        ; touches à séquence : [code, normal, shifté] (chaînes après CSI)
+.rk_find:
+        move.b  (a2)+,d0
+        bmi.s   .rk_cook
+        cmp.b   d0,d2
+        beq.s   .rk_seq
+        addq.l  #4,a2
+        bra.s   .rk_find
+.rk_seq:
+        move.b  (a2)+,d0             ; décalage de la chaîne normale
+        and.w   #KQ_SHIFT,d1
+        beq.s   .rk_ns
+        move.b  (a2),d0              ; décalage de la chaîne shiftée
+.rk_ns:
+        ext.w   d0
+        lea     rk_str(pc,d0.w),a2
+        moveq   #0,d0
+        subq.l  #1,d3
+        bmi.s   .rk_over
+        move.b  #$9B,(a1)+
+        addq.l  #1,d0
+.rk_scp:
+        tst.b   (a2)
+        beq.s   .rk_ret
+        subq.l  #1,d3
+        bmi.s   .rk_over
+        move.b  (a2)+,(a1)+
+        addq.l  #1,d0
+        bra.s   .rk_scp
+.rk_cook:
+        move.b  d2,d0
+        jsr     kbd_cook             ; d0.b = ASCII | 0
+        and.l   #$FF,d0
+        beq.s   .rk_ret
+        tst.l   d3
+        beq.s   .rk_over
+        move.b  d0,(a1)
+        moveq   #1,d0
+        bra.s   .rk_ret
+.rk_over:
+        moveq   #-1,d0
+.rk_ret:
+        movem.l (sp)+,d2-d3/a2
+        rts
+rk_seq:                              ; code, décalage normal, décalage shifté, bourrage
+        dc.b    $4C,rk_up-rk_str,rk_sup-rk_str,0
+        dc.b    $4D,rk_dn-rk_str,rk_sdn-rk_str,0
+        dc.b    $4E,rk_rt-rk_str,rk_srt-rk_str,0
+        dc.b    $4F,rk_lt-rk_str,rk_slt-rk_str,0
+        dc.b    $50,rk_f1-rk_str,rk_sf1-rk_str,0
+        dc.b    $51,rk_f2-rk_str,rk_sf2-rk_str,0
+        dc.b    $52,rk_f3-rk_str,rk_sf3-rk_str,0
+        dc.b    $53,rk_f4-rk_str,rk_sf4-rk_str,0
+        dc.b    $54,rk_f5-rk_str,rk_sf5-rk_str,0
+        dc.b    $55,rk_f6-rk_str,rk_sf6-rk_str,0
+        dc.b    $56,rk_f7-rk_str,rk_sf7-rk_str,0
+        dc.b    $57,rk_f8-rk_str,rk_sf8-rk_str,0
+        dc.b    $58,rk_f9-rk_str,rk_sf9-rk_str,0
+        dc.b    $59,rk_f10-rk_str,rk_sf10-rk_str,0
+        dc.b    $5F,rk_hlp-rk_str,rk_hlp-rk_str,0
+        dc.b    -1
+rk_str:
+rk_up:  dc.b    "A",0
+rk_dn:  dc.b    "B",0
+rk_rt:  dc.b    "C",0
+rk_lt:  dc.b    "D",0
+rk_sup: dc.b    "T",0
+rk_sdn: dc.b    "S",0
+rk_srt: dc.b    " @",0
+rk_slt: dc.b    " A",0
+rk_f1:  dc.b    "0~",0
+rk_f2:  dc.b    "1~",0
+rk_f3:  dc.b    "2~",0
+rk_f4:  dc.b    "3~",0
+rk_f5:  dc.b    "4~",0
+rk_f6:  dc.b    "5~",0
+rk_f7:  dc.b    "6~",0
+rk_f8:  dc.b    "7~",0
+rk_f9:  dc.b    "8~",0
+rk_f10: dc.b    "9~",0
+rk_sf1: dc.b    "10~",0
+rk_sf2: dc.b    "11~",0
+rk_sf3: dc.b    "12~",0
+rk_sf4: dc.b    "13~",0
+rk_sf5: dc.b    "14~",0
+rk_sf6: dc.b    "15~",0
+rk_sf7: dc.b    "16~",0
+rk_sf8: dc.b    "17~",0
+rk_sf9: dc.b    "18~",0
+rk_sf10: dc.b   "19~",0
+rk_hlp: dc.b    "?~",0
+        even
+
 ; Close(iorequest a1) : libère la ConUnit d'une unité fenêtre.
 console_close:
         subq.w  #1,LIB_OPENCNT(a6)

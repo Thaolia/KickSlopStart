@@ -25,6 +25,7 @@ OFSB_MINS       EQU 424
 OFSB_TICKS      EQU 428
 OFSB_NAME       EQU 432           ; long[108] (= (128-20)) : nom BCPL (octet longueur + chars)
 OFSB_HASHCHAIN  EQU 496           ; long[124] (= (128-4)) : hash_chain (prochain header même bucket)
+OFSB_EXTENSION  EQU 504           ; long[126] : bloc d'extension (72 blocs de données de plus) | 0
 OFSB_PARENT     EQU 500           ; long[125] (= (128-3)) : bloc du répertoire parent (0 pour le root)
 OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)) : type secondaire (ST_FILE=-3)
 ; bitmap d'allocation (root block) — disk-validator (#4), offsets vérifiés sur l'ADF de test
@@ -70,7 +71,8 @@ SS_POS          EQU 8             ; LONG : position absolue courante de lecture
 SS_FIRSTDATA    EQU 12            ; LONG : premier data block (rewind sur seek arrière)
 SS_CURBLK       EQU 16            ; LONG : data block courant (celui qui commence à SS_BLKBASE)
 SS_BLKBASE      EQU 20            ; LONG : offset absolu du début des données de SS_CURBLK
-SS_IOREQ        EQU 24            ; IOStdReq (IOREQ_SZ o) ; le block buffer suit à +IOREQ_SZ (OFS_BSIZE o)
+SS_HEADER       EQU 24            ; LONG : bloc d'en-tête du fichier (tables de blocs : seek direct)
+SS_IOREQ        EQU 28            ; IOStdReq (IOREQ_SZ o) ; le block buffer suit à +IOREQ_SZ (OFS_BSIZE o)
 SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; taille AllocMem totale de l'état
 
 ; STREAM_CAP32K=1 (RED streaming) : ofs_stream_read re-plafonne la lecture à 32768 o (= l'ancien cap whole-file)

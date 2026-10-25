@@ -123,7 +123,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_Animate              ; 27 : LVO -162
         dc.l    gfx_GetGBuffers          ; 28 : LVO -168
         dc.l    gfx_InitGMasks           ; 29 : LVO -174
-        dcb.l   3,graphics_null          ; 30..32 : LVO -180..-192 (ellipses, LoadRGB4 : non implémentés)
+        dcb.l   2,graphics_null          ; 30..31 : LVO -180..-186 (ellipses : non implémentées)
+        dc.l    gfx_LoadRGB4             ; 32 : LVO -192 LoadRGB4(vp a0, couleurs a1, nombre d0)
         dc.l    gfx_InitRastPort         ; 33 : LVO -198
         dc.l    graphics_null            ; 34 : LVO -204 (non implémenté)
         dc.l    gfx_MrgCop               ; 35 : LVO -210
@@ -144,7 +145,11 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_SetAPen              ; 57 : LVO -342
         dc.l    gfx_SetBPen              ; 58 : LVO -348
         dc.l    gfx_SetDrMd              ; 59 : LVO -354
-        dcb.l   5,graphics_null         ; 60..64 : LVO -360..-384 (non implémentés)
+        dc.l    graphics_null            ; 60 : LVO -360 InitView (non impl.)
+        dc.l    gfx_CBump                ; 61 : LVO -366 CBump(ucl a1)
+        dc.l    gfx_CMove                ; 62 : LVO -372 CMove(ucl a1, registre d0, valeur d1)
+        dc.l    gfx_CWait                ; 63 : LVO -378 CWait(ucl a1, v d0, h d1)
+        dc.l    graphics_null            ; 64 : LVO -384 VBeamPos (non impl.)
         dc.l    gfx_InitBitMap           ; 65 : LVO -390
         dc.l    gfx_ScrollRaster         ; 66 : LVO -396
         dc.l    graphics_null            ; 67 : LVO -402 WaitBOVP (non implémenté)
@@ -172,7 +177,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
         dcb.l   2,graphics_null          ; 91..92 : LVO -546..-552 (non implémentés)
         dc.l    gfx_XorRectRegion        ; 93 : LVO -558
-        dcb.l   6,graphics_null          ; 94..99 : LVO -564..-594 (non implémentés)
+        dcb.l   5,graphics_null          ; 94..98 : LVO -564..-588 (non implémentés)
+        dc.l    gfx_UCopperListInit      ; 99 : LVO -594 UCopperListInit(ucl a0, nombre d0)
         dc.l    gfx_FreeGBuffers         ; 100 : LVO -600
         dc.l    gfx_BltBitMapRastPort    ; 101 : LVO -606
         dc.l    gfx_OrRegionRegion       ; 102 : LVO -612
@@ -224,7 +230,8 @@ graphics_initfunc:
         move.w  #64*256,gb_MicrosPerLine(a2)
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
-        jsr     gfx_fontinit
+        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter actif en permanence, comme la 1.3 : un
+        jsr     gfx_fontinit         ; programme qui sauve puis restaure DMACON doit le retrouver
         moveq   #GFX_COPINIT_SIZE,d0 ; copinit (COP1LC) : attente ligne 12 puis saut vers COP2LC
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -389,9 +396,94 @@ gfx_MakeVPort:
         addq.w  #2,d3
         subq.w  #1,d4
         bne.s   .mv_color
+        bsr     gfx_ucopemit         ; instructions utilisateur (vp_UCopIns) en fin de fragment
         move.l  a3,vp_DspIns(a2)     ; publie le fragment
 .mv_ret:
         movem.l (sp)+,d2/d3/d4/d5/a2/a3/a4/a6
+        rts
+
+; gfx_ucopemit(a1 = écriture dans le fragment, a2 = ViewPort, a3 = fragment) : recopie les instructions de
+; vp_UCopIns (CMove/CWait de l'utilisateur) à la fin du fragment, dans la place qui reste. Un WAIT donne la ligne
+; v + $2C + DyOffset de la ViewPort (au-delà de 255, précédé du WAIT de passage $FFDF) ; v >= 10000 = fin de liste
+; (CEND). Clobbe d0/d1/a0.
+gfx_ucopemit:
+        movem.l d2-d4/a4,-(sp)
+        move.l  vp_UCopIns(a2),d0
+        beq.s   .ue_ret
+        move.l  d0,a0
+        move.l  ucl_FirstCopList(a0),d0
+        beq.s   .ue_ret
+        move.l  d0,a4
+        move.l  cl_CopIns(a4),a0
+        move.w  cl_Count(a4),d2      ; d2 = instructions
+        lea     GFX_FRAG_SIZE(a3),a4 ; a4 = fin du fragment
+        moveq   #0,d4                ; d4 = WAIT de passage de la ligne 255 déjà émis
+.ue_lp:
+        subq.w  #1,d2
+        bmi.s   .ue_ret
+        move.l  a4,d0
+        sub.l   a1,d0
+        cmp.l   #8,d0                ; place pour une instruction (+ un WAIT de passage)
+        blo.s   .ue_ret
+        move.w  ci_Word1(a0),d0
+        move.w  ci_Word2(a0),d1
+        tst.w   ci_OpCode(a0)
+        bne.s   .ue_wait
+        and.w   #$1FE,d0             ; registre : décalage dans les registres custom
+        move.w  d0,(a1)+
+        move.w  d1,(a1)+
+        bra.s   .ue_nx
+.ue_wait:
+        cmp.w   #10000,d0
+        bge.s   .ue_ret              ; CEND
+        add.w   #$2C,d0
+        add.w   vp_DyOffset(a2),d0
+        bpl.s   .ue_pos
+        moveq   #0,d0
+.ue_pos:
+        cmp.w   #255,d0
+        ble.s   .ue_line
+        tst.w   d4
+        bne.s   .ue_line
+        st      d4
+        move.w  #$FFDF,(a1)+         ; attend la fin de la ligne 255
+        move.w  #$FFFE,(a1)+
+.ue_line:
+        lsl.w   #8,d0                ; ligne (8 bits bas) en VP
+        and.w   #$FE,d1              ; position horizontale paire
+        or.w    d1,d0
+        or.w    #1,d0
+        move.w  d0,(a1)+
+        move.w  #$FFFE,(a1)+
+.ue_nx:
+        addq.l  #CI_SIZEOF,a0
+        bra.s   .ue_lp
+.ue_ret:
+        movem.l (sp)+,d2-d4/a4
+        rts
+
+; gfx_LoadRGB4(vp a0, couleurs a1, nombre d0) : les « nombre » premières couleurs ($0RGB) par SetRGB4.
+gfx_LoadRGB4:
+        movem.l d2-d5/a2-a3,-(sp)
+        move.l  a0,a2
+        move.l  a1,a3
+        move.w  d0,d5                ; d5 = nombre
+        moveq   #0,d4                ; d4 = n° de couleur
+.lr_lp:
+        cmp.w   d5,d4
+        bhs.s   .lr_ret
+        move.w  (a3)+,d1
+        move.w  d1,d3                ; b
+        move.w  d1,d2
+        lsr.w   #4,d2                ; g
+        lsr.w   #8,d1                ; r
+        move.w  d4,d0
+        move.l  a2,a0
+        bsr.s   gfx_SetRGB4
+        addq.w  #1,d4
+        bra.s   .lr_lp
+.lr_ret:
+        movem.l (sp)+,d2-d5/a2-a3
         rts
 
 ; gfx_SetRGB4(vp a0, n d0, r d1, g d2, b d3) : ColorTable[n] = RGB 4 bits, et le MOVE COLORn déjà généré est corrigé
@@ -451,16 +543,106 @@ gfx_win_hires:
 
 ; gfx_FreeVPortCopLists(vp a0) : libère le fragment copper de la ViewPort (vp_DspIns := 0).
 gfx_FreeVPortCopLists:
-        move.l  a6,-(sp)
-        move.l  vp_DspIns(a0),d0
-        beq.s   .fv_ret
-        clr.l   vp_DspIns(a0)
+        movem.l a2-a3/a6,-(sp)
+        move.l  a0,a2
+        move.l  ($4).w,a6
+        move.l  vp_DspIns(a2),d0
+        beq.s   .fv_ucl
+        clr.l   vp_DspIns(a2)
         move.l  d0,a1
         move.l  #GFX_FRAG_SIZE,d0
-        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+.fv_ucl:
+        move.l  vp_UCopIns(a2),d0    ; liste utilisateur : ses CopList (instructions comprises) puis l'en-tête
+        beq.s   .fv_ret
+        clr.l   vp_UCopIns(a2)
+        move.l  d0,-(sp)
+        move.l  d0,a0
+        move.l  ucl_FirstCopList(a0),a3
+.fv_cl:
+        move.l  a3,d0
+        beq.s   .fv_hdr
+        move.l  cl_CopIns(a3),a1
+        move.w  cl_MaxCount(a3),d0
+        mulu    #CI_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  a3,a1
+        move.l  cl_Next(a3),a3
+        moveq   #CL_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        bra.s   .fv_cl
+.fv_hdr:
+        move.l  (sp)+,a1
+        moveq   #UCL_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
 .fv_ret:
-        move.l  (sp)+,a6
+        movem.l (sp)+,a2-a3/a6
+        rts
+
+; UCopperListInit(ucl a0, nombre d0) -> d0 = CopList | 0 : CopList de « nombre » instructions, courante et première.
+gfx_UCopperListInit:
+        movem.l d2/a2-a3/a6,-(sp)
+        move.l  a0,a2
+        move.w  d0,d2
+        move.l  ($4).w,a6
+        moveq   #CL_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ui_ret
+        move.l  d0,a3
+        moveq   #0,d0
+        move.w  d2,d0
+        mulu    #CI_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        bne.s   .ui_ok
+        move.l  a3,a1
+        moveq   #CL_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra.s   .ui_ret
+.ui_ok:
+        move.l  d0,cl_CopIns(a3)
+        move.l  d0,cl_CopPtr(a3)
+        move.w  d2,cl_MaxCount(a3)
+        move.l  a3,ucl_FirstCopList(a2)
+        move.l  a3,ucl_CopList(a2)
+        move.l  a3,d0
+.ui_ret:
+        movem.l (sp)+,d2/a2-a3/a6
+        rts
+
+; CMove(ucl a1, registre d0, valeur d1) / CWait(ucl a1, v d0, h d1) : écrivent l'instruction courante ; CBump(ucl a1)
+; passe à la suivante. Liste pleine : instruction ignorée.
+gfx_CMove:
+        movem.l d2-d3,-(sp)
+        moveq   #0,d2                ; COPPER_MOVE
+        bra.s   gfx_cput
+gfx_CWait:
+        movem.l d2-d3,-(sp)
+        moveq   #1,d2                ; COPPER_WAIT
+gfx_cput:
+        move.l  ucl_CopList(a1),a0
+        move.w  cl_Count(a0),d3
+        cmp.w   cl_MaxCount(a0),d3
+        bhs.s   .cp_ret
+        move.l  cl_CopPtr(a0),a0
+        move.w  d2,ci_OpCode(a0)
+        move.w  d0,ci_Word1(a0)
+        move.w  d1,ci_Word2(a0)
+.cp_ret:
+        movem.l (sp)+,d2-d3
+        rts
+gfx_CBump:
+        move.l  ucl_CopList(a1),a0
+        move.w  cl_Count(a0),d0
+        cmp.w   cl_MaxCount(a0),d0
+        bhs.s   .cb_ret
+        addq.w  #1,cl_Count(a0)
+        addq.l  #CI_SIZEOF,cl_CopPtr(a0)
+.cb_ret:
         rts
 
 ; gfx_MrgCop(view a1) : fusionne le fragment vp_DspIns de chaque ViewPort dans v_LOFCprList (master, chip RAM)

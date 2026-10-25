@@ -644,6 +644,7 @@ ofs_stream_open:
                 cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)
                 bne.s   .so_fail                      ; pas un FICHIER (dir -> échec, comme l'ancien ofs_read_file)
                 move.l  OFSB_FILESIZE(a0),SS_SIZE(a5)
+                move.l  d4,SS_HEADER(a5)
                 move.l  OFSB_FIRSTDATA(a0),d0
                 move.l  d0,SS_FIRSTDATA(a5)
                 move.l  d0,SS_CURBLK(a5)
@@ -743,18 +744,60 @@ ofs_stream_read:
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 
-; ofs_stream_seek(a1=état, d0=position absolue cible, a6=SysBase). Repositionne le curseur. Stratégie « dumb seek » :
-; si la cible est AVANT le début du bloc courant -> rewind au premier data block ; puis POS = cible. La marche avant
-; (parcours des data blocks jusqu'au bloc contenant la cible) est faite paresseusement par la boucle d'avance de
-; ofs_stream_read (within >= data_size) au prochain Read. Bornage [0, SS_SIZE] à la charge de l'appelant (handler).
+; ofs_stream_seek(a1=état, d0=position absolue cible, a6=SysBase). Repositionne le curseur. Hors du bloc courant, le
+; data block n° pos/488 est pris directement dans la table de l'en-tête (72 blocs) puis des blocs d'extension, comme le
+; système de fichiers : quelques lectures au lieu de suivre la chaîne bloc par bloc (un jeu qui lit son fichier de
+; données par Seek + Read relisait des centaines de blocs par Seek). Table illisible : retour au premier data block,
+; la marche avant se faisant au prochain Read. Bornage [0, SS_SIZE] à la charge de l'appelant (handler). Clobbe a0/a1.
 ofs_stream_seek:
-                cmp.l   SS_BLKBASE(a1),d0
-                bhs.s   .sk_setpos                    ; cible >= début du bloc courant -> marche avant au prochain Read
-                move.l  SS_FIRSTDATA(a1),SS_CURBLK(a1)   ; cible en arrière -> rewind au premier data block
-                clr.l   SS_BLKBASE(a1)
-.sk_setpos:
-                move.l  d0,SS_POS(a1)
+                movem.l d2-d4/a2-a3/a5,-(sp)
+                move.l  a1,a5
+                move.l  d0,SS_POS(a5)
+                move.l  d0,d1
+                sub.l   SS_BLKBASE(a5),d1
+                bcs.s   .sk_direct
+                cmp.l   #OFS_DMAX,d1
+                blo.s   .sk_ret                       ; dans le bloc courant
+.sk_direct:                                           ; bloc n° k = pos / 488 : en-tête puis extensions, 72 par bloc
+                move.l  d0,d4
+                divu    #OFS_DMAX,d4
+                and.l   #$FFFF,d4                     ; d4 = k
+                move.l  d4,d2
+                move.l  SS_TRACKDISK(a5),a2
+                lea     SS_IOREQ(a5),a3
+                move.l  SS_HEADER(a5),d3
+.sk_ext:
+                move.l  d3,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq.s   .sk_chain
+                lea     IOREQ_SZ(a3),a0
+                cmp.l   #OFS_TABLE,d2
+                blo.s   .sk_tab
+                move.l  OFSB_EXTENSION(a0),d3
+                beq.s   .sk_chain
+                sub.l   #OFS_TABLE,d2
+                bra.s   .sk_ext
+.sk_tab:
+                moveq   #OFS_TABLE-1,d0               ; table inversée : le 1er bloc est le dernier long
+                sub.l   d2,d0
+                lsl.l   #2,d0
+                move.l  OFSB_HASHTAB(a0,d0.l),d1
+                beq.s   .sk_chain
+                move.l  d1,SS_CURBLK(a5)
+                mulu    #OFS_DMAX,d4
+                move.l  d4,SS_BLKBASE(a5)
+                bra.s   .sk_ret
+.sk_chain:                                            ; table illisible (fin de fichier...) : marche par la chaîne
+                move.l  SS_POS(a5),d0
+                cmp.l   SS_BLKBASE(a5),d0
+                bhs.s   .sk_ret
+                move.l  SS_FIRSTDATA(a5),SS_CURBLK(a5)
+                clr.l   SS_BLKBASE(a5)
+.sk_ret:
+                movem.l (sp)+,d2-d4/a2-a3/a5
                 rts
+OFS_TABLE       EQU 72                        ; numéros de blocs de données par en-tête / extension
 
 ofs_td_name:
                 dc.b    "trackdisk.device",0

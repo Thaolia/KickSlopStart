@@ -26,6 +26,7 @@ DMAF_SETCLR EQU $8000         ; 1 = positionne les bits à 1 ; 0 = les met à 0
 DMAF_COPPER EQU $0080         ; canal DMA Copper
 DMAF_RASTER EQU $0100         ; canal DMA bitplane (fetch des données de pixels depuis la chip RAM)
 DMAF_MASTER EQU $0200         ; DMA maître (requis pour que TOUT canal DMA fonctionne)
+DMAF_BLITTER EQU $0040        ; canal DMA blitter
 
 ; --- valeurs d'init display (HRM) : OVERSCAN lores 352x272 PAL (remplit l'écran bord-à-bord pour l'écran de boot) ---
 ; hstart=$71 (113), hstop=113+352=465=$1D1 (H8 forcé 1) ; vstart=$24 (36), vstop=36+272=308=$134 (V8=~V7).
@@ -62,7 +63,7 @@ BOOTSCR_ONE_PLANE EQU 0
 ; structures View/ViewPort/BitMap/ColorMap — le template copper codé en dur de M4a/M4b est SUPPRIMÉ. La preuve
 ; « GREEN=rayures » vaut par ÉLIMINATION : plus aucun autre chemin ne dessine les rayures. Les gates M4A_NO_COPPER
 ; et M4B_NO_BITPLANE (qui gataient ce template) sont donc RETIRÉS.
-GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER|DMAF_SPRITE)  ; activé par LoadView
+GFX_DMA_ON    EQU (DMAF_SETCLR|DMAF_MASTER|DMAF_COPPER|DMAF_RASTER|DMAF_SPRITE|DMAF_BLITTER)  ; activé par LoadView
 GFX_HIRES_BIT EQU $8000        ; BPLCON0 bit 15 (HIRES), posé si vp_Modes a le bit HIRES ($8000)
 GFX_COLOR_BIT EQU $0200        ; BPLCON0 bit 9 (COLOR composite) ; BPLCON0 généré = (depth<<12) | GFX_COLOR_BIT
 ; M4C2_NO_MRGCOP=1 (RED M4c2) : MrgCop ne fusionne PAS les fragments vp_DspIns -> v_LOFCprList ne contient que
@@ -80,8 +81,10 @@ v_SIZEOF     EQU 18
 vp_Next      EQU 0            ; ViewPort
 vp_ColorMap  EQU 4
 vp_DspIns    EQU 8
+vp_UCopIns   EQU 20           ; struct UCopList * : instructions copper de l'utilisateur (CMove/CWait)
 vp_DWidth    EQU 24
 vp_DHeight   EQU 26
+vp_DyOffset  EQU 30
 vp_Modes     EQU 32
 vp_RasInfo   EQU 36
 vp_SIZEOF    EQU 40
@@ -224,7 +227,22 @@ DMAF_SPRITE  EQU $0020
 ; MakeVPort est générique : DIW/DDF (4) + BPLCON0/1/2/BPL1MOD/BPL2MOD (5) + depth*2 (pointeurs de plan) + Count
 ; (couleurs) MOVEs. Dimensionné pour le pire cas de ce projet (6 plans + 32 couleurs = 53 MOVEs = 106 mots) ;
 ; MrgCop copie le fragment entier -> le reliquat mis à 0 (MEMF_CLEAR) = MOVEs inertes vers BLTDDAT, inoffensifs.
-GFX_FRAG_WORDS EQU 106
+GFX_UCOPMAX    EQU 64             ; instructions utilisateur (vp_UCopIns) gardées dans un fragment
+GFX_FRAG_WORDS EQU 106+GFX_UCOPMAX*2+2 ; + un WAIT de passage de la ligne 255
+; struct UCopList / CopList / CopIns (graphics/copper.h)
+ucl_FirstCopList EQU 4
+ucl_CopList  EQU 8
+UCL_SIZEOF   EQU 12
+cl_Next      EQU 0
+cl_CopIns    EQU 12
+cl_CopPtr    EQU 16
+cl_Count     EQU 28
+cl_MaxCount  EQU 30
+CL_SIZEOF    EQU 34
+ci_OpCode    EQU 0               ; COPPER_MOVE 0, COPPER_WAIT 1
+ci_Word1     EQU 2               ; DestAddr / VWaitPos
+ci_Word2     EQU 4               ; DestData / HWaitPos
+CI_SIZEOF    EQU 6
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
 GFX_SPRCOP_SIZE EQU 8*2*4            ; SPR0PTH/L..SPR7PTH/L : 16 MOVEs ajoutés par MrgCop
 GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+GFX_SPRCOP_SIZE+4   ; + WAIT final ajouté par MrgCop
