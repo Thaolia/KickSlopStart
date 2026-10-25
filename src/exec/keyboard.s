@@ -91,6 +91,8 @@ kbd_install:
                 movem.l a2/a6,-(sp)
                 clr.w   KBD_HEAD             ; RAM basse non garantie nulle au power-on
                 clr.w   KBD_TAIL
+                clr.w   KBD_FHEAD            ; tampon du feeder : un index impair laissé par la RAM du power-on faisait
+                clr.w   KBD_FTAIL            ; une erreur d'adresse au 1er appui (WinUAE remplit la RAM, FS-UAE la vide)
                 clr.w   KBD_QUAL             ; #5 : état des qualifieurs
                 lea     kbd_ciaa_name(pc),a1
                 jsr     LVO_OPENRESOURCE(a6) ; OpenResource("ciaa.resource")

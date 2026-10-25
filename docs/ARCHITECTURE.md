@@ -836,6 +836,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     suivre la chaîne des data blocks.
   - Restant : le lecteur de musique de Monkey prend le vecteur $78 (niveau 6) sans chaîner ; notre MICROHZ est sur
     CIA-B (niveau 6), la vraie timer.device sur CIA-A. Le feeder clavier et le handler console attendent sur MICROHZ.
+  (23) **Clavier sous WinUAE** (signalé par l'utilisateur ; spec keyboard-handshake-v34 pour la référence). Les index
+  du tampon du feeder (KBD_FHEAD/KBD_FTAIL) n'étaient jamais initialisés : FS-UAE met la RAM à zéro à l'allumage,
+  WinUAE (comme une vraie machine) non ; un index impair faisait une erreur d'adresse dans l'interruption clavier au
+  premier appui, qui restait bloquée au niveau 2 (plus de poignée de main, plus aucune touche, souris intacte). Le
+  coldstart met désormais à zéro toute la zone des variables de RAM basse ($500-$800). Diagnostic sous WinUAE Linux
+  (Xvfb, `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1`, focus de la fenêtre) avec des jalons de couleur (COLOR00 de la
+  liste copper affichée) dans l'interruption, faute de série et de débogueur.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

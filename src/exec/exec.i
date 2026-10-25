@@ -28,6 +28,8 @@ CIAA_DDRA EQU $BFE201
 ; --- Carte mémoire cible A500 512K ---
 MAXCHIP      EQU $00080000
 MH_CHIP      EQU $00000400     ; MemHeader chip
+LOWVARS_LO   EQU $00000500     ; variables globales en RAM basse [LOWVARS_LO, LOWVARS_HI), mises à zéro au coldstart
+LOWVARS_HI   EQU $00000800
 TST_LIST     EQU $00000420     ; scratch auto-test (listes)
 TST_N1       EQU $00000440
 TST_N2       EQU $00000460

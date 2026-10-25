@@ -175,6 +175,11 @@ coldstart:                        ; $FC00D2
         move.b  #$03,CIAA_DDRA
         move.b  #$02,CIAA_PRA        ; OVL off -> RAM chip à $0
         move.l  #STACKTOP,sp
+        lea     LOWVARS_LO,a0        ; variables de la RAM basse à zéro : la RAM n'est pas nulle à l'allumage sur une
+        move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; vraie machine ni sous WinUAE (un index de tampon clavier impair y
+.lv_clr:                             ; faisait une erreur d'adresse au 1er appui ; FS-UAE vide la RAM)
+        clr.l   (a0)+
+        dbra    d0,.lv_clr
         move.w  #C_BLUE,COLOR00
         move.w  #SERPER_9600_PAL,SERPER
         lea     msg_cold(pc),a0
