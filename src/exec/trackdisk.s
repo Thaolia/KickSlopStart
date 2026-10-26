@@ -270,6 +270,14 @@ trackdisk_initfunc:
         move.l  #td_motor_server,IS_CODE(a1)
         moveq   #INTB_VERTB,d0
         jsr     LVO_ADDINTSERVER(a6)
+        lea     TD_DSKINT,a1         ; vecteur DSKBLK (niveau 1) : fin de DMA par interruption (td_dmawait)
+        move.b  #NT_INTERRUPT,LN_TYPE(a1)
+        lea     trackdisk_name(pc),a0
+        move.l  a0,LN_NAME(a1)
+        clr.l   IS_DATA(a1)
+        move.l  #td_dskblk_int,IS_CODE(a1)
+        moveq   #1,d0                ; INTB_DSKBLK
+        jsr     LVO_SETINTVECTOR(a6)
         movem.l (sp)+,d0/a1
         move.l  d0,a1
         lea     trackdisk_name(pc),a0
@@ -353,6 +361,15 @@ td_cache_slot:
 ; coupe aussi le moteur par minuterie). Ignoré pendant un accès (TD_BUSY). Extinction = sélection avec le bit moteur
 ; haut (latch off) puis déselection. -> d0 = 0 (Z : la chaîne continue).
 td_motor_server:
+        tst.l   TD_DMATASK           ; DMA attendu par une tâche : délai décompté, à zéro elle est réveillée
+        beq.s   .ms_motor
+        subq.w  #1,TD_DMATMO
+        bgt.s   .ms_motor
+        clr.w   TD_DMATMO
+        move.l  TD_DMATASK,a1
+        moveq   #SIGF_SINGLE,d0
+        jsr     LVO_SIGNAL(a6)
+.ms_motor:
         tst.b   TD_MOTORON
         beq.s   .ms_ret
         tst.b   TD_BUSY
@@ -434,13 +451,8 @@ td_read_track:
         move.w  #($8000|TD_RAWWORDS),DSKLEN   ; arme la lecture (DMAEN|len)
         move.w  #($8000|TD_RAWWORDS),DSKLEN   ; écrit 2x pour démarrer (quirk hardware)
                 endc                 ; RED TD_NO_DMA : DMA non armé -> buffer reste à 0 -> aucun sync
-        move.l  #$00080000,d2        ; poll DSKBLK avec timeout (jamais de hang si pas de disque)
-.rd_wait:
-        move.w  INTREQR,d3
-        btst    #1,d3                ; DSKBLK (bit 1) ?
+        bsr     td_dmawait           ; fin du DMA, ou délai dépassé (pas de disque)
         bne.s   .rd_done
-        subq.l  #1,d2
-        bne.s   .rd_wait
         bsr.s   .rd_stop             ; timeout -> libère le buffer, renvoie 0
         move.l  a2,a1
         move.l  #TD_RAWBYTES,d0
@@ -461,6 +473,64 @@ td_read_track:
         move.w  #TD_MOTORIDLE,TD_MOTORCNT ; le serveur VBlank l'éteindra après TD_MOTORIDLE ticks d'inactivité
         sf      TD_BUSY
         rts
+; td_dmawait(a6 = SysBase ; DMA disque armé) -> Z = 0 à la fin du DMA (DSKBLK), Z = 1 si elle n'est pas venue à temps.
+; Multitâche en marche : DSKBLK est démasqué et la tâche attend SIGF_SINGLE (td_dskblk_int, ou le serveur VBlank au
+; bout de TD_DMATICKS trames) : le processeur reste aux autres tâches pendant la révolution de disque, comme la 1.3 ;
+; avant (boot, strap), INTREQR est interrogé en boucle. Préserve tout sauf le CCR.
+TD_DMATICKS     EQU 50                ; 1 s : une piste demande au plus deux révolutions (400 ms)
+SIGF_SINGLE     EQU $10
+td_dmawait:
+        movem.l d0-d2/a0-a1,-(sp)
+        tst.b   SCHED_ON
+        beq.s   .dw_poll
+        tst.l   EB_THISTASK(a6)
+        beq.s   .dw_poll
+        moveq   #0,d0
+        moveq   #SIGF_SINGLE,d1
+        jsr     LVO_SETSIGNAL(a6)    ; un SIGF_SINGLE resté posé ne doit pas réveiller l'attente
+        sf      TD_DMADONE
+        move.w  #TD_DMATICKS,TD_DMATMO
+        move.l  EB_THISTASK(a6),TD_DMATASK
+        move.w  #(INTF_SETCLR|INTF_DSKBLK),INTENA   ; (déjà fini : l'interruption part tout de suite)
+.dw_wait:
+        tst.b   TD_DMADONE
+        bne.s   .dw_end
+        tst.w   TD_DMATMO
+        beq.s   .dw_end
+        moveq   #SIGF_SINGLE,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .dw_wait
+.dw_end:
+        move.w  #INTF_DSKBLK,INTENA
+        clr.l   TD_DMATASK
+        tst.b   TD_DMADONE           ; Z = 1 : délai dépassé
+        bra.s   .dw_ret
+.dw_poll:
+        move.l  #$00080000,d2        ; sans disque, le DMA ne finit jamais : borne
+.dw_lp:
+        move.w  INTREQR,d0
+        btst    #1,d0                ; DSKBLK
+        bne.s   .dw_ret              ; Z = 0
+        subq.l  #1,d2
+        bne.s   .dw_lp               ; Z = 1 à la sortie
+.dw_ret:
+        movem.l (sp)+,d0-d2/a0-a1    ; (movem ne touche pas le CCR)
+        rts
+
+; td_dskblk_int : vecteur DSKBLK (niveau 1, int1_dispatch, a6 = SysBase) : fin du DMA disque -> masqué, acquitté,
+; la tâche qui attend est réveillée.
+td_dskblk_int:
+        move.w  #INTF_DSKBLK,INTENA
+        move.w  #INTF_DSKBLK,INTREQ
+        st      TD_DMADONE
+        move.l  TD_DMATASK,d0
+        beq.s   .di_ret
+        move.l  d0,a1
+        moveq   #SIGF_SINGLE,d0
+        jsr     LVO_SIGNAL(a6)
+.di_ret:
+        rts
+
 ; td_position(d6 = piste, a6 = SysBase) : moteur allumé (spin-up si besoin), DF0 sélectionné, tête amenée au
 ; cylindre (suivi de cylindre, recalibration si position inconnue), face choisie. TD_BUSY posé (rendu par l'appelant
 ; à la fin de son accès). Clobbe d0/d2/d3.
@@ -1077,13 +1147,8 @@ td_write_track:
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON
         move.w  #($C000|TD_WRWORDS),DSKLEN   ; DMAEN | WRITE | longueur
         move.w  #($C000|TD_WRWORDS),DSKLEN
-        move.l  #$00080000,d2
-.wt_wait:
-        move.w  INTREQR,d3
-        btst    #1,d3                ; DSKBLK
+        bsr     td_dmawait
         bne.s   .wt_end
-        subq.l  #1,d2
-        bne.s   .wt_wait
         moveq   #TDERR_NotSpec,d2
         bra.s   .wt_stop
 .wt_end:

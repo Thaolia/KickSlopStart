@@ -962,6 +962,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   Écarts : exec ne balaie pas $F00000-$F7FFFF ni le saut $1111 de cartouche ; dos existe avant romboot (la 1.3 ne le
   crée qu'au démarrage) ; DF0 n'apparaît pas deux fois (artefact 1.3 avec une carte prioritaire) ; le Workbench
   n'affiche que l'icône du disque de démarrage.
+  (32) **trackdisk : fin de DMA par interruption** (`td_dmawait`) : le multitâche en marche, la lecture et l'écriture
+  d'une piste démasquent DSKBLK (vecteur exclusif de niveau 1, `td_dskblk_int`) et la tâche attend SIGF_SINGLE ; le
+  serveur VBlank de trackdisk réveille au bout d'1 s sans fin de DMA (pas de disque). Avant, le handler DF0: (pri 6)
+  interrogeait INTREQR pendant chaque révolution : aucune tâche de priorité inférieure (CLI, applications) n'avait le
+  processeur tant que le disque travaillait. Au boot (strap) : interrogation inchangée. « Blocage » de deux
+  `list sys: all` : en fait tests/timerprobe.s attendait une égalité exacte de son compteur de trames, ratée dès que
+  le CLI perdait le processeur plus d'une trame ; ses attentes sont maintenant « au moins ».
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

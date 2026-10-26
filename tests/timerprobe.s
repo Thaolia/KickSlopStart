@@ -128,11 +128,12 @@ t_exec:
                 move.w  $124(a6),d0          ; SysFlags
                 bsr     ph
                 ; calibration : ligne verticale maximale vue pendant 2 trames complètes
-                move.l  vbcnt(pc),d2
-                addq.l  #1,d2
+                move.l  vbcnt(pc),d2         ; (attentes « au moins » : une tâche de même priorité peut garder le
+                addq.l  #1,d2                ; processeur plusieurs trames, une égalité exacte serait ratée)
 .w1:
                 cmp.l   vbcnt(pc),d2
-                bne.s   .w1
+                bhi.s   .w1
+                move.l  vbcnt(pc),d2
                 addq.l  #2,d2
                 moveq   #0,d3
 .w2:
@@ -142,7 +143,7 @@ t_exec:
                 move.l  d1,d3
 .w3:
                 cmp.l   d0,d2
-                bne.s   .w2
+                bhi.s   .w2
                 move.l  d3,d0
                 bsr     ph
                 bra     nl

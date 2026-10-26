@@ -409,6 +409,10 @@ DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un 
 HND_CLOCKED  EQU $0000079A ; byte : le file-handler DF0: a fait son réglage d'heure de montage (hnd_bootclock)
 MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
 INT2_BUSY    EQU $000007A0 ; byte : int2_dispatch sert la chaîne PORTS (lu par la reprise du serveur VBLANK de timer.device)
+TD_DMATASK   EQU $000007A2 ; trackdisk : long — tâche qui attend la fin d'un DMA disque (SIGF_SINGLE), 0 : aucune
+TD_DMATMO    EQU $000007A6 ; trackdisk : word — trames restantes avant d'abandonner ce DMA (décomptées au VBlank)
+TD_DMADONE   EQU $000007A8 ; trackdisk : byte — DSKBLK reçu pour le DMA en cours
+TD_DSKINT    EQU $000007AA ; trackdisk : struct Interrupt (22 o, jusqu'à $7BF) du vecteur DSKBLK (niveau 1)
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
 GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
