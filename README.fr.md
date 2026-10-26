@@ -103,4 +103,7 @@ assets/          image de l'écran de démarrage ; votre ROM et vos ADF vont ici
 - AROS sert uniquement de référence ; aucun de ses fichiers n'est copié dans `src/`.
 - Amiga est une marque de son propriétaire respectif. Ce projet n'y est pas affilié.
 
-Aucune licence n'a encore été choisie pour ce code.
+## Licence
+
+Le code de ce dépôt est publié sous [licence MIT](LICENSE). Elle ne couvre que les fichiers de ce dépôt et ne donne
+aucun droit sur la ROM Kickstart d'origine, sur AmigaOS ni sur une image de disquette.

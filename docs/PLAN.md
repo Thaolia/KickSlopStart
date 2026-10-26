@@ -75,8 +75,7 @@ Deux pistes, deux rôles d'agents, un mur :
   algorithmes), on **ne copie pas** ses sources dans `src/` → notre licence reste libre.
 - **Docs** (NDK 3.2, RKRM/AutoDocs) : licences propriétaires, **consommées** pour apprendre l'ABI/le
   comportement, **jamais redistribuées/vendorées** dans le dépôt.
-- **Notre licence** : permissive (type MIT/BSD/zlib) recommandée, ou décision différée ; choix à acter
-  avant première publication publique (non bloquant pour M0/M1).
+- **Notre licence** : **MIT** (fichier `LICENSE` à la racine, actée le 2026-10-26 à la publication sur GitHub).
 
 ## Structure du dépôt (règles project-structure)
 

@@ -99,4 +99,7 @@ assets/          boot screen image; your own ROM and ADF files go here (git-igno
 - AROS is consulted as a reference only; none of its code is copied into `src/`.
 - Amiga is a trademark of its respective owner. This project is not affiliated with it.
 
-No license has been chosen for this code yet.
+## License
+
+The code in this repository is released under the [MIT License](LICENSE). This covers only the files in this
+repository; it grants no rights over the original Kickstart ROM, AmigaOS or any disk image.
