@@ -838,7 +838,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     Clavier sous WinUAE réparé (variables de RAM basse à zéro au coldstart) : Caesar et Monkey au clavier sous WinUAE.
     SysInfo MEMORY lisible après NEXT/PREV (PrintIText/DrawBorder restaurent stylos et mode, sondé) ; ClearEOL/ClearScreen.
     Barre de titre d'un écran SCREENQUIET plus jamais dessinée (SysInfo : plus de barre noire au clic). Suite ADF de fin
-    d'étape sous WinUAE Linux (tests/adf_suite_winuae.sh) au lieu d'Amiberry. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    d'étape sous WinUAE Linux (tests/adf_suite_winuae.sh) au lieu d'Amiberry.
+    Autoconfig Zorro II (expansion.library complète, fast RAM ajoutée, vecteurs de la 1.3 reproduits). À faire : carte
+    disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

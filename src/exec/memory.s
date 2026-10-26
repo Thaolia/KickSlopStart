@@ -376,6 +376,7 @@ init_memory:                         ; a6 = SysBase (jump table déjà bâtie)
         clr.l   (a1)+
         dbf     d0,.im_z
         move.b  #NT_MEMORY,LN_TYPE(a0)
+        move.b  #-10,LN_PRI(a0)      ; comme en 1.3 : la fast RAM des cartes (pri 0) passe devant la chip
         move.l  #mh_name,LN_NAME(a0)
         move.w  #(MEMF_CHIP|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
         move.l  #HEAP_LOWER,MH_LOWER(a0)
@@ -458,11 +459,11 @@ add_slow_memory:
         rts
 
 slow_name:
-        dc.b    "slow memory",0
+        dc.b    "Fast Memory",0
         EVEN
 
 mh_name:
-        dc.b    "chip memory",0
+        dc.b    "Chip Memory",0
         EVEN
 
                 ifd     MEMTRACK

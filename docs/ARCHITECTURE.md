@@ -858,6 +858,23 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   premier clic. `sc_drawbar` ne fait plus rien sans couche de barre (comme la vraie 1.3, qui n'affiche aucune barre).
   Suite ADF de fin d'étape désormais sous **WinUAE Linux** (`tests/adf_suite_winuae.sh`, série par
   `unix.serial_port`) au lieu d'Amiberry.
+  (26) **Autoconfig Zorro II** (`src/exec/expansion.s`, spec `docs/analysis/autoconfig-v34.md` produite par un agent
+  d'analyse séparé, relue sans code transcrit). ExpansionBase au layout V34 ($1C8 : eb_BoardList $3C, eb_MountList
+  $4A, table de 256 slots de 64 Ko $58, sémaphore de binding $158). L'init du résident (pri 110, après la slow RAM)
+  libère l'espace mémoire $200000-$9FFFFF et l'espace E/S $E90000-$EFFFFF, puis ConfigChain($E80000) : lecture de
+  la ROM de chaque carte (17 octets, type non inversé, validation + 11 relectures), slots au premier ajusté (E/S
+  d'abord sous 8 slots ; 4 Mo en $200000 puis $600000), adresse écrite au registre $48 (quartet haut en dernier),
+  RAM ajoutée par AddMemList(MEMF_FAST|MEMF_PUBLIC, pri 0, « expansion ram »), DiagArea copiée (largeur nibble /
+  octet / mot) et DiagPoint appelé (A0 carte, A2 copie, A3 ConfigDev, A5 ExpansionBase, A6 ExecBase) ; sans place :
+  sommeil (CDF_SHUTUP) ; carte NOSHUTUP sans place : chaîne bouchée, sans post-configuration (écart volontaire : la
+  1.3 la ferait sur l'adresse -1). Les 25 LVO sont implémentés (Read/WriteExpansionByte, ReadExpansionRom,
+  ConfigBoard/Chain, Alloc/FreeExpansionMem, Alloc/FreeBoardMem, RemConfigDev, bindings, MakeDosNode, AddDosNode :
+  liste DOS si dos.library est là, sinon BootNode dans eb_MountList). exec : chip en pri -10, MemHeaders nommés
+  « Fast Memory » (slow RAM) et « Chip Memory » comme en 1.3. Vecteurs de la spec reproduits (sonde
+  `tests/cfgdev.s`, FS-UAE) : 64K/$E9, 256K/$EC, 2 Mo, 8 Mo (avec et sans slow RAM), 1 Mo + 4 Mo ($600000), 8 Mo
+  + 1 Mo (sommeil, $FF000000). Carte disque UAE : configurée en $E90000, DiagArea copiée et exécutée, mais pas de
+  ConfigDev en $F00000 ni de DH0: (à instruire : scan des résidents hors ROM / BootPoint). Bornes de slow RAM et
+  chip différentes de la 1.3 (disposition propre de notre exec, hors autoconfig).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

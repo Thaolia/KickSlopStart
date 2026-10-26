@@ -711,6 +711,8 @@ LVO_WAITIO       EQU -474
 LVO_ABORTIO      EQU -480
 LVO_COPYMEM      EQU -624
 LVO_COPYMEMQUICK EQU -630
+LVO_ALERT        EQU -108       ; Alert(alertNum d7)
+LVO_ADDMEMLIST   EQU -618       ; AddMemList(taille d0, attributs d1, pri d2, base a0, nom a1)
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
 LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)
