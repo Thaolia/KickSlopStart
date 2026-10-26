@@ -842,8 +842,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     Autoconfig Zorro II (expansion.library complète, fast RAM ajoutée, vecteurs de la 1.3 reproduits). À faire : carte
     disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse.
     MICROHZ sur le timer B de CIA-A (niveau 2) comme la 1.3 : les jeux qui prennent $78 ne cassent plus les délais ;
-    AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. À faire : précision MICROHZ sous
-    charge (~5 %). Répétition clavier (délai/période d'input.device, Preferences) et INTUITICKS faits : les
+    AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. Précision MICROHZ sous
+    charge réglée (1,007 s pour 1 s, vraie 1.3 : 1,0125 s ; cause : feeder sur MICROHZ, passé en VBLANK). Répétition clavier (délai/période d'input.device, Preferences) et INTUITICKS faits : les
     flèches des tiroirs du WB défilent tant qu'elles sont tenues ; ModifyIDCMP. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).

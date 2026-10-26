@@ -887,8 +887,12 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   AVANT la chaîne (sinon un événement CIA survenu pendant le service était effacé) ; reprise au VBLANK quand le one-shot
   est fini sans interruption servie (FS-UAE perd l'événement d'ICR quand sa file « event2 » de 10 places déborde :
   le bit IR du CIA-A restait levé et plus aucune interruption de niveau 2 — clavier compris — n'arrivait).
-  Reste : durées MICROHZ ~5 % trop longues sous forte charge (latence entre fin du one-shot et réarmement non comptée,
-  ~110 services/s à cause des requêtes du feeder et du handler console) ; Quantum/Elapsed d'ExecBase non posés.
+  Précision MICROHZ (mesurée le 2026-10-26, tests/timerprobe.s, ROM prod, en lignes de 64 µs) : l'écart de ~5 % sous
+  charge venait des ~110 services/s du feeder clavier ; depuis (28) le feeder attend en VBLANK. {1,0} = 15 733 lignes
+  (1,0069 s ; vraie 1.3 : 15 820, 1,0125 s, décompte nominal et constante NTSC), {0,100000} = 1 591 (identique à la
+  1.3), {0,250000} = 3 946-3 951 (1.3 : 3 959), même avec un `list sys: all` en tâche de fond. Reste un surcoût fixe
+  par requête d'environ 8 lignes de plus que la 1.3 (requête de 0 µs : 20 lignes contre 12). Quantum/Elapsed
+  d'ExecBase non posés.
   (28) **Répétition clavier et INTUITICKS** (spec `docs/analysis/intuiticks-repeat-v34.md`, agent d'analyse, relue ;
   sonde `tests/ticks.s`). Le feeder (`src/dos/feeder.s`) joue le rôle de la tâche d'input.device 1.3 : il attend une
   trame en VBLANK (plus de MICROHZ toutes les 10 ms), envoie un IECLASS_TIMER toutes les 5 trames et répète la
