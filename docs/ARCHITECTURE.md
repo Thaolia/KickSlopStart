@@ -851,6 +851,13 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   nôtres les sauvegardent et les restaurent désormais. graphics : `ClearEOL` (−42 : de cp_x au bord droit, sur la
   hauteur de la police alignée sur la ligne de base) et `ClearScreen` (−48 : idem puis tout le dessous), couleur =
   stylo B en JAM2, 0 sinon ; pixels identiques à la vraie ROM (sonde `tests/cleareol.s`).
+  (25) **Écran SCREENQUIET : jamais de barre de titre**. SysInfo ouvre son écran en CUSTOMSCREEN | SCREENBEHIND |
+  SCREENQUIET (trace des appels OpenScreen/OpenWindow : Type $118F ; fenêtre BORDERLESS non BACKDROP ; ShowTitle
+  jamais appelé). OpenScreen ne créait pas de couche de barre, mais l'activation d'une fenêtre (`wn_scrtitle`) appelait
+  `sc_drawbar`, qui se rabattait sur le RastPort de l'écran entier : barre noire dessinée par-dessus la fenêtre au
+  premier clic. `sc_drawbar` ne fait plus rien sans couche de barre (comme la vraie 1.3, qui n'affiche aucune barre).
+  Suite ADF de fin d'étape désormais sous **WinUAE Linux** (`tests/adf_suite_winuae.sh`, série par
+  `unix.serial_port`) au lieu d'Amiberry.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

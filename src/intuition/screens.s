@@ -344,8 +344,10 @@ intuition_DisplayBeep:
 
 ; sc_drawbar(a3 = Screen, a5 = IntuitionBase) : barre de titre (lignes 0..BarHeight) au stylo BlockPen, titre au
 ; stylo DetailPen, gadgets de profondeur d'écran à droite (pictogrammes des fenêtres, spec intuition-frame-v34 §6).
-; Clobbe d0-d3/a0/a1/a6.
+; Écran SCREENQUIET (aucune couche de barre) : rien, jamais de barre. Clobbe d0-d3/a0/a1/a6.
 sc_drawbar:
+        tst.l   SC_BARLAYER(a3)
+        beq.s   .db_quiet
         move.l  IB_GFXBASE(a5),a6
         bsr.s   sc_barrp
         moveq   #0,d0
@@ -380,17 +382,14 @@ sc_drawbar:
         move.w  SC_WIDTH(a3),d0
         bsr     wn_depthpics
         movem.l (sp)+,a2/a4
+.db_quiet:
         rts
 
-; sc_barrp(a3 = Screen) -> a1 = RastPort de la barre (celui de sa couche quand elle existe, recouvrement par les
-; fenêtres ; sinon celui de l'écran). Préserve tout le reste.
+; sc_barrp(a3 = Screen avec couche de barre) -> a1 = RastPort de cette couche (recouvrement par les fenêtres).
+; Préserve tout le reste.
 sc_barrp:
-        lea     SC_RASTPORT(a3),a1
-        tst.l   SC_BARLAYER(a3)
-        beq.s   .br_ret
         move.l  SC_BARLAYER(a3),a1
         move.l  IL_RP(a1),a1
-.br_ret:
         rts
 
 ; it_title(a1 = RastPort, a0 = titre C | 0, d0 = stylo texte, d1 = stylo fond, d2.w = largeur max en pixels,

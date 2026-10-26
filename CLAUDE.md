@@ -22,7 +22,7 @@ Roadmap → `docs/PLAN.md`. Architecture → `docs/ARCHITECTURE.md`. Discipline 
 ## Build / test (référence)
 
 - `make hello` → `build/kick13-hello.rom` · `make verify` (romtool `is_kick`) · `tests/boot_test.sh` (boot FS-UAE).
-- Suite ADF de fin d'étape : `tests/adf_suite_amiberry.sh` (Amiberry A500 cycle-exact, cf. `docs/HARDWARE.md`).
+- Suite ADF de fin d'étape : `tests/adf_suite_winuae.sh` (WinUAE Linux A500 cycle-exact, cf. `docs/HARDWARE.md`).
 - Toolchain requise dans le PATH : `vasmm68k_mot`, `vlink`, `romtool` (amitools), `python3`, `fs-uae`, `Xvfb`.
 - Vérif syntaxe asm = le build `vasm` lui-même (pas de `py_compile`). Python lisant des données : `python3 -I`.
 
