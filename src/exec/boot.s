@@ -36,6 +36,10 @@
                 xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
                 xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
                 xref    req_draw         ; intuition/requester.s (requester : rendu bord+texte)
+                xdef    boot_dos_start   ; dos/dos_lib.s (rt_Init de dos.library)
+                xref    dos_mountlist
+                xref    strap_romboot    ; exec/strap.s
+                xref    dos_df0bootnode  ; dos/dos_lib.s
                 xref    req_input_handler ; intuition/requester.s (requester : handler clic sur input.device)
                 xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
                 xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
@@ -2462,7 +2466,7 @@ d2_done:
         ; Enregistre DEUX serveurs sur PORTS : ciaa_server (pri 10, lit+acquitte l'ICR ciaa ->
         ; cia_test_vec incrémente CIA_FIRED) et int2_srv2 (pri 0, incrémente INT2_SRV2). La chaîne les
         ; appelle DANS L'ORDRE DE PRIORITÉ (cia avant srv2) -> prouve AddIntServer + walker + ordre.
-        ; Structs serveur en RAM (Enqueue les chaîne). CIA-A Timer A en CONTINU déclenche INT2.
+        ; Structs serveur en RAM (Enqueue les chaîne). Un one-shot du Timer A de CIA-A déclenche INT2.
         ; Généralise M6b : cia.resource EST le handler PORTS (serveur), plus un autovecteur hardcodé.
         clr.l   CIA_FIRED
         clr.l   INT2_SRV2
@@ -2494,10 +2498,10 @@ d2_done:
         lea     cia_test_int(pc),a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.l  CIAR_HWBASE(a2),a0   ; démarre CIA-A Timer A CONTINU, latch $00FF (~360 us/IRQ)
-        move.b  #$FF,CIA_TALO(a0)
-        move.b  #$00,CIA_TAHI(a0)
-        move.b  #$11,CIA_CRA(a0)     ; START(b0)+LOAD(b4), continu (b3=0) -> INT2 périodique
+        move.l  CIAR_HWBASE(a2),a0   ; CIA-A Timer A en ONE-SHOT, latch $00FF (~360 us) : UNE interruption suffit à faire
+        move.b  #$FF,CIA_TALO(a0)    ; passer la chaîne. En continu, il saturait le niveau 2 dès qu'une carte ajoutait un
+        move.b  #$00,CIA_TAHI(a0)    ; serveur PORTS (DiagPoint UAE, spec uae-int2-v34) : le code qui l'arrête ne
+        move.b  #$19,CIA_CRA(a0)     ; tournait plus. START(b0) + one-shot(b3) + LOAD(b4)
         move.l  VBL_COUNT,d7         ; T0 (timeout)
 .m7b_wait:
         move.l  VBL_COUNT,d0
@@ -3176,7 +3180,9 @@ d2_done:
         ; mais ne saute pas -> CBOOT absent, M6Y présent. RED STRAP_BAD_CSUM : rejette un bon bloc -> M6R.
         bsr     strap_boot
         tst.l   d0
-        bne.s   .m6r_booted
+        bne.s   .m6r_floppy
+        jsr     strap_romboot        ; DF0: non amorçable : BootPoint des cartes (un BootPoint qui démarre dos saute à
+                                     ; boot_dos_start et ne revient pas)
         lea     msg_m6r_ok(pc),a0
         bsr     ser_puts             ; « M6R STRAP OK (no bootable volume -> insert-disk) »
         jsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
@@ -3188,8 +3194,14 @@ d2_done:
         moveq   #-1,d0
         move.l  #DW_STK,d1
         jsr     proc_create
-        bra.s   .strap_done
-.m6r_booted:
+        bra.s   boot_strap_done
+.m6r_floppy:
+        jsr     dos_df0bootnode      ; BootNode DF0: (pri 5) dans eb_MountList, comme après un bootblock 1.3
+; boot_dos_start : démarrage de dos (après un bootblock DF0:, ou depuis le rt_Init de dos.library appelé par le
+; BootPoint d'une carte) : liste de montage -> périphérique de démarrage, puis Initial CLI. Ne revient pas.
+boot_dos_start:
+        move.l  ($4).w,a6
+        jsr     dos_mountlist
         lea     msg_m6y_ok(pc),a0
         bsr     ser_puts             ; « M6Y STRAP BOOTED OK » (bootblock exécuté ; CBOOT émis par le bootblock)
         bsr     ptr_wire             ; souris : pointeur à l'écran (sprite) dans le système tournant
@@ -3201,7 +3213,7 @@ d2_done:
         moveq   #2,d0                ; Initial CLI pri 2 (consommateur unique de la console)
         move.l  #SH_STK,d1           ; les commandes lancées tournent sur cette pile
         jsr     proc_create
-.strap_done:
+boot_strap_done:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
                 endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only

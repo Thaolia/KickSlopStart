@@ -22,6 +22,7 @@
                 include "exec.i"
 
                 xdef    strap_boot
+                xdef    strap_romboot
 
 ; constantes IO non présentes dans exec.i (spécifiques lecture) — littéraux documentés (strap n'inclut pas disk.i)
 CMD_READ       EQU 2
@@ -135,6 +136,26 @@ strap_boot:
         jsr     LVO_FREEMEM(a6)      ; a6 = SysBase sur tous les chemins qui arrivent ici
         rts
 
+; strap_romboot(a6 = SysBase) : DF0: n'est pas amorçable -> une seule fois, RomBoot() de romboot.library (BootPoint des
+; cartes, spec uae-hd-boot-v34 §3 point 3). Un BootPoint qui démarre dos ne revient pas. Préserve d2-d7/a2-a6.
+strap_romboot:
+        move.l  a6,-(sp)
+        lea     strap_rb_name(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        tst.l   d0
+        beq.s   .rb_ret
+        move.l  d0,a6
+        jsr     -30(a6)              ; RomBoot()
+        move.l  a6,a1
+        move.l  ($4).w,a6
+        jsr     LVO_CLOSELIBRARY(a6)
+.rb_ret:
+        move.l  (sp)+,a6
+        rts
+
 strap_td_name:
         dc.b    "trackdisk.device",0
+strap_rb_name:
+        dc.b    "romboot.library",0
         even

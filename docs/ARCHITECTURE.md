@@ -943,6 +943,25 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   après), écrans : tout conforme ; DiskCopy affiche son invite et Cancel le termine. Écarts : pas de repli DisplayAlert
   (FALSE), SizeWindow ne rogne pas la couche d'un requester, les gadgets d'un requester PREDRAWN sont dessinés tout
   de suite.
+  (31) **Boot sur la carte disque UAE (DH0:)** (specs `docs/analysis/uae-hd-boot-v34.md` et `uae-int2-v34.md`, agents
+  d'analyse, relues). `src/exec/romboot.s` : **romboot.library** (COLDSTART pri -40) ; à son init, pour chaque ConfigDev
+  CONFIGME à DiagArea copiée (Diag valide, CONFIGTIME), la première ROMTag de la copie est initialisée (InitResident)
+  sous ObtainConfigBinding / SetCurrentBinding (sous UAE : uaehf.device, qui monte DH0 et enfile son BootNode
+  NT_BOOTNODE dans eb_MountList) ; **RomBoot** (-30) appelle le BootPoint de chaque BootNode amorçable (A0 = adresse,
+  A1 = ConfigDev, aussi en 4(sp), A6 = ExecBase ; BootPoint nul ignoré). strap : DF0: amorçable -> BootNode DF0: de
+  priorité 5 enfilé (`dos_df0bootnode`) ; sinon RomBoot une fois avant l'écran insert-disk. **dos.library** : sa
+  ROMTag a désormais un rt_Init en code (plus AUTOINIT) : au premier appel (InitCode) il construit la bibliothèque, aux
+  suivants (BootPoint UAE, qui fait FindResident puis appelle rt_Init) il saute à `boot_dos_start` (suite du démarrage,
+  sans retour). `dos_mountlist` : la tête de eb_MountList est retirée et son DeviceNode devient le périphérique de
+  démarrage (DL_BOOTDEV) ; les DeviceNodes des BootNodes sont ajoutés au fond de di_DevInfo. `dos_boot_assigns` : SYS:,
+  C:, S:, L:, DEVS:, LIBS:, FONTS: et le répertoire courant sur ce périphérique ; nœud volume de la disquette de DF0:
+  créé dans tous les cas (notre handler ne le fait pas). Preuve M7B : le timer A de CIA-A en one-shot (en continu à
+  360 µs, il saturait le niveau 2 dès que la DiagPoint UAE ajoutait son serveur PORTS ; la vraie 1.3 ne l'arme jamais
+  au boot). Prouvé (ROM prod, FS-UAE `hard_drive_0`) : disquette vierge -> boot DH0, SYS: = hddir: ; Workbench
+  amorçable + DH0 pri 0 -> Workbench sur la disquette, DH0 monté ; DH0 pri 5 -> bootblock exécuté puis SYS: = hddir:.
+  Écarts : exec ne balaie pas $F00000-$F7FFFF ni le saut $1111 de cartouche ; dos existe avant romboot (la 1.3 ne le
+  crée qu'au démarrage) ; DF0 n'apparaît pas deux fois (artefact 1.3 avec une carte prioritaire) ; le Workbench
+  n'affiche que l'icône du disque de démarrage.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

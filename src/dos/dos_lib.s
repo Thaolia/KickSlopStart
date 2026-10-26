@@ -16,6 +16,7 @@
                 include "exec.i"
                 include "dos.i"
                 include "dospkt.i"       ; D3c : FileHandle / DosPacket / ACTION_* / DeviceNode / PR_MSGPORT
+                include "expansion.i"    ; eb_MountList / BootNode (périphérique de démarrage)
 
                 xref    conwin_seg
                 xref    rcli_seg
@@ -34,6 +35,9 @@
                 xref    proc_create      ; dos/process.s (Process + pile + pr_MsgPort + AddTask)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
+                xdef    dos_mountlist    ; exec/boot.s : liste de montage, périphérique de démarrage
+                xdef    dos_df0bootnode  ; exec/boot.s : BootNode DF0: après un bootblock
+                xref    boot_dos_start   ; exec/boot.s : suite du démarrage (Initial CLI), sans retour
 
 
 ; --- ROMTag dos.library (scanné par build_reslist) ---
@@ -42,18 +46,45 @@ dos_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    dos_romtag               ; RT_MATCHTAG = self
         dc.l    dos_end                  ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,0   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (0 : place roadmap dos)
+        dc.b    RTF_COLDSTART,34,NT_LIBRARY,0   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (0 : place roadmap dos)
         dc.l    dos_name                 ; RT_NAME
         dc.l    dos_name                 ; RT_IDSTRING
-        dc.l    dos_inittab              ; RT_INIT -> table AUTOINIT
+        dc.l    dos_rtinit               ; RT_INIT -> code (un bootblock le rend en A0, un BootPoint l'appelle)
 dos_name:
         dc.b    "dos.library",0
+exp_libname:
+        dc.b    "expansion.library",0
         EVEN
-dos_inittab:
-        dc.l    DOSBASE_DATASIZE         ; dataSize : base Library + champs dos + scaffold DL_DISHADOW
-        dc.l    dos_vectors              ; funcTable
-        dc.l    dos_datatab              ; dataTable (InitStruct)
-        dc.l    dos_initfunc             ; initFunc
+
+; rt_Init de dos.library (a6 = ExecBase), du code comme en 1.3 et pas une table AUTOINIT : le BootPoint d'une carte
+; (spec uae-hd-boot-v34 §2.2, §6) fait FindResident("dos.library") puis appelle rt_Init. Premier appel (InitCode,
+; COLDSTART) : la bibliothèque est construite (MakeLibrary + Enqueue dans LibList) -> d0 = DosBase. Appel suivant
+; (dos existe déjà) : démarrage de dos sur la liste de montage d'expansion (boot_dos_start, sans retour).
+dos_rtinit:
+        move.l  ($4).w,a6
+        lea     EB_LIBLIST(a6),a0
+        lea     dos_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .ri_make
+        jmp     boot_dos_start
+.ri_make:
+        move.l  a2,-(sp)
+        lea     dos_vectors(pc),a0
+        lea     dos_datatab(pc),a1
+        lea     dos_initfunc(pc),a2
+        move.l  #DOSBASE_DATASIZE,d0
+        moveq   #0,d1
+        jsr     LVO_MAKELIBRARY(a6)
+        move.l  (sp)+,a2
+        tst.l   d0
+        beq.s   .ri_ret
+        move.l  d0,a1
+        lea     EB_LIBLIST(a6),a0
+        jsr     LVO_ENQUEUE(a6)
+        move.l  a1,d0
+.ri_ret:
+        rts
 ; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. D3c : Open(-30,v5)/Close(-36,v6)/Read(-42,v7) implémentés
 ; (via packets vers le file-handler). LoadSeg(-150,v25)/UnLoadSeg(-156,v26) composent Open/Read + ls_load_stream.
 ; Les autres vecteurs pointent sur dos_null (non impl.).
@@ -1584,17 +1615,78 @@ dos_upper:
 ; dos_boot_assigns(a6 = DosBase) : appelé par le CLI initial (process) une fois le disque de boot monté. Crée le nœud
 ; VOLUME (nom lu par Examine de la racine), l'assign SYS: (racine) et les assigns C: S: L: DEVS: LIBS: FONTS: pour
 ; chaque répertoire présent sur DF0:, puis pose pr_CurrentDir = racine. Sans disque lisible -> rien. Préserve tout.
+BA_PATHMAX      EQU 48
 dos_boot_assigns:
         movem.l d0-d7/a0-a6,-(sp)
         move.l  a6,a5                   ; a5 = DosBase
+        lea     -BA_PATHMAX(sp),sp      ; (sp) = « <périphérique de démarrage>: », puis les chemins des assigns
         bsr     ba_ramnode
         bsr     ba_devnodes
-        lea     ba_root(pc),a0
-        move.l  a0,d1
+        bsr     ba_df0volume
+        bsr     ba_bootname             ; d5 = longueur de « NOM: »
+        move.l  sp,d1
         moveq   #SHARED_LOCK,d2
         bsr     dos_fn_lock
         move.l  d0,d7                   ; d7 = lock racine (conservé par SYS:)
         beq     .ba_ret
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  FL_TASK(a0),a4          ; a4 = port du handler du périphérique de démarrage
+        moveq   #DLT_DIRECTORY,d0
+        move.l  d7,d1
+        lea     ba_sysname(pc),a0
+        move.l  a4,a1
+        bsr     ba_addnode
+        lea     ba_tab(pc),a2           ; paires (nom d'assign, répertoire du disque) terminées par un nom vide
+.ba_loop:
+        tst.b   (a2)
+        beq.s   .ba_cd
+        move.l  a2,a3                   ; a3 = nom d'assign
+.ba_skip1:
+        tst.b   (a2)+
+        bne.s   .ba_skip1               ; a2 = répertoire
+        lea     0(sp,d5.l),a0           ; « NOM:répertoire »
+.ba_cat:
+        move.b  (a2)+,(a0)+
+        bne.s   .ba_cat                 ; a2 = paire suivante
+        move.l  a5,a6
+        move.l  sp,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+        clr.b   0(sp,d5.l)              ; de nouveau « NOM: »
+        tst.l   d0
+        beq.s   .ba_loop                ; répertoire absent -> pas d'assign
+        move.l  d0,d1
+        moveq   #DLT_DIRECTORY,d0
+        move.l  a3,a0
+        move.l  a4,a1
+        bsr     ba_addnode
+        bra.s   .ba_loop
+.ba_cd:
+        move.l  a5,a6                   ; répertoire courant initial = racine du disque de boot
+        move.l  sp,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+        move.l  d0,d1
+        beq.s   .ba_ret
+        bsr     dos_fn_currentdir
+.ba_ret:
+        lea     BA_PATHMAX(sp),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+; ba_df0volume(a5 = DosBase) : nœud volume de la disquette de DF0: (notre handler ne le crée pas lui-même ; un autre,
+; comme celui de DH0:, s'en charge), quel que soit le périphérique de démarrage ; DL_VOLUME = ce nœud (fl_Volume des
+; locks DF0: suivants). Sans disquette : rien. Clobbe d0-d2/a0-a1.
+ba_df0volume:
+        movem.l d7/a3-a4/a6,-(sp)
+        move.l  a5,a6
+        lea     ba_df0root(pc),a0
+        move.l  a0,d1
+        moveq   #SHARED_LOCK,d2
+        bsr     dos_fn_lock
+        move.l  d0,d7                   ; d7 = lock racine de DF0:
+        beq     .dv_ret
         lsl.l   #2,d0
         move.l  d0,a0
         move.l  FL_TASK(a0),a4          ; a4 = port du handler DF0:
@@ -1604,13 +1696,13 @@ dos_boot_assigns:
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,a3                   ; a3 = FIB | 0
         tst.l   d0
-        beq.s   .ba_sys
+        beq.s   .dv_unlock
         move.l  a5,a6
         move.l  d7,d1
         move.l  a3,d2
         bsr     dos_fn_examine
         tst.l   d0
-        beq.s   .ba_nofib
+        beq.s   .dv_nofib
         moveq   #DLT_VOLUME,d0
         moveq   #0,d1
         lea     FIB_FILENAME(a3),a0
@@ -1622,61 +1714,179 @@ dos_boot_assigns:
         move.l  d0,a0
         move.l  DI_DEVINFO(a0),d0
         lsl.l   #2,d0
-        beq.s   .ba_nofib
+        beq.s   .dv_nofib
         move.l  d0,a0
         cmp.l   #DLT_VOLUME,DN_TYPE(a0)
-        bne.s   .ba_nofib               ; nœud non créé (mémoire)
+        bne.s   .dv_nofib               ; nœud non créé (mémoire)
         lsr.l   #2,d0
         move.l  d0,DL_VOLUME(a5)
         move.l  d7,d1
         lsl.l   #2,d1
         move.l  d1,a0
         move.l  d0,FL_VOLUME(a0)
-.ba_nofib:
+.dv_nofib:
         move.l  ($4).w,a6
         move.l  a3,a1
         move.l  #FIB_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
-.ba_sys:
-        moveq   #DLT_DIRECTORY,d0
-        move.l  d7,d1
-        lea     ba_sysname(pc),a0
-        move.l  a4,a1
-        bsr     ba_addnode
-        lea     ba_tab(pc),a2           ; paires (nom d'assign, chemin) terminées par un nom vide
-.ba_loop:
-        tst.b   (a2)
-        beq.s   .ba_cd
-        move.l  a2,a3                   ; a3 = nom d'assign
-.ba_skip1:
-        tst.b   (a2)+
-        bne.s   .ba_skip1               ; a2 = chemin
+.dv_unlock:
         move.l  a5,a6
-        move.l  a2,d1
-        moveq   #SHARED_LOCK,d2
-        bsr     dos_fn_lock
-.ba_skip2:
-        tst.b   (a2)+
-        bne.s   .ba_skip2               ; a2 = paire suivante
+        move.l  d7,d1
+        bsr     dos_fn_unlock
+.dv_ret:
+        movem.l (sp)+,d7/a3-a4/a6
+        rts
+
+; ba_bootname(a5 = DosBase, 4(sp) = tampon de BA_PATHMAX octets) -> d5 = longueur de « NOM: » écrit dans le tampon
+; (nom du DeviceNode de démarrage DL_BOOTDEV, « DF0 » à défaut), NUL final. Clobbe d0/a0/a1.
+ba_bootname:
+        lea     4(sp),a1
+        lea     ba_df0(pc),a0
+        move.l  DL_BOOTDEV(a5),d0
+        beq.s   .bn_c
+        move.l  d0,a0
+        move.l  DN_NAME(a0),d0
+        lsl.l   #2,d0
+        beq.s   .bn_df0
+        move.l  d0,a0
+        moveq   #0,d5
+        move.b  (a0)+,d5                ; BSTR
+        cmp.w   #BA_PATHMAX-16,d5       ; place pour « :répertoire »
+        bhi.s   .bn_df0
+        move.w  d5,d0
+        bra.s   .bn_bnext
+.bn_bcpy:
+        move.b  (a0)+,(a1)+
+.bn_bnext:
+        dbra    d0,.bn_bcpy
+        bra.s   .bn_colon
+.bn_df0:
+        lea     4(sp),a1
+        lea     ba_df0(pc),a0
+.bn_c:
+        moveq   #0,d5
+.bn_ccpy:
+        move.b  (a0)+,d0
+        beq.s   .bn_colon
+        move.b  d0,(a1)+
+        addq.l  #1,d5
+        bra.s   .bn_ccpy
+.bn_colon:
+        move.b  #':',(a1)+
+        clr.b   (a1)
+        addq.l  #1,d5
+        rts
+
+; dos_df0bootnode(a6 = ExecBase) : après un bootblock DF0: réussi, BootNode de priorité 5 (ln_Type 0, ln_Name « DF0 »)
+; enfilé dans eb_MountList pour le DeviceNode DF0: (spec uae-hd-boot-v34 §3 point 2) : une carte de priorité >= 5,
+; enfilée avant, reste en tête et devient le périphérique de démarrage. Préserve tout.
+dos_df0bootnode:
+        movem.l d0-d1/a0-a3,-(sp)
+        lea     EB_LIBLIST(a6),a0
+        lea     exp_libname(pc),a1
+        jsr     LVO_FINDNAME(a6)
         tst.l   d0
-        beq.s   .ba_loop                ; répertoire absent -> pas d'assign
-        move.l  d0,d1
-        moveq   #DLT_DIRECTORY,d0
+        beq.s   .bn_ret
+        move.l  d0,a3                   ; a3 = ExpansionBase
+        lea     EB_LIBLIST(a6),a0
+        lea     dos_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .bn_ret
+        move.l  d0,a0
+        move.l  DL_ROOT(a0),a0
+        move.l  RN_INFO(a0),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  DI_DEVINFO(a0),d0       ; DeviceNode servi par notre handler DF0:
+.bn_find:
+        lsl.l   #2,d0
+        beq.s   .bn_ret
+        move.l  d0,a2
+        move.l  DN_TASK(a2),d0
+        cmp.l   DOS_FSPORT,d0
+        beq.s   .bn_got
+        move.l  DN_NEXT(a2),d0
+        bra.s   .bn_find
+.bn_got:
+        moveq   #BN_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .bn_ret
+        move.l  d0,a1
+        move.b  #5,LN_PRI(a1)
+        lea     ba_df0(pc),a0
+        move.l  a0,LN_NAME(a1)
+        move.l  a2,BN_DEVICENODE(a1)
+        lea     EB_MOUNTLIST(a3),a0
+        jsr     LVO_ENQUEUE(a6)
+.bn_ret:
+        movem.l (sp)+,d0-d1/a0-a3
+        rts
+
+; dos_mountlist(a6 = ExecBase) : liste de montage d'expansion (spec uae-hd-boot-v34 §4.1), au démarrage de dos. Sa tête
+; est retirée (pas libérée) : son DeviceNode est le périphérique de démarrage (DL_BOOTDEV ; liste vide : DF0). Le
+; DeviceNode de chaque BootNode (tête comprise), s'il n'est pas déjà dans di_DevInfo, y est ajouté au fond, dans l'ordre
+; de la liste ; les autres BootNodes restent dans la liste. Contexte de démarrage seulement (avant le multitâche :
+; pas de Forbid, dont le Permit pourrait replanifier depuis ce contexte). Préserve tout.
+dos_mountlist:
+        movem.l d0-d2/a0-a5,-(sp)
+        lea     EB_LIBLIST(a6),a0
+        lea     dos_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .ml_ret
+        move.l  d0,a5                   ; a5 = DosBase
+        clr.l   DL_BOOTDEV(a5)
+        lea     EB_LIBLIST(a6),a0
+        lea     exp_libname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .ml_ret
+        move.l  d0,a4                   ; a4 = ExpansionBase
+        lea     EB_MOUNTLIST(a4),a0
+        jsr     LVO_REMHEAD(a6)
+        tst.l   d0
+        beq.s   .ml_list
+        move.l  d0,a0
+        move.l  BN_DEVICENODE(a0),DL_BOOTDEV(a5)
+        bsr.s   .ml_add
+.ml_list:
+        move.l  EB_MOUNTLIST(a4),a3
+.ml_lp:
+        tst.l   (a3)
+        beq.s   .ml_ret
         move.l  a3,a0
-        move.l  a4,a1
-        bsr     ba_addnode
-        bra.s   .ba_loop
-.ba_cd:
-        move.l  a5,a6                   ; répertoire courant initial = racine du disque de boot
-        lea     ba_root(pc),a0
-        move.l  a0,d1
-        moveq   #SHARED_LOCK,d2
-        bsr     dos_fn_lock
-        move.l  d0,d1
-        beq.s   .ba_ret
-        bsr     dos_fn_currentdir
-.ba_ret:
-        movem.l (sp)+,d0-d7/a0-a6
+        bsr.s   .ml_add
+        move.l  (a3),a3
+        bra.s   .ml_lp
+.ml_ret:
+        movem.l (sp)+,d0-d2/a0-a5
+        rts
+.ml_add:                                ; a0 = BootNode : son DeviceNode au fond de di_DevInfo s'il n'y est pas
+        move.l  BN_DEVICENODE(a0),d0
+        beq.s   .ad_ret
+        move.l  d0,a1
+        move.l  DL_ROOT(a5),a2
+        move.l  RN_INFO(a2),d0
+        lsl.l   #2,d0
+        move.l  d0,a2
+        lea     DI_DEVINFO(a2),a2       ; a2 = maillon (BPTR)
+.ad_lp:
+        move.l  (a2),d0
+        lsl.l   #2,d0
+        beq.s   .ad_put
+        cmp.l   a1,d0
+        beq.s   .ad_ret                 ; déjà dans la liste
+        move.l  d0,a2                   ; dn_Next à l'offset 0 : le nœud sert de maillon
+        bra.s   .ad_lp
+.ad_put:
+        clr.l   DN_NEXT(a1)
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,(a2)
+.ad_ret:
         rts
 
 ; ba_ramnode(a5 = DosBase) : nœud device « RAM » (handler BCPL L:RAM-HANDLER chargé au premier accès, pile 300 longs,
@@ -1847,17 +2057,19 @@ ba_addnode:
         movem.l (sp)+,d3-d4/a2/a6
         rts
 
-ba_root:
+ba_df0:
+        dc.b    "DF0",0
+ba_df0root:
         dc.b    "DF0:",0
 ba_sysname:
         dc.b    "SYS",0
 ba_tab:
-        dc.b    "C",0,"DF0:c",0
-        dc.b    "S",0,"DF0:s",0
-        dc.b    "L",0,"DF0:l",0
-        dc.b    "DEVS",0,"DF0:devs",0
-        dc.b    "LIBS",0,"DF0:libs",0
-        dc.b    "FONTS",0,"DF0:fonts",0
+        dc.b    "C",0,"c",0
+        dc.b    "S",0,"s",0
+        dc.b    "L",0,"l",0
+        dc.b    "DEVS",0,"devs",0
+        dc.b    "LIBS",0,"libs",0
+        dc.b    "FONTS",0,"fonts",0
         dc.b    0
         EVEN
 

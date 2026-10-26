@@ -20,7 +20,7 @@ EXEC_DIR  := src/exec
 EXEC_INC  := $(EXEC_DIR)/exec.i
 LDSCRIPT  := $(EXEC_DIR)/kick.ld
 # ORDRE LOAD-BEARING : boot.o PREMIER -> son CODE porte l'en-tête à $FC0000.
-EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o $(BUILD)/mathffp.o $(BUILD)/diskres.o $(BUILD)/potgo.o $(BUILD)/kbddev.o $(BUILD)/audio.o $(BUILD)/semaphores.o $(BUILD)/execmisc.o
+EXEC_OBJ  := $(BUILD)/boot.o $(BUILD)/lists.o $(BUILD)/memory.o $(BUILD)/library.o $(BUILD)/rawdofmt.o $(BUILD)/tasks.o $(BUILD)/ports.o $(BUILD)/io.o $(BUILD)/ramlib.o $(BUILD)/interrupts.o $(BUILD)/resident.o $(BUILD)/libinit.o $(BUILD)/cia.o $(BUILD)/misc.o $(BUILD)/timer.o $(BUILD)/trackdisk.o $(BUILD)/strap.o $(BUILD)/keyboard.o $(BUILD)/input.o $(BUILD)/console.o $(BUILD)/keymap.o $(BUILD)/keymapdata.o $(BUILD)/gameport.o $(BUILD)/expansion.o $(BUILD)/romboot.o $(BUILD)/mathffp.o $(BUILD)/diskres.o $(BUILD)/potgo.o $(BUILD)/kbddev.o $(BUILD)/audio.o $(BUILD)/semaphores.o $(BUILD)/execmisc.o
 # --- piste graphique (M4+) : objets reliés APRÈS exec (boot.o reste premier) ---
 GFX_DIR   := src/graphics
 GFX_INC   := $(GFX_DIR)/graphics.i
@@ -74,7 +74,7 @@ $(BUILD)/console.o: $(EXEC_DIR)/console.s $(EXEC_INC) $(GFX_DIR)/graphics.i $(IN
 # trackdisk.s inclut aussi disk.i (registres disque B2).
 $(BUILD)/trackdisk.o $(BUILD)/diskres.o: $(EXEC_DIR)/disk.i
 # expansion.s inclut expansion.i (ExpansionBase/ConfigDev/LVO) : relier la dépendance pour rebuild.
-$(BUILD)/expansion.o: $(EXEC_DIR)/expansion.i
+$(BUILD)/expansion.o $(BUILD)/romboot.o: $(EXEC_DIR)/expansion.i
 # boot.s inclut dospkt.i + dos.i (scaffold de preuve D3, montage DeviceNode) : relier les dépendances.
 $(BUILD)/boot.o: $(DOS_DIR)/dospkt.i $(DOS_DIR)/dos.i
 # dos_lib.o inclut dospkt.i (D3c : Open/Read/Close via packets) : relier la dépendance.

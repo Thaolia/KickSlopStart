@@ -55,6 +55,7 @@ AN_BADEXPFREE  EQU $0A000001      ; Alert de FreeExpansionMem (slot déjà libre
 DA_CONFIG      EQU 0              ; UBYTE : largeur (bits 7-6), moment (bits 5-4)
 DA_SIZE        EQU 2              ; UWORD
 DA_DIAGPOINT   EQU 4              ; UWORD
+DA_BOOTPOINT   EQU 6              ; UWORD : décalage du point d'amorçage dans la copie de la DiagArea
 DA_HDRSIZE     EQU 14
 DAC_BUSWIDTH   EQU $C0
 DAC_NIBBLEWIDE EQU $00
@@ -67,12 +68,16 @@ DAC_CONFIGTIME EQU $10
 BN_FLAGS       EQU 14             ; UWORD
 BN_DEVICENODE  EQU 16
 BN_SIZEOF      EQU 20
+NT_BOOTNODE    EQU 16             ; ln_Type d'un BootNode amorçable (ln_Name = ConfigDev de la carte)
 
 ; --- LVO expansion.library ---
 EXP_LVO_ADDCONFIGDEV   EQU -30    ; AddConfigDev(configDev a0)
 EXP_LVO_ALLOCCONFIGDEV EQU -48    ; AllocConfigDev() -> d0 = ConfigDev* | 0
 EXP_LVO_FINDCONFIGDEV  EQU -72    ; FindConfigDev(oldConfigDev a0, manufacturer d0, product d1) -> d0 = cd | 0
 EXP_LVO_FREECONFIGDEV  EQU -84    ; FreeConfigDev(configDev a0)
+EXP_LVO_OBTAINBINDING  EQU -120   ; ObtainConfigBinding()
+EXP_LVO_RELEASEBINDING EQU -126   ; ReleaseConfigBinding()
+EXP_LVO_SETBINDING     EQU -132   ; SetCurrentBinding(binding a0, taille d0)
 
 ; EXP_NO_ENQUEUE=1 (RED) : AddConfigDev N'AJOUTE PAS le ConfigDev à EB_BOARDLIST -> FindConfigDev ne le trouve
 ; jamais -> « EXPANSION OK » absent (AllocConfigDev + l'ouverture de la lib restent OK). Isole le câblage de la

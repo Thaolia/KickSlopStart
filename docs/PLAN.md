@@ -839,8 +839,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     SysInfo MEMORY lisible après NEXT/PREV (PrintIText/DrawBorder restaurent stylos et mode, sondé) ; ClearEOL/ClearScreen.
     Barre de titre d'un écran SCREENQUIET plus jamais dessinée (SysInfo : plus de barre noire au clic). Suite ADF de fin
     d'étape sous WinUAE Linux (tests/adf_suite_winuae.sh) au lieu d'Amiberry.
-    Autoconfig Zorro II (expansion.library complète, fast RAM ajoutée, vecteurs de la 1.3 reproduits). À faire : carte
-    disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse.
+    Autoconfig Zorro II (expansion.library complète, fast RAM ajoutée, vecteurs de la 1.3 reproduits). Carte disque
+    UAE : romboot.library (ROMTag de la DiagArea, RomBoot/BootPoint), eb_MountList consommée par dos : boot sur DH0:
+    (SYS: = DH0) sans disquette amorçable ou avec une priorité >= 5, sinon DH0 monté.
     MICROHZ sur le timer B de CIA-A (niveau 2) comme la 1.3 : les jeux qui prennent $78 ne cassent plus les délais ;
     AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. Précision MICROHZ sous
     charge réglée (1,007 s pour 1 s, vraie 1.3 : 1,0125 s ; cause : feeder sur MICROHZ, passé en VBLANK). Répétition clavier (délai/période d'input.device, Preferences) et INTUITICKS faits : les
