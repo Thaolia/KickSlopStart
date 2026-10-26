@@ -25,7 +25,6 @@
 
 ; constantes IO non présentes dans exec.i (spécifiques lecture) — littéraux documentés (strap n'inclut pas disk.i)
 CMD_READ       EQU 2
-IOF_QUICK      EQU $01
 IO_ACTUAL      EQU 32               ; octets réellement transférés
 IO_LENGTH      EQU 36               ; octets demandés
 IO_DATA        EQU 40               ; APTR buffer destination

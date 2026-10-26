@@ -63,7 +63,6 @@ NW_MINWIDTH     EQU 38
 NW_TYPE         EQU 46
 CON_WINFLAGS    EQU $00021007        ; SIZING, DRAG, DEPTH, ACTIVATE, NOCAREREFRESH (fenêtre CON: standard)
 CON_WBSCREEN    EQU 1                ; nw_Type WBENCHSCREEN
-IOF_QUICK       EQU 1
 
 ; con_handler : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
 con_handler:

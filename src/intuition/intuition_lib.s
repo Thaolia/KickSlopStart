@@ -52,6 +52,7 @@
                 xref    intuition_ItemAddress
                 xref    intuition_OnMenu
                 xref    intuition_OffMenu
+                xref    intuition_ModifyIDCMP
                 xref    intuition_PrintIText
                 xref    intuition_IntuiTextLength
                 xref    it_startinput            ; screens.s : tâche d'entrée (boutons, gadgets, menus)
@@ -98,7 +99,7 @@ intuition_vectors:
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
         dc.l    intuition_null           ; 23 : LVO -138 InitRequester (non impl.)
         dc.l    intuition_ItemAddress    ; 24 : LVO -144 ItemAddress(menustrip a0, code d0)
-        dc.l    intuition_null           ; 25 : LVO -150 ModifyIDCMP (non impl.)
+        dc.l    intuition_ModifyIDCMP    ; 25 : LVO -150 ModifyIDCMP(fenêtre a0, classes d0)
         dc.l    intuition_ModifyProp     ; 26 : LVO -156 ModifyProp(gadget a0, fenêtre a1, requester a2, Flags d0, Pots d1/d2, Bodies d3/d4)
         dc.l    intuition_null           ; 27 : LVO -162 MoveScreen (non impl.)
         dc.l    intuition_MoveWindow     ; 28 : LVO -168 MoveWindow(fenêtre a0, dx d0, dy d1)

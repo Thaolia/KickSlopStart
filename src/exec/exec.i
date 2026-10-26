@@ -339,9 +339,17 @@ KBD_TAIL        EQU $0000064E ; F2b : word — index d'ÉCRITURE (producteur : k
 IND_ADDHANDLER  EQU 9            ; io_Command : ajoute un handler (struct Interrupt) à la chaîne
 IND_REMHANDLER  EQU 10           ; io_Command : retire un handler de la chaîne
 IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents dans la chaîne de handlers
+IND_SETTHRESH   EQU 12           ; io_Command : délai avant la 1re répétition (timeval de la requête)
+IND_SETPERIOD   EQU 13           ; io_Command : période des répétitions suivantes
+ID_HANDLERS     EQU LIB_SIZE     ; base input.device : struct List (chaîne des handlers)
+ID_THRESH       EQU LIB_SIZE+14  ; timeval : délai de répétition (défaut 0,8 s)
+ID_PERIOD       EQU LIB_SIZE+22  ; timeval : période de répétition (défaut 0,1 s)
+INPUT_SIZE      EQU LIB_SIZE+30
 IECLASS_NULL    EQU 0            ; ie_Class : événement neutralisé (ignoré par les handlers suivants)
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
+IECLASS_TIMER   EQU 6            ; ie_Class : tic d'input.device (10 par seconde)
+IEQUALIFIER_REPEAT EQU $0200     ; ie_Qualifier : événement de répétition automatique d'une touche
 IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
 IECODE_RBUTTON  EQU $69          ; ie_Code : bouton droit (down ; up = | $80)
 IECODE_NOBUTTON EQU $FF          ; ie_Code : event de mouvement pur (aucun bouton)
@@ -353,6 +361,7 @@ IE_CODE         EQU 6            ; UWORD code (keycode pour RAWKEY ; bouton pour
 IE_QUALIFIER    EQU 8            ; UWORD qualifieurs
 IE_X            EQU 10           ; WORD ie_position.ie_xy.ie_x (position souris ; absolue dans notre injection)
 IE_Y            EQU 12           ; WORD ie_position.ie_xy.ie_y
+IE_TIMESTAMP    EQU 14           ; struct timeval : heure système de l'événement
 IE_SIZEOF       EQU 22           ; sizeof(struct InputEvent)
 ; proof globals input.device (#2), RAM basse réservée (positionnés par les handlers de test de boot.s)
 INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (parcours de chaîne)
@@ -632,6 +641,7 @@ TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
 TR_GETSYSTIME EQU 10
 TR_SETSYSTIME EQU 11
 IOERR_OPENFAIL EQU -1
+IOF_QUICK    EQU 1           ; io_Flags : requête rapide (terminée sur place, pas de ReplyMsg)
 IOERR_NOCMD  EQU -3
 IOERR_ABORTED EQU -2
 TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device

@@ -22,7 +22,6 @@
                 xdef    exec_RemDevice
                 xref    ram_loadmodule   ; ramlib.s
 
-IOF_QUICK       EQU 1
 DEV_OPEN        EQU -6
 DEV_CLOSE       EQU -12
 DEV_BEGINIO     EQU -30

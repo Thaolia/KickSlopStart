@@ -130,11 +130,11 @@ pf_tattr:
         rts
 
 ; pf_apply(a6 = IntuitionBase) : police par défaut, écran Workbench (police, couleurs), décalage de la vue,
-; pointeur (image et décalage). Clobbe d0-d3/a0-a3.
+; pointeur (image et décalage), répétition des touches (input.device). Clobbe d0-d3/a0-a3.
 pf_apply:
         move.l  a6,a3
         move.l  IB_GFXBASE(a3),a6
-        bsr.s   pf_tattr_a3
+        bsr     pf_tattr_a3
         jsr     LVO_OPENFONT(a6)
         tst.l   d0
         beq.s   .pa_view
@@ -161,10 +161,10 @@ pf_apply:
         move.l  d0,a2
         lea     IB_PREFS+PF_COLOR0(a3),a0
         moveq   #0,d2
-        bsr.s   pf_rgb4
+        bsr     pf_rgb4
         lea     IB_PREFS+PF_COLOR17(a3),a0
         moveq   #17,d2
-        bsr.s   pf_rgb4
+        bsr     pf_rgb4
 .pa_ptr:
         move.l  IB_PTRDATA(a3),d0
         beq.s   .pa_ret
@@ -177,8 +177,39 @@ pf_apply:
         dbra    d0,.pa_img
         jsr     it_ptrmoved
 .pa_ret:
+        bsr.s   pf_keyrpt
         move.l  a3,a6
         rts
+
+; pf_keyrpt(a3 = IntuitionBase) : KeyRptDelay -> IND_SETTHRESH, KeyRptSpeed -> IND_SETPERIOD (spec intuition-prefs-v34
+; §3.3), si input.device est là. Clobbe d0-d1/a0-a2/a6.
+pf_keyrpt:
+        move.l  ($4).w,a6
+        lea     EB_DEVICELIST(a6),a0
+        lea     pf_inputname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .kr_ret
+        move.l  d0,a6
+        lea     -TR_SIZE(sp),sp
+        move.l  sp,a2
+        move.l  a6,IO_DEVICE(a2)
+        move.w  #IND_SETTHRESH,IO_COMMAND(a2)
+        move.l  IB_PREFS+PF_KEYRPTDELAY(a3),TV_SECS(a2)
+        move.l  IB_PREFS+PF_KEYRPTDELAY+4(a3),TV_MICRO(a2)
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        move.w  #IND_SETPERIOD,IO_COMMAND(a2)
+        move.l  IB_PREFS+PF_KEYRPTSPEED(a3),TV_SECS(a2)
+        move.l  IB_PREFS+PF_KEYRPTSPEED+4(a3),TV_MICRO(a2)
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        lea     TR_SIZE(sp),sp
+.kr_ret:
+        rts
+pf_inputname:
+        dc.b    "input.device",0
+        EVEN
 
 pf_tattr_a3:
         exg     a3,a6

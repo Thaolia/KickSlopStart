@@ -47,6 +47,7 @@ ICON_LVO_FREEWBOBJECT EQU -60
 ICON_LVO_ADDFREELIST EQU -72
 ICON_LVO_PUTWBOBJECT EQU -36
 WB_LVO_NEWMODIFYPROP EQU -468       ; intuition
+WB_LVO_MODIFYIDCMP EQU -150         ; intuition ModifyIDCMP(fenêtre a0, classes d0)
 DOS_LVO_INFO    EQU -114             ; Info(lock d1, InfoData d2)
 ID_NUMBLOCKS    EQU 12               ; struct InfoData
 ID_NUMBLOCKSUSED EQU 16
@@ -246,7 +247,9 @@ WBS_MADDR       EQU WBS_ARROWS+4     ; IAddress du dernier message lu (wb_getmsg
 WBS_MQUAL       EQU WBS_MADDR+4      ; WORD : son qualificatif
 WBS_SCRW        EQU WBS_MQUAL+2      ; WORD : tiroir en cours de défilement
 WBS_SCRG        EQU WBS_SCRW+2       ; WORD : GadgetID du gadget de défilement tenu, 0 : aucun
-WBS_DRAWERS     EQU WBS_SCRG+2       ; WB_MAXDRAWERS fiches de tiroir
+WBS_SCRGAD      EQU WBS_SCRG+2       ; LONG : ce gadget
+WBS_SCRTICK     EQU WBS_SCRGAD+4     ; WORD : flèche tenue sans Shift -> un pas par INTUITICKS (ajouté à l'IDCMP)
+WBS_DRAWERS     EQU WBS_SCRTICK+2    ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
@@ -811,14 +814,16 @@ wb_scrollto:
         rts
 
 ; wb_scrollev(d7.w = tiroir, d2 = classe, a5) : GADGETDOWN sur un gadget de défilement : il devient le gadget tenu ;
-; une flèche avance d'un huitième de la zone visible (Shift : 1 pixel). MOUSEMOVE et GADGETUP sur une barre tenue :
-; la position suit son Pot ; GADGETUP termine le défilement. Z = 0 si l'événement était pour le défilement.
+; une flèche avance d'un huitième de la zone visible (Shift : 1 pixel, un seul pas). Flèche tenue sans Shift :
+; INTUITICKS est ajouté à l'IDCMP et chaque INTUITICKS ou MOUSEMOVE avance d'un pas (spec workbench-task-v34 §8.3).
+; MOUSEMOVE et GADGETUP sur une barre tenue : la position suit son Pot ; GADGETUP termine le défilement (et retire
+; INTUITICKS). Z = 0 si l'événement était pour le défilement.
 wb_scrollev:
         movem.l d2-d6/a2-a4,-(sp)
         bsr     wb_window
         beq     .se_no
         cmp.l   #GADGETDOWN,d2
-        bne.s   .se_held
+        bne     .se_held
         move.l  WBS_MADDR(a5),a2
         lea     DR_GADS(a4),a0
         cmp.l   a0,a2
@@ -827,11 +832,23 @@ wb_scrollev:
         cmp.l   a0,a2
         bhs     .se_no
         move.w  d7,WBS_SCRW(a5)
+        move.l  a2,WBS_SCRGAD(a5)
         move.w  GG_GADGETID(a2),d6
         move.w  d6,WBS_SCRG(a5)
         cmp.w   #3,d6
         blo     .se_yes              ; barre : la position suivra son Pot
-        bsr     wb_content           ; flèche : pas d'un huitième de la zone visible (Shift : 1)
+        move.w  WBS_MQUAL(a5),d0
+        and.w   #KQ_SHIFT,d0
+        bne.s   .se_once             ; Shift : un seul pas d'un pixel
+        move.w  #1,WBS_SCRTICK(a5)
+        move.l  WD_IDCMPFLAGS(a3),d0
+        or.l    #INTUITICKS,d0
+        bsr     .se_idcmp
+.se_once:
+        bsr.s   .se_arrow
+        bra     .se_yes
+.se_arrow:                           ; d6 = flèche (3..6) : pas d'un huitième de la zone visible (Shift : 1)
+        bsr     wb_content
         sub.w   d0,d2
         addq.w  #1,d2
         lsr.w   #3,d2
@@ -862,23 +879,39 @@ wb_scrollev:
         bne.s   .se_go
         add.w   d3,d1
 .se_go:
-        bsr     wb_scrollto
-        bra     .se_yes
+        bra     wb_scrollto
 .se_held:
         tst.w   WBS_SCRG(a5)
         beq     .se_no
         cmp.w   WBS_SCRW(a5),d7
         bne     .se_no
+        cmp.l   #INTUITICKS,d2
+        beq.s   .se_rep
         cmp.l   #MOUSEMOVE,d2
         bne.s   .se_up
         bsr.s   .se_bar
+.se_rep:                             ; flèche tenue : un pas par INTUITICKS / MOUSEMOVE, tant qu'elle est sélectionnée
+        tst.w   WBS_SCRTICK(a5)
+        beq     .se_yes
+        move.l  WBS_SCRGAD(a5),a0
+        btst    #7,GG_FLAGS+1(a0)    ; SELECTED : relâchée hors de la flèche (pas de GADGETUP) -> fin
+        beq.s   .se_end
+        move.w  WBS_SCRG(a5),d6
+        bsr     .se_arrow
         bra     .se_yes
 .se_up:
         cmp.l   #GADGETUP,d2
         bne     .se_no
         bsr.s   .se_bar
+.se_end:
         clr.w   WBS_SCRG(a5)         ; fin du défilement
-        bra.s   .se_yes
+        tst.w   WBS_SCRTICK(a5)
+        beq     .se_yes
+        clr.w   WBS_SCRTICK(a5)
+        move.l  WD_IDCMPFLAGS(a3),d0
+        and.l   #~INTUITICKS,d0
+        bsr     .se_idcmp
+        bra     .se_yes
 .se_bar:                             ; barre tenue : position = Pot / 65535 × (plage - visible) + min
         move.w  WBS_SCRG(a5),d6
         cmp.w   #3,d6
@@ -913,6 +946,13 @@ wb_scrollev:
 .sb_go:
         bsr     wb_scrollto
 .sb_ret:
+        rts
+.se_idcmp:                           ; ModifyIDCMP(a3, d0)
+        move.l  a6,-(sp)
+        move.l  a3,a0
+        move.l  WBS_IBASE(a5),a6
+        jsr     WB_LVO_MODIFYIDCMP(a6)
+        move.l  (sp)+,a6
         rts
 .sb_pos:                             ; d4 = Pot, d5 = plage - visible -> d4 = Pot × (plage - visible) / 65535
         tst.w   d5

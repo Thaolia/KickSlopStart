@@ -827,8 +827,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
     À faire : Request/EndRequest/InitRequester (couche de requester). Cadre des fenêtres refait comme la 1.3 : fait. Gadgets proportionnels
     (ModifyProp/NewModifyProp) et barres de défilement des tiroirs du WB faits ; LoadSeg à tampon extensible. Restent :
-    INTUITICKS (répétition des flèches), InstallClipRegion. Preferences s'affiche (SetFont préserve D0, SetPrefs,
-    devs:system-configuration, PointerTicks) ; reste la répétition clavier (cadre de centrage noir = thème DetailPen 2).
+    InstallClipRegion (INTUITICKS fait). Preferences s'affiche (SetFont préserve D0, SetPrefs,
+    devs:system-configuration, PointerTicks) ; répétition clavier faite (cadre de centrage noir = thème DetailPen 2).
     Caesar se charge depuis la disquette (copinit/COPJMP2 + VBlank, RemakeDisplay, LoadSeg en flux).
     Intros de la suite ADF : Scooby (titre), Monkey 1 et SimCity (retour au WB) comme la 1.3 (ExecBase dans LibList,
     IntVects public, ExecBase en chip basse, plus de TRAP dans exec, résident « CLI » système).
@@ -842,7 +842,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse.
     MICROHZ sur le timer B de CIA-A (niveau 2) comme la 1.3 : les jeux qui prennent $78 ne cassent plus les délais ;
     AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. À faire : précision MICROHZ sous
-    charge (~5 %). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    charge (~5 %). Répétition clavier (délai/période d'input.device, Preferences) et INTUITICKS faits : les
+    flèches des tiroirs du WB défilent tant qu'elles sont tenues ; ModifyIDCMP. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

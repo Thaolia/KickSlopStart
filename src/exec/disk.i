@@ -65,7 +65,6 @@ MFM_BAD_DECODE EQU 0
 
 ; --- CMD_READ (B4) : BeginIO device ---
 CMD_READ      EQU 2            ; commande standard de lecture (io.i : INVALID=0, RESET=1, READ=2)
-IOF_QUICK     EQU $01          ; io_Flags bit 0 : I/O synchrone (pas de ReplyMsg)
 IO_ACTUAL     EQU 32           ; IOStdReq : octets réellement transférés
 IO_LENGTH     EQU 36           ; octets demandés
 IO_DATA       EQU 40           ; APTR buffer destination

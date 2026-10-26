@@ -45,6 +45,8 @@
                 xref    str_key
                 xref    str_clickout
                 xdef    it_keyin
+                xdef    it_tickin
+                xdef    intuition_ModifyIDCMP
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
@@ -1794,6 +1796,28 @@ wn_refreshmsg:
 .rf_ret:
         rts
 
+; intuition_ModifyIDCMP(fenêtre a0, classes d0) : nouvelles classes IDCMP. 0 : le UserPort est fermé (ses messages en
+; attente retirés) ; non nul sans UserPort : un port signalant la tâche appelante est créé. Sous Forbid : la tâche
+; d'entrée ne poste pas pendant le changement.
+intuition_ModifyIDCMP:
+        movem.l a3/a6,-(sp)
+        move.l  a0,a3
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        move.l  d0,WD_IDCMPFLAGS(a3)
+        bne.s   .mi_open
+        bsr     wn_freeport
+        clr.l   WD_USERPORT(a3)
+        bra.s   .mi_ret
+.mi_open:
+        tst.l   WD_USERPORT(a3)
+        bne.s   .mi_ret
+        bsr     wn_mkport
+.mi_ret:
+        jsr     LVO_PERMIT(a6)
+        movem.l (sp)+,a3/a6
+        rts
+
 ; wn_mkport(a3 = fenêtre, a6 = SysBase) : port IDCMP (WD_USERPORT) signalant la tâche appelante ; laissé à 0 si
 ; plus de signal ou de mémoire. Préserve d2-d7/a2-a6.
 wn_mkport:
@@ -1844,6 +1868,7 @@ wn_freeport:
         move.l  a1,-(sp)
         jsr     LVO_REMOVE(a6)
         move.l  (sp)+,a1
+        move.b  #NT_REPLYMSG,LN_TYPE(a1) ; de nouveau libre dans la réserve (ModifyIDCMP peut rouvrir un port)
 .fp_nomsg:
         lea     IM_SIZEOF(a1),a1
         dbra    d2,.fp_lp
@@ -2091,6 +2116,59 @@ it_keyin:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
+; it_tickin(a3 = InputEvent IECLASS_TIMER) : handler de pointeur (input.device). Le tic passe à la tâche d'entrée, qui
+; envoie INTUITICKS (it_tick). Préserve tout.
+it_tickin:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  INT_IBASE,d1
+        beq.s   .ti_ret
+        move.l  d1,a1
+        tst.l   IB_INSIG(a1)
+        beq.s   .ti_ret
+        move.w  #IT_TICKCODE,d0
+        moveq   #0,d1
+        bsr     it_push
+.ti_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; it_tick(a5) : INTUITICKS à la fenêtre active si elle l'a demandé et si son précédent INTUITICKS a été rendu (au plus
+; un en circulation, comme WINDOWTICKED en 1.3) ; souris relative à la fenêtre (spec intuiticks-repeat-v34 §3).
+; Préserve d2-d7/a2-a5.
+it_tick:
+        move.l  IB_ACTIVEWINDOW(a5),d1
+        beq.s   .tk_ret
+        movem.l d2-d6/a3-a4,-(sp)
+        move.l  d1,a3
+        move.l  WD_IDCMPFLAGS(a3),d0
+        and.l   #INTUITICKS,d0
+        beq.s   .tk_done
+        lea     WDX_EMSG(a3),a1
+        moveq   #WDX_NEMSG-1,d0
+.tk_scan:
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .tk_nx
+        cmp.l   #INTUITICKS,IM_CLASS(a1)
+        beq.s   .tk_done             ; le précédent n'est pas encore rendu
+.tk_nx:
+        lea     IM_SIZEOF(a1),a1
+        dbra    d0,.tk_scan
+        move.w  PTR_X,d4
+        move.w  PTR_Y,d5
+        bsr     it_scrxy
+        beq.s   .tk_done
+        move.w  d4,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  d5,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        move.l  #INTUITICKS,d0
+        moveq   #0,d1
+        bsr     wn_sendmsg
+.tk_done:
+        movem.l (sp)+,d2-d6/a3-a4
+.tk_ret:
+        rts
+
 ; it_startinput(a2 = IntuitionBase, a6 = SysBase) : crée la tâche d'entrée (pri 20, comme celle d'input.device).
 ; Sans mémoire : pas de tâche, les boutons sont ignorés. Préserve d2-d7/a2-a6.
 IT_STACK        EQU 4096
@@ -2160,6 +2238,8 @@ it_intask:
         moveq   #0,d1
 .in_wrap:
         move.w  d1,IB_EVTAIL(a5)
+        cmp.w   #IT_TICKCODE,d0
+        beq.s   .in_tick
         cmp.w   #IT_KEYCODE,d0
         bhs.s   .in_key
         bsr     it_dobutton
@@ -2173,6 +2253,9 @@ it_intask:
         bra.s   .in_next
 .in_raw:
         bsr     it_rawkey
+        bra.s   .in_next
+.in_tick:
+        bsr     it_tick
         bra.s   .in_next
 .in_move:
         tst.b   IB_MOVED(a5)

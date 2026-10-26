@@ -4,6 +4,7 @@
 ; (chemin AUTOINIT) crée la base, Enqueue dans EB_DEVICELIST. BeginIO dispatche par io_Command :
 ;   IND_ADDHANDLER / IND_REMHANDLER : Enqueue / Remove le struct Interrupt du handler (io_Data) dans la chaîne,
 ;     triée par LN_PRI décroissant (tête = plus haute priorité) — même mécanique qu'AddIntServer.
+;   IND_SETTHRESH / IND_SETPERIOD : délai et période de répétition des touches (lus par le feeder clavier).
 ;   IND_WRITEEVENT : parcourt la chaîne ; chaque handler reçoit a0 = liste d'InputEvents, a1 = is_Data,
 ;     a5 = is_Code, et REND en d0 la liste (éventuellement modifiée) passée au handler suivant.
 ; IND_WRITEEVENT est le point d'injection PUBLIC de première classe (Intuition s'en sert pour injecter des
@@ -18,8 +19,6 @@
                 xref    newlist          ; lists.s (NEWLIST de la chaîne de handlers)
 
 IO_DATA2        EQU 40               ; IOStdReq : io_Data (APTR) — défini localement (évite d'inclure disk.i)
-ID_HANDLERS     EQU LIB_SIZE         ; base input.device : struct List (chaîne des handlers) après le nœud Library
-INPUT_SIZE      EQU LIB_SIZE+14      ; Library + 1 struct List
 
 ; --- ROMTag input.device (scanné par build_reslist) ---
                 EVEN
@@ -86,7 +85,17 @@ input_beginio:
         beq.s   .bi_rem
         cmp.w   #IND_WRITEEVENT,d0
         beq.s   .bi_write
+        lea     ID_THRESH(a2),a0
+        cmp.w   #IND_SETTHRESH,d0
+        beq.s   .bi_tv
+        lea     ID_PERIOD(a2),a0
+        cmp.w   #IND_SETPERIOD,d0
+        beq.s   .bi_tv
         move.b  #IOERR_NOCMD,IO_ERROR(a3)   ; commande non reconnue
+        bra.s   .bi_done
+.bi_tv:                              ; SETTHRESH / SETPERIOD : timeval de la requête (comme une timerequest), prise en
+        move.l  TV_SECS(a3),(a0)+    ; compte au prochain armement de la répétition (feeder clavier)
+        move.l  TV_MICRO(a3),(a0)
         bra.s   .bi_done
 .bi_add:
         lea     ID_HANDLERS(a2),a0   ; chaîne de handlers
@@ -125,6 +134,8 @@ input_initfunc:
         lea     input_name(pc),a0
         move.l  a0,LN_NAME(a1)       ; pose le nom
         move.l  d0,-(sp)             ; sauve la base (newlist clobbe a0)
+        move.l  #800000,ID_THRESH+4(a1) ; répétition par défaut : 0,8 s puis 0,1 s (base mise à zéro par MakeLibrary)
+        move.l  #100000,ID_PERIOD+4(a1)
         lea     ID_HANDLERS(a1),a1   ; NEWLIST(chaîne de handlers)
         jsr     newlist
         move.l  (sp)+,d0             ; d0 = base (valeur de retour)

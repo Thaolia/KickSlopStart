@@ -64,6 +64,7 @@ IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
 IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE = touche (keycode en bits 0-6), x = qualificatif
+IT_TICKCODE      EQU $0400             ; anneau d'entrée : tic IECLASS_TIMER d'input.device (INTUITICKS)
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2
 
@@ -210,6 +211,8 @@ RMBTRAP         EQU $00010000
 
 ; --- struct Preferences V34 (intuition/preferences.h, 232 octets) : champs utilisés ---
 PF_FONTHEIGHT   EQU $00
+PF_KEYRPTSPEED  EQU $04                ; timeval : période de répétition des touches
+PF_KEYRPTDELAY  EQU $0C                ; timeval : délai avant la 1re répétition
 PF_DBLCLICK     EQU $14                ; timeval : secondes, microsecondes
 PF_PTRMATRIX    EQU $1C                ; 36 mots : POS, CTL, 16 lignes (2 plans), 0, 0
 PF_XOFFSET      EQU $64                ; octets signés : décalage de l'image par rapport au point chaud
@@ -248,6 +251,7 @@ MENUPICK        EQU $00000100
 CLOSEWINDOW     EQU $00000200
 RAWKEY          EQU $00000400
 NEWPREFS        EQU $00004000
+INTUITICKS      EQU $00400000           ; ~10 par seconde à la fenêtre active, un seul en circulation
 MENUNULL        EQU $FFFF
 SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS
 SELECTUP        EQU $E8

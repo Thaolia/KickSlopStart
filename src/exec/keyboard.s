@@ -81,6 +81,7 @@ kbd_selftest:
 
 ; ============================ F2b : driver clavier LIVE (interrupt-driven) ============================
                 xdef    kbd_install
+                xdef    kbd_pushcooked
                 xref    kbd_cook         ; #5 : exec/keymap.s — cook keycode(+qualifiers)->ASCII (US/AZERTY)
 
 ; kbd_install() [a6=SysBase] -> d0 = 0 (ok) | !=0 (échec OpenResource). Installe le driver LIVE :
@@ -164,56 +165,74 @@ kbd_interrupt:
                 btst    #7,d0                ; down -> set le bit, up -> clear
                 bne.s   .ki_qclr
                 or.w    d1,KBD_QUAL
-                bra   .ki_out
+                bra.s   .ki_feedout
 .ki_qclr:
                 not.w   d1
                 and.w   d1,KBD_QUAL
-                bra   .ki_out
+                bra.s   .ki_feedout
 .ki_caps:
                 btst    #7,d0                ; CAPS : toggle sur key-down seulement
-                bne   .ki_out
+                bne.s   .ki_feedout
                 move.w  KBD_QUAL,d1
                 eori.w  #$04,d1
                 move.w  d1,KBD_QUAL
-                bra   .ki_out
+                bra.s   .ki_feedout
 .ki_key:
                 btst    #7,d0
-                bne   .ki_out              ; touche normale key-up -> ignore
-                ; --- raw tap -> feeder ring (intégration F, item 1) : snapshot (KBD_QUAL<<8 | keycode) par frappe,
-                ; au MÊME point que le push cuit (après filtre qualifieurs) -> une seule autorité qualifieur ---
-                move.w  KBD_FTAIL,d0
-                move.w  d0,d1
-                addq.w  #2,d1
-                and.w   #KBD_FRMASK,d1
-                cmp.w   KBD_FHEAD,d1
-                beq.s   .ki_cooked           ; feed ring plein -> saute le feed, continue le chemin cuit
-                move.w  KBD_QUAL,d3
-                lsl.w   #8,d3
-                move.b  d2,d3                ; d3 = (qualifieurs << 8) | keycode
-                lea     KBD_FEEDRING,a0
-                move.w  d3,0(a0,d0.w)        ; écrit l'entrée AVANT de publier TAIL
-                move.w  d1,KBD_FTAIL
-.ki_cooked:
+                bne.s   .ki_feedout          ; touche normale relâchée : pour input.device seulement
+                bsr.s   .ki_feed
                 ifne    F2B_NO_FEED
-                bra   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring cuit (isole le câblage)
+                bra.s   .ki_out              ; RED F2B_NO_FEED : décode mais NE nourrit PAS le ring cuit (isole le câblage)
                 endc
                 move.b  d2,d0                ; keycode
                 move.w  KBD_QUAL,d1          ; qualifieurs courants
+                bsr.s   kbd_pushcooked
+                bra.s   .ki_out
+.ki_feedout:
+                bsr.s   .ki_feed
+                bra.s   .ki_out
+                ; --- tout événement (enfoncement, relâchement, qualificatifs) -> anneau du feeder : (KBD_QUAL << 8) |
+                ; code brut (bit 7 = relâchement), qualificatif déjà à jour -> input.device reçoit tout, comme en 1.3 ---
+.ki_feed:
+                move.w  KBD_FTAIL,d1
+                move.w  d1,d3
+                addq.w  #2,d3
+                and.w   #KBD_FRMASK,d3
+                cmp.w   KBD_FHEAD,d3
+                beq.s   .kf_ret              ; anneau plein : événement perdu (borné)
+                move.w  d3,-(sp)
+                move.w  KBD_QUAL,d3
+                lsl.w   #8,d3
+                move.b  d0,d3                ; d3 = (qualifieurs << 8) | code brut
+                lea     KBD_FEEDRING,a0
+                move.w  d3,0(a0,d1.w)        ; écrit l'entrée AVANT de publier TAIL
+                move.w  (sp)+,KBD_FTAIL
+.kf_ret:
+                rts
+.ki_out:
+                movem.l (sp)+,d0-d3/a0-a1
+                rts
+
+; kbd_pushcooked(d0.b = keycode, d1.w = qualificatifs) : caractère cuit (kbd_cook) déposé dans l'anneau lu par le CLI
+; (con_ring_get) ; non mappé ou anneau plein : rien. Deux producteurs (interruption clavier, répétition du feeder) :
+; l'appelant hors interruption appelle sous Disable. Préserve d2-d7/a2-a6.
+kbd_pushcooked:
+                move.l  d2,-(sp)
                 jsr     kbd_cook             ; -> d0.b = ASCII (préserve d2/a0/a1)
                 tst.b   d0
-                beq   .ki_out              ; non mappé
-                move.b  d0,d1                ; d1 = ASCII à pousser
-                move.w  KBD_TAIL,d0          ; push dans le ring SPSC
+                beq.s   .pc_ret              ; non mappé
+                move.b  d0,d1
+                move.w  KBD_TAIL,d0
                 move.w  d0,d2
                 addq.w  #1,d2
                 and.w   #KBD_RMASK,d2
                 cmp.w   KBD_HEAD,d2
-                beq   .ki_out              ; ring plein -> drop (borné)
+                beq.s   .pc_ret              ; anneau plein : perdu (borné)
                 lea     KBD_RING,a0
                 move.b  d1,0(a0,d0.w)        ; écrit la donnée AVANT de publier TAIL
                 move.w  d2,KBD_TAIL
-.ki_out:
-                movem.l (sp)+,d0-d3/a0-a1
+.pc_ret:
+                move.l  (sp)+,d2
                 rts
 
                 EVEN
