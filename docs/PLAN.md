@@ -825,7 +825,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     Info du Workbench fait (info.library, fenêtres GIMMEZEROZERO, gadgets dessinés à rebours comme la 1.3 ; SAVE et
     QUIT prouvés). Duplicate fait (identique à la 1.3), DiskCopy fonctionne (AutoRequest conforme, returnpkt du handler,
     ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
-    À faire : Request/EndRequest/InitRequester (couche de requester). Cadre des fenêtres refait comme la 1.3 : fait. Gadgets proportionnels
+    Requesters faits (Request/EndRequest/InitRequester/SetDMRequest, BuildSysRequest/FreeSysRequest, AutoRequest
+    construit dessus, ScreenToFront/ScreenToBack). Cadre des fenêtres refait comme la 1.3 : fait. Gadgets proportionnels
     (ModifyProp/NewModifyProp) et barres de défilement des tiroirs du WB faits ; LoadSeg à tampon extensible. Restent :
     InstallClipRegion fait, icônes partielles des tiroirs du WB coupées au bord du contenu (INTUITICKS fait). Preferences s'affiche (SetFont préserve D0, SetPrefs,
     devs:system-configuration, PointerTicks) ; répétition clavier faite (cadre de centrage noir = thème DetailPen 2).

@@ -38,21 +38,42 @@
                 xref    wn_sysgads
                 xref    it_scrxy
                 xdef    gad_propinit
+                xdef    gad_propinitl
+                xdef    gad_drawrev
+                xdef    rq_origin
+                xref    rq_endgadget         ; request.s : fin du requester par un ENDGADGET
                 xdef    prop_track
                 xdef    intuition_ModifyProp
                 xdef    intuition_NewModifyProp
 
 ; gad_rect(a3 = fenêtre, a0 = gadget, a1 = 4 mots x0, y0, x1, y1) : rectangle du gadget en coordonnées de la fenêtre,
 ; positions et tailles relatives au bord droit / bas résolues. Gadget intérieur d'une fenêtre GIMMEZEROZERO : relatif à
-; l'intérieur (taille GZZ), puis décalé des bordures gauche et haute. Clobbe d0/d1.
+; l'intérieur (taille GZZ), puis décalé des bordures gauche et haute. Gadget de requester : relatif au requester
+; (sa taille, décalé de son coin, spec intuition-requesters-v34 §2.4). Clobbe d0/d1.
 gad_rect:
-        movem.l d2-d3,-(sp)
-        move.w  WD_WIDTH(a3),d2      ; d2/d3 = taille de référence
+        movem.l d2-d5,-(sp)
+        moveq   #0,d4                ; d4/d5 = coin du domaine dans la fenêtre
+        moveq   #0,d5
+        move.w  WD_WIDTH(a3),d2      ; d2/d3 = taille du domaine
         move.w  WD_HEIGHT(a3),d3
-        bsr.s   gad_inner
+        bsr     gad_reqof
+        beq.s   .gr_win
+        move.l  a0,-(sp)
+        move.l  d0,a0
+        move.w  RQ_WIDTH(a0),d2
+        move.w  RQ_HEIGHT(a0),d3
+        bsr     rq_origin
+        move.w  d0,d4
+        move.w  d1,d5
+        move.l  (sp)+,a0
+        bra.s   .gr_ref
+.gr_win:
+        bsr     gad_inner
         beq.s   .gr_ref
         move.w  WD_GZZWIDTH(a3),d2
         move.w  WD_GZZHEIGHT(a3),d3
+        move.b  WD_BORDERLEFT(a3),d4
+        move.b  WD_BORDERTOP(a3),d5
 .gr_ref:
         move.w  GG_FLAGS(a0),d1
         move.w  GG_LEFTEDGE(a0),d0
@@ -85,17 +106,76 @@ gad_rect:
         add.w   2(a1),d0
         subq.w  #1,d0
         move.w  d0,6(a1)
-        bsr.s   gad_inner
-        beq.s   .gr_ret
+        add.w   d4,(a1)
+        add.w   d4,4(a1)
+        add.w   d5,2(a1)
+        add.w   d5,6(a1)
+        movem.l (sp)+,d2-d5
+        rts
+
+gad_skip:
+        rts
+
+; gad_reqof(a3 = fenêtre, a0 = gadget) -> d0 = requester de la fenêtre qui porte ce gadget (REQGADGET), 0 sinon ;
+; Z = 1 si aucun. Préserve tout le reste.
+gad_reqof:
         moveq   #0,d0
-        move.b  WD_BORDERLEFT(a3),d0
-        add.w   d0,(a1)
-        add.w   d0,4(a1)
-        move.b  WD_BORDERTOP(a3),d0
-        add.w   d0,2(a1)
-        add.w   d0,6(a1)
-.gr_ret:
-        movem.l (sp)+,d2-d3
+        btst    #4,GG_GADGETTYPE(a0) ; REQGADGET ($1000)
+        beq.s   .ro_none
+        movem.l a1-a2,-(sp)
+        move.l  WD_FIRSTREQUEST(a3),a1
+.rq_lp:
+        move.l  a1,d0
+        beq.s   .rq_ret
+        move.l  RQ_REQGADGET(a1),a2
+.rq_gad:
+        cmpa.w  #0,a2
+        beq.s   .rq_next
+        cmpa.l  a0,a2
+        beq.s   .rq_ret              ; d0 = ce requester
+        move.l  GG_NEXTGADGET(a2),a2
+        bra.s   .rq_gad
+.rq_next:
+        move.l  RQ_OLDERREQ(a1),a1
+        bra.s   .rq_lp
+.rq_ret:
+        movem.l (sp)+,a1-a2
+        tst.l   d0
+.ro_none:
+        rts
+
+; rq_origin(a3 = fenêtre, a0 = requester) -> d0.w/d1.w = coin du requester dans la fenêtre : LeftEdge/TopEdge, plus
+; les bordures dans une fenêtre GIMMEZEROZERO (relatif à l'intérieur). Préserve tout le reste.
+rq_origin:
+        move.w  RQ_LEFTEDGE(a0),d0
+        move.w  RQ_TOPEDGE(a0),d1
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO
+        beq.s   .og_ret
+        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP : une seule couche)
+        beq.s   .og_ret
+        move.l  d2,-(sp)
+        moveq   #0,d2
+        move.b  WD_BORDERLEFT(a3),d2
+        add.w   d2,d0
+        move.b  WD_BORDERTOP(a3),d2
+        add.w   d2,d1
+        move.l  (sp)+,d2
+.og_ret:
+        rts
+
+; gad_nolayer(a3 = fenêtre, a2 = gadget) -> Z = 0 si c'est un gadget de requester sans couche (requester rogné à
+; rien) : rien à dessiner. Préserve tout le reste.
+gad_nolayer:
+        movem.l d0/a0,-(sp)
+        move.l  a2,a0
+        bsr.s   gad_reqof
+        beq.s   .nl_ret              ; Z = 1 : pas un gadget de requester
+        move.l  d0,a0
+        tst.l   RQ_REQLAYER(a0)
+        seq     d0                   ; d0 = $FF si pas de couche
+        tst.b   d0
+.nl_ret:
+        movem.l (sp)+,d0/a0          ; (movem ne touche pas les drapeaux)
         rts
 
 ; gad_inner(a3 = fenêtre, a0 = gadget) -> Z = 0 si c'est un gadget de l'intérieur d'une fenêtre GIMMEZEROZERO (pas
@@ -110,9 +190,21 @@ gad_inner:
 .gn_ret:
         rts
 
-; gad_rpof(a3 = fenêtre, a2 = gadget) -> a0 = RastPort où le dessiner : celui du cadre pour un gadget GZZGADGET d'une
-; fenêtre GIMMEZEROZERO, sinon celui de la fenêtre (l'intérieur). Préserve tout le reste.
+; gad_rpof(a3 = fenêtre, a2 = gadget) -> a0 = RastPort où le dessiner : celui de la couche du requester pour un gadget
+; de requester (appelant : gad_nolayer vérifié), celui du cadre pour un gadget GZZGADGET d'une fenêtre GIMMEZEROZERO,
+; sinon celui de la fenêtre (l'intérieur). Préserve tout le reste.
 gad_rpof:
+        move.l  d0,-(sp)
+        move.l  a2,a0
+        bsr     gad_reqof
+        beq.s   .ro_win
+        move.l  d0,a0                ; gadget de requester : la couche du requester
+        move.l  RQ_REQLAYER(a0),a0
+        move.l  IL_RP(a0),a0
+        move.l  (sp)+,d0
+        rts
+.ro_win:
+        move.l  (sp)+,d0
         move.l  WD_RPORT(a3),a0
         btst    #2,WD_FLAGS+2(a3)
         beq.s   .ro_ret
@@ -125,10 +217,26 @@ gad_rpof:
         rts
 
 ; gad_rp(a3 = fenêtre, a2 = gadget, a1 = rectangle de gad_rect) -> a1 inchangé, a0 = RastPort où le dessiner (gad_rpof) ;
-; le rectangle est ramené dans ce RastPort (gadget intérieur d'une fenêtre GIMMEZEROZERO : moins les bordures).
-; Clobbe d0.
+; le rectangle est ramené dans ce RastPort (gadget intérieur d'une fenêtre GIMMEZEROZERO : moins les bordures ; gadget
+; de requester : moins le coin du requester). Clobbe d0.
 gad_rp:
         bsr.s   gad_rpof
+        move.l  a0,-(sp)
+        move.l  a2,a0
+        bsr     gad_reqof
+        beq.s   .rp_win
+        move.l  d1,-(sp)
+        move.l  d0,a0                ; gadget de requester : rectangle relatif au coin du requester
+        bsr     rq_origin
+        sub.w   d0,(a1)
+        sub.w   d0,4(a1)
+        sub.w   d1,2(a1)
+        sub.w   d1,6(a1)
+        move.l  (sp)+,d1
+        move.l  (sp)+,a0
+        rts
+.rp_win:
+        move.l  (sp)+,a0
         exg     a0,a2
         bsr     gad_inner
         exg     a0,a2
@@ -173,6 +281,8 @@ gad_draw:
 gad_render:
         moveq   #0,d0
 gad_drw:
+        bsr     gad_nolayer
+        bne     gad_skip
         bsr     it_unclip
         bsr     gad_drw_nc
         bra     it_reclip
@@ -391,6 +501,8 @@ gad_drawrev:
 ; gad_hilite(a3, a2, a5) : l'état SELECTED vient de changer -> surbrillance mise à jour (inversion, ou image redessinée
 ; en GADGHIMAGE). Préserve d2-d7/a2-a5.
 gad_hilite:
+        bsr     gad_nolayer
+        bne     gad_skip
         bsr     it_unclip
         bsr     gad_hilite_nc
         bra     it_reclip
@@ -410,10 +522,31 @@ gad_hilite_nc:
 
 ; gad_down(a3 = fenêtre, a5, d2/d3 = clic dans la fenêtre) -> Z = 0 si un gadget d'application actif l'a pris :
 ; il est sélectionné (ou basculé en TOGGLESELECT), GADGETDOWN s'il est GADGIMMEDIATE, et il reste enfoncé jusqu'au
-; relâchement (gad_up). Clobbe d0/d1/d6/a0/a1/a6 (comme wn_sendmsg).
+; relâchement (gad_up). Avec un requester, les gadgets de la fenêtre sont inertes : seuls ceux du plus récent
+; comptent, si le clic tombe sur sa couche (spec intuition-requesters-v34 §3.1). Clobbe d0/d1/d6/a0/a1/a6.
 gad_down:
         move.l  a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
+        move.l  WD_FIRSTREQUEST(a3),d0
+        beq.s   .gn_lp
+        suba.l  a2,a2
+        move.l  d0,a0
+        move.l  RQ_REQLAYER(a0),d0
+        beq.s   .gn_lp
+        move.l  d0,a1
+        move.w  d2,d0                ; clic -> coordonnées de l'écran
+        add.w   WD_LEFTEDGE(a3),d0
+        cmp.w   IL_MINX(a1),d0
+        blt.s   .gn_lp
+        cmp.w   IL_MAXX(a1),d0
+        bgt.s   .gn_lp
+        move.w  d3,d0
+        add.w   WD_TOPEDGE(a3),d0
+        cmp.w   IL_MINY(a1),d0
+        blt.s   .gn_lp
+        cmp.w   IL_MAXY(a1),d0
+        bgt.s   .gn_lp
+        move.l  RQ_REQGADGET(a0),a2
 .gn_lp:
         move.l  a2,d0
         beq.s   .gn_none
@@ -497,14 +630,26 @@ gad_up:
         bsr     gad_hilite
 .gu_verify:
         btst    #0,GG_ACTIVATION+1(a2)   ; RELVERIFY
-        beq.s   .gu_ret
+        beq.s   .gu_end
         move.l  a2,a0
         bsr     gad_inside
-        beq.s   .gu_ret
+        beq.s   .gu_end
         moveq   #GADGETUP,d0
         moveq   #0,d1
         move.l  a2,a0
         bsr.s   gad_send
+.gu_end:
+        btst    #2,GG_ACTIVATION+1(a2)   ; ENDGADGET relâché dessus : fin du requester le plus récent
+        beq.s   .gu_ret
+        move.l  a2,a0
+        bsr     gad_inside
+        beq.s   .gu_ret
+        move.l  a2,a0
+        bsr     gad_reqof
+        beq.s   .gu_ret
+        cmp.l   WD_FIRSTREQUEST(a3),d0
+        bne.s   .gu_ret
+        jsr     rq_endgadget
 .gu_ret:
         move.l  (sp)+,a2
         rts
@@ -554,9 +699,15 @@ PP_SIZE         EQU 28
 ; gad_propinit(a3 = fenêtre) : bordures du PropInfo de chaque gadget proportionnel de la fenêtre, comme à l'entrée
 ; d'un gadget dans une fenêtre : WBorLeft / WBorTop de l'écran, 0 / 0 si PROPBORDERLESS (spec §1). Préserve tout.
 gad_propinit:
+        move.l  a2,-(sp)
+        move.l  WD_FIRSTGADGET(a3),a2
+        bsr.s   gad_propinitl
+        move.l  (sp)+,a2
+        rts
+; gad_propinitl(a3 = fenêtre, a2 = premier gadget d'une liste) : idem pour cette liste (gadgets d'un requester).
+gad_propinitl:
         movem.l d0-d1/a0-a2,-(sp)
         move.l  WD_WSCREEN(a3),a1
-        move.l  WD_FIRSTGADGET(a3),a2
 .pi_lp:
         move.l  a2,d0
         beq.s   .pi_ret
@@ -904,6 +1055,8 @@ prop_knob:
 ; Rien si la position n'a pas changé. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
 PU_NEW          EQU PP_SIZE          ; nouvelle boîte du knob (4 mots)
 prop_update:
+        bsr     gad_nolayer
+        bne     gad_skip
         bsr     it_unclip
         bsr     prop_update_nc
         bra     it_reclip
@@ -1276,6 +1429,8 @@ str_len:
 ; remplie avec les caractères visibles depuis si_DispPos, curseur inversé s'il est actif ; la position d'affichage
 ; suit le curseur. Stylos et mode du RastPort restaurés. Préserve d2-d7/a2-a6.
 str_text:
+        bsr     gad_nolayer
+        bne     gad_skip
         bsr     it_unclip
         bsr     str_text_nc
         bra     it_reclip

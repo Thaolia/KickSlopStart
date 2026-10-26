@@ -76,6 +76,7 @@ LVO_UPFRONTLAYER        EQU -48
 LVO_BEHINDLAYER         EQU -54
 LVO_MOVELAYER           EQU -60
 LVO_SIZELAYER           EQU -66
+LVO_MOVELAYERINFRONTOF  EQU -168
 LVO_BEGINUPDATE         EQU -78
 LVO_ENDUPDATE           EQU -84
 LVO_INSTALLCLIPREGION   EQU -174
@@ -83,6 +84,10 @@ LVO_DELETELAYER         EQU -90
 LVO_LOCKLAYERS          EQU -108
 LVO_UNLOCKLAYERS        EQU -114
 IL_RP           EQU 12               ; struct Layer : RastPort
+IL_MINX         EQU 16               ; bornes (coordonnées de l'écran)
+IL_MINY         EQU 18
+IL_MAXX         EQU 20
+IL_MAXY         EQU 22
 IL_FLAGS        EQU 30               ; Flags (UWORD)
 IL_WINDOW       EQU 40               ; Window (réservé à l'interface utilisateur)
 IL_LOCK         EQU 72               ; SignalSemaphore de la couche
@@ -397,9 +402,28 @@ RQ_LEFTEDGE   EQU 4             ; WORD
 RQ_TOPEDGE    EQU 6             ; WORD
 RQ_WIDTH      EQU 8             ; WORD
 RQ_HEIGHT     EQU 10            ; WORD
+RQ_RELLEFT    EQU 12            ; WORD (POINTREL : double-menu)
+RQ_RELTOP     EQU 14            ; WORD
 RQ_REQGADGET  EQU 16           ; APTR liste de gadgets
+RQ_REQBORDER  EQU 20           ; APTR Border
 RQ_REQTEXT    EQU 24           ; APTR texte
+RQ_FLAGS      EQU 28           ; UWORD
+RQ_BACKFILL   EQU 30           ; UBYTE : stylo du fond
+RQ_REQLAYER   EQU 32           ; APTR couche du requester
+RQ_IMAGEBMAP  EQU 68           ; APTR BitMap (PREDRAWN)
+RQ_RWINDOW    EQU 72           ; APTR fenêtre
 RQ_SIZEOF     EQU 112
+PREDRAWN      EQU $0002         ; RQ_FLAGS : ImageBMap recopié au lieu du dessin
+NOISYREQ      EQU $0004         ; RQ_FLAGS : les événements continuent d'aller à la fenêtre
+REQACTIVE     EQU $2000         ; RQ_FLAGS : affiché
+REQGADGET     EQU $1000         ; gg_GadgetType : gadget d'un requester
+ENDGADGET     EQU $0004         ; gg_Activation : son relâchement termine le requester
+WD_FIRSTREQUEST EQU 36          ; struct Window
+WD_DMREQUEST  EQU 40
+WD_REQCOUNT   EQU 44            ; WORD
+INREQUEST     EQU $00004000     ; WD_FLAGS : au moins un requester
+REQSET        EQU $00000080     ; IDCMP
+REQCLEAR      EQU $00001000
 ; REQ_NO_HITTEST=1 (RED requester) : req_input_handler ne fait PAS le hit-test -> un clic DANS le gadget ne pose pas
 ; REQ_HIT -> « REQUESTER CLICK OK » absent. Isole le hit-test du gadget. Défaut 0.
 REQ_NO_HITTEST EQU 0

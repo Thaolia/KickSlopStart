@@ -214,6 +214,12 @@ it_menubutton:
         beq.s   .mb_ret
         btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP : le bouton droit appartient à l'application
         bne.s   .mb_ret
+        move.l  WD_FIRSTREQUEST(a3),d0   ; requester sans NOISYREQ : pas de menus (spec intuition-requesters-v34 §3.2)
+        beq.s   .mb_menus
+        move.l  d0,a0
+        btst    #2,RQ_FLAGS+1(a0)    ; NOISYREQ
+        beq.s   .mb_ret
+.mb_menus:
         clr.l   IB_MENUBOX(a5)
         clr.l   IB_MENUCUR(a5)
         clr.l   IB_ITEMCUR(a5)

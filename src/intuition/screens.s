@@ -28,6 +28,8 @@
                 xdef    intuition_FreeRemember
                 xdef    intuition_DoubleClick
                 xdef    intuition_RemakeDisplay
+                xdef    intuition_ScreenToFront
+                xdef    intuition_ScreenToBack
                 xdef    it_event
                 xdef    it_refresh           ; menus.s
                 xdef    it_title
@@ -47,6 +49,9 @@
                 xdef    it_keyin
                 xdef    it_tickin
                 xdef    it_unclip
+                xref    rq_closeall          ; request.s
+                xref    rq_move
+                xref    rq_restack
                 xdef    it_reclip
                 xdef    intuition_ModifyIDCMP
                 xref    gad_forget
@@ -489,6 +494,54 @@ it_remake:
         jsr     LVO_LOADVIEW(a6)
 .rm_ret:
         movem.l (sp)+,a2/a6
+        rts
+
+; ScreenToFront(écran a0) / ScreenToBack(écran a0) : l'écran passe en tête / en queue de la liste des écrans ; seul
+; l'écran de tête est affiché (it_remake). Rien si l'écran n'est pas dans la liste.
+intuition_ScreenToFront:
+        moveq   #0,d1
+        bra.s   sc_depth
+intuition_ScreenToBack:
+        moveq   #1,d1
+sc_depth:
+        movem.l a2/a5-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a2
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        lea     IB_FIRSTSCREEN(a5),a0 ; maillon précédent (SC_NEXTSCREEN à l'offset 0)
+.sd_find:
+        move.l  (a0),d0
+        beq.s   .sd_none
+        cmp.l   d0,a2
+        beq.s   .sd_hit
+        move.l  d0,a0
+        bra.s   .sd_find
+.sd_hit:
+        move.l  SC_NEXTSCREEN(a2),(a0)
+        tst.w   d1
+        bne.s   .sd_back
+        move.l  IB_FIRSTSCREEN(a5),SC_NEXTSCREEN(a2)
+        move.l  a2,IB_FIRSTSCREEN(a5)
+        bra.s   .sd_done
+.sd_back:
+        clr.l   SC_NEXTSCREEN(a2)
+        lea     IB_FIRSTSCREEN(a5),a0
+.sd_tail:
+        move.l  (a0),d0
+        beq.s   .sd_put
+        move.l  d0,a0
+        bra.s   .sd_tail
+.sd_put:
+        move.l  a2,(a0)
+.sd_done:
+        jsr     LVO_PERMIT(a6)
+        bsr     it_remake
+        bra.s   .sd_ret
+.sd_none:
+        jsr     LVO_PERMIT(a6)
+.sd_ret:
+        movem.l (sp)+,a2/a5-a6
         rts
 
 ; CloseScreen(screen a0) -> d0 = TRUE. Retire l'écran de la liste, libère ses ressources et réaffiche l'écran
@@ -1524,6 +1577,7 @@ intuition_CloseWindow:
         move.l  a0,d0
         beq     .cw_ret
         bsr     gad_forget           ; un gadget de cette fenêtre restait enfoncé
+        jsr     rq_closeall          ; ses requesters (et leurs couches) d'abord
         move.l  WD_WSCREEN(a3),a4    ; a4 = écran
         move.l  IB_LAYERSBASE(a5),a6
         suba.l  a0,a0
@@ -1714,6 +1768,7 @@ wn_depth:
         move.l  d3,a1
         jsr     0(a6,d2.w)
 .wd_one:
+        jsr     rq_restack           ; les requesters restent juste devant la fenêtre
         bsr     it_relist
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
@@ -1769,6 +1824,7 @@ intuition_MoveWindow:
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_MOVELAYER(a6)
+        jsr     rq_move              ; les requesters suivent
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
         rts
@@ -2445,6 +2501,11 @@ it_dobutton:
         bge.s   .db_size
         bsr     wn_sysat             ; fermeture / profondeur : boîte inversée, action au relâchement
         beq.s   .db_ndepth
+        cmp.w   #IT_SYSCLOSE,d0      ; fermeture refusée tant qu'un requester est posé
+        bne.s   .db_sys
+        tst.l   WD_FIRSTREQUEST(a3)
+        bne     .db_ret
+.db_sys:
         move.w  d0,IB_SYSACT(a5)
         move.l  a3,IB_SYSWIN(a5)
         bra     wn_sysinv
@@ -2906,7 +2967,16 @@ wn_post:
         move.l  WD_USERPORT(a3),d6
         beq     .sm_ret
         and.l   WD_IDCMPFLAGS(a3),d0
-        beq.s   .sm_ret
+        beq     .sm_ret
+        move.l  WD_FIRSTREQUEST(a3),d6   ; requester sans NOISYREQ : touches, boutons, mouvements, tics et menus
+        beq.s   .sm_take                 ; sont avalés (spec intuition-requesters-v34 §3.2)
+        move.l  d6,a1
+        btst    #2,RQ_FLAGS+1(a1)    ; NOISYREQ
+        bne.s   .sm_take
+        move.l  d0,d6
+        and.l   #RAWKEY|MOUSEBUTTONS|MOUSEMOVE|INTUITICKS|MENUPICK,d6
+        bne     .sm_ret
+.sm_take:
         lea     WDX_EMSG(a3),a1
         moveq   #WDX_NEMSG-1,d6
 .sm_find:

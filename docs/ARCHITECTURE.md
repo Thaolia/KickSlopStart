@@ -691,8 +691,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
        - boutons : texte + 12 de large, police + 6 de haut, positif à 14 du bord gauche, négatif à 13 du bord droit,
          4 pixels au-dessus du bas ; filet intérieur au stylo 0 et cadre extérieur au stylo 3 ;
        - Amiga-V / Amiga-B traités (sans effet tant que RAWKEY n'est pas acheminé vers les fenêtres).
-    - **Écart assumé** : le requester est dessiné dans la fenêtre, sans couche Request ; seule la structure interne
-      diffère. Request, EndRequest et InitRequester restent à faire.
+    - Écart d'alors (requester dessiné dans la fenêtre, sans couche) : levé en (30), AutoRequest passe désormais par
+      BuildSysRequest et Request.
   - Prouvé sous FS-UAE :
     - la demande « Put SOURCE disk » est identique à la vraie ROM, à l'habillage de fenêtre près (bordure droite et
       gadget de taille) ;
@@ -920,6 +920,25 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   compris ; seule une icône à plus de 4 × la taille de l'écran est sautée ; le clic n'est pris que dans le contenu. La
   jauge d'un disque est dessinée hors mise à jour. Écart : ordre de dessin des icônes = ordre du tableau (la 1.3 va de
   la queue vers la tête de sa liste).
+  (30) **Requesters** (spec `docs/analysis/intuition-requesters-v34.md`, relue ; sonde `tests/reqtest.s`).
+  `src/intuition/request.s` : **Request** (-240 : couche LAYERSMART au coin LeftEdge/TopEdge, intérieur d'une fenêtre
+  GZZ, rognée à la fenêtre, devant le requester précédent sinon devant la fenêtre ; une seule opération de couches
+  quand cette couche est déjà tout devant ; fond BackFill, ReqBorder, ReqText, gadgets à rebours, ImageBMap si
+  PREDRAWN ; REQGADGET posé ; chaîne, ReqCount, INREQUEST ; REQSET), **EndRequest** (-120 : retrait même hors tête,
+  DeleteLayer, REQCLEAR et INREQUEST effacé au dernier, fenêtre réparée), **InitRequester** (-138), **SetDMRequest** /
+  **ClearDMRequest** (-258/-48, refusés si le DMRequest est affiché). gadgets.s : un gadget de requester a pour
+  domaine le requester et se dessine dans sa couche (`gad_reqof`, `rq_origin`) ; pendant un requester les gadgets de
+  la fenêtre sont inertes, seuls ceux du plus récent répondent (clic sur sa couche) ; **ENDGADGET** relâché dessus
+  le termine (REQCLEAR à chaque fois). screens.s : sans NOISYREQ, RAWKEY / MOUSEBUTTONS / MOUSEMOVE / INTUITICKS /
+  MENUPICK sont avalés (`wn_post`) et les menus ne s'ouvrent pas ; la fermeture est refusée ; les couches des
+  requesters suivent MoveWindow et les changements de profondeur ; CloseWindow retire les requesters restants.
+  sysreq.s : **BuildSysRequest** (-360 : fenêtre « System Request » + requester NOISYREQ, mémoire en liste Remember
+  dans Window->UserData), **FreeSysRequest** (-372), **AutoRequest** construit dessus (ScreenToFront de son écran).
+  **ScreenToFront / ScreenToBack** (-252/-246) : tête / queue de la liste des écrans, l'écran de tête est affiché.
+  Sonde : Request ×2, EndRequest hors tête, ENDGADGET, AutoRequest (Amiga-V / Amiga-B, AvailMem identique avant /
+  après), écrans : tout conforme ; DiskCopy affiche son invite et Cancel le termine. Écarts : pas de repli DisplayAlert
+  (FALSE), SizeWindow ne rogne pas la couche d'un requester, les gadgets d'un requester PREDRAWN sont dessinés tout
+  de suite.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

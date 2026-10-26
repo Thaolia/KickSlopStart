@@ -30,6 +30,15 @@
                 xref    intuition_ModifyProp     ; gadgets.s
                 xref    intuition_NewModifyProp
                 xref    intuition_AllocRemember
+                xref    intuition_Request        ; request.s
+                xref    intuition_ScreenToBack   ; screens.s
+                xref    intuition_ScreenToFront
+                xref    intuition_EndRequest
+                xref    intuition_InitRequester
+                xref    intuition_SetDMRequest
+                xref    intuition_ClearDMRequest
+                xref    intuition_BuildSysRequest ; sysreq.s
+                xref    intuition_FreeSysRequest
                 xref    intuition_FreeRemember
                 xref    intuition_DoubleClick
                 xref    intuition_GetPrefs
@@ -84,7 +93,7 @@ intuition_vectors:
         dc.l    intuition_null           ; 4 : LVO -24 (réservé)
         dcb.l   2,intuition_null         ; 5..6 : LVO -30..-36 (non impl.)
         dc.l    intuition_AddGadget      ; 7 : LVO -42 AddGadget(fenêtre a0, gadget a1, position d0)
-        dc.l    intuition_null           ; 8 : LVO -48 ClearDMRequest (non impl.)
+        dc.l    intuition_ClearDMRequest ; 8 : LVO -48 ClearDMRequest(fenêtre a0)
         dc.l    intuition_ClearMenuStrip ; 9 : LVO -54 ClearMenuStrip(fenêtre a0)
         dc.l    intuition_null           ; 10 : LVO -60 ClearPointer (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
@@ -94,10 +103,10 @@ intuition_vectors:
         dc.l    intuition_DoubleClick    ; 17 : LVO -102 DoubleClick(s1 d0, µs1 d1, s2 d2, µs2 d3)
         dc.l    intuition_DrawBorder     ; 18 : LVO -108 DrawBorder(rp a0, border a1, x d0, y d1)
         dc.l    intuition_DrawImage      ; 19 : LVO -114 DrawImage(rp a0, image a1, x d0, y d1)
-        dc.l    intuition_null           ; 20 : LVO -120 EndRequest (non impl.)
+        dc.l    intuition_EndRequest     ; 20 : LVO -120 EndRequest(requester a0, fenêtre a1)
         dc.l    intuition_GetDefPrefs    ; 21 : LVO -126 GetDefPrefs(buffer a0, taille d0)
         dc.l    intuition_GetPrefs       ; 22 : LVO -132 GetPrefs(buffer a0, taille d0)
-        dc.l    intuition_null           ; 23 : LVO -138 InitRequester (non impl.)
+        dc.l    intuition_InitRequester  ; 23 : LVO -138 InitRequester(requester a0)
         dc.l    intuition_ItemAddress    ; 24 : LVO -144 ItemAddress(menustrip a0, code d0)
         dc.l    intuition_ModifyIDCMP    ; 25 : LVO -150 ModifyIDCMP(fenêtre a0, classes d0)
         dc.l    intuition_ModifyProp     ; 26 : LVO -156 ModifyProp(gadget a0, fenêtre a1, requester a2, Flags d0, Pots d1/d2, Bodies d3/d4)
@@ -114,7 +123,10 @@ intuition_vectors:
         dc.l    intuition_RefreshGadgets ; 37 : LVO -222 RefreshGadgets(gadgets a0, fenêtre a1, requester a2)
         dc.l    intuition_RemoveGadget   ; 38 : LVO -228 RemoveGadget(fenêtre a0, gadget a1)
         dc.l    intuition_ReportMouse    ; 39 : LVO -234 ReportMouse(drapeau d0, fenêtre a0)
-        dcb.l   4,intuition_null         ; 40..43 : LVO -240..-258 (non impl.)
+        dc.l    intuition_Request        ; 40 : LVO -240 Request(requester a0, fenêtre a1)
+        dc.l    intuition_ScreenToBack   ; 41 : LVO -246 ScreenToBack(écran a0)
+        dc.l    intuition_ScreenToFront  ; 42 : LVO -252 ScreenToFront(écran a0)
+        dc.l    intuition_SetDMRequest   ; 43 : LVO -258 SetDMRequest(fenêtre a0, requester a1)
         dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
         dc.l    intuition_null           ; 45 : LVO -270 SetPointer (non impl.)
         dc.l    intuition_SetWindowTitles ; 46 : LVO -276 SetWindowTitles(fenêtre a0, titre a1, titre d'écran a2)
@@ -130,9 +142,10 @@ intuition_vectors:
         dcb.l   2,intuition_null         ; 56..57 : LVO -336..-342 (non impl.)
         dc.l    intuition_AutoRequest    ; 58 : LVO -348 AutoRequest(fenêtre a0, corps a1, oui a2, non a3, ...)
         dc.l    intuition_BeginRefresh   ; 59 : LVO -354 BeginRefresh(fenêtre a0)
-        dc.l    intuition_null           ; 60 : LVO -360 (non impl.)
+        dc.l    intuition_BuildSysRequest ; 60 : LVO -360 BuildSysRequest(fenêtre a0, corps a1, pos a2, nég a3, IDCMP d0, l d2, h d3)
         dc.l    intuition_EndRefresh     ; 61 : LVO -366 EndRefresh(fenêtre a0, complet d0)
-        dcb.l   2,intuition_null         ; 62..63 : LVO -372..-378 (non impl.)
+        dc.l    intuition_FreeSysRequest ; 62 : LVO -372 FreeSysRequest(fenêtre a0)
+        dc.l    intuition_null           ; 63 : LVO -378 (non impl.)
         dc.l    intuition_RemakeDisplay  ; 64 : LVO -384 RemakeDisplay()
         dc.l    intuition_RemakeDisplay  ; 65 : LVO -390 RethinkDisplay()
         dc.l    intuition_AllocRemember  ; 66 : LVO -396 AllocRemember(clé a0, taille d0, drapeaux d1)
