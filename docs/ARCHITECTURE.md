@@ -969,6 +969,17 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   processeur tant que le disque travaillait. Au boot (strap) : interrogation inchangée. « Blocage » de deux
   `list sys: all` : en fait tests/timerprobe.s attendait une égalité exacte de son compteur de trames, ratée dès que
   le CLI perdait le processeur plus d'une trame ; ses attentes sont maintenant « au moins ».
+  (33) **Volume plein** (spec `docs/analysis/disk-full-write-v34.md`, agent d'analyse, relue ; sonde `tests/diskfull.s`).
+  Échec « intermittent » de `join` : 25 jointures de 27,5 Ko sur disque libre sont exactes à l'octet ; sur un disque
+  presque plein, le fichier était tronqué sans rien afficher (seule reproduction trouvée ; rien ne prouve que l'échec
+  d'origine avait cette cause). La vraie 1.3 ne fait pas mieux côté Join (il ne teste pas ses écritures, rend 0) mais dos ouvre à chaque
+  Write qui échoue faute de place le requester « Volume / <nom> / is full » (Retry / Cancel) et bloque jusqu'à la
+  réponse. `dos_rawwrite` : Res1 = -1 et IoErr 221 -> `dos_fullreq` (volume = nœud DLT_VOLUME du même handler ; repli
+  « ? ») ; Retry renvoie le packet, Cancel rend -1 (IoErr 221 conservé). Le requester système est commun avec « Please
+  insert volume » (`vr_req`). Écritures différées du runtime BCPL (`dos_bufwrite`) : un vidage qui échoue fait rendre
+  -1 à l'écriture en cours (avant, l'échec était avalé). Prouvé (ADF jw, 5 × join a b a sur un WB presque plein) :
+  trois requesters annulés au clavier (Amiga-B), puis J5 et FIN comme sur la 1.3 ; j1-j4 identiques à l'octet,
+  j5 = début exact (26 352 octets ; 26 344 sur la 1.3, artefact de fin de bloc non reproduit).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

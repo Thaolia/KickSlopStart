@@ -846,7 +846,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. Précision MICROHZ sous
     charge réglée (1,007 s pour 1 s, vraie 1.3 : 1,0125 s ; cause : feeder sur MICROHZ, passé en VBLANK). Répétition clavier (délai/période d'input.device, Preferences) et INTUITICKS faits : les
     flèches des tiroirs du WB défilent tant qu'elles sont tenues ; ModifyIDCMP. trackdisk : fin de DMA par interruption (le processeur reste aux autres tâches pendant la lecture d'une piste).
-    Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    Volume plein : requester « Volume <nom> is full » comme la 1.3. `join` : 25/25 jointures exactes sur disque libre ;
+    un disque plein tronquait le fichier sans rien dire (seule façon trouvée de reproduire l'échec d'origine, sans
+    preuve que ce soit la même cause). Restent : blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34

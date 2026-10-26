@@ -619,6 +619,7 @@ dos_fn_write:
 ; Préserve d1-d7/a2-a6.
 dos_rawwrite:
         movem.l d1-d3/a0-a1/a6,-(sp)
+.rw_send:
         move.l  ($4).w,a6
         lea     -SP_SIZEOF(sp),sp
         move.l  sp,a0
@@ -629,7 +630,78 @@ dos_rawwrite:
         move.l  d6,d3                   ; ARG3 = longueur
         jsr     dos_sendpkt             ; d0 = octets écrits ; pr_Result2 posé par dos_sendpkt
         lea     SP_SIZEOF(sp),sp
+        cmp.l   #-1,d0                  ; volume plein : requester « Volume <nom> is full » (spec disk-full-write-v34),
+        bne.s   .rw_ret                 ; Retry renvoie l'écriture, Cancel rend l'échec (IoErr 221)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        cmp.l   #ERROR_DISK_FULL,PR_RESULT2(a0)
+        bne.s   .rw_ret
+        bsr     dos_fullreq
+        tst.l   d0
+        bne.s   .rw_send
+        moveq   #-1,d0
+.rw_ret:
         movem.l (sp)+,d1-d3/a0-a1/a6
+        rts
+
+; dos_fullreq(a2 = FileHandle) -> d0 = vrai si Retry : requester « Volume / <nom du volume> / is full ». Le volume est
+; le nœud DLT_VOLUME servi par le même handler que le FileHandle (« ? » sinon). Préserve d1-d7/a0-a6 ; Result2 intact.
+dos_fullreq:
+        movem.l d1-d7/a0-a6,-(sp)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  PR_RESULT2(a0),-(sp)
+        lea     -32(sp),sp              ; nom du volume en C
+        lea     vr_unknown(pc),a4
+        moveq   #1,d3
+        move.l  DOS_DOSBASE,a0
+        move.l  DL_ROOT(a0),a0
+        move.l  RN_INFO(a0),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  DI_DEVINFO(a0),d0
+.fr_node:
+        lsl.l   #2,d0
+        beq.s   .fr_ask
+        move.l  d0,a0
+        cmp.l   #DLT_VOLUME,DN_TYPE(a0)
+        bne.s   .fr_next
+        move.l  DN_TASK(a0),d1
+        cmp.l   FH_TYPE(a2),d1
+        bne.s   .fr_next
+        move.l  DN_NAME(a0),d0
+        lsl.l   #2,d0
+        beq.s   .fr_ask
+        move.l  d0,a0
+        moveq   #0,d3
+        move.b  (a0)+,d3
+        cmp.w   #30,d3
+        bls.s   .fr_len
+        moveq   #30,d3
+.fr_len:
+        move.l  sp,a4
+        move.l  sp,a1
+        move.w  d3,d0
+        bra.s   .fr_cpn
+.fr_cp:
+        move.b  (a0)+,(a1)+
+.fr_cpn:
+        dbra    d0,.fr_cp
+        clr.b   (a1)
+        bra.s   .fr_ask
+.fr_next:
+        move.l  DN_NEXT(a0),d0
+        bra.s   .fr_node
+.fr_ask:
+        lea     vr_v1(pc),a0
+        lea     vr_v3(pc),a1
+        moveq   #0,d0                   ; aucun événement ne vaut Retry
+        bsr     vr_req
+        lea     32(sp),sp
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        move.l  (sp)+,PR_RESULT2(a0)
+        movem.l (sp)+,d1-d7/a0-a6
         rts
 
 ; Écriture différée du runtime BCPL : wrch & co écrivent octet par octet ; vers un fichier (FileHandle routé, non
@@ -668,6 +740,7 @@ dos_bufwrite:
         cmp.l   #DOS_WBUF,d0
         bls.s   .bw_copy
         bsr.s   dos_flushfh
+        beq.s   .bw_fail                ; tampon plein non écrit (volume plein…) : l'appelant le saura
 .bw_copy:
         move.l  FH_WBUF(a2),a1
         add.l   FH_WCNT(a2),a1
@@ -698,8 +771,12 @@ dos_bufwrite:
         bra.s   .bw_done
 .bw_flush:
         bsr     dos_flushfh
+        beq.s   .bw_fail
 .bw_done:
         move.l  d6,d0
+        bra.s   .bw_ret
+.bw_fail:
+        moveq   #-1,d0
         bra.s   .bw_ret
 .bw_direct:
         movem.l (sp),d1-d3
@@ -720,19 +797,23 @@ dos_flushout:
         movem.l (sp)+,d1/a2
         rts
 
-; dos_flushfh(a2 = FileHandle) : écrit les octets différés (s'il y en a). Préserve tout.
+; dos_flushfh(a2 = FileHandle) -> Z = 1 si l'écriture des octets différés a échoué (Result2 posé, octets perdus),
+; Z = 0 sinon (ou rien à écrire). Préserve tout le reste.
 dos_flushfh:
         cmp.l   #DOS_FH_ALLOC+4,-4(a2)
-        bne.s   .fl_ret
+        bne.s   .fl_ok
         tst.l   FH_WCNT(a2)
-        beq.s   .fl_ret
+        beq.s   .fl_ok
         movem.l d0/d5-d6,-(sp)
         move.l  FH_WBUF(a2),d5
         move.l  FH_WCNT(a2),d6
         clr.l   FH_WCNT(a2)
         bsr     dos_rawwrite
-        movem.l (sp)+,d0/d5-d6
-.fl_ret:
+        cmp.l   #-1,d0
+        movem.l (sp)+,d0/d5-d6       ; (movem ne touche pas le CCR)
+        rts
+.fl_ok:
+        andi.b  #$FB,ccr             ; Z = 0
         rts
 
 ; Input() -> d0 = BPTR pr_CIS de ThisTask (FileHandle d'entrée standard). a6 = DosBase (non utilisé).
@@ -1492,7 +1573,20 @@ VR_SIZE         EQU VR_IT+5*VR_ITSIZE
 LVO_AUTOREQ     EQU -348             ; intuition AutoRequest
 VR_DISKINSERTED EQU $00008000        ; classe IDCMP : un disque inséré vaut Retry
 dos_volreq:
+        movem.l a0-a1,-(sp)
+        lea     vr_l1(pc),a0
+        lea     vr_l3(pc),a1
+        move.l  #VR_DISKINSERTED,d0
+        bsr.s   vr_req
+        movem.l (sp)+,a0-a1
+        rts
+; vr_req(a4 = nom, d3 = sa longueur, a0 = 1re ligne, a1 = 3e ligne, d0 = classes IDCMP valant Retry) -> d0 = vrai si
+; Retry : requester système à trois lignes, Retry / Cancel. Préserve d1-d7/a0-a6.
+vr_req:
         movem.l d1-d7/a0-a6,-(sp)
+        move.l  a0,d4                ; d4/d5 = 1re / 3e ligne, d2 = classes
+        move.l  a1,d5
+        move.l  d0,d2
         moveq   #0,d7                ; d7 = réponse
         move.l  ($4).w,a6
         move.l  EB_THISTASK(a6),a5
@@ -1525,13 +1619,13 @@ dos_volreq:
 .vr_ncp:
         dbra    d0,.vr_ncl
         lea     VR_IT(sp),a0         ; corps : trois lignes chaînées
-        lea     vr_l1(pc),a1
+        move.l  d4,a1
         moveq   #4,d1
         bsr     vr_itext
         lea     VR_NAME(sp),a1
         moveq   #14,d1
         bsr     vr_itext
-        lea     vr_l3(pc),a1
+        move.l  d5,a1
         moveq   #24,d1
         bsr     vr_itext
         clr.l   VR_NEXTTEXT-VR_ITSIZE(a0)
@@ -1548,7 +1642,7 @@ dos_volreq:
         lea     VR_IT+3*VR_ITSIZE(sp),a2
         lea     VR_IT+4*VR_ITSIZE(sp),a4
         exg     a3,a4                ; a3 = Cancel, a4 = IntuitionBase
-        move.l  #VR_DISKINSERTED,d0
+        move.l  d2,d0
         moveq   #0,d1
         move.l  #320,d2
         moveq   #72,d3
@@ -1578,6 +1672,9 @@ vr_itext:
 vr_intname:     dc.b    "intuition.library",0
 vr_l1:          dc.b    "Please insert volume",0
 vr_l3:          dc.b    "in any drive",0
+vr_v1:          dc.b    "Volume",0
+vr_v3:          dc.b    "is full",0
+vr_unknown:     dc.b    "?",0
 vr_retry:       dc.b    "Retry",0
 vr_cancel:      dc.b    "Cancel",0
                 even
