@@ -13,6 +13,8 @@
                 include "intuition.i"
 
                 xdef    intuition_AddGadget
+                xref    it_unclip            ; screens.s : dessin hors de la ClipRegion de l'application
+                xref    it_reclip
                 xdef    intuition_AddGList
                 xdef    intuition_RemoveGadget
                 xdef    intuition_RemoveGList
@@ -171,6 +173,10 @@ gad_draw:
 gad_render:
         moveq   #0,d0
 gad_drw:
+        bsr     it_unclip
+        bsr     gad_drw_nc
+        bra     it_reclip
+gad_drw_nc:
         movem.l d2-d7/a2-a6,-(sp)
         move.w  d0,d7                ; d7 = surbrillance voulue
         lea     -8(sp),sp
@@ -385,6 +391,10 @@ gad_drawrev:
 ; gad_hilite(a3, a2, a5) : l'état SELECTED vient de changer -> surbrillance mise à jour (inversion, ou image redessinée
 ; en GADGHIMAGE). Préserve d2-d7/a2-a5.
 gad_hilite:
+        bsr     it_unclip
+        bsr     gad_hilite_nc
+        bra     it_reclip
+gad_hilite_nc:
         move.w  GG_FLAGS(a2),d0
         and.w   #GADGHIGHBITS,d0
         cmp.w   #GADGHIMAGE,d0
@@ -894,6 +904,10 @@ prop_knob:
 ; Rien si la position n'a pas changé. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
 PU_NEW          EQU PP_SIZE          ; nouvelle boîte du knob (4 mots)
 prop_update:
+        bsr     it_unclip
+        bsr     prop_update_nc
+        bra     it_reclip
+prop_update_nc:
         movem.l d2-d7/a4,-(sp)
         lea     -PP_SIZE-8(sp),sp
         move.l  sp,a1
@@ -1262,6 +1276,10 @@ str_len:
 ; remplie avec les caractères visibles depuis si_DispPos, curseur inversé s'il est actif ; la position d'affichage
 ; suit le curseur. Stylos et mode du RastPort restaurés. Préserve d2-d7/a2-a6.
 str_text:
+        bsr     it_unclip
+        bsr     str_text_nc
+        bra     it_reclip
+str_text_nc:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  GG_SPECIALINFO(a2),d0
         beq     .st_ret

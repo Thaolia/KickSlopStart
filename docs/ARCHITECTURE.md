@@ -761,7 +761,7 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     56 180 octets) était tronqué et plantait.
   - **Écarts restants** :
     - le knob tenu est invisible (notre DetailPen vaut 2) ;
-    - une icône partiellement visible n'est pas dessinée (pas d'InstallClipRegion) ;
+    - une icône partiellement visible n'était pas dessinée : corrigé en (29) (DamageList + BeginUpdate, pas InstallClipRegion) ;
     - les flèches ne se répétaient pas (INTUITICKS absent) : corrigé en (28).
   (19) **Preferences : SetPrefs, chargement de devs:system-configuration, PointerTicks** (spec intuition-prefs-v34,
   relue clean-room ; Preferences 34.66 s'affiche et montre les mêmes valeurs que la vraie 1.3).
@@ -903,6 +903,23 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   **ModifyIDCMP** (-150) implémenté. Workbench : flèche de défilement tenue sans Shift -> INTUITICKS ajouté à l'IDCMP,
   un pas par INTUITICKS ou MOUSEMOVE tant que la flèche est SELECTED, retiré au GADGETUP. Prouvé : « a » tenu 2 s
   -> ~50 « a », Shift+b -> « BBB… » ; flèche gauche d'un tiroir tenue 3 s -> défilement continu, arrêt au relâchement.
+  (29) **InstallClipRegion et découpage des icônes du WB** (specs `docs/analysis/installclipregion-v34.md` et
+  `wb-icon-clipping-v34.md`, agents d'analyse, relues ; sonde `tests/clipreg.s`). layers.library : **InstallClipRegion**
+  (-174, `ly_ClipRegion` +$7E) ; `lr_clip` remplace la liste normale (gardée dans `_cliprects`) par ses ClipRects ∩ C,
+  C = ClipRegion, ou DamageList (∩ ClipRegion) pendant BeginUpdate ; les parties cachées avec sauvegarde reprennent le
+  BitMap d'origine (emprunté : dessiner dedans écrit la sauvegarde, rien à recopier au retrait) ; région vide -> aucun
+  ClipRect ; mémoire insuffisante -> LAYER_CLIPRECTS_LOST. `lr_unclip` défait. BeginUpdate/EndUpdate passent par ces
+  deux routines (EndUpdate remet la liste réduite à la région) ; LockLayers défait les listes réduites au premier niveau
+  (`LayerInfo+$5B`), UnlockLayers les reconstruit au dernier : les opérations de couches voient les listes normales et la
+  région suit la couche. Sonde T0-T6 : mêmes ClipRects et pixels que la vraie 1.3 (ordre des ClipRects non normatif).
+  intuition : `it_unclip`/`it_reclip` (verrou de couche + région retirée au premier niveau, compteur par fenêtre) autour
+  du cadre, de la barre de titre, des gadgets système et d'application, des knobs et des gadgets texte. Workbench (spec
+  §1-§6) : plus de test « icône entière » ; chaque dessin passe par `wb_updopen`/`wb_updclose` (DamageList remplacée par
+  le rectangle de contenu, vrais dommages gardés dans Window->UserData, BeginUpdate ; mode 0 = dommages ∩ contenu pour
+  REFRESHWINDOW, seulement si LAYERREFRESH) : une icône à cheval sur le bord est dessinée en entier et coupée net, nom
+  compris ; seule une icône à plus de 4 × la taille de l'écran est sautée ; le clic n'est pris que dans le contenu. La
+  jauge d'un disque est dessinée hors mise à jour. Écart : ordre de dessin des icônes = ordre du tableau (la 1.3 va de
+  la queue vers la tête de sa liste).
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

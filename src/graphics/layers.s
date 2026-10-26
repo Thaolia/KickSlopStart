@@ -51,6 +51,7 @@ LY_LOCK         EQU 72               ; struct SignalSemaphore
 LY_OLDX         EQU 138              ; reserved2 : position avant l'opération en cours
 LY_OLDY         EQU 140
 LY_NEW          EQU 142              ; byte : couche créée par l'opération en cours
+LY_CLIPREGION   EQU 126              ; struct Region * : région de découpe de l'application (InstallClipRegion)
 LY_DAMAGE       EQU 156              ; struct Region *
 LY_SIZE         EQU 160
 LAYERSIMPLE     EQU 1
@@ -59,6 +60,7 @@ LAYERSUPER      EQU 4
 LAYERUPDATING   EQU $10
 LAYERBACKDROP   EQU $40
 LAYERREFRESH    EQU $80
+LAYER_CLIPRECTS_LOST EQU $0100       ; liste réduite incomplète (mémoire insuffisante)
 ; --- struct ClipRect ---
 CR_NEXT         EQU 0
 CR_PREV         EQU 4
@@ -80,6 +82,7 @@ LI_TOP          EQU 0
 LI_LOCK         EQU 24
 LI_GSHEAD       EQU 70
 LI_FLAGS        EQU 88
+LI_LOCKCNT      EQU 91               ; byte : niveau d'imbrication de LockLayers
 LI_SIZE         EQU 102
 NEWLAYERINFO_CALLED EQU 1
 ; --- nœud de liste de rectangles (RegionRectangle) ---
@@ -145,6 +148,7 @@ layers_vectors:
         dc.l    ly_FattenLayerInfo   ; -156
         dc.l    ly_ThinLayerInfo     ; -162
         dc.l    ly_MoveLayerInFrontOf ; -168
+        dc.l    ly_InstallClipRegion ; -174
         dc.l    -1
 layers_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)
@@ -262,26 +266,57 @@ ly_release:
         move.l  (sp)+,a6
         rts
 
-; LockLayers(li a0) : Layer_Info puis chaque couche, de l'avant vers l'arrière.
+; LockLayers(li a0) : Layer_Info puis chaque couche, de l'avant vers l'arrière. Au premier niveau, la liste réduite
+; de chaque couche qui a une ClipRegion est défaite : les opérations de couches travaillent sur les listes normales.
 ly_LockLayers:
-        move.l  a2,-(sp)
-        move.l  a0,a2
+        movem.l a2-a4,-(sp)
+        move.l  a0,a3
         bsr     ly_LockLayerInfo
-        move.l  LI_TOP(a2),a2
+        move.l  LI_TOP(a3),a2
 .ll_lp:
         cmpa.w  #0,a2
-        beq.s   .ll_r
+        beq.s   .ll_cnt
         lea     LY_LOCK(a2),a0
         bsr     ly_obtain
         move.l  LY_BACK(a2),a2
         bra.s   .ll_lp
+.ll_cnt:
+        addq.b  #1,LI_LOCKCNT(a3)
+        cmp.b   #1,LI_LOCKCNT(a3)
+        bne.s   .ll_r
+        move.l  LI_TOP(a3),a4
+.ll_reg:
+        cmpa.w  #0,a4
+        beq.s   .ll_r
+        tst.l   LY_CLIPREGION(a4)
+        beq.s   .ll_rn
+        bsr     lr_unclip
+.ll_rn:
+        move.l  LY_BACK(a4),a4
+        bra.s   .ll_reg
 .ll_r:
-        move.l  (sp)+,a2
+        movem.l (sp)+,a2-a4
         rts
-; UnlockLayers(li a0).
+; UnlockLayers(li a0). Au dernier niveau, la liste réduite de chaque couche qui a une ClipRegion est reconstruite
+; sur le nouvel arrangement.
 ly_UnlockLayers:
-        move.l  a2,-(sp)
+        movem.l a2/a4,-(sp)
         move.l  a0,-(sp)
+        subq.b  #1,LI_LOCKCNT(a0)
+        bne.s   .ul_go
+        move.l  LI_TOP(a0),a4
+.ul_reg:
+        cmpa.w  #0,a4
+        beq.s   .ul_go
+        tst.l   LY_CLIPREGION(a4)
+        beq.s   .ul_rn
+        bsr     lr_unclip            ; (région installée pendant le verrou par la même tâche)
+        bsr     lr_clip
+.ul_rn:
+        move.l  LY_BACK(a4),a4
+        bra.s   .ul_reg
+.ul_go:
+        move.l  (sp),a0
         move.l  LI_TOP(a0),a2
 .ul_lp:
         cmpa.w  #0,a2
@@ -293,7 +328,7 @@ ly_UnlockLayers:
 .ul_li:
         move.l  (sp)+,a0
         bsr     ly_UnlockLayerInfo
-        move.l  (sp)+,a2
+        movem.l (sp)+,a2/a4
         rts
 
 ; WhichLayer(li a0, x d0, y d1) -> d0 = couche la plus en avant contenant le point, ou 0.
@@ -615,76 +650,168 @@ ly_ScrollLayer:
 
 ; ============================ BeginUpdate / EndUpdate ============================
 
-; BeginUpdate(l a0) -> TRUE : la liste de ClipRects devient (ClipRects de la couche) ∩ (DamageList), pour ne
-; redessiner que les zones abîmées. La liste normale est gardée dans ly__cliprects.
+; BeginUpdate(l a0) -> TRUE : la liste de ClipRects devient sa partie dans la DamageList (∩ ClipRegion s'il y en a
+; une), pour ne redessiner que les zones abîmées. La couche reste verrouillée jusqu'à EndUpdate.
 ly_BeginUpdate:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a4
-        move.l  ($4).w,a6
         lea     LY_LOCK(a4),a0
-        jsr     LVO_OBTAINSEMAPHORE(a6)
-        clr.l   -(sp)                ; cellule de la nouvelle liste
-        move.l  LY_CLIPRECT(a4),a3
-.bu_cr:
-        cmpa.w  #0,a3
-        beq     .bu_done
-        tst.l   CR_LOBS(a3)
-        beq.s   .bu_use
-        tst.l   CR_BITMAP(a3)
-        beq.s   .bu_next             ; caché sans sauvegarde : rien à dessiner
-.bu_use:
-        move.l  LY_DAMAGE(a4),d0
-        beq.s   .bu_next
-        move.l  d0,a0
-        move.l  8(a0),a2             ; rectangles de dommage (relatifs à la région, elle-même relative à la couche)
-.bu_dmg:
-        cmpa.w  #0,a2
-        beq.s   .bu_next
-        move.l  LY_DAMAGE(a4),a0
-        bsr     lr_dmgrect           ; d0..d3 = rectangle de dommage absolu
-        cmp.w   CR_MINX(a3),d0       ; ∩ ClipRect
-        bge.s   .bu_1
-        move.w  CR_MINX(a3),d0
-.bu_1:
-        cmp.w   CR_MINY(a3),d1
-        bge.s   .bu_2
-        move.w  CR_MINY(a3),d1
-.bu_2:
-        cmp.w   CR_MAXX(a3),d2
-        ble.s   .bu_3
-        move.w  CR_MAXX(a3),d2
-.bu_3:
-        cmp.w   CR_MAXY(a3),d3
-        ble.s   .bu_4
-        move.w  CR_MAXY(a3),d3
-.bu_4:
-        cmp.w   d2,d0
-        bgt.s   .bu_dnext
-        cmp.w   d3,d1
-        bgt.s   .bu_dnext
-        move.l  sp,a1
-        bsr     lr_newcr             ; a0 = ClipRect (bornes d0..d3), en tête de la liste (a1)
-        cmpa.w  #0,a0
-        beq.s   .bu_dnext
-        move.l  CR_LOBS(a3),CR_LOBS(a0)
-        move.l  CR_BITMAP(a3),CR_BITMAP(a0)
-        move.l  CR_ORGX(a3),CR_ORGX(a0)
-        move.b  #CRF_BORROWED,CR_FLAGS+3(a0)
-.bu_dnext:
-        move.l  RR_NEXT(a2),a2
-        bra.s   .bu_dmg
-.bu_next:
-        move.l  CR_NEXT(a3),a3
-        bra     .bu_cr
-.bu_done:
-        move.l  LY_CLIPRECT(a4),LY_SAVECR(a4)
-        move.l  (sp)+,LY_CLIPRECT(a4)
+        bsr     ly_obtain
+        bsr     lr_unclip
         or.w    #LAYERUPDATING,LY_FLAGS(a4)
+        bsr     lr_clip
         moveq   #-1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_dmgrect(a4 = couche, a0 = région de dommage, a2 = son rectangle) -> d0..d3 = rectangle absolu.
+; InstallClipRegion(l a0, region a1) -> d0 = ancienne région. La liste de ClipRects devient sa partie dans la région
+; (coordonnées de la couche) : un instantané, une région modifiée doit être réinstallée. NULL : liste normale.
+ly_InstallClipRegion:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a0,a4
+        move.l  a1,a2
+        lea     LY_LOCK(a4),a0
+        bsr     ly_obtain
+        move.l  LY_CLIPREGION(a4),d5
+        bsr     lr_unclip
+        move.l  a2,LY_CLIPREGION(a4)
+        bsr     lr_clip
+        lea     LY_LOCK(a4),a0
+        bsr     ly_release
+        move.l  d5,d0
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; lr_unclip(a4 = couche) : liste réduite (BeginUpdate ou ClipRegion) libérée, liste normale rétablie. Préserve
+; d2-d7/a2-a6.
+lr_unclip:
+        tst.l   LY_SAVECR(a4)
+        beq.s   .uc_r
+        move.l  a2,-(sp)
+        lea     LY_CLIPRECT(a4),a2
+        bsr     lr_freecrs           ; ClipRects empruntées : BitMaps non libérés
+        move.l  LY_SAVECR(a4),LY_CLIPRECT(a4)
+        clr.l   LY_SAVECR(a4)
+        move.l  (sp)+,a2
+.uc_r:
+        rts
+
+; lr_clip(a4 = couche, liste normale en place) : C = DamageList (∩ ClipRegion) pendant BeginUpdate, sinon ClipRegion ;
+; sans C, rien. Sinon la liste normale est gardée dans ly__cliprects et remplacée par ses ClipRects ∩ C : visibles,
+; et cachées avec sauvegarde (BitMap emprunté : dessiner dedans écrit la sauvegarde). Région sans rectangle : aucun
+; ClipRect. Mémoire insuffisante : liste partielle et LAYER_CLIPRECTS_LOST. Préserve d2-d7/a2-a6.
+lr_clip:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  LY_CLIPREGION(a4),d6 ; d6 = 1re région, d7 = 2e (0 : aucune)
+        moveq   #0,d7
+        btst    #4,LY_FLAGS+1(a4)    ; LAYERUPDATING
+        beq.s   .cl_reg
+        move.l  d6,d7
+        move.l  LY_DAMAGE(a4),d6
+        bra.s   .cl_build
+.cl_reg:
+        tst.l   d6
+        beq     .cl_ret
+.cl_build:
+        clr.l   -(sp)                ; cellule de la nouvelle liste
+        move.l  sp,a5
+        move.l  LY_CLIPRECT(a4),a3
+.cb_cr:
+        cmpa.w  #0,a3
+        beq     .cb_done
+        tst.l   CR_LOBS(a3)
+        beq.s   .cb_use
+        tst.l   CR_BITMAP(a3)
+        beq.s   .cb_next             ; caché sans sauvegarde : rien à dessiner
+.cb_use:
+        tst.l   d6
+        beq.s   .cb_next
+        move.l  d6,a0
+        move.l  8(a0),a2
+.cb_r1:
+        cmpa.w  #0,a2
+        beq.s   .cb_next
+        move.l  d6,a0
+        bsr     lr_dmgrect
+        lea     CR_MINX(a3),a0
+        bsr     lr_isect
+        bgt.s   .cb_n1
+        tst.l   d7
+        bne.s   .cb_two
+        bsr.s   .cb_add
+        bra.s   .cb_n1
+.cb_two:
+        movem.w d0-d3,-(sp)          ; ClipRect ∩ rectangle de la 1re région
+        move.l  d7,a0
+        move.l  8(a0),a6
+.cb_r2:
+        cmpa.w  #0,a6
+        beq.s   .cb_e2
+        exg     a2,a6
+        move.l  d7,a0
+        bsr     lr_dmgrect
+        exg     a2,a6
+        move.l  sp,a0
+        bsr     lr_isect
+        bgt.s   .cb_n2
+        bsr.s   .cb_add
+.cb_n2:
+        move.l  RR_NEXT(a6),a6
+        bra.s   .cb_r2
+.cb_e2:
+        addq.l  #8,sp
+.cb_n1:
+        move.l  RR_NEXT(a2),a2
+        bra.s   .cb_r1
+.cb_next:
+        move.l  CR_NEXT(a3),a3
+        bra.s   .cb_cr
+.cb_add:                             ; ClipRect d0..d3 en tête de la liste (a5), mêmes lobs/sauvegarde que a3
+        move.l  a5,a1
+        bsr     lr_newcr
+        cmpa.w  #0,a0
+        beq.s   .ca_lost
+        move.l  CR_LOBS(a3),CR_LOBS(a0)
+        move.l  CR_BITMAP(a3),CR_BITMAP(a0)
+        move.l  CR_ORGX(a3),CR_ORGX(a0)
+        move.b  #CRF_BORROWED,CR_FLAGS+3(a0)
+        rts
+.ca_lost:
+        or.w    #LAYER_CLIPRECTS_LOST,LY_FLAGS(a4)
+        rts
+.cb_done:
+        move.l  LY_CLIPRECT(a4),LY_SAVECR(a4)
+        move.l  (sp)+,LY_CLIPRECT(a4)
+.cl_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; lr_isect(d0..d3 = rectangle, a0 = bornes (4 mots)) -> d0..d3 ∩ bornes ; condition GT si l'intersection est vide.
+lr_isect:
+        cmp.w   (a0),d0
+        bge.s   .is_1
+        move.w  (a0),d0
+.is_1:
+        cmp.w   2(a0),d1
+        bge.s   .is_2
+        move.w  2(a0),d1
+.is_2:
+        cmp.w   4(a0),d2
+        ble.s   .is_3
+        move.w  4(a0),d2
+.is_3:
+        cmp.w   6(a0),d3
+        ble.s   .is_4
+        move.w  6(a0),d3
+.is_4:
+        cmp.w   d2,d0
+        bgt.s   .is_r
+        cmp.w   d3,d1
+.is_r:
+        rts
+
+; lr_dmgrect(a4 = couche, a0 = région relative à la couche, a2 = son rectangle) -> d0..d3 = rectangle absolu.
+; Clobbe d4.
 lr_dmgrect:
         movem.w RR_MINX(a2),d0-d3
         move.w  (a0),d4              ; région : bornes relatives à la couche
@@ -697,7 +824,7 @@ lr_dmgrect:
         add.w   d4,d3
         rts
 
-; EndUpdate(l a0, flag d0) : liste normale rétablie ; flag != 0 -> dommages effacés et LAYERREFRESH retiré.
+; EndUpdate(l a0, flag d0) : liste normale rétablie (ou réduite à la ClipRegion) ; flag != 0 -> dommages effacés et LAYERREFRESH retiré.
 ly_EndUpdate:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a4
@@ -705,11 +832,9 @@ ly_EndUpdate:
         move.l  a6,a5
         btst    #4,LY_FLAGS+1(a4)    ; LAYERUPDATING
         beq.s   .eu_flag
-        lea     LY_CLIPRECT(a4),a2
-        bsr     lr_freecrs           ; ClipRects empruntées : BitMaps non libérés
-        move.l  LY_SAVECR(a4),LY_CLIPRECT(a4)
-        clr.l   LY_SAVECR(a4)
+        bsr     lr_unclip
         and.w   #~LAYERUPDATING,LY_FLAGS(a4)
+        bsr     lr_clip              ; ClipRegion seule, s'il y en a une
 .eu_flag:
         tst.l   d7
         beq.s   .eu_unlock

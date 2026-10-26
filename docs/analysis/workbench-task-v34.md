@@ -1268,7 +1268,10 @@ l'objet (`+$4C`). Les règles de rendu intuition sont dans `intuition-prop-v34.m
 
 - **Flags** passés à l'ouverture d'un tiroir ou d'un disque : **$0240027F**. Cela comprend
   SIZING, DRAG, DEPTH, CLOSE, **SIZEBRIGHT, SIZEBBOTTOM**, SIMPLE_REFRESH, REPORTMOUSE,
-  WBENCHWINDOW, plus un bit $00400000 [S, rôle non identifié].
+  WBENCHWINDOW, plus un bit $00400000 : **sans effet** (intuition 34.3 ne le teste jamais dans
+  `Window->Flags` ; c'est la valeur d'INTUITICKS ; la réouverture d'un tiroir dont le DrawerData
+  existe passe $0200027F, cf. `wb-icon-clipping-v34.md` §7) [O]. Découpage des icônes, effacement
+  et défilement : `wb-icon-clipping-v34.md`.
 - **Six gadgets**, copiés depuis des modèles ROM dans le DrawerData et chaînés **dans cet
   ordre** :
 

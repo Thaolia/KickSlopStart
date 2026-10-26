@@ -78,12 +78,16 @@ LVO_MOVELAYER           EQU -60
 LVO_SIZELAYER           EQU -66
 LVO_BEGINUPDATE         EQU -78
 LVO_ENDUPDATE           EQU -84
+LVO_INSTALLCLIPREGION   EQU -174
 LVO_DELETELAYER         EQU -90
 LVO_LOCKLAYERS          EQU -108
 LVO_UNLOCKLAYERS        EQU -114
 IL_RP           EQU 12               ; struct Layer : RastPort
 IL_FLAGS        EQU 30               ; Flags (UWORD)
 IL_WINDOW       EQU 40               ; Window (réservé à l'interface utilisateur)
+IL_LOCK         EQU 72               ; SignalSemaphore de la couche
+IL_CLIPREGION   EQU 126              ; région de découpe de l'application (InstallClipRegion)
+IL_DAMAGE       EQU 156              ; DamageList (struct Region *)
 IL_SIMPLE       EQU 1                ; LAYERSIMPLE
 IL_SMART        EQU 2                ; LAYERSMART
 IL_SUPER        EQU 4                ; LAYERSUPER
@@ -193,6 +197,7 @@ WD_BLOCKPEN     EQU 99
 WD_SCREENTITLE  EQU 104             ; titre d'écran montré quand la fenêtre est active (0 : celui de l'écran)
 WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114
+WD_USERDATA     EQU 120              ; UserData (le WB y garde les vrais dommages, spec wb-icon-clipping-v34 §1)
 WD_WLAYER       EQU 124
 WD_SIZE         EQU 132
 ; drapeaux de fenêtre (wd_Flags)

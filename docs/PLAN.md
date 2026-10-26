@@ -827,7 +827,7 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
     À faire : Request/EndRequest/InitRequester (couche de requester). Cadre des fenêtres refait comme la 1.3 : fait. Gadgets proportionnels
     (ModifyProp/NewModifyProp) et barres de défilement des tiroirs du WB faits ; LoadSeg à tampon extensible. Restent :
-    InstallClipRegion (INTUITICKS fait). Preferences s'affiche (SetFont préserve D0, SetPrefs,
+    InstallClipRegion fait, icônes partielles des tiroirs du WB coupées au bord du contenu (INTUITICKS fait). Preferences s'affiche (SetFont préserve D0, SetPrefs,
     devs:system-configuration, PointerTicks) ; répétition clavier faite (cadre de centrage noir = thème DetailPen 2).
     Caesar se charge depuis la disquette (copinit/COPJMP2 + VBlank, RemakeDisplay, LoadSeg en flux).
     Intros de la suite ADF : Scooby (titre), Monkey 1 et SimCity (retour au WB) comme la 1.3 (ExecBase dans LibList,

@@ -46,6 +46,8 @@
                 xref    str_clickout
                 xdef    it_keyin
                 xdef    it_tickin
+                xdef    it_unclip
+                xdef    it_reclip
                 xdef    intuition_ModifyIDCMP
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
@@ -75,7 +77,9 @@ WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé u
 WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
 WDX_NEMSG       EQU 4
 WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO : couche du cadre (WD_WLAYER = l'intérieur) | 0
-WDX_SIZE        EQU WDX_BLAYER+4
+WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; ClipRegion de l'application retirée pendant un dessin d'intuition
+WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD : imbrication de it_unclip
+WDX_SIZE        EQU WDX_CLIPNEST+2
 WD_TBARH        EQU 10               ; hauteur de la barre de titre d'une fenêtre (BorderTop)
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Alloue la struct, la BitMap (plans chip effacés, sauf CUSTOMBITMAP),
@@ -958,6 +962,10 @@ wn_brp:
 ; gadgets d'application, les gadgets système par-dessus (wn_sysgads), et le voile si la fenêtre n'est pas active. État de dessin
 ; rendu aux clients : JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
 wn_border:
+        bsr     it_unclip
+        bsr     wn_border_nc
+        bra     it_reclip
+wn_border_nc:
         move.l  IB_GFXBASE(a5),a6
         btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS
         bne     .df_gad
@@ -1136,6 +1144,10 @@ wn_titlex:
 ; zone, puis, avec WINDOWDRAG, le motif de glissement (lignes 2, 3, 6, 7 de chaque groupe de 8 au DetailPen) du bout
 ; du titre + 3 jusqu'à la fin de la zone - 3 (spec §3.2). Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
 wn_titlebar:
+        bsr     it_unclip
+        bsr     wn_titlebar_nc
+        bra     it_reclip
+wn_titlebar_nc:
         movem.l d2-d7/a2,-(sp)
         move.l  IB_GFXBASE(a5),a6
         moveq   #0,d7
@@ -1250,6 +1262,10 @@ wn_patfill:
 ; wn_sysgads(a3 = fenêtre, a5) : pictogrammes des gadgets système (spec §5) : fermeture en (0,0), taille dans le coin
 ; bas-droit, profondeur arrière puis avant à droite de la barre. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
 wn_sysgads:
+        bsr     it_unclip
+        bsr     wn_sysgads_nc
+        bra     it_reclip
+wn_sysgads_nc:
         movem.l d2/a2/a4,-(sp)
         move.l  IB_GFXBASE(a5),a6
         bsr     wn_brp
@@ -1369,6 +1385,10 @@ wn_sysat:
 ; wn_sysinv(a3 = fenêtre, d0.w = gadget système, a5) : inverse sa boîte (surbrillance GADGHCOMP) dans le RastPort du
 ; cadre, mode de dessin rendu ensuite. Clobbe d0-d3/a0/a1/a6.
 wn_sysinv:
+        bsr     it_unclip
+        bsr     wn_sysinv_nc
+        bra     it_reclip
+wn_sysinv_nc:
         move.w  d0,d3
         bsr     wn_geo
         moveq   #0,d1                ; boîte : y 0..9, x selon le gadget
@@ -2113,6 +2133,52 @@ it_keyin:
         clr.w   d1
         bsr     it_push
 .ki_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; it_unclip(a3 = fenêtre) : avant un dessin d'intuition dans la fenêtre, la couche est verrouillée et, au premier
+; niveau, la ClipRegion de l'application est retirée (spec installclipregion-v34 §5) : cadre et gadgets ne sont pas
+; découpés par elle. it_reclip la remet et déverrouille. Préservent tout.
+it_unclip:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  WD_WLAYER(a3),d0
+        beq.s   .uc_r
+        move.l  d0,a0
+        lea     IL_LOCK(a0),a0
+        move.l  ($4).w,a6
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        addq.w  #1,WDX_CLIPNEST(a3)
+        cmp.w   #1,WDX_CLIPNEST(a3)
+        bne.s   .uc_r
+        move.l  WD_WLAYER(a3),a0
+        move.l  IL_CLIPREGION(a0),WDX_CLIPSAVE(a3)
+        beq.s   .uc_r
+        suba.l  a1,a1
+        move.l  INT_IBASE,a6
+        move.l  IB_LAYERSBASE(a6),a6
+        jsr     LVO_INSTALLCLIPREGION(a6)
+.uc_r:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+it_reclip:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  WD_WLAYER(a3),d0
+        beq.s   .rc_r
+        subq.w  #1,WDX_CLIPNEST(a3)
+        bne.s   .rc_rel
+        move.l  WDX_CLIPSAVE(a3),d0
+        beq.s   .rc_rel
+        move.l  WD_WLAYER(a3),a0
+        move.l  d0,a1
+        move.l  INT_IBASE,a6
+        move.l  IB_LAYERSBASE(a6),a6
+        jsr     LVO_INSTALLCLIPREGION(a6)
+.rc_rel:
+        move.l  WD_WLAYER(a3),a0
+        lea     IL_LOCK(a0),a0
+        move.l  ($4).w,a6
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.rc_r:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 

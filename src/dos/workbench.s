@@ -35,8 +35,6 @@ LVO_SETWINDOWTITLES EQU -276
 LVO_DISPLAYBEEP EQU -96
 LVO_SETMENUSTRIP EQU -264
 LVO_CLEARMENUSTRIP EQU -54
-LVO_BEGINREFRESH EQU -354
-LVO_ENDREFRESH  EQU -366
 LVO_WINDOWTOFRONT EQU -312
 LVO_DOUBLECLICK EQU -102
 LVO_REPORTMOUSE EQU -234
@@ -249,7 +247,8 @@ WBS_SCRW        EQU WBS_MQUAL+2      ; WORD : tiroir en cours de défilement
 WBS_SCRG        EQU WBS_SCRW+2       ; WORD : GadgetID du gadget de défilement tenu, 0 : aucun
 WBS_SCRGAD      EQU WBS_SCRG+2       ; LONG : ce gadget
 WBS_SCRTICK     EQU WBS_SCRGAD+4     ; WORD : flèche tenue sans Shift -> un pas par INTUITICKS (ajouté à l'IDCMP)
-WBS_DRAWERS     EQU WBS_SCRTICK+2    ; WB_MAXDRAWERS fiches de tiroir
+WBS_UPDCNT      EQU WBS_SCRTICK+2    ; WORD : imbrication de wb_updopen (une seule mise à jour pour tout le WB)
+WBS_DRAWERS     EQU WBS_UPDCNT+2     ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
@@ -461,17 +460,8 @@ wb_dispatch:
 .dp_ref:
         cmp.l   #REFRESHWINDOW,d2
         bne.s   .dp_mb
-        bsr     wb_window
-        move.l  a3,a0
-        move.l  WBS_IBASE(a5),a6
-        jsr     LVO_BEGINREFRESH(a6)
-        bsr     wb_drawwin
-        bsr     wb_window
-        move.l  a3,a0
-        moveq   #1,d0
-        move.l  WBS_IBASE(a5),a6
-        jsr     LVO_ENDREFRESH(a6)
-        bra.s   wb_dispatch
+        bsr     wb_repair
+        bra     wb_dispatch
 .dp_mb:
         cmp.l   #MOUSEBUTTONS,d2
         bne.s   .dp_mv
@@ -1215,64 +1205,198 @@ wb_drawwin:
         bsr     wb_drawicon
         bra.s   .dw_ret
 .dw_dr:
-        bsr     wb_gauge             ; fenêtre d'un disque : sa jauge
-        moveq   #0,d6                ; d6 = icône
-.dw_lp:
-        cmp.w   DR_NICON+2(a4),d6
-        bhs.s   .dw_ret
-        bsr.s   wb_drawone
-        addq.w  #1,d6
-        bra.s   .dw_lp
+        bsr     wb_gauge             ; fenêtre d'un disque : sa jauge (hors du contenu, donc hors mise à jour)
+        bsr.s   wb_drawicons
 .dw_ret:
         movem.l (sp)+,d2-d7/a2-a4/a6
         rts
 
-; wb_drawone(d7.w = tiroir, d6.w = icône, a5) : dessine l'icône si elle tient entière (nom compris) dans l'intérieur
-; de la fenêtre (pas de défilement : une icône hors champ apparaît quand on agrandit). Préserve d2-d7/a2-a4.
+; wb_drawicons(d7.w = tiroir, a4 = sa fiche, a5) : toutes ses icônes, dans une mise à jour limitée au contenu.
+; Préserve d2-d7/a2-a4.
+wb_drawicons:
+        move.l  d6,-(sp)
+        moveq   #1,d0
+        bsr     wb_updopen
+        moveq   #0,d6                ; d6 = icône
+.di_lp:
+        cmp.w   DR_NICON+2(a4),d6
+        bhs.s   .di_end
+        bsr.s   wb_drawone
+        addq.w  #1,d6
+        bra.s   .di_lp
+.di_end:
+        bsr     wb_updclose
+        move.l  (sp)+,d6
+        rts
+
+; wb_drawone(d7.w = tiroir, d6.w = icône, a5) : dessine l'icône en entier, nom compris, dans une mise à jour limitée
+; au contenu : layers coupe une icône à cheval sur le bord (spec wb-icon-clipping-v34 §3). Seule une icône à plus de
+; 4 fois la taille de l'écran n'est pas dessinée (§4). Préserve d2-d7/a2-a4.
 wb_drawone:
         movem.l d2-d7/a2-a4,-(sp)
         bsr     wb_window            ; a3/a4 (avant wb_iconrect : wb_window écrase d0)
         move.w  d6,d1
         bsr     wb_iconrect
         beq.s   .do_ret
-        bsr     wb_inside
+        bsr     wb_toofar
         bne.s   .do_ret
+        moveq   #1,d0
+        bsr     wb_updopen
+        move.w  d6,d1
+        bsr     wb_iconrect          ; position relue (wb_updopen écrase d0/d1)
         move.w  d0,d4
         move.w  d1,d5
         move.w  d6,d0
         mulu    #WBS_NAMEMAX,d0
         lea     DR_NAMES(a4,d0.l),a4
         bsr     wb_drawicon
+        bsr     wb_updclose
 .do_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; wb_inside(a3 = fenêtre, d0..d3 = rectangle de l'icône) -> Z = 1 si l'icône et son nom (une ligne de texte sous elle)
-; tiennent dans l'intérieur de la fenêtre. Clobbe a0 ; préserve d0-d3.
-wb_inside:
-        movem.l d0-d7/a4,-(sp)
-        movem.w d0-d3,-(sp)
-        tst.w   d7
-        bne.s   .in_dr
-        suba.l  a4,a4                ; bureau : pas de jauge
-.in_dr:
-        bsr     wb_content           ; d0..d3 = zone visible
-        movem.w (sp)+,d4-d7          ; d4..d7 = icône
-        cmp.w   d0,d4
-        blt.s   .in_no
-        cmp.w   d1,d5
-        blt.s   .in_no
-        cmp.w   d2,d6
-        bgt.s   .in_no
-        add.w   #GFX_FONTH+1,d7      ; ligne du nom
-        cmp.w   d3,d7
-        bgt.s   .in_no
+; wb_toofar(a3 = fenêtre, d0/d1 = position de l'icône dans la fenêtre) -> Z = 0 si |x| > 4 × largeur ou |y| > 4 ×
+; hauteur de l'écran (garde-fou des coordonnées 16 bits, spec wb-icon-clipping-v34 §4). Préserve tout sauf le CCR.
+wb_toofar:
+        movem.l d0-d3/a0,-(sp)
+        move.l  WD_WSCREEN(a3),a0
+        move.w  SC_WIDTH(a0),d2
+        lsl.w   #2,d2
+        move.w  SC_HEIGHT(a0),d3
+        lsl.w   #2,d3
+        tst.w   d0
+        bpl.s   .tf_x
+        neg.w   d0
+.tf_x:
+        tst.w   d1
+        bpl.s   .tf_y
+        neg.w   d1
+.tf_y:
+        cmp.w   d2,d0
+        bgt.s   .tf_far
+        cmp.w   d3,d1
+        bgt.s   .tf_far
         moveq   #0,d0                ; Z = 1
-        bra.s   .in_ret
-.in_no:
+        bra.s   .tf_ret
+.tf_far:
         moveq   #1,d0                ; Z = 0
-.in_ret:
-        movem.l (sp)+,d0-d7/a4
+.tf_ret:
+        movem.l (sp)+,d0-d3/a0
+        rts
+
+; wb_updopen(d7.w = fenêtre, d0 = mode, a5) : le dessin du WB est limité au contenu de la fenêtre (spec
+; wb-icon-clipping-v34 §1). Au premier niveau seulement : couche verrouillée (LockLayerRom), puis mode 1 : dommages
+; remplacés par le rectangle de contenu (les vrais gardés dans UserData) ; mode 0 : dommages ∩ contenu ; BeginUpdate.
+; Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+wb_updopen:
+        addq.w  #1,WBS_UPDCNT(a5)
+        cmp.w   #1,WBS_UPDCNT(a5)
+        bne     .uo_r
+        movem.l d2-d6/a2-a4,-(sp)
+        move.l  d0,d6
+        bsr     wb_window
+        tst.w   d7
+        bne.s   .uo_dr
+        suba.l  a4,a4                ; bureau : pas de jauge
+.uo_dr:
+        bsr     wb_content
+        movem.w d0-d3,-(sp)          ; rectangle de contenu (coordonnées de la couche)
+        move.l  WD_RPORT(a3),a0
+        move.l  (a0),a2              ; rp_Layer
+        move.l  WBS_GFXBASE(a5),a6
+        exg     a2,a5
+        jsr     LVO_LOCKLAYERROM(a6)
+        exg     a2,a5
+        clr.l   WD_USERDATA(a3)
+        tst.l   d6
+        beq.s   .uo_and
+        jsr     LVO_NEWREGION(a6)
+        tst.l   d0
+        beq.s   .uo_clr
+        move.l  IL_DAMAGE(a2),WD_USERDATA(a3)
+        move.l  d0,IL_DAMAGE(a2)
+.uo_clr:
+        move.l  IL_DAMAGE(a2),a0
+        jsr     LVO_CLEARREGION(a6)
+        move.l  IL_DAMAGE(a2),a0
+        move.l  sp,a1
+        jsr     LVO_ORRECTREGION(a6)
+        bra.s   .uo_upd
+.uo_and:
+        move.l  IL_DAMAGE(a2),a0
+        move.l  sp,a1
+        jsr     LVO_ANDRECTREGION(a6)
+.uo_upd:
+        addq.l  #8,sp
+        move.l  WBS_IBASE(a5),a6
+        move.l  IB_LAYERSBASE(a6),a6
+        move.l  a2,a0
+        jsr     LVO_BEGINUPDATE(a6)
+        movem.l (sp)+,d2-d6/a2-a4
+.uo_r:
+        rts
+
+; wb_updclose(d7.w = fenêtre, a5) : fin de wb_updopen (§2). Au dernier niveau : mode 1 -> région du WB rendue, vrais
+; dommages remis, EndUpdate(FALSE) ; sinon LAYERREFRESH effacé et EndUpdate(TRUE) ; déverrouillage. Préserve d2-d7/a2-a5 ;
+; clobbe d0/d1/a0/a1/a6.
+wb_updclose:
+        subq.w  #1,WBS_UPDCNT(a5)
+        bne     .uc_r
+        movem.l d2/a2-a4,-(sp)
+        bsr     wb_window
+        move.l  WD_RPORT(a3),a0
+        move.l  (a0),a2
+        moveq   #0,d2                ; d2 = flag d'EndUpdate
+        move.l  WD_USERDATA(a3),d0
+        beq.s   .uc_rep
+        move.l  WBS_GFXBASE(a5),a6
+        move.l  IL_DAMAGE(a2),a0
+        move.l  d0,IL_DAMAGE(a2)
+        clr.l   WD_USERDATA(a3)
+        jsr     LVO_DISPOSEREGION(a6)
+        bra.s   .uc_end
+.uc_rep:
+        bclr    #ILB_REFRESH,IL_FLAGS+1(a2)
+        moveq   #1,d2
+.uc_end:
+        move.l  WBS_IBASE(a5),a6
+        move.l  IB_LAYERSBASE(a6),a6
+        move.l  a2,a0
+        move.l  d2,d0
+        jsr     LVO_ENDUPDATE(a6)
+        move.l  WBS_GFXBASE(a5),a6
+        exg     a2,a5
+        jsr     LVO_UNLOCKLAYERROM(a6)
+        exg     a2,a5
+        movem.l (sp)+,d2/a2-a4
+.uc_r:
+        rts
+
+; wb_repair(d7.w = fenêtre, a5) : REFRESHWINDOW, seulement si la couche est abîmée (spec §6) : jauge d'un disque
+; (hors mise à jour), puis icônes dans les dommages ∩ contenu ; dommages effacés. Le cadre est réparé par intuition.
+wb_repair:
+        movem.l d6/a2-a4,-(sp)
+        bsr     wb_window
+        beq.s   .rp_ret
+        move.l  WD_RPORT(a3),a0
+        move.l  (a0),a2
+        btst    #ILB_REFRESH,IL_FLAGS+1(a2)
+        beq.s   .rp_ret
+        tst.w   d7
+        beq.s   .rp_desk
+        bsr     wb_gauge
+        moveq   #0,d0
+        bsr     wb_updopen
+        bsr     wb_drawicons
+        bra.s   .rp_close
+.rp_desk:
+        moveq   #0,d0
+        bsr     wb_updopen
+        bsr     wb_drawwin
+.rp_close:
+        bsr     wb_updclose
+.rp_ret:
+        movem.l (sp)+,d6/a2-a4
         rts
 
 ; wb_drawicon(a2 = DiskObject, a3 = fenêtre, a4 = nom, d4/d5 = position, d6.w = n°, d7.w = fenêtre, a5) : image de
@@ -1325,8 +1449,12 @@ wb_drawicon:
 ; wb_invert(d7.w = fenêtre, d1.w = icône, a5) : inverse (COMPLEMENT) le rectangle de l'icône. Préserve d2-d7/a2-a5.
 wb_invert:
         movem.l d2-d3/a2-a4/a6,-(sp)
+        move.w  d1,-(sp)
+        moveq   #1,d0
+        bsr     wb_updopen
+        move.w  (sp)+,d1
         bsr     wb_iconrect
-        beq.s   .iv_ret
+        beq.s   .iv_end
         movem.w d0-d3,-(sp)
         bsr     wb_window
         move.l  WBS_GFXBASE(a5),a6
@@ -1339,7 +1467,8 @@ wb_invert:
         move.l  WD_RPORT(a3),a1
         moveq   #JAM1,d0
         jsr     LVO_SETDRMD(a6)
-.iv_ret:
+.iv_end:
+        bsr     wb_updclose
         movem.l (sp)+,d2-d3/a2-a4/a6
         rts
 
@@ -1353,11 +1482,20 @@ wb_click:
 .ck_find:
         move.l  (sp),d1
         bsr     wb_iconrect
-        beq.s   .ck_none
+        beq     .ck_none
         tst.w   d7
         beq.s   .ck_test
-        bsr     wb_inside            ; tiroir : icône dessinée seulement si elle tient dans l'intérieur
-        bne.s   .ck_nx
+        movem.l d0-d3,-(sp)
+        bsr     wb_content           ; tiroir : seule la partie d'une icône dans le contenu est cliquable
+        cmp.w   d0,d4
+        blt.s   .ck_out
+        cmp.w   d2,d4
+        bgt.s   .ck_out
+        cmp.w   d1,d5
+        blt.s   .ck_out
+        cmp.w   d3,d5
+        bgt.s   .ck_out
+        movem.l (sp)+,d0-d3
 .ck_test:
         cmp.w   d0,d4
         blt.s   .ck_nx
@@ -1402,27 +1540,43 @@ wb_click:
         move.l  d6,WBS_LSEC(a5)
         move.l  (sp)+,WBS_LMIC(a5)
         rts
+.ck_out:
+        movem.l (sp)+,d0-d3
+        bra.s   .ck_nx
 .ck_none:
         addq.l  #8,sp
         bra     wb_deselect
 
-; wb_redraw1(d7.w = fenêtre, a5) : intérieur effacé au stylo 0 puis icônes redessinées. Préserve d7/a5.
+; wb_redraw1(d7.w = fenêtre, a5) : réaffichage complet (spec wb-icon-clipping-v34 §5) : jauge d'un disque, puis dans
+; une mise à jour limitée au contenu, contenu effacé au stylo 0 et icônes redessinées. Préserve d7/a5.
 wb_redraw1:
         movem.l d2-d6/a2-a4/a6,-(sp)
         bsr     wb_window
         beq.s   .r1_ret
+        tst.w   d7
+        bne.s   .r1_dr
+        suba.l  a4,a4                ; bureau : pas de jauge
+        bra.s   .r1_open
+.r1_dr:
+        bsr     wb_gauge
+.r1_open:
+        moveq   #1,d0
+        bsr     wb_updopen
         move.l  WBS_GFXBASE(a5),a6
         move.l  WD_RPORT(a3),a1
         moveq   #0,d0
         jsr     LVO_SETAPEN(a6)
-        tst.w   d7
-        bne.s   .r1_dr
-        suba.l  a4,a4                ; bureau : pas de jauge
-.r1_dr:
         bsr     wb_content
         move.l  WD_RPORT(a3),a1
         jsr     LVO_RECTFILL(a6)
+        tst.w   d7
+        bne.s   .r1_icons
         bsr     wb_drawwin
+        bra.s   .r1_close
+.r1_icons:
+        bsr     wb_drawicons
+.r1_close:
+        bsr     wb_updclose
 .r1_ret:
         movem.l (sp)+,d2-d6/a2-a4/a6
         rts
