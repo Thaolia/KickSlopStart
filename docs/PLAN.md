@@ -340,7 +340,7 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     PROCHAIN : B2b (step/side vers une piste précise) puis B3 (décodage MFM). Checkpoint user.
   - **B3 / M6v — décodage MFM de la piste (FAIT, cœur algorithmique).** User : « go B3 » (+ B4 + B2b enchaînés).
     Garde-fou : l'algorithme MFM Amiga (split odd/even + checksums) = fait à NE PAS coder de mémoire → VERROUILLÉ
-    d'abord par round-trip Python (`scratchpad/mfm_ref.py`) : decode `((odd&$55555555)<<1)|(even&$55555555)` (odd en
+    d'abord par round-trip Python (script de référence hors dépôt) : decode `((odd&$55555555)<<1)|(even&$55555555)` (odd en
     1er), checksums en-tête/data = XOR des longs MFM & masque. `td_decode_track(rawbuf, sectorbuf)` : scanne les syncs
     $4489, décode info (format=$FF, n° secteur < 11), vérifie checksum en-tête (XOR 10 longs info+label) ET checksum
     data (XOR 256 longs), décode 512 o vers sectorbuf+n°*512, renvoie le nombre de secteurs valides. Offsets secteur
@@ -850,7 +850,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     un disque plein tronquait le fichier sans rien dire (seule façon trouvée de reproduire l'échec d'origine, sans
     preuve que ce soit la même cause). Blocage de la ROM dev en début de boot (1 fois sur 7 avec SysInfo) et LoadSeg
     de DiskCopy rendu 121 (1 fois sur 6) : non reproduits le 2026-10-26 (20 boots dev SysInfo : 20 jusqu'à SetPatch ;
-    Duplicate -> DiskCopy : 18 invites sur 18 runs valides), boucles $S/bh/loop.sh et dcloop.sh à relancer si ça revient.
+    Duplicate -> DiskCopy : 18 invites sur 18 runs valides) ; boucles de reproduction (boots répétés, lancements
+    DiskCopy) à refaire si ça revient.
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page

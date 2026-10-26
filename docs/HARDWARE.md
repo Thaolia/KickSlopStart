@@ -41,8 +41,8 @@ loader Kickstart 1.x) et sorties `rawbin`/`ados`. Alternative C (modules en C pl
 (`convert`). Côté Windows, `WinUAE.exe` (interop WSL2) reste une option, surtout pour un log série robuste
 dès M2. Clés de config FS-UAE : `amiga_model`, `kickstart_file`, `chip_memory` (voir `tests/boot_test.sh`).
 
-**WinUAE Linux** (portage Unix de WinUAE, AppImage extraite dans `~/dev/tools/winuae/squashfs-root/`, lanceur
-`AppRun`) pour un A500 fidèle au matériel : fichier de config `-f a500.uae` avec `use_gui=no`, `cpu_model=68000`,
+**WinUAE Linux** (portage Unix de WinUAE, AppImage extraite où l'on veut ; son lanceur `AppRun` est donné à
+`tests/adf_suite_winuae.sh` par la variable `WINUAE`, ou placé dans le PATH sous le nom `winuae`) pour un A500 fidèle au matériel : fichier de config `-f a500.uae` avec `use_gui=no`, `cpu_model=68000`,
 `cpu_cycle_exact=true`, `cycle_exact=true`, `chipset=ocs`, `chipmem_size=1` + `bogomem_size=2` (512 Ko chip + 512 Ko
 slow), `floppy_speed=100` (disquette à vitesse réelle), sous Xvfb avec `QT_QPA_PLATFORM=xcb SDL_AUDIODRIVER=dummy`.
 Série : **`unix.serial_port=TCP://127.0.0.1:<port>`** (la clé `serial_port` de WinUAE Windows est inconnue de ce

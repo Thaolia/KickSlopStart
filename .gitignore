@@ -5,8 +5,9 @@ __pycache__/
 *.o
 *.obj
 
-# Scratch d'orchestration (ledgers superpowers)
+# Scratch d'orchestration (ledgers superpowers) et configuration locale de l'assistant
 /.superpowers/
+/.claude/
 
 # ROM Kickstart propriétaire — NE JAMAIS committer ni distribuer.
 # Chaque utilisateur fournit sa propre copie dans assets/ (cf. README).

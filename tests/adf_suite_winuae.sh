@@ -6,20 +6,20 @@
 # Le série passe par TCP : clé `unix.serial_port` (la clé `serial_port` de WinUAE Windows est inconnue ici).
 #
 # Usage : tests/adf_suite_winuae.sh [rom] [secondes par disquette] [filtre de nom (grep -i)]
-# Variable : WINUAE = lanceur (défaut ~/dev/tools/winuae/squashfs-root/AppRun, AppImage extraite).
+# Variable : WINUAE = lanceur de WinUAE Linux (AppRun de l'AppImage extraite) ; défaut : « winuae » pris dans le PATH.
 # Sortie : build/adf_suite_winuae/<n>/{screen.png,serial.log,winuae.log,a500.uae} + build/adf_suite_winuae/summary.txt
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"
 WAIT="${2:-120}"
 FILTER="${3:-}"
-WINUAE="${WINUAE:-$HOME/dev/tools/winuae/squashfs-root/AppRun}"
+WINUAE="${WINUAE:-winuae}"
 DIR="$ROOT/assets/test_adf"
 OUT="$ROOT/build/adf_suite_winuae"
 MARKER="M6Y STRAP BOOTED OK"
 [ -f "$ROM" ] || { echo "ROM absente : $ROM"; exit 2; }
 [ -d "$DIR" ] || { echo "répertoire absent : $DIR"; exit 2; }
-[ -x "$WINUAE" ] || { echo "WinUAE absent : $WINUAE"; exit 2; }
+WINUAE="$(command -v "$WINUAE")" || { echo "WinUAE absent : définir WINUAE (chemin de AppRun) ou le mettre dans le PATH"; exit 2; }
 for t in Xvfb xwd convert socat; do command -v "$t" >/dev/null || { echo "outil absent : $t"; exit 2; }; done
 ROM="$(readlink -f "$ROM")"
 mkdir -p "$OUT"
