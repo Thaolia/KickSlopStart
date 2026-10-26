@@ -875,6 +875,20 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   + 1 Mo (sommeil, $FF000000). Carte disque UAE : configurée en $E90000, DiagArea copiée et exécutée, mais pas de
   ConfigDev en $F00000 ni de DH0: (à instruire : scan des résidents hors ROM / BootPoint). Bornes de slow RAM et
   chip différentes de la 1.3 (disposition propre de notre exec, hors autoconfig).
+  (27) **timer.device : MICROHZ sur le timer B de CIA-A** (spec `docs/analysis/timer-v34.md`, agent d'analyse, relue ;
+  adresses ROM retirées). L'init prend le bit 1 de ciaa.resource (AddICRVector) : MICROHZ est servi au niveau 2,
+  comme la 1.3. Plus aucun timer de CIA-B n'est programmé en production : un jeu qui détourne $78 sans chaîner (musique
+  de Monkey Island) ne casse plus les délais (sonde `tests/timerprobe.s`, test HJ6 : MICROHZ 0,5 s intact). La ROM dev
+  garde une source de niveau 6 de preuve (timer A de CIA-B, m7_int6_probe) pour M7d/M7e. Ajouts : AddTime / SubTime /
+  CmpTime (LVO -42/-48/-54, sémantique exacte de la 1.3), AbortIO rend -1 hors file, Open pose io_Unit (0/1) et refuse
+  l'unité >= 2 (IOERR_OPENFAIL ; avant, une ouverture VBLANK tombait en MICROHZ), Close remet io_Device/io_Unit à -1,
+  VBLANK terminé au k-ième VBLANK (k = max(1, ⌈T/20 ms⌉)), heure strictement croissante (+1 µs par lecture dans une
+  trame, remis à zéro par SETSYSTIME). Corrections d'interruptions trouvées en route : INTREQ PORTS/EXTER acquitté
+  AVANT la chaîne (sinon un événement CIA survenu pendant le service était effacé) ; reprise au VBLANK quand le one-shot
+  est fini sans interruption servie (FS-UAE perd l'événement d'ICR quand sa file « event2 » de 10 places déborde :
+  le bit IR du CIA-A restait levé et plus aucune interruption de niveau 2 — clavier compris — n'arrivait).
+  Reste : durées MICROHZ ~5 % trop longues sous forte charge (latence entre fin du one-shot et réarmement non comptée,
+  ~110 services/s à cause des requêtes du feeder et du handler console) ; Quantum/Elapsed d'ExecBase non posés.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

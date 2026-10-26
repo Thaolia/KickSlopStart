@@ -1,11 +1,8 @@
 # intuition-requesters-v34.md — Request / EndRequest / InitRequester / AutoRequest (intuition 34.3)
 
 > Piste ANALYSE (« dirty »). Sources : ROM `assets/kick34005.A500` (intuition 34.3) et
-> `SYS:System/DiskCopy` de `wb133.adf` (« DiskCopy 1.4 », `$VER: diskcopy 36.6`). Repères ROM :
-> InitRequester $FD68A6, Request $FDC08C/$FDC0AA, couche du requester $FDC160, dessin
-> $FDBFB0/$FDBEFC, retrait $FDC394, EndRequest $FDC3FC, BuildSysRequest $FDE1C0, AutoRequest
-> $FDE368, FreeSysRequest $FDE338, file d'événements différés $FD7F2C, table classe→IDCMP
-> $FD5C1A, recherche de gadget $FD46B0.
+> `SYS:System/DiskCopy` de `wb133.adf` (« DiskCopy 1.4 », `$VER: diskcopy 36.6`). (Adresses de
+> routines ROM retirées du document : elles n'apportent rien à l'implémentation.)
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Comportements, layouts
 > d'ABI et constantes uniquement : **aucune suite d'instructions n'est reproduite**.

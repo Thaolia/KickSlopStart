@@ -24,8 +24,6 @@
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c : lancement 1re tâche = transition user-mode)
                 xref    build_reslist    ; resident.s (scan des ROMTags)
-                xref    timer_micro_int  ; timer.s (struct Interrupt de l'unité MICROHZ, vecteur ICR CIA-B)
-                xref    timer_micro_start
                 xref    task_alloc
                 xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
@@ -2145,7 +2143,7 @@ m6t_done:
         move.l  d0,a3                ; a3 = sectorbuf
         move.l  a4,a0
         move.l  a3,a1
-        bsr     td_decode_track      ; d0 = nombre de secteurs décodés+vérifiés
+        jsr     td_decode_track      ; d0 = nombre de secteurs décodés+vérifiés
         move.l  d0,d5
         lea     msg_m6v_sect(pc),a0
         bsr     ser_puts             ; « M6V SECTORS= »
@@ -2232,7 +2230,7 @@ m6w_done:
         move.l  d0,a3                ; a3 = sectorbuf
         move.l  a4,a0
         move.l  a3,a1
-        bsr     td_decode_track      ; d0 = nb secteurs valides, d1 = n° de piste lu
+        jsr     td_decode_track      ; d0 = nb secteurs valides, d1 = n° de piste lu
         move.l  d1,d5                ; d5 = piste lue (sauvée avant que d1 soit clobbé)
         move.l  d0,d2                ; d2 = count (sauvé : ser_puthex clobbe d0-d3)
         lea     msg_m6x_track(pc),a0
@@ -3105,9 +3103,10 @@ d2_done:
                 endc
         ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
         ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
-        ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ via CIA-B/INT6 +
+        ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ (timer B de CIA-A, niveau 2) +
         ; task_timer qui bloque dessus -> prouve (a) une TÂCHE réveillée par un timer d'interruption
-        ; (Wait->wake) et (b) la fidélité IPL-par-niveau (M7e) : INT6 (niveau 6) préempte le CORPS de
+        ; (Wait->wake) et (b) la fidélité IPL-par-niveau (M7e, ROM dev : sonde de niveau 6 sur le timer A de
+        ; CIA-B, m7_int6_probe) : INT6 (niveau 6) préempte le CORPS de
         ; vbl_handler (IPL natif 3) -> VBL_PREEMPT_COUNT>0, MAIS la chirurgie de listes du switch reste
         ; atomique (IPL7 bref) -> VBL_CLASH==0 (overlap, pas corruption). RED1 (M7E_SURGERY_INTENA=1 :
         ; INTENA-off au lieu d'IPL7) -> VBL_CLASH>0 ; RED2 (M7E_PROLOGUE_IPL7=1 : IPL7 au prologue) ->
@@ -3152,14 +3151,19 @@ d2_done:
         moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int) : vecteur EXCLUSIF ->
         lea     ciab_server_int(pc),a1  ; INT6 passe par le dispatcher par numéro (ciab_server/cia_dispatch)
         jsr     LVO_SETINTVECTOR(a6)
-        move.l  a6,-(sp)             ; AddICRVector(ciab, bit0 = timer A, &timer_micro_int)
-        move.l  a2,a6
+                ifeq    PROD            ; ROM dev : source de niveau 6 des preuves M7d/M7e (la ROM de production ne
+        move.l  a6,-(sp)             ; programme aucun timer de CIA-B, comme la 1.3 : les jeux les prennent)
+        move.l  a2,a6                ; AddICRVector(ciab, bit0 = timer A, &m7_int6_int)
         moveq   #0,d0
-        move.l  #timer_micro_int,a1
+        move.l  #m7_int6_int,a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
+        lea     CIAB_HW,a0           ; timer A de CIA-B en one-shot de 255 ticks (~360 µs), réarmé à la fin de chaque
+        move.b  #$FF,CIA_TALO(a0)    ; service : la période inclut la durée du service, pas d'accumulation d'INT6
+        move.b  #$00,CIA_TAHI(a0)
+        move.b  #$19,CIA_CRA(a0)     ; START + one-shot + LOAD
+                endc
         move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; active Paula EXTER (INT6, niveau 6 > VBlank 3)
-        jsr     timer_micro_start    ; timer A de CIA-B en one-shot (dev : réarmé toutes les ~360 µs)
         bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
         ; --- M6r/M6y : strap (romboot) — lit, valide et EXÉCUTE le bootblock de DF0: (jalon C « ça boote ! ») ---
@@ -5720,6 +5724,65 @@ coper_int:
 coper_int_name:
         dc.b    "test.coper",0
 
+                ifeq    PROD
+; m7_int6_probe (ROM dev) : vecteur ICR bit 0 de ciab.resource (timer A de CIA-B continu), appelé par cia_dispatch
+; depuis le niveau 6. Deux détecteurs exclusifs AVANT toute manip :
+;   - VBL_INSURG posé -> INT6 a préempté la CHIRURGIE du switch -> VBL_CLASH++ (doit rester 0 : le Disable la rend
+;     atomique vs tout IPL ; > 0 = RED1) ;
+;   - sinon VBL_INBODY posé -> INT6 a préempté le CORPS de vbl -> VBL_PREEMPT_COUNT++ (doit être > 0 : preuve que vbl
+;     tourne à IPL3 natif ; == 0 = RED2).
+; Puis M7d : stress du PORT PARTAGÉ côté interruption (course contre task_port). Convention vecteur ICR : préserve
+; d2/d3/a2 (variables de boucle de cia_dispatch).
+        EVEN
+m7_int6_probe:
+        tst.b   VBL_INSURG          ; vbl_handler est-il en pleine CHIRURGIE de listes ?
+        beq.s   .ip_notsurg
+        addq.l  #1,VBL_CLASH        ; OUI -> INT6 a préempté la section critique = Disable violé (RED1)
+        bra.s   .ip_ok
+.ip_notsurg:
+        tst.b   VBL_INBODY          ; sinon, vbl est-il dans son CORPS (hors chirurgie) ?
+        beq.s   .ip_ok
+        addq.l  #1,VBL_PREEMPT_COUNT ; OUI -> INT6(6) a préempté le CORPS de vbl(3) = fidélité IPL-par-niveau
+.ip_ok:
+        movem.l d0-d1/a0-a1,-(sp)
+        move.l  WP_SPORT,d0
+        beq.s   .ip_ret             ; port pas encore créé
+        addq.b  #1,STRESS_TICK      ; rate-limit : 1 INT6 sur 4
+        move.b  STRESS_TICK,d1
+                ifne    M7D_STRESS_MAX
+        and.b   #0,d1               ; RED A/B : chaque INT6 (contention max)
+                else
+        and.b   #3,d1
+                endc
+        bne.s   .ip_ret
+        move.l  d0,a0
+        jsr     LVO_GETMSG(a6)      ; GetMsg(SP)
+        tst.l   d0
+        beq.s   .ip_ret
+        move.l  d0,a1
+        cmp.l   #STRESS_MAGIC,MSG_MAGIC_OFF(a1)
+        bne.s   .ip_pfail           ; mauvais pointeur -> corruption de liste
+        tst.l   MSG_INHAND_OFF(a1)
+        bne.s   .ip_pfail           ; déjà « en main » -> doublon = corruption
+        move.l  #1,MSG_INHAND_OFF(a1)
+        clr.l   MSG_INHAND_OFF(a1)
+        move.l  WP_SPORT,a0
+        jsr     LVO_PUTMSG(a6)      ; PutMsg(SP, msg)
+        addq.l  #1,WP_PORTI
+        bra.s   .ip_ret
+.ip_pfail:
+        st      WP_PORTFAIL
+.ip_ret:
+        move.b  #$19,CIAB_HW+CIA_CRA ; réarme le one-shot (LOAD : latch 255)
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+        EVEN
+m7_int6_int:
+        dcb.b   14,0                ; struct Node (non chaîné : AddICRVector ne stocke que le pointeur)
+        dc.l    0                   ; IS_DATA
+        dc.l    m7_int6_probe       ; IS_CODE
+                endc
+
 ; ciab_server_int (M7b) : vecteur EXCLUSIF EXTER installé par SetIntVector -> ciab_server. Non chaîné
 ; (SetIntVector copie IS_DATA/IS_CODE) -> peut rester en ROM. IS_DATA inutilisé (ciab_server lit CIAB_PTR).
         EVEN
@@ -5908,7 +5971,7 @@ msg_m7b_ok:
 msg_m7b_fail:
         dc.b    "M7B FAILED: per-number interrupt dispatch / server chain incorrect",13,10,0
 msg_m7a_ok:
-        dc.b    "M7A TIMER OK (MICROHZ via CIA-B/INT6: task woke on timer, reentrancy gate held)",13,10,0
+        dc.b    "M7A TIMER OK (MICROHZ via CIA-A/INT2: task woke on timer, reentrancy gate held)",13,10,0
 msg_m7a_fail:
         dc.b    "M7A FAILED: MICROHZ wake or scheduler-list reentrancy gate",13,10,0
 msg_m7c_ok:

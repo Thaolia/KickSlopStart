@@ -436,9 +436,11 @@ trap2_handler:
 int2_dispatch:
         movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 2) — préemptible par vbl(3)/int6(6)
         move.l  ($4).w,a6
-        moveq   #INTB_PORTS,d0
+        move.w  #INTF_PORTS,INTREQ  ; ack Paula INT2 AVANT la chaîne : un événement CIA survenu pendant le service
+        moveq   #INTB_PORTS,d0      ; (one-shot MICROHZ réarmé court, clavier) repose PORTS au lieu d'être effacé
+        st      INT2_BUSY
         bsr     intr_dispatch_number
-        move.w  #INTF_PORTS,INTREQ  ; ack Paula INT2
+        clr.b   INT2_BUSY
         bra.s   intr_isr_defer
 ; int1/int4/int5_dispatch (autovecteurs $64/$70/$74) : sources multiples à vecteur EXCLUSIF (SetIntVector). Pour chaque
 ; source du niveau en attente ET activée : handler présent -> appel (il acquitte INTREQ lui-même, RKRM « Exec :
@@ -488,9 +490,9 @@ intr_multi:
 int6_dispatch:
         movem.l d0-d7/a0-a6,-(sp)   ; PROLOGUE M7e : IPL NATIF (niveau 6) — niveau max utilisé, jamais préempté
         move.l  ($4).w,a6
+        move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6 AVANT la chaîne (même raison que PORTS)
         moveq   #INTB_EXTER,d0
         bsr     intr_dispatch_number
-        move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6
 ; intr_isr_defer : tail commun int2/int3/int6 — flag de dispatch différé (EB_ATTNRESCHED).
 intr_isr_defer:
         move.l  ($4).w,a6           ; M7f : RECHARGE a6=SysBase — le walker ne restaure PAS a6 après le

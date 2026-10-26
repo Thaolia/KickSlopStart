@@ -128,10 +128,13 @@ IV_SIZE      EQU 12
 INTVECTS_NVEC EQU 16          ; numéros 0..15 (14 = INTEN inusité, 15 = NMI)
 IV_LIST_SIZE EQU 14           ; sizeof(struct List) d'une chaîne de serveurs
 INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 224 (PAS d'espace : vasm tronque l'opérande à l'espace)
-; CIA timer A — registres (offsets depuis la base CIA = registre<<8)
+; CIA timers A et B — registres (offsets depuis la base CIA = registre<<8)
 CIA_TALO     EQU $400         ; timer A low
 CIA_TAHI     EQU $500         ; timer A high (l'écriture charge le latch)
+CIA_TBLO     EQU $600         ; timer B low
+CIA_TBHI     EQU $700         ; timer B high (l'écriture charge le latch)
 CIA_CRA      EQU $E00         ; control register A (b0=START, b3=RUNMODE 1-shot, b4=LOAD)
+CIA_CRB      EQU $F00         ; control register B (mêmes bits ; b7 = ALARM, b5-6 = INMODE)
 VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
 SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
 WP_HTASK     EQU $00000508    ; démo M3e/f : TCB de task_H (pour que task_L la signale)
@@ -300,15 +303,14 @@ M7J_DEMO         EQU 0
 ; « M7J REMTASK OK » absent. Prouve que le FreeMem pile+TCB est load-bearing.
 M7J_NOFREE       EQU 0
 
-; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par le timer A de CIA-B, en mode ONE-SHOT armé
-; sur l'échéance la plus proche (au plus TIMER_CAP ticks E). Horloge E PAL = 709379 Hz (= CPU 7,09379 MHz / 10). Une
-; requête garde son reste en (secondes, ticks E dans la seconde) ; le temps écoulé est lu sur le compteur du CIA. La
-; latence entre fin du one-shot et réarmement n'est pas comptée : armer large (TIMER_CAP) la rend négligeable.
-; File vide : timer arrêté en production ; la ROM dev le réarme toutes les TIMER_IDLE ticks (~360 µs), les preuves
-; M7a/M7d/M7e exigent une INT6 périodique. (Un timer CONTINU à 255 coûtait ~55 % du CPU, mesuré le 2026-10-21.)
+; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par le timer B de CIA-A (ciaa.resource, ICR bit 1,
+; niveau 2, comme la 1.3 : spec docs/analysis/timer-v34.md), en mode ONE-SHOT armé sur l'échéance la plus proche (au plus
+; TIMER_CAP ticks E). Horloge E PAL = 709379 Hz (= CPU 7,09379 MHz / 10). Une requête garde son reste en (secondes,
+; ticks E dans la seconde) ; le temps écoulé est lu sur le compteur du CIA (plus juste que la comptabilité nominale de
+; la 1.3). La latence entre fin du one-shot et réarmement n'est pas comptée : armer large (TIMER_CAP) la rend
+; négligeable. File vide : timer arrêté. Aucun timer de CIA-B n'est programmé par l'OS (les jeux les prennent).
 E_PER_SEC      EQU 709379     ; ticks E-clock par seconde (PAL)
 TIMER_CAP      EQU $FFFF      ; armement maximal (~92 ms)
-TIMER_IDLE     EQU 255
 ; Preuve = inter-horloges : une requête MICROHZ LONGUE connue, mesurée contre l'horloge VBLANK (50 Hz,
 ; indépendante : raster display vs E-clock CPU). 0,5 s doit s'écouler en ~25 ticks VBLANK. NON tautologique
 ; (les deux horloges dérivent de matériels différents) : valide la constante E à ~±10 %.
@@ -397,6 +399,7 @@ EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur
 DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
 HND_CLOCKED  EQU $0000079A ; byte : le file-handler DF0: a fait son réglage d'heure de montage (hnd_bootclock)
 MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
+INT2_BUSY    EQU $000007A0 ; byte : int2_dispatch sert la chaîne PORTS (lu par la reprise du serveur VBLANK de timer.device)
 GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
 GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
 GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
@@ -512,11 +515,13 @@ LIB_SUM      EQU $1C           ; lib_Sum : somme de contrôle de la table de vec
 LIBB_CHANGED EQU 1             ; LIBF_CHANGED : table modifiée (SetFunction), somme à recalculer
 LIBB_SUMUSED EQU 2             ; LIBF_SUMUSED : la somme est vérifiée
 TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
-TIMER_MICROQ EQU LIB_SIZE+14   ; M7a : liste de requêtes de l'unité MICROHZ (CIA-B/INT6) (struct List)
+TIMER_MICROQ EQU LIB_SIZE+14   ; liste de requêtes de l'unité MICROHZ (timer B de CIA-A, niveau 2) (struct List)
 TIMER_SYSSECS EQU LIB_SIZE+28  ; heure système : secondes à la référence (TR_SETSYSTIME)
 TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT à la référence
-TIMER_ARMED  EQU LIB_SIZE+36   ; long : ticks E armés sur le timer A de CIA-B (0 = arrêté)
-TD_SIZE      EQU LIB_SIZE+40   ; taille de la base timer.device (Library + 2 listes d'unité + heure système + armement)
+TIMER_ARMED  EQU LIB_SIZE+36   ; long : ticks E armés sur le timer B de CIA-A (0 = arrêté)
+TIMER_UNIQ   EQU LIB_SIZE+40   ; long : µs ajoutées aux lectures d'heure faites dans le tic TIMER_UVBL (heure strictement croissante)
+TIMER_UVBL   EQU LIB_SIZE+44   ; long : VBL_COUNT de la dernière lecture d'heure
+TD_SIZE      EQU LIB_SIZE+48   ; taille de la base timer.device (Library + 2 listes d'unité + heure système + armement)
 UNIT_MICROHZ EQU 0             ; sélecteur d'unité dans IO_UNIT (= numérotation réelle timer.device)
 UNIT_VBLANK  EQU 1             ; (OpenDevice poserait un struct Unit* ; notre impl minimale = l'index)
 EB_CHKBASE    EQU $26
@@ -626,6 +631,7 @@ TR_SIZE      EQU 40
 TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
 TR_GETSYSTIME EQU 10
 TR_SETSYSTIME EQU 11
+IOERR_OPENFAIL EQU -1
 IOERR_NOCMD  EQU -3
 IOERR_ABORTED EQU -2
 TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device
@@ -712,6 +718,7 @@ LVO_ABORTIO      EQU -480
 LVO_COPYMEM      EQU -624
 LVO_COPYMEMQUICK EQU -630
 LVO_ALERT        EQU -108       ; Alert(alertNum d7)
+AN_TIMERCIARSRC  EQU $15058020  ; Alert : timer.device sans ciaa.resource (AN_TimerDev|AG_OpenRes|AO_CIARsrc)
 LVO_ADDMEMLIST   EQU -618       ; AddMemList(taille d0, attributs d1, pri d2, base a0, nom a1)
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498

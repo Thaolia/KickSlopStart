@@ -21,7 +21,6 @@
 
 ; --- constantes trackdisk (devices/trackdisk.i) + erreurs exec io (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
-IOERR_OPENFAIL EQU -1                ; OpenDevice a échoué
 IOERR_BADLENGTH EQU -4               ; io_Offset/io_Length pas un multiple de la taille de secteur (M6z)
 TDU_UNIT0      EQU LIB_SIZE          ; 34 : début de l'aire des unités (placeholder, -> Unit+MsgPort en B2)
 TDU_UNITSZ     EQU 8                 ; octets par unité (placeholder)

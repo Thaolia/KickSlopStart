@@ -825,8 +825,7 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     Info du Workbench fait (info.library, fenêtres GIMMEZEROZERO, gadgets dessinés à rebours comme la 1.3 ; SAVE et
     QUIT prouvés). Duplicate fait (identique à la 1.3), DiskCopy fonctionne (AutoRequest conforme, returnpkt du handler,
     ACTION_INHIBIT, DeviceProc). RAWKEY vers la fenêtre active et qualificatifs Alt/Amiga faits.
-    À faire : Request/EndRequest/InitRequester (couche de requester),
-    cadre des fenêtres refait comme la 1.3 (motif, voile, pictogrammes, bordures). Gadgets proportionnels
+    À faire : Request/EndRequest/InitRequester (couche de requester). Cadre des fenêtres refait comme la 1.3 : fait. Gadgets proportionnels
     (ModifyProp/NewModifyProp) et barres de défilement des tiroirs du WB faits ; LoadSeg à tampon extensible. Restent :
     INTUITICKS (répétition des flèches), InstallClipRegion. Preferences s'affiche (SetFont préserve D0, SetPrefs,
     devs:system-configuration, PointerTicks) ; reste la répétition clavier (cadre de centrage noir = thème DetailPen 2).
@@ -840,7 +839,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     Barre de titre d'un écran SCREENQUIET plus jamais dessinée (SysInfo : plus de barre noire au clic). Suite ADF de fin
     d'étape sous WinUAE Linux (tests/adf_suite_winuae.sh) au lieu d'Amiberry.
     Autoconfig Zorro II (expansion.library complète, fast RAM ajoutée, vecteurs de la 1.3 reproduits). À faire : carte
-    disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse. Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
+    disque UAE (ConfigDev $F00000, DH0:) — résidents hors ROM / BootPoint, à instruire par la piste analyse.
+    MICROHZ sur le timer B de CIA-A (niveau 2) comme la 1.3 : les jeux qui prennent $78 ne cassent plus les délais ;
+    AddTime/SubTime/CmpTime, Open/Close/AbortIO conformes, heure strictement croissante. À faire : précision MICROHZ sous
+    charge (~5 %). Restent : échec intermittent de `join` (non reproduit), blocage intermittent de la ROM
     dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
     avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
