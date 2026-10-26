@@ -980,6 +980,8 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   -1 à l'écriture en cours (avant, l'échec était avalé). Prouvé (ADF jw, 5 × join a b a sur un WB presque plein) :
   trois requesters annulés au clavier (Amiga-B), puis J5 et FIN comme sur la 1.3 ; j1-j4 identiques à l'octet,
   j5 = début exact (26 352 octets ; 26 344 sur la 1.3, artefact de fin de bloc non reproduit).
+  Autres échecs intermittents notés plus tôt, remesurés le 2026-10-26 : blocage de la ROM dev au boot avec SysInfo
+  (0 sur 20 boots) et LoadSeg de DiskCopy rendu 121 (0 sur 18 lancements par Duplicate) : non reproduits.
 - **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
   continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
   9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à

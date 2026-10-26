@@ -848,9 +848,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     flèches des tiroirs du WB défilent tant qu'elles sont tenues ; ModifyIDCMP. trackdisk : fin de DMA par interruption (le processeur reste aux autres tâches pendant la lecture d'une piste).
     Volume plein : requester « Volume <nom> is full » comme la 1.3. `join` : 25/25 jointures exactes sur disque libre ;
     un disque plein tronquait le fichier sans rien dire (seule façon trouvée de reproduire l'échec d'origine, sans
-    preuve que ce soit la même cause). Restent : blocage intermittent de la ROM
-    dev en début de boot ; LoadSeg de SYS:System/DiskCopy rendu 121 une fois sur 6 lancements (Duplicate du disque,
-    avant toute frappe ; non reproduit) ; (1 fois sur 7 avec SysInfo : M7F émis, puis plus rien, ni M7G ni shell ; non reproduit).
+    preuve que ce soit la même cause). Blocage de la ROM dev en début de boot (1 fois sur 7 avec SysInfo) et LoadSeg
+    de DiskCopy rendu 121 (1 fois sur 6) : non reproduits le 2026-10-26 (20 boots dev SysInfo : 20 jusqu'à SetPatch ;
+    Duplicate -> DiskCopy : 18 invites sur 18 runs valides), boucles $S/bh/loop.sh et dcloop.sh à relancer si ça revient.
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page
