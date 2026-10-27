@@ -13,6 +13,7 @@
 
                 xdef    proc_create
                 xdef    dos_sendpkt
+                xref    dos_pktretry         ; dos/dos_lib.s
                 xref    task_alloc           ; exec/tasks.s
 
 ; proc_create(a6=SysBase, a0=nom, a1=entryPC, d0=priorité.b, d1=taille pile) -> d0 = APTR &pr_MsgPort | 0.
@@ -112,6 +113,7 @@ dos_sendpkt:
                 move.l  d3,DP_ARG3(a4)
                 clr.l   DP_RES1(a4)
                 clr.l   DP_RES2(a4)
+.sp_send:
                 move.l  a3,a0                ; PutMsg(handlerPort, &sp_Msg)
                 move.l  a2,a1
                 jsr     LVO_PUTMSG(a6)
@@ -119,6 +121,17 @@ dos_sendpkt:
                 jsr     LVO_WAITPORT(a6)
                 move.l  a5,a0
                 jsr     LVO_GETMSG(a6)       ; récupère notre packet (répondu par le handler)
+                move.l  DP_RES1(a4),d0
+                move.l  DP_RES2(a4),d1
+                jsr     dos_pktretry         ; volume éjecté : « Please replace volume », Retry -> renvoi
+                tst.l   d0
+                beq.s   .sp_done
+                clr.l   DP_RES1(a4)
+                clr.l   DP_RES2(a4)
+                move.l  a5,DP_PORT(a4)
+                move.l  a5,MN_REPLYPORT(a2)
+                bra.s   .sp_send
+.sp_done:
                 move.l  DP_RES1(a4),d0
                 move.l  DP_RES2(a4),d1
                 ifeq    DOS_NO_IOERR

@@ -41,6 +41,9 @@ PRB_SEL0_OFF   EQU $F7         ; SEL0=0 moteur=1 : sélectionne DF0 en latchant 
 ; --- lecture de piste brute ---
 TD_RAWWORDS  EQU $1900         ; mots lus = 6400 (12800 o, > une piste DD) ; tient dans un compteur dbra 16 bits
 TD_RAWBYTES  EQU TD_RAWWORDS*2
+TD_SECBODY   EQU 1080          ; octets MFM d'un secteur après ses syncs : en-tête 56 + données 1024
+TD_ALLSECT   EQU $7FF          ; masque des 11 secteurs d'une piste
+TD_FILLTRIES EQU 4             ; lectures d'une piste incomplète avant de rendre une erreur
 TD_SYNC      EQU $4489         ; mot de synchro MFM standard Amiga (impossible dans du MFM normal -> 0 faux positif)
 
 ; TD_NO_DMA=1 (RED B2) : la lecture n'arme PAS le DMA disque (ni DMACON DSKEN ni DSKLEN start) -> le buffer

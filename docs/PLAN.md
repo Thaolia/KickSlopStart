@@ -868,7 +868,12 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     sonde), intuition (diffusion des IDCMP), Workbench (une icône par volume, icône par défaut, placement 96 px).
     Prouvé sous FS-UAE avec tests/dskchg.s + tests/dskchg_run.sh (changement par le menu F12) : WB -> OctaMED -> WB,
     nœuds et événements conformes à la spec (V2-V5), icônes RAM DISK + Workbench1.3 au boot, OctaMED en (264, 2) puis
-    retirée, fenêtres OctaMEDv4 et RAM DISK ouvertes. Reste : requester « Please replace volume », icône DF0:NDOS.
+    retirée, fenêtres OctaMEDv4 et RAM DISK ouvertes. Requester « Please replace volume / <nom> / in any drive »
+    (lock ou fichier d'un volume éjecté ; Retry ou réinsertion relancent l'appel, Cancel rend 218) : prouvé par la
+    sonde dskchg LA (V11). Reste : icône DF0:NDOS.
+    trackdisk robuste aux pistes longues (émulateur ESP32 amiga500-esp32, erreur 121) : décodeur jusqu'au ras du
+    tampon, masque des secteurs distincts, relecture d'une piste incomplète (4 fois), erreur plutôt que contenu
+    périmé ; test unicorn tests/td_decode_test.py (99/99, l'ancien code 30 échecs sur 33 avec un gap de 830 octets).
     OctaMED Professional v4 (signalé : interface mal chargée, aucun bouton ne répond) : spec d'analyse octamed-v34
     (agent séparé ; ses boutons sont des zones testées sur MOUSEBUTTONS, pas des gadgets). Causes et corrections :
     l'auto-test M7B laissait le latch du timer A de la CIA-A à $00FF, et OctaMED démarre ce timer sans le recharger

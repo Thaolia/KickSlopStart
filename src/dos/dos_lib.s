@@ -32,6 +32,7 @@
                 xref    bcpl_execute     ; dos/bcpl.s (LVO Execute : C:Run + runcommand)
                 xdef    dos_bufwrite     ; écriture différée du runtime BCPL (bcpl.s)
                 xdef    dos_flushout     ; vidage de la sortie courante avant une lecture (bcpl.s)
+                xdef    dos_pktretry     ; requester « Please replace volume » après un refus 218 (process.s, bcpl.s)
                 xref    proc_create      ; dos/process.s (Process + pile + pr_MsgPort + AddTask)
                 xdef    dos_boot_assigns ; appelé par le CLI initial (shell.s) une fois le disque de boot lisible
                 xdef    dos_resolve      ; runtime BCPL (deviceproc)
@@ -1580,6 +1581,40 @@ dos_volreq:
         bsr.s   vr_req
         movem.l (sp)+,a0-a1
         rts
+; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2 d'un packet répondu) -> d0 = vrai s'il faut le renvoyer : refus 218 du
+; handler DF0: pour un lock ou un fichier d'un volume éjecté (HND_REFVOL) -> requester « Please replace volume / <nom> /
+; in any drive » (spec disk-change-v34 §2.4) ; Retry ou l'insertion d'un disque (DISKINSERTED) relancent. Préserve
+; d1-d7/a0-a6.
+dos_pktretry:
+        tst.l   d0
+        bne.s   .pr_no
+        cmp.l   #ERROR_DEVICE_NOT_MOUNTED,d1
+        bne.s   .pr_no
+        move.l  HND_REFVOL,d0
+        clr.l   HND_REFVOL
+        lsl.l   #2,d0
+        beq.s   .pr_ret
+        movem.l d3/a0-a1/a4,-(sp)
+        move.l  d0,a4
+        moveq   #0,d0
+        tst.l   DN_TASK(a4)          ; volume de nouveau monté entre-temps : pas de requester
+        bne.s   .pr_pop
+        move.l  DN_NAME(a4),d0
+        lsl.l   #2,d0
+        move.l  d0,a4
+        moveq   #0,d3
+        move.b  (a4)+,d3             ; BSTR : longueur puis caractères
+        lea     vr_r1(pc),a0
+        lea     vr_l3(pc),a1
+        move.l  #VR_DISKINSERTED,d0
+        bsr.s   vr_req
+.pr_pop:
+        movem.l (sp)+,d3/a0-a1/a4
+        rts
+.pr_no:
+        moveq   #0,d0
+.pr_ret:
+        rts
 ; vr_req(a4 = nom, d3 = sa longueur, a0 = 1re ligne, a1 = 3e ligne, d0 = classes IDCMP valant Retry) -> d0 = vrai si
 ; Retry : requester système à trois lignes, Retry / Cancel. Préserve d1-d7/a0-a6.
 vr_req:
@@ -1671,6 +1706,7 @@ vr_itext:
         rts
 vr_intname:     dc.b    "intuition.library",0
 vr_l1:          dc.b    "Please insert volume",0
+vr_r1:          dc.b    "Please replace volume",0
 vr_l3:          dc.b    "in any drive",0
 vr_v1:          dc.b    "Volume",0
 vr_v3:          dc.b    "is full",0

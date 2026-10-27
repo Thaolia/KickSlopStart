@@ -409,6 +409,7 @@ EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logici
 EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
 HND_CTX      EQU $000007C0 ; dos : long — contexte du file-handler DF0: (changement de disquette, handler.s)
+HND_REFVOL   EQU $000007C4 ; dos : long — BPTR du volume absent du dernier refus 218 du handler DF0: (« replace »)
 MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
 INT2_BUSY    EQU $000007A0 ; byte : int2_dispatch sert la chaîne PORTS (lu par la reprise du serveur VBLANK de timer.device)
 TD_DMATASK   EQU $000007A2 ; trackdisk : long — tâche qui attend la fin d'un DMA disque (SIGF_SINGLE), 0 : aucune

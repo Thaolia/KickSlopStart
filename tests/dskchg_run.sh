@@ -121,7 +121,7 @@ while read -r cmd a b c; do
            printf 'm dff010 2\n' >&3; sleep 1
            for i in $(seq 1 40); do printf 't\n' >&3; sleep 0.2; done; sleep 1
            cp "$OUT/fs-uae.log" "$OUT/$a.dbglog"; printf 'g\n' >&3; log "dbg $a";;
-    dump)  X keydown F12 key d keyup F12; sleep 3
+    dump)  WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"; dbgon
            python3 -I "$HERE/dskchg_dump.py" "$OUT/in" "$OUT/fs-uae.log" "$OUT/log.txt" > "$OUT/dump.out" 2>&1
            printf 'g\n' >&3;;
   esac

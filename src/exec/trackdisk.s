@@ -202,6 +202,26 @@ trackdisk_beginio:
         bsr     td_fill              ; d0 = 0 piste complète (cachée), 1 partielle, -1 illisible
         tst.l   d0
         bmi     .td_noread
+        beq.s   .td_cached
+        move.l  a0,d1                ; piste incomplète : chaque secteur demandé doit en faire partie (jamais le
+        move.l  d6,d0                ; contenu périmé du tampon)
+        lsr.l   #8,d0
+        lsr.l   #1,d0                ; d0 = premier secteur demandé
+        move.l  d2,-(sp)
+        move.l  d5,d2
+        lsr.l   #8,d2
+        lsr.l   #1,d2
+        subq.l  #1,d2                ; d2 = secteurs demandés - 1
+.td_pchk:
+        btst    d0,d1
+        beq.s   .td_pmiss
+        addq.l  #1,d0
+        dbra    d2,.td_pchk
+        move.l  (sp)+,d2
+        bra.s   .td_cached
+.td_pmiss:
+        move.l  (sp)+,d2
+        bra     .td_noread
 .td_cached:
         move.l  a3,a0                ; copie n octets : src = sectorbuf + octet-dans-piste, dst = a5
         add.l   d6,a0
@@ -915,7 +935,9 @@ td_cachebuf:
 
 ; td_fill(d0.w = piste, d1.w = emplacement, a3 = son tampon, a6) : l'emplacement (écrit d'abord s'il était modifié)
 ; reçoit la piste lue et décodée ; il n'est déclaré valide que si ses 11 secteurs sont bons et portent cette piste.
-; -> d0 = 0 piste complète, 1 incomplète (contenu partiel, non cachée), -1 illisible. Préserve d1-d7/a2-a6.
+; Piste incomplète : relue jusqu'à TD_FILLTRIES fois, les secteurs bons s'accumulant (une lecture de la mauvaise
+; piste les annule). -> d0 = 0 piste complète, 1 incomplète (non cachée ; a0 = masque des secteurs bons), -1
+; illisible. Préserve d1-d7/a2-a6.
 td_fill:
         movem.l d1-d7/a2-a5,-(sp)
         move.w  d0,d6                ; d6 = piste
@@ -926,31 +948,45 @@ td_fill:
         move.w  d5,d4
         add.w   d4,d4                ; d4 = offset de l'emplacement
         move.w  #$FFFF,0(a0,d4.w)    ; vide tant que la piste n'est pas vérifiée
+        moveq   #0,d3                ; d3 = masque des secteurs bons
+        moveq   #TD_FILLTRIES-1,d2
+.fi_try:
         moveq   #0,d0
         move.w  d6,d0
         bsr     td_read_track        ; d0 = tampon brut | 0
         tst.l   d0
-        beq.s   .fi_none
+        beq.s   .fi_end
         move.l  d0,d7
         move.l  d0,a0
         move.l  a3,a1
-        bsr     td_decode_track      ; d0 = secteurs valides, d1 = piste du dernier secteur valide
-        moveq   #1,d2
-        cmp.w   #MFM_NSECT,d0
-        bne.s   .fi_free
+        bsr     td_decode_track      ; a0 = masque, d1 = piste du dernier secteur valide
+        move.l  a0,d0
+        beq.s   .fi_free             ; rien de décodé : le tampon garde les secteurs bons d'avant
         cmp.w   d6,d1
-        bne.s   .fi_free
-        lea     TD_CTRK,a0
-        move.w  d6,0(a0,d4.w)
-        moveq   #0,d2
+        beq.s   .fi_same
+        moveq   #0,d3                ; mauvaise piste : ses secteurs ont remplacé les bons
+        bra.s   .fi_free
+.fi_same:
+        move.l  a0,d0
+        or.l    d0,d3
 .fi_free:
         move.l  d7,a1
         move.l  #TD_RAWBYTES,d0
         jsr     LVO_FREEMEM(a6)
-        move.l  d2,d0
-        bra.s   .fi_ret
-.fi_none:
+        cmp.l   #TD_ALLSECT,d3
+        beq.s   .fi_full
+        dbra    d2,.fi_try
+.fi_end:
         moveq   #-1,d0
+        tst.l   d3
+        beq.s   .fi_ret              ; aucun secteur bon : illisible
+        move.l  d3,a0
+        moveq   #1,d0
+        bra.s   .fi_ret
+.fi_full:
+        lea     TD_CTRK,a0
+        move.w  d6,0(a0,d4.w)
+        moveq   #0,d0
 .fi_ret:
         movem.l (sp)+,d1-d7/a2-a5
         rts
@@ -1224,7 +1260,8 @@ td_disk_present:
         bne.s   .dp_dl
         rts
 
-; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs décodés+vérifiés (checksums en-tête ET data OK).
+; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = nombre de secteurs DISTINCTS décodés+vérifiés (checksums en-tête ET
+; data OK), a0 = leur masque (bit n = secteur n), d1 = piste du dernier secteur valide.
 ; Scanne la piste brute à la recherche des syncs $4489 ; pour chaque secteur : décode info (combine odd/even),
 ; vérifie format=$FF et numéro de secteur < 11, vérifie le checksum en-tête (XOR des 10 longs MFM info+label & MASK
 ; == checksum stocké décodé) et le checksum data (XOR des 256 longs MFM data & MASK), puis décode les 512 o de
@@ -1232,8 +1269,9 @@ td_disk_present:
 td_decode_track:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a4                ; a4 = base sectorbuf
-        lea     (TD_RAWBYTES-1200)(a0),a2  ; a2 = fin de scan (laisse 1200 o pour le dernier secteur)
-        moveq   #0,d7                ; d7 = compteur de secteurs valides
+        lea     (TD_RAWBYTES-TD_SECBODY)(a0),a2 ; a2 = dernier début d'en-tête possible : en-tête + données dans le
+                                     ; tampon (une piste longue qui commence avant le gap finit au ras du tampon)
+        moveq   #0,d7                ; d7 = masque des secteurs valides
         moveq   #0,d5                ; d5 = n° de piste du dernier secteur valide (renvoyé en d1 -> oracle seek B2b)
 .sc_loop:
         cmp.l   a2,a0
@@ -1244,6 +1282,8 @@ td_decode_track:
         addq.l  #2,a0                ; saute les $4489 consécutifs (2 mots de sync)
         cmp.w   #$4489,(a0)
         beq.s   .sc_skipsync
+        cmp.l   a2,a0
+        bhi     .sc_done             ; secteur coupé par la fin du tampon
         move.l  a0,a3                ; a3 = en-tête du secteur (info_odd)
         ; décode info = combine(info_odd, info_even)
         move.l  (a3),d0
@@ -1318,7 +1358,7 @@ td_decode_track:
         move.l  d0,(a1)+
         dbra    d1,.sc_data
         move.l  (sp)+,a0            ; restaure le pointeur de scan
-        addq.l  #1,d7              ; secteur valide
+        bset    d6,d7              ; secteur valide (un secteur relu en fin de tampon ne compte qu'une fois)
         move.l  d4,d5              ; n° de piste de ce secteur = (info>>16)&$FF
         swap    d5
         and.l   #$FF,d5            ; d5 = track (oracle du seek : doit valoir la piste demandée)
@@ -1328,7 +1368,16 @@ td_decode_track:
         addq.l  #2,a0
         bra     .sc_loop
 .sc_done:
-        move.l  d7,d0              ; d0 = nombre de secteurs valides
+        moveq   #0,d0              ; d0 = nombre de secteurs valides (bits du masque)
+        move.l  d7,d1
+.sc_cnt:
+        lsr.l   #1,d1
+        bcc.s   .sc_cnt0
+        addq.l  #1,d0
+.sc_cnt0:
+        tst.l   d1
+        bne.s   .sc_cnt
+        move.l  d7,a0              ; a0 = masque
         move.l  d5,d1              ; d1 = n° de piste (du dernier secteur valide) -> oracle du seek B2b
         movem.l (sp)+,d2-d7/a2-a5
         rts

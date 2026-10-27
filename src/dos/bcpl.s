@@ -28,6 +28,7 @@
                 xref    rcli_seg
                 xref    dos_bufwrite         ; dos_lib.s : écriture différée (wrch & co vers un fichier)
                 xref    dos_flushout
+                xref    dos_pktretry         ; dos_lib.s : requester « Please replace volume »
                 xref    dos_setnow           ; dos_lib.s : règle l'heure système (setdatstamp)
                 xref    proc_create          ; process.s : Process + pile + pr_MsgPort + AddTask
                 xref    ser_puts
@@ -1918,6 +1919,7 @@ g_rootstruct:
 ; Res2, Arg1...). Envoi synchrone au port, réponse sur le port du process ; -> dp_Res1 ; Result2 := dp_Res2.
 g_sendpkt:
         BENTER
+        move.l  DP_PORT(a4),-(sp)    ; destination, gardée pour un renvoi
         lea     -MN_SIZE(sp),sp      ; Message exec sur la pile 68000
         move.l  sp,a0
         moveq   #(MN_SIZE/2)-1,d0
@@ -1930,11 +1932,12 @@ g_sendpkt:
         bsr     rt_this
         lea     PR_MSGPORT(a3),a3    ; port de réponse
         move.l  a3,MN_REPLYPORT(a0)
-        move.l  a0,a1                ; a1 = message
-        move.l  DP_PORT(a4),a0       ; a0 = destination (argument 2)
-        move.l  a1,DP_LINK(a4)
-        move.l  a3,DP_PORT(a4)       ; le handler répond au port du process
+        move.l  a0,DP_LINK(a4)
         move.l  ($4).w,a6
+.sk_send:
+        move.l  a3,DP_PORT(a4)       ; le handler répond au port du process
+        move.l  sp,a1                ; a1 = message
+        move.l  MN_SIZE(sp),a0       ; a0 = destination (argument 2)
         jsr     LVO_PUTMSG(a6)       ; PutMsg(port a0, message a1)
 .sk_wait:
         move.l  a3,a0
@@ -1943,10 +1946,19 @@ g_sendpkt:
         jsr     LVO_GETMSG(a6)
         tst.l   d0
         beq     .sk_wait
+        move.l  DP_RES1(a4),d0
+        move.l  DP_RES2(a4),d1
+        jsr     dos_pktretry         ; volume éjecté : « Please replace volume », Retry -> renvoi
+        tst.l   d0
+        beq.s   .sk_done
+        clr.l   DP_RES1(a4)
+        clr.l   DP_RES2(a4)
+        bra.s   .sk_send
+.sk_done:
         move.l  DP_RES2(a4),d0
         bsr     rt_setr2
         move.l  DP_RES1(a4),d1
-        lea     MN_SIZE(sp),sp
+        lea     MN_SIZE+4(sp),sp
         BLEAVE
 
 ; 51 currentdir(set, lock) : set = 0 -> renvoie pr_CurrentDir ; sinon renvoie l'ancien et écrit lock.

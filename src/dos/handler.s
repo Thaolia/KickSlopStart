@@ -1134,6 +1134,7 @@ hnd_gate:
                 cmp.l   d1,d0
                 beq.s   .gt_ok
 .gt_218:
+                move.l  d0,HND_REFVOL                 ; volume réclamé par le requester « Please replace volume » (dos)
                 move.l  #ERROR_DEVICE_NOT_MOUNTED,d0
                 rts
 ; .gt_arg(d0.b = décalage dans le packet de l'argument lock | 0, d1 = volume monté) -> Z = 1 : accepté, sinon d0 = code
@@ -1161,6 +1162,7 @@ hnd_gate:
                 cmp.l   FL_VOLUME(a0),d1
                 beq.s   .ga_ok
 .ga_218:
+                move.l  FL_VOLUME(a0),HND_REFVOL
                 move.l  #ERROR_DEVICE_NOT_MOUNTED,d0
 .ga_err:
                 addq.l  #4,sp

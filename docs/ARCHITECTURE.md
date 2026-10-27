@@ -554,8 +554,27 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   DISKINSERTED / DISKREMOVED à toutes les fenêtres qui les demandent (it_diskbc). Workbench : une icône par volume
   monté (table WBS_VOLS, 8 au plus), « <volume>:Disk.info » sinon icône par défaut dessinée à la main, placement en
   colonnes de 96 px depuis la droite ; relevé au démarrage, au tic de 5 s et sur ces IDCMP ; RAM DISK y apparaît.
-  Écarts connus : pas de requester « Please replace volume » (l'accès renvoie 218), pas d'icône « DF0:NDOS », un
-  volume dont la fenêtre est ouverte perd quand même son icône à l'éjection s'il n'a pas de lock.
+  Requester « Please replace volume / <nom> / in any drive » (2026-10-27, spec §2.4) : le handler retient en
+  HND_REFVOL ($7C4) le volume d'un lock ou d'un fichier refusé (218) ; `dos_pktretry` (dos_lib.s), appelé par les
+  deux chemins d'envoi de packets (`dos_sendpkt` et `sendpkt` du runtime BCPL), affiche le requester système (Retry /
+  Cancel, fenêtre pr_WindowPtr, rien si -1 ou pour une simple tâche) si ce volume est toujours absent ; Retry ou
+  DISKINSERTED (le handler continue son tic pendant que l'appelant attend) renvoient le packet, Cancel rend 0 / 218.
+  Prouvé sous FS-UAE (sonde dskchg LA, V11) : éjection -> requester ; réinsertion -> fermé seul, Examine = -1,
+  IoErr 0, Lock("Workbench1.3:c") et Lock("DF0:") aboutissent ; Cancel -> Examine = 0, IoErr 218.
+  Écarts connus : pas d'icône « DF0:NDOS », un volume dont la fenêtre est ouverte perd quand même son icône à
+  l'éjection s'il n'a pas de lock ; un Lock par le nom d'un volume connu mais absent donne « Please insert volume »
+  (partage insert/replace non tranché par la spec).
+  (7d) **trackdisk : pistes longues et pistes incomplètes** (2026-10-27, signalé sur l'émulateur ESP32
+  amiga500-esp32 : « Unable to load …: Error code 121 » sur WB 1.2, SysInfo, Caesar). Sa piste fait 6 399 mots
+  (gap de 830 octets) : notre décodeur arrêtait sa recherche 1 200 octets avant la fin du tampon brut, et le dernier
+  secteur d'une lecture commencée avant le gap était ignoré ; `td_fill` rendait alors une piste « partielle » que la
+  lecture copiait quand même, secteur manquant compris (contenu périmé du tampon -> hunks invalides, 121). Désormais :
+  un en-tête est accepté tant que en-tête + données (TD_SECBODY, 1 080 o) tiennent dans le tampon ; le décodeur rend
+  le masque des secteurs DISTINCTS (a0) ; `td_fill` relit une piste incomplète jusqu'à TD_FILLTRIES (4) fois en
+  cumulant les secteurs bons (une lecture de la mauvaise piste annule le cumul) ; une lecture n'est servie que si
+  chacun des secteurs demandés est bon, sinon TDERR_NotSpec. Test `tests/td_decode_test.py` (unicorn, 68000) : le
+  vrai code de la ROM sur des pistes synthétiques (gaps 532/700/830, pistes 0/41/159, début à chacun des 11
+  secteurs) : 99/99 ; l'ancien décodeur échouait dans 30 cas sur 33 avec le gap de 830.
   (7c) **OctaMED Professional v4** (spec `docs/analysis/octamed-v34.md`, 2026-10-27) : un écran CUSTOMSCREEN 640 x 256
   x 3 et une fenêtre BACKDROP|BORDERLESS|RMBTRAP ; les boutons sont des zones testées sur MOUSEBUTTONS. Corrections :
   - **auto-tests de boot qui rendent ce qu'ils prennent** : M7B remet le latch du timer A de la CIA-A à $FFFF (valeur
