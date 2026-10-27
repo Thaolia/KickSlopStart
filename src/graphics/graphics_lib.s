@@ -64,6 +64,7 @@
                 xref    gfx_ReadPixel
                 xref    gfx_LockLayerRom
                 xref    gfx_UnlockLayerRom
+                xref    gfx_AttemptLockLayerRom
                 xref    gfx_AndRectRegion
                 xref    gfx_OrRectRegion
                 xref    gfx_NewRegion
@@ -96,7 +97,7 @@ graphics_inittab:
         dc.l    graphics_initfunc        ; initFunc
 ; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N. On remplit jusqu'à LoadView (-222 = vecteur 37) ; les
 ; vecteurs 5..34 (-30..-204) non implémentés pointent sur graphics_null (dcb évite tout miscount manuel).
-graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu V34 complet (106 vecteurs)
+graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu V34 complet (109 vecteurs)
         dc.l    graphics_open            ; 1 : LVO -6
         dc.l    graphics_close           ; 2 : LVO -12
         dc.l    graphics_expunge         ; 3 : LVO -18
@@ -193,7 +194,10 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_OrRegionRegion       ; 102 : LVO -612
         dc.l    gfx_XorRegionRegion      ; 103 : LVO -618
         dc.l    gfx_AndRegionRegion      ; 104 : LVO -624
-        dcb.l   2,graphics_null          ; 105..106 : LVO -630..-636 (non implémentés)
+        dc.l    gfx_SetRGB4CM            ; 105 : LVO -630 SetRGB4CM(colormap a0, n d0, r d1, v d2, b d3)
+        dc.l    graphics_null            ; 106 : LVO -636 BltMaskBitMapRastPort (non implémenté)
+        dcb.l   2,graphics_null          ; 107..108 : LVO -642/-648 (privés)
+        dc.l    gfx_AttemptLockLayerRom  ; 109 : LVO -654 AttemptLockLayerRom(couche a5) -> d0
         dc.l    -1
 graphics_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
@@ -853,6 +857,30 @@ gfx_WaitTOF:
         cmp.l   d2,d0
         bhs.s   .wt_lp
         move.l  (sp)+,d2
+        rts
+
+; SetRGB4CM(colormap a0, n d0, r d1, v d2, b d3) : couleur n de la ColorMap seulement (l'affichage n'est pas touché).
+; Indice hors de la ColorMap : rien.
+gfx_SetRGB4CM:
+        cmpa.w  #0,a0
+        beq.s   .sc_ret
+        cmp.w   cm_Count(a0),d0
+        bhs.s   .sc_ret
+        move.l  d4,-(sp)
+        and.w   #$F,d1
+        lsl.w   #8,d1
+        move.w  d2,d4
+        and.w   #$F,d4
+        lsl.w   #4,d4
+        or.w    d4,d1
+        move.w  d3,d4
+        and.w   #$F,d4
+        or.w    d4,d1
+        move.l  cm_ColorTable(a0),a0
+        add.w   d0,d0
+        move.w  d1,0(a0,d0.w)
+        move.l  (sp)+,d4
+.sc_ret:
         rts
 
 ; GetRGB4(colormap a0, n d0) -> d0 = couleur n ($0RGB), -1 si la ColorMap ou l'indice ne conviennent pas.

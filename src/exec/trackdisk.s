@@ -109,9 +109,12 @@ trackdisk_null:
 trackdisk_beginio:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a2                ; a2 = ioreq
-        clr.l   IO_ACTUAL(a2)
         clr.b   IO_ERROR(a2)
         move.w  IO_COMMAND(a2),d0
+        cmp.w   #TD_FORMAT,d0        ; TD_FORMAT ne touche pas io_Actual (spec trackdisk-write-v34 §8, étapes K et L)
+        beq.s   .td_nact
+        clr.l   IO_ACTUAL(a2)
+.td_nact:
                 ifeq    TD_READ_NOCMD
         cmp.w   #CMD_READ,d0
         beq.s   .td_read
@@ -888,7 +891,10 @@ td_wr:
         st      0(a0,d1.w)
         add.l   d5,a5
         add.l   d5,d3
+        tst.l   d7
+        bne.s   .wr_noact
         add.l   d5,IO_ACTUAL(a2)
+.wr_noact:
         sub.l   d5,d2
         bra     .wr_loop
 .wr_done:
@@ -1135,6 +1141,7 @@ td_encode_track:
         addq.w  #1,d5
         cmp.w   #MFM_NSECT,d5
         blo     .en_sec
+        move.w  #TD_WRTAIL,(a2)+     ; mot de queue
         movem.l (sp)+,d2-d7/a2-a5
         rts
 .en_long:                            ; d0 -> (a2)+ : bits impairs puis pairs. Clobbe d2.
@@ -1183,7 +1190,7 @@ td_write_track:
         move.w  #INTF_DSKBLK,INTREQ
         move.w  #$7F00,ADKCON        ; précompensation, MFM, débit, sync : effacés (bits audio intacts)
         move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST),d0
-        cmp.w   #TD_NTRACKS/2,d6
+        cmp.w   #TD_PCTRACK,d6
         blo.s   .wt_pc
         or.w    #ADKF_PRECOMP140,d0
 .wt_pc:

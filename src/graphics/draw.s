@@ -36,6 +36,7 @@
                 xdef    gfx_ReadPixel
                 xdef    gfx_LockLayerRom
                 xdef    gfx_UnlockLayerRom
+                xdef    gfx_AttemptLockLayerRom
                 xdef    gfx_putrow
                 xref    topaz8_font
                 xref    gfx_OwnBlitter
@@ -3395,4 +3396,17 @@ gfx_UnlockLayerRom:
         jsr     LVO_RELEASESEMAPHORE(a6)
         movem.l (sp)+,d0-d1/a0-a1/a6
 .unlo_r:
+        rts
+; AttemptLockLayerRom(layer a5) -> d0 = vrai si la couche est verrouillée (sans attendre), faux si elle est tenue par
+; une autre tâche. Préserve d1/a0/a1/a6.
+gfx_AttemptLockLayerRom:
+        moveq   #1,d0
+        cmpa.w  #0,a5
+        beq.s   .alo_r
+        movem.l d1/a0-a1/a6,-(sp)
+        lea     LY_LOCK(a5),a0
+        move.l  ($4).w,a6
+        jsr     LVO_ATTEMPTSEMAPHORE(a6)
+        movem.l (sp)+,d1/a0-a1/a6
+.alo_r:
         rts

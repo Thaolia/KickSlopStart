@@ -871,6 +871,10 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     retirée, fenêtres OctaMEDv4 et RAM DISK ouvertes. Requester « Please replace volume / <nom> / in any drive »
     (lock ou fichier d'un volume éjecté ; Retry ou réinsertion relancent l'appel, Cancel rend 218) : prouvé par la
     sonde dskchg LA (V11). Reste : icône DF0:NDOS.
+    Avant un essai sur A500 réel : piste écrite au format de la vraie 1.3 (garde 1660 o, 6815 mots, précompensation
+    dès la piste 81 ; sonde tdwrite identique à la vraie ROM), table graphics à 109 vecteurs (SetRGB4CM,
+    AttemptLockLayerRom). Specs d'analyse ajoutées : trackdisk-write, coldstart-hardware, coverage (inventaire des 390
+    LVO V34), puis graphics-blitter, graphics-display, alert.
     trackdisk robuste aux pistes longues (émulateur ESP32 amiga500-esp32, erreur 121) : décodeur jusqu'au ras du
     tampon, masque des secteurs distincts, relecture d'une piste incomplète (4 fois), erreur plutôt que contenu
     périmé ; test unicorn tests/td_decode_test.py (99/99, l'ancien code 30 échecs sur 33 avec un gap de 830 octets).

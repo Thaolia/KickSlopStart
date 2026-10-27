@@ -92,12 +92,15 @@ TD_GETNUMTRACKS EQU 19
 TD_ADDCHANGEINT EQU 20
 TD_REMCHANGEINT EQU 21
 DSKB_PROT     EQU 3            ; CIA-A PRA : /WPRO (0 = disquette protégée)
-ADKF_PRECOMP140 EQU $2000      ; précompensation 140 ns (cylindres internes, >= 40)
-; écriture d'une piste : zone de garde en tête puis 11 secteurs de 1088 octets MFM (préambule, sync, en-tête, label,
-; sommes de contrôle, données) ; la piste dépasse un peu un tour : la fin recouvre la garde, jamais un secteur.
-TD_WRGAP      EQU 700
+ADKF_PRECOMP140 EQU $2000      ; précompensation 140 ns (pistes >= TD_PCTRACK)
+TD_PCTRACK    EQU 81             ; première piste (cylindre*2 + face) écrite avec précompensation (spec trackdisk-write-v34)
+; écriture d'une piste (spec trackdisk-write-v34 §2) : garde de 1660 octets en tête, 11 secteurs de 1088 octets MFM
+; (préambule, sync, en-tête, label, sommes, données), mot de queue : 6815 mots, ~218 ms. La piste dépasse nettement un
+; tour : la fin recouvre la garde, jamais un secteur, même sur un lecteur lent (~+4 %) ; aucun reste de l'ancienne piste.
+TD_WRGAP      EQU 1660
 TD_SECRAW     EQU 1088
-TD_WRBYTES    EQU TD_WRGAP+MFM_NSECT*TD_SECRAW
+TD_WRTAIL     EQU $AAA8          ; mot de queue après le dernier secteur
+TD_WRBYTES    EQU TD_WRGAP+MFM_NSECT*TD_SECRAW+2
 TD_WRWORDS    EQU TD_WRBYTES/2
 ; TD_READ_NOCMD=1 (RED B4) : BeginIO ne reconnaît PAS CMD_READ (retombe sur IOERR_NOCMD) -> io_Data reste à 0 ->
 ; secteur lu != « DOS\0 » -> « M6W TRACKDISK CMD_READ OK » absent. Isole le handler de commande. Défaut 0.

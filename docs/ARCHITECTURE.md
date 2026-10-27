@@ -564,6 +564,16 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   Écarts connus : pas d'icône « DF0:NDOS », un volume dont la fenêtre est ouverte perd quand même son icône à
   l'éjection s'il n'a pas de lock ; un Lock par le nom d'un volume connu mais absent donne « Please insert volume »
   (partage insert/replace non tranché par la spec).
+  (7e) **Écriture disquette au format de la vraie 1.3, table graphics complète** (2026-10-27, avant un essai sur A500
+  réel ; spec `docs/analysis/trackdisk-write-v34.md`). Piste écrite : garde de 1 660 octets, 11 secteurs, mot de queue
+  `$AAA8` = 6 815 mots (~218 ms, dépasse un tour : aucun reste de l'ancienne piste même sur un lecteur lent ; avant :
+  garde de 700 octets, 6 334 mots, fragile au-delà de ~1,5 % de lenteur). Précompensation 140 ns à partir de la piste
+  81 (TD_PCTRACK). TD_FORMAT ne touche plus io_Actual. Sonde `tests/tdwrite_run.sh` sur notre ROM : mêmes DSKLEN
+  ($DA9F) et ADKCON ($1100 / $3100) que la vraie ROM, étapes A-N identiques sauf H (la 1.3 écrit un secteur pour
+  CMD_WRITE de longueur 0) et O (sa TD_PROTSTATUS éteint toujours le moteur), écarts gardés. graphics : la table
+  s'arrêtait à −636 (106 vecteurs) : un appel à −642..−654 sautait hors de la table ; elle a les 109 vecteurs V34,
+  SetRGB4CM (−630) et AttemptLockLayerRom (−654, AttemptSemaphore du verrou de la couche) ; BltMaskBitMapRastPort
+  (−636) reste à faire (spec graphics-blitter-v34).
   (7d) **trackdisk : pistes longues et pistes incomplètes** (2026-10-27, signalé sur l'émulateur ESP32
   amiga500-esp32 : « Unable to load …: Error code 121 » sur WB 1.2, SysInfo, Caesar). Sa piste fait 6 399 mots
   (gap de 830 octets) : notre décodeur arrêtait sa recherche 1 200 octets avant la fin du tampon brut, et le dernier
