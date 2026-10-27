@@ -368,6 +368,14 @@ coldstart:                        ; $FC00D2
         move.l  (sp)+,a6
         tst.l   d0
         bne     cia_fail
+        move.l  a6,-(sp)             ; le test rend ce qu'il a pris : vecteur factice retiré, bit 0 désactivé (sinon le
+        move.l  a2,a6                ; timer B de CIA-B restait occupé pour les applications, ex. le lecteur d'OctaMED)
+        moveq   #1,d0
+        lea     cia_dummy_int(pc),a1
+        jsr     CIA_REMICRVECTOR(a6)
+        moveq   #$01,d0
+        jsr     CIA_ABLEICR(a6)
+        move.l  (sp)+,a6
         lea     msg_cia_ok(pc),a0
         bsr     ser_puts             ; « M5B CIA OK »
 
@@ -2513,7 +2521,9 @@ d2_done:
         tst.l   INT2_SRV2            ; 2e serveur de la chaîne appelé ?
         beq.s   .m7b_wait
         move.l  CIAR_HWBASE(a2),a0   ; les deux tournent -> cleanup matériel
-        move.b  #$00,CIA_CRA(a0)     ; stop Timer A
+        move.b  #$00,CIA_CRA(a0)     ; stop Timer A (mode continu : l'écriture du latch ne le relance pas)
+        move.b  #$FF,CIA_TALO(a0)    ; latch rendu à $FFFF, sa valeur de mise sous tension : des programmes (OctaMED)
+        move.b  #$FF,CIA_TAHI(a0)    ; démarrent ce timer sans le recharger ; à $00FF il tournait à ~2,8 kHz
         move.l  a6,-(sp)             ; RemICRVector(bit0)
         move.l  a2,a6
         moveq   #0,d0
@@ -2523,6 +2533,9 @@ d2_done:
         move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS -> pas d'INT2 pendant la démo
         tst.l   INT2_ORDER_SNAP      ; ordre : ciaa (pri 10) a tourné AVANT srv2 (pri 0) ?
         beq     m7b_fail
+        moveq   #INTB_PORTS,d0       ; le serveur de test quitte la chaîne (ciaa_server, le vrai, y reste)
+        lea     IS_STRIDE(a3),a1
+        jsr     LVO_REMINTSERVER(a6)
         lea     msg_m7b_ok(pc),a0
         bsr     ser_puts             ; « M7B PORTS OK »
 

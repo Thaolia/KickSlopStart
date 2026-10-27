@@ -899,6 +899,30 @@ prop_prep:
 ; (montants de WBorLeft/2, traits de WBorTop/2) sauf PROPBORDERLESS, puis le knob. Préserve d2-d7/a2-a5 ; clobbe
 ; d0/d1/a0/a1/a6.
 prop_render:
+        lea     prop_rend(pc),a1
+        bra.s   prop_keep
+
+; prop_keep(a1 = routine de dessin d'un gadget proportionnel, a2/a3/a5, d4-d7 transmis) : la routine est appelée,
+; puis les stylos et le mode du RastPort du gadget sont rendus : il est souvent celui de la fenêtre, où
+; l'application dessine sans les reposer (la liste de fichiers d'OctaMED, redessinée après RefreshGList de son
+; ascenseur, devenait invisible). Clobbe d0/d1/a0/a1/a6.
+prop_keep:
+        move.l  a1,-(sp)
+        bsr     gad_rpof
+        move.l  (sp)+,a1
+        move.l  a0,-(sp)
+        move.b  rp_FgPen(a0),-(sp)
+        move.b  rp_BgPen(a0),-(sp)
+        move.b  rp_DrawMode(a0),-(sp)
+        jsr     (a1)
+        move.l  6(sp),a0
+        move.b  (sp)+,rp_DrawMode(a0)
+        move.b  (sp)+,rp_BgPen(a0)
+        move.b  (sp)+,rp_FgPen(a0)
+        addq.l  #4,sp
+        rts
+
+prop_rend:
         movem.l d2-d7/a4,-(sp)
         lea     -PP_SIZE(sp),sp
         move.l  sp,a1
@@ -1058,9 +1082,10 @@ prop_update:
         bsr     gad_nolayer
         bne     gad_skip
         bsr     it_unclip
-        bsr     prop_update_nc
+        lea     prop_upd(pc),a1
+        bsr     prop_keep
         bra     it_reclip
-prop_update_nc:
+prop_upd:
         movem.l d2-d7/a4,-(sp)
         lea     -PP_SIZE-8(sp),sp
         move.l  sp,a1

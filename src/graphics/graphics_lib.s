@@ -137,14 +137,18 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_SetRast              ; 39 : LVO -234
         dc.l    gfx_Move                 ; 40 : LVO -240
         dc.l    gfx_Draw                 ; 41 : LVO -246
-        dcb.l   6,graphics_null         ; 42..47 : LVO -252..-282 (non implémentés)
+        dcb.l   3,graphics_null         ; 42..44 : LVO -252..-264 (AreaMove/Draw/End : non implémentés)
+        dc.l    gfx_WaitTOF              ; 45 : LVO -270 WaitTOF()
+        dcb.l   2,graphics_null         ; 46..47 : LVO -276..-282 (QBlit, InitArea : non implémentés)
         dc.l    gfx_SetRGB4              ; 48 : LVO -288 SetRGB4(vp a0, n d0, r d1, g d2, b d3)
-        dcb.l   2,graphics_null         ; 49..50 : LVO -294..-300 (non implémentés)
+        dc.l    graphics_null            ; 49 : LVO -294 QBSBlit (non implémenté)
+        dc.l    gfx_BltClear             ; 50 : LVO -300 BltClear(mémoire a1, taille d0, drapeaux d1)
         dc.l    gfx_RectFill             ; 51 : LVO -306
         dc.l    graphics_null            ; 52 : LVO -312 (non implémenté)
         dc.l    gfx_ReadPixel            ; 53 : LVO -318
         dc.l    gfx_WritePixel           ; 54 : LVO -324
-        dcb.l   2,graphics_null         ; 55..56 : LVO -330..-336 (non implémentés)
+        dc.l    graphics_null            ; 55 : LVO -330 Flood (non implémenté)
+        dc.l    gfx_PolyDraw             ; 56 : LVO -336 PolyDraw(rp a1, nombre d0, points a0)
         dc.l    gfx_SetAPen              ; 57 : LVO -342
         dc.l    gfx_SetBPen              ; 58 : LVO -348
         dc.l    gfx_SetDrMd              ; 59 : LVO -354
@@ -152,12 +156,12 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_CBump                ; 61 : LVO -366 CBump(ucl a1)
         dc.l    gfx_CMove                ; 62 : LVO -372 CMove(ucl a1, registre d0, valeur d1)
         dc.l    gfx_CWait                ; 63 : LVO -378 CWait(ucl a1, v d0, h d1)
-        dc.l    graphics_null            ; 64 : LVO -384 VBeamPos (non impl.)
+        dc.l    gfx_VBeamPos             ; 64 : LVO -384 VBeamPos()
         dc.l    gfx_InitBitMap           ; 65 : LVO -390
         dc.l    gfx_ScrollRaster         ; 66 : LVO -396
         dc.l    graphics_null            ; 67 : LVO -402 WaitBOVP (non implémenté)
         dc.l    gfx_GetSprite            ; 68 : LVO -408
-        dc.l    graphics_null            ; 69 : LVO -414 FreeSprite (non implémenté)
+        dc.l    gfx_FreeSprite           ; 69 : LVO -414 FreeSprite(n° d0)
         dc.l    gfx_ChangeSprite         ; 70 : LVO -420
         dc.l    gfx_MoveSprite           ; 71 : LVO -426
         dc.l    gfx_LockLayerRom         ; 72 : LVO -432
@@ -180,7 +184,9 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
         dcb.l   2,graphics_null          ; 91..92 : LVO -546..-552 (non implémentés)
         dc.l    gfx_XorRectRegion        ; 93 : LVO -558
-        dcb.l   5,graphics_null          ; 94..98 : LVO -564..-588 (non implémentés)
+        dcb.l   3,graphics_null          ; 94..96 : LVO -564..-576 (non implémentés)
+        dc.l    gfx_GetRGB4              ; 97 : LVO -582 GetRGB4(colormap a0, n d0)
+        dc.l    graphics_null            ; 98 : LVO -588 ScrollVPort (non implémenté)
         dc.l    gfx_UCopperListInit      ; 99 : LVO -594 UCopperListInit(ucl a0, nombre d0)
         dc.l    gfx_FreeGBuffers         ; 100 : LVO -600
         dc.l    gfx_BltBitMapRastPort    ; 101 : LVO -606
@@ -490,10 +496,10 @@ gfx_LoadRGB4:
         rts
 
 ; gfx_SetRGB4(vp a0, n d0, r d1, g d2, b d3) : ColorTable[n] = RGB 4 bits, et le MOVE COLORn déjà généré est corrigé
-; dans le fragment de la ViewPort et, si elle est la ViewPort de la vue affichée, dans la liste maîtresse.
+; dans le fragment de la ViewPort et, si elle fait partie de la vue affichée, à sa place dans la liste maîtresse.
 gfx_SetRGB4:
         cmpa.w  #0,a0
-        beq.s   .sr_ret
+        beq     .sr_ret
         move.l  vp_ColorMap(a0),a1
         cmpa.w  #0,a1
         beq.s   .sr_ret
@@ -522,16 +528,29 @@ gfx_SetRGB4:
         bra.s   .sr_ret
 .sr_hit:
         move.w  d1,2(a1)
+        sub.l   d2,a1                ; a1 = position du MOVE dans le fragment
         move.l  gb_ActiView(a6),d3
         beq.s   .sr_ret
-        exg     d3,a0
-        cmp.l   v_ViewPort(a0),d3
-        bne.s   .sr_ret
+        move.l  a0,d2                ; d2 = ViewPort
+        move.l  d3,a0
         move.l  v_LOFCprList(a0),d3
         beq.s   .sr_ret
-        sub.l   d2,a1                ; même position dans la copie du fragment
+        add.l   #GFX_SPRCOP_SIZE,d3  ; liste maîtresse : sprites, puis un fragment par ViewPort (qui en a un), dans
+        move.l  v_ViewPort(a0),a0    ; l'ordre de la vue
+.sr_vp:
+        cmpa.w  #0,a0
+        beq.s   .sr_ret              ; ViewPort hors de la vue affichée
+        cmp.l   a0,d2
+        beq.s   .sr_mst
+        tst.l   vp_DspIns(a0)
+        beq.s   .sr_vnx
+        add.l   #GFX_FRAG_SIZE,d3
+.sr_vnx:
+        move.l  vp_Next(a0),a0
+        bra.s   .sr_vp
+.sr_mst:
         add.l   d3,a1
-        move.w  d1,GFX_SPRCOP_SIZE+2(a1)
+        move.w  d1,2(a1)
 .sr_ret:
         rts
 
@@ -806,6 +825,100 @@ gfx_GetSprite:
         rts
 .gs_fail:
         moveq   #-1,d0
+        rts
+
+; FreeSprite(n° d0) : le canal redevient libre pour GetSprite.
+gfx_FreeSprite:
+        cmp.w   #8,d0
+        bhs.s   .fs_ret
+        move.w  gb_SprUsed(a6),d1
+        bclr    d0,d1
+        move.w  d1,gb_SprUsed(a6)
+.fs_ret:
+        rts
+
+; VBeamPos() -> d0 = ligne courante du faisceau vidéo (0..312 en PAL).
+gfx_VBeamPos:
+        move.l  CUSTOM+$004,d0       ; VPOSR (bit 0 = ligne 8) puis VHPOSR (ligne 0-7 en octet haut)
+        lsr.l   #8,d0
+        and.l   #$1FF,d0
+        rts
+; WaitTOF() : attend le début de la trame suivante (le faisceau repasse en haut de l'écran).
+gfx_WaitTOF:
+        move.l  d2,-(sp)
+        bsr.s   gfx_VBeamPos
+.wt_lp:
+        move.l  d0,d2
+        bsr.s   gfx_VBeamPos
+        cmp.l   d2,d0
+        bhs.s   .wt_lp
+        move.l  (sp)+,d2
+        rts
+
+; GetRGB4(colormap a0, n d0) -> d0 = couleur n ($0RGB), -1 si la ColorMap ou l'indice ne conviennent pas.
+gfx_GetRGB4:
+        cmpa.w  #0,a0
+        beq.s   .gr_bad
+        cmp.w   cm_Count(a0),d0
+        bhs.s   .gr_bad
+        move.l  cm_ColorTable(a0),a0
+        add.w   d0,d0
+        moveq   #0,d1
+        move.w  0(a0,d0.w),d1
+        move.l  d1,d0
+        rts
+.gr_bad:
+        moveq   #-1,d0
+        rts
+
+; BltClear(mémoire a1, taille d0, drapeaux d1) : met la zone à zéro. Drapeau bit 1 : d0 = lignes (mot haut) x octets par
+; ligne (mot bas), sinon un nombre d'octets. Le processeur s'en charge : l'attente de fin (bit 0) est donc acquise.
+gfx_BltClear:
+        btst    #1,d1
+        beq.s   .bc_n
+        move.l  d0,d1
+        swap    d1
+        mulu    d1,d0                ; lignes x octets (mot bas de d0)
+.bc_n:
+        move.l  a1,d1
+        btst    #0,d1
+        beq.s   .bc_al
+        tst.l   d0
+        beq.s   .bc_ret
+        clr.b   (a1)+
+        subq.l  #1,d0
+.bc_al:
+        move.l  d0,d1
+        lsr.l   #2,d1
+        bra.s   .bc_le
+.bc_l:
+        clr.l   (a1)+
+.bc_le:
+        subq.l  #1,d1
+        bpl.s   .bc_l
+        btst    #1,d0
+        beq.s   .bc_b
+        clr.w   (a1)+
+.bc_b:
+        btst    #0,d0
+        beq.s   .bc_ret
+        clr.b   (a1)+
+.bc_ret:
+        rts
+
+; PolyDraw(rp a1, nombre d0, points a0) : Draw vers chacun des points (paires de mots x, y) depuis la position
+; courante.
+gfx_PolyDraw:
+        movem.l d2/a2,-(sp)
+        move.l  a0,a2
+        move.w  d0,d2
+        bra.s   .pd_e
+.pd_l:
+        movem.w (a2)+,d0-d1
+        bsr     gfx_Draw
+.pd_e:
+        dbra    d2,.pd_l
+        movem.l (sp)+,d2/a2
         rts
 
 ; ChangeSprite(vp a0, sprite a1, données a2) : nouvelle image du canal ss_num (POS/CTL recalculés à ss_x/ss_y) ;

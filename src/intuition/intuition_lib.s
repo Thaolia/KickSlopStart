@@ -62,6 +62,8 @@
                 xref    intuition_OnMenu
                 xref    intuition_OffMenu
                 xref    intuition_ModifyIDCMP
+                xref    intuition_ShowTitle
+                xref    intuition_ViewPortAddress
                 xref    intuition_PrintIText
                 xref    intuition_IntuiTextLength
                 xref    it_startinput            ; screens.s : tâche d'entrée (boutons, gadgets, menus)
@@ -130,10 +132,10 @@ intuition_vectors:
         dc.l    intuition_SetMenuStrip   ; 44 : LVO -264 SetMenuStrip(fenêtre a0, menu a1)
         dc.l    intuition_null           ; 45 : LVO -270 SetPointer (non impl.)
         dc.l    intuition_SetWindowTitles ; 46 : LVO -276 SetWindowTitles(fenêtre a0, titre a1, titre d'écran a2)
-        dc.l    intuition_null           ; 47 : LVO -282 ShowTitle (non impl.)
+        dc.l    intuition_ShowTitle      ; 47 : LVO -282 ShowTitle(écran a0, montrer d0)
         dc.l    intuition_SizeWindow     ; 48 : LVO -288 SizeWindow(fenêtre a0, dx d0, dy d1)
         dc.l    intuition_ViewAddress    ; 49 : LVO -294
-        dc.l    intuition_null           ; 50 : LVO -300 (non impl.)
+        dc.l    intuition_ViewPortAddress ; 50 : LVO -300 ViewPortAddress(fenêtre a0)
         dc.l    intuition_WindowToBack   ; 51 : LVO -306 WindowToBack(fenêtre a0)
         dc.l    intuition_WindowToFront  ; 52 : LVO -312 WindowToFront(fenêtre a0)
         dc.l    intuition_WindowLimits   ; 53 : LVO -318 WindowLimits(fenêtre a0, minW d0, minH d1, maxW d2, maxH d3)

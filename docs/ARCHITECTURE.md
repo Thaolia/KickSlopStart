@@ -556,6 +556,25 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   colonnes de 96 px depuis la droite ; relevé au démarrage, au tic de 5 s et sur ces IDCMP ; RAM DISK y apparaît.
   Écarts connus : pas de requester « Please replace volume » (l'accès renvoie 218), pas d'icône « DF0:NDOS », un
   volume dont la fenêtre est ouverte perd quand même son icône à l'éjection s'il n'a pas de lock.
+  (7c) **OctaMED Professional v4** (spec `docs/analysis/octamed-v34.md`, 2026-10-27) : un écran CUSTOMSCREEN 640 x 256
+  x 3 et une fenêtre BACKDROP|BORDERLESS|RMBTRAP ; les boutons sont des zones testées sur MOUSEBUTTONS. Corrections :
+  - **auto-tests de boot qui rendent ce qu'ils prennent** : M7B remet le latch du timer A de la CIA-A à $FFFF (valeur
+    de mise sous tension) après son one-shot de 255 ticks. OctaMED démarre ce timer sans le recharger : à $00FF il
+    tournait à ~2,8 kHz, la machine saturait et l'éditeur ne se dessinait jamais. M7B retire aussi son serveur PORTS
+    de test, M5B son vecteur factice (CIA-B bit 1, désactivé).
+  - **gadgets proportionnels** : `prop_render` et `prop_update` passent par `prop_keep`, qui rend FgPen, BgPen et
+    DrawMode du RastPort du gadget, souvent celui de la fenêtre. OctaMED redessine sa liste de fichiers après
+    RefreshGList de son ascenseur sans reposer ses stylos : elle sortait au stylo du fond, donc invisible.
+  - **graphics** : SetRGB4 patche la liste copper maîtresse pour toute ViewPort de la vue (fragment de
+    GFX_FRAG_SIZE par ViewPort) ; WaitTOF (−270), BltClear (−300), PolyDraw (−336), VBeamPos (−384, VPOSR/VHPOSR),
+    FreeSprite (−414), GetRGB4 (−582).
+  - **intuition** : ShowTitle (−282, couche de la barre de titre devant ou derrière, puis rafraîchissement),
+    ViewPortAddress (−300).
+  - Prouvé sous FS-UAE (`tests/dskchg_run.sh`) : écran d'accueil et palette conformes, éditeur, FILES (liste du
+    disque, volumes, jauge), PLAY, PLAY SONG (lecture, TIMER qui avance), STOP, flèches du clavier.
+  - Harnais : `DSKCHG_SERIAL=1` capture le série (ROM `-DDOSTRACE=1`), commande `key`, joystick clavier de FS-UAE
+    coupé (`joystick_port_1 = none` : sinon les flèches n'atteignent jamais la CIA), F12+D réessayé.
+  - Limite du harnais : FS-UAE ne transmet pas Ctrl-F1.
   (8) **Libérations mémoire fidèles (exec)**. Révélé par l'heure au montage : le boot WB plantait (« Background CLI »,
   globale 133 absente) dès qu'une heure non nulle précédait SetClock, car un bloc de pile du CLI de fond avait été
   réattribué. Trois causes, trouvées au traceur MEMTRACK :

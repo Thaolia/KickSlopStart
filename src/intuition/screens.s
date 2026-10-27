@@ -55,6 +55,8 @@
                 xref    rq_restack
                 xdef    it_reclip
                 xdef    intuition_ModifyIDCMP
+                xdef    intuition_ShowTitle
+                xdef    intuition_ViewPortAddress
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
@@ -1773,6 +1775,35 @@ wn_depth:
         bsr     it_relist
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; ShowTitle(écran a0, montrer d0) : la barre de titre de l'écran passe devant (d0 != 0) ou derrière (d0 = 0) les
+; fenêtres BACKDROP (sa couche est une backdrop : elle reste toujours derrière les autres fenêtres) ; zones abîmées
+; redessinées. Écran sans barre (SCREENQUIET) : rien.
+intuition_ShowTitle:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a4
+        move.l  SC_BARLAYER(a4),d1
+        beq.s   .st_ret
+        moveq   #LVO_UPFRONTLAYER,d2
+        tst.l   d0
+        bne.s   .st_go
+        moveq   #LVO_BEHINDLAYER,d2
+.st_go:
+        move.l  IB_LAYERSBASE(a5),a6
+        suba.l  a0,a0
+        move.l  d1,a1
+        jsr     0(a6,d2.w)
+        bsr     it_refresh
+.st_ret:
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; ViewPortAddress(fenêtre a0) -> d0 = ViewPort de l'écran de la fenêtre.
+intuition_ViewPortAddress:
+        move.l  WD_WSCREEN(a0),d0
+        add.l   #SC_VIEWPORT,d0
         rts
 
 ; MoveWindow(fenêtre a0, dx d0, dy d1) : déplacement borné à l'écran, puis zones abîmées redessinées.
