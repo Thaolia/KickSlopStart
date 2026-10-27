@@ -333,6 +333,639 @@ dr_span1:
         and.b   d4,(a0)+
         rts
 
+; dr_rect(a5 = contexte, d0/d1 = coin haut gauche, d2/d3 = coin bas droit (absolus, inclusifs), d4.b = stylo A,
+; d5.b = stylo B, a0 = motif (0 : plein), d6.w = masque des lignes du motif) : remplit le rectangle dans chaque
+; ClipRect utilisable, plans filtrés par rp_Mask, selon rp_DrawMode. Plein : stylo A (COMPLEMENT : inversion). Motif :
+; bits à 1 au stylo A (COMPLEMENT : inversion), bits à 0 au stylo B en JAM2 seul, laissés sinon ; mot de la ligne y =
+; motif[(y - OY) & masque], bit 15 = pixel x tel que (x - OX) ≡ 0 (mod 16). Découpage, masques et adresse calculés une
+; fois par ClipRect et par plan : le coût par pixel ne dépend plus du nombre de ClipRects. Préserve tout.
+RC_X0           EQU 0                ; rectangle demandé (absolu) : X0 Y0 X1 Y1
+RC_Y0           EQU 2
+RC_X1           EQU 4
+RC_Y1           EQU 6
+RC_FG           EQU 8                ; byte : stylo A
+RC_BG           EQU 9                ; byte : stylo B
+RC_PAT          EQU 10               ; motif (0 : plein)
+RC_PMASK        EQU 14               ; masque des lignes du motif
+RC_NB           EQU 16               ; octets de la ligne après le premier
+RC_FM           EQU 18               ; byte : masque du premier octet
+RC_LM           EQU 19               ; byte : masque du dernier octet
+RC_ROWS         EQU 20               ; lignes - 1
+RC_BPR          EQU 22               ; octets par ligne du BitMap
+RC_ROFF         EQU 24               ; décalage du premier octet dans un plan
+RC_SHIFT        EQU 28               ; rotation du mot de motif (premier pixel du premier octet -> bit 15)
+RC_PROW         EQU 30               ; ligne du motif de la première ligne
+RC_COMP         EQU 32               ; byte : COMPLEMENT
+RC_JAM2         EQU 33               ; byte : bits à 0 du motif au stylo B
+RC_F            EQU 34               ; byte : bit 0 = stylo A du plan courant
+RC_G            EQU 35               ; byte : bit 0 = stylo B du plan courant
+RC_PR           EQU 36               ; ligne du motif courante
+RC_RCNT         EQU 38               ; lignes restantes (motif)
+RC_PW           EQU 40               ; mot de motif tourné de la ligne courante
+RC_SIZE         EQU 42
+dr_rect:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        lea     -RC_SIZE(sp),sp
+        move.l  sp,a4
+        movem.w d0-d3,RC_X0(a4)
+        move.b  d4,RC_FG(a4)
+        move.b  d5,RC_BG(a4)
+        move.l  a0,RC_PAT(a4)
+        move.w  d6,RC_PMASK(a4)
+        move.l  DC_RP(a5),a0
+        move.b  rp_DrawMode(a0),d4
+        moveq   #COMPLEMENT,d5
+        and.b   d4,d5
+        sne     RC_COMP(a4)
+        and.b   #JAM2|COMPLEMENT,d4
+        cmp.b   #JAM2,d4
+        seq     RC_JAM2(a4)
+        move.l  DC_FIRST(a5),a3
+.rc_lp:
+        cmpa.w  #0,a3
+        beq.s   .rc_ret
+        movem.w RC_X0(a4),d0-d3
+        cmp.w   CR_MINX+2(a3),d3     ; le rectangle doit croiser la ClipRect
+        blt.s   .rc_n
+        cmp.w   CR_MINX+6(a3),d1
+        bgt.s   .rc_n
+        cmp.w   CR_MINX(a3),d2
+        blt.s   .rc_n
+        cmp.w   CR_MINX+4(a3),d0
+        bgt.s   .rc_n
+        move.l  a3,a0
+        bsr     dr_crset
+        beq.s   .rc_n
+        bsr.s   rc_one
+.rc_n:
+        move.l  CR_NEXT(a3),a3
+        bra.s   .rc_lp
+.rc_ret:
+        lea     RC_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+; rc_one(a4 = variables de dr_rect, a5) : le rectangle dans la ClipRect courante. Préserve a3-a5.
+rc_one:
+        movem.w RC_X0(a4),d0-d3
+        cmp.w   DC_CMINX(a5),d0
+        bge.s   .o_1
+        move.w  DC_CMINX(a5),d0
+.o_1:
+        cmp.w   DC_CMAXX(a5),d2
+        ble.s   .o_2
+        move.w  DC_CMAXX(a5),d2
+.o_2:
+        cmp.w   d2,d0
+        bgt     .o_ret
+        cmp.w   DC_CMINY(a5),d1
+        bge.s   .o_3
+        move.w  DC_CMINY(a5),d1
+.o_3:
+        cmp.w   DC_CMAXY(a5),d3
+        ble.s   .o_4
+        move.w  DC_CMAXY(a5),d3
+.o_4:
+        cmp.w   d3,d1
+        bgt     .o_ret
+        move.w  d1,d4
+        sub.w   DC_OY(a5),d4
+        move.w  d4,RC_PROW(a4)
+        sub.w   d1,d3
+        move.w  d3,RC_ROWS(a4)
+        move.l  DC_CBM(a5),a0
+        sub.w   DC_BX(a5),d0         ; coordonnées dans ce BitMap
+        sub.w   DC_BX(a5),d2
+        sub.w   DC_BY(a5),d1
+        moveq   #0,d4
+        move.w  bm_BytesPerRow(a0),d4
+        move.w  d4,RC_BPR(a4)
+        mulu    d1,d4
+        moveq   #0,d5
+        move.w  d0,d5
+        lsr.w   #3,d5                ; d5 = octet de début
+        add.l   d5,d4
+        move.l  d4,RC_ROFF(a4)
+        move.w  d2,d6
+        lsr.w   #3,d6
+        sub.w   d5,d6
+        move.w  d6,RC_NB(a4)
+        moveq   #-1,d7               ; masque de début : pixels >= x0
+        move.w  d0,d4
+        and.w   #7,d4
+        lsr.b   d4,d7
+        move.w  d2,d4                ; masque de fin : pixels <= x1
+        not.w   d4
+        and.w   #7,d4
+        moveq   #-1,d3
+        lsl.b   d4,d3
+        tst.w   d6
+        bne.s   .o_5
+        and.b   d3,d7                ; un seul octet
+.o_5:
+        move.b  d7,RC_FM(a4)
+        move.b  d3,RC_LM(a4)
+        lsl.w   #3,d5                ; x absolu du premier pixel du premier octet (l'origine X est multiple de 16)
+        add.w   DC_BX(a5),d5
+        sub.w   DC_OX(a5),d5
+        and.w   #15,d5
+        move.w  d5,RC_SHIFT(a4)
+        move.l  DC_RP(a5),a1
+        move.b  rp_Mask(a1),d6       ; d6 = plans autorisés
+        move.b  RC_FG(a4),d5         ; d5/d4 : bit 0 = stylo A/B du plan courant
+        move.b  RC_BG(a4),d4
+        moveq   #0,d7
+        move.b  bm_Depth(a0),d7
+        lea     bm_Planes(a0),a2
+        bra.s   .o_pe
+.o_pl:
+        move.l  (a2)+,a1
+        btst    #0,d6
+        beq.s   .o_pn
+        adda.l  RC_ROFF(a4),a1
+        bsr.s   rc_plane
+.o_pn:
+        lsr.b   #1,d6
+        lsr.b   #1,d5
+        lsr.b   #1,d4
+.o_pe:
+        dbra    d7,.o_pl
+.o_ret:
+        rts
+; rc_plane(a1 = premier octet de la première ligne, d5.b/d4.b bit 0 = stylos A/B de ce plan, a4) : remplit le
+; rectangle dans un plan. Clobbe d0-d3/a0/a1/a6.
+rc_plane:
+        movem.l d4-d7/a2,-(sp)
+        move.w  RC_ROWS(a4),d7
+        tst.l   RC_PAT(a4)
+        bne     .pl_pat
+        tst.b   RC_COMP(a4)
+        bne.s   .pl_inv
+        btst    #0,d5
+        beq.s   .pl_clr
+.pl_set:
+        move.l  a1,a0
+        move.b  RC_FM(a4),d0
+        or.b    d0,(a0)+
+        move.w  RC_NB(a4),d1
+        beq.s   .ps_nx
+        subq.w  #1,d1
+        moveq   #-1,d0
+        bsr     rc_fill
+        move.b  RC_LM(a4),d0
+        or.b    d0,(a0)+
+.ps_nx:
+        adda.w  RC_BPR(a4),a1
+        dbra    d7,.pl_set
+        bra     .pl_ret
+.pl_clr:
+        move.l  a1,a0
+        move.b  RC_FM(a4),d0
+        not.b   d0
+        and.b   d0,(a0)+
+        move.w  RC_NB(a4),d1
+        beq.s   .pc_nx
+        subq.w  #1,d1
+        moveq   #0,d0
+        bsr     rc_fill
+        move.b  RC_LM(a4),d0
+        not.b   d0
+        and.b   d0,(a0)+
+.pc_nx:
+        adda.w  RC_BPR(a4),a1
+        dbra    d7,.pl_clr
+        bra     .pl_ret
+.pl_inv:
+        move.l  a1,a0
+        move.b  RC_FM(a4),d0
+        eor.b   d0,(a0)+
+        move.w  RC_NB(a4),d1
+        beq.s   .pi_nx
+        subq.w  #1,d1
+        moveq   #-1,d0
+        bsr     rc_finv
+        move.b  RC_LM(a4),d0
+        eor.b   d0,(a0)+
+.pi_nx:
+        adda.w  RC_BPR(a4),a1
+        dbra    d7,.pl_inv
+        bra     .pl_ret
+; motif : chaque octet devient ((octet & K) | S) ^ X, K/S/X tirés du masque et des bits du motif (rc_kpx) ; les
+; octets pleins alternent les deux octets du mot tourné (pair : octet haut, impair : octet bas).
+.pl_pat:
+        move.b  d5,RC_F(a4)
+        move.b  d4,RC_G(a4)
+        move.w  RC_PROW(a4),RC_PR(a4)
+        move.w  d7,RC_RCNT(a4)
+.pp_row:
+        move.w  RC_PR(a4),d0
+        and.w   RC_PMASK(a4),d0
+        add.w   d0,d0
+        move.l  RC_PAT(a4),a0
+        move.w  0(a0,d0.w),d0
+        move.w  RC_SHIFT(a4),d1
+        rol.w   d1,d0
+        move.w  d0,RC_PW(a4)
+        move.l  a1,a0
+        move.b  RC_FM(a4),d0
+        move.b  RC_PW(a4),d1
+        bsr     rc_kpx
+        bsr     rc_apply
+        move.w  RC_NB(a4),d1
+        beq     .pp_nx
+        moveq   #-1,d0               ; octets pleins pairs -> d5/d6/d7
+        move.b  RC_PW(a4),d1
+        bsr     rc_kpx
+        move.b  d2,d5
+        move.b  d3,d6
+        move.b  d4,d7
+        moveq   #-1,d0               ; octets pleins impairs -> d2/d3/d4
+        move.b  RC_PW+1(a4),d1
+        bsr     rc_kpx
+        move.w  RC_NB(a4),d1
+        subq.w  #1,d1                ; octets pleins, le premier impair
+        beq.s   .pp_last
+        move.l  a0,d0
+        btst    #0,d0
+        beq.s   .pp_even
+        move.b  (a0),d0              ; adresse impaire : un octet impair, puis des mots (pair, impair)
+        and.b   d2,d0
+        or.b    d3,d0
+        eor.b   d4,d0
+        move.b  d0,(a0)+
+        subq.w  #1,d1
+        lsl.w   #8,d5
+        move.b  d2,d5
+        lsl.w   #8,d6
+        move.b  d3,d6
+        lsl.w   #8,d7
+        move.b  d4,d7
+        exg     d2,d5
+        exg     d3,d6
+        exg     d4,d7
+        bra.s   .pp_w
+.pp_even:
+        lsl.w   #8,d2                ; adresse paire : des mots (impair, pair)
+        move.b  d5,d2
+        lsl.w   #8,d3
+        move.b  d6,d3
+        lsl.w   #8,d4
+        move.b  d7,d4
+.pp_w:
+        move.w  d1,d5
+        lsr.w   #1,d5
+        bra.s   .pp_we
+.pp_wl:
+        move.w  (a0),d0
+        and.w   d2,d0
+        or.w    d3,d0
+        eor.w   d4,d0
+        move.w  d0,(a0)+
+.pp_we:
+        dbra    d5,.pp_wl
+        btst    #0,d1
+        beq.s   .pp_last
+        lsr.w   #8,d2                ; octet restant : celui de l'octet haut des mots
+        lsr.w   #8,d3
+        lsr.w   #8,d4
+        bsr     rc_apply
+.pp_last:
+        move.b  RC_PW(a4),d1
+        btst    #0,RC_NB+1(a4)
+        beq.s   .pp_l
+        move.b  RC_PW+1(a4),d1
+.pp_l:
+        move.b  RC_LM(a4),d0
+        bsr.s   rc_kpx
+        bsr.s   rc_apply
+.pp_nx:
+        adda.w  RC_BPR(a4),a1
+        addq.w  #1,RC_PR(a4)
+        subq.w  #1,RC_RCNT(a4)
+        bpl     .pp_row
+.pl_ret:
+        movem.l (sp)+,d4-d7/a2
+        rts
+; rc_kpx(d0.b = masque, d1.b = bits du motif, a4) -> d2.b = K, d3.b = S, d4.b = X pour ((octet & K) | S) ^ X.
+; Clobbe d0/d1.
+rc_kpx:
+        move.b  d1,d4
+        and.b   d0,d4                ; d4 = bits à 1 dans le masque
+        not.b   d1
+        and.b   d0,d1                ; d1 = bits à 0 dans le masque
+        tst.b   RC_COMP(a4)
+        beq.s   .kx_n
+        moveq   #-1,d2               ; COMPLEMENT : inversion des bits à 1 seulement
+        moveq   #0,d3
+        rts
+.kx_n:
+        tst.b   RC_JAM2(a4)
+        bne.s   .kx_j
+        moveq   #0,d1
+.kx_j:
+        move.b  d4,d2
+        or.b    d1,d2
+        not.b   d2
+        moveq   #0,d3
+        btst    #0,RC_F(a4)
+        beq.s   .kx_g
+        or.b    d4,d3
+.kx_g:
+        btst    #0,RC_G(a4)
+        beq.s   .kx_x
+        or.b    d1,d3
+.kx_x:
+        moveq   #0,d4
+        rts
+; rc_apply(a0, d2/d3/d4 = K/S/X) : (a0)+ = (((a0) & K) | S) ^ X. Clobbe d0.
+rc_apply:
+        move.b  (a0),d0
+        and.b   d2,d0
+        or.b    d3,d0
+        eor.b   d4,d0
+        move.b  d0,(a0)+
+        rts
+; rc_fill(a0, d1.w = nombre d'octets, d0.l = valeur répétée) : écrit d0 sur d1 octets à partir de a0 (avancé), par
+; longs dès que l'adresse est paire. rc_finv : même parcours, inversion par d0. Clobbent d1/d2.
+rc_fill:
+        tst.w   d1
+        beq.s   .fl_r
+        move.l  a0,d2
+        btst    #0,d2
+        beq.s   .fl_al
+        move.b  d0,(a0)+
+        subq.w  #1,d1
+.fl_al:
+        move.w  d1,d2
+        lsr.w   #2,d2
+        bra.s   .fl_le
+.fl_l:
+        move.l  d0,(a0)+
+.fl_le:
+        dbra    d2,.fl_l
+        btst    #1,d1
+        beq.s   .fl_b
+        move.w  d0,(a0)+
+.fl_b:
+        btst    #0,d1
+        beq.s   .fl_r
+        move.b  d0,(a0)+
+.fl_r:
+        rts
+rc_finv:
+        tst.w   d1
+        beq.s   .fi_r
+        move.l  a0,d2
+        btst    #0,d2
+        beq.s   .fi_al
+        eor.b   d0,(a0)+
+        subq.w  #1,d1
+.fi_al:
+        move.w  d1,d2
+        lsr.w   #2,d2
+        bra.s   .fi_le
+.fi_l:
+        eor.l   d0,(a0)+
+.fi_le:
+        dbra    d2,.fi_l
+        btst    #1,d1
+        beq.s   .fi_b
+        eor.w   d0,(a0)+
+.fi_b:
+        btst    #0,d1
+        beq.s   .fi_r
+        eor.b   d0,(a0)+
+.fi_r:
+        rts
+
+; dr_line(a5 = contexte, d4/d5 = départ, d6/d7 = arrivée (absolus)) : segment au stylo A dans chaque ClipRect
+; utilisable, plans filtrés par rp_Mask (COMPLEMENT : inversion). Bresenham : e = dx - |dy| ; à chaque point, pas en x
+; si 2e >= -|dy|, pas en y si 2e <= dx. Dans une ClipRect, l'adresse suit le point (ligne ± BytesPerRow) et chaque
+; plan reçoit un bset/bclr/bchg : plus de recherche de ClipRect par pixel. Préserve tout.
+LN_X0           EQU 0                ; départ et arrivée absolus : X0 Y0 X1 Y1
+LN_Y0           EQU 2
+LN_X1           EQU 4
+LN_Y1           EQU 6
+LN_DX           EQU 8                ; |dx|
+LN_DY           EQU 10               ; -|dy|
+LN_SX           EQU 12               ; pas en x (±1)
+LN_SY           EQU 14               ; pas en y (±1)
+LN_BX0          EQU 16               ; boîte englobante absolue : BX0 BY0 BX1 BY1
+LN_BY0          EQU 18
+LN_BX1          EQU 20
+LN_BY1          EQU 22
+LN_MINX         EQU 24               ; ClipRect courante dans son BitMap : MINX MINY MAXX MAXY
+LN_MINY         EQU 26
+LN_MAXX         EQU 28
+LN_MAXY         EQU 30
+LN_EX           EQU 32               ; arrivée dans ce BitMap
+LN_EY           EQU 34
+LN_AE           EQU 36               ; fin de la liste A (plans mis à 1, ou inversés)
+LN_BE           EQU 40               ; fin de la liste B (plans mis à 0)
+LN_COMP         EQU 44               ; byte : COMPLEMENT
+LN_A            EQU 46               ; 8 plans au plus
+LN_B            EQU 78
+LN_SIZE         EQU 110
+dr_line:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        lea     -LN_SIZE(sp),sp
+        move.l  sp,a4
+        movem.w d4-d7,LN_X0(a4)
+        move.w  d6,d0
+        sub.w   d4,d0
+        moveq   #1,d1
+        move.w  d4,d2
+        move.w  d6,d3
+        tst.w   d0
+        bpl.s   .ln_1
+        neg.w   d0
+        moveq   #-1,d1
+        exg     d2,d3
+.ln_1:
+        move.w  d0,LN_DX(a4)
+        move.w  d1,LN_SX(a4)
+        move.w  d2,LN_BX0(a4)
+        move.w  d3,LN_BX1(a4)
+        move.w  d7,d0
+        sub.w   d5,d0
+        moveq   #1,d1
+        move.w  d5,d2
+        move.w  d7,d3
+        tst.w   d0
+        bpl.s   .ln_2
+        neg.w   d0
+        moveq   #-1,d1
+        exg     d2,d3
+.ln_2:
+        neg.w   d0
+        move.w  d0,LN_DY(a4)
+        move.w  d1,LN_SY(a4)
+        move.w  d2,LN_BY0(a4)
+        move.w  d3,LN_BY1(a4)
+        move.l  DC_RP(a5),a0
+        moveq   #COMPLEMENT,d0
+        and.b   rp_DrawMode(a0),d0
+        sne     LN_COMP(a4)
+        move.l  DC_FIRST(a5),a3
+.ln_lp:
+        cmpa.w  #0,a3
+        beq.s   .ln_ret
+        move.w  LN_BY1(a4),d0        ; la boîte du segment doit croiser la ClipRect
+        cmp.w   CR_MINX+2(a3),d0
+        blt.s   .ln_n
+        move.w  LN_BY0(a4),d0
+        cmp.w   CR_MINX+6(a3),d0
+        bgt.s   .ln_n
+        move.w  LN_BX1(a4),d0
+        cmp.w   CR_MINX(a3),d0
+        blt.s   .ln_n
+        move.w  LN_BX0(a4),d0
+        cmp.w   CR_MINX+4(a3),d0
+        bgt.s   .ln_n
+        move.l  a3,a0
+        bsr     dr_crset
+        beq.s   .ln_n
+        bsr.s   ln_one
+.ln_n:
+        move.l  CR_NEXT(a3),a3
+        bra.s   .ln_lp
+.ln_ret:
+        lea     LN_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+; ln_one(a4 = variables de dr_line, a5) : le segment entier parcouru, points tracés dans la ClipRect courante.
+; Préserve a3-a5.
+ln_one:
+        move.l  a3,-(sp)
+        move.w  DC_BX(a5),d2
+        move.w  DC_BY(a5),d3
+        move.w  DC_CMINX(a5),d0
+        sub.w   d2,d0
+        move.w  d0,LN_MINX(a4)
+        move.w  DC_CMAXX(a5),d0
+        sub.w   d2,d0
+        move.w  d0,LN_MAXX(a4)
+        move.w  DC_CMINY(a5),d0
+        sub.w   d3,d0
+        move.w  d0,LN_MINY(a4)
+        move.w  DC_CMAXY(a5),d0
+        sub.w   d3,d0
+        move.w  d0,LN_MAXY(a4)
+        move.w  LN_X1(a4),d0
+        sub.w   d2,d0
+        move.w  d0,LN_EX(a4)
+        move.w  LN_Y1(a4),d0
+        sub.w   d3,d0
+        move.w  d0,LN_EY(a4)
+        move.l  DC_CBM(a5),a2        ; listes de plans : A = bset (bchg en COMPLEMENT), B = bclr
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d6
+        move.b  rp_FgPen(a0),d5
+        lea     LN_A(a4),a0
+        lea     LN_B(a4),a1
+        moveq   #0,d7
+        move.b  bm_Depth(a2),d7
+        move.w  bm_BytesPerRow(a2),d4
+        lea     bm_Planes(a2),a2
+        bra.s   .lo_pe
+.lo_pl:
+        move.l  (a2)+,d0
+        btst    #0,d6
+        beq.s   .lo_pn
+        tst.b   LN_COMP(a4)
+        bne.s   .lo_pa
+        btst    #0,d5
+        bne.s   .lo_pa
+        move.l  d0,(a1)+
+        bra.s   .lo_pn
+.lo_pa:
+        move.l  d0,(a0)+
+.lo_pn:
+        lsr.b   #1,d6
+        lsr.b   #1,d5
+.lo_pe:
+        dbra    d7,.lo_pl
+        move.l  a0,LN_AE(a4)
+        move.l  a1,LN_BE(a4)
+        move.w  LN_X0(a4),d0         ; d0/d1 = point courant dans ce BitMap
+        sub.w   d2,d0
+        move.w  LN_Y0(a4),d1
+        sub.w   d3,d1
+        move.w  d4,d3
+        muls    d1,d3
+        move.l  d3,a3                ; a3 = décalage de la ligne du point (peut être négatif hors BitMap)
+        moveq   #0,d2
+        move.w  d4,d2
+        tst.w   LN_SY(a4)
+        bpl.s   .lo_sy
+        neg.l   d2
+.lo_sy:
+        move.l  d2,a6                ; a6 = pas de ligne
+        move.w  LN_DX(a4),d4
+        move.w  LN_DY(a4),d5
+        move.w  d4,d2
+        add.w   d5,d2                ; d2 = erreur
+.lo_pt:
+        cmp.w   LN_MINX(a4),d0
+        blt.s   .lo_np
+        cmp.w   LN_MAXX(a4),d0
+        bgt.s   .lo_np
+        cmp.w   LN_MINY(a4),d1
+        blt.s   .lo_np
+        cmp.w   LN_MAXY(a4),d1
+        bgt.s   .lo_np
+        move.w  d0,d3
+        lsr.w   #3,d3                ; d3 = octet
+        move.w  d0,d7
+        not.w   d7                   ; d7 = bit (modulo 8 : 7 pour le pixel de gauche)
+        lea     LN_A(a4),a2
+        tst.b   LN_COMP(a4)
+        bne.s   .lo_c
+.lo_s:
+        cmpa.l  LN_AE(a4),a2
+        beq.s   .lo_b0
+        move.l  (a2)+,a0
+        adda.l  a3,a0
+        bset    d7,0(a0,d3.w)
+        bra.s   .lo_s
+.lo_b0:
+        lea     LN_B(a4),a2
+.lo_b:
+        cmpa.l  LN_BE(a4),a2
+        beq.s   .lo_np
+        move.l  (a2)+,a0
+        adda.l  a3,a0
+        bclr    d7,0(a0,d3.w)
+        bra.s   .lo_b
+.lo_c:
+        cmpa.l  LN_AE(a4),a2
+        beq.s   .lo_np
+        move.l  (a2)+,a0
+        adda.l  a3,a0
+        bchg    d7,0(a0,d3.w)
+        bra.s   .lo_c
+.lo_np:
+        cmp.w   LN_EX(a4),d0
+        bne.s   .lo_st
+        cmp.w   LN_EY(a4),d1
+        beq.s   .lo_ret
+.lo_st:
+        move.w  d2,d6
+        add.w   d6,d6                ; 2e
+        cmp.w   d5,d6
+        blt.s   .lo_nx
+        add.w   d5,d2
+        add.w   LN_SX(a4),d0
+.lo_nx:
+        cmp.w   d4,d6
+        bgt.s   .lo_pt
+        add.w   d4,d2
+        add.w   LN_SY(a4),d1
+        adda.l  a6,a3
+        bra     .lo_pt
+.lo_ret:
+        move.l  (sp)+,a3
+        rts
+
 ; --- LVO simples ---
 gfx_SetAPen:                         ; SetAPen(rp a1, stylo d0)
         move.b  d0,rp_FgPen(a1)
@@ -431,112 +1064,30 @@ gfx_WritePixel:
         moveq   #0,d0
         rts
 
-; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) : rectangle plein au stylo A (relatif au Layer).
+; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) : rectangle au stylo A (relatif au Layer), motif de SetAfPt
+; s'il y en a un (dr_rect).
 gfx_RectFill:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        move.w  d0,d4
-        move.w  d1,d5
-        move.w  d2,d6
-        move.w  d3,d7
+        movem.w d0-d3,-(sp)
         bsr     dr_ctx
-        add.w   DC_OX(a5),d4
-        add.w   DC_OX(a5),d6
-        add.w   DC_OY(a5),d5
-        add.w   DC_OY(a5),d7
-        move.b  rp_FgPen(a1),d3
-        tst.l   rp_AreaPtrn(a1)
-        bne.s   .rf_pat
-.rf_lp:
-        cmp.w   d7,d5
-        bgt.s   .rf_ret
-        move.w  d4,d0
-        move.w  d5,d1
-        move.w  d6,d2
-        bsr     dr_span
-        addq.w  #1,d5
-        bra.s   .rf_lp
-.rf_ret:
+        movem.w (sp)+,d0-d3
+        add.w   DC_OX(a5),d0
+        add.w   DC_OX(a5),d2
+        add.w   DC_OY(a5),d1
+        add.w   DC_OY(a5),d3
+        move.b  rp_FgPen(a1),d4
+        move.b  rp_BgPen(a1),d5
+        move.l  rp_AreaPtrn(a1),a0
+        moveq   #1,d6
+        move.b  rp_AreaPtSz(a1),d7
+        lsl.w   d7,d6
+        subq.w  #1,d6
+        bsr     dr_rect
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
-        rts
-; motif (SetAfPt) : ligne y -> mot AreaPtrn[(y - origine) & (2^AreaPtSz - 1)], bit 15 = pixel x ≡ 0 (mod 16) de la
-; couche ; plages de 1 au stylo A, plages de 0 au stylo B en JAM2 (laissées telles quelles sinon).
-RP_WORD         EQU 0                ; mot du motif de la ligne
-RP_VAL          EQU 2                ; byte : valeur de la plage (FF = bits à 1)
-RP_X0           EQU 4                ; début de la plage
-RP_X1           EQU 6                ; fin exclusive de la plage
-RP_MASK         EQU 8                ; masque des lignes du motif
-RP_SIZE         EQU 10
-.rf_pat:
-        move.l  a2,-(sp)
-        lea     -RP_SIZE(sp),sp
-        move.l  rp_AreaPtrn(a1),a2
-        moveq   #1,d0
-        move.b  rp_AreaPtSz(a1),d1
-        lsl.w   d1,d0
-        subq.w  #1,d0
-        move.w  d0,RP_MASK(sp)
-.rp_row:
-        cmp.w   d7,d5
-        bgt.s   .rp_ret
-        move.w  d5,d0
-        sub.w   DC_OY(a5),d0
-        and.w   RP_MASK(sp),d0
-        add.w   d0,d0
-        move.w  0(a2,d0.w),RP_WORD(sp)
-        move.w  d4,RP_X0(sp)
-.rp_run:
-        move.w  RP_X0(sp),d0
-        cmp.w   d6,d0
-        bgt.s   .rp_next
-        bsr.s   .rp_bit
-        sne     RP_VAL(sp)
-.rp_ext:
-        addq.w  #1,d0
-        cmp.w   d6,d0
-        bgt.s   .rp_emit
-        bsr.s   .rp_bit
-        sne     d1
-        cmp.b   RP_VAL(sp),d1
-        beq.s   .rp_ext
-.rp_emit:
-        move.w  d0,RP_X1(sp)
-        tst.b   RP_VAL(sp)
-        bne.s   .rp_fg
-        move.b  rp_DrawMode(a1),d1
-        and.b   #JAM2|COMPLEMENT,d1
-        cmp.b   #JAM2,d1
-        bne.s   .rp_skip
-        move.b  rp_BgPen(a1),d3
-        bra.s   .rp_span
-.rp_fg:
-        move.b  rp_FgPen(a1),d3
-.rp_span:
-        move.w  RP_X0(sp),d0
-        move.w  d5,d1
-        move.w  RP_X1(sp),d2
-        subq.w  #1,d2
-        bsr     dr_span
-.rp_skip:
-        move.w  RP_X1(sp),RP_X0(sp)
-        bra.s   .rp_run
-.rp_next:
-        addq.w  #1,d5
-        bra.s   .rp_row
-.rp_ret:
-        lea     RP_SIZE(sp),sp
-        move.l  (sp)+,a2
-        bra     .rf_ret
-.rp_bit:                             ; (d0 = x) -> Z = 1 si le bit du motif vaut 0. Clobbe d1/d2.
-        move.w  d0,d1
-        sub.w   DC_OX(a5),d1
-        not.w   d1
-        and.w   #15,d1
-        move.w  4+RP_WORD(sp),d2
-        btst    d1,d2
         rts
 
 ; SetRast(rp a1, stylo d0) : remplit toute la zone du RastPort (bornes du Layer, sinon le BitMap).
@@ -548,17 +1099,10 @@ gfx_SetRast:
         bsr     dr_ctx
         move.b  rp_DrawMode(a1),-(sp)
         clr.b   rp_DrawMode(a1)      ; remplissage plein, quel que soit le mode
-        move.w  DC_MINY(a5),d5
-.sr_lp:
-        cmp.w   DC_MAXY(a5),d5
-        bgt.s   .sr_ret
-        move.w  DC_MINX(a5),d0
-        move.w  d5,d1
-        move.w  DC_MAXX(a5),d2
-        bsr     dr_span
-        addq.w  #1,d5
-        bra.s   .sr_lp
-.sr_ret:
+        move.b  d3,d4
+        movem.w DC_MINX(a5),d0-d3    ; MINX MINY MAXX MAXY
+        suba.l  a0,a0
+        bsr     dr_rect
         move.b  (sp)+,rp_DrawMode(a1)
         bsr     dr_end
         lea     DC_SIZE(sp),sp
@@ -619,20 +1163,21 @@ cl_box:
         ble.s   .cb_lp
         move.w  DC_MAXY(a5),d7
 .cb_lp:
-        cmp.w   d7,d5
-        bgt.s   .cb_r
+        movem.l d3-d6/a0,-(sp)
         move.w  d4,d0
         move.w  d5,d1
         move.w  DC_MAXX(a5),d2
-        bsr     dr_span
-        addq.w  #1,d5
-        bra.s   .cb_lp
-.cb_r:
+        move.b  d3,d4
+        move.w  d7,d3
+        suba.l  a0,a0
+        bsr     dr_rect
+        movem.l (sp)+,d3-d6/a0
         rts
 
-; Draw(rp a1, x d0, y d1) : segment de (cp_x, cp_y) à (x, y) au stylo A (Bresenham), puis cp := (x, y).
+; Draw(rp a1, x d0, y d1) : segment de (cp_x, cp_y) à (x, y) au stylo A, puis cp := (x, y). Horizontales et verticales
+; par dr_rect (mêmes pixels), les autres par dr_line (Bresenham).
 gfx_Draw:
-        movem.l d2-d7/a2-a5,-(sp)
+        movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
         move.w  rp_cp_x(a1),d4       ; d4,d5 = point courant ; d6,d7 = arrivée
@@ -648,62 +1193,38 @@ gfx_Draw:
         move.w  DC_OY(a5),d0
         add.w   d0,d5
         add.w   d0,d7
-        move.w  d6,d0                ; a2 = dx = |x1-x0|, a3 = sx
-        sub.w   d4,d0
-        moveq   #1,d1
-        tst.w   d0
-        bpl.s   .dw_sx
-        neg.w   d0
-        moveq   #-1,d1
-.dw_sx:
-        move.w  d0,a2
-        move.w  d1,a3
-        move.w  d7,d0                ; d2 = -|y1-y0| (dy négatif), a4 = sy
-        sub.w   d5,d0
-        moveq   #1,d1
-        tst.w   d0
-        bpl.s   .dw_sy
-        neg.w   d0
-        moveq   #-1,d1
-.dw_sy:
-        neg.w   d0
-        move.w  d0,-(sp)             ; (sp) = dy (négatif)
-        move.w  d1,a4
-        move.w  a2,d0
-        add.w   (sp),d0
-        move.w  d0,-(sp)             ; (sp) = err = dx + dy ; 2(sp) = dy
-.dw_lp:
-        movem.w d4-d5,-(sp)
-        move.w  d4,d0
+        cmp.w   d5,d7
+        bne.s   .dw_nh
+        move.w  d4,d0                ; horizontale : une ligne de dr_rect
+        move.w  d6,d2
+        cmp.w   d2,d0
+        ble.s   .dw_h
+        exg     d0,d2
+.dw_h:
         move.w  d5,d1
+        move.w  d5,d3
+        bra.s   .dw_rect
+.dw_nh:
+        cmp.w   d4,d6
+        bne.s   .dw_line
+        move.w  d4,d0                ; verticale : une colonne de dr_rect
         move.w  d4,d2
-        move.b  rp_FgPen(a1),d3
-        bsr     dr_span
-        movem.w (sp)+,d4-d5
-        cmp.w   d6,d4
-        bne.s   .dw_step
-        cmp.w   d7,d5
-        beq.s   .dw_done
-.dw_step:
-        move.w  (sp),d0
-        add.w   d0,d0                ; e2 = 2*err
-        cmp.w   2(sp),d0
-        blt.s   .dw_noy
-        move.w  2(sp),d1             ; err += dy ; x += sx
-        add.w   d1,(sp)
-        add.w   a3,d4
-.dw_noy:
-        move.w  a2,d1
-        cmp.w   d1,d0
-        bgt.s   .dw_lp
-        add.w   d1,(sp)              ; err += dx ; y += sy
-        add.w   a4,d5
-        bra.s   .dw_lp
+        move.w  d5,d1
+        move.w  d7,d3
+        cmp.w   d3,d1
+        ble.s   .dw_rect
+        exg     d1,d3
+.dw_rect:
+        move.b  rp_FgPen(a1),d4
+        suba.l  a0,a0
+        bsr     dr_rect
+        bra.s   .dw_done
+.dw_line:
+        bsr     dr_line
 .dw_done:
-        addq.l  #4,sp
         bsr     dr_end
         lea     DC_SIZE(sp),sp
-        movem.l (sp)+,d2-d7/a2-a5
+        movem.l (sp)+,d2-d7/a5
         rts
 
 ; --- variables de Text, après le contexte de dessin (a5) ---
@@ -717,7 +1238,7 @@ TX_BASE         EQU DC_SIZE+14       ; tf_Baseline
 TX_SMEAR        EQU DC_SIZE+16       ; tf_BoldSmear
 TX_ADV          EQU DC_SIZE+18       ; avance du caractère courant
 TX_STYLE        EQU DC_SIZE+20       ; byte : styles algorithmiques rendus (gras, souligné)
-TX_SOK          EQU DC_SIZE+21       ; byte : voie « chaîne » permise (JAM2, police fixe de 8 pixels, sans style)
+TX_SOK          EQU DC_SIZE+21       ; byte : voie « chaîne » permise (police fixe de 8 pixels, sans style)
 TX_GP           EQU DC_SIZE+22       ; TX_NMAX pointeurs de glyphes de la tranche courante
 TX_NMAX         EQU 16
 TX_FRAME        EQU DC_SIZE+22+4*TX_NMAX
@@ -804,17 +1325,38 @@ tx_metrics:
 ; BltTemplate(gabarit a0, xSrc d0, srcMod d1, rp a1, xDest d2, yDest d3, xSize d4, ySize d5) : gabarit d'un plan
 ; (bit à 1 = pixel du motif), ligne i à a0 + i × srcMod, premier pixel au bit xSrc. Bits à 1 au stylo A (inversés en
 ; COMPLEMENT) ; bits à 0 au stylo B en JAM2 ; INVERSVID permute. Coordonnées relatives à la couche, découpage par
-; ses ClipRects, plans filtrés par rp_Mask (dr_span). Lu par tranches de 32 pixels.
-BT_SRC          EQU DC_SIZE          ; ligne courante du gabarit
+; ses ClipRects, plans filtrés par rp_Mask. Par ClipRect et par plan, une opération fixe sur l'octet g du gabarit
+; (NON g si l'inversion s'applique) : OU (JAM1, stylo à 1), ET-NON (JAM1, stylo à 0), OU exclusif (COMPLEMENT),
+; mise à 1 / à 0 (JAM2, stylos A et B égaux), remplacement (JAM2, stylos différents) ; octets de bord masqués.
+BT_SRC          EQU DC_SIZE          ; gabarit
 BT_MOD          EQU DC_SIZE+4        ; WORD : srcMod
 BT_XS           EQU DC_SIZE+6        ; WORD : xSrc
 BT_X            EQU DC_SIZE+8        ; WORD : x absolu du premier pixel
-BT_Y            EQU DC_SIZE+10       ; WORD : y absolu de la ligne courante
+BT_Y            EQU DC_SIZE+10       ; WORD : y absolu de la première ligne
 BT_W            EQU DC_SIZE+12       ; WORD : largeur
-BT_H            EQU DC_SIZE+14       ; WORD : lignes restantes
-BT_FRAME        EQU DC_SIZE+16
+BT_H            EQU DC_SIZE+14       ; WORD : hauteur
+BT_NB           EQU DC_SIZE+16       ; WORD : octets de la ligne après le premier
+BT_FM           EQU DC_SIZE+18       ; byte : masque du premier octet
+BT_LM           EQU DC_SIZE+19       ; byte : masque du dernier octet
+BT_ROWS         EQU DC_SIZE+20       ; WORD : lignes - 1
+BT_RC           EQU DC_SIZE+22       ; WORD : lignes restantes
+BT_ROFF         EQU DC_SIZE+24       ; décalage du premier octet dans un plan
+BT_SROW         EQU DC_SIZE+28       ; premier octet de gabarit lu pour la première ligne
+BT_SH           EQU DC_SIZE+32       ; WORD : 8 - (bit de départ & 7)
+BT_FGS          EQU DC_SIZE+34       ; byte : stylo A, décalé d'un bit par plan
+BT_BGS          EQU DC_SIZE+35       ; byte : stylo B
+BT_MSK          EQU DC_SIZE+36       ; byte : rp_Mask
+BT_INV          EQU DC_SIZE+37       ; byte : $FF en INVERSVID
+BT_BPR          EQU DC_SIZE+38       ; WORD : octets par ligne du BitMap
+BT_FRAME        EQU DC_SIZE+40
+BTO_OR          EQU 0                ; opérations (indice x 4 dans les tables)
+BTO_ANDN        EQU 4
+BTO_XOR         EQU 8
+BTO_SET         EQU 12
+BTO_CLR         EQU 16
+BTO_REPL        EQU 20
 gfx_BltTemplate:
-        movem.l d2-d7/a2-a5,-(sp)
+        movem.l d2-d7/a2-a6,-(sp)
         lea     -BT_FRAME(sp),sp
         move.l  sp,a5
         move.l  a0,BT_SRC(a5)
@@ -831,117 +1373,313 @@ gfx_BltTemplate:
         move.w  d3,BT_Y(a5)
         tst.w   BT_W(a5)
         ble.s   .bt_end
-.bt_row:
-        subq.w  #1,BT_H(a5)
-        bmi.s   .bt_end
-        moveq   #0,d7                ; d7 = pixel de la tranche dans la ligne
-.bt_chunk:
-        move.w  BT_W(a5),d6
-        sub.w   d7,d6                ; pixels restants
-        ble.s   .bt_next
-        cmp.w   #32,d6
-        bls.s   .bt_n
-        moveq   #32,d6
+        tst.w   BT_H(a5)
+        ble.s   .bt_end
+        move.l  DC_FIRST(a5),a3
+.bt_lp:
+        cmpa.w  #0,a3
+        beq.s   .bt_end
+        move.w  BT_Y(a5),d1          ; le rectangle du gabarit doit croiser la ClipRect
+        cmp.w   CR_MINX+6(a3),d1
+        bgt.s   .bt_n
+        add.w   BT_H(a5),d1
+        subq.w  #1,d1
+        cmp.w   CR_MINX+2(a3),d1
+        blt.s   .bt_n
+        move.w  BT_X(a5),d0
+        cmp.w   CR_MINX+4(a3),d0
+        bgt.s   .bt_n
+        add.w   BT_W(a5),d0
+        subq.w  #1,d0
+        cmp.w   CR_MINX(a3),d0
+        blt.s   .bt_n
+        move.l  a3,a0
+        bsr     dr_crset
+        beq.s   .bt_n
+        bsr.s   bt_one
 .bt_n:
-        move.w  BT_XS(a5),d0         ; bit de départ = xSrc + d7
-        add.w   d7,d0
-        move.w  d0,d1
-        lsr.w   #3,d1
-        move.l  BT_SRC(a5),a0
-        add.w   d1,a0
-        and.w   #7,d0
-        moveq   #3,d1                ; 32 bits + l'octet suivant pour le décalage (lecture par octets)
-.bt_rd:
-        lsl.l   #8,d2
-        move.b  (a0)+,d2
-        dbra    d1,.bt_rd
-        lsl.l   d0,d2
-        moveq   #0,d1
-        move.b  (a0),d1
-        lsl.w   d0,d1
-        lsr.w   #8,d1
-        or.b    d1,d2                ; d2 = 32 pixels, le premier en bit 31
-        btst    #2,rp_DrawMode(a1)   ; INVERSVID
-        beq.s   .bt_nv
-        not.l   d2
-.bt_nv:
-        move.w  BT_X(a5),d4
-        add.w   d7,d4                ; d4 = x absolu de la tranche
-        move.w  BT_Y(a5),d5
-        bsr.s   bt_runs
-        add.w   #32,d7
-        bra.s   .bt_chunk
-.bt_next:
-        moveq   #0,d0
-        move.w  BT_MOD(a5),d0
-        ext.l   d0
-        add.l   d0,BT_SRC(a5)
-        addq.w  #1,BT_Y(a5)
-        bra.s   .bt_row
+        move.l  CR_NEXT(a3),a3
+        bra.s   .bt_lp
 .bt_end:
         bsr     dr_end
         lea     BT_FRAME(sp),sp
-        movem.l (sp)+,d2-d7/a2-a5
+        movem.l (sp)+,d2-d7/a2-a6
         rts
-; bt_runs(d2 = pixels (bit 31 d'abord), d6.w = nombre, d4.w = x absolu, d5.w = y, a1 = rp, a5) : plages de même
-; valeur ; 1 -> stylo A, 0 -> stylo B en JAM2 seulement. Préserve d4-d7.
-bt_runs:
-        movem.l d4-d7,-(sp)
-        move.w  d6,d0
-        move.w  d0,-(sp)             ; (sp) = nombre de pixels
-        moveq   #0,d6                ; d6 = pixel courant
-.br_run:
-        cmp.w   (sp),d6
-        bge.s   .br_ret
-        move.w  d6,d7                ; début de la plage
-        moveq   #31,d0
-        sub.w   d6,d0
-        btst    d0,d2
-        sne     d3                   ; valeur de la plage
-.br_ext:
-        addq.w  #1,d6
-        cmp.w   (sp),d6
-        bge.s   .br_emit
-        moveq   #31,d0
-        sub.w   d6,d0
-        btst    d0,d2
-        sne     d1
-        cmp.b   d1,d3
-        beq.s   .br_ext
-.br_emit:
-        movem.l d2-d3,-(sp)
-        tst.b   d3
-        bne.s   .br_fg
-        move.b  rp_DrawMode(a1),d0   ; fond : seulement en JAM2 (sans COMPLEMENT)
-        and.b   #JAM2|COMPLEMENT,d0
-        cmp.b   #JAM2,d0
-        bne.s   .br_skip
-        move.b  rp_BgPen(a1),d3
-        bra.s   .br_do
-.br_fg:
-        move.b  rp_FgPen(a1),d3
-.br_do:
-        move.w  d4,d0
-        add.w   d7,d0                ; x0
-        move.w  d4,d2
-        add.w   d6,d2
-        subq.w  #1,d2                ; x1
-        move.w  d5,d1
-        bsr     dr_span
-.br_skip:
-        movem.l (sp)+,d2-d3
-        bra.s   .br_run
-.br_ret:
-        addq.l  #2,sp
-        movem.l (sp)+,d4-d7
+; bt_one(a1 = rp, a5) : le gabarit dans la ClipRect courante. Préserve a1/a3/a5.
+bt_one:
+        move.w  BT_X(a5),d0          ; d0..d2 = colonnes, d1..d3 = lignes gardées (absolues)
+        move.w  d0,d2
+        add.w   BT_W(a5),d2
+        subq.w  #1,d2
+        cmp.w   DC_CMINX(a5),d0
+        bge.s   .bo_1
+        move.w  DC_CMINX(a5),d0
+.bo_1:
+        cmp.w   DC_CMAXX(a5),d2
+        ble.s   .bo_2
+        move.w  DC_CMAXX(a5),d2
+.bo_2:
+        cmp.w   d2,d0
+        bgt     .bo_ret
+        move.w  BT_Y(a5),d1
+        move.w  d1,d3
+        add.w   BT_H(a5),d3
+        subq.w  #1,d3
+        cmp.w   DC_CMINY(a5),d1
+        bge.s   .bo_3
+        move.w  DC_CMINY(a5),d1
+.bo_3:
+        cmp.w   DC_CMAXY(a5),d3
+        ble.s   .bo_4
+        move.w  DC_CMAXY(a5),d3
+.bo_4:
+        cmp.w   d3,d1
+        bgt     .bo_ret
+        sub.w   d1,d3
+        move.w  d3,BT_ROWS(a5)
+        move.w  d1,d4                ; première ligne du gabarit lue : (y gardé - BT_Y) × srcMod
+        sub.w   BT_Y(a5),d4
+        muls    BT_MOD(a5),d4
+        move.l  BT_SRC(a5),a0
+        add.l   d4,a0
+        move.l  DC_CBM(a5),a2
+        sub.w   DC_BX(a5),d0         ; coordonnées dans ce BitMap
+        sub.w   DC_BX(a5),d2
+        sub.w   DC_BY(a5),d1
+        moveq   #0,d4
+        move.w  bm_BytesPerRow(a2),d4
+        move.w  d4,BT_BPR(a5)
+        mulu    d1,d4
+        moveq   #0,d5
+        move.w  d0,d5
+        lsr.w   #3,d5                ; d5 = premier octet
+        add.l   d5,d4
+        move.l  d4,BT_ROFF(a5)
+        move.w  d2,d6
+        lsr.w   #3,d6
+        sub.w   d5,d6
+        move.w  d6,BT_NB(a5)
+        moveq   #-1,d7               ; masques de bord
+        move.w  d0,d4
+        and.w   #7,d4
+        lsr.b   d4,d7
+        move.w  d2,d4
+        not.w   d4
+        and.w   #7,d4
+        moveq   #-1,d3
+        lsl.b   d4,d3
+        tst.w   d6
+        bne.s   .bo_5
+        and.b   d3,d7
+.bo_5:
+        move.b  d7,BT_FM(a5)
+        move.b  d3,BT_LM(a5)
+        lsl.w   #3,d5                ; bit du gabarit sous le pixel 0 du premier octet (peut être négatif)
+        add.w   DC_BX(a5),d5
+        sub.w   BT_X(a5),d5
+        add.w   BT_XS(a5),d5
+        move.w  d5,d4
+        asr.w   #3,d4
+        ext.l   d4
+        add.l   d4,a0
+        move.l  a0,BT_SROW(a5)
+        and.w   #7,d5
+        moveq   #8,d4
+        sub.w   d5,d4
+        move.w  d4,BT_SH(a5)
+        move.b  rp_FgPen(a1),BT_FGS(a5)
+        move.b  rp_BgPen(a1),BT_BGS(a5)
+        move.b  rp_Mask(a1),BT_MSK(a5)
+        btst    #2,rp_DrawMode(a1)   ; INVERSVID
+        sne     BT_INV(a5)
+        moveq   #0,d7
+        move.b  bm_Depth(a2),d7
+        lea     bm_Planes(a2),a2
+        bra.s   .bo_pe
+.bo_pl:
+        move.l  (a2)+,a0
+        btst    #0,BT_MSK(a5)
+        beq.s   .bo_pn
+        adda.l  BT_ROFF(a5),a0
+        movem.l d7/a1-a3,-(sp)
+        bsr.s   bt_plane
+        movem.l (sp)+,d7/a1-a3
+.bo_pn:
+        move.b  BT_FGS(a5),d0
+        lsr.b   #1,d0
+        move.b  d0,BT_FGS(a5)
+        move.b  BT_BGS(a5),d0
+        lsr.b   #1,d0
+        move.b  d0,BT_BGS(a5)
+        move.b  BT_MSK(a5),d0
+        lsr.b   #1,d0
+        move.b  d0,BT_MSK(a5)
+.bo_pe:
+        dbra    d7,.bo_pl
+.bo_ret:
+        rts
+; bt_plane(a0 = premier octet de la première ligne, a1 = rp, a5) : opération du plan, puis ligne par ligne : premier
+; octet masqué, octets pleins, dernier octet masqué. Flux du gabarit : d3.w = octet précédent (haut) et courant,
+; octet g = (d3 >> BT_SH) ^ d7. Clobbe d0-d7/a0-a3/a6.
+bt_plane:
+        move.b  BT_INV(a5),d7        ; d7 = inversion du gabarit
+        moveq   #BTO_XOR,d6
+        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT
+        bne.s   .bp_go
+        btst    #0,rp_DrawMode(a1)   ; JAM2 : selon les deux stylos
+        bne.s   .bp_j2
+        moveq   #BTO_OR,d6
+        btst    #0,BT_FGS(a5)
+        bne.s   .bp_go
+        moveq   #BTO_ANDN,d6
+        bra.s   .bp_go
+.bp_j2:
+        move.b  BT_FGS(a5),d0
+        move.b  BT_BGS(a5),d1
+        eor.b   d0,d1
+        btst    #0,d1
+        bne.s   .bp_rp
+        moveq   #BTO_SET,d6          ; stylos égaux : couleur pleine
+        btst    #0,d0
+        bne.s   .bp_go
+        moveq   #BTO_CLR,d6
+        bra.s   .bp_go
+.bp_rp:
+        moveq   #BTO_REPL,d6         ; stylos différents : le gabarit, inversé si le stylo A vaut 0
+        btst    #0,d0
+        bne.s   .bp_go
+        not.b   d7
+.bp_go:
+        lea     bt_mops(pc),a6
+        move.l  0(a6,d6.w),a6        ; a6 = boucle des octets pleins
+        move.w  BT_SH(a5),d4
+        move.l  BT_SROW(a5),a2
+        move.w  BT_ROWS(a5),BT_RC(a5)
+.bp_row:
+        move.l  a0,-(sp)
+        move.l  a2,-(sp)
+        moveq   #0,d3
+        move.b  (a2)+,d3
+        lsl.w   #8,d3
+        move.b  (a2)+,d3             ; premier octet
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        move.b  BT_FM(a5),d2
+        bsr.s   bt_mask
+        move.w  BT_NB(a5),d1
+        beq.s   .bp_nx
+        subq.w  #1,d1
+        beq.s   .bp_last
+        subq.w  #1,d1                ; octets pleins - 1 (dbra)
+        jsr     (a6)
+.bp_last:
+        move.b  (a2)+,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        move.b  BT_LM(a5),d2
+        bsr.s   bt_mask
+.bp_nx:
+        move.l  (sp)+,a2
+        move.l  (sp)+,a0
+        adda.w  BT_MOD(a5),a2
+        adda.w  BT_BPR(a5),a0
+        subq.w  #1,BT_RC(a5)
+        bpl.s   .bp_row
+        rts
+; bt_mask(a0, d0.b = g, d2.b = masque, d6 = opération) : un octet de bord, (a0)+. Clobbe d0/d2.
+bt_mask:
+        jmp     .bm_t(pc,d6.w)
+.bm_t:
+        bra.w   .bm_or
+        bra.w   .bm_andn
+        bra.w   .bm_xor
+        bra.w   .bm_set
+        bra.w   .bm_clr
+        and.b   d2,d0                ; BTO_REPL
+        not.b   d2
+        and.b   (a0),d2
+        or.b    d2,d0
+        move.b  d0,(a0)+
+        rts
+.bm_or:
+        and.b   d2,d0
+        or.b    d0,(a0)+
+        rts
+.bm_andn:
+        and.b   d2,d0
+        not.b   d0
+        and.b   d0,(a0)+
+        rts
+.bm_xor:
+        and.b   d2,d0
+        eor.b   d0,(a0)+
+        rts
+.bm_set:
+        or.b    d2,(a0)+
+        rts
+.bm_clr:
+        not.b   d2
+        and.b   d2,(a0)+
+        rts
+; boucles des octets pleins : d1 = nombre - 1, a0 = destination, a2/d3/d4/d7 = flux du gabarit. Clobbent d0.
+bt_mops:
+        dc.l    .mo_or,.mo_andn,.mo_xor,.mo_set,.mo_clr,.mo_repl
+.mo_or:
+        move.b  (a2)+,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        or.b    d0,(a0)+
+        dbra    d1,.mo_or
+        rts
+.mo_andn:
+        move.b  (a2)+,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        not.b   d0
+        and.b   d0,(a0)+
+        dbra    d1,.mo_andn
+        rts
+.mo_xor:
+        move.b  (a2)+,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        eor.b   d0,(a0)+
+        dbra    d1,.mo_xor
+        rts
+.mo_repl:
+        move.b  (a2)+,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        move.b  d0,(a0)+
+        dbra    d1,.mo_repl
+        rts
+.mo_set:                             ; SET et CLR ne lisent pas le gabarit (ni ici ni au dernier octet)
+        st      (a0)+
+        dbra    d1,.mo_set
+        rts
+.mo_clr:
+        clr.b   (a0)+
+        dbra    d1,.mo_clr
         rts
 
 ; Text(rp a1, chaîne a0, nombre d0) : caractères de la police du RastPort (topaz 8 par défaut), coin haut du glyphe
 ; à cp_y - tf_Baseline, à cp_x + crénage ; cp_x avance du crénage + espacement + rp_TxSpacing. JAM1 : pixels du
 ; glyphe (stylo A) ; JAM2 : fond au stylo B ; COMPLEMENT : glyphe inversé ; INVERSVID : glyphe et fond permutés.
 ; Styles algorithmiques (rp_AlgoStyle) : gras (glyphe étalé de tf_BoldSmear) et souligné (ligne sous la base).
-; Voie rapide : glyphe de 8 pixels (début d'octet dans la police), JAM1 ou JAM2, à n'importe quelle abscisse, cellule
-; entière dans une ClipRect, sans style ; sinon rendu par plages de pixels.
+; Voies rapides, police fixe de 8 pixels sans style : « chaîne » (.tx_str, tout mode, jusqu'à TX_NMAX glyphes alignés
+; d'un coup), sinon glyphe par glyphe (.tx_fast, JAM1/JAM2) ; il faut la cellule entière dans une ClipRect. Sinon
+; rendu par plages de pixels.
 gfx_Text:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -TX_FRAME(sp),sp
@@ -960,10 +1698,6 @@ gfx_Text:
         move.b  d0,TX_STYLE(a5)
         clr.b   TX_SOK(a5)
         tst.b   d0
-        bne.s   .tx_char
-        move.b  rp_DrawMode(a1),d0
-        and.b   #JAM2|COMPLEMENT,d0
-        cmp.b   #JAM2,d0
         bne.s   .tx_char
         tst.l   tf_CharSpace(a2)
         bne.s   .tx_char
@@ -1133,10 +1867,12 @@ gfx_Text:
 .tt_none:
         moveq   #0,d0                ; Z = 1
         rts
-; .tx_str(d6.w = n caractères, glyphes en TX_GP, d4/d5 = coin absolu, a1 = rp, ClipRect courante) : JAM2, plan par
-; plan et ligne par ligne, octet de glyphe g -> (g ET m1) OU-exclusif m2 (m1 = stylos A et B différents, m2 =
-; stylo B ; INVERSVID : m2 ^= m1), flux décalé de x & 7 ; les bits hors de la plage des deux octets de bord sont
-; conservés. Préserve tout sauf d0/d1.
+; .tx_str(d6.w = n caractères, glyphes en TX_GP, d4/d5 = coin absolu, a1 = rp, ClipRect courante) : plan par plan
+; et ligne par ligne, flux des octets de glyphe décalé de x & 7. JAM2 : octet g -> (g ET m1) OU-exclusif m2 (m1 =
+; stylos A et B différents, m2 = stylo B ; INVERSVID : m2 ^= m1), les bits hors de la plage des deux octets de bord
+; sont conservés. Autres modes (.to_*) : g (INVERSVID : NON g) touche seulement ses bits à 1 : dst = (dst ET K) OU-
+; exclusif V avec K = NON g OU E et V = g ET F (JAM1 stylo à 1 : E = 0, F = $FF ; stylo à 0 : E = F = 0 ;
+; COMPLEMENT : E = F = $FF). Préserve tout sauf d0/d1.
 TS_N            EQU 0                ; WORD : caractères
 TS_PLW          EQU 2                ; plan suivant (bm_Planes)
 TS_PC           EQU 6                ; WORD : plans restants
@@ -1147,6 +1883,7 @@ TS_MODE         EQU 11               ; byte : rp_DrawMode
 TS_RC           EQU 12               ; WORD : lignes restantes
 TS_DST          EQU 14               ; premier octet de la ligne courante
 TS_O0           EQU 18               ; byte : octet de gauche d'origine
+TS_F            EQU 19               ; byte : F des modes autres que JAM2
 TS_SIZE         EQU 20
 .tx_str:
         movem.l d2-d7/a1-a4/a6,-(sp)
@@ -1195,6 +1932,10 @@ TS_SIZE         EQU 20
         move.b  d0,TS_MSK(a3)
         tst.b   d1
         beq.s   .ts_plane            ; plan protégé par rp_Mask
+        move.b  TS_MODE(a3),d0
+        and.b   #JAM2|COMPLEMENT,d0
+        cmp.b   #JAM2,d0
+        bne     .to_plane
         eor.b   d7,d6                ; d6 = m1
         btst    #2,TS_MODE(a3)       ; INVERSVID
         beq.s   .ts_ni
@@ -1244,6 +1985,65 @@ TS_SIZE         EQU 20
         move.w  TX_MOD(a5),d0
         add.l   d0,d5
         bra.s   .ts_row
+.to_plane:                           ; d6 = bit du stylo A ($FF / 0)
+        moveq   #0,d7                ; d7 = inversion du glyphe (INVERSVID)
+        btst    #2,TS_MODE(a3)
+        beq.s   .to_ni
+        moveq   #-1,d7
+.to_ni:
+        btst    #1,TS_MODE(a3)       ; COMPLEMENT
+        beq.s   .to_j1
+        moveq   #-1,d6               ; d6 = E
+        st      TS_F(a3)
+        bra.s   .to_go
+.to_j1:
+        move.b  d6,TS_F(a3)
+        moveq   #0,d6
+.to_go:
+        add.l   a4,a0
+        moveq   #0,d5
+        move.w  TX_H(a5),TS_RC(a3)
+.to_row:
+        subq.w  #1,TS_RC(a3)
+        bmi     .ts_plane
+        move.l  a0,TS_DST(a3)
+        lea     TX_GP(a5),a2
+        move.w  TS_N(a3),d2
+        subq.w  #1,d2
+        moveq   #0,d3
+.to_ch:
+        move.l  (a2)+,a1
+        move.b  0(a1,d5.l),d0
+        eor.b   d7,d0
+        lsl.w   #8,d3
+        move.b  d0,d3
+        move.w  d3,d0
+        lsr.w   d4,d0
+        move.b  d0,d1
+        not.b   d1
+        or.b    d6,d1
+        and.b   d1,(a0)
+        and.b   TS_F(a3),d0
+        eor.b   d0,(a0)+
+        dbra    d2,.to_ch
+        tst.w   d4
+        beq.s   .to_nx
+        lsl.w   #8,d3                ; octet de droite : fin du dernier glyphe
+        lsr.w   d4,d3
+        move.b  d3,d0
+        move.b  d0,d1
+        not.b   d1
+        or.b    d6,d1
+        and.b   d1,(a0)
+        and.b   TS_F(a3),d0
+        eor.b   d0,(a0)
+.to_nx:
+        move.l  TS_DST(a3),a0
+        add.l   a6,a0
+        moveq   #0,d0
+        move.w  TX_MOD(a5),d0
+        add.l   d0,d5
+        bra.s   .to_row
 .ts_ret:
         lea     TS_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a4/a6
@@ -1367,7 +2167,8 @@ TS_SIZE         EQU 20
         movem.l (sp)+,d4-d7/a4/a6
         rts
 ; .tx_runs : ligne d2.l (bit 31 = pixel gauche) de TX_RW pixels à (d4, d5) : découpe en plages de bits égaux ;
-; bit 1 -> stylo A (ou inversion en COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7.
+; bit 1 -> stylo A (ou inversion en COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7. Pour des lignes
+; de glyphe (une dizaine de pixels), quelques dr_span suffisent.
 .tx_runs:
         movem.l d4-d7,-(sp)
         moveq   #0,d6                ; d6 = index du pixel courant

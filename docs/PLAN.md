@@ -851,6 +851,17 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     de DiskCopy rendu 121 (1 fois sur 6) : non reproduits le 2026-10-26 (20 boots dev SysInfo : 20 jusqu'à SetPatch ;
     Duplicate -> DiskCopy : 18 invites sur 18 runs valides) ; boucles de reproduction (boots répétés, lancements
     DiskCopy) à refaire si ça revient.
+    Dessin accéléré (2026-10-26, signalé lent sous WinUAE) : RectFill/SetRast/ClearEOL/ClearScreen passent par
+    `dr_rect` (découpage, masques et adresse calculés une fois par ClipRect et par plan ; octets pleins par longs,
+    motif SetAfPt par mots) et Draw trace horizontales/verticales par `dr_rect`, les autres par `dr_line` (même
+    Bresenham, adresse suivie de point en point). Pixels identiques à l'octet (sonde `tests/drawcheck.s`, 16
+    empreintes) ; mesures `tests/drawperf.s` (ROM de production, FS-UAE) : ligne horizontale de 620 px 173 ms -> 0,7 ms,
+    verticale de 180 px 50 -> 5 ms, diagonale 174 -> 42 ms, RectFill 620x180 154 -> 40 ms, le même à motif 35 s -> 0,16 s.
+    Texte : la voie « chaîne » de Text (police fixe de 8 pixels sans style) couvre aussi JAM1, COMPLEMENT et INVERSVID
+    (dst = (dst ET K) OU-exclusif V) : 1 400 caractères JAM1 1,74 -> 0,61 s, COMPLEMENT 5,4 -> 0,62 s (JAM2 inchangé,
+    0,5 s ; gras et souligné restent au rendu par plages). BltTemplate (FastFonts, lancé par la startup-sequence 1.3,
+    y fait passer tout le texte) : une opération fixe par ClipRect et par plan (OU, ET-NON, OU exclusif, mise à 1/0,
+    remplacement), gabarit lu en flux : 20 lignes de 560 x 8 3,2 -> 0,30 s. Pixels identiques (drawcheck T8, T9).
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page
