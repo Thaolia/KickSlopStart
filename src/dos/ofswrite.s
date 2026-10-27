@@ -62,7 +62,7 @@ WS_CURLEN       EQU 20               ; octets dans le bloc courant
 WS_EXT          EQU 24               ; extension courante (0 = la table du header)
 WS_EXTN         EQU 28               ; entrées dans la table courante
 WS_FIRST        EQU 32               ; premier bloc de données
-WS_HBUF         EQU 36
+WS_HBUF         EQU 40               ; (WS_VOL en 36 : ofs.i)
 WS_XBUF         EQU WS_HBUF+OFS_BSIZE
 WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE

@@ -6,16 +6,16 @@
 ;   - le process doit répondre au message de LoadWB (28 octets : +$14 = BPTR du chemin, +$18 = drapeau -debug) dès son
 ;     initialisation, sinon LoadWB reste bloqué ; il se nomme « Workbench » (LoadWB le retrouve par FindTask) et
 ;     tourne en priorité 1.
-; Bureau : écran Workbench, fenêtre de fond (BACKDROP) avec l'icône du disque de boot (SYS:Disk.info, icon.library du
-; disque) et le nom du volume. Fenêtres de tiroir (WB_MAXDRAWERS) : la racine (double-clic sur le disque) et tout
+; Bureau : écran Workbench, fenêtre de fond (BACKDROP) avec une icône par volume monté de la DosList (spec
+; disk-change-v34 §4) : « <volume>:Disk.info », sinon icône de disque par défaut ; relevé au démarrage, au tic de 5 s et
+; sur DISKINSERTED / DISKREMOVED ; un volume disparu de la DosList perd son icône. Fenêtres de tiroir (WB_MAXDRAWERS) : la racine (double-clic sur le disque) et tout
 ; tiroir imbriqué (double-clic sur une icône de tiroir), icônes lues par Examine/ExNext + GetDiskObject, redessinées
 ; au REFRESHWINDOW (BeginRefresh/EndRefresh). Une seule icône sélectionnée à la fois (rectangle inversé). Double-clic
 ; sur un outil : lancé par CreateProc avec un message WBStartup (argument 0 = l'outil) ; sur un projet : son outil par
 ; défaut, le projet en argument 1. Le message revient sur le port « Workbench » à la fin de l'outil : segment
 ; déchargé, verrous rendus. Menus Workbench / Disk / Special : Open, Close, Rename, Discard, Clean Up, Last Error,
 ; Redraw, Snapshot et Version actifs, le reste grisé. Titre d'écran (spec §6) : mémoire libre au tic de 5 s, message
-; figé (Version, Last Error) jusqu'au prochain clic ou menu. Portée : ni Info / Duplicate, ni icône Ram Disk, ni
-; défilement des tiroirs, une seule icône sélectionnée ; Rename et Discard ne s'appliquent qu'aux icônes d'un
+; figé (Version, Last Error) jusqu'au prochain clic ou menu. Portée : une seule icône sélectionnée ; Rename et Discard ne s'appliquent qu'aux icônes d'un
 ; tiroir. Échecs signalés en titre d'écran comme la 1.3 (spec §6.9) : « Error while <action>: <IoErr> » à l'ouverture
 ; d'un tiroir, au lancement, au Rename (et « Do not use ':' in names »), au Discard et au Snapshot.
 ; Piste IMPLÉMENTATION (« clean ») : spec ci-dessus + AutoDocs exec/dos/workbench (WBStartup, DiskObject).
@@ -25,6 +25,7 @@
                 include "dospkt.i"
                 include "intuition.i"
                 include "graphics.i"
+                include "dos.i"
 
                 ifeq    PROD
                 xref    ser_puts             ; marqueurs de test (ROM de développement)
@@ -211,19 +212,16 @@ WBS_GFXBASE     EQU 4
 WBS_DOSBASE     EQU 8
 WBS_ICONBASE    EQU 12
 WBS_WIN         EQU 16               ; fenêtre de fond (BACKDROP) | 0
-WBS_DOBJ        EQU 20               ; DiskObject du disque de boot (icon.library) | 0
-WBS_NAME        EQU 24               ; nom du volume (chaîne C)
+WBS_NVOL        EQU 20               ; WORD : volumes sur le bureau (WBS_VOLS[0..NVOL-1], icônes 0..NVOL-1 du bureau)
+WBS_DEFIMG      EQU 22               ; données de l'image de disque par défaut, copiées en CHIP | 0 (celles de la ROM)
 WBS_NAMEMAX     EQU 32
-WBS_PORT        EQU WBS_NAME+WBS_NAMEMAX ; port public « Workbench »
-WBS_IX          EQU WBS_PORT+4       ; position de l'icône du disque dans la fenêtre de fond
-WBS_IY          EQU WBS_IX+2
-WBS_SELW        EQU WBS_IY+2         ; WORD : fenêtre de l'icône sélectionnée (0 bureau, 1.. tiroir), -1 : aucune
+WBS_PORT        EQU WBS_DEFIMG+4     ; port public « Workbench »
+WBS_SELW        EQU WBS_PORT+4       ; WORD : fenêtre de l'icône sélectionnée (0 bureau, 1.. tiroir), -1 : aucune
 WBS_SELI        EQU WBS_SELW+2       ; WORD : n° de l'icône sélectionnée
 WBS_LSEC        EQU WBS_SELI+2       ; horodatage du clic précédent (double-clic)
 WBS_LMIC        EQU WBS_LSEC+4
-WBS_SHOWN       EQU WBS_LMIC+4       ; BYTE : icône du disque dessinée
-WBS_GON         EQU WBS_SHOWN+1      ; BYTE : cadre fantôme du glisser affiché
-WBS_DRAGW       EQU WBS_SHOWN+2      ; WORD : fenêtre de l'icône glissée, -1 : aucun glisser
+WBS_GON         EQU WBS_LMIC+4       ; BYTE : cadre fantôme du glisser affiché
+WBS_DRAGW       EQU WBS_GON+2        ; WORD : fenêtre de l'icône glissée, -1 : aucun glisser
 WBS_DRAGI       EQU WBS_DRAGW+2      ; WORD : icône glissée
 WBS_DSX         EQU WBS_DRAGI+2      ; souris au clic (relative à la fenêtre)
 WBS_DSY         EQU WBS_DSX+2
@@ -248,10 +246,27 @@ WBS_SCRG        EQU WBS_SCRW+2       ; WORD : GadgetID du gadget de défilement 
 WBS_SCRGAD      EQU WBS_SCRG+2       ; LONG : ce gadget
 WBS_SCRTICK     EQU WBS_SCRGAD+4     ; WORD : flèche tenue sans Shift -> un pas par INTUITICKS (ajouté à l'IDCMP)
 WBS_UPDCNT      EQU WBS_SCRTICK+2    ; WORD : imbrication de wb_updopen (une seule mise à jour pour tout le WB)
-WBS_DRAWERS     EQU WBS_UPDCNT+2     ; WB_MAXDRAWERS fiches de tiroir
+WBS_VOLS        EQU WBS_UPDCNT+2     ; WB_MAXVOLS fiches de volume (icônes du bureau)
+WBS_DRAWERS     EQU WBS_VOLS+WB_MAXVOLS*VE_SIZE ; WB_MAXDRAWERS fiches de tiroir
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copie des menus (intuition y écrit)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
+WB_MAXVOLS      EQU 8
+; fiche d'un volume du bureau
+VE_NODE         EQU 0                ; BPTR du nœud volume de la DosList
+VE_DOBJ         EQU 4                ; DiskObject : celui de « <volume>:Disk », ou VE_DEFO
+VE_DEF          EQU 8                ; BYTE : icône par défaut (copie en VE_DEFO, jamais rendue à icon.library)
+VE_SEEN         EQU 9                ; BYTE : revu au dernier relevé de la DosList
+VE_X            EQU 10               ; WORD : position de l'icône dans la fenêtre de fond
+VE_Y            EQU 12
+VE_DATE         EQU 14               ; date de création du volume (dl_VolumeDate)
+VE_NAME         EQU 26               ; nom du volume (chaîne C)
+VE_PATH         EQU VE_NAME+WBS_NAMEMAX ; « <nom>: »
+VE_DEFO         EQU VE_PATH+36       ; DiskObject par défaut (78 octets)
+VE_DEFI         EQU VE_DEFO+78       ; son Image (IG_SIZE)
+VE_SIZE         EQU VE_DEFI+IG_SIZE
+WB_COLW         EQU 96               ; placement automatique : colonnes de 96 pixels (spec disk-change-v34 §4.3)
+WB_LABELH       EQU 11               ; place du nom sous une icône (tf_YSize de topaz 8 + 3)
 ; fiche d'un tiroir
 DR_WIN          EQU 0                ; fenêtre | 0 (fiche libre)
 DR_NICON        EQU 4                ; icônes lues
@@ -281,13 +296,11 @@ WB_DISKGAUGE    EQU 14               ; largeur réservée à la jauge d'une fen�
 WB_MAXICONS     EQU 16
 WB_PATHMAX      EQU 96
 WB_CPBUF        EQU 4096             ; tampon de copie de Duplicate
-WB_ICONGAP      EQU 20               ; marge droite de l'icône de disque (pas de position mémorisée)
-WB_ICONTOP      EQU 6
 WB_GRIDX        EQU 80
 WB_TOOLSTACK    EQU 4096             ; pile minimale d'un outil lancé
 
 ; wb_desktop(a5 = état, a6 = SysBase) : ouvre l'écran Workbench, la fenêtre de fond (BACKDROP, sans bordure, sous la
-; barre de l'écran), lit le nom du volume SYS: et l'icône SYS:Disk (icon.library du disque), puis dessine le bureau.
+; barre de l'écran), puis relève les volumes de la DosList (wb_vscan) et dessine le bureau.
 ; Chaque étape est optionnelle (bibliothèque ou fichier absent : bureau plus pauvre). Préserve d2-d7/a2-a6.
 wb_desktop:
         movem.l d2-d3/a2/a6,-(sp)
@@ -314,7 +327,7 @@ wb_desktop:
         move.w  SC_HEIGHT(a2),d0
         sub.w   d1,d0
         move.w  d0,NW_HEIGHT(a0)
-        move.l  #REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK,NW_IDCMPFLAGS(a0)
+        move.l  #REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK|DISKINSERTED|DISKREMOVED,NW_IDCMPFLAGS(a0)
         move.l  #BACKDROP|BORDERLESS,NW_FLAGS(a0)
         jsr     LVO_OPENWINDOW(a6)
         lea     NW_SIZEOF(sp),sp
@@ -323,59 +336,457 @@ wb_desktop:
         move.l  d0,a0
         bsr     wb_setmenus
 .wd_vol:
-        move.l  ($4).w,a6
-        lea     wb_dosname(pc),a1    ; nom du volume : Examine de SYS:
+        lea     wb_dosname(pc),a1
         bsr     wb_openlib
         move.l  d0,WBS_DOSBASE(a5)
-        beq.s   .wd_icon
-        move.l  #FIB_SIZEOF,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,d3                ; d3 = FIB | 0
-        beq.s   .wd_icon
-        move.l  WBS_DOSBASE(a5),a6
-        move.l  #wb_sysname,d1
-        moveq   #SHARED_LOCK,d2
-        jsr     DOS_LVO_LOCK(a6)
-        move.l  d0,a2                ; a2 = lock | 0
-        tst.l   d0
-        beq.s   .wd_nofib
-        move.l  d0,d1
-        move.l  d3,d2
-        jsr     DOS_LVO_EXAMINE(a6)
-        tst.l   d0
-        beq.s   .wd_unlock
-        move.l  d3,a0
-        lea     FIB_FILENAME(a0),a0
-        lea     WBS_NAME(a5),a1
-        moveq   #WBS_NAMEMAX-2,d0
-.wd_ncpy:
-        move.b  (a0)+,(a1)+
-        dbeq    d0,.wd_ncpy
-        clr.b   (a1)
-.wd_unlock:
-        move.l  a2,d1
-        jsr     DOS_LVO_UNLOCK(a6)
-.wd_nofib:
-        move.l  ($4).w,a6
-        move.l  d3,a1
-        move.l  #FIB_SIZEOF,d0
-        jsr     LVO_FREEMEM(a6)
-.wd_icon:
-        move.l  ($4).w,a6
-        lea     wb_iconname(pc),a1   ; icône du disque : SYS:Disk.info
+        lea     wb_iconname(pc),a1
         bsr     wb_openlib
         move.l  d0,WBS_ICONBASE(a5)
-        beq.s   .wd_draw
-        move.l  d0,a6
-        lea     wb_diskname(pc),a0
-        jsr     ICON_LVO_GETDISKOBJECT(a6)
-        move.l  d0,WBS_DOBJ(a5)
-.wd_draw:
-        moveq   #0,d7
-        bsr     wb_drawwin
+        move.l  ($4).w,a6
+        move.l  #4*32,d0             ; image de disque par défaut en CHIP (32 x 16, 2 plans)
+        move.l  #(MEMF_CHIP|MEMF_PUBLIC),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,WBS_DEFIMG(a5)
+        beq.s   .wd_scan
+        move.l  d0,a1
+        lea     wb_defdata(pc),a0
+        moveq   #32-1,d0
+.wd_img:
+        move.l  (a0)+,(a1)+
+        dbra    d0,.wd_img
+.wd_scan:
+        bsr     wb_vscan             ; icônes des volumes, puis bureau dessiné
 .wd_ret:
         movem.l (sp)+,d2-d3/a2/a6
+        rts
+
+; --- volumes du bureau (spec disk-change-v34 §4) -------------------------------------------------------------------
+; wb_volent(d1.w = n° de volume, a5) -> a0 = sa fiche. Clobbe d0.
+wb_volent:
+        move.w  d1,d0
+        mulu    #VE_SIZE,d0
+        lea     WBS_VOLS(a5),a0
+        add.l   d0,a0
+        rts
+
+; wb_vscan(a5) : relevé de la DosList. Volume connu (même nœud, présent ou non) : revu. Volume inconnu monté (dl_Task
+; non nul) : nouvelle icône (wb_vadd), dans l'ordre de la liste. Fiche dont le nœud a quitté la liste : icône retirée.
+; Changement : bureau redessiné. Rien pendant un glisser. Préserve d2-d7/a2-a6.
+wb_vscan:
+        movem.l d2-d7/a2-a4/a6,-(sp)
+        tst.l   WBS_DOSBASE(a5)
+        beq     .vs_ret
+        tst.w   WBS_DRAGW(a5)
+        bpl     .vs_ret
+        moveq   #0,d5                ; d5 = changement
+        lea     WBS_VOLS(a5),a2
+        move.w  WBS_NVOL(a5),d0
+        bra.s   .vs_ue
+.vs_un:
+        sf      VE_SEEN(a2)
+        lea     VE_SIZE(a2),a2
+.vs_ue:
+        dbra    d0,.vs_un
+        lea     -4*WB_MAXVOLS(sp),sp ; nœuds des nouveaux volumes
+        moveq   #0,d6                ; d6 = leur nombre
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        bsr     wb_devinfo
+        move.l  (a0),d2
+.vs_lp:
+        lsl.l   #2,d2
+        beq.s   .vs_end
+        move.l  d2,a3
+        lsr.l   #2,d2                ; d2 = BPTR du nœud
+        cmp.l   #DLT_VOLUME,DN_TYPE(a3)
+        bne.s   .vs_nx
+        lea     WBS_VOLS(a5),a2
+        move.w  WBS_NVOL(a5),d0
+        bra.s   .vs_fe
+.vs_find:
+        cmp.l   VE_NODE(a2),d2
+        beq.s   .vs_seen
+        lea     VE_SIZE(a2),a2
+.vs_fe:
+        dbra    d0,.vs_find
+        tst.l   DN_TASK(a3)          ; inconnu : seulement s'il est monté
+        beq.s   .vs_nx
+        cmp.w   #WB_MAXVOLS,d6
+        bhs.s   .vs_nx
+        move.w  d6,d0
+        lsl.w   #2,d0
+        move.l  d2,0(sp,d0.w)
+        addq.w  #1,d6
+        bra.s   .vs_nx
+.vs_seen:
+        st      VE_SEEN(a2)
+.vs_nx:
+        move.l  DN_NEXT(a3),d2
+        bra.s   .vs_lp
+.vs_end:
+        jsr     LVO_PERMIT(a6)
+        move.w  WBS_NVOL(a5),d4      ; fiches disparues, de la dernière à la première
+.vs_rm:
+        subq.w  #1,d4
+        bmi.s   .vs_add
+        move.w  d4,d1
+        bsr     wb_volent
+        tst.b   VE_SEEN(a0)
+        bne.s   .vs_rm
+        move.w  d4,d1
+        bsr     wb_vremove
+        moveq   #1,d5
+        bra.s   .vs_rm
+.vs_add:
+        moveq   #0,d4
+.vs_al:
+        cmp.w   d6,d4
+        bhs.s   .vs_draw
+        move.w  d4,d0
+        lsl.w   #2,d0
+        move.l  0(sp,d0.w),d0
+        bsr     wb_vadd
+        beq.s   .vs_an
+        moveq   #1,d5
+.vs_an:
+        addq.w  #1,d4
+        bra.s   .vs_al
+.vs_draw:
+        lea     4*WB_MAXVOLS(sp),sp
+        tst.l   d5
+        beq.s   .vs_ret
+        moveq   #0,d7
+        bsr     wb_redraw1
+.vs_ret:
+        movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+; wb_devinfo(a5) -> a0 = &DosInfo.di_DevInfo. Clobbe d0.
+wb_devinfo:
+        move.l  WBS_DOSBASE(a5),a0
+        move.l  DL_ROOT(a0),a0
+        move.l  RN_INFO(a0),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        lea     DI_DEVINFO(a0),a0
+        rts
+
+; wb_vremove(d1.w = n° de volume, a5) : son icône quitte le bureau (DiskObject rendu, sauf l'icône par défaut) ; les
+; fiches suivantes descendent d'un rang. Une sélection sur le bureau est abandonnée. Préserve d2-d7/a2-a6.
+wb_vremove:
+        movem.l d2/a2/a6,-(sp)
+        tst.w   WBS_SELW(a5)
+        bne.s   .vr_sel
+        move.w  #-1,WBS_SELW(a5)     ; le bureau est redessiné ensuite
+.vr_sel:
+        move.w  d1,d2
+        bsr     wb_volent
+        move.l  a0,a2
+        tst.b   VE_DEF(a2)
+        bne.s   .vr_shift
+        move.l  VE_DOBJ(a2),a0
+        move.l  WBS_ICONBASE(a5),a6
+        jsr     ICON_LVO_FREEDISKOBJECT(a6)
+.vr_shift:
+        subq.w  #1,WBS_NVOL(a5)
+.vr_lp:
+        cmp.w   WBS_NVOL(a5),d2
+        bhs.s   .vr_ret
+        lea     VE_SIZE(a2),a0       ; fiche suivante recopiée ici
+        move.l  a2,a1
+        move.w  #VE_SIZE/2-1,d0
+.vr_cp:
+        move.w  (a0)+,(a1)+
+        dbra    d0,.vr_cp
+        bsr     wb_vfix
+        lea     VE_SIZE(a2),a2
+        addq.w  #1,d2
+        bra.s   .vr_lp
+.vr_ret:
+        movem.l (sp)+,d2/a2/a6
+        rts
+; wb_vfix(a2 = fiche) : icône par défaut : pointeurs vers sa propre copie (la fiche a pu être déplacée). Clobbe a0.
+wb_vfix:
+        tst.b   VE_DEF(a2)
+        beq.s   .vf_ret
+        lea     VE_DEFO(a2),a0
+        move.l  a0,VE_DOBJ(a2)
+        lea     VE_DEFI(a2),a0
+        move.l  a0,VE_DEFO+DO_GADGET+GG_GADGETRENDER(a2)
+.vf_ret:
+        rts
+
+; wb_vadd(d0 = BPTR du nœud volume, a5) -> Z = 0 si une icône a été ajoutée : fiche suivante remplie (nom, chemin,
+; date, sous Forbid et seulement si le nœud est toujours dans la DosList avec dl_Task) ; DiskObject de
+; « <volume>:Disk », sinon l'icône par défaut ; position par wb_vplace. Préserve d2-d7/a2-a6.
+wb_vadd:
+        movem.l d2-d3/a2-a3/a6,-(sp)
+        move.l  d0,d2
+        cmp.w   #WB_MAXVOLS,WBS_NVOL(a5)
+        bhs     .va_no
+        move.w  WBS_NVOL(a5),d1
+        bsr     wb_volent
+        move.l  a0,a2                ; a2 = fiche (à zéro)
+        move.w  #VE_SIZE/2-1,d0
+.va_clr:
+        clr.w   (a0)+
+        dbra    d0,.va_clr
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        bsr     wb_devinfo
+        move.l  (a0),d0
+.va_find:
+        cmp.l   d0,d2
+        beq.s   .va_got
+        lsl.l   #2,d0
+        beq     .va_gone
+        move.l  d0,a0
+        move.l  DN_NEXT(a0),d0
+        bra.s   .va_find
+.va_got:
+        lsl.l   #2,d0
+        move.l  d0,a3
+        tst.l   DN_TASK(a3)
+        beq     .va_gone
+        move.l  d2,VE_NODE(a2)
+        move.l  DOL_VOLDATE(a3),VE_DATE(a2)
+        move.l  DOL_VOLDATE+4(a3),VE_DATE+4(a2)
+        move.l  DOL_VOLDATE+8(a3),VE_DATE+8(a2)
+        move.l  DN_NAME(a3),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        moveq   #0,d0
+        move.b  (a0)+,d0             ; BSTR
+        cmp.w   #WBS_NAMEMAX-2,d0
+        bls.s   .va_nl
+        moveq   #WBS_NAMEMAX-2,d0
+.va_nl:
+        lea     VE_NAME(a2),a1
+        lea     VE_PATH(a2),a3
+        bra.s   .va_ne
+.va_nc:
+        move.b  (a0),(a1)+
+        move.b  (a0)+,(a3)+
+.va_ne:
+        dbra    d0,.va_nc
+        move.b  #':',(a3)+
+        jsr     LVO_PERMIT(a6)
+        lea     -WB_PATHMAX(sp),sp   ; « <volume>:Disk »
+        lea     VE_PATH(a2),a0
+        move.l  sp,a1
+        moveq   #WB_PATHMAX-2,d0
+        bsr     wb_strcpy
+        move.l  sp,a0
+        bsr     wb_strlen
+        lea     0(sp,d0.w),a1
+        lea     wb_diskicon(pc),a0
+        moveq   #5,d0
+        bsr     wb_strcpy
+        moveq   #0,d0
+        move.l  WBS_ICONBASE(a5),d1
+        beq.s   .va_dobj
+        move.l  d1,a6
+        move.l  sp,a0
+        jsr     ICON_LVO_GETDISKOBJECT(a6)
+.va_dobj:
+        lea     WB_PATHMAX(sp),sp
+        move.l  d0,VE_DOBJ(a2)
+        bne.s   .va_place
+        bsr     wb_vdefault
+.va_place:
+        bsr     wb_vplace
+        st      VE_SEEN(a2)
+        addq.w  #1,WBS_NVOL(a5)
+        moveq   #1,d0                ; Z = 0
+        bra.s   .va_ret
+.va_gone:
+        jsr     LVO_PERMIT(a6)
+.va_no:
+        moveq   #0,d0                ; Z = 1
+.va_ret:
+        movem.l (sp)+,d2-d3/a2-a3/a6
+        rts
+
+; wb_vdefault(a2 = fiche, a5) : icône de disque par défaut (spec disk-change-v34 §4.2) : copie de wb_defobj et de son
+; Image dans la fiche, données de l'image en CHIP si possible. Clobbe d0/a0/a1.
+wb_vdefault:
+        lea     wb_defobj(pc),a0
+        lea     VE_DEFO(a2),a1
+        moveq   #(78+IG_SIZE)/2-1,d0
+.vd_cp:
+        move.w  (a0)+,(a1)+
+        dbra    d0,.vd_cp
+        st      VE_DEF(a2)
+        move.l  WBS_DEFIMG(a5),d0
+        bne.s   .vd_img
+        lea     wb_defdata(pc),a0
+        move.l  a0,d0
+.vd_img:
+        move.l  d0,VE_DEFI+IG_IMAGEDATA(a2)
+        bra     wb_vfix
+
+; wb_vplace(a2 = nouvelle fiche, a5) : VE_X/VE_Y de son icône parmi celles déjà sur le bureau (spec disk-change-v34
+; §4.3). La position du .info est gardée si le rectangle [X-2, X+w+2] x [Y-m, Y+h+m] (m = place du nom) ne touche
+; aucune icône ; sinon, colonnes de 96 pixels depuis la droite, dans chacune le premier trou depuis le haut (y = 5 au
+; départ, icônes de la colonne prises par Y croissant) tenant dans la fenêtre ; à défaut, (W-60, 5).
+; Préserve d2-d7/a2-a6.
+wb_vplace:
+        movem.l d2-d7/a3-a4,-(sp)
+        clr.l   VE_X(a2)
+        move.l  WBS_WIN(a5),d0
+        beq     .vp_ret
+        move.l  d0,a3
+        move.l  VE_DOBJ(a2),a4
+        move.w  DO_GADGET+GG_WIDTH(a4),d6     ; d6 = w
+        move.w  DO_GADGET+GG_HEIGHT(a4),d7    ; d7 = h
+        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a4)
+        beq.s   .vp_cols
+        move.w  DO_CURRENTX+2(a4),d0
+        move.w  DO_CURRENTY+2(a4),d1
+        move.w  d0,d2                ; rectangle de garde
+        subq.w  #2,d2
+        move.w  d0,d3
+        add.w   d6,d3
+        addq.w  #2,d3
+        move.w  d1,d4
+        sub.w   #WB_LABELH,d4
+        move.w  d1,d5
+        add.w   d7,d5
+        add.w   #WB_LABELH,d5
+        bsr     wb_vhit
+        bne.s   .vp_cols
+        move.w  d0,VE_X(a2)
+        move.w  d1,VE_Y(a2)
+        bra     .vp_ret
+.vp_cols:
+        move.w  WD_WIDTH(a3),d2
+        sub.w   #WB_COLW,d2          ; d2 = x0
+.vp_col:
+        tst.w   d2
+        bmi.s   .vp_none
+        moveq   #5,d3                ; d3 = y candidat
+        moveq   #0,d4                ; d4 = icônes de la colonne déjà prises (bits)
+.vp_next:
+        bsr     wb_vlow              ; d0 = n° de l'icône de la colonne au plus petit Y non prise | -1, a0 = sa fiche
+        bmi.s   .vp_fit
+        bset    d0,d4
+        move.w  d3,d1
+        add.w   d7,d1
+        add.w   #WB_LABELH,d1
+        cmp.w   VE_Y(a0),d1
+        ble.s   .vp_fit              ; le trou au-dessus de cette icône suffit
+        move.l  VE_DOBJ(a0),a1
+        move.w  VE_Y(a0),d1
+        add.w   DO_GADGET+GG_HEIGHT(a1),d1
+        add.w   #WB_LABELH,d1
+        cmp.w   d1,d3
+        bge.s   .vp_next
+        move.w  d1,d3
+        bra.s   .vp_next
+.vp_fit:
+        move.w  d3,d1
+        add.w   d7,d1
+        add.w   #WB_LABELH,d1
+        move.w  WD_HEIGHT(a3),d0
+        subq.w  #5,d0
+        cmp.w   d0,d1
+        bgt.s   .vp_left
+        move.w  #WB_COLW,d0
+        sub.w   d6,d0
+        asr.w   #1,d0
+        add.w   d2,d0
+        move.w  d0,VE_X(a2)
+        move.w  d3,VE_Y(a2)
+        bra.s   .vp_ret
+.vp_left:
+        sub.w   #WB_COLW,d2
+        bra.s   .vp_col
+.vp_none:
+        move.w  WD_WIDTH(a3),d0
+        sub.w   #60,d0
+        move.w  d0,VE_X(a2)
+        move.w  #5,VE_Y(a2)
+.vp_ret:
+        movem.l (sp)+,d2-d7/a3-a4
+        rts
+; wb_vhit(d2..d5 = rectangle x0, x1, y0, y1, a5) -> Z = 0 s'il touche l'icône d'un volume déjà placé (fiches
+; 0..NVOL-1). Préserve d2-d7/a2-a6 et d0/d1.
+wb_vhit:
+        movem.l d0-d1/d6/a1,-(sp)
+        moveq   #0,d6
+.vh_lp:
+        cmp.w   WBS_NVOL(a5),d6
+        bhs.s   .vh_no
+        move.w  d6,d1
+        bsr     wb_volent
+        move.l  VE_DOBJ(a0),a1
+        move.w  VE_X(a0),d0
+        cmp.w   d3,d0
+        bgt.s   .vh_nx
+        add.w   DO_GADGET+GG_WIDTH(a1),d0
+        cmp.w   d2,d0
+        blt.s   .vh_nx
+        move.w  VE_Y(a0),d0
+        cmp.w   d5,d0
+        bgt.s   .vh_nx
+        add.w   DO_GADGET+GG_HEIGHT(a1),d0
+        cmp.w   d4,d0
+        bge.s   .vh_yes
+.vh_nx:
+        addq.w  #1,d6
+        bra.s   .vh_lp
+.vh_yes:
+        movem.l (sp)+,d0-d1/d6/a1    ; (movem vers les registres ne touche pas aux codes)
+        andi.b  #$FB,ccr             ; Z = 0
+        rts
+.vh_no:
+        movem.l (sp)+,d0-d1/d6/a1
+        ori.b   #$04,ccr             ; Z = 1
+        rts
+; wb_vlow(d2 = x0 de la colonne, d4 = icônes déjà prises, a5) -> d0 = n° de l'icône de la colonne [x0, x0+96[ au plus
+; petit Y parmi les autres, a0 = sa fiche ; d0 = -1 (N = 1) s'il n'y en a plus. Préserve d1-d7/a1-a6.
+wb_vlow:
+        movem.l d1/d5-d6/a1,-(sp)
+        moveq   #-1,d5               ; meilleure : n°
+        moveq   #0,d6
+.vl_lp:
+        cmp.w   WBS_NVOL(a5),d6
+        bhs.s   .vl_end
+        btst    d6,d4
+        bne.s   .vl_nx
+        move.w  d6,d1
+        bsr     wb_volent
+        move.l  VE_DOBJ(a0),a1
+        move.w  VE_X(a0),d0
+        move.w  d2,d1
+        add.w   #WB_COLW-1,d1
+        cmp.w   d1,d0
+        bgt.s   .vl_nx
+        add.w   DO_GADGET+GG_WIDTH(a1),d0
+        cmp.w   d2,d0
+        blt.s   .vl_nx
+        tst.w   d5
+        bmi.s   .vl_take
+        move.w  d5,d1
+        move.l  a0,a1
+        bsr     wb_volent
+        move.w  VE_Y(a0),d0
+        move.l  a1,a0
+        cmp.w   VE_Y(a0),d0
+        ble.s   .vl_nx
+.vl_take:
+        move.w  d6,d5
+.vl_nx:
+        addq.w  #1,d6
+        bra.s   .vl_lp
+.vl_end:
+        move.w  d5,d1
+        bmi.s   .vl_ret
+        bsr     wb_volent
+.vl_ret:
+        move.w  d5,d0
+        ext.l   d0
+        movem.l (sp)+,d1/d5-d6/a1
+        tst.l   d0
         rts
 
 ; wb_nwclear(sp+4 = NewWindow réservée par l'appelant) -> a0 = NewWindow à zéro, stylos de l'écran, type WBENCHSCREEN.
@@ -458,6 +869,12 @@ wb_dispatch:
         bsr     wb_bars              ; nouvelle taille : barres recalculées (le dessin suit REFRESHWINDOW)
         bra     wb_dispatch
 .dp_ref:
+        move.l  d2,d0
+        and.l   #DISKINSERTED|DISKREMOVED,d0
+        beq.s   .dp_rf
+        bsr     wb_vscan             ; disquette insérée ou éjectée : volumes relevés
+        bra     wb_dispatch
+.dp_rf:
         cmp.l   #REFRESHWINDOW,d2
         bne.s   .dp_mb
         bsr     wb_repair
@@ -1112,18 +1529,17 @@ wb_gauge:
         rts
 
 ; wb_iconrect(d7.w = fenêtre, d1.w = n° d'icône, a5) -> a2 = DiskObject, d0..d3 = x0,y0,x1,y1 dans la fenêtre ;
-; Z = 1 si l'icône n'existe pas. Bureau : l'icône du disque à (IX, IY) ; tiroir : position du .info (sinon grille)
-; décalée des bordures gauche et haute. Clobbe a0/a1.
+; Z = 1 si l'icône n'existe pas. Bureau : l'icône du volume n° d1 à sa position (VE_X, VE_Y) ; tiroir : position du
+; .info (sinon grille) décalée des bordures gauche et haute. Clobbe a0/a1.
 wb_iconrect:
         tst.w   d7
         bne.s   .ir_dr
-        tst.w   d1
-        bne.s   .ir_none
-        tst.b   WBS_SHOWN(a5)
-        beq.s   .ir_none
-        move.l  WBS_DOBJ(a5),a2
-        move.w  WBS_IX(a5),d0
-        move.w  WBS_IY(a5),d1
+        cmp.w   WBS_NVOL(a5),d1
+        bhs.s   .ir_none
+        bsr     wb_volent            ; a0 = fiche du volume
+        move.l  VE_DOBJ(a0),a2
+        move.w  VE_X(a0),d0
+        move.w  VE_Y(a0),d1
         bra.s   .ir_size
 .ir_dr:
         move.l  a4,-(sp)
@@ -1176,34 +1592,19 @@ wb_drawwin:
         beq     .dw_ret
         tst.w   d7
         bne.s   .dw_dr
-        move.l  WBS_DOBJ(a5),d0      ; bureau : position de l'icône du disque (en haut à droite, nom compris)
-        beq     .dw_ret
-        move.l  d0,a2
-        lea     WBS_NAME(a5),a0
-        bsr     wb_strlen
-        lsl.w   #3,d0
-        sub.w   DO_GADGET+GG_WIDTH(a2),d0
-        bpl.s   .dw_wide
-        moveq   #0,d0
-.dw_wide:
-        lsr.w   #1,d0
-        move.w  WD_WIDTH(a3),d4
-        sub.w   DO_GADGET+GG_WIDTH(a2),d4
-        sub.w   d0,d4
-        sub.w   #WB_ICONGAP,d4
-        moveq   #WB_ICONTOP,d5
-        cmp.l   #NO_ICON_POSITION,DO_CURRENTX(a2)
-        beq.s   .dw_pos
-        move.w  DO_CURRENTX+2(a2),d4
-        move.w  DO_CURRENTY+2(a2),d5
-.dw_pos:
-        move.w  d4,WBS_IX(a5)
-        move.w  d5,WBS_IY(a5)
-        st      WBS_SHOWN(a5)
-        lea     WBS_NAME(a5),a4
-        moveq   #0,d6
+        moveq   #0,d6                ; bureau : les icônes des volumes
+.dw_vol:
+        cmp.w   WBS_NVOL(a5),d6
+        bhs.s   .dw_ret
+        move.w  d6,d1
+        bsr     wb_volent
+        move.l  VE_DOBJ(a0),a2
+        move.w  VE_X(a0),d4
+        move.w  VE_Y(a0),d5
+        lea     VE_NAME(a0),a4
         bsr     wb_drawicon
-        bra.s   .dw_ret
+        addq.w  #1,d6
+        bra.s   .dw_vol
 .dw_dr:
         bsr     wb_gauge             ; fenêtre d'un disque : sa jauge (hors du contenu, donc hors mise à jour)
         bsr.s   wb_drawicons
@@ -1725,7 +2126,7 @@ wb_dragend:
 .de_ay:
         add.w   d1,d0
         cmp.w   #3,d0
-        blt.s   .de_out              ; simple clic
+        blt     .de_out              ; simple clic
         bsr     wb_window
         beq.s   .de_out
         tst.w   d4                   ; relâché hors de la fenêtre d'origine : rien
@@ -1765,6 +2166,15 @@ wb_dragend:
         ext.l   d1
         move.l  d0,DO_CURRENTX(a2)
         move.l  d1,DO_CURRENTY(a2)
+        tst.w   d7
+        bne.s   .de_draw
+        movem.w d0-d1,-(sp)          ; bureau : nouvelle position du volume
+        move.w  WBS_DRAGI(a5),d1
+        bsr     wb_volent
+        movem.w (sp)+,d0-d1
+        move.w  d0,VE_X(a0)
+        move.w  d1,VE_Y(a0)
+.de_draw:
         bsr     wb_redraw1
 .de_out:
         movem.l (sp)+,d2-d6/a2-a4
@@ -1791,11 +2201,10 @@ wb_openicon:
         lea     -WB_PATHMAX(sp),sp
         tst.w   d7
         bne.s   .oi_dr
-        move.l  WBS_DOBJ(a5),d0      ; disque : racine « SYS: », titre = nom du volume
-        beq     .oi_ret
-        move.l  d0,a2
-        lea     wb_sysname(pc),a0
-        lea     WBS_NAME(a5),a1
+        bsr     wb_volent            ; disque : sa racine « <volume>: », titre = nom du volume
+        move.l  VE_DOBJ(a0),a2
+        lea     VE_NAME(a0),a1
+        lea     VE_PATH(a0),a0
         bsr     wb_opendrawer
         bra     .oi_ret
 .oi_dr:
@@ -2065,7 +2474,7 @@ wb_loadicons:
         subq.w  #5,d3                ; d3 = longueur du nom sans « .info »
         cmp.w   #4,d3                ; « Disk » : l'icône du disque lui-même
         bne.s   .li_keep
-        lea     wb_diskname+4(pc),a0
+        lea     wb_diskicon(pc),a0
         move.l  a2,a1
         moveq   #3,d0
 .li_dk:
@@ -2387,11 +2796,12 @@ wb_timeropen:
 .to_ret:
         rts
 
-; wb_tick(a5) : tic de 5 s (spec workbench-task-v34 §3.4). AvailMem(0) ; si la valeur a changé, le titre d'écran est
+; wb_tick(a5) : tic de 5 s (spec workbench-task-v34 §3.4). Volumes relevés (wb_vscan), puis AvailMem(0) ; si la valeur a changé, le titre d'écran est
 ; reformaté (« Workbench release 1.2.  %ld free memory », que le SetWindowTitles détourné par LoadWB 1.3.3 retouche)
 ; et appliqué aux fenêtres ; puis la requête repart pour 5 s. Préserve d2-d7/a2-a6.
 wb_tick:
         movem.l a2-a3/a6,-(sp)
+        bsr     wb_vscan
         bsr.s   wb_memtitle
         lea     WBS_TREQ(a5),a1
         move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
@@ -2753,13 +3163,21 @@ wb_snapshot:
         beq     .ss_ret
         tst.w   d7
         bne.s   .ss_dr
-        lea     wb_diskname(pc),a0   ; disque : SYS:Disk, sa fenêtre est la racine SYS:
-        move.l  sp,a1
-        movem.w d0-d1,-(sp)
+        movem.w d0-d1,-(sp)          ; disque : « <volume>:Disk », sa fenêtre est la racine « <volume>: »
+        move.w  WBS_SELI(a5),d1
+        bsr     wb_volent
+        lea     VE_PATH(a0),a3
+        move.l  a3,a0
+        lea     4(sp),a1
         moveq   #WB_PATHMAX-2,d0
         bsr     wb_strcpy
+        lea     4(sp),a0
+        bsr     wb_strlen
+        lea     4(sp,d0.w),a1
+        lea     wb_diskicon(pc),a0
+        moveq   #5,d0
+        bsr     wb_strcpy
         movem.w (sp)+,d0-d1
-        lea     wb_sysname(pc),a3
         bra.s   .ss_pos
 .ss_dr:
         movem.w d0-d1,-(sp)
@@ -2839,7 +3257,9 @@ wb_info:
         move.w  WBS_SELW(a5),d7
         bmi     .if_ret
         bne.s   .if_dr
-        lea     wb_sysname(pc),a0    ; disque : racine, icône « Disk »
+        move.w  WBS_SELI(a5),d1      ; disque : sa racine, icône « Disk »
+        bsr     wb_volent
+        lea     VE_PATH(a0),a0
         lea     wb_diskicon(pc),a3
         bra.s   .if_lock
 .if_dr:
@@ -2957,9 +3377,10 @@ wb_duplicate:
         move.w  WBS_SELW(a5),d7
         bmi     .du_ret
         bne.s   .du_obj
-        move.l  WBS_DOBJ(a5),d0      ; disque
-        beq     .du_ret
-        move.l  d0,a2
+        move.w  WBS_SELI(a5),d1      ; disque
+        bsr     wb_volent
+        move.l  VE_DOBJ(a0),a2
+        lea     VE_PATH(a0),a1
         move.l  DO_DEFAULTTOOL(a2),d0
         bne.s   .du_tool
         lea     wb_nodiskcopy(pc),a0
@@ -2968,7 +3389,6 @@ wb_duplicate:
         bra     .du_ret
 .du_tool:
         move.l  d0,a0
-        lea     wb_sysname(pc),a1
         bsr     wb_launch
         bra     .du_ret
 .du_obj:
@@ -3895,10 +4315,6 @@ wb_dosname:
         dc.b    "dos.library",0
 wb_iconname:
         dc.b    "icon.library",0
-wb_sysname:
-        dc.b    "SYS:",0
-wb_diskname:
-        dc.b    "SYS:Disk",0
 wb_infosuffix:
         dc.b    ".info",0
 wb_procname:
@@ -3977,6 +4393,8 @@ wb_nomem:
         dc.b    "Ran out of memory.  Please free some and try again.",0
 wb_diskicon:
         dc.b    "Disk",0
+wb_diskcopy:
+        dc.b    "SYS:System/DiskCopy",0
 wb_errfmt:
         dc.b    "Error while %s: %ld",0
 wb_badchar:
@@ -3997,4 +4415,59 @@ wbe_8:  dc.b    "writing %s",0
 wb_idstring:
         dc.b    "workbench.task 34.2",13,10,0
         EVEN
+; icône de disque par défaut (spec disk-change-v34 §4.2) : DiskObject et Image recopiés dans la fiche du volume
+; (pointeurs corrigés par wb_vfix), dessin 32 x 16 en 2 plans fait à la main (K noir, W blanc, O orange).
+                cnop    0,2
+wb_defobj:
+        dc.w    $E310,1              ; do_Magic, do_Version
+        dc.l    0                    ; Gadget : NextGadget
+        dc.w    0,0,32,16            ;   LeftEdge, TopEdge, Width, Height
+        dc.w    5,3,1                ;   Flags (GADGIMAGE|GADGHBOX), Activation, GadgetType (BOOLGADGET)
+        dc.l    0,0,0,0,0            ;   GadgetRender (wb_vfix), SelectRender, GadgetText, MutualExclude, SpecialInfo
+        dc.w    0                    ;   GadgetID
+        dc.l    0                    ;   UserData
+        dc.b    WBDISK,0             ; do_Type
+        dc.l    wb_diskcopy          ; do_DefaultTool
+        dc.l    0                    ; do_ToolTypes
+        dc.l    NO_ICON_POSITION,NO_ICON_POSITION
+        dc.l    0,0,0                ; do_DrawerData, do_ToolWindow, do_StackSize
+        dc.w    0,0,32,16,2          ; Image : LeftEdge, TopEdge, Width, Height, Depth
+        dc.l    0                    ;   ImageData (wb_vdefault)
+        dc.b    3,0                  ;   PlanePick, PlaneOnOff
+        dc.l    0                    ;   NextImage
+                cnop    0,4
+wb_defdata:                          ; plan 0
+        dc.l    $00000000           ; KKKKKKKKKKKKKKKKKKKKKKKKKKKKKK..
+        dc.l    $7FFFFFF8           ; KWWWWWWOOOOOOOOOOOOOOOOWWWWWWK..
+        dc.l    $7FFF1FFC           ; KWWWWWWOOOOOOOOOKKKOOOOWWWWWWWK.
+        dc.l    $7FFF1FFE           ; KWWWWWWOOOOOOOOOKKKOOOOWWWWWWWWK
+        dc.l    $7FFF1FFE           ; KWWWWWWOOOOOOOOOKKKOOOOWWWWWWWWK
+        dc.l    $7FFFFFFE           ; KWWWWWWOOOOOOOOOOOOOOOOWWWWWWWWK
+        dc.l    $7FFFFFFE           ; KWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWK
+        dc.l    $7FFFFFFE           ; KWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWK
+        dc.l    $7000000E           ; KWWWKKKKKKKKKKKKKKKKKKKKKKKKWWWK
+        dc.l    $77FFFFEE           ; KWWWKWWWWWWWWWWWWWWWWWWWWWWKWWWK
+        dc.l    $760000EE           ; KWWWKWWKKKKKKKKKKKKKKKKKWWWKWWWK
+        dc.l    $77FFFFEE           ; KWWWKWWWWWWWWWWWWWWWWWWWWWWKWWWK
+        dc.l    $760007EE           ; KWWWKWWKKKKKKKKKKKKKKWWWWWWKWWWK
+        dc.l    $77FFFFEE           ; KWWWKWWWWWWWWWWWWWWWWWWWWWWKWWWK
+        dc.l    $77FFFFEE           ; KWWWKWWWWWWWWWWWWWWWWWWWWWWKWWWK
+        dc.l    $00000000           ; KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
+                                     ; plan 1
+        dc.l    $FFFFFFFC
+        dc.l    $81FFFE04
+        dc.l    $81FFFE02
+        dc.l    $81FFFE01
+        dc.l    $81FFFE01
+        dc.l    $81FFFE01
+        dc.l    $80000001
+        dc.l    $80000001
+        dc.l    $8FFFFFF1
+        dc.l    $88000011
+        dc.l    $89FFFF11
+        dc.l    $88000011
+        dc.l    $89FFF811
+        dc.l    $88000011
+        dc.l    $88000011
+        dc.l    $FFFFFFFF
 wb_end:

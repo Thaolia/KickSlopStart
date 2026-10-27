@@ -540,8 +540,22 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   (7) **Heure système au montage** (handler.s, `hnd_bootclock`, spec boot-clock-v34) : au premier packet du
   file-handler DF0:, l'heure prend la plus récente des dates du bloc racine (répertoire racine et disque) si elle
   est encore au premier jour et antérieure ; jamais reculée. Comparé à la vraie 1.3 : `date` au boot affiche la date
-  de dernière modification du disque des deux côtés (« <unset> » avant). Écart : fait une seule fois (pas de
-  gestion de l'insertion d'un autre disque, que la 1.3 traite par son process validateur à chaque montage).
+  de dernière modification du disque des deux côtés (« <unset> » avant). Refait à chaque montage depuis le
+  changement de disquette (ci-dessous).
+  (7b) **Changement de disquette** (spec `docs/analysis/disk-change-v34.md`, 2026-10-27) : le handler DF0: se réveille
+  par packet ou par un tic timer d'1 s (UNIT_VBLANK) et interroge trackdisk (TD_CHANGESTATE, TD_CHANGENUM ; trackdisk
+  donne un pas de sonde moteur arrêté quand /CHNG est bas). Éjection : volume détaché (nœud retiré de la DosList s'il
+  n'a ni lock ni fichier ouvert — compte d'usage dans dol_unused, +$24 —, sinon dl_Task := 0), IECLASS_DISKREMOVED.
+  Insertion : bloc 0 (« DOS\0 », sinon le type tel quel / « BAD\0 »), bloc racine contrôlé (« NDOS » sinon), nœud de
+  même nom et même date de création réactivé ou créé en tête de liste (DL_VOLUME), bitmap oubliée, heure réglée,
+  IECLASS_DISKINSERTED (aussi pour un disque non DOS). Un lock ou un fichier d'un autre volume est refusé (218), la
+  racine sans disque aussi (226 / 225). ACTION_INHIBIT détache sans événement et remonte à sa levée. Contexte du
+  handler en RAM basse (HND_CTX, $7C0) ; le nœud volume n'est plus créé par dos au boot. intuition diffuse
+  DISKINSERTED / DISKREMOVED à toutes les fenêtres qui les demandent (it_diskbc). Workbench : une icône par volume
+  monté (table WBS_VOLS, 8 au plus), « <volume>:Disk.info » sinon icône par défaut dessinée à la main, placement en
+  colonnes de 96 px depuis la droite ; relevé au démarrage, au tic de 5 s et sur ces IDCMP ; RAM DISK y apparaît.
+  Écarts connus : pas de requester « Please replace volume » (l'accès renvoie 218), pas d'icône « DF0:NDOS », un
+  volume dont la fenêtre est ouverte perd quand même son icône à l'éjection s'il n'a pas de lock.
   (8) **Libérations mémoire fidèles (exec)**. Révélé par l'heure au montage : le boot WB plantait (« Background CLI »,
   globale 133 absente) dès qu'une heure non nulle précédait SetClock, car un bloc de pile du CLI de fond avait été
   réattribué. Trois causes, trouvées au traceur MEMTRACK :

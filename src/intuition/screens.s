@@ -48,6 +48,7 @@
                 xref    str_clickout
                 xdef    it_keyin
                 xdef    it_tickin
+                xdef    it_diskin
                 xdef    it_unclip
                 xref    rq_closeall          ; request.s
                 xref    rq_move
@@ -2254,6 +2255,60 @@ it_tickin:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
+; it_diskin(a3 = InputEvent IECLASS_DISKINSERTED | IECLASS_DISKREMOVED) : handler de pointeur (input.device). Passe à la
+; tâche d'entrée (it_diskbc). Préserve tout.
+it_diskin:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  INT_IBASE,d1
+        beq.s   .di_ret
+        move.l  d1,a1
+        tst.l   IB_INSIG(a1)
+        beq.s   .di_ret
+        move.w  #IT_DISKINCODE,d0
+        cmp.b   #IECLASS_DISKINSERTED,IE_CLASS(a3)
+        beq.s   .di_push
+        move.w  #IT_DISKOUTCODE,d0
+.di_push:
+        moveq   #0,d1
+        bsr     it_push
+.di_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
+; it_diskbc(a5, d0.w = IT_DISKINCODE | IT_DISKOUTCODE) : DISKINSERTED / DISKREMOVED à toutes les fenêtres de tous les
+; écrans qui l'ont demandé, active ou non (spec disk-change-v34 §3) ; souris relative à chaque fenêtre.
+; Préserve d2-d7/a2-a5.
+it_diskbc:
+        movem.l d2-d7/a3-a4,-(sp)
+        move.l  #DISKINSERTED,d7
+        cmp.w   #IT_DISKINCODE,d0
+        beq.s   .db_cls
+        move.l  #DISKREMOVED,d7
+.db_cls:
+        move.l  IB_FIRSTSCREEN(a5),a4
+.db_scr:
+        cmpa.w  #0,a4
+        beq.s   .db_ret
+        move.l  SC_FIRSTWINDOW(a4),a3
+.db_win:
+        cmpa.w  #0,a3
+        beq.s   .db_nscr
+        move.w  PTR_X,d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  PTR_Y,d3
+        sub.w   WD_TOPEDGE(a3),d3
+        move.l  d7,d0
+        moveq   #0,d1
+        bsr     wn_sendmsg           ; seulement si la fenêtre a demandé la classe
+        move.l  WD_NEXTWINDOW(a3),a3
+        bra.s   .db_win
+.db_nscr:
+        move.l  SC_NEXTSCREEN(a4),a4
+        bra.s   .db_scr
+.db_ret:
+        movem.l (sp)+,d2-d7/a3-a4
+        rts
+
 ; it_tick(a5) : INTUITICKS à la fenêtre active si elle l'a demandé et si son précédent INTUITICKS a été rendu (au plus
 ; un en circulation, comme WINDOWTICKED en 1.3) ; souris relative à la fenêtre (spec intuiticks-repeat-v34 §3).
 ; Préserve d2-d7/a2-a5.
@@ -2362,6 +2417,10 @@ it_intask:
         move.w  d1,IB_EVTAIL(a5)
         cmp.w   #IT_TICKCODE,d0
         beq.s   .in_tick
+        cmp.w   #IT_DISKINCODE,d0
+        beq.s   .in_disk
+        cmp.w   #IT_DISKOUTCODE,d0
+        beq.s   .in_disk
         cmp.w   #IT_KEYCODE,d0
         bhs.s   .in_key
         bsr     it_dobutton
@@ -2378,6 +2437,9 @@ it_intask:
         bra.s   .in_next
 .in_tick:
         bsr     it_tick
+        bra.s   .in_next
+.in_disk:
+        bsr     it_diskbc
         bra.s   .in_next
 .in_move:
         tst.b   IB_MOVED(a5)

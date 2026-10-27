@@ -20,6 +20,7 @@
                 xref    it_event             ; screens.s : boutons et mouvements -> tâche d'entrée
                 xref    it_keyin
                 xref    it_tickin
+                xref    it_diskin
 
 ; pointer_input_handler(a0 = liste d'InputEvents, a1 = is_Data) : handler input.device (pri 50). Pour chaque
 ; RAWMOUSE : PTR += (ie_X, ie_Y) relatifs signés, clamp [0, PTR_?MAX-1], réécrit ie_X/ie_Y en absolu. Rend d0 =
@@ -30,15 +31,23 @@ pointer_input_handler:
                 move.l  a0,a3                ; parcours
 .pih_loop:
                 move.l  a3,d0
-                beq.s   .pih_done
+                beq     .pih_done
                 cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
                 bne.s   .pih_tick
                 jsr     it_keyin             ; clavier d'un gadget texte actif
                 bra.s   .pih_next
 .pih_tick:
                 cmp.b   #IECLASS_TIMER,IE_CLASS(a3)
-                bne.s   .pih_mouse
+                bne.s   .pih_disk
                 jsr     it_tickin            ; INTUITICKS (tâche d'entrée)
+                bra.s   .pih_next
+.pih_disk:
+                cmp.b   #IECLASS_DISKREMOVED,IE_CLASS(a3)
+                beq.s   .pih_dk
+                cmp.b   #IECLASS_DISKINSERTED,IE_CLASS(a3)
+                bne.s   .pih_mouse
+.pih_dk:
+                jsr     it_diskin            ; DISKINSERTED / DISKREMOVED (tâche d'entrée)
                 bra.s   .pih_next
 .pih_mouse:
                 cmp.b   #IECLASS_RAWMOUSE,IE_CLASS(a3)
@@ -75,7 +84,7 @@ pointer_input_handler:
                 jsr     it_event
 .pih_next:
                 move.l  IE_NEXTEVENT(a3),a3
-                bra.s   .pih_loop
+                bra     .pih_loop
 .pih_done:
                 move.l  d2,d0                ; liste (pass-through)
                 movem.l (sp)+,d2/d3/d4/a3

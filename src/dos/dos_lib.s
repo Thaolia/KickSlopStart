@@ -1719,7 +1719,6 @@ dos_boot_assigns:
         lea     -BA_PATHMAX(sp),sp      ; (sp) = « <périphérique de démarrage>: », puis les chemins des assigns
         bsr     ba_ramnode
         bsr     ba_devnodes
-        bsr     ba_df0volume
         bsr     ba_bootname             ; d5 = longueur de « NOM: »
         move.l  sp,d1
         moveq   #SHARED_LOCK,d2
@@ -1770,68 +1769,6 @@ dos_boot_assigns:
 .ba_ret:
         lea     BA_PATHMAX(sp),sp
         movem.l (sp)+,d0-d7/a0-a6
-        rts
-
-; ba_df0volume(a5 = DosBase) : nœud volume de la disquette de DF0: (notre handler ne le crée pas lui-même ; un autre,
-; comme celui de DH0:, s'en charge), quel que soit le périphérique de démarrage ; DL_VOLUME = ce nœud (fl_Volume des
-; locks DF0: suivants). Sans disquette : rien. Clobbe d0-d2/a0-a1.
-ba_df0volume:
-        movem.l d7/a3-a4/a6,-(sp)
-        move.l  a5,a6
-        lea     ba_df0root(pc),a0
-        move.l  a0,d1
-        moveq   #SHARED_LOCK,d2
-        bsr     dos_fn_lock
-        move.l  d0,d7                   ; d7 = lock racine de DF0:
-        beq     .dv_ret
-        lsl.l   #2,d0
-        move.l  d0,a0
-        move.l  FL_TASK(a0),a4          ; a4 = port du handler DF0:
-        move.l  ($4).w,a6
-        move.l  #FIB_SIZEOF,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a3                   ; a3 = FIB | 0
-        tst.l   d0
-        beq.s   .dv_unlock
-        move.l  a5,a6
-        move.l  d7,d1
-        move.l  a3,d2
-        bsr     dos_fn_examine
-        tst.l   d0
-        beq.s   .dv_nofib
-        moveq   #DLT_VOLUME,d0
-        moveq   #0,d1
-        lea     FIB_FILENAME(a3),a0
-        move.l  a4,a1
-        bsr     ba_addnode              ; volume « <nom du disque> » (en tête de la liste)
-        move.l  DL_ROOT(a5),a0          ; fl_Volume des locks DF0: = ce nœud (dont le lock racine déjà créé)
-        move.l  RN_INFO(a0),d0
-        lsl.l   #2,d0
-        move.l  d0,a0
-        move.l  DI_DEVINFO(a0),d0
-        lsl.l   #2,d0
-        beq.s   .dv_nofib
-        move.l  d0,a0
-        cmp.l   #DLT_VOLUME,DN_TYPE(a0)
-        bne.s   .dv_nofib               ; nœud non créé (mémoire)
-        lsr.l   #2,d0
-        move.l  d0,DL_VOLUME(a5)
-        move.l  d7,d1
-        lsl.l   #2,d1
-        move.l  d1,a0
-        move.l  d0,FL_VOLUME(a0)
-.dv_nofib:
-        move.l  ($4).w,a6
-        move.l  a3,a1
-        move.l  #FIB_SIZEOF,d0
-        jsr     LVO_FREEMEM(a6)
-.dv_unlock:
-        move.l  a5,a6
-        move.l  d7,d1
-        bsr     dos_fn_unlock
-.dv_ret:
-        movem.l (sp)+,d7/a3-a4/a6
         rts
 
 ; ba_bootname(a5 = DosBase, 4(sp) = tampon de BA_PATHMAX octets) -> d5 = longueur de « NOM: » écrit dans le tampon
@@ -2156,8 +2093,6 @@ ba_addnode:
 
 ba_df0:
         dc.b    "DF0",0
-ba_df0root:
-        dc.b    "DF0:",0
 ba_sysname:
         dc.b    "SYS",0
 ba_tab:

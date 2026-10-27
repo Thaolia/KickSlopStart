@@ -18,7 +18,7 @@ DL_SIZEOF        EQU DL_INTUITIONBASE+4 ; 70 : fin de la struct DosLibrary publi
 ; BPTR de rn_Info par compute-then-compare (rn_Info<<2 == &DosInfo) SANS déréférencer un pointeur potentiellement
 ; mal encodé (garde-fou RED anti-bus-error). Retiré quand le vrai DOS rendra &DosInfo atteignable par traversée.
 DL_DISHADOW      EQU DL_SIZEOF         ; 70
-DL_VOLUME        EQU DL_DISHADOW+4     ; 74 : BPTR du nœud volume du disque de boot (fl_Volume des locks DF0:)
+DL_VOLUME        EQU DL_DISHADOW+4     ; 74 : BPTR du nœud volume de la disquette montée dans DF0: (posé par son handler) | 0
 DL_BOOTDEV       EQU DL_VOLUME+4       ; 78 : APTR DeviceNode du périphérique de démarrage (tête de eb_MountList ; 0 : DF0)
 DOSBASE_DATASIZE EQU DL_BOOTDEV+4      ; 82 : dataSize pour MakeLibrary (base Library + champs dos + scaffold)
 

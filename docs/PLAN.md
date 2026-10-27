@@ -862,6 +862,13 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     0,5 s ; gras et souligné restent au rendu par plages). BltTemplate (FastFonts, lancé par la startup-sequence 1.3,
     y fait passer tout le texte) : une opération fixe par ClipRect et par plan (OU, ET-NON, OU exclusif, mise à 1/0,
     remplacement), gabarit lu en flux : 20 lignes de 560 x 8 3,2 -> 0,30 s. Pixels identiques (drawcheck T8, T9).
+    Changement de disquette (signalé par l'utilisateur : OctaMED inséré, aucune icône ; pas d'icône RAM DISK) : spec
+    d'analyse disk-change-v34 (agent séparé, annexe d'adresses retirée à la relecture) ; handler DF0: (détection par
+    tic d'1 s, volumes par nom + date, DISKINSERTED/DISKREMOVED, locks d'un autre volume refusés), trackdisk (pas de
+    sonde), intuition (diffusion des IDCMP), Workbench (une icône par volume, icône par défaut, placement 96 px).
+    Prouvé sous FS-UAE avec tests/dskchg.s + tests/dskchg_run.sh (changement par le menu F12) : WB -> OctaMED -> WB,
+    nœuds et événements conformes à la spec (V2-V5), icônes RAM DISK + Workbench1.3 au boot, OctaMED en (264, 2) puis
+    retirée, fenêtres OctaMEDv4 et RAM DISK ouvertes. Reste : requester « Please replace volume », icône DF0:NDOS.
     **Intercalé — SetPatch / SysInfo (demande utilisateur 2026-10-21, avant de reprendre le Workbench)** : exec V34
     complet (SetFunction réel & 33 autres LVO), shell qui respecte `cli_Module`, relais Alert, DeleteLayer en trois
     étapes, GfxBase public V34, TOD des CIA démarrés, FileSysStartupMsg de DF0 ; SysInfo affiche toute sa page

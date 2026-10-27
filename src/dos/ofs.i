@@ -72,7 +72,9 @@ SS_FIRSTDATA    EQU 12            ; LONG : premier data block (rewind sur seek a
 SS_CURBLK       EQU 16            ; LONG : data block courant (celui qui commence à SS_BLKBASE)
 SS_BLKBASE      EQU 20            ; LONG : offset absolu du début des données de SS_CURBLK
 SS_HEADER       EQU 24            ; LONG : bloc d'en-tête du fichier (tables de blocs : seek direct)
-SS_IOREQ        EQU 28            ; IOStdReq (IOREQ_SZ o) ; le block buffer suit à +IOREQ_SZ (OFS_BSIZE o)
+SS_VOL          EQU 28            ; BPTR : nœud volume du disque où le fichier a été ouvert (handler)
+SS_IOREQ        EQU 32            ; IOStdReq (IOREQ_SZ o) ; le block buffer suit à +IOREQ_SZ (OFS_BSIZE o)
+WS_VOL          EQU 36            ; BPTR : nœud volume d'un état d'écriture (ofswrite.s), comme SS_VOL
 SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; taille AllocMem totale de l'état
 
 ; STREAM_CAP32K=1 (RED streaming) : ofs_stream_read re-plafonne la lecture à 32768 o (= l'ancien cap whole-file)

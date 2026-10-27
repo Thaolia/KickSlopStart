@@ -86,6 +86,11 @@ FSSM_SIZEOF      EQU 16
 DLT_DEVICE       EQU 0
 DLT_DIRECTORY    EQU 1
 DLT_VOLUME       EQU 2
+DOL_VOLDATE      EQU 16            ; volume : DateStamp de création du disque (3 longs)
+DOL_LOCKLIST     EQU 28            ; volume : locks laissés pendant l'absence du disque
+DOL_DISKTYPE     EQU 32
+DOL_USE          EQU 36            ; volume (dol_unused) : locks et fichiers ouverts comptés par notre handler DF0:
+DOL_NODESIZE     EQU DN_SIZEOF+32  ; nœud + BSTR du nom (31 caractères) alloués ensemble
 
 ; --- codes ACTION_* (= mode d'Open pour les FIND*) ---
 ACTION_FINDUPDATE  EQU 1004
@@ -168,6 +173,8 @@ ERROR_DISK_NOT_VALIDATED EQU 213
 ERROR_DISK_WRITE_PROTECTED EQU 214
 ERROR_DIRECTORY_NOT_EMPTY EQU 216
 ERROR_DISK_FULL EQU 221
+ERROR_NO_DISK   EQU 226           ; pas de disquette dans le lecteur
+ERROR_NOT_A_DOS_DISK EQU 225
 ACTION_SET_PROTECT EQU 21          ; (ARG1 -, ARG2 lock, ARG3 BSTR nom, ARG4 masque)
 ACTION_SET_COMMENT EQU 28          ; (ARG1 -, ARG2 lock, ARG3 BSTR nom, ARG4 BSTR commentaire)
 ACTION_DISK_INFO EQU 25            ; (ARG1 BPTR InfoData)

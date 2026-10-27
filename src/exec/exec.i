@@ -349,6 +349,8 @@ IECLASS_NULL    EQU 0            ; ie_Class : événement neutralisé (ignoré p
 IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
 IECLASS_TIMER   EQU 6            ; ie_Class : tic d'input.device (10 par seconde)
+IECLASS_DISKREMOVED EQU 15       ; ie_Class : disquette éjectée (émis par le file-system, spec disk-change-v34 §3)
+IECLASS_DISKINSERTED EQU 16      ; ie_Class : disquette insérée et montée
 IEQUALIFIER_REPEAT EQU $0200     ; ie_Qualifier : événement de répétition automatique d'une touche
 IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
 IECODE_RBUTTON  EQU $69          ; ie_Code : bouton droit (down ; up = | $80)
@@ -406,7 +408,7 @@ DOS_OWCTX    EQU $00000754 ; dos : long — contexte d'écriture OFS (ofswrite.s
 EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logicielles en attente (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
-HND_CLOCKED  EQU $0000079A ; byte : le file-handler DF0: a fait son réglage d'heure de montage (hnd_bootclock)
+HND_CTX      EQU $000007C0 ; dos : long — contexte du file-handler DF0: (changement de disquette, handler.s)
 MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
 INT2_BUSY    EQU $000007A0 ; byte : int2_dispatch sert la chaîne PORTS (lu par la reprise du serveur VBLANK de timer.device)
 TD_DMATASK   EQU $000007A2 ; trackdisk : long — tâche qui attend la fin d'un DMA disque (SIGF_SINGLE), 0 : aucune

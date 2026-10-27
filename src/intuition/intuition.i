@@ -65,6 +65,8 @@ IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
 IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE = touche (keycode en bits 0-6), x = qualificatif
 IT_TICKCODE      EQU $0400             ; anneau d'entrée : tic IECLASS_TIMER d'input.device (INTUITICKS)
+IT_DISKINCODE    EQU $0401             ; anneau d'entrée : IECLASS_DISKINSERTED
+IT_DISKOUTCODE   EQU $0402             ; anneau d'entrée : IECLASS_DISKREMOVED
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2
 
@@ -261,6 +263,8 @@ MENUPICK        EQU $00000100
 CLOSEWINDOW     EQU $00000200
 RAWKEY          EQU $00000400
 NEWPREFS        EQU $00004000
+DISKINSERTED    EQU $00008000           ; une disquette a été insérée (toutes les fenêtres qui le demandent)
+DISKREMOVED     EQU $00010000
 INTUITICKS      EQU $00400000           ; ~10 par seconde à la fenêtre active, un seul en circulation
 MENUNULL        EQU $FFFF
 SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS

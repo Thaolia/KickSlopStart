@@ -696,15 +696,25 @@ td_cmd_chgnum:
         bsr     td_check_change
         move.l  TD_CHGCNT,IO_ACTUAL(a2)
         rts
-; TD_CHANGESTATE : io_Actual = 0 si une disquette est dans le lecteur.
+; TD_CHANGESTATE : io_Actual = 0 si une disquette est dans le lecteur. /CHNG reste bas après une éjection tant
+; qu'aucun pas de tête n'a eu lieu avec une disquette : moteur arrêté, un pas de sonde (td_disk_present, le « clic »
+; du lecteur vide) dit si une disquette a été insérée depuis (le file-system interroge ainsi chaque seconde).
 td_cmd_chgstate:
         bsr     td_check_change
         bsr     td_sense
-        moveq   #0,d0
         btst    #DSKB_CHANGE,d1
         bne.s   .cs_in
+        tst.b   TD_MOTORON
+        bne.s   .cs_out
+        bsr     td_disk_present
+        tst.l   d0
+        bne.s   .cs_in
+.cs_out:
         moveq   #1,d0
+        bra.s   .cs_set
 .cs_in:
+        moveq   #0,d0
+.cs_set:
         move.l  d0,IO_ACTUAL(a2)
         rts
 ; TD_PROTSTATUS : io_Actual != 0 si la disquette est protégée en écriture.
