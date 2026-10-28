@@ -11,6 +11,10 @@
                 xdef    exec_Cause
                 xdef    exec_softint_init
                 xdef    exec_Alert
+                xdef    alert_show           ; interrupts.s (exception d'une tâche), boot.s (alert.hook)
+                xdef    alert_boothook
+                xdef    alert_deadend
+                xdef    alert_reboot         ; interrupts.s : redémarrage depuis le mode superviseur
                 xdef    exec_SetSR
                 xdef    exec_SuperState
                 xdef    exec_UserState
@@ -125,36 +129,192 @@ softint_server:
 .ss_ret:
         rts
 
-; Alert(alertNum d7) : message série. Alerte récupérable (bit 31 à 0) : retour à l'appelant. Sans issue : machine
-; arrêtée (interruptions coupées, écran rouge).
+; Alert(alertNum d7, a5) (spec alert-v34 §1, coldstart-hardware-v34 §8) : message série, puis
+; - récupérable (bit 31 à 0) : LastAlert = (numéro, long pointé par a5), Guru affiché par DisplayAlert, LastAlert[0]
+;   remis à -1 ; d0 = 1 (bouton gauche) | 0 (bouton droit ou intuition absente). Un mot haut nul (numéro d'exception
+;   CPU) est traité comme une alerte récupérable ;
+; - sans issue (bit 31) : 'HELP' en $0, numéro en $100, second nombre en $104, LED clignotante, redémarrage ; le Guru
+;   s'affiche au boot suivant (alert_boothook).
+; Préserve d1-d7/a0-a6.
 exec_Alert:
-        movem.l d0-d2/a0,-(sp)
+        movem.l d1-d2/a0-a1/a6,-(sp)
         lea     al_dead(pc),a0
         tst.l   d7
         bmi.s   .al_msg
         lea     al_rec(pc),a0
 .al_msg:
-        bsr.s   raw_puts
+        bsr     raw_puts
         move.l  d7,d2
         moveq   #7,d1
+        lea     al_digits(pc),a1
 .al_hex:
         rol.l   #4,d2
         moveq   #15,d0
         and.w   d2,d0
-        move.b  al_digits(pc,d0.w),d0
-        bsr.s   exec_RawPutChar
+        move.b  0(a1,d0.w),d0
+        bsr     exec_RawPutChar
         dbra    d1,.al_hex
         moveq   #10,d0
-        bsr.s   exec_RawPutChar
+        bsr     exec_RawPutChar
+        moveq   #0,d1                ; second nombre : le long pointé par a5 (s'il est lisible en RAM)
+        move.l  a5,d0
+        btst    #0,d0
+        bne.s   .al_2nd
+        cmp.l   #$00200000,d0
+        bhs.s   .al_2nd
+        move.l  (a5),d1
+.al_2nd:
+        move.l  d7,d0
         tst.l   d7
-        bmi.s   .al_halt
-        movem.l (sp)+,d0-d2/a0
+        bmi     alert_deadend
+        move.l  ($4).w,a6
+        movem.l d0-d1,EB_LASTALERT(a6)
+        bsr     alert_show
+        move.l  ($4).w,a6
+        move.l  #-1,EB_LASTALERT(a6)
+        movem.l (sp)+,d1-d2/a0-a1/a6
         rts
-.al_halt:
-        move.w  #$7FFF,INTENA
-.al_stop:
-        move.w  #$0F00,COLOR00
-        bra.s   .al_stop
+
+; alert_deadend(d0 = numéro, d1 = second nombre) : mémorise l'alerte pour le boot suivant ('HELP' en $0, $100, $104),
+; fait clignoter la LED six fois puis redémarre. Ne revient pas ; utilisable en mode utilisateur ou superviseur.
+alert_deadend:
+        move.l  #$48454C50,$0.w      ; 'HELP'
+        move.l  d0,$100.w
+        move.l  d1,$104.w
+        moveq   #5,d1
+.ad_blink:
+        bset    #1,CIAA_PRA          ; LED atténuée
+        bsr.s   .ad_wait
+        bclr    #1,CIAA_PRA
+        bsr.s   .ad_wait
+        dbra    d1,.ad_blink
+        move.l  ($4).w,a6
+        lea     al_reset(pc),a5
+        jsr     LVO_SUPERVISOR(a6)
+.ad_wait:
+        move.l  #50000,d0            ; ~0,15 s
+.ad_w:
+        subq.l  #1,d0
+        bne.s   .ad_w
+        rts
+; al_reset (superviseur) : RESET remet l'overlay (ROM en $0) ; le JMP, lu dans le même long que le RESET (préchargé),
+; part sur le mot 2 de la ROM : JMP vers le point d'entrée du coldstart.
+        cnop    0,4
+alert_reboot:
+al_reset:
+        lea     2.w,a0
+        reset
+        jmp     (a0)
+
+; alert_boothook : rôle du résident alert.hook (spec alert-v34 §4), appelé une fois intuition initialisée. Si une
+; alerte sans issue a été mémorisée ('HELP' en $0), affiche son Guru, puis efface la marque. Préserve tout.
+alert_boothook:
+        cmp.l   #$48454C50,$0.w
+        bne.s   .ab_ret
+        movem.l d0-d1/a6,-(sp)
+        clr.l   $0.w
+        move.l  $100.w,d0
+        move.l  $104.w,d1
+        move.l  ($4).w,a6
+        movem.l d0-d1,EB_LASTALERT(a6)
+        bsr.s   alert_show
+        move.l  ($4).w,a6
+        move.l  #-1,EB_LASTALERT(a6)
+        movem.l (sp)+,d0-d1/a6
+.ab_ret:
+        rts
+
+; alert_show(d0 = numéro, d1 = second nombre) -> d0 = résultat de DisplayAlert (0 sans intuition) : texte du Guru
+; (spec alert-v34 §3), DisplayAlert(0, texte, 40). En-tête : « Not enough memory. » (sous-système $01), « Recoverable
+; Alert. » (bit 31 à 0, mot haut non nul), sinon « Software Failure. ». Préserve d1-d7/a0-a6.
+AS_BUF          EQU 132
+alert_show:
+        movem.l d1-d3/a0-a3/a6,-(sp)
+        lea     -AS_BUF(sp),sp
+        move.l  d0,d2
+        move.l  d1,d3
+        move.l  ($4).w,a6
+        lea     al_intname(pc),a1
+        moveq   #0,d0
+        jsr     LVO_OPENLIBRARY(a6)
+        move.l  d0,a3
+        tst.l   d0
+        beq.s   .as_ret
+        move.l  sp,a2
+        move.l  #$00260F00,d0        ; x = 38, y = 15 (3 octets)
+        bsr     .as_pos
+        lea     al_h3(pc),a0         ; en-tête
+        move.l  d2,d0
+        swap    d0
+        cmp.b   #$01,d0              ; sous-système AG_NoMemory
+        bne.s   .as_h2
+        lea     al_h1(pc),a0
+        bra.s   .as_hd
+.as_h2:
+        tst.l   d2
+        bmi.s   .as_hd
+        tst.w   d0
+        beq.s   .as_hd
+        lea     al_h2(pc),a0
+.as_hd:
+        bsr.s   .as_str
+        move.b  #$FF,(a2)+
+        move.l  #$00EA0F00,d0        ; x = 234, y = 15
+        bsr.s   .as_pos
+        lea     al_press(pc),a0
+        bsr.s   .as_str
+        move.b  #$FF,(a2)+
+        move.l  #$008E1E00,d0        ; x = 142, y = 30
+        bsr.s   .as_pos
+        lea     al_guru(pc),a0
+        bsr.s   .as_strnz
+        move.l  d2,d0
+        bsr.s   .as_hex8
+        move.b  #'.',(a2)+
+        move.l  d3,d0
+        bsr.s   .as_hex8
+        clr.b   (a2)+
+        clr.b   (a2)+                ; fin de la chaîne
+        move.l  a3,a6
+        moveq   #0,d0
+        move.l  sp,a0
+        moveq   #40,d1
+        jsr     -90(a6)              ; DisplayAlert
+        move.l  d0,d2
+        move.l  a3,a1
+        move.l  ($4).w,a6
+        jsr     LVO_CLOSELIBRARY(a6)
+        move.l  d2,d0
+.as_ret:
+        lea     AS_BUF(sp),sp
+        movem.l (sp)+,d1-d3/a0-a3/a6
+        rts
+.as_pos:                             ; d0 = x (mot haut) et y (octet 3) -> 3 octets
+        rol.l   #8,d0
+        move.b  d0,(a2)+
+        rol.l   #8,d0
+        move.b  d0,(a2)+
+        rol.l   #8,d0
+        move.b  d0,(a2)+
+        rts
+.as_str:                             ; chaîne a0 avec son 0
+        move.b  (a0)+,(a2)+
+        bne.s   .as_str
+        rts
+.as_strnz:                           ; chaîne a0 sans son 0
+        move.b  (a0)+,(a2)+
+        bne.s   .as_strnz
+        subq.l  #1,a2
+        rts
+.as_hex8:                            ; d0 -> 8 chiffres hexadécimaux majuscules
+        moveq   #7,d1
+.as_hx:
+        rol.l   #4,d0
+        moveq   #15,d2
+        and.w   d0,d2
+        move.b  al_digits(pc,d2.w),(a2)+
+        dbra    d1,.as_hx
+        rts
 al_digits:
         dc.b    "0123456789ABCDEF"
 
@@ -426,4 +586,16 @@ al_dead:
         dc.b    10,"Software Failure ALERT ",0
 al_rec:
         dc.b    10,"Recoverable Alert ",0
+al_intname:
+        dc.b    "intuition.library",0
+al_h1:
+        dc.b    "Not enough memory. ",0
+al_h2:
+        dc.b    "Recoverable Alert. ",0
+al_h3:
+        dc.b    "Software Failure. ",0
+al_press:
+        dc.b    "Press left mouse button to continue.",0
+al_guru:
+        dc.b    "Guru Meditation #",0
         even

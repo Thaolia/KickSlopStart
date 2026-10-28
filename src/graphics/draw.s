@@ -32,6 +32,8 @@
                 xdef    gfx_InitRastPort
                 xdef    gfx_InitBitMap
                 xdef    gfx_BltBitMapRastPort
+                xdef    gfx_BltMaskBitMapRastPort
+                xdef    gfx_ClipBlit
                 xdef    gfx_BltBitMap
                 xdef    gfx_ReadPixel
                 xdef    gfx_LockLayerRom
@@ -2779,6 +2781,138 @@ BLT_DMACONR     EQU $002
 .sd_r:
         rts
 
+; BltMaskBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, largeur d4, hauteur d5,
+; minterm d6, masque a2) (spec graphics-blitter-v34 §5.4) : trois passes de BltBitMapRastPort, source en $90
+; (D = non(B ou-exclusif C)), puis le masque (BitMap fictive : en-tête de la source, tous les plans sur le masque)
+; avec le minterm de l'appelant, puis la source de nouveau en $90. Avec $E0 : la source là où le masque vaut 1, la
+; destination intacte ailleurs. Masque NULL : rien. Préserve d2-d7/a1-a5.
+BMB_ARGS        EQU bm_SIZEOF        ; arguments sauvés au-dessus de la BitMap fictive : d0/d1/d6/a0
+gfx_BltMaskBitMapRastPort:
+        cmpa.w  #0,a2
+        beq.s   .bm_ret
+        movem.l d0-d1/d6/a0,-(sp)
+        lea     -bm_SIZEOF(sp),sp
+        move.l  (a0),(sp)            ; BytesPerRow, Rows
+        move.l  4(a0),4(sp)          ; Flags, Depth, pad
+        lea     bm_Planes(sp),a0
+        moveq   #7,d0
+.bm_pl:
+        move.l  a2,(a0)+
+        dbra    d0,.bm_pl
+        movem.l BMB_ARGS(sp),d0-d1   ; passe 1 : source, $90
+        move.l  BMB_ARGS+12(sp),a0
+        move.l  #$90,d6
+        bsr     gfx_BltBitMapRastPort
+        movem.l BMB_ARGS(sp),d0-d1   ; passe 2 : masque, minterm de l'appelant
+        move.l  BMB_ARGS+8(sp),d6
+        move.l  sp,a0
+        bsr     gfx_BltBitMapRastPort
+        movem.l BMB_ARGS(sp),d0-d1   ; passe 3 : source, $90
+        move.l  BMB_ARGS+12(sp),a0
+        move.l  #$90,d6
+        bsr     gfx_BltBitMapRastPort
+        lea     bm_SIZEOF(sp),sp
+        movem.l (sp)+,d0-d1/d6/a0
+.bm_ret:
+        rts
+
+; ClipBlit(RastPort source a0, srcX d0, srcY d1, RastPort dest a1, destX d2, destY d3, largeur d4, hauteur d5,
+; minterm d6) -> d0 = 1 (spec graphics-blitter-v34 §5.3) : le rectangle source est découpé par les ClipRects de sa
+; couche (partie visible : BitMap de l'écran ; cachée et sauvegardée : la sauvegarde ; cachée sans sauvegarde : la
+; destination reste intacte) ; chaque morceau passe par BltBitMapRastPort, qui découpe côté destination. Écarts :
+; ni SuperBitMap source, ni réordonnancement des ClipRects pour une copie qui se recouvre dans le même RastPort.
+CB_SX   EQU 0                        ; arguments sauvés (mots) : sx, sy, dx, dy, w, h ; minterm (long) ; RastPort dest
+CB_SY   EQU 2
+CB_DX   EQU 4
+CB_DY   EQU 6
+CB_W    EQU 8
+CB_H    EQU 10
+CB_MT   EQU 12
+CB_DRP  EQU 16
+CB_SIZE EQU 20
+gfx_ClipBlit:
+        movem.l d2-d7/a1-a5,-(sp)
+        lea     -DC_SIZE(sp),sp
+        move.l  sp,a5
+        lea     -CB_SIZE(sp),sp
+        movem.w d0-d5,(sp)
+        move.l  d6,CB_MT(sp)
+        move.l  a1,CB_DRP(sp)
+        move.l  a0,a1
+        bsr     dr_ctx               ; contexte de la RastPort source (verrou de sa couche)
+        move.w  DC_OX(a5),d0
+        add.w   d0,CB_SX(sp)         ; source en coordonnées absolues
+        move.w  DC_OY(a5),d0
+        add.w   d0,CB_SY(sp)
+        move.l  DC_FIRST(a5),a4
+.cb_lp:
+        cmpa.w  #0,a4
+        beq     .cb_done
+        move.l  a4,a0
+        bsr     dr_crset
+        beq     .cb_next
+        move.w  CB_SX(sp),d0         ; d0..d3 = intersection (x0, y0, x1, y1)
+        cmp.w   DC_CMINX(a5),d0
+        bge.s   .cb_x0
+        move.w  DC_CMINX(a5),d0
+.cb_x0:
+        move.w  CB_SY(sp),d1
+        cmp.w   DC_CMINY(a5),d1
+        bge.s   .cb_y0
+        move.w  DC_CMINY(a5),d1
+.cb_y0:
+        move.w  CB_SX(sp),d2
+        add.w   CB_W(sp),d2
+        subq.w  #1,d2
+        cmp.w   DC_CMAXX(a5),d2
+        ble.s   .cb_x1
+        move.w  DC_CMAXX(a5),d2
+.cb_x1:
+        move.w  CB_SY(sp),d3
+        add.w   CB_H(sp),d3
+        subq.w  #1,d3
+        cmp.w   DC_CMAXY(a5),d3
+        ble.s   .cb_y1
+        move.w  DC_CMAXY(a5),d3
+.cb_y1:
+        move.w  d2,d4
+        sub.w   d0,d4
+        addq.w  #1,d4                ; largeur du morceau
+        ble.s   .cb_next
+        move.w  d3,d5
+        sub.w   d1,d5
+        addq.w  #1,d5                ; hauteur du morceau
+        ble.s   .cb_next
+        move.w  d0,d2                ; destination décalée comme le morceau dans la source
+        sub.w   CB_SX(sp),d2
+        add.w   CB_DX(sp),d2
+        move.w  d1,d3
+        sub.w   CB_SY(sp),d3
+        add.w   CB_DY(sp),d3
+        sub.w   DC_BX(a5),d0         ; position dans le BitMap de ce morceau
+        sub.w   DC_BY(a5),d1
+        ext.l   d0
+        ext.l   d1
+        ext.l   d2
+        ext.l   d3
+        ext.l   d4
+        ext.l   d5
+        move.l  CB_MT(sp),d6
+        move.l  DC_CBM(a5),a0
+        move.l  CB_DRP(sp),a1
+        move.l  a5,-(sp)
+        bsr     gfx_BltBitMapRastPort
+        move.l  (sp)+,a5
+.cb_next:
+        move.l  CR_NEXT(a4),a4
+        bra     .cb_lp
+.cb_done:
+        bsr     dr_end
+        lea     CB_SIZE+DC_SIZE(sp),sp
+        movem.l (sp)+,d2-d7/a1-a5
+        moveq   #1,d0
+        rts
+
 ; BltBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, largeur d4, hauteur d5, minterm d6) :
 ; copie le rectangle source dans le RastPort (relatif au Layer, découpé au contexte), plan par plan selon rp_Mask.
 ; Minterm appliqué (B = source, C = destination). Plan source NULL = tout à 0,
@@ -2813,6 +2947,7 @@ gfx_BltBitMapRastPort:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a5
+        moveq   #1,d0                ; rend toujours vrai (spec graphics-blitter-v34 §5.2)
         rts
 ; .bb_one(d0..d5 = sx, sy, dx, dy absolus, largeur, hauteur) : partie dans la ClipRect courante. Clobbe d0-d7/a0-a3.
 .bb_one:
@@ -3067,8 +3202,7 @@ dr_bits:
 
 ; BltBitMap(src a0, srcX d0, srcY d1, dest a1, destX d2, destY d3, largeur d4, hauteur d5, minterm d6, masque d7,
 ; tampon a2 ignoré) -> d0 = nombre de plans traités. Rectangle découpé aux deux BitMaps. Plans : ceux du masque
-; présents dans la destination (plan destination NULL ou -1 ignoré) ; un plan source absent, NULL ou -1 vaut
-; 0 / 0 / 1. Même BitMap source et destination : chaque ligne source passe par un tampon (aucun recouvrement
+; présents dans les DEUX BitMaps (plan destination NULL ou -1 ignoré) ; un plan source NULL ou -1 vaut 0 / 1. Même BitMap source et destination : chaque ligne source passe par un tampon (aucun recouvrement
 ; possible dans la ligne) et les lignes sont parcourues du bas vers le haut si la destination est plus basse.
 ; Cadre : contexte DC (DC_MINTERM pour dr_bits) suivi des variables BB_*.
 BB_SX           EQU DC_SIZE
@@ -3172,6 +3306,9 @@ gfx_BltBitMap:
         move.b  bm_Depth(a3),d0
         cmp.w   d0,d6
         bge     .bm_free
+        move.b  bm_Depth(a4),d0      ; seuls les plans communs aux deux BitMaps (spec graphics-blitter-v34 §1.1 :
+        cmp.w   d0,d6                ; source de 2 plans vers 3 plans -> 2 copiés, le 3e plan reste intact)
+        bge     .bm_free
         move.b  BB_MASK(a5),d0
         btst    d6,d0
         beq     .bm_pnext
@@ -3182,11 +3319,6 @@ gfx_BltBitMap:
         cmp.l   #-1,d1
         beq     .bm_pnext
         addq.w  #1,BB_COUNT(a5)
-        clr.l   BB_SPLANE(a5)
-        moveq   #0,d1
-        move.b  bm_Depth(a4),d1
-        cmp.w   d1,d6
-        bge.s   .bm_rows
         move.l  bm_Planes(a4,d0.w),BB_SPLANE(a5)
 .bm_rows:
         move.w  BB_SY(a5),BB_CSY(a5)

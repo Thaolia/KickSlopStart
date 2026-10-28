@@ -29,6 +29,7 @@
                 xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
                 xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
                 xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
+                xref    alert_boothook   ; exec/execmisc.s (rôle d'alert.hook)
                 xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
                 xref    kbd_devevent     ; exec/kbddev.s (keyboard.device : keycode brut synthétique pour la preuve)
                 xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
@@ -3191,6 +3192,7 @@ d2_done:
         ; Les deux branches convergent vers SCHED_ON (le set M7 complet suit dans les deux cas).
         ; RED STRAP_FAKE_BOOTDEV : d0!=0 sans lire -> M6Y présent mais CBOOT absent. RED STRAP_NO_EXEC : valide
         ; mais ne saute pas -> CBOOT absent, M6Y présent. RED STRAP_BAD_CSUM : rejette un bon bloc -> M6R.
+        jsr     alert_boothook       ; alert.hook : Guru d'une alerte sans issue d'avant le reset, avant le strap
         bsr     strap_boot
         tst.l   d0
         bne.s   .m6r_floppy

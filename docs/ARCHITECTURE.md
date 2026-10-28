@@ -564,6 +564,35 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   Écarts connus : pas d'icône « DF0:NDOS », un volume dont la fenêtre est ouverte perd quand même son icône à
   l'éjection s'il n'a pas de lock ; un Lock par le nom d'un volume connu mais absent donne « Please insert volume »
   (partage insert/replace non tranché par la spec).
+  (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
+  - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
+    l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),
+    ClipBlit (−552 : découpage par les ClipRects de la couche source, morceau caché sans sauvegarde = destination
+    intacte, puis découpage destination par BltBitMapRastPort ; écarts : ni SuperBitMap source ni réordonnancement des
+    ClipRects pour une copie qui se recouvre), BltBitMapRastPort et ClipBlit rendent 1, BltBitMap ne traite que les plans
+    communs aux deux BitMaps, QBlit/QBSBlit (−276/−294 : appel immédiat dans le contexte de l'appelant, A0 = $DFF000,
+    A1 = nœud, rappel tant que Z = 0, cleanup si CLEANUP ; écart : un blit en cours est attendu au lieu d'être relayé
+    par l'interruption BLIT). Sonde tests/gblit_probe.sh : T1, T2, T8, T10, T11 identiques à la vraie ROM ; écarts
+    gardés : T3/T4 (largeur ou hauteur nulle : la 1.3 écrit 1024 lignes / 64 mots), T6 (la 1.3 tronque un BltClear à
+    1024 lignes), T7 (BltTemplate sans couche : nous gardons xSrc, cf. fastfonts-ff), T9 (BlitLock non tenu).
+  - intuition DisplayAlert (−90, src/intuition/alert.s) : raster 640 × hauteur, 1 plan, fond $111, texte et cadre
+    $F20, cadre 6 px / 3 lignes clignotant (COMPLEMENT, 46 trames comptées au faisceau, donc interruptions coupées
+    possibles), blocs « x, y, texte, suite » lus octet par octet, boutons par CIA-A PRA bit 6 / POTGOR bit 10 (gauche
+    1, droit 0, gauche prioritaire, pas d'expiration), DMA sprite coupé pendant l'attente ; raster impossible :
+    0, ou exec Alert pour une alerte sans issue. Écart : liste copper propre (gb_LOFlist et COP2LC détournés) au lieu
+    d'une ViewPort sous laquelle les écrans glissent : le reste de l'affichage est au fond pendant l'alerte, et l'écran
+    revient ensuite même après une alerte sans issue.
+  - exec Alert : récupérable (et numéro d'exception à mot haut nul) -> LastAlert, Guru « Recoverable Alert. » /
+    « Not enough memory. » / « Software Failure. » + « Press left mouse button to continue. » + « Guru Meditation
+    #XXXXXXXX.YYYYYYYY » (DisplayAlert(0, texte, 40)), d0 = bouton ; sans issue -> 'HELP' en $0, numéro en $100,
+    second nombre (long pointé par A5, s'il est en chip) en $104, six clignotements de la LED, RESET + saut au mot 2
+    de la ROM (même long) ; alert_boothook (rôle d'alert.hook) affiche ce Guru au boot suivant, avant le strap.
+  - Exception d'une tâche (exc_default) : Guru « Software Failure. » #<vecteur>.<tâche> ; gauche = redémarrage comme
+    la 1.3, droit = tâche suspendue (pas de ROM-Wack) ; exception en superviseur : alerte sans issue (avant : arrêt
+    silencieux). Prouvé par tests/alert_probe.sh (modes 0 et 2) sur notre ROM, par une capture du Guru au boot
+    suivant (« Software Failure. … Guru Meditation #80000000.00000000 », cadre clignotant) et par un bootblock à
+    instruction illégale (Guru #00000004.<tâche>). DisplayAlert passe par COP1LC (au boot, aucune vue n'enchaîne
+    encore sur COP2LC) et rend ensuite l'enchaînement de la vue chargée, ou les bits DMA d'avant.
   (7e) **Écriture disquette au format de la vraie 1.3, table graphics complète** (2026-10-27, avant un essai sur A500
   réel ; spec `docs/analysis/trackdisk-write-v34.md`). Piste écrite : garde de 1 660 octets, 11 secteurs, mot de queue
   `$AAA8` = 6 815 mots (~218 ms, dépasse un tour : aucun reste de l'ancienne piste même sur un lecteur lent ; avant :

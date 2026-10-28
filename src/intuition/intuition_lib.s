@@ -9,6 +9,7 @@
                 include "exec.i"
                 include "intuition.i"
 
+                xref    intuition_DisplayAlert ; alert.s
                 xref    intuition_AutoRequest
                 xref    intuition_AddGadget
                 xref    intuition_AddGList
@@ -100,7 +101,8 @@ intuition_vectors:
         dc.l    intuition_null           ; 10 : LVO -60 ClearPointer (non impl.)
         dc.l    intuition_CloseScreen    ; 11 : LVO -66 CloseScreen(écran a0)
         dc.l    intuition_CloseWindow    ; 12 : LVO -72 CloseWindow(fenêtre a0)
-        dcb.l   3,intuition_null         ; 13..15 : LVO -78..-90 (non impl. : DisplayAlert -90 inclus)
+        dcb.l   2,intuition_null         ; 13..14 : LVO -78..-84 (CloseWorkBench, CurrentTime : non impl.)
+        dc.l    intuition_DisplayAlert   ; 15 : LVO -90 DisplayAlert(numéro d0, chaîne a0, hauteur d1) -> d0
         dc.l    intuition_DisplayBeep    ; 16 : LVO -96 DisplayBeep(écran a0 | 0)
         dc.l    intuition_DoubleClick    ; 17 : LVO -102 DoubleClick(s1 d0, µs1 d1, s2 d2, µs2 d3)
         dc.l    intuition_DrawBorder     ; 18 : LVO -108 DrawBorder(rp a0, border a1, x d0, y d1)

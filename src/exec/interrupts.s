@@ -56,6 +56,9 @@
                 xdef    exec_AddIntServer  ; M7b : dispatcher par numéro (chaîne de serveurs)
 
                 xref    task_freemem      ; tasks.s
+                xref    alert_show        ; execmisc.s (Guru de l'exception d'une tâche)
+                xref    alert_deadend
+                xref    alert_reboot
                 xref    newlist          ; lists.s (NEWLIST d'une chaîne de serveurs)
                 xref    exec_Enqueue     ; lists.s (AddIntServer : insertion par priorité)
                 xref    exec_AllocMem    ; memory.s (alloc du bloc IntVects à init_ints)
@@ -788,7 +791,17 @@ exc_default:
         lea     exc_crlf(pc),a0
         bsr     exc_puts
         btst    #5,(a1)              ; bit S du SR empilé (octet haut du mot SR)
-        bne.s   .ed_fatal
+        bne     .ed_fatal
+        move.l  20(sp),d0            ; Guru « Software Failure » : #<n° du vecteur>.<tâche> (spec alert-v34 §3)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),d1
+        move.l  a1,-(sp)
+        jsr     alert_show
+        move.l  (sp)+,a1
+        cmp.l   #1,d0                ; bouton gauche : redémarrage (comme la 1.3) ; droit : la tâche est suspendue
+        bne.s   .ed_hold
+        jmp     alert_reboot
+.ed_hold:
         clr.w   (a1)                 ; reprise en mode utilisateur, IPL 0
         move.l  #exc_hold,2(a1)
         movem.l (sp)+,d0-d2/a0-a1
@@ -805,11 +818,11 @@ exc_default:
         bsr     exc_puthex
         moveq   #' ',d0
         bra     exc_putc
-.ed_fatal:
-        move.w  #$2700,sr
-.ed_stop:
-        stop    #$2700
-        bra.s   .ed_stop
+.ed_fatal:                           ; exception en superviseur : alerte sans issue (reset, Guru au boot suivant)
+        move.l  20(sp),d0
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),d1
+        jmp     alert_deadend
 
 ; exc_hold : point de reprise (mode utilisateur) d'une tâche fautive : dort pour toujours.
 exc_hold:

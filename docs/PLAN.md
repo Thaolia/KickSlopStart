@@ -871,6 +871,11 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     retirée, fenêtres OctaMEDv4 et RAM DISK ouvertes. Requester « Please replace volume / <nom> / in any drive »
     (lock ou fichier d'un volume éjecté ; Retry ou réinsertion relancent l'appel, Cancel rend 218) : prouvé par la
     sonde dskchg LA (V11). Reste : icône DF0:NDOS.
+    Blitter et alertes (specs graphics-blitter-v34, alert-v34) : BltMaskBitMapRastPort, ClipBlit, QBlit/QBSBlit,
+    plans communs dans BltBitMap ; DisplayAlert et Guru (Alert récupérable, sans issue -> reset puis Guru au boot
+    suivant, exception de tâche -> Software Failure) ; sondes gblit_probe et alert_probe conformes à la vraie ROM.
+    Specs d'analyse suivantes (agents séparés, relues) : intuition-screens, intuition-input-menus, graphics-area —
+    base des prochaines implémentations (OpenScreen/RethinkDisplay fidèles, moteur d'entrées et menus, Area*/Flood).
     Avant un essai sur A500 réel : piste écrite au format de la vraie 1.3 (garde 1660 o, 6815 mots, précompensation
     dès la piste 81 ; sonde tdwrite identique à la vraie ROM), table graphics à 109 vecteurs (SetRGB4CM,
     AttemptLockLayerRom). Specs d'analyse ajoutées : trackdisk-write, coldstart-hardware, coverage (inventaire des 390

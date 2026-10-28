@@ -65,6 +65,8 @@
                 xref    gfx_LockLayerRom
                 xref    gfx_UnlockLayerRom
                 xref    gfx_AttemptLockLayerRom
+                xref    gfx_BltMaskBitMapRastPort
+                xref    gfx_ClipBlit
                 xref    gfx_AndRectRegion
                 xref    gfx_OrRectRegion
                 xref    gfx_NewRegion
@@ -140,9 +142,10 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_Draw                 ; 41 : LVO -246
         dcb.l   3,graphics_null         ; 42..44 : LVO -252..-264 (AreaMove/Draw/End : non implémentés)
         dc.l    gfx_WaitTOF              ; 45 : LVO -270 WaitTOF()
-        dcb.l   2,graphics_null         ; 46..47 : LVO -276..-282 (QBlit, InitArea : non implémentés)
+        dc.l    gfx_QBlit                ; 46 : LVO -276 QBlit(bltnode a1)
+        dc.l    graphics_null            ; 47 : LVO -282 InitArea (non implémenté)
         dc.l    gfx_SetRGB4              ; 48 : LVO -288 SetRGB4(vp a0, n d0, r d1, g d2, b d3)
-        dc.l    graphics_null            ; 49 : LVO -294 QBSBlit (non implémenté)
+        dc.l    gfx_QBlit                ; 49 : LVO -294 QBSBlit(bltnode a1) : comme QBlit (spec §9.4, gb_VBlank = 0)
         dc.l    gfx_BltClear             ; 50 : LVO -300 BltClear(mémoire a1, taille d0, drapeaux d1)
         dc.l    gfx_RectFill             ; 51 : LVO -306
         dc.l    graphics_null            ; 52 : LVO -312 (non implémenté)
@@ -183,7 +186,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_ClearRegion          ; 88 : LVO -528
         dc.l    gfx_DisposeRegion        ; 89 : LVO -534
         dc.l    gfx_FreeVPortCopLists    ; 90 : LVO -540
-        dcb.l   2,graphics_null          ; 91..92 : LVO -546..-552 (non implémentés)
+        dc.l    graphics_null            ; 91 : LVO -546 FreeCopList (non implémenté)
+        dc.l    gfx_ClipBlit             ; 92 : LVO -552 ClipBlit(rp source a0, ..., rp dest a1, ..., minterm d6)
         dc.l    gfx_XorRectRegion        ; 93 : LVO -558
         dcb.l   3,graphics_null          ; 94..96 : LVO -564..-576 (non implémentés)
         dc.l    gfx_GetRGB4              ; 97 : LVO -582 GetRGB4(colormap a0, n d0)
@@ -195,7 +199,7 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_XorRegionRegion      ; 103 : LVO -618
         dc.l    gfx_AndRegionRegion      ; 104 : LVO -624
         dc.l    gfx_SetRGB4CM            ; 105 : LVO -630 SetRGB4CM(colormap a0, n d0, r d1, v d2, b d3)
-        dc.l    graphics_null            ; 106 : LVO -636 BltMaskBitMapRastPort (non implémenté)
+        dc.l    gfx_BltMaskBitMapRastPort ; 106 : LVO -636 BltMaskBitMapRastPort(..., minterm d6, masque a2)
         dcb.l   2,graphics_null          ; 107..108 : LVO -642/-648 (privés)
         dc.l    gfx_AttemptLockLayerRom  ; 109 : LVO -654 AttemptLockLayerRom(couche a5) -> d0
         dc.l    -1
@@ -779,6 +783,37 @@ gfx_WaitBlit:
 .wb_loop:
         btst    #6,CUSTOM+$002
         bne.s   .wb_loop
+        rts
+
+; QBlit(bltnode a1) / QBSBlit(bltnode a1) (spec graphics-blitter-v34 §9) : la fonction du nœud est appelée tout de
+; suite, dans le contexte de l'appelant (A0 = $DFF000, A1 = nœud, A6 = GfxBase), et rappelée blitter au repos tant
+; qu'elle rend Z = 0 ; puis, blitter au repos, cleanup si stat & CLEANUP. Écart : un blit en cours est attendu au
+; lieu d'être relayé par l'interruption BLIT, et QBSBlit n'attend pas le faisceau (comme la 1.3 hors GELs).
+BN_FUNCTION     EQU 4
+BN_STAT         EQU 8
+BN_CLEANUP      EQU $E
+BNB_CLEANUP     EQU 6
+gfx_QBlit:
+        movem.l a2/a5-a6,-(sp)
+        move.l  a1,a2                ; a2 = nœud
+        clr.l   (a2)                 ; n = NULL
+.qb_call:
+        bsr.s   gfx_WaitBlit
+        lea     CUSTOM,a0
+        move.l  a2,a1
+        move.l  BN_FUNCTION(a2),a5
+        jsr     (a5)                 ; Z = 1 : nœud terminé
+        movem.l 4(sp),a5-a6          ; (movem ne touche pas les codes conditions)
+        bne.s   .qb_call
+        bsr.s   gfx_WaitBlit
+        btst    #BNB_CLEANUP,BN_STAT(a2)
+        beq.s   .qb_ret
+        lea     CUSTOM,a0
+        move.l  a2,a1
+        move.l  BN_CLEANUP(a2),a5
+        jsr     (a5)
+.qb_ret:
+        movem.l (sp)+,a2/a5-a6
         rts
 
 ; gfx_OwnBlitter() : prend le blitter (sémaphore gb_BlitSem : attend qu'aucune autre tâche ne le possède), puis attend

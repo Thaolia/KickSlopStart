@@ -558,6 +558,7 @@ EB_LIBLIST      EQU $17A
 EB_PORTLIST     EQU $188
 EB_TASKREADY    EQU $196
 EB_TASKWAIT     EQU $1A4
+EB_LASTALERT    EQU $202       ; LastAlert[4] : numéro et second nombre de la dernière alerte (-1 : aucune)
 EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
