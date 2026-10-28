@@ -880,6 +880,9 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     dès la piste 81 ; sonde tdwrite identique à la vraie ROM), table graphics à 109 vecteurs (SetRGB4CM,
     AttemptLockLayerRom). Specs d'analyse ajoutées : trackdisk-write, coldstart-hardware, coverage (inventaire des 390
     LVO V34), puis graphics-blitter, graphics-display, alert.
+    Area*/Flood/DrawEllipse (spec graphics-area, sonde garea conforme sauf écarts T27/T32 voulus), contour et motif
+    multicolore de RectFill, symbole de la touche Amiga (un chat) dans les menus. Specs d'analyse rendues : layers,
+    audio-device, console-keymap. Reste dans les menus : raccourcis Amiga-droite, coches dessinées, sous-menus.
     trackdisk robuste aux pistes longues (émulateur ESP32 amiga500-esp32, erreur 121) : décodeur jusqu'au ras du
     tampon, masque des secteurs distincts, relecture d'une piste incomplète (4 fois), erreur plutôt que contenu
     périmé ; test unicorn tests/td_decode_test.py (99/99, l'ancien code 30 échecs sur 33 avec un gap de 830 octets).

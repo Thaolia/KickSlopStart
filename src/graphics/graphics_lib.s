@@ -18,6 +18,14 @@
                 xdef    gfx_OwnBlitter       ; draw.s (ScrollRaster au blitter)
                 xdef    gfx_DisownBlitter
                 xref    gfx_BltTemplate
+                xref    gfx_InitArea
+                xref    gfx_InitTmpRas
+                xref    gfx_AreaMove
+                xref    gfx_AreaDraw
+                xref    gfx_AreaEllipse
+                xref    gfx_AreaEnd
+                xref    gfx_DrawEllipse
+                xref    gfx_Flood
                 xref    gfx_ClearEOL
                 xref    gfx_ClearScreen
                 xref    gfx_Text
@@ -129,7 +137,8 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_Animate              ; 27 : LVO -162
         dc.l    gfx_GetGBuffers          ; 28 : LVO -168
         dc.l    gfx_InitGMasks           ; 29 : LVO -174
-        dcb.l   2,graphics_null          ; 30..31 : LVO -180..-186 (ellipses : non implémentées)
+        dc.l    gfx_DrawEllipse          ; 30 : LVO -180 DrawEllipse(rp a1, cx d0, cy d1, a d2, b d3)
+        dc.l    gfx_AreaEllipse          ; 31 : LVO -186 AreaEllipse(rp a1, cx d0, cy d1, a d2, b d3)
         dc.l    gfx_LoadRGB4             ; 32 : LVO -192 LoadRGB4(vp a0, couleurs a1, nombre d0)
         dc.l    gfx_InitRastPort         ; 33 : LVO -198
         dc.l    graphics_null            ; 34 : LVO -204 (non implémenté)
@@ -140,10 +149,12 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    gfx_SetRast              ; 39 : LVO -234
         dc.l    gfx_Move                 ; 40 : LVO -240
         dc.l    gfx_Draw                 ; 41 : LVO -246
-        dcb.l   3,graphics_null         ; 42..44 : LVO -252..-264 (AreaMove/Draw/End : non implémentés)
+        dc.l    gfx_AreaMove             ; 42 : LVO -252 AreaMove(rp a1, x d0, y d1)
+        dc.l    gfx_AreaDraw             ; 43 : LVO -258 AreaDraw(rp a1, x d0, y d1)
+        dc.l    gfx_AreaEnd              ; 44 : LVO -264 AreaEnd(rp a1)
         dc.l    gfx_WaitTOF              ; 45 : LVO -270 WaitTOF()
         dc.l    gfx_QBlit                ; 46 : LVO -276 QBlit(bltnode a1)
-        dc.l    graphics_null            ; 47 : LVO -282 InitArea (non implémenté)
+        dc.l    gfx_InitArea             ; 47 : LVO -282 InitArea(areaInfo a0, tampon a1, maxVectors d0)
         dc.l    gfx_SetRGB4              ; 48 : LVO -288 SetRGB4(vp a0, n d0, r d1, g d2, b d3)
         dc.l    gfx_QBlit                ; 49 : LVO -294 QBSBlit(bltnode a1) : comme QBlit (spec §9.4, gb_VBlank = 0)
         dc.l    gfx_BltClear             ; 50 : LVO -300 BltClear(mémoire a1, taille d0, drapeaux d1)
@@ -151,7 +162,7 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dc.l    graphics_null            ; 52 : LVO -312 (non implémenté)
         dc.l    gfx_ReadPixel            ; 53 : LVO -318
         dc.l    gfx_WritePixel           ; 54 : LVO -324
-        dc.l    graphics_null            ; 55 : LVO -330 Flood (non implémenté)
+        dc.l    gfx_Flood                ; 55 : LVO -330 Flood(rp a1, mode d2, x d0, y d1)
         dc.l    gfx_PolyDraw             ; 56 : LVO -336 PolyDraw(rp a1, nombre d0, points a0)
         dc.l    gfx_SetAPen              ; 57 : LVO -342
         dc.l    gfx_SetBPen              ; 58 : LVO -348
@@ -173,7 +184,7 @@ graphics_vectors:                    ; table ABSOLUE, vecteur N -> LVO -6*N, jeu
         dcb.l   2,graphics_null          ; 74..75 : LVO -444..-450 (non implémentés)
         dc.l    gfx_OwnBlitter           ; 76 : LVO -456
         dc.l    gfx_DisownBlitter        ; 77 : LVO -462
-        dc.l    graphics_null            ; 78 : LVO -468 InitTmpRas (non implémenté)
+        dc.l    gfx_InitTmpRas           ; 78 : LVO -468 InitTmpRas(tmpRas a0, tampon a1, taille d0)
         dc.l    gfx_AskFont              ; 79 : LVO -474
         dc.l    gfx_AddFont              ; 80 : LVO -480
         dc.l    gfx_RemFont              ; 81 : LVO -486

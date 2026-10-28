@@ -564,6 +564,31 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
   Écarts connus : pas d'icône « DF0:NDOS », un volume dont la fenêtre est ouverte perd quand même son icône à
   l'éjection s'il n'a pas de lock ; un Lock par le nom d'un volume connu mais absent donne « Please insert volume »
   (partage insert/replace non tranché par la spec).
+  (7g) **Remplissages de polygones et d'ellipses, Flood, chat de la touche Amiga** (2026-10-28 ; spec
+  `docs/analysis/graphics-area-v34.md`).
+  - graphics (`src/graphics/area.s`) : InitArea (−282), InitTmpRas (−468), AreaMove/AreaDraw/AreaEnd (−252..−264),
+    AreaEllipse (−186), DrawEllipse (−180), Flood (−330). Les sommets sont enregistrés comme dans la 1.3 :
+    - drapeaux $00 move, $02/$03 tracé, | $04 contour, $83 puis $02 ellipse ;
+    - −1 quand la table est pleine ;
+    - fermeture par AreaDraw via son LVO, AreaMove isolé remplacé.
+    AreaEnd construit un masque d'un plan au processeur, en trois passes :
+    - points de croisement en XOR (lignes [haut, bas[ de chaque arête non horizontale, bornes de ligne des ellipses) ;
+    - remplissage de chaque ligne ;
+    - arêtes complètes tracées par le Bresenham unifié de Draw, dans le sens de l'arête (pixels du pentagramme
+      identiques à la 1.3). Elles sont effacées si DrawMode = JAM1 et AreaPtSz = 2, comme la 1.3.
+    Rendu ensuite ligne par ligne par RectFill, puis contour Draw/Move en AOlPen si AREAOUTLINE. DrawEllipse :
+    algorithme de Kennedy en deux ensembles, points posés par le LVO WritePixel. Flood : remplissage 4-connexe par
+    lignes (ReadPixel), frontière AOlPen (mode 0) ou couleur de départ (mode 1). Écarts gardés :
+    - la table n'est pas translatée et on ne lit pas d'entrée au-delà de Count (pas de point parasite, T27) ;
+    - sans TmpRas (ou TmpRas trop petite), AreaEnd alloue son masque au lieu d'écrire en mémoire basse ;
+    - Flood n'alloue pas TmpRas.Size octets de chip : il réussit là où la 1.3 rend 0 (T32).
+  - RectFill : contour AREAOUTLINE (intérieur réduit d'un pixel en COMPLEMENT, Move/Draw en AOlPen et JAM1, cp en
+    (xmin, ymin)) ; motif multicolore (AreaPtSz négatif, 2^n mots par plan).
+  - Sonde `tests/garea_probe.sh` sur notre ROM : 34 tests ; T1–T6, T8–T10, T13–T16, T18–T26, T29–T31 et T33
+    identiques aux vecteurs de la spec, T27/T32 = écarts ci-dessus.
+  - intuition (`menus.s`) : un élément COMMSEQ affiche sa lettre à droite, précédée du symbole de la touche Amiga. Ce
+    symbole est un petit chat (23 × 8 en hires, 14 × 8 en lowres, dessiné pour KickSlopStart). Les raccourcis clavier
+    Amiga-droite ne sont pas encore traités. Sonde visuelle `tests/menucat.s`.
   (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
   - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
     l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),

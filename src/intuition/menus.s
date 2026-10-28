@@ -7,6 +7,8 @@
 ; sinon), couches supprimées ; layers rend la zone aux fenêtres (sauvegarde des fenêtres smart, REFRESHWINDOW des
 ; fenêtres simple via it_refresh). Les éléments ou menus inactifs sont grisés par des rayures horizontales au stylo
 ; du fond.
+; Raccourcis COMMSEQ (spec intuition-input-menus-v34 §3.5) : le caractère Command à droite de l'élément, précédé du
+; symbole de la touche Amiga — ici un petit chat dessiné pour KickSlopStart (pas le glyphe de la ROM), au même format.
 ; Portée : pas de sous-menus, ni de coches dessinées, ni de raccourcis clavier, ni de multi-sélection.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + intuition/intuition.h. AUCUNE lecture ROM.
 
@@ -31,6 +33,8 @@
                 xref    intuition_DrawImage
 
 MB_MARGIN       EQU 2                ; marge intérieure du menu déroulé (cadre compris)
+MI_COMMAND      EQU 26               ; MenuItem : caractère du raccourci (COMMSEQ)
+COMMSEQ         EQU $0004
 SC_BARH_M       EQU 9                ; hauteur de la barre de l'écran (lignes 0..9), comme screens.s
 
 ; SetMenuStrip(fenêtre a0, menu a1) -> d0 = TRUE. ClearMenuStrip(fenêtre a0).
@@ -557,6 +561,10 @@ mn_openbox:
 .ob_img:
         jsr     intuition_DrawImage
 .ob_ghost:
+        btst    #2,MI_FLAGS+1(a2)    ; COMMSEQ : symbole + caractère du raccourci
+        beq.s   .ob_gh
+        bsr     mn_commseq
+.ob_gh:
         btst    #4,MI_FLAGS+1(a2)    ; inactif (ou menu inactif) : grisé
         beq.s   .ob_g
         move.l  IB_MENUCUR(a5),a0
@@ -581,6 +589,92 @@ mn_openbox:
 .ob_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
+
+; mn_commseq(a2 = élément, a3 = RastPort de la boîte, a4 = écran, a5 = IntuitionBase) : le caractère Command en
+; x = élément + Width - largeur du caractère - 2 (stylo DetailPen, JAM1), à la hauteur du texte de l'élément, et le
+; chat juste à sa gauche (2 pixels d'écart). Préserve d2-d7/a2-a5.
+mn_commseq:
+        movem.l d2-d4/a6,-(sp)
+        moveq   #MB_MARGIN,d2
+        add.w   MI_LEFTEDGE(a2),d2
+        add.w   MI_WIDTH(a2),d2
+        sub.w   rp_TxWidth(a3),d2
+        subq.w  #2,d2                ; d2 = x du caractère
+        moveq   #MB_MARGIN,d3
+        add.w   MI_TOPEDGE(a2),d3    ; d3 = y (haut du texte de l'élément)
+        btst    #1,MI_FLAGS+1(a2)
+        beq.s   .cq_y
+        move.l  MI_ITEMFILL(a2),d0
+        beq.s   .cq_y
+        move.l  d0,a0
+        add.w   IT_TOPEDGE(a0),d3
+.cq_y:
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  SC_DETAILPEN(a4),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        move.l  a3,a1
+        move.w  d2,d0
+        ext.l   d0
+        move.w  d3,d1
+        add.w   rp_TxBaseline(a3),d1
+        ext.l   d1
+        jsr     LVO_MOVE(a6)
+        move.l  a3,a1
+        lea     MI_COMMAND(a2),a0
+        moveq   #1,d0
+        jsr     LVO_TEXT(a6)
+        lea     mn_cat_lo(pc),a1     ; chat : version hires si l'écran l'est
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .cq_lo
+        lea     mn_cat_hi(pc),a1
+.cq_lo:
+        move.w  d2,d0
+        sub.w   4(a1),d0             ; Image.Width
+        subq.w  #2,d0
+        ext.l   d0
+        move.w  d3,d1
+        ext.l   d1
+        move.l  a3,a0
+        move.l  a5,a6
+        jsr     intuition_DrawImage
+        movem.l (sp)+,d2-d4/a6
+        rts
+
+; Le chat de la touche Amiga (struct Image : Left, Top, Width, Height, Depth, ImageData, PlanePick, PlaneOnOff, Next).
+; Format de la 1.3 : PlanePick 1, PlaneOnOff 0, bits à 1 = fond (couleur 1), dessin à 0 (couleur 0).
+mn_cat_hi:
+        dc.w    0,0,23,8,1
+        dc.l    mn_cat_hi_data
+        dc.b    1,0
+        dc.l    0
+mn_cat_lo:
+        dc.w    0,0,14,8,1
+        dc.l    mn_cat_lo_data
+        dc.b    1,0
+        dc.l    0
+mn_cat_hi_data:                      ; oreilles, yeux, moustaches, nez, menton (23 x 8)
+        dc.w    $FDFF,$7FFF
+        dc.w    $FCFE,$7FFF
+        dc.w    $FC00,$7FFF
+        dc.w    $FC82,$7FFF
+        dc.w    $E000,$0FFF
+        dc.w    $FC10,$7FFF
+        dc.w    $E101,$0FFF
+        dc.w    $FF01,$FFFF
+mn_cat_lo_data:                      ; le même en basse résolution (14 x 8)
+        dc.w    $EFDF
+        dc.w    $E79F
+        dc.w    $E01F
+        dc.w    $E85F
+        dc.w    $8007
+        dc.w    $E31F
+        dc.w    $9027
+        dc.w    $F87F
 
 ; mn_closebox(a4, a5) : supprime le menu déroulé (s'il existe) et répare l'écran. Préserve d2-d7/a2-a4.
 mn_closebox:

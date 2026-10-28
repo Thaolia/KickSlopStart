@@ -365,7 +365,8 @@ RC_G            EQU 35               ; byte : bit 0 = stylo B du plan courant
 RC_PR           EQU 36               ; ligne du motif courante
 RC_RCNT         EQU 38               ; lignes restantes (motif)
 RC_PW           EQU 40               ; mot de motif tourné de la ligne courante
-RC_SIZE         EQU 42
+RC_PSTEP        EQU 42               ; octets du motif d'un plan (motif multicolore), 0 sinon
+RC_SIZE         EQU 44
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -RC_SIZE(sp),sp
@@ -375,6 +376,8 @@ dr_rect:
         move.b  d5,RC_BG(a4)
         move.l  a0,RC_PAT(a4)
         move.w  d6,RC_PMASK(a4)
+        swap    d6
+        move.w  d6,RC_PSTEP(a4)
         move.l  DC_RP(a5),a0
         move.b  rp_DrawMode(a0),d4
         moveq   #COMPLEMENT,d5
@@ -479,6 +482,7 @@ rc_one:
         moveq   #0,d7
         move.b  bm_Depth(a0),d7
         lea     bm_Planes(a0),a2
+        move.l  RC_PAT(a4),-(sp)
         bra.s   .o_pe
 .o_pl:
         move.l  (a2)+,a1
@@ -490,8 +494,13 @@ rc_one:
         lsr.b   #1,d6
         lsr.b   #1,d5
         lsr.b   #1,d4
+        move.w  RC_PSTEP(a4),d0      ; motif multicolore : bloc du plan suivant
+        add.w   d0,RC_PAT+2(a4)
+        bcc.s   .o_pe
+        addq.w  #1,RC_PAT(a4)
 .o_pe:
         dbra    d7,.o_pl
+        move.l  (sp)+,RC_PAT(a4)
 .o_ret:
         rts
 ; rc_plane(a1 = premier octet de la première ligne, d5.b/d4.b bit 0 = stylos A/B de ce plan, a4) : remplit le
@@ -1068,8 +1077,13 @@ gfx_WritePixel:
         rts
 
 ; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) : rectangle au stylo A (relatif au Layer), motif de SetAfPt
-; s'il y en a un (dr_rect).
+; s'il y en a un (dr_rect ; AreaPtSz = -n : motif multicolore, 2^n mots par plan, plans consécutifs). AREAOUTLINE :
+; intérieur (réduit d'un pixel de chaque côté en COMPLEMENT, pour ne pas inverser deux fois le bord), puis contour
+; Move/Draw (LVO) en AOlPen et JAM1 ; cp reste en (xmin, ymin) (spec graphics-area-v34 §8).
 gfx_RectFill:
+        btst    #3,rp_Flags+1(a1)    ; AREAOUTLINE
+        bne.s   rf_outline
+rf_fill:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -1083,14 +1097,78 @@ gfx_RectFill:
         move.b  rp_FgPen(a1),d4
         move.b  rp_BgPen(a1),d5
         move.l  rp_AreaPtrn(a1),a0
-        moveq   #1,d6
+        moveq   #0,d6                ; d6 = pas entre plans (mot haut) | masque des lignes
         move.b  rp_AreaPtSz(a1),d7
+        bpl.s   .rf_mono
+        neg.b   d7
+        moveq   #2,d6
+        lsl.w   d7,d6
+        swap    d6
+.rf_mono:
+        move.w  #1,d6
         lsl.w   d7,d6
         subq.w  #1,d6
         bsr     dr_rect
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+rf_outline:
+        movem.l d2-d5/a2,-(sp)
+        move.l  a1,a2
+        movem.w d0-d3,-(sp)
+        btst    #1,rp_DrawMode(a2)   ; COMPLEMENT
+        beq.s   .ro_fill
+        addq.w  #1,d0
+        addq.w  #1,d1
+        subq.w  #1,d2
+        subq.w  #1,d3
+        cmp.w   d2,d0
+        bgt.s   .ro_edge
+        cmp.w   d3,d1
+        bgt.s   .ro_edge
+.ro_fill:
+        bsr     rf_fill
+.ro_edge:
+        movem.w (sp)+,d2-d5          ; xmin ymin xmax ymax
+        move.b  rp_FgPen(a2),-(sp)
+        move.b  rp_DrawMode(a2),-(sp)
+        move.l  a2,a1
+        moveq   #0,d0
+        move.b  rp_AOlPen(a2),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a2,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        move.l  a2,a1
+        move.l  d2,d0
+        move.l  d3,d1
+        jsr     LVO_MOVE(a6)
+        move.l  a2,a1
+        move.l  d2,d0
+        move.l  d5,d1
+        jsr     LVO_DRAW(a6)
+        move.l  a2,a1
+        move.l  d4,d0
+        move.l  d5,d1
+        jsr     LVO_DRAW(a6)
+        move.l  a2,a1
+        move.l  d4,d0
+        move.l  d3,d1
+        jsr     LVO_DRAW(a6)
+        move.l  a2,a1
+        move.l  d2,d0
+        move.l  d3,d1
+        jsr     LVO_DRAW(a6)
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        move.l  a2,a1
+        jsr     LVO_SETDRMD(a6)
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        move.l  a2,a1
+        jsr     LVO_SETAPEN(a6)
+        movem.l (sp)+,d2-d5/a2
         rts
 
 ; SetRast(rp a1, stylo d0) : remplit toute la zone du RastPort (bornes du Layer, sinon le BitMap).

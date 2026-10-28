@@ -13,6 +13,7 @@
 #   rel DX DY [N]            N déplacements relatifs de la souris (pas <= 20 : les grands sauts se perdent)
 #   dclick                   double-clic gauche
 #   click                    clic gauche simple
+#   rdown / rup              bouton droit enfoncé / relâché (menus)
 #   key TOUCHE               touche au format xdotool (Down, ctrl+F1…)
 #   cia NOM                  vecteurs et masques de ciaa/ciab.resource (debug_cia.py) -> <out>/NOM.cia
 #   dcmd NOM CMDS            commandes brutes du débogueur séparées par « ; », « _ » pour espace -> <out>/NOM.dcmd
@@ -96,6 +97,8 @@ while read -r cmd a b c; do
     rel)   for i in $(seq 1 "${c:-1}"); do X mousemove_relative -- "$a" "$b"; sleep 0.05; done;;
     dclick) for i in 1 2; do X mousedown 1; sleep 0.1; X mouseup 1; sleep 0.15; done;;
     click) X mousedown 1; sleep 0.12; X mouseup 1;;
+    rdown) X mousedown 3;;
+    rup)   X mouseup 3;;
     key)   WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"
            X key --clearmodifiers "$a"; sleep 0.3;;
     cia)   WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"
