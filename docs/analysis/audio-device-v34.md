@@ -434,3 +434,16 @@ circuite exec et audio.device.
    mémoire (adresses écrites) dépend du contenu de la requête et n'a pas été caractérisée.
 6. **Clé `$FFFF`** donnant accès aux canaux libres : déduit, non sondé.
 7. Période minimale 124 et filtre : tirés du HRM, aucune mesure sur matériel réel.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
+  aucune adresse de routine ROM (seuls `$DFF000` et le vecteur 68000 `$70`, adresses matérielles/CPU).
+- [x] L'automate d'interruption (§6) et les commandes (§4-§7) sont décrits par **états, effets sur les
+  registres Paula et ordre des rendus**, recoupés par la sonde boîte noire [O] ; la table d'aiguillage
+  interne n'est évoquée que pour signaler les cas indéfinis à traiter en erreur.
+- [x] Pas de données ROM au-delà de l'ABI : chaîne d'ID, taille de base, nombre de vecteurs, masques
+  ADKCON par canal (valeurs écrites dans un registre, observables), sentinelles de clé/précédence.
+- [x] La sonde citée (`tests/audio_probe.s`) est du code auteur.

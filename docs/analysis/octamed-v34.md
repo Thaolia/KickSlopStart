@@ -313,3 +313,19 @@ Par ordre de probabilité [D] :
 - Code de sortie de PPShow (clic, touche ou délai ?) non déterminé.
 - Les champs `StringInfo` des gadgets texte et le contenu exact de l'UCopList n'ont pas été relus.
 - La signification de « Mem 384448/ 206176 » n'a pas été vérifiée contre AvailMem.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Cibles désassemblées = logiciels tiers (`OctaMED`, `c/LoadWB` 2.04) ; la ROM Kickstart n'a été
+  qu'**exécutée** (captures, structures publiques relues en mémoire). Aucune adresse de routine ROM,
+  aucune suite d'instructions de la ROM.
+- [x] Données issues de la ROM : uniquement des **valeurs observées à l'exécution** (champs de
+  structures publiques, ColorMap relue, hauteur d'écran 256, flags de fenêtre) et le bandeau du CLI
+  initial (`Copyright © 1987 Commodore-Amiga, Inc.` / `All rights reserved.` / `Release 1.3`), texte
+  affiché et observable (inventorié dans `docs/audit/specs-review.md`). Pas de table, glyphe ni image
+  de la ROM.
+- [x] Les captures de `docs/analysis/octamed/` montrent l'écran d'OctaMED (logiciel tiers) sur la vraie
+  ROM ; elles ne contiennent pas d'image issue de la ROM hormis le pointeur/couleurs venant du
+  `system-configuration` de la disquette.

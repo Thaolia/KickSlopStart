@@ -11,8 +11,8 @@
 > Provenance : **ROM** = Kickstart, **WB** = binaire du disque Workbench.
 >
 > Ce document décrit des comportements, des layouts d'ABI, des numéros de globales et des
-> constantes. **Aucune suite d'instructions n'est reproduite ni paraphrasée.** Les adresses ROM
-> citées servent uniquement de repères pour la piste analyse (l'implémentation n'en a pas besoin).
+> constantes. **Aucune suite d'instructions n'est reproduite ni paraphrasée**, et aucune adresse ROM n'est
+> citée (retirées le 2026-10-29).
 
 ---
 
@@ -157,7 +157,7 @@ appelle directement la globale BCPL (arguments déjà au format BPTR, ex. FileHa
 ### 2.4 Segarray (`pr_SegList`) et initialisation [O ROM]
 - `pr_SegList` (process +$80) = **BPTR vers un « segarray »** : `V!0 = n`, `V!1..V!n` = BPTR de
   chaînes de segments. La globale 89 (`findsegarray`) le renvoie.
-- Segarray ROM (à $FF3E24) : `V!0 = 4`, mais **7 entrées** utiles :
+- Segarray ROM : `V!0 = 4`, mais **7 entrées** utiles :
   1. noyau BCPL (chaîne de 4 segments : mémoire, process, I/O devices, coroutines, chaînes…),
   2. dos (« BLIB » : flux, rdargs, writef, fichiers…),
   3. `cliinit` (globale 133 ; startup-sequence, fenêtre CON:…),
@@ -630,16 +630,16 @@ Globales définies en ROM et caractérisées plus loin : 21, 46, 50, 86, 91, 94/
 ### 8.4 Globales 21–128 et C:Date (2026-10-21)
 
 Sources : ROM `kick34005.A500` (tables globin des segments du segarray, §3.1) et `c:Date`,
-`c:SetClock` du disque Workbench 1.3.3. Contrats uniquement. Adresses ROM = repères analyse.
+`c:SetClock` du disque Workbench 1.3.3. Contrats uniquement.
 
 #### 8.4.1 Où vivent ces globales [O ROM]
 
-| Gl. | Off. | Segment porteur (segarray ROM) | Repère |
-|---|---|---|---|
-| 21, 46, 86, 91, 127, 128, −25 | $054, $0B8, $158, $16C, $1FC, $200, −$64 | entrée 2 (dos « BLIB ») | $FF55D0, $FF547C, $FF7A70, $FF7E08, $FF54A4, $FF7A80, $FF7960 |
-| 94, 95, 126 | $178, $17C, $1F8 | entrée 1, 2ᵉ segment de la chaîne | $FF4AE2, $FF4AF0, $FF4C24 |
-| 50 | $0C8 | entrée 1, 3ᵉ segment (avec −33 sysrequest et 52 requester) | $FF4E3E |
-| 34 (rappel) | $088 | entrée 1, 1ᵉʳ segment | $FF44B2 |
+| Gl. | Off. | Segment porteur (segarray ROM) |
+|---|---|---|
+| 21, 46, 86, 91, 127, 128, −25 | $054, $0B8, $158, $16C, $1FC, $200, −$64 | entrée 2 (dos « BLIB ») |
+| 94, 95, 126 | $178, $17C, $1F8 | entrée 1, 2ᵉ segment de la chaîne |
+| 50 | $0C8 | entrée 1, 3ᵉ segment (avec −33 sysrequest et 52 requester) |
+| 34 (rappel) | $088 | entrée 1, 1ᵉʳ segment |
 
 Ni 83 ni 84 ne sont définies en ROM (84 est fournie par C:Date elle-même). La globale **92** n'est
 dans aucune table globin : c'est une **donnée** (IntuitionBase, APTR) écrite par `cliinit` (133). [O]
@@ -1082,7 +1082,7 @@ renvoie le port et l'open poursuit par ACTION_FINDINPUT/OUTPUT.
 Repères d'analyse : dans c:Run (hunk 1, BCPL, globale 1 seule définie, max 134), la routine
 d'init est à l'offset **$4B8** du hunk ; Run en place l'**adresse machine** (pas un BPTR) dans
 dp_Type. Elle utilise deux sous-routines locales (copie des réglages du CLI parent, copie de la
-liste de chemins). Côté CLI : start ROM à $FF9008, start de Shell-Seg = globale 1 de son hunk.
+liste de chemins). Côté CLI : start du CLI ROM = sa globale 1, start de Shell-Seg = globale 1 de son hunk.
 
 #### 13.6.1 Contrat d'appel (Q1)
 - **Localisation de la CLI à remplir : exclusivement par `findcli()` (globale 134, GV +$218)
@@ -1438,7 +1438,7 @@ Je certifie, après relecture intégrale de ce document, que :
   offsets de globales, layouts (frame, GV, FileHandle, CLI, segarray, hunk BCPL, nœuds de liste),
   conventions de registres, constantes (codes d'action packets, codes d'erreur, tailles de
   tampons/piles, valeur du marqueur de globale non définie), chaînes de messages et templates
-  (nécessaires à la compatibilité de sortie), et adresses ROM à titre de repère d'analyse ;
+  (nécessaires à la compatibilité de sortie) ;
 - la ROM n'a pas été modifiée ; seules des extractions temporaires des fichiers du disque
   Workbench (et, pour le §13.6, une copie de lecture temporaire de la ROM, supprimée après
   analyse) ont été faites dans le répertoire scratch de session, hors du dépôt.
@@ -1446,7 +1446,7 @@ Je certifie, après relecture intégrale de ce document, que :
   est exprimé en entrées/sorties, champs écrits (offsets de structure et numéros de globales),
   valeurs de retour et ordre des effets observables ; aucun encodage, aucune séquence
   d'instructions, aucun nom de registre de travail interne n'y figure (seuls les registres de
-  la convention d'appel publique §1.1 sont cités). Les offsets de hunk/ROM ($4B8, $FF9008) et les
+  la convention d'appel publique §1.1 sont cités). Les offsets de hunk de c:Run ($4B8) et les
   tailles de frame observées ($1A4, $2BC) sont des repères d'analyse et des éléments d'ABI
   (dimensionnement de D0), pas du code.
 - **§13.7 (relu le 2026-10-20)** : le contrat de c:NewCLI (process appelant, routine d'init du
@@ -1456,3 +1456,6 @@ Je certifie, après relecture intégrale de ce document, que :
   d'instructions, aucun registre de travail interne. Les offsets $4/$544 du hunk sont des repères
   d'analyse. Sources : extraction temporaire de `c/NewCLI` d'une **copie** de l'ADF dans le scratch
   de session ; ROM lue en place, en lecture seule (non copiée, non modifiée).
+- **Correction du 2026-10-29** : retirées les 15 adresses ROM restantes (segarray ROM, colonne
+  « Repère » de la table des globales par segment, start du CLI ROM) et la mention « adresses ROM =
+  repères » ; numéros de globales, offsets dans le vecteur global et segments porteurs conservés.

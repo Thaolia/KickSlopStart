@@ -1,13 +1,11 @@
 # intuition-gzz-v34.md — bordures, couches et coordonnées des fenêtres (GIMMEZEROZERO ou non)
 
 > Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, module intuition 34.3
-> (OpenWindow à $FDEB1E, ajustement des bordures par les gadgets à $FDE95A, contexte de gadget
-> à $FD5416/$FD5596/$FD532C, gadgets système à $FDF266/$FDE8E0, coordonnées souris à $FD8686,
-> IntuiMessage à $FD59C8, rendu d'une liste de gadgets à $FD4AA6/$FD4B58, dessin de la fenêtre
-> à $FDF8E8, AddGadget à $FD4ED2). Cas pratique : `libs/info.library` de `wb133.adf`.
+> (OpenWindow, ajustement des bordures par les gadgets, contexte de gadget, gadgets système,
+> coordonnées souris, IntuiMessage, rendu d'une liste de gadgets, dessin de la fenêtre, AddGadget ;
+> aucune adresse ROM, retirées le 2026-10-29). Cas pratique : `libs/info.library` de `wb133.adf`.
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Les adresses ne sont que des
-> repères. **Aucune suite d'instructions n'est reproduite** : seuls des règles de calcul, des
+> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. **Aucune suite d'instructions n'est reproduite** : seuls des règles de calcul, des
 > champs de structures publiques (`intuition.h` 1.3) et des appels de librairie.
 
 Champs `struct Window` utilisés : LeftEdge +$04, TopEdge +$06, Width +$08, Height +$0A,
@@ -310,3 +308,5 @@ du dessin.
 - [x] §6 : l'ordre de dessin est décrit comme une règle (à rebours, puis surbrillance à
   l'endroit) avec la table des appelants. La liste d'info.library est donnée par son ordre et
   ses appels publics (AddGadget −1, RefreshGadgets(FirstGadget)), sans code recopié.
+- [x] **Correction du 2026-10-29** : retirées les 13 adresses de routines ROM de l'en-tête,
+  remplacées par la liste des fonctions étudiées ; corps inchangé.

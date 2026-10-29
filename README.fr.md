@@ -9,7 +9,10 @@ assembleur 68000, selon une méthode de **salle blanche**. L'image fait **256 Ki
 un simple **68000**. Elle vise à remplacer directement le Kickstart d'origine sur A500, A1000 et A2000. Elle démarre
 aujourd'hui en émulateur ; le démarrage sur un vrai A500 depuis une EPROM est un objectif ultérieur.
 
-Ce dépôt ne contient **aucun code de Commodore** et ne fournit **pas** la ROM d'origine.
+Ce dépôt ne contient **aucun code de Commodore** et ne fournit **pas** la ROM d'origine. Le code ayant été écrit avec
+un LLM qui a pu voir des sources de Kickstart fuitées, cette affirmation est vérifiée par la mesure plutôt que tenue
+pour acquise : voir l'[audit clean-room](docs/AUDIT.fr.md) (comparaison binaire avec la ROM 1.3, comparaison des
+sources avec AROS, relecture des notes d'analyse, et liste des données de la ROM gardées pour la compatibilité).
 
 ## Ce qui fonctionne
 
@@ -100,7 +103,8 @@ assets/          image de l'écran de démarrage ; votre ROM et vos ADF vont ici
   commitée. Pour l'analyse et la comparaison, placez votre propre copie de `kick34005.A500` dans `assets/` ; elle est
   ignorée par git.
 - Les images de disquettes de jeux et du Workbench ne sont pas incluses non plus.
-- AROS sert uniquement de référence ; aucun de ses fichiers n'est copié dans `src/`.
+- AROS sert uniquement de référence ; aucun de ses fichiers n'est copié dans `src/` (mesuré dans
+  [docs/audit/aros-similarity.md](docs/audit/aros-similarity.md)).
 - Amiga est une marque de son propriétaire respectif. Ce projet n'y est pas affilié.
 
 ## Licence

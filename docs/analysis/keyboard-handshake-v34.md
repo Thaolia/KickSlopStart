@@ -1,11 +1,11 @@
 # keyboard-handshake-v34.md — réception d'un octet clavier et poignée de main (KS 1.3)
 
-> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`. Repères :
-> - keyboard.device : résident $FE4B8E, init $FE4F44, réglage CRA $FE4FD4/$FE4FEC, handler
->   $FE5276, fin du handshake $FE53A2 et $FE5266 ;
-> - ciaa.resource : serveur $FC4684, AddICRVector $FC46F8, AbleICR/SetICR $FC4772/$FC4790 ;
-> - exec : parcours de chaîne de serveurs $FC1338 ;
-> - timer.device : $FE8D6C… (pour CIA-A timer B).
+> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`. Modules couverts :
+> - keyboard.device : résident, init, réglage de CRA, handler d'interruption, fin du handshake ;
+> - ciaa.resource : serveur, AddICRVector, AbleICR/SetICR ;
+> - exec : parcours de la chaîne de serveurs ;
+> - timer.device (pour le timer B de la CIA-A).
+> Aucune adresse ROM (retirées le 2026-10-29).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Registres CIA-A :
 > PRA $BFE001, TBLO $BFE601, TBHI $BFE701, **SDR $BFEC01**, **ICR $BFED01**, **CRA $BFEE01**,
@@ -25,8 +25,7 @@
    - appel des vecteurs **dans l'ordre des bits** : 0 TA, 1 TB, 2 ALRM, **3 SP**, 4 FLG. Chaque
      vecteur reçoit A1 = is_Data et A5 = is_Code.
    - **L'ICR n'est relu à aucun autre moment du service.**
-3. Exec acquitte **INTREQ PORTS seulement après** le parcours de toute la chaîne (fin de
-   $FC1338). Si la CIA reçoit un nouvel octet pendant le service, son /IRQ reste actif et le bit
+3. Exec acquitte **INTREQ PORTS seulement après** le parcours de toute la chaîne de serveurs. Si la CIA reçoit un nouvel octet pendant le service, son /IRQ reste actif et le bit
    PORTS se relève. Le nouvel octet n'est donc pas perdu, puisque son drapeau SP n'a pas été
    relu [D].
 4. keyboard.device installe son handler par **AddICRVector(CIAICRB_SP = 3, &interrupt)**
@@ -96,8 +95,7 @@ Ce qui n'est **jamais** fait pendant ce trajet :
   - pour chaque handler de la liste KBD_ADDRESETHANDLER : compteur +$102 incrémenté, puis
     **Cause** (exec −180) ;
   - **le handshake n'est PAS terminé** : CRA bit 6 reste à 1 ;
-  - il ne se termine qu'au dernier **KBD_RESETHANDLERDONE** (compteur ramené à 0 ⇒ CRA &= $BF,
-    $FE5266). S'il n'y a aucun handler, il se termine tout de suite.
+  - il ne se termine qu'au dernier **KBD_RESETHANDLERDONE** (compteur ramené à 0 ⇒ CRA &= $BF). S'il n'y a aucun handler, il se termine tout de suite.
   - Le clavier attend ce handshake (au plus environ 10 s) avant de faire le reset matériel [D,
     comportement clavier public].
 - Tout code différent de $78 efface le drapeau « 1er avertissement ».
@@ -142,3 +140,6 @@ la ROM. Les différences possibles sont ailleurs :
 - [x] Aucune suite d'instructions recopiée : ordre des accès registres et valeurs, structure du
   service d'interruption, conditions (reset, codes spéciaux) et estimation de durée.
 - [x] Aucune donnée de la ROM reproduite (tables de qualificatifs seulement citées).
+- [x] **Correction du 2026-10-29** : retiré le bloc « Repères » d'en-tête (adresses de routines de
+  keyboard.device, ciaa.resource, exec, timer.device) et les adresses citées dans le corps ;
+  registres CIA (adresses matérielles) conservés.

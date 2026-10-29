@@ -9,7 +9,10 @@ KickSlopStart is an open-source reimplementation of the Amiga **Kickstart 1.3** 
 **68000**. It is meant as a drop-in replacement for the original Kickstart on the A500/A1000/A2000. It boots in an
 emulator today; booting it on a real A500 from an EPROM is a later goal.
 
-This repository contains **no Commodore code** and does **not** ship the original ROM.
+This repository contains **no Commodore code** and does **not** ship the original ROM. Because the code was written
+with an LLM that may have seen leaked Kickstart sources, this claim is checked by measurement rather than taken on
+trust: see the [clean-room audit](docs/AUDIT.md) (binary comparison with the 1.3 ROM, source comparison with AROS,
+review of the analysis notes, and the list of ROM data deliberately kept for compatibility).
 
 ## What works
 
@@ -96,7 +99,8 @@ assets/          boot screen image; your own ROM and ADF files go here (git-igno
 - The original Kickstart ROM is copyrighted. It is **not** included and must never be committed. For analysis and
   comparison, put your own copy of `kick34005.A500` in `assets/`; it is git-ignored.
 - Game and Workbench disk images are not included either.
-- AROS is consulted as a reference only; none of its code is copied into `src/`.
+- AROS is consulted as a reference only; none of its code is copied into `src/` (measured in
+  [docs/audit/aros-similarity.md](docs/audit/aros-similarity.md)).
 - Amiga is a trademark of its respective owner. This project is not affiliated with it.
 
 ## License

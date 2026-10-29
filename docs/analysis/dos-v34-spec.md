@@ -12,9 +12,9 @@
 
 ## 0. Fait fondateur : la dos V34 est la dos **BCPL** (delta majeur vs 2.0)
 
-- **[ROM]** ROMTag `dos.library` à `$FF3E62` : `rt_Flags = 0` (ni AUTOINIT ni COLDSTART),
-  `rt_Type = NT_LIBRARY (9)`, `rt_Pri = 0`, `rt_Init = rt_EndSkip = $FF3E94`, `rt_Name` → `"dos.library"`
-  (`$FF4030`), `rt_IdString` → `"dos 34.3 (9 Dec 1987)"` (`$FF3E7C`). dos n'a donc **pas** de table
+- **[ROM]** ROMTag `dos.library` : `rt_Flags = 0` (ni AUTOINIT ni COLDSTART),
+  `rt_Type = NT_LIBRARY (9)`, `rt_Pri = 0`, `rt_Init = rt_EndSkip` (même pointeur), `rt_Name` → `"dos.library"`,
+  `rt_IdString` → `"dos 34.3 (9 Dec 1987)"`. dos n'a donc **pas** de table
   auto-init statique : son `rt_Init` est du code d'init **manuel** (il alloue et publie sa base
   lui-même) et il n'est **pas** démarré par la passe `InitCode(RTF_COLDSTART)` — il est amené par
   l'amorçage disque (cf. `dos-boot-sequence.md`).
@@ -26,10 +26,10 @@
     décalées ; les champs notés `APTR` portent des pointeurs exec normaux (non décalés).
   - **BSTR** = BPTR vers une chaîne **BCPL** : **premier octet = longueur**, puis les caractères
     (pas de terminateur). **[ROM]** Corroboré directement dans la ROM : le gabarit de nom de device
-    est stocké comme BSTR `{0x03,'D','F','X'}` à `$FF89A5` (le `'X'` = `0x58` est patché par le
-    numéro d'unité `0`..`3` à l'exécution) ; le nom de handler est `{0x0B,"File System"}` (`$FF8B45`) ;
-    la tâche résidente du handler porte `{0x0B,"FileHandler"}` (`$FF8861`) ; le gabarit de fenêtre
-    CLI est `{0x18,"CON:0/0/640/200/AmigaDOS"}` (`$FF886D`). L'octet de longueur précède bien la
+    est stocké comme BSTR `{0x03,'D','F','X'}` (le `'X'` = `0x58` est patché par le
+    numéro d'unité `0`..`3` à l'exécution) ; le nom de handler est `{0x0B,"File System"}` ;
+    la tâche résidente du handler porte `{0x0B,"FileHandler"}` ; le gabarit de fenêtre
+    CLI est `{0x18,"CON:0/0/640/200/AmigaDOS"}`. L'octet de longueur précède bien la
     chaîne dans chaque cas → convention BSTR confirmée en ROM.
   - **Global vector** : les routines internes de dos sont appelées via un **vecteur global BCPL**
     (`pr_GlobVec` par process, `dl_GV` dans la base). La jump table LVO exposée publiquement n'est
@@ -133,7 +133,7 @@ Couplage conventionnel : `sp_Msg.mn_Node.ln_Name` pointe sur `sp_Pkt`, et `dp_Li
 | Off | Champ | Rôle |
 |----:|-------|------|
 | 0x00 | `fssm_Unit` | ULONG, numéro d'unité exec du device (0..3 pour DFx) |
-| 0x04 | `fssm_Device` | BSTR, nom du device bas niveau (**[ROM]** `"trackdisk.device"` à `$FF87F9`) |
+| 0x04 | `fssm_Device` | BSTR, nom du device bas niveau (**[ROM]** `"trackdisk.device"`) |
 | 0x08 | `fssm_Environ` | BPTR → table d'environnement/géométrie (`DosEnvec`) |
 | 0x0C | `fssm_Flags` | ULONG, flags pour `OpenDevice()` |
 
@@ -357,3 +357,17 @@ et **ne doit pas exister** dans une jump table V34.
   copie.
 - **`dl_UtilityBase`/sémaphores `DosInfo`/queues `RootNode`/`Process`** : marqués 2.0+ ci-dessus ;
   à NE PAS implémenter pour une cible 1.3 stricte.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage :
+  les §2-§4 décrivent le protocole packet et les conventions BCPL **observables** (champs, valeurs),
+  d'après les includes et la spec packets publics.
+- [x] **Corrigé** : retirées les adresses ROM de la ROMTag de dos, de `rt_Init`/`rt_EndSkip`,
+  `rt_Name`, `rt_IdString` et des chaînes BSTR citées (`DFX`, `File System`, `FileHandler`,
+  `CON:…`, `trackdisk.device`). La relation `rt_Init == rt_EndSkip` est conservée sans valeur.
+- [x] Restent : offsets de structures publiques NDK (`dosextens.i`, `filehandler.i`), LVO
+  (`dos_lib.fd`), constantes `ACTION_*`/`MODE_*`/`DLT_*`, gabarits BSTR courts (noms d'ABI,
+  inventoriés dans `docs/audit/specs-review.md`).

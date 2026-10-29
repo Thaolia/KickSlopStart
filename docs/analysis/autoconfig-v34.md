@@ -377,3 +377,18 @@ l'identique pour les lignes CD et pour Lower/Upper/Attr/nom des MH (le champ Fre
 - WinUAE non utilisé : FS-UAE suffisait pour deux cartes (`uae_fastmem2_size`) ; Zorro III ignoré (hors A500).
 - Le chemin « dos.library présente » d'AddDosNode et le détail de MakeDosNode ne sont résumés qu'à grands
   traits (hors autoconfig proprement dit).
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite, aucun extrait de désassemblage, aucune adresse de
+  routine ROM : toutes les adresses citées sont celles de l'espace Zorro II (`$E80000`, `$200000..$9FFFFF`,
+  `$E90000..$EFFFFF`), de la slow RAM (`$C00000`), de la carte UAE (`$F00000`) ou des registres de
+  configuration (`$40`/`$48`/`$4C`).
+- [x] Les §1, §2.4, §2.5 et §6 énumèrent des étapes au niveau des **appels publics** (LVO
+  d'expansion/exec) et de leurs résultats ; c'est l'ordre observable du protocole Autoconfig, pas un
+  déroulé de code. Les vecteurs §8 sont des sorties de sonde (code auteur `tests/cfgdev2.s`).
+- [x] Pas de données ROM au-delà de l'ABI : layout `ExpansionBase`/`ConfigDev`/`ExpansionRom`, codes
+  d'erreur, tables de tailles Zorro II (publiques), nom de MemHeader `"expansion ram"`, valeurs
+  `dn_StackSize`/`dn_Priority` de MakeDosNode.

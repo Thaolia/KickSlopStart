@@ -3,7 +3,7 @@
 > Piste **ANALYSE** (dirty). Source : ROM `assets/kick34005.A500` (lecture seule), segarray dos
 > (`bcpl-runtime-v34.md` §2.4) : entrée 6 = file system (FS), entrée 7 = process « restart » /
 > validateur (`rn_RestartSeg`, nom de process `"Validator"`). Spécification **comportementale**
-> uniquement : conditions, valeurs, effets, champs d'ABI. Adresses ROM = repères d'analyse.
+> uniquement : conditions, valeurs, effets, champs d'ABI. Aucune adresse ROM (retirées le 2026-10-29).
 > Conventions : **[O]** observé dans la ROM, **[D]** déduit. Numéros de globales = numéros dans le
 > GV **du process concerné** (le validateur a son propre GV : ses globales 186/187/203 n'ont rien à
 > voir avec celles du FS ou de dos portant le même numéro).
@@ -27,8 +27,7 @@ xdftool a réécrit les dates du bloc racine ; au montage de DF0: le validateur 
 récente dans l'horloge système encore « à zéro ». [D, cohérent avec O]
 
 > **Correction** de `bcpl-runtime-v34.md` §8.4.2 (setdatstamp, « Appelant observé : uniquement
-> C:Date — la ROM ne l'appelle pas ») : c'est **faux** ; la ROM l'appelle depuis le validateur
-> (repère `$FFFF8E`). [O]
+> C:Date — la ROM ne l'appelle pas ») : c'est **faux** ; la ROM l'appelle depuis le validateur. [O]
 
 ---
 
@@ -36,7 +35,7 @@ récente dans l'horloge système encore « à zéro ». [D, cohérent avec O]
 
 | Étape | Acteur | Effet | Cert. |
 |---|---|---|---|
-| 1 | FS (handler DFx, entrée 6) | Dans sa boucle principale, sur détection d'un (nouveau) disque, lance un process avec le segment **restart** (nom `"Validator"`, repère `$FFD440..$FFD52A`) et lui envoie un packet de démarrage | O |
+| 1 | FS (handler DFx, entrée 6) | Dans sa boucle principale, sur détection d'un (nouveau) disque, lance un process avec le segment **restart** (nom `"Validator"`) et lui envoie un packet de démarrage | O |
 | 2 | Validateur | Ouvre le device du FS (même nom, **même unité**, mêmes flags que le FS), lit le bloc racine | O |
 | 3 | Validateur | Contrôle le bloc racine ; type de disque ≠ `'DOS\0'` → fin en échec | O |
 | 4 | Validateur | Cherche/crée le nœud de volume (§4.2) | O |
@@ -66,8 +65,7 @@ Le validateur lit dans les arguments du packet reçu :
 | Arg4 | drapeau fourni par le FS (rôle non élucidé) | si non nul **et** bitmap invalide → abandon sans valider |
 | Arg5 | flags d'ouverture (`fssm_Flags`) | ouverture du device |
 
-(Le FS recopie `fssm_Unit`, `fssm_Device`, `fssm_Environ`, `fssm_Flags` à son démarrage — repère
-`$FFEE2A..$FFEE3C`.)
+(Le FS recopie `fssm_Unit`, `fssm_Device`, `fssm_Environ`, `fssm_Flags` à son démarrage.)
 
 ---
 
@@ -219,5 +217,7 @@ Relu intégralement : ce document ne contient **aucune suite d'instructions 6800
 paraphrasée, aucun extrait de désassemblage, aucun opcode, ni pseudo-code ligne à ligne. Il décrit
 des **conditions, valeurs et effets observables**, l'ordre des effets visibles, et des éléments
 d'ABI/interopérabilité (champs du bloc racine OFS, champs timer.device, RootNode, DeviceList,
-arguments du packet de démarrage). Les adresses ROM ne sont que des repères d'analyse. La ROM n'a
+arguments du packet de démarrage). Aucune adresse ROM n'est citée. La ROM n'a
 été ni modifiée ni copiée (désassemblage temporaire dans le répertoire scratch de session).
+- [x] **Correction du 2026-10-29** : retirés les 5 repères d'adresses ROM (appel de setdatstamp
+  par le validateur, segment restart, recopie du FSSM) ; comportement inchangé.

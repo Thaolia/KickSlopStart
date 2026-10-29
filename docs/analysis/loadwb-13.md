@@ -112,7 +112,7 @@ message n'apparaît pas.
 
 ### 3.2 Qui ferme réellement la fenêtre : la boucle du CLI en ROM [O]
 
-Dans la boucle BCPL du CLI (dos, autour de $FF953C), lorsque la lecture d'une ligne de commande
+Dans la boucle BCPL du CLI (dos), lorsque la lecture d'une ligne de commande
 rend **fin de flux** :
 - **CurrentInput ≠ StandardInput** : fin d'un script ⇒ endread, puis retour sur StandardInput.
 - **CurrentInput = StandardInput et Background = 0** : CLI interactif normal ⇒ fh_End := −1,
@@ -151,7 +151,7 @@ Chez nous (« CLI process 1 ending », fenêtre ouverte, pas de Workbench) :
    frappe**. La fenêtre reste alors ouverte, avec le message affiché : c'est exactement ce qu'on
    observe.
    - Avec `endcli >NIL:`, on passe par le chemin de redirection, puis la fermeture des flux
-     redirigés (endstream, `$FF9AD0`/`$FF9AE8`). Cette séquence pourrait cacher l'écart.
+     redirigés (endstream). Cette séquence pourrait cacher l'écart.
    - **À tester : `endcli` sans `>NIL:` derrière `LoadWB delay` sur le disque WB 1.3.3.**
 2. **Fin du CLI ⇒ endread + endwrite, puis le handler console ferme la fenêtre au dernier
    ACTION_END.** Il faut vérifier que notre fin de CLI fait ces deux Close et que notre handler
@@ -176,3 +176,5 @@ Chez nous (« CLI process 1 ending », fenêtre ouverte, pas de Workbench) :
   structures publiques (Process, CommandLineInterface, FileHandle, Message), conditions.
 - [x] Aucune donnée du programme reproduite, hormis de courtes chaînes. Les textes obfusqués sont
   décrits par leur rôle seulement.
+- [x] **Correction du 2026-10-29** : retirées les 3 adresses ROM (boucle du CLI, appels endstream) ;
+  comportement inchangé.

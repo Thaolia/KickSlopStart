@@ -8,7 +8,7 @@
 > process (process+$5C), « R2 » = `pr_Result2`.
 >
 > **Légende** : **[O]** observé directement · **[D]** déduit d'observations convergentes ·
-> **[S]** supposé. Les adresses ROM ne sont que des repères pour la piste analyse.
+> **[S]** supposé. Aucune adresse ROM n'est citée (retirées le 2026-10-29).
 >
 > Ce document décrit des comportements, des layouts d'ABI et des constantes. **Aucune suite
 > d'instructions n'est reproduite ni paraphrasée.**
@@ -49,13 +49,13 @@ FileLock : `+$00` fl_Link · `+$04` fl_Key · `+$08` fl_Access · **`+$0C` fl_Ta
 
 ### 1.1 Où et dans quel ordre [O ROM]
 
-- **rt_Init de dos** ($FF3E94) ne crée aucun DeviceNode. Il crée le process « Initial CLI »
+- **rt_Init de dos** ne crée aucun DeviceNode. Il crée le process « Initial CLI »
   puis ouvre `expansion.library` et parcourt `eb_MountList` (ExpansionBase+$4A) : il **chaîne**
   entre eux (dn_Next, BPTR) les DeviceNodes des BootNodes (`bn_DeviceNode`, BootNode+$10), retire
   le premier BootNode de la liste (RemHead) et range **l'APTR de son DeviceNode dans
   `rn_FileHandlerSegment`** (RootNode+$1C) **temporairement**. Sur un A500 sans carte autoboot la
   liste est vide ⇒ ce champ vaut 0. [O pour les accès, D pour la sémantique BootNode]
-- **cliinit** (globale 133, segarray ROM entrée 3, code à partir de $FF82DC), exécutée par
+- **cliinit** (globale 133, segarray ROM entrée 3), exécutée par
   l'Initial CLI [D : start(pkt=0) → GV[133], cf. bcpl-runtime §13.5], fait dans l'ordre :
   1. alloue rn_TaskArray (20 entrées), DosInfo (effacé ⇒ di_DevInfo = 0), les range dans le
      RootNode ; lit l'ancienne valeur de RootNode+$1C (APTR → BPTR) puis y écrit le **vrai**
@@ -65,7 +65,7 @@ FileLock : `+$00` fl_Link · `+$04` fl_Key · `+$08` fl_Access · **`+$0C` fl_Ta
      de tête de liste (et l'octet de longueur du BSTR `fssm_Device` de chaque nœud d'expansion est
      **incrémenté de 1** avant démarrage [O ; raison S : inclure le NUL final]) ;
      `di_DevInfo` := ce nœud de tête ;
-  3. crée **RAM, CON, RAW, SER, PAR, PRT** (routine locale, repère $FF8C20) ;
+  3. crée **RAM, CON, RAW, SER, PAR, PRT** (routine locale) ;
   4. ouvre `intuition.library` (rangée en **GV[92]**, utilisée par la globale 50) ;
   5. **démarre le handler du nœud de tête** (DF0) par la routine FS de cliinit (§1.3), et
      `pr_FileSystemTask` de l'Initial CLI := son port ;
@@ -108,7 +108,7 @@ Tous sont créés par **makedevnode** (globale 85) puis complétés. Noms en maj
   rn_FileHandlerSegment` ni `dn_Handler = "File System"`. `"File System"` est le **nom du
   process** FS ; dn_SegList reste **0** et le segment FS est pris directement dans le segarray. [O]
 - **FileSysStartupMsg de DF<n>** (getmem 4 longs effacés) : fssm_Unit = n, fssm_Device = BSTR
-  `"trackdisk.device"` (texte suivi d'un NUL), fssm_Environ = BPTR d'une table ROM ($FF8970),
+  `"trackdisk.device"` (texte suivi d'un NUL), fssm_Environ = BPTR d'une table ROM,
   fssm_Flags = 0. Table d'environnement (13 longs) :
   `TableSize 12, SizeBlock 128, SecOrg 0, Surfaces 2, SectorPerBlock 1, BlocksPerTrack 11,
   Reserved 2, PreAlloc 11, Interleave 0, LowCyl 0, HighCyl 79, NumBuffers 5, BufMemType 3`. [O]
@@ -117,7 +117,7 @@ Tous sont créés par **makedevnode** (globale 85) puis complétés. Noms en maj
 
 ### 1.3 Démarrage d'un file system par cliinit (≠ globale 112) [O ROM]
 
-Routine locale de cliinit (repère $FF89A8), arguments : nœud, segarray de base, segarray ROM.
+Routine locale de cliinit, arguments : nœud, segarray de base, segarray ROM.
 - Segarray neuf `getvec(4)` = `[3, V!1, V!2, V!6 ROM (FS)]`.
 - **dn_SegList = 0** (cas DF0 ROM) : GV := **makeglobvec(segarray)** (dn_GlobalVec ignoré) ;
   `createproc(segarray, **210 longs**, **pri 10**, BSTR **"File System"**, GV)`.
@@ -143,7 +143,7 @@ Routine locale de cliinit (repère $FF89A8), arguments : nœud, segarray de base
 - **Packet de démarrage** (§3.1) : Arg1 = **BSTR complet passé à deviceproc** (ex.
   `"CON:0/0/640/200/AmigaDOS"`), Arg2 = dn_Startup (**0 = CON, 1 = RAW**), Arg3 = BPTR du nœud,
   Res2 = GV. [O]
-- **Côté console-handler ROM** (G1 à $FF9C24) [O] : lit dp_Port, Arg1, Arg2 ; **ne lit pas Arg3**
+- **Côté console-handler ROM** (sa globale 1) [O] : lit dp_Port, Arg1, Arg2 ; **ne lit pas Arg3**
   et **n'écrit jamais dn_Task** ⇒ chaque deviceproc("CON:…") relance un process, **une fenêtre
   par Open**. Arg2 ≠ 0 ⇒ mode RAW ; Arg2 < 0 ⇒ Arg1 est utilisé tel quel comme fenêtre existante
   [O pour le test, D pour le sens]. Analyse du nom : 4 champs décimaux séparés par `/` à partir du
@@ -199,14 +199,14 @@ Routine locale de cliinit (repère $FF89A8), arguments : nœud, segarray de base
   initialisés** (pas de marqueur $474C…).
 - Dans les deux cas la valeur est aussi transmise en **dp_Res2** du packet de démarrage.
 
-### 3.4 makeglobvec(segarray) — globale 13 ($FF6D90) [O ROM]
+### 3.4 makeglobvec(segarray) — globale 13 [O ROM]
 - Parcourt les entrées `1..V!0` du segarray ; pour chaque **chaîne** de segments, lit le dernier
   long de chaque segment (« max », §3.1 de la spec BCPL). `max` = le plus grand, **plancher 15**.
 - `getvec(max + 50)` ; échec ⇒ renvoie 0 (R2 = 103 laissé par getvec).
 - Slot 0 = début + 50 longs ; **GV[0] := max** ; aucun autre slot écrit (ni positifs ni négatifs).
 - Renvoie le **BPTR du slot 0**.
 
-### 3.5 starthandler — globale 112 ($FF5EB0) : précisions [O ROM]
+### 3.5 starthandler — globale 112 : précisions [O ROM]
 Complète §13.3 de la spec (qui reste exacte) :
 - le segarray est construit à partir du `findsegarray()` **du process appelant** (entrées 1 et 2) ;
 - branche C : CreateProc(nom C = BADDR(dn_Name)+1, dn_Priority, dn_SegList, **dn_StackSize octets**) ;
@@ -215,25 +215,25 @@ Complète §13.3 de la spec (qui reste exacte) :
 - Result2 := dn_Lock est posé **avant** l'envoi du packet puis de nouveau après une réponse Res1 ≠ 0.
 
 ### 3.6 Autres globales du runtime utilisées par les handlers
-| Gl. | Adresse | Nom | Contrat observé | Cert. |
-|---|---|---|---|---|
-| 6 | $FF4506 | setio(iob, cmd, data, len, off) | iob BPTR ; io_Command (+$1C, **mot**) := cmd ; io_Data (+$28) := **data×4** (data est un BPTR) ; io_Length (+$24) := len ; io_Offset (+$2C) := 5e arg | O |
-| 21 | $FF55D0 | **doio(iob)** | exec DoIO sur BADDR(iob) ; renvoie **io_Error** (octet +$1F, non signé) | O |
-| 22 | $FF4520 | sendio(iob, pkt) | iob.ln_Name (+$0A) := APTR(pkt) ; pkt.dp_Link := APTR(iob) ; exec SendIO. La réponse arrive sur le port du process ⇒ **taskwait renvoie alors ce pkt** (lien par ln_Name) | O / D pour l'usage |
-| 31 | $FF44B4 | opendevice(iob, nom, unité, flags) | nom = BSTR **dont le texte doit être suivi d'un NUL** (passé à OpenDevice en BADDR+1) ; avant l'appel : ln_Succ/ln_Pred := 0, **ln_Name := nom (chaîne C)**, mn_ReplyPort := port du process, mn_Length := 12 ; → **−1** si OpenDevice renvoie 0, sinon **0** | O |
-| 32 | $FF4540 | closedevice(iob) | exec CloseDevice ; résultat non significatif | O |
-| 36 | $FF469E | setflags(taskid, m) | Signal(mp_SigTask du port `taskid` (+$10), **(m & 15) << 12**) : bit 0 de m = CTRL-C … bit 3 = CTRL-F | O |
-| 37 | $FF46C2 | testflags(m) | SetSignal(0, (m&15)<<12) : teste **et efface** ; → −1 si un bit était posé, sinon 0 | O |
-| 41 | $FF4648 | taskwait() | si **pr_PktWait** (process+$B4) ≠ 0 : appel `jsr` de cette routine avec **D0 = MsgPort du process**, elle doit rendre le message en **D0** ; sinon : efface SIGF_DOS ($100), GetMsg sur le port du process, Wait($100) tant que vide. → **BPTR(msg.ln_Name)** (= le packet) | O |
-| 42 | $FF4600 | qpkt(pkt) | dp_Link (= Message) doit être > 0, sinon renvoie 0, R2 = 101 ; message.ln_Name := pkt ; ln_Succ/Pred := 0 ; destination = ancien dp_Port, **dp_Port := port du process** ; PutMsg ; → 1 | O |
-| 50 | $FF4E3E | **openwindow(x, y, l, h, titre)** | Intuition OpenWindow (IntuitionBase = **GV[92]**, posée par cliinit) avec une NewWindow sur la pile : Left/Top/Width/Height = args, Detail/BlockPen = $FF/$FF, IDCMP 0, **Flags $00021007** (SIZING, DRAG, DEPTH, ACTIVATE, NOCAREREFRESH, smart refresh), pas de gadgets/checkmark, **Title = titre×4** (BPTR d'un tampon chaîne C, pas un BSTR), Screen/BitMap 0, **Min 120×50, Max $FFFF×$FFFF, Type WBENCHSCREEN (1)** ; → APTR Window ou 0 | O |
-| 86 | $FF7A70 | **datstamp(v)** | DateStamp (C, globale −25) dans BADDR(v) : v!0 jours, v!1 minutes, v!2 ticks ; **renvoie v**. (Pas de rapport avec les volumes.) | O |
+| Gl. | Nom | Contrat observé | Cert. |
+|---|---|---|---|
+| 6 | setio(iob, cmd, data, len, off) | iob BPTR ; io_Command (+$1C, **mot**) := cmd ; io_Data (+$28) := **data×4** (data est un BPTR) ; io_Length (+$24) := len ; io_Offset (+$2C) := 5e arg | O |
+| 21 | **doio(iob)** | exec DoIO sur BADDR(iob) ; renvoie **io_Error** (octet +$1F, non signé) | O |
+| 22 | sendio(iob, pkt) | iob.ln_Name (+$0A) := APTR(pkt) ; pkt.dp_Link := APTR(iob) ; exec SendIO. La réponse arrive sur le port du process ⇒ **taskwait renvoie alors ce pkt** (lien par ln_Name) | O / D pour l'usage |
+| 31 | opendevice(iob, nom, unité, flags) | nom = BSTR **dont le texte doit être suivi d'un NUL** (passé à OpenDevice en BADDR+1) ; avant l'appel : ln_Succ/ln_Pred := 0, **ln_Name := nom (chaîne C)**, mn_ReplyPort := port du process, mn_Length := 12 ; → **−1** si OpenDevice renvoie 0, sinon **0** | O |
+| 32 | closedevice(iob) | exec CloseDevice ; résultat non significatif | O |
+| 36 | setflags(taskid, m) | Signal(mp_SigTask du port `taskid` (+$10), **(m & 15) << 12**) : bit 0 de m = CTRL-C … bit 3 = CTRL-F | O |
+| 37 | testflags(m) | SetSignal(0, (m&15)<<12) : teste **et efface** ; → −1 si un bit était posé, sinon 0 | O |
+| 41 | taskwait() | si **pr_PktWait** (process+$B4) ≠ 0 : appel `jsr` de cette routine avec **D0 = MsgPort du process**, elle doit rendre le message en **D0** ; sinon : efface SIGF_DOS ($100), GetMsg sur le port du process, Wait($100) tant que vide. → **BPTR(msg.ln_Name)** (= le packet) | O |
+| 42 | qpkt(pkt) | dp_Link (= Message) doit être > 0, sinon renvoie 0, R2 = 101 ; message.ln_Name := pkt ; ln_Succ/Pred := 0 ; destination = ancien dp_Port, **dp_Port := port du process** ; PutMsg ; → 1 | O |
+| 50 | **openwindow(x, y, l, h, titre)** | Intuition OpenWindow (IntuitionBase = **GV[92]**, posée par cliinit) avec une NewWindow sur la pile : Left/Top/Width/Height = args, Detail/BlockPen = $FF/$FF, IDCMP 0, **Flags $00021007** (SIZING, DRAG, DEPTH, ACTIVATE, NOCAREREFRESH, smart refresh), pas de gadgets/checkmark, **Title = titre×4** (BPTR d'un tampon chaîne C, pas un BSTR), Screen/BitMap 0, **Min 120×50, Max $FFFF×$FFFF, Type WBENCHSCREEN (1)** ; → APTR Window ou 0 | O |
+| 86 | **datstamp(v)** | DateStamp (C, globale −25) dans BADDR(v) : v!0 jours, v!1 minutes, v!2 ticks ; **renvoie v**. (Pas de rapport avec les volumes.) | O |
 
 ---
 
 ## 4. Q4 — Globales « fichier » et deviceproc
 
-### 4.1 deviceproc(nom) — globale 102 ($FF58E0) [O ROM]
+### 4.1 deviceproc(nom) — globale 102 [O ROM]
 1. `splitname(préfixe, ':', nom, 1)` → `pos` = indice après `:` (0 si pas de `:`).
 2. *(boucle de retry)* `lock` := currentdir courant ; Result2 := 218.
 3. `nom` = `"NIL:"` (insensible à la casse) ⇒ renvoie **0**.
@@ -261,7 +261,7 @@ Complète §13.3 de la spec (qui reste exacte) :
 | `:t` | idem | **0** |
 | `FOO:` inconnu | requester « Please insert volume FOO » | 218 si Cancel |
 
-### 4.2 Routine commune « objet » (repère $FF7CF8) [O ROM]
+### 4.2 Routine commune « objet » [O ROM]
 `obj(nom, action, arg3)` : `port = deviceproc(nom)` ; `lock = Result2` ; port = 0 ⇒ renvoie 0.
 Packet synchrone (sendpkt) au port, type = action :
 - **cas général** : **Arg1 = lock**, **Arg2 = BSTR du nom complet** (non découpé : le handler doit
@@ -333,6 +333,10 @@ Je certifie, après relecture intégrale de ce document, que :
 - les seules valeurs reprises sont des éléments d'ABI et d'interopérabilité : layouts (DeviceNode,
   volume, FileLock, DosPacket, NewWindow, IORequest), numéros de globales, codes d'action et
   d'erreur, tailles de pile, priorités, constantes d'environnement disque, chaînes et templates
-  nécessaires à la compatibilité, et adresses ROM à titre de repère d'analyse ;
+  nécessaires à la compatibilité ;
 - la ROM n'a été ni modifiée ni copiée ; les fichiers du disque Workbench n'ont été extraits que
   dans le répertoire scratch de session.
+- **correction du 2026-10-29** : retirées les 21 adresses ROM (`rt_Init` de dos, `cliinit`, routines
+  locales, table d'environnement, console-handler, makeglobvec, starthandler, deviceproc, routine
+  « objet », colonne « Adresse » de la table des globales) ; numéros de globales et contrats
+  conservés.

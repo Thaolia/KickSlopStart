@@ -289,3 +289,18 @@ Construit en pile au format §2.1 puis passé à `DisplayAlert(0, texte, 40)` **
   matériel ; dépend de la position où MrgCop insère la copper list de l'alerte.
 - **Valeur rendue par `Alert()` quand intuition est absente** (A2 de l'appelant) : lue dans le code, non
   provoquée en sonde.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
+  aucune adresse de routine ROM (la seule adresse en `$C0xxxx` est une adresse de slow RAM, les autres
+  sont des adresses RAM basse `$0`/`$100`/`$104`/`$180` ou de registres matériels).
+- [x] Les chemins d'Alert/DisplayAlert sont décrits par leurs **effets** (valeurs écrites, registres
+  rendus, ordre visible, géométrie à l'écran), recoupés par sonde [S] là où c'est marqué.
+- [x] Données ROM reproduites, toutes **observables à l'écran ou en retour** (inventoriées dans
+  `docs/audit/specs-review.md`) : textes du Guru (trois en-têtes, « Press left mouse button… »,
+  format `Guru Meditation #%08lx.%08lx`), positions x/y des trois blocs, palette `$111`/`$F20`,
+  géométrie du cadre, compteur de clignotement 26 633.
+- [x] Les sondes citées (`tests/alert_probe.s`, `tests/coldhw_probe.sh`) sont du code auteur.

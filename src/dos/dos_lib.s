@@ -178,7 +178,7 @@ dos_null:
         moveq   #0,d0
         rts
 
-; DateStamp(date d1) (a6 = DosBase) -> d0 = date. AutoDoc : « All three elements are zero if the date is unset ».
+; DateStamp(date d1) (a6 = DosBase) -> d0 = date ; horloge jamais réglée : les trois champs valent 0.
 ; Notre horloge n'est PAS réglée (ni battclock ni dl_TimeReq câblés ce milestone) -> (0,0,0) est le comportement
 ; FIDÈLE V34, pas un stub. Renvoie le pointeur passé (compat pré-V36). Arg en d1 (dos BCPL-dérivé : args en D1..).
 dos_DateStamp:

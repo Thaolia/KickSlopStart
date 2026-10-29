@@ -534,3 +534,20 @@ théorique $12C) voit son WAIT de bas plafonné à MaxDisplayRow − 1 = $104 �
   ROM, seule la variante non entrelacée a été mesurée.
 - Comportement de `MrgCop` quand une View change de LACE à non-LACE : l'ancienne SHFCprList est
   conservée (non libérée) — fuite ou réutilisation ultérieure, non sondé.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite, aucun extrait de désassemblage, aucune adresse de
+  routine ROM : les adresses citées sont des registres custom, des adresses RAM de l'exécution sondée
+  (`$420`, `$480`, `$C00276`…) ou des valeurs de listes copper (instructions **copper**, données
+  produites en RAM et observables, pas du code 68000).
+- [x] Les calculs du §4.4 (DIW/DDF/BPLCON1/modulo) et la fusion du §5.2 sont exprimés comme
+  **fonctions des entrées** (formules et règles de choix) et recoupés par les vecteurs sondés [S] ; point
+  d'attention : leur granularité est fine, une réimplémentation doit s'appuyer sur les vecteurs du
+  §4.4/§5.3 comme oracle plutôt que sur l'ordre des étapes.
+- [x] Données ROM reproduites (inventoriées dans `docs/audit/specs-review.md`) : table de couleurs par
+  défaut de 32 entrées (§3, valeurs rendues par GetColorMap/GetRGB4, observables) et contenu de copinit
+  (§2, liste copper en chip RAM, observable et dont dépendent des programmes, cf. `caesar-boot.md`).
+- [x] La sonde citée (`tests/gdisp_probe.s`) est du code auteur.

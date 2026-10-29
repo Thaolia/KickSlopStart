@@ -4,8 +4,8 @@
 > exécutables sont **un seul hunk CODE sans relocation, compacté** (décompacteur maison en tête).
 > Ils ont été décompactés **par émulation 68000** (Unicorn, scratch de la piste analyse : RAM à
 > plat, registres custom/CIA simulés et journalisés, ExecBase factice qui journalise les LVO
-> appelés), puis désassemblés. Repères ROM : graphics 34 (VBlank $FC6D48, installation des
-> interruptions $FCAD8C…$FCADC6).
+> appelés), puis désassemblés. Fonctions ROM concernées : graphics 34 (serveur VBlank,
+> installation des interruptions).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Comportement, registres et
 > valeurs ; aucune suite d'instructions recopiée, aucune donnée d'image ni de musique.
@@ -292,3 +292,5 @@ bloque après RAZOR. Sur la vraie ROM, trackdisk, serial et graphics les réacti
   vecteurs touchés, conditions d'attente et de sortie, champs lus, zones mémoire.
 - [x] Les décompacteurs ne sont pas décrits ; aucune donnée graphique ni musicale, aucun texte
   d'intro reproduit (seuls des noms de fichiers).
+- [x] **Correction du 2026-10-29** : retirées les 3 adresses de routines graphics de la ROM
+  (en-tête) ; comportement inchangé.

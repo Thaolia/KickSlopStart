@@ -175,3 +175,22 @@ Classées de la plus à la moins probable vu l'analyse ci-dessus :
    - Les remplaçants vivant dans le seglist de SetPatch, notre CLI doit **relire `cli_Module` après la
      commande** et ne pas décharger si 0 ; sinon tous les vecteurs patchés pointeraient vers de la mémoire
      libérée, réallouée ensuite (p. ex. comme pile d'un nouveau process) → PC dans une pile.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Source = `C/SetPatch` 1.38 (programme du disque Workbench, pas la ROM Kickstart) ; la ROM n'a
+  pas été ouverte. Les adresses/offsets cités (`$FC0000-$FFFFFF`, `$F80000`, `$C0-$FC`, offsets
+  `+$30`/`+$88` relatifs à l'ancien vecteur Alert, déplacement de 6 octets dans le gestionnaire
+  d'exception) décrivent les **gardes et dépendances de SetPatch**, utiles pour la compatibilité ; ce ne
+  sont pas des adresses de routines relevées dans la ROM.
+- [x] Aucune suite d'instructions transcrite : le balayage « BSR » du correctif DeleteLayer et la glue
+  BCPL de `Execute` sont décrits par leur effet (ce que SetPatch cherche et où il saute).
+- [x] Point signalé, non modifié : deux motifs de code attendus par SetPatch dans la ROM sont cités
+  comme valeurs (`$70E56000` en tête de l'entrée LVO -222 de dos, mot `$E2EF` dans le gestionnaire
+  d'exception). Ils proviennent du binaire SetPatch (ce sont ses conditions d'application) et servent
+  à décider si la ROM « paraît patchable » ; ils ne doivent PAS être reproduits volontairement dans
+  `src/` (cf. contrôle dans `docs/audit/specs-review.md`).
+- [x] Offsets de structures publiques (ExecBase, Layer, RastPort, View/ViewPort, Process) et LVO :
+  ABI.

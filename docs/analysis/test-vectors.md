@@ -11,11 +11,12 @@
 ## A. Image ROM (statique)
 
 - **[M] A1** : `*(ULONG*)$FC0000 = 0x11114EF9` (SSP/ROM-ID+opcode).
-- **[M] A2** : `*(ULONG*)$FC0004 = 0x00FC00D2` (PC de reset = coldstart exec).
+- **[M] A2** : `*(ULONG*)$FC0004` = une adresse dans la ROM (PC de reset = coldstart exec = `rt_Init`
+  d'exec, cf. B5).
 - **[M] A3** : `*(ULONG*)$FC000C = 0x00220005` → version **34.5**. (Interprétation : Kickstart 1.3,
   corroborée par les chaînes `"Release 1.3"` et `"exec 34.2 (28 Oct 1987)"` présentes en ROM.)
 - **[M] A4** : exactement **24 ROMTags** valides (matchword `0x4AFC` + `rt_MatchTag` auto-référent)
-  aux offsets listés dans `module-map.md`. Tous ont `rt_Version = 34`.
+  (liste dans `module-map.md`). Tous ont `rt_Version = 34`.
 - **[M] A5** : pied de ROM — champ de taille `0x00040000` (= 256 Ko) dans les derniers longwords.
 
 ## B. ROMTags — assertions par champ (toutes **[M]**)
@@ -31,8 +32,8 @@
   mathffp, dos, romboot (9 modules) ; NT_DEVICE(3) = keyboard, gameport, timer, audio, input,
   console, trackdisk (7) ; NT_RESOURCE(8) = potgo, keymap, cia, disk, misc (5) ;
   NT_TASK(1) = workbench.task (1) ; NT_UNKNOWN(0) = alert.hook, strap (2).
-- **[M] B5** : `rt_Init` d'exec = `$FC00D2` = PC de reset (A2). `rt_EndSkip` d'exec = `$FC3276`
-  = adresse de la ROMTag alert.hook.
+- **[M] B5** : `rt_Init` d'exec = PC de reset (A2). `rt_EndSkip` d'exec = adresse de la ROMTag
+  alert.hook (la tag suivante dans la ROM).
 - **[M] B6** : priorités (octet signé) exactes : exec 120, expansion 110, potgo 100, keymap 100,
   cia 80, disk 70, misc 70, ramlib 70, graphics 65, keyboard 60, gameport 60, timer 50, audio 40,
   input 40, layers 31, console 20, trackdisk 20, intuition 10, alert.hook 5, mathffp 0,
@@ -45,13 +46,13 @@ Deux séquences distinctes à ne pas confondre : (a) `ResModules` = TOUS les ré
 `InitCode(RTF_COLDSTART)` = sous-ensemble effectivement démarré.
 
 - **[M] C1 — `ResModules` (24 entrées)** : triée par **`rt_Pri` décroissant, puis adresse ROM
-  croissante** pour les ex-æquo. Ordre exact :
+  croissante** pour les ex-æquo (ordre de position dans l'image). Ordre exact :
 
   1 exec · 2 expansion · 3 potgo · 4 keymap · 5 cia · 6 disk · 7 misc · 8 ramlib · 9 graphics ·
   10 keyboard · 11 gameport · 12 timer · 13 audio · 14 input · 15 layers · 16 console ·
   17 trackdisk · 18 intuition · 19 alert.hook · 20 mathffp · **21 workbench.task · 22 dos** ·
   23 romboot · 24 strap.
-  (Trio pri 0 par adresse croissante : mathffp $FE3DA4 < workbench.task $FEB47C < dos $FF3E62.)
+  (Trio pri 0 par position croissante dans la ROM : mathffp < workbench.task < dos.)
 
 - **[M] C2 — passe `InitCode(RTF_COLDSTART)` (20 entrées)** : `ResModules` **moins** exec (noyau,
   non démarré par InitCode), ramlib (AUTOINIT sans COLDSTART), workbench.task et dos (`rt_Flags=0`) :
@@ -130,3 +131,16 @@ Deux séquences distinctes à ne pas confondre : (a) `ResModules` = TOUS les ré
   statique. À valider sur émulateur/matériel réel contre une Kickstart 1.3 authentique.
 - G3 : compte LVO exec à ±1 sur la dernière entrée ; recouper `exec_lib.fd` **V34** pour figer.
 - E6/F2 : `MaxLocMem` et `mh_Upper` dépendent de la quantité de RAM chip réelle de la config testée.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions transcrite, aucun pseudo-code : uniquement des assertions boîte
+  noire (valeurs, ordres, tailles).
+- [x] **Corrigé** : retirées les adresses ROM du PC de reset (A2), de `rt_Init`/`rt_EndSkip` d'exec
+  (B5) et des trois ROMTags de priorité 0 (C1), ainsi que le renvoi aux « offsets » des tags ; les
+  assertions sont conservées sous forme relative (égalité PC de reset = `rt_Init`, ordre de position).
+- [x] Restent : en-tête `0x11114EF9`, version `0x00220005`, taille `0x00040000` (format d'image vérifié
+  par `romtool`), offsets publics d'ExecBase, LVO, constantes `MEMF_*`/`NT_*`/`RTF_*`. G2 cite le mode
+  d'adressage des appels LVO uniquement pour borner la jump table (aucune instruction recopiée).

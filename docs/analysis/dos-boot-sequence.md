@@ -20,8 +20,8 @@ initialiser dos**, puis de lui rendre la main.
 ## Phase A — Initialisation de `dos.library` ([ROM] ancrages + [inféré] séquence)
 
 Déclencheur : le code d'amorçage (bootblock + `strap`) localise le résident dos
-(`FindResident "dos.library"`, ROMTag `$FF3E62`) et l'initialise (`InitResident` → saut dans
-`rt_Init = $FF3E94`, init **manuel** car `rt_Flags` sans AUTOINIT). Effets observables :
+(`FindResident "dos.library"`) et l'initialise (`InitResident` → saut dans son `rt_Init`,
+init **manuel** car `rt_Flags` sans AUTOINIT). Effets observables :
 
 1. Allocation + init de la base `DosLibrary` (`lib_Version=34`, `lib_Revision=3` → [ROM] « dos 34.3 »),
    insertion dans `ExecBase.LibList`, construction de la **jump table** (37 LVO, cf. `dos-v34-spec.md`
@@ -29,13 +29,12 @@ Déclencheur : le code d'amorçage (bootblock + `strap`) localise le résident d
 2. Construction du `RootNode` (pointé par `dl_Root`) : `rn_TaskArray` (table des CLI),
    `rn_ConsoleSegment`, `rn_Time`, `rn_RestartSeg` (**[ROM]** seglist du disk-validator, cf. Phase D),
    `rn_Info` → `DosInfo`, `rn_FileHandlerSegment` (**[ROM]** code du handler OFS résident —
-   tâche `{0x0B,"FileHandler"}` `$FF8861`).
+   tâche nommée « FileHandler »).
 3. Construction du `DosInfo` (`di_DevInfo` = tête de la liste device/volume/assign). **En V34 la
    liste est protégée par `Forbid()/Permit()`**, pas par sémaphores (cf. frontière §1b de la spec).
 4. **[ROM]** Ouverture des libraries dont dos dépend — chaînes mesurées près du code d'init :
-   `"expansion.library"` (`$FF403C`), `"ramlib.library"` (`$FF404E`), `"intuition.library"`
-   (`$FF4E2B`/`$FF8815`), `"timer.device"` (`$FF54F9`), `"console.device"` (`$FFA711`),
-   `"input.device"` (`$FFD365`). expansion fournit la config des unités montables ; ramlib
+   `"expansion.library"`, `"ramlib.library"`, `"intuition.library"`, `"timer.device"`,
+   `"console.device"`, `"input.device"`. expansion fournit la config des unités montables ; ramlib
    (`LDDemon`) permet le `LoadSeg` des handlers/commandes disque ; intuition sert aux **requesters**
    d'erreur disque (cf. Phase D).
 
@@ -43,32 +42,31 @@ Déclencheur : le code d'amorçage (bootblock + `strap`) localise le résident d
 
 dos publie dans `di_DevInfo` une chaîne de `DeviceNode` (cf. `dos-v34-spec.md` §1a). Mesures ROM :
 
-- **DFx:** — gabarit de nom BSTR `{0x03,'D','F','X'}` (`$FF89A5`), le `'X'` (`0x58`) patché par le
+- **DFx:** — gabarit de nom BSTR `{0x03,'D','F','X'}`, le `'X'` (`0x58`) patché par le
   n° d'unité `0`..`3`. Chaque `DeviceNode` DFx a :
   - `dn_SegList` = `rn_FileHandlerSegment` (handler OFS résident) et `dn_GlobalVec` (prog BCPL) ;
-  - `dn_Handler` = BSTR `{0x0B,"File System"}` (`$FF8B45`) — nom chargé si le seglist était NULL ;
-  - `dn_Startup` → `FileSysStartupMsg` avec `fssm_Device` = `"trackdisk.device"` (`$FF87F9`),
+  - `dn_Handler` = BSTR `{0x0B,"File System"}` — nom chargé si le seglist était NULL ;
+  - `dn_Startup` → `FileSysStartupMsg` avec `fssm_Device` = `"trackdisk.device"`,
     `fssm_Unit` = n° de drive, `fssm_Environ` = géométrie (OFS 880 Ko) ;
   - `dn_Task` = NULL au départ ⇒ **handler démarré au 1er accès** (Phase D).
-- **Handlers chargés depuis le disque** (`L:`) : `"L:PORT-HANDLER"` (`$FF8D2D`), `"L:RAM-HANDLER"`
-  (`$FF8D41`) → nœuds dont `dn_Handler` pointe un fichier à `LoadSeg` ; `"NIL:"` (`$FF5A9D`/`$FF5CF9`).
-- **Console** : gabarit `{0x18,"CON:0/0/640/200/AmigaDOS"}` (`$FF886D`) — la fenêtre du CLI initial.
-- **Assigns système** : `"LIBS"` (`$FF8831`), `"DEVS"` (`$FF8839`), `"FONTS"` (`$FF8841`),
-  et la lecture de `"devs:system-configuration"` (`$FF8FD5`) pour la config.
+- **Handlers chargés depuis le disque** (`L:`) : `"L:PORT-HANDLER"`, `"L:RAM-HANDLER"`
+  → nœuds dont `dn_Handler` pointe un fichier à `LoadSeg` ; `"NIL:"`.
+- **Console** : gabarit `{0x18,"CON:0/0/640/200/AmigaDOS"}` — la fenêtre du CLI initial.
+- **Assigns système** : `"LIBS"`, `"DEVS"`, `"FONTS"`,
+  et la lecture de `"devs:system-configuration"` pour la config.
 
 ## Phase C — Premier process (« Initial CLI ») et script de démarrage ([ROM] + [inféré])
 
-1. **[ROM]** dos crée le process du CLI initial — chaîne `"Initial CLI"` (`$FF4025`). Ce process
+1. **[ROM]** dos crée le process du CLI initial — chaîne `"Initial CLI"`. Ce process
    (un `Process`, cf. §1b) reçoit un `CommandLineInterface` (`pr_CLI`), un répertoire courant
    (`pr_CurrentDir`), et des flux `pr_CIS`/`pr_COS` branchés sur une fenêtre **CON:** (gabarit
    Phase B) via le handler console.
-2. **[ROM/inféré]** Le CLI exécute le script d'amorçage : `":S/STARTUP-SEQUENCE"` (`$FF88D5`), lu via
-   le mécanisme `Execute`. Les commandes sont chargées depuis `C:` (`"C:RUN"` `$FF7939`,
-   `"C:FAULT"` `$FF501D`). La bannière `"Release 1.3"` (`$FF88C8`) + copyright (`$FF888C`) est
-   affichée.
-3. **[ROM]** Diagnostics CLI présents : `"Unknown command %S"` (`$FF972D`), `"Unable to load %S: "`
-   (`$FF9741`), `"%S failed returncode %N"` (`$FF9755`), `"**BREAK - CLI"` (`$FF9719`),
-   `"CLI error: %S"` (`$FF9BFD`) — confirment un CLI capable de charger+lancer des commandes
+2. **[ROM/inféré]** Le CLI exécute le script d'amorçage : `":S/STARTUP-SEQUENCE"`, lu via
+   le mécanisme `Execute`. Les commandes sont chargées depuis `C:` (`"C:RUN"`,
+   `"C:FAULT"`). La bannière `"Release 1.3"` + une ligne de copyright est affichée.
+3. **[ROM]** Diagnostics CLI présents : `"Unknown command %S"`, `"Unable to load %S: "`
+  , `"%S failed returncode %N"`, `"**BREAK - CLI"`,
+   `"CLI error: %S"` — confirment un CLI capable de charger+lancer des commandes
    externes et de rapporter les codes retour.
 
 ## Phase D — Démarrage du file-handler DF0: au 1er accès ([ABI] + [ROM] + [inféré])
@@ -83,8 +81,8 @@ startup) :
    (répartition exacte des `dp_Arg` = incertitude, cf. `dos-v34-spec.md` §6).
 3. Le handler s'initialise : `OpenDevice("trackdisk.device", fssm_Unit, …)` (depuis
    `FileSysStartupMsg`), lit le bloc racine, et **valide le disque** — s'il faut valider, il lance
-   le process **disk-validator** (`rn_RestartSeg` ; **[ROM]** `"L:Disk-Validator"` `$FFFAE1`/`$FFFAF5`,
-   `"Validator"` `$FFD52D`, `"Error validating disk"` `$FFFDDD`). Puis il boucle en
+   le process **disk-validator** (`rn_RestartSeg` ; **[ROM]** `"L:Disk-Validator"`,
+   `"Validator"`, `"Error validating disk"`). Puis il boucle en
    `WaitPort/GetMsg` sur son `MsgPort` pour servir les packets.
 4. dos pose **`dn_Task` = le `MsgPort` du handler**. Les `Open/Read/Close` suivants sur DF0: sont
    routés vers ce port (cf. `dos-v34-spec.md` §2–§3).
@@ -92,9 +90,9 @@ startup) :
 **[ROM]** Gestion d'erreurs/médias du handler (requesters intuition) — chaînes mesurées :
 `"Volume"`/`"in unit 0X "`/`"is not validated"`/`"is write protected"`/`"Please replace volume"`/
 `"is full"`/`"Not a DOS disk"`/`"No disk present"`/`"has a read/write error"`/`"You MUST replace
-volume"`/`"Please insert volume"` ($FF5293..$FF5ABD), `"Error code %N"` (`$FF5025`),
-`"Disk corrupt - task held"`/`"Software error - task held"` ($FF4875/$FF4891), boutons
-`"Retry"`/`"Cancel"` ($FF4E1C/$FF4E24). Codes retour associés (`dos/dos.i`) : `ERROR_DISK_WRITE_PROTECTED`
+volume"`/`"Please insert volume"`, `"Error code %N"`,
+`"Disk corrupt - task held"`/`"Software error - task held"`, boutons
+`"Retry"`/`"Cancel"`. Codes retour associés (`dos/dos.i`) : `ERROR_DISK_WRITE_PROTECTED`
 214, `ERROR_NOT_A_DOS_DISK` 225, `ERROR_NO_DISK` 226, `ERROR_DISK_FULL` 221, etc.
 
 ## Phase E — Charger + lancer UNE commande (flux LoadSeg + Run) ([ABI] + [inféré])
@@ -119,7 +117,7 @@ Chemin « ce qu'il faut pour lancer une commande » :
 
 ```
 strap (COLDSTART, pri -60) → bootblock DF0: valide
-   → FindResident("dos.library") + InitResident → rt_Init $FF3E94 (init manuel)
+   → FindResident("dos.library") + InitResident → rt_Init (init manuel)
       → DosLibrary (dl_Root, dl_GV) + RootNode + DosInfo + jump table + GV BCPL
       → OpenLibrary expansion / ramlib / intuition + OpenDevice timer/console/input
       → table de montage : DeviceNode DFx (handler résident "File System", startup trackdisk),
@@ -144,3 +142,19 @@ challenge commande : LoadSeg(C:nom) [FINDINPUT/READ/END] → run (CLI ou RUN) �
 - Les phases observables (création process, ouverture/lecture à travers le handler, LoadSeg+run)
   sont prouvables par **boot FS-UAE** + marqueur ; les détails internes BCPL ne le sont pas et
   n'ont pas à l'être pour la réimplémentation (équivalent fonctionnel, pas copie).
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage :
+  les phases A-E décrivent un ordre d'opérations et des effets (champs posés, packets échangés),
+  marqués [inféré] là où ils ne sont pas observés.
+- [x] **Corrigé** : retirées toutes les adresses ROM (une quarantaine) : ROMTag et `rt_Init` de dos,
+  et l'emplacement dans la ROM de chacune des chaînes citées (noms de libraries/devices, gabarits
+  BSTR, chemins `L:`/`C:`/`S:`, messages de requesters et du CLI). Les chaînes restent citées : ce
+  sont des noms d'ABI (libraries, devices, handlers, assigns) ou des textes rendus/observables par
+  l'utilisateur.
+- [x] Données ROM restantes (courtes, inventoriées dans `docs/audit/specs-review.md`) : gabarits
+  BSTR `DFX`/`File System`/`CON:0/0/640/200/AmigaDOS`, messages de requesters et du CLI. Le texte de
+  copyright n'est pas reproduit.

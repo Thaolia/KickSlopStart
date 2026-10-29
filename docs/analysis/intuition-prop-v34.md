@@ -1,10 +1,9 @@
 # intuition-prop-v34.md — gadgets proportionnels (intuition 34.3)
 
-> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, intuition 34.3. Repères :
-> bordures du conteneur à l'ouverture $FD6370, boîte et conteneur $FD532C, préparation des
-> gadgets $FDA55C, taille du knob $FDB1EE, position du knob $FDB34A, pas de page $FDB1B0, saut
-> de page $FDB0F0, glissement $FDB40C/$FDB4CC, bornage $FDBD62, redessin du knob $FDB020, rendu
-> $FD4B58/$FD4D84, test KNOBHIT $FD4780, ModifyProp / NewModifyProp $FDFC6E/$FDFC6A → $FD50A0.
+> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, intuition 34.3. Fonctions couvertes : bordures du conteneur
+> à l'ouverture, boîte et conteneur, préparation des gadgets, taille et position du knob, pas et
+> saut de page, glissement, bornage, redessin du knob, rendu, test KNOBHIT, ModifyProp /
+> NewModifyProp. Aucune adresse ROM (retirées le 2026-10-29).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Règles et layouts
 > uniquement, aucune suite d'instructions recopiée.
@@ -149,3 +148,5 @@ Ordre :
 - [x] Aucune suite d'instructions recopiée : formules sur des champs publics (PropInfo, Image,
   Gadget, Screen), ordre de dessin, stylos et constantes.
 - [x] Aucun bitmap.
+- [x] **Correction du 2026-10-29** : retiré le bloc « Repères » d'en-tête (17 adresses de routines
+  ROM), remplacé par la liste des fonctions couvertes ; corps inchangé.

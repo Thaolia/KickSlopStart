@@ -3,8 +3,7 @@
 > Piste ANALYSE (« dirty »). Source : `assets/test_adf/Caesar (1992)(Impressions)[cr FLT].adf`,
 > fichiers extraits par un lecteur OFS tolérant (en-têtes de fichier blocs 899 et 966). Désassemblés
 > avec r2. `flt.exe` est compacté : il a été décompacté hors ligne, en Python, en reproduisant le
-> décompacteur. Repères ROM : graphics 34 (serveur VBlank $FC6D48, construction de copinit
-> $FCAD40…$FCAD6E).
+> décompacteur. Fonctions ROM concernées : graphics 34 (serveur VBlank, construction de copinit).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Comportement, registres et
 > valeurs uniquement ; aucune suite d'instructions recopiée, aucune donnée d'image ni texte
@@ -156,7 +155,7 @@ Tout repose sur l'organisation copper de graphics 34 :
    - puis la fin de liste.
    Le copper **saute donc à l'adresse contenue dans COP2LC** à chaque trame.
 2. **COP2LC n'est jamais écrit par le copper.** C'est le **serveur VBlank de graphics**
-   ($FC6D48, interruption VERTB) qui y écrit à chaque trame, par le CPU :
+   (interruption VERTB) qui y écrit à chaque trame, par le CPU :
    - **gb_LOFlist** (GfxBase +$32) ;
    - ou, en entrelacé, gb_LOFlist ou gb_SHFlist (+$36) selon le bit LOF de VPOSR.
 3. FLT coupe INTEN : le serveur VBlank ne tourne plus et **son COP2LC reste en place**. Le
@@ -219,3 +218,5 @@ autre.
   donnée de police ni texte reproduit, hors trois chaînes courtes.
 - [x] La copper list est décrite comme une table registre → valeur (données matérielles
   publiques).
+- [x] **Correction du 2026-10-29** : retirées les 4 adresses de routines graphics de la ROM
+  (serveur VBlank, construction de copinit) ; comportement inchangé.

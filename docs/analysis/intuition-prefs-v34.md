@@ -1,17 +1,12 @@
 # intuition-prefs-v34.md — Preferences : SetPrefs / GetPrefs / GetDefPrefs, system-configuration
 
 > Piste ANALYSE (« dirty »). Sources : ROM `assets/kick34005.A500` (intuition 34.3, dos V34 BCPL),
-> fichier `devs/system-configuration` de `assets/wb133.adf`. Repères :
-> - vecteurs : SetPrefs (−324) $FDFE08 → $FDB5DA ; GetPrefs (−132) $FDFC34 → $FDB5B6 ;
->   GetDefPrefs (−126) $FDFC26 → $FDB580 ; copie bornée $FDB62A ; application $FDB67A ;
->   PointerMatrix $FDB914 ; couleurs $FDB868/$FDB87E/$FDB8B8 ;
-> - prefs par défaut $FDB96C (232 octets), image pointeur par défaut $FD6322 (36 mots),
->   TextAttr topaz 8 / topaz 9 $FDBA54 / $FDBA5C ;
-> - souris : conversion POINTERPOS $FD6AE4, accumulateur PointerTicks $FD7C16, bornage $FD8556 ;
-> - NEWPREFS : file différée $FD7F2C (code 4) → $FD8044 → diffusion $FD7FFC ;
-> - init intuition $FD65E4 (prefs en $FD6862…), premier OpenLibrary $FD8A62 ;
-> - dos : section BCPL de `cliinit` (globale 133) $FF82D8–$FF9000, routine locale
->   system-configuration $FF8E34 (appelée en $FF8684), nom BSTR $FF8FD5.
+> fichier `devs/system-configuration` de `assets/wb133.adf`. Fonctions couvertes : SetPrefs (−324),
+> GetPrefs (−132), GetDefPrefs (−126), table des prefs par défaut (232 octets), image du pointeur par
+> défaut (36 mots, non reproduite), TextAttr topaz 8/9, conversion POINTERPOS et accumulateur
+> PointerTicks, bornage souris, diffusion NEWPREFS, init d'intuition, lecture de
+> `devs:system-configuration` par `cliinit` (globale 133 de dos). Aucune adresse ROM (retirées le
+> 2026-10-29).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Comportement et layouts
 > uniquement, aucune suite d'instructions recopiée, aucun bitmap.
@@ -157,7 +152,7 @@ Effets, dans l'ordre observé (p = copie interne) :
 8. **Image du pointeur** : les 36 mots de PointerMatrix (+$1C, mots de contrôle du sprite
    compris) sont recopiés dans le tampon sprite du pointeur par défaut (*IB+$32E).
 9. **RemakeDisplay()** (LVO −384).
-10. **Bornage souris et repositionnement du pointeur** ($FD8556) : MouseX bornée à
+10. **Bornage souris et repositionnement du pointeur** : MouseX bornée à
     [IB+$50, IB+$52], MouseY à [IB+$54, IB+$56], puis mise à jour des sprites/écrans [D].
 11. **Répétition clavier**, seulement si input.device est ouvert (io_Device de IB+$182 ≠ 0) :
     copie des 40 octets de l'IORequest en IB+$37E, puis deux **DoIO synchrones** :
@@ -167,7 +162,7 @@ Effets, dans l'ordre observé (p = copie interne) :
 Champs **non** appliqués par SetPrefs : PointerTicks (lu à la volée, §6), LaceWB (lu par
 OpenWorkBench : bit 0 ⇒ ViewModes |= LACE), EnableCLI, imprimante, série, WorkName,
 wb_Depth. Dans le code d'intuition, les seules autres lectures directes de la copie sont
-PointerTicks, FontHeight ($FDDF16, calcul d'une hauteur avec repli sur FontHeight + 6) et LaceWB
+PointerTicks, FontHeight (calcul d'une hauteur avec repli sur FontHeight + 6) et LaceWB
 [O]. Les champs imprimante/série sont destinés aux devices via GetPrefs [S].
 
 ### 3.4 `inform` et NEWPREFS
@@ -189,14 +184,14 @@ PointerTicks, FontHeight ($FDDF16, calcul d'une hauteur avec repli sur FontHeigh
 
 ### 4.2 GetDefPrefs(buf A0, size D0) — LVO −126 [O]
 
-- Copie bornée §3.1 depuis la **table ROM $FDB96C** (pas depuis la copie courante), ViewInitX/Y
+- Copie bornée §3.1 depuis la **table par défaut de la ROM** (§4.3, pas depuis la copie courante), ViewInitX/Y
   depuis IB si size ≥ 124.
-- Puis, si size ≥ 100 : PointerMatrix (36 mots, +$1C) := **image par défaut de la ROM, 36 mots**
-  ($FD6322). La table $FDB96C a sa PointerMatrix à zéro : c'est ce remplissage qui la fournit.
+- Puis, si size ≥ 100 : PointerMatrix (36 mots, +$1C) := **image par défaut de la ROM, 36 mots**.
+  La table par défaut a sa PointerMatrix à zéro : c'est ce remplissage qui la fournit.
 - Retour D0 = `buf`. Aucun effet de bord (rien n'est appliqué).
 - Différence avec GetPrefs : source ROM au lieu de la copie courante, et image pointeur forcée.
 
-### 4.3 Table des valeurs par défaut (ROM $FDB96C) [O]
+### 4.3 Table des valeurs par défaut (ROM) [O]
 
 | Off. | Champ | Défaut |
 |---|---|---|
@@ -259,7 +254,7 @@ Dans le traitement des événements d'entrée d'intuition :
   - si reste ≥ t : position += 1, delta += 1, reste −= t.
   - Le delta de l'événement est réécrit avec la valeur effective (utilisée ensuite pour le
     déplacement des écrans/gadgets).
-  - Puis bornage + repositionnement du pointeur ($FD8556, §3.3 point 10).
+  - Puis bornage + repositionnement du pointeur (§3.3 point 10).
 - Résultat : t = 1 ⇒ vitesse native (1 pixel par comptage), t = 2 ⇒ moitié, t = 4 ⇒ quart.
   Pour t = 3 le diviseur est 2 (s = 1) mais le seuil de report 3 : la formule n'est cohérente que
   pour 1, 2, 4 (valeurs proposées par Preferences) [D].
@@ -289,7 +284,11 @@ Dans le traitement des événements d'entrée d'intuition :
 
 - [x] Aucune suite d'instructions recopiée : effets décrits sur des champs publics (Preferences,
   IntuitionBase, GfxBase, Screen, IORequest), avec formules et ordre d'application.
-- [x] Aucun bitmap : l'image pointeur par défaut est seulement citée (adresse, 36 mots).
+- [x] Aucun bitmap : l'image pointeur par défaut est seulement citée (taille, 36 mots).
 - [x] Valeurs par défaut = données de configuration (constantes), présentées en tableau.
 - [x] Les offsets internes d'IB sont des repères d'analyse ; l'implémentation est libre de son
   propre stockage tant que le comportement observable (§3, §4, §6) est respecté.
+- [x] **Correction du 2026-10-29** : retiré le bloc « Repères » d'en-tête (37 adresses ROM : vecteurs
+  et corps de SetPrefs/GetPrefs/GetDefPrefs, table par défaut, image pointeur, TextAttr, routines
+  souris/NEWPREFS/init, section `cliinit` de dos) et les adresses citées dans le corps (§3.3, §4) ;
+  remplacé par la liste des fonctions couvertes. Comportement et table §4.3 inchangés.

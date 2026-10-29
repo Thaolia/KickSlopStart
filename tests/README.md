@@ -21,3 +21,13 @@ Résultat attendu M0 : couleur dominante `#00FF00` (vert) sur la zone active, lo
 
 Capture du **log série** (registre SERDAT) comme canal d'assertion primaire, marqueurs série par
 milestone, et comparaison oracle boîte noire contre la vraie KS 1.3 (sondes comportementales ciblées).
+
+## Audit clean-room — audit_rom_similarity.py, audit_aros_similarity.py
+
+Mesures de similarité publiées dans [docs/AUDIT.md](../docs/AUDIT.md) (synthèse) et `docs/audit/` (détail). Les deux
+outils n'affichent que des statistiques et des emplacements dans le premier argument (notre code).
+
+```sh
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom <rom_kick13_de_référence> [--temoin NOM fichiers…] [--selftest]
+python3 -I tests/audit_aros_similarity.py src <clone_aros>
+```

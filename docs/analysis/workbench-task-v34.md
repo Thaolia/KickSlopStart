@@ -1,14 +1,15 @@
 # workbench-task-v34.md — résident `workbench.task` (wb 34.1) : démarrage, init, boucle, fin
 
 > Piste ANALYSE (« dirty »). Sources : la ROM `assets/kick34005.A500` (module `wb 34.1 (18 Aug
-> 1987)`, ROMTag à $FEB47C, code jusqu'à $FF310C, stubs de librairies jusqu'à ~$FF3DD0) et, sur le
+> 1987)`, ROMTag, code du module et stubs de librairies) et, sur le
 > disque `assets/wb133.adf`, `c:LoadWB` (extrait en scratch, pour recouper l'interface).
 > Mêmes conventions que `handlers-v34.md` / `bcpl-runtime-v34.md` : **BPTR** = adresse/4,
 > « R2 » = `pr_Result2`, champs Process : `pr_MsgPort` +$5C, `pr_SegList` +$80, `pr_ConsoleTask`
 > +$A4, `pr_CLI` +$AC, `pr_WindowPtr` +$B8.
 >
 > **Légende** : **[O]** observé directement · **[D]** déduit d'observations convergentes ·
-> **[S]** supposé. Les adresses ROM ne sont que des repères pour la piste analyse.
+> **[S]** supposé. Aucune adresse de routine ROM n'est citée (retirées le 2026-10-29) ; les
+> positions relatives au ROMTag qui restent sont celles qu'impose `c:LoadWB` (programme du disque).
 >
 > Ce document décrit des comportements, des layouts d'ABI et des constantes. **Aucune suite
 > d'instructions n'est reproduite ni paraphrasée.**
@@ -48,20 +49,20 @@
 
 ## 1. Q1 — ROMTag et zone d'entrée
 
-### 1.1 ROMTag ($FEB47C) [O]
+### 1.1 ROMTag [O]
 
 | Off. | Champ | Valeur |
 |---|---|---|
 | +0 | rt_MatchWord | $4AFC |
-| +2 | rt_MatchTag | $00FEB47C (lui-même) |
-| +6 | rt_EndSkip | $00FF310C |
+| +2 | rt_MatchTag | adresse du tag (lui-même) |
+| +6 | rt_EndSkip | fin du module |
 | +10 | rt_Flags | **$00** (ni COLDSTART ni AUTOINIT) |
 | +11 | rt_Version | 34 |
 | +12 | rt_Type | **1** (NT_TASK) |
 | +13 | rt_Pri | 0 |
-| +14 | rt_Name | $FEB4CA → `"workbench.task"` |
-| +18 | rt_IdString | $FEB464 → `"wb 34.1 (18 Aug 1987)\r\n"` |
-| +22 | rt_Init | **$FEB496 = ROMTag+26** |
+| +14 | rt_Name | → `"workbench.task"` |
+| +18 | rt_IdString | → `"wb 34.1 (18 Aug 1987)\r\n"` |
+| +22 | rt_Init | **ROMTag+26** (juste après la structure) |
 
 - Aucun autre endroit de la ROM ne contient l'adresse du tag, de son nom ou de `rt_Init`, ni la
   chaîne `"workbench.task"` : ni strap ni dos ne le lancent. **Correction** de l'hypothèse
@@ -72,35 +73,32 @@
 
 ### 1.2 Zone ROMTag+26 .. ROMTag+49 [O]
 
-Trois blocs consécutifs de **8 octets**, à ROMTag+26, +34, +42 (soit $FEB496, $FEB49E, $FEB4A6).
-Chaque bloc = **4 octets de bourrage** (une opération neutre sur D0 dont les 2 derniers octets
-valent $0000) suivis de **4 octets** qui chargent le sélecteur (0, 1 ou 2) dans D0. Les deux
-premiers blocs rejoignent ensuite le troisième ; le code commun empile D0 comme **unique argument
-(long) de `main` ($FEE398)** et l'appelle. Le code qui suit l'appel (si `main` rendait la main)
-est la routine d'Alert dead-end du §2.6.
+Trois points d'entrée de **8 octets** chacun, à ROMTag+26, +34, +42. Chacun a pour effet de
+fixer un **sélecteur** (0, 1 ou 2) puis d'appeler la fonction principale du Workbench (`main`) avec
+ce sélecteur pour **unique argument** (long). Si `main` rendait la main, l'Alert dead-end du §2.6
+suivrait.
 
-| Entrée | Adresse | Sélecteur | Qui |
-|---|---|---|---|
-| ROMTag+26 = rt_Init | $FEB496 | 0 | InitResident (non utilisé en pratique) |
-| ROMTag+34 | $FEB49E | 1 | personne d'observé |
-| ROMTag+42 | $FEB4A6 | **2** | **LoadWB (CreateProc)** |
+| Entrée | Sélecteur | Qui |
+|---|---|---|
+| ROMTag+26 = rt_Init | 0 | InitResident (non utilisé en pratique) |
+| ROMTag+34 | 1 | personne d'observé |
+| ROMTag+42 | **2** | **LoadWB (CreateProc)** |
 
 « Faux segment » : à ROMTag+42 le long de **lien vaut 0** (fin de chaîne de segments) et le point
-d'entrée est à **ROMTag+46** (charge 2 dans D0). Mais ROMTag+42 = $FEB4A6 n'est **pas aligné sur 4**
-(≡ 2 mod 4) ; voir §1.3.
+d'entrée est à **ROMTag+46**. Mais, le tag d'origine étant aligné sur 4, ROMTag+42 n'est **pas
+aligné sur 4** (≡ 2 mod 4) ; voir §1.3.
 
 ### 1.3 Ce que LoadWB passe réellement à CreateProc [O WB + O ROM]
 
 - LoadWB calcule `seglist = (adresse_ROMTag + 26 + 16) >> 2` par **décalage arithmétique** (bits
-  bas tronqués) → BPTR $003FAD29 → `BADDR = $FEB4A4` (= ROMTag+40), **pas** $FEB4A6.
+  bas tronqués) → `BADDR(seglist)` = **ROMTag+40**, **pas** ROMTag+42.
 - dos CreateProc (forme C, globale −18) lance la tâche par AddTask avec **PC initial =
-  BADDR(seglist)+4 = $FEB4A8** (= ROMTag+44) et **PC final** = sa routine de fin de process. Le
-  « lien » lu à BADDR(seglist) n'est pas suivi au démarrage. [O dos $FF43DA..$FF43E6]
-- À $FEB4A8 se trouvent les 2 derniers octets du bourrage du bloc 3 suivis du chargement du
-  sélecteur : les 4 octets vus depuis cette adresse forment **une opération qui fait `D0 := D0 OU 2`**
-  (et non « D0 := 2 »). Le sélecteur vaut donc 2 **si et seulement si les bits utiles de D0 sont 0
+  BADDR(seglist)+4** (= ROMTag+44) et **PC final** = sa routine de fin de process. Le
+  « lien » lu à BADDR(seglist) n'est pas suivi au démarrage. [O dos]
+- Entré à ROMTag+44 (au milieu du troisième point d'entrée), le code ROM a pour **effet
+  `D0 := D0 OU 2`** (et non « D0 := 2 »). Le sélecteur vaut donc 2 **si et seulement si les bits utiles de D0 sont 0
   à l'entrée** ; même mécanisme pour les blocs 1 et 2 (OU 1, OU 0). [O]
-- exec AddTask (ROM, $FC1CCA..) construit la frame initiale avec **15 longs à 0 (D0–D7/A0–A6)**,
+- exec AddTask construit la frame initiale avec **15 longs à 0 (D0–D7/A0–A6)**,
   un SR à 0 et le PC initial, sous le PC final empilé. ⇒ D0 = 0, **A6 = 0** à l'entrée. [O]
 - **Exigence pour une réimplémentation** : un process C démarré par CreateProc doit entrer avec
   **D0 = 0** (et ne rien supposer d'autre des registres) ; à défaut, sélecteur 3 ⇒ le Workbench ne
@@ -124,7 +122,7 @@ directe au code). Le code du Workbench est compilé (C, modèle « petites donn�
 pointeur sur ses globales** (= bloc+$40) ; tous ses stubs de librairie lisent les bases dans ces
 globales. [O]
 
-### 2.2 Séquence d'initialisation de `main` ($FEE398), dans l'ordre [O]
+### 2.2 Séquence d'initialisation de `main`, dans l'ordre [O]
 
 1. **AllocMem($4F2, MEMF_CHIP|MEMF_CLEAR)** (bloc global ; via SysBase lu en $4) ; échec ⇒
    Alert `$31010000` (AN_Workbench|AG_NoMemory) puis dead-end (§2.6).
@@ -132,7 +130,7 @@ globales. [O]
 3. **FindTask(NULL)** → soi ; **`pr_CLI := BPTR(bloc)`** : les $40 premiers octets du bloc (zéro)
    servent de **faux CommandLineInterface**.
 4. **SetTaskPri(soi, 1)**.
-5. **`soi->tc_Node.ln_Name := "Workbench"`** (chaîne ROM $FECD72). ⇒ le renommage a lieu **avant**
+5. **`soi->tc_Node.ln_Name := "Workbench"`** (chaîne de la ROM). ⇒ le renommage a lieu **avant**
    l'attente du message, donc avant la réponse à LoadWB ; `FindTask("Workbench")` de LoadWB réussit
    toujours. [O]
 6. **Si sélecteur = 2** : `WaitPort(&pr_MsgPort)`, `GetMsg(&pr_MsgPort)`, lecture de
@@ -187,7 +185,7 @@ reboot**. Il n'existe pas de chemin « échec propre » qui rendrait la main au 
 
 ### 2.6 Routines d'abandon [O]
 
-- « Fatal » générique ($FEB4B4) : **Alert(`$80008031`)** (bit 31 = AT_DeadEnd) appelée avec la
+- « Fatal » générique : **Alert(`$80008031`)** (bit 31 = AT_DeadEnd) appelée avec la
   SysBase lue en $4 ; elle ne revient pas. Appelée après chaque Alert récupérable ci-dessous et si
   `main` rendait la main.
 - Manque de mémoire : Alert `$31010000` puis fatal.
@@ -201,19 +199,19 @@ reboot**. Il n'existe pas de chemin « échec propre » qui rendrait la main au 
 
 ### 3.1 Initialisation (suite de `main`) [O sauf mention]
 
-| # | Repère | Effet observable (appels de librairie) |
-|---|---|---|
-| 1 | $FEE130 | **AllocSignal(−1)** (un seul signal) ; deux MsgPorts **publics** de 34 octets dans les globales, **A** (+$38E) et **B** (+$3B0) : ln_Type 4, ln_Name `"Workbench"`, mp_Flags 0 (PA_SIGNAL), mp_SigBit = ce signal (**partagé**), mp_SigTask = soi ; **AddPort(A)**, **AddPort(B)**. A = port de réponse (WBStartup des outils, timer) ; B = port IDCMP/Workbench. |
-| 2 | $FEC4F2 | **GetPrefs(buf, 1)** (lit seulement l'octet `FontHeight`) ; TextAttr `{"topaz.font", FontHeight, 0, 0}` ; **InitRastPort** (rastport privé) ; **CloseFont** de l'ancienne police éventuelle ; **OpenFont** (échec ⇒ $B1000001) ; **SetFont**. Ré-exécuté sur NEWPREFS. |
-| 3 | $FEF1A8, $FECD18, $FF2632 | allocations internes (AllocMem MEMF_CHIP\|CLEAR ; échec ⇒ $31010000), construction des menus (mesures **TextLength**). [D pour le rôle] |
-| 4 | $FEDFE0 | 3 listes vides (NewList) ; **AllocWBObject** (icon) = objet racine nommé `"Workbench"` ; puis ouverture de la **fenêtre backdrop** (§3.2) ; ajout de la racine en liste (AddTail) et rafraîchissement. Échec ⇒ $31010000 + fatal. |
-| 5 | $FF2C20 | AllocMem + **InitGels** (GelsInfo pour le glisser d'icônes), attaché au RastPort de l'écran (Screen+$68 = `RastPort.GelsInfo`). |
-| 6 | $FEFF3A | parcours des listes d'objets (préparation) [D] |
-| 7 | $FF1436 | `DosInfo := BADDR(DOSBase->dl_Root->rn_Info)` (DOSBase+$22 → RootNode+$18) ; **scan de la DosList** (§3.3) |
-| 8 | $FEFF6C | traitement de la file interne (Disable/AddHead/RemTail/Enable, GetMsg) [D] |
-| 9 | $FF3CD0 | **AlohaWorkbench(port B)** (intuition −402) |
-| 10 | $FF2398 | **OpenDevice("timer.device", unité 1 = UNIT_VBLANK, req, 0)** sur une timerequest de 40 octets (allouée avec un en-tête de 2 octets marqué 4), `mn_ReplyPort = port A`, `io_Command = 9` (TR_ADDREQUEST) ; puis **premier tic** (§3.4) |
-| 11 | $FEE18E | **boucle principale** (§3.5), sans retour |
+| # | Effet observable (appels de librairie) |
+|---|---|
+| 1 | **AllocSignal(−1)** (un seul signal) ; deux MsgPorts **publics** de 34 octets dans les globales, **A** (+$38E) et **B** (+$3B0) : ln_Type 4, ln_Name `"Workbench"`, mp_Flags 0 (PA_SIGNAL), mp_SigBit = ce signal (**partagé**), mp_SigTask = soi ; **AddPort(A)**, **AddPort(B)**. A = port de réponse (WBStartup des outils, timer) ; B = port IDCMP/Workbench. |
+| 2 | **GetPrefs(buf, 1)** (lit seulement l'octet `FontHeight`) ; TextAttr `{"topaz.font", FontHeight, 0, 0}` ; **InitRastPort** (rastport privé) ; **CloseFont** de l'ancienne police éventuelle ; **OpenFont** (échec ⇒ $B1000001) ; **SetFont**. Ré-exécuté sur NEWPREFS. |
+| 3 | allocations internes (AllocMem MEMF_CHIP\|CLEAR ; échec ⇒ $31010000), construction des menus (mesures **TextLength**). [D pour le rôle] |
+| 4 | 3 listes vides (NewList) ; **AllocWBObject** (icon) = objet racine nommé `"Workbench"` ; puis ouverture de la **fenêtre backdrop** (§3.2) ; ajout de la racine en liste (AddTail) et rafraîchissement. Échec ⇒ $31010000 + fatal. |
+| 5 | AllocMem + **InitGels** (GelsInfo pour le glisser d'icônes), attaché au RastPort de l'écran (Screen+$68 = `RastPort.GelsInfo`). |
+| 6 | parcours des listes d'objets (préparation) [D] |
+| 7 | `DosInfo := BADDR(DOSBase->dl_Root->rn_Info)` (DOSBase+$22 → RootNode+$18) ; **scan de la DosList** (§3.3) |
+| 8 | traitement de la file interne (Disable/AddHead/RemTail/Enable, GetMsg) [D] |
+| 9 | **AlohaWorkbench(port B)** (intuition −402) |
+| 10 | **OpenDevice("timer.device", unité 1 = UNIT_VBLANK, req, 0)** sur une timerequest de 40 octets (allouée avec un en-tête de 2 octets marqué 4), `mn_ReplyPort = port A`, `io_Command = 9` (TR_ADDREQUEST) ; puis **premier tic** (§3.4) |
+| 11 | **boucle principale** (§3.5), sans retour |
 
 Ordre des modules ouverts implicitement : l'**écran Workbench** n'est ouvert qu'au #4, au moment
 de GetScreenData/OpenWindow de type WBENCHSCREEN. Le Workbench n'appelle **ni OpenWorkBench, ni
@@ -282,7 +280,7 @@ aux fenêtres (SetWindowTitles, que LoadWB 1.3.3 a détourné). Puis renvoi de l
 `tv_secs = 5`, `tv_micro = 0`, **SendIO** (asynchrone, réponse sur le port A).
 Détail (drapeau « message affiché », valeur initiale −1, fenêtres concernées) : voir §6.4.
 
-### 3.5 Boucle principale ($FEE18E) [O]
+### 3.5 Boucle principale [O]
 
 Boucle **infinie** : vider le **port B** (chaque IntuiMessage → dispatcher par numéro de bit de
 `im_Class`, 23 entrées) ; sauf mode particulier, vider le **port A** : chaque message porte un **mot
@@ -373,7 +371,7 @@ non nul ⇒ abandon (cohérent avec la correction « TRUE = abandon » de l'éta
 
 | Test | Attendu |
 |---|---|
-| FindResident("workbench.task") | tag $FEB47C (ROM d'origine) ; rt_Flags 0, rt_Type 1, rt_Pri 0, rt_Version 34 |
+| FindResident("workbench.task") | le tag du module ; rt_Flags 0, rt_Type 1, rt_Pri 0, rt_Version 34 |
 | LoadWB : seglist | `(tag+42) >> 2` ⇒ PC initial `tag+44`, D0 = 0 à l'entrée |
 | Après la réponse à LoadWB | `FindTask("Workbench")` ≠ 0, pri 1, `pr_CLI` ≠ 0 |
 | Ports publics | 2 ports nommés `"Workbench"`, même pri 0 ; avec un AddPort par Enqueue, FindPort rend le **premier ajouté = port A** [D] |
@@ -400,7 +398,7 @@ Sources : ROM (module wb, repères ci-dessous) et `c:LoadWB` de `wb133.adf` (hun
 | **G+$2F2** | dernière valeur AvailMem affichée (comparaison du tic). |
 | **G+$22** (octet de drapeaux) | bit 0 = Workbench « fermé » (CloseWorkBench, §4.1) ; **bit 1 = titre verrouillé** (pendant la saisie du Rename) ; **bit 2 = « un message est affiché »**. |
 
-### 6.2 Routine commune « afficher un titre » (repère $FEBA06) [O]
+### 6.2 Routine commune « afficher un titre » [O]
 
 Signature (convention C, pile) : `ShowTitle(fmt, arg1, arg2, arg3, arg4, arg5)`. Comportement :
 
@@ -419,14 +417,15 @@ Signature (convention C, pile) : `ShowTitle(fmt, arg1, arg2, arg3, arg4, arg5)`.
    d'**écran** = tampon. Donc **backdrop + toutes les fenêtres de tiroir/disque ouvertes**.
 
 Restauration du titre mémoire (`ShowTitle(G+$3DA)`) appelée : **au début de tout MENUPICK** (avant
-le dispatch de l'élément, $FEF37C), sur **SELECTDOWN** (clic gauche, $FEDD48), par le tic (§6.4),
+le dispatch de l'élément), sur **SELECTDOWN** (clic gauche), par le tic (§6.4),
 et à l'entrée du Rename (sans effet, verrou mis).
 
 ### 6.3 Special/Version (code menu $F882 = menu 2, élément 4, pas de sous-élément) [O]
 
 1. (Restauration du titre mémoire, §6.2, commune à tout MENUPICK : efface le bit 2.)
 2. **Version Kickstart** : lue dans l'**en-tête de la ROM**, pas dans une base de librairie :
-   base ROM = `$1000000 − (longmot en $FFFFEC = taille ROM, $00040000)` = $FC0000 ; mots non
+   base ROM = `$1000000 − taille ROM` (taille = champ du pied de ROM, situé 20 octets avant la fin
+   de l'espace 24 bits ; `$00040000` ici) = $FC0000 ; mots non
    signés en **base+$0C** (= 34) et **base+$0E** (= 5), étendus en longs. (exec.library, elle,
    est en 34.2 : ce n'est **pas** `SysBase->lib_Version/lib_Revision`.)
 3. **Version Workbench** : **OpenLibrary("version.library", 0)** ; si succès, mots non signés
@@ -736,7 +735,7 @@ Rappels :
 
 ## 7. Workbench/Info et info.library
 
-Sources : ROM (routine Info du module wb, repère $FEFB70) et `libs/info.library` de `wb133.adf`
+Sources : ROM (routine Info du module wb) et `libs/info.library` de `wb133.adf`
 (16 380 octets, 25 hunks ; extraite et relogée dans le scratch de la piste analyse). info.library
 est un **binaire du disque que nous ne réimplémentons pas** : cette section décrit **le contrat
 d'appel** et les **champs** qu'elle lit et écrit, pour que notre ROM puisse l'appeler.
@@ -1386,8 +1385,8 @@ x = BL + 9**. Le contenu commence à BL + 14.
 
 ## Relecture clean-room
 
-- [x] Aucun listing, aucune suite d'instructions transcrite ni paraphrasée ligne à ligne : seules des
-  **adresses-repères**, des **layouts** (ROMTag, message LoadWB, MsgPort, NewWindow, WBStartup,
+- [x] Aucun listing, aucune suite d'instructions transcrite ni paraphrasée ligne à ligne : seuls des
+  **layouts** (ROMTag, message LoadWB, MsgPort, NewWindow, WBStartup,
   DosPacket), des **constantes** (codes d'Alert, flags de fenêtre, IDCMP, n° d'action dos, tailles)
   et des **séquences d'appels de librairie** (contrat d'API public) sont donnés.
 - [x] §1.2/§1.3 décrivent l'**effet** des 8 octets d'entrée (sélecteur, OU sur D0) et la contrainte
@@ -1396,6 +1395,12 @@ x = BL + 9**. Le contenu commence à BL + 14.
   quelle forme, tant que `(tag+42)>>2` donne un segment exécutable correct — par exemple placer son
   ROMTag à une adresse ≡ 2 mod 4 n'est **pas** requis ; il suffit que `BADDR((tag+42)>>2)+4` soit un
   point d'entrée valide).
+- [x] **Correction du 2026-10-29** : retirées les 47 adresses ROM restantes (ROMTag, `rt_Name`,
+  `rt_IdString`, `rt_Init`, `rt_EndSkip`, points d'entrée, `main`, boucle principale, routines
+  d'abandon, d'affichage de titre et d'Info, colonne « Repère » du §3.1, AddTask d'exec, chaîne
+  « Workbench ») et la description de l'encodage des points d'entrée (« bourrage », opération sur
+  D0) ; conservés : positions relatives au tag imposées par `c:LoadWB` (+26/+34/+42/+44) et effet
+  observable (sélecteur, `D0 := D0 OU 2`).
 - [x] Les noms de LVO au-delà des AutoDocs 1.3 (−426…−468 intuition, −504…−534 graphics) sont
   déduits de l'ordre des fichiers `.fd` publics et marqués [D].
 - [x] Les éléments disque (LoadWB) sont limités à l'interface (message, seglist, SetFunction) déjà

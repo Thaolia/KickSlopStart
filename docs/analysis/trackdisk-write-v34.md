@@ -385,3 +385,17 @@ Journal disque : toutes les écritures `LEN=1A9F (6815)`, DSKPT = début du tamp
 6. **Taille du tampon de piste** et origine de son allocation (disk.resource / mémoire CHIP) non relevées en
    détail ; seule la disposition (gap à l'offset 4 du tampon, DMA de lecture à +1668 du début du tampon) est
    établie.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
+  aucune adresse de routine ROM : uniquement des registres matériels (`$BFD100`, DSKLEN, DSKPT, ADKCON,
+  INTENA/INTREQ), des valeurs écrites et des durées.
+- [x] La séquence du §3 est l'ordre des **accès matériels observables** (vérifiés en partie par le
+  journal disque de l'émulateur) ; la §5 décrit les commandes par leurs entrées/sorties et effets.
+- [x] Pas de données ROM au-delà du format : l'image de piste (gap, `$4489`, info, sommes, horloges
+  MFM) est le **format de disquette Amiga public**, observable sur tout disque écrit ; seuils de
+  précompensation et identifiants de lecteur sont des constantes de comportement.
+- [x] La sonde citée (`tests/tdwrite.s`) est du code auteur.

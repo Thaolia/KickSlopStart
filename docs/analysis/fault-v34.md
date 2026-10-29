@@ -2,7 +2,7 @@
 
 Piste ANALYSE. Sources : ROM `kick34005.A500` (lecture seule) et `c/Fault`, `c/Copy` extraits de
 `assets/wb133.adf` (Workbench 1.3.3) dans un répertoire temporaire. Contrats observables uniquement ;
-les adresses ROM sont des repères d'analyse, pas des contraintes d'implémentation.
+aucune adresse de routine ROM n'est citée.
 
 Légende : **[O]** observé dans le binaire · **[D]** déduit (raisonnement sur l'observé, non exécuté).
 
@@ -31,9 +31,9 @@ Références internes : convention d'appel BCPL (§1), `runcommand` (§4.3), glo
 
 ## 2. `fault(code)` — globale 104 (GV +$1A0), ROM
 
-Repères : entrée `$FF4FA8` (offset 4 du segment BCPL commençant en `$FF4FA4`), chaînes BSTR
-`"C:FAULT"` en `$FF501C` et `"Error code %N\n"` en `$FF5024` (longueur 14 : le `\n` est **dans**
-la chaîne). Table globin de ce segment : globale 104 → offset 4, globale −21 → offset $90. [O]
+Repères : `fault()` est définie dans un segment BCPL résident de dos dont la table globin fournit
+les globales 104 (`fault`) et −21 (chargement sans requester, §2.2). Chaînes BSTR utilisées :
+`"C:FAULT"` et `"Error code %N\n"` (longueur 14 : le `\n` est **dans** la chaîne). [O]
 
 ### 2.1 Déroulé observable
 
@@ -217,3 +217,18 @@ s'étend si nécessaire.
 - Suppression des requesters pendant le chargement (pr_WindowPtr = −1, restauré ensuite).
 - Le repli contient son propre `\n` ; le texte de C:Fault aussi (via wrch) : l'appelant ne doit
   pas en ajouter.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite, aucun extrait de désassemblage.
+- [x] **Corrigé** : retirés les « repères » ROM du §2 (adresse d'entrée de `fault()`, adresse du
+  segment BCPL, adresses des chaînes BSTR, offsets internes de la table globin) et la mention d'en-tête
+  qui présentait les adresses ROM comme repères. Conservés : numéros de globales (ABI du vecteur
+  global BCPL), chaînes émises.
+- [x] Le tableau §2.1 décrit les **effets observables** dans leur ordre (chargement puis pose de
+  Result2, repli, déchargement), ordre qui conditionne la sortie ; ce n'est pas un déroulé
+  d'instructions.
+- [x] La table des messages du §4 provient de `c/Fault` (disque Workbench), pas de la ROM. La seule
+  donnée ROM reproduite est la chaîne de repli `Error code %N\n` (texte émis, observable).

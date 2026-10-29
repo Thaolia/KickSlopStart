@@ -19,23 +19,24 @@
 
 ### 1.1 Ce qui précède : vecteurs et overlay
 - Au reset, l'overlay est actif (CIA-A DDRA = 0 après reset → la broche OVL, en entrée, est tirée
-  haut) : la ROM apparaît en `$000000`. Le 68000 lit SSP = `$11114EF9` et PC = `$00FC00D2`. **[O]**
+  haut) : la ROM apparaît en `$000000`. Le 68000 lit SSP = `$11114EF9` et PC = l'adresse du point
+  d'entrée du coldstart dans la ROM. **[O]**
 - Le mot `$4EF9` en ROM `+2` suivi de l'adresse du coldstart en `+4` forme une instruction « JMP
   absolu vers le coldstart » **exécutable à l'adresse 2** tant que l'overlay est actif. C'est ce qui rend
   possible la technique de reboot logiciel publique de l'ère 1.3 (§7.3). **Une ROM compatible doit
-  garder ces 8 premiers octets à l'identique.** **[O]**
-- Le mot qui précède immédiatement le point d'entrée du coldstart est une instruction `RESET` (mot
-  `$4E70`). Aucun code de la ROM n'y saute ; c'est une commodité placée à côté de l'entrée. **[O]**
+  garder cette forme** (`$1111`, `$4EF9`, puis l'adresse de son propre point d'entrée). **[O]**
+- Le mot qui précède immédiatement le point d'entrée du coldstart, s'il est exécuté, réinitialise les
+  périphériques (effet d'un reset logiciel, overlay remis) puis tombe dans le coldstart. Aucun code de
+  la ROM n'y saute ; c'est une commodité placée à côté de l'entrée. **[O]**
 - **État CPU à l'entrée** : superviseur, masque d'interruption 7 (état de reset du 68000). Le coldstart ne
   touche pas à SR avant la création de la tâche initiale (§4.4). **[O]**
 
 ### 1.2 Ordre exact des opérations (chemin commun froid/chaud)
 1. Pose un SSP provisoire à **`$40000`** (le haut des 256 premiers Ko de chip). **[O]** Aucune écriture
-   en pile n'a lieu avant le dimensionnement de la RAM : tout le code de démarrage s'enchaîne par
-   adresse de retour dans un registre (pas de BSR/JSR), de sorte qu'une RAM défectueuse ne fait pas
-   planter le diagnostic. **[O]**
-2. **Temporisation d'environ 0,33 s** : boucle vide de 131 072 itérations (≈ 2,36 M cycles à
-   7,09 MHz PAL, exécutée depuis la ROM donc sans contention). **[O]** (durée **[D]**)
+   en pile n'a lieu avant le dimensionnement de la RAM : le code de démarrage n'utilise pas la pile,
+   de sorte qu'une RAM défectueuse ne fait pas planter le diagnostic. **[O]**
+2. **Temporisation d'environ 0,33 s** : attente CPU active (≈ 2,36 M cycles à 7,09 MHz PAL, depuis
+   la ROM donc sans contention). **[O]** (durée **[D]**)
 3. **Sonde de ROM de diagnostic à `$F00000`** : si la ROM ne s'exécute pas elle-même depuis `$F00000`
    et que le mot lu en `$F00000` vaut **`$1111`**, exec saute en **`$F00002`** en laissant dans A5
    l'adresse où reprendre le coldstart. L'overlay est encore actif à ce moment. **[O]**
@@ -69,7 +70,8 @@
 - **Plage sondée** : de `$000000` à `$200000` (exclu), **par pas de 4 Ko**. **[O]**
 - **Méthode** **[O]** :
   1. écrire le long `0` en `$000000` (sentinelle anti-miroir) ;
-  2. pour chaque frontière de 4 Ko `A = $1000, $2000, …` : écrire le long **`$F2D4B698`** en `A` ;
+  2. pour chaque frontière de 4 Ko `A = $1000, $2000, …` : écrire un long de motif de test (non nul,
+     bits mélangés) en `A` ;
   3. arrêter dès que : (a) la sentinelle `$000000` n'est plus nulle (**miroir** : l'adresse a rebouclé
      sur 0) ; (b) la relecture de `A` diffère du motif ; (c) `A` atteint `$200000` ;
   4. `MaxLocMem` = la première adresse `A` en échec.
@@ -103,9 +105,10 @@ Effectuée **avant** la chip. **[O]**
   - Effet de bord : INTENA réel est brièvement chargé de `$3FFF` ; sans danger car SR masque tout. **[D]**
 - **Test RAM d'un bloc** **[O]** :
   1. écrire `0` à l'emplacement de référence du **premier** bloc (`$C3F09A`) ;
-  2. écrire **`$F2D4`** à l'emplacement sondé du bloc courant, relire → différent = fin ;
-  3. si la référence est restée nulle : écrire **`$B698`**, relire → différent = fin, égal = bloc accepté ;
-  4. si la référence vaut `$F2D4` : premier bloc (même adresse) → on passe à l'étape 3 ; **autre bloc
+  2. écrire un premier mot de motif à l'emplacement sondé du bloc courant, relire → différent = fin ;
+  3. si la référence est restée nulle : écrire un second mot de motif, relire → différent = fin, égal =
+     bloc accepté ;
+  4. si la référence vaut le premier motif : premier bloc (même adresse) → on passe à l'étape 3 ; **autre bloc
      (miroir du premier) → bloc accepté sans 2ᵉ motif**.
   - **Anomalie** : un module qui se répète en miroir dans `$C00000+` serait donc compté jusqu'à la
     limite. Une A501 ne se répète pas (le bloc suivant tombe sur les registres en miroir, arrêt correct).
@@ -286,7 +289,7 @@ exception CPU :
    → **Avec slow RAM, ExecBase est en `$C00276` : TOUTE alerte, même récupérable, prend le chemin dur**
    (reset puis affichage au boot suivant). Prouvé : `Alert($35000001)` sous 512+512 Ko → reboot puis
    « Recoverable Alert » affiché par alert.hook ; l'appelant ne reprend jamais la main. **[S]**
-5. Test de pile superviseur/utilisateur (écrit puis relit `$F1E2D3C4`) ; échec → SSP ← `$40000`, chemin dur.
+5. Test de pile superviseur/utilisateur (écrit puis relit un long de motif) ; échec → SSP ← `$40000`, chemin dur.
 6. Bit 31 (dead-end) → chemin dur.
 7. Sinon : `LastAlert` ← (alertNum, second nombre) et **affichage immédiat** (routine d'alert.hook, §8.4).
    - mot haut d'alertNum ≠ 0 (appel `Alert()` récupérable) : interruptions réactivées si `IDNestCnt < 0`,
@@ -296,15 +299,15 @@ exception CPU :
 
 **Chemin dur** **[O]** : CIA-A DDRA |= 3 et OVL forcé à 0, vecteur `$20` (violation de privilège)
 redirigé pour garantir le passage en superviseur, SR ← `$2700`. Puis **6 tours** de : SERPER ←
-**`$0174`** (≈ 9600 bauds), **LED atténuée puis brillante** (65 536 itérations chacune, accès CIA
-synchronisés sur l'horloge E), lecture de SERDATR, effacement de RBF dans INTREQ ; si le caractère reçu
+**`$0174`** (≈ 9600 bauds), **LED atténuée puis brillante** (attente CPU de durée égale pour chaque
+phase, rythmée par des accès CIA synchronisés sur l'horloge E), lecture de SERDATR, effacement de RBF dans INTREQ ; si le caractère reçu
 (7 bits) vaut **`$7F` (DEL)** → entrée dans **ROM-Wack**. Après 6 tours sans DEL → reboot (§7.2).
 L'écran **n'est pas modifié** pendant ce temps. Durée ≈ 5-6 s sous FS-UAE avant le reboot. **[S]**
 
 ### 8.4 alert.hook (résident pri 5, type UNKNOWN) **[O][S]**
 - Son `rt_Init` est **la même routine** que l'affichage immédiat d'Alert. Lancé dans
   `InitCode(RTF_COLDSTART)` après intuition (pri 10), donc après le blanc de graphics.
-- **Temporisation fixe ≈ 1 s à chaque boot** (11 × 65 536 tours de boucle vide), **avant** de regarder
+- **Temporisation fixe ≈ 1 s à chaque boot** (attente CPU active), **avant** de regarder
   s'il y a une alerte. **[O]** (durée **[D]**)
 - Si `LastAlert[0] = $FFFFFFFF` → retour sans rien faire.
 - Sinon, texte au format DisplayAlert (x sur 16 bits, y sur 8 bits, chaîne, octet de continuation) :
@@ -329,7 +332,7 @@ L'écran **n'est pas modifié** pendant ce temps. Durée ≈ 5-6 s sous FS-UAE a
 
 ### 8.6 Couleurs d'erreur du coldstart **[O]**
 Une seule routine d'erreur : BPLCON0 ← `$0200`, BPL1DAT ← 0, **COLOR00 ← couleur**, puis **11
-clignotements de la LED** (≈ 65 536 tours atténuée, ≈ 32 768 tours brillante), puis reboot (§7.2) —
+clignotements de la LED** (≈ 0,5 s atténuée, ≈ 0,25 s brillante), puis reboot (§7.2) —
 d'où une **boucle de reset** si la panne est permanente.
 
 | COLOR00 | Signification |
@@ -425,3 +428,24 @@ Autres faits : `VBlankFrequency` est posé par graphics.library (50/60 selon PAL
   68000 + estimation des attentes d'horloge E), pas chronométrées.
 - **WarmCapture** : appelé seulement si `InitCode(RTF_COLDSTART)` revient ; qu'il ne revienne jamais
   sur un boot disquette normal est déduit, non prouvé.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucun extrait de désassemblage ; les séquences numérotées (§1.2, §2, §3, §5.1, §8.3) décrivent
+  l'ordre des **accès matériels et RAM observables** (registres custom, CIA, couleurs, RAM basse) et
+  les conditions de décision, pas l'enchaînement des instructions.
+- [x] **Corrigé** : retirée l'adresse ROM du point d'entrée du coldstart (valeur du PC de reset) ; la
+  contrainte « 8 premiers octets à l'identique » reformulée en forme d'en-tête (une ROM compatible a son
+  propre point d'entrée).
+- [x] **Corrigé** : retirés les détails qui relevaient du code plutôt que du comportement : nom et
+  opcode de l'instruction placée avant le point d'entrée (remplacés par son effet), mention du mode
+  d'enchaînement des sous-routines (« pas de BSR/JSR »), nombres d'itérations des boucles de
+  temporisation (remplacés par les durées), valeurs des motifs de test RAM et de pile (remplacés par
+  « motif de test », la valeur exacte n'ayant aucune portée d'ABI).
+- [x] Restent : adresses matérielles/RAM publiques (`$000000`, `$C00000`, `$DFF0xx`, `$BFE001`,
+  `$F00000`, RAM basse `$100`/`$104`/`$180`), valeurs écrites dans les registres (couleurs, INTENA,
+  DMACON, SERPER), offsets publics d'ExecBase, règles de validation du reset à chaud et de la somme
+  Kick (comportement de compatibilité).
+- [x] La sonde citée (`tests/coldhw_probe.s`) est du code auteur.

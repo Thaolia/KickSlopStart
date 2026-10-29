@@ -34,7 +34,7 @@ d'un `struct Node` (14 octets). Offsets (décimal entre parenthèses) :
 | 0x12 | UWORD | `lib_PosSize` | taille des données (= sizeof ExecBase) |
 | 0x14 | UWORD | `lib_Version` | **= 34** [ROM, cf. en-tête] |
 | 0x16 | UWORD | `lib_Revision` | = 2 (exec 34.2) |
-| 0x18 | APTR | `lib_IdString` | → `"exec 34.2 (28 Oct 1987)"` [ROM $FC0018] |
+| 0x18 | APTR | `lib_IdString` | → `"exec 34.2 (28 Oct 1987)"` [ROM, en-tête de l'image] |
 | 0x1C | ULONG | `lib_Sum` | checksum de la jump table |
 | 0x20 | UWORD | `lib_OpenCnt` | |
 
@@ -191,3 +191,17 @@ privé V36). La piste implémentation doit refuser/ignorer ces LVO pour rester f
   `docs/exec-lvo-table.md`. L'histogramme ROM avait sous-estimé la queue. Pour figer exactement la dernière entrée, la piste
   implémentation peut recouper le `exec_lib.fd` **V34** officiel ; les offsets des primitives
   demandées sont certains et confirmés par usage dans la ROM.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage.
+  Le §3 cite les opcodes d'appel LVO (`0x4EAE`/`0x4EEE`) et `JMP abs.l` (`0x4EF9`) comme **format
+  public** de la jump table et critère de comptage statistique, pas comme code recopié.
+- [x] **Corrigé** : retirée l'adresse ROM de la chaîne `rt_IdString` d'exec.
+- [x] Restent : offsets publics `exec/execbase.i`, LVO `exec_lib.fd`, constantes `MEMF_*`, comptes de
+  sites d'appel (statistique, sans adresse).
+- [ ] Remarque de fond (non corrigée, hors périmètre clean-room) : la liste « Delta V34 → 2.0/3.x »
+  du §3 classe encore `AddMemList`/`CopyMem`/`CopyMemQuick` comme V36, alors que le §5 (résolu par
+  `exec_lib.fd`) les donne présents en V34 ; c'est le §5 qui fait foi.

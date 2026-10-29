@@ -429,3 +429,16 @@ Notre ROM doit garantir :
 5. Exceptions CPU en mode utilisateur envoyées à `tc_TrapCode` de la tâche courante.
 6. Si PRT: est redirigé vers la série, le savoir : un PRINT déclenché par erreur y écrirait le
    rapport.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Cible = programme tiers SysInfo 4.4 (désassemblage permis) ; la ROM Kickstart n'a pas été lue.
+  Les localisations « H0+… / H1+… [f …] » sont des offsets **dans SysInfo**, pas dans la ROM.
+- [x] Aucune adresse de routine ROM et aucune donnée de la ROM Kickstart transcrite : les seules
+  valeurs liées à la ROM sont l'en-tête public `$1111 4EF9`, la position attendue de `lib_IdString`
+  (64 premiers Ko) et des offsets publics d'ExecBase/Process/Window/IntuiMessage ; les autres adresses
+  sont matérielles (`$DFF0xx`, `$BFE801…`, `$DC0001`) ou de la zone ROM générique (`$F80004`).
+- [x] Les détails d'instructions évoqués (S2 : comment le serveur VERTB de SysInfo positionne Z)
+  concernent le code de SysInfo et servent à fixer le contrat que notre chaîne VERTB doit respecter.

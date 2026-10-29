@@ -1,27 +1,28 @@
 # module-map.md — Carte des 24 ROMTags (Kickstart 1.3 / V34.5, `kick34005.A500`)
 
 > Piste ANALYSE (« dirty »). Faits dérivés UNIQUEMENT de la lecture radare2 de la ROM
-> (256 Ko, 68000 big-endian, base $FC0000). Aucun listing d'instructions n'est reproduit :
-> seuls adresses, offsets, tailles, flags et constantes d'ABI figurent ici.
+> (256 Ko, 68000 big-endian, base $FC0000). Aucun listing d'instructions n'est reproduit, ni
+> aucune adresse de routine ou de structure dans la ROM : seuls flags, types, priorités, tailles,
+> comptes et constantes d'ABI figurent ici.
 >
 > Provenance : toutes les colonnes sont **mesurées dans la ROM** sauf la décomposition
 > nominale des flags/types (constantes d'ABI publiques, `exec/resident.i`, `exec/nodes.i`).
 
-## En-tête ROM (longwords à la base $FC0000)
+## En-tête ROM (longwords au début de l'image)
 
 | Offset | Valeur mesurée | Sens |
 |-------:|----------------|------|
-| +0x00 | `0x11114EF9` | SSP initial vu au reset = mot ROM-ID `0x1111` + opcode `0x4EF9` (JMP abs.l) |
-| +0x04 | `0x00FC00D2` | PC de reset → coldstart exec (= `rt_Init` d'exec, cf. ci-dessous) |
+| +0x00 | `0x11114EF9` | SSP initial vu au reset = mot ROM-ID `0x1111` + opcode `0x4EF9` (JMP abs.l) — format d'en-tête Kickstart 256 Ko, vérifié par les outils (`romtool`) |
+| +0x04 | adresse ROM | PC de reset → point d'entrée du coldstart exec (= `rt_Init` d'exec, cf. ci-dessous) |
 | +0x08 | `0x0000FFFF` | — |
 | +0x0C | `0x00220005` | **Version ROM = 34.5** (major `0x22`=34, minor `0x0005`=5) → Kickstart 1.3 |
 | +0x10 | `0x00220002` | Marqueur secondaire 34.2 (coïncide avec la révision propre d'exec) |
 | +0x14 | `0xFFFFFFFF` | — |
-| +0x18 | ASCII | `"exec 34.2 (28 Oct 1987)\r\n"` (= `rt_IdString` d'exec) |
-| +0x38 | ASCII | Bannière `"AMIGA ROM Operating System and Libraries / Copyright (C) 1985, Commodore-Amiga, Inc."` |
+| +0x18 | ASCII | `rt_IdString` d'exec (« exec 34.2 » + date + CR/LF) |
+| +0x38 | ASCII | Bannière de copyright Commodore-Amiga (texte non reproduit) |
 
-Pied de ROM (24 derniers octets, $FFFFE8..$FFFFFF) : champ de taille `0x00040000` (256 Ko)
-+ longword d'allure checksum `0x15267DB3`. Non analysé plus avant (hors périmètre spec).
+Pied de ROM (24 derniers octets de l'image) : champ de taille `0x00040000` (256 Ko) + un longword
+de checksum de l'image. Non analysé plus avant (hors périmètre spec).
 
 ## Constantes de décodage (ABI publique)
 
@@ -32,41 +33,41 @@ Pied de ROM (24 derniers octets, $FFFFE8..$FFFFFF) : champ de taille `0x00040000
 
 ## Tableau des 24 ROMTags (ordre de priorité décroissante = ordre d'init, cf. règle de tri plus bas)
 
-Adresse = $FC0000 + offset fichier. Tous : `rt_MatchWord=0x4AFC`, `rt_MatchTag`→lui-même, `rt_Version=34`.
+Tous : `rt_MatchWord=0x4AFC`, `rt_MatchTag`→lui-même, `rt_Version=34`.
 
-| # | Module | Off. fichier | Adresse | `rt_Flags` | Flags décodés | `rt_Type` | Pri | `rt_Name` | `rt_IdString` (rév.) | `rt_Init` | `rt_EndSkip` |
-|--:|--------|-------------:|---------|:----------:|---------------|:---------:|----:|-----------|----------------------|-----------|--------------|
-| 1 | exec.library | 0x0000B6 | $FC00B6 | `0x00` | *(aucun)* | `9` LIBRARY | 120 | $FC00A8 | $FC0018 (34.2) | **$FC00D2** | $FC3276 |
-| 2 | expansion.library | 0x004B64 | $FC4B64 | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 110 | $FC4BB0 | $FC4B7E (34.1) | $FC4BA0 | $FC51D8 |
-| 3 | potgo.resource | 0x0243DC | $FE43DC | `0x01` | COLDSTART | `8` RESOURCE | 100 | $FE43F6 | $FE4406 (34.1) | $FE4424 | $FE4524 |
-| 4 | keymap.resource | 0x024B44 | $FE4B44 | `0x01` | COLDSTART | `8` RESOURCE | 100 | $FE4B5E | $FE4B6E (34.1) | $FE7F24 | $FE4B8E |
-| 5 | cia.resource | 0x004574 | $FC4574 | `0x01` | COLDSTART | `8` RESOURCE | 80 | $FC458E | $FC45B8 (34.1) | $FC45E0 | $FC47F8 |
-| 6 | disk.resource | 0x0047FC | $FC47FC | `0x01` | COLDSTART | `8` RESOURCE | 70 | $FC4816 | $FC4824 (34.1) | $FC4840 | $FC4B5C |
-| 7 | misc.resource | 0x0242D0 | $FE42D0 | `0x01` | COLDSTART | `8` RESOURCE | 70 | $FE42EA | $FE42F8 (34.1) | $FE4314 | $FE43D8 |
-| 8 | ramlib.library | 0x024528 | $FE4528 | `0x80` | AUTOINIT *(pas COLDSTART)* | `9` LIBRARY | 70 | $FE45BC | $FE4542 (34.1) | $FE4560 | $FE4AC8 |
-| 9 | graphics.library | 0x0053E4 | $FC53E4 | `0x01` | COLDSTART | `9` LIBRARY | 65 | $FC53FE | $FC540F (34.1) | $FCABA2 | $FD08B8 |
-| 10 | keyboard.device | 0x024B8E | $FE4B8E | `0x01` | COLDSTART | `3` DEVICE | 60 | $FE4BA8 | $FE4BB8 (34.1) | $FE4F44 | $FE4BDA |
-| 11 | gameport.device | 0x024BDA | $FE4BDA | `0x01` | COLDSTART | `3` DEVICE | 60 | $FE4BF4 | $FE4C04 (34.1) | $FE53B0 | $FE4C26 |
-| 12 | timer.device | 0x028D6C | $FE8D6C | `0x01` | COLDSTART | `3` DEVICE | 50 | $FE8D86 | $FE8D94 (34.1) | $FE8DF4 | $FE9558 |
-| 13 | audio.device | 0x003508 | $FC3508 | `0x81` | AUTOINIT+COLDSTART | `3` DEVICE | 40 | $FC3522 | $FC3530 (34.1) | $FC354C | $FC445C |
-| 14 | input.device | 0x024C26 | $FE4C26 | `0x01` | COLDSTART | `3` DEVICE | 40 | $FE4C40 | $FE4C4E (34.1) | $FE5AD0 | $FE4C6C |
-| 15 | layers.library | 0x0209A4 | $FE09A4 | `0x01` | COLDSTART | `9` LIBRARY | 31 | $FE0994 | $FE09BE (34.1) | $FE0A2C | $FE0A0C |
-| 16 | console.device | 0x024C6C | $FE4C6C | `0x01` | COLDSTART | `3` DEVICE | 20 | $FE4C86 | $FE4C96 (34.1) | $FE66E4 | $FE6234 |
-| 17 | trackdisk.device | 0x029564 | $FE9564 | `0x01` | COLDSTART | `3` DEVICE | 20 | $FE957E | $FE9590 (34.1) | $FE97BE | $FEB05C |
-| 18 | intuition.library | 0x013D8C | $FD3D8C | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 10 | $FD3DCA | $FD3D64 (34.3) | $FD3DA6 | $FDFF94 |
-| 19 | alert.hook | 0x003276 | $FC3276 | `0x01` | COLDSTART | `0` UNKNOWN | 5 | $FC3269 | $FC3269 *(nom seul)* | $FC3128 | $FC3290 |
-| 20 | mathffp.library | 0x023DA4 | $FE3DA4 | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 0 | $FE3DBE | $FE3DCE (34.1) | $FE3DEC | $FE4288 |
-| 21 | workbench.task | 0x02B47C | $FEB47C | `0x00` | *(aucun)* | `1` TASK | 0 | $FEB4CA | $FEB464 (wb 34.1) | $FEB496 | $FF310C |
-| 22 | dos.library | 0x033E62 | $FF3E62 | `0x00` | *(aucun)* | `9` LIBRARY | 0 | $FF4030 | $FF3E7C (34.3) | $FF3E94 | $FF3E94 |
-| 23 | romboot.library | 0x02B060 | $FEB060 | `0x01` | COLDSTART | `9` LIBRARY | -40 | $FEB07A | $FEB08A (34.1) | $FEB0A8 | $FEB380 |
-| 24 | strap | 0x0283E0 | $FE83E0 | `0x01` | COLDSTART | `0` UNKNOWN | -60 | $FE83FA | $FE8400 (34.4) | $FE8444 | $FE841A |
+| # | Module | `rt_Flags` | Flags décodés | `rt_Type` | Pri | Révision (`rt_IdString`) |
+|--:|--------|:----------:|---------------|:---------:|----:|--------------------------|
+| 1 | exec.library | `0x00` | *(aucun)* | `9` LIBRARY | 120 | 34.2 |
+| 2 | expansion.library | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 110 | 34.1 |
+| 3 | potgo.resource | `0x01` | COLDSTART | `8` RESOURCE | 100 | 34.1 |
+| 4 | keymap.resource | `0x01` | COLDSTART | `8` RESOURCE | 100 | 34.1 |
+| 5 | cia.resource | `0x01` | COLDSTART | `8` RESOURCE | 80 | 34.1 |
+| 6 | disk.resource | `0x01` | COLDSTART | `8` RESOURCE | 70 | 34.1 |
+| 7 | misc.resource | `0x01` | COLDSTART | `8` RESOURCE | 70 | 34.1 |
+| 8 | ramlib.library | `0x80` | AUTOINIT *(pas COLDSTART)* | `9` LIBRARY | 70 | 34.1 |
+| 9 | graphics.library | `0x01` | COLDSTART | `9` LIBRARY | 65 | 34.1 |
+| 10 | keyboard.device | `0x01` | COLDSTART | `3` DEVICE | 60 | 34.1 |
+| 11 | gameport.device | `0x01` | COLDSTART | `3` DEVICE | 60 | 34.1 |
+| 12 | timer.device | `0x01` | COLDSTART | `3` DEVICE | 50 | 34.1 |
+| 13 | audio.device | `0x81` | AUTOINIT+COLDSTART | `3` DEVICE | 40 | 34.1 |
+| 14 | input.device | `0x01` | COLDSTART | `3` DEVICE | 40 | 34.1 |
+| 15 | layers.library | `0x01` | COLDSTART | `9` LIBRARY | 31 | 34.1 |
+| 16 | console.device | `0x01` | COLDSTART | `3` DEVICE | 20 | 34.1 |
+| 17 | trackdisk.device | `0x01` | COLDSTART | `3` DEVICE | 20 | 34.1 |
+| 18 | intuition.library | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 10 | 34.3 |
+| 19 | alert.hook | `0x01` | COLDSTART | `0` UNKNOWN | 5 | *(nom seul, `rt_IdString` = `rt_Name`)* |
+| 20 | mathffp.library | `0x81` | AUTOINIT+COLDSTART | `9` LIBRARY | 0 | 34.1 |
+| 21 | workbench.task | `0x00` | *(aucun)* | `1` TASK | 0 | wb 34.1 |
+| 22 | dos.library | `0x00` | *(aucun)* | `9` LIBRARY | 0 | 34.3 |
+| 23 | romboot.library | `0x01` | COLDSTART | `9` LIBRARY | -40 | 34.1 |
+| 24 | strap | `0x01` | COLDSTART | `0` UNKNOWN | -60 | 34.4 |
 
 ### Faits remarquables (mesurés)
 
-- **exec** : `rt_Flags=0` (ni AUTOINIT ni COLDSTART), et `rt_Init = $FC00D2 = PC de reset`. exec
-  n'est donc PAS initialisé par le balayage des résidents : le vecteur de reset saute directement
-  dans son `rt_Init`, qui EST la routine de coldstart du noyau. `rt_EndSkip` d'exec (`$FC3276`)
-  pointe exactement sur la ROMTag `alert.hook` → exec « possède » la plage $FC00B6..$FC3276.
+- **exec** : `rt_Flags=0` (ni AUTOINIT ni COLDSTART), et son `rt_Init` **est** le PC de reset de
+  l'en-tête. exec n'est donc PAS initialisé par le balayage des résidents : le vecteur de reset saute
+  directement dans son `rt_Init`, qui EST la routine de coldstart du noyau. Son `rt_EndSkip` désigne
+  la ROMTag suivante (`alert.hook`) : le balayage reprend juste après la plage d'exec.
 - **Bits de timing présents dans cette ROM** : seul `RTF_COLDSTART` (0x01) parmi les trois bits
   « quand démarrer ». **Aucun** module n'a `RTF_SINGLETASK` (0x02) ni `RTF_AFTERDOS` (0x04).
 - **Sans aucun bit de timing** : exec (0x00), **ramlib** (0x80 = AUTOINIT seul), workbench.task
@@ -75,25 +76,27 @@ Adresse = $FC0000 + offset fichier. Tous : `rt_MatchWord=0x4AFC`, `rt_MatchTag`�
   dos et workbench.task par l'amorçage DOS/strap). Voir `boot-sequence.md`.
 - **Types « UNKNOWN » (0)** : `alert.hook` (pri 5) et `strap` (pri -60) ne sont ni library ni
   device ni resource — ce sont des hooks de boot invoqués via `rt_Init`.
-- **alert.hook** : `rt_Name == rt_IdString == $FC3269` (même chaîne « alert.hook ») et
-  `rt_Init = $FC3128` se situe AVANT l'adresse de la tag ($FC3276).
-- **dos** : `rt_Init == rt_EndSkip == $FF3E94`.
+- **alert.hook** : `rt_Name` et `rt_IdString` désignent la même chaîne (« alert.hook ») ; son
+  `rt_Init` est situé avant la tag elle-même (aucune contrainte d'ABI : `rt_Init` est un pointeur libre).
+- **dos** : `rt_Init == rt_EndSkip` (même valeur de pointeur).
 - Révisions par module (depuis `rt_IdString`) : exec **34.2**, intuition **34.3**, dos **34.3**,
   strap **34.4** ; tous les autres **34.1**. La ROM dans son ensemble s'identifie **34.5 / Release 1.3**.
 
 ### Règle de tri de la liste des résidents (= ordre d'initialisation)
 
-Clé de tri : **`rt_Pri` décroissant, puis adresse ROM croissante** (le balayage ROM construit
-la liste en ordre d'adresse croissante, le tri par priorité est stable). Confirmé par les égalités
-de priorité mesurées :
-- pri 100 : potgo ($FE43DC) < keymap ($FE4B44)
-- pri 70 : disk ($FC47FC) < misc ($FE42D0) < ramlib ($FE4528)
-- pri 60 : keyboard ($FE4B8E) < gameport ($FE4BDA)
-- pri 40 : audio ($FC3508) < input ($FE4C26)
-- pri 20 : console ($FE4C6C) < trackdisk ($FE9564)
-- pri 0 : mathffp ($FE3DA4) < workbench.task ($FEB47C) < dos ($FF3E62)
+Clé de tri : **`rt_Pri` décroissant, puis position dans la ROM croissante** (le balayage ROM
+construit la liste en ordre d'adresse croissante, le tri par priorité est stable). Confirmé par
+les égalités de priorité mesurées (ordre observé à priorité égale) :
+- pri 100 : potgo avant keymap
+- pri 70 : disk avant misc avant ramlib
+- pri 60 : keyboard avant gameport
+- pri 40 : audio avant input
+- pri 20 : console avant trackdisk
+- pri 0 : mathffp avant workbench.task avant dos
 
-L'ordre du tableau ci-dessus est donc l'ordre exact que la réimplémentation doit reproduire.
+L'ordre du tableau ci-dessus est donc l'ordre exact que la réimplémentation doit reproduire (une
+réimplémentation peut placer ses propres tags dans cet ordre d'adresse pour obtenir les mêmes
+départages).
 
 ## Structures d'auto-init (modules RTF_AUTOINIT)
 
@@ -112,24 +115,41 @@ les entrées sont des **déplacements WORD signés** (16 bits) relatifs à l'adr
 terminés par `0xFFFF` ; sinon ce sont des **adresses LONG absolues** (32 bits) terminées par
 `0xFFFFFFFF`. Le nombre d'entrées = nombre de LVO exposés par le module.
 
-| Module | `rt_Init` | `dataSize` | `vectors` | Encodage | **Nb vecteurs (LVO)** | `structure` | `initFunction` |
-|--------|-----------|-----------:|-----------|----------|:---------------------:|-------------|----------------|
-| expansion.library | $FC4BA0 | `0x1C8` = 456 | $FC4BEE | LONG absolu | **25** | $FC4BC2 (présent) | $FC4C56 |
-| ramlib.library | $FE4560 | `0x0B2` = 178 | $FE4570 | WORD relatif | **11** | $FE458A (présent) | $FE45CC |
-| audio.device | $FC354C | `0x27A` = 634 | $FC3592 | WORD relatif | **6** | $FC355C (présent) | $FC3586 |
-| intuition.library | $FD3DA6 | `0x564` = 1380 | $FD3DE6 | LONG absolu | **78** | **$00000000 (NULL)** | $FD3DB6 |
-| mathffp.library | $FE3DEC | `0x022` = 34 | $FE3EB0 | WORD relatif *(offsets signés, certains négatifs)* | **16** | $FE3E1A (présent) | $FE3EAC |
+| Module | `dataSize` | Encodage de `vectors` | **Nb vecteurs (LVO)** | `structure` | `initFunction` |
+|--------|-----------:|----------|:---------------------:|-------------|----------------|
+| expansion.library | `0x1C8` = 456 | LONG absolu | **25** | présent | présent |
+| ramlib.library | `0x0B2` = 178 | WORD relatif | **11** | présent | présent |
+| audio.device | `0x27A` = 634 | WORD relatif | **6** | présent | présent |
+| intuition.library | `0x564` = 1380 | LONG absolu | **78** | **NULL** | présent |
+| mathffp.library | `0x022` = 34 | WORD relatif *(offsets signés, certains négatifs)* | **16** | présent | présent |
 
 Remarques mesurées :
 - Les comptes de vecteurs sont **exacts** (comptés jusqu'au terminateur dans la ROM).
 - **intuition** : `structure = NULL` → aucune table InitStruct ; les champs de la base sont posés
   par `initFunction` seule. C'est le seul des cinq dans ce cas.
 - **mathffp** : `dataSize = 0x22 = sizeof(struct Library)` (34) → aucune donnée d'instance au-delà
-  du nœud de library ; sa table de vecteurs emploie des offsets WORD **signés** (ex. 1er offset
-  `0xFFD6` = −42 → fonction située avant la table).
+  du nœud de library ; sa table de vecteurs emploie des offsets WORD **signés** (des fonctions
+  peuvent précéder la table — le format l'autorise).
 - expansion/intuition emploient le format **LONG absolu** ; ramlib/audio/mathffp le format
   **WORD relatif**. Les deux formats coexistent dans la même ROM.
 - Les autres modules (graphics, dos, layers, keymap/potgo/cia/disk/misc resources, keyboard/
   gameport/timer/input/console/trackdisk devices, romboot) ont `rt_Flags` **sans** AUTOINIT :
   leur `rt_Init` pointe sur du code d'init manuel (pas de table auto-init standard), donc leur
   nombre de LVO n'est pas mesurable sans tracer leur `MakeLibrary` — non reproduit ici.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage.
+- [x] **Corrigé** : la version initiale donnait, pour chacune des 24 ROMTags, l'offset fichier et
+  l'adresse dans la ROM de la tag, de `rt_Name`, `rt_IdString`, `rt_Init` et `rt_EndSkip`, ainsi que
+  les adresses des tables auto-init (`vectors`, `structure`, `initFunction`), la valeur du PC de reset,
+  les bornes de la plage d'exec et les adresses servant à illustrer la règle de départage. Toutes ces
+  adresses de routines/données ROM ont été retirées ; l'information comportementale est conservée
+  (flags, type, priorité, révision, présence/absence des champs, comptes de LVO, ordre de départage à
+  priorité égale exprimé en ordre relatif).
+- [x] **Corrigé** : retirés le texte intégral de la bannière de copyright, la valeur du checksum de
+  l'image et l'exemple d'offset négatif de la table mathffp (données ROM sans utilité d'ABI).
+- [x] Restent : en-tête `0x1111`/`0x4EF9`, version 34.5, taille 256 Ko (format d'image Kickstart
+  vérifié par `romtool`), constantes publiques `exec/resident.i` / `exec/nodes.i`, tailles des bases.

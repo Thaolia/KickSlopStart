@@ -1,10 +1,9 @@
 # intuition-frame-v34.md — cadre des fenêtres, gadgets système, barre d'écran (intuition 34.3)
 
-> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, intuition 34.3. Repères :
-> dessin du cadre $FDF3CA, barre de titre $FDF52C, limites du titre $FDF356/$FDF38A, activation
-> $FDF6D0, désactivation $FDF7D4, contour $FDA470, remplissage à motif $FDA402, rectangle plein
-> $FDA71A, motifs dans IntuitionBase (init à $FD67D4), modèles de gadgets système (ROM $FD6062,
-> 8 modèles par résolution), barre d'écran $FDD03A.
+> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, intuition 34.3. Fonctions couvertes :
+> dessin du cadre, barre de titre et ses limites, activation, désactivation, contour, remplissage à
+> motif, rectangle plein, motifs gardés dans IntuitionBase, modèles de gadgets système (8 par
+> résolution), barre d'écran. Aucune adresse ROM (retirées le 2026-10-29).
 >
 > **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Aucune suite d'instructions
 > n'est reproduite, et **aucune image bitmap n'est transcrite** : les pictogrammes sont décrits
@@ -237,3 +236,6 @@ Elle est dessinée dans la **BarLayer** de l'écran (Screen +$14E), sous LockLay
   rectangles, épaisseurs, couleurs), à redessiner librement. Les deux motifs de remplissage
   sont décrits par leur effet (lignes pleines ou vides, un pixel sur quatre), pas comme des
   tableaux de mots.
+- [x] **Correction du 2026-10-29** : retirées les 12 adresses de routines/données ROM de l'en-tête.
+  La géométrie des pictogrammes (§5.3, donnée inventoriée de type (ii) dans
+  `docs/audit/specs-review.md`) n'a pas été modifiée (décision du responsable).

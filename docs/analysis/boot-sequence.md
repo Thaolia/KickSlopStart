@@ -15,11 +15,11 @@ Au reset, le 68000 lit deux longwords aux adresses physiques **$000000** (SSP in
 - `*(ULONG*)$000000` = `0x11114EF9` → SSP initial. Les deux octets de poids fort `0x1111`
   servent aussi de mot de reconnaissance ROM ; `0x4EF9` est l'opcode qui, exécuté, poursuit vers
   le coldstart (artefact du double usage du longword).
-- `*(ULONG*)$000004` = `0x00FC00D2` → PC initial = **coldstart exec** = `rt_Init` de la ROMTag
-  exec. Le CPU démarre donc directement dans exec ; exec n'est jamais « initialisé » par le
+- `*(ULONG*)$000004` = une adresse dans la ROM → PC initial = **coldstart exec** = `rt_Init` de la
+  ROMTag exec. Le CPU démarre donc directement dans exec ; exec n'est jamais « initialisé » par le
   balayage des résidents (cf. `module-map.md`).
 
-## Phase 1 — Coldstart exec ($FC00D2) : amorçage CPU/matériel minimal *(inféré au niveau détail)*
+## Phase 1 — Coldstart exec : amorçage CPU/matériel minimal *(inféré au niveau détail)*
 
 Ordre comportemental :
 
@@ -43,7 +43,7 @@ Ordre comportemental :
    `lib_IdString` → `"exec 34.2 …"`, type `NT_LIBRARY`, et **construire la jump table LVO d'exec**
    (vecteurs négatifs, pas de 6 octets ; cf. `exec-spec.md`). exec se bootstrappe lui-même : la
    jump table n'est pas une table auto-init statique présente dans la ROM *(vérifié : aucune table
-   `MakeFunctions` d'exec parsable dans $FC00D2..$FC3276)*.
+   `MakeFunctions` d'exec parsable dans la plage du module exec)*.
 3. Initialiser à vide toutes les listes système d'`ExecBase` : `MemList`, `ResourceList`,
    `DeviceList`, `IntrList`, `LibList`, `PortList`, `TaskReady`, `TaskWait`, `SemaphoreList`,
    les 5 `SoftInts`, et les champs de scheduling (`Quantum`, `ThisTask=NULL`, nest counts).
@@ -101,7 +101,7 @@ Dans CETTE ROM, seuls les bits de timing suivants sont présents :
 ## Résumé de l'ordre global (oracle)
 
 ```
-reset → $FC00D2 (coldstart exec)
+reset → coldstart exec (PC de reset = rt_Init d'exec)
       → silence matériel + sizing RAM + AttnFlags/VBlankFreq
       → construction ExecBase (@*(ULONG*)4) + jump table exec + listes + MemHeader chip + IntVects
       → scan ROM (match 0x4AFC) → tri (pri desc, adresse asc) → ResModules
@@ -120,3 +120,16 @@ reset → $FC00D2 (coldstart exec)
 - Le point exact où ramlib, dos et workbench.task sont initialisés (chemin dédié vs amorçage strap)
   est inféré de leurs flags (`rt_Flags` sans bit de timing) ; la piste implémentation devra le
   confirmer par le comportement observable (ouverture de `dos.library` possible seulement après boot).
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage.
+  Les phases 1-4 sont un ordre comportemental de haut niveau (marqué *(inféré)* là où il n'est pas
+  observé), conforme à l'ABI publique `exec/resident.i` et aux AutoDocs, pas un déroulé du code ROM.
+- [x] **Corrigé** : retirées les adresses ROM du point d'entrée du coldstart (valeur du PC de reset,
+  titre de la phase 1, schéma « oracle ») et les bornes de la plage du module exec ; remplacées par
+  « adresse dans la ROM » / « plage du module exec ».
+- [x] Restent : adresses matérielles ($000000/$000004, overlay, base ROM $FC0000), en-tête
+  `0x1111`/`0x4EF9`, offset public `ChkBase` (+0x26), constantes `MEMF_*`.

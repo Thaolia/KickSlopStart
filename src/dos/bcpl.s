@@ -48,6 +48,8 @@ WF_BUFSZ        EQU 128              ; tampon de sortie local de writef & co (vi
 CP_STKEXTRA     EQU 4096             ; marge de pile 68000 des process créés par createproc
 
 ; --- appel / retour (A5 / A6) — multiply DOIT être à bcpl_call+$10, divide à +$12 (appels « jsr $10(a5) ») ---
+; L'ABI fige cette entrée à 16 octets (frame -12/-8/-4, sauts à +$10/+$12) : la séquence est de ce fait identique à
+; celle de BCPL_jsr/BCPL_rts d'AROS (arch/m68k-all/dos/bcpl.S), relevé par l'audit docs/audit/aros-similarity.md.
 bcpl_call:
         move.l  (sp)+,a3             ; adresse de retour (l'appel est fait par jsr (a5))
         movem.l a1/a3-a4,-12(a1,d0.l) ; sous le nouveau frame : ancien A1, retour, routine appelée

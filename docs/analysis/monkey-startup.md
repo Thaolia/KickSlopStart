@@ -218,9 +218,9 @@ Le lecteur de musique, activé au premier morceau, prend le matériel **directem
   - Cela vaut pour un trackdisk qui attend des délais MICROHZ, un Delay() s'il passe par MICROHZ,
     la répétition clavier… ⇒ **blocage silencieux du chargement**.
 - **Sur la vraie 1.3, timer.device utilise ciaa.resource** : la chaîne « ciaa.resource » est
-  dans timer.device, à $FE8DB0. Le niveau 6 n'y sert pas à MICROHZ, et la prise du vecteur $78
+  dans timer.device. Le niveau 6 n'y sert pas à MICROHZ, et la prise du vecteur $78
   par le jeu est sans effet sur le chargement disque.
-  - trackdisk ouvre bien ciab.resource ($FE9782), mais rien n'indique qu'il ait besoin de
+  - trackdisk ouvre bien ciab.resource, mais rien n'indique qu'il ait besoin de
     l'interruption pour lire [S].
 - **Recommandation** : MICROHZ et tout délai disque doivent passer par CIA-A (niveau 2, PORTS).
   Sinon, il faut ne dépendre d'aucune interruption de niveau 6 pendant les lectures.
@@ -279,3 +279,5 @@ Ordre conseillé :
   NewWindow champ par champ, registres matériels et valeurs, conditions.
 - [x] Aucune donnée du jeu (image, musique, texte) reproduite ; les copper lists sont décrites
   comme des tables registre → rôle.
+- [x] **Correction du 2026-10-29** : retirées les 2 adresses ROM (chaîne dans timer.device,
+  ouverture de ciab.resource par trackdisk) ; constat inchangé.

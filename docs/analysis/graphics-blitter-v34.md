@@ -460,3 +460,17 @@ bloc LCM 2048 octets chip + sémaphore. **Le bit BLTPRI (« nasty ») n'est jama
 8. Les chemins **avec couche** (ClipRects cachés, SuperBitMap, tri de ClipBlit) sont **déduits
    uniquement** : la sonde n'utilise que des RastPorts sans couche. Une sonde en fenêtre (smart refresh
    recouverte) serait la suite logique.
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
+  aucune adresse de routine ROM (seules adresses : registres custom `$DFF000`, RAM chip/slow).
+- [x] Les moteurs (BltBitMap, BltTemplate, BltClear, files QBlit/QBSBlit) sont décrits par **contrats
+  d'appel, ordre des écritures de registres blitter, choix de schéma et résultats observés** [O] ; la
+  mention « instruction qui positionne Z » (§9.1) est une contrainte imposée aux fonctions de
+  l'appelant, pas du code ROM.
+- [x] Pas de données ROM au-delà de l'ABI : offsets publics de `GfxBase`/`RastPort`/`bltnode`, valeurs
+  de registres (BLTCON0, masques de bord calculés), code d'alerte `$82011234`, tailles de tampons.
+- [x] La sonde citée (`tests/gblit_probe.s`) est du code auteur.

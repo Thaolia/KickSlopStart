@@ -182,3 +182,15 @@ Conséquences :
 - Test de non-régression proposé : après `FF -0`, un `Text` topaz 8 de ≤ 120 caractères dans une
   fenêtre (console + PrintIText de menu + nom d'icône) doit afficher les glyphes ; un texte > 120
   caractères ou en gras doit aussi s'afficher (chemin de repli).
+
+## Relecture clean-room
+
+Relecture du 2026-10-29.
+
+- [x] Cible = programme tiers `C:FF` (FastFonts V1.31, disque Workbench) ; la ROM Kickstart n'a pas été
+  ouverte. Aucune adresse de routine ROM, aucun extrait de désassemblage (ni de FF ni de la ROM).
+- [x] Aucune donnée de la ROM Kickstart transcrite : pas de glyphe, pas de strike topaz, pas de table ;
+  la table de glyphes de FF est décrite (taille, indexation, inversion des codes de contrôle) sans
+  contenu. Les offsets cités sont ceux des structures publiques (RastPort, TextFont, BitMap, Process)
+  et les LVO publics.
+- [x] Les exigences pour notre ROM sont formulées comme contrats AutoDocs/ABI (registres, champs).
