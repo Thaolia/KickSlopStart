@@ -202,6 +202,7 @@ WD_IDCMPFLAGS   EQU 82
 WD_USERPORT     EQU 86
 WD_DETAILPEN    EQU 98
 WD_BLOCKPEN     EQU 99
+WD_CHECKMARK    EQU 100             ; Image de la coche des menus (NewWindow.CheckMark, sinon l'interne)
 WD_SCREENTITLE  EQU 104             ; titre d'écran montré quand la fenêtre est active (0 : celui de l'écran)
 WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114

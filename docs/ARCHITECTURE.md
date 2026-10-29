@@ -601,6 +601,11 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     - Pas de MENUVERIFY (absent aussi du chemin souris).
     - Sonde `tests/menucat.s` et commande `keyraw` de `tests/dskchg_run.sh` (Super_R = Amiga droite) : O → $F800,
       S → $F820, élément inactif → MENUNULL, Q seul → rien ; choix à la souris inchangé ($F800).
+  - intuition, coches des menus (§3.5) : OpenWindow pose `Window->CheckMark` (+$64) = NewWindow.CheckMark, sinon notre
+    coche interne (hires 15 × 8 ou lores 9 × 8 selon l'écran, LeftEdge 2, dessinée pour KickSlopStart, format du chat).
+    Un élément CHECKIT et CHECKED la reçoit en (x de l'élément, y de l'élément + TopEdge de son ItemFill). Le
+    basculement reste fait à la fermeture (souris) ou au raccourci : pas de redessin dans une boîte ouverte. Sonde
+    `tests/menucat.s`, menu « Option » : « Coche » cochée au départ, « Bascule » cochée puis décochée par Amiga-droite+B.
   (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
   - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
     l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),

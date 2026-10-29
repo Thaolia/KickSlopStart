@@ -63,6 +63,7 @@
                 xref    it_menumove
                 xref    mn_keyshort          ; menus.s : raccourci Amiga droite (handler)
                 xref    mn_keypick           ; menus.s : raccourci Amiga droite (tâche d'entrée)
+                xref    mn_defcheck          ; menus.s : coche interne des menus
                 xdef    it_startinput
                 xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
@@ -719,6 +720,11 @@ intuition_OpenWindow:
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
         move.l  NW_FIRSTGADGET(a2),WD_FIRSTGADGET(a3)
         move.l  a4,WD_WSCREEN(a3)
+        move.l  NW_CHECKMARK(a2),d0  ; coche des menus : celle de l'application, sinon l'interne (selon HIRES)
+        bne.s   .ow_ck
+        jsr     mn_defcheck
+.ow_ck:
+        move.l  d0,WD_CHECKMARK(a3)
         move.b  NW_DETAILPEN(a2),d0  ; stylos : -1 = ceux de l'écran
         cmp.b   #-1,d0
         bne.s   .ow_dp

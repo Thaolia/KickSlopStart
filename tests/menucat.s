@@ -1,7 +1,8 @@
 ; tests/menucat.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
 ; Ouvre une fenêtre sur l'écran Workbench avec un menu « Projet » dont les éléments ont des raccourcis (COMMSEQ) :
 ; en dérouler le menu (bouton droit) montre le symbole de la touche Amiga (le chat de KickSlopStart) devant chaque
-; lettre. L'élément « Grisé » ('G') est inactif. Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
+; lettre. L'élément « Grise » ('G') est inactif. Menu « Option » : « Bascule » (CHECKIT|MENUTOGGLE, 'B') et « Coche »
+; (CHECKIT, coché au départ) : la coche des menus. Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
 ; dans le titre de la fenêtre : « MENUPICK cccc qqqq #n » (code, qualificatif, rang du message).
 ; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/menucat tests/menucat.s
 ; Code auteur ; structures publiques (intuition/intuition.h, exec/ports.h).
@@ -83,7 +84,7 @@ newwin:         dc.w    40,30,360,80
                 dc.l    0,0
                 dc.w    80,40,640,256
                 dc.w    1                    ; WBENCHSCREEN
-menu:           dc.l    0
+menu:           dc.l    menu2
                 dc.w    4,0,80,10
                 dc.w    1                    ; MENUENABLED
                 dc.l    mname
@@ -121,6 +122,34 @@ item4:          dc.l    0
                 dc.b    'G',0
                 dc.l    0
                 dc.w    0
+menu2:          dc.l    0
+                dc.w    90,0,80,10
+                dc.w    1
+                dc.l    mname2
+                dc.l    oitem1
+                dc.w    0,0,0,0
+oitem1:         dc.l    oitem2
+                dc.w    0,0,150,10
+                dc.w    $005F                ; CHECKIT|ITEMTEXT|COMMSEQ|MENUTOGGLE|ITEMENABLED|HIGHCOMP
+                dc.l    0
+                dc.l    ot1,0
+                dc.b    'B',0
+                dc.l    0
+                dc.w    0
+oitem2:         dc.l    0
+                dc.w    0,10,150,10
+                dc.w    $0153                ; CHECKIT|ITEMTEXT|ITEMENABLED|HIGHCOMP|CHECKED
+                dc.l    0
+                dc.l    ot2,0
+                dc.b    0,0
+                dc.l    0
+                dc.w    0
+ot1:            dc.b    0,1,1,0
+                dc.w    20,1
+                dc.l    0,o1,0
+ot2:            dc.b    0,1,1,0
+                dc.w    20,1
+                dc.l    0,o2,0
 it1:            dc.b    0,1,1,0
                 dc.w    2,1
                 dc.l    0,t1,0
@@ -140,6 +169,9 @@ tcode:          dc.b    "0000 "
 tqual:          dc.b    "0000 #"
 tnum:           dc.b    "0000",0
 mname:          dc.b    "Projet",0
+mname2:         dc.b    "Option",0
+o1:             dc.b    "Bascule",0
+o2:             dc.b    "Coche",0
 t1:             dc.b    "Ouvrir",0
 t2:             dc.b    "Sauver",0
 t3:             dc.b    "Quitter",0

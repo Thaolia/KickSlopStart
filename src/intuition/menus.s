@@ -12,7 +12,9 @@
 ; Raccourcis clavier (§3.11) : Amiga droite + touche convertie en un caractère ; le handler cherche dans la barre de la
 ; fenêtre active (menus, éléments, sous-éléments ; Command & $5F, COMMSEQ non testé), avale la touche, et la tâche
 ; d'entrée envoie MENUPICK (MENUNULL si le menu, l'élément ou le sous-élément est inactif).
-; Portée : pas de sous-menus affichés, ni de coches dessinées, ni de multi-sélection, ni de MENUVERIFY.
+; Coches (§3.5) : un élément CHECKIT et CHECKED reçoit l'image Window->CheckMark en (x de l'élément, y de l'élément +
+; TopEdge de son ItemFill) ; coche interne dessinée pour KickSlopStart (pas l'image de la ROM), même format que le chat.
+; Portée : pas de sous-menus affichés, ni de multi-sélection, ni de MENUVERIFY, ni de MutualExclude.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + intuition/intuition.h. AUCUNE lecture ROM.
 
                 include "exec.i"
@@ -30,6 +32,7 @@
                 xdef    it_menumove
                 xdef    mn_keyshort
                 xdef    mn_keypick
+                xdef    mn_defcheck
                 xref    it_refresh
                 xref    it_title
                 xref    it_box
@@ -551,7 +554,7 @@ mn_openbox:
         move.l  MU_FIRSTITEM(a2),a2  ; éléments
 .ob_it:
         move.l  a2,d0
-        beq.s   .ob_ret
+        beq     .ob_ret
         move.l  MI_ITEMFILL(a2),d0
         beq.s   .ob_ghost
         move.l  d0,a1
@@ -568,6 +571,12 @@ mn_openbox:
 .ob_img:
         jsr     intuition_DrawImage
 .ob_ghost:
+        move.w  MI_FLAGS(a2),d0
+        and.w   #CHECKIT|CHECKED,d0
+        cmp.w   #CHECKIT|CHECKED,d0
+        bne.s   .ob_nck
+        bsr     mn_drawcheck
+.ob_nck:
         btst    #2,MI_FLAGS+1(a2)    ; COMMSEQ : symbole + caractère du raccourci
         beq.s   .ob_gh
         bsr     mn_commseq
@@ -592,7 +601,7 @@ mn_openbox:
         bsr     mn_ghost
 .ob_nx:
         move.l  MI_NEXTITEM(a2),a2
-        bra.s   .ob_it
+        bra     .ob_it
 .ob_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
@@ -651,6 +660,71 @@ mn_commseq:
         jsr     intuition_DrawImage
         movem.l (sp)+,d2-d4/a6
         rts
+
+; mn_drawcheck(a2 = élément, a3 = RastPort de la boîte, a4 = écran, a5 = IntuitionBase) : coche de la fenêtre du menu
+; (Window->CheckMark, sinon l'interne) en (x de l'élément, y de l'élément + TopEdge de son ItemFill). Préserve
+; d2-d7/a2-a5.
+mn_drawcheck:
+        move.l  a6,-(sp)
+        moveq   #0,d0
+        move.l  IB_MENUWIN(a5),d1
+        beq.s   .dc_def
+        move.l  d1,a0
+        move.l  WD_CHECKMARK(a0),d0
+.dc_def:
+        tst.l   d0
+        bne.s   .dc_img
+        bsr.s   mn_defcheck
+.dc_img:
+        move.l  d0,a1
+        moveq   #MB_MARGIN,d1
+        add.w   MI_TOPEDGE(a2),d1
+        move.l  MI_ITEMFILL(a2),d0
+        beq.s   .dc_y
+        move.l  d0,a0
+        btst    #1,MI_FLAGS+1(a2)    ; ITEMTEXT : IntuiText.TopEdge, sinon Image.TopEdge
+        beq.s   .dc_iy
+        add.w   IT_TOPEDGE(a0),d1
+        bra.s   .dc_y
+.dc_iy:
+        add.w   2(a0),d1
+.dc_y:
+        ext.l   d1
+        moveq   #MB_MARGIN,d0
+        add.w   MI_LEFTEDGE(a2),d0
+        ext.l   d0
+        move.l  a3,a0
+        move.l  a5,a6
+        jsr     intuition_DrawImage
+        move.l  (sp)+,a6
+        rts
+
+; mn_defcheck(a4 = écran) -> d0 = coche interne (hires si le ViewPort de l'écran l'est). Préserve le reste.
+mn_defcheck:
+        lea     mn_chk_lo(pc),a0
+        move.l  a0,d0
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .df_r
+        lea     mn_chk_hi(pc),a0
+        move.l  a0,d0
+.df_r:
+        rts
+
+; Coche interne des menus (dessinée pour KickSlopStart ; LeftEdge 2 comme la 1.3, bits à 1 = fond, dessin à 0).
+mn_chk_hi:
+        dc.w    2,0,15,8,1
+        dc.l    mn_chk_hi_data
+        dc.b    1,0
+        dc.l    0
+mn_chk_lo:
+        dc.w    2,0,9,8,1
+        dc.l    mn_chk_lo_data
+        dc.b    1,0
+        dc.l    0
+mn_chk_hi_data:                      ; trait épais montant vers la droite (15 x 8)
+        dc.w    $FFE7,$FFCF,$FF9F,$9F3F,$CE7F,$E4FF,$F1FF,$FBFF
+mn_chk_lo_data:                      ; le même en basse résolution (9 x 8)
+        dc.w    $FEFF,$FCFF,$FDFF,$79FF,$33FF,$A7FF,$8FFF,$DFFF
 
 ; Le chat de la touche Amiga (struct Image : Left, Top, Width, Height, Depth, ImageData, PlanePick, PlaneOnOff, Next).
 ; Format de la 1.3 : PlanePick 1, PlaneOnOff 0, bits à 1 = fond (couleur 1), dessin à 0 (couleur 0).
