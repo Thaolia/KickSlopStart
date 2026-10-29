@@ -17,10 +17,14 @@ Original ROM identified: 262,144 bytes, MD5 `82a21c1890cae844b3df741f2762d48d`, 
    two sealed tracks (analysis ↔ implementation), through distinct agent roles. The implementation
    **never** sees the disassembly — only **behavioural specs** (the *what*, never the transcribed
    *how*) + the public docs.
-2. **AROS is not suitable as a base.** AROS m68k targets the **3.1** API (~512 K ROM split @ `$F80000`,
-   **APL v1.1** licence, per-file copyleft, non-OSI, GPL-incompatible) and **requires ≥ 68040** — neither the
-   right API level, nor the right size/address, nor bootable on a 68000. It remains a **reading
-   reference** (algorithms, structures); we **do not copy** its code into `src/` (see Licence).
+2. **AROS is not used as a base, by choice.** AROS m68k mainly targets the **3.1** API, with compatibility for
+   1.3 programs (BCPL support; it is reported to boot Workbench 1.3 and to run 1.3 tools such as the Shell and Ed).
+   It **runs on a plain 68000**: its Amiga build explicitly handles the 68000/010 alignment rules for the A500. Its
+   ROM is **1 MB** (a 512 K image at `$F80000` plus a 512 K extension at `$E00000`) and it is under the **APL v1.1**
+   licence (per-file copyleft). This project aims at a **256 K, 1.3-sized ROM written from scratch under MIT**, so
+   AROS remains a **reading reference** (algorithms, structures); we **do not copy** its code into `src/` (see
+   Licence and `docs/audit/aros-similarity.md`). *Corrected on 2026-10-30 after GitHub issue #3: an earlier
+   version wrongly stated that AROS m68k requires a 68040.*
 3. **The 68000 is our target by design.** Since we reimplement 1.3 from scratch, the real
    A500 (68000) remains reachable for *us* — it is AROS that cannot reach it.
 
