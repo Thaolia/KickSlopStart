@@ -15,6 +15,7 @@
 #   click                    clic gauche simple
 #   rdown / rup              bouton droit enfoncé / relâché (menus)
 #   key TOUCHE               touche au format xdotool (Down, ctrl+F1…)
+#   keyraw TOUCHES           idem sans --clearmodifiers (Super_R+q = Amiga droite + Q sous FS-UAE)
 #   cia NOM                  vecteurs et masques de ciaa/ciab.resource (debug_cia.py) -> <out>/NOM.cia
 #   dcmd NOM CMDS            commandes brutes du débogueur séparées par « ; », « _ » pour espace -> <out>/NOM.dcmd
 #   tpc NOM TÂCHE [N]        N relevés du contexte sauvegardé (PC, registres) de la tâche -> <out>/NOM.tpc
@@ -101,6 +102,8 @@ while read -r cmd a b c; do
     rup)   X mouseup 3;;
     key)   WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"
            X key --clearmodifiers "$a"; sleep 0.3;;
+    keyraw) WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"
+           X key "$a"; sleep 0.3;;
     cia)   WID="$(X search --name 'FS-UAE' | head -1)"; X windowfocus --sync "$WID"
            X keydown F12 key d keyup F12; sleep 3
            python3 -I "$HERE/debug_cia.py" "$OUT/in" "$OUT/fs-uae.log" > "$OUT/$a.cia" 2>&1; printf 'g\n' >&3; log "cia $a";;

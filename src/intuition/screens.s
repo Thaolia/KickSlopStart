@@ -36,6 +36,7 @@
                 xdef    it_box
                 xdef    it_scrxy
                 xdef    wn_sendmsg
+                xdef    wn_sendkey
                 xdef    wn_sendgad
                 xdef    wn_sysgads
                 xref    gad_drawall          ; gadgets.s
@@ -60,6 +61,8 @@
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s : bouton droit
                 xref    it_menumove
+                xref    mn_keyshort          ; menus.s : raccourci Amiga droite (handler)
+                xref    mn_keypick           ; menus.s : raccourci Amiga droite (tâche d'entrée)
                 xdef    it_startinput
                 xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
@@ -2187,10 +2190,11 @@ it_signal:
         move.l  (sp)+,a1
         rts
 
-; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Le clavier va à un gadget texte actif, sinon à
-; la fenêtre active si elle a demandé RAWKEY : l'événement est alors neutralisé (IECLASS_NULL, la console ne le voit
-; pas) et déposé dans l'anneau (code IT_KEYCODE + code brut, relâchement compris ; x = qualificatif). Un gadget
-; texte ne reçoit que les touches enfoncées. Préserve tout.
+; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Le clavier va à un gadget texte actif ; sinon
+; une touche Amiga droite qui désigne un élément de la barre de la fenêtre active (mn_keyshort) est avalée et déposée
+; dans l'anneau (IT_MENUKEYCODE) ; sinon la touche va à la fenêtre active si elle a demandé RAWKEY : l'événement est
+; alors neutralisé (IECLASS_NULL, la console ne le voit pas) et déposé dans l'anneau (code IT_KEYCODE + code brut,
+; relâchement compris ; x = qualificatif). Un gadget texte ne reçoit que les touches enfoncées. Préserve tout.
 it_keyin:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
@@ -2204,6 +2208,23 @@ it_keyin:
         move.l  IB_ACTIVEWINDOW(a1),d1
         beq.s   .ki_ret
         move.l  d1,a0
+        btst    #7,d0
+        bne.s   .ki_raw
+        btst    #KQB_RCOMMAND,IE_QUALIFIER+1(a3)
+        beq.s   .ki_raw
+        jsr     mn_keyshort          ; d0 = code de menu | -1
+        tst.l   d0
+        bmi.s   .ki_nmk
+        clr.b   IE_CLASS(a3)         ; avalé : le relâchement arrivera normalement
+        move.w  d0,d1
+        swap    d1
+        move.w  IE_QUALIFIER(a3),d1
+        move.w  #IT_MENUKEYCODE,d0
+        bsr     it_push
+        bra.s   .ki_ret
+.ki_nmk:
+        move.w  IE_CODE(a3),d0
+.ki_raw:
         move.l  WD_IDCMPFLAGS(a0),d1
         and.l   #RAWKEY,d1
         beq.s   .ki_ret
@@ -2452,6 +2473,8 @@ it_intask:
         beq.s   .in_disk
         cmp.w   #IT_DISKOUTCODE,d0
         beq.s   .in_disk
+        cmp.w   #IT_MENUKEYCODE,d0
+        beq.s   .in_mkey
         cmp.w   #IT_KEYCODE,d0
         bhs.s   .in_key
         bsr     it_dobutton
@@ -2472,14 +2495,17 @@ it_intask:
 .in_disk:
         bsr     it_diskbc
         bra.s   .in_next
+.in_mkey:
+        jsr     mn_keypick           ; d4 = code de menu, d5 = qualificatif
+        bra     .in_next
 .in_move:
         tst.b   IB_MOVED(a5)
-        beq.s   .in_wait
+        beq     .in_wait
         clr.b   IB_MOVED(a5)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         bsr     it_domove
-        bra.s   .in_next
+        bra     .in_next
 
 ; it_rawkey(a5, d0.w = IT_KEYCODE + code brut, d4.w = qualificatif) : message RAWKEY à la fenêtre active, si elle
 ; l'a demandé. Préserve d2-d7/a2-a5.

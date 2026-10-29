@@ -9,7 +9,10 @@
 ; du fond.
 ; Raccourcis COMMSEQ (spec intuition-input-menus-v34 §3.5) : le caractère Command à droite de l'élément, précédé du
 ; symbole de la touche Amiga — ici un petit chat dessiné pour KickSlopStart (pas le glyphe de la ROM), au même format.
-; Portée : pas de sous-menus, ni de coches dessinées, ni de raccourcis clavier, ni de multi-sélection.
+; Raccourcis clavier (§3.11) : Amiga droite + touche convertie en un caractère ; le handler cherche dans la barre de la
+; fenêtre active (menus, éléments, sous-éléments ; Command & $5F, COMMSEQ non testé), avale la touche, et la tâche
+; d'entrée envoie MENUPICK (MENUNULL si le menu, l'élément ou le sous-élément est inactif).
+; Portée : pas de sous-menus affichés, ni de coches dessinées, ni de multi-sélection, ni de MENUVERIFY.
 ; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + intuition/intuition.h. AUCUNE lecture ROM.
 
                 include "exec.i"
@@ -25,11 +28,15 @@
                 xdef    intuition_IntuiTextLength
                 xdef    it_menubutton
                 xdef    it_menumove
+                xdef    mn_keyshort
+                xdef    mn_keypick
                 xref    it_refresh
                 xref    it_title
                 xref    it_box
                 xref    it_scrxy
                 xref    wn_sendmsg
+                xref    wn_sendkey
+                xref    kbd_cook
                 xref    intuition_DrawImage
 
 MB_MARGIN       EQU 2                ; marge intérieure du menu déroulé (cadre compris)
@@ -692,6 +699,169 @@ mn_closebox:
 .cb_ret:
         rts
 
+; mn_select(a0 = élément ou sous-élément choisi) : NextSelect := MENUNULL ; CHECKIT : CHECKED posé, ou basculé avec
+; MENUTOGGLE. Préserve tout.
+mn_select:
+        move.w  #MENUNULL,MI_NEXTSELECT(a0)
+        btst    #0,MI_FLAGS+1(a0)    ; CHECKIT
+        beq.s   .sl_ret
+        btst    #3,MI_FLAGS+1(a0)    ; MENUTOGGLE
+        beq.s   .sl_set
+        bchg    #0,MI_FLAGS(a0)      ; CHECKED ($100)
+        rts
+.sl_set:
+        bset    #0,MI_FLAGS(a0)
+.sl_ret:
+        rts
+
+; mn_keyshort(a0 = fenêtre active, a1 = IntuitionBase, a3 = InputEvent, d0.w = code brut d'une touche enfoncée avec
+; Amiga droite) : handler d'input.device. Fenêtre sans requester, ni menus en cours, ni RMBTRAP, avec une barre ;
+; touche convertie par la keymap (kbd_cook) -> d0.l = code de menu (mn_keyfind) ou -1. Clobbe d1 ; préserve a0/a1.
+mn_keyshort:
+        move.l  WD_FLAGS(a0),d1
+        and.l   #INREQUEST|MENUSTATE|RMBTRAP,d1
+        bne.s   .ks_no
+        tst.l   IB_MENUWIN(a1)
+        bne.s   .ks_no
+        tst.l   WD_MENUSTRIP(a0)
+        beq.s   .ks_no
+        cmp.w   #$60,d0
+        bhs.s   .ks_no
+        move.w  IE_QUALIFIER(a3),d1
+        jsr     kbd_cook
+        bra.s   mn_keyfind
+.ks_no:
+        moveq   #-1,d0
+        rts
+
+; mn_keyfind(a0 = fenêtre, d0.b = caractère) -> d0.l = code du premier élément (sans sous-éléments) ou sous-élément
+; dont Command & $5F = caractère & $5F, dans l'ordre menus -> éléments -> sous-éléments ; -1 si aucun ou si
+; caractère & $5F = 0. Préserve tout sauf d0.
+mn_keyfind:
+        movem.l d1-d4/a0-a2,-(sp)
+        and.b   #$5F,d0
+        beq.s   .kf_no
+        move.l  WD_MENUSTRIP(a0),a1
+        moveq   #0,d2                ; n° de menu
+.kf_menu:
+        move.l  a1,d1
+        beq.s   .kf_no
+        move.l  MU_FIRSTITEM(a1),a2
+        moveq   #0,d3                ; n° d'élément
+.kf_item:
+        move.l  a2,d1
+        beq.s   .kf_nm
+        move.l  MI_SUBITEM(a2),a0
+        move.l  a0,d1
+        bne.s   .kf_sub
+        moveq   #$1F,d4              ; NOSUB
+        move.b  MI_COMMAND(a2),d1
+        and.b   #$5F,d1
+        cmp.b   d1,d0
+        beq.s   .kf_hit
+        bra.s   .kf_ni
+.kf_sub:
+        moveq   #0,d4                ; n° de sous-élément
+.kf_sl:
+        move.b  MI_COMMAND(a0),d1
+        and.b   #$5F,d1
+        cmp.b   d1,d0
+        beq.s   .kf_hit
+        addq.w  #1,d4
+        move.l  MI_NEXTITEM(a0),a0
+        move.l  a0,d1
+        bne.s   .kf_sl
+.kf_ni:
+        addq.w  #1,d3
+        move.l  MI_NEXTITEM(a2),a2
+        bra.s   .kf_item
+.kf_nm:
+        addq.w  #1,d2
+        move.l  MU_NEXTMENU(a1),a1
+        bra.s   .kf_menu
+.kf_hit:
+        moveq   #0,d0
+        move.w  d4,d0                ; sous-élément << 11 | élément << 5 | menu
+        lsl.w   #6,d0
+        or.w    d3,d0
+        lsl.w   #5,d0
+        or.w    d2,d0
+        bra.s   .kf_ret
+.kf_no:
+        moveq   #-1,d0
+.kf_ret:
+        movem.l (sp)+,d1-d4/a0-a2
+        rts
+
+; mn_keypick(a5, d4.w = code de menu, d5.w = qualificatif) : tâche d'entrée — raccourci Amiga droite. Menu, élément
+; et sous-élément actifs : mn_select, puis MENUPICK avec le code à la fenêtre active ; sinon MENUPICK MENUNULL.
+; Rien si la fenêtre a perdu sa barre ou si un menu est ouvert. Préserve d2-d7/a2-a5.
+mn_keypick:
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq     .kp_ret
+        tst.l   IB_MENUWIN(a5)
+        bne     .kp_ret
+        movem.l d2-d4/a3,-(sp)
+        move.l  d0,a3
+        move.l  WD_MENUSTRIP(a3),d0
+        beq.s   .kp_out
+        move.l  d0,a0
+        move.w  d4,d1                ; menu
+        and.w   #$1F,d1
+        bsr.s   .kp_walk
+        beq.s   .kp_null
+        btst    #0,MU_FLAGS+1(a0)    ; MENUENABLED
+        beq.s   .kp_null
+        move.l  MU_FIRSTITEM(a0),d0
+        beq.s   .kp_null
+        move.l  d0,a0
+        move.w  d4,d1                ; élément
+        lsr.w   #5,d1
+        and.w   #$3F,d1
+        bsr.s   .kp_walk
+        beq.s   .kp_null
+        btst    #4,MI_FLAGS+1(a0)    ; ITEMENABLED
+        beq.s   .kp_null
+        move.w  d4,d1                ; sous-élément
+        moveq   #11,d0
+        lsr.w   d0,d1
+        cmp.w   #$1F,d1
+        beq.s   .kp_ok
+        move.l  MI_SUBITEM(a0),d0
+        beq.s   .kp_null
+        move.l  d0,a0
+        bsr.s   .kp_walk
+        beq.s   .kp_null
+        btst    #4,MI_FLAGS+1(a0)
+        beq.s   .kp_null
+.kp_ok:
+        bsr     mn_select
+        move.w  d4,d1
+        bra.s   .kp_send
+.kp_null:
+        move.w  #MENUNULL,d1
+.kp_send:
+        move.l  #MENUPICK,d0
+        moveq   #0,d2
+        moveq   #0,d3
+        move.w  d5,d4                ; im_Qualifier
+        bsr     wn_sendkey
+.kp_out:
+        movem.l (sp)+,d2-d4/a3
+.kp_ret:
+        rts
+.kp_walk:                            ; a0 = premier maillon, d1 = rang -> a0 = maillon (Z = 1 : liste trop courte)
+        bra.s   .kw_e
+.kw_l:
+        move.l  (a0),d0              ; NextMenu / NextItem (offset 0)
+        beq.s   .kw_r
+        move.l  d0,a0
+.kw_e:
+        dbra    d1,.kw_l
+        moveq   #1,d0                ; Z = 0
+.kw_r:
+        rts
+
 ; mn_end(a4, a5) : bouton droit relâché. Code du choix (élément actif en surbrillance, sinon MENUNULL) ; un élément
 ; CHECKIT est coché (MENUTOGGLE : basculé). Couches supprimées, écran réparé, puis MENUPICK à la fenêtre.
 mn_end:
@@ -702,16 +872,7 @@ mn_end:
         move.l  IB_ITEMCUR(a5),d0
         beq.s   .me_close
         move.l  d0,a0
-        move.w  #MENUNULL,MI_NEXTSELECT(a0)
-        btst    #0,MI_FLAGS+1(a0)    ; CHECKIT
-        beq.s   .me_code
-        btst    #3,MI_FLAGS+1(a0)    ; MENUTOGGLE
-        beq.s   .me_set
-        bchg    #0,MI_FLAGS(a0)      ; CHECKED ($100)
-        bra.s   .me_code
-.me_set:
-        bset    #0,MI_FLAGS(a0)
-.me_code:
+        bsr     mn_select
         move.w  IB_ITEMNUM(a5),d7
         lsl.w   #5,d7
         or.w    IB_MENUNUM(a5),d7

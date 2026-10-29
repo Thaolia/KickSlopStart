@@ -1,9 +1,10 @@
 ; tests/menucat.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
 ; Ouvre une fenêtre sur l'écran Workbench avec un menu « Projet » dont les éléments ont des raccourcis (COMMSEQ) :
 ; en dérouler le menu (bouton droit) montre le symbole de la touche Amiga (le chat de KickSlopStart) devant chaque
-; lettre. Attend ensuite indéfiniment (CLOSEWINDOW non géré : sonde visuelle).
+; lettre. L'élément « Grisé » ('G') est inactif. Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
+; dans le titre de la fenêtre : « MENUPICK cccc qqqq #n » (code, qualificatif, rang du message).
 ; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/menucat tests/menucat.s
-; Code auteur ; structures publiques (intuition/intuition.h).
+; Code auteur ; structures publiques (intuition/intuition.h, exec/ports.h).
 
                 section code,code
 _start:
@@ -11,7 +12,7 @@ _start:
                 lea     intname(pc),a1
                 moveq   #0,d0
                 jsr     -552(a6)             ; OpenLibrary
-                move.l  d0,a5
+                move.l  d0,a5                ; a5 = IntuitionBase
                 tst.l   d0
                 beq.s   .out
                 lea     newwin(pc),a0
@@ -19,19 +20,61 @@ _start:
                 jsr     -204(a6)             ; OpenWindow
                 tst.l   d0
                 beq.s   .out
-                move.l  d0,a0
+                move.l  d0,a4                ; a4 = fenêtre
+                move.l  a4,a0
                 lea     menu(pc),a1
                 jsr     -264(a6)             ; SetMenuStrip
-                move.l  4.w,a6
+                moveq   #0,d7                ; rang du message
 .wait:
-                moveq   #0,d0
-                jsr     -318(a6)             ; Wait(0) : pour toujours
-                bra.s   .wait
+                move.l  4.w,a6
+                move.l  $56(a4),a0           ; UserPort
+                jsr     -384(a6)             ; WaitPort
+.get:
+                move.l  4.w,a6
+                move.l  $56(a4),a0
+                jsr     -372(a6)             ; GetMsg
+                tst.l   d0
+                beq.s   .wait
+                move.l  d0,a3
+                cmp.l   #$100,20(a3)         ; im_Class = MENUPICK
+                bne.s   .reply
+                addq.w  #1,d7
+                lea     tcode(pc),a0
+                move.w  24(a3),d0            ; im_Code
+                bsr.s   hex4
+                lea     tqual(pc),a0
+                move.w  26(a3),d0            ; im_Qualifier
+                bsr.s   hex4
+                lea     tnum(pc),a0
+                move.w  d7,d0
+                bsr.s   hex4
+                move.l  a4,a0
+                lea     title(pc),a1
+                move.l  #-1,a2
+                move.l  a5,a6
+                jsr     -276(a6)             ; SetWindowTitles
+.reply:
+                move.l  4.w,a6
+                move.l  a3,a1
+                jsr     -378(a6)             ; ReplyMsg
+                bra.s   .get
 .out:
                 moveq   #20,d0
                 rts
 
-newwin:         dc.w    40,30,300,80
+; hex4(a0 = 4 caractères à remplir, d0.w = valeur)
+hex4:
+                moveq   #3,d2
+.hl:
+                rol.w   #4,d0
+                move.w  d0,d1
+                and.w   #$F,d1
+                move.b  hexd(pc,d1.w),(a0)+
+                dbra    d2,.hl
+                rts
+hexd:           dc.b    "0123456789ABCDEF"
+
+newwin:         dc.w    40,30,360,80
                 dc.b    0,1
                 dc.l    $100                 ; IDCMP : MENUPICK
                 dc.l    $100F                ; WINDOWSIZING|DRAG|DEPTH|CLOSE|ACTIVATE
@@ -62,12 +105,20 @@ item2:          dc.l    item3
                 dc.b    'S',0
                 dc.l    0
                 dc.w    0
-item3:          dc.l    0
+item3:          dc.l    item4
                 dc.w    0,20,150,10
                 dc.w    $0056
                 dc.l    0
                 dc.l    it3,0
                 dc.b    'Q',0
+                dc.l    0
+                dc.w    0
+item4:          dc.l    0
+                dc.w    0,30,150,10
+                dc.w    $0046                ; ITEMTEXT|COMMSEQ|HIGHCOMP, inactif
+                dc.l    0
+                dc.l    it4,0
+                dc.b    'G',0
                 dc.l    0
                 dc.w    0
 it1:            dc.b    0,1,1,0
@@ -79,10 +130,18 @@ it2:            dc.b    0,1,1,0
 it3:            dc.b    0,1,1,0
                 dc.w    2,1
                 dc.l    0,t3,0
+it4:            dc.b    0,1,1,0
+                dc.w    2,1
+                dc.l    0,t4,0
 intname:        dc.b    "intuition.library",0
 wtitle:         dc.b    "Le chat de la touche Amiga",0
+title:          dc.b    "MENUPICK "
+tcode:          dc.b    "0000 "
+tqual:          dc.b    "0000 #"
+tnum:           dc.b    "0000",0
 mname:          dc.b    "Projet",0
 t1:             dc.b    "Ouvrir",0
 t2:             dc.b    "Sauver",0
 t3:             dc.b    "Quitter",0
+t4:             dc.b    "Grise",0
                 even

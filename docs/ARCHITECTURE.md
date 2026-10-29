@@ -588,7 +588,19 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     identiques aux vecteurs de la spec, T27/T32 = écarts ci-dessus.
   - intuition (`menus.s`) : un élément COMMSEQ affiche sa lettre à droite, précédée du symbole de la touche Amiga. Ce
     symbole est un petit chat (23 × 8 en hires, 14 × 8 en lowres, dessiné pour KickSlopStart). Les raccourcis clavier
-    Amiga-droite ne sont pas encore traités. Sonde visuelle `tests/menucat.s`.
+    Amiga-droite sont traités (point suivant). Sonde visuelle `tests/menucat.s`.
+  - intuition, raccourcis Amiga-droite (spec intuition-input-menus-v34 §3.11, 2026-10-28) :
+    - **handler** (`it_keyin` puis `mn_keyshort`) : la touche enfoncée avec RCOMMAND est convertie par la keymap
+      (`kbd_cook`). Il faut une fenêtre active avec une barre, sans requester, sans menu ouvert et sans RMBTRAP.
+      La recherche se fait dans l'ordre menus, éléments, sous-éléments ; elle compare `Command & $5F` (COMMSEQ n'est
+      pas testé) et un élément à sous-éléments ne compare que ceux-ci. Trouvé : l'événement est avalé (IECLASS_NULL,
+      le relâchement passe normalement) et l'anneau reçoit IT_MENUKEYCODE (x = code, y = qualificatif).
+    - **tâche d'entrée** (`mn_keypick`) : si menu, élément et sous-élément sont actifs, `mn_select` (CHECKIT, comme
+      à la souris) puis MENUPICK avec le code ; sinon MENUPICK MENUNULL. Le qualificatif de la touche va dans
+      im_Qualifier.
+    - Pas de MENUVERIFY (absent aussi du chemin souris).
+    - Sonde `tests/menucat.s` et commande `keyraw` de `tests/dskchg_run.sh` (Super_R = Amiga droite) : O → $F800,
+      S → $F820, élément inactif → MENUNULL, Q seul → rien ; choix à la souris inchangé ($F800).
   (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
   - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
     l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),

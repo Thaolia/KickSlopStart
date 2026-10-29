@@ -67,6 +67,7 @@ IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE =
 IT_TICKCODE      EQU $0400             ; anneau d'entrée : tic IECLASS_TIMER d'input.device (INTUITICKS)
 IT_DISKINCODE    EQU $0401             ; anneau d'entrée : IECLASS_DISKINSERTED
 IT_DISKOUTCODE   EQU $0402             ; anneau d'entrée : IECLASS_DISKREMOVED
+IT_MENUKEYCODE   EQU $0403             ; anneau d'entrée : raccourci Amiga droite, x = code de menu, y = qualificatif
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2
 
@@ -426,6 +427,7 @@ WD_FIRSTREQUEST EQU 36          ; struct Window
 WD_DMREQUEST  EQU 40
 WD_REQCOUNT   EQU 44            ; WORD
 INREQUEST     EQU $00004000     ; WD_FLAGS : au moins un requester
+MENUSTATE     EQU $00008000     ; WD_FLAGS : menus en cours
 REQSET        EQU $00000080     ; IDCMP
 REQCLEAR      EQU $00001000
 ; REQ_NO_HITTEST=1 (RED requester) : req_input_handler ne fait PAS le hit-test -> un clic DANS le gadget ne pose pas
