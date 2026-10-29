@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# tests/mk_ofs_testfile.py — génère le contenu déterministe du fichier de test OFS « KickSlop » (preuve D1).
-# 1024 octets (= 3 data blocks OFS de 488 o) avec marqueurs aux frontières de block : @0 « D1OFSOK0 »,
-# @488 « D1OFSOK1 » (2e block), @976 « D1OFSOK2 » (3e block). Le reste = motif déterministe.
-# Lancer via `python3 -I`. Usage : mk_ofs_testfile.py <sortie.bin>
+# tests/mk_ofs_testfile.py - generates the deterministic content of the OFS test file "KickSlop" (proof D1).
+# 1024 bytes (= 3 OFS data blocks of 488 bytes) with markers at the block boundaries: @0 "D1OFSOK0",
+# @488 "D1OFSOK1" (2nd block), @976 "D1OFSOK2" (3rd block). The rest = deterministic pattern.
+# Run via `python3 -I`. Usage: mk_ofs_testfile.py <output.bin>
 import sys
 
 SIZE = 1024

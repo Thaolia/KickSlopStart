@@ -1,102 +1,102 @@
-# bcpl-runtime-v34.md — Runtime BCPL de dos.library V34 (spec comportementale)
+# bcpl-runtime-v34.md — BCPL runtime of dos.library V34 (behavioural spec)
 
-> Piste ANALYSE (« dirty »). Sources : la ROM `assets/kick34005.A500` (dos 34.3) et les
-> commandes `c:` / `l:Shell-Seg` du disque `assets/wb133.adf` (Workbench 1.3.3).
-> Objectif aval : permettre à notre ROM d'exécuter les commandes BCPL du Workbench 1.3
+> ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (dos 34.3) and the
+> `c:` / `l:Shell-Seg` commands of the disk `assets/wb133.adf` (Workbench 1.3.3).
+> Downstream goal: allow our ROM to run the BCPL commands of Workbench 1.3
 > (AddBuffers, CD, Path, Execute, Run, Wait, Resident, Mount, EndCLI, Shell-Seg).
 >
-> **Légende de certitude** (sur chaque affirmation) :
-> **[O]** observé directement (ROM ou binaire WB) · **[D]** déduit d'observations convergentes ·
-> **[S]** supposé (plausible, non vérifié).
-> Provenance : **ROM** = Kickstart, **WB** = binaire du disque Workbench.
+> **Certainty legend** (on each statement):
+> **[O]** observed directly (ROM or WB binary) · **[D]** deduced from converging observations ·
+> **[S]** assumed (plausible, not verified).
+> Provenance: **ROM** = Kickstart, **WB** = binary from the Workbench disk.
 >
-> Ce document décrit des comportements, des layouts d'ABI, des numéros de globales et des
-> constantes. **Aucune suite d'instructions n'est reproduite ni paraphrasée**, et aucune adresse ROM n'est
-> citée (retirées le 2026-10-29).
+> This document describes behaviours, ABI layouts, global numbers and
+> constants. **No instruction sequence is reproduced or paraphrased**, and no ROM address is
+> cited (removed on 2026-10-29).
 
 ---
 
-## 0. Résumé exécutable (ce qu'il faut absolument respecter)
+## 0. Executable summary (what must absolutely be respected)
 
-1. **Le CLI ne distingue pas** un exécutable BCPL d'un exécutable C/asm. Il appelle toujours le
-   premier hunk avec la même convention (§4). Le « côté BCPL » d'une commande `c:` 1.3 est porté
-   par **son propre hunk 0** (stub de démarrage de 316 octets, identique dans les 14 commandes
-   examinées), qui se fabrique un **vecteur global privé** puis appelle sa globale 1 (§3.3).
-2. Ce stub **exige** à l'entrée : A2 = un GV valide contenant au minimum les globales
-   **28 (globin), 29 (getvec), 89 (findsegarray)** ; A5/A6 = routines d'appel/retour BCPL ;
-   `pr_SegList` du process = un **segarray** dont les entrées 1..`V!0` sont des segments au
-   **format BCPL** (table d'init des globales en fin de hunk) qui fournissent tout le runtime
-   (dont la globale **134 findCLI**, **30 freevec**). [O WB + D]
-3. Les arguments d'une commande BCPL sont lus par `rdargs`/`rditem` **via `rdch` sur `input()`**.
-   Le CLI a **remplacé temporairement le tampon** du FileHandle d'entrée par une copie du reste de
-   la ligne (fh_Buf/fh_Pos=0/fh_End=n). La même copie est passée en A0/D0 aux programmes C. (§5) [O ROM]
-4. Les globales **134..149** du GV privé d'une commande sont une **copie des 16 longs de la
-   `CommandLineInterface`** : copiée à l'entrée, **recopiée dans la vraie structure au retour**.
-   C'est ainsi que Failat/Prompt/Stack/Path/CD/Execute/EndCLI modifient le CLI. (§3.3, §8) [O WB]
+1. **The CLI does not distinguish** a BCPL executable from a C/asm executable. It always calls the
+   first hunk with the same convention (§4). The "BCPL side" of a 1.3 `c:` command is carried
+   by **its own hunk 0** (316-byte startup stub, identical in the 14 commands
+   examined), which builds itself a **private global vector** then calls its global 1 (§3.3).
+2. This stub **requires** on entry: A2 = a valid GV containing at least the globals
+   **28 (globin), 29 (getvec), 89 (findsegarray)**; A5/A6 = BCPL call/return routines;
+   the process's `pr_SegList` = a **segarray** whose entries 1..`V!0` are segments in
+   **BCPL format** (global init table at the end of the hunk) which provide the whole runtime
+   (including global **134 findCLI**, **30 freevec**). [O WB + D]
+3. The arguments of a BCPL command are read by `rdargs`/`rditem` **via `rdch` on `input()`**.
+   The CLI has **temporarily replaced the buffer** of the input FileHandle with a copy of the rest of
+   the line (fh_Buf/fh_Pos=0/fh_End=n). The same copy is passed in A0/D0 to C programs. (§5) [O ROM]
+4. Globals **134..149** of a command's private GV are a **copy of the 16 longs of the
+   `CommandLineInterface`**: copied on entry, **copied back into the real structure on return**.
+   This is how Failat/Prompt/Stack/Path/CD/Execute/EndCLI modify the CLI. (§3.3, §8) [O WB]
 
 ---
 
-## 1. Conventions d'appel BCPL (confirmation / corrections de la table publique)
+## 1. BCPL calling conventions (confirmation / corrections of the public table)
 
-### 1.1 Registres [O ROM + WB]
+### 1.1 Registers [O ROM + WB]
 
-| Registre | Rôle | Statut |
+| Register | Role | Status |
 |---|---|---|
-| A0 | **toujours 0** (base d'adressage : les accès mémoire BCPL se font en « 0 + adresse octet », adresse = BPTR×4) | [O] |
-| A1 | pointeur de frame BCPL courant (adresse octet, pas un BPTR) | [O] |
-| A2 | adresse (octet) du **slot 0** du vecteur global courant | [O] |
-| A4 | adresse d'entrée de la routine **en cours d'exécution** (sert de base pour les chaînes et appels locaux PC-indépendants) | [O] |
-| A5 | routine d'**appel** (call) ; A5+$10 = multiply, A5+$12 = divide | [O] |
-| A6 | routine de **retour** ; une routine BCPL rend la main par un saut à A6 | [O] |
-| D0 | à l'appel : **taille en octets de la frame de l'appelant** = décalage du nouveau A1 par rapport à l'actuel | [O] |
-| D1–D4 | 4 premiers arguments ; **D1 = résultat** au retour | [O] |
-| A7 | pile 68000 ; **inchangée** au travers d'un appel BCPL (la routine d'appel retire immédiatement l'adresse de retour qu'empile le `jsr`) | [O] |
+| A0 | **always 0** (addressing base: BCPL memory accesses are done as "0 + byte address", address = BPTR×4) | [O] |
+| A1 | current BCPL frame pointer (byte address, not a BPTR) | [O] |
+| A2 | (byte) address of **slot 0** of the current global vector | [O] |
+| A4 | entry address of the routine **currently executing** (serves as the base for strings and PC-independent local calls) | [O] |
+| A5 | **call** routine; A5+$10 = multiply, A5+$12 = divide | [O] |
+| A6 | **return** routine; a BCPL routine gives control back by a jump to A6 | [O] |
+| D0 | at the call: **size in bytes of the caller's frame** = offset of the new A1 relative to the current one | [O] |
+| D1–D4 | first 4 arguments; **D1 = result** on return | [O] |
+| A7 | 68000 stack; **unchanged** across a BCPL call (the call routine immediately removes the return address pushed by the `jsr`) | [O] |
 
-Registres non préservés par un appel : D0, D2–D7, A3 (scratch). A0 doit rester 0 ; A2/A5/A6 sont
-invariants ; A1/A4 sont restaurés par la routine de retour. [D]
+Registers not preserved by a call: D0, D2–D7, A3 (scratch). A0 must stay 0; A2/A5/A6 are
+invariant; A1/A4 are restored by the return routine. [D]
 
 ### 1.2 Frame [O ROM]
 
-Sur un appel avec D0 = *t* : la nouvelle frame commence à `A1 + t`. La routine d'appel range, dans
-les 3 longs **précédant** la nouvelle frame :
+On a call with D0 = *t*: the new frame starts at `A1 + t`. The call routine stores, in
+the 3 longs **preceding** the new frame:
 
-| Offset / nouvelle frame | Contenu |
+| Offset / new frame | Contents |
 |---|---|
-| −12 | A1 de l'appelant (frame de l'appelant) |
-| −8 | adresse de retour |
-| −4 | **A4 de l'appelé** = adresse d'entrée de la routine propriétaire de cette frame |
+| −12 | A1 of the caller (caller's frame) |
+| −8 | return address |
+| −4 | **A4 of the callee** = entry address of the routine owning this frame |
 
-puis range D1..D4 aux offsets 0, 4, 8, 12 de la nouvelle frame et saute à A4.
-Les arguments 5, 6, … sont écrits **par l'appelant** directement en mémoire aux offsets 16, 20, …
-de la future frame (= `A1_appelant + t + 16`, …) avant l'appel. Il n'y a **pas de limite** de
-nombre d'arguments (writef, sendpkt en utilisent ≥ 6).
+then stores D1..D4 at offsets 0, 4, 8, 12 of the new frame and jumps to A4.
+Arguments 5, 6, … are written **by the caller** directly into memory at offsets 16, 20, …
+of the future frame (= `A1_caller + t + 16`, …) before the call. There is **no limit** on the
+number of arguments (writef, sendpkt use ≥ 6).
 
-Au retour (saut à A6) : A1 et l'adresse de retour sont relus aux offsets −12/−8 de la frame
-courante, puis **A4 est relu à l'offset −4 de la frame de l'appelant** (donc A4 retrouve l'entrée
-de la routine appelante).
+On return (jump to A6): A1 and the return address are re-read at offsets −12/−8 of the current
+frame, then **A4 is re-read at offset −4 of the caller's frame** (so A4 recovers the entry
+of the calling routine).
 
-> **Correction de la table publique** : « −4 = ancien A4 » est imprécis. Le slot −4 d'une frame
-> contient l'**entrée de la routine qui possède la frame** (A4 de l'appelé), et A4 est restauré
-> depuis la frame **de l'appelant**. [O ROM]
+> **Correction of the public table**: "−4 = old A4" is imprecise. Slot −4 of a frame
+> contains the **entry of the routine that owns the frame** (A4 of the callee), and A4 is restored
+> from the frame **of the caller**. [O ROM]
 
-### 1.3 Arithmétique (A5+$10, A5+$12) [O ROM]
+### 1.3 Arithmetic (A5+$10, A5+$12) [O ROM]
 
-- **A5+$10 multiply** : D1 := D1 × D2 (32 bits bas, signe indifférent). Les autres registres sont préservés.
-- **A5+$12 divide** : division **signée**, quotient tronqué vers 0 en **D1**, reste en **D2** (signe
-  du reste = signe du dividende, sémantique C). Les deux résultats sont utilisables.
-- A5+$14 existe (variante interne « diviseur supposé ≥ 0 ») ; aucune commande examinée ne
-  l'utilise. Les commandes WB n'utilisent que +$10 et +$12. [O WB]
+- **A5+$10 multiply**: D1 := D1 × D2 (low 32 bits, sign irrelevant). The other registers are preserved.
+- **A5+$12 divide**: **signed** division, quotient truncated towards 0 in **D1**, remainder in **D2** (sign
+  of the remainder = sign of the dividend, C semantics). Both results are usable.
+- A5+$14 exists (internal variant "divisor assumed ≥ 0"); no command examined
+  uses it. The WB commands only use +$10 and +$12. [O WB]
 
-### 1.4 Pont LVO → BCPL (pour mémoire) [O ROM]
+### 1.4 LVO → BCPL bridge (for the record) [O ROM]
 
-Chaque vecteur LVO public de dos (−30 Open … −222 Execute) charge un **numéro de globale** puis
-saute dans un pont commun qui : sauve D2–D7/A2–A6 sur la pile C, met A0 = 0, installe une frame
-BCPL **1500 octets ($5DC) sous le SP courant** (alignée pair), charge A2/A5/A6 depuis
-`dl_A2`/`dl_A5`/`dl_A6` (base +$2A/+$2E/+$32), appelle la globale avec D1–D4 **tels que fournis
-par l'appelant C**, et renvoie D1 dans D0. Conséquence : tout appelant C d'une LVO dos doit
-disposer d'au moins ~1,5 Ko de pile libre. Correspondance LVO → globale observée :
+Each public dos LVO vector (−30 Open … −222 Execute) loads a **global number** then
+jumps into a common bridge which: saves D2–D7/A2–A6 on the C stack, sets A0 = 0, installs a BCPL
+frame **1500 bytes ($5DC) below the current SP** (even-aligned), loads A2/A5/A6 from
+`dl_A2`/`dl_A5`/`dl_A6` (base +$2A/+$2E/+$32), calls the global with D1–D4 **as supplied
+by the C caller**, and returns D1 in D0. Consequence: any C caller of a dos LVO must
+have at least ~1.5 KB of free stack. Observed LVO → global correspondence:
 
-| LVO | Fonction | Gl. | | LVO | Fonction | Gl. |
+| LVO | Function | Gl. | | LVO | Function | Gl. |
 |---|---|---|---|---|---|---|
 | −30 | Open | −1 | | −132 | IoErr | −17 |
 | −36 | Close | **93** | | −138 | CreateProc | −18 |
@@ -116,129 +116,129 @@ disposer d'au moins ~1,5 Ko de pile libre. Correspondance LVO → globale observ
 | −120 | CreateDir | −15 | | −222 | Execute | −27 |
 | −126 | CurrentDir | −16 | | | | |
 
-(!) **Anomalie V34** : la globale −20 est `clearvec` (utilitaire BCPL) et −21 sert de « LoadSeg
-sans requester » ; les LVO GetPacket/QueuePacket de la 1.3 aboutissent donc à des fonctions sans
-rapport avec leur nom documenté. [O ROM pour le câblage, D pour −21]
+(!) **V34 anomaly**: global −20 is `clearvec` (BCPL utility) and −21 serves as "LoadSeg
+without requester"; the 1.3 GetPacket/QueuePacket LVOs therefore end up in functions unrelated
+to their documented name. [O ROM for the wiring, D for −21]
 
-Les globales **négatives** sont des adaptateurs « ABI C » (arguments C : chaînes C, APTR) ; les
-positives sont l'ABI BCPL (BPTR/BSTR). Les globales positives citées en gras sont partagées : la LVO
-appelle directement la globale BCPL (arguments déjà au format BPTR, ex. FileHandle/lock). [O]
+The **negative** globals are "C ABI" adapters (C arguments: C strings, APTR); the
+positive ones are the BCPL ABI (BPTR/BSTR). The positive globals cited in bold are shared: the LVO
+calls the BCPL global directly (arguments already in BPTR format, e.g. FileHandle/lock). [O]
 
 ---
 
-## 2. Q1 — Le vecteur global (GV)
+## 2. Q1 — The global vector (GV)
 
-### 2.1 Format général [O ROM + WB]
-- Un GV est un bloc de longs indexé de **−N_neg à +N_max**. A2 (et `dl_GV`, `pr_GlobVec`)
-  pointent sur le **slot 0** (adresse octet, pas BPTR).
-- **GV[0] = numéro de la plus grande globale autorisée** (« slot count »). `globin` refuse
-  d'installer une globale de numéro > GV[0] (comparaison signée : les numéros négatifs passent
-  toujours). [O ROM]
-- Partie négative : **50 longs** (slots −50..−1) dans tous les GV observés (dos et commandes). [O]
+### 2.1 General format [O ROM + WB]
+- A GV is a block of longs indexed from **−N_neg to +N_max**. A2 (and `dl_GV`, `pr_GlobVec`)
+  point to **slot 0** (byte address, not BPTR).
+- **GV[0] = number of the highest allowed global** ("slot count"). `globin` refuses
+  to install a global with a number > GV[0] (signed comparison: negative numbers always
+  pass). [O ROM]
+- Negative part: **50 longs** (slots −50..−1) in all the GVs observed (dos and commands). [O]
 
-### 2.2 Le GV de dos (`dl_GV`) [O ROM]
-- Alloué par le code d'init de dos (rt_Init) : un bloc `AllocMem(804 octets = 201 longs,
-  MEMF_PUBLIC)` **non effacé** ; `dl_GV` (base+$26) = début du bloc + 200 octets (50 longs
-  négatifs) → slots −50..+150. **GV[0] = 150**.
-- Les slots non définis gardent **le contenu indéfini de la mémoire** (pas de remplissage). [O]
-- Il est rempli par `globin` des segments BCPL de la ROM lors du démarrage du **premier process**
+### 2.2 The dos GV (`dl_GV`) [O ROM]
+- Allocated by dos's init code (rt_Init): a block `AllocMem(804 bytes = 201 longs,
+  MEMF_PUBLIC)` **not cleared**; `dl_GV` (base+$26) = start of the block + 200 bytes (50 negative
+  longs) → slots −50..+150. **GV[0] = 150**.
+- Undefined slots keep **the undefined contents of the memory** (no filling). [O]
+- It is filled by `globin` of the ROM's BCPL segments when the **first process** starts
   (§2.4).
-- C'est **le même GV** que : le premier process (« Initial CLI »), tous les CLI créés par
-  Run/NewCLI (qui passent le GV de leur parent, cf. §8), et le pont LVO. [O ROM + WB]
-- **GV partagé ≠ GV de commande** : une commande BCPL ne travaille **jamais** dans `dl_GV` ; son
-  stub crée un GV privé (§3.3). `pr_GlobVec` du process CLI n'est pas modifié pendant la commande. [O WB]
+- It is **the same GV** as: the first process ("Initial CLI"), all the CLIs created by
+  Run/NewCLI (which pass their parent's GV, cf. §8), and the LVO bridge. [O ROM + WB]
+- **Shared GV ≠ command GV**: a BCPL command **never** works in `dl_GV`; its
+  stub creates a private GV (§3.3). The CLI process's `pr_GlobVec` is not modified during the command. [O WB]
 
-### 2.3 Rangement [O ROM]
-- `pr_GlobVec` (process +$88) = **APTR** (adresse octet du slot 0), pas un BPTR. (Run le relit
-  et le convertit en BPTR avant de le passer à createproc.) [O]
-- `dl_GV` (DosLibrary +$26) = APTR idem. `dl_A2` (+$2A) = même valeur ; `dl_A5` (+$2E) / `dl_A6`
-  (+$32) = adresses des routines d'appel / retour. [O]
+### 2.3 Storage [O ROM]
+- `pr_GlobVec` (process +$88) = **APTR** (byte address of slot 0), not a BPTR. (Run reads it
+  back and converts it to a BPTR before passing it to createproc.) [O]
+- `dl_GV` (DosLibrary +$26) = APTR likewise. `dl_A2` (+$2A) = same value; `dl_A5` (+$2E) / `dl_A6`
+  (+$32) = addresses of the call / return routines. [O]
 
-### 2.4 Segarray (`pr_SegList`) et initialisation [O ROM]
-- `pr_SegList` (process +$80) = **BPTR vers un « segarray »** : `V!0 = n`, `V!1..V!n` = BPTR de
-  chaînes de segments. La globale 89 (`findsegarray`) le renvoie.
-- Segarray ROM : `V!0 = 4`, mais **7 entrées** utiles :
-  1. noyau BCPL (chaîne de 4 segments : mémoire, process, I/O devices, coroutines, chaînes…),
-  2. dos (« BLIB » : flux, rdargs, writef, fichiers…),
-  3. `cliinit` (globale 133 ; startup-sequence, fenêtre CON:…),
-  4. le **CLI** (globale 1),
-  5. console-handler, 6. file system (chaîne de 10 segments, globales jusqu'à 266), 7. validateur.
-  Seules les entrées 1..4 (`V!0`) sont « installées » dans les GV ; les 5..7 servent de segments
-  pour d'autres process (handlers). [O pour le contenu, D pour le rôle exact de 5..7]
-- Démarrage d'un process BCPL (créé par la globale 33) : remplissage de sa pile avec le motif
-  **$ABABABAB**, création de la frame de base BCPL au **bas** de la pile (`!1 = −1`, `!2` = limite
-  haute), GV[12] := BPTR de cette base, puis `globin(V!i)` pour i = 1..V!0 dans **pr_GlobVec**,
-  puis **attente du packet de démarrage** (taskwait), puis `start(pkt)` (globale 1, frame 32
-  octets). Au retour de start : fin du process. [O]
-- Le premier process est créé par l'init de dos avec : segarray ROM, pile **400 longs (1600
-  octets)**, pri 0, nom BSTR **"Initial CLI"**, GV = `dl_GV`. [O]
+### 2.4 Segarray (`pr_SegList`) and initialisation [O ROM]
+- `pr_SegList` (process +$80) = **BPTR to a "segarray"**: `V!0 = n`, `V!1..V!n` = BPTRs of
+  segment chains. Global 89 (`findsegarray`) returns it.
+- ROM segarray: `V!0 = 4`, but **7 useful entries**:
+  1. BCPL kernel (chain of 4 segments: memory, process, I/O devices, coroutines, strings…),
+  2. dos ("BLIB": streams, rdargs, writef, files…),
+  3. `cliinit` (global 133; startup-sequence, CON: window…),
+  4. the **CLI** (global 1),
+  5. console-handler, 6. file system (chain of 10 segments, globals up to 266), 7. validator.
+  Only entries 1..4 (`V!0`) are "installed" in the GVs; 5..7 serve as segments
+  for other processes (handlers). [O for the contents, D for the exact role of 5..7]
+- Start of a BCPL process (created by global 33): filling of its stack with the pattern
+  **$ABABABAB**, creation of the BCPL base frame at the **bottom** of the stack (`!1 = −1`, `!2` = upper
+  limit), GV[12] := BPTR of that base, then `globin(V!i)` for i = 1..V!0 into **pr_GlobVec**,
+  then **wait for the startup packet** (taskwait), then `start(pkt)` (global 1, frame of 32
+  bytes). On return from start: end of the process. [O]
+- The first process is created by the dos init with: ROM segarray, stack **400 longs (1600
+  bytes)**, pri 0, BSTR name **"Initial CLI"**, GV = `dl_GV`. [O]
 
 ---
 
-## 3. Q3 — Format d'un segment BCPL, `globin`, stub des commandes
+## 3. Q3 — Format of a BCPL segment, `globin`, command stub
 
-### 3.1 Format d'un hunk BCPL [O ROM + WB]
-Pour un hunk de code de *N* longs (les données chargées du hunk, c.-à-d. `BADDR(seg)+4`) :
+### 3.1 Format of a BCPL hunk [O ROM + WB]
+For a code hunk of *N* longs (the loaded data of the hunk, i.e. `BADDR(seg)+4`):
 
-| Position (en longs, depuis le début des données du hunk) | Contenu |
+| Position (in longs, from the start of the hunk's data) | Contents |
 |---|---|
-| 0 | **N** = longueur de la section en longs (égale à la taille du hunk) |
-| 1 … | code (la routine globale 1 commence typiquement à l'octet 4) |
-| … | (chaînes BSTR alignées sur 4, données) |
-| N−2k−2 | **0** (terminateur) |
-| N−2k−1, N−2k | paire k : **numéro de globale**, puis **offset octet** |
-| … | … autres paires (numéro à l'adresse basse, offset à l'adresse haute) |
-| N−1 | **plus grande globale référencée** par ce segment |
+| 0 | **N** = length of the section in longs (equal to the size of the hunk) |
+| 1 … | code (the global 1 routine typically starts at byte 4) |
+| … | (BSTR strings aligned on 4, data) |
+| N−2k−2 | **0** (terminator) |
+| N−2k−1, N−2k | pair k: **global number**, then **byte offset** |
+| … | … other pairs (number at the lower address, offset at the higher address) |
+| N−1 | **highest global referenced** by this segment |
 
-- L'**offset est relatif au début des données du hunk** (le long « N »), en octets. Valeur
-  installée = adresse absolue `BADDR(seg)+4+offset` (une **adresse machine**, pas un BPTR). [O]
-- Exemples [O WB] : AddBuffers (127 longs) : paire (1, $4), max 102. CD : (84, $2B8), (1, $4),
-  max 153. Execute : (166, $582), (1, $4), max 168. Resident : (1, $CC), max 109.
-  Shell-Seg (1 hunk de 1770 longs) : (1, $4), max 133.
-- Un exécutable BCPL de commande = fichier hunk ordinaire (HUNK_HEADER/HUNK_CODE), **sans
-  relocations** dans les cas examinés, avec deux hunks : hunk 0 = stub (79 longs), hunk 1 = le
-  module BCPL au format ci-dessus. Rien dans le fichier ne le marque « BCPL » (pas de magic). [O]
+- The **offset is relative to the start of the hunk's data** (the "N" long), in bytes. Value
+  installed = absolute address `BADDR(seg)+4+offset` (a **machine address**, not a BPTR). [O]
+- Examples [O WB]: AddBuffers (127 longs): pair (1, $4), max 102. CD: (84, $2B8), (1, $4),
+  max 153. Execute: (166, $582), (1, $4), max 168. Resident: (1, $CC), max 109.
+  Shell-Seg (1 hunk of 1770 longs): (1, $4), max 133.
+- A BCPL command executable = ordinary hunk file (HUNK_HEADER/HUNK_CODE), **without
+  relocations** in the cases examined, with two hunks: hunk 0 = stub (79 longs), hunk 1 = the
+  BCPL module in the format above. Nothing in the file marks it as "BCPL" (no magic). [O]
 
-### 3.2 `globin(seg)` — globale 28 (GV +$70) [O ROM]
-- Parcourt la **chaîne** de segments à partir de `seg` (BPTR ; suit le lien en tête de chaque
-  segment jusqu'à 0). Pour chaque segment, parcourt la table depuis la fin (en sautant le long
-  « max ») vers le terminateur 0, et pour chaque paire écrit `GV[num] := adresse`.
-  `seg = 0` : rien à faire, succès.
-- **Pas de vérification** du long « max » ; seule vérification : `num > GV[0]` → échec.
-- Renvoie **−1 (TRUE)** si tout est installé ; sinon **0** avec **Result2 = 111** (valeur non
-  documentée publiquement). Les paires déjà traitées avant l'erreur restent installées.
-- Les paires sont traitées de la dernière vers la première : si un même numéro apparaît deux fois,
-  **la paire de plus basse adresse l'emporte**. [D]
+### 3.2 `globin(seg)` — global 28 (GV +$70) [O ROM]
+- Walks the **chain** of segments starting from `seg` (BPTR; follows the link at the head of each
+  segment until 0). For each segment, walks the table from the end (skipping the "max"
+  long) towards the 0 terminator, and for each pair writes `GV[num] := address`.
+  `seg = 0`: nothing to do, success.
+- **No check** of the "max" long; the only check: `num > GV[0]` → failure.
+- Returns **−1 (TRUE)** if everything is installed; otherwise **0** with **Result2 = 111** (value not
+  publicly documented). The pairs already processed before the error remain installed.
+- The pairs are processed from the last to the first: if the same number appears twice,
+  **the pair at the lowest address wins**. [D]
 
-### 3.3 Stub de démarrage des commandes `c:` (hunk 0, 316 octets) [O WB]
-Identique (md5 `d6b59e0e42e7bc95b5f0dd07c9697e85`) dans AddBuffers, CD, Echo, EndCLI, Execute,
-Failat, Mount, NewCLI, Path, Prompt, Resident, Run, Stack, Wait. Effets observables, dans l'ordre :
+### 3.3 Startup stub of the `c:` commands (hunk 0, 316 bytes) [O WB]
+Identical (md5 `d6b59e0e42e7bc95b5f0dd07c9697e85`) in AddBuffers, CD, Echo, EndCLI, Execute,
+Failat, Mount, NewCLI, Path, Prompt, Resident, Run, Stack, Wait. Observable effects, in order:
 
-1. Lit le segarray du process via la globale **89** du GV appelant (A2 à l'entrée).
-2. Calcule `max` = le plus grand des longs « max » des hunks **de la commande** (hunks suivant le
-   stub dans la seglist), avec un **plancher de 149**. (Les segments ROM ne sont pas pris en compte.)
-3. Alloue via la globale **29** du GV appelant un vecteur de `max + 50` longs (→ 50 slots négatifs
-   + slots 0..max). Échec → la commande renvoie **−1** en D0.
-4. Initialise **GV[0] = max** et **GV[i] = $474C0001 + 2·i** pour i = 1..max (marqueur « GL » +
-   nombre impair : appeler une globale non définie saute à une adresse **impaire** → erreur
-   d'adresse 68000). **Les slots négatifs ne sont pas initialisés** (sauf par globin ensuite).
-5. Construit la frame BCPL de base **au bas de la pile de la commande** : base = (A7 d'entrée + 8)
-   − taille de pile en octets (lue à 4(A7) d'entrée) ; `base!1 = −1`, `base!2 = base + taille
-   − 160` (limite) ; **GV[12] := BPTR(base)** (« currco »/stackbase).
-6. Avec la globale **28** du GV **appelant** (mais A2 = nouveau GV), installe : les entrées
-   1..`V!0` du segarray (le runtime), puis la seglist de la commande (à partir du hunk 1). Tout
-   échec → D0 = −1.
-7. Appelle la globale **134** (findCLI) du **nouveau** GV. Si non nul : copie les **16 longs** de
-   la `CommandLineInterface` dans **GV[134..149]**.
-8. Remplace **GV[2] (stop)** par sa propre routine de sortie (stop(n) fait revenir de l'étape 9
-   avec le code n, quel que soit le niveau d'imbrication — A7 n'ayant pas bougé).
-9. Appelle **GV[1] (start)** avec D1 = 0, frame 32 octets. Retour normal ⇒ code retour **0** (le
-   D1 rendu par start est **ignoré**) ; sortie par stop(n) ⇒ code **n**.
-10. Si l'étape 7 avait trouvé une CLI : **recopie GV[134..149] dans la `CommandLineInterface`**.
-11. Libère le GV privé (globale 30 du nouveau GV) et revient (`rts`) avec le code en **D0**.
+1. Reads the process's segarray via global **89** of the calling GV (A2 on entry).
+2. Computes `max` = the largest of the "max" longs of the hunks **of the command** (hunks following the
+   stub in the seglist), with a **floor of 149**. (The ROM segments are not taken into account.)
+3. Allocates via global **29** of the calling GV a vector of `max + 50` longs (→ 50 negative slots
+   + slots 0..max). Failure → the command returns **−1** in D0.
+4. Initialises **GV[0] = max** and **GV[i] = $474C0001 + 2·i** for i = 1..max ("GL" marker +
+   odd number: calling an undefined global jumps to an **odd** address → 68000 address
+   error). **The negative slots are not initialised** (except by globin afterwards).
+5. Builds the base BCPL frame **at the bottom of the command's stack**: base = (entry A7 + 8)
+   − stack size in bytes (read at 4(A7) on entry); `base!1 = −1`, `base!2 = base + size
+   − 160` (limit); **GV[12] := BPTR(base)** ("currco"/stackbase).
+6. With global **28** of the **calling** GV (but A2 = new GV), installs: entries
+   1..`V!0` of the segarray (the runtime), then the command's seglist (starting from hunk 1). Any
+   failure → D0 = −1.
+7. Calls global **134** (findCLI) of the **new** GV. If non-zero: copies the **16 longs** of
+   the `CommandLineInterface` into **GV[134..149]**.
+8. Replaces **GV[2] (stop)** with its own exit routine (stop(n) makes step 9 return
+   with code n, whatever the nesting level — A7 not having moved).
+9. Calls **GV[1] (start)** with D1 = 0, frame of 32 bytes. Normal return ⇒ return code **0** (the
+   D1 returned by start is **ignored**); exit by stop(n) ⇒ code **n**.
+10. If step 7 had found a CLI: **copies GV[134..149] back into the `CommandLineInterface`**.
+11. Frees the private GV (global 30 of the new GV) and returns (`rts`) with the code in **D0**.
 
-Correspondance GV[134+i] ↔ champ CLI (offset 4·i) [O WB par usage : Failat→139, Prompt→140,
-Stack→147, Path→136, CD→135, EndCLI→141/142/145, Execute→142/143] :
+Correspondence GV[134+i] ↔ CLI field (offset 4·i) [O WB by use: Failat→139, Prompt→140,
+Stack→147, Path→136, CD→135, EndCLI→141/142/145, Execute→142/143]:
 
 | Gl. | CLI | Gl. | CLI | Gl. | CLI | Gl. | CLI |
 |---|---|---|---|---|---|---|---|
@@ -247,1215 +247,1215 @@ Stack→147, Path→136, CD→135, EndCLI→141/142/145, Execute→142/143] :
 | 136 | CommandDir | 140 | Prompt | 144 | Interactive | 148 | StandardOutput |
 | 137 | ReturnCode | 141 | StandardInput | 145 | Background | 149 | Module |
 
-Les commandes utilisent aussi des globales **≥ 150** comme variables statiques privées (CD 150–153,
-Execute 150–168, Mount 150–158) — d'où l'intérêt du GV privé. [O WB]
+The commands also use globals **≥ 150** as private static variables (CD 150–153,
+Execute 150–168, Mount 150–158) — hence the point of the private GV. [O WB]
 
-### 3.4 Distinguer BCPL / C [O ROM]
-- **Le CLI ne fait aucune différence** : il charge (LoadSeg), puis appelle le premier hunk via la
-  globale 121 (§4) dans tous les cas.
-- `dn_GlobalVec` (DeviceNode) est l'unique « drapeau BCPL » de dos, et ne concerne que les
-  **handlers** lancés par dos (cf. `dos-v34-spec.md`), pas les commandes.
-- Un segment directement BCPL **sans stub** (ex. `l:Shell-Seg`, le CLI ROM, les handlers) n'est
-  exécutable que comme **entrée de segarray d'un process** (createproc + globin au démarrage), pas
-  comme commande. [O/D]
+### 3.4 Distinguishing BCPL / C [O ROM]
+- **The CLI makes no difference**: it loads (LoadSeg), then calls the first hunk via
+  global 121 (§4) in all cases.
+- `dn_GlobalVec` (DeviceNode) is dos's only "BCPL flag", and only concerns the
+  **handlers** launched by dos (cf. `dos-v34-spec.md`), not the commands.
+- A directly BCPL segment **without stub** (e.g. `l:Shell-Seg`, the ROM CLI, the handlers) is only
+  executable as a **segarray entry of a process** (createproc + globin at startup), not
+  as a command. [O/D]
 
 ---
 
-## 4. Q4 — Lancement d'une commande par le CLI
+## 4. Q4 — Launch of a command by the CLI
 
-### 4.1 Recherche [O ROM]
-- Nom lu par `rditem` dans `cli_CommandName` (tampon de 25 longs → ≤ 103 caractères). Item vide
-  → ligne ignorée ; erreur → message « Error in command name ».
-- Recherche : répertoire courant, puis chaque nœud du **chemin `cli_CommandDir`** (liste de nœuds
-  `!0` = BPTR suivant, `!1` = lock), puis `C:` (via deviceproc + le lock rendu en Result2). Une
-  seconde passe a lieu si l'échec n'est pas 218 (device non monté). **Pas de liste Resident** dans
-  le CLI ROM (c'est Shell-Seg qui la gère). [O]
-- Non trouvé : si l'erreur est 205 (objet absent) ou 218 → « Unknown command %S » ; sinon
-  « Unable to load %S: » + message d'erreur (globale 104). [O]
+### 4.1 Lookup [O ROM]
+- Name read by `rditem` into `cli_CommandName` (buffer of 25 longs → ≤ 103 characters). Empty item
+  → line ignored; error → message "Error in command name".
+- Lookup: current directory, then each node of the **`cli_CommandDir` path** (list of nodes
+  `!0` = next BPTR, `!1` = lock), then `C:` (via deviceproc + the lock returned in Result2). A
+  second pass takes place if the failure is not 218 (device not mounted). **No Resident list** in
+  the ROM CLI (it is Shell-Seg that manages it). [O]
+- Not found: if the error is 205 (object not found) or 218 → "Unknown command %S"; otherwise
+  "Unable to load %S: " + error message (global 104). [O]
 
-### 4.2 Préparation (routine « run » locale au CLI) [O ROM]
-1. Lit des caractères après le nom (le terminateur du nom a été remis par `unrdch`), saute blancs
-   et tabulations, traite les redirections **`<fichier`** (findinput) et **`>fichier`**
-   (findoutput) — uniquement **avant** les arguments ; une deuxième redirection du même sens →
-   « too many > or < » ; échec d'ouverture → « Unable to open redirection file ».
-2. Copie **le reste de la ligne** (jusqu'au `\n` inclus ou EOF) dans un tampon local de **256
-   octets** (dépassement → « command too long ») avec ces règles :
-   - `"` bascule l'état « entre guillemets » (le `"` est copié) ;
-   - `;` hors guillemets **arrête la copie** (commentaire), la lecture continue jusqu'au `\n` ;
-   - `+` suivi immédiatement de `\n` : le `\n` est copié **et la lecture continue sur la ligne
-     suivante** (continuation) ; `+` sinon : copié tel quel ;
-   - le `\n` final est copié (sauf s'il tombe dans un commentaire).
-3. Entrée de la commande = le fichier `<` sinon **`cli_StandardInput`** (pas CurrentInput : dans un
-   script Execute, la commande lit la console). Sortie = le fichier `>` sinon `output()` courant.
-4. **Injection des arguments** : sauvegarde `fh_Buf`, `fh_Pos`, `fh_End` du FileHandle d'entrée,
-   puis `fh_Buf` := BPTR du tampon local, `fh_Pos` := 0, `fh_End` := *n* (octets copiés).
-   `selectinput`/`selectoutput` sur ces flux ; **pr_Result2 := 0**.
-5. Appel `runcommand(seg, cli_DefaultStack, BPTR tampon, n)` (globale 121).
-6. Au retour : restaure `fh_Buf` (seulement s'il pointe encore sur le tampon local) et `fh_Pos` ;
-   restaure `fh_End` **sauf s'il vaut 0** (une commande peut forcer l'EOF, cf. EndCLI) ; ferme les
-   fichiers `<`/`>` éventuels.
+### 4.2 Preparation (CLI-local "run" routine) [O ROM]
+1. Reads characters after the name (the name's terminator was put back by `unrdch`), skips blanks
+   and tabs, handles the redirections **`<file`** (findinput) and **`>file`**
+   (findoutput) — only **before** the arguments; a second redirection in the same direction →
+   "too many > or <"; open failure → "Unable to open redirection file".
+2. Copies **the rest of the line** (up to the `\n` included or EOF) into a local buffer of **256
+   bytes** (overflow → "command too long") with these rules:
+   - `"` toggles the "inside quotes" state (the `"` is copied);
+   - `;` outside quotes **stops the copy** (comment), reading continues up to the `\n`;
+   - `+` immediately followed by `\n`: the `\n` is copied **and reading continues on the next
+     line** (continuation); `+` otherwise: copied as is;
+   - the final `\n` is copied (unless it falls inside a comment).
+3. The command's input = the `<` file otherwise **`cli_StandardInput`** (not CurrentInput: in an
+   Execute script, the command reads the console). Output = the `>` file otherwise the current `output()`.
+4. **Injection of the arguments**: saves `fh_Buf`, `fh_Pos`, `fh_End` of the input FileHandle,
+   then `fh_Buf` := BPTR of the local buffer, `fh_Pos` := 0, `fh_End` := *n* (bytes copied).
+   `selectinput`/`selectoutput` on these streams; **pr_Result2 := 0**.
+5. Call `runcommand(seg, cli_DefaultStack, BPTR buffer, n)` (global 121).
+6. On return: restores `fh_Buf` (only if it still points to the local buffer) and `fh_Pos`;
+   restores `fh_End` **unless it is 0** (a command can force EOF, cf. EndCLI); closes the
+   possible `<`/`>` files.
 
-### 4.3 `runcommand(seg, pile, args, len)` — globale 121 (GV +$1E4) [O ROM]
-- Alloue la pile par `getvec(pile)` (pile en **longs** ; échec → renvoie **−1** sans appeler).
-- Haut de pile = fin du vecteur. Sur la nouvelle pile (de haut en bas) : l'ancien A7, puis la
-  **taille de pile en octets** (= pile×4) ; **`pr_ReturnAddr` := adresse de ce long « taille »**
-  (l'ancienne valeur est sauvée et restaurée au retour).
-- Appel par `jsr` de `BADDR(seg)+4` (premier hunk). **État à l'entrée de la commande** :
+### 4.3 `runcommand(seg, stack, args, len)` — global 121 (GV +$1E4) [O ROM]
+- Allocates the stack by `getvec(stack)` (stack in **longs**; failure → returns **−1** without calling).
+- Top of stack = end of the vector. On the new stack (from top to bottom): the old A7, then the
+  **stack size in bytes** (= stack×4); **`pr_ReturnAddr` := address of this "size" long**
+  (the old value is saved and restored on return).
+- Call by `jsr` of `BADDR(seg)+4` (first hunk). **State on entry to the command**:
 
-| Élément | Valeur |
+| Element | Value |
 |---|---|
-| (A7) | adresse de retour |
-| 4(A7) | taille de la pile en octets (= cli_DefaultStack × 4) |
-| 8(A7) | (interne : ancien A7) |
-| A0 | adresse octet de la copie des arguments |
-| D0 | longueur des arguments (**inclut** le `\n` final) |
-| D2 | taille de pile en octets (même valeur que 4(A7)) [O, non contractuel] |
-| A1 | frame BCPL de l'appelant (dans la pile du CLI) |
-| A2 | GV du CLI (= `dl_GV` pour le CLI ROM) |
-| A5 / A6 | routines BCPL d'appel / retour |
-| A3 | BADDR(seg) [O, non contractuel] |
-| input()/output() | flux préparés §4.2, tampon d'entrée = arguments |
+| (A7) | return address |
+| 4(A7) | stack size in bytes (= cli_DefaultStack × 4) |
+| 8(A7) | (internal: old A7) |
+| A0 | byte address of the copy of the arguments |
+| D0 | length of the arguments (**includes** the final `\n`) |
+| D2 | stack size in bytes (same value as 4(A7)) [O, not contractual] |
+| A1 | caller's BCPL frame (in the CLI's stack) |
+| A2 | GV of the CLI (= `dl_GV` for the ROM CLI) |
+| A5 / A6 | BCPL call / return routines |
+| A3 | BADDR(seg) [O, not contractual] |
+| input()/output() | streams prepared in §4.2, input buffer = arguments |
 | pr_Result2 | 0 |
 
-- **Pile BCPL = pile 68000** : même bloc mémoire. Le stub BCPL bâtit ses frames **depuis le bas**
-  (début du vecteur getvec) vers le haut, tandis que A7 descend depuis le haut. [O WB]
-- Le programme rend la main par `rts` avec **D0 = code retour**. `runcommand` restaure lui-même
-  A1/A2/A5/A6, `pr_ReturnAddr` et l'ancien A7 : la commande n'a **aucun registre à préserver**. [O]
-- Sortie anticipée : la globale 2 de `dl_GV` (= LVO Exit) remet A7 à `pr_ReturnAddr − 4` et
-  exécute un `rts` avec D0 = code → retour au même point que le `rts` normal. [O]
-- Libère la pile, renvoie le code en D1. **Ne touche pas pr_Result2.** [O]
+- **BCPL stack = 68000 stack**: same memory block. The BCPL stub builds its frames **from the bottom**
+  (start of the getvec vector) upwards, while A7 goes down from the top. [O WB]
+- The program gives control back by `rts` with **D0 = return code**. `runcommand` itself restores
+  A1/A2/A5/A6, `pr_ReturnAddr` and the old A7: the command has **no register to preserve**. [O]
+- Early exit: global 2 of `dl_GV` (= LVO Exit) resets A7 to `pr_ReturnAddr − 4` and
+  executes an `rts` with D0 = code → return to the same point as the normal `rts`. [O]
+- Frees the stack, returns the code in D1. **Does not touch pr_Result2.** [O]
 
-### 4.4 Après la commande (CLI) [O ROM]
-- `cli_ReturnCode` := code ; `cli_Result2` := pr_Result2 si code ≠ 0, sinon 0.
+### 4.4 After the command (CLI) [O ROM]
+- `cli_ReturnCode` := code; `cli_Result2` := pr_Result2 if code ≠ 0, otherwise 0.
 - `selectoutput(cli_StandardOutput)`, `selectinput(cli_CurrentInput)`.
-- Si code ≥ `cli_FailLevel` **et CLI non interactif** : affiche « %S failed returncode %N », puis
-  traite l'entrée courante **comme en fin de fichier** (abandon du script Execute, §4.5). En mode
-  interactif, aucun effet (ni message ni abandon).
-- Se resynchronise sur la fin de ligne : `unrdch()` puis lit jusqu'à `\n`/EOF (normalement 1 seul
-  caractère, puisque la ligne a déjà été consommée par l'étape §4.2).
+- If code ≥ `cli_FailLevel` **and CLI not interactive**: displays "%S failed returncode %N", then
+  handles the current input **as at end of file** (abandon of the Execute script, §4.5). In
+  interactive mode, no effect (neither message nor abandon).
+- Resynchronises on the end of line: `unrdch()` then reads up to `\n`/EOF (normally only 1
+  character, since the line has already been consumed by step §4.2).
 - `unloadseg(cli_Module)`, `cli_Module` := 0.
-- Code **−1** = cas spécial « impossible de lancer » (traité comme un échec de chargement).
+- Code **−1** = special case "cannot be launched" (treated as a load failure).
 
-### 4.5 Boucle et fin de flux du CLI [O ROM]
-- `cli_Interactive` := (non `cli_Background`) **et** (`cli_StandardInput` = `cli_CurrentInput`).
-- Interactif : écrit le caractère 15, puis `writef(cli_Prompt, numéro de tâche)`, puis `wrch(0)`
-  (le NUL force le vidage du tampon console). Non interactif : teste CTRL-D →
-  « **BREAK - CLI » et abandon du script.
-- EOF sur l'entrée courante :
-  - script (CurrentInput ≠ StandardInput) : ferme le script, **supprime `cli_CommandFile`** s'il
-    est non vide (fichier temporaire d'Execute) puis le vide, revient à StandardInput,
-    **FailLevel := 10** ;
-  - console, CLI non Background : `fh_End` := −1 sur stdin (prochaine lecture redemande au
-    handler) et écrit 1 à l'offset $24 du FileHandle [O, sens non élucidé] ;
-  - **Background** : fin du CLI (vidage de la sortie, fermetures, libération de la liste de
-    chemins, `rn_TaskArray[n]` := 0, fin du process).
+### 4.5 Loop and end of stream of the CLI [O ROM]
+- `cli_Interactive` := (not `cli_Background`) **and** (`cli_StandardInput` = `cli_CurrentInput`).
+- Interactive: writes character 15, then `writef(cli_Prompt, task number)`, then `wrch(0)`
+  (the NUL forces the flush of the console buffer). Non-interactive: tests CTRL-D →
+  "**BREAK - CLI" and abandon of the script.
+- EOF on the current input:
+  - script (CurrentInput ≠ StandardInput): closes the script, **deletes `cli_CommandFile`** if it
+    is not empty (Execute's temporary file) then empties it, returns to StandardInput,
+    **FailLevel := 10**;
+  - console, non-Background CLI: `fh_End` := −1 on stdin (the next read asks the
+    handler again) and writes 1 at offset $24 of the FileHandle [O, meaning not elucidated];
+  - **Background**: end of the CLI (flush of the output, closings, freeing of the path
+    list, `rn_TaskArray[n]` := 0, end of the process).
 
 ---
 
-## 5. Q5 — Lecture des arguments : flux, rdargs, rditem
+## 5. Q5 — Reading the arguments: streams, rdargs, rditem
 
-### 5.1 FileHandle vu par le runtime BCPL [O ROM]
-FileHandle = vecteur `getvec` de **11 longs** (44 o) + en-tête getvec, alloué effacé :
+### 5.1 FileHandle as seen by the BCPL runtime [O ROM]
+FileHandle = `getvec` vector of **11 longs** (44 b) + getvec header, allocated cleared:
 
-| Off. | Champ | Usage runtime |
+| Off. | Field | Runtime use |
 |---|---|---|
-| $04 | fh_Interactive (fh_Port) | ≠ 0 ⇒ flux interactif (renvoyé tel quel par IsInteractive, gl. −26) |
-| $08 | fh_Type | MsgPort du handler (0 pour NIL:) |
-| $0C | fh_Buf | **BPTR** du tampon |
-| $10 | fh_Pos | index **octet** du prochain caractère |
-| $14 | fh_End | index octet de fin de données (lecture) / capacité (écriture) |
-| $18 | fh_Funcs | **adresse machine** d'une routine BCPL « remplir » (lecture) |
-| $1C | fh_Func2 | adresse d'une routine BCPL « vider » (écriture) |
-| $20 | fh_Func3 | adresse d'une routine BCPL « fermer » |
-| $24 | fh_Args | argument handler (fh_Arg1) passé dans les packets |
+| $04 | fh_Interactive (fh_Port) | ≠ 0 ⇒ interactive stream (returned as is by IsInteractive, gl. −26) |
+| $08 | fh_Type | MsgPort of the handler (0 for NIL:) |
+| $0C | fh_Buf | **BPTR** of the buffer |
+| $10 | fh_Pos | **byte** index of the next character |
+| $14 | fh_End | byte index of the end of data (read) / capacity (write) |
+| $18 | fh_Funcs | **machine address** of a BCPL "fill" routine (read) |
+| $1C | fh_Func2 | address of a BCPL "flush" routine (write) |
+| $20 | fh_Func3 | address of a BCPL "close" routine |
+| $24 | fh_Args | handler argument (fh_Arg1) passed in the packets |
 
-- À l'ouverture (`findinput`/`findoutput`, mode 1005/1006) : `fh_Pos = fh_End = −1`, les trois
-  routines installées. `*` → console (`pr_ConsoleTask`) ; `NIL:` → aucun handler, routines à 0
-  (lecture = EOF immédiat, écriture = caractères ignorés). Sinon deviceproc + packet
-  ACTION_FINDINPUT/OUTPUT (arg1 = FileHandle, arg2 = lock rendu par deviceproc, arg3 = nom). [O]
-- Tampon alloué **paresseusement** au premier remplissage/vidage : `getvec(49)` = **200 octets**.
-  Remplissage = Read de ≤ 200 octets ; `fh_Pos` := 0, `fh_End` := octets lus. Échec d'allocation :
+- On open (`findinput`/`findoutput`, mode 1005/1006): `fh_Pos = fh_End = −1`, the three
+  routines installed. `*` → console (`pr_ConsoleTask`); `NIL:` → no handler, routines at 0
+  (read = immediate EOF, write = characters ignored). Otherwise deviceproc + packet
+  ACTION_FINDINPUT/OUTPUT (arg1 = FileHandle, arg2 = lock returned by deviceproc, arg3 = name). [O]
+- Buffer allocated **lazily** at the first fill/flush: `getvec(49)` = **200 bytes**.
+  Fill = Read of ≤ 200 bytes; `fh_Pos` := 0, `fh_End` := bytes read. Allocation failure:
   EOF, Result2 = 103. [O]
-- Fermeture (globale 93 = LVO Close) : vide si nécessaire, libère le tampon, envoie ACTION_END
-  (1007, arg1 = fh_Args) (avec requester de retry), puis **freevec du FileHandle** (Result2
-  préservé). Précision : vidage, libération du tampon et ACTION_END sont le fait de la routine
-  **fh_Func3** ; endstream ne l'appelle que si elle est non nulle, puis fait toujours le freevec
-  du FileHandle (cas du FileHandle mémoire de Run, §13.6.4). [O ROM]
-  ⇒ les FileHandles doivent être des blocs **getvec** (en-tête de taille à −4). [O]
+- Close (global 93 = LVO Close): flushes if necessary, frees the buffer, sends ACTION_END
+  (1007, arg1 = fh_Args) (with retry requester), then **freevec of the FileHandle** (Result2
+  preserved). Clarification: flush, freeing of the buffer and ACTION_END are done by the
+  **fh_Func3** routine; endstream only calls it if it is non-zero, then always does the freevec
+  of the FileHandle (case of Run's memory FileHandle, §13.6.4). [O ROM]
+  ⇒ FileHandles must be **getvec** blocks (size header at −4). [O]
 
 ### 5.2 rdch / unrdch [O ROM]
-- **rdch()** (54) opère **toujours sur `input()`**. Si `fh_Pos < fh_End` : renvoie l'octet
-  `buf[fh_Pos]` (non signé) et incrémente `fh_Pos`. Sinon : si `fh_End = 0` → **−1 (EOF)** sans
-  contacter le handler ; sinon appelle fh_Funcs ; succès → renvoie le premier octet (fh_Pos = 1) ;
-  échec → `fh_Pos = fh_End = 0` et −1.
-- **unrdch()** (55) : si `fh_Pos > 0` → `fh_Pos−1`, renvoie TRUE ; sinon renvoie TRUE ssi
-  `fh_End = 0` (EOF « relisible »), FALSE sinon.
-- Conséquence pour l'injection d'arguments : une commande lit exactement les *n* octets copiés ;
-  lire au-delà déclenche un vrai remplissage depuis le handler (c'est ainsi que le `?` de rdargs
-  relit une ligne au clavier). [D]
+- **rdch()** (54) **always** operates **on `input()`**. If `fh_Pos < fh_End`: returns the byte
+  `buf[fh_Pos]` (unsigned) and increments `fh_Pos`. Otherwise: if `fh_End = 0` → **−1 (EOF)** without
+  contacting the handler; otherwise calls fh_Funcs; success → returns the first byte (fh_Pos = 1);
+  failure → `fh_Pos = fh_End = 0` and −1.
+- **unrdch()** (55): if `fh_Pos > 0` → `fh_Pos−1`, returns TRUE; otherwise returns TRUE iff
+  `fh_End = 0` ("re-readable" EOF), FALSE otherwise.
+- Consequence for the injection of arguments: a command reads exactly the *n* copied bytes;
+  reading beyond triggers a real fill from the handler (this is how rdargs's `?`
+  re-reads a line from the keyboard). [D]
 
-### 5.3 rditem(v, taille) — globale 79 (GV +$13C) [O ROM]
-- `v` = BPTR d'un vecteur de *taille*+1 longs, **effacé** au début (clearvec) ; l'item y est
-  rangé comme **BSTR** (longueur dans l'octet 0). Capacité : (taille+1)·4 − 1 caractères.
-- Saute blancs/tabulations. `"` initial ⇒ item entre guillemets.
-- Non quoté : se termine sur `\n`, EOF, `;`, espace, tab ou `=` ; le terminateur est **remis**
+### 5.3 rditem(v, size) — global 79 (GV +$13C) [O ROM]
+- `v` = BPTR of a vector of *size*+1 longs, **cleared** at the start (clearvec); the item is
+  stored in it as a **BSTR** (length in byte 0). Capacity: (size+1)·4 − 1 characters.
+- Skips blanks/tabs. Initial `"` ⇒ quoted item.
+- Unquoted: ends on `\n`, EOF, `;`, space, tab or `=`; the terminator is **put back**
   (unrdch).
-- Quoté : se termine sur le `"` fermant (consommé, **non** remis) ; `*N`/`*n` → LF, `*E`/`*e` →
-  ESC (27), `*x` → x littéral ; `\n`/EOF avant le `"` fermant ⇒ erreur.
-- Résultats : **1** item normal ; **2** item quoté ; **0** fin (rien lu avant `\n`/`;`/EOF —
-  terminateur remis) ; **−2** `=` rencontré sans item (le `=` est consommé) ; **−1** erreur
-  (débordement ou guillemet non fermé).
+- Quoted: ends on the closing `"` (consumed, **not** put back); `*N`/`*n` → LF, `*E`/`*e` →
+  ESC (27), `*x` → literal x; `\n`/EOF before the closing `"` ⇒ error.
+- Results: **1** normal item; **2** quoted item; **0** end (nothing read before `\n`/`;`/EOF —
+  terminator put back); **−2** `=` encountered without an item (the `=` is consumed); **−1** error
+  (overflow or unclosed quote).
 
-### 5.4 rdargs(template, argv, taille) — globale 78 (GV +$138) [O ROM]
-- Arguments : D1 = **BSTR** du template, D2 = **BPTR** argv, D3 = taille d'argv en **longs**.
-- **Template** : clés séparées par `,` ; alias par `=` (`SEC=SECS/S`, `TO=AS`) ; qualificatifs
-  insensibles à la casse `/A` (obligatoire), `/K` (mot-clé requis), `/S` (switch). Les **noms vides
-  sont permis** (clé positionnelle pure : Path `",,,,,,,,,,ADD/S,SHOW/S,RESET/S,QUIET/S"`, Wait
-  `",SEC=SECS/S,MIN=MINS/S,UNTIL/K"`). Un template vide `""` consomme la ligne (EndCLI).
-- **Vecteur résultat** : `argv!i` (i = 0..nclés−1) =
-  - **0** : clé absente (après contrôle /A) ;
-  - **−1** : switch /S présent ;
-  - sinon **BPTR d'un BSTR** stocké dans la **zone libre d'argv** (à partir de `argv!nclés`).
-  Pendant l'analyse, `argv!i` contient temporairement les drapeaux de la clé (bit0 /A, bit1 /K,
-  bit2 /S), d'où la valeur 0..7 testée pour « non rempli ».
-- Algorithme observable : chaque item non quoté est d'abord cherché comme mot-clé (findarg,
-  insensible à la casse, alias compris). Mot-clé /S → −1. Autre mot-clé → l'item **suivant**
-  (éventuellement après `=`) est sa valeur. Sinon (ou item quoté) → valeur positionnelle affectée
-  à la **première clé non remplie qui n'est ni /K ni /S**. Item non-clé égal à `?` suivi de `\n` →
-  écrit `"<template>: "` et continue l'analyse sur une nouvelle lecture.
-- Fin (rditem = 0) : toute clé /A non remplie ⇒ erreur ; sinon consomme le terminateur
-  (`\n` ou `;`) et renvoie **non nul** (BPTR du premier long libre d'argv).
-- Erreur (clé inconnue en trop, /A manquant, item trop long, plus de place) : **saute le reste
-  de la ligne** jusqu'à `\n`, `;` ou EOF, **Result2 = 120**, renvoie **0**.
-- [O] La taille restante passée à rditem est calculée **une fois** au début (pas décrémentée au
-  fil des items) : un argv trop petit peut déborder. À reproduire tel quel ou à durcir.
+### 5.4 rdargs(template, argv, size) — global 78 (GV +$138) [O ROM]
+- Arguments: D1 = **BSTR** of the template, D2 = **BPTR** argv, D3 = size of argv in **longs**.
+- **Template**: keys separated by `,`; aliases by `=` (`SEC=SECS/S`, `TO=AS`); case-insensitive
+  qualifiers `/A` (mandatory), `/K` (keyword required), `/S` (switch). **Empty names
+  are allowed** (pure positional key: Path `",,,,,,,,,,ADD/S,SHOW/S,RESET/S,QUIET/S"`, Wait
+  `",SEC=SECS/S,MIN=MINS/S,UNTIL/K"`). An empty template `""` consumes the line (EndCLI).
+- **Result vector**: `argv!i` (i = 0..nkeys−1) =
+  - **0**: key absent (after the /A check);
+  - **−1**: /S switch present;
+  - otherwise **BPTR of a BSTR** stored in the **free area of argv** (starting at `argv!nkeys`).
+  During parsing, `argv!i` temporarily contains the key's flags (bit0 /A, bit1 /K,
+  bit2 /S), hence the value 0..7 tested for "not filled".
+- Observable algorithm: each unquoted item is first looked up as a keyword (findarg,
+  case-insensitive, aliases included). /S keyword → −1. Other keyword → the **next** item
+  (possibly after `=`) is its value. Otherwise (or quoted item) → positional value assigned
+  to the **first unfilled key that is neither /K nor /S**. A non-key item equal to `?` followed by `\n` →
+  writes `"<template>: "` and continues parsing on a new read.
+- End (rditem = 0): any unfilled /A key ⇒ error; otherwise consumes the terminator
+  (`\n` or `;`) and returns **non-zero** (BPTR of the first free long of argv).
+- Error (unknown extra key, missing /A, item too long, no more room): **skips the rest
+  of the line** up to `\n`, `;` or EOF, **Result2 = 120**, returns **0**.
+- [O] The remaining size passed to rditem is computed **once** at the start (not decremented
+  as the items go by): an argv that is too small can overflow. To be reproduced as is or hardened.
 
-### 5.5 findarg(template, item) — globale 80 (GV +$140) [O ROM]
-Renvoie l'index (0-based) de la clé dont un des alias égale `item` (insensible à la casse), ou −1.
+### 5.5 findarg(template, item) — global 80 (GV +$140) [O ROM]
+Returns the (0-based) index of the key one of whose aliases equals `item` (case-insensitive), or −1.
 
 ---
 
-## 6. Q6 — Sortie : wrch, writes, writef, newline…
+## 6. Q6 — Output: wrch, writes, writef, newline…
 
-### 6.1 wrch(c) — globale 56 [O ROM]
-- Opère sur `output()`. Si `fh_Pos ≥ fh_End` : appelle fh_Func2 (vider) puis `fh_Pos` repart
-  à 0 ; si fh_Func2 est nul (NIL:), le caractère est perdu. Range `c` (octet bas) en `buf[fh_Pos++]`.
-- Puis, si `c < 32` **et** flux interactif **et** `c ∈ {0, 10, 12, 13}` : vide immédiatement et
+### 6.1 wrch(c) — global 56 [O ROM]
+- Operates on `output()`. If `fh_Pos ≥ fh_End`: calls fh_Func2 (flush) then `fh_Pos` restarts
+  at 0; if fh_Func2 is null (NIL:), the character is lost. Stores `c` (low byte) in `buf[fh_Pos++]`.
+- Then, if `c < 32` **and** interactive stream **and** `c ∈ {0, 10, 12, 13}`: flushes immediately and
   `fh_Pos := 0`.
-- Premier vidage = allocation du tampon de 200 octets (`fh_Pos = 0`, `fh_End = 200`), sans écriture.
-  Vidage suivant = Write de `fh_Pos` octets. Le vidage **ignore** les erreurs d'écriture et
-  préserve Result2. Fermeture = vidage final si `fh_Pos > 0`.
-- ⇒ Fichiers : tamponnés par 200, vidés à la fermeture. Console : vidée à chaque LF/CR/FF/NUL.
+- First flush = allocation of the 200-byte buffer (`fh_Pos = 0`, `fh_End = 200`), without writing.
+  Following flush = Write of `fh_Pos` bytes. The flush **ignores** write errors and
+  preserves Result2. Close = final flush if `fh_Pos > 0`.
+- ⇒ Files: buffered by 200, flushed at close. Console: flushed at each LF/CR/FF/NUL.
 
-### 6.2 Fonctions d'écriture [O ROM]
+### 6.2 Write functions [O ROM]
 
-| Gl. | Off. | Fonction | Sémantique |
+| Gl. | Off. | Function | Semantics |
 |---|---|---|---|
-| 53 | $0D4 | writet(s, w) | écrit le BSTR `s` puis des espaces jusqu'à `w` colonnes (pas de troncature) |
+| 53 | $0D4 | writet(s, w) | writes the BSTR `s` then spaces up to `w` columns (no truncation) |
 | 68 | $110 | newline() | wrch(10) |
-| 69 | $114 | writed(n, w) | décimal signé, aligné à droite sur `w` (espaces avant le `-`), pas de troncature |
+| 69 | $114 | writed(n, w) | signed decimal, right-aligned on `w` (spaces before the `-`), no truncation |
 | 70 | $118 | writen(n) | writed(n, 0) |
-| 71 | $11C | writehex(n, d) | exactement `d` chiffres hexa **majuscules** (zéros de tête ; d ≤ 1 → 1 chiffre ; bits hauts tronqués) |
-| 72 | $120 | writeoct(n, d) | idem en octal |
-| 73 | $124 | writes(s) | écrit le BSTR `s` (D1 = BPTR) |
-| 74 | $128 | writef(fmt, a1, a2, …) | voir ci-dessous |
+| 71 | $11C | writehex(n, d) | exactly `d` **upper-case** hex digits (leading zeros; d ≤ 1 → 1 digit; high bits truncated) |
+| 72 | $120 | writeoct(n, d) | same in octal |
+| 73 | $124 | writes(s) | writes the BSTR `s` (D1 = BPTR) |
+| 74 | $128 | writef(fmt, a1, a2, …) | see below |
 
 ### 6.3 writef [O ROM]
-`fmt` = BSTR ; les arguments sont les longs consécutifs suivant `fmt` dans la frame (nombre
-illimité). Chaque `%` lit la lettre suivante (insensible à la casse) :
+`fmt` = BSTR; the arguments are the consecutive longs following `fmt` in the frame (unlimited
+number). Each `%` reads the next letter (case-insensitive):
 
-| Code | Effet | Consomme un arg | Lit un chiffre de largeur |
+| Code | Effect | Consumes an arg | Reads a width digit |
 |---|---|---|---|
-| `%S` | writes(arg) (BSTR) | oui | non |
-| `%T` | writet(arg, w) | oui | **oui** |
-| `%C` | wrch(arg) | oui | non |
-| `%N` | writen(arg) | oui | non |
-| `%I` | writed(arg, w) | oui | **oui** |
-| `%U` | décimal **non signé**, largeur w | oui | **oui** |
-| `%X` | writehex(arg, w) | oui | **oui** |
-| `%O` | writeoct(arg, w) | oui | **oui** |
-| `%$` | **saute** un argument, n'écrit rien | oui | non |
-| autre | écrit la lettre elle-même (`%%` → `%`) | non | non |
+| `%S` | writes(arg) (BSTR) | yes | no |
+| `%T` | writet(arg, w) | yes | **yes** |
+| `%C` | wrch(arg) | yes | no |
+| `%N` | writen(arg) | yes | no |
+| `%I` | writed(arg, w) | yes | **yes** |
+| `%U` | **unsigned** decimal, width w | yes | **yes** |
+| `%X` | writehex(arg, w) | yes | **yes** |
+| `%O` | writeoct(arg, w) | yes | **yes** |
+| `%$` | **skips** an argument, writes nothing | yes | no |
+| other | writes the letter itself (`%%` → `%`) | no | no |
 
-Chiffre de largeur : `0`–`9` → 0–9 ; une lettre → valeur `10 + (code − 'A')` (`A`=10, `B`=11…).
-Exemples : `"%N> "` (prompt), `"[CLI %N]\n"`, `"%S failed returncode %N\n"`, `"%TH %I3"` (Resident :
-nom sur 17 colonnes, nombre sur 3).
+Width digit: `0`–`9` → 0–9; a letter → value `10 + (code − 'A')` (`A`=10, `B`=11…).
+Examples: `"%N> "` (prompt), `"[CLI %N]\n"`, `"%S failed returncode %N\n"`, `"%TH %I3"` (Resident:
+name on 17 columns, number on 3).
 
-### 6.4 Lecture numérique — readn() (67) [O ROM]
-Saute espaces/tab/LF, accepte `+`/`-`, lit les chiffres décimaux, remet le caractère suivant.
-Succès : Result2 = 0, renvoie la valeur. Aucun chiffre : remet le caractère, Result2 = −1, renvoie 0.
+### 6.4 Numeric reading — readn() (67) [O ROM]
+Skips spaces/tab/LF, accepts `+`/`-`, reads the decimal digits, puts the next character back.
+Success: Result2 = 0, returns the value. No digit: puts the character back, Result2 = −1, returns 0.
 
 ---
 
 ## 7. Q7 — Coroutines
 
-**Non.** Aucune des commandes examinées (AddBuffers, CD, Echo, EndCLI, Execute, Failat, Mount,
-NewCLI, Path, Prompt, Resident, Run, Stack, Wait) ni `l:Shell-Seg` n'appelle les globales 23–27
-(createco, deleteco, callco, cowait, resumeco). [O WB] Elles existent dans le noyau ROM (globale 12
-= coroutine courante / base de pile, mise à jour par le stub). [O ROM]
+**No.** None of the commands examined (AddBuffers, CD, Echo, EndCLI, Execute, Failat, Mount,
+NewCLI, Path, Prompt, Resident, Run, Stack, Wait) nor `l:Shell-Seg` calls globals 23–27
+(createco, deleteco, callco, cowait, resumeco). [O WB] They exist in the ROM kernel (global 12
+= current coroutine / stack base, updated by the stub). [O ROM]
 
 ---
 
-## 8. Q2 — Table des globales (ROM V34)
+## 8. Q2 — Table of the globals (ROM V34)
 
-Numéro → offset octet = 4×n. Unités : **BPTR** (adresse/4), **BSTR** (BPTR vers chaîne à
-longueur), **APTR** (adresse octet), **taskid** = adresse du MsgPort d'un process (process+$5C).
-« R2 » = effet sur Result2 (`pr_Result2`). Colonne « Cmd » : commandes cibles qui l'appellent
+Number → byte offset = 4×n. Units: **BPTR** (address/4), **BSTR** (BPTR to a length-prefixed
+string), **APTR** (byte address), **taskid** = address of a process's MsgPort (process+$5C).
+"R2" = effect on Result2 (`pr_Result2`). "Cmd" column: target commands that call it
 (A=AddBuffers, C=CD, P=Path, X=Execute, R=Run, W=Wait, E=EndCLI, S=Resident, M=Mount, H=Shell-Seg).
 
-### 8.1 Noyau (segments ROM entrée 1)
+### 8.1 Kernel (ROM segments entry 1)
 
-| Gl. | Off. | Nom | Arguments → résultat (D1) | R2 | Cert. | Cmd |
+| Gl. | Off. | Name | Arguments → result (D1) | R2 | Cert. | Cmd |
 |---|---|---|---|---|---|---|
-| 0 | $000 | globsize | (valeur) nombre max de globales | | O | |
-| 1 | $004 | start | entrée du programme/process | | O | toutes |
-| 2 | $008 | stop(code) | dl_GV : quitte jusqu'à pr_ReturnAddr avec D0=code (= LVO Exit) ; GV de commande : remplacée par le stub | | O | A C P X R W S M |
+| 0 | $000 | globsize | (value) maximum number of globals | | O | |
+| 1 | $004 | start | entry of the program/process | | O | all |
+| 2 | $008 | stop(code) | dl_GV: exits up to pr_ReturnAddr with D0=code (= LVO Exit); command GV: replaced by the stub | | O | A C P X R W S M |
 | 3 | $00C | muldiv: mult(a,b) | a×b | | O | |
-| 4 | $010 | div(a,b) | a/b (troncature vers 0) | | O | |
-| 5 | $014 | rem(a,b) | reste (signe du dividende) | | O | |
-| 6 | $018 | setio(iob, cmd, data, len, offset) | remplit io_Command (mot), io_Data (BPTR→APTR), io_Length, io_Offset (5e arg) | | O | |
-| 8 | $020 | getlongbytes(adr, n) | assemble *n* octets big-endian lus à l'**APTR** adr | | O | |
+| 4 | $010 | div(a,b) | a/b (truncation towards 0) | | O | |
+| 5 | $014 | rem(a,b) | remainder (sign of the dividend) | | O | |
+| 6 | $018 | setio(iob, cmd, data, len, offset) | fills io_Command (word), io_Data (BPTR→APTR), io_Length, io_Offset (5th arg) | | O | |
+| 8 | $020 | getlongbytes(adr, n) | assembles *n* big-endian bytes read at the **APTR** adr | | O | |
 | 9 | $024 | putlongbytes(adr, n, v) | inverse | | O | |
-| 10 | $028 | result2(set, v) | set=0 : renvoie pr_Result2 ; set≠0 : renvoie l'ancien et écrit v | lit/écrit | O | C P X R H… |
-| 12 | $030 | currco | (valeur) BPTR de la coroutine courante / base de pile BCPL | | O | |
-| 13 | $034 | makeglobvec(segarray) | alloue un GV (max des « max » des segments, plancher 15, +50 négatifs), GV[0]=max, reste **non initialisé** ; renvoie BPTR du slot 0 ; 0 si échec | 103 | O | |
-| 14 | $038 | taskid() | MsgPort du process courant (APTR) | | O | X R E P |
-| 15/16 | $03C/$040 | getbyte(v,i) / putbyte(v,i,b) | octet `i` à partir de BADDR(v) | | O | |
-| 17 | $044 | level() | frame de l'appelant (APTR) | | O | X |
-| 18 | $048 | longjump(level, label) | reprend à `label` (APTR) dans la frame `level` | | O | X |
-| 19 | $04C | getmem(n, flags) | comme getvec avec flags AllocMem (ex. $10001) | 103 | O | S |
-| 20 | $050 | aptovec(f, n) | appelle f(v, n) avec v = vecteur de n+1 longs pris sur la pile BCPL | | O | |
-| 22 | $058 | sendio(iob, pkt) | lie iob↔pkt (ln_Name = pkt, pkt!0 = iob) puis SendIO | | O | |
-| 23–27 | $05C–$06C | createco, deleteco, callco, cowait, resumeco | coroutines (non utilisées) | | D | — |
+| 10 | $028 | result2(set, v) | set=0: returns pr_Result2; set≠0: returns the old one and writes v | read/write | O | C P X R H… |
+| 12 | $030 | currco | (value) BPTR of the current coroutine / BCPL stack base | | O | |
+| 13 | $034 | makeglobvec(segarray) | allocates a GV (max of the segments' "max", floor 15, +50 negative), GV[0]=max, rest **not initialised**; returns BPTR of slot 0; 0 on failure | 103 | O | |
+| 14 | $038 | taskid() | MsgPort of the current process (APTR) | | O | X R E P |
+| 15/16 | $03C/$040 | getbyte(v,i) / putbyte(v,i,b) | byte `i` starting from BADDR(v) | | O | |
+| 17 | $044 | level() | caller's frame (APTR) | | O | X |
+| 18 | $048 | longjump(level, label) | resumes at `label` (APTR) in frame `level` | | O | X |
+| 19 | $04C | getmem(n, flags) | like getvec with AllocMem flags (e.g. $10001) | 103 | O | S |
+| 20 | $050 | aptovec(f, n) | calls f(v, n) with v = vector of n+1 longs taken on the BCPL stack | | O | |
+| 22 | $058 | sendio(iob, pkt) | links iob↔pkt (ln_Name = pkt, pkt!0 = iob) then SendIO | | O | |
+| 23–27 | $05C–$06C | createco, deleteco, callco, cowait, resumeco | coroutines (not used) | | D | — |
 | 28 | $070 | globin(seg) | §3.2 → −1 / 0 | 111 | O | stub |
-| 29 | $074 | getvec(n) | vecteur de n+1 longs (indices 0..n), **non effacé**, MEMF_PUBLIC ; en-tête caché à −4 = taille octets totale ; renvoie BPTR, 0 si échec | 103 | O | P R M H stub |
-| 30 | $078 | freevec(v) | v=0 : rien ; en-tête invalide (bits $FF000003) → alerte $07000005 | | O | P R S M H stub |
-| 31 | $07C | opendevice(iob, nom, unité, flags) | port de réponse = MsgPort du process ; → −1 succès / 0 | | O | |
+| 29 | $074 | getvec(n) | vector of n+1 longs (indices 0..n), **not cleared**, MEMF_PUBLIC; hidden header at −4 = total size in bytes; returns BPTR, 0 on failure | 103 | O | P R M H stub |
+| 30 | $078 | freevec(v) | v=0: nothing; invalid header (bits $FF000003) → alert $07000005 | | O | P R S M H stub |
+| 31 | $07C | opendevice(iob, name, unit, flags) | reply port = MsgPort of the process; → −1 success / 0 | | O | |
 | 32 | $080 | closedevice(iob) | | | O | |
-| 33 | $084 | createproc(segarray, pile, pri, nom, gv) | pile en **longs** ; nom BSTR ; gv BPTR (5e arg) ; process + pile en un bloc ; hérite ConsoleTask/FileSystemTask/WindowPtr ; démarrage §2.4 ; → **taskid** (0 si échec) | 103 | O | R (NewCLI) |
-| 34 | $088 | endtask() | fin du process courant | | D | |
+| 33 | $084 | createproc(segarray, stack, pri, name, gv) | stack in **longs**; BSTR name; gv BPTR (5th arg); process + stack in one block; inherits ConsoleTask/FileSystemTask/WindowPtr; startup §2.4; → **taskid** (0 on failure) | 103 | O | R (NewCLI) |
+| 34 | $088 | endtask() | end of the current process | | D | |
 | 35 | $08C | parentdir(lock) | = LVO ParentDir (ACTION_PARENT 29) | handler | O | C P |
-| 36 | $090 | setflags(taskid, m) | Signal des bits CTRL (m bit0=C…bit3=F) | | O | |
-| 37 | $094 | testflags(m) | **teste et efface** les bits CTRL de m ; → −1 si l'un était posé | | O | X W H |
-| 38 | $098 | abort(code) | requester « Software error / Disk corrupt - task held » (retry), puis Alert si code < 0 | | O | |
-| 39 | $09C | rootstruct() | BPTR du RootNode | | O | R E S M H |
-| 40 | $0A0 | readbytes(adr, n) | Read(input(), APTR adr, n) → octets lus | handler | O | |
-| 41 | $0A4 | taskwait() | attend un packet (pr_PktWait si défini, sinon port du process) → BPTR packet | | O | |
-| 42 | $0A8 | qpkt(pkt) | envoie le packet à dp_Port, dp_Port := port de réponse du process ; dp_Link ≤ 0 → 0 | 101 | O | |
+| 36 | $090 | setflags(taskid, m) | Signal of the CTRL bits (m bit0=C…bit3=F) | | O | |
+| 37 | $094 | testflags(m) | **tests and clears** the CTRL bits of m; → −1 if one was set | | O | X W H |
+| 38 | $098 | abort(code) | requester "Software error / Disk corrupt - task held" (retry), then Alert if code < 0 | | O | |
+| 39 | $09C | rootstruct() | BPTR of the RootNode | | O | R E S M H |
+| 40 | $0A0 | readbytes(adr, n) | Read(input(), APTR adr, n) → bytes read | handler | O | |
+| 41 | $0A4 | taskwait() | waits for a packet (pr_PktWait if defined, otherwise the process's port) → BPTR packet | | O | |
+| 42 | $0A8 | qpkt(pkt) | sends the packet to dp_Port, dp_Port := reply port of the process; dp_Link ≤ 0 → 0 | 101 | O | |
 | 43 | $0AC | writebytes(adr, n) | Write(output(), APTR, n) | handler | O | H |
-| 44/45 | $0B0/$0B4 | packstring(v,s) / unpackstring(s,v) | vecteur de caractères ↔ BSTR | | O | |
+| 44/45 | $0B0/$0B4 | packstring(v,s) / unpackstring(s,v) | character vector ↔ BSTR | | O | |
 | 47 | $0BC | delay(ticks) | 1/50 s, via timer.device (= LVO Delay) | | O | W |
-| 48 | $0C0 | sendpkt(_, port, type, r1, r2, a1, a2, …) | le packet **est la frame d'arguments** (layout DosPacket : Link, Port, Type, Res1, Res2, Arg1…) ; envoi + attente synchrone ; → dp_Res1 | := dp_Res2 | O | A C P R S H |
+| 48 | $0C0 | sendpkt(_, port, type, r1, r2, a1, a2, …) | the packet **is the argument frame** (DosPacket layout: Link, Port, Type, Res1, Res2, Arg1…); send + synchronous wait; → dp_Res1 | := dp_Res2 | O | A C P R S H |
 | 49 | $0C4 | returnpkt(pkt, r1, r2) | | | O | |
-| 51 | $0CC | currentdir(set, lock) | set=0 : renvoie pr_CurrentDir ; sinon renvoie l'ancien et écrit lock | | O | C X R H |
-| 52 | $0D0 | requester(l1, l2, l3) | 3 BSTR ; → TRUE = « Retry » | | D | |
-| 88 | $160 | callexec(lvo, d0, d1, a0, a1, a2) | appel exec (ex. Forbid −132, Permit −138) → D0 | | O | R E S M |
+| 51 | $0CC | currentdir(set, lock) | set=0: returns pr_CurrentDir; otherwise returns the old one and writes lock | | O | C X R H |
+| 52 | $0D0 | requester(l1, l2, l3) | 3 BSTRs; → TRUE = "Retry" | | D | |
+| 88 | $160 | callexec(lvo, d0, d1, a0, a1, a2) | exec call (e.g. Forbid −132, Permit −138) → D0 | | O | R E S M |
 | 89 | $164 | findsegarray() | pr_SegList (BPTR) | | O | R stub |
-| 103 | $19C | calllib(base, lvo, d0, d1, a0, a1) | appel d'une library quelconque → D0 | | O | |
+| 103 | $19C | calllib(base, lvo, d0, d1, a0, a1) | call of any library → D0 | | O | |
 | 105/106 | $1A4/$1A8 | consoletask() / filesystemtask() | pr_ConsoleTask / pr_FileSystemTask | | O | |
-| 110 | $1B8 | getlong(b, off) | long à `BADDR(b) + off` (**off en octets**) | | O | P R S H |
-| 111 | $1BC | putlong(b, off, v) | écriture idem | | O | P R E H |
-| 121 | $1E4 | runcommand(seg, pile, args, len) | §4.3 → code retour, −1 si pile impossible | | O | H |
-| 134 | $218 | findcli() | pr_CLI (BPTR) — **dans un GV de commande, ce slot est écrasé par cli_Result2** | | O | stub |
-| −18 | −$48 | CreateProc (C) | segarray `[2, V!1, V!2 du parent, seglist]`, entrée directe au code | | O | |
+| 110 | $1B8 | getlong(b, off) | long at `BADDR(b) + off` (**off in bytes**) | | O | P R S H |
+| 111 | $1BC | putlong(b, off, v) | write likewise | | O | P R E H |
+| 121 | $1E4 | runcommand(seg, stack, args, len) | §4.3 → return code, −1 if stack impossible | | O | H |
+| 134 | $218 | findcli() | pr_CLI (BPTR) — **in a command GV, this slot is overwritten by cli_Result2** | | O | stub |
+| −18 | −$48 | CreateProc (C) | segarray `[2, V!1, V!2 of the parent, seglist]`, direct entry into the code | | O | |
 
-### 8.2 dos / BLIB (segment ROM entrée 2) et utilitaires
+### 8.2 dos / BLIB (ROM segment entry 2) and utilities
 
-| Gl. | Off. | Nom | Arguments → résultat | R2 | Cert. | Cmd |
+| Gl. | Off. | Name | Arguments → result | R2 | Cert. | Cmd |
 |---|---|---|---|---|---|---|
 | 53 | $0D4 | writet(s, w) | §6.2 | | O | |
 | 54/55/56 | $0D8/$0DC/$0E0 | rdch / unrdch / wrch | §5.2, §6.1 | | O | X M H |
-| 57 | $0E4 | readwords(v, n) | readbytes en longs ; → longs lus (ou code ≤ 0) | | O | |
+| 57 | $0E4 | readwords(v, n) | readbytes in longs; → longs read (or code ≤ 0) | | O | |
 | 58 | $0E8 | writewords(v, n) | | | O | |
-| 59/60 | $0EC/$0F0 | findinput(nom) / findoutput(nom) | BSTR ; → FileHandle BPTR ou 0 ; requester retry sur erreur disque | handler | O | X M |
-| 61/62 | $0F4/$0F8 | selectinput(fh) / selectoutput(fh) | écrit pr_CIS / pr_COS | | O | X M H |
-| 63/64 | $0FC/$100 | endread() / endwrite() | endstream(input()) / endstream(output()) (ne resélectionne rien) | | O | X M H |
+| 59/60 | $0EC/$0F0 | findinput(name) / findoutput(name) | BSTR; → FileHandle BPTR or 0; retry requester on disk error | handler | O | X M |
+| 61/62 | $0F4/$0F8 | selectinput(fh) / selectoutput(fh) | writes pr_CIS / pr_COS | | O | X M H |
+| 63/64 | $0FC/$100 | endread() / endwrite() | endstream(input()) / endstream(output()) (reselects nothing) | | O | X M H |
 | 65/66 | $104/$108 | input() / output() | pr_CIS / pr_COS | | O | X R M H |
 | 67 | $10C | readn() | §6.4 | 0/−1 | O | |
-| 68–74 | $110–$128 | newline, writed, writen, writehex, writeoct, writes, writef | §6 | | O | toutes |
+| 68–74 | $110–$128 | newline, writed, writen, writehex, writeoct, writes, writef | §6 | | O | all |
 | 75 | $12C | capitalch(c) | a–z → A–Z | | O | X M |
 | 76 | $130 | compch(a, b) | capitalch(a) − capitalch(b) | | O | H |
-| 77 | $134 | compstring(s1, s2) | comparaison BSTR insensible à la casse ; 0 = égales | | O | E S M H |
-| 78 | $138 | rdargs(tpl, argv, n) | §5.4 | 120 | O | toutes |
+| 77 | $134 | compstring(s1, s2) | case-insensitive BSTR comparison; 0 = equal | | O | E S M H |
+| 78 | $138 | rdargs(tpl, argv, n) | §5.4 | 120 | O | all |
 | 79 | $13C | rditem(v, n) | §5.3 | | O | X H |
 | 80 | $140 | findarg(tpl, item) | §5.5 | | O | X M |
-| 81 | $144 | load(nom) | LoadSeg BCPL (nom BSTR) → seglist | handler | O | S H |
-| 82 | $148 | unloadseg(seg) | gère le cas overlay ($ABCD) ; = LVO UnLoadSeg | | O | S H |
-| 85 | $154 | (ajout de nœud device) | utilisée par Mount | | S | M |
+| 81 | $144 | load(name) | BCPL LoadSeg (BSTR name) → seglist | handler | O | S H |
+| 82 | $148 | unloadseg(seg) | handles the overlay case ($ABCD); = LVO UnLoadSeg | | O | S H |
+| 85 | $154 | (addition of a device node) | used by Mount | | S | M |
 | 87 | $15C | waitforchar(fh, µs) | = LVO WaitForChar | | O | |
-| 90 | $168 | deleteobj(nom) | ACTION_DELETE_OBJECT (16) | handler | O | X H |
-| 93 | $174 | endstream(fh) | = LVO Close (§5.1) | préservé | O | E H |
-| 100 | $190 | taskwait (alias de 41) | | | O | |
-| 101 | $194 | execute(cmd, in, out) | charge **C:RUN**, sélectionne in/out, **pr_Result2 := cmd (BSTR)**, runcommand(pile 600 longs) | | O | |
-| 102 | $198 | deviceproc(nom) | → MsgPort du handler ; Result2 = lock associé (assign/répertoire) ; nom inconnu → 0 et 218 ; volume absent → requester « Please insert volume … in any drive » (retry) ; `NIL:` → 0 | 218 / lock | O | A S M H |
-| 104 | $1A0 | fault(code) | code≠0 : exécute **C:FAULT** (pile 400 longs) avec pr_Result2 = code ; si C:FAULT introuvable → `"Error code %N\n"` | := code | O | C P H |
-| 107 | $1AC | splitname(préfixe, car, chaîne, pos) | extrait jusqu'à `car` (≤ 30 car.) dans le BSTR préfixe ; → position après `car` ou 0 | | O | M |
-| 108 | $1B0 | locateobj(nom) | lock **partagé** (−2) via ACTION_LOCATE_OBJECT (8) | handler | O | P S H |
-| 109 | $1B4 | freeobj(lock) | ACTION_FREE_LOCK (15) au fl_Task du lock ; lock 0 → rien ; Result2 préservé | préservé | O | C P X E S H |
-| 112 | $1C0 | starthandler(nœud, nom) (§13.3) | | | O | |
-| 113 | $1C4 | copydir(lock) | DupLock : ACTION_COPY_DIR (19) ; 0 → 0 | handler | O | R (NewCLI) |
-| 114 | $1C8 | errorreq(…) | requester d'erreur disque selon Result2 (protégé, plein, pas DOS…) → TRUE = retry | | D | C P |
-| 115 | $1CC | copystring(src, dst) | copie un BSTR (longueur+1 octets) — **ordre (source, destination)** | | O | C P M |
-| 123 | $1EC | lock(nom, mode) | appelle locateobj (le mode est ignoré : toujours partagé) | | O | C X |
-| 124 | $1F0 | (recherche dans la liste DevInfo) | | | S | M |
-| 125 | $1F4 | createdir(nom) | ACTION_CREATE_DIR (22) | handler | O | X |
-| 127 | $1FC | timerio(cmd, iob, secs, µs) — requête timer.device synchrone (§8.4) | | | O | |
-| 133 | $214 | cliinit(pkt) | init du CLI initial (startup-sequence…) ; FailLevel 10, **DefaultStack 1000 longs** | | O | |
+| 90 | $168 | deleteobj(name) | ACTION_DELETE_OBJECT (16) | handler | O | X H |
+| 93 | $174 | endstream(fh) | = LVO Close (§5.1) | preserved | O | E H |
+| 100 | $190 | taskwait (alias of 41) | | | O | |
+| 101 | $194 | execute(cmd, in, out) | loads **C:RUN**, selects in/out, **pr_Result2 := cmd (BSTR)**, runcommand(stack 600 longs) | | O | |
+| 102 | $198 | deviceproc(name) | → MsgPort of the handler; Result2 = associated lock (assign/directory); unknown name → 0 and 218; absent volume → requester "Please insert volume … in any drive" (retry); `NIL:` → 0 | 218 / lock | O | A S M H |
+| 104 | $1A0 | fault(code) | code≠0: runs **C:FAULT** (stack 400 longs) with pr_Result2 = code; if C:FAULT not found → `"Error code %N\n"` | := code | O | C P H |
+| 107 | $1AC | splitname(prefix, char, string, pos) | extracts up to `char` (≤ 30 chars) into the prefix BSTR; → position after `char` or 0 | | O | M |
+| 108 | $1B0 | locateobj(name) | **shared** lock (−2) via ACTION_LOCATE_OBJECT (8) | handler | O | P S H |
+| 109 | $1B4 | freeobj(lock) | ACTION_FREE_LOCK (15) to the lock's fl_Task; lock 0 → nothing; Result2 preserved | preserved | O | C P X E S H |
+| 112 | $1C0 | starthandler(node, name) (§13.3) | | | O | |
+| 113 | $1C4 | copydir(lock) | DupLock: ACTION_COPY_DIR (19); 0 → 0 | handler | O | R (NewCLI) |
+| 114 | $1C8 | errorreq(…) | disk error requester according to Result2 (protected, full, not DOS…) → TRUE = retry | | D | C P |
+| 115 | $1CC | copystring(src, dst) | copies a BSTR (length+1 bytes) — **order (source, destination)** | | O | C P M |
+| 123 | $1EC | lock(name, mode) | calls locateobj (the mode is ignored: always shared) | | O | C X |
+| 124 | $1F0 | (lookup in the DevInfo list) | | | S | M |
+| 125 | $1F4 | createdir(name) | ACTION_CREATE_DIR (22) | handler | O | X |
+| 127 | $1FC | timerio(cmd, iob, secs, µs) — synchronous timer.device request (§8.4) | | | O | |
+| 133 | $214 | cliinit(pkt) | init of the initial CLI (startup-sequence…); FailLevel 10, **DefaultStack 1000 longs** | | O | |
 
-### 8.3 Globales négatives (ABI « C », segments ROM 2–4)
+### 8.3 Negative globals ("C" ABI, ROM segments 2–4)
 
-| Gl. | Off. | Nom | Cert. |
+| Gl. | Off. | Name | Cert. |
 |---|---|---|---|
-| −1 | −$04 | Open (nom C) | O |
-| −2 | −$08 | copyvec(src, dst, n) : copie n+1 longs (BPTR) | O |
+| −1 | −$04 | Open (C name) | O |
+| −2 | −$08 | copyvec(src, dst, n): copies n+1 longs (BPTR) | O |
 | −3 | −$0C | Read | O |
 | −6 | −$18 | Write | O |
 | −8 | −$20 | Seek | O |
-| −9 … −16 | −$24 … −$40 | DeleteFile, Rename, Lock, Examine, ExNext, Info, CreateDir, CurrentDir | O (câblage LVO) |
+| −9 … −16 | −$24 … −$40 | DeleteFile, Rename, Lock, Examine, ExNext, Info, CreateDir, CurrentDir | O (LVO wiring) |
 | −17 | −$44 | IoErr | O |
 | −18 | −$48 | CreateProc | O |
 | −19 | −$4C | LoadSeg | O |
-| −20 | −$50 | clearvec(v, n) : met à 0 n+1 longs (aussi câblée sur LVO GetPacket) | O |
-| −21 | −$54 | chargement de segment **sans requester**, nom **BSTR** → seglist (utilisée par le CLI pour chercher les commandes et par fault pour C:FAULT ; aussi câblée sur LVO QueuePacket) | O (usage) / D (sans requester) |
-| −22 … −27 | −$58 … −$6C | DeviceProc, SetComment, SetProtection, DateStamp, IsInteractive, Execute | O (câblage LVO) |
-| −26 | −$68 | IsInteractive(fh) : renvoie **brut** fh!1 (fh_Interactive), pas normalisé à −1 | O |
-| −31 | −$7C | C-string → BSTR (dest BPTR), longueur plafonnée à 255 | O |
-| −32 | −$80 | BSTR → C-string **en place** (décale d'un octet, ajoute NUL), renvoie l'APTR | O |
-| −33 | −$84 | sysrequest (entrée C) | O |
+| −20 | −$50 | clearvec(v, n): sets n+1 longs to 0 (also wired to LVO GetPacket) | O |
+| −21 | −$54 | segment loading **without requester**, **BSTR** name → seglist (used by the CLI to look up commands and by fault for C:FAULT; also wired to LVO QueuePacket) | O (use) / D (without requester) |
+| −22 … −27 | −$58 … −$6C | DeviceProc, SetComment, SetProtection, DateStamp, IsInteractive, Execute | O (LVO wiring) |
+| −26 | −$68 | IsInteractive(fh): returns fh!1 (fh_Interactive) **raw**, not normalised to −1 | O |
+| −31 | −$7C | C string → BSTR (dest BPTR), length capped at 255 | O |
+| −32 | −$80 | BSTR → C string **in place** (shifts by one byte, adds NUL), returns the APTR | O |
+| −33 | −$84 | sysrequest (C entry) | O |
 
-Globales définies en ROM et caractérisées plus loin : 21, 46, 50, 86, 91, 94/95, 126, 127, 128 →
-§8.4 ; 85/124/112 → §13. Aucune n'est appelée par les commandes cibles de §9 sauf 85/124 (Mount) ;
-**C:Date appelle 86 et 128** (§8.4.3). [O]
+Globals defined in ROM and characterised further on: 21, 46, 50, 86, 91, 94/95, 126, 127, 128 →
+§8.4; 85/124/112 → §13. None is called by the target commands of §9 except 85/124 (Mount);
+**C:Date calls 86 and 128** (§8.4.3). [O]
 
-### 8.4 Globales 21–128 et C:Date (2026-10-21)
+### 8.4 Globals 21–128 and C:Date (2026-10-21)
 
-Sources : ROM `kick34005.A500` (tables globin des segments du segarray, §3.1) et `c:Date`,
-`c:SetClock` du disque Workbench 1.3.3. Contrats uniquement.
+Sources: ROM `kick34005.A500` (globin tables of the segarray's segments, §3.1) and `c:Date`,
+`c:SetClock` from the Workbench 1.3.3 disk. Contracts only.
 
-#### 8.4.1 Où vivent ces globales [O ROM]
+#### 8.4.1 Where these globals live [O ROM]
 
-| Gl. | Off. | Segment porteur (segarray ROM) |
+| Gl. | Off. | Carrying segment (ROM segarray) |
 |---|---|---|
-| 21, 46, 86, 91, 127, 128, −25 | $054, $0B8, $158, $16C, $1FC, $200, −$64 | entrée 2 (dos « BLIB ») |
-| 94, 95, 126 | $178, $17C, $1F8 | entrée 1, 2ᵉ segment de la chaîne |
-| 50 | $0C8 | entrée 1, 3ᵉ segment (avec −33 sysrequest et 52 requester) |
-| 34 (rappel) | $088 | entrée 1, 1ᵉʳ segment |
+| 21, 46, 86, 91, 127, 128, −25 | $054, $0B8, $158, $16C, $1FC, $200, −$64 | entry 2 (dos "BLIB") |
+| 94, 95, 126 | $178, $17C, $1F8 | entry 1, 2nd segment of the chain |
+| 50 | $0C8 | entry 1, 3rd segment (with −33 sysrequest and 52 requester) |
+| 34 (reminder) | $088 | entry 1, 1st segment |
 
-Ni 83 ni 84 ne sont définies en ROM (84 est fournie par C:Date elle-même). La globale **92** n'est
-dans aucune table globin : c'est une **donnée** (IntuitionBase, APTR) écrite par `cliinit` (133). [O]
+Neither 83 nor 84 is defined in ROM (84 is supplied by C:Date itself). Global **92** is
+in no globin table: it is a **datum** (IntuitionBase, APTR) written by `cliinit` (133). [O]
 
-#### 8.4.2 Contrats [O ROM sauf mention]
+#### 8.4.2 Contracts [O ROM unless stated]
 
-Unités comme en §8 ; « vecteur datestamp » = 3 longs consécutifs **[jours, minutes, ticks]**
-(jours depuis le 1-jan-1978, minutes depuis minuit 0..1439, ticks de 1/50 s dans la minute 0..2999).
+Units as in §8; "datestamp vector" = 3 consecutive longs **[days, minutes, ticks]**
+(days since 1-Jan-1978, minutes since midnight 0..1439, ticks of 1/50 s within the minute 0..2999).
 
-- **128 `setdatstamp(v)`** — D1 = **BPTR** d'un vecteur datestamp. Règle l'heure système :
-  1. secondes = v!0 × 86400 + v!1 × 60 + v!2 / 50 ; microsecondes = (v!2 mod 50) × 20000
-     (arithmétique 32 bits signée, **aucune validation de plage**, v n'est pas modifié) ;
-  2. **Forbid**, puis requête timer **TR_SETSYSTIME (11)** via la globale 127 (secondes,
-     microsecondes) sur un vecteur IORequest **local à sa frame** ;
-  3. relit l'heure par la globale **86** sur ce même vecteur local — ce qui **rafraîchit
-     `rn_Time` du RootNode** (cf. −25 ci-dessous) ;
+- **128 `setdatstamp(v)`** — D1 = **BPTR** of a datestamp vector. Sets the system time:
+  1. seconds = v!0 × 86400 + v!1 × 60 + v!2 / 50; microseconds = (v!2 mod 50) × 20000
+     (signed 32-bit arithmetic, **no range validation**, v is not modified);
+  2. **Forbid**, then timer request **TR_SETSYSTIME (11)** via global 127 (seconds,
+     microseconds) on an IORequest vector **local to its frame**;
+  3. re-reads the time by global **86** on that same local vector — which **refreshes
+     `rn_Time` of the RootNode** (cf. −25 below);
   4. **Permit**.
-  Résultat D1 : **non significatif** (résidu de l'appel Permit ; Date l'ignore). Result2 inchangé.
-  Aucun packet DOS, aucun accès à l'horloge sauvegardée (RTC $DC0000) : écrire la RTC est le
-  rôle de `SetClock save`. Appelants : C:Date **et le validateur de la ROM** (réglage d'heure au montage de
-  DF0:, cf. [boot-clock-v34.md](boot-clock-v34.md) — correction de la mention « la ROM ne l'appelle pas »).
-- **86 `datstamp(v)`** — D1 = BPTR d'un vecteur de 3 longs ; appelle l'adaptateur C **−25
-  (DateStamp)** sur `BADDR(v)` ; **renvoie v** (le BPTR reçu). Appelants : C:Date et le file
-  system (entrée 6).
-- **−25 `DateStamp(ds)`** (LVO −192, ABI C : D1 = APTR de 3 longs) :
-  1. requête timer **TR_GETSYSTIME (10)** via 127 → (secondes, microsecondes) de l'heure système ;
-  2. **Forbid** ; calcule jours = s / 86400, minutes = (s / 60) mod 1440,
-     ticks = (s mod 60) × 50 + µs / 20000 ;
-  3. écrit ces 3 valeurs **dans `rn_Time` du RootNode** (RootNode +$08 jours, +$0C minutes,
-     +$10 ticks), puis les recopie dans ds[0], ds[1], ds[2] ;
+  D1 result: **not meaningful** (residue of the Permit call; Date ignores it). Result2 unchanged.
+  No DOS packet, no access to the battery-backed clock (RTC $DC0000): writing the RTC is the
+  role of `SetClock save`. Callers: C:Date **and the ROM's validator** (time setting at the mount of
+  DF0:, cf. [boot-clock-v34.md](boot-clock-v34.md) — correction of the mention "the ROM does not call it").
+- **86 `datstamp(v)`** — D1 = BPTR of a vector of 3 longs; calls the C adapter **−25
+  (DateStamp)** on `BADDR(v)`; **returns v** (the BPTR received). Callers: C:Date and the file
+  system (entry 6).
+- **−25 `DateStamp(ds)`** (LVO −192, C ABI: D1 = APTR of 3 longs):
+  1. timer request **TR_GETSYSTIME (10)** via 127 → (seconds, microseconds) of the system time;
+  2. **Forbid**; computes days = s / 86400, minutes = (s / 60) mod 1440,
+     ticks = (s mod 60) × 50 + µs / 20000;
+  3. writes these 3 values **into the RootNode's `rn_Time`** (RootNode +$08 days, +$0C minutes,
+     +$10 ticks), then copies them into ds[0], ds[1], ds[2];
   4. **Permit**.
-  Le D0 rendu à un appelant C n'est **pas** ds (résidu de Permit) — divergence avec l'AutoDoc ;
-  ne pas s'en servir. `rn_Time` n'est donc qu'un **cache** mis à jour à chaque DateStamp ;
-  la source de vérité est l'heure système de timer.device. [O]
-- **127 `timerio(cmd, iob, secs, micros)`** — requête synchrone à timer.device :
-  `iob` = BPTR d'un vecteur **d'au moins 12 longs (48 octets)** fourni par l'appelant (en pratique
-  un vecteur de sa frame BCPL). Effets dans l'ordre : `opendevice(iob, "timer.device", unité 0 =
-  UNIT_MICROHZ, flags 0)` (globale 31 : ln_Succ/ln_Pred := 0, ReplyPort = MsgPort du process,
-  mn_Length = 12 ; **résultat non testé**) ; `setio` (globale 6) : io_Command := cmd,
-  io_Length (+$24 = **tv_micro**) := micros, io_Data (+$28) et io_Offset (+$2C) reçoivent des
-  valeurs **résiduelles** (d'où l'exigence de 48 octets) ; +$20 (**tv_secs**) := secs ;
-  **doio** (21) ; **closedevice** (32). Résultat : non significatif. Au retour, +$20/+$24 contiennent
-  la réponse du timer. Le device est **ouvert et fermé à chaque appel**. Commandes utilisées :
-  **9 TR_ADDREQUEST** (delay, globale 47 : secs = ticks/50, µs = (ticks mod 50) × 20000),
+  The D0 returned to a C caller is **not** ds (residue of Permit) — divergence from the AutoDoc;
+  do not use it. `rn_Time` is therefore only a **cache** updated at each DateStamp;
+  the source of truth is the system time of timer.device. [O]
+- **127 `timerio(cmd, iob, secs, micros)`** — synchronous request to timer.device:
+  `iob` = BPTR of a vector **of at least 12 longs (48 bytes)** supplied by the caller (in practice
+  a vector of its BCPL frame). Effects in order: `opendevice(iob, "timer.device", unit 0 =
+  UNIT_MICROHZ, flags 0)` (global 31: ln_Succ/ln_Pred := 0, ReplyPort = MsgPort of the process,
+  mn_Length = 12; **result not tested**); `setio` (global 6): io_Command := cmd,
+  io_Length (+$24 = **tv_micro**) := micros, io_Data (+$28) and io_Offset (+$2C) receive
+  **residual** values (hence the 48-byte requirement); +$20 (**tv_secs**) := secs;
+  **doio** (21); **closedevice** (32). Result: not meaningful. On return, +$20/+$24 contain
+  the timer's reply. The device is **opened and closed at each call**. Commands used:
+  **9 TR_ADDREQUEST** (delay, global 47: secs = ticks/50, µs = (ticks mod 50) × 20000),
   **10 TR_GETSYSTIME** (−25), **11 TR_SETSYSTIME** (128).
-- **21 `doio(iob)`** — D1 = BPTR d'une IORequest ; exec **DoIO** (−456) ; → **io_Error** (octet +$1F,
-  non signé). Appelants : 127, console-handler, validateur.
-- **126 `compstamp(a, b)`** — deux BPTR de vecteurs datestamp ; comparaison lexicographique signée
-  (jours, puis minutes, puis ticks) ; → **0** si égaux, **+1 si a est plus récent que b**, **−1 si a
-  est plus ancien**. Pas d'effet de bord. Appelant : validateur (entrée 7).
-- **94 `getword(v, i)`** / **95 `putword(v, i, w)`** — mot 16 bits (non signé à la lecture) à
+- **21 `doio(iob)`** — D1 = BPTR of an IORequest; exec **DoIO** (−456); → **io_Error** (byte +$1F,
+  unsigned). Callers: 127, console-handler, validator.
+- **126 `compstamp(a, b)`** — two BPTRs of datestamp vectors; signed lexicographic comparison
+  (days, then minutes, then ticks); → **0** if equal, **+1 if a is more recent than b**, **−1 if a
+  is older**. No side effect. Caller: validator (entry 7).
+- **94 `getword(v, i)`** / **95 `putword(v, i, w)`** — 16-bit word (unsigned on read) at
   `BADDR(v) + 2·i`. [O]
-- **46 `unloadseg(seg)` + `endtask()`** — `unloadseg(seg)` (82) puis endtask (34) ; ne revient pas ;
-  si l'endtask revenait : `abort($87000002)`. Aucun appelant trouvé dans la ROM. [O]
-- **34 `endtask()`** (complément de §8.1) — **arguments ignorés** : freevec de `pr_SegList` (le
-  segarray) ; si `pr_GlobVec` ≠ `dl_GV`, freevec du GV (bloc complet, 50 slots négatifs compris) ;
-  puis `RemTask(0)`. [O]
-- **50 `openwindow(gauche, haut, largeur, hauteur, titre)`** — intuition **OpenWindow** (−204) avec
-  pour base la **globale 92** (IntuitionBase). NewWindow : LeftEdge/TopEdge/Width/Height = les 4
-  premiers arguments (mots), DetailPen = BlockPen = −1, IDCMPFlags = 0, Flags = **$00021007**
-  (WINDOWSIZING | WINDOWDRAG | WINDOWDEPTH | ACTIVATE | NOCAREREFRESH, smart refresh), pas de
-  gadget ni de checkmark, Title = `BADDR(5ᵉ arg)` (texte attendu terminé par NUL), Screen/BitMap =
+- **46 `unloadseg(seg)` + `endtask()`** — `unloadseg(seg)` (82) then endtask (34); does not return;
+  if the endtask returned: `abort($87000002)`. No caller found in the ROM. [O]
+- **34 `endtask()`** (complement to §8.1) — **arguments ignored**: freevec of `pr_SegList` (the
+  segarray); if `pr_GlobVec` ≠ `dl_GV`, freevec of the GV (whole block, 50 negative slots included);
+  then `RemTask(0)`. [O]
+- **50 `openwindow(left, top, width, height, title)`** — intuition **OpenWindow** (−204) with
+  **global 92** (IntuitionBase) as base. NewWindow: LeftEdge/TopEdge/Width/Height = the first 4
+  arguments (words), DetailPen = BlockPen = −1, IDCMPFlags = 0, Flags = **$00021007**
+  (WINDOWSIZING | WINDOWDRAG | WINDOWDEPTH | ACTIVATE | NOCAREREFRESH, smart refresh), no
+  gadget nor checkmark, Title = `BADDR(5th arg)` (NUL-terminated text expected), Screen/BitMap =
   0, MinWidth 120, MinHeight 50, MaxWidth = MaxHeight = $FFFF, Type = WBENCHSCREEN (1).
-  → **Window\*** (APTR) ou 0. Appelant : console-handler (entrée 5). [O]
-- **91 `renameobj(ancien, nouveau)`** — deux BSTR. `deviceproc` sur chacun (Result2 de chaque appel
-  = lock de référence) ; l'un des deux à 0 → **0** ; ports différents → **Result2 := 215**
-  (ERROR_RENAME_ACROSS_DEVICES) et **0** ; sinon `sendpkt` **ACTION_RENAME_OBJECT (17)** avec
-  Arg1 = lock ancien, Arg2 = BSTR ancien, Arg3 = lock nouveau, Arg4 = BSTR nouveau → dp_Res1.
-  Si Res1 = 0 : `errorreq` (114) ; **s'il renvoie 0 l'opération complète est relancée**, sinon
-  renvoie 0. (Sens du booléen de 114 observé ici : 0 = recommencer — à rapprocher de la ligne 114
-  de §8.2, marquée [D].) Appelant : l'adaptateur **−10 (Rename, LVO −78)**. [O]
-- **112** : voir §13.3.
+  → **Window\*** (APTR) or 0. Caller: console-handler (entry 5). [O]
+- **91 `renameobj(old, new)`** — two BSTRs. `deviceproc` on each (Result2 of each call
+  = reference lock); either one at 0 → **0**; different ports → **Result2 := 215**
+  (ERROR_RENAME_ACROSS_DEVICES) and **0**; otherwise `sendpkt` **ACTION_RENAME_OBJECT (17)** with
+  Arg1 = old lock, Arg2 = old BSTR, Arg3 = new lock, Arg4 = new BSTR → dp_Res1.
+  If Res1 = 0: `errorreq` (114); **if it returns 0 the whole operation is restarted**, otherwise
+  returns 0. (Meaning of 114's boolean observed here: 0 = start again — to be compared with the 114 line
+  of §8.2, marked [D].) Caller: the adapter **−10 (Rename, LVO −78)**. [O]
+- **112**: see §13.3.
 
 #### 8.4.3 C:Date (Workbench 1.3.3) [O WB]
 
-Fichier 4208 octets (md5 `16b1601e143f86663d2ec14151d6951d`) : hunk 0 = stub standard (§3.3,
-md5 `d6b59e0e…`), hunk 1 = module BCPL de 960 longs, max = **152**, paires globin
-**(84, $4D4)** et **(1, $44)**. Commande BCPL ordinaire : seules 86 et 128 la distinguent des
-commandes de §9.
+File of 4208 bytes (md5 `16b1601e143f86663d2ec14151d6951d`): hunk 0 = standard stub (§3.3,
+md5 `d6b59e0e…`), hunk 1 = BCPL module of 960 longs, max = **152**, globin pairs
+**(84, $4D4)** and **(1, $44)**. Ordinary BCPL command: only 86 and 128 distinguish it from the
+commands of §9.
 
-**Globales utilisées par le module** (liste exhaustive des accès `GV` du hunk 1) :
+**Globals used by the module** (exhaustive list of the `GV` accesses of hunk 1):
 
-| Gl. | Usage | Gl. | Usage |
+| Gl. | Use | Gl. | Use |
 |---|---|---|---|
-| 1 | start (définie par Date) | 74 | writef |
-| 2 | stop(20) sur erreur | 78 | rdargs (vecteur 50 longs) |
-| 10 | result2 (lecture / écriture d'un drapeau, cf. ci-dessous) | 80 | findarg |
-| 60 | findoutput (argument TO) | **84** | restauration de la sortie (définie par Date) |
+| 1 | start (defined by Date) | 74 | writef |
+| 2 | stop(20) on error | 78 | rdargs (vector of 50 longs) |
+| 10 | result2 (read / write of a flag, cf. below) | 80 | findarg |
+| 60 | findoutput (TO argument) | **84** | restoration of the output (defined by Date) |
 | 62 | selectoutput | **86** | **datstamp** |
 | 64 | endwrite | **128** | **setdatstamp** |
-| 66 | output | 150 | statique : flux de sortie initial |
-| 73 | writes | 151, 152 | statiques : chaîne d'heure analysée, index de lecture |
+| 66 | output | 150 | static: initial output stream |
+| 73 | writes | 151, 152 | statics: parsed time string, read index |
 
-Plus, via le stub : 28, 29, 30, 89, 134 et la copie CLI 134..149. Arithmétique A5+$10/+$12.
-**Aucun accès direct** à timer.device, au RootNode ni à la RTC ; aucune globale 126/127.
+Plus, via the stub: 28, 29, 30, 89, 134 and the CLI copy 134..149. Arithmetic A5+$10/+$12.
+**No direct access** to timer.device, the RootNode or the RTC; no global 126/127.
 
-**Comportement** :
-1. G150 := output() ; `rdargs("TIME,DATE,TO=VER/K")`. Échec → « usage » : trois `writes`
+**Behaviour**:
+1. G150 := output(); `rdargs("TIME,DATE,TO=VER/K")`. Failure → "usage": three `writes`
    (`***Bad args \n`, `- use DD-MMM-YY or <dayname> or yesterday etc. to set date\n`,
-   `      HH:MM:SS OR HH:MM to set time\n`), globale 84, **stop(20)**.
-2. TO présent : `findoutput(TO)` ; 0 → `writef("***Can't open %S\n", TO)` puis stop(20) ;
-   sinon `selectoutput`.
-3. **Ni TIME ni DATE** → lecture : `datstamp(v)` (vecteur local), conversion locale en trois
-   chaînes, puis `writef("%S %S %S\n", jour_de_semaine, date, heure)` (date `DD-MMM-YY`, heure
-   `HH:MM:SS`, jour = `Sunday…Saturday` indexé par jours mod 7, le 1-jan-1978 étant un dimanche ;
-   chaînes de repli `<unset>` / `<invalid>` présentes).
-4. Sinon, **argv!0 (TIME) puis argv!1 (DATE)** sont traités dans cet ordre, chacun selon son
-   contenu et non sa position : présence d'un `:` → **réglage d'heure**, sinon **réglage de date**.
-   - **Heure** `HH:MM[:SS]` : HH **obligatoire** ∈ 0..23 ; MM et SS ∈ 0..59 (MM/SS absents → 0 ;
-     HH absent ou toute valeur hors plage → usage + stop(20)). `datstamp(w)` (heure courante),
-     puis w!1 := HH×60+MM, w!2 := SS×50, **w!0 conservé**, puis **`setdatstamp(w)`** (128).
-   - **Date** : à l'entrée de l'analyse `result2` est mis à 0. Formes : `DD-MMM-YY` (mois
-     `Jan…Dec` ; **YY < 78 → 20YY, sinon 19YY** ; jours comptés depuis 1978 avec années
-     bissextiles = divisibles par 4), `findarg("Tomorrow,Today,Yesterday")` → jours courant +1 / 0
-     / −1, `findarg("Sunday,…,Saturday")` → jour de cette semaine-là dans les 7 jours **précédents**,
-     avec **Result2 := 1**. Les deux formes relatives exigent une date courante non nulle (jours =
-     0 → usage + stop(20)). Échec d'analyse → usage. Puis `datstamp(w)`, **w!0 := jours (+7 si
-     Result2 = 1)** — donc nom de jour = prochaine occurrence, aujourd'hui inclus [D] —, w!1/w!2
-     conservés, puis **`setdatstamp(w)`** (128).
-5. Fin : **globale 84** = si `output()` ≠ G150 : `endwrite()` puis `selectoutput(G150)`. Retour
-   normal de start (code 0).
+   `      HH:MM:SS OR HH:MM to set time\n`), global 84, **stop(20)**.
+2. TO present: `findoutput(TO)`; 0 → `writef("***Can't open %S\n", TO)` then stop(20);
+   otherwise `selectoutput`.
+3. **Neither TIME nor DATE** → read: `datstamp(v)` (local vector), local conversion into three
+   strings, then `writef("%S %S %S\n", day_of_week, date, time)` (date `DD-MMM-YY`, time
+   `HH:MM:SS`, day = `Sunday…Saturday` indexed by days mod 7, 1-Jan-1978 being a Sunday;
+   fallback strings `<unset>` / `<invalid>` present).
+4. Otherwise, **argv!0 (TIME) then argv!1 (DATE)** are processed in that order, each according to its
+   contents and not its position: presence of a `:` → **time setting**, otherwise **date setting**.
+   - **Time** `HH:MM[:SS]`: HH **mandatory** ∈ 0..23; MM and SS ∈ 0..59 (MM/SS absent → 0;
+     HH absent or any out-of-range value → usage + stop(20)). `datstamp(w)` (current time),
+     then w!1 := HH×60+MM, w!2 := SS×50, **w!0 kept**, then **`setdatstamp(w)`** (128).
+   - **Date**: on entry to the parsing `result2` is set to 0. Forms: `DD-MMM-YY` (month
+     `Jan…Dec`; **YY < 78 → 20YY, otherwise 19YY**; days counted since 1978 with leap years
+     = divisible by 4), `findarg("Tomorrow,Today,Yesterday")` → current days +1 / 0
+     / −1, `findarg("Sunday,…,Saturday")` → day of that week within the **previous** 7 days,
+     with **Result2 := 1**. Both relative forms require a non-zero current date (days =
+     0 → usage + stop(20)). Parsing failure → usage. Then `datstamp(w)`, **w!0 := days (+7 if
+     Result2 = 1)** — so day name = next occurrence, today included [D] —, w!1/w!2
+     kept, then **`setdatstamp(w)`** (128).
+5. End: **global 84** = if `output()` ≠ G150: `endwrite()` then `selectoutput(G150)`. Normal
+   return from start (code 0).
 
-**Appel exact de la globale 128** : D1 = BPTR d'un vecteur de 3 longs (dans la frame de Date)
-déjà rempli par `datstamp` puis partiellement remplacé ; frame appelante de $34 (date) ou $30
-(heure) octets ; résultat ignoré. `date 21-Oct-26 10:00:00` ⇒ **deux** appels successifs :
-(17825, minutes courantes, ticks courants) puis (17825, 600, 0) — ce dernier règle l'heure
-système à 1 540 116 000 s ($5BCC4E20), 0 µs. Avec un GV de commande dont GV[128] garde le
-marqueur `$474C0001 + 2·128` (§3.3), le premier réglage saute à une adresse impaire. `date` sans
-argument n'exige que 86 (et donc −25/127/21).
+**Exact call of global 128**: D1 = BPTR of a vector of 3 longs (in Date's frame)
+already filled by `datstamp` then partly replaced; calling frame of $34 (date) or $30
+(time) bytes; result ignored. `date 21-Oct-26 10:00:00` ⇒ **two** successive calls:
+(17825, current minutes, current ticks) then (17825, 600, 0) — the latter sets the system
+time to 1,540,116,000 s ($5BCC4E20), 0 µs. With a command GV whose GV[128] keeps the
+marker `$474C0001 + 2·128` (§3.3), the first setting jumps to an odd address. `date` without
+argument only requires 86 (and hence −25/127/21).
 
-#### 8.4.4 C:SetClock (`SetClock load`) [O WB, D pour l'identification des appels de bibliothèque]
+#### 8.4.4 C:SetClock (`SetClock load`) [O WB, D for the identification of the library calls]
 
-Fichier 4884 octets (md5 `f2775b9198d12db532b935cb70682cd4`), **exécutable C (17 hunks, avec
-relocations), pas BCPL** : il n'utilise **aucune globale** ; il passe par dos.library (LVO) et
-timer.device. Syntaxe : `setclock load|save|reset` (sinon texte d'usage, code 0).
+File of 4884 bytes (md5 `f2775b9198d12db532b935cb70682cd4`), **C executable (17 hunks, with
+relocations), not BCPL**: it uses **no global**; it goes through dos.library (LVO) and
+timer.device. Syntax: `setclock load|save|reset` (otherwise usage text, code 0).
 
-- **Horloge** : MSM6242 en **$DC0000**, 16 registres de 4 bits, **un registre par long** (registre
-  *i* au quartet bas du long `base + 4·i`) : 0/1 secondes, 2/3 minutes, 4/5 heures, 6/7 jour,
-  8/9 mois, 10/11 année (2 chiffres), 12 jour de semaine, 13/14/15 = registres de contrôle D/E/F
-  (+$34/+$38/+$3C). Valeurs écrites en longs `$FFFxFFFx` (quartet utile répété).
-- **Détection** : lit le registre des secondes, attend ~1,5 s (appel dos de 75 ticks, D), relit ;
-  valeur changée ⇒ horloge présente. Sinon retente en **$D80000** (message
-  `Warning: Clock is at old address`) ; absente aux deux adresses ⇒ `Battery Backed up Clock not
-  found` et code retour **5**. Un `SetClock load` sans RTC émulée sort donc en 5 (startup-sequence :
-  sans conséquence si FailAt ≥ 5, cas par défaut 10).
-- **load** : gèle l'horloge (bit HOLD du registre D, attente de BUSY = 0), lit les 12 chiffres,
-  libère ; secondes depuis le 1-jan-1978 (années depuis 78, tables de mois 365/366 jours,
-  bissextile = année mod 4 = 0 ; années 00–77 non gérées) ; puis timer.device unité 0, IORequest de
-  40 octets sur un port créé pour l'occasion, **TR_SETSYSTIME (11)**, tv_secs = secondes,
-  **tv_micro = 0**, DoIO, fermeture. **Aucun passage par dos** : `rn_Time` n'est mis à jour qu'au
-  prochain DateStamp.
-- **save** : **TR_GETSYSTIME (10)** → tv_secs décomposé en date/heure, écrit dans les registres de
-  la RTC (sous HOLD). **reset** : séquence de réinitialisation des registres de contrôle D/E/F.
+- **Clock**: MSM6242 at **$DC0000**, 16 4-bit registers, **one register per long** (register
+  *i* in the low nibble of the long `base + 4·i`): 0/1 seconds, 2/3 minutes, 4/5 hours, 6/7 day,
+  8/9 month, 10/11 year (2 digits), 12 day of week, 13/14/15 = control registers D/E/F
+  (+$34/+$38/+$3C). Values written as longs `$FFFxFFFx` (useful nibble repeated).
+- **Detection**: reads the seconds register, waits ~1.5 s (dos call of 75 ticks, D), reads again;
+  value changed ⇒ clock present. Otherwise retries at **$D80000** (message
+  `Warning: Clock is at old address`); absent at both addresses ⇒ `Battery Backed up Clock not
+  found` and return code **5**. A `SetClock load` without an emulated RTC therefore exits with 5 (startup-sequence:
+  without consequence if FailAt ≥ 5, default case 10).
+- **load**: freezes the clock (HOLD bit of register D, wait for BUSY = 0), reads the 12 digits,
+  releases; seconds since 1-Jan-1978 (years since 78, month tables of 365/366 days,
+  leap = year mod 4 = 0; years 00–77 not handled); then timer.device unit 0, IORequest of
+  40 bytes on a port created for the occasion, **TR_SETSYSTIME (11)**, tv_secs = seconds,
+  **tv_micro = 0**, DoIO, close. **No passage through dos**: `rn_Time` is only updated at the
+  next DateStamp.
+- **save**: **TR_GETSYSTIME (10)** → tv_secs decomposed into date/time, written into the registers of
+  the RTC (under HOLD). **reset**: reinitialisation sequence of the control registers D/E/F.
 
-#### 8.4.5 Conséquences pour notre runtime [D]
+#### 8.4.5 Consequences for our runtime [D]
 
-- Une ROM qui veut faire tourner C:Date doit fournir **86** (ou −25) et **128** dans les segments
-  installés par globin ; 128 ne demande que timer.device **TR_SETSYSTIME** + la relecture qui
-  rafraîchit `rn_Time`.
-- 127 n'a pas besoin d'être exportée pour Date, mais toute implémentation de −25/128/47 doit
-  fournir un tampon IORequest ≥ 40 octets (≥ 48 si l'on reproduit `setio`).
-- Les résultats D1 de 128 et D0 de DateStamp sont non significatifs en V34 : renvoyer v / ds est
+- A ROM that wants to run C:Date must provide **86** (or −25) and **128** in the segments
+  installed by globin; 128 only needs timer.device **TR_SETSYSTIME** + the re-read that
+  refreshes `rn_Time`.
+- 127 does not need to be exported for Date, but any implementation of −25/128/47 must
+  provide an IORequest buffer ≥ 40 bytes (≥ 48 if `setio` is reproduced).
+- The D1 results of 128 and D0 of DateStamp are not meaningful in V34: returning v / ds is
   compatible.
 
 ---
 
-## 9. Q8 — Autres comportements nécessaires aux commandes cibles
+## 9. Q8 — Other behaviours needed by the target commands
 
-### 9.1 Globales minimales par commande [O WB]
-(appels par la table GV ; s'ajoutent 28/29/30/89/134 utilisées par le stub)
+### 9.1 Minimal globals per command [O WB]
+(calls through the GV table; to which are added 28/29/30/89/134 used by the stub)
 
-| Commande | Globales appelées | Champs CLI (GV 134–149) |
+| Command | Globals called | CLI fields (GV 134–149) |
 |---|---|---|
 | AddBuffers | 2, 48, 73, 74, 78, 102 (+ mult) | — |
-| CD | 2, 10, 35, 48, 51, 73, 74, 78, 104, 109, 114, 115, 123 (+ 84 privée) | 135 SetName (lecture/écriture du tampon) |
+| CD | 2, 10, 35, 48, 51, 73, 74, 78, 104, 109, 114, 115, 123 (+ 84 private) | 135 SetName (read/write of the buffer) |
 | Path | 2, 10, 14, 29, 30, 35, 48, 73, 74, 78, 104, 108, 109, 110, 111, 114, 115 | 136 CommandDir |
 | Wait | 2, 37, 39, 47, 73, 78 (+ mult/div) | — |
 | EndCLI | 14, 39, 74, 77, 78, 88, 93, 110 | 141, 142, 144, 145 |
 | Execute | 2, 10, 14, 17, 18, 37, 51, 54, 55, 56, 59–66, 70, 73–75, 78–80, 90, 109–111, 123, 125 (+ div) | 142 CurrentInput, 143 CommandFile, 144 |
 | Run | −26, 2, 10, 14, 29, 30, 33, 39, 48, 51, 60, 65, 66, 73, 74, 77, 88, 89, 110, 111, 113, 134 (+ div) | — (via packet) |
 | Resident | 2, 19, 30, 39, 48, 73, 74, 77, 81, 82, 88, 102, 108, 109 | — |
-| Mount | −2, 2, 14, 29, 30, 37, 39, 54–56, 59–64, 68, 73–75, 77, 78, 80, 85, 102, 107, 110, 115, 124 (+ 84 privée) | — |
-| Shell-Seg | −20, −8, −1, 10, 14, 29, 30, 34, 37, 39, 43, 48, 49, 51, 54–56, 61–66, 73, 74, 76, 77, 79, 81, 82, 90, 93, 102, 104, 108–111, 121 | — (segment de process) |
+| Mount | −2, 2, 14, 29, 30, 37, 39, 54–56, 59–64, 68, 73–75, 77, 78, 80, 85, 102, 107, 110, 115, 124 (+ 84 private) | — |
+| Shell-Seg | −20, −8, −1, 10, 14, 29, 30, 34, 37, 39, 43, 48, 49, 51, 54–56, 61–66, 73, 74, 76, 77, 79, 81, 82, 90, 93, 102, 104, 108–111, 121 | — (process segment) |
 
-### 9.2 Particularités par commande [O WB sauf mention]
-- **AddBuffers** : `rdargs("DRIVE/A,BUFFERS/A")`, deviceproc(DRIVE) (« Drive %S not found »),
-  conversion décimale locale (« Invalid char '%C' in number »), puis `sendpkt(−, port,
-  ACTION_MORE_CACHE = 18, −, −, n)` ; résultat 0 → « Warning: Insufficient memory for buffers ».
-  Échecs : stop(20).
-- **CD** : template `"DIR"`. Utilise ACTION_EXAMINE_OBJECT (23) via sendpkt, parentdir pour
-  reconstruire le nom complet, currentdir(TRUE, lock), freeobj de l'ancien ; écrit le nom dans le
-  **tampon BSTR pointé par cli_SetName** (copystring). Messages : « Can't find %S »,
-  « %s is a file not a directory », « Unable to find current directory name ». [O/D]
-- **Path** : template `",,,,,,,,,,ADD/S,SHOW/S,RESET/S,QUIET/S"`. Met **pr_WindowPtr := −1**
-  (process +$B8 via putlong) pendant l'exécution pour supprimer les requesters, puis le restaure.
-  Gère la liste `cli_CommandDir` : nœuds `getvec(1)` = `[BPTR suivant, lock]` (le CLI libère ces
-  nœuds par freevec + unlock à sa fin). Examine (23) pour refuser les fichiers.
-- **Wait** : template `",SEC=SECS/S,MIN=MINS/S,UNTIL/K"` ; boucle de delay() avec testflags(CTRL-C)
-  → « **BREAK » ; UNTIL lit l'heure via le RootNode (rn_Time) [D].
-- **EndCLI** : `rdargs("")` ; **stdin.fh_End := 0** (EOF forcé, que le CLI ne restaure pas) ; si
-  CurrentInput ≠ StandardInput : ferme le script et CurrentInput := StandardInput ;
-  **cli_Background := TRUE** ; si cli_Interactive : `"CLI process %N ending\n"` ; sous Forbid,
-  décrémente le compteur d'usage du résident « CLI » s'il existe et est > 0. Le CLI sort alors à la
-  lecture suivante (§4.5).
-- **Execute** : lit le nom du script par **rditem** (pas rdargs) ; ouvre le fichier (findinput),
-  sinon réessaie relativement à `S:` ; « Can't open %S ».
-  - Script **sans directive** (premier caractère non blanc ≠ `.`) et pas d'imbrication
-    (CurrentInput = StandardInput) : remet le caractère, **cli_CurrentInput := le script**, stop(0).
-    Le CLI exécute alors les lignes du script. Les paramètres de la ligne Execute sont ignorés.
-  - Sinon : traite les directives `.KEY/.K`, `.DEFAULT/.DEF`, `.BRA`, `.KET`, `.DOLLAR`, `.DOT`
-    (délimiteurs par défaut `<` `>` `$` `.`), écrit le script substitué dans un fichier temporaire
-    `T:Command-<n>-T<m>` (repli `:T/Command-0-Tnn`), recopie le reste du script englobant en cas
-    d'imbrication, puis CurrentInput := temporaire et **cli_CommandFile := son nom** (supprimé par
-    le CLI à l'EOF). Erreurs internes gérées par level()/longjump. [O/D]
-- **Run** (protocole de création d'un CLI de fond) :
-  1. Texte de commande : si pr_Result2 ≠ 0 à l'entrée, c'est un **BSTR de commande** (cas de la
-     globale 101 / LVO Execute) ; sinon le **tampon d'entrée injecté** (fh_Buf[0..fh_End−1]) suivi
-     d'un `\n`, placé dans un FileHandle mémoire construit à la main (getvec ; `fh_Buf` = données
-     internes, `fh_Pos` = 0, `fh_End` = longueur+1, aucune routine).
-  2. Segarray neuf `getvec(4)` : `[4, V!1, V!2 du parent, 0, CLI]` où CLI = segment du résident
-     nommé **"CLI"** s'il existe dans la liste Resident (son compteur d'usage peut être
-     incrémenté, jamais s'il vaut −1 = système ; condition exacte au §13.6.5 [O]), sinon
+### 9.2 Peculiarities per command [O WB unless stated]
+- **AddBuffers**: `rdargs("DRIVE/A,BUFFERS/A")`, deviceproc(DRIVE) ("Drive %S not found"),
+  local decimal conversion ("Invalid char '%C' in number"), then `sendpkt(−, port,
+  ACTION_MORE_CACHE = 18, −, −, n)`; result 0 → "Warning: Insufficient memory for buffers".
+  Failures: stop(20).
+- **CD**: template `"DIR"`. Uses ACTION_EXAMINE_OBJECT (23) via sendpkt, parentdir to
+  rebuild the full name, currentdir(TRUE, lock), freeobj of the old one; writes the name into the
+  **BSTR buffer pointed to by cli_SetName** (copystring). Messages: "Can't find %S",
+  "%s is a file not a directory", "Unable to find current directory name". [O/D]
+- **Path**: template `",,,,,,,,,,ADD/S,SHOW/S,RESET/S,QUIET/S"`. Sets **pr_WindowPtr := −1**
+  (process +$B8 via putlong) during execution to suppress the requesters, then restores it.
+  Manages the `cli_CommandDir` list: nodes `getvec(1)` = `[next BPTR, lock]` (the CLI frees these
+  nodes by freevec + unlock at its end). Examine (23) to refuse files.
+- **Wait**: template `",SEC=SECS/S,MIN=MINS/S,UNTIL/K"`; delay() loop with testflags(CTRL-C)
+  → "**BREAK"; UNTIL reads the time via the RootNode (rn_Time) [D].
+- **EndCLI**: `rdargs("")`; **stdin.fh_End := 0** (forced EOF, which the CLI does not restore); if
+  CurrentInput ≠ StandardInput: closes the script and CurrentInput := StandardInput;
+  **cli_Background := TRUE**; if cli_Interactive: `"CLI process %N ending\n"`; under Forbid,
+  decrements the usage counter of the "CLI" resident if it exists and is > 0. The CLI then exits at the
+  next read (§4.5).
+- **Execute**: reads the script name by **rditem** (not rdargs); opens the file (findinput),
+  otherwise retries relative to `S:`; "Can't open %S".
+  - Script **without directive** (first non-blank character ≠ `.`) and no nesting
+    (CurrentInput = StandardInput): puts the character back, **cli_CurrentInput := the script**, stop(0).
+    The CLI then executes the lines of the script. The parameters of the Execute line are ignored.
+  - Otherwise: processes the directives `.KEY/.K`, `.DEFAULT/.DEF`, `.BRA`, `.KET`, `.DOLLAR`, `.DOT`
+    (default delimiters `<` `>` `$` `.`), writes the substituted script into a temporary file
+    `T:Command-<n>-T<m>` (fallback `:T/Command-0-Tnn`), copies the rest of the enclosing script in case
+    of nesting, then CurrentInput := temporary and **cli_CommandFile := its name** (deleted by
+    the CLI at EOF). Internal errors handled by level()/longjump. [O/D]
+- **Run** (protocol for creating a background CLI):
+  1. Command text: if pr_Result2 ≠ 0 on entry, it is a **command BSTR** (case of
+     global 101 / LVO Execute); otherwise the **injected input buffer** (fh_Buf[0..fh_End−1]) followed
+     by a `\n`, placed in a hand-built memory FileHandle (getvec; `fh_Buf` = internal
+     data, `fh_Pos` = 0, `fh_End` = length+1, no routine).
+  2. New segarray `getvec(4)`: `[4, V!1, V!2 of the parent, 0, CLI]` where CLI = segment of the resident
+     named **"CLI"** if it exists in the Resident list (its usage counter may be
+     incremented, never if it is −1 = system; exact condition in §13.6.5 [O]), otherwise
      `rn_ConsoleSegment` (RootNode +4).
-  3. Sous Forbid : premier slot libre de `rn_TaskArray` (`[0]` = taille) ; échec → « Unable to
-     create background process ».
-  4. createproc(segarray, **800 longs**, pri du parent, `"Background CLI"`, **GV du parent**
-     = pr_GlobVec du CLI appelant) ; `rn_TaskArray[slot]` := taskid ; `pr_TaskNum` du nouveau
+  3. Under Forbid: first free slot of `rn_TaskArray` (`[0]` = size); failure → "Unable to
+     create background process".
+  4. createproc(segarray, **800 longs**, pri of the parent, `"Background CLI"`, **GV of the parent**
+     = pr_GlobVec of the calling CLI); `rn_TaskArray[slot]` := taskid; `pr_TaskNum` of the new
      process (+$8C) := slot. Permit.
-  5. **Packet de démarrage** (sendpkt synchrone) : `dp_Type` = **adresse machine d'une routine
-     d'init BCPL** contenue dans Run ; Arg1 = pr_CLI du parent, Arg2 = input(), Arg3 = output(),
-     Arg4 = FileHandle des commandes, Arg5 = DupLock du répertoire courant (si CLI parent), Arg6 =
-     BSTR de commande initial (ou 0).
-  6. Côté nouveau CLI : `start(pkt)` appelle `init = pkt.dp_Type` (ou GV[133] si pkt = 0) avec
-     pkt ; si `init` renvoie une valeur **> 0**, le CLI l'appelle comme une fonction avec
-     pr_Result2 en argument (Run renvoie ainsi `qpkt` après avoir mis pkt dans Result2 → réponse
-     **immédiate**, Run continue) ; une valeur **< 0** = drapeaux, le packet n'est rendu qu'à la
-     **fin** du CLI (cas Execute() synchrone). [O ROM + WB ; bits et contrat complet : §13.6]
-  7. Run affiche `"[CLI %N]\n"` (si pas de BSTR initial) puis stop(0).
-  Le CLI de fond lit ses commandes dans le FileHandle mémoire ; à son EOF, étant Background, il
-  se termine.
-- **NewCLI** : crée un CLI **interactif** dans une fenêtre (`"Window,From"`, défaut
-  `CON:0/0/640/100/New CLI`) ; la fenêtre est ouverte **par le nouveau process** (findinput puis
-  findoutput(`*`)) dans une routine d'init propre à NewCLI (globale 133 de son GV privé). Contrat
-  complet : **§13.7**.
-- **Resident** : liste des segments résidents = chaîne partant de **DosInfo +$10** (DosInfo = BADDR
-  de rn_Info, RootNode +$18). Nœud : `!0` BPTR suivant, `!1` compteur d'usage (−1 = SYSTEM), `!2`
-  seglist, `!3…` nom BSTR (octet +12). Exige le bit de protection **p** (« Pure bit not set »).
+  5. **Startup packet** (synchronous sendpkt): `dp_Type` = **machine address of a BCPL init
+     routine** contained in Run; Arg1 = pr_CLI of the parent, Arg2 = input(), Arg3 = output(),
+     Arg4 = FileHandle of the commands, Arg5 = DupLock of the current directory (if parent CLI), Arg6 =
+     initial command BSTR (or 0).
+  6. On the new CLI's side: `start(pkt)` calls `init = pkt.dp_Type` (or GV[133] if pkt = 0) with
+     pkt; if `init` returns a value **> 0**, the CLI calls it as a function with
+     pr_Result2 as argument (Run thus returns `qpkt` after putting pkt in Result2 → **immediate**
+     reply, Run continues); a value **< 0** = flags, the packet is only returned at the
+     **end** of the CLI (synchronous Execute() case). [O ROM + WB; bits and full contract: §13.6]
+  7. Run displays `"[CLI %N]\n"` (if no initial BSTR) then stop(0).
+  The background CLI reads its commands from the memory FileHandle; at its EOF, being Background, it
+  terminates.
+- **NewCLI**: creates an **interactive** CLI in a window (`"Window,From"`, default
+  `CON:0/0/640/100/New CLI`); the window is opened **by the new process** (findinput then
+  findoutput(`*`)) in an init routine specific to NewCLI (global 133 of its private GV). Full
+  contract: **§13.7**.
+- **Resident**: list of resident segments = chain starting from **DosInfo +$10** (DosInfo = BADDR
+  of rn_Info, RootNode +$18). Node: `!0` next BPTR, `!1` usage counter (−1 = SYSTEM), `!2`
+  seglist, `!3…` BSTR name (byte +12). Requires the **p** protection bit ("Pure bit not set").
   Template `"Name,File,Remove/S,Add/S,Replace/S,Pure/S,SYSTEM/S"`. [O/D]
-- **Mount** : lit `devs:mountlist` (template `"DEVICE/A,FROM/K"`) par findinput/rdch ; mots-clés
-  `Handler, StackSize, Priority, GlobVec, FileSystem, Startup, …` ; crée DeviceNode/environnement.
-  Non analysé en détail. [S]
-- **Shell-Seg** : segment BCPL d'**un seul hunk sans stub** (globale 1, max 133) ; il s'installe
-  comme résident « CLI » et est utilisé comme entrée 4 du segarray (comme le CLI ROM) ; il gère
-  lui-même la liste Resident et appelle runcommand (121). Partage le GV du CLI. [O/D]
+- **Mount**: reads `devs:mountlist` (template `"DEVICE/A,FROM/K"`) by findinput/rdch; keywords
+  `Handler, StackSize, Priority, GlobVec, FileSystem, Startup, …`; creates DeviceNode/environment.
+  Not analysed in detail. [S]
+- **Shell-Seg**: BCPL segment of **a single hunk without stub** (global 1, max 133); it installs itself
+  as the "CLI" resident and is used as entry 4 of the segarray (like the ROM CLI); it manages
+  the Resident list itself and calls runcommand (121). Shares the CLI's GV. [O/D]
 
-### 9.3 Contraintes d'interopérabilité pour notre ROM [D]
-- Nos FileHandles doivent respecter le layout §5.1 (tampon BPTR, index octets) car le CLI y
-  **injecte** les arguments et les commandes (EndCLI, Run) écrivent directement `fh_End`/`fh_Buf`.
-  Si nos rdch/wrch BCPL sont natifs, ils doivent appliquer exactement les règles §5.2/§6.1 sur ces
-  champs ; si les routines fh_Funcs/Func2/Func3 sont appelées, elles doivent être **appelables
-  en BCPL** (entrée A4, retour par A6).
-- Les FileHandles et nœuds alloués par les commandes le sont par getvec et libérés par freevec
-  (et réciproquement) : l'en-tête getvec (taille à −4) doit être compatible avec tous les blocs
-  échangés (FileHandle, nœuds de chemin, segarray, GV).
-- Le runtime doit exister sous forme de **segments au format §3.1** listés dans le segarray de
-  chaque CLI (entrées 1..V!0), car c'est la globin de la commande qui les installe dans son GV
-  privé.
-- `cli_DefaultStack` par défaut = 1000 longs ; le stub prend sa pile BCPL **dans** cette pile.
+### 9.3 Interoperability constraints for our ROM [D]
+- Our FileHandles must respect the §5.1 layout (BPTR buffer, byte indices) because the CLI
+  **injects** the arguments into them and the commands (EndCLI, Run) write `fh_End`/`fh_Buf` directly.
+  If our BCPL rdch/wrch are native, they must apply exactly the rules of §5.2/§6.1 on these
+  fields; if the fh_Funcs/Func2/Func3 routines are called, they must be **callable
+  in BCPL** (entry A4, return through A6).
+- The FileHandles and nodes allocated by the commands are allocated by getvec and freed by freevec
+  (and vice versa): the getvec header (size at −4) must be compatible with all the blocks
+  exchanged (FileHandle, path nodes, segarray, GV).
+- The runtime must exist in the form of **segments in the §3.1 format** listed in the segarray of
+  each CLI (entries 1..V!0), because it is the command's globin that installs them into its private
+  GV.
+- Default `cli_DefaultStack` = 1000 longs; the stub takes its BCPL stack **within** that stack.
 
 ---
 
-## 10. Divergences avec la table publique (Kinnersley/AROS)
+## 10. Divergences from the public table (Kinnersley/AROS)
 
-| Point | Table publique | V34 observé |
+| Point | Public table | V34 observed |
 |---|---|---|
-| Frame −4 | « ancien A4 » | A4 **de l'appelé** ; A4 restauré depuis la frame de l'appelant [O] |
-| Global 1 Start | (commenté chez AROS) | **confirmé** : start(D1) [O] |
-| $0C/$10/$14 | multiply/divide/mod | confirmé (3/4/5) [O] |
+| Frame −4 | "old A4" | A4 **of the callee**; A4 restored from the caller's frame [O] |
+| Global 1 Start | (commented in AROS) | **confirmed**: start(D1) [O] |
+| $0C/$10/$14 | multiply/divide/mod | confirmed (3/4/5) [O] |
 | $48 (18) | longcall | **longjump(level, label)** [O] |
 | $50 (20) | longjump | **aptovec(f, n)** [O] |
-| $1A0 (104) | writeErr | **fault(code)** : lance C:FAULT, repli `"Error code %N"` [O] |
-| $13C (79) | rditem (K : rdline) | rditem confirmé [O] |
-| $140 (80) | subString (K : parseline) | **findarg(template, item)** [O] |
-| $1E4 (121) | runCommand (K : runloaded) | confirmé, convention §4.3 [O] |
-| $204 (129) | DOSBase (valeur) | **inexistant en V34** : aucune référence dans la ROM ni dans les commandes [O] |
-| $218 (134) | findCLI | confirmé dans dl_GV ; **dans le GV d'une commande, 134..149 = copie de la CLI** [O] |
-| −$08 (−2) | copyvec (K : strncpy) | copyvec (n+1 longs) [O] |
-| −$50 (−20) | clearvec (K : clearmem) | clearvec ; **aussi LVO GetPacket** [O] |
-| −$54 (−21) | NoReqLoadSeg (K : queuepkt) | chargement de segment (nom BSTR) — NoReqLoadSeg confirmé par l'usage ; **aussi LVO QueuePacket** [O/D] |
-| −$58 (−22) | DeviceProc | confirmé [O] |
-| Taille GV | — | dl_GV : 0..150 (+50 négatifs) ; commande : 0..max(149, max cmd) (+50) [O] |
-| Slots non définis | — | dl_GV : indéfinis ; commande : $474C0001+2n [O] |
-| Pile BCPL | « distincte de la pile C » (dos-v34-spec §4) | **même bloc** que la pile 68000 ; frames BCPL depuis le bas, A7 depuis le haut [O] — à corriger dans dos-v34-spec.md |
+| $1A0 (104) | writeErr | **fault(code)**: launches C:FAULT, fallback `"Error code %N"` [O] |
+| $13C (79) | rditem (K: rdline) | rditem confirmed [O] |
+| $140 (80) | subString (K: parseline) | **findarg(template, item)** [O] |
+| $1E4 (121) | runCommand (K: runloaded) | confirmed, convention §4.3 [O] |
+| $204 (129) | DOSBase (value) | **does not exist in V34**: no reference in the ROM nor in the commands [O] |
+| $218 (134) | findCLI | confirmed in dl_GV; **in a command's GV, 134..149 = copy of the CLI** [O] |
+| −$08 (−2) | copyvec (K: strncpy) | copyvec (n+1 longs) [O] |
+| −$50 (−20) | clearvec (K: clearmem) | clearvec; **also LVO GetPacket** [O] |
+| −$54 (−21) | NoReqLoadSeg (K: queuepkt) | segment loading (BSTR name) — NoReqLoadSeg confirmed by use; **also LVO QueuePacket** [O/D] |
+| −$58 (−22) | DeviceProc | confirmed [O] |
+| GV size | — | dl_GV: 0..150 (+50 negative); command: 0..max(149, cmd max) (+50) [O] |
+| Undefined slots | — | dl_GV: undefined; command: $474C0001+2n [O] |
+| BCPL stack | "distinct from the C stack" (dos-v34-spec §4) | **same block** as the 68000 stack; BCPL frames from the bottom, A7 from the top [O] — to be corrected in dos-v34-spec.md |
 
 ---
 
-## 11. Vecteurs de test (observables)
+## 11. Test vectors (observable)
 
-1. `Failat 15` dans un CLI : après la commande, `cli_FailLevel` (CLI +$14) = 15 (écrit via GV[139]
-   puis recopie du stub). [D]
-2. Commande `Echo "a b"` (BCPL) lancée par le CLI : à l'entrée du stub, A0 pointe sur `"a b"\n`
-   (avec les guillemets), D0 = 6 ; input().fh_Pos = 0, fh_End = 6. [D à partir de §4.2]
-3. rdargs(`"DRIVE/A,BUFFERS/A"`, v, 20) sur l'entrée `DF0: 30\n` → v!0 = BSTR "DF0:", v!1 = BSTR
-   "30", résultat ≠ 0, ligne consommée jusqu'au `\n` inclus. Sur `DF0:\n` → 0, Result2 = 120.
-4. rdargs(`",SEC=SECS/S,MIN=MINS/S,UNTIL/K"`, v, n) sur `5 MINS\n` → v!0 = "5", v!1 = 0,
+1. `Failat 15` in a CLI: after the command, `cli_FailLevel` (CLI +$14) = 15 (written via GV[139]
+   then copied back by the stub). [D]
+2. Command `Echo "a b"` (BCPL) launched by the CLI: on entry to the stub, A0 points to `"a b"\n`
+   (with the quotes), D0 = 6; input().fh_Pos = 0, fh_End = 6. [D from §4.2]
+3. rdargs(`"DRIVE/A,BUFFERS/A"`, v, 20) on the input `DF0: 30\n` → v!0 = BSTR "DF0:", v!1 = BSTR
+   "30", result ≠ 0, line consumed up to the `\n` included. On `DF0:\n` → 0, Result2 = 120.
+4. rdargs(`",SEC=SECS/S,MIN=MINS/S,UNTIL/K"`, v, n) on `5 MINS\n` → v!0 = "5", v!1 = 0,
    v!2 = −1, v!3 = 0.
 5. writef(`"%X4|%I5|%T8|%%|%$%N"`, 255, −42, "ab", 7, 9) → `00FF|  -42|ab      |%|9`.
-6. Une globale non définie dans un GV de commande contient $474C0001+2n (ex. GV[7], définie par
-   aucun segment ROM, vaut $474C000F dans le GV de toute commande qui ne la définit pas).
-7. getvec(9) → bloc de 44 octets dont le long caché (BADDR(v)−4) vaut 44.
-8. Après `EndCLI` dans le CLI initial (interactif) : message `"CLI process 1 ending"`, puis le
-   process CLI se termine à la lecture suivante.
+6. An undefined global in a command GV contains $474C0001+2n (e.g. GV[7], defined by
+   no ROM segment, is $474C000F in the GV of any command that does not define it).
+7. getvec(9) → block of 44 bytes whose hidden long (BADDR(v)−4) is 44.
+8. After `EndCLI` in the initial (interactive) CLI: message `"CLI process 1 ending"`, then the
+   CLI process terminates at the next read.
 
 ---
 
-## 13. Compléments (globales 85/124/112, c:Mount, démarrage des handlers et des CLI de fond)
+## 13. Complements (globals 85/124/112, c:Mount, starting of handlers and of background CLIs)
 
-Layout DeviceNode (DevInfo) V34 utilisé ci-dessous, en longs (offset octet) [O ROM + WB] :
+V34 DeviceNode (DevInfo) layout used below, in longs (byte offset) [O ROM + WB]:
 `!0` dn_Next ($00) · `!1` dn_Type ($04, 0 = DLT_DEVICE, 2 = volume) · `!2` dn_Task ($08) ·
 `!3` dn_Lock ($0C) · `!4` dn_Handler ($10, BSTR) · `!5` dn_StackSize ($14) · `!6` dn_Priority ($18) ·
 `!7` dn_Startup ($1C) · `!8` dn_SegList ($20) · `!9` dn_GlobalVec ($24) · `!10` dn_Name ($28, BSTR).
-La liste des nœuds part de **DosInfo +$04** (di_DevInfo ; DosInfo = BADDR de rn_Info, RootNode +$18).
+The list of nodes starts from **DosInfo +$04** (di_DevInfo; DosInfo = BADDR of rn_Info, RootNode +$18).
 
-### 13.1 Globale 85 (GV +$154) — `makedevnode(nom)` [O ROM]
-- **Argument** : D1 = BSTR du nom **sans `:`** (Mount le passe en majuscules).
-- Alloue le nœud par **getvec(10)** (11 longs, **non effacé**) et une copie du nom par getmem
-  effacé de `(longueur+1)/4` longs (+1 implicite), donc la copie est suivie d'au moins un octet
-  NUL. Copie le BSTR (copystring).
-- Initialise : dn_Name := la copie ; **dn_Type, dn_Task, dn_Lock, dn_Handler, dn_StackSize,
-  dn_Priority, dn_Startup, dn_SegList := 0**. **dn_GlobalVec n'est pas initialisé** (contenu
-  indéfini : l'appelant doit l'écrire).
-- Sous Forbid/Permit : insère le nœud **en tête** de la liste di_DevInfo.
-- **Résultat** : BPTR du nœud ; 0 si une allocation échoue (les deux blocs sont alors libérés,
-  Result2 = 103 laissé par getvec). Aucun autre effet sur Result2.
+### 13.1 Global 85 (GV +$154) — `makedevnode(name)` [O ROM]
+- **Argument**: D1 = BSTR of the name **without `:`** (Mount passes it in upper case).
+- Allocates the node by **getvec(10)** (11 longs, **not cleared**) and a copy of the name by a cleared
+  getmem of `(length+1)/4` longs (+1 implicit), so the copy is followed by at least one
+  NUL byte. Copies the BSTR (copystring).
+- Initialises: dn_Name := the copy; **dn_Type, dn_Task, dn_Lock, dn_Handler, dn_StackSize,
+  dn_Priority, dn_Startup, dn_SegList := 0**. **dn_GlobalVec is not initialised** (undefined
+  contents: the caller must write it).
+- Under Forbid/Permit: inserts the node **at the head** of the di_DevInfo list.
+- **Result**: BPTR of the node; 0 if an allocation fails (both blocks are then freed,
+  Result2 = 103 left by getvec). No other effect on Result2.
 
-### 13.2 Globale 124 (GV +$1F0) — `finddevinfo(nom)` [O ROM]
-- **Argument** : D1 = BSTR du nom sans `:`. Comparaison **insensible à la casse** (compstring) avec
-  dn_Name de chaque nœud, sous Forbid/Permit.
-- **Résultat** : le **premier nœud de type DLT_DEVICE (0)** portant ce nom ; à défaut, le
-  **dernier** nœud de même nom d'un autre type (volume, assign) ; 0 si aucun. Result2 inchangé.
-- (deviceproc utilise la même recherche en mode « premier nœud de ce nom, quel que soit le type ».)
+### 13.2 Global 124 (GV +$1F0) — `finddevinfo(name)` [O ROM]
+- **Argument**: D1 = BSTR of the name without `:`. **Case-insensitive** comparison (compstring) with
+  the dn_Name of each node, under Forbid/Permit.
+- **Result**: the **first node of type DLT_DEVICE (0)** bearing that name; failing that, the
+  **last** node with the same name of another type (volume, assign); 0 if none. Result2 unchanged.
+- (deviceproc uses the same lookup in "first node of that name, whatever the type" mode.)
 
-### 13.3 Globale 112 (GV +$1C0) — `starthandler(nœud, nom)` [O ROM]
-Appelée par **deviceproc** (globale 102) quand le nœud trouvé est de type 0, a dn_Lock = 0 et
-dn_Task = 0. Arguments : D1 = BPTR du DeviceNode, D2 = **le BSTR complet passé à deviceproc**
-(ex. `NEWCON:0/0/640/200/Titre` pour un Open). Résultat : MsgPort du handler, ou 0.
-1. **Segment** : si dn_SegList = 0, charge dn_Handler par la globale 81 (load, nom BSTR) ; échec →
-   0 (Result2 = erreur du chargement). Le segment est **mémorisé dans dn_SegList** (chargé une
-   seule fois, jamais déchargé ici).
-2. **dn_GlobalVec = −1 → handler C** : CreateProc ABI C (globale −18) avec nom = texte de
-   dn_Name **comme chaîne C** (BADDR+1, terminée par le NUL garanti par 13.1), pri = dn_Priority,
-   seglist = dn_SegList, pile = dn_StackSize **en octets**. Entrée directe au code du premier
-   segment (pas de globin).
-3. **Sinon → handler BCPL** : construit un segarray `getvec(3)` = `[3, V!1, V!2 du process
-   appelant, dn_SegList]` (noyau + dos + handler) ; GV = dn_GlobalVec s'il est non nul (**GV
-   existant partagé**, BPTR), sinon **makeglobvec(segarray)** (globale 13 : GV neuf dimensionné sur
-   les « max » des segments, plancher 15, non initialisé hors globin) ; puis **createproc(segarray,
-   dn_StackSize en longs, dn_Priority, dn_Name BSTR, GV)**. Le process démarre selon §2.4 : globin
-   de V!1..V!3 dans ce GV, puis attente du packet de démarrage.
-4. Échec de création → libère le segarray, renvoie 0. Succès → **Result2 := dn_Lock**.
-5. **Packet de démarrage** (sendpkt synchrone vers le port créé) : **Arg1 = BSTR complet du nom**
-   (D2), **Arg2 = dn_Startup**, **Arg3 = BPTR du DeviceNode** ; dp_Res2 = GV (cas BCPL) ;
-   **dp_Type, dp_Res1 et le reste ne sont pas initialisés** par la ROM (valeurs résiduelles de
-   la frame : un handler ne doit pas les interpréter). Si le handler répond avec Res1 ≠ 0 :
-   Result2 := dn_Lock et renvoie le port ; sinon renvoie 0.
-6. **dn_Task n'est jamais écrit par dos** : c'est au handler de le renseigner (via Arg3) s'il veut
-   rester partagé. Sinon chaque deviceproc relance un nouveau process (comportement de type
-   CON:/NEWCON:, une fenêtre par Open). [O pour l'absence d'écriture, D pour la conséquence]
+### 13.3 Global 112 (GV +$1C0) — `starthandler(node, name)` [O ROM]
+Called by **deviceproc** (global 102) when the node found is of type 0, has dn_Lock = 0 and
+dn_Task = 0. Arguments: D1 = BPTR of the DeviceNode, D2 = **the complete BSTR passed to deviceproc**
+(e.g. `NEWCON:0/0/640/200/Titre` for an Open). Result: MsgPort of the handler, or 0.
+1. **Segment**: if dn_SegList = 0, loads dn_Handler by global 81 (load, BSTR name); failure →
+   0 (Result2 = error of the load). The segment is **stored in dn_SegList** (loaded only
+   once, never unloaded here).
+2. **dn_GlobalVec = −1 → C handler**: C ABI CreateProc (global −18) with name = text of
+   dn_Name **as a C string** (BADDR+1, terminated by the NUL guaranteed by 13.1), pri = dn_Priority,
+   seglist = dn_SegList, stack = dn_StackSize **in bytes**. Direct entry into the code of the first
+   segment (no globin).
+3. **Otherwise → BCPL handler**: builds a segarray `getvec(3)` = `[3, V!1, V!2 of the calling
+   process, dn_SegList]` (kernel + dos + handler); GV = dn_GlobalVec if it is non-zero (**shared existing
+   GV**, BPTR), otherwise **makeglobvec(segarray)** (global 13: new GV sized on
+   the segments' "max", floor 15, not initialised apart from globin); then **createproc(segarray,
+   dn_StackSize in longs, dn_Priority, dn_Name BSTR, GV)**. The process starts according to §2.4: globin
+   of V!1..V!3 into this GV, then wait for the startup packet.
+4. Creation failure → frees the segarray, returns 0. Success → **Result2 := dn_Lock**.
+5. **Startup packet** (synchronous sendpkt to the created port): **Arg1 = complete BSTR of the name**
+   (D2), **Arg2 = dn_Startup**, **Arg3 = BPTR of the DeviceNode**; dp_Res2 = GV (BCPL case);
+   **dp_Type, dp_Res1 and the rest are not initialised** by the ROM (residual values of
+   the frame: a handler must not interpret them). If the handler replies with Res1 ≠ 0:
+   Result2 := dn_Lock and returns the port; otherwise returns 0.
+6. **dn_Task is never written by dos**: it is up to the handler to fill it in (via Arg3) if it wants
+   to remain shared. Otherwise each deviceproc relaunches a new process (behaviour of the
+   CON:/NEWCON: type, one window per Open). [O for the absence of a write, D for the consequence]
 
-> Asymétrie d'unités observée : **dn_StackSize est en octets pour un handler C mais en longs
-> (×4) pour un handler BCPL**. [O]
+> Unit asymmetry observed: **dn_StackSize is in bytes for a C handler but in longs
+> (×4) for a BCPL handler**. [O]
 
-### 13.4 c:Mount — déroulé pour `mount newcon:` [O WB, D pour la lecture du fichier]
-1. `rdargs("DEVICE/A,FROM/K")`. Fichier = FROM, sinon **`devs:mountlist`** (findinput ; échec →
-   « Could not open %S for input »).
-2. Lecture du mountlist par rdch : commentaires `/* */`, recherche de l'entrée dont le nom égale
-   DEVICE (insensible à la casse), puis lecture des affectations `Mot-clé = valeur` jusqu'à `#`.
-   Mots-clés reconnus par findarg sur le gabarit
+### 13.4 c:Mount — sequence for `mount newcon:` [O WB, D for the reading of the file]
+1. `rdargs("DEVICE/A,FROM/K")`. File = FROM, otherwise **`devs:mountlist`** (findinput; failure →
+   "Could not open %S for input").
+2. Reading of the mountlist by rdch: `/* */` comments, search for the entry whose name equals
+   DEVICE (case-insensitive), then reading of the `Keyword = value` assignments up to `#`.
+   Keywords recognised by findarg on the template
    `",BlockSize,,Surfaces,,BlocksPerTrack,Reserved,PreAlloc,Interleave,LowCyl,HighCyl,Buffers,
    BufMemType,MaxTransfer,Mask,BootPri,DosType,Device,Unit,Flags,Handler,StackSize,Priority,
    GlobVec,FileSystem,Startup,Mount,Baud,Controlr"` (index = position, Handler = 20, StackSize =
    21, Priority = 22, GlobVec = 23, FileSystem = 24, Startup = 25).
-3. Valeurs par défaut des champs absents (marqueur interne « non fourni » remplacé) :
-   **StackSize = 600, Priority = 10, GlobVec = −3** (= « GV du process appelant »), Handler = 0,
-   Startup = 0, FileSystem = 0, Mount = 0 ; pour les FS : BlockSize = 512, Reserved = 2,
+3. Default values of the absent fields (internal "not supplied" marker replaced):
+   **StackSize = 600, Priority = 10, GlobVec = −3** (= "GV of the calling process"), Handler = 0,
+   Startup = 0, FileSystem = 0, Mount = 0; for the FSes: BlockSize = 512, Reserved = 2,
    Interleave = 0, Buffers = 5, BufMemType = 3, MaxTransfer = $7FFFFFFF, Mask = $FFFFFFFF,
    DosType = `'DOS\0'`, Baud = 1200, Unit/Flags/LowCyl/HighCyl/PreAlloc… = 0.
-4. Création du nœud : extrait le nom avant `:` (splitname, globale 107), **le met en
-   majuscules**, `finddevinfo` (124) → déjà présent ⇒ « Device %S already mounted », fin.
-   Sinon `makedevnode` (85) (échec ⇒ « Unable to create new node ») ; puis dn_Lock = dn_Type =
+4. Creation of the node: extracts the name before `:` (splitname, global 107), **puts it in
+   upper case**, `finddevinfo` (124) → already present ⇒ "Device %S already mounted", end.
+   Otherwise `makedevnode` (85) (failure ⇒ "Unable to create new node"); then dn_Lock = dn_Type =
    dn_Task = 0, **dn_StackSize = StackSize, dn_Priority = Priority**.
-5. **Entrée sans `Device =` (cas NEWCON)** : dn_SegList = 0, **dn_Startup = valeur Startup**
-   (0 ici), **dn_Handler = BSTR de Handler** (`L:Newcon-Handler`), **dn_GlobalVec** déduit de
-   GlobVec : −3 (défaut) ou 2 → **BPTR du `pr_GlobVec` du process Mount** (= GV du CLI, donc
-   `dl_GV` pour le CLI ROM) ; 0 → 0 ; toute autre valeur (ex. −1) → **−1**.
-   Pour NEWCON (mountlist WB : `Handler = L:Newcon-Handler`, `Priority = 5`, `StackSize = 1000`,
-   pas de GlobVec) : **dn_Handler = "L:Newcon-Handler", dn_StackSize = 1000, dn_Priority = 5,
-   dn_Startup = 0, dn_SegList = 0, dn_GlobalVec = BPTR(GV du CLI)**, dn_Type = 0, dn_Name =
-   "NEWCON", inséré en tête de di_DevInfo. Mount **ne charge pas** le handler (le mot-clé
-   `Mount =` n'a pas été examiné).
-6. **Entrée avec `Device =` (système de fichiers)** : construit un FileSysStartupMsg (unité,
-   nom de device, environnement copié depuis les champs numériques) ; **dn_Startup = BPTR de ce
-   message** ; si FileSystem absent → **dn_SegList = rn_FileHandlerSegment** (RootNode +$1C, le FS
-   ROM) et dn_Handler = 0, sinon dn_SegList = 0 et dn_Handler = FileSystem ; dn_GlobalVec déduit
-   de GlobVec avec « GV appelant » remplacé par **0** (−3/2/0 → 0 ⇒ dos construira un GV neuf ;
-   autre → −1). [O pour les affectations, D pour le détail du FSSM]
-7. Le binaire `l:Newcon-Handler` du disque est un **segment BCPL d'un seul hunk** (globale 1 à
-   l'offset 4, max 111, pas de stub) — cohérent avec un démarrage en BCPL sur GV partagé. [O WB]
+5. **Entry without `Device =` (NEWCON case)**: dn_SegList = 0, **dn_Startup = Startup value**
+   (0 here), **dn_Handler = BSTR of Handler** (`L:Newcon-Handler`), **dn_GlobalVec** deduced from
+   GlobVec: −3 (default) or 2 → **BPTR of the Mount process's `pr_GlobVec`** (= GV of the CLI, hence
+   `dl_GV` for the ROM CLI); 0 → 0; any other value (e.g. −1) → **−1**.
+   For NEWCON (WB mountlist: `Handler = L:Newcon-Handler`, `Priority = 5`, `StackSize = 1000`,
+   no GlobVec): **dn_Handler = "L:Newcon-Handler", dn_StackSize = 1000, dn_Priority = 5,
+   dn_Startup = 0, dn_SegList = 0, dn_GlobalVec = BPTR(GV of the CLI)**, dn_Type = 0, dn_Name =
+   "NEWCON", inserted at the head of di_DevInfo. Mount **does not load** the handler (the
+   `Mount =` keyword has not been examined).
+6. **Entry with `Device =` (file system)**: builds a FileSysStartupMsg (unit,
+   device name, environment copied from the numeric fields); **dn_Startup = BPTR of this
+   message**; if FileSystem absent → **dn_SegList = rn_FileHandlerSegment** (RootNode +$1C, the ROM
+   FS) and dn_Handler = 0, otherwise dn_SegList = 0 and dn_Handler = FileSystem; dn_GlobalVec deduced
+   from GlobVec with "calling GV" replaced by **0** (−3/2/0 → 0 ⇒ dos will build a new GV;
+   other → −1). [O for the assignments, D for the detail of the FSSM]
+7. The disk's `l:Newcon-Handler` binary is a **single-hunk BCPL segment** (global 1 at
+   offset 4, max 111, no stub) — consistent with a BCPL start on a shared GV. [O WB]
 
-Premier accès à `NEWCON:` (ex. Open("NEWCON:0/0/640/100/x")) : open BCPL → deviceproc → nœud
-DLT_DEVICE sans tâche ni lock → **globale 112** (13.3) : chargement de `L:Newcon-Handler` dans
-dn_SegList, segarray `[3, noyau, dos, handler]`, **createproc avec le GV partagé** (dn_GlobalVec ≠
-0, ≠ −1), pile 1000 longs, pri 5, nom "NEWCON" ; globin du noyau, de dos et du handler **dans ce
-GV partagé** (le handler y écrase la globale 1, sans effet sur les process déjà démarrés [D]) ;
-packet de démarrage (Arg1 = nom complet, Arg2 = 0, Arg3 = nœud) ; à la réponse, deviceproc
-renvoie le port et l'open poursuit par ACTION_FINDINPUT/OUTPUT.
+First access to `NEWCON:` (e.g. Open("NEWCON:0/0/640/100/x")): BCPL open → deviceproc → DLT_DEVICE
+node without task or lock → **global 112** (13.3): loading of `L:Newcon-Handler` into
+dn_SegList, segarray `[3, kernel, dos, handler]`, **createproc with the shared GV** (dn_GlobalVec ≠
+0, ≠ −1), stack 1000 longs, pri 5, name "NEWCON"; globin of the kernel, dos and the handler **into this
+shared GV** (the handler overwrites global 1 in it, without effect on the already started processes [D]);
+startup packet (Arg1 = complete name, Arg2 = 0, Arg3 = node); on the reply, deviceproc
+returns the port and the open continues with ACTION_FINDINPUT/OUTPUT.
 
-### 13.5 Démarrage d'un CLI (ROM ou Shell-Seg en entrée 4 du segarray) [O ROM + WB]
-- createproc → démarrage §2.4 : pile remplie de $ABABABAB, globin de V!1..V!0 (noyau, dos,
-  [cliinit ou 0], CLI) dans le GV fourni, **taskwait** du packet, puis **start(pkt)**.
-- `start(pkt)` du CLI ROM **et** de Shell-Seg (même comportement observé) : la fonction d'init est
-  **`pkt.dp_Type`** (adresse machine d'une routine BCPL), ou **GV[133] (cliinit)** si pkt = 0. La
-  CLI est d'abord allouée **dans la frame du CLI** (effacée, tampons Prompt/CommandName/
-  CommandFile/SetName internes) et rangée dans pr_CLI ; puis `r = init(pkt)` :
-  - `r > 0` : `r` est une routine, appelée avec **pr_Result2** comme argument (Run : init met pkt
-    dans Result2 et renvoie l'adresse de `qpkt` ⇒ **réponse immédiate** au créateur) ;
-  - `r ≤ 0` : drapeaux conservés ; le packet est **rendu à la fin** du CLI (returnpkt, Res2 =
-    cli_Result2) ; bit 1 de `r` = ne pas faire endread, bit 0 = faire endwrite (§13.6.4). [O]
-- Ce que l'init de Run (routine passée dans dp_Type) consomme du packet et écrit : voir le
-  **contrat exact du §13.6** (Arg1 = CLI parent : Prompt/SetName/DefaultStack/CommandDir copiés,
-  FailLevel **non** hérité (10) ; sortie `*` si Arg3 = StandardOutput du parent, sinon **NIL:** ;
-  Arg4 ⇒ cli_StandardInput = cli_CurrentInput ; Arg5 ⇒ répertoire courant ; Arg6 = sélecteur
-  de mode). [O]
-- Un CLI de fond dont l'entrée (FileHandle mémoire, routines nulles) s'épuise reçoit EOF ; étant
-  Background il se termine (§4.5), libère son slot de rn_TaskArray et sort du process.
-- Les points [D] ci-dessus sur l'init de Run sont **remplacés** par le contrat observé du §13.6.
+### 13.5 Start of a CLI (ROM or Shell-Seg in entry 4 of the segarray) [O ROM + WB]
+- createproc → start §2.4: stack filled with $ABABABAB, globin of V!1..V!0 (kernel, dos,
+  [cliinit or 0], CLI) into the supplied GV, **taskwait** for the packet, then **start(pkt)**.
+- `start(pkt)` of the ROM CLI **and** of Shell-Seg (same behaviour observed): the init function is
+  **`pkt.dp_Type`** (machine address of a BCPL routine), or **GV[133] (cliinit)** if pkt = 0. The
+  CLI is first allocated **in the CLI's frame** (cleared, internal Prompt/CommandName/
+  CommandFile/SetName buffers) and stored in pr_CLI; then `r = init(pkt)`:
+  - `r > 0`: `r` is a routine, called with **pr_Result2** as argument (Run: init puts pkt
+    into Result2 and returns the address of `qpkt` ⇒ **immediate reply** to the creator);
+  - `r ≤ 0`: flags kept; the packet is **returned at the end** of the CLI (returnpkt, Res2 =
+    cli_Result2); bit 1 of `r` = do not do endread, bit 0 = do endwrite (§13.6.4). [O]
+- What Run's init (routine passed in dp_Type) consumes from the packet and writes: see the
+  **exact contract of §13.6** (Arg1 = parent CLI: Prompt/SetName/DefaultStack/CommandDir copied,
+  FailLevel **not** inherited (10); output `*` if Arg3 = StandardOutput of the parent, otherwise **NIL:**;
+  Arg4 ⇒ cli_StandardInput = cli_CurrentInput; Arg5 ⇒ current directory; Arg6 = mode
+  selector). [O]
+- A background CLI whose input (memory FileHandle, null routines) runs out receives EOF; being
+  Background it terminates (§4.5), frees its rn_TaskArray slot and exits the process.
+- The [D] points above about Run's init are **replaced** by the contract observed in §13.6.
 
-### 13.6 Routine d'init de Run : contrat exact [O WB (c:Run, l:Shell-Seg) + O ROM (CLI, entrée 4)]
+### 13.6 Run's init routine: exact contract [O WB (c:Run, l:Shell-Seg) + O ROM (CLI, entry 4)]
 
-Repères d'analyse : dans c:Run (hunk 1, BCPL, globale 1 seule définie, max 134), la routine
-d'init est à l'offset **$4B8** du hunk ; Run en place l'**adresse machine** (pas un BPTR) dans
-dp_Type. Elle utilise deux sous-routines locales (copie des réglages du CLI parent, copie de la
-liste de chemins). Côté CLI : start du CLI ROM = sa globale 1, start de Shell-Seg = globale 1 de son hunk.
+Analysis landmarks: in c:Run (hunk 1, BCPL, only global 1 defined, max 134), the init
+routine is at offset **$4B8** of the hunk; Run places its **machine address** (not a BPTR) in
+dp_Type. It uses two local subroutines (copy of the parent CLI's settings, copy of the
+path list). On the CLI side: start of the ROM CLI = its global 1, start of Shell-Seg = global 1 of its hunk.
 
-#### 13.6.1 Contrat d'appel (Q1)
-- **Localisation de la CLI à remplir : exclusivement par `findcli()` (globale 134, GV +$218)
-  appelée dans le GV désigné par A2.** Elle n'utilise ni un argument du packet, ni le frame de
-  l'appelant, ni une variable fournie par start. `findcli()` doit donc renvoyer le **BPTR**
-  rangé dans **pr_CLI du process courant** (= le nouveau CLI ; process +$AC). La ROM le lit
-  brut dans le process courant (pas de conversion). [O]
-  ⇒ start doit avoir rangé la CLI dans pr_CLI **avant** l'appel, et la globale 134 du GV
-  courant doit être la *fonction* findcli (c'est le cas du GV partagé ; dans un GV de commande
-  ce slot contient une donnée, cf. §3.3 — init ne doit donc jamais tourner sur un GV privé).
-- Le **process courant** est obtenu par `taskid()` (globale 14) ; seul l'usage « mode
-  Execute » (13.6.2) s'en sert (écriture de pr_ConsoleTask par putlong). [O]
-- Hypothèses sur l'appelant (toutes nécessaires) [O pour l'usage, D pour la nécessité] :
-  - appel BCPL standard (§1.1/§1.2) : **A0 = 0**, A2 = GV (partagé) du nouveau process,
-    A5/A6 = routines d'appel/retour, **A4 = exactement l'adresse d'entrée** (= dp_Type) —
-    la routine adresse ses chaînes (`"NIL:"`, `"*"`, `"%N> "`, `"SYS:"`) et ses sous-routines
-    **relativement à A4** ;
-  - **D1 = BPTR du packet**, et le packet aussi présent au slot 0 du nouveau frame (la routine
-    relit le packet depuis ce slot : la routine d'appel doit avoir rangé D1..D4 dans le frame,
-    §1.2) ;
-  - **frame long-aligné** : une sous-routine prend le BPTR d'une de ses variables de frame
-    (queue de liste chaînée) ;
-  - **D0 suffisant** pour que le frame d'init et ceux de ses appelés (copie de chemins →
-    getvec, copydir → sendpkt) **ne recouvrent ni la CLI ni ses tampons** si ceux-ci sont dans
-    le frame de start. Profondeur propre d'init + sous-routines ≈ $30 + $34 + $24 octets avant
-    les appels runtime. Valeurs observées : **CLI ROM D0 = $1A4** (CLI à frame+$154..$193),
-    **Shell-Seg D0 = $2BC** (CLI à frame+$25C..$29B). [O]
-  - aucune lecture du frame de l'appelant, ni d'autre globale du GV que celles listées
-    ci-dessous ; **pr_CIS/pr_COS ne sont ni lus ni écrits**.
-- Globales utilisées (GV de A2) : **134** findcli, **14** taskid, **60** findoutput, **−26**
+#### 13.6.1 Calling contract (Q1)
+- **Location of the CLI to fill: exclusively through `findcli()` (global 134, GV +$218)
+  called in the GV designated by A2.** It uses neither an argument of the packet, nor the frame of
+  the caller, nor a variable supplied by start. `findcli()` must therefore return the **BPTR**
+  stored in **pr_CLI of the current process** (= the new CLI; process +$AC). The ROM reads it
+  raw from the current process (no conversion). [O]
+  ⇒ start must have stored the CLI in pr_CLI **before** the call, and global 134 of the current
+  GV must be the findcli *function* (this is the case for the shared GV; in a command GV
+  this slot contains a datum, cf. §3.3 — init must therefore never run on a private GV).
+- The **current process** is obtained by `taskid()` (global 14); only the "Execute
+  mode" use (13.6.2) needs it (write of pr_ConsoleTask by putlong). [O]
+- Assumptions about the caller (all necessary) [O for the use, D for the necessity]:
+  - standard BCPL call (§1.1/§1.2): **A0 = 0**, A2 = (shared) GV of the new process,
+    A5/A6 = call/return routines, **A4 = exactly the entry address** (= dp_Type) —
+    the routine addresses its strings (`"NIL:"`, `"*"`, `"%N> "`, `"SYS:"`) and its subroutines
+    **relative to A4**;
+  - **D1 = BPTR of the packet**, and the packet also present in slot 0 of the new frame (the routine
+    re-reads the packet from that slot: the call routine must have stored D1..D4 in the frame,
+    §1.2);
+  - **long-aligned frame**: a subroutine takes the BPTR of one of its frame variables
+    (tail of a linked list);
+  - **D0 sufficient** so that init's frame and those of its callees (path copy →
+    getvec, copydir → sendpkt) **overlap neither the CLI nor its buffers** if those are in
+    start's frame. Own depth of init + subroutines ≈ $30 + $34 + $24 bytes before
+    the runtime calls. Observed values: **ROM CLI D0 = $1A4** (CLI at frame+$154..$193),
+    **Shell-Seg D0 = $2BC** (CLI at frame+$25C..$29B). [O]
+  - no read of the caller's frame, nor of any other global of the GV than those listed
+    below; **pr_CIS/pr_COS are neither read nor written**.
+- Globals used (GV of A2): **134** findcli, **14** taskid, **60** findoutput, **−26**
   IsInteractive, **111** putlong, **51** currentdir, **89** findsegarray, **10** result2,
-  **29** getvec, **113** copydir ; la **valeur** du slot **42** (adresse de qpkt) est lue mais
-  pas appelée. [O]
-- Pré-requis sur la CLI : effacée sauf les 4 BPTR de tampons déjà installés et inscriptibles :
-  **cli_Prompt ($18)**, **cli_SetName ($04)**, **cli_CommandFile ($24)** (et cli_CommandName ($10),
-  non utilisé par init). Init **recopie dans** ces tampons ; elle ne les alloue pas. Tailles des
-  tampons du start ROM et Shell-Seg (identiques) : Prompt 68 o, CommandName 108 o, CommandFile
-  48 o, SetName 84 o. [O]
+  **29** getvec, **113** copydir; the **value** of slot **42** (address of qpkt) is read but
+  not called. [O]
+- Prerequisites on the CLI: cleared except the 4 buffer BPTRs already installed and writable:
+  **cli_Prompt ($18)**, **cli_SetName ($04)**, **cli_CommandFile ($24)** (and cli_CommandName ($10),
+  not used by init). Init **copies into** these buffers; it does not allocate them. Sizes of the
+  buffers of the ROM start and of Shell-Seg (identical): Prompt 68 b, CommandName 108 b, CommandFile
+  48 b, SetName 84 b. [O]
 
-#### 13.6.2 Champs remplis (Q2)
-Notation : `pkt` = BADDR(D1) ; Arg1..Arg6 = pkt+$14..$28 ; `par` = Arg1 (CLI parent ou 0) ;
-`cli` = findcli(). Deux modes selon **Arg6** : **Arg6 = 0 ⇒ mode Run** (lancement par c:Run
-depuis un CLI) ; **Arg6 ≠ 0 ⇒ mode Execute** (Run lancé par la globale 101 / LVO Execute,
-Arg6 = BSTR de commande). Effets dans cet ordre [O] :
+#### 13.6.2 Fields filled (Q2)
+Notation: `pkt` = BADDR(D1); Arg1..Arg6 = pkt+$14..$28; `par` = Arg1 (parent CLI or 0);
+`cli` = findcli(). Two modes depending on **Arg6**: **Arg6 = 0 ⇒ Run mode** (launch by c:Run
+from a CLI); **Arg6 ≠ 0 ⇒ Execute mode** (Run launched by global 101 / LVO Execute,
+Arg6 = command BSTR). Effects in this order [O]:
 
-1. **cli_StandardInput ($1C) := Arg4** et **cli_CurrentInput ($20) := Arg4** (inconditionnel).
-2. Choix du flux de sortie `out` et des drapeaux (valeur initiale **$FFFFFFFC** = −4) :
-   - *mode Run* : si **Arg3 = par.cli_StandardOutput** (BADDR(Arg1)+$38 — Run passe son
-     output() en Arg3) ⇒ `out := findoutput("*")` ; sinon (sortie de Run redirigée)
-     ⇒ `out := findoutput("NIL:")`. Bit 0 des drapeaux mis. Arg2 est **ignoré**.
-   - *mode Execute* : si **Arg2 ≠ 0** : **cli_StandardInput := Arg2** (CurrentInput reste
-     Arg4), **pr_ConsoleTask (process +$A4) := Arg2.fh_Type** (FileHandle +$08), entrée
-     interactive := IsInteractive(Arg2) (valeur brute fh_Interactive), bit 1 mis. Puis
-     `out := Arg3` ; si Arg3 = 0 ⇒ `out := findoutput("*")` et bit 0 mis.
-3. **cli_Background ($2C) := NON( IsInteractive(out) ET entrée_interactive )** (opérations
-   bit à bit sur les valeurs brutes ; entrée_interactive = 0 en mode Run) ⇒ **toujours TRUE (−1)
-   en mode Run**.
-4. **currentdir(TRUE, Arg5)** ⇒ pr_CurrentDir := Arg5 (l'ancien n'est pas libéré).
-5. Réglages hérités (sous-routine locale, arguments cli, out, par) :
-   - si `par ≠ 0` : source Prompt = par.cli_Prompt, SetName = par.cli_SetName, pile =
-     par.cli_DefaultStack, chemin = **copie profonde** de par.cli_CommandDir (nouveaux nœuds
-     getvec(1) `[suivant, copydir(lock)]`, même ordre ; s'arrête silencieusement si getvec
-     échoue) ;
-   - si `par = 0` : Prompt `"%N> "`, SetName `"SYS:"`, pile **1000**, chemin 0 ;
-   - écrit : **cli_StandardOutput ($38) := out**, **cli_CurrentOutput ($30) := out**,
-     **cli_FailLevel ($14) := 10** (non hérité), **longueur du BSTR cli_CommandFile := 0**,
-     **cli_DefaultStack ($34)**, **cli_CommandDir ($08)**, puis **copie des octets** du BSTR
-     Prompt dans le tampon pointé par cli_Prompt et du BSTR SetName dans celui de cli_SetName
-     (longueur + texte ; aucun contrôle de taille).
-6. **Entrée 3 du segarray (findsegarray()!3) := 0**.
-7. **pr_Result2 := D1 (le packet)** (result2(TRUE, pkt)).
+1. **cli_StandardInput ($1C) := Arg4** and **cli_CurrentInput ($20) := Arg4** (unconditional).
+2. Choice of the output stream `out` and of the flags (initial value **$FFFFFFFC** = −4):
+   - *Run mode*: if **Arg3 = par.cli_StandardOutput** (BADDR(Arg1)+$38 — Run passes its
+     output() in Arg3) ⇒ `out := findoutput("*")`; otherwise (Run's output redirected)
+     ⇒ `out := findoutput("NIL:")`. Bit 0 of the flags set. Arg2 is **ignored**.
+   - *Execute mode*: if **Arg2 ≠ 0**: **cli_StandardInput := Arg2** (CurrentInput stays
+     Arg4), **pr_ConsoleTask (process +$A4) := Arg2.fh_Type** (FileHandle +$08), interactive
+     input := IsInteractive(Arg2) (raw fh_Interactive value), bit 1 set. Then
+     `out := Arg3`; if Arg3 = 0 ⇒ `out := findoutput("*")` and bit 0 set.
+3. **cli_Background ($2C) := NOT( IsInteractive(out) AND interactive_input )** (bitwise
+   operations on the raw values; interactive_input = 0 in Run mode) ⇒ **always TRUE (−1)
+   in Run mode**.
+4. **currentdir(TRUE, Arg5)** ⇒ pr_CurrentDir := Arg5 (the old one is not freed).
+5. Inherited settings (local subroutine, arguments cli, out, par):
+   - if `par ≠ 0`: source Prompt = par.cli_Prompt, SetName = par.cli_SetName, stack =
+     par.cli_DefaultStack, path = **deep copy** of par.cli_CommandDir (new nodes
+     getvec(1) `[next, copydir(lock)]`, same order; stops silently if getvec
+     fails);
+   - if `par = 0`: Prompt `"%N> "`, SetName `"SYS:"`, stack **1000**, path 0;
+   - writes: **cli_StandardOutput ($38) := out**, **cli_CurrentOutput ($30) := out**,
+     **cli_FailLevel ($14) := 10** (not inherited), **length of the cli_CommandFile BSTR := 0**,
+     **cli_DefaultStack ($34)**, **cli_CommandDir ($08)**, then **copy of the bytes** of the Prompt
+     BSTR into the buffer pointed to by cli_Prompt and of the SetName BSTR into that of cli_SetName
+     (length + text; no size check).
+6. **Entry 3 of the segarray (findsegarray()!3) := 0**.
+7. **pr_Result2 := D1 (the packet)** (result2(TRUE, pkt)).
 
-Champs **non touchés** : cli_Result2 ($00), cli_ReturnCode ($0C), cli_CommandName ($10),
-**cli_Interactive ($28)**, cli_Module ($3C) ; pr_CIS, pr_COS ; dp_Res1/dp_Res2. [O]
+Fields **not touched**: cli_Result2 ($00), cli_ReturnCode ($0C), cli_CommandName ($10),
+**cli_Interactive ($28)**, cli_Module ($3C); pr_CIS, pr_COS; dp_Res1/dp_Res2. [O]
 
-Correspondance avec les globales 134..149 d'un GV de commande (§3.3) : StandardInput ↔ 141,
+Correspondence with globals 134..149 of a command GV (§3.3): StandardInput ↔ 141,
 CurrentInput ↔ 142, Background ↔ 145, CurrentOutput ↔ 146, StandardOutput ↔ 148, FailLevel ↔
 139, DefaultStack ↔ 147, CommandDir ↔ 136, Prompt ↔ 140, SetName ↔ 135, CommandFile ↔ 143
-(init n'écrit pas via ces globales mais directement dans la structure).
+(init does not write via these globals but directly into the structure).
 
-#### 13.6.3 Valeur de retour (Q3)
-- **Mode Run (Arg6 = 0)** : renvoie le **contenu du slot 42** du GV courant, c.-à-d. l'adresse
-  machine de **qpkt** (> 0). [O]
-- **Mode Execute (Arg6 ≠ 0)** : renvoie les drapeaux **$FFFFFFFC | bit0 | bit1**, soit **−4,
-  −3, −2 ou −1** : bit 0 = « la sortie a été ouverte par init (`*`) et devra être fermée »,
-  bit 1 = « l'entrée a été fournie par l'appelant (Arg2) et ne doit pas être fermée ». [O]
-- **Arg6** n'est utilisé **que** comme sélecteur de mode (son contenu BSTR n'est pas lu par
-  init : c'est Run lui-même qui en a fait le contenu du FileHandle Arg4). [O]
-- **Diagnostic** : −1 n'est produit que si init a lu **Arg6 ≠ 0, Arg2 ≠ 0 et Arg3 = 0**
-  (ou si le slot 42 vaut −1). Avec le packet émis par Run (Arg6 = 0, Arg3 ≠ 0), un retour −1
-  **et** une CLI intacte indiquent que les **lectures/écritures indirectes de la routine
-  n'atteignent pas les structures attendues** — toutes passent par « A0 + BPTR×4 », alors que
-  result2/qpkt passent par A2 et restent corrects. Causes compatibles avec les observations, à
-  vérifier côté appelant : **A0 ≠ 0** à l'entrée (cause unique expliquant à la fois le retour
-  −1, la CLI inchangée et un pr_Result2 correct) ; D1 non BPTR ; findcli() renvoyant une APTR, 0
-  ou la CLI d'un autre process. Effet de bord révélateur dans ce cas : pr_CurrentDir écrasé par
-  une valeur parasite (étape 4) et écritures parasites en mémoire basse ou ailleurs. [D]
+#### 13.6.3 Returned value (Q3)
+- **Run mode (Arg6 = 0)**: returns the **contents of slot 42** of the current GV, i.e. the machine
+  address of **qpkt** (> 0). [O]
+- **Execute mode (Arg6 ≠ 0)**: returns the flags **$FFFFFFFC | bit0 | bit1**, i.e. **−4,
+  −3, −2 or −1**: bit 0 = "the output was opened by init (`*`) and will have to be closed",
+  bit 1 = "the input was supplied by the caller (Arg2) and must not be closed". [O]
+- **Arg6** is used **only** as a mode selector (its BSTR contents are not read by
+  init: it is Run itself that turned it into the contents of the Arg4 FileHandle). [O]
+- **Diagnosis**: −1 is only produced if init read **Arg6 ≠ 0, Arg2 ≠ 0 and Arg3 = 0**
+  (or if slot 42 is −1). With the packet emitted by Run (Arg6 = 0, Arg3 ≠ 0), a return of −1
+  **and** an intact CLI indicate that the **routine's indirect reads/writes
+  do not reach the expected structures** — they all go through "A0 + BPTR×4", whereas
+  result2/qpkt go through A2 and remain correct. Causes compatible with the observations, to be
+  checked on the caller's side: **A0 ≠ 0** on entry (single cause explaining at the same time the return of
+  −1, the unchanged CLI and a correct pr_Result2); D1 not a BPTR; findcli() returning an APTR, 0
+  or the CLI of another process. Revealing side effect in that case: pr_CurrentDir overwritten by
+  a stray value (step 4) and stray writes into low memory or elsewhere. [D]
 
-#### 13.6.4 Ce que start() doit faire autour de l'appel (Q4) [O ROM ≡ O Shell-Seg]
-Comportement identique dans le start du CLI ROM et dans celui de Shell-Seg :
+#### 13.6.4 What start() must do around the call (Q4) [O ROM ≡ O Shell-Seg]
+Identical behaviour in the start of the ROM CLI and in that of Shell-Seg:
 
-*Avant* :
-1. Réserver dans son propre frame les 4 tampons (Prompt, CommandName, CommandFile, SetName) et
-   la CLI (16 longs), **effacer la CLI** (clearvec, globale −20, 16 longs).
-2. **pr_CLI := BPTR de la CLI** (putlong sur le process courant).
-3. Installer les BPTR de tampons dans cli_Prompt, cli_CommandName, cli_CommandFile, cli_SetName.
-4. `init := pkt ? pkt.dp_Type : GV[133]` ; `r := init(pkt)` (appel BCPL, D1 = pkt, D0 = taille
-   couvrant CLI + tampons, cf. 13.6.1).
+*Before*:
+1. Reserve in its own frame the 4 buffers (Prompt, CommandName, CommandFile, SetName) and
+   the CLI (16 longs), **clear the CLI** (clearvec, global −20, 16 longs).
+2. **pr_CLI := BPTR of the CLI** (putlong on the current process).
+3. Install the buffer BPTRs in cli_Prompt, cli_CommandName, cli_CommandFile, cli_SetName.
+4. `init := pkt ? pkt.dp_Type : GV[133]`; `r := init(pkt)` (BCPL call, D1 = pkt, D0 = size
+   covering CLI + buffers, cf. 13.6.1).
 
-*Après* :
-5. **Si r > 0** : appeler `r(result2(FALSE))` — en mode Run : qpkt(pkt) ⇒ **le packet est
-   rendu immédiatement** à Run (le dp_Port du packet reçu désigne déjà l'émetteur, car le qpkt
-   de l'émetteur a remplacé dp_Port par son propre port ; taskwait ne le modifie pas). Le
-   résultat de cet appel est ignoré ; **r reste mémorisé** (valeur > 0) pour la fin.
-6. Lire pr_TaskNum (process +$8C) pour le prompt/les messages.
-7. **Mémoriser cli_StandardOutput** (valeur posée par init) : c'est **cette copie** qui sera
-   resélectionnée comme sortie après chaque commande.
-8. **cli_Interactive := NON cli_Background ET (cli_StandardInput = cli_CurrentInput)** ⇒ FALSE
-   pour un CLI de Run (pas de prompt ni de bannière).
-9. **selectinput(cli_CurrentInput)** ⇒ **pr_CIS := Arg4** (le FileHandle mémoire des
-   commandes) ; **selectoutput(StandardOutput mémorisée)** ⇒ **pr_COS := `out`** (`*` ou NIL:).
-   C'est start, pas init, qui positionne pr_CIS/pr_COS.
-10. Si cli_Interactive : bannière/prompt (non concerné ici). Puis boucle de lecture par rdch
-    sur input() ; **à chaque tour** start resélectionne `cli_CurrentInput` en entrée et la
-    sortie mémorisée (étape 7).
+*After*:
+5. **If r > 0**: call `r(result2(FALSE))` — in Run mode: qpkt(pkt) ⇒ **the packet is
+   returned immediately** to Run (the dp_Port of the received packet already designates the sender, because the qpkt
+   of the sender replaced dp_Port with its own port; taskwait does not modify it). The
+   result of this call is ignored; **r remains stored** (value > 0) for the end.
+6. Read pr_TaskNum (process +$8C) for the prompt/messages.
+7. **Store cli_StandardOutput** (value set by init): it is **this copy** that will be
+   reselected as output after each command.
+8. **cli_Interactive := NOT cli_Background AND (cli_StandardInput = cli_CurrentInput)** ⇒ FALSE
+   for a CLI from Run (no prompt nor banner).
+9. **selectinput(cli_CurrentInput)** ⇒ **pr_CIS := Arg4** (the memory FileHandle of the
+   commands); **selectoutput(stored StandardOutput)** ⇒ **pr_COS := `out`** (`*` or NIL:).
+   It is start, not init, that sets pr_CIS/pr_COS.
+10. If cli_Interactive: banner/prompt (not concerned here). Then read loop by rdch
+    on input(); **at each round** start reselects `cli_CurrentInput` as input and the
+    stored output (step 7).
 
-*Fin* (EOF au niveau supérieur) :
-- si cli_CurrentInput ≠ cli_StandardInput (fin d'un script Execute) : endread, suppression du
-  fichier cli_CommandFile s'il est non vide puis longueur := 0, CurrentInput := StandardInput,
-  FailLevel := 10, on continue ;
-- sinon, si **non Background** : le CLI continue (la console est « réarmée » : fh_End := −1,
-  fh_Args := 1 sur StandardInput) ;
-- sinon (**Background**, cas Run) : sortie du CLI :
-  - **r < 0** (mode Execute) : vider la sortie courante si fh_Pos > 0 (writebytes) puis fh_Pos
-    := 0 ; **endread() sauf si bit 1** ; **endwrite() si bit 0** ; puis **returnpkt(pkt,
-    res1, cli_Result2)** ⇒ l'appelant d'Execute() est débloqué seulement maintenant ; dans
-    Shell-Seg, res1 est la **valeur résiduelle d'une variable locale de la boucle** (ancien
-    répertoire courant sauvegardé autour d'une commande, souvent 0) : **non significative**,
-    seul dp_Res2 = cli_Result2 a un sens ;
-  - **r ≥ 0** (mode Run, r = qpkt) : **endread() et endwrite()** inconditionnels (ferme le
-    FileHandle mémoire et `out`), pas de returnpkt ;
-  - puis : freeobj(répertoire courant), libération de la liste cli_CommandDir (freeobj du lock
-    + freevec du nœud), libération des autres ressources du CLI, **rn_TaskArray[pr_TaskNum] :=
-    0**, fin du process. [O]
+*End* (EOF at the top level):
+- if cli_CurrentInput ≠ cli_StandardInput (end of an Execute script): endread, deletion of the
+  cli_CommandFile file if it is not empty then length := 0, CurrentInput := StandardInput,
+  FailLevel := 10, continue;
+- otherwise, if **not Background**: the CLI continues (the console is "re-armed": fh_End := −1,
+  fh_Args := 1 on StandardInput);
+- otherwise (**Background**, Run case): exit of the CLI:
+  - **r < 0** (Execute mode): flush the current output if fh_Pos > 0 (writebytes) then fh_Pos
+    := 0; **endread() unless bit 1**; **endwrite() if bit 0**; then **returnpkt(pkt,
+    res1, cli_Result2)** ⇒ the caller of Execute() is only unblocked now; in
+    Shell-Seg, res1 is the **residual value of a local variable of the loop** (old
+    current directory saved around a command, often 0): **not meaningful**,
+    only dp_Res2 = cli_Result2 has a meaning;
+  - **r ≥ 0** (Run mode, r = qpkt): **endread() and endwrite()** unconditional (closes the
+    memory FileHandle and `out`), no returnpkt;
+  - then: freeobj(current directory), freeing of the cli_CommandDir list (freeobj of the lock
+    + freevec of the node), freeing of the CLI's other resources, **rn_TaskArray[pr_TaskNum] :=
+    0**, end of the process. [O]
 
-Conséquence pour le FileHandle Arg4 construit par Run (`getvec(n/4 + 11)`, n = longueur du
-texte sans le `\n` ajouté, bloc non effacé ; tampon **en ligne** à partir de l'index 11) : fh_Link/fh_Interactive/fh_Type/fh_Pos/fh_Funcs/
-fh_Func3 = 0, fh_Buf = BPTR(FH)+11, fh_End = n+1 ; **fh_Func2 et fh_Args ne sont pas
-initialisés**. Donc : rdch à fh_Pos = fh_End doit traiter **fh_Funcs = 0 comme EOF** ;
-**endstream (globale 93)** appelle fh_Func3 seulement s'il est non nul, puis **freevec du
-FileHandle** (Result2 préservé) — le tampon en ligne part avec le bloc, rien d'autre n'est
-libéré ni envoyé ; fh_Func2/fh_Args ne doivent jamais être utilisés sur ce flux. [O ROM + WB]
+Consequence for the Arg4 FileHandle built by Run (`getvec(n/4 + 11)`, n = length of the
+text without the added `\n`, block not cleared; buffer **inline** starting at index 11): fh_Link/fh_Interactive/fh_Type/fh_Pos/fh_Funcs/
+fh_Func3 = 0, fh_Buf = BPTR(FH)+11, fh_End = n+1; **fh_Func2 and fh_Args are not
+initialised**. Hence: rdch at fh_Pos = fh_End must treat **fh_Funcs = 0 as EOF**;
+**endstream (global 93)** calls fh_Func3 only if it is non-zero, then **freevec of the
+FileHandle** (Result2 preserved) — the inline buffer goes with the block, nothing else is
+freed or sent; fh_Func2/fh_Args must never be used on this stream. [O ROM + WB]
 
-#### 13.6.5 Compléments sur c:Run (côté émetteur) [O WB]
-- Arg5 = copydir(lock courant) **seulement si pr_CLI de Run ≠ 0**, sinon 0.
-- Arg6 = valeur de **pr_Result2 à l'entrée de Run** (0 attendu quand le CLI lance Run comme
-  commande ⇒ le lanceur de commandes doit laisser pr_Result2 = 0 ; BSTR quand Run est lancé
-  par la globale 101).
-- Compteur d'usage du résident « CLI » : incrémenté **seulement** si Arg6 ≠ 0 **et** le BSTR
-  de commande est de longueur 0 (et compteur ≠ −1) ; décrémenté (si ≠ −1) sur le chemin
-  d'échec « Unable to create background process ». Le start de Shell-Seg met à −1 le compteur du nœud
-  résident « CLI » obtenu par une de ses sous-routines locales (non analysée). [O]
-- Dans le segarray du nouveau process, l'entrée 3 est déjà 0 côté Run ; init la remet à 0.
-- Après la réponse au packet, Run affiche `"[CLI %N]\n"` (N = slot) seulement si Arg6 = 0,
-  puis stop(0).
+#### 13.6.5 Complements on c:Run (sender side) [O WB]
+- Arg5 = copydir(current lock) **only if Run's pr_CLI ≠ 0**, otherwise 0.
+- Arg6 = value of **pr_Result2 on entry to Run** (0 expected when the CLI launches Run as a
+  command ⇒ the command launcher must leave pr_Result2 = 0; BSTR when Run is launched
+  by global 101).
+- Usage counter of the "CLI" resident: incremented **only** if Arg6 ≠ 0 **and** the command BSTR
+  has length 0 (and counter ≠ −1); decremented (if ≠ −1) on the failure path
+  "Unable to create background process". The start of Shell-Seg sets to −1 the counter of the resident
+  "CLI" node obtained by one of its local subroutines (not analysed). [O]
+- In the new process's segarray, entry 3 is already 0 on Run's side; init sets it to 0 again.
+- After the reply to the packet, Run displays `"[CLI %N]\n"` (N = slot) only if Arg6 = 0,
+  then stop(0).
 
-### 13.7 NewCLI : contrat [O WB (c:NewCLI) + O ROM (findinput/findoutput, endtask)]
+### 13.7 NewCLI: contract [O WB (c:NewCLI) + O ROM (findinput/findoutput, endtask)]
 
-Repères d'analyse : c:NewCLI = stub standard (§3.3) + hunk 1 BCPL de 605 longs, **max 136**,
-qui définit **deux** globales : **1** (start, offset $4) et **133** (offset **$544** : la routine
-d'init du nouveau CLI). Comme le stub installe le module dans le **GV privé**, la globale 133
-de ce GV privé (≠ cliinit) désigne la routine d'init de NewCLI ; le GV partagé n'est pas
-touché. [O]
+Analysis landmarks: c:NewCLI = standard stub (§3.3) + BCPL hunk 1 of 605 longs, **max 136**,
+which defines **two** globals: **1** (start, offset $4) and **133** (offset **$544**: the init routine
+of the new CLI). Since the stub installs the module into the **private GV**, global 133
+of that private GV (≠ cliinit) designates NewCLI's init routine; the shared GV is not
+touched. [O]
 
-#### 13.7.1 Côté NewCLI (process appelant) — ordre des effets [O]
-1. Lit **pr_StackSize** (process +$84, octets) et le convertit en longs ; lit **pr_GlobVec**
-   (+$88, APTR) et le convertit en BPTR (accès par getlong 110 avec l'index en longs relatif au
-   taskid : 10 → +$84, 11 → +$88).
-2. **Segarray neuf `getvec(4)`** : copie des indices **0..V!0** du segarray du process courant
-   (findsegarray 89) — donc `[V!0, V!1, V!2, V!3, V!4]` du CLI appelant. **Aucun contrôle** :
-   si V!0 > 4 la copie déborde le bloc de 5 longs. [O]
-3. Segment CLI : recherche dans la liste Resident (DosInfo +$10, comparaison compstring
-   insensible à la casse avec le nom du nœud à +12) du **2e** nœud nommé **"CLI"**, à défaut du
-   **1er**. Trouvé ⇒ entrée 4 := seglist du nœud (`!2`) et compteur d'usage (`!1`) incrémenté
-   **seulement s'il vaut ≥ 1**. Pas trouvé ⇒ l'entrée 4 reste **celle du CLI appelant** (copie de
-   l'étape 2). `rn_ConsoleSegment` est lu mais **non utilisé** (≠ Run, §9.2). [O]
-4. `rdargs("Window,From", v, 50)` ; échec ⇒ freevec du segarray, `"NEWCLI failed\n"`, stop(20)
-   (pas de message spécifique). **Window absent ⇒ `"CON:0/0/640/100/New CLI"`**. [O]
-5. Sous **Forbid** : premier slot nul de `rn_TaskArray[1..[0]]` ; aucun ⇒ Permit, freevec,
+#### 13.7.1 NewCLI side (calling process) — order of the effects [O]
+1. Reads **pr_StackSize** (process +$84, bytes) and converts it to longs; reads **pr_GlobVec**
+   (+$88, APTR) and converts it to a BPTR (access by getlong 110 with the index in longs relative to the
+   taskid: 10 → +$84, 11 → +$88).
+2. **New segarray `getvec(4)`**: copy of indices **0..V!0** of the current process's segarray
+   (findsegarray 89) — hence `[V!0, V!1, V!2, V!3, V!4]` of the calling CLI. **No check**:
+   if V!0 > 4 the copy overflows the 5-long block. [O]
+3. CLI segment: search in the Resident list (DosInfo +$10, case-insensitive compstring comparison
+   with the node name at +12) for the **2nd** node named **"CLI"**, failing that the
+   **1st**. Found ⇒ entry 4 := seglist of the node (`!2`) and usage counter (`!1`) incremented
+   **only if it is ≥ 1**. Not found ⇒ entry 4 stays **that of the calling CLI** (copy from
+   step 2). `rn_ConsoleSegment` is read but **not used** (≠ Run, §9.2). [O]
+4. `rdargs("Window,From", v, 50)`; failure ⇒ freevec of the segarray, `"NEWCLI failed\n"`, stop(20)
+   (no specific message). **Window absent ⇒ `"CON:0/0/640/100/New CLI"`**. [O]
+5. Under **Forbid**: first null slot of `rn_TaskArray[1..[0]]`; none ⇒ Permit, freevec,
    `"Too many processes\n"`. [O]
-6. **createproc(segarray, max(pile, 800) longs, pri 0, BSTR "New CLI", GV = pr_GlobVec du
-   process NewCLI)** — c.-à-d. le **GV partagé** du CLI qui a lancé NewCLI (pr_GlobVec n'est pas
-   modifié par le stub). Pri **0 constante** (≠ Run). Échec ⇒ Permit, freevec,
-   `"Unable to create new process\n"`. Succès ⇒ `rn_TaskArray[slot] := taskid`,
-   **pr_TaskNum (+$8C) du nouveau := slot**, Permit. [O]
-7. Prépare : Arg1 = **copydir(currentdir courant)** (DupLock ; même si 0) ; Arg3 = **copie
-   profonde de la liste de chemins** lue dans la globale 136 du GV privé (= cli_CommandDir du
-   CLI appelant ; nœuds `getvec(1)` = `[suivant, copydir(lock)]`, même ordre, arrêt silencieux si
-   getvec échoue — même algorithme que Run) ; Arg5 = **filesystemtask()** (106). [O]
-8. **Packet de démarrage** (sendpkt 48, synchrone, vers le taskid du nouveau process) :
+6. **createproc(segarray, max(stack, 800) longs, pri 0, BSTR "New CLI", GV = pr_GlobVec of the
+   NewCLI process)** — i.e. the **shared GV** of the CLI that launched NewCLI (pr_GlobVec is not
+   modified by the stub). Pri **0 constant** (≠ Run). Failure ⇒ Permit, freevec,
+   `"Unable to create new process\n"`. Success ⇒ `rn_TaskArray[slot] := taskid`,
+   **pr_TaskNum (+$8C) of the new one := slot**, Permit. [O]
+7. Prepares: Arg1 = **copydir(current currentdir)** (DupLock; even if 0); Arg3 = **deep
+   copy of the path list** read in global 136 of the private GV (= cli_CommandDir of the
+   calling CLI; nodes `getvec(1)` = `[next, copydir(lock)]`, same order, silent stop if
+   getvec fails — same algorithm as Run); Arg5 = **filesystemtask()** (106). [O]
+8. **Startup packet** (sendpkt 48, synchronous, to the taskid of the new process):
 
-| Champ | Valeur |
+| Field | Value |
 |---|---|
-| dp_Type | **adresse machine** de la routine d'init (valeur de la globale 133 du GV privé) |
-| dp_Res1 | **−1 pré-rempli** par NewCLI (c'est cette valeur que voit NewCLI en cas de succès) |
+| dp_Type | **machine address** of the init routine (value of global 133 of the private GV) |
+| dp_Res1 | **−1 pre-filled** by NewCLI (it is this value that NewCLI sees on success) |
 | dp_Res2 | 0 |
-| Arg1 | DupLock du répertoire courant |
-| Arg2 | **BPTR du vecteur rdargs** de NewCLI : `!0` = BSTR Window (ou le défaut), `!1` = BSTR From ou 0 (vecteur **dans la pile de NewCLI**, valide tant que NewCLI attend la réponse) |
-| Arg3 | liste de chemins copiée |
-| Arg4 | **BPTR de GV_privé[134]** : les 16 longs = copie de la CommandLineInterface du CLI appelant (§3.3 ; GV[134+i] ↔ champ CLI +4·i) |
-| Arg5 | pr_FileSystemTask de NewCLI |
-| Arg6.. | non initialisés |
+| Arg1 | DupLock of the current directory |
+| Arg2 | **BPTR of NewCLI's rdargs vector**: `!0` = Window BSTR (or the default), `!1` = From BSTR or 0 (vector **in NewCLI's stack**, valid as long as NewCLI is waiting for the reply) |
+| Arg3 | copied path list |
+| Arg4 | **BPTR of private_GV[134]**: the 16 longs = copy of the calling CLI's CommandLineInterface (§3.3; GV[134+i] ↔ CLI field +4·i) |
+| Arg5 | pr_FileSystemTask of NewCLI |
+| Arg6.. | not initialised |
 
-9. Résultat de sendpkt (= dp_Res1 de la réponse) :
-   - **≠ 0 ⇒ stop(0)**, aucun message côté NewCLI ;
-   - **= 0 ⇒ `"Unable to open new window\n"` puis `"NEWCLI failed\n"`**, `rn_TaskArray[slot] := 0`,
-     compteur d'usage du résident trouvé **décrémenté s'il ≠ −1** (même s'il n'avait pas été
-     incrémenté), **stop(20)**. Le segarray, le DupLock et la copie de chemins ne sont **pas**
-     libérés par NewCLI (le segarray l'est par endtask dans le nouveau process, cf. 13.7.3). [O]
+9. Result of sendpkt (= dp_Res1 of the reply):
+   - **≠ 0 ⇒ stop(0)**, no message on NewCLI's side;
+   - **= 0 ⇒ `"Unable to open new window\n"` then `"NEWCLI failed\n"`**, `rn_TaskArray[slot] := 0`,
+     usage counter of the resident found **decremented if ≠ −1** (even if it had not been
+     incremented), **stop(20)**. The segarray, the DupLock and the path copy are **not**
+     freed by NewCLI (the segarray is freed by endtask in the new process, cf. 13.7.3). [O]
 
-⇒ **Q2 — « Unable to open new window » = la réponse au packet de démarrage a dp_Res1 = 0.**
-Seule la routine d'init (13.7.2) produit cette réponse, dans trois cas : findinput de la
-fenêtre = 0, fenêtre non interactive (fh_Interactive = 0), ou findoutput(`*`) = 0. [O]
+⇒ **Q2 — "Unable to open new window" = the reply to the startup packet has dp_Res1 = 0.**
+Only the init routine (13.7.2) produces this reply, in three cases: findinput of the
+window = 0, non-interactive window (fh_Interactive = 0), or findoutput(`*`) = 0. [O]
 
-#### 13.7.2 Routine d'init de NewCLI (dans le nouveau process) [O]
-Même contrat d'appel que l'init de Run (§13.6.1 : appelée par start avec D1 = pkt, A4 = son
-adresse, A2 = GV partagé, A0 = 0, frame aligné ; elle adresse ses chaînes `"*"`,
-`"Cannot open From file %S\n"`, `"s:cli-startup"`, `"New CLI process %N\n"` et sa sous-routine
-relativement à A4). CLI à remplir = **findcli()** (134) du GV partagé. `par` = BADDR(Arg4).
-Effets dans l'ordre :
+#### 13.7.2 NewCLI's init routine (in the new process) [O]
+Same calling contract as Run's init (§13.6.1: called by start with D1 = pkt, A4 = its
+address, A2 = shared GV, A0 = 0, aligned frame; it addresses its strings `"*"`,
+`"Cannot open From file %S\n"`, `"s:cli-startup"`, `"New CLI process %N\n"` and its subroutine
+relative to A4). CLI to fill = **findcli()** (134) of the shared GV. `par` = BADDR(Arg4).
+Effects in order:
 
 1. **currentdir(TRUE, Arg1)** ⇒ pr_CurrentDir := DupLock.
-2. **pr_FileSystemTask (+$A8) := Arg5** ; **pr_WindowPtr (+$B8) := 0** (putlong 111, index 19
-   et 23 relatifs au taskid).
-3. **Ouverture de la fenêtre = `findinput(Arg2!0)`** (globale 59, **dans le nouveau process**),
-   nom = le BSTR Window tel quel (ex. `CON:0/80/480/100/MyCLI`).
-   - **Échec A** : findinput renvoie 0 ;
-   - **Échec B** : `IsInteractive(fh)` (globale −26, valeur brute **fh_Interactive**, FH +$04)
-     = 0 ⇒ endstream(fh) puis **Result2 := 206**.
-   Dans les deux cas : **returnpkt(pkt, 0, Result2)** (⇒ NewCLI affiche « Unable to open new
-   window »), puis Result2 := taskid, et init **renvoie le contenu du slot 34 du GV** (adresse
-   de **endtask**) ⇒ start l'appelle (r > 0, §13.5) ⇒ le process se termine.
-4. Succès : **cli_StandardInput ($1C) := fh**, selectinput(fh), **pr_ConsoleTask (+$A4) :=
-   fh_Type** (FH +$08 : le port du handler qui a servi l'open).
-5. **cli_StandardOutput ($38) := findoutput("*")** (globale 60) — donc un **2e open, sur la
-   console qui vient d'être posée**. Échec (0) ⇒ endread() (ferme la fenêtre d'entrée),
-   **returnpkt(pkt, 0, Result2)** ⇒ même message « Unable to open new window », Result2 :=
-   taskid, renvoie endtask (comme 3). Succès ⇒ selectoutput(cli_StandardOutput).
-6. **cli_CurrentInput ($20) := cli_StandardInput**. Puis :
-   - **From fourni** (Arg2!1 ≠ 0) : findinput(From) ; échec ⇒ `writef("Cannot open From file
-     %S\n", From)` (dans la nouvelle fenêtre), on continue ; succès ⇒ cli_CurrentInput := ce flux ;
-   - **From absent** : sous-routine « ouverture silencieuse » : sauve pr_WindowPtr, le met à
-     **−1** (pas de requester), `findinput("s:cli-startup")`, restaure pr_WindowPtr ; résultat ≠ 0
-     ⇒ cli_CurrentInput := ce flux. (`s:cli-startup` n'est pas cherché si From est donné.)
-7. **cli_CurrentOutput ($30) := cli_StandardOutput** ; **cli_Background ($2C) := 0** (FALSE,
-   explicite, ≠ Run) ; **cli_CommandDir ($08) := Arg3** ; **cli_ReturnCode ($0C) := 0** ;
-   **cli_FailLevel ($14) := par.FailLevel** (GV[139] : **hérité**, ≠ Run qui force 10) ;
-   **cli_Result2 ($00) := 0** ; longueur du BSTR cli_CommandFile := 0 ; **cli_DefaultStack ($34)
-   := par.DefaultStack** (GV[147]) ; **cli_Module ($3C) := 0** ; copie des octets (longueur +
-   texte, sans contrôle de taille) du **Prompt** de `par` (GV[140]) dans le tampon cli_Prompt et
-   du **SetName** de `par` (GV[135]) dans le tampon cli_SetName.
-8. `writef("New CLI process %N\n", pr_TaskNum)` (sur la nouvelle fenêtre).
-9. **findsegarray()!3 := 0** ; **Result2 := pkt** ; renvoie **le contenu du slot 42** (adresse de
-   qpkt) ⇒ start fait qpkt(pkt) ⇒ réponse immédiate, **dp_Res1 = −1** (valeur pré-remplie par
-   NewCLI, init ne la modifie pas), dp_Res2 = 0. [O]
+2. **pr_FileSystemTask (+$A8) := Arg5**; **pr_WindowPtr (+$B8) := 0** (putlong 111, indices 19
+   and 23 relative to the taskid).
+3. **Opening of the window = `findinput(Arg2!0)`** (global 59, **in the new process**),
+   name = the Window BSTR as is (e.g. `CON:0/80/480/100/MyCLI`).
+   - **Failure A**: findinput returns 0;
+   - **Failure B**: `IsInteractive(fh)` (global −26, raw value **fh_Interactive**, FH +$04)
+     = 0 ⇒ endstream(fh) then **Result2 := 206**.
+   In both cases: **returnpkt(pkt, 0, Result2)** (⇒ NewCLI displays "Unable to open new
+   window"), then Result2 := taskid, and init **returns the contents of slot 34 of the GV** (address
+   of **endtask**) ⇒ start calls it (r > 0, §13.5) ⇒ the process terminates.
+4. Success: **cli_StandardInput ($1C) := fh**, selectinput(fh), **pr_ConsoleTask (+$A4) :=
+   fh_Type** (FH +$08: the port of the handler that served the open).
+5. **cli_StandardOutput ($38) := findoutput("*")** (global 60) — hence a **2nd open, on the
+   console that has just been set**. Failure (0) ⇒ endread() (closes the input window),
+   **returnpkt(pkt, 0, Result2)** ⇒ same message "Unable to open new window", Result2 :=
+   taskid, returns endtask (as in 3). Success ⇒ selectoutput(cli_StandardOutput).
+6. **cli_CurrentInput ($20) := cli_StandardInput**. Then:
+   - **From supplied** (Arg2!1 ≠ 0): findinput(From); failure ⇒ `writef("Cannot open From file
+     %S\n", From)` (in the new window), continue; success ⇒ cli_CurrentInput := that stream;
+   - **From absent**: "silent open" subroutine: saves pr_WindowPtr, sets it to
+     **−1** (no requester), `findinput("s:cli-startup")`, restores pr_WindowPtr; result ≠ 0
+     ⇒ cli_CurrentInput := that stream. (`s:cli-startup` is not looked for if From is given.)
+7. **cli_CurrentOutput ($30) := cli_StandardOutput**; **cli_Background ($2C) := 0** (FALSE,
+   explicit, ≠ Run); **cli_CommandDir ($08) := Arg3**; **cli_ReturnCode ($0C) := 0**;
+   **cli_FailLevel ($14) := par.FailLevel** (GV[139]: **inherited**, ≠ Run which forces 10);
+   **cli_Result2 ($00) := 0**; length of the cli_CommandFile BSTR := 0; **cli_DefaultStack ($34)
+   := par.DefaultStack** (GV[147]); **cli_Module ($3C) := 0**; copy of the bytes (length +
+   text, without size check) of `par`'s **Prompt** (GV[140]) into the cli_Prompt buffer and
+   of `par`'s **SetName** (GV[135]) into the cli_SetName buffer.
+8. `writef("New CLI process %N\n", pr_TaskNum)` (on the new window).
+9. **findsegarray()!3 := 0**; **Result2 := pkt**; returns **the contents of slot 42** (address of
+   qpkt) ⇒ start does qpkt(pkt) ⇒ immediate reply, **dp_Res1 = −1** (value pre-filled by
+   NewCLI, init does not modify it), dp_Res2 = 0. [O]
 
-Non touchés par init : cli_CommandName ($10), **cli_Interactive ($28)** (calculé ensuite par
-start : NON Background ET StandardInput = CurrentInput, §13.6.4 étape 8 ⇒ FALSE tant que
-s:cli-startup est l'entrée courante, TRUE ensuite), pr_CIS/pr_COS **sont** positionnés
-(selectinput/selectoutput) mais start les resélectionne de toute façon. [O]
+Not touched by init: cli_CommandName ($10), **cli_Interactive ($28)** (computed afterwards by
+start: NOT Background AND StandardInput = CurrentInput, §13.6.4 step 8 ⇒ FALSE as long as
+s:cli-startup is the current input, TRUE afterwards); pr_CIS/pr_COS **are** set
+(selectinput/selectoutput) but start reselects them anyway. [O]
 
-Globales du **GV partagé** utilisées par init (toutes doivent exister dans le GV du CLI qui
-lance NewCLI) : **10, 14, 49, 51, 59, 60, 61, 62, 63, 74, 89, 93, 110, 111, 134, −26**, et les
-**valeurs** des slots **34** (endtask) et **42** (qpkt), qui doivent être des adresses machine
-**> 0** (start les appelle comme fonctions). [O]
+Globals of the **shared GV** used by init (all must exist in the GV of the CLI that
+launches NewCLI): **10, 14, 49, 51, 59, 60, 61, 62, 63, 74, 89, 93, 110, 111, 134, −26**, and the
+**values** of slots **34** (endtask) and **42** (qpkt), which must be machine addresses
+**> 0** (start calls them as functions). [O]
 
-#### 13.7.3 Démarrage et fin du nouveau CLI (Q3) [O ROM + WB]
-- Démarrage §2.4/§13.5 sur le segarray `[V!0, V!1, V!2, V!3, CLI]` : globin de V!1..V!V!0
-  **dans le GV partagé** (y compris l'entrée 3 = cliinit du parent, non encore effacée à ce
-  moment), taskwait, puis start(pkt) qui alloue la CLI, pr_CLI := elle, appelle `pkt.dp_Type`.
-- Contrat de retour identique à Run (r > 0 = fonction appelée avec Result2) mais deux valeurs
-  possibles : **qpkt** (succès, 13.7.2 étape 9) ou **endtask** (échec, étapes 3/5).
-- **endtask** (globale 34, ROM) : libère (freevec) le **segarray** (pr_SegList) du process
-  courant, libère le **GV** s'il diffère de `dl_GV` (GV partagé ⇒ non libéré), puis
-  **RemTask(courant)**. Ne revient pas. [O ; libération de la mémoire du process/pile : S]
-- **pr_ConsoleTask du nouveau process := fh_Type du flux fenêtre** (étape 4) : c'est ce qui
-  rend `*` valide dans le nouveau CLI (et chez ses fils, qui l'héritent via createproc). NewCLI
-  lui-même ne touche pas à son propre pr_ConsoleTask. [O]
-- CLI **interactif, non Background** : il ne se termine qu'à EOF après EndCLI (qui force
-  Background, §9.2) ; à la sortie, r = qpkt ≥ 0 ⇒ endread + endwrite inconditionnels (ferment les
-  deux flux fenêtre), pas de returnpkt, rn_TaskArray[slot] := 0 (§13.6.4 *Fin*). [O/D]
+#### 13.7.3 Start and end of the new CLI (Q3) [O ROM + WB]
+- Start §2.4/§13.5 on the segarray `[V!0, V!1, V!2, V!3, CLI]`: globin of V!1..V!V!0
+  **into the shared GV** (including entry 3 = cliinit of the parent, not yet cleared at that
+  moment), taskwait, then start(pkt) which allocates the CLI, pr_CLI := it, calls `pkt.dp_Type`.
+- Return contract identical to Run (r > 0 = function called with Result2) but two possible
+  values: **qpkt** (success, 13.7.2 step 9) or **endtask** (failure, steps 3/5).
+- **endtask** (global 34, ROM): frees (freevec) the **segarray** (pr_SegList) of the current
+  process, frees the **GV** if it differs from `dl_GV` (shared GV ⇒ not freed), then
+  **RemTask(current)**. Does not return. [O; freeing of the process/stack memory: S]
+- **pr_ConsoleTask of the new process := fh_Type of the window stream** (step 4): this is what
+  makes `*` valid in the new CLI (and in its children, which inherit it via createproc). NewCLI
+  itself does not touch its own pr_ConsoleTask. [O]
+- **Interactive, non-Background** CLI: it only terminates at EOF after EndCLI (which forces
+  Background, §9.2); on exit, r = qpkt ≥ 0 ⇒ unconditional endread + endwrite (close the
+  two window streams), no returnpkt, rn_TaskArray[slot] := 0 (§13.6.4 *End*). [O/D]
 
-#### 13.7.4 findinput / findoutput vus du handler (ROM, globales 59/60) [O ROM]
-Routine commune (mode 1005 / 1006) :
-- FileHandle **getmem(10, $10001)** (11 longs **effacés**), fh_Pos = fh_End = −1, routines
-  fh_Funcs/Func2/Func3 installées (Func3 selon le mode).
-- **Nom = `*`** (compstring) : port := **pr_ConsoleTask** (consoletask 105) ; **pas de
-  deviceproc** ⇒ **Arg2 = valeur résiduelle de Result2** (en pratique le dp_Res2 du dernier
-  packet reçu, non significative : **ne pas l'interpréter comme un lock**).
-- **Nom = `NIL:`** : aucun packet, fh_Type 0, routines 0, renvoie le FileHandle.
-- Sinon : deviceproc(nom) ⇒ port, Arg2 = Result2 (lock de deviceproc ; 0 pour CON:/RAW:).
-- port = 0 ⇒ freevec, renvoie 0. Sinon **fh_Type := port**, puis sendpkt(port, mode,
-  **Arg1 = BPTR du FileHandle, Arg2 = lock/résidu, Arg3 = BSTR du nom complet**).
-- **dos n'écrit ni fh_Interactive ni fh_Args** : c'est au handler de les remplir dans le
-  FileHandle reçu en Arg1. Res1 = 0 ⇒ freevec, puis `errorreq(2, Result2, port)` (114) ; Retry ⇒
-  tout recommence ; sinon renvoie 0. Res1 ≠ 0 ⇒ renvoie le FileHandle (BPTR).
+#### 13.7.4 findinput / findoutput as seen from the handler (ROM, globals 59/60) [O ROM]
+Common routine (mode 1005 / 1006):
+- FileHandle **getmem(10, $10001)** (11 **cleared** longs), fh_Pos = fh_End = −1, routines
+  fh_Funcs/Func2/Func3 installed (Func3 according to the mode).
+- **Name = `*`** (compstring): port := **pr_ConsoleTask** (consoletask 105); **no
+  deviceproc** ⇒ **Arg2 = residual value of Result2** (in practice the dp_Res2 of the last
+  packet received, not meaningful: **do not interpret it as a lock**).
+- **Name = `NIL:`**: no packet, fh_Type 0, routines 0, returns the FileHandle.
+- Otherwise: deviceproc(name) ⇒ port, Arg2 = Result2 (deviceproc's lock; 0 for CON:/RAW:).
+- port = 0 ⇒ freevec, returns 0. Otherwise **fh_Type := port**, then sendpkt(port, mode,
+  **Arg1 = BPTR of the FileHandle, Arg2 = lock/residue, Arg3 = BSTR of the complete name**).
+- **dos writes neither fh_Interactive nor fh_Args**: it is up to the handler to fill them in the
+  FileHandle received in Arg1. Res1 = 0 ⇒ freevec, then `errorreq(2, Result2, port)` (114); Retry ⇒
+  everything starts again; otherwise returns 0. Res1 ≠ 0 ⇒ returns the FileHandle (BPTR).
 
-#### 13.7.5 Ce que le handler console doit fournir pour que NewCLI réussisse (Q4) [O/D]
-1. **Démarrage** (globale 112, packet Arg1 = `CON:0/80/480/100/MyCLI`, Arg2 = 0/1, Arg3 =
-   nœud) : ouvrir la fenêtre, **Res1 ≠ 0**. [O]
-2. **ACTION_FINDINPUT (1005)** reçu ensuite (Arg1 = FileHandle, Arg2 = 0, Arg3 = même nom) :
-   **écrire fh_Interactive (FH +$04) ≠ 0** (le console-handler ROM y met −1 [D]) et fh_Args
-   (FH +$24) = clé du flux ; répondre **Res1 = −1**. Un fh_Interactive nul ⇒ échec B ⇒ « Unable
-   to open new window » **même si la fenêtre est ouverte** (elle est alors refermée par END). [O]
-3. **ACTION_FINDOUTPUT (1006) sur le même port avec Arg3 = BSTR `"*"`** et Arg2 = résidu :
-   le handler doit l'accepter comme **un second flux sur la fenêtre déjà ouverte** (sans
-   analyser `*` comme une spécification de fenêtre, sans exiger de lock), remplir fh_Interactive
-   ≠ 0 et fh_Args, **Res1 = −1**. Refus ⇒ « Unable to open new window ». [O pour l'exigence de
-   succès, D pour le remplissage de fh_Interactive sur ce flux]
-4. **fh_Type** du flux d'entrée doit être le **port du process handler** (posé par dos, §13.7.4)
-   puisqu'il devient pr_ConsoleTask : si notre findinput range le port ailleurs que FH +$08,
-   l'étape 5 vise un mauvais port. [O]
-5. Le handler doit **rester vivant tant qu'il reste un flux ouvert** : deux ACTION_END arrivent à
-   la fin (entrée puis sortie, endread puis endwrite), plus éventuellement ceux de flux `*`
-   ouverts par les commandes. Fermer la fenêtre/terminer au premier END casse la sortie. [D]
-6. Ensuite, packets habituels de console : READ, WRITE, WAIT_CHAR (20), SCREEN_MODE (994),
+#### 13.7.5 What the console handler must provide for NewCLI to succeed (Q4) [O/D]
+1. **Start** (global 112, packet Arg1 = `CON:0/80/480/100/MyCLI`, Arg2 = 0/1, Arg3 =
+   node): open the window, **Res1 ≠ 0**. [O]
+2. **ACTION_FINDINPUT (1005)** received next (Arg1 = FileHandle, Arg2 = 0, Arg3 = same name):
+   **write fh_Interactive (FH +$04) ≠ 0** (the ROM console-handler puts −1 there [D]) and fh_Args
+   (FH +$24) = key of the stream; reply **Res1 = −1**. A null fh_Interactive ⇒ failure B ⇒ "Unable
+   to open new window" **even if the window is open** (it is then closed again by END). [O]
+3. **ACTION_FINDOUTPUT (1006) on the same port with Arg3 = BSTR `"*"`** and Arg2 = residue:
+   the handler must accept it as **a second stream on the already open window** (without
+   parsing `*` as a window specification, without requiring a lock), fill fh_Interactive
+   ≠ 0 and fh_Args, **Res1 = −1**. Refusal ⇒ "Unable to open new window". [O for the success
+   requirement, D for the filling of fh_Interactive on this stream]
+4. **fh_Type** of the input stream must be the **port of the handler process** (set by dos, §13.7.4)
+   since it becomes pr_ConsoleTask: if our findinput stores the port elsewhere than FH +$08,
+   step 5 targets a wrong port. [O]
+5. The handler must **stay alive as long as a stream remains open**: two ACTION_ENDs arrive at
+   the end (input then output, endread then endwrite), plus possibly those of `*` streams
+   opened by the commands. Closing the window/terminating at the first END breaks the output. [D]
+6. Then, the usual console packets: READ, WRITE, WAIT_CHAR (20), SCREEN_MODE (994),
    DISK_INFO (25), END (1007) (cf. handlers-v34 §2). [O/D]
 
-Diagnostic pour notre ROM (symptôme « Unable to open new window » + « NEWCLI failed », Run/
-Execute OK) [D] : la réponse Res1 = 0 provient forcément de l'init de NewCLI exécutée **dans le
-nouveau process sur le GV partagé**. Causes à vérifier, par ordre de probabilité : (a) le
-FINDOUTPUT `"*"` vers pr_ConsoleTask est refusé par notre handler, ou notre findoutput("*") ne
-vise pas pr_ConsoleTask ; (b) fh_Interactive (+$04) ou fh_Type (+$08) du flux d'entrée non
-renseignés au retour de notre findinput ; (c) globale −26 (IsInteractive) absente/incorrecte
-dans le GV partagé ; (d) findinput(`CON:…`) échoue dans un process qui n'est pas celui d'un CLI
-« standard » (pr_CurrentDir = DupLock, pr_WindowPtr = 0, pr_FileSystemTask = Arg5 déjà posés).
-Run ne passe par aucun de ces chemins (il ouvre `*`/`NIL:` en sortie seulement, jamais une
-fenêtre en entrée), d'où la différence observée.
+Diagnosis for our ROM (symptom "Unable to open new window" + "NEWCLI failed", Run/
+Execute OK) [D]: the Res1 = 0 reply necessarily comes from NewCLI's init executed **in the
+new process on the shared GV**. Causes to check, in order of probability: (a) the
+`"*"` FINDOUTPUT to pr_ConsoleTask is refused by our handler, or our findoutput("*") does not
+target pr_ConsoleTask; (b) fh_Interactive (+$04) or fh_Type (+$08) of the input stream not
+filled in on return from our findinput; (c) global −26 (IsInteractive) absent/incorrect
+in the shared GV; (d) findinput(`CON:…`) fails in a process that is not that of a "standard"
+CLI (pr_CurrentDir = DupLock, pr_WindowPtr = 0, pr_FileSystemTask = Arg5 already set).
+Run goes through none of these paths (it opens `*`/`NIL:` as output only, never a
+window as input), hence the observed difference.
 
 ---
 
-## 12. Relecture clean-room
+## 12. Clean-room review
 
-Je certifie, après relecture intégrale de ce document, que :
-- il ne contient **aucune suite d'instructions 68000 recopiée ou paraphrasée ligne à ligne**,
-  ni de la ROM ni des binaires du disque Workbench, aucun extrait de désassemblage, aucun opcode
-  ni encodage d'instruction ;
-- les descriptions de routines sont formulées comme des **spécifications fonctionnelles**
-  (entrées, sorties, effets, ordre des effets observables), sans pseudo-code calqué sur la
-  structure du code d'origine (boucles, branches et registres de travail internes ne sont pas
-  décrits) ;
-- les seules valeurs reprises sont des **éléments d'ABI et d'interopérabilité** : numéros et
-  offsets de globales, layouts (frame, GV, FileHandle, CLI, segarray, hunk BCPL, nœuds de liste),
-  conventions de registres, constantes (codes d'action packets, codes d'erreur, tailles de
-  tampons/piles, valeur du marqueur de globale non définie), chaînes de messages et templates
-  (nécessaires à la compatibilité de sortie) ;
-- la ROM n'a pas été modifiée ; seules des extractions temporaires des fichiers du disque
-  Workbench (et, pour le §13.6, une copie de lecture temporaire de la ROM, supprimée après
-  analyse) ont été faites dans le répertoire scratch de session, hors du dépôt.
-- **§13.6 (relu le 2026-10-20)** : le contrat de la routine d'init de c:Run et du start des CLI
-  est exprimé en entrées/sorties, champs écrits (offsets de structure et numéros de globales),
-  valeurs de retour et ordre des effets observables ; aucun encodage, aucune séquence
-  d'instructions, aucun nom de registre de travail interne n'y figure (seuls les registres de
-  la convention d'appel publique §1.1 sont cités). Les offsets de hunk de c:Run ($4B8) et les
-  tailles de frame observées ($1A4, $2BC) sont des repères d'analyse et des éléments d'ABI
-  (dimensionnement de D0), pas du code.
-- **§13.7 (relu le 2026-10-20)** : le contrat de c:NewCLI (process appelant, routine d'init du
-  nouveau CLI, findinput/findoutput et endtask de la ROM) est exprimé en effets observables
-  ordonnés, champs écrits (offsets de Process/CLI/FileHandle, numéros de globales), contenu du
-  packet de démarrage, chaînes de messages et conditions d'échec ; aucun encodage, aucune séquence
-  d'instructions, aucun registre de travail interne. Les offsets $4/$544 du hunk sont des repères
-  d'analyse. Sources : extraction temporaire de `c/NewCLI` d'une **copie** de l'ADF dans le scratch
-  de session ; ROM lue en place, en lecture seule (non copiée, non modifiée).
-- **Correction du 2026-10-29** : retirées les 15 adresses ROM restantes (segarray ROM, colonne
-  « Repère » de la table des globales par segment, start du CLI ROM) et la mention « adresses ROM =
-  repères » ; numéros de globales, offsets dans le vecteur global et segments porteurs conservés.
+I certify, after a full re-reading of this document, that:
+- it contains **no 68000 instruction sequence copied or paraphrased line by line**,
+  neither from the ROM nor from the Workbench disk binaries, no disassembly excerpt, no opcode
+  nor instruction encoding;
+- the descriptions of routines are formulated as **functional specifications**
+  (inputs, outputs, effects, order of the observable effects), without pseudo-code modelled on the
+  structure of the original code (loops, branches and internal working registers are not
+  described);
+- the only values reproduced are **ABI and interoperability elements**: numbers and
+  offsets of globals, layouts (frame, GV, FileHandle, CLI, segarray, BCPL hunk, list nodes),
+  register conventions, constants (packet action codes, error codes, sizes of
+  buffers/stacks, value of the undefined-global marker), message strings and templates
+  (needed for output compatibility);
+- the ROM was not modified; only temporary extractions of the Workbench disk files
+  (and, for §13.6, a temporary read copy of the ROM, deleted after
+  analysis) were made in the session scratch directory, outside the repository.
+- **§13.6 (re-read on 2026-10-20)**: the contract of c:Run's init routine and of the CLIs' start
+  is expressed as inputs/outputs, fields written (structure offsets and global numbers),
+  return values and order of the observable effects; no encoding, no instruction
+  sequence, no internal working register name appears in it (only the registers of
+  the public calling convention §1.1 are cited). The c:Run hunk offsets ($4B8) and the
+  observed frame sizes ($1A4, $2BC) are analysis landmarks and ABI elements
+  (sizing of D0), not code.
+- **§13.7 (re-read on 2026-10-20)**: the contract of c:NewCLI (calling process, init routine of the
+  new CLI, findinput/findoutput and endtask of the ROM) is expressed as ordered observable effects,
+  fields written (Process/CLI/FileHandle offsets, global numbers), contents of the
+  startup packet, message strings and failure conditions; no encoding, no instruction
+  sequence, no internal working register. The hunk offsets $4/$544 are analysis
+  landmarks. Sources: temporary extraction of `c/NewCLI` from a **copy** of the ADF in the session
+  scratch; ROM read in place, read only (not copied, not modified).
+- **Correction of 2026-10-29**: removed the 15 remaining ROM addresses (ROM segarray, "Landmark"
+  column of the table of globals per segment, start of the ROM CLI) and the mention "ROM addresses =
+  landmarks"; global numbers, offsets in the global vector and carrying segments kept.

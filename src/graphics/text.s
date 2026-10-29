@@ -1,7 +1,7 @@
-; src/graphics/text.s — polices de graphics.library : topaz 8 (police de la ROM, glyphes hand-authored de
-; font8x8 au format strike), liste gb_TextFonts, OpenFont/CloseFont/AskFont/AddFont/RemFont, styles logiciels
-; (AskSoftStyle/SetSoftStyle) et AllocRaster/FreeRaster. Le rendu (Text/TextLength) est dans draw.s.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs graphics.library + graphics/text.h publics. AUCUNE lecture ROM.
+; src/graphics/text.s — graphics.library fonts: topaz 8 (the ROM font, hand-authored glyphs from
+; font8x8 in strike format), gb_TextFonts list, OpenFont/CloseFont/AskFont/AddFont/RemFont, software styles
+; (AskSoftStyle/SetSoftStyle) and AllocRaster/FreeRaster. Rendering (Text/TextLength) lives in draw.s.
+; IMPLEMENTATION track ("clean"): public graphics.library AutoDocs + graphics/text.h. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -20,11 +20,11 @@
                 xref    topaz8_strike
                 xref    TOPAZ8_MOD
 
-TOPAZ8_NCHARS   EQU $7F-$20+2        ; LoChar..HiChar plus le glyphe par défaut
-SOFTSTYLES      EQU FSF_UNDERLINED|FSF_BOLD   ; styles que Text sait produire
+TOPAZ8_NCHARS   EQU $7F-$20+2        ; LoChar..HiChar plus the default glyph
+SOFTSTYLES      EQU FSF_UNDERLINED|FSF_BOLD   ; styles that Text can produce
 
-; topaz 8 en ROM : modèle de la TextFont chaînée dans gb_TextFonts (copie RAM) et police de secours d'un RastPort
-; sans police.
+; topaz 8 in ROM: template of the TextFont linked into gb_TextFonts (RAM copy) and fallback font for a RastPort
+; with no font.
                 EVEN
 topaz8_font:
         dc.l    0,0                  ; ln_Succ, ln_Pred
@@ -50,8 +50,8 @@ topaz_name:
         dc.b    "topaz.font",0
         EVEN
 
-; gfx_fontinit(a2 = GfxBase, a6 = SysBase) : liste des polices vide, puis topaz 8 (copie RAM du modèle) en tête et
-; police par défaut. Sans mémoire, le modèle ROM sert de police par défaut hors liste. Préserve a2/a6.
+; gfx_fontinit(a2 = GfxBase, a6 = SysBase): empty font list, then topaz 8 (RAM copy of the template) at the head and
+; as default font. Without memory, the ROM template serves as the default font outside the list. Preserves a2/a6.
 gfx_fontinit:
         lea     gb_TextFonts(a2),a0
         lea     LH_TAIL(a0),a1
@@ -79,8 +79,8 @@ gfx_fontinit:
         lea     gb_TextFonts(a2),a0
         jmp     LVO_ADDHEAD(a6)
 
-; OpenFont(textAttr a0) -> d0 = police de même nom (casse ignorée) dont la hauteur est la plus proche de ta_YSize
-; (exacte de préférence), son compte d'accès incrémenté ; 0 si aucune police de ce nom.
+; OpenFont(textAttr a0) -> d0 = font with the same name (case ignored) whose height is closest to ta_YSize
+; (exact preferred), its access count incremented; 0 if no font has that name.
 gfx_OpenFont:
         movem.l d2-d4/a2-a4/a6,-(sp)
         move.l  a0,a3
@@ -91,11 +91,11 @@ gfx_OpenFont:
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
         move.l  (sp)+,a6
-        suba.l  a1,a1                ; meilleure police
-        move.l  #$10000,d3           ; meilleur écart
+        suba.l  a1,a1                ; best font
+        move.l  #$10000,d3           ; best difference
         move.l  gb_TextFonts(a6),a2
 .of_lp:
-        tst.l   (a2)                 ; ln_Succ = 0 : fin de liste
+        tst.l   (a2)                 ; ln_Succ = 0: end of list
         beq.s   .of_end
         move.l  LN_NAME(a2),d0
         beq.s   .of_nx
@@ -132,7 +132,7 @@ gfx_OpenFont:
         movem.l (sp)+,d2-d4/a2-a4/a6
         rts
 
-; tx_namecmp(a0, a4 = chaînes C) : Z = 1 si égales, casse ASCII ignorée. Clobbe d0/d1/a0.
+; tx_namecmp(a0, a4 = C strings): Z = 1 if equal, ASCII case ignored. Clobbers d0/d1/a0.
 tx_namecmp:
         move.l  a1,-(sp)
         move.l  a4,a1
@@ -156,10 +156,10 @@ tx_namecmp:
         tst.b   d0
         bne.s   .nc_lp
 .nc_r:
-        movem.l (sp)+,a1             ; movem ne touche pas aux codes conditions
+        movem.l (sp)+,a1             ; movem does not touch the condition codes
         rts
 
-; CloseFont(textFont a1) : un accès de moins (jamais négatif).
+; CloseFont(textFont a1): one access fewer (never negative).
 gfx_CloseFont:
         move.l  a1,d0
         beq.s   .cf_r
@@ -169,7 +169,7 @@ gfx_CloseFont:
 .cf_r:
         rts
 
-; AskFont(rp a1, textAttr a0) : nom, hauteur, style et drapeaux de la police du RastPort.
+; AskFont(rp a1, textAttr a0): name, height, style and flags of the RastPort's font.
 gfx_AskFont:
         move.l  a2,-(sp)
         move.l  rp_Font(a1),a2
@@ -184,7 +184,7 @@ gfx_AskFont:
         move.l  (sp)+,a2
         rts
 
-; AddFont(textFont a1) : la police entre en tête de gb_TextFonts.
+; AddFont(textFont a1): the font is added at the head of gb_TextFonts.
 gfx_AddFont:
         move.l  a6,-(sp)
         move.l  a6,a0
@@ -198,7 +198,7 @@ gfx_AddFont:
         move.l  (sp)+,a6
         rts
 
-; RemFont(textFont a1) : retire la police de la liste (une seule fois).
+; RemFont(textFont a1): removes the font from the list (only once).
 gfx_RemFont:
         move.l  a6,-(sp)
         move.l  ($4).w,a6
@@ -211,7 +211,7 @@ gfx_RemFont:
         move.l  (sp)+,a6
         rts
 
-; AskSoftStyle(rp a1) -> d0 = styles que SetSoftStyle peut ajouter (ceux que la police n'a pas déjà).
+; AskSoftStyle(rp a1) -> d0 = styles SetSoftStyle can add (those the font does not already have).
 gfx_AskSoftStyle:
         move.l  rp_Font(a1),d0
         bne.s   .as_have
@@ -225,25 +225,25 @@ gfx_AskSoftStyle:
         and.b   #SOFTSTYLES,d0
         rts
 
-; SetSoftStyle(rp a1, style d0, enable d1) -> d0 = style résultant (police + algorithmique). Seuls les bits de enable
-; que AskSoftStyle autorise changent.
+; SetSoftStyle(rp a1, style d0, enable d1) -> d0 = resulting style (font + algorithmic). Only the bits of enable
+; that AskSoftStyle allows are changed.
 gfx_SetSoftStyle:
         move.l  d2,-(sp)
         move.l  d0,d2
         bsr.s   gfx_AskSoftStyle
-        and.b   d0,d1                ; d1 = bits modifiables
+        and.b   d0,d1                ; d1 = modifiable bits
         and.b   d1,d2
         not.b   d1
         and.b   rp_AlgoStyle(a1),d1
         or.b    d2,d1
         move.b  d1,rp_AlgoStyle(a1)
         moveq   #0,d0
-        move.b  tf_Style(a0),d0      ; a0 = police (laissée par AskSoftStyle)
+        move.b  tf_Style(a0),d0      ; a0 = font (left by AskSoftStyle)
         or.b    d1,d0
         move.l  (sp)+,d2
         rts
 
-; AllocRaster(largeur d0, hauteur d1) -> d0 = plan en mémoire chip (largeur arrondie au mot), 0 si épuisée.
+; AllocRaster(width d0, height d1) -> d0 = plane in chip memory (width rounded to a word), 0 if exhausted.
 gfx_AllocRaster:
         bsr.s   tx_rassize
         move.l  #MEMF_CHIP,d1
@@ -252,7 +252,7 @@ gfx_AllocRaster:
         jsr     LVO_ALLOCMEM(a6)
         move.l  (sp)+,a6
         rts
-; FreeRaster(plan a0, largeur d0, hauteur d1) : rend un plan d'AllocRaster.
+; FreeRaster(plane a0, width d0, height d1): returns a plane from AllocRaster.
 gfx_FreeRaster:
         move.l  a0,a1
         cmpa.w  #0,a1
@@ -264,7 +264,7 @@ gfx_FreeRaster:
         move.l  (sp)+,a6
 .fr_r:
         rts
-; tx_rassize(largeur d0, hauteur d1) -> d0 = hauteur * octets par ligne (largeur arrondie au mot). Clobbe d1.
+; tx_rassize(width d0, height d1) -> d0 = height * bytes per row (width rounded to a word). Clobbers d1.
 tx_rassize:
         add.w   #15,d0
         lsr.w   #4,d0

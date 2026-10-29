@@ -1,16 +1,16 @@
-; tests/cmd_e3.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) pour le jalon E3.
-; Même structure que loadseg_d3d.s (CODE émettant via SERDAT + DATA + 1 relocation 32 bits CODE->DATA), mais
-; émet « E3 CMD RAN OK ». Écrit sur l'ADF sous le nom « e3cmd » ; tapé au shell (« e3cmd\r »), le shell le charge
-; depuis DF0: via dos (Open/Read -> ls_load_hunks -> reloc) puis l'exécute : s'il émet son marqueur, la chaîne
-; « taper un nom de commande -> charger+exécuter depuis le disque via dos » a fonctionné.
-; Clean-room : code AUTEUR, registres hardware publics, aucune lecture ROM.
+; tests/cmd_e3.s - test HUNK executable (TEST ASSET, NOT ROM code) for milestone E3.
+; Same structure as loadseg_d3d.s (CODE emitting via SERDAT + DATA + 1 32-bit CODE->DATA relocation), but
+; emits "E3 CMD RAN OK". Written to the ADF under the name "e3cmd"; typed at the shell ("e3cmd\r"), the shell loads it
+; from DF0: via dos (Open/Read -> ls_load_hunks -> reloc) then runs it: if it emits its marker, the
+; "type a command name -> load+run from disk via dos" chain worked.
+; Clean-room: AUTHORED code, public hardware registers, no ROM reading.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 
                 section code,code
 _start:
-                move.l  #e3msg,a0           ; pointeur ABSOLU -> string en DATA (RELOC32 code->data)
+                move.l  #e3msg,a0           ; ABSOLUTE pointer -> string in DATA (RELOC32 code->data)
 .lp:
                 move.b  (a0)+,d1
                 beq.s   .done

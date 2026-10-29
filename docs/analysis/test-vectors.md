@@ -1,146 +1,146 @@
-# test-vectors.md — Vecteurs d'oracle (Kickstart 1.3 / V34.5)
+# test-vectors.md — Oracle vectors (Kickstart 1.3 / V34.5)
 
-> Assertions testables en boîte noire qu'une réimplémentation doit reproduire. **Pas de code.**
-> Deux niveaux de provenance, étiquetés sur chaque assertion :
-> **[M] = mesuré dans la ROM** `kick34005.A500` (oracle dur, falsifiable par relecture r2) ;
-> **[D] = comportement documenté** (ABI publique ; la ROM ne dumpe pas la valeur runtime,
-> l'assertion découle du contrat exec V34).
-> Config de référence pour les vecteurs runtime : **A500, 512 Ko de RAM chip, aucune extension,
-> 68000, région PAL** (sauf mention NTSC).
+> Black-box testable assertions that a reimplementation must reproduce. **No code.**
+> Two levels of provenance, labelled on each assertion:
+> **[M] = measured in the ROM** `kick34005.A500` (hard oracle, falsifiable by re-reading with r2);
+> **[D] = documented behaviour** (public ABI; the ROM does not dump the runtime value,
+> the assertion follows from the exec V34 contract).
+> Reference config for the runtime vectors: **A500, 512 KB of chip RAM, no expansion,
+> 68000, PAL region** (unless NTSC is stated).
 
-## A. Image ROM (statique)
+## A. ROM image (static)
 
-- **[M] A1** : `*(ULONG*)$FC0000 = 0x11114EF9` (SSP/ROM-ID+opcode).
-- **[M] A2** : `*(ULONG*)$FC0004` = une adresse dans la ROM (PC de reset = coldstart exec = `rt_Init`
-  d'exec, cf. B5).
-- **[M] A3** : `*(ULONG*)$FC000C = 0x00220005` → version **34.5**. (Interprétation : Kickstart 1.3,
-  corroborée par les chaînes `"Release 1.3"` et `"exec 34.2 (28 Oct 1987)"` présentes en ROM.)
-- **[M] A4** : exactement **24 ROMTags** valides (matchword `0x4AFC` + `rt_MatchTag` auto-référent)
-  (liste dans `module-map.md`). Tous ont `rt_Version = 34`.
-- **[M] A5** : pied de ROM — champ de taille `0x00040000` (= 256 Ko) dans les derniers longwords.
+- **[M] A1**: `*(ULONG*)$FC0000 = 0x11114EF9` (SSP/ROM-ID+opcode).
+- **[M] A2**: `*(ULONG*)$FC0004` = an address in the ROM (reset PC = exec coldstart = exec's
+  `rt_Init`, see B5).
+- **[M] A3**: `*(ULONG*)$FC000C = 0x00220005` → version **34.5**. (Interpretation: Kickstart 1.3,
+  corroborated by the strings `"Release 1.3"` and `"exec 34.2 (28 Oct 1987)"` present in the ROM.)
+- **[M] A4**: exactly **24 valid ROMTags** (matchword `0x4AFC` + self-referencing `rt_MatchTag`)
+  (list in `module-map.md`). All have `rt_Version = 34`.
+- **[M] A5**: ROM footer — size field `0x00040000` (= 256 KB) in the last longwords.
 
-## B. ROMTags — assertions par champ (toutes **[M]**)
+## B. ROMTags — per-field assertions (all **[M]**)
 
-- **[M] B1** : flags des 5 modules RTF_AUTOINIT (bit 0x80) : expansion `0x81`, ramlib `0x80`,
-  audio `0x81`, intuition `0x81`, mathffp `0x81`. **Aucun autre** module n'a le bit AUTOINIT.
-- **[M] B2** : **aucun** module n'a RTF_SINGLETASK (0x02) ni RTF_AFTERDOS (0x04). Seuls
-  COLDSTART (0x01) et AUTOINIT (0x80) apparaissent.
-- **[M] B3** : modules à `rt_Flags = 0x00` (aucun bit de timing) : exec, workbench.task, dos.
-  Plus ramlib à `0x80` (AUTOINIT sans COLDSTART). → ces 4 ne sont pas démarrés par
+- **[M] B1**: flags of the 5 RTF_AUTOINIT modules (bit 0x80): expansion `0x81`, ramlib `0x80`,
+  audio `0x81`, intuition `0x81`, mathffp `0x81`. **No other** module has the AUTOINIT bit.
+- **[M] B2**: **no** module has RTF_SINGLETASK (0x02) or RTF_AFTERDOS (0x04). Only
+  COLDSTART (0x01) and AUTOINIT (0x80) appear.
+- **[M] B3**: modules with `rt_Flags = 0x00` (no timing bit): exec, workbench.task, dos.
+  Plus ramlib at `0x80` (AUTOINIT without COLDSTART). → these 4 are not started by
   `InitCode(RTF_COLDSTART)`.
-- **[M] B4** : `rt_Type` : NT_LIBRARY(9) = exec, expansion, ramlib, graphics, layers, intuition,
-  mathffp, dos, romboot (9 modules) ; NT_DEVICE(3) = keyboard, gameport, timer, audio, input,
-  console, trackdisk (7) ; NT_RESOURCE(8) = potgo, keymap, cia, disk, misc (5) ;
-  NT_TASK(1) = workbench.task (1) ; NT_UNKNOWN(0) = alert.hook, strap (2).
-- **[M] B5** : `rt_Init` d'exec = PC de reset (A2). `rt_EndSkip` d'exec = adresse de la ROMTag
-  alert.hook (la tag suivante dans la ROM).
-- **[M] B6** : priorités (octet signé) exactes : exec 120, expansion 110, potgo 100, keymap 100,
+- **[M] B4**: `rt_Type`: NT_LIBRARY(9) = exec, expansion, ramlib, graphics, layers, intuition,
+  mathffp, dos, romboot (9 modules); NT_DEVICE(3) = keyboard, gameport, timer, audio, input,
+  console, trackdisk (7); NT_RESOURCE(8) = potgo, keymap, cia, disk, misc (5);
+  NT_TASK(1) = workbench.task (1); NT_UNKNOWN(0) = alert.hook, strap (2).
+- **[M] B5**: exec's `rt_Init` = reset PC (A2). Exec's `rt_EndSkip` = address of the
+  alert.hook ROMTag (the next tag in the ROM).
+- **[M] B6**: exact priorities (signed byte): exec 120, expansion 110, potgo 100, keymap 100,
   cia 80, disk 70, misc 70, ramlib 70, graphics 65, keyboard 60, gameport 60, timer 50, audio 40,
   input 40, layers 31, console 20, trackdisk 20, intuition 10, alert.hook 5, mathffp 0,
-  workbench.task 0, dos 0, romboot **-40** (octet `0xD8`), strap **-60** (octet `0xC4`).
+  workbench.task 0, dos 0, romboot **-40** (byte `0xD8`), strap **-60** (byte `0xC4`).
 
-## C. Ordre d'initialisation (oracle de séquence) **[M pour les clés de tri]**
+## C. Initialisation order (sequence oracle) **[M for the sort keys]**
 
-Deux séquences distinctes à ne pas confondre : (a) `ResModules` = TOUS les résidents valides
-(les flags RTF ne filtrent QUE `InitCode`, pas l'appartenance à la liste) ; (b) la passe
-`InitCode(RTF_COLDSTART)` = sous-ensemble effectivement démarré.
+Two distinct sequences not to be confused: (a) `ResModules` = ALL valid residents
+(the RTF flags filter ONLY `InitCode`, not membership of the list); (b) the
+`InitCode(RTF_COLDSTART)` pass = the subset actually started.
 
-- **[M] C1 — `ResModules` (24 entrées)** : triée par **`rt_Pri` décroissant, puis adresse ROM
-  croissante** pour les ex-æquo (ordre de position dans l'image). Ordre exact :
+- **[M] C1 — `ResModules` (24 entries)**: sorted by **descending `rt_Pri`, then ascending ROM
+  address** for ties (order of position in the image). Exact order:
 
   1 exec · 2 expansion · 3 potgo · 4 keymap · 5 cia · 6 disk · 7 misc · 8 ramlib · 9 graphics ·
   10 keyboard · 11 gameport · 12 timer · 13 audio · 14 input · 15 layers · 16 console ·
   17 trackdisk · 18 intuition · 19 alert.hook · 20 mathffp · **21 workbench.task · 22 dos** ·
   23 romboot · 24 strap.
-  (Trio pri 0 par position croissante dans la ROM : mathffp < workbench.task < dos.)
+  (Pri 0 trio by ascending position in the ROM: mathffp < workbench.task < dos.)
 
-- **[M] C2 — passe `InitCode(RTF_COLDSTART)` (20 entrées)** : `ResModules` **moins** exec (noyau,
-  non démarré par InitCode), ramlib (AUTOINIT sans COLDSTART), workbench.task et dos (`rt_Flags=0`) :
+- **[M] C2 — `InitCode(RTF_COLDSTART)` pass (20 entries)**: `ResModules` **minus** exec (kernel,
+  not started by InitCode), ramlib (AUTOINIT without COLDSTART), workbench.task and dos (`rt_Flags=0`):
 
   expansion · potgo · keymap · cia · disk · misc · graphics · keyboard · gameport · timer · audio ·
   input · layers · console · trackdisk · intuition · alert.hook · mathffp · romboot · strap.
 
-- **[M] C3** : vérification des ex-æquo (le tri DOIT produire ces ordres) : pri100 potgo<keymap ;
-  pri70 disk<misc<ramlib ; pri60 keyboard<gameport ; pri40 audio<input ; pri20 console<trackdisk.
-- **[D] C4** : la passe `InitCode(RTF_SINGLETASK,0)` n'initialise aucun module (liste vide) ;
-  la passe `InitCode(RTF_AFTERDOS,…)` non plus. Observable : rien ne doit s'initialiser « avant
-  multitâche » ni « après DOS » via le mécanisme de flags.
+- **[M] C3**: tie check (the sort MUST produce these orders): pri100 potgo<keymap;
+  pri70 disk<misc<ramlib; pri60 keyboard<gameport; pri40 audio<input; pri20 console<trackdisk.
+- **[D] C4**: the `InitCode(RTF_SINGLETASK,0)` pass initialises no module (empty list);
+  nor does the `InitCode(RTF_AFTERDOS,…)` pass. Observable: nothing must initialise "before
+  multitasking" or "after DOS" via the flags mechanism.
 
-## D. Tables d'auto-init (toutes **[M]**, oracles durs)
+## D. Auto-init tables (all **[M]**, hard oracles)
 
-- **[M] D1** `dataSize` (taille de base allouée) : expansion `0x1C8` (456) · ramlib `0x0B2` (178)
+- **[M] D1** `dataSize` (allocated base size): expansion `0x1C8` (456) · ramlib `0x0B2` (178)
   · audio `0x27A` (634) · intuition `0x564` (1380) · mathffp `0x022` (34 = sizeof struct Library).
-- **[M] D2** nombre de vecteurs LVO exposés : expansion **25** · ramlib **11** · audio **6**
+- **[M] D2** number of LVO vectors exposed: expansion **25** · ramlib **11** · audio **6**
   · intuition **78** · mathffp **16**.
-- **[M] D3** encodage de la table `vectors` : expansion & intuition = **LONG absolu** (terminateur
-  `0xFFFFFFFF`) ; ramlib, audio, mathffp = **WORD relatif** (1er mot `0xFFFF`, terminateur `0xFFFF`).
-- **[M] D4** `structure` (données InitStruct) : NULL **uniquement** pour intuition ; présent pour
-  les 4 autres.
-- **[M] D5** audio.device expose exactement 6 LVO = les 4 standard (Open/Close/Expunge/réservé)
-  + 2 spécifiques device (BeginIO/AbortIO). mathffp expose 16 LVO = 4 standard + 12 fonctions
-  mathématiques simple-précision.
+- **[M] D3** encoding of the `vectors` table: expansion & intuition = **absolute LONG** (terminator
+  `0xFFFFFFFF`); ramlib, audio, mathffp = **relative WORD** (1st word `0xFFFF`, terminator `0xFFFF`).
+- **[M] D4** `structure` (InitStruct data): NULL **only** for intuition; present for
+  the other 4.
+- **[M] D5** audio.device exposes exactly 6 LVOs = the 4 standard ones (Open/Close/Expunge/reserved)
+  + 2 device-specific ones (BeginIO/AbortIO). mathffp exposes 16 LVOs = 4 standard + 12
+  single-precision math functions.
 
-## E. ExecBase après init (runtime) **[D sauf indication]**
+## E. ExecBase after init (runtime) **[D unless indicated]**
 
-- **[D] E1** : `*(ULONG*)$00000004` pointe sur `ExecBase` (valeur non prédictible mais non nulle,
-  dans la RAM chip < `MaxLocMem`).
-- **[D] E2** : `ExecBase.ChkBase` (+0x26) = `~(*(ULONG*)4)` (complément à un du pointeur base).
-- **[D] E3** : `ExecBase.LibNode.lib_Version` (+0x14) = **34** ; `lib_Revision` (+0x16) = 2 ;
-  `LN_Type` (+0x08) = `NT_LIBRARY` (9) ; `LN_Name` → `"exec.library"`.
-- **[D] E4** : `AttnFlags` (+0x128) = **0x0000** sur 68000 pur (aucun bit 68010/020/030/040/
-  68881/882 posé). Sur CPU supérieur, bits correspondants posés.
-- **[D] E5** : `VBlankFrequency` (+0x212) = **50** en PAL (60 en NTSC) ;
+- **[D] E1**: `*(ULONG*)$00000004` points to `ExecBase` (value not predictable but non-zero,
+  in chip RAM < `MaxLocMem`).
+- **[D] E2**: `ExecBase.ChkBase` (+0x26) = `~(*(ULONG*)4)` (ones' complement of the base pointer).
+- **[D] E3**: `ExecBase.LibNode.lib_Version` (+0x14) = **34**; `lib_Revision` (+0x16) = 2;
+  `LN_Type` (+0x08) = `NT_LIBRARY` (9); `LN_Name` → `"exec.library"`.
+- **[D] E4**: `AttnFlags` (+0x128) = **0x0000** on a pure 68000 (no 68010/020/030/040/
+  68881/882 bit set). On a higher CPU, the corresponding bits are set.
+- **[D] E5**: `VBlankFrequency` (+0x212) = **50** in PAL (60 in NTSC);
   `PowerSupplyFrequency` (+0x213) = **50** PAL / 60 NTSC.
-- **[D] E6** : `MaxLocMem` (+0x3E) = sommet de la RAM chip = **0x00080000** pour 512 Ko chip
-  (0x00200000 si 2 Mo chip).
-- **[D] E7** : toutes les listes système d'ExecBase sont des `struct List` valides (vides juste
-  après init, puis peuplées) : `MemList`, `ResourceList`, `DeviceList`, `IntrList`, `LibList`,
-  `PortList`, `TaskReady`, `TaskWait`, `SemaphoreList`. Une `List` vide vérifie
-  `lh_Head == &lh_Tail && lh_TailPred == &lh_Head` (en-tête auto-référent).
-- **[D] E8** : `ResModules` (+0x12C) ≠ NULL et énumère les 24 résidents dans l'ordre de C1.
-- **[D] E9** : `IDNestCnt`/`TDNestCnt` (+0x126/+0x127) reviennent à **-1** au repos (aucun
-  Disable/Forbid actif ; convention : -1 = « hors section critique »).
-- **[D] E10** : la zone au-delà de `KickCheckSum` (~0x22E) n'est pas un champ ExecBase en V34
-  (cf. exec-spec.md §2). Une implémentation 1.3 ne doit rien y supposer.
+- **[D] E6**: `MaxLocMem` (+0x3E) = top of chip RAM = **0x00080000** for 512 KB chip
+  (0x00200000 if 2 MB chip).
+- **[D] E7**: all of ExecBase's system lists are valid `struct List`s (empty right
+  after init, then populated): `MemList`, `ResourceList`, `DeviceList`, `IntrList`, `LibList`,
+  `PortList`, `TaskReady`, `TaskWait`, `SemaphoreList`. An empty `List` satisfies
+  `lh_Head == &lh_Tail && lh_TailPred == &lh_Head` (self-referencing header).
+- **[D] E8**: `ResModules` (+0x12C) ≠ NULL and enumerates the 24 residents in the order of C1.
+- **[D] E9**: `IDNestCnt`/`TDNestCnt` (+0x126/+0x127) return to **-1** when idle (no
+  Disable/Forbid active; convention: -1 = "outside a critical section").
+- **[D] E10**: the area beyond `KickCheckSum` (~0x22E) is not an ExecBase field in V34
+  (see exec-spec.md §2). A 1.3 implementation must assume nothing there.
 
-## F. Liste mémoire (A500 512 Ko chip, sans extension) **[D]**
+## F. Memory list (A500 512 KB chip, no expansion) **[D]**
 
-- **[D] F1** : `MemList` contient **exactement un** `MemHeader` (RAM chip). Pas de nœud fast.
-- **[D] F2** : ce `MemHeader` a `mh_Attributes = MEMF_CHIP|MEMF_PUBLIC` (= **0x3**) en V34
-  (les bits `MEMF_LOCAL` 0x100 et `MEMF_24BITDMA` 0x200 sont des ajouts **V36**, absents en 1.3) ;
-  `mh_Upper` ≈ `0x00080000` ; `mh_Lower` au-dessus de la zone basse réservée (vecteurs CPU +
-  ExecBase + piles). `LN_Type = NT_MEMORY (10)`.
-- **[D] F3** : `AvailMem(MEMF_CHIP)` > 0 ; `AvailMem(MEMF_FAST)` = 0 (aucune RAM fast).
-- **[D] F4** : granularité d'allocation = **8 octets** (AllocMem arrondit vers le haut).
+- **[D] F1**: `MemList` contains **exactly one** `MemHeader` (chip RAM). No fast node.
+- **[D] F2**: this `MemHeader` has `mh_Attributes = MEMF_CHIP|MEMF_PUBLIC` (= **0x3**) in V34
+  (the `MEMF_LOCAL` 0x100 and `MEMF_24BITDMA` 0x200 bits are **V36** additions, absent in 1.3);
+  `mh_Upper` ≈ `0x00080000`; `mh_Lower` above the reserved low area (CPU vectors +
+  ExecBase + stacks). `LN_Type = NT_MEMORY (10)`.
+- **[D] F3**: `AvailMem(MEMF_CHIP)` > 0; `AvailMem(MEMF_FAST)` = 0 (no fast RAM).
+- **[D] F4**: allocation granularity = **8 bytes** (AllocMem rounds up).
 
-## G. Jump table exec **[M + D]**
+## G. Exec jump table **[M + D]**
 
-- **[M] G1** : les offsets LVO des primitives sont utilisés dans la ROM aux valeurs canoniques :
+- **[M] G1**: the LVO offsets of the primitives are used in the ROM with the canonical values:
   Forbid -132, Permit -138, AllocMem -198, FreeMem -210, AddHead -240, AddTail -246, Remove -252,
-  FindName -276 (sites d'appel recensés dans exec-spec.md §3).
-- **[M] G2** : l'offset `JSR/JMP d16(A6)` le plus profond de toute la ROM est **-636** ; l'usage
-  des LVO exec est dense et contigu jusqu'à ~ -588.
-- **[D] G3** : la jump table exec V34 compte ~**102** entrées (`lib_NegSize` ≈ 612), soit bien
-  moins que 2.0/3.x. Les LVO ≥ -618 (AddMemList/CopyMem/CopyMemQuick/Cache*/pools…) **ne doivent
-  pas exister** dans une réimplémentation V34.
-- **[D] G4** : chaque entrée de jump table = 6 octets (`JMP abs.l` `0x4EF9` + adresse 32 bits) ;
-  `lib_Sum`/`SumLibrary` recalcule un checksum cohérent de la table.
+  FindName -276 (call sites listed in exec-spec.md §3).
+- **[M] G2**: the deepest `JSR/JMP d16(A6)` offset in the whole ROM is **-636**; the use
+  of exec LVOs is dense and contiguous down to ~ -588.
+- **[D] G3**: the exec V34 jump table has ~**102** entries (`lib_NegSize` ≈ 612), i.e. far
+  fewer than 2.0/3.x. LVOs ≥ -618 (AddMemList/CopyMem/CopyMemQuick/Cache*/pools…) **must not
+  exist** in a V34 reimplementation.
+- **[D] G4**: each jump table entry = 6 bytes (`JMP abs.l` `0x4EF9` + 32-bit address);
+  `lib_Sum`/`SumLibrary` recomputes a consistent checksum of the table.
 
-## H. Limites / zones à confirmer par la piste implémentation
-- Section E (ExecBase runtime) et F (liste mémoire) sont **[D]** : non lisibles dans la ROM
-  statique. À valider sur émulateur/matériel réel contre une Kickstart 1.3 authentique.
-- G3 : compte LVO exec à ±1 sur la dernière entrée ; recouper `exec_lib.fd` **V34** pour figer.
-- E6/F2 : `MaxLocMem` et `mh_Upper` dépendent de la quantité de RAM chip réelle de la config testée.
+## H. Limits / areas to be confirmed by the implementation track
+- Section E (runtime ExecBase) and F (memory list) are **[D]**: not readable in the static
+  ROM. To be validated on an emulator/real hardware against an authentic Kickstart 1.3.
+- G3: exec LVO count to within ±1 on the last entry; cross-check `exec_lib.fd` **V34** to settle it.
+- E6/F2: `MaxLocMem` and `mh_Upper` depend on the actual amount of chip RAM of the tested config.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Aucune suite d'instructions transcrite, aucun pseudo-code : uniquement des assertions boîte
-  noire (valeurs, ordres, tailles).
-- [x] **Corrigé** : retirées les adresses ROM du PC de reset (A2), de `rt_Init`/`rt_EndSkip` d'exec
-  (B5) et des trois ROMTags de priorité 0 (C1), ainsi que le renvoi aux « offsets » des tags ; les
-  assertions sont conservées sous forme relative (égalité PC de reset = `rt_Init`, ordre de position).
-- [x] Restent : en-tête `0x11114EF9`, version `0x00220005`, taille `0x00040000` (format d'image vérifié
-  par `romtool`), offsets publics d'ExecBase, LVO, constantes `MEMF_*`/`NT_*`/`RTF_*`. G2 cite le mode
-  d'adressage des appels LVO uniquement pour borner la jump table (aucune instruction recopiée).
+- [x] No instruction sequence transcribed, no pseudo-code: only black-box
+  assertions (values, orders, sizes).
+- [x] **Fixed**: removed the ROM addresses of the reset PC (A2), of exec's `rt_Init`/`rt_EndSkip`
+  (B5) and of the three priority-0 ROMTags (C1), as well as the reference to the tags' "offsets"; the
+  assertions are kept in relative form (equality reset PC = `rt_Init`, order of position).
+- [x] Remaining: header `0x11114EF9`, version `0x00220005`, size `0x00040000` (image format checked
+  by `romtool`), public ExecBase offsets, LVOs, `MEMF_*`/`NT_*`/`RTF_*` constants. G2 cites the addressing
+  mode of the LVO calls only to bound the jump table (no instruction copied).

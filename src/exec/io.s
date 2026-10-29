@@ -1,9 +1,9 @@
-; src/exec/io.s — exec : entrées/sorties device (OpenDevice, CloseDevice, DoIO, SendIO, CheckIO, WaitIO, AbortIO)
-; et copies mémoire (CopyMem, CopyMemQuick : L:Ram-Handler copie toutes ses données par CopyMem).
-; Requis par les handlers BCPL du disque (L:Newcon-Handler, L:Aux-Handler, L:Port-Handler : globales opendevice,
-; doio, sendio) et par tout programme qui ouvre un device.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs exec (OpenDevice/DoIO/SendIO/CheckIO/WaitIO/AbortIO) + exec/io.i.
-; AUCUNE lecture ROM.
+; src/exec/io.s — exec: device input/output (OpenDevice, CloseDevice, DoIO, SendIO, CheckIO, WaitIO, AbortIO)
+; and memory copies (CopyMem, CopyMemQuick: L:Ram-Handler copies all its data with CopyMem).
+; Required by the BCPL disk handlers (L:Newcon-Handler, L:Aux-Handler, L:Port-Handler: globals opendevice,
+; doio, sendio) and by any program that opens a device.
+; IMPLEMENTATION track ("clean"): AutoDocs exec (OpenDevice/DoIO/SendIO/CheckIO/WaitIO/AbortIO) + exec/io.i.
+; NO ROM reading.
 
                 include "exec.i"
 
@@ -27,22 +27,22 @@ DEV_CLOSE       EQU -12
 DEV_BEGINIO     EQU -30
 DEV_ABORTIO     EQU -36
 
-; OpenDevice(nom a0, unité d0, iorequest a1, flags d1) -> d0 = io_Error (0 = succès). Sous Forbid : FindName dans la
-; DeviceList, io_Device := device, io_Error := 0, puis le vecteur Open du device (a6 = device, a1/d0/d1 transmis).
-; Device absent : chargé depuis DEVS: (ram_loadmodule, appelant process) ; sinon io_Error = IOERR_OPENFAIL.
+; OpenDevice(name a0, unit d0, iorequest a1, flags d1) -> d0 = io_Error (0 = success). Under Forbid: FindName in the
+; DeviceList, io_Device := device, io_Error := 0, then the device's Open vector (a6 = device, a1/d0/d1 passed on).
+; Device missing: loaded from DEVS: (ram_loadmodule, process caller); otherwise io_Error = IOERR_OPENFAIL.
 exec_OpenDevice:
         movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a1,a2                ; a2 = iorequest
-        move.l  d0,d2                ; d2 = unité
+        move.l  d0,d2                ; d2 = unit
         move.l  d1,d3                ; d3 = flags
-        move.l  a0,a3                ; a3 = nom
+        move.l  a0,a3                ; a3 = name
         jsr     LVO_FORBID(a6)
         lea     EB_DEVICELIST(a6),a0
         move.l  a3,a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.s   .od_found
-        jsr     LVO_PERMIT(a6)       ; absent : chargement depuis DEVS: (ramlib), hors Forbid
+        jsr     LVO_PERMIT(a6)       ; missing: load from DEVS: (ramlib), outside Forbid
         lea     od_devsdir(pc),a0
         move.l  a3,a1
         jsr     ram_loadmodule
@@ -79,7 +79,7 @@ od_devsdir:
         dc.b    "DEVS:",0
         even
 
-; CloseDevice(iorequest a1) : vecteur Close du device de la requête.
+; CloseDevice(iorequest a1): Close vector of the request's device.
 exec_CloseDevice:
         move.l  a6,-(sp)
         jsr     LVO_FORBID(a6)
@@ -91,8 +91,8 @@ exec_CloseDevice:
         move.l  (sp)+,a6
         rts
 
-; DoIO(iorequest a1) -> d0 = io_Error : BeginIO en mode rapide (IOF_QUICK), puis WaitIO si le device a mis la
-; requête en file.
+; DoIO(iorequest a1) -> d0 = io_Error: BeginIO in quick mode (IOF_QUICK), then WaitIO if the device has queued
+; the request.
 exec_DoIO:
         move.l  a1,-(sp)
         move.b  #IOF_QUICK,IO_FLAGS(a1)
@@ -100,7 +100,7 @@ exec_DoIO:
         move.l  (sp)+,a1
         bra     exec_WaitIO
 
-; SendIO(iorequest a1) : BeginIO asynchrone (la réponse arrivera sur mn_ReplyPort).
+; SendIO(iorequest a1): asynchronous BeginIO (the reply will arrive on mn_ReplyPort).
 exec_SendIO:
         clr.b   IO_FLAGS(a1)
 io_beginio:
@@ -111,7 +111,7 @@ io_beginio:
         move.l  (sp)+,a6
         rts
 
-; CheckIO(iorequest a1) -> d0 = a1 si la requête est terminée (rapide ou répondue), sinon 0.
+; CheckIO(iorequest a1) -> d0 = a1 if the request is complete (quick or replied), otherwise 0.
 exec_CheckIO:
         moveq   #0,d0
         btst    #0,IO_FLAGS(a1)      ; IOF_QUICK
@@ -123,8 +123,8 @@ exec_CheckIO:
 .ci_ret:
         rts
 
-; WaitIO(iorequest a1) -> d0 = io_Error : attend la réponse (Wait sur le bit du reply port) puis retire la requête
-; du port (sous Disable : la réponse peut venir d'une interruption).
+; WaitIO(iorequest a1) -> d0 = io_Error: waits for the reply (Wait on the reply port's bit) then removes the request
+; from the port (under Disable: the reply may come from an interrupt).
 exec_WaitIO:
         move.l  a2,-(sp)
         move.l  a1,a2
@@ -152,7 +152,7 @@ exec_WaitIO:
         move.l  (sp)+,a2
         rts
 
-; AbortIO(iorequest a1) : vecteur AbortIO du device.
+; AbortIO(iorequest a1): AbortIO vector of the device.
 exec_AbortIO:
         move.l  a6,-(sp)
         move.l  IO_DEVICE(a1),a6
@@ -160,24 +160,24 @@ exec_AbortIO:
         move.l  (sp)+,a6
         rts
 
-; CopyMem(source a0, destination a1, taille d0) : copie d'octets sans alignement requis (AutoDoc : zones disjointes).
-; Par longs quand source et destination ont la même parité, sinon octet par octet. Ne touche que d0/d1/a0/a1.
+; CopyMem(source a0, destination a1, size d0): byte copy with no alignment required (AutoDoc: disjoint areas).
+; By longs when source and destination have the same parity, otherwise byte by byte. Only touches d0/d1/a0/a1.
 exec_CopyMem:
         move.l  a0,d1
-        add.l   a1,d1                ; bit 0 de la somme = parités différentes
+        add.l   a1,d1                ; bit 0 of the sum = different parities
         btst    #0,d1
-        bne.s   cm_bytes            ; parités différentes : octets
+        bne.s   cm_bytes            ; different parities: bytes
         move.l  a0,d1
         btst    #0,d1
         beq.s   exec_CopyMemQuick
         tst.l   d0
         beq.s   cm_ret
-        move.b  (a0)+,(a1)+          ; aligne sur un mot pair
+        move.b  (a0)+,(a1)+          ; align on an even word
         subq.l  #1,d0
-; CopyMemQuick(source a0, destination a1, taille d0) : source/destination alignées ; longs puis reste en octets.
+; CopyMemQuick(source a0, destination a1, size d0): source/destination aligned; longs then remainder in bytes.
 exec_CopyMemQuick:
         move.l  d0,d1
-        lsr.l   #2,d1                ; nombre de longs
+        lsr.l   #2,d1                ; number of longs
         bra.s   .cq_lnext
 .cq_long:
         move.l  (a0)+,(a1)+
@@ -195,9 +195,9 @@ cm_bnext:
 cm_ret:
         rts
 
-; AddLibrary(library a1) / AddDevice(device a1) : Enqueue dans LibList / DeviceList sous Forbid (un module chargé
-; depuis le disque qui fait lui-même son MakeLibrary s'inscrit ainsi). RemLibrary / RemDevice(a1) : appel du
-; vecteur Expunge du module (a6 = module) -> d0 = seglist rendue par Expunge (0 si le module refuse).
+; AddLibrary(library a1) / AddDevice(device a1): Enqueue into LibList / DeviceList under Forbid (a module loaded
+; from disk that does its own MakeLibrary registers itself this way). RemLibrary / RemDevice(a1): call of the
+; module's Expunge vector (a6 = module) -> d0 = seglist returned by Expunge (0 if the module refuses).
 exec_AddLibrary:
         lea     EB_LIBLIST(a6),a0
         bra.s   io_addnode

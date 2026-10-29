@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# tests/debug_memwatch.sh — boot FS-UAE avec le débogueur console, puis point d'arrêt mémoire posé en cours de route.
-# Sert à trouver QUI écrit à une adresse (ex. SERDAT $DFF030 quand des octets parasites sortent sur la série) : à T0
-# secondes, F12+D (injecté par xdotool) entre dans le débogueur, les commandes CMDS sont envoyées puis « g » ; après T1
-# secondes, registres (« r ») et désassemblage autour du PC sont relevés. Sortie : build/debug_memwatch/uae.log.
-# Le désassemblage affiché est celui du code en cours (souvent un programme tiers) : n'en tirer que du comportement.
+# tests/debug_memwatch.sh - FS-UAE boot with the console debugger, then a memory watchpoint set along the way.
+# Used to find WHO writes to an address (e.g. SERDAT $DFF030 when spurious bytes come out on the serial): at T0
+# seconds, F12+D (injected by xdotool) enters the debugger, the CMDS commands are sent then "g"; after T1
+# seconds, registers ("r") and the disassembly around the PC are recorded. Output: build/debug_memwatch/uae.log.
+# The displayed disassembly is that of the running code (often a third-party program): derive only behaviour from it.
 #
-# Usage : tests/debug_memwatch.sh <rom> <adf> [T0=75] [T1=120] [CMDS="w 0 dff030 2 w"]
+# Usage: tests/debug_memwatch.sh <rom> <adf> [T0=75] [T1=120] [CMDS="w 0 dff030 2 w"]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:?rom}"; ADF="${2:?adf}"; T0="${3:-75}"; T1="${4:-120}"; CMDS="${5:-w 0 dff030 2 w}"

@@ -128,7 +128,7 @@ listed in report §2.
 ```sh
 # 1. Binary similarity (needs your own Kickstart 1.3 ROM; capstone optional)
 python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom <kick13.rom> --selftest
-# 2. AROS similarity (sparse clone of AROS: see aros-similarity.md, "Commandes")
+# 2. AROS similarity (sparse clone of AROS: see aros-similarity.md, "Commands")
 python3 -I tests/audit_aros_similarity.py src <aros-clone>
 ```
 

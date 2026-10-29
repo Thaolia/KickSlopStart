@@ -1,77 +1,77 @@
-# dos-v34-spec.md — Spec comportementale de dos.library (V34 / Kickstart 1.3)
+# dos-v34-spec.md — Behavioural spec of dos.library (V34 / Kickstart 1.3)
 
-> Piste ANALYSE (« dirty »). Objectif aval : « dos peut ouvrir/lire un fichier à travers un
-> process file-handler via des DOS packets, et charger+exécuter un exécutable depuis DF0: ».
-> Trois provenances, étiquetées par champ :
-> **[ROM]** mesuré dans `assets/kick34005.A500` (oracle dur, falsifiable par relecture) ;
-> **[ABI]** layout/constantes issus des includes publics NDK (`dos/dosextens.i`, `dos/dos.i`,
-> `dos/filehandler.i`, `FD/dos_lib.fd`) et de la spec packets publique (RKRM/AmigaMail Vol.2) —
-> ces includes décrivent surtout la **2.0/3.x**, les deltas V34 sont signalés explicitement ;
-> **[inféré]** déduit du comportement 1.3 connu, non vérifié ligne à ligne (le mur clean-room
-> interdit de transcrire le code). **Aucun opcode ni suite d'instructions n'est reproduit ici.**
+> ANALYSIS track ("dirty"). Downstream goal: "dos can open/read a file through a
+> file-handler process via DOS packets, and load+run an executable from DF0:".
+> Three provenances, labelled per field:
+> **[ROM]** measured in `assets/kick34005.A500` (hard oracle, falsifiable by re-reading);
+> **[ABI]** layout/constants taken from the public NDK includes (`dos/dosextens.i`, `dos/dos.i`,
+> `dos/filehandler.i`, `FD/dos_lib.fd`) and from the public packet spec (RKRM/AmigaMail Vol.2) —
+> these includes mainly describe **2.0/3.x**, the V34 deltas are flagged explicitly;
+> **[inferred]** deduced from known 1.3 behaviour, not verified line by line (the clean-room wall
+> forbids transcribing the code). **No opcode or instruction sequence is reproduced here.**
 
-## 0. Fait fondateur : la dos V34 est la dos **BCPL** (delta majeur vs 2.0)
+## 0. Founding fact: the V34 dos is the **BCPL** dos (major delta vs 2.0)
 
-- **[ROM]** ROMTag `dos.library` : `rt_Flags = 0` (ni AUTOINIT ni COLDSTART),
-  `rt_Type = NT_LIBRARY (9)`, `rt_Pri = 0`, `rt_Init = rt_EndSkip` (même pointeur), `rt_Name` → `"dos.library"`,
-  `rt_IdString` → `"dos 34.3 (9 Dec 1987)"`. dos n'a donc **pas** de table
-  auto-init statique : son `rt_Init` est du code d'init **manuel** (il alloue et publie sa base
-  lui-même) et il n'est **pas** démarré par la passe `InitCode(RTF_COLDSTART)` — il est amené par
-  l'amorçage disque (cf. `dos-boot-sequence.md`).
-- **[ABI/inféré]** En 1.3, dos est un portage **BCPL**. Conséquences observables, structurantes
-  pour toute réimplémentation V34 :
-  - **BPTR** = « BCPL pointer » = adresse octet **divisée par 4**. Conversion publique :
-    `BADDR(bptr) = bptr << 2` (`dos/dos.i`). Toute structure désignée par un BPTR est donc
-    **alignée sur 4 octets**. Les champs notés `BPTR`/`BSTR` ci-dessous portent des valeurs
-    décalées ; les champs notés `APTR` portent des pointeurs exec normaux (non décalés).
-  - **BSTR** = BPTR vers une chaîne **BCPL** : **premier octet = longueur**, puis les caractères
-    (pas de terminateur). **[ROM]** Corroboré directement dans la ROM : le gabarit de nom de device
-    est stocké comme BSTR `{0x03,'D','F','X'}` (le `'X'` = `0x58` est patché par le
-    numéro d'unité `0`..`3` à l'exécution) ; le nom de handler est `{0x0B,"File System"}` ;
-    la tâche résidente du handler porte `{0x0B,"FileHandler"}` ; le gabarit de fenêtre
-    CLI est `{0x18,"CON:0/0/640/200/AmigaDOS"}`. L'octet de longueur précède bien la
-    chaîne dans chaque cas → convention BSTR confirmée en ROM.
-  - **Global vector** : les routines internes de dos sont appelées via un **vecteur global BCPL**
-    (`pr_GlobVec` par process, `dl_GV` dans la base). La jump table LVO exposée publiquement n'est
-    qu'une **mince couche** d'entrées qui bascule dans le code BCPL via ce vecteur global et les
-    registres BCPL standard (`dl_A2`/`dl_A5`/`dl_A6`). C'est un détail d'**implémentation** V34
-    (non reproductible champ à champ sans transcrire le code) — mais il est **observable** par le
-    fait que `pr_GlobVec` et `dl_GV` ne sont pas nuls et que les handlers BCPL partagent ce vecteur.
+- **[ROM]** ROMTag `dos.library`: `rt_Flags = 0` (neither AUTOINIT nor COLDSTART),
+  `rt_Type = NT_LIBRARY (9)`, `rt_Pri = 0`, `rt_Init = rt_EndSkip` (same pointer), `rt_Name` → `"dos.library"`,
+  `rt_IdString` → `"dos 34.3 (9 Dec 1987)"`. dos therefore has **no** static
+  auto-init table: its `rt_Init` is **manual** init code (it allocates and publishes its base
+  itself) and it is **not** started by the `InitCode(RTF_COLDSTART)` pass — it is brought in by
+  the disk bootstrap (cf. `dos-boot-sequence.md`).
+- **[ABI/inferred]** In 1.3, dos is a **BCPL** port. Observable consequences, structuring
+  for any V34 reimplementation:
+  - **BPTR** = "BCPL pointer" = byte address **divided by 4**. Public conversion:
+    `BADDR(bptr) = bptr << 2` (`dos/dos.i`). Every structure designated by a BPTR is therefore
+    **4-byte aligned**. The fields noted `BPTR`/`BSTR` below carry shifted
+    values; the fields noted `APTR` carry normal exec pointers (not shifted).
+  - **BSTR** = BPTR to a **BCPL** string: **first byte = length**, then the characters
+    (no terminator). **[ROM]** Corroborated directly in the ROM: the device name template
+    is stored as BSTR `{0x03,'D','F','X'}` (the `'X'` = `0x58` is patched with the
+    unit number `0`..`3` at run time); the handler name is `{0x0B,"File System"}`;
+    the handler's resident task carries `{0x0B,"FileHandler"}`; the CLI window
+    template is `{0x18,"CON:0/0/640/200/AmigaDOS"}`. The length byte does precede the
+    string in each case → BSTR convention confirmed in ROM.
+  - **Global vector**: dos's internal routines are called via a **BCPL global vector**
+    (`pr_GlobVec` per process, `dl_GV` in the base). The publicly exposed LVO jump table is
+    only a **thin layer** of entry points that switches into the BCPL code via this global vector and the
+    standard BCPL registers (`dl_A2`/`dl_A5`/`dl_A6`). This is a V34 **implementation** detail
+    (not reproducible field by field without transcribing the code) — but it is **observable** by the
+    fact that `pr_GlobVec` and `dl_GV` are not null and that the BCPL handlers share this vector.
 
-## 1. Layout des structures V34 (offsets)
+## 1. Layout of the V34 structures (offsets)
 
-> Offsets **calculés** depuis les includes NDK (macros `STRUCTURE`/`BYTE`/`WORD`/`LONG`/`APTR`/
-> `BPTR`/`BSTR`/`STRUCT` de `exec/types.i` : **addition séquentielle sans auto-alignement**).
-> Tailles de base utilisées (toutes [ABI], vérifiées par recalcul) : `LN_SIZE=14`, `MLN_SIZE=8`,
+> Offsets **computed** from the NDK includes (macros `STRUCTURE`/`BYTE`/`WORD`/`LONG`/`APTR`/
+> `BPTR`/`BSTR`/`STRUCT` of `exec/types.i`: **sequential addition without auto-alignment**).
+> Base sizes used (all [ABI], verified by recomputation): `LN_SIZE=14`, `MLN_SIZE=8`,
 > `LH_SIZE=14`, `MLH_SIZE=12`, `MN_SIZE=20`, `MP_SIZE=34 (0x22)`, `LIB_SIZE=34 (0x22)`,
-> `TC_SIZE=92 (0x5C)`, `SS_SIZE=46 (0x2E)`, `ds_SIZEOF=12`. Les offsets de structure sont de
-> l'**ABI d'interopérabilité** ; ils sont **stables 1.3↔2.0** SAUF aux endroits marqués « delta ».
+> `TC_SIZE=92 (0x5C)`, `SS_SIZE=46 (0x2E)`, `ds_SIZEOF=12`. The structure offsets are
+> **interoperability ABI**; they are **stable 1.3↔2.0** EXCEPT at the places marked "delta".
 
-### 1a. Groupe STABLE (haute confiance, identique 1.3/2.0)
+### 1a. STABLE group (high confidence, identical 1.3/2.0)
 
-#### `FileHandle` — 44 octets (`0x2C`). **Il n'existe PAS de champ `fh_Port`.**
-| Off | Champ | Rôle |
+#### `FileHandle` — 44 bytes (`0x2C`). **There is NO `fh_Port` field.**
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `fh_Link` | APTR, usage privé |
-| 0x04 | `fh_Interactive` | APTR/BOOL, vrai si handle interactif (console) |
-| 0x08 | `fh_Type` | **APTR = le `MsgPort` du handler** auquel `PutMsg()` les packets. C'EST le port ; pas de `fh_Port` séparé. |
-| 0x0C | `fh_Buf` | LONG, tampon de bufférisation (BPTR) |
-| 0x10 | `fh_Pos` | LONG, position dans le tampon |
-| 0x14 | `fh_End` | LONG, fin de données valides dans le tampon |
+| 0x00 | `fh_Link` | APTR, private use |
+| 0x04 | `fh_Interactive` | APTR/BOOL, true if interactive handle (console) |
+| 0x08 | `fh_Type` | **APTR = the handler's `MsgPort`** to which packets are `PutMsg()`ed. THIS is the port; no separate `fh_Port`. |
+| 0x0C | `fh_Buf` | LONG, buffering buffer (BPTR) |
+| 0x10 | `fh_Pos` | LONG, position in the buffer |
+| 0x14 | `fh_End` | LONG, end of valid data in the buffer |
 | 0x18 | `fh_Func1` (=`fh_Funcs`) | LONG |
 | 0x1C | `fh_Func2` | LONG |
 | 0x20 | `fh_Func3` | LONG |
-| 0x24 | `fh_Arg1` (=`fh_Args`) | **LONG = la clé privée du fichier côté handler** (voir §2) |
+| 0x24 | `fh_Arg1` (=`fh_Args`) | **LONG = the file's private key on the handler side** (see §2) |
 | 0x28 | `fh_Arg2` | LONG |
 
-#### `DosPacket` — 48 octets (`0x30`)
-| Off | Champ | Rôle |
+#### `DosPacket` — 48 bytes (`0x30`)
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `dp_Link` | APTR → le `Message` exec associé |
-| 0x04 | `dp_Port` | APTR → port de **réponse** (doit être rempli à CHAQUE envoi : dos l'écrase) |
-| 0x08 | `dp_Type` (=`dp_Action`) | LONG, code `ACTION_*` (voir §2) |
-| 0x0C | `dp_Res1` (=`dp_Status`) | LONG, résultat (ce que la fonction aurait renvoyé) |
-| 0x10 | `dp_Res2` (=`dp_Status2`) | LONG, code d'erreur (ce que `IoErr()` aurait renvoyé) |
+| 0x00 | `dp_Link` | APTR → the associated exec `Message` |
+| 0x04 | `dp_Port` | APTR → **reply** port (must be filled on EVERY send: dos overwrites it) |
+| 0x08 | `dp_Type` (=`dp_Action`) | LONG, `ACTION_*` code (see §2) |
+| 0x0C | `dp_Res1` (=`dp_Status`) | LONG, result (what the function would have returned) |
+| 0x10 | `dp_Res2` (=`dp_Status2`) | LONG, error code (what `IoErr()` would have returned) |
 | 0x14 | `dp_Arg1` (=`dp_BufAddr`) | LONG |
 | 0x18 | `dp_Arg2` | LONG |
 | 0x1C | `dp_Arg3` | LONG |
@@ -80,252 +80,252 @@
 | 0x28 | `dp_Arg6` | LONG |
 | 0x2C | `dp_Arg7` | LONG |
 
-#### `StandardPacket` — 68 octets (`0x44`)
-| Off | Champ | Rôle |
+#### `StandardPacket` — 68 bytes (`0x44`)
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `sp_Msg` | `struct Message` (20 oct., `MN_SIZE`) — le message exec |
-| 0x14 | `sp_Pkt` | `struct DosPacket` (48 oct.) |
+| 0x00 | `sp_Msg` | `struct Message` (20 bytes, `MN_SIZE`) — the exec message |
+| 0x14 | `sp_Pkt` | `struct DosPacket` (48 bytes) |
 
-Couplage conventionnel : `sp_Msg.mn_Node.ln_Name` pointe sur `sp_Pkt`, et `dp_Link` pointe sur
-`sp_Msg`, de sorte qu'un `GetMsg()` qui rend le `Message` permet de retrouver le packet. **[ABI]**
+Conventional coupling: `sp_Msg.mn_Node.ln_Name` points to `sp_Pkt`, and `dp_Link` points to
+`sp_Msg`, so that a `GetMsg()` that returns the `Message` allows the packet to be found. **[ABI]**
 
-#### `CommandLineInterface` (CLI) — 64 octets (`0x40`), identique 1.3/2.0
-| Off | Champ | | Off | Champ |
+#### `CommandLineInterface` (CLI) — 64 bytes (`0x40`), identical 1.3/2.0
+| Off | Field | | Off | Field |
 |----:|-------|--|----:|-------|
 | 0x00 | `cli_Result2` (LONG) | | 0x24 | `cli_CommandFile` (BSTR) |
 | 0x04 | `cli_SetName` (BSTR) | | 0x28 | `cli_Interactive` (LONG/BOOL) |
 | 0x08 | `cli_CommandDir` (BPTR) | | 0x2C | `cli_Background` (LONG/BOOL) |
 | 0x0C | `cli_ReturnCode` (LONG) | | 0x30 | `cli_CurrentOutput` (BPTR FileHandle) |
-| 0x10 | `cli_CommandName` (BSTR) | | 0x34 | `cli_DefaultStack` (LONG, en **long words**) |
+| 0x10 | `cli_CommandName` (BSTR) | | 0x34 | `cli_DefaultStack` (LONG, in **long words**) |
 | 0x14 | `cli_FailLevel` (LONG) | | 0x38 | `cli_StandardOutput` (BPTR FileHandle) |
-| 0x18 | `cli_Prompt` (BSTR) | | 0x3C | `cli_Module` (BPTR, SegList commande chargée) |
+| 0x18 | `cli_Prompt` (BSTR) | | 0x3C | `cli_Module` (BPTR, SegList of the loaded command) |
 | 0x1C | `cli_StandardInput` (BPTR FileHandle) | | | |
 | 0x20 | `cli_CurrentInput` (BPTR FileHandle) | | | |
 
-#### `FileLock` — 20 octets (`0x14`)
-| Off | Champ | Rôle |
+#### `FileLock` — 20 bytes (`0x14`)
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `fl_Link` | BPTR, lock suivant dans la chaîne du handler |
-| 0x04 | `fl_Key` | LONG, numéro de bloc disque de l'objet |
-| 0x08 | `fl_Access` | LONG, `SHARED_LOCK (-2)` ou `EXCLUSIVE_LOCK (-1)` |
-| 0x0C | `fl_Task` | APTR, le `MsgPort` du handler propriétaire du lock |
-| 0x10 | `fl_Volume` | BPTR → nœud `DLT_VOLUME` du volume |
+| 0x00 | `fl_Link` | BPTR, next lock in the handler's chain |
+| 0x04 | `fl_Key` | LONG, disk block number of the object |
+| 0x08 | `fl_Access` | LONG, `SHARED_LOCK (-2)` or `EXCLUSIVE_LOCK (-1)` |
+| 0x0C | `fl_Task` | APTR, the `MsgPort` of the handler owning the lock |
+| 0x10 | `fl_Volume` | BPTR → `DLT_VOLUME` node of the volume |
 
-#### `DeviceNode` (= `DevInfo`/`dvi_*` de dosextens) — 44 octets (`0x2C`), layout stable 1.3/2.0
-> C'est le nœud d'un « device » DOS (ex. `DF0:`), chaîné dans la liste device. En 1.3, c'est
-> cette forme (`dos/filehandler.i`) qui est utilisée ; la structure unifiée `DosList` est un
-> **habillage 2.0** du même stockage (cf. §1b).
-| Off | Champ | Rôle |
+#### `DeviceNode` (= `DevInfo`/`dvi_*` of dosextens) — 44 bytes (`0x2C`), layout stable 1.3/2.0
+> This is the node of a DOS "device" (e.g. `DF0:`), linked into the device list. In 1.3, it is
+> this form (`dos/filehandler.i`) that is used; the unified `DosList` structure is a
+> **2.0 wrapping** of the same storage (cf. §1b).
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `dn_Next` | BPTR, liste simplement chaînée |
-| 0x04 | `dn_Type` | ULONG, toujours 0 pour un device DOS |
-| 0x08 | `dn_Task` | APTR = `MsgPort` du process handler. **NULL ⇒ le handler sera démarré au 1er accès** |
-| 0x0C | `dn_Lock` | BPTR, non utilisé pour un device |
-| 0x10 | `dn_Handler` | BSTR = fichier à `LoadSeg` si `dn_SegList` est NULL |
-| 0x14 | `dn_StackSize` | ULONG, pile du process handler à sa création |
-| 0x18 | `dn_Priority` | LONG, priorité du process handler |
-| 0x1C | `dn_Startup` | BPTR → `FileSysStartupMsg` (pour un disque) |
-| 0x20 | `dn_SegList` | BPTR, code déjà chargé du handler (si NULL → charger `dn_Handler`) |
-| 0x24 | `dn_GlobalVec` | BPTR, vecteur global BCPL. **-1** = `dn_SegList` n'est PAS un prog BCPL (dos ne construit pas de GV) ; **0** = prog BCPL conforme, dos construit le GV ; **>0** = GV existant |
-| 0x28 | `dn_Name` | BSTR = nom du nœud (ex. BSTR `{3,"DF0"}`) |
+| 0x00 | `dn_Next` | BPTR, singly linked list |
+| 0x04 | `dn_Type` | ULONG, always 0 for a DOS device |
+| 0x08 | `dn_Task` | APTR = `MsgPort` of the handler process. **NULL ⇒ the handler will be started on 1st access** |
+| 0x0C | `dn_Lock` | BPTR, not used for a device |
+| 0x10 | `dn_Handler` | BSTR = file to `LoadSeg` if `dn_SegList` is NULL |
+| 0x14 | `dn_StackSize` | ULONG, stack of the handler process at its creation |
+| 0x18 | `dn_Priority` | LONG, priority of the handler process |
+| 0x1C | `dn_Startup` | BPTR → `FileSysStartupMsg` (for a disk) |
+| 0x20 | `dn_SegList` | BPTR, already loaded code of the handler (if NULL → load `dn_Handler`) |
+| 0x24 | `dn_GlobalVec` | BPTR, BCPL global vector. **-1** = `dn_SegList` is NOT a BCPL prog (dos does not build a GV); **0** = conforming BCPL prog, dos builds the GV; **>0** = existing GV |
+| 0x28 | `dn_Name` | BSTR = node name (e.g. BSTR `{3,"DF0"}`) |
 
-#### `FileSysStartupMsg` — 16 octets (`0x10`)
-| Off | Champ | Rôle |
+#### `FileSysStartupMsg` — 16 bytes (`0x10`)
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `fssm_Unit` | ULONG, numéro d'unité exec du device (0..3 pour DFx) |
-| 0x04 | `fssm_Device` | BSTR, nom du device bas niveau (**[ROM]** `"trackdisk.device"`) |
-| 0x08 | `fssm_Environ` | BPTR → table d'environnement/géométrie (`DosEnvec`) |
-| 0x0C | `fssm_Flags` | ULONG, flags pour `OpenDevice()` |
+| 0x00 | `fssm_Unit` | ULONG, exec unit number of the device (0..3 for DFx) |
+| 0x04 | `fssm_Device` | BSTR, name of the low-level device (**[ROM]** `"trackdisk.device"`) |
+| 0x08 | `fssm_Environ` | BPTR → environment/geometry table (`DosEnvec`) |
+| 0x0C | `fssm_Flags` | ULONG, flags for `OpenDevice()` |
 
-#### `DosLibrary` (base de dos) — en-tête + câblage BCPL
-| Off | Champ | Rôle |
+#### `DosLibrary` (dos base) — header + BCPL wiring
+| Off | Field | Role |
 |----:|-------|------|
-| 0x00 | `dl_lib` | `struct Library` (34 oct., `LIB_SIZE`) ; `lib_Version=34`, `lib_Revision=3` ([ROM] « dos 34.3 ») |
-| 0x22 | `dl_Root` | APTR → `RootNode` (racine de tout le câblage DOS, cf. §1b et `dos-boot-sequence.md`) |
-| 0x26 | `dl_GV` | APTR → **vecteur global BCPL** |
-| 0x2A | `dl_A2` | LONG, valeurs de registres BCPL standard |
+| 0x00 | `dl_lib` | `struct Library` (34 bytes, `LIB_SIZE`); `lib_Version=34`, `lib_Revision=3` ([ROM] "dos 34.3") |
+| 0x22 | `dl_Root` | APTR → `RootNode` (root of all the DOS wiring, cf. §1b and `dos-boot-sequence.md`) |
+| 0x26 | `dl_GV` | APTR → **BCPL global vector** |
+| 0x2A | `dl_A2` | LONG, standard BCPL register values |
 | 0x2E | `dl_A5` | LONG |
 | 0x32 | `dl_A6` | LONG |
-| 0x36 | `dl_Errors` | APTR, privé : table des messages d'erreur |
-| 0x3A | `dl_TimeReq` | APTR, privé : requête timer |
-| 0x3E | `dl_UtilityBase` | APTR, privé — **delta : utility.library est 2.0 ; champ sans objet en V34** |
-| 0x42 | `dl_IntuitionBase` | APTR, privé : base intuition (pour les requesters disque) |
+| 0x36 | `dl_Errors` | APTR, private: error message table |
+| 0x3A | `dl_TimeReq` | APTR, private: timer request |
+| 0x3E | `dl_UtilityBase` | APTR, private — **delta: utility.library is 2.0; field irrelevant in V34** |
+| 0x42 | `dl_IntuitionBase` | APTR, private: intuition base (for disk requesters) |
 
-### 1b. Groupe MODIFIÉ en 2.0 — le V34 **diffère** (couper les queues !)
+### 1b. Group MODIFIED in 2.0 — V34 **differs** (cut off the tails!)
 
-#### `Process` — **frontière V34 : la structure s'arrête à `pr_WindowPtr`**
-Les offsets de 0x00 à 0xB8 sont V34-valides ; **tout ce qui suit est « new with 2.0 »**
-(annotation explicite de `dosextens.i`) et **n'existe pas en V34**.
-| Off | Champ V34 | Rôle |
+#### `Process` — **V34 boundary: the structure stops at `pr_WindowPtr`**
+The offsets from 0x00 to 0xB8 are V34-valid; **everything that follows is "new with 2.0"**
+(explicit annotation in `dosextens.i`) and **does not exist in V34**.
+| Off | V34 field | Role |
 |----:|-----------|------|
-| 0x00 | `pr_Task` | `struct Task` (92 oct., `TC_SIZE`) |
-| 0x5C | `pr_MsgPort` | `struct MsgPort` (34 oct.) embarqué. **C'est ce port que `CreateProc`/`DeviceProc` renvoient — comme un `APTR` directement utilisable (adresse octet), PAS un BPTR** (cf. §4). Le commentaire « BPTR address » de `dosextens.i` est trompeur : l'arithmétique `Process = retour − TC_SIZE` est en octets, et tous les autres champs « port de handler » ici sont des `APTR` (`pr_ConsoleTask`, `pr_FileSystemTask`, `fl_Task`, `dn_Task`, `dp_Port`, `fh_Type`). |
+| 0x00 | `pr_Task` | `struct Task` (92 bytes, `TC_SIZE`) |
+| 0x5C | `pr_MsgPort` | embedded `struct MsgPort` (34 bytes). **This is the port that `CreateProc`/`DeviceProc` return — as a directly usable `APTR` (byte address), NOT a BPTR** (cf. §4). The "BPTR address" comment in `dosextens.i` is misleading: the arithmetic `Process = return − TC_SIZE` is in bytes, and all the other "handler port" fields here are `APTR`s (`pr_ConsoleTask`, `pr_FileSystemTask`, `fl_Task`, `dn_Task`, `dp_Port`, `fh_Type`). |
 | 0x7E | `pr_Pad` | WORD |
-| 0x80 | `pr_SegList` | BPTR, tableau des seglists du process |
+| 0x80 | `pr_SegList` | BPTR, array of the process's seglists |
 | 0x84 | `pr_StackSize` | LONG |
-| 0x88 | `pr_GlobVec` | APTR, **vecteur global BCPL du process** |
-| 0x8C | `pr_TaskNum` | LONG, n° de tâche CLI (0 si pas un CLI) |
-| 0x90 | `pr_StackBase` | BPTR, haut de pile du process |
-| 0x94 | `pr_Result2` | LONG, résultat secondaire du dernier appel (= `IoErr`) |
-| 0x98 | `pr_CurrentDir` | BPTR, lock du répertoire courant |
-| 0x9C | `pr_CIS` | BPTR, flux d'entrée CLI courant (FileHandle) |
-| 0xA0 | `pr_COS` | BPTR, flux de sortie CLI courant (FileHandle) |
-| 0xA4 | `pr_ConsoleTask` | APTR, process handler console de la fenêtre courante |
-| 0xA8 | `pr_FileSystemTask` | APTR, process handler du drive courant |
+| 0x88 | `pr_GlobVec` | APTR, **BCPL global vector of the process** |
+| 0x8C | `pr_TaskNum` | LONG, CLI task no. (0 if not a CLI) |
+| 0x90 | `pr_StackBase` | BPTR, top of the process stack |
+| 0x94 | `pr_Result2` | LONG, secondary result of the last call (= `IoErr`) |
+| 0x98 | `pr_CurrentDir` | BPTR, lock of the current directory |
+| 0x9C | `pr_CIS` | BPTR, current CLI input stream (FileHandle) |
+| 0xA0 | `pr_COS` | BPTR, current CLI output stream (FileHandle) |
+| 0xA4 | `pr_ConsoleTask` | APTR, console handler process of the current window |
+| 0xA8 | `pr_FileSystemTask` | APTR, handler process of the current drive |
 | 0xAC | `pr_CLI` | BPTR → `CommandLineInterface` |
-| 0xB0 | `pr_ReturnAddr` | APTR, cadre de pile précédent |
-| 0xB4 | `pr_PktWait` | APTR, fonction appelée en attente de message |
-| 0xB8 | `pr_WindowPtr` | APTR, fenêtre pour les requesters d'erreur. **← dernier champ V34** |
+| 0xB0 | `pr_ReturnAddr` | APTR, previous stack frame |
+| 0xB4 | `pr_PktWait` | APTR, function called while waiting for a message |
+| 0xB8 | `pr_WindowPtr` | APTR, window for error requesters. **← last V34 field** |
 
-**Taille `Process` en V34 ≈ `0xBC` (188 octets).** `pr_HomeDir (0xBC)`, `pr_Flags (0xC0)`,
-`pr_ExitCode`, `pr_ExitData`, `pr_Arguments`, `pr_LocalVars`, `pr_ShellPrivate`, `pr_CES` sont
-**des ajouts 2.0+** : une réimplémentation 1.3 ne doit NI réserver NI exposer ces champs. (Analogue
-à la frontière `ExecBase` à `~0x22E` documentée dans `exec-spec.md`.)
+**`Process` size in V34 ≈ `0xBC` (188 bytes).** `pr_HomeDir (0xBC)`, `pr_Flags (0xC0)`,
+`pr_ExitCode`, `pr_ExitData`, `pr_Arguments`, `pr_LocalVars`, `pr_ShellPrivate`, `pr_CES` are
+**2.0+ additions**: a 1.3 reimplementation must NEITHER reserve NOR expose these fields. (Analogous
+to the `ExecBase` boundary at `~0x22E` documented in `exec-spec.md`.)
 
-#### `RootNode` — **frontière V34 : s'arrête à `rn_FileHandlerSegment`**
-| Off | Champ V34 | Rôle |
+#### `RootNode` — **V34 boundary: stops at `rn_FileHandlerSegment`**
+| Off | V34 field | Role |
 |----:|-----------|------|
-| 0x00 | `rn_TaskArray` | BPTR : `[0]` = nb max de CLI ; `[n]` = APTR vers le process id du CLI n |
-| 0x04 | `rn_ConsoleSegment` | BPTR, SegList du CLI |
-| 0x08 | `rn_Time` | `DateStamp` (12 oct.), heure courante |
-| 0x14 | `rn_RestartSeg` | LONG/BPTR, **SegList du process disk-validator** ([ROM] `"L:Disk-Validator"` / `"Validator"`) |
+| 0x00 | `rn_TaskArray` | BPTR: `[0]` = max number of CLIs; `[n]` = APTR to the process id of CLI n |
+| 0x04 | `rn_ConsoleSegment` | BPTR, SegList of the CLI |
+| 0x08 | `rn_Time` | `DateStamp` (12 bytes), current time |
+| 0x14 | `rn_RestartSeg` | LONG/BPTR, **SegList of the disk-validator process** ([ROM] `"L:Disk-Validator"` / `"Validator"`) |
 | 0x18 | `rn_Info` | BPTR → `DosInfo` |
-| 0x1C | `rn_FileHandlerSegment` | BPTR, **code du file-handler** (le handler OFS résident). **← dernier champ V34** |
+| 0x1C | `rn_FileHandlerSegment` | BPTR, **file-handler code** (the resident OFS handler). **← last V34 field** |
 
-**Taille `RootNode` en V34 ≈ `0x20` (32 octets).** `rn_CliList`, `rn_BootProc`, `rn_ShellSegment`,
-`rn_Flags` sont **2.0+** (il n'y a pas de liste de CLI à base de `MinList`, ni de Shell, ni de
-flags dos en 1.3 : la gestion des CLI passe uniquement par `rn_TaskArray`).
+**`RootNode` size in V34 ≈ `0x20` (32 bytes).** `rn_CliList`, `rn_BootProc`, `rn_ShellSegment`,
+`rn_Flags` are **2.0+** (there is no `MinList`-based CLI list, no Shell, no
+dos flags in 1.3: CLI management goes solely through `rn_TaskArray`).
 
-#### `DosInfo` — **frontière V34 : s'arrête à `di_NetHand` ; PAS de sémaphores en 1.3**
-| Off | Champ V34 | Rôle |
+#### `DosInfo` — **V34 boundary: stops at `di_NetHand`; NO semaphores in 1.3**
+| Off | V34 field | Role |
 |----:|-----------|------|
-| 0x00 | `di_McName` (=`di_ResList`) | BPTR, liste des modules résidents DOS (segments chargés) |
-| 0x04 | `di_DevInfo` | BPTR → **tête de la liste des devices/volumes/assigns** (`DeviceNode` chaîne) |
-| 0x08 | `di_Devices` | BPTR, zéro en pratique |
-| 0x0C | `di_Handlers` | BPTR, zéro en pratique |
-| 0x10 | `di_NetHand` | APTR, zéro. **← dernier champ V34** |
+| 0x00 | `di_McName` (=`di_ResList`) | BPTR, list of DOS resident modules (loaded segments) |
+| 0x04 | `di_DevInfo` | BPTR → **head of the device/volume/assign list** (`DeviceNode` chain) |
+| 0x08 | `di_Devices` | BPTR, zero in practice |
+| 0x0C | `di_Handlers` | BPTR, zero in practice |
+| 0x10 | `di_NetHand` | APTR, zero. **← last V34 field** |
 
-**En V34, la liste device est protégée par `Forbid()/Permit()`**, pas par des sémaphores.
-`di_DevLock`, `di_EntryLock`, `di_DeleteLock` (3× `SignalSemaphore`) sont **2.0+** : ne pas les
-allouer ni s'appuyer dessus pour une cible 1.3. **Taille `DosInfo` en V34 ≈ `0x14` (20 octets).**
+**In V34, the device list is protected by `Forbid()/Permit()`**, not by semaphores.
+`di_DevLock`, `di_EntryLock`, `di_DeleteLock` (3× `SignalSemaphore`) are **2.0+**: do not
+allocate them nor rely on them for a 1.3 target. **`DosInfo` size in V34 ≈ `0x14` (20 bytes).**
 
-#### `DosList` (vue unifiée 2.0) vs nœuds 1.3
-`DosList` (dosextens) est une **structure unionée introduite en 2.0** pour décrire indifféremment
-device / volume / assign. Pour la 1.3, décrire plutôt :
-- **device** : `DeviceNode` (§1a) ;
-- **volume** : `DevList`/`dl_*` (`dl_Next` 0x00, `dl_Type` 0x04, `dl_Task` 0x08, `dl_Lock` 0x0C,
+#### `DosList` (unified 2.0 view) vs 1.3 nodes
+`DosList` (dosextens) is a **union structure introduced in 2.0** to describe interchangeably
+device / volume / assign. For 1.3, describe instead:
+- **device**: `DeviceNode` (§1a);
+- **volume**: `DevList`/`dl_*` (`dl_Next` 0x00, `dl_Type` 0x04, `dl_Task` 0x08, `dl_Lock` 0x0C,
   `dl_VolumeDate` 0x10 `DateStamp`, `dl_LockList` 0x1C, `dl_DiskType` 0x20, `dl_Name` 0x28 BSTR —
-  44 oct.).
+  44 bytes).
 
-Les offsets « DosList » utiles sont néanmoins cohérents avec `DeviceNode` sur les premiers champs
-(`dol_Next`/`dol_Type`/`dol_Task`/`dol_Lock` = `dn_Next`/`dn_Type`/`dn_Task`/`dn_Lock`), et
-`dol_Startup=0x1C`, `dol_SegList=0x20`, `dol_GlobVec=0x24`, `dol_Name=0x28` coïncident avec
-`dn_Startup`/`dn_SegList`/`dn_GlobalVec`/`dn_Name`. Constantes de type : `DLT_DEVICE=0`,
+The useful "DosList" offsets are nevertheless consistent with `DeviceNode` on the first fields
+(`dol_Next`/`dol_Type`/`dol_Task`/`dol_Lock` = `dn_Next`/`dn_Type`/`dn_Task`/`dn_Lock`), and
+`dol_Startup=0x1C`, `dol_SegList=0x20`, `dol_GlobVec=0x24`, `dol_Name=0x28` coincide with
+`dn_Startup`/`dn_SegList`/`dn_GlobalVec`/`dn_Name`. Type constants: `DLT_DEVICE=0`,
 `DLT_DIRECTORY=1` (assign), `DLT_VOLUME=2`.
 
-## 2. Protocole packet du file-handler (chemin ouvrir-en-lecture → lire → fermer)
+## 2. File-handler packet protocol (open-for-read → read → close path)
 
-### 2a. Le cycle d'un packet — **ATTENTION : pas de `DoPkt()` public en V34**
-**[ABI, delta majeur]** `DoPkt`, `SendPkt`, `WaitPkt`, `ReplyPkt`, `AbortPkt` sont marqués
-*« functions in V36 or higher (Release 2.0) »* dans `dos_lib.fd` : **ils n'existent PAS dans la
-jump table V34**. En 1.3, l'échange de packet est fait par les routines **BCPL internes** de dos
-(un `sendpkt`/`taskwait` interne), ou, côté application, en **montant le packet à la main** et en
-utilisant les primitives **exec** `PutMsg`/`WaitPort`/`GetMsg`. Une réimplémentation 1.3 ne peut
-donc PAS s'appuyer sur `DoPkt()` : elle doit soit fournir l'équivalent interne, soit documenter le
-pattern exec. Le cycle observable (identique quel que soit l'habillage) :
+### 2a. The life cycle of a packet — **WARNING: no public `DoPkt()` in V34**
+**[ABI, major delta]** `DoPkt`, `SendPkt`, `WaitPkt`, `ReplyPkt`, `AbortPkt` are marked
+*"functions in V36 or higher (Release 2.0)"* in `dos_lib.fd`: **they do NOT exist in the
+V34 jump table**. In 1.3, packet exchange is done by dos's **internal BCPL** routines
+(an internal `sendpkt`/`taskwait`), or, on the application side, by **building the packet by hand** and
+using the **exec** primitives `PutMsg`/`WaitPort`/`GetMsg`. A 1.3 reimplementation can
+therefore NOT rely on `DoPkt()`: it must either provide the internal equivalent, or document the
+exec pattern. The observable cycle (identical whatever the wrapping):
 
-1. L'appelant (le process demandeur) obtient/alloue un `StandardPacket` (message exec + DosPacket).
-2. Il remplit `dp_Type` (= `ACTION_*`), `dp_Arg1..n`, et **`dp_Port = &demandeur->pr_MsgPort`**
-   (le port de réponse ; dos/BCPL l'écrase à chaque envoi — toujours le re-remplir).
-3. `PutMsg()` du message au `MsgPort` du handler (= `fh_Type`, ou `dn_Task`, ou `fl_Task`).
-4. L'appelant `WaitPort(&pr_MsgPort)` puis `GetMsg()` pour récupérer la réponse (le handler a fait
-   `ReplyMsg()` vers `dp_Port`). Le handler est un **process** : il boucle en `WaitPort`/`GetMsg`
-   sur SON port, traite le packet, remplit `dp_Res1`/`dp_Res2`, `ReplyMsg()`.
-5. L'appelant lit `dp_Res1` (résultat) et `dp_Res2` (code d'erreur, = `IoErr`).
+1. The caller (the requesting process) obtains/allocates a `StandardPacket` (exec message + DosPacket).
+2. It fills `dp_Type` (= `ACTION_*`), `dp_Arg1..n`, and **`dp_Port = &requester->pr_MsgPort`**
+   (the reply port; dos/BCPL overwrites it on every send — always refill it).
+3. `PutMsg()` of the message to the handler's `MsgPort` (= `fh_Type`, or `dn_Task`, or `fl_Task`).
+4. The caller does `WaitPort(&pr_MsgPort)` then `GetMsg()` to retrieve the reply (the handler did
+   `ReplyMsg()` to `dp_Port`). The handler is a **process**: it loops in `WaitPort`/`GetMsg`
+   on ITS port, processes the packet, fills `dp_Res1`/`dp_Res2`, `ReplyMsg()`.
+5. The caller reads `dp_Res1` (result) and `dp_Res2` (error code, = `IoErr`).
 
-**Identité clé [ABI, corroborée dos.i]** : le `mode` passé à `Open()` **EST** le code `ACTION_*`
-envoyé au handler — `MODE_OLDFILE = 1005 = ACTION_FINDINPUT`, `MODE_NEWFILE = 1006 =
+**Key identity [ABI, corroborated by dos.i]**: the `mode` passed to `Open()` **IS** the `ACTION_*` code
+sent to the handler — `MODE_OLDFILE = 1005 = ACTION_FINDINPUT`, `MODE_NEWFILE = 1006 =
 ACTION_FINDOUTPUT`, `MODE_READWRITE = 1004 = ACTION_FINDUPDATE`.
 
-### 2b. Table des packets du chemin lecture (args et résultats)
-> **[ABI]** d'après la spec packets publique (RKRM Devices / AmigaMail Vol.2). `LOCK` = BPTR vers
-> `FileLock` (0 = racine du volume courant). `BSTR` = BPTR vers chaîne BCPL longueur-préfixée.
+### 2b. Table of the read-path packets (args and results)
+> **[ABI]** according to the public packet spec (RKRM Devices / AmigaMail Vol.2). `LOCK` = BPTR to
+> `FileLock` (0 = root of the current volume). `BSTR` = BPTR to a length-prefixed BCPL string.
 
 | ACTION_ (val.) | Via | ARG1 | ARG2 | ARG3 | RES1 | RES2 |
 |----------------|-----|------|------|------|------|------|
-| `FINDINPUT` (1005) | `Open(…,MODE_OLDFILE)` | **BPTR `FileHandle` à remplir** | `LOCK` répertoire de base (0=racine) | `BSTR` nom du fichier (relatif à ARG2) | `BOOL` succès (DOSTRUE/DOSFALSE) | code si échec |
-| `FINDOUTPUT` (1006) | `Open(…,MODE_NEWFILE)` | idem | idem | idem | idem | idem |
-| `FINDUPDATE` (1004) | `Open(…,MODE_READWRITE)` | idem | idem | idem | idem | idem |
-| `READ` (`'R'`=82) | `Read()` | **`fh_Arg1`** du FileHandle ouvert | `APTR` buffer destination | `LONG` nb d'octets à lire | `LONG` octets lus (**0 = EOF, -1 = erreur**) | code si RES1=-1 |
-| `WRITE` (`'W'`=87) | `Write()` | `fh_Arg1` | `APTR` buffer source | `LONG` nb d'octets | `LONG` octets écrits | code si RES1≠ARG3 |
-| `SEEK` (1008) | `Seek()` | `fh_Arg1` | `LONG` nouvelle position | `LONG` mode (`OFFSET_BEGINNING -1`/`OFFSET_CURRENT 0`/`OFFSET_END 1`) | `LONG` ancienne position (-1 = erreur) | code si RES1=-1 |
+| `FINDINPUT` (1005) | `Open(…,MODE_OLDFILE)` | **BPTR `FileHandle` to fill** | `LOCK` base directory (0=root) | `BSTR` file name (relative to ARG2) | `BOOL` success (DOSTRUE/DOSFALSE) | code on failure |
+| `FINDOUTPUT` (1006) | `Open(…,MODE_NEWFILE)` | same | same | same | same | same |
+| `FINDUPDATE` (1004) | `Open(…,MODE_READWRITE)` | same | same | same | same | same |
+| `READ` (`'R'`=82) | `Read()` | **`fh_Arg1`** of the open FileHandle | `APTR` destination buffer | `LONG` number of bytes to read | `LONG` bytes read (**0 = EOF, -1 = error**) | code if RES1=-1 |
+| `WRITE` (`'W'`=87) | `Write()` | `fh_Arg1` | `APTR` source buffer | `LONG` number of bytes | `LONG` bytes written | code if RES1≠ARG3 |
+| `SEEK` (1008) | `Seek()` | `fh_Arg1` | `LONG` new position | `LONG` mode (`OFFSET_BEGINNING -1`/`OFFSET_CURRENT 0`/`OFFSET_END 1`) | `LONG` old position (-1 = error) | code if RES1=-1 |
 | `END` (1007) | `Close()` | `fh_Arg1` | — | — | `LONG` DOSTRUE | — |
-| `LOCATE_OBJECT` (8) | `Lock()` | `LOCK` répertoire de base (0=racine) | `BSTR` nom de l'objet | `LONG` mode (`ACCESS_READ/SHARED_LOCK -2`, `ACCESS_WRITE/EXCLUSIVE_LOCK -1`) | `BPTR` nouveau `FileLock` (0=échec) | code si échec |
-| `FREE_LOCK` (15) | `UnLock()` | `LOCK` à libérer | — | — | `BOOL` succès | — |
-| `EXAMINE_OBJECT` (23) | `Examine()` | `LOCK` de l'objet | `BPTR` `FileInfoBlock` à remplir | — | `BOOL` succès | code |
-| `EXAMINE_NEXT` (24) | `ExNext()` | `LOCK` du répertoire examiné | `BPTR` `FileInfoBlock` (du précédent Examine) | — | `BOOL` (échec = plus d'entrées) | code |
-| `PARENT` (29) | `ParentDir()` | `LOCK` de l'objet | — | — | `BPTR` lock du parent (0=racine) | code |
-| `INFO` (26) | `Info()` | `LOCK` | `BPTR` `InfoData` à remplir | — | `BOOL` succès | code |
+| `LOCATE_OBJECT` (8) | `Lock()` | `LOCK` base directory (0=root) | `BSTR` object name | `LONG` mode (`ACCESS_READ/SHARED_LOCK -2`, `ACCESS_WRITE/EXCLUSIVE_LOCK -1`) | `BPTR` new `FileLock` (0=failure) | code on failure |
+| `FREE_LOCK` (15) | `UnLock()` | `LOCK` to free | — | — | `BOOL` success | — |
+| `EXAMINE_OBJECT` (23) | `Examine()` | `LOCK` of the object | `BPTR` `FileInfoBlock` to fill | — | `BOOL` success | code |
+| `EXAMINE_NEXT` (24) | `ExNext()` | `LOCK` of the examined directory | `BPTR` `FileInfoBlock` (from the previous Examine) | — | `BOOL` (failure = no more entries) | code |
+| `PARENT` (29) | `ParentDir()` | `LOCK` of the object | — | — | `BPTR` lock of the parent (0=root) | code |
+| `INFO` (26) | `Info()` | `LOCK` | `BPTR` `InfoData` to fill | — | `BOOL` success | code |
 
-**Note 1.3 spécifique [ABI]** : pour `ACTION_END`, « *Under 1.3, [DOS] does not check the result* »
-(sous 2.0 un échec empêche la désallocation du FileHandle ; en 1.3 le résultat est ignoré).
+**1.3-specific note [ABI]**: for `ACTION_END`, "*Under 1.3, [DOS] does not check the result*"
+(under 2.0 a failure prevents deallocation of the FileHandle; in 1.3 the result is ignored).
 
-## 3. FileHandle : ce que renvoie `Open()` et comment `Read()` route
+## 3. FileHandle: what `Open()` returns and how `Read()` routes
 
-**[ABI/inféré]** :
-1. `Open(name, accessMode)` **alloue** un `FileHandle` (zone BPTR-adressable, alignée 4). Il résout
-   le device/volume/assign du chemin via la liste `di_DevInfo` (→ `DeviceProc`), démarre le handler
-   si `dn_Task` est NULL (cf. `dos-boot-sequence.md` §D), puis pose **`fh_Type = dn_Task`** (le
-   `MsgPort` du handler).
-2. Il envoie le packet `FINDINPUT/OUTPUT/UPDATE` (= `accessMode`) avec **ARG1 = BPTR du FileHandle
-   lui-même** et ARG2/ARG3 = lock+nom. Le handler, en succès, **remplit `fh_Arg1`** (sa clé privée
-   d'objet fichier) et renvoie `DOSTRUE` dans `dp_Res1`.
-3. `Open()` renvoie le **BPTR du FileHandle** (0 en échec, `IoErr`/`pr_Result2` posé).
-4. `Read(fh, buf, len)` prend le FileHandle, lit **`fh_Arg1`** et **`fh_Type`**, et envoie un packet
-   `ACTION_READ` au port `fh_Type` avec ARG1=`fh_Arg1`, ARG2=buffer, ARG3=longueur. Il retourne
-   `dp_Res1` (octets lus, 0=EOF, -1=erreur). `Close(fh)` envoie `ACTION_END(fh_Arg1)` et libère le
-   FileHandle. Les champs `fh_Buf`/`fh_Pos`/`fh_End` servent à la **bufférisation ligne/caractère**
-   (p. ex. pour les lectures interactives) ; les lectures en bloc passent directement par le packet.
+**[ABI/inferred]**:
+1. `Open(name, accessMode)` **allocates** a `FileHandle` (BPTR-addressable area, 4-aligned). It resolves
+   the device/volume/assign of the path via the `di_DevInfo` list (→ `DeviceProc`), starts the handler
+   if `dn_Task` is NULL (cf. `dos-boot-sequence.md` §D), then sets **`fh_Type = dn_Task`** (the
+   handler's `MsgPort`).
+2. It sends the `FINDINPUT/OUTPUT/UPDATE` packet (= `accessMode`) with **ARG1 = BPTR of the FileHandle
+   itself** and ARG2/ARG3 = lock+name. The handler, on success, **fills `fh_Arg1`** (its private
+   file-object key) and returns `DOSTRUE` in `dp_Res1`.
+3. `Open()` returns the **BPTR of the FileHandle** (0 on failure, `IoErr`/`pr_Result2` set).
+4. `Read(fh, buf, len)` takes the FileHandle, reads **`fh_Arg1`** and **`fh_Type`**, and sends an
+   `ACTION_READ` packet to the `fh_Type` port with ARG1=`fh_Arg1`, ARG2=buffer, ARG3=length. It returns
+   `dp_Res1` (bytes read, 0=EOF, -1=error). `Close(fh)` sends `ACTION_END(fh_Arg1)` and frees the
+   FileHandle. The `fh_Buf`/`fh_Pos`/`fh_End` fields are used for **line/character buffering**
+   (e.g. for interactive reads); block reads go directly through the packet.
 
-## 4. `CreateProc` et aspects BCPL **observables** (jamais transcrits)
+## 4. `CreateProc` and **observable** BCPL aspects (never transcribed)
 
-- **[ABI]** `CreateProc(name D1, pri D2, segList D3, stackSize D4)` crée un `Process` et renvoie
-  **un `APTR` (pointeur octet directement utilisable) sur son `MsgPort`** (`pr_MsgPort`), prêt pour
-  `PutMsg()` tel quel. Relation d'ABI documentée : l'adresse du `Process` = `valeur_rendue − TC_SIZE`
-  (= `− 92` **octets**), car `pr_MsgPort` est à l'offset `TC_SIZE` dans `Process`. `DeviceProc(name)`
-  renvoie le même type de pointeur (port du handler du chemin).
-- **[ABI] Asymétrie BPTR/APTR à ne surtout pas confondre (point de crash classique en 1.3)** :
-  `Open()` renvoie un **BPTR** `FileHandle` → il faut `BADDR()` (×4) pour déréférencer la structure.
-  `CreateProc()`/`DeviceProc()` renvoient un **APTR** `MsgPort` → **ne PAS `BADDR()`**, on l'utilise
-  directement. Même asymétrie dans les structures : les BPTR portent des adresses /4 (locks,
-  FileHandles, seglists, BSTR), tandis que les champs de port de handler (`fh_Type`, `dn_Task`,
-  `fl_Task`, `pr_FileSystemTask`, `pr_ConsoleTask`, `dp_Port`) sont des APTR exec normaux.
-- **[ABI/inféré] Linkage BCPL observable** :
-  - Un process DOS reçoit son contexte de démarrage via un **packet de démarrage** (`ACTION_STARTUP`
-    = 0) déposé à son `pr_MsgPort` au lancement ; le handler l'attend en premier.
-  - `pr_GlobVec` tient le **vecteur global BCPL** du process ; `dn_GlobalVec` décide, à la création,
-    si dos doit en construire un (`0`), réutiliser un GV (`>0`) ou considérer que le code n'est pas
-    BCPL (`-1`). Le handler OFS résident est un programme **BCPL** partageant le GV de dos.
-  - Les routines BCPL prennent leurs **arguments en registres** et manipulent des **BPTR** ; la pile
-    BCPL est distincte de la pile C. Ces conventions sont **observables** (valeurs de `pr_GlobVec`,
-    `dl_A2/A5/A6`, BPTR dans les champs) mais leur mécanique interne relève de l'implémentation et
-    n'est **pas** reproduite ici.
-- **[ABI]** `LoadSeg(name)` ouvre le fichier (via les packets §2b), lit un exécutable **hunk**
-  (`HUNK_HEADER`/`CODE`/`DATA`/`BSS`/`RELOC32`/`HUNK_END`), alloue un bloc mémoire par hunk, applique
-  les relocations, et **chaîne les segments** à la BCPL : à `BADDR(seg)` on trouve le BPTR du segment
-  suivant, le code commence à `BADDR(seg)+4`. Renvoie le **BPTR du 1er segment** (0 = échec, `IoErr`
-  posé). `UnLoadSeg(seglist)` libère la chaîne. (Cohérent avec le jalon projet D2 « LoadSeg ».)
+- **[ABI]** `CreateProc(name D1, pri D2, segList D3, stackSize D4)` creates a `Process` and returns
+  **an `APTR` (directly usable byte pointer) to its `MsgPort`** (`pr_MsgPort`), ready for
+  `PutMsg()` as is. Documented ABI relation: the address of the `Process` = `returned_value − TC_SIZE`
+  (= `− 92` **bytes**), because `pr_MsgPort` is at offset `TC_SIZE` in `Process`. `DeviceProc(name)`
+  returns the same type of pointer (port of the path's handler).
+- **[ABI] BPTR/APTR asymmetry that must absolutely not be confused (classic crash point in 1.3)**:
+  `Open()` returns a **BPTR** `FileHandle` → `BADDR()` (×4) is needed to dereference the structure.
+  `CreateProc()`/`DeviceProc()` return an **APTR** `MsgPort` → **do NOT `BADDR()`**, it is used
+  directly. Same asymmetry in the structures: BPTRs carry /4 addresses (locks,
+  FileHandles, seglists, BSTR), whereas the handler port fields (`fh_Type`, `dn_Task`,
+  `fl_Task`, `pr_FileSystemTask`, `pr_ConsoleTask`, `dp_Port`) are normal exec APTRs.
+- **[ABI/inferred] Observable BCPL linkage**:
+  - A DOS process receives its startup context via a **startup packet** (`ACTION_STARTUP`
+    = 0) placed at its `pr_MsgPort` at launch; the handler waits for it first.
+  - `pr_GlobVec` holds the process's **BCPL global vector**; `dn_GlobalVec` decides, at creation,
+    whether dos must build one (`0`), reuse a GV (`>0`) or consider that the code is not
+    BCPL (`-1`). The resident OFS handler is a **BCPL** program sharing dos's GV.
+  - BCPL routines take their **arguments in registers** and handle **BPTRs**; the BCPL
+    stack is distinct from the C stack. These conventions are **observable** (values of `pr_GlobVec`,
+    `dl_A2/A5/A6`, BPTRs in the fields) but their internal mechanics belong to the implementation and
+    are **not** reproduced here.
+- **[ABI]** `LoadSeg(name)` opens the file (via the §2b packets), reads a **hunk** executable
+  (`HUNK_HEADER`/`CODE`/`DATA`/`BSS`/`RELOC32`/`HUNK_END`), allocates one memory block per hunk, applies
+  the relocations, and **links the segments** BCPL-style: at `BADDR(seg)` one finds the BPTR of the next
+  segment, the code starts at `BADDR(seg)+4`. Returns the **BPTR of the 1st segment** (0 = failure, `IoErr`
+  set). `UnLoadSeg(seglist)` frees the chain. (Consistent with project milestone D2 "LoadSeg".)
 
-## 5. Table LVO publique de dos.library en V34 (sous-ensemble 1.3)
+## 5. Public LVO table of dos.library in V34 (1.3 subset)
 
-**[ABI, `dos_lib.fd` `##bias 30`]** — la V34 expose **uniquement** les fonctions AVANT le marqueur
-*« V36 or higher (Release 2.0) »*. 4 vecteurs standard de library (`-6 Open`, `-12 Close`,
-`-18 Expunge`, `-24` réservé) puis, de `-30` à `-222` :
+**[ABI, `dos_lib.fd` `##bias 30`]** — V34 exposes **only** the functions BEFORE the marker
+*"V36 or higher (Release 2.0)"*. 4 standard library vectors (`-6 Open`, `-12 Close`,
+`-18 Expunge`, `-24` reserved) then, from `-30` to `-222`:
 
-| LVO | Fonction | LVO | Fonction | LVO | Fonction |
+| LVO | Function | LVO | Function | LVO | Function |
 |----:|----------|----:|----------|----:|----------|
-| -30 | `Open` | -96 | `DupLock` | -162 | *(privé dos1)* |
-| -36 | `Close` | -102 | `Examine` | -168 | *(privé dos2)* |
+| -30 | `Open` | -96 | `DupLock` | -162 | *(private dos1)* |
+| -36 | `Close` | -102 | `Examine` | -168 | *(private dos2)* |
 | -42 | `Read` | -108 | `ExNext` | -174 | `DeviceProc` |
 | -48 | `Write` | -114 | `Info` | -180 | `SetComment` |
 | -54 | `Input` | -120 | `CreateDir` | -186 | `SetProtection` |
@@ -336,38 +336,38 @@ ACTION_FINDOUTPUT`, `MODE_READWRITE = 1004 = ACTION_FINDUPDATE`.
 | -84 | `Lock` | -150 | `LoadSeg` | -216 | `IsInteractive` |
 | -90 | `UnLock` | -156 | `UnLoadSeg` | -222 | `Execute` |
 
-Soit **37 vecteurs** (dont 2 privés `-162`/`-168`), `lib_NegSize ≈ 222`. **Delta** : tout ce qui
-suit (`AllocDosObject`/`FreeDosObject`/`DoPkt`/`SendPkt`/`WaitPkt`/`ReplyPkt`/`AbortPkt`/record
-locking/I/O bufférisée `FGetC`…/gestion d'objets 2.0/`SetIoErr`/`Fault`/`PrintFault`…) est **2.0+**
-et **ne doit pas exister** dans une jump table V34.
+That is **37 vectors** (including 2 private ones `-162`/`-168`), `lib_NegSize ≈ 222`. **Delta**: everything that
+follows (`AllocDosObject`/`FreeDosObject`/`DoPkt`/`SendPkt`/`WaitPkt`/`ReplyPkt`/`AbortPkt`/record
+locking/buffered I/O `FGetC`…/2.0 object management/`SetIoErr`/`Fault`/`PrintFault`…) is **2.0+**
+and **must not exist** in a V34 jump table.
 
-## 6. Incertitudes / à confirmer par la piste implémentation
+## 6. Uncertainties / to be confirmed by the implementation track
 
-- **`ACTION_STARTUP` (0)** : la répartition exacte de `dp_Arg1..7` du packet de démarrage reçu par
-  un handler 1.3 (quel slot porte le `DeviceNode`, lequel porte le `FileSysStartupMsg`/nom) n'a pas
-  été figée à partir d'une source primaire — elle est **handler-dépendante** et doit être validée
-  (convention courante : le `DeviceNode` et son `dn_Startup` sont atteignables depuis le packet de
-  démarrage ; à vérifier sur comportement réel).
-- **Tailles exactes** (`pr_SIZEOF`, `rn_SIZEOF`, `DosInfo` en V34) : déduites des frontières
-  « new 2.0 » des includes, non mesurées dans le code d'init de la ROM (le mur interdit de tracer
-  `rt_Init`). Les offsets jusqu'aux frontières indiquées sont des faits d'ABI stables ; les tailles
-  totales V34 sont à confirmer par comportement sur une 1.3 authentique.
-- **Câblage BCPL interne** (contenu du vecteur global, mécanique `sendpkt` interne) : décrit comme
-  comportement, non comme code — l'implémentation doit fournir un équivalent fonctionnel, pas une
-  copie.
-- **`dl_UtilityBase`/sémaphores `DosInfo`/queues `RootNode`/`Process`** : marqués 2.0+ ci-dessus ;
-  à NE PAS implémenter pour une cible 1.3 stricte.
+- **`ACTION_STARTUP` (0)**: the exact distribution of `dp_Arg1..7` of the startup packet received by
+  a 1.3 handler (which slot carries the `DeviceNode`, which carries the `FileSysStartupMsg`/name) has not
+  been pinned down from a primary source — it is **handler-dependent** and must be validated
+  (common convention: the `DeviceNode` and its `dn_Startup` are reachable from the startup
+  packet; to be checked on real behaviour).
+- **Exact sizes** (`pr_SIZEOF`, `rn_SIZEOF`, `DosInfo` in V34): deduced from the "new 2.0"
+  boundaries of the includes, not measured in the ROM's init code (the wall forbids tracing
+  `rt_Init`). The offsets up to the indicated boundaries are stable ABI facts; the total V34
+  sizes are to be confirmed by behaviour on an authentic 1.3.
+- **Internal BCPL wiring** (content of the global vector, internal `sendpkt` mechanics): described as
+  behaviour, not as code — the implementation must provide a functional equivalent, not a
+  copy.
+- **`dl_UtilityBase`/`DosInfo` semaphores/`RootNode`/`Process` tails**: marked 2.0+ above;
+  NOT to be implemented for a strict 1.3 target.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage :
-  les §2-§4 décrivent le protocole packet et les conventions BCPL **observables** (champs, valeurs),
-  d'après les includes et la spec packets publics.
-- [x] **Corrigé** : retirées les adresses ROM de la ROMTag de dos, de `rt_Init`/`rt_EndSkip`,
-  `rt_Name`, `rt_IdString` et des chaînes BSTR citées (`DFX`, `File System`, `FileHandler`,
-  `CON:…`, `trackdisk.device`). La relation `rt_Init == rt_EndSkip` est conservée sans valeur.
-- [x] Restent : offsets de structures publiques NDK (`dosextens.i`, `filehandler.i`), LVO
-  (`dos_lib.fd`), constantes `ACTION_*`/`MODE_*`/`DLT_*`, gabarits BSTR courts (noms d'ABI,
-  inventoriés dans `docs/audit/specs-review.md`).
+- [x] No 68000 instruction sequence transcribed or paraphrased, no disassembly excerpt:
+  §2-§4 describe the packet protocol and the **observable** BCPL conventions (fields, values),
+  from the public includes and packet spec.
+- [x] **Fixed**: removed the ROM addresses of the dos ROMTag, of `rt_Init`/`rt_EndSkip`,
+  `rt_Name`, `rt_IdString` and of the cited BSTR strings (`DFX`, `File System`, `FileHandler`,
+  `CON:…`, `trackdisk.device`). The relation `rt_Init == rt_EndSkip` is kept without value.
+- [x] Remaining: offsets of public NDK structures (`dosextens.i`, `filehandler.i`), LVOs
+  (`dos_lib.fd`), `ACTION_*`/`MODE_*`/`DLT_*` constants, short BSTR templates (ABI names,
+  inventoried in `docs/audit/specs-review.md`).

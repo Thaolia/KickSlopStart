@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tests/con_probe.sh — harnais de la sonde tests/con_probe.s (piste ANALYSE,
-# docs/analysis/console-keymap-v34.md) : boot FS-UAE avec la VRAIE ROM 1.3, disquette = sonde
-# (bootblock à deux étages), journal série capturé ; à chaque ligne « @S x » une capture <out>/shot_x.png ;
-# à la ligne « @K » le harnais tape une suite de touches réelles (xdotool) dans la fenêtre FS-UAE.
-# Un seul FS-UAE à la fois sur la machine : on attend que `pgrep -x fs-uae` soit vide.
-# Usage : tests/con_probe.sh <répertoire de sortie> [durée max en s, défaut 240]
+# tests/con_probe.sh - harness for the tests/con_probe.s probe (ANALYSIS track,
+# docs/analysis/console-keymap-v34.md): FS-UAE boot with the REAL 1.3 ROM, floppy = probe
+# (two-stage bootblock), serial log captured; on each "@S x" line a capture <out>/shot_x.png;
+# on the "@K" line the harness types a sequence of real keys (xdotool) into the FS-UAE window.
+# Only one FS-UAE at a time on the machine: we wait until `pgrep -x fs-uae` is empty.
+# Usage: tests/con_probe.sh <output directory> [max duration in s, default 240]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:?sortie}"; DUR="${2:-240}"
@@ -60,7 +60,7 @@ fade_in_duration = 0
 serial_port = $OUT/ser_uae
 joystick_port_1 = none
 EOF
-# CON_DBG=1 : débogueur console ; en cas de blocage, liste des tâches (debug_tasks.py) et registres courants
+# CON_DBG=1: console debugger; on a hang, task list (debug_tasks.py) and current registers
 if [ -n "${CON_DBG:-}" ]; then echo "console_debugger = 1" >> "$OUT/cfg.fs-uae"; fi
 rm -f "$OUT/in"; mkfifo "$OUT/in"; exec 3<>"$OUT/in"
 T0=$(date +%s)

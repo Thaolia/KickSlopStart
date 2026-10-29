@@ -1,512 +1,512 @@
-# console-keymap-v34.md — console.device (« console ri 34.1 ») et keymap.resource (« keymap ri 34.1 »)
+# console-keymap-v34.md — console.device ("console ri 34.1") and keymap.resource ("keymap ri 34.1")
 
-> Piste ANALYSE (« dirty »). Sources : ROM `assets/kick34005.A500` lue sous radare2 (base `$FC0000`) et
-> sonde boîte noire **sur la vraie ROM** sous FS-UAE (`tests/con_probe.s` + `tests/con_probe.sh`, code
-> auteur, vecteurs en §8). On décrit le **quoi** : valeurs, séquences, layouts d'ABI, ordre des effets
-> visibles. Aucune suite d'instructions transcrite ni paraphrasée, aucune adresse de routine ROM.
+> ANALYSIS track ("dirty"). Sources: ROM `assets/kick34005.A500` read under radare2 (base `$FC0000`) and
+> black-box probe **on the real ROM** under FS-UAE (`tests/con_probe.s` + `tests/con_probe.sh`, author
+> code, vectors in §8). We describe the **what**: values, sequences, ABI layouts, order of the visible
+> effects. No instruction sequence transcribed or paraphrased, no ROM routine address.
 >
-> **Légende** : **[O]** observé directement (lecture des données/du comportement dans la ROM, ou sortie
-> de la sonde) — précisé **[O ROM]**, **[O sonde]** ou **[O ROM+sonde]** quand les deux concordent ;
-> **[D]** déduit d'observations convergentes ; **[S]** supposé.
+> **Legend**: **[O]** observed directly (reading of the data/behaviour in the ROM, or output
+> of the probe) — specified as **[O ROM]**, **[O probe]** or **[O ROM+probe]** when both agree;
+> **[D]** deduced from converging observations; **[S]** assumed.
 >
-> Specs voisines (non dupliquées) : `handlers-v34.md` §2 (CON:/RAW: côté dos : c'est le handler, pas
-> console.device, qui fait l'édition de ligne et l'écho) ; `intuiticks-repeat-v34.md` (répétition des
-> touches et qualificatif IEQUALIFIER_REPEAT produits par input.device) ; `keyboard-handshake-v34.md`
-> (codes bruts du clavier) ; `monkey-startup.md` §6 (RawKeyConvert(RETURN) = `$0D`).
+> Neighbouring specs (not duplicated): `handlers-v34.md` §2 (CON:/RAW: on the dos side: it is the handler, not
+> console.device, that does the line editing and the echo); `intuiticks-repeat-v34.md` (key repeat
+> and IEQUALIFIER_REPEAT qualifier produced by input.device); `keyboard-handshake-v34.md`
+> (raw keyboard codes); `monkey-startup.md` §6 (RawKeyConvert(RETURN) = `$0D`).
 >
-> Conditions de la sonde : A500 PAL, 512 Ko chip + 512 Ko slow, aucune disquette système (Preferences
-> par défaut de la ROM : police **topaz 9**, cellule **10 × 9** pixels), écran Workbench 640 × 200 à
-> 2 plans (couleurs 0 bleu, 1 blanc, 2 noir, 3 orange).
+> Probe conditions: PAL A500, 512 KB chip + 512 KB slow, no system floppy (ROM default
+> Preferences: **topaz 9** font, **10 × 9** pixel cell), 640 × 200 Workbench screen with
+> 2 planes (colours 0 blue, 1 white, 2 black, 3 orange).
 
 ---
 
-## 0. Résumé exécutable
+## 0. Executable summary
 
-1. console.device est un résident COLDSTART pri 20 qui **exige keymap.resource** (il copie, à son
-   init, la KeyMap du **premier** nœud de la liste de keymap.resource comme keymap par défaut ; liste
-   vide ⇒ init en échec) et s'installe dans la chaîne d'input.device comme handler **pri 0**. [O ROM]
-2. OpenDevice : unité **−1** ⇒ simple accès aux fonctions (io_Unit = −1) ; toute autre unité ⇒
-   io_Data **doit** être une Window (sinon io_Error = −1) ; io_Unit reçoit le **ConUnit** (677 octets,
-   partie publique = `devices/conunit.h` 1.3). Le numéro d'unité et io_Length sont ignorés. [O ROM+sonde]
-3. Le dessin se fait **directement dans le RastPort de la fenêtre** (état du RastPort sauvé puis
-   restauré à chaque opération, couche verrouillée par LockLayerRom) ; il n'y a **aucun tampon de
-   caractères** : rien n'est redessiné après un REFRESHWINDOW. [O ROM]
-4. CMD_WRITE interprète un sous-ensemble ANSI/ECMA-48 (tables complètes en §3–§4) ; après ESC c :
-   **LNM, ASM et AWM actifs** (LF = CR+LF, défilement automatique, retour à la ligne automatique). [O ROM+sonde]
-5. CMD_READ rend des **octets déjà cuits** (RawKeyConvert avec la keymap de l'unité, ou rapports
-   `CSI … |` / `CSI … R` / `CSI … r`) dès qu'au moins un octet est disponible ; tampon circulaire de
-   255 octets ; **pas d'écho, pas d'édition de ligne**. [O ROM+sonde]
-6. RawKeyConvert (LVO −48) parcourt **toute la chaîne** d'événements, ne traite que IECLASS_RAWKEY, rend
-   le nombre d'octets ou **−1** si le tampon est trop court ; touches mortes à un niveau (double morte
-   prévue par le format mais inutilisée par « usa »). Modèle validé sur 1 680 combinaisons (§6). [O ROM+sonde]
-7. keymap.resource V34 n'a **aucune fonction** : 74 octets (Node + List + un KeyMapNode « usa » dont la
-   KeyMap pointe dans la ROM). [O ROM+sonde]
+1. console.device is a COLDSTART resident pri 20 that **requires keymap.resource** (at its
+   init it copies the KeyMap of the **first** node of keymap.resource's list as the default keymap; empty
+   list ⇒ init fails) and installs itself in input.device's chain as a **pri 0** handler. [O ROM]
+2. OpenDevice: unit **−1** ⇒ mere access to the functions (io_Unit = −1); any other unit ⇒
+   io_Data **must** be a Window (otherwise io_Error = −1); io_Unit receives the **ConUnit** (677 bytes,
+   public part = `devices/conunit.h` 1.3). The unit number and io_Length are ignored. [O ROM+probe]
+3. Drawing is done **directly in the window's RastPort** (RastPort state saved then
+   restored at each operation, layer locked by LockLayerRom); there is **no character
+   buffer**: nothing is redrawn after a REFRESHWINDOW. [O ROM]
+4. CMD_WRITE interprets a subset of ANSI/ECMA-48 (complete tables in §3–§4); after ESC c:
+   **LNM, ASM and AWM active** (LF = CR+LF, automatic scrolling, automatic line wrap). [O ROM+probe]
+5. CMD_READ returns **already cooked bytes** (RawKeyConvert with the unit's keymap, or
+   `CSI … |` / `CSI … R` / `CSI … r` reports) as soon as at least one byte is available; circular buffer of
+   255 bytes; **no echo, no line editing**. [O ROM+probe]
+6. RawKeyConvert (LVO −48) walks **the whole chain** of events, only processes IECLASS_RAWKEY, returns
+   the number of bytes or **−1** if the buffer is too short; one-level dead keys (double dead key
+   provided for by the format but unused by "usa"). Model validated on 1,680 combinations (§6). [O ROM+probe]
+7. keymap.resource V34 has **no functions**: 74 bytes (Node + List + one KeyMapNode "usa" whose
+   KeyMap points into the ROM). [O ROM+probe]
 
 ---
 
-## 1. Initialisation et structures
+## 1. Initialisation and structures
 
-### 1.1 keymap.resource [O ROM+sonde]
+### 1.1 keymap.resource [O ROM+probe]
 
-- Résident « keymap.resource », COLDSTART, **pri 100**, version 34 (idString « keymap ri 34.1 (18 Aug 1987) »).
-- Init : AllocMem(**74**, **MEMF_CLEAR** seul — pas MEMF_PUBLIC), puis :
-  - `+$00` Node : ln_Type = **8** (NT_RESOURCE), ln_Pri 0, ln_Name = `"keymap.resource"` ;
-  - `+$0E` List `kr_List` (14 octets ; lh_Type laissé à 0) ;
-  - `+$1C` **KeyMapNode** (46 octets) copié depuis la ROM : Node (succ/pred mis à jour pour être le
-    seul élément de kr_List, ln_Type 0, ln_Pri 0, ln_Name = `"usa"`) suivi de la **KeyMap** (8 pointeurs
-    vers les tables ROM, §5) ;
-  - AddResource. Aucune table de vecteurs (0 LVO, pas de MakeFunctions).
-- Sonde : OpenResource("keymap.resource") ⇒ ln_Type 8 ; lh_Head = ressource + `$1C` ; ln_Succ de ce
-  nœud = adresse de lh_Tail ; nom « usa ».
+- Resident "keymap.resource", COLDSTART, **pri 100**, version 34 (idString "keymap ri 34.1 (18 Aug 1987)").
+- Init: AllocMem(**74**, **MEMF_CLEAR** only — not MEMF_PUBLIC), then:
+  - `+$00` Node: ln_Type = **8** (NT_RESOURCE), ln_Pri 0, ln_Name = `"keymap.resource"`;
+  - `+$0E` List `kr_List` (14 bytes; lh_Type left at 0);
+  - `+$1C` **KeyMapNode** (46 bytes) copied from the ROM: Node (succ/pred updated to be the
+    only element of kr_List, ln_Type 0, ln_Pri 0, ln_Name = `"usa"`) followed by the **KeyMap** (8 pointers
+    to the ROM tables, §5);
+  - AddResource. No vector table (0 LVOs, no MakeFunctions).
+- Probe: OpenResource("keymap.resource") ⇒ ln_Type 8; lh_Head = resource + `$1C`; ln_Succ of that
+  node = address of lh_Tail; name "usa".
 
-Layout KeyMap (ABI publique `devices/keymap.h`, 32 octets) : `+0` km_LoKeyMapTypes, `+4` km_LoKeyMap,
+KeyMap layout (public ABI `devices/keymap.h`, 32 bytes): `+0` km_LoKeyMapTypes, `+4` km_LoKeyMap,
 `+8` km_LoCapsable, `+12` km_LoRepeatable, `+16` km_HiKeyMapTypes, `+20` km_HiKeyMap, `+24` km_HiCapsable,
-`+28` km_HiRepeatable. « Lo » = codes `$00–$3F` (tables de 64 types, 64 longs, 8 + 8 octets de bits),
-« Hi » = codes `$40–$77` (56 types, 56 longs, 7 + 7 octets de bits). Bit d'un code `c` dans un tableau
-de bits : octet `(c & $3F) >> 3`, bit `c & 7`.
+`+28` km_HiRepeatable. "Lo" = codes `$00–$3F` (tables of 64 types, 64 longs, 8 + 8 bytes of bits),
+"Hi" = codes `$40–$77` (56 types, 56 longs, 7 + 7 bytes of bits). Bit of a code `c` in a bit
+array: byte `(c & $3F) >> 3`, bit `c & 7`.
 
-### 1.2 console.device : résident et base [O ROM]
+### 1.2 console.device: resident and base [O ROM]
 
-- Résident « console.device », COLDSTART, **pri 20**, NT_DEVICE, version 34, idString
-  « console ri 34.1 (18 Aug 1987) ». Base de 184 octets (lib_PosSize), 6 vecteurs standard + 2 :
+- Resident "console.device", COLDSTART, **pri 20**, NT_DEVICE, version 34, idString
+  "console ri 34.1 (18 Aug 1987)". Base of 184 bytes (lib_PosSize), 6 standard vectors + 2:
   **−42 CDInputHandler**, **−48 RawKeyConvert**.
-- Init, dans l'ordre : ouvre graphics.library (échec ⇒ init en échec) ; OpenResource("keymap.resource")
-  (absente ou liste vide ⇒ ferme graphics, init en échec) ; **copie les 32 octets de la KeyMap du premier
-  nœud** comme keymap par défaut du device ; initialise la liste des unités ; ouvre **input.device
-  unité 0** et lui envoie **IND_ADDHANDLER** (9) avec une structure Interrupt : ln_Type NT_INTERRUPT,
-  **ln_Pri 0**, ln_Name `"console.device"`, is_Data = base du device, is_Code = le vecteur −42 (donc
-  CDInputHandler(A0 = événements, A1 = base)). Échec d'ouverture d'input.device : le device est quand
-  même rendu (sans handler). intuition.library n'est ouverte qu'au **premier OpenDevice** sur fenêtre.
-- Expunge : refusé (drapeau LIBF_DELEXP posé) tant que lib_OpenCnt ≠ 0 ; sinon IND_REMHANDLER (10),
-  fermeture d'input.device, d'intuition et de graphics, libération de la base.
+- Init, in order: opens graphics.library (failure ⇒ init fails); OpenResource("keymap.resource")
+  (absent or empty list ⇒ closes graphics, init fails); **copies the 32 bytes of the KeyMap of the first
+  node** as the device's default keymap; initialises the list of units; opens **input.device
+  unit 0** and sends it **IND_ADDHANDLER** (9) with an Interrupt structure: ln_Type NT_INTERRUPT,
+  **ln_Pri 0**, ln_Name `"console.device"`, is_Data = device base, is_Code = vector −42 (hence
+  CDInputHandler(A0 = events, A1 = base)). Failure to open input.device: the device is still
+  returned (without handler). intuition.library is only opened at the **first OpenDevice** on a window.
+- Expunge: refused (LIBF_DELEXP flag set) as long as lib_OpenCnt ≠ 0; otherwise IND_REMHANDLER (10),
+  closing of input.device, intuition and graphics, freeing of the base.
 
-### 1.3 ConUnit (ABI publique `devices/conunit.h` 1.3) [O ROM+sonde]
+### 1.3 ConUnit (public ABI `devices/conunit.h` 1.3) [O ROM+probe]
 
-Taille allouée : **677 octets** (`$2A5`), MEMF_PUBLIC, effacée. La partie publique occupe `$00–$127` ;
-le reste est privé (tampons, état de l'analyseur). Champs publics et usage réel :
+Allocated size: **677 bytes** (`$2A5`), MEMF_PUBLIC, cleared. The public part occupies `$00–$127`;
+the rest is private (buffers, parser state). Public fields and actual use:
 
-| Off. | Champ | Usage V34 |
+| Off. | Field | V34 use |
 |---|---|---|
-| `$00` | cu_MP (MsgPort, 34 o) | ln_Name `"console.device"`, NT_MSGPORT ; sa liste reçoit les CMD_READ en attente |
-| `$22` | cu_Window | io_Data de l'OpenDevice |
-| `$26/$28` | cu_XCP / cu_YCP | position logique du curseur (colonne/ligne, base 0) |
-| `$2A/$2C` | cu_XMax / cu_YMax | dernière colonne / dernière ligne (base 0) |
-| `$2E/$30` | cu_XRSize / cu_YRSize | taille de cellule = TxWidth + TxSpacing / TxHeight du RastPort |
-| `$32/$34` | cu_XROrigin / cu_YROrigin | origine de la zone de texte, pixels relatifs à la fenêtre |
-| `$36/$38` | cu_XRExtant / cu_YRExtant | dernier pixel de la zone de texte (inclus) |
-| `$3A/$3C` | cu_XMinShrink / cu_YMinShrink | plus petite taille (pixels utiles) vue depuis le dernier recalcul ; 9999 = « rien à effacer » |
-| `$3E/$40` | cu_XCCP / cu_YCCP | cellule où le bloc curseur est **dessiné** (= XCP/YCP après chaque écriture) |
-| `$42` | cu_KeyMapStruct (32 o) | keymap de l'unité (copie de la keymap par défaut à l'ouverture) |
-| `$62` | cu_TabStops[80] (UWORD) | taquets triés croissants, terminés par `$FFFF` |
-| `$102–$121` | cu_Mask … cu_TxSpacing | copie de l'état RastPort de la console (§2.2) |
-| `$122` | cu_Modes[3] | bit n ⇒ octet n/8, bit n%8 ; **20 = LNM, 21 = ASM, 22 = AWM** |
-| `$125` | cu_RawEvents[3] | bit n = classe IECLASS n rapportée en brut (n ≤ 18) |
+| `$00` | cu_MP (MsgPort, 34 b) | ln_Name `"console.device"`, NT_MSGPORT; its list receives the pending CMD_READs |
+| `$22` | cu_Window | io_Data of the OpenDevice |
+| `$26/$28` | cu_XCP / cu_YCP | logical cursor position (column/line, base 0) |
+| `$2A/$2C` | cu_XMax / cu_YMax | last column / last line (base 0) |
+| `$2E/$30` | cu_XRSize / cu_YRSize | cell size = TxWidth + TxSpacing / TxHeight of the RastPort |
+| `$32/$34` | cu_XROrigin / cu_YROrigin | origin of the text area, pixels relative to the window |
+| `$36/$38` | cu_XRExtant / cu_YRExtant | last pixel of the text area (inclusive) |
+| `$3A/$3C` | cu_XMinShrink / cu_YMinShrink | smallest size (useful pixels) seen since the last recomputation; 9999 = "nothing to clear" |
+| `$3E/$40` | cu_XCCP / cu_YCCP | cell where the cursor block is **drawn** (= XCP/YCP after each write) |
+| `$42` | cu_KeyMapStruct (32 b) | the unit's keymap (copy of the default keymap at open) |
+| `$62` | cu_TabStops[80] (UWORD) | tab stops sorted in increasing order, terminated by `$FFFF` |
+| `$102–$121` | cu_Mask … cu_TxSpacing | copy of the console's RastPort state (§2.2) |
+| `$122` | cu_Modes[3] | bit n ⇒ byte n/8, bit n%8; **20 = LNM, 21 = ASM, 22 = AWM** |
+| `$125` | cu_RawEvents[3] | bit n = IECLASS class n reported raw (n ≤ 18) |
 
-Sonde, juste après OpenDevice sur une fenêtre 640 × 200 bordée (BorderLeft 4, Top 12, Right 18,
-Bottom 2), topaz 9 : XCP = YCP = 0, **XMax = 60, YMax = 19**, XRSize 10, YRSize 9, XROrigin 4,
+Probe, just after OpenDevice on a bordered 640 × 200 window (BorderLeft 4, Top 12, Right 18,
+Bottom 2), topaz 9: XCP = YCP = 0, **XMax = 60, YMax = 19**, XRSize 10, YRSize 9, XROrigin 4,
 YROrigin 12, XRExtant 613, YRExtant 191, Modes = `00 00 70`, RawEvents = 0, FgPen 1, BgPen 0,
-DrawMode 1 (JAM2), AlgoStyle 0, Mask `$FF`, taquets 0, 8, 16, … (§3.4).
+DrawMode 1 (JAM2), AlgoStyle 0, Mask `$FF`, tab stops 0, 8, 16, … (§3.4).
 
 ---
 
 ## 2. OpenDevice, CloseDevice, BeginIO
 
-### 2.1 OpenDevice [O ROM+sonde]
+### 2.1 OpenDevice [O ROM+probe]
 
-- lib_OpenCnt est incrémenté **en premier, dans tous les cas**, y compris en cas d'échec (il n'est
-  jamais redécrémenté : fuite d'un compte par échec ; sonde : 2 → 3 après un échec). [O]
-- **unit = −1** : io_Unit := −1, io_Error inchangé (0), succès. Sert à obtenir io_Device pour appeler
-  RawKeyConvert / CDInputHandler. CloseDevice d'une telle requête ne fait que le décompte. [O]
-- **autre unité (valeur indifférente)** : io_Data = 0 ⇒ **io_Error = −1** (IOERR_OPENFAIL) et
-  io_Device := 0 ; mémoire insuffisante ⇒ idem. Sinon :
-  1. alloue/initialise le ConUnit (MsgPort, cu_Window := io_Data, keymap := **copie de la keymap par
-     défaut courante du device**) ; io_Unit := ConUnit ;
-  2. insère l'unité **en tête** de la liste des unités du device ;
-  3. exécute l'équivalent d'**ESC c** (§3.6) : police = police courante du RastPort de la fenêtre au
-     moment de l'ouverture (mémorisée, restaurée par chaque ESC c), géométrie calculée, zone de texte
-     effacée (fenêtre SMART_REFRESH), curseur affiché en (0,0) ;
-  4. ouvre intuition.library si ce n'est déjà fait ;
-  5. l'unité devient l'**unité active** (destinataire des touches) si aucune fenêtre active n'est
-     encore connue du device **ou** si sa fenêtre est la fenêtre active connue (§6.1).
-  io_Length (taille de la Window) est ignoré. [O ROM ; sonde : io_Error 0, io_Unit = ConUnit]
-- Plusieurs unités peuvent partager une fenêtre ; chacune a son curseur et ses taquets, et dessine
-  dans le même RastPort. [O sonde]
+- lib_OpenCnt is incremented **first, in all cases**, including on failure (it is
+  never decremented again: leak of one count per failure; probe: 2 → 3 after a failure). [O]
+- **unit = −1**: io_Unit := −1, io_Error unchanged (0), success. Used to obtain io_Device in order to call
+  RawKeyConvert / CDInputHandler. CloseDevice of such a request only does the decrement. [O]
+- **other unit (any value)**: io_Data = 0 ⇒ **io_Error = −1** (IOERR_OPENFAIL) and
+  io_Device := 0; insufficient memory ⇒ same. Otherwise:
+  1. allocates/initialises the ConUnit (MsgPort, cu_Window := io_Data, keymap := **copy of the device's current
+     default keymap**); io_Unit := ConUnit;
+  2. inserts the unit **at the head** of the device's list of units;
+  3. performs the equivalent of **ESC c** (§3.6): font = current font of the window's RastPort at the
+     time of opening (stored, restored by each ESC c), geometry computed, text area
+     cleared (SMART_REFRESH window), cursor displayed at (0,0);
+  4. opens intuition.library if not already done;
+  5. the unit becomes the **active unit** (recipient of the keys) if no active window is
+     yet known to the device **or** if its window is the known active window (§6.1).
+  io_Length (size of the Window) is ignored. [O ROM; probe: io_Error 0, io_Unit = ConUnit]
+- Several units can share a window; each has its own cursor and tab stops, and draws
+  into the same RastPort. [O probe]
 
-### 2.2 Accès au RastPort [O ROM ; sonde §8.4]
+### 2.2 Access to the RastPort [O ROM; probe §8.4]
 
-Chaque opération de dessin (et chaque CMD_WRITE en entier) : LockLayerRom(rp->Layer), sauvegarde de
+Each drawing operation (and each whole CMD_WRITE): LockLayerRom(rp->Layer), saving of
 `cp_x/cp_y`, Mask/FgPen/BgPen/AOlPen, DrawMode/AreaPtSz, AreaPtrn, Minterms, Font, AlgoStyle/TxFlags,
-TxHeight/TxWidth, TxBaseline/TxSpacing du RastPort de la fenêtre, installation des valeurs du ConUnit
-(`$102–$121`), dessin, recopie des valeurs du RastPort dans le ConUnit, restauration du RastPort,
-UnlockLayerRom. Ces verrous sont imbriquables (compteur). Le programme qui partage la fenêtre retrouve
-donc son RastPort intact.
+TxHeight/TxWidth, TxBaseline/TxSpacing of the window's RastPort, installation of the ConUnit's values
+(`$102–$121`), drawing, copy of the RastPort's values back into the ConUnit, restoration of the RastPort,
+UnlockLayerRom. These locks are nestable (counter). The program that shares the window therefore
+finds its RastPort intact.
 
 ### 2.3 CloseDevice [O ROM]
 
-Unité −1 : rien. Sinon : retire l'unité de la liste ; si c'était l'unité active, **plus aucune unité
-n'est active** (même si une autre unité est ouverte sur la même fenêtre — sonde §8.6) ; libère les 677
-octets. Le bloc curseur **n'est pas effacé** de la fenêtre ; les CMD_READ en attente ne sont pas
-répondus (à l'appelant de les annuler avant). io_Unit et io_Device := 0 ; lib_OpenCnt décrémenté ;
-Expunge différé exécuté si demandé.
+Unit −1: nothing. Otherwise: removes the unit from the list; if it was the active unit, **no unit
+is active any more** (even if another unit is open on the same window — probe §8.6); frees the 677
+bytes. The cursor block **is not erased** from the window; the pending CMD_READs are not
+replied to (up to the caller to cancel them before). io_Unit and io_Device := 0; lib_OpenCnt decremented;
+deferred Expunge executed if requested.
 
-### 2.4 BeginIO, AbortIO, commandes standard [O ROM+sonde]
+### 2.4 BeginIO, AbortIO, standard commands [O ROM+probe]
 
-Code partagé avec keyboard/gameport/input : io_Flags &= `$0F`, io_Error := 0 ; commande ≥ **13** ⇒
-traitée comme 0. Chaque commande est « immédiate » sauf **CMD_READ** (mise en file sur le MsgPort de
-l'unité ; exécutée tout de suite si elle est en tête et l'unité non arrêtée, sinon IOF_QUICK effacé
-et retour). Réponse : io_Error posé, retrait de la file, ReplyMsg seulement si IOF_QUICK est absent.
+Code shared with keyboard/gameport/input: io_Flags &= `$0F`, io_Error := 0; command ≥ **13** ⇒
+treated as 0. Each command is "immediate" except **CMD_READ** (queued on the unit's MsgPort;
+executed at once if it is at the head and the unit is not stopped, otherwise IOF_QUICK cleared
+and return). Reply: io_Error set, removal from the queue, ReplyMsg only if IOF_QUICK is absent.
 
-| N° | Commande | Comportement V34 |
+| No. | Command | V34 behaviour |
 |---:|---|---|
 | 0 | CMD_INVALID | io_Error = −3 (IOERR_NOCMD) |
-| 1 | CMD_RESET | = CMD_STOP + CMD_FLUSH + CMD_START, une seule réponse ; io_Error **non initialisé** (voir sous le tableau) |
+| 1 | CMD_RESET | = CMD_STOP + CMD_FLUSH + CMD_START, a single reply; io_Error **not initialised** (see below the table) |
 | 2 | CMD_READ | §6.3 |
 | 3 | CMD_WRITE | §3 |
-| 4 | CMD_UPDATE | **comme CMD_INVALID** : io_Error = −3 |
-| 5 | CMD_CLEAR | vide le tampon d'entrée de l'unité ; **ne répond jamais** : io_Error reste 0, IOF_QUICK reste posé ; envoyée sans IOF_QUICK (SendIO), la requête n'est **jamais** rendue (ln_Type reste NT_MESSAGE) [O sonde] |
-| 6 | CMD_STOP | marque l'unité arrêtée : les CMD_READ restent en file (CMD_WRITE continue de fonctionner) |
-| 7 | CMD_START | relance : exécute la CMD_READ en tête de file s'il y en a une |
-| 8 | CMD_FLUSH | répond **−2** (IOERR_ABORTED) à toutes les CMD_READ en file |
+| 4 | CMD_UPDATE | **like CMD_INVALID**: io_Error = −3 |
+| 5 | CMD_CLEAR | empties the unit's input buffer; **never replies**: io_Error stays 0, IOF_QUICK stays set; sent without IOF_QUICK (SendIO), the request is **never** returned (ln_Type stays NT_MESSAGE) [O probe] |
+| 6 | CMD_STOP | marks the unit stopped: the CMD_READs stay queued (CMD_WRITE keeps working) |
+| 7 | CMD_START | restarts: executes the CMD_READ at the head of the queue if there is one |
+| 8 | CMD_FLUSH | replies **−2** (IOERR_ABORTED) to all the queued CMD_READs |
 | 9 | CD_ASKKEYMAP | §5.4 |
 | 10 | CD_SETKEYMAP | §5.4 |
 | 11 | CD_ASKDEFAULTKEYMAP | §5.4 |
 | 12 | CD_SETDEFAULTKEYMAP | §5.4 |
 
-**io_Error de CMD_STOP, CMD_START, CMD_FLUSH, CMD_RESET** : ces commandes répondent sans fixer de code :
-io_Error reçoit l'**octet bas du D0 de l'appelant** au moment de BeginIO (sonde, BeginIO appelé avec
-D0 = n° de commande : io_Error = 1, 6, 7, 8 ; pour FLUSH après au moins un abandon : −2). Une
-réimplémentation doit rendre 0. [O ROM+sonde]
+**io_Error of CMD_STOP, CMD_START, CMD_FLUSH, CMD_RESET**: these commands reply without setting a code:
+io_Error receives the **low byte of the caller's D0** at the time of BeginIO (probe, BeginIO called with
+D0 = command no.: io_Error = 1, 6, 7, 8; for FLUSH after at least one abort: −2). A
+reimplementation must return 0. [O ROM+probe]
 
-AbortIO : répond **−2** à la requête si elle n'a pas déjà été rendue (pas de vérification qu'elle est
-en file) ; renvoie 0.
+AbortIO: replies **−2** to the request if it has not already been returned (no check that it is
+queued); returns 0.
 
 ---
 
-## 3. CMD_WRITE : affichage
+## 3. CMD_WRITE: display
 
-### 3.1 Contrat [O ROM+sonde]
+### 3.1 Contract [O ROM+probe]
 
-- io_Data = octets, io_Length = nombre d'octets, ou **−1** ⇒ chaîne terminée par NUL (io_Length est
-  alors remplacé par la longueur). io_Length = 0 ⇒ rien n'est écrit (mais un redimensionnement en
-  attente est appliqué, §3.9). io_Actual = octets consommés (sonde : « xyz », −1 ⇒ 3). io_Error = 0.
-- L'état de l'analyseur (séquence ESC/CSI incomplète) **persiste d'une écriture à l'autre**.
-- Pendant toute l'écriture, la couche est verrouillée et le RastPort sauvé (§2.2).
-- À la fin, si le tampon d'entrée n'est pas vide (rapports produits par `6n` ou `SP q`) et qu'une
-  CMD_READ attend, elle est servie immédiatement.
-- Pas de traitement de NUL en mode longueur explicite : `$00` est un caractère de contrôle ignoré.
+- io_Data = bytes, io_Length = number of bytes, or **−1** ⇒ NUL-terminated string (io_Length is
+  then replaced by the length). io_Length = 0 ⇒ nothing is written (but a pending resize
+  is applied, §3.9). io_Actual = bytes consumed (probe: "xyz", −1 ⇒ 3). io_Error = 0.
+- The parser state (incomplete ESC/CSI sequence) **persists from one write to the next**.
+- During the whole write, the layer is locked and the RastPort saved (§2.2).
+- At the end, if the input buffer is not empty (reports produced by `6n` or `SP q`) and a
+  CMD_READ is waiting, it is served immediately.
+- No NUL handling in explicit-length mode: `$00` is an ignored control character.
 
-### 3.2 Automate (tous octets 8 bits) [O ROM+sonde]
+### 3.2 Automaton (all 8-bit bytes) [O ROM+probe]
 
-États : **normal**, **ESC** (après `$1B`), **ESC-intermédiaire**, **CSI-paramètres**, **CSI-intermédiaire**.
+States: **normal**, **ESC** (after `$1B`), **ESC-intermediate**, **CSI-parameters**, **CSI-intermediate**.
 
-| État | Octet | Effet |
+| State | Byte | Effect |
 |---|---|---|
-| normal | `$00–$1F` | contrôle C0 (§3.3) |
-| normal | `$20–$7F` | caractère imprimable (`$7F` aussi : glyphe de la police) |
-| normal | `$80–$9F` | contrôle C1 (§3.3) |
-| normal | `$A0–$FF` | caractère imprimable |
-| ESC | `$00–$1F`, `$80–$FF` | abandon d'ESC, l'octet est retraité en état normal (ESC ESC = nouvel ESC) |
-| ESC | `$20–$2F` | intermédiaire mémorisé ⇒ ESC-intermédiaire |
-| ESC | `$30–$3F` | **ignoré, on reste en état ESC** (ESC 7 B : le B est consommé comme `ESC B`) |
-| ESC | `$40–$5F` | équivaut au C1 `octet + $40` (ESC [ = CSI, ESC D = IND, ESC E = NEL, ESC H = HTS, ESC M = RI ; les autres sont ignorés) |
-| ESC | `$60–$7F` | seul **`c`** (RIS, §3.6) est reconnu ; les autres sont consommés sans effet |
-| ESC-interm. | `$20–$2F` | intermédiaire de plus (7 au plus mémorisés) |
-| ESC-interm. | `$30–$7E` | fin de séquence **ignorée** (ESC ( 0, ESC # 8… sans effet) |
-| CSI-param. | `0–9` | chiffre du paramètre courant (base 10) |
-| CSI-param. | `;` | paramètre suivant |
-| CSI-param. | `:` | ignoré |
-| CSI-param. | `<` `=` `>` `?` | le paramètre courant prend la valeur −1, −2, −3, −4 (les chiffres suivants s'ajoutent « en négatif » : `>1` = −31, `?7` = −47) |
-| CSI-param. | `$20–$2F` | intermédiaire ⇒ CSI-intermédiaire |
-| CSI-param. | `$40–$7E` | octet final ⇒ exécution (§3.5) |
-| CSI-param. | contrôle C0/C1 (dont CSI, ESC) | **abandon** de la séquence et retraitement de l'octet (CSI 2 LF ⇒ LF ; CSI 1 CSI 2C ⇒ CSI 2C) |
-| CSI-interm. | `$20–$2F` | intermédiaire de plus |
-| CSI-interm. | `$30–$3F` | abandon et retraitement (CSI ! 2 C D ⇒ affiche « 2CD ») |
-| CSI-interm. | `$40–$6F` | séquence **ignorée** |
-| CSI-interm. | `$70–$7E` | exécutée seulement si l'unique intermédiaire est l'espace (`SP p`, `SP q`, §3.5) ; sinon ignorée |
+| normal | `$00–$1F` | C0 control (§3.3) |
+| normal | `$20–$7F` | printable character (`$7F` too: glyph of the font) |
+| normal | `$80–$9F` | C1 control (§3.3) |
+| normal | `$A0–$FF` | printable character |
+| ESC | `$00–$1F`, `$80–$FF` | ESC abandoned, the byte is reprocessed in the normal state (ESC ESC = new ESC) |
+| ESC | `$20–$2F` | intermediate stored ⇒ ESC-intermediate |
+| ESC | `$30–$3F` | **ignored, stays in the ESC state** (ESC 7 B: the B is consumed as `ESC B`) |
+| ESC | `$40–$5F` | equivalent to the C1 `byte + $40` (ESC [ = CSI, ESC D = IND, ESC E = NEL, ESC H = HTS, ESC M = RI; the others are ignored) |
+| ESC | `$60–$7F` | only **`c`** (RIS, §3.6) is recognised; the others are consumed without effect |
+| ESC-interm. | `$20–$2F` | one more intermediate (at most 7 stored) |
+| ESC-interm. | `$30–$7E` | end of sequence **ignored** (ESC ( 0, ESC # 8… without effect) |
+| CSI-param. | `0–9` | digit of the current parameter (base 10) |
+| CSI-param. | `;` | next parameter |
+| CSI-param. | `:` | ignored |
+| CSI-param. | `<` `=` `>` `?` | the current parameter takes the value −1, −2, −3, −4 (the following digits are added "negatively": `>1` = −31, `?7` = −47) |
+| CSI-param. | `$20–$2F` | intermediate ⇒ CSI-intermediate |
+| CSI-param. | `$40–$7E` | final byte ⇒ execution (§3.5) |
+| CSI-param. | C0/C1 control (including CSI, ESC) | **abandon** of the sequence and reprocessing of the byte (CSI 2 LF ⇒ LF; CSI 1 CSI 2C ⇒ CSI 2C) |
+| CSI-interm. | `$20–$2F` | one more intermediate |
+| CSI-interm. | `$30–$3F` | abandon and reprocessing (CSI ! 2 C D ⇒ displays "2CD") |
+| CSI-interm. | `$40–$6F` | sequence **ignored** |
+| CSI-interm. | `$70–$7E` | executed only if the single intermediate is the space (`SP p`, `SP q`, §3.5); otherwise ignored |
 
-Paramètres : au plus **24** (les suivants sont perdus) ; un paramètre absent vaut « défaut » (valeur
-interne −5) ; valeurs sur 16 bits signés (débordement non contrôlé). Pour les commandes de mouvement,
-**défaut, 0 et négatif valent 1**. [O ROM ; sonde : CSI 0A = CSI A, CSI 65535C borné]
+Parameters: at most **24** (the following ones are lost); an absent parameter is "default" (internal
+value −5); 16-bit signed values (overflow not checked). For the movement commands,
+**default, 0 and negative are 1**. [O ROM; probe: CSI 0A = CSI A, CSI 65535C bounded]
 
-### 3.3 Contrôles C0 et C1 [O ROM+sonde]
+### 3.3 C0 and C1 controls [O ROM+probe]
 
-| Octet | Nom | Effet |
+| Byte | Name | Effect |
 |---|---|---|
-| `$07` | BEL | DisplayBeep(écran de la fenêtre) |
-| `$08` | BS | curseur à gauche de 1 (non destructif) ; en colonne 0 avec AWM : dernière colonne de la ligne précédente (en ligne 0 : ligne 0, colonne XMax, et défilement d'une ligne vers le bas si ASM — comme CUU ; ce dernier cas non sondé) ; sans AWM : rien |
-| `$09` | HT | taquet suivant (§3.4) |
-| `$0A` | LF | si LNM : comme NEL (`$85`) ; sinon comme IND (`$84`) |
-| `$0B` | VT | **ligne précédente** (= RI `$8D`), colonne inchangée |
-| `$0C` | FF | curseur en (0,0) et **effacement de toute la zone de texte** (couleur §3.7) |
-| `$0D` | CR | colonne 0 |
-| `$0E` | SO | jeu « décalé » : les caractères `$20–$7F` sont affichés comme `octet | $80` |
-| `$0F` | SI | retour au jeu normal |
-| `$1B` | ESC | début de séquence |
-| autres `$00–$1F` | — | ignorés (y compris NUL, `$1C`, `$1F`) |
-| `$84` | IND | ligne suivante, colonne inchangée ; en bas : défilement si ASM. **Absorbé** si le curseur vient d'être renvoyé à la ligne automatiquement (§3.8) |
-| `$85` | NEL | ligne suivante + colonne 0 ; absorbé (en entier) après un retour automatique |
-| `$88` | HTS | pose un taquet à la colonne courante |
-| `$8D` | RI | ligne précédente ; en haut : défilement inverse si ASM |
-| `$9B` | CSI | début de séquence de contrôle |
-| autres `$80–$9F` | — | ignorés |
+| `$07` | BEL | DisplayBeep(the window's screen) |
+| `$08` | BS | cursor left by 1 (non-destructive); in column 0 with AWM: last column of the previous line (on line 0: line 0, column XMax, and scroll down by one line if ASM — like CUU; this last case not probed); without AWM: nothing |
+| `$09` | HT | next tab stop (§3.4) |
+| `$0A` | LF | if LNM: like NEL (`$85`); otherwise like IND (`$84`) |
+| `$0B` | VT | **previous line** (= RI `$8D`), column unchanged |
+| `$0C` | FF | cursor at (0,0) and **clearing of the whole text area** (colour §3.7) |
+| `$0D` | CR | column 0 |
+| `$0E` | SO | "shifted" set: the characters `$20–$7F` are displayed as `byte | $80` |
+| `$0F` | SI | back to the normal set |
+| `$1B` | ESC | start of sequence |
+| other `$00–$1F` | — | ignored (including NUL, `$1C`, `$1F`) |
+| `$84` | IND | next line, column unchanged; at the bottom: scroll if ASM. **Absorbed** if the cursor has just been wrapped automatically (§3.8) |
+| `$85` | NEL | next line + column 0; absorbed (entirely) after an automatic wrap |
+| `$88` | HTS | sets a tab stop at the current column |
+| `$8D` | RI | previous line; at the top: reverse scroll if ASM |
+| `$9B` | CSI | start of control sequence |
+| other `$80–$9F` | — | ignored |
 
-### 3.4 Taquets [O ROM+sonde]
+### 3.4 Tab stops [O ROM+probe]
 
-- Défaut (ESC c, ouverture) : colonnes **0, 8, 16, …, 632** (80 taquets ; le 81e mot vaut `$FFFF`).
-- HT : va au premier taquet **strictement supérieur** à XCP. S'il dépasse XMax (ou s'il n'y en a plus) :
-  avec AWM, colonne 0 de la ligne suivante (défilement si nécessaire) et **retour automatique mémorisé**
-  (un LF/NEL immédiatement suivant est absorbé) ; sans AWM, colonne XMax.
-- HTS (`$88`, ESC H, `CSI W`/`CSI 0W`) : insère XCP dans la liste triée (pas de doublon ; si la liste
-  est pleine, le dernier taquet est perdu).
-- `CSI 2W` et `CSI g`/`CSI 0g` : retire le taquet de la colonne courante — **sauf en colonne 0** (le
-  taquet 0 est indélébile).
-- `CSI 5W`, `CSI 4W`, `CSI 3g` : efface tout ; il ne reste que le taquet 0 (liste = `0, $FFFF`).
-- `CSI W` et `CSI g` traitent chaque paramètre de la liste (`CSI 0;2W` …) ; les valeurs non listées
-  sont ignorées.
-- `CSI n I` (CHT) : n fois HT. `CSI n Z` (CBT) : n fois « taquet précédent » : premier taquet
-  strictement inférieur à XCP ; en colonne 0 avec AWM : remonte d'une ligne (défilement inverse si ASM)
-  et cherche depuis la fin de cette ligne ; en colonne 0 sans AWM : rien.
+- Default (ESC c, open): columns **0, 8, 16, …, 632** (80 tab stops; the 81st word is `$FFFF`).
+- HT: goes to the first tab stop **strictly greater** than XCP. If it exceeds XMax (or if there are no more):
+  with AWM, column 0 of the next line (scroll if necessary) and **automatic wrap stored**
+  (an immediately following LF/NEL is absorbed); without AWM, column XMax.
+- HTS (`$88`, ESC H, `CSI W`/`CSI 0W`): inserts XCP into the sorted list (no duplicate; if the list
+  is full, the last tab stop is lost).
+- `CSI 2W` and `CSI g`/`CSI 0g`: removes the tab stop of the current column — **except in column 0** (the
+  tab stop 0 is indelible).
+- `CSI 5W`, `CSI 4W`, `CSI 3g`: clears everything; only tab stop 0 remains (list = `0, $FFFF`).
+- `CSI W` and `CSI g` process each parameter of the list (`CSI 0;2W` …); unlisted values
+  are ignored.
+- `CSI n I` (CHT): n times HT. `CSI n Z` (CBT): n times "previous tab stop": first tab stop
+  strictly lower than XCP; in column 0 with AWM: goes up one line (reverse scroll if ASM)
+  and searches from the end of that line; in column 0 without AWM: nothing.
 
-### 3.5 Séquences CSI reconnues [O ROM+sonde]
+### 3.5 Recognised CSI sequences [O ROM+probe]
 
-Notation : `Pn` = paramètre (défaut/0/négatif ⇒ 1 pour les mouvements). Tout final absent du tableau
-est **ignoré** (dont `G`, `d`, `X`, `p` sans espace, `s`, `r`, `|`, `~`…). [O sonde : G, d, X, CSI 0p, CSI p]
+Notation: `Pn` = parameter (default/0/negative ⇒ 1 for movements). Any final absent from the table
+is **ignored** (including `G`, `d`, `X`, `p` without space, `s`, `r`, `|`, `~`…). [O probe: G, d, X, CSI 0p, CSI p]
 
-| Séquence | Nom | Effet exact V34 |
+| Sequence | Name | Exact V34 effect |
 |---|---|---|
-| `CSI Pn @` | ICH | insère Pn cellules vides à XCP (décalage à droite de la ligne courante jusqu'à XRExtant, ce qui sort est perdu) ; curseur fixe |
-| `CSI Pn A` | CUU | YCP −= Pn ; si < 0 : YCP = 0 et, **si ASM, défilement vers le bas** du déficit (CUU au-delà du haut fait apparaître des lignes vides) |
-| `CSI Pn B` | CUD | YCP += Pn ; si > YMax : YMax et, si ASM, défilement vers le haut de l'excédent |
-| `CSI Pn C` | CUF | XCP += Pn ; si > XMax : avec AWM, retour à la colonne 0 de la ligne suivante (défilement si besoin) et poursuite du reste, retour automatique mémorisé ; sans AWM : XMax |
-| `CSI Pn D` | CUB | XCP −= Pn ; si < 0 : avec AWM, dernière colonne de la ligne précédente et poursuite ; sans AWM : 0 |
-| `CSI Pn E` | CNL | Pn lignes vers le bas (comme CUD) puis colonne 0 ; **entièrement absorbé** juste après un retour automatique |
-| `CSI Pn F` | CPL | Pn lignes vers le haut (comme CUU) puis colonne 0 ; absorbé juste après un retour automatique |
-| `CSI Pl;Pc H`, `CSI Pl;Pc f` | CUP | ligne Pl, colonne Pc (base 1) ; défaut/0 ⇒ 1 ; **bornés** à YMax/XMax (pas de défilement) |
+| `CSI Pn @` | ICH | inserts Pn empty cells at XCP (shift right of the current line up to XRExtant, what goes out is lost); cursor fixed |
+| `CSI Pn A` | CUU | YCP −= Pn; if < 0: YCP = 0 and, **if ASM, scroll down** by the deficit (CUU beyond the top makes empty lines appear) |
+| `CSI Pn B` | CUD | YCP += Pn; if > YMax: YMax and, if ASM, scroll up by the excess |
+| `CSI Pn C` | CUF | XCP += Pn; if > XMax: with AWM, back to column 0 of the next line (scroll if needed) and continuation of the rest, automatic wrap stored; without AWM: XMax |
+| `CSI Pn D` | CUB | XCP −= Pn; if < 0: with AWM, last column of the previous line and continuation; without AWM: 0 |
+| `CSI Pn E` | CNL | Pn lines down (like CUD) then column 0; **entirely absorbed** just after an automatic wrap |
+| `CSI Pn F` | CPL | Pn lines up (like CUU) then column 0; absorbed just after an automatic wrap |
+| `CSI Pl;Pc H`, `CSI Pl;Pc f` | CUP | line Pl, column Pc (base 1); default/0 ⇒ 1; **bounded** to YMax/XMax (no scrolling) |
 | `CSI Pn I` | CHT | Pn tabulations |
-| `CSI J` | ED | efface du curseur à la fin de la ligne puis toutes les lignes suivantes de la zone ; **paramètre ignoré** (`1J`, `2J` = `J`) |
-| `CSI K` | EL | efface du curseur à la fin de la ligne ; **paramètre ignoré** (`1K`, `2K` = `K`) |
-| `CSI Pn L` | IL | insère Pn lignes vides à la ligne courante (le bas de la zone est perdu) ; curseur fixe |
-| `CSI Pn M` | DL | supprime Pn lignes à partir de la ligne courante, le bas se remplit de lignes vides |
-| `CSI Pn P` | DCH | supprime Pn caractères à XCP, la fin de ligne se décale à gauche, cellules vides à droite |
-| `CSI Pn S` | SU | défile toute la zone de Pn lignes vers le haut ; curseur fixe |
-| `CSI Pn T` | SD | défile toute la zone de Pn lignes vers le bas ; curseur fixe |
-| `CSI Ps;… W` | CTC | 0/défaut : HTS ; 2 : efface le taquet courant ; 4 ou 5 : efface tous (§3.4) |
-| `CSI Pn Z` | CBT | Pn tabulations arrière |
-| `CSI Ps;… g` | TBC | 0/défaut : efface le taquet courant ; 3 : efface tous |
-| `CSI Ps;… h` / `l` | SM / RM | pose / efface le bit Ps de cu_Modes pour 0 ≤ Ps ≤ 20 ; `>1` (−31) ⇒ bit 21 **ASM** ; `?7` (−47) ⇒ bit 22 **AWM** ; autres valeurs ignorées. Seuls 20/21/22 ont un effet |
+| `CSI J` | ED | clears from the cursor to the end of the line then all the following lines of the area; **parameter ignored** (`1J`, `2J` = `J`) |
+| `CSI K` | EL | clears from the cursor to the end of the line; **parameter ignored** (`1K`, `2K` = `K`) |
+| `CSI Pn L` | IL | inserts Pn empty lines at the current line (the bottom of the area is lost); cursor fixed |
+| `CSI Pn M` | DL | deletes Pn lines starting from the current line, the bottom fills with empty lines |
+| `CSI Pn P` | DCH | deletes Pn characters at XCP, the end of the line shifts left, empty cells on the right |
+| `CSI Pn S` | SU | scrolls the whole area up by Pn lines; cursor fixed |
+| `CSI Pn T` | SD | scrolls the whole area down by Pn lines; cursor fixed |
+| `CSI Ps;… W` | CTC | 0/default: HTS; 2: clears the current tab stop; 4 or 5: clears all (§3.4) |
+| `CSI Pn Z` | CBT | Pn backward tabulations |
+| `CSI Ps;… g` | TBC | 0/default: clears the current tab stop; 3: clears all |
+| `CSI Ps;… h` / `l` | SM / RM | sets / clears bit Ps of cu_Modes for 0 ≤ Ps ≤ 20; `>1` (−31) ⇒ bit 21 **ASM**; `?7` (−47) ⇒ bit 22 **AWM**; other values ignored. Only 20/21/22 have an effect |
 | `CSI Ps;… m` | SGR | §3.7 |
-| `CSI 6n` | DSR | met `CSI <YCP+1>;<XCP+1>R` dans le tampon d'entrée (premier paramètre seul examiné : `6;6n` répond, `5n` et `n` non) |
-| `CSI Pn t` | — | Pn > 0 : longueur de page fixée, **YMax = Pn−1** ; défaut/≤ 0 : retour au calcul automatique |
-| `CSI Pn u` | — | Pn > 0 : longueur de ligne fixée, **XMax = Pn−1** ; défaut/≤ 0 : automatique |
-| `CSI Pn x` | — | Pn ≥ 0 : **XROrigin = Pn pixels** (depuis le bord gauche de la fenêtre, bordure comprise) ; défaut : automatique |
-| `CSI Pn y` | — | Pn ≥ 0 : **YROrigin = Pn pixels** ; défaut : automatique |
-| `CSI Ps;… {` | — | pose le bit de rapport brut de chaque classe Ps (0 ≤ Ps ≤ 18 ; autres ignorées) |
-| `CSI Ps;… }` | — | efface ces bits |
-| `CSI 0 SP p` | — | **curseur invisible** (le bloc est effacé) |
-| `CSI SP p`, `CSI Pn SP p` (Pn ≠ 0) | — | curseur visible |
-| `CSI SP q`, `CSI Pn SP q` | — | met `CSI 1;1;<YMax+1>;<XMax+1> r` dans le tampon d'entrée (rapport de bornes de fenêtre ; paramètre ignoré) |
+| `CSI 6n` | DSR | puts `CSI <YCP+1>;<XCP+1>R` into the input buffer (only the first parameter is examined: `6;6n` replies, `5n` and `n` do not) |
+| `CSI Pn t` | — | Pn > 0: fixed page length, **YMax = Pn−1**; default/≤ 0: back to automatic computation |
+| `CSI Pn u` | — | Pn > 0: fixed line length, **XMax = Pn−1**; default/≤ 0: automatic |
+| `CSI Pn x` | — | Pn ≥ 0: **XROrigin = Pn pixels** (from the left edge of the window, border included); default: automatic |
+| `CSI Pn y` | — | Pn ≥ 0: **YROrigin = Pn pixels**; default: automatic |
+| `CSI Ps;… {` | — | sets the raw-report bit of each class Ps (0 ≤ Ps ≤ 18; others ignored) |
+| `CSI Ps;… }` | — | clears these bits |
+| `CSI 0 SP p` | — | **cursor invisible** (the block is erased) |
+| `CSI SP p`, `CSI Pn SP p` (Pn ≠ 0) | — | cursor visible |
+| `CSI SP q`, `CSI Pn SP q` | — | puts `CSI 1;1;<YMax+1>;<XMax+1> r` into the input buffer (window bounds report; parameter ignored) |
 
-Après `t`, `u`, `x`, `y`, la géométrie est recalculée immédiatement (§3.9).
+After `t`, `u`, `x`, `y`, the geometry is recomputed immediately (§3.9).
 
-### 3.6 RIS — `ESC c` [O ROM+sonde]
+### 3.6 RIS — `ESC c` [O ROM+probe]
 
-Dans l'ordre visible : curseur masqué ; taquets par défaut ; jeu normal (SI) ; analyseur remis à zéro ;
-XCP = YCP = 0 ; cu_XCCP/YCCP = 0 ; longueur de page/ligne et origines redeviennent automatiques ;
-curseur **visible** ; cu_Modes = 0 puis **LNM, ASM, AWM posés** (`00 00 70`) ; police, style
-algorithmique, TxHeight/TxWidth/TxBaseline/TxSpacing **restaurés** depuis ceux mémorisés à
-l'OpenDevice ; XRSize = TxWidth + TxSpacing, YRSize = TxHeight ; SGR 0 ; recalcul de la géométrie
-avec « plus petite taille vue » = 0, ce qui **efface toute la zone** (y compris la marge partielle à
-droite/en bas) **si la fenêtre est SMART_REFRESH** ; rien n'est effacé pour SIMPLE_REFRESH ou
-SUPER_BITMAP (§8.7) ; curseur dessiné en (0,0). cu_RawEvents n'est **pas** remis à zéro.
+In visible order: cursor hidden; default tab stops; normal set (SI); parser reset;
+XCP = YCP = 0; cu_XCCP/YCCP = 0; page/line length and origins become automatic again;
+cursor **visible**; cu_Modes = 0 then **LNM, ASM, AWM set** (`00 00 70`); font, algorithmic
+style, TxHeight/TxWidth/TxBaseline/TxSpacing **restored** from those stored at
+OpenDevice; XRSize = TxWidth + TxSpacing, YRSize = TxHeight; SGR 0; recomputation of the geometry
+with "smallest size seen" = 0, which **clears the whole area** (including the partial margin on the
+right/at the bottom) **if the window is SMART_REFRESH**; nothing is cleared for SIMPLE_REFRESH or
+SUPER_BITMAP (§8.7); cursor drawn at (0,0). cu_RawEvents is **not** reset.
 
-### 3.7 SGR (`CSI Ps;… m`) [O ROM+sonde]
+### 3.7 SGR (`CSI Ps;… m`) [O ROM+probe]
 
-Chaque paramètre est traité dans l'ordre ; défaut/négatif ⇒ 0 ; valeurs > 49 ignorées.
+Each parameter is processed in order; default/negative ⇒ 0; values > 49 ignored.
 
-| Ps | Effet sur le RastPort de la console |
+| Ps | Effect on the console's RastPort |
 |---:|---|
-| 0 | Mask = `$FF`, DrawMode = JAM2, SetSoftStyle(0, masque 7) (gras/italique/souligné retirés), APen = 1, BPen = 0 |
-| 1 | gras algorithmique (FSF_BOLD) |
-| 2 | **APen = 2** (« faible » = couleur 2, pas un style) |
-| 3 | italique algorithmique (FSF_ITALIC) |
-| 4 | souligné (FSF_UNDERLINED) |
+| 0 | Mask = `$FF`, DrawMode = JAM2, SetSoftStyle(0, mask 7) (bold/italic/underline removed), APen = 1, BPen = 0 |
+| 1 | algorithmic bold (FSF_BOLD) |
+| 2 | **APen = 2** ("faint" = colour 2, not a style) |
+| 3 | algorithmic italic (FSF_ITALIC) |
+| 4 | underline (FSF_UNDERLINED) |
 | 7 | DrawMode = JAM2 \| INVERSVID (5) |
-| 8 | **Mask = 0** (« caché » : plus rien n'est dessiné, ni texte ni effacements ; voir piège ci-dessous) |
+| 8 | **Mask = 0** ("concealed": nothing is drawn any more, neither text nor clears; see the pitfall below) |
 | 30–37 | APen = Ps − 30 |
 | 39 | APen = 1 |
 | 40–47 | BPen = Ps − 40 |
 | 49 | BPen = 0 |
-| 5, 6, 9–29 (dont 22, 23, 24, 27), 38, 48 | **sans effet** (aucune annulation individuelle en V34) |
+| 5, 6, 9–29 (including 22, 23, 24, 27), 38, 48 | **no effect** (no individual cancellation in V34) |
 
-- Plume ≥ nombre de couleurs : masquée par la profondeur (sonde : 34 ⇒ couleur 0, 37 ⇒ couleur 3).
-- **Couleur d'effacement** (FF, ED, EL, ESC c, marge de redimensionnement) : **BPen si DrawMode vaut
-  exactement JAM2**, sinon couleur 0 (en inverse, EL efface en 0). ICH/DCH/IL/DL/SU/SD et le défilement
-  automatique passent par ScrollRaster, qui remplit avec **BPen** quel que soit le mode. [O sonde]
-- Piège SGR 8 : le bloc curseur est dessiné/effacé en complément **avec le Mask courant** ; avec Mask 0
-  l'effacement du curseur n'a pas lieu et le bloc reste à l'écran à l'ancienne position. [O sonde]
+- Pen ≥ number of colours: masked by the depth (probe: 34 ⇒ colour 0, 37 ⇒ colour 3).
+- **Clearing colour** (FF, ED, EL, ESC c, resize margin): **BPen if DrawMode is
+  exactly JAM2**, otherwise colour 0 (in inverse, EL clears in 0). ICH/DCH/IL/DL/SU/SD and automatic
+  scrolling go through ScrollRaster, which fills with **BPen** whatever the mode. [O probe]
+- SGR 8 pitfall: the cursor block is drawn/erased in complement **with the current Mask**; with Mask 0
+  the cursor erase does not take place and the block stays on screen at the old position. [O probe]
 
-### 3.8 Écriture des caractères, retour automatique, défilement [O ROM+sonde]
+### 3.8 Writing characters, automatic wrap, scrolling [O ROM+probe]
 
-- Les octets imprimables consécutifs sont affichés par **Text()** en une fois, par tranche limitée à
-  la fin de ligne (XMax − XCP + 1), à la position pixel (XROrigin + XCP × XRSize, YROrigin + YCP × YRSize
-  + TxBaseline). En mode SO, un caractère à la fois (octet | `$80`).
-- Après chaque tranche, curseur avancé comme `CSI Pn C` : **si AWM**, le caractère écrit en dernière
-  colonne renvoie **immédiatement** le curseur en colonne 0 de la ligne suivante (défilement si on
-  était en bas et ASM) et **mémorise** ce « retour automatique » ; sinon le curseur reste sur XMax et
-  les caractères suivants **réécrivent la dernière colonne**.
-- Le marqueur de retour automatique est effacé dès que le curseur change de cellule. Tant qu'il est
-  posé, **LF, IND, NEL, CNL et CPL sont absorbés** (une ligne de exactement XMax+1 caractères suivie de
-  LF ne laisse pas de ligne vide). CR ne déplace rien (déjà en colonne 0) et ne l'efface pas, donc
-  « ligne pleine + CR LF » n'avance aussi que d'une ligne. [O ROM ; sonde §8.3]
-- En bas (YCP = YMax), un passage à la ligne **avec ASM** défile toute la zone d'une ligne vers le haut
-  (ScrollRaster sur XROrigin..XRExtant × YROrigin..YRExtant, remplissage BPen) ; **sans ASM** le
-  curseur reste sur la dernière ligne qui est réécrite.
-- Le défilement est limité à la page définie par `t`/`u` (sonde : page 20 × 5, le défilement ne touche
-  que ces 20 colonnes × 5 lignes).
+- Consecutive printable bytes are displayed by **Text()** in one go, in slices limited to
+  the end of the line (XMax − XCP + 1), at the pixel position (XROrigin + XCP × XRSize, YROrigin + YCP × YRSize
+  + TxBaseline). In SO mode, one character at a time (byte | `$80`).
+- After each slice, cursor advanced like `CSI Pn C`: **if AWM**, the character written in the last
+  column **immediately** sends the cursor back to column 0 of the next line (scroll if we
+  were at the bottom and ASM) and **stores** this "automatic wrap"; otherwise the cursor stays on XMax and
+  the following characters **overwrite the last column**.
+- The automatic-wrap marker is cleared as soon as the cursor changes cell. As long as it is
+  set, **LF, IND, NEL, CNL and CPL are absorbed** (a line of exactly XMax+1 characters followed by
+  LF leaves no empty line). CR moves nothing (already in column 0) and does not clear it, so
+  "full line + CR LF" also only advances by one line. [O ROM; probe §8.3]
+- At the bottom (YCP = YMax), a line feed **with ASM** scrolls the whole area up by one line
+  (ScrollRaster over XROrigin..XRExtant × YROrigin..YRExtant, BPen fill); **without ASM** the
+  cursor stays on the last line which is overwritten.
+- Scrolling is limited to the page defined by `t`/`u` (probe: page 20 × 5, scrolling only touches
+  those 20 columns × 5 lines).
 
-### 3.9 Géométrie et redimensionnement [O ROM+sonde]
+### 3.9 Geometry and resizing [O ROM+probe]
 
-Recalcul (à l'ouverture, ESC c, `t u x y`, et au début de la première écriture après un
-IECLASS_SIZEWINDOW) :
+Recomputation (at open, ESC c, `t u x y`, and at the start of the first write after an
+IECLASS_SIZEWINDOW):
 
-- Fenêtre **non GIMMEZEROZERO** : XROrigin = BorderLeft (sauf `x`), YROrigin = BorderTop (sauf `y`) ;
-  largeur utile = Width − XROrigin − BorderRight ; hauteur utile = Height − YROrigin − BorderBottom.
-- Fenêtre **GIMMEZEROZERO** : XROrigin = 0 et YROrigin = 0 (sauf `x`/`y`) ; largeur utile = Width −
-  BorderLeft − BorderRight − XROrigin ; hauteur utile = Height − BorderTop − BorderBottom − **XROrigin**
-  (V34 retranche l'origine **horizontale** de la hauteur : bogue visible seulement après `CSI Pn x`). [O ROM ; sonde §8.7]
-- XMax = largeur utile / XRSize − 1 (sauf `u`) ; YMax = hauteur utile / YRSize − 1 (sauf `t`) ;
-  XRExtant = (XMax+1) × XRSize − 1 + XROrigin ; YRExtant = (YMax+1) × YRSize − 1 + YROrigin.
-- Fenêtre SMART_REFRESH uniquement : si la fenêtre a grandi, effacement (couleur §3.7) de la bande à
-  droite des colonnes entières qui existaient à la plus petite taille vue, et de la bande sous les lignes
-  entières correspondantes (élimine les demi-caractères révélés).
-- Curseur : s'il était dans la partie conservée il est effacé normalement, sinon il est considéré comme
-  disparu. Puis (sauf SUPER_BITMAP) : XCP > XMax ⇒ colonne 0 de la ligne suivante ; YCP > YMax ⇒
-  YCP = YMax, colonne 0 et **défilement d'une seule ligne** (pas de recentrage) ; curseur redessiné.
-- La console apprend le redimensionnement par l'événement **IECLASS_SIZEWINDOW** que lui transmet la
-  chaîne d'input.device : il est appliqué à l'**unité active**, quelle que soit la fenêtre redimensionnée
-  (pour une console non active, le recalcul n'a pas lieu avant le prochain `ESC c`/`t u x y`). Le
-  recalcul effectif est différé au **début de la prochaine CMD_WRITE** (même de longueur 0). [O ROM ; D pour l'effet sur une fenêtre inactive ; sonde §8.5]
-- Aucune autre réaction au rafraîchissement : IECLASS_REFRESHWINDOW n'est utilisé que pour le rapport
-  brut ; une fenêtre SIMPLE_REFRESH masquée puis révélée perd son texte. [O ROM]
+- **Non-GIMMEZEROZERO** window: XROrigin = BorderLeft (unless `x`), YROrigin = BorderTop (unless `y`);
+  useful width = Width − XROrigin − BorderRight; useful height = Height − YROrigin − BorderBottom.
+- **GIMMEZEROZERO** window: XROrigin = 0 and YROrigin = 0 (unless `x`/`y`); useful width = Width −
+  BorderLeft − BorderRight − XROrigin; useful height = Height − BorderTop − BorderBottom − **XROrigin**
+  (V34 subtracts the **horizontal** origin from the height: bug visible only after `CSI Pn x`). [O ROM; probe §8.7]
+- XMax = useful width / XRSize − 1 (unless `u`); YMax = useful height / YRSize − 1 (unless `t`);
+  XRExtant = (XMax+1) × XRSize − 1 + XROrigin; YRExtant = (YMax+1) × YRSize − 1 + YROrigin.
+- SMART_REFRESH window only: if the window has grown, clearing (colour §3.7) of the band to the
+  right of the whole columns that existed at the smallest size seen, and of the band below the corresponding
+  whole lines (removes the half-characters revealed).
+- Cursor: if it was in the kept part it is erased normally, otherwise it is considered
+  gone. Then (except SUPER_BITMAP): XCP > XMax ⇒ column 0 of the next line; YCP > YMax ⇒
+  YCP = YMax, column 0 and **scroll of a single line** (no recentring); cursor redrawn.
+- The console learns of the resize through the **IECLASS_SIZEWINDOW** event passed to it by
+  input.device's chain: it is applied to the **active unit**, whatever window was resized
+  (for a non-active console, the recomputation does not take place before the next `ESC c`/`t u x y`). The
+  actual recomputation is deferred to the **start of the next CMD_WRITE** (even of length 0). [O ROM; D for the effect on an inactive window; probe §8.5]
+- No other reaction to refresh: IECLASS_REFRESHWINDOW is only used for the raw
+  report; a SIMPLE_REFRESH window hidden then revealed loses its text. [O ROM]
 
-### 3.10 Curseur [O ROM+sonde]
+### 3.10 Cursor [O ROM+probe]
 
-Bloc plein d'une cellule (XRSize × YRSize) dessiné par **RectFill en mode COMPLEMENT** (couleur 0 ⇒ 3
-sur 2 plans : le curseur 1.3 orange), à (cu_XCCP, cu_YCCP). Masqué pendant toute opération de dessin,
-réaffiché à la position XCP/YCP à la fin. Visible par défaut ; `CSI 0 SP p` le cache. Il n'y a pas de
-curseur « fantôme » quand la fenêtre est inactive (même dessin quel que soit l'état d'activation). [O ROM]
+Solid one-cell block (XRSize × YRSize) drawn by **RectFill in COMPLEMENT mode** (colour 0 ⇒ 3
+on 2 planes: the orange 1.3 cursor), at (cu_XCCP, cu_YCCP). Hidden during any drawing operation,
+redisplayed at the XCP/YCP position at the end. Visible by default; `CSI 0 SP p` hides it. There is no
+"ghost" cursor when the window is inactive (same drawing whatever the activation state). [O ROM]
 
 ---
 
-## 4. Rapports insérés dans le flux d'entrée [O ROM+sonde]
+## 4. Reports inserted into the input stream [O ROM+probe]
 
-Formats (décimal ASCII, `CSI` = octet `$9B`) :
+Formats (ASCII decimal, `CSI` = byte `$9B`):
 
-| Origine | Format |
+| Origin | Format |
 |---|---|
-| `CSI 6n` | `CSI` *ligne* `;` *colonne* `R` (base 1 ; sonde après « xyz » en ligne 1 colonne 9 : `9B 31 3B 39 52`) |
-| `CSI SP q` | `CSI 1;1;` *lignes* `;` *colonnes* ` r` (espace avant `r` ; sonde : `CSI 1;1;20;61 r`) |
-| événement brut | `CSI` *classe* `;` *sous-classe* `;` *code* `;` *qualificatif* `;` *x* `;` *y* `;` *secondes* `;` *microsecondes* `|` |
+| `CSI 6n` | `CSI` *line* `;` *column* `R` (base 1; probe after "xyz" on line 1 column 9: `9B 31 3B 39 52`) |
+| `CSI SP q` | `CSI 1;1;` *lines* `;` *columns* ` r` (space before `r`; probe: `CSI 1;1;20;61 r`) |
+| raw event | `CSI` *class* `;` *subclass* `;` *code* `;` *qualifier* `;` *x* `;` *y* `;` *seconds* `;` *microseconds* `|` |
 
-Rapport brut : un par événement de la classe activée par `CSI n{`, pour l'unité active (ou toutes les
-unités si le qualificatif porte IEQUALIFIER_MULTIBROADCAST `$0800`) ; x et y = ie_X/ie_Y **non signés**
-(pour RAWKEY : codes/qualificatifs des touches précédentes) ; secondes et microsecondes avec le bit 31
-forcé à 0. Un événement rapporté en brut n'est **pas** cuit en plus. Les octets passent par le même
-tampon de 255 octets que les touches ; s'il est plein, la fin du rapport est **tronquée** (octet par
-octet), alors qu'une traduction de touche qui ne tient pas est **écartée entière**.
+Raw report: one per event of the class enabled by `CSI n{`, for the active unit (or all the
+units if the qualifier carries IEQUALIFIER_MULTIBROADCAST `$0800`); x and y = ie_X/ie_Y **unsigned**
+(for RAWKEY: codes/qualifiers of the previous keys); seconds and microseconds with bit 31
+forced to 0. An event reported raw is **not** cooked as well. The bytes go through the same
+255-byte buffer as the keys; if it is full, the end of the report is **truncated** (byte by
+byte), whereas a key translation that does not fit is **discarded entirely**.
 
 ---
 
 ## 5. Keymaps
 
-### 5.1 Types (octet de km_*KeyMapTypes) [O ROM ; ABI publique]
+### 5.1 Types (byte of km_*KeyMapTypes) [O ROM; public ABI]
 
 `KCF_SHIFT 1`, `KCF_ALT 2`, `KCF_CONTROL 4`, `KCF_DOWNUP 8`, `KCF_DEAD $20`, `KCF_STRING $40`,
-`KCF_NOP $80`, `KC_VANILLA 7`. Index de combinaison : on parcourt les bits 0 à 3 du type (SHIFT, ALT,
-CONTROL, DOWNUP) ; chaque bit présent dans le type vaut 1, 2, 4… dans l'ordre de rencontre, et compte
-s'il est aussi présent dans l'état courant. Nombre de combinaisons = 2^(bits présents).
+`KCF_NOP $80`, `KC_VANILLA 7`. Combination index: bits 0 to 3 of the type are walked (SHIFT, ALT,
+CONTROL, DOWNUP); each bit present in the type is worth 1, 2, 4… in the order encountered, and counts
+if it is also present in the current state. Number of combinations = 2^(bits present).
 
-### 5.2 Traduction d'un code (RawKeyConvert) [O ROM ; modèle validé par sonde §6]
+### 5.2 Translation of a code (RawKeyConvert) [O ROM; model validated by probe §6]
 
-Pour un événement RAWKEY (code `c`, qualificatif `q`) :
+For a RAWKEY event (code `c`, qualifier `q`):
 
-1. code = `c & $7F` ; > `$77` ⇒ 0 octet. Tables Lo si < `$40`, sinon Hi.
-2. `q & $0200` (IEQUALIFIER_REPEAT) et touche non « Repeatable » ⇒ 0 octet.
-3. type `KCF_NOP` ⇒ 0 octet.
-4. Relâchement (`c & $80`) : 0 octet si le type n'a pas KCF_DOWNUP ; sinon le bit DOWNUP compte.
-5. État : Maj si `q & 3` (LSHIFT|RSHIFT) ; Alt si `q & $30` (LALT|RALT) ; **Caps Lock (`q & 4`) sur une
-   touche Capsable ⇒ Maj** (Caps + Maj = Maj, pas d'inversion) ; Ctrl si `q & 8`. Les touches Amiga
-   (`$40/$80`) et le pavé (`$100`) sont sans effet.
-6. Selon le type :
-   - **STRING** : le long est un pointeur vers des paires (longueur, décalage) — une par combinaison —
-     le décalage étant relatif au début du descripteur ; longueur > place restante ⇒ **−1**.
-   - **DEAD** : le long pointe vers des paires (drapeau, valeur), une par combinaison :
-     drapeau 0 ⇒ valeur = l'octet rendu ; drapeau `DPF_DEAD` (8) ⇒ touche morte : **0 octet** (même avec
-     un tampon de longueur 0), sa valeur = indice de la morte ; drapeau `DPF_MOD` (1) ⇒ touche
-     modifiable : valeur = décalage d'une table de traduction ; l'octet rendu est `table[k]`, où k =
-     indice de morte de la **touche précédente** (ie_Prev1DownCode/Qual = octets de ie_X) si elle était
-     morte, sinon 0. Si l'indice de la précédente a un quartet haut non nul (double morte), k =
-     (haut × bas) + indice bas de la touche d'avant (ie_Prev2DownCode/Qual = octets de ie_Y) ; la keymap
-     « usa » n'utilise que des indices 1 à 5, donc une seule morte compte.
-   - **VANILLA (7)** sans Ctrl : octet n° (index) du long en partant de l'octet de **poids faible** (0 =
-     sans qualificatif, 1 = Maj, 2 = Alt, 3 = Maj+Alt).
-   - **VANILLA avec Ctrl** : on part de l'octet sélectionné par Maj/Alt et on cherche, en tournant vers
-     les octets de poids plus fort (4 au plus, en rebouclant), le premier octet de la forme `%01xxxxxx`
-     (`$40–$7F`) ; résultat = cet octet **& `$1F`**. Aucun ⇒ l'octet sélectionné tel quel. (Ctrl-2 ⇒
-     `$00` via « @ », Ctrl-6 ⇒ `$1E`, Ctrl-Alt-q ⇒ `$11`.)
-   - **Autre type sans STRING/DEAD** : ≤ 4 combinaisons ⇒ octet n° index du long (poids faible = 0) ;
-     plus de 4 (type avec DOWNUP et 2 qualificatifs ou plus, hors VANILLA) ⇒ le long est un pointeur vers
-     un tableau d'octets indexé.
-7. Place restante 0 pour un résultat d'un octet ⇒ **−1**.
+1. code = `c & $7F`; > `$77` ⇒ 0 bytes. Lo tables if < `$40`, otherwise Hi.
+2. `q & $0200` (IEQUALIFIER_REPEAT) and key not "Repeatable" ⇒ 0 bytes.
+3. type `KCF_NOP` ⇒ 0 bytes.
+4. Release (`c & $80`): 0 bytes if the type does not have KCF_DOWNUP; otherwise the DOWNUP bit counts.
+5. State: Shift if `q & 3` (LSHIFT|RSHIFT); Alt if `q & $30` (LALT|RALT); **Caps Lock (`q & 4`) on a
+   Capsable key ⇒ Shift** (Caps + Shift = Shift, no inversion); Ctrl if `q & 8`. The Amiga keys
+   (`$40/$80`) and the keypad (`$100`) have no effect.
+6. Depending on the type:
+   - **STRING**: the long is a pointer to pairs (length, offset) — one per combination —
+     the offset being relative to the start of the descriptor; length > remaining room ⇒ **−1**.
+   - **DEAD**: the long points to pairs (flag, value), one per combination:
+     flag 0 ⇒ value = the byte returned; flag `DPF_DEAD` (8) ⇒ dead key: **0 bytes** (even with
+     a buffer of length 0), its value = index of the dead key; flag `DPF_MOD` (1) ⇒ modifiable
+     key: value = offset of a translation table; the byte returned is `table[k]`, where k =
+     dead-key index of the **previous key** (ie_Prev1DownCode/Qual = bytes of ie_X) if it was
+     dead, otherwise 0. If the index of the previous one has a non-zero high nibble (double dead key), k =
+     (high × low) + low index of the key before that (ie_Prev2DownCode/Qual = bytes of ie_Y); the
+     "usa" keymap only uses indices 1 to 5, so only one dead key counts.
+   - **VANILLA (7)** without Ctrl: byte no. (index) of the long starting from the **least significant**
+     byte (0 = no qualifier, 1 = Shift, 2 = Alt, 3 = Shift+Alt).
+   - **VANILLA with Ctrl**: start from the byte selected by Shift/Alt and search, rotating towards
+     the more significant bytes (at most 4, wrapping around), for the first byte of the form `%01xxxxxx`
+     (`$40–$7F`); result = that byte **& `$1F`**. None ⇒ the selected byte as is. (Ctrl-2 ⇒
+     `$00` via "@", Ctrl-6 ⇒ `$1E`, Ctrl-Alt-q ⇒ `$11`.)
+   - **Other type without STRING/DEAD**: ≤ 4 combinations ⇒ byte no. index of the long (least significant = 0);
+     more than 4 (type with DOWNUP and 2 or more qualifiers, outside VANILLA) ⇒ the long is a pointer to
+     an indexed byte array.
+7. Remaining room 0 for a one-byte result ⇒ **−1**.
 
-### 5.3 Fonction RawKeyConvert (console LVO −48) [O ROM+sonde]
+### 5.3 RawKeyConvert function (console LVO −48) [O ROM+probe]
 
-`actual = RawKeyConvert(events A0, buffer A1, length D1, keyMap A2)`, A6 = base du console.device
-(obtenue par OpenDevice unité −1).
+`actual = RawKeyConvert(events A0, buffer A1, length D1, keyMap A2)`, A6 = console.device base
+(obtained by OpenDevice unit −1).
 
-- keyMap = NULL ⇒ **keymap par défaut courante du device** (celle que CD_SETDEFAULTKEYMAP remplace).
-- Parcourt **toute la chaîne** ie_NextEvent ; seuls les événements de classe 1 (RAWKEY) produisent des
-  octets, concaténés ; length décroît d'un événement à l'autre.
-- Rend le total (mot, partie haute nulle), ou **−1 (long) dès qu'un résultat ne tient pas** (le début
-  déjà écrit reste dans le tampon). Sonde : chaîne « a », « Maj b » ⇒ 2 octets `61 42` ; même chaîne en
-  longueur 1 ⇒ −1 ; premier événement RAWMOUSE ⇒ seul `42` (1).
-- Ne lit ni ne modifie aucun état global : les touches mortes reposent uniquement sur ie_X/ie_Y de
-  l'événement.
+- keyMap = NULL ⇒ **the device's current default keymap** (the one that CD_SETDEFAULTKEYMAP replaces).
+- Walks **the whole** ie_NextEvent **chain**; only events of class 1 (RAWKEY) produce
+  bytes, concatenated; length decreases from one event to the next.
+- Returns the total (word, high part zero), or **−1 (long) as soon as a result does not fit** (the start
+  already written stays in the buffer). Probe: chain "a", "Shift b" ⇒ 2 bytes `61 42`; same chain with
+  length 1 ⇒ −1; first event RAWMOUSE ⇒ only `42` (1).
+- Neither reads nor modifies any global state: dead keys rely solely on ie_X/ie_Y of
+  the event.
 
-### 5.4 Commandes de keymap [O ROM+sonde]
+### 5.4 Keymap commands [O ROM+probe]
 
-- io_Length doit valoir **exactement 32** ; sinon io_Error = **−4** (IOERR_BADLENGTH), rien n'est copié,
-  io_Actual inchangé. Succès : io_Actual = 32.
-- **CD_ASKKEYMAP** (9) : copie la KeyMap de l'unité (`cu_KeyMapStruct`) vers io_Data.
-- **CD_SETKEYMAP** (10) : copie io_Data vers la KeyMap de l'unité (effet immédiat sur les touches de
-  cette unité).
-- **CD_ASKDEFAULTKEYMAP** (11) : copie la keymap par défaut du device vers io_Data.
-- **CD_SETDEFAULTKEYMAP** (12) : copie io_Data vers la keymap par défaut du device. Effets : (a)
-  RawKeyConvert(…, NULL) l'utilise aussitôt ; (b) les unités **ouvertes ensuite** la reçoivent ; (c) les
-  unités **déjà ouvertes ne changent pas** ; (d) keymap.resource **n'est pas modifiée**.
-- Seuls les 8 pointeurs sont copiés (sous Forbid) : les tables doivent rester en mémoire tant qu'elles
-  servent (cas de `SetMap`, qui les charge en RAM).
-- Sonde : SETDEFAULT d'une copie où le long de `$21` (s) vaut `$5A7A5A7A` ⇒ RawKeyConvert(s, NULL) = `z` ;
-  ASKKEYMAP de l'unité existante = pointeurs ROM ; nouvelle unité ⇒ pointeur modifié ; restauration ⇒ `s`.
+- io_Length must be **exactly 32**; otherwise io_Error = **−4** (IOERR_BADLENGTH), nothing is copied,
+  io_Actual unchanged. Success: io_Actual = 32.
+- **CD_ASKKEYMAP** (9): copies the unit's KeyMap (`cu_KeyMapStruct`) to io_Data.
+- **CD_SETKEYMAP** (10): copies io_Data to the unit's KeyMap (immediate effect on the keys of
+  that unit).
+- **CD_ASKDEFAULTKEYMAP** (11): copies the device's default keymap to io_Data.
+- **CD_SETDEFAULTKEYMAP** (12): copies io_Data to the device's default keymap. Effects: (a)
+  RawKeyConvert(…, NULL) uses it at once; (b) the units **opened afterwards** receive it; (c) the
+  units **already open do not change**; (d) keymap.resource **is not modified**.
+- Only the 8 pointers are copied (under Forbid): the tables must stay in memory as long as they
+  are used (case of `SetMap`, which loads them into RAM).
+- Probe: SETDEFAULT of a copy where the long of `$21` (s) is `$5A7A5A7A` ⇒ RawKeyConvert(s, NULL) = `z`;
+  ASKKEYMAP of the existing unit = ROM pointers; new unit ⇒ modified pointer; restoration ⇒ `s`.
 
-### 5.5 Keymap « usa » de la ROM : tables brutes [O ROM+sonde]
+### 5.5 ROM "usa" keymap: raw tables [O ROM+probe]
 
-- Capsable Lo (8 octets) : `00 00 FF 03 FF 01 FE 00` ⇒ `$10–$19`, `$20–$28`, `$31–$37` ; Hi : tout à 0.
-- Repeatable Lo : `FF BF FF EF FF EF FF F7` ⇒ tous sauf `$0E`, `$1C`, `$2C`, `$3B` ;
-  Hi : `47 F4 FF 03 00 00 00` ⇒ `$40 $41 $42 $46 $4A $4C–$4F $50–$59` (**Return, Enter, Esc, Help et
-  les modificateurs ne se répètent pas**).
+- Capsable Lo (8 bytes): `00 00 FF 03 FF 01 FE 00` ⇒ `$10–$19`, `$20–$28`, `$31–$37`; Hi: all 0.
+- Repeatable Lo: `FF BF FF EF FF EF FF F7` ⇒ all except `$0E`, `$1C`, `$2C`, `$3B`;
+  Hi: `47 F4 FF 03 00 00 00` ⇒ `$40 $41 $42 $46 $4A $4C–$4F $50–$59` (**Return, Enter, Esc, Help and
+  the modifiers do not repeat**).
 
-### 5.6 Keymap « usa » : résultat par touche et par qualificatif [O ROM+sonde]
+### 5.6 "usa" keymap: result per key and per qualifier [O ROM+probe]
 
-Valeurs **rendues par RawKeyConvert** (enfoncement, tampon suffisant), identiques à la sonde sur les
-14 qualificatifs testés × 120 codes. « — » = rien ; « morte n » = touche morte d'indice n (rien n'est
-rendu) ; « † » = touche modifiable (la valeur affichée est celle sans morte précédente, voir §5.7) ;
-`SP` = espace `$20` ; `$xx` = octet non imprimable ou ambigu ; `CSI` = `$9B`. Caps Lock = Maj pour les
-touches marquées « Caps ». Codes `$68–$77` : type hors table, toujours rien.
+Values **returned by RawKeyConvert** (press, sufficient buffer), identical to the probe on the
+14 qualifiers tested × 120 codes. "—" = nothing; "dead n" = dead key of index n (nothing is
+returned); "†" = modifiable key (the value shown is the one without a preceding dead key, see §5.7);
+`SP` = space `$20`; `$xx` = non-printable or ambiguous byte; `CSI` = `$9B`. Caps Lock = Shift for the
+keys marked "Caps". Codes `$68–$77`: type outside the table, always nothing.
 
-| Code | Touche | Type | Caps | Rép. | — | Maj | Alt | Maj+Alt | Ctrl | Ctrl+Maj | Ctrl+Alt | Ctrl+Maj+Alt |
+| Code | Key | Type | Caps | Rep. | — | Shift | Alt | Shift+Alt | Ctrl | Ctrl+Shift | Ctrl+Alt | Ctrl+Shift+Alt |
 |---|---|---|:-:|:-:|---|---|---|---|---|---|---|---|
-| $00 | `` ` `` (gauche de 1) | $07 |  | x | `` ` `` | ~ | `` ` `` | ~ | $00 | $1E | $00 | $1E |
+| $00 | `` ` `` (left of 1) | $07 |  | x | `` ` `` | ~ | `` ` `` | ~ | $00 | $1E | $00 | $1E |
 | $01 | 1 | $03 |  | x | 1 | ! | ¹ | ! | 1 | ! | ¹ | ! |
 | $02 | 2 | $07 |  | x | 2 | @ | ² | @ | $00 | $00 | $00 | $00 |
 | $03 | 3 | $03 |  | x | 3 | # | ³ | # | 3 | # | ³ | # |
@@ -520,8 +520,8 @@ touches marquées « Caps ». Codes `$68–$77` : type hors table, toujours rien
 | $0B | - | $07 |  | x | - | _ | - | _ | $1F | $1F | $1F | $1F |
 | $0C | = | $01 |  | x | = | + | = | + | = | + | = | + |
 | $0D | \\ | $07 |  | x | \\ | \\| | \\ | \\| | $1C | $1C | $1C | $1C |
-| $0E | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $0F | pavé 0 | $00 |  | x | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| $0E | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $0F | keypad 0 | $00 |  | x | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | $10 | q | $07 | x | x | q | Q | å | Å | $11 | $11 | $11 | $11 |
 | $11 | w | $07 | x | x | w | W | ° | ° | $17 | $17 | $17 | $17 |
 | $12 | e | $27 | x | x | e† | E† | © | © | $05 | $05 | $85 | $85 |
@@ -534,27 +534,27 @@ touches marquées « Caps ». Codes `$68–$77` : type hors table, toujours rien
 | $19 | p | $07 | x | x | p | P | ¶ | ¶ | $10 | $10 | $10 | $10 |
 | $1A | [ | $07 |  | x | [ | { | [ | { | $1B | $1B | $1B | $1B |
 | $1B | ] | $07 |  | x | ] | } | ] | } | $1D | $1D | $1D | $1D |
-| $1C | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $1D | pavé 1 | $00 |  | x | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
-| $1E | pavé 2 | $00 |  | x | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
-| $1F | pavé 3 | $00 |  | x | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
+| $1C | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $1D | keypad 1 | $00 |  | x | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+| $1E | keypad 2 | $00 |  | x | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| $1F | keypad 3 | $00 |  | x | 3 | 3 | 3 | 3 | 3 | 3 | 3 | 3 |
 | $20 | a | $27 | x | x | a† | A† | æ | Æ | $01 | $01 | $81 | $81 |
 | $21 | s | $07 | x | x | s | S | ß | § | $13 | $13 | $13 | $13 |
 | $22 | d | $07 | x | x | d | D | ð | Ð | $04 | $04 | $04 | $04 |
-| $23 | f | $27 | x | x | f | F | morte 1 | morte 1 | $06 | $06 | $86 | $86 |
-| $24 | g | $27 | x | x | g | G | morte 2 | morte 2 | $07 | $07 | $87 | $87 |
-| $25 | h | $27 | x | x | h | H | morte 3 | morte 3 | $08 | $08 | $88 | $88 |
-| $26 | j | $27 | x | x | j | J | morte 4 | morte 4 | $0A | $0A | $8A | $8A |
-| $27 | k | $27 | x | x | k | K | morte 5 | morte 5 | $0B | $0B | $8B | $8B |
+| $23 | f | $27 | x | x | f | F | dead 1 | dead 1 | $06 | $06 | $86 | $86 |
+| $24 | g | $27 | x | x | g | G | dead 2 | dead 2 | $07 | $07 | $87 | $87 |
+| $25 | h | $27 | x | x | h | H | dead 3 | dead 3 | $08 | $08 | $88 | $88 |
+| $26 | j | $27 | x | x | j | J | dead 4 | dead 4 | $0A | $0A | $8A | $8A |
+| $27 | k | $27 | x | x | k | K | dead 5 | dead 5 | $0B | $0B | $8B | $8B |
 | $28 | l | $07 | x | x | l | L | £ | £ | $0C | $0C | $0C | $0C |
 | $29 | ; | $01 |  | x | ; | : | ; | : | ; | : | ; | : |
 | $2A | ' | $01 |  | x | ' | " | ' | " | ' | " | ' | " |
-| $2B | intl. (près de Return) | $80 |  | x | — | — | — | — | — | — | — | — |
-| $2C | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $2D | pavé 4 | $00 |  | x | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
-| $2E | pavé 5 | $00 |  | x | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
-| $2F | pavé 6 | $00 |  | x | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
-| $30 | intl. (gauche de Z) | $03 |  | x | < | > | « | » | < | > | « | » |
+| $2B | intl. (near Return) | $80 |  | x | — | — | — | — | — | — | — | — |
+| $2C | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $2D | keypad 4 | $00 |  | x | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+| $2E | keypad 5 | $00 |  | x | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| $2F | keypad 6 | $00 |  | x | 6 | 6 | 6 | 6 | 6 | 6 | 6 | 6 |
+| $30 | intl. (left of Z) | $03 |  | x | < | > | « | » | < | > | « | » |
 | $31 | z | $07 | x | x | z | Z | ± | ¬ | $1A | $1A | $1A | $1A |
 | $32 | x | $07 | x | x | x | X | × | ÷ | $18 | $18 | $18 | $18 |
 | $33 | c | $07 | x | x | c | C | ç | Ç | $03 | $03 | $03 | $03 |
@@ -565,23 +565,23 @@ touches marquées « Caps ». Codes `$68–$77` : type hors table, toujours rien
 | $38 | , | $01 |  | x | , | < | , | < | , | < | , | < |
 | $39 | . | $01 |  | x | . | > | . | > | . | > | . | > |
 | $3A | / | $01 |  | x | / | ? | / | ? | / | ? | / | ? |
-| $3B | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $3C | pavé . | $00 |  | x | . | . | . | . | . | . | . | . |
-| $3D | pavé 7 | $00 |  | x | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
-| $3E | pavé 8 | $00 |  | x | 8 | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
-| $3F | pavé 9 | $00 |  | x | 9 | 9 | 9 | 9 | 9 | 9 | 9 | 9 |
-| $40 | Espace | $22 |  | x | SP† | SP† | $A0 | $A0 | SP† | SP† | $A0 | $A0 |
+| $3B | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $3C | keypad . | $00 |  | x | . | . | . | . | . | . | . | . |
+| $3D | keypad 7 | $00 |  | x | 7 | 7 | 7 | 7 | 7 | 7 | 7 | 7 |
+| $3E | keypad 8 | $00 |  | x | 8 | 8 | 8 | 8 | 8 | 8 | 8 | 8 |
+| $3F | keypad 9 | $00 |  | x | 9 | 9 | 9 | 9 | 9 | 9 | 9 | 9 |
+| $40 | Space | $22 |  | x | SP† | SP† | $A0 | $A0 | SP† | SP† | $A0 | $A0 |
 | $41 | Backspace | $00 |  | x | $08 | $08 | $08 | $08 | $08 | $08 | $08 | $08 |
 | $42 | Tab | $41 |  | x | $09 | CSI Z | $09 | CSI Z | $09 | CSI Z | $09 | CSI Z |
-| $43 | Enter (pavé) | $00 |  |  | $0D | $0D | $0D | $0D | $0D | $0D | $0D | $0D |
+| $43 | Enter (keypad) | $00 |  |  | $0D | $0D | $0D | $0D | $0D | $0D | $0D | $0D |
 | $44 | Return | $04 |  |  | $0D | $0D | $0D | $0D | $0A | $0A | $0A | $0A |
 | $45 | Esc | $02 |  |  | $1B | $1B | CSI | CSI | $1B | $1B | CSI | CSI |
 | $46 | Del | $00 |  | x | $7F | $7F | $7F | $7F | $7F | $7F | $7F | $7F |
-| $47 | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $48 | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $49 | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $4A | pavé - | $00 |  | x | - | - | - | - | - | - | - | - |
-| $4B | (inutilisé) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $47 | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $48 | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $49 | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $4A | keypad - | $00 |  | x | - | - | - | - | - | - | - | - |
+| $4B | (unused) | $80 |  |  | — | — | — | — | — | — | — | — |
 | $4C | ↑ | $41 |  | x | CSI A | CSI T | CSI A | CSI T | CSI A | CSI T | CSI A | CSI T |
 | $4D | ↓ | $41 |  | x | CSI B | CSI S | CSI B | CSI S | CSI B | CSI S | CSI B | CSI S |
 | $4E | → | $41 |  | x | CSI C | CSI SP @ | CSI C | CSI SP @ | CSI C | CSI SP @ | CSI C | CSI SP @ |
@@ -596,30 +596,30 @@ touches marquées « Caps ». Codes `$68–$77` : type hors table, toujours rien
 | $57 | F8 | $41 |  | x | CSI 7 ~ | CSI 1 7 ~ | CSI 7 ~ | CSI 1 7 ~ | CSI 7 ~ | CSI 1 7 ~ | CSI 7 ~ | CSI 1 7 ~ |
 | $58 | F9 | $41 |  | x | CSI 8 ~ | CSI 1 8 ~ | CSI 8 ~ | CSI 1 8 ~ | CSI 8 ~ | CSI 1 8 ~ | CSI 8 ~ | CSI 1 8 ~ |
 | $59 | F10 | $41 |  | x | CSI 9 ~ | CSI 1 9 ~ | CSI 9 ~ | CSI 1 9 ~ | CSI 9 ~ | CSI 1 9 ~ | CSI 9 ~ | CSI 1 9 ~ |
-| $5A | pavé ( (A500/A2000) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $5B | pavé ) | $80 |  |  | — | — | — | — | — | — | — | — |
-| $5C | pavé / | $80 |  |  | — | — | — | — | — | — | — | — |
-| $5D | pavé * | $80 |  |  | — | — | — | — | — | — | — | — |
-| $5E | pavé + | $80 |  |  | — | — | — | — | — | — | — | — |
+| $5A | keypad ( (A500/A2000) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $5B | keypad ) | $80 |  |  | — | — | — | — | — | — | — | — |
+| $5C | keypad / | $80 |  |  | — | — | — | — | — | — | — | — |
+| $5D | keypad * | $80 |  |  | — | — | — | — | — | — | — | — |
+| $5E | keypad + | $80 |  |  | — | — | — | — | — | — | — | — |
 | $5F | Help | $40 |  |  | CSI ? ~ | CSI ? ~ | CSI ? ~ | CSI ? ~ | CSI ? ~ | CSI ? ~ | CSI ? ~ | CSI ? ~ |
-| $60 | Maj gauche | $80 |  |  | — | — | — | — | — | — | — | — |
-| $61 | Maj droite | $80 |  |  | — | — | — | — | — | — | — | — |
+| $60 | Left Shift | $80 |  |  | — | — | — | — | — | — | — | — |
+| $61 | Right Shift | $80 |  |  | — | — | — | — | — | — | — | — |
 | $62 | Caps Lock | $80 |  |  | — | — | — | — | — | — | — | — |
 | $63 | Ctrl | $80 |  |  | — | — | — | — | — | — | — | — |
-| $64 | Alt gauche | $80 |  |  | — | — | — | — | — | — | — | — |
-| $65 | Alt droite | $80 |  |  | — | — | — | — | — | — | — | — |
-| $66 | Amiga gauche | $80 |  |  | — | — | — | — | — | — | — | — |
-| $67 | Amiga droite | $80 |  |  | — | — | — | — | — | — | — | — |
+| $64 | Left Alt | $80 |  |  | — | — | — | — | — | — | — | — |
+| $65 | Right Alt | $80 |  |  | — | — | — | — | — | — | — | — |
+| $66 | Left Amiga | $80 |  |  | — | — | — | — | — | — | — | — |
+| $67 | Right Amiga | $80 |  |  | — | — | — | — | — | — | — | — |
 
-### 5.7 Touches mortes (keymap « usa ») [O ROM+sonde]
+### 5.7 Dead keys ("usa" keymap) [O ROM+probe]
 
-Mortes (Alt ou Alt+Maj sur f, g, h, j, k) : indice **1 = Alt-f accent aigu**, **2 = Alt-g grave**,
-**3 = Alt-h circonflexe**, **4 = Alt-j tilde**, **5 = Alt-k tréma**. Ctrl-Alt-f etc. ne sont pas mortes
-(`$86`…). Touches modifiables et leur table (indice 0 = sans morte, puis 1 à 5) :
+Dead keys (Alt or Alt+Shift on f, g, h, j, k): index **1 = Alt-f acute accent**, **2 = Alt-g grave**,
+**3 = Alt-h circumflex**, **4 = Alt-j tilde**, **5 = Alt-k diaeresis**. Ctrl-Alt-f etc. are not dead
+(`$86`…). Modifiable keys and their table (index 0 = without dead key, then 1 to 5):
 
-| Touche | Sans Maj : 0, 1, 2, 3, 4, 5 | Avec Maj (ou Caps) : 0, 1, 2, 3, 4, 5 |
+| Key | Without Shift: 0, 1, 2, 3, 4, 5 | With Shift (or Caps): 0, 1, 2, 3, 4, 5 |
 |---|---|---|
-| Espace (`$40`, aussi avec Maj ; Ctrl sans effet) | SP ´ ` ^ ~ ¨ | idem |
+| Space (`$40`, also with Shift; Ctrl without effect) | SP ´ ` ^ ~ ¨ | same |
 | a (`$20`) | a á à â ã ä | A Á À Â Ã Ä |
 | e (`$12`) | e é è ê e ë | E É È Ê E Ë |
 | i (`$17`) | i í ì î i ï | I Í Ì Î I Ï |
@@ -628,257 +628,257 @@ Mortes (Alt ou Alt+Maj sur f, g, h, j, k) : indice **1 = Alt-f accent aigu**, **
 | y (`$15`) | y ý y y y ÿ | Y Ý Y Y Y Y |
 | n (`$36`) | n n n n ñ n | N N N N Ñ N |
 
-Codes rendus pour l'espace : `$B4`, `$60`, `$5E`, `$7E`, `$A8`. Seules les combinaisons sans Alt et sans
-Ctrl sont modifiables (Alt-e = « © » ignore la morte). Une morte suivie d'une touche non modifiable :
-la morte est perdue, la touche donne sa valeur normale (sonde : Alt-f puis q ⇒ `q`). La morte doit être
-**la touche enfoncée immédiatement avant** (ie_Prev1DownCode) avec son qualificatif Alt (Prev1DownQual) :
-« f » sans Alt avant « e » ⇒ `e`.
+Codes returned for the space: `$B4`, `$60`, `$5E`, `$7E`, `$A8`. Only the combinations without Alt and without
+Ctrl are modifiable (Alt-e = "©" ignores the dead key). A dead key followed by a non-modifiable key:
+the dead key is lost, the key gives its normal value (probe: Alt-f then q ⇒ `q`). The dead key must be
+**the key pressed immediately before** (ie_Prev1DownCode) with its Alt qualifier (Prev1DownQual):
+"f" without Alt before "e" ⇒ `e`.
 
 ---
 
-## 6. CDInputHandler (LVO −42) et flux d'entrée
+## 6. CDInputHandler (LVO −42) and input stream
 
-### 6.1 Contrat [O ROM]
+### 6.1 Contract [O ROM]
 
-`events = CDInputHandler(events A0, consoleDevice A1)` — appelé par input.device (pri 0, après
-intuition pri 50). Pour chaque événement de la chaîne :
+`events = CDInputHandler(events A0, consoleDevice A1)` — called by input.device (pri 0, after
+intuition pri 50). For each event of the chain:
 
-1. **IECLASS_EVENT (3) / IECODE_NEWACTIVE (1)** : la fenêtre ie_EventAddress devient la « fenêtre active
-   connue » ; l'unité active devient la **première unité de la liste** (= la plus récemment ouverte)
-   dont cu_Window est cette fenêtre, ou aucune.
-2. Qualificatif avec **IEQUALIFIER_MULTIBROADCAST (`$0800`)** : l'événement est traité pour **toutes**
-   les unités ; sinon pour l'unité active seulement (rien s'il n'y en a pas).
-3. **IECLASS_SIZEWINDOW (12)** (hors multibroadcast) : mémorise la taille minimale vue et marque un
-   recalcul de géométrie pour l'unité active (§3.9).
-4. Traitement pour une unité : si classe ≤ 18 et bit cu_RawEvents correspondant ⇒ rapport brut (§4) ;
-   sinon RawKeyConvert de **cet événement seul** (ie_NextEvent masqué temporairement) avec la keymap de
-   l'unité dans un tampon de 127 octets ; si au moins 1 octet et que **tout** tient dans la place libre
-   du tampon d'entrée, ajout ; sinon abandon silencieux.
-5. Après la chaîne : si quelque chose a été ajouté, les CMD_READ en attente de l'unité active (ou de
-   toutes les unités après un multibroadcast) sont servies.
+1. **IECLASS_EVENT (3) / IECODE_NEWACTIVE (1)**: the window ie_EventAddress becomes the "known active
+   window"; the active unit becomes the **first unit of the list** (= the most recently opened)
+   whose cu_Window is that window, or none.
+2. Qualifier with **IEQUALIFIER_MULTIBROADCAST (`$0800`)**: the event is processed for **all**
+   the units; otherwise for the active unit only (nothing if there is none).
+3. **IECLASS_SIZEWINDOW (12)** (outside multibroadcast): stores the minimal size seen and flags a
+   geometry recomputation for the active unit (§3.9).
+4. Processing for a unit: if class ≤ 18 and the corresponding cu_RawEvents bit ⇒ raw report (§4);
+   otherwise RawKeyConvert of **this event alone** (ie_NextEvent temporarily masked) with the
+   unit's keymap into a 127-byte buffer; if at least 1 byte and **everything** fits in the free room
+   of the input buffer, it is added; otherwise silent abandon.
+5. After the chain: if something was added, the pending CMD_READs of the active unit (or of
+   all the units after a multibroadcast) are served.
 
-Le handler **rend NULL** : il consomme toute la chaîne (dernier handler standard). [O ROM]
+The handler **returns NULL**: it consumes the whole chain (last standard handler). [O ROM]
 
-### 6.2 Ce qui arrive vraiment de l'intuition 1.3 [O sonde]
+### 6.2 What really arrives from intuition 1.3 [O probe]
 
-- Ce que la console reçoit est la liste **rendue par intuition** (`intuition-input-menus-v34.md` §1–§2) :
-  les RAWKEY destinés à la fenêtre active, IECLASS_EVENT/NEWACTIVE (émis par ActivateWindow **même si la
-  fenêtre est déjà active**), IECLASS_SIZEWINDOW (émis aussi par SizeWindow()), les événements NULL ;
-  **pas** les boutons de souris RAWMOUSE ni POINTERPOS ni TIMER (avalés par intuition). Sonde : `CSI 2{`
-  + boutons injectés ⇒ aucun rapport ; `CSI 0{ 4{ 6{` ⇒ seul un rapport de classe 0. [O sonde]
-- Les touches injectées par IND_WRITEEVENT gardent ie_X/ie_Y tels quels : une morte injectée n'agit
-  que si l'injecteur remplit lui-même Prev1DownCode/Qual (sonde : Alt-f puis e injectés ⇒ `e` ; e avec
-  ie_X = `$2310` ⇒ `é`). Pour les vraies frappes, c'est input.device qui remplit ces champs
-  (`intuiticks-repeat-v34.md` §2.1). [O sonde]
-- Cuisson observée en CMD_READ (unité active, keymap « usa ») : a ⇒ `61` ; Maj a ⇒ `41` ; ↑ ⇒ `9B 41` ;
-  Maj ↑ ⇒ `9B 54` ; F1 ⇒ `9B 30 7E` ; Maj F1 ⇒ `9B 31 30 7E` ; Help ⇒ `9B 3F 7E` ; Maj Tab ⇒ `9B 5A` ;
-  Alt Esc ⇒ `9B` ; Ctrl Return ⇒ `0A` ; Backspace ⇒ `08` ; Del ⇒ `7F` ; les relâchements ne produisent
-  rien. [O sonde]
-- Rapport brut (`CSI 1{`, RAWKEY `$20`, qualificatif `$8000`, ie_X/ie_Y = `$1234`/`$5678`, horodatage
-  0) : `CSI 1;0;32;32768;4660;22136;0;0|`. [O sonde]
-- **Piège de l'unité active** : ouvrir puis fermer une seconde unité sur la fenêtre active laisse le
-  device **sans unité active** (la fermeture ne cherche pas d'autre unité) ; les frappes sont perdues
-  jusqu'au prochain NEWACTIVE (ActivateWindow, clic). Sonde : unité active = 0 après la fermeture, `a`
-  injecté ⇒ rien ; après ActivateWindow ⇒ `a`. [O ROM+sonde]
+- What the console receives is the list **returned by intuition** (`intuition-input-menus-v34.md` §1–§2):
+  the RAWKEYs intended for the active window, IECLASS_EVENT/NEWACTIVE (emitted by ActivateWindow **even if the
+  window is already active**), IECLASS_SIZEWINDOW (also emitted by SizeWindow()), the NULL events;
+  **not** the RAWMOUSE mouse buttons nor POINTERPOS nor TIMER (swallowed by intuition). Probe: `CSI 2{`
+  + injected buttons ⇒ no report; `CSI 0{ 4{ 6{` ⇒ only a class 0 report. [O probe]
+- Keys injected by IND_WRITEEVENT keep ie_X/ie_Y as they are: an injected dead key only acts
+  if the injector fills Prev1DownCode/Qual itself (probe: Alt-f then e injected ⇒ `e`; e with
+  ie_X = `$2310` ⇒ `é`). For real keystrokes, it is input.device that fills these fields
+  (`intuiticks-repeat-v34.md` §2.1). [O probe]
+- Cooking observed in CMD_READ (active unit, "usa" keymap): a ⇒ `61`; Shift a ⇒ `41`; ↑ ⇒ `9B 41`;
+  Shift ↑ ⇒ `9B 54`; F1 ⇒ `9B 30 7E`; Shift F1 ⇒ `9B 31 30 7E`; Help ⇒ `9B 3F 7E`; Shift Tab ⇒ `9B 5A`;
+  Alt Esc ⇒ `9B`; Ctrl Return ⇒ `0A`; Backspace ⇒ `08`; Del ⇒ `7F`; releases produce
+  nothing. [O probe]
+- Raw report (`CSI 1{`, RAWKEY `$20`, qualifier `$8000`, ie_X/ie_Y = `$1234`/`$5678`, timestamp
+  0): `CSI 1;0;32;32768;4660;22136;0;0|`. [O probe]
+- **Active unit pitfall**: opening then closing a second unit on the active window leaves the
+  device **without an active unit** (the close does not look for another unit); keystrokes are lost
+  until the next NEWACTIVE (ActivateWindow, click). Probe: active unit = 0 after the close, `a`
+  injected ⇒ nothing; after ActivateWindow ⇒ `a`. [O ROM+probe]
 
-### 6.3 CMD_READ [O ROM+sonde]
+### 6.3 CMD_READ [O ROM+probe]
 
-- io_Length > 0 : sous Forbid, copie au plus io_Length octets du tampon d'entrée vers io_Data,
-  io_Actual = nombre copié, réponse immédiate **dès qu'au moins un octet** est disponible ; tampon vide ⇒
-  la requête reste en file (IOF_QUICK effacé) jusqu'à l'arrivée d'octets (touche, rapport) ; les
-  requêtes en file sont servies dans l'ordre.
-- Tampon d'entrée : anneau de **255 octets** utiles par unité, vidé par CMD_CLEAR (sonde : 60 rapports de
-  5 octets = 300 octets écrits ⇒ 255 octets relus (51 rapports), le reste perdu).
-- **io_Length = 0** : bogue V34 — la réponse « −4 » est faite puis le code lit la file de l'unité via un
-  registre **non initialisé** (valeur laissée par l'appelant) ⇒ comportement indéfini (sonde : Guru
-  `#00000003` avec A2 = 1 à l'appel de BeginIO). Une réimplémentation doit répondre −4 (IOERR_BADLENGTH) proprement. [O ROM+sonde]
-- io_Length = −1 : traité comme « 1 octet au plus ». [O ROM]
-- Pas d'écho, pas d'édition, pas de conversion CR → LF : c'est le travail du console-handler (CON:).
-
----
-
-## 7. Ce qui diffère sur un vrai A500
-
-- **Aucune dépendance matérielle directe** : console.device ne touche ni CIA ni registres custom ; tout
-  passe par graphics (Text, RectFill, ScrollRaster → blitter), layers, intuition et input.device. Le
-  comportement est donc identique sur un vrai A500 ; seule la vitesse change (ScrollRaster et Text au
-  blitter réel). [O ROM]
-- **Codes bruts réels** : un clavier A500 US produit `$00–$0D`, `$0F–$1B` (`$1D–$1F` pavé), `$20–$2A`,
-  `$2D–$2F`, `$31–$3A`, `$3C–$46`, `$4A`, `$4C–$5F`, `$60–$67` ; les claviers non US ajoutent `$2B`
-  (à côté de Return) et `$30` (à gauche de Z). La keymap ROM donne `$2B` ⇒ **rien** (NOP) et `$30` ⇒
-  `<`/`>`. **Les touches `( ) / * +` du pavé de l'A500 (`$5A–$5E`) sont NOP dans la keymap ROM** : elles
-  ne produisent rien tant qu'un `SetMap` (keymap disque, p. ex. usa1) n'a pas été chargé. [O ROM+sonde ;
-  liste des codes physiques : D, doc publique]
-- **Claviers non US** (l'utilisateur est en AZERTY) : la ROM ne connaît que « usa » ; `SetMap f` de la
-  startup-sequence charge une keymap en RAM et la passe à **CD_SETDEFAULTKEYMAP** (et, pour la console du
-  CLI courant, CD_SETKEYMAP) — seules les unités ouvertes **après** héritent du défaut (§5.4). [O ROM pour
-  le device ; D pour le mécanisme de SetMap, non sondé ici]
-- **Répétition réelle** : les répétitions viennent d'input.device avec IEQUALIFIER_REPEAT ; sur la keymap
-  ROM, **Return, Enter, Esc et Help ne se répètent pas** (table Repeatable), contrairement aux
-  lettres, flèches et F1–F10. [O ROM+sonde]
-- **Police et taille** : la cellule suit la police du RastPort de la fenêtre à l'ouverture (Preferences :
-  topaz 8 ⇒ 8 × 8, topaz 9 ⇒ 10 × 9 sur cette ROM sans disque système) ; en NTSC l'écran fait 200 lignes,
-  en PAL avec un écran 256 lignes YMax change en conséquence. [O sonde pour topaz 9 ; D pour le reste]
-- **Injection d'entrées sous FS-UAE** : les frappes xdotool « alt+… » n'arrivent pas comme Alt Amiga dans
-  ce harnais (Alt-k ⇒ `k`), et F1/F10 n'ont rien produit ; les touches mortes et Fn ont donc été validées
-  par RawKeyConvert et IND_WRITEEVENT, pas par le clavier émulé. [O sonde]
+- io_Length > 0: under Forbid, copies at most io_Length bytes of the input buffer to io_Data,
+  io_Actual = number copied, immediate reply **as soon as at least one byte** is available; empty buffer ⇒
+  the request stays queued (IOF_QUICK cleared) until bytes arrive (key, report); the
+  queued requests are served in order.
+- Input buffer: ring of **255 useful bytes** per unit, emptied by CMD_CLEAR (probe: 60 reports of
+  5 bytes = 300 bytes written ⇒ 255 bytes read back (51 reports), the rest lost).
+- **io_Length = 0**: V34 bug — the "−4" reply is made then the code reads the unit's queue via a
+  **non-initialised** register (value left by the caller) ⇒ undefined behaviour (probe: Guru
+  `#00000003` with A2 = 1 at the BeginIO call). A reimplementation must reply −4 (IOERR_BADLENGTH) cleanly. [O ROM+probe]
+- io_Length = −1: treated as "1 byte at most". [O ROM]
+- No echo, no editing, no CR → LF conversion: that is the console-handler's (CON:) job.
 
 ---
 
-## 8. Vecteurs de test (vraie ROM 34.5, FS-UAE, sonde `tests/con_probe.s`)
+## 7. What differs on a real A500
 
-Sonde : `tests/con_probe.sh <sortie> 600` (vraie ROM par défaut). Fenêtre 640 × 200 (bordures 4/12/18/2),
-topaz 9 ⇒ cellule 10 × 9, XMax 60, YMax 19. Chaque test commence par `ESC c FF`. Notation des résultats :
-texte reconnu par ligne et position du curseur (XCP, YCP).
+- **No direct hardware dependency**: console.device touches neither CIA nor custom registers; everything
+  goes through graphics (Text, RectFill, ScrollRaster → blitter), layers, intuition and input.device. The
+  behaviour is therefore identical on a real A500; only the speed changes (ScrollRaster and Text on the
+  real blitter). [O ROM]
+- **Real raw codes**: a US A500 keyboard produces `$00–$0D`, `$0F–$1B` (`$1D–$1F` keypad), `$20–$2A`,
+  `$2D–$2F`, `$31–$3A`, `$3C–$46`, `$4A`, `$4C–$5F`, `$60–$67`; non-US keyboards add `$2B`
+  (next to Return) and `$30` (left of Z). The ROM keymap gives `$2B` ⇒ **nothing** (NOP) and `$30` ⇒
+  `<`/`>`. **The A500 keypad keys `( ) / * +` (`$5A–$5E`) are NOP in the ROM keymap**: they
+  produce nothing until a `SetMap` (disk keymap, e.g. usa1) has been loaded. [O ROM+probe;
+  list of physical codes: D, public documentation]
+- **Non-US keyboards** (the user is on AZERTY): the ROM only knows "usa"; the startup-sequence's `SetMap f`
+  loads a keymap into RAM and passes it to **CD_SETDEFAULTKEYMAP** (and, for the console of the
+  current CLI, CD_SETKEYMAP) — only the units opened **afterwards** inherit the default (§5.4). [O ROM for
+  the device; D for the SetMap mechanism, not probed here]
+- **Real repeat**: repeats come from input.device with IEQUALIFIER_REPEAT; on the ROM keymap,
+  **Return, Enter, Esc and Help do not repeat** (Repeatable table), unlike the
+  letters, arrows and F1–F10. [O ROM+probe]
+- **Font and size**: the cell follows the font of the window's RastPort at open (Preferences:
+  topaz 8 ⇒ 8 × 8, topaz 9 ⇒ 10 × 9 on this ROM without a system disk); in NTSC the screen has 200 lines,
+  in PAL with a 256-line screen YMax changes accordingly. [O probe for topaz 9; D for the rest]
+- **Input injection under FS-UAE**: xdotool "alt+…" keystrokes do not arrive as Amiga Alt in
+  this harness (Alt-k ⇒ `k`), and F1/F10 produced nothing; dead keys and Fn were therefore validated
+  through RawKeyConvert and IND_WRITEEVENT, not through the emulated keyboard. [O probe]
 
-### 8.1 Contrôles et curseur
+---
 
-| Entrée (après ESC c FF) | Résultat |
+## 8. Test vectors (real ROM 34.5, FS-UAE, probe `tests/con_probe.s`)
+
+Probe: `tests/con_probe.sh <sortie> 600` (real ROM by default). 640 × 200 window (borders 4/12/18/2),
+topaz 9 ⇒ 10 × 9 cell, XMax 60, YMax 19. Each test starts with `ESC c FF`. Notation of the results:
+text recognised per line and cursor position (XCP, YCP).
+
+### 8.1 Controls and cursor
+
+| Input (after ESC c FF) | Result |
 |---|---|
-| `AB LF CD CR LF EF` (LNM) | `AB` / `CD` / `EF`, curseur (2,2) |
+| `AB LF CD CR LF EF` (LNM) | `AB` / `CD` / `EF`, cursor (2,2) |
 | `CSI 20l AB LF CD LF CR EF` | `AB` / `··CD` / `EF` |
-| `ABC BS BS X CR Y` | `YXC`, curseur (1,0) |
-| `AB LF BS X` (AWM) | X en (60,0), curseur (0,1) après retour |
-| `CSI ?7l AB LF BS X` | X en (0,1) |
+| `ABC BS BS X CR Y` | `YXC`, cursor (1,0) |
+| `AB LF BS X` (AWM) | X at (60,0), cursor (0,1) after wrap |
+| `CSI ?7l AB LF BS X` | X at (0,1) |
 | `HT A HT B HT HT C` | A col 8, B col 16, C col 32 |
-| `CSI 3;10H CSI A A CSI 2B B CSI 5C C CSI 3D D CSI 0A E CSI -2B F` | A (9,1) ; B (10,3) ; C (16,3) ; D (14,3) ; « E2BF » en (15,2) (le `-` intermédiaire abandonne la séquence) |
+| `CSI 3;10H CSI A A CSI 2B B CSI 5C C CSI 3D D CSI 0A E CSI -2B F` | A (9,1); B (10,3); C (16,3); D (14,3); "E2BF" at (15,2) (the intermediate `-` abandons the sequence) |
 | `ABCDEF CSI H 1 CSI 2H 2 CSI ;5H 3 CSI 3;f 4 CSI 0;0H 5` | `5BCD3F` / `2` / `4` |
-| `CSI 99;999H X` | X en (60,19), retour + défilement : curseur (0,19) |
-| `L1 L2 L3` (3 lignes) `CSI 1;1H CSI 2A T` | défilement vers le bas de 2 : `T` / vide / `L1` / `L2` / `L3` |
-| idem avec `CSI >1l` | pas de défilement : `T` remplace L1 |
-| `CSI 1;78H CSI 5C X` | X en (4,1) |
-| `CSI 2;3H CSI 5D X` | X en (58,0) |
+| `CSI 99;999H X` | X at (60,19), wrap + scroll: cursor (0,19) |
+| `L1 L2 L3` (3 lines) `CSI 1;1H CSI 2A T` | scroll down by 2: `T` / empty / `L1` / `L2` / `L3` |
+| same with `CSI >1l` | no scroll: `T` replaces L1 |
+| `CSI 1;78H CSI 5C X` | X at (4,1) |
+| `CSI 2;3H CSI 5D X` | X at (58,0) |
 | `CSI 3;10H CSI E A CSI 2F B CSI 0E C` | A (0,3), B (0,1), C (0,2) |
 | `CSI 3;5H A VT B $8D C` | A (4,2), B (5,1), C (6,0) |
 | `CSI 20l A $84 B $85 C` | A (0,0), B (1,1), C (0,2) |
 | `AB ESC D C ESC E D ESC M E ESC [2;8H F` | `AB` / `·EC····F` / `D` |
-| `A ESC 7B ESC (0C ESC #8D ESC =E ESC aF ESC ESC [2CG` | `ACD` / `F··G` (ESC 7 B = ESC B ignoré ; ESC = E = NEL) |
+| `A ESC 7B ESC (0C ESC #8D ESC =E ESC aF ESC ESC [2CG` | `ACD` / `F··G` (ESC 7 B = ESC B ignored; ESC = E = NEL) |
 | `A CSI 2 LF B CSI 1; ESC [CC CSI !pD CSI 5 HE CSI 1 CSI 2CF` | `A` / `B·CDE··F` |
 | `A CSI 2!CB CSI 3 CC CSI !2CD` | `ABC2CD` |
-| `ABC CSI 10GX CSI 3dY CSI 2XZ` | `ABCXYZ` (G, d, X ignorés) |
-| `A $80 $81 $86 $90 $9A $9F B $7F C` | `AB` + glyphe `$7F` + `C` |
+| `ABC CSI 10GX CSI 3dY CSI 2XZ` | `ABCXYZ` (G, d, X ignored) |
+| `A $80 $81 $86 $90 $9A $9F B $7F C` | `AB` + glyph `$7F` + `C` |
 | `A $01 B $1C C $1F D` | `ABCD` |
 
-### 8.2 Effacements, insertions, défilements
+### 8.2 Clears, insertions, scrolls
 
-| Entrée | Résultat |
+| Input | Result |
 |---|---|
 | `ABCDEFGH CR LF IJKLMNOP CSI 1;4H CSI K CSI 2;4H CSI 1K` | `ABC` / `IJK` |
 | `ABCDEFGH CSI 1;4H CSI 2K` | `ABC` |
-| 3 lignes `CSI 2;4H CSI J` | `ABCDEFGH` / `IJK` / vide |
+| 3 lines `CSI 2;4H CSI J` | `ABCDEFGH` / `IJK` / empty |
 | `ABCDEFGH CSI 1;3H CSI @ CSI 1;7H CSI 3@ x` | `AB·CDEx··FGH` |
 | `ABCDEFGH CSI 1;3H CSI P CSI 1;4H CSI 2P x` | `ABDxH` |
 | `L1 L2 L3 CSI 2;2H CSI L x` | `L1` / `·x` / `L2` / `L3` |
-| `L1 L2 L3 L4 CSI 2;2H CSI 2M x` | `L1` / `Lx` (L4) / vide |
-| `L1 L2 L3 L4 CSI S CSI 2T x` | vide / vide / `L2` / `L3x` (curseur fixe en (2,3)) |
-| `TOP CSI 24;1H BOT LF N` | TOP disparu, `BOT` ligne 18, `N` ligne 19 |
-| idem avec `CSI >1l` | `TOP` reste ; `N` écrase `B` en ligne 19 |
-| `CSI 5t CSI 20u` + A…Z + `CSI 5;1H X LF Y` | XMax 19, YMax 4, XRExtant 203, YRExtant 56 ; `UVWXYZ` / vide / vide / `X` / `Y` |
-| puis `CSI t CSI u Q` | XMax 60, YMax 19 ; Q en (1,4) |
+| `L1 L2 L3 L4 CSI 2;2H CSI 2M x` | `L1` / `Lx` (L4) / empty |
+| `L1 L2 L3 L4 CSI S CSI 2T x` | empty / empty / `L2` / `L3x` (cursor fixed at (2,3)) |
+| `TOP CSI 24;1H BOT LF N` | TOP gone, `BOT` line 18, `N` line 19 |
+| same with `CSI >1l` | `TOP` stays; `N` overwrites `B` on line 19 |
+| `CSI 5t CSI 20u` + A…Z + `CSI 5;1H X LF Y` | XMax 19, YMax 4, XRExtant 203, YRExtant 56; `UVWXYZ` / empty / empty / `X` / `Y` |
+| then `CSI t CSI u Q` | XMax 60, YMax 19; Q at (1,4) |
 | `CSI 16x CSI 20y AB` | XROrigin 16, YROrigin 20, XMax 59, YMax 18 |
-| puis `CSI x CSI y C CSI 0x CSI 0y D` | XROrigin 0, YROrigin 0, XMax 61, YMax 21 |
+| then `CSI x CSI y C CSI 0x CSI 0y D` | XROrigin 0, YROrigin 0, XMax 61, YMax 21 |
 
-### 8.3 Retour automatique (page de 20 colonnes : `CSI 20u`)
+### 8.3 Automatic wrap (20-column page: `CSI 20u`)
 
-| Entrée (20 caractères = ligne pleine) | Résultat |
+| Input (20 characters = full line) | Result |
 |---|---|
-| 20 car. `LF B` | B en (0,1) (LF absorbé) |
-| 20 car. `CR LF B` | B en (0,1) |
-| 20 car. `B LF C` | B (0,1), C (0,2) |
-| 20 car. `CSI E B` / `CSI F B` | B en (0,1) (absorbés) |
-| 20 car. `LF LF B` | B en (0,2) (seul le premier LF est absorbé) |
-| 20 car. `VT B` | B en (0,0) (VT n'est **pas** absorbé) |
-| `CSI 20l` + 20 car. `LF B` | B en (0,1) (IND absorbé) |
-| 18 car. `HT LF B` | B en (0,1) (HT a renvoyé à la ligne) |
-| 20 car. `BS X` | X remplace T en (19,0), curseur (0,1) |
-| `CSI 1;19H CSI 2C LF B` | B en (0,1) |
-| `CSI ?7l` + 23 car. | `ABCDEFGHIJKLMNOPQRS` + `W` en colonne 19, curseur (19,0) |
+| 20 chars `LF B` | B at (0,1) (LF absorbed) |
+| 20 chars `CR LF B` | B at (0,1) |
+| 20 chars `B LF C` | B (0,1), C (0,2) |
+| 20 chars `CSI E B` / `CSI F B` | B at (0,1) (absorbed) |
+| 20 chars `LF LF B` | B at (0,2) (only the first LF is absorbed) |
+| 20 chars `VT B` | B at (0,0) (VT is **not** absorbed) |
+| `CSI 20l` + 20 chars `LF B` | B at (0,1) (IND absorbed) |
+| 18 chars `HT LF B` | B at (0,1) (HT wrapped the line) |
+| 20 chars `BS X` | X replaces T at (19,0), cursor (0,1) |
+| `CSI 1;19H CSI 2C LF B` | B at (0,1) |
+| `CSI ?7l` + 23 chars | `ABCDEFGHIJKLMNOPQRS` + `W` in column 19, cursor (19,0) |
 
-### 8.4 SGR et couleurs (masque des couleurs présentes dans la cellule)
+### 8.4 SGR and colours (mask of the colours present in the cell)
 
-| Entrée | Résultat |
+| Input | Result |
 |---|---|
-| `CSI 2m D` | D en couleur 2 |
-| `CSI 7m R` | R en inverse (fond 1, texte 0) |
-| `CSI 8m H CSI 0m N` | H non dessiné ; **bloc curseur résiduel** en colonne 0 |
-| `CSI 30m A … CSI 37m F CSI 39m G` | couleurs 0, 1, 2, 3, 0 (34), 3 (37), 1 |
-| `CSI 41m B`, `42m C`, `43m D`, `44m E`, `49m F` | fonds 1, 2, 3, 0, 0 |
-| `CSI ;32m N` | SGR 0 puis APen 2 (FgPen = 2) |
-| `CSI 1;4;7m A CSI 22;24;27m B` | B toujours gras/souligné/inverse |
-| `ABCDEFGH CSI 43m CSI 1;4H CSI K` | colonnes 3+ remplies en couleur 3 |
-| `CSI 42m FF A` | toute la ligne en couleur 2 |
-| `CSI 43m L1 L2 CSI 1;1H CSI T` | ligne 0 libérée remplie en couleur 3 (ScrollRaster ⇒ BPen) |
-| `ABCDEF CSI 43m CSI 1;2H CSI 2@` | cellules insérées en couleur 3 |
-| `ABCDEFGH CSI 7m CSI 1;4H CSI K` | effacement en couleur 0 (DrawMode ≠ JAM2) |
-| `AB CSI 0 SP p` | plus de bloc curseur |
-| `C CSI SP p D CSI 0p E CSI p` | curseur visible (`0p`/`p` sans espace ignorés) |
+| `CSI 2m D` | D in colour 2 |
+| `CSI 7m R` | R in inverse (background 1, text 0) |
+| `CSI 8m H CSI 0m N` | H not drawn; **residual cursor block** in column 0 |
+| `CSI 30m A … CSI 37m F CSI 39m G` | colours 0, 1, 2, 3, 0 (34), 3 (37), 1 |
+| `CSI 41m B`, `42m C`, `43m D`, `44m E`, `49m F` | backgrounds 1, 2, 3, 0, 0 |
+| `CSI ;32m N` | SGR 0 then APen 2 (FgPen = 2) |
+| `CSI 1;4;7m A CSI 22;24;27m B` | B still bold/underlined/inverse |
+| `ABCDEFGH CSI 43m CSI 1;4H CSI K` | columns 3+ filled in colour 3 |
+| `CSI 42m FF A` | the whole line in colour 2 |
+| `CSI 43m L1 L2 CSI 1;1H CSI T` | freed line 0 filled in colour 3 (ScrollRaster ⇒ BPen) |
+| `ABCDEF CSI 43m CSI 1;2H CSI 2@` | inserted cells in colour 3 |
+| `ABCDEFGH CSI 7m CSI 1;4H CSI K` | clearing in colour 0 (DrawMode ≠ JAM2) |
+| `AB CSI 0 SP p` | no more cursor block |
+| `C CSI SP p D CSI 0p E CSI p` | cursor visible (`0p`/`p` without space ignored) |
 
-### 8.5 Rapports, modes, entrée
+### 8.5 Reports, modes, input
 
-| Entrée | Résultat |
+| Input | Result |
 |---|---|
-| `xyz` avec io_Length −1 | io_Actual 3, io_Error 0 ; io_Length 0 ⇒ io_Actual 0 |
-| `CSI 6n` puis CMD_READ | `9B 31 3B 35 52` (ligne 1, colonne 5) |
-| `CSI 5n CSI n CSI 6;6n ESC [6n` | deux rapports |
+| `xyz` with io_Length −1 | io_Actual 3, io_Error 0; io_Length 0 ⇒ io_Actual 0 |
+| `CSI 6n` then CMD_READ | `9B 31 3B 35 52` (line 1, column 5) |
+| `CSI 5n CSI n CSI 6;6n ESC [6n` | two reports |
 | `CSI SP q` | `CSI 1;1;20;61 r` |
-| `CSI 0 q`, `CSI q`, `CSI ␠␠q` | un seul rapport (le premier) |
-| CMD_READ sans donnée, abandon après 10 trames | io_Error −2, io_Actual 0 |
+| `CSI 0 q`, `CSI q`, `CSI ␠␠q` | a single report (the first) |
+| CMD_READ without data, abort after 10 frames | io_Error −2, io_Actual 0 |
 | `CSI 20l CSI >1l CSI ?7l CSI 3h` | cu_Modes `08 00 00` |
 | `CSI 20h CSI >1h CSI ?7h CSI 3l CSI 1;2;19h` | cu_Modes `06 00 78` |
-| `CSI 1;2;18;19;-1{` | rien n'est exécuté : le `-` est un intermédiaire, le `1` qui suit abandonne la séquence et `1{` s'affiche ; cu_RawEvents reste `00 00 00` |
-| SizeWindow(−200, −64) puis CMD_WRITE vide | XMax 40, YMax 12, XRExtant 413, YRExtant 128 ; rapport `CSI 1;1;13;41 r` ; avant l'écriture : inchangé |
-| SizeWindow(+200, +64) puis écriture vide | XMax 60, YMax 19 ; zone révélée effacée |
+| `CSI 1;2;18;19;-1{` | nothing is executed: the `-` is an intermediate, the `1` that follows abandons the sequence and `1{` is displayed; cu_RawEvents stays `00 00 00` |
+| SizeWindow(−200, −64) then empty CMD_WRITE | XMax 40, YMax 12, XRExtant 413, YRExtant 128; report `CSI 1;1;13;41 r`; before the write: unchanged |
+| SizeWindow(+200, +64) then empty write | XMax 60, YMax 19; revealed area cleared |
 
-### 8.6 Commandes (BeginIO direct, IOF_QUICK)
+### 8.6 Commands (direct BeginIO, IOF_QUICK)
 
-| Commande | io_Flags après | io_Error |
+| Command | io_Flags after | io_Error |
 |---|---|---|
 | 0, 4, 13, 14, `$7FFF` | `$81` | −3 |
-| 1, 6, 7, 8 | `$81` | 1, 6, 7, 8 (D0 résiduel) |
-| 5 (CLEAR) | `$01` (pas de réponse) | 0 |
-| 5 sans IOF_QUICK | requête jamais rendue (ln_Type 5) | — |
-| 4 sans IOF_QUICK | rendue (ln_Type 7) | −3 |
-| CMD_STOP puis CMD_READ (rapport disponible) | READ non servie (abandon −2) ; après CMD_START : servie | — |
+| 1, 6, 7, 8 | `$81` | 1, 6, 7, 8 (residual D0) |
+| 5 (CLEAR) | `$01` (no reply) | 0 |
+| 5 without IOF_QUICK | request never returned (ln_Type 5) | — |
+| 4 without IOF_QUICK | returned (ln_Type 7) | −3 |
+| CMD_STOP then CMD_READ (report available) | READ not served (abort −2); after CMD_START: served | — |
 | CMD_READ io_Length 0 (A2 = 1) | Guru `#00000003` | — |
 
-### 8.7 Fenêtres SIMPLE_REFRESH et GIMMEZEROZERO (400 × 100)
+### 8.7 SIMPLE_REFRESH and GIMMEZEROZERO windows (400 × 100)
 
-| Fenêtre / entrée | Résultat |
+| Window / input | Result |
 |---|---|
-| SIMPLE_REFRESH : `HELLO CR LF WORLD` puis `ESC c X` | `XELLO`… : **rien n'est effacé** par ESC c, curseur (1,0) |
-| GZZ : ouverture | XROrigin 0, YROrigin 0, XMax 36, YMax 8, YRExtant 80 |
-| GZZ : `CSI 16x` | XMax 35, **YMax 6** (la hauteur perd 16 pixels) |
-| GZZ : `CSI x CSI 16y` | **YMax 8**, YRExtant 96 > hauteur intérieure 86 (l'origine verticale n'est pas retranchée) |
+| SIMPLE_REFRESH: `HELLO CR LF WORLD` then `ESC c X` | `XELLO`…: **nothing is cleared** by ESC c, cursor (1,0) |
+| GZZ: open | XROrigin 0, YROrigin 0, XMax 36, YMax 8, YRExtant 80 |
+| GZZ: `CSI 16x` | XMax 35, **YMax 6** (the height loses 16 pixels) |
+| GZZ: `CSI x CSI 16y` | **YMax 8**, YRExtant 96 > inner height 86 (the vertical origin is not subtracted) |
 
 ---
 
-## 9. Points non tranchés
+## 9. Open points
 
-1. **Cuisson des vraies frappes** (chaîne keyboard.device → input.device → intuition → console) non
-   sondée de bout en bout avec Alt et les touches de fonction : l'injection xdotool de ce harnais ne
-   transmet pas Alt comme Alt Amiga et F1/F10 n'ont rien donné. Le contenu de ie_X/ie_Y repose sur
-   `intuiticks-repeat-v34.md` §2.1. À refaire avec un autre moyen d'injection (débogueur, ou
-   keyboard.device direct).
-2. **Fenêtre redimensionnée non active** : le recalcul est appliqué à l'unité active, pas à celle de la
-   fenêtre redimensionnée [O ROM] ; l'effet visible sur une console inactive n'a pas été sondé.
-3. **SUPER_BITMAP** : non sondé (le recalcul n'efface rien et ne replace pas le curseur ; curseur
-   possiblement non réaffiché — à vérifier).
-4. **SetMap du Workbench 1.3.3** : qu'il appelle CD_SETDEFAULTKEYMAP et/ou CD_SETKEYMAP et sur quelle
-   unité n'a pas été vérifié sur le disque (D, usage documenté).
-5. **Débordement de valeurs de paramètres** (> 32767) : CSI 65535C a borné le curseur comme attendu,
-   mais l'arithmétique exacte (produit 16 × 16 signé, saturation partielle) n'est pas spécifiée au-delà.
-6. **BEL** : DisplayBeep lu dans la ROM, effet visuel (flash d'écran) non capturé.
-7. **Ordre des unités pour NEWACTIVE** : la première unité de la liste (la plus récemment ouverte) sur la
-   fenêtre devient active [O ROM] ; non sondé avec deux unités ouvertes simultanément.
+1. **Cooking of real keystrokes** (chain keyboard.device → input.device → intuition → console) not
+   probed end to end with Alt and the function keys: this harness's xdotool injection does not
+   transmit Alt as Amiga Alt and F1/F10 gave nothing. The contents of ie_X/ie_Y rely on
+   `intuiticks-repeat-v34.md` §2.1. To be redone with another injection means (debugger, or
+   keyboard.device directly).
+2. **Resized window not active**: the recomputation is applied to the active unit, not to that of the
+   resized window [O ROM]; the visible effect on an inactive console has not been probed.
+3. **SUPER_BITMAP**: not probed (the recomputation clears nothing and does not reposition the cursor; cursor
+   possibly not redisplayed — to be checked).
+4. **SetMap of Workbench 1.3.3**: whether it calls CD_SETDEFAULTKEYMAP and/or CD_SETKEYMAP and on which
+   unit has not been verified on the disk (D, documented use).
+5. **Overflow of parameter values** (> 32767): CSI 65535C bounded the cursor as expected,
+   but the exact arithmetic (16 × 16 signed product, partial saturation) is not specified beyond that.
+6. **BEL**: DisplayBeep read in the ROM, visual effect (screen flash) not captured.
+7. **Order of the units for NEWACTIVE**: the first unit of the list (the most recently opened) on the
+   window becomes active [O ROM]; not probed with two units open simultaneously.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
-  aucune adresse de routine ROM. Les seules données ROM reproduites sont **fonctionnelles d'ABI** :
-  contenu de la keymap « usa » (valeurs par touche, en tableau), chaînes rendues/émises, tailles et
-  offsets de structures publiques (`conunit.h`, `keymap.h`) et constantes.
-- [x] Les automates et algorithmes (§3.2, §5.2) sont décrits par leurs **entrées/sorties et effets
-  visibles**, vérifiés par la sonde boîte noire, pas par la structure du code.
-- [x] La sonde citée est du code auteur (`tests/con_probe.s`, en-tête « ASSET DE TEST, PAS du code ROM »).
+- [x] No 68000 instruction sequence transcribed or paraphrased, no disassembly excerpt,
+  no ROM routine address. The only ROM data reproduced are **functional ABI data**:
+  contents of the "usa" keymap (values per key, as a table), strings returned/emitted, sizes and
+  offsets of public structures (`conunit.h`, `keymap.h`) and constants.
+- [x] The automata and algorithms (§3.2, §5.2) are described by their **inputs/outputs and visible
+  effects**, verified by the black-box probe, not by the structure of the code.
+- [x] The probe cited is author code (`tests/con_probe.s`, header "ASSET DE TEST, PAS du code ROM").

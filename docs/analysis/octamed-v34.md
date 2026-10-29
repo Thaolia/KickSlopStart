@@ -1,331 +1,331 @@
-# octamed-v34.md — OctaMED Professional v4.00 sur la vraie 1.3 : référence visuelle, contrat OS, LoadWB
+# octamed-v34.md — OctaMED Professional v4.00 on the real 1.3: visual reference, OS contract, LoadWB
 
-> Piste ANALYSE (« dirty »). Sources :
-> - ROM `assets/kick34005.A500` (vraie KS 1.3, exec 34.2 / graphics 34.1 / intuition 34.3 / dos 34.3)
->   **exécutée** sous FS-UAE (A500, 512K chip + 512K slow) — aucune lecture de son code n'a été
->   nécessaire pour ce document : tout ce qui concerne la ROM est **observé** (captures, structures
->   publiques relues en mémoire par le débogueur FS-UAE après coup) ;
-> - disquette `OctaMED Professional v4.00 (1992)(RBF Software)[a].adf` (copie de travail ; l'original
->   n'est pas modifié). Programme `OctaMED` (143 668 o) et `c/LoadWB` (1 136 o) : logiciels tiers,
->   décompressés / désassemblés pour savoir **quelles fonctions publiques ils appellent et avec quels
+> ANALYSIS track ("dirty"). Sources:
+> - ROM `assets/kick34005.A500` (real KS 1.3, exec 34.2 / graphics 34.1 / intuition 34.3 / dos 34.3)
+>   **executed** under FS-UAE (A500, 512K chip + 512K slow) — no reading of its code was
+>   needed for this document: everything concerning the ROM is **observed** (screenshots, public
+>   structures read back from memory by the FS-UAE debugger afterwards);
+> - floppy `OctaMED Professional v4.00 (1992)(RBF Software)[a].adf` (working copy; the original
+>   is not modified). Program `OctaMED` (143,668 bytes) and `c/LoadWB` (1,136 bytes): third-party software,
+>   unpacked / disassembled to find out **which public functions they call and with which
 >   arguments**.
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Ce document ne contient aucune
-> suite d'instructions de la ROM ni aucune adresse de routine ROM ; les valeurs citées sont des
-> champs de structures publiques (includes NDK 1.3) et des arguments d'appels d'API.
+> **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. This document contains no
+> ROM instruction sequence and no ROM routine address; the values cited are
+> fields of public structures (NDK 1.3 includes) and API call arguments.
 
 ---
 
-## 0. Résumé exécutable
+## 0. Executive summary
 
-1. Sur la vraie 1.3, avec la startup réduite à `OctaMED`, l'écran d'accueil est **stable de 120 s à
-   160 s** (captures identiques au pixel), un clic gauche n'importe où le remplace par l'éditeur, et
-   **tous les boutons testés réagissent** (FILES, PLAY, PLAY SONG, STOP). [O] (§1)
-2. OctaMED ouvre **un écran CUSTOMSCREEN 640 × `-1` × 3 plans, HIRES|SPRITES** puis **une seule
-   fenêtre BACKDROP|BORDERLESS|ACTIVATE|RMBTRAP|NOCAREREFRESH** de la taille de l'écran. La vraie 1.3
-   transforme la hauteur **-1 en 256** (PAL) : Screen.Height = ViewPort.DHeight = BitMap.Rows = 256,
-   et la fenêtre (dont OctaMED recopie la hauteur depuis Screen.Height) fait 640 × 256. [O] (§2.1)
-3. **Les boutons du panneau (FILES, PLAY, INSTR…, PLAY SONG, STOP…) ne sont PAS des gadgets
-   Intuition.** La fenêtre n'a en tout que 5 à 7 gadgets (2–4 chaînes, 1 booléen, 2 proportionnels) ;
-   les boutons sont détectés par OctaMED lui-même à partir des messages IDCMP **MOUSEBUTTONS /
-   SELECTDOWN ($68)** et des champs **MouseX / MouseY de l'IntuiMessage**. [O] (§2.4, §2.5)
-4. L'écran d'accueil « CLICK MOUSE TO CONTINUE » attend lui aussi un **MOUSEBUTTONS de Code $68**
-   sur le UserPort de la fenêtre. [O] (§2.5)
-5. `c/LoadWB` de la disquette est le **LoadWB 38.9 de la 2.04** : il demande `dos.library` **V36** et
-   s'arrête dès cet échec. **La vraie 1.3 affiche exactement « loadwb failed returncode 20 »** : ce
-   message n'est donc pas une régression de notre ROM. [O] (§3)
+1. On the real 1.3, with the startup reduced to `OctaMED`, the welcome screen is **stable from 120 s to
+   160 s** (pixel-identical screenshots), a left click anywhere replaces it with the editor, and
+   **all buttons tested respond** (FILES, PLAY, PLAY SONG, STOP). [O] (§1)
+2. OctaMED opens **a CUSTOMSCREEN 640 × `-1` × 3 planes, HIRES|SPRITES** then **a single
+   BACKDROP|BORDERLESS|ACTIVATE|RMBTRAP|NOCAREREFRESH window** the size of the screen. The real 1.3
+   turns the height **-1 into 256** (PAL): Screen.Height = ViewPort.DHeight = BitMap.Rows = 256,
+   and the window (whose height OctaMED copies from Screen.Height) is 640 × 256. [O] (§2.1)
+3. **The panel buttons (FILES, PLAY, INSTR..., PLAY SONG, STOP...) are NOT Intuition
+   gadgets.** The window has only 5 to 7 gadgets in all (2–4 string, 1 boolean, 2 proportional);
+   the buttons are detected by OctaMED itself from the IDCMP messages **MOUSEBUTTONS /
+   SELECTDOWN ($68)** and the **MouseX / MouseY fields of the IntuiMessage**. [O] (§2.4, §2.5)
+4. The "CLICK MOUSE TO CONTINUE" welcome screen also waits for a **MOUSEBUTTONS with Code $68**
+   on the window's UserPort. [O] (§2.5)
+5. The floppy's `c/LoadWB` is the **LoadWB 38.9 from 2.04**: it asks for `dos.library` **V36** and
+   stops as soon as that fails. **The real 1.3 displays exactly "loadwb failed returncode 20"**: this
+   message is therefore not a regression of our ROM. [O] (§3)
 
-Causes les plus probables des symptômes rapportés sur notre ROM (§4) : traitement de
-`NewScreen.Height = -1`, livraison des IDCMP MOUSEBUTTONS (et de MouseX/MouseY relatifs à la fenêtre)
-à une fenêtre BACKDROP/BORDERLESS/RMBTRAP **hors de tout gadget**, et le bit `NS_EXTENDED` ($1000)
-dans `NewScreen.Type`.
+Most probable causes of the symptoms reported on our ROM (§4): handling of
+`NewScreen.Height = -1`, delivery of MOUSEBUTTONS IDCMP (and of window-relative MouseX/MouseY)
+to a BACKDROP/BORDERLESS/RMBTRAP window **outside any gadget**, and the `NS_EXTENDED` ($1000) bit
+in `NewScreen.Type`.
 
 ---
 
-## 1. Captures de référence (vraie 1.3) — `docs/analysis/octamed/`
+## 1. Reference screenshots (real 1.3) — `docs/analysis/octamed/`
 
-Protocole [O] : copie de l'ADF dont `s/startup-sequence` est remplacée par la seule ligne `OctaMED`
-(xdftool delete + write) ; boot froid sur `kick34005.A500` par le harnais `tests/dskchg_run.sh`
-(copie locale avec une commande `click` = mousedown/mouseup 1 par xdotool, 120 ms) ; captures X
-recadrées en +152+100 720×568. Pointeur placé par déplacements relatifs depuis le coin haut-gauche
-(1 pas xdotool ≈ 1 pixel hires horizontal, ≈ ½ ligne verticale). Les instants sont comptés depuis le
-lancement de FS-UAE.
+Protocol [O]: copy of the ADF whose `s/startup-sequence` is replaced by the single line `OctaMED`
+(xdftool delete + write); cold boot on `kick34005.A500` with the harness `tests/dskchg_run.sh`
+(local copy with a `click` command = mousedown/mouseup 1 via xdotool, 120 ms); X screenshots
+cropped at +152+100 720×568. Pointer positioned by relative moves from the top-left corner
+(1 xdotool step ≈ 1 horizontal hires pixel, ≈ ½ line vertically). Times are counted from the
+launch of FS-UAE.
 
-Palette de l'éditeur (relue dans la ColorMap, §2.2) : 0 = $000 noir (fond), 1 = $CCC gris clair
-(texte, reliefs clairs), 2 = $667 gris foncé (ombres), 3 = $99A gris-bleu (panneaux), 4 = $F00 rouge
-(curseur d'édition, séparateurs de pistes), 5 = $F88, 6 = $FAA (rose : numéros de pistes), 7 = $FCC.
-Couleurs du pointeur (17-19) relues : $00F / $000 / $FE1 (bleu / noir / jaune), forme du pointeur
-comprise : elles viennent du `devs/system-configuration` de la disquette, pas d'OctaMED.
+Editor palette (read back from the ColorMap, §2.2): 0 = $000 black (background), 1 = $CCC light grey
+(text, light bevels), 2 = $667 dark grey (shadows), 3 = $99A grey-blue (panels), 4 = $F00 red
+(edit cursor, track separators), 5 = $F88, 6 = $FAA (pink: track numbers), 7 = $FCC.
+Pointer colours (17-19) read back: $00F / $000 / $FE1 (blue / black / yellow), pointer shape
+included: they come from the floppy's `devs/system-configuration`, not from OctaMED.
 
-| Fichier | Instant / action | Ce que montre la capture |
+| File | Time / action | What the screenshot shows |
 |---|---|---|
-| `01_accueil_t120.png` | 124 s (identique au pixel à 166 s) | Écran d'accueil. En haut, bandeau gris-bleu ($99A) avec titre « OctaMED-Professional (v4.00) » dessiné, cadre « OctaMED Professional (v4.00) / COPYRIGHT © 1992 TEIJO KINNUNEN & RAY BURT-FROST / ILLEGAL DISTRIBUTION… / -CLICK MOUSE TO CONTINUE- » et, à droite, la grille de 15 boutons (FILES MISC ≡ / PLAY VOL ♪ / INSTR MIDI SYNTH / BLOCK TRANS SMPED / EDIT RANGE SLIST). Ligne d'état sous le panneau (champs vides, E SP CHRD, barre de 8 crans). Zone centrale noire avec 4 lignes de texte blanc topaz 8 : « OctaMED V4 - now released as freeware! … commercial version of OctaMED. » En bas, cadre gris des oscilloscopes/VU (2 grands rectangles à graduations). Pointeur en haut à gauche. |
-| `02_apres_clic.png` | clic gauche au centre (≈ 320,137 écran), +10 s | Éditeur principal : titre d'écran **« Loading GFX... »** dans la barre de titre (noire, texte blanc) ; panneau PLAY (flèches haut/bas, +/-, INS/DEL, VOL HEX/DEC, FILTER, E1 E2 E3 STS, SPD 033/06, CH.MODE HQ, 4 5 6 7 8, STOP, PLAY SONG, CONT. SONG, PLAY BLOCK, D, CONT. BLOCK, deux glissières horizontales) ; bouton **PLAY en vidéo inverse** ; ligne d'état « 0001/0001 000/000 … 01 … 01/01 » ; numéros de pistes roses 4 0 1 2 3, séparateurs rouges verticaux ; bloc de pattern (lignes 000-007, « --- 00000 »), ligne courante 000 sur bande grise avec curseur rouge ; ligne « Mem 384448/ 206176 » ; cadre VU en bas. |
-| `03_files.png` | clic sur FILES (≈ 532,56 capture), +6 s | Titre « Loading directory... ». Panneau FILES : SAVE FORMAT (MOD1(+INSTR) en inverse, MOD1(NOINST), MOD0(OLD), ST-MODULE), INFO/ICON, LOAD SONG / SAVE SONG / LOAD INSTR / SAVE INSTR, DEL FILE, LOAD/SAVE MSG MAP, champs DIR: « OctaMEDv4: » et FILE: (noirs). Zone centrale grise ($99A) : « Disk 71 % full (248392 bytes free) », liste « ReadMe 8690 », « (dir) c », colonne de volumes/assigns (C: CON: DEVS: DF0: FONTS: L: LIBS: PAR: PRT: RAM: RAW: S: SER:), ascenseurs verticaux. Bouton FILES en inverse. |
-| `04_play.png` | clic sur PLAY, +6 s | Retour au panneau PLAY (PLAY en inverse). La barre de titre d'écran n'est plus visible : le haut de l'écran montre « TIMER 00:00 » + le logo « OctaMED-Professional (v4.00) BY TEIJO KINNUNEN » (dessin de la fenêtre). |
-| `05_play_song.png` | clic sur PLAY SONG (≈ 310,115), +6 s | Lecture en cours : PLAY SONG en inverse, TIMER 00:04, le pattern défile (ligne courante 036 sur la bande grise, lignes 029-043 visibles, numéros de piste dans le pattern). |
-| `06_stop.png` | clic sur STOP (≈ 240,124), +4 s | Lecture arrêtée : TIMER figé à 00:11, PLAY SONG n'est plus en inverse, pattern arrêté (ligne courante 031). |
+| `01_accueil_t120.png` | 124 s (pixel-identical at 166 s) | Welcome screen. At the top, grey-blue ($99A) banner with the title "OctaMED-Professional (v4.00)" drawn, frame "OctaMED Professional (v4.00) / COPYRIGHT © 1992 TEIJO KINNUNEN & RAY BURT-FROST / ILLEGAL DISTRIBUTION... / -CLICK MOUSE TO CONTINUE-" and, on the right, the grid of 15 buttons (FILES MISC ≡ / PLAY VOL ♪ / INSTR MIDI SYNTH / BLOCK TRANS SMPED / EDIT RANGE SLIST). Status line under the panel (empty fields, E SP CHRD, 8-notch bar). Black central area with 4 lines of white topaz 8 text: "OctaMED V4 - now released as freeware! ... commercial version of OctaMED." At the bottom, grey frame of the oscilloscopes/VU meters (2 large graduated rectangles). Pointer at top left. |
+| `02_apres_clic.png` | left click in the centre (≈ 320,137 screen), +10 s | Main editor: screen title **"Loading GFX..."** in the title bar (black, white text); PLAY panel (up/down arrows, +/-, INS/DEL, VOL HEX/DEC, FILTER, E1 E2 E3 STS, SPD 033/06, CH.MODE HQ, 4 5 6 7 8, STOP, PLAY SONG, CONT. SONG, PLAY BLOCK, D, CONT. BLOCK, two horizontal sliders); **PLAY button in reverse video**; status line "0001/0001 000/000 ... 01 ... 01/01"; pink track numbers 4 0 1 2 3, red vertical separators; pattern block (lines 000-007, "--- 00000"), current line 000 on a grey band with red cursor; line "Mem 384448/ 206176"; VU frame at the bottom. |
+| `03_files.png` | click on FILES (≈ 532,56 screenshot), +6 s | Title "Loading directory...". FILES panel: SAVE FORMAT (MOD1(+INSTR) in reverse, MOD1(NOINST), MOD0(OLD), ST-MODULE), INFO/ICON, LOAD SONG / SAVE SONG / LOAD INSTR / SAVE INSTR, DEL FILE, LOAD/SAVE MSG MAP, fields DIR: "OctaMEDv4:" and FILE: (black). Grey ($99A) central area: "Disk 71 % full (248392 bytes free)", list "ReadMe 8690", "(dir) c", column of volumes/assigns (C: CON: DEVS: DF0: FONTS: L: LIBS: PAR: PRT: RAM: RAW: S: SER:), vertical scrollers. FILES button in reverse. |
+| `04_play.png` | click on PLAY, +6 s | Back to the PLAY panel (PLAY in reverse). The screen title bar is no longer visible: the top of the screen shows "TIMER 00:00" + the logo "OctaMED-Professional (v4.00) BY TEIJO KINNUNEN" (window drawing). |
+| `05_play_song.png` | click on PLAY SONG (≈ 310,115), +6 s | Playback in progress: PLAY SONG in reverse, TIMER 00:04, the pattern scrolls (current line 036 on the grey band, lines 029-043 visible, track numbers in the pattern). |
+| `06_stop.png` | click on STOP (≈ 240,124), +4 s | Playback stopped: TIMER frozen at 00:11, PLAY SONG no longer in reverse, pattern stopped (current line 031). |
 
-Mesures annexes [O] : la ligne « Mem 384448/ 206176 » (valeurs non interprétées) ; le titre d'écran
-« Loading GFX... » apparaît après le clic d'accueil (chargement d'`OctaMED.gfx*`), puis disparaît
-quand l'éditeur redessine la bande de titre.
+Additional measurements [O]: the line "Mem 384448/ 206176" (values not interpreted); the screen title
+"Loading GFX..." appears after the welcome click (loading of `OctaMED.gfx*`), then disappears
+when the editor redraws the title band.
 
 ---
 
-## 2. Ce qu'OctaMED attend de l'OS
+## 2. What OctaMED expects from the OS
 
-### 2.0 Chargement
+### 2.0 Loading
 
-- `OctaMED` est un exécutable **auto-décompactant** : 2 hunks (CODE 652 o, DATA 0x22E74 o / alloc
-  0x3BB38 o). Le décompacteur n'utilise qu'**AllocMem / FreeMem** (exec) et écrit dans
-  **COLOR17 ($DFF1A2)** pendant la décompression ; il construit **43 segments** chaînés en seglist
-  (BPTR), libère son hunk de données puis saute au premier segment. [O] (exécution sous un
-  émulateur 68000 minimal avec un faux exec)
-- Le code décompacté est du C « small data » (registre de base sur le segment de données). [O]
-- Démarrage CLI classique : FindTask(NULL), pr_CLI, pr_CurrentDir ; OpenLibrary("dos.library", 0). [O]
+- `OctaMED` is a **self-unpacking** executable: 2 hunks (CODE 652 bytes, DATA 0x22E74 bytes / alloc
+  0x3BB38 bytes). The unpacker uses only **AllocMem / FreeMem** (exec) and writes to
+  **COLOR17 ($DFF1A2)** during decompression; it builds **43 segments** chained into a seglist
+  (BPTR), frees its data hunk then jumps to the first segment. [O] (execution under a
+  minimal 68000 emulator with a fake exec)
+- The unpacked code is "small data" C (base register on the data segment). [O]
+- Classic CLI start-up: FindTask(NULL), pr_CLI, pr_CurrentDir; OpenLibrary("dos.library", 0). [O]
 
-### 2.1 Écran et fenêtre [O]
+### 2.1 Screen and window [O]
 
-Bibliothèques : `intuition.library` **V33** (échec ⇒ Alert), `graphics.library` V0,
-`icon.library` V0 (facultative : « No icon.library: no icon. »), `dos.library` V0 ;
-plus tard `powerpacker.library`, `audio.device`, `ciax.resource`, `misc.resource`,
-`serial.device` (MIDI), `printer.device` à la demande.
+Libraries: `intuition.library` **V33** (failure ⇒ Alert), `graphics.library` V0,
+`icon.library` V0 (optional: "No icon.library: no icon."), `dos.library` V0;
+later `powerpacker.library`, `audio.device`, `ciax.resource`, `misc.resource`,
+`serial.device` (MIDI), `printer.device` on demand.
 
-`OpenScreen(NewScreen)` :
+`OpenScreen(NewScreen)`:
 
-| champ | valeur | note |
+| field | value | note |
 |---|---|---|
 | LeftEdge, TopEdge | 0, 0 | |
 | Width | 640 | |
-| **Height** | **-1** ($FFFF) | jamais modifié par le programme. **Vraie 1.3 : Screen.Height = 256, ViewPort.DHeight = 256, BitMap.Rows = 256** (machine PAL) [O] |
-| Depth | 3 (2 si l'option « depth » des préférences est réglée) | |
+| **Height** | **-1** ($FFFF) | never modified by the program. **Real 1.3: Screen.Height = 256, ViewPort.DHeight = 256, BitMap.Rows = 256** (PAL machine) [O] |
+| Depth | 3 (2 if the "depth" preferences option is set) | |
 | DetailPen / BlockPen | 0 / 1 | |
-| ViewModes | **$C000 = HIRES \| SPRITES** | relu : ViewPort.Modes = $C000 [O] |
-| **Type** | **$100F = CUSTOMSCREEN \| NS_EXTENDED ($1000)** | la vraie 1.3 accepte et **conserve** le bit : Screen.Flags = $100F [O] |
+| ViewModes | **$C000 = HIRES \| SPRITES** | read back: ViewPort.Modes = $C000 [O] |
+| **Type** | **$100F = CUSTOMSCREEN \| NS_EXTENDED ($1000)** | the real 1.3 accepts and **keeps** the bit: Screen.Flags = $100F [O] |
 | Font | TextAttr { "topaz.font", 8, 0, 0 } | |
-| DefaultTitle | « OctaMED Professional © 1991-1992 Teijo Kinnunen & Ray Burt-Frost. » (chaîne décodée XOR $CC au démarrage) | Screen.Title relu identique [O] |
+| DefaultTitle | "OctaMED Professional © 1991-1992 Teijo Kinnunen & Ray Burt-Frost." (string decoded with XOR $CC at start-up) | Screen.Title read back identical [O] |
 | Gadgets, CustomBitMap | NULL, NULL | |
-| (Extension, V36) | pointeur vers une liste de tags `SA_Pens` ($8000003A) | **ignorée** par la 1.3 [D] |
+| (Extension, V36) | pointer to an `SA_Pens` ($8000003A) tag list | **ignored** by 1.3 [D] |
 
-Résultat relu sur la vraie 1.3 : BarHeight 10, BitMap BytesPerRow 80, Rows 256, Depth 3,
+Result read back on the real 1.3: BarHeight 10, BitMap BytesPerRow 80, Rows 256, Depth 3,
 ColorMap Count 32. [O]
 
-Puis `OpenFont(topaz 8)` (graphics), `FindTask(NULL)` et `OpenWindow(NewWindow)` :
+Then `OpenFont(topaz 8)` (graphics), `FindTask(NULL)` and `OpenWindow(NewWindow)`:
 
-| champ | valeur |
+| field | value |
 |---|---|
 | Left/Top | 0, 0 |
-| Width / Height | 640 / **recopiée de Screen.Height** juste avant OpenWindow (donc 256 sur la vraie 1.3) |
+| Width / Height | 640 / **copied from Screen.Height** just before OpenWindow (hence 256 on the real 1.3) |
 | DetailPen / BlockPen | 255 / 255 |
 | **IDCMPFlags** | **$478 = MOUSEBUTTONS \| MOUSEMOVE \| GADGETDOWN \| GADGETUP \| RAWKEY** |
 | **Flags** | **$31900 = BACKDROP \| BORDERLESS \| ACTIVATE \| RMBTRAP \| NOCAREREFRESH** |
 | FirstGadget, CheckMark, Title | NULL |
-| Screen | l'écran ouvert ; Type = CUSTOMSCREEN |
+| Screen | the opened screen; Type = CUSTOMSCREEN |
 
-Relu sur la vraie 1.3 : Window 640×256 en (0,0), **Flags $33900** (WINDOWACTIVE ajouté),
-IDCMPFlags $478, bordures 0/0/0/0, Pointer NULL (pointeur par défaut), IntuitionBase.ActiveWindow =
-cette fenêtre, ActiveScreen = cet écran. [O]
+Read back on the real 1.3: Window 640×256 at (0,0), **Flags $33900** (WINDOWACTIVE added),
+IDCMPFlags $478, borders 0/0/0/0, Pointer NULL (default pointer), IntuitionBase.ActiveWindow =
+this window, ActiveScreen = this screen. [O]
 
-Ensuite : `pr_WindowPtr := window` (requesters DOS sur cet écran), RastPort = `window->RPort`,
+Next: `pr_WindowPtr := window` (DOS requesters on this screen), RastPort = `window->RPort`,
 `ViewPortAddress(window)`, `LoadRGB4(vp, table, 8)`, `SetDrMd(rp, JAM2)`, `SetAPen(rp, 0)`,
 `SetBPen(rp, 3)`. [O]
 
 ### 2.2 Palette [O]
 
-- `LoadRGB4(vp, 8 couleurs)` pour les couleurs 0-7, `SetRGB4` ponctuels (mise au noir des 8 couleurs
-  avant de dessiner l'écran d'accueil, puis couleurs de sprites 21-27), `GetRGB4` (4 sites,
-  préférences de palette).
-- ColorMap relue sur la vraie 1.3 :
-  - écran d'accueil : `000 CCC 667 99A 334 556 889 BBC` pour 0-7 ;
-  - éditeur : `000 CCC 667 99A F00 F88 FAA FCC` pour 0-7 et `AAA AAA BBB 888 AAA AAA BBB` pour
-    21-27 (couleurs des sprites des VU/curseurs) ; 16-20 et 28-31 inchangées
+- `LoadRGB4(vp, 8 colours)` for colours 0-7, occasional `SetRGB4` (blacking out the 8 colours
+  before drawing the welcome screen, then sprite colours 21-27), `GetRGB4` (4 sites,
+  palette preferences).
+- ColorMap read back on the real 1.3:
+  - welcome screen: `000 CCC 667 99A 334 556 889 BBC` for 0-7;
+  - editor: `000 CCC 667 99A F00 F88 FAA FCC` for 0-7 and `AAA AAA BBB 888 AAA AAA BBB` for
+    21-27 (colours of the VU/cursor sprites); 16-20 and 28-31 unchanged
     (`000 00F 000 FE1 444`, `CCC DDD EEE FFF`). [O]
 
-### 2.3 Dessin
+### 2.3 Drawing
 
-- Écran d'accueil et panneaux : images chargées depuis `OctaMED.gfx1..7` dans une BitMap
-  initialisée par `InitBitMap`, copiées par **`BltBitMapRastPort(src, 0, 0, rp, 0, 0, 640, 200,
-  $C0)`**. Si `Screen.Height >= 256`, OctaMED complète les lignes PAL par
-  `SetAPen(rp, 3)` + `RectFill(rp, 0, 199, 639, 206)` et dessine des éléments supplémentaires plus
-  bas : **la mise en page dépend de la hauteur réelle obtenue pour l'écran**. [O]
-- `ShowTitle(screen, FALSE)` puis `SetWindowTitles(window, (char*)-1, titre)` (titre d'écran
-  seulement) ; plus tard le titre d'écran sert de ligne d'état (« Loading GFX... », « Loading
-  directory... »). [O]
-- Primitives graphics très utilisées : Move ×69, Text ×55, SetDrMd ×37, SetAPen ×34, RectFill ×27,
-  Draw ×16, SetBPen ×10, WritePixel, PolyDraw, WaitBlit, VBeamPos (attente de faisceau). [O]
-- **UCopList** (si l'option est active) : AllocMem(12, MEMF_PUBLIC|MEMF_CLEAR), puis 30 fois
+- Welcome screen and panels: images loaded from `OctaMED.gfx1..7` into a BitMap
+  initialised by `InitBitMap`, copied by **`BltBitMapRastPort(src, 0, 0, rp, 0, 0, 640, 200,
+  $C0)`**. If `Screen.Height >= 256`, OctaMED fills the PAL lines with
+  `SetAPen(rp, 3)` + `RectFill(rp, 0, 199, 639, 206)` and draws additional elements further
+  down: **the layout depends on the actual height obtained for the screen**. [O]
+- `ShowTitle(screen, FALSE)` then `SetWindowTitles(window, (char*)-1, title)` (screen title
+  only); later the screen title serves as a status line ("Loading GFX...", "Loading
+  directory..."). [O]
+- Heavily used graphics primitives: Move ×69, Text ×55, SetDrMd ×37, SetAPen ×34, RectFill ×27,
+  Draw ×16, SetBPen ×10, WritePixel, PolyDraw, WaitBlit, VBeamPos (beam wait). [O]
+- **UCopList** (if the option is active): AllocMem(12, MEMF_PUBLIC|MEMF_CLEAR), then 30 times
   `CWait(ucl, y, 0)` / `CBump` / `CMove(ucl, COLOR22, …)` / `CBump` / `CMove(ucl, COLOR26, …)` /
-  `CBump` (y de 2 en 2 depuis une ligne de base), terminée par `CWait(ucl, 10000, 255)` + `CBump`
-  (= CEND), puis `vp->UCopIns := ucl` et **`RethinkDisplay()`**. Retrait : Forbid… `vp->UCopIns :=
-  NULL`, RethinkDisplay, `FreeCopList`. Relu sur la vraie 1.3 : **UCopIns non nul dans la vue
-  éditeur, nul dans la vue FILES**. [O]
-- **Sprites matériels** via graphics : `GetSprite` (×6), `ChangeSprite` (×10), `MoveSprite` (×11),
-  `FreeSprite` (×4) — indicateurs VU / curseurs, en plus du pointeur Intuition. ViewPort.SprIns
-  reste NULL (SimpleSprites). [O]
-- `SetPointer(window, données, 14, 16, -12, -11)` seulement si une préférence le demande ;
-  `ClearPointer` sinon. Par défaut (captures) : pointeur système. [O]
-- `CloseWorkBench` / `OpenWorkBench` existent (option), non déclenchés dans les captures : l'écran
-  Workbench (avec la fenêtre CLI « AmigaDOS ») reste ouvert derrière. [O]
+  `CBump` (y in steps of 2 from a base line), terminated by `CWait(ucl, 10000, 255)` + `CBump`
+  (= CEND), then `vp->UCopIns := ucl` and **`RethinkDisplay()`**. Removal: Forbid... `vp->UCopIns :=
+  NULL`, RethinkDisplay, `FreeCopList`. Read back on the real 1.3: **UCopIns non-null in the editor
+  view, null in the FILES view**. [O]
+- **Hardware sprites** via graphics: `GetSprite` (×6), `ChangeSprite` (×10), `MoveSprite` (×11),
+  `FreeSprite` (×4) — VU indicators / cursors, in addition to the Intuition pointer. ViewPort.SprIns
+  stays NULL (SimpleSprites). [O]
+- `SetPointer(window, data, 14, 16, -12, -11)` only if a preference requests it;
+  `ClearPointer` otherwise. By default (screenshots): system pointer. [O]
+- `CloseWorkBench` / `OpenWorkBench` exist (option), not triggered in the screenshots: the Workbench
+  screen (with the "AmigaDOS" CLI window) stays open behind. [O]
 
-### 2.4 Gadgets Intuition réellement présents [O]
+### 2.4 Intuition gadgets actually present [O]
 
-Relus dans `window->FirstGadget` sur la vraie 1.3 (GadgetType / Flags / Activation en hexa) :
+Read back from `window->FirstGadget` on the real 1.3 (GadgetType / Flags / Activation in hex):
 
-Vue éditeur (panneau PLAY), 5 gadgets :
+Editor view (PLAY panel), 5 gadgets:
 
-| ID | type | position, taille | Flags | Activation | rôle |
+| ID | type | position, size | Flags | Activation | role |
 |---|---|---|---|---|---|
-| 320 | STRGADGET ($04) | 178,198 224×8 | 0 (GADGHCOMP) | RELVERIFY | champ texte noir de la ligne « Mem » |
-| 321 | STRGADGET | 406,198 200×8 | 0 | RELVERIFY | 2e champ texte |
-| 322 | BOOLGADGET ($01) | 610,198 28×8 | 3 (GADGHNONE) | GADGIMMEDIATE | case « NRM » |
-| 775 | PROPGADGET ($03) | 332,19 88×13 | 4 (GADGIMAGE) | RELVERIFY\|GADGIMMEDIATE\|FOLLOWMOUSE ($0B) | glissière droite du panneau PLAY |
-| 777 | PROPGADGET | 106,19 186×13 | 4 | $0B | glissière gauche |
+| 320 | STRGADGET ($04) | 178,198 224×8 | 0 (GADGHCOMP) | RELVERIFY | black text field of the "Mem" line |
+| 321 | STRGADGET | 406,198 200×8 | 0 | RELVERIFY | text field no. 2 |
+| 322 | BOOLGADGET ($01) | 610,198 28×8 | 3 (GADGHNONE) | GADGIMMEDIATE | "NRM" box |
+| 775 | PROPGADGET ($03) | 332,19 88×13 | 4 (GADGIMAGE) | RELVERIFY\|GADGIMMEDIATE\|FOLLOWMOUSE ($0B) | right slider of the PLAY panel |
+| 777 | PROPGADGET | 106,19 186×13 | 4 | $0B | left slider |
 
-PropInfo : Flags **$001B** (AUTOKNOB | FREEHORIZ | PROPBORDERLESS | bit $10 non défini en 1.3,
-conservé tel quel), VPot $FFFF, VBody $FFFF.
-Vecteurs de test du knob auto (Image de GadgetRender, recalculée par Intuition) :
-- 88×13, HPot $294B, HBody $0842 ⇒ Image L/T **13,0**, W/H **6×13** ;
+PropInfo: Flags **$001B** (AUTOKNOB | FREEHORIZ | PROPBORDERLESS | bit $10 undefined in 1.3,
+kept as is), VPot $FFFF, VBody $FFFF.
+Test vectors for the auto knob (GadgetRender Image, recomputed by Intuition):
+- 88×13, HPot $294B, HBody $0842 ⇒ Image L/T **13,0**, W/H **6×13**;
 - 186×13, HPot $2271, HBody $0112 ⇒ Image L/T **24,0**, W/H **6×13**.
-  (largeur minimale du knob 6, position = HPot × (largeur − knob) / $FFFF, arrondi bas). [O]
+  (minimum knob width 6, position = HPot × (width − knob) / $FFFF, rounded down). [O]
 
-Vue FILES, 7 gadgets (les props PLAY sont retirés, `RemoveGList`/`AddGList` à chaque changement de
-panneau) :
+FILES view, 7 gadgets (the PLAY props are removed, `RemoveGList`/`AddGList` on every panel
+change):
 
-| ID | type | position, taille | Flags | Act | rôle |
+| ID | type | position, size | Flags | Act | role |
 |---|---|---|---|---|---|
-| 4126 | PROP | 436,89 16×84 | 4 | $0B | ascenseur de la liste de fichiers (PropInfo $001D = AUTOKNOB\|FREEVERT\|PROPBORDERLESS\|$10, VBody $FFFF ⇒ knob 16×84) |
-| 4127 | PROP | 620,89 16×84 | 4 | $0B | ascenseur des volumes (VBody $EDB5 ⇒ knob **16×78** en 0,0) |
-| 320, 321, 322 | idem vue éditeur | | | | |
-| 522 | STR | 136,43 320×8 | 0 | RELVERIFY | champ DIR: |
-| 523 | STR | 136,54 320×8 | 0 | RELVERIFY | champ FILE: |
+| 4126 | PROP | 436,89 16×84 | 4 | $0B | scroller of the file list (PropInfo $001D = AUTOKNOB\|FREEVERT\|PROPBORDERLESS\|$10, VBody $FFFF ⇒ knob 16×84) |
+| 4127 | PROP | 620,89 16×84 | 4 | $0B | scroller of the volumes (VBody $EDB5 ⇒ knob **16×78** at 0,0) |
+| 320, 321, 322 | same as editor view | | | | |
+| 522 | STR | 136,43 320×8 | 0 | RELVERIFY | DIR: field |
+| 523 | STR | 136,54 320×8 | 0 | RELVERIFY | FILE: field |
 
-**Aucun des boutons FILES / PLAY / PLAY SONG / STOP… n'est un gadget.** [O]
+**None of the FILES / PLAY / PLAY SONG / STOP... buttons is a gadget.** [O]
 
-Usage des fonctions de gadgets (comptes de sites d'appel) : `RefreshGList` ×27, `RemoveGadget` ×22,
-`AddGadget` ×18, `ActivateGadget` ×11 (champs texte), `AddGList` ×10, `RemoveGList` ×10,
-`NewModifyProp` ×3, `ModifyProp` ×2. Pas de menus (aucun SetMenuStrip). [O]
+Use of gadget functions (call-site counts): `RefreshGList` ×27, `RemoveGadget` ×22,
+`AddGadget` ×18, `ActivateGadget` ×11 (text fields), `AddGList` ×10, `RemoveGList` ×10,
+`NewModifyProp` ×3, `ModifyProp` ×2. No menus (no SetMenuStrip). [O]
 
-GadgetID : OctaMED décode **octet haut = groupe, octet bas = numéro** pour GADGETDOWN / GADGETUP
-(lu dans `((struct Gadget*)IAddress)->GadgetID`). [O]
+GadgetID: OctaMED decodes **high byte = group, low byte = number** for GADGETDOWN / GADGETUP
+(read from `((struct Gadget*)IAddress)->GadgetID`). [O]
 
-### 2.5 Entrées : souris, clics, clavier [O]
+### 2.5 Input: mouse, clicks, keyboard [O]
 
-Boucle principale : `Wait(signal du UserPort | signaux timer/MIDI/série/…)` (avec, en mode
-« occupé », un sondage `SetSignal(0, 0)`), puis `GetMsg` en boucle ; pour chaque message OctaMED
-copie **Class, Code, Qualifier, IAddress, MouseX, MouseY** puis fait **ReplyMsg tout de suite**, et
-traite la copie :
+Main loop: `Wait(UserPort signal | timer/MIDI/serial/... signals)` (with, in "busy"
+mode, a `SetSignal(0, 0)` poll), then `GetMsg` in a loop; for each message OctaMED
+copies **Class, Code, Qualifier, IAddress, MouseX, MouseY**, then does **ReplyMsg straight away**, and
+processes the copy:
 
-- **Class $08 MOUSEBUTTONS** :
-  - Code **$68 SELECTDOWN** : test de zone sur des tables internes de rectangles à partir de
-    **MouseX / MouseY du message** (y < 77 ⇒ table du panneau de boutons, sinon table de la vue
-    courante) ⇒ action du bouton. **C'est le seul chemin par lequel FILES, PLAY, PLAY SONG, STOP…
-    réagissent.**
-  - Code $E8 SELECTUP / $E9 MENUUP : fin de glissement, `ReportMouse(FALSE, window)` (d0 = 0,
+- **Class $08 MOUSEBUTTONS**:
+  - Code **$68 SELECTDOWN**: hit test against internal tables of rectangles using
+    **the message's MouseX / MouseY** (y < 77 ⇒ button panel table, otherwise table of the current
+    view) ⇒ button action. **This is the only path by which FILES, PLAY, PLAY SONG, STOP...
+    respond.**
+  - Code $E8 SELECTUP / $E9 MENUUP: end of drag, `ReportMouse(FALSE, window)` (d0 = 0,
     a0 = window).
-  - Le bouton droit arrive en MOUSEBUTTONS ($69/$E9) grâce à RMBTRAP (pas de menus).
-- **Class $10 MOUSEMOVE** : glissements (activés par `ReportMouse(TRUE, window)` pendant un drag,
+  - The right button arrives as MOUSEBUTTONS ($69/$E9) thanks to RMBTRAP (no menus).
+- **Class $10 MOUSEMOVE**: drags (enabled by `ReportMouse(TRUE, window)` during a drag,
   5 sites).
-- **Class $20 GADGETDOWN / $40 GADGETUP** : gadgets du §2.4, via IAddress→GadgetID.
-- **Class $400 RAWKEY** : clavier (Code bit 7 = relâchement ignoré).
-- Class $400000 INTUITICKS : traitée si présente (non incluse dans $478).
-- `ModifyIDCMP(window, 0)` pendant les chargements, puis `ModifyIDCMP(window, $478)` ; aussi
-  `$200000` (VANILLAKEY) et `$400` (RAWKEY) seuls pendant certaines saisies. [O]
+- **Class $20 GADGETDOWN / $40 GADGETUP**: gadgets from §2.4, via IAddress→GadgetID.
+- **Class $400 RAWKEY**: keyboard (Code bit 7 = release, ignored).
+- Class $400000 INTUITICKS: handled if present (not included in $478).
+- `ModifyIDCMP(window, 0)` during loads, then `ModifyIDCMP(window, $478)`; also
+  `$200000` (VANILLAKEY) and `$400` (RAWKEY) alone during some text entries. [O]
 
-Écran d'accueil : `WaitPort(UserPort)` / `GetMsg` / `ReplyMsg` jusqu'à un message **Class
+Welcome screen: `WaitPort(UserPort)` / `GetMsg` / `ReplyMsg` until a message with **Class
 MOUSEBUTTONS, Code $68**. [O]
 
-Lecture directe du matériel : seulement dans les routines d'**échantillonnage** et de lecture
-(`$BFE001` bit 6 = bouton gauche, `POTINP $DFF016` bit 10 = bouton droit pour interrompre ;
-INTENA/DMACON/registres audio, CIA). **L'interface ne lit jamais la souris en direct.** [O]
+Direct hardware reads: only in the **sampling** and playback routines
+(`$BFE001` bit 6 = left button, `POTINP $DFF016` bit 10 = right button to interrupt;
+INTENA/DMACON/audio registers, CIA). **The user interface never reads the mouse directly.** [O]
 
-Autres usages exec notables : `Disable/Enable` ×25, `AddIntServer` (VBlank « OctaMED VBlank »),
-interruptions logicielles (« OctaMED SoftInt »), `ciax.resource` (timer CIA), `misc.resource` +
-`serial.device` (MIDI), `audio.device` (allocation des 4 canaux), `CopyMem`, `AllocSignal`. [O]
+Other notable exec uses: `Disable/Enable` ×25, `AddIntServer` (VBlank "OctaMED VBlank"),
+software interrupts ("OctaMED SoftInt"), `ciax.resource` (CIA timer), `misc.resource` +
+`serial.device` (MIDI), `audio.device` (allocation of the 4 channels), `CopyMem`, `AllocSignal`. [O]
 
 ---
 
-## 3. `c/LoadWB` de la disquette OctaMED [O]
+## 3. `c/LoadWB` on the OctaMED floppy [O]
 
-- Exécutable 1 136 o, 2 hunks, chaîne `$VER: loadwb 38.9 (30.3.92)` : **LoadWB de la 2.04**, sans
-  rapport avec celui du Workbench 1.3.3 (`loadwb-13.md`).
-- Séquence : `OpenLibrary("dos.library", 36)`. **Échec ⇒ `pr_Result2` (ThisTask+$94) := 122
-  (ERROR_INVALID_RESIDENT_LIBRARY), retour 20**, sans aucun message ni autre appel.
-  Sinon (2.0+ seulement) : `ReadArgs("-DEBUG/S,DELAY/S,CLEANUP/S,NEWPATH/S")`, échec ⇒
-  `PrintFault(IoErr(), …)` ; `OpenLibrary("workbench.library", 36)` (échec ⇒ `PrintFault(122)`) [O] ;
-  la suite (chemin CLI, démarrage par la workbench.library, catalogue `locale.library` /
-  `sys/workbench.catalog`, d'après ses chaînes) n'a pas été suivie [S]. Ses chaînes ne contiennent ni
-  « workbench.task » ni de message « Cannot find resident tag » : **aucun contrat avec le
-  workbench.task de la ROM 1.3** [D] — et de toute façon il s'arrête avant, sur dos V36 [O].
-- **Vraie 1.3** (ADF copie, startup = `loadwb` seul, captures à 45 s et 75 s identiques) : la fenêtre
-  CLI « AmigaDOS » affiche
+- Executable of 1,136 bytes, 2 hunks, string `$VER: loadwb 38.9 (30.3.92)`: **the 2.04 LoadWB**, unrelated
+  to the Workbench 1.3.3 one (`loadwb-13.md`).
+- Sequence: `OpenLibrary("dos.library", 36)`. **Failure ⇒ `pr_Result2` (ThisTask+$94) := 122
+  (ERROR_INVALID_RESIDENT_LIBRARY), return 20**, with no message and no other call.
+  Otherwise (2.0+ only): `ReadArgs("-DEBUG/S,DELAY/S,CLEANUP/S,NEWPATH/S")`, failure ⇒
+  `PrintFault(IoErr(), …)`; `OpenLibrary("workbench.library", 36)` (failure ⇒ `PrintFault(122)`) [O];
+  the rest (CLI path, start-up through workbench.library, `locale.library` /
+  `sys/workbench.catalog` catalogue, according to its strings) was not followed [S]. Its strings contain neither
+  "workbench.task" nor a "Cannot find resident tag" message: **no contract with the
+  1.3 ROM's workbench.task** [D] — and in any case it stops earlier, on dos V36 [O].
+- **Real 1.3** (copied ADF, startup = `loadwb` alone, screenshots at 45 s and 75 s identical): the
+  "AmigaDOS" CLI window displays
   `Copyright © 1987 Commodore-Amiga, Inc.` / `All rights reserved.` / `Release 1.3` /
-  **`loadwb failed returncode 20`** / `1> ` — **pas de Workbench**. [O]
-- Contrat observable pour notre ROM : `OpenLibrary("dos.library", 36)` doit échouer (lib_Version
-  34 < 36) ; le CLI affiche alors le message d'échec standard car 20 ≥ FailAt (10) ; avec la
-  startup d'origine (`ppshow c/np` / `loadwb` / `endcli`) le script **s'interrompt** à `loadwb`
-  (`endcli` n'est jamais exécuté). Comportement identique à reproduire, pas un bug. [D]
-- Remarque : avec la startup d'origine, `ppshow c/np` (PPShow 1.2a) affichait encore son image
-  « 17 BIT SOFTWARE » ~20 s après un clic gauche sur la vraie 1.3 (captures à 33/64/95 s, clic à
-  ~125 s, captures à 125 et 146 s, toutes identiques) ; la condition de sortie de PPShow n'a pas été déterminée. [O]
+  **`loadwb failed returncode 20`** / `1> ` — **no Workbench**. [O]
+- Observable contract for our ROM: `OpenLibrary("dos.library", 36)` must fail (lib_Version
+  34 < 36); the CLI then displays the standard failure message because 20 ≥ FailAt (10); with the
+  original startup (`ppshow c/np` / `loadwb` / `endcli`) the script **aborts** at `loadwb`
+  (`endcli` is never executed). Identical behaviour to reproduce, not a bug. [D]
+- Note: with the original startup, `ppshow c/np` (PPShow 1.2a) was still displaying its
+  "17 BIT SOFTWARE" picture ~20 s after a left click on the real 1.3 (screenshots at 33/64/95 s, click at
+  ~125 s, screenshots at 125 and 146 s, all identical); PPShow's exit condition was not determined. [O]
 
 ---
 
-## 4. Pistes pour « l'interface se charge mal » et « les clics n'ont aucun effet »
+## 4. Leads for "the interface loads badly" and "clicks have no effect"
 
-Par ordre de probabilité [D] :
+In order of probability [D]:
 
-1. **`NewScreen.Height = -1`** : la vraie 1.3 en fait **256** (PAL ; hauteur d'écran standard).
-   Si notre OpenScreen prend -1 au pied de la lettre (65535 lignes, ou hauteur NTSC 200), la fenêtre
-   (hauteur recopiée de Screen.Height), la BitMap et le test `Height >= 256` d'OctaMED divergent ⇒
-   mise en page fausse. Vérifier aussi `Width` / `Depth` / `ViewModes $C000` / BarHeight 10.
-2. **`NewScreen.Type = $100F`** : le bit $1000 (NS_EXTENDED) doit être **toléré** (et conservé dans
-   Screen.Flags) ; le pointeur `Extension` (+32) ne doit pas être lu par une 1.3 (NewScreen 1.3 =
-   32 octets).
-3. **MOUSEBUTTONS hors gadget** : pour un clic sur la fenêtre active BACKDROP|BORDERLESS|RMBTRAP en
-   dehors de tout gadget, Intuition doit envoyer un IntuiMessage **Class $08, Code $68** (relâché
-   $E8 ; bouton droit $69/$E9 grâce à RMBTRAP), **MouseX/MouseY relatifs à la fenêtre** (ici =
-   coordonnées écran, fenêtre en 0,0), IAddress quelconque. Sans cela : l'écran d'accueil ne se ferme
-   jamais, et aucun bouton du panneau ne réagit (ils ne sont pas des gadgets).
-4. **Fenêtre active** : ACTIVATE doit rendre la fenêtre active à l'ouverture (WINDOWACTIVE dans
-   Flags, IntuitionBase.ActiveWindow) — sinon les MOUSEBUTTONS iraient ailleurs.
-5. `ModifyIDCMP(window, 0)` puis `ModifyIDCMP(window, $478)` (pendant chaque chargement) : le
-   passage à 0 libère le UserPort, le retour à $478 en recrée un (sémantique AutoDocs) ; OctaMED
-   relit `window->UserPort` à chaque tour de boucle, donc le nouveau port doit être en place au retour
-   de ModifyIDCMP [D].
-6. Moins probables mais visibles : `BltBitMapRastPort` minterm $C0 depuis une BitMap utilisateur,
-   UCopList + `RethinkDisplay`, `ShowTitle(FALSE)`, `SetWindowTitles(w, -1, titre)`, knobs auto des
-   props PROPBORDERLESS (vecteurs §2.4), sprites GetSprite/ChangeSprite/MoveSprite.
+1. **`NewScreen.Height = -1`**: the real 1.3 makes it **256** (PAL; standard screen height).
+   If our OpenScreen takes -1 literally (65535 lines, or NTSC height 200), the window
+   (height copied from Screen.Height), the BitMap and OctaMED's `Height >= 256` test diverge ⇒
+   wrong layout. Also check `Width` / `Depth` / `ViewModes $C000` / BarHeight 10.
+2. **`NewScreen.Type = $100F`**: the $1000 bit (NS_EXTENDED) must be **tolerated** (and kept in
+   Screen.Flags); the `Extension` pointer (+32) must not be read by a 1.3 (1.3 NewScreen =
+   32 bytes).
+3. **MOUSEBUTTONS outside a gadget**: for a click on the active BACKDROP|BORDERLESS|RMBTRAP window
+   outside any gadget, Intuition must send an IntuiMessage with **Class $08, Code $68** (release
+   $E8; right button $69/$E9 thanks to RMBTRAP), **MouseX/MouseY relative to the window** (here =
+   screen coordinates, window at 0,0), any IAddress. Without this: the welcome screen never
+   closes, and no panel button responds (they are not gadgets).
+4. **Active window**: ACTIVATE must make the window active on opening (WINDOWACTIVE in
+   Flags, IntuitionBase.ActiveWindow) — otherwise the MOUSEBUTTONS would go elsewhere.
+5. `ModifyIDCMP(window, 0)` then `ModifyIDCMP(window, $478)` (during every load): going to
+   0 frees the UserPort, returning to $478 creates a new one (AutoDocs semantics); OctaMED
+   re-reads `window->UserPort` on every loop iteration, so the new port must be in place when
+   ModifyIDCMP returns [D].
+6. Less probable but visible: `BltBitMapRastPort` minterm $C0 from a user BitMap,
+   UCopList + `RethinkDisplay`, `ShowTitle(FALSE)`, `SetWindowTitles(w, -1, title)`, auto knobs of the
+   PROPBORDERLESS props (vectors in §2.4), GetSprite/ChangeSprite/MoveSprite sprites.
 
 ---
 
-## 5. Reproduction (piste analyse)
+## 5. Reproduction (analysis track)
 
-- Décompactage d'`OctaMED` : émulateur 68000 minimal (unicorn) chargeant les hunks et simulant
-  AllocMem/FreeMem, jusqu'au saut dans le premier segment décompacté ; scan des `JSR -LVO(A6)`
-  regroupés par variable de base de bibliothèque, nommés d'après les `.fd` publics d'amitools. Ce
-  travail et les dumps sont restés hors du dépôt.
-- Relecture des structures publiques sur la vraie 1.3 : débogueur console FS-UAE (`m adresse n`),
-  parcours ExecBase→LibList→IntuitionBase→FirstScreen→FirstWindow→FirstGadget.
-- Ports : un seul FS-UAE à la fois ; ADF renommé à chaque séance.
+- Unpacking of `OctaMED`: minimal 68000 emulator (unicorn) loading the hunks and simulating
+  AllocMem/FreeMem, up to the jump into the first unpacked segment; scan of the `JSR -LVO(A6)`
+  grouped by library base variable, named after amitools' public `.fd` files. This
+  work and the dumps were kept outside the repository.
+- Reading back public structures on the real 1.3: FS-UAE console debugger (`m adresse n`),
+  walk ExecBase→LibList→IntuitionBase→FirstScreen→FirstWindow→FirstGadget.
+- Ports: only one FS-UAE at a time; ADF renamed for each session.
 
-## 6. Points ouverts
+## 6. Open points
 
-- Code de sortie de PPShow (clic, touche ou délai ?) non déterminé.
-- Les champs `StringInfo` des gadgets texte et le contenu exact de l'UCopList n'ont pas été relus.
-- La signification de « Mem 384448/ 206176 » n'a pas été vérifiée contre AvailMem.
+- PPShow exit condition (click, key or timeout?) not determined.
+- The `StringInfo` fields of the text gadgets and the exact contents of the UCopList were not read back.
+- The meaning of "Mem 384448/ 206176" was not checked against AvailMem.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Cibles désassemblées = logiciels tiers (`OctaMED`, `c/LoadWB` 2.04) ; la ROM Kickstart n'a été
-  qu'**exécutée** (captures, structures publiques relues en mémoire). Aucune adresse de routine ROM,
-  aucune suite d'instructions de la ROM.
-- [x] Données issues de la ROM : uniquement des **valeurs observées à l'exécution** (champs de
-  structures publiques, ColorMap relue, hauteur d'écran 256, flags de fenêtre) et le bandeau du CLI
-  initial (`Copyright © 1987 Commodore-Amiga, Inc.` / `All rights reserved.` / `Release 1.3`), texte
-  affiché et observable (inventorié dans `docs/audit/specs-review.md`). Pas de table, glyphe ni image
-  de la ROM.
-- [x] Les captures de `docs/analysis/octamed/` montrent l'écran d'OctaMED (logiciel tiers) sur la vraie
-  ROM ; elles ne contiennent pas d'image issue de la ROM hormis le pointeur/couleurs venant du
-  `system-configuration` de la disquette.
+- [x] Disassembled targets = third-party software (`OctaMED`, `c/LoadWB` 2.04); the Kickstart ROM was
+  only **executed** (screenshots, public structures read back from memory). No ROM routine address,
+  no ROM instruction sequence.
+- [x] Data coming from the ROM: only **values observed at run time** (fields of
+  public structures, ColorMap read back, screen height 256, window flags) and the initial CLI banner
+  (`Copyright © 1987 Commodore-Amiga, Inc.` / `All rights reserved.` / `Release 1.3`), displayed and
+  observable text (inventoried in `docs/audit/specs-review.md`). No table, glyph or image
+  from the ROM.
+- [x] The screenshots in `docs/analysis/octamed/` show OctaMED's screen (third-party software) on the real
+  ROM; they contain no image taken from the ROM apart from the pointer/colours coming from the
+  floppy's `system-configuration`.

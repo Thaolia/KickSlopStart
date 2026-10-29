@@ -1,10 +1,10 @@
-; tests/timerprobe.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : sonde boîte noire de
-; timer.device et du partage des CIA. Lancer « timerprobe >SER: » (ou sur la console) ; une ligne par mesure. Assembler avec -kick1hunks (HUNK_RELOC32 :
-; la 1.3 refuse HUNK_RELOC32SHORT, « file is not an object module »).
-; Vecteurs attendus (vraie ROM 34.5) : docs/analysis/timer-v34.md.
-; Mesure du temps : compteur de trames d'un serveur VERTB de la sonde + ligne verticale (VPOSR/VHPOSR) ;
-; « F » = trames écoulées, « L » = différence de ligne (signée) ; durée ≈ F × 313 + L lignes de 64 µs (PAL).
-; Clean-room : structures publiques (timerequest, Interrupt, IntVector, ExecBase), code auteur.
+; tests/timerprobe.s - HUNK test executable (TEST ASSET, NOT ROM code): black-box probe of
+; timer.device and of CIA sharing. Run "timerprobe >SER:" (or on the console); one line per measurement.
+; Assemble with -kick1hunks (HUNK_RELOC32: 1.3 rejects HUNK_RELOC32SHORT, "file is not an object module").
+; Expected vectors (real ROM 34.5): docs/analysis/timer-v34.md.
+; Time measurement: frame counter of a VERTB server installed by the probe + vertical line (VPOSR/VHPOSR);
+; "F" = elapsed frames, "L" = line difference (signed); duration ~= F x 313 + L lines of 64 us (PAL).
+; Clean-room: public structures (timerequest, Interrupt, IntVector, ExecBase), authored code.
 
 EB_INTVECTS     EQU $54
 TR_SIZE         EQU 40
@@ -20,7 +20,7 @@ _start:
                 lea     dosbase(pc),a0
                 move.l  d0,(a0)
                 beq     .ret
-                ; port de réponse
+                ; reply port
                 moveq   #-1,d0
                 jsr     -330(a6)             ; AllocSignal
                 lea     port(pc),a2
@@ -35,7 +35,7 @@ _start:
                 addq.l  #4,a0
                 clr.l   (a0)
                 move.l  a0,-4(a0)
-                ; serveur VERTB de mesure
+                ; measurement VERTB server
                 lea     vbint(pc),a1
                 move.b  #2,8(a1)
                 move.b  #-100,9(a1)
@@ -76,13 +76,13 @@ _start:
                 moveq   #0,d0
                 rts
 
-vbcode:                                      ; serveur VERTB : a1 = &vbcnt
+vbcode:                                      ; VERTB server: a1 = &vbcnt
                 addq.l  #1,(a1)
                 moveq   #0,d0
                 rts
 
-; ---------------------------------------------------------------- horodatage
-; now : d0 = trames, d1 = ligne verticale (0..312), relu jusqu'à cohérence
+; ---------------------------------------------------------------- timestamping
+; now: d0 = frames, d1 = vertical line (0..312), re-read until consistent
 now:
                 move.l  vbcnt(pc),d0
                 move.l  $dff004,d1
@@ -91,14 +91,14 @@ now:
                 cmp.l   vbcnt(pc),d0
                 bne.s   now
                 rts
-; stamp a0 : mémorise now en (a0)
+; stamp a0: stores now at (a0)
 stamp:
                 move.l  a0,-(sp)
                 bsr.s   now
                 move.l  (sp)+,a0
                 movem.l d0-d1,(a0)
                 rts
-; since a0 : d0 = trames, d1 = lignes depuis le stamp (a0)
+; since a0: d0 = frames, d1 = lines since the stamp (a0)
 since:
                 move.l  a0,-(sp)
                 bsr.s   now
@@ -127,9 +127,9 @@ t_exec:
                 moveq   #0,d0
                 move.w  $124(a6),d0          ; SysFlags
                 bsr     ph
-                ; calibration : ligne verticale maximale vue pendant 2 trames complètes
-                move.l  vbcnt(pc),d2         ; (attentes « au moins » : une tâche de même priorité peut garder le
-                addq.l  #1,d2                ; processeur plusieurs trames, une égalité exacte serait ratée)
+                ; calibration: highest vertical line seen during 2 complete frames
+                move.l  vbcnt(pc),d2         ; ("at least" waits: a task of the same priority can keep the
+                addq.l  #1,d2                ; CPU for several frames, an exact equality would be missed)
 .w1:
                 cmp.l   vbcnt(pc),d2
                 bhi.s   .w1
@@ -148,7 +148,7 @@ t_exec:
                 bsr     ph
                 bra     nl
 
-; ---------------------------------------------------------------- registres CIA
+; ---------------------------------------------------------------- CIA registers
 t_cia:
                 lea     s_ciaa(pc),a0
                 bsr     ps
@@ -160,7 +160,7 @@ t_cia:
                 lea     $bfd000,a2
                 bsr     ciaregs
                 bra     nl
-ciaregs:                                     ; CRA CRB TALO TAHI TBLO TBHI TOD(h,m,l) — pas l'ICR (lecture destructive)
+ciaregs:                                     ; CRA CRB TALO TAHI TBLO TBHI TOD(h,m,l) - not the ICR (destructive read)
                 moveq   #0,d0
                 move.b  $e00(a2),d0
                 lsl.w   #8,d0
@@ -184,9 +184,9 @@ ciaregs:                                     ; CRA CRB TALO TAHI TBLO TBHI TOD(h
                 move.b  $800(a2),d0
                 bra     ph
 
-; ---------------------------------------------------------------- propriétaires ICR
-; Pour chaque CIA : masque autorisé (AbleICR(0)), puis pour chaque bit 0..4 :
-; AddICRVector d'une Interrupt factice ; 0 = libre (aussitôt RemICRVector), sinon nom du propriétaire.
+; ---------------------------------------------------------------- ICR owners
+; For each CIA: enabled mask (AbleICR(0)), then for each bit 0..4:
+; AddICRVector of a dummy Interrupt; 0 = free (immediately RemICRVector), otherwise the owner's name.
 t_icr:
                 lea     ciaaname(pc),a1
                 lea     s_icra(pc),a3
@@ -204,7 +204,7 @@ icr1:
                 bsr     ph
                 move.l  d7,a6
                 moveq   #0,d0
-                jsr     -18(a6)              ; AbleICR(0) = masque courant
+                jsr     -18(a6)              ; AbleICR(0) = current mask
                 bsr     ph
                 moveq   #0,d6
 .bit:
@@ -238,7 +238,7 @@ icr1:
                 bsr     ps
                 move.b  #'/',(a4)+
                 move.l  d5,a0
-                move.l  18(a0),d0            ; is_Code (repère)
+                move.l  18(a0),d0            ; is_Code (landmark)
                 bsr     ph
 .nx:
                 move.b  #' ',(a4)+
@@ -249,7 +249,7 @@ icr1:
 .x:
                 rts
 
-; ---------------------------------------------------------------- vecteurs d'interruption + chaînes de serveurs
+; ---------------------------------------------------------------- interrupt vectors + server chains
 t_vec:
                 move.l  4.w,a6
                 moveq   #0,d6
@@ -277,7 +277,7 @@ t_vec:
                 bsr     ps
 .nn:
                 bsr     nl
-                ; chaînes de serveurs : 3 PORTS, 4 COPER, 5 VERTB, 13 EXTER
+                ; server chains: 3 PORTS, 4 COPER, 5 VERTB, 13 EXTER
                 cmp.w   #3,d6
                 beq.s   .srv
                 cmp.w   #4,d6
@@ -287,7 +287,7 @@ t_vec:
                 cmp.w   #13,d6
                 bne.s   .nx
 .srv:
-                move.l  (a2),d0              ; iv_Data = liste des serveurs
+                move.l  (a2),d0              ; iv_Data = server list
                 beq.s   .nx
                 move.l  d0,a3
                 move.l  (a3),a3
@@ -318,8 +318,8 @@ t_vec:
                 bne     .v
                 rts
 
-; ---------------------------------------------------------------- ouvertures
-; rq0, rqa, rqb : unité 0 (MICROHZ) ; rq1, rqt : unité 1 (VBLANK) ; rqx : unité 2 (doit échouer)
+; ---------------------------------------------------------------- opens
+; rq0, rqa, rqb: unit 0 (MICROHZ); rq1, rqt: unit 1 (VBLANK); rqx: unit 2 (must fail)
 t_open:
                 lea     rq0(pc),a1
                 moveq   #0,d0
@@ -363,11 +363,11 @@ t_open:
                 swap    d0
                 move.w  22(a0),d0            ; lib_Revision
                 bsr     ph
-                ; unité 2
+                ; unit 2
                 lea     rqx(pc),a1
                 moveq   #2,d0
                 bsr     opn
-                bsr     ph                   ; d0 rendu par OpenDevice
+                bsr     ph                   ; d0 returned by OpenDevice
                 lea     rqx(pc),a1
                 move.b  31(a1),d0
                 ext.w   d0
@@ -386,7 +386,7 @@ t_open:
                 bsr     nl
                 moveq   #-1,d0
                 rts
-opn:                                         ; a1 = timerequest, d0 = unité → d0 = OpenDevice, CCR sur d0
+opn:                                         ; a1 = timerequest, d0 = unit -> d0 = OpenDevice, CCR on d0
                 move.l  a1,-(sp)
                 lea     port(pc),a0
                 move.l  a0,14(a1)            ; mn_ReplyPort
@@ -400,17 +400,17 @@ opn:                                         ; a1 = timerequest, d0 = unité →
                 tst.l   d0
                 rts
 
-; ---------------------------------------------------------------- commandes invalides, AbortIO hors file
+; ---------------------------------------------------------------- invalid commands, AbortIO of an unqueued request
 t_cmd:
                 lea     s_cmd(pc),a0
                 bsr     ps
                 moveq   #2,d2                ; CMD_READ
                 bsr.s   cmdx
-                moveq   #12,d2               ; hors table
+                moveq   #12,d2               ; outside the table
                 bsr.s   cmdx
                 moveq   #0,d2                ; CMD_INVALID
                 bsr.s   cmdx
-                ; AbortIO d'une requête non en file
+                ; AbortIO of a request not in a queue
                 lea     rq0(pc),a1
                 move.l  4.w,a6
                 jsr     -480(a6)             ; AbortIO
@@ -427,10 +427,10 @@ cmdx:
                 clr.b   30(a1)
                 move.l  4.w,a6
                 jsr     -456(a6)             ; DoIO
-                bsr     ph                   ; d0 rendu par DoIO
+                bsr     ph                   ; d0 returned by DoIO
                 lea     rq0(pc),a1
                 moveq   #0,d0
-                move.b  8(a1),d0             ; ln_Type après réponse
+                move.b  8(a1),d0             ; ln_Type after reply
                 lsl.w   #8,d0
                 move.b  31(a1),d0
                 bsr     ph
@@ -441,7 +441,7 @@ t_times:
                 lea     s_tim(pc),a0
                 bsr     ps
                 lea     rq0(pc),a1
-                move.l  20(a1),a6            ; base timer.device
+                move.l  20(a1),a6            ; timer.device base
                 ; AddTime {0,999999}+{0,2}
                 lea     tv1(pc),a0
                 move.l  #0,(a0)
@@ -460,7 +460,7 @@ t_times:
                 clr.l   4(a1)
                 jsr     -42(a6)
                 bsr     ptv1
-                ; AddTime {5,-3}+{0,0} (micro négatif)
+                ; AddTime {5,-3}+{0,0} (negative micro)
                 lea     tv1(pc),a0
                 move.l  #5,(a0)
                 move.l  #-3,4(a0)
@@ -487,7 +487,7 @@ t_times:
                 move.l  #3000000,4(a1)
                 jsr     -48(a6)
                 bsr     ptv1
-                ; SubTime {0,5000000}-{0,0} (micro > 1e6 non normalisé ?)
+                ; SubTime {0,5000000}-{0,0} (micro > 1e6 not normalised?)
                 lea     tv1(pc),a0
                 clr.l   (a0)
                 move.l  #5000000,4(a0)
@@ -499,7 +499,7 @@ t_times:
                 bsr     nl
                 lea     s_cmp(pc),a0
                 bsr     ps
-                ; CmpTime(a0={2,0}, a1={1,5}) ; ({1,5},{2,0}) ; égal ; ({0,1},{0,2}) ; secs « négatives »
+                ; CmpTime(a0={2,0}, a1={1,5}); ({1,5},{2,0}); equal; ({0,1},{0,2}); "negative" secs
                 lea     cmpv(pc),a2
                 moveq   #5-1,d7
 .c:
@@ -517,15 +517,15 @@ ptv1:
                 move.l  (sp)+,d0
                 bra     ph
 
-; ---------------------------------------------------------------- délais (mesurés, avec garde-fou VBLANK)
-; dly : a1 = requête (déjà ouverte), d0 = secs, d1 = micro → imprime « F L err » ou « TMO err »
+; ---------------------------------------------------------------- delays (measured, with a VBLANK watchdog)
+; dly: a1 = request (already opened), d0 = secs, d1 = micro -> prints "F L err" or "TMO err"
 dly:
                 movem.l d2-d4/a2,-(sp)
                 move.l  a1,a2
                 move.w  #9,28(a2)            ; TR_ADDREQUEST
                 clr.b   30(a2)
                 movem.l d0-d1,32(a2)
-                lea     rqt(pc),a1           ; garde-fou : VBLANK 3 s
+                lea     rqt(pc),a1           ; watchdog: VBLANK 3 s
                 move.w  #9,28(a1)
                 clr.b   30(a1)
                 move.l  #3,32(a1)
@@ -569,7 +569,7 @@ dly:
                 ext.w   d0
                 ext.l   d0
                 bsr     ph
-                move.b  #'t',(a4)+           ; timeval rendu dans la requête
+                move.b  #'t',(a4)+           ; timeval returned in the request
                 move.b  #'v',(a4)+
                 move.b  #' ',(a4)+
                 move.l  32(a2),d0
@@ -587,7 +587,7 @@ t_delays:
                 lea     vbvals(pc),a3
                 lea     s_vb(pc),a5
                 lea     rq1(pc),a2
-dlist:                                       ; a3 = table (secs, micro) terminée par -1, a5 = étiquette
+dlist:                                       ; a3 = table (secs, micro) terminated by -1, a5 = label
 .l:
                 move.l  (a3),d0
                 cmp.l   #-1,d0
@@ -606,10 +606,10 @@ dlist:                                       ; a3 = table (secs, micro) terminé
 .x:
                 rts
 
-; ---------------------------------------------------------------- préemption / insertion derrière la tête
-; PREa : A = 1 s, puis B = 0,5 s posée ~3 trames plus tard (B < reste de A → B en tête)
-; PREb : A = 0,2 s, puis B = 0,4 s posée ~3 trames plus tard (B >= A → B derrière A)
-; Imprime : F,L de la pose de B ; puis pour chaque réponse dans l'ordre : 'A'/'B' F L (depuis la pose de A)
+; ---------------------------------------------------------------- preemption / insertion behind the head
+; PREa: A = 1 s, then B = 0.5 s posted ~3 frames later (B < remainder of A -> B at the head)
+; PREb: A = 0.2 s, then B = 0.4 s posted ~3 frames later (B >= A -> B behind A)
+; Prints: F,L of the posting of B; then for each reply in order: 'A'/'B' F L (since the posting of A)
 t_preempt:
                 lea     s_prea(pc),a0
                 move.l  #1,d2
@@ -623,7 +623,7 @@ t_preempt:
                 moveq   #0,d4
                 move.l  #400000,d5
                 bsr.s   pre
-                lea     s_prec(pc),a0        ; PREc : idem PREa sur l'unité VBLANK
+                lea     s_prec(pc),a0        ; PREc: same as PREa on the VBLANK unit
                 move.l  #1,d2
                 moveq   #0,d3
                 moveq   #0,d4
@@ -650,9 +650,9 @@ pre2:                                        ; a2 = A, a3 = B, d2/d3 = A, d4/d5 
                 move.l  vbcnt(pc),d0
                 addq.l  #3,d0
 .w:
-                cmp.l   vbcnt(pc),d0         ; attente active de 3 trames (pas de timer pendant ce temps)
+                cmp.l   vbcnt(pc),d0         ; busy-wait for 3 frames (no timer meanwhile)
                 bhi.s   .w
-                move.l  $dff004,d0           ; décaler dans la trame
+                move.l  $dff004,d0           ; shift within the frame
                 lsr.l   #8,d0
                 and.l   #$1ff,d0
                 cmp.w   #150,d0
@@ -691,7 +691,7 @@ pre2:                                        ; a2 = A, a3 = B, d2/d3 = A, d4/d5 
                 dbra    d7,.r
                 bra     nl
 
-; ---------------------------------------------------------------- horloge système
+; ---------------------------------------------------------------- system clock
 t_gst:
                 lea     s_gst(pc),a0
                 bsr     ps
@@ -700,7 +700,7 @@ t_gst:
                 bsr     gst
                 dbra    d7,.g
                 bsr     nl
-                ; TR_SETSYSTIME {1000, 500000} puis 3 lectures, puis une lecture après 0,5 s
+                ; TR_SETSYSTIME {1000, 500000} then 3 reads, then one read after 0.5 s
                 lea     s_sst(pc),a0
                 bsr     ps
                 lea     rq0(pc),a1
@@ -725,7 +725,7 @@ t_gst:
                 bsr     dly
                 bsr     gst
                 bra     nl
-gst:                                         ; GETSYSTIME sur l'unité VBLANK (rq1), imprime secs micro
+gst:                                         ; GETSYSTIME on the VBLANK unit (rq1), prints secs micro
                 lea     rq1(pc),a1
                 move.w  #10,28(a1)
                 clr.b   30(a1)
@@ -738,9 +738,9 @@ gst:                                         ; GETSYSTIME sur l'unité VBLANK (r
                 move.l  36(a1),d0
                 bra     ph
 
-; ---------------------------------------------------------------- détournement du vecteur $78 (niveau 6), façon jeu
-; Le gestionnaire de la sonde lit l'ICR de CIA-B, acquitte EXTER, compte, RTE — sans chaîner.
-; Pendant ce temps CIA-B timer B tourne en continu (latch $2E2E, ICR $82), comme la musique de Monkey Island.
+; ---------------------------------------------------------------- hijacking of the $78 vector (level 6), game-style
+; The probe's handler reads the CIA-B ICR, acknowledges EXTER, counts, RTE - without chaining.
+; Meanwhile CIA-B timer B runs continuously (latch $2E2E, ICR $82), like the Monkey Island music.
 t_hj6:
                 lea     s_hj6(pc),a0
                 bsr     ps
@@ -754,28 +754,28 @@ t_hj6:
                 move.l  a0,$78.w
                 move.b  #$2e,$bfd600
                 move.b  #$2e,$bfd700
-                move.b  $bfdf00,d0           ; garder le bit ALARM posé par graphics
+                move.b  $bfdf00,d0           ; keep the ALARM bit set by graphics
                 and.b   #$80,d0
-                or.b    #$11,d0              ; START | LOAD, continu
+                or.b    #$11,d0              ; START | LOAD, continuous
                 move.b  d0,$bfdf00
-                move.b  #$82,$bfdd00         ; autorise TB
+                move.b  #$82,$bfdd00         ; enables TB
                 move.w  #$a000,$dff09a       ; INTENA EXTER
                 jsr     -126(a6)             ; Enable
                 lea     rq0(pc),a1
                 moveq   #0,d0
                 move.l  #500000,d1
-                bsr     dly                  ; MICROHZ 0,5 s
+                bsr     dly                  ; MICROHZ 0.5 s
                 lea     rq1(pc),a1
                 moveq   #0,d0
                 move.l  #500000,d1
-                bsr     dly                  ; VBLANK 0,5 s
+                bsr     dly                  ; VBLANK 0.5 s
                 move.l  h6cnt(pc),d0
                 bsr     ph
                 move.l  4.w,a6
                 jsr     -120(a6)
-                move.b  #$02,$bfdd00         ; interdit TB
+                move.b  #$02,$bfdd00         ; disables TB
                 move.b  $bfdf00,d0
-                and.b   #$80,d0              ; arrêt (ALARM conservé)
+                and.b   #$80,d0              ; stop (ALARM preserved)
                 move.b  d0,$bfdf00
                 tst.b   $bfdd00
                 move.w  #$2000,$dff09c
@@ -791,9 +791,9 @@ h6:
                 move.l  (sp)+,a0
                 rte
 
-; ---------------------------------------------------------------- contrôle négatif : détournement du vecteur $68 (niveau 2)
-; MICROHZ 0,1 s avec garde-fou VBLANK : attendu TMO (timer B de CIA-A servi par ciaa.resource au niveau 2).
-; Puis rétablissement, AbortIO déjà fait par dly, et nouvelle requête MICROHZ pour vérifier que l'unité repart.
+; -------------------------------------------------------------- negative control: hijacking of the $68 vector (level 2)
+; MICROHZ 0.1 s with VBLANK watchdog: TMO expected (CIA-A timer B serviced by ciaa.resource at level 2).
+; Then restore, AbortIO already done by dly, and a new MICROHZ request to check that the unit restarts.
 t_hj2:
                 lea     s_hj2(pc),a0
                 bsr     ps
@@ -830,20 +830,20 @@ h2:
                 move.l  (sp)+,a0
                 rte
 
-; ---------------------------------------------------------------- délais bornés et valeurs nulles (en dernier : peuvent rester bloqués)
+; --------------------------------------------------------------- boundary delays and zero values (last: may stay stuck)
 t_delays2:
                 lea     mz2vals(pc),a3
                 lea     s_mz2(pc),a5
                 lea     rq0(pc),a2
                 bra     dlist
 
-; ---------------------------------------------------------------- sortie
-ps:                                          ; copie la chaîne a0 en (a4)+
+; ---------------------------------------------------------------- output
+ps:                                          ; copies the string a0 to (a4)+
                 move.b  (a0)+,(a4)+
                 bne.s   ps
                 subq.l  #1,a4
                 rts
-ph:                                          ; d0 en 8 chiffres + espace
+ph:                                          ; d0 as 8 digits + space
                 movem.l d1/d3,-(sp)
                 moveq   #7,d3
 .h:
@@ -860,7 +860,7 @@ ph:                                          ; d0 en 8 chiffres + espace
                 move.b  #' ',(a4)+
                 movem.l (sp)+,d1/d3
                 rts
-nl:                                          ; termine la ligne et l'écrit sur Output()
+nl:                                          ; terminates the line and writes it to Output()
                 movem.l d0-d3/a0-a1/a6,-(sp)
                 move.b  #10,(a4)+
                 lea     line(pc),a0

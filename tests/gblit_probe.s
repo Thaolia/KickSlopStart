@@ -1,33 +1,33 @@
-; tests/gblit_probe.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire « blitter de graphics.library » (piste analyse, docs/analysis/graphics-blitter-v34.md).
-; Lancée depuis la startup-sequence d'une disquette (tests/gblit_probe.sh). Appelle les fonctions blitter par
-; leurs LVO publics et écrit chaque résultat sur le série direct (SERDAT), une ligne par test, en hexadécimal.
-; Tous les tampons de données sont en CHIP (exigé par le blitter). Aucune RastPort n'a de Layer (chemin direct).
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/gblit_probe tests/gblit_probe.s
-; Code auteur ; structures publiques (graphics/gfx.h, rastport.h, gfxbase.h, hardware/blit.h).
+; tests/gblit_probe.s - test HUNK executable (TEST ASSET, NOT ROM code).
+; Black-box probe "graphics.library blitter" (analysis track, docs/analysis/graphics-blitter-v34.md).
+; Started from the startup-sequence of a floppy (tests/gblit_probe.sh). Calls the blitter functions through
+; their public LVOs and writes each result to the direct serial port (SERDAT), one line per test, in hexadecimal.
+; All data buffers are in CHIP (required by the blitter). No RastPort has a Layer (direct path).
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/gblit_probe tests/gblit_probe.s
+; Authored code; public structures (graphics/gfx.h, rastport.h, gfxbase.h, hardware/blit.h).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 SERPER   EQU $DFF032
 CHIPSZ   EQU 12000
-; décalages dans le bloc CHIP
-O_BIGD   EQU 0          ; T3 destination (2200 o), placée AVANT la source
+; offsets in the CHIP block
+O_BIGD   EQU 0          ; T3 destination (2200 bytes), placed BEFORE the source
 O_BIGS   EQU 2400       ; T3 source
-O_OVG    EQU 4800       ; T5 garde basse (16 o)
-O_OV     EQU 4816       ; T5 bitmap 8 o x 4 lignes
-O_OVH    EQU 4848       ; T5 garde haute (16 o)
-O_TBUF   EQU 4900       ; T5 TempA (16 o)
-O_W2     EQU 5000       ; T4 destination 160 o x 2
-O_W1     EQU 5400       ; T4 source 160 o x 2
-O_CLR    EQU 5800       ; T6 3000 o
-O_P1     EQU 9000       ; T1 plans (6 x 16 o)
+O_OVG    EQU 4800       ; T5 low guard (16 bytes)
+O_OV     EQU 4816       ; T5 bitmap 8 bytes x 4 rows
+O_OVH    EQU 4848       ; T5 high guard (16 bytes)
+O_TBUF   EQU 4900       ; T5 TempA (16 bytes)
+O_W2     EQU 5000       ; T4 destination 160 bytes x 2
+O_W1     EQU 5400       ; T4 source 160 bytes x 2
+O_CLR    EQU 5800       ; T6 3000 bytes
+O_P1     EQU 9000       ; T1 planes (6 x 16 bytes)
 O_T2S    EQU 9100
 O_T2D    EQU 9102
-O_TPL    EQU 9200       ; T7 gabarit 3 mots
+O_TPL    EQU 9200       ; T7 template 3 words
 O_TDST   EQU 9220       ; T7 destination 4 o
 O_MS     EQU 9240       ; T8 source
 O_MD     EQU 9260       ; T8 destination
-O_MM     EQU 9280       ; T8 masque
+O_MM     EQU 9280       ; T8 mask
 
 LVO_BltBitMap   EQU -30
 LVO_BltTemplate EQU -36
@@ -66,7 +66,7 @@ _start:
                 bsr     puts
                 move.l  gfxb-vars(a4),a6
 
-; ---------- T1 : valeur rendue / masque de plans / profondeurs ----------
+; ---------- T1: return value / plane mask / depths ----------
                 lea     bmA-vars(a4),a0
                 lea     O_P1(a5),a1
                 moveq   #4,d0
@@ -104,7 +104,7 @@ _start:
                 bsr     t1call
                 bsr     nl
 
-; ---------- T2 : quartet bas du minterm ----------
+; ---------- T2: low nibble of the minterm ----------
                 lea     bmS1-vars(a4),a0
                 lea     O_T2S(a5),a1
                 moveq   #2,d0
@@ -144,7 +144,7 @@ _start:
                 bra.s   .t2l
 .t2e:           bsr     nl
 
-; ---------- T3 : hauteur nulle (destination avant la source, même BytesPerRow) ----------
+; ---------- T3: zero height (destination before the source, same BytesPerRow) ----------
                 lea     O_BIGS(a5),a0
                 move.w  #1099,d0
 .t3f:           move.w  #$FFFF,(a0)+
@@ -192,7 +192,7 @@ _start:
                 bsr     phex4
                 bsr     nl
 
-; ---------- T4 : largeur nulle à x=16 (destination avant la source) ----------
+; ---------- T4: zero width at x=16 (destination before the source) ----------
                 lea     O_W1(a5),a0
                 move.w  #159,d0
 .t4f:           move.w  #$FFFF,(a0)+
@@ -235,17 +235,17 @@ _start:
 .t4n:           dbra    d1,.t4c
                 bsr     phex4
                 bsr     sp1
-                move.w  O_W2+2(a5),d0           ; premier mot écrit attendu
+                move.w  O_W2+2(a5),d0           ; first word expected to be written
                 bsr     phex4
                 bsr     sp1
-                move.w  O_W2+128(a5),d0         ; dernier mot écrit attendu (64e)
+                move.w  O_W2+128(a5),d0         ; last word expected to be written (64th)
                 bsr     phex4
                 bsr     sp1
-                move.w  O_W2+130(a5),d0         ; au-delà
+                move.w  O_W2+130(a5),d0         ; beyond
                 bsr     phex4
                 bsr     nl
 
-; ---------- T5 : recouvrements dans une même BitMap (BytesPerRow 8, 4 lignes) ----------
+; ---------- T5: overlaps within a single BitMap (BytesPerRow 8, 4 rows) ----------
                 lea     bmOV-vars(a4),a0
                 lea     O_OV(a5),a1
                 moveq   #8,d0
@@ -294,7 +294,7 @@ _start:
                 bsr     phex4
                 dbra    d2,.t5b
                 bsr     sp1
-                lea     O_OVG(a5),a0            ; gardes intactes ?
+                lea     O_OVG(a5),a0            ; guards intact?
                 moveq   #0,d0
                 moveq   #15,d2
 .t5g1:          cmp.b   #$77,(a0)+
@@ -313,7 +313,7 @@ _start:
                 bra     .t5l
 .t5e:
 
-; ---------- T6 : BltClear ----------
+; ---------- T6: BltClear ----------
                 lea     m_t6(pc),a0
                 bsr     puts
                 bsr     clrfill
@@ -356,7 +356,7 @@ _start:
                 bsr     clrcount
                 bsr     nl
 
-; ---------- T7 : BltTemplate sans Layer, xSrc 0/16/4 ----------
+; ---------- T7: BltTemplate without Layer, xSrc 0/16/4 ----------
                 lea     rpT-vars(a4),a1
                 jsr     LVO_InitRastPort(a6)
                 lea     bmT-vars(a4),a0
@@ -401,7 +401,7 @@ _start:
                 bra.s   .t7l
 .t7e:           bsr     nl
 
-; ---------- T8 : BltMaskBitMapRastPort, BltBitMapRastPort, ClipBlit (sans Layer) ----------
+; ---------- T8: BltMaskBitMapRastPort, BltBitMapRastPort, ClipBlit (without Layer) ----------
                 lea     rpM-vars(a4),a1
                 jsr     LVO_InitRastPort(a6)
                 lea     bmMD-vars(a4),a0
@@ -434,7 +434,7 @@ _start:
                 move.l  #$E0,d6
                 sub.l   a2,a2
                 bsr     t8call
-                ; BltBitMapRastPort : valeur rendue
+                ; BltBitMapRastPort: return value
                 move.l  #$0F0F0F0F,O_MD(a5)
                 lea     bmMS-vars(a4),a0
                 moveq   #0,d0
@@ -454,7 +454,7 @@ _start:
                 move.l  O_MD(a5),d0
                 bsr     phex8
                 bsr     sp1
-                ; ClipBlit même RastPort, sans Layer : valeur rendue
+                ; ClipBlit same RastPort, without Layer: return value
                 lea     rpM-vars(a4),a0
                 moveq   #0,d0
                 moveq   #0,d1
@@ -474,7 +474,7 @@ _start:
                 bsr     phex8
                 bsr     nl
 
-; ---------- T9 : OwnBlitter / DisownBlitter, BlitLock ($AA) et BlitOwner ($BC) ----------
+; ---------- T9: OwnBlitter / DisownBlitter, BlitLock ($AA) and BlitOwner ($BC) ----------
                 lea     m_t9(pc),a0
                 bsr     puts
                 move.w  $AA(a6),d0
@@ -495,7 +495,7 @@ _start:
                 bsr     phex4
                 bsr     nl
 
-; ---------- T10 : QBlit (appel synchrone ? registres ? reprise si non nul ? cleanup ?) ----------
+; ---------- T10: QBlit (synchronous call? registers? re-run if non-zero? cleanup?) ----------
                 lea     m_t10(pc),a0
                 bsr     puts
                 lea     node1-vars(a4),a1
@@ -533,7 +533,7 @@ _start:
                 seq     d0
                 bsr     phex2
                 bsr     sp1
-                ; nœud 2 : rend non nul deux fois sans lancer de blit, CLEANUP demandé
+                ; node 2: returns non-zero twice without starting a blit, CLEANUP requested
                 lea     node1-vars(a4),a1
                 clr.l   (a1)
                 lea     qf2(pc),a0
@@ -556,7 +556,7 @@ _start:
                 bsr     phex2
                 bsr     nl
 
-; ---------- T11 : QBSBlit, beamsync = 200 demandé vers la ligne 50 ----------
+; ---------- T11: QBSBlit, beamsync = 200 requested around line 50 ----------
                 lea     m_t11(pc),a0
                 bsr     puts
                 moveq   #1,d3
@@ -620,7 +620,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-; --- T1 : BltBitMap(a0 -> bmB) 16x1, masque d7, imprime D0
+; --- T1: BltBitMap(a0 -> bmB) 16x1, mask d7, prints D0
 t1call:         lea     bmB-vars(a4),a1
                 moveq   #0,d0
                 moveq   #0,d1
@@ -637,7 +637,7 @@ t1call:         lea     bmB-vars(a4),a1
                 bsr     phex8
                 bra     sp1
 
-; --- T8 : BltMaskBitMapRastPort(bmMS -> rpM) 32x1, minterm d6, masque a2
+; --- T8: BltMaskBitMapRastPort(bmMS -> rpM) 32x1, minterm d6, mask a2
 t8call:         move.l  #$0F0F0F0F,O_MD(a5)
                 lea     bmMS-vars(a4),a0
                 moveq   #0,d0
@@ -653,7 +653,7 @@ t8call:         move.l  #$0F0F0F0F,O_MD(a5)
                 bsr     phex8
                 bra     sp1
 
-; --- fonctions QBlit (a0 = custom, a1 = nœud attendus)
+; --- QBlit functions (a0 = custom, a1 = node expected)
 qf1:            move.l  a2,-(sp)
                 lea     vars(pc),a2
                 addq.l  #1,qcnt-vars(a2)
@@ -694,7 +694,7 @@ qf3:            move.l  a2,-(sp)
                 moveq   #0,d0
                 rts
 
-; --- setbm : a0 = BitMap, d0 = BytesPerRow, d1 = Rows, d2 = Depth, a1 = plan 0, d3 = pas entre plans
+; --- setbm: a0 = BitMap, d0 = BytesPerRow, d1 = Rows, d2 = Depth, a1 = plane 0, d3 = stride between planes
 setbm:          move.w  d0,(a0)
                 move.w  d1,2(a0)
                 clr.b   4(a0)
@@ -711,7 +711,7 @@ setbm:          move.w  d0,(a0)
                 dbra    d2,.p
                 rts
 
-; --- T5 : motif d'octets (i*37+11) et gardes $77, TempA à $DEAD
+; --- T5: byte pattern (i*37+11) and $77 guards, TempA set to $DEAD
 ovfill:         lea     O_OVG(a5),a0
                 moveq   #15,d0
 .g1:            move.b  #$77,(a0)+
@@ -782,7 +782,7 @@ putc:           move.w  d0,-(sp)
                 rts
 
 mterms:         dc.w    $C0,$CF,$C5,$60,$6A,$30,$0A,-1
-; sx,sy,dx,dy,w,h,tempA(1 = tampon fourni)
+; sx,sy,dx,dy,w,h,tempA(1 = buffer supplied)
 t5tab:          dc.w    5,0,2,0,40,3,1
                 dc.w    2,0,5,0,40,3,1
                 dc.w    20,0,3,0,30,3,1

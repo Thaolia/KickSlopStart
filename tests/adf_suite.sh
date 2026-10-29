@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# tests/adf_suite.sh — non-régression de fin d'étape : boote CHAQUE disquette de assets/test_adf/ (copies des ADF de
-# l'utilisateur, lecture seule) sur une copie inscriptible, avec 512 Ko de slow RAM comme un A500 étendu.
-# Par disquette : bootblock exécuté ? (marqueur ROM « M6Y STRAP BOOTED OK »), alerte/guru, capture d'écran finale.
-# Le contenu de l'écran (jeu lancé, Workbench, SysInfo...) se juge sur la capture : il n'y a pas d'oracle série.
+# tests/adf_suite.sh - end-of-step non-regression: boots EACH floppy in assets/test_adf/ (copies of the user's
+# ADFs, read-only) from a writable copy, with 512 KB of slow RAM like an expanded A500.
+# Per floppy: bootblock executed? (ROM marker "M6Y STRAP BOOTED OK"), alert/guru, final screen capture.
+# The screen contents (game started, Workbench, SysInfo...) are judged on the capture: there is no serial oracle.
 #
-# Usage : tests/adf_suite.sh [rom] [secondes par disquette] [filtre de nom (grep -i)]
-# Sortie : build/adf_suite/<n>/{screen.png,serial.log} + build/adf_suite/summary.txt
+# Usage: tests/adf_suite.sh [rom] [seconds per floppy] [name filter (grep -i)]
+# Output: build/adf_suite/<n>/{screen.png,serial.log} + build/adf_suite/summary.txt
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"

@@ -1,22 +1,22 @@
-; tests/loadseg_big.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : fichier > 16 Ko pour prouver
-; le cap-bump de LoadSeg (handler HS_BUF + LoadSeg buffer relevés 16K -> 32K). Structure : 1 CODE + 1 DATA + 1
-; RELOC32 (code->data, count=1). Le DATA contient 24000 octets de padding ON-DISK puis une SENTINELLE à la toute
-; fin. Le CODE lit la sentinelle via un pointeur relocalisé : si elle vaut la valeur attendue, c'est que le gros
-; DATA (> 16 Ko) a été lu EN ENTIER dans le segment -> émet « LOADSEG BIG OK ». Avec le cap re-plafonné à 16 Ko
-; (RED LOADSEG_CAP16K), le fichier tronque à FINDINPUT -> la sentinelle (offset 24000) n'est pas chargée -> pas d'émission.
-; Message PC-relatif (dans le CODE) -> une seule relocation (vers la sentinelle). Clean-room : code AUTEUR, aucune lecture ROM.
+; tests/loadseg_big.s - test HUNK executable (TEST ASSET, NOT ROM code): file > 16 KB to prove
+; the LoadSeg cap bump (handler HS_BUF + LoadSeg buffer raised 16K -> 32K). Layout: 1 CODE + 1 DATA + 1
+; RELOC32 (code->data, count=1). The DATA holds 24000 bytes of ON-DISK padding then a SENTINEL at the very
+; end. The CODE reads the sentinel through a relocated pointer: if it holds the expected value, the large
+; DATA (> 16 KB) was read IN FULL into the segment -> emits "LOADSEG BIG OK". With the cap lowered back to 16 KB
+; (RED LOADSEG_CAP16K), the file is truncated at FINDINPUT -> the sentinel (offset 24000) is not loaded -> no output.
+; PC-relative message (in the CODE) -> a single relocation (to the sentinel). Clean-room: AUTHORED code, no ROM reading.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
-BIGPAD   EQU 24000                      ; padding on-disk (force le fichier au-delà de 16 Ko)
+BIGPAD   EQU 24000                      ; on-disk padding (forces the file beyond 16 KB)
 SENTINEL EQU $B16B00B5
 
                 section code,code
 _start:
-                move.l  #bigsentinel,a0     ; RELOC32 code->data : pointeur vers la sentinelle (fin du gros DATA)
+                move.l  #bigsentinel,a0     ; RELOC32 code->data: pointer to the sentinel (end of the large DATA)
                 cmp.l   #SENTINEL,(a0)
-                bne.s   .done               ; gros DATA pas chargé en entier -> pas d'émission
-                lea     bigmsg(pc),a0       ; message PC-relatif (dans le CODE -> pas de 2e relocation)
+                bne.s   .done               ; large DATA not fully loaded -> no output
+                lea     bigmsg(pc),a0       ; PC-relative message (in the CODE -> no 2nd relocation)
 .lp:
                 move.b  (a0)+,d1
                 beq.s   .done
@@ -41,6 +41,6 @@ bigmsg:
 
                 section data,data
 bigpad:
-                dcb.b   BIGPAD,0            ; padding on-disk : rend le fichier > 16 Ko (cap de LECTURE)
+                dcb.b   BIGPAD,0            ; on-disk padding: makes the file > 16 KB (READ cap)
 bigsentinel:
-                dc.l    SENTINEL            ; sentinelle à la FIN du gros DATA : prouve que tout a été lu
+                dc.l    SENTINEL            ; sentinel at the END of the large DATA: proves everything was read

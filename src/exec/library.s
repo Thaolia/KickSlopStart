@@ -1,12 +1,12 @@
-; src/exec/library.s — exec.library : construction de la jump table LVO et
-; fonctions « library/forbid/disable » (Open, Close, Expunge, Forbid, Permit,
-; Disable, Enable). Convention Amiga : scratch = d0/d1/a0/a1 ; a6 = library base.
-; Piste IMPLÉMENTATION (« clean ») : docs/analysis/exec-spec.md +
-; docs/exec-lvo-table.md + ABI publique. AUCUNE lecture de la ROM.
+; src/exec/library.s — exec.library: construction of the LVO jump table and
+; "library/forbid/disable" functions (Open, Close, Expunge, Forbid, Permit,
+; Disable, Enable). Amiga convention: scratch = d0/d1/a0/a1; a6 = library base.
+; IMPLEMENTATION track ("clean"): docs/analysis/exec-spec.md +
+; docs/exec-lvo-table.md + public ABI. NO reading of the ROM.
 ;
-; M2.1a couvre : le MÉCANISME de dispatch (jump table) et le COMPORTEMENT des
-; fonctions. Il ne prouve PAS la compatibilité d'offsets avec l'AmigaOS 1.3 réel
-; (on appelle ce qu'on a soi-même patché) — validé par cross-check exec_lib.fd V34.
+; M2.1a covers: the dispatch MECHANISM (jump table) and the BEHAVIOUR of the
+; functions. It does NOT prove offset compatibility with the real AmigaOS 1.3
+; (we call what we patched ourselves) — validated by cross-check against exec_lib.fd V34.
 
                 include "exec.i"
 
@@ -18,7 +18,7 @@
                 xdef    exec_Permit
                 xdef    exec_Disable
                 xdef    exec_Enable
-                xdef    raw_enable       ; M7c : Enable NU (Signal réactive sans la queue reschedule)
+                xdef    raw_enable       ; M7c: BARE Enable (Signal re-enables without the reschedule tail)
 
                 xref    exec_AddHead     ; lists.s
                 xref    exec_AddTail
@@ -40,14 +40,14 @@
                 xref    exec_Signal
                 xref    exec_AllocSignal
                 xref    exec_FreeSignal
-                xref    exec_Wait        ; interrupts.s (scheduler : switch synchrone)
-                xref    reschedule       ; interrupts.s (yield-sur-Permit : switch synchrone)
-                xref    exec_SetIntVector ; interrupts.s (dispatcher par numéro : vecteur exclusif)
-                xref    exec_AddIntServer ; interrupts.s (dispatcher par numéro : chaîne de serveurs)
-                xref    exec_InitCode    ; resident.s (scan + init des modules résidents)
+                xref    exec_Wait        ; interrupts.s (scheduler: synchronous switch)
+                xref    reschedule       ; interrupts.s (yield-on-Permit: synchronous switch)
+                xref    exec_SetIntVector ; interrupts.s (by-number dispatcher: exclusive vector)
+                xref    exec_AddIntServer ; interrupts.s (by-number dispatcher: server chain)
+                xref    exec_InitCode    ; resident.s (scan + init of the resident modules)
                 xref    exec_FindResident
                 xref    exec_InitResident
-                xref    exec_MakeLibrary ; libinit.s (création lib/device, chemin AUTOINIT)
+                xref    exec_MakeLibrary ; libinit.s (lib/device creation, AUTOINIT path)
                 xref    exec_MakeFunctions
                 xref    exec_InitStruct
                 xref    exec_AddResource ; resident.s (resources)
@@ -68,7 +68,7 @@
                 xref    exec_WaitIO
                 xref    exec_AbortIO
                 xref    exec_CopyMem
-                xref    ram_loadmodule   ; ramlib.s (chargement depuis LIBS:/DEVS:)
+                xref    ram_loadmodule   ; ramlib.s (loading from LIBS:/DEVS:)
                 xref    exec_CopyMemQuick
                 xref    exec_AddLibrary
                 xref    exec_RemLibrary
@@ -108,8 +108,8 @@
                 xref    exec_AddMemList
 
 ; ============================ jump table ============================
-; Remplit les 105 entrées (V34) avec _unimpl puis patche les LVO implémentés.
-build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
+; Fills the 105 entries (V34) with _unimpl then patches the implemented LVOs.
+build_jumptable:                     ; a6 = SysBase; clobbers d0/d1/a0
         lea     EXEC_BLOCK,a0
         move.w  #(EXEC_NEGSIZE/6)-1,d0
         move.l  #_unimpl,d1
@@ -117,7 +117,7 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.w  #$4EF9,(a0)+
         move.l  d1,(a0)+
         dbf     d0,.fill
-        move.w  #$4EF9,LVO_SUPERVISOR(a6)      ; -30 : exec Supervisor (requis par le cracktro flt-intro)
+        move.w  #$4EF9,LVO_SUPERVISOR(a6)      ; -30: exec Supervisor (required by the flt-intro cracktro)
         move.l  #exec_Supervisor,LVO_SUPERVISOR+2(a6)
         move.w  #$4EF9,LVO_OPEN(a6)
         move.l  #exec_Open,LVO_OPEN+2(a6)
@@ -256,8 +256,8 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         move.l  #exec_SumLibrary,-426+2(a6)       ; SumLibrary
         move.w  #$4EF9,-180(a6)
         move.l  #exec_Cause,-180+2(a6)       ; Cause
-        move.w  #$4EF9,EXEC_ALERTSTUB       ; Alert passe par un relais en RAM : SetPatch 1.3 ne remplace Alert que
-        move.l  #exec_Alert,EXEC_ALERTSTUB+2 ; si l'ancien vecteur est en ROM, puis saute dans le code de la ROM 1.3
+        move.w  #$4EF9,EXEC_ALERTSTUB       ; Alert goes through a relay in RAM: SetPatch 1.3 only replaces Alert
+        move.l  #exec_Alert,EXEC_ALERTSTUB+2 ; if the old vector is in ROM, then jumps into the 1.3 ROM code
         move.w  #$4EF9,-108(a6)
         move.l  #EXEC_ALERTSTUB,-108+2(a6)   ; Alert
         move.w  #$4EF9,-144(a6)
@@ -303,19 +303,19 @@ build_jumptable:                     ; a6 = SysBase ; clobbers d0/d1/a0
         rts
 
 _unimpl:
-        moveq   #0,d0                ; LVO non implémenté : retour neutre
+        moveq   #0,d0                ; unimplemented LVO: neutral return
         rts
 
-; exec_Supervisor(a5 = routine) : exécute a5 en mode SUPERVISEUR, puis revient à l'appelant. Appelée en mode
-; USER par le code chargé (ex. le cracktro flt-intro qui pilote le hardware/copper en superviseur). EXEC_SVC ->
-; superviseur -> trap3_handler fait jmp (a5) ; a5 (par convention Supervisor) se termine par RTE, qui dépile le
-; frame {SR user, PC} de EXEC_SVC -> reprend ICI en mode user -> rts à l'appelant. a5 doit préserver le
-; frame SSP (contrat AutoDoc Supervisor).
+; exec_Supervisor(a5 = routine): executes a5 in SUPERVISOR mode, then returns to the caller. Called in
+; USER mode by loaded code (e.g. the flt-intro cracktro which drives the hardware/copper in supervisor). EXEC_SVC ->
+; supervisor -> trap3_handler does jmp (a5); a5 (by Supervisor convention) ends with RTE, which pops the
+; {user SR, PC} frame of EXEC_SVC -> resumes HERE in user mode -> rts to the caller. a5 must preserve the
+; SSP frame (AutoDoc Supervisor contract).
 exec_Supervisor:
         EXEC_SVC trap3_handler
         rts
 
-; ============================ fonctions exec ========================
+; ============================ exec functions ========================
 exec_Open:                           ; -> d0 = SysBase
         addq.w  #1,LIB_OPENCNT(a6)
         move.l  a6,d0
@@ -325,23 +325,23 @@ exec_Close:
         moveq   #0,d0
         rts
 exec_Expunge:
-        moveq   #0,d0                ; exec ne s'expulse jamais
+        moveq   #0,d0                ; exec never expunges itself
         rts
 
-; OpenLibrary(libName a1, version d0) -> d0 = base (ou 0). Forbid-gardé : FindName(LibList) + gate de
-; version (lib_Version >= version demandée, sinon 0) + appel du vecteur Open (-6) de la lib (OpenCnt++).
-; Chargement disque via ramlib si non-résidente = différé (M6) : non trouvée -> 0. Préserve d2/a2.
+; OpenLibrary(libName a1, version d0) -> d0 = base (or 0). Forbid-guarded: FindName(LibList) + version
+; gate (lib_Version >= requested version, otherwise 0) + call of the lib's Open vector (-6) (OpenCnt++).
+; Disk loading via ramlib if not resident = deferred (M6): not found -> 0. Preserves d2/a2.
 exec_OpenLibrary:
         movem.l d2/a2,-(sp)
-        move.w  d0,d2                ; d2 = version demandée (UWORD)
-        move.l  a1,a2                ; a2 = nom (préservé sur Forbid/FindName)
+        move.w  d0,d2                ; d2 = requested version (UWORD)
+        move.l  a1,a2                ; a2 = name (preserved across Forbid/FindName)
         jsr     LVO_FORBID(a6)
         lea     EB_LIBLIST(a6),a0
         move.l  a2,a1
-        jsr     LVO_FINDNAME(a6)     ; d0 = nœud lib (ou 0)
+        jsr     LVO_FINDNAME(a6)     ; d0 = lib node (or 0)
         tst.l   d0
         bne.s   .ol_found
-        jsr     LVO_PERMIT(a6)       ; absente : chargement depuis LIBS: (ramlib), hors Forbid
+        jsr     LVO_PERMIT(a6)       ; missing: load from LIBS: (ramlib), outside Forbid
         lea     ol_libsdir(pc),a0
         move.l  a2,a1
         jsr     ram_loadmodule
@@ -354,20 +354,20 @@ exec_OpenLibrary:
         tst.l   d0
         beq.s   .ol_fail
 .ol_found:
-        move.l  d0,a2                ; a2 = base lib
+        move.l  d0,a2                ; a2 = lib base
                 ifeq    OPENLIB_NO_VERCHECK
-        cmp.w   LIB_VERSION(a2),d2   ; demandée (d2) > disponible (lib_Version) ?
-        bhi.s   .ol_fail             ; version trop récente demandée -> échec
+        cmp.w   LIB_VERSION(a2),d2   ; requested (d2) > available (lib_Version)?
+        bhi.s   .ol_fail             ; too recent a version requested -> failure
                 endc
-        move.l  a6,-(sp)             ; appel du vecteur Open de la lib (a6 = lib)
+        move.l  a6,-(sp)             ; call of the lib's Open vector (a6 = lib)
         move.l  a2,a6
-        jsr     LVO_OPEN(a6)         ; -6 : OpenCnt++, d0 = base
+        jsr     LVO_OPEN(a6)         ; -6: OpenCnt++, d0 = base
         move.l  (sp)+,a6
         bra.s   .ol_done
 .ol_fail:
         moveq   #0,d0
 .ol_done:
-        move.l  d0,-(sp)             ; préserve le résultat à travers Permit (qui peut yield)
+        move.l  d0,-(sp)             ; preserve the result across Permit (which may yield)
         jsr     LVO_PERMIT(a6)
         move.l  (sp)+,d0
         movem.l (sp)+,d2/a2
@@ -377,19 +377,19 @@ ol_libsdir:
         dc.b    "LIBS:",0
         even
 
-; OldOpenLibrary(libName a1) -> d0 = base (ou 0) : OpenLibrary sans gate de version (forme pré-V33).
+; OldOpenLibrary(libName a1) -> d0 = base (or 0): OpenLibrary without version gate (pre-V33 form).
 exec_OldOpenLibrary:
-        moveq   #0,d0                ; version 0 -> la gate passe toujours
+        moveq   #0,d0                ; version 0 -> the gate always passes
         bra     exec_OpenLibrary
 
-; CloseLibrary(library a1) : Forbid-gardé, appel du vecteur Close (-12) de la lib (OpenCnt--). d0 = 0.
+; CloseLibrary(library a1): Forbid-guarded, call of the lib's Close vector (-12) (OpenCnt--). d0 = 0.
 exec_CloseLibrary:
         movem.l a2,-(sp)
         move.l  a1,a2                ; a2 = lib
         jsr     LVO_FORBID(a6)
         move.l  a6,-(sp)
         move.l  a2,a6
-        jsr     LVO_CLOSE(a6)        ; -12 : OpenCnt--
+        jsr     LVO_CLOSE(a6)        ; -12: OpenCnt--
         move.l  (sp)+,a6
         jsr     LVO_PERMIT(a6)
         moveq   #0,d0
@@ -399,40 +399,40 @@ exec_CloseLibrary:
 exec_Forbid:
         addq.b  #1,EB_TDNEST(a6)
         rts
-; Permit : déverrouille le Forbid ; au retour à l'état permis (TDNest < 0) ET non Disabled,
-; si un reschedule est en attente (AttnResched, posé par Signal pour une réveillée
-; prioritaire) -> yield SYNCHRONE immédiat (M3e). Sinon la réveillée attendrait un tick.
+; Permit: unlocks the Forbid; on return to the permitted state (TDNest < 0) AND not Disabled,
+; if a reschedule is pending (AttnResched, set by Signal for a woken task with
+; priority) -> immediate SYNCHRONOUS yield (M3e). Otherwise the woken task would wait for a tick.
 exec_Permit:
         subq.b  #1,EB_TDNEST(a6)
-        bge.s   .pm_ret             ; nesting : encore interdit -> rien
+        bge.s   .pm_ret             ; nesting: still forbidden -> nothing
         tst.b   EB_IDNEST(a6)
-        bge.s   .pm_ret             ; encore Disabled -> Enable fera le yield
+        bge.s   .pm_ret             ; still Disabled -> Enable will do the yield
         tst.w   EB_ATTNRESCHED(a6)
         beq.s   .pm_ret
-        jsr     reschedule          ; revient ici quand la courante est re-dispatchée
+        jsr     reschedule          ; returns here when the current task is re-dispatched
 .pm_ret:
         rts
 exec_Disable:
         addq.b  #1,EB_IDNEST(a6)
         move.w  #$4000,INTENA        ; clear INTEN (bit14)
         rts
-; raw_enable : Enable NU — décrémente le nesting et réactive INTEN si on repasse permis, SANS la
-; queue reschedule. Partagé par exec_Enable et exec_Signal : Signal est appelé AUSSI depuis une
-; interruption, où déclencher reschedule->trap serait une ré-entrance du scheduler (cf. ledger M7c).
+; raw_enable: BARE Enable — decrements the nesting and re-enables INTEN if we go back to permitted, WITHOUT the
+; reschedule tail. Shared by exec_Enable and exec_Signal: Signal is ALSO called from an
+; interrupt, where triggering reschedule->trap would be a scheduler re-entry (cf. ledger M7c).
 raw_enable:
         subq.b  #1,EB_IDNEST(a6)
-        bge.s   .re_ret             ; encore Disabled (nesting) -> ne pas toucher INTENA
-        move.w  #$C000,INTENA        ; SETCLR + INTEN (réactive le maître)
+        bge.s   .re_ret             ; still Disabled (nesting) -> do not touch INTENA
+        move.w  #$C000,INTENA        ; SETCLR + INTEN (re-enables the master)
 .re_ret:
         rts
-; Enable : symétrique de Permit côté Disable. raw_enable puis, si on vient de ré-habiliter ET non
-; Forbidden ET reschedule en attente -> yield.
+; Enable: symmetric of Permit on the Disable side. raw_enable then, if we just re-enabled AND not
+; Forbidden AND reschedule pending -> yield.
 exec_Enable:
         bsr     raw_enable
         tst.b   EB_IDNEST(a6)
-        bge.s   .en_ret             ; encore Disabled (nesting) -> pas de yield
+        bge.s   .en_ret             ; still Disabled (nesting) -> no yield
         tst.b   EB_TDNEST(a6)
-        bge.s   .en_ret             ; encore Forbidden -> Permit fera le yield
+        bge.s   .en_ret             ; still Forbidden -> Permit will do the yield
         tst.w   EB_ATTNRESCHED(a6)
         beq.s   .en_ret
         jsr     reschedule

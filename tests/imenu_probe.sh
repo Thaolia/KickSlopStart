@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tests/imenu_probe.sh — harnais de la sonde tests/imenu_probe.s (piste ANALYSE,
-# docs/analysis/intuition-input-menus-v34.md) : boot FS-UAE avec la VRAIE ROM 1.3, disquette = sonde
-# (bootblock à deux étages), journal série capturé ; à chaque ligne « @S x » une capture <out>/shot_x.png.
-# La sonde injecte elle-même ses événements (input.device IND_WRITEEVENT) : aucune injection X ici.
-# Un seul FS-UAE à la fois sur la machine : on attend que `pgrep -x fs-uae` soit vide.
-# Usage : tests/imenu_probe.sh <répertoire de sortie> [durée max en s, défaut 240]
+# tests/imenu_probe.sh - harness for the probe tests/imenu_probe.s (ANALYSIS track,
+# docs/analysis/intuition-input-menus-v34.md): FS-UAE boot with the REAL 1.3 ROM, floppy = probe
+# (two-stage bootblock), serial log captured; for each "@S x" line a screenshot <out>/shot_x.png.
+# The probe injects its own events (input.device IND_WRITEEVENT): no X injection here.
+# Only one FS-UAE at a time on the machine: we wait until `pgrep -x fs-uae` is empty.
+# Usage: tests/imenu_probe.sh <output directory> [max duration in s, default 240]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:?sortie}"; DUR="${2:-240}"
@@ -59,7 +59,7 @@ window_height = 568
 fade_in_duration = 0
 serial_port = $OUT/ser_uae
 EOF
-# IMENU_DBG=1 : débogueur console ; en cas de blocage, liste des tâches (debug_tasks.py) et registres courants
+# IMENU_DBG=1: console debugger; on a hang, task list (debug_tasks.py) and current registers
 if [ -n "${IMENU_DBG:-}" ]; then echo "console_debugger = 1" >> "$OUT/cfg.fs-uae"; fi
 rm -f "$OUT/in"; mkfifo "$OUT/in"; exec 3<>"$OUT/in"
 T0=$(date +%s)

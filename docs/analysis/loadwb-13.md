@@ -1,180 +1,181 @@
-# loadwb-13.md — `c/loadwb` (Monkey Island, 2 784 o) vs `C:LoadWB` 1.3.3 (2 780 o), et `EndCLI`
+# loadwb-13.md — `c/loadwb` (Monkey Island, 2,784 bytes) vs `C:LoadWB` 1.3.3 (2,780 bytes), and `EndCLI`
 
-> Piste ANALYSE (« dirty »). Sources :
-> - disque Monkey Island, disque 1/4 [cr Defjam] : `c/loadwb` (en-tête bloc 891), `c/endcli` (bloc
->   903), `s/startup-sequence` (bloc 997) ;
-> - `assets/wb133.adf` : `C:LoadWB` (bloc 1039), `C:EndCLI` (bloc 979) ;
-> - ROM `kick34005.A500` : boucle du CLI dans la section BCPL de dos, workbench.task.
+> ANALYSIS track ("dirty"). Sources:
+> - Monkey Island disk, disk 1/4 [cr Defjam]: `c/loadwb` (header block 891), `c/endcli` (block
+>   903), `s/startup-sequence` (block 997);
+> - `assets/wb133.adf`: `C:LoadWB` (block 1039), `C:EndCLI` (block 979);
+> - ROM `kick34005.A500`: CLI loop in the BCPL section of dos, workbench.task.
 >
-> Fichiers extraits par le lecteur OFS tolérant, relogés à plat à $100000 et comparés octet par
-> octet. **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Appels publics et
-> comportement ; aucune suite d'instructions recopiée.
+> Files extracted by the tolerant OFS reader, relocated flat at $100000 and compared byte by
+> byte. **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. Public calls and
+> behaviour; no instruction sequence copied.
 
 ---
 
-## 1. `c/loadwb` de Monkey Island : séquence complète [O]
+## 1. Monkey Island's `c/loadwb`: complete sequence [O]
 
-Exécutable C de **12 hunks**, d'une structure identique à celle du 1.3.3 (§2). Les globales sont
-SysBase (exec) et DOSBase. La séquence de `main(argc, argv)` :
+C executable of **12 hunks**, with a structure identical to that of 1.3.3 (§2). The globals are
+SysBase (exec) and DOSBase. The sequence of `main(argc, argv)`:
 
-1. exec **OpenLibrary("icon.library", 0)** (−552). Échec ⇒ **exit(20)** silencieux, sans
-   message.
-2. exec **OpenLibrary("intuition.library", 0)**. En cas de succès :
-   - **AllocMem(160, MEMF_PUBLIC|MEMF_CLEAR)** (−198), qui recevra le code de remplacement ;
-   - décodage en place de deux chaînes obfusquées (XOR $9E) : un texte d'« œuf de Pâques »
-     d'écran et son remplaçant ;
-   - **CopyMem(code, bloc, 160)** (−624) ;
-   - **Forbid** (−132), **SetFunction(IntuitionBase, −276 = SetWindowTitles, bloc+4)** (−420),
-     l'ancien vecteur étant rangé en tête du bloc, **Permit** (−138) ;
+1. exec **OpenLibrary("icon.library", 0)** (−552). Failure ⇒ silent **exit(20)**, without
+   a message.
+2. exec **OpenLibrary("intuition.library", 0)**. On success:
+   - **AllocMem(160, MEMF_PUBLIC|MEMF_CLEAR)** (−198), which will receive the replacement code;
+   - in-place decoding of two obfuscated strings (XOR $9E): a screen "Easter egg" text
+     and its replacement;
+   - **CopyMem(code, block, 160)** (−624);
+   - **Forbid** (−132), **SetFunction(IntuitionBase, −276 = SetWindowTitles, block+4)** (−420),
+     the old vector being stored at the head of the block, **Permit** (−138);
    - **CloseLibrary(intuition)** (−414).
 
-   Le remplaçant est examiné en §2. Échec d'OpenLibrary ou d'AllocMem ⇒ le patch n'est pas
-   posé, et le programme continue.
-3. exec **FindTask(NULL)** (−294) : son Process, dont on garde `&pr_MsgPort` (+$5C) et
-   `BADDR(pr_CLI)` (+$AC).
-4. Si **argc = 2 et argv[1] = "-debug"** (comparaison exacte, sensible à la casse) ⇒ drapeau
-   debug := 1.
-5. exec **FindResident("workbench.task")** (−96). Échec ⇒ écrit **« Cannot find resident tag for
-   workbench.task »** sur **Output()** (dos −60, Write −48, via RawDoFmt −522), puis exit(20).
-6. Copie du chemin de commandes : pour chaque nœud de `cli_CommandDir` (CLI +$08),
-   AllocMem(8, MEMF_CLEAR), puis **DupLock** (dos −96) du lock. Le tout forme une liste BPTR.
-7. dos **CreateProc("workbench.task", pri 1, seglist = (RomTag + $2A) >> 2, pile 5000)** (−138).
-   Le décalage est arithmétique et l'adresse n'est pas alignée : c'est le « sélecteur 2 » de la
-   ROM, cf. `workbench-task-v34.md` §1.3. Échec ⇒ **« Cannot start tool (error %ld) »** avec
-   **IoErr()** (−132) sur Output(), puis exit(20).
-8. Message de démarrage de 28 octets **sur sa pile** :
-   - `mn_ReplyPort` = son `pr_MsgPort` ;
-   - +$14 = la liste de chemins ;
-   - +$18 = le drapeau debug ;
-   - `mn_Length` n'est pas initialisé.
+   The replacement is examined in §2. Failure of OpenLibrary or AllocMem ⇒ the patch is not
+   installed, and the program continues.
+3. exec **FindTask(NULL)** (−294): its Process, of which `&pr_MsgPort` (+$5C) and
+   `BADDR(pr_CLI)` (+$AC) are kept.
+4. If **argc = 2 and argv[1] = "-debug"** (exact comparison, case-sensitive) ⇒ debug flag
+   := 1.
+5. exec **FindResident("workbench.task")** (−96). Failure ⇒ writes **"Cannot find resident tag for
+   workbench.task"** to **Output()** (dos −60, Write −48, via RawDoFmt −522), then exit(20).
+6. Copy of the command path: for each node of `cli_CommandDir` (CLI +$08),
+   AllocMem(8, MEMF_CLEAR), then **DupLock** (dos −96) of the lock. The whole forms a BPTR list.
+7. dos **CreateProc("workbench.task", pri 1, seglist = (RomTag + $2A) >> 2, stack 5000)** (−138).
+   The shift is arithmetic and the address is not aligned: this is the ROM's "selector 2",
+   see `workbench-task-v34.md` §1.3. Failure ⇒ **"Cannot start tool (error %ld)"** with
+   **IoErr()** (−132) on Output(), then exit(20).
+8. 28-byte startup message **on its stack**:
+   - `mn_ReplyPort` = its `pr_MsgPort`;
+   - +$14 = the path list;
+   - +$18 = the debug flag;
+   - `mn_Length` is not initialised.
 
-   Il est envoyé par **PutMsg(port renvoyé par CreateProc, msg)** (−366).
-9. **WaitPort(&pr_MsgPort)** (−384) puis **GetMsg** (−372) : attente **bloquante** de la
-   réponse. Il n'y a pas de délai d'expiration.
-10. **FindTask("Workbench")**. Si la tâche est trouvée : **`pr_ConsoleTask` (+$A4) := 0** dans
-    ce process. Sinon, rien.
-11. Si **argc = 2 et argv[1] = "delay"** ⇒ dos **Delay(150)** (−198), soit 3 s.
-12. Retour, code 0.
+   It is sent by **PutMsg(port returned by CreateProc, msg)** (−366).
+9. **WaitPort(&pr_MsgPort)** (−384) then **GetMsg** (−372): **blocking** wait for the
+   reply. There is no timeout.
+10. **FindTask("Workbench")**. If the task is found: **`pr_ConsoleTask` (+$A4) := 0** in
+    this process. Otherwise, nothing.
+11. If **argc = 2 and argv[1] = "delay"** ⇒ dos **Delay(150)** (−198), i.e. 3 s.
+12. Return, code 0.
 
-**Ce qu'il ne fait pas** :
-- il n'ouvre pas de workbench.library ;
-- il ne cherche pas de port « Workbench » ;
-- il ne fait ni Execute, ni LoadSeg, ni OpenWorkBench ;
-- il ne teste pas un Workbench déjà lancé : un deuxième `loadwb` relance un second process.
+**What it does not do**:
+- it does not open any workbench.library;
+- it does not look for a "Workbench" port;
+- it does neither Execute, nor LoadSeg, nor OpenWorkBench;
+- it does not check for an already-running Workbench: a second `loadwb` launches a second process.
 
-**Sorties silencieuses** : seulement l'échec d'OpenLibrary(icon), avec le code 20. Les deux
-autres échecs écrivent un message.
+**Silent exits**: only the failure of OpenLibrary(icon), with code 20. The two
+other failures write a message.
 
-## 2. Différences avec `C:LoadWB` 1.3.3 (2 780 o, md5 f10020d8…) [O]
+## 2. Differences from `C:LoadWB` 1.3.3 (2,780 bytes, md5 f10020d8…) [O]
 
-- **Le même programme** : mêmes 12 hunks, même `main` octet pour octet. Les seuls octets qui
-  diffèrent dans `main` sont des adresses relogées, décalées par les tailles des hunks 4 et 6.
-- **Aucune différence pour `delay`, `-debug`, FindResident, CreateProc, le message, WaitPort,
-  FindTask("Workbench") et pr_ConsoleTask.**
-- **Hunk 4, le remplaçant de SetWindowTitles(win A0, titre A1, titre d'écran A2)** :
-  - **dans les deux versions** : si le titre d'écran vaut $FFFFFFFF, appel direct de
-    l'original. Sinon :
-    - si c'est le texte de version en 1.2, quelques caractères sont réécrits dans la chaîne de
-      l'appelant (+$11…+$15) ;
-    - si c'est le texte d'œuf de Pâques, le titre est remplacé par l'autre chaîne ;
-    - puis appel de l'original avec les mêmes registres ;
-  - **seule différence** : la version 1.3.3 sort aussi si **A2 = NULL**. La version Monkey ne
-    teste pas NULL : avec A2 = NULL, elle **lit** l'octet $14 et compare la chaîne à l'adresse 0.
-    Ce sont des lectures en mémoire basse, sans écriture, puisqu'aucune comparaison ne réussit [D].
-    Les deux versions affichent un texte « Workbench release 1.2. ».
-- **Hunk 6** (helper d'écriture formatée) : 36 octets au lieu de 28, même fonction.
-- **Conclusion** : avec ce loadwb, le Workbench doit démarrer comme avec celui du 1.3.3. Ce qui
-  change dans la startup-sequence Monkey, c'est **l'absence de `delay`** et **`endcli` sans
+- **The same program**: same 12 hunks, same `main` byte for byte. The only bytes that
+  differ in `main` are relocated addresses, shifted by the sizes of hunks 4 and 6.
+- **No difference for `delay`, `-debug`, FindResident, CreateProc, the message, WaitPort,
+  FindTask("Workbench") and pr_ConsoleTask.**
+- **Hunk 4, the replacement of SetWindowTitles(win A0, title A1, screen title A2)**:
+  - **in both versions**: if the screen title is $FFFFFFFF, direct call of
+    the original. Otherwise:
+    - if it is the 1.2 version text, a few characters are rewritten in the
+      caller's string (+$11…+$15);
+    - if it is the Easter egg text, the title is replaced by the other string;
+    - then call of the original with the same registers;
+  - **only difference**: the 1.3.3 version also exits if **A2 = NULL**. The Monkey version does
+    not test NULL: with A2 = NULL, it **reads** byte $14 and compares the string at address 0.
+    These are reads in low memory, without writes, since no comparison succeeds [D].
+    Both versions display a text "Workbench release 1.2.".
+- **Hunk 6** (formatted-write helper): 36 bytes instead of 28, same function.
+- **Conclusion**: with this loadwb, the Workbench should start as with the 1.3.3 one. What
+  changes in the Monkey startup-sequence is **the absence of `delay`** and **`endcli` without
   `>NIL:`**.
 
-## 3. `EndCLI` (696 o) : **identique** au C:EndCLI du WB 1.3.3 (même md5 34adda82…) [O]
+## 3. `EndCLI` (696 bytes): **identical** to the C:EndCLI of WB 1.3.3 (same md5 34adda82…) [O]
 
-### 3.1 Ce que fait la commande
+### 3.1 What the command does
 
-Commande BCPL : un hunk stub, plus un module de 82 longs, globale max 145. Avec les numéros de
-globales de `bcpl-runtime-v34.md` :
+BCPL command: one stub hunk, plus a module of 82 longs, max global 145. With the global
+numbers of `bcpl-runtime-v34.md`:
 
-1. rdargs avec un gabarit vide ; numéro de process lu pour le message.
-2. **`cli_StandardInput`→fh_End (FileHandle +$14) := 0** : vide le tampon de l'entrée console.
-3. Si **cli_CurrentInput ≠ cli_StandardInput** (on est dans un script) : **endstream(CurrentInput)**
-   (Close), puis CurrentInput := StandardInput.
-4. **`cli_Background` := −1 (TRUE)** (globale 145 = champ CLI +$2C).
-5. Si **cli_Interactive ≠ 0** : **writef("CLI process %N ending")** sur la sortie courante.
-6. Forbid (−132) ; dans la liste des segments résidents de DosInfo (via rootstruct), recherche du
-   nœud nommé **"CLI"** et **décrément de son compteur d'utilisation** s'il est > 0 ; Permit
+1. rdargs with an empty template; process number read for the message.
+2. **`cli_StandardInput`→fh_End (FileHandle +$14) := 0**: empties the console input
+   buffer.
+3. If **cli_CurrentInput ≠ cli_StandardInput** (we are in a script): **endstream(CurrentInput)**
+   (Close), then CurrentInput := StandardInput.
+4. **`cli_Background` := −1 (TRUE)** (global 145 = CLI field +$2C).
+5. If **cli_Interactive ≠ 0**: **writef("CLI process %N ending")** on the current output.
+6. Forbid (−132); in the DosInfo resident segment list (via rootstruct), search for the
+   node named **"CLI"** and **decrement of its use count** if it is > 0; Permit
    (−138).
-7. Retour.
+7. Return.
 
-**EndCLI ne ferme pas la console**, n'envoie aucun ACTION_END et ne touche ni Output() ni Input().
-Le message « CLI process 1 ending » est **normal** : il s'affiche aussi sur la vraie 1.3, juste
-avant la fermeture de la fenêtre. Avec `>NIL:`, la sortie courante de la commande est NIL: et le
-message n'apparaît pas.
+**EndCLI does not close the console**, sends no ACTION_END and touches neither Output() nor Input().
+The message "CLI process 1 ending" is **normal**: it is also displayed on the real 1.3, just
+before the window closes. With `>NIL:`, the command's current output is NIL: and the
+message does not appear.
 
-### 3.2 Qui ferme réellement la fenêtre : la boucle du CLI en ROM [O]
+### 3.2 Who actually closes the window: the CLI loop in ROM [O]
 
-Dans la boucle BCPL du CLI (dos), lorsque la lecture d'une ligne de commande
-rend **fin de flux** :
-- **CurrentInput ≠ StandardInput** : fin d'un script ⇒ endread, puis retour sur StandardInput.
-- **CurrentInput = StandardInput et Background = 0** : CLI interactif normal ⇒ fh_End := −1,
-  c'est-à-dire « tampon à recharger », et lecture suivante ; on continue.
-- **CurrentInput = StandardInput et Background ≠ 0** : **fin du CLI** :
-  1. **endread()** (globale 63) : Close du flux d'entrée courant, la console ;
-  2. **endwrite()** (globale 64) : Close du flux de sortie courant, la console ;
-  3. **currentdir(0, …)** puis **freeobj(lock)** (globales 51 et 109) : **UnLock du répertoire
-     courant du CLI** ;
-  4. libérations, puis fin du process. Un autre chemin traite un CLI lancé par paquet
-     (NewCLI/Run) avec returnpkt.
-- **La fenêtre CON: se ferme** quand le handler console reçoit le **dernier ACTION_END**, ses
-  deux FileHandles (entrée et sortie) étant fermés [D, comportement du handler].
+In the BCPL loop of the CLI (dos), when reading a command line
+returns **end of stream**:
+- **CurrentInput ≠ StandardInput**: end of a script ⇒ endread, then back to StandardInput.
+- **CurrentInput = StandardInput and Background = 0**: normal interactive CLI ⇒ fh_End := −1,
+  i.e. "buffer to be reloaded", and next read; it continues.
+- **CurrentInput = StandardInput and Background ≠ 0**: **end of the CLI**:
+  1. **endread()** (global 63): Close of the current input stream, the console;
+  2. **endwrite()** (global 64): Close of the current output stream, the console;
+  3. **currentdir(0, …)** then **freeobj(lock)** (globals 51 and 109): **UnLock of the CLI's
+     current directory**;
+  4. deallocations, then end of the process. Another path handles a CLI launched by packet
+     (NewCLI/Run) with returnpkt.
+- **The CON: window closes** when the console handler receives the **last ACTION_END**, its
+  two FileHandles (input and output) being closed [D, handler behaviour].
 
-**Point clé (convention FileHandle BCPL)** :
-- `fh_End = 0` veut dire « **flux épuisé** » : le prochain `rdch` rend fin de flux
-  **immédiatement, sans lire la console** ;
-- `fh_End = −1` veut dire « **tampon vide, à recharger** par ACTION_READ ».
+**Key point (BCPL FileHandle convention)**:
+- `fh_End = 0` means "**stream exhausted**": the next `rdch` returns end of stream
+  **immediately, without reading the console**;
+- `fh_End = −1` means "**buffer empty, to be reloaded** by ACTION_READ".
 
-EndCLI met 0. C'est ce qui fait sortir le CLI **sans attendre de frappe**, aussitôt la commande
-terminée.
+EndCLI sets 0. That is what makes the CLI exit **without waiting for a keystroke**, as soon as the
+command has finished.
 
-## 4. Pistes pour notre écart [D]
+## 4. Leads for our discrepancy [D]
 
-L'enchaînement réel est le suivant :
-1. `loadwb` rend la main dès la **réponse immédiate** de workbench.task. Cette réponse arrive
-   avant toute ouverture d'écran (`workbench-task-v34.md` §2.4).
-2. `endcli` s'exécute **pendant** l'init du Workbench.
-3. Le CLI lit la fin de flux, ferme ses deux handles console, fait UnLock de son répertoire
-   courant et se termine.
-4. La fenêtre se ferme et le Workbench finit de s'ouvrir.
+The real sequence of events is the following:
+1. `loadwb` returns as soon as the **immediate reply** from workbench.task arrives. This reply arrives
+   before any screen is opened (`workbench-task-v34.md` §2.4).
+2. `endcli` runs **during** the Workbench init.
+3. The CLI reads end of stream, closes its two console handles, UnLocks its current
+   directory and terminates.
+4. The window closes and the Workbench finishes opening.
 
-Chez nous (« CLI process 1 ending », fenêtre ouverte, pas de Workbench) :
-1. **`fh_End = 0` doit signifier EOF sans lecture.** Si notre rdch ou notre recharge traite
-   fh_End = 0 comme « tampon vide », le CLI repart en ACTION_READ sur la console et **attend une
-   frappe**. La fenêtre reste alors ouverte, avec le message affiché : c'est exactement ce qu'on
+On our side ("CLI process 1 ending", window open, no Workbench):
+1. **`fh_End = 0` must mean EOF without reading.** If our rdch or our reload treats
+   fh_End = 0 as "buffer empty", the CLI goes back to ACTION_READ on the console and **waits for a
+   keystroke**. The window then stays open, with the message displayed: this is exactly what we
    observe.
-   - Avec `endcli >NIL:`, on passe par le chemin de redirection, puis la fermeture des flux
-     redirigés (endstream). Cette séquence pourrait cacher l'écart.
-   - **À tester : `endcli` sans `>NIL:` derrière `LoadWB delay` sur le disque WB 1.3.3.**
-2. **Fin du CLI ⇒ endread + endwrite, puis le handler console ferme la fenêtre au dernier
-   ACTION_END.** Il faut vérifier que notre fin de CLI fait ces deux Close et que notre handler
-   compte bien ses ouvertures.
-3. **Répertoire courant partagé.** La fin du CLI fait **UnLock de son répertoire courant**. Si
-   notre CreateProc donne au process Workbench le **même lock** que le CLI (au lieu de 0 ou d'un
-   DupLock), l'UnLock fait sortir le Workbench de son répertoire en pleine init. Le Workbench
-   resterait alors invisible ou bloqué. Avec `delay`, le Workbench a fini son init avant l'UnLock,
-   ce qui expliquerait que notre cas de référence marche.
-   - **À tester : `loadwb` puis `endcli >NIL:` sans `delay`.**
-4. **`FindTask("Workbench")`.** Sur la vraie ROM, le process s'appelle déjà « Workbench » quand
-   LoadWB reçoit la réponse. Sinon, `pr_ConsoleTask` n'est pas remis à 0. C'est sans gravité tant
-   que notre Workbench n'utilise pas `pr_ConsoleTask` ; la ROM ne le lit jamais.
-5. Le process est créé avec **pile 5000 et priorité 1** : vérifier que notre CreateProc respecte
-   la priorité, puisque le Workbench doit passer devant le CLI (pri 0) qui se termine.
+   - With `endcli >NIL:`, we go through the redirection path, then the closing of the redirected
+     streams (endstream). This sequence could hide the discrepancy.
+   - **To test: `endcli` without `>NIL:` after `LoadWB delay` on the WB 1.3.3 disk.**
+2. **End of the CLI ⇒ endread + endwrite, then the console handler closes the window at the last
+   ACTION_END.** We must check that our CLI end does these two Closes and that our handler
+   counts its opens correctly.
+3. **Shared current directory.** The end of the CLI does an **UnLock of its current directory**. If
+   our CreateProc gives the Workbench process the **same lock** as the CLI (instead of 0 or a
+   DupLock), the UnLock pulls the Workbench out of its directory in the middle of its init. The Workbench
+   would then remain invisible or stuck. With `delay`, the Workbench has finished its init before the UnLock,
+   which would explain why our reference case works.
+   - **To test: `loadwb` then `endcli >NIL:` without `delay`.**
+4. **`FindTask("Workbench")`.** On the real ROM, the process is already called "Workbench" when
+   LoadWB receives the reply. Otherwise, `pr_ConsoleTask` is not reset to 0. This is harmless as long
+   as our Workbench does not use `pr_ConsoleTask`; the ROM never reads it.
+5. The process is created with **stack 5000 and priority 1**: check that our CreateProc respects
+   the priority, since the Workbench must run ahead of the CLI (pri 0) that is terminating.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions recopiée : appels publics avec LVO et arguments, champs de
-  structures publiques (Process, CommandLineInterface, FileHandle, Message), conditions.
-- [x] Aucune donnée du programme reproduite, hormis de courtes chaînes. Les textes obfusqués sont
-  décrits par leur rôle seulement.
-- [x] **Correction du 2026-10-29** : retirées les 3 adresses ROM (boucle du CLI, appels endstream) ;
-  comportement inchangé.
+- [x] No instruction sequence copied: public calls with LVO and arguments, fields of
+  public structures (Process, CommandLineInterface, FileHandle, Message), conditions.
+- [x] No program data reproduced, apart from short strings. The obfuscated texts are
+  described by their role only.
+- [x] **Correction of 2026-10-29**: removed the 3 ROM addresses (CLI loop, endstream calls);
+  behaviour unchanged.

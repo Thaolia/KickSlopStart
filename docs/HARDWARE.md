@@ -1,23 +1,23 @@
-# Cible matérielle & toolchain
+# Hardware target & toolchain
 
-## Amiga 500 (cible)
+## Amiga 500 (target)
 
-- CPU **Motorola 68000**, big-endian, pas de MMU.
-- **Kickstart ROM 256 KiB** mappée à **`$FC0000`–`$FFFFFF`** ; mirroir à `$0` au reset (overlay OVL,
-  piloté par la CIA). RAM chip à partir de `$000000` (512 KiB sur A500 d'origine).
-- Chipset (OCS) : adresses custom à partir de `$DFF000` (ex. `$DFF096` DMACON, `$DFF09A` INTENA,
-  `$DFF09C` INTREQ, `$DFF180` COLOR00, `$DFF030/032/018` SERDAT/SERPER/SERDATR). CIA 8520 à `$BFE001`/`$BFD000`.
-- Au power-on : DMA et interruptions doivent être neutralisés très tôt (le coldstart hello le fait).
+- **Motorola 68000** CPU, big-endian, no MMU.
+- **Kickstart ROM 256 KiB** mapped at **`$FC0000`–`$FFFFFF`**; mirrored at `$0` on reset (OVL overlay,
+  driven by the CIA). Chip RAM from `$000000` (512 KiB on the original A500).
+- Chipset (OCS): custom addresses from `$DFF000` (e.g. `$DFF096` DMACON, `$DFF09A` INTENA,
+  `$DFF09C` INTREQ, `$DFF180` COLOR00, `$DFF030/032/018` SERDAT/SERPER/SERDATR). CIA 8520 at `$BFE001`/`$BFD000`.
+- At power-on: DMA and interrupts must be neutralised very early (the hello coldstart does it).
 
-### Vraie ROM (EPROM) — note pour M7
-Une Kickstart 256K se remplace par une EPROM/flash adaptée (typiquement une 27C400 4 Mbit avec gestion
-des lignes d'adresse, ou un adaptateur). À détailler au moment du portage matériel ; l'émulateur
-suffit jusque-là.
+### Real ROM (EPROM) — note for M7
+A 256K Kickstart is replaced by a suitable EPROM/flash (typically a 27C400 4 Mbit with handling
+of the address lines, or an adapter). To be detailed at hardware-porting time; the emulator
+is enough until then.
 
-## Toolchain (hôte, WSL2 Debian)
+## Toolchain (host, WSL2 Debian)
 
-### Assembleur / linker 68k — vasm + vlink (Frank Wille)
-Non packagés : compilés depuis les sources, installés dans `~/.local/bin`.
+### 68k assembler / linker — vasm + vlink (Frank Wille)
+Not packaged: built from source, installed in `~/.local/bin`.
 
 ```sh
 mkdir -p ~/.cache/amiga-tc && cd ~/.cache/amiga-tc
@@ -28,28 +28,28 @@ make -C vasm CPU=m68k SYNTAX=mot      # -> vasmm68k_mot
 make -C vlink                          # -> vlink
 cp vasm/vasmm68k_mot vlink/vlink ~/.local/bin/
 ```
-Versions validées : vasm **2.0f**, vlink **V0.18a**. Option vlink utile dès M2 : `-kick1` (compat
-loader Kickstart 1.x) et sorties `rawbin`/`ados`. Alternative C (modules en C plus tard) : gcc
-**bebbo** `m68k-amigaos-gcc` (runtime KS1.3 : `-mcrt=nix13`).
+Validated versions: vasm **2.0f**, vlink **V0.18a**. Useful vlink option from M2 on: `-kick1` (Kickstart 1.x
+loader compat) and `rawbin`/`ados` outputs. C alternative (modules in C later): gcc
+**bebbo** `m68k-amigaos-gcc` (KS1.3 runtime: `-mcrt=nix13`).
 
-### amitools (déjà installé, pipx)
-`romtool` (info/build/split/copy de ROM, checksum), `fdtool` (LVO depuis `.fd`), `xdftool` (ADF),
-`vamos` (exécution de binaires AmigaOS côté hôte — ne peut PAS héberger notre propre exec).
+### amitools (already installed, pipx)
+`romtool` (ROM info/build/split/copy, checksum), `fdtool` (LVOs from `.fd`), `xdftool` (ADF),
+`vamos` (runs AmigaOS binaries on the host — can NOT host our own exec).
 
-### Émulateur
-**FS-UAE 3.2.35** (Debian) + **Xvfb** pour le boot headless / CI. Capture d'écran via `xwd` + ImageMagick
-(`convert`). Côté Windows, `WinUAE.exe` (interop WSL2) reste une option, surtout pour un log série robuste
-dès M2. Clés de config FS-UAE : `amiga_model`, `kickstart_file`, `chip_memory` (voir `tests/boot_test.sh`).
+### Emulator
+**FS-UAE 3.2.35** (Debian) + **Xvfb** for headless boot / CI. Screen capture via `xwd` + ImageMagick
+(`convert`). On the Windows side, `WinUAE.exe` (WSL2 interop) remains an option, especially for a robust serial log
+from M2 on. FS-UAE config keys: `amiga_model`, `kickstart_file`, `chip_memory` (see `tests/boot_test.sh`).
 
-**WinUAE Linux** (portage Unix de WinUAE, AppImage extraite où l'on veut ; son lanceur `AppRun` est donné à
-`tests/adf_suite_winuae.sh` par la variable `WINUAE`, ou placé dans le PATH sous le nom `winuae`) pour un A500 fidèle au matériel : fichier de config `-f a500.uae` avec `use_gui=no`, `cpu_model=68000`,
-`cpu_cycle_exact=true`, `cycle_exact=true`, `chipset=ocs`, `chipmem_size=1` + `bogomem_size=2` (512 Ko chip + 512 Ko
-slow), `floppy_speed=100` (disquette à vitesse réelle), sous Xvfb avec `QT_QPA_PLATFORM=xcb SDL_AUDIODRIVER=dummy`.
-Série : **`unix.serial_port=TCP://127.0.0.1:<port>`** (la clé `serial_port` de WinUAE Windows est inconnue de ce
-portage), lue par `socat -u TCP:127.0.0.1:<port> -` ; le coldstart arrive dès la première ligne. Clavier injecté par
-xdotool : `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1` et focus de la fenêtre sous la souris ; la souris n'est capturée
-qu'après un premier clic. Suite ADF : `tests/adf_suite_winuae.sh [rom] [secondes]`.
+**WinUAE Linux** (Unix port of WinUAE, AppImage extracted wherever you like; its `AppRun` launcher is given to
+`tests/adf_suite_winuae.sh` through the `WINUAE` variable, or placed in the PATH under the name `winuae`) for a hardware-faithful A500: config file `-f a500.uae` with `use_gui=no`, `cpu_model=68000`,
+`cpu_cycle_exact=true`, `cycle_exact=true`, `chipset=ocs`, `chipmem_size=1` + `bogomem_size=2` (512 KB chip + 512 KB
+slow), `floppy_speed=100` (floppy at real speed), under Xvfb with `QT_QPA_PLATFORM=xcb SDL_AUDIODRIVER=dummy`.
+Serial: **`unix.serial_port=TCP://127.0.0.1:<port>`** (the `serial_port` key of Windows WinUAE is unknown to this
+port), read by `socat -u TCP:127.0.0.1:<port> -`; the coldstart arrives from the very first line. Keyboard injected by
+xdotool: `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1` and focus on the window under the mouse; the mouse is only captured
+after a first click. ADF suite: `tests/adf_suite_winuae.sh [rom] [seconds]`.
 
-### Analyse (piste dirty)
-**radare2 6.1.3** (`r2 -a m68k -e cfg.bigendian=true`, base `$FC0000`). Ghidra headless optionnel pour
-le décompilateur (cf. règle ghidra-mcp : une instance dédiée par binaire).
+### Analysis (dirty track)
+**radare2 6.1.3** (`r2 -a m68k -e cfg.bigendian=true`, base `$FC0000`). Ghidra headless optional for
+the decompiler (see the ghidra-mcp rule: one dedicated instance per binary).

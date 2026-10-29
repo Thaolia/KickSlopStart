@@ -1,37 +1,38 @@
 #!/usr/bin/env bash
-# tests/dskchg_run.sh — harnais de la sonde tests/dskchg.s (piste analyse, docs/analysis/disk-change-v34.md).
-# Boot FS-UAE headless (Xvfb) avec débogueur console, DF0: = <df0>, et trois images dans la liste de disquettes
-# (floppy_image_0..2) ; exécute un script de commandes, une par ligne :
-#   sleep N                  attente (secondes, horloge murale)
-#   shot NOM                 capture X complète -> <out>/NOM.png (écran Amiga en +152+100, 720x568)
-#   media COURANT CIBLE [NOM] change la disquette de DF0: par le MENU F12 de FS-UAE (seule méthode qui a marché :
-#                            les raccourcis keyboard_key_* = action_*_floppy_* sont ignorés quand on les injecte par
-#                            xdotool). Positions du sous-menu « INSERT INTO DF0 » : 0 = EJECT, 1..3 = floppy_image_0..2 ;
-#                            la surbrillance part de l'image COURANTE (0 si lecteur vide). Le premier appel descend de
-#                            PAUSE à l'entrée DF0 (7 x Bas) ; ensuite le menu s'ouvre déjà sur cette entrée. Entrée sur
-#                            l'image ferme le menu (pas de F12 en plus). L'émulation est en pause pendant le menu.
-#   rel DX DY [N]            N déplacements relatifs de la souris (pas <= 20 : les grands sauts se perdent)
-#   dclick                   double-clic gauche
-#   click                    clic gauche simple
-#   rdown / rup              bouton droit enfoncé / relâché (menus)
-#   key TOUCHE               touche au format xdotool (Down, ctrl+F1…)
-#   keyraw TOUCHES           idem sans --clearmodifiers (Super_R+q = Amiga droite + Q sous FS-UAE)
-#   cia NOM                  vecteurs et masques de ciaa/ciab.resource (debug_cia.py) -> <out>/NOM.cia
-#   dcmd NOM CMDS            commandes brutes du débogueur séparées par « ; », « _ » pour espace -> <out>/NOM.dcmd
-#   tpc NOM TÂCHE [N]        N relevés du contexte sauvegardé (PC, registres) de la tâche -> <out>/NOM.tpc
-#   pcs NOM [N] [ADR]        N arrêts du débogueur (registres, et code en ADR) -> <out>/NOM.pcs
-#   dbg NOM                  débogueur : tâches (debug_tasks.py) -> <out>/NOM.tasks ; registres, code autour du PC,
-#                            registres $DFF010-$DFF02F (INTENAR/INTREQR) et 40 pas « t » -> <out>/NOM.dbglog ; reprise
-#   dump                     F12+D, relit le journal mémoire de la sonde (adresse en $3F0) -> <out>/log.txt, puis « g »
-# DSKCHG_SERIAL=1 : capture du port série dans <out>/serial.log (ROM de trace, ex. -DDOSTRACE=1).
-# Usage : tests/dskchg_run.sh <rom> <df0.adf> <img1.adf> <img2.adf> <script> <répertoire de sortie>
-# Les ADF doivent porter un NOM NEUF à chaque séance (FS-UAE attache une surcouche d'écriture au nom du fichier).
+# tests/dskchg_run.sh - harness for the tests/dskchg.s probe (analysis track, docs/analysis/disk-change-v34.md).
+# Headless FS-UAE boot (Xvfb) with the console debugger, DF0: = <df0>, and three images in the floppy list
+# (floppy_image_0..2); runs a command script, one command per line:
+#   sleep N                  wait (seconds, wall clock)
+#   shot NAME                full X capture -> <out>/NAME.png (Amiga screen at +152+100, 720x568)
+#   media CURRENT TARGET [NAME] changes the DF0: floppy through the FS-UAE F12 MENU (the only method that worked:
+#                            the keyboard_key_* = action_*_floppy_* shortcuts are ignored when injected through
+#                            xdotool). Positions in the "INSERT INTO DF0" submenu: 0 = EJECT, 1..3 = floppy_image_0..2;
+#                            the highlight starts on the CURRENT image (0 if the drive is empty). The first call moves
+#                            down from PAUSE to the DF0 entry (7 x Down); afterwards the menu already opens on that
+#                            entry. Return on the image closes the menu (no extra F12). Emulation is paused while the
+#                            menu is open.
+#   rel DX DY [N]            N relative mouse moves (step <= 20: large jumps get lost)
+#   dclick                   left double-click
+#   click                    single left click
+#   rdown / rup              right button pressed / released (menus)
+#   key KEY                  key in xdotool format (Down, ctrl+F1...)
+#   keyraw KEYS              same without --clearmodifiers (Super_R+q = right Amiga + Q under FS-UAE)
+#   cia NAME                 ciaa/ciab.resource vectors and masks (debug_cia.py) -> <out>/NAME.cia
+#   dcmd NAME CMDS           raw debugger commands separated by ";", "_" for a space -> <out>/NAME.dcmd
+#   tpc NAME TASK [N]        N samples of the task's saved context (PC, registers) -> <out>/NAME.tpc
+#   pcs NAME [N] [ADDR]      N debugger stops (registers, and code at ADDR) -> <out>/NAME.pcs
+#   dbg NAME                 debugger: tasks (debug_tasks.py) -> <out>/NAME.tasks; registers, code around the PC,
+#                            registers $DFF010-$DFF02F (INTENAR/INTREQR) and 40 "t" steps -> <out>/NAME.dbglog; resume
+#   dump                     F12+D, reads back the probe's memory log (address at $3F0) -> <out>/log.txt, then "g"
+# DSKCHG_SERIAL=1: captures the serial port into <out>/serial.log (trace ROM, e.g. -DDOSTRACE=1).
+# Usage: tests/dskchg_run.sh <rom> <df0.adf> <img1.adf> <img2.adf> <script> <output directory>
+# The ADFs must carry a NEW NAME for every session (FS-UAE attaches a write overlay keyed by the file name).
 set -u
 ROM="${1:?rom}"; F0="${2:?df0}"; F1="${3:?img1}"; F2="${4:?img2}"; SCRIPT="${5:?script}"; OUT="${6:?sortie}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 rm -rf "$OUT"; mkdir -p "$OUT"
 for t in fs-uae Xvfb xdotool xwd convert python3; do command -v "$t" >/dev/null || { echo "outil absent : $t"; exit 2; }; done
-# un seul émulateur à la fois : attendre deux constats successifs d'absence
+# only one emulator at a time: wait for two successive observations of absence
 while pgrep -x fs-uae >/dev/null || { sleep 3; pgrep -x fs-uae >/dev/null; }; do sleep 2; done
 DISP=""; for n in $(seq 99 120); do [ -e "/tmp/.X${n}-lock" ] || { DISP=":$n"; break; }; done
 [ -n "$DISP" ] || { echo "aucun display X libre"; exit 2; }
@@ -44,7 +45,7 @@ cleanup() { [ -n "$FP" ] && kill "$FP" 2>/dev/null; kill "$XP" 2>/dev/null; slee
 trap cleanup EXIT INT TERM
 sleep 2
 SERDEV=/dev/null
-if [ -n "${DSKCHG_SERIAL:-}" ]; then           # série capturé dans <out>/serial.log (pont PTY socat)
+if [ -n "${DSKCHG_SERIAL:-}" ]; then           # serial captured into <out>/serial.log (socat PTY bridge)
   command -v socat >/dev/null || { echo "outil absent : socat"; exit 2; }
   socat pty,raw,echo=0,link="$OUT/ser_uae" pty,raw,echo=0,link="$OUT/ser_cap" >/dev/null 2>&1 & SP=$!
   for _ in $(seq 1 40); do [ -e "$OUT/ser_uae" ] && [ -e "$OUT/ser_cap" ] && break; sleep 0.1; done
@@ -78,8 +79,8 @@ sleep 3
 X() { DISPLAY="$DISP" xdotool "$@" 2>/dev/null; }
 tp() { X keydown "$1"; sleep 0.15; X keyup "$1"; sleep 0.35; }
 log() { echo "$(( $(date +%s) - T0 )) $*" >> "$OUT/events.log"; }
-# dbgon : F12+D ouvre le débogueur ; si l'accord est mal pris, F12 seul ouvre le menu de FS-UAE (rien dans le journal) :
-# le refermer par F12 et recommencer (3 essais).
+# dbgon: F12+D opens the debugger; if the chord is missed, F12 alone opens the FS-UAE menu (nothing in the log):
+# close it with F12 and retry (3 attempts).
 dbgon() { local p n; for n in 1 2 3; do p=$(stat -c%s "$OUT/fs-uae.log"); X keydown F12 key d keyup F12; sleep 3
             grep -aq 'Next PC' <(tail -c +$((p+1)) "$OUT/fs-uae.log") && return 0; tp F12; sleep 1; done; }
 MSEEN=""

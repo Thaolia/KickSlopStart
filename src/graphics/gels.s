@@ -1,12 +1,12 @@
-; src/graphics/gels.s — GELs de graphics.library : liste de VSprites triée par (Y, X) (InitGels, AddVSprite,
-; RemVSprite, SortGList), Bobs (AddBob, RemIBob, DrawGList : fond sauvé/restauré, image posée avec son masque
-; selon PlanePick/PlaneOnOff), masques (InitMasks), collisions (DoCollision, SetCollision) et animation
+; src/graphics/gels.s — graphics.library GELs: VSprite list sorted by (Y, X) (InitGels, AddVSprite,
+; RemVSprite, SortGList), Bobs (AddBob, RemIBob, DrawGList: background saved/restored, image drawn with its mask
+; according to PlanePick/PlaneOnOff), masks (InitMasks), collisions (DoCollision, SetCollision) and animation
 ; (AddAnimOb, Animate, GetGBuffers, FreeGBuffers, InitGMasks).
-; Dessin par lignes de pixels (gfx_putrow / gfx_ReadPixel) : passe par les couches et leurs ClipRects.
-; Portée : les VSprites matériels (drapeau VSPRITE) restent dans la liste et participent aux collisions mais ne
-; sont pas affichés ; l'ordre Before/After des Bobs et le double tampon (DBuffer) ne sont pas exploités ; les Bobs
-; recouverts ne sont pas redessinés par RemIBob.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs graphics.library, graphics/gels.h et RKM publics. AUCUNE lecture ROM.
+; Drawing by pixel rows (gfx_putrow / gfx_ReadPixel): goes through the layers and their ClipRects.
+; Scope: hardware VSprites (VSPRITE flag) stay in the list and take part in collisions but are not
+; displayed; the Before/After ordering of Bobs and double buffering (DBuffer) are not used; overlapped Bobs
+; are not redrawn by RemIBob.
+; IMPLEMENTATION track ("clean"): public graphics.library AutoDocs, graphics/gels.h and RKM. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -38,7 +38,7 @@ VS_FLAGS        EQU 20
 VS_Y            EQU 22
 VS_X            EQU 24
 VS_HEIGHT       EQU 26
-VS_WIDTH        EQU 28               ; en mots
+VS_WIDTH        EQU 28               ; in words
 VS_DEPTH        EQU 30
 VS_MEMASK       EQU 32
 VS_HITMASK      EQU 34
@@ -103,17 +103,17 @@ ANFRACSIZE      EQU 6
 ; struct DBufPacket
 DB_BUFFER       EQU 8
 DB_SIZE         EQU 12
-; bits de DoCollision pour la routine 0 (bords)
+; DoCollision bits for routine 0 (borders)
 TOPHIT          EQU 1
 BOTTOMHIT       EQU 2
 LEFTHIT         EQU 4
 RIGHTHIT        EQU 8
 
-GEL_CHUNK       EQU 64               ; pixels traités par appel de gfx_putrow
+GEL_CHUNK       EQU 64               ; pixels processed per gfx_putrow call
 
 ; ---------------------------------------------------------------------------------------------------------------
-; InitGels(head a0, tail a1, gelsInfo a2) : liste vide encadrée par deux VSprites sentinelles (head au plus petit
-; (Y, X), tail au plus grand), rattachée à la GelsInfo.
+; InitGels(head a0, tail a1, gelsInfo a2): empty list framed by two sentinel VSprites (head at the smallest
+; (Y, X), tail at the largest), attached to the GelsInfo.
 gfx_InitGels:
         move.l  a1,VS_NEXT(a0)
         clr.l   VS_PREV(a0)
@@ -129,8 +129,8 @@ gfx_InitGels:
         move.l  a1,GI_TAIL(a2)
         rts
 
-; gel_gt(a0, a1 = VSprites) -> d0 = 1 si (Y, X) de a0 > (Y, X) de a1 (Y d'abord, comparaisons signées), sinon 0.
-; Préserve le reste.
+; gel_gt(a0, a1 = VSprites) -> d0 = 1 if (Y, X) of a0 > (Y, X) of a1 (Y first, signed comparisons), else 0.
+; Preserves the rest.
 gel_gt:
         move.w  VS_Y(a0),d0
         cmp.w   VS_Y(a1),d0
@@ -146,7 +146,7 @@ gel_gt:
         moveq   #1,d0
         rts
 
-; gel_insert(vs a0, avant a1) : chaîne vs juste avant a1. Préserve tout sauf a1.
+; gel_insert(vs a0, before a1): links vs just before a1. Preserves everything except a1.
 gel_insert:
         move.l  a1,VS_NEXT(a0)
         move.l  VS_PREV(a1),VS_PREV(a0)
@@ -155,8 +155,8 @@ gel_insert:
         move.l  a0,VS_NEXT(a1)
         rts
 
-; AddVSprite(vs a0, rp a1) : drapeaux système effacés, ancienne position = position, insertion triée par (Y, X)
-; dans la liste de rp->GelsInfo.
+; AddVSprite(vs a0, rp a1): system flags cleared, old position = position, sorted insertion by (Y, X)
+; into the rp->GelsInfo list.
 gfx_AddVSprite:
         movem.l a1-a2,-(sp)
         and.w   #$00FF,VS_FLAGS(a0)
@@ -165,10 +165,10 @@ gfx_AddVSprite:
         move.l  GI_HEAD(a2),a1
         move.l  VS_NEXT(a1),a1
 .av_lp:
-        tst.l   VS_NEXT(a1)          ; sentinelle de fin : on insère avant
+        tst.l   VS_NEXT(a1)          ; end sentinel: insert before it
         beq.s   .av_ins
         exg     a0,a1
-        bsr.s   gel_gt               ; élément > vs ?
+        bsr.s   gel_gt               ; element > vs?
         exg     a0,a1
         tst.w   d0
         bne.s   .av_ins
@@ -179,7 +179,7 @@ gfx_AddVSprite:
         movem.l (sp)+,a1-a2
         rts
 
-; RemVSprite(vs a0) : retire le VSprite de sa liste.
+; RemVSprite(vs a0): removes the VSprite from its list.
 gfx_RemVSprite:
         move.l  a1,-(sp)
         move.l  VS_PREV(a0),a1
@@ -189,7 +189,7 @@ gfx_RemVSprite:
         move.l  (sp)+,a1
         rts
 
-; AddBob(bob a0, rp a1) : drapeaux système du Bob effacés, son VSprite (qui pointe sur le Bob) ajouté à la liste.
+; AddBob(bob a0, rp a1): the Bob's system flags cleared, its VSprite (which points to the Bob) added to the list.
 gfx_AddBob:
         and.w   #$00FF,BOB_FLAGS(a0)
         move.l  a0,d0
@@ -197,8 +197,8 @@ gfx_AddBob:
         move.l  d0,VS_BOB(a0)
         bra     gfx_AddVSprite
 
-; RemIBob(bob a0, rp a1, vp a2) : retrait immédiat : fond restauré s'il avait été sauvé, VSprite retiré, Bob marqué
-; BOBNIX.
+; RemIBob(bob a0, rp a1, vp a2): immediate removal: background restored if it had been saved, VSprite removed, Bob
+; marked BOBNIX.
 gfx_RemIBob:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  a0,a3
@@ -211,26 +211,26 @@ gfx_RemIBob:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; SortGList(rp a1) : tri par insertion de la liste par (Y, X) croissants (positions modifiées depuis l'ajout).
+; SortGList(rp a1): insertion sort of the list by ascending (Y, X) (positions changed since being added).
 gfx_SortGList:
         movem.l a2-a4,-(sp)
         move.l  rp_GelsInfo(a1),a4
-        move.l  GI_HEAD(a4),a4       ; a4 = tête
-        move.l  VS_NEXT(a4),a2       ; a2 = élément courant
+        move.l  GI_HEAD(a4),a4       ; a4 = head
+        move.l  VS_NEXT(a4),a2       ; a2 = current element
 .sg_lp:
         tst.l   VS_NEXT(a2)
-        beq.s   .sg_ret              ; sentinelle de fin
-        move.l  VS_NEXT(a2),a3       ; a3 = suivant (sauvé avant déplacement)
+        beq.s   .sg_ret              ; end sentinel
+        move.l  VS_NEXT(a2),a3       ; a3 = next (saved before moving)
         move.l  VS_PREV(a2),a0
         cmpa.l  a4,a0
         beq.s   .sg_nx
         move.l  a2,a1
-        bsr     gel_gt               ; précédent > courant ?
+        bsr     gel_gt               ; previous > current?
         tst.w   d0
         beq.s   .sg_nx
-        move.l  a2,a0                ; décroche le courant
+        move.l  a2,a0                ; unlinks the current one
         bsr     gfx_RemVSprite
-        move.l  VS_PREV(a2),a1       ; remonte tant que le prédécesseur est plus grand
+        move.l  VS_PREV(a2),a1       ; moves back up while the predecessor is greater
 .sg_back:
         move.l  VS_PREV(a1),a0
         cmpa.l  a4,a0
@@ -243,7 +243,7 @@ gfx_SortGList:
         beq.s   .sg_put0
         bra.s   .sg_back
 .sg_put0:
-        move.l  VS_NEXT(a1),a1       ; a1 = premier élément non plus grand -> insérer avant son suivant
+        move.l  VS_NEXT(a1),a1       ; a1 = first element not greater -> insert before its successor
 .sg_put:
         move.l  a2,a0
         bsr     gel_insert
@@ -255,8 +255,8 @@ gfx_SortGList:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; DrawGList(rp a1, vp a0) : 1) fonds sauvés restaurés, du dernier Bob dessiné au premier ; 2) dans l'ordre de la
-; liste : Bob BOBSAWAY retiré (BOBNIX), sinon fond sauvé (SAVEBACK) puis image posée, ancienne position = position.
+; DrawGList(rp a1, vp a0): 1) saved backgrounds restored, from the last Bob drawn to the first; 2) in list
+; order: BOBSAWAY Bob removed (BOBNIX), else background saved (SAVEBACK) then image drawn, old position = position.
 gfx_DrawGList:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  rp_GelsInfo(a1),d0
@@ -265,7 +265,7 @@ gfx_DrawGList:
         move.l  GI_TAIL(a5),a2
 .dg_rest:
         move.l  VS_PREV(a2),a2
-        tst.l   VS_PREV(a2)          ; tête atteinte
+        tst.l   VS_PREV(a2)          ; head reached
         beq.s   .dg_draw
         btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
         bne.s   .dg_rest
@@ -278,7 +278,7 @@ gfx_DrawGList:
         move.l  GI_HEAD(a5),a2
         move.l  VS_NEXT(a2),a2
 .dg_lp:
-        move.l  VS_NEXT(a2),d7       ; d7 = suivant (le Bob courant peut quitter la liste)
+        move.l  VS_NEXT(a2),d7       ; d7 = next (the current Bob may leave the list)
         beq.s   .dg_ret
         btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
         bne.s   .dg_nx
@@ -307,8 +307,8 @@ gfx_DrawGList:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; gel_geom(a2 = vs, a1 = rp) -> d4.w = hauteur, d5.w = largeur en pixels, d6.w = profondeur du BitMap du RastPort,
-; d3.l = octets d'un plan de l'image (hauteur * largeur en mots * 2). Clobbe d0/a0.
+; gel_geom(a2 = vs, a1 = rp) -> d4.w = height, d5.w = width in pixels, d6.w = depth of the RastPort's BitMap,
+; d3.l = bytes of one image plane (height * width in words * 2). Clobbers d0/a0.
 gel_geom:
         move.w  VS_HEIGHT(a2),d4
         move.w  VS_WIDTH(a2),d5
@@ -321,15 +321,15 @@ gel_geom:
         move.b  bm_Depth(a0),d6
         rts
 
-; gel_save(a2 = vs, a3 = bob, a1 = rp) : fond du rectangle (Y, X) lu pixel par pixel dans bob->SaveBuffer (plans
-; du BitMap du RastPort, chacun hauteur x largeur en mots) ; BACKSAVED posé. Sans tampon : rien.
+; gel_save(a2 = vs, a3 = bob, a1 = rp): background of the (Y, X) rectangle read pixel by pixel into bob->SaveBuffer
+; (planes of the RastPort's BitMap, each height x width in words); BACKSAVED set. Without a buffer: nothing.
 gel_save:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  BOB_SAVE(a3),d0
         beq     .gs_ret
-        move.l  d0,a4                ; a4 = tampon
+        move.l  d0,a4                ; a4 = buffer
         bsr.s   gel_geom
-        move.l  d3,d0                ; tampon à zéro (profondeur x plan)
+        move.l  d3,d0                ; buffer cleared (depth x plane)
         mulu    d6,d0
         lsr.l   #1,d0
         move.l  a4,a0
@@ -339,11 +339,11 @@ gel_save:
 .gs_cz:
         subq.l  #1,d0
         bpl.s   .gs_clr
-        moveq   #0,d7                ; d7 = ligne
+        moveq   #0,d7                ; d7 = row
 .gs_row:
         cmp.w   d4,d7
         bge.s   .gs_done
-        moveq   #0,d2                ; d2 = colonne
+        moveq   #0,d2                ; d2 = column
 .gs_px:
         cmp.w   d5,d2
         bge.s   .gs_nr
@@ -353,7 +353,7 @@ gel_save:
         add.w   d7,d1
         jsr     gfx_ReadPixel
         tst.l   d0
-        bmi.s   .gs_nxp              ; hors de toute zone visible : 0
+        bmi.s   .gs_nxp              ; outside any visible area: 0
         bsr     gel_putbits
 .gs_nxp:
         addq.w  #1,d2
@@ -366,19 +366,19 @@ gel_save:
 .gs_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
-; gel_putbits(d0 = couleur, d2 = colonne, d7 = ligne, a4 = tampon planaire, d3 = octets d'un plan, d6 = plans,
-; VS_WIDTH(a2)) : pose les bits de la couleur dans chaque plan du tampon. Clobbe d0/d1/a0.
+; gel_putbits(d0 = colour, d2 = column, d7 = row, a4 = planar buffer, d3 = bytes of one plane, d6 = planes,
+; VS_WIDTH(a2)): sets the colour bits in each plane of the buffer. Clobbers d0/d1/a0.
 gel_putbits:
         movem.l d4-d5,-(sp)
         move.w  d7,d1
         mulu    VS_WIDTH(a2),d1
-        add.l   d1,d1                ; octet de début de la ligne dans un plan
+        add.l   d1,d1                ; start byte of the row within a plane
         move.w  d2,d4
         lsr.w   #3,d4
-        add.l   d4,d1                ; octet du pixel
+        add.l   d4,d1                ; byte of the pixel
         move.w  d2,d4
         not.w   d4
-        and.w   #7,d4                ; bit du pixel
+        and.w   #7,d4                ; bit of the pixel
         lea     0(a4,d1.l),a0
         move.w  d6,d5
         bra.s   .pb_nx
@@ -393,7 +393,7 @@ gel_putbits:
         movem.l (sp)+,d4-d5
         rts
 
-; gel_unsave(a2 = vs, a3 = bob, a1 = rp) : si BACKSAVED, le fond sauvé est reposé à (OldY, OldX) ; BACKSAVED effacé.
+; gel_unsave(a2 = vs, a3 = bob, a1 = rp): if BACKSAVED, saved background restored at (OldY, OldX); BACKSAVED cleared.
 gel_unsave:
         bclr    #VSB_BACKSAVED-8,VS_FLAGS(a2)
         beq.s   .gu_r
@@ -403,15 +403,15 @@ gel_unsave:
         move.l  d0,a4
         bsr     gel_geom
         lea     -GEL_CHUNK(sp),sp
-        moveq   #0,d7                ; ligne
+        moveq   #0,d7                ; row
 .gu_row:
         cmp.w   d4,d7
         bge.s   .gu_done
-        moveq   #0,d2                ; début du morceau
+        moveq   #0,d2                ; start of the chunk
 .gu_ch:
         cmp.w   d5,d2
         bge.s   .gu_nr
-        moveq   #0,d0                ; d0 = pixels de ce morceau
+        moveq   #0,d0                ; d0 = pixels in this chunk
         move.w  d5,d0
         sub.w   d2,d0
         cmp.w   #GEL_CHUNK,d0
@@ -420,7 +420,7 @@ gel_unsave:
 .gu_n:
         move.w  d0,-(sp)
         lea     2(sp),a0
-        bsr     gel_getbits          ; couleurs du tampon -> morceau
+        bsr     gel_getbits          ; buffer colours -> chunk
         move.w  (sp)+,d0
         move.w  d2,-(sp)
         move.w  d0,-(sp)
@@ -444,12 +444,12 @@ gel_unsave:
         movem.l (sp)+,d2-d7/a2-a4
 .gu_r:
         rts
-; gel_getbits(a0 = morceau, d0.w = nombre, d2 = première colonne, d7 = ligne, a4 = tampon, d3, d6, a2) : couleur
-; de chaque pixel du morceau reconstituée depuis les plans du tampon. Préserve d2-d7.
+; gel_getbits(a0 = chunk, d0.w = count, d2 = first column, d7 = row, a4 = buffer, d3, d6, a2): colour
+; of each pixel of the chunk rebuilt from the buffer planes. Preserves d2-d7.
 gel_getbits:
         movem.l d2-d7/a1,-(sp)
         move.l  a0,a1
-        move.w  d0,d5                ; d5 = compteur
+        move.w  d0,d5                ; d5 = counter
         bra.s   .gb_nx
 .gb_px:
         move.w  d7,d1
@@ -463,8 +463,8 @@ gel_getbits:
         and.w   #7,d4
         lea     0(a4,d1.l),a0
         move.l  d3,d1
-        mulu    d6,d1                ; (d3 tient sur 16 bits pour un Bob raisonnable)
-        add.l   d1,a0                ; après le dernier plan, on remonte
+        mulu    d6,d1                ; (d3 fits in 16 bits for a reasonable Bob)
+        add.l   d1,a0                ; after the last plane, go back up
         moveq   #0,d0
         move.w  d6,d1
         bra.s   .gb_pn
@@ -483,14 +483,14 @@ gel_getbits:
         movem.l (sp)+,d2-d7/a1
         rts
 
-; gel_draw(a2 = vs, a3 = bob, a1 = rp) : image posée à (Y, X). Pixel du masque (OVERLAY : bob->ImageShadow, à
-; défaut OU des plans de l'image ; sinon tout le rectangle) : pour chaque plan du BitMap, bit du plan d'image
-; suivant si PlanePick le choisit, sinon bit de PlaneOnOff. Hors masque : transparent.
+; gel_draw(a2 = vs, a3 = bob, a1 = rp): image drawn at (Y, X). Mask pixel (OVERLAY: bob->ImageShadow, failing
+; that the OR of the image planes; otherwise the whole rectangle): for each BitMap plane, bit of the next image
+; plane if PlanePick selects it, else bit of PlaneOnOff. Outside the mask: transparent.
 gel_draw:
         movem.l d2-d7/a2-a4,-(sp)
         bsr     gel_geom
         lea     -GEL_CHUNK(sp),sp
-        moveq   #0,d7                ; ligne
+        moveq   #0,d7                ; row
 .gd_row:
         cmp.w   d4,d7
         bge.s   .gd_done
@@ -527,15 +527,15 @@ gel_draw:
         lea     GEL_CHUNK(sp),sp
         movem.l (sp)+,d2-d7/a2-a4
         rts
-; gel_imgbits(a0 = morceau, d0.w = nombre, d2 = première colonne, d7 = ligne, a2 = vs, a3 = bob, d3 = octets d'un
-; plan, d6 = plans du BitMap) : couleur (ou 255) de chaque pixel. Préserve d0/d2-d7.
+; gel_imgbits(a0 = chunk, d0.w = count, d2 = first column, d7 = row, a2 = vs, a3 = bob, d3 = bytes of one
+; plane, d6 = BitMap planes): colour (or 255) of each pixel. Preserves d0/d2-d7.
 gel_imgbits:
         movem.l d0/d2-d7/a1/a4,-(sp)
         move.l  a0,a1
         move.w  d0,d5
         bra     .ib_nx
 .ib_px:
-        move.w  d7,d1                ; d1 = octet du pixel dans un plan
+        move.w  d7,d1                ; d1 = byte of the pixel within a plane
         mulu    VS_WIDTH(a2),d1
         add.l   d1,d1
         move.w  d2,d4
@@ -554,7 +554,7 @@ gel_imgbits:
         beq.s   .ib_out
         bra.s   .ib_in
 .ib_or:
-        lea     0(a4,d1.l),a0        ; pas d'ombre : OU des plans de l'image
+        lea     0(a4,d1.l),a0        ; no shadow: OR of the image planes
         move.w  VS_DEPTH(a2),d0
         bra.s   .ib_on
 .ib_ol:
@@ -567,18 +567,18 @@ gel_imgbits:
         st      (a1)+
         bra.s   .ib_np
 .ib_in:
-        lea     0(a4,d1.l),a0        ; a0 = plan d'image courant
-        moveq   #0,d0                ; couleur
-        moveq   #0,d1                ; n° de plan du BitMap
+        lea     0(a4,d1.l),a0        ; a0 = current image plane
+        moveq   #0,d0                ; colour
+        moveq   #0,d1                ; BitMap plane number
         swap    d5
-        move.w  VS_DEPTH(a2),d5      ; plans d'image restants (mot haut de d5 = compteur de pixels)
+        move.w  VS_DEPTH(a2),d5      ; remaining image planes (high word of d5 = pixel counter)
 .ib_pl:
         cmp.w   d6,d1
         bge.s   .ib_put
         btst    d1,VS_PICK(a2)
         beq.s   .ib_onoff
         subq.w  #1,d5
-        bmi.s   .ib_npl              ; plus de plan d'image : bit 0
+        bmi.s   .ib_npl              ; no more image planes: bit 0
         btst    d4,(a0)
         beq.s   .ib_np0
         bset    d1,d0
@@ -603,29 +603,29 @@ gel_imgbits:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; InitMasks(vs a0) : CollMask = OU des plans de l'image ligne par ligne (VSprite matériel : les deux mots
-; entrelacés de chaque ligne) ; BorderLine = OU de toutes les lignes du CollMask. Tableau absent : ignoré.
+; InitMasks(vs a0): CollMask = OR of the image planes row by row (hardware VSprite: the two interleaved
+; words of each row); BorderLine = OR of all the CollMask rows. Missing array: ignored.
 gfx_InitMasks:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  a0,a2
-        move.w  VS_WIDTH(a2),d5      ; d5 = mots par ligne
+        move.w  VS_WIDTH(a2),d5      ; d5 = words per row
         move.w  VS_HEIGHT(a2),d4
         move.l  VS_IMAGE(a2),a3
         move.l  VS_COLLMASK(a2),d0
         beq.s   .im_bl
         move.l  d0,a4
-        moveq   #0,d7                ; ligne
+        moveq   #0,d7                ; row
 .im_row:
         cmp.w   d4,d7
         bge.s   .im_bl
-        moveq   #0,d6                ; mot
+        moveq   #0,d6                ; word
 .im_w:
         cmp.w   d5,d6
         bge.s   .im_nr
-        moveq   #0,d2                ; d2 = OU
+        moveq   #0,d2                ; d2 = OR
         btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
         beq.s   .im_bob
-        move.w  d7,d0                ; VSprite : ligne = 2 x largeur mots (plan 0 puis plan 1)
+        move.w  d7,d0                ; VSprite: row = 2 x width words (plane 0 then plane 1)
         mulu    d5,d0
         add.w   d0,d0
         add.w   d6,d0
@@ -637,9 +637,9 @@ gfx_InitMasks:
         or.w    0(a3,d0.w),d2
         bra.s   .im_put
 .im_bob:
-        move.w  d4,d3                ; d3 = mots d'un plan
+        move.w  d4,d3                ; d3 = words of one plane
         mulu    d5,d3
-        add.l   d3,d3                ; octets d'un plan
+        add.l   d3,d3                ; bytes of one plane
         move.w  d7,d0
         mulu    d5,d0
         add.w   d6,d0
@@ -693,7 +693,7 @@ gfx_InitMasks:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; SetCollision(n° d0, routine a0, gelsInfo a1) : routine n de la collTable de la GelsInfo.
+; SetCollision(number d0, routine a0, gelsInfo a1): routine n of the GelsInfo's collTable.
 gfx_SetCollision:
         move.l  GI_COLL(a1),d1
         beq.s   .sc_r
@@ -703,8 +703,8 @@ gfx_SetCollision:
 .sc_r:
         rts
 
-; gel_call(a0 = routine, d0 = 1er argument, d1 = 2e) : appel à la convention C (arguments empilés de droite à
-; gauche, retirés au retour). Préserve d2-d7/a2-a6.
+; gel_call(a0 = routine, d0 = 1st argument, d1 = 2nd): call using the C convention (arguments pushed right to
+; left, removed on return). Preserves d2-d7/a2-a6.
 gel_call:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  d1,-(sp)
@@ -714,10 +714,10 @@ gel_call:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; DoCollision(rp a1) : pour chaque gel (ordre de la liste) : HitMask bit 0 et sortie des bornes de la GelsInfo ->
-; routine 0 (gel, TOPHIT|BOTTOMHIT|LEFTHIT|RIGHTHIT) ; puis chaque gel suivant dont le rectangle chevauche et dont
-; un pixel du CollMask recouvre (à défaut de CollMask : le rectangle) avec HitMask(premier) & MeMask(second) non nul
-; -> routine du plus petit bit commun (premier, second).
+; DoCollision(rp a1): for each gel (list order): HitMask bit 0 and leaving the GelsInfo bounds ->
+; routine 0 (gel, TOPHIT|BOTTOMHIT|LEFTHIT|RIGHTHIT); then each following gel whose rectangle overlaps and of which
+; a CollMask pixel overlaps (without a CollMask: the rectangle) with HitMask(first) & MeMask(second) non-zero
+; -> routine of the lowest common bit (first, second).
 gfx_DoCollision:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  rp_GelsInfo(a1),d0
@@ -771,7 +771,7 @@ gfx_DoCollision:
         move.l  VS_NEXT(a3),a3
         tst.l   VS_NEXT(a3)
         beq     .dc_lp
-        move.w  VS_Y(a2),d0          ; liste triée : au-delà du bas du premier, plus de chevauchement
+        move.w  VS_Y(a2),d0          ; sorted list: beyond the bottom of the first, no more overlap
         add.w   VS_HEIGHT(a2),d0
         cmp.w   VS_Y(a3),d0
         ble     .dc_lp
@@ -780,7 +780,7 @@ gfx_DoCollision:
         beq.s   .dc_p2
         bsr.s   gel_overlap
         beq.s   .dc_p2
-        moveq   #0,d0                ; plus petit bit commun
+        moveq   #0,d0                ; lowest common bit
 .dc_bit:
         btst    d0,d6
         bne.s   .dc_got
@@ -799,11 +799,11 @@ gfx_DoCollision:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; gel_overlap(a2, a3 = VSprites) : Z = 0 si leurs rectangles se chevauchent et (CollMasks présents) qu'un pixel
-; est commun aux deux masques. Préserve d6/a2-a5.
+; gel_overlap(a2, a3 = VSprites): Z = 0 if their rectangles overlap and (CollMasks present) a pixel
+; is common to both masks. Preserves d6/a2-a5.
 gel_overlap:
         movem.l d2-d7,-(sp)
-        move.w  VS_X(a2),d2          ; x commun [d2 .. d3], y commun [d4 .. d5]
+        move.w  VS_X(a2),d2          ; common x [d2 .. d3], common y [d4 .. d5]
         move.w  VS_X(a3),d0
         cmp.w   d0,d2
         bge.s   .ov_1
@@ -844,7 +844,7 @@ gel_overlap:
         tst.l   VS_COLLMASK(a3)
         beq.s   .ov_yes
 .ov_y:
-        move.w  d2,d7                ; pixel par pixel
+        move.w  d2,d7                ; pixel by pixel
 .ov_x:
         move.l  a2,a0
         bsr.s   .ov_bit
@@ -867,7 +867,7 @@ gel_overlap:
 .ov_ret:
         movem.l (sp)+,d2-d7
         rts
-; .ov_bit(a0 = vs, d7 = x, d4 = y absolus) : Z = 0 si le bit du CollMask est posé. Clobbe d0/d1/a0.
+; .ov_bit(a0 = vs, d7 = x, d4 = y absolute): Z = 0 if the CollMask bit is set. Clobbers d0/d1/a0.
 .ov_bit:
         move.w  d4,d0
         sub.w   VS_Y(a0),d0
@@ -888,8 +888,8 @@ gel_overlap:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; AddAnimOb(anOb a0, anKey a1, rp a2) : l'objet entre en tête de la liste *anKey ; horloge à 0 ; le Bob de chaque
-; composant actif (chaîne NextComp) est ajouté, positionné, minuteur armé (TimeSet).
+; AddAnimOb(anOb a0, anKey a1, rp a2): the object is added at the head of the *anKey list; clock at 0; the Bob of
+; each active component (NextComp chain) is added, positioned, timer armed (TimeSet).
 gfx_AddAnimOb:
         movem.l a2-a4,-(sp)
         move.l  a0,a3
@@ -920,8 +920,8 @@ gfx_AddAnimOb:
         movem.l (sp)+,a2-a4
         rts
 
-; anim_place(a3 = anOb, a4 = comp) : position du VSprite du composant = position de l'objet (partie entière) +
-; translation du composant. Clobbe d0/a0.
+; anim_place(a3 = anOb, a4 = comp): position of the component's VSprite = position of the object (integer part) +
+; translation of the component. Clobbers d0/a0.
 anim_place:
         move.l  AC_BOB(a4),a0
         move.l  BOB_VS(a0),a0
@@ -935,10 +935,10 @@ anim_place:
         move.w  d0,VS_X(a0)
         rts
 
-; Animate(anKey a0, rp a1) : pour chaque objet : horloge + 1, vitesse += accélération, position += vitesse,
-; routine de l'objet ; pour chaque composant actif : minuteur décompté (TimeSet non nul) ; à zéro, le composant
-; NextSeq le remplace dans la chaîne (ancien Bob marqué BOBSAWAY, nouveau Bob ajouté, minuteur réarmé ;
-; RINGTRIGGER : translation d'anneau ajoutée à l'objet) ; puis position du Bob et routine du composant.
+; Animate(anKey a0, rp a1): for each object: clock + 1, velocity += acceleration, position += velocity,
+; object routine; for each active component: timer counted down (non-zero TimeSet); at zero, the NextSeq
+; component replaces it in the chain (old Bob marked BOBSAWAY, new Bob added, timer rearmed;
+; RINGTRIGGER: ring translation added to the object); then Bob position and component routine.
 gfx_Animate:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a5                ; a5 = rp
@@ -967,7 +967,7 @@ gfx_Animate:
 .an_c:
         cmpa.w  #0,a4
         beq     .an_nob
-        move.l  AC_NEXTCOMP(a4),d7   ; d7 = composant suivant de la chaîne
+        move.l  AC_NEXTCOMP(a4),d7   ; d7 = next component of the chain
         tst.w   AC_TIMESET(a4)
         beq.s   .an_pos
         subq.w  #1,AC_TIMER(a4)
@@ -976,8 +976,8 @@ gfx_Animate:
         beq.s   .an_pos
         cmp.l   a4,d0
         beq.s   .an_rearm
-        move.l  d0,a2                ; a2 = nouveau composant
-        move.l  AC_BOB(a4),a0        ; RemBob de l'ancien
+        move.l  d0,a2                ; a2 = new component
+        move.l  AC_BOB(a4),a0        ; RemBob of the old one
         bset    #BB_BOBSAWAY-8,BOB_FLAGS(a0)
         move.l  AC_PREVCOMP(a4),d0
         move.l  d0,AC_PREVCOMP(a2)
@@ -1029,9 +1029,9 @@ gfx_Animate:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; anim_forall(a0 = anOb, a3 = action) : appelle l'action (a4 = composant) pour chaque composant de chaque séquence
-; (anneau NextSeq parcouru jusqu'au retour ou jusqu'à 0). L'action rend Z = 0 pour arrêter (échec). d0 = 1 si tout
-; a réussi. Préserve d2-d7/a2-a6.
+; anim_forall(a0 = anOb, a3 = action): calls the action (a4 = component) for each component of each sequence
+; (NextSeq ring walked until it loops back or reaches 0). The action returns Z = 0 to stop (failure). d0 = 1 if
+; everything succeeded. Preserves d2-d7/a2-a6.
 anim_forall:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  AO_HEADCOMP(a0),a2
@@ -1040,9 +1040,9 @@ anim_forall:
         beq.s   .fa_ok
         move.l  a2,a4
 .fa_s:
-        move.l  a2,-(sp)             ; l'action peut utiliser a2
+        move.l  a2,-(sp)             ; the action may use a2
         jsr     (a3)
-        movem.l (sp)+,a2             ; movem laisse les codes conditions de l'action
+        movem.l (sp)+,a2             ; movem leaves the action's condition codes
         bne.s   .fa_ko
         move.l  AC_NEXTSEQ(a4),a4
         cmpa.w  #0,a4
@@ -1061,7 +1061,7 @@ anim_forall:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; InitGMasks(anOb a0) : InitMasks de chaque composant de chaque séquence.
+; InitGMasks(anOb a0): InitMasks of each component of each sequence.
 gfx_InitGMasks:
         move.l  a3,-(sp)
         lea     gm_one(pc),a3
@@ -1072,27 +1072,27 @@ gm_one:
         move.l  AC_BOB(a4),a0
         move.l  BOB_VS(a0),a0
         bsr     gfx_InitMasks
-        moveq   #0,d0                ; Z = 1 : continuer
+        moveq   #0,d0                ; Z = 1: continue
         rts
 
-; GetGBuffers(anOb a0, rp a1, db d0) -> d0 = TRUE si chaque composant a reçu ses tampons : ImageShadow et
-; SaveBuffer (chip), CollMask et BorderLine, et en double tampon un DBufPacket avec son BufBuffer (chip). En cas
-; d'échec, FreeGBuffers rend ce qui a été obtenu.
+; GetGBuffers(anOb a0, rp a1, db d0) -> d0 = TRUE if every component received its buffers: ImageShadow and
+; SaveBuffer (chip), CollMask and BorderLine, and with double buffering a DBufPacket with its BufBuffer (chip). On
+; failure, FreeGBuffers returns what was obtained.
 gfx_GetGBuffers:
         movem.l d2-d3/a3/a5,-(sp)
-        move.w  d0,d3                ; d3 = double tampon
+        move.w  d0,d3                ; d3 = double buffering
         move.l  rp_BitMap(a1),a5
         moveq   #0,d2
-        move.b  bm_Depth(a5),d2      ; d2 = profondeur
+        move.b  bm_Depth(a5),d2      ; d2 = depth
         lea     gb_one(pc),a3
         bsr.s   anim_forall
         movem.l (sp)+,d2-d3/a3/a5
         rts
-; gb_one(a4 = composant, d2 = profondeur, d3 = double tampon) : Z = 0 si une allocation échoue.
+; gb_one(a4 = component, d2 = depth, d3 = double buffering): Z = 0 if an allocation fails.
 gb_one:
         move.l  AC_BOB(a4),a2
         move.l  BOB_VS(a2),a5
-        bsr     gb_sizes             ; d4 = plan, d5 = largeur en octets
+        bsr     gb_sizes             ; d4 = plane, d5 = width in bytes
         move.l  d4,d0
         move.l  #MEMF_CHIP|MEMF_CLEAR,d1
         bsr     gb_alloc
@@ -1136,7 +1136,7 @@ gb_one:
 .go_ko:
         moveq   #1,d0
         rts
-; gb_sizes(a5 = vs) -> d4 = octets d'un plan (hauteur x largeur en mots x 2), d5 = octets d'une ligne.
+; gb_sizes(a5 = vs) -> d4 = bytes of one plane (height x width in words x 2), d5 = bytes of one row.
 gb_sizes:
         move.w  VS_WIDTH(a5),d5
         add.w   d5,d5
@@ -1144,7 +1144,7 @@ gb_sizes:
         mulu    d5,d4
         ext.l   d5
         rts
-; gb_alloc(d0 = taille, d1 = exigences) -> d0 = bloc | 0 (Z en conséquence).
+; gb_alloc(d0 = size, d1 = requirements) -> d0 = block | 0 (Z accordingly).
 gb_alloc:
         move.l  a6,-(sp)
         move.l  ($4).w,a6
@@ -1153,7 +1153,7 @@ gb_alloc:
         tst.l   d0
         rts
 
-; FreeGBuffers(anOb a0, rp a1, db d0) : rend les tampons obtenus par GetGBuffers (pointeurs remis à 0).
+; FreeGBuffers(anOb a0, rp a1, db d0): returns the buffers obtained by GetGBuffers (pointers reset to 0).
 gfx_FreeGBuffers:
         movem.l d2-d3/a3/a5,-(sp)
         move.w  d0,d3
@@ -1197,7 +1197,7 @@ fb_one:
 .fo_r:
         moveq   #0,d0
         rts
-; fb_free(a0 = adresse du pointeur, d0 = taille) : FreeMem si non nul, pointeur remis à 0.
+; fb_free(a0 = address of the pointer, d0 = size): FreeMem if non-zero, pointer reset to 0.
 fb_free:
         move.l  (a0),d1
         beq.s   .ff_r

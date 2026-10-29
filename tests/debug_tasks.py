@@ -1,5 +1,5 @@
-# tests/debug_tasks.py — pilote du débogueur FS-UAE (appelé par tests/debug_tasks.sh) : lit la mémoire par « m addr n »
-# (FIFO d'entrée, réponses lues dans le journal) et parcourt les listes TaskReady / TaskWait d'ExecBase.
+# tests/debug_tasks.py - FS-UAE debugger driver (called by tests/debug_tasks.sh): reads memory with "m addr n"
+# (input FIFO, replies read from the log) and walks the TaskReady / TaskWait lists of ExecBase.
 import sys, time, re, struct
 fifo, log = sys.argv[1], sys.argv[2]
 f = open(fifo, 'w')

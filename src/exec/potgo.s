@@ -1,19 +1,19 @@
-; src/exec/potgo.s — potgo.resource : partage du registre POTGO (ports analogiques / broches 5 et 9 des manettes).
+; src/exec/potgo.s — potgo.resource: sharing of the POTGO register (analogue ports / pins 5 and 9 of the joysticks).
 ;
-; AllocPotBits accorde des bits START / DATxx non pris (un DATxx en entrée exige qu'aucun autre ne tienne START :
-; un START étranger relancerait ses compteurs ; START exige qu'aucun DATxx en entrée ne soit déjà pris). Les OUTxx
-; demandés avec un DATxx accordé sont mémorisés. WritePotgo écrit les bits du masque ; l'octet haut est conservé
-; pour les écritures suivantes, START n'est jamais conservé (écrit seulement quand il est demandé explicitement).
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs potgo.resource + hardware/custom.i. AUCUNE lecture ROM.
+; AllocPotBits grants START / DATxx bits not yet taken (an input DATxx requires that nobody else holds START:
+; a foreign START would restart its counters; START requires that no input DATxx is already taken). The OUTxx
+; requested together with a granted DATxx are remembered. WritePotgo writes the bits of the mask; the high byte
+; is kept for subsequent writes, START is never kept (written only when explicitly requested).
+; IMPLEMENTATION track ("clean"): AutoDocs potgo.resource + hardware/custom.i. NO ROM reading.
 
                 include "exec.i"
 
 POTGO_HW        EQU CUSTOM+$034
-PG_ALLOC        EQU LIB_SIZE         ; UWORD bits attribués (START, DATxx et leurs OUTxx)
-PG_SHADOW       EQU LIB_SIZE+2       ; UWORD octet haut conservé de POTGO
+PG_ALLOC        EQU LIB_SIZE         ; UWORD allocated bits (START, DATxx and their OUTxx)
+PG_SHADOW       EQU LIB_SIZE+2       ; UWORD kept high byte of POTGO
 PG_SIZE         EQU LIB_SIZE+4
 PGF_START       EQU $0001
-PGM_DAT         EQU $5500            ; DATLX/DATLY/DATRX/DATRY (bits 8/10/12/14), OUTxx = bit suivant
+PGM_DAT         EQU $5500            ; DATLX/DATLY/DATRX/DATRY (bits 8/10/12/14), OUTxx = next bit
 
         EVEN
 potgo_romtag:
@@ -52,41 +52,41 @@ potgo_init:
         moveq   #0,d0
         rts
 
-; pg_inputs : d1 = bits attribués -> d1 = DATxx attribués en entrée (OUTxx correspondant à 0), Z si aucun. Utilise d0.
+; pg_inputs: d1 = allocated bits -> d1 = DATxx allocated as inputs (matching OUTxx at 0), Z if none. Uses d0.
 pg_inputs:
         move.w  d1,d0
-        lsr.w   #1,d0                ; OUTxx ramenés sur la position de leur DATxx
+        lsr.w   #1,d0                ; OUTxx shifted down onto the position of their DATxx
         not.w   d0
         and.w   #PGM_DAT,d0
         and.w   d0,d1
         rts
 
-; AllocPotBits(bits d0) -> d0 = bits START/DATxx accordés. Atomique (Disable).
+; AllocPotBits(bits d0) -> d0 = granted START/DATxx bits. Atomic (Disable).
 pg_alloc:
         movem.l d2-d4/a6,-(sp)
-        move.w  d0,d2                ; d2 = demande
+        move.w  d0,d2                ; d2 = request
         move.l  a6,a0
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        move.w  PG_ALLOC(a0),d3      ; d3 = déjà attribués
-        moveq   #0,d4                ; d4 = accordés (DATxx + OUTxx + START)
+        move.w  PG_ALLOC(a0),d3      ; d3 = already allocated
+        moveq   #0,d4                ; d4 = granted (DATxx + OUTxx + START)
         moveq   #3,d1
-        move.w  #$0100,d0            ; d0 = DATxx courant
+        move.w  #$0100,d0            ; d0 = current DATxx
 .pa_dat:
         move.w  d0,-(sp)
         and.w   d2,d0
-        beq.s   .pa_next             ; non demandé
+        beq.s   .pa_next             ; not requested
         and.w   d3,d0
-        bne.s   .pa_next             ; déjà pris
+        bne.s   .pa_next             ; already taken
         move.w  (sp),d0
         add.w   d0,d0                ; OUTxx
         and.w   d2,d0
-        bne.s   .pa_grant            ; sortie : START étranger sans effet
+        bne.s   .pa_grant            ; output: foreign START has no effect
         btst    #0,d3
-        bne.s   .pa_next             ; entrée alors qu'un autre tient START
+        bne.s   .pa_next             ; input while someone else holds START
 .pa_grant:
         or.w    (sp),d4
-        or.w    d0,d4                ; OUTxx demandé avec le DATxx
+        or.w    d0,d4                ; OUTxx requested with the DATxx
 .pa_next:
         move.w  (sp)+,d0
         lsl.w   #2,d0
@@ -94,10 +94,10 @@ pg_alloc:
         btst    #0,d2
         beq.s   .pa_done
         btst    #0,d3
-        bne.s   .pa_done             ; START déjà pris
+        bne.s   .pa_done             ; START already taken
         move.w  d3,d1
         bsr.s   pg_inputs
-        bne.s   .pa_done             ; des DATxx en entrée sont déjà pris
+        bne.s   .pa_done             ; input DATxx are already taken
         or.w    #PGF_START,d4
 .pa_done:
         or.w    d4,PG_ALLOC(a0)
@@ -107,15 +107,15 @@ pg_alloc:
         movem.l (sp)+,d2-d4/a6
         rts
 
-; FreePotBits(bits d0) : libère les START/DATxx donnés et les OUTxx associés.
+; FreePotBits(bits d0): frees the given START/DATxx and the associated OUTxx.
 pg_free:
         and.w   #PGM_DAT|PGF_START,d0
         move.w  d0,d1
         and.w   #PGM_DAT,d1
         add.w   d1,d1
-        or.w    d1,d0                ; + OUTxx des DATxx libérés
+        or.w    d1,d0                ; + OUTxx of the freed DATxx
         not.w   d0
-        and.w   d0,PG_ALLOC(a6)      ; and.w mémoire : indivisible sur 68000
+        and.w   d0,PG_ALLOC(a6)      ; memory and.w: indivisible on 68000
         rts
 
 ; WritePotgo(word d0, mask d1).
@@ -127,14 +127,14 @@ pg_write:
         move.w  d1,d2
         and.w   #$FF00,d2
         not.w   d2
-        and.w   PG_SHADOW(a0),d2     ; octet haut conservé hors masque
-        and.w   d0,d1                ; bits demandés
+        and.w   PG_SHADOW(a0),d2     ; high byte kept outside the mask
+        and.w   d0,d1                ; requested bits
         move.w  d1,d0
         and.w   #$FF00,d0
         or.w    d0,d2
         move.w  d2,PG_SHADOW(a0)
         and.w   #PGF_START,d1
-        or.w    d1,d2                ; START seulement s'il est écrit maintenant
+        or.w    d1,d2                ; START only if it is written now
         move.w  d2,POTGO_HW
         jsr     LVO_ENABLE(a6)
         movem.l (sp)+,d2/a6

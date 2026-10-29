@@ -1,8 +1,8 @@
-# tests/debug_taskpc.py — pilote du débogueur FS-UAE (appelé par tests/dskchg_run.sh, commande « tpc ») : retrouve une
-# tâche par son nom dans TaskReady / TaskWait et lit sa trame de contexte (TC_SPREG -> [d0-d7/a0-a6 60 o][SR][PC]),
-# N fois en relançant l'émulation entre deux arrêts (« g », pause, puis la commande d'arrêt passée en argument) ; à
-# chaque arrêt, aussi la tâche courante (nom, priorité, PC et mode du processeur, USP).
-# Usage : debug_taskpc.py <fifo> <journal> <nom de tâche> <n> <fichier de commande d'arrêt>
+# tests/debug_taskpc.py - FS-UAE debugger driver (called by tests/dskchg_run.sh, "tpc" command): finds a
+# task by name in TaskReady / TaskWait and reads its context frame (TC_SPREG -> [d0-d7/a0-a6 60 bytes][SR][PC]),
+# N times, resuming emulation between two stops ("g", pause, then the stop command passed as argument); at
+# each stop, also the current task (name, priority, PC and processor mode, USP).
+# Usage: debug_taskpc.py <fifo> <log> <task name> <n> <stop command file>
 import sys, time, re, struct, subprocess
 fifo, log, name, n, brk = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
 f = open(fifo, 'w')
@@ -11,7 +11,7 @@ def cmd(c):
 def rd(addr, ln):
     base = addr & ~15; cnt = (addr + ln - base + 15) // 16
     want = {base + 16*i for i in range(cnt)}; got = {}
-    pos = len(open(log, errors='replace').read())   # seules les lignes écrites après la commande comptent
+    pos = len(open(log, errors='replace').read())   # only lines written after the command count
     cmd('m %x %d' % (base, cnt)); t0 = time.time()
     while time.time() - t0 < 30 and len(got) < len(want):
         txt = open(log, errors='replace').read()[pos:]
@@ -43,10 +43,10 @@ for i in range(n):
     print('courante %x %s pc %s S=%s usp %s pri %d sigwait %08x sigrecvd %08x' % (cur, cstr(L(cur + 10)),
           pcs[-1] if pcs else '?', srm[-1] if srm else '?', usp[-1] if usp else '?', struct.unpack('b', rd(cur + 9, 1))[0],
           L(cur + 22), L(cur + 26)))
-    top = L(eb + 0x36)               # SysStkUpper : la trame la plus externe (interruption prise en mode user) est dessous
+    top = L(eb + 0x36)               # SysStkUpper: the outermost frame (interrupt taken in user mode) lies just below
     fr = rd(top - 6, 6)
     print('  trame externe : sr %04x pc %08x' % (struct.unpack('>H', fr[:2])[0], struct.unpack('>I', fr[2:])[0]))
-    if rd(cur + 8, 1)[0] == 13:      # NT_PROCESS : messages en attente sur pr_MsgPort
+    if rd(cur + 8, 1)[0] == 13:      # NT_PROCESS: messages pending on pr_MsgPort
         m = L(cur + 92 + 20); k = 0
         while m and L(m) and k < 50: k += 1; m = L(m)
         print('  messages en attente : %d' % k)

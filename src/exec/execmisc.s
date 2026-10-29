@@ -1,8 +1,8 @@
-; src/exec/execmisc.s — exec.library : fonctions V34 documentées qui manquaient à la table de vecteurs (SetFunction,
-; SumLibrary, Cause et la file des interruptions logicielles, Alert, SetSR, SuperState/UserState, GetCC,
+; src/exec/execmisc.s — exec.library: documented V34 functions that were missing from the vector table (SetFunction,
+; SumLibrary, Cause and the software interrupt queue, Alert, SetSR, SuperState/UserState, GetCC,
 ; RemIntServer, AllocEntry/FreeEntry, SetExcept, AllocTrap/FreeTrap, RemResource, Raw*, Obtain/ReleaseSemaphoreList).
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs exec + includes publics (exec/libraries.i, exec/tasks.i, exec/memory.i).
-; AUCUNE lecture ROM.
+; IMPLEMENTATION track ("clean"): AutoDocs exec + public includes (exec/libraries.i, exec/tasks.i, exec/memory.i).
+; NO ROM reading.
 
                 include "exec.i"
 
@@ -11,10 +11,10 @@
                 xdef    exec_Cause
                 xdef    exec_softint_init
                 xdef    exec_Alert
-                xdef    alert_show           ; interrupts.s (exception d'une tâche), boot.s (alert.hook)
+                xdef    alert_show           ; interrupts.s (exception of a task), boot.s (alert.hook)
                 xdef    alert_boothook
                 xdef    alert_deadend
-                xdef    alert_reboot         ; interrupts.s : redémarrage depuis le mode superviseur
+                xdef    alert_reboot         ; interrupts.s: reboot from supervisor mode
                 xdef    exec_SetSR
                 xdef    exec_SuperState
                 xdef    exec_UserState
@@ -33,18 +33,18 @@
                 xdef    exec_ReleaseSemaphoreList
 
 LVO_SUPERVISOR_X EQU -30
-ME_SIZE         EQU 8                ; struct MemEntry : me_Reqs|me_Addr, me_Length
-INTENA_INTEN    EQU 14               ; bit maître de INTENA
+ME_SIZE         EQU 8                ; struct MemEntry: me_Reqs|me_Addr, me_Length
+INTENA_INTEN    EQU 14               ; master bit of INTENA
 
-; SetFunction(library a1, funcOffset a0.w, newFunction d0) -> d0 = ancienne fonction. Le vecteur devient
-; JMP newFunction ; la bibliothèque est marquée modifiée et sa somme recalculée. Sous Forbid.
+; SetFunction(library a1, funcOffset a0.w, newFunction d0) -> d0 = old function. The vector becomes
+; JMP newFunction; the library is marked changed and its sum recomputed. Under Forbid.
 exec_SetFunction:
         move.l  d0,d1
         move.w  a0,d0
         ext.l   d0
-        lea     0(a1,d0.l),a0        ; a0 = vecteur
+        lea     0(a1,d0.l),a0        ; a0 = vector
         jsr     LVO_FORBID(a6)
-        move.l  2(a0),-(sp)          ; ancienne fonction
+        move.l  2(a0),-(sp)          ; old function
         move.w  #$4EF9,(a0)
         move.l  d1,2(a0)
         bset    #LIBB_CHANGED,LIB_FLAGS(a1)
@@ -53,9 +53,9 @@ exec_SetFunction:
         move.l  (sp)+,d0
         rts
 
-; SumLibrary(library a1) : somme des mots de la table de vecteurs. Table modifiée (LIBF_CHANGED) ou somme non
-; vérifiée : la somme est enregistrée et LIBF_CHANGED effacé. (Pas d'alerte sur écart : aucune table n'est
-; protégée ici.) Clobbe d0/d1/a0.
+; SumLibrary(library a1): sum of the words of the vector table. Table changed (LIBF_CHANGED) or sum not
+; verified: the sum is stored and LIBF_CHANGED cleared. (No alert on mismatch: no table is
+; protected here.) Clobbers d0/d1/a0.
 exec_SumLibrary:
         moveq   #0,d0
         moveq   #0,d1
@@ -63,7 +63,7 @@ exec_SumLibrary:
         lsr.w   #1,d1
         move.l  a1,a0
         sub.l   d1,a0
-        sub.l   d1,a0                ; a0 = début de la table
+        sub.l   d1,a0                ; a0 = start of the table
         bra.s   .sl_nx
 .sl_lp:
         add.w   (a0)+,d0
@@ -73,14 +73,14 @@ exec_SumLibrary:
         bclr    #LIBB_CHANGED,LIB_FLAGS(a1)
         rts
 
-; Cause(interrupt a1) : l'interruption logicielle est mise en file (une seule fois tant qu'elle attend) puis
-; SOFTINT est demandée ; le serveur de niveau 1 l'exécute (a1 = is_Data, a5 = is_Code, a6 = SysBase). Appelable
-; depuis une interruption : masquage par INTENA (état maître restauré), jamais Disable/Enable (qui peuvent céder).
+; Cause(interrupt a1): the software interrupt is queued (only once while it is pending) then
+; SOFTINT is requested; the level 1 server executes it (a1 = is_Data, a5 = is_Code, a6 = SysBase). Callable
+; from an interrupt: masking through INTENA (master state restored), never Disable/Enable (which may yield).
 exec_Cause:
         move.w  INTENAR,d1
         move.w  #INTF_INTEN,INTENA
         cmp.b   #NT_SOFTINT,LN_TYPE(a1)
-        beq.s   .ca_done             ; déjà en attente
+        beq.s   .ca_done             ; already pending
         move.b  #NT_SOFTINT,LN_TYPE(a1)
         move.l  d1,-(sp)
         lea     EXEC_SOFTLIST,a0
@@ -94,8 +94,8 @@ exec_Cause:
 .ca_ret:
         rts
 
-; exec_softint_init(a6) : file vide, serveur SOFTINT installé (vecteur exclusif du niveau 1) et source activée.
-; Après init_ints (table IntVects allouée).
+; exec_softint_init(a6): empty queue, SOFTINT server installed (exclusive level 1 vector) and source enabled.
+; After init_ints (IntVects table allocated).
 exec_softint_init:
         lea     EXEC_SOFTLIST,a0
         move.l  a0,8(a0)             ; lh_TailPred = &lh_Head
@@ -109,7 +109,7 @@ exec_softint_init:
         move.w  #(INTF_SETCLR|INTF_SOFTINT),INTENA
         rts
 
-; softint_server (niveau 1, a6 = SysBase) : acquitte SOFTINT puis exécute les interruptions en attente dans l'ordre.
+; softint_server (level 1, a6 = SysBase): acknowledges SOFTINT then executes the pending interrupts in order.
 softint_server:
         move.w  #INTF_SOFTINT,INTREQ
 .ss_lp:
@@ -129,13 +129,13 @@ softint_server:
 .ss_ret:
         rts
 
-; Alert(alertNum d7, a5) (spec alert-v34 §1, coldstart-hardware-v34 §8) : message série, puis
-; - récupérable (bit 31 à 0) : LastAlert = (numéro, long pointé par a5), Guru affiché par DisplayAlert, LastAlert[0]
-;   remis à -1 ; d0 = 1 (bouton gauche) | 0 (bouton droit ou intuition absente). Un mot haut nul (numéro d'exception
-;   CPU) est traité comme une alerte récupérable ;
-; - sans issue (bit 31) : 'HELP' en $0, numéro en $100, second nombre en $104, LED clignotante, redémarrage ; le Guru
-;   s'affiche au boot suivant (alert_boothook).
-; Préserve d1-d7/a0-a6.
+; Alert(alertNum d7, a5) (spec alert-v34 §1, coldstart-hardware-v34 §8): serial message, then
+; - recoverable (bit 31 at 0): LastAlert = (number, long pointed to by a5), Guru displayed by DisplayAlert, LastAlert[0]
+;   reset to -1; d0 = 1 (left button) | 0 (right button or intuition missing). A null high word (CPU exception
+;   number) is treated as a recoverable alert;
+; - dead end (bit 31): 'HELP' at $0, number at $100, second number at $104, blinking LED, reboot; the Guru
+;   is displayed at the next boot (alert_boothook).
+; Preserves d1-d7/a0-a6.
 exec_Alert:
         movem.l d1-d2/a0-a1/a6,-(sp)
         lea     al_dead(pc),a0
@@ -156,7 +156,7 @@ exec_Alert:
         dbra    d1,.al_hex
         moveq   #10,d0
         bsr     exec_RawPutChar
-        moveq   #0,d1                ; second nombre : le long pointé par a5 (s'il est lisible en RAM)
+        moveq   #0,d1                ; second number: the long pointed to by a5 (if it is readable in RAM)
         move.l  a5,d0
         btst    #0,d0
         bne.s   .al_2nd
@@ -175,15 +175,15 @@ exec_Alert:
         movem.l (sp)+,d1-d2/a0-a1/a6
         rts
 
-; alert_deadend(d0 = numéro, d1 = second nombre) : mémorise l'alerte pour le boot suivant ('HELP' en $0, $100, $104),
-; fait clignoter la LED six fois puis redémarre. Ne revient pas ; utilisable en mode utilisateur ou superviseur.
+; alert_deadend(d0 = number, d1 = second number): remembers the alert for the next boot ('HELP' at $0, $100, $104),
+; blinks the LED six times then reboots. Does not return; usable in user or supervisor mode.
 alert_deadend:
         move.l  #$48454C50,$0.w      ; 'HELP'
         move.l  d0,$100.w
         move.l  d1,$104.w
         moveq   #5,d1
 .ad_blink:
-        bset    #1,CIAA_PRA          ; LED atténuée
+        bset    #1,CIAA_PRA          ; LED dimmed
         bsr.s   .ad_wait
         bclr    #1,CIAA_PRA
         bsr.s   .ad_wait
@@ -192,13 +192,13 @@ alert_deadend:
         lea     al_reset(pc),a5
         jsr     LVO_SUPERVISOR(a6)
 .ad_wait:
-        move.l  #50000,d0            ; ~0,15 s
+        move.l  #50000,d0            ; ~0.15 s
 .ad_w:
         subq.l  #1,d0
         bne.s   .ad_w
         rts
-; al_reset (superviseur) : RESET remet l'overlay (ROM en $0) ; le JMP, lu dans le même long que le RESET (préchargé),
-; part sur le mot 2 de la ROM : JMP vers le point d'entrée du coldstart.
+; al_reset (supervisor): RESET restores the overlay (ROM at $0); the JMP, read in the same long as the RESET
+; (prefetched), goes to word 2 of the ROM: JMP to the coldstart entry point.
         cnop    0,4
 alert_reboot:
 al_reset:
@@ -206,8 +206,8 @@ al_reset:
         reset
         jmp     (a0)
 
-; alert_boothook : rôle du résident alert.hook (spec alert-v34 §4), appelé une fois intuition initialisée. Si une
-; alerte sans issue a été mémorisée ('HELP' en $0), affiche son Guru, puis efface la marque. Préserve tout.
+; alert_boothook: role of the alert.hook resident (spec alert-v34 §4), called once intuition is initialised. If a
+; dead-end alert has been remembered ('HELP' at $0), displays its Guru, then clears the mark. Preserves everything.
 alert_boothook:
         cmp.l   #$48454C50,$0.w
         bne.s   .ab_ret
@@ -224,9 +224,9 @@ alert_boothook:
 .ab_ret:
         rts
 
-; alert_show(d0 = numéro, d1 = second nombre) -> d0 = résultat de DisplayAlert (0 sans intuition) : texte du Guru
-; (spec alert-v34 §3), DisplayAlert(0, texte, 40). En-tête : « Not enough memory. » (sous-système $01), « Recoverable
-; Alert. » (bit 31 à 0, mot haut non nul), sinon « Software Failure. ». Préserve d1-d7/a0-a6.
+; alert_show(d0 = number, d1 = second number) -> d0 = result of DisplayAlert (0 without intuition): Guru text
+; (spec alert-v34 §3), DisplayAlert(0, text, 40). Header: "Not enough memory." (subsystem $01), "Recoverable
+; Alert." (bit 31 at 0, non-null high word), otherwise "Software Failure.". Preserves d1-d7/a0-a6.
 AS_BUF          EQU 132
 alert_show:
         movem.l d1-d3/a0-a3/a6,-(sp)
@@ -241,12 +241,12 @@ alert_show:
         tst.l   d0
         beq.s   .as_ret
         move.l  sp,a2
-        move.l  #$00260F00,d0        ; x = 38, y = 15 (3 octets)
+        move.l  #$00260F00,d0        ; x = 38, y = 15 (3 bytes)
         bsr     .as_pos
-        lea     al_h3(pc),a0         ; en-tête
+        lea     al_h3(pc),a0         ; header
         move.l  d2,d0
         swap    d0
-        cmp.b   #$01,d0              ; sous-système AG_NoMemory
+        cmp.b   #$01,d0              ; subsystem AG_NoMemory
         bne.s   .as_h2
         lea     al_h1(pc),a0
         bra.s   .as_hd
@@ -274,7 +274,7 @@ alert_show:
         move.l  d3,d0
         bsr.s   .as_hex8
         clr.b   (a2)+
-        clr.b   (a2)+                ; fin de la chaîne
+        clr.b   (a2)+                ; end of the string
         move.l  a3,a6
         moveq   #0,d0
         move.l  sp,a0
@@ -289,7 +289,7 @@ alert_show:
         lea     AS_BUF(sp),sp
         movem.l (sp)+,d1-d3/a0-a3/a6
         rts
-.as_pos:                             ; d0 = x (mot haut) et y (octet 3) -> 3 octets
+.as_pos:                             ; d0 = x (high word) and y (byte 3) -> 3 bytes
         rol.l   #8,d0
         move.b  d0,(a2)+
         rol.l   #8,d0
@@ -297,16 +297,16 @@ alert_show:
         rol.l   #8,d0
         move.b  d0,(a2)+
         rts
-.as_str:                             ; chaîne a0 avec son 0
+.as_str:                             ; string a0 with its 0
         move.b  (a0)+,(a2)+
         bne.s   .as_str
         rts
-.as_strnz:                           ; chaîne a0 sans son 0
+.as_strnz:                           ; string a0 without its 0
         move.b  (a0)+,(a2)+
         bne.s   .as_strnz
         subq.l  #1,a2
         rts
-.as_hex8:                            ; d0 -> 8 chiffres hexadécimaux majuscules
+.as_hex8:                            ; d0 -> 8 upper-case hexadecimal digits
         moveq   #7,d1
 .as_hx:
         rol.l   #4,d0
@@ -318,7 +318,7 @@ alert_show:
 al_digits:
         dc.b    "0123456789ABCDEF"
 
-; raw_puts(a0 = chaîne C) : émission série par RawPutChar. Clobbe d0/a0.
+; raw_puts(a0 = C string): serial output through RawPutChar. Clobbers d0/a0.
 raw_puts:
         move.b  (a0)+,d0
         beq.s   .rp_ret
@@ -327,8 +327,8 @@ raw_puts:
 .rp_ret:
         rts
 
-; RawIOInit() : le port série est déjà réglé au démarrage. RawMayGetChar() -> d0 = caractère reçu | -1.
-; RawPutChar(char d0) : attente bornée de TBE puis émission (8 bits + bit d'arrêt). Préserve d1-d2/a0/a1.
+; RawIOInit(): the serial port is already set up at startup. RawMayGetChar() -> d0 = received character | -1.
+; RawPutChar(char d0): bounded wait for TBE then output (8 bits + stop bit). Preserves d1-d2/a0/a1.
 exec_RawIOInit:
         rts
 exec_RawMayGetChar:
@@ -354,8 +354,8 @@ exec_RawPutChar:
         movem.l (sp)+,d1-d2
         rts
 
-; SetSR(newSR d0, mask d1) -> d0 = ancien SR : les bits de mask prennent la valeur de newSR (via Supervisor ; le SR
-; empilé par le trap est modifié puis rétabli par RTE).
+; SetSR(newSR d0, mask d1) -> d0 = old SR: the bits of mask take the value of newSR (via Supervisor; the SR
+; pushed by the trap is modified then restored by RTE).
 exec_SetSR:
         move.l  a5,-(sp)
         lea     .sr_super(pc),a5
@@ -363,7 +363,7 @@ exec_SetSR:
         move.l  (sp)+,a5
         rts
 .sr_super:
-        move.w  (sp),a1              ; ancien SR
+        move.w  (sp),a1              ; old SR
         and.w   d1,d0
         not.w   d1
         and.w   d1,(sp)
@@ -372,30 +372,30 @@ exec_SetSR:
         and.l   #$FFFF,d0
         rte
 
-; SuperState() -> d0 = pile superviseur à rendre à UserState (0 si déjà en superviseur) : la suite s'exécute en
-; superviseur sur la pile utilisateur.
+; SuperState() -> d0 = supervisor stack to give back to UserState (0 if already in supervisor): what follows runs in
+; supervisor on the user stack.
 exec_SuperState:
         move.w  sr,d0
         btst    #13,d0
         bne.s   .su_already
         move.l  a5,a1
         lea     .su_super(pc),a5
-        jsr     LVO_SUPERVISOR_X(a6) ; revient en superviseur par .su_super
+        jsr     LVO_SUPERVISOR_X(a6) ; comes back in supervisor through .su_super
         rts
 .su_already:
         moveq   #0,d0
         rts
 .su_super:
         move.l  a1,a5
-        move.l  2(sp),a0             ; reprise : après le trap de Supervisor
-        addq.l  #6,sp                ; frame du trap retiré
-        move.l  sp,d0                ; pile superviseur
+        move.l  2(sp),a0             ; resume: after the Supervisor trap
+        addq.l  #6,sp                ; trap frame removed
+        move.l  sp,d0                ; supervisor stack
         move.l  usp,a1
-        move.l  a1,sp                ; on continue sur la pile utilisateur
+        move.l  a1,sp                ; we continue on the user stack
         jmp     (a0)
 
-; UserState(sysStack d0) : retour en mode utilisateur sur la pile courante, la pile superviseur redevient sysStack.
-; d0 = 0 (SuperState appelé en superviseur) : rien à faire.
+; UserState(sysStack d0): return to user mode on the current stack, the supervisor stack becomes sysStack again.
+; d0 = 0 (SuperState called in supervisor): nothing to do.
 exec_UserState:
         tst.l   d0
         beq.s   .us_ret
@@ -408,13 +408,13 @@ exec_UserState:
 .us_ret:
         rts
 
-; GetCC() -> d0 = codes condition (68000 : MOVE depuis SR permis en mode utilisateur).
+; GetCC() -> d0 = condition codes (68000: MOVE from SR allowed in user mode).
 exec_GetCC:
         move.w  sr,d0
         and.l   #$FF,d0
         rts
 
-; RemIntServer(intNum d0, interrupt a1) : le serveur quitte sa chaîne, interruptions masquées pendant le retrait.
+; RemIntServer(intNum d0, interrupt a1): the server leaves its chain, interrupts masked during the removal.
 exec_RemIntServer:
         move.w  INTENAR,d1
         move.w  #INTF_INTEN,INTENA
@@ -427,12 +427,12 @@ exec_RemIntServer:
 .ri_ret:
         rts
 
-; AllocEntry(memList a0) -> d0 = nouvelle MemList (adresses remplies) | exigences de l'entrée en échec avec le bit 31
-; posé (rien ne reste alloué). FreeEntry(memList a0) libère les entrées puis la MemList (a0 comme AllocEntry : exec_lib.fd ;
-; icon.library enchaîne RemHead -> FreeEntry avec la MemList dans a0 et la liste encore dans a1).
+; AllocEntry(memList a0) -> d0 = new MemList (addresses filled in) | requirements of the failing entry with bit 31
+; set (nothing remains allocated). FreeEntry(memList a0) frees the entries then the MemList (a0 like AllocEntry:
+; exec_lib.fd; icon.library chains RemHead -> FreeEntry with the MemList in a0 and the list still in a1).
 exec_AllocEntry:
         movem.l d2-d3/a2-a3,-(sp)
-        move.l  a0,a2                ; a2 = modèle
+        move.l  a0,a2                ; a2 = template
         moveq   #0,d2
         move.w  ML_NUMENTRIES(a2),d2
         move.l  d2,d0
@@ -442,9 +442,9 @@ exec_AllocEntry:
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.s   .ae_nolist
-        move.l  d0,a3                ; a3 = copie
+        move.l  d0,a3                ; a3 = copy
         move.w  d2,ML_NUMENTRIES(a3)
-        moveq   #0,d3                ; d3 = entrées allouées
+        moveq   #0,d3                ; d3 = allocated entries
 .ae_lp:
         cmp.w   d2,d3
         beq.s   .ae_ok
@@ -469,15 +469,15 @@ exec_AllocEntry:
         move.l  a3,d0
         bra.s   .ae_ret
 .ae_fail:
-        move.l  d1,-(sp)             ; exigences en échec
-        move.w  d3,ML_NUMENTRIES(a3) ; seules les entrées obtenues sont rendues
+        move.l  d1,-(sp)             ; failing requirements
+        move.w  d3,ML_NUMENTRIES(a3) ; only the obtained entries are returned
         move.l  a3,a0
         bsr.s   exec_FreeEntry
         move.l  (sp)+,d0
         bset    #31,d0
         bra.s   .ae_ret
 .ae_nolist:
-        moveq   #-1,d0               ; la MemList elle-même n'a pu être allouée
+        moveq   #-1,d0               ; the MemList itself could not be allocated
 .ae_ret:
         movem.l (sp)+,d2-d3/a2-a3
         rts
@@ -505,7 +505,7 @@ exec_FreeEntry:
         movem.l (sp)+,d2/a2
         rts
 
-; SetExcept(newSignals d0, signalMask d1) -> d0 = ancien tc_SigExcept (bits de mask remplacés).
+; SetExcept(newSignals d0, signalMask d1) -> d0 = old tc_SigExcept (bits of mask replaced).
 exec_SetExcept:
         move.l  d2,-(sp)
         move.l  EB_THISTASK(a6),a0
@@ -519,7 +519,7 @@ exec_SetExcept:
         move.l  (sp)+,d2
         rts
 
-; AllocTrap(trapNum d0 | -1 = n'importe lequel) -> d0 = n° de trap attribué à la tâche | -1. FreeTrap(trapNum d0).
+; AllocTrap(trapNum d0 | -1 = any) -> d0 = trap number granted to the task | -1. FreeTrap(trapNum d0).
 exec_AllocTrap:
         move.l  EB_THISTASK(a6),a0
         move.w  TC_TRAPALLOC(a0),d1
@@ -551,13 +551,13 @@ exec_FreeTrap:
         move.w  d1,TC_TRAPALLOC(a0)
         rts
 
-; RemResource(resource a1) : retrait de la liste des ressources, sous Forbid.
+; RemResource(resource a1): removal from the resource list, under Forbid.
 exec_RemResource:
         jsr     LVO_FORBID(a6)
         jsr     LVO_REMOVE(a6)
         jmp     LVO_PERMIT(a6)
 
-; ObtainSemaphoreList(list a0) / ReleaseSemaphoreList(list a0) : chaque SignalSemaphore de la liste, dans l'ordre.
+; ObtainSemaphoreList(list a0) / ReleaseSemaphoreList(list a0): each SignalSemaphore of the list, in order.
 exec_ObtainSemaphoreList:
         move.l  #LVO_OBTAINSEMAPHORE,d0
         bra.s   sem_walk

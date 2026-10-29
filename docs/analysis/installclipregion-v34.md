@@ -1,128 +1,128 @@
-# installclipregion-v34.md — layers.library 34.1 : InstallClipRegion (spec comportementale)
+# installclipregion-v34.md — layers.library 34.1: InstallClipRegion (behavioural spec)
 
-> Piste ANALYSE (« dirty »). Source : ROM `kick34005.A500` (layers 34.1, intuition 34.3) lue sous
-> radare2, plus une sonde boîte noire sur la vraie ROM sous FS-UAE (`tests/clipreg.s`, vecteurs §7).
-> On décrit le **quoi** (effets observables, ordre, conditions, layout d'ABI), jamais le **comment** :
-> aucune suite d'instructions transcrite, aucune adresse de routine.
+> ANALYSIS track ("dirty"). Source: ROM `kick34005.A500` (layers 34.1, intuition 34.3) read under
+> radare2, plus a black-box probe on the real ROM under FS-UAE (`tests/clipreg.s`, vectors §7).
+> We describe the **what** (observable effects, order, conditions, ABI layout), never the **how**:
+> no instruction sequence transcribed, no routine address.
 >
-> Légende : **[R]** analyse ROM (comportement) · **[S]** sonde boîte noire · **[D]** doc publique
-> (NDK `layers_lib.fd`, AutoDocs) · **[R+S]** les deux concordent.
+> Legend: **[R]** ROM analysis (behaviour) · **[S]** black-box probe · **[D]** public documentation
+> (NDK `layers_lib.fd`, AutoDocs) · **[R+S]** both agree.
 
 ---
 
-## 1. Existence et ABI
+## 1. Existence and ABI
 
-- `InstallClipRegion` **existe en V34** : c'est le **25ᵉ et dernier** vecteur utilisateur de
-  layers.library 34.1, **LVO −174**, `InstallClipRegion(layer, region)(A0/A1)`, retour **D0 = ancienne
-  région** (APTR, éventuellement NULL). La table de la 34.1 compte exactement les LVO −30..−174 (25
-  fonctions, `InitLayers` … `MoveLayerInFrontOf`, `InstallClipRegion`) ; `MoveSizeLayer` (−180) et
-  suivantes n'existent pas en 1.3. **[R ; D pour les noms]**
-- Pas de vérification des arguments : `layer` doit être valide (pas de test NULL) ; `region` NULL = retrait.
+- `InstallClipRegion` **exists in V34**: it is the **25th and last** user vector of
+  layers.library 34.1, **LVO −174**, `InstallClipRegion(layer, region)(A0/A1)`, return **D0 = old
+  region** (APTR, possibly NULL). The 34.1 table has exactly the LVOs −30..−174 (25
+  functions, `InitLayers` … `MoveLayerInFrontOf`, `InstallClipRegion`); `MoveSizeLayer` (−180) and
+  following do not exist in 1.3. **[R; D for the names]**
+- No argument checking: `layer` must be valid (no NULL test); `region` NULL = removal.
   **[R]**
 
-### 1.1 Champs d'ABI impliqués (offsets V34)
+### 1.1 ABI fields involved (V34 offsets)
 
-`struct Layer` (publique, `graphics/clip.h` 1.3) **[R : offsets lus aux accès ; D]** :
+`struct Layer` (public, `graphics/clip.h` 1.3) **[R: offsets read from the accesses; D]**:
 
-| Off. | Champ | Rôle ici |
+| Off. | Field | Role here |
 |---:|---|---|
-| `$08` | `ClipRect` | liste **courante** des ClipRects (celle que graphics parcourt pour dessiner) |
-| `$0C` | `rp` | RastPort de la couche (sa `BitMap->Depth` sert à allouer les tampons cachés, §3.3) |
-| `$10..$17` | `bounds` (MinX, MinY, MaxX, MaxY) | origine des coordonnées de la région (§2) |
-| `$1E` | `Flags` (UWORD) | `LAYERUPDATING $0010` (BeginUpdate), `LAYER_CLIPRECTS_LOST $0100` (échec mémoire, §3.5) |
-| `$2C/$2E` | `Scroll_X/Scroll_Y` | **ignorés** par la région (§2) ; intuition les met à 0 pendant ses dessins (§5) |
-| `$40` | `_cliprects` (privé) | **sauvegarde** de la liste « normale » pendant qu'une liste réduite est en place |
+| `$08` | `ClipRect` | **current** list of ClipRects (the one graphics walks to draw) |
+| `$0C` | `rp` | RastPort of the layer (its `BitMap->Depth` is used to allocate the hidden buffers, §3.3) |
+| `$10..$17` | `bounds` (MinX, MinY, MaxX, MaxY) | origin of the region's coordinates (§2) |
+| `$1E` | `Flags` (UWORD) | `LAYERUPDATING $0010` (BeginUpdate), `LAYER_CLIPRECTS_LOST $0100` (memory failure, §3.5) |
+| `$2C/$2E` | `Scroll_X/Scroll_Y` | **ignored** by the region (§2); intuition sets them to 0 during its drawing (§5) |
+| `$40` | `_cliprects` (private) | **backup** of the "normal" list while a reduced list is in place |
 | `$44` | `LayerInfo` | |
-| `$48` | `Lock` (SignalSemaphore, 46 octets) | verrou de couche |
-| `$7E` | **`ClipRegion`** | la région installée (pointeur de l'appelant, **non copiée**) |
-| `$82` | `saveClipRects` (privé) | mis à NULL pour chaque couche au premier `LockLayers` (§4.2) ; pas d'autre usage observé |
-| `$9C` | `DamageList` | région de dommages (BeginUpdate) |
+| `$48` | `Lock` (SignalSemaphore, 46 bytes) | layer lock |
+| `$7E` | **`ClipRegion`** | the installed region (caller's pointer, **not copied**) |
+| `$82` | `saveClipRects` (private) | set to NULL for each layer at the first `LockLayers` (§4.2); no other use observed |
+| `$9C` | `DamageList` | damage region (BeginUpdate) |
 
-`struct ClipRect` (40 octets alloués) : `Next $00`, `prev $04`, `lobs $08`, `BitMap $0C`, `bounds $10`
-(coordonnées **écran**, i.e. du BitMap de la LayerInfo), privés `$18..$27`. `struct Region` : `bounds $00`
-(8 octets), `RegionRectangle $08` ; `struct RegionRectangle` : `Next $00`, `Prev $04`, `bounds $08`
-(relatif à `Region.bounds.MinX/MinY`). **[D ; R pour l'usage]**
-
----
-
-## 2. Coordonnées
-
-- La région est exprimée en **coordonnées de la couche** : le pixel (0,0) de la région est le coin
-  `bounds.MinX/MinY` de la couche. Un rectangle de région `rr` donne en coordonnées écran
-  `layer.MinX + region.bounds.MinX + rr.bounds.MinX` (idem Y, et pour Max). **[R+S]** (T1 : rect (10,10)-(29,19)
-  d'une couche en (100,50) ⇒ ClipRect écran (110,60)-(129,69)).
-- `Scroll_X/Scroll_Y` ne sont **pas** appliqués (en 1.3 ils ne concernent que les couches superbitmap). **[R]**
-- La région peut déborder de la couche : seule l'intersection avec la couche compte (§3.1). **[R+S]** (T5).
+`struct ClipRect` (40 bytes allocated): `Next $00`, `prev $04`, `lobs $08`, `BitMap $0C`, `bounds $10`
+(**screen** coordinates, i.e. of the LayerInfo's BitMap), private `$18..$27`. `struct Region`: `bounds $00`
+(8 bytes), `RegionRectangle $08`; `struct RegionRectangle`: `Next $00`, `Prev $04`, `bounds $08`
+(relative to `Region.bounds.MinX/MinY`). **[D; R for the use]**
 
 ---
 
-## 3. Sémantique
+## 2. Coordinates
 
-### 3.1 Effet de `InstallClipRegion(layer, region)` **[R ; S pour les cas visibles]**
+- The region is expressed in **layer coordinates**: pixel (0,0) of the region is the corner
+  `bounds.MinX/MinY` of the layer. A region rectangle `rr` gives in screen coordinates
+  `layer.MinX + region.bounds.MinX + rr.bounds.MinX` (same for Y, and for Max). **[R+S]** (T1: rect (10,10)-(29,19)
+  of a layer at (100,50) ⇒ screen ClipRect (110,60)-(129,69)).
+- `Scroll_X/Scroll_Y` are **not** applied (in 1.3 they only concern superbitmap layers). **[R]**
+- The region may extend beyond the layer: only the intersection with the layer counts (§3.1). **[R+S]** (T5).
 
-Sous le verrou de la couche (`LockLayerRom`/`UnlockLayerRom` de graphics, réentrant) :
+---
+
+## 3. Semantics
+
+### 3.1 Effect of `InstallClipRegion(layer, region)` **[R; S for the visible cases]**
+
+Under the layer lock (graphics' `LockLayerRom`/`UnlockLayerRom`, reentrant):
 
 1. `old = layer->ClipRegion`.
-2. Si `old ≠ NULL` : la liste réduite actuelle est **défaite** (§3.4) et la liste normale restaurée.
+2. If `old ≠ NULL`: the current reduced list is **undone** (§3.4) and the normal list restored.
 3. `layer->ClipRegion = region`.
-4. Si `region ≠ NULL` : une **liste réduite** est construite (§3.2) et devient `layer->ClipRect`.
-5. Déverrouillage ; retour `old`.
+4. If `region ≠ NULL`: a **reduced list** is built (§3.2) and becomes `layer->ClipRect`.
+5. Unlock; return `old`.
 
-Conséquences :
-- `InstallClipRegion(l, NULL)` sans région installée ne fait rien d'observable (retour NULL). **[R+S]**
-- Réinstaller la même région (`Install(l, r)` puis `Install(l, r)`) renvoie `r` et **reconstruit** la liste :
-  c'est la seule façon de faire prendre en compte une **modification de la région après installation**
-  (la liste réduite est un instantané ; graphics ne relit jamais la région). **[R+S]** (T2).
-- Le pointeur `region` est conservé tel quel ; layers ne la libère jamais (c'est à l'application de la
-  retirer avant `DisposeRegion` / `CloseWindow`). **[R]**
+Consequences:
+- `InstallClipRegion(l, NULL)` with no region installed does nothing observable (returns NULL). **[R+S]**
+- Reinstalling the same region (`Install(l, r)` then `Install(l, r)`) returns `r` and **rebuilds** the list:
+  this is the only way to have a **modification of the region after installation** taken into account
+  (the reduced list is a snapshot; graphics never re-reads the region). **[R+S]** (T2).
+- The `region` pointer is kept as is; layers never frees it (it is up to the application to
+  remove it before `DisposeRegion` / `CloseWindow`). **[R]**
 
-### 3.2 Construction de la liste réduite **[R ; S pour la partie visible]**
+### 3.2 Construction of the reduced list **[R; S for the visible part]**
 
-La liste normale (`layer->ClipRect`) est rangée dans `_cliprects` (`$40`) et `layer->ClipRect` repart vide.
-Soit `C` la région de découpe :
-- hors BeginUpdate : `C = ClipRegion` ;
-- pendant BeginUpdate (`LAYERUPDATING`) : `C = DamageList ∩ ClipRegion` (copie temporaire, détruite à la fin) ;
-  sans ClipRegion : `C = DamageList` (comportement normal de BeginUpdate).
+The normal list (`layer->ClipRect`) is stored in `_cliprects` (`$40`) and `layer->ClipRect` starts again empty.
+Let `C` be the clipping region:
+- outside BeginUpdate: `C = ClipRegion`;
+- during BeginUpdate (`LAYERUPDATING`): `C = DamageList ∩ ClipRegion` (temporary copy, destroyed at the end);
+  without ClipRegion: `C = DamageList` (normal BeginUpdate behaviour).
 
-Si `C` n'a **aucun rectangle** : la couche reste **sans aucun ClipRect** (`layer->ClipRect = NULL`) ⇒ tout
-dessin dans la couche est sans effet. **[R+S]** (T4 : `ClipRect = 00000000`, pixel inchangé).
+If `C` has **no rectangle**: the layer remains **without any ClipRect** (`layer->ClipRect = NULL`) ⇒ any
+drawing into the layer has no effect. **[R+S]** (T4: `ClipRect = 00000000`, pixel unchanged).
 
-Sinon, deux régions sont calculées à partir de la liste normale (en coordonnées couche) :
-- **V** = union des ClipRects **visibles** (`lobs == NULL`) ;
-- **O** = union des ClipRects **cachés avec tampon** (`lobs ≠ NULL` **et** `BitMap ≠ NULL`, i.e. les
-  parties cachées d'une couche smart/superbitmap). Les parties cachées sans tampon (couche simple) ne sont
-  pas reprises : y dessiner reste sans effet, comme sans région.
+Otherwise, two regions are computed from the normal list (in layer coordinates):
+- **V** = union of the **visible** ClipRects (`lobs == NULL`);
+- **O** = union of the **hidden ClipRects with a buffer** (`lobs ≠ NULL` **and** `BitMap ≠ NULL`, i.e. the
+  hidden parts of a smart/superbitmap layer). Hidden parts without a buffer (simple layer) are
+  not carried over: drawing there remains without effect, as without a region.
 
-Puis :
-1. pour chaque rectangle de `V ∩ C` : un ClipRect visible (`lobs = NULL`, `BitMap = NULL`), bornes écran ;
-2. pour chaque rectangle de `O ∩ C` : un ClipRect « caché » avec `lobs = 1` (valeur sentinelle non nulle,
-   pas un pointeur de couche) et un **tampon BitMap propre** de la profondeur du `rp->BitMap` de la couche,
-   aligné sur 16 pixels comme les tampons smart ; son contenu est **recopié depuis le(s) tampon(s) d'origine**
-   qui le recouvrent (BltBitMap, minterm `$CA`, masque `$FF`).
-Les ClipRects sont pris dans la LayerInfo ; les tampons des ClipRects cachés sont alloués **hors** de la
-comptabilité de la LayerInfo (MEMF_CLEAR). Les régions temporaires V, O (et la copie DamageList ∩ ClipRegion)
-sont libérées à la fin. **[R]**
+Then:
+1. for each rectangle of `V ∩ C`: a visible ClipRect (`lobs = NULL`, `BitMap = NULL`), screen bounds;
+2. for each rectangle of `O ∩ C`: a "hidden" ClipRect with `lobs = 1` (non-null sentinel value,
+   not a layer pointer) and an **own BitMap buffer** of the depth of the layer's `rp->BitMap`,
+   aligned on 16 pixels like the smart buffers; its contents are **copied from the original buffer(s)**
+   covering it (BltBitMap, minterm `$CA`, mask `$FF`).
+The ClipRects are taken from the LayerInfo; the buffers of the hidden ClipRects are allocated **outside** the
+LayerInfo's accounting (MEMF_CLEAR). The temporary regions V, O (and the DamageList ∩ ClipRegion copy)
+are freed at the end. **[R]**
 
-### 3.3 Dessin pendant qu'une région est installée **[R+S]**
+### 3.3 Drawing while a region is installed **[R+S]**
 
-graphics dessine à travers `layer->ClipRect` comme d'habitude : il n'y a **aucun cas particulier** dans
-graphics. Donc :
-- les pixels visibles hors `C` ne sont **pas** modifiés ; ceux dans `V ∩ C` le sont (T1, T6) ;
-- les dessins dans des parties cachées d'une couche smart, dans `C`, vont dans les tampons propres de la
-  liste réduite et sont **reportés** dans les tampons d'origine au retrait (§3.4).
+graphics draws through `layer->ClipRect` as usual: there is **no special case** in
+graphics. Hence:
+- visible pixels outside `C` are **not** modified; those in `V ∩ C` are (T1, T6);
+- drawing into hidden parts of a smart layer, within `C`, goes into the reduced list's own buffers
+  and is **carried over** into the original buffers on removal (§3.4).
 
-### 3.4 Retrait de la liste réduite **[R]**
+### 3.4 Removal of the reduced list **[R]**
 
-Pour chaque ClipRect caché de la liste réduite (`lobs ≠ NULL`), son contenu est recopié (BltBitMap `$CA`,
-masque `$FF`) dans **le premier** ClipRect caché de la liste normale sauvegardée dont les bornes le recouvrent.
-Puis la liste réduite est libérée (ClipRects rendus à la LayerInfo, tampons libérés), `layer->ClipRect =
+For each hidden ClipRect of the reduced list (`lobs ≠ NULL`), its contents are copied (BltBitMap `$CA`,
+mask `$FF`) into **the first** hidden ClipRect of the saved normal list whose bounds cover it.
+Then the reduced list is freed (ClipRects returned to the LayerInfo, buffers freed), `layer->ClipRect =
 _cliprects`, `_cliprects = NULL`.
 
-### 3.5 Mémoire insuffisante **[R uniquement]**
+### 3.5 Insufficient memory **[R only]**
 
-Si une allocation échoue pendant la construction, la construction s'arrête (liste réduite partielle laissée
-en place) et `layer->Flags |= LAYER_CLIPRECTS_LOST ($0100)`. InstallClipRegion n'en informe pas l'appelant
-(il renvoie toujours l'ancienne région).
+If an allocation fails during construction, construction stops (partial reduced list left
+in place) and `layer->Flags |= LAYER_CLIPRECTS_LOST ($0100)`. InstallClipRegion does not inform the caller
+(it still returns the old region).
 
 ---
 
@@ -130,136 +130,136 @@ en place) et `layer->Flags |= LAYER_CLIPRECTS_LOST ($0100)`. InstallClipRegion n
 
 ### 4.1 BeginUpdate / EndUpdate **[R]**
 
-- **BeginUpdate(l)** : verrouille la couche (et la **laisse verrouillée** jusqu'à EndUpdate) ; si une
-  ClipRegion est installée, défait d'abord sa liste réduite ; pose `LAYERUPDATING` ; construit la liste
-  réduite avec `C = DamageList ∩ ClipRegion` (ou `DamageList` seule sans ClipRegion). Le dessin d'un refresh
-  est donc limité **à la fois** aux dommages et à la région.
-- **EndUpdate(l, flag)** : si `flag ≠ 0`, `ClearRegion(DamageList)` ; défait la liste réduite (§3.4) ;
-  efface `LAYERUPDATING` ; **si une ClipRegion est installée, reconstruit sa liste** (`C = ClipRegion`) ;
-  déverrouille.
-- Appeler InstallClipRegion **entre** BeginUpdate et EndUpdate reconstruit avec `DamageList ∩ nouvelle région`
-  (le drapeau UPDATING est encore posé) ; le retrait par NULL donne `C = DamageList`.
+- **BeginUpdate(l)**: locks the layer (and **leaves it locked** until EndUpdate); if a
+  ClipRegion is installed, first undoes its reduced list; sets `LAYERUPDATING`; builds the reduced
+  list with `C = DamageList ∩ ClipRegion` (or `DamageList` alone without ClipRegion). The drawing of a refresh
+  is therefore limited **both** to the damage and to the region.
+- **EndUpdate(l, flag)**: if `flag ≠ 0`, `ClearRegion(DamageList)`; undoes the reduced list (§3.4);
+  clears `LAYERUPDATING`; **if a ClipRegion is installed, rebuilds its list** (`C = ClipRegion`);
+  unlocks.
+- Calling InstallClipRegion **between** BeginUpdate and EndUpdate rebuilds with `DamageList ∩ new region`
+  (the UPDATING flag is still set); removal by NULL gives `C = DamageList`.
 
-### 4.2 Opérations de couches (Create*, Upfront, Behind, Move, Size, Delete, MoveLayerInFrontOf) **[R ; S Move]**
+### 4.2 Layer operations (Create*, Upfront, Behind, Move, Size, Delete, MoveLayerInFrontOf) **[R; S Move]**
 
-Toutes ces fonctions encadrent leur travail par `LockLayers(li)` … `UnlockLayers(li)` (verrou de toutes les
-couches de la LayerInfo). layers.library utilise ce verrou global pour neutraliser les régions :
-- **au premier niveau** de LockLayers (compteur `LayerInfo+$5B` passant à 1) : pour **chaque couche** de la
-  LayerInfo (de `top_layer` vers l'arrière), `saveClipRects := NULL`, et si `ClipRegion ≠ NULL`, sa liste
-  réduite est défaite (§3.4) ⇒ l'opération travaille sur les listes normales ;
-- **au dernier** UnlockLayers (compteur revenant à 0) : pour chaque couche ayant une `ClipRegion`, la liste
-  réduite est **reconstruite** sur le nouvel arrangement (§3.2).
-Effets : la région suit la couche (coordonnées couche) après Move/Size ; les parties nouvellement cachées ou
-découvertes sont reprises ; une application qui appelle elle-même LockLayers voit les listes normales tant
-qu'elle tient ce verrou. `ScrollLayer` ne passe pas par ce mécanisme. **[R]** Vecteur T6 : après
-`MoveWindow(+20,+10)` la région installée reste `ClipRegion` et le ClipRect réduit est translaté. **[S]**
-- `DeleteLayer` d'une couche ayant encore une ClipRegion : la région n'est **pas** libérée (elle appartient à
-  l'application). **[R]**
+All these functions bracket their work with `LockLayers(li)` … `UnlockLayers(li)` (lock of all the
+layers of the LayerInfo). layers.library uses this global lock to neutralise the regions:
+- **at the first level** of LockLayers (counter `LayerInfo+$5B` going to 1): for **each layer** of the
+  LayerInfo (from `top_layer` backwards), `saveClipRects := NULL`, and if `ClipRegion ≠ NULL`, its reduced
+  list is undone (§3.4) ⇒ the operation works on the normal lists;
+- **at the last** UnlockLayers (counter returning to 0): for each layer having a `ClipRegion`, the reduced
+  list is **rebuilt** on the new arrangement (§3.2).
+Effects: the region follows the layer (layer coordinates) after Move/Size; newly hidden or
+uncovered parts are taken into account; an application that calls LockLayers itself sees the normal lists as long as
+it holds that lock. `ScrollLayer` does not go through this mechanism. **[R]** Vector T6: after
+`MoveWindow(+20,+10)` the installed region remains `ClipRegion` and the reduced ClipRect is translated. **[S]**
+- `DeleteLayer` of a layer still having a ClipRegion: the region is **not** freed (it belongs to
+  the application). **[R]**
 
-### 4.3 Avec LockLayer / LockLayerInfo seuls
+### 4.3 With LockLayer / LockLayerInfo alone
 
-Pas d'effet sur la région (seul LockLayers la neutralise). **[R]**
-
----
-
-## 5. Qui l'utilise en 1.3 **[R]**
-
-- Dans toute la ROM, **seule intuition** appelle InstallClipRegion (un seul point d'appel vers le vecteur
-  −174, via la base layers rangée dans IntuitionBase `+$68`). console.device, graphics, workbench.task,
-  dos ne l'appellent pas.
-- Usage d'intuition : autour de **tous ses dessins internes dans une fenêtre** (cadre, gadgets système et
-  applicatifs, knob des gadgets proportionnels, etc. — une quinzaine d'appelants) intuition :
-  1. verrouille la couche (`LockLayerRom` de graphics) et prend son verrou interne ;
-  2. `ancienne = InstallClipRegion(couche, NULL)` (mémorisée dans IntuitionBase, privé) ;
-  3. sauvegarde `Scroll_X/Scroll_Y` de la couche et les met à 0 ;
-  4. dessine ; puis restaure `Scroll_X/Y`, `InstallClipRegion(couche, ancienne)`, déverrouille.
-  Donc : **les dessins d'intuition ignorent la ClipRegion de l'application**, et intuition appelle
-  InstallClipRegion **même quand aucune région n'est installée** (appel neutre, §3.1). Une implémentation
-  d'intuition peut s'en passer si elle n'a pas de ClipRegion à neutraliser, mais dès qu'une application en
-  installe une, l'absence de ce retrait ferait découper les gadgets/cadres par la région de l'application.
-- Le Workbench 1.3 n'utilise **pas** InstallClipRegion. Ses fenêtres de tiroir/disque ne sont **pas**
-  GIMMEZEROZERO (Flags $0240027F / $0200027F, SIMPLE_REFRESH) : il découpe ses icônes au rectangle de contenu
-  en **remplaçant (ou réduisant) la `DamageList` de la couche par ce rectangle, puis BeginUpdate/EndUpdate**
-  (cf. `wb-icon-clipping-v34.md`). Seule la fenêtre de info.library est GIMMEZEROZERO.
-
-Ce qui casse sans InstallClipRegion : les applications tierces (éditeurs, jeux/outils « system-friendly »,
-programmes de dessin) qui l'appellent obtiennent un saut vers un vecteur absent ; et, si on l'implémente
-sans la neutralisation par intuition, le rendu des gadgets dans ces fenêtres.
+No effect on the region (only LockLayers neutralises it). **[R]**
 
 ---
 
-## 6. Résumé pour l'implémentation
+## 5. Who uses it in 1.3 **[R]**
 
-1. LVO −174, A0 = couche, A1 = région ou NULL, D0 = ancienne. Verrou de couche.
-2. Liste réduite = (visibles ∩ C) + (cachés-avec-tampon ∩ C, tampons propres recopiés à l'aller et au retour),
-   `C` = ClipRegion, ou DamageList ∩ ClipRegion pendant BeginUpdate ; région vide ⇒ aucun ClipRect.
-3. Coordonnées de région = coordonnées couche (origine `bounds.MinX/MinY`), Scroll ignoré.
-4. Instantané : modifier la région impose de la réinstaller.
-5. BeginUpdate/EndUpdate et LockLayers/UnlockLayers (donc toutes les opérations de pile) défont et
-   reconstruisent la liste réduite.
-6. intuition retire la région (et annule Scroll_X/Y) pendant ses propres dessins.
+- In the whole ROM, **only intuition** calls InstallClipRegion (a single call site to vector
+  −174, via the layers base stored in IntuitionBase `+$68`). console.device, graphics, workbench.task,
+  dos do not call it.
+- intuition's use: around **all its internal drawing in a window** (frame, system and
+  application gadgets, knob of proportional gadgets, etc. — about fifteen callers) intuition:
+  1. locks the layer (graphics' `LockLayerRom`) and takes its internal lock;
+  2. `old = InstallClipRegion(layer, NULL)` (stored in IntuitionBase, private);
+  3. saves the layer's `Scroll_X/Scroll_Y` and sets them to 0;
+  4. draws; then restores `Scroll_X/Y`, `InstallClipRegion(layer, old)`, unlocks.
+  Hence: **intuition's drawing ignores the application's ClipRegion**, and intuition calls
+  InstallClipRegion **even when no region is installed** (neutral call, §3.1). An implementation
+  of intuition can do without it if it has no ClipRegion to neutralise, but as soon as an application
+  installs one, the absence of this removal would make the gadgets/frames clipped by the application's region.
+- The Workbench 1.3 does **not** use InstallClipRegion. Its drawer/disk windows are **not**
+  GIMMEZEROZERO (Flags $0240027F / $0200027F, SIMPLE_REFRESH): it clips its icons to the content rectangle
+  by **replacing (or reducing) the layer's `DamageList` with that rectangle, then BeginUpdate/EndUpdate**
+  (cf. `wb-icon-clipping-v34.md`). Only the info.library window is GIMMEZEROZERO.
+
+What breaks without InstallClipRegion: third-party applications (editors, "system-friendly" games/tools,
+drawing programs) that call it get a jump to a missing vector; and, if it is implemented
+without the neutralisation by intuition, the rendering of the gadgets in those windows.
 
 ---
 
-## 7. Vecteurs de test (vraie ROM 34.5, FS-UAE 3.2.35)
+## 6. Summary for the implementation
 
-Sonde `tests/clipreg.s` (copie de l'ADF WB 1.3.3, lancée par `clipreg >SER:` depuis la startup-sequence ;
-`slow_memory = 512`). Fenêtre BORDERLESS|ACTIVATE smart, en (100,50), 100×50, entièrement visible ; couche
-⇒ bounds écran (100,50)-(199,99). R1 = {(10,10)-(29,19)} en coordonnées couche. Pixels relus dans le
-RastPort de l'écran (`P x y pen`, hexadécimal). `CR minX minY maxX maxY lobs BitMap`.
+1. LVO −174, A0 = layer, A1 = region or NULL, D0 = old one. Layer lock.
+2. Reduced list = (visible ∩ C) + (hidden-with-buffer ∩ C, own buffers copied on the way in and on the way out),
+   `C` = ClipRegion, or DamageList ∩ ClipRegion during BeginUpdate; empty region ⇒ no ClipRect.
+3. Region coordinates = layer coordinates (origin `bounds.MinX/MinY`), Scroll ignored.
+4. Snapshot: modifying the region requires reinstalling it.
+5. BeginUpdate/EndUpdate and LockLayers/UnlockLayers (hence all stack operations) undo and
+   rebuild the reduced list.
+6. intuition removes the region (and cancels Scroll_X/Y) during its own drawing.
+
+---
+
+## 7. Test vectors (real ROM 34.5, FS-UAE 3.2.35)
+
+Probe `tests/clipreg.s` (copy of the WB 1.3.3 ADF, launched by `clipreg >SER:` from the startup-sequence;
+`slow_memory = 512`). BORDERLESS|ACTIVATE smart window, at (100,50), 100×50, entirely visible; layer
+⇒ screen bounds (100,50)-(199,99). R1 = {(10,10)-(29,19)} in layer coordinates. Pixels read back in the
+screen's RastPort (`P x y pen`, hexadecimal). `CR minX minY maxX maxY lobs BitMap`.
 
 ```
-T0 00000000                         ClipRegion initiale = NULL
-CR 0064 0032 00C7 0063 00000000 00000000      liste normale : 1 ClipRect = toute la couche
-T1 00000000 00C05B60                Install(R1) rend NULL ; layer+$7E = R1
-CR 006E 003C 0081 0045 00000000 00000000      liste réduite = R1 + (100,50) = (110,60)-(129,69)
-P 0069 0037 00000000                (105,55) hors région : intact
-P 0073 0041 00000001                (115,65) dans : pen 1
-P 0081 0045 00000001                (129,69) coin bas-droit inclus
-P 0082 0046 00000000                (130,70) juste dehors : intact
-T2                                  OrRectRegion(R1, (50,30)-(59,39)) SANS réinstaller, remplissage pen 2
+T0 00000000                         initial ClipRegion = NULL
+CR 0064 0032 00C7 0063 00000000 00000000      normal list: 1 ClipRect = the whole layer
+T1 00000000 00C05B60                Install(R1) returns NULL; layer+$7E = R1
+CR 006E 003C 0081 0045 00000000 00000000      reduced list = R1 + (100,50) = (110,60)-(129,69)
+P 0069 0037 00000000                (105,55) outside the region: intact
+P 0073 0041 00000001                (115,65) inside: pen 1
+P 0081 0045 00000001                (129,69) bottom-right corner included
+P 0082 0046 00000000                (130,70) just outside: intact
+T2                                  OrRectRegion(R1, (50,30)-(59,39)) WITHOUT reinstalling, fill pen 2
 P 0073 0041 00000002
-P 009B 0055 00000000                (155,85) : non dessiné ⇒ la liste réduite est un instantané
-00C05B60                            Install(R1) à nouveau : rend R1
+P 009B 0055 00000000                (155,85): not drawn ⇒ the reduced list is a snapshot
+00C05B60                            Install(R1) again: returns R1
 CR 0096 0050 009F 0059 00000000 00000000      (150,80)-(159,89)
 CR 006E 003C 0081 0045 00000000 00000000
 P 0073 0041 00000002
-P 009B 0055 00000002                maintenant dessiné
-T3 00C05B60 00000000                Install(NULL) rend R1 ; layer+$7E = NULL
-CR 0064 0032 00C7 0063 00000000 00000000      liste normale restaurée
-P 0069 0037 00000000 … (tout pen 0 après remplissage pen 0)
-T4 00000000 00000000                région vide : Install rend NULL ; layer->ClipRect = NULL
-P 0069 0037 00000000 / 0073 0041 00000000 / … remplissage pen 1 sans effet
-T5                                  région (-20,-20)-(200,200) débordante
-CR 0064 0032 00C7 0063 00000000 00000000      bornée à la couche
-T6                                  Install(R1 modifiée) puis MoveWindow(+20,+10), Delay 1 s
-L 0078 003C 00C05B60                couche en (120,60), ClipRegion toujours R1
+P 009B 0055 00000002                now drawn
+T3 00C05B60 00000000                Install(NULL) returns R1; layer+$7E = NULL
+CR 0064 0032 00C7 0063 00000000 00000000      normal list restored
+P 0069 0037 00000000 … (all pen 0 after fill pen 0)
+T4 00000000 00000000                empty region: Install returns NULL; layer->ClipRect = NULL
+P 0069 0037 00000000 / 0073 0041 00000000 / … fill pen 1 without effect
+T5                                  overflowing region (-20,-20)-(200,200)
+CR 0064 0032 00C7 0063 00000000 00000000      bounded to the layer
+T6                                  Install(modified R1) then MoveWindow(+20,+10), Delay 1 s
+L 0078 003C 00C05B60                layer at (120,60), ClipRegion still R1
 CR 00AA 005A 00B3 0063 00000000 00000000      (50,30)-(59,39) + (120,60) = (170,90)-(179,99)
 CR 0082 0046 0095 004F 00000000 00000000      (10,10)-(29,19) + (120,60) = (130,70)-(149,79)
-P 007D 0041 00000000                (125,65) hors région
-P 0087 004B 00000003                (135,75) dans
-P 0095 004F 00000003                (149,79) coin inclus
-P 0096 0050 00000000                (150,80) dehors
+P 007D 0041 00000000                (125,65) outside the region
+P 0087 004B 00000003                (135,75) inside
+P 0095 004F 00000003                (149,79) corner included
+P 0096 0050 00000000                (150,80) outside
 ```
-Non-régression proposée : reproduire ces lignes (adresses de région exceptées).
+Proposed non-regression: reproduce these lines (region addresses excepted).
 
 ---
 
-## 8. Non sondé / incertain
+## 8. Not probed / uncertain
 
-- Parties **cachées** d'une couche smart sous région (tampons propres, recopie aller/retour) : ROM seulement ;
-  la sonde n'a qu'une couche entièrement visible.
-- Couches **superbitmap** : le traitement des parties cachées suppose que leurs ClipRects cachés portent un
-  BitMap (§3.2) ; non vérifié.
-- Interaction BeginUpdate/EndUpdate avec une région installée : ROM seulement (pas de dommages
-  déterministes dans la sonde).
-- Échec mémoire (`LAYER_CLIPRECTS_LOST`) : ROM seulement.
-- Ordre des ClipRects dans la liste réduite : non normatif (graphics n'en dépend pas).
+- **Hidden** parts of a smart layer under a region (own buffers, copy in/out): ROM only;
+  the probe only has an entirely visible layer.
+- **Superbitmap** layers: the handling of hidden parts assumes that their hidden ClipRects carry a
+  BitMap (§3.2); not verified.
+- BeginUpdate/EndUpdate interaction with an installed region: ROM only (no deterministic
+  damage in the probe).
+- Memory failure (`LAYER_CLIPRECTS_LOST`): ROM only.
+- Order of the ClipRects in the reduced list: not normative (graphics does not depend on it).
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions transcrite ni paraphrasée ; aucune adresse de routine ROM (seuls des
-  offsets de structures publiques/privées, des constantes d'ABI et des plages matérielles).
-- [x] Les sondes citées sont du code auteur (`tests/`, en-tête « ASSET DE TEST, PAS du code ROM »).
+- [x] No instruction sequence transcribed or paraphrased; no ROM routine address (only
+  offsets of public/private structures, ABI constants and hardware ranges).
+- [x] The probes cited are author code (`tests/`, header "ASSET DE TEST, PAS du code ROM").

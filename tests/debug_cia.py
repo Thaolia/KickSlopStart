@@ -1,7 +1,7 @@
-# tests/debug_cia.py — pilote du débogueur FS-UAE (commande « cia » de tests/dskchg_run.sh) : pour ciaa.resource et
-# ciab.resource de NOTRE ROM (ExecBase->ResourceList), masque ICR activé et vecteurs des 5 sources (nom, is_Code,
-# is_Data). Les registres des CIA ne sont pas lisibles par le débogueur.
-# Usage : debug_cia.py <fifo> <journal>
+# tests/debug_cia.py - FS-UAE debugger driver ("cia" command of tests/dskchg_run.sh): for ciaa.resource and
+# ciab.resource of OUR ROM (ExecBase->ResourceList), enabled ICR mask and vectors of the 5 sources (name, is_Code,
+# is_Data). The CIA registers cannot be read by the debugger.
+# Usage: debug_cia.py <fifo> <log>
 import sys, time, re, struct
 fifo, log = sys.argv[1], sys.argv[2]
 f = open(fifo, 'w')
@@ -10,7 +10,7 @@ def cmd(c):
 def rd(addr, ln):
     base = addr & ~15; cnt = (addr + ln - base + 15) // 16
     want = {base + 16*i for i in range(cnt)}; got = {}
-    pos = len(open(log, errors='replace').read())   # seules les lignes écrites après la commande comptent
+    pos = len(open(log, errors='replace').read())   # only lines written after the command count
     cmd('m %x %d' % (base, cnt)); t0 = time.time()
     while time.time() - t0 < 30 and len(got) < len(want):
         txt = open(log, errors='replace').read()[pos:]

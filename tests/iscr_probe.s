@@ -1,10 +1,10 @@
-; iscr_probe.s — sonde boîte noire de la gestion des écrans d'intuition (PISTE ANALYSE).
-; ASSET DE TEST, PAS du code ROM. Code auteur ; structures publiques (intuition 1.3 : NewScreen,
-; Screen, IntuitionBase publique ; graphics : View, ViewPort, BitMap, ColorMap).
-; Deux morceaux dans un même source (même schéma que gdisp_probe.s) :
-;   - LOADER défini : bootblock qui lit BLOBSZ octets à l'offset disque 1024 en CHIP et y saute ;
-;   - sinon : le corps de la sonde, binaire brut indépendant de la position.
-; Sorties sur la série (SERDAT en scrutation), en hexadécimal.
+; iscr_probe.s - black-box probe of intuition screen management (ANALYSIS TRACK).
+; TEST ASSET, NOT ROM code. Authored code; public structures (intuition 1.3: NewScreen,
+; Screen, public IntuitionBase; graphics: View, ViewPort, BitMap, ColorMap).
+; Two pieces in the same source (same scheme as gdisp_probe.s):
+;   - LOADER defined: bootblock that reads BLOBSZ bytes at disk offset 1024 into CHIP and jumps there;
+;   - otherwise: the probe body, a position-independent raw binary.
+; Output on the serial port (SERDAT, polled), in hexadecimal.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -29,7 +29,7 @@ boot:   movea.l a1,a5
         rts
         ELSE
 
-; ---------------------------------------------------------------- variables (base a4)
+; ---------------------------------------------------------------- variables (a4 base)
 O_EXEC   EQU 0
 O_GFX    EQU 4
 O_INT    EQU 8
@@ -37,8 +37,8 @@ O_S1     EQU 12
 O_S2     EQU 16
 O_S3     EQU 20
 O_WB     EQU 24
-O_CBM    EQU 28                         ; BitMap utilisateur 40 octets
-O_BUF    EQU 68                         ; tampon GetScreenData 400 octets
+O_CBM    EQU 28                         ; user BitMap 40 bytes
+O_BUF    EQU 68                         ; GetScreenData buffer 400 bytes
 O_END    EQU 468
 
 start:  lea     vars(pc),a4
@@ -52,7 +52,7 @@ start:  lea     vars(pc),a4
         moveq   #0,d0
         jsr     -552(a6)
         move.l  d0,O_INT(a4)
-        movea.l d0,a6                   ; a6 = IntuitionBase pour toute la sonde
+        movea.l d0,a6                   ; a6 = IntuitionBase for the whole probe
         bsr     reloc
         lea     m_head(pc),a0
         bsr     puts
@@ -62,7 +62,7 @@ start:  lea     vars(pc),a4
         lea     m_t0(pc),a0
         bsr     state
 
-; ----- OpenWorkBench deux fois
+; ----- OpenWorkBench twice
         jsr     -210(a6)
         move.l  d0,O_WB(a4)
         lea     m_owb(pc),a0
@@ -77,7 +77,7 @@ start:  lea     vars(pc),a4
         movea.l O_WB(a4),a0
         bsr     dscr
 
-; ----- S1 : lores, Height -1, NS_EXTENDED, LeftEdge 7
+; ----- S1: lores, Height -1, NS_EXTENDED, LeftEdge 7
         lea     ns1(pc),a0
         jsr     -198(a6)
         move.l  d0,O_S1(a4)
@@ -117,7 +117,7 @@ start:  lea     vars(pc),a4
         lea     m_mv4(pc),a0
         bsr     state
 
-; ----- profondeur
+; ----- depth arrangement
         movea.l O_S1(a4),a0
         jsr     -246(a6)                ; ScreenToBack
         lea     m_stb(pc),a0
@@ -155,7 +155,7 @@ start:  lea     vars(pc),a4
         bsr     puts
         bsr     shflags
 
-; ----- S2 : hires LACE, Height -1, BEHIND|QUIET, topaz 8 fourni
+; ----- S2: hires LACE, Height -1, BEHIND|QUIET, topaz 8 supplied
         lea     ns2(pc),a0
         jsr     -198(a6)
         move.l  d0,O_S2(a4)
@@ -169,7 +169,7 @@ start:  lea     vars(pc),a4
         movea.l O_S2(a4),a0
         bsr     dscr
 
-; ----- S3 : CUSTOMBITMAP, police introuvable, un gadget utilisateur
+; ----- S3: CUSTOMBITMAP, font not found, one user gadget
         movea.l O_EXEC(a4),a6
         move.l  #2*40*50,d0
         move.l  #$10002,d1
@@ -233,7 +233,7 @@ start:  lea     vars(pc),a4
         bsr     hex8
         bsr     nl
 
-; ----- fermetures
+; ----- closing
         movea.l O_S3(a4),a0
         jsr     -66(a6)
         movea.l O_S2(a4),a0
@@ -274,12 +274,12 @@ start:  lea     vars(pc),a4
         jsr     -198(a6)
         move.l  d0,O_S1(a4)
         movea.l d0,a0
-        jsr     -66(a6)                 ; dernier écran fermé
+        jsr     -66(a6)                 ; last screen closed
         bsr     wait
         lea     m_t10(pc),a0
         bsr     state
 
-; ----- état final pour la capture : S1 lores 3 plans devant, TopEdge 100
+; ----- final state for the capture: S1 lores 3 planes in front, TopEdge 100
         lea     ns1(pc),a0
         move.w  #100,2(a0)
         jsr     -198(a6)
@@ -291,8 +291,8 @@ start:  lea     vars(pc),a4
         bsr     puts
 .fin:   bra.s   .fin
 
-; ---------------------------------------------------------------- pointeurs absolus des données
-; le blob est chargé à une adresse quelconque : les dc.l vers des étiquettes sont posés à l'exécution
+; ---------------------------------------------------------------- absolute pointers to the data
+; the blob is loaded at an arbitrary address: the dc.l to labels are set at run time
 reloc:  lea     ns1(pc),a1
         lea     t_s1(pc),a0
         move.l  a0,20(a1)
@@ -314,7 +314,7 @@ reloc:  lea     ns1(pc),a1
         move.l  a0,(a1)
         rts
 
-; ---------------------------------------------------------------- attente ~0,6 s (deferred d'intuition)
+; ---------------------------------------------------------------- wait ~0.6 s (intuition deferred work)
 wait:   movem.l d0-d2/a0-a1/a6,-(a7)
         movea.l O_GFX(a4),a6
         moveq   #30-1,d2
@@ -323,8 +323,8 @@ wait:   movem.l d0-d2/a0-a1/a6,-(a7)
         movem.l (a7)+,d0-d2/a0-a1/a6
         rts
 
-; ---------------------------------------------------------------- état d'IntuitionBase
-; a0 = étiquette
+; ---------------------------------------------------------------- IntuitionBase state
+; a0 = label
 state:  movem.l d0-d2/a0-a2,-(a7)
         bsr     puts
         movea.l a6,a2
@@ -338,12 +338,12 @@ state:  movem.l d0-d2/a0-a2,-(a7)
         bsr     hex8
         lea     m_view(pc),a0
         bsr     puts
-        lea     $22(a2),a0              ; View : 9 mots
+        lea     $22(a2),a0              ; View: 9 words
         moveq   #9-1,d1
         bsr     dumpw
         lea     m_lim(pc),a0
         bsr     puts
-        lea     $44(a2),a0              ; MouseY MouseX ... jusqu'à $58
+        lea     $44(a2),a0              ; MouseY MouseX ... up to $58
         moveq   #10-1,d1
         bsr     dumpw
         lea     m_misc(pc),a0
@@ -357,7 +357,7 @@ state:  movem.l d0-d2/a0-a2,-(a7)
         move.w  $546(a2),d0
         bsr     hex4
         bsr     nl
-        movea.l $22(a2),a1              ; chaîne des ViewPorts
+        movea.l $22(a2),a1              ; ViewPort chain
 .vp:    move.l  a1,d0
         beq.s   .vpe
         lea     m_vp(pc),a0
@@ -376,7 +376,7 @@ state:  movem.l d0-d2/a0-a2,-(a7)
         bsr     nl
         movea.l (a1),a1
         bra.s   .vp
-.vpe:   movea.l $3C(a2),a1              ; liste des écrans
+.vpe:   movea.l $3C(a2),a1              ; screen list
 .sc:    move.l  a1,d0
         beq.s   .sce
         lea     m_sc(pc),a0
@@ -403,7 +403,7 @@ shflags: movem.l d0/a0-a1,-(a7)
         move.w  20(a1),d0
         bsr     hex4
         movea.l $14E(a1),a0
-        move.w  $1E(a0),d0              ; Layer.Flags de la BarLayer
+        move.w  $1E(a0),d0              ; Layer.Flags of the BarLayer
         bsr     hex4
         move.l  4(a0),d0                ; Layer.back
         bsr     hex8
@@ -413,37 +413,37 @@ shflags: movem.l d0/a0-a1,-(a7)
         movem.l (a7)+,d0/a0-a1
         rts
 
-; ---------------------------------------------------------------- dump d'un écran (a0)
+; ---------------------------------------------------------------- dump of a screen (a0)
 dscr:   movem.l d0-d3/a0-a3,-(a7)
         movea.l a0,a2
         move.l  a2,d0
         beq     .x
-        lea     m_s0(pc),a0             ; Screen +0..+$2B (22 mots)
+        lea     m_s0(pc),a0             ; Screen +0..+$2B (22 words)
         bsr     puts
         movea.l a2,a0
         moveq   #22-1,d1
         bsr     dumpw
-        lea     m_s1(pc),a0             ; ViewPort +$2C (20 mots)
+        lea     m_s1(pc),a0             ; ViewPort +$2C (20 words)
         bsr     puts
         lea     $2C(a2),a0
         moveq   #20-1,d1
         bsr     dumpw
-        lea     m_s2(pc),a0             ; RastPort +$54 (50 mots)
+        lea     m_s2(pc),a0             ; RastPort +$54 (50 words)
         bsr     puts
         lea     $54(a2),a0
         moveq   #50-1,d1
         bsr     dumpw
-        lea     m_s3(pc),a0             ; BitMap +$B8 (20 mots)
+        lea     m_s3(pc),a0             ; BitMap +$B8 (20 words)
         bsr     puts
         lea     $B8(a2),a0
         moveq   #20-1,d1
         bsr     dumpw
-        lea     m_s4(pc),a0             ; +$146..+$159 (10 mots)
+        lea     m_s4(pc),a0             ; +$146..+$159 (10 words)
         bsr     puts
         lea     $146(a2),a0
         moveq   #10-1,d1
         bsr     dumpw
-        lea     m_s5(pc),a0             ; TextAttr de Screen.Font
+        lea     m_s5(pc),a0             ; TextAttr of Screen.Font
         bsr     puts
         movea.l $28(a2),a0
         move.l  a0,d0
@@ -455,7 +455,7 @@ dscr:   movem.l d0-d3/a0-a3,-(a7)
         movea.l $50(a2),a0
         moveq   #6-1,d1
         bsr     dumpw
-        lea     m_s7(pc),a0             ; BarLayer : 20 premiers mots + police du rp
+        lea     m_s7(pc),a0             ; BarLayer: first 20 words + font of the rp
         bsr     puts
         movea.l $14E(a2),a3
         movea.l a3,a0
@@ -481,7 +481,7 @@ dscr:   movem.l d0-d3/a0-a3,-(a7)
         bsr     dumpw
         movea.l (a3),a3
         bra.s   .g
-.ge:    lea     m_col(pc),a0            ; couleurs 0..31
+.ge:    lea     m_col(pc),a0            ; colours 0..31
         bsr     puts
         movea.l $30(a2),a3              ; vp_ColorMap
         moveq   #0,d3
@@ -502,8 +502,8 @@ dscr:   movem.l d0-d3/a0-a3,-(a7)
 .x:     movem.l (a7)+,d0-d3/a0-a3
         rts
 
-; ---------------------------------------------------------------- sorties série
-; a0 = adresse, d1 = nombre de mots - 1
+; ---------------------------------------------------------------- serial output
+; a0 = address, d1 = number of words - 1
 dumpw:  move.l  d2,-(a7)
         moveq   #0,d2
 .w:     move.w  (a0)+,d0
@@ -566,7 +566,7 @@ putc:   movem.l d0/d2,-(a7)
         movem.l (a7)+,d0/d2
         rts
 
-; ---------------------------------------------------------------- données
+; ---------------------------------------------------------------- data
         CNOP    0,4
 ; NewScreen : Left, Top, Width, Height, Depth, DP, BP, ViewModes, Type, Font, DefaultTitle, Gadgets, CustomBitMap
 ns1:    dc.w    7,40,320,-1,3
@@ -576,7 +576,7 @@ ns1:    dc.w    7,40,320,-1,3
 ns2:    dc.w    0,20,640,-1,1
         dc.b    0,1
         dc.w    $8004,$018F
-        dc.l    0,0,0,0                 ; Font, titre : posés par reloc
+        dc.l    0,0,0,0                 ; Font, title: set by reloc
 ns3:    dc.w    0,150,320,50,2
         dc.b    1,2
         dc.w    $0000,$004F
@@ -587,7 +587,7 @@ ta8:    dc.l    0                       ; -> topaz (reloc)
 tabad:  dc.l    0                       ; -> badf (reloc)
         dc.w    8
         dc.b    0,0
-; gadget utilisateur booléen 20x10 en (100,2), sans rendu
+; boolean user gadget 20x10 at (100,2), no rendering
 ugad:   dc.l    0
         dc.w    100,2,20,10,$0003,$0001,$0001
         dc.l    0,0,0,0,0

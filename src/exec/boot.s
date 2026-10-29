@@ -1,86 +1,86 @@
-; src/exec/boot.s — exec.library : en-tête ROM, coldstart, build ExecBase,
-; publication de SysBase, auto-vérification + auto-test. Module « glue » du
-; coldstart (M2.3 : extrait de l'ancien coldstart.s monolithique).
-; Piste IMPLÉMENTATION (« clean ») : écrit depuis docs/analysis/exec-spec.md +
-; ABI publique. AUCUNE lecture de la ROM.
+; src/exec/boot.s — exec.library: ROM header, coldstart, ExecBase build,
+; SysBase publication, self-check + self-test. "Glue" module of the
+; coldstart (M2.3: extracted from the old monolithic coldstart.s).
+; IMPLEMENTATION track ("clean"): written from docs/analysis/exec-spec.md +
+; public ABI. NO reading of the ROM.
 ;
-; Reset $FC00D2 -> superviseur + gel HW (ROUGE) -> coupe overlay + pile (BLEU)
-; -> ExecBase + jump table (CYAN) -> publie SysBase, auto-vérif + auto-test des
-; fonctions via la jump table -> BLANC si tout passe, MAGENTA sinon.
+; Reset $FC00D2 -> supervisor + HW freeze (RED) -> overlay off + stack (BLUE)
+; -> ExecBase + jump table (CYAN) -> publishes SysBase, self-check + self-test of the
+; functions via the jump table -> WHITE if everything passes, MAGENTA otherwise.
 ;
-; Couleur -> phase (débogueur visuel) : rouge=entré, bleu=overlay off/pile,
-; cyan=build ExecBase+table, blanc=SUCCÈS, magenta=échec d'une vérification.
+; Colour -> phase (visual debugger): red=entered, blue=overlay off/stack,
+; cyan=build ExecBase+table, white=SUCCESS, magenta=failure of a check.
 
                 include "exec.i"
-                include "dospkt.i"       ; D3 : constantes Process/packet pour le scaffold de preuve
-                include "dos.i"          ; D3c : DL_ROOT/RN_INFO/DI_DEVINFO (montage DeviceNode)
-                include "expansion.i"    ; expansion.library : EXP_LVO_*/ConfigDev (preuve round-trip)
+                include "dospkt.i"       ; D3: Process/packet constants for the proof scaffold
+                include "dos.i"          ; D3c: DL_ROOT/RN_INFO/DI_DEVINFO (DeviceNode mount)
+                include "expansion.i"    ; expansion.library: EXP_LVO_*/ConfigDev (round-trip proof)
 
                 xref    newlist          ; lists.s
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
-                xref    add_slow_memory  ; memory.s (slow RAM $C00000 en tête de MemList)
+                xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
-                xref    dispatch_in      ; interrupts.s (M7c : lancement 1re tâche = transition user-mode)
-                xref    build_reslist    ; resident.s (scan des ROMTags)
+                xref    dispatch_in      ; interrupts.s (M7c: launch of the 1st task = user-mode transition)
+                xref    build_reslist    ; resident.s (scan of the ROMTags)
                 xref    task_alloc
-                xref    ciaa_server      ; cia.s (serveur PORTS/INT2)
-                xref    ciab_server      ; cia.s (serveur EXTER/INT6, vecteur exclusif)
-                xref    gfx_display_init ; graphics/gfx.s (M4a : premier affichage piloté par le Copper)
-                xref    strap_boot       ; exec/strap.s (M6r : décision de boot -> insert-disk si non bootable)
-                xref    alert_boothook   ; exec/execmisc.s (rôle d'alert.hook)
-                xref    kbd_selftest     ; exec/keyboard.s (F2a : réception+décodage clavier CIA-A)
-                xref    kbd_devevent     ; exec/kbddev.s (keyboard.device : keycode brut synthétique pour la preuve)
-                xref    kbd_install      ; exec/keyboard.s (F2b : installe le driver clavier LIVE interrupt-driven)
-                xref    font8x8          ; graphics/font8x8.s (#3a : glyphes 8x8 — readback de preuve console.device)
-                xref    dv_validate      ; dos/diskvalidator.s (#4 : valide le bitmap OFS de DF0:)
-                xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
-                xref    req_draw         ; intuition/requester.s (requester : rendu bord+texte)
-                xdef    boot_dos_start   ; dos/dos_lib.s (rt_Init de dos.library)
+                xref    ciaa_server      ; cia.s (PORTS/INT2 server)
+                xref    ciab_server      ; cia.s (EXTER/INT6 server, exclusive vector)
+                xref    gfx_display_init ; graphics/gfx.s (M4a: first Copper-driven display)
+                xref    strap_boot       ; exec/strap.s (M6r: boot decision -> insert-disk if not bootable)
+                xref    alert_boothook   ; exec/execmisc.s (role of alert.hook)
+                xref    kbd_selftest     ; exec/keyboard.s (F2a: CIA-A keyboard reception+decoding)
+                xref    kbd_devevent     ; exec/kbddev.s (keyboard.device: synthetic raw keycode for the proof)
+                xref    kbd_install      ; exec/keyboard.s (F2b: installs the LIVE interrupt-driven keyboard driver)
+                xref    font8x8          ; graphics/font8x8.s (#3a: 8x8 glyphs — console.device proof readback)
+                xref    dv_validate      ; dos/diskvalidator.s (#4: validates the OFS bitmap of DF0:)
+                xref    kbd_cook         ; exec/keymap.s (#5: cook keycode(+qualifiers)->ASCII, US/AZERTY)
+                xref    req_draw         ; intuition/requester.s (requester: border+text rendering)
+                xdef    boot_dos_start   ; dos/dos_lib.s (rt_Init of dos.library)
                 xref    dos_mountlist
                 xref    strap_romboot    ; exec/strap.s
                 xref    dos_df0bootnode  ; dos/dos_lib.s
-                xref    req_input_handler ; intuition/requester.s (requester : handler clic sur input.device)
-                xref    td_read_track0   ; exec/trackdisk.s (B2 : lecture d'une piste MFM brute de DF0)
-                xref    td_decode_track  ; exec/trackdisk.s (B3 : décodage MFM piste -> secteurs 512 o)
-                xref    td_read_track    ; exec/trackdisk.s (B2b : seek + lecture d'une piste arbitraire)
-                xref    td_disk_present  ; exec/trackdisk.s (écran insert-disk : disquette insérée ?)
-                xref    ofs_read_file    ; dos/ofs.s (D1 : lecture seule OFS -> lire un fichier par nom)
-                xref    dos_loadseg      ; dos/loadseg.s (D2 : charger un exécutable hunk de l'OFS + reloc)
-                xref    dos_unloadseg    ; dos/loadseg.s (D2 : libérer une seglist)
-                xref    proc_create      ; dos/process.s (D3 : créer un Process + pr_MsgPort)
-                xref    dos_sendpkt      ; dos/process.s (D3 : envoi d'un DOS packet + WaitPort/GetMsg)
-                xref    dos_handler_df0  ; dos/handler.s (D3b : process file-handler DF0: OFS)
-                xref    ls_load_hunks    ; dos/loadseg.s (D3d : parse hunk depuis un buffer lu via dos)
-                xref    con_handler      ; dos/conhandler.s (E1 : process handler console-série)
-                xref    exec_AddTail     ; exec/lists.s (ExecBase dans LibList au coldstart)
-                xref    shell_main       ; dos/shell.s (E2 : shell interactif minimal)
-                xref    feeder_main      ; dos/feeder.s (intégration F : feeder clavier -> input.device)
+                xref    req_input_handler ; intuition/requester.s (requester: click handler on input.device)
+                xref    td_read_track0   ; exec/trackdisk.s (B2: read of a raw MFM track of DF0)
+                xref    td_decode_track  ; exec/trackdisk.s (B3: MFM decoding track -> 512-byte sectors)
+                xref    td_read_track    ; exec/trackdisk.s (B2b: seek + read of an arbitrary track)
+                xref    td_disk_present  ; exec/trackdisk.s (insert-disk screen: floppy inserted?)
+                xref    ofs_read_file    ; dos/ofs.s (D1: read-only OFS -> read a file by name)
+                xref    dos_loadseg      ; dos/loadseg.s (D2: load a hunk executable from the OFS + reloc)
+                xref    dos_unloadseg    ; dos/loadseg.s (D2: free a seglist)
+                xref    proc_create      ; dos/process.s (D3: create a Process + pr_MsgPort)
+                xref    dos_sendpkt      ; dos/process.s (D3: send a DOS packet + WaitPort/GetMsg)
+                xref    dos_handler_df0  ; dos/handler.s (D3b: DF0: OFS file-handler process)
+                xref    ls_load_hunks    ; dos/loadseg.s (D3d: parse hunks from a buffer read via dos)
+                xref    con_handler      ; dos/conhandler.s (E1: serial console handler process)
+                xref    exec_AddTail     ; exec/lists.s (ExecBase in LibList at coldstart)
+                xref    shell_main       ; dos/shell.s (E2: minimal interactive shell)
+                xref    feeder_main      ; dos/feeder.s (integration F: keyboard feeder -> input.device)
                 ifne    LOADSCREEN_DEMO
-                xref    loadscreen_demo  ; graphics/loadscreen.s (écran de chargement, gaté LOADSCREEN_DEMO)
+                xref    loadscreen_demo  ; graphics/loadscreen.s (loading screen, gated by LOADSCREEN_DEMO)
                 endc
-                xref    gp_delta8        ; exec/gameport.s (souris : delta signé avec wraparound 8 bits)
-                xref    gp_poll          ; exec/gameport.s (souris : logique poll -> InputEvent RAWMOUSE via IND_WRITEEVENT)
-                xref    gp_install       ; exec/gameport.s (souris : arme gp_vblank_server sur la chaîne VERTB)
-                xref    pointer_input_handler ; intuition/pointer.s (accumulateur deltas relatifs -> position absolue)
+                xref    gp_delta8        ; exec/gameport.s (mouse: signed delta with 8-bit wraparound)
+                xref    gp_poll          ; exec/gameport.s (mouse: poll logic -> RAWMOUSE InputEvent via IND_WRITEEVENT)
+                xref    gp_install       ; exec/gameport.s (mouse: arms gp_vblank_server on the VERTB chain)
+                xref    pointer_input_handler ; intuition/pointer.s (accumulator relative deltas -> absolute position)
 
                 xref    exec_softint_init
-                xdef    ser_puts         ; émission série (diagnostics du runtime BCPL)
+                xdef    ser_puts         ; serial output (diagnostics of the BCPL runtime)
                 xdef    ser_puthex
-                xdef    ser_lock         ; émission série atomique (Forbid gated SCHED_ON) — utilisé par conhandler/feeder/shell
+                xdef    ser_lock         ; atomic serial output (Forbid gated by SCHED_ON) — used by conhandler/feeder/shell
                 xdef    ser_unlock
 
-DEMO_STK     EQU 2048         ; pile des tâches démo (frames de switch)
-D3_STK       EQU 4096         ; pile des processes D3 (driver/handler : ser_puts + ofs/loadseg plus tard)
-LYT_PIX      macro                    ; pixel (\1, \2) du BitMap de la sonde layers == \3, sinon échec
+DEMO_STK     EQU 2048         ; stack of the demo tasks (switch frames)
+D3_STK       EQU 4096         ; stack of the D3 processes (driver/handler: ser_puts + ofs/loadseg later)
+LYT_PIX      macro                    ; pixel (\1, \2) of the layers probe BitMap == \3, otherwise failure
         moveq   #\1,d0
         moveq   #\2,d1
         moveq   #\3,d2
         bsr     lyt_px
         bne     lyt_fail
              endm
-LYT_RPIX     macro                    ; ReadPixel(L2, \1, \2) == \3, sinon échec
+LYT_RPIX     macro                    ; ReadPixel(L2, \1, \2) == \3, otherwise failure
         moveq   #\1,d0
         moveq   #\2,d1
         moveq   #\3,d2
@@ -93,94 +93,94 @@ AUT_LENGTH   EQU 38
 AUT_PERIOD   EQU 42
 AUT_VOLUME   EQU 44
 AUT_CYCLES   EQU 46
-SEMT_NEST    EQU 14           ; SignalSemaphore ss_NestCount / ss_Owner / ss_QueueCount (sonde sémaphores)
+SEMT_NEST    EQU 14           ; SignalSemaphore ss_NestCount / ss_Owner / ss_QueueCount (semaphore probe)
 SEMT_OWNER   EQU 40
 SEMT_QC      EQU 44
 SEMT_SIZE    EQU 48
-KDT_ACTUAL   EQU 32           ; IOStdReq io_Actual / io_Length / io_Data (sonde keyboard.device)
+KDT_ACTUAL   EQU 32           ; IOStdReq io_Actual / io_Length / io_Data (keyboard.device probe)
 KDT_LENGTH   EQU 36
 KDT_DATA     EQU 40
 IOF_QUICK_K  EQU 1
-INP_IO_DATA  EQU 40           ; #2 : IOStdReq io_Data (boot.s n'inclut pas disk.i -> EQU local)
-INPUT_TESTBLK EQU 120         ; #2 : bloc de test input.device = ioreq(48)+h1(24)+h2(24)+event(22), arrondi pair
-CMD_WRITE_BO EQU 3            ; #3a : io_Command CMD_WRITE (EQU local)
-CMD_READ_BO  EQU 2            ; #3b : io_Command CMD_READ (EQU local)
-IO_LEN_BO    EQU 36           ; #3a : IOStdReq io_Length (EQU local)
-; D3b : bloc du fs-driver (une seule AllocMem, sous-parties long-alignées pour les BPTR)
+INP_IO_DATA  EQU 40           ; #2: IOStdReq io_Data (boot.s does not include disk.i -> local EQU)
+INPUT_TESTBLK EQU 120         ; #2: input.device test block = ioreq(48)+h1(24)+h2(24)+event(22), rounded even
+CMD_WRITE_BO EQU 3            ; #3a: io_Command CMD_WRITE (local EQU)
+CMD_READ_BO  EQU 2            ; #3b: io_Command CMD_READ (local EQU)
+IO_LEN_BO    EQU 36           ; #3a: IOStdReq io_Length (local EQU)
+; D3b: fs-driver block (a single AllocMem, long-aligned sub-parts for the BPTRs)
 FSD_SP       EQU 0            ; StandardPacket (68)
 FSD_FH       EQU 68           ; FileHandle (44)
-FSD_BUF      EQU 112          ; buffer de lecture (2048)
-FSD_NAME     EQU 2160         ; BSTR nom (len + "kickslop")
+FSD_BUF      EQU 112          ; read buffer (2048)
+FSD_NAME     EQU 2160         ; BSTR name (len + "kickslop")
 FSD_TOTAL    EQU 2176
-DEMO_SIG     EQU 16           ; bit de signal de task_H (hors 0-15 réservés système)
-DEMO_PRI_H   EQU 10           ; task_H : haute priorité (cible du yield-sur-Permit)
-FB_SIG       EQU 17           ; bit de signal de task_fb (preuve atomicité Forbid ; hors 0-15, != DEMO_SIG)
-FB_PRI_FA    EQU 3            ; task_fa : priorité basse (tient le Forbid)
-FB_PRI_FB    EQU 7            ; task_fb : priorité HAUTE (préempterait fa si Forbid n'était pas respecté)
-DEMO_PRI_T   EQU 10           ; task_timer (M7a) : même pri que task_H -> partagent les dispatches
-CONS_THRESH  EQU 100          ; réveils de task_H (via yield) requis pour « M3F LIVE »
+DEMO_SIG     EQU 16           ; signal bit of task_H (outside the 0-15 reserved for the system)
+DEMO_PRI_H   EQU 10           ; task_H: high priority (target of the yield-on-Permit)
+FB_SIG       EQU 17           ; signal bit of task_fb (Forbid atomicity proof; outside 0-15, != DEMO_SIG)
+FB_PRI_FA    EQU 3            ; task_fa: low priority (holds the Forbid)
+FB_PRI_FB    EQU 7            ; task_fb: HIGH priority (would preempt fa if Forbid were not respected)
+DEMO_PRI_T   EQU 10           ; task_timer (M7a): same pri as task_H -> they share the dispatches
+CONS_THRESH  EQU 100          ; wake-ups of task_H (via yield) required for "M3F LIVE"
                 ifne    M7E_COOP
-SPIN_THRESH  EQU 0            ; coopératif : pas de task_S -> « M3F LIVE » par le seul yield
+SPIN_THRESH  EQU 0            ; cooperative: no task_S -> "M3F LIVE" through the yield alone
                 else
-SPIN_THRESH  EQU 5            ; itérations de task_S (via préemption) requises pour « M3F LIVE »
+SPIN_THRESH  EQU 5            ; iterations of task_S (via preemption) required for "M3F LIVE"
                 endc
-TCONS_THRESH EQU 50           ; réveils de task_timer (via l'IRQ MICROHZ) requis pour « M7A TIMER OK »
-M7A_MINTICKS EQU 250          ; ET délai minimum (ticks VBlank = 5 s) écoulé avant d'émettre OK :
-                              ; le détecteur de clash tourne à chaque INT6 (~2/s), donc en RED un
-                              ; clash tombe BIEN AVANT 5 s -> « M7A FAILED » précède, OK n'apparaît pas.
+TCONS_THRESH EQU 50           ; wake-ups of task_timer (via the MICROHZ IRQ) required for "M7A TIMER OK"
+M7A_MINTICKS EQU 250          ; AND minimum delay (VBlank ticks = 5 s) elapsed before emitting OK:
+                              ; the clash detector runs at each INT6 (~2/s), so in RED a
+                              ; clash happens WELL BEFORE 5 s -> "M7A FAILED" comes first, OK does not appear.
                 ifne    M7D_STRESS_MAX
-DEMO_PRI_P   EQU 20           ; RED A/B : task_port martèle le port (contention max vs IRQ)
+DEMO_PRI_P   EQU 20           ; RED A/B: task_port hammers the port (max contention vs IRQ)
                 else
-DEMO_PRI_P   EQU 0            ; task_port (M7d) : pri 0 -> partage le CPU équitablement avec task_S/L
+DEMO_PRI_P   EQU 0            ; task_port (M7d): pri 0 -> shares the CPU fairly with task_S/L
                 endc
-STRESS_K     EQU 4            ; nb de messages de stress circulant sur le port partagé
-PORTT_THRESH EQU 60           ; itérations GetMsg+PutMsg de task_port requises pour « M7D PORTS OK »
-PORTI_THRESH EQU 300          ; itérations côté interruption requises (producteur rapide ~INT6)
-PEMPTY_LIMIT EQU 50000        ; M7d : GetMsg vides consécutifs = nœuds perdus (corruption) ; GREEN ~0
-SENT_H       EQU $CAFE0010    ; sentinelles de contexte (doivent survivre à TOUT switch)
+STRESS_K     EQU 4            ; number of stress messages circulating on the shared port
+PORTT_THRESH EQU 60           ; GetMsg+PutMsg iterations of task_port required for "M7D PORTS OK"
+PORTI_THRESH EQU 300          ; interrupt-side iterations required (fast producer ~INT6)
+PEMPTY_LIMIT EQU 50000        ; M7d: consecutive empty GetMsgs = lost nodes (corruption); GREEN ~0
+SENT_H       EQU $CAFE0010    ; context sentinels (must survive EVERY switch)
 SENT_L       EQU $CAFE0020
 SENT_S       EQU $CAFE0030
-SENT_T       EQU $CAFE0040    ; sentinelle de task_timer (M7a)
-SENT_P       EQU $CAFE0050    ; sentinelle de task_port (M7d)
-SENT_Q2      EQU $CAFE0060    ; sentinelle de task_q2 (M7h, spinner-2 d'isolation)
-SENT_RM      EQU $CAFE0070    ; sentinelle de task_rm (M7j, tâche qui se termine)
-M7H_MINTICKS EQU 150          ; ticks VBlank min avant d'émettre « M7H QUANTUM OK » (ratio stable, ~3 s)
+SENT_T       EQU $CAFE0040    ; sentinel of task_timer (M7a)
+SENT_P       EQU $CAFE0050    ; sentinel of task_port (M7d)
+SENT_Q2      EQU $CAFE0060    ; sentinel of task_q2 (M7h, isolation spinner-2)
+SENT_RM      EQU $CAFE0070    ; sentinel of task_rm (M7j, terminating task)
+M7H_MINTICKS EQU 150          ; min VBlank ticks before emitting "M7H QUANTUM OK" (stable ratio, ~3 s)
                 ifne    M7L_OLD_CONV
-TT_MICRO_REQ EQU 400000       ; RED M7L_OLD_CONV : /20000 -> 20 int -> ~7,2 ms (période inchangée)
+TT_MICRO_REQ EQU 400000       ; RED M7L_OLD_CONV: /20000 -> 20 int -> ~7.2 ms (period unchanged)
                 else
-TT_MICRO_REQ EQU 7000         ; M7l : 7000 µs RÉELS (≈ ancien débit ~140/s)
+TT_MICRO_REQ EQU 7000         ; M7l: 7000 REAL us (~= old rate ~140/s)
                 endc
-; (FTEST_LO/FTEST_HI, région de test multi-header, sont dans exec.i — carte mémoire)
+; (FTEST_LO/FTEST_HI, multi-header test region, are in exec.i — memory map)
 
-; L'en-tête doit atterrir à $FC0000 : boot.o est le PREMIER objet passé à vlink
-; (cf. Makefile), son CODE porte donc le reset vector. hdr_start = offset 0 de la
-; section ; le padding utilise une différence intra-section (constante en relogeable).
+; The header must land at $FC0000: boot.o is the FIRST object passed to vlink
+; (cf. Makefile), so its CODE carries the reset vector. hdr_start = offset 0 of the
+; section; the padding uses an intra-section difference (constant in relocatable output).
 hdr_start:
         dc.w    $1111
         dc.w    $4EF9
-        dc.l    coldstart        ; +04 PC de reset
+        dc.l    coldstart        ; +04 reset PC
         dc.l    $0000FFFF        ; +08
-        dc.l    $00220005        ; +0C version ROM 34.5
+        dc.l    $00220005        ; +0C ROM version 34.5
         dc.l    $00220002        ; +10
         dc.l    $FFFFFFFF        ; +14
         dcb.b   $D0-(*-hdr_start),0
         dc.w    $4E70            ; $FC00D0 RESET (magic_reset)
 
 coldstart:                        ; $FC00D2
-        ; --- Phase 1 : superviseur + gel matériel (straight-line, pas de pile) ---
+        ; --- Phase 1: supervisor + hardware freeze (straight-line, no stack) ---
         move.w  #$2700,sr
         move.w  #$7FFF,DMACON
         move.w  #$7FFF,INTENA
         move.w  #$7FFF,INTREQ
         move.w  #C_RED,COLOR00
 
-        ; --- Phase 2 : coupe overlay puis installe la pile ---
+        ; --- Phase 2: overlay off then install the stack ---
         move.b  #$03,CIAA_DDRA
-        move.b  #$02,CIAA_PRA        ; OVL off -> RAM chip à $0
+        move.b  #$02,CIAA_PRA        ; OVL off -> chip RAM at $0
         move.l  #STACKTOP,sp
-        lea     LOWVARS_LO,a0        ; variables de la RAM basse à zéro : la RAM n'est pas nulle à l'allumage sur une
-        move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; vraie machine ni sous WinUAE (un index de tampon clavier impair y
-.lv_clr:                             ; faisait une erreur d'adresse au 1er appui ; FS-UAE vide la RAM)
+        lea     LOWVARS_LO,a0        ; low-RAM variables zeroed: RAM is not null at power-on on a
+        move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; real machine nor under WinUAE (an odd keyboard buffer index there
+.lv_clr:                             ; caused an address error at the 1st key press; FS-UAE clears RAM)
         clr.l   (a0)+
         dbra    d0,.lv_clr
         move.w  #C_BLUE,COLOR00
@@ -188,25 +188,25 @@ coldstart:                        ; $FC00D2
         lea     msg_cold(pc),a0
         bsr     ser_puts
 
-        ; --- F2a : réception+décodage clavier CIA-A (TÔT, interruptions encore masquées -> pas de course avec le
-        ; cia_wrapper qui clearait le flag SP). Décode le flux power-up du clavier émulé ($FD initiate + $FE terminate),
-        ; prouvant la voie clavier SANS injecteur. d0 = flags ; d0==3 = les deux vus. ---
-        jsr     kbd_selftest         ; keyboard.o lié loin -> jsr absolu
+        ; --- F2a: CIA-A keyboard reception+decoding (EARLY, interrupts still masked -> no race with the
+        ; cia_wrapper that cleared the SP flag). Decodes the power-up stream of the emulated keyboard ($FD initiate +
+        ; $FE terminate), proving the keyboard path WITHOUT injector. d0 = flags; d0==3 = both seen. ---
+        jsr     kbd_selftest         ; keyboard.o linked far away -> absolute jsr
         cmp.b   #3,d0
         bne.s   .f2a_nokbd
         lea     msg_f2kbd(pc),a0
-        bsr     ser_puts             ; « F2 KBD OK »
+        bsr     ser_puts             ; "F2 KBD OK"
 .f2a_nokbd:
 
-        ; --- Phase 3 : ExecBase + jump table ---
+        ; --- Phase 3: ExecBase + jump table ---
         move.w  #C_CYAN,COLOR00
-        lea     EXECBASE,a0          ; zéro-remplit la zone des champs positifs
+        lea     EXECBASE,a0          ; zero-fill the area of the positive fields
         move.w  #(EXEC_POSSIZE/4)-1,d0
 .zf:
         clr.l   (a0)+
         dbf     d0,.zf
 
-        lea     EXECBASE,a6          ; a6 = SysBase (convention library base)
+        lea     EXECBASE,a6          ; a6 = SysBase (library base convention)
         move.b  #NT_LIBRARY,LN_TYPE(a6)
         move.l  #exec_name,LN_NAME(a6)
         move.w  #EXEC_NEGSIZE,LIB_NEGSIZE(a6)
@@ -234,8 +234,8 @@ coldstart:                        ; $FC00D2
         jsr     newlist
         lea     EB_LIBLIST(a6),a1
         jsr     newlist
-        lea     EB_LIBLIST(a6),a0    ; exec.library est la 1re bibliothèque de LibList (des programmes en
-        move.l  a6,a1                ; déduisent GfxBase : ExecBase->ln_Succ->ln_Succ, après expansion)
+        lea     EB_LIBLIST(a6),a0    ; exec.library is the 1st library of LibList (programs
+        move.l  a6,a1                ; derive GfxBase from it: ExecBase->ln_Succ->ln_Succ, after expansion)
         jsr     exec_AddTail
         lea     EB_PORTLIST(a6),a1
         jsr     newlist
@@ -248,9 +248,9 @@ coldstart:                        ; $FC00D2
 
         jsr     build_jumptable
         jsr     init_memory
-        jsr     init_task            ; TCB « boot task » -> ThisTask (avant selftest)
+        jsr     init_task            ; "boot task" TCB -> ThisTask (before selftest)
 
-        ; --- Phase 4 : publie SysBase, auto-vérif, auto-test ---
+        ; --- Phase 4: publish SysBase, self-check, self-test ---
         move.l  a6,($4).w
 
         move.l  ($4).w,d0
@@ -262,36 +262,36 @@ coldstart:                        ; $FC00D2
         not.l   d0
         cmp.l   EB_CHKBASE(a6),d0
         bne     eb_fail
-        move.l  EB_MEMLIST(a6),d0    ; lh_Head doit pointer sur le MemHeader ajouté
+        move.l  EB_MEMLIST(a6),d0    ; lh_Head must point to the added MemHeader
         cmp.l   #MH_CHIP,d0
         bne     eb_fail
 
-        bsr     selftest             ; d0 = 0 (OK) / !=0 (échec)
+        bsr     selftest             ; d0 = 0 (OK) / !=0 (failure)
         tst.l   d0
         bne     eb_fail
-        jsr     add_slow_memory      ; après le selftest mémoire (qui suppose la chip en tête de liste)
-        lsr.l   #8,d0                ; octets -> Ko (512 Ko = $0200)
+        jsr     add_slow_memory      ; after the memory selftest (which assumes chip at the head of the list)
+        lsr.l   #8,d0                ; bytes -> KB (512 KB = $0200)
         lsr.l   #2,d0
         move.w  d0,d2
         lea     msg_memslow(pc),a0
-        bsr     ser_puts             ; « MEM SLOW KB= »
+        bsr     ser_puts             ; "MEM SLOW KB="
         move.w  d2,d0
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
-        bsr     rdf_selftest         ; RawDoFmt (-522) : formatage comparé à une chaîne attendue
-        ; --- M3a : arme VBlank et prouve que la chaîne d'interruptions tourne ---
+        bsr     rdf_selftest         ; RawDoFmt (-522): formatting compared with an expected string
+        ; --- M3a: arm VBlank and prove that the interrupt chain runs ---
         jsr     init_ints
-        jsr     exec_softint_init    ; file des interruptions logicielles (Cause) + serveur SOFTINT
-        move.l  #$00100000,d1        ; timeout du spin (le GREEN sort sur count=5 bien avant)
+        jsr     exec_softint_init    ; software interrupt queue (Cause) + SOFTINT server
+        move.l  #$00100000,d1        ; spin timeout (GREEN exits on count=5 well before)
 .vbl_wait:
         lea     VBL_COUNT,a0
-        move.l  (a0),d0              ; chargement DANS la boucle (le compteur évolue)
+        move.l  (a0),d0              ; load INSIDE the loop (the counter changes)
         cmp.l   #5,d0
         bcc.s   .vbl_live
         subq.l  #1,d1
         bne.s   .vbl_wait
-        lea     msg_vbltimeout(pc),a0  ; interruptions mortes -> échec
+        lea     msg_vbltimeout(pc),a0  ; dead interrupts -> failure
         bsr     ser_puts
         bra     eb_fail
 .vbl_live:
@@ -300,68 +300,68 @@ coldstart:                        ; $FC00D2
 
         move.w  #C_WHITE,COLOR00
         lea     msg_ok(pc),a0
-        bsr     ser_puts             ; « self-test passed » émis AVANT le lancement (gate conservée)
+        bsr     ser_puts             ; "self-test passed" emitted BEFORE the launch (gate kept)
 
-        ; --- M4 : scan des résidents + InitCode (machinerie data-driven) ---
-        ; Prouve la MACHINERIE de découverte de modules (scan ROM des ROMTags -> ResModules
-        ; pri-trié -> InitResident/InitCode de chacun en ordre décroissant) avec des résidents
-        ; DÉMO. N'EST PAS le handoff de boot : le handoff reste la démo M3f codée en dur
-        ; ci-dessous (rte qui ne revient jamais) tant qu'aucun vrai module (cia/timer...)
-        ; n'existe. Les résidents démo ne font qu'émettre leur nom ; rien n'est lancé par eux.
-        move.l  #127,RES_LASTPRI     ; borne haute (toute RT_PRI <= 127 passe)
+        ; --- M4: resident scan + InitCode (data-driven machinery) ---
+        ; Proves the module discovery MACHINERY (ROM scan of the ROMTags -> pri-sorted ResModules
+        ; -> InitResident/InitCode of each in descending order) with DEMO residents.
+        ; It is NOT the boot handoff: the handoff remains the hard-coded M3f demo
+        ; below (rte that never returns) as long as no real module (cia/timer...)
+        ; exists. The demo residents only emit their name; nothing is launched by them.
+        move.l  #127,RES_LASTPRI     ; upper bound (any RT_PRI <= 127 passes)
         clr.l   RES_COUNT
-        jsr     build_reslist        ; scanne [RESSCAN_LO,HI) -> ExecBase->ResModules
-        moveq   #RTF_COLDSTART,d0    ; startClass : résidents de démarrage à froid
-        moveq   #0,d1                ; version minimale 0
-        jsr     LVO_INITCODE(a6)     ; init chaque résident démo (émet son nom en ordre de pri)
-        lea     res_mid_name(pc),a1  ; FindResident(nom) doit retrouver le bon résident
+        jsr     build_reslist        ; scans [RESSCAN_LO,HI) -> ExecBase->ResModules
+        moveq   #RTF_COLDSTART,d0    ; startClass: cold-start residents
+        moveq   #0,d1                ; minimum version 0
+        jsr     LVO_INITCODE(a6)     ; init each demo resident (emits its name in pri order)
+        lea     res_mid_name(pc),a1  ; FindResident(name) must find the right resident
         jsr     LVO_FINDRESIDENT(a6)
         cmp.l   #res_mid,d0
         bne     res_fail
-        cmp.l   #3,RES_COUNT         ; les 3 résidents démo direct-init initialisés ?
+        cmp.l   #3,RES_COUNT         ; the 3 direct-init demo residents initialised?
         bne     res_fail
         lea     msg_res_ok(pc),a0
-        bsr     ser_puts             ; « M4 RESIDENTS OK »
+        bsr     ser_puts             ; "M4 RESIDENTS OK"
 
-        ; --- M5a : vérifier le résident AUTOINIT (demo.autolib) créé par MakeLibrary ---
-        lea     EB_LIBLIST(a6),a0    ; la lib doit avoir été ajoutée à LibList
+        ; --- M5a: check the AUTOINIT resident (demo.autolib) created by MakeLibrary ---
+        lea     EB_LIBLIST(a6),a0    ; the lib must have been added to LibList
         lea     autolib_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
-        beq     auto_fail            ; lib absente -> AUTOINIT/add KO
-        move.l  d0,a2                ; a2 = base de la lib
-        cmp.w   #40,LIB_VERSION(a2)  ; InitStruct (INITWORD) a posé la version ?
+        beq     auto_fail            ; lib missing -> AUTOINIT/add failed
+        move.l  d0,a2                ; a2 = lib base
+        cmp.w   #40,LIB_VERSION(a2)  ; did InitStruct (INITWORD) set the version?
         bne     auto_fail
-        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) a posé le type ?
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; did InitStruct (INITBYTE) set the type?
         bne     auto_fail
-        cmp.w   #$5A,LIB_REVISION(a2) ; l'init function a tourné (a posé la révision) ?
+        cmp.w   #$5A,LIB_REVISION(a2) ; did the init function run (did it set the revision)?
         bne     auto_fail
-        move.l  a6,-(sp)             ; sauve SysBase
-        move.l  a2,a6                ; a6 = base de la lib (convention d'appel)
-        jsr     -6(a6)               ; appelle func0 via la jump table -> d0 (MakeFunctions OK ?)
-        move.l  (sp)+,a6             ; restaure SysBase
+        move.l  a6,-(sp)             ; save SysBase
+        move.l  a2,a6                ; a6 = lib base (calling convention)
+        jsr     -6(a6)               ; call func0 via the jump table -> d0 (MakeFunctions OK?)
+        move.l  (sp)+,a6             ; restore SysBase
         cmp.l   #$5A,d0
         bne     auto_fail
         lea     msg_auto_ok(pc),a0
-        bsr     ser_puts             ; « M5A AUTOINIT OK »
+        bsr     ser_puts             ; "M5A AUTOINIT OK"
 
-        ; --- M5b : vérifier cia.resource (1er vrai module résident, direct-init) ---
+        ; --- M5b: check cia.resource (1st real resident module, direct-init) ---
         lea     ciab_test_name(pc),a1  ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
-        beq     cia_fail             ; resource absent -> KO
-        move.l  d0,a2                ; a2 = base ciab
-        cmp.l   #CIAB_HW,CIAR_HWBASE(a2)  ; bonne base matérielle ?
+        beq     cia_fail             ; resource missing -> failed
+        move.l  d0,a2                ; a2 = ciab base
+        cmp.l   #CIAB_HW,CIAR_HWBASE(a2)  ; right hardware base?
         bne     cia_fail
-        move.l  a6,-(sp)             ; AbleICR($81 = enable bit0) via la jump table du resource
-        move.l  a2,a6                ; a6 = base resource (convention d'appel)
+        move.l  a6,-(sp)             ; AbleICR($81 = enable bit0) via the resource's jump table
+        move.l  a2,a6                ; a6 = resource base (calling convention)
         moveq   #$81,d0
         jsr     CIA_ABLEICR(a6)
         move.l  (sp)+,a6
-        move.b  CIAR_ICRMASK(a2),d0  ; le shadow doit avoir le bit0 posé
+        move.b  CIAR_ICRMASK(a2),d0  ; the shadow must have bit0 set
         and.b   #1,d0
         beq     cia_fail
-        move.l  a6,-(sp)             ; AddICRVector(bit1, dummy) -> doit rendre NULL (slot libre)
+        move.l  a6,-(sp)             ; AddICRVector(bit1, dummy) -> must return NULL (free slot)
         move.l  a2,a6
         moveq   #1,d0
         lea     cia_dummy_int(pc),a1
@@ -369,8 +369,8 @@ coldstart:                        ; $FC00D2
         move.l  (sp)+,a6
         tst.l   d0
         bne     cia_fail
-        move.l  a6,-(sp)             ; le test rend ce qu'il a pris : vecteur factice retiré, bit 0 désactivé (sinon le
-        move.l  a2,a6                ; timer B de CIA-B restait occupé pour les applications, ex. le lecteur d'OctaMED)
+        move.l  a6,-(sp)             ; the test gives back what it took: dummy vector removed, bit 0 disabled (otherwise
+        move.l  a2,a6                ; CIA-B timer B stayed busy for applications, e.g. the OctaMED player)
         moveq   #1,d0
         lea     cia_dummy_int(pc),a1
         jsr     CIA_REMICRVECTOR(a6)
@@ -378,91 +378,91 @@ coldstart:                        ; $FC00D2
         jsr     CIA_ABLEICR(a6)
         move.l  (sp)+,a6
         lea     msg_cia_ok(pc),a0
-        bsr     ser_puts             ; « M5B CIA OK »
+        bsr     ser_puts             ; "M5B CIA OK"
 
-        ; --- M5c : vérifier timer.device (AUTOINIT, 2e vrai module résident) ---
-        lea     EB_DEVICELIST(a6),a0 ; le device doit avoir été ajouté à DeviceList
+        ; --- M5c: check timer.device (AUTOINIT, 2nd real resident module) ---
+        lea     EB_DEVICELIST(a6),a0 ; the device must have been added to DeviceList
         lea     timer_test_name(pc),a1
-        jsr     LVO_FINDNAME(a6)     ; (= ce que fait OpenDevice en interne)
+        jsr     LVO_FINDNAME(a6)     ; (= what OpenDevice does internally)
         tst.l   d0
         beq     timer_fail
-        move.l  d0,a2                ; a2 = base device
-        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        move.l  d0,a2                ; a2 = device base
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD)?
         bne     timer_fail
-        cmp.b   #NT_DEVICE,LN_TYPE(a2)  ; InitStruct (INITBYTE) ?
+        cmp.b   #NT_DEVICE,LN_TYPE(a2)  ; InitStruct (INITBYTE)?
         bne     timer_fail
-        move.l  a6,-(sp)             ; Open via la jump table du device -> LIB_OPENCNT++
-        move.l  a2,a6                ; a6 = base device (convention)
-        suba.l  a1,a1                ; iorequest = NULL (stub l'ignore)
+        move.l  a6,-(sp)             ; Open via the device's jump table -> LIB_OPENCNT++
+        move.l  a2,a6                ; a6 = device base (convention)
+        suba.l  a1,a1                ; iorequest = NULL (the stub ignores it)
         moveq   #0,d0                ; unit 0
         moveq   #0,d1                ; flags
         jsr     -6(a6)
         move.l  (sp)+,a6
-        cmp.w   #1,LIB_OPENCNT(a2)   ; Open a bien incrémenté ?
+        cmp.w   #1,LIB_OPENCNT(a2)   ; did Open increment?
         bne     timer_fail
         lea     msg_timer_ok(pc),a0
-        bsr     ser_puts             ; « M5C TIMER OK »
+        bsr     ser_puts             ; "M5C TIMER OK"
 
-        ; --- M4c1 : vérifier graphics.library (AUTOINIT, 1er LIBRARY -> LibList) ---
-        ; Miroir de la preuve M5c, mais sur EB_LIBLIST (branche NT_LIBRARY->LibList, neuve). Skip-on-fail :
-        ; en RED (RT_TYPE=NT_DEVICE) GfxBase est routée vers DeviceList -> FindName(LibList) rate -> marqueur
-        ; absent, sans « FAILED » (le reste du boot continue).
+        ; --- M4c1: check graphics.library (AUTOINIT, 1st LIBRARY -> LibList) ---
+        ; Mirror of the M5c proof, but on EB_LIBLIST (NT_LIBRARY->LibList branch, new). Skip-on-fail:
+        ; in RED (RT_TYPE=NT_DEVICE) GfxBase is routed to DeviceList -> FindName(LibList) misses -> marker
+        ; absent, without "FAILED" (the rest of the boot continues).
         lea     EB_LIBLIST(a6),a0
         lea     graphics_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq.s   m4c1_done
         move.l  d0,a2                ; a2 = GfxBase
-        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD)?
         bne.s   m4c1_done
-        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ? (device mal routé ne passerait pas ici non plus)
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE)? (a misrouted device would not get here either)
         bne.s   m4c1_done
-        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a6,-(sp)             ; Open via the jump table -> LIB_OPENCNT++
         move.l  a2,a6
         jsr     -6(a6)
         move.l  (sp)+,a6
         cmp.w   #1,LIB_OPENCNT(a2)
         bne.s   m4c1_done
         lea     msg_m4c1_ok(pc),a0
-        bsr     ser_puts             ; « M4C1 GFX LIB OK »
+        bsr     ser_puts             ; "M4C1 GFX LIB OK"
 m4c1_done:
 
-        ; --- M5 : vérifier intuition.library (squelette résident + ViewAddress) ---
-        ; Miroir de la preuve M4c1 sur EB_LIBLIST, étendu d'un appel ABI RÉEL : ViewAddress (LVO -294) doit
-        ; renvoyer &ib_ViewLord (= IntuitionBase + IB_VIEWLORD). Skip-on-fail : si l'une des vérifs échoue
-        ; (ou RED M5I_BAD_VIEWADDR -> ViewAddress=0), le marqueur « M5I INTUI LIB OK » est absent, sans FAILED.
+        ; --- M5: check intuition.library (resident skeleton + ViewAddress) ---
+        ; Mirror of the M4c1 proof on EB_LIBLIST, extended with a REAL ABI call: ViewAddress (LVO -294) must
+        ; return &ib_ViewLord (= IntuitionBase + IB_VIEWLORD). Skip-on-fail: if one of the checks fails
+        ; (or RED M5I_BAD_VIEWADDR -> ViewAddress=0), the "M5I INTUI LIB OK" marker is absent, without FAILED.
         lea     EB_LIBLIST(a6),a0
         lea     intuition_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq.s   m5i_done
         move.l  d0,a2                ; a2 = IntuitionBase
-        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD)?
         bne.s   m5i_done
-        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ? (device mal routé ne passerait pas FindName non plus)
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE)? (a misrouted device would not pass FindName either)
         bne.s   m5i_done
-        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a6,-(sp)             ; Open via the jump table -> LIB_OPENCNT++
         move.l  a2,a6
         jsr     LVO_OPEN(a6)
         move.l  (sp)+,a6
         cmp.w   #1,LIB_OPENCNT(a2)
         bne.s   m5i_done
-        move.l  a6,-(sp)             ; ViewAddress() via la jump table (a6 = IntuitionBase)
+        move.l  a6,-(sp)             ; ViewAddress() via the jump table (a6 = IntuitionBase)
         move.l  a2,a6
-        jsr     -294(a6)             ; LVO_VIEWADDRESS = -294 (littéral : boot.s n'inclut qu'exec.i)
+        jsr     -294(a6)             ; LVO_VIEWADDRESS = -294 (literal: boot.s only includes exec.i)
         move.l  (sp)+,a6
-        lea     LIB_SIZE(a2),a1      ; attendu : &ib_ViewLord (IB_VIEWLORD = LIB_SIZE : le ViewLord suit la base Library)
+        lea     LIB_SIZE(a2),a1      ; expected: &ib_ViewLord (IB_VIEWLORD = LIB_SIZE: the ViewLord follows the Library base)
         cmp.l   a1,d0
         bne.s   m5i_done
         lea     msg_m5i_ok(pc),a0
-        bsr     ser_puts             ; « M5I INTUI LIB OK »
+        bsr     ser_puts             ; "M5I INTUI LIB OK"
 m5i_done:
 
-        ; --- OpenLibrary : ouverture par nom + gate de version (exec) ---
-        ; 1) OpenLibrary("intuition.library",34) == base & OpenCnt+1 ; 2) version 99 -> 0 (gate de version) ;
-        ; 3) lib inexistante -> 0 ; 3b) OldOpenLibrary == base (sans gate) ; 4) CloseLibrary -> OpenCnt-1.
-        ; RED OPENLIB_NO_VERCHECK : (2) ouvre À TORT
-        ; (d0 != 0) -> assertion échoue -> « M5O OPENLIB OK » absent. a2 = IntuitionBase, d3 = OpenCnt baseline.
+        ; --- OpenLibrary: opening by name + version gate (exec) ---
+        ; 1) OpenLibrary("intuition.library",34) == base & OpenCnt+1; 2) version 99 -> 0 (version gate);
+        ; 3) nonexistent lib -> 0; 3b) OldOpenLibrary == base (without gate); 4) CloseLibrary -> OpenCnt-1.
+        ; RED OPENLIB_NO_VERCHECK: (2) WRONGLY opens
+        ; (d0 != 0) -> assertion fails -> "M5O OPENLIB OK" absent. a2 = IntuitionBase, d3 = OpenCnt baseline.
         lea     EB_LIBLIST(a6),a0
         lea     intuition_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -470,144 +470,144 @@ m5i_done:
         beq.s   m5o_done
         move.l  d0,a2                ; a2 = IntuitionBase
         move.w  LIB_OPENCNT(a2),d3   ; d3 = OpenCnt baseline (N)
-        lea     intuition_test_name(pc),a1   ; 1) succès version 34
+        lea     intuition_test_name(pc),a1   ; 1) success version 34
         moveq   #34,d0
         jsr     LVO_OPENLIBRARY(a6)
-        cmp.l   a2,d0                ; == IntuitionBase ?
+        cmp.l   a2,d0                ; == IntuitionBase?
         bne.s   m5o_done
         move.w  LIB_OPENCNT(a2),d0
         subq.w  #1,d0
-        cmp.w   d3,d0                ; OpenCnt == N+1 ?
+        cmp.w   d3,d0                ; OpenCnt == N+1?
         bne.s   m5o_done
-        lea     intuition_test_name(pc),a1   ; 2) version 99 trop haute -> 0, OpenCnt inchangé
+        lea     intuition_test_name(pc),a1   ; 2) version 99 too high -> 0, OpenCnt unchanged
         move.w  #99,d0
         jsr     LVO_OPENLIBRARY(a6)
         tst.l   d0
-        bne.s   m5o_done             ; RED OPENLIB_NO_VERCHECK : renvoie base != 0 -> M5O absent
+        bne.s   m5o_done             ; RED OPENLIB_NO_VERCHECK: returns base != 0 -> M5O absent
         move.w  LIB_OPENCNT(a2),d0
         subq.w  #1,d0
-        cmp.w   d3,d0                ; toujours N+1 (aucune ouverture) ?
+        cmp.w   d3,d0                ; still N+1 (no opening)?
         bne.s   m5o_done
-        lea     noexist_test_name(pc),a1     ; 3) lib inexistante -> 0
+        lea     noexist_test_name(pc),a1     ; 3) nonexistent lib -> 0
         moveq   #0,d0
         jsr     LVO_OPENLIBRARY(a6)
         tst.l   d0
         bne.s   m5o_done
-        lea     intuition_test_name(pc),a1   ; 3b) OldOpenLibrary (pré-V33, sans gate de version) == base
+        lea     intuition_test_name(pc),a1   ; 3b) OldOpenLibrary (pre-V33, without version gate) == base
         jsr     LVO_OLDOPENLIBRARY(a6)
         cmp.l   a2,d0
         bne.s   m5o_done
-        move.l  a2,a1                ; rééquilibre l'ouverture 3b (net zéro) avant le step 4
+        move.l  a2,a1                ; rebalance opening 3b (net zero) before step 4
         jsr     LVO_CLOSELIBRARY(a6)
-        move.l  a2,a1                ; 4) CloseLibrary -> OpenCnt revient à N
+        move.l  a2,a1                ; 4) CloseLibrary -> OpenCnt goes back to N
         jsr     LVO_CLOSELIBRARY(a6)
         move.w  LIB_OPENCNT(a2),d0
-        cmp.w   d3,d0                ; OpenCnt == N ?
+        cmp.w   d3,d0                ; OpenCnt == N?
         bne.s   m5o_done
         lea     msg_m5o_ok(pc),a0
-        bsr     ser_puts             ; « M5O OPENLIB OK »
+        bsr     ser_puts             ; "M5O OPENLIB OK"
 m5o_done:
 
-        ; --- M6 : vérifier dos.library (squelette résident + convention BPTR + DateStamp) ---
-        ; Miroir des preuves M4c1/M5 sur EB_LIBLIST, étendu de deux vérifs : (a) round-trip BPTR — dl_Root (APTR) ->
-        ; RootNode, rn_Info (BPTR) <<2 doit égaler &DosInfo (lu via le scaffold DL_DISHADOW, en compute-then-compare,
-        ; SANS déréférencer le pointeur décodé : en RED l'échec est un mismatch d'adresse, jamais un bus error) ;
-        ; (b) DateStamp(-192) remplit (0,0,0) « horloge non réglée » et renvoie le pointeur. Skip-on-fail : toute
-        ; vérif ratée (ou RED M6D_BAD_BPTR) -> « M6D DOS LIB OK » absent, sans FAILED. a6 = ExecBase.
+        ; --- M6: check dos.library (resident skeleton + BPTR convention + DateStamp) ---
+        ; Mirror of the M4c1/M5 proofs on EB_LIBLIST, extended with two checks: (a) BPTR round-trip — dl_Root (APTR) ->
+        ; RootNode, rn_Info (BPTR) <<2 must equal &DosInfo (read via the DL_DISHADOW scaffold, compute-then-compare,
+        ; WITHOUT dereferencing the decoded pointer: in RED the failure is an address mismatch, never a bus error);
+        ; (b) DateStamp(-192) fills (0,0,0) "clock not set" and returns the pointer. Skip-on-fail: any
+        ; failed check (or RED M6D_BAD_BPTR) -> "M6D DOS LIB OK" absent, without FAILED. a6 = ExecBase.
         lea     EB_LIBLIST(a6),a0
         lea     dos_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     m6d_done
         move.l  d0,a2                ; a2 = DosBase
-        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD) ?
+        cmp.w   #34,LIB_VERSION(a2)  ; InitStruct (INITWORD)?
         bne     m6d_done
-        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE) ?
+        cmp.b   #NT_LIBRARY,LN_TYPE(a2)  ; InitStruct (INITBYTE)?
         bne     m6d_done
-        move.l  a6,-(sp)             ; Open via la jump table -> LIB_OPENCNT++
+        move.l  a6,-(sp)             ; Open via the jump table -> LIB_OPENCNT++
         move.l  a2,a6
         jsr     LVO_OPEN(a6)
         move.l  (sp)+,a6
         cmp.w   #1,LIB_OPENCNT(a2)
         bne     m6d_done
-        ; (a) round-trip BPTR — AUCUN déréférencement du pointeur décodé
+        ; (a) BPTR round-trip — NO dereferencing of the decoded pointer
         move.l  LIB_SIZE(a2),a3      ; a3 = dl_Root (DL_ROOT = LIB_SIZE = 34) = RootNode (APTR)
         move.l  a3,d0
-        beq     m6d_done             ; RootNode alloué ?
-        move.l  70(a2),d2            ; d2 = DL_DISHADOW (offset 70) = &DosInfo (APTR brut, connu)
-        beq     m6d_done             ; DosInfo alloué ?
-        move.l  24(a3),d0            ; d0 = rn_Info (RN_INFO = 24) ; lecture sûre (a3 = RootNode valide, GREEN et RED)
+        beq     m6d_done             ; RootNode allocated?
+        move.l  70(a2),d2            ; d2 = DL_DISHADOW (offset 70) = &DosInfo (raw APTR, known)
+        beq     m6d_done             ; DosInfo allocated?
+        move.l  24(a3),d0            ; d0 = rn_Info (RN_INFO = 24); safe read (a3 = valid RootNode, GREEN and RED)
         lsl.l   #2,d0                ; BPTR -> APTR
-        cmp.l   d2,d0                ; == &DosInfo ?  RED M6D_BAD_BPTR : rn_Info brut -> 4*&DosInfo != shadow
+        cmp.l   d2,d0                ; == &DosInfo?  RED M6D_BAD_BPTR: raw rn_Info -> 4*&DosInfo != shadow
         bne     m6d_done
-        ; (b) DateStamp -> (0,0,0) + renvoie le pointeur. Buffer de 12 octets sur la pile, pré-sali.
+        ; (b) DateStamp -> (0,0,0) + returns the pointer. 12-byte buffer on the stack, pre-dirtied.
         lea     -12(sp),sp           ; buf = sp (DS_SIZEOF = 12)
-        move.l  #$5A5A5A5A,(sp)      ; salit les 3 longs : « mis à 0 » devient discriminant
+        move.l  #$5A5A5A5A,(sp)      ; dirty the 3 longs: "set to 0" becomes discriminating
         move.l  #$5A5A5A5A,4(sp)
         move.l  #$5A5A5A5A,8(sp)
-        move.l  sp,d1                ; d1 = &date (convention dos : arg en d1)
-        move.l  a6,-(sp)             ; swap a6 -> DosBase (décale sp de 4 ; d1 = adresse absolue, inchangée)
+        move.l  sp,d1                ; d1 = &date (dos convention: arg in d1)
+        move.l  a6,-(sp)             ; swap a6 -> DosBase (shifts sp by 4; d1 = absolute address, unchanged)
         move.l  a2,a6
-        jsr     -192(a6)             ; LVO_DATESTAMP = -192 ; d0 = &date, date = {0,0,0}
-        move.l  (sp)+,a6             ; restore a6 = ExecBase (sp revient au buffer)
-        cmp.l   sp,d0                ; renvoie bien le pointeur passé ?
+        jsr     -192(a6)             ; LVO_DATESTAMP = -192; d0 = &date, date = {0,0,0}
+        move.l  (sp)+,a6             ; restore a6 = ExecBase (sp back at the buffer)
+        cmp.l   sp,d0                ; does it return the pointer passed?
         bne.s   m6d_ds_pop
-        tst.l   (sp)                 ; ds_Days == 0 ?
+        tst.l   (sp)                 ; ds_Days == 0?
         bne.s   m6d_ds_pop
-        tst.l   4(sp)               ; ds_Minute == 0 ?
+        tst.l   4(sp)               ; ds_Minute == 0?
         bne.s   m6d_ds_pop
-        tst.l   8(sp)               ; ds_Tick == 0 ?
+        tst.l   8(sp)               ; ds_Tick == 0?
         bne.s   m6d_ds_pop
-        lea     12(sp),sp            ; libère le buffer (succès)
+        lea     12(sp),sp            ; free the buffer (success)
         lea     msg_m6d_ok(pc),a0
-        bsr     ser_puts             ; « M6D DOS LIB OK »
+        bsr     ser_puts             ; "M6D DOS LIB OK"
         bra.s   m6d_done
 m6d_ds_pop:
-        lea     12(sp),sp            ; libère le buffer (échec DateStamp)
+        lea     12(sp),sp            ; free the buffer (DateStamp failure)
 m6d_done:
 
-        ; --- expansion.library : gate de version v37 + round-trip de la liste ConfigDev (Alloc->Add->Find) ---
-        ; (1) OpenLibrary("expansion.library", 37) DOIT échouer (gate KS 2.0 ; c'est ce qui fait sauter la branche
-        ; expansion du bootblock Lemmings sur notre V34) ; OpenLibrary(..., 34) réussit. (2) AllocConfigDev -> pose
-        ; manufacturer/product -> AddConfigDev -> FindConfigDev les retrouve (exact + wildcard produit) + un ID absent
-        ; ne matche pas -> « EXPANSION OK ». Cleanup robuste : Remove UNIQUEMENT si le nœud est chaîné (ln_Succ!=0),
-        ; sinon (RED EXP_NO_ENQUEUE : pas ajouté) on free seulement. Synchrone (fonctions lib pures, pas de packets).
+        ; --- expansion.library: v37 version gate + round-trip of the ConfigDev list (Alloc->Add->Find) ---
+        ; (1) OpenLibrary("expansion.library", 37) MUST fail (KS 2.0 gate; this is what makes the Lemmings
+        ; bootblock skip its expansion branch on our V34); OpenLibrary(..., 34) succeeds. (2) AllocConfigDev -> sets
+        ; manufacturer/product -> AddConfigDev -> FindConfigDev finds them (exact + product wildcard) + an absent ID
+        ; does not match -> "EXPANSION OK". Robust cleanup: Remove ONLY if the node is linked (ln_Succ!=0),
+        ; otherwise (RED EXP_NO_ENQUEUE: not added) we only free. Synchronous (pure lib functions, no packets).
         lea     expansion_test_name(pc),a1
-        moveq   #37,d0               ; v37 (KS 2.0) -> DOIT renvoyer 0 sur notre V34
+        moveq   #37,d0               ; v37 (KS 2.0) -> MUST return 0 on our V34
         jsr     LVO_OPENLIBRARY(a6)
         tst.l   d0
-        bne     exp_done             ; v37 ouvre à tort (gate cassé) -> ne pas émettre
+        bne     exp_done             ; v37 wrongly opens (broken gate) -> do not emit
         lea     expansion_test_name(pc),a1
-        moveq   #34,d0               ; V34 -> doit réussir
+        moveq   #34,d0               ; V34 -> must succeed
         jsr     LVO_OPENLIBRARY(a6)
         tst.l   d0
         beq     exp_done
-        move.l  d0,a2                ; a2 = ExpansionBase (préservé par exec + les fonctions exp_*)
+        move.l  d0,a2                ; a2 = ExpansionBase (preserved by exec + the exp_* functions)
         move.l  a2,a6
         jsr     EXP_LVO_ALLOCCONFIGDEV(a6)   ; d0 = ConfigDev | 0
         tst.l   d0
         beq     exp_close1
         move.l  d0,a3                ; a3 = ConfigDev
-        move.w  #$0202,ER_MANUFACTURER(a3)   ; IDs de test (manufacturer word + product byte)
+        move.w  #$0202,ER_MANUFACTURER(a3)   ; test IDs (manufacturer word + product byte)
         move.b  #$42,ER_PRODUCT(a3)
         move.l  a2,a6                ; AddConfigDev(cd a0)
         move.l  a3,a0
         jsr     EXP_LVO_ADDCONFIGDEV(a6)
-        move.l  a2,a6                ; FindConfigDev(0, $0202, $42) -> doit == a3
+        move.l  a2,a6                ; FindConfigDev(0, $0202, $42) -> must == a3
         suba.l  a0,a0
         move.l  #$0202,d0
         move.l  #$42,d1
         jsr     EXP_LVO_FINDCONFIGDEV(a6)
         cmp.l   a3,d0
         bne     exp_rem
-        move.l  a2,a6                ; FindConfigDev(0, $0202, -1) wildcard produit -> a3
+        move.l  a2,a6                ; FindConfigDev(0, $0202, -1) product wildcard -> a3
         suba.l  a0,a0
         move.l  #$0202,d0
         moveq   #-1,d1
         jsr     EXP_LVO_FINDCONFIGDEV(a6)
         cmp.l   a3,d0
         bne     exp_rem
-        move.l  a2,a6                ; FindConfigDev(0, $9999, $42) -> pas de match -> 0
+        move.l  a2,a6                ; FindConfigDev(0, $9999, $42) -> no match -> 0
         suba.l  a0,a0
         move.l  #$9999,d0
         move.l  #$42,d1
@@ -615,13 +615,13 @@ m6d_done:
         tst.l   d0
         bne     exp_rem
         lea     msg_expansion_ok(pc),a0
-        bsr     ser_puts             ; « EXPANSION OK »
+        bsr     ser_puts             ; "EXPANSION OK"
 exp_rem:
-        tst.l   (a3)                 ; ln_Succ != 0 -> le ConfigDev est bien chaîné dans la liste
+        tst.l   (a3)                 ; ln_Succ != 0 -> the ConfigDev is indeed linked into the list
         beq.s   exp_freeonly
         move.l  ($4).w,a6
         move.l  a3,a1
-        jsr     LVO_REMOVE(a6)       ; Remove(cd) avant free
+        jsr     LVO_REMOVE(a6)       ; Remove(cd) before free
 exp_freeonly:
         move.l  a2,a6
         move.l  a3,a0
@@ -631,11 +631,11 @@ exp_close1:
         move.l  a2,a1
         jsr     LVO_CLOSELIBRARY(a6)
 exp_done:
-        move.l  ($4).w,a6            ; restaure a6 = ExecBase pour la suite (M6t)
+        move.l  ($4).w,a6            ; restore a6 = ExecBase for what follows (M6t)
 
-        ; --- mathffp.library : table de vecteurs FFP (LVO, d0, d1, résultat attendu calculé hors ROM) ---
-        ; Chaque appel passe par le vecteur LVO de la base ouverte ; un écart -> « MATHFFP FAIL » + LVO fautif.
-        ; La boucle garde son état dans d4/d5/a2/a3 : une fonction qui ne préserve pas d2-d7 casse la preuve.
+        ; --- mathffp.library: FFP vector table (LVO, d0, d1, expected result computed outside the ROM) ---
+        ; Each call goes through the LVO vector of the opened base; a mismatch -> "MATHFFP FAIL" + faulting LVO.
+        ; The loop keeps its state in d4/d5/a2/a3: a function that does not preserve d2-d7 breaks the proof.
         movem.l d4-d5/a2-a3,-(sp)
         lea     mathffp_test_name(pc),a1
         moveq   #34,d0
@@ -672,11 +672,11 @@ mft_done:
         movem.l (sp)+,d4-d5/a2-a3
         move.l  ($4).w,a6
 
-        ; --- disk.resource : AllocUnit/FreeUnit, GetUnitID, puis GetUnit/GiveUnit avec file d'attente ---
-        ; dru1 prend le contrôleur (GetUnit rend le « dernier pilote », non nul et != dru1) ; dru2 est mis en attente
-        ; (GetUnit = 0) ; GiveUnit lui fait ReplyMsg (sans port : LN_TYPE -> NT_REPLYMSG) ; dru2 retente et obtient
-        ; dru1 comme dernier pilote. Les DRU vivent sur la pile : DR_CURRENT reste ensuite un simple témoin (jamais
-        ; déréférencé hors possession du contrôleur). L'identifiant DF1 lu au démarrage est affiché.
+        ; --- disk.resource: AllocUnit/FreeUnit, GetUnitID, then GetUnit/GiveUnit with a wait queue ---
+        ; dru1 takes the controller (GetUnit returns the "last driver", non-null and != dru1); dru2 is put on hold
+        ; (GetUnit = 0); GiveUnit ReplyMsgs it (without port: LN_TYPE -> NT_REPLYMSG); dru2 retries and gets
+        ; dru1 as last driver. The DRUs live on the stack: DR_CURRENT then remains a mere witness (never
+        ; dereferenced outside controller ownership). The DF1 identifier read at startup is displayed.
         movem.l d4/a2-a4,-(sp)
         lea     diskres_test_name(pc),a1
         jsr     LVO_OPENRESOURCE(a6)
@@ -684,7 +684,7 @@ mft_done:
         beq     drt_done
         move.l  d0,a2
         lea     -176(sp),sp
-        move.l  sp,a3                ; a3 = dru1, a4 = dru2 (88 octets chacun, mis à zéro)
+        move.l  sp,a3                ; a3 = dru1, a4 = dru2 (88 bytes each, zeroed)
         lea     88(a3),a4
         move.l  a3,a0
         moveq   #43,d0
@@ -697,19 +697,19 @@ drt_clr:
         cmp.l   #1,d0
         bne     drt_fail
         moveq   #0,d0
-        jsr     -6(a6)               ; déjà prise -> 0
+        jsr     -6(a6)               ; already taken -> 0
         tst.l   d0
         bne     drt_fail
         moveq   #0,d0
         jsr     -12(a6)              ; FreeUnit(0)
         moveq   #0,d0
-        jsr     -6(a6)               ; de nouveau libre -> 1
+        jsr     -6(a6)               ; free again -> 1
         cmp.l   #1,d0
         bne     drt_fail
         moveq   #0,d0
         jsr     -12(a6)
         moveq   #4,d0
-        jsr     -6(a6)               ; unité invalide -> 0
+        jsr     -6(a6)               ; invalid unit -> 0
         tst.l   d0
         bne     drt_fail
         moveq   #0,d0
@@ -718,23 +718,23 @@ drt_clr:
         bne     drt_fail
         moveq   #1,d0
         jsr     -30(a6)
-        move.l  d0,d4                ; d4 = identifiant DF1
+        move.l  d0,d4                ; d4 = DF1 identifier
         move.l  a3,a1
-        jsr     -18(a6)              ; GetUnit(dru1) : libre
+        jsr     -18(a6)              ; GetUnit(dru1): free
         tst.l   d0
         beq     drt_fail
         cmp.l   a3,d0
         beq     drt_fail
         move.b  #NT_MESSAGE,LN_TYPE(a4)
         move.l  a4,a1
-        jsr     -18(a6)              ; GetUnit(dru2) : occupé -> 0, mis en attente
+        jsr     -18(a6)              ; GetUnit(dru2): busy -> 0, put on hold
         tst.l   d0
         bne     drt_fail
         jsr     -24(a6)              ; GiveUnit -> ReplyMsg(dru2)
         cmp.b   #NT_REPLYMSG,LN_TYPE(a4)
         bne     drt_fail
         move.l  a4,a1
-        jsr     -18(a6)              ; dru2 retente : dernier pilote = dru1
+        jsr     -18(a6)              ; dru2 retries: last driver = dru1
         cmp.l   a3,d0
         bne     drt_fail
         jsr     -24(a6)
@@ -757,9 +757,9 @@ drt_done:
         movem.l (sp)+,d4/a2-a4
         move.l  ($4).w,a6
 
-        ; --- potgo.resource : règles d'attribution START / DATxx + conservation de l'octet haut par WritePotgo ---
-        ; (attendus : AutoDoc AllocPotBits ; un appelant peut se bloquer lui-même, la ressource ne suit pas les
-        ; propriétaires). POTGO est remis à 0 (toutes broches en entrée, valeur de reset) à la fin.
+        ; --- potgo.resource: START / DATxx allocation rules + high byte kept by WritePotgo ---
+        ; (expected: AutoDoc AllocPotBits; a caller can block itself, the resource does not track
+        ; owners). POTGO is reset to 0 (all pins as input, reset value) at the end.
         move.l  a2,-(sp)
         lea     potgo_test_name(pc),a1
         jsr     LVO_OPENRESOURCE(a6)
@@ -768,32 +768,32 @@ drt_done:
         move.l  d0,a6
         move.l  d0,a2
         move.w  #$0101,d0
-        jsr     -6(a6)               ; START + DATLX en entrée -> accordés
+        jsr     -6(a6)               ; START + DATLX as input -> granted
         cmp.w   #$0101,d0
         bne     pgt_fail
         move.w  #$0400,d0
-        jsr     -6(a6)               ; DATLY en entrée alors que START est tenu -> refusé
+        jsr     -6(a6)               ; DATLY as input while START is held -> refused
         tst.w   d0
         bne     pgt_fail
         move.w  #$0C00,d0
-        jsr     -6(a6)               ; DATLY en sortie -> accordé
+        jsr     -6(a6)               ; DATLY as output -> granted
         cmp.w   #$0400,d0
         bne     pgt_fail
         move.w  #$0100,d0
-        jsr     -6(a6)               ; DATLX déjà pris -> refusé
+        jsr     -6(a6)               ; DATLX already taken -> refused
         tst.w   d0
         bne     pgt_fail
         move.w  #$0101,d0
         jsr     -12(a6)              ; FreePotBits(START + DATLX)
         moveq   #1,d0
-        jsr     -6(a6)               ; START : seul DATLY (sortie) reste pris -> accordé
+        jsr     -6(a6)               ; START: only DATLY (output) remains taken -> granted
         cmp.w   #1,d0
         bne     pgt_fail
         move.w  #$0401,d0
         jsr     -12(a6)
         move.w  #$0C01,d0
         move.w  #$0C01,d1
-        jsr     -18(a6)              ; WritePotgo : octet haut conservé, START non conservé
+        jsr     -18(a6)              ; WritePotgo: high byte kept, START not kept
         cmp.w   #$0C00,LIB_SIZE+2(a2)
         bne     pgt_fail
         moveq   #0,d0
@@ -811,10 +811,10 @@ pgt_done:
         move.l  (sp)+,a2
         move.l  ($4).w,a6
 
-        ; --- keyboard.device : matrice, KBD_READEVENT (tampon / requête en attente rendue par l'événement),
-        ; CMD_CLEAR, AbortIO, liste des gestionnaires de reset. Keycodes SYNTHÉTIQUES remis à kbd_devevent (le même
-        ; point d'entrée que kbd_interrupt) ; la matrice est rendue vide (touches relâchées) et le tampon vidé.
-        ; Pile : IOStdReq 48 o, tampon 24 o (InputEvent / matrice), struct Interrupt 24 o.
+        ; --- keyboard.device: matrix, KBD_READEVENT (buffer / pending request returned by the event),
+        ; CMD_CLEAR, AbortIO, reset handler list. SYNTHETIC keycodes handed to kbd_devevent (the same
+        ; entry point as kbd_interrupt); the matrix is left empty (keys released) and the buffer emptied.
+        ; Stack: IOStdReq 48 bytes, buffer 24 bytes (InputEvent / matrix), struct Interrupt 24 bytes.
         movem.l a2-a3,-(sp)
         lea     -96(sp),sp
         move.l  sp,a3
@@ -831,45 +831,45 @@ kdt_clr:
         tst.b   d0
         bne     kdt_fail0
         move.l  IO_DEVICE(a3),a2
-        bsr     kdt_matrix           ; matrice vide au départ (touches $20-$27 = octet 4)
+        bsr     kdt_matrix           ; empty matrix at start (keys $20-$27 = byte 4)
         tst.l   48+4(a3)
         bne     kdt_fail
-        moveq   #$20,d0              ; « A » enfoncée
+        moveq   #$20,d0              ; "A" pressed
         jsr     kbd_devevent
         bsr     kdt_matrix
         cmp.b   #1,48+4(a3)
         bne     kdt_fail
         move.b  #IOF_QUICK_K,IO_FLAGS(a3)
-        bsr     kdt_read             ; servie depuis le tampon
+        bsr     kdt_read             ; served from the buffer
         cmp.b   #IECLASS_RAWKEY,48+IE_CLASS(a3)
         bne     kdt_fail
         cmp.w   #$20,48+IE_CODE(a3)
         bne     kdt_fail
         cmp.l   #IE_SIZEOF,KDT_ACTUAL(a3)
         bne     kdt_fail
-        move.l  #$A0,d0              ; « A » relâchée
+        move.l  #$A0,d0              ; "A" released
         jsr     kbd_devevent
         bsr     kdt_matrix
         tst.b   48+4(a3)
         bne     kdt_fail
         bsr     kdt_clear
-        clr.b   IO_FLAGS(a3)         ; tampon vide : la requête attend un événement
+        clr.b   IO_FLAGS(a3)         ; empty buffer: the request waits for an event
         move.b  #NT_MESSAGE,LN_TYPE(a3)
         bsr     kdt_read
         cmp.b   #NT_MESSAGE,LN_TYPE(a3)
         bne     kdt_fail
-        moveq   #$45,d0              ; Échap enfoncée -> rend la requête en attente
+        moveq   #$45,d0              ; Escape pressed -> returns the pending request
         jsr     kbd_devevent
         cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
         bne     kdt_fail
         cmp.w   #$45,48+IE_CODE(a3)
         bne     kdt_fail
-        move.l  #$C5,d0              ; Échap relâchée (tamponnée puis effacée)
+        move.l  #$C5,d0              ; Escape released (buffered then cleared)
         jsr     kbd_devevent
         bsr     kdt_clear
         move.b  #NT_MESSAGE,LN_TYPE(a3)
         move.b  #IOF_QUICK_K,IO_FLAGS(a3)
-        bsr     kdt_read             ; rien en tampon : IOF_QUICK effacé, requête en attente
+        bsr     kdt_read             ; nothing buffered: IOF_QUICK cleared, request pending
         btst    #0,IO_FLAGS(a3)
         bne     kdt_fail
         move.l  a3,a1
@@ -880,18 +880,18 @@ kdt_clr:
         bne     kdt_fail
         cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
         bne     kdt_fail
-        lea     72(a3),a0            ; gestionnaire de reset : ajouté puis retiré
+        lea     72(a3),a0            ; reset handler: added then removed
         move.b  #NT_INTERRUPT,LN_TYPE(a0)
         move.l  a0,KDT_DATA(a3)
         move.w  #11,IO_COMMAND(a3)   ; KBD_ADDRESETHANDLER
         bsr     kdt_io
         lea     72(a3),a0
-        cmp.l   LIB_SIZE+30(a2),a0   ; tête de la liste des gestionnaires
+        cmp.l   LIB_SIZE+30(a2),a0   ; head of the handler list
         bne     kdt_fail
         move.w  #12,IO_COMMAND(a3)   ; KBD_REMRESETHANDLER
         bsr     kdt_io
         move.l  LIB_SIZE+30(a2),a0
-        tst.l   (a0)                 ; liste vide : la tête est le nœud de queue
+        tst.l   (a0)                 ; empty list: the head is the tail node
         bne     kdt_fail
         lea     msg_kbddev_ok(pc),a0
         bsr     ser_puts
@@ -911,7 +911,7 @@ kdt_done:
         movem.l (sp)+,a2-a3
         move.l  ($4).w,a6
         bra     kdt_end
-; sous-routines de la sonde keyboard.device (a3 = IOStdReq, a2 = device ; rendent a6 = SysBase)
+; subroutines of the keyboard.device probe (a3 = IOStdReq, a2 = device; return a6 = SysBase)
 kdt_matrix:
         move.w  #10,IO_COMMAND(a3)   ; KBD_READMATRIX
         move.b  #IOF_QUICK_K,IO_FLAGS(a3)
@@ -936,11 +936,11 @@ kdt_clear:
         bra.s   kdt_io
 kdt_end:
 
-        ; --- audio.device : attribution (sans DMA ni interruption : synchrone au boot) ---
-        ; ioa1 = canal 0 à pri 0 ; ioa2 à pri -10 ne peut pas le voler (ALLOCFAILED) mais obtient le canal 1 par la
-        ; 2e combinaison ; ioa3 à pri 10 vole le canal 0 (la clé de ioa1 n'y vaut plus : NOALLOCATION) ; ioa3 le
-        ; verrouille ; ioa2 à pri 20 le réclame : le verrou est rendu ADIOERR_CHANNELSTOLEN et ioa2 attend ; ioa3
-        ; libère -> ioa2 est servi par le réessai. Pile : 3 IOAudio (72 o chacun).
+        ; --- audio.device: allocation (without DMA or interrupt: synchronous at boot) ---
+        ; ioa1 = channel 0 at pri 0; ioa2 at pri -10 cannot steal it (ALLOCFAILED) but gets channel 1 through the
+        ; 2nd combination; ioa3 at pri 10 steals channel 0 (ioa1's key no longer counts there: NOALLOCATION); ioa3
+        ; locks it; ioa2 at pri 20 claims it: the lock is returned ADIOERR_CHANNELSTOLEN and ioa2 waits; ioa3
+        ; frees -> ioa2 is served by the retry. Stack: 3 IOAudio (72 bytes each).
         movem.l a2-a3,-(sp)
         lea     -216(sp),sp
         move.l  sp,a3
@@ -961,20 +961,20 @@ aut_clr:
         beq     aut_fail
         move.l  a2,IO_DEVICE+72(a3)
         move.l  a2,IO_DEVICE+144(a3)
-        lea     0(a3),a1             ; ioa1 : canal 0, pri 0
+        lea     0(a3),a1             ; ioa1: channel 0, pri 0
         lea     aut_ch0(pc),a0
         moveq   #0,d0
         bsr     aut_alloc
         bne     aut_fail
         cmp.b   #1,IO_UNIT+3(a3)
         bne     aut_fail
-        lea     72(a3),a1            ; ioa2 : canal 0 à pri -10 -> refusé
+        lea     72(a3),a1            ; ioa2: channel 0 at pri -10 -> refused
         lea     aut_ch0(pc),a0
         moveq   #-10,d0
         bsr     aut_alloc
         cmp.b   #-11,d0
         bne     aut_fail
-        lea     72(a3),a1            ; ioa2 : {canal 0, canal 1} -> canal 1 (sans vol)
+        lea     72(a3),a1            ; ioa2: {channel 0, channel 1} -> channel 1 (without theft)
         lea     aut_ch0or1(pc),a0
         moveq   #-10,d0
         moveq   #2,d1
@@ -984,32 +984,32 @@ aut_clr:
         bne     aut_fail
         move.w  AUT_KEY+72(a3),d0
         cmp.w   AUT_KEY(a3),d0
-        beq     aut_fail             ; clés distinctes
-        lea     72(a3),a1            ; ioa2 libère le canal 1
+        beq     aut_fail             ; distinct keys
+        lea     72(a3),a1            ; ioa2 frees channel 1
         moveq   #9,d0                ; ADCMD_FREE
         bsr     aut_cmd
         bne     aut_fail
-        lea     144(a3),a1           ; ioa3 : canal 0 à pri 10 -> vol
+        lea     144(a3),a1           ; ioa3: channel 0 at pri 10 -> theft
         lea     aut_ch0(pc),a0
         moveq   #10,d0
         bsr     aut_alloc
         bne     aut_fail
         cmp.b   #1,IO_UNIT+3+144(a3)
         bne     aut_fail
-        move.b  #1,IO_UNIT+3(a3)     ; ioa1 : CMD_RESET du canal volé -> NOALLOCATION
+        move.b  #1,IO_UNIT+3(a3)     ; ioa1: CMD_RESET of the stolen channel -> NOALLOCATION
         lea     0(a3),a1
         moveq   #1,d0
         bsr     aut_cmd
         cmp.b   #-10,d0
         bne     aut_fail
-        lea     144(a3),a1           ; ioa3 : ADCMD_LOCK (asynchrone)
+        lea     144(a3),a1           ; ioa3: ADCMD_LOCK (asynchronous)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         clr.b   IO_FLAGS(a1)
         move.w  #13,IO_COMMAND(a1)
         bsr     aut_io
         cmp.b   #NT_MESSAGE,LN_TYPE+144(a3)
         bne     aut_fail
-        lea     72(a3),a1            ; ioa2 : canal 0 à pri 20 -> verrou volé, attente (malgré NOWAIT)
+        lea     72(a3),a1            ; ioa2: channel 0 at pri 20 -> lock stolen, waiting (despite NOWAIT)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         lea     aut_ch0(pc),a0
         moveq   #20,d0
@@ -1020,7 +1020,7 @@ aut_clr:
         bne     aut_fail
         cmp.b   #NT_MESSAGE,LN_TYPE+72(a3)
         bne     aut_fail
-        lea     144(a3),a1           ; ioa3 libère -> ioa2 servi
+        lea     144(a3),a1           ; ioa3 frees -> ioa2 served
         move.b  #1,IO_UNIT+3(a1)
         moveq   #9,d0
         bsr     aut_cmd
@@ -1052,7 +1052,7 @@ aut_done:
         movem.l (sp)+,a2-a3
         move.l  ($4).w,a6
         bra     aut_end
-; sous-routines (a1 = IOAudio, a2 = device) -> d0.b = io_Error, codes conditions posés ; a6 = SysBase en sortie
+; subroutines (a1 = IOAudio, a2 = device) -> d0.b = io_Error, condition codes set; a6 = SysBase on exit
 aut_alloc:
         moveq   #1,d1
 aut_allocn:
@@ -1078,8 +1078,8 @@ aut_ch0or1:
         EVEN
 aut_end:
 
-        ; --- sémaphores d'exec : publication (Add/Find), Attempt + Obtain imbriqués, Release jusqu'à libre. En dev,
-        ; le sémaphore reste PRIS pour task_semw (bloquée dans Obtain) que task_semr débloque par Release. ---
+        ; --- exec semaphores: publication (Add/Find), nested Attempt + Obtain, Release until free. In dev,
+        ; the semaphore stays HELD for task_semw (blocked in Obtain) which task_semr unblocks with Release. ---
         move.l  a2,-(sp)
         moveq   #SEMT_SIZE,d0
         move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
@@ -1102,7 +1102,7 @@ aut_end:
         cmp.l   #1,d0
         bne     semt_fail
         move.l  a2,a0
-        jsr     LVO_OBTAINSEMAPHORE(a6)    ; imbriqué : ne bloque pas
+        jsr     LVO_OBTAINSEMAPHORE(a6)    ; nested: does not block
         cmp.w   #2,SEMT_NEST(a2)
         bne     semt_fail
         cmp.w   #1,SEMT_QC(a2)
@@ -1121,7 +1121,7 @@ aut_end:
         bsr     ser_puts
                 ifeq    PROD
         move.l  a2,a0
-        jsr     LVO_OBTAINSEMAPHORE(a6)    ; tenu pour la preuve d'attente (task_semw / task_semr)
+        jsr     LVO_OBTAINSEMAPHORE(a6)    ; held for the wait proof (task_semw / task_semr)
         bra.s   semt_done
                 else
         bra.s   semt_free
@@ -1138,8 +1138,8 @@ semt_free:
 semt_done:
         move.l  (sp)+,a2
 
-        ; --- graphics Regions : Or/And/ClearRect/Xor sur rectangles puis Or/Xor/And de régions ; aires, bornes et
-        ; appartenance de points comparées à un modèle par ensembles de pixels (calcul hors ROM). ---
+        ; --- graphics Regions: Or/And/ClearRect/Xor on rectangles then Or/Xor/And of regions; areas, bounds and
+        ; point membership compared with a model based on pixel sets (computed outside the ROM). ---
         movem.l d2/a2-a5,-(sp)
         lea     graphics_test_name(pc),a1
         moveq   #0,d0
@@ -1187,11 +1187,11 @@ semt_done:
         move.l  #205,d2
         bsr     rgt_check1
         bne     rgt_fail
-        cmp.l   #$00030003,(a2)      ; bornes (3,3,21,21)
+        cmp.l   #$00030003,(a2)      ; bounds (3,3,21,21)
         bne     rgt_fail
         cmp.l   #$00150015,4(a2)
         bne     rgt_fail
-        lea     rgt_pts(pc),a1       ; points : (x, y, attendu)
+        lea     rgt_pts(pc),a1       ; points: (x, y, expected)
         moveq   #7,d2
 rgt_pt:
         move.w  (a1)+,d0
@@ -1217,7 +1217,7 @@ rgt_pt:
         bsr     rgt_area
         cmp.l   #209,d0
         bne     rgt_fail
-        cmp.l   #$00030000,(a4)      ; bornes (3,0,31,21)
+        cmp.l   #$00030000,(a4)      ; bounds (3,0,31,21)
         bne     rgt_fail
         cmp.l   #$001F0015,4(a4)
         bne     rgt_fail
@@ -1255,7 +1255,7 @@ rgt_msg:
         bsr     ser_puts
         exg     a5,a6
         move.l  a2,a0
-        jsr     -534(a6)             ; DisposeRegion (0 accepté)
+        jsr     -534(a6)             ; DisposeRegion (0 accepted)
         move.l  a3,a0
         jsr     -534(a6)
         move.l  a4,a0
@@ -1266,13 +1266,13 @@ rgt_msg:
 rgt_done:
         movem.l (sp)+,d2/a2-a5
         bra     rgt_end
-; rgt_check1 : aire de R1 (a2) comparée à d2 -> Z si égale.
+; rgt_check1: area of R1 (a2) compared with d2 -> Z if equal.
 rgt_check1:
         move.l  a2,a0
         bsr.s   rgt_area
         cmp.l   d2,d0
         rts
-; rgt_area(a0 = région) -> d0 = somme des aires de ses rectangles.
+; rgt_area(a0 = region) -> d0 = sum of the areas of its rectangles.
 rgt_area:
         moveq   #0,d0
         move.l  8(a0),a0
@@ -1282,17 +1282,17 @@ rgt_ar:
         move.w  14(a0),d1
         sub.w   10(a0),d1
         addq.w  #1,d1
-        move.w  d1,-(sp)             ; hauteur
+        move.w  d1,-(sp)             ; height
         move.w  12(a0),d1
         sub.w   8(a0),d1
-        addq.w  #1,d1                ; largeur
+        addq.w  #1,d1                ; width
         mulu    (sp)+,d1
         add.l   d1,d0
         move.l  (a0),a0
         bra.s   rgt_ar
 rgt_ar_r:
         rts
-; rgt_has(a0 = région, d0 = x, d1 = y) -> d0.w = 1 si le point est dans la région, sinon 0. Préserve a1.
+; rgt_has(a0 = region, d0 = x, d1 = y) -> d0.w = 1 if the point is in the region, otherwise 0. Preserves a1.
 rgt_has:
         sub.w   (a0),d0
         sub.w   2(a0),d1
@@ -1322,12 +1322,12 @@ rgt_pts:
         dc.w    3,3,1, 6,6,0, 7,8,1, 10,10,0, 11,11,0, 12,12,1, 21,21,1, 0,0,0
 rgt_end:
 
-        ; --- polices (graphics) : OpenFont topaz 8 = police par défaut (accès compté), topaz 9 -> la plus proche (8),
-        ; nom inconnu -> 0 ; InitRastPort pose la police par défaut ; TextLength (espacement compris) ; styles
-        ; logiciels (italique refusé) ; Text en gras de « I » dans un BitMap 32x8 relu : glyphe | glyphe >> 1. ---
-FNT_RP          EQU 0                ; RastPort (100 octets)
+        ; --- fonts (graphics): OpenFont topaz 8 = default font (access counted), topaz 9 -> the nearest one (8),
+        ; unknown name -> 0; InitRastPort sets the default font; TextLength (spacing included); software
+        ; styles (italic refused); bold Text of "I" in a 32x8 BitMap read back: glyph | glyph >> 1. ---
+FNT_RP          EQU 0                ; RastPort (100 bytes)
 FNT_BM          EQU 100              ; BitMap (40)
-FNT_DATA        EQU 140              ; plan 32x8 (32)
+FNT_DATA        EQU 140              ; 32x8 plane (32)
 FNT_FRAME       EQU 172
         movem.l d2-d3/a2-a5,-(sp)
         lea     graphics_test_name(pc),a1
@@ -1346,7 +1346,7 @@ FNT_FRAME       EQU 172
         bne     fnt_fail
         tst.l   d0
         beq     fnt_fail
-        move.w  30(a2),d3            ; tf_Accessors après l'ouverture
+        move.w  30(a2),d3            ; tf_Accessors after the opening
         lea     fnt_ta9(pc),a0
         jsr     -72(a6)              ; OpenFont(topaz 9) -> topaz 8
         cmp.l   a2,d0
@@ -1388,13 +1388,13 @@ FNT_FRAME       EQU 172
         bne     fnt_fail
         clr.w   FNT_RP+64(a4)
         lea     FNT_RP(a4),a1
-        jsr     -84(a6)              ; AskSoftStyle = souligné | gras
+        jsr     -84(a6)              ; AskSoftStyle = underlined | bold
         cmp.l   #3,d0
         bne     fnt_fail
         lea     FNT_RP(a4),a1
-        moveq   #6,d0                ; gras | italique
+        moveq   #6,d0                ; bold | italic
         moveq   #-1,d1
-        jsr     -90(a6)              ; SetSoftStyle -> gras seul
+        jsr     -90(a6)              ; SetSoftStyle -> bold only
         cmp.l   #2,d0
         bne     fnt_fail
         cmp.b   #2,FNT_RP+56(a4)     ; rp_AlgoStyle
@@ -1403,7 +1403,7 @@ FNT_FRAME       EQU 172
         moveq   #1,d0
         moveq   #32,d1
         moveq   #8,d2
-        jsr     -390(a6)             ; InitBitMap(1 plan, 32x8)
+        jsr     -390(a6)             ; InitBitMap(1 plane, 32x8)
         lea     FNT_DATA(a4),a0
         move.l  a0,FNT_BM+8(a4)
         moveq   #7,d0
@@ -1413,12 +1413,12 @@ fnt_clr:
         lea     FNT_BM(a4),a0
         move.l  a0,FNT_RP+4(a4)      ; rp_BitMap
         clr.b   FNT_RP+28(a4)        ; JAM1
-        move.l  #$00000006,FNT_RP+36(a4)   ; cp = (0, ligne de base 6)
+        move.l  #$00000006,FNT_RP+36(a4)   ; cp = (0, baseline 6)
         lea     FNT_RP(a4),a1
         lea     fnt_i(pc),a0
         moveq   #1,d0
         jsr     -60(a6)              ; Text("I")
-        cmp.w   #8,FNT_RP+36(a4)     ; cp_x avancé de 8
+        cmp.w   #8,FNT_RP+36(a4)     ; cp_x advanced by 8
         bne     fnt_fail
         lea     font8x8+($49-$20)*8,a0
         lea     FNT_DATA(a4),a1
@@ -1429,7 +1429,7 @@ fnt_row:
         move.w  d0,d1
         lsl.w   #8,d1
         lsl.w   #7,d0
-        or.w    d0,d1                ; gras : pixels du glyphe et leurs voisins de droite (9 pixels)
+        or.w    d0,d1                ; bold: pixels of the glyph and their right-hand neighbours (9 pixels)
         cmp.b   1(a1),d1
         bne     fnt_fail
         lsr.w   #8,d1
@@ -1452,10 +1452,10 @@ fnt_msg:
 fnt_done:
         movem.l (sp)+,d2-d3/a2-a5
 
-        ; --- GELs (graphics) : Bob 16x4x2 (OVERLAY + SAVEBACK, masque d'InitMasks) posé à x non aligné sur un fond
-        ; de couleur 1 et relu au pixel (zone hors masque transparente) ; collision avec un VSprite (CollMask) ->
-        ; routine 1 ; déplacement : fond d'origine restauré, nouvelle position dessinée et découpée au bord ; sortie
-        ; à droite des bornes -> routine 0 (RIGHTHIT) ; SortGList ; RemIBob restaure le fond. ---
+        ; --- GELs (graphics): Bob 16x4x2 (OVERLAY + SAVEBACK, mask from InitMasks) placed at a non-aligned x on a
+        ; colour-1 background and read back per pixel (area outside the mask transparent); collision with a VSprite
+        ; (CollMask) -> routine 1; movement: original background restored, new position drawn and clipped at the
+        ; edge; exit to the right of the bounds -> routine 0 (RIGHTHIT); SortGList; RemIBob restores the background. ---
 GLT_GI          EQU 0
 GLT_HEAD        EQU 40
 GLT_TAIL        EQU 100
@@ -1475,7 +1475,7 @@ GLT_MASK2       EQU 686
 GLT_OB          EQU 696              ; AnimOb (42)
 GLT_CA          EQU 740              ; AnimComp A, B (38)
 GLT_CB          EQU 780
-GLT_BA          EQU 820              ; leurs Bobs (32) et VSprites (60)
+GLT_BA          EQU 820              ; their Bobs (32) and VSprites (60)
 GLT_BB          EQU 852
 GLT_VA          EQU 884
 GLT_VB          EQU 944
@@ -1495,7 +1495,7 @@ GLT_SIZE        EQU 1008
         tst.l   d0
         beq     glt_close
         exg     a5,a6                ; a6 = GfxBase, a5 = SysBase
-        lea     GLT_IMG(a4),a0       ; image : plan 0 = $FF00, plan 1 = $F0F0 (couleurs 3,1,2,- par quart)
+        lea     GLT_IMG(a4),a0       ; image: plane 0 = $FF00, plane 1 = $F0F0 (colours 3,1,2,- per quarter)
         moveq   #3,d0
 glt_img:
         move.w  #$FF00,(a0)
@@ -1506,9 +1506,9 @@ glt_img:
         lea     GLT_VS1(a4),a0
         move.w  #6,20(a0)            ; SAVEBACK | OVERLAY
         move.l  #$00020003,22(a0)    ; Y = 2, X = 3
-        move.l  #$00040001,26(a0)    ; Height 4, Width 1 mot
+        move.l  #$00040001,26(a0)    ; Height 4, Width 1 word
         move.w  #2,30(a0)            ; Depth
-        move.l  #$00020003,32(a0)    ; MeMask = 2, HitMask = 3 (bord + type 1)
+        move.l  #$00020003,32(a0)    ; MeMask = 2, HitMask = 3 (border + type 1)
         lea     GLT_IMG(a4),a1
         move.l  a1,36(a0)
         lea     GLT_BORD(a4),a1
@@ -1584,14 +1584,14 @@ glt_img:
         lea     GLT_RP(a4),a1
         jsr     -102(a6)             ; AddVSprite
         lea     GLT_RP(a4),a1
-        jsr     -108(a6)             ; DoCollision : Bob x VSprite -> routine 1
+        jsr     -108(a6)             ; DoCollision: Bob x VSprite -> routine 1
         cmp.w   #1,GLT_VS1+58(a4)
         bne     glt_fail
         cmp.w   #1,GLT_VS2+58(a4)
         bne     glt_fail
         move.l  #$00080014,GLT_VS1+22(a4)   ; Y = 8, X = 20
         lea     GLT_RP(a4),a1
-        jsr     -150(a6)             ; SortGList : VSprite (Y 4) puis Bob (Y 8)
+        jsr     -150(a6)             ; SortGList: VSprite (Y 4) then Bob (Y 8)
         lea     GLT_VS2(a4),a0
         cmp.l   GLT_HEAD(a4),a0
         bne     glt_fail
@@ -1602,10 +1602,10 @@ glt_img:
         bsr     glt_check
         bne     glt_fail
         lea     GLT_RP(a4),a1
-        jsr     -108(a6)             ; DoCollision : bord droit -> routine 0
+        jsr     -108(a6)             ; DoCollision: right border -> routine 0
         cmp.w   #8,GLT_VS1+58(a4)    ; RIGHTHIT
         bne     glt_fail
-        cmp.w   #1,GLT_VS2+58(a4)    ; plus de chevauchement
+        cmp.w   #1,GLT_VS2+58(a4)    ; no more overlap
         bne     glt_fail
         lea     GLT_BOB(a4),a0
         lea     GLT_RP(a4),a1
@@ -1619,7 +1619,7 @@ glt_img:
         lea     GLT_VS2(a4),a0
         cmp.l   GLT_HEAD(a4),a0      ; head->Next = VSprite
         bne     glt_fail
-        ; animation : composants A et B en anneau (TimeSet 2), objet en (5, 7) + 1 pixel/appel en X (fraction 6 bits)
+        ; animation: components A and B in a ring (TimeSet 2), object at (5, 7) + 1 pixel/call in X (6-bit fraction)
         lea     GLT_OB(a4),a0
         move.l  #(5<<6)<<16|(7<<6),16(a0)  ; AnY, AnX
         move.w  #1<<6,22(a0)         ; XVel
@@ -1630,7 +1630,7 @@ glt_img:
         move.w  #2,4(a2)
         move.l  a2,14(a1)            ; A.NextSeq = B
         move.l  a1,14(a2)            ; B.NextSeq = A
-        move.l  #$00010002,26(a1)    ; A : YTrans 1, XTrans 2
+        move.l  #$00010002,26(a1)    ; A: YTrans 1, XTrans 2
         lea     GLT_BA(a4),a0
         move.l  a0,34(a1)
         lea     GLT_VA(a4),a1
@@ -1641,7 +1641,7 @@ glt_img:
         move.l  a1,18(a0)
         lea     GLT_IMG(a4),a2
         lea     GLT_VA(a4),a0
-        move.l  #$00010001,26(a0)    ; 1 ligne, 1 mot, profondeur 1
+        move.l  #$00010001,26(a0)    ; 1 line, 1 word, depth 1
         move.w  #1,30(a0)
         move.l  a2,36(a0)
         move.l  #$00010001,26(a1)
@@ -1655,7 +1655,7 @@ glt_img:
         beq     glt_fail
         tst.l   GLT_BA+2(a4)         ; SaveBuffer
         beq     glt_fail
-        tst.l   GLT_VB+44(a4)        ; CollMask de B
+        tst.l   GLT_VB+44(a4)        ; CollMask of B
         beq     glt_fail
         lea     GLT_OB(a4),a0
         jsr     -174(a6)             ; InitGMasks
@@ -1676,7 +1676,7 @@ glt_img:
         bne     glt_fail
         cmp.w   #1,GLT_CA+2(a4)      ; Timer
         bne     glt_fail
-        bsr     glt_anim             ; minuteur à 0 : B remplace A
+        bsr     glt_anim             ; timer at 0: B replaces A
         lea     GLT_CB(a4),a0
         cmp.l   GLT_OB+36(a4),a0
         bne     glt_fail
@@ -1690,7 +1690,7 @@ glt_img:
         bne     glt_fail
         lea     GLT_RP(a4),a1
         suba.l  a0,a0
-        jsr     -114(a6)             ; DrawGList : A retiré (BOBNIX)
+        jsr     -114(a6)             ; DrawGList: A removed (BOBNIX)
         btst    #3,GLT_BA(a4)
         beq     glt_fail
         lea     GLT_OB(a4),a0
@@ -1721,7 +1721,7 @@ glt_anim:
         lea     GLT_KEY(a4),a0
         lea     GLT_RP(a4),a1
         jmp     -162(a6)             ; Animate
-; glt_check(a2 = table (x, y, attendu)... terminée par -1, a4, a6 = GfxBase) : Z = 1 si chaque ReadPixel correspond.
+; glt_check(a2 = table (x, y, expected)... terminated by -1, a4, a6 = GfxBase): Z = 1 if every ReadPixel matches.
 glt_check:
         move.w  (a2)+,d0
         bmi.s   glt_ck_ok
@@ -1734,7 +1734,7 @@ glt_check:
 glt_ck_ok:
         moveq   #0,d0
         rts
-; routines de collision (convention C) : compte dans VUserExt (offset 58) de chaque gel ; bords : drapeaux.
+; collision routines (C convention): count in VUserExt (offset 58) of each gel; borders: flags.
 glt_coll1:
         move.l  4(sp),a0
         addq.w  #1,58(a0)
@@ -1745,21 +1745,21 @@ glt_coll0:
         move.l  4(sp),a0
         move.w  10(sp),58(a0)
         rts
-glt_px1:                             ; Bob à (3, 2) : 3,3 | 1 | 2 | transparent ; fond 1 autour
+glt_px1:                             ; Bob at (3, 2): 3,3 | 1 | 2 | transparent; background 1 around
         dc.w    3,2,3, 6,2,3, 7,2,1, 10,2,1, 11,2,2, 14,2,2, 15,2,1, 18,2,1
         dc.w    5,1,1, 5,5,3, 5,6,1, 2,3,1, -1
-glt_px2:                             ; ancien emplacement restauré ; Bob à (20, 8), découpé à x = 31
+glt_px2:                             ; old location restored; Bob at (20, 8), clipped at x = 31
         dc.w    3,2,1, 7,2,1, 11,2,1, 6,5,1
         dc.w    20,8,3, 23,8,3, 24,8,1, 27,8,1, 28,8,2, 31,8,2, 20,11,3, 20,12,1, 19,8,1, -1
-glt_px3:                             ; RemIBob : fond restauré
+glt_px3:                             ; RemIBob: background restored
         dc.w    20,8,1, 24,8,1, 28,8,1, 31,11,1, -1
 glt_end:
 
-        ; --- layers.library : une couche SIMPLE (L1) et une SMART (L2) sur un BitMap hors écran 64x32x2. Dessin,
-        ; BehindLayer (zone simple redécouverte : effacée + dommage ; zone smart cachée : sauvegardée), dessin dans la
-        ; partie cachée de L2 (lu par ReadPixel), BeginUpdate/EndUpdate de L1, UpfrontLayer (restauration), MoveLayer,
-        ; SizeLayer de L2 (agrandissement smart : dommage), DeleteLayer (fond et couche de dessous), SizeLayer de L1,
-        ; WhichLayer. Attendus : modèle Python au pixel. ---
+        ; --- layers.library: a SIMPLE layer (L1) and a SMART one (L2) on an off-screen 64x32x2 BitMap. Drawing,
+        ; BehindLayer (simple area uncovered again: cleared + damage; hidden smart area: saved), drawing in the
+        ; hidden part of L2 (read by ReadPixel), BeginUpdate/EndUpdate of L1, UpfrontLayer (restoration), MoveLayer,
+        ; SizeLayer of L2 (smart enlargement: damage), DeleteLayer (background and layer below), SizeLayer of L1,
+        ; WhichLayer. Expected: pixel-level Python model. ---
         movem.l d2-d7/a2-a5,-(sp)
         lea     -16(sp),sp
         move.l  sp,a5                ; 0 BitMap, 4 L1, 8 L2, 12 Layer_Info
@@ -1793,7 +1793,7 @@ glt_end:
         exg     a2,a6
         move.l  (a5),a0
         lea     40(a0),a1
-        move.l  a1,8(a0)             ; plans
+        move.l  a1,8(a0)             ; planes
         lea     256(a1),a1
         move.l  a1,12(a0)
         exg     a3,a6
@@ -1829,7 +1829,7 @@ glt_end:
         LYT_PIX 5,5,1
         LYT_PIX 40,20,2
         LYT_PIX 50,5,0
-        move.l  4(a5),a1             ; L1 : RectFill 3 sur toute la couche (seule sa partie visible change)
+        move.l  4(a5),a1             ; L1: RectFill 3 over the whole layer (only its visible part changes)
         moveq   #3,d0
         bsr     lyt_fill
         LYT_PIX 20,10,2
@@ -1841,10 +1841,10 @@ glt_end:
         LYT_PIX 5,5,3
         LYT_PIX 40,20,2
         move.l  4(a5),a0
-        btst    #7,31(a0)            ; L1 : LAYERREFRESH
+        btst    #7,31(a0)            ; L1: LAYERREFRESH
         beq     lyt_fail
         LYT_RPIX 4,2,2
-        move.l  8(a5),a1             ; dessin dans la partie cachée de L2 : (0,0)-(7,3) au stylo 1
+        move.l  8(a5),a1             ; drawing in the hidden part of L2: (0,0)-(7,3) with pen 1
         moveq   #1,d0
         moveq   #0,d4
         moveq   #0,d5
@@ -1871,7 +1871,7 @@ glt_end:
         btst    #7,31(a0)
         bne     lyt_fail
         move.l  8(a5),a1
-        moveq   #-48,d7              ; UpfrontLayer(L2) : contenu restauré depuis la sauvegarde
+        moveq   #-48,d7              ; UpfrontLayer(L2): contents restored from the backup
         bsr     lyt_lcall
         LYT_PIX 20,10,1
         LYT_PIX 30,14,2
@@ -1885,7 +1885,7 @@ glt_end:
         LYT_PIX 17,9,0
         LYT_PIX 20,10,0
         LYT_PIX 50,26,2
-        move.l  8(a5),a1             ; SizeLayer(L2 smart, +4, +2) : contenu gardé, partie agrandie à 0 et en dommage
+        move.l  8(a5),a1             ; SizeLayer(L2 smart, +4, +2): contents kept, enlarged part at 0 and damaged
         moveq   #4,d0
         moveq   #2,d1
         moveq   #-66,d7
@@ -1942,7 +1942,7 @@ lyt_fail:
         lea     msg_layers_fail(pc),a0
 lyt_msg:
         bsr     ser_puts
-        moveq   #8,d6                ; couches restantes supprimées, puis Layer_Info et BitMap rendus
+        moveq   #8,d6                ; remaining layers deleted, then Layer_Info and BitMap returned
 lyt_del:
         move.l  0(a5,d6.w),d0
         beq.s   lyt_deln
@@ -1974,7 +1974,7 @@ lyt_close:
         lea     16(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
         bra     lyt_end
-; sous-routines de la sonde layers (a2 = GfxBase, a3 = LayersBase, a5 = cadre, a6 = SysBase)
+; subroutines of the layers probe (a2 = GfxBase, a3 = LayersBase, a5 = frame, a6 = SysBase)
 lyt_create:                          ; CreateUpfrontLayer(li, bm, d0..d3, flags d4) -> d0
         move.l  12(a5),a0
         move.l  (a5),a1
@@ -1992,12 +1992,12 @@ lyt_setrast1:                        ; SetRast(L1, d0)
         jsr     -234(a6)
         exg     a2,a6
         rts
-lyt_fill:                            ; a1 = couche, d0 = stylo : RectFill de toute la couche initiale (0,0)-(31,15)
+lyt_fill:                            ; a1 = layer, d0 = pen: RectFill of the whole initial layer (0,0)-(31,15)
         moveq   #0,d4
         moveq   #0,d5
         moveq   #31,d6
         moveq   #15,d7
-lyt_rect:                            ; a1 = couche, d0 = stylo, d4..d7 = rectangle relatif
+lyt_rect:                            ; a1 = layer, d0 = pen, d4..d7 = relative rectangle
         move.l  12(a1),a1
         exg     a2,a6
         jsr     -342(a6)             ; SetAPen
@@ -2008,13 +2008,13 @@ lyt_rect:                            ; a1 = couche, d0 = stylo, d4..d7 = rectang
         jsr     -306(a6)             ; RectFill
         exg     a2,a6
         rts
-lyt_lcall:                           ; layers(dummy a0, couche a1, d0, d1) au LVO d7
+lyt_lcall:                           ; layers(dummy a0, layer a1, d0, d1) at LVO d7
         suba.l  a0,a0
         exg     a3,a6
         jsr     0(a6,d7.w)
         exg     a3,a6
         rts
-lyt_clrdmg:                          ; dommages de L1 effacés (BeginUpdate + EndUpdate TRUE)
+lyt_clrdmg:                          ; damage of L1 cleared (BeginUpdate + EndUpdate TRUE)
         move.l  4(a5),a0
         exg     a3,a6
         jsr     -78(a6)
@@ -2023,10 +2023,10 @@ lyt_clrdmg:                          ; dommages de L1 effacés (BeginUpdate + En
         jsr     -84(a6)
         exg     a3,a6
         rts
-; lyt_px(d0 = x, d1 = y) -> d0 = couleur lue directement dans les deux plans du BitMap ; d2 = attendu -> Z si égal.
+; lyt_px(d0 = x, d1 = y) -> d0 = colour read directly from the two planes of the BitMap; d2 = expected -> Z if equal.
 lyt_px:
         move.l  (a5),a0
-        lsl.w   #3,d1                ; 8 octets par ligne
+        lsl.w   #3,d1                ; 8 bytes per line
         move.w  d0,d3
         lsr.w   #3,d3
         add.w   d3,d1
@@ -2045,7 +2045,7 @@ lyt_p1:
 lyt_p2:
         cmp.w   d2,d3
         rts
-; lyt_rpx(d0 = x, d1 = y relatifs à L2) : ReadPixel(L2) comparé à d2.
+; lyt_rpx(d0 = x, d1 = y relative to L2): ReadPixel(L2) compared with d2.
 lyt_rpx:
         move.l  8(a5),a1
         move.l  12(a1),a1
@@ -2056,10 +2056,10 @@ lyt_rpx:
         rts
 lyt_end:
 
-        ; --- M6t : vérifier trackdisk.device (squelette résident + validation d'unité) ---
-        ; FindName(DeviceList) + version 34 + NT_DEVICE + Open(unité 0) OK (OpenCnt==1, io_Error==0, io_Unit ==
-        ; base+LIB_SIZE = aire EXACTE de l'unité 0, io_Device==base) + Open(unité 4) ÉCHOUE (io_Error!=0,
-        ; io_Device==0, OpenCnt inchangé). RED TD_NO_UNITCHECK : unité 4 ouvre à tort -> M6T absent. a6=ExecBase.
+        ; --- M6t: check trackdisk.device (resident skeleton + unit validation) ---
+        ; FindName(DeviceList) + version 34 + NT_DEVICE + Open(unit 0) OK (OpenCnt==1, io_Error==0, io_Unit ==
+        ; base+LIB_SIZE = EXACT area of unit 0, io_Device==base) + Open(unit 4) FAILS (io_Error!=0,
+        ; io_Device==0, OpenCnt unchanged). RED TD_NO_UNITCHECK: unit 4 wrongly opens -> M6T absent. a6=ExecBase.
         lea     EB_DEVICELIST(a6),a0
         lea     trackdisk_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -2070,65 +2070,66 @@ lyt_end:
         bne     m6t_done
         cmp.b   #NT_DEVICE,LN_TYPE(a2)
         bne     m6t_done
-        lea     -32(sp),sp           ; IORequest sur la pile (IO_SIZE=32), mis à 0
+        lea     -32(sp),sp           ; IORequest on the stack (IO_SIZE=32), zeroed
         move.l  sp,a3                ; a3 = ioreq
         moveq   #(32/4)-1,d0
         move.l  a3,a0
 .m6t_clr:
         clr.l   (a0)+
         dbf     d0,.m6t_clr
-        move.l  a6,-(sp)             ; Open(unité 0) via le vecteur -6 (a6=dev, a1=ioreq, d0=unit, d1=flags)
+        move.l  a6,-(sp)             ; Open(unit 0) via vector -6 (a6=dev, a1=ioreq, d0=unit, d1=flags)
         move.l  a2,a6
         move.l  a3,a1
         moveq   #0,d0
         moveq   #0,d1
-        jsr     -6(a6)               ; trackdisk Open (LVO -6, littéral : boot.s n'inclut qu'exec.i)
+        jsr     -6(a6)               ; trackdisk Open (LVO -6, literal: boot.s only includes exec.i)
         move.l  (sp)+,a6
-        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt==1 ?
+        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt==1?
         bne.s   m6t_pop
-        tst.b   IO_ERROR(a3)         ; io_Error==0 ?
+        tst.b   IO_ERROR(a3)         ; io_Error==0?
         bne.s   m6t_pop
-        move.l  IO_DEVICE(a3),d0     ; io_Device==TDBase ?
+        move.l  IO_DEVICE(a3),d0     ; io_Device==TDBase?
         cmp.l   a2,d0
         bne.s   m6t_pop
-        lea     LIB_SIZE(a2),a0      ; attendu io_Unit = base + TDU_UNIT0 (TDU_UNIT0 = LIB_SIZE = 34)
-        cmp.l   IO_UNIT(a3),a0       ; io_Unit == base+TDU_UNIT0 ? (prouve l'offset de base + io_Unit posé ; le stride
-        bne.s   m6t_pop              ;   par-unité est placeholder, re-prouvé quand les unités seront réelles en B2)
-        move.l  a6,-(sp)             ; Open(unité 4) -> doit ÉCHOUER
+        lea     LIB_SIZE(a2),a0      ; expected io_Unit = base + TDU_UNIT0 (TDU_UNIT0 = LIB_SIZE = 34)
+        cmp.l   IO_UNIT(a3),a0       ; io_Unit == base+TDU_UNIT0? (proves the base offset + io_Unit set; the per-unit
+        bne.s   m6t_pop              ;   stride is a placeholder, proven again when the units become real in B2)
+        move.l  a6,-(sp)             ; Open(unit 4) -> must FAIL
         move.l  a2,a6
         move.l  a3,a1
         moveq   #4,d0
         moveq   #0,d1
         jsr     -6(a6)
         move.l  (sp)+,a6
-        tst.b   IO_ERROR(a3)         ; io_Error != 0 (échec) ?
-        beq.s   m6t_pop              ; RED TD_NO_UNITCHECK : io_Error==0 -> ouvre à tort -> M6T absent
-        move.l  IO_DEVICE(a3),d0     ; io_Device == 0 (échec OpenDevice) ?
+        tst.b   IO_ERROR(a3)         ; io_Error != 0 (failure)?
+        beq.s   m6t_pop              ; RED TD_NO_UNITCHECK: io_Error==0 -> wrongly opens -> M6T absent
+        move.l  IO_DEVICE(a3),d0     ; io_Device == 0 (OpenDevice failure)?
         bne.s   m6t_pop
-        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt toujours 1 (unité 4 n'a pas compté) ?
+        cmp.w   #1,LIB_OPENCNT(a2)   ; OpenCnt still 1 (unit 4 did not count)?
         bne.s   m6t_pop
-        lea     32(sp),sp            ; libère l'IORequest (succès)
+        lea     32(sp),sp            ; free the IORequest (success)
         lea     msg_m6t_ok(pc),a0
-        bsr     ser_puts             ; « M6T TRACKDISK OK »
+        bsr     ser_puts             ; "M6T TRACKDISK OK"
         bra.s   m6t_done
 m6t_pop:
-        lea     32(sp),sp            ; libère l'IORequest (échec)
+        lea     32(sp),sp            ; free the IORequest (failure)
 m6t_done:
 
-        clr.b   TD_CYLVALID         ; cylinder-tracking : position tête inconnue avant la 1re lecture -> recalibrer
-        ; --- M6u/M6v : lecture brute (B2) + décodage MFM (B3) — UNE SEULE lecture de DF0 ---
-        ; td_read_track0 lit la piste brute ; M6U compte les mots de synchro $4489 (impossibles en MFM normal -> 0
-        ; faux positif), M6V décode les secteurs (combine odd/even) + vérifie les checksums en-tête ET data. UNE
-        ; seule lecture pour les deux (un 2e timeout sans disque décalerait la preuve M7A). Sans disque -> rien, sans FAILED.
-        moveq   #0,d4                ; d4 = flag « disque présent » (gate M6W : évite un 2e timeout sans disque)
+        clr.b   TD_CYLVALID         ; cylinder-tracking: head position unknown before the 1st read -> recalibrate
+        ; --- M6u/M6v: raw read (B2) + MFM decoding (B3) — A SINGLE read of DF0 ---
+        ; td_read_track0 reads the raw track; M6U counts the $4489 sync words (impossible in normal MFM -> 0
+        ; false positives), M6V decodes the sectors (combine odd/even) + checks the header AND data checksums. A
+        ; single read for both (a 2nd timeout without a disk would shift the M7A proof). Without a disk -> nothing,
+        ; without FAILED.
+        moveq   #0,d4                ; d4 = "disk present" flag (M6W gate: avoids a 2nd timeout without a disk)
         bsr     td_read_track0
         tst.l   d0
         beq     m6uv_done
-        moveq   #1,d4                ; disque présent
-        move.l  d0,a4                ; a4 = rawbuf chip (piste brute ; préservé jusqu'au FreeMem)
-        ; M6U : compter les mots de synchro
+        moveq   #1,d4                ; disk present
+        move.l  d0,a4                ; a4 = chip rawbuf (raw track; preserved until the FreeMem)
+        ; M6U: count the sync words
         move.l  a4,a0
-        move.l  #$1900-1,d2          ; TD_RAWWORDS-1 (disk.i) : 6399 < 65535 -> dbra OK
+        move.l  #$1900-1,d2          ; TD_RAWWORDS-1 (disk.i): 6399 < 65535 -> dbra OK
         moveq   #0,d3
 .m6u_scan:
         cmp.w   #$4489,(a0)+         ; TD_SYNC (disk.i)
@@ -2137,52 +2138,52 @@ m6t_done:
 .m6u_next:
         dbra    d2,.m6u_scan
         lea     msg_m6u_syncs(pc),a0
-        bsr     ser_puts             ; « M6U SYNCS= »
+        bsr     ser_puts             ; "M6U SYNCS="
         move.w  d3,d0
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
-        cmp.l   #5,d3                ; seuil : au moins 5 syncs (une piste formatée en a ~22)
+        cmp.l   #5,d3                ; threshold: at least 5 syncs (a formatted track has ~22)
         blt.s   .m6v_decode
         lea     msg_m6u_ok(pc),a0
-        bsr     ser_puts             ; « M6U TRACKDISK READ OK »
+        bsr     ser_puts             ; "M6U TRACKDISK READ OK"
 .m6v_decode:
-        ; M6V : décoder la piste en secteurs 512 o + vérifier les checksums
+        ; M6V: decode the track into 512-byte sectors + check the checksums
         move.l  #512*11,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .m6uv_freeraw        ; pas de RAM -> libère juste rawbuf
+        beq.s   .m6uv_freeraw        ; no RAM -> just free rawbuf
         move.l  d0,a3                ; a3 = sectorbuf
         move.l  a4,a0
         move.l  a3,a1
-        jsr     td_decode_track      ; d0 = nombre de secteurs décodés+vérifiés
+        jsr     td_decode_track      ; d0 = number of sectors decoded+verified
         move.l  d0,d5
         lea     msg_m6v_sect(pc),a0
-        bsr     ser_puts             ; « M6V SECTORS= »
+        bsr     ser_puts             ; "M6V SECTORS="
         move.w  d5,d0
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
-        cmp.l   #11,d5               ; 11 secteurs valides ?
+        cmp.l   #11,d5               ; 11 valid sectors?
         bne.s   .m6v_free
-        cmp.l   #$444F5300,(a3)      ; secteur 0 décodé == « DOS\0 » (bootblock OFS) ?
+        cmp.l   #$444F5300,(a3)      ; decoded sector 0 == "DOS\0" (OFS bootblock)?
         bne.s   .m6v_free
         lea     msg_m6v_ok(pc),a0
-        bsr     ser_puts             ; « M6V TRACKDISK DECODE OK »
+        bsr     ser_puts             ; "M6V TRACKDISK DECODE OK"
 .m6v_free:
-        move.l  a3,a1                ; libère sectorbuf
+        move.l  a3,a1                ; free sectorbuf
         move.l  #512*11,d0
         jsr     LVO_FREEMEM(a6)
 .m6uv_freeraw:
-        move.l  a4,a1                ; libère rawbuf (TD_RAWBYTES = $1900*2)
+        move.l  a4,a1                ; free rawbuf (TD_RAWBYTES = $1900*2)
         move.l  #$1900*2,d0
         jsr     LVO_FREEMEM(a6)
 m6uv_done:
 
-        ; --- M6w : trackdisk CMD_READ (B4) — SEULEMENT si disque présent (d4=1 ; évite un 2e timeout sans disque) ---
-        ; Monte un IOStdReq (CMD_READ, offset 0, length 512, IOF_QUICK), appelle BeginIO via le vecteur -30, vérifie
-        ; io_Error==0 + io_Actual==512 + secteur lu == « DOS\0 ». RED TD_READ_NOCMD -> io_Data reste vide -> absent.
+        ; --- M6w: trackdisk CMD_READ (B4) — ONLY if disk present (d4=1; avoids a 2nd timeout without a disk) ---
+        ; Sets up an IOStdReq (CMD_READ, offset 0, length 512, IOF_QUICK), calls BeginIO via vector -30, checks
+        ; io_Error==0 + io_Actual==512 + sector read == "DOS\0". RED TD_READ_NOCMD -> io_Data stays empty -> absent.
         tst.l   d4
         beq     m6w_done
         lea     EB_DEVICELIST(a6),a0
@@ -2202,36 +2203,36 @@ m6uv_done:
         move.l  #512,36(a3)          ; IO_LENGTH (offset 36) = 512
         lea     48(a3),a0
         move.l  a0,40(a3)            ; IO_DATA (offset 40) = databuf (ioreq+48)
-        clr.l   44(a3)               ; IO_OFFSET (offset 44) = 0 (secteur logique 0)
-        move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK -> BeginIO ne fait pas ReplyMsg
-        move.l  a6,-(sp)             ; BeginIO via le vecteur -30 (a6 = trackdisk, a1 = ioreq)
+        clr.l   44(a3)               ; IO_OFFSET (offset 44) = 0 (logical sector 0)
+        move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK -> BeginIO does not ReplyMsg
+        move.l  a6,-(sp)             ; BeginIO via vector -30 (a6 = trackdisk, a1 = ioreq)
         move.l  a2,a6
         move.l  a3,a1
         jsr     -30(a6)
         move.l  (sp)+,a6
-        tst.b   IO_ERROR(a3)         ; io_Error == 0 ?
+        tst.b   IO_ERROR(a3)         ; io_Error == 0?
         bne.s   .m6w_free
-        cmp.l   #512,32(a3)          ; IO_ACTUAL (offset 32) == 512 octets transférés ?
+        cmp.l   #512,32(a3)          ; IO_ACTUAL (offset 32) == 512 bytes transferred?
         bne.s   .m6w_free
         lea     48(a3),a0            ; databuf
-        cmp.l   #$444F5300,(a0)      ; secteur 0 lu == « DOS\0 » (bootblock) ?
+        cmp.l   #$444F5300,(a0)      ; sector 0 read == "DOS\0" (bootblock)?
         bne.s   .m6w_free
         lea     msg_m6w_ok(pc),a0
-        bsr     ser_puts             ; « M6W TRACKDISK CMD_READ OK »
+        bsr     ser_puts             ; "M6W TRACKDISK CMD_READ OK"
 .m6w_free:
         move.l  a3,a1
         move.l  #48+512,d0
         jsr     LVO_FREEMEM(a6)
 m6w_done:
 
-        ; --- M6x : trackdisk SEEK + side-select (B2b) — lire la PISTE 2 (cylindre 1, face 0) ---
-        ; td_read_track(2) seek vers cylindre 1 + face 0 ; td_decode_track renvoie d1 = n° de piste des secteurs.
-        ; Succès = 11 secteurs valides ET track == 2 (prouve le seek ET le side : un mauvais side lirait la piste 3).
-        ; Gaté sur d4 (disque présent) : pas de 2e timeout sans disque. RED SEEK_NOSTEP -> reste piste 0 -> absent.
+        ; --- M6x: trackdisk SEEK + side-select (B2b) — read TRACK 2 (cylinder 1, side 0) ---
+        ; td_read_track(2) seeks to cylinder 1 + side 0; td_decode_track returns d1 = track number of the sectors.
+        ; Success = 11 valid sectors AND track == 2 (proves the seek AND the side: a wrong side would read track 3).
+        ; Gated on d4 (disk present): no 2nd timeout without a disk. RED SEEK_NOSTEP -> stays on track 0 -> absent.
         tst.l   d4
         beq     m6x_done
         moveq   #2,d0
-        bsr     td_read_track        ; d0 = rawbuf (piste 2) | 0
+        bsr     td_read_track        ; d0 = rawbuf (track 2) | 0
         tst.l   d0
         beq     m6x_done
         move.l  d0,a4                ; a4 = rawbuf
@@ -2243,21 +2244,21 @@ m6w_done:
         move.l  d0,a3                ; a3 = sectorbuf
         move.l  a4,a0
         move.l  a3,a1
-        jsr     td_decode_track      ; d0 = nb secteurs valides, d1 = n° de piste lu
-        move.l  d1,d5                ; d5 = piste lue (sauvée avant que d1 soit clobbé)
-        move.l  d0,d2                ; d2 = count (sauvé : ser_puthex clobbe d0-d3)
+        jsr     td_decode_track      ; d0 = number of valid sectors, d1 = track number read
+        move.l  d1,d5                ; d5 = track read (saved before d1 is clobbered)
+        move.l  d0,d2                ; d2 = count (saved: ser_puthex clobbers d0-d3)
         lea     msg_m6x_track(pc),a0
-        bsr     ser_puts             ; « M6X TRACK= » (diagnostic : piste réellement atteinte par le seek)
+        bsr     ser_puts             ; "M6X TRACK=" (diagnostic: track actually reached by the seek)
         move.w  d5,d0
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
-        cmp.l   #11,d2               ; 11 secteurs valides ?
+        cmp.l   #11,d2               ; 11 valid sectors?
         bne.s   .m6x_free
-        cmp.l   #2,d5                ; piste lue == 2 (seek + side corrects) ?
+        cmp.l   #2,d5                ; track read == 2 (seek + side correct)?
         bne.s   .m6x_free
         lea     msg_m6x_ok(pc),a0
-        bsr     ser_puts             ; « M6X TRACKDISK SEEK OK »
+        bsr     ser_puts             ; "M6X TRACKDISK SEEK OK"
 .m6x_free:
         move.l  a3,a1
         move.l  #512*11,d0
@@ -2268,14 +2269,14 @@ m6w_done:
         jsr     LVO_FREEMEM(a6)
 m6x_done:
 
-        ; --- M6z : CMD_READ MULTI-PISTE (prérequis D) — SEULEMENT si disque présent (d4=1) ---
-        ; Deux lectures via BeginIO (le vrai chemin device que dos appellera) prouvent le mapping offset->piste :
-        ;  (1) root block @ bloc 880 = piste 80 (cyl 40) -> type primaire +0 == 2 (T_SHORT) ET type secondaire
-        ;      +508 == 1 (ST_ROOT). Un mauvais mapping renverrait la piste 0 (bootblock « DOS\0 ») -> échoue.
-        ;  (2) lecture SPANNING : offset 10*512, length 1024 = blocs 10+11 -> TRAVERSE la frontière piste 0/1.
-        ;      Le bloc 10 (piste 0, secteur 10) porte « SPAN0010 », le bloc 11 (piste 1, secteur 0) « SPAN0011 »
-        ;      (posés par patch_bootblock.py). Les deux marqueurs présents <=> la boucle a lu DEUX pistes et les
-        ;      a assemblées. RED TD_NOSEEK (lit toujours la piste 0) -> les deux contrôles échouent -> M6Z absent.
+        ; --- M6z: MULTI-TRACK CMD_READ (prerequisite for D) — ONLY if disk present (d4=1) ---
+        ; Two reads via BeginIO (the real device path that dos will call) prove the offset->track mapping:
+        ;  (1) root block @ block 880 = track 80 (cyl 40) -> primary type +0 == 2 (T_SHORT) AND secondary type
+        ;      +508 == 1 (ST_ROOT). A wrong mapping would return track 0 (bootblock "DOS\0") -> fails.
+        ;  (2) SPANNING read: offset 10*512, length 1024 = blocks 10+11 -> CROSSES the track 0/1 boundary.
+        ;      Block 10 (track 0, sector 10) carries "SPAN0010", block 11 (track 1, sector 0) "SPAN0011"
+        ;      (set by patch_bootblock.py). Both markers present <=> the loop read TWO tracks and
+        ;      assembled them. RED TD_NOSEEK (always reads track 0) -> both checks fail -> M6Z absent.
         tst.l   d4
         beq     m6z_done
         lea     EB_DEVICELIST(a6),a0
@@ -2284,39 +2285,39 @@ m6x_done:
         tst.l   d0
         beq     m6z_done
         move.l  d0,a2                ; a2 = trackdisk base
-        move.l  #48+1024,d0          ; IOStdReq (48) + databuf (1024 = lecture spanning 2 blocs)
+        move.l  #48+1024,d0          ; IOStdReq (48) + databuf (1024 = spanning read of 2 blocks)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     m6z_done
-        move.l  d0,a3                ; a3 = ioreq ; databuf = a3+48
+        move.l  d0,a3                ; a3 = ioreq; databuf = a3+48
         move.l  a2,IO_DEVICE(a3)
         move.w  #2,IO_COMMAND(a3)    ; CMD_READ
-        ; (1) root block @ bloc 880 (piste 80)
+        ; (1) root block @ block 880 (track 80)
         move.l  #512,36(a3)          ; IO_LENGTH = 512
         lea     48(a3),a0
         move.l  a0,40(a3)            ; IO_DATA = databuf
-        move.l  #880*512,44(a3)      ; IO_OFFSET = bloc 880 (piste 80, cyl 40)
+        move.l  #880*512,44(a3)      ; IO_OFFSET = block 880 (track 80, cyl 40)
         move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK
-        move.l  a6,-(sp)             ; BeginIO via le vecteur -30
+        move.l  a6,-(sp)             ; BeginIO via vector -30
         move.l  a2,a6
         move.l  a3,a1
         jsr     -30(a6)
         move.l  (sp)+,a6
         tst.b   IO_ERROR(a3)
         bne     .m6z_free
-        cmp.l   #512,32(a3)          ; io_Actual == 512 ?
+        cmp.l   #512,32(a3)          ; io_Actual == 512?
         bne     .m6z_free
         lea     48(a3),a0            ; databuf = root block
-        cmp.l   #2,(a0)              ; +0 == T_SHORT (0x00000002) ?
+        cmp.l   #2,(a0)              ; +0 == T_SHORT (0x00000002)?
         bne.s   .m6z_free
-        cmp.l   #1,508(a0)           ; +508 == ST_ROOT (0x00000001) ?
+        cmp.l   #1,508(a0)           ; +508 == ST_ROOT (0x00000001)?
         bne.s   .m6z_free
-        ; (2) lecture spanning piste 0/1 : blocs 10+11 (offset 10*512, length 1024)
+        ; (2) spanning read track 0/1: blocks 10+11 (offset 10*512, length 1024)
         move.l  #1024,36(a3)         ; IO_LENGTH = 1024
         lea     48(a3),a0
         move.l  a0,40(a3)            ; IO_DATA = databuf
-        move.l  #10*512,44(a3)       ; IO_OFFSET = bloc 10 (dernier secteur de la piste 0)
+        move.l  #10*512,44(a3)       ; IO_OFFSET = block 10 (last sector of track 0)
         move.b  #1,IO_FLAGS(a3)      ; IOF_QUICK
         move.l  a6,-(sp)
         move.l  a2,a6
@@ -2325,32 +2326,32 @@ m6x_done:
         move.l  (sp)+,a6
         tst.b   IO_ERROR(a3)
         bne.s   .m6z_free
-        cmp.l   #1024,32(a3)         ; io_Actual == 1024 ?
+        cmp.l   #1024,32(a3)         ; io_Actual == 1024?
         bne.s   .m6z_free
-        lea     48(a3),a0           ; databuf : [0..511]=bloc 10 (piste 0), [512..1023]=bloc 11 (piste 1)
-        cmp.l   #$5350414E,(a0)      ; bloc 10 « SPAN » ?
+        lea     48(a3),a0           ; databuf: [0..511]=block 10 (track 0), [512..1023]=block 11 (track 1)
+        cmp.l   #$5350414E,(a0)      ; block 10 "SPAN"?
         bne.s   .m6z_free
-        cmp.l   #$30303130,4(a0)     ; bloc 10 « 0010 » ?
+        cmp.l   #$30303130,4(a0)     ; block 10 "0010"?
         bne.s   .m6z_free
-        cmp.l   #$5350414E,512(a0)   ; bloc 11 « SPAN » (piste 1) ?
+        cmp.l   #$5350414E,512(a0)   ; block 11 "SPAN" (track 1)?
         bne.s   .m6z_free
-        cmp.l   #$30303131,516(a0)   ; bloc 11 « 0011 » ?
+        cmp.l   #$30303131,516(a0)   ; block 11 "0011"?
         bne.s   .m6z_free
         lea     msg_m6z_ok(pc),a0
-        bsr     ser_puts             ; « M6Z TRACKDISK CMD_READ MULTI-TRACK OK »
+        bsr     ser_puts             ; "M6Z TRACKDISK CMD_READ MULTI-TRACK OK"
 .m6z_free:
         move.l  a3,a1
         move.l  #48+1024,d0
         jsr     LVO_FREEMEM(a6)
 m6z_done:
 
-        ; --- D1 : OFS lecture seule — lire le fichier « KickSlop » de DF0: PAR NOM (gaté disque d4) ---
-        ; ofs_read_file parcourt le filesystem OFS (root 880 -> hash -> header via chaîne de hash -> chaîne de
-        ; data blocks) en s'appuyant sur trackdisk CMD_READ (M6z). Preuve : taille retournée == 1024 (RED
-        ; OFS_NO_DATACHAIN -> 488) ET marqueurs aux frontières de data block OFS : @0 « D1OFSOK0 », @488
-        ; « D1OFSOK1 » (2e block, 488 o/bloc OFS), @976 « D1OFSOK2 » (3e block). Prouve trouvé-PAR-NOM — requête
-        ; « kickslop » vs stocké « KickSlop » exerce le toupper hash + compare insensible à la casse — ET la
-        ; chaîne data complète. RED OFS_NO_DATACHAIN -> taille 488 -> D1 absent (isole le chaînage).
+        ; --- D1: read-only OFS — read the file "KickSlop" of DF0: BY NAME (gated on disk d4) ---
+        ; ofs_read_file walks the OFS filesystem (root 880 -> hash -> header via hash chain -> chain of
+        ; data blocks) relying on trackdisk CMD_READ (M6z). Proof: returned size == 1024 (RED
+        ; OFS_NO_DATACHAIN -> 488) AND markers at the OFS data block boundaries: @0 "D1OFSOK0", @488
+        ; "D1OFSOK1" (2nd block, 488 bytes/OFS block), @976 "D1OFSOK2" (3rd block). Proves found-BY-NAME — request
+        ; "kickslop" vs stored "KickSlop" exercises the toupper hash + case-insensitive compare — AND the
+        ; complete data chain. RED OFS_NO_DATACHAIN -> size 488 -> D1 absent (isolates the chaining).
         tst.l   d4
         beq     d1_done
         move.l  #2048,d0
@@ -2358,60 +2359,60 @@ m6z_done:
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     d1_done
-        move.l  d0,a4                ; a4 = buffer destination (préservé par ofs_read_file : movem d2-d7/a2-a5)
-        lea     ofs_test_name(pc),a0 ; « kickslop » (casse différente du nom stocké)
+        move.l  d0,a4                ; a4 = destination buffer (preserved by ofs_read_file: movem d2-d7/a2-a5)
+        lea     ofs_test_name(pc),a0 ; "kickslop" (different case from the stored name)
         move.l  a4,a1
-        move.l  #2048,d0             ; max octets (garde buffer)
-        jsr     ofs_read_file        ; d0 = taille lue | 0 (jsr absolu : ofs.o lié hors portée bsr 16 bits)
-        cmp.l   #1024,d0             ; fichier complet lu ?
+        move.l  #2048,d0             ; max bytes (buffer guard)
+        jsr     ofs_read_file        ; d0 = size read | 0 (absolute jsr: ofs.o linked out of 16-bit bsr range)
+        cmp.l   #1024,d0             ; complete file read?
         bne.s   .d1_free
-        cmp.l   #$44314F46,(a4)      ; @0 « D1OF »
+        cmp.l   #$44314F46,(a4)      ; @0 "D1OF"
         bne.s   .d1_free
-        cmp.l   #$534F4B30,4(a4)     ; @0 « SOK0 »
+        cmp.l   #$534F4B30,4(a4)     ; @0 "SOK0"
         bne.s   .d1_free
-        cmp.l   #$534F4B31,492(a4)   ; @488 « SOK1 » (2e data block OFS)
+        cmp.l   #$534F4B31,492(a4)   ; @488 "SOK1" (2nd OFS data block)
         bne.s   .d1_free
-        cmp.l   #$534F4B32,980(a4)   ; @976 « SOK2 » (3e data block OFS)
+        cmp.l   #$534F4B32,980(a4)   ; @976 "SOK2" (3rd OFS data block)
         bne.s   .d1_free
         lea     msg_d1_ok(pc),a0
-        bsr     ser_puts             ; « D1 OFS READ OK »
+        bsr     ser_puts             ; "D1 OFS READ OK"
 .d1_free:
         move.l  a4,a1
         move.l  #2048,d0
         jsr     LVO_FREEMEM(a6)
 d1_done:
 
-        ; --- D2 : LoadSeg — charger « D2Test » de l'OFS, relocaliser, EXÉCUTER (gaté disque d4) ---
-        ; dos_loadseg lit l'exécutable hunk via ofs_read_file (D1), alloue les segments, APPLIQUE les relocations
-        ; et renvoie le BPTR de la seglist. On exécute le code chargé : entry = (BPTR<<2)+4. Le code émet LUI-MÊME
-        ; « D2LOADSEG OK » (preuve qu'il tourne depuis la RAM AVEC relocation appliquée — même logique que CBOOT en
-        ; C). RED D2_NO_RELOC : load OK mais pointeur non relocaté -> le code lit la RAM basse -> marqueur absent.
+        ; --- D2: LoadSeg — load "D2Test" from the OFS, relocate, EXECUTE (gated on disk d4) ---
+        ; dos_loadseg reads the hunk executable via ofs_read_file (D1), allocates the segments, APPLIES the relocations
+        ; and returns the BPTR of the seglist. We execute the loaded code: entry = (BPTR<<2)+4. The code ITSELF emits
+        ; "D2LOADSEG OK" (proof that it runs from RAM WITH relocation applied — same logic as CBOOT in
+        ; C). RED D2_NO_RELOC: load OK but pointer not relocated -> the code reads low RAM -> marker absent.
         tst.l   d4
         beq     d2_done
         lea     ls_test_name(pc),a0
-        jsr     dos_loadseg          ; d0 = BPTR 1er segment | 0 (jsr absolu : loadseg.o hors portée bsr)
+        jsr     dos_loadseg          ; d0 = BPTR of 1st segment | 0 (absolute jsr: loadseg.o out of bsr range)
         tst.l   d0
-        beq.s   d2_done              ; échec de chargement -> pas de marqueur
-        move.l  d0,-(sp)             ; BPTR sur la pile (survit au code chargé)
+        beq.s   d2_done              ; load failure -> no marker
+        move.l  d0,-(sp)             ; BPTR on the stack (survives the loaded code)
         lsl.l   #2,d0
-        addq.l  #4,d0                ; entry = (BPTR<<2)+4 = contenu du 1er hunk (CODE)
+        addq.l  #4,d0                ; entry = (BPTR<<2)+4 = contents of the 1st hunk (CODE)
         move.l  d0,a0
-        jsr     (a0)                 ; exécute le code chargé (A6=SysBase) -> émet « D2LOADSEG OK »
-        move.l  ($4).w,a6            ; recharge SysBase (le code chargé a pu clobber a6)
+        jsr     (a0)                 ; execute the loaded code (A6=SysBase) -> emits "D2LOADSEG OK"
+        move.l  ($4).w,a6            ; reload SysBase (the loaded code may have clobbered a6)
         move.l  (sp)+,d0             ; BPTR
-        jsr     dos_unloadseg        ; libère les segments
+        jsr     dos_unloadseg        ; free the segments
 d2_done:
 
-        ; --- M6a : unité VBLANK de timer.device FONCTIONNELLE ---
-        ; alloue reply port + timerequest, demande 100000 us (= 5 ticks), BeginIO, puis
-        ; interroge le reply port (le service VBlank répond après ~5 VBlank). d6 = base timer,
-        ; d7 = VBL_COUNT au départ (préservés par AllocMem/newlist/GetMsg).
+        ; --- M6a: FUNCTIONAL VBLANK unit of timer.device ---
+        ; allocates reply port + timerequest, requests 100000 us (= 5 ticks), BeginIO, then
+        ; polls the reply port (the VBlank service replies after ~5 VBlanks). d6 = timer base,
+        ; d7 = VBL_COUNT at start (preserved by AllocMem/newlist/GetMsg).
         lea     EB_DEVICELIST(a6),a0
         lea     timer_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
-        move.l  d0,d6                ; d6 = base timer.device
+        move.l  d0,d6                ; d6 = timer.device base
         beq     m6a_fail
-        move.l  #MP_SIZE,d0          ; reply port (PA_IGNORE : boot interroge par GetMsg)
+        move.l  #MP_SIZE,d0          ; reply port (PA_IGNORE: boot polls with GetMsg)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
@@ -2419,9 +2420,9 @@ d2_done:
         move.l  d0,a2                ; a2 = port
         lea     MP_MSGLIST(a2),a1
         jsr     newlist
-        move.b  #PA_SIGNAL,MP_FLAGS(a2)   ; PA_SIGNAL -> exerce exec_Signal DEPUIS le handler
+        move.b  #PA_SIGNAL,MP_FLAGS(a2)   ; PA_SIGNAL -> exercises exec_Signal FROM the handler
         move.b  #16,MP_SIGBIT(a2)
-        move.l  EB_THISTASK(a6),MP_SIGTASK(a2)  ; signale la boot task (TS_RUN -> no-wake)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a2)  ; signals the boot task (TS_RUN -> no-wake)
         move.l  #TR_SIZE,d0          ; timerequest
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -2430,53 +2431,53 @@ d2_done:
         move.l  d0,a3                ; a3 = timerequest
         move.l  a2,MN_REPLYPORT(a3)
         move.l  d6,IO_DEVICE(a3)
-        move.l  #UNIT_VBLANK,IO_UNIT(a3)  ; unité VBLANK (le défaut de BeginIO est MICROHZ depuis M7a)
+        move.l  #UNIT_VBLANK,IO_UNIT(a3)  ; VBLANK unit (BeginIO's default is MICROHZ since M7a)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a3)
         clr.l   TV_SECS(a3)
         move.l  #100000,TV_MICRO(a3) ; 100000 us / 20000 = 5 ticks
-        move.l  EB_THISTASK(a6),a0   ; efface le bit 16 de SIGRECVD (on le veut posé par la reply)
+        move.l  EB_THISTASK(a6),a0   ; clear bit 16 of SIGRECVD (we want it set by the reply)
         move.l  TC_SIGRECVD(a0),d0
         bclr    #16,d0
         move.l  d0,TC_SIGRECVD(a0)
         move.l  VBL_COUNT,d7         ; T0
-        move.l  a6,-(sp)             ; BeginIO (a6 = base timer, a1 = requête)
+        move.l  a6,-(sp)             ; BeginIO (a6 = timer base, a1 = request)
         move.l  d6,a6
         move.l  a3,a1
         jsr     TD_BEGINIO(a6)
         move.l  (sp)+,a6
 .m6a_wait:
-        move.l  VBL_COUNT,d0         ; garde-fou timeout (~4 s)
+        move.l  VBL_COUNT,d0         ; timeout safeguard (~4 s)
         sub.l   d7,d0
         cmp.l   #200,d0
         bcc     m6a_fail
-        move.l  a2,a0                ; GetMsg(port) ?
+        move.l  a2,a0                ; GetMsg(port)?
         jsr     LVO_GETMSG(a6)
         tst.l   d0
         beq.s   .m6a_wait
-        cmp.l   a3,d0                ; le reply doit être NOTRE requête
+        cmp.l   a3,d0                ; the reply must be OUR request
         bne     m6a_fail
-        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)  ; marquée répondue ?
+        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)  ; marked replied?
         bne     m6a_fail
-        move.l  VBL_COUNT,d0         ; délai ≈ 5 ticks ? (marge [3..40])
+        move.l  VBL_COUNT,d0         ; delay ~= 5 ticks? (margin [3..40])
         sub.l   d7,d0
         cmp.l   #3,d0
         bcs     m6a_fail
         cmp.l   #40,d0
         bhi     m6a_fail
-        move.l  EB_THISTASK(a6),a0   ; exec_Signal (depuis le handler) a-t-il posé le bit 16 ?
+        move.l  EB_THISTASK(a6),a0   ; did exec_Signal (from the handler) set bit 16?
         move.l  TC_SIGRECVD(a0),d0
         btst    #16,d0
         beq     m6a_fail
         lea     msg_m6a_ok(pc),a0
-        bsr     ser_puts             ; « M6A TIMER OK »
+        bsr     ser_puts             ; "M6A TIMER OK"
 
-        ; --- M7b : dispatcher par numéro — chaîne PORTS (INT2) via AddIntServer ---
-        ; SCHED_ON encore 0 (aucune interaction scheduler/gate ; INT2 niveau 2 < 3 de toute façon).
-        ; Enregistre DEUX serveurs sur PORTS : ciaa_server (pri 10, lit+acquitte l'ICR ciaa ->
-        ; cia_test_vec incrémente CIA_FIRED) et int2_srv2 (pri 0, incrémente INT2_SRV2). La chaîne les
-        ; appelle DANS L'ORDRE DE PRIORITÉ (cia avant srv2) -> prouve AddIntServer + walker + ordre.
-        ; Structs serveur en RAM (Enqueue les chaîne). Un one-shot du Timer A de CIA-A déclenche INT2.
-        ; Généralise M6b : cia.resource EST le handler PORTS (serveur), plus un autovecteur hardcodé.
+        ; --- M7b: by-number dispatcher — PORTS chain (INT2) via AddIntServer ---
+        ; SCHED_ON still 0 (no scheduler/gate interaction; INT2 level 2 < 3 anyway).
+        ; Registers TWO servers on PORTS: ciaa_server (pri 10, reads+acknowledges the ciaa ICR ->
+        ; cia_test_vec increments CIA_FIRED) and int2_srv2 (pri 0, increments INT2_SRV2). The chain
+        ; calls them IN PRIORITY ORDER (cia before srv2) -> proves AddIntServer + walker + order.
+        ; Server structs in RAM (Enqueue links them). A CIA-A Timer A one-shot triggers INT2.
+        ; Generalises M6b: cia.resource IS the PORTS handler (server), no longer a hardcoded autovector.
         clr.l   CIA_FIRED
         clr.l   INT2_SRV2
         clr.l   INT2_ORDER_SNAP
@@ -2484,16 +2485,16 @@ d2_done:
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
         beq     m7b_fail
-        move.l  d0,a2                ; a2 = base ciaa (survit au spin + cleanup)
-        move.l  #(2*IS_STRIDE),d0    ; 2 struct Interrupt RAM alignées (Enqueue les chaîne -> pas en ROM)
+        move.l  d0,a2                ; a2 = ciaa base (survives the spin + cleanup)
+        move.l  #(2*IS_STRIDE),d0    ; 2 aligned RAM struct Interrupts (Enqueue links them -> not in ROM)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     m7b_fail
-        move.l  d0,a3                ; a3 = bloc serveurs : srvA=+0, srvB=+IS_STRIDE (aligné)
-        move.b  #10,LN_PRI(a3)       ; srvA = ciaa_server, pri 10 (appelé en 1er)
+        move.l  d0,a3                ; a3 = server block: srvA=+0, srvB=+IS_STRIDE (aligned)
+        move.b  #10,LN_PRI(a3)       ; srvA = ciaa_server, pri 10 (called 1st)
         move.l  #ciaa_server,IS_CODE(a3)
-        move.b  #0,IS_STRIDE+LN_PRI(a3) ; srvB = int2_srv2, pri 0 (appelé en 2e)
+        move.b  #0,IS_STRIDE+LN_PRI(a3) ; srvB = int2_srv2, pri 0 (called 2nd)
         move.l  #int2_srv2,IS_STRIDE+IS_CODE(a3)
         moveq   #INTB_PORTS,d0       ; AddIntServer(PORTS, srvA)
         move.l  a3,a1
@@ -2507,72 +2508,72 @@ d2_done:
         lea     cia_test_int(pc),a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.l  CIAR_HWBASE(a2),a0   ; CIA-A Timer A en ONE-SHOT, latch $00FF (~360 us) : UNE interruption suffit à faire
-        move.b  #$FF,CIA_TALO(a0)    ; passer la chaîne. En continu, il saturait le niveau 2 dès qu'une carte ajoutait un
-        move.b  #$00,CIA_TAHI(a0)    ; serveur PORTS (DiagPoint UAE, spec uae-int2-v34) : le code qui l'arrête ne
-        move.b  #$19,CIA_CRA(a0)     ; tournait plus. START(b0) + one-shot(b3) + LOAD(b4)
+        move.l  CIAR_HWBASE(a2),a0   ; CIA-A Timer A in ONE-SHOT, latch $00FF (~360 us): ONE interrupt is enough to
+        move.b  #$FF,CIA_TALO(a0)    ; exercise the chain. In continuous mode, it saturated level 2 as soon as a board added a
+        move.b  #$00,CIA_TAHI(a0)    ; PORTS server (UAE DiagPoint, spec uae-int2-v34): the code that stops it no
+        move.b  #$19,CIA_CRA(a0)     ; longer ran. START(b0) + one-shot(b3) + LOAD(b4)
         move.l  VBL_COUNT,d7         ; T0 (timeout)
 .m7b_wait:
         move.l  VBL_COUNT,d0
         sub.l   d7,d0
         cmp.l   #150,d0
-        bcc     m7b_fail             ; timeout -> chaîne non dispatchée
-        tst.l   CIA_FIRED            ; 1er serveur (ciaa) appelé via la chaîne ?
+        bcc     m7b_fail             ; timeout -> chain not dispatched
+        tst.l   CIA_FIRED            ; 1st server (ciaa) called via the chain?
         beq.s   .m7b_wait
-        tst.l   INT2_SRV2            ; 2e serveur de la chaîne appelé ?
+        tst.l   INT2_SRV2            ; 2nd server of the chain called?
         beq.s   .m7b_wait
-        move.l  CIAR_HWBASE(a2),a0   ; les deux tournent -> cleanup matériel
-        move.b  #$00,CIA_CRA(a0)     ; stop Timer A (mode continu : l'écriture du latch ne le relance pas)
-        move.b  #$FF,CIA_TALO(a0)    ; latch rendu à $FFFF, sa valeur de mise sous tension : des programmes (OctaMED)
-        move.b  #$FF,CIA_TAHI(a0)    ; démarrent ce timer sans le recharger ; à $00FF il tournait à ~2,8 kHz
+        move.l  CIAR_HWBASE(a2),a0   ; both run -> hardware cleanup
+        move.b  #$00,CIA_CRA(a0)     ; stop Timer A (continuous mode: writing the latch does not restart it)
+        move.b  #$FF,CIA_TALO(a0)    ; latch reset to $FFFF, its power-on value: some programs (OctaMED)
+        move.b  #$FF,CIA_TAHI(a0)    ; start this timer without reloading it; at $00FF it ran at ~2.8 kHz
         move.l  a6,-(sp)             ; RemICRVector(bit0)
         move.l  a2,a6
         moveq   #0,d0
         suba.l  a1,a1
         jsr     CIA_REMICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.w  #INTF_PORTS,INTENA   ; désactive Paula PORTS -> pas d'INT2 pendant la démo
-        tst.l   INT2_ORDER_SNAP      ; ordre : ciaa (pri 10) a tourné AVANT srv2 (pri 0) ?
+        move.w  #INTF_PORTS,INTENA   ; disables Paula PORTS -> no INT2 during the demo
+        tst.l   INT2_ORDER_SNAP      ; order: did ciaa (pri 10) run BEFORE srv2 (pri 0)?
         beq     m7b_fail
-        moveq   #INTB_PORTS,d0       ; le serveur de test quitte la chaîne (ciaa_server, le vrai, y reste)
+        moveq   #INTB_PORTS,d0       ; the test server leaves the chain (ciaa_server, the real one, stays)
         lea     IS_STRIDE(a3),a1
         jsr     LVO_REMINTSERVER(a6)
         lea     msg_m7b_ok(pc),a0
-        bsr     ser_puts             ; « M7B PORTS OK »
+        bsr     ser_puts             ; "M7B PORTS OK"
 
-        jsr     kbd_install          ; F2b : installe le driver clavier LIVE (AddICRVector bit 3 -> kbd_interrupt)
+        jsr     kbd_install          ; F2b: installs the LIVE keyboard driver (AddICRVector bit 3 -> kbd_interrupt)
         tst.l   d0
         bne.s   .f2b_nokbd
         lea     msg_f2bkbd(pc),a0
-        bsr     ser_puts             ; « F2B KBD OK » (driver clavier live installé ; le CLI est pilotable au clavier)
+        bsr     ser_puts             ; "F2B KBD OK" (live keyboard driver installed; the CLI can be driven from the keyboard)
 .f2b_nokbd:
 
-        ; --- input.device (#2) : OpenDevice (FindName) + IND_ADDHANDLER x2 (pri) + IND_WRITEEVENT -> chaîne ---
-        ; Prouve EN ISOLATION le cœur d'input.device : la chaîne de handlers triée par pri + la propagation d'un
-        ; InputEvent via IND_WRITEEVENT (point d'injection public, celui qu'Intuition utilise). Deux handlers à
-        ; pri 10 / 0 : l'ordre d'appel (h1 avant h2) prouve le tri ; le keycode relayé prouve la propagation.
+        ; --- input.device (#2): OpenDevice (FindName) + IND_ADDHANDLER x2 (pri) + IND_WRITEEVENT -> chain ---
+        ; Proves IN ISOLATION the core of input.device: the pri-sorted handler chain + the propagation of an
+        ; InputEvent via IND_WRITEEVENT (public injection point, the one Intuition uses). Two handlers at
+        ; pri 10 / 0: the call order (h1 before h2) proves the sorting; the relayed keycode proves the propagation.
         clr.w   INPUT_SEQ
         clr.w   INPUT_H1_ORD
         clr.w   INPUT_H2_ORD
         clr.w   INPUT_CODE
         lea     EB_DEVICELIST(a6),a0
-        lea     input_dev_name(pc),a1   ; FindName("input.device") (= ce que fait OpenDevice en interne)
+        lea     input_dev_name(pc),a1   ; FindName("input.device") (= what OpenDevice does internally)
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
-        beq     .input_done             ; pas d'input.device (ne devrait pas arriver) -> skip
-        move.l  d0,a2                   ; a2 = base input.device (survit aux BeginIO)
-        move.l  #INPUT_TESTBLK,d0       ; bloc RAM : ioreq(48) + h1(24) + h2(24) + event(22) -> structs writables
+        beq     .input_done             ; no input.device (should not happen) -> skip
+        move.l  d0,a2                   ; a2 = input.device base (survives the BeginIOs)
+        move.l  #INPUT_TESTBLK,d0       ; RAM block: ioreq(48) + h1(24) + h2(24) + event(22) -> writable structs
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .input_done
-        move.l  d0,a3                   ; a3 = bloc ; ioreq=+0, h1=+48, h2=+72, event=+96
-        lea     48(a3),a0               ; h1 : handler pri 10 (appelé 1er)
+        move.l  d0,a3                   ; a3 = block; ioreq=+0, h1=+48, h2=+72, event=+96
+        lea     48(a3),a0               ; h1: handler pri 10 (called 1st)
         move.b  #10,LN_PRI(a0)
         move.l  #input_test_h1,IS_CODE(a0)
-        lea     72(a3),a0               ; h2 : handler pri 0 (appelé 2e)
+        lea     72(a3),a0               ; h2: handler pri 0 (called 2nd)
         move.l  #input_test_h2,IS_CODE(a0)
-        lea     96(a3),a0               ; event : RAWKEY, code $34 ('v')
+        lea     96(a3),a0               ; event: RAWKEY, code $34 ('v')
         move.b  #IECLASS_RAWKEY,IE_CLASS(a0)
         move.w  #$0034,IE_CODE(a0)
         move.l  a2,IO_DEVICE(a3)
@@ -2584,20 +2585,20 @@ d2_done:
         move.w  #IND_ADDHANDLER,IO_COMMAND(a3)
         move.l  a0,INP_IO_DATA(a3)
         bsr     .input_beginio
-        lea     96(a3),a0               ; WRITEEVENT event -> parcourt la chaîne
+        lea     96(a3),a0               ; WRITEEVENT event -> walks the chain
         move.w  #IND_WRITEEVENT,IO_COMMAND(a3)
         move.l  a0,INP_IO_DATA(a3)
         bsr     .input_beginio
-        cmp.w   #$0034,INPUT_CODE       ; keycode relayé par la chaîne ?
+        cmp.w   #$0034,INPUT_CODE       ; keycode relayed by the chain?
         bne.s   .input_free
-        cmp.w   #1,INPUT_H1_ORD         ; h1 (pri 10) a tourné en 1er ?
+        cmp.w   #1,INPUT_H1_ORD         ; did h1 (pri 10) run 1st?
         bne.s   .input_free
-        cmp.w   #2,INPUT_H2_ORD         ; h2 (pri 0) a tourné en 2e ?
+        cmp.w   #2,INPUT_H2_ORD         ; did h2 (pri 0) run 2nd?
         bne.s   .input_free
         lea     msg_input_ok(pc),a0
-        bsr     ser_puts                ; « INPUT OK »
+        bsr     ser_puts                ; "INPUT OK"
 .input_free:
-        lea     48(a3),a0               ; REMHANDLER h1 (nettoyage)
+        lea     48(a3),a0               ; REMHANDLER h1 (cleanup)
         move.w  #IND_REMHANDLER,IO_COMMAND(a3)
         move.l  a0,INP_IO_DATA(a3)
         bsr     .input_beginio
@@ -2609,30 +2610,30 @@ d2_done:
         move.l  #INPUT_TESTBLK,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .input_done
-.input_beginio:                         ; helper : BeginIO(input, a3=ioreq) + recharge SysBase. a2=device base.
+.input_beginio:                         ; helper: BeginIO(input, a3=ioreq) + reloads SysBase. a2=device base.
         move.l  a3,a1
         move.l  a2,a6
         jsr     -30(a6)                 ; input_beginio (LVO -30)
-        move.l  ($4).w,a6               ; recharge a6 = SysBase (BeginIO ressort avec a6 = base device)
+        move.l  ($4).w,a6               ; reload a6 = SysBase (BeginIO exits with a6 = device base)
         rts
 .input_done:
 
-        ; --- console.device (#3a) : CMD_WRITE d'une string -> blit glyphes 8x8 -> READBACK du bitplane ---
-        ; Prouve le blitter + la police SANS affichage : on écrit une string connue via CMD_WRITE puis on relit
-        ; chaque cellule du bitplane et on la compare au glyphe de font8x8. Correct math d'adresse + bons octets
-        ; = « CONSOLE WRITE OK ». Headless (série, pas de Xvfb) ; RED CON_NO_BLIT -> readback != glyphes -> absent.
+        ; --- console.device (#3a): CMD_WRITE of a string -> blit of 8x8 glyphs -> READBACK of the bitplane ---
+        ; Proves the blitter + the font WITHOUT display: we write a known string via CMD_WRITE then read back
+        ; each cell of the bitplane and compare it with the font8x8 glyph. Correct address math + right bytes
+        ; = "CONSOLE WRITE OK". Headless (serial, no Xvfb); RED CON_NO_BLIT -> readback != glyphs -> absent.
         lea     EB_DEVICELIST(a6),a0
         lea     console_dev_name(pc),a1  ; FindName("console.device")
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .con_done
-        move.l  d0,a2                    ; a2 = base console.device
-        move.l  #64,d0                   ; ioreq (48 -> arrondi 64)
+        move.l  d0,a2                    ; a2 = console.device base
+        move.l  #64,d0                   ; ioreq (48 -> rounded to 64)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .con_done
-        move.l  d0,a3                    ; a3 = ioreq (survit jusqu'au free)
+        move.l  d0,a3                    ; a3 = ioreq (survives until the free)
         move.l  a2,IO_DEVICE(a3)
         move.w  #CMD_WRITE_BO,IO_COMMAND(a3)
         lea     con_test_str(pc),a0
@@ -2640,79 +2641,79 @@ d2_done:
         move.l  #con_test_end-con_test_str,IO_LEN_BO(a3)  ; io_Length
         move.l  a3,a1
         move.l  a2,a6
-        jsr     -30(a6)                  ; console BeginIO (CMD_WRITE -> blit dans le bitplane)
+        jsr     -30(a6)                  ; console BeginIO (CMD_WRITE -> blit into the bitplane)
         move.l  ($4).w,a6
-        ; readback : chaque cellule (col, lignes 0..7) == glyphe de font8x8 du char correspondant ?
-        move.l  CONB_BITMAP(a2),d0       ; bitplane alloué par la 1re écriture ?
+        ; readback: each cell (col, lines 0..7) == font8x8 glyph of the corresponding char?
+        move.l  CONB_BITMAP(a2),d0       ; bitplane allocated by the 1st write?
         beq     .con_free
         move.l  d0,a5                    ; a5 = bitplane
         moveq   #0,d4
         move.w  CONB_BWIDTH(a2),d4       ; d4 = stride
-        lea     con_test_str(pc),a4      ; a4 = string rendue
-        moveq   #0,d5                    ; d5 = colonne
+        lea     con_test_str(pc),a4      ; a4 = rendered string
+        moveq   #0,d5                    ; d5 = column
 .con_rb:
         moveq   #0,d0
         move.b  (a4)+,d0
-        beq.s   .con_match               ; fin de string (NUL) -> toutes cellules OK
+        beq.s   .con_match               ; end of string (NUL) -> all cells OK
         subi.w  #$20,d0
         lsl.l   #3,d0                    ; (char-0x20)*8
         move.l  #font8x8,a0
-        add.l   d0,a0                    ; a0 = glyphe
+        add.l   d0,a0                    ; a0 = glyph
         move.l  a5,a1
         add.l   d5,a1                    ; a1 = bitplane + col (cury=0)
-        moveq   #7,d2                    ; 8 lignes
+        moveq   #7,d2                    ; 8 lines
 .con_rbrow:
-        move.b  (a0)+,d0                 ; octet glyphe attendu
-        cmp.b   (a1),d0                  ; octet réellement blitté
+        move.b  (a0)+,d0                 ; expected glyph byte
+        cmp.b   (a1),d0                  ; byte actually blitted
         bne.s   .con_mismatch
-        add.w   d4,a1                    ; ligne suivante (+stride)
+        add.w   d4,a1                    ; next line (+stride)
         dbra    d2,.con_rbrow
-        addq.l  #1,d5                    ; colonne suivante
+        addq.l  #1,d5                    ; next column
         bra.s   .con_rb
 .con_mismatch:
-        bra.s   .con_free                ; une cellule diffère -> pas de marqueur
+        bra.s   .con_free                ; a cell differs -> no marker
 .con_match:
         lea     msg_console_ok(pc),a0
-        bsr     ser_puts                 ; « CONSOLE WRITE OK »
+        bsr     ser_puts                 ; "CONSOLE WRITE OK"
 .con_free:
         move.l  a3,a1
         move.l  #64,d0
         jsr     LVO_FREEMEM(a6)
 .con_done:
 
-        ; --- console.device READ via input.device (#3b) : IND_WRITEEVENT RAWKEY -> handler console -> CMD_READ ---
-        ; Le handler de console.device (enregistré sur input.device à l'init) cuit le RAWKEY -> ASCII -> read buffer ;
-        ; CMD_READ le ressert. On injecte un RAWKEY 'v' ($34) par le chemin PUBLIC IND_WRITEEVENT (celui d'Intuition)
-        ; -> la chaîne #2 devient load-bearing avec console comme vrai consommateur. (Feeder clavier->input.device = F.)
+        ; --- console.device READ via input.device (#3b): IND_WRITEEVENT RAWKEY -> console handler -> CMD_READ ---
+        ; The console.device handler (registered on input.device at init) cooks the RAWKEY -> ASCII -> read buffer;
+        ; CMD_READ serves it back. We inject a RAWKEY 'v' ($34) through the PUBLIC path IND_WRITEEVENT (Intuition's)
+        ; -> chain #2 becomes load-bearing with console as a real consumer. (Keyboard feeder->input.device = F.)
         lea     EB_DEVICELIST(a6),a0
         lea     console_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .conr_done
-        move.l  d0,a2                    ; a2 = base console.device
+        move.l  d0,a2                    ; a2 = console.device base
         lea     EB_DEVICELIST(a6),a0
         lea     input_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .conr_done
-        move.l  d0,a4                    ; a4 = base input.device
-        move.l  #96,d0                   ; bloc : ioreq@0(48) + event@48(22) + readbuf@80
+        move.l  d0,a4                    ; a4 = input.device base
+        move.l  #96,d0                   ; block: ioreq@0(48) + event@48(22) + readbuf@80
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .conr_done
-        move.l  d0,a3                    ; a3 = bloc
-        move.l  a2,IO_DEVICE(a3)         ; draine le read buffer (restes du test #2)
+        move.l  d0,a3                    ; a3 = block
+        move.l  a2,IO_DEVICE(a3)         ; drain the read buffer (leftovers of test #2)
         move.w  #CMD_READ_BO,IO_COMMAND(a3)
         lea     80(a3),a0
         move.l  a0,INP_IO_DATA(a3)
         move.l  #16,IO_LEN_BO(a3)
         bsr     .conr_bio_con
-        lea     48(a3),a0               ; construit l'event RAWKEY 'v' ($34)
+        lea     48(a3),a0               ; build the RAWKEY event 'v' ($34)
         move.b  #IECLASS_RAWKEY,IE_CLASS(a0)
         move.w  #$0034,IE_CODE(a0)
         clr.l   IE_NEXTEVENT(a0)
-        move.l  a4,IO_DEVICE(a3)        ; IND_WRITEEVENT -> input.device -> chaîne -> handler console
+        move.l  a4,IO_DEVICE(a3)        ; IND_WRITEEVENT -> input.device -> chain -> console handler
         move.w  #IND_WRITEEVENT,IO_COMMAND(a3)
         lea     48(a3),a0
         move.l  a0,INP_IO_DATA(a3)
@@ -2720,23 +2721,23 @@ d2_done:
         move.l  a4,a6
         jsr     -30(a6)                 ; input BeginIO WRITEEVENT
         move.l  ($4).w,a6
-        clr.b   80(a3)                  ; console CMD_READ 1 octet -> doit être 'v' cuit
+        clr.b   80(a3)                  ; console CMD_READ 1 byte -> must be cooked 'v'
         move.l  a2,IO_DEVICE(a3)
         move.w  #CMD_READ_BO,IO_COMMAND(a3)
         lea     80(a3),a0
         move.l  a0,INP_IO_DATA(a3)
         move.l  #1,IO_LEN_BO(a3)
         bsr     .conr_bio_con
-        cmp.b   #'v',80(a3)             ; char rendu par CMD_READ == le keycode cuit ?
+        cmp.b   #'v',80(a3)             ; char returned by CMD_READ == the cooked keycode?
         bne.s   .conr_free
         lea     msg_conread_ok(pc),a0
-        bsr     ser_puts                ; « CONSOLE READ=v »
+        bsr     ser_puts                ; "CONSOLE READ=v"
 .conr_free:
         move.l  a3,a1
         move.l  #96,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .conr_done
-.conr_bio_con:                          ; helper : console BeginIO(a3=ioreq) + recharge SysBase. a2=base console.
+.conr_bio_con:                          ; helper: console BeginIO(a3=ioreq) + reloads SysBase. a2=console base.
         move.l  a3,a1
         move.l  a2,a6
         jsr     -30(a6)
@@ -2744,18 +2745,18 @@ d2_done:
         rts
 .conr_done:
 
-        ; --- disk-validator (#4) : valide le bitmap d'allocation OFS de DF0: ---
-        ; (sur ADF : rootblock+bitmap checksums OFS + bm_flag valide + root marqué alloué ; NODISK : pas de disque -> 0)
-        jsr     dv_validate          ; diskvalidator.o lié loin -> jsr absolu
+        ; --- disk-validator (#4): validates the OFS allocation bitmap of DF0: ---
+        ; (on ADF: rootblock+bitmap OFS checksums + valid bm_flag + root marked allocated; NODISK: no disk -> 0)
+        jsr     dv_validate          ; diskvalidator.o linked far away -> absolute jsr
         tst.l   d0
         beq.s   .dv4_done
         lea     msg_diskvalid(pc),a0
-        bsr     ser_puts             ; « DISK VALID OK »
+        bsr     ser_puts             ; "DISK VALID OK"
 .dv4_done:
 
-        ; --- keymap (#5) : cook keycode(+qualifiers) via keymap.resource (US QWERTY ou FR AZERTY selon le build) ---
+        ; --- keymap (#5): cook keycode(+qualifiers) via keymap.resource (US QWERTY or FR AZERTY depending on the build) ---
                 ifeq    KEYMAP_AZERTY
-        moveq   #$10,d0             ; 'q' non-shifté
+        moveq   #$10,d0             ; 'q' unshifted
         moveq   #0,d1
         jsr     kbd_cook
         cmp.b   #'q',d0
@@ -2770,7 +2771,7 @@ d2_done:
         jsr     kbd_cook
         cmp.b   #'Q',d0
         bne     .km5_done
-        moveq   #$01,d0             ; '1' non-shifté ; SHIFT -> '!'
+        moveq   #$01,d0             ; '1' unshifted; SHIFT -> '!'
         moveq   #0,d1
         jsr     kbd_cook
         cmp.b   #'1',d0
@@ -2786,14 +2787,14 @@ d2_done:
         cmp.b   #3,d0
         bne     .km5_done
         lea     msg_keymap_ok(pc),a0
-        bsr     ser_puts            ; « KEYMAP OK »
+        bsr     ser_puts            ; "KEYMAP OK"
                 else
-        moveq   #$10,d0             ; AZERTY : keycode $10 -> 'a'
+        moveq   #$10,d0             ; AZERTY: keycode $10 -> 'a'
         moveq   #0,d1
         jsr     kbd_cook
         cmp.b   #'a',d0
         bne     .km5_done
-        moveq   #$01,d0             ; AZERTY : $01 non-shifté -> '&'
+        moveq   #$01,d0             ; AZERTY: $01 unshifted -> '&'
         moveq   #0,d1
         jsr     kbd_cook
         cmp.b   #'&',d0
@@ -2803,35 +2804,35 @@ d2_done:
         jsr     kbd_cook
         cmp.b   #'1',d0
         bne     .km5_done
-        moveq   #$02,d0             ; AZERTY : $02 non-shifté -> 'é' ($E9)
+        moveq   #$02,d0             ; AZERTY: $02 unshifted -> e-acute ($E9)
         moveq   #0,d1
         jsr     kbd_cook
         cmp.b   #$E9,d0
         bne     .km5_done
         lea     msg_keymap_azerty(pc),a0
-        bsr     ser_puts            ; « KEYMAP AZERTY OK »
+        bsr     ser_puts            ; "KEYMAP AZERTY OK"
                 endc
 .km5_done:
 
-        ; --- requester Intuition « insert disk » cliquable : rendu (readback) + clic (RAWMOUSE via input.device) ---
-        ; (1) req_draw -> bord + texte dans un bitplane -> readback (bord haut + glyphe 'I'). (2) req_input_handler sur
-        ; input.device -> IND_WRITEEVENT d'un RAWMOUSE DANS le gadget (hit) puis HORS (miss) -> prouve le hit-test.
-        move.l  #CON_BMSIZE,d0          ; bitplane de test (chip, effacé)
+        ; --- clickable "insert disk" Intuition requester: rendering (readback) + click (RAWMOUSE via input.device) ---
+        ; (1) req_draw -> border + text in a bitplane -> readback (top border + glyph 'I'). (2) req_input_handler on
+        ; input.device -> IND_WRITEEVENT of a RAWMOUSE INSIDE the gadget (hit) then OUTSIDE (miss) -> proves the hit-test.
+        move.l  #CON_BMSIZE,d0          ; test bitplane (chip, cleared)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .req_done
-        move.l  d0,a2                   ; a2 = bitplane (survit)
+        move.l  d0,a2                   ; a2 = bitplane (survives)
         move.l  a2,a0
         moveq   #CON_BYTEW,d0
-        jsr     req_draw                ; dessine le requester
+        jsr     req_draw                ; draws the requester
         move.l  a2,a0
-        cmp.b   #$FF,(64*CON_BYTEW)+10(a0)  ; bord haut (row 64, octet 10) tracé ?
+        cmp.b   #$FF,(64*CON_BYTEW)+10(a0)  ; top border (row 64, byte 10) drawn?
         bne     .req_dfree
-        move.l  #font8x8,a1             ; glyphe 'I' attendu
+        move.l  #font8x8,a1             ; expected glyph 'I'
         move.l  #('I'-$20)*8,d0
         add.l   d0,a1
-        lea     (72*CON_BYTEW)+12(a0),a3    ; cellule rendue (col 12, row 72)
+        lea     (72*CON_BYTEW)+12(a0),a3    ; rendered cell (col 12, row 72)
         moveq   #7,d2
 .req_rb:
         move.b  (a1)+,d0
@@ -2840,45 +2841,45 @@ d2_done:
         add.w   #CON_BYTEW,a3
         dbra    d2,.req_rb
         lea     msg_req_drawn(pc),a0
-        bsr     ser_puts                ; « REQUESTER DRAWN OK »
+        bsr     ser_puts                ; "REQUESTER DRAWN OK"
 .req_dfree:
         move.l  a2,a1
         move.l  #CON_BMSIZE,d0
         jsr     LVO_FREEMEM(a6)
-        lea     EB_DEVICELIST(a6),a0    ; clic via input.device
+        lea     EB_DEVICELIST(a6),a0    ; click via input.device
         lea     input_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .req_done
         move.l  d0,a4                   ; a4 = input.device base
-        move.l  #96,d0                  ; bloc : req_int(24) + ioreq(48@24) + event(22@72)
+        move.l  #96,d0                  ; block: req_int(24) + ioreq(48@24) + event(22@72)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .req_done
-        move.l  d0,a3                   ; a3 = bloc
-        move.b  #0,LN_PRI(a3)           ; req_int : handler pri 0
+        move.l  d0,a3                   ; a3 = block
+        move.b  #0,LN_PRI(a3)           ; req_int: handler pri 0
         move.l  #req_input_handler,IS_CODE(a3)
         lea     24(a3),a1              ; ADDHANDLER req_int
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
         move.l  a3,INP_IO_DATA(a1)
         bsr     .req_bio
-        lea     72(a3),a0              ; event RAWMOUSE DANS le gadget (160,112)
+        lea     72(a3),a0              ; RAWMOUSE event INSIDE the gadget (160,112)
         move.b  #IECLASS_RAWMOUSE,IE_CLASS(a0)
         move.w  #IECODE_LBUTTON,IE_CODE(a0)
         move.w  #160,IE_X(a0)
         move.w  #112,IE_Y(a0)
         clr.w   REQ_HIT
-        lea     24(a3),a1             ; WRITEEVENT (clic dans)
+        lea     24(a3),a1             ; WRITEEVENT (click inside)
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_WRITEEVENT,IO_COMMAND(a1)
         lea     72(a3),a0
         move.l  a0,INP_IO_DATA(a1)
         bsr     .req_bio
-        cmp.w   #1,REQ_HIT            ; clic DANS -> doit avoir posé REQ_HIT
+        cmp.w   #1,REQ_HIT            ; click INSIDE -> must have set REQ_HIT
         bne.s   .req_cfree
-        lea     72(a3),a0            ; event RAWMOUSE HORS (5,5)
+        lea     72(a3),a0            ; RAWMOUSE event OUTSIDE (5,5)
         move.w  #5,IE_X(a0)
         move.w  #5,IE_Y(a0)
         clr.w   REQ_HIT
@@ -2888,10 +2889,10 @@ d2_done:
         lea     72(a3),a0
         move.l  a0,INP_IO_DATA(a1)
         bsr     .req_bio
-        tst.w   REQ_HIT              ; clic HORS -> REQ_HIT doit rester 0
+        tst.w   REQ_HIT              ; click OUTSIDE -> REQ_HIT must stay 0
         bne.s   .req_cfree
         lea     msg_req_click(pc),a0
-        bsr     ser_puts             ; « REQUESTER CLICK OK »
+        bsr     ser_puts             ; "REQUESTER CLICK OK"
 .req_cfree:
         lea     24(a3),a1            ; REMHANDLER
         move.l  a4,IO_DEVICE(a1)
@@ -2902,19 +2903,19 @@ d2_done:
         move.l  #96,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .req_done
-.req_bio:                            ; helper : input BeginIO(a1=ioreq) + recharge SysBase. a4=input base.
+.req_bio:                            ; helper: input BeginIO(a1=ioreq) + reloads SysBase. a4=input base.
         move.l  a4,a6
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts
 .req_done:
 
-        ; --- gameport.device (souris matérielle) : LOGIQUE prouvée par snapshots SYNTHÉTIQUES de registres ---
-        ; (headless : JOY0DAT non pilotable + framebuffer invisible -> on prouve la LOGIQUE, pas le matériel ; le
-        ; serveur VBlank est prouvé séparément, LIVE, par GP_POLLS dans le système tournant). (1) gp_delta8 :
-        ; vecteurs de wraparound 8 bits. (2) gp_poll : mouvement (dx incl. wrap) + edge bouton, capturés par un
-        ; handler sur input.device (IND_WRITEEVENT = la vraie voie d'injection, comme le feeder clavier).
-        moveq   #5,d0                   ; gp_delta8(cur,prev) : (5,2) -> +3
+        ; --- gameport.device (hardware mouse): LOGIC proven by SYNTHETIC register snapshots ---
+        ; (headless: JOY0DAT not drivable + invisible framebuffer -> we prove the LOGIC, not the hardware; the
+        ; VBlank server is proven separately, LIVE, by GP_POLLS in the running system). (1) gp_delta8:
+        ; 8-bit wraparound vectors. (2) gp_poll: movement (dx incl. wrap) + button edge, captured by a
+        ; handler on input.device (IND_WRITEEVENT = the real injection path, like the keyboard feeder).
+        moveq   #5,d0                   ; gp_delta8(cur,prev): (5,2) -> +3
         moveq   #2,d1
         jsr     gp_delta8
         cmp.w   #3,d0
@@ -2924,109 +2925,109 @@ d2_done:
         jsr     gp_delta8
         cmp.w   #-3,d0
         bne     .gp_done
-        move.w  #$01,d0                 ; ($01,$FE) -> +3 (wrap bas->haut)
+        move.w  #$01,d0                 ; ($01,$FE) -> +3 (wrap low->high)
         move.w  #$FE,d1
         jsr     gp_delta8
         cmp.w   #3,d0
         bne     .gp_done
-        move.w  #$FE,d0                 ; ($FE,$01) -> -3 (wrap haut->bas)
+        move.w  #$FE,d0                 ; ($FE,$01) -> -3 (wrap high->low)
         move.w  #$01,d1
         jsr     gp_delta8
         cmp.w   #-3,d0
         bne     .gp_done
-        lea     EB_DEVICELIST(a6),a0    ; capture via un handler sur input.device
+        lea     EB_DEVICELIST(a6),a0    ; capture via a handler on input.device
         lea     input_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .gp_done
         move.l  d0,a4                   ; a4 = input.device base
-        move.l  d0,GP_INPUTBASE         ; cible d'injection de gp_poll
-        move.l  #72,d0                  ; bloc : gp_int(24) + ioreq(48@24)
+        move.l  d0,GP_INPUTBASE         ; injection target of gp_poll
+        move.l  #72,d0                  ; block: gp_int(24) + ioreq(48@24)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .gp_done
-        move.l  d0,a3                   ; a3 = bloc
-        move.b  #0,LN_PRI(a3)           ; gp_int : handler de capture pri 0
+        move.l  d0,a3                   ; a3 = block
+        move.b  #0,LN_PRI(a3)           ; gp_int: capture handler pri 0
         move.l  #gp_cap_handler,IS_CODE(a3)
         lea     24(a3),a1               ; ADDHANDLER gp_int
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
         move.l  a3,INP_IO_DATA(a1)
         bsr     .gp_bio
-        move.w  #$00FE,GP_PREV_JOY      ; mouvement+wrap : prev (X=$FE,Y=$00), poll JOY=$0001 (X=$01,Y=$00) -> dx=+3 dy=0
+        move.w  #$00FE,GP_PREV_JOY      ; movement+wrap: prev (X=$FE,Y=$00), poll JOY=$0001 (X=$01,Y=$00) -> dx=+3 dy=0
         clr.b   GP_PREV_BTN
         clr.b   GP_PREV_RBTN
         clr.w   GP_CAP_N
         move.w  #$0001,d0
-        move.w  #$00FF,d1               ; CIAA_PRA bit6=1 -> bouton relâché
+        move.w  #$00FF,d1               ; CIAA_PRA bit6=1 -> button released
         jsr     gp_poll
-        cmp.w   #1,GP_CAP_N             ; un event (mouvement pur)
+        cmp.w   #1,GP_CAP_N             ; one event (pure movement)
         bne.s   .gp_cfree
         cmp.w   #IECODE_NOBUTTON,GP_CAP_CODE
         bne.s   .gp_cfree
-        cmp.w   #3,GP_CAP_DX            ; dx=+3 au passage $FE->$01 (RED GP_NO_WRAP -> -253)
+        cmp.w   #3,GP_CAP_DX            ; dx=+3 when crossing $FE->$01 (RED GP_NO_WRAP -> -253)
         bne.s   .gp_cfree
         tst.w   GP_CAP_DY               ; dy=0
         bne.s   .gp_cfree
-        move.w  #$1234,GP_PREV_JOY      ; edge bouton : position CONSTANTE (cur==prev -> dx=dy=0) pour isoler le front
-        clr.b   GP_PREV_BTN             ; relâché au départ
+        move.w  #$1234,GP_PREV_JOY      ; button edge: CONSTANT position (cur==prev -> dx=dy=0) to isolate the edge
+        clr.b   GP_PREV_BTN             ; released at start
         clr.w   GP_CAP_N
-        move.w  #$1234,d0               ; A : pressé (bit6=0, $BF) -> front -> LBUTTON down
+        move.w  #$1234,d0               ; A: pressed (bit6=0, $BF) -> edge -> LBUTTON down
         move.w  #$00BF,d1
         jsr     gp_poll
-        move.w  #$1234,d0               ; B : tenu -> GREEN rien / RED GP_NO_EDGE un 2e down
+        move.w  #$1234,d0               ; B: held -> GREEN nothing / RED GP_NO_EDGE a 2nd down
         move.w  #$00BF,d1
         jsr     gp_poll
-        move.w  #$1234,d0               ; C : tenu -> GREEN rien / RED un 3e down
+        move.w  #$1234,d0               ; C: held -> GREEN nothing / RED a 3rd down
         move.w  #$00BF,d1
         jsr     gp_poll
-        move.w  #$1234,d0               ; D : relâché (bit6=1) -> front -> LBUTTON up
+        move.w  #$1234,d0               ; D: released (bit6=1) -> edge -> LBUTTON up
         move.w  #$00FF,d1
         jsr     gp_poll
-        cmp.w   #2,GP_CAP_N             ; exactement 2 events (down + up) ; RED GP_NO_EDGE -> 3
+        cmp.w   #2,GP_CAP_N             ; exactly 2 events (down + up); RED GP_NO_EDGE -> 3
         bne.s   .gp_cfree
-        cmp.w   #(IECODE_LBUTTON|IECODE_UP_PREFIX),GP_CAP_CODE  ; dernier = up ($E8)
+        cmp.w   #(IECODE_LBUTTON|IECODE_UP_PREFIX),GP_CAP_CODE  ; last = up ($E8)
         bne.s   .gp_cfree
         lea     msg_gameport_ok(pc),a0
-        bsr     ser_puts                ; « GAMEPORT OK »
+        bsr     ser_puts                ; "GAMEPORT OK"
 .gp_cfree:
         lea     24(a3),a1               ; REMHANDLER
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_REMHANDLER,IO_COMMAND(a1)
         move.l  a3,INP_IO_DATA(a1)
         bsr     .gp_bio
-        clr.l   GP_INPUTBASE            ; gp_install la re-publiera pour le serveur live
+        clr.l   GP_INPUTBASE            ; gp_install will republish it for the live server
         move.l  a3,a1
         move.l  #72,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .gp_done
-.gp_bio:                                ; input BeginIO(a1=ioreq) + recharge SysBase. a4=input base.
+.gp_bio:                                ; input BeginIO(a1=ioreq) + reloads SysBase. a4=input base.
         move.l  a4,a6
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts
 .gp_done:
 
-        ; --- câblage M6R LIVE : deltas RAWMOUSE RELATIFS -> accumulateur de pointeur (absolu, clampé) -> requester ---
-        ; Le chaînon live : pointer_input_handler (pri 50) intègre les deltas en position absolue clampée et réécrit
-        ; ie_X/ie_Y -> req_input_handler (pri 0, INCHANGÉ) hit-teste en absolu. La voie JOY->RAWMOUSE est prouvée au
-        ; bloc GAMEPORT ; ici on injecte des RAWMOUSE relatifs (= la sortie de gameport) via IND_WRITEEVENT.
+        ; --- LIVE M6R wiring: RELATIVE RAWMOUSE deltas -> pointer accumulator (absolute, clamped) -> requester ---
+        ; The live link: pointer_input_handler (pri 50) integrates the deltas into a clamped absolute position and
+        ; rewrites ie_X/ie_Y -> req_input_handler (pri 0, UNCHANGED) hit-tests in absolute. The JOY->RAWMOUSE path is
+        ; proven in the GAMEPORT block; here we inject relative RAWMOUSEs (= gameport's output) via IND_WRITEEVENT.
         lea     EB_DEVICELIST(a6),a0
         lea     input_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     .m6r_done
         move.l  d0,a4                   ; a4 = input.device base
-        move.l  #120,d0                 ; bloc : ptr_int(24) + req_int(24@24) + ioreq(48@48) + event(22@96)
+        move.l  #120,d0                 ; block: ptr_int(24) + req_int(24@24) + ioreq(48@48) + event(22@96)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .m6r_done
-        move.l  d0,a3                   ; a3 = bloc
-        move.b  #50,LN_PRI(a3)          ; ptr_int : accumulateur pri 50 (AVANT le requester dans la chaîne)
+        move.l  d0,a3                   ; a3 = block
+        move.b  #50,LN_PRI(a3)          ; ptr_int: accumulator pri 50 (BEFORE the requester in the chain)
         move.l  #pointer_input_handler,IS_CODE(a3)
-        move.b  #0,LN_PRI+24(a3)        ; req_int : requester pri 0
+        move.b  #0,LN_PRI+24(a3)        ; req_int: requester pri 0
         move.l  #req_input_handler,IS_CODE+24(a3)
         lea     48(a3),a1               ; ADDHANDLER ptr_int
         move.l  a4,IO_DEVICE(a1)
@@ -3039,51 +3040,51 @@ d2_done:
         lea     24(a3),a0
         move.l  a0,INP_IO_DATA(a1)
         bsr     .m6r_bio
-        move.w  #10,PTR_X               ; départ (10,10)
+        move.w  #10,PTR_X               ; start (10,10)
         move.w  #10,PTR_Y
-        lea     96(a3),a0               ; event RAWMOUSE relatif (-50,-50) NOBUTTON -> clamp (0,0)
+        lea     96(a3),a0               ; relative RAWMOUSE event (-50,-50) NOBUTTON -> clamp (0,0)
         clr.l   IE_NEXTEVENT(a0)
         move.b  #IECLASS_RAWMOUSE,IE_CLASS(a0)
         move.w  #IECODE_NOBUTTON,IE_CODE(a0)
         move.w  #-50,IE_X(a0)
         move.w  #-50,IE_Y(a0)
         bsr     .m6r_write
-        lea     96(a3),a0               ; mouvement +160,+112 -> (160,112) sur le gadget
+        lea     96(a3),a0               ; movement +160,+112 -> (160,112) on the gadget
         move.w  #IECODE_NOBUTTON,IE_CODE(a0)
         move.w  #160,IE_X(a0)
         move.w  #112,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
-        cmp.w   #160,PTR_X              ; position absolue correcte (RED PTR_NO_CLAMP -> 120 : base -40)
+        cmp.w   #160,PTR_X              ; correct absolute position (RED PTR_NO_CLAMP -> 120: base -40)
         bne.s   .m6r_free
         cmp.w   #112,PTR_Y              ; (RED -> 72)
         bne.s   .m6r_free
-        clr.w   REQ_HIT                 ; clic LBUTTON (delta nul) -> pointeur réécrit abs (160,112) -> hit-test DANS
+        clr.w   REQ_HIT                 ; LBUTTON click (null delta) -> pointer rewritten abs (160,112) -> hit-test INSIDE
         lea     96(a3),a0
         move.w  #IECODE_LBUTTON,IE_CODE(a0)
         move.w  #0,IE_X(a0)
         move.w  #0,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
-        cmp.w   #1,REQ_HIT              ; clic DANS le gadget -> REQ_HIT posé
+        cmp.w   #1,REQ_HIT              ; click INSIDE the gadget -> REQ_HIT set
         bne.s   .m6r_free
-        lea     96(a3),a0               ; déplace HORS : (160,112) -155 -> (5,112)
+        lea     96(a3),a0               ; move OUTSIDE: (160,112) -155 -> (5,112)
         move.w  #IECODE_NOBUTTON,IE_CODE(a0)
         move.w  #-155,IE_X(a0)
         move.w  #0,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
         clr.w   REQ_HIT
-        lea     96(a3),a0               ; clic HORS (5,112) : x<120 -> miss
+        lea     96(a3),a0               ; click OUTSIDE (5,112): x<120 -> miss
         move.w  #IECODE_LBUTTON,IE_CODE(a0)
         move.w  #0,IE_X(a0)
         move.w  #0,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
-        tst.w   REQ_HIT                 ; clic HORS -> REQ_HIT reste 0
+        tst.w   REQ_HIT                 ; click OUTSIDE -> REQ_HIT stays 0
         bne.s   .m6r_free
         lea     msg_m6r_live_ok(pc),a0
-        bsr     ser_puts                ; « M6R LIVE OK »
+        bsr     ser_puts                ; "M6R LIVE OK"
 .m6r_free:
         lea     48(a3),a1               ; REMHANDLER ptr_int
         move.l  a4,IO_DEVICE(a1)
@@ -3100,7 +3101,7 @@ d2_done:
         move.l  #120,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .m6r_done
-.m6r_write:                             ; IND_WRITEEVENT(event @ 96(a3)) ; a4=input base, a3=bloc. Clobbe a0/a1.
+.m6r_write:                             ; IND_WRITEEVENT(event @ 96(a3)); a4=input base, a3=block. Clobbers a0/a1.
         lea     48(a3),a1
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_WRITEEVENT,IO_COMMAND(a1)
@@ -3114,134 +3115,134 @@ d2_done:
 .m6r_done:
 
                 ifne    LOADSCREEN_DEMO
-        ; DÉMO écran de chargement : tous les modules sont up (console/graphics/trackdisk) + disque en DF0:.
-        ; loadscreen_demo monte l'affichage, lit « bigseg » en streaming avec barre de progression, tient l'écran.
+        ; Loading screen DEMO: all modules are up (console/graphics/trackdisk) + disk in DF0:.
+        ; loadscreen_demo sets up the display, reads "bigseg" by streaming with a progress bar, holds the screen.
         move.l  ($4).w,a6            ; a6 = SysBase
-        jsr     loadscreen_demo      ; NE REVIENT PAS
+        jsr     loadscreen_demo      ; DOES NOT RETURN
                 endc
-        ; --- M7a + M3f : démo combinée (SCHED_ON=1) ---
-        ; Setup entier à IPL7 pour qu'aucune IRQ ne parte avant le lancement (le CIA-B démarre
-        ; mais son underflow reste pending jusqu'au rte). M7a : unité MICROHZ (timer B de CIA-A, niveau 2) +
-        ; task_timer qui bloque dessus -> prouve (a) une TÂCHE réveillée par un timer d'interruption
-        ; (Wait->wake) et (b) la fidélité IPL-par-niveau (M7e, ROM dev : sonde de niveau 6 sur le timer A de
-        ; CIA-B, m7_int6_probe) : INT6 (niveau 6) préempte le CORPS de
-        ; vbl_handler (IPL natif 3) -> VBL_PREEMPT_COUNT>0, MAIS la chirurgie de listes du switch reste
-        ; atomique (IPL7 bref) -> VBL_CLASH==0 (overlap, pas corruption). RED1 (M7E_SURGERY_INTENA=1 :
-        ; INTENA-off au lieu d'IPL7) -> VBL_CLASH>0 ; RED2 (M7E_PROLOGUE_IPL7=1 : IPL7 au prologue) ->
-        ; VBL_PREEMPT_COUNT==0. M3f (rejoué, non-régression) : task_H/L/S prouvent
-        ; la coexistence préemption + yield (« M3F LIVE »). GREEN = « M7A TIMER OK » + « M7E IPL OK ».
-        move.w  #$2700,sr            ; masque les interruptions pendant TOUT le setup
-                ifeq    PROD            ; PROD : vbl_tail est un serveur de PREUVE (M7e/M7f) -> hors prod
+        ; --- M7a + M3f: combined demo (SCHED_ON=1) ---
+        ; Whole setup at IPL7 so that no IRQ fires before the launch (CIA-B starts
+        ; but its underflow stays pending until the rte). M7a: MICROHZ unit (CIA-A timer B, level 2) +
+        ; task_timer blocking on it -> proves (a) a TASK woken by an interrupt timer
+        ; (Wait->wake) and (b) per-level IPL fidelity (M7e, dev ROM: level 6 probe on CIA-B
+        ; timer A, m7_int6_probe): INT6 (level 6) preempts the BODY of
+        ; vbl_handler (native IPL 3) -> VBL_PREEMPT_COUNT>0, BUT the switch's list surgery stays
+        ; atomic (brief IPL7) -> VBL_CLASH==0 (overlap, not corruption). RED1 (M7E_SURGERY_INTENA=1:
+        ; INTENA-off instead of IPL7) -> VBL_CLASH>0; RED2 (M7E_PROLOGUE_IPL7=1: IPL7 in the prologue) ->
+        ; VBL_PREEMPT_COUNT==0. M3f (replayed, non-regression): task_H/L/S prove
+        ; the coexistence of preemption + yield ("M3F LIVE"). GREEN = "M7A TIMER OK" + "M7E IPL OK".
+        move.w  #$2700,sr            ; masks interrupts during the WHOLE setup
+                ifeq    PROD            ; PROD: vbl_tail is a PROOF server (M7e/M7f) -> out of prod
         clr.l   VBL_CLASH
-        clr.l   VBL_PREEMPT_COUNT    ; M7e : baseline des préemptions du corps de vbl (INT6 armé juste après)
-        clr.b   M7E_STAT             ; M7e : marqueur « M7E IPL OK » pas encore émis
-        clr.l   VERTB_CHAIN_N        ; M7f : baseline des parcours de chaîne VERTB
-        clr.b   M7F_STAT             ; M7f : marqueur « M7F VERTB OK » pas encore émis
-        ; M7f : enregistre vbl_tail_server (serveur de PREUVE, pri -10) en QUEUE de la chaîne VERTB
-        ; (après sched_server pri 20 + timer_vblank pri 0). Son compteur VERTB_CHAIN_N prouve le parcours complet.
+        clr.l   VBL_PREEMPT_COUNT    ; M7e: baseline of the vbl body preemptions (INT6 armed right after)
+        clr.b   M7E_STAT             ; M7e: "M7E IPL OK" marker not yet emitted
+        clr.l   VERTB_CHAIN_N        ; M7f: baseline of the VERTB chain walks
+        clr.b   M7F_STAT             ; M7f: "M7F VERTB OK" marker not yet emitted
+        ; M7f: registers vbl_tail_server (PROOF server, pri -10) at the TAIL of the VERTB chain
+        ; (after sched_server pri 20 + timer_vblank pri 0). Its counter VERTB_CHAIN_N proves the complete walk.
         move.b  #-10,VBL_TAIL_INT+LN_PRI
         clr.l   VBL_TAIL_INT+IS_DATA
         move.l  #vbl_tail_server,VBL_TAIL_INT+IS_CODE
         moveq   #INTB_VERTB,d0
         lea     VBL_TAIL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
-                endc                    ; fin bloc preuve VERTB (PROD=0)
-        ; souris matérielle : arme le poller gameport.device (gp_vblank_server) sur la chaîne VERTB du système
-        ; tournant — câblage LIVE PERSISTANT (pendant du feeder clavier). GP_POLLS avancera sur les VBlanks réels ;
-        ; headless (JOY0DAT statique) le poller n'injecte rien (prev primé = courant) -> inerte vis-à-vis de M7.
+                endc                    ; end of the VERTB proof block (PROD=0)
+        ; hardware mouse: arms the gameport.device poller (gp_vblank_server) on the VERTB chain of the running
+        ; system — PERSISTENT LIVE wiring (counterpart of the keyboard feeder). GP_POLLS will advance on real VBlanks;
+        ; headless (static JOY0DAT) the poller injects nothing (prev primed = current) -> inert with regard to M7.
         jsr     gp_install
-                ifeq    PROD            ; PROD : COPER = source de PREUVE (M7g multi-source int3) -> hors prod
-        ; M7g : 2e source de NIVEAU 3 (COPER) pour prouver le décodage INTREQR multi-source d'int3.
-        ; coper_test (vecteur EXCLUSIF) incrémente COPER_FIRED ; vbl_tail déclenche COPER par logiciel.
+                ifeq    PROD            ; PROD: COPER = PROOF source (M7g multi-source int3) -> out of prod
+        ; M7g: 2nd LEVEL 3 source (COPER) to prove int3's multi-source INTREQR decoding.
+        ; coper_test (EXCLUSIVE vector) increments COPER_FIRED; vbl_tail triggers COPER by software.
         clr.l   COPER_FIRED
         clr.b   COPER_TICK
         clr.b   M7G_STAT
         moveq   #INTB_COPER,d0          ; SetIntVector(COPER, &coper_int)
         lea     coper_int(pc),a1
         jsr     LVO_SETINTVECTOR(a6)
-        move.w  #(INTF_SETCLR|INTF_COPER),INTENA ; active COPER (niveau 3) ; vbl_tail la déclenche
-                endc                    ; fin source COPER de preuve (PROD=0) ; MICROHZ/CIA-B conservé ci-dessous
+        move.w  #(INTF_SETCLR|INTF_COPER),INTENA ; enables COPER (level 3); vbl_tail triggers it
+                endc                    ; end of the COPER proof source (PROD=0); MICROHZ/CIA-B kept below
         lea     ciab_test_name(pc),a1   ; OpenResource("ciab.resource")
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
         beq     m7a_fail
-        move.l  d0,a2                ; a2 = base ciab
-        moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int) : vecteur EXCLUSIF ->
-        lea     ciab_server_int(pc),a1  ; INT6 passe par le dispatcher par numéro (ciab_server/cia_dispatch)
+        move.l  d0,a2                ; a2 = ciab base
+        moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int): EXCLUSIVE vector ->
+        lea     ciab_server_int(pc),a1  ; INT6 goes through the by-number dispatcher (ciab_server/cia_dispatch)
         jsr     LVO_SETINTVECTOR(a6)
-                ifeq    PROD            ; ROM dev : source de niveau 6 des preuves M7d/M7e (la ROM de production ne
-        move.l  a6,-(sp)             ; programme aucun timer de CIA-B, comme la 1.3 : les jeux les prennent)
+                ifeq    PROD            ; dev ROM: level 6 source of the M7d/M7e proofs (the production ROM
+        move.l  a6,-(sp)             ; programs no CIA-B timer, like 1.3: games take them)
         move.l  a2,a6                ; AddICRVector(ciab, bit0 = timer A, &m7_int6_int)
         moveq   #0,d0
         move.l  #m7_int6_int,a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
-        lea     CIAB_HW,a0           ; timer A de CIA-B en one-shot de 255 ticks (~360 µs), réarmé à la fin de chaque
-        move.b  #$FF,CIA_TALO(a0)    ; service : la période inclut la durée du service, pas d'accumulation d'INT6
+        lea     CIAB_HW,a0           ; CIA-B timer A in a one-shot of 255 ticks (~360 us), re-armed at the end of each
+        move.b  #$FF,CIA_TALO(a0)    ; service: the period includes the service duration, no accumulation of INT6s
         move.b  #$00,CIA_TAHI(a0)
         move.b  #$19,CIA_CRA(a0)     ; START + one-shot + LOAD
                 endc
-        move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; active Paula EXTER (INT6, niveau 6 > VBlank 3)
-        bsr     setup_stress_port    ; M7d : port partagé + K messages (martelé par tâche ET interruption)
+        move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; enables Paula EXTER (INT6, level 6 > VBlank 3)
+        bsr     setup_stress_port    ; M7d: shared port + K messages (hammered by task AND interrupt)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        ; --- M6r/M6y : strap (romboot) — lit, valide et EXÉCUTE le bootblock de DF0: (jalon C « ça boote ! ») ---
-        ; strap_boot lit les secteurs 0+1 (bootblock) de DF0:, valide magic « DOS » + checksum additif, et saute
-        ; au boot code à +12. d0=0 = aucun volume bootable (pas de disque, ou checksum invalide = formaté non
-        ; installé) -> ÉCRAN DE BOOT insert-disk (M6R). d0!=0 = bootblock exécuté -> PAS d'insert-disk (M6Y) ;
-        ; le marqueur « CBOOT » est émis par le bootblock LUI-MÊME pendant son exécution (preuve du saut).
-        ; Les deux branches convergent vers SCHED_ON (le set M7 complet suit dans les deux cas).
-        ; RED STRAP_FAKE_BOOTDEV : d0!=0 sans lire -> M6Y présent mais CBOOT absent. RED STRAP_NO_EXEC : valide
-        ; mais ne saute pas -> CBOOT absent, M6Y présent. RED STRAP_BAD_CSUM : rejette un bon bloc -> M6R.
-        jsr     alert_boothook       ; alert.hook : Guru d'une alerte sans issue d'avant le reset, avant le strap
+        ; --- M6r/M6y: strap (romboot) — reads, validates and EXECUTES the bootblock of DF0: (milestone C "it boots!") ---
+        ; strap_boot reads sectors 0+1 (bootblock) of DF0:, validates magic "DOS" + additive checksum, and jumps
+        ; to the boot code at +12. d0=0 = no bootable volume (no disk, or invalid checksum = formatted, not
+        ; installed) -> insert-disk BOOT SCREEN (M6R). d0!=0 = bootblock executed -> NO insert-disk (M6Y);
+        ; the "CBOOT" marker is emitted by the bootblock ITSELF during its execution (proof of the jump).
+        ; Both branches converge towards SCHED_ON (the complete M7 set follows in both cases).
+        ; RED STRAP_FAKE_BOOTDEV: d0!=0 without reading -> M6Y present but CBOOT absent. RED STRAP_NO_EXEC: validates
+        ; but does not jump -> CBOOT absent, M6Y present. RED STRAP_BAD_CSUM: rejects a good block -> M6R.
+        jsr     alert_boothook       ; alert.hook: Guru of a dead-end alert from before the reset, before the strap
         bsr     strap_boot
         tst.l   d0
         bne.s   .m6r_floppy
-        jsr     strap_romboot        ; DF0: non amorçable : BootPoint des cartes (un BootPoint qui démarre dos saute à
-                                     ; boot_dos_start et ne revient pas)
+        jsr     strap_romboot        ; DF0: not bootable: BootPoint of the boards (a BootPoint that starts dos jumps to
+                                     ; boot_dos_start and does not return)
         lea     msg_m6r_ok(pc),a0
-        bsr     ser_puts             ; « M6R STRAP OK (no bootable volume -> insert-disk) »
-        jsr     gfx_display_init     ; M6s : ÉCRAN DE BOOT (image chaton 32 couleurs) via l'ABI graphics.library
+        bsr     ser_puts             ; "M6R STRAP OK (no bootable volume -> insert-disk)"
+        jsr     gfx_display_init     ; M6s: BOOT SCREEN (32-colour kitten image) via the graphics.library ABI
         lea     msg_m6s_ok(pc),a0
-        bsr     ser_puts             ; « M6S BOOTSCR OK » (écran monté ; discriminant VISUEL = couleurs)
-        bsr     m6r_wire_requester   ; câblage LIVE : handlers pointeur+requester PERSISTANTS sur input.device
-        lea     dw_name(pc),a0       ; surveillance de DF0: : une disquette insérée redémarre la machine (boot)
+        bsr     ser_puts             ; "M6S BOOTSCR OK" (screen set up; VISUAL discriminant = colours)
+        bsr     m6r_wire_requester   ; LIVE wiring: PERSISTENT pointer+requester handlers on input.device
+        lea     dw_name(pc),a0       ; DF0: watch: an inserted floppy reboots the machine (boot)
         move.l  #disk_watch,a1
         moveq   #-1,d0
         move.l  #DW_STK,d1
         jsr     proc_create
         bra.s   boot_strap_done
 .m6r_floppy:
-        jsr     dos_df0bootnode      ; BootNode DF0: (pri 5) dans eb_MountList, comme après un bootblock 1.3
-; boot_dos_start : démarrage de dos (après un bootblock DF0:, ou depuis le rt_Init de dos.library appelé par le
-; BootPoint d'une carte) : liste de montage -> périphérique de démarrage, puis Initial CLI. Ne revient pas.
+        jsr     dos_df0bootnode      ; DF0: BootNode (pri 5) in eb_MountList, as after a 1.3 bootblock
+; boot_dos_start: dos startup (after a DF0: bootblock, or from the rt_Init of dos.library called by the
+; BootPoint of a board): mount list -> boot device, then Initial CLI. Does not return.
 boot_dos_start:
         move.l  ($4).w,a6
         jsr     dos_mountlist
         lea     msg_m6y_ok(pc),a0
-        bsr     ser_puts             ; « M6Y STRAP BOOTED OK » (bootblock exécuté ; CBOOT émis par le bootblock)
-        bsr     ptr_wire             ; souris : pointeur à l'écran (sprite) dans le système tournant
-        ; --- F1 : disque BOOTABLE -> créer l'Initial CLI (shell). GATÉ sur le boot (c'est la ligne F vs E) :
-        ; sur un disque non bootable (branche M6R insert-disk), AUCUN Initial CLI n'est créé. Le shell exécute
-        ; d'abord s:startup-sequence (racine) puis passe à l'invite interactive. a6 = SysBase (strap l'a restauré).
+        bsr     ser_puts             ; "M6Y STRAP BOOTED OK" (bootblock executed; CBOOT emitted by the bootblock)
+        bsr     ptr_wire             ; mouse: on-screen pointer (sprite) in the running system
+        ; --- F1: BOOTABLE disk -> create the Initial CLI (shell). GATED on the boot (this is the F vs E line):
+        ; on a non-bootable disk (M6R insert-disk branch), NO Initial CLI is created. The shell first runs
+        ; s:startup-sequence (root) then moves on to the interactive prompt. a6 = SysBase (strap restored it).
         lea     sh_cname(pc),a0
-        move.l  #shell_main,a1       ; absolu : shell.o lié hors portée lea(pc) 16 bits
-        moveq   #2,d0                ; Initial CLI pri 2 (consommateur unique de la console)
-        move.l  #SH_STK,d1           ; les commandes lancées tournent sur cette pile
+        move.l  #shell_main,a1       ; absolute: shell.o linked out of 16-bit lea(pc) range
+        moveq   #2,d0                ; Initial CLI pri 2 (sole consumer of the console)
+        move.l  #SH_STK,d1           ; the commands it launches run on this stack
         jsr     proc_create
 boot_strap_done:
                 ifeq    M7E_COOP
-        move.b  #1,SCHED_ON          ; ARME la préemption périodique (défaut)
-                endc                 ; M7E_COOP=1 : SCHED_ON reste 0 -> non-régression yield-only
-        ; --- M7c : LANCEMENT de la 1re tâche = transition SUPERVISEUR -> USER mode ---
-        ; La pile boot (STACKTOP) devient la SSP PARTAGÉE des interruptions ; chaque tâche a sa pile
-        ; user (AllocMem'd). On réinitialise la SSP à STACKTOP (abandonne le contexte boot), on réserve
-        ; un slot de frame, et dispatch_in relocalise la frame user de task_H -> SSP puis rte en USER mode.
-        move.l  #STACKTOP,sp         ; SSP partagée propre (le contexte boot ne reprend jamais)
-        lea     -FRAME_SIZE(sp),sp   ; slot 66 o pour dispatch_in (movem+rte ramènent sp à STACKTOP)
-        lea     EB_TASKREADY(a6),a0  ; dispatch initial explicite
-        jsr     LVO_REMHEAD(a6)      ; tête = task_H (pri 10) -> elle Wait d'abord
+        move.b  #1,SCHED_ON          ; ARMS periodic preemption (default)
+                endc                 ; M7E_COOP=1: SCHED_ON stays 0 -> yield-only non-regression
+        ; --- M7c: LAUNCH of the 1st task = SUPERVISOR -> USER mode transition ---
+        ; The boot stack (STACKTOP) becomes the SHARED SSP of the interrupts; each task has its own
+        ; user stack (AllocMem'd). We reset the SSP to STACKTOP (abandon the boot context), reserve
+        ; a frame slot, and dispatch_in relocates task_H's user frame -> SSP then rte's in USER mode.
+        move.l  #STACKTOP,sp         ; clean shared SSP (the boot context never resumes)
+        lea     -FRAME_SIZE(sp),sp   ; 66-byte slot for dispatch_in (movem+rte bring sp back to STACKTOP)
+        lea     EB_TASKREADY(a6),a0  ; explicit initial dispatch
+        jsr     LVO_REMHEAD(a6)      ; head = task_H (pri 10) -> it Waits first
         move.l  d0,a1
-        bra     dispatch_in          ; -> task_H en USER mode (SR=$0000 ; VBlank + INT6 + yield actifs)
+        bra     dispatch_in          ; -> task_H in USER mode (SR=$0000; VBlank + INT6 + yield active)
 
 eb_fail:
         move.w  #C_FAIL,COLOR00
@@ -3250,10 +3251,10 @@ eb_fail:
 .ff:
         bra.s   .ff
 
-; ser_puts : chaîne NUL-terminée sur le série (a0) ; timeout borné sur TBE
+; ser_puts: NUL-terminated string on the serial port (a0); bounded timeout on TBE
 ser_puts:
         movem.l d0/d1/d2/a0,-(sp)
-        bsr     ser_lock             ; émission ATOMIQUE (aucun autre émetteur ne s'entrelace)
+        bsr     ser_lock             ; ATOMIC output (no other printer interleaves)
 .lp:
         move.b  (a0)+,d0
         beq.s   .done
@@ -3274,11 +3275,11 @@ ser_puts:
         movem.l (sp)+,d0/d1/d2/a0
         rts
 
-; ser_lock / ser_unlock : rendent TOUTE émission série atomique entre tâches (Forbid gated SCHED_ON — no-op avant
-; le multitâche). Mécanisme = exclusion mutuelle par Forbid (aucun switch de tâche pendant l'émission), déjà éprouvé
-; (task_timer). Préservent TOUS les registres (Forbid/Permit les préservent ; seul a6 est touché, sauvé/restauré).
-; Tous les émetteurs concurrents (ser_puts, ser_puthex, con_handler WRITE, feeder, binaires chargés via le Forbid de
-; leur appelant) les utilisent -> plus d'entrelacement octet-à-octet des marqueurs (plus de faux-GREEN).
+; ser_lock / ser_unlock: make ALL serial output atomic between tasks (Forbid gated by SCHED_ON — no-op before
+; multitasking). Mechanism = mutual exclusion by Forbid (no task switch during the output), already proven
+; (task_timer). Preserve ALL registers (Forbid/Permit preserve them; only a6 is touched, saved/restored).
+; All concurrent printers (ser_puts, ser_puthex, con_handler WRITE, feeder, binaries loaded via the Forbid of
+; their caller) use them -> no more byte-by-byte interleaving of the markers (no more false GREEN).
 ser_lock:
         tst.b   SCHED_ON
         beq.s   .slk_ret
@@ -3298,21 +3299,21 @@ ser_unlock:
 .sulk_ret:
         rts
 
-; ser_puthex(d0.w) : émet les 4 chiffres hexa de d0 (mot) sur le série (MSB d'abord). Scratch sauvé (d0-d3).
+; ser_puthex(d0.w): emits the 4 hex digits of d0 (word) on the serial port (MSB first). Scratch saved (d0-d3).
 ser_puthex:
         movem.l d0-d3,-(sp)
-        bsr     ser_lock             ; émission atomique
-        move.w  d0,d3                ; d3 = valeur à afficher
+        bsr     ser_lock             ; atomic output
+        move.w  d0,d3                ; d3 = value to display
         moveq   #3,d2                ; 4 nibbles
 .ph_nib:
-        rol.w   #4,d3                ; amène le nibble de poids fort suivant en bits 0-3
-        move.w  #$2000,d1            ; timeout TBE
+        rol.w   #4,d3                ; brings the next most significant nibble into bits 0-3
+        move.w  #$2000,d1            ; TBE timeout
 .ph_wt:
         move.w  SERDATR,d0
-        btst    #13,d0               ; TBE (transmit buffer empty) ?
+        btst    #13,d0               ; TBE (transmit buffer empty)?
         bne.s   .ph_send
         dbra    d1,.ph_wt
-        bra.s   .ph_next             ; timeout -> saute ce chiffre
+        bra.s   .ph_next             ; timeout -> skip this digit
 .ph_send:
         move.w  d3,d0
         and.w   #$000F,d0
@@ -3330,25 +3331,25 @@ ser_puthex:
         movem.l (sp)+,d0-d3
         rts
 
-; ============================ auto-test (M2.1a+) ====================
-; Exerce le dispatch jump-table et le comportement des fonctions.
-; Retour : d0 = 0 (tout OK) / 1 (échec).
+; ============================ self-test (M2.1a+) ====================
+; Exercises the jump-table dispatch and the behaviour of the functions.
+; Return: d0 = 0 (all OK) / 1 (failure).
 selftest:
         movem.l d6-d7/a2-a5,-(sp)
-        ; baseline du tas chip : 1er chunk libre APRÈS les allocations permanentes
-        ; de boot (TCB ThisTask...). Les asserts de coalescing comparent à cette
-        ; baseline (robuste aux allocations permanentes, pas au tas vide).
+        ; chip heap baseline: 1st free chunk AFTER the permanent boot
+        ; allocations (ThisTask TCB...). The coalescing asserts compare against this
+        ; baseline (robust to permanent allocations, not to an empty heap).
         lea     MH_CHIP,a0
-        move.l  MH_FIRST(a0),a5     ; a5 = adresse baseline du 1er chunk
-        move.l  MC_BYTES(a5),d7     ; d7 = taille baseline
-        ; Forbid : TDNestCnt -1 -> 0 ; Permit : 0 -> -1
+        move.l  MH_FIRST(a0),a5     ; a5 = baseline address of the 1st chunk
+        move.l  MC_BYTES(a5),d7     ; d7 = baseline size
+        ; Forbid: TDNestCnt -1 -> 0; Permit: 0 -> -1
         jsr     LVO_FORBID(a6)
         cmp.b   #0,EB_TDNEST(a6)
         bne.w   .bad
         jsr     LVO_PERMIT(a6)
         cmp.b   #-1,EB_TDNEST(a6)
         bne.w   .bad
-        ; Disable/Enable : IDNestCnt -1 -> 0 -> -1
+        ; Disable/Enable: IDNestCnt -1 -> 0 -> -1
         jsr     LVO_DISABLE(a6)
         cmp.b   #0,EB_IDNEST(a6)
         bne.w   .bad
@@ -3356,7 +3357,7 @@ selftest:
         cmp.b   #-1,EB_IDNEST(a6)
         bne.w   .bad
 
-        ; liste : NEWLIST, AddTail(n1), AddTail(n2), FindName
+        ; list: NEWLIST, AddTail(n1), AddTail(n2), FindName
         lea     TST_LIST,a1
         jsr     newlist
         move.l  #str_alpha,TST_N1+LN_NAME
@@ -3379,7 +3380,7 @@ selftest:
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.w   .bad
-        ; Remove(n1) ; FindName("alpha") == 0
+        ; Remove(n1); FindName("alpha") == 0
         lea     TST_N1,a1
         jsr     LVO_REMOVE(a6)
         lea     TST_LIST,a0
@@ -3387,7 +3388,7 @@ selftest:
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.w   .bad
-        ; AddHead(n1) ; FindName("alpha") == TST_N1
+        ; AddHead(n1); FindName("alpha") == TST_N1
         lea     TST_LIST,a0
         lea     TST_N1,a1
         jsr     LVO_ADDHEAD(a6)
@@ -3396,17 +3397,17 @@ selftest:
         jsr     LVO_FINDNAME(a6)
         cmp.l   #TST_N1,d0
         bne.w   .bad
-        ; Open/Close : OpenCnt +1 puis -1, Open retourne SysBase
+        ; Open/Close: OpenCnt +1 then -1, Open returns SysBase
         jsr     LVO_OPEN(a6)
         cmp.l   a6,d0
         bne.w   .bad
         jsr     LVO_CLOSE(a6)
         tst.w   LIB_OPENCNT(a6)
         bne.w   .bad
-        lea     chk_core(pc),a0      ; checkpoint série : groupe « core » passé
+        lea     chk_core(pc),a0      ; serial checkpoint: "core" group passed
         bsr     ser_puts
 
-        ; --- mémoire : AllocMem / FreeMem ---
+        ; --- memory: AllocMem / FreeMem ---
         move.l  #256,d0
         moveq   #MEMF_CHIP,d1
         jsr     LVO_ALLOCMEM(a6)
@@ -3419,13 +3420,13 @@ selftest:
         tst.l   d0
         beq.w   .bad
         move.l  d0,a3                ; p2
-        move.l  #$11111111,(a2)      ; non-recouvrement par motif
+        move.l  #$11111111,(a2)      ; non-overlap by pattern
         move.l  #$22222222,(a3)
         cmp.l   #$11111111,(a2)
         bne.w   .bad
         cmp.l   #$22222222,(a3)
         bne.w   .bad
-        move.l  #$DEADBEEF,(a2)      ; dirty p1, free, realloc CLEAR -> zéro
+        move.l  #$DEADBEEF,(a2)      ; dirty p1, free, realloc CLEAR -> zero
         move.l  a2,a1
         move.l  #256,d0
         jsr     LVO_FREEMEM(a6)
@@ -3435,15 +3436,15 @@ selftest:
         tst.l   d0
         beq.w   .bad
         move.l  d0,a1
-        tst.l   (a1)                 ; MEMF_CLEAR -> 1er longword == 0
+        tst.l   (a1)                 ; MEMF_CLEAR -> 1st longword == 0
         bne.w   .bad
-        move.l  #256,d0              ; libère le bloc CLEAR puis p2
+        move.l  #256,d0              ; free the CLEAR block then p2
         jsr     LVO_FREEMEM(a6)
         move.l  a3,a1
         move.l  #256,d0
         jsr     LVO_FREEMEM(a6)
 
-        ; coalescing : après tous les free, le tas doit être revenu à sa baseline
+        ; coalescing: after all the frees, the heap must be back to its baseline
         lea     MH_CHIP,a0
         move.l  MH_FIRST(a0),d0
         cmp.l   a5,d0
@@ -3451,69 +3452,69 @@ selftest:
         move.l  d0,a0
         cmp.l   MC_BYTES(a0),d7
         bne.w   .bad
-        lea     chk_mem(pc),a0       ; checkpoint : mémoire M2.1/M2.2 + coalescing
+        lea     chk_mem(pc),a0       ; checkpoint: M2.1/M2.2 memory + coalescing
         bsr     ser_puts
 
-        ; ===== M2.4a : multi-MemHeader + primitives de listes =====
-        ; (1) 2e MemHeader « fast » sur la région DISJOINTE [FTEST_LO,FTEST_HI).
-        ;     Struct allouée depuis le tas ; la région est fixe/disjointe (c'est
-        ;     ainsi que fonctionne un vrai multi-header : régions physiques distinctes).
+        ; ===== M2.4a: multi-MemHeader + list primitives =====
+        ; (1) 2nd "fast" MemHeader on the DISJOINT region [FTEST_LO,FTEST_HI).
+        ;     Struct allocated from the heap; the region is fixed/disjoint (that is
+        ;     how a real multi-header works: distinct physical regions).
         move.l  #MH_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.w   .bad
-        move.l  d0,a2                ; a2 = H (header fast)
+        move.l  d0,a2                ; a2 = H (fast header)
         move.b  #NT_MEMORY,LN_TYPE(a2)
         move.w  #(MEMF_FAST|MEMF_PUBLIC),MH_ATTRIBUTES(a2)
         move.l  #FTEST_LO,MH_LOWER(a2)
         move.l  #FTEST_HI,MH_UPPER(a2)
         move.l  #(FTEST_HI-FTEST_LO),MH_FREE(a2)
-        move.l  #FTEST_LO,a0         ; chunk initial = toute la région
+        move.l  #FTEST_LO,a0         ; initial chunk = the whole region
         clr.l   MC_NEXT(a0)
         move.l  #(FTEST_HI-FTEST_LO),MC_BYTES(a0)
         move.l  a0,MH_FIRST(a2)
         lea     EB_MEMLIST(a6),a0
         move.l  a2,a1
         jsr     LVO_ADDTAIL(a6)
-        ; AvailMem(MEMF_FAST) == taille de la région
+        ; AvailMem(MEMF_FAST) == size of the region
         moveq   #MEMF_FAST,d1
         jsr     LVO_AVAILMEM(a6)
         cmp.l   #(FTEST_HI-FTEST_LO),d0
         bne.w   .bad
-        ; AllocMem(1024,MEMF_FAST) -> sélection par attribut -> adresse dans la région
+        ; AllocMem(1024,MEMF_FAST) -> selection by attribute -> address in the region
         move.l  #1024,d0
         moveq   #MEMF_FAST,d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.w   .bad
-        move.l  d0,a3               ; a3 = bloc fast
+        move.l  d0,a3               ; a3 = fast block
         cmp.l   #FTEST_LO,d0
         bcs.w   .bad                ; < FTEST_LO
         cmp.l   #FTEST_HI,d0
         bcc.w   .bad                ; >= FTEST_HI
-        ; TypeOfMem(bloc) a le bit MEMF_FAST (= bit 2)
+        ; TypeOfMem(block) has the MEMF_FAST bit (= bit 2)
         move.l  a3,a1
         jsr     LVO_TYPEOFMEM(a6)
         btst    #2,d0
         beq.w   .bad
-        ; FreeMem(bloc fast) : l'owner-search doit retrouver H (pas le header chip)
+        ; FreeMem(fast block): the owner search must find H (not the chip header)
         move.l  a3,a1
         move.l  #1024,d0
         jsr     LVO_FREEMEM(a6)
         moveq   #MEMF_FAST,d1
         jsr     LVO_AVAILMEM(a6)
-        cmp.l   #(FTEST_HI-FTEST_LO),d0   ; région de nouveau pleine -> owner-search OK
+        cmp.l   #(FTEST_HI-FTEST_LO),d0   ; region full again -> owner search OK
         bne.w   .bad
-        ; retire H de la MemList + libère sa struct
+        ; remove H from the MemList + free its struct
         move.l  a2,a1
         jsr     LVO_REMOVE(a6)
         move.l  a2,a1
         move.l  #MH_SIZE,d0
         jsr     LVO_FREEMEM(a6)
 
-        ; (2) Enqueue : 3 noeuds pri 0/10/5 -> ordre tête->queue 10,5,0 (FIFO à pri égale)
-        move.l  #(3*16),d0          ; 3 noeuds (LN_SIZE=14 arrondi à 16)
+        ; (2) Enqueue: 3 nodes pri 0/10/5 -> head->tail order 10,5,0 (FIFO at equal pri)
+        move.l  #(3*16),d0          ; 3 nodes (LN_SIZE=14 rounded to 16)
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
@@ -3539,7 +3540,7 @@ selftest:
         move.l  a4,a0
         lea     32(a3),a1           ; Enqueue n2 (pri 5)
         jsr     LVO_ENQUEUE(a6)
-        ; ordre attendu : head=n1, n1->Succ=n2, n2->Succ=n0, n0->Succ=&lh_Tail
+        ; expected order: head=n1, n1->Succ=n2, n2->Succ=n0, n0->Succ=&lh_Tail
         move.l  (a4),a0             ; lh_Head
         lea     16(a3),a1
         cmp.l   a1,a0
@@ -3556,7 +3557,7 @@ selftest:
         lea     LH_TAIL(a4),a1
         cmp.l   a1,a0
         bne.w   .bad
-        ; RemHead -> n1 ; nouvelle tête = n2
+        ; RemHead -> n1; new head = n2
         move.l  a4,a0
         jsr     LVO_REMHEAD(a6)
         lea     16(a3),a1
@@ -3566,7 +3567,7 @@ selftest:
         lea     32(a3),a1
         cmp.l   a1,a0
         bne.w   .bad
-        ; RemTail -> n0 (plus basse pri, en queue)
+        ; RemTail -> n0 (lowest pri, at the tail)
         move.l  a4,a0
         jsr     LVO_REMTAIL(a6)
         move.l  a3,a1
@@ -3582,23 +3583,23 @@ selftest:
         move.l  a3,a1
         cmp.l   a1,a0
         bne.w   .bad
-        ; libère list + noeuds
+        ; free list + nodes
         move.l  a4,a1
         move.l  #16,d0
         jsr     LVO_FREEMEM(a6)
         move.l  a3,a1
         move.l  #(3*16),d0
         jsr     LVO_FREEMEM(a6)
-        lea     chk_m24a(pc),a0      ; checkpoint : multi-header + listes
+        lea     chk_m24a(pc),a0      ; checkpoint: multi-header + lists
         bsr     ser_puts
 
-        ; ===== M2.4b : tâches + signaux (non bloquants) =====
+        ; ===== M2.4b: tasks + signals (non-blocking) =====
         ; FindTask(NULL) == ThisTask
         sub.l   a1,a1
         jsr     LVO_FINDTASK(a6)
         cmp.l   EB_THISTASK(a6),d0
         bne.w   .bad
-        ; AllocSignal(-1) -> 16 (bits 0-15 pré-alloués via SYS_SIGALLOC)
+        ; AllocSignal(-1) -> 16 (bits 0-15 pre-allocated via SYS_SIGALLOC)
         moveq   #-1,d0
         jsr     LVO_ALLOCSIGNAL(a6)
         cmp.l   #16,d0
@@ -3607,37 +3608,37 @@ selftest:
         jsr     LVO_ALLOCSIGNAL(a6)
         cmp.l   #17,d0
         bne.w   .bad
-        moveq   #16,d0               ; libère 16 -> redevient le plus petit libre
+        moveq   #16,d0               ; free 16 -> becomes the lowest free one again
         jsr     LVO_FREESIGNAL(a6)
         moveq   #-1,d0
         jsr     LVO_ALLOCSIGNAL(a6)
         cmp.l   #16,d0
         bne.w   .bad
-        ; AllocSignal efface un SIGRECVD rémanent sur le bit alloué
+        ; AllocSignal clears a leftover SIGRECVD on the allocated bit
         move.l  EB_THISTASK(a6),a2
-        or.l    #$00100000,TC_SIGRECVD(a2)   ; bit 20 rémanent
+        or.l    #$00100000,TC_SIGRECVD(a2)   ; leftover bit 20
         moveq   #20,d0
         jsr     LVO_ALLOCSIGNAL(a6)
         cmp.l   #20,d0
         bne.w   .bad
         move.l  TC_SIGRECVD(a2),d0
         and.l   #$00100000,d0
-        bne.w   .bad                 ; le bit 20 doit avoir été effacé
-        ; SetSignal : pose le bit 16, retourne l'ancien jeu
+        bne.w   .bad                 ; bit 20 must have been cleared
+        ; SetSignal: sets bit 16, returns the old set
         move.l  #$00010000,d0
         move.l  #$00010000,d1
         jsr     LVO_SETSIGNAL(a6)
         move.l  TC_SIGRECVD(a2),d0
         and.l   #$00010000,d0
         beq.w   .bad
-        ; Signal(ThisTask, bit 17) -> bit posé dans SIGRECVD
+        ; Signal(ThisTask, bit 17) -> bit set in SIGRECVD
         move.l  a2,a1
         move.l  #$00020000,d0
         jsr     LVO_SIGNAL(a6)
         move.l  TC_SIGRECVD(a2),d0
         and.l   #$00020000,d0
         beq.w   .bad
-        ; SetTaskPri(ThisTask,5) -> ancienne 0 ; LN_PRI == 5 ; puis restaure 0
+        ; SetTaskPri(ThisTask,5) -> old 0; LN_PRI == 5; then restore 0
         move.l  a2,a1
         moveq   #5,d0
         jsr     LVO_SETTASKPRI(a6)
@@ -3648,21 +3649,21 @@ selftest:
         move.l  a2,a1
         moveq   #0,d0
         jsr     LVO_SETTASKPRI(a6)
-        moveq   #16,d0               ; nettoie les signaux de test (16,17,20)
+        moveq   #16,d0               ; clean up the test signals (16,17,20)
         jsr     LVO_FREESIGNAL(a6)
         moveq   #17,d0
         jsr     LVO_FREESIGNAL(a6)
         moveq   #20,d0
         jsr     LVO_FREESIGNAL(a6)
-        move.l  #0,TC_SIGRECVD(a2)   ; remet SIGRECVD propre
+        move.l  #0,TC_SIGRECVD(a2)   ; reset SIGRECVD clean
 
-        ; FindTask(nom) : nœud tâche factice dans TaskReady
+        ; FindTask(name): dummy task node in TaskReady
         move.l  #TC_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.w   .bad
-        move.l  d0,a3                ; tâche factice
+        move.l  d0,a3                ; dummy task
         move.b  #NT_TASK,LN_TYPE(a3)
         move.l  #task_test_name,LN_NAME(a3)
         lea     EB_TASKREADY(a6),a0
@@ -3672,29 +3673,29 @@ selftest:
         jsr     LVO_FINDTASK(a6)
         cmp.l   a3,d0
         bne.w   .bad
-        move.l  #str_gamma,a1        ; nom inconnu -> 0
+        move.l  #str_gamma,a1        ; unknown name -> 0
         jsr     LVO_FINDTASK(a6)
         tst.l   d0
         bne.w   .bad
-        move.l  a3,a1                ; retire + libère la tâche factice
+        move.l  a3,a1                ; remove + free the dummy task
         jsr     LVO_REMOVE(a6)
         move.l  a3,a1
         move.l  #TC_SIZE,d0
         jsr     LVO_FREEMEM(a6)
-        lea     chk_m24b(pc),a0      ; checkpoint : tâches + signaux
+        lea     chk_m24b(pc),a0      ; checkpoint: tasks + signals
         bsr     ser_puts
 
-        ; ===== M2.4c : ports / messages (non bloquants) =====
-        moveq   #-1,d0               ; bit de signal pour le port
+        ; ===== M2.4c: ports / messages (non-blocking) =====
+        moveq   #-1,d0               ; signal bit for the port
         jsr     LVO_ALLOCSIGNAL(a6)
-        move.l  d0,d6                ; d6 = n° de bit
-        move.l  #MP_SIZE,d0          ; port principal depuis le tas
+        move.l  d0,d6                ; d6 = bit number
+        move.l  #MP_SIZE,d0          ; main port from the heap
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.w   .bad
         move.l  d0,a2                ; a2 = port
-        lea     MP_MSGLIST(a2),a1    ; le caller initialise la file
+        lea     MP_MSGLIST(a2),a1    ; the caller initialises the queue
         jsr     newlist
         move.l  #str_port,LN_NAME(a2)
         move.b  #PA_SIGNAL,MP_FLAGS(a2)
@@ -3702,7 +3703,7 @@ selftest:
         move.l  EB_THISTASK(a6),MP_SIGTASK(a2)
         move.l  a2,a1
         jsr     LVO_ADDPORT(a6)
-        ; FindPort(nom) == port ; FindPort(inconnu) == 0
+        ; FindPort(name) == port; FindPort(unknown) == 0
         move.l  #str_port,a1
         jsr     LVO_FINDPORT(a6)
         cmp.l   a2,d0
@@ -3711,14 +3712,14 @@ selftest:
         jsr     LVO_FINDPORT(a6)
         tst.l   d0
         bne.w   .bad
-        ; 2 messages depuis le tas (msg1=+0, msg2=+MN_SIZE)
+        ; 2 messages from the heap (msg1=+0, msg2=+MN_SIZE)
         move.l  #(2*MN_SIZE),d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.w   .bad
         move.l  d0,a3
-        ; PutMsg(msg1) doit poser le bit du port dans SIGRECVD de ThisTask
+        ; PutMsg(msg1) must set the port's bit in ThisTask's SIGRECVD
         move.l  EB_THISTASK(a6),a0
         clr.l   TC_SIGRECVD(a0)
         move.l  a2,a0
@@ -3729,8 +3730,8 @@ selftest:
         moveq   #1,d1
         lsl.l   d6,d1
         and.l   d1,d0
-        beq.w   .bad                 ; bit du port non posé
-        ; PutMsg(msg2) ; GetMsg FIFO : msg1, msg2, puis 0 (vide)
+        beq.w   .bad                 ; port bit not set
+        ; PutMsg(msg2); GetMsg FIFO: msg1, msg2, then 0 (empty)
         move.l  a2,a0
         lea     MN_SIZE(a3),a1
         jsr     LVO_PUTMSG(a6)
@@ -3747,7 +3748,7 @@ selftest:
         jsr     LVO_GETMSG(a6)
         tst.l   d0
         bne.w   .bad
-        ; ReplyMsg : msg1 revient sur un reply port avec le type NT_REPLYMSG
+        ; ReplyMsg: msg1 comes back on a reply port with type NT_REPLYMSG
         move.l  #MP_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -3756,19 +3757,19 @@ selftest:
         move.l  d0,a4                ; a4 = reply port
         lea     MP_MSGLIST(a4),a1
         jsr     newlist
-        move.b  #PA_IGNORE,MP_FLAGS(a4)   ; pas de signal au reply
+        move.b  #PA_IGNORE,MP_FLAGS(a4)   ; no signal on reply
         move.l  a4,MN_REPLYPORT(a3)
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
         move.l  a4,a0
         jsr     LVO_GETMSG(a6)
-        cmp.l   a3,d0                ; msg1 revenu sur le reply port
+        cmp.l   a3,d0                ; msg1 back on the reply port
         bne.w   .bad
         cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
         bne.w   .bad
-        ; nettoyage : RemPort du port PUBLIC seulement (rport n'a jamais été
-        ; AddPort'd -> le retirer appellerait Remove sur un noeud non chaîné, qui
-        ; écrirait dans la low RAM $0/$4). free messages + ports + signal.
+        ; cleanup: RemPort of the PUBLIC port only (rport was never
+        ; AddPort'd -> removing it would call Remove on an unlinked node, which
+        ; would write into low RAM $0/$4). free messages + ports + signal.
         move.l  a2,a1
         jsr     LVO_REMPORT(a6)
         move.l  a3,a1
@@ -3782,10 +3783,10 @@ selftest:
         jsr     LVO_FREEMEM(a6)
         move.l  d6,d0
         jsr     LVO_FREESIGNAL(a6)
-        lea     chk_m24c(pc),a0      ; checkpoint : ports + messages
+        lea     chk_m24c(pc),a0      ; checkpoint: ports + messages
         bsr     ser_puts
 
-        ; invariant final : tas chip revenu à la baseline (chunk unique)
+        ; final invariant: chip heap back to the baseline (single chunk)
         lea     MH_CHIP,a0
         move.l  MH_FIRST(a0),d0
         cmp.l   a5,d0
@@ -3802,144 +3803,144 @@ selftest:
         movem.l (sp)+,d6-d7/a2-a5
         rts
 
-; ============================ démo recombinaison (M3f) ==============
-; Crée 3 tâches superviseur et les met dans TaskReady. Scaffolding de PREUVE (comme le
-; selftest) : sera remplacé par la suite d'init exec (scan résidents) plus tard. Signal
-; CÂBLÉ EN DUR (DEMO_SIG=16, hors 0-15 réservés) plutôt qu'AllocSignal (qui opère sur
-; ThisTask = tâche de boot ; Wait/Signal ne consultent que le MASQUE). task_L signale
-; task_H via son TCB publié dans WP_HTASK (posé AVANT lancement -> toujours valide).
-;   task_H (pri 10) : cible du yield. task_L/task_S (pri 0) : round-robin préemptif.
-setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a4 (sauvés)
+; ============================ recombination demo (M3f) ==============
+; Creates 3 supervisor tasks and puts them into TaskReady. PROOF scaffolding (like the
+; selftest): will be replaced by the exec init sequence (resident scan) later. Signal
+; HARD-WIRED (DEMO_SIG=16, outside the reserved 0-15) rather than AllocSignal (which operates on
+; ThisTask = boot task; Wait/Signal only look at the MASK). task_L signals
+; task_H via its TCB published in WP_HTASK (set BEFORE launch -> always valid).
+;   task_H (pri 10): yield target. task_L/task_S (pri 0): preemptive round-robin.
+setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4 (saved)
         movem.l d2/a2-a4,-(sp)
-        clr.l   WP_HTASK             ; RAM basse non garantie nulle au power-on -> explicite
-        clr.l   FB_TASK              ; preuve atomicité Forbid : TCB de task_fb (posé à la création)
-        clr.l   FORBID_TEST_FLAG     ; flag « fb a tourné » (task_fa le ré-efface avant son test)
+        clr.l   WP_HTASK             ; low RAM not guaranteed zero at power-on -> explicit
+        clr.l   FB_TASK              ; Forbid atomicity proof: TCB of task_fb (set at creation)
+        clr.l   FORBID_TEST_FLAG     ; "fb ran" flag (task_fa clears it again before its test)
         clr.l   WP_CONS
         clr.l   WP_PROD
         clr.l   WP_SPIN
         clr.l   WP_STAT
-        clr.l   WP_TCONS             ; M7a : réveils de task_timer
-        clr.b   QUANTUM_ELAPSED      ; M7h : time-slice courant
-        clr.l   QUANTUM_EXPIRE_N     ; M7h : expirations de quantum
-        clr.l   Q2_RUNS              ; M7h : itérations du 2e spinner
-        clr.b   M7H_STAT             ; M7h : marqueur « M7H QUANTUM OK » pas encore émis
-        clr.l   RM_RUNS              ; M7j : itérations de task_rm
-        clr.b   M7J_STAT             ; M7j : marqueur « M7J REMTASK OK » pas encore émis
+        clr.l   WP_TCONS             ; M7a: wake-ups of task_timer
+        clr.b   QUANTUM_ELAPSED      ; M7h: current time slice
+        clr.l   QUANTUM_EXPIRE_N     ; M7h: quantum expirations
+        clr.l   Q2_RUNS              ; M7h: iterations of the 2nd spinner
+        clr.b   M7H_STAT             ; M7h: "M7H QUANTUM OK" marker not yet emitted
+        clr.l   RM_RUNS              ; M7j: iterations of task_rm
+        clr.b   M7J_STAT             ; M7j: "M7J REMTASK OK" marker not yet emitted
                 ifne    M7H_QUANTUM_DEMO
-        ; === M7h : démo d'ISOLATION du quantum — SEULEMENT 2 spinners pri 0, aucun préempteur ===
-        ; prioritaire ni yield -> la rotation n'est pilotée QUE par le quantum VBlank (observable).
-        lea     task_s(pc),a2        ; spinner-1 (compteur WP_SPIN)
+        ; === M7h: quantum ISOLATION demo — ONLY 2 spinners pri 0, no higher-priority ===
+        ; preemptor nor yield -> the rotation is driven ONLY by the VBlank quantum (observable).
+        lea     task_s(pc),a2        ; spinner-1 (counter WP_SPIN)
         lea     task_s_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
-        lea     task_q2(pc),a2       ; spinner-2 (compteur Q2_RUNS + émet « M7H QUANTUM OK »)
+        lea     task_q2(pc),a2       ; spinner-2 (counter Q2_RUNS + emits "M7H QUANTUM OK")
         lea     task_q2_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
                 else
-                ifeq    PROD            ; PROD : tâches démo M7 (scheduler proofs : H/L/S/timer/port/fa/fb) -> hors prod
-        lea     task_h(pc),a2        ; task_H (pri 10) -> tête (Enqueue trie), publiée
+                ifeq    PROD            ; PROD: M7 demo tasks (scheduler proofs: H/L/S/timer/port/fa/fb) -> out of prod
+        lea     task_h(pc),a2        ; task_H (pri 10) -> head (Enqueue sorts), published
         lea     task_h_name(pc),a3
         moveq   #DEMO_PRI_H,d2
         bsr     mk_demo_task
         move.l  a4,WP_HTASK
-        lea     task_l(pc),a2        ; task_L (pri 0) : signale+yield+spin préemptible
+        lea     task_l(pc),a2        ; task_L (pri 0): signals+yields+preemptible spin
         lea     task_l_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
                 ifeq    M7E_COOP
-        lea     task_s(pc),a2        ; task_S (pri 0) : spinner pur (dispatché par préemption)
+        lea     task_s(pc),a2        ; task_S (pri 0): pure spinner (dispatched by preemption)
         lea     task_s_name(pc),a3
         moveq   #0,d2
-        bsr     mk_demo_task         ; M7E_COOP=1 : retiré (monopoliserait sans préemption)
-        ; preuve atomicité Forbid (SCHED_ON=1 seulement) : fb (pri 7) créée+publiée AVANT fa (pri 3) pour être en
-        ; Wait quand fa la signale sous Forbid. fa vérifie que fb ne préempte PAS son Forbid -> « FORBID ATOMIC OK ».
-        lea     task_fb(pc),a2       ; task_fb (pri 7) : victime prioritaire
+        bsr     mk_demo_task         ; M7E_COOP=1: removed (would hog the CPU without preemption)
+        ; Forbid atomicity proof (SCHED_ON=1 only): fb (pri 7) created+published BEFORE fa (pri 3) so as to be in
+        ; Wait when fa signals it under Forbid. fa checks that fb does NOT preempt its Forbid -> "FORBID ATOMIC OK".
+        lea     task_fb(pc),a2       ; task_fb (pri 7): high-priority victim
         lea     task_fb_name(pc),a3
         moveq   #FB_PRI_FB,d2
         bsr     mk_demo_task
-        move.l  a4,FB_TASK           ; publie le TCB de fb (fa le signale)
-        lea     task_fa(pc),a2       ; task_fa (pri 3) : tient le Forbid + signale fb + vérifie l'atomicité
+        move.l  a4,FB_TASK           ; publish fb's TCB (fa signals it)
+        lea     task_fa(pc),a2       ; task_fa (pri 3): holds the Forbid + signals fb + checks the atomicity
         lea     task_fa_name(pc),a3
         moveq   #FB_PRI_FA,d2
         bsr     mk_demo_task
                 endc
-        lea     task_semw(pc),a2     ; task_semw (pri 5) : bloque dans ObtainSemaphore (sémaphore tenu par le boot)
+        lea     task_semw(pc),a2     ; task_semw (pri 5): blocks in ObtainSemaphore (semaphore held by the boot)
         lea     task_semw_name(pc),a3
         moveq   #5,d2
         bsr     mk_demo_task
-        lea     task_semr(pc),a2     ; task_semr (pri 0) : ReleaseSemaphore -> transmet à task_semw
+        lea     task_semr(pc),a2     ; task_semr (pri 0): ReleaseSemaphore -> hands over to task_semw
         lea     task_semr_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
-        lea     task_aud(pc),a2      ; task_aud (pri 5) : lecture DMA par audio.device (« AUDIO PLAY OK ») ; au-dessus
-        lea     task_aud_name(pc),a3 ; du shell et de la console, sinon un boot qui affiche beaucoup l'affame et elle
-        moveq   #5,d2                ; rate la fenêtre « w1 rendu, w2 en cours » qu'elle doit observer
+        lea     task_aud(pc),a2      ; task_aud (pri 5): DMA playback by audio.device ("AUDIO PLAY OK"); above
+        lea     task_aud_name(pc),a3 ; the shell and the console, otherwise a boot that prints a lot starves it and it
+        moveq   #5,d2                ; misses the "w1 returned, w2 in progress" window it must observe
         bsr     mk_demo_task
-        lea     task_timer(pc),a2    ; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ
+        lea     task_timer(pc),a2    ; task_timer (pri 10, M7a): blocks on the MICROHZ unit
         lea     task_t_name(pc),a3
         moveq   #DEMO_PRI_T,d2
         bsr     mk_demo_task
                 ifeq    M7E_COOP
-        lea     task_port(pc),a2     ; task_port (pri 0, M7d) : martèle le port partagé (consommateur TÂCHE)
+        lea     task_port(pc),a2     ; task_port (pri 0, M7d): hammers the shared port (TASK consumer)
         lea     task_p_name(pc),a3
         moveq   #DEMO_PRI_P,d2
-        bsr     mk_demo_task         ; M7E_COOP=1 : retiré (spinner pur, monopoliserait sans préemption)
+        bsr     mk_demo_task         ; M7E_COOP=1: removed (pure spinner, would hog the CPU without preemption)
                 endc
-                endc                    ; fin tâches démo M7 (PROD=0)
-        ; --- D3a : créer le process file-handler (echo) + le process driver (tournent après dispatch_in) ---
-        ; Créés dans les DEUX modes (GREEN SCHED_ON=1 ET COOP) : driver/handler bloquent sur WaitPort (switch
-        ; synchrone M3d) -> round-trip packet coopératif. proc_create via jsr (process.o hors portée bsr).
-        ; Paire echo PRIORITAIRE (8/7) au-dessus de la paire OFS (6/5) : son round-trip (rapide, sans disque)
-        ; s'achève TÔT -> « D3A » émis bien avant la lecture OFS lente -> pas d'émission série concurrente avec D3B.
-                ifeq    PROD            ; PROD : paire echo D3a = preuve round-trip packet (D3A) -> hors prod
+                endc                    ; end of the M7 demo tasks (PROD=0)
+        ; --- D3a: create the file-handler process (echo) + the driver process (they run after dispatch_in) ---
+        ; Created in BOTH modes (GREEN SCHED_ON=1 AND COOP): driver/handler block on WaitPort (synchronous
+        ; M3d switch) -> cooperative packet round-trip. proc_create via jsr (process.o out of bsr range).
+        ; HIGH-PRIORITY echo pair (8/7) above the OFS pair (6/5): its round-trip (fast, no disk)
+        ; completes EARLY -> "D3A" emitted well before the slow OFS read -> no serial output concurrent with D3B.
+                ifeq    PROD            ; PROD: D3a echo pair = packet round-trip proof (D3A) -> out of prod
         lea     d3a_hname(pc),a0
         lea     d3a_handler(pc),a1
         moveq   #8,d0                ; echo handler pri 8
         move.l  #D3_STK,d1
         jsr     proc_create
-        move.l  d0,DOS_HANDLERPORT   ; publie le port du handler pour le driver
+        move.l  d0,DOS_HANDLERPORT   ; publish the handler's port for the driver
         lea     d3a_dname(pc),a0
         lea     d3a_driver(pc),a1
         moveq   #7,d0                ; echo driver pri 7
         move.l  #D3_STK,d1
         jsr     proc_create
-                endc                    ; fin paire echo D3a (PROD=0)
-        ; --- D3b : créer le process file-handler DF0: (OFS) — INFRASTRUCTURE (le CLI résout DF0: par lui). Le
-        ; fs-driver qui suit est un CLIENT de PREUVE (lit « kickslop » -> « D3B HANDLER OK ») -> gaté en prod. ---
+                endc                    ; end of the D3a echo pair (PROD=0)
+        ; --- D3b: create the DF0: file-handler process (OFS) — INFRASTRUCTURE (the CLI resolves DF0: through it). The
+        ; fs-driver that follows is a PROOF CLIENT (reads "kickslop" -> "D3B HANDLER OK") -> gated in prod. ---
         lea     d3b_hname(pc),a0
-        move.l  #dos_handler_df0,a1  ; absolu : handler.o lié hors portée lea(pc) 16 bits
+        move.l  #dos_handler_df0,a1  ; absolute: handler.o linked out of 16-bit lea(pc) range
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        move.l  d0,DOS_FSPORT        ; publie le port du file-handler OFS
-                ifeq    PROD            ; PROD : fs-driver = client de preuve D3b (lit kickslop) -> hors prod ; le handler reste
+        move.l  d0,DOS_FSPORT        ; publish the port of the OFS file-handler
+                ifeq    PROD            ; PROD: fs-driver = D3b proof client (reads kickslop) -> out of prod; the handler stays
         lea     d3b_dname(pc),a0
         lea     dos_fsdriver(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-                endc                    ; fin fs-driver de preuve D3b (PROD=0)
-        ; --- D3c : monter un DeviceNode DF0: dans DosInfo.di_DevInfo (dn_Task = port du handler OFS) + client dos ---
+                endc                    ; end of the D3b proof fs-driver (PROD=0)
+        ; --- D3c: mount a DF0: DeviceNode in DosInfo.di_DevInfo (dn_Task = OFS handler port) + dos client ---
         lea     EB_LIBLIST(a6),a0
         lea     dos_libname(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
-        beq     .d3c_noclient        ; pas de dos.library (ne devrait pas) -> pas de client
+        beq     .d3c_noclient        ; no dos.library (should not happen) -> no client
         move.l  d0,a2                ; a2 = DosBase
-        move.l  #DN_SIZEOF+4+FSSM_SIZEOF,d0  ; + BSTR « DF0 » + FileSysStartupMsg (long-alignés : BPTR)
+        move.l  #DN_SIZEOF+4+FSSM_SIZEOF,d0  ; + BSTR "DF0" + FileSysStartupMsg (long-aligned: BPTR)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .d3c_noclient
         move.l  d0,a3                ; a3 = DeviceNode (dn_Type = DLT_DEVICE = 0 via MEMF_CLEAR)
-        move.l  DOS_FSPORT,DN_TASK(a3)   ; dn_Task = port du process file-handler OFS
-        move.l  #$03444630,DN_SIZEOF(a3) ; BSTR : longueur 3, « DF0 »
+        move.l  DOS_FSPORT,DN_TASK(a3)   ; dn_Task = port of the OFS file-handler process
+        move.l  #$03444630,DN_SIZEOF(a3) ; BSTR: length 3, "DF0"
         lea     DN_SIZEOF(a3),a0
         move.l  a0,d0
         lsr.l   #2,d0
-        move.l  d0,DN_NAME(a3)       ; dn_Name -> dos résout « DF0: » par ce nœud
-        lea     DN_SIZEOF+4(a3),a0   ; FileSysStartupMsg : unité 0 (MEMF_CLEAR), « trackdisk.device », géométrie DD
+        move.l  d0,DN_NAME(a3)       ; dn_Name -> dos resolves "DF0:" through this node
+        lea     DN_SIZEOF+4(a3),a0   ; FileSysStartupMsg: unit 0 (MEMF_CLEAR), "trackdisk.device", DD geometry
         lea     df0_device(pc),a1
         move.l  a1,d0
         lsr.l   #2,d0
@@ -3957,91 +3958,91 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         move.l  d0,a0                ; DosInfo
         move.l  a3,d0
         lsr.l   #2,d0                ; BPTR(DeviceNode)
-        move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open résout DF0: par ce nœud
-                ifeq    PROD            ; PROD : clients de test D3 (d3c..d3j lisent kickslop/D3DTest/bigseg/BigData,
-                                        ; absents d'un vrai disque Workbench) -> hors prod ; le MONTAGE DF0: ci-dessus reste
+        move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open resolves DF0: through this node
+                ifeq    PROD            ; PROD: D3 test clients (d3c..d3j read kickslop/D3DTest/bigseg/BigData,
+                                        ; absent from a real Workbench disk) -> out of prod; the DF0: MOUNT above stays
         lea     d3c_cname(pc),a0
         lea     d3c_client(pc),a1
-        moveq   #4,d0                ; client pri 4 (bloque sur packets ; sous echo/OFS)
+        moveq   #4,d0                ; client pri 4 (blocks on packets; below echo/OFS)
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3d : client qui charge+exécute « D3DTest » À TRAVERS dos (Open/Read par packets -> ls_load_hunks -> run)
+        ; D3d: client that loads+executes "D3DTest" THROUGH dos (Open/Read by packets -> ls_load_hunks -> run)
         lea     d3d_cname(pc),a0
         lea     d3d_client(pc),a1
-        moveq   #3,d0                ; pri 3 (sous le client D3c)
+        moveq   #3,d0                ; pri 3 (below the D3c client)
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3e : client qui charge « D3DTest » via le VRAI vecteur LVO LoadSeg(-150) de dos.library (qui compose
-        ; Open/Read/Close + ls_load_hunks EN INTERNE) puis UnLoadSeg(-156). Prouve LoadSeg par vecteur LVO ; d3d
-        ; (load inline) reste la baseline indépendante de la couche en-dessous -> RED LOADSEG_LVO_UNWIRED isole d3e.
+        ; D3e: client that loads "D3DTest" via the REAL LVO vector LoadSeg(-150) of dos.library (which composes
+        ; Open/Read/Close + ls_load_hunks INTERNALLY) then UnLoadSeg(-156). Proves LoadSeg by LVO vector; d3d
+        ; (inline load) remains the baseline independent of the layer below -> RED LOADSEG_LVO_UNWIRED isolates d3e.
         lea     d3e_cname(pc),a0
         lea     d3e_client(pc),a1
-        moveq   #5,d0                ; pri 5 : AU-DESSUS du shell (Initial CLI pri 2) -> d3e charge+émet TÔT, hors de
-                                     ; la fenêtre tardive startup-sequence (sinon son marqueur entrelace « E3 CMD RAN OK »)
+        moveq   #5,d0                ; pri 5: ABOVE the shell (Initial CLI pri 2) -> d3e loads+emits EARLY, outside
+                                     ; the late startup-sequence window (otherwise its marker interleaves "E3 CMD RAN OK")
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3f : client prouvant IoErr(-132) + Seek(-66). pri 5 + émet sous Forbid (même discipline que d3e : tôt,
-        ; hors fenêtre startup, atomique). IoErr : Open absent -> 0 + IoErr != 0 ; Open d3dtest -> IoErr 0. Seek :
-        ; Read 4 -> Seek(0,BEGINNING) -> Read 4 identiques (repositionnement).
+        ; D3f: client proving IoErr(-132) + Seek(-66). pri 5 + emits under Forbid (same discipline as d3e: early,
+        ; outside the startup window, atomic). IoErr: Open of a missing file -> 0 + IoErr != 0; Open d3dtest -> IoErr 0.
+        ; Seek: Read 4 -> Seek(0,BEGINNING) -> Read 4 identical (repositioning).
         lea     d3f_cname(pc),a0
         lea     d3f_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3g : client prouvant CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). pri 5. CurrentDir/Input
-        ; round-trip, puis pr_COS = FileHandle console (fh_Type = DOS_CONPORT) ; Write(Output(), marqueur) -> le
-        ; marqueur « DOS WRITE OK » est émis PAR le Write via con_handler (prouve les 4 d'un coup).
+        ; D3g: client proving CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). pri 5. CurrentDir/Input
+        ; round-trip, then pr_COS = console FileHandle (fh_Type = DOS_CONPORT); Write(Output(), marker) -> the
+        ; "DOS WRITE OK" marker is emitted BY the Write via con_handler (proves all 4 at once).
         lea     d3g_cname(pc),a0
         lea     d3g_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3h : client prouvant le cap-bump LoadSeg. Charge « bigseg » (> 16 Ko) via LoadSeg(-150) + l'exécute :
-        ; le binaire vérifie une sentinelle en fin de son gros DATA et émet « LOADSEG BIG OK » si tout a été lu.
+        ; D3h: client proving the LoadSeg cap-bump. Loads "bigseg" (> 16 KB) via LoadSeg(-150) + executes it:
+        ; the binary checks a sentinel at the end of its big DATA and emits "LOADSEG BIG OK" if everything was read.
         lea     d3h_cname(pc),a0
         lea     d3h_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3i : client prouvant Lock(-84)/UnLock(-90)/Examine(-102)/ExNext(-108). pri 5 (même discipline : tôt, hors
-        ; fenêtre startup, émet sous ser_lock). Lock("kickslop")->Examine (fichier, 1024 o) ; Lock(":")->ExNext trouve
-        ; kickslop par énumération du répertoire racine.
+        ; D3i: client proving Lock(-84)/UnLock(-90)/Examine(-102)/ExNext(-108). pri 5 (same discipline: early, outside
+        ; the startup window, emits under ser_lock). Lock("kickslop")->Examine (file, 1024 bytes); Lock(":")->ExNext finds
+        ; kickslop by enumerating the root directory.
         lea     d3i_cname(pc),a0
         lea     d3i_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        ; D3j : client prouvant le STREAMING OFS RÉEL. pri 5. Ouvre « BigData » (48000 o > ancien cap 32 Ko), le lit
-        ; en entier par chunks (lecture incrémentale sans buffer whole-file) + seek cross-block -> « OFS STREAM OK ».
+        ; D3j: client proving REAL OFS STREAMING. pri 5. Opens "BigData" (48000 bytes > old 32 KB cap), reads it
+        ; entirely in chunks (incremental read without a whole-file buffer) + cross-block seek -> "OFS STREAM OK".
         lea     d3j_cname(pc),a0
         lea     d3j_client(pc),a1
         moveq   #5,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-                endc                    ; fin clients de test D3 (PROD=0)
-        ; --- E1 : handler console-série (pri 6, comme le handler OFS). INFRASTRUCTURE -> créé inconditionnellement.
-        ; Le shell (Initial CLI, F1) n'est PAS créé ici : il est GATÉ sur un disque bootable (branche .m6r_booted).
+                endc                    ; end of the D3 test clients (PROD=0)
+        ; --- E1: serial console handler (pri 6, like the OFS handler). INFRASTRUCTURE -> created unconditionally.
+        ; The shell (Initial CLI, F1) is NOT created here: it is GATED on a bootable disk (.m6r_booted branch).
         lea     e1_hname(pc),a0
-        move.l  #con_handler,a1      ; absolu : conhandler.o lié hors portée lea(pc) 16 bits
+        move.l  #con_handler,a1      ; absolute: conhandler.o linked out of 16-bit lea(pc) range
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
-        move.l  d0,DOS_CONPORT       ; publie le port du handler console
-        ; --- feeder clavier -> input.device (intégration F, item 1) : INFRASTRUCTURE, créé inconditionnellement.
-        ; Draine le ring brut du clavier (KBD_FEEDRING) et injecte les RAWKEY dans input.device (IND_WRITEEVENT).
+        move.l  d0,DOS_CONPORT       ; publish the console handler's port
+        ; --- keyboard feeder -> input.device (integration F, item 1): INFRASTRUCTURE, created unconditionally.
+        ; Drains the raw keyboard ring (KBD_FEEDRING) and injects the RAWKEYs into input.device (IND_WRITEEVENT).
         lea     fd_cname(pc),a0
-        move.l  #feeder_main,a1      ; absolu : feeder.o lié hors portée lea(pc) 16 bits
-        moveq   #4,d0                ; pri 4 (sous le handler console)
+        move.l  #feeder_main,a1      ; absolute: feeder.o linked out of 16-bit lea(pc) range
+        moveq   #4,d0                ; pri 4 (below the console handler)
         move.l  #D3_STK,d1
         jsr     proc_create
 .d3c_noclient:
                 ifne    M7J_DEMO
-        ; M7j : capture AvailMem AVANT de créer task_rm (baseline) ; après son auto-retrait, AvailMem
-        ; doit remonter d'au moins M7J_RECOVER (pile+TCB libérés). task_timer vérifie la remontée.
-        moveq   #0,d1                ; AvailMem(requirements=0) -> total libre
+        ; M7j: capture AvailMem BEFORE creating task_rm (baseline); after its self-removal, AvailMem
+        ; must go back up by at least M7J_RECOVER (stack+TCB freed). task_timer checks the increase.
+        moveq   #0,d1                ; AvailMem(requirements=0) -> total free
         jsr     LVO_AVAILMEM(a6)
         move.l  d0,M7J_AVAIL_BEFORE
-        lea     task_rm(pc),a2       ; tâche à durée de vie finie (RTS -> task_exit -> RemTask self)
+        lea     task_rm(pc),a2       ; task with a finite lifetime (RTS -> task_exit -> RemTask self)
         lea     task_rm_name(pc),a3
         moveq   #0,d2
         bsr     mk_demo_task
@@ -4050,32 +4051,32 @@ setup_demo_tasks:                    ; a6 = SysBase ; clobbers scratch + d2/a2-a
         movem.l (sp)+,d2/a2-a4
         rts
 
-; setup_stress_port (M7d) : crée le port partagé + STRESS_K messages (MAGIC + IN_HAND=0), tous AddTail'd
-; sur le port. a6 = SysBase. WP_SPORT est écrit EN DERNIER (une fois le port prêt) pour que le service
-; MICROHZ (qui teste WP_SPORT) ne le voie qu'entièrement construit. clobbers scratch + d2/a2 (sauvés).
+; setup_stress_port (M7d): creates the shared port + STRESS_K messages (MAGIC + IN_HAND=0), all AddTail'd
+; on the port. a6 = SysBase. WP_SPORT is written LAST (once the port is ready) so that the MICROHZ
+; service (which tests WP_SPORT) only sees it fully built. clobbers scratch + d2/a2 (saved).
 setup_stress_port:
-                ifne    PROD            ; PROD : pas de stress M7d ; efface WP_SPORT -> le service MICROHZ le voit
-        clr.l   WP_SPORT             ; nul et saute la voie de stress (sinon valeur power-up aléatoire = crash)
+                ifne    PROD            ; PROD: no M7d stress; clears WP_SPORT -> the MICROHZ service sees it
+        clr.l   WP_SPORT             ; null and skips the stress path (otherwise random power-up value = crash)
         rts
                 endc
         movem.l d2/a2,-(sp)
-        clr.l   WP_SPORT             ; (RAM basse non garantie nulle)
+        clr.l   WP_SPORT             ; (low RAM not guaranteed zero)
         clr.l   WP_PORTT
         clr.l   WP_PORTI
         clr.l   WP_PORTFAIL
         clr.b   M7D_STAT
-        move.l  #MP_SIZE,d0          ; alloue le port
+        move.l  #MP_SIZE,d0          ; allocate the port
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     m7d_fail
         move.l  d0,a2                ; a2 = port
         move.b  #NT_MSGPORT,LN_TYPE(a2)
-        move.b  #PA_IGNORE,MP_FLAGS(a2)   ; action != PA_SIGNAL -> PutMsg saute la voie de signal
+        move.b  #PA_IGNORE,MP_FLAGS(a2)   ; action != PA_SIGNAL -> PutMsg skips the signal path
         move.l  a2,a1                ; NEWLIST(&port->MsgList)
         lea     MP_MSGLIST(a2),a1
         jsr     newlist
-        moveq   #STRESS_K,d2         ; d2 = compteur de messages à créer
+        moveq   #STRESS_K,d2         ; d2 = counter of messages to create
 .sp_loop:
         move.l  #STRESS_MSG_SIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
@@ -4084,42 +4085,42 @@ setup_stress_port:
         beq     m7d_fail
         move.l  d0,a1                ; a1 = message
         move.b  #NT_MESSAGE,LN_TYPE(a1)
-        move.l  #STRESS_MAGIC,MSG_MAGIC_OFF(a1)   ; MAGIC ; IN_HAND déjà 0 (MEMF_CLEAR)
+        move.l  #STRESS_MAGIC,MSG_MAGIC_OFF(a1)   ; MAGIC; IN_HAND already 0 (MEMF_CLEAR)
         lea     MP_MSGLIST(a2),a0    ; AddTail(&port->MsgList, msg)
         jsr     LVO_ADDTAIL(a6)
         subq.l  #1,d2
         bne.s   .sp_loop
-        move.l  a2,WP_SPORT          ; port prêt -> publié EN DERNIER
+        move.l  a2,WP_SPORT          ; port ready -> published LAST
         movem.l (sp)+,d2/a2
         rts
 
-; --- D3a : corps du process file-handler ECHO + du process driver (preuve process + round-trip packet) ---
-; Les corps démarrent GPR à zéro (frame AddTask) -> rechargent SysBase depuis ($4).w. Le handler boucle
-; WaitPort/GetMsg sur SON pr_MsgPort et renvoie dp_Res1 = dp_Arg1 (echo). Le driver monte un StandardPacket,
-; PutMsg au port du handler, WaitPort(son port)/GetMsg, vérifie l'echo, émet « D3A », puis bloque pour toujours.
-; Round-trip via WaitPort = switch SYNCHRONE (M3d) -> fonctionne en GREEN (préemption) ET en COOP.
+; --- D3a: body of the ECHO file-handler process + of the driver process (process proof + packet round-trip) ---
+; The bodies start with GPRs at zero (AddTask frame) -> reload SysBase from ($4).w. The handler loops
+; WaitPort/GetMsg on ITS pr_MsgPort and returns dp_Res1 = dp_Arg1 (echo). The driver sets up a StandardPacket,
+; PutMsg to the handler's port, WaitPort(its port)/GetMsg, checks the echo, emits "D3A", then blocks forever.
+; Round-trip via WaitPort = SYNCHRONOUS switch (M3d) -> works in GREEN (preemption) AND in COOP.
 d3a_handler:
         move.l  ($4).w,a6
         move.l  EB_THISTASK(a6),a2
-        lea     PR_MSGPORT(a2),a2    ; a2 = pr_MsgPort du handler (le sien)
+        lea     PR_MSGPORT(a2),a2    ; a2 = pr_MsgPort of the handler (its own)
 .h_loop:
         move.l  a2,a0
-        jsr     LVO_WAITPORT(a6)     ; bloque jusqu'à l'arrivée d'un message
+        jsr     LVO_WAITPORT(a6)     ; blocks until a message arrives
         move.l  a2,a0
         jsr     LVO_GETMSG(a6)       ; d0 = Message | 0
         tst.l   d0
         beq.s   .h_loop
         move.l  d0,a1                ; a1 = Message (= &sp_Msg)
-        move.l  LN_NAME(a1),a3       ; a3 = &sp_Pkt (convention : msg->ln_Name -> DosPacket)
+        move.l  LN_NAME(a1),a3       ; a3 = &sp_Pkt (convention: msg->ln_Name -> DosPacket)
                 ifeq    D3A_NO_REPLY
-        move.l  DP_ARG1(a3),DP_RES1(a3)   ; ECHO : res1 = arg1
-        jsr     LVO_REPLYMSG(a6)     ; renvoie au mn_ReplyPort (port du driver)
-                endc                 ; RED D3A_NO_REPLY : ne répond pas -> le driver reste bloqué -> « D3A » absent
+        move.l  DP_ARG1(a3),DP_RES1(a3)   ; ECHO: res1 = arg1
+        jsr     LVO_REPLYMSG(a6)     ; back to mn_ReplyPort (the driver's port)
+                endc                 ; RED D3A_NO_REPLY: does not reply -> the driver stays blocked -> "D3A" absent
         bra.s   .h_loop
 d3a_driver:
         move.l  ($4).w,a6
         move.l  EB_THISTASK(a6),a4
-        lea     PR_MSGPORT(a4),a4    ; a4 = pr_MsgPort du driver (port de réponse)
+        lea     PR_MSGPORT(a4),a4    ; a4 = pr_MsgPort of the driver (reply port)
         move.l  #SP_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -4128,39 +4129,39 @@ d3a_driver:
         move.l  d0,a2                ; a2 = StandardPacket (&sp_Msg)
         lea     SP_PKT(a2),a3        ; a3 = &sp_Pkt (DosPacket)
         move.b  #NT_MESSAGE,LN_TYPE(a2)
-        move.l  a4,MN_REPLYPORT(a2)  ; ReplyMsg reviendra ici
+        move.l  a4,MN_REPLYPORT(a2)  ; ReplyMsg will come back here
         move.w  #DP_SIZEOF,MN_LENGTH(a2)
         move.l  a3,LN_NAME(a2)       ; sp_Msg.ln_Name -> sp_Pkt
         move.l  a2,DP_LINK(a3)
         move.l  a4,DP_PORT(a3)
-        move.l  #ACTION_READ,DP_TYPE(a3)   ; valeur de test (echo ne l'interprète pas)
-        move.l  #$D3A0CAFE,DP_ARG1(a3)     ; magic à echoer
+        move.l  #ACTION_READ,DP_TYPE(a3)   ; test value (echo does not interpret it)
+        move.l  #$D3A0CAFE,DP_ARG1(a3)     ; magic to echo
         move.l  DOS_HANDLERPORT,a0
         move.l  a2,a1
-        jsr     LVO_PUTMSG(a6)       ; PutMsg(handlerPort, &sp_Msg) -> signale le handler
+        jsr     LVO_PUTMSG(a6)       ; PutMsg(handlerPort, &sp_Msg) -> signals the handler
         move.l  a4,a0
-        jsr     LVO_WAITPORT(a6)     ; attend la réponse (switch synchrone -> handler)
+        jsr     LVO_WAITPORT(a6)     ; waits for the reply (synchronous switch -> handler)
         move.l  a4,a0
         jsr     LVO_GETMSG(a6)
         lea     SP_PKT(a2),a3
-        cmp.l   #$D3A0CAFE,DP_RES1(a3)    ; echo correct ?
+        cmp.l   #$D3A0CAFE,DP_RES1(a3)    ; correct echo?
         bne.s   .d_free
-        jsr     LVO_FORBID(a6)       ; émission atomique (évite l'entrelacement série avec le fs-driver)
+        jsr     LVO_FORBID(a6)       ; atomic output (avoids serial interleaving with the fs-driver)
         lea     msg_d3a_ok(pc),a0
-        bsr     ser_puts             ; « D3A ... OK »
+        bsr     ser_puts             ; "D3A ... OK"
         jsr     LVO_PERMIT(a6)
 .d_free:
         move.l  a2,a1
         move.l  #SP_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
 .d_block:
-        moveq   #0,d0                ; terminé -> bloque pour toujours (ne spinne pas)
+        moveq   #0,d0                ; done -> block forever (does not spin)
         jsr     LVO_WAIT(a6)
         bra.s   .d_block
 
-; --- D3b : corps du fs-driver — ouvre/lit/ferme « kickslop » À TRAVERS le process file-handler DF0: via packets ---
-; FINDINPUT(BPTR fh, 0, BSTR nom) -> DOSTRUE + fh_Arg1 = clé ; READ(clé, buf, 1024) -> 1024 + marqueurs ;
-; END(clé). Émet « D3B » si tout OK. Utilise dos_sendpkt (process.s). a5 = bloc, d6 = flag succès, d7 = clé.
+; --- D3b: body of the fs-driver — opens/reads/closes "kickslop" THROUGH the DF0: file-handler process via packets ---
+; FINDINPUT(BPTR fh, 0, BSTR name) -> DOSTRUE + fh_Arg1 = key; READ(key, buf, 1024) -> 1024 + markers;
+; END(key). Emits "D3B" if all OK. Uses dos_sendpkt (process.s). a5 = block, d6 = success flag, d7 = key.
 dos_fsdriver:
         move.l  ($4).w,a6
         move.l  #FSD_TOTAL,d0
@@ -4168,9 +4169,9 @@ dos_fsdriver:
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .fd_block
-        move.l  d0,a5                ; a5 = bloc (persistant)
-        moveq   #0,d6                ; d6 = flag succès
-        ; construire le BSTR nom {8,"kickslop"} à a5+FSD_NAME
+        move.l  d0,a5                ; a5 = block (persistent)
+        moveq   #0,d6                ; d6 = success flag
+        ; build the BSTR name {8,"kickslop"} at a5+FSD_NAME
         lea     FSD_NAME(a5),a1
         move.b  #8,(a1)+
         lea     fsd_name_src(pc),a0
@@ -4178,35 +4179,35 @@ dos_fsdriver:
 .fd_ncpy:
         move.b  (a0)+,(a1)+
         dbra    d0,.fd_ncpy
-        ; --- FINDINPUT : arg1 = BPTR(fh), arg2 = 0, arg3 = BPTR(nom) ---
+        ; --- FINDINPUT: arg1 = BPTR(fh), arg2 = 0, arg3 = BPTR(name) ---
         lea     FSD_SP(a5),a0
         move.l  DOS_FSPORT,a1
         move.l  #ACTION_FINDINPUT,d0
         move.l  a5,d1
         add.l   #FSD_FH,d1
         lsr.l   #2,d1                ; BPTR(FileHandle)
-        moveq   #0,d2                ; lock 0 (racine)
+        moveq   #0,d2                ; lock 0 (root)
         move.l  a5,d3
         add.l   #FSD_NAME,d3
-        lsr.l   #2,d3                ; BPTR(nom)
+        lsr.l   #2,d3                ; BPTR(name)
         jsr     dos_sendpkt          ; d0 = dp_Res1
         cmp.l   #DOSTRUE,d0
         bne     .fd_free
-        move.l  a5,a0                ; clé = fh.FH_ARG1 (posée par le handler)
+        move.l  a5,a0                ; key = fh.FH_ARG1 (set by the handler)
         add.l   #FSD_FH,a0
-        move.l  FH_ARG1(a0),d7       ; d7 = clé du fichier
-        ; --- READ : arg1 = clé, arg2 = buffer (APTR), arg3 = 1024 ---
+        move.l  FH_ARG1(a0),d7       ; d7 = file key
+        ; --- READ: arg1 = key, arg2 = buffer (APTR), arg3 = 1024 ---
         lea     FSD_SP(a5),a0
         move.l  DOS_FSPORT,a1
         move.l  #ACTION_READ,d0
         move.l  d7,d1
         move.l  a5,d2
-        add.l   #FSD_BUF,d2          ; dest = buffer (APTR, PAS un BPTR)
+        add.l   #FSD_BUF,d2          ; dest = buffer (APTR, NOT a BPTR)
         move.l  #1024,d3
-        jsr     dos_sendpkt          ; d0 = octets lus
+        jsr     dos_sendpkt          ; d0 = bytes read
         cmp.l   #1024,d0
         bne.s   .fd_close
-        lea     FSD_BUF(a5),a0       ; vérifier les marqueurs (mêmes que D1 : @0/@488/@976)
+        lea     FSD_BUF(a5),a0       ; check the markers (same as D1: @0/@488/@976)
         cmp.l   #$44314F46,(a0)      ; "D1OF"
         bne.s   .fd_close
         cmp.l   #$534F4B30,4(a0)     ; "SOK0"
@@ -4215,9 +4216,9 @@ dos_fsdriver:
         bne.s   .fd_close
         cmp.l   #$534F4B32,980(a0)   ; "SOK2"
         bne.s   .fd_close
-        moveq   #1,d6                ; succès
+        moveq   #1,d6                ; success
 .fd_close:
-        ; --- END : arg1 = clé (ferme toujours, même si READ a échoué) ---
+        ; --- END: arg1 = key (always closes, even if READ failed) ---
         lea     FSD_SP(a5),a0
         move.l  DOS_FSPORT,a1
         move.l  #ACTION_END,d0
@@ -4227,9 +4228,9 @@ dos_fsdriver:
         jsr     dos_sendpkt
         tst.l   d6
         beq.s   .fd_free
-        jsr     LVO_FORBID(a6)       ; émission atomique (évite l'entrelacement série avec l'echo-driver)
+        jsr     LVO_FORBID(a6)       ; atomic output (avoids serial interleaving with the echo-driver)
         lea     msg_d3b_ok(pc),a0
-        bsr     ser_puts             ; « D3B ... OK »
+        bsr     ser_puts             ; "D3B ... OK"
         jsr     LVO_PERMIT(a6)
 .fd_free:
         move.l  a5,a1
@@ -4240,9 +4241,9 @@ dos_fsdriver:
         jsr     LVO_WAIT(a6)
         bra.s   .fd_block
 
-; --- D3c : corps du process client dos — OpenLibrary(dos) + Open/Read/Close « kickslop » via les LVO dos ---
-; Prouve la couche dos user-facing (Open/Read/Close fabriquent les packets vers le handler, appelées depuis un
-; PROCESS qui fournit son pr_MsgPort comme port de réponse). a4 = DosBase, a5 = buffer, d6 = octets, d7 = BPTR fh.
+; --- D3c: body of the dos client process — OpenLibrary(dos) + Open/Read/Close "kickslop" via the dos LVOs ---
+; Proves the user-facing dos layer (Open/Read/Close build the packets to the handler, called from a
+; PROCESS that supplies its pr_MsgPort as reply port). a4 = DosBase, a5 = buffer, d6 = bytes, d7 = BPTR fh.
 d3c_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4256,10 +4257,10 @@ d3c_client:
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .c_closelib
-        move.l  d0,a5                ; a5 = buffer de lecture
-        move.l  a4,a6                ; a6 = DosBase pour les appels dos
+        move.l  d0,a5                ; a5 = read buffer
+        move.l  a4,a6                ; a6 = DosBase for the dos calls
         lea     ofs_test_name(pc),a0
-        move.l  a0,d1                ; name = « kickslop » (C-string)
+        move.l  a0,d1                ; name = "kickslop" (C-string)
         move.l  #MODE_OLDFILE,d2
         jsr     DOS_LVO_OPEN(a6)     ; d0 = BPTR FileHandle | 0
         tst.l   d0
@@ -4268,24 +4269,24 @@ d3c_client:
         move.l  d7,d1
         move.l  a5,d2
         move.l  #1024,d3
-        jsr     DOS_LVO_READ(a6)     ; d0 = octets lus
+        jsr     DOS_LVO_READ(a6)     ; d0 = bytes read
         move.l  d0,d6
         move.l  d7,d1
         jsr     DOS_LVO_CLOSE(a6)
         move.l  ($4).w,a6            ; -> SysBase (ser_puts / Forbid / FreeMem)
-        cmp.l   #1024,d6             ; fichier complet lu via dos ?
+        cmp.l   #1024,d6             ; complete file read via dos?
         bne.s   .c_free
-        cmp.l   #$44314F46,(a5)      ; « D1OF »
+        cmp.l   #$44314F46,(a5)      ; "D1OF"
         bne.s   .c_free
-        cmp.l   #$534F4B30,4(a5)     ; « SOK0 »
+        cmp.l   #$534F4B30,4(a5)     ; "SOK0"
         bne.s   .c_free
-        cmp.l   #$534F4B31,492(a5)   ; « SOK1 »
+        cmp.l   #$534F4B31,492(a5)   ; "SOK1"
         bne.s   .c_free
-        cmp.l   #$534F4B32,980(a5)   ; « SOK2 »
+        cmp.l   #$534F4B32,980(a5)   ; "SOK2"
         bne.s   .c_free
         jsr     LVO_FORBID(a6)
         lea     msg_d3c_ok(pc),a0
-        bsr     ser_puts             ; « D3C ... OK »
+        bsr     ser_puts             ; "D3C ... OK"
         jsr     LVO_PERMIT(a6)
 .c_free:
         move.l  ($4).w,a6
@@ -4301,10 +4302,10 @@ d3c_client:
         jsr     LVO_WAIT(a6)
         bra.s   .c_block
 
-; --- D3d : corps du client — charge « D3DTest » À TRAVERS dos (Open/Read par packets) puis l'EXÉCUTE ---
-; OpenLibrary(dos) ; dos Open/Read/Close « d3dtest » dans un filebuf ; ls_load_hunks(filebuf,size) -> seglist ;
-; JSR (seglist<<2)+4 -> la commande émet « D3D LOADSEG-VIA-DOS OK » depuis la RAM. Prouve la chaîne complète
-; « charger une commande via dos ». a4=DosBase, a5=filebuf, d6=size, d7=fh puis BPTR seglist.
+; --- D3d: body of the client — loads "D3DTest" THROUGH dos (Open/Read by packets) then EXECUTES it ---
+; OpenLibrary(dos); dos Open/Read/Close "d3dtest" into a filebuf; ls_load_hunks(filebuf,size) -> seglist;
+; JSR (seglist<<2)+4 -> the command emits "D3D LOADSEG-VIA-DOS OK" from RAM. Proves the complete chain
+; "load a command via dos". a4=DosBase, a5=filebuf, d6=size, d7=fh then BPTR seglist.
 d3d_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4313,15 +4314,15 @@ d3d_client:
         tst.l   d0
         beq     .q_block
         move.l  d0,a4                ; a4 = DosBase
-        move.l  #16384,d0            ; filebuf (>= taille d'un exécutable hunk)
+        move.l  #16384,d0            ; filebuf (>= size of a hunk executable)
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .q_closelib
         move.l  d0,a5                ; a5 = filebuf
-        move.l  a4,a6                ; a6 = DosBase pour les appels dos
+        move.l  a4,a6                ; a6 = DosBase for the dos calls
         lea     d3d_fname(pc),a0
-        move.l  a0,d1                ; « d3dtest »
+        move.l  a0,d1                ; "d3dtest"
         move.l  #MODE_OLDFILE,d2
         jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0
         tst.l   d0
@@ -4329,32 +4330,32 @@ d3d_client:
         move.l  d0,d7                ; d7 = BPTR fh
         move.l  d7,d1
         move.l  a5,d2                ; buffer
-        move.l  #16384,d3            ; len (le handler renvoie la taille réelle)
-        jsr     DOS_LVO_READ(a6)     ; d0 = octets lus = taille fichier
+        move.l  #16384,d3            ; len (the handler returns the real size)
+        jsr     DOS_LVO_READ(a6)     ; d0 = bytes read = file size
         move.l  d0,d6
         move.l  d7,d1
         jsr     DOS_LVO_CLOSE(a6)
         move.l  ($4).w,a6            ; -> SysBase
         tst.l   d6
-        beq     .q_free              ; rien lu
+        beq     .q_free              ; nothing read
         move.l  a5,a0
         move.l  d6,d0
-        jsr     ls_load_hunks        ; d0 = BPTR seglist | 0 (jsr : loadseg.o loin)
+        jsr     ls_load_hunks        ; d0 = BPTR seglist | 0 (jsr: loadseg.o far away)
         tst.l   d0
         beq     .q_free
         move.l  d0,d7                ; d7 = BPTR seglist
                 ifeq    D3D_NO_RUN
-        move.l  d7,d0                ; entry = (seglist<<2)+4 = contenu du 1er hunk (CODE)
+        move.l  d7,d0                ; entry = (seglist<<2)+4 = contents of the 1st hunk (CODE)
         lsl.l   #2,d0
         addq.l  #4,d0
         move.l  d0,a0
-        bsr     ser_lock             ; le binaire chargé émet sous Forbid -> son marqueur reste atomique
-        jsr     (a0)                 ; exécute D3DTest -> émet « D3D LOADSEG-VIA-DOS OK »
+        bsr     ser_lock             ; the loaded binary prints under Forbid -> its marker stays atomic
+        jsr     (a0)                 ; executes D3DTest -> emits "D3D LOADSEG-VIA-DOS OK"
         bsr     ser_unlock
-        move.l  ($4).w,a6            ; recharge SysBase (le code chargé a pu clobber a6)
-                endc                 ; RED D3D_NO_RUN : saute le run -> commande pas exécutée -> D3D absent
+        move.l  ($4).w,a6            ; reload SysBase (the loaded code may have clobbered a6)
+                endc                 ; RED D3D_NO_RUN: skips the run -> command not executed -> D3D absent
         move.l  d7,d0
-        jsr     dos_unloadseg        ; libère le seglist
+        jsr     dos_unloadseg        ; free the seglist
 .q_free:
         move.l  ($4).w,a6
         move.l  a5,a1
@@ -4369,9 +4370,9 @@ d3d_client:
         jsr     LVO_WAIT(a6)
         bra.s   .q_block
 
-; d3e_client : charge « D3DTest » via le VRAI vecteur LVO LoadSeg(-150) de dos.library (qui ouvre/lit/parse/reloc
-; EN INTERNE via Open/Read), prouve un seglist non nul (« D3E LOADSEG LVO OK »), puis UnLoadSeg(-156). Ne RE-exécute
-; pas le programme (d3d le fait déjà) -> pas de double marqueur. a6 = SysBase à l'entrée (corps de process).
+; d3e_client: loads "D3DTest" via the REAL LVO vector LoadSeg(-150) of dos.library (which opens/reads/parses/relocs
+; INTERNALLY via Open/Read), proves a non-null seglist ("D3E LOADSEG LVO OK"), then UnLoadSeg(-156). Does NOT
+; re-execute the program (d3d already does) -> no double marker. a6 = SysBase on entry (process body).
 d3e_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4381,21 +4382,21 @@ d3e_client:
         beq.s   .e_block
         move.l  d0,a4                ; a4 = DosBase
         move.l  a4,a6
-        lea     d3d_fname(pc),a0     ; « d3dtest » (même exécutable que d3d, prouvé chargeable)
+        lea     d3d_fname(pc),a0     ; "d3dtest" (same executable as d3d, proven loadable)
         move.l  a0,d1
-        jsr     DOS_LVO_LOADSEG(a6)  ; -150 : ouvre+lit+parse hunk+reloc via Open/Read -> BPTR seglist | 0
+        jsr     DOS_LVO_LOADSEG(a6)  ; -150: opens+reads+parses hunks+relocs via Open/Read -> BPTR seglist | 0
         tst.l   d0
-        beq.s   .e_closelib          ; RED LOADSEG_LVO_UNWIRED : -150 = dos_null -> 0 -> pas de marqueur
-        move.l  d0,d7                ; d7 = BPTR seglist (non nul = chargé+relocalisé via le vecteur LVO)
-        move.l  ($4).w,a6            ; émet le marqueur sous Forbid (atomicité vs les autres émetteurs série)
+        beq.s   .e_closelib          ; RED LOADSEG_LVO_UNWIRED: -150 = dos_null -> 0 -> no marker
+        move.l  d0,d7                ; d7 = BPTR seglist (non-null = loaded+relocated via the LVO vector)
+        move.l  ($4).w,a6            ; emit the marker under Forbid (atomicity vs the other serial printers)
         jsr     LVO_FORBID(a6)
         lea     msg_d3e_loadseg(pc),a0
-        bsr     ser_puts             ; « D3E LOADSEG LVO OK »
+        bsr     ser_puts             ; "D3E LOADSEG LVO OK"
         move.l  ($4).w,a6
         jsr     LVO_PERMIT(a6)
         move.l  a4,a6
         move.l  d7,d1
-        jsr     DOS_LVO_UNLOADSEG(a6) ; -156 : libère le seglist
+        jsr     DOS_LVO_UNLOADSEG(a6) ; -156: frees the seglist
 .e_closelib:
         move.l  ($4).w,a6
         move.l  a4,a1
@@ -4405,7 +4406,7 @@ d3e_client:
         jsr     LVO_WAIT(a6)
         bra.s   .e_block
 
-; d3f_client : prouve IoErr(-132) + Seek(-66) via les vrais vecteurs LVO. a6 = SysBase à l'entrée (corps de process).
+; d3f_client: proves IoErr(-132) + Seek(-66) via the real LVO vectors. a6 = SysBase on entry (process body).
 d3f_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4414,19 +4415,19 @@ d3f_client:
         tst.l   d0
         beq     .f_block
         move.l  d0,a4                ; a4 = DosBase
-        ; IoErr : Open d'un nom ABSENT -> 0 puis IoErr != 0
+        ; IoErr: Open of an ABSENT name -> 0 then IoErr != 0
         move.l  a4,a6
         lea     d3f_badname(pc),a0
         move.l  a0,d1
         move.l  #MODE_OLDFILE,d2
         jsr     DOS_LVO_OPEN(a6)
         tst.l   d0
-        bne     .f_closelib          ; a ouvert à tort un nom absent -> abort
+        bne     .f_closelib          ; wrongly opened an absent name -> abort
         move.l  a4,a6
-        jsr     DOS_LVO_IOERR(a6)    ; doit être != 0 (ERROR_OBJECT_NOT_FOUND) ; RED DOS_NO_IOERR -> 0
+        jsr     DOS_LVO_IOERR(a6)    ; must be != 0 (ERROR_OBJECT_NOT_FOUND); RED DOS_NO_IOERR -> 0
         tst.l   d0
         beq     .f_closelib
-        ; Open d3dtest ; IoErr doit repasser à 0
+        ; Open d3dtest; IoErr must go back to 0
         move.l  a4,a6
         lea     d3d_fname(pc),a0
         move.l  a0,d1
@@ -4436,26 +4437,26 @@ d3f_client:
         beq     .f_closelib
         move.l  d0,d7                ; d7 = BPTR fh
         move.l  a4,a6
-        jsr     DOS_LVO_IOERR(a6)    ; doit être 0 après un Open réussi
+        jsr     DOS_LVO_IOERR(a6)    ; must be 0 after a successful Open
         tst.l   d0
         bne     .f_close
-        ; Seek : Read 4 @0 -> Seek(0,BEGINNING) -> Read 4 identiques
-        lea     -8(sp),sp            ; 2 buffers de 4 octets (buf1=sp, buf2=sp+4)
+        ; Seek: Read 4 @0 -> Seek(0,BEGINNING) -> Read 4 identical
+        lea     -8(sp),sp            ; 2 buffers of 4 bytes (buf1=sp, buf2=sp+4)
         move.l  a4,a6
         move.l  d7,d1
         move.l  sp,d2
         moveq   #4,d3
-        jsr     DOS_LVO_READ(a6)     ; lit 4 @ pos 0 -> buf1
+        jsr     DOS_LVO_READ(a6)     ; reads 4 @ pos 0 -> buf1
         cmp.l   #4,d0
         bne     .f_free8
-        move.l  a4,a6                ; Seek(fh, 0, OFFSET_BEGINNING) -> ancienne pos (= 4)
+        move.l  a4,a6                ; Seek(fh, 0, OFFSET_BEGINNING) -> old pos (= 4)
         move.l  d7,d1
         moveq   #0,d2
         moveq   #OFFSET_BEGINNING,d3
         jsr     DOS_LVO_SEEK(a6)
-        cmp.l   #4,d0                ; Seek rend l'ANCIENNE position (4) ; RED HND_NO_SEEK -> 4 aussi mais pos pas remise
+        cmp.l   #4,d0                ; Seek returns the OLD position (4); RED HND_NO_SEEK -> 4 too but pos not reset
         bne     .f_free8
-        move.l  a4,a6                ; Read 4 à nouveau -> buf2
+        move.l  a4,a6                ; Read 4 again -> buf2
         move.l  d7,d1
         move.l  sp,d2
         addq.l  #4,d2
@@ -4463,14 +4464,14 @@ d3f_client:
         jsr     DOS_LVO_READ(a6)
         cmp.l   #4,d0
         bne     .f_free8
-        move.l  (sp),d0              ; buf1 == buf2 ? (Seek a bien ramené au début)
+        move.l  (sp),d0              ; buf1 == buf2? (Seek did bring it back to the start)
         cmp.l   4(sp),d0
         bne     .f_free8
         lea     8(sp),sp
-        move.l  ($4).w,a6            ; succès -> émet sous Forbid (atomicité série)
+        move.l  ($4).w,a6            ; success -> emit under Forbid (serial atomicity)
         jsr     LVO_FORBID(a6)
         lea     msg_d3f_ok(pc),a0
-        bsr     ser_puts             ; « DOS IOERR SEEK OK »
+        bsr     ser_puts             ; "DOS IOERR SEEK OK"
         move.l  ($4).w,a6
         jsr     LVO_PERMIT(a6)
         bra.s   .f_close
@@ -4489,7 +4490,7 @@ d3f_client:
         jsr     LVO_WAIT(a6)
         bra.s   .f_block
 
-; d3g_client : prouve CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). a6 = SysBase à l'entrée (process).
+; d3g_client: proves CurrentDir(-126) + Input(-54) + Output(-60) + Write(-48). a6 = SysBase on entry (process).
 d3g_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4498,7 +4499,7 @@ d3g_client:
         tst.l   d0
         beq     .g_block
         move.l  d0,a4                ; a4 = DosBase
-        ; CurrentDir round-trip : pose $1234, puis 0 (doit rendre $1234)
+        ; CurrentDir round-trip: set $1234, then 0 (must return $1234)
         move.l  a4,a6
         move.l  #$1234,d1
         jsr     DOS_LVO_CURRENTDIR(a6)
@@ -4507,7 +4508,7 @@ d3g_client:
         jsr     DOS_LVO_CURRENTDIR(a6)
         cmp.l   #$1234,d0
         bne     .g_closelib
-        ; Input : pose pr_CIS = $5678, relit via Input()
+        ; Input: set pr_CIS = $5678, read back via Input()
         move.l  ($4).w,a0
         move.l  EB_THISTASK(a0),a0
         move.l  #$5678,PR_CIS(a0)
@@ -4515,10 +4516,10 @@ d3g_client:
         jsr     DOS_LVO_INPUT(a6)
         cmp.l   #$5678,d0
         bne     .g_closelib
-        ; FileHandle console (fh_Type = DOS_CONPORT) pour Output/Write
+        ; console FileHandle (fh_Type = DOS_CONPORT) for Output/Write
         move.l  DOS_CONPORT,d7
         tst.l   d7
-        beq     .g_closelib          ; pas de console
+        beq     .g_closelib          ; no console
         move.l  ($4).w,a6
         move.l  #FH_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -4526,13 +4527,13 @@ d3g_client:
         tst.l   d0
         beq     .g_closelib
         move.l  d0,a5                ; a5 = FileHandle
-        move.l  d7,FH_TYPE(a5)       ; fh_Type = port con_handler
+        move.l  d7,FH_TYPE(a5)       ; fh_Type = con_handler port
         move.l  ($4).w,a0            ; pr_COS = BPTR(a5)
         move.l  EB_THISTASK(a0),a0
         move.l  a5,d0
         lsr.l   #2,d0
         move.l  d0,PR_COS(a0)
-        move.l  a4,a6                ; Output() doit rendre BPTR(a5)
+        move.l  a4,a6                ; Output() must return BPTR(a5)
         jsr     DOS_LVO_OUTPUT(a6)
         move.l  a5,d1
         lsr.l   #2,d1
@@ -4542,7 +4543,7 @@ d3g_client:
         move.l  #msg_dos_write,d2
         move.l  #msg_dos_write_len,d3
         move.l  a4,a6
-        jsr     DOS_LVO_WRITE(a6)    ; con_handler émet « DOS WRITE OK » sur série (= le marqueur)
+        jsr     DOS_LVO_WRITE(a6)    ; con_handler emits "DOS WRITE OK" on serial (= the marker)
 .g_free:
         move.l  ($4).w,a6
         move.l  a5,a1
@@ -4557,8 +4558,8 @@ d3g_client:
         jsr     LVO_WAIT(a6)
         bra.s   .g_block
 
-; d3h_client : prouve le cap-bump LoadSeg. Charge « bigseg » (> 16 Ko) via LoadSeg(-150) + l'exécute (le binaire
-; vérifie la sentinelle en fin de son gros DATA -> émet « LOADSEG BIG OK » SSI tout a été lu). a6 = SysBase à l'entrée.
+; d3h_client: proves the LoadSeg cap-bump. Loads "bigseg" (> 16 KB) via LoadSeg(-150) + executes it (the binary
+; checks the sentinel at the end of its big DATA -> emits "LOADSEG BIG OK" IFF everything was read). a6 = SysBase on entry.
 d3h_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4568,9 +4569,9 @@ d3h_client:
         beq     .h_block
         move.l  d0,a4                ; a4 = DosBase
         move.l  a4,a6
-        lea     d3h_fname(pc),a0     ; « bigseg »
+        lea     d3h_fname(pc),a0     ; "bigseg"
         move.l  a0,d1
-        jsr     DOS_LVO_LOADSEG(a6)  ; -150 : charge l'exécutable > 16 Ko (cap 32 Ko)
+        jsr     DOS_LVO_LOADSEG(a6)  ; -150: loads the executable > 16 KB (cap 32 KB)
         tst.l   d0
         beq.s   .h_closelib
         move.l  d0,d7                ; d7 = BPTR seglist
@@ -4578,8 +4579,8 @@ d3h_client:
         lsl.l   #2,d0
         addq.l  #4,d0
         move.l  d0,a0
-        bsr     ser_lock             ; le binaire émet sous Forbid -> marqueur atomique
-        jsr     (a0)                 ; exécute bigseg -> « LOADSEG BIG OK » si la sentinelle (fin du gros DATA) est bonne
+        bsr     ser_lock             ; the binary prints under Forbid -> atomic marker
+        jsr     (a0)                 ; executes bigseg -> "LOADSEG BIG OK" if the sentinel (end of the big DATA) is right
         bsr     ser_unlock
         move.l  ($4).w,a6
         move.l  a4,a6
@@ -4594,11 +4595,11 @@ d3h_client:
         jsr     LVO_WAIT(a6)
         bra.s   .h_block
 
-; d3i_client : prouve Lock(-84) + UnLock(-90) + Examine(-102) + ExNext(-108) via les vrais vecteurs LVO. a6 = SysBase
-; à l'entrée (corps de process). (A) Lock("kickslop") -> Examine -> fib : DirEntryType < 0 (fichier) ET Size == 1024
-; (ORACLE byte_size@324 confirmé sur l'ADF). (B) Lock(":") [racine] -> Examine -> DirEntryType > 0 (répertoire) ->
-; ExNext en boucle -> trouve l'entrée fichier de 1024 octets (= kickslop spécifiquement, note advisor). Le curseur
-; d'énumération vit dans le lock (flp_Bucket/flp_ChainBlk) -> déviation documentée (le vrai OS le garde dans le FIB).
+; d3i_client: proves Lock(-84) + UnLock(-90) + Examine(-102) + ExNext(-108) via the real LVO vectors. a6 = SysBase
+; on entry (process body). (A) Lock("kickslop") -> Examine -> fib: DirEntryType < 0 (file) AND Size == 1024
+; (ORACLE byte_size@324 confirmed on the ADF). (B) Lock(":") [root] -> Examine -> DirEntryType > 0 (directory) ->
+; ExNext in a loop -> finds the 1024-byte file entry (= kickslop specifically, advisor note). The enumeration
+; cursor lives in the lock (flp_Bucket/flp_ChainBlk) -> documented deviation (the real OS keeps it in the FIB).
 d3i_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4607,14 +4608,14 @@ d3i_client:
         tst.l   d0
         beq     .i_block
         move.l  d0,a4                ; a4 = DosBase
-        move.l  ($4).w,a6            ; FileInfoBlock long-aligné (AllocMem -> BPTR réversible)
+        move.l  ($4).w,a6            ; long-aligned FileInfoBlock (AllocMem -> reversible BPTR)
         move.l  #FIB_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .i_closelib
         move.l  d0,a5                ; a5 = fib
-        ; --- (A) Examine un FICHIER : Lock("kickslop") ---
+        ; --- (A) Examine a FILE: Lock("kickslop") ---
         move.l  a4,a6
         lea     ofs_test_name(pc),a0 ; "kickslop"
         move.l  a0,d1
@@ -4622,7 +4623,7 @@ d3i_client:
         jsr     DOS_LVO_LOCK(a6)     ; -84 -> BPTR lock
         tst.l   d0
         beq     .i_freefib
-        move.l  d0,d6                ; d6 = BPTR lock (fichier)
+        move.l  d0,d6                ; d6 = BPTR lock (file)
         move.l  a4,a6
         move.l  d6,d1
         move.l  a5,d2               ; fib
@@ -4630,21 +4631,21 @@ d3i_client:
         tst.l   d0
         beq     .i_unlockfile
         move.l  FIB_DIRENTRYTYPE(a5),d0
-        bpl     .i_unlockfile        ; >= 0 -> pas un fichier
+        bpl     .i_unlockfile        ; >= 0 -> not a file
         move.l  FIB_SIZE(a5),d0
-        cmp.l   #1024,d0            ; ORACLE : taille lue @324 -> write@124 -> readback
+        cmp.l   #1024,d0            ; ORACLE: size read @324 -> write@124 -> readback
         bne     .i_unlockfile
-        moveq   #1,d3               ; d3 = (A) fichier OK
+        moveq   #1,d3               ; d3 = (A) file OK
         bra.s   .i_fileok
 .i_unlockfile:
         moveq   #0,d3
 .i_fileok:
-        move.l  a4,a6               ; UnLock(fichier)
+        move.l  a4,a6               ; UnLock(file)
         move.l  d6,d1
         jsr     DOS_LVO_UNLOCK(a6)   ; -90
         tst.l   d3
         beq     .i_freefib
-        ; --- (B) Examine + ExNext un RÉPERTOIRE : Lock(":") ---
+        ; --- (B) Examine + ExNext a DIRECTORY: Lock(":") ---
         move.l  a4,a6
         lea     d3i_rootname(pc),a0  ; ":"
         move.l  a0,d1
@@ -4652,42 +4653,42 @@ d3i_client:
         jsr     DOS_LVO_LOCK(a6)
         tst.l   d0
         beq     .i_freefib
-        move.l  d0,d6               ; d6 = BPTR lock (racine)
-        move.l  a4,a6               ; Examine racine -> doit être un répertoire
+        move.l  d0,d6               ; d6 = BPTR lock (root)
+        move.l  a4,a6               ; Examine root -> must be a directory
         move.l  d6,d1
         move.l  a5,d2
         jsr     DOS_LVO_EXAMINE(a6)
         tst.l   d0
         beq     .i_unlockroot
         move.l  FIB_DIRENTRYTYPE(a5),d0
-        ble     .i_unlockroot        ; <= 0 -> pas un répertoire
-        moveq   #0,d4               ; d4 = flag « kickslop trouvé par ExNext »
-        moveq   #24,d5              ; cap d'itérations (anti-boucle)
+        ble     .i_unlockroot        ; <= 0 -> not a directory
+        moveq   #0,d4               ; d4 = "kickslop found by ExNext" flag
+        moveq   #24,d5              ; iteration cap (anti-loop)
 .i_exloop:
         move.l  a4,a6
         move.l  d6,d1
         move.l  a5,d2
         jsr     DOS_LVO_EXNEXT(a6)   ; -108
         tst.l   d0
-        beq.s   .i_exdone            ; DOSFALSE -> fin d'énumération (ERROR_NO_MORE_ENTRIES)
+        beq.s   .i_exdone            ; DOSFALSE -> end of enumeration (ERROR_NO_MORE_ENTRIES)
         move.l  FIB_DIRENTRYTYPE(a5),d0
-        bpl.s   .i_exnextit          ; répertoire -> pas kickslop
+        bpl.s   .i_exnextit          ; directory -> not kickslop
         move.l  FIB_SIZE(a5),d0
-        cmp.l   #1024,d0            ; entrée fichier de 1024 octets = kickslop (unique sur l'ADF)
+        cmp.l   #1024,d0            ; 1024-byte file entry = kickslop (unique on the ADF)
         bne.s   .i_exnextit
         moveq   #1,d4
 .i_exnextit:
         subq.l  #1,d5
         bne.s   .i_exloop
 .i_exdone:
-        move.l  a4,a6               ; UnLock(racine)
+        move.l  a4,a6               ; UnLock(root)
         move.l  d6,d1
         jsr     DOS_LVO_UNLOCK(a6)
         tst.l   d4
-        beq.s   .i_freefib           ; énumération n'a pas trouvé kickslop
-        bsr     ser_lock             ; (A) && (B) OK -> émet sous ser_lock (atomicité série)
+        beq.s   .i_freefib           ; enumeration did not find kickslop
+        bsr     ser_lock             ; (A) && (B) OK -> emit under ser_lock (serial atomicity)
         lea     msg_d3i_ok(pc),a0
-        bsr     ser_puts             ; « DOS LOCK EXAMINE OK »
+        bsr     ser_puts             ; "DOS LOCK EXAMINE OK"
         bsr     ser_unlock
         bra.s   .i_freefib
 .i_unlockroot:
@@ -4708,14 +4709,15 @@ d3i_client:
         jsr     LVO_WAIT(a6)
         bra.s   .i_block
 
-D3J_BUFSZ       EQU 4096             ; taille des chunks de lecture (non-multiple de 488 -> traverse les data blocks)
-D3J_SIZE        EQU 48000            ; taille de BigData (> ancien cap 32 Ko)
+D3J_BUFSZ       EQU 4096             ; size of the read chunks (not a multiple of 488 -> crosses the data blocks)
+D3J_SIZE        EQU 48000            ; size of BigData (> old 32 KB cap)
 
-; d3j_client : prouve le STREAMING OFS RÉEL. Ouvre « BigData » (48000 o, > ancien cap whole-file DOS_FILEMAX=32 Ko)
-; via dos Open, le lit INTÉGRALEMENT en chunks de 4096 o (12 Read, le curseur avance dans l'état de streaming entre
-; chaque appel), vérifie total == 48000 ET sentinelle $B16B00B5 aux 4 derniers octets. Puis Seek(500, BEGINNING) +
-; Read(4) == $A5EE3780 (seek cross-block : rewind + marche avant jusqu'au bloc contenant l'octet 500). Ancien handler
-; whole-file aurait tronqué à 32 Ko -> preuve auto-suffisante du cap levé. a6 = SysBase à l'entrée. pri 5, sous ser_lock.
+; d3j_client: proves REAL OFS STREAMING. Opens "BigData" (48000 bytes, > old whole-file cap DOS_FILEMAX=32 KB)
+; via dos Open, reads it ENTIRELY in 4096-byte chunks (12 Reads, the cursor advances in the streaming state between
+; calls), checks total == 48000 AND sentinel $B16B00B5 in the last 4 bytes. Then Seek(500, BEGINNING) +
+; Read(4) == $A5EE3780 (cross-block seek: rewind + forward walk up to the block containing byte 500). The old
+; whole-file handler would have truncated at 32 KB -> self-sufficient proof of the lifted cap. a6 = SysBase on entry.
+; pri 5, under ser_lock.
 d3j_client:
         move.l  ($4).w,a6
         lea     dos_libname(pc),a1
@@ -4725,43 +4727,43 @@ d3j_client:
         beq     .j_block
         move.l  d0,a4                ; a4 = DosBase
         move.l  ($4).w,a6
-        move.l  #D3J_BUFSZ,d0        ; buffer de lecture
+        move.l  #D3J_BUFSZ,d0        ; read buffer
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .j_closelib
         move.l  d0,a5               ; a5 = buffer
         move.l  a4,a6
-        lea     d3j_fname(pc),a0     ; « BigData »
+        lea     d3j_fname(pc),a0     ; "BigData"
         move.l  a0,d1
         move.l  #MODE_OLDFILE,d2
         jsr     DOS_LVO_OPEN(a6)
         tst.l   d0
         beq     .j_freebuf
         move.l  d0,d7               ; d7 = BPTR fh
-        moveq   #0,d5               ; d5 = total lu
-        moveq   #0,d4               ; d4 = 4 derniers octets du flux
+        moveq   #0,d5               ; d5 = total read
+        moveq   #0,d4               ; d4 = last 4 bytes of the stream
 .j_rloop:
         move.l  a4,a6
         move.l  d7,d1
         move.l  a5,d2
         move.l  #D3J_BUFSZ,d3
-        jsr     DOS_LVO_READ(a6)    ; lit un chunk incrémental (data-block par data-block côté handler)
+        jsr     DOS_LVO_READ(a6)    ; reads an incremental chunk (data block by data block on the handler side)
         tst.l   d0
-        ble.s   .j_rdone            ; 0 (EOF) ou erreur
+        ble.s   .j_rdone            ; 0 (EOF) or error
         add.l   d0,d5               ; total += n
         cmp.l   #4,d0
-        blo.s   .j_rloop            ; chunk < 4 o (ne peut pas arriver ici) -> continue
+        blo.s   .j_rloop            ; chunk < 4 bytes (cannot happen here) -> continue
         move.l  d0,d1
-        subq.l  #4,d1               ; offset des 4 derniers octets de ce chunk
-        move.l  0(a5,d1.l),d4       ; d4 = 4 derniers octets (= sentinelle au dernier chunk)
+        subq.l  #4,d1               ; offset of the last 4 bytes of this chunk
+        move.l  0(a5,d1.l),d4       ; d4 = last 4 bytes (= sentinel at the last chunk)
         bra.s   .j_rloop
 .j_rdone:
-        cmp.l   #D3J_SIZE,d5        ; total == 48000 ? (ancien handler aurait tronqué à 32768)
+        cmp.l   #D3J_SIZE,d5        ; total == 48000? (the old handler would have truncated at 32768)
         bne     .j_close
-        cmp.l   #$B16B00B5,d4       ; sentinelle lue jusqu'au bout ?
+        cmp.l   #$B16B00B5,d4       ; sentinel read up to the end?
         bne     .j_close
-        move.l  a4,a6               ; seek cross-block : Seek(500, BEGINNING)
+        move.l  a4,a6               ; cross-block seek: Seek(500, BEGINNING)
         move.l  d7,d1
         move.l  #500,d2
         moveq   #OFFSET_BEGINNING,d3
@@ -4773,12 +4775,12 @@ d3j_client:
         jsr     DOS_LVO_READ(a6)
         cmp.l   #4,d0
         bne.s   .j_close
-        move.l  (a5),d0             ; long@500 attendu $A5EE3780 (pattern déterministe)
+        move.l  (a5),d0             ; long@500 expected $A5EE3780 (deterministic pattern)
         cmp.l   #$A5EE3780,d0
         bne.s   .j_close
-        bsr     ser_lock            ; tout OK -> émet sous ser_lock
+        bsr     ser_lock            ; all OK -> emit under ser_lock
         lea     msg_d3j_ok(pc),a0
-        bsr     ser_puts            ; « OFS STREAM OK »
+        bsr     ser_puts            ; "OFS STREAM OK"
         bsr     ser_unlock
 .j_close:
         move.l  a4,a6
@@ -4798,8 +4800,8 @@ d3j_client:
         jsr     LVO_WAIT(a6)
         bra.s   .j_block
 
-; task_semw : bloque sur « kicksem.test » (pris au boot) ; réveillée, elle doit en être propriétaire avec une
-; imbrication de 1. Elle le libère puis le retire et le rend.
+; task_semw: blocks on "kicksem.test" (taken at boot); once woken, it must own it with a
+; nesting of 1. It releases it then removes it and gives it back.
 task_semw:
         move.l  ($4).w,a6
         lea     semt_name(pc),a1
@@ -4831,7 +4833,7 @@ task_semw:
         jsr     LVO_FORBID(a6)
         bsr     ser_puts
         jmp     LVO_PERMIT(a6)
-; task_semr : libère la prise du boot (le propriétaire n'est pas vérifié, comme en V34).
+; task_semr: releases the boot's hold (the owner is not checked, as in V34).
 task_semr:
         move.l  ($4).w,a6
         lea     semt_name(pc),a1
@@ -4843,10 +4845,10 @@ task_semr:
 .sr_r:
         rts
 
-; task_aud : CMD_WRITE réel sur le canal 0 (volume 0 : DMA et interruptions sans son audible). w1 puis w2 (30 cycles
-; chacun) en file ; ADCMD_WAITCYCLE doit être rendu avant w1 (fin du 1er cycle), w1 avant w2 (enchaînement
-; par la file), CMD_READ rend w1 pendant la lecture puis 0, et le DMA du canal est coupé à la fin.
-; Pile : 3 IOAudio (ioa1 = commandes, w1, w2). d5 = constats d'ordre (b0 WAITCYCLE avant w1, b1 w1 avant w2).
+; task_aud: real CMD_WRITE on channel 0 (volume 0: DMA and interrupts without audible sound). w1 then w2 (30 cycles
+; each) queued; ADCMD_WAITCYCLE must be returned before w1 (end of the 1st cycle), w1 before w2 (chaining
+; through the queue), CMD_READ returns w1 during playback then 0, and the channel's DMA is cut at the end.
+; Stack: 3 IOAudio (ioa1 = commands, w1, w2). d5 = order findings (b0 WAITCYCLE before w1, b1 w1 before w2).
 task_aud:
         move.l  ($4).w,a6
         lea     -216(sp),sp
@@ -4859,7 +4861,7 @@ task_aud:
         moveq   #64,d0
         move.l  #MEMF_CHIP|MEMF_CLEAR,d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  d0,a4                ; a4 = échantillon (64 o de zéros en chip)
+        move.l  d0,a4                ; a4 = sample (64 bytes of zeros in chip)
         tst.l   d0
         beq     .ta_fail0
         lea     audio_test_name(pc),a0
@@ -4875,24 +4877,24 @@ task_aud:
         moveq   #0,d0
         bsr     aut_alloc
         bne     .ta_fail
-        lea     72(a3),a1            ; w1 et w2 : même device, clé et canal que ioa1
-        moveq   #30,d2               ; ~210 ms : bien plus qu'un quantum de préemption
+        lea     72(a3),a1            ; w1 and w2: same device, key and channel as ioa1
+        moveq   #30,d2               ; ~210 ms: much more than a preemption quantum
         bsr     .ta_mkw
         lea     144(a3),a1
-        moveq   #30,d2               ; fenêtre « w1 rendu, w2 en cours » de ~210 ms, observable malgré la préemption
+        moveq   #30,d2               ; "w1 returned, w2 in progress" window of ~210 ms, observable despite preemption
         bsr     .ta_mkw
-        jsr     LVO_FORBID(a6)       ; lancement + CMD_READ + WAITCYCLE sans préemption (les IRQ restent actives)
+        jsr     LVO_FORBID(a6)       ; start + CMD_READ + WAITCYCLE without preemption (IRQs stay active)
         lea     72(a3),a1
-        bsr     aut_io               ; CMD_WRITE w1 (démarre)
+        bsr     aut_io               ; CMD_WRITE w1 (starts)
         lea     144(a3),a1
-        bsr     aut_io               ; CMD_WRITE w2 (en file)
+        bsr     aut_io               ; CMD_WRITE w2 (queued)
         move.l  a3,a1
         moveq   #2,d0                ; CMD_READ -> w1
         bsr     aut_cmd
         lea     72(a3),a0
         cmp.l   AUT_DATA(a3),a0
         bne     .ta_failp
-        move.l  a3,a1                ; ADCMD_WAITCYCLE (asynchrone)
+        move.l  a3,a1                ; ADCMD_WAITCYCLE (asynchronous)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         clr.b   IO_FLAGS(a1)
         move.w  #14,IO_COMMAND(a1)
@@ -4905,13 +4907,13 @@ task_aud:
         bne.s   .ta_p1
         cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
         beq.s   .ta_p1
-        bset    #0,d5                ; WAITCYCLE rendu, w1 encore en cours
+        bset    #0,d5                ; WAITCYCLE returned, w1 still in progress
 .ta_p1:
         cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
         bne.s   .ta_p2
         cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
         beq.s   .ta_p2
-        bset    #1,d5                ; w1 rendu, w2 encore en cours
+        bset    #1,d5                ; w1 returned, w2 still in progress
 .ta_p2:
         cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
         beq.s   .ta_end
@@ -4925,11 +4927,11 @@ task_aud:
         bne     .ta_fail
         tst.b   IO_ERROR+144(a3)
         bne     .ta_fail
-        btst    #0,$DFF003           ; DMACONR AUD0EN : canal coupé
+        btst    #0,$DFF003           ; DMACONR AUD0EN: channel cut
         bne     .ta_fail
         move.l  a3,a1
         move.b  #1,IO_UNIT+3(a1)
-        moveq   #2,d0                ; CMD_READ -> plus d'écriture
+        moveq   #2,d0                ; CMD_READ -> no more write
         bsr     aut_cmd
         tst.l   AUT_DATA(a3)
         bne     .ta_fail
@@ -4959,7 +4961,7 @@ task_aud:
 .ta_fail0:
         lea     216(sp),sp
         rts
-; .ta_mkw : a1 = IOAudio à préparer en CMD_WRITE de d2 cycles (période 400, volume 0, ADIOF_PERVOL).
+; .ta_mkw: a1 = IOAudio to prepare as a CMD_WRITE of d2 cycles (period 400, volume 0, ADIOF_PERVOL).
 .ta_mkw:
         move.l  a2,IO_DEVICE(a1)
         move.w  AUT_KEY(a3),AUT_KEY(a1)
@@ -4975,88 +4977,88 @@ task_aud:
         move.w  d2,AUT_CYCLES(a1)
         rts
 
-; mk_demo_task : a2 = PC du corps, a3 = nom, d2.b = priorité -> a4 = TCB créé.
-; AllocMem préserve a2/a3/d2 ; AddTask lit a2 (initPC) / a3 (finalPC=task_exit).
+; mk_demo_task: a2 = PC of the body, a3 = name, d2.b = priority -> a4 = created TCB.
+; AllocMem preserves a2/a3/d2; AddTask reads a2 (initPC) / a3 (finalPC=task_exit).
 mk_demo_task:
-        move.l  #TC_SIZE,d0          ; TCB + pile dans tc_MemEntry (pas de DMA : slow RAM d'abord)
+        move.l  #TC_SIZE,d0          ; TCB + stack in tc_MemEntry (no DMA: slow RAM first)
         move.l  #DEMO_STK,d1
         jsr     task_alloc
         move.l  d0,a4                ; a4 = TCB
         move.l  a3,LN_NAME(a4)
         move.b  d2,LN_PRI(a4)
-        move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)  ; bits 0-15 réservés -> AllocSignal rend 16+ (task_timer)
+        move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)  ; bits 0-15 reserved -> AllocSignal returns 16+ (task_timer)
         move.l  a4,a1
-        lea     task_exit(pc),a3     ; finalPC (a3 = nom écrasé, déjà posé dans LN_NAME)
+        lea     task_exit(pc),a3     ; finalPC (a3 = name overwritten, already set in LN_NAME)
         jsr     LVO_ADDTASK(a6)      ; AddTask(a1=task, a2=initPC, a3=finalPC)
         rts
 
-; Corps des tâches de démo M3f — PREUVE que préemption périodique et yield-sur-Permit
-; COEXISTENT (SCHED_ON=1), sans corruption de contexte. Déterministe, indépendant du
-; cadencement série (les compteurs avancent par l'ordonnancement, pas par l'émission).
-;   task_H (pri 10) : boucle Wait(DEMO_SIG) ; WP_CONS++. Dispatchée par le yield de task_L.
-;   task_L (pri 0)  : boucle Forbid/Signal(task_H)/Permit(<-yield) ; WP_PROD++. Ne bloque jamais.
-;   task_S (pri 0)  : spinner PUR (WP_SPIN++) ; ne bloque/signale/yield JAMAIS -> ne tourne
-;                     que si la PRÉEMPTION partage le CPU (sinon il monopoliserait -> RED).
-; Chaque tâche garde une sentinelle en d7 (préservé par tout switch) et la revérifie :
-; corruption -> « M3F FAILED ». « M3F LIVE » émis UNE fois quand WP_CONS >= CONS_THRESH
-; (yield répété) ET WP_SPIN >= SPIN_THRESH (task_S a tourné via préemption).
-; RED (SCHED_ON=0 = préemption OFF) : task_S (ou task_L) monopolise le CPU -> task_L ne
-; peut plus signaler task_H -> WP_CONS gèle -> « M3F LIVE » jamais émis (absent).
-task_h:                              ; haute priorité (les tâches démarrent a6=0)
-        move.l  ($4).w,a6            ; SysBase (cf. frame AddTask qui zéro-remplit les GPR)
-        move.l  #SENT_H,d7           ; sentinelle de contexte
+; Bodies of the M3f demo tasks — PROOF that periodic preemption and yield-on-Permit
+; COEXIST (SCHED_ON=1), without context corruption. Deterministic, independent of the
+; serial timing (the counters advance through scheduling, not through output).
+;   task_H (pri 10): loop Wait(DEMO_SIG); WP_CONS++. Dispatched by task_L's yield.
+;   task_L (pri 0): loop Forbid/Signal(task_H)/Permit(<-yield); WP_PROD++. Never blocks.
+;   task_S (pri 0): PURE spinner (WP_SPIN++); NEVER blocks/signals/yields -> only runs
+;                     if PREEMPTION shares the CPU (otherwise it would hog it -> RED).
+; Each task keeps a sentinel in d7 (preserved by every switch) and re-checks it:
+; corruption -> "M3F FAILED". "M3F LIVE" emitted ONCE when WP_CONS >= CONS_THRESH
+; (repeated yield) AND WP_SPIN >= SPIN_THRESH (task_S ran via preemption).
+; RED (SCHED_ON=0 = preemption OFF): task_S (or task_L) hogs the CPU -> task_L can
+; no longer signal task_H -> WP_CONS freezes -> "M3F LIVE" never emitted (absent).
+task_h:                              ; high priority (tasks start with a6=0)
+        move.l  ($4).w,a6            ; SysBase (cf. AddTask frame which zero-fills the GPRs)
+        move.l  #SENT_H,d7           ; context sentinel
 .h_loop:
         moveq   #1,d0
         moveq   #DEMO_SIG,d1
-        lsl.l   d1,d0               ; masque = 1 << DEMO_SIG (décalage registre : 68000 immédiat <= 8)
-        jsr     LVO_WAIT(a6)         ; BLOQUE jusqu'au signal de task_L (dispatch via yield)
+        lsl.l   d1,d0               ; mask = 1 << DEMO_SIG (register shift: 68000 immediate <= 8)
+        jsr     LVO_WAIT(a6)         ; BLOCKS until task_L's signal (dispatch via yield)
         cmp.l   #SENT_H,d7
-        bne.w   demo_fail            ; contexte corrompu par un switch
+        bne.w   demo_fail            ; context corrupted by a switch
         addq.l  #1,WP_CONS
         btst    #0,WP_STAT
-        bne.s   .h_loop              ; marqueur déjà émis
+        bne.s   .h_loop              ; marker already emitted
         move.l  WP_CONS,d0
         cmp.l   #CONS_THRESH,d0
-        bcs.s   .h_loop              ; WP_CONS < seuil -> continuer
+        bcs.s   .h_loop              ; WP_CONS < threshold -> continue
         move.l  WP_SPIN,d0
         cmp.l   #SPIN_THRESH,d0
-        bcs.s   .h_loop              ; WP_SPIN < seuil -> préemption pas encore prouvée
-        bset    #0,WP_STAT           ; marque émis (une seule fois)
-        jsr     LVO_FORBID(a6)       ; émission non fractionnée
+        bcs.s   .h_loop              ; WP_SPIN < threshold -> preemption not yet proven
+        bset    #0,WP_STAT           ; mark emitted (only once)
+        jsr     LVO_FORBID(a6)       ; unsplit output
         lea     msg_m3flive(pc),a0
         bsr     ser_puts
-        tst.b   WP_UMODE             ; M7c : une tâche s'est observée en USER mode (SR bit S == 0) ?
+        tst.b   WP_UMODE             ; M7c: did a task observe itself in USER mode (SR bit S == 0)?
         beq.s   .h_noum
         lea     msg_m7c_ok(pc),a0
-        bsr     ser_puts             ; « M7C USERMODE OK » (user-mode + relocation + préemption prouvés)
+        bsr     ser_puts             ; "M7C USERMODE OK" (user mode + relocation + preemption proven)
 .h_noum:
         jsr     LVO_PERMIT(a6)
         bra.s   .h_loop
-task_l:                              ; basse priorité, ne bloque jamais
+task_l:                              ; low priority, never blocks
         move.l  ($4).w,a6            ; SysBase
         move.l  #SENT_L,d7
 .l_loop:
-        jsr     LVO_FORBID(a6)       ; Signal sous Forbid -> yield reporté au Permit
+        jsr     LVO_FORBID(a6)       ; Signal under Forbid -> yield postponed to the Permit
         move.l  WP_HTASK,a1
         moveq   #1,d0
         moveq   #DEMO_SIG,d1
         lsl.l   d1,d0
-        jsr     LVO_SIGNAL(a6)       ; réveille task_H + pose AttnResched (pri 10 > 0)
-        jsr     LVO_PERMIT(a6)       ; <- YIELD : dispatche task_H immédiatement
+        jsr     LVO_SIGNAL(a6)       ; wakes task_H + sets AttnResched (pri 10 > 0)
+        jsr     LVO_PERMIT(a6)       ; <- YIELD: dispatches task_H immediately
         cmp.l   #SENT_L,d7
         bne.w   demo_fail
         addq.l  #1,WP_PROD
         bra.s   .l_loop
-task_s:                              ; basse priorité, spinner PUR (jamais de blocage/yield)
+task_s:                              ; low priority, PURE spinner (never blocks/yields)
         move.l  ($4).w,a6            ; SysBase
         move.l  #SENT_S,d7
-        move.w  sr,d0                ; M7c : preuve DIRECTE du user-mode (MOVE from SR non privilégié
-        and.w   #$2000,d0            ; sur 68000) -> bit S attendu à 0
-        bne.w   demo_fail            ; S=1 => tâche en superviseur => régression user-mode (sentinelle KO)
-        move.b  #1,WP_UMODE          ; user mode confirmé (consommé par task_H -> « M7C USERMODE OK »)
+        move.w  sr,d0                ; M7c: DIRECT proof of user mode (MOVE from SR not privileged
+        and.w   #$2000,d0            ; on 68000) -> S bit expected at 0
+        bne.w   demo_fail            ; S=1 => task in supervisor => user-mode regression (sentinel failed)
+        move.b  #1,WP_UMODE          ; user mode confirmed (consumed by task_H -> "M7C USERMODE OK")
 .s_loop:
         cmp.l   #SENT_S,d7
-        bne.w   demo_fail            ; contexte corrompu par une PRÉEMPTION
+        bne.w   demo_fail            ; context corrupted by a PREEMPTION
         addq.l  #1,WP_SPIN
         move.l  #$00001000,d0
 .s_spin:
@@ -5064,70 +5066,70 @@ task_s:                              ; basse priorité, spinner PUR (jamais de b
         bne.s   .s_spin
         bra.s   .s_loop
 
-; task_fb (pri 7, preuve atomicité Forbid) : BLOQUE sur FB_SIG ; quand elle tourne, pose FORBID_TEST_FLAG=1.
-; Si elle tourne PENDANT le Forbid de task_fa (pri 3), c'est que la préemption n'a PAS respecté Forbid (bug).
+; task_fb (pri 7, Forbid atomicity proof): BLOCKS on FB_SIG; when it runs, sets FORBID_TEST_FLAG=1.
+; If it runs DURING task_fa's Forbid (pri 3), preemption did NOT respect Forbid (bug).
 task_fb:
-        move.l  ($4).w,a6            ; SysBase (GPR zéro-remplis par la frame AddTask)
+        move.l  ($4).w,a6            ; SysBase (GPRs zero-filled by the AddTask frame)
 .fb_loop:
         moveq   #1,d0
         moveq   #FB_SIG,d1
-        lsl.l   d1,d0                ; masque = 1 << FB_SIG (décalage REGISTRE : count > 8 OK sur 68000)
-        jsr     LVO_WAIT(a6)         ; bloque jusqu'au signal de task_fa
-        move.l  #1,FORBID_TEST_FLAG  ; « j'ai tourné » (observé par task_fa)
+        lsl.l   d1,d0                ; mask = 1 << FB_SIG (REGISTER shift: count > 8 OK on 68000)
+        jsr     LVO_WAIT(a6)         ; blocks until task_fa's signal
+        move.l  #1,FORBID_TEST_FLAG  ; "I ran" (observed by task_fa)
         bra.s   .fb_loop
 
-; task_fa (pri 3, preuve atomicité Forbid) : prend Forbid, réveille task_fb (pri 7 > 3 -> arme AttnResched),
-; attend 2 VBlanks SOUS Forbid (garantit >= 1 sortie d'IRQ pendant le Forbid, où intr_isr_defer pourrait switcher).
-; Si FORBID_TEST_FLAG est resté 0 -> task_fb n'a PAS préempté sous Forbid -> « FORBID ATOMIC OK ». Tourne UNE fois
-; puis bloque (pas de monopolisation). RED SCHED_NO_FORBID_GATE : fb préempte pendant le Forbid -> flag=1 -> absent.
+; task_fa (pri 3, Forbid atomicity proof): takes Forbid, wakes task_fb (pri 7 > 3 -> arms AttnResched),
+; waits 2 VBlanks UNDER Forbid (guarantees >= 1 IRQ exit during the Forbid, where intr_isr_defer could switch).
+; If FORBID_TEST_FLAG stayed 0 -> task_fb did NOT preempt under Forbid -> "FORBID ATOMIC OK". Runs ONCE
+; then blocks (no hogging). RED SCHED_NO_FORBID_GATE: fb preempts during the Forbid -> flag=1 -> absent.
 task_fa:
         move.l  ($4).w,a6
-        jsr     LVO_FORBID(a6)       ; section d'émission atomique à prouver
+        jsr     LVO_FORBID(a6)       ; atomic output section to be proven
         clr.l   FORBID_TEST_FLAG
-        move.l  FB_TASK,a1           ; réveille task_fb (pri 7 > courante 3 -> exec_Signal pose AttnResched)
+        move.l  FB_TASK,a1           ; wakes task_fb (pri 7 > current 3 -> exec_Signal sets AttnResched)
         moveq   #1,d0
         moveq   #FB_SIG,d1
         lsl.l   d1,d0
         jsr     LVO_SIGNAL(a6)
-        move.l  VBL_COUNT,d2         ; attend que VBL_COUNT avance de 2 (>= 1 IRQ-exit VBlank pendant le Forbid)
+        move.l  VBL_COUNT,d2         ; waits for VBL_COUNT to advance by 2 (>= 1 VBlank IRQ exit during the Forbid)
         addq.l  #2,d2
 .fa_wait:
         cmp.l   VBL_COUNT,d2
-        bhi.s   .fa_wait             ; VBL_COUNT incrémenté par l'IRQ VBlank (fire même sous Forbid)
-        tst.l   FORBID_TEST_FLAG     ; task_fb a-t-elle tourné pendant le Forbid ?
-        bne.s   .fa_perm             ; oui -> Forbid violé -> ne PAS émettre
+        bhi.s   .fa_wait             ; VBL_COUNT incremented by the VBlank IRQ (fires even under Forbid)
+        tst.l   FORBID_TEST_FLAG     ; did task_fb run during the Forbid?
+        bne.s   .fa_perm             ; yes -> Forbid violated -> do NOT emit
         lea     msg_forbid_ok(pc),a0
-        bsr     ser_puts             ; « FORBID ATOMIC OK » (sous le Forbid tenu -> émission atomique)
+        bsr     ser_puts             ; "FORBID ATOMIC OK" (under the held Forbid -> atomic output)
 .fa_perm:
-        jsr     LVO_PERMIT(a6)       ; yield -> task_fb tourne enfin (pose le flag, trop tard pour fausser la preuve)
+        jsr     LVO_PERMIT(a6)       ; yield -> task_fb finally runs (sets the flag, too late to skew the proof)
 .fa_block:
         moveq   #0,d0
         jsr     LVO_WAIT(a6)
         bra.s   .fa_block
 
-; task_q2 (M7h) : 2e spinner d'ISOLATION (pri 0 ; config M7H_QUANTUM_DEMO seulement). Rotation avec task_s
-; pilotée UNIQUEMENT par le quantum VBlank (aucun préempteur prioritaire). Émet « M7H QUANTUM OK » quand
-; le débit d'expirations prouve un quantum > 1 tick : QUANTUM_EXPIRE_N*2 < VBL_COUNT (GREEN N=4 : ~VBL/4 ;
-; RED N=1 : ~VBL -> échoue). Vérifie aussi que task_s a tourné (WP_SPIN>0) = rotation réelle.
+; task_q2 (M7h): 2nd ISOLATION spinner (pri 0; M7H_QUANTUM_DEMO config only). Rotation with task_s
+; driven ONLY by the VBlank quantum (no higher-priority preemptor). Emits "M7H QUANTUM OK" when
+; the expiration rate proves a quantum > 1 tick: QUANTUM_EXPIRE_N*2 < VBL_COUNT (GREEN N=4: ~VBL/4;
+; RED N=1: ~VBL -> fails). Also checks that task_s ran (WP_SPIN>0) = real rotation.
 task_q2:
         move.l  ($4).w,a6            ; SysBase
         move.l  #SENT_Q2,d7
 .q2_loop:
         cmp.l   #SENT_Q2,d7
-        bne.w   demo_fail            ; contexte corrompu par une PRÉEMPTION
+        bne.w   demo_fail            ; context corrupted by a PREEMPTION
         addq.l  #1,Q2_RUNS
         btst    #0,M7H_STAT
-        bne.s   .q2_spin             ; déjà émis -> juste spinner
+        bne.s   .q2_spin             ; already emitted -> just spin
         move.l  VBL_COUNT,d0
-        cmp.l   #M7H_MINTICKS,d0     ; assez de ticks pour un ratio stable ?
+        cmp.l   #M7H_MINTICKS,d0     ; enough ticks for a stable ratio?
         bcs.s   .q2_spin
-        tst.l   WP_SPIN              ; task_s (spinner-1) a-t-il tourné ? (rotation réelle, pas monopolisé)
+        tst.l   WP_SPIN              ; did task_s (spinner-1) run? (real rotation, not hogged)
         beq.s   .q2_spin
         move.l  QUANTUM_EXPIRE_N,d1
         add.l   d1,d1                ; EXPIRE_N * 2
-        cmp.l   VBL_COUNT,d1         ; EXPIRE_N*2 >= VBL_COUNT ? (quantum ~1 tick -> RED)
-        bcc.s   .q2_spin             ; oui -> quantum trop court -> pas prouvé
-        bset    #0,M7H_STAT          ; EXPIRE_N*2 < VBL_COUNT -> quantum > ~2 ticks prouvé
+        cmp.l   VBL_COUNT,d1         ; EXPIRE_N*2 >= VBL_COUNT? (quantum ~1 tick -> RED)
+        bcc.s   .q2_spin             ; yes -> quantum too short -> not proven
+        bset    #0,M7H_STAT          ; EXPIRE_N*2 < VBL_COUNT -> quantum > ~2 ticks proven
         jsr     LVO_FORBID(a6)
         lea     msg_m7h_ok(pc),a0
         bsr     ser_puts
@@ -5139,46 +5141,46 @@ task_q2:
         bne.s   .q2_delay
         bra.s   .q2_loop
 
-; task_rm (M7j, pri 0 ; config M7J_DEMO seulement) : tâche à DURÉE DE VIE FINIE. Tourne RM_THRESH fois
-; (RM_RUNS++) puis fait RTS -> finalPC task_exit -> RemTask(self) -> libère sa pile + TCB et bascule.
-; Prouve le cycle de vie : AvailMem remonte après son auto-retrait (vérifié par task_timer).
+; task_rm (M7j, pri 0; M7J_DEMO config only): task with a FINITE LIFETIME. Runs RM_THRESH times
+; (RM_RUNS++) then does RTS -> finalPC task_exit -> RemTask(self) -> frees its stack + TCB and switches.
+; Proves the life cycle: AvailMem goes back up after its self-removal (checked by task_timer).
 task_rm:
         move.l  ($4).w,a6
         move.l  #SENT_RM,d7
 .rm_loop:
         cmp.l   #SENT_RM,d7
-        bne.w   demo_fail            ; contexte corrompu par une préemption
+        bne.w   demo_fail            ; context corrupted by a preemption
         addq.l  #1,RM_RUNS
         move.l  RM_RUNS,d0
         cmp.l   #RM_THRESH,d0
-        bcc.s   .rm_done             ; RM_RUNS >= RM_THRESH -> se terminer (RTS)
-        move.l  #$00008000,d0        ; délai (laisse les compteurs des autres avancer)
+        bcc.s   .rm_done             ; RM_RUNS >= RM_THRESH -> terminate (RTS)
+        move.l  #$00008000,d0        ; delay (lets the others' counters advance)
 .rm_delay:
         subq.l  #1,d0
         bne.s   .rm_delay
         bra.s   .rm_loop
 .rm_done:
-        rts                          ; -> task_exit -> RemTask(self) (ne revient pas)
+        rts                          ; -> task_exit -> RemTask(self) (does not return)
 
-; task_timer (pri 10, M7a) : bloque sur l'unité MICROHZ (CIA-B/INT6). À chaque tour, arme une
-; requête courte (1 tick CIA-B), Wait sur le reply port, vérifie la réponse. Prouve qu'une TÂCHE
-; se réveille sur un timer d'interruption (Wait->wake par l'IRQ MICROHZ) ET surveille VBL_CLASH :
-; si INT6 a préempté la chirurgie de listes de vbl_handler (gate violé en RED), VBL_CLASH>0 ->
-; « M7A FAILED ». GREEN = TCONS_THRESH réveils accumulés avec VBL_CLASH toujours == 0.
-; Setup en contexte tâche (AllocSignal opère bien sur task_timer). a4=base timer, a3=reply port,
-; a2=timerequest, d6=bit de signal, d7=sentinelle — tous préservés par les appels exec (vérifié).
+; task_timer (pri 10, M7a): blocks on the MICROHZ unit (CIA-B/INT6). On each round, arms a
+; short request (1 CIA-B tick), Waits on the reply port, checks the reply. Proves that a TASK
+; wakes up on an interrupt timer (Wait->wake by the MICROHZ IRQ) AND watches VBL_CLASH:
+; if INT6 preempted vbl_handler's list surgery (gate violated in RED), VBL_CLASH>0 ->
+; "M7A FAILED". GREEN = TCONS_THRESH wake-ups accumulated with VBL_CLASH always == 0.
+; Setup in task context (AllocSignal does operate on task_timer). a4=timer base, a3=reply port,
+; a2=timerequest, d6=signal bit, d7=sentinel — all preserved by the exec calls (verified).
 task_timer:
         move.l  ($4).w,a6            ; SysBase
-        move.l  #SENT_T,d7           ; sentinelle de contexte
-        lea     EB_DEVICELIST(a6),a0 ; base timer.device
+        move.l  #SENT_T,d7           ; context sentinel
+        lea     EB_DEVICELIST(a6),a0 ; timer.device base
         lea     timer_test_name(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq     m7a_fail
-        move.l  d0,a4                ; a4 = base timer.device
-        moveq   #-1,d0               ; AllocSignal -> bit du reply port (task_timer a SYS_SIGALLOC)
+        move.l  d0,a4                ; a4 = timer.device base
+        moveq   #-1,d0               ; AllocSignal -> reply port bit (task_timer has SYS_SIGALLOC)
         jsr     LVO_ALLOCSIGNAL(a6)
-        move.l  d0,d6                ; d6 = n° de bit
+        move.l  d0,d6                ; d6 = bit number
         move.l  #MP_SIZE,d0          ; reply port
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -5189,7 +5191,7 @@ task_timer:
         jsr     newlist
         move.b  #PA_SIGNAL,MP_FLAGS(a3)
         move.b  d6,MP_SIGBIT(a3)
-        move.l  EB_THISTASK(a6),MP_SIGTASK(a3)   ; se signale elle-même
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a3)   ; signals itself
         move.l  #TR_SIZE,d0          ; timerequest
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -5198,233 +5200,233 @@ task_timer:
         move.l  d0,a2                ; a2 = timerequest
         move.l  a3,MN_REPLYPORT(a2)
         move.l  a4,IO_DEVICE(a2)
-        move.l  #UNIT_MICROHZ,IO_UNIT(a2)   ; unité MICROHZ (CIA-B/INT6)
-        ; M7l — CALIBRATION µs RÉELLE (une fois, avant la boucle) : une requête MICROHZ LONGUE connue
-        ; (M7L_CAL_US = 0,5 s), mesurée contre l'horloge VBLANK (50 Hz, INDÉPENDANTE : raster display vs
-        ; E-clock CPU). 0,5 s de µs réelles doit s'écouler en ~25 ticks VBLANK. Hors bande -> M7L non émis
-        ; (RED OLD_CONV : la requête expire en ~0-1 tick) ; on tombe quand même dans la boucle (M7A reste prouvable).
-        move.l  VBL_COUNT,M7L_VBL_BEFORE    ; T0 sur l'horloge VBLANK
+        move.l  #UNIT_MICROHZ,IO_UNIT(a2)   ; MICROHZ unit (CIA-B/INT6)
+        ; M7l — REAL us CALIBRATION (once, before the loop): a known LONG MICROHZ request
+        ; (M7L_CAL_US = 0.5 s), measured against the VBLANK clock (50 Hz, INDEPENDENT: display raster vs
+        ; CPU E-clock). 0.5 s of real us must elapse in ~25 VBLANK ticks. Out of band -> M7L not emitted
+        ; (RED OLD_CONV: the request expires in ~0-1 tick); we still fall into the loop (M7A stays provable).
+        move.l  VBL_COUNT,M7L_VBL_BEFORE    ; T0 on the VBLANK clock
         clr.l   TV_SECS(a2)
         move.l  #M7L_CAL_US,TV_MICRO(a2)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
-        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
+        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = request)
         move.l  a4,a6
         move.l  a2,a1
         jsr     TD_BEGINIO(a6)
         move.l  (sp)+,a6
-        moveq   #1,d0                ; Wait(1<<bit) : BLOQUE jusqu'à expiration de la requête de calibration
+        moveq   #1,d0                ; Wait(1<<bit): BLOCKS until the calibration request expires
         move.l  d6,d1
         lsl.l   d1,d0
         jsr     LVO_WAIT(a6)
-        move.l  a3,a0                ; GetMsg(reply port) -> doit être NOTRE requête
+        move.l  a3,a0                ; GetMsg(reply port) -> must be OUR request
         jsr     LVO_GETMSG(a6)
         cmp.l   a2,d0
         bne     m7a_fail
-        move.l  VBL_COUNT,d0         ; T1 ; élapsed = T1 - T0 (ticks VBLANK pendant 0,5 s MICROHZ)
+        move.l  VBL_COUNT,d0         ; T1; elapsed = T1 - T0 (VBLANK ticks during 0.5 s of MICROHZ)
         sub.l   M7L_VBL_BEFORE,d0
         move.l  d0,M7L_ELAPSED
-        cmp.l   #M7L_LO,d0           ; dans la bande [M7L_LO, M7L_HI] ? (0,5 s ≈ 25 ticks)
-        bcs.s   .tt_cal_done         ; trop rapide (RED OLD_CONV) -> M7L non émis, on continue
+        cmp.l   #M7L_LO,d0           ; within the band [M7L_LO, M7L_HI]? (0.5 s ~= 25 ticks)
+        bcs.s   .tt_cal_done         ; too fast (RED OLD_CONV) -> M7L not emitted, we continue
         cmp.l   #M7L_HI+1,d0
-        bcc.s   .tt_cal_done         ; trop lent (constante grossièrement fausse) -> M7L non émis
-        bset    #0,M7L_STAT          ; émet « M7L MICROHZ CALIB OK » une seule fois
+        bcc.s   .tt_cal_done         ; too slow (constant grossly wrong) -> M7L not emitted
+        bset    #0,M7L_STAT          ; emits "M7L MICROHZ CALIB OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7l_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_cal_done:
-        move.l  VBL_COUNT,d5         ; T0 (ticks VBlank au départ ; d5 préservé par les appels exec)
+        move.l  VBL_COUNT,d5         ; T0 (VBlank ticks at start; d5 preserved by the exec calls)
 .tt_loop:
-        cmp.l   #SENT_T,d7           ; contexte intact après chaque switch ?
+        cmp.l   #SENT_T,d7           ; context intact after each switch?
         bne     m7a_fail
-        tst.l   VBL_CLASH            ; le gate IPL7 a-t-il été violé ? (RED -> != 0)
+        tst.l   VBL_CLASH            ; was the IPL7 gate violated? (RED -> != 0)
         bne     m7a_fail
-        clr.l   TV_SECS(a2)          ; (ré)arme une requête MICROHZ ~7 ms (TT_MICRO_REQ µs RÉELLES depuis M7l)
-        move.l  #TT_MICRO_REQ,TV_MICRO(a2) ; 7000 us / 359 = 19 int CIA-B -> ~140 réveils/s (coexiste avec M3f ;
-                                     ; 1 int seule préempterait ~2800/s via le dispatch différé et starverait task_s/L)
+        clr.l   TV_SECS(a2)          ; (re)arms a MICROHZ request of ~7 ms (TT_MICRO_REQ REAL us since M7l)
+        move.l  #TT_MICRO_REQ,TV_MICRO(a2) ; 7000 us / 359 = 19 CIA-B ints -> ~140 wake-ups/s (coexists with M3f;
+                                     ; a single int would preempt ~2800/s via the deferred dispatch and starve task_s/L)
         move.w  #TR_ADDREQUEST,IO_COMMAND(a2)
-        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = requête)
+        move.l  a6,-(sp)             ; BeginIO(a4 = base, a2 = request)
         move.l  a4,a6
         move.l  a2,a1
         jsr     TD_BEGINIO(a6)
         move.l  (sp)+,a6
-        moveq   #1,d0                ; Wait(1<<bit) : BLOQUE jusqu'au réveil MICROHZ
+        moveq   #1,d0                ; Wait(1<<bit): BLOCKS until the MICROHZ wake-up
         move.l  d6,d1
         lsl.l   d1,d0
         jsr     LVO_WAIT(a6)
         move.l  a3,a0                ; GetMsg(reply port)
         jsr     LVO_GETMSG(a6)
-        cmp.l   a2,d0                ; doit être NOTRE requête
+        cmp.l   a2,d0                ; must be OUR request
         bne     m7a_fail
-        addq.l  #1,WP_TCONS          ; un réveil MICROHZ réussi de plus
-        btst    #0,M7E_STAT          ; M7e : marqueur IPL-par-niveau déjà émis ? (testé à chaque réveil,
-        bne.s   .tt_m7e_done         ; indépendamment du flag M7a ; -> tombe sur le check M7F (ne PAS sauter)
-        move.l  VBL_PREEMPT_COUNT,d0 ; INT6(6) a-t-il déjà préempté le CORPS de vbl(3) ? (fidélité IPL natif)
-        beq.s   .tt_m7e_done         ; pas encore observé -> pas prouvé (mais checker quand même M7F)
-        tst.l   VBL_CLASH            ; ET la chirurgie du switch est-elle restée atomique ? (doit == 0)
-        bne.s   .tt_m7e_done         ; clash -> le check en tête de boucle prendra m7a_fail au prochain tour
-        bset    #0,M7E_STAT          ; émet « M7E IPL OK » une seule fois
+        addq.l  #1,WP_TCONS          ; one more successful MICROHZ wake-up
+        btst    #0,M7E_STAT          ; M7e: per-level IPL marker already emitted? (tested at every wake-up,
+        bne.s   .tt_m7e_done         ; independently of the M7a flag; -> falls through to the M7F check (do NOT skip)
+        move.l  VBL_PREEMPT_COUNT,d0 ; has INT6(6) already preempted the BODY of vbl(3)? (native IPL fidelity)
+        beq.s   .tt_m7e_done         ; not yet observed -> not proven (but check M7F anyway)
+        tst.l   VBL_CLASH            ; AND did the switch's surgery stay atomic? (must == 0)
+        bne.s   .tt_m7e_done         ; clash -> the check at the top of the loop will take m7a_fail at the next round
+        bset    #0,M7E_STAT          ; emits "M7E IPL OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7e_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7e_done:
-        btst    #0,M7F_STAT          ; M7f : marqueur chaîne VERTB déjà émis ?
-        bne.s   .tt_m7f_done         ; -> tombe sur le check M7G (ne PAS sauter)
-        move.l  VERTB_CHAIN_N,d0     ; le walker a-t-il parcouru la chaîne VERTB jusqu'à la QUEUE (vbl_tail) ?
-        cmp.l   #VERTB_CHAIN_THRESH,d0  ; (prouve sched_server pri 20 + timer_vblank pri 0 AVANT vbl_tail pri -10)
-        bcs.s   .tt_m7f_done         ; pas encore assez de parcours complets de chaîne (mais checker M7G)
-        bset    #0,M7F_STAT          ; émet « M7F VERTB OK » une seule fois
+        btst    #0,M7F_STAT          ; M7f: VERTB chain marker already emitted?
+        bne.s   .tt_m7f_done         ; -> falls through to the M7G check (do NOT skip)
+        move.l  VERTB_CHAIN_N,d0     ; did the walker walk the VERTB chain down to the TAIL (vbl_tail)?
+        cmp.l   #VERTB_CHAIN_THRESH,d0  ; (proves sched_server pri 20 + timer_vblank pri 0 BEFORE vbl_tail pri -10)
+        bcs.s   .tt_m7f_done         ; not yet enough complete chain walks (but check M7G)
+        bset    #0,M7F_STAT          ; emits "M7F VERTB OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7f_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7f_done:
-        btst    #0,M7G_STAT          ; M7g : marqueur multi-source déjà émis ?
+        btst    #0,M7G_STAT          ; M7g: multi-source marker already emitted?
         bne.s   .tt_m7g_done
-        move.l  COPER_FIRED,d0       ; la 2e source de niveau 3 (COPER) a-t-elle été servie via le décodage ?
+        move.l  COPER_FIRED,d0       ; was the 2nd level 3 source (COPER) served via the decoding?
         cmp.l   #COPER_THRESH,d0
-        bcs.s   .tt_m7g_done         ; pas encore assez d'appels coper_test (mais checker M7J)
-        bset    #0,M7G_STAT          ; émet « M7G MULTISRC OK » une seule fois
+        bcs.s   .tt_m7g_done         ; not yet enough coper_test calls (but check M7J)
+        bset    #0,M7G_STAT          ; emits "M7G MULTISRC OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7g_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7g_done:
-        btst    #0,GP_LIVE_STAT      ; gameport : serveur souris VBlank live déjà prouvé ?
-        bne.s   .tt_gp_done          ; -> tombe sur le check M7J (ne PAS sauter)
-        move.l  GP_POLLS,d0          ; gp_vblank_server tourne-t-il sur les VBlanks RÉELS du système tournant ?
+        btst    #0,GP_LIVE_STAT      ; gameport: live VBlank mouse server already proven?
+        bne.s   .tt_gp_done          ; -> falls through to the M7J check (do NOT skip)
+        move.l  GP_POLLS,d0          ; does gp_vblank_server run on the REAL VBlanks of the running system?
         cmp.l   #GP_POLLS_THRESH,d0
-        bcs.s   .tt_gp_done          ; pas encore assez de polls (checker M7J quand même)
-        bset    #0,GP_LIVE_STAT      ; émet « GP VBLANK LIVE OK » une seule fois
+        bcs.s   .tt_gp_done          ; not yet enough polls (check M7J anyway)
+        bset    #0,GP_LIVE_STAT      ; emits "GP VBLANK LIVE OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_gp_live_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_gp_done:
-        btst    #0,M7J_STAT          ; M7j : marqueur cycle-de-vie déjà émis ?
+        btst    #0,M7J_STAT          ; M7j: life-cycle marker already emitted?
         bne.s   .tt_m7a
-        move.l  RM_RUNS,d0           ; task_rm a-t-elle fini ses itérations (puis s'est auto-retirée) ?
+        move.l  RM_RUNS,d0           ; has task_rm finished its iterations (then removed itself)?
         cmp.l   #RM_THRESH,d0
-        bcs.s   .tt_m7a              ; pas encore -> attendre (en RED NOFREE on reste ici : AvailMem gelé)
+        bcs.s   .tt_m7a              ; not yet -> wait (in RED NOFREE we stay here: AvailMem frozen)
         moveq   #0,d1                ; AvailMem(now)
-        jsr     LVO_AVAILMEM(a6)     ; (préserve d2-d7/a2-a6 ; clobbe d0/d1/a0/a1)
+        jsr     LVO_AVAILMEM(a6)     ; (preserves d2-d7/a2-a6; clobbers d0/d1/a0/a1)
         move.l  M7J_AVAIL_BEFORE,d1
-        sub.l   #M7J_RECOVER,d1      ; seuil = baseline - M7J_RECOVER
-        cmp.l   d1,d0                ; AvailMem(now) >= baseline - RECOVER ? (pile+TCB bien libérés)
-        bcs.s   .tt_m7a              ; < seuil -> pas remonté (fuite = RED) -> pas prouvé
-        bset    #0,M7J_STAT          ; émet « M7J REMTASK OK » une seule fois
+        sub.l   #M7J_RECOVER,d1      ; threshold = baseline - M7J_RECOVER
+        cmp.l   d1,d0                ; AvailMem(now) >= baseline - RECOVER? (stack+TCB really freed)
+        bcs.s   .tt_m7a              ; < threshold -> not back up (leak = RED) -> not proven
+        bset    #0,M7J_STAT          ; emits "M7J REMTASK OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7j_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
 .tt_m7a:
         btst    #1,WP_STAT
-        bne     .tt_loop             ; marqueur déjà émis (branche word : corps de boucle long)
+        bne     .tt_loop             ; marker already emitted (word branch: long loop body)
         move.l  WP_TCONS,d0
         cmp.l   #TCONS_THRESH,d0
-        bcs     .tt_loop             ; pas encore assez de réveils
-        move.l  VBL_COUNT,d0         ; ET assez de temps écoulé ? (fenêtre où un clash RED serait tombé)
+        bcs     .tt_loop             ; not yet enough wake-ups
+        move.l  VBL_COUNT,d0         ; AND enough time elapsed? (window in which a RED clash would have occurred)
         sub.l   d5,d0
         cmp.l   #M7A_MINTICKS,d0
         bcs     .tt_loop
-        bset    #1,WP_STAT           ; émet « M7A TIMER OK » une seule fois
+        bset    #1,WP_STAT           ; emits "M7A TIMER OK" only once
         jsr     LVO_FORBID(a6)
         lea     msg_m7a_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
         bra     .tt_loop
 
-; task_port (pri 0, M7d) : CONSOMMATEUR TÂCHE du port de stress partagé. Boucle serrée GetMsg+PutMsg ;
-; le PRODUCTEUR est timer_micro_service (INTERRUPTION). Ports interrupt-safe (Disable) -> la course
-; GetMsg(tâche)/PutMsg(IRQ) sur le même MP_MSGLIST est sûre. En RED (ports remis en Forbid) elle corrompt
-; la liste. Vérifie MAGIC (mauvais pointeur) + IN_HAND==0 (doublon) à chaque message. a4 = port (préservé
-; par GetMsg/PutMsg = scratch d0/d1/a0/a1). Émet « M7D PORTS OK » quand les 2 compteurs passent sans fail.
+; task_port (pri 0, M7d): TASK CONSUMER of the shared stress port. Tight GetMsg+PutMsg loop;
+; the PRODUCER is timer_micro_service (INTERRUPT). Interrupt-safe ports (Disable) -> the
+; GetMsg(task)/PutMsg(IRQ) race on the same MP_MSGLIST is safe. In RED (ports back to Forbid) it corrupts
+; the list. Checks MAGIC (wrong pointer) + IN_HAND==0 (duplicate) on each message. a4 = port (preserved
+; by GetMsg/PutMsg = scratch d0/d1/a0/a1). Emits "M7D PORTS OK" when both counters pass without failure.
 task_port:
         move.l  ($4).w,a6
         move.l  #SENT_P,d7
-        moveq   #0,d6                ; d6 = compteur de GetMsg vides CONSÉCUTIFs (détecteur de nœuds perdus)
+        moveq   #0,d6                ; d6 = counter of CONSECUTIVE empty GetMsgs (lost node detector)
 .pp_wait:
-        move.l  WP_SPORT,a4          ; attendre que le port existe (créé pré-handoff -> déjà prêt)
+        move.l  WP_SPORT,a4          ; wait for the port to exist (created before the handoff -> already ready)
         move.l  a4,d0
         beq.s   .pp_wait
 .pp_loop:
         cmp.l   #SENT_P,d7
-        bne.w   demo_fail            ; contexte corrompu par un switch
+        bne.w   demo_fail            ; context corrupted by a switch
         move.l  a4,a0                ; GetMsg(SP)
         jsr     LVO_GETMSG(a6)
         tst.l   d0
-        beq.s   .pp_empty            ; vide -> compter (K messages circulent, le port n'est quasi
-        move.l  d0,a1                ; jamais vide ; vide PROLONGÉ = nœuds perdus par corruption)
+        beq.s   .pp_empty            ; empty -> count (K messages circulate, the port is almost
+        move.l  d0,a1                ; never empty; PROLONGED emptiness = nodes lost by corruption)
         cmp.l   #STRESS_MAGIC,MSG_MAGIC_OFF(a1)
-        bne     m7d_fail             ; mauvais pointeur -> corruption de liste
+        bne     m7d_fail             ; wrong pointer -> list corruption
         tst.l   MSG_INHAND_OFF(a1)
-        bne     m7d_fail             ; déjà « en main » -> doublon = corruption
+        bne     m7d_fail             ; already "in hand" -> duplicate = corruption
         move.l  #1,MSG_INHAND_OFF(a1)
         clr.l   MSG_INHAND_OFF(a1)
         move.l  a4,a0                ; PutMsg(SP, msg)
         jsr     LVO_PUTMSG(a6)
         addq.l  #1,WP_PORTT
-        moveq   #0,d6                ; message obtenu -> reset du compteur de vides
+        moveq   #0,d6                ; message obtained -> reset of the empty counter
         bra.s   .pp_emit
 .pp_empty:
         addq.l  #1,d6
         cmp.l   #PEMPTY_LIMIT,d6
-        bcc     m7d_fail             ; port vide trop longtemps -> nœuds perdus = corruption
+        bcc     m7d_fail             ; port empty for too long -> lost nodes = corruption
 .pp_emit:
         btst    #0,M7D_STAT
-        bne     .pp_loop             ; marqueur déjà émis
-        tst.l   WP_PORTFAIL          ; corruption vue côté interruption ?
+        bne     .pp_loop             ; marker already emitted
+        tst.l   WP_PORTFAIL          ; corruption seen on the interrupt side?
         bne     m7d_fail
         move.l  WP_PORTT,d0
         cmp.l   #PORTT_THRESH,d0
-        bcs     .pp_loop             ; pas assez d'itérations côté tâche
+        bcs     .pp_loop             ; not enough iterations on the task side
         move.l  WP_PORTI,d0
         cmp.l   #PORTI_THRESH,d0
-        bcs     .pp_loop             ; pas assez côté interruption (producteur)
+        bcs     .pp_loop             ; not enough on the interrupt side (producer)
         bset    #0,M7D_STAT
         jsr     LVO_FORBID(a6)
         lea     msg_m7d_ok(pc),a0
         bsr     ser_puts
         jsr     LVO_PERMIT(a6)
         bra     .pp_loop
-m7d_fail:                            ; corruption de liste de port (RED) -> preuve
+m7d_fail:                            ; port list corruption (RED) -> proof
         jsr     LVO_FORBID(a6)
         lea     msg_m7d_fail(pc),a0
         bsr     ser_puts
 .m7df_hang:
         bra.s   .m7df_hang
 
-demo_fail:                           ; sentinelle KO -> preuve de corruption
+demo_fail:                           ; sentinel failed -> proof of corruption
         jsr     LVO_FORBID(a6)
         lea     msg_m3ffail(pc),a0
         bsr     ser_puts
 .df_hang:
         bra.s   .df_hang
-task_exit:                           ; M7j : finalPC — une tâche a fait RTS (fin de corps) -> se retire
-        move.l  ($4).w,a6            ; elle-même via RemTask(self). RemTask ne revient pas (bascule).
-        suba.l  a1,a1                ; a1 = 0 -> RemTask interprète NULL comme la tâche courante
+task_exit:                           ; M7j: finalPC — a task did RTS (end of body) -> removes
+        move.l  ($4).w,a6            ; itself via RemTask(self). RemTask does not return (switches).
+        suba.l  a1,a1                ; a1 = 0 -> RemTask interprets NULL as the current task
         jsr     LVO_REMTASK(a6)
-        bra.s   task_exit            ; filet (ne doit jamais être atteint)
+        bra.s   task_exit            ; safety net (must never be reached)
 
-; ============================ résidents démo (M4) ==================
-; 3 ROMTags scannés par build_reslist puis initialisés par InitCode en ordre de PRIORITÉ
-; DÉCROISSANTE (hi=60, mid=10, lo=-20). Chacun partage res_demo_init, qui vérifie que sa
-; RT_PRI n'est PAS supérieure à la précédente (ordre décroissant maintenu) puis émet son
-; nom. Preuve : noms émis hi->mid->lo dans le log + RES_COUNT==3.
-; IMPORTANT : rangés en mémoire dans un ordre (mid, lo, hi) DIFFÉRENT de l'ordre de
-; priorité, pour que le TRI de build_reslist soit load-bearing (sinon l'ordre de scan
-; suffirait). ROMTags non-AUTOINIT (direct-init). Alignement PAIR obligatoire (le scan
-; lit des mots à adresses paires ; RT_ENDSKIP doit rester pair).
+; ============================ demo residents (M4) ==================
+; 3 ROMTags scanned by build_reslist then initialised by InitCode in DESCENDING
+; PRIORITY order (hi=60, mid=10, lo=-20). Each one shares res_demo_init, which checks that its
+; RT_PRI is NOT higher than the previous one (descending order maintained) then emits its
+; name. Proof: names emitted hi->mid->lo in the log + RES_COUNT==3.
+; IMPORTANT: stored in memory in an order (mid, lo, hi) DIFFERENT from the priority
+; order, so that the SORT of build_reslist is load-bearing (otherwise the scan order
+; would suffice). Non-AUTOINIT ROMTags (direct-init). EVEN alignment mandatory (the scan
+; reads words at even addresses; RT_ENDSKIP must stay even).
         EVEN
 res_mid:
         dc.w    RTC_MATCHWORD
-        dc.l    res_mid              ; RT_MATCHTAG = self (valide le match)
+        dc.l    res_mid              ; RT_MATCHTAG = self (validates the match)
         dc.l    res_mid_end          ; RT_ENDSKIP
         dc.b    RTF_COLDSTART,1,NT_RESOURCE,10   ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    res_mid_name         ; RT_NAME
         dc.l    res_mid_name         ; RT_IDSTRING
-        dc.l    res_mid_init         ; RT_INIT (routine propre au module)
+        dc.l    res_mid_init         ; RT_INIT (module's own routine)
 res_mid_name:
         dc.b    "demo.res.mid",0
         EVEN
@@ -5454,10 +5456,10 @@ res_hi_name:
         EVEN
 res_hi_end:
 
-; Routines d'init des résidents démo. Appelées par InitResident avec la convention ABI
-; direct-init (D0=0, A0=segList, A6=SysBase) : le pointeur resident n'est PAS fourni, donc
-; chaque routine connaît STATIQUEMENT sa priorité et son nom (comme un vrai module). Elles
-; passent (d0=pri signée, a1=nom) à res_demo_common.
+; Init routines of the demo residents. Called by InitResident with the direct-init ABI
+; convention (D0=0, A0=segList, A6=SysBase): the resident pointer is NOT supplied, so
+; each routine knows its priority and name STATICALLY (like a real module). They
+; pass (d0=signed pri, a1=name) to res_demo_common.
 res_hi_init:
         moveq   #60,d0
         lea     res_hi_name(pc),a1
@@ -5469,101 +5471,101 @@ res_mid_init:
 res_lo_init:
         moveq   #-20,d0
         lea     res_lo_name(pc),a1
-        ; tombe dans res_demo_common
-; res_demo_common : d0 = RT_PRI (signée, longword via moveq), a1 = nom. Vérifie l'ordre
-; décroissant via RES_LASTPRI, compte dans RES_COUNT, émet le nom + CRLF. Retourne d0=0.
+        ; falls through into res_demo_common
+; res_demo_common: d0 = RT_PRI (signed, longword via moveq), a1 = name. Checks the descending
+; order via RES_LASTPRI, counts in RES_COUNT, emits the name + CRLF. Returns d0=0.
 res_demo_common:
         cmp.l   RES_LASTPRI,d0
-        bgt     res_fail             ; pri > précédente -> ordre CROISSANT = scan/tri FAUX
+        bgt     res_fail             ; pri > previous -> ASCENDING order = scan/sort WRONG
         move.l  d0,RES_LASTPRI
         addq.l  #1,RES_COUNT
-        move.l  a1,a0                ; nom
-        bsr     ser_puts             ; émet le nom (ordre visible hi->mid->lo)
+        move.l  a1,a0                ; name
+        bsr     ser_puts             ; emits the name (visible order hi->mid->lo)
         lea     msg_crlf(pc),a0
         bsr     ser_puts
         moveq   #0,d0
         rts
 
-res_fail:                            ; échec M4 (scan/ordre/dispatch) -> fige
+res_fail:                            ; M4 failure (scan/order/dispatch) -> freezes
         lea     msg_res_fail(pc),a0
         bsr     ser_puts
 .resf_hang:
         bra.s   .resf_hang
-auto_fail:                           ; échec M5a (AUTOINIT/MakeLibrary) -> fige
+auto_fail:                           ; M5a failure (AUTOINIT/MakeLibrary) -> freezes
         lea     msg_auto_fail(pc),a0
         bsr     ser_puts
 .autof_hang:
         bra.s   .autof_hang
-cia_fail:                            ; échec M5b (cia.resource) -> fige
+cia_fail:                            ; M5b failure (cia.resource) -> freezes
         lea     msg_cia_fail(pc),a0
         bsr     ser_puts
 .ciaf_hang:
         bra.s   .ciaf_hang
-timer_fail:                          ; échec M5c (timer.device) -> fige
+timer_fail:                          ; M5c failure (timer.device) -> freezes
         lea     msg_timer_fail(pc),a0
         bsr     ser_puts
 .tmrf_hang:
         bra.s   .tmrf_hang
-m6a_fail:                            ; échec M6a (unité VBLANK timer) -> fige
+m6a_fail:                            ; M6a failure (timer VBLANK unit) -> freezes
         lea     msg_m6a_fail(pc),a0
         bsr     ser_puts
 .m6af_hang:
         bra.s   .m6af_hang
-m7b_fail:                            ; échec M7b (dispatcher par numéro / chaîne PORTS) -> fige
+m7b_fail:                            ; M7b failure (by-number dispatcher / PORTS chain) -> freezes
         lea     msg_m7b_fail(pc),a0
         bsr     ser_puts
 .m7bf_hang:
         bra.s   .m7bf_hang
-m7a_fail:                            ; échec M7a (gate de ré-entrance / unité MICROHZ) -> fige
-        jsr     LVO_FORBID(a6)       ; émission non fractionnée (atteint depuis le contexte tâche)
+m7a_fail:                            ; M7a failure (re-entry gate / MICROHZ unit) -> freezes
+        jsr     LVO_FORBID(a6)       ; unsplit output (reached from the task context)
         lea     msg_m7a_fail(pc),a0
         bsr     ser_puts
 .m7af_hang:
         bra.s   .m7af_hang
-; struct Interrupt de test (M6b) : IS_CODE -> cia_test_vec (incrémente CIA_FIRED).
+; test struct Interrupt (M6b): IS_CODE -> cia_test_vec (increments CIA_FIRED).
         EVEN
 cia_test_int:
-        dcb.b   14,0                 ; LN (non chaîné)
+        dcb.b   14,0                 ; LN (not linked)
         dc.l    0                    ; IS_DATA
         dc.l    cia_test_vec         ; IS_CODE
-cia_test_vec:                        ; serveur ICR (a1=data, a5=code, a6=SysBase)
+cia_test_vec:                        ; ICR server (a1=data, a5=code, a6=SysBase)
         addq.l  #1,CIA_FIRED
         rts
-cia_dummy_int:                       ; fausse struct Interrupt (AddICRVector ne stocke que le ptr)
+cia_dummy_int:                       ; fake struct Interrupt (AddICRVector only stores the ptr)
         dc.l    0,0,0,0,0
 
-; int2_srv2 (M7b) : 2e serveur de la chaîne PORTS (pri 0, après ciaa_server pri 10). Incrémente
-; INT2_SRV2 et capture l'ordre (CIA_FIRED > 0 au 1er appel => ciaa_server a tourné avant = pri OK).
-; a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0 + mémoire). Z MIS (continue).
+; int2_srv2 (M7b): 2nd server of the PORTS chain (pri 0, after ciaa_server pri 10). Increments
+; INT2_SRV2 and captures the order (CIA_FIRED > 0 at the 1st call => ciaa_server ran before = pri OK).
+; a1=IS_DATA (unused), a6=SysBase. Preserves d2-d7/a2-a4 (only touches d0 + memory). Z SET (continue).
 int2_srv2:
         addq.l  #1,INT2_SRV2
-        tst.l   INT2_ORDER_SNAP      ; déjà capturé ?
+        tst.l   INT2_ORDER_SNAP      ; already captured?
         bne.s   .s2_z
-        move.l  CIA_FIRED,d0         ; ciaa_server (pri 10) a-t-il déjà tourné dans CET INT2 ?
-        beq.s   .s2_z                ; pas encore -> on capturera à un INT2 ultérieur
-        move.l  d0,INT2_ORDER_SNAP   ; > 0 -> ordre de priorité confirmé (ciaa avant srv2)
+        move.l  CIA_FIRED,d0         ; has ciaa_server (pri 10) already run in THIS INT2?
+        beq.s   .s2_z                ; not yet -> we will capture at a later INT2
+        move.l  d0,INT2_ORDER_SNAP   ; > 0 -> priority order confirmed (ciaa before srv2)
 .s2_z:
-        moveq   #0,d0                ; Z set -> continue la chaîne
+        moveq   #0,d0                ; Z set -> continue the chain
         rts
 
-; input_test_h1 / input_test_h2 (#2) : handlers input.device de test. Convention : a0 = liste d'InputEvents,
-; a1 = is_Data ; rend d0 = liste (pass-through). h1 (pri 10) tourne avant h2 (pri 0) -> INPUT_SEQ ordonne.
-; h1 relève aussi le keycode du 1er event (preuve de propagation). Clobbe d0 (+ mémoire) ; préserve a0-a6/d1-d7.
+; input_test_h1 / input_test_h2 (#2): test input.device handlers. Convention: a0 = InputEvent list,
+; a1 = is_Data; returns d0 = list (pass-through). h1 (pri 10) runs before h2 (pri 0) -> INPUT_SEQ orders them.
+; h1 also records the keycode of the 1st event (propagation proof). Clobbers d0 (+ memory); preserves a0-a6/d1-d7.
 input_test_h1:
         addq.w  #1,INPUT_SEQ
-        move.w  INPUT_SEQ,INPUT_H1_ORD   ; ordre d'appel (doit = 1)
-        move.w  IE_CODE(a0),INPUT_CODE   ; keycode relayé par la chaîne
-        move.l  a0,d0                    ; rend la liste inchangée
+        move.w  INPUT_SEQ,INPUT_H1_ORD   ; call order (must = 1)
+        move.w  IE_CODE(a0),INPUT_CODE   ; keycode relayed by the chain
+        move.l  a0,d0                    ; return the list unchanged
         rts
 input_test_h2:
         addq.w  #1,INPUT_SEQ
-        move.w  INPUT_SEQ,INPUT_H2_ORD   ; ordre d'appel (doit = 2)
+        move.w  INPUT_SEQ,INPUT_H2_ORD   ; call order (must = 2)
         move.l  a0,d0
         rts
 
-; gp_cap_handler(a0 = liste d'InputEvents, a1 = is_Data) -> d0 = liste : handler de capture du bloc GAMEPORT.
-; Compte les RAWMOUSE vus (GP_CAP_N) et mémorise ie_Code/ie_X/ie_Y du dernier (events injectés unitaires -> tête
-; seule). Scratch d0/d1/a1 uniquement (préserve d2-d7/a2-a4, convention handler).
+; gp_cap_handler(a0 = InputEvent list, a1 = is_Data) -> d0 = list: capture handler of the GAMEPORT block.
+; Counts the RAWMOUSEs seen (GP_CAP_N) and remembers ie_Code/ie_X/ie_Y of the last one (single injected events ->
+; head only). Scratch d0/d1/a1 only (preserves d2-d7/a2-a4, handler convention).
 gp_cap_handler:
         move.l  a0,d1
         beq.s   .gc_ret
@@ -5578,15 +5580,15 @@ gp_cap_handler:
         move.l  a0,d0
         rts
 
-; disk_watch : process de l'écran insert-disk (pri -1). Toutes les DW_TICKS : td_disk_present ; une disquette
-; insérée (lecteur vu vide auparavant) -> redémarrage à froid (Supervisor : RESET puis saut à l'entrée de la ROM) : le boot la trouve alors comme
-; à la mise sous tension. Ne revient pas.
-DW_TICKS        EQU 25               ; 0,5 s entre deux sondages
+; disk_watch: process of the insert-disk screen (pri -1). Every DW_TICKS: td_disk_present; an inserted
+; floppy (drive previously seen empty) -> cold reboot (Supervisor: RESET then jump to the ROM entry): the boot
+; then finds it as at power-on. Does not return.
+DW_TICKS        EQU 25               ; 0.5 s between two polls
 DW_STK          EQU 1024
 disk_watch:
         move.l  ($4).w,a6
-        moveq   #0,d7                ; d7 != 0 : lecteur vu vide (une disquette non amorçable déjà présente ne
-.dw_lp:                              ; redémarre pas la machine : il faut la retirer puis en insérer une)
+        moveq   #0,d7                ; d7 != 0: drive seen empty (a non-bootable floppy already present does not
+.dw_lp:                              ; reboot the machine: it must be removed and then another one inserted)
         move.l  DOS_DOSBASE,a6
         moveq   #DW_TICKS,d1
         jsr     DOS_LVO_DELAY(a6)
@@ -5600,10 +5602,10 @@ disk_watch:
         tst.l   d7
         beq.s   .dw_lp
         lea     dw_reboot(pc),a5
-        jsr     LVO_SUPERVISOR(a6)   ; ne revient pas
+        jsr     LVO_SUPERVISOR(a6)   ; does not return
         bra.s   .dw_lp
-; dw_reboot (superviseur) : RESET réinitialise les puces (l'overlay remet la ROM en $0) ; le JMP doit être dans le
-; même mot long que le RESET (déjà préchargé). Entrée = PC initial de la ROM (long en $FC0004).
+; dw_reboot (supervisor): RESET reinitialises the chips (the overlay puts the ROM back at $0); the JMP must be in the
+; same long word as the RESET (already prefetched). Entry = initial PC of the ROM (long at $FC0004).
         cnop    0,4
 dw_reboot:
         move.w  #$2700,sr
@@ -5617,9 +5619,9 @@ dw_name:
         dc.b    "DF0 watch",0
         even
 
-; ptr_wire : installe le handler de pointeur PERSISTANT (PTR_INT, pri 50) sur input.device : deltas RAWMOUSE ->
-; position absolue PTR_X/PTR_Y + sprite du pointeur. Appelé sur les deux branches de boot (insert-disk et disquette).
-; a6 = SysBase. Préserve d2-d7/a2-a6.
+; ptr_wire: installs the PERSISTENT pointer handler (PTR_INT, pri 50) on input.device: RAWMOUSE deltas ->
+; absolute position PTR_X/PTR_Y + pointer sprite. Called on both boot branches (insert-disk and floppy).
+; a6 = SysBase. Preserves d2-d7/a2-a6.
 ptr_wire:
         movem.l a2/a4,-(sp)
         lea     EB_DEVICELIST(a6),a0
@@ -5628,7 +5630,7 @@ ptr_wire:
         tst.l   d0
         beq.s   .pw_ret
         move.l  d0,a4
-        clr.l   PTR_INT+LN_SUCC          ; struct Interrupt pointeur (pri 50), RAM basse réservée
+        clr.l   PTR_INT+LN_SUCC          ; pointer struct Interrupt (pri 50), reserved low RAM
         move.b  #50,PTR_INT+LN_PRI
         clr.l   PTR_INT+IS_DATA
         move.l  #pointer_input_handler,PTR_INT+IS_CODE
@@ -5645,11 +5647,11 @@ ptr_wire:
         movem.l (sp)+,a2/a4
         rts
 
-; m6r_wire_requester : câble les handlers CONSOMMATEURS (pointeur pri 50 + requester pri 0) PERSISTANTS sur
-; input.device (PAS de teardown) -> la chaîne gameport -> input.device -> pointeur -> requester vit dans le
-; système tournant (symétrique du producteur gp_vblank_server persistant). Puis self-check SYNCHRONE : injecte via
-; les handlers persistants un move relatif -> gadget puis un clic -> REQ_HIT -> « M6R WIRED OK ». a6 = SysBase.
-; Appelé une fois dans la branche M6R insert-disk (IRQ masquées ; IND_WRITEEVENT est synchrone). Préserve a2-a4.
+; m6r_wire_requester: wires the PERSISTENT CONSUMER handlers (pointer pri 50 + requester pri 0) on
+; input.device (NO teardown) -> the gameport -> input.device -> pointer -> requester chain lives in the
+; running system (symmetric of the persistent producer gp_vblank_server). Then SYNCHRONOUS self-check: injects via
+; the persistent handlers a relative move -> gadget then a click -> REQ_HIT -> "M6R WIRED OK". a6 = SysBase.
+; Called once in the M6R insert-disk branch (IRQs masked; IND_WRITEEVENT is synchronous). Preserves a2-a4.
 m6r_wire_requester:
         movem.l a2-a4,-(sp)
         lea     EB_DEVICELIST(a6),a0
@@ -5658,16 +5660,16 @@ m6r_wire_requester:
         tst.l   d0
         beq     .mw_ret
         move.l  d0,a4                    ; a4 = input.device base
-        bsr     ptr_wire                 ; handler pointeur pri 50 (PERSISTANT)
-        clr.l   REQ_INT+LN_SUCC          ; struct Interrupt requester (pri 0)
+        bsr     ptr_wire                 ; pointer handler pri 50 (PERSISTENT)
+        clr.l   REQ_INT+LN_SUCC          ; requester struct Interrupt (pri 0)
         clr.b   REQ_INT+LN_PRI
         clr.l   REQ_INT+IS_DATA
         move.l  #req_input_handler,REQ_INT+IS_CODE
         lea     -48(sp),sp               ; IOStdReq scratch
         move.l  sp,a2                    ; a2 = ioreq
-        lea     REQ_INT,a0               ; ADDHANDLER requester (PERSISTANT)
+        lea     REQ_INT,a0               ; ADDHANDLER requester (PERSISTENT)
         bsr.s   .mw_add
-        clr.w   PTR_X                    ; self-check : les handlers persistants répondent-ils ?
+        clr.w   PTR_X                    ; self-check: do the persistent handlers respond?
         clr.w   PTR_Y
         clr.w   REQ_HIT
         lea     -24(sp),sp               ; InputEvent scratch
@@ -5676,34 +5678,34 @@ m6r_wire_requester:
         clr.b   IE_SUBCLASS(a3)
         clr.w   IE_QUALIFIER(a3)
         clr.l   IE_NEXTEVENT(a3)
-        move.w  #IECODE_NOBUTTON,IE_CODE(a3)  ; move relatif -> (160,112) sur le gadget
+        move.w  #IECODE_NOBUTTON,IE_CODE(a3)  ; relative move -> (160,112) on the gadget
         move.w  #160,IE_X(a3)
         move.w  #112,IE_Y(a3)
         bsr.s   .mw_write
-        move.w  #IECODE_LBUTTON,IE_CODE(a3)   ; clic (delta nul) -> hit-test (160,112) -> REQ_HIT
+        move.w  #IECODE_LBUTTON,IE_CODE(a3)   ; click (null delta) -> hit-test (160,112) -> REQ_HIT
         clr.w   IE_X(a3)
         clr.w   IE_Y(a3)
         clr.l   IE_NEXTEVENT(a3)
         bsr.s   .mw_write
-        lea     24(sp),sp                ; libère l'event scratch
-        cmp.w   #1,REQ_HIT               ; les handlers PERSISTANTS ont traité le clic ?
+        lea     24(sp),sp                ; free the scratch event
+        cmp.w   #1,REQ_HIT               ; did the PERSISTENT handlers process the click?
         bne.s   .mw_done
         lea     msg_m6r_wired(pc),a0
-        bsr     ser_puts                 ; « M6R WIRED OK »
+        bsr     ser_puts                 ; "M6R WIRED OK"
 .mw_done:
-        clr.w   PTR_X                    ; remet le pointeur à zéro pour la vraie souris (handlers RESTENT câblés)
+        clr.w   PTR_X                    ; reset the pointer to zero for the real mouse (handlers STAY wired)
         clr.w   PTR_Y
         clr.w   REQ_HIT
-        lea     48(sp),sp                ; libère l'ioreq scratch
+        lea     48(sp),sp                ; free the scratch ioreq
 .mw_ret:
         movem.l (sp)+,a2-a4
         rts
-.mw_add:                                 ; IND_ADDHANDLER(a0 = struct Interrupt) ; a2=ioreq, a4=input base
+.mw_add:                                 ; IND_ADDHANDLER(a0 = struct Interrupt); a2=ioreq, a4=input base
         move.l  a4,IO_DEVICE(a2)
         move.w  #IND_ADDHANDLER,IO_COMMAND(a2)
         move.l  a0,INP_IO_DATA(a2)
         bra.s   .mw_bio
-.mw_write:                               ; IND_WRITEEVENT(a3 = event) ; a2=ioreq, a4=input base
+.mw_write:                               ; IND_WRITEEVENT(a3 = event); a2=ioreq, a4=input base
         move.l  a4,IO_DEVICE(a2)
         move.w  #IND_WRITEEVENT,IO_COMMAND(a2)
         move.l  a3,INP_IO_DATA(a2)
@@ -5714,37 +5716,37 @@ m6r_wire_requester:
         move.l  ($4).w,a6
         rts
 
-; vbl_tail_server (M7f) : serveur VERTB de plus basse priorité (-10). Incrémente VERTB_CHAIN_N ->
-; prouve que le walker parcourt TOUTE la chaîne VERTB (sched_server pri 20 + timer_vblank pri 0 ont donc
-; tourné AVANT lui). a1=IS_DATA (inutilisé), a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que d0+mémoire).
+; vbl_tail_server (M7f): lowest-priority VERTB server (-10). Increments VERTB_CHAIN_N ->
+; proves that the walker goes through the WHOLE VERTB chain (sched_server pri 20 + timer_vblank pri 0 therefore
+; ran BEFORE it). a1=IS_DATA (unused), a6=SysBase. Preserves d2-d7/a2-a4 (only touches d0+memory).
 vbl_tail_server:
         addq.l  #1,VERTB_CHAIN_N
-        ; M7g : déclenche COPER par LOGICIEL (2e source niveau 3), rate-limité 1 VBlank sur 4, pour prouver
-        ; le décodage multi-source d'int3 (COPER sera servie au prochain INT3). Scratch d0 (préserve d2-d7/a2-a4).
+        ; M7g: triggers COPER by SOFTWARE (2nd level 3 source), rate-limited 1 VBlank in 4, to prove
+        ; int3's multi-source decoding (COPER will be served at the next INT3). Scratch d0 (preserves d2-d7/a2-a4).
         addq.b  #1,COPER_TICK
         move.b  COPER_TICK,d0
         and.b   #3,d0
         bne.s   .vt_z
-        move.w  #(INTF_SETCLR|INTF_COPER),INTREQ ; pose la requête COPER (Paula)
+        move.w  #(INTF_SETCLR|INTF_COPER),INTREQ ; sets the COPER request (Paula)
 .vt_z:
-        moveq   #0,d0                ; Z set -> continue (dernier noeud : fin de chaîne de toute façon)
+        moveq   #0,d0                ; Z set -> continue (last node: end of chain anyway)
         rts
 
-; coper_test (M7g) : handler EXCLUSIF de la source COPER (niveau 3), installé par SetIntVector. Prouve
-; que le décodage INTREQR d'int3 dispatche une 2e source de niveau 3. a0=$DFF000, a1=IS_DATA (inutilisé),
-; a6=SysBase. Préserve d2-d7/a2-a4 (ne touche que COPER_FIRED -> d2 de int3_dispatch survit).
+; coper_test (M7g): EXCLUSIVE handler of the COPER source (level 3), installed by SetIntVector. Proves
+; that int3's INTREQR decoding dispatches a 2nd level 3 source. a0=$DFF000, a1=IS_DATA (unused),
+; a6=SysBase. Preserves d2-d7/a2-a4 (only touches COPER_FIRED -> int3_dispatch's d2 survives).
 coper_test:
         addq.l  #1,COPER_FIRED
         rts
 
-; coper_int (M7g) : struct Interrupt du vecteur EXCLUSIF COPER (SetIntVector copie IS_DATA/IS_CODE ->
-; peut rester en ROM). IS_CODE -> coper_test. IS_DATA inutilisé.
+; coper_int (M7g): struct Interrupt of the EXCLUSIVE COPER vector (SetIntVector copies IS_DATA/IS_CODE ->
+; can stay in ROM). IS_CODE -> coper_test. IS_DATA unused.
         EVEN
 coper_int:
         dc.l    0                    ; LN_SUCC
         dc.l    0                    ; LN_PRED
         dc.b    0                    ; LN_TYPE
-        dc.b    0                    ; LN_PRI (inusité : vecteur exclusif)
+        dc.b    0                    ; LN_PRI (unused: exclusive vector)
         dc.l    coper_int_name       ; LN_NAME
         dc.l    0                    ; IS_DATA
         dc.l    coper_test           ; IS_CODE
@@ -5752,32 +5754,32 @@ coper_int_name:
         dc.b    "test.coper",0
 
                 ifeq    PROD
-; m7_int6_probe (ROM dev) : vecteur ICR bit 0 de ciab.resource (timer A de CIA-B continu), appelé par cia_dispatch
-; depuis le niveau 6. Deux détecteurs exclusifs AVANT toute manip :
-;   - VBL_INSURG posé -> INT6 a préempté la CHIRURGIE du switch -> VBL_CLASH++ (doit rester 0 : le Disable la rend
-;     atomique vs tout IPL ; > 0 = RED1) ;
-;   - sinon VBL_INBODY posé -> INT6 a préempté le CORPS de vbl -> VBL_PREEMPT_COUNT++ (doit être > 0 : preuve que vbl
-;     tourne à IPL3 natif ; == 0 = RED2).
-; Puis M7d : stress du PORT PARTAGÉ côté interruption (course contre task_port). Convention vecteur ICR : préserve
-; d2/d3/a2 (variables de boucle de cia_dispatch).
+; m7_int6_probe (dev ROM): ICR bit 0 vector of ciab.resource (continuous CIA-B timer A), called by cia_dispatch
+; from level 6. Two exclusive detectors BEFORE any manipulation:
+;   - VBL_INSURG set -> INT6 preempted the switch SURGERY -> VBL_CLASH++ (must stay 0: Disable makes it
+;     atomic vs any IPL; > 0 = RED1);
+;   - otherwise VBL_INBODY set -> INT6 preempted the BODY of vbl -> VBL_PREEMPT_COUNT++ (must be > 0: proof that vbl
+;     runs at native IPL3; == 0 = RED2).
+; Then M7d: stress of the SHARED PORT on the interrupt side (race against task_port). ICR vector convention: preserves
+; d2/d3/a2 (loop variables of cia_dispatch).
         EVEN
 m7_int6_probe:
-        tst.b   VBL_INSURG          ; vbl_handler est-il en pleine CHIRURGIE de listes ?
+        tst.b   VBL_INSURG          ; is vbl_handler in the middle of list SURGERY?
         beq.s   .ip_notsurg
-        addq.l  #1,VBL_CLASH        ; OUI -> INT6 a préempté la section critique = Disable violé (RED1)
+        addq.l  #1,VBL_CLASH        ; YES -> INT6 preempted the critical section = Disable violated (RED1)
         bra.s   .ip_ok
 .ip_notsurg:
-        tst.b   VBL_INBODY          ; sinon, vbl est-il dans son CORPS (hors chirurgie) ?
+        tst.b   VBL_INBODY          ; otherwise, is vbl in its BODY (outside surgery)?
         beq.s   .ip_ok
-        addq.l  #1,VBL_PREEMPT_COUNT ; OUI -> INT6(6) a préempté le CORPS de vbl(3) = fidélité IPL-par-niveau
+        addq.l  #1,VBL_PREEMPT_COUNT ; YES -> INT6(6) preempted the BODY of vbl(3) = per-level IPL fidelity
 .ip_ok:
         movem.l d0-d1/a0-a1,-(sp)
         move.l  WP_SPORT,d0
-        beq.s   .ip_ret             ; port pas encore créé
-        addq.b  #1,STRESS_TICK      ; rate-limit : 1 INT6 sur 4
+        beq.s   .ip_ret             ; port not yet created
+        addq.b  #1,STRESS_TICK      ; rate-limit: 1 INT6 in 4
         move.b  STRESS_TICK,d1
                 ifne    M7D_STRESS_MAX
-        and.b   #0,d1               ; RED A/B : chaque INT6 (contention max)
+        and.b   #0,d1               ; RED A/B: every INT6 (max contention)
                 else
         and.b   #3,d1
                 endc
@@ -5788,9 +5790,9 @@ m7_int6_probe:
         beq.s   .ip_ret
         move.l  d0,a1
         cmp.l   #STRESS_MAGIC,MSG_MAGIC_OFF(a1)
-        bne.s   .ip_pfail           ; mauvais pointeur -> corruption de liste
+        bne.s   .ip_pfail           ; wrong pointer -> list corruption
         tst.l   MSG_INHAND_OFF(a1)
-        bne.s   .ip_pfail           ; déjà « en main » -> doublon = corruption
+        bne.s   .ip_pfail           ; already "in hand" -> duplicate = corruption
         move.l  #1,MSG_INHAND_OFF(a1)
         clr.l   MSG_INHAND_OFF(a1)
         move.l  WP_SPORT,a0
@@ -5800,24 +5802,24 @@ m7_int6_probe:
 .ip_pfail:
         st      WP_PORTFAIL
 .ip_ret:
-        move.b  #$19,CIAB_HW+CIA_CRA ; réarme le one-shot (LOAD : latch 255)
+        move.b  #$19,CIAB_HW+CIA_CRA ; re-arms the one-shot (LOAD: latch 255)
         movem.l (sp)+,d0-d1/a0-a1
         rts
         EVEN
 m7_int6_int:
-        dcb.b   14,0                ; struct Node (non chaîné : AddICRVector ne stocke que le pointeur)
+        dcb.b   14,0                ; struct Node (not linked: AddICRVector only stores the pointer)
         dc.l    0                   ; IS_DATA
         dc.l    m7_int6_probe       ; IS_CODE
                 endc
 
-; ciab_server_int (M7b) : vecteur EXCLUSIF EXTER installé par SetIntVector -> ciab_server. Non chaîné
-; (SetIntVector copie IS_DATA/IS_CODE) -> peut rester en ROM. IS_DATA inutilisé (ciab_server lit CIAB_PTR).
+; ciab_server_int (M7b): EXCLUSIVE EXTER vector installed by SetIntVector -> ciab_server. Not linked
+; (SetIntVector copies IS_DATA/IS_CODE) -> can stay in ROM. IS_DATA unused (ciab_server reads CIAB_PTR).
         EVEN
 ciab_server_int:
         dc.l    0                    ; LN_SUCC
         dc.l    0                    ; LN_PRED
         dc.b    0                    ; LN_TYPE
-        dc.b    0                    ; LN_PRI (inusité : vecteur exclusif)
+        dc.b    0                    ; LN_PRI (unused: exclusive vector)
         dc.l    srv_ciab_name        ; LN_NAME
         dc.l    0                    ; IS_DATA
         dc.l    ciab_server          ; IS_CODE
@@ -5825,13 +5827,13 @@ srv_ciab_name:
         dc.b    "ciab.exter",0
         EVEN
 
-; ============================ résident AUTOINIT démo (M5a) =========
-; ROMTag RTF_AUTOINIT (pri 40) -> InitResident appelle MakeLibrary avec la table de 4 longs.
-; Prouve : jump table bâtie (func0 rend $5A), InitStruct pose version/type, init func pose
-; la révision + le nom, lib ajoutée à LibList. Table de vecteurs ABSOLUE (longwords, -1).
-; Data table = INITWORD(LIB_VERSION,40) + INITBYTE(LN_TYPE,NT_LIBRARY). Le nom (adresse) est
-; posé par l'init func (PC-relative), pas par InitStruct (une adresse relogée ne peut pas être
-; scindée en deux mots à l'assemblage).
+; ============================ demo AUTOINIT resident (M5a) =========
+; RTF_AUTOINIT ROMTag (pri 40) -> InitResident calls MakeLibrary with the table of 4 longs.
+; Proves: jump table built (func0 returns $5A), InitStruct sets version/type, init func sets
+; the revision + the name, lib added to LibList. ABSOLUTE vector table (longwords, -1).
+; Data table = INITWORD(LIB_VERSION,40) + INITBYTE(LN_TYPE,NT_LIBRARY). The name (address) is
+; set by the init func (PC-relative), not by InitStruct (a relocated address cannot be
+; split into two words at assembly time).
         EVEN
 res_auto:
         dc.w    RTC_MATCHWORD
@@ -5840,41 +5842,41 @@ res_auto:
         dc.b    RTF_AUTOINIT|RTF_COLDSTART,1,NT_LIBRARY,40  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    autolib_name         ; RT_NAME
         dc.l    autolib_name         ; RT_IDSTRING
-        dc.l    autolib_inittab      ; RT_INIT -> table AUTOINIT (4 longs)
+        dc.l    autolib_inittab      ; RT_INIT -> AUTOINIT table (4 longs)
 autolib_name:
         dc.b    "demo.autolib",0
         EVEN
 autolib_inittab:
-        dc.l    LIB_SIZE             ; dataSize (base mini)
+        dc.l    LIB_SIZE             ; dataSize (minimal base)
         dc.l    autolib_vectors      ; funcTable
         dc.l    autolib_datatab      ; dataTable (InitStruct)
         dc.l    autolib_initfunc     ; initFunc
-autolib_vectors:                     ; table RELATIVE (exerce la détection + l'arithmétique word)
-        dc.w    -1                            ; marqueur : déplacements word relatifs à cette base
+autolib_vectors:                     ; RELATIVE table (exercises the detection + the word arithmetic)
+        dc.w    -1                            ; marker: word displacements relative to this base
         dc.w    autolib_func0-autolib_vectors ; LVO -6
         dc.w    autolib_func1-autolib_vectors ; LVO -12
-        dc.w    -1                            ; terminateur (word)
+        dc.w    -1                            ; terminator (word)
 autolib_datatab:
         dc.w    $D000,LIB_VERSION,40          ; INITWORD(LIB_VERSION, 40)
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8) ; INITBYTE(LN_TYPE, NT_LIBRARY)
-        dc.b    0                             ; terminateur du flux InitStruct
+        dc.b    0                             ; terminator of the InitStruct stream
         EVEN
-autolib_func0:                       ; appelée via jsr -6(base) -> preuve MakeFunctions
+autolib_func0:                       ; called via jsr -6(base) -> MakeFunctions proof
         moveq   #$5A,d0
         rts
-autolib_func1:                       ; LVO -12 (non exercée)
+autolib_func1:                       ; LVO -12 (not exercised)
         moveq   #0,d0
         rts
 autolib_initfunc:                    ; (D0=base, A0=segList, A6=ExecBase) -> D0 = base
         move.l  d0,a1                ; a1 = base
-        move.w  #$5A,LIB_REVISION(a1) ; preuve : l'init func a tourné
+        move.w  #$5A,LIB_REVISION(a1) ; proof: the init func ran
         lea     autolib_name(pc),a0
-        move.l  a0,LN_NAME(a1)       ; nom (adresse, PC-relative) -> OpenLibrary/FindName
-        rts                          ; d0 = base inchangé
+        move.l  a0,LN_NAME(a1)       ; name (address, PC-relative) -> OpenLibrary/FindName
+        rts                          ; d0 = base unchanged
         EVEN
 res_auto_end:
 
-; ============================ données ==============================
+; ============================ data ==============================
 exec_name:
         dc.b    "exec.library",0
 exec_id:
@@ -6045,7 +6047,7 @@ msg_d3b_ok:
         dc.b    "D3B HANDLER OK (file-handler process served FINDINPUT/READ/END packets; read 'kickslop' 1024 bytes via OFS, markers match)",13,10,0
 msg_d3c_ok:
         dc.b    "D3C DOS OK (client process: dos.library Open/Read/Close 'kickslop' via packets -> DeviceNode handler; 1024 bytes, markers match)",13,10,0
-; nom du device et géométrie DD du disque DF0 (dosfilehandler.i : DosEnvec), désignés par BPTR depuis le FSSM
+; device name and DD geometry of the DF0 disk (dosfilehandler.i: DosEnvec), referenced by BPTR from the FSSM
         cnop    0,4
 df0_device:
         dc.b    16,"trackdisk.device",0
@@ -6091,7 +6093,7 @@ d3h_fname:
 d3i_cname:
         dc.b    "dos.lockclient",0
 d3i_rootname:
-        dc.b    ":",0                ; racine du volume (ACTION_LOCATE_OBJECT -> OFS_ROOTBLK)
+        dc.b    ":",0                ; volume root (ACTION_LOCATE_OBJECT -> OFS_ROOTBLK)
 msg_d3i_ok:
         dc.b    "DOS LOCK EXAMINE OK (Lock -84 'kickslop' -> Examine -102: file, size 1024@fib_Size; Lock ':' -> ExNext -108 enumerates root, finds kickslop; UnLock -90)",13,10,0
 d3j_cname:
@@ -6101,7 +6103,7 @@ d3j_fname:
 msg_d3j_ok:
         dc.b    "OFS STREAM OK (dos Open/Read 'BigData' 48000 bytes > 32K old cap, incremental per-datablock stream, sentinel reached; Seek -66 cross-block re-reads @500)",13,10,0
         even
-; marqueur émis PAR le Write lui-même (con_handler), pas NUL-terminé (Write utilise une longueur explicite).
+; marker emitted BY the Write itself (con_handler), not NUL-terminated (Write uses an explicit length).
 msg_dos_write:
         dc.b    "DOS WRITE OK (dos Write -48 -> ACTION_WRITE -> con_handler -> serial; Input -54/Output -60/CurrentDir -126 ok)",13,10
 msg_dos_write_end:
@@ -6240,7 +6242,7 @@ msg_diskres_ok:
 msg_diskres_fail:
         dc.b    "DISKRES FAIL",13,10,0
         EVEN
-; LVO.w, d0.l, d1.l, attendu.l — 3.0=$C0000042, -10.0=$A00000C4, 1.0=$80000041, -2.5=$A00000C2.
+; LVO.w, d0.l, d1.l, expected.l — 3.0=$C0000042, -10.0=$A00000C4, 1.0=$80000041, -2.5=$A00000C2.
 mft_table:
         dc.w    -36
         dc.l    3,0,$C0000042                    ; SPFlt(3)
@@ -6251,19 +6253,19 @@ mft_table:
         dc.w    -30
         dc.l    $F00000C5,0,-30                  ; SPFix(-30.0)
         dc.w    -84
-        dc.l    $80000041,$C0000042,$AAAAAB3F    ; SPDiv : 1/3 arrondi au plus près
+        dc.l    $80000041,$C0000042,$AAAAAB3F    ; SPDiv: 1/3 rounded to nearest
         dc.w    -78
-        dc.l    $AAAAAB3F,$C0000042,$80000041    ; SPMul(1/3,3) = 1.0 après arrondi
+        dc.l    $AAAAAB3F,$C0000042,$80000041    ; SPMul(1/3,3) = 1.0 after rounding
         dc.w    -66
         dc.l    $C0000042,$A00000C4,$E00000C3    ; SPAdd(3,-10) = -7
         dc.w    -72
-        dc.l    $C0000042,$A00000C4,$D0000044    ; SPSub : 3 - (-10) = 13
+        dc.l    $C0000042,$A00000C4,$D0000044    ; SPSub: 3 - (-10) = 13
         dc.w    -42
         dc.l    $C0000042,$A00000C4,1            ; SPCmp(3,-10) -> +1
         dc.w    -42
         dc.l    $A00000C4,$C0000042,-1           ; SPCmp(-10,3) -> -1
         dc.w    -48
-        dc.l    0,$A00000C4,-1                   ; SPTst(-10) en d1 -> -1
+        dc.l    0,$A00000C4,-1                   ; SPTst(-10) in d1 -> -1
         dc.w    -60
         dc.l    $C0000042,0,$C00000C2            ; SPNeg(3) = -3
         dc.w    -90
@@ -6275,9 +6277,9 @@ mft_table:
         dc.w    -36
         dc.l    123456,0,$F1200051               ; SPFlt(123456)
         dc.w    -30
-        dc.l    $F1200051,0,123456               ; SPFix -> aller-retour exact
+        dc.l    $F1200051,0,123456               ; SPFix -> exact round trip
         dc.w    -84
-        dc.l    $C0000042,0,$FFFFFF7F            ; SPDiv(3/0) -> plus grand positif
+        dc.l    $C0000042,0,$FFFFFF7F            ; SPDiv(3/0) -> largest positive
 mft_table_end:
 ciaa_test_name:
         dc.b    "ciaa.resource",0
@@ -6299,9 +6301,9 @@ msg_memslow:
         dc.b    "MEM SLOW KB=",0
         EVEN
 
-; rdf_selftest : RawDoFmt via la jump table (LVO -522) dans un tampon pile, comparé octet à octet (NUL compris) à
-; rdf_expect -> « RAWDOFMT OK » ou « RAWDOFMT FAILED ». Couvre d/ld signés, largeur, cadrage gauche, remplissage
-; '0' avec signe, x, s, c, et la restitution de a3. a6 = SysBase. Préserve tout.
+; rdf_selftest: RawDoFmt via the jump table (LVO -522) into a stack buffer, compared byte by byte (NUL included) with
+; rdf_expect -> "RAWDOFMT OK" or "RAWDOFMT FAILED". Covers signed d/ld, width, left justification, '0' fill
+; with sign, x, s, c, and the restoring of a3. a6 = SysBase. Preserves everything.
 rdf_selftest:
         movem.l d0-d1/a0-a3,-(sp)
         lea     -64(sp),sp
@@ -6310,7 +6312,7 @@ rdf_selftest:
         lea     rdf_putch(pc),a2
         move.l  sp,a3
         jsr     LVO_RAWDOFMT(a6)
-        cmp.l   sp,a3                ; a3 doit être restitué (convention d'appel)
+        cmp.l   sp,a3                ; a3 must be restored (calling convention)
         bne.s   .rdf_bad
         move.l  sp,a0
         lea     rdf_expect(pc),a1

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# tests/tdwrite_run.sh — harnais de la sonde tests/tdwrite.s (piste analyse, docs/analysis/trackdisk-write-v34.md).
-# Fabrique une disquette OFS vierge amorçable (xdftool) dont la startup-sequence lance la sonde, boote FS-UAE headless
-# (Xvfb) avec débogueur console, active le journal disque de l'émulateur (« did 2 » : une ligne par écriture DSKLEN avec
-# ADKCON et PC), capture le série dans <out>/serial.log et le journal dans <out>/fs-uae.log.
-# Dossier de base FS-UAE propre à la séance (<out>/base) : le journal de l'émulateur y est isolé
-# (<out>/base/Cache/Logs/fs-uae.log.txt), à l'abri des autres séances.
-# TDW_WP=1 : disquette protégée en écriture (ADF en lecture seule + writable_floppy_images = 1 : sans surcouche,
-# FS-UAE présente alors le disque comme protégé ; uae_floppy0wp et floppy_write_protect sont ignorés).
-# Usage : tests/tdwrite_run.sh <rom> <exécutable tdwrite> <répertoire de sortie> [durée s, défaut 150]
+# tests/tdwrite_run.sh - harness for the tests/tdwrite.s probe (analysis track, docs/analysis/trackdisk-write-v34.md).
+# Builds a blank bootable OFS floppy (xdftool) whose startup-sequence runs the probe, boots FS-UAE headless
+# (Xvfb) with the console debugger, enables the emulator's disk log ("did 2": one line per DSKLEN write with
+# ADKCON and PC), captures the serial into <out>/serial.log and the log into <out>/fs-uae.log.
+# FS-UAE base directory private to the session (<out>/base): the emulator's log is isolated there
+# (<out>/base/Cache/Logs/fs-uae.log.txt), safe from other sessions.
+# TDW_WP=1: write-protected floppy (read-only ADF + writable_floppy_images = 1: without an overlay,
+# FS-UAE then presents the disk as protected; uae_floppy0wp and floppy_write_protect are ignored).
+# Usage: tests/tdwrite_run.sh <rom> <tdwrite executable> <output directory> [duration s, default 150]
 set -u
 ROM="${1:?rom}"; EXE="${2:?exe}"; OUT="${3:?sortie}"; DUR="${4:-150}"
 rm -rf "$OUT"; mkdir -p "$OUT/base"

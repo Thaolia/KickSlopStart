@@ -1,17 +1,17 @@
-; tests/coldhw_probe.s — bootblock de SONDE boîte noire du coldstart (ASSET DE TEST, PAS du code ROM).
-; Assemblé en binaire brut (vasm -Fbin -m68000 -DMODE=n), posé à l'offset +12 du bootblock d'un ADF par
-; tests/coldhw_probe.sh. Sert à observer, sous la VRAIE ROM 1.3, l'état laissé par le coldstart (ExecBase,
-; MemList, RAM basse, survie au reset) et la chaîne Alert -> reset -> alert.hook. Code AUTEUR : n'utilise que
-; l'ABI publique (offsets ExecBase de exec/execbase.i, LVO de exec_lib.fd) et les registres hardware publics.
+; tests/coldhw_probe.s - black-box PROBE bootblock for the coldstart (TEST ASSET, NOT ROM code).
+; Assembled as a raw binary (vasm -Fbin -m68000 -DMODE=n), placed at offset +12 of an ADF bootblock by
+; tests/coldhw_probe.sh. Used to observe, under the REAL 1.3 ROM, the state left by the coldstart (ExecBase,
+; MemList, low RAM, survival across reset) and the Alert -> reset -> alert.hook chain. AUTHORED code: uses only
+; the public ABI (ExecBase offsets from exec/execbase.i, LVOs from exec_lib.fd) and the public hardware registers.
 ;
-; Compteur de boots : long magique 'CHWM' + compteur à CHIPMARK (et SLOWMARK si de la RAM $C00000 existe).
-; Premier boot (compteur = 1) : action du MODE ; boots suivants : rapport seul, puis attente infinie.
-;   MODE 0 : rapport seul.
-;   MODE 1 : Alert($8100000F) dead-end, A5 -> $CAFEBABE.
-;   MODE 2 : Alert($35000001) récupérable, A5 -> $12345678, puis rapport « RET ».
-;   MODE 3 : instruction ILLEGAL.
-;   MODE 4 : reboot logiciel (RESET + saut dans la ROM via l'adresse 2, technique publique 1.3).
-;   MODE 5 : pose ColdCapture/CoolCapture (stubs copiés en RAM chip), recalcule ChkSum, puis reboot MODE 4.
+; Boot counter: magic long 'CHWM' + counter at CHIPMARK (and SLOWMARK if RAM exists at $C00000).
+; First boot (counter = 1): MODE action; subsequent boots: report only, then infinite wait.
+;   MODE 0: report only.
+;   MODE 1: dead-end Alert($8100000F), A5 -> $CAFEBABE.
+;   MODE 2: recoverable Alert($35000001), A5 -> $12345678, then "RET" report.
+;   MODE 3: ILLEGAL instruction.
+;   MODE 4: software reboot (RESET + jump into the ROM via address 2, public 1.3 technique).
+;   MODE 5: sets ColdCapture/CoolCapture (stubs copied into chip RAM), recomputes ChkSum, then MODE 4 reboot.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -29,7 +29,7 @@ start:
         moveq   #MODE,d0
         bsr     hex8
         bsr     nl
-        ; RAM basse
+        ; low RAM
         lea     m_low(pc),a0
         bsr     puts
         move.l  0.w,d0
@@ -39,7 +39,7 @@ start:
         move.l  $104.w,d0
         bsr     hex8
         bsr     nl
-        ; ExecBase et champs
+        ; ExecBase and fields
         lea     m_eb(pc),a0
         bsr     puts
         move.l  a6,d0
@@ -67,7 +67,7 @@ start:
         bsr     hex8
         move.w  $128(a6),d0         ; AttnFlags
         bsr     hex8
-        move.l  $212(a6),d0         ; VBlankFreq/PowerSupplyFreq (2 octets hauts)
+        move.l  $212(a6),d0         ; VBlankFreq/PowerSupplyFreq (2 high bytes)
         bsr     hex8
         bsr     nl
         ; MemList
@@ -90,25 +90,25 @@ start:
         bsr     hex8
         move.l  $1C(a2),d0          ; mh_Free
         bsr     hex8
-        movea.l $A(a2),a0           ; nom
+        movea.l $A(a2),a0           ; name
         bsr     puts
         bsr     nl
         movea.l (a2),a2
         bra.s   .ml
 .mld:
-        ; marqueurs de survie
+        ; survival markers
         lea     m_mark(pc),a0
         bsr     puts
         lea     CHIPMARK,a3
         bsr     mark
-        move.l  d0,d6               ; compteur chip (après incrément)
+        move.l  d0,d6               ; chip counter (after increment)
         move.l  $4E(a6),d1
         cmp.l   #SLOWMARK+16,d1
         bls.s   .noslow
         lea     SLOWMARK,a3
         bsr     mark
 .noslow:
-        move.l  CHIPMARK+16,d0      ; compteurs ColdCapture/CoolCapture (MODE 5)
+        move.l  CHIPMARK+16,d0      ; ColdCapture/CoolCapture counters (MODE 5)
         bsr     hex8
         move.l  CHIPMARK+20,d0
         bsr     hex8
@@ -145,7 +145,7 @@ start:
         dbra    d0,.cp
         move.l  #STUBS,$2A(a6)
         move.l  #STUBS+(stub_cool-stub_cold),$2E(a6)
-        ; ChkSum : complément de la somme des mots $22..$50
+        ; ChkSum: complement of the sum of words $22..$50
         lea     $22(a6),a0
         moveq   #0,d1
         moveq   #($52-$22)/2-1,d0
@@ -157,7 +157,7 @@ start:
         IFGE MODE-4
         lea     m_rb(pc),a0
         bsr     puts
-        lea     2.w,a0              ; le bootblock tourne en mode UTILISATEUR : RESET exige Supervisor()
+        lea     2.w,a0              ; the bootblock runs in USER mode: RESET requires Supervisor()
         lea     resetcode(pc),a5
         jsr     -30(a6)
         ENDC
@@ -178,7 +178,7 @@ stub_cool:
         rts
 stub_end:
 
-; mark : A3 = zone ; si 'CHWM' présent incrémente le compteur, sinon l'initialise à 1. Affiche avant/après.
+; mark: A3 = area; if 'CHWM' is present, increments the counter, otherwise initialises it to 1. Prints before/after.
 mark:   move.l  (a3),d0
         bsr     hex8
         move.l  4(a3),d0
@@ -191,7 +191,7 @@ mark:   move.l  (a3),d0
         move.l  4(a3),d0
         rts
 
-; hex8 : affiche D0 en 8 chiffres hexa + espace
+; hex8: prints D0 as 8 hex digits + space
 hex8:   movem.l d0-d2,-(a7)
         move.l  d0,d2
         moveq   #7,d1

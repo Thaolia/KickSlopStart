@@ -1,11 +1,11 @@
-; tests/garea_probe.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire « remplissages de graphics.library » (piste analyse, docs/analysis/graphics-area-v34.md).
-; Lancée depuis la startup-sequence d'une disquette (tests/garea_probe.sh). Appelle InitArea, AreaMove,
-; AreaDraw, AreaEnd, AreaEllipse, DrawEllipse, InitTmpRas, Flood, RectFill, WritePixel, ReadPixel par leurs
-; LVO publics sur une BitMap 32 x 20 à 2 plans en CHIP, sans couche, et écrit les résultats sur le série
-; direct (SERDAT) : une ligne d'en-tête par test, puis 20 lignes « plan0 plan1 » en hexadécimal.
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/garea_probe tests/garea_probe.s
-; Code auteur ; structures publiques (graphics/gfx.h, rastport.h).
+; tests/garea_probe.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe "graphics.library fills" (analysis track, docs/analysis/graphics-area-v34.md).
+; Run from the startup-sequence of a floppy (tests/garea_probe.sh). Calls InitArea, AreaMove,
+; AreaDraw, AreaEnd, AreaEllipse, DrawEllipse, InitTmpRas, Flood, RectFill, WritePixel, ReadPixel through their
+; public LVOs on a 32 x 20 BitMap with 2 planes in CHIP, without a layer, and writes the results to the direct
+; serial port (SERDAT): one header line per test, then 20 "plane0 plane1" lines in hexadecimal.
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/garea_probe tests/garea_probe.s
+; Authored code; public structures (graphics/gfx.h, rastport.h).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -15,8 +15,8 @@ BPR      EQU 4
 ROWS     EQU 20
 O_PL0    EQU 0
 O_PL1    EQU 80
-O_TMP    EQU 256         ; TmpRas (1024 o)
-O_GRD    EQU 1280        ; garde après une TmpRas de 80 o placée en O_GRD-80 (test T22)
+O_TMP    EQU 256         ; TmpRas (1024 bytes)
+O_GRD    EQU 1280        ; guard after an 80-byte TmpRas placed at O_GRD-80 (test T22)
 
 LVO_DrawEllipse EQU -180
 LVO_AreaEllipse EQU -186
@@ -38,7 +38,7 @@ LVO_SetDrMd     EQU -354
 LVO_InitBitMap  EQU -390
 LVO_InitTmpRas  EQU -468
 
-; décalages RastPort (rastport.h)
+; RastPort offsets (rastport.h)
 RP_TMPRAS EQU $0C
 RP_AREA  EQU $10
 RP_PTRN  EQU $08
@@ -46,7 +46,7 @@ RP_AOL   EQU $1B
 RP_PTSZ  EQU $1D
 RP_FLAGS EQU $20
 
-; --- macros d'appel (rp = vars:rp) ; le résultat D0 est imprimé en 4 chiffres
+; --- call macros (rp = vars:rp); the D0 result is printed as 4 digits
 AM              macro
                 move.l  #\1,d0
                 move.l  #\2,d1
@@ -165,7 +165,7 @@ _start:
                 lea     m_start(pc),a0
                 bsr     puts
                 move.l  gfxb-vars(a4),a6
-                ; BitMap 32 x 20, 2 plans
+                ; BitMap 32 x 20, 2 planes
                 lea     bm-vars(a4),a0
                 moveq   #2,d0
                 moveq   #32,d1
@@ -175,7 +175,7 @@ _start:
                 move.l  a0,bm+8-vars(a4)
                 lea     O_PL1(a5),a0
                 move.l  a0,bm+12-vars(a4)
-                ; T0 : InitArea / InitTmpRas
+                ; T0: InitArea / InitTmpRas
                 lea     m_t0(pc),a0
                 bsr     puts
                 lea     ai-vars(a4),a0
@@ -201,7 +201,7 @@ _start:
                 bsr     phex8
                 bsr     nl
 
-; T1 : carré, introspection de l'AreaInfo
+; T1: square, introspection of the AreaInfo
                 BEG     m_t1
                 AM      2,2
                 AD      10,2
@@ -215,7 +215,7 @@ _start:
                 bsr     dumpvt
                 bsr     dump
 
-; T2 : carré décrit dans l'autre sens, fermeture explicite
+; T2: square traced in the other direction, explicit closing
                 BEG     m_t2
                 AM      2,2
                 AD      2,10
@@ -224,14 +224,14 @@ _start:
                 AD      2,2
                 AE
                 bsr     dump
-; T3 : triangle
+; T3: triangle
                 BEG     m_t3
                 AM      16,1
                 AD      28,14
                 AD      4,14
                 AE
                 bsr     dump
-; T4 : pentagramme (règle pair/impair ?)
+; T4: pentagram (even/odd rule?)
                 BEG     m_t4
                 AM      16,1
                 AD      22,18
@@ -240,7 +240,7 @@ _start:
                 AD      10,18
                 AE
                 bsr     dump
-; T5 : deux carrés qui se chevauchent dans le même AreaEnd
+; T5: two overlapping squares in the same AreaEnd
                 BEG     m_t5
                 AM      2,2
                 AD      14,2
@@ -254,7 +254,7 @@ _start:
                 bsr     dumpai
                 AE
                 bsr     dump
-; T6 : polygone concave en C
+; T6: concave C-shaped polygon
                 BEG     m_t6
                 AM      2,2
                 AD      28,2
@@ -266,7 +266,7 @@ _start:
                 AD      2,16
                 AE
                 bsr     dump
-; T7 : AreaEllipse 8 x 6
+; T7: AreaEllipse 8 x 6
                 BEG     m_t7
                 AEL     16,10,8,6
                 lea     ai-vars(a4),a0
@@ -274,7 +274,7 @@ _start:
                 bsr     dumpfl
                 AE
                 bsr     dump
-; T8 : petites AreaEllipse
+; T8: small AreaEllipses
                 BEG     m_t8
                 AEL     3,3,1,1
                 AEL     9,3,2,1
@@ -285,7 +285,7 @@ _start:
                 AEL     24,13,5,5
                 AE
                 bsr     dump
-; T9 : mêmes ellipses par DrawEllipse
+; T9: same ellipses via DrawEllipse
                 BEG     m_t9
                 DEL     3,3,1,1
                 DEL     9,3,2,1
@@ -295,7 +295,7 @@ _start:
                 DEL     13,13,4,4
                 DEL     24,13,5,5
                 bsr     dump
-; T10 : DrawEllipse rayons nuls et 1 x 0 / 0 x 1
+; T10: DrawEllipse with zero radii and 1 x 0 / 0 x 1
                 BEG     m_t10
                 DEL     3,3,0,0
                 DEL     9,3,1,0
@@ -305,7 +305,7 @@ _start:
                 DEL     8,13,6,5
                 DEL     24,13,1,1
                 bsr     dump
-; T11 : contour AOlPen = 2, APen = 1 (polygone + ellipse)
+; T11: outline AOlPen = 2, APen = 1 (polygon + ellipse)
                 BEG     m_t11
                 move.b  #2,rp+RP_AOL-vars(a4)
                 or.w    #8,rp+RP_FLAGS-vars(a4)
@@ -320,7 +320,7 @@ _start:
                 AE
                 and.w   #~8,rp+RP_FLAGS-vars(a4)
                 bsr     dump
-; T12 : contour activé seulement après les AreaDraw (drapeau par sommet ?)
+; T12: outline enabled only after the AreaDraws (per-vertex flag?)
                 BEG     m_t12
                 AM      2,2
                 AD      12,2
@@ -330,7 +330,7 @@ _start:
                 AE
                 and.w   #~8,rp+RP_FLAGS-vars(a4)
                 bsr     dump
-; T13 : motif 2 lignes JAM1
+; T13: 2-line pattern JAM1
                 BEG     m_t13
                 lea     pat1(pc),a0
                 move.l  a0,rp+RP_PTRN-vars(a4)
@@ -340,7 +340,7 @@ _start:
                 AD      29,7
                 AD      2,7
                 AE
-; T13b : même motif en JAM2, BPen = 2
+; T13b: same pattern in JAM2, BPen = 2
                 MODE    1
                 BPEN    2
                 AM      2,10
@@ -351,7 +351,7 @@ _start:
                 MODE    0
                 BPEN    0
                 bsr     dump
-; T14 : motif multicolore (AreaPtSz = -1), APen 3 JAM2 puis APen 1 JAM1
+; T14: multicolour pattern (AreaPtSz = -1), APen 3 JAM2 then APen 1 JAM1
                 BEG     m_t14
                 lea     pat2(pc),a0
                 move.l  a0,rp+RP_PTRN-vars(a4)
@@ -373,7 +373,7 @@ _start:
                 clr.l   rp+RP_PTRN-vars(a4)
                 clr.b   rp+RP_PTSZ-vars(a4)
                 bsr     dump
-; T15 : RectFill avec contour, puis en COMPLEMENT sur fond plein
+; T15: RectFill with outline, then in COMPLEMENT over a solid background
                 BEG     m_t15
                 move.b  #2,rp+RP_AOL-vars(a4)
                 or.w    #8,rp+RP_FLAGS-vars(a4)
@@ -396,7 +396,7 @@ _start:
                 RF      18,11,27,16
                 MODE    0
                 bsr     dump
-; T16 : AreaEnd en COMPLEMENT (deux carrés successifs qui se chevauchent)
+; T16: AreaEnd in COMPLEMENT (two successive overlapping squares)
                 BEG     m_t16
                 MODE    2
                 AM      2,2
@@ -411,7 +411,7 @@ _start:
                 AE
                 MODE    0
                 bsr     dump
-; T17 : JAM1 avec AreaPtSz = 2 et motif plein (contour retiré ?)
+; T17: JAM1 with AreaPtSz = 2 and solid pattern (outline removed?)
                 BEG     m_t17
                 lea     pat3(pc),a0
                 move.l  a0,rp+RP_PTRN-vars(a4)
@@ -428,20 +428,20 @@ _start:
                 clr.l   rp+RP_PTRN-vars(a4)
                 clr.b   rp+RP_PTSZ-vars(a4)
                 bsr     dump
-; T18 : Flood mode 1 (couleur), frontière diagonale + îlot de couleur 3
+; T18: Flood mode 1 (colour), diagonal boundary + island of colour 3
                 BEG     m_t18
                 bsr     floodscene
                 PEN     2
                 FL      1,20,3
                 bsr     dump
-; T19 : Flood mode 0 (contour AOlPen = 1), même scène
+; T19: Flood mode 0 (outline AOlPen = 1), same scene
                 BEG     m_t19
                 bsr     floodscene
                 move.b  #1,rp+RP_AOL-vars(a4)
                 PEN     2
                 FL      0,20,3
                 bsr     dump
-; T20 : Flood sans TmpRas, modes 1 puis 0
+; T20: Flood without TmpRas, modes 1 then 0
                 BEG     m_t20
                 bsr     floodscene
                 clr.l   rp+RP_TMPRAS-vars(a4)
@@ -452,7 +452,7 @@ _start:
                 lea     tr-vars(a4),a0
                 move.l  a0,rp+RP_TMPRAS-vars(a4)
                 bsr     dump
-; T21 : Flood mode 1 sur un point déjà à la couleur APen, mode 0 démarrant sur AOlPen, et motif
+; T21: Flood mode 1 on a point already at the APen colour, mode 0 starting on AOlPen, and pattern
                 BEG     m_t21
                 bsr     floodscene
                 move.b  #1,rp+RP_AOL-vars(a4)
@@ -467,7 +467,7 @@ _start:
                 clr.l   rp+RP_PTRN-vars(a4)
                 clr.b   rp+RP_PTSZ-vars(a4)
                 bsr     dump
-; T22 : WritePixel / ReadPixel, valeurs rendues et bornes
+; T22: WritePixel / ReadPixel, returned values and bounds
                 BEG     m_t22
                 PEN     3
                 WP      0,0
@@ -492,7 +492,7 @@ _start:
                 RPX     0,20
                 RPX     -1,0
                 bsr     dump
-; T23 : débordements de l'AreaInfo (MaxCount = 3)
+; T23: AreaInfo overflows (MaxCount = 3)
                 BEG     m_t23
                 lea     ai-vars(a4),a0
                 lea     vbuf-vars(a4),a1
@@ -529,7 +529,7 @@ _start:
                 moveq   #40,d0
                 jsr     LVO_InitArea(a6)
                 bsr     dump
-; T24 : TmpRas déclarée trop petite (Size = 4) pour AreaEnd ; gardes après 80 octets
+; T24: TmpRas declared too small (Size = 4) for AreaEnd; guards after 80 bytes
                 BEG     m_t24
                 lea     tr2-vars(a4),a0
                 lea     O_GRD-80(a5),a1
@@ -556,7 +556,7 @@ _start:
                 lea     tr-vars(a4),a0
                 move.l  a0,rp+RP_TMPRAS-vars(a4)
                 bsr     dump
-; T25 : figures dégénérées (segment horizontal, horizontal, vertical, oblique)
+; T25: degenerate figures (horizontal segment, horizontal, vertical, oblique)
                 BEG     m_t25
                 AM      5,2
                 AD      12,2
@@ -573,13 +573,13 @@ _start:
                 AE
                 bsr     dump
 
-; T26 : AreaEllipse seule, tampon de sommets remis à zéro (pas de résidu après Count)
+; T26: AreaEllipse alone, vertex buffer cleared (no leftovers after Count)
                 BEG     m_t26
                 bsr     zvbuf
                 AEL     16,10,8,6
                 AE
                 bsr     dump
-; T27 : AreaEllipse seule, tampon pré-rempli de sommets (0,0) à drapeau $03 (lecture d'une entrée de trop ?)
+; T27: AreaEllipse alone, buffer pre-filled with (0,0) vertices with flag $03 (one entry too many read?)
                 BEG     m_t27
                 lea     vbuf-vars(a4),a0
                 moveq   #39,d0
@@ -591,7 +591,7 @@ _start:
                 AEL     16,10,8,6
                 AE
                 bsr     dump
-; T28 : drapeaux enregistrés (AREAOUTLINE actif) : horizontal, vertical, oblique, puis AreaEllipse
+; T28: recorded flags (AREAOUTLINE active): horizontal, vertical, oblique, then AreaEllipse
                 BEG     m_t28
                 bsr     zvbuf
                 or.w    #8,rp+RP_FLAGS-vars(a4)
@@ -609,7 +609,7 @@ _start:
                 bsr     dumpvt
                 AE
                 bsr     dump
-; T29 : JAM1 + AreaPtSz = 2 (motif plein) à gauche ; JAM1 + AreaPtSz = 0 à droite
+; T29: JAM1 + AreaPtSz = 2 (solid pattern) on the left; JAM1 + AreaPtSz = 0 on the right
                 BEG     m_t29
                 bsr     zvbuf
                 MODE    0
@@ -629,7 +629,7 @@ _start:
                 AD      16,12
                 AE
                 bsr     dump
-; T30 : JAM1 vs JAM2 avec motif sur fond de couleur 2
+; T30: JAM1 vs JAM2 with pattern over a colour 2 background
                 BEG     m_t30
                 PEN     2
                 RF      0,0,31,19
@@ -656,7 +656,7 @@ _start:
                 AD      2,18
                 AE
                 bsr     dump
-; T31 : AreaEnd sur AreaInfo vide (valeur rendue) ; AreaEllipse rayons nuls ; AreaEllipse puis AreaDraw
+; T31: AreaEnd on an empty AreaInfo (returned value); AreaEllipse with zero radii; AreaEllipse then AreaDraw
                 BEG     m_t31
                 bsr     zvbuf
                 AE
@@ -673,7 +673,7 @@ _start:
                 bsr     dumpfl
                 AE
                 bsr     dump
-; T32 : Flood avec TmpRas.Size énorme (AllocMem chip impossible)
+; T32: Flood with a huge TmpRas.Size (chip AllocMem impossible)
                 BEG     m_t32
                 bsr     floodscene
                 lea     tr2-vars(a4),a0
@@ -688,7 +688,7 @@ _start:
                 lea     tr-vars(a4),a0
                 move.l  a0,rp+RP_TMPRAS-vars(a4)
                 bsr     dump
-; T33 : Flood mode 1 sur une zone en escalier (connexité) et zone fermée en losange
+; T33: Flood mode 1 on a staircase area (connectivity) and a closed diamond-shaped area
                 BEG     m_t33
                 PEN     1
                 MV      16,0
@@ -713,7 +713,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-; --- begin : imprime l'en-tête (a0), efface les plans, remet le RastPort à zéro (pen 1, JAM1)
+; --- begin: prints the header (a0), clears the planes, resets the RastPort (pen 1, JAM1)
 begin:          bsr     puts
                 jsr     LVO_WaitBlit(a6)
                 lea     O_PL0(a5),a0
@@ -732,7 +732,7 @@ begin:          bsr     puts
                 PEN     1
                 rts
 
-; --- floodscene : diagonale (0,0)-(19,19) couleur 1, cadre colonne 24 couleur 1, îlot 2x2 couleur 3 en (14,3)
+; --- floodscene: diagonal (0,0)-(19,19) colour 1, column 24 frame colour 1, 2x2 island colour 3 at (14,3)
 floodscene:     PEN     1
                 MV      0,0
                 LDRAW   19,19
@@ -746,13 +746,13 @@ floodscene:     PEN     1
                 bsr     nl
                 rts
 
-; --- zvbuf : remet à zéro le tampon de sommets et de drapeaux
+; --- zvbuf: clears the vertex and flag buffer
 zvbuf:          lea     vbuf-vars(a4),a0
                 moveq   #49,d0
 .z:             clr.l   (a0)+
                 dbra    d0,.z
                 rts
-; --- dumpai : imprime l'AreaInfo (a0) : pointeurs relatifs à vbuf, Count, MaxCount, FirstX, FirstY
+; --- dumpai: prints the AreaInfo (a0): pointers relative to vbuf, Count, MaxCount, FirstX, FirstY
 dumpai:         move.l  a0,a2
                 lea     vbuf-vars(a4),a3
                 moveq   #3,d2
@@ -767,7 +767,7 @@ dumpai:         move.l  a0,a2
                 bsr     sp1
                 dbra    d2,.w
                 bra     nl
-; --- dumpvt : 6 premiers sommets (x,y) de la table
+; --- dumpvt: first 6 vertices (x,y) of the table
 dumpvt:         lea     vbuf-vars(a4),a2
                 moveq   #11,d2
 .l:             move.w  (a2)+,d0
@@ -775,7 +775,7 @@ dumpvt:         lea     vbuf-vars(a4),a2
                 bsr     sp1
                 dbra    d2,.l
                 bra     nl
-; --- dumpfl : 6 premiers drapeaux
+; --- dumpfl: first 6 flags
 dumpfl:         move.l  ai+8-vars(a4),a2
                 moveq   #5,d2
 .l:             move.b  (a2)+,d0
@@ -783,7 +783,7 @@ dumpfl:         move.l  ai+8-vars(a4),a2
                 bsr     sp1
                 dbra    d2,.l
                 bra     nl
-; --- dump : 20 lignes « plan0 plan1 »
+; --- dump: 20 "plane0 plane1" lines
 dump:           jsr     LVO_WaitBlit(a6)
                 bsr     nl
                 lea     O_PL0(a5),a2
@@ -797,7 +797,7 @@ dump:           jsr     LVO_WaitBlit(a6)
                 addq.l  #4,a2
                 dbra    d2,.r
                 rts
-; --- pres : imprime D0 (mot) suivi d'un espace, conserve D0
+; --- pres: prints D0 (word) followed by a space, preserves D0
 pres:           move.l  d0,-(sp)
                 bsr     phex4
                 bsr     sp1

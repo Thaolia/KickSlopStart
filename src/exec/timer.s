@@ -1,36 +1,36 @@
-; src/exec/timer.s — timer.device — M5c (création AUTOINIT) + M6a (unité VBLANK fonctionnelle).
-; 2e vrai module résident, 1er DEVICE. ROMTag RTF_AUTOINIT (pri 50) -> chemin AUTOINIT de
-; InitResident (MakeLibrary + Enqueue DeviceList). Quirk V34 : la data table pose LN_TYPE +
-; LIB_VERSION et l'init func pose LN_NAME="timer.device" + initialise l'unité VBLANK + enregistre
-; le service VBlank (M7f : timer_vblank_service est un SERVEUR de la chaîne VERTB via AddIntServer,
-; dispatché par int3_dispatch — plus l'ancien hook VBL_SVC).
+; src/exec/timer.s — timer.device — M5c (AUTOINIT creation) + M6a (functional VBLANK unit).
+; 2nd real resident module, 1st DEVICE. RTF_AUTOINIT ROMTag (pri 50) -> AUTOINIT path of
+; InitResident (MakeLibrary + Enqueue DeviceList). V34 quirk: the data table sets LN_TYPE +
+; LIB_VERSION and the init func sets LN_NAME="timer.device" + initialises the VBLANK unit + registers
+; the VBlank service (M7f: timer_vblank_service is a SERVER of the VERTB chain via AddIntServer,
+; dispatched by int3_dispatch — no longer the old VBL_SVC hook).
 ;
-; M6a — UNITÉ VBLANK FONCTIONNELLE (sans CIA) :
-;   BeginIO(TR_ADDREQUEST) : convertit la timeval en TICKS (secs*50 + micro/20000), stocke le
-;     décompte dans TR_TIME, enqueue la requête sur la file de l'unité VBLANK. Disable autour de
-;     la manip (la file est partagée avec le handler VBlank = interruption, pas juste des tâches).
-;   timer_vblank_service : appelé depuis le handler VBlank (IPL 3) chaque tick. Décrémente chaque
-;     requête ; à 0 -> la retire et répond via ReplyMsg (M7i). HISTORIQUE : jusqu'en M7h la réponse
-;     utilisait une routine bespoke (timer_reply) car PutMsg/ReplyMsg appelaient Permit (reschedule
-;     SYNCHRONE interdit en interruption). M7d a rendu PutMsg/ReplyMsg interrupt-safe (Disable INTENA +
-;     raw_enable, SANS tail Permit/yield) -> M7i a supprimé timer_reply et appelle directement ReplyMsg.
-;     Signal (via PutMsg) pose AttnResched sans rescheduler -> le switch se fait à la sortie du handler.
-; UNITÉ MICROHZ (timer B de CIA-A, niveau 2, comme la 1.3 — spec docs/analysis/timer-v34.md) :
-;   l'init prend le bit 1 (timer B) de ciaa.resource par AddICRVector ; timer_micro_service est appelé par
-;   cia_dispatch (serveur PORTS) à chaque fin de one-shot. Le one-shot est armé sur l'échéance la plus proche ; le
-;   temps écoulé est relu sur le compteur. Aucun timer de CIA-B : un jeu qui détourne le vecteur $78 (niveau 6) sans
-;   chaîner ne casse plus les délais système. Conversion en µs réelles (E-clock PAL 709379 Hz).
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs timer.device + exec + spec docs/analysis/timer-v34.md. AUCUNE lecture ROM.
+; M6a — FUNCTIONAL VBLANK UNIT (without CIA):
+;   BeginIO(TR_ADDREQUEST): converts the timeval to TICKS (secs*50 + micro/20000), stores the
+;     countdown in TR_TIME, enqueues the request on the VBLANK unit's queue. Disable around
+;     the manipulation (the queue is shared with the VBlank handler = interrupt, not just tasks).
+;   timer_vblank_service: called from the VBlank handler (IPL 3) every tick. Decrements each
+;     request; at 0 -> removes it and replies via ReplyMsg (M7i). HISTORY: until M7h the reply
+;     used a bespoke routine (timer_reply) because PutMsg/ReplyMsg called Permit (SYNCHRONOUS
+;     reschedule forbidden in an interrupt). M7d made PutMsg/ReplyMsg interrupt-safe (Disable INTENA +
+;     raw_enable, WITHOUT Permit/yield tail) -> M7i removed timer_reply and calls ReplyMsg directly.
+;     Signal (via PutMsg) sets AttnResched without rescheduling -> the switch happens on handler exit.
+; MICROHZ UNIT (CIA-A timer B, level 2, like 1.3 — spec docs/analysis/timer-v34.md):
+;   the init takes bit 1 (timer B) of ciaa.resource through AddICRVector; timer_micro_service is called by
+;   cia_dispatch (PORTS server) at each end of one-shot. The one-shot is armed on the nearest deadline; the
+;   elapsed time is read back from the counter. No CIA-B timer: a game that hijacks vector $78 (level 6) without
+;   chaining no longer breaks the system delays. Conversion into real us (PAL E-clock 709379 Hz).
+; IMPLEMENTATION track ("clean"): AutoDocs timer.device + exec + spec docs/analysis/timer-v34.md. NO ROM reading.
 
                 include "exec.i"
 
-                xdef    timer_now         ; heure système (dos DateStamp)
-                xdef    timer_setnow      ; réglage de l'heure système (globale BCPL setdatstamp)
+                xdef    timer_now         ; system time (dos DateStamp)
+                xdef    timer_setnow      ; setting of the system time (BCPL global setdatstamp)
 
-                xref    newlist           ; lists.s (NEWLIST de la file d'unité)
-                xref    ciaa_server       ; cia.s (distribution des vecteurs ICR de CIA-A)
+                xref    newlist           ; lists.s (NEWLIST of the unit queue)
+                xref    ciaa_server       ; cia.s (distribution of the CIA-A ICR vectors)
 
-; --- ROMTag timer.device (scanné par build_reslist) ---
+; --- timer.device ROMTag (scanned by build_reslist) ---
         EVEN
 timer_romtag:
         dc.w    RTC_MATCHWORD
@@ -39,22 +39,22 @@ timer_romtag:
         dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,50  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    timer_name           ; RT_NAME
         dc.l    timer_name           ; RT_IDSTRING
-        dc.l    timer_inittab        ; RT_INIT -> table AUTOINIT
+        dc.l    timer_inittab        ; RT_INIT -> AUTOINIT table
 timer_name:
         dc.b    "timer.device",0
 timer_cianame:
         dc.b    "ciaa.resource",0
         EVEN
 timer_inittab:
-        dc.l    TD_SIZE              ; dataSize (Library + file d'unité VBLANK)
+        dc.l    TD_SIZE              ; dataSize (Library + VBLANK unit queue)
         dc.l    timer_vectors        ; funcTable
         dc.l    timer_datatab        ; dataTable (InitStruct)
         dc.l    timer_initfunc       ; initFunc
-timer_vectors:                       ; table ABSOLUE, terminée par -1 (ordre device standard)
+timer_vectors:                       ; ABSOLUTE table, terminated by -1 (standard device order)
         dc.l    timer_open           ; LVO -6
         dc.l    timer_close          ; LVO -12
         dc.l    timer_expunge        ; LVO -18
-        dc.l    timer_null           ; LVO -24 (réservé / ExtFunc)
+        dc.l    timer_null           ; LVO -24 (reserved / ExtFunc)
         dc.l    timer_beginio        ; LVO -30
         dc.l    timer_abortio        ; LVO -36
         dc.l    timer_addtime        ; LVO -42 AddTime(dest a0, src a1)
@@ -67,8 +67,8 @@ timer_datatab:
         dc.b    0
         EVEN
 
-; Open(device a6, iorequest a1, unit d0, flags d1) : unité 0 (MICROHZ) ou 1 (VBLANK) -> io_Unit = unité, compte
-; d'ouverture + 1 ; unité >= 2 -> io_Error = IOERR_OPENFAIL, rien de compté (comme la 1.3).
+; Open(device a6, iorequest a1, unit d0, flags d1): unit 0 (MICROHZ) or 1 (VBLANK) -> io_Unit = unit, open
+; count + 1; unit >= 2 -> io_Error = IOERR_OPENFAIL, nothing counted (like 1.3).
 timer_open:
         cmp.l   #UNIT_VBLANK,d0
         bhi.s   .to_fail
@@ -78,7 +78,7 @@ timer_open:
 .to_fail:
         move.b  #IOERR_OPENFAIL,IO_ERROR(a1)
         rts
-; Close(device a6, iorequest a1) : io_Device = io_Unit = -1, compte d'ouverture - 1.
+; Close(device a6, iorequest a1): io_Device = io_Unit = -1, open count - 1.
 timer_close:
         moveq   #-1,d0
         move.l  d0,IO_DEVICE(a1)
@@ -93,9 +93,9 @@ timer_null:
         moveq   #0,d0
         rts
 
-; AddTime(dest a0, src a1) : dest += src, puis tant que micro >= 1 000 000 : une seconde reportée (un micro négatif
-; n'est pas corrigé, comme en 1.3). SubTime(dest a0, src a1) : dest -= src, puis tant que micro < 0 : une seconde
-; empruntée (un micro >= 1 000 000 n'est pas corrigé). Ne lisent pas a6 ; détruisent d0/d1.
+; AddTime(dest a0, src a1): dest += src, then while micro >= 1 000 000: one second carried (a negative micro
+; is not corrected, as in 1.3). SubTime(dest a0, src a1): dest -= src, then while micro < 0: one second
+; borrowed (a micro >= 1 000 000 is not corrected). Do not read a6; destroy d0/d1.
 timer_addtime:
         move.l  TV_SECS-IO_SIZE(a1),d0
         add.l   d0,TV_SECS-IO_SIZE(a0)
@@ -125,7 +125,7 @@ timer_subtime:
 .st_set:
         move.l  d0,TV_MICRO-IO_SIZE(a0)
         rts
-; CmpTime(dest a0, src a1) -> d0 = 0 si égaux, +1 si src > dest, -1 si src < dest (secondes puis µs, sans signe).
+; CmpTime(dest a0, src a1) -> d0 = 0 if equal, +1 if src > dest, -1 if src < dest (seconds then us, unsigned).
 timer_cmptime:
         move.l  TV_SECS-IO_SIZE(a1),d0
         cmp.l   TV_SECS-IO_SIZE(a0),d0
@@ -143,12 +143,12 @@ timer_cmptime:
         moveq   #1,d0
         rts
 
-; BeginIO(device a6, iorequest a1) : M6a — enqueue une requête TR_ADDREQUEST sur l'unité VBLANK.
-; Convertit la timeval en ticks (secs*50 + micro/20000, mini 1), stocke le décompte dans TV_SECS.
-; Disable autour (file partagée avec le handler VBlank).
-; timer_systime(a2 = base timer.device, a6 = SysBase) -> d0 = secondes, d1 = µs de l'heure système : secondes à la
-; référence (TR_SETSYSTIME) + trames écoulées depuis (50 Hz), plus 1 µs par lecture déjà faite dans la même trame :
-; deux lectures successives ne rendent jamais la même heure (comme la 1.3). Préserve d2-d7/a0-a6.
+; BeginIO(device a6, iorequest a1): M6a — enqueues a TR_ADDREQUEST request on the VBLANK unit.
+; Converts the timeval to ticks (secs*50 + micro/20000, min 1), stores the countdown in TV_SECS.
+; Disable around it (queue shared with the VBlank handler).
+; timer_systime(a2 = timer.device base, a6 = SysBase) -> d0 = seconds, d1 = us of the system time: seconds at the
+; reference (TR_SETSYSTIME) + frames elapsed since (50 Hz), plus 1 us per read already made in the same frame:
+; two successive reads never return the same time (like 1.3). Preserves d2-d7/a0-a6.
 timer_systime:
         move.l  d2,-(sp)
         jsr     LVO_DISABLE(a6)
@@ -161,27 +161,27 @@ timer_systime:
         move.l  TIMER_UNIQ(a2),-(sp)
         addq.l  #1,TIMER_UNIQ(a2)
         jsr     LVO_ENABLE(a6)
-        sub.l   TIMER_SYSVBL(a2),d0  ; ticks écoulés depuis la référence (division 32/16 en deux temps)
+        sub.l   TIMER_SYSVBL(a2),d0  ; ticks elapsed since the reference (32/16 division in two steps)
         swap    d0
         moveq   #0,d1
         move.w  d0,d1
-        divu    #50,d1               ; mot haut
+        divu    #50,d1               ; high word
         move.w  d1,d2
         swap    d2
         swap    d0
-        move.w  d0,d1                ; reste:mot bas
+        move.w  d0,d1                ; remainder:low word
         divu    #50,d1
-        move.w  d1,d2                ; d2 = secondes écoulées
+        move.w  d1,d2                ; d2 = elapsed seconds
         swap    d1
-        mulu    #20000,d1            ; reste (ticks) -> µs
-        add.l   (sp)+,d1             ; + rang de la lecture dans la trame
+        mulu    #20000,d1            ; remainder (ticks) -> us
+        add.l   (sp)+,d1             ; + rank of the read within the frame
         add.l   TIMER_SYSSECS(a2),d2
         move.l  d2,d0
         move.l  (sp)+,d2
         rts
 
-; timer_setsys(a2 = base, d0 = secondes, d1 = µs) : nouvelle référence ; l'heure système vaut ensuite
-; d0 + (VBL_COUNT - référence) / 50. Clobbe d0/d1.
+; timer_setsys(a2 = base, d0 = seconds, d1 = us): new reference; the system time is then
+; d0 + (VBL_COUNT - reference) / 50. Clobbers d0/d1.
 timer_setsys:
         clr.l   TIMER_UNIQ(a2)
         move.l  VBL_COUNT,TIMER_UVBL(a2)
@@ -193,8 +193,8 @@ timer_setsys:
         move.l  d0,TIMER_SYSVBL(a2)
         rts
 
-; timer_setnow(a6 = SysBase, d0 = secondes, d1 = µs) : règle l'heure système (TR_SETSYSTIME sans IORequest).
-; Préserve d2-d7/a2-a6.
+; timer_setnow(a6 = SysBase, d0 = seconds, d1 = us): sets the system time (TR_SETSYSTIME without IORequest).
+; Preserves d2-d7/a2-a6.
 timer_setnow:
         movem.l d0-d1/a2,-(sp)
         lea     EB_DEVICELIST(a6),a0
@@ -209,8 +209,8 @@ timer_setnow:
         move.l  (sp)+,a2
         rts
 
-; timer_now(a6 = SysBase) -> d0 = secondes, d1 = µs de l'heure système (0 / 0 sans timer.device). Pour DateStamp.
-; Préserve d2-d7/a2-a6.
+; timer_now(a6 = SysBase) -> d0 = seconds, d1 = us of the system time (0 / 0 without timer.device). For DateStamp.
+; Preserves d2-d7/a2-a6.
 timer_now:
         move.l  a2,-(sp)
         lea     EB_DEVICELIST(a6),a0
@@ -229,9 +229,9 @@ timer_now:
 
 timer_beginio:
         movem.l d2/a2-a4,-(sp)
-        move.l  a6,a2                ; a2 = base device
+        move.l  a6,a2                ; a2 = device base
         move.l  a1,a3                ; a3 = iorequest
-        move.l  ($4).w,a6            ; a6 = SysBase (pour les appels exec)
+        move.l  ($4).w,a6            ; a6 = SysBase (for the exec calls)
         clr.b   IO_ERROR(a3)
         move.w  IO_COMMAND(a3),d0
         cmp.w   #TR_ADDREQUEST,d0
@@ -252,7 +252,7 @@ timer_beginio:
         move.l  d0,TV_SECS(a3)
         move.l  d1,TV_MICRO(a3)
 .bio_done:
-        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK : terminé sur place ; sinon réponse au reply port
+        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK: completed in place; otherwise reply to the reply port
         bne.s   .bio_ret
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
@@ -261,65 +261,65 @@ timer_beginio:
         movem.l (sp)+,d2/a2-a4
         rts
 .bio_add:
-        jsr     LVO_DISABLE(a6)      ; files partagées avec le serveur VBlank et l'interruption du CIA-A
+        jsr     LVO_DISABLE(a6)      ; queues shared with the VBlank server and the CIA-A interrupt
         move.b  #NT_MESSAGE,LN_TYPE(a3)
-        bclr    #0,IO_FLAGS(a3)      ; requête mise en file : jamais rapide (DoIO attendra la réponse)
+        bclr    #0,IO_FLAGS(a3)      ; request queued: never quick (DoIO will wait for the reply)
         cmp.l   #UNIT_VBLANK,IO_UNIT(a3)
         beq.s   .bio_vbl
-        bsr     tm_conv              ; MICROHZ : reste en (secondes, ticks E)
+        bsr     tm_conv              ; MICROHZ: remainder in (seconds, E ticks)
         move.l  a3,-(sp)
-        bsr     tm_account           ; temps écoulé imputé aux requêtes déjà en file AVANT d'ajouter celle-ci
+        bsr     tm_account           ; elapsed time charged to the requests already queued BEFORE adding this one
         move.l  (sp)+,a1
         lea     TIMER_MICROQ(a2),a0
         jsr     LVO_ADDTAIL(a6)
         bsr     tm_rearm
         bra.s   .bio_queued
 .bio_vbl:
-        move.l  TV_SECS(a3),d0       ; VBLANK : échéance au k-ième VBLANK, k = max(1, ⌈T / 20000 µs⌉)
+        move.l  TV_SECS(a3),d0       ; VBLANK: deadline at the k-th VBLANK, k = max(1, ceil(T / 20000 us))
         move.l  TV_MICRO(a3),d1
         mulu    #50,d0
         add.l   #20000-1,d1
         divu    #20000,d1
-        and.l   #$0000FFFF,d1        ; quotient divu (mot bas)
+        and.l   #$0000FFFF,d1        ; divu quotient (low word)
         add.l   d1,d0
         bne.s   .bio_store
-        moveq   #1,d0                ; mini 1 (évite expiration immédiate)
+        moveq   #1,d0                ; min 1 (avoids immediate expiry)
 .bio_store:
-        move.l  d0,TV_SECS(a3)       ; décompte (TV_SECS réutilisé)
+        move.l  d0,TV_SECS(a3)       ; countdown (TV_SECS reused)
         clr.l   TV_MICRO(a3)
         lea     TIMER_VBLQ(a2),a0
         move.l  a3,a1
         jsr     LVO_ADDTAIL(a6)
 .bio_queued:
         jsr     LVO_ENABLE(a6)
-        move.l  a2,a6                ; restaure a6 = base device
+        move.l  a2,a6                ; restore a6 = device base
         movem.l (sp)+,d2/a2-a4
         rts
 
-; tm_div1000(d0 = dividende) -> d0 = quotient, d1 = reste de la division par 1000. Préserve d2-d7/a0-a6.
+; tm_div1000(d0 = dividend) -> d0 = quotient, d1 = remainder of the division by 1000. Preserves d2-d7/a0-a6.
 tm_div1000:
         move.l  d2,-(sp)
         moveq   #0,d1
         swap    d0
         move.w  d0,d1
-        divu    #1000,d1             ; d1 = reste : quotient du mot haut
+        divu    #1000,d1             ; d1 = remainder: quotient of the high word
         move.w  d1,d2
         swap    d0
-        move.w  d0,d1                ; reste : mot bas
+        move.w  d0,d1                ; remainder: low word
         divu    #1000,d1
         swap    d2
-        move.w  d1,d2                ; d2 = quotient complet
+        move.w  d1,d2                ; d2 = complete quotient
         clr.w   d1
-        swap    d1                   ; d1 = reste
+        swap    d1                   ; d1 = remainder
         move.l  d2,d0
         move.l  (sp)+,d2
         rts
 
-; tm_conv(a3 = requête MICROHZ) : timeval -> reste (TV_SECS secondes, TV_MICRO ticks E dans la seconde), au moins
-; 1 tick. µs normalisées (>= 1 s reportées dans les secondes). Clobbe d0/d1.
+; tm_conv(a3 = MICROHZ request): timeval -> remainder (TV_SECS seconds, TV_MICRO E ticks within the second), at least
+; 1 tick. us normalised (>= 1 s carried into the seconds). Clobbers d0/d1.
 tm_conv:
                 ifne    M7L_OLD_CONV
-        move.l  TV_SECS(a3),d0       ; RED : ancienne conversion VBLANK (/20000) appliquée à des pas de 255 ticks
+        move.l  TV_SECS(a3),d0       ; RED: old VBLANK conversion (/20000) applied to steps of 255 ticks
         mulu    #50,d0
         move.l  TV_MICRO(a3),d1
         divu    #20000,d1
@@ -329,18 +329,18 @@ tm_conv:
         clr.l   TV_SECS(a3)
                 else
         move.l  TV_MICRO(a3),d0
-        bsr.s   tm_div1000           ; d0 = ms, d1 = µs (0-999)
+        bsr.s   tm_div1000           ; d0 = ms, d1 = us (0-999)
         move.l  d1,-(sp)
-        bsr.s   tm_div1000           ; d0 = secondes en plus, d1 = ms (0-999)
+        bsr.s   tm_div1000           ; d0 = extra seconds, d1 = ms (0-999)
         add.l   d0,TV_SECS(a3)
         move.l  d1,d0
-        mulu    #E_PER_SEC/1000,d0   ; ms -> ticks : ms × 709,379
+        mulu    #E_PER_SEC/1000,d0   ; ms -> ticks: ms x 709.379
         mulu    #E_PER_SEC//1000,d1
         divu    #1000,d1
         and.l   #$0000FFFF,d1
         add.l   d1,d0
         move.l  (sp)+,d1
-        mulu    #E_PER_SEC/1000,d1   ; µs -> ticks : µs × 0,709
+        mulu    #E_PER_SEC/1000,d1   ; us -> ticks: us x 0.709
         divu    #1000,d1
         and.l   #$0000FFFF,d1
         add.l   d1,d0
@@ -354,34 +354,34 @@ tm_conv:
         move.l  d0,TV_MICRO(a3)
         rts
 
-; tm_account(a2 = base, a6 = SysBase ; sous Disable ou dans l'interruption) : arrête le timer B de CIA-A, impute le temps
-; écoulé depuis son armement à chaque requête MICROHZ, répond à celles qui sont échues. Clobbe d0-d2/a0/a1/a3/a4.
+; tm_account(a2 = base, a6 = SysBase; under Disable or in the interrupt): stops CIA-A timer B, charges the time
+; elapsed since it was armed to each MICROHZ request, replies to those that are due. Clobbers d0-d2/a0/a1/a3/a4.
 tm_account:
         move.l  TIMER_ARMED(a2),d2
         beq.s   .ta_ret
         clr.l   TIMER_ARMED(a2)
         lea     CIAA_HW,a0
         btst    #0,CIA_CRB(a0)
-        beq.s   .ta_spent            ; START retombé : le one-shot est arrivé au bout
-        bclr    #0,CIA_CRB(a0)       ; arrêt (compteur figé) : seul START, comme la 1.3
+        beq.s   .ta_spent            ; START dropped: the one-shot ran to the end
+        bclr    #0,CIA_CRB(a0)       ; stop (counter frozen): START only, like 1.3
         moveq   #0,d0
         move.b  CIA_TBHI(a0),d0
         lsl.w   #8,d0
         move.b  CIA_TBLO(a0),d0
         cmp.l   d2,d0
-        bhs.s   .ta_spent            ; compteur rechargé : arrivé au bout juste avant l'arrêt
-        sub.l   d0,d2                ; écoulé = armé - restant
+        bhs.s   .ta_spent            ; counter reloaded: reached the end just before the stop
+        sub.l   d0,d2                ; elapsed = armed - remaining
 .ta_spent:
         lea     TIMER_MICROQ(a2),a3
         move.l  (a3),a3
 .ta_loop:
-        move.l  (a3),a4              ; a4 = suivant (0 : sentinelle de fin)
+        move.l  (a3),a4              ; a4 = next (0: end sentinel)
         cmpa.w  #0,a4
         beq.s   .ta_ret
         move.l  TV_MICRO(a3),d0
         sub.l   d2,d0
         bpl.s   .ta_nb
-        add.l   #E_PER_SEC,d0        ; emprunt d'une seconde (écoulé < 1 s)
+        add.l   #E_PER_SEC,d0        ; borrow of one second (elapsed < 1 s)
         subq.l  #1,TV_SECS(a3)
 .ta_nb:
         move.l  d0,TV_MICRO(a3)
@@ -394,15 +394,15 @@ tm_account:
         move.l  a3,a1
         jsr     LVO_REMOVE(a6)
         move.l  a3,a1
-        jsr     LVO_REPLYMSG(a6)     ; interrupt-safe (Disable/raw_enable, pas de yield)
+        jsr     LVO_REPLYMSG(a6)     ; interrupt-safe (Disable/raw_enable, no yield)
 .ta_next:
         move.l  a4,a3
         bra.s   .ta_loop
 .ta_ret:
         rts
 
-; tm_rearm(a2 = base ; timer arrêté par tm_account) : arme le one-shot sur l'échéance la plus proche, au plus
-; TIMER_CAP ticks ; file vide : timer laissé arrêté. Clobbe d0/d2/a0.
+; tm_rearm(a2 = base; timer stopped by tm_account): arms the one-shot on the nearest deadline, at most
+; TIMER_CAP ticks; empty queue: timer left stopped. Clobbers d0/d2/a0.
 tm_rearm:
         lea     TIMER_MICROQ(a2),a0
         move.l  (a0),a0
@@ -413,7 +413,7 @@ tm_rearm:
         tst.l   (a0)
         beq.s   .tr_arm
         tst.l   TV_SECS(a0)
-        bne.s   .tr_next             ; au moins 1 s : plafond
+        bne.s   .tr_next             ; at least 1 s: cap
         move.l  TV_MICRO(a0),d0
         cmp.l   d2,d0
         bhs.s   .tr_next
@@ -426,17 +426,17 @@ tm_rearm:
         move.b  d2,CIA_TBLO(a0)
         move.w  d2,d0
         lsr.w   #8,d0
-        move.b  d0,CIA_TBHI(a0)      ; one-shot : l'écriture du poids fort charge le compteur
-        move.b  #$19,CIA_CRB(a0)     ; START + one-shot + LOAD, horloge E, ALARM = 0 (TOD en mode heure)
+        move.b  d0,CIA_TBHI(a0)      ; one-shot: writing the high byte loads the counter
+        move.b  #$19,CIA_CRB(a0)     ; START + one-shot + LOAD, E clock, ALARM = 0 (TOD in time mode)
         move.l  d2,TIMER_ARMED(a2)
 .tr_ret:
         rts
 
-; AbortIO(device a6, iorequest a1) -> d0 : une requête encore en file (ln_Type = NT_MESSAGE et IOF_QUICK à 0) est
-; retirée et rendue avec io_Error = IOERR_ABORTED, d0 = 0 ; une requête qui n'est pas en file est laissée telle
-; quelle, d0 = -1 (comme en 1.3).
-; (Sans ce retrait, une requête abandonnée par un programme qui se termine expirait plus tard et répondait sur son
-; port libéré, dans de la mémoire réutilisée.)
+; AbortIO(device a6, iorequest a1) -> d0: a request still queued (ln_Type = NT_MESSAGE and IOF_QUICK at 0) is
+; removed and returned with io_Error = IOERR_ABORTED, d0 = 0; a request that is not queued is left as
+; is, d0 = -1 (as in 1.3).
+; (Without this removal, a request abandoned by a terminating program expired later and replied on its
+; freed port, into reused memory.)
 timer_abortio:
         movem.l a2/a6,-(sp)
         move.l  a1,a2
@@ -445,7 +445,7 @@ timer_abortio:
         moveq   #-1,d0
         cmp.b   #NT_MESSAGE,LN_TYPE(a2)
         bne.s   .ab_done
-        btst    #0,IO_FLAGS(a2)      ; IOF_QUICK : terminée sur place (DoIO), jamais mise en file -> rien à retirer
+        btst    #0,IO_FLAGS(a2)      ; IOF_QUICK: completed in place (DoIO), never queued -> nothing to remove
         bne.s   .ab_done
         move.l  a2,a1
         jsr     LVO_REMOVE(a6)
@@ -460,31 +460,31 @@ timer_abortio:
         movem.l (sp)+,a2/a6
         rts
 
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom (quirk V34),
-; NEWLIST l'unité VBLANK, enregistre le service VBlank.
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Sets the name (V34 quirk),
+; NEWLISTs the VBLANK unit, registers the VBlank service.
 timer_initfunc:
         move.l  d0,a1                ; a1 = base
         lea     timer_name(pc),a0
         move.l  a0,LN_NAME(a1)
-        move.l  d0,-(sp)             ; sauve la base
-        lea     TIMER_VBLQ(a1),a1    ; NEWLIST file d'unité VBLANK
-        jsr     newlist              ; (clobbe a0 ; a6 préservé)
-        move.l  (sp),a1              ; relit la base (sans dépiler)
-        lea     TIMER_MICROQ(a1),a1  ; NEWLIST file d'unité MICROHZ (timer B de CIA-A)
+        move.l  d0,-(sp)             ; save the base
+        lea     TIMER_VBLQ(a1),a1    ; NEWLIST VBLANK unit queue
+        jsr     newlist              ; (clobbers a0; a6 preserved)
+        move.l  (sp),a1              ; reread the base (without popping)
+        lea     TIMER_MICROQ(a1),a1  ; NEWLIST MICROHZ unit queue (CIA-A timer B)
         jsr     newlist
         move.l  (sp)+,d0             ; base
-        move.l  d0,VBL_SVCDATA       ; data = base device (lue aussi par timer_micro_service)
-        ; M7f : timer_vblank devient un SERVEUR de la chaîne VERTB (remplace l'ancien hook VBL_SVC).
-        ; struct Interrupt en RAM basse réservée (AddIntServer l'Enqueue). pri 0 : après sched_server(20).
+        move.l  d0,VBL_SVCDATA       ; data = device base (also read by timer_micro_service)
+        ; M7f: timer_vblank becomes a SERVER of the VERTB chain (replaces the old VBL_SVC hook).
+        ; struct Interrupt in reserved low RAM (AddIntServer Enqueues it). pri 0: after sched_server(20).
         move.b  #0,TIMER_VBL_INT+LN_PRI
-        move.l  d0,TIMER_VBL_INT+IS_DATA        ; IS_DATA = base device -> passée en a1 au service
+        move.l  d0,TIMER_VBL_INT+IS_DATA        ; IS_DATA = device base -> passed in a1 to the service
         move.l  #timer_vblank_service,TIMER_VBL_INT+IS_CODE
-        move.l  d0,-(sp)             ; sauve la base (AddIntServer clobbe d0/d1/a0/a1)
+        move.l  d0,-(sp)             ; save the base (AddIntServer clobbers d0/d1/a0/a1)
         moveq   #INTB_VERTB,d0       ; AddIntServer(VERTB, &TIMER_VBL_INT)
         lea     TIMER_VBL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
-        move.b  #$08,CIAA_HW+CIA_CRB ; timer B de CIA-A : one-shot, horloge E, arrêté
-        lea     timer_cianame(pc),a1 ; MICROHZ : bit 1 (timer B) de ciaa.resource -> niveau 2
+        move.b  #$08,CIAA_HW+CIA_CRB ; CIA-A timer B: one-shot, E clock, stopped
+        lea     timer_cianame(pc),a1 ; MICROHZ: bit 1 (timer B) of ciaa.resource -> level 2
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
         beq.s   .ti_nocia
@@ -494,75 +494,75 @@ timer_initfunc:
         lea     timer_micro_int(pc),a1
         jsr     CIA_ADDICRVECTOR(a6)
         move.l  (sp)+,a6
-        move.l  (sp)+,d0             ; d0 = base (valeur de retour inchangée)
+        move.l  (sp)+,d0             ; d0 = base (return value unchanged)
         rts
 .ti_nocia:
         move.l  d7,-(sp)
-        move.l  #AN_TIMERCIARSRC,d7  ; ciaa.resource absente : comme la 1.3, alerte et pas de timer.device
+        move.l  #AN_TIMERCIARSRC,d7  ; ciaa.resource missing: like 1.3, alert and no timer.device
         jsr     LVO_ALERT(a6)
         move.l  (sp)+,d7
         addq.l  #4,sp
         moveq   #0,d0
         rts
 
-; timer_vblank_service(a1 = IS_DATA = base device, a6 = SysBase) : M7f — SERVEUR de la chaîne VERTB
-; (plus un hook). Décrémente chaque requête de la file VBLANK ; à 0 -> Remove + ReplyMsg (M7i :
-; interrupt-safe, sans Permit). Convention serveur : préserve d2-d7/a2-a4 (movem d0-d2/a0-a4 couvre
-; d2/a2-a4 ; ne touche PAS d3-d7/a5) et retourne Z-SET (d0=0) = « continue la chaîne » (call-all).
+; timer_vblank_service(a1 = IS_DATA = device base, a6 = SysBase): M7f — SERVER of the VERTB chain
+; (no longer a hook). Decrements each request of the VBLANK queue; at 0 -> Remove + ReplyMsg (M7i:
+; interrupt-safe, without Permit). Server convention: preserves d2-d7/a2-a4 (movem d0-d2/a0-a4 covers
+; d2/a2-a4; does NOT touch d3-d7/a5) and returns Z-SET (d0=0) = "continue the chain" (call-all).
 timer_vblank_service:
         movem.l d0-d2/a0-a5,-(sp)
-        move.l  a1,a2                ; a2 = base device
-        tst.b   INT2_BUSY            ; reprise d'une interruption de CIA-A perdue : one-shot MICROHZ armé, arrivé au
-        bne.s   .svc_vbl             ; bout (START retombé), et aucune interruption de niveau 2 en cours pour le servir
-        tst.l   TIMER_ARMED(a2)      ; (événement d'ICR perdu : course de lecture du 8520, ou file d'événements pleine
-        beq.s   .svc_vbl             ; sous FS-UAE). Le CIA-A garderait sinon son bit IR levé et ne demanderait plus
-        btst    #0,CIAA_HW+CIA_CRB   ; jamais d'interruption (clavier compris) : on lit l'ICR et on distribue ici.
+        move.l  a1,a2                ; a2 = device base
+        tst.b   INT2_BUSY            ; recovery of a lost CIA-A interrupt: MICROHZ one-shot armed, ran to
+        bne.s   .svc_vbl             ; the end (START dropped), and no level-2 interrupt in progress to serve it
+        tst.l   TIMER_ARMED(a2)      ; (lost ICR event: 8520 read race, or event queue full
+        beq.s   .svc_vbl             ; under FS-UAE). Otherwise CIA-A would keep its IR bit set and never request
+        btst    #0,CIAA_HW+CIA_CRB   ; an interrupt again (keyboard included): we read the ICR and dispatch here.
         bne.s   .svc_vbl
         jsr     ciaa_server
 .svc_vbl:
         lea     TIMER_VBLQ(a2),a4
-        move.l  (a4),a3              ; a3 = lh_Head (1re requête ou sentinelle)
+        move.l  (a4),a3              ; a3 = lh_Head (1st request or sentinel)
 .svc_loop:
-        move.l  (a3),d2              ; d2 = a3->Succ ; 0 => sentinelle tail -> fin
+        move.l  (a3),d2              ; d2 = a3->Succ; 0 => tail sentinel -> end
         beq.s   .svc_done
-        subq.l  #1,TV_SECS(a3)       ; décompte ce tick
-        bgt.s   .svc_cont            ; > 0 -> pas encore expiré
-        move.l  a3,a1                ; expiré : Remove(a3)
+        subq.l  #1,TV_SECS(a3)       ; count down this tick
+        bgt.s   .svc_cont            ; > 0 -> not expired yet
+        move.l  a3,a1                ; expired: Remove(a3)
         jsr     LVO_REMOVE(a6)
-        move.l  a3,a1                ; M7i : ReplyMsg(a3) — interrupt-safe depuis M7d (Disable/raw_enable,
-        jsr     LVO_REPLYMSG(a6)     ; PAS de Permit/yield) ; préserve d2/a2/a4 (invariants de boucle)
+        move.l  a3,a1                ; M7i: ReplyMsg(a3) — interrupt-safe since M7d (Disable/raw_enable,
+        jsr     LVO_REPLYMSG(a6)     ; NO Permit/yield); preserves d2/a2/a4 (loop invariants)
 .svc_cont:
-        move.l  d2,a3                ; a3 = Succ sauvé (valide même après Remove)
+        move.l  d2,a3                ; a3 = saved Succ (valid even after Remove)
         bra.s   .svc_loop
 .svc_done:
         movem.l (sp)+,d0-d2/a0-a5
-        moveq   #0,d0               ; M7f : Z-SET -> « continue la chaîne » (serveur call-all VERTB)
+        moveq   #0,d0               ; M7f: Z-SET -> "continue the chain" (VERTB call-all server)
         rts
 
-; M7i : timer_reply (routine bespoke M7c) SUPPRIMÉE — remplacée par ReplyMsg. M7d a rendu PutMsg/GetMsg/
-; ReplyMsg interrupt-safe (Disable INTENA + raw_enable, SANS tail Permit/yield), donc le hack bas-niveau
-; qui évitait le reschedule synchrone de Permit n'a plus de raison d'être : les services VBLANK/MICROHZ
-; appellent directement LVO_REPLYMSG (AddTail + Signal + marque NT_REPLYMSG, atomique, aucun yield en IRQ).
+; M7i: timer_reply (bespoke M7c routine) REMOVED — replaced by ReplyMsg. M7d made PutMsg/GetMsg/
+; ReplyMsg interrupt-safe (Disable INTENA + raw_enable, WITHOUT Permit/yield tail), so the low-level hack
+; that avoided Permit's synchronous reschedule no longer has a reason to exist: the VBLANK/MICROHZ services
+; call LVO_REPLYMSG directly (AddTail + Signal + NT_REPLYMSG mark, atomic, no yield in IRQ).
 
-; timer_micro_service(a6 = SysBase ; a1 = IS_DATA, inutilisé) : vecteur ICR bit 1 de ciaa.resource, appelé par
-; cia_dispatch (serveur PORTS, niveau 2) à chaque fin de one-shot du timer B de CIA-A. Base lue dans VBL_SVCDATA.
-; Convention vecteur ICR : préserve d2/d3/a2 (variables de boucle de cia_dispatch).
+; timer_micro_service(a6 = SysBase; a1 = IS_DATA, unused): ICR bit 1 vector of ciaa.resource, called by
+; cia_dispatch (PORTS server, level 2) at each end of one-shot of CIA-A timer B. Base read from VBL_SVCDATA.
+; ICR vector convention: preserves d2/d3/a2 (loop variables of cia_dispatch).
 timer_micro_service:
         movem.l d0-d2/a0-a4,-(sp)
         move.l  VBL_SVCDATA,a2
         move.l  a2,d0
-        beq.s   .mic_ret             ; timer non initialisé -> rien
+        beq.s   .mic_ret             ; timer not initialised -> nothing
         bsr     tm_account
         bsr     tm_rearm
 .mic_ret:
         movem.l (sp)+,d0-d2/a0-a4
         rts
 
-; struct Interrupt de l'unité MICROHZ : enregistrée sur ciaa.resource (ICR bit 1 = timer B) via AddICRVector.
-; IS_CODE -> timer_micro_service. IS_DATA inutilisé (le service lit VBL_SVCDATA).
+; struct Interrupt of the MICROHZ unit: registered on ciaa.resource (ICR bit 1 = timer B) via AddICRVector.
+; IS_CODE -> timer_micro_service. IS_DATA unused (the service reads VBL_SVCDATA).
         EVEN
 timer_micro_int:
-        dcb.b   14,0                ; struct Node (non chaîné ; AddICRVector ne stocke que le ptr)
+        dcb.b   14,0                ; struct Node (not linked; AddICRVector only stores the ptr)
         dc.l    0                   ; IS_DATA
         dc.l    timer_micro_service ; IS_CODE
         EVEN

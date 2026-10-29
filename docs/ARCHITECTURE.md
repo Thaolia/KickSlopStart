@@ -1,1225 +1,1225 @@
 # Architecture
 
-## Modèle de ROM (Kickstart 1.3, 256K)
+## ROM model (Kickstart 1.3, 256K)
 
-- Image de **262 144 octets**, chargée à **`$FC0000`** (mappée aussi à `$0` au reset via l'overlay OVL).
-- En-tête de reset aux 8 premiers octets : longword `$0` = SSP initial (`0x11114EF9`, mot ROM-ID
-  `0x1111` + opcode `0x4EF9`), longword `$4` = PC initial = adresse de coldstart (`$FC00D2` sur une
-  ROM authentique ; instruction `RESET` `$4E70` à `$FC00D0`).
-- Footer (format conteneur, cf. amitools) : checksum longword à `taille-0x18`, champ taille à
-  `taille-0x14`, 8 mots `0x0018..0x001F` à `taille-0x10`. Checksum valide = somme des longwords
-  (retenue repliée) égale à `0xFFFFFFFF`. **Non vérifié par l'OS avant la V37**, mais exigé par les outils.
+- Image of **262,144 bytes**, loaded at **`$FC0000`** (also mapped at `$0` on reset via the OVL overlay).
+- Reset header in the first 8 bytes: longword `$0` = initial SSP (`0x11114EF9`, ROM-ID word
+  `0x1111` + opcode `0x4EF9`), longword `$4` = initial PC = coldstart address (`$FC00D2` on an
+  authentic ROM; `RESET` instruction `$4E70` at `$FC00D0`).
+- Footer (container format, see amitools): checksum longword at `taille-0x18`, size field at
+  `taille-0x14`, 8 words `0x0018..0x001F` at `taille-0x10`. Valid checksum = sum of the longwords
+  (carry folded back) equal to `0xFFFFFFFF`. **Not verified by the OS before V37**, but required by the tools.
 
-## Modules résidents (ROMTags)
+## Resident modules (ROMTags)
 
-L'OS se construit par un scan de modules résidents (struct `Resident`, matchword `0x4AFC`) dans
-l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail d'ABI sont dans
-`docs/analysis/` (piste analyse). Résumé de l'ordre d'init :
+The OS builds itself through a scan of resident modules (struct `Resident`, matchword `0x4AFC`) in
+**decreasing priority** order. The 24 modules of 34.5 and the ABI details are in
+`docs/analysis/` (analysis track). Summary of the init order:
 
 `exec`(120) → `expansion`(110) → `potgo`/`keymap`(100) → `cia`(80) → `disk`/`misc`/`ramlib`(70) →
 `graphics`(65) → `keyboard`/`gameport`(60) → `timer`(50) → `audio`/`input`(40) → `layers`(31) →
 `console`/`trackdisk`(20) → `intuition`(10) → `alert.hook`(5) → `mathffp`/`workbench.task`/`dos`(0) →
 `romboot`(-40) → `strap`(-60).
 
-## Structure `src/` (piste clean)
+## `src/` structure (clean track)
 
-| Dossier | Contenu prévu |
+| Folder | Planned contents |
 |---------|---------------|
-| `src/rom/` | hello-ROM M0 (`start.s`) + `mkrom.py` (padding + footer + checksum) |
-| `src/exec/` | exec.library, découpée en modules reliés par vlink : `exec.i` (constantes/ABI), `boot.s` (en-tête/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (listes + Enqueue/Insert/RemHead/RemTail), `memory.s` (AllocMem/FreeMem multi-header, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable avec yield-sur-reschedule, jump table ; **`OpenLibrary`/`CloseLibrary`/`OldOpenLibrary`** : ouverture par nom = Forbid + `FindName(LibList)` + gate de version (`lib_Version >= version`, sinon 0) + appel du vecteur Open/-6 de la lib ; chargement disque ramlib si non-résidente différé à M6), `tasks.s` (AddTask, FindTask, signaux, Signal réveillant les tâches bloquées + demandant un reschedule si prioritaire, SetTaskPri), `ports.s` (AddPort/RemPort en Forbid ; M7d : PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomiques vs une IRQ qui touche le même MP_MSGLIST), `interrupts.s` (init_ints + handlers INT2/INT3/INT6/TRAP partageant un **prologue commun** `movem` (à l'IPL **natif** depuis M7e) et un **épilogue commun** `intr_exit` ; M7f : les 3 autovecteurs utilisés sont UNIFORMES — `int2_dispatch`(PORTS)/`int3_dispatch`(niveau 3)/`int6_dispatch`(EXTER) passent par `intr_dispatch_number` -> chaîne de serveurs ; la décision round-robin est `sched_server`, serveur de la chaîne VERTB ; M7g : `int3_dispatch` décode `INTREQR` et dispatche CHAQUE source de niveau 3 en attente (COPER/VERTB/BLIT) ; M7c : tâches **user-mode** sur **SSP partagée**, `dispatch` **relocalise** la frame de contexte SSP↔pile user et sauve le nesting par-tâche, `dispatch_in` rte en user-mode ; switch volontaire via `trap #0`/`#1` ; **flag de dispatch différé** `intr_isr_defer` à la sortie d'IRQ quand un serveur pose `AttnResched` ; M7e : section critique du switch montée à **IPL7 bref** = gate de ré-entrance des listes, instantané vs le délai de propagation d'INTENA ; dispatcher par numéro `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (scan ROM des ROMTags → `ResModules` pri-trié, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — création lib/device, chemin AUTOINIT), `resident.s` ajoute aussi `AddResource`/`OpenResource` ; **`cia.s`** (`cia.resource` : 1er vrai module résident — ciaa/ciab + serveurs PORTS/EXTER `ciaa_server`/`ciab_server` + dispatch ICR), **`timer.s`** (`timer.device` : 2e vrai résident, device AUTOINIT + unité VBLANK + unité MICROHZ via CIA-B/INT6), **`trackdisk.s`** (`trackdisk.device` — **B1/M6t** : 2e device, ROMTag AUTOINIT pri 20 → DeviceList ; `Open` valide le numéro d'unité (DF0-3 → io_Unit = aire de l'unité, io_Device = base, OpenCnt++ ; unité ≥ 4 → échec OpenDevice io_Error/io_Device=0) ; `BeginIO` (**B4/M6w** puis **multi-piste M6z** : traite **`CMD_READ`** — convertit l'offset octet en (piste, secteur) via `bloc=offset/512`, `piste=bloc/11`, `secteur=bloc%11`, boucle sur CHAQUE piste touchée via td_read_track+td_decode_track, copie jusqu'à la fin de piste et avance → une requête TRAVERSANT une frontière de piste est servie en plusieurs lectures ; gardes `IOERR_BADLENGTH` (offset/length multiples de TD_SECTOR) et `TD_DISKBYTES` (borne) ; autres commandes → IOERR_NOCMD ; **ReplyMsg si non-quick** écrit mais seul le chemin QUICK est prouvé pour l'instant — le non-quick sera exercé par un vrai `DoIO` en C) ; unités = placeholders → Unit+MsgPort en B2. **B2/M6u** : `td_read_track0` lit une piste MFM brute de DF0 — CIA-B DDRB=$FF + PRB moteur/select DF0 (latch via front SEL0), spin-up (poll DSKRDY timeout), **disk DMA Paula** (ADKCON WORDSYNC, DSKSYNC=$4489, DSKPT, DSKLEN×2), poll `INTREQR` DSKBLK avec timeout ; registres/bits dans `disk.i`. N'écrit QUE CIA-B PRB (timers MICROHZ/M7a intacts). **B2b/M6x** : `td_read_track(n°)` seek d'abord — recalibration à la piste 0 (step OUT via DSKDIREC jusqu'à DSKTRACK0) puis step IN jusqu'au cylindre cible + side-select (DSKSIDE selon piste&1) → lit n'importe quelle piste ; `td_decode_track` renvoie le n° de piste décodé (oracle du seek). **B3/M6v** : `td_decode_track` scanne les syncs $4489, décode chaque secteur (combine odd/even `((odd&$55555555)<<1)|(even&$55555555)`), vérifie les checksums en-tête ET data (XOR des longs MFM & masque), range les 512 o par n° de secteur → 11 secteurs décodés+vérifiés, secteur 0 = bootblock « DOS\0 » ; algorithme verrouillé par round-trip Python), **`strap.s`** (`strap_boot` — **M6r** : ÉCHAFAUDAGE de la décision de boot ; renvoie 0 = aucun volume bootable → l'appelant **route** l'affichage de l'écran insert-disk par cette décision ; `FindName(trackdisk)` + CMD_READ + validation/exécution du bootblock viendront aux incréments B/C) ; script linker `kick.ld`, `execmisc.s` (LVO exec V34 complémentaires : SetFunction, Cause/SOFTINT, Alert, SuperState…) |
-| `src/graphics/` | piste graphique (M4+) : `graphics.i` (registres d'affichage OCS dérivés de `CUSTOM` : COP1LC/COPJMP1/DIW/DDF (overscan 352×272)/BPLCON0/1/BPL1-2MOD/BPL1PT/COLOR00-01 + bits DMACON ; dimensions écran de boot), `gfx.s` (`gfx_display_init` — **M6s** : alloue 5 bitplanes chip, Y COPIE l'**écran de boot** (image chaton « KickSlopStart » 352×272×5 = 32 couleurs, overscan) depuis la ROM, monte BitMap/ViewPort/View/ColorMap(32), `FindName("graphics.library")`, puis `MakeVPort`/`MrgCop`/`LoadView` **via la jump table** → la copper list (5 pointeurs de plan + 32 couleurs) est GÉNÉRÉE par l'ABI ; restaure `a6`=SysBase. Historique M4a/M4b/M4c2 : écran rayé 1 plan, remplacé ici par l'image), **`graphics_lib.s`** (`graphics.library` — ROMTag AUTOINIT pri 65 → `MakeLibrary` dans `LibList`, **M4c1** ; **M4c2** moteur d'affichage, **M6s** : `MakeVPort` rendu **GÉNÉRIQUE** — émet un pointeur BPLxPT par plan (depth) + `cm_Count` couleurs COLOR00.. → supporte 1 plan/2 couleurs comme 5 plans/32 couleurs ; `MrgCop` fusionne → `v_LOFCprList`, `LoadView` installe COP1LC + `DMACON`), `mk_bootscreen.py` (pipeline Pillow générant les données de l'écran de boot : JPEG utilisateur → 352×272 → quantize 32 couleurs → 5 bitplanes planar, **auto-vérifié** ; sort `bootscreen.raw` + palette OCS + PNG de référence) + `bootscreen_data.s` (GÉNÉRÉ : palette + `incbin bootscreen.raw`). Discriminant VISUEL (nb de couleurs uniques capturées) ; preuve par élimination (RED `BOOTSCR_ONE_PLANE`) ; **`draw.s`** (étape 6 WB) : primitives de dessin dans un RastPort (Move/Draw/RectFill/SetRast/WritePixel/Text/ScrollRaster…), découpage par les bornes de `rp_Layer` ; remplissages par `dr_rect` (une fois par ClipRect et par plan, longs/mots) et segments par `dr_line` (Bresenham à adresse incrémentale), voie « chaîne » de Text dans tous les modes, BltTemplate par opération fixe par plan, cf. sondes `tests/drawcheck.s` (pixels) et `tests/drawperf.s` (temps) |
-| `src/intuition/` | piste intuition (M5+) : `intuition.i` (layout `IntuitionBase` V34 — champs 1re génération stables : `ib_LibNode`/`ib_ViewLord` (View embarqué = le « ViewLord »)/ActiveWindow/ActiveScreen/FirstScreen/Flags/Mouse/Seconds/Micros ; `INTUITIONBASE_SIZE`=80 ; LVO `ViewAddress`=-294), **`intuition_lib.s`** (`intuition.library` — module résident ROMTag AUTOINIT pri 10 → `MakeLibrary` dans `LibList` (branche NT_LIBRARY), **M5** : squelette Open/Close/Expunge + `ViewAddress` (vecteur 49) renvoyant `&ib_ViewLord`). Discriminant SÉRIE (marqueur M5I) ; preuve par élimination (RED `M5I_BAD_VIEWADDR`). **`screens.s`** (étape 6 WB) : OpenScreen/CloseScreen/OpenWorkBench/GetScreenData, OpenWindow/CloseWindow dessinés (RastPort + pseudo-couche par fenêtre) ; `requester.s`/`pointer.s` : requester insert-disk cliquable et accumulateur de pointeur |
-| `src/dos/` | piste dos (M6+) : `dos.i` (layout `DosLibrary`/`RootNode`/`DosInfo` (dosextens.i) + convention **BPTR** (`addr>>2`) + `DateStamp` + LVO `DateStamp`=-192 ; scaffold `DL_DISHADOW` = APTR brut DosInfo pour auto-vérif BPTR sans déréférencement), **`dos_lib.s`** (`dos.library` — module résident ROMTag AUTOINIT pri 0 → `MakeLibrary` dans `LibList`, **M6** : squelette Open/Close/Expunge + initfunc qui alloue RootNode + DosInfo **séparément** via AllocMem (long-alignés, requis pour BPTR), câble `dl_Root` (APTR) et `rn_Info` (BPTR), + `DateStamp` (vecteur 32) remplissant (0,0,0) « horloge non réglée » (fidèle V34) et renvoyant le pointeur. Déviation clean-room assumée : init C-style au lieu du glue BCPL d'origine — ABI observable reproduite, pas le mécanisme). Différé : packets/LoadSeg/handlers, Open/Read/Lock, strap/trackdisk, écran insert-disk. Discriminant SÉRIE (marqueur M6D) ; preuve par élimination (RED `M6D_BAD_BPTR`). **`ofs.i` + `ofs.s`** (**D1** : lecture seule OFS — machinerie INTERNE du filesystem, PAS de packets/handler BCPL = D3) : `ofs_read_file(name, dest, max)` lit un fichier par nom en parcourant root@880 → table de hash (hash `h=(h*13+toupper(c))&$7FF`, idx=`h%ht_size`) → header (nom BCPL, sec_type ST_FILE, first_data, hash_chain) → chaîne de data blocks OFS (type 8, data_size, next, données @+24), via trackdisk `CMD_READ` (M6z). Insensible à la casse ; valide type/sec_type/bornes de bloc avant chaque lecture ; boucles cappées (anti-hang). Format verrouillé empiriquement sur un ADF de test. Discriminant SÉRIE (marqueur **D1**, taille==1024 + marqueurs multi-block) ; preuve par élimination (RED `OFS_NO_DATACHAIN` → taille 488). **`loadseg.s`** (**D2** : LoadSeg — machinerie INTERNE, pas de packets = D3) : `dos_loadseg(name)` → BPTR seglist | 0, `dos_unloadseg(BPTR)`. Charge un exécutable « hunk » depuis l'OFS (via `ofs_read_file`), alloue un segment par hunk, copie le contenu, **applique les relocations HUNK_RELOC32** ($3EC ; $3FC/SYMBOL/DEBUG → échec propre), bâtit la seglist BPTR (`[taille][next BPTR][contenu]`, BPTR → bloc+4, contenu à `(BPTR<<2)+4`). Format hunk verrouillé empiriquement. Discriminant SÉRIE (marqueur **D2LOADSEG**, émis par le code chargé+relocalisé qui tourne depuis la RAM) ; preuve par élimination (RED `D2_NO_RELOC` → reloc non appliquée → pointeur vers RAM basse → marqueur absent), `ofswrite.s` (écriture OFS : création, flux, suppression, renommage, Info) |
+| `src/rom/` | M0 hello-ROM (`start.s`) + `mkrom.py` (padding + footer + checksum) |
+| `src/exec/` | exec.library, split into modules linked by vlink: `exec.i` (constants/ABI), `boot.s` (header/reset, coldstart, ExecBase, init_task, publish, selftest), `lists.s` (lists + Enqueue/Insert/RemHead/RemTail), `memory.s` (multi-header AllocMem/FreeMem, AvailMem, TypeOfMem), `library.s` (Open/Close/Forbid/Permit/Disable/Enable with yield-on-reschedule, jump table; **`OpenLibrary`/`CloseLibrary`/`OldOpenLibrary`**: opening by name = Forbid + `FindName(LibList)` + version gate (`lib_Version >= version`, otherwise 0) + call of the lib's Open/-6 vector; ramlib disk loading if non-resident deferred to M6), `tasks.s` (AddTask, FindTask, signals, Signal waking blocked tasks + requesting a reschedule if higher priority, SetTaskPri), `ports.s` (AddPort/RemPort under Forbid; M7d: PutMsg/GetMsg/ReplyMsg INTERRUPT-SAFE = Disable/raw_enable, atomic vs an IRQ that touches the same MP_MSGLIST), `interrupts.s` (init_ints + INT2/INT3/INT6/TRAP handlers sharing a **common prologue** `movem` (at the **native** IPL since M7e) and a **common epilogue** `intr_exit`; M7f: the 3 autovectors in use are UNIFORM — `int2_dispatch`(PORTS)/`int3_dispatch`(level 3)/`int6_dispatch`(EXTER) go through `intr_dispatch_number` -> server chain; the round-robin decision is `sched_server`, a server of the VERTB chain; M7g: `int3_dispatch` decodes `INTREQR` and dispatches EACH pending level-3 source (COPER/VERTB/BLIT); M7c: **user-mode** tasks on a **shared SSP**, `dispatch` **relocates** the context frame SSP↔user stack and saves the per-task nesting, `dispatch_in` rte's into user mode; voluntary switch via `trap #0`/`#1`; **deferred dispatch flag** `intr_isr_defer` at IRQ exit when a server sets `AttnResched`; M7e: critical section of the switch raised to a **brief IPL7** = re-entrancy gate of the lists, instantaneous vs INTENA's propagation delay; dispatcher by number `SetIntVector`/`AddIntServer`/`intr_chain_walker`, M7b), `resident.s` (ROM scan of the ROMTags → pri-sorted `ResModules`, `FindResident`/`InitResident`/`InitCode`), `libinit.s` (`MakeLibrary`/`MakeFunctions`/`InitStruct` — lib/device creation, AUTOINIT path), `resident.s` also adds `AddResource`/`OpenResource`; **`cia.s`** (`cia.resource`: 1st real resident module — ciaa/ciab + PORTS/EXTER servers `ciaa_server`/`ciab_server` + ICR dispatch), **`timer.s`** (`timer.device`: 2nd real resident, AUTOINIT device + VBLANK unit + MICROHZ unit via CIA-B/INT6), **`trackdisk.s`** (`trackdisk.device` — **B1/M6t**: 2nd device, ROMTag AUTOINIT pri 20 → DeviceList; `Open` validates the unit number (DF0-3 → io_Unit = unit area, io_Device = base, OpenCnt++; unit ≥ 4 → OpenDevice failure io_Error/io_Device=0); `BeginIO` (**B4/M6w** then **multi-track M6z**: handles **`CMD_READ`** — converts the byte offset into (track, sector) via `bloc=offset/512`, `piste=bloc/11`, `secteur=bloc%11`, loops over EACH touched track via td_read_track+td_decode_track, copies up to the end of the track and advances → a request CROSSING a track boundary is served in several reads; guards `IOERR_BADLENGTH` (offset/length multiples of TD_SECTOR) and `TD_DISKBYTES` (bound); other commands → IOERR_NOCMD; **ReplyMsg if non-quick** written but only the QUICK path is proven for now — the non-quick one will be exercised by a real `DoIO` in C); units = placeholders → Unit+MsgPort in B2. **B2/M6u**: `td_read_track0` reads a raw MFM track from DF0 — CIA-B DDRB=$FF + PRB motor/select DF0 (latched via the SEL0 edge), spin-up (DSKRDY poll with timeout), **Paula disk DMA** (ADKCON WORDSYNC, DSKSYNC=$4489, DSKPT, DSKLEN×2), poll `INTREQR` DSKBLK with timeout; registers/bits in `disk.i`. Writes ONLY CIA-B PRB (MICROHZ/M7a timers intact). **B2b/M6x**: `td_read_track(n°)` seeks first — recalibration to track 0 (step OUT via DSKDIREC until DSKTRACK0) then step IN up to the target cylinder + side-select (DSKSIDE according to track&1) → reads any track; `td_decode_track` returns the decoded track no. (seek oracle). **B3/M6v**: `td_decode_track` scans the $4489 syncs, decodes each sector (odd/even combine `((odd&$55555555)<<1)|(even&$55555555)`), checks the header AND data checksums (XOR of the MFM longs & mask), stores the 512 bytes by sector no. → 11 sectors decoded+verified, sector 0 = bootblock "DOS\0"; algorithm locked by a Python round-trip), **`strap.s`** (`strap_boot` — **M6r**: SCAFFOLD of the boot decision; returns 0 = no bootable volume → the caller **routes** the display of the insert-disk screen through this decision; `FindName(trackdisk)` + CMD_READ + validation/execution of the bootblock will come in increments B/C); linker script `kick.ld`, `execmisc.s` (complementary V34 exec LVOs: SetFunction, Cause/SOFTINT, Alert, SuperState...) |
+| `src/graphics/` | graphics track (M4+): `graphics.i` (OCS display registers derived from `CUSTOM`: COP1LC/COPJMP1/DIW/DDF (overscan 352×272)/BPLCON0/1/BPL1-2MOD/BPL1PT/COLOR00-01 + DMACON bits; boot screen dimensions), `gfx.s` (`gfx_display_init` — **M6s**: allocates 5 chip bitplanes, COPIES the **boot screen** into them (kitten image "KickSlopStart" 352×272×5 = 32 colours, overscan) from the ROM, sets up BitMap/ViewPort/View/ColorMap(32), `FindName("graphics.library")`, then `MakeVPort`/`MrgCop`/`LoadView` **through the jump table** → the copper list (5 plane pointers + 32 colours) is GENERATED by the ABI; restores `a6`=SysBase. M4a/M4b/M4c2 history: 1-plane striped screen, replaced here by the image), **`graphics_lib.s`** (`graphics.library` — ROMTag AUTOINIT pri 65 → `MakeLibrary` into `LibList`, **M4c1**; **M4c2** display engine, **M6s**: `MakeVPort` made **GENERIC** — emits one BPLxPT pointer per plane (depth) + `cm_Count` colours COLOR00.. → supports 1 plane/2 colours as well as 5 planes/32 colours; `MrgCop` merges → `v_LOFCprList`, `LoadView` installs COP1LC + `DMACON`), `mk_bootscreen.py` (Pillow pipeline generating the boot screen data: user JPEG → 352×272 → quantize 32 colours → 5 planar bitplanes, **self-checking**; outputs `bootscreen.raw` + OCS palette + reference PNG) + `bootscreen_data.s` (GENERATED: palette + `incbin bootscreen.raw`). VISUAL discriminant (number of unique captured colours); proof by elimination (RED `BOOTSCR_ONE_PLANE`); **`draw.s`** (WB step 6): drawing primitives in a RastPort (Move/Draw/RectFill/SetRast/WritePixel/Text/ScrollRaster...), clipping by the bounds of `rp_Layer`; fills by `dr_rect` (once per ClipRect and per plane, longs/words) and segments by `dr_line` (Bresenham with incremental address), "string" path of Text in all modes, BltTemplate by fixed operation per plane, see probes `tests/drawcheck.s` (pixels) and `tests/drawperf.s` (timing) |
+| `src/intuition/` | intuition track (M5+): `intuition.i` (V34 `IntuitionBase` layout — stable 1st-generation fields: `ib_LibNode`/`ib_ViewLord` (embedded View = the "ViewLord")/ActiveWindow/ActiveScreen/FirstScreen/Flags/Mouse/Seconds/Micros; `INTUITIONBASE_SIZE`=80; LVO `ViewAddress`=-294), **`intuition_lib.s`** (`intuition.library` — resident module ROMTag AUTOINIT pri 10 → `MakeLibrary` into `LibList` (NT_LIBRARY branch), **M5**: Open/Close/Expunge skeleton + `ViewAddress` (vector 49) returning `&ib_ViewLord`). SERIAL discriminant (marker M5I); proof by elimination (RED `M5I_BAD_VIEWADDR`). **`screens.s`** (WB step 6): OpenScreen/CloseScreen/OpenWorkBench/GetScreenData, drawn OpenWindow/CloseWindow (RastPort + pseudo-layer per window); `requester.s`/`pointer.s`: clickable insert-disk requester and pointer accumulator |
+| `src/dos/` | dos track (M6+): `dos.i` (layout of `DosLibrary`/`RootNode`/`DosInfo` (dosextens.i) + **BPTR** convention (`addr>>2`) + `DateStamp` + LVO `DateStamp`=-192; scaffold `DL_DISHADOW` = raw DosInfo APTR for BPTR self-check without dereferencing), **`dos_lib.s`** (`dos.library` — resident module ROMTag AUTOINIT pri 0 → `MakeLibrary` into `LibList`, **M6**: Open/Close/Expunge skeleton + initfunc that allocates RootNode + DosInfo **separately** via AllocMem (long-aligned, required for BPTR), wires `dl_Root` (APTR) and `rn_Info` (BPTR), + `DateStamp` (vector 32) filling (0,0,0) "clock not set" (faithful to V34) and returning the pointer. Deliberate clean-room deviation: C-style init instead of the original BCPL glue — observable ABI reproduced, not the mechanism). Deferred: packets/LoadSeg/handlers, Open/Read/Lock, strap/trackdisk, insert-disk screen. SERIAL discriminant (marker M6D); proof by elimination (RED `M6D_BAD_BPTR`). **`ofs.i` + `ofs.s`** (**D1**: read-only OFS — INTERNAL filesystem machinery, NO BCPL packets/handler = D3): `ofs_read_file(name, dest, max)` reads a file by name by walking root@880 → hash table (hash `h=(h*13+toupper(c))&$7FF`, idx=`h%ht_size`) → header (BCPL name, sec_type ST_FILE, first_data, hash_chain) → chain of OFS data blocks (type 8, data_size, next, data @+24), via trackdisk `CMD_READ` (M6z). Case-insensitive; validates type/sec_type/block bounds before each read; capped loops (anti-hang). Format locked empirically on a test ADF. SERIAL discriminant (marker **D1**, size==1024 + multi-block markers); proof by elimination (RED `OFS_NO_DATACHAIN` → size 488). **`loadseg.s`** (**D2**: LoadSeg — INTERNAL machinery, no packets = D3): `dos_loadseg(name)` → BPTR seglist | 0, `dos_unloadseg(BPTR)`. Loads a "hunk" executable from the OFS (via `ofs_read_file`), allocates one segment per hunk, copies the contents, **applies the HUNK_RELOC32 relocations** ($3EC; $3FC/SYMBOL/DEBUG → clean failure), builds the BPTR seglist (`[taille][next BPTR][contenu]`, BPTR → block+4, contents at `(BPTR<<2)+4`). Hunk format locked empirically. SERIAL discriminant (marker **D2LOADSEG**, emitted by the loaded+relocated code running from RAM); proof by elimination (RED `D2_NO_RELOC` → reloc not applied → pointer to low RAM → marker absent), `ofswrite.s` (OFS writing: creation, stream, deletion, renaming, Info) |
 | `src/resources/` | cia, disk, misc, potgo, keymap |
 | `src/devices/` | timer, keyboard, gameport, input, audio, console, trackdisk |
 | `src/libs/` | expansion, graphics, layers, intuition, mathffp, dos |
 
-## Pipeline de build
+## Build pipeline
 
-1. **ROM principale** (`make kick`) : `vasmm68k_mot -Fvobj` assemble chaque module exec en objet
-   relogeable, puis `vlink -b rawbin1 -T src/exec/kick.ld` les lie à `$FC0000` en image brute.
-   **Ordre load-bearing** : `boot.o` est passé en premier → son CODE porte l'en-tête de reset à `$FC0000`.
-2. **ROM de production** (`make kick-prod`) : même pipeline avec `-DPROD=1` (flag `PROD` dans
-   `src/exec/exec.i`, défaut 0 protégé par `ifnd` → surcharge sans édition de source). Objets isolés
-   dans `build/prod/`, image `build/kick13-prod.rom` ; la ROM de dév reste **byte-identique**. Les gates
-   `ifeq PROD` de `boot.s` retirent du chemin de boot le **harnais RUNTIME** : tâches démo M7
-   (`task_h/l/s/timer/port/fa/fb`, spinners), clients/drivers de test D3 (echo `d3a`, fs-driver `d3b`,
-   `d3c_client`, `d3d..d3j` — lisent des fichiers de test absents d'un vrai disque), sondes de preuve
-   (serveur de queue VERTB `vbl_tail`, source COPER), stress port M7d (neutralisé via `ifne PROD`).
-   **Gardé** : tout l'OS réel — `build_reslist`+`InitCode` monte TOUS les vrais modules (le « scan M4 »
-   couvre toute la ROM, pas que des résidents démo), timer CIA-B/MICROHZ, gameport live, montage DF0:
-   (handler OFS + DeviceNode), con_handler, feeder, strap (boot floppy OU écran insert-disk), Initial CLI.
-   Le hand-off final (`RemHead(TASKREADY)`+`dispatch_in`) est générique ; en prod le système idle via
-   `.d_idle` au lieu de spinner. `kick-prod` **retire le harnais, n'ajoute aucune capacité OS** : booter
-   un jeu complet reste un jalon séparé (identique dev/prod — cf. smoke-test Lemmings dans le ledger).
-3. **hello-ROM** (`make hello`) : fichier unique via `vasmm68k_mot -Fbin` (smoke test M0).
-4. `src/rom/mkrom.py` complète à 256K, écrit footer + champ taille + checksum.
-5. `romtool info` valide le conteneur (`is_kick = ok`, `chk_sum = ok`) — gate dur de `make verify`.
-6. `tests/boot_test.sh` boote l'image sous FS-UAE et assère le **log série** (canal primaire, capturé
-   via un pont PTY `socat` sur `serial_port`) : marqueur de succès présent + marqueur d'échec absent ;
-   repli automatique sur la couleur d'écran si aucune émission série (ex. hello-ROM). La ROM émet des
-   checkpoints (`chk core`/`chk mem`/`chk m24a|b|c` → `self-test passed`) localisant tout échec.
+1. **Main ROM** (`make kick`): `vasmm68k_mot -Fvobj` assembles each exec module into a relocatable
+   object, then `vlink -b rawbin1 -T src/exec/kick.ld` links them at `$FC0000` into a raw image.
+   **Load-bearing order**: `boot.o` is passed first → its CODE carries the reset header at `$FC0000`.
+2. **Production ROM** (`make kick-prod`): same pipeline with `-DPROD=1` (`PROD` flag in
+   `src/exec/exec.i`, default 0 protected by `ifnd` → override without editing the source). Objects isolated
+   in `build/prod/`, image `build/kick13-prod.rom`; the dev ROM stays **byte-identical**. The `ifeq PROD`
+   gates of `boot.s` remove the **RUNTIME harness** from the boot path: M7 demo tasks
+   (`task_h/l/s/timer/port/fa/fb`, spinners), D3 test clients/drivers (echo `d3a`, fs-driver `d3b`,
+   `d3c_client`, `d3d..d3j` — they read test files absent from a real disk), proof probes
+   (VERTB tail server `vbl_tail`, COPER source), M7d port stress (neutralised via `ifne PROD`).
+   **Kept**: the whole real OS — `build_reslist`+`InitCode` mounts ALL the real modules (the "M4 scan"
+   covers the whole ROM, not only demo residents), CIA-B/MICROHZ timer, live gameport, DF0: mounting
+   (OFS handler + DeviceNode), con_handler, feeder, strap (floppy boot OR insert-disk screen), Initial CLI.
+   The final hand-off (`RemHead(TASKREADY)`+`dispatch_in`) is generic; in prod the system idles via
+   `.d_idle` instead of spinners. `kick-prod` **removes the harness, adds no OS capability**: booting
+   a complete game remains a separate milestone (identical dev/prod — see the Lemmings smoke test in the ledger).
+3. **hello-ROM** (`make hello`): single file via `vasmm68k_mot -Fbin` (M0 smoke test).
+4. `src/rom/mkrom.py` pads to 256K, writes the footer + size field + checksum.
+5. `romtool info` validates the container (`is_kick = ok`, `chk_sum = ok`) — hard gate of `make verify`.
+6. `tests/boot_test.sh` boots the image under FS-UAE and asserts the **serial log** (primary channel, captured
+   via a `socat` PTY bridge on `serial_port`): success marker present + failure marker absent;
+   automatic fallback to the screen colour if there is no serial emission (e.g. hello-ROM). The ROM emits
+   checkpoints (`chk core`/`chk mem`/`chk m24a|b|c` → `self-test passed`) locating any failure.
 
-## État
+## Status
 
-- **M0** (hello-ROM) : livré, vérifié (`is_kick` + boot écran vert).
-- **M2.0→M2.3** (exec coldstart, `src/exec/`) : livré, vérifié (boot écran **blanc** = auto-test passé).
-  Le reset entre en `$FC00D2`, passe superviseur + gèle le matériel, **coupe l'overlay** (RAM chip à
-  `$0`), pose une pile sous la jump table, bâtit **ExecBase** à `$7F000` (nœud library 34.2,
-  `ChkBase=~base`, `MaxLocMem=$80000`, `AttnFlags=0`, `VBlankFrequency=50`, 9 listes système `NEWLIST`),
-  construit la **jump table LVO V34** (105 vecteurs, `lib_NegSize $276`, cf. `docs/exec-lvo-table.md`)
-  avec 13 LVO implémentés (Open/Close/Expunge, Forbid/Permit, Disable/Enable, AddHead/AddTail/Remove/
-  FindName, AllocMem/FreeMem), initialise un **MemHeader chip** + MemList, publie `SysBase` en `$4`,
-  puis **auto-vérifie** et **auto-teste** les fonctions via la jump table (dispatch + comportement +
-  coalescing). Phases tracées en couleur (rouge→bleu→cyan→blanc ; magenta = échec).
-- **M2.4** : mémoire **multi-MemHeader** (sélection par attribut, AvailMem, TypeOfMem) ;
-  primitives de listes (Enqueue tri par priorité, Insert, RemHead, RemTail) ; **tâches + signaux**
-  non bloquants (TCB `ThisTask`, FindTask, AllocSignal/FreeSignal/SetSignal/Signal, SetTaskPri) ;
-  **ports/messages** non bloquants (AddPort/RemPort/FindPort, PutMsg+Signal, GetMsg FIFO, ReplyMsg).
-  ⚠️ « vert » = structures manipulées correctement, PAS ordonnancement réel. **Différé à M3**
-  (exige les interruptions) : `Wait`/`WaitPort` bloquants, `AddTask`/`RemTask`, dispatch
-  (`Switch`/`Dispatch`/`Cause`), réveil d'une tâche sur signal.
-- **M3a** : **plomberie d'interruptions**. Autovecteur 68000 niveau 3 (`$6C`) → handler VBlank,
-  `INTENA = VERTB|INTEN` ($C020), `SR=$2000` → la chaîne d'interruptions tourne (compteur VBlank qui
-  avance, prouvé par le série).
-- **M3b** : **ordonnanceur préemptif** (tâches **superviseur**). Le handler VBlank est le point de
-  préemption : round-robin (sauve SP de la sortante dans `TC_SPREG`, Enqueue en `TaskReady`, RemHead
-  l'entrante, restaure son SP + GPR, `RTE`). `AddTask` (-282) pose la frame initiale miroir du pop
-  dispatcher. Prouvé par 2 tâches démo qui **alternent** sur le série (preemption) **en préservant
-  leur contexte** (sentinelles de registres).
-- **M3c** (exclusion mutuelle, prérequis #1) : `Forbid()` est désormais **honoré** par le scheduler.
-  Le handler VBlank défère le switch si une section critique est active — double-garde `EB_TDNEST >= 0`
-  (Forbid) **ou** `EB_IDNEST >= 0` (Disable, ferme la fenêtre `addq`/`INTENA`). Ces compteurs sont
-  **globaux** (ExecBase) : licite car une tâche interdite n'est jamais commutée, donc `EB_TDNEST`
-  reflète toujours la tâche courante ; le switch ne touchant pas ces compteurs, aucune tâche n'est
-  reprise avec le compte d'une autre. Modèle **défère-au-prochain-VBlank** (pas de yield immédiat sur
-  `Permit` ce milestone) : le switch différé est repris au tick suivant, jamais perdu (`Permit`/`Enable`
-  restent de simples dé/incréments). Sections critiques exec enveloppées en **Forbid/Permit** (exclusion
-  tâche-vs-tâche ; `Disable` n'est PAS employé ce milestone — il perturberait `INTENA` pendant le
-  selftest pré-interruptions) à **sortie unique** : `AllocMem`/`FreeMem`/`AvailMem`/`TypeOfMem`
-  (listes mémoire) + `AddPort`/`RemPort`/`PutMsg`/`GetMsg`/`ReplyMsg` (PortList + files de messages).
-  Les primitives de listes brutes et `FindName`/`FindPort` restent **non enveloppées** (briques
-  arbitrées par l'appelant, contrat exec V34 ; et le handler les appelle -> wrapper = ré-entrée).
-  Prouvé **déterministe** (compteur partagé observé à travers une fenêtre interdite, indépendant du
-  cadencement série) : `M3C LIVE` émis ssi Forbid honoré (A) ET pas de starvation (B). RED vérifiés :
-  garde Forbid retirée -> `FAILED` ; `Permit` retiré -> dérive `EB_TDNEST` attrapée dès l'assertion
-  Forbid/Permit du selftest.
-- **M3d** (`Wait`/`WaitPort` + réveil-sur-signal) : une tâche peut désormais se **bloquer**.
-  `Wait(sigset)` fait un **switch SYNCHRONE** (volontaire) : si aucun signal attendu n'est présent,
-  il pose sur SA pile une frame **miroir exact** de celle de `vbl_handler` (`[d0-d7/a0-a6][SR][PC]`),
-  passe la tâche en `TS_WAIT` dans `TaskWait`, `RemHead` l'entrante de `TaskReady` et bascule — les
-  deux chemins de dispatch (préemptif + volontaire) partagent ce format et `interrupts.s`. Toute la
-  surgery est à **IPL 7** (atomique vs VBlank). `WaitPort(port)` boucle `Wait(1<<MP_SIGBIT)` tant que
-  la file est vide ; pas de lost-wakeup (PutMsg fait `AddTail` AVANT `Signal`, et le recheck de `Wait`
-  est atomique). `Signal` **réveille** une tâche `TS_WAIT` dont les bits attendus arrivent
-  (`TaskWait` → `TaskReady`, `TS_READY`) ; la réveillée tourne au **prochain point d'ordonnancement**
-  (modèle « défère », cf. yield-sur-Permit ci-dessous). Prouvé **déterministe** par un **ping-pong
-  requête/réponse** à 2 ports (deadlock-free : exactement une tâche prête à chaque blocage) :
-  `M3D LIVE` émis après `M3D_THRESH` aller-retours (blocages+réveils répétés corrects) ; invariant
-  `GetMsg != NULL` après `WaitPort`. RED vérifiés : réveil désactivé (`Signal`) → deadlock, marqueur
-  absent ; blocage désactivé (`WaitPort` rend sur file vide) → `GetMsg` NULL → `M3D FAILED`.
-  Hypothèse V34 assumée : `Wait` appelé hors `Forbid`/`Disable` (qu'il romprait) ; retour à IPL 0.
-- **M3e** (yield immédiat sur `Permit`) : une tâche réveillée **prioritaire** tourne désormais **dès le
-  `Permit`** qui ferme la section critique du réveilleur, au lieu d'attendre le prochain tick. `Signal`,
-  quand il réveille une tâche de priorité > la courante, pose `EB_ATTNRESCHED` (ABI exec `$12A`).
-  `Permit`/`Enable`, au retour à l'état permis (`TDNest`/`IDNest` < 0, l'autre non verrouillé), si
-  `AttnResched` est posé, appellent `reschedule` : un **switch SYNCHRONE sans blocage** qui requeue la
-  courante dans `TaskReady` (round-robin par priorité) et bascule sur la tête (la réveillée prioritaire).
-  `reschedule` réutilise la **queue de switch commune `dispatch_head`** (partagée avec `Wait`) et pose la
-  même frame miroir dispatcher ; il fonctionne **indépendamment de `SCHED_ON`** (switch direct, pas
-  d'IRQ). Prouvé en régime **COOPÉRATIF** (`SCHED_ON=0`, pas de préemption périodique) pour **isoler** la
-  preuve : task_L (pri 0, ne bloque jamais) `Forbid`/`Signal(task_H)`/`Permit` ; task_H (pri 10) boucle
-  `Wait`. Le SEUL dispatcher de task_H est le `reschedule` de `Permit` → `M3E LIVE` émis après 500 yields
-  ⟺ yield-sur-Permit correct. RED : yield désactivé dans `Permit` → task_H starve (marqueur absent).
-- **M3f** (recombinaison yield + préemption) : la préemption périodique (`SCHED_ON=1`) et le
-  yield-sur-`Permit` **coexistent sans corruption de contexte**. Les trois chemins de switch sont
-  unifiés : `dispatch_head` (RemHead + bascule + `rte`, commun aux trois) et `requeue_and_dispatch`
-  (requeue round-robin de la sortante + `clr AttnResched` + `dispatch_head`, partagé par le handler et
-  `reschedule`). Le handler **efface `AttnResched` à chaque switch** (un tick satisfait une demande de
-  yield en attente → pas de `reschedule` redondant au `Permit` suivant) ; `reschedule` re-teste
-  `AttnResched` à IPL 7 (idempotent, ferme la course lecture-IPL0/appel). Prouvé par 3 tâches
-  (`SCHED_ON=1`) : task_H (pri 10, cible du yield), task_L (pri 0, signale+yield), task_S (pri 0,
-  spinner pur dispatché UNIQUEMENT par la préemption). Sentinelle de contexte (d7) vérifiée après
-  chaque switch dans les trois tâches → `M3F FAILED` si corrompue. `M3F LIVE` émis quand `WP_CONS`≥100
-  (yield répété) ET `WP_SPIN`≥5 (task_S a tourné via préemption). **Préemption confirmée load-bearing**
-  par le RED (`SCHED_ON=0` → task_S monopolise → task_L ne signale plus task_H → `WP_CONS` gèle →
-  marqueur absent). Portée de la preuve : M3f valide la **mécanique** du yield et la coexistence sans
-  corruption ; la **nécessité** du yield reste prouvée par M3e (démo coopérative, commit 18cba43), car
-  sous `SCHED_ON=1` un tick dispatcherait task_H de toute façon (preuve non isolable en un seul mode).
-  Le code anti-course (handler efface un `AttnResched` posé, branche `.rs_none`) est correct par
-  inspection mais **inerte** dans cette démo (task_L signale sous Forbid → le tick défère).
-- **M4** (scan des résidents + InitResident) : la **machinerie de découverte data-driven** des modules.
-  `build_reslist` (`resident.s`) scanne `[RESSCAN_LO,RESSCAN_HI)` (toute la ROM) pour les ROMTags —
-  mot `RTC_MATCHWORD` ($4AFC) à adresse paire dont `RT_MATCHTAG` pointe sur lui-même (rejette un
-  `$4AFC` fortuit, p. ex. l'immédiat du `cmp.w` du scan lui-même) — reprend à `RT_ENDSKIP`, bâtit le
-  tableau NUL-terminé `ExecBase->ResModules` trié par `RT_PRI` **décroissant** (tri à bulles stable).
-  `InitCode` le parcourt et appelle `InitResident` sur chaque module (filtre version). `InitResident`
-  valide le matchword puis, en direct-init (RTF_AUTOINIT clair), saute à `RT_INIT` avec la convention
-  ABI **`D0=0, A0=segList, A6=ExecBase`** (le resident n'est pas passé) ; **AUTOINIT (MakeLibrary +
-  InitStruct) est DIFFÉRÉ** (no-op). `FindResident` cherche par nom dans `ResModules`. Prouvé par 3
-  résidents démo (pri 60/10/-20) **rangés en mémoire dans un ordre différent** (mid, lo, hi) pour que
-  le tri soit load-bearing : noms émis `hi→mid→lo` (ordre de priorité), `RES_COUNT==3`, FindResident
-  retrouve le bon. RED : tri désactivé → init en ordre de scan → échec du contrôle d'ordre ; dispatch
-  `InitResident` désactivé → `RES_COUNT=0`. ⚠️ **Ce n'est PAS encore le handoff de boot** : la phase M4
-  tourne puis la démo M3f codée en dur s'exécute (le vrai lancement par un résident viendra avec les
-  vrais modules). Convention direct-init **vérifiée** contre l'AutoDoc exec (corrigée en cours de route).
-- **M5a** (AUTOINIT : `MakeLibrary` + `MakeFunctions` + `InitStruct`) : le chemin AUTOINIT de
-  `InitResident`. `MakeLibrary(vectors, structure, init, dataSize, segList)` alloue negSize (jump table)
-  + dataSize (`MEMF_CLEAR`), base = alloc+negSize, bâtit la jump table via `MakeFunctions` (vecteurs
-  **absolus** longword OU **relatifs** word si 1er mot = -1, terminés par -1), pose
-  `LIB_NEGSIZE`/`LIB_POSSIZE`, `InitStruct` la data table puis appelle l'init function (**D0=base,
-  A0=segList, A6=ExecBase**). `InitStruct` interprète le flux `ddssnnnn` (chemin INITBYTE/WORD/LONG :
-  dd=11 offset 24 bits, ss taille, item unique, + ré-alignement word + terminateur 00). `InitResident`
-  AUTOINIT : `MakeLibrary` puis Enqueue de la base dans la liste selon `RT_TYPE`, **sans** remplir
-  name/type/version (quirk V34 — le module le fait). Convention d'appel direct-init (D0=0/A0=segList)
-  vs init-de-MakeLibrary (D0=base/A0=segList) : **vérifiées contre l'AutoDoc** (distinctes). Prouvé par
-  un résident AUTOINIT démo (`demo.autolib`, table de vecteurs relative) : jump table bâtie (func0 rend
-  $5A via `jsr -6(base)`, l'ordre des vecteurs est load-bearing), `InitStruct` pose version+type, init
-  func pose révision+nom, lib trouvée dans `LibList`. RED : `InitStruct` désactivé → version KO ; appel
-  init func retiré → nom KO.
-- **M5b** (`cia.resource` — 1er vrai module résident) : ROMTag `cia.resource` (direct-init, pri 80)
-  scanné par `build_reslist` ; `cia_init` crée `ciaa.resource` + `ciab.resource` via `MakeLibrary`
-  (base library-like + jump table `AddICRVector`/`RemICRVector`/`AbleICR`/`SetICR`), les nomme, pose la
-  base matérielle CIA (`$BFE001`/`$BFD000`), `AddResource`. Exec expose `AddResource` (-486, Enqueue
-  `ResourceList`) et `OpenResource` (-498, `FindName`). Les fonctions gèrent les 5 slots de vecteurs ICR
-  + le shadow du masque ICR + le registre ICR du chip (`AbleICR` bit7=enable). Prouvé : `OpenResource`
-  (« ciab.resource ») trouve la base, base matérielle correcte, `AbleICR($81)` pose le bit0 du shadow,
-  `AddICRVector` enregistre (rend NULL, slot libre). RED : `AddResource` cassé → introuvable ; `AbleICR`
-  cassé → shadow KO. ⚠️ **DIFFÉRÉ** : la **dispatch INT2/INT6** (les vecteurs enregistrés ne se
-  déclenchent pas — Paula INTENA PORTS/EXTER + autovecteurs `$68`/`$78` non posés → inerte et sûr).
-  `SetICR` est un stub (status d'interruption différée). Table de vecteurs CIA **absolue** (la démo
-  AUTOINIT M5a étant relative, les deux branches de `MakeFunctions` restent exercées).
-- **M5c** (`timer.device` — 2e vrai résident, 1er device) : ROMTag `timer.device` **AUTOINIT** (pri 50)
-  scanné puis créé par le chemin AUTOINIT de `InitResident` (`MakeLibrary` + Enqueue `DeviceList` par
-  `RT_TYPE`=NT_DEVICE). Sa data table (`InitStruct`) pose `LN_TYPE`=NT_DEVICE + `LIB_VERSION` ; son init
-  func pose `LN_NAME`="timer.device" (quirk V34 : `InitResident` ne remplit pas les champs). Vecteurs
-  device standard (Open/Close/Expunge/ExtFunc/BeginIO/AbortIO), stubs. Prouvé : `FindName(DeviceList,
-  "timer.device")` trouve la base, `LIB_VERSION`/`LN_TYPE` (InitStruct), `Open` via `jsr -6(base)`
-  incrémente `LIB_OPENCNT`. RED : nom non posé → introuvable ; `Open` cassé → compte KO. ⚠️ **PÉRIMÈTRE** :
-  device **créé + nommé + listé + jump table (Open)**. **DIFFÉRÉ** : unités (VBLANK/MICROHZ/ECLOCK),
-  file de requêtes, `BeginIO` fonctionnel (stub). Le scan produit ainsi l'OS en instanciant de VRAIS
-  modules résidents — mais ni `cia.resource` ni `timer.device` ne font encore de travail fonctionnel
-  (squelettes nommés/listés). Les résidents **démo** (`demo.res.*` + `demo.autolib`) sont **conservés**
-  dans le scan comme couverture de non-régression M4/M5a (ils s'intercalent par priorité et renforcent
-  la preuve du tri) — à retirer quand les vrais modules couvriront ces preuves.
-- **M6a** (unité VBLANK de `timer.device` **fonctionnelle**, sans CIA) : **premier comportement OS
-  observable** produit par la machinerie résidente + interruption + messages. `BeginIO(TR_ADDREQUEST)`
-  convertit la timeval en ticks (`secs*50 + micro/20000` pour l'unité VBLANK ; M7l sépare la conversion de
-  l'unité MICROHZ en µs réelles, cf. bullet M7l), stocke le décompte dans `TR_TIME`, enqueue
-  la requête sur la file de l'unité VBLANK (sous `Disable` — file partagée avec le handler). Le handler
-  VBlank appelle `timer_vblank_service` chaque tick (hook `VBL_SVC` à l'origine ; **M7f** : devenu un
-  serveur de la chaîne VERTB) ; le service décrémente chaque requête et, à 0, la retire et la **répond**.
-  POINT CLÉ (à l'origine M6a) : la réponse en contexte interruption ne pouvait PAS utiliser `PutMsg`/
-  `ReplyMsg` car ils appelaient `Permit` -> `reschedule` **synchrone au milieu de l'interruption** ;
-  M6a utilisait donc une routine bespoke (`timer_reply`) qui ne posait qu'`AttnResched`. **M7d** a rendu
-  `PutMsg`/`ReplyMsg` interrupt-safe (Disable/`raw_enable`, sans yield) et **M7i** a supprimé `timer_reply`
-  au profit de `ReplyMsg` direct (cf. bullet M7i). Prouvé (M6a) : une requête de
-  100000 µs (= 5 ticks) est répondue après ~5 VBlank (délai mesuré ∈ [3..40]) **et** `exec_Signal`
-  depuis le handler pose bien le bit (vérifié dans `TC_SIGRECVD` de la boot task). RED : hook coupé →
-  timeout ; reply retiré → timeout. **PORTÉE** : prouvé = timer+interruption+messages+`exec_Signal`
-  depuis l'IRQ ; **PAS encore montré** = une tâche qui **bloque** sur un timer et est réveillée
-  (`Wait`→timer-wake) — nécessite une vraie tâche en attente (la boot task est `TS_RUN`, branche no-wake).
-- **M6b** (dispatch d'interruption CIA, INT2/CIA-A) : les vecteurs ICR enregistrés dans `cia.resource`
-  se **déclenchent** désormais. `init_ints` installe les autovecteurs 68000 `$68` (INT2/CIA-A) et `$78`
-  (INT6/CIA-B) et active Paula INTENA PORTS (pas EXTER — voir plus bas). `int2_handler` lève IPL 7,
-  lit le registre ICR du chip **une seule fois** (ACK + efface tous les bits pending), puis `cia_dispatch`
-  appelle le vecteur de chaque bit posé (`a1`=IS_DATA, `a5`=IS_CODE, `a6`=SysBase), et acquitte Paula.
-  Même discipline mid-handler qu'M6a (un vecteur qui `Signal` ne reschedule pas dans l'IRQ ; état de
-  boucle en d2/d3/a2 que la convention serveur préserve). Prouvé **bout-en-bout** : `AddICRVector`
-  (timer A, bit 0) + démarrage de CIA-A Timer A one-shot → underflow → /IRQ CIA-A → INT2 → autovecteur →
-  `cia_dispatch` → le vecteur de test incrémente un compteur (détecté par le boot). RED : appel du vecteur
-  coupé → timeout ; **activation ICR du chip coupée → timeout** (ce RED prouve toute la chaîne, car il ne
-  peut passer que si le CIA ému pilote réellement l'interruption). Nettoyage après preuve (RemICRVector +
-  stop timer + désactivation PORTS).
-  ⚠️ **Gate (M6b → requalifié par M7a)** : M6b tournait en contexte **coopératif** (`SCHED_ON=0`) +
-  CIA désactivée avant M3f, car une source CIA de niveau > 3 active sous préemption posait un hazard
-  (voir M7a pour sa nature exacte, qui n'était pas celle écrite ici à l'origine). `int6_handler`/EXTER
-  (CIA-B) restaient câblés mais non activés. **M7a lève ce blocage pour la ré-entrance des listes.**
-- **M7a** (gate de ré-entrance des listes + unité MICROHZ via CIA-B/INT6 + tâche bloquant sur un timer) :
-  **le vrai hazard n'était pas la pile** (dans le modèle tâches-superviseur-même-pile, les frames
-  d'interruption se dépilent correctement ; la corruption de pile par SSP partagée reste **latente**
-  jusqu'au user-mode = M7c). Le vrai hazard = **ré-entrance des listes du scheduler** : `vbl_handler`
-  faisait son `Enqueue`/`RemHead` TaskReady à **IPL3**, donc INT6/CIA-B (niveau 6 > 3) pouvait le
-  préempter en plein milieu, et l'`exec_Signal` du réveil MICROHZ faisait aussi `Enqueue(TaskReady)` sur
-  la même liste à moitié mise à jour → corruption. **Fix 1** : `requeue_and_dispatch` monte IPL7 autour
-  de la seule section critique (pas tout `vbl_handler` — INT6 doit préempter le VBlank ailleurs) ;
-  `exec_Wait`/`reschedule` y entraient déjà à IPL7. **Fix 2** : `timer_reply` fait son `AddTail`
-  (msglist de reply-port, partageable entre unités VBLANK et MICROHZ) à IPL7. L'**unité MICROHZ**
-  (2e file `TIMER_MICROQ`, décrémentée par `timer_micro_service` enregistré comme vecteur ICR du timer A
-  de CIA-B) réveille une **tâche bloquée** (`task_timer` : `BeginIO`→`Wait`→wake par l'IRQ). Preuve
-  **structurelle** via `VBL_INSURG`/`VBL_CLASH` : à IPL7 INT6 est masqué pendant la chirurgie →
-  `VBL_CLASH==0` est **garanti** (pas probabiliste). GREEN « M7A TIMER OK » (réveils + `VBL_CLASH==0` +
-  time-gate 5 s). RED#1 (gate retiré, IPL3) → clash < 1 s → « M7A FAILED ». RED#2 (réveil cassé) →
-  `task_timer` figée, « M3F LIVE » toujours présent → isole le chemin de réveil. Yield re-prouvé en
-  **coopératif** (`SCHED_ON=0`, `task_S` retiré → `task_timer` réveillée par le seul yield) : ma modif
-  des tails partagés n'a pas régressé le reschedule. `int6_handler`/EXTER désormais **activés et testés**.
-  MICROHZ en M7a = « 1 tick = 1 IRQ CIA-B » (chemin IRQ/réveil prouvé ; **calibration µs réelle livrée en M7l**).
-- **M7b** (dispatcher d'interruption PAR NUMÉRO) : table `IntVects[16]` (AllocMem'd, pointeur dans
-  `EB_INTVECTS`) + `SetIntVector` (vecteur exclusif : copie IS_DATA/IS_CODE) + `AddIntServer` (chaîne de
-  serveurs triée par `LN_PRI`, marchée par `intr_chain_walker` ; retour Z clair = « géré, stop », Z mis =
-  continue, cf. AutoDoc). Les autovecteurs hardcodés `int2_handler`/`int6_handler` sont remplacés par
-  `int2_dispatch` ($68/PORTS) / `int6_dispatch` ($78/EXTER) **génériques** qui dispatchent via `IntVects`.
-  cia.resource est ré-exprimé en SERVEURS : `ciaa_server` (PORTS, via `AddIntServer`) et `ciab_server`
-  (EXTER, via `SetIntVector`) — c.-à-d. cia.resource EST le handler PORTS/EXTER, comme dans le vrai exec.
-  CAVEAT : dispatch par NUMÉRO + chaîne, PAS la fidélité IPL-PAR-NIVEAU (les handlers restent IPL7 à
-  l'entrée, discipline du gate M7a) ; VERTB garde `vbl_handler` dédié (refactor VERTB→chaîne + switch-sur-
-  sortie-d'IRQ différé). PREUVE : GREEN « M7B PORTS OK » (chaîne [ciaa_server pri 10, srv2 pri 0], les 2
-  appelés dans l'ordre) + « M7A TIMER OK » désormais via `SetIntVector`/EXTER + « M3F LIVE ». RED : 2e
-  serveur non ajouté → M7B FAILED ; vecteur EXTER retiré → M7A absent ; gate M7a (IPL7 retiré) re-prouvé
-  à travers le nouveau chemin EXTER → `VBL_CLASH>0` → M7A FAILED. Deux bugs attrapés au bringup :
-  (1) vasm tronque un opérande d'EQU à l'espace -> `INTVECTS_TOTAL` sous-évalué (128 au lieu de 352) ->
-  sous-allocation ; (2) `move.l (an),Ax` = MOVEA qui N'AFFECTE PAS les CC -> `beq` sur flags périmés ->
-  lire `node->Succ` dans un registre de DONNÉES d'abord.
-- **M7c** (tâches USER-MODE sur SSP partagée + switch DIFFÉRÉ) : les tâches tournent en user-mode
-  (SR bit S=0), chacune sur **sa pile user** ; interruptions + noyau sur **UNE pile superviseur partagée**
-  (région STACKTOP). Dérivé du spec public « The Exec Microkernel » (AROS) + mécanique 68000, zéro code
-  transcrit. Prologue commun (IPL7 + `movem` → frame `[GPR][SR][PC]` 66 o sur la SSP) ; épilogue `intr_exit`
-  dispatche SEULEMENT à la **frontière user** (bit S de la SR sauvée == 0 = on interrompait une tâche user,
-  pas une IRQ imbriquée — c'est le nest-count, lu dans le bit S). `dispatch` **relocalise** la frame SSP→pile
-  user de la sortante (`TC_SPREG` pointe désormais dans une pile user), sauve/restaure le nesting PAR-TÂCHE
-  (`TC_IDNESTCNT`/`TC_TDNESTCNT`↔`EB_*`) et synchronise INTENA → la SSP n'est JAMAIS partagée entre contextes
-  de tâches (hazard neutralisé). Switch VOLONTAIRE (Wait/reschedule) via `trap #0`/`#1`. `AddTask` pose SR=$0000
-  + nesting=-1. `exec_Signal`/`exec_Wait`/`timer_reply` passent de l'atomicité SR à une **section critique nue**
-  (Disable INTENA + `raw_enable`, user-safe, appelables depuis une IRQ sans ré-entrance du scheduler). Lancement
-  de la 1re tâche = transition superviseur→user. **Flag de dispatch différé** (spec exec) : un serveur d'IRQ qui
-  réveille une tâche prioritaire (AttnResched posé par Signal) provoque le switch à la SORTIE d'interruption,
-  sans attendre un Permit ou le VBlank — sinon le réveil dépend du hasard de phase (résonance). PREUVE : GREEN
-  « M7C USERMODE OK » (user-mode prouvé par `move sr` → bit S==0, + N préemptions survécues) avec M3F/M7A/M7B
-  toujours GREEN sur le nouveau modèle (7/7 runs, `VBL_CLASH==0`, sentinelles d7 intactes). RED : tâches en
-  superviseur ($2000) → hang ; relocation bypassée (sp-swap inline sur SSP partagée) → crash ; IPL7 du prologue
-  retiré → crash. Coopératif (SCHED_ON=0, task_s retiré) re-prouvé : M3F LIVE via le yield seul + M7A.
-- **M7d** (ports INTERRUPT-SAFE) : `PutMsg`/`GetMsg`/`ReplyMsg` manipulent `MP_MSGLIST`, qui peut être touché
-  depuis une INTERRUPTION (device piloté par IRQ). Forbid (TDNest) ne masque PAS les interruptions -> une IRQ
-  qui `PutMsg`/`ReplyMsg` peut s'entrelacer avec le `GetMsg` d'une tâche sur la même liste doublement chaînée
-  (RemHead vs AddTail) -> corruption. FIX : section critique NUE (Disable INTENA + `raw_enable`, sans queue
-  reschedule -> pas de ré-entrance du scheduler depuis l'IRQ), qui masque AUSSI les interruptions. AddPort/
-  RemPort restent Forbid (PortList non touchée par IRQ). Nesting ReplyMsg->PutMsg->Signal : seul le `raw_enable`
-  le plus externe rallume INTEN. PREUVE : série « M7D PORTS OK » — un port partagé (K=4 messages, MAGIC +
-  IN_HAND + détecteur de nœuds perdus) martelé par task_port (TÂCHE) ET timer_micro_service (INTERRUPTION,
-  GetMsg+PutMsg à chaque INT6) en coexistence avec M3F/M7A/M7C (4/4 runs, zéro corruption). RED (A/B sous
-  CONTENTION MAX dédiée — task_port pri haute, sans rate-limit, fenêtre 90 s) : ports en Forbid -> « M7D FAILED:
-  shared-port list corrupted » ; MÊME contention, ports en Disable -> propre. La course est statistique
-  (fenêtre RemHead/AddTail sub-µs, corruption CUMULATIVE sur liste doublement chaînée) : déterministe sous
-  contention max + fenêtre longue, non déclenchée par la démo de coexistence allégée.
-- **M7e** (fidélité IPL-PAR-NIVEAU) : les handlers ne montent plus IPL7 au prologue — ils tournent à leur IPL
-  **natif** (VBlank=3, PORTS=2, EXTER=6, posé par le CPU à la prise d'autovecteur). Conséquence : une source de
-  niveau supérieur préempte le **corps** d'un handler inférieur (INT6 préempte le corps de `vbl_handler`). La
-  section critique du switch (`dispatch` : relocalisation puis Enqueue/RemHead TaskReady) est masquée par **IPL7
-  bref** (`move #imm,sr`), PAS par INTENA-off. **Découverte empirique (FS-UAE)** : masquer par INTENA-off laisse
-  une course — l'écriture d'INTENA a un **délai de propagation** (quirk Amiga), donc un INT6 déjà asserté sur les
-  lignes IPL chevauche la fenêtre de chirurgie. L'écriture SR (IPL) est, elle, **interne au CPU = instantanée**.
-  **Argument de privilège** (pourquoi IPL ici mais INTENA ailleurs) : la chirurgie tourne en SUPERVISEUR (atteinte
-  via `intr_exit`/trap) → `move to SR` légal → IPL7 possible. `Signal`/`PutMsg`/`GetMsg`/`Wait`/`timer_reply` sont
-  appelables depuis une tâche USER-MODE où `move to SR` est **privilégié** (manuel 68000) → ils ne peuvent pas monter
-  l'IPL → ils gardent INTENA-Disable. **Honnêteté (cohérence M7d)** : la fenêtre write-delay touche donc TOUTE section
-  masquée par INTENA appelable en user-mode — Signal, les ports M7d, Wait, timer_reply — par nécessité ; elle est
-  tolérée par le re-check (Wait re-teste au réveil) et empiriquement bénigne pour les ports M7d même en contention
-  max. SEUL le switch côté superviseur a été promu à l'IPL. La relocalisation de frame (SSP→pile user) reste à l'IPL
-  natif sans masque : INT6 s'imbrique SOUS `sp`, la frame sortante `[sp,sp+66)` est intacte. PREUVE : série
-  « M7E IPL OK » gated sur `VBL_PREEMPT_COUNT>0` (INT6 préempte le corps de vbl, détecteur `timer_micro_service`) ET
-  `VBL_CLASH==0` (zéro chevauchement INT6/chirurgie — `VBL_CLASH` est un proxy d'OVERLAP, précondition de corruption,
-  PAS un détecteur de corruption). GREEN 3/3 ; RED1 (`M7E_SURGERY_INTENA=1`, surgery en INTENA-off) → `VBL_CLASH>0`
-  « M7A FAILED » 3/3 (prouve l'IPL7 load-bearing) ; RED2 (`M7E_PROLOGUE_IPL7=1`, IPL7 au prologue) → `M7E IPL OK`
-  absent 2/2 sans crash (prouve l'IPL natif load-bearing, pas cosmétique) ; non-régression coopérative
-  (`M7E_COOP=1`, `SCHED_ON=0`, yield-only) re-prouvée. L'idle du dispatcher (atteint seulement si TaskReady vide
-  après un Wait) n'est pas exercé par ces démos (les tâches round-robin/spin gardent TaskReady peuplée) — documenté.
-- **M7f** (VERTB EN CHAÎNE DE SERVEURS) : le handler VBlank dédié `vbl_handler` est remplacé par
-  `int3_dispatch`, un dispatcher générique miroir de `int2_dispatch`/`int6_dispatch` -> `intr_dispatch_number`
-  `(INTB_VERTB=5)` -> **chaîne de serveurs par priorité**. Modèle désormais UNIFORME pour les 3 autovecteurs
-  utilisés : PORTS(int2)/VERTB(int3)/EXTER(int6). La **décision d'ordonnancement** (quantum round-robin) devient
-  `sched_server`, serveur VERTB de pri 20 qui pose `EB_ATTNRESCHED` (sous les mêmes gardes que l'ancien
-  `vbl_handler` : `SCHED_ON && !Forbid && !Disable && TaskReady` non vide -> le round-robin RESPECTE Forbid) ;
-  `intr_isr_defer` la consomme à la sortie d'IRQ (comme un réveil INT6). Faithful : le vrai exec a un serveur
-  VBlank qui pose la flag AttnResched. `timer.device` enregistre son service VBLANK via `AddIntServer(VERTB,
-  timer_vblank_int)` (pri 0) au lieu du hook `VBL_SVC` (supprimé) ; `timer_vblank_service` retourne Z-set
-  (« continue la chaîne »). **Risque clé traité** : `intr_chain_walker` re-fournit `a6` AVANT chaque serveur
-  mais NE le restaure PAS après le dernier (les serveurs ne préservent que d2-d7/a2-a4) -> `intr_isr_defer`
-  **recharge `a6=SysBase`** avant de lire `EB_ATTNRESCHED` (sinon décisions de dispatch sur a6 clobbé). Les
-  structs Interrupt vivent en RAM basse réservée (< `HEAP_LOWER`, hors pool AllocMem ; AddIntServer les Enqueue).
-  PREUVE : série « M7F VERTB OK » gated sur `VERTB_CHAIN_N` (compteur du serveur de QUEUE `vbl_tail`, pri -10)
-  -> prouve que le walker parcourt TOUTE la chaîne (sched(20) + timer(0) avant tail(-10), en ordre de priorité) ;
-  le scheduler (M3F LIVE) ET le timer (M7A/M6A via `timer_vblank`) fonctionnent À TRAVERS la chaîne. GREEN
-  3/3 (0 FAILED) ; RED (`M7F_SCHED_STOPS_CHAIN=1`, sched retourne Z-clair) -> le walker ARRÊTE la chaîne
-  après sched -> `timer_vblank`/`vbl_tail` jamais appelés -> « M6A FAILED: timer VBLANK unit incorrect »
-  2/2 (preuve : la sémantique call-all Z-set = la marche dispatche BIEN les serveurs suivants en séquence).
-  Non-régression M3f + coopérative (`M7E_COOP=1`) + M7e (« M7E IPL OK ») + M7a/M7c/M7d re-prouvés dans le même
-  boot. **Découverte (hypothèse RED initiale invalidée empiriquement)** : retirer le SEUL quantum VBlank
-  (`sched_server`) ne stoppe PAS la préemption -> « M3F LIVE » émet quand même, car INT6 (MICROHZ ~140/s)
-  co-pilote le round-robin : TOUT dispatch différé (`intr_isr_defer`, d6=1) requeue la sortante et pivote les
-  tâches de pri égale. Le quantum VBlank est donc redondant avec un timer INT6 rapide dans cette démo ; il
-  reste la bonne place (fidèle) pour la décision, mais son effet n'est pas isolable ici. HORS SCOPE
-  (M7g+) : INT3 reste mono-source VERTB (pas de décodage INTREQR COPER/BLIT).
-- **M7g** (DÉCODAGE INTREQR MULTI-SOURCE) : `int3_dispatch` ne suppose plus VERTB seule — il lit
-  `INTREQR & INTENAR` et dispatche+acke CHAQUE source de niveau 3 en attente (COPER bit4 / VERTB bit5 /
-  BLIT bit6) via `IntVects[n]`. VERTB -> compteur M3a + chaîne (M7f) ; COPER/BLIT -> leur vecteur. `int2`
-  (PORTS) / `int6` (EXTER) restent mono-source : leur niveau n'a qu'UNE source Paula (optimisation correcte,
-  pas une boucle générique). Le masque des sources en attente est tenu dans `d2`, préservé à travers les
-  dispatch par la convention serveur (walker `movem d2/a2-a4` ; `coper_test` ne touche que son compteur) ;
-  `a6` est rechargé après chaque dispatch (leçon M7f). **Bonus de correction** : sur un INT3 SPURIOUS (délai
-  de propagation d'ack, cf. M7e) les 3 `btst` échouent -> aucun dispatch, vs le dispatch VERTB inconditionnel
-  de M7f. PREUVE : une 2e source de niveau 3 (COPER) est DÉCLENCHÉE PAR LOGICIEL (`INTREQ=SETCLR|COPER`
-  depuis le serveur VERTB `vbl_tail`, rate-limité 1/4 ; pas de graphics requis) ; `IntVects[COPER]` =
-  `coper_test` (vecteur exclusif) incrémente `COPER_FIRED`. Série « M7G MULTISRC OK » gated sur
-  `COPER_FIRED>=seuil` -> int3 sert CHAQUE source de niveau 3 en attente (COPER sur son propre INT3, VERTB
-  sur le sien), plus seulement VERTB. **Portée exacte** : le per-source SÉQUENTIEL est prouvé (vbl_tail pose
-  COPER PENDANT l'INT3 VERTB -> d2 est déjà échantillonné -> COPER servie à l'INT3 SUIVANT) ; le cas
-  co-pending (VERTB+COPER sur le MÊME INT3) n'est PAS isolé. BLIT : chemin présent mais par-inspection
-  seulement (aucune source BLIT en démo ; identique au chemin COPER prouvé). GREEN 3/3 (0 FAILED) ;
-  RED (`M7G_MONO_SOURCE=1`) -> int3 décode+acke COPER mais NE la dispatche PAS -> « M7G » absent,
-  `COPER_FIRED` figé, tout le reste identique SANS storm (preuve : le dispatch par source décodée est
-  load-bearing). Note : un vrai mono-source (acke VERTB seul) LIVELOCKERAIT la machine (COPER niveau 3
-  pending-non-ackée -> INT3 en boucle) ; d'où le RED « dispatch-skip » qui isole proprement la variable.
-  Non-régression M3f + coopérative + M7a..M7f re-prouvés dans le même boot.
-- **M7h** (QUANTUM RÉEL) : `sched_server` ne pose plus `AttnResched` à CHAQUE tick — il compte
-  `QUANTUM_ELAPSED` et ne préempte qu'après `M7H_QUANTUM` ticks de time-slice (défaut 4, comme
-  SysBase.Quantum d'exec). `dispatch_in` reset `QUANTUM_ELAPSED` sur un changement RÉEL de tâche
-  (entrante != sortante ; pas de reset sur dispatch-vers-soi). La priorité stricte était DÉJÀ correcte
-  (RemHead pick la plus haute pri, Enqueue requeue par pri, Signal préempte sur réveil prioritaire) ->
-  pas de gap priorité, M7h = quantum seul. **Observabilité (conséquence directe de M7f)** : en démo
-  NORMALE, INT6 (task_timer ~140/s) dispatche -> `dispatch_in` reset `QUANTUM_ELAPSED` avant qu'il
-  n'atteigne le quantum -> le quantum ne se déclenche QUASI JAMAIS (QUANTUM_EXPIRE_N≈0) ; c'est un
-  quasi-no-op et la rotation reste pilotée par INT6 (non-régression M3F..M7G OK). Le quantum n'est
-  OBSERVABLE qu'en ISOLATION (`M7H_QUANTUM_DEMO=1`) : `setup_demo_tasks` ne crée que task_s + task_q2
-  (2 spinners pri 0, aucun préempteur prioritaire ni yield ; INT6 tourne mais ne Signale personne ->
-  ne rotate pas) -> le quantum VBlank devient le SEUL rotateur. PREUVE : « M7H QUANTUM OK » gated sur
-  `QUANTUM_EXPIRE_N*2 < VBL_COUNT` (débit ≈ VBL/4 pour QUANTUM=4 -> quantum > ~2 ticks) ET `WP_SPIN>0`
-  (task_s a tourné = rotation réelle, pas monopolisé). GREEN-défaut 3/3 (non-rég, M7H absent) ;
-  GREEN-isolation 2/2 (« M7H QUANTUM OK ») ; RED-isolation `M7H_QUANTUM=1` -> rotation chaque tick ->
-  `QUANTUM_EXPIRE_N≈VBL_COUNT` -> discriminant échoue -> « M7H » absent 2/2 ; coopérative OK. Framing
-  honnête : quantum FIDÈLE, observable seulement isolé ; quasi-no-op en défaut = conséquence correcte de
-  l'archi (INT6 co-pilote), pas une faiblesse.
-- **M7i** (`timer_reply` -> `ReplyMsg`) : la routine de réponse bespoke `timer_reply` (M7c) est SUPPRIMÉE.
-  Elle existait parce qu'à l'époque `PutMsg`/`ReplyMsg` appelaient `Permit` -> reschedule SYNCHRONE
-  interdit au milieu d'une interruption. M7d a rendu ces primitives interrupt-safe (Disable INTENA +
-  `raw_enable`, SANS tail Permit/yield) -> le hack n'a plus de raison d'être. Les 2 services qui
-  répondaient (timer_vblank_service / timer_micro_service, chemin interruption) appellent désormais
-  directement `LVO_REPLYMSG` (AddTail + Signal + marque NT_REPLYMSG, atomique, aucun yield en IRQ).
-  `timer_beginio` n'était PAS un appelant (il force min 1 tick -> reply différé, et tourne en contexte
-  tâche). Register-safe : ReplyMsg clobbe d0/d1/a0/a1, préserve d2-d7/a2-a6 (les invariants de boucle
-  d2/a2/a4, et d3/a5 pour le chemin micro, survivent). PREUVE = ÉQUIVALENCE : jeu de marqueurs
-  IDENTIQUE à la démo par défaut M7h (M3F/M6A/M7A/M7C/M7D/M7E/M7F/M7G, 0 FAILED) sur GREEN 3/3 +
-  coopérative — le swap est observablement inerte (refactor, pas nouveau mécanisme ; aucun RED à part un
-  bug planté). La justification inversée (« on n'utilise PAS ReplyMsg car Permit yield ») a été corrigée
-  partout (en-tête timer.s, commentaires des services, ce document).
-- **M7j** (`RemTask` — CYCLE DE VIE) : `RemTask(task a1)` retire une tâche et libère sa pile
-  (`TC_SPLOWER..TC_SPUPPER`) + son TCB (`TC_SIZE`). Deux chemins. **SELF** (`a1`=0 ou ThisTask — le cas
-  « une tâche se termine » : son corps RTS -> `task_exit` -> `RemTask(self)`) : `trap #2` -> superviseur.
-  Réalisation d'option (D) de l'advisor : une fois en superviseur on tourne sur la **SSP partagée**, donc
-  la pile user de la sortante n'est PLUS utilisée et est libérable ; on `FreeMem` pile puis TCB, puis on
-  bascule sur la tâche suivante exactement comme le lancement de la 1re tâche (`RemHead` + `dispatch_in`,
-  NE REVIENT PAS). **Pièges traités** : (1) `FreeMem` utilise Forbid/Permit et Permit YIELD -> on enveloppe
-  le teardown dans un `Forbid` EXTERNE (le Permit interne voit TDNEST>=0 -> pas de yield) + IPL7 (masque
-  IRQ) ; (2) on efface `EB_THISTASK` AVANT `FreeMem(TCB)` car `dispatch_in` le lit (cmp QUANTUM_ELAPSED M7h)
-  -> pas de lecture de TCB libéré ; (3) QUANTUM_ELAPSED est global -> `dispatch_in` le reset sur le switch
-  (note M7h close). **NON-SELF** (`a1` != ThisTask, tâche ready/waiting) : pas de trap ni switch — Forbid
-  (anti-yield) + Disable (vs IRQ) + `Remove` + `FreeMem` pile+TCB + raw_enable + Permit, retour au caller.
-  PREUVE : « M7J REMTASK OK » — task_rm (pri 0) tourne `RM_THRESH` fois puis RTS -> `task_exit` ->
-  `RemTask(self)` ; task_timer (survivante) capture `AvailMem` AVANT création de task_rm, puis confirme
-  qu'après l'auto-retrait `AvailMem` est remonté d'au moins `M7J_RECOVER` (pile 2048 + TCB) = free réussi.
-  GREEN 2/2 + non-régression défaut (M3F..M7G, 0 FAILED, M7J absent car task_rm hors config par défaut) 3/3
-  + coopérative ; RED (`M7J_NOFREE=1`, FreeMem sauté) -> `AvailMem` ne remonte pas -> « M7J » absent 2/2,
-  SANS crash (task_rm bien retirée de l'ordonnancement, seule la mémoire fuit). **Limites** : non-self par
-  inspection (la démo exerce le self) ; `tc_MemEntry` non libéré (aucune tâche démo n'en alloue) -> hors scope.
-  **Corrigé à l'étape 10** (voir « Libérations mémoire fidèles ») : RemTask ne libère plus que `tc_MemEntry`, comme la
-  vraie exec ; pile et structure y sont décrites par `task_alloc`.
-- **M7l** (CALIBRATION µs RÉELLE MICROHZ) : avant M7l, `timer_beginio` convertissait `TV_MICRO` en ticks via
-  `/20000` (le facteur VBLANK 50 Hz) pour les DEUX unités -> sur l'unité MICROHZ (CIA-B, latch `$00FF` = 255
-  ticks E-clock) `TV_MICRO` ne valait PAS des µs réelles (une requête « 400000 µs » durait ~7 ms, pas 400 ms).
-  M7l SÉPARE la conversion par unité : MICROHZ compte en interruptions CIA-B via `US_PER_INT`=359 /
-  `INTS_PER_SEC`=2782 (E-clock PAL 709379 Hz = CPU/10, latch 255 -> ~359,5 µs/int) ; VBLANK garde `/20000`.
-  `TV_MICRO` signifie donc des µs réelles, à la résolution d'une interruption (~360 µs). (Remplacé à l'étape 10 :
-  one-shot armé sur l'échéance, reste en ticks E — voir « ÉTAPE 10 — PERFORMANCE ».) PREUVE = INTER-HORLOGES
-  (NON tautologique : E-clock CPU vs raster display, matériels différents) : une requête MICROHZ de 0,5 s doit
-  s'écouler en ~25 ticks VBLANK (horloge 50 Hz indépendante). GREEN « M7L MICROHZ CALIB OK » = elapsed ∈ bande
-  [22,28] (3/3). RED (`M7L_OLD_CONV=1`, conversion VBLANK rétablie sur MICROHZ) : la requête de 0,5 s expire en
-  ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> elapsed ~0-1 -> M7L ABSENT, M3F..M7G verts (2/2, RED chirurgical :
-  la valeur de requête de la boucle `task_timer` est gatée en parallèle via `TT_MICRO_REQ` pour garder la PÉRIODE
-  ~7 ms sous les deux conversions). COOP : non-régression de tous les marqueurs antérieurs (M3F/M6A/M7A/M7E/M7F/
-  M7G, 0 FAILED) ; M7L est une preuve du build PAR DÉFAUT (comme M7C/M7D dépendent des spinners, M7H de
-  l'isolation) : en coopératif la latence de réveil (task_timer pri 10 ne préempte pas task_h pri 10 — Signal à
-  pri égale ne pose pas AttnResched -> attend le yield de task_h) gonfle la fenêtre VBLANK mesurée au-delà de la
-  bande serrée -> M7L non émis. C'est un artefact de MESURE, pas d'erreur de calibration — PROUVÉ PAR CONSTRUCTION :
-  le décompte est 1392 interruptions CIA-B sur le timer matériel (latch `$00FF`, non gaté, identique dans TOUT
-  build) donc l'achèvement est fixé à ~0,5 s ≈ 25 ticks quel que soit `SCHED_ON` ; donc `elapsed = 25 + head(<1) +
-  latence-réveil`, et seule la latence-réveil diffère entre préemptif et coopératif (magnitude immatérielle, mécanisme
-  déductif ; confirmé empiriquement aussi : bande élargie [22,250] -> M7L réapparaît en coop). **Limites** : résolution
-  sub-interruption (< 360 µs, lecture live du latch E) + unité ECLOCK différées ; le chemin `secs` de la conversion
-  n'est pas exercé par les démos (les deux requêtes ont secs=0) -> correct par construction, non prouvé empiriquement.
-- **M4 graphics FAIT** (Copper → bitplane → graphics.library résidente → affichage généré par l'ABI). **M5 intuition : squelette résident + `ViewAddress` FAIT** (`src/intuition/`) ; l'écran « insert Workbench disk » est reporté à **M6** (son vrai déclencheur = pas de volume bootable ; les docs publiques confirment qu'il n'est PAS une fonction intuition — refuser l'écran synthétique, cf. logique M7k reporté).
-- **`OpenLibrary` exec FAIT** (`library.s` : `OpenLibrary`/`CloseLibrary`/`OldOpenLibrary` ; marqueur série M5O : succès version 34 + OpenCnt+1, gate version 99→0, lib inexistante→0, CloseLibrary→OpenCnt-1 ; RED `OPENLIB_NO_VERCHECK`). Les preuves M4c1/M5 (FindName+Open à la main) peuvent maintenant être refactorées pour passer par `OpenLibrary` (suivi).
-- **dos.library squelette résident FAIT** (`src/dos/` : `DosBase`+`RootNode`+`DosInfo` liés par **BPTR**, structures séparément AllocMem'd/long-alignées ; `DateStamp`-192 → (0,0,0) horloge non réglée + renvoie le pointeur ; marqueur série **M6D** : AUTOINIT→LibList + round-trip BPTR `rn_Info<<2==&DosInfo` (compute-then-compare, sans déréférencement) + DateStamp ; RED `M6D_BAD_BPTR` isole l'encodage BPTR ; checksum `0x929C804F`). 1er incrément M6.
-- **Écran de boot FAIT** (`src/graphics/` : image chaton « KickSlopStart » 352×272×5 = 32 couleurs en overscan, affichée au handoff via l'ABI graphics.library ; `MakeVPort` rendu générique N plans/M couleurs ; marqueur série **M6S** (liveness) + discriminant VISUEL (couleurs uniques : GREEN ~18-19k vs RED one-plane ~36) ; RED `BOOTSCR_ONE_PLANE` isole le rendu multi-bitplane ; pipeline `mk_bootscreen.py` auto-vérifié). ⚠️ Affiché **inconditionnellement** au handoff pour l'instant : le vrai déclencheur « aucun volume bootable » reste à l'incrément strap.
-- **Strap (romboot) — routage FAIT (M6r)** puis **lecture+validation+exécution du bootblock FAIT (C/M6y)** (`src/exec/strap.s`). M6r : `strap_boot` route l'affichage insert-disk par sa décision. **C** : `strap_boot` lit maintenant VRAIMENT les secteurs 0+1 de DF0: (`CMD_READ` offset 0 len 1024, via `BeginIO`-30, pattern M6w), valide magic « DOS » + **checksum additif** (somme à retenue circulaire des 256 longs == `$FFFFFFFF` — ADDITIF, pas XOR comme les checksums MFM), puis **saute au boot code à +12** (A6=SysBase, A1=IORequest ; A0 de handoff dos IGNORÉ, pas de dos en C). Bootable → renvoie « bouté » (**M6Y**, pas d'insert-disk) ; checksum invalide (ADF formaté non installé = checksum 0) ou pas de disque → renvoie 0 → insert-disk (**M6R**) = le VRAI déclencheur 1.3. RED `STRAP_FAKE_BOOTDEV` (route sans lire), `STRAP_NO_EXEC` (valide sans sauter → isole l'exécution), `STRAP_BAD_CSUM` (rejette un bon bloc → isole la validation). Preuve : le marqueur **CBOOT** est émis par le bootblock LUI-MÊME → prouve le saut. ADF de test bootable custom régénérable (`tests/mk_boot_adf.sh` + `tests/bootblock_c.s` + `tests/patch_bootblock.py`, round-trip).
-- **trackdisk.device — squelette (B1) FAIT** (`src/exec/trackdisk.s` : 2e device, AUTOINIT pri 20 → DeviceList, `Open` valide les unités DF0-3 ; marqueur série **M6T** ; RED `TD_NO_UNITCHECK` isole la validation d'unité). Fondation de la lecture disque.
-- **trackdisk lecture de piste brute (B2) FAIT** (`td_read_track0` : la ROM LIT réellement une piste MFM de DF0 via le disk DMA Paula — 22 mots de synchro `$4489` trouvés sur un ADF de test ; marqueur série **M6U** + compte de syncs ; RED `TD_NO_DMA` isole l'armement du DMA ; harness `tests/boot_test.sh` étendu avec une disquette optionnelle en DF0). 1re fois que la ROM accède au matériel disque.
-- **trackdisk décodage MFM (B3) FAIT** (`td_decode_track` : 11 secteurs × 512 o décodés+vérifiés, secteur 0 = bootblock « DOS\0 » ; marqueur série **M6V** ; RED `MFM_BAD_DECODE`).
-- **trackdisk CMD_READ (B4) FAIT** (`BeginIO` traite `CMD_READ` ; marqueur série **M6W** ; RED `TD_READ_NOCMD`).
-- **trackdisk CMD_READ MULTI-PISTE (M6z, prérequis D) FAIT** : `BeginIO` convertit l'offset octet en (piste, secteur) et boucle sur les pistes touchées (traverse les frontières de piste) ; gardes `IOERR_BADLENGTH`/`TD_DISKBYTES`. Preuve série **M6Z** = root block @bloc 880 (piste 80, +0==T_SHORT, +508==ST_ROOT) + lecture spanning blocs 10+11 (marqueurs « SPAN0010 »/« SPAN0011 » à cheval sur la frontière piste 0/1). RED `TD_NOSEEK` (lit toujours la piste 0, sans crash) → M6Z absent (isole le mapping offset→piste).
-- **trackdisk seek + side-select (B2b) FAIT** (`td_read_track(n°)` : seek vers une piste arbitraire + side ; prouvé en lisant la piste 2 → secteurs décodés portent track==2 ; marqueur série **M6X** + diagnostic TRACK= ; RED `SEEK_NOSTEP`). **trackdisk.device est maintenant complet** : il lit n'importe quel secteur logique de n'importe quelle piste de DF0.
-- **trackdisk — CYLINDER-TRACKING** : `td_read_track` suit le cylindre courant (`TD_CURCYL`/`TD_CYLVALID`) et steppe le **delta** vers la cible (recalibration à 0 seulement si position inconnue) — corrige PROPREMENT le bug « lecture après un seek lisait la mauvaise piste » (le delta ramène la tête au bon cylindre) ET supprime la recalibration 85-pas à chaque lecture (lectures rapides, requis sous l'ordonnanceur). RED `TD_NO_CYLTRACK` (recalibration systématique → D3B absent à WAIT=90). Détection « lecteur absent/vide » via le **timeout DSKRDY** (retour avant le seek). Wiring `CMD_READ` offset→piste multi-piste livré (M6z). Dette : pas d'invalidation sur disk-change (eject/swap réel → recalibration périodique, M7).
-- **trackdisk — FIX RACE SEEK/INTERRUPTION (CIA-B)** : les pulses de pas du seek écrivent `CIAB_PRB` ; la source MICROHZ (timer A de CIA-B, INT6) partage la MÊME puce. Une IRQ INT6 tombant entre les écritures PRB d'un pas corrompt le positionnement de la tête → la lecture suivante **se vautre** (hang). Invisible tant que le boot ne lit que des blocs bas (petits seeks) : exposé par un **gros seek vers un bloc haut** sur un vrai disque plein (ex. ouverture de `flt-intro` sur une disquette Lemmings). FIX = **section critique `Disable`/`Enable` autour du seul SEEK** (`td_read_track`, `.rd_seek`→`.rd_dma`) ; le DMA en aval poll `INTREQR` → pas d'IRQ requise → latence d'IRQ minimale (vs masquer tout le read). **Cause prouvée par bissection, pas supposée** : un délai inter-pas PUR ne corrige PAS (donc pas un défaut de settle), masquer les IRQ OUI (3/3). Non-régression : GREEN complet (D1/D3B/OFS STREAM/M7A/M7L/FORBID ATOMIC/E3/F1BOOTOK, 0 FAILED) inchangé.
-- **« Ça boote ! » (C/M6y) FAIT** : cf. la ligne Strap ci-dessus — le strap lit+valide+exécute le bootblock d'un ADF bootable, prouvé par le marqueur **CBOOT** émis par le bootblock. Premier code EXTERNE (disque) exécuté par la ROM.
-- **CRACKTRO FAIRLIGHT DE LEMMINGS AFFICHÉ (jalon jeu réel)** : la ROM boote la disquette *Holiday Lemmings 1993 [h FLT]*, son `s/startup-sequence` lance `flt-intro` (cracktro FLT), qui **S'AFFICHE À L'ÉCRAN** (logo FAIRLIGHT + liste BBS, prouvé par capture). A nécessité trois pièces : (1) le fix race seek trackdisk ci-dessus (flt-intro, bloc 1597, chargeait enfin) ; (2) **graphics.library** — jump table étendue aux vecteurs 38-77 + `WaitBlit`(-228)/`OwnBlitter`(-456)/`DisownBlitter`(-462) (stubs : l'intro n'utilise pas le blitter) + `LoadView`(-222) gère la **vue NULLE** (coupe DMA bitplane+copper au lieu de déréférencer l'adresse 0) ; (3) **exec `Supervisor`(-30)** (`library.s` + `trap3_handler` dans `interrupts.s`) : `trap #3` → superviseur → `jmp (a5)` ; la routine (l'intro) finit par `RTE` qui dépile le frame du trap → retour au caller. L'intro pilote le copper/bitplanes/DMACON/BEAMCON0 **100% en direct** en mode superviseur (aucun rendu via graphics.library ; ActiView/copinit/LOFlist seulement SAUVÉS-pour-restaurer, jamais déréférencés — layout GfxBase intact). Analyse clean-room du bootblock + du cracktro dépacké (r2, disque de JEU = hors firewall Kickstart). Non-régression GREEN complète inchangée. **Portée honnête** : c'est le CRACKTRO qui tourne ; le jeu `HolidayLemmings` (145 Ko > buffer shell 16 Ko + cap LoadSeg) reste un jalon « gros loader » distinct.
-- **ÉCRAN DE CHARGEMENT (gros fichier) — DÉMO GATÉE FAITE** (`src/graphics/loadscreen.s`, flag `LOADSCREEN_DEMO`) : `loadscreen_demo` monte une **View** sur le bitplane texte de la console.device (`FindName` console → repointe `CONB_BITMAP` sur un plan 352×272 = géométrie fixe de `gfx_MakeVPort`, stride 44 ; `MakeVPort`/`MrgCop`/`LoadView` via l'ABI graphics.library) puis écrit « Chargement <nom>... » (console `CMD_WRITE`, glyphes 8×8) + une **barre de progression** (un '#' par chunk de 4 Ko) pendant une lecture **STREAMING réelle** du fichier (`ofs_stream_read`, data-block par data-block, sans buffer whole-file), puis « OK ». Preuve **boot FS-UAE** : capture écran — texte blanc lisible sur fond bleu nuit (`loadscreen_final.png`). **Gating propre** : `loadscreen.o` n'est lié QUE sous `make VASMDEF=-DLOADSCREEN_DEMO=1 kick` (condition `findstring` dans le Makefile + `xref`/trigger gardés `ifne LOADSCREEN_DEMO` dans boot.s) → la ROM par défaut reste **byte-identique** au commit (md5 `d4c1784c…` inchangée, zéro code mort). **Dépasse** la limite « rendu visuel différé » notée en #3a : le texte console S'AFFICHE bien dans une fenêtre FS-UAE capturable dès que la View est montée avec la bonne géométrie (352×272, stride 44) — l'ancien `gfx_text_display` ne montait pas la View correctement. **Portée honnête** : DÉMO autonome (nom `bigseg` codé en dur, monte son propre affichage, tient l'écran, NE REVIENT PAS) — PAS encore câblée dans `dos_loadseg`, donc ne se déclenche pas automatiquement « quand il charge une image ». Câblage *live* = follow-up (le loadscreen devra RETOURNER, libérer ses allocs, et réutiliser l'affichage courant au lieu d'en monter un dédié).
-- **TRACKDISK SUR TIMING-EXACT (WinUAE / vrai A500) — FIX FAST** (commit 4590cb1) : le mode lecture ADKCON était `$8400` (FAST=0 = 4 µs/bit) → Paula échantillonnait au mauvais rythme, bitstream garbage, `$4489` jamais matché, aucune lecture sur WinUAE (FS-UAE tolérait). Désormais `$9500` (= mode lecture officiel KS1.3 `$9100` SETCLR|MFMPREC|FAST + WORDSYNC). Aussi : plus de hard-fail sur timeout `/RDY` (l'officiel ne lit jamais `/RDY`), pulse `/STEP` élargi. Prouvé : Lemmings [h FLT] boote sur WinUAE timing-exact, cracktro affiché, chargement du jeu engagé (bloque plus loin, ~secteur 46 = chantier suivant). Référence clean-room : `docs/analysis/trackdisk-official-timing.md`. Le loadscreen **coupe le DMA bitplane+copper pendant chaque `ofs_stream_read`** : sur WinUAE, lire le disque avec notre View montée renvoyait un buffer DMA vide ; avec le cut → `######`/`OK` prouvé sur WinUAE et FS-UAE.
-- **LE JEU HOLIDAY LEMMINGS DÉMARRE (jalon jeu réel)** : sur la disquette *Holiday Lemmings 1993 [h FLT]* (A500 512 Ko chip + 512 Ko slow), la startup-sequence enchaîne `flt-intro` (cracktro) → **clic gauche** → `HolidayLemmings` (145 Ko) qui se charge et **affiche son menu** (PLAY/QUIT/NEW LEVEL…, scroller actif), prouvé par capture FS-UAE (harnais clavier/souris). Quatre pièces : (1) **slow RAM** (`add_slow_memory`, `memory.s`) : sonde `$C00000` par blocs de 512 Ko (sondes à `$1FE`/`$3FE` = registre NO-OP si miroir custom, deux motifs croisés, rejet des alias), ajoutée **EN TÊTE** de la MemList en `MEMF_FAST|MEMF_PUBLIC` → les allocations sans `MEMF_CHIP` y vont d'abord, la chip reste au programme ; marqueur série `MEM SLOW KB=`. (2) **shell** : buffer de commande à la **taille réelle** du fichier (`Lock`+`Examine` → `FIB_SIZE`, plus de buffer fixe 16 Ko), boucle `Read` jusqu'à EOF, buffer libéré **avant** d'exécuter. (3) **LoadSeg** respecte les **flags mémoire** des hunks (bit 30 → `MEMF_CHIP`, bit 31 → `MEMF_FAST`, `11` = attributs étendus V37 → échec propre) et masque les flags **recopiés dans l'id de hunk** du corps (`$400003EB` = BSS chip — c'était la cause du « ? » au lancement) ; gardes `hidx`/`ref < hunkcount`. (4) **cache de piste trackdisk** : le sectorbuf devient persistant (`TD_CACHEBUF`) et garde la dernière piste décodée (`TD_CACHETRK`), validée seulement si les 11 secteurs sont décodés ET portent le n° de piste demandé, invalidée par `/CHNG` (CIA-A PRA bit 2, lu en sélectionnant DF0 moteur OFF) — chaque bloc OFS de 512 o relisait une piste entière (spin-up+seek+DMA), ~300 lectures de piste pour l'exécutable. Non-régression GREEN avec et sans slow RAM. **Lancement d'un niveau confirmé par l'utilisateur** (2026-10-18, test manuel ; pas de preuve automatisée dans le harnais). **Portée honnête** : sans slow RAM le jeu ne tient pas en mémoire (comme sur une vraie A500 512 Ko).
-- **WORKBENCH 1.3.3 — ÉTAPE 1 : NOMS DOS, ASSIGNS, CLI, TRAPS (SetPatch tourne)** : (1) **résolution des noms** (`dos_resolve`, `dos_lib.s`) : « xxx:reste » → nœud de la DosList (insensible à la casse) ; assign (DLT_DIRECTORY) → son lock + son handler, on transmet « reste » ; device/volume → handler, lock 0, nom complet ; « :reste » → racine du volume courant ; sans ':' → relatif à `pr_CurrentDir` (lock 0 → `pr_FileSystemTask`, sinon DF0:). Préfixe inconnu → `ERROR_DEVICE_NOT_MOUNTED`. Open/Lock transmettent enfin le **lock parent** (ARG2 de FINDINPUT, ARG1 de LOCATE_OBJECT) ; noms BSTR jusqu'à 255. (2) **OFS** : `ofs_name_to_block`/`ofs_stream_open` partent du répertoire du lock (« xxx: » → racine, chemin vide → le répertoire lui-même, composant vide « / » → parent via long[125], '/' final neutre). (3) **DosList** : DeviceNode nommé `DF0` ; au démarrage du CLI initial, `dos_boot_assigns` crée le nœud **volume** (nom lu par Examine de la racine), les assigns **SYS: C: S: L: DEVS: LIBS: FONTS:** (si le répertoire existe) et `pr_CurrentDir` = racine. (4) **CLI initial** : `pr_CIS`/`pr_COS` = FileHandle console, **`pr_CLI` = CommandLineInterface** (sans elle le code de démarrage C se croit lancé par le Workbench et attend le message WBStartup → blocage), `cli_CommandName`/`cli_Module`/`cli_ReturnCode` tenus à jour ; commandes cherchées telles quelles puis dans **C:** ; convention d'appel CLI (a0 = arguments terminés par '\n', d0 = longueur, 4(sp) = taille de pile, **`pr_ReturnAddr`** pointé sur ce long : `exit()` y retrouve la pile d'entrée) ; redirections `>`/`<` et commentaires `;` retirés des arguments ; pile du CLI 8 Ko. (5) **Exceptions CPU** (`interrupts.s`) : vecteurs 2-11 et TRAP #4-15 → n° de trap empilé → `tc_TrapCode` (0 → `ExecBase.TaskTrapCode`) ; gestionnaire par défaut = « SOFTWARE FAILURE trap= pc= addr= code= task= » sur le série puis tâche mise en attente (avant : saut à une adresse quelconque, machine gelée). **Forme imposée par SetPatch** : vecteur n → `bsr.s` d'une table (2 octets/vecteur), routine commune = `subi.l` 6 octets (→ 2n) puis `lsr.w 2(sp)` (`$E2EF`) ; SetPatch vérifie ce mot (sinon plantage volontaire) et y branche ses stubs FPU. (6) **exec `RawDoFmt` (-522)** (`rawdofmt.s`) : %[-][0][largeur][.limite][l]d/u/x/s/b/c, a2/a3 restitués ; auto-test « RAWDOFMT OK » (RED vérifié). Preuve : sur le disque *Workbench 1.3.3*, `c:SetPatch` (trouvé via C:) s'exécute en entier, affiche ses messages et rend la main ; la startup-sequence s'arrête ensuite sur `AddBuffers` (commande **BCPL** → étape 2). **Portée honnête** : `SetFunction` non implémenté → les correctifs annoncés par SetPatch ne sont pas réellement installés ; pas de layers.library ; pas encore de redirection réelle ni de NIL:.
-- **WORKBENCH 1.3.3 — ÉTAPE 2 : RUNTIME BCPL (`src/dos/bcpl.s`)** : appel/retour BCPL (A5 = `bcpl_call`, multiply à +$10, divide à +$12 ; A6 = `bcpl_ret`), vecteur global du CLI (804 octets, slots −50..+150, GV[0] = 150, slots non définis = stubs « BCPL GLOBAL xxxx NON IMPL » sur le série) dans `pr_GlobVec`, et **segment runtime au format BCPL** (table `(globale, offset)` + max en fin de hunk) publié dans le **segarray** `pr_SegList` = [1, runtime] : le stub de démarrage des commandes c: (hunk 0, identique dans toutes) s'y crée un GV PRIVÉ par findsegarray/getvec/globin et y installe le runtime puis sa propre seglist. ~60 globales : stop, result2, taskid, level/longjump, getmem, globin, getvec/freevec, parentdir, testflags, rootstruct, delay, sendpkt (la frame d'arguments EST le DosPacket), currentdir, rdch/unrdch/wrch, findinput/findoutput, select/end*, input/output, writet/newline/writed/writen/writehex/writeoct/writes/**writef**, capitalch/compch/compstring, **rdargs/rditem/findarg**, load/unloadseg, makedevnode/finddevinfo, callexec/calllib, findsegarray, deleteobj/createdir (échec : FS lecture seule), endstream, deviceproc, fault (repli « Error code %N »), splitname, locateobj/freeobj/lock, getlong/putlong, copydir, errorreq (FALSE), copystring, findcli, copyvec. Le CLI lance chaque commande comme **runcommand** (spec §4.3) : pile dédiée de `cli_DefaultStack` longs (1000), [ancien SP][taille] au sommet, `pr_ReturnAddr` → taille, arguments injectés dans le FileHandle d'entrée (`fh_Buf`/`fh_Pos`/`fh_End`, restaurés au retour), A1/A2/A3/A4/A5/A6 posés. Un slot non défini d'un GV de commande vaut `$474C0001+2n` : la faute d'adresse donne directement n = (addr − $474C0001)/2. Handler : ACTION_MORE_CACHE (accepté), ACTION_PARENT, ACTION_COPY_DIR. dos : jump table complétée jusqu'à −222 (Delay, WaitForChar, ParentDir, IsInteractive, Execute — l'appel au-delà de DateStamp tombait sous la table : faute de SetClock). exec AddTask n'écrase plus `ln_Type` (les process restent NT_PROCESS). SOFTWARE FAILURE affiche aussi `cmd=`, `a6=`, `(usp)=`. Spec : `docs/analysis/bcpl-runtime-v34.md` (relue clean-room, sections 1-13). **createproc (33) + CLI de fond (Run)** : `bcpl_proc_entry` (spec §2.4 : pile remplie de `$ABABABAB`, frame de base, GV[12], globin de chaque segment du segarray, attente du packet de démarrage, `start(pkt)` avec `pr_ReturnAddr` posé pour `stop`, RemTask au retour) ; le GV est **partagé** avec le CLI parent (conforme à la spec) ; `rn_TaskArray` (20 slots) alloué par dos, `pr_TaskNum` ; qpkt/returnpkt/taskwait, runcommand (121) en globale. Corrections révélées par Run : **getlong/putlong(i, base[, v])** = long à `base + 4*i` (la spec §8.1 disait « offset en octets », démenti par Run) ; les **FileHandles sont des blocs getvec** (taille à −4) car les commandes BCPL en fabriquent et les ferment (FileHandle mémoire de Run) — Open alloue en getvec, Close libère par l'en-tête ; le CLI **réinstalle ses flux** autour de chaque commande (avant : selectinput(cli_StandardInput), après : selectoutput(cli_StandardOutput)/selectinput(cli_CurrentInput), spec §4.2.3/§4.4) ; **Delay bloque sur timer.device** (unité VBLANK, port et requête sur la pile) au lieu d'une attente active qui affamait le CLI de fond pendant `wait` ; le handler remplit le **FIB comme un handler de packets** : nom et commentaire en **BSTR**, `fib_Protection`, `fib_EntryType`, `fib_NumBlocks`, `fib_Date` (Shell-Seg lit la protection d'un fichier trouvé par le chemin de recherche) ; les LVO Examine/ExNext convertissent BSTR → chaîne C (comme `fixfib` d'AROS). Preuve (WB 1.3.3, FS-UAE) : SetPatch, **AddBuffers**, **cd c:** (BCPL), echo, FastMemFirst, BindDrivers, SetClock, FF, **resident** ×2, **mount newcon:**, **failat**, puis **run execute s:StartupII** crée « Background CLI » (`[CLI 2]`) qui exécute **Execute** et les six **resident** de StartupII (code retour 0 chacun, trace temporaire des noms de commande) ; il s'arrête sur `makedir ram:t` (code 10 : pas de device RAM:) et le script est abandonné (failat) ; le CLI principal attend dans `wait 5 mins`. **Portée honnête** : pas de démarrage de handler BCPL (globale 112 : RAM: = `L:Ram-Handler`, NEWCON:), FS en lecture seule, writef non tamponné, C:FAULT non lancé.
-- **WORKBENCH 1.3.3 — ÉTAPE 3 : HANDLERS DE DEVICE (RAM:, PIPE:) ET E/S EXEC** : (1) **`bcpl_starthandler`** (`bcpl.s`, globale 112, spec `docs/analysis/handlers-v34.md` + `bcpl-runtime-v34.md` §13.3) appelé par `dos_resolve` pour tout nœud DLT_DEVICE sans tâche (donc par Open/Lock/CreateDir/… et par `deviceproc`) : charge `dn_Handler` dans `dn_SegList` (une seule fois) ; `dn_GlobalVec = -1` → **handler C** (process lancé sur le code du premier hunk, pile en octets) ; sinon **handler BCPL** : segarray `[3, runtime, 0, seglist]`, GV partagé (`dn_GlobalVec`) ou **`makeglobvec`** (globale 13 : max des « max » des segments, plancher 15, slots −50..max), `createproc` (pile en longs) ; packet de démarrage synchrone (Arg1 = BSTR du nom complet, Arg2 = `dn_Startup`, Arg3 = nœud, Res2 = GV) ; succès si Res1 ≠ 0, Result2 := `dn_Lock` ; `dn_Task` n'est jamais écrit par dos (le handler le fait s'il veut être partagé). Le cœur de createproc est factorisé (`rt_createproc`). (2) **Nœud RAM** créé au démarrage du CLI initial (`ba_ramnode` : `L:RAM-HANDLER`, pile 300 longs, pri 0, GV neuf) ; Ram-Handler écrit lui-même `dn_Task` et crée le volume « RAM DISK ». (3) **exec** (`src/exec/io.s`) : **OpenDevice / CloseDevice / DoIO / SendIO / CheckIO / WaitIO / AbortIO** (AutoDocs ; OpenDevice ne cherche que dans la DeviceList) et **CopyMem / CopyMemQuick** (Ram-Handler copie toutes ses données par CopyMem, globale 156 qu'il définit lui-même). timer.device traite désormais **TR_GETSYSTIME / TR_SETSYSTIME** (heure système = référence + VBL_COUNT/50) et rejette les autres commandes (IOERR_NOCMD) en répondant si la requête n'est pas rapide ; TR_ADDREQUEST efface IOF_QUICK (sinon DoIO rendait la main tout de suite — SetClock bloquait). (4) **dos** : LVO **DeleteFile (−72), Rename (−78), CreateDir (−120)** par packets (factorisation `dos_namepkt` avec Lock ; `dos_sendpkt` transmet ARG4) ; globales **createdir/deleteobj/rename** réelles, **setio (6), doio (21), sendio (22), opendevice (31), closedevice (32), setflags (36 : `break`), datstamp (86)**. **errorreq (114) rend TRUE** = abandon (c:Dir reboucle sur ExNext tant qu'errorreq rend 0 : la spec « TRUE = retry » était inversée). (5) **LoadSeg** ignore HUNK_NAME / HUNK_DEBUG / HUNK_SYMBOL (MountMF commence par un HUNK_NAME). (6) **shell** : ligne vide ou commentaire seul après espaces (suite de ligne « ;… ») ignorée au lieu d'afficher « ? ». Preuves (FS-UAE) : la **startup-sequence complète du Workbench 1.3.3** s'exécute — StartupII dans le CLI de fond (makedir/assign sur RAM:, mount speak:/aux:/pipe:, resident remove, **`break 1 C`** interrompt le `wait` du CLI principal : `**BREAK`), puis path, **SYS:MountMF** (CrossDOS), LoadWB (sans effet : pas de workbench/layers), endcli (« CLI process 1 ending »), sans aucun « NON IMPL » ni faute ; disque de test (copie de l'ADF, startup-sequence remplacée) : `copy` vers RAM:, `type`, `makedir`, `dir`, `rename`, `list`, `delete` corrects sur RAM: ; **PIPE:** (handler C) : `run copy s:StartupII to pipe:x` + `type pipe:x` transfèrent tout le fichier jusqu'à EOF. **Portée honnête** : NEWCON: (globale 50 openwindow + console.device sur fenêtre) et AUX:/SER:/PAR:/PRT: (serial.device/parallel.device à charger depuis DEVS:, pas de chargement de device depuis le disque) ne sont pas démarrables ; nœuds CON/RAW/SER/PAR/PRT de la ROM non créés ; LoadWB sans effet.
-- **WORKBENCH 1.3.3 — ÉTAPE 4 : DEVICES DE DEVS:, AUX:, NEWCON:** : (1) **chargement depuis le disque** (`src/exec/ramlib.s`, rôle de ramlib) : OpenLibrary / OpenDevice d'un nom absent des listes, appelés par un process, font `LoadSeg("LIBS:nom" / "DEVS:nom")`, cherchent le ROMTag (RT_MATCHTAG = lui-même) dans les segments et appellent `InitResident(romtag, seglist)` ; échec -> UnLoadSeg. (2) **exec** : AddLibrary/RemLibrary/AddDevice/RemDevice (un module qui fait lui-même son MakeLibrary s'inscrit par AddDevice), **InitStruct complet** (effacement préalable, formes dd = 00/01/10/11, compteur, réalignement : seules INITBYTE/WORD/LONG étaient gérées), **autovecteurs des niveaux 1/4/5** (TBE/DSKBLK/SOFTINT, AUD0-3, RBF/DSKSYNC : sources activées et en attente -> handler exclusif de SetIntVector, qui acquitte INTREQ lui-même ; sans handler -> acquittée ; trackdisk et la console série pollent avec INTENA coupé). (3) **misc.resource** (`src/exec/misc.s`, pri 70) : AllocMiscResource / FreeMiscResource (unités série/parallèle) — sans elle l'init de serial.device échoue. RESMAX porté à 24. (4) **intuition** : GetPrefs / GetDefPrefs (Preferences V34 par défaut, 232 octets : 9600 bauds, 8N1 — serial.device y lit son débit à l'ouverture), OpenWindow / CloseWindow **minimaux** (structure Window remplie depuis la NewWindow, sans layer, rastport ni rendu). (5) **console.device** : une requête issue d'OpenDevice (io_Unit = la fenêtre) suit la sémantique exec standard (réponse ReplyMsg hors IOF_QUICK, CMD_READ en file jusqu'à l'arrivée d'un caractère, AbortIO) ; les appelants synchrones historiques (io_Unit nul : conhandler, sondes) gardent le comportement immédiat ; séquences ESC/CSI ignorées au rendu. (6) **expansion.library** : table de vecteurs complétée au jeu V34 (jusqu'à AddDosNode −150 : Set/GetCurrentBinding réels, Obtain/ReleaseConfigBinding sans effet, le reste neutre) — elle s'arrêtait à −84 et BindDrivers, désormais capable de charger icon.library, appelait ObtainConfigBinding (−120) sous la jump table. **dos Lock** : la factorisation `dos_namepkt` écrasait le d3 de l'appelant (mode copié avant la sauvegarde) — BindDrivers relisait alors IconBase à $FFFFFFFE ; ARG3 passe désormais par d2. (7) **BCPL** : globale 50 **openwindow** (NewWindow de la spec : Flags $21007, Min 120x50, WBENCHSCREEN) avec **GV[92] = IntuitionBase** posé dans le GV du CLI. SOFTWARE FAILURE affiche aussi la valeur d'USP. Preuves (FS-UAE, copies de l'ADF WB 1.3.3) : **AUX:** — `copy s:StartupII to aux:` : Aux-Handler (BCPL, GV partagé) -> serial.device **chargé depuis DEVS:** -> le texte sort sur la ligne série ; **NEWCON:** — `copy s:StartupII to newcon:0/0/640/100/Test` : Newcon-Handler ouvre sa fenêtre (globale 50), console.device sur la fenêtre, CMD_WRITE complétés, CMD_READ en attente avorté à la fermeture, CloseWindow, le script continue. Boot complet WB 1.3.3 : **BindDrivers s'exécute en entier** (icon.library chargée depuis LIBS:, examen de SYS:Expansion), **LoadWB** répond « Cannot find resident tag for workbench.task » (module résident absent : étape suivante). **Portée honnête** : pas d'affichage des fenêtres (pas de layers.library ni d'écran Workbench : le texte de console.device va dans son bitplane unique, partagé par toutes les fenêtres, non relu par le harnais), lecture clavier NEWCON non prouvée, nœuds CON/RAW/SER/PAR/PRT de la ROM non créés (CON: demanderait le console-handler BCPL de la ROM), SetIntVector ne rend pas l'ancien vecteur, ramlib réservée aux process.
-- **WORKBENCH 1.3.3 — ÉTAPE 5 : RÉSIDENT workbench.task (LoadWB)** : (1) **`src/dos/workbench.s`** (spec `docs/analysis/workbench-task-v34.md`) : ROMTag NT_TASK **sans drapeau de classe** (présent dans ResModules pour FindResident, jamais initialisé au boot) ; LoadWB fait CreateProc avec la seglist BPTR(ROMTag+42) -> faux segment à ROMTag+40 (lien 0) et point d'entrée à ROMTag+44 (ROMTag aligné sur 4). Le process se renomme « Workbench » (LoadWB le retrouve par FindTask), passe en priorité 1, se donne un faux CLI (pr_CLI ; le chemin reçu, message +$14, va dans cli_CommandDir), **répond immédiatement** au message de LoadWB (sans réponse LoadWB reste bloqué dans WaitPort), puis sert un port public « Workbench » en répondant à tout message, et vit indéfiniment comme le vrai. (2) **exec InitCode filtre par classe** : n'initialise que les résidents dont RT_FLAGS a un bit commun avec startClass ; tous nos ROMTags portent désormais **RTF_COLDSTART** et le boot appelle InitCode(RTF_COLDSTART) (avant : startClass ignoré, d0 écrasé). (3) **exec AddPort initialise la liste de messages** (NEWLIST, AutoDoc). Preuve (FS-UAE, WB 1.3.3) : « Cannot find resident tag for workbench.task » disparaît ; LoadWB lance le Workbench, reçoit sa réponse et rend la main ; la startup-sequence se termine par endcli. **Portée honnête** : Workbench **minimal, sans bureau** — pas d'écran Workbench, de fenêtre backdrop, d'icônes de disques, de menus ni de lancement d'outils (le vrai ouvre dos/graphics/layers/intuition/mathffp/icon et redémarre la machine si l'une manque : layers.library, mathffp.library, les écrans et fenêtres Intuition réels, InitGels, OpenFont/Text sont à faire).
-- **WORKBENCH 1.3.3 — ÉTAPE 7 : AMIGASLOPDOS AU DÉMARRAGE ET BUREAU** : (1) **fenêtre AmigaSlopDOS** — le CLI initial ouvre sa console sous le nom `CON:0/0/640/200/AmigaSlopDOS` (Arg3 du FINDINPUT) ; le handler console (`conhandler.s`) ouvre alors une fenêtre sur l'écran Workbench (`con_openwin` : géométrie et titre lus dans le nom, drapeaux d'une fenêtre CON:) et y rend sortie et écho par console.device (le miroir série reste pour le harnais) ; les ouvertures nommées sont comptées, le dernier END ferme la fenêtre — le CLI l'envoie quand EndCLI l'a passé en arrière-plan (`cli_Background`) ; ensuite le shell série de secours ne lit plus le clavier (fin de la double consommation). La bannière de test « E2 SHELL READY » va directement sur le série ; le `echo` intégré se comporte comme c:Echo (sans guillemets englobants, saut de ligne). (2) **thème du projet** — couleur 0 vert pomme ($7C3), couleur 2 noir pur, titres en stylo 2 (DetailPen du Workbench), texte de console sur le stylo 2 par défaut. (3) **intuition sans layers** — une fenêtre n'efface que la partie de son rectangle qu'aucune fenêtre placée devant ne couvre (`it_clearvis`, balayage par segments) ; à la fermeture, la barre de l'écran et les cadres des fenêtres découvertes sont redessinés s'ils ne sont pas recouverts, et ces fenêtres reçoivent **REFRESHWINDOW** ; **IDCMP minimal** (UserPort créé si IDCMPFlags ≠ 0, IntuiMessage intégré à la fenêtre, réutilisé une fois répondu) ; fenêtre **BACKDROP** placée à l'arrière ; `DrawImage` (−114, plans selon PlanePick/PlaneOnOff, segments de même couleur), `AllocRemember`/`FreeRemember` (−396/−408) ; un écran charge ses 32 couleurs. (4) **pointeur souris** — graphics : pointeurs SPR0-7 en tête de la liste copper maîtresse (sprite vide par défaut, réécrits par LoadView, modifiables par ChangeSprite), DMA sprite, `GetSprite`/`ChangeSprite`/`MoveSprite` (−408/−420/−426, coordonnées relatives à la fenêtre d'affichage de la ViewPort active) ; intuition : flèche dessinée pour le projet (couleurs 17-18), canal 0, déplacée par le handler de pointeur (`it_ptrmoved`, ib_MouseX/Y), installé désormais aussi sur le boot disquette (`ptr_wire`). (5) **bureau** (`workbench.task`) — fenêtre de fond BACKDROP sans bordure sous la barre de l'écran (IDCMP REFRESHWINDOW), icône du disque de boot lue par l'**icon.library du disque** (`GetDiskObject("SYS:Disk")`) dessinée par DrawImage en haut à droite (pas de position mémorisée dans Disk.info) avec le nom du volume (Examine de SYS:) centré dessous ; ignorée tant qu'une fenêtre placée devant la couvre, redessinée au REFRESHWINDOW. (6) **interaction** — le handler de pointeur transmet le bouton gauche à intuition (`it_button`) : fenêtre la plus en avant sous le pointeur, gadget de fermeture -> **CLOSEWINDOW**, sinon activation + **MOUSEBUTTONS** (SELECTDOWN/SELECTUP, coordonnées relatives, horodatage tiré du compteur VBlank) ; réserve de 4 IntuiMessages par fenêtre ; **DoubleClick** (−102). Le Workbench sélectionne l'icône du disque au clic (rectangle inversé), l'ouvre au double-clic : fenêtre du disque (géométrie de la DrawerData de Disk.info, titre = nom du volume) avec les icônes de la racine (Examine/ExNext, `nom.info` -> GetDiskObject, positions des .info, nom dessous), dessinées dans les bornes intérieures de la fenêtre ; le gadget de fermeture la ferme et le bureau est réparé. (7) **graphics** — `BltBitMapRastPort` (−606, copie CPU octet par octet avec décalage, découpée, plan NULL = 0 / −1 = 1) : DrawImage construit une BitMap temporaire et fait un seul appel (l'ancien rendu pixel par pixel était visiblement lent sur WinUAE) ; BPLCON2 = $24 (sprites devant les playfields : le pointeur ne passe plus sous la barre de titre). (8) **disquette insérée sur l'écran insert-disk** — process `disk_watch` (pri −1) : toutes les 0,5 s `td_disk_present` (lecture de /CHNG ; s'il est bas, une impulsion de pas — le « clic » du lecteur — réarme le verrou puis relecture) ; lecteur vu vide puis disquette présente -> redémarrage à froid (Supervisor : RESET + saut à l'entrée de la ROM, dans le même mot long) ; une disquette non amorçable déjà présente ne fait pas boucler. (9) **chip RAM** — MakeLibrary, la table des résidents et les tâches de démonstration passent en MEMF_PUBLIC (slow RAM d'abord), le bitplane historique de console.device n'est alloué qu'à la première écriture : Holiday Lemmings (hunk chip de 363 Ko + 37 Ko) retrouve sa place malgré l'écran Workbench. Preuves (FS-UAE, copie du WB 1.3.3, ROM de production) : fenêtre AmigaSlopDOS verte à texte noir pendant le chargement (SetPatch, FastFonts…), fermée à `endcli` ; bureau vert avec barre de titre, icône « Workbench1.3 » et pointeur rouge ; souris pilotée par xdotool : double-clic -> fenêtre du disque avec ses 8 icônes, clic sur le gadget de fermeture -> fermée, bureau réparé ; disk_watch : lecteur vide -> 0 en continu, disquette non amorçable -> présente sans redémarrage, chemin de redémarrage prouvé (ROM de test). **Portée honnête** : pas de layers.library (SetPatch le signale), pas d'OpenFont/topaz (FastFonts le signale), pas de menus, de tiroirs imbriqués, de lancement d'outils ni de défilement des fenêtres de tiroir (MountMF coupée), pas d'icône Ram Disk ; le contenu d'une fenêtre découverte non abonnée à REFRESHWINDOW n'est pas restauré ; l'insertion réelle d'une disquette n'a pas pu être simulée sous FS-UAE (action de touche inopérante) : à confirmer sous WinUAE.
-- **M7+ (MODULES RÉSIDENTS MANQUANTS) ET L4 (INTUITION SUR LAYERS)** : (1) **nouveaux résidents** — `mathffp.library` (`src/exec/mathffp.s`, pri 0, AUTOINIT, 12 fonctions FFP aux LVO −30..−96) ; `disk.resource` (`diskres.s`, pri 70 : AllocUnit/FreeUnit, GetUnit avec file `dr_Waiting` et GiveUnit qui répond au demandeur suivant, GetUnitID lu sur le CIA-B au démarrage pour DF1-3, relais DSKBLK/DSKSYNC/index vers le DiscResourceUnit courant) ; `potgo.resource` (`potgo.s`, pri 100 : AllocPotBits/FreePotBits/WritePotgo) ; `keyboard.device` (`kbddev.s`, pri 60 : READEVENT avec tampon de 16 événements et requêtes en attente servies par `kbd_devevent` appelé depuis l'interruption clavier, READMATRIX, CMD_CLEAR, AbortIO, ADD/REMRESETHANDLER) ; `audio.device` (`audio.s`, pri 40 : allocation par précédence avec vol de canal et verrous, WRITE en DMA avec comptage des cycles par les interruptions AUDn, WAITCYCLE, FINISH, PERVOL, STOP/START, FLUSH, RESET, READ, CLEAR, UPDATE, AbortIO). RESMAX passe à 32. (2) **exec** — sémaphores de signal (`semaphores.s` : Init/Obtain/Release/Attempt/Add/Rem/FindSemaphore, LVO −558..−606 ; le Release qui libère transmet directement la propriété au premier demandeur en file). (3) **graphics** — regions (`src/graphics/regions.s` : NewRegion, DisposeRegion, ClearRegion, Or/And/Clear/XorRectRegion, Or/Xor/AndRegionRegion ; moteur commun d'union, différence et intersection de listes de RegionRectangle) ; `BltBitMap` général (minterms, tampon de ligne si source = destination), ReadPixel, LockLayerRom/UnlockLayerRom ; tout le dessin dans un RastPort à couche passe par ses ClipRects (verrou de couche pris par l'appel ; ScrollRaster par paires de ClipRects, une source masquée marque des dommages). (4) **`layers.library`** (`src/graphics/layers.s`, pri 31, 28 LVO −30..−168, offsets vérifiés sur l'unité Free Pascal `layers.pas`) : couches simple, smart (sauvegarde des parties cachées ; superbitmap traitée comme smart) et backdrop ; reconstruction des ClipRects à chaque changement de pile, fond découvert effacé, DamageList relative à la couche, BeginUpdate/EndUpdate, Move/Size/Upfront/Behind/MoveLayerInFrontOf/DeleteLayer, WhichLayer, SwapBitsRastPortClipRect, verrous. (5) **L4** — intuition ouvre layers.library ; un écran porte sa LayerInfo et une couche simple backdrop pour sa barre ; OpenWindow crée la couche de la fenêtre (simple ou smart selon les drapeaux, une superbitmap étant traitée comme smart ; derrière si BACKDROP) ; CloseWindow la détruit et redessine ; nouvelles fonctions WindowToFront/WindowToBack/MoveWindow/BeginRefresh/EndRefresh ; l'effacement par segments de l'étape 7 (`it_clearvis`) disparaît. (6) **correction d'un écrasement mémoire latent** (`shell.s`) : le stub des commandes BCPL place la base de ses frames à (sommet − 4) − taille ; la pile que le shell allouait faisait exactement « taille » octets, si bien que le premier frame écrasait le dernier long du bloc mémoire précédent. Au boot du Workbench, c'était la case « ancien SP » de la pile d'Execute -> SOFTWARE FAILURE, selon la disposition de la ROM seulement (blocs adjacents). Le bloc a maintenant un long de plus (comme le vecteur getvec de runcommand). Sondes de boot : MATHFFP OK, DISKRES OK, POTGO OK, KBDDEV OK, AUDIO ALLOC OK, AUDIO PLAY OK, SEM OK, SEM WAIT OK, REGIONS OK, LAYERS OK (les deux dernières comparées à un modèle Python au pixel). **Portée honnête** : SetFunction reste un stub (les correctifs de SetPatch ne s'installent pas) ; pas de SizeWindow ; ni ObtainSemaphoreList/Procure/Vacate, ni InstallClipRegion.
-- **WORKBENCH ÉTAPE 8 (INTERACTION)** : (1) **intuition** — tâche « intuition input » (pri 20) alimentée par un anneau d'événements que remplit `it_event` (appelé par le handler de pointeur pour chaque RAWMOUSE ; les mouvements ne sont signalés que pendant un suivi) ; clic : activation de la fenêtre touchée (BACKDROP compris), gadgets système (fermeture -> CLOSEWINDOW, profondeur -> WindowToBack/Front, barre de titre WINDOWDRAG -> déplacement, gadget de taille -> redimensionnement), sinon MOUSEBUTTONS. Déplacement et redimensionnement sous LockLayers avec un cadre fantôme en XOR, appliqués au relâchement. `SizeWindow` (−288 : SizeLayer, bordures et gadgets redessinés, NEWSIZE, réparation) et `WindowLimits` (−318). **Menus** (`src/intuition/menus.s`) : SetMenuStrip/ClearMenuStrip/ItemAddress/OnMenu/OffMenu/PrintIText/IntuiTextLength ; bouton droit -> barre de menus et menu déroulé dans des couches simples, surbrillance par complément, éléments inactifs grisés par rayures, MENUPICK (code menu/élément, NOSUB) au relâchement, CHECKIT/MENUTOGGLE. (2) **gameport** — bouton droit lu sur POTINP bit 10 (POTGO $0C00 via potgo.resource), IECODE_RBUTTON. (3) **graphics** — voie rapide de `BltBitMap` pour la copie simple alignée sur l'octet (restauration d'une fenêtre ×6 plus rapide) ; correction de `lr_fill` (a0 écrasé par lr_damage -> boucle infinie quand une couche smart grandit). (4) **dos** — `Execute` (globale 101 et LVO) : commande passée à C:Run via le segment résident « CLI » ; `CreateProc` hérite du vecteur global et libère son bloc à la sortie du process ; pile d'un process : dernier long = taille, pr_ReturnAddr pointe dessus (contrat du code de démarrage C) ; `NIL:` ; écriture tamponnée (512 octets par FileHandle, vidée avant Read/Seek/Close) ; globales BCPL 3/4/5 (mult/div/rem). (5) **workbench.task** — jusqu'à 6 tiroirs ouverts (double-clic sur un tiroir, imbriqués), fenêtres de tiroir redimensionnables, icônes dessinées au fil du chargement, lancement d'outils et de projets par message WBStartup (LoadSeg + CreateProc, libération au retour du message), menus Workbench (Open, Close), Disk (grisé), Special (Redraw). Prouvé sous FS-UAE : tiroir System imbriqué, double-clic Shell -> AmigaShell interactif (`echo`, `dir`), déplacement et redimensionnement de fenêtres, menus, fermeture par gadget et par Workbench/Close. **Portée honnête** : pas de déplacement d'icônes, ni Info/Rename/Discard/Format ; réparation après fermeture en 4 à 6 s ; un outil lancé met 30 à 60 s à apparaître (accès disquette) ; OpenFont/topaz et InitGels restent à faire.
-- **ÉTAPE 9 — POLICES ET GELS** : (1) **polices** (`src/graphics/text.s`) — topaz 8 est une vraie TextFont : glyphes hand-authored de `font8x8` émis aussi au format strike (`topaz8_strike`, modulo 98, glyphe par défaut après HiChar) par `tests/mk_font8x8.py` ; modèle ROM recopié en RAM à l'init de graphics, chaîné dans `gb_TextFonts` (offset public 140) et posé en `gb_DefaultFont` (154), GfxBase portée à 158 octets. OpenFont (nom sans casse, hauteur la plus proche, accès comptés), CloseFont, AskFont, AddFont, RemFont, AskSoftStyle/SetSoftStyle (gras et souligné), AllocRaster/FreeRaster. Text/TextLength lisent la police du RastPort (CharLoc/CharSpace/CharKern, rp_TxSpacing, glyphes jusqu'à 32 pixels) ; voie rapide conservée pour les glyphes de 8 pixels alignés en JAM2. (2) **GELs** (`src/graphics/gels.s`) — liste triée par (Y, X) entre deux sentinelles, Bobs dessinés par lignes de pixels (`gfx_putrow` de draw.s, à travers les couches) avec fond sauvé/restauré, masque OVERLAY, PlanePick/PlaneOnOff ; InitMasks, DoCollision (bords puis paires par CollMask, routines appelées en convention C), animation (AddAnimOb, Animate avec changement de séquence, Get/FreeGBuffers, InitGMasks). Sondes de boot FONTS OK et GELS OK. **Portée honnête** : VSprites matériels non affichés ; ordre Before/After, double tampon et italique non gérés ; rendu des Bobs au pixel (correct, pas rapide). Mesure (VBL_COUNT, ROM de production) : fermer une fenêtre de tiroir coûte ~1,4 s dans DeleteLayer (phase A : recopie de toutes les sauvegardes des couches smart) et ~0,2 s dans la réparation intuition.
-- **SETPATCH 1.38 / SYSINFO 4.4 — EXEC V34 COMPLET** : (1) **34 LVO exec manquantes** (`src/exec/execmisc.s`, AutoDocs) :
-  SetFunction (vrai : JMP réécrit, LIBF_CHANGED, somme recalculée), SumLibrary, Cause + file des interruptions
-  logicielles (`EXEC_SOFTLIST`, serveur SOFTINT niveau 1, masquage par INTENA et non Disable car appelable en
-  interruption), Alert (message série « Software Failure / Recoverable Alert », arrêt si sans issue), SetSR,
+- **M0** (hello-ROM): delivered, verified (`is_kick` + green-screen boot).
+- **M2.0→M2.3** (exec coldstart, `src/exec/`): delivered, verified (**white** screen boot = self-test passed).
+  The reset enters at `$FC00D2`, switches to supervisor + freezes the hardware, **turns off the overlay** (chip RAM at
+  `$0`), sets a stack below the jump table, builds **ExecBase** at `$7F000` (library node 34.2,
+  `ChkBase=~base`, `MaxLocMem=$80000`, `AttnFlags=0`, `VBlankFrequency=50`, 9 system lists `NEWLIST`),
+  builds the **V34 LVO jump table** (105 vectors, `lib_NegSize $276`, see `docs/exec-lvo-table.md`)
+  with 13 LVOs implemented (Open/Close/Expunge, Forbid/Permit, Disable/Enable, AddHead/AddTail/Remove/
+  FindName, AllocMem/FreeMem), initialises a **chip MemHeader** + MemList, publishes `SysBase` at `$4`,
+  then **self-checks** and **self-tests** the functions through the jump table (dispatch + behaviour +
+  coalescing). Phases traced in colour (red→blue→cyan→white; magenta = failure).
+- **M2.4**: **multi-MemHeader** memory (selection by attribute, AvailMem, TypeOfMem);
+  list primitives (Enqueue sorted by priority, Insert, RemHead, RemTail); non-blocking **tasks + signals**
+  (TCB `ThisTask`, FindTask, AllocSignal/FreeSignal/SetSignal/Signal, SetTaskPri);
+  non-blocking **ports/messages** (AddPort/RemPort/FindPort, PutMsg+Signal, FIFO GetMsg, ReplyMsg).
+  ⚠️ "green" = structures handled correctly, NOT real scheduling. **Deferred to M3**
+  (requires interrupts): blocking `Wait`/`WaitPort`, `AddTask`/`RemTask`, dispatch
+  (`Switch`/`Dispatch`/`Cause`), waking a task on a signal.
+- **M3a**: **interrupt plumbing**. 68000 level-3 autovector (`$6C`) → VBlank handler,
+  `INTENA = VERTB|INTEN` ($C020), `SR=$2000` → the interrupt chain runs (VBlank counter that
+  advances, proven over serial).
+- **M3b**: **preemptive scheduler** (**supervisor** tasks). The VBlank handler is the preemption
+  point: round-robin (saves the outgoing task's SP in `TC_SPREG`, Enqueue into `TaskReady`, RemHead
+  the incoming one, restores its SP + GPRs, `RTE`). `AddTask` (-282) sets up the initial frame mirroring the dispatcher's
+  pop. Proven by 2 demo tasks that **alternate** on serial (preemption) **while preserving
+  their context** (register sentinels).
+- **M3c** (mutual exclusion, prerequisite #1): `Forbid()` is now **honoured** by the scheduler.
+  The VBlank handler defers the switch if a critical section is active — double guard `EB_TDNEST >= 0`
+  (Forbid) **or** `EB_IDNEST >= 0` (Disable, closes the `addq`/`INTENA` window). These counters are
+  **global** (ExecBase): legitimate because a forbidden task is never switched out, so `EB_TDNEST`
+  always reflects the current task; since the switch does not touch these counters, no task is
+  resumed with another one's count. **Defer-to-next-VBlank** model (no immediate yield on
+  `Permit` in this milestone): the deferred switch is picked up at the next tick, never lost (`Permit`/`Enable`
+  remain simple decrements/increments). exec critical sections wrapped in **Forbid/Permit** (task-vs-task
+  exclusion; `Disable` is NOT used in this milestone — it would disturb `INTENA` during the
+  pre-interrupt selftest) with a **single exit**: `AllocMem`/`FreeMem`/`AvailMem`/`TypeOfMem`
+  (memory lists) + `AddPort`/`RemPort`/`PutMsg`/`GetMsg`/`ReplyMsg` (PortList + message queues).
+  The raw list primitives and `FindName`/`FindPort` remain **unwrapped** (building blocks
+  arbitrated by the caller, V34 exec contract; and the handler calls them -> wrapper = re-entry).
+  Proven **deterministically** (shared counter observed across a forbidden window, independent of
+  serial timing): `M3C LIVE` emitted iff Forbid honoured (A) AND no starvation (B). REDs verified:
+  Forbid guard removed -> `FAILED`; `Permit` removed -> `EB_TDNEST` drift caught right at the
+  Forbid/Permit assertion of the selftest.
+- **M3d** (`Wait`/`WaitPort` + wake-on-signal): a task can now **block**.
+  `Wait(sigset)` does a **SYNCHRONOUS switch** (voluntary): if no awaited signal is present,
+  it pushes on ITS stack a frame that is an **exact mirror** of `vbl_handler`'s (`[d0-d7/a0-a6][SR][PC]`),
+  puts the task in `TS_WAIT` in `TaskWait`, `RemHead`s the incoming one from `TaskReady` and switches — the
+  two dispatch paths (preemptive + voluntary) share this format and `interrupts.s`. All the
+  surgery is at **IPL 7** (atomic vs VBlank). `WaitPort(port)` loops `Wait(1<<MP_SIGBIT)` as long as
+  the queue is empty; no lost wakeup (PutMsg does `AddTail` BEFORE `Signal`, and `Wait`'s recheck
+  is atomic). `Signal` **wakes** a `TS_WAIT` task whose awaited bits arrive
+  (`TaskWait` → `TaskReady`, `TS_READY`); the woken task runs at the **next scheduling point**
+  ("defer" model, see yield-on-Permit below). Proven **deterministically** by a 2-port **request/reply
+  ping-pong** (deadlock-free: exactly one task ready at each block):
+  `M3D LIVE` emitted after `M3D_THRESH` round trips (repeated correct blocks+wakes); invariant
+  `GetMsg != NULL` after `WaitPort`. REDs verified: wake-up disabled (`Signal`) → deadlock, marker
+  absent; blocking disabled (`WaitPort` returns on an empty queue) → `GetMsg` NULL → `M3D FAILED`.
+  Deliberate V34 assumption: `Wait` called outside `Forbid`/`Disable` (which it would break); return at IPL 0.
+- **M3e** (immediate yield on `Permit`): a **higher-priority** woken task now runs **right at the
+  `Permit`** that closes the waker's critical section, instead of waiting for the next tick. `Signal`,
+  when it wakes a task with priority > the current one, sets `EB_ATTNRESCHED` (exec ABI `$12A`).
+  `Permit`/`Enable`, on returning to the permitted state (`TDNest`/`IDNest` < 0, the other one not locked), if
+  `AttnResched` is set, call `reschedule`: a **SYNCHRONOUS switch without blocking** that requeues the
+  current task in `TaskReady` (round-robin by priority) and switches to the head (the higher-priority woken task).
+  `reschedule` reuses the **common switch tail `dispatch_head`** (shared with `Wait`) and sets the
+  same dispatcher-mirror frame; it works **independently of `SCHED_ON`** (direct switch, no
+  IRQ). Proven in **COOPERATIVE** mode (`SCHED_ON=0`, no periodic preemption) to **isolate** the
+  proof: task_L (pri 0, never blocks) `Forbid`/`Signal(task_H)`/`Permit`; task_H (pri 10) loops on
+  `Wait`. The ONLY dispatcher of task_H is `Permit`'s `reschedule` → `M3E LIVE` emitted after 500 yields
+  ⟺ yield-on-Permit correct. RED: yield disabled in `Permit` → task_H starves (marker absent).
+- **M3f** (recombination of yield + preemption): periodic preemption (`SCHED_ON=1`) and
+  yield-on-`Permit` **coexist without context corruption**. The three switch paths are
+  unified: `dispatch_head` (RemHead + switch + `rte`, common to all three) and `requeue_and_dispatch`
+  (round-robin requeue of the outgoing task + `clr AttnResched` + `dispatch_head`, shared by the handler and
+  `reschedule`). The handler **clears `AttnResched` on every switch** (a tick satisfies a pending yield
+  request → no redundant `reschedule` at the next `Permit`); `reschedule` re-tests
+  `AttnResched` at IPL 7 (idempotent, closes the read-at-IPL0/call race). Proven by 3 tasks
+  (`SCHED_ON=1`): task_H (pri 10, yield target), task_L (pri 0, signals+yields), task_S (pri 0,
+  pure spinner dispatched ONLY by preemption). Context sentinel (d7) checked after
+  every switch in all three tasks → `M3F FAILED` if corrupted. `M3F LIVE` emitted when `WP_CONS`≥100
+  (repeated yield) AND `WP_SPIN`≥5 (task_S ran via preemption). **Preemption confirmed load-bearing**
+  by the RED (`SCHED_ON=0` → task_S monopolises → task_L no longer signals task_H → `WP_CONS` freezes →
+  marker absent). Scope of the proof: M3f validates the **mechanics** of the yield and the coexistence without
+  corruption; the **necessity** of the yield remains proven by M3e (cooperative demo, commit 18cba43), because
+  under `SCHED_ON=1` a tick would dispatch task_H anyway (proof not isolable in a single mode).
+  The anti-race code (handler clears a set `AttnResched`, `.rs_none` branch) is correct by
+  inspection but **inert** in this demo (task_L signals under Forbid → the tick defers).
+- **M4** (resident scan + InitResident): the **data-driven discovery machinery** of the modules.
+  `build_reslist` (`resident.s`) scans `[RESSCAN_LO,RESSCAN_HI)` (the whole ROM) for ROMTags —
+  `RTC_MATCHWORD` word ($4AFC) at an even address whose `RT_MATCHTAG` points to itself (rejects a
+  stray `$4AFC`, e.g. the immediate of the scan's own `cmp.w`) — resumes at `RT_ENDSKIP`, builds the
+  NUL-terminated array `ExecBase->ResModules` sorted by **decreasing** `RT_PRI` (stable bubble sort).
+  `InitCode` walks it and calls `InitResident` on each module (version filter). `InitResident`
+  validates the matchword then, for direct-init (RTF_AUTOINIT clear), jumps to `RT_INIT` with the
+  ABI convention **`D0=0, A0=segList, A6=ExecBase`** (the resident is not passed); **AUTOINIT (MakeLibrary +
+  InitStruct) is DEFERRED** (no-op). `FindResident` searches by name in `ResModules`. Proven by 3
+  demo residents (pri 60/10/-20) **placed in memory in a different order** (mid, lo, hi) so that
+  the sort is load-bearing: names emitted `hi→mid→lo` (priority order), `RES_COUNT==3`, FindResident
+  finds the right one. RED: sort disabled → init in scan order → order check fails; `InitResident`
+  dispatch disabled → `RES_COUNT=0`. ⚠️ **This is NOT yet the boot handoff**: the M4 phase
+  runs then the hard-coded M3f demo executes (real launching by a resident will come with the
+  real modules). Direct-init convention **checked** against the exec AutoDoc (corrected along the way).
+- **M5a** (AUTOINIT: `MakeLibrary` + `MakeFunctions` + `InitStruct`): the AUTOINIT path of
+  `InitResident`. `MakeLibrary(vectors, structure, init, dataSize, segList)` allocates negSize (jump table)
+  + dataSize (`MEMF_CLEAR`), base = alloc+negSize, builds the jump table via `MakeFunctions` (vectors
+  **absolute** longword OR **relative** word if the 1st word = -1, terminated by -1), sets
+  `LIB_NEGSIZE`/`LIB_POSSIZE`, `InitStruct`s the data table then calls the init function (**D0=base,
+  A0=segList, A6=ExecBase**). `InitStruct` interprets the `ddssnnnn` stream (INITBYTE/WORD/LONG path:
+  dd=11 24-bit offset, ss size, single item, + word re-alignment + 00 terminator). `InitResident`
+  AUTOINIT: `MakeLibrary` then Enqueue of the base in the list according to `RT_TYPE`, **without** filling
+  name/type/version (V34 quirk — the module does it). Direct-init calling convention (D0=0/A0=segList)
+  vs MakeLibrary init (D0=base/A0=segList): **checked against the AutoDoc** (distinct). Proven by
+  a demo AUTOINIT resident (`demo.autolib`, relative vector table): jump table built (func0 returns
+  $5A via `jsr -6(base)`, the order of the vectors is load-bearing), `InitStruct` sets version+type, init
+  func sets revision+name, lib found in `LibList`. RED: `InitStruct` disabled → version wrong; init
+  func call removed → name wrong.
+- **M5b** (`cia.resource` — 1st real resident module): ROMTag `cia.resource` (direct-init, pri 80)
+  scanned by `build_reslist`; `cia_init` creates `ciaa.resource` + `ciab.resource` via `MakeLibrary`
+  (library-like base + jump table `AddICRVector`/`RemICRVector`/`AbleICR`/`SetICR`), names them, sets the
+  CIA hardware base (`$BFE001`/`$BFD000`), `AddResource`. Exec exposes `AddResource` (-486, Enqueue
+  `ResourceList`) and `OpenResource` (-498, `FindName`). The functions manage the 5 ICR vector slots
+  + the ICR mask shadow + the chip's ICR register (`AbleICR` bit7=enable). Proven: `OpenResource`
+  ("ciab.resource") finds the base, correct hardware base, `AbleICR($81)` sets bit0 of the shadow,
+  `AddICRVector` registers (returns NULL, free slot). RED: `AddResource` broken → not found; `AbleICR`
+  broken → shadow wrong. ⚠️ **DEFERRED**: the **INT2/INT6 dispatch** (the registered vectors do not
+  fire — Paula INTENA PORTS/EXTER + autovectors `$68`/`$78` not set → inert and safe).
+  `SetICR` is a stub (interrupt status deferred). CIA vector table **absolute** (the demo
+  M5a AUTOINIT demo being relative, both branches of `MakeFunctions` remain exercised).
+- **M5c** (`timer.device` — 2nd real resident, 1st device): ROMTag `timer.device` **AUTOINIT** (pri 50)
+  scanned then created by the AUTOINIT path of `InitResident` (`MakeLibrary` + Enqueue into `DeviceList` by
+  `RT_TYPE`=NT_DEVICE). Its data table (`InitStruct`) sets `LN_TYPE`=NT_DEVICE + `LIB_VERSION`; its init
+  func sets `LN_NAME`="timer.device" (V34 quirk: `InitResident` does not fill the fields). Standard
+  device vectors (Open/Close/Expunge/ExtFunc/BeginIO/AbortIO), stubs. Proven: `FindName(DeviceList,
+  "timer.device")` finds the base, `LIB_VERSION`/`LN_TYPE` (InitStruct), `Open` via `jsr -6(base)`
+  increments `LIB_OPENCNT`. RED: name not set → not found; `Open` broken → count wrong. ⚠️ **SCOPE**:
+  device **created + named + listed + jump table (Open)**. **DEFERRED**: units (VBLANK/MICROHZ/ECLOCK),
+  request queue, functional `BeginIO` (stub). The scan thus produces the OS by instantiating REAL
+  resident modules — but neither `cia.resource` nor `timer.device` does any functional work yet
+  (named/listed skeletons). The **demo** residents (`demo.res.*` + `demo.autolib`) are **kept**
+  in the scan as M4/M5a non-regression coverage (they interleave by priority and strengthen
+  the proof of the sort) — to be removed when the real modules cover these proofs.
+- **M6a** (**functional** VBLANK unit of `timer.device`, without CIA): **first observable OS
+  behaviour** produced by the resident machinery + interrupt + messages. `BeginIO(TR_ADDREQUEST)`
+  converts the timeval into ticks (`secs*50 + micro/20000` for the VBLANK unit; M7l separates the conversion of
+  the MICROHZ unit into real µs, see the M7l bullet), stores the countdown in `TR_TIME`, enqueues
+  the request on the VBLANK unit's queue (under `Disable` — queue shared with the handler). The VBlank
+  handler calls `timer_vblank_service` every tick (originally the `VBL_SVC` hook; **M7f**: became a
+  server of the VERTB chain); the service decrements each request and, at 0, removes it and **replies** to it.
+  KEY POINT (originally M6a): the reply in interrupt context could NOT use `PutMsg`/
+  `ReplyMsg` because they called `Permit` -> `reschedule` **synchronously in the middle of the interrupt**;
+  M6a therefore used a bespoke routine (`timer_reply`) that only set `AttnResched`. **M7d** made
+  `PutMsg`/`ReplyMsg` interrupt-safe (Disable/`raw_enable`, without yield) and **M7i** removed `timer_reply`
+  in favour of direct `ReplyMsg` (see the M7i bullet). Proven (M6a): a request of
+  100000 µs (= 5 ticks) is replied to after ~5 VBlanks (measured delay ∈ [3..40]) **and** `exec_Signal`
+  from the handler does set the bit (checked in the boot task's `TC_SIGRECVD`). RED: hook cut →
+  timeout; reply removed → timeout. **SCOPE**: proven = timer+interrupt+messages+`exec_Signal`
+  from the IRQ; **NOT yet shown** = a task that **blocks** on a timer and is woken
+  (`Wait`→timer-wake) — requires a real waiting task (the boot task is `TS_RUN`, no-wake branch).
+- **M6b** (CIA interrupt dispatch, INT2/CIA-A): the ICR vectors registered in `cia.resource`
+  now **fire**. `init_ints` installs the 68000 autovectors `$68` (INT2/CIA-A) and `$78`
+  (INT6/CIA-B) and enables Paula INTENA PORTS (not EXTER — see below). `int2_handler` raises IPL 7,
+  reads the chip's ICR register **only once** (ACK + clears all pending bits), then `cia_dispatch`
+  calls the vector of each set bit (`a1`=IS_DATA, `a5`=IS_CODE, `a6`=SysBase), and acknowledges Paula.
+  Same mid-handler discipline as M6a (a vector that `Signal`s does not reschedule inside the IRQ; loop
+  state in d2/d3/a2, which the server convention preserves). Proven **end to end**: `AddICRVector`
+  (timer A, bit 0) + start of CIA-A Timer A one-shot → underflow → /IRQ CIA-A → INT2 → autovector →
+  `cia_dispatch` → the test vector increments a counter (detected by the boot). RED: vector call
+  cut → timeout; **chip ICR enable cut → timeout** (this RED proves the whole chain, because it can
+  only pass if the emulated CIA really drives the interrupt). Cleanup after the proof (RemICRVector +
+  timer stop + PORTS disabled).
+  ⚠️ **Gate (M6b → requalified by M7a)**: M6b ran in a **cooperative** context (`SCHED_ON=0`) +
+  CIA disabled before M3f, because an active CIA source of level > 3 under preemption posed a hazard
+  (see M7a for its exact nature, which was not the one originally written here). `int6_handler`/EXTER
+  (CIA-B) remained wired but not enabled. **M7a lifts this blocker for list re-entrancy.**
+- **M7a** (list re-entrancy gate + MICROHZ unit via CIA-B/INT6 + task blocking on a timer):
+  **the real hazard was not the stack** (in the supervisor-tasks-same-stack model, the interrupt
+  frames unstack correctly; stack corruption through a shared SSP remains **latent**
+  until user mode = M7c). The real hazard = **re-entrancy of the scheduler lists**: `vbl_handler`
+  did its TaskReady `Enqueue`/`RemHead` at **IPL3**, so INT6/CIA-B (level 6 > 3) could
+  preempt it right in the middle, and the `exec_Signal` of the MICROHZ wake-up also did `Enqueue(TaskReady)` on
+  the same half-updated list → corruption. **Fix 1**: `requeue_and_dispatch` raises IPL7 around
+  the critical section only (not the whole `vbl_handler` — INT6 must preempt the VBlank elsewhere);
+  `exec_Wait`/`reschedule` already entered it at IPL7. **Fix 2**: `timer_reply` does its `AddTail`
+  (reply-port msglist, shareable between the VBLANK and MICROHZ units) at IPL7. The **MICROHZ unit**
+  (2nd queue `TIMER_MICROQ`, decremented by `timer_micro_service` registered as the ICR vector of CIA-B's
+  timer A) wakes a **blocked task** (`task_timer`: `BeginIO`→`Wait`→wake by the IRQ). **Structural**
+  proof via `VBL_INSURG`/`VBL_CLASH`: at IPL7 INT6 is masked during the surgery →
+  `VBL_CLASH==0` is **guaranteed** (not probabilistic). GREEN "M7A TIMER OK" (wake-ups + `VBL_CLASH==0` +
+  5 s time gate). RED#1 (gate removed, IPL3) → clash < 1 s → "M7A FAILED". RED#2 (wake-up broken) →
+  `task_timer` frozen, "M3F LIVE" still present → isolates the wake-up path. Yield re-proven in
+  **cooperative** mode (`SCHED_ON=0`, `task_S` removed → `task_timer` woken by the yield alone): my change
+  to the shared tails did not regress the reschedule. `int6_handler`/EXTER now **enabled and tested**.
+  MICROHZ in M7a = "1 tick = 1 CIA-B IRQ" (IRQ/wake-up path proven; **real µs calibration delivered in M7l**).
+- **M7b** (interrupt dispatcher BY NUMBER): table `IntVects[16]` (AllocMem'd, pointer in
+  `EB_INTVECTS`) + `SetIntVector` (exclusive vector: copies IS_DATA/IS_CODE) + `AddIntServer` (server
+  chain sorted by `LN_PRI`, walked by `intr_chain_walker`; Z clear on return = "handled, stop", Z set =
+  continue, see AutoDoc). The hardcoded autovectors `int2_handler`/`int6_handler` are replaced by
+  **generic** `int2_dispatch` ($68/PORTS) / `int6_dispatch` ($78/EXTER) that dispatch via `IntVects`.
+  cia.resource is re-expressed as SERVERS: `ciaa_server` (PORTS, via `AddIntServer`) and `ciab_server`
+  (EXTER, via `SetIntVector`) — i.e. cia.resource IS the PORTS/EXTER handler, as in the real exec.
+  CAVEAT: dispatch by NUMBER + chain, NOT PER-LEVEL IPL fidelity (the handlers stay at IPL7 on
+  entry, M7a gate discipline); VERTB keeps a dedicated `vbl_handler` (VERTB→chain refactor + switch-on-
+  IRQ-exit deferred). PROOF: GREEN "M7B PORTS OK" (chain [ciaa_server pri 10, srv2 pri 0], the 2
+  called in order) + "M7A TIMER OK" now via `SetIntVector`/EXTER + "M3F LIVE". RED: 2nd
+  server not added → M7B FAILED; EXTER vector removed → M7A absent; M7a gate (IPL7 removed) re-proven
+  through the new EXTER path → `VBL_CLASH>0` → M7A FAILED. Two bugs caught during bringup:
+  (1) vasm truncates an EQU operand at the space -> `INTVECTS_TOTAL` underestimated (128 instead of 352) ->
+  under-allocation; (2) `move.l (an),Ax` = MOVEA which does NOT AFFECT the CCs -> `beq` on stale flags ->
+  read `node->Succ` into a DATA register first.
+- **M7c** (USER-MODE tasks on a shared SSP + DEFERRED switch): tasks run in user mode
+  (SR bit S=0), each on **its own user stack**; interrupts + kernel on **ONE shared supervisor stack**
+  (STACKTOP region). Derived from the public "The Exec Microkernel" spec (AROS) + 68000 mechanics, zero
+  transcribed code. Common prologue (IPL7 + `movem` → frame `[GPR][SR][PC]` 66 bytes on the SSP); the `intr_exit` epilogue
+  dispatches ONLY at the **user boundary** (S bit of the saved SR == 0 = a user task was interrupted,
+  not a nested IRQ — this is the nest count, read from the S bit). `dispatch` **relocates** the SSP frame→user
+  stack of the outgoing task (`TC_SPREG` now points into a user stack), saves/restores the PER-TASK nesting
+  (`TC_IDNESTCNT`/`TC_TDNESTCNT`↔`EB_*`) and synchronises INTENA → the SSP is NEVER shared between task
+  contexts (hazard neutralised). VOLUNTARY switch (Wait/reschedule) via `trap #0`/`#1`. `AddTask` sets SR=$0000
+  + nesting=-1. `exec_Signal`/`exec_Wait`/`timer_reply` move from SR atomicity to a **bare critical section**
+  (Disable INTENA + `raw_enable`, user-safe, callable from an IRQ without scheduler re-entrancy). Launching
+  the 1st task = supervisor→user transition. **Deferred dispatch flag** (exec spec): an IRQ server that
+  wakes a higher-priority task (AttnResched set by Signal) causes the switch at interrupt EXIT,
+  without waiting for a Permit or the VBlank — otherwise the wake-up depends on phase luck (resonance). PROOF: GREEN
+  "M7C USERMODE OK" (user mode proven by `move sr` → S bit==0, + N preemptions survived) with M3F/M7A/M7B
+  still GREEN on the new model (7/7 runs, `VBL_CLASH==0`, d7 sentinels intact). RED: tasks in
+  supervisor ($2000) → hang; relocation bypassed (inline sp-swap on the shared SSP) → crash; prologue IPL7
+  removed → crash. Cooperative (SCHED_ON=0, task_s removed) re-proven: M3F LIVE via the yield alone + M7A.
+- **M7d** (INTERRUPT-SAFE ports): `PutMsg`/`GetMsg`/`ReplyMsg` manipulate `MP_MSGLIST`, which can be touched
+  from an INTERRUPT (IRQ-driven device). Forbid (TDNest) does NOT mask interrupts -> an IRQ
+  that `PutMsg`/`ReplyMsg`s can interleave with a task's `GetMsg` on the same doubly linked list
+  (RemHead vs AddTail) -> corruption. FIX: BARE critical section (Disable INTENA + `raw_enable`, without the reschedule
+  tail -> no scheduler re-entrancy from the IRQ), which ALSO masks interrupts. AddPort/
+  RemPort stay Forbid (PortList not touched by IRQs). ReplyMsg->PutMsg->Signal nesting: only the outermost
+  `raw_enable` turns INTEN back on. PROOF: serial "M7D PORTS OK" — a shared port (K=4 messages, MAGIC +
+  IN_HAND + lost-node detector) hammered by task_port (TASK) AND timer_micro_service (INTERRUPT,
+  GetMsg+PutMsg on each INT6) coexisting with M3F/M7A/M7C (4/4 runs, zero corruption). RED (A/B under dedicated
+  MAX CONTENTION — task_port high pri, no rate limit, 90 s window): ports in Forbid -> "M7D FAILED:
+  shared-port list corrupted"; SAME contention, ports in Disable -> clean. The race is statistical
+  (sub-µs RemHead/AddTail window, CUMULATIVE corruption on a doubly linked list): deterministic under
+  max contention + long window, not triggered by the lightened coexistence demo.
+- **M7e** (PER-LEVEL IPL fidelity): handlers no longer raise IPL7 in the prologue — they run at their **native**
+  IPL (VBlank=3, PORTS=2, EXTER=6, set by the CPU when taking the autovector). Consequence: a higher-level
+  source preempts the **body** of a lower handler (INT6 preempts the body of `vbl_handler`). The
+  switch's critical section (`dispatch`: relocation then TaskReady Enqueue/RemHead) is masked by a **brief
+  IPL7** (`move #imm,sr`), NOT by INTENA-off. **Empirical discovery (FS-UAE)**: masking with INTENA-off leaves
+  a race — the INTENA write has a **propagation delay** (Amiga quirk), so an INT6 already asserted on the
+  IPL lines overlaps the surgery window. The SR (IPL) write, on the other hand, is **internal to the CPU = instantaneous**.
+  **Privilege argument** (why IPL here but INTENA elsewhere): the surgery runs in SUPERVISOR mode (reached
+  via `intr_exit`/trap) → `move to SR` legal → IPL7 possible. `Signal`/`PutMsg`/`GetMsg`/`Wait`/`timer_reply` are
+  callable from a USER-MODE task where `move to SR` is **privileged** (68000 manual) → they cannot raise
+  the IPL → they keep INTENA-Disable. **Honesty (M7d consistency)**: the write-delay window therefore affects EVERY
+  INTENA-masked section callable in user mode — Signal, the M7d ports, Wait, timer_reply — by necessity; it is
+  tolerated by the re-check (Wait re-tests on wake-up) and empirically benign for the M7d ports even under max
+  contention. ONLY the supervisor-side switch was promoted to IPL. The frame relocation (SSP→user stack) stays at the native
+  IPL without a mask: INT6 nests BELOW `sp`, the outgoing frame `[sp,sp+66)` is intact. PROOF: serial
+  "M7E IPL OK" gated on `VBL_PREEMPT_COUNT>0` (INT6 preempts the vbl body, `timer_micro_service` detector) AND
+  `VBL_CLASH==0` (zero INT6/surgery overlap — `VBL_CLASH` is an OVERLAP proxy, a precondition of corruption,
+  NOT a corruption detector). GREEN 3/3; RED1 (`M7E_SURGERY_INTENA=1`, surgery with INTENA-off) → `VBL_CLASH>0`
+  "M7A FAILED" 3/3 (proves IPL7 load-bearing); RED2 (`M7E_PROLOGUE_IPL7=1`, IPL7 in the prologue) → `M7E IPL OK`
+  absent 2/2 without crash (proves the native IPL load-bearing, not cosmetic); cooperative non-regression
+  (`M7E_COOP=1`, `SCHED_ON=0`, yield-only) re-proven. The dispatcher idle (reached only if TaskReady is empty
+  after a Wait) is not exercised by these demos (the round-robin/spin tasks keep TaskReady populated) — documented.
+- **M7f** (VERTB AS A SERVER CHAIN): the dedicated VBlank handler `vbl_handler` is replaced by
+  `int3_dispatch`, a generic dispatcher mirroring `int2_dispatch`/`int6_dispatch` -> `intr_dispatch_number`
+  `(INTB_VERTB=5)` -> **server chain by priority**. Model now UNIFORM for the 3 autovectors
+  in use: PORTS(int2)/VERTB(int3)/EXTER(int6). The **scheduling decision** (round-robin quantum) becomes
+  `sched_server`, a pri 20 VERTB server that sets `EB_ATTNRESCHED` (under the same guards as the old
+  `vbl_handler`: `SCHED_ON && !Forbid && !Disable && TaskReady` non-empty -> the round-robin RESPECTS Forbid);
+  `intr_isr_defer` consumes it at IRQ exit (like an INT6 wake-up). Faithful: the real exec has a VBlank
+  server that sets the AttnResched flag. `timer.device` registers its VBLANK service via `AddIntServer(VERTB,
+  timer_vblank_int)` (pri 0) instead of the `VBL_SVC` hook (removed); `timer_vblank_service` returns Z set
+  ("continue the chain"). **Key risk handled**: `intr_chain_walker` re-supplies `a6` BEFORE each server
+  but does NOT restore it after the last one (the servers only preserve d2-d7/a2-a4) -> `intr_isr_defer`
+  **reloads `a6=SysBase`** before reading `EB_ATTNRESCHED` (otherwise dispatch decisions on a clobbered a6). The
+  Interrupt structs live in reserved low RAM (< `HEAP_LOWER`, outside the AllocMem pool; AddIntServer Enqueues them).
+  PROOF: serial "M7F VERTB OK" gated on `VERTB_CHAIN_N` (counter of the TAIL server `vbl_tail`, pri -10)
+  -> proves that the walker goes through the WHOLE chain (sched(20) + timer(0) before tail(-10), in priority order);
+  the scheduler (M3F LIVE) AND the timer (M7A/M6A via `timer_vblank`) work THROUGH the chain. GREEN
+  3/3 (0 FAILED); RED (`M7F_SCHED_STOPS_CHAIN=1`, sched returns Z clear) -> the walker STOPS the chain
+  after sched -> `timer_vblank`/`vbl_tail` never called -> "M6A FAILED: timer VBLANK unit incorrect"
+  2/2 (proof: the call-all Z-set semantics = the walk DOES dispatch the following servers in sequence).
+  Non-regression of M3f + cooperative (`M7E_COOP=1`) + M7e ("M7E IPL OK") + M7a/M7c/M7d re-proven in the same
+  boot. **Discovery (initial RED hypothesis invalidated empirically)**: removing the VBlank quantum ALONE
+  (`sched_server`) does NOT stop preemption -> "M3F LIVE" is emitted anyway, because INT6 (MICROHZ ~140/s)
+  co-drives the round-robin: ANY deferred dispatch (`intr_isr_defer`, d6=1) requeues the outgoing task and rotates the
+  equal-priority tasks. The VBlank quantum is therefore redundant with a fast INT6 timer in this demo; it
+  remains the right (faithful) place for the decision, but its effect cannot be isolated here. OUT OF SCOPE
+  (M7g+): INT3 remains single-source VERTB (no COPER/BLIT INTREQR decoding).
+- **M7g** (MULTI-SOURCE INTREQR DECODING): `int3_dispatch` no longer assumes VERTB alone — it reads
+  `INTREQR & INTENAR` and dispatches+acks EACH pending level-3 source (COPER bit4 / VERTB bit5 /
+  BLIT bit6) via `IntVects[n]`. VERTB -> M3a counter + chain (M7f); COPER/BLIT -> their vector. `int2`
+  (PORTS) / `int6` (EXTER) remain single-source: their level has only ONE Paula source (correct optimisation,
+  not a generic loop). The mask of pending sources is held in `d2`, preserved across the
+  dispatches by the server convention (walker `movem d2/a2-a4`; `coper_test` only touches its counter);
+  `a6` is reloaded after each dispatch (M7f lesson). **Correctness bonus**: on a SPURIOUS INT3 (ack
+  propagation delay, see M7e) the 3 `btst`s fail -> no dispatch, vs M7f's unconditional VERTB
+  dispatch. PROOF: a 2nd level-3 source (COPER) is TRIGGERED BY SOFTWARE (`INTREQ=SETCLR|COPER`
+  from the VERTB server `vbl_tail`, rate-limited 1/4; no graphics required); `IntVects[COPER]` =
+  `coper_test` (exclusive vector) increments `COPER_FIRED`. Serial "M7G MULTISRC OK" gated on
+  `COPER_FIRED>=seuil` -> int3 serves EACH pending level-3 source (COPER on its own INT3, VERTB
+  on its own), not only VERTB any more. **Exact scope**: SEQUENTIAL per-source is proven (vbl_tail sets
+  COPER DURING the VERTB INT3 -> d2 is already sampled -> COPER served at the NEXT INT3); the
+  co-pending case (VERTB+COPER on the SAME INT3) is NOT isolated. BLIT: path present but by inspection
+  only (no BLIT source in the demo; identical to the proven COPER path). GREEN 3/3 (0 FAILED);
+  RED (`M7G_MONO_SOURCE=1`) -> int3 decodes+acks COPER but does NOT dispatch it -> "M7G" absent,
+  `COPER_FIRED` frozen, everything else identical WITHOUT a storm (proof: dispatch by decoded source is
+  load-bearing). Note: a real single-source (ack VERTB only) WOULD LIVELOCK the machine (level-3 COPER
+  pending-not-acked -> INT3 in a loop); hence the "dispatch-skip" RED, which cleanly isolates the variable.
+  Non-regression of M3f + cooperative + M7a..M7f re-proven in the same boot.
+- **M7h** (REAL QUANTUM): `sched_server` no longer sets `AttnResched` on EVERY tick — it counts
+  `QUANTUM_ELAPSED` and only preempts after `M7H_QUANTUM` time-slice ticks (default 4, like
+  exec's SysBase.Quantum). `dispatch_in` resets `QUANTUM_ELAPSED` on a REAL task change
+  (incoming != outgoing; no reset on dispatch-to-self). Strict priority was ALREADY correct
+  (RemHead picks the highest pri, Enqueue requeues by pri, Signal preempts on a higher-priority wake-up) ->
+  no priority gap, M7h = quantum only. **Observability (direct consequence of M7f)**: in the NORMAL
+  demo, INT6 (task_timer ~140/s) dispatches -> `dispatch_in` resets `QUANTUM_ELAPSED` before it
+  reaches the quantum -> the quantum ALMOST NEVER fires (QUANTUM_EXPIRE_N≈0); it is a
+  quasi no-op and the rotation stays driven by INT6 (non-regression M3F..M7G OK). The quantum is only
+  OBSERVABLE in ISOLATION (`M7H_QUANTUM_DEMO=1`): `setup_demo_tasks` creates only task_s + task_q2
+  (2 spinners pri 0, no higher-priority preempter nor yield; INT6 runs but Signals nobody ->
+  does not rotate) -> the VBlank quantum becomes the ONLY rotator. PROOF: "M7H QUANTUM OK" gated on
+  `QUANTUM_EXPIRE_N*2 < VBL_COUNT` (rate ≈ VBL/4 for QUANTUM=4 -> quantum > ~2 ticks) AND `WP_SPIN>0`
+  (task_s ran = real rotation, not monopolised). GREEN-default 3/3 (non-reg, M7H absent);
+  GREEN-isolation 2/2 ("M7H QUANTUM OK"); RED-isolation `M7H_QUANTUM=1` -> rotation every tick ->
+  `QUANTUM_EXPIRE_N≈VBL_COUNT` -> discriminant fails -> "M7H" absent 2/2; cooperative OK. Honest
+  framing: FAITHFUL quantum, observable only in isolation; quasi no-op by default = correct consequence of
+  the architecture (INT6 co-drives), not a weakness.
+- **M7i** (`timer_reply` -> `ReplyMsg`): the bespoke reply routine `timer_reply` (M7c) is REMOVED.
+  It existed because at the time `PutMsg`/`ReplyMsg` called `Permit` -> a SYNCHRONOUS reschedule
+  forbidden in the middle of an interrupt. M7d made these primitives interrupt-safe (Disable INTENA +
+  `raw_enable`, WITHOUT the Permit/yield tail) -> the hack no longer has a reason to exist. The 2 services that
+  replied (timer_vblank_service / timer_micro_service, interrupt path) now call
+  `LVO_REPLYMSG` directly (AddTail + Signal + NT_REPLYMSG mark, atomic, no yield in IRQ).
+  `timer_beginio` was NOT a caller (it forces min 1 tick -> deferred reply, and runs in task
+  context). Register-safe: ReplyMsg clobbers d0/d1/a0/a1, preserves d2-d7/a2-a6 (the loop invariants
+  d2/a2/a4, and d3/a5 for the micro path, survive). PROOF = EQUIVALENCE: set of markers
+  IDENTICAL to the M7h default demo (M3F/M6A/M7A/M7C/M7D/M7E/M7F/M7G, 0 FAILED) on GREEN 3/3 +
+  cooperative — the swap is observably inert (refactor, not a new mechanism; no RED apart from a
+  planted bug). The inverted justification ("we do NOT use ReplyMsg because Permit yields") was corrected
+  everywhere (timer.s header, service comments, this document).
+- **M7j** (`RemTask` — LIFE CYCLE): `RemTask(task a1)` removes a task and frees its stack
+  (`TC_SPLOWER..TC_SPUPPER`) + its TCB (`TC_SIZE`). Two paths. **SELF** (`a1`=0 or ThisTask — the case
+  "a task ends": its body RTSes -> `task_exit` -> `RemTask(self)`): `trap #2` -> supervisor.
+  Implementation of the advisor's option (D): once in supervisor we run on the **shared SSP**, so
+  the outgoing task's user stack is NO LONGER used and can be freed; we `FreeMem` the stack then the TCB, then we
+  switch to the next task exactly like launching the 1st task (`RemHead` + `dispatch_in`,
+  DOES NOT RETURN). **Traps handled**: (1) `FreeMem` uses Forbid/Permit and Permit YIELDS -> we wrap
+  the teardown in an OUTER `Forbid` (the inner Permit sees TDNEST>=0 -> no yield) + IPL7 (masks
+  IRQs); (2) we clear `EB_THISTASK` BEFORE `FreeMem(TCB)` because `dispatch_in` reads it (cmp QUANTUM_ELAPSED M7h)
+  -> no read of a freed TCB; (3) QUANTUM_ELAPSED is global -> `dispatch_in` resets it on the switch
+  (M7h note closed). **NON-SELF** (`a1` != ThisTask, ready/waiting task): no trap nor switch — Forbid
+  (anti-yield) + Disable (vs IRQ) + `Remove` + `FreeMem` stack+TCB + raw_enable + Permit, return to the caller.
+  PROOF: "M7J REMTASK OK" — task_rm (pri 0) runs `RM_THRESH` times then RTSes -> `task_exit` ->
+  `RemTask(self)`; task_timer (survivor) captures `AvailMem` BEFORE creating task_rm, then confirms
+  that after the self-removal `AvailMem` has risen by at least `M7J_RECOVER` (stack 2048 + TCB) = successful free.
+  GREEN 2/2 + default non-regression (M3F..M7G, 0 FAILED, M7J absent because task_rm is outside the default config) 3/3
+  + cooperative; RED (`M7J_NOFREE=1`, FreeMem skipped) -> `AvailMem` does not rise -> "M7J" absent 2/2,
+  WITHOUT crash (task_rm properly removed from scheduling, only the memory leaks). **Limits**: non-self by
+  inspection (the demo exercises self); `tc_MemEntry` not freed (no demo task allocates one) -> out of scope.
+  **Fixed in step 10** (see "Faithful memory releases"): RemTask now frees only `tc_MemEntry`, like the
+  real exec; stack and structure are described in it by `task_alloc`.
+- **M7l** (REAL µs MICROHZ CALIBRATION): before M7l, `timer_beginio` converted `TV_MICRO` into ticks via
+  `/20000` (the 50 Hz VBLANK factor) for BOTH units -> on the MICROHZ unit (CIA-B, latch `$00FF` = 255
+  E-clock ticks) `TV_MICRO` was NOT worth real µs (a "400000 µs" request lasted ~7 ms, not 400 ms).
+  M7l SEPARATES the conversion per unit: MICROHZ counts in CIA-B interrupts via `US_PER_INT`=359 /
+  `INTS_PER_SEC`=2782 (PAL E-clock 709379 Hz = CPU/10, latch 255 -> ~359.5 µs/int); VBLANK keeps `/20000`.
+  `TV_MICRO` therefore means real µs, at the resolution of one interrupt (~360 µs). (Replaced in step 10:
+  one-shot armed on the deadline, stays in E ticks — see "STEP 10 — PERFORMANCE".) PROOF = CROSS-CLOCK
+  (NOT tautological: CPU E-clock vs display raster, different hardware): a 0.5 s MICROHZ request must
+  elapse in ~25 VBLANK ticks (independent 50 Hz clock). GREEN "M7L MICROHZ CALIB OK" = elapsed ∈ band
+  [22,28] (3/3). RED (`M7L_OLD_CONV=1`, VBLANK conversion restored on MICROHZ): the 0.5 s request expires in
+  ~25 interrupts ≈ 9 ms < 1 VBLANK tick -> elapsed ~0-1 -> M7L ABSENT, M3F..M7G green (2/2, surgical RED:
+  the request value of the `task_timer` loop is gated in parallel via `TT_MICRO_REQ` to keep the PERIOD
+  ~7 ms under both conversions). COOP: non-regression of all earlier markers (M3F/M6A/M7A/M7E/M7F/
+  M7G, 0 FAILED); M7L is a proof of the DEFAULT build (just as M7C/M7D depend on the spinners, M7H on
+  isolation): in cooperative mode the wake-up latency (task_timer pri 10 does not preempt task_h pri 10 — Signal at
+  equal pri does not set AttnResched -> waits for task_h's yield) inflates the measured VBLANK window beyond the
+  tight band -> M7L not emitted. This is a MEASUREMENT artefact, not a calibration error — PROVEN BY CONSTRUCTION:
+  the countdown is 1392 CIA-B interrupts on the hardware timer (latch `$00FF`, not gated, identical in EVERY
+  build) so completion is fixed at ~0.5 s ≈ 25 ticks whatever `SCHED_ON` is; hence `elapsed = 25 + head(<1) +
+  wake-up-latency`, and only the wake-up latency differs between preemptive and cooperative (immaterial magnitude, deductive
+  mechanism; also confirmed empirically: band widened to [22,250] -> M7L reappears in coop). **Limits**: sub-interrupt
+  resolution (< 360 µs, live read of the E latch) + ECLOCK unit deferred; the `secs` path of the conversion
+  is not exercised by the demos (both requests have secs=0) -> correct by construction, not proven empirically.
+- **M4 graphics DONE** (Copper → bitplane → resident graphics.library → display generated by the ABI). **M5 intuition: resident skeleton + `ViewAddress` DONE** (`src/intuition/`); the "insert Workbench disk" screen is postponed to **M6** (its real trigger = no bootable volume; the public docs confirm it is NOT an intuition function — refuse the synthetic screen, see the M7k-postponed logic).
+- **exec `OpenLibrary` DONE** (`library.s`: `OpenLibrary`/`CloseLibrary`/`OldOpenLibrary`; serial marker M5O: success version 34 + OpenCnt+1, version gate 99→0, non-existent lib→0, CloseLibrary→OpenCnt-1; RED `OPENLIB_NO_VERCHECK`). The M4c1/M5 proofs (FindName+Open by hand) can now be refactored to go through `OpenLibrary` (follow-up).
+- **dos.library resident skeleton DONE** (`src/dos/`: `DosBase`+`RootNode`+`DosInfo` linked by **BPTR**, structures separately AllocMem'd/long-aligned; `DateStamp`-192 → (0,0,0) clock not set + returns the pointer; serial marker **M6D**: AUTOINIT→LibList + BPTR round-trip `rn_Info<<2==&DosInfo` (compute-then-compare, without dereferencing) + DateStamp; RED `M6D_BAD_BPTR` isolates the BPTR encoding; checksum `0x929C804F`). 1st M6 increment.
+- **Boot screen DONE** (`src/graphics/`: kitten image "KickSlopStart" 352×272×5 = 32 colours in overscan, displayed at handoff through the graphics.library ABI; `MakeVPort` made generic N planes/M colours; serial marker **M6S** (liveness) + VISUAL discriminant (unique colours: GREEN ~18-19k vs RED one-plane ~36); RED `BOOTSCR_ONE_PLANE` isolates multi-bitplane rendering; self-checking `mk_bootscreen.py` pipeline). ⚠️ Displayed **unconditionally** at handoff for now: the real "no bootable volume" trigger remains for the strap increment.
+- **Strap (romboot) — routing DONE (M6r)** then **reading+validation+execution of the bootblock DONE (C/M6y)** (`src/exec/strap.s`). M6r: `strap_boot` routes the insert-disk display through its decision. **C**: `strap_boot` now REALLY reads sectors 0+1 of DF0: (`CMD_READ` offset 0 len 1024, via `BeginIO`-30, M6w pattern), validates the "DOS" magic + **additive checksum** (end-around-carry sum of the 256 longs == `$FFFFFFFF` — ADDITIVE, not XOR like the MFM checksums), then **jumps to the boot code at +12** (A6=SysBase, A1=IORequest; dos handoff A0 IGNORED, no dos in C). Bootable → returns "booted" (**M6Y**, no insert-disk); invalid checksum (formatted ADF without install = checksum 0) or no disk → returns 0 → insert-disk (**M6R**) = the REAL 1.3 trigger. RED `STRAP_FAKE_BOOTDEV` (routes without reading), `STRAP_NO_EXEC` (validates without jumping → isolates execution), `STRAP_BAD_CSUM` (rejects a good block → isolates validation). Proof: the **CBOOT** marker is emitted by the bootblock ITSELF → proves the jump. Regenerable custom bootable test ADF (`tests/mk_boot_adf.sh` + `tests/bootblock_c.s` + `tests/patch_bootblock.py`, round-trip).
+- **trackdisk.device — skeleton (B1) DONE** (`src/exec/trackdisk.s`: 2nd device, AUTOINIT pri 20 → DeviceList, `Open` validates units DF0-3; serial marker **M6T**; RED `TD_NO_UNITCHECK` isolates unit validation). Foundation of disk reading.
+- **trackdisk raw track read (B2) DONE** (`td_read_track0`: the ROM really READS an MFM track from DF0 via Paula disk DMA — 22 `$4489` sync words found on a test ADF; serial marker **M6U** + sync count; RED `TD_NO_DMA` isolates the arming of the DMA; harness `tests/boot_test.sh` extended with an optional floppy in DF0). 1st time the ROM accesses the disk hardware.
+- **trackdisk MFM decoding (B3) DONE** (`td_decode_track`: 11 sectors × 512 bytes decoded+verified, sector 0 = bootblock "DOS\0"; serial marker **M6V**; RED `MFM_BAD_DECODE`).
+- **trackdisk CMD_READ (B4) DONE** (`BeginIO` handles `CMD_READ`; serial marker **M6W**; RED `TD_READ_NOCMD`).
+- **MULTI-TRACK trackdisk CMD_READ (M6z, D prerequisite) DONE**: `BeginIO` converts the byte offset into (track, sector) and loops over the touched tracks (crosses track boundaries); guards `IOERR_BADLENGTH`/`TD_DISKBYTES`. Serial proof **M6Z** = root block @block 880 (track 80, +0==T_SHORT, +508==ST_ROOT) + spanning read of blocks 10+11 (markers "SPAN0010"/"SPAN0011" straddling the track 0/1 boundary). RED `TD_NOSEEK` (always reads track 0, without crash) → M6Z absent (isolates the offset→track mapping).
+- **trackdisk seek + side-select (B2b) DONE** (`td_read_track(n°)`: seek to an arbitrary track + side; proven by reading track 2 → decoded sectors carry track==2; serial marker **M6X** + TRACK= diagnostic; RED `SEEK_NOSTEP`). **trackdisk.device is now complete**: it reads any logical sector of any track of DF0.
+- **trackdisk — CYLINDER-TRACKING**: `td_read_track` tracks the current cylinder (`TD_CURCYL`/`TD_CYLVALID`) and steps the **delta** to the target (recalibration to 0 only if the position is unknown) — CLEANLY fixes the "read after a seek read the wrong track" bug (the delta brings the head back to the right cylinder) AND removes the 85-step recalibration on every read (fast reads, required under the scheduler). RED `TD_NO_CYLTRACK` (systematic recalibration → D3B absent at WAIT=90). "Absent/empty drive" detection via the **DSKRDY timeout** (return before the seek). Multi-track `CMD_READ` offset→track wiring delivered (M6z). Debt: no invalidation on disk change (real eject/swap → periodic recalibration, M7).
+- **trackdisk — SEEK/INTERRUPT RACE FIX (CIA-B)**: the seek's step pulses write `CIAB_PRB`; the MICROHZ source (CIA-B timer A, INT6) shares the SAME chip. An INT6 IRQ falling between the PRB writes of a step corrupts the head positioning → the next read **falls over** (hang). Invisible as long as the boot only reads low blocks (small seeks): exposed by a **large seek to a high block** on a real full disk (e.g. opening `flt-intro` on a Lemmings floppy). FIX = **`Disable`/`Enable` critical section around the SEEK only** (`td_read_track`, `.rd_seek`→`.rd_dma`); the downstream DMA polls `INTREQR` → no IRQ required → minimal IRQ latency (vs masking the whole read). **Cause proven by bisection, not assumed**: a PURE inter-step delay does NOT fix it (so not a settle defect), masking IRQs DOES (3/3). Non-regression: complete GREEN (D1/D3B/OFS STREAM/M7A/M7L/FORBID ATOMIC/E3/F1BOOTOK, 0 FAILED) unchanged.
+- **"It boots!" (C/M6y) DONE**: see the Strap line above — the strap reads+validates+executes the bootblock of a bootable ADF, proven by the **CBOOT** marker emitted by the bootblock. First EXTERNAL (disk) code executed by the ROM.
+- **LEMMINGS FAIRLIGHT CRACKTRO DISPLAYED (real game milestone)**: the ROM boots the *Holiday Lemmings 1993 [h FLT]* floppy, its `s/startup-sequence` launches `flt-intro` (FLT cracktro), which **IS DISPLAYED ON SCREEN** (FAIRLIGHT logo + BBS list, proven by capture). It required three pieces: (1) the trackdisk seek race fix above (flt-intro, block 1597, finally loaded); (2) **graphics.library** — jump table extended to vectors 38-77 + `WaitBlit`(-228)/`OwnBlitter`(-456)/`DisownBlitter`(-462) (stubs: the intro does not use the blitter) + `LoadView`(-222) handles the **NULL view** (turns off bitplane+copper DMA instead of dereferencing address 0); (3) **exec `Supervisor`(-30)** (`library.s` + `trap3_handler` in `interrupts.s`): `trap #3` → supervisor → `jmp (a5)`; the routine (the intro) ends with `RTE`, which unstacks the trap frame → return to the caller. The intro drives copper/bitplanes/DMACON/BEAMCON0 **100% directly** in supervisor mode (no rendering through graphics.library; ActiView/copinit/LOFlist only SAVED-for-restoring, never dereferenced — GfxBase layout intact). Clean-room analysis of the bootblock + the unpacked cracktro (r2, GAME disk = outside the Kickstart firewall). Complete GREEN non-regression unchanged. **Honest scope**: it is the CRACKTRO that runs; the game `HolidayLemmings` (145 KB > 16 KB shell buffer + LoadSeg cap) remains a separate "large loader" milestone.
+- **LOADING SCREEN (large file) — GATED DEMO DONE** (`src/graphics/loadscreen.s`, flag `LOADSCREEN_DEMO`): `loadscreen_demo` sets up a **View** on console.device's text bitplane (`FindName` console → repoints `CONB_BITMAP` to a 352×272 plane = fixed geometry of `gfx_MakeVPort`, stride 44; `MakeVPort`/`MrgCop`/`LoadView` through the graphics.library ABI) then writes "Chargement <name>..." (console `CMD_WRITE`, 8×8 glyphs) + a **progress bar** (one '#' per 4 KB chunk) during a **real STREAMING** read of the file (`ofs_stream_read`, data block by data block, without a whole-file buffer), then "OK". **FS-UAE boot** proof: screen capture — readable white text on a midnight-blue background (`loadscreen_final.png`). **Clean gating**: `loadscreen.o` is linked ONLY under `make VASMDEF=-DLOADSCREEN_DEMO=1 kick` (`findstring` condition in the Makefile + `xref`/trigger guarded by `ifne LOADSCREEN_DEMO` in boot.s) → the default ROM stays **byte-identical** to the commit (md5 `d4c1784c…` unchanged, zero dead code). **Goes beyond** the "visual rendering deferred" limitation noted in #3a: the console text IS displayed in a capturable FS-UAE window as soon as the View is set up with the right geometry (352×272, stride 44) — the old `gfx_text_display` did not set up the View correctly. **Honest scope**: standalone DEMO (name `bigseg` hard-coded, sets up its own display, holds the screen, DOES NOT RETURN) — NOT yet wired into `dos_loadseg`, so it does not trigger automatically "when it loads an image". *Live* wiring = follow-up (the loadscreen will have to RETURN, free its allocations, and reuse the current display instead of setting up a dedicated one).
+- **TRACKDISK ON TIMING-EXACT (WinUAE / real A500) — FAST FIX** (commit 4590cb1): the ADKCON read mode was `$8400` (FAST=0 = 4 µs/bit) → Paula sampled at the wrong rate, garbage bitstream, `$4489` never matched, no read on WinUAE (FS-UAE tolerated it). Now `$9500` (= official KS1.3 read mode `$9100` SETCLR|MFMPREC|FAST + WORDSYNC). Also: no more hard failure on `/RDY` timeout (the official one never reads `/RDY`), `/STEP` pulse widened. Proven: Lemmings [h FLT] boots on timing-exact WinUAE, cracktro displayed, game loading started (blocks further on, ~sector 46 = next work item). Clean-room reference: `docs/analysis/trackdisk-official-timing.md`. The loadscreen **turns off bitplane+copper DMA during each `ofs_stream_read`**: on WinUAE, reading the disk with our View set up returned an empty DMA buffer; with the cut → `######`/`OK` proven on WinUAE and FS-UAE.
+- **THE HOLIDAY LEMMINGS GAME STARTS (real game milestone)**: on the *Holiday Lemmings 1993 [h FLT]* floppy (A500 512 KB chip + 512 KB slow), the startup-sequence chains `flt-intro` (cracktro) → **left click** → `HolidayLemmings` (145 KB), which loads and **displays its menu** (PLAY/QUIT/NEW LEVEL..., scroller active), proven by an FS-UAE capture (keyboard/mouse harness). Four pieces: (1) **slow RAM** (`add_slow_memory`, `memory.s`): probes `$C00000` in 512 KB blocks (probes at `$1FE`/`$3FE` = NO-OP register if custom mirror, two crossed patterns, aliases rejected), added **AT THE HEAD** of the MemList as `MEMF_FAST|MEMF_PUBLIC` → allocations without `MEMF_CHIP` go there first, chip stays for the program; serial marker `MEM SLOW KB=`. (2) **shell**: command buffer of the file's **real size** (`Lock`+`Examine` → `FIB_SIZE`, no more fixed 16 KB buffer), `Read` loop until EOF, buffer freed **before** running. (3) **LoadSeg** honours the hunks' **memory flags** (bit 30 → `MEMF_CHIP`, bit 31 → `MEMF_FAST`, `11` = V37 extended attributes → clean failure) and masks the flags **copied into the hunk id** of the body (`$400003EB` = chip BSS — this was the cause of the "?" at launch); guards `hidx`/`ref < hunkcount`. (4) **trackdisk track cache**: the sectorbuf becomes persistent (`TD_CACHEBUF`) and keeps the last decoded track (`TD_CACHETRK`), validated only if the 11 sectors are decoded AND carry the requested track no., invalidated by `/CHNG` (CIA-A PRA bit 2, read by selecting DF0 with motor OFF) — each 512-byte OFS block re-read a whole track (spin-up+seek+DMA), ~300 track reads for the executable. GREEN non-regression with and without slow RAM. **Launching a level confirmed by the user** (2026-10-18, manual test; no automated proof in the harness). **Honest scope**: without slow RAM the game does not fit in memory (as on a real 512 KB A500).
+- **WORKBENCH 1.3.3 — STEP 1: DOS NAMES, ASSIGNS, CLI, TRAPS (SetPatch runs)**: (1) **name resolution** (`dos_resolve`, `dos_lib.s`): "xxx:rest" → DosList node (case-insensitive); assign (DLT_DIRECTORY) → its lock + its handler, "rest" is passed on; device/volume → handler, lock 0, full name; ":rest" → root of the current volume; without ':' → relative to `pr_CurrentDir` (lock 0 → `pr_FileSystemTask`, otherwise DF0:). Unknown prefix → `ERROR_DEVICE_NOT_MOUNTED`. Open/Lock finally pass the **parent lock** (ARG2 of FINDINPUT, ARG1 of LOCATE_OBJECT); BSTR names up to 255. (2) **OFS**: `ofs_name_to_block`/`ofs_stream_open` start from the lock's directory ("xxx:" → root, empty path → the directory itself, empty component "/" → parent via long[125], trailing '/' neutral). (3) **DosList**: DeviceNode named `DF0`; when the initial CLI starts, `dos_boot_assigns` creates the **volume** node (name read by Examine of the root), the assigns **SYS: C: S: L: DEVS: LIBS: FONTS:** (if the directory exists) and `pr_CurrentDir` = root. (4) **Initial CLI**: `pr_CIS`/`pr_COS` = console FileHandle, **`pr_CLI` = CommandLineInterface** (without it, C startup code believes it was launched by the Workbench and waits for the WBStartup message → hang), `cli_CommandName`/`cli_Module`/`cli_ReturnCode` kept up to date; commands looked up as is then in **C:**; CLI calling convention (a0 = arguments terminated by '\n', d0 = length, 4(sp) = stack size, **`pr_ReturnAddr`** pointing to this long: `exit()` finds the entry stack there); redirections `>`/`<` and `;` comments removed from the arguments; CLI stack 8 KB. (5) **CPU exceptions** (`interrupts.s`): vectors 2-11 and TRAP #4-15 → trap no. pushed → `tc_TrapCode` (0 → `ExecBase.TaskTrapCode`); default handler = "SOFTWARE FAILURE trap= pc= addr= code= task=" on serial then task put on hold (before: jump to some arbitrary address, machine frozen). **Shape imposed by SetPatch**: vector n → `bsr.s` of a table (2 bytes/vector), common routine = `subi.l` 6 bytes (→ 2n) then `lsr.w 2(sp)` (`$E2EF`); SetPatch checks this word (otherwise deliberate crash) and hooks its FPU stubs there. (6) **exec `RawDoFmt` (-522)** (`rawdofmt.s`): %[-][0][width][.limit][l]d/u/x/s/b/c, a2/a3 returned; self-test "RAWDOFMT OK" (RED verified). Proof: on the *Workbench 1.3.3* disk, `c:SetPatch` (found via C:) runs in full, displays its messages and returns; the startup-sequence then stops at `AddBuffers` (a **BCPL** command → step 2). **Honest scope**: `SetFunction` not implemented → the fixes announced by SetPatch are not really installed; no layers.library; no real redirection nor NIL: yet.
+- **WORKBENCH 1.3.3 — STEP 2: BCPL RUNTIME (`src/dos/bcpl.s`)**: BCPL call/return (A5 = `bcpl_call`, multiply at +$10, divide at +$12; A6 = `bcpl_ret`), global vector of the CLI (804 bytes, slots −50..+150, GV[0] = 150, undefined slots = stubs "BCPL GLOBAL xxxx NON IMPL" on serial) in `pr_GlobVec`, and **runtime segment in BCPL format** (`(global, offset)` table + max at the end of the hunk) published in the **segarray** `pr_SegList` = [1, runtime]: the startup stub of the c: commands (hunk 0, identical in all of them) creates a PRIVATE GV there through findsegarray/getvec/globin and installs the runtime into it, then its own seglist. ~60 globals: stop, result2, taskid, level/longjump, getmem, globin, getvec/freevec, parentdir, testflags, rootstruct, delay, sendpkt (the argument frame IS the DosPacket), currentdir, rdch/unrdch/wrch, findinput/findoutput, select/end*, input/output, writet/newline/writed/writen/writehex/writeoct/writes/**writef**, capitalch/compch/compstring, **rdargs/rditem/findarg**, load/unloadseg, makedevnode/finddevinfo, callexec/calllib, findsegarray, deleteobj/createdir (failure: read-only FS), endstream, deviceproc, fault (fallback "Error code %N"), splitname, locateobj/freeobj/lock, getlong/putlong, copydir, errorreq (FALSE), copystring, findcli, copyvec. The CLI launches each command as **runcommand** (spec §4.3): dedicated stack of `cli_DefaultStack` longs (1000), [old SP][size] at the top, `pr_ReturnAddr` → size, arguments injected into the input FileHandle (`fh_Buf`/`fh_Pos`/`fh_End`, restored on return), A1/A2/A3/A4/A5/A6 set. An undefined slot of a command GV is worth `$474C0001+2n`: the address fault directly gives n = (addr − $474C0001)/2. Handler: ACTION_MORE_CACHE (accepted), ACTION_PARENT, ACTION_COPY_DIR. dos: jump table completed up to −222 (Delay, WaitForChar, ParentDir, IsInteractive, Execute — the call beyond DateStamp fell below the table: SetClock's fault). exec AddTask no longer overwrites `ln_Type` (processes stay NT_PROCESS). SOFTWARE FAILURE also displays `cmd=`, `a6=`, `(usp)=`. Spec: `docs/analysis/bcpl-runtime-v34.md` (clean-room reviewed, sections 1-13). **createproc (33) + background CLI (Run)**: `bcpl_proc_entry` (spec §2.4: stack filled with `$ABABABAB`, base frame, GV[12], globin of each segment of the segarray, wait for the startup packet, `start(pkt)` with `pr_ReturnAddr` set for `stop`, RemTask on return); the GV is **shared** with the parent CLI (as per the spec); `rn_TaskArray` (20 slots) allocated by dos, `pr_TaskNum`; qpkt/returnpkt/taskwait, runcommand (121) as a global. Fixes revealed by Run: **getlong/putlong(i, base[, v])** = long at `base + 4*i` (spec §8.1 said "offset in bytes", contradicted by Run); **FileHandles are getvec blocks** (size at −4) because BCPL commands build and close them (Run's in-memory FileHandle) — Open allocates with getvec, Close frees through the header; the CLI **reinstalls its streams** around each command (before: selectinput(cli_StandardInput), after: selectoutput(cli_StandardOutput)/selectinput(cli_CurrentInput), spec §4.2.3/§4.4); **Delay blocks on timer.device** (VBLANK unit, port and request on the stack) instead of a busy wait that starved the background CLI during `wait`; the handler fills the **FIB like a packet handler**: name and comment as **BSTR**, `fib_Protection`, `fib_EntryType`, `fib_NumBlocks`, `fib_Date` (Shell-Seg reads the protection of a file found through the search path); the Examine/ExNext LVOs convert BSTR → C string (like AROS's `fixfib`). Proof (WB 1.3.3, FS-UAE): SetPatch, **AddBuffers**, **cd c:** (BCPL), echo, FastMemFirst, BindDrivers, SetClock, FF, **resident** ×2, **mount newcon:**, **failat**, then **run execute s:StartupII** creates "Background CLI" (`[CLI 2]`), which runs **Execute** and the six **resident** commands of StartupII (return code 0 for each, temporary trace of the command names); it stops at `makedir ram:t` (code 10: no RAM: device) and the script is abandoned (failat); the main CLI waits in `wait 5 mins`. **Honest scope**: no starting of BCPL handlers (global 112: RAM: = `L:Ram-Handler`, NEWCON:), read-only FS, unbuffered writef, C:FAULT not launched.
+- **WORKBENCH 1.3.3 — STEP 3: DEVICE HANDLERS (RAM:, PIPE:) AND EXEC I/O**: (1) **`bcpl_starthandler`** (`bcpl.s`, global 112, spec `docs/analysis/handlers-v34.md` + `bcpl-runtime-v34.md` §13.3) called by `dos_resolve` for any DLT_DEVICE node without a task (hence by Open/Lock/CreateDir/... and by `deviceproc`): loads `dn_Handler` into `dn_SegList` (only once); `dn_GlobalVec = -1` → **C handler** (process launched on the code of the first hunk, stack in bytes); otherwise **BCPL handler**: segarray `[3, runtime, 0, seglist]`, shared GV (`dn_GlobalVec`) or **`makeglobvec`** (global 13: max of the segments' "max" values, floor 15, slots −50..max), `createproc` (stack in longs); synchronous startup packet (Arg1 = BSTR of the full name, Arg2 = `dn_Startup`, Arg3 = node, Res2 = GV); success if Res1 ≠ 0, Result2 := `dn_Lock`; `dn_Task` is never written by dos (the handler does it if it wants to be shared). The core of createproc is factored out (`rt_createproc`). (2) **RAM node** created when the initial CLI starts (`ba_ramnode`: `L:RAM-HANDLER`, stack 300 longs, pri 0, new GV); Ram-Handler writes `dn_Task` itself and creates the "RAM DISK" volume. (3) **exec** (`src/exec/io.s`): **OpenDevice / CloseDevice / DoIO / SendIO / CheckIO / WaitIO / AbortIO** (AutoDocs; OpenDevice only searches the DeviceList) and **CopyMem / CopyMemQuick** (Ram-Handler copies all its data with CopyMem, global 156, which it defines itself). timer.device now handles **TR_GETSYSTIME / TR_SETSYSTIME** (system time = reference + VBL_COUNT/50) and rejects the other commands (IOERR_NOCMD), replying if the request is not quick; TR_ADDREQUEST clears IOF_QUICK (otherwise DoIO returned immediately — SetClock blocked). (4) **dos**: LVOs **DeleteFile (−72), Rename (−78), CreateDir (−120)** through packets (factored `dos_namepkt` with Lock; `dos_sendpkt` passes ARG4); real globals **createdir/deleteobj/rename**, **setio (6), doio (21), sendio (22), opendevice (31), closedevice (32), setflags (36: `break`), datstamp (86)**. **errorreq (114) returns TRUE** = abort (c:Dir loops on ExNext as long as errorreq returns 0: the spec's "TRUE = retry" was inverted). (5) **LoadSeg** ignores HUNK_NAME / HUNK_DEBUG / HUNK_SYMBOL (MountMF starts with a HUNK_NAME). (6) **shell**: empty line or comment alone after spaces (rest of line ";...") ignored instead of displaying "?". Proofs (FS-UAE): the **complete Workbench 1.3.3 startup-sequence** runs — StartupII in the background CLI (makedir/assign on RAM:, mount speak:/aux:/pipe:, resident remove, **`break 1 C`** interrupts the main CLI's `wait`: `**BREAK`), then path, **SYS:MountMF** (CrossDOS), LoadWB (no effect: no workbench/layers), endcli ("CLI process 1 ending"), without any "NON IMPL" or fault; test disk (copy of the ADF, startup-sequence replaced): `copy` to RAM:, `type`, `makedir`, `dir`, `rename`, `list`, `delete` correct on RAM:; **PIPE:** (C handler): `run copy s:StartupII to pipe:x` + `type pipe:x` transfer the whole file up to EOF. **Honest scope**: NEWCON: (global 50 openwindow + console.device on a window) and AUX:/SER:/PAR:/PRT: (serial.device/parallel.device to be loaded from DEVS:, no device loading from disk) cannot be started; ROM CON/RAW/SER/PAR/PRT nodes not created; LoadWB has no effect.
+- **WORKBENCH 1.3.3 — STEP 4: DEVS: DEVICES, AUX:, NEWCON:**: (1) **loading from disk** (`src/exec/ramlib.s`, ramlib's role): OpenLibrary / OpenDevice of a name absent from the lists, called by a process, do `LoadSeg("LIBS:nom" / "DEVS:nom")`, look for the ROMTag (RT_MATCHTAG = itself) in the segments and call `InitResident(romtag, seglist)`; failure -> UnLoadSeg. (2) **exec**: AddLibrary/RemLibrary/AddDevice/RemDevice (a module that does its own MakeLibrary registers through AddDevice), **complete InitStruct** (prior clearing, forms dd = 00/01/10/11, counter, re-alignment: only INITBYTE/WORD/LONG were handled), **level 1/4/5 autovectors** (TBE/DSKBLK/SOFTINT, AUD0-3, RBF/DSKSYNC: enabled and pending sources -> SetIntVector's exclusive handler, which acknowledges INTREQ itself; without a handler -> acknowledged; trackdisk and the serial console poll with INTENA off). (3) **misc.resource** (`src/exec/misc.s`, pri 70): AllocMiscResource / FreeMiscResource (serial/parallel units) — without it serial.device's init fails. RESMAX raised to 24. (4) **intuition**: GetPrefs / GetDefPrefs (default V34 Preferences, 232 bytes: 9600 baud, 8N1 — serial.device reads its rate there when opened), **minimal** OpenWindow / CloseWindow (Window structure filled from the NewWindow, without layer, rastport or rendering). (5) **console.device**: a request coming from OpenDevice (io_Unit = the window) follows standard exec semantics (ReplyMsg reply outside IOF_QUICK, CMD_READ queued until a character arrives, AbortIO); the historical synchronous callers (null io_Unit: conhandler, probes) keep the immediate behaviour; ESC/CSI sequences ignored when rendering. (6) **expansion.library**: vector table completed to the V34 set (up to AddDosNode −150: real Set/GetCurrentBinding, Obtain/ReleaseConfigBinding with no effect, the rest neutral) — it stopped at −84 and BindDrivers, now able to load icon.library, called ObtainConfigBinding (−120) below the jump table. **dos Lock**: the `dos_namepkt` factoring overwrote the caller's d3 (mode copied before saving) — BindDrivers then re-read IconBase at $FFFFFFFE; ARG3 now goes through d2. (7) **BCPL**: global 50 **openwindow** (the spec's NewWindow: Flags $21007, Min 120x50, WBENCHSCREEN) with **GV[92] = IntuitionBase** set in the CLI's GV. SOFTWARE FAILURE also displays the USP value. Proofs (FS-UAE, copies of the WB 1.3.3 ADF): **AUX:** — `copy s:StartupII to aux:`: Aux-Handler (BCPL, shared GV) -> serial.device **loaded from DEVS:** -> the text comes out on the serial line; **NEWCON:** — `copy s:StartupII to newcon:0/0/640/100/Test`: Newcon-Handler opens its window (global 50), console.device on the window, CMD_WRITEs completed, pending CMD_READ aborted on closing, CloseWindow, the script continues. Complete WB 1.3.3 boot: **BindDrivers runs in full** (icon.library loaded from LIBS:, examination of SYS:Expansion), **LoadWB** answers "Cannot find resident tag for workbench.task" (resident module absent: next step). **Honest scope**: no display of windows (no layers.library nor Workbench screen: console.device's text goes into its single bitplane, shared by all windows, not read back by the harness), NEWCON keyboard reading not proven, ROM CON/RAW/SER/PAR/PRT nodes not created (CON: would require the ROM's BCPL console-handler), SetIntVector does not return the old vector, ramlib reserved for processes.
+- **WORKBENCH 1.3.3 — STEP 5: workbench.task RESIDENT (LoadWB)**: (1) **`src/dos/workbench.s`** (spec `docs/analysis/workbench-task-v34.md`): ROMTag NT_TASK **without a class flag** (present in ResModules for FindResident, never initialised at boot); LoadWB does CreateProc with the seglist BPTR(ROMTag+42) -> fake segment at ROMTag+40 (link 0) and entry point at ROMTag+44 (ROMTag aligned on 4). The process renames itself "Workbench" (LoadWB finds it again through FindTask), moves to priority 1, gives itself a fake CLI (pr_CLI; the path received, message +$14, goes into cli_CommandDir), **replies immediately** to LoadWB's message (without a reply LoadWB stays blocked in WaitPort), then serves a public "Workbench" port by replying to every message, and lives indefinitely like the real one. (2) **exec InitCode filters by class**: only initialises the residents whose RT_FLAGS have a bit in common with startClass; all our ROMTags now carry **RTF_COLDSTART** and the boot calls InitCode(RTF_COLDSTART) (before: startClass ignored, d0 overwritten). (3) **exec AddPort initialises the message list** (NEWLIST, AutoDoc). Proof (FS-UAE, WB 1.3.3): "Cannot find resident tag for workbench.task" disappears; LoadWB launches the Workbench, receives its reply and returns; the startup-sequence ends with endcli. **Honest scope**: **minimal** Workbench, **without a desktop** — no Workbench screen, backdrop window, disk icons, menus or tool launching (the real one opens dos/graphics/layers/intuition/mathffp/icon and restarts the machine if one of them is missing: layers.library, mathffp.library, the real Intuition screens and windows, InitGels, OpenFont/Text are still to be done).
+- **WORKBENCH 1.3.3 — STEP 7: AMIGASLOPDOS AT STARTUP AND DESKTOP**: (1) **AmigaSlopDOS window** — the initial CLI opens its console under the name `CON:0/0/640/200/AmigaSlopDOS` (Arg3 of FINDINPUT); the console handler (`conhandler.s`) then opens a window on the Workbench screen (`con_openwin`: geometry and title read from the name, flags of a CON: window) and renders output and echo there through console.device (the serial mirror stays for the harness); named openings are counted, the last END closes the window — the CLI sends it when EndCLI has moved it to the background (`cli_Background`); after that the fallback serial shell no longer reads the keyboard (end of the double consumption). The test banner "E2 SHELL READY" goes directly to serial; the built-in `echo` behaves like c:Echo (without enclosing quotes, newline). (2) **project theme** — colour 0 apple green ($7C3), colour 2 pure black, titles in pen 2 (the Workbench's DetailPen), console text on pen 2 by default. (3) **intuition without layers** — a window only clears the part of its rectangle that no window placed in front covers (`it_clearvis`, sweep by segments); on closing, the screen bar and the frames of the uncovered windows are redrawn if they are not covered, and these windows receive **REFRESHWINDOW**; **minimal IDCMP** (UserPort created if IDCMPFlags ≠ 0, IntuiMessage embedded in the window, reused once replied to); **BACKDROP** window placed at the back; `DrawImage` (−114, planes according to PlanePick/PlaneOnOff, same-colour segments), `AllocRemember`/`FreeRemember` (−396/−408); a screen loads its 32 colours. (4) **mouse pointer** — graphics: SPR0-7 pointers at the head of the master copper list (empty sprite by default, rewritten by LoadView, modifiable by ChangeSprite), sprite DMA, `GetSprite`/`ChangeSprite`/`MoveSprite` (−408/−420/−426, coordinates relative to the display window of the active ViewPort); intuition: arrow drawn for the project (colours 17-18), channel 0, moved by the pointer handler (`it_ptrmoved`, ib_MouseX/Y), now also installed on the floppy boot (`ptr_wire`). (5) **desktop** (`workbench.task`) — borderless BACKDROP background window under the screen bar (IDCMP REFRESHWINDOW), boot disk icon read by the **disk's icon.library** (`GetDiskObject("SYS:Disk")`) drawn by DrawImage at the top right (no position stored in Disk.info) with the volume name (Examine of SYS:) centred below; skipped as long as a window placed in front covers it, redrawn on REFRESHWINDOW. (6) **interaction** — the pointer handler passes the left button on to intuition (`it_button`): frontmost window under the pointer, close gadget -> **CLOSEWINDOW**, otherwise activation + **MOUSEBUTTONS** (SELECTDOWN/SELECTUP, relative coordinates, timestamp taken from the VBlank counter); pool of 4 IntuiMessages per window; **DoubleClick** (−102). The Workbench selects the disk icon on click (inverted rectangle), opens it on double-click: disk window (geometry from the DrawerData of Disk.info, title = volume name) with the root's icons (Examine/ExNext, `nom.info` -> GetDiskObject, positions from the .info files, name below), drawn within the inner bounds of the window; the close gadget closes it and the desktop is repaired. (7) **graphics** — `BltBitMapRastPort` (−606, CPU copy byte by byte with shift, clipped, NULL plane = 0 / −1 = 1): DrawImage builds a temporary BitMap and makes a single call (the old pixel-by-pixel rendering was visibly slow on WinUAE); BPLCON2 = $24 (sprites in front of the playfields: the pointer no longer goes under the title bar). (8) **floppy inserted on the insert-disk screen** — process `disk_watch` (pri −1): every 0.5 s `td_disk_present` (read of /CHNG; if it is low, a step pulse — the drive's "click" — re-arms the latch then re-read); drive seen empty then floppy present -> cold restart (Supervisor: RESET + jump to the ROM entry, in the same long word); a non-bootable floppy already present does not cause a loop. (9) **chip RAM** — MakeLibrary, the resident table and the demonstration tasks move to MEMF_PUBLIC (slow RAM first), console.device's historical bitplane is only allocated at the first write: Holiday Lemmings (chip hunk of 363 KB + 37 KB) gets its room back despite the Workbench screen. Proofs (FS-UAE, copy of WB 1.3.3, production ROM): green AmigaSlopDOS window with black text during loading (SetPatch, FastFonts...), closed at `endcli`; green desktop with title bar, "Workbench1.3" icon and red pointer; mouse driven by xdotool: double-click -> disk window with its 8 icons, click on the close gadget -> closed, desktop repaired; disk_watch: empty drive -> 0 continuously, non-bootable floppy -> present without restart, restart path proven (test ROM). **Honest scope**: no layers.library (SetPatch reports it), no OpenFont/topaz (FastFonts reports it), no menus, nested drawers, tool launching or scrolling of drawer windows (MountMF cut), no Ram Disk icon; the contents of an uncovered window not subscribed to REFRESHWINDOW are not restored; real insertion of a floppy could not be simulated under FS-UAE (key action not working): to be confirmed under WinUAE.
+- **M7+ (MISSING RESIDENT MODULES) AND L4 (INTUITION ON LAYERS)**: (1) **new residents** — `mathffp.library` (`src/exec/mathffp.s`, pri 0, AUTOINIT, 12 FFP functions at LVOs −30..−96); `disk.resource` (`diskres.s`, pri 70: AllocUnit/FreeUnit, GetUnit with a `dr_Waiting` queue and GiveUnit that replies to the next requester, GetUnitID read from CIA-B at startup for DF1-3, DSKBLK/DSKSYNC/index relays to the current DiscResourceUnit); `potgo.resource` (`potgo.s`, pri 100: AllocPotBits/FreePotBits/WritePotgo); `keyboard.device` (`kbddev.s`, pri 60: READEVENT with a 16-event buffer and pending requests served by `kbd_devevent` called from the keyboard interrupt, READMATRIX, CMD_CLEAR, AbortIO, ADD/REMRESETHANDLER); `audio.device` (`audio.s`, pri 40: allocation by precedence with channel stealing and locks, DMA WRITE with cycles counted by the AUDn interrupts, WAITCYCLE, FINISH, PERVOL, STOP/START, FLUSH, RESET, READ, CLEAR, UPDATE, AbortIO). RESMAX goes to 32. (2) **exec** — signal semaphores (`semaphores.s`: Init/Obtain/Release/Attempt/Add/Rem/FindSemaphore, LVOs −558..−606; the releasing Release hands ownership directly to the first queued requester). (3) **graphics** — regions (`src/graphics/regions.s`: NewRegion, DisposeRegion, ClearRegion, Or/And/Clear/XorRectRegion, Or/Xor/AndRegionRegion; common union, difference and intersection engine over RegionRectangle lists); general `BltBitMap` (minterms, line buffer if source = destination), ReadPixel, LockLayerRom/UnlockLayerRom; all drawing in a layered RastPort goes through its ClipRects (layer lock taken by the call; ScrollRaster by pairs of ClipRects, a hidden source marks damage). (4) **`layers.library`** (`src/graphics/layers.s`, pri 31, 28 LVOs −30..−168, offsets checked against the Free Pascal unit `layers.pas`): simple, smart (saving of hidden parts; superbitmap treated as smart) and backdrop layers; rebuilding of the ClipRects on every stack change, uncovered background cleared, DamageList relative to the layer, BeginUpdate/EndUpdate, Move/Size/Upfront/Behind/MoveLayerInFrontOf/DeleteLayer, WhichLayer, SwapBitsRastPortClipRect, locks. (5) **L4** — intuition opens layers.library; a screen carries its LayerInfo and a simple backdrop layer for its bar; OpenWindow creates the window's layer (simple or smart according to the flags, a superbitmap being treated as smart; at the back if BACKDROP); CloseWindow destroys it and redraws; new functions WindowToFront/WindowToBack/MoveWindow/BeginRefresh/EndRefresh; step 7's clearing by segments (`it_clearvis`) disappears. (6) **fix of a latent memory overwrite** (`shell.s`): the BCPL command stub places the base of its frames at (top − 4) − size; the stack the shell allocated was exactly "size" bytes, so the first frame overwrote the last long of the previous memory block. At Workbench boot, it was the "old SP" slot of Execute's stack -> SOFTWARE FAILURE, depending on the ROM layout only (adjacent blocks). The block now has one more long (like runcommand's getvec vector). Boot probes: MATHFFP OK, DISKRES OK, POTGO OK, KBDDEV OK, AUDIO ALLOC OK, AUDIO PLAY OK, SEM OK, SEM WAIT OK, REGIONS OK, LAYERS OK (the last two compared pixel for pixel with a Python model). **Honest scope**: SetFunction remains a stub (SetPatch's fixes are not installed); no SizeWindow; neither ObtainSemaphoreList/Procure/Vacate nor InstallClipRegion.
+- **WORKBENCH STEP 8 (INTERACTION)**: (1) **intuition** — task "intuition input" (pri 20) fed by an event ring filled by `it_event` (called by the pointer handler for each RAWMOUSE; movements are only reported during tracking); click: activation of the window hit (BACKDROP included), system gadgets (close -> CLOSEWINDOW, depth -> WindowToBack/Front, WINDOWDRAG title bar -> moving, size gadget -> resizing), otherwise MOUSEBUTTONS. Moving and resizing under LockLayers with an XOR ghost frame, applied on release. `SizeWindow` (−288: SizeLayer, borders and gadgets redrawn, NEWSIZE, repair) and `WindowLimits` (−318). **Menus** (`src/intuition/menus.s`): SetMenuStrip/ClearMenuStrip/ItemAddress/OnMenu/OffMenu/PrintIText/IntuiTextLength; right button -> menu bar and dropped-down menu in simple layers, highlighting by complement, inactive items ghosted by stripes, MENUPICK (menu/item code, NOSUB) on release, CHECKIT/MENUTOGGLE. (2) **gameport** — right button read on POTINP bit 10 (POTGO $0C00 via potgo.resource), IECODE_RBUTTON. (3) **graphics** — fast path of `BltBitMap` for the simple byte-aligned copy (restoring a window ×6 faster); fix of `lr_fill` (a0 overwritten by lr_damage -> infinite loop when a smart layer grows). (4) **dos** — `Execute` (global 101 and LVO): command passed to C:Run through the resident segment "CLI"; `CreateProc` inherits the global vector and frees its block when the process exits; stack of a process: last long = size, pr_ReturnAddr points to it (contract of the C startup code); `NIL:`; buffered writing (512 bytes per FileHandle, flushed before Read/Seek/Close); BCPL globals 3/4/5 (mult/div/rem). (5) **workbench.task** — up to 6 open drawers (double-click on a drawer, nested), resizable drawer windows, icons drawn as loading proceeds, launching of tools and projects through a WBStartup message (LoadSeg + CreateProc, freeing when the message comes back), Workbench menus (Open, Close), Disk (ghosted), Special (Redraw). Proven under FS-UAE: nested System drawer, double-click on Shell -> interactive AmigaShell (`echo`, `dir`), moving and resizing windows, menus, closing by gadget and by Workbench/Close. **Honest scope**: no icon dragging, nor Info/Rename/Discard/Format; repair after closing in 4 to 6 s; a launched tool takes 30 to 60 s to appear (floppy access); OpenFont/topaz and InitGels are still to be done.
+- **STEP 9 — FONTS AND GELS**: (1) **fonts** (`src/graphics/text.s`) — topaz 8 is a real TextFont: hand-authored glyphs from `font8x8` also emitted in strike format (`topaz8_strike`, modulo 98, default glyph after HiChar) by `tests/mk_font8x8.py`; ROM template copied into RAM at graphics init, linked into `gb_TextFonts` (public offset 140) and set as `gb_DefaultFont` (154), GfxBase raised to 158 bytes. OpenFont (case-insensitive name, closest height, counted accesses), CloseFont, AskFont, AddFont, RemFont, AskSoftStyle/SetSoftStyle (bold and underline), AllocRaster/FreeRaster. Text/TextLength read the RastPort's font (CharLoc/CharSpace/CharKern, rp_TxSpacing, glyphs up to 32 pixels); fast path kept for aligned 8-pixel glyphs in JAM2. (2) **GELs** (`src/graphics/gels.s`) — list sorted by (Y, X) between two sentinels, Bobs drawn by rows of pixels (`gfx_putrow` from draw.s, through the layers) with background saved/restored, OVERLAY mask, PlanePick/PlaneOnOff; InitMasks, DoCollision (borders then pairs by CollMask, routines called with the C convention), animation (AddAnimOb, Animate with sequence change, Get/FreeGBuffers, InitGMasks). Boot probes FONTS OK and GELS OK. **Honest scope**: hardware VSprites not displayed; Before/After order, double buffering and italics not handled; Bob rendering per pixel (correct, not fast). Measurement (VBL_COUNT, production ROM): closing a drawer window costs ~1.4 s in DeleteLayer (phase A: copying back all the saves of the smart layers) and ~0.2 s in the intuition repair.
+- **SETPATCH 1.38 / SYSINFO 4.4 — COMPLETE V34 EXEC**: (1) **34 missing exec LVOs** (`src/exec/execmisc.s`, AutoDocs):
+  SetFunction (real: JMP rewritten, LIBF_CHANGED, sum recomputed), SumLibrary, Cause + software interrupt
+  queue (`EXEC_SOFTLIST`, level 1 SOFTINT server, masking by INTENA and not Disable since callable from an
+  interrupt), Alert (serial message "Software Failure / Recoverable Alert", stop if dead-end), SetSR,
   SuperState/UserState, GetCC, RemIntServer, AllocEntry/FreeEntry, SetExcept, AllocTrap/FreeTrap, RemResource,
-  RawIOInit/RawMayGetChar/RawPutChar, Obtain/ReleaseSemaphoreList ; `src/exec/memory.s` refondu : AllocMem/FreeMem
-  reposent sur **Allocate/Deallocate** (par MemHeader), plus **AllocAbs** et **AddMemList**. Restent `_unimpl` : les
-  privées (ExitIntr..Exception), Debug, Procure/Vacate, SumKickData. (2) **Vecteur Alert relayé en RAM**
-  (`EXEC_ALERTSTUB` $766) : SetPatch ne remplace Alert que si l'ancien vecteur est en ROM, et son remplacement saute
-  dans le code de la ROM 1.3 ; hors ROM, il annule lui-même son correctif. (3) **DeleteLayer en trois étapes**
-  (`ly_dl_lock`/`ly_dl_remove`/`ly_dl_unlock`, arguments sur la pile) derrière un mot d'entrée + branchement : le
-  DeleteLayer de SetPatch retrouve ces trois routines (forme vérifiée sur le binaire). (4) **Shell** : au retour d'une
-  commande, seule la seglist encore dans `cli_Module` est déchargée (SetPatch le met à 0 pour rester résident ; le
-  décharger laissait ses remplacements pointer dans de la mémoire réutilisée → plantages simultanés de toutes les
-  tâches) ; redirection `> nom` avec espace acceptée. (5) **GfxBase à la disposition publique V34** (LOFlist +50,
-  Modes +158 mis à jour par LoadView, VBlank, system_bplcon0, DisplayFlags = PAL +206, dimensions normales,
-  MicrosPerLine) ; champs privés (sprites) déplacés après la partie publique (ils occupaient copinit/cia/blitter/
-  LOFlist). (6) **TOD des CIA démarrés** dans `cia_init` (CRB ALARM = 0, TODHI, TODMID, TODLO en dernier, par MOVE :
-  CLR lirait TODHI et figerait la lecture) — SysInfo attend sous Forbid que le TOD de la CIA-A avance de 60.
-  (7) **FileSysStartupMsg de DF0** (`boot.s`, `FSSM_*` de `dospkt.i`) : dn_Startup = BPTR d'un FSSM (unité 0,
-  fssm_Device = BSTR « trackdisk.device » + NUL, fssm_Environ = DosEnvec DD de 13 longs en ROM, flags 0), comme la
-  V34 (`handlers-v34.md`). Il valait 0 : SysInfo lisait le nom du device via un FSSM en $0 et sa copie de chaîne sans
-  borne balayait toute la mémoire (registres custom compris → écran gris, octets $FC/« f » sur la série). Diagnostic
-  par point d'arrêt d'écriture sur SERDAT dans le débogueur console de FS-UAE (`console_debugger`, F12+D injecté).
-  **Résultat** : SysInfo 4.4 affiche toute sa page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
+  RawIOInit/RawMayGetChar/RawPutChar, Obtain/ReleaseSemaphoreList; `src/exec/memory.s` reworked: AllocMem/FreeMem
+  rest on **Allocate/Deallocate** (per MemHeader), plus **AllocAbs** and **AddMemList**. Still `_unimpl`: the
+  private ones (ExitIntr..Exception), Debug, Procure/Vacate, SumKickData. (2) **Alert vector relayed in RAM**
+  (`EXEC_ALERTSTUB` $766): SetPatch only replaces Alert if the old vector is in ROM, and its replacement jumps
+  into the 1.3 ROM's code; outside the ROM, it cancels its own fix. (3) **DeleteLayer in three steps**
+  (`ly_dl_lock`/`ly_dl_remove`/`ly_dl_unlock`, arguments on the stack) behind an entry word + branch: SetPatch's
+  DeleteLayer finds these three routines (shape checked on the binary). (4) **Shell**: on return from a
+  command, only the seglist still in `cli_Module` is unloaded (SetPatch sets it to 0 to stay resident; unloading
+  it left its replacements pointing into reused memory → simultaneous crashes of all the
+  tasks); redirection `> nom` with a space accepted. (5) **GfxBase with the public V34 layout** (LOFlist +50,
+  Modes +158 updated by LoadView, VBlank, system_bplcon0, DisplayFlags = PAL +206, normal dimensions,
+  MicrosPerLine); private fields (sprites) moved after the public part (they occupied copinit/cia/blitter/
+  LOFlist). (6) **CIA TODs started** in `cia_init` (CRB ALARM = 0, TODHI, TODMID, TODLO last, by MOVE:
+  CLR would read TODHI and freeze the reading) — SysInfo waits under Forbid for the CIA-A TOD to advance by 60.
+  (7) **DF0 FileSysStartupMsg** (`boot.s`, `FSSM_*` from `dospkt.i`): dn_Startup = BPTR of an FSSM (unit 0,
+  fssm_Device = BSTR "trackdisk.device" + NUL, fssm_Environ = DD DosEnvec of 13 longs in ROM, flags 0), like
+  V34 (`handlers-v34.md`). It was 0: SysInfo read the device name through an FSSM at $0 and its unbounded string copy
+  swept the whole memory (custom registers included → grey screen, $FC/"f" bytes on serial). Diagnosed
+  with a write breakpoint on SERDAT in FS-UAE's console debugger (`console_debugger`, F12+D injected).
+  **Result**: SysInfo 4.4 displays its whole page (CLOCK FOUND, STD AGNUS 512K, PAL, STD DENISE, 15.72 kHz,
   EClock 709379, 50/50 Hz).
-- **ÉTAPE 10 — GADGETS TEXTE ET RENAME** : (1) **STRGADGET** (gadgets.s, structures publiques StringInfo) : un clic
-  dans le gadget ou `ActivateGadget` (LVO -462) en fait le gadget texte actif (IB_STRGAD/IB_STRWIN, curseur placé sous
-  le clic, texte copié dans le tampon d'annulation, GADGETDOWN si GADGIMMEDIATE). Le **clavier** lui est routé par le
-  handler de pointeur (input.device, pri 50, avant la console) : tant qu'un gadget texte est actif, chaque RAWKEY est
-  neutralisée (IECLASS_NULL, la console ne la reçoit pas) et la touche enfoncée part dans l'anneau de la tâche
-  d'entrée d'intuition (code IT_KEYCODE + keycode, qualificatif), qui l'applique (`str_key`) : insertion (kbd_cook),
-  Backspace, Del, flèches (Shift : début / fin), Amiga droite + X (effacer) / + Q (annuler), Return / Enter
-  (LONGINT converti dans si_LongInt, GADGETUP si RELVERIFY). Un clic hors du gadget le désactive sans message ;
-  fermeture de la fenêtre / RemoveGadget l'oublient. Rendu : texte visible depuis si_DispPos (qui suit le curseur),
-  curseur en COMPLEMENT. Portée : alignement à gauche seulement (STRINGCENTER/RIGHT ignorés), pas d'ALTKEYMAP.
-  (2) **Workbench Rename** (workbench.s, `wb_rename`) : fenêtre « Rename » avec un gadget texte prérempli et activé ;
-  Return renomme l'objet puis son « .info » et relit le tiroir, la case de fermeture annule. Prouvé sous FS-UAE
-  (ROM prod, disque WB) : tiroir Empty renommé « Vide », vérifié par xdftool (Vide + Vide.info).
-  (3) **Démarrage d'un handler sérialisé** (dos_lib.s, sémaphore DOS_HSEM en RAM basse $76C) : le handler ne pose
-  dn_Task qu'à la réception de son paquet de démarrage (spec §13.3) et le chargement de son segment est long ; deux
-  process ouvrant le même device sans tâche (« run copy x to pipe:a » puis « type pipe:a ») lançaient chacun une
-  instance de L:Pipe-Handler — l'écrivain et le lecteur ne se voyaient pas, `type` attendait pour toujours. Le
-  chemin dn_Task = 0 de la résolution prend le sémaphore et relit dn_Task avant de démarrer. Course révélée par un
-  simple décalage du timing de boot (RT_ENDSKIP de workbench.task déplacé : le scan des ROMTags saute 416 octets
-  de moins) ; diagnostic par parcours des listes d'exec au débogueur FS-UAE (4 process PIPE -> 1 après correctif).
-  Limite : un handler qui, pendant son propre démarrage, ferait démarrer un AUTRE handler depuis un autre process
-  bloquerait (aucun dans la 1.3 connue).
-  (4) **Requester « Please insert volume »** (dos_lib.s, `dos_volreq`, spec handlers-v34 §4.1) : préfixe inconnu
-  de la DosList, ou volume connu sans tâche (disque absent) -> AutoRequest « Please insert volume / <nom> / in any
-  drive », Retry / Cancel (DISKINSERTED vaut Retry) ; Retry relance la résolution, Cancel rend 218. Aucun
-  requester pour une simple tâche, si pr_WindowPtr = -1, ou pour « NIL: ». Comparé à la vraie KS 1.3 (sonde boîte
-  noire, `type foo:x` puis clic Cancel) : même texte, mêmes boutons, même suite (« Can't open foo:x », « type failed
-  returncode 20 »). Écarts : position de la fenêtre ; pas de FLUSH préalable au file-handler (rien en attente chez
-  nous).
-  (5) **Redirections seulement avant les arguments** (shell.s, `sh_build_args`, spec §4.2) : après le premier
-  argument (ou guillemet), « > » et « < » sont des caractères ordinaires. Comparé à la vraie 1.3 : `echo "A" >ram:x`
-  -> « Invalid argument to ECHO » des deux côtés. Pas de « >> » en 1.3 (`>>x` = « > » vers un nom commençant par
-  « > »).
-  (6) **Textes d'erreur par C:FAULT** (bcpl.s, `rt_fault`, spec docs/analysis/fault-v34.md) : la globale 104
-  `fault(code)` charge C:FAULT sans requester (pr_WindowPtr = -1 le temps du chargement), pose pr_Result2 = code
-  APRÈS le chargement (C:Fault y lit le code et n'écrit alors que le texte), le lance par runcommand (400 longs, sans
-  arguments, sorties de l'appelant) puis le décharge ; repli « Error code <n> » si introuvable. Le shell s'en sert
-  aussi pour « Unable to load X: ». Comparé à la vraie 1.3 : `copy zzz to ram:` -> « Can't open zzz for input -
-  object not found » des deux côtés ; disque sans C:Fault -> « Error code 121 ».
-  (7) **Heure système au montage** (handler.s, `hnd_bootclock`, spec boot-clock-v34) : au premier packet du
-  file-handler DF0:, l'heure prend la plus récente des dates du bloc racine (répertoire racine et disque) si elle
-  est encore au premier jour et antérieure ; jamais reculée. Comparé à la vraie 1.3 : `date` au boot affiche la date
-  de dernière modification du disque des deux côtés (« <unset> » avant). Refait à chaque montage depuis le
-  changement de disquette (ci-dessous).
-  (7b) **Changement de disquette** (spec `docs/analysis/disk-change-v34.md`, 2026-10-27) : le handler DF0: se réveille
-  par packet ou par un tic timer d'1 s (UNIT_VBLANK) et interroge trackdisk (TD_CHANGESTATE, TD_CHANGENUM ; trackdisk
-  donne un pas de sonde moteur arrêté quand /CHNG est bas). Éjection : volume détaché (nœud retiré de la DosList s'il
-  n'a ni lock ni fichier ouvert — compte d'usage dans dol_unused, +$24 —, sinon dl_Task := 0), IECLASS_DISKREMOVED.
-  Insertion : bloc 0 (« DOS\0 », sinon le type tel quel / « BAD\0 »), bloc racine contrôlé (« NDOS » sinon), nœud de
-  même nom et même date de création réactivé ou créé en tête de liste (DL_VOLUME), bitmap oubliée, heure réglée,
-  IECLASS_DISKINSERTED (aussi pour un disque non DOS). Un lock ou un fichier d'un autre volume est refusé (218), la
-  racine sans disque aussi (226 / 225). ACTION_INHIBIT détache sans événement et remonte à sa levée. Contexte du
-  handler en RAM basse (HND_CTX, $7C0) ; le nœud volume n'est plus créé par dos au boot. intuition diffuse
-  DISKINSERTED / DISKREMOVED à toutes les fenêtres qui les demandent (it_diskbc). Workbench : une icône par volume
-  monté (table WBS_VOLS, 8 au plus), « <volume>:Disk.info » sinon icône par défaut dessinée à la main, placement en
-  colonnes de 96 px depuis la droite ; relevé au démarrage, au tic de 5 s et sur ces IDCMP ; RAM DISK y apparaît.
-  Requester « Please replace volume / <nom> / in any drive » (2026-10-27, spec §2.4) : le handler retient en
-  HND_REFVOL ($7C4) le volume d'un lock ou d'un fichier refusé (218) ; `dos_pktretry` (dos_lib.s), appelé par les
-  deux chemins d'envoi de packets (`dos_sendpkt` et `sendpkt` du runtime BCPL), affiche le requester système (Retry /
-  Cancel, fenêtre pr_WindowPtr, rien si -1 ou pour une simple tâche) si ce volume est toujours absent ; Retry ou
-  DISKINSERTED (le handler continue son tic pendant que l'appelant attend) renvoient le packet, Cancel rend 0 / 218.
-  Prouvé sous FS-UAE (sonde dskchg LA, V11) : éjection -> requester ; réinsertion -> fermé seul, Examine = -1,
-  IoErr 0, Lock("Workbench1.3:c") et Lock("DF0:") aboutissent ; Cancel -> Examine = 0, IoErr 218.
-  Écarts connus : pas d'icône « DF0:NDOS », un volume dont la fenêtre est ouverte perd quand même son icône à
-  l'éjection s'il n'a pas de lock ; un Lock par le nom d'un volume connu mais absent donne « Please insert volume »
-  (partage insert/replace non tranché par la spec).
-  (7g) **Remplissages de polygones et d'ellipses, Flood, chat de la touche Amiga** (2026-10-28 ; spec
+- **STEP 10 — TEXT GADGETS AND RENAME**: (1) **STRGADGET** (gadgets.s, public StringInfo structures): a click
+  in the gadget or `ActivateGadget` (LVO -462) makes it the active text gadget (IB_STRGAD/IB_STRWIN, cursor placed under
+  the click, text copied into the undo buffer, GADGETDOWN if GADGIMMEDIATE). The **keyboard** is routed to it by the
+  pointer handler (input.device, pri 50, before the console): as long as a text gadget is active, each RAWKEY is
+  neutralised (IECLASS_NULL, the console does not receive it) and the pressed key goes into the ring of intuition's input
+  task (code IT_KEYCODE + keycode, qualifier), which applies it (`str_key`): insertion (kbd_cook),
+  Backspace, Del, arrows (Shift: start / end), Right Amiga + X (clear) / + Q (undo), Return / Enter
+  (LONGINT converted into si_LongInt, GADGETUP if RELVERIFY). A click outside the gadget deactivates it without a message;
+  closing the window / RemoveGadget forget it. Rendering: text visible from si_DispPos (which follows the cursor),
+  cursor in COMPLEMENT. Scope: left alignment only (STRINGCENTER/RIGHT ignored), no ALTKEYMAP.
+  (2) **Workbench Rename** (workbench.s, `wb_rename`): "Rename" window with a prefilled and activated text gadget;
+  Return renames the object then its ".info" and re-reads the drawer, the close box cancels. Proven under FS-UAE
+  (prod ROM, WB disk): drawer Empty renamed "Vide", checked with xdftool (Vide + Vide.info).
+  (3) **Serialised handler startup** (dos_lib.s, DOS_HSEM semaphore in low RAM $76C): the handler only sets
+  dn_Task on receiving its startup packet (spec §13.3) and loading its segment takes a long time; two
+  processes opening the same device without a task ("run copy x to pipe:a" then "type pipe:a") each launched an
+  instance of L:Pipe-Handler — the writer and the reader did not see each other, `type` waited forever. The
+  dn_Task = 0 path of the resolution takes the semaphore and re-reads dn_Task before starting. Race revealed by a
+  mere shift of the boot timing (RT_ENDSKIP of workbench.task moved: the ROMTag scan skips 416 fewer bytes
+  ); diagnosed by walking the exec lists in the FS-UAE debugger (4 PIPE processes -> 1 after the fix).
+  Limit: a handler that, during its own startup, would start ANOTHER handler from another process
+  would block (none in the known 1.3).
+  (4) **"Please insert volume" requester** (dos_lib.s, `dos_volreq`, spec handlers-v34 §4.1): prefix unknown
+  to the DosList, or known volume without a task (disk absent) -> AutoRequest "Please insert volume / <name> / in any
+  drive", Retry / Cancel (DISKINSERTED counts as Retry); Retry restarts the resolution, Cancel returns 218. No
+  requester for a plain task, if pr_WindowPtr = -1, or for "NIL:". Compared with the real KS 1.3 (black-box
+  probe, `type foo:x` then click on Cancel): same text, same buttons, same sequel ("Can't open foo:x", "type failed
+  returncode 20"). Differences: position of the window; no prior FLUSH to the file-handler (nothing pending on our
+  side).
+  (5) **Redirections only before the arguments** (shell.s, `sh_build_args`, spec §4.2): after the first
+  argument (or quote), ">" and "<" are ordinary characters. Compared with the real 1.3: `echo "A" >ram:x`
+  -> "Invalid argument to ECHO" on both sides. No ">>" in 1.3 (`>>x` = ">" to a name starting with
+  ">").
+  (6) **Error texts through C:FAULT** (bcpl.s, `rt_fault`, spec docs/analysis/fault-v34.md): global 104
+  `fault(code)` loads C:FAULT without a requester (pr_WindowPtr = -1 while loading), sets pr_Result2 = code
+  AFTER loading (C:Fault reads the code there and then only writes the text), launches it through runcommand (400 longs, without
+  arguments, the caller's outputs) then unloads it; fallback "Error code <n>" if not found. The shell also uses it
+  for "Unable to load X:". Compared with the real 1.3: `copy zzz to ram:` -> "Can't open zzz for input -
+  object not found" on both sides; disk without C:Fault -> "Error code 121".
+  (7) **System time at mount** (handler.s, `hnd_bootclock`, spec boot-clock-v34): at the first packet of the
+  DF0: file-handler, the time takes the most recent of the root block's dates (root directory and disk) if it
+  is still on the first day and earlier; never moved back. Compared with the real 1.3: `date` at boot displays the date
+  of last modification of the disk on both sides ("<unset>" before). Redone at every mount since the
+  disk change (below).
+  (7b) **Disk change** (spec `docs/analysis/disk-change-v34.md`, 2026-10-27): the DF0: handler wakes up
+  on a packet or on a 1 s timer tick (UNIT_VBLANK) and queries trackdisk (TD_CHANGESTATE, TD_CHANGENUM; trackdisk
+  gives a probe step with the motor stopped when /CHNG is low). Ejection: volume detached (node removed from the DosList if it
+  has neither a lock nor an open file — usage count in dol_unused, +$24 —, otherwise dl_Task := 0), IECLASS_DISKREMOVED.
+  Insertion: block 0 ("DOS\0", otherwise the type as is / "BAD\0"), root block checked ("NDOS" otherwise), node with the
+  same name and same creation date reactivated or created at the head of the list (DL_VOLUME), bitmap forgotten, time set,
+  IECLASS_DISKINSERTED (also for a non-DOS disk). A lock or a file of another volume is refused (218), the
+  root without a disk too (226 / 225). ACTION_INHIBIT detaches without an event and remounts when lifted. Context of the
+  handler in low RAM (HND_CTX, $7C0); the volume node is no longer created by dos at boot. intuition broadcasts
+  DISKINSERTED / DISKREMOVED to all windows that request them (it_diskbc). Workbench: one icon per mounted
+  volume (table WBS_VOLS, 8 at most), "<volume>:Disk.info" otherwise a default icon drawn by hand, placement in
+  96 px columns from the right; surveyed at startup, at the 5 s tick and on these IDCMPs; RAM DISK appears there.
+  Requester "Please replace volume / <name> / in any drive" (2026-10-27, spec §2.4): the handler keeps in
+  HND_REFVOL ($7C4) the volume of a refused lock or file (218); `dos_pktretry` (dos_lib.s), called by the
+  two packet-sending paths (`dos_sendpkt` and the BCPL runtime's `sendpkt`), displays the system requester (Retry /
+  Cancel, window pr_WindowPtr, nothing if -1 or for a plain task) if this volume is still absent; Retry or
+  DISKINSERTED (the handler keeps ticking while the caller waits) resend the packet, Cancel returns 0 / 218.
+  Proven under FS-UAE (dskchg LA probe, V11): ejection -> requester; reinsertion -> closed by itself, Examine = -1,
+  IoErr 0, Lock("Workbench1.3:c") and Lock("DF0:") succeed; Cancel -> Examine = 0, IoErr 218.
+  Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
+  ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
+  (insert/replace split not settled by the spec).
+  (7g) **Polygon and ellipse fills, Flood, Amiga-key cat** (2026-10-28; spec
   `docs/analysis/graphics-area-v34.md`).
-  - graphics (`src/graphics/area.s`) : InitArea (−282), InitTmpRas (−468), AreaMove/AreaDraw/AreaEnd (−252..−264),
-    AreaEllipse (−186), DrawEllipse (−180), Flood (−330). Les sommets sont enregistrés comme dans la 1.3 :
-    - drapeaux $00 move, $02/$03 tracé, | $04 contour, $83 puis $02 ellipse ;
-    - −1 quand la table est pleine ;
-    - fermeture par AreaDraw via son LVO, AreaMove isolé remplacé.
-    AreaEnd construit un masque d'un plan au processeur, en trois passes :
-    - points de croisement en XOR (lignes [haut, bas[ de chaque arête non horizontale, bornes de ligne des ellipses) ;
-    - remplissage de chaque ligne ;
-    - arêtes complètes tracées par le Bresenham unifié de Draw, dans le sens de l'arête (pixels du pentagramme
-      identiques à la 1.3). Elles sont effacées si DrawMode = JAM1 et AreaPtSz = 2, comme la 1.3.
-    Rendu ensuite ligne par ligne par RectFill, puis contour Draw/Move en AOlPen si AREAOUTLINE. DrawEllipse :
-    algorithme de Kennedy en deux ensembles, points posés par le LVO WritePixel. Flood : remplissage 4-connexe par
-    lignes (ReadPixel), frontière AOlPen (mode 0) ou couleur de départ (mode 1). Écarts gardés :
-    - la table n'est pas translatée et on ne lit pas d'entrée au-delà de Count (pas de point parasite, T27) ;
-    - sans TmpRas (ou TmpRas trop petite), AreaEnd alloue son masque au lieu d'écrire en mémoire basse ;
-    - Flood n'alloue pas TmpRas.Size octets de chip : il réussit là où la 1.3 rend 0 (T32).
-  - RectFill : contour AREAOUTLINE (intérieur réduit d'un pixel en COMPLEMENT, Move/Draw en AOlPen et JAM1, cp en
-    (xmin, ymin)) ; motif multicolore (AreaPtSz négatif, 2^n mots par plan).
-  - Sonde `tests/garea_probe.sh` sur notre ROM : 34 tests ; T1–T6, T8–T10, T13–T16, T18–T26, T29–T31 et T33
-    identiques aux vecteurs de la spec, T27/T32 = écarts ci-dessus.
-  - intuition (`menus.s`) : un élément COMMSEQ affiche sa lettre à droite, précédée du symbole de la touche Amiga. Ce
-    symbole est un petit chat (23 × 8 en hires, 14 × 8 en lowres, dessiné pour KickSlopStart). Les raccourcis clavier
-    Amiga-droite sont traités (point suivant). Sonde visuelle `tests/menucat.s`.
-  - intuition, raccourcis Amiga-droite (spec intuition-input-menus-v34 §3.11, 2026-10-28) :
-    - **handler** (`it_keyin` puis `mn_keyshort`) : la touche enfoncée avec RCOMMAND est convertie par la keymap
-      (`kbd_cook`). Il faut une fenêtre active avec une barre, sans requester, sans menu ouvert et sans RMBTRAP.
-      La recherche se fait dans l'ordre menus, éléments, sous-éléments ; elle compare `Command & $5F` (COMMSEQ n'est
-      pas testé) et un élément à sous-éléments ne compare que ceux-ci. Trouvé : l'événement est avalé (IECLASS_NULL,
-      le relâchement passe normalement) et l'anneau reçoit IT_MENUKEYCODE (x = code, y = qualificatif).
-    - **tâche d'entrée** (`mn_keypick`) : si menu, élément et sous-élément sont actifs, `mn_select` (CHECKIT, comme
-      à la souris) puis MENUPICK avec le code ; sinon MENUPICK MENUNULL. Le qualificatif de la touche va dans
+  - graphics (`src/graphics/area.s`): InitArea (−282), InitTmpRas (−468), AreaMove/AreaDraw/AreaEnd (−252..−264),
+    AreaEllipse (−186), DrawEllipse (−180), Flood (−330). The vertices are recorded as in 1.3:
+    - flags $00 move, $02/$03 draw, | $04 outline, $83 then $02 ellipse;
+    - −1 when the table is full;
+    - closing by AreaDraw through its LVO, isolated AreaMove replaced.
+    AreaEnd builds a one-plane mask with the processor, in three passes:
+    - crossing points in XOR (lines [top, bottom[ of each non-horizontal edge, line bounds of the ellipses);
+    - filling of each line;
+    - complete edges drawn by Draw's unified Bresenham, in the direction of the edge (pentagram pixels
+      identical to 1.3). They are erased if DrawMode = JAM1 and AreaPtSz = 2, like 1.3.
+    Then rendered line by line by RectFill, then Draw/Move outline in AOlPen if AREAOUTLINE. DrawEllipse:
+    Kennedy's algorithm in two sets, points set through the WritePixel LVO. Flood: 4-connected fill by
+    lines (ReadPixel), boundary AOlPen (mode 0) or starting colour (mode 1). Differences kept:
+    - the table is not translated and no entry beyond Count is read (no stray point, T27);
+    - without TmpRas (or with too small a TmpRas), AreaEnd allocates its mask instead of writing into low memory;
+    - Flood does not allocate TmpRas.Size bytes of chip: it succeeds where 1.3 returns 0 (T32).
+  - RectFill: AREAOUTLINE outline (interior shrunk by one pixel in COMPLEMENT, Move/Draw in AOlPen and JAM1, cp in
+    (xmin, ymin)); multicolour pattern (negative AreaPtSz, 2^n words per plane).
+  - Probe `tests/garea_probe.sh` on our ROM: 34 tests; T1–T6, T8–T10, T13–T16, T18–T26, T29–T31 and T33
+    identical to the spec's vectors, T27/T32 = differences above.
+  - intuition (`menus.s`): a COMMSEQ item displays its letter on the right, preceded by the Amiga key symbol. This
+    symbol is a small cat (23 × 8 in hires, 14 × 8 in lowres, drawn for KickSlopStart). Right-Amiga keyboard
+    shortcuts are handled (next point). Visual probe `tests/menucat.s`.
+  - intuition, Right-Amiga shortcuts (spec intuition-input-menus-v34 §3.11, 2026-10-28):
+    - **handler** (`it_keyin` then `mn_keyshort`): the key pressed with RCOMMAND is converted by the keymap
+      (`kbd_cook`). An active window with a bar is required, without a requester, without an open menu and without RMBTRAP.
+      The search goes in the order menus, items, sub-items; it compares `Command & $5F` (COMMSEQ is not
+      tested) and an item with sub-items only compares those. Found: the event is swallowed (IECLASS_NULL,
+      the release goes through normally) and the ring receives IT_MENUKEYCODE (x = code, y = qualifier).
+    - **input task** (`mn_keypick`): if menu, item and sub-item are enabled, `mn_select` (CHECKIT, as
+      with the mouse) then MENUPICK with the code; otherwise MENUPICK MENUNULL. The key's qualifier goes into
       im_Qualifier.
-    - Pas de MENUVERIFY (absent aussi du chemin souris).
-    - Sonde `tests/menucat.s` et commande `keyraw` de `tests/dskchg_run.sh` (Super_R = Amiga droite) : O → $F800,
-      S → $F820, élément inactif → MENUNULL, Q seul → rien ; choix à la souris inchangé ($F800).
-  - intuition, coches des menus (§3.5) : OpenWindow pose `Window->CheckMark` (+$64) = NewWindow.CheckMark, sinon notre
-    coche interne (hires 15 × 8 ou lores 9 × 8 selon l'écran, LeftEdge 2, format du chat) : une empreinte de patte de
-    chat. Le premier dessin (un trait de coche) ressemblait trop à l'image de la 1.3, que la spec montre : remplacé
-    après l'audit du 2026-10-29 (docs/audit/specs-review.md).
-    Un élément CHECKIT et CHECKED la reçoit en (x de l'élément, y de l'élément + TopEdge de son ItemFill). Le
-    basculement reste fait à la fermeture (souris) ou au raccourci : pas de redessin dans une boîte ouverte. Sonde
-    `tests/menucat.s`, menu « Option » : « Coche » cochée au départ, « Bascule » cochée puis décochée par Amiga-droite+B.
-  - intuition, sous-menus (§3.5, §3.7) : pointeur sur un élément qui a des sous-éléments → boîte de sous-éléments
-    (couche simple au-dessus ; la boîte d'éléments est désormais une couche SMART, restaurée telle quelle quand la boîte
-    de sous-éléments se ferme). Étendue des sous-éléments (relative à l'élément) élargie de la marge, bornée pour
-    toucher l'élément, posée sur lui puis ramenée dans l'écran. Suivi : un sous-élément touché passe en surbrillance et
-    rallume son élément parent ; hors sous-éléments la boîte reste ; un autre élément ou un titre la retire. Dessin des
-    éléments factorisé (`mn_drawitems`, origine IB_DOX/IB_DOY, grisé de toute la boîte si le menu ou l'élément parent
-    est inactif). MENUPICK = sous-élément << 11 | élément << 5 | menu ; élément à sous-éléments sans sous-élément choisi
-    → MENUNULL. Sonde `tests/menucat.s`, « Export » : Texte → $0080 (souris et Amiga-droite+T), Image → $0880, retour sur
-    « Quitter » : boîte retirée, boîte d'éléments intacte.
-  (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
-  - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
-    l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),
-    ClipBlit (−552 : découpage par les ClipRects de la couche source, morceau caché sans sauvegarde = destination
-    intacte, puis découpage destination par BltBitMapRastPort ; écarts : ni SuperBitMap source ni réordonnancement des
-    ClipRects pour une copie qui se recouvre), BltBitMapRastPort et ClipBlit rendent 1, BltBitMap ne traite que les plans
-    communs aux deux BitMaps, QBlit/QBSBlit (−276/−294 : appel immédiat dans le contexte de l'appelant, A0 = $DFF000,
-    A1 = nœud, rappel tant que Z = 0, cleanup si CLEANUP ; écart : un blit en cours est attendu au lieu d'être relayé
-    par l'interruption BLIT). Sonde tests/gblit_probe.sh : T1, T2, T8, T10, T11 identiques à la vraie ROM ; écarts
-    gardés : T3/T4 (largeur ou hauteur nulle : la 1.3 écrit 1024 lignes / 64 mots), T6 (la 1.3 tronque un BltClear à
-    1024 lignes), T7 (BltTemplate sans couche : nous gardons xSrc, cf. fastfonts-ff), T9 (BlitLock non tenu).
-  - intuition DisplayAlert (−90, src/intuition/alert.s) : raster 640 × hauteur, 1 plan, fond $111, texte et cadre
-    $F20, cadre 6 px / 3 lignes clignotant (COMPLEMENT, 46 trames comptées au faisceau, donc interruptions coupées
-    possibles), blocs « x, y, texte, suite » lus octet par octet, boutons par CIA-A PRA bit 6 / POTGOR bit 10 (gauche
-    1, droit 0, gauche prioritaire, pas d'expiration), DMA sprite coupé pendant l'attente ; raster impossible :
-    0, ou exec Alert pour une alerte sans issue. Écart : liste copper propre (gb_LOFlist et COP2LC détournés) au lieu
-    d'une ViewPort sous laquelle les écrans glissent : le reste de l'affichage est au fond pendant l'alerte, et l'écran
-    revient ensuite même après une alerte sans issue.
-  - exec Alert : récupérable (et numéro d'exception à mot haut nul) -> LastAlert, Guru « Recoverable Alert. » /
-    « Not enough memory. » / « Software Failure. » + « Press left mouse button to continue. » + « Guru Meditation
-    #XXXXXXXX.YYYYYYYY » (DisplayAlert(0, texte, 40)), d0 = bouton ; sans issue -> 'HELP' en $0, numéro en $100,
-    second nombre (long pointé par A5, s'il est en chip) en $104, six clignotements de la LED, RESET + saut au mot 2
-    de la ROM (même long) ; alert_boothook (rôle d'alert.hook) affiche ce Guru au boot suivant, avant le strap.
-  - Exception d'une tâche (exc_default) : Guru « Software Failure. » #<vecteur>.<tâche> ; gauche = redémarrage comme
-    la 1.3, droit = tâche suspendue (pas de ROM-Wack) ; exception en superviseur : alerte sans issue (avant : arrêt
-    silencieux). Prouvé par tests/alert_probe.sh (modes 0 et 2) sur notre ROM, par une capture du Guru au boot
-    suivant (« Software Failure. … Guru Meditation #80000000.00000000 », cadre clignotant) et par un bootblock à
-    instruction illégale (Guru #00000004.<tâche>). DisplayAlert passe par COP1LC (au boot, aucune vue n'enchaîne
-    encore sur COP2LC) et rend ensuite l'enchaînement de la vue chargée, ou les bits DMA d'avant.
-  (7e) **Écriture disquette au format de la vraie 1.3, table graphics complète** (2026-10-27, avant un essai sur A500
-  réel ; spec `docs/analysis/trackdisk-write-v34.md`). Piste écrite : garde de 1 660 octets, 11 secteurs, mot de queue
-  `$AAA8` = 6 815 mots (~218 ms, dépasse un tour : aucun reste de l'ancienne piste même sur un lecteur lent ; avant :
-  garde de 700 octets, 6 334 mots, fragile au-delà de ~1,5 % de lenteur). Précompensation 140 ns à partir de la piste
-  81 (TD_PCTRACK). TD_FORMAT ne touche plus io_Actual. Sonde `tests/tdwrite_run.sh` sur notre ROM : mêmes DSKLEN
-  ($DA9F) et ADKCON ($1100 / $3100) que la vraie ROM, étapes A-N identiques sauf H (la 1.3 écrit un secteur pour
-  CMD_WRITE de longueur 0) et O (sa TD_PROTSTATUS éteint toujours le moteur), écarts gardés. graphics : la table
-  s'arrêtait à −636 (106 vecteurs) : un appel à −642..−654 sautait hors de la table ; elle a les 109 vecteurs V34,
-  SetRGB4CM (−630) et AttemptLockLayerRom (−654, AttemptSemaphore du verrou de la couche) ; BltMaskBitMapRastPort
-  (−636) reste à faire (spec graphics-blitter-v34).
-  (7d) **trackdisk : pistes longues et pistes incomplètes** (2026-10-27, signalé sur l'émulateur ESP32
-  amiga500-esp32 : « Unable to load …: Error code 121 » sur WB 1.2, SysInfo, Caesar). Sa piste fait 6 399 mots
-  (gap de 830 octets) : notre décodeur arrêtait sa recherche 1 200 octets avant la fin du tampon brut, et le dernier
-  secteur d'une lecture commencée avant le gap était ignoré ; `td_fill` rendait alors une piste « partielle » que la
-  lecture copiait quand même, secteur manquant compris (contenu périmé du tampon -> hunks invalides, 121). Désormais :
-  un en-tête est accepté tant que en-tête + données (TD_SECBODY, 1 080 o) tiennent dans le tampon ; le décodeur rend
-  le masque des secteurs DISTINCTS (a0) ; `td_fill` relit une piste incomplète jusqu'à TD_FILLTRIES (4) fois en
-  cumulant les secteurs bons (une lecture de la mauvaise piste annule le cumul) ; une lecture n'est servie que si
-  chacun des secteurs demandés est bon, sinon TDERR_NotSpec. Test `tests/td_decode_test.py` (unicorn, 68000) : le
-  vrai code de la ROM sur des pistes synthétiques (gaps 532/700/830, pistes 0/41/159, début à chacun des 11
-  secteurs) : 99/99 ; l'ancien décodeur échouait dans 30 cas sur 33 avec le gap de 830.
-  (7c) **OctaMED Professional v4** (spec `docs/analysis/octamed-v34.md`, 2026-10-27) : un écran CUSTOMSCREEN 640 x 256
-  x 3 et une fenêtre BACKDROP|BORDERLESS|RMBTRAP ; les boutons sont des zones testées sur MOUSEBUTTONS. Corrections :
-  - **auto-tests de boot qui rendent ce qu'ils prennent** : M7B remet le latch du timer A de la CIA-A à $FFFF (valeur
-    de mise sous tension) après son one-shot de 255 ticks. OctaMED démarre ce timer sans le recharger : à $00FF il
-    tournait à ~2,8 kHz, la machine saturait et l'éditeur ne se dessinait jamais. M7B retire aussi son serveur PORTS
-    de test, M5B son vecteur factice (CIA-B bit 1, désactivé).
-  - **gadgets proportionnels** : `prop_render` et `prop_update` passent par `prop_keep`, qui rend FgPen, BgPen et
-    DrawMode du RastPort du gadget, souvent celui de la fenêtre. OctaMED redessine sa liste de fichiers après
-    RefreshGList de son ascenseur sans reposer ses stylos : elle sortait au stylo du fond, donc invisible.
-  - **graphics** : SetRGB4 patche la liste copper maîtresse pour toute ViewPort de la vue (fragment de
-    GFX_FRAG_SIZE par ViewPort) ; WaitTOF (−270), BltClear (−300), PolyDraw (−336), VBeamPos (−384, VPOSR/VHPOSR),
+    - No MENUVERIFY (absent from the mouse path too).
+    - Probe `tests/menucat.s` and the `keyraw` command of `tests/dskchg_run.sh` (Super_R = Right Amiga): O → $F800,
+      S → $F820, disabled item → MENUNULL, Q alone → nothing; mouse choice unchanged ($F800).
+  - intuition, menu checkmarks (§3.5): OpenWindow sets `Window->CheckMark` (+$64) = NewWindow.CheckMark, otherwise our
+    internal checkmark (hires 15 × 8 or lores 9 × 8 depending on the screen, LeftEdge 2, cat format): a cat paw
+    print. The first drawing (a tick stroke) looked too much like the 1.3 image, which the spec shows: replaced
+    after the audit of 2026-10-29 (docs/audit/specs-review.md).
+    A CHECKIT and CHECKED item receives it at (x of the item, y of the item + TopEdge of its ItemFill). The
+    toggling is still done on closing (mouse) or on the shortcut: no redrawing in an open box. Probe
+    `tests/menucat.s`, menu "Option": "Coche" checked at the start, "Bascule" checked then unchecked by Right-Amiga+B.
+  - intuition, submenus (§3.5, §3.7): pointer on an item that has sub-items → sub-item box
+    (simple layer on top; the item box is now a SMART layer, restored as is when the sub-item box
+    closes). Extent of the sub-items (relative to the item) widened by the margin, bounded so as to
+    touch the item, placed on it then brought back into the screen. Tracking: a touched sub-item is highlighted and
+    re-highlights its parent item; outside the sub-items the box stays; another item or a title removes it. Item drawing
+    factored out (`mn_drawitems`, origin IB_DOX/IB_DOY, whole box ghosted if the menu or the parent item
+    is disabled). MENUPICK = sub-item << 11 | item << 5 | menu; item with sub-items without a chosen sub-item
+    → MENUNULL. Probe `tests/menucat.s`, "Export": Texte → $0080 (mouse and Right-Amiga+T), Image → $0880, back on
+    "Quitter": box removed, item box intact.
+  (7f) **Blitter and alerts according to the graphics-blitter-v34 and alert-v34 specs** (2026-10-28).
+  - graphics: BltMaskBitMapRastPort (−636: three passes of BltBitMapRastPort, source in $90, mask with the caller's
+    minterm through a dummy BitMap whose planes all point to the mask, source in $90; NULL mask: nothing),
+    ClipBlit (−552: clipping by the ClipRects of the source layer, hidden piece without a save = destination
+    intact, then destination clipping by BltBitMapRastPort; differences: neither source SuperBitMap nor reordering of the
+    ClipRects for an overlapping copy), BltBitMapRastPort and ClipBlit return 1, BltBitMap only handles the planes
+    common to both BitMaps, QBlit/QBSBlit (−276/−294: immediate call in the caller's context, A0 = $DFF000,
+    A1 = node, called again as long as Z = 0, cleanup if CLEANUP; difference: a blit in progress is waited for instead of being relayed
+    by the BLIT interrupt). Probe tests/gblit_probe.sh: T1, T2, T8, T10, T11 identical to the real ROM; differences
+    kept: T3/T4 (zero width or height: 1.3 writes 1024 lines / 64 words), T6 (1.3 truncates a BltClear at
+    1024 lines), T7 (BltTemplate without a layer: we keep xSrc, see fastfonts-ff), T9 (BlitLock not held).
+  - intuition DisplayAlert (−90, src/intuition/alert.s): raster 640 × height, 1 plane, background $111, text and frame
+    $F20, 6 px / 3 lines frame blinking (COMPLEMENT, 46 frames counted on the beam, so interrupts off
+    possible), "x, y, text, continuation" blocks read byte by byte, buttons through CIA-A PRA bit 6 / POTGOR bit 10 (left
+    1, right 0, left takes priority, no timeout), sprite DMA off during the wait; raster impossible:
+    0, or exec Alert for a dead-end alert. Difference: own copper list (gb_LOFlist and COP2LC diverted) instead
+    of a ViewPort under which the screens slide: the rest of the display is in the background during the alert, and the screen
+    comes back afterwards even after a dead-end alert.
+  - exec Alert: recoverable (and exception number with a null high word) -> LastAlert, Guru "Recoverable Alert." /
+    "Not enough memory." / "Software Failure." + "Press left mouse button to continue." + "Guru Meditation
+    #XXXXXXXX.YYYYYYYY" (DisplayAlert(0, text, 40)), d0 = button; dead-end -> 'HELP' at $0, number at $100,
+    second number (long pointed to by A5, if it is in chip) at $104, six LED blinks, RESET + jump to word 2
+    of the ROM (same long); alert_boothook (role of alert.hook) displays this Guru at the next boot, before the strap.
+  - Task exception (exc_default): Guru "Software Failure." #<vector>.<task>; left = restart like
+    1.3, right = task suspended (no ROM-Wack); exception in supervisor: dead-end alert (before: silent
+    stop). Proven by tests/alert_probe.sh (modes 0 and 2) on our ROM, by a capture of the Guru at the next
+    boot ("Software Failure. … Guru Meditation #80000000.00000000", blinking frame) and by a bootblock with an
+    illegal instruction (Guru #00000004.<task>). DisplayAlert goes through COP1LC (at boot, no view chains
+    to COP2LC yet) and then restores the chaining of the loaded view, or the previous DMA bits.
+  (7e) **Floppy writing in the real 1.3 format, complete graphics table** (2026-10-27, before a trial on a real
+  A500; spec `docs/analysis/trackdisk-write-v34.md`). Track written: gap of 1,660 bytes, 11 sectors, tail word
+  `$AAA8` = 6,815 words (~218 ms, exceeds one revolution: no remnant of the old track even on a slow drive; before:
+  gap of 700 bytes, 6,334 words, fragile beyond ~1.5% slowness). Precompensation 140 ns from track
+  81 on (TD_PCTRACK). TD_FORMAT no longer touches io_Actual. Probe `tests/tdwrite_run.sh` on our ROM: same DSKLEN
+  ($DA9F) and ADKCON ($1100 / $3100) as the real ROM, steps A-N identical except H (1.3 writes a sector for a
+  CMD_WRITE of length 0) and O (its TD_PROTSTATUS always turns the motor off), differences kept. graphics: the table
+  stopped at −636 (106 vectors): a call to −642..−654 jumped out of the table; it has the 109 V34 vectors,
+  SetRGB4CM (−630) and AttemptLockLayerRom (−654, AttemptSemaphore of the layer lock); BltMaskBitMapRastPort
+  (−636) remains to be done (spec graphics-blitter-v34).
+  (7d) **trackdisk: long tracks and incomplete tracks** (2026-10-27, reported on the ESP32 emulator
+  amiga500-esp32: "Unable to load …: Error code 121" on WB 1.2, SysInfo, Caesar). Its track is 6,399 words
+  (gap of 830 bytes): our decoder stopped its search 1,200 bytes before the end of the raw buffer, and the last
+  sector of a read started before the gap was ignored; `td_fill` then returned a "partial" track that the
+  read copied anyway, missing sector included (stale buffer contents -> invalid hunks, 121). Now:
+  a header is accepted as long as header + data (TD_SECBODY, 1,080 bytes) fit in the buffer; the decoder returns
+  the mask of DISTINCT sectors (a0); `td_fill` re-reads an incomplete track up to TD_FILLTRIES (4) times,
+  accumulating the good sectors (a read of the wrong track cancels the accumulation); a read is only served if
+  every requested sector is good, otherwise TDERR_NotSpec. Test `tests/td_decode_test.py` (unicorn, 68000): the
+  real ROM code on synthetic tracks (gaps 532/700/830, tracks 0/41/159, start at each of the 11
+  sectors): 99/99; the old decoder failed in 30 cases out of 33 with the 830 gap.
+  (7c) **OctaMED Professional v4** (spec `docs/analysis/octamed-v34.md`, 2026-10-27): a CUSTOMSCREEN 640 x 256
+  x 3 screen and a BACKDROP|BORDERLESS|RMBTRAP window; the buttons are zones tested on MOUSEBUTTONS. Fixes:
+  - **boot self-tests that give back what they take**: M7B resets the CIA-A timer A latch to $FFFF (power-on
+    value) after its 255-tick one-shot. OctaMED starts this timer without reloading it: at $00FF it
+    ran at ~2.8 kHz, the machine saturated and the editor was never drawn. M7B also removes its test PORTS
+    server, M5B its dummy vector (CIA-B bit 1, disabled).
+  - **proportional gadgets**: `prop_render` and `prop_update` go through `prop_keep`, which restores FgPen, BgPen and
+    DrawMode of the gadget's RastPort, often the window's. OctaMED redraws its file list after
+    RefreshGList of its scroller without resetting its pens: it came out in the background pen, hence invisible.
+  - **graphics**: SetRGB4 patches the master copper list for every ViewPort of the view (fragment of
+    GFX_FRAG_SIZE per ViewPort); WaitTOF (−270), BltClear (−300), PolyDraw (−336), VBeamPos (−384, VPOSR/VHPOSR),
     FreeSprite (−414), GetRGB4 (−582).
-  - **intuition** : ShowTitle (−282, couche de la barre de titre devant ou derrière, puis rafraîchissement),
+  - **intuition**: ShowTitle (−282, title bar layer in front or behind, then refresh),
     ViewPortAddress (−300).
-  - Prouvé sous FS-UAE (`tests/dskchg_run.sh`) : écran d'accueil et palette conformes, éditeur, FILES (liste du
-    disque, volumes, jauge), PLAY, PLAY SONG (lecture, TIMER qui avance), STOP, flèches du clavier.
-  - Harnais : `DSKCHG_SERIAL=1` capture le série (ROM `-DDOSTRACE=1`), commande `key`, joystick clavier de FS-UAE
-    coupé (`joystick_port_1 = none` : sinon les flèches n'atteignent jamais la CIA), F12+D réessayé.
-  - Limite du harnais : FS-UAE ne transmet pas Ctrl-F1.
-  (8) **Libérations mémoire fidèles (exec)**. Révélé par l'heure au montage : le boot WB plantait (« Background CLI »,
-  globale 133 absente) dès qu'une heure non nulle précédait SetClock, car un bloc de pile du CLI de fond avait été
-  réattribué. Trois causes, trouvées au traceur MEMTRACK :
-  - **RemTask ne libère que `tc_MemEntry`**, comme la vraie exec. Avant, RemTask et `trap2_handler` rendaient d'office
-    la pile et `TC_SIZE` : fuite pour un process (0xBC rendu en 0x5C), et double libération pour une tâche créée par un
-    programme, qui décrit sa mémoire dans `tc_MemEntry` ou la rend lui-même. Nos créateurs (`proc_create`, tâches de
-    démo) passent par `task_alloc` (tasks.s) : AllocEntry {structure, pile} ajoutée en tête de `tc_MemEntry`, et
-    `SPLOWER`/`SPUPPER` posés. `task_freemem` rend chaque MemList par FreeEntry, en calculant la fin de liste avant,
-    car la tête de liste vit dans la tâche que la dernière MemList libère.
-  - **FreeEntry prend la MemList dans A0** (exec_lib.fd), pas dans A1. icon.library enchaîne RemHead puis FreeEntry,
-    avec la MemList dans A0 et la liste encore dans A1. Avec A1, nous rendions l'en-tête de liste logé à l'intérieur
-    de son bloc DiskObject : 16 octets d'un bloc encore alloué (cas BindDrivers avec le `.info` invalide de
-    SYS:Expansion). Sondé sur la vraie ROM (point d'arrêt sur le vecteur FreeEntry) : A0 = MemList de 10 entrées.
-  - **Execute** (bcpl.s) perdait d5 (BPTR de la commande) à travers runcommand, d'où un freevec(0) et une fuite de
-    64 longs par appel.
-  `timer_abortio` est réel : la requête encore en file est retirée, IO_ERROR = IOERR_ABORTED, puis ReplyMsg.
-  **Traceur MEMTRACK** (memory.s, ROM de diagnostic seulement, la ROM normale est inchangée) :
-  `make BUILD=build/mt VASMDEF=-DMEMTRACK=1 KICK_ROM=build/kick13-mt.rom kick`. Chaque AllocMem ou AllocAbs réussi
-  est noté (table de 3000 entrées en mémoire chip, pointeur en `MT_TABLE`). FreeMem émet sur le série :
-  - « MTSZ adresse taille-rendue taille-notée appelant » si la taille diffère ;
-  - « MTUNK adresse taille appelant tâche » si l'adresse est inconnue.
-  Le boot WB 1.3.3 complet n'émet plus aucune ligne.
-  (9) **Workbench : Clean Up et Snapshot** (workbench.s), sondés sur la vraie 1.3.
-  - Méthode de sonde : mesure à la souris et capture ; les positions sont relevées en comparant les mêmes icônes avant
-    et après, à l'échelle 100 px écran pour 96 px hires.
-  - **Clean Up** : les icônes du tiroir sont triées par position (X puis Y), puis rangées par colonnes de haut en bas.
-    Chaque cellule fait 96 px de large et l'icône y est centrée : X = 96·k + (96 − largeur)/2. Écart vertical : 11
-    sous chaque icône. Changement de colonne au-delà de la hauteur intérieure d'une fenêtre 1.3 (hauteur − 20).
-    Les positions restent en mémoire.
-  - Sur SYS: du WB 1.3.3, le résultat est identique à la vraie ROM : Utilities (11,0) et Shell (21,29), MountMF
-    (104,0), System et Prefs (203), Expansion et Empty (299).
-  - **Snapshot** : la position de l'icône sélectionnée est écrite dans son `.info` par PutDiskObject, sans
-    requester (`pr_WindowPtr` = −1). Pour le disque ou un tiroir dont la fenêtre est ouverte, la géométrie de cette
-    fenêtre va aussi dans `dd_NewWindow`.
-  - Les `.info` écrits sont relus par la vraie 1.3.
-  (10) **Titre d'écran du Workbench, Version et Last Error** (spec workbench-task-v34 §6, relue clean-room) :
-  - **Tic de 5 s** : timerequest VBLANK, réponse sur le port « Workbench ». À chaque tic, AvailMem(0) ; si la valeur
-    a changé, `RawDoFmt("Workbench release 1.2.  %ld free memory")` puis SetWindowTitles(fenêtre, −1, titre) sur la
-    backdrop et chaque tiroir ouvert.
-  - Le SetWindowTitles détourné par le LoadWB du disque transforme le texte en « Workbench release.      N free
-    memory », comme sur la vraie ROM.
-  - **Message figé** (bit « message affiché ») : DisplayBeep, puis formatage dans un tampon propre. Le tic ne touche
-    plus au titre jusqu'au prochain clic gauche ou choix de menu.
-  - **Version** : « Kickstart version %ld.%ld. Workbench version %ld.%ld ». Les deux premiers nombres sont lus dans
-    l'en-tête ROM (mots +$0C/+$0E ; base = $1000000 − taille en $FFFFEC). Les deux autres sont lib_Version et
-    lib_Revision de version.library, chargée de LIBS:, ou −1 sans elle.
-  - **Last Error** réaffiche le dernier message, sans bip.
-  - **Rename** verrouille le titre et affiche l'invite « Enter the new name.  Press return when done. ».
-  - **Intuition** :
-    - **SetWindowTitles** (−276) et `wd_ScreenTitle` : la barre de l'écran montre le titre d'écran de la fenêtre
-      active, sinon celui de l'écran.
-    - **DisplayBeep** (−96) : la couleur 0 est complémentée pendant 6 trames.
-    - **Activation, règle d'intuition 34.3** : OpenWindow n'active que si ACTIVATE est demandé, et range la fenêtre
-      après l'active dans la chaîne Parent/Descendant. CloseWindow de la fenêtre active active son Parent, sinon la
-      première fenêtre de l'écran (chez nous, la plus en avant), sinon aucune.
-    - Conséquence : après `endcli`, la backdrop est active et ses menus répondent sans clic, comme sur la vraie ROM.
-  - **LoadView** préserve désormais d2 : il était écrasé par la réécriture des pointeurs de sprite, ce qui faussait
-    les appelants.
-  (11) **ScrollRaster au blitter** (draw.s, `.sc_blit`) : dans la voie rapide (une seule ClipRect visible couvre le
-  rectangle), si tous les plans sont en mémoire chip (TypeOfMem), le rectangle déplacé est copié en un blit par plan.
-  - Canaux : A constant $FFFF avec les masques de premier et dernier mot, B = source, C = D = destination, minterme
-    AB + ~AC. Vers le bas, en mode descendant : adresses de fin, masques échangés.
-  - Sinon, l'ancienne copie CPU ligne à ligne s'applique.
-  - Le blitter est pris par **OwnBlitter / DisownBlitter**, désormais un vrai verrou : sémaphore privé `gb_BlitSem`
-    dans GfxBase. DisownBlitter est sans effet pour une tâche qui ne le possède pas.
-  - Mesure en temps émulé, 400 lignes de `type ram:` dans la fenêtre de boot : 89 s → 70 s. La vraie 1.3 met 38 s.
-    Écran final identique au pixel près.
-  - Le miroir série de con.handler ne compte que pour environ 3 s.
-  (12) **Messages d'erreur du Workbench** (spec workbench-task-v34 §6.9) : `wb_error(action, nom)` lit IoErr avant tout
-  autre appel dos, formate l'action (table de la 1.3), puis affiche « Error while %s: %ld » comme message figé. Le premier
-  message affiché l'emporte.
-  - **Ouverture d'un tiroir** : Lock ou Examine échoue → « examining <tiroir> » ; ExNext échoue (hors 232) →
-    « examining directory ».
-  - **Lancement** : LoadSeg échoue → « opening <nom de l'outil> » ; pour un projet, Default Tool tel quel.
-  - **Rename** : « : » ou « / » → « Do not use '%lc' in names » ; échec hors 205 → « moving <ancien nom> ».
-  - **Discard** : 205 compte comme réussi, sinon « removing <nom> », puis « removing <nom>.info ».
-  - **Snapshot** : échec de PutDiskObject → « writing <nom> ».
-  - **Écart** : pas de requester errorreq avant le message de Rename.
-  - **dos LoadSeg** pose désormais IoErr : 121 si le fichier n'est pas un exécutable, 103 sans mémoire. Le code est
-    posé après le Close, dont la réponse remettait `pr_Result2` à 0.
-  - Comparé à la vraie 1.3 (outil « Bad » non exécutable) : « Error while opening Bad: 121 » des deux côtés.
-  (13) **Workbench Info et fenêtres GIMMEZEROZERO** (specs workbench-task-v34 §7/§7.8 et intuition-gzz-v34, relues
-  clean-room).
-  - **Info** (`wb_info`, menu Workbench élément 4) : Lock du répertoire qui contient l'icône, OpenLibrary("info.library"),
-    CurrentDir, GetWBObject (nom « Disk » pour le disque), nom copié et rangé par AddFreeList, lock posé dans le
-    WBObject (+$A4 ; pour le disque, aussi dans le DrawerData +$1BA). Appel de la fonction −30 (A0 = A6 = InfoBase,
-    A1 = WBObject), puis FreeWBObject, répertoire courant rétabli, CloseLibrary, tiroir rechargé, UnLock.
-    Sans info.library : message « Info not available ».
-  - **Bordures agrandies par les gadgets** (toutes les fenêtres) : un gadget dont l'Activation porte LEFT/RIGHT/TOP/
-    BOTTOMBORDER élargit la bordure correspondante. Positions relatives (GREL*) : bord du domaine − 1.
-  - **GIMMEZEROZERO** (screens.s) : la couche du cadre est toujours SIMPLE ; une couche intérieure est créée devant
-    elle, et WLayer/RPort la désignent ; `wd_BorderRPort` (+58) est celui du cadre. Fermeture, profondeur,
-    déplacement et redimensionnement agissent sur les deux couches. Les gadgets GZZGADGET sont dans le cadre, les
-    autres relatifs à l'intérieur (`gad_rect`, `gad_rp`).
-  - **Ordre de dessin des gadgets comme intuition 34.3** (`gad_drawrev`) : une plage se dessine à rebours, si bien que le
-    premier gadget de la liste finit par-dessus. Ce comportement sert à OpenWindow, à la réparation du cadre et à
-    RefreshGadgets. info.library en a besoin : SAVE et QUIT sont en tête de liste, devant un remplisseur qui les
-    recouvre.
-  - **Bug corrigé** : `gad_comp` (surbrillance par complément) sauvegardait 9 registres et n'en restaurait que 8.
-    Tout clic sur un gadget GADGHCOMP de ce chemin aurait fini en SOFTWARE FAILURE.
-  - Prouvé sous FS-UAE (disque WB 1.3.3, tiroir Expansion) : fenêtre identique à la vraie 1.3. QUIT ferme la fenêtre.
-    SAVE écrit le commentaire saisi, qui réapparaît à la réouverture.
-  (14) **Text : voie « chaîne »** (draw.s, `.tx_try` / `.tx_str`). Elle s'applique en JAM2 sans COMPLEMENT, sans
-  style, police fixe de 8 pixels (pas de CharSpace ni de CharKern, TxSpacing nul), et seulement si toute la plage
-  tient dans une ClipRect. C'est le cas de la console.
-  - Par tranche de 16 caractères au plus, les pointeurs de glyphes sont calculés une fois.
-  - Ensuite, plan par plan et ligne par ligne : octet = (glyphe ET m1) OU-exclusif m2. m1 vaut 1 si les stylos A et
-    B diffèrent sur ce plan, m2 est le bit du stylo B ; INVERSVID fait m2 ^= m1.
-  - Le flux est décalé de x & 7 ; les bits hors plage des deux octets de bord sont conservés.
-  - Un glyphe d'une autre largeur, ou non aligné sur l'octet, fait passer par le rendu caractère par caractère.
-    Une plage à cheval sur des ClipRects désactive la voie pour la fin de l'appel.
-  - Mesure, 400 lignes de `type` dans la fenêtre de boot (ROM de production, temps émulé) : 70 s → 45 s. La vraie
-    1.3 met 38 s. Écran final identique au pixel près.
-  - Décomposition avant correction, obtenue par variantes : sans `Text` 35 s, sans défilement 59 s.
-  - Effet de bord sur une sonde de dev : la sonde « AUDIO PLAY » (pri 0) observe par scrutation la fenêtre
-    « w1 rendu, w2 en cours » (~210 ms). Avec une console plus rapide, le boot `hnd` affiche davantage, avec sa
-    recopie série sous Forbid ; la sonde n'a plus tourné qu'environ 1 300 fois sur 420 ms et a raté la fenêtre
-    (`d5` = 1). Elle tourne maintenant à pri 5, au-dessus du shell et de la console. audio.device n'est pas en cause.
-  (15) **Workbench Duplicate** (spec workbench-task-v34 §6.6 et §7.9, relue clean-room ; sondé sur la vraie 1.3).
-  - **Objet** (`wb_duplicate`) : CurrentDir du tiroir, Lock de l'original (échec : « accessing <nom> »), nouveau nom par
-    icon BumpRevision (−108, « copy of … », tronqué à 25 caractères).
-  - **Icône** : le WBObject de l'original est lu (GetWBObject), décalé de +30/+15 et écrit sous le nouveau nom par
-    PutWBObject (−36) **avant** les données, puis rétabli et rendu. L'icône est ensuite relue ; en cas d'échec,
-    « Cannot read info file <nom> » et rien n'est copié.
-  - **Affichage** : l'icône est ajoutée au tiroir et dessinée sans relire le tiroir ; l'original reste sélectionné.
-    Une icône du même nom déjà affichée est remplacée, et le tiroir redessiné.
-  - **Copie** (`wb_cptree`) : récursive, Open/Read/Write par tampon de 4 Ko. La 1.3 lit et écrit par 512 octets via
-    deux coroutines, ce qui ne change rien d'observable. Messages « accessing / opening / reading / writing /
-    examining » comme la 1.3. Protection, date et commentaire ne sont pas recopiés, comme dans la 1.3.
-  - **Disque** : lance son outil par défaut (DiskCopy) avec le disque en argument ; sans outil, « This disk cannot be
-    copied ».
-  - **dos DeviceProc** (−174) : rend le port du handler. IoErr vaut le verrou d'un assign, 0 sinon. DiskCopy en a besoin.
-  - Comparé à la vraie 1.3 (Duplicate du tiroir Expansion) : même nom, même `.info` (position 233,15) écrit avant le
-    répertoire. Copie de Prefs : 8 fichiers identiques octet par octet.
-  - **DiskCopy 1.4 fonctionne** depuis Duplicate du disque (spec intuition-requesters-v34 §5-§7). Trois correctifs :
-    1. **handler DF0: — réponse returnpkt** : le paquet revient vers `dp_Port` par PutMsg, et `dp_Port` reçoit le port
-       du handler. Avant, ReplyMsg passait par `mn_ReplyPort`, que DiskCopy ne remplit pas pour son ACTION_INHIBIT :
-       il attendait indéfiniment.
-    2. **ACTION_INHIBIT** (31) accepté. À l'inhibition, la bitmap modifiée est écrite ; à la levée, elle est oubliée
-       et sera relue (`ow_inhibit`).
-    3. **AutoRequest conforme à BuildSysRequest** :
-       - fenêtre en (0,0), titre de la fenêtre appelante (« System Request » sans elle), stylos de cette fenêtre ;
-       - drapeaux NOCAREREFRESH, ACTIVATE, SIMPLE_REFRESH, DEPTH, DRAG et SIZING, taille minimale 88×24 ;
-       - IDCMP pflag | nflag | GADGETUP | RAWKEY ;
-       - requester sur tout l'intérieur : fond au stylo 1, cadre en retrait d'un pixel au stylo 0 (montants de deux
-         pixels), corps à son coin ;
-       - boutons : texte + 12 de large, police + 6 de haut, positif à 14 du bord gauche, négatif à 13 du bord droit,
-         4 pixels au-dessus du bas ; filet intérieur au stylo 0 et cadre extérieur au stylo 3 ;
-       - Amiga-V / Amiga-B traités (sans effet tant que RAWKEY n'est pas acheminé vers les fenêtres).
-    - Écart d'alors (requester dessiné dans la fenêtre, sans couche) : levé en (30), AutoRequest passe désormais par
-      BuildSysRequest et Request.
-  - Prouvé sous FS-UAE :
-    - la demande « Put SOURCE disk » est identique à la vraie ROM, à l'habillage de fenêtre près (bordure droite et
-      gadget de taille) ;
-    - Cancel termine DiskCopy, Continue lance la lecture ;
-    - la confirmation de Discard s'affiche au nouveau format.
-  (16) **Clavier vers les fenêtres (RAWKEY) et qualificatifs Alt/Amiga.**
-  - **keyboard.s** : `KBD_QUAL` suit aussi Alt gauche/droite et Amiga gauche/droite ($64-$67), selon les bits publics
-    IEQUALIFIER LALT $10, RALT $20, LCOMMAND $40 et RCOMMAND $80. La conversion en caractères (kbd_cook) n'utilise
-    toujours que Shift, Caps et Ctrl.
-  - **intuition** : quand aucun gadget texte n'est actif et que la fenêtre active a demandé RAWKEY, la touche lui est
-    réservée :
-    - l'événement est neutralisé pour la console ;
-    - la touche passe par l'anneau d'entrée, relâchements compris ;
-    - elle part en IntuiMessage RAWKEY, avec le code brut et le qualificatif (`wn_sendkey`).
-  - AutoRequest répond donc à Amiga-V et Amiga-B. Prouvé par DiskCopy : Amiga-V équivaut à Continue, comme sur la
-    vraie 1.3.
-  - **Harnais** : le jeton `keyraw:` envoie une touche sans relâcher les modificateurs tenus. `xdotool key
-    --clearmodifiers` relâchait Super avant le V.
-  (17) **Cadre des fenêtres comme intuition 34.3** (spec intuition-frame-v34, relue clean-room : géométrie seulement,
-  aucun bitmap transcrit).
-  - **graphics RectFill + SetAfPt** : un `rp_AreaPtrn` non nul fait un remplissage à motif. Le motif est ancré à
-    l'origine de la couche (ligne y modulo 2^AreaPtSz, bit 15 = x ≡ 0 modulo 16) ; les 1 vont au stylo A, les 0 au
-    stylo B en JAM2 (laissés tels quels sinon).
-  - **wn_border**, dans l'ordre de la spec :
-    1. bordures gauche, droite et basse effacées au stylo 0 ;
-    2. contour au BlockPen : montants de BorderLeft/2 pixels aux deux bords, lignes du haut et du bas. La bordure
-       droite d'une fenêtre redimensionnable paraît donc fine, comme sur la 1.3 ;
-    3. fond de la barre de titre jusqu'à BorderTop − 2 ;
-    4. titre au début de la zone de titre (30 après la fermeture en hires) ;
-    5. avec WINDOWDRAG, motif de glissement (doubles lignes au DetailPen) du bout du titre + 3 à la fin de la zone − 3 ;
-    6. gadgets d'application ;
-    7. gadgets système **par-dessus** (en tête de liste chez la 1.3) ;
-    8. sur une fenêtre inactive, voile d'un pixel sur quatre au BlockPen.
-  - **Activation** (`it_setactive`, seul point de changement) : l'ancienne fenêtre reçoit le voile, la barre de la
-    nouvelle est redessinée.
-  - **Pictogrammes système** (fermeture, profondeur arrière et avant, taille ; hires et lores) : redessinés d'après leur
-    description géométrique, en listes de rectangles. Leurs positions et les zones de clic viennent d'une table par
-    résolution (`wn_geo` / `sc_geo`), partagée par la barre d'écran.
-  - Quand RefreshGadgets part de la tête de liste, et à la réparation de l'intérieur d'une fenêtre GZZ, les gadgets
-    système sont redessinés en dernier. Sans cela, le remplisseur d'Info recouvrait le gadget de taille.
-  - Comparé à la vraie 1.3 : barre de titre (motif, voile, pictogrammes) du tiroir du disque et de la fenêtre Info ;
-    activation par clic ; fermeture et profondeur arrière sur un tiroir.
-  - **Clic sur un gadget système** (fermeture, profondeur) :
-    - à l'appui, sa boîte est inversée (GADGHCOMP) ; `IB_SYSACT` et `IB_SYSWIN` mémorisent le gadget et sa fenêtre ;
-    - au relâchement, la boîte reprend son aspect, et l'action (CLOSEWINDOW, WindowToBack, WindowToFront) n'a lieu
-      que si le pointeur est encore sur ce gadget ;
-    - fermer la fenêtre entre-temps oublie l'appui (`gad_forget`).
-  - **WindowToBack d'Info** : rien ne change à l'écran, exactement comme sur la vraie 1.3 (sondé). Le tiroir révélé
-    est SIMPLE_REFRESH, et seul le Workbench le redessine ; il est bloqué dans info.library tant qu'Info est ouverte.
-  (18) **Gadgets proportionnels, barres de défilement des tiroirs, LoadSeg extensible** (specs intuition-prop-v34 et
-  workbench-task-v34 §8, relues clean-room : comportement et géométrie seulement).
-  - **intuition (gadgets.s)** : PROPGADGET (type 3) avec PropInfo (Flags, HPot/VPot, HBody/VBody, CWidth/CHeight,
+  - Proven under FS-UAE (`tests/dskchg_run.sh`): welcome screen and palette as expected, editor, FILES (disk
+    list, volumes, gauge), PLAY, PLAY SONG (playback, TIMER advancing), STOP, keyboard arrows.
+  - Harness: `DSKCHG_SERIAL=1` captures the serial line (ROM `-DDOSTRACE=1`), `key` command, FS-UAE keyboard joystick
+    turned off (`joystick_port_1 = none`: otherwise the arrows never reach the CIA), F12+D retried.
+  - Harness limitation: FS-UAE does not pass Ctrl-F1 through.
+  (8) **Faithful memory releases (exec)**. Revealed by the time-at-mount change: the WB boot crashed ("Background CLI",
+  global 133 absent) as soon as a non-zero time preceded SetClock, because a stack block of the background CLI had been
+  reallocated. Three causes, found with the MEMTRACK tracer:
+  - **RemTask only frees `tc_MemEntry`**, like the real exec. Before, RemTask and `trap2_handler` automatically freed
+    the stack and `TC_SIZE`: a leak for a process (0xBC returned as 0x5C), and a double free for a task created by a
+    program, which describes its memory in `tc_MemEntry` or frees it itself. Our creators (`proc_create`, demo
+    tasks) go through `task_alloc` (tasks.s): AllocEntry {structure, stack} added at the head of `tc_MemEntry`, and
+    `SPLOWER`/`SPUPPER` set. `task_freemem` frees each MemList with FreeEntry, computing the end of the list beforehand,
+    because the list head lives in the task that the last MemList frees.
+  - **FreeEntry takes the MemList in A0** (exec_lib.fd), not in A1. icon.library chains RemHead then FreeEntry,
+    with the MemList in A0 and the list still in A1. With A1, we freed the list header located inside
+    its DiskObject block: 16 bytes of a block still allocated (BindDrivers case with the invalid `.info` of
+    SYS:Expansion). Probed on the real ROM (breakpoint on the FreeEntry vector): A0 = MemList of 10 entries.
+  - **Execute** (bcpl.s) lost d5 (BPTR of the command) across runcommand, hence a freevec(0) and a leak of
+    64 longs per call.
+  `timer_abortio` is real: the request still queued is removed, IO_ERROR = IOERR_ABORTED, then ReplyMsg.
+  **MEMTRACK tracer** (memory.s, diagnostic ROM only, the normal ROM is unchanged):
+  `make BUILD=build/mt VASMDEF=-DMEMTRACK=1 KICK_ROM=build/kick13-mt.rom kick`. Each successful AllocMem or AllocAbs
+  is recorded (table of 3000 entries in chip memory, pointer at `MT_TABLE`). FreeMem emits on serial:
+  - "MTSZ address returned-size recorded-size caller" if the size differs;
+  - "MTUNK address size caller task" if the address is unknown.
+  The complete WB 1.3.3 boot no longer emits any line.
+  (9) **Workbench: Clean Up and Snapshot** (workbench.s), probed on the real 1.3.
+  - Probing method: measurement with the mouse and capture; positions are recorded by comparing the same icons before
+    and after, at the scale of 100 screen px for 96 hires px.
+  - **Clean Up**: the drawer's icons are sorted by position (X then Y), then arranged in columns from top to bottom.
+    Each cell is 96 px wide and the icon is centred in it: X = 96·k + (96 − width)/2. Vertical gap: 11
+    below each icon. Column change beyond the inner height of a 1.3 window (height − 20).
+    The positions stay in memory.
+  - On SYS: of WB 1.3.3, the result is identical to the real ROM: Utilities (11,0) and Shell (21,29), MountMF
+    (104,0), System and Prefs (203), Expansion and Empty (299).
+  - **Snapshot**: the position of the selected icon is written into its `.info` by PutDiskObject, without a
+    requester (`pr_WindowPtr` = −1). For the disk or a drawer whose window is open, the geometry of this
+    window also goes into `dd_NewWindow`.
+  - The `.info` files written are read back by the real 1.3.
+  (10) **Workbench screen title, Version and Last Error** (spec workbench-task-v34 §6, clean-room reviewed):
+  - **5 s tick**: VBLANK timerequest, reply on the "Workbench" port. At each tick, AvailMem(0); if the value
+    has changed, `RawDoFmt("Workbench release 1.2.  %ld free memory")` then SetWindowTitles(window, −1, title) on the
+    backdrop and each open drawer.
+  - The SetWindowTitles diverted by the disk's LoadWB turns the text into "Workbench release.      N free
+    memory", as on the real ROM.
+  - **Frozen message** ("message displayed" bit): DisplayBeep, then formatting into a dedicated buffer. The tick does not touch
+    the title any more until the next left click or menu choice.
+  - **Version**: "Kickstart version %ld.%ld. Workbench version %ld.%ld". The first two numbers are read from
+    the ROM header (words +$0C/+$0E; base = $1000000 − size at $FFFFEC). The other two are lib_Version and
+    lib_Revision of version.library, loaded from LIBS:, or −1 without it.
+  - **Last Error** redisplays the last message, without a beep.
+  - **Rename** locks the title and displays the prompt "Enter the new name.  Press return when done.".
+  - **Intuition**:
+    - **SetWindowTitles** (−276) and `wd_ScreenTitle`: the screen bar shows the screen title of the active
+      window, otherwise that of the screen.
+    - **DisplayBeep** (−96): colour 0 is complemented for 6 frames.
+    - **Activation, intuition 34.3 rule**: OpenWindow only activates if ACTIVATE is requested, and places the window
+      after the active one in the Parent/Descendant chain. CloseWindow of the active window activates its Parent, otherwise the
+      first window of the screen (on our side, the frontmost), otherwise none.
+    - Consequence: after `endcli`, the backdrop is active and its menus respond without a click, as on the real ROM.
+  - **LoadView** now preserves d2: it was overwritten by the rewriting of the sprite pointers, which disturbed
+    the callers.
+  (11) **ScrollRaster with the blitter** (draw.s, `.sc_blit`): in the fast path (a single visible ClipRect covers the
+  rectangle), if all the planes are in chip memory (TypeOfMem), the moved rectangle is copied with one blit per plane.
+  - Channels: A constant $FFFF with the first- and last-word masks, B = source, C = D = destination, minterm
+    AB + ~AC. Downwards, in descending mode: end addresses, masks swapped.
+  - Otherwise, the old line-by-line CPU copy applies.
+  - The blitter is taken through **OwnBlitter / DisownBlitter**, now a real lock: private semaphore `gb_BlitSem`
+    in GfxBase. DisownBlitter has no effect for a task that does not own it.
+  - Measurement in emulated time, 400 lines of `type ram:` in the boot window: 89 s → 70 s. The real 1.3 takes 38 s.
+    Final screen identical to the pixel.
+  - con.handler's serial mirror only accounts for about 3 s.
+  (12) **Workbench error messages** (spec workbench-task-v34 §6.9): `wb_error(action, nom)` reads IoErr before any
+  other dos call, formats the action (1.3 table), then displays "Error while %s: %ld" as a frozen message. The first
+  message displayed wins.
+  - **Opening a drawer**: Lock or Examine fails → "examining <drawer>"; ExNext fails (other than 232) →
+    "examining directory".
+  - **Launching**: LoadSeg fails → "opening <tool name>"; for a project, Default Tool as is.
+  - **Rename**: ":" or "/" → "Do not use '%lc' in names"; failure other than 205 → "moving <old name>".
+  - **Discard**: 205 counts as success, otherwise "removing <name>", then "removing <name>.info".
+  - **Snapshot**: PutDiskObject failure → "writing <name>".
+  - **Difference**: no errorreq requester before the Rename message.
+  - **dos LoadSeg** now sets IoErr: 121 if the file is not an executable, 103 without memory. The code is
+    set after the Close, whose reply reset `pr_Result2` to 0.
+  - Compared with the real 1.3 (non-executable tool "Bad"): "Error while opening Bad: 121" on both sides.
+  (13) **Workbench Info and GIMMEZEROZERO windows** (specs workbench-task-v34 §7/§7.8 and intuition-gzz-v34, clean-room
+  reviewed).
+  - **Info** (`wb_info`, Workbench menu item 4): Lock of the directory that contains the icon, OpenLibrary("info.library"),
+    CurrentDir, GetWBObject (name "Disk" for the disk), name copied and stored through AddFreeList, lock set in the
+    WBObject (+$A4; for the disk, also in the DrawerData +$1BA). Call of function −30 (A0 = A6 = InfoBase,
+    A1 = WBObject), then FreeWBObject, current directory restored, CloseLibrary, drawer reloaded, UnLock.
+    Without info.library: message "Info not available".
+  - **Borders enlarged by the gadgets** (all windows): a gadget whose Activation carries LEFT/RIGHT/TOP/
+    BOTTOMBORDER widens the corresponding border. Relative positions (GREL*): edge of the domain − 1.
+  - **GIMMEZEROZERO** (screens.s): the frame layer is always SIMPLE; an inner layer is created in front of
+    it, and WLayer/RPort designate it; `wd_BorderRPort` (+58) is the frame's. Close, depth,
+    moving and resizing act on both layers. GZZGADGET gadgets are in the frame, the
+    others relative to the interior (`gad_rect`, `gad_rp`).
+  - **Gadget drawing order like intuition 34.3** (`gad_drawrev`): a range is drawn in reverse order, so that the
+    first gadget of the list ends up on top. This behaviour is used by OpenWindow, by the frame repair and by
+    RefreshGadgets. info.library needs it: SAVE and QUIT are at the head of the list, in front of a filler that
+    covers them.
+  - **Bug fixed**: `gad_comp` (highlighting by complement) saved 9 registers and only restored 8.
+    Any click on a GADGHCOMP gadget of this path would have ended in SOFTWARE FAILURE.
+  - Proven under FS-UAE (WB 1.3.3 disk, Expansion drawer): window identical to the real 1.3. QUIT closes the window.
+    SAVE writes the comment typed in, which reappears on reopening.
+  (14) **Text: "string" path** (draw.s, `.tx_try` / `.tx_str`). It applies in JAM2 without COMPLEMENT, without
+  style, fixed 8-pixel font (no CharSpace nor CharKern, zero TxSpacing), and only if the whole range
+  fits in one ClipRect. This is the case for the console.
+  - Per slice of 16 characters at most, the glyph pointers are computed once.
+  - Then, plane by plane and line by line: byte = (glyph AND m1) XOR m2. m1 is 1 if pens A and
+    B differ on this plane, m2 is the bit of pen B; INVERSVID does m2 ^= m1.
+  - The stream is shifted by x & 7; the out-of-range bits of the two edge bytes are kept.
+  - A glyph of another width, or not byte-aligned, falls back to character-by-character rendering.
+    A range straddling ClipRects disables the path for the rest of the call.
+  - Measurement, 400 lines of `type` in the boot window (production ROM, emulated time): 70 s → 45 s. The real
+    1.3 takes 38 s. Final screen identical to the pixel.
+  - Breakdown before the fix, obtained through variants: without `Text` 35 s, without scrolling 59 s.
+  - Side effect on a dev probe: the "AUDIO PLAY" probe (pri 0) observes by polling the window
+    "w1 rendered, w2 in progress" (~210 ms). With a faster console, the `hnd` boot displays more, with its
+    serial copy under Forbid; the probe only ran about 1,300 times over 420 ms and missed the window
+    (`d5` = 1). It now runs at pri 5, above the shell and the console. audio.device is not at fault.
+  (15) **Workbench Duplicate** (spec workbench-task-v34 §6.6 and §7.9, clean-room reviewed; probed on the real 1.3).
+  - **Object** (`wb_duplicate`): CurrentDir of the drawer, Lock of the original (failure: "accessing <name>"), new name through
+    icon BumpRevision (−108, "copy of …", truncated to 25 characters).
+  - **Icon**: the original's WBObject is read (GetWBObject), shifted by +30/+15 and written under the new name by
+    PutWBObject (−36) **before** the data, then restored and returned. The icon is then read back; on failure,
+    "Cannot read info file <name>" and nothing is copied.
+  - **Display**: the icon is added to the drawer and drawn without re-reading the drawer; the original stays selected.
+    An icon with the same name already displayed is replaced, and the drawer redrawn.
+  - **Copy** (`wb_cptree`): recursive, Open/Read/Write with a 4 KB buffer. 1.3 reads and writes 512 bytes at a time through
+    two coroutines, which changes nothing observable. Messages "accessing / opening / reading / writing /
+    examining" like 1.3. Protection, date and comment are not copied, as in 1.3.
+  - **Disk**: launches its default tool (DiskCopy) with the disk as argument; without a tool, "This disk cannot be
+    copied".
+  - **dos DeviceProc** (−174): returns the handler's port. IoErr is the lock of an assign, 0 otherwise. DiskCopy needs it.
+  - Compared with the real 1.3 (Duplicate of the Expansion drawer): same name, same `.info` (position 233,15) written before the
+    directory. Copy of Prefs: 8 files identical byte for byte.
+  - **DiskCopy 1.4 works** from Duplicate of the disk (spec intuition-requesters-v34 §5-§7). Three fixes:
+    1. **DF0: handler — returnpkt reply**: the packet goes back to `dp_Port` through PutMsg, and `dp_Port` receives the handler's
+       port. Before, ReplyMsg went through `mn_ReplyPort`, which DiskCopy does not fill for its ACTION_INHIBIT:
+       it waited forever.
+    2. **ACTION_INHIBIT** (31) accepted. On inhibition, the modified bitmap is written; when lifted, it is forgotten
+       and will be re-read (`ow_inhibit`).
+    3. **AutoRequest conforming to BuildSysRequest**:
+       - window at (0,0), title of the calling window ("System Request" without it), pens of that window;
+       - flags NOCAREREFRESH, ACTIVATE, SIMPLE_REFRESH, DEPTH, DRAG and SIZING, minimum size 88×24;
+       - IDCMP pflag | nflag | GADGETUP | RAWKEY;
+       - requester over the whole interior: background in pen 1, frame inset by one pixel in pen 0 (uprights two
+         pixels wide), body at its corner;
+       - buttons: text + 12 wide, font + 6 high, positive at 14 from the left edge, negative at 13 from the right edge,
+         4 pixels above the bottom; inner rule in pen 0 and outer frame in pen 3;
+       - Amiga-V / Amiga-B handled (no effect as long as RAWKEY is not routed to the windows).
+    - Difference at the time (requester drawn in the window, without a layer): lifted in (30), AutoRequest now goes through
+      BuildSysRequest and Request.
+  - Proven under FS-UAE:
+    - the "Put SOURCE disk" prompt is identical to the real ROM, apart from the window dressing (right border and
+      size gadget);
+    - Cancel ends DiskCopy, Continue starts the reading;
+    - Discard's confirmation is displayed in the new format.
+  (16) **Keyboard to the windows (RAWKEY) and Alt/Amiga qualifiers.**
+  - **keyboard.s**: `KBD_QUAL` also tracks left/right Alt and left/right Amiga ($64-$67), according to the public bits
+    IEQUALIFIER LALT $10, RALT $20, LCOMMAND $40 and RCOMMAND $80. The conversion to characters (kbd_cook) still only uses
+    Shift, Caps and Ctrl.
+  - **intuition**: when no text gadget is active and the active window has requested RAWKEY, the key is
+    reserved for it:
+    - the event is neutralised for the console;
+    - the key goes through the input ring, releases included;
+    - it is sent as a RAWKEY IntuiMessage, with the raw code and the qualifier (`wn_sendkey`).
+  - AutoRequest therefore responds to Amiga-V and Amiga-B. Proven by DiskCopy: Amiga-V is equivalent to Continue, as on the
+    real 1.3.
+  - **Harness**: the `keyraw:` token sends a key without releasing the held modifiers. `xdotool key
+    --clearmodifiers` released Super before the V.
+  (17) **Window frame like intuition 34.3** (spec intuition-frame-v34, clean-room reviewed: geometry only,
+  no bitmap transcribed).
+  - **graphics RectFill + SetAfPt**: a non-null `rp_AreaPtrn` makes a patterned fill. The pattern is anchored at
+    the layer's origin (line y modulo 2^AreaPtSz, bit 15 = x ≡ 0 modulo 16); bits at 1 go to pen A, bits at 0 to
+    pen B in JAM2 (left as is otherwise).
+  - **wn_border**, in the spec's order:
+    1. left, right and bottom borders cleared in pen 0;
+    2. outline in BlockPen: uprights of BorderLeft/2 pixels at both edges, top and bottom lines. The right
+       border of a resizable window therefore looks thin, as on 1.3;
+    3. title bar background down to BorderTop − 2;
+    4. title at the start of the title area (30 after the close gadget in hires);
+    5. with WINDOWDRAG, drag pattern (double lines in DetailPen) from the end of the title + 3 to the end of the area − 3;
+    6. application gadgets;
+    7. system gadgets **on top** (at the head of the list in 1.3);
+    8. on an inactive window, a veil of one pixel in four in BlockPen.
+  - **Activation** (`it_setactive`, the only point of change): the old window receives the veil, the bar of the
+    new one is redrawn.
+  - **System pictograms** (close, depth back and front, size; hires and lores): redrawn from their
+    geometric description, as lists of rectangles. Their positions and the click zones come from a table per
+    resolution (`wn_geo` / `sc_geo`), shared by the screen bar.
+  - When RefreshGadgets starts from the head of the list, and when repairing the interior of a GZZ window, the system
+    gadgets are redrawn last. Without this, Info's filler covered the size gadget.
+  - Compared with the real 1.3: title bar (pattern, veil, pictograms) of the disk drawer and of the Info window;
+    activation by click; close and depth-to-back on a drawer.
+  - **Click on a system gadget** (close, depth):
+    - on press, its box is inverted (GADGHCOMP); `IB_SYSACT` and `IB_SYSWIN` remember the gadget and its window;
+    - on release, the box returns to its normal look, and the action (CLOSEWINDOW, WindowToBack, WindowToFront) only happens
+      if the pointer is still on this gadget;
+    - closing the window in the meantime forgets the press (`gad_forget`).
+  - **Info's WindowToBack**: nothing changes on screen, exactly as on the real 1.3 (probed). The revealed drawer
+    is SIMPLE_REFRESH, and only the Workbench redraws it; it is blocked in info.library as long as Info is open.
+  (18) **Proportional gadgets, drawer scroll bars, extensible LoadSeg** (specs intuition-prop-v34 and
+  workbench-task-v34 §8, clean-room reviewed: behaviour and geometry only).
+  - **intuition (gadgets.s)**: PROPGADGET (type 3) with PropInfo (Flags, HPot/VPot, HBody/VBody, CWidth/CHeight,
     HPotRes/VPotRes, LBorder/TBorder).
     - AUTOKNOB, FREEHORIZ, FREEVERT, PROPBORDERLESS, KNOBHIT.
-    - Géométrie du knob dans la zone intérieure (`prop_prep`, `prop_knob`), dessin (`prop_render`).
-    - Clic hors du knob : déplacement d'une page. Clic sur le knob : glissement suivi en direct (`prop_track`, appelé
-      depuis le suivi des mouvements), FOLLOWMOUSE relayé.
-    - `ModifyProp` (−156) et `NewModifyProp` (−468). `gad_propinit` à OpenWindow et AddGList.
-  - **workbench.task** : chaque tiroir a 6 gadgets (barre horizontale et verticale, quatre flèches, images en CHIP)
-    et une origine de défilement (DR_SX/SY).
-    - L'étendue du contenu (`wb_content`) fixe Body et Pot (`wb_bars`) ; flèches et knob font défiler (`wb_scrollto`).
-    - L'origine est appliquée au dessin, au clic et au dépôt d'icônes, et enregistrée au snapshot (dd_CurrentX/Y).
-    - Tiroir d'un disque : jauge de remplissage (Info → InfoData, `wb_gauge`), comme sur la vraie 1.3.
-    - Comparé à la vraie ROM : positions des icônes, jauge et barres identiques ; défilement 49 px par flèche.
-  - **dos LoadSeg** : tampon de lecture extensible (32 Ko, doublé au besoin). Un fichier de plus de 32 Ko (Preferences,
-    56 180 octets) était tronqué et plantait.
-  - **Écarts restants** :
-    - le knob tenu est invisible (notre DetailPen vaut 2) ;
-    - une icône partiellement visible n'était pas dessinée : corrigé en (29) (DamageList + BeginUpdate, pas InstallClipRegion) ;
-    - les flèches ne se répétaient pas (INTUITICKS absent) : corrigé en (28).
-  (19) **Preferences : SetPrefs, chargement de devs:system-configuration, PointerTicks** (spec intuition-prefs-v34,
-  relue clean-room ; Preferences 34.66 s'affiche et montre les mêmes valeurs que la vraie 1.3).
-  - **graphics SetFont** ne touche plus D0 : Preferences teste au retour le D0 laissé par son OpenFont (sortie
-    silencieuse sinon). **SetRGB4** (−288) : ColorTable, MOVE du fragment de la ViewPort et de la liste maîtresse.
-  - **intuition (prefs.s)** : copie courante de 232 octets dans IntuitionBase.
-    - GetPrefs (−132) la copie ; GetDefPrefs (−126) copie les valeurs par défaut et l'image du pointeur ; copie bornée
-      signée, ViewInitX/Y remplacés par les décalages de la vue.
-    - SetPrefs (−324) : copie, ext_size à 0, puis police par défaut (topaz 8 ou 9 selon FontHeight), police de
-      l'écran WB, décalage de la vue, couleurs 0-3 et 17-19 de l'écran WB (SetRGB4), image et décalage du pointeur ;
-      `inform` : NEWPREFS à chaque fenêtre qui l'a demandé.
-    - Lus à la volée : DoubleClick (délai des Preferences), PointerTicks, XOffset/YOffset, couleurs WB à OpenScreen.
-  - **Pointeur** : un compte souris vaut un pixel hires (une demi-ligne en Y) divisé par PointerTicks, comme sur la
-    1.3 (mesuré sur la vraie ROM) ; nos positions étant lores, chaque delta est divisé par 2 × PointerTicks avec report
-    du reste. Le pointeur allait auparavant deux fois trop vite.
-  - **dos (CLI initial)** : après les assigns, `devs:system-configuration` (232 octets exactement) passe à
-    SetPrefs(…, 232, TRUE). Écarts voulus : les couleurs 0 à 3 restent celles du thème du projet ; l'extension
-    ext_size est ignorée (intuition V34 borne à 232).
-  - Valeurs par défaut de la spec, sauf couleurs (thème), couleurs et décalage du pointeur (notre image).
-  - Le cadre de centrage de Preferences (PROPGADGET sans AUTOKNOB, fond au DetailPen de la fenêtre, hérité de l'écran)
-    est noir chez nous au lieu de la couleur 0 : conséquence du thème (DetailPen 2 sur l'écran WB), pas un bug du rendu.
-  - **Non faits** : RemakeDisplay (le décalage de la vue n'a pas d'effet visible), ajustement lignes/colonnes,
-    transmission KeyRptDelay/Speed à input.device (pas de répétition clavier chez nous).
-  (20) **Caesar se charge depuis la disquette** (spec caesar-boot, relue clean-room ; parcours identique à la vraie
-  1.3 : intro FAIRLIGHT, clic, `play caesar`, choix de la langue, écran titre, menu du jeu).
-  - **graphics, schéma copper de la 1.3** : COP1LC pointe sur un copinit (attente ligne 12, MOVE COPJMP2) ; LoadView
-    et un serveur VBlank (pri 10) écrivent COP2LC avec la liste de la vue affichée. Un programme qui écrit COP2LC
-    interruptions coupées (intro FLT de Caesar) voit sa liste affichée jusqu'à ce qu'il les rétablisse.
-  - **intuition RemakeDisplay / RethinkDisplay** (−384/−390) : liste copper refaite depuis l'écran de tête.
-    `caesar.boot` passe l'écran actif à 1 plan (Depth := 1, FreeRaster du plan 2) puis appelle RemakeDisplay ; sans
-    lui, le copper affichait le plan libéré (pixels parasites).
-  - **dos LoadSeg en flux** (`ls_load_stream`) : tampon de lecture de 2 Ko rechargé par Read, gros hunks lus
-    directement à leur place, IoErr 103 (mémoire) ou 121 (format). Le shell charge ses commandes par LoadSeg au lieu
-    de lire le fichier entier. `csr.exe` (126 Ko compactés, 657 Ko de hunks) ne tenait pas avec un tampon du fichier
-    entier et sortait en « Error code 121 ».
-  - Après `caesar.boot`, l'écran WB n'a qu'un plan : le stylo 2 du thème se confondait avec le fond (texte invisible,
-    frappe « à l'aveugle »). La console prend désormais la couleur voisine du fond quand texte et fond tombent sur la
-    même couleur une fois réduits aux plans de la BitMap (blanc sur vert).
-  (21) **Compatibilité exec/dos avec les intros et jeux de la suite ADF** (spec cracktros-exit, loadwb-13 ; sondes boîte
-  noire `tests/memmap.s` et `tests/reslist.s` sur la vraie ROM). Scooby-Doo va jusqu'à l'écran titre, Monkey Island et
-  SimCity reviennent au Workbench après leur intro, comme sur la vraie 1.3.
-  - **ExecBase dans LibList** (première bibliothèque, avant expansion puis graphics) : des programmes y retrouvent
-    GfxBase par `ExecBase->ln_Succ->ln_Succ` pour restaurer le copinit.
-  - **IntVects public** à ExecBase+$54 (16 × {iv_Data, iv_Code, iv_Node}) ; SetIntVector rend l'ancien Interrupt ; les
-    listes de serveurs restent dans un bloc privé (EB_INTSVL). graphics installe `bltsrv` (GfxBase+$76) par
-    SetIntVector(INTB_BLIT) avec is_Data = GfxBase et son serveur VBlank dans `vbsrv` (+$4A) : des intros lisent
-    `IntVects[INTB_BLIT].iv_Data` pour retrouver GfxBase.
-  - **ExecBase, table de sauts et pile superviseur en chip basse** : table $1000-$1276, ExecBase $1276, région du test
-    multi-header $1500-$2500 (marge sous la pile ensuite), pile superviseur $2500-$3500, tas $3500-$80000. Le haut de
-    la chip reste libre comme sur la vraie 1.3 (intros : routine à $7F000, pile à $7FFFE, plans à $70000+).
-  - **Aucun vecteur TRAP utilisé par exec** : Wait/yield/RemTask(self)/Supervisor entrent en superviseur par une
-    violation de privilège sur un site connu de la ROM (macro EXEC_SVC : `ori.w #0,sr`, mot magique, adresse du
-    service ; gestionnaire au vecteur $20). Les programmes installent souvent leur code au vecteur TRAP #0 pour passer
-    en superviseur ; TRAP #0-#15 vont désormais tous au tc_TrapCode de la tâche.
-  - **Liste Resident initiale** : nœud « CLI » système (usage -1, seglist = CLI ROM). EndCLI y décrémente le compteur
-    du nœud « CLI » qu'il cherche ; sans lui, il décrémentait l'adresse 4 (pointeur ExecBase) et tout s'écroulait
-    (fin de startup « endcli » sans `resident CLI` préalable). La vraie ROM a FileHandler, Restart et CLI ; nous n'avons
-    pas de seglists BCPL pour les deux premiers.
-  - Le gestionnaire d'exception rétablit SERPER avant d'écrire « SOFTWARE FAILURE » (un programme a pu changer la
-    vitesse du port).
-  (22) **SimCity et Monkey Island lancés depuis le CLI** (spec monkey-startup ; trace dos `-DDOSTRACE=1`). SimCity
-  atteint son menu, Monkey Island son écran titre (« Appuyez sur ENTER », générique).
-  - **console.device** : OpenDevice en unité -1 (CONU_LIBRARY, sans fenêtre) et **RawKeyConvert** (−48) : caractère par
-    kbd_cook, séquences CSI des flèches, F1-F10 et Help (variantes Shift), 0 sur un relâchement, -1 si le tampon est
-    trop court.
-  - **graphics** : LoadRGB4 (−192) ; listes copper utilisateur **UCopperListInit** (−594), **CMove**, **CWait**, **CBump**
-    (−372/−378/−366) ; MakeVPort recopie `vp_UCopIns` en fin de fragment (WAIT ramené à la ligne réelle, passage de la
-    ligne 255, CEND), FreeVPortCopLists les libère. Monkey y place un saut COP1LC/COPJMP1 vers ses propres listes.
-    **DMA blitter actif dès l'init** : un programme qui sauve puis restaure DMACON (intro defjam) le coupait sinon
-    pour de bon, et le premier WaitBlit du jeu ne rendait jamais la main.
-  - **OFS** : Seek direct par les tables de blocs de l'en-tête et des blocs d'extension (bloc pos/488), au lieu de
-    suivre la chaîne des data blocks.
-  - Restant : le lecteur de musique de Monkey prend le vecteur $78 (niveau 6) sans chaîner ; notre MICROHZ est sur
-    CIA-B (niveau 6), la vraie timer.device sur CIA-A. Le feeder clavier et le handler console attendent sur MICROHZ.
-  (23) **Clavier sous WinUAE** (signalé par l'utilisateur ; spec keyboard-handshake-v34 pour la référence). Les index
-  du tampon du feeder (KBD_FHEAD/KBD_FTAIL) n'étaient jamais initialisés : FS-UAE met la RAM à zéro à l'allumage,
-  WinUAE (comme une vraie machine) non ; un index impair faisait une erreur d'adresse dans l'interruption clavier au
-  premier appui, qui restait bloquée au niveau 2 (plus de poignée de main, plus aucune touche, souris intacte). Le
-  coldstart met désormais à zéro toute la zone des variables de RAM basse ($500-$800). Diagnostic sous WinUAE Linux
-  (Xvfb, `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1`, focus de la fenêtre) avec des jalons de couleur (COLOR00 de la
-  liste copper affichée) dans l'interruption, faute de série et de débogueur.
-  (24) **PrintIText/DrawBorder rendent le RastPort intact ; ClearEOL/ClearScreen** (signalé par l'utilisateur : page
-  MEMORY de SysInfo illisible après NEXT/PREV). SysInfo efface ses valeurs en écrivant des espaces, en comptant sur
-  le stylo et le mode JAM2 réglés une fois pour toutes dans le RastPort de sa fenêtre ; le rendu du gadget cliqué
-  (PrintIText interne) y laissait stylo 1 / JAM1 -> espaces invisibles, valeurs superposées. Sonde boîte noire
-  `tests/itextstate.s` : sur la vraie 1.3, PrintIText et DrawBorder rendent stylo A, stylo B et mode intacts ; les
-  nôtres les sauvegardent et les restaurent désormais. graphics : `ClearEOL` (−42 : de cp_x au bord droit, sur la
-  hauteur de la police alignée sur la ligne de base) et `ClearScreen` (−48 : idem puis tout le dessous), couleur =
-  stylo B en JAM2, 0 sinon ; pixels identiques à la vraie ROM (sonde `tests/cleareol.s`).
-  (25) **Écran SCREENQUIET : jamais de barre de titre**. SysInfo ouvre son écran en CUSTOMSCREEN | SCREENBEHIND |
-  SCREENQUIET (trace des appels OpenScreen/OpenWindow : Type $118F ; fenêtre BORDERLESS non BACKDROP ; ShowTitle
-  jamais appelé). OpenScreen ne créait pas de couche de barre, mais l'activation d'une fenêtre (`wn_scrtitle`) appelait
-  `sc_drawbar`, qui se rabattait sur le RastPort de l'écran entier : barre noire dessinée par-dessus la fenêtre au
-  premier clic. `sc_drawbar` ne fait plus rien sans couche de barre (comme la vraie 1.3, qui n'affiche aucune barre).
-  Suite ADF de fin d'étape désormais sous **WinUAE Linux** (`tests/adf_suite_winuae.sh`, série par
-  `unix.serial_port`) au lieu d'Amiberry.
-  (26) **Autoconfig Zorro II** (`src/exec/expansion.s`, spec `docs/analysis/autoconfig-v34.md` produite par un agent
-  d'analyse séparé, relue sans code transcrit). ExpansionBase au layout V34 ($1C8 : eb_BoardList $3C, eb_MountList
-  $4A, table de 256 slots de 64 Ko $58, sémaphore de binding $158). L'init du résident (pri 110, après la slow RAM)
-  libère l'espace mémoire $200000-$9FFFFF et l'espace E/S $E90000-$EFFFFF, puis ConfigChain($E80000) : lecture de
-  la ROM de chaque carte (17 octets, type non inversé, validation + 11 relectures), slots au premier ajusté (E/S
-  d'abord sous 8 slots ; 4 Mo en $200000 puis $600000), adresse écrite au registre $48 (quartet haut en dernier),
-  RAM ajoutée par AddMemList(MEMF_FAST|MEMF_PUBLIC, pri 0, « expansion ram »), DiagArea copiée (largeur nibble /
-  octet / mot) et DiagPoint appelé (A0 carte, A2 copie, A3 ConfigDev, A5 ExpansionBase, A6 ExecBase) ; sans place :
-  sommeil (CDF_SHUTUP) ; carte NOSHUTUP sans place : chaîne bouchée, sans post-configuration (écart volontaire : la
-  1.3 la ferait sur l'adresse -1). Les 25 LVO sont implémentés (Read/WriteExpansionByte, ReadExpansionRom,
-  ConfigBoard/Chain, Alloc/FreeExpansionMem, Alloc/FreeBoardMem, RemConfigDev, bindings, MakeDosNode, AddDosNode :
-  liste DOS si dos.library est là, sinon BootNode dans eb_MountList). exec : chip en pri -10, MemHeaders nommés
-  « Fast Memory » (slow RAM) et « Chip Memory » comme en 1.3. Vecteurs de la spec reproduits (sonde
-  `tests/cfgdev.s`, FS-UAE) : 64K/$E9, 256K/$EC, 2 Mo, 8 Mo (avec et sans slow RAM), 1 Mo + 4 Mo ($600000), 8 Mo
-  + 1 Mo (sommeil, $FF000000). Carte disque UAE : configurée en $E90000, DiagArea copiée et exécutée, mais pas de
-  ConfigDev en $F00000 ni de DH0: (à instruire : scan des résidents hors ROM / BootPoint). Bornes de slow RAM et
-  chip différentes de la 1.3 (disposition propre de notre exec, hors autoconfig).
-  (27) **timer.device : MICROHZ sur le timer B de CIA-A** (spec `docs/analysis/timer-v34.md`, agent d'analyse, relue ;
-  adresses ROM retirées). L'init prend le bit 1 de ciaa.resource (AddICRVector) : MICROHZ est servi au niveau 2,
-  comme la 1.3. Plus aucun timer de CIA-B n'est programmé en production : un jeu qui détourne $78 sans chaîner (musique
-  de Monkey Island) ne casse plus les délais (sonde `tests/timerprobe.s`, test HJ6 : MICROHZ 0,5 s intact). La ROM dev
-  garde une source de niveau 6 de preuve (timer A de CIA-B, m7_int6_probe) pour M7d/M7e. Ajouts : AddTime / SubTime /
-  CmpTime (LVO -42/-48/-54, sémantique exacte de la 1.3), AbortIO rend -1 hors file, Open pose io_Unit (0/1) et refuse
-  l'unité >= 2 (IOERR_OPENFAIL ; avant, une ouverture VBLANK tombait en MICROHZ), Close remet io_Device/io_Unit à -1,
-  VBLANK terminé au k-ième VBLANK (k = max(1, ⌈T/20 ms⌉)), heure strictement croissante (+1 µs par lecture dans une
-  trame, remis à zéro par SETSYSTIME). Corrections d'interruptions trouvées en route : INTREQ PORTS/EXTER acquitté
-  AVANT la chaîne (sinon un événement CIA survenu pendant le service était effacé) ; reprise au VBLANK quand le one-shot
-  est fini sans interruption servie (FS-UAE perd l'événement d'ICR quand sa file « event2 » de 10 places déborde :
-  le bit IR du CIA-A restait levé et plus aucune interruption de niveau 2 — clavier compris — n'arrivait).
-  Précision MICROHZ (mesurée le 2026-10-26, tests/timerprobe.s, ROM prod, en lignes de 64 µs) : l'écart de ~5 % sous
-  charge venait des ~110 services/s du feeder clavier ; depuis (28) le feeder attend en VBLANK. {1,0} = 15 733 lignes
-  (1,0069 s ; vraie 1.3 : 15 820, 1,0125 s, décompte nominal et constante NTSC), {0,100000} = 1 591 (identique à la
-  1.3), {0,250000} = 3 946-3 951 (1.3 : 3 959), même avec un `list sys: all` en tâche de fond. Reste un surcoût fixe
-  par requête d'environ 8 lignes de plus que la 1.3 (requête de 0 µs : 20 lignes contre 12). Quantum/Elapsed
-  d'ExecBase non posés.
-  (28) **Répétition clavier et INTUITICKS** (spec `docs/analysis/intuiticks-repeat-v34.md`, agent d'analyse, relue ;
-  sonde `tests/ticks.s`). Le feeder (`src/dos/feeder.s`) joue le rôle de la tâche d'input.device 1.3 : il attend une
-  trame en VBLANK (plus de MICROHZ toutes les 10 ms), envoie un IECLASS_TIMER toutes les 5 trames et répète la
-  dernière touche enfoncée de code < $60 (copie de l'événement + IEQUALIFIER_REPEAT $0200), d'abord après le délai
-  puis à la période d'input.device. Arrêt : enfoncement d'un qualificatif (>= $60), relâchement de la touche répétée,
-  ou qualificatif changé ((répété & $05FF) != (courant & $07FF)). Les événements sont horodatés (TR_GETSYSTIME).
-  input.device : IND_SETTHRESH / IND_SETPERIOD (12/13, timeval de la requête ; défauts 0,8 s / 0,1 s) ; Preferences
-  (`pf_keyrpt`) y envoie KeyRptDelay / KeyRptSpeed. `kbd_interrupt` passe désormais TOUS les événements au feeder
-  (relâchements et qualificatifs compris) ; la répétition dépose aussi son caractère dans l'anneau cuit du CLI de
-  l'écran (`kbd_pushcooked`, sous Disable). Intuition : IECLASS_TIMER -> tâche d'entrée -> INTUITICKS à la fenêtre
-  active seulement si elle l'a demandé et si son INTUITICKS précédent est rendu (un seul en circulation) ;
-  **ModifyIDCMP** (-150) implémenté. Workbench : flèche de défilement tenue sans Shift -> INTUITICKS ajouté à l'IDCMP,
-  un pas par INTUITICKS ou MOUSEMOVE tant que la flèche est SELECTED, retiré au GADGETUP. Prouvé : « a » tenu 2 s
-  -> ~50 « a », Shift+b -> « BBB… » ; flèche gauche d'un tiroir tenue 3 s -> défilement continu, arrêt au relâchement.
-  (29) **InstallClipRegion et découpage des icônes du WB** (specs `docs/analysis/installclipregion-v34.md` et
-  `wb-icon-clipping-v34.md`, agents d'analyse, relues ; sonde `tests/clipreg.s`). layers.library : **InstallClipRegion**
-  (-174, `ly_ClipRegion` +$7E) ; `lr_clip` remplace la liste normale (gardée dans `_cliprects`) par ses ClipRects ∩ C,
-  C = ClipRegion, ou DamageList (∩ ClipRegion) pendant BeginUpdate ; les parties cachées avec sauvegarde reprennent le
-  BitMap d'origine (emprunté : dessiner dedans écrit la sauvegarde, rien à recopier au retrait) ; région vide -> aucun
-  ClipRect ; mémoire insuffisante -> LAYER_CLIPRECTS_LOST. `lr_unclip` défait. BeginUpdate/EndUpdate passent par ces
-  deux routines (EndUpdate remet la liste réduite à la région) ; LockLayers défait les listes réduites au premier niveau
-  (`LayerInfo+$5B`), UnlockLayers les reconstruit au dernier : les opérations de couches voient les listes normales et la
-  région suit la couche. Sonde T0-T6 : mêmes ClipRects et pixels que la vraie 1.3 (ordre des ClipRects non normatif).
-  intuition : `it_unclip`/`it_reclip` (verrou de couche + région retirée au premier niveau, compteur par fenêtre) autour
-  du cadre, de la barre de titre, des gadgets système et d'application, des knobs et des gadgets texte. Workbench (spec
-  §1-§6) : plus de test « icône entière » ; chaque dessin passe par `wb_updopen`/`wb_updclose` (DamageList remplacée par
-  le rectangle de contenu, vrais dommages gardés dans Window->UserData, BeginUpdate ; mode 0 = dommages ∩ contenu pour
-  REFRESHWINDOW, seulement si LAYERREFRESH) : une icône à cheval sur le bord est dessinée en entier et coupée net, nom
-  compris ; seule une icône à plus de 4 × la taille de l'écran est sautée ; le clic n'est pris que dans le contenu. La
-  jauge d'un disque est dessinée hors mise à jour. Écart : ordre de dessin des icônes = ordre du tableau (la 1.3 va de
-  la queue vers la tête de sa liste).
-  (30) **Requesters** (spec `docs/analysis/intuition-requesters-v34.md`, relue ; sonde `tests/reqtest.s`).
-  `src/intuition/request.s` : **Request** (-240 : couche LAYERSMART au coin LeftEdge/TopEdge, intérieur d'une fenêtre
-  GZZ, rognée à la fenêtre, devant le requester précédent sinon devant la fenêtre ; une seule opération de couches
-  quand cette couche est déjà tout devant ; fond BackFill, ReqBorder, ReqText, gadgets à rebours, ImageBMap si
-  PREDRAWN ; REQGADGET posé ; chaîne, ReqCount, INREQUEST ; REQSET), **EndRequest** (-120 : retrait même hors tête,
-  DeleteLayer, REQCLEAR et INREQUEST effacé au dernier, fenêtre réparée), **InitRequester** (-138), **SetDMRequest** /
-  **ClearDMRequest** (-258/-48, refusés si le DMRequest est affiché). gadgets.s : un gadget de requester a pour
-  domaine le requester et se dessine dans sa couche (`gad_reqof`, `rq_origin`) ; pendant un requester les gadgets de
-  la fenêtre sont inertes, seuls ceux du plus récent répondent (clic sur sa couche) ; **ENDGADGET** relâché dessus
-  le termine (REQCLEAR à chaque fois). screens.s : sans NOISYREQ, RAWKEY / MOUSEBUTTONS / MOUSEMOVE / INTUITICKS /
-  MENUPICK sont avalés (`wn_post`) et les menus ne s'ouvrent pas ; la fermeture est refusée ; les couches des
-  requesters suivent MoveWindow et les changements de profondeur ; CloseWindow retire les requesters restants.
-  sysreq.s : **BuildSysRequest** (-360 : fenêtre « System Request » + requester NOISYREQ, mémoire en liste Remember
-  dans Window->UserData), **FreeSysRequest** (-372), **AutoRequest** construit dessus (ScreenToFront de son écran).
-  **ScreenToFront / ScreenToBack** (-252/-246) : tête / queue de la liste des écrans, l'écran de tête est affiché.
-  Sonde : Request ×2, EndRequest hors tête, ENDGADGET, AutoRequest (Amiga-V / Amiga-B, AvailMem identique avant /
-  après), écrans : tout conforme ; DiskCopy affiche son invite et Cancel le termine. Écarts : pas de repli DisplayAlert
-  (FALSE), SizeWindow ne rogne pas la couche d'un requester, les gadgets d'un requester PREDRAWN sont dessinés tout
-  de suite.
-  (31) **Boot sur la carte disque UAE (DH0:)** (specs `docs/analysis/uae-hd-boot-v34.md` et `uae-int2-v34.md`, agents
-  d'analyse, relues). `src/exec/romboot.s` : **romboot.library** (COLDSTART pri -40) ; à son init, pour chaque ConfigDev
-  CONFIGME à DiagArea copiée (Diag valide, CONFIGTIME), la première ROMTag de la copie est initialisée (InitResident)
-  sous ObtainConfigBinding / SetCurrentBinding (sous UAE : uaehf.device, qui monte DH0 et enfile son BootNode
-  NT_BOOTNODE dans eb_MountList) ; **RomBoot** (-30) appelle le BootPoint de chaque BootNode amorçable (A0 = adresse,
-  A1 = ConfigDev, aussi en 4(sp), A6 = ExecBase ; BootPoint nul ignoré). strap : DF0: amorçable -> BootNode DF0: de
-  priorité 5 enfilé (`dos_df0bootnode`) ; sinon RomBoot une fois avant l'écran insert-disk. **dos.library** : sa
-  ROMTag a désormais un rt_Init en code (plus AUTOINIT) : au premier appel (InitCode) il construit la bibliothèque, aux
-  suivants (BootPoint UAE, qui fait FindResident puis appelle rt_Init) il saute à `boot_dos_start` (suite du démarrage,
-  sans retour). `dos_mountlist` : la tête de eb_MountList est retirée et son DeviceNode devient le périphérique de
-  démarrage (DL_BOOTDEV) ; les DeviceNodes des BootNodes sont ajoutés au fond de di_DevInfo. `dos_boot_assigns` : SYS:,
-  C:, S:, L:, DEVS:, LIBS:, FONTS: et le répertoire courant sur ce périphérique ; nœud volume de la disquette de DF0:
-  créé dans tous les cas (notre handler ne le fait pas). Preuve M7B : le timer A de CIA-A en one-shot (en continu à
-  360 µs, il saturait le niveau 2 dès que la DiagPoint UAE ajoutait son serveur PORTS ; la vraie 1.3 ne l'arme jamais
-  au boot). Prouvé (ROM prod, FS-UAE `hard_drive_0`) : disquette vierge -> boot DH0, SYS: = hddir: ; Workbench
-  amorçable + DH0 pri 0 -> Workbench sur la disquette, DH0 monté ; DH0 pri 5 -> bootblock exécuté puis SYS: = hddir:.
-  Écarts : exec ne balaie pas $F00000-$F7FFFF ni le saut $1111 de cartouche ; dos existe avant romboot (la 1.3 ne le
-  crée qu'au démarrage) ; DF0 n'apparaît pas deux fois (artefact 1.3 avec une carte prioritaire) ; le Workbench
-  n'affiche que l'icône du disque de démarrage.
-  (32) **trackdisk : fin de DMA par interruption** (`td_dmawait`) : le multitâche en marche, la lecture et l'écriture
-  d'une piste démasquent DSKBLK (vecteur exclusif de niveau 1, `td_dskblk_int`) et la tâche attend SIGF_SINGLE ; le
-  serveur VBlank de trackdisk réveille au bout d'1 s sans fin de DMA (pas de disque). Avant, le handler DF0: (pri 6)
-  interrogeait INTREQR pendant chaque révolution : aucune tâche de priorité inférieure (CLI, applications) n'avait le
-  processeur tant que le disque travaillait. Au boot (strap) : interrogation inchangée. « Blocage » de deux
-  `list sys: all` : en fait tests/timerprobe.s attendait une égalité exacte de son compteur de trames, ratée dès que
-  le CLI perdait le processeur plus d'une trame ; ses attentes sont maintenant « au moins ».
-  (33) **Volume plein** (spec `docs/analysis/disk-full-write-v34.md`, agent d'analyse, relue ; sonde `tests/diskfull.s`).
-  Échec « intermittent » de `join` : 25 jointures de 27,5 Ko sur disque libre sont exactes à l'octet ; sur un disque
-  presque plein, le fichier était tronqué sans rien afficher (seule reproduction trouvée ; rien ne prouve que l'échec
-  d'origine avait cette cause). La vraie 1.3 ne fait pas mieux côté Join (il ne teste pas ses écritures, rend 0) mais dos ouvre à chaque
-  Write qui échoue faute de place le requester « Volume / <nom> / is full » (Retry / Cancel) et bloque jusqu'à la
-  réponse. `dos_rawwrite` : Res1 = -1 et IoErr 221 -> `dos_fullreq` (volume = nœud DLT_VOLUME du même handler ; repli
-  « ? ») ; Retry renvoie le packet, Cancel rend -1 (IoErr 221 conservé). Le requester système est commun avec « Please
-  insert volume » (`vr_req`). Écritures différées du runtime BCPL (`dos_bufwrite`) : un vidage qui échoue fait rendre
-  -1 à l'écriture en cours (avant, l'échec était avalé). Prouvé (ADF jw, 5 × join a b a sur un WB presque plein) :
-  trois requesters annulés au clavier (Amiga-B), puis J5 et FIN comme sur la 1.3 ; j1-j4 identiques à l'octet,
-  j5 = début exact (26 352 octets ; 26 344 sur la 1.3, artefact de fin de bloc non reproduit).
-  Autres échecs intermittents notés plus tôt, remesurés le 2026-10-26 : blocage de la ROM dev au boot avec SysInfo
-  (0 sur 20 boots) et LoadSeg de DiskCopy rendu 121 (0 sur 18 lancements par Duplicate) : non reproduits.
-- **ÉTAPE 10 — PERFORMANCE (CPU, CONSOLE)** : (1) **timer.device MICROHZ en one-shot** : le timer A de CIA-B tournait en
-  continu (latch 255, ~2 780 INT6/s) même sans requête, ce qui coûtait plus de la moitié du CPU (mesure : `copy ram:x to *`
-  9,9 s -> 4,8 s rien qu'en ralentissant ce timer). Désormais chaque requête garde son reste en (secondes, ticks E à
-  709 379 Hz) ; `tm_account` lit le compteur (temps écoulé depuis l'armement), décompte et répond aux requêtes échues,
-  `tm_rearm` arme le one-shot sur l'échéance la plus proche (au plus `TIMER_CAP` = $FFFF ≈ 92 ms). Appelés sous INT6
-  masquée depuis BeginIO (imputation AVANT l'ajout de la nouvelle requête) et depuis le vecteur ICR. File vide : timer
-  arrêté en production ; réarmé toutes les `TIMER_IDLE` = 255 ticks en dev (preuves M7a/M7d/M7e). Armer large compte :
-  un plafond de 255 faisait dériver M7L de plus de 12 % (latence underflow -> réarmement non comptée). (2) **Sortie
-  console BCPL tamponnée** (règle wrch V34) : `dos_bufwrite` tamponne aussi les FileHandles interactifs et les vide dès
-  qu'un LF, CR, FF ou NUL est écrit ; `rdch` vide la sortie courante avant de relire l'entrée (invite sans retour à la
-  ligne) ; la console initiale du shell est allouée comme un FileHandle de dos (`DOS_FH_ALLOC`) pour en bénéficier.
-  Avant : un paquet ACTION_WRITE par caractère (~35 ms chacun). (3) **Text** : voie rapide généralisée (toute abscisse,
-  glyphe décalé sur deux octets masqués ; JAM1 et JAM2). Mesures ROM de production (disque WB, sans FastFonts) :
-  `copy ram:x to *` 27 s -> 4,6 s ; `type ram:x` (1,4 Ko) 68 s -> 9,3 s. SysInfo : 552 Dhrystones, 1,04 × A600 (169
-  avant) — le « 3× sous un A500 » venait du timer continu. **ScrollRaster** : milieu de ligne copié par longs quand
-  source et destination ont la même parité ; voie rapide quand une ClipRect visible contient tout le rectangle
-  (fenêtre non recouverte : plus de parcours des ClipRects à chaque ligne) -> `type` 9,3 -> 6,9 s. Un défilement
-  de la console coûte encore ~5 trames (copie CPU) : le blitter reste la vraie solution.
-  (4) **Échecs de commande fidèles à la 1.3** (`sh_report`, shell.s), comportements relevés par sonde boîte noire
-  sur la vraie KS 1.3 (startup-sequence de test, captures d'écran) : commande introuvable -> « Unknown command
-  <nom> » ; fichier non chargeable (LoadSeg refuse, ex. hunk V39 $3FD) -> « Unable to load <nom>: Error code 121 »
-  (ERROR_FILE_NOT_OBJECT ; « Error code » faute de C:Fault) ; dans les deux cas un script non interactif est
-  abandonné sans autre message. Code retour >= cli_FailLevel en non interactif -> « <nom> failed returncode <n> » puis
-  abandon. Appliqué à la startup-sequence, aux scripts d'Execute et au CLI ROM. Écart restant : les messages
-  d'erreur des commandes (« Error code 205 » au lieu de « object not found » : la 1.3 obtient le texte via C:Fault).
-- **ÉTAPE 10 (SUITE) — DATES, DISCARD, FASTFONTS** : (1) **heure système** : `timer_now`/`timer_setnow` (timer.s),
-  `DateStamp` réel (dos_now : jours/minutes/ticks depuis le 1-1-1978, copie dans rn_Time du RootNode) ; globales BCPL
-  **128 setdatstamp** (TR_SETSYSTIME) et **126 compstamp** (spec bcpl-runtime-v34.md §8.4) : `C:Date` règle et lit
-  l'heure. (2) **dates OFS** (`ow_stamp`/`ow_touch`) : en-tête daté à la création et à la fermeture d'un fichier écrit,
-  répertoire parent à l'ajout / à la suppression d'une entrée, racine : modification + dernière altération du disque.
-  (3) **AutoRequest** (`src/intuition/sysreq.s`, LVO -348) : fenêtre « System Request », corps PrintIText, gadgets
-  positif / négatif dimensionnés sur leur texte, réponse par GADGETUP ou drapeaux IDCMP. (4) **Workbench Discard** :
-  confirmation, suppression récursive d'un tiroir (`wb_rmtree`) et du « .info », tiroir relu (`wb_reload`). Prouvé
-  à la souris sur une copie du disque WB (tiroir Empty) et relu par xdftool. (5) **BltTemplate** (graphics -36) :
-  gabarit d'un plan aux stylos et mode courants, découpé par les ClipRects — FastFonts (C:FF de la startup WB) dessine
-  tout son texte par là : avec SetFunction réel, le texte du WB était invisible (spec `docs/analysis/fastfonts-ff.md`).
-  LockLayerRom/UnlockLayerRom ignorent une couche nulle. Constat : `list df0:` ~1 min pour 26 entrées (lenteur, pas
-  blocage) — à mesurer en ROM de production.
-- **GADGETS D'APPLICATION (intuition)** (`src/intuition/gadgets.s`) : la liste `wd_FirstGadget` (reprise de
-  `nw_FirstGadget`) est dessinée avec le cadre de la fenêtre (Border via DrawBorder ou Image, IntuiText, surbrillance
-  GADGHCOMP/GADGHBOX par inversion, SelectRender en GADGHIMAGE) ; positions/tailles GRELRIGHT/GRELBOTTOM/GRELWIDTH/
-  GRELHEIGHT. Bouton gauche sur un gadget actif (ni SYSGADGET ni GADGDISABLED) : sélection (bascule en TOGGLESELECT),
-  GADGETDOWN si GADGIMMEDIATE ; relâchement : désélection, GADGETUP si RELVERIFY et pointeur encore dessus ;
-  `im_IAddress` = le gadget (`wn_sendgad`) ; aucun MOUSEBUTTONS pour un clic pris par un gadget. LVO : AddGadget,
-  AddGList, RemoveGadget, RemoveGList, RefreshGadgets, RefreshGList, OnGadget, OffGadget, DrawBorder. Limites : tous
-  traités en boutons (pas de PROP/STRGADGET), pas de motif fantôme pour un gadget désactivé, surbrillance non suivie
-  pendant le glissement. Preuve : clic sur SPEED de SysInfo → test de vitesse exécuté (ROM prod : 68000 7.09 MHz,
-  169 Dhrystones, Chip 0.32 × A600 — écart de performance à étudier).
-  Specs d'analyse : `docs/analysis/setpatch-138.md`, `docs/analysis/sysinfo-44.md`. Banc : `tests/adf_suite.sh`
-  (boot de chaque ADF de `assets/test_adf/`, copies inscriptibles, résumé + captures).
-- **ÉTAPE 10 (EN COURS) — ÉCRITURE DISQUETTE** : (1) **trackdisk** : CMD_WRITE dans le cache de pistes (piste
-  partiellement couverte relue d'abord), TD_FORMAT, CMD_UPDATE/CLEAR, TD_MOTOR/PROTSTATUS/CHANGENUM/CHANGESTATE/
-  GETNUMTRACKS ; codage MFM AmigaDOS (garde 700 o + 11 secteurs de 1088 o, en-tête/données impairs puis pairs, sommes
-  XOR, bits d'horloge) ; DMA d'écriture avec précompensation à partir du cylindre 40 ; refus si /WPRO. (2) **écriture
-  OFS** (`src/dos/ofswrite.s`) : contexte unique (`DOS_OWCTX`), bitmap gardée en mémoire (refus si bm_flag invalide),
-  allocation à partir de la racine, création fichier/répertoire (chaîne de hachage, remplacement d'un fichier
-  existant), suppression (répertoire vide exigé), renommage/déplacement (retour à l'origine si la destination échoue),
-  protection, commentaire, informations disque ; flux d'écriture par handle (blocs de données type 8, tables remplies
-  depuis la fin, extensions T_LIST au-delà de 72 blocs). (3) **handler DF0:** : FINDOUTPUT/FINDUPDATE, WRITE, END
-  d'un état d'écriture, DELETE_OBJECT, RENAME_OBJECT, CREATE_DIR, SET_PROTECT, SET_COMMENT, INFO/DISK_INFO.
-  (4) **dos** : DupLock, Info, SetComment, SetProtection. Prouvé sous FS-UAE (`writable_floppy_images`) et relu sur
-  l'hôte par `xdftool` : makedir, `echo >fichier`, copy (identique à l'octet), join (fichier > 72 blocs), rename,
-  protect, filenote, delete. **Ouvert** : un échec intermittent de `join` vers DF0: (1 fois, puis 23/23 réussis ;
-  symptôme compatible avec une écriture trackdisk refusée en cours de paquet), `list` bloqué sur un répertoire écrit
-  (DateStamp renvoie toujours 0), dates des en-têtes non posées.
-- **ÉTAPE 9 (SUITE) — CLI, CONSOLES, ICÔNES** : (1) **CLI ROM** (`src/dos/shell.s`, `rcli_*`) : segment au format BCPL (globale 1 = `start(pkt)`) posé en `rn_ConsoleSegment` et en entrée 4 du segarray du CLI initial ; contrat §13.6/§13.7 de l'analyse : CLI effacée avec ses 4 tampons (dont cli_CommandFile) rangée dans pr_CLI, appel BCPL de l'init du packet avec **A0 = 0**, `r > 0` appelé avec pr_Result2, cli_Interactive calculé (recalculé en fin de script), sortie mémorisée resélectionnée à chaque tour, invite `%N`, lecture caractère par caractère de cli_CurrentInput (tampon BCPL puis Read), fin d'un CLI de fond selon r (Run : fermeture des flux ; Execute : bits 0/1 puis returnpkt), libération de cli_CommandDir, du répertoire courant et du slot. Run, Execute() et NewCLI fonctionnent sans résident « CLI ». (2) **Shell initial** : redirections `<nom` / `>nom` (arguments injectés dans l'entrée redirigée, « Can't open »), scripts d'Execute (`sh_runscript` : cli_CurrentInput suivi jusqu'à sa fin, fichier temporaire supprimé), pr_ConsoleTask = console initiale (sortie `*` des CLI de fond), Forbid autour des commandes réservé à la ROM de dev. (3) **Nœuds DOS** CON, RAW (handler ROM `src/dos/conwin.s`, un process et une fenêtre par Open, édition de ligne en CON, brut en RAW, lecture console asynchrone, READ/WRITE/END/WAIT_CHAR/SCREEN_MODE/DISK_INFO), SER, PAR, PRT (`L:PORT-HANDLER` du disque), GV partagé du CLI initial. (4) **console.device** : liste des unités ouvertes, touches servies à l'unité de la fenêtre active (sinon tête de file) ; la console initiale ne prend l'anneau clavier que si sa fenêtre est active. (5) **intuition** : ReportMouse, MOUSEMOVE (un message en attente est mis à jour, pas doublé), SELECTUP envoyé à la fenêtre active. (6) **Workbench** : icônes déplaçables (cadre fantôme XOR, position mise à jour en mémoire, fenêtre redessinée). (7) **layers** : une ClipRect visible restée en place et en partie découverte est recopiée directement des sauvegardes vers l'écran (fermeture d'un tiroir ≈ 0,5-1 s en production au lieu de 1,5-2 s). **Portée honnête** : pas d'écriture disquette (Rename, Discard, Snapshot impossibles), pas de `>>`, VSprites non affichés, Info non fait.
-- **WORKBENCH 1.3.3 — ÉTAPE 6 : ÉCRAN WORKBENCH ET FENÊTRES VISIBLES** : (1) **graphics.library** — primitives de dessin CPU dans un RastPort (`src/graphics/draw.s` : SetAPen/SetBPen/SetDrMd/Move/Draw (Bresenham)/WritePixel/RectFill/SetRast/Text/TextLength/SetFont/InitRastPort/InitBitMap/ScrollRaster vertical), sans layers.library : si `rp_Layer` est posé, ses bornes donnent le décalage ET le découpage ; police 8x8 unique (font8x8, auteurée à la main) ; voies rapides (Text JAM2 aligné sur un octet : écriture directe ; RectFill/ScrollRaster : octets pleins en boucle serrée, seuls les bords masqués) ; table de vecteurs V34 complète (106) ; `MakeVPort` générique (fenêtre HIRES 640, basse résolution 320 ou overscan 352x272, hauteur = DHeight, modulo = BytesPerRow − octets lus), réutilisation des listes copper (vp_DspIns, v_LOFCprList), `FreeVPortCopLists` (−540). (2) **intuition.library** (`src/intuition/screens.s`) — `OpenScreen`/`CloseScreen` (struct Screen V34 de 346 octets + extension privée RasInfo/ColorMap/palette, plans chip, barre de titre et gadgets de profondeur dessinés, palette des préférences 1.3), `OpenWorkBench` (640x256, 2 plans, HIRES), `GetScreenData` (−426), écran de tête affiché via `ib_ViewLord` ; `OpenWindow`/`CloseWindow` réels (fenêtre ramenée dans l'écran, bordures selon les drapeaux, RastPort propre + pseudo-couche aux bornes de la fenêtre, cadre/barre de titre/gadgets dessinés, fenêtre active ; CloseWindow efface sa zone) ; table étendue au jeu V34 (−468) ; GfxBase retenue à l'init (`IB_GFXBASE`). (3) **console.device** — une unité ouverte sur une fenêtre reçoit une **ConUnit** (devices/conunit.h : cu_Window, curseur, bornes) et rend son texte dans le RastPort de la fenêtre : plages imprimables par Text, retour à la ligne automatique, défilement par ScrollRaster, BS/TAB/LF/VT/FF/CR, IND/NEL/RI, ESC c, CSI A-F/H/f/J/K/L/M/m/SPACE p (CSI P = effacement fin de ligne, sans décalage), curseur orange par complément ; `io_Length = -1` (chaîne terminée par NUL). (4) **dos** — `Open("*")` vise `pr_ConsoleTask` ; dp_Res1 non nul = succès ; **packets alignés sur un long** (`dos_sendpkt` et le packet de démarrage de starthandler : un handler BCPL reçoit le packet en BPTR — sur une pile C alignée sur un mot, le packet était tronqué de 2 octets et la réponse partait dans le décor) ; `fl_Volume` des locks DF0: = nœud volume (`DL_VOLUME`, sinon CD reconstruisait le nom du volume depuis l'adresse 0). (5) **BCPL** — globales 105 consoletask / 106 filesystemtask ; qpkt pose `message.ln_Name := packet`. (6) **workbench.task** ouvre l'écran Workbench (`OpenWorkBench`). Preuves (FS-UAE, copies de l'ADF WB 1.3.3, ROM de production) : `copy … to newcon:0/0/640/100/Test` affiche la fenêtre « Test » avec StartupII qui défile ; `NewShell NEWCON:0/11/640/150/AmigaShell FROM s:Demo` ouvre la fenêtre AmigaShell sur l'écran Workbench, exécute `echo` et `dir c:` (deux colonnes, défilement), invite « 2.Workbench1.3:c> » ; une commande tapée au **vrai clavier émulé** (xdotool) s'affiche dans la fenêtre et s'exécute. **Portée honnête** : pas de layers.library (pas de recouvrement ni de rafraîchissement des fenêtres, pas de déplacement/redimensionnement, pas d'IDCMP), pas de pointeur souris visible, une seule police, pas de bureau Workbench (icônes) ; le shell série de secours (E2) lit aussi le clavier après la fin du CLI initial.
-- **TRACKDISK — LECTURE DISQUETTE ×5** (`src/exec/trackdisk.s`, constantes `TD_*` d'`exec.i`) : (1) **moteur maintenu** : une lecture laisse le moteur DF0 allumé (`TD_MOTORON`) ; la suivante saute le spin-up ; un serveur VBlank (`td_motor_server`, `TD_VBLINT`) l'éteint après 2 s d'inactivité (`TD_MOTORIDLE`, compteur `TD_MOTORCNT`, jamais pendant un accès : `TD_BUSY`) ; `td_check_change` conserve l'état du moteur. (2) **seek aux timings du lecteur** : 3 ms entre deux pas (`TD_STEPWAIT`), 18 ms de stabilisation après le dernier (`TD_SETTLE`), au lieu de délais très larges. (3) **cache LRU de 8 pistes décodées** (`TD_NCACHE` × 5632 o en `MEMF_PUBLIC`, emplacement par piste `TD_CTRK`, âge `TD_CAGE`/`TD_CTICK` ; repli sur 1 emplacement si la mémoire manque ; vidé sur `/CHNG`) : remplace le cache d'une seule piste — la FAT OFS (root, bitmap, en-têtes, chaînes) revenait sans cesse sur les mêmes pistes. Mesure, boot complet WB 1.3.3 (FS-UAE, temps réel) : SetPatch 78 s → 12 s, fin de startup-sequence > 400 s → 87 s ; lectures physiques 222 → 103 (58 pistes distinctes ; 16 emplacements : 83 s, gain marginal). Non-régression : GREEN complet avec et sans slow RAM, AUX:/NEWCON:/PIPE:/handlers, boot WB, Holiday Lemmings jusqu'au menu.
-- **OFS lecture seule (D1) FAIT** (`src/dos/ofs.s` + `ofs.i`) : `ofs_read_file` lit un fichier par nom de DF0: (root → hash → header → chaîne data blocks) via trackdisk `CMD_READ`. Format OFS verrouillé empiriquement. Marqueur série **D1** (taille 1024 + marqueurs @0/@488/@976) ; RED `OFS_NO_DATACHAIN` (taille 488). Machinerie INTERNE (pas de packets).
-- **Sous-répertoires OFS FAIT** : `ofs_read_file` prend désormais un CHEMIN '/'-séparé. `ofs_split` découpe composant par composant ; `ofs_dir_lookup(dir, comp)` hashe+parcourt la chaîne du répertoire COURANT (USERDIR intermédiaire = sectype 2 → devient le répertoire suivant ; dernier composant = fichier, sectype -3). `ht_size` : lu du bloc pour le root (72), mais les USERDIR laissent long[3]=0 (mesuré) → fallback `OFS_HTDEF`=72. Les lookups mono-composant (kickslop/D3DTest/e3cmd) passent par le même driver (last=1, root) = non-rég. Le shell ouvre « s/startup-sequence » (sous-rép `s/` de l'ADF). Marqueurs **F1BOOTOK**+**E3 CMD RAN OK** désormais sourcés du sous-rép ; RED `OFS_NO_SUBDIR` ('/' = char normal → chemin cherché en racine → introuvable → F1BOOTOK/E3 absents, D1/E2 SHELL READY intacts).
-- **LoadSeg (D2) FAIT** (`src/dos/loadseg.s`) : `dos_loadseg`/`dos_unloadseg` chargent un exécutable hunk depuis l'OFS, appliquent les relocations (RELOC32 $3EC) et bâtissent la seglist BPTR. Format hunk verrouillé empiriquement. Marqueur série **D2LOADSEG** (émis par le code chargé+relocalisé) ; RED `D2_NO_RELOC`. Machinerie INTERNE.
-- **dos packets / process / handler (D3) COMPLET** (`src/dos/process.s`, `handler.s`, `dos_lib.s`, `loadseg.s`, `dospkt.i`) : **D3a** `proc_create` (Process = Task + `pr_MsgPort` embarqué @0x5C ; port init par le parent, sigbit réservé `DOS_PORTSIG`=8) + round-trip packet (marqueur **D3A**, RED `D3A_NO_REPLY`) ; **D3b** process file-handler DF0: `dos_handler_df0` servant `ACTION_FINDINPUT`/`READ`/`END` via `ofs_read_file`, + helper `dos_sendpkt` (pas de DoPkt public V34) (marqueur **D3B**, RED `D3B_NO_READ`) ; **D3c** `dos.library` `Open`(-30)/`Read`(-42)/`Close`(-36) user-facing via packets — résout le handler par `DosInfo.di_DevInfo`→`DeviceNode`→`dn_Task`, appelées depuis un process client (marqueur **D3C**, RED `D3C_NO_FHTYPE`) ; **D3d** exécuter une commande chargée *à travers dos* : `ls_load_hunks` (extrait de `dos_loadseg`) parse un buffer lu via `Open`/`Read` (packets→handler→OFS), relocalise, puis `JSR` au seglist — toute la chaîne dos exercée bout en bout (marqueur **D3D**, RED `D3D_NO_RUN`). Processes prouvés en phase ordonnancée (créés avec les tâches démo). **cylinder-tracking** livré → lectures rapides (WAIT=90).
-- **dos.library `LoadSeg`(-150)/`UnLoadSeg`(-156) via les vrais vecteurs LVO FAIT** (`src/dos/dos_lib.s`) : `dos_fn_loadseg(name d1)` → BPTR seglist | 0 ouvre le fichier via le vrai `Open`(-30, MODE_OLDFILE), le lit ENTIER via le vrai `Read`(-42, boucle jusqu'à EOF — le file-handler est séquentiel) dans un buffer AllocMem'd, le parse via `ls_load_hunks` (hunks + relocations RELOC32 → seglist BPTR), referme via `Close`(-36), libère le buffer. `dos_fn_unloadseg(seglist d1)` → `dos_unloadseg`. Les vecteurs 25/26 de la jump table sont câblés (M6D = canary : DateStamp -192 reste au vecteur 32 → la table n'a pas glissé). Preuve **D3E LOADSEG LVO OK** : un process client `d3e_client` charge « D3DTest » via `jsr DOS_LVO_LOADSEG(a6)` → seglist non nul (ouvert+lu+parsé+relocalisé par le vrai chemin LVO) → `UnLoadSeg`. `d3d_client` (load inline Open/Read/ls_load_hunks) RESTE la baseline indépendante de la couche en-dessous ; RED `LOADSEG_LVO_UNWIRED` (vecteur -150 → dos_null) → D3E absent, **D3D baseline intact** → isole le câblage du vecteur LVO. **Portée (cf. Lemmings)** : charge NOS exécutables hunk via le vrai chemin LVO ; whole-file bufferisé (≤ 16 Ko, pas de streaming), handler OFS DF0: seul → ne suffit PAS à exécuter du logiciel commercial (il manque `Lock`/`Seek`/`Examine`/`Write`, `expansion.library`, le streaming, et notre boot.s est un harnais de dev, pas un chemin de reset de production). `sh_exec_cmd` (shell E3) garde son load inline (non touché pour ne pas risquer E3/F1/F2b ; refactor DRY vers LoadSeg = follow-up possible).
-- **CLI interactif sur série (E) EN COURS** (`src/dos/conhandler.s`) : **E1** handler console-série `con_handler` — process servant `FINDINPUT`(open)/`WRITE`(émet sur série, poll TBE borné)/`READ`(lit une ligne depuis RX avec écho)/`END`, même forme que `dos_handler_df0`. C'est le **substitut du console.device** : le CLI fait tout son IO via FileHandles DOS (DOS packets → ce handler), jamais directement sur `SERDAT` — en Bootstrap réel (F) on remplace ce handler par un vrai console.device sans toucher au shell. READ bloque proprement via poll sur tick **timer.device MICROHZ** (BeginIO `TR_ADDREQUEST` + Wait, précédent `task_timer`) — pas de busy-poll (COOP-safe), pas d'interrupt RBF niveau-5 (différé F). Port global `DOS_CONPORT`. Marqueur **E1 CON WRITE OK** (RED `E1_NO_WRITE`) prouvé dans les 4 scénarios standard ; **READ** prouvé en harnais interactif (`tests/boot_test_interactive.sh` injecte dans `ser_cap` → RX Paula via `SERDATR` bit 14 RBF) : « hello » injecté → « E1 CON READ=hello ». **E2** shell `shell_main` (`src/dos/shell.s`) : ouvre la console, bannière **E2 SHELL READY**, boucle invite `> ` → read ligne → parse 1er mot → dispatch builtins (`ver` → « E2 SHELL ver OK » ; `echo <args>` → ré-émet) sinon `?`. Remplace le client de preuve E1 comme consommateur unique de la console. RED `E2_NO_DISPATCH` (tout → `?`). **E3** la branche « commande inconnue » null-termine le 1er mot et appelle `sh_exec_cmd` (OpenLibrary dos → Open/Read du nom depuis DF0: → `ls_load_hunks` → reloc → `JSR` → UnLoadSeg) — même pile que D3d mais déclenchée par le NOM TAPÉ ; si introuvable → `?`. Commande tapée « e3cmd » → **E3 CMD RAN OK** (chargée du disque via dos + exécutée). RED `E3_NO_EXEC` (chargée mais pas exécutée). **CLI interactif atteint** : invite, commandes tapées, builtins + commandes externes du disque.
-- **Bootstrap réel (F) EN COURS** : **F1** l'Initial CLI est désormais créé PAR LE CHEMIN DE BOOT — `shell_main` n'est plus créé inconditionnellement dans `setup_demo_tasks` mais dans la branche `.m6r_booted` de boot.s, APRÈS `strap_boot` et SEULEMENT si un disque bootable est présent (la ligne F vs « E4 » = le gating). Sur un disque non bootable → M6R insert-disk, aucun Initial CLI. Le shell exécute d'abord `sh_run_startup` (Open/Read « s/startup-sequence » dans le sous-répertoire OFS `s/` via dos — traversée de sous-répertoires, cf. ci-dessus — puis `sh_dispatch_line` sur chaque ligne : builtins + commandes externes, vides/`;` ignorées) AVANT l'invite interactive. Marqueurs **F1BOOTOK** (echo du script) + **E3 CMD RAN OK** (e3cmd lancé par le script). RED `F1_NO_STARTUP` (CLI créé mais script sauté). **F2a** réception+décodage clavier CIA-A (`src/exec/keyboard.s`) : `kbd_selftest` appelé très tôt au boot (IRQ masquées -> pas de course avec le `cia_wrapper`), poll borné du CIA-A (ICR bit 3 = SP), lit SDR, décode `NOT(ROR.b #1, brut)`, handshake (pulse CRA bit 6 ~75us), collecte le flux power-up du clavier émulé ($FD initiate + $FE terminate) -> **F2 KBD OK**. Prouvé SANS injecteur (le clavier émulé envoie sa séquence power-up au reset ; spike préalable confirmé). RED `F2A_NO_HANDSHAKE`. **F2b** driver clavier LIVE interrupt-driven : `kbd_install` (après M7B) fait `OpenResource` « ciaa.resource » + `AddICRVector(bit 3 = SP)` → `kbd_interrupt`, puis ré-active PORTS/INT2 (coupé après la démo M7B) ; `ciaa_server` (resté sur la chaîne PORTS) acquitte l'ICR et route le bit 3 vers `kbd_interrupt`. `kbd_interrupt` décode (F2a), handshake obligatoire, ignore les key-up (bit 7), mappe keycode→ASCII (**keymap US minimal**, vérifiée contre les keycodes mesurés sous FS-UAE : v=$34 e=$12 r=$13 Return=$44 space=$40) et pousse dans un **ring SPSC lock-free** (`KBD_RING`/`KBD_HEAD`/`KBD_TAIL` en RAM basse ; producteur = INT2, écrit la donnée AVANT d'avancer `KBD_TAIL`). `con_handler` READ draine ce ring via `con_ring_get` (consommateur, avance `KBD_HEAD`) EN PLUS du RBF série → le CLI est piloté au **vrai clavier**, sans masquage (SPSC). Marqueur **F2B KBD OK** (install OK). Preuve **E2E** : `xdotool key v e r Return` (XTEST sur la fenêtre FS-UAE sous Xvfb — pas `--window`/XSendEvent que SDL ignore ; injection + keycodes relevés par un spike préalable) → écho « ver » + **E2 SHELL ver OK** ; harnais `tests/boot_test_kbd.sh`. RED `F2B_NO_FEED` (handler décode mais ne pousse pas dans le ring → « E2 SHELL ver OK » absent, « F2 KBD OK »/« F2B KBD OK » intacts → câblage clavier→console load-bearing). GREEN+NODISK+COOP, 0 FAILED. **À venir** : console.device réel (rendu écran ; y brancher le clavier via input.device), disk-validator, requesters Intuition, keymap complet (keymap.resource, + variante AZERTY). En F on remplacera le handler console-série par un console.device SANS toucher au shell (l'IO passe déjà par FileHandles DOS). D3 = cœur architectural atteint ; prérequis D livrés (M6z/D1/D2).
-- **console.device WRITE (#3a) FAIT** (`src/exec/console.s` + `src/graphics/font8x8.s`) : device résident AUTOINIT NT_DEVICE pri 20. `initfunc` alloue un bitplane 1-plan (chip RAM). `BeginIO`/`CMD_WRITE` interprète le flux via `con_putglyph` : imprimable → **blitter de glyphes 8x8** (copie CPU synchrone de 8 octets depuis `font8x8` dans le bitplane à `cury*stride+curx`) + avance colonne ; CR → col 0 ; LF/wrap → ligne +8 (clampée, pas de scroll). graphics.library n'a pas de `Text()` → rendu ici. **Police HAND-AUTHORED** (`tests/mk_font8x8.py` → `font8x8.s`, domaine public, 96 glyphes 0x20-0x7F) — JAMAIS la topaz ROM (piège clean-room). Preuve **READBACK** headless : CMD_WRITE d'une string connue puis relecture de chaque cellule du bitplane comparée au glyphe attendu → **CONSOLE WRITE OK** (valide le math d'adresse + la police, sans affichage/Xvfb) ; RED `CON_NO_BLIT` (blit sauté → mismatch → absent). **Rendu à l'écran (visuel) différé** : `gfx_text_display` (Copper sur le bitplane via le pipeline M6S) existe mais FS-UAE/Xvfb n'affiche pas le framebuffer Amiga dans une fenêtre X capturable (capture du kitten M6S identique) → pixel-verif non viable en CI headless ; correction prouvée par readback.
-- **console.device READ via input.device (#3b) FAIT** (`src/exec/console.s`) : `console.device` enregistre à l'init un handler sur **input.device** (`IND_ADDHANDLER`, `console_input_handler`, struct `CONB_INT` dans la base). Chaque RAWKEY key-down reçu via la chaîne input.device est cuit keycode→ASCII (réutilise `kbd_keymap` de F2b) et poussé dans un **read buffer** (`CONB_RBUF` ring) ; `CMD_READ` le ressert. console.device est donc le VRAI consommateur `IND_ADDHANDLER` qui rend la chaîne #2 load-bearing. Marqueur **CONSOLE READ=v** (IND_WRITEEVENT d'un RAWKEY $34 par le chemin public → handler console → cook → read buffer → CMD_READ) ; RED `CON_NO_READBUF` (cuit sans bufferiser → CMD_READ vide → absent). Le feeder clavier→input.device (depuis une tâche) = intégration F (le clavier atteint déjà la ROM en F2b, WRITEEVENT propage en #2).
-- **Requester Intuition « insert disk » cliquable FAIT** (`src/intuition/requester.s`) : struct Requester + struct Gadget (layout NDK) ; `req_hittest(x,y)` = hit-test de la box absolue du gadget ; `req_input_handler` sur input.device → clic BOUTON GAUCHE (IECLASS_RAWMOUSE/IECODE_LBUTTON) hit-testé → pose `REQ_HIT` ; `req_draw` rend bord + texte « INSERT DISK »/« RETRY » via `font8x8` dans un bitplane. Marqueurs **REQUESTER DRAWN OK** (readback bord+glyphe 'I') / **REQUESTER CLICK OK** (RAWMOUSE DANS→hit, HORS→miss via IND_WRITEEVENT) ; RED `REQ_NO_HITTEST`. Preuve du clic = chemin public IND_WRITEEVENT, même chaîne que console.device. Souris matérielle + câblage M6R live désormais FAITS (entrée gameport.device ci-dessous).
-- **gameport.device (souris matérielle) + câblage M6R live FAIT** (`src/exec/gameport.s` + `src/intuition/pointer.s`) : device résident AUTOINIT NT_DEVICE pri 60. Souris non observable headless (deltas JOY0DAT RELATIFS + pas de mouvement injectable + framebuffer invisible) → on FACTORISE la logique pure du shim matériel. **`gp_delta8(cur,prev)`** : delta signé avec wraparound 8 bits (`sub.b`+`ext.w` — les compteurs quadrature JOY0DAT wrappent). **`gp_poll(JOY0DAT, CIAA_PRA)`** : logique pure — dx/dy via gp_delta8, edge-detect du bouton gauche (CIAA PRA bit 6, actif-bas), et si mouvement/front → InputEvent RAWMOUSE ($68 down / $E8 up / $FF mouvement) injecté dans input.device via `IND_WRITEEVENT` (pattern du feeder clavier ; pas d'input.task — déviation documentée). **`gp_vblank_server`** : shim matériel mince (lit les vrais registres → gp_poll), enregistré par `gp_install` sur la chaîne VERTB du système tournant (câblage LIVE persistant, pendant du feeder clavier) ; `GP_PREV_JOY` primé à la lecture courante (évite le parasite frame 1). **`pointer_input_handler`** (intuition, pri 50 > requester 0) : accumule les deltas RELATIFS en position ABSOLUE `PTR_X/PTR_Y` clampée à l'écran et réécrit ie_X/ie_Y → le `req_input_handler` (pri 0, INCHANGÉ) hit-teste en absolu = le câblage M6R live. Preuves : **GAMEPORT OK** (gp_delta8 wraparound + edge bouton + event capturé par un handler, via IND_WRITEEVENT) ; **M6R LIVE OK** (deltas RAWMOUSE relatifs → accumulateur → position absolue clampée → hit-test gadget : sur le gadget→hit, hors→miss) ; **GP VBLANK LIVE OK** (gp_vblank_server tourne sur les VBlanks RÉELS du système tournant : GP_POLLS avance). REDs : `GP_NO_WRAP` (sub mot sans sign-extend → delta faux au wrap → GAMEPORT OK absent), `GP_NO_EDGE` (event à chaque poll tenu → compteur edge 2→3 → GAMEPORT OK absent), `PTR_NO_CLAMP` (pas d'écrêtage → position hors écran → hit-test rate → M6R LIVE OK absent). Headless JOY0DAT statique → le serveur live n'injecte rien (prev primé = courant) → inerte vis-à-vis de M7 (non-rég M7A/M7E/M7F/M7G + E3 CMD RAN OK/F1BOOTOK confirmée, 0 FAILED). Bouton DROIT (POTINP) et clic réel sur écran affiché différés (invérifiables headless ; attendent un vrai display).
-- **Swap écran du shell (intégration F, item 2) FAIT** (`src/dos/conhandler.s`, gaté `SHELL_ON_SCREEN`) : réalisé par GATING de con_handler (pas de nouveau handler ni repoint ; `DOS_CONPORT` reste con_handler qui devient le handler ÉCRAN). Flag=1 : WRITE rend le buffer via `console.device CMD_WRITE` (rendu #3a) **+ miroir série inconditionnel** (canal de preuve) ; READ source `console.device CMD_READ` (clavier via feeder→input.device→console.device) au lieu de `KBD_RING`, avec écho écran+série + discipline de ligne (helpers `con_scr_read`/`con_scr_emit`, état `CS_CONBASE`/`CS_CONIO`). Binaire shell INTACT. Preuves : GREEN (SHELL_ON_SCREEN=1) « ver » tapé → **E2 SHELL ver OK** (shell piloté par le clavier via le nouveau chemin) ; RED (+FEEDER_NO_WRITEEVENT) → input coupé → E2 SHELL ver OK absent, E3 CMD RAN OK présent (discrimine le chemin d'input) ; flag off → con_handler série inchangé. ROM écran : `make kick` avec `SHELL_ON_SCREEN=1`.
-- **Feeder clavier → input.device (intégration F, item 1) FAIT** (`src/dos/feeder.s`) : process (poll COOP à chaque trame, timer.device VBLANK depuis l'étape 10 (28) ; tic IECLASS_TIMER et répétition des touches) qui draine le **ring BRUT** `KBD_FEEDRING` (alimenté par `kbd_interrupt` via un raw tap au MÊME point que le push cuit → snapshot `(KBD_QUAL<<8 | keycode)`, une seule autorité qualifieur) et injecte chaque frappe comme InputEvent RAWKEY dans input.device (`IND_WRITEEVENT`) → input.device = source unique du clavier, `console_input_handler` cuit. Deux rings transitoires (cuit `KBD_RING`+con_handler série restent le chemin du shell jusqu'au swap). Self-test (ifeq `SHELL_ON_SCREEN`) : lit console.device CMD_READ et émet **FEEDER OK=<char>** ; prouvé par 'v'→`FEEDER OK=v` et **Shift+v→`FEEDER OK=V`** (snapshot qualifieur + cook shift) ; RED `FEEDER_NO_WRITEEVENT`. Timer-poll (pas de Signal depuis l'ICR CIA).
-- **keymap.resource + cook + ROM AZERTY (#5) FAIT** (`src/exec/keymap.s` + `src/exec/keymapdata.s`) : `keymap.resource` résidente (direct-init pri 100, `MakeLibrary` + jump table `SetKeyMapDefault`/`AskKeyMapDefault`) détient la keymap par défaut (US QWERTY, ou FR AZERTY si `KEYMAP_AZERTY=1`) et publie `KM_RESBASE`. `kbd_cook(keycode, qualifiers)→ASCII` : SHIFT (table `_hi`), CAPS (majuscule lettres), CTRL (char&$1F). Tables **HAND-AUTHORED** (`tests/mk_keymaps.py`→`keymapdata.s`, `km_us_lo/hi`, `km_fr_lo/hi`, 96 o chacune) — JAMAIS la ROM. Câblé LIVE : `kbd_interrupt` suit les qualifieurs ($60-$67 → `KBD_QUAL`) puis cuit via `kbd_cook` (remplace la table plate de F2b) ; `console_input_handler` (#3b) cuit via `kbd_cook(keycode, ie_Qualifier)`. Marqueurs **KEYMAP OK** (US : q/Q/Q, 1/!, ctrl-C=$03) / **KEYMAP AZERTY OK** (mêmes keycodes → a, &/1, é : prouve que la table pilote) ; F2b E2E « ver » rejoué sur les deux ROMs (non-rég live) ; RED `KM_NO_SHIFT`. ROM AZERTY : `make kick` avec `KEYMAP_AZERTY=1`. Déviation : représentation simplifiée (2 tables + règles) vs struct KeyMap V34 complète (dead-keys différés).
-- **disk-validator OFS (#4) FAIT** (`src/dos/diskvalidator.s`) : `dv_validate` valide le bitmap d'allocation de DF0: via trackdisk — checksum OFS du rootblock (Σ 128 longs == 0), sec_type ST_ROOT, `bm_flag`==$FFFFFFFF, checksum OFS du bloc bitmap (`bm_pages[0]`), et COHÉRENCE (rootblock 880 marqué ALLOUÉ bit=0 : idx=878 → long[28] bit 14, LSB-first). Offsets/convention (bm_flag@312, bm_pages@316, 1=libre/0=alloué) vérifiés sur l'ADF de test. Marqueur **DISK VALID OK** ; RED `DV_CORRUPT` (flip d'un octet du bloc bitmap → checksum KO → rejet → absent) ; NODISK → absent. Revalidation (bm_flag=0 → reconstruire) différée. Machinerie INTERNE (pas de packets).
-- **Lock d'émission série (banc) FAIT** (`src/exec/boot.s` `ser_lock`/`ser_unlock`) : `ser_puts` n'avait pas de mutex et plusieurs émetteurs concurrents (clients de preuve d3x, `con_handler` WRITE du shell, feeder, binaires chargés e3cmd/d3d) entrelaçaient les marqueurs octet-à-octet → un marqueur GREEN pouvait devenir non-greppable (faux-GREEN/faux-rouge). Fix = exclusion mutuelle par **Forbid** (aucun switch de tâche pendant une émission ; pas de lock-byte+spin pour éviter le deadlock avec les Forbid imbriqués — Forbid-around-emit est déjà le pattern de `task_timer`). `ser_lock`/`ser_unlock` (xdef, Forbid/Permit gated `SCHED_ON` → no-op avant le multitâche, préservent tous les registres) sont appelés par TOUS les émetteurs concurrents : `ser_puts`/`ser_puthex`, `con_handler` WRITE, `feeder` fd_selftest, et les binaires chargés via le Forbid de leur appelant (`sh_exec_cmd` pour e3cmd/E3, `d3d_client` pour D3D) — donc **sans régénération d'ADF ni édition des binaires de test**. Prouvé par STABILITÉ cross-run (tous les marqueurs greppables à chaque run, là où E3/D3B/DOS-IOERR étaient flaky). La pri 5 des clients d3e/d3f devient défense en profondeur. Note : une granularité plus fine (lock-byte laissant tourner les autres tâches pendant une émission) reste un raffinement possible si les stalls Forbid gênaient un jour.
-- **LoadSeg cap-bump 16K → 32K FAIT** (`exec.i` `DOS_FILEMAX`, `handler.s`, `dos_lib.s`, `loadseg.s`) : le cap de LECTURE d'un exécutable était le buffer whole-file du handler (`HND_FILEMAX`) + celui de LoadSeg (`LS_LOADMAX`), tous deux 16 Ko. Relevés à un `DOS_FILEMAX`=32 Ko partagé (2 buffers concurrents = 64 Ko transitoire, sûr sur le tas A500 ~500 Ko). **Ce n'est PAS du streaming** : le fichier reste bufferisé en entier ; la vraie lecture incrémentale OFS (data-block par data-block, sans buffer whole-file) était alors une DETTE différée (gros blast radius sur le chemin `ACTION_READ` prouvé — D1/D3B/D3C/D3D/E3/F1 en dépendent). **DETTE LEVÉE depuis** : voir « Streaming OFS RÉEL » ci-dessous (le buffer whole-file + le cap `HND_FILEMAX` ont disparu du handler). Preuve **LOADSEG BIG OK** : `tests/loadseg_big.s` = exécutable hunk > 16 Ko (gros hunk DATA 24 Ko + sentinelle `$B16B00B5` à la fin + 1 RELOC32), écrit sur l'ADF (`bigseg`), chargé par `d3h_client` via `LoadSeg`(-150) + exécuté → le binaire vérifie la sentinelle (donc tout le gros DATA a été lu dans le segment) et émet le marqueur. RED `LOADSEG_CAP16K` (re-plafonne à 16 Ko → bigseg tronque à FINDINPUT → sentinelle absente → pas d'émission ; d3dtest < 16 Ko reste OK). Non-rég : D3E/E3/D1/M6Z intacts, layout ADF préservé (blocs 10/11 spanning non perturbés).
-- **dos.library `Write`(-48) + `Input`(-54) + `Output`(-60) + `CurrentDir`(-126) FAIT** (`src/dos/dos_lib.s`) : **Write** envoie `ACTION_WRITE` au port `fh_Type` (vers con_handler → émission série ; vers l'OFS lecture seule → erreur), mirror de Read. **Input/Output** renvoient `pr_CIS`/`pr_COS` de ThisTask (FileHandles standard). **CurrentDir** pose `pr_CurrentDir` et renvoie l'ancien. Vecteurs 8/9/10/21 câblés (DateStamp -192 reste vecteur 32 = canary M6D). Preuve **DOS WRITE OK** (`d3g_client`) : CurrentDir round-trip ($1234→0→$1234) + Input (pr_CIS=$5678 relu) + `pr_COS = FileHandle console` (fh_Type=`DOS_CONPORT`) → `Output()` rend ce BPTR → `Write(Output(), msg, len)` → **le marqueur « DOS WRITE OK » est émis PAR le Write lui-même via con_handler** (prouve les 4 d'un coup). RED `DOS_NO_WRITE` (dos_fn_write n'envoie pas le packet → rien émis).
-- **dos.library `IoErr`(-132) + `Seek`(-66) FAIT** (`src/dos/dos_lib.s`, `process.s`, `handler.s`) : **IoErr** renvoie `pr_Result2` de ThisTask ; câblé dans `dos_sendpkt` qui copie désormais `dp_Res2 → pr_Result2` après CHAQUE packet (faithful, un seul endroit) ; le handler OFS pose `DP_RES2 = ERROR_OBJECT_NOT_FOUND`(205) sur un Open introuvable. **Seek** envoie `ACTION_SEEK` au handler (ARG1=clé, ARG2=position, ARG3=mode OFFSET_BEGINNING/-CURRENT/-END) → le handler ajuste `HS_POS` (il bufferise tout le fichier) borné [0,taille], renvoie l'ANCIENNE position. Vecteurs 11 (-66) + 22 (-132) câblés dans la jump table (DateStamp -192 reste vecteur 32). Preuve **DOS IOERR SEEK OK** (`d3f_client`, pri 5, émet sous Forbid) : Open absent → 0 + `IoErr`≠0 ; Open d3dtest → `IoErr`=0 ; Read 4 → `Seek(0,BEGINNING)` (rend l'ancienne pos 4) → Read 4 identiques. REDs : `DOS_NO_IOERR` (dos_sendpkt ne propage pas dp_Res2 → IoErr=0 après échec), `HND_NO_SEEK` (handler ignore ACTION_SEEK → la 2e lecture ne repart pas du début). **Write(-48) DIFFÉRÉ** (advisor) : OFS lecture seule → un Write-fichier ne prouverait que l'échec propre ; un vrai Write nécessite le câblage console (con_handler + Output -60), plus que ne justifie cet incrément.
-- **dos.library `Lock`(-84) + `UnLock`(-90) + `Examine`(-102) + `ExNext`(-108) FAIT** (`src/dos/dos_lib.s`, `handler.s`, `ofs.s`, `ofs.i`, `dospkt.i`) : locks + lecture de répertoire OFS. **Lock** résout le device (DF0:) pour le port du handler, convertit le nom en BSTR long-aligné et envoie `ACTION_LOCATE_OBJECT` ; le handler résout le chemin via `ofs_name_to_block` (préfixe `xxx:` ignoré, vide/« : » → racine OFS_ROOTBLK, sous-répertoires `/`-séparés, composant final fichier OU dir), alloue un `FileLock` {fl_Key=bloc, fl_Access=mode, fl_Task=port handler, curseur privé flp_Bucket/flp_ChainBlk=0} et renvoie son BPTR. **UnLock** récupère le port via `fl_Task` du lock, envoie `ACTION_FREE_LOCK` (FreeMem). **Examine** envoie `ACTION_EXAMINE_OBJECT` → `ofs_fill_fib` (DiskKey=bloc, DirEntryType=sec_type, FileName=nom BCPL→C-string, Size=byte_size@324 si fichier sinon 0) + reset du curseur. **ExNext** envoie `ACTION_EXAMINE_NEXT` → `ofs_dir_next` (machine à états : parcourt la chaîne hash courante puis avance de bucket en bucket dans la hashtable, remplit le FIB de l'entrée, fait avancer le curseur stocké DANS le lock). Vecteurs 14/15/17/18 câblés (DateStamp -192 reste vecteur 32 = canary). **Offset `OFSB_FILESIZE`=324 vérifié** sur l'ADF de test (kickslop bloc 866 → 1024) AVANT build, reconfirmé par l'assertion de boot. Preuve **DOS LOCK EXAMINE OK** (`d3i_client`, pri 5, émet sous ser_lock) : (A) Lock("kickslop")→Examine → DirEntryType<0 (fichier) ET fib_Size==1024 (oracle read@324→write@124→readback) ; (B) Lock(":")[racine]→Examine (DirEntryType>0, répertoire)→ExNext en boucle trouve l'entrée fichier de 1024 octets (= kickslop spécifiquement). RED `OFS_NO_DIRNEXT` (ofs_dir_next renvoie found=0 d'emblée → ExNext ne trouve jamais rien → marqueur absent, **D1 OFS READ reste VERT** = isole l'énumération du chemin de lecture prouvé). **Déviation clean-room ASSUMÉE** : le vrai AmigaDOS garde le curseur d'ExNext dans le FIB (fib_DiskKey) ; on le garde dans le lock (un lock = une énumération ; suffisant pour le harnais, documenté dans `dospkt.i`).
-- **Streaming OFS RÉEL FAIT** (`src/dos/ofs.s`, `handler.s`, `ofs.i`) : le handler DF0: ne bufferise PLUS le fichier entier à FINDINPUT. Nouvelles primitives `ofs_stream_open`/`ofs_stream_read`/`ofs_stream_seek` : un état par FileHandle (`SS_*`, un seul AllocMem = champs + IOStdReq + block buffer 512 o) détient un curseur {byte_size, pos, first_data, cur_block, blk_base}. `ofs_stream_read` boucle incrémentalement — charge le data block courant (512 o), avance via `next_data` quand épuisé, copie `min(reste bloc, reste demandé, reste EOF)` — empreinte O(1)=512 o par handle au lieu de O(taille fichier). `ofs_stream_seek` = « dumb seek » : rewind au 1er data block si la cible est en arrière, sinon `pos=cible` ; la marche avant est faite paresseusement par la boucle d'avance de `ofs_stream_read`. **Plus aucun cap de taille** (l'ancien `HND_FILEMAX`=`DOS_FILEMAX`=32 Ko disparaît du handler ; `DOS_FILEMAX` reste pour le buffer de LoadSeg `LS_LOADMAX`). `ofs_read_file` (D1) + `dos_loadseg` (D2) restent INTACTS (appel direct, hors handler) → ancrage indépendant. Preuve **OFS STREAM OK** (`d3j_client`, pri 5, sous ser_lock) : ouvre « BigData » (48000 o **> ancien cap 32 Ko**, 99 data blocks OFS), le lit INTÉGRALEMENT en chunks de 4096 o (12 Read, curseur maintenu entre appels) → total==48000 ET sentinelle `$B16B00B5` aux 4 derniers octets ; puis `Seek`(500, BEGINNING) cross-block + `Read`(4)==`$A5EE3780`. L'ancien handler whole-file aurait tronqué à 32 Ko → preuve **auto-suffisante** du cap levé (que l'ancien code ne pouvait physiquement pas produire). RED `STREAM_CAP32K` (re-plafonne la lecture à 32 Ko → BigData tronque → « OFS STREAM OK » absent ; tous les fichiers < 32 Ko — kickslop/d3dtest/e3cmd/bigseg/startup — restent lus en ENTIER → D3B/D3C/D3D/E3/F1/D3E/LOADSEG BIG VERTS = isole PRÉCISÉMENT le relèvement du cap). Fichier de test ajouté à l'ADF (`tests/mk_bigdata.py`) sans perturber le layout (blocs 10/11 spanning vérifiés intacts).
-- **Atomicité Forbid au point de préemption FAIT** (`src/exec/interrupts.s`) — bug PRÉ-EXISTANT révélé par le streaming. `ser_puts`/`ser_lock` s'appuyaient sur `Forbid` pour sérialiser les émissions série, MAIS le chemin de préemption ne respectait pas Forbid : `intr_isr_defer` (tail commun int2/int3/int6) consommait un `EB_ATTNRESCHED` posé AVANT le Forbid (quantum périmé) ou par `exec_Signal` d'une tâche prioritaire PENDANT le Forbid, et switchait à la sortie d'IRQ en ne testant QUE le bit S de la SR sauvée — PAS `EB_TDNEST`. Conséquence : une tâche émettrice sous Forbid se faisait préempter en plein `ser_puts` → marqueurs entrelacés char-à-char (invisible tant que les émissions étaient courtes/séparées temporellement ; le streaming a allongé les fenêtres d'émission → collision D3B/DOS-IOERR). **Fix** : garde `EB_TDNEST`/`EB_IDNEST` ajoutée dans `intr_isr_defer` (si Forbid ou Disable actif → pas de dispatch différé ; AttnResched reste pending, consommé au prochain IRQ-exit non-forbidden ou par le yield volontaire de Permit via `trap #1`). Mêmes gardes que `sched_server` (qui, lui, les testait déjà avant de POSER AttnResched). Les switches VOLONTAIRES (Wait `trap #0` / yield-Permit `trap #1`) vont directement à `intr_exit` sans passer par la garde → inchangés (corrects). Preuve DÉTERMINISTE **FORBID ATOMIC OK** (`task_fa` pri 3 : Forbid → Signal(`task_fb` pri 7, arme AttnResched car 7>3) → attend 2 VBlanks SOUS Forbid ≥1 IRQ-exit → `task_fb` n'a PAS tourné → émet). RED `SCHED_NO_FORBID_GATE` (retire la garde → fb préempte pendant le Forbid → flag posé → marqueur absent ; **M3F LIVE reste VERT** = le scheduler n'est pas cassé, seule la garde manque). Timing-proofs M7A/M7L/M3F non-rég. ⚠️ Corrige la croyance antérieure « ser_lock = atomicité totale » (c'était de la séparation temporelle, pas de l'exclusion mutuelle).
-- **expansion.library (autoconfig, parité) FAIT** (`src/exec/expansion.s` + `expansion.i`) : module résident AUTOINIT NT_LIBRARY pri 110 (1er après exec). ExpansionBase = Library + `eb_Flags`(34) + liste des ConfigDev. Fonctions réelles aux vrais offsets LVO (confirmés sur AROS `rom/expansion/expansion.conf`) : `AddConfigDev`(-30, AddTail dans la liste), `AllocConfigDev`(-48, AllocMem CD_SIZEOF CLEAR), `FindConfigDev`(-72, parcourt la liste, match `er_Manufacturer` UWORD + `er_Product` UBYTE, -1 = wildcard), `FreeConfigDev`(-84) ; le reste (ConfigBoard/ReadExpansionRom/MakeDosNode/AddBootNode...) = `exp_null` (probe matériel/montage de volumes différés). Preuve **EXPANSION OK** (synchrone, early) : `OpenLibrary("expansion.library",37)` → 0 (gate KS 2.0) + `(...,34)` → base ; `AllocConfigDev`→pose manufacturer/product→`AddConfigDev`→`FindConfigDev` exact + wildcard produit + ID absent = miss ; cleanup gardé (Remove seulement si `ln_Succ`≠0). RED `EXP_NO_ENQUEUE` (AddConfigDev n'ajoute rien → FindConfigDev échoue → EXPANSION OK absent, pas de crash). **NOTE Lemmings** : le bootblock ouvre `expansion.library` en **v37** (KS 2.0) → notre gate V34 renvoie 0 → le bootblock saute sa branche expansion (il la tolère). Ce module est de la **parité honnête**, il ne débloque PAS Lemmings. 15/16 ROMTags résidents (RESMAX).
-- **input.device (#2) FAIT** (`src/exec/input.s`) : device résident AUTOINIT NT_DEVICE pri 40, `BeginIO` par io_Command. **Chaîne de handlers** d'InputEvents triée par pri (struct List, Enqueue) : `IND_ADDHANDLER`/`IND_REMHANDLER` insèrent/retirent un struct Interrupt ; `IND_WRITEEVENT` parcourt la chaîne (handler : a0=liste events, a1=is_Data, a5=is_Code → d0=liste pour le suivant — idiome serveur, robuste à une modif de chaîne via Succ sauvé). `IND_WRITEEVENT` = point d'injection PUBLIC (Intuition l'utilise) → preuve en isolation = le vrai mécanisme. Marqueur **INPUT OK** (FindName input.device + 2 handlers pri 10/0 + WRITEEVENT d'un RAWKEY $34 → ordre d'appel h1<h2 + keycode relayé) ; RED `INPUT_NO_PROPAGATE` (chaîne non parcourue → INPUT OK absent, device+ADDHANDLER intacts). Déviation #2 assumée : pas d'input.task ni d'ouverture keyboard/gameport (chaîne exécutée dans le contexte de l'appelant de WRITEEVENT) ; le câblage clavier LIVE → input.device → console se fera en #3 (console.device réel = consommateur naturel d'IND_ADDHANDLER).
-  **M7k reporté** (décision 2026-10-15) : le décodage INTREQR des niveaux INT1/INT4/INT5 n'a aucun consommateur
-  réel aujourd'hui (audio=M4+, disk=M6, serial plus tard) -> replié dans le sous-système concerné quand il
-  arrivera, avec un vrai consommateur et un vrai test (pas un self-test synthétique jetable).
+    - Knob geometry in the inner area (`prop_prep`, `prop_knob`), drawing (`prop_render`).
+    - Click outside the knob: move by one page. Click on the knob: live-tracked dragging (`prop_track`, called
+      from movement tracking), FOLLOWMOUSE relayed.
+    - `ModifyProp` (−156) and `NewModifyProp` (−468). `gad_propinit` at OpenWindow and AddGList.
+  - **workbench.task**: each drawer has 6 gadgets (horizontal and vertical bar, four arrows, images in CHIP)
+    and a scroll origin (DR_SX/SY).
+    - The extent of the contents (`wb_content`) sets Body and Pot (`wb_bars`); arrows and knob scroll (`wb_scrollto`).
+    - The origin is applied to drawing, to clicks and to icon drops, and saved on snapshot (dd_CurrentX/Y).
+    - Drawer of a disk: fill gauge (Info → InfoData, `wb_gauge`), as on the real 1.3.
+    - Compared with the real ROM: icon positions, gauge and bars identical; scrolling 49 px per arrow.
+  - **dos LoadSeg**: extensible read buffer (32 KB, doubled as needed). A file of more than 32 KB (Preferences,
+    56,180 bytes) was truncated and crashed.
+  - **Remaining differences**:
+    - the held knob is invisible (our DetailPen is 2);
+    - a partially visible icon was not drawn: fixed in (29) (DamageList + BeginUpdate, not InstallClipRegion);
+    - the arrows did not repeat (INTUITICKS absent): fixed in (28).
+  (19) **Preferences: SetPrefs, loading of devs:system-configuration, PointerTicks** (spec intuition-prefs-v34,
+  clean-room reviewed; Preferences 34.66 is displayed and shows the same values as the real 1.3).
+  - **graphics SetFont** no longer touches D0: Preferences tests on return the D0 left by its OpenFont (silent
+    exit otherwise). **SetRGB4** (−288): ColorTable, MOVE of the ViewPort's fragment and of the master list.
+  - **intuition (prefs.s)**: current 232-byte copy in IntuitionBase.
+    - GetPrefs (−132) copies it; GetDefPrefs (−126) copies the default values and the pointer image; bounded
+      signed copy, ViewInitX/Y replaced by the view offsets.
+    - SetPrefs (−324): copy, ext_size at 0, then default font (topaz 8 or 9 according to FontHeight), font of
+      the WB screen, view offset, colours 0-3 and 17-19 of the WB screen (SetRGB4), pointer image and offset;
+      `inform`: NEWPREFS to each window that requested it.
+    - Read on the fly: DoubleClick (Preferences delay), PointerTicks, XOffset/YOffset, WB colours at OpenScreen.
+  - **Pointer**: one mouse count is worth one hires pixel (half a line in Y) divided by PointerTicks, as on
+    1.3 (measured on the real ROM); our positions being lores, each delta is divided by 2 × PointerTicks with the remainder
+    carried over. The pointer previously moved twice too fast.
+  - **dos (initial CLI)**: after the assigns, `devs:system-configuration` (exactly 232 bytes) goes to
+    SetPrefs(…, 232, TRUE). Intended differences: colours 0 to 3 remain those of the project theme; the
+    ext_size extension is ignored (V34 intuition caps at 232).
+  - Default values from the spec, except colours (theme), pointer colours and offset (our image).
+  - Preferences' centring frame (PROPGADGET without AUTOKNOB, background in the window's DetailPen, inherited from the screen)
+    is black on our side instead of colour 0: consequence of the theme (DetailPen 2 on the WB screen), not a rendering bug.
+  - **Not done**: RemakeDisplay (the view offset has no visible effect), rows/columns adjustment,
+    passing of KeyRptDelay/Speed to input.device (no key repeat on our side).
+  (20) **Caesar loads from the floppy** (spec caesar-boot, clean-room reviewed; path identical to the real
+  1.3: FAIRLIGHT intro, click, `play caesar`, language choice, title screen, game menu).
+  - **graphics, 1.3 copper scheme**: COP1LC points to a copinit (wait for line 12, MOVE COPJMP2); LoadView
+    and a VBlank server (pri 10) write COP2LC with the list of the displayed view. A program that writes COP2LC
+    with interrupts off (Caesar's FLT intro) has its list displayed until it re-enables them.
+  - **intuition RemakeDisplay / RethinkDisplay** (−384/−390): copper list rebuilt from the front screen.
+    `caesar.boot` switches the active screen to 1 plane (Depth := 1, FreeRaster of plane 2) then calls RemakeDisplay; without
+    it, the copper displayed the freed plane (stray pixels).
+  - **streaming dos LoadSeg** (`ls_load_stream`): 2 KB read buffer refilled by Read, large hunks read
+    directly in place, IoErr 103 (memory) or 121 (format). The shell loads its commands with LoadSeg instead
+    of reading the whole file. `csr.exe` (126 KB packed, 657 KB of hunks) did not fit with a whole-file
+    buffer and exited with "Error code 121".
+  - After `caesar.boot`, the WB screen has only one plane: the theme's pen 2 merged with the background (invisible text,
+    "blind" typing). The console now takes the colour next to the background when text and background fall on the
+    same colour once reduced to the planes of the BitMap (white on green).
+  (21) **exec/dos compatibility with the intros and games of the ADF suite** (spec cracktros-exit, loadwb-13; black-box
+  probes `tests/memmap.s` and `tests/reslist.s` on the real ROM). Scooby-Doo gets to the title screen, Monkey Island and
+  SimCity return to the Workbench after their intro, as on the real 1.3.
+  - **ExecBase in LibList** (first library, before expansion then graphics): some programs find
+    GfxBase there through `ExecBase->ln_Succ->ln_Succ` to restore the copinit.
+  - **Public IntVects** at ExecBase+$54 (16 × {iv_Data, iv_Code, iv_Node}); SetIntVector returns the old Interrupt; the
+    server lists stay in a private block (EB_INTSVL). graphics installs `bltsrv` (GfxBase+$76) through
+    SetIntVector(INTB_BLIT) with is_Data = GfxBase and its VBlank server in `vbsrv` (+$4A): some intros read
+    `IntVects[INTB_BLIT].iv_Data` to find GfxBase.
+  - **ExecBase, jump table and supervisor stack in low chip**: table $1000-$1276, ExecBase $1276, region of the
+    multi-header test $1500-$2500 (margin below the stack afterwards), supervisor stack $2500-$3500, heap $3500-$80000. The top of
+    chip stays free as on the real 1.3 (intros: routine at $7F000, stack at $7FFFE, planes at $70000+).
+  - **No TRAP vector used by exec**: Wait/yield/RemTask(self)/Supervisor enter supervisor mode through a
+    privilege violation at a known site in the ROM (EXEC_SVC macro: `ori.w #0,sr`, magic word, address of the
+    service; handler at vector $20). Programs often install their code at the TRAP #0 vector to switch
+    to supervisor; TRAP #0-#15 now all go to the task's tc_TrapCode.
+  - **Initial Resident list**: system "CLI" node (usage -1, seglist = ROM CLI). EndCLI decrements there the counter
+    of the "CLI" node it looks for; without it, it decremented address 4 (ExecBase pointer) and everything collapsed
+    (end of startup "endcli" without a prior `resident CLI`). The real ROM has FileHandler, Restart and CLI; we do not
+    have BCPL seglists for the first two.
+  - The exception handler restores SERPER before writing "SOFTWARE FAILURE" (a program may have changed the
+    port speed).
+  (22) **SimCity and Monkey Island launched from the CLI** (spec monkey-startup; dos trace `-DDOSTRACE=1`). SimCity
+  reaches its menu, Monkey Island its title screen ("Appuyez sur ENTER", credits).
+  - **console.device**: OpenDevice on unit -1 (CONU_LIBRARY, without a window) and **RawKeyConvert** (−48): character through
+    kbd_cook, CSI sequences for the arrows, F1-F10 and Help (Shift variants), 0 on a release, -1 if the buffer is
+    too short.
+  - **graphics**: LoadRGB4 (−192); user copper lists **UCopperListInit** (−594), **CMove**, **CWait**, **CBump**
+    (−372/−378/−366); MakeVPort copies `vp_UCopIns` at the end of the fragment (WAIT brought back to the real line, crossing of
+    line 255, CEND), FreeVPortCopLists frees them. Monkey places a COP1LC/COPJMP1 jump there to its own lists.
+    **Blitter DMA active from init**: a program that saves then restores DMACON (defjam intro) otherwise turned it off
+    for good, and the game's first WaitBlit never returned.
+  - **OFS**: direct Seek through the block tables of the header and of the extension blocks (block pos/488), instead of
+    following the chain of data blocks.
+  - Remaining: Monkey's music player takes vector $78 (level 6) without chaining; our MICROHZ is on
+    CIA-B (level 6), the real timer.device on CIA-A. The keyboard feeder and the console handler wait on MICROHZ.
+  (23) **Keyboard under WinUAE** (reported by the user; spec keyboard-handshake-v34 for reference). The indexes
+  of the feeder's buffer (KBD_FHEAD/KBD_FTAIL) were never initialised: FS-UAE zeroes RAM at power-on,
+  WinUAE (like a real machine) does not; an odd index caused an address error in the keyboard interrupt at the
+  first key press, which stayed stuck at level 2 (no more handshake, no more keys at all, mouse intact). The
+  coldstart now zeroes the whole low-RAM variable area ($500-$800). Diagnosed under WinUAE Linux
+  (Xvfb, `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1`, window focus) with colour milestones (COLOR00 of the
+  displayed copper list) in the interrupt, for lack of serial and debugger.
+  (24) **PrintIText/DrawBorder leave the RastPort intact; ClearEOL/ClearScreen** (reported by the user: SysInfo's
+  MEMORY page unreadable after NEXT/PREV). SysInfo erases its values by writing spaces, relying on
+  the pen and JAM2 mode set once and for all in its window's RastPort; the rendering of the clicked gadget
+  (internal PrintIText) left pen 1 / JAM1 there -> invisible spaces, overlapping values. Black-box probe
+  `tests/itextstate.s`: on the real 1.3, PrintIText and DrawBorder leave pen A, pen B and mode intact;
+  ours now save and restore them. graphics: `ClearEOL` (−42: from cp_x to the right edge, over the
+  height of the font aligned on the baseline) and `ClearScreen` (−48: same then everything below), colour =
+  pen B in JAM2, 0 otherwise; pixels identical to the real ROM (probe `tests/cleareol.s`).
+  (25) **SCREENQUIET screen: never a title bar**. SysInfo opens its screen as CUSTOMSCREEN | SCREENBEHIND |
+  SCREENQUIET (trace of the OpenScreen/OpenWindow calls: Type $118F; BORDERLESS non-BACKDROP window; ShowTitle
+  never called). OpenScreen did not create a bar layer, but activating a window (`wn_scrtitle`) called
+  `sc_drawbar`, which fell back on the RastPort of the whole screen: black bar drawn over the window at the
+  first click. `sc_drawbar` no longer does anything without a bar layer (like the real 1.3, which displays no bar).
+  End-of-step ADF suite now under **WinUAE Linux** (`tests/adf_suite_winuae.sh`, serial through
+  `unix.serial_port`) instead of Amiberry.
+  (26) **Zorro II autoconfig** (`src/exec/expansion.s`, spec `docs/analysis/autoconfig-v34.md` produced by a separate
+  analysis agent, reviewed for no transcribed code). ExpansionBase with the V34 layout ($1C8: eb_BoardList $3C, eb_MountList
+  $4A, table of 256 slots of 64 KB $58, binding semaphore $158). The resident's init (pri 110, after the slow RAM)
+  frees the memory space $200000-$9FFFFF and the I/O space $E90000-$EFFFFF, then ConfigChain($E80000): reading of
+  each board's ROM (17 bytes, type not inverted, validation + 11 re-reads), first-fit slots (I/O
+  first below 8 slots; 4 MB at $200000 then $600000), address written to register $48 (high nibble last),
+  RAM added by AddMemList(MEMF_FAST|MEMF_PUBLIC, pri 0, "expansion ram"), DiagArea copied (nibble /
+  byte / word width) and DiagPoint called (A0 board, A2 copy, A3 ConfigDev, A5 ExpansionBase, A6 ExecBase); without room:
+  sleep (CDF_SHUTUP); NOSHUTUP board without room: chain blocked, without post-configuration (deliberate difference: the
+  1.3 would do it at address -1). The 25 LVOs are implemented (Read/WriteExpansionByte, ReadExpansionRom,
+  ConfigBoard/Chain, Alloc/FreeExpansionMem, Alloc/FreeBoardMem, RemConfigDev, bindings, MakeDosNode, AddDosNode:
+  DOS list if dos.library is there, otherwise BootNode in eb_MountList). exec: chip at pri -10, MemHeaders named
+  "Fast Memory" (slow RAM) and "Chip Memory" as in 1.3. The spec's vectors reproduced (probe
+  `tests/cfgdev.s`, FS-UAE): 64K/$E9, 256K/$EC, 2 MB, 8 MB (with and without slow RAM), 1 MB + 4 MB ($600000), 8 MB
+  + 1 MB (sleep, $FF000000). UAE disk board: configured at $E90000, DiagArea copied and executed, but no
+  ConfigDev at $F00000 nor DH0: (to be investigated: scan of residents outside the ROM / BootPoint). Slow RAM and
+  chip bounds different from 1.3 (our exec's own layout, outside autoconfig).
+  (27) **timer.device: MICROHZ on CIA-A timer B** (spec `docs/analysis/timer-v34.md`, analysis agent, reviewed;
+  ROM addresses removed). The init takes bit 1 of ciaa.resource (AddICRVector): MICROHZ is served at level 2,
+  like 1.3. No CIA-B timer is programmed in production any more: a game that hijacks $78 without chaining (Monkey
+  Island's music) no longer breaks delays (probe `tests/timerprobe.s`, test HJ6: MICROHZ 0.5 s intact). The dev ROM
+  keeps a level-6 proof source (CIA-B timer A, m7_int6_probe) for M7d/M7e. Additions: AddTime / SubTime /
+  CmpTime (LVO -42/-48/-54, exact 1.3 semantics), AbortIO returns -1 when not queued, Open sets io_Unit (0/1) and refuses
+  unit >= 2 (IOERR_OPENFAIL; before, a VBLANK open fell into MICROHZ), Close resets io_Device/io_Unit to -1,
+  VBLANK completed at the k-th VBLANK (k = max(1, ⌈T/20 ms⌉)), strictly increasing time (+1 µs per read within a
+  frame, reset by SETSYSTIME). Interrupt fixes found along the way: INTREQ PORTS/EXTER acknowledged
+  BEFORE the chain (otherwise a CIA event occurring during servicing was cleared); fallback on VBLANK when the one-shot
+  has finished without an interrupt being served (FS-UAE loses the ICR event when its 10-slot "event2" queue overflows:
+  the CIA-A IR bit stayed raised and no level-2 interrupt — keyboard included — arrived any more).
+  MICROHZ accuracy (measured on 2026-10-26, tests/timerprobe.s, prod ROM, in 64 µs lines): the ~5% deviation under
+  load came from the keyboard feeder's ~110 services/s; since (28) the feeder waits on VBLANK. {1,0} = 15,733 lines
+  (1.0069 s; real 1.3: 15,820, 1.0125 s, nominal countdown and NTSC constant), {0,100000} = 1,591 (identical to
+  1.3), {0,250000} = 3,946-3,951 (1.3: 3,959), even with a `list sys: all` in the background. There remains a fixed overhead
+  per request of about 8 lines more than 1.3 (0 µs request: 20 lines against 12). ExecBase's Quantum/Elapsed
+  not set.
+  (28) **Key repeat and INTUITICKS** (spec `docs/analysis/intuiticks-repeat-v34.md`, analysis agent, reviewed;
+  probe `tests/ticks.s`). The feeder (`src/dos/feeder.s`) plays the role of the 1.3 input.device task: it waits one
+  frame on VBLANK (no more MICROHZ every 10 ms), sends an IECLASS_TIMER every 5 frames and repeats the
+  last key pressed with code < $60 (copy of the event + IEQUALIFIER_REPEAT $0200), first after the delay
+  then at input.device's period. Stop: pressing a qualifier (>= $60), releasing the repeated key,
+  or qualifier changed ((repeated & $05FF) != (current & $07FF)). Events are timestamped (TR_GETSYSTIME).
+  input.device: IND_SETTHRESH / IND_SETPERIOD (12/13, timeval of the request; defaults 0.8 s / 0.1 s); Preferences
+  (`pf_keyrpt`) sends KeyRptDelay / KeyRptSpeed there. `kbd_interrupt` now passes ALL events to the feeder
+  (releases and qualifiers included); the repeat also drops its character into the cooked ring of the screen
+  CLI (`kbd_pushcooked`, under Disable). Intuition: IECLASS_TIMER -> input task -> INTUITICKS to the active window
+  only if it requested it and if its previous INTUITICKS has been returned (only one in circulation);
+  **ModifyIDCMP** (-150) implemented. Workbench: scroll arrow held without Shift -> INTUITICKS added to the IDCMP,
+  one step per INTUITICKS or MOUSEMOVE as long as the arrow is SELECTED, removed at GADGETUP. Proven: "a" held 2 s
+  -> ~50 "a", Shift+b -> "BBB…"; a drawer's left arrow held 3 s -> continuous scrolling, stops on release.
+  (29) **InstallClipRegion and clipping of WB icons** (specs `docs/analysis/installclipregion-v34.md` and
+  `wb-icon-clipping-v34.md`, analysis agents, reviewed; probe `tests/clipreg.s`). layers.library: **InstallClipRegion**
+  (-174, `ly_ClipRegion` +$7E); `lr_clip` replaces the normal list (kept in `_cliprects`) by its ClipRects ∩ C,
+  C = ClipRegion, or DamageList (∩ ClipRegion) during BeginUpdate; the hidden parts with a save take the original
+  BitMap again (borrowed: drawing into it writes the save, nothing to copy back on removal); empty region -> no
+  ClipRect; insufficient memory -> LAYER_CLIPRECTS_LOST. `lr_unclip` undoes it. BeginUpdate/EndUpdate go through these
+  two routines (EndUpdate puts back the list reduced to the region); LockLayers undoes the reduced lists at the first level
+  (`LayerInfo+$5B`), UnlockLayers rebuilds them at the last: layer operations see the normal lists and the
+  region follows the layer. Probe T0-T6: same ClipRects and pixels as the real 1.3 (order of the ClipRects not normative).
+  intuition: `it_unclip`/`it_reclip` (layer lock + region removed at the first level, counter per window) around
+  the frame, the title bar, system and application gadgets, knobs and text gadgets. Workbench (spec
+  §1-§6): no more "whole icon" test; each drawing goes through `wb_updopen`/`wb_updclose` (DamageList replaced by
+  the contents rectangle, real damage kept in Window->UserData, BeginUpdate; mode 0 = damage ∩ contents for
+  REFRESHWINDOW, only if LAYERREFRESH): an icon straddling the edge is drawn entirely and clipped cleanly, name
+  included; only an icon more than 4 × the screen size away is skipped; the click is only taken in the contents. The
+  gauge of a disk is drawn outside the update. Difference: icon drawing order = array order (1.3 goes from
+  the tail to the head of its list).
+  (30) **Requesters** (spec `docs/analysis/intuition-requesters-v34.md`, reviewed; probe `tests/reqtest.s`).
+  `src/intuition/request.s`: **Request** (-240: LAYERSMART layer at the LeftEdge/TopEdge corner, interior of a GZZ
+  window, clipped to the window, in front of the previous requester otherwise in front of the window; a single layer operation
+  when this layer is already frontmost; BackFill background, ReqBorder, ReqText, gadgets in reverse order, ImageBMap if
+  PREDRAWN; REQGADGET set; chain, ReqCount, INREQUEST; REQSET), **EndRequest** (-120: removal even when not at the head,
+  DeleteLayer, REQCLEAR and INREQUEST cleared at the last one, window repaired), **InitRequester** (-138), **SetDMRequest** /
+  **ClearDMRequest** (-258/-48, refused if the DMRequest is displayed). gadgets.s: a requester gadget has the
+  requester as its domain and is drawn in its layer (`gad_reqof`, `rq_origin`); during a requester the window's gadgets
+  are inert, only those of the most recent one respond (click on its layer); an **ENDGADGET** released on it
+  ends it (REQCLEAR every time). screens.s: without NOISYREQ, RAWKEY / MOUSEBUTTONS / MOUSEMOVE / INTUITICKS /
+  MENUPICK are swallowed (`wn_post`) and the menus do not open; closing is refused; the layers of the
+  requesters follow MoveWindow and depth changes; CloseWindow removes the remaining requesters.
+  sysreq.s: **BuildSysRequest** (-360: "System Request" window + NOISYREQ requester, memory in a Remember list
+  in Window->UserData), **FreeSysRequest** (-372), **AutoRequest** built on top (ScreenToFront of its screen).
+  **ScreenToFront / ScreenToBack** (-252/-246): head / tail of the screen list, the front screen is displayed.
+  Probe: Request ×2, EndRequest not at the head, ENDGADGET, AutoRequest (Amiga-V / Amiga-B, AvailMem identical before /
+  after), screens: all conforming; DiskCopy displays its prompt and Cancel ends it. Differences: no DisplayAlert fallback
+  (FALSE), SizeWindow does not clip a requester's layer, the gadgets of a PREDRAWN requester are drawn right
+  away.
+  (31) **Boot on the UAE disk board (DH0:)** (specs `docs/analysis/uae-hd-boot-v34.md` and `uae-int2-v34.md`, analysis
+  agents, reviewed). `src/exec/romboot.s`: **romboot.library** (COLDSTART pri -40); at its init, for each CONFIGME
+  ConfigDev with a copied DiagArea (valid Diag, CONFIGTIME), the first ROMTag of the copy is initialised (InitResident)
+  under ObtainConfigBinding / SetCurrentBinding (under UAE: uaehf.device, which mounts DH0 and enqueues its BootNode
+  NT_BOOTNODE in eb_MountList); **RomBoot** (-30) calls the BootPoint of each bootable BootNode (A0 = address,
+  A1 = ConfigDev, also at 4(sp), A6 = ExecBase; null BootPoint ignored). strap: bootable DF0: -> DF0: BootNode of
+  priority 5 enqueued (`dos_df0bootnode`); otherwise RomBoot once before the insert-disk screen. **dos.library**: its
+  ROMTag now has an rt_Init in code (no longer AUTOINIT): on the first call (InitCode) it builds the library, on the
+  following ones (UAE BootPoint, which does FindResident then calls rt_Init) it jumps to `boot_dos_start` (rest of the startup,
+  no return). `dos_mountlist`: the head of eb_MountList is removed and its DeviceNode becomes the boot
+  device (DL_BOOTDEV); the DeviceNodes of the BootNodes are added at the end of di_DevInfo. `dos_boot_assigns`: SYS:,
+  C:, S:, L:, DEVS:, LIBS:, FONTS: and the current directory on this device; volume node of the DF0: floppy
+  created in all cases (our handler does not do it). M7B proof: CIA-A timer A in one-shot (running continuously at
+  360 µs, it saturated level 2 as soon as the UAE DiagPoint added its PORTS server; the real 1.3 never arms it
+  at boot). Proven (prod ROM, FS-UAE `hard_drive_0`): blank floppy -> DH0 boot, SYS: = hddir:; bootable
+  Workbench + DH0 pri 0 -> Workbench on the floppy, DH0 mounted; DH0 pri 5 -> bootblock executed then SYS: = hddir:.
+  Differences: exec does not sweep $F00000-$F7FFFF nor the cartridge $1111 jump; dos exists before romboot (1.3 only
+  creates it at startup); DF0 does not appear twice (1.3 artefact with a higher-priority board); the Workbench
+  only displays the boot disk's icon.
+  (32) **trackdisk: end of DMA by interrupt** (`td_dmawait`): with multitasking running, reading and writing
+  a track unmask DSKBLK (level 1 exclusive vector, `td_dskblk_int`) and the task waits for SIGF_SINGLE; the
+  trackdisk VBlank server wakes it after 1 s without end of DMA (no disk). Before, the DF0: handler (pri 6)
+  polled INTREQR during each revolution: no lower-priority task (CLI, applications) got the
+  processor as long as the disk was working. At boot (strap): polling unchanged. "Hang" of two
+  `list sys: all`: in fact tests/timerprobe.s expected an exact equality of its frame counter, missed as soon as
+  the CLI lost the processor for more than one frame; its expectations are now "at least".
+  (33) **Full volume** (spec `docs/analysis/disk-full-write-v34.md`, analysis agent, reviewed; probe `tests/diskfull.s`).
+  "Intermittent" failure of `join`: 25 joins of 27.5 KB on a free disk are byte-exact; on an almost
+  full disk, the file was truncated without displaying anything (only reproduction found; nothing proves that the original
+  failure had this cause). The real 1.3 does no better on Join's side (it does not check its writes, returns 0) but dos opens, on each
+  Write that fails for lack of space, the "Volume / <name> / is full" requester (Retry / Cancel) and blocks until the
+  answer. `dos_rawwrite`: Res1 = -1 and IoErr 221 -> `dos_fullreq` (volume = DLT_VOLUME node of the same handler; fallback
+  "?"); Retry resends the packet, Cancel returns -1 (IoErr 221 kept). The system requester is shared with "Please
+  insert volume" (`vr_req`). Deferred writes of the BCPL runtime (`dos_bufwrite`): a failing flush makes the
+  current write return -1 (before, the failure was swallowed). Proven (ADF jw, 5 × join a b a on an almost full WB):
+  three requesters cancelled with the keyboard (Amiga-B), then J5 and FIN as on 1.3; j1-j4 byte-identical,
+  j5 = exact beginning (26,352 bytes; 26,344 on 1.3, end-of-block artefact not reproduced).
+  Other intermittent failures noted earlier, re-measured on 2026-10-26: dev ROM hang at boot with SysInfo
+  (0 out of 20 boots) and DiskCopy's LoadSeg returning 121 (0 out of 18 launches through Duplicate): not reproduced.
+- **STEP 10 — PERFORMANCE (CPU, CONSOLE)**: (1) **timer.device MICROHZ in one-shot mode**: CIA-B timer A ran
+  continuously (latch 255, ~2,780 INT6/s) even without a request, which cost more than half of the CPU (measurement: `copy ram:x to *`
+  9.9 s -> 4.8 s just by slowing this timer down). Now each request keeps its remainder in (seconds, E ticks at
+  709,379 Hz); `tm_account` reads the counter (time elapsed since arming), counts down and replies to the expired requests,
+  `tm_rearm` arms the one-shot on the nearest deadline (at most `TIMER_CAP` = $FFFF ≈ 92 ms). Called with INT6
+  masked from BeginIO (accounting BEFORE adding the new request) and from the ICR vector. Empty queue: timer
+  stopped in production; re-armed every `TIMER_IDLE` = 255 ticks in dev (M7a/M7d/M7e proofs). Arming wide matters:
+  a cap of 255 made M7L drift by more than 12% (underflow -> re-arm latency not counted). (2) **Buffered BCPL console
+  output** (V34 wrch rule): `dos_bufwrite` also buffers interactive FileHandles and flushes them as soon as
+  an LF, CR, FF or NUL is written; `rdch` flushes the current output before reading the input again (prompt without a
+  newline); the shell's initial console is allocated as a dos FileHandle (`DOS_FH_ALLOC`) to benefit from it.
+  Before: one ACTION_WRITE packet per character (~35 ms each). (3) **Text**: fast path generalised (any abscissa,
+  glyph shifted over two masked bytes; JAM1 and JAM2). Production ROM measurements (WB disk, without FastFonts):
+  `copy ram:x to *` 27 s -> 4.6 s; `type ram:x` (1.4 KB) 68 s -> 9.3 s. SysInfo: 552 Dhrystones, 1.04 × A600 (169
+  before) — the "3× below an A500" came from the continuous timer. **ScrollRaster**: middle of the line copied by longs when
+  source and destination have the same parity; fast path when one visible ClipRect contains the whole rectangle
+  (uncovered window: no more walking of the ClipRects on every line) -> `type` 9.3 -> 6.9 s. One scroll
+  of the console still costs ~5 frames (CPU copy): the blitter remains the real solution.
+  (4) **Command failures faithful to 1.3** (`sh_report`, shell.s), behaviours recorded by a black-box probe
+  on the real KS 1.3 (test startup-sequence, screenshots): command not found -> "Unknown command
+  <name>"; file that cannot be loaded (LoadSeg refuses, e.g. V39 hunk $3FD) -> "Unable to load <name>: Error code 121"
+  (ERROR_FILE_NOT_OBJECT; "Error code" for lack of C:Fault); in both cases a non-interactive script is
+  abandoned without any other message. Return code >= cli_FailLevel in non-interactive mode -> "<name> failed returncode <n>" then
+  abandon. Applied to the startup-sequence, to Execute scripts and to the ROM CLI. Remaining difference: the commands' error
+  messages ("Error code 205" instead of "object not found": 1.3 gets the text through C:Fault).
+- **STEP 10 (CONTINUED) — DATES, DISCARD, FASTFONTS**: (1) **system time**: `timer_now`/`timer_setnow` (timer.s),
+  real `DateStamp` (dos_now: days/minutes/ticks since 1-1-1978, copy in the RootNode's rn_Time); BCPL globals
+  **128 setdatstamp** (TR_SETSYSTIME) and **126 compstamp** (spec bcpl-runtime-v34.md §8.4): `C:Date` sets and reads
+  the time. (2) **OFS dates** (`ow_stamp`/`ow_touch`): header dated at creation and when closing a written file,
+  parent directory when adding / deleting an entry, root: modification + last alteration of the disk.
+  (3) **AutoRequest** (`src/intuition/sysreq.s`, LVO -348): "System Request" window, PrintIText body, positive /
+  negative gadgets sized to their text, answer by GADGETUP or IDCMP flags. (4) **Workbench Discard**:
+  confirmation, recursive deletion of a drawer (`wb_rmtree`) and of the ".info", drawer re-read (`wb_reload`). Proven
+  with the mouse on a copy of the WB disk (Empty drawer) and read back by xdftool. (5) **BltTemplate** (graphics -36):
+  one-plane template with the current pens and mode, clipped by the ClipRects — FastFonts (the WB startup's C:FF) draws
+  all its text through it: with a real SetFunction, the WB's text was invisible (spec `docs/analysis/fastfonts-ff.md`).
+  LockLayerRom/UnlockLayerRom ignore a null layer. Finding: `list df0:` ~1 min for 26 entries (slowness, not a
+  hang) — to be measured with the production ROM.
+- **APPLICATION GADGETS (intuition)** (`src/intuition/gadgets.s`): the `wd_FirstGadget` list (taken over from
+  `nw_FirstGadget`) is drawn with the window frame (Border through DrawBorder or Image, IntuiText, GADGHCOMP/GADGHBOX
+  highlighting by inversion, SelectRender in GADGHIMAGE); GRELRIGHT/GRELBOTTOM/GRELWIDTH/GRELHEIGHT
+  positions/sizes. Left button on an active gadget (neither SYSGADGET nor GADGDISABLED): selection (toggle in TOGGLESELECT),
+  GADGETDOWN if GADGIMMEDIATE; release: deselection, GADGETUP if RELVERIFY and the pointer is still over it;
+  `im_IAddress` = the gadget (`wn_sendgad`); no MOUSEBUTTONS for a click taken by a gadget. LVOs: AddGadget,
+  AddGList, RemoveGadget, RemoveGList, RefreshGadgets, RefreshGList, OnGadget, OffGadget, DrawBorder. Limits: all
+  handled as buttons (no PROP/STRGADGET), no ghost pattern for a disabled gadget, highlighting not tracked
+  while dragging. Proof: click on SysInfo's SPEED → speed test run (prod ROM: 68000 7.09 MHz,
+  169 Dhrystones, Chip 0.32 × A600 — performance gap to be studied).
+  Analysis specs: `docs/analysis/setpatch-138.md`, `docs/analysis/sysinfo-44.md`. Bench: `tests/adf_suite.sh`
+  (boot of each ADF of `assets/test_adf/`, writable copies, summary + captures).
+- **STEP 10 (IN PROGRESS) — FLOPPY WRITING**: (1) **trackdisk**: CMD_WRITE into the track cache (partially
+  covered track read first), TD_FORMAT, CMD_UPDATE/CLEAR, TD_MOTOR/PROTSTATUS/CHANGENUM/CHANGESTATE/
+  GETNUMTRACKS; AmigaDOS MFM encoding (gap 700 bytes + 11 sectors of 1088 bytes, header/data odd then even, XOR
+  sums, clock bits); write DMA with precompensation from cylinder 40 on; refusal if /WPRO. (2) **OFS
+  writing** (`src/dos/ofswrite.s`): single context (`DOS_OWCTX`), bitmap kept in memory (refusal if bm_flag invalid),
+  allocation starting from the root, file/directory creation (hash chain, replacement of an existing
+  file), deletion (empty directory required), renaming/moving (return to the origin if the destination fails),
+  protection, comment, disk information; write stream per handle (data blocks type 8, tables filled
+  from the end, T_LIST extensions beyond 72 blocks). (3) **DF0: handler**: FINDOUTPUT/FINDUPDATE, WRITE, END
+  of a write state, DELETE_OBJECT, RENAME_OBJECT, CREATE_DIR, SET_PROTECT, SET_COMMENT, INFO/DISK_INFO.
+  (4) **dos**: DupLock, Info, SetComment, SetProtection. Proven under FS-UAE (`writable_floppy_images`) and read back on
+  the host by `xdftool`: makedir, `echo >fichier`, copy (byte-identical), join (file > 72 blocks), rename,
+  protect, filenote, delete. **Open**: an intermittent failure of `join` to DF0: (1 time, then 23/23 successful;
+  symptom consistent with a trackdisk write refused in the middle of a packet), `list` blocked on a written directory
+  (DateStamp always returns 0), header dates not set.
+- **STEP 9 (CONTINUED) — CLI, CONSOLES, ICONS**: (1) **ROM CLI** (`src/dos/shell.s`, `rcli_*`): segment in BCPL format (global 1 = `start(pkt)`) set as `rn_ConsoleSegment` and as entry 4 of the initial CLI's segarray; contract §13.6/§13.7 of the analysis: cleared CLI with its 4 buffers (including cli_CommandFile) stored in pr_CLI, BCPL call of the packet's init with **A0 = 0**, `r > 0` called with pr_Result2, cli_Interactive computed (recomputed at the end of a script), remembered output reselected at each round, prompt `%N`, character-by-character reading of cli_CurrentInput (BCPL buffer then Read), end of a background CLI according to r (Run: closing of the streams; Execute: bits 0/1 then returnpkt), freeing of cli_CommandDir, of the current directory and of the slot. Run, Execute() and NewCLI work without a "CLI" resident. (2) **Initial shell**: redirections `<nom` / `>nom` (arguments injected into the redirected input, "Can't open"), Execute scripts (`sh_runscript`: cli_CurrentInput followed to its end, temporary file deleted), pr_ConsoleTask = initial console (`*` output of the background CLIs), Forbid around commands reserved for the dev ROM. (3) **DOS nodes** CON, RAW (ROM handler `src/dos/conwin.s`, one process and one window per Open, line editing in CON, raw in RAW, asynchronous console reading, READ/WRITE/END/WAIT_CHAR/SCREEN_MODE/DISK_INFO), SER, PAR, PRT (the disk's `L:PORT-HANDLER`), shared GV of the initial CLI. (4) **console.device**: list of open units, keys served to the unit of the active window (otherwise head of the queue); the initial console only takes the keyboard ring if its window is active. (5) **intuition**: ReportMouse, MOUSEMOVE (a pending message is updated, not duplicated), SELECTUP sent to the active window. (6) **Workbench**: draggable icons (XOR ghost frame, position updated in memory, window redrawn). (7) **layers**: a visible ClipRect that stayed in place and is partly uncovered is copied directly from the saves to the screen (closing a drawer ≈ 0.5-1 s in production instead of 1.5-2 s). **Honest scope**: no floppy writing (Rename, Discard, Snapshot impossible), no `>>`, VSprites not displayed, Info not done.
+- **WORKBENCH 1.3.3 — STEP 6: WORKBENCH SCREEN AND VISIBLE WINDOWS**: (1) **graphics.library** — CPU drawing primitives in a RastPort (`src/graphics/draw.s`: SetAPen/SetBPen/SetDrMd/Move/Draw (Bresenham)/WritePixel/RectFill/SetRast/Text/TextLength/SetFont/InitRastPort/InitBitMap/vertical ScrollRaster), without layers.library: if `rp_Layer` is set, its bounds give the offset AND the clipping; single 8x8 font (font8x8, hand-authored); fast paths (byte-aligned JAM2 Text: direct writing; RectFill/ScrollRaster: full bytes in a tight loop, only the edges masked); complete V34 vector table (106); generic `MakeVPort` (HIRES 640 window, low resolution 320 or overscan 352x272, height = DHeight, modulo = BytesPerRow − bytes read), reuse of the copper lists (vp_DspIns, v_LOFCprList), `FreeVPortCopLists` (−540). (2) **intuition.library** (`src/intuition/screens.s`) — `OpenScreen`/`CloseScreen` (V34 Screen struct of 346 bytes + private RasInfo/ColorMap/palette extension, chip planes, title bar and depth gadgets drawn, 1.3 preferences palette), `OpenWorkBench` (640x256, 2 planes, HIRES), `GetScreenData` (−426), front screen displayed through `ib_ViewLord`; real `OpenWindow`/`CloseWindow` (window brought back into the screen, borders according to the flags, own RastPort + pseudo-layer at the window bounds, frame/title bar/gadgets drawn, window active; CloseWindow clears its area); table extended to the V34 set (−468); GfxBase kept at init (`IB_GFXBASE`). (3) **console.device** — a unit opened on a window receives a **ConUnit** (devices/conunit.h: cu_Window, cursor, bounds) and renders its text in the window's RastPort: printable runs through Text, automatic line wrap, scrolling through ScrollRaster, BS/TAB/LF/VT/FF/CR, IND/NEL/RI, ESC c, CSI A-F/H/f/J/K/L/M/m/SPACE p (CSI P = clear to end of line, without shifting), orange cursor by complement; `io_Length = -1` (NUL-terminated string). (4) **dos** — `Open("*")` targets `pr_ConsoleTask`; non-zero dp_Res1 = success; **packets aligned on a long** (`dos_sendpkt` and starthandler's startup packet: a BCPL handler receives the packet as a BPTR — on a word-aligned C stack, the packet was truncated by 2 bytes and the reply went off into the weeds); `fl_Volume` of DF0: locks = volume node (`DL_VOLUME`, otherwise CD rebuilt the volume name from address 0). (5) **BCPL** — globals 105 consoletask / 106 filesystemtask; qpkt sets `message.ln_Name := packet`. (6) **workbench.task** opens the Workbench screen (`OpenWorkBench`). Proofs (FS-UAE, copies of the WB 1.3.3 ADF, production ROM): `copy … to newcon:0/0/640/100/Test` displays the "Test" window with StartupII scrolling; `NewShell NEWCON:0/11/640/150/AmigaShell FROM s:Demo` opens the AmigaShell window on the Workbench screen, runs `echo` and `dir c:` (two columns, scrolling), prompt "2.Workbench1.3:c>"; a command typed on the **real emulated keyboard** (xdotool) is displayed in the window and runs. **Honest scope**: no layers.library (no overlapping nor refreshing of windows, no moving/resizing, no IDCMP), no visible mouse pointer, a single font, no Workbench desktop (icons); the fallback serial shell (E2) also reads the keyboard after the end of the initial CLI.
+- **TRACKDISK — FLOPPY READING ×5** (`src/exec/trackdisk.s`, `TD_*` constants from `exec.i`): (1) **motor kept on**: a read leaves the DF0 motor on (`TD_MOTORON`); the next one skips the spin-up; a VBlank server (`td_motor_server`, `TD_VBLINT`) turns it off after 2 s of inactivity (`TD_MOTORIDLE`, counter `TD_MOTORCNT`, never during an access: `TD_BUSY`); `td_check_change` preserves the motor state. (2) **seek at the drive's timings**: 3 ms between two steps (`TD_STEPWAIT`), 18 ms of settling after the last one (`TD_SETTLE`), instead of very wide delays. (3) **LRU cache of 8 decoded tracks** (`TD_NCACHE` × 5632 bytes in `MEMF_PUBLIC`, slot per track `TD_CTRK`, age `TD_CAGE`/`TD_CTICK`; fallback to 1 slot if memory is short; flushed on `/CHNG`): replaces the single-track cache — the OFS FAT (root, bitmap, headers, chains) kept coming back to the same tracks. Measurement, complete WB 1.3.3 boot (FS-UAE, real time): SetPatch 78 s → 12 s, end of startup-sequence > 400 s → 87 s; physical reads 222 → 103 (58 distinct tracks; 16 slots: 83 s, marginal gain). Non-regression: complete GREEN with and without slow RAM, AUX:/NEWCON:/PIPE:/handlers, WB boot, Holiday Lemmings up to the menu.
+- **Read-only OFS (D1) DONE** (`src/dos/ofs.s` + `ofs.i`): `ofs_read_file` reads a file by name from DF0: (root → hash → header → data block chain) via trackdisk `CMD_READ`. OFS format locked empirically. Serial marker **D1** (size 1024 + markers @0/@488/@976); RED `OFS_NO_DATACHAIN` (size 488). INTERNAL machinery (no packets).
+- **OFS subdirectories DONE**: `ofs_read_file` now takes a '/'-separated PATH. `ofs_split` splits component by component; `ofs_dir_lookup(dir, comp)` hashes+walks the chain of the CURRENT directory (intermediate USERDIR = sectype 2 → becomes the next directory; last component = file, sectype -3). `ht_size`: read from the block for the root (72), but USERDIRs leave long[3]=0 (measured) → fallback `OFS_HTDEF`=72. The single-component lookups (kickslop/D3DTest/e3cmd) go through the same driver (last=1, root) = non-reg. The shell opens "s/startup-sequence" (the ADF's `s/` subdirectory). Markers **F1BOOTOK**+**E3 CMD RAN OK** now sourced from the subdirectory; RED `OFS_NO_SUBDIR` ('/' = normal char → path looked up in the root → not found → F1BOOTOK/E3 absent, D1/E2 SHELL READY intact).
+- **LoadSeg (D2) DONE** (`src/dos/loadseg.s`): `dos_loadseg`/`dos_unloadseg` load a hunk executable from the OFS, apply the relocations (RELOC32 $3EC) and build the BPTR seglist. Hunk format locked empirically. Serial marker **D2LOADSEG** (emitted by the loaded+relocated code); RED `D2_NO_RELOC`. INTERNAL machinery.
+- **dos packets / process / handler (D3) COMPLETE** (`src/dos/process.s`, `handler.s`, `dos_lib.s`, `loadseg.s`, `dospkt.i`): **D3a** `proc_create` (Process = Task + embedded `pr_MsgPort` @0x5C; port initialised by the parent, reserved sigbit `DOS_PORTSIG`=8) + packet round-trip (marker **D3A**, RED `D3A_NO_REPLY`); **D3b** DF0: file-handler process `dos_handler_df0` serving `ACTION_FINDINPUT`/`READ`/`END` via `ofs_read_file`, + helper `dos_sendpkt` (no public DoPkt in V34) (marker **D3B**, RED `D3B_NO_READ`); **D3c** user-facing `dos.library` `Open`(-30)/`Read`(-42)/`Close`(-36) via packets — resolves the handler through `DosInfo.di_DevInfo`→`DeviceNode`→`dn_Task`, called from a client process (marker **D3C**, RED `D3C_NO_FHTYPE`); **D3d** running a command loaded *through dos*: `ls_load_hunks` (extracted from `dos_loadseg`) parses a buffer read via `Open`/`Read` (packets→handler→OFS), relocates, then `JSR` to the seglist — the whole dos chain exercised end to end (marker **D3D**, RED `D3D_NO_RUN`). Processes proven in the scheduled phase (created with the demo tasks). **cylinder-tracking** delivered → fast reads (WAIT=90).
+- **dos.library `LoadSeg`(-150)/`UnLoadSeg`(-156) through the real LVO vectors DONE** (`src/dos/dos_lib.s`): `dos_fn_loadseg(name d1)` → BPTR seglist | 0 opens the file via the real `Open`(-30, MODE_OLDFILE), reads it WHOLE via the real `Read`(-42, loop until EOF — the file-handler is sequential) into an AllocMem'd buffer, parses it via `ls_load_hunks` (hunks + RELOC32 relocations → BPTR seglist), closes via `Close`(-36), frees the buffer. `dos_fn_unloadseg(seglist d1)` → `dos_unloadseg`. Vectors 25/26 of the jump table are wired (M6D = canary: DateStamp -192 stays at vector 32 → the table has not slipped). Proof **D3E LOADSEG LVO OK**: a client process `d3e_client` loads "D3DTest" via `jsr DOS_LVO_LOADSEG(a6)` → non-null seglist (opened+read+parsed+relocated through the real LVO path) → `UnLoadSeg`. `d3d_client` (inline Open/Read/ls_load_hunks load) REMAINS the baseline independent of the layer below; RED `LOADSEG_LVO_UNWIRED` (vector -150 → dos_null) → D3E absent, **D3D baseline intact** → isolates the wiring of the LVO vector. **Scope (see Lemmings)**: loads OUR hunk executables through the real LVO path; whole-file buffered (≤ 16 KB, no streaming), DF0: OFS handler only → NOT enough to run commercial software (missing `Lock`/`Seek`/`Examine`/`Write`, `expansion.library`, streaming, and our boot.s is a dev harness, not a production reset path). `sh_exec_cmd` (shell E3) keeps its inline load (not touched so as not to risk E3/F1/F2b; DRY refactor to LoadSeg = possible follow-up).
+- **Interactive CLI on serial (E) IN PROGRESS** (`src/dos/conhandler.s`): **E1** serial-console handler `con_handler` — process serving `FINDINPUT`(open)/`WRITE`(emits on serial, bounded TBE poll)/`READ`(reads a line from RX with echo)/`END`, same shape as `dos_handler_df0`. It is the **console.device substitute**: the CLI does all its IO via DOS FileHandles (DOS packets → this handler), never directly on `SERDAT` — in the Real bootstrap (F) we replace this handler by a real console.device without touching the shell. READ blocks cleanly via polling on a **timer.device MICROHZ** tick (BeginIO `TR_ADDREQUEST` + Wait, `task_timer` precedent) — no busy-poll (COOP-safe), no level-5 RBF interrupt (deferred to F). Global port `DOS_CONPORT`. Marker **E1 CON WRITE OK** (RED `E1_NO_WRITE`) proven in the 4 standard scenarios; **READ** proven in the interactive harness (`tests/boot_test_interactive.sh` injects into `ser_cap` → Paula RX via `SERDATR` bit 14 RBF): "hello" injected → "E1 CON READ=hello". **E2** shell `shell_main` (`src/dos/shell.s`): opens the console, banner **E2 SHELL READY**, prompt loop `> ` → read line → parse 1st word → dispatch builtins (`ver` → "E2 SHELL ver OK"; `echo <args>` → re-emits) otherwise `?`. Replaces the E1 proof client as the only consumer of the console. RED `E2_NO_DISPATCH` (everything → `?`). **E3** the "unknown command" branch null-terminates the 1st word and calls `sh_exec_cmd` (OpenLibrary dos → Open/Read of the name from DF0: → `ls_load_hunks` → reloc → `JSR` → UnLoadSeg) — same stack as D3d but triggered by the TYPED NAME; if not found → `?`. Typed command "e3cmd" → **E3 CMD RAN OK** (loaded from disk via dos + run). RED `E3_NO_EXEC` (loaded but not run). **Interactive CLI reached**: prompt, typed commands, builtins + external commands from the disk.
+- **Real bootstrap (F) IN PROGRESS**: **F1** the Initial CLI is now created BY THE BOOT PATH — `shell_main` is no longer created unconditionally in `setup_demo_tasks` but in the `.m6r_booted` branch of boot.s, AFTER `strap_boot` and ONLY if a bootable disk is present (the F vs "E4" line = the gating). On a non-bootable disk → M6R insert-disk, no Initial CLI. The shell first runs `sh_run_startup` (Open/Read "s/startup-sequence" in the OFS `s/` subdirectory via dos — subdirectory traversal, see above — then `sh_dispatch_line` on each line: builtins + external commands, empty/`;` ignored) BEFORE the interactive prompt. Markers **F1BOOTOK** (echo from the script) + **E3 CMD RAN OK** (e3cmd launched by the script). RED `F1_NO_STARTUP` (CLI created but script skipped). **F2a** CIA-A keyboard reception+decoding (`src/exec/keyboard.s`): `kbd_selftest` called very early at boot (IRQs masked -> no race with the `cia_wrapper`), bounded poll of CIA-A (ICR bit 3 = SP), reads SDR, decodes `NOT(ROR.b #1, brut)`, handshake (CRA bit 6 pulse ~75us), collects the emulated keyboard's power-up stream ($FD initiate + $FE terminate) -> **F2 KBD OK**. Proven WITHOUT an injector (the emulated keyboard sends its power-up sequence at reset; preliminary spike confirmed). RED `F2A_NO_HANDSHAKE`. **F2b** LIVE interrupt-driven keyboard driver: `kbd_install` (after M7B) does `OpenResource` "ciaa.resource" + `AddICRVector(bit 3 = SP)` → `kbd_interrupt`, then re-enables PORTS/INT2 (turned off after the M7B demo); `ciaa_server` (still on the PORTS chain) acknowledges the ICR and routes bit 3 to `kbd_interrupt`. `kbd_interrupt` decodes (F2a), mandatory handshake, ignores key-ups (bit 7), maps keycode→ASCII (**minimal US keymap**, checked against the keycodes measured under FS-UAE: v=$34 e=$12 r=$13 Return=$44 space=$40) and pushes into a **lock-free SPSC ring** (`KBD_RING`/`KBD_HEAD`/`KBD_TAIL` in low RAM; producer = INT2, writes the data BEFORE advancing `KBD_TAIL`). `con_handler` READ drains this ring via `con_ring_get` (consumer, advances `KBD_HEAD`) IN ADDITION to the serial RBF → the CLI is driven by the **real keyboard**, without masking (SPSC). Marker **F2B KBD OK** (install OK). **E2E** proof: `xdotool key v e r Return` (XTEST on the FS-UAE window under Xvfb — not `--window`/XSendEvent which SDL ignores; injection + keycodes recorded by a preliminary spike) → echo "ver" + **E2 SHELL ver OK**; harness `tests/boot_test_kbd.sh`. RED `F2B_NO_FEED` (handler decodes but does not push into the ring → "E2 SHELL ver OK" absent, "F2 KBD OK"/"F2B KBD OK" intact → keyboard→console wiring load-bearing). GREEN+NODISK+COOP, 0 FAILED. **Coming up**: real console.device (screen rendering; plug the keyboard into it via input.device), disk-validator, Intuition requesters, complete keymap (keymap.resource, + AZERTY variant). In F we will replace the serial-console handler by a console.device WITHOUT touching the shell (IO already goes through DOS FileHandles). D3 = architectural core reached; D prerequisites delivered (M6z/D1/D2).
+- **console.device WRITE (#3a) DONE** (`src/exec/console.s` + `src/graphics/font8x8.s`): AUTOINIT resident device NT_DEVICE pri 20. `initfunc` allocates a 1-plane bitplane (chip RAM). `BeginIO`/`CMD_WRITE` interprets the stream via `con_putglyph`: printable → **8x8 glyph blitter** (synchronous CPU copy of 8 bytes from `font8x8` into the bitplane at `cury*stride+curx`) + column advance; CR → col 0; LF/wrap → line +8 (clamped, no scroll). graphics.library has no `Text()` → rendering here. **HAND-AUTHORED font** (`tests/mk_font8x8.py` → `font8x8.s`, public domain, 96 glyphs 0x20-0x7F) — NEVER the ROM topaz (clean-room trap). Headless **READBACK** proof: CMD_WRITE of a known string then read-back of each bitplane cell compared with the expected glyph → **CONSOLE WRITE OK** (validates the address math + the font, without display/Xvfb); RED `CON_NO_BLIT` (blit skipped → mismatch → absent). **On-screen (visual) rendering deferred**: `gfx_text_display` (Copper on the bitplane via the M6S pipeline) exists but FS-UAE/Xvfb does not display the Amiga framebuffer in a capturable X window (capture of the M6S kitten identical) → pixel verification not viable in headless CI; correctness proven by readback.
+- **console.device READ via input.device (#3b) DONE** (`src/exec/console.s`): `console.device` registers at init a handler on **input.device** (`IND_ADDHANDLER`, `console_input_handler`, struct `CONB_INT` in the base). Each RAWKEY key-down received via the input.device chain is cooked keycode→ASCII (reuses F2b's `kbd_keymap`) and pushed into a **read buffer** (`CONB_RBUF` ring); `CMD_READ` serves it back. console.device is therefore the REAL `IND_ADDHANDLER` consumer that makes chain #2 load-bearing. Marker **CONSOLE READ=v** (IND_WRITEEVENT of a RAWKEY $34 through the public path → console handler → cook → read buffer → CMD_READ); RED `CON_NO_READBUF` (cooks without buffering → CMD_READ empty → absent). The keyboard→input.device feeder (from a task) = F integration (the keyboard already reaches the ROM in F2b, WRITEEVENT propagates in #2).
+- **Clickable Intuition "insert disk" requester DONE** (`src/intuition/requester.s`): Requester struct + Gadget struct (NDK layout); `req_hittest(x,y)` = hit-test of the gadget's absolute box; `req_input_handler` on input.device → LEFT BUTTON click (IECLASS_RAWMOUSE/IECODE_LBUTTON) hit-tested → sets `REQ_HIT`; `req_draw` renders border + text "INSERT DISK"/"RETRY" via `font8x8` into a bitplane. Markers **REQUESTER DRAWN OK** (readback border+glyph 'I') / **REQUESTER CLICK OK** (RAWMOUSE INSIDE→hit, OUTSIDE→miss via IND_WRITEEVENT); RED `REQ_NO_HITTEST`. Click proof = public IND_WRITEEVENT path, same chain as console.device. Hardware mouse + live M6R wiring now DONE (gameport.device entry below).
+- **gameport.device (hardware mouse) + live M6R wiring DONE** (`src/exec/gameport.s` + `src/intuition/pointer.s`): AUTOINIT resident device NT_DEVICE pri 60. Mouse not observable headless (RELATIVE JOY0DAT deltas + no injectable movement + invisible framebuffer) → we FACTOR OUT the pure logic of the hardware shim. **`gp_delta8(cur,prev)`**: signed delta with 8-bit wraparound (`sub.b`+`ext.w` — the JOY0DAT quadrature counters wrap). **`gp_poll(JOY0DAT, CIAA_PRA)`**: pure logic — dx/dy via gp_delta8, edge detection of the left button (CIAA PRA bit 6, active-low), and if movement/edge → InputEvent RAWMOUSE ($68 down / $E8 up / $FF movement) injected into input.device via `IND_WRITEEVENT` (keyboard feeder pattern; no input.task — documented deviation). **`gp_vblank_server`**: thin hardware shim (reads the real registers → gp_poll), registered by `gp_install` on the VERTB chain of the running system (persistent LIVE wiring, counterpart of the keyboard feeder); `GP_PREV_JOY` primed with the current reading (avoids the frame-1 glitch). **`pointer_input_handler`** (intuition, pri 50 > requester 0): accumulates the RELATIVE deltas into an ABSOLUTE position `PTR_X/PTR_Y` clamped to the screen and rewrites ie_X/ie_Y → the `req_input_handler` (pri 0, UNCHANGED) hit-tests in absolute terms = the live M6R wiring. Proofs: **GAMEPORT OK** (gp_delta8 wraparound + button edge + event captured by a handler, via IND_WRITEEVENT); **M6R LIVE OK** (relative RAWMOUSE deltas → accumulator → clamped absolute position → gadget hit-test: on the gadget→hit, outside→miss); **GP VBLANK LIVE OK** (gp_vblank_server runs on the REAL VBlanks of the running system: GP_POLLS advances). REDs: `GP_NO_WRAP` (word sub without sign-extend → wrong delta at wrap → GAMEPORT OK absent), `GP_NO_EDGE` (event on every held poll → edge counter 2→3 → GAMEPORT OK absent), `PTR_NO_CLAMP` (no clipping → position off screen → hit-test misses → M6R LIVE OK absent). Headless JOY0DAT static → the live server injects nothing (prev primed = current) → inert with respect to M7 (non-reg M7A/M7E/M7F/M7G + E3 CMD RAN OK/F1BOOTOK confirmed, 0 FAILED). RIGHT button (POTINP) and real click on a displayed screen deferred (unverifiable headless; waiting for a real display).
+- **Shell screen swap (F integration, item 2) DONE** (`src/dos/conhandler.s`, gated by `SHELL_ON_SCREEN`): achieved by GATING con_handler (no new handler nor repointing; `DOS_CONPORT` stays con_handler, which becomes the SCREEN handler). Flag=1: WRITE renders the buffer via `console.device CMD_WRITE` (#3a rendering) **+ unconditional serial mirror** (proof channel); READ sources `console.device CMD_READ` (keyboard via feeder→input.device→console.device) instead of `KBD_RING`, with screen+serial echo + line discipline (helpers `con_scr_read`/`con_scr_emit`, state `CS_CONBASE`/`CS_CONIO`). Shell binary INTACT. Proofs: GREEN (SHELL_ON_SCREEN=1) "ver" typed → **E2 SHELL ver OK** (shell driven by the keyboard via the new path); RED (+FEEDER_NO_WRITEEVENT) → input cut → E2 SHELL ver OK absent, E3 CMD RAN OK present (discriminates the input path); flag off → serial con_handler unchanged. Screen ROM: `make kick` with `SHELL_ON_SCREEN=1`.
+- **Keyboard feeder → input.device (F integration, item 1) DONE** (`src/dos/feeder.s`): process (COOP poll every frame, timer.device VBLANK since step 10 (28); IECLASS_TIMER tick and key repeat) that drains the **RAW ring** `KBD_FEEDRING` (fed by `kbd_interrupt` via a raw tap at the SAME point as the cooked push → snapshot `(KBD_QUAL<<8 | keycode)`, a single qualifier authority) and injects each keystroke as a RAWKEY InputEvent into input.device (`IND_WRITEEVENT`) → input.device = single source of the keyboard, `console_input_handler` cooks. Two transitional rings (cooked `KBD_RING`+serial con_handler remain the shell's path until the swap). Self-test (ifeq `SHELL_ON_SCREEN`): reads console.device CMD_READ and emits **FEEDER OK=<char>**; proven by 'v'→`FEEDER OK=v` and **Shift+v→`FEEDER OK=V`** (qualifier snapshot + shift cook); RED `FEEDER_NO_WRITEEVENT`. Timer poll (no Signal from the CIA ICR).
+- **keymap.resource + cook + AZERTY ROM (#5) DONE** (`src/exec/keymap.s` + `src/exec/keymapdata.s`): resident `keymap.resource` (direct-init pri 100, `MakeLibrary` + jump table `SetKeyMapDefault`/`AskKeyMapDefault`) holds the default keymap (US QWERTY, or FR AZERTY if `KEYMAP_AZERTY=1`) and publishes `KM_RESBASE`. `kbd_cook(keycode, qualifiers)→ASCII`: SHIFT (`_hi` table), CAPS (upper-case letters), CTRL (char&$1F). **HAND-AUTHORED** tables (`tests/mk_keymaps.py`→`keymapdata.s`, `km_us_lo/hi`, `km_fr_lo/hi`, 96 bytes each) — NEVER the ROM. Wired LIVE: `kbd_interrupt` tracks the qualifiers ($60-$67 → `KBD_QUAL`) then cooks via `kbd_cook` (replaces F2b's flat table); `console_input_handler` (#3b) cooks via `kbd_cook(keycode, ie_Qualifier)`. Markers **KEYMAP OK** (US: q/Q/Q, 1/!, ctrl-C=$03) / **KEYMAP AZERTY OK** (same keycodes → a, &/1, é: proves that the table drives); F2b E2E "ver" replayed on both ROMs (live non-reg); RED `KM_NO_SHIFT`. AZERTY ROM: `make kick` with `KEYMAP_AZERTY=1`. Deviation: simplified representation (2 tables + rules) vs complete V34 KeyMap struct (dead keys deferred).
+- **OFS disk-validator (#4) DONE** (`src/dos/diskvalidator.s`): `dv_validate` validates the allocation bitmap of DF0: via trackdisk — OFS checksum of the rootblock (Σ 128 longs == 0), sec_type ST_ROOT, `bm_flag`==$FFFFFFFF, OFS checksum of the bitmap block (`bm_pages[0]`), and CONSISTENCY (rootblock 880 marked ALLOCATED bit=0: idx=878 → long[28] bit 14, LSB-first). Offsets/convention (bm_flag@312, bm_pages@316, 1=free/0=allocated) checked on the test ADF. Marker **DISK VALID OK**; RED `DV_CORRUPT` (flip of one byte of the bitmap block → checksum fails → rejection → absent); NODISK → absent. Revalidation (bm_flag=0 → rebuild) deferred. INTERNAL machinery (no packets).
+- **Serial emission lock (bench) DONE** (`src/exec/boot.s` `ser_lock`/`ser_unlock`): `ser_puts` had no mutex and several concurrent emitters (d3x proof clients, the shell's `con_handler` WRITE, feeder, loaded binaries e3cmd/d3d) interleaved the markers byte by byte → a GREEN marker could become non-greppable (false GREEN/false red). Fix = mutual exclusion through **Forbid** (no task switch during an emission; no lock byte+spin to avoid deadlock with nested Forbids — Forbid-around-emit is already `task_timer`'s pattern). `ser_lock`/`ser_unlock` (xdef, Forbid/Permit gated by `SCHED_ON` → no-op before multitasking, preserve all registers) are called by ALL the concurrent emitters: `ser_puts`/`ser_puthex`, `con_handler` WRITE, `feeder` fd_selftest, and the loaded binaries through their caller's Forbid (`sh_exec_cmd` for e3cmd/E3, `d3d_client` for D3D) — hence **without regenerating the ADF or editing the test binaries**. Proven by cross-run STABILITY (all markers greppable on every run, where E3/D3B/DOS-IOERR were flaky). The pri 5 of the d3e/d3f clients becomes defence in depth. Note: a finer granularity (lock byte letting the other tasks run during an emission) remains a possible refinement if the Forbid stalls ever become a problem.
+- **LoadSeg cap bump 16K → 32K DONE** (`exec.i` `DOS_FILEMAX`, `handler.s`, `dos_lib.s`, `loadseg.s`): the READ cap of an executable was the handler's whole-file buffer (`HND_FILEMAX`) + LoadSeg's (`LS_LOADMAX`), both 16 KB. Raised to a shared `DOS_FILEMAX`=32 KB (2 concurrent buffers = 64 KB transient, safe on the ~500 KB A500 heap). **This is NOT streaming**: the file stays buffered in full; real incremental OFS reading (data block by data block, without a whole-file buffer) was then a deferred DEBT (large blast radius on the proven `ACTION_READ` path — D1/D3B/D3C/D3D/E3/F1 depend on it). **DEBT LIFTED since**: see "REAL OFS streaming" below (the whole-file buffer + the `HND_FILEMAX` cap have disappeared from the handler). Proof **LOADSEG BIG OK**: `tests/loadseg_big.s` = hunk executable > 16 KB (large 24 KB DATA hunk + sentinel `$B16B00B5` at the end + 1 RELOC32), written to the ADF (`bigseg`), loaded by `d3h_client` via `LoadSeg`(-150) + executed → the binary checks the sentinel (so the whole large DATA was read into the segment) and emits the marker. RED `LOADSEG_CAP16K` (re-caps at 16 KB → bigseg truncated at FINDINPUT → sentinel absent → no emission; d3dtest < 16 KB stays OK). Non-reg: D3E/E3/D1/M6Z intact, ADF layout preserved (spanning blocks 10/11 not disturbed).
+- **dos.library `Write`(-48) + `Input`(-54) + `Output`(-60) + `CurrentDir`(-126) DONE** (`src/dos/dos_lib.s`): **Write** sends `ACTION_WRITE` to the `fh_Type` port (to con_handler → serial emission; to the read-only OFS → error), mirror of Read. **Input/Output** return ThisTask's `pr_CIS`/`pr_COS` (standard FileHandles). **CurrentDir** sets `pr_CurrentDir` and returns the old one. Vectors 8/9/10/21 wired (DateStamp -192 stays vector 32 = M6D canary). Proof **DOS WRITE OK** (`d3g_client`): CurrentDir round-trip ($1234→0→$1234) + Input (pr_CIS=$5678 read back) + `pr_COS = console FileHandle` (fh_Type=`DOS_CONPORT`) → `Output()` returns this BPTR → `Write(Output(), msg, len)` → **the "DOS WRITE OK" marker is emitted BY the Write itself via con_handler** (proves all 4 at once). RED `DOS_NO_WRITE` (dos_fn_write does not send the packet → nothing emitted).
+- **dos.library `IoErr`(-132) + `Seek`(-66) DONE** (`src/dos/dos_lib.s`, `process.s`, `handler.s`): **IoErr** returns ThisTask's `pr_Result2`; wired in `dos_sendpkt`, which now copies `dp_Res2 → pr_Result2` after EACH packet (faithful, a single place); the OFS handler sets `DP_RES2 = ERROR_OBJECT_NOT_FOUND`(205) on an Open not found. **Seek** sends `ACTION_SEEK` to the handler (ARG1=key, ARG2=position, ARG3=mode OFFSET_BEGINNING/-CURRENT/-END) → the handler adjusts `HS_POS` (it buffers the whole file) bounded to [0,size], returns the OLD position. Vectors 11 (-66) + 22 (-132) wired in the jump table (DateStamp -192 stays vector 32). Proof **DOS IOERR SEEK OK** (`d3f_client`, pri 5, emits under Forbid): Open of absent file → 0 + `IoErr`≠0; Open d3dtest → `IoErr`=0; Read 4 → `Seek(0,BEGINNING)` (returns the old pos 4) → Read 4 identical. REDs: `DOS_NO_IOERR` (dos_sendpkt does not propagate dp_Res2 → IoErr=0 after failure), `HND_NO_SEEK` (handler ignores ACTION_SEEK → the 2nd read does not start again from the beginning). **Write(-48) DEFERRED** (advisor): read-only OFS → a file Write would only prove the clean failure; a real Write requires the console wiring (con_handler + Output -60), more than this increment justifies.
+- **dos.library `Lock`(-84) + `UnLock`(-90) + `Examine`(-102) + `ExNext`(-108) DONE** (`src/dos/dos_lib.s`, `handler.s`, `ofs.s`, `ofs.i`, `dospkt.i`): locks + OFS directory reading. **Lock** resolves the device (DF0:) for the handler's port, converts the name into a long-aligned BSTR and sends `ACTION_LOCATE_OBJECT`; the handler resolves the path via `ofs_name_to_block` (`xxx:` prefix ignored, empty/":" → root OFS_ROOTBLK, `/`-separated subdirectories, final component file OR dir), allocates a `FileLock` {fl_Key=block, fl_Access=mode, fl_Task=handler port, private cursor flp_Bucket/flp_ChainBlk=0} and returns its BPTR. **UnLock** gets the port back through the lock's `fl_Task`, sends `ACTION_FREE_LOCK` (FreeMem). **Examine** sends `ACTION_EXAMINE_OBJECT` → `ofs_fill_fib` (DiskKey=block, DirEntryType=sec_type, FileName=BCPL name→C string, Size=byte_size@324 if file otherwise 0) + cursor reset. **ExNext** sends `ACTION_EXAMINE_NEXT` → `ofs_dir_next` (state machine: walks the current hash chain then advances bucket by bucket in the hashtable, fills the FIB of the entry, advances the cursor stored INSIDE the lock). Vectors 14/15/17/18 wired (DateStamp -192 stays vector 32 = canary). **Offset `OFSB_FILESIZE`=324 verified** on the test ADF (kickslop block 866 → 1024) BEFORE building, reconfirmed by the boot assertion. Proof **DOS LOCK EXAMINE OK** (`d3i_client`, pri 5, emits under ser_lock): (A) Lock("kickslop")→Examine → DirEntryType<0 (file) AND fib_Size==1024 (oracle read@324→write@124→readback); (B) Lock(":")[root]→Examine (DirEntryType>0, directory)→ExNext in a loop finds the 1024-byte file entry (= kickslop specifically). RED `OFS_NO_DIRNEXT` (ofs_dir_next returns found=0 straight away → ExNext never finds anything → marker absent, **D1 OFS READ stays GREEN** = isolates enumeration from the proven read path). **DELIBERATE clean-room deviation**: the real AmigaDOS keeps ExNext's cursor in the FIB (fib_DiskKey); we keep it in the lock (one lock = one enumeration; enough for the harness, documented in `dospkt.i`).
+- **REAL OFS streaming DONE** (`src/dos/ofs.s`, `handler.s`, `ofs.i`): the DF0: handler NO LONGER buffers the whole file at FINDINPUT. New primitives `ofs_stream_open`/`ofs_stream_read`/`ofs_stream_seek`: one state per FileHandle (`SS_*`, a single AllocMem = fields + IOStdReq + 512-byte block buffer) holds a cursor {byte_size, pos, first_data, cur_block, blk_base}. `ofs_stream_read` loops incrementally — loads the current data block (512 bytes), advances via `next_data` when exhausted, copies `min(rest of block, rest requested, rest to EOF)` — O(1)=512-byte footprint per handle instead of O(file size). `ofs_stream_seek` = "dumb seek": rewind to the 1st data block if the target is backwards, otherwise `pos=cible`; forward movement is done lazily by `ofs_stream_read`'s advance loop. **No size cap any more** (the old `HND_FILEMAX`=`DOS_FILEMAX`=32 KB disappears from the handler; `DOS_FILEMAX` remains for LoadSeg's buffer `LS_LOADMAX`). `ofs_read_file` (D1) + `dos_loadseg` (D2) remain INTACT (direct call, outside the handler) → independent anchoring. Proof **OFS STREAM OK** (`d3j_client`, pri 5, under ser_lock): opens "BigData" (48000 bytes **> old 32 KB cap**, 99 OFS data blocks), reads it ENTIRELY in 4096-byte chunks (12 Reads, cursor maintained between calls) → total==48000 AND sentinel `$B16B00B5` in the last 4 bytes; then cross-block `Seek`(500, BEGINNING) + `Read`(4)==`$A5EE3780`. The old whole-file handler would have truncated at 32 KB → **self-sufficient** proof of the lifted cap (which the old code could physically not produce). RED `STREAM_CAP32K` (re-caps reading at 32 KB → BigData truncated → "OFS STREAM OK" absent; all files < 32 KB — kickslop/d3dtest/e3cmd/bigseg/startup — are still read ENTIRELY → D3B/D3C/D3D/E3/F1/D3E/LOADSEG BIG GREEN = isolates PRECISELY the raising of the cap). Test file added to the ADF (`tests/mk_bigdata.py`) without disturbing the layout (spanning blocks 10/11 checked intact).
+- **Forbid atomicity at the preemption point DONE** (`src/exec/interrupts.s`) — PRE-EXISTING bug revealed by streaming. `ser_puts`/`ser_lock` relied on `Forbid` to serialise serial emissions, BUT the preemption path did not respect Forbid: `intr_isr_defer` (common int2/int3/int6 tail) consumed an `EB_ATTNRESCHED` set BEFORE the Forbid (stale quantum) or by `exec_Signal` of a higher-priority task DURING the Forbid, and switched at IRQ exit testing ONLY the S bit of the saved SR — NOT `EB_TDNEST`. Consequence: an emitting task under Forbid got preempted in the middle of `ser_puts` → markers interleaved char by char (invisible as long as the emissions were short/separated in time; streaming lengthened the emission windows → D3B/DOS-IOERR collision). **Fix**: `EB_TDNEST`/`EB_IDNEST` guard added in `intr_isr_defer` (if Forbid or Disable active → no deferred dispatch; AttnResched stays pending, consumed at the next non-forbidden IRQ exit or by Permit's voluntary yield via `trap #1`). Same guards as `sched_server` (which, for its part, already tested them before SETTING AttnResched). VOLUNTARY switches (Wait `trap #0` / yield-Permit `trap #1`) go directly to `intr_exit` without going through the guard → unchanged (correct). DETERMINISTIC proof **FORBID ATOMIC OK** (`task_fa` pri 3: Forbid → Signal(`task_fb` pri 7, arms AttnResched since 7>3) → waits 2 VBlanks UNDER Forbid ≥1 IRQ exit → `task_fb` did NOT run → emits). RED `SCHED_NO_FORBID_GATE` (removes the guard → fb preempts during the Forbid → flag set → marker absent; **M3F LIVE stays GREEN** = the scheduler is not broken, only the guard is missing). Timing proofs M7A/M7L/M3F non-reg. ⚠️ Corrects the earlier belief "ser_lock = total atomicity" (it was temporal separation, not mutual exclusion).
+- **expansion.library (autoconfig, parity) DONE** (`src/exec/expansion.s` + `expansion.i`): AUTOINIT NT_LIBRARY resident module pri 110 (1st after exec). ExpansionBase = Library + `eb_Flags`(34) + list of ConfigDevs. Real functions at the real LVO offsets (confirmed on AROS `rom/expansion/expansion.conf`): `AddConfigDev`(-30, AddTail into the list), `AllocConfigDev`(-48, AllocMem CD_SIZEOF CLEAR), `FindConfigDev`(-72, walks the list, matches `er_Manufacturer` UWORD + `er_Product` UBYTE, -1 = wildcard), `FreeConfigDev`(-84); the rest (ConfigBoard/ReadExpansionRom/MakeDosNode/AddBootNode...) = `exp_null` (hardware probe/volume mounting deferred). Proof **EXPANSION OK** (synchronous, early): `OpenLibrary("expansion.library",37)` → 0 (KS 2.0 gate) + `(...,34)` → base; `AllocConfigDev`→sets manufacturer/product→`AddConfigDev`→`FindConfigDev` exact + product wildcard + absent ID = miss; cleanup guarded (Remove only if `ln_Succ`≠0). RED `EXP_NO_ENQUEUE` (AddConfigDev adds nothing → FindConfigDev fails → EXPANSION OK absent, no crash). **Lemmings NOTE**: the bootblock opens `expansion.library` at **v37** (KS 2.0) → our V34 gate returns 0 → the bootblock skips its expansion branch (it tolerates it). This module is **honest parity**, it does NOT unblock Lemmings. 15/16 resident ROMTags (RESMAX).
+- **input.device (#2) DONE** (`src/exec/input.s`): AUTOINIT resident device NT_DEVICE pri 40, `BeginIO` by io_Command. **Handler chain** of InputEvents sorted by pri (struct List, Enqueue): `IND_ADDHANDLER`/`IND_REMHANDLER` insert/remove an Interrupt struct; `IND_WRITEEVENT` walks the chain (handler: a0=event list, a1=is_Data, a5=is_Code → d0=list for the next one — server idiom, robust to a chain change via the saved Succ). `IND_WRITEEVENT` = PUBLIC injection point (Intuition uses it) → proof in isolation = the real mechanism. Marker **INPUT OK** (FindName input.device + 2 handlers pri 10/0 + WRITEEVENT of a RAWKEY $34 → call order h1<h2 + keycode relayed); RED `INPUT_NO_PROPAGATE` (chain not walked → INPUT OK absent, device+ADDHANDLER intact). Deliberate #2 deviation: no input.task nor opening of keyboard/gameport (chain executed in the context of WRITEEVENT's caller); the LIVE keyboard → input.device → console wiring will be done in #3 (real console.device = natural consumer of IND_ADDHANDLER).
+  **M7k postponed** (decision 2026-10-15): the INTREQR decoding of levels INT1/INT4/INT5 has no real consumer
+  today (audio=M4+, disk=M6, serial later) -> folded into the relevant subsystem when it
+  arrives, with a real consumer and a real test (not a throwaway synthetic self-test).
 
-Voir `docs/PLAN.md` pour la suite et `docs/CLEANROOM.md` pour le mur.
+See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.

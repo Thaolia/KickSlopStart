@@ -1,50 +1,50 @@
 #!/usr/bin/env python3
-# tests/audit_rom_similarity.py — audit de similarité binaire entre NOTRE ROM et une ROM de référence.
+# tests/audit_rom_similarity.py - binary similarity audit between OUR ROM and a reference ROM.
 #
-# Question posée : notre image contient-elle des suites de code reprises de la ROM de référence
-# (Kickstart d'origine), y compris relogées à une autre adresse ? La réponse est chiffrée et comparée
-# au niveau « normal » des coïncidences entre codes 68000 sans lien (les témoins).
+# Question asked: does our image contain code sequences taken from the reference ROM
+# (original Kickstart), including ones relocated to another address? The answer is quantified and compared
+# with the "normal" level of coincidences between unrelated 68000 code bases (the controls).
 #
-# Méthode
-#   1. Découpage. Les ROM brutes sont lues telles quelles (base déduite du vecteur de reset). Les
-#      exécutables AmigaDOS (hunks) des témoins sont réduits à leurs hunks CODE ; les mots longs
-#      relogés (HUNK_RELOC32) y sont remplacés par un marqueur d'adresse. Un .gz est décompressé.
-#   2. Normalisation (ce qui varie forcément d'un build à l'autre est neutralisé, pour ne PAS
-#      sous-estimer une copie relogée) :
-#        - mot long pointant dans la ROM (fenêtre $F80000-$FFFFFF ou plage de l'image) -> jeton ADDR ;
-#        - Bcc/BRA/BSR : déplacement 8 bits effacé ; forme .w : mot d'extension -> jeton DISP ;
-#        - DBcc et modes d16(PC)/d8(PC,Xn) : mot d'extension -> DISP ;
-#        - remplissages (>= 8 mots identiques consécutifs) -> sentinelles uniques, jamais appariées.
-#      Deux flux de jetons :
-#        - MOTS : le flux de mots de 16 bits normalisé (aucun décodeur requis, insensible aux
-#          désalignements d'un désassemblage linéaire) ;
-#        - INSTR (si le module capstone est présent) : désassemblage linéaire 68000, une instruction
-#          = un jeton « mnémonique + opérandes », cibles de branchement, déplacements PC et adresses
-#          ROM masqués ; variante INSTR-SOUPLE où registres et constantes sont aussi effacés (résiste
-#          à un renommage de registres).
-#   3. Métriques, pour chaque paire (A, B) :
-#        - correspondances exactes maximales (statistiques d'appariement par automate des suffixes
-#          de B) : longueur maximale, nombre >= 8/16/32/64 jetons, couverture de A par celles-ci ;
-#        - recouvrement de n-grammes (n = 4, 8, 16) : part des n-grammes distincts de A présents
-#          dans B (n-grammes contenant une sentinelle exclus).
-#      Chaque correspondance est classée d'après les octets de A : texte, faible entropie,
-#      en-tête/pied de ROM (format imposé), RomTag, ou code/table. Les statistiques « hors données »
-#      ne retiennent que la classe code/table.
-#   4. Base sans lien : chaque groupe de témoins est mesuré contre la référence (témoin vs réf.) et
-#      contre notre ROM (notre ROM vs témoin). Le seuil « notable » vaut, par défaut, la plus longue
-#      correspondance code/table observée entre un témoin de base et la référence, plus un ; --base
-#      désigne les groupes réellement sans lien (un groupe Commodore ou AROS sert de témoin séparé).
-#   5. Sortie : statistiques, puis la liste des correspondances notables avec leur SEUL emplacement
-#      dans la PREMIÈRE ROM (offset, adresse, objet et symbole si une table vlink -M est fournie).
-#      Rien n'est jamais affiché de la ROM de référence : ni octets, ni désassemblage, ni offset.
+# Method
+#   1. Splitting. Raw ROMs are read as is (base derived from the reset vector). The
+#      AmigaDOS executables (hunks) of the controls are reduced to their CODE hunks; relocated
+#      longwords (HUNK_RELOC32) are replaced in them by an address marker. A .gz is decompressed.
+#   2. Normalisation (whatever necessarily varies from one build to another is neutralised, so as NOT
+#      to underestimate a relocated copy):
+#        - longword pointing into the ROM ($F80000-$FFFFFF window or range of the image) -> ADDR token;
+#        - Bcc/BRA/BSR: 8-bit displacement cleared; .w form: extension word -> DISP token;
+#        - DBcc and d16(PC)/d8(PC,Xn) modes: extension word -> DISP;
+#        - fills (>= 8 identical consecutive words) -> unique sentinels, never matched.
+#      Two token streams:
+#        - WORDS: the normalised stream of 16-bit words (no decoder required, insensitive to the
+#          misalignments of a linear disassembly);
+#        - INSTR (if the capstone module is present): linear 68000 disassembly, one instruction
+#          = one "mnemonic + operands" token, branch targets, PC displacements and ROM addresses
+#          masked; INSTR-LOOSE variant where registers and constants are also cleared (resists
+#          register renaming).
+#   3. Metrics, for each pair (A, B):
+#        - maximal exact matches (matching statistics via the suffix automaton
+#          of B): maximum length, number >= 8/16/32/64 tokens, coverage of A by them;
+#        - n-gram overlap (n = 4, 8, 16): share of the distinct n-grams of A present
+#          in B (n-grams containing a sentinel excluded).
+#      Each match is classified from the bytes of A: text, low entropy,
+#      ROM header/footer (mandated format), RomTag, or code/table. The "excluding data" statistics
+#      only keep the code/table class.
+#   4. Unrelated baseline: each control group is measured against the reference (control vs ref.) and
+#      against our ROM (our ROM vs control). The "notable" threshold is, by default, the longest
+#      code/table match observed between a baseline control and the reference, plus one; --base
+#      names the groups that are really unrelated (a Commodore or AROS group serves as a separate control).
+#   5. Output: statistics, then the list of notable matches with ONLY their location
+#      in the FIRST ROM (offset, address, object and symbol if a vlink -M map is supplied).
+#      Nothing of the reference ROM is ever displayed: no bytes, no disassembly, no offset.
 #
-# Auto-contrôle (--selftest) : insère en mémoire des fragments de la référence, relogés (adresses
-# ROM décalées), dans une copie de la première ROM, et vérifie qu'ils sont retrouvés.
+# Self-test (--selftest): inserts in memory fragments of the reference, relocated (ROM addresses
+# shifted), into a copy of the first ROM, and checks that they are found.
 #
-# Usage : python3 -I tests/audit_rom_similarity.py <notre_rom> <rom_reference> [témoins...]
-#           [--temoin NOM CHEMIN...]... [--base NOM...] [--map table.map] [--seuil N] [--selftest]
-#         Un témoin est un fichier (hunk, ROM brute, .gz) ou un répertoire (exécutables hunk trouvés
-#         dessous). Les témoins positionnels forment le groupe « temoins ».
+# Usage: python3 -I tests/audit_rom_similarity.py <our_rom> <reference_rom> [controls...]
+#          [--temoin NAME PATH...]... [--base NAME...] [--map table.map] [--seuil N] [--selftest]
+#        A control is a file (hunk, raw ROM, .gz) or a directory (hunk executables found
+#        below it). The positional controls form the group "temoins".
 
 import argparse
 import gzip
@@ -74,10 +74,10 @@ def sentinel():
     return _sentinel[0]
 
 
-# ---------------------------------------------------------------- lecture des fichiers
+# ---------------------------------------------------------------- reading the files
 
 class Part:
-    """Un bloc d'octets à comparer (une ROM, ou un hunk CODE)."""
+    """A block of bytes to compare (a ROM, or a CODE hunk)."""
 
     def __init__(self, label, data, base, is_rom):
         self.label = label
@@ -101,7 +101,7 @@ def read_file(path):
 
 
 def parse_hunks(data):
-    """Renvoie la liste des hunks CODE (bytearray avec relocations marquées) ; None si pas un hunk."""
+    """Returns the list of CODE hunks (bytearray with relocations marked); None if not a hunk file."""
     if len(data) < 24 or struct.unpack('>I', data[:4])[0] != 0x3F3:
         return None
     p = 4
@@ -303,8 +303,8 @@ class Vocab:
 
 
 def instr_tokens(part, fm, md, vocab_strict, vocab_loose):
-    # Désassemblage linéaire par fenêtres (une instruction 68000 fait au plus 10 octets) ;
-    # un mot non décodable devient une sentinelle et la lecture reprend au mot suivant.
+    # Linear disassembly by windows (a 68000 instruction is at most 10 bytes long);
+    # an undecodable word becomes a sentinel and reading resumes at the next word.
     data = part.data
     strict, loose, offs, sizes = [], [], [], []
     off = 0
@@ -338,7 +338,7 @@ def instr_tokens(part, fm, md, vocab_strict, vocab_loose):
 
 
 class Stream:
-    """Flux de jetons d'un corpus (concaténation de parts séparées par des sentinelles)."""
+    """Token stream of a corpus (concatenation of parts separated by sentinels)."""
 
     def __init__(self, parts, kind, ctx):
         self.tokens = []
@@ -391,7 +391,7 @@ class Context:
         return ('mots', 'instr', 'instr-souple') if self.md else ('mots',)
 
 
-# ---------------------------------------------------------------- automate des suffixes
+# ---------------------------------------------------------------- suffix automaton
 
 class SuffixAutomaton:
     def __init__(self, seq):
@@ -428,7 +428,7 @@ class SuffixAutomaton:
         self.nxt, self.link, self.length, self.first = nxt, link, length, first
 
     def matches(self, seq):
-        """Correspondances exactes maximales : (début, fin exclue, longueur, fin dans la séquence indexée)."""
+        """Maximal exact matches: (start, exclusive end, length, end in the indexed sequence)."""
         nxt, link, length = self.nxt, self.link, self.length
         v = l = 0
         ms = [0] * len(seq)
@@ -454,7 +454,7 @@ class SuffixAutomaton:
         return out
 
 
-# ---------------------------------------------------------------- classification et statistiques
+# ---------------------------------------------------------------- classification and statistics
 
 def region_bytes(stream, a, b):
     pi, o0, _ = stream.where[a]
@@ -465,8 +465,8 @@ def region_bytes(stream, a, b):
 
 
 def arithmetic(w):
-    """Vrai si les mots forment, phase par phase (période 1 à 4), des progressions arithmétiques :
-    table calculée (ex. localisation de caractères d'une police à chasse fixe)."""
+    """True if the words form, phase by phase (period 1 to 4), arithmetic progressions:
+    computed table (e.g. character locations of a fixed-width font)."""
     for p in (1, 2, 3, 4):
         if len(w) < 4 * p:
             break
@@ -532,7 +532,7 @@ def coverage(n_eff, intervals):
 
 
 def summarize(matches, n_eff):
-    """matches : liste de (début, fin, longueur, classe) côté de la séquence couverte."""
+    """matches: list of (start, end, length, class) on the side of the covered sequence."""
     res = {}
     for label, sel in (('toutes', matches), ('code/table', [m for m in matches if m[3] == 'code/table'])):
         lens = [m[2] for m in sel]
@@ -545,7 +545,7 @@ def summarize(matches, n_eff):
     return res
 
 
-# ---------------------------------------------------------------- table des symboles vlink
+# ---------------------------------------------------------------- vlink symbol table
 
 class SymMap:
     def __init__(self, path):
@@ -576,10 +576,10 @@ class SymMap:
         return obj, sym
 
 
-# ---------------------------------------------------------------- comparaisons
+# ---------------------------------------------------------------- comparisons
 
 def compare(ctx, sam_cache, a_parts, b_parts, kind, b_key):
-    """Correspondances de A dans B, localisées dans A (B indexé par automate)."""
+    """Matches of A in B, located in A (B indexed by the automaton)."""
     sa = Stream(a_parts, kind, ctx)
     if (b_key, kind) not in sam_cache:
         sb = Stream(b_parts, kind, ctx)
@@ -593,7 +593,7 @@ def compare(ctx, sam_cache, a_parts, b_parts, kind, b_key):
 
 
 def compare_mapped(ctx, sam_cache, ours_parts, w_parts, kind, our_key):
-    """Correspondances témoin -> notre ROM, reportées côté notre ROM (première occurrence)."""
+    """Control -> our ROM matches, reported on our ROM's side (first occurrence)."""
     sw = Stream(w_parts, kind, ctx)
     if (our_key, kind) not in sam_cache:
         so = Stream(ours_parts, kind, ctx)
@@ -677,19 +677,19 @@ def selftest(ctx, sam_cache, ours, ref, rng, count=12):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Audit de similarité binaire 68000 (statistiques et '
-                                             'emplacements dans la première ROM uniquement).')
+    ap = argparse.ArgumentParser(description='68000 binary similarity audit (statistics and '
+                                             'locations in the first ROM only).')
     ap.add_argument('notre_rom')
     ap.add_argument('rom_reference')
     ap.add_argument('temoins', nargs='*')
     ap.add_argument('--temoin', nargs='+', action='append', default=[], metavar=('NOM', 'CHEMIN'),
-                    help='groupe de témoins nommé : NOM suivi de fichiers ou répertoires')
-    ap.add_argument('--map', help='table vlink -M de la première ROM (objets et symboles)')
-    ap.add_argument('--seuil', type=int, help='seuil « notable » en jetons (défaut : base sans lien + 1)')
+                    help='named control group: NOM followed by files or directories')
+    ap.add_argument('--map', help='vlink -M map of the first ROM (objects and symbols)')
+    ap.add_argument('--seuil', type=int, help='"notable" threshold in tokens (default: unrelated baseline + 1)')
     ap.add_argument('--base', nargs='+', metavar='NOM',
-                    help='groupes formant la base sans lien (défaut : tous les groupes)')
-    ap.add_argument('--selftest', action='store_true', help='contrôle positif par copies relogées')
-    ap.add_argument('--graine', type=int, default=1, help='graine de l\'auto-contrôle')
+                    help='groups forming the unrelated baseline (default: all groups)')
+    ap.add_argument('--selftest', action='store_true', help='positive check with relocated copies')
+    ap.add_argument('--graine', type=int, default=1, help='seed of the self-test')
     args = ap.parse_args()
 
     ours = rom_part('notre_rom', read_file(args.notre_rom))

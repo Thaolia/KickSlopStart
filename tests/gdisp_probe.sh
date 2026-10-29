@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# tests/gdisp_probe.sh — sonde boîte noire de la construction d'affichage de graphics (PISTE ANALYSE).
-# Construit un ADF : bootblock = tests/gdisp_probe.s assemblé avec -DLOADER, corps de la sonde à l'offset 1024.
-# Boote FS-UAE (vraie ROM 1.3 par défaut), capture la série et un écran. Un seul FS-UAE à la fois sur la machine.
+# tests/gdisp_probe.sh - black-box probe of graphics display construction (ANALYSIS TRACK).
+# Builds an ADF: bootblock = tests/gdisp_probe.s assembled with -DLOADER, probe body at offset 1024.
+# Boots FS-UAE (real 1.3 ROM by default), captures the serial output and a screenshot. Only one FS-UAE at a
+# time on the machine.
 #
-# Usage : GDISP_OUT=<dir> tests/gdisp_probe.sh [pal|ntsc] [durée_s=40]
+# Usage: GDISP_OUT=<dir> tests/gdisp_probe.sh [pal|ntsc] [duration_s=40]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VIDEO="${1:-pal}"; DUR="${2:-40}"

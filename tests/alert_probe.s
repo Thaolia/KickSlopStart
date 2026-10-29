@@ -1,16 +1,16 @@
-; tests/alert_probe.s — bootblock de SONDE boîte noire d'intuition DisplayAlert (ASSET DE TEST, PAS du code ROM).
-; Assemblé en binaire brut (vasm -Fbin -m68000 -DMODE=n), posé à l'offset +12 du bootblock d'un ADF par
-; tests/alert_probe.sh. Code AUTEUR : n'utilise que l'ABI publique (exec_lib.fd, intuition_lib.fd, structures NDK)
-; et les registres hardware publics ; seule lecture privée : le mot IntuitionBase+$546 (largeur affichée en série).
+; tests/alert_probe.s - black-box PROBE bootblock for intuition DisplayAlert (TEST ASSET, NOT ROM code).
+; Assembled as a raw binary (vasm -Fbin -m68000 -DMODE=n), placed at offset +12 of an ADF bootblock by
+; tests/alert_probe.sh. AUTHOR'S code: uses only the public ABI (exec_lib.fd, intuition_lib.fd, NDK structures)
+; and the public hardware registers; only private read: the word IntuitionBase+$546 (width printed on serial).
 ;
-; Un serveur VBlank (pri -10) compte les trames et journalise chaque changement du premier mot du raster de
-; l'alerte (adresse prédite par AllocMem/FreeMem de la même taille juste avant l'appel) : on mesure ainsi la
-; période de clignotement du cadre en trames.
-;   MODE 0 : ouvre un écran 320x200x1, puis DisplayAlert(0, texte, 40) [clic gauche attendu],
-;            puis DisplayAlert($80000000, texte, 60) [clic droit attendu].
-;   MODE 1 : DisplayAlert(0, texte, 7000) (raster impossible à allouer) : retour immédiat attendu.
-;   MODE 2 : DisplayAlert($80000000, texte, 7000) : repli sur exec Alert() attendu (reboot, Guru au boot suivant).
-; Lignes série « @A », « @B », « @C » : posées juste avant chaque DisplayAlert (le harnais capture puis clique).
+; A VBlank server (pri -10) counts frames and logs every change of the first word of the alert's raster
+; (address predicted by an AllocMem/FreeMem of the same size just before the call): this measures the
+; blink period of the frame, in frames.
+;   MODE 0: opens a 320x200x1 screen, then DisplayAlert(0, text, 40) [left click expected],
+;           then DisplayAlert($80000000, text, 60) [right click expected].
+;   MODE 1: DisplayAlert(0, text, 7000) (raster cannot be allocated): immediate return expected.
+;   MODE 2: DisplayAlert($80000000, text, 7000): fallback to exec Alert() expected (reboot, Guru on next boot).
+; Serial lines "@A", "@B", "@C": emitted just before each DisplayAlert (the harness captures, then clicks).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -51,11 +51,11 @@ start:
         move.w  $546(a5),d0
         bsr     hex8
         bsr     nl
-        ; journal + Interrupt dans un bloc chip effacé
+        ; log + Interrupt in a cleared chip block
         move.l  #1024,d0
         move.l  #$10003,d1
         jsr     -198(a6)            ; AllocMem
-        movea.l d0,a4               ; A4 = journal : 0 trames, 4 adresse surveillée, 8 dernier mot, 12 index, 16.. entrées
+        movea.l d0,a4               ; A4 = log: 0 frames, 4 watched address, 8 last word, 12 index, 16.. entries
         lea     $3E0(a4),a1         ; struct Interrupt
         move.b  #2,8(a1)            ; NT_INTERRUPT
         move.b  #-10,9(a1)          ; pri
@@ -67,7 +67,7 @@ start:
         IFEQ    MODE
         lea     scrtitle(pc),a0
         lea     newscr(pc),a1
-        move.l  a0,20(a1)           ; DefaultTitle (adresse connue seulement à l'exécution)
+        move.l  a0,20(a1)           ; DefaultTitle (address known only at run time)
         movea.l a1,a0
         exg     a5,a6
         jsr     -198(a6)            ; OpenScreen
@@ -105,7 +105,7 @@ idle:   lea     m_idle(pc),a0
         bsr     puts
 .w:     bra.s   .w
 
-; test : D4 = lettre, D5 = code, D6 = hauteur, A3 = texte. Prédit l'adresse du raster (80 octets par ligne).
+; test: D4 = letter, D5 = code, D6 = height, A3 = text. Predicts the raster address (80 bytes per line).
 test:   move.l  d6,d0
         mulu    #80,d0
         move.l  d0,d7
@@ -148,13 +148,13 @@ test:   move.l  d6,d0
         moveq   #0,d2
 .lg:    cmp.l   12(a4),d2
         bcc.s   .le
-        move.l  16(a4,d2.l),d0      ; trame.w | mot.w
+        move.l  16(a4,d2.l),d0      ; frame.w | word.w
         bsr     hex8
         addq.l  #4,d2
         bra.s   .lg
 .le:    bra     nl
 
-; serveur VBlank : A1 = journal
+; VBlank server: A1 = log
 srv:    addq.l  #1,(a1)
         move.l  4(a1),d0
         beq.s   .x
@@ -216,9 +216,9 @@ putc:   movem.l d0/d2,-(a7)
 newscr: dc.w    0,0,320,200,1       ; Left, Top, Width, Height, Depth
         dc.b    0,1                 ; DetailPen, BlockPen
         dc.w    0,$000F             ; ViewModes, Type CUSTOMSCREEN
-        dc.l    0,0                 ; Font, DefaultTitle (posé à l'exécution)
+        dc.l    0,0                 ; Font, DefaultTitle (set at run time)
         dc.l    0,0                 ; Gadgets, CustomBitMap
-; texte A : deux lignes + une ligne à x >= 256 (x sur 16 bits)
+; text A: two lines + one line at x >= 256 (x on 16 bits)
 txta:   dc.b    0,38,15,"LIGNE1 X38 Y15",0,$FF
         dc.b    1,$30,15,"X304",0,$01
         dc.b    0,142,30,"LIGNE2 X142 Y30 0123456789",0,0

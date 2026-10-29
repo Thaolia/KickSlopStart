@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# tests/run_fsuae.sh — lance la ROM maison dans FS-UAE, FENÊTRÉ (pour la voir à l'écran).
-# Contrairement à boot_test.sh (headless Xvfb + assertion), ce script ouvre une vraie fenêtre :
-# il faut donc un display (WSLg sous WSL2, ou X). Usage : tests/run_fsuae.sh [rom]
-# Ex. : make && tests/run_fsuae.sh        (affiche l'écran de boot « KickSlopStart »)
+# tests/run_fsuae.sh - runs our ROM in FS-UAE, WINDOWED (to see it on screen).
+# Unlike boot_test.sh (headless Xvfb + assertion), this script opens a real window:
+# a display is therefore required (WSLg under WSL2, or X). Usage: tests/run_fsuae.sh [rom]
+# E.g.: make && tests/run_fsuae.sh        (shows the "KickSlopStart" boot screen)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"

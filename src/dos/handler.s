@@ -1,16 +1,17 @@
-; src/dos/handler.s — process file-handler DF0: (D3b). Corps d'un Process (créé par proc_create) qui boucle
-; WaitPort/GetMsg sur son pr_MsgPort et sert les DOS packets : ACTION_FINDINPUT/READ/SEEK/END + LOCATE_OBJECT/
-; FREE_LOCK/EXAMINE_OBJECT/EXAMINE_NEXT, en s'appuyant sur la machinerie OFS (ofs_stream_* / ofs_name_to_block /
-; ofs_fill_fib / ofs_dir_next). Machinerie INTERNE (pas de dos.library user-facing = D3c).
+; src/dos/handler.s - DF0: file-handler process (D3b). Body of a Process (created by proc_create) that loops
+; WaitPort/GetMsg on its pr_MsgPort and serves DOS packets: ACTION_FINDINPUT/READ/SEEK/END + LOCATE_OBJECT/
+; FREE_LOCK/EXAMINE_OBJECT/EXAMINE_NEXT, relying on the OFS machinery (ofs_stream_* / ofs_name_to_block /
+; ofs_fill_fib / ofs_dir_next). INTERNAL machinery (no user-facing dos.library = D3c).
 ;
-; Protocole (docs/analysis/dos-v34-spec.md §2) : msg->ln_Name -> DosPacket. Sur FINDINPUT (ARG1=BPTR FileHandle,
-; ARG2=lock du répertoire de départ, ARG3=BSTR nom) le handler alloue un état de STREAMING (SS_*, ofs.i : un seul AllocMem incluant
-; l'ioreq + un block buffer de 512 o), l'ouvre via ofs_stream_open (résout le chemin -> premier data block, SANS
-; lire le fichier), pose fh_Arg1 = état dans le FileHandle (BADDR(ARG1)), renvoie DOSTRUE. READ (ARG1=fh_Arg1,
-; ARG2=dest, ARG3=len) lit INCRÉMENTALEMENT via ofs_stream_read (data-block par data-block, le curseur avance dans
-; l'état ; RES1=octets, 0=EOF). SEEK repositionne via ofs_stream_seek (rend l'ancienne position). END libère l'état.
-; STREAMING RÉEL : plus de buffer whole-file -> aucun cap de taille de fichier (empreinte O(1) = 512 o par handle).
-; Piste IMPLÉMENTATION (« clean ») : spec analyse + AutoDocs exec. AUCUNE lecture ROM.
+; Protocol (docs/analysis/dos-v34-spec.md §2): msg->ln_Name -> DosPacket. On FINDINPUT (ARG1=BPTR FileHandle,
+; ARG2=lock of the starting directory, ARG3=BSTR name) the handler allocates a STREAMING state (SS_*, ofs.i: a single
+; AllocMem including the ioreq + a 512-byte block buffer), opens it via ofs_stream_open (resolves the path -> first
+; data block, WITHOUT reading the file), sets fh_Arg1 = state in the FileHandle (BADDR(ARG1)), returns DOSTRUE. READ
+; (ARG1=fh_Arg1, ARG2=dest, ARG3=len) reads INCREMENTALLY via ofs_stream_read (data block by data block, the cursor
+; advances in the state; RES1=bytes, 0=EOF). SEEK repositions via ofs_stream_seek (returns the old position). END
+; frees the state.
+; REAL STREAMING: no more whole-file buffer -> no file size cap (O(1) footprint = 512 bytes per handle).
+; IMPLEMENTATION track ("clean"): analysis spec + exec AutoDocs. NO ROM reading.
 
                 include "exec.i"
                 include "ofs.i"
@@ -19,13 +20,13 @@
                 include "disk.i"
 
                 xdef    dos_handler_df0
-                xref    ofs_name_to_block    ; LOCATE_OBJECT : chemin -> bloc
-                xref    ofs_fill_fib         ; EXAMINE_OBJECT : bloc -> FIB
-                xref    ofs_dir_next         ; EXAMINE_NEXT : entrée suivante du répertoire
-                xref    ofs_stream_open      ; FINDINPUT : ouvre un fichier en streaming
-                xref    ofs_stream_read      ; READ : lecture incrémentale data-block par data-block
-                xref    ofs_stream_seek      ; SEEK : repositionne le curseur de streaming
-                xref    ow_create            ; écriture OFS (ofswrite.s)
+                xref    ofs_name_to_block    ; LOCATE_OBJECT: path -> block
+                xref    ofs_fill_fib         ; EXAMINE_OBJECT: block -> FIB
+                xref    ofs_dir_next         ; EXAMINE_NEXT: next directory entry
+                xref    ofs_stream_open      ; FINDINPUT: opens a file for streaming
+                xref    ofs_stream_read      ; READ: incremental read data block by data block
+                xref    ofs_stream_seek      ; SEEK: repositions the streaming cursor
+                xref    ow_create            ; OFS writing (ofswrite.s)
                 xref    ow_delete
                 xref    ow_rename
                 xref    ow_setfield
@@ -34,53 +35,53 @@
                 xref    ws_open
                 xref    ws_write
                 xref    ws_close
-                xref    ofs_read_block       ; hnd_bootclock : lecture du bloc racine
-                xref    timer_now            ; heure système (exec/timer.s)
+                xref    ofs_read_block       ; hnd_bootclock: reading of the root block
+                xref    timer_now            ; system time (exec/timer.s)
                 xref    timer_setnow
 
-ACTION_MORE_CACHE EQU 18             ; AddBuffers : ajoute des tampons au filesystem
-ID_VALIDATING   EQU 81               ; InfoData.id_DiskState : pas de bitmap (pas de disque, ou disque non DOS)
+ACTION_MORE_CACHE EQU 18             ; AddBuffers: adds buffers to the filesystem
+ID_VALIDATING   EQU 81               ; InfoData.id_DiskState: no bitmap (no disk, or non-DOS disk)
 IND_WRITEEVENT_C EQU 11              ; input.device
 IE_SIZE         EQU 22               ; struct InputEvent
-DT_DOS          EQU $444F5300        ; « DOS\0 »
-DT_NDOS         EQU $4E444F53        ; « NDOS » : amorce DOS mais bloc racine invalide
-DT_BAD          EQU $42414400        ; « BAD\0 » : bloc 0 illisible
+DT_DOS          EQU $444F5300        ; "DOS\0"
+DT_NDOS         EQU $4E444F53        ; "NDOS": DOS boot block but invalid root block
+DT_BAD          EQU $42414400        ; "BAD\0": block 0 unreadable
 
-; contexte du handler (alloué à son démarrage, pointeur en HND_CTX)
-HC_TDIO         EQU 0                ; IOStdReq trackdisk (questions de changement), puis un bloc de 512 octets
-HC_TMPORT       EQU HC_TDIO+IOREQ_SZ+OFS_BSIZE  ; port des réponses du timer (MP_SIZE, arrondi)
+; handler context (allocated at its startup, pointer in HND_CTX)
+HC_TDIO         EQU 0                ; trackdisk IOStdReq (disk change queries), then a 512-byte block
+HC_TMPORT       EQU HC_TDIO+IOREQ_SZ+OFS_BSIZE  ; timer reply port (MP_SIZE, rounded)
 HC_TMREQ        EQU HC_TMPORT+36     ; timerequest (40)
-HC_INPORT       EQU HC_TMREQ+40      ; port des réponses d'input.device
+HC_INPORT       EQU HC_TMREQ+40      ; input.device reply port
 HC_INIO         EQU HC_INPORT+36     ; IOStdReq input.device
-HC_IEV          EQU HC_INIO+IOREQ_SZ ; InputEvent (IE_SIZE, arrondi)
-HC_SIGS         EQU HC_IEV+24        ; signaux attendus : port des packets | timer
-HC_CHG          EQU HC_SIGS+4        ; TD_CHANGENUM au montage
-HC_DTYPE        EQU HC_CHG+4         ; type du disque monté (id_DiskType), -1 : aucun
-HC_MOUNTED      EQU HC_DTYPE+4       ; byte : un disque a été examiné depuis la dernière éjection
-HC_INHIB        EQU HC_MOUNTED+1     ; byte : ACTION_INHIBIT en cours
-HC_TMOK         EQU HC_INHIB+1       ; byte : timer ouvert, requête en cours
-HC_INOK         EQU HC_TMOK+1        ; byte : input.device ouvert
+HC_IEV          EQU HC_INIO+IOREQ_SZ ; InputEvent (IE_SIZE, rounded)
+HC_SIGS         EQU HC_IEV+24        ; signals waited for: packet port | timer
+HC_CHG          EQU HC_SIGS+4        ; TD_CHANGENUM at mount time
+HC_DTYPE        EQU HC_CHG+4         ; type of the mounted disk (id_DiskType), -1: none
+HC_MOUNTED      EQU HC_DTYPE+4       ; byte: a disk has been examined since the last ejection
+HC_INHIB        EQU HC_MOUNTED+1     ; byte: ACTION_INHIBIT in progress
+HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
+HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
 HC_SIZE         EQU HC_INOK+1
-ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE : le disque n'est plus accédé (DiskCopy, Format)
-WS_MAGICV       EQU $57524954        ; tête d'un état d'écriture (ofswrite.s) ; un état de lecture commence par un APTR
-HND_NAMEBUF     EQU 112              ; chaîne C d'un nom reçu en BSTR (pile)
+ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
+WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
+HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
 
-; dos_handler_df0 : corps du process. GPR à zéro à l'entrée (frame AddTask) -> recharge SysBase.
-; a2 = pr_MsgPort (persistant) ; a3 = Message courant ; a4 = DosPacket courant.
-; Changement de disquette (spec disk-change-v34 §2) : réveil par un packet ou par un tic timer d'1 s ; à chaque réveil
-; hnd_check interroge trackdisk (TD_CHANGESTATE / TD_CHANGENUM) : éjection -> volume détaché, DISKREMOVED ;
-; insertion -> volume retrouvé (même nom, même date de création) ou créé, DISKINSERTED.
+; dos_handler_df0: process body. GPRs at zero on entry (AddTask frame) -> reload SysBase.
+; a2 = pr_MsgPort (persistent); a3 = current Message; a4 = current DosPacket.
+; Disk change (spec disk-change-v34 §2): woken by a packet or by a 1 s timer tick; on each wakeup
+; hnd_check queries trackdisk (TD_CHANGESTATE / TD_CHANGENUM): ejection -> volume detached, DISKREMOVED;
+; insertion -> volume found again (same name, same creation date) or created, DISKINSERTED.
 dos_handler_df0:
                 move.l  ($4).w,a6
                 move.l  EB_THISTASK(a6),a2
-                lea     PR_MSGPORT(a2),a2    ; a2 = son propre pr_MsgPort
+                lea     PR_MSGPORT(a2),a2    ; a2 = its own pr_MsgPort
                 bsr     hnd_init
 .hl:
                 move.l  HND_CTX,d0
-                beq.s   .hl_port             ; sans contexte : packets seulement
+                beq.s   .hl_port             ; no context: packets only
                 move.l  d0,a0
                 move.l  HC_SIGS(a0),d0
-                jsr     LVO_WAIT(a6)         ; packet ou tic
+                jsr     LVO_WAIT(a6)         ; packet or tick
                 bsr     hnd_tick
                 bsr     hnd_check
                 bra.s   .hl_msg
@@ -93,9 +94,9 @@ dos_handler_df0:
                 tst.l   d0
                 beq.s   .hl
                 move.l  d0,a3                ; a3 = Message
-                move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention : msg->ln_Name)
+                move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention: msg->ln_Name)
                 clr.l   DP_RES2(a4)
-                bsr     hnd_gate             ; lock ou fichier d'un autre volume, pas de disque : refus
+                bsr     hnd_gate             ; lock or file of another volume, no disk: refused
                 tst.l   d0
                 bne     .refuse
                 move.l  DP_TYPE(a4),d0
@@ -143,7 +144,7 @@ dos_handler_df0:
                 beq     .info
                 cmp.l   #ACTION_INHIBIT,d0
                 beq     .inhibit
-                move.l  #DOSFALSE,DP_RES1(a4)         ; action inconnue
+                move.l  #DOSFALSE,DP_RES1(a4)         ; unknown action
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
 .refuse:
@@ -152,20 +153,20 @@ dos_handler_df0:
                 bra     .reply
 
 .findinput:
-                move.l  #SS_ALLOC,d0                 ; état de streaming (champs + ioreq + block buffer 512 o)
+                move.l  #SS_ALLOC,d0                 ; streaming state (fields + ioreq + 512-byte block buffer)
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq.s   .fi_fail
-                move.l  d0,d6                        ; d6 = état (préservé par ofs_stream_open)
-                ; convertir le BSTR nom (ARG3) en C-string sur la pile pour ofs_stream_open
+                move.l  d0,d6                        ; d6 = state (preserved by ofs_stream_open)
+                ; convert the BSTR name (ARG3) into a C string on the stack for ofs_stream_open
                 lea     -112(sp),sp
                 move.l  DP_ARG3(a4),d0
                 lsl.l   #2,d0                         ; BADDR(ARG3) = &BSTR (len + chars)
                 move.l  d0,a0
                 move.l  sp,a1
                 moveq   #0,d1
-                move.b  (a0)+,d1                      ; longueur BCPL
+                move.b  (a0)+,d1                      ; BCPL length
 .fi_ncpy:
                 tst.l   d1
                 beq.s   .fi_ndone
@@ -173,26 +174,26 @@ dos_handler_df0:
                 subq.l  #1,d1
                 bra.s   .fi_ncpy
 .fi_ndone:
-                clr.b   (a1)                          ; termine en C-string
-                move.l  DP_ARG2(a4),d0                ; lock du répertoire de départ (0 = racine)
-                bsr     hnd_lockkey                    ; d0 = bloc du répertoire | 0
-                move.l  sp,a0                         ; a0 = chemin, a1 = état
+                clr.b   (a1)                          ; terminate as a C string
+                move.l  DP_ARG2(a4),d0                ; lock of the starting directory (0 = root)
+                bsr     hnd_lockkey                    ; d0 = directory block | 0
+                move.l  sp,a0                         ; a0 = path, a1 = state
                 move.l  d6,a1
-                jsr     ofs_stream_open                ; d0 = 1/0 (résout + init curseur, SANS lire le fichier)
-                lea     112(sp),sp                    ; restaure la pile (C-string consommée)
+                jsr     ofs_stream_open                ; d0 = 1/0 (resolves + inits cursor, WITHOUT reading the file)
+                lea     112(sp),sp                    ; restore the stack (C string consumed)
                 tst.l   d0
-                beq.s   .fi_fail_state                ; introuvable / pas un fichier
+                beq.s   .fi_fail_state                ; not found / not a file
                 move.l  DP_ARG1(a4),d0                ; FileHandle = BADDR(ARG1)
                 lsl.l   #2,d0
                 move.l  d0,a1
-                move.l  d6,FH_ARG1(a1)                ; fh_Arg1 = clé = état de streaming
+                move.l  d6,FH_ARG1(a1)                ; fh_Arg1 = key = streaming state
                 move.l  d6,a1
                 bsr     hnd_usevol
                 move.l  d0,SS_VOL(a1)
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 .fi_fail_state:
-                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)  ; introuvable -> IoErr (d3f en dépend)
+                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)  ; not found -> IoErr (d3f depends on it)
                 move.l  d6,a1
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)
@@ -202,66 +203,66 @@ dos_handler_df0:
 
 .read:
                 ifne    D3B_NO_READ
-                clr.l   DP_RES1(a4)                   ; RED D3B_NO_READ : ne sert PAS READ -> EOF immédiat
+                clr.l   DP_RES1(a4)                   ; RED D3B_NO_READ: does NOT serve READ -> immediate EOF
                 bra     .reply
                 endc
                 move.l  DP_ARG1(a4),a1
                 cmp.l   #WS_MAGICV,(a1)
-                beq     .rw_wrong                     ; fichier ouvert en écriture
-                move.l  a2,-(sp)                       ; a2 = pr_MsgPort du handler : sauvé (ofs_stream_read prend dest en a2)
-                move.l  DP_ARG1(a4),a1                ; a1 = état de streaming
+                beq     .rw_wrong                     ; file open for writing
+                move.l  a2,-(sp)                       ; a2 = handler port: saved (ofs_stream_read takes dest in a2)
+                move.l  DP_ARG1(a4),a1                ; a1 = streaming state
                 move.l  DP_ARG2(a4),a2                ; a2 = dest
-                move.l  DP_ARG3(a4),d0                ; d0 = len demandé
-                jsr     ofs_stream_read                ; d0 = octets lus (0 = EOF) ; curseur avancé dans l'état
+                move.l  DP_ARG3(a4),d0                ; d0 = len requested
+                jsr     ofs_stream_read                ; d0 = bytes read (0 = EOF); cursor advanced in the state
                 move.l  d0,DP_RES1(a4)
-                move.l  (sp)+,a2                       ; restaure le port du handler
+                move.l  (sp)+,a2                       ; restore the handler port
                 bra     .reply
 
-.seek:                                                ; Seek(ARG1=état, ARG2=position, ARG3=mode) -> RES1 = ancienne pos
+.seek:                                                ; Seek(ARG1=state, ARG2=position, ARG3=mode) -> RES1 = old pos
                 ifne    HND_NO_SEEK
-                move.l  DP_ARG1(a4),a1                ; RED HND_NO_SEEK : lit l'état mais NE repositionne PAS
+                move.l  DP_ARG1(a4),a1                ; RED HND_NO_SEEK: reads the state but does NOT reposition
                 move.l  SS_POS(a1),DP_RES1(a4)
                 bra     .reply
                 endc
-                move.l  DP_ARG1(a4),a1                ; a1 = état
+                move.l  DP_ARG1(a4),a1                ; a1 = state
                 cmp.l   #WS_MAGICV,(a1)
-                beq     .sk_err                       ; pas de repositionnement en écriture
-                move.l  SS_POS(a1),d3                 ; d3 = ancienne position (valeur de retour)
-                move.l  DP_ARG2(a4),d1                ; position (signée)
+                beq     .sk_err                       ; no repositioning while writing
+                move.l  SS_POS(a1),d3                 ; d3 = old position (return value)
+                move.l  DP_ARG2(a4),d1                ; position (signed)
                 move.l  DP_ARG3(a4),d2                ; mode (OFFSET_BEGINNING -1 / CURRENT 0 / END 1)
                 tst.l   d2
                 blt.s   .sk_begin
                 beq.s   .sk_current
-                move.l  SS_SIZE(a1),d0                ; END : taille + position
+                move.l  SS_SIZE(a1),d0                ; END: size + position
                 add.l   d1,d0
                 bra.s   .sk_bounds
 .sk_begin:
-                move.l  d1,d0                         ; BEGINNING : position absolue
+                move.l  d1,d0                         ; BEGINNING: absolute position
                 bra.s   .sk_bounds
 .sk_current:
-                move.l  d3,d0                         ; CURRENT : ancienne + position
+                move.l  d3,d0                         ; CURRENT: old + position
                 add.l   d1,d0
 .sk_bounds:
                 tst.l   d0
                 bmi.s   .sk_err
                 cmp.l   SS_SIZE(a1),d0
-                bhi.s   .sk_err                       ; hors [0, taille]
-                jsr     ofs_stream_seek                ; a1 = état, d0 = cible -> repositionne le curseur (dumb seek)
-                move.l  d3,DP_RES1(a4)                ; renvoie l'ANCIENNE position
+                bhi.s   .sk_err                       ; outside [0, size]
+                jsr     ofs_stream_seek                ; a1 = state, d0 = target -> repositions the cursor (dumb seek)
+                move.l  d3,DP_RES1(a4)                ; returns the OLD position
                 bra     .reply
 .sk_err:
                 move.l  #-1,DP_RES1(a4)
                 move.l  #ERROR_SEEK_ERROR,DP_RES2(a4)
                 bra     .reply
 
-.locate:                                              ; Lock : (ARG2 BSTR nom, ARG3 mode) -> RES1 = BPTR FileLock
-                lea     -112(sp),sp                   ; BSTR nom -> C-string sur la pile
+.locate:                                              ; Lock: (ARG2 BSTR name, ARG3 mode) -> RES1 = BPTR FileLock
+                lea     -112(sp),sp                   ; BSTR name -> C string on the stack
                 move.l  DP_ARG2(a4),d0
                 lsl.l   #2,d0
                 move.l  d0,a0                          ; BADDR(ARG2)
                 move.l  sp,a1
                 moveq   #0,d1
-                move.b  (a0)+,d1                      ; longueur BCPL
+                move.b  (a0)+,d1                      ; BCPL length
 .lo_ncpy:
                 tst.l   d1
                 beq.s   .lo_ndone
@@ -269,27 +270,27 @@ dos_handler_df0:
                 subq.l  #1,d1
                 bra.s   .lo_ncpy
 .lo_ndone:
-                clr.b   (a1)                          ; C-string terminée
-                move.l  DP_ARG1(a4),d0                ; lock parent (0 = racine)
+                clr.b   (a1)                          ; C string terminated
+                move.l  DP_ARG1(a4),d0                ; parent lock (0 = root)
                 bsr     hnd_lockkey
-                move.l  sp,a0                          ; a0 = nom
-                jsr     ofs_name_to_block              ; d0 = bloc | 0 (a6 = SysBase ; préserve a2/a3/a4)
+                move.l  sp,a0                          ; a0 = name
+                jsr     ofs_name_to_block              ; d0 = block | 0 (a6 = SysBase; preserves a2/a3/a4)
                 lea     112(sp),sp
                 tst.l   d0
-                beq.s   .lo_fail                       ; objet introuvable
-                move.l  d0,d2                          ; d2 = bloc (préservé par AllocMem)
+                beq.s   .lo_fail                       ; object not found
+                move.l  d0,d2                          ; d2 = block (preserved by AllocMem)
                 move.l  #FL_SIZEOF,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq.s   .lo_fail                       ; pas de RAM
+                beq.s   .lo_fail                       ; no RAM
                 move.l  d0,a0                          ; a0 = FileLock
-                move.l  d2,FL_KEY(a0)                 ; bloc locké
+                move.l  d2,FL_KEY(a0)                 ; locked block
                 move.l  DP_ARG3(a4),FL_ACCESS(a0)     ; mode (SHARED/EXCLUSIVE)
-                move.l  a2,FL_TASK(a0)                ; port du handler (= notre pr_MsgPort) -> source UnLock/Examine
+                move.l  a2,FL_TASK(a0)                ; handler port (= our pr_MsgPort) -> source for UnLock/Examine
                 bsr     hnd_usevol
-                move.l  d0,FL_VOLUME(a0)               ; nœud volume du disque monté (compté)
-                move.l  a0,d1                          ; FL_LINK/curseur = 0 (MEMF_CLEAR)
+                move.l  d0,FL_VOLUME(a0)               ; volume node of the mounted disk (counted)
+                move.l  a0,d1                          ; FL_LINK/cursor = 0 (MEMF_CLEAR)
                 lsr.l   #2,d1                          ; BPTR(lock)
                 move.l  d1,DP_RES1(a4)
                 bra     .reply
@@ -298,7 +299,7 @@ dos_handler_df0:
                 move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
                 bra     .reply
 
-.freelock:                                            ; UnLock : (ARG1 BPTR lock) -> libère
+.freelock:                                            ; UnLock: (ARG1 BPTR lock) -> frees
                 move.l  DP_ARG1(a4),d0
                 lsl.l   #2,d0
                 beq.s   .frl_ok                        ; lock 0 -> no-op
@@ -311,18 +312,18 @@ dos_handler_df0:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 
-.examine:                                             ; Examine : (ARG1 BPTR lock, ARG2 BPTR fib) -> remplit le FIB
+.examine:                                             ; Examine: (ARG1 BPTR lock, ARG2 BPTR fib) -> fills the FIB
                 move.l  DP_ARG1(a4),d0
                 lsl.l   #2,d0
                 beq.s   .ex_fail
                 move.l  d0,a0                          ; a0 = FileLock
-                move.l  FL_KEY(a0),d0                 ; bloc de l'objet locké
-                clr.l   FLP_BUCKET(a0)                ; reset du curseur d'énumération (Examine -> début)
+                move.l  FL_KEY(a0),d0                 ; block of the locked object
+                clr.l   FLP_BUCKET(a0)                ; reset the enumeration cursor (Examine -> start)
                 clr.l   FLP_CHAIN(a0)
                 move.l  DP_ARG2(a4),d1
                 lsl.l   #2,d1
                 move.l  d1,a1                          ; a1 = fib
-                jsr     ofs_fill_fib                   ; d0 = 1/0 (préserve a2/a3/a4/a6)
+                jsr     ofs_fill_fib                   ; d0 = 1/0 (preserves a2/a3/a4/a6)
                 tst.l   d0
                 beq.s   .ex_fail
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -332,21 +333,21 @@ dos_handler_df0:
                 move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
                 bra     .reply
 
-.exnext:                                              ; ExNext : (ARG1 BPTR lock, ARG2 BPTR fib) -> entrée suivante
+.exnext:                                              ; ExNext: (ARG1 BPTR lock, ARG2 BPTR fib) -> next entry
                 move.l  DP_ARG1(a4),d0
                 lsl.l   #2,d0
                 beq.s   .exn_end
                 move.l  d0,a0                          ; a0 = FileLock
-                move.l  FL_KEY(a0),d0                 ; bloc répertoire
-                move.l  FLP_BUCKET(a0),d1             ; curseur bucket
-                move.l  FLP_CHAIN(a0),d2              ; curseur chaîne
+                move.l  FL_KEY(a0),d0                 ; directory block
+                move.l  FLP_BUCKET(a0),d1             ; bucket cursor
+                move.l  FLP_CHAIN(a0),d2              ; chain cursor
                 move.l  DP_ARG2(a4),d3
                 lsl.l   #2,d3
                 move.l  d3,a1                          ; a1 = fib
-                move.l  a0,-(sp)                       ; ofs_dir_next ne préserve PAS a0 -> sauver le lock
-                jsr     ofs_dir_next                   ; d0=found, d1=bucket màj, d2=chain màj (préserve a2-a5)
+                move.l  a0,-(sp)                       ; ofs_dir_next does NOT preserve a0 -> save the lock
+                jsr     ofs_dir_next                   ; d0=found, d1=updated bucket, d2=updated chain (preserves a2-a5)
                 move.l  (sp)+,a0
-                move.l  d1,FLP_BUCKET(a0)             ; réécrit le curseur dans le lock
+                move.l  d1,FLP_BUCKET(a0)             ; write the cursor back into the lock
                 move.l  d2,FLP_CHAIN(a0)
                 tst.l   d0
                 beq.s   .exn_end
@@ -357,24 +358,24 @@ dos_handler_df0:
                 move.l  #ERROR_NO_MORE_ENTRIES,DP_RES2(a4)
                 bra     .reply
 
-.copydir:                                            ; DupLock : (ARG1 BPTR lock) -> nouveau lock, même bloc
+.copydir:                                            ; DupLock: (ARG1 BPTR lock) -> new lock, same block
                 move.l  DP_ARG1(a4),d0
                 bsr     hnd_lockkey
                 tst.l   d0
                 bne.s   .cd_key
-                move.l  #OFS_ROOTBLK,d0                ; lock 0 = racine
+                move.l  #OFS_ROOTBLK,d0                ; lock 0 = root
 .cd_key:
                 move.l  d0,d2
                 bra.s   .pa_alloc
-.parent:                                             ; ParentDir : (ARG1 BPTR lock) -> lock du parent | 0 (racine)
+.parent:                                             ; ParentDir: (ARG1 BPTR lock) -> lock of the parent | 0 (root)
                 move.l  DP_ARG1(a4),d0
                 bsr     hnd_lockkey
-                lea     hnd_slash(pc),a0               ; « / » = parent du répertoire de départ
+                lea     hnd_slash(pc),a0               ; "/" = parent of the starting directory
                 jsr     ofs_name_to_block
                 tst.l   d0
-                beq.s   .pa_root                       ; parent de la racine : 0 sans erreur
+                beq.s   .pa_root                       ; parent of the root: 0 without error
                 move.l  d0,d2
-.pa_alloc:                                             ; d2 = bloc -> nouveau FileLock partagé
+.pa_alloc:                                             ; d2 = block -> new shared FileLock
                 move.l  #FL_SIZEOF,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
@@ -394,9 +395,9 @@ dos_handler_df0:
                 clr.l   DP_RES1(a4)
                 bra     .reply
 
-.inhibit:                                            ; (ARG1 : DOSTRUE = inhiber, 0 = lever)
+.inhibit:                                            ; (ARG1: DOSTRUE = inhibit, 0 = release)
                 move.l  DP_ARG1(a4),d0
-                jsr     ow_inhibit                     ; bitmap écrite / oubliée
+                jsr     ow_inhibit                     ; bitmap written / forgotten
                 move.l  HND_CTX,d0
                 beq.s   .ih_ok
                 move.l  d0,a0
@@ -404,47 +405,47 @@ dos_handler_df0:
                 beq.s   .ih_off
                 tst.b   HC_INHIB(a0)
                 bne.s   .ih_ok
-                st      HC_INHIB(a0)                   ; volume détaché comme à l'éjection, sans événement
+                st      HC_INHIB(a0)                   ; volume detached as on ejection, without an event
                 move.l  a3,-(sp)
                 move.l  a0,a3
                 moveq   #0,d0
                 bsr     hnd_eject
-                move.l  #$42555359,HC_DTYPE(a3)        ; « BUSY »
+                move.l  #$42555359,HC_DTYPE(a3)        ; "BUSY"
                 move.l  (sp)+,a3
                 bra.s   .ih_ok
 .ih_off:
                 tst.b   HC_INHIB(a0)
                 beq.s   .ih_ok
-                sf      HC_INHIB(a0)                   ; remontage complet au réveil suivant
+                sf      HC_INHIB(a0)                   ; full remount on the next wakeup
                 sf      HC_MOUNTED(a0)
                 move.l  #-1,HC_DTYPE(a0)
 .ih_ok:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 
-.morecache:                                          ; AddBuffers : pas de cache de blocs FS (le trackdisk garde la piste)
-                move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepté sans effet
+.morecache:                                          ; AddBuffers: no FS block cache (trackdisk keeps the track)
+                move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepted without effect
                 bra     .reply
 
 .end:
-                move.l  DP_ARG1(a4),a1                ; a1 = état de streaming (un seul AllocMem)
+                move.l  DP_ARG1(a4),a1                ; a1 = streaming state (a single AllocMem)
                 cmp.l   #WS_MAGICV,(a1)
                 beq.s   .end_w
                 move.l  SS_VOL(a1),d0
                 bsr     hnd_unusevol
                 move.l  #SS_ALLOC,d0
-                jsr     LVO_FREEMEM(a6)               ; libère l'état (ioreq + block buffer inclus)
+                jsr     LVO_FREEMEM(a6)               ; free the state (ioreq + block buffer included)
                 move.l  #DOSTRUE,DP_RES1(a4)
-.reply:                                              ; returnpkt : vers dp_Port (mn_ReplyPort peut
-                move.l  DP_PORT(a4),a0                ; ne pas être rempli : DiskCopy), qui reçoit
-                move.l  a2,DP_PORT(a4)                ; en retour le port du handler
+.reply:                                              ; returnpkt: to dp_Port (mn_ReplyPort may
+                move.l  DP_PORT(a4),a0                ; not be filled in: DiskCopy), which receives
+                move.l  a2,DP_PORT(a4)                ; the handler port in return
                 move.l  a3,a1
                 jsr     LVO_PUTMSG(a6)
                 bra     .hl_msg
 .end_w:
                 move.l  WS_VOL(a1),d0
                 bsr     hnd_unusevol
-                jsr     ws_close                       ; données, extension, header, bitmap écrits ; état libéré
+                jsr     ws_close                       ; data, extension, header, bitmap written; state freed
                 move.l  d0,DP_RES1(a4)
                 bne.s   .reply
                 move.l  #ERROR_DISK_WRITE_PROTECTED,DP_RES2(a4)
@@ -454,8 +455,8 @@ dos_handler_df0:
                 move.l  #ERROR_OBJECT_WRONG_TYPE,DP_RES2(a4)
                 bra.s   .reply
 
-; --- écriture (ofswrite.s) ---
-.findupdate:                                         ; fichier existant -> lecture ; sinon créé comme FINDOUTPUT
+; --- writing (ofswrite.s) ---
+.findupdate:                                         ; existing file -> read; otherwise created like FINDOUTPUT
                 lea     -HND_NAMEBUF(sp),sp
                 move.l  DP_ARG3(a4),d0
                 move.l  sp,a1
@@ -467,7 +468,7 @@ dos_handler_df0:
                 lea     HND_NAMEBUF(sp),sp
                 tst.l   d0
                 bne     .findinput
-.findoutput:                                         ; (ARG1 fh, ARG2 lock, ARG3 BSTR nom) : fichier créé ou remplacé
+.findoutput:                                         ; (ARG1 fh, ARG2 lock, ARG3 BSTR name): file created or replaced
                 lea     -HND_NAMEBUF(sp),sp
                 move.l  DP_ARG3(a4),d0
                 move.l  sp,a1
@@ -475,7 +476,7 @@ dos_handler_df0:
                 move.l  DP_ARG2(a4),d0
                 bsr     hnd_lockkey
                 move.l  sp,a0
-                jsr     ws_open                        ; d0 = état | 0, d1 = erreur
+                jsr     ws_open                        ; d0 = state | 0, d1 = error
                 lea     HND_NAMEBUF(sp),sp
                 tst.l   d0
                 beq     .w_fail
@@ -488,17 +489,17 @@ dos_handler_df0:
                 move.l  d0,WS_VOL(a1)
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
-.write:                                              ; (ARG1 état, ARG2 données, ARG3 longueur) -> RES1 = longueur | -1
+.write:                                              ; (ARG1 state, ARG2 data, ARG3 length) -> RES1 = length | -1
                 move.l  DP_ARG1(a4),a1
                 cmp.l   #WS_MAGICV,(a1)
-                bne     .rw_wrong                     ; fichier ouvert en lecture
+                bne     .rw_wrong                     ; file open for reading
                 move.l  DP_ARG2(a4),a0
                 move.l  DP_ARG3(a4),d0
                 jsr     ws_write
                 move.l  d0,DP_RES1(a4)
                 move.l  d1,DP_RES2(a4)
                 bra     .reply
-.delete:                                             ; (ARG1 lock, ARG2 BSTR nom)
+.delete:                                             ; (ARG1 lock, ARG2 BSTR name)
                 lea     -HND_NAMEBUF(sp),sp
                 move.l  DP_ARG2(a4),d0
                 move.l  sp,a1
@@ -508,7 +509,7 @@ dos_handler_df0:
                 move.l  sp,a0
                 jsr     ow_delete
                 bra     .w_res
-.rename:                                             ; (ARG1 lock, ARG2 BSTR ancien, ARG3 lock, ARG4 BSTR nouveau)
+.rename:                                             ; (ARG1 lock, ARG2 BSTR old, ARG3 lock, ARG4 BSTR new)
                 lea     -2*HND_NAMEBUF(sp),sp
                 move.l  DP_ARG2(a4),d0
                 move.l  sp,a1
@@ -526,7 +527,7 @@ dos_handler_df0:
                 jsr     ow_rename
                 lea     HND_NAMEBUF(sp),sp
                 bra     .w_res
-.createdir:                                          ; (ARG1 lock, ARG2 BSTR nom) -> RES1 = lock du répertoire
+.createdir:                                          ; (ARG1 lock, ARG2 BSTR name) -> RES1 = lock of the directory
                 lea     -HND_NAMEBUF(sp),sp
                 move.l  DP_ARG2(a4),d0
                 move.l  sp,a1
@@ -541,10 +542,10 @@ dos_handler_df0:
                 beq.s   .w_fail
                 move.l  d0,d2
                 bra     .pa_alloc
-.setprot:                                            ; (ARG2 lock, ARG3 BSTR nom, ARG4 masque)
+.setprot:                                            ; (ARG2 lock, ARG3 BSTR name, ARG4 mask)
                 moveq   #0,d1
                 bra.s   .setfield
-.setcomment:                                         ; (ARG2 lock, ARG3 BSTR nom, ARG4 BSTR commentaire)
+.setcomment:                                         ; (ARG2 lock, ARG3 BSTR name, ARG4 BSTR comment)
                 moveq   #1,d1
 .setfield:
                 lea     -HND_NAMEBUF(sp),sp
@@ -583,7 +584,7 @@ dos_handler_df0:
                 jsr     ow_diskinfo
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
-.di_none:                                            ; pas de volume : état « validation », type courant
+.di_none:                                            ; no volume: "validating" state, current type
                 moveq   #8,d0
 .di_clr:
                 clr.l   (a0)+
@@ -600,12 +601,12 @@ dos_handler_df0:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 
-; hnd_bootclock(a6 = SysBase) : réglage d'heure au montage (spec boot-clock-v34) : l'heure système prend la plus
-; récente des deux dates du bloc racine (répertoire racine, longs 105-107 ; disque, longs 118-120) si elle est encore
-; au premier jour (horloge jamais réglée) et antérieure à cette date ; jamais reculée. Appelé à chaque montage d'un
-; disque DOS. Préserve tout.
-HND_ROOTDATE    EQU 420              ; DateStamp de modification du répertoire racine
-HND_DISKDATE    EQU 472              ; DateStamp de modification du disque
+; hnd_bootclock(a6 = SysBase): time setting at mount time (spec boot-clock-v34): the system time takes the more
+; recent of the two dates of the root block (root directory, longs 105-107; disk, longs 118-120) if it is still
+; on the first day (clock never set) and earlier than that date; never moved backwards. Called on every mount of a
+; DOS disk. Preserves everything.
+HND_ROOTDATE    EQU 420              ; modification DateStamp of the root directory
+HND_DISKDATE    EQU 472              ; modification DateStamp of the disk
 hnd_bootclock:
                 movem.l d0-d7/a0-a3,-(sp)
                 lea     EB_DEVICELIST(a6),a0
@@ -623,9 +624,9 @@ hnd_bootclock:
                 move.l  #OFS_ROOTBLK,d0
                 jsr     ofs_read_block
                 tst.l   d0
-                beq.s   .bc_free             ; pas de disque
+                beq.s   .bc_free             ; no disk
                 lea     IOREQ_SZ(a3),a0
-                moveq   #0,d0                ; checksum OFS : somme des 128 longs nulle
+                moveq   #0,d0                ; OFS checksum: sum of the 128 longs is zero
                 moveq   #OFS_BSIZE/4-1,d1
 .bc_sum:
                 add.l   (a0)+,d0
@@ -637,7 +638,7 @@ hnd_bootclock:
                 bne.s   .bc_free
                 lea     HND_ROOTDATE(a0),a1
                 bsr.s   hnd_dssecs
-                move.l  d0,d2                ; d2/d3 = date retenue (secondes, µs)
+                move.l  d0,d2                ; d2/d3 = date retained (seconds, us)
                 move.l  d1,d3
                 lea     IOREQ_SZ+HND_DISKDATE(a3),a1
                 bsr.s   hnd_dssecs
@@ -646,9 +647,9 @@ hnd_bootclock:
                 move.l  d0,d2
                 move.l  d1,d3
 .bc_max:
-                jsr     timer_now            ; d0/d1 = heure système
+                jsr     timer_now            ; d0/d1 = system time
                 cmp.l   #86400,d0
-                bhs.s   .bc_free             ; déjà réglée (au-delà du premier jour)
+                bhs.s   .bc_free             ; already set (past the first day)
                 cmp.l   d2,d0
                 bhi.s   .bc_free
                 blo.s   .bc_set
@@ -666,25 +667,25 @@ hnd_bootclock:
                 movem.l (sp)+,d0-d7/a0-a3
                 rts
 
-; hnd_dssecs(a1 = DateStamp [jours, minutes, ticks]) -> d0 = secondes, d1 = µs (ticks bornés à 16 bits).
+; hnd_dssecs(a1 = DateStamp [days, minutes, ticks]) -> d0 = seconds, d1 = us (ticks bounded to 16 bits).
 hnd_dssecs:
                 move.l  (a1),d0
-                mulu    #1440,d0             ; jours -> minutes
+                mulu    #1440,d0             ; days -> minutes
                 add.l   4(a1),d0
-                move.l  d0,d1                ; × 60 = × 64 - × 4
+                move.l  d0,d1                ; x 60 = x 64 - x 4
                 lsl.l   #6,d0
                 lsl.l   #2,d1
                 sub.l   d1,d0
                 move.l  8(a1),d1
                 and.l   #$0000FFFF,d1
-                divu    #50,d1               ; d1 = reste : secondes
+                divu    #50,d1               ; d1 = remainder: seconds
                 add.w   d1,d0
                 bcc.s   .ds_nc
                 add.l   #$10000,d0
 .ds_nc:
                 clr.w   d1
                 swap    d1
-                mulu    #20000,d1            ; reste (ticks) -> µs
+                mulu    #20000,d1            ; remainder (ticks) -> us
                 rts
 hnd_tdname:
                 dc.b    "trackdisk.device",0
@@ -695,13 +696,13 @@ hnd_inname:
                 even
 
 
-; hnd_init(a2 = pr_MsgPort, a6) : contexte, port et requête timer (UNIT_VBLANK, 1 s), input.device, puis premier
-; montage. Sans mémoire : le handler tourne quand même, sans détection de changement. Préserve d2-d7/a2-a6.
+; hnd_init(a2 = pr_MsgPort, a6): context, timer port and request (UNIT_VBLANK, 1 s), input.device, then first
+; mount. Without memory: the handler runs anyway, without change detection. Preserves d2-d7/a2-a6.
 hnd_init:
                 movem.l d2/a3,-(sp)
                 moveq   #0,d2
                 move.b  MP_SIGBIT(a2),d0
-                bset    d0,d2                         ; d2 = signal du port des packets
+                bset    d0,d2                         ; d2 = signal of the packet port
                 move.l  #HC_SIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
@@ -748,7 +749,7 @@ hnd_init:
 .in_ret:
                 movem.l (sp)+,d2/a3
                 rts
-; hnd_port(a0 = MsgPort à préparer, a6) -> d0 = masque de son signal (0 : aucun signal libre). Clobbe d1/a0/a1.
+; hnd_port(a0 = MsgPort to set up, a6) -> d0 = mask of its signal (0: no free signal). Clobbers d1/a0/a1.
 hnd_port:
                 move.l  a0,-(sp)
                 moveq   #-1,d0
@@ -760,7 +761,7 @@ hnd_port:
                 clr.b   MP_FLAGS(a0)                  ; PA_SIGNAL
                 move.b  d0,MP_SIGBIT(a0)
                 move.l  EB_THISTASK(a6),MP_SIGTASK(a0)
-                lea     MP_MSGLIST(a0),a1             ; liste vide
+                lea     MP_MSGLIST(a0),a1             ; empty list
                 move.l  a1,8(a1)
                 addq.l  #4,a1
                 clr.l   (a1)
@@ -772,14 +773,14 @@ hnd_port:
 .po_none:
                 moveq   #0,d0
                 rts
-; hnd_arm(a3 = contexte, a6) : requête timer d'une seconde, asynchrone. Clobbe d0/d1/a0/a1.
+; hnd_arm(a3 = context, a6): one-second timer request, asynchronous. Clobbers d0/d1/a0/a1.
 hnd_arm:
                 lea     HC_TMREQ(a3),a1
                 move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
                 move.l  #1,TV_SECS(a1)
                 clr.l   TV_SECS+4(a1)
                 jmp     LVO_SENDIO(a6)
-; hnd_tick(a6) : réponse du timer reçue -> requête réarmée. Préserve d2-d7/a2-a6.
+; hnd_tick(a6): timer reply received -> request re-armed. Preserves d2-d7/a2-a6.
 hnd_tick:
                 move.l  a3,-(sp)
                 move.l  HND_CTX,d0
@@ -796,7 +797,7 @@ hnd_tick:
                 move.l  (sp)+,a3
                 rts
 
-; hnd_tdcmd(d0.w = commande, a3 = contexte, a6) -> d0 = io_Actual. Clobbe d1/a0/a1.
+; hnd_tdcmd(d0.w = command, a3 = context, a6) -> d0 = io_Actual. Clobbers d1/a0/a1.
 hnd_tdcmd:
                 lea     HC_TDIO(a3),a1
                 move.w  d0,IO_COMMAND(a1)
@@ -809,9 +810,9 @@ hnd_tdcmd:
                 move.l  HC_TDIO+IO_ACTUAL(a3),d0
                 rts
 
-; hnd_check(a2 = port du handler, a6) : éjection ou insertion depuis le dernier passage (spec disk-change-v34 §2.1).
-; Monté : disque absent ou compteur de changements différent -> éjection. Non monté et disque présent -> montage.
-; Rien pendant une inhibition. Préserve d2-d7/a2-a6.
+; hnd_check(a2 = handler port, a6): ejection or insertion since the last pass (spec disk-change-v34 §2.1).
+; Mounted: disk absent or different change counter -> ejection. Not mounted and disk present -> mount.
+; Nothing during an inhibit. Preserves d2-d7/a2-a6.
 hnd_check:
                 movem.l d2/a3,-(sp)
                 move.l  HND_CTX,d0
@@ -823,7 +824,7 @@ hnd_check:
                 bne.s   .ck_ret
                 moveq   #TD_CHANGESTATE,d0
                 bsr     hnd_tdcmd
-                move.l  d0,d2                         ; d2 = 0 : disque présent
+                move.l  d0,d2                         ; d2 = 0: disk present
                 tst.b   HC_MOUNTED(a3)
                 beq.s   .ck_in
                 tst.l   d2
@@ -845,12 +846,12 @@ hnd_check:
                 movem.l (sp)+,d2/a3
                 rts
 
-; hnd_mount(a2 = port, a3 = contexte, a6) : examine le disque inséré (bloc 0 puis bloc racine, spec §2.2.2 et §2.5).
-; Disque DOS : nœud volume de même nom et même date de création réactivé, sinon créé en tête de la DosList ; il devient
-; DL_VOLUME, bitmap oubliée, heure réglée. Puis DISKINSERTED, disque DOS ou non. Préserve d2-d7/a2-a6.
+; hnd_mount(a2 = port, a3 = context, a6): examines the inserted disk (block 0 then root block, spec §2.2.2 and §2.5).
+; DOS disk: volume node with the same name and creation date reactivated, otherwise created at the head of the
+; DosList; it becomes DL_VOLUME, bitmap forgotten, time set. Then DISKINSERTED, DOS disk or not. Preserves d2-d7/a2-a6.
 hnd_mount:
                 movem.l d2/a2-a4,-(sp)
-                move.l  a2,a4                         ; a4 = port du handler
+                move.l  a2,a4                         ; a4 = handler port
                 st      HC_MOUNTED(a3)
                 move.l  HC_TDIO+IO_DEVICE(a3),a2
                 moveq   #0,d0
@@ -861,7 +862,7 @@ hnd_mount:
                 move.l  #DT_BAD,d2
                 tst.l   d0
                 beq     .mo_type
-                move.l  HC_TDIO+IOREQ_SZ(a3),d2       ; premier long du bloc 0 : « DOS\0 » seulement (OFS)
+                move.l  HC_TDIO+IOREQ_SZ(a3),d2       ; first long of block 0: "DOS\0" only (OFS)
                 cmp.l   #DT_DOS,d2
                 bne     .mo_type
                 move.l  #DT_NDOS,d2
@@ -872,7 +873,7 @@ hnd_mount:
                 move.l  (sp)+,a3
                 tst.l   d0
                 beq     .mo_type
-                lea     HC_TDIO+IOREQ_SZ(a3),a0       ; contrôles du bloc racine
+                lea     HC_TDIO+IOREQ_SZ(a3),a0       ; root block checks
                 moveq   #0,d0
                 moveq   #OFS_BSIZE/4-1,d1
 .mo_sum:
@@ -883,7 +884,7 @@ hnd_mount:
                 lea     HC_TDIO+IOREQ_SZ(a3),a0
                 cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
                 bne     .mo_type
-                tst.l   4(a0)                         ; clé d'en-tête
+                tst.l   4(a0)                         ; header key
                 bne     .mo_type
                 cmp.l   #72,OFSB_HTSIZE(a0)
                 bne     .mo_type
@@ -895,11 +896,11 @@ hnd_mount:
                 cmp.b   #30,d0
                 bhi     .mo_type
                 move.l  #DT_DOS,d2
-                bsr     hnd_findvol                   ; d0 = BPTR du nœud (réactivé ou créé) | 0
+                bsr     hnd_findvol                   ; d0 = BPTR of the node (reactivated or created) | 0
                 move.l  DOS_DOSBASE,a0
                 move.l  d0,DL_VOLUME(a0)
                 moveq   #0,d0
-                jsr     ow_inhibit                    ; bitmap de l'ancien disque oubliée
+                jsr     ow_inhibit                    ; bitmap of the old disk forgotten
                 bsr     hnd_bootclock
 .mo_type:
                 move.l  d2,HC_DTYPE(a3)
@@ -911,11 +912,11 @@ hnd_mount:
                 movem.l (sp)+,d2/a2-a4
                 rts
 
-; hnd_findvol(a3 = contexte (bloc racine en HC_TDIO+IOREQ_SZ), a4 = port, a6) -> d0 = BPTR du nœud volume | 0 :
-; nœud DLT_VOLUME de même nom (sans casse) et de même date de création (longs 121..123) : dl_Task := port ; sinon
-; nœud neuf en tête de la DosList (date, nom, dl_Task ; dl_Lock, dl_LockList et dl_DiskType à 0). Sous Forbid.
-; Clobbe d0/d1/a0/a1.
-HND_CDATE       EQU 484              ; bloc racine : date de création du disque (longs 121..123)
+; hnd_findvol(a3 = context (root block at HC_TDIO+IOREQ_SZ), a4 = port, a6) -> d0 = BPTR of the volume node | 0:
+; DLT_VOLUME node with the same name (case-insensitive) and the same creation date (longs 121..123): dl_Task := port;
+; otherwise a new node at the head of the DosList (date, name, dl_Task; dl_Lock, dl_LockList and dl_DiskType at 0).
+; Under Forbid. Clobbers d0/d1/a0/a1.
+HND_CDATE       EQU 484              ; root block: creation date of the disk (longs 121..123)
 hnd_findvol:
                 movem.l d2/a2,-(sp)
                 jsr     LVO_FORBID(a6)
@@ -963,12 +964,12 @@ hnd_findvol:
                 move.l  (a0)+,(a1)+
                 move.l  (a0)+,(a1)+
                 lea     HC_TDIO+IOREQ_SZ+OFSB_NAME(a3),a0
-                lea     DN_SIZEOF(a2),a1              ; BSTR du nom juste après le nœud
+                lea     DN_SIZEOF(a2),a1              ; BSTR of the name right after the node
                 move.l  a1,d0
                 lsr.l   #2,d0
                 move.l  d0,DN_NAME(a2)
                 moveq   #0,d0
-                move.b  (a0),d0                       ; longueur (1..30, contrôlée)
+                move.b  (a0),d0                       ; length (1..30, checked)
 .fv_cp:
                 move.b  (a0)+,(a1)+
                 dbra    d0,.fv_cp
@@ -984,7 +985,7 @@ hnd_findvol:
                 jsr     LVO_PERMIT(a6)
                 movem.l (sp)+,d2/a2
                 rts
-; hnd_devinfo -> a0 = &DosInfo.di_DevInfo. Clobbe d0.
+; hnd_devinfo -> a0 = &DosInfo.di_DevInfo. Clobbers d0.
 hnd_devinfo:
                 move.l  DOS_DOSBASE,a0
                 move.l  DL_ROOT(a0),a0
@@ -993,7 +994,7 @@ hnd_devinfo:
                 move.l  d0,a0
                 lea     DI_DEVINFO(a0),a0
                 rts
-; hnd_bstreq(a0, a1 = BSTR) -> Z = 1 si égales sans tenir compte de la casse (ASCII). Clobbe d0/d1/a0/a1.
+; hnd_bstreq(a0, a1 = BSTR) -> Z = 1 if equal ignoring case (ASCII). Clobbers d0/d1/a0/a1.
 hnd_bstreq:
                 move.l  d2,-(sp)
                 moveq   #0,d2
@@ -1013,7 +1014,7 @@ hnd_bstreq:
                 dbra    d2,.be_lp
                 moveq   #0,d0                         ; Z = 1
 .be_ret:
-                movem.l (sp)+,d2                      ; (movem ne touche pas aux codes de condition)
+                movem.l (sp)+,d2                      ; (movem does not touch the condition codes)
                 rts
 .be_up:
                 cmp.b   #'a',d0
@@ -1024,9 +1025,9 @@ hnd_bstreq:
 .bu_r:
                 rts
 
-; hnd_eject(d0 = 1 : émettre DISKREMOVED, a3 = contexte, a6) : volume courant détaché (spec §2.2.1) : sans lock ni
-; fichier ouvert, son nœud quitte la DosList et est libéré ; sinon dl_Task := 0 (le nœud reste). Bitmap oubliée.
-; Préserve d2-d7/a2-a6.
+; hnd_eject(d0 = 1: emit DISKREMOVED, a3 = context, a6): current volume detached (spec §2.2.1): with no lock or
+; open file, its node leaves the DosList and is freed; otherwise dl_Task := 0 (the node stays). Bitmap forgotten.
+; Preserves d2-d7/a2-a6.
 hnd_eject:
                 movem.l d2/a2,-(sp)
                 move.l  d0,d2
@@ -1043,7 +1044,7 @@ hnd_eject:
                 jsr     LVO_FORBID(a6)
                 tst.l   DOL_USE(a2)
                 bne.s   .ej_keep
-                bsr     hnd_devinfo                   ; retrait de la DosList
+                bsr     hnd_devinfo                   ; removal from the DosList
 .ej_find:
                 move.l  (a0),d0
                 lsl.l   #2,d0
@@ -1072,8 +1073,8 @@ hnd_eject:
                 movem.l (sp)+,d2/a2
                 rts
 
-; hnd_event(d0.b = ie_Class, a3 = contexte, a6) : InputEvent nulle de cette classe écrite dans input.device
-; (IND_WRITEEVENT) : intuition en fait DISKINSERTED / DISKREMOVED. Clobbe d0/d1/a0/a1.
+; hnd_event(d0.b = ie_Class, a3 = context, a6): null InputEvent of this class written into input.device
+; (IND_WRITEEVENT): intuition turns it into DISKINSERTED / DISKREMOVED. Clobbers d0/d1/a0/a1.
 hnd_event:
                 tst.b   HC_INOK(a3)
                 beq.s   .ev_ret
@@ -1093,24 +1094,24 @@ hnd_event:
 .ev_ret:
                 rts
 
-; hnd_gate(a4 = DosPacket) -> d0 = 0 si le packet peut être servi, sinon le code d'erreur (spec §2.4) : un lock ou
-; un fichier d'un autre volume que le disque monté -> 218 (ERROR_DEVICE_NOT_MOUNTED) ; une action sur la racine
-; sans disque -> 226 (ERROR_NO_DISK), disque non DOS -> 225. Fermetures, UnLock, Info disque et inhibition passent
-; toujours. Clobbe d1/a0/a1.
+; hnd_gate(a4 = DosPacket) -> d0 = 0 if the packet can be served, otherwise the error code (spec §2.4): a lock or
+; a file of a volume other than the mounted disk -> 218 (ERROR_DEVICE_NOT_MOUNTED); an action on the root
+; without a disk -> 226 (ERROR_NO_DISK), non-DOS disk -> 225. Closes, UnLock, disk Info and inhibit always
+; pass. Clobbers d1/a0/a1.
 hnd_gate:
                 move.l  DP_TYPE(a4),d0
                 lea     hnd_gtab(pc),a0
 .gt_lp:
                 move.w  (a0)+,d1
-                beq.s   .gt_ok                        ; action sans lock à contrôler
+                beq.s   .gt_ok                        ; action with no lock to check
                 cmp.w   d1,d0
                 beq.s   .gt_hit
                 addq.l  #2,a0
                 bra.s   .gt_lp
 .gt_hit:
                 move.l  DOS_DOSBASE,a1
-                move.l  DL_VOLUME(a1),d1              ; d1 = volume monté | 0
-                move.w  (a0),d0                       ; décalages des arguments (octet haut, octet bas ; 0 = aucun)
+                move.l  DL_VOLUME(a1),d1              ; d1 = mounted volume | 0
+                move.w  (a0),d0                       ; argument offsets (high byte, low byte; 0 = none)
                 tst.b   d0
                 bmi.s   .gt_state
                 bsr.s   .gt_arg
@@ -1122,7 +1123,7 @@ hnd_gate:
                 moveq   #0,d0
 .gt_ret:
                 rts
-.gt_state:                                            ; READ/WRITE/SEEK : ARG1 = état d'un fichier ouvert
+.gt_state:                                            ; READ/WRITE/SEEK: ARG1 = state of an open file
                 move.l  DP_ARG1(a4),a0
                 move.l  SS_VOL(a0),d0
                 cmp.l   #WS_MAGICV,(a0)
@@ -1134,10 +1135,10 @@ hnd_gate:
                 cmp.l   d1,d0
                 beq.s   .gt_ok
 .gt_218:
-                move.l  d0,HND_REFVOL                 ; volume réclamé par le requester « Please replace volume » (dos)
+                move.l  d0,HND_REFVOL                 ; volume requested by the "Please replace volume" requester (dos)
                 move.l  #ERROR_DEVICE_NOT_MOUNTED,d0
                 rts
-; .gt_arg(d0.b = décalage dans le packet de l'argument lock | 0, d1 = volume monté) -> Z = 1 : accepté, sinon d0 = code
+; .gt_arg(d0.b = offset in the packet of the lock argument | 0, d1 = mounted volume) -> Z = 1: accepted, else d0 = code
 .gt_arg:
                 move.l  d0,-(sp)
                 and.w   #$FF,d0
@@ -1145,7 +1146,7 @@ hnd_gate:
                 move.l  0(a4,d0.w),d0                 ; BPTR lock | 0
                 lsl.l   #2,d0
                 bne.s   .ga_lock
-                tst.l   d1                            ; racine du disque monté
+                tst.l   d1                            ; root of the mounted disk
                 bne.s   .ga_ok
                 move.l  #ERROR_NO_DISK,d0
                 move.l  HND_CTX,a0
@@ -1172,7 +1173,7 @@ hnd_gate:
                 move.l  (sp)+,d0
                 cmp.w   d0,d0                         ; Z = 1
                 rts
-; action, décalages (octet haut : 2e lock, octet bas : 1er lock) ; $80 : état de fichier en ARG1
+; action, offsets (high byte: 2nd lock, low byte: 1st lock); $80: file state in ARG1
 hnd_gtab:
                 dc.w    ACTION_LOCATE_OBJECT,DP_ARG1
                 dc.w    ACTION_EXAMINE_OBJECT,DP_ARG1
@@ -1193,8 +1194,8 @@ hnd_gtab:
                 dc.w    ACTION_SEEK,$80
                 dc.w    0
 
-; hnd_usevol -> d0 = BPTR du volume monté (DL_VOLUME) | 0, son compte d'usage augmenté (lock ou fichier ouvert).
-; hnd_unusevol(d0 = BPTR volume | 0) : compte diminué. Préservent tout sauf d0.
+; hnd_usevol -> d0 = BPTR of the mounted volume (DL_VOLUME) | 0, its use count increased (lock or open file).
+; hnd_unusevol(d0 = BPTR volume | 0): count decreased. Both preserve everything except d0.
 hnd_usevol:
                 move.l  a0,-(sp)
                 move.l  DOS_DOSBASE,a0
@@ -1220,7 +1221,7 @@ hnd_unusevol:
 .un_ret:
                 rts
 
-; hnd_lockkey(d0 = BPTR FileLock | 0) -> d0 = bloc header verrouillé (fl_Key) | 0 (= racine pour ofs_*). Clobbe a0.
+; hnd_lockkey(d0 = BPTR FileLock | 0) -> d0 = locked header block (fl_Key) | 0 (= root for ofs_*). Clobbers a0.
 hnd_lockkey:
                 lsl.l   #2,d0
                 beq.s   .lk_root
@@ -1228,7 +1229,7 @@ hnd_lockkey:
                 move.l  FL_KEY(a0),d0
 .lk_root:
                 rts
-; hnd_cstr(d0 = BPTR BSTR, a1 = destination HND_NAMEBUF) : chaîne C (longueur bornée). Clobbe d0/d1/a0/a1.
+; hnd_cstr(d0 = BPTR BSTR, a1 = destination HND_NAMEBUF): C string (bounded length). Clobbers d0/d1/a0/a1.
 hnd_cstr:
                 lsl.l   #2,d0
                 move.l  d0,a0

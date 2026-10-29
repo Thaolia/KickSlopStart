@@ -1,10 +1,10 @@
-; src/intuition/prefs.s — Preferences d'intuition : GetPrefs (-132), GetDefPrefs (-126), SetPrefs (-324).
+; src/intuition/prefs.s - intuition Preferences: GetPrefs (-132), GetDefPrefs (-126), SetPrefs (-324).
 ;
-; La copie courante (232 octets) vit dans IntuitionBase (IB_PREFS). Le reste d'intuition la lit à la volée :
-; PointerTicks (pointer.s), DoubleClick (screens.s), décalage et image du pointeur, couleurs du Workbench à
-; l'ouverture de son écran. SetPrefs la remplace puis applique police par défaut, couleurs, pointeur et décalage de
-; la vue ; avec « inform », chaque fenêtre qui a demandé NEWPREFS en est avertie.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition, preferences.h public, spec docs/analysis/intuition-prefs-v34.md.
+; The current copy (232 bytes) lives in IntuitionBase (IB_PREFS). The rest of intuition reads it on the fly:
+; PointerTicks (pointer.s), DoubleClick (screens.s), pointer offset and image, Workbench colors when
+; its screen opens. SetPrefs replaces it then applies the default font, colors, pointer and view
+; offset; with "inform", each window that asked for NEWPREFS is notified.
+; IMPLEMENTATION track ("clean"): AutoDocs intuition, public preferences.h, spec docs/analysis/intuition-prefs-v34.md.
 
                 include "exec.i"
                 include "intuition.i"
@@ -14,21 +14,21 @@
                 xdef    intuition_GetDefPrefs
                 xdef    intuition_SetPrefs
                 xdef    it_prefsinit
-                xref    ptr_image            ; pointer.s : image par défaut du pointeur (16 lignes, 2 plans)
-                xref    it_ptrmoved          ; pointer.s : replace le sprite (décalage des Preferences compris)
-                xref    wn_sendmsg           ; screens.s : IntuiMessage vers une fenêtre qui a demandé la classe
+                xref    ptr_image            ; pointer.s: default pointer image (16 lines, 2 planes)
+                xref    it_ptrmoved          ; pointer.s: repositions the sprite (Preferences offset included)
+                xref    wn_sendmsg           ; screens.s: IntuiMessage to a window that asked for the class
 
 LVO_OPENFONT    EQU -72
 LVO_SETRGB4     EQU -288
 
-; GetPrefs(buffer a0, taille d0) -> d0 = buffer : les « taille » premiers octets de la copie courante.
+; GetPrefs(buffer a0, size d0) -> d0 = buffer: the first "size" bytes of the current copy.
 intuition_GetPrefs:
         lea     IB_PREFS(a6),a1
         exg     a0,a1
         bra.s   pf_copy
 
-; GetDefPrefs(buffer a0, taille d0) -> d0 = buffer : valeurs par défaut de la ROM, image du pointeur comprise ; la
-; copie courante n'est pas touchée.
+; GetDefPrefs(buffer a0, size d0) -> d0 = buffer: ROM default values, pointer image included; the
+; current copy is not touched.
 intuition_GetDefPrefs:
         move.l  a0,a1
         lea     pf_defaults(pc),a0
@@ -38,7 +38,7 @@ intuition_GetDefPrefs:
         cmp.l   #PF_PTRMATRIX+72,d1
         blt.s   .gd_ret
         move.l  d0,a1
-        lea     PF_PTRMATRIX+4(a1),a1   ; POS et CTL restent à 0, de même que la fin de liste
+        lea     PF_PTRMATRIX+4(a1),a1   ; POS and CTL stay at 0, as does the end of list
         lea     ptr_image,a0
         moveq   #PTR_ROWS*2-1,d1
 .gd_img:
@@ -48,8 +48,8 @@ intuition_GetDefPrefs:
         rts
 PTR_ROWS        EQU 16
 
-; pf_copy(source a0, destination a1, taille d0, a6 = IntuitionBase) -> d0 = destination. Taille signée : <= 0, rien ;
-; bornée à 232. Si ViewInitX/Y sont dans la copie, ils prennent les décalages de la vue fixés à l'init.
+; pf_copy(source a0, destination a1, size d0, a6 = IntuitionBase) -> d0 = destination. Signed size: <= 0, nothing;
+; capped at 232. If ViewInitX/Y are in the copy, they take the view offsets set at init.
 pf_copy:
         move.l  a1,-(sp)
         tst.l   d0
@@ -72,8 +72,8 @@ pf_copy:
         move.l  (sp)+,d0
         rts
 
-; SetPrefs(prefs a0, taille d0, inform d1) -> d0 = prefs. Copie bornée dans la copie courante, ext_size à 0, puis
-; application complète (même si rien n'a été copié) ; inform : NEWPREFS aux fenêtres qui l'ont demandé.
+; SetPrefs(prefs a0, size d0, inform d1) -> d0 = prefs. Capped copy into the current copy, ext_size at 0, then
+; full application (even if nothing was copied); inform: NEWPREFS to the windows that asked for it.
 intuition_SetPrefs:
         movem.l d2-d3/a0/a2-a3,-(sp)
         move.w  d1,d2
@@ -89,8 +89,8 @@ intuition_SetPrefs:
         move.l  a0,d0
         rts
 
-; it_prefsinit(a2 = IntuitionBase) : décalages de la vue (standard PAL si InitView ne les a pas posés), copie
-; courante = valeurs par défaut. Appelé avant le pointeur, qui y prend son image. Préserve d2-d7/a2-a6.
+; it_prefsinit(a2 = IntuitionBase): view offsets (standard PAL if InitView did not set them), current
+; copy = default values. Called before the pointer, which takes its image from it. Preserves d2-d7/a2-a6.
 it_prefsinit:
         move.l  a6,-(sp)
         move.l  a2,a6
@@ -112,10 +112,10 @@ it_prefsinit:
         bsr.s   pf_tattr
         move.l  (sp)+,a6
         rts
-PF_STDX         EQU $81              ; début de la fenêtre d'affichage PAL standard (DIWSTRT $2C81)
+PF_STDX         EQU $81              ; start of the standard PAL display window (DIWSTRT $2C81)
 PF_STDY         EQU $2C
 
-; pf_tattr(a6 = IntuitionBase) -> a0 = TextAttr de la police par défaut : topaz 8 si FontHeight = 8, topaz 9 sinon.
+; pf_tattr(a6 = IntuitionBase) -> a0 = TextAttr of the default font: topaz 8 if FontHeight = 8, topaz 9 otherwise.
 pf_tattr:
         lea     IB_TATTR(a6),a0
         lea     pf_topaz(pc),a1
@@ -126,11 +126,11 @@ pf_tattr:
         moveq   #8,d0
 .ta_h:
         move.w  d0,ta_YSize(a0)
-        clr.w   ta_Style(a0)         ; Style et Flags
+        clr.w   ta_Style(a0)         ; Style and Flags
         rts
 
-; pf_apply(a6 = IntuitionBase) : police par défaut, écran Workbench (police, couleurs), décalage de la vue,
-; pointeur (image et décalage), répétition des touches (input.device). Clobbe d0-d3/a0-a3.
+; pf_apply(a6 = IntuitionBase): default font, Workbench screen (font, colors), view offset,
+; pointer (image and offset), key repeat (input.device). Clobbers d0-d3/a0-a3.
 pf_apply:
         move.l  a6,a3
         move.l  IB_GFXBASE(a3),a6
@@ -169,7 +169,7 @@ pf_apply:
         move.l  IB_PTRDATA(a3),d0
         beq.s   .pa_ret
         move.l  d0,a1
-        addq.l  #4,a1                ; POS et CTL du sprite affiché restent ceux de MoveSprite
+        addq.l  #4,a1                ; POS and CTL of the displayed sprite remain those of MoveSprite
         lea     IB_PREFS+PF_PTRMATRIX+4(a3),a0
         moveq   #PTR_ROWS*2-1,d0
 .pa_img:
@@ -181,8 +181,8 @@ pf_apply:
         move.l  a3,a6
         rts
 
-; pf_keyrpt(a3 = IntuitionBase) : KeyRptDelay -> IND_SETTHRESH, KeyRptSpeed -> IND_SETPERIOD (spec intuition-prefs-v34
-; §3.3), si input.device est là. Clobbe d0-d1/a0-a2/a6.
+; pf_keyrpt(a3 = IntuitionBase): KeyRptDelay -> IND_SETTHRESH, KeyRptSpeed -> IND_SETPERIOD (spec intuition-prefs-v34
+; §3.3), if input.device is present. Clobbers d0-d1/a0-a2/a6.
 pf_keyrpt:
         move.l  ($4).w,a6
         lea     EB_DEVICELIST(a6),a0
@@ -217,8 +217,8 @@ pf_tattr_a3:
         exg     a3,a6
         rts
 
-; pf_rgb4(couleurs a0, premier registre d2, écran a2, a6 = GfxBase) : SetRGB4 de 4 couleurs (0..3) ou 3 (17..19)
-; sur le ViewPort de l'écran.
+; pf_rgb4(colors a0, first register d2, screen a2, a6 = GfxBase): SetRGB4 of 4 colors (0..3) or 3 (17..19)
+; on the screen's ViewPort.
 pf_rgb4:
         move.l  a0,-(sp)
         moveq   #3,d3
@@ -243,8 +243,8 @@ pf_rgb4:
         addq.l  #4,sp
         rts
 
-; pf_inform(a6 = IntuitionBase) : NEWPREFS à chaque fenêtre de chaque écran qui l'a demandé. Sous Forbid : la
-; tâche d'entrée puise dans les mêmes réserves de messages. Clobbe d0-d3/a0-a3.
+; pf_inform(a6 = IntuitionBase): NEWPREFS to each window of each screen that asked for it. Under Forbid: the
+; input task draws from the same message pools. Clobbers d0-d3/a0-a3.
 pf_inform:
         move.l  a6,-(sp)
         move.l  ($4).w,a6
@@ -280,21 +280,21 @@ pf_topaz:
         dc.b    "topaz.font",0
         even
 
-; Preferences par défaut (mise en page preferences.h V34, 232 octets ; valeurs de la spec intuition-prefs-v34 §4.3,
-; sauf les couleurs, qui sont celles du thème du projet, et le décalage du pointeur, nul pour notre image).
+; Default Preferences (layout of preferences.h V34, 232 bytes; values from spec intuition-prefs-v34 §4.3,
+; except the colors, which are those of the project theme, and the pointer offset, zero for our image).
 pf_defaults:
         dc.b    9,0                      ; FontHeight (topaz 9), PrinterPort = PARALLEL_PRINTER
         dc.w    5                        ; BaudRate = BAUD_9600
         dc.l    0,100000                 ; KeyRptSpeed
         dc.l    0,800000                 ; KeyRptDelay
         dc.l    1,500000                 ; DoubleClick
-        dcb.w   36,0                     ; PointerMatrix (image remplie par GetDefPrefs)
+        dcb.w   36,0                     ; PointerMatrix (image filled in by GetDefPrefs)
         dc.b    0,0                      ; XOffset, YOffset
-        dc.w    $0E44,$0000,$0EEC        ; color17..19 (pointeur)
+        dc.w    $0E44,$0000,$0EEC        ; color17..19 (pointer)
         dc.w    2                        ; PointerTicks
         dc.w    SC_BGCOLOR,$0FFF,$0000,$0F80 ; color0..3 (Workbench)
         dc.b    0,0                      ; ViewXOffset, ViewYOffset
-        dc.w    0,0                      ; ViewInitX, ViewInitY (remplacés à la copie)
+        dc.w    0,0                      ; ViewInitX, ViewInitY (replaced on copy)
         dc.w    0                        ; EnableCLI
         dc.w    7                        ; PrinterType
         dc.b    "generic"                ; PrinterFilename[30]

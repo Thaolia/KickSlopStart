@@ -1,12 +1,12 @@
-; tests/menucat.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Ouvre une fenêtre sur l'écran Workbench avec un menu « Projet » dont les éléments ont des raccourcis (COMMSEQ) :
-; en dérouler le menu (bouton droit) montre le symbole de la touche Amiga (le chat de KickSlopStart) devant chaque
-; lettre. L'élément « Grise » ('G') est inactif. Menu « Option » : « Bascule » (CHECKIT|MENUTOGGLE, 'B') et « Coche »
-; (CHECKIT, coché au départ) : la coche des menus. « Export » (Projet, élément 4) a deux sous-éléments en (100, 0) et
-; (100, 10) : « Texte » ('T') et « Image ». Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
-; dans le titre de la fenêtre : « MENUPICK cccc qqqq #n » (code, qualificatif, rang du message).
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/menucat tests/menucat.s
-; Code auteur ; structures publiques (intuition/intuition.h, exec/ports.h).
+; tests/menucat.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Opens a window on the Workbench screen with a "Projet" menu whose items have shortcuts (COMMSEQ):
+; pulling down the menu (right button) shows the Amiga key symbol (the KickSlopStart cat) in front of each
+; letter. The "Grise" ('G') item is disabled. "Option" menu: "Bascule" (CHECKIT|MENUTOGGLE, 'B') and "Coche"
+; (CHECKIT, initially checked): the menu checkmark. "Export" (Projet, item 4) has two sub-items at (100, 0) and
+; (100, 10): "Texte" ('T') and "Image". Each MENUPICK received (mouse or right Amiga + letter) is shown
+; in the window title: "MENUPICK cccc qqqq #n" (code, qualifier, message index).
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/menucat tests/menucat.s
+; Author's code; public structures (intuition/intuition.h, exec/ports.h).
 
                 section code,code
 _start:
@@ -22,11 +22,11 @@ _start:
                 jsr     -204(a6)             ; OpenWindow
                 tst.l   d0
                 beq.s   .out
-                move.l  d0,a4                ; a4 = fenêtre
+                move.l  d0,a4                ; a4 = window
                 move.l  a4,a0
                 lea     menu(pc),a1
                 jsr     -264(a6)             ; SetMenuStrip
-                moveq   #0,d7                ; rang du message
+                moveq   #0,d7                ; message index
 .wait:
                 move.l  4.w,a6
                 move.l  $56(a4),a0           ; UserPort
@@ -64,7 +64,7 @@ _start:
                 moveq   #20,d0
                 rts
 
-; hex4(a0 = 4 caractères à remplir, d0.w = valeur)
+; hex4(a0 = 4 characters to fill, d0.w = value)
 hex4:
                 moveq   #3,d2
 .hl:
@@ -78,7 +78,7 @@ hexd:           dc.b    "0123456789ABCDEF"
 
 newwin:         dc.w    40,30,360,80
                 dc.b    0,1
-                dc.l    $100                 ; IDCMP : MENUPICK
+                dc.l    $100                 ; IDCMP: MENUPICK
                 dc.l    $100F                ; WINDOWSIZING|DRAG|DEPTH|CLOSE|ACTIVATE
                 dc.l    0,0
                 dc.l    wtitle
@@ -117,7 +117,7 @@ item3:          dc.l    item4
                 dc.w    0
 item4:          dc.l    item5
                 dc.w    0,30,150,10
-                dc.w    $0046                ; ITEMTEXT|COMMSEQ|HIGHCOMP, inactif
+                dc.w    $0046                ; ITEMTEXT|COMMSEQ|HIGHCOMP, disabled
                 dc.l    0
                 dc.l    it4,0
                 dc.b    'G',0

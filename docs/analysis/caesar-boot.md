@@ -1,222 +1,222 @@
-# caesar-boot.md — Caesar (Impressions) [cr FLT] : `caesar.boot` et `flt.exe`
+# caesar-boot.md — Caesar (Impressions) [cr FLT]: `caesar.boot` and `flt.exe`
 
-> Piste ANALYSE (« dirty »). Source : `assets/test_adf/Caesar (1992)(Impressions)[cr FLT].adf`,
-> fichiers extraits par un lecteur OFS tolérant (en-têtes de fichier blocs 899 et 966). Désassemblés
-> avec r2. `flt.exe` est compacté : il a été décompacté hors ligne, en Python, en reproduisant le
-> décompacteur. Fonctions ROM concernées : graphics 34 (serveur VBlank, construction de copinit).
+> ANALYSIS track ("dirty"). Source: `assets/test_adf/Caesar (1992)(Impressions)[cr FLT].adf`,
+> files extracted by a tolerant OFS reader (file header blocks 899 and 966). Disassembled
+> with r2. `flt.exe` is packed: it was unpacked offline, in Python, by reproducing the
+> unpacker. ROM functions concerned: graphics 34 (VBlank server, construction of copinit).
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Comportement, registres et
-> valeurs uniquement ; aucune suite d'instructions recopiée, aucune donnée d'image ni texte
-> reproduit (hors chaînes courtes).
+> **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. Behaviour, registers and
+> values only; no copied instruction sequence, no image data or text
+> reproduced (apart from short strings).
 
 ---
 
-## 1. `caesar.boot` (488 octets, 1 hunk CODE de $C4, RELOC32, HUNK_SYMBOL) [O]
+## 1. `caesar.boot` (488 bytes, 1 CODE hunk of $C4, RELOC32, HUNK_SYMBOL) [O]
 
-Petit utilitaire « gagner de la mémoire CHIP » : il réduit l'écran actif à 1 plan.
+Small "gain CHIP memory" utility: it reduces the active screen to 1 plane.
 
-1. exec **OpenLibrary("graphics.library", 0)** (−552). Le résultat **n'est pas testé**.
-2. exec **OpenLibrary("intuition.library", 0)** (−552). Le résultat n'est pas testé et il est
-   déréférencé aussitôt.
-3. Lecture de **IntuitionBase+$38 = ActiveScreen** (champ public). Pas de test de NULL.
-4. Sur cet écran, il lit `Screen.RastPort.BitMap` (Screen +$58, soit RastPort +$04).
-5. Si **BitMap.Depth (+$05) = 1** : rien n'est fait.
-6. Sinon :
-   - **BitMap.Depth := 1**, écrit directement dans la structure de l'écran ;
+1. exec **OpenLibrary("graphics.library", 0)** (−552). The result **is not tested**.
+2. exec **OpenLibrary("intuition.library", 0)** (−552). The result is not tested and it is
+   dereferenced immediately.
+3. Read of **IntuitionBase+$38 = ActiveScreen** (public field). No NULL test.
+4. On that screen, it reads `Screen.RastPort.BitMap` (Screen +$58, i.e. RastPort +$04).
+5. If **BitMap.Depth (+$05) = 1**: nothing is done.
+6. Otherwise:
+   - **BitMap.Depth := 1**, written directly into the screen structure;
    - graphics **FreeRaster(BitMap.Planes[1] (+$0C), Screen.Width (+$0C), Screen.Height
-     (+$0E))** (−498). Le **2ᵉ plan est rendu à l'allocateur**, mais **son pointeur reste dans
-     Planes[1]** ;
+     (+$0E))** (−498). The **2nd plane is returned to the allocator**, but **its pointer stays in
+     Planes[1]**;
    - intuition **RemakeDisplay()** (−384).
-7. CloseLibrary(intuition), CloseLibrary(graphics) (−414). Retour D0 = 0.
+7. CloseLibrary(intuition), CloseLibrary(graphics) (−414). Return D0 = 0.
 
-- La chaîne "dos.library" est présente mais inutilisée.
-- Aucun accès matériel direct, aucune allocation, aucune attente.
+- The string "dos.library" is present but unused.
+- No direct hardware access, no allocation, no wait.
 
-**Effet attendu sur une ROM conforme [D]** :
-- L'écran Workbench (celui de la console initiale) passe en **1 plan, 2 couleurs**.
-- Ce passage repose sur trois points :
-  - MakeVPort/MrgCop (via RemakeDisplay) dérivent le nombre de plans (BPU de BPLCON0) et les
-    pointeurs BPLxPT de **`ViewPort.RasInfo->BitMap->Depth`** ;
-  - tout le rendu (console, layers, Text, RectFill, ScrollRaster…) n'écrit que dans
-    `rp->BitMap->Depth` plans ;
-  - le ViewPort, le RastPort de l'écran et ceux des fenêtres (couches) partagent **la même**
+**Expected effect on a conforming ROM [D]**:
+- The Workbench screen (that of the initial console) switches to **1 plane, 2 colours**.
+- This switch relies on three points:
+  - MakeVPort/MrgCop (via RemakeDisplay) derive the number of planes (BPU of BPLCON0) and the
+    BPLxPT pointers from **`ViewPort.RasInfo->BitMap->Depth`**;
+  - all rendering (console, layers, Text, RectFill, ScrollRaster…) only writes into
+    `rp->BitMap->Depth` planes;
+  - the ViewPort, the screen's RastPort and those of the windows (layers) share **the same**
     BitMap, `&Screen.BitMap`.
 
-**Comment il peut corrompre l'affichage ou la mémoire chez nous [D]** :
-- **(a)** Notre construction de display ne relit pas `BitMap.Depth` : nombre de plans fixe, ou
-  copie interne de la profondeur faite à l'OpenScreen. Le DMA continue alors d'afficher le plan 2,
-  qui est **de la mémoire libérée** et vite réutilisée (LoadSeg de flt.exe, tampons…). On voit
-  des pixels parasites en couleurs 2/3, ce qui correspond au « vert » du thème.
-- **(b)** Pire : notre console, nos layers ou nos primitives écrivent encore dans 2 plans. Elles
-  **écrivent alors dans la mémoire libérée** : corruption de la liste libre de l'allocateur ou de
-  ce qui y a été chargé (le code de flt.exe), donc gel possible.
-- **(c)** Notre `IntuitionBase+$38` n'est pas l'écran WB, ou vaut NULL. Le programme lit alors
-  une « BitMap » quelconque (adresse basse), y écrit 1 et libère un pointeur arbitraire.
+**How it can corrupt the display or the memory on our side [D]**:
+- **(a)** Our display construction does not re-read `BitMap.Depth`: fixed number of planes, or
+  internal copy of the depth made at OpenScreen. The DMA then keeps displaying plane 2,
+  which is **freed memory** and quickly reused (LoadSeg of flt.exe, buffers…). One sees
+  stray pixels in colours 2/3, which corresponds to the theme's "green".
+- **(b)** Worse: our console, our layers or our primitives still write into 2 planes. They
+  **then write into freed memory**: corruption of the allocator's free list or of
+  what was loaded there (the code of flt.exe), hence a possible freeze.
+- **(c)** Our `IntuitionBase+$38` is not the WB screen, or is NULL. The program then reads
+  some arbitrary "BitMap" (low address), writes 1 there and frees an arbitrary pointer.
 
-**Tests à faire** :
-- après caesar.boot : `ActiveScreen->BitMap.Depth = 1` ;
-- le BPLCON0 effectif de la copper list a BPU = 1 ;
-- plus aucune écriture dans l'ancien Planes[1] (sonde mémoire) ;
-- console encore fonctionnelle, en 2 couleurs.
+**Tests to do**:
+- after caesar.boot: `ActiveScreen->BitMap.Depth = 1`;
+- the effective BPLCON0 of the copper list has BPU = 1;
+- no more writes into the old Planes[1] (memory probe);
+- console still functional, in 2 colours.
 
-## 2. `flt.exe` (1 552 octets, 1 hunk CODE de $5EC, aucune relocation) [O]
+## 2. `flt.exe` (1,552 bytes, 1 CODE hunk of $5EC, no relocation) [O]
 
-### 2.1 Décompactage vers une adresse fixe
+### 2.1 Unpacking to a fixed address
 
-- Le hunk est un **décompacteur** suivi des données compactées : 1 316 octets compactés pour
-  2 046 décompactés.
-- Il **écrit le résultat à l'adresse absolue `$4A000`** : de `$4A000` à `$4A7FE`, **sans
-  AllocMem ni AllocAbs**. Il décompacte de la fin vers le début.
-- Pendant le décompactage, il écrit des octets de contrôle dans **COLOR00 ($DFF180)**, ce qui
-  produit un clignotement du fond.
-- Il saute ensuite à `$4A000`, en **mode utilisateur, sans aucun appel de bibliothèque**.
+- The hunk is an **unpacker** followed by the packed data: 1,316 packed bytes for
+  2,046 unpacked.
+- It **writes the result at the absolute address `$4A000`**: from `$4A000` to `$4A7FE`, **without
+  AllocMem or AllocAbs**. It unpacks from the end towards the beginning.
+- During unpacking, it writes control bytes into **COLOR00 ($DFF180)**, which
+  produces a flickering of the background.
+- It then jumps to `$4A000`, in **user mode, without any library call**.
 
-### 2.2 Le code décompacté : 100 % matériel, aucun appel système
+### 2.2 The unpacked code: 100 % hardware, no system call
 
-Le code n'ouvre aucune bibliothèque : ni graphics, ni intuition, ni dos. Il ne fait **ni
-OpenScreen, ni View, ni LoadView, ni OpenFont**. Il ne lit **aucun champ de GfxBase**. Il
-n'appelle pas Forbid/Disable/OwnBlitter.
+The code opens no library: neither graphics, nor intuition, nor dos. It does **no
+OpenScreen, no View, no LoadView, no OpenFont**. It reads **no GfxBase field**. It
+does not call Forbid/Disable/OwnBlitter.
 
-Séquence :
-1. **Effacement de `$53000`–`$63FFF`** par longs, à adresse fixe, sans allocation. C'est
-   68 Ko de CHIP.
-2. Sauvegarde de **DMACONR** OR $8000 dans un mot interne.
-3. **INTENA := $4000** : effacement du bit maître **INTEN**, donc **plus aucune interruption**.
-   Plus de VBlank, de clavier, de timer, de disque, de série. **Le système est gelé**
-   jusqu'à la sortie.
-4. **COP2LC ($DFF084) := $4A16A** : adresse de sa copper list, à l'intérieur du code
-   décompacté. **Il n'y a ni écriture de COPJMP2 ni écriture de COP1LC.**
-5. **DMACON := DMACONR | $00F0 | $8000** : DSKEN, SPREN, BLTEN et COPEN mis à 1, rien
-   d'effacé. BPLEN n'est pas touché : il est supposé déjà actif.
-6. Affichage du texte (§2.4), attente du bouton (§2.5), puis sortie (§2.6).
+Sequence:
+1. **Clearing of `$53000`–`$63FFF`** by longs, at a fixed address, without allocation. That is
+   68 KB of CHIP.
+2. Saving of **DMACONR** OR $8000 into an internal word.
+3. **INTENA := $4000**: clearing of the **INTEN** master bit, hence **no more interrupts at all**.
+   No more VBlank, keyboard, timer, disk, serial. **The system is frozen**
+   until exit.
+4. **COP2LC ($DFF084) := $4A16A**: address of its copper list, inside the unpacked
+   code. **There is no write to COPJMP2 nor write to COP1LC.**
+5. **DMACON := DMACONR | $00F0 | $8000**: DSKEN, SPREN, BLTEN and COPEN set to 1, nothing
+   cleared. BPLEN is not touched: it is assumed to be already active.
+6. Display of the text (§2.4), wait for the button (§2.5), then exit (§2.6).
 
-### 2.3 Copper list maison (à `$4A16A`)
+### 2.3 Home-made copper list (at `$4A16A`)
 
-Elle ne contient que des MOVE, sans WAIT, et se termine par $FFFF,$FFFE :
+It contains only MOVEs, without WAIT, and ends with $FFFF,$FFFE:
 
-| Registre | Valeur |
+| Register | Value |
 |---|---|
-| DMACON | $0020 (efface SPREN : sprites coupés) |
-| DIWSTRT / DIWSTOP | $3081 / $30C1 (lignes $30–$130 : 256 lignes PAL) |
-| DDFSTRT / DDFSTOP | $0038 / $00D0 (hires, 80 octets par ligne) |
+| DMACON | $0020 (clears SPREN: sprites turned off) |
+| DIWSTRT / DIWSTOP | $3081 / $30C1 (lines $30–$130: 256 PAL lines) |
+| DDFSTRT / DDFSTOP | $0038 / $00D0 (hires, 80 bytes per line) |
 | BPLCON1, BPL1MOD, BPLCON2, BPL2MOD | 0 |
-| BPLCON0 | **$A400** : HIRES, **2 plans**, **DBLPF** (double playfield), PF2PRI = 0 |
+| BPLCON0 | **$A400**: HIRES, **2 planes**, **DBLPF** (dual playfield), PF2PRI = 0 |
 | COLOR00 | $000 |
-| COLOR01 | variable (fondu, §2.4), réécrite par le CPU dans la liste |
-| BPL1PT / BPL2PT | **$53000 / $53000** (le même plan pour les deux) |
+| COLOR01 | variable (fade, §2.4), rewritten by the CPU in the list |
+| BPL1PT / BPL2PT | **$53000 / $53000** (the same plane for both) |
 
-En double playfield, le plan 1 forme le playfield 1, dont les couleurs sont 0 et 1, et il est
-devant. Le texte apparaît donc en **COLOR01 sur COLOR00 noir**. C'est le « blanc sur noir »
-observé sur la vraie ROM.
+In dual playfield, plane 1 forms playfield 1, whose colours are 0 and 1, and it is
+in front. The text therefore appears in **COLOR01 on black COLOR00**. This is the "white on black"
+observed on the real ROM.
 
-### 2.4 Texte et police
+### 2.4 Text and font
 
-- **Police embarquée** à la fin du code : 8 octets par caractère, dont 7 lignes utilisées, à
-  partir du caractère $20. Il n'y a **ni OpenFont, ni DefaultFont, ni lecture de tf_CharData**.
-- Les glyphes sont recopiés octet par octet dans le plan `$53000` :
-  - colonne = 2 + numéro du caractère dans la ligne ;
-  - ligne de texte n à la ligne raster 8·n + 13 (pas de 80 octets, 7 lignes raster par glyphe).
-- Format du texte :
-  - octet 0 = fin de ligne ;
-  - **$FF = fin de page** ;
-  - **$FE = fin du texte**.
-- Il y a ici **une seule page** de 25 lignes. Chaînes courtes visibles : « F A I R L I G H T »,
-  « PRESENTS », « CAESAR FROM IMPRESSIONS ».
-- **Fondu** : COLOR01 est augmenté de $111 par pas, de $000 à $FFF. À chaque pas, COP2LC est
-  réécrit avec la même valeur et le programme fait une **boucle d'attente CPU** de $6000
-  itérations (`dbra`) : la durée dépend de la vitesse du CPU.
+- **Embedded font** at the end of the code: 8 bytes per character, of which 7 lines are used, starting
+  from character $20. There is **no OpenFont, no DefaultFont, no read of tf_CharData**.
+- The glyphs are copied byte by byte into the `$53000` plane:
+  - column = 2 + number of the character in the line;
+  - text line n at raster line 8·n + 13 (stride of 80 bytes, 7 raster lines per glyph).
+- Text format:
+  - byte 0 = end of line;
+  - **$FF = end of page**;
+  - **$FE = end of text**.
+- There is here **a single page** of 25 lines. Short visible strings: "F A I R L I G H T",
+  "PRESENTS", "CAESAR FROM IMPRESSIONS".
+- **Fade**: COLOR01 is increased by $111 per step, from $000 to $FFF. At each step, COP2LC is
+  rewritten with the same value and the program does a **CPU wait loop** of $6000
+  iterations (`dbra`): the duration depends on the CPU speed.
 
-### 2.5 Attente
+### 2.5 Wait
 
-- **Bouton gauche de la souris uniquement** : **CIA-A PRA ($BFE001) bit 6**, actif à 0.
-- Il n'y a ni test POTINP (bouton droit), ni lecture clavier, ni interruption.
-- Pendant le tracé, avant chaque ligne : bouton enfoncé ⇒ **sortie immédiate**.
-- Après le fondu d'entrée : **attente active tant que le bit 6 vaut 1**. Il n'attend pas que le
-  bouton soit relâché.
-- Ensuite : fondu de sortie (−$111 par pas jusqu'à 0), nouvel effacement de `$53000`–`$63FFF`,
-  et COLOR01 de la liste remis à $FFF.
-- `$FE` ⇒ fin (sinon page suivante).
+- **Left mouse button only**: **CIA-A PRA ($BFE001) bit 6**, active at 0.
+- There is no POTINP test (right button), no keyboard read, no interrupt.
+- During drawing, before each line: button pressed ⇒ **immediate exit**.
+- After the fade-in: **busy wait as long as bit 6 is 1**. It does not wait for the
+  button to be released.
+- Then: fade-out (−$111 per step down to 0), new clearing of `$53000`–`$63FFF`,
+  and COLOR01 of the list reset to $FFF.
+- `$FE` ⇒ end (otherwise next page).
 
-### 2.6 Sortie et restauration
+### 2.6 Exit and restoration
 
-- **DMACON := valeur sauvée** (avec SET) : les sprites reviennent.
-- **INTENA := $C000** : le bit maître INTEN est remis à 1.
-- Retour au CLI avec les registres d'entrée restaurés : D0 = longueur des arguments, donc code
-  de retour très faible.
-- **Rien d'autre n'est restauré** : ni COP1LC, ni COP2LC, ni LoadView, ni gb_copinit.
+- **DMACON := saved value** (with SET): the sprites come back.
+- **INTENA := $C000**: the INTEN master bit is set back to 1.
+- Return to the CLI with the entry registers restored: D0 = length of the arguments, hence a very
+  low return code.
+- **Nothing else is restored**: neither COP1LC, nor COP2LC, nor LoadView, nor gb_copinit.
 
-### 2.7 Pourquoi l'écran FLT apparaît sur la vraie ROM : dépendance au schéma copper de graphics 1.3 [O ROM]
+### 2.7 Why the FLT screen appears on the real ROM: dependency on the graphics 1.3 copper scheme [O ROM]
 
-Tout repose sur l'organisation copper de graphics 34 :
-1. **copinit** (gb_copinit, chargé dans COP1LC et relancé par le matériel à chaque trame) se
-   termine par :
-   - un WAIT sur la ligne 12 ($0C01,$FFFE) ;
-   - puis un **MOVE COPJMP2** ($008A) ;
-   - puis la fin de liste.
-   Le copper **saute donc à l'adresse contenue dans COP2LC** à chaque trame.
-2. **COP2LC n'est jamais écrit par le copper.** C'est le **serveur VBlank de graphics**
-   (interruption VERTB) qui y écrit à chaque trame, par le CPU :
-   - **gb_LOFlist** (GfxBase +$32) ;
-   - ou, en entrelacé, gb_LOFlist ou gb_SHFlist (+$36) selon le bit LOF de VPOSR.
-3. FLT coupe INTEN : le serveur VBlank ne tourne plus et **son COP2LC reste en place**. Le
-   copinit du système y saute à chaque trame et affiche l'écran FLT.
-4. À la sortie, INTEN est rétabli : dès la VBlank suivante, graphics réécrit gb_LOFlist dans
-   COP2LC. **L'affichage système revient tout seul**, sans aucun appel.
+Everything relies on the copper organisation of graphics 34:
+1. **copinit** (gb_copinit, loaded into COP1LC and restarted by the hardware at each frame)
+   ends with:
+   - a WAIT on line 12 ($0C01,$FFFE);
+   - then a **MOVE COPJMP2** ($008A);
+   - then the end of list.
+   The copper **therefore jumps to the address contained in COP2LC** at each frame.
+2. **COP2LC is never written by the copper.** It is the **graphics VBlank server**
+   (VERTB interrupt) that writes it at each frame, via the CPU:
+   - **gb_LOFlist** (GfxBase +$32);
+   - or, in interlace, gb_LOFlist or gb_SHFlist (+$36) depending on the LOF bit of VPOSR.
+3. FLT turns off INTEN: the VBlank server no longer runs and **its COP2LC stays in place**. The
+   system copinit jumps to it at each frame and displays the FLT screen.
+4. On exit, INTEN is re-enabled: from the next VBlank on, graphics rewrites gb_LOFlist into
+   COP2LC. **The system display comes back on its own**, without any call.
 
-**Conséquence pour notre ROM [D]** : si notre display n'utilise pas ce schéma, l'écriture de
-COP2LC par FLT est sans effet. C'est le cas si, par exemple :
-- la liste de la vue est mise directement dans COP1LC ;
-- copinit n'a pas de COPJMP2 ;
-- COP2LC est rechargé par le copper lui-même ;
-- ou une interruption non masquable par INTEN récrit COP2LC.
+**Consequence for our ROM [D]**: if our display does not use this scheme, FLT's write to
+COP2LC has no effect. This is the case if, for example:
+- the view's list is put directly into COP1LC;
+- copinit has no COPJMP2;
+- COP2LC is reloaded by the copper itself;
+- or an interrupt not maskable by INTEN rewrites COP2LC.
 
-On garde alors notre vue à l'écran pendant que le programme a coupé les interruptions et attend
-un clic gauche. Cela correspond au symptôme : **système « figé », aucun echo**. En pratique, un
-clic gauche devrait le libérer, après le fondu d'environ 1 s.
+We then keep our view on screen while the program has turned off interrupts and is waiting for
+a left click. This corresponds to the symptom: **system "frozen", no echo**. In practice, a
+left click should release it, after the fade of about 1 s.
 
-À reproduire :
-- COP1LC = copinit, avec à la fin MOVE COPJMP2 puis $FFFF,$FFFE ;
-- COP2LC chargé par le CPU dans le serveur VBlank (gb_LOFlist / gb_SHFlist) ;
-- LoadView ne fait que mettre à jour gb_LOFlist / gb_SHFlist (+ gb_ActiView) et COP2LC.
+To reproduce:
+- COP1LC = copinit, with at the end MOVE COPJMP2 then $FFFF,$FFFE;
+- COP2LC loaded by the CPU in the VBlank server (gb_LOFlist / gb_SHFlist);
+- LoadView only updates gb_LOFlist / gb_SHFlist (+ gb_ActiView) and COP2LC.
 
-## 3. Dépendances aux adresses fixes et aux champs [O]
+## 3. Dependencies on fixed addresses and fields [O]
 
-| Dépendance | Programme | Risque chez nous |
+| Dependency | Program | Risk on our side |
 |---|---|---|
-| Code décompacté à **$4A000–$4A7FE**, sans allocation | flt.exe | écrase ce que notre ROM y a mis (bitmap d'écran, copper list, pile, tampons de handler) |
-| Plan d'affichage effacé et écrit à **$53000–$63FFF**, sans allocation | flt.exe | idem, sur 68 Ko |
-| CHIP ≥ $64000 (512 Ko) | flt.exe | — |
-| copinit → COPJMP2 → COP2LC chargé par le VBlank de gfx | flt.exe | §2.7 |
-| INTENA maître coupé pendant toute l'intro | flt.exe | tout le système est suspendu |
-| CIA-A PRA bit 6 (bouton gauche) | flt.exe | doit refléter le bouton en lecture directe |
-| `IntuitionBase+$38` (ActiveScreen), Screen +$0C/+$0E/+$58, BitMap +$05/+$0C | caesar.boot | §1, champs publics |
-| BitMap.Depth réellement relu par MakeVPort et par tout le rendu | caesar.boot | §1 (a)/(b) |
-| Aucun champ privé de GfxBase ou d'IntuitionBase, aucun appel à une adresse de la ROM | les deux | — |
+| Code unpacked at **$4A000–$4A7FE**, without allocation | flt.exe | overwrites what our ROM put there (screen bitmap, copper list, stack, handler buffers) |
+| Display plane cleared and written at **$53000–$63FFF**, without allocation | flt.exe | same, over 68 KB |
+| CHIP ≥ $64000 (512 KB) | flt.exe | — |
+| copinit → COPJMP2 → COP2LC loaded by the gfx VBlank | flt.exe | §2.7 |
+| INTENA master turned off during the whole intro | flt.exe | the whole system is suspended |
+| CIA-A PRA bit 6 (left button) | flt.exe | must reflect the button on direct read |
+| `IntuitionBase+$38` (ActiveScreen), Screen +$0C/+$0E/+$58, BitMap +$05/+$0C | caesar.boot | §1, public fields |
+| BitMap.Depth actually re-read by MakeVPort and by all rendering | caesar.boot | §1 (a)/(b) |
+| No private field of GfxBase or IntuitionBase, no call to a ROM address | both | — |
 
-**Sur la vraie 1.3 [D]** : au moment où flt.exe tourne, l'allocateur exec sert la CHIP par le
-bas. Les bitmaps et listes du WB et de la console sont plutôt au-dessous de $4A000, et la zone
-$4A000–$64000 est libre en pratique. **Une ROM dont les allocations du boot montent plus haut, ou
-qui place des structures fixes dans cette zone, verra des corruptions.** C'est un candidat direct
-pour les « pixels parasites dans la console ». Le plan 2 libéré par caesar.boot (§1) en est un
-autre.
+**On the real 1.3 [D]**: at the time flt.exe runs, the exec allocator serves CHIP from the
+bottom. The WB and console bitmaps and lists are rather below $4A000, and the area
+$4A000–$64000 is free in practice. **A ROM whose boot allocations go higher, or
+which places fixed structures in this area, will see corruption.** This is a direct candidate
+for the "stray pixels in the console". Plane 2 freed by caesar.boot (§1) is
+another.
 
-**Diagnostic conseillé** :
-1. Relever l'emplacement de nos bitmaps d'écran, de nos copper lists et des segments chargés
-   après la startup-sequence, et le comparer à $4A000–$64000.
-2. Vérifier BitMap.Depth = 1 après caesar.boot (§1).
-3. Vérifier le schéma COPJMP2 / VBlank (§2.7).
-4. Pendant le « gel », un clic gauche doit rendre la main : le programme sort et les echo
-   arrivent.
+**Recommended diagnosis**:
+1. Record the location of our screen bitmaps, our copper lists and the segments loaded
+   after the startup-sequence, and compare it with $4A000–$64000.
+2. Check BitMap.Depth = 1 after caesar.boot (§1).
+3. Check the COPJMP2 / VBlank scheme (§2.7).
+4. During the "freeze", a left click must give control back: the program exits and the echoes
+   arrive.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions recopiée : appels de bibliothèque avec LVO, registres matériels
-  et valeurs, adresses fixes, conditions d'attente et de sortie.
-- [x] Le décompacteur est seulement nommé, son algorithme n'est pas décrit pas à pas. Aucune
-  donnée de police ni texte reproduit, hors trois chaînes courtes.
-- [x] La copper list est décrite comme une table registre → valeur (données matérielles
-  publiques).
-- [x] **Correction du 2026-10-29** : retirées les 4 adresses de routines graphics de la ROM
-  (serveur VBlank, construction de copinit) ; comportement inchangé.
+- [x] No copied instruction sequence: library calls with LVO, hardware registers
+  and values, fixed addresses, wait and exit conditions.
+- [x] The unpacker is only named, its algorithm is not described step by step. No
+  font data or text reproduced, apart from three short strings.
+- [x] The copper list is described as a register → value table (public hardware
+  data).
+- [x] **Correction of 2026-10-29**: removed the 4 addresses of ROM graphics routines
+  (VBlank server, construction of copinit); behaviour unchanged.

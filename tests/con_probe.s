@@ -1,31 +1,31 @@
-; tests/con_probe.s — sonde boîte noire de console.device / keymap.resource 1.3
-; (ASSET DE TEST, PAS du code ROM ; piste ANALYSE, docs/analysis/console-keymap-v34.md).
-; Code AUTEUR : n'utilise que l'ABI publique (exec/intuition/graphics .fd, devices/console.h,
-; devices/conunit.h, devices/keymap.h, devices/inputevent.h du NDK 1.3).
+; tests/con_probe.s - black-box probe of console.device / keymap.resource 1.3
+; (TEST ASSET, NOT ROM code; ANALYSIS track, docs/analysis/console-keymap-v34.md).
+; AUTHORED code: uses only the public ABI (exec/intuition/graphics .fd, devices/console.h,
+; devices/conunit.h, devices/keymap.h, devices/inputevent.h from the 1.3 NDK).
 ;
-; Assemblé en binaire brut (vasm -Fbin -m68000), posé à l'offset 12 d'un ADF par tests/con_probe.sh.
-; Étage 1 (bootblock) : relit les 32 premiers Ko de la disquette en chip RAM et y saute.
-; Étage 2 : ouvre une fenêtre type CON: sur l'écran Workbench, y ouvre console.device, puis enchaîne
-; des écritures (CMD_WRITE) ; après chacune journalise sur le port série :
-;   T <nom>                       début d'un test
+; Assembled as a raw binary (vasm -Fbin -m68000), placed at offset 12 of an ADF by tests/con_probe.sh.
+; Stage 1 (bootblock): re-reads the first 32 KB of the floppy into chip RAM and jumps there.
+; Stage 2: opens a CON:-style window on the Workbench screen, opens console.device on it, then runs a series
+; of writes (CMD_WRITE); after each one, logs to the serial port:
+;   T <name>                      start of a test
 ;   U xcp ycp xccp yccp xmax ymax xrs yrs xro yro xre yre modes[3] raw[3] fg bg drmd style mask
-;   R nn |<texte reconnu>|<couleurs>|   ligne nn de la zone de texte (lecture du BitMap de l'écran,
-;                                  reconnaissance des glyphes de la police de la console ;
-;                                  « ? » = cellule non reconnue ; couleurs : chiffre hexa = masque des
-;                                  couleurs présentes (bit n = couleur n) ; lettre g..v = idem mais
-;                                  glyphe reconnu en INVERSE)
-;   I <n> <octets hexa>           réponse lue par CMD_READ
-;   K ...                         résultats RawKeyConvert / commandes de keymap
-; « @S x » : capture d'écran par le harnais ; « @K » : le harnais tape au clavier.
-; Dernière action VOLONTAIREMENT fatale : CMD_READ de longueur 0 (bogue V34, Guru attendu) ; « IDLE »
-; n'est donc jamais atteint et le harnais s'arrête sur sa durée maximale.
+;   R nn |<recognised text>|<colours>|  line nn of the text area (read from the screen BitMap,
+;                                  recognition of the console font glyphs;
+;                                  "?" = unrecognised cell; colours: hex digit = mask of the
+;                                  colours present (bit n = colour n); letter g..v = same but
+;                                  glyph recognised in INVERSE video)
+;   I <n> <hex bytes>             reply read by CMD_READ
+;   K ...                         RawKeyConvert / keymap command results
+; "@S x": screen capture by the harness; "@K": the harness types on the keyboard.
+; Last action DELIBERATELY fatal: CMD_READ of length 0 (V34 bug, Guru expected); "IDLE"
+; is therefore never reached and the harness stops at its maximum duration.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 LOADSZ   EQU 32768
 LOGSZ    EQU 65536
 
-; LVO exec
+; exec LVOs
 _AllocMem   EQU -198
 _FindTask   EQU -294
 _AllocSignal EQU -330
@@ -44,7 +44,7 @@ _OpenWindow EQU -204
 _SizeWindow EQU -288
 _WaitTOF    EQU -270
 
-; variables (relatives à A5)
+; variables (relative to A5)
 v_ib     EQU 0
 v_gfx    EQU 4
 v_win    EQU 8
@@ -54,22 +54,22 @@ v_lptr   EQU 20
 v_lbuf   EQU 24
 v_glyph  EQU 28
 v_port   EQU 40          ; MsgPort (34)
-v_wio    EQU 76          ; IOStdReq écriture console (48)
-v_rio    EQU 124         ; IOStdReq lecture console (48)
+v_wio    EQU 76          ; IOStdReq console write (48)
+v_rio    EQU 124         ; IOStdReq console read (48)
 v_iio    EQU 172         ; IOStdReq input.device (48)
-v_kio    EQU 220         ; IOStdReq console unité -1 (48)
+v_kio    EQU 220         ; IOStdReq console unit -1 (48)
 v_ev     EQU 268         ; InputEvent (24)
 v_ev2    EQU 292         ; InputEvent (24)
-v_rbuf   EQU 316         ; tampon de lecture (128)
+v_rbuf   EQU 316         ; read buffer (128)
 v_km     EQU 444         ; KeyMap (32)
 v_km2    EQU 476         ; KeyMap (32)
-v_tmp    EQU 508         ; 64 octets
-v_xio    EQU 572         ; IOStdReq console 2e unité (48)
-v_mytab  EQU 620         ; table LoKeyMap modifiée (256)
+v_tmp    EQU 508         ; 64 bytes
+v_xio    EQU 572         ; IOStdReq console 2nd unit (48)
+v_mytab  EQU 620         ; modified LoKeyMap table (256)
 v_size   EQU 880
 
 start:
-; ---------------------------------------------------------------- étage 1 (bootblock)
+; ---------------------------------------------------------------- stage 1 (bootblock)
         movea.l 4.w,a6
         movea.l a1,a2
         move.l  #LOADSZ,d0
@@ -91,7 +91,7 @@ start:
         lea     12(a3),a0
         jmp     stage2-start(a0)
 
-; ---------------------------------------------------------------- étage 2
+; ---------------------------------------------------------------- stage 2
 stage2:
         lea     vars(pc),a5
         movea.l 4.w,a6
@@ -115,7 +115,7 @@ stage2:
         moveq   #0,d0
         jsr     _OpenLibrary(a6)
         move.l  d0,v_gfx(a5)
-        ; port de réponse
+        ; reply port
         moveq   #-1,d0
         jsr     _AllocSignal(a6)
         lea     v_port(a5),a2
@@ -140,7 +140,7 @@ stage2:
         bsr     initio
         lea     v_xio(a5),a1
         bsr     initio
-        ; --- OpenDevice : unité -1 (accès aux fonctions)
+        ; --- OpenDevice: unit -1 (access to the functions)
         lea     m_open(pc),a0
         bsr     puts
         lea     v_kio(a5),a1
@@ -162,7 +162,7 @@ stage2:
         move.w  32(a0),d0           ; lib_OpenCnt
         bsr     hex4s
         bsr     nl
-        ; --- OpenDevice sans fenêtre (io_Data = 0)
+        ; --- OpenDevice without a window (io_Data = 0)
         lea     m_open0(pc),a0
         bsr     puts
         lea     v_xio(a5),a1
@@ -181,7 +181,7 @@ stage2:
         move.w  32(a0),d0
         bsr     hex4s
         bsr     nl
-        ; --- fenêtre principale
+        ; --- main window
         movea.l v_ib(a5),a6
         lea     nw1(pc),a0
         lea     s_title(pc),a1
@@ -190,7 +190,7 @@ stage2:
         move.l  d0,v_win(a5)
         beq     failed
         bsr     dumpwin
-        ; --- console sur la fenêtre (unité 0, io_Length = taille)
+        ; --- console on the window (unit 0, io_Length = size)
         movea.l 4.w,a6
         lea     m_open1(pc),a0
         bsr     puts
@@ -215,7 +215,7 @@ stage2:
         move.l  $114(a0),d0         ; cu_Font
         bsr     hex8s
         bsr     nl
-        ; requête de lecture : même unité
+        ; read request: same unit
         lea     v_rio(a5),a1
         lea     v_wio(a5),a0
         move.l  20(a0),20(a1)
@@ -233,7 +233,7 @@ stage2:
         moveq   #'a',d0
         bsr     shot
         bsr     flush
-        ; ------------------------------------------------ écritures
+        ; ------------------------------------------------ writes
         lea     tests(pc),a4
 .tl:    move.w  (a4)+,d0
         beq.s   .td
@@ -264,7 +264,7 @@ stage2:
         bsr     altwin
         bsr     flush
         bsr     livekeys
-        ; dernier : CMD_READ de longueur 0 (crash attendu si le registre A2 non initialisé est utilisé)
+        ; last: CMD_READ of length 0 (crash expected if the uninitialised A2 register is used)
         lea     m_rd0(pc),a0
         bsr     puts
         bsr     flush
@@ -298,16 +298,16 @@ initio: move.b  #5,8(a1)            ; NT_MESSAGE
         move.w  #48,18(a1)
         rts
 
-; ---------------------------------------------------------------- un test d'écriture
-; a0 = enregistrement « nom\0 charge\0 »
-; d1 = nombre de lignes à vider (0 = aucune), d2 = nombre de colonnes
+; ---------------------------------------------------------------- one write test
+; a0 = record "name\0 payload\0"
+; d1 = number of lines to dump (0 = none), d2 = number of columns
 runtest:
         movem.l d1-d2/a4,-(a7)
         move.l  a0,-(a7)
         lea     m_t(pc),a0
         bsr     puts
         movea.l (a7)+,a0
-        bsr     puts                ; nom (a0 avance après le NUL)
+        bsr     puts                ; name (a0 advances past the NUL)
         bsr     nl
         bsr     strlen
         bsr     conwrite
@@ -320,7 +320,7 @@ runtest:
         bsr     dumprows
 .n:     rts
 
-; écrit a0, longueur d0 (CMD_WRITE, DoIO) ; renvoie io_Actual dans d0
+; writes a0, length d0 (CMD_WRITE, DoIO); returns io_Actual in d0
 conwrite:
         movem.l a1/a6,-(a7)
         lea     v_wio(a5),a1
@@ -341,7 +341,7 @@ strlen: moveq   #0,d0
         bra.s   .l
 .e:     rts
 
-; ---------------------------------------------------------------- journal de l'état ConUnit
+; ---------------------------------------------------------------- ConUnit state log
 logcu:  movem.l d0-d2/a0-a2,-(a7)
         lea     m_u(pc),a0
         bsr     puts
@@ -414,13 +414,13 @@ dumptabs:
         movem.l (a7)+,d0-d1/a0-a2
         rts
 
-; ---------------------------------------------------------------- glyphes de la police de la console
+; ---------------------------------------------------------------- console font glyphs
 buildglyphs:
         movem.l d0-d7/a0-a4,-(a7)
         movea.l v_unit(a5),a0
         movea.l $114(a0),a3         ; cu_Font
         movea.l v_glyph(a5),a4
-        move.w  #$20,d7             ; caractère
+        move.w  #$20,d7             ; character
 .c:     moveq   #0,d6
         move.b  $20(a3),d6          ; tf_LoChar
         moveq   #0,d5
@@ -433,9 +433,9 @@ buildglyphs:
         sub.w   d6,d4
         movea.l $28(a3),a0          ; tf_CharLoc
         lsl.w   #2,d4
-        move.w  0(a0,d4.w),d3       ; décalage en bits
-        move.w  2(a0,d4.w),d2       ; largeur
-        moveq   #0,d1               ; ligne
+        move.w  0(a0,d4.w),d3       ; bit offset
+        move.w  2(a0,d4.w),d2       ; width
+        moveq   #0,d1               ; row
 .r:     movea.l $22(a3),a1          ; tf_CharData
         move.w  $26(a3),d0          ; tf_Modulo
         mulu    d1,d0
@@ -450,7 +450,7 @@ buildglyphs:
         and.w   #7,d6
         lsl.w   d6,d0
         lsr.w   #8,d0
-        ; masque de largeur (bits de gauche)
+        ; width mask (left-hand bits)
         move.w  #$FF,d6
         lsr.w   d2,d6
         not.b   d6
@@ -469,9 +469,9 @@ buildglyphs:
         movem.l (a7)+,d0-d7/a0-a4
         rts
 
-; ---------------------------------------------------------------- lecture d'une cellule
-; d0 = colonne, d1 = ligne (texte) ; rend d0 = code du glyphe (0 = non reconnu, bit 8 = inverse),
-; d1 = masque des couleurs présentes (bit n = couleur n)
+; ---------------------------------------------------------------- reading one cell
+; d0 = column, d1 = row (text); returns d0 = glyph code (0 = unrecognised, bit 8 = inverse),
+; d1 = mask of the colours present (bit n = colour n)
 cell:   movem.l d2-d7/a0-a4,-(a7)
         movea.l v_unit(a5),a2
         movea.l v_win(a5),a3
@@ -492,15 +492,15 @@ cell:   movem.l d2-d7/a0-a4,-(a7)
         lsr.w   #3,d3
         add.l   d3,d1
         and.w   #7,d0
-        movea.l 8(a0),a1            ; plan 0
-        movea.l 12(a0),a4           ; plan 1
+        movea.l 8(a0),a1            ; plane 0
+        movea.l 12(a0),a4           ; plane 1
         adda.l  d1,a1
         adda.l  d1,a4
         lea     v_tmp(a5),a0
-        moveq   #0,d4               ; couleur 0 présente (OU des bits)
-        moveq   #0,d5               ; couleur 1
-        moveq   #0,d6               ; couleur 2
-        moveq   #0,d7               ; couleur 3
+        moveq   #0,d4               ; colour 0 present (OR of the bits)
+        moveq   #0,d5               ; colour 1
+        moveq   #0,d6               ; colour 2
+        moveq   #0,d7               ; colour 3
         moveq   #7,d3
 .r:     move.b  (a1),d1
         lsl.w   #8,d1
@@ -513,7 +513,7 @@ cell:   movem.l d2-d7/a0-a4,-(a7)
         lsl.w   d0,d2
         lsr.w   #8,d2               ; p1
         move.b  d1,(a0)
-        or.b    d2,(a0)+            ; motif = p0|p1
+        or.b    d2,(a0)+            ; pattern = p0|p1
         movea.w d1,a2
         and.b   d2,d1
         or.b    d1,d7               ; p0&p1
@@ -544,7 +544,7 @@ cell:   movem.l d2-d7/a0-a4,-(a7)
 .c3:    tst.b   d7
         beq.s   .c4
         bset    #3,d1
-.c4:    moveq   #0,d2               ; passe 0 = normal, 1 = inverse
+.c4:    moveq   #0,d2               ; pass 0 = normal, 1 = inverse
 .pass:  move.w  #$20,d0
         movea.l v_glyph(a5),a1
 .g:     lea     v_tmp(a5),a0
@@ -571,7 +571,7 @@ cell:   movem.l d2-d7/a0-a4,-(a7)
 .ok:    movem.l (a7)+,d2-d7/a0-a4
         rts
 
-; vide d1 lignes (à partir de la ligne d0) sur d2 colonnes
+; dumps d1 lines (starting at line d0) over d2 columns
 dumprows:
         movem.l d0-d7/a0,-(a7)
         move.w  d0,d5
@@ -627,8 +627,8 @@ dumprows:
         movem.l (a7)+,d0-d7/a0
         rts
 
-; ---------------------------------------------------------------- lecture console (CMD_READ) avec délai
-; lit ce qui est disponible (attend au plus d7 trames) ; journalise « I n octets »
+; ---------------------------------------------------------------- console read (CMD_READ) with timeout
+; reads whatever is available (waits at most d7 frames); logs "I n bytes"
 conread:
         movem.l d0-d7/a0-a1/a6,-(a7)
         movea.l 4.w,a6
@@ -667,8 +667,8 @@ conread:
         movem.l (a7)+,d0-d7/a0-a1/a6
         rts
 
-; ---------------------------------------------------------------- injection d'un événement (IND_WRITEEVENT)
-; d0 = classe, d1 = code, d2 = qualificatif, d3 = ie_X/ie_Y (long : prev1 code/qual, prev2 code/qual)
+; ---------------------------------------------------------------- event injection (IND_WRITEEVENT)
+; d0 = class, d1 = code, d2 = qualifier, d3 = ie_X/ie_Y (long: prev1 code/qual, prev2 code/qual)
 inject: movem.l d0-d3/a0-a1/a6,-(a7)
         lea     v_ev(a5),a0
         clr.l   (a0)
@@ -697,9 +697,9 @@ wtof:   movem.l d0-d1/a0-a1/a6,-(a7)
         movem.l (a7)+,d0-d1/a0-a1/a6
         rts
 
-; ---------------------------------------------------------------- tests spéciaux d'écriture
+; ---------------------------------------------------------------- special write tests
 specials:
-        ; io_Length = -1 (chaîne terminée par NUL)
+        ; io_Length = -1 (NUL-terminated string)
         lea     m_t(pc),a0
         bsr     puts
         lea     s_len1(pc),a0
@@ -720,7 +720,7 @@ specials:
         bsr     conwrite
         bsr     hex8s
         bsr     nl
-        ; rapport de position : CSI 6n puis lecture
+        ; position report: CSI 6n then read
         lea     m_t(pc),a0
         bsr     puts
         lea     s_dsr(pc),a0
@@ -731,26 +731,26 @@ specials:
         bsr     conwrite
         moveq   #10,d7
         bsr     conread
-        lea     p_dsr2(pc),a0       ; CSI 5n, CSI n, CSI 6;6n : rien / un / un ?
+        lea     p_dsr2(pc),a0       ; CSI 5n, CSI n, CSI 6;6n: nothing / one / one?
         bsr     strlen
         bsr     conwrite
         moveq   #10,d7
         bsr     conread
-        ; rapport de fenêtre
+        ; window report
         lea     p_wsr(pc),a0
         bsr     strlen
         bsr     conwrite
         moveq   #10,d7
         bsr     conread
-        lea     p_wsr2(pc),a0       ; avec paramètre, sans espace, deux espaces
+        lea     p_wsr2(pc),a0       ; with parameter, without space, two spaces
         bsr     strlen
         bsr     conwrite
         moveq   #10,d7
         bsr     conread
-        ; lecture vide : expiration
+        ; empty read: timeout
         moveq   #5,d7
         bsr     conread
-        ; tampon d'entrée : 40 rapports (> 255 octets ?) puis lectures
+        ; input buffer: 40 reports (> 255 bytes?) then reads
         lea     m_t(pc),a0
         bsr     puts
         lea     s_ovf(pc),a0
@@ -765,7 +765,7 @@ specials:
 .ovr:   moveq   #5,d7
         bsr     conread
         dbra    d6,.ovr
-        ; CMD_CLEAR vide-t-il le tampon ?
+        ; does CMD_CLEAR empty the buffer?
         lea     p_dsr(pc),a0
         bsr     strlen
         bsr     conwrite
@@ -787,7 +787,7 @@ specials:
         rts
 
 ; ---------------------------------------------------------------- RawKeyConvert
-; d0 = code, d1 = qualificatif, d3 = prev (ie_X/ie_Y), d2 = longueur du tampon ; journalise « n:octets »
+; d0 = code, d1 = qualifier, d3 = prev (ie_X/ie_Y), d2 = buffer length; logs "n:bytes"
 rkc1:   movem.l d0-d7/a0-a3/a6,-(a7)
         lea     v_ev(a5),a0
         clr.l   (a0)
@@ -823,7 +823,7 @@ rkctests:
         lea     m_rk(pc),a0
         bsr     puts
         bsr     nl
-        ; table complète : codes 0..$77, qualificatifs de la liste quals
+        ; full table: codes 0..$77, qualifiers from the quals list
         moveq   #0,d5
 .code:  lea     m_k(pc),a0
         bsr     puts
@@ -842,7 +842,7 @@ rkctests:
         cmp.w   #$78,d5
         blt.s   .code
         bsr     flush
-        ; relâchements, répétition, longueur courte, combinaisons mortes
+        ; key releases, repeat, short length, dead-key combinations
         lea     rkx(pc),a3
 .x:     move.w  (a3)+,d0
         cmp.w   #-1,d0
@@ -864,11 +864,11 @@ rkctests:
         bsr     rkc1
         bsr     nl
         bra.s   .x
-.xe:    ; touches mortes : pour chaque morte (f g h j k) x qualif. (alt, alt+maj), chaque modifiable
+.xe:    ; dead keys: for each dead key (f g h j k) x qualif. (alt, alt+shift), each modifiable key
         lea     deadk(pc),a3
-.d1:    move.w  (a3)+,d4            ; code de la morte
+.d1:    move.w  (a3)+,d4            ; dead key code
         bmi.s   .de
-        move.w  (a3)+,d6            ; qualif de la morte
+        move.w  (a3)+,d6            ; dead key qualifier
         lea     m_kd(pc),a0
         bsr     puts
         move.w  d4,d0
@@ -881,7 +881,7 @@ rkctests:
         move.w  (a2)+,d1
         move.l  d4,d3
         lsl.w   #8,d3
-        move.b  d6,d3               ; prev1 = code, qualif (octet bas)
+        move.b  d6,d3               ; prev1 = code, qualif (low byte)
         swap    d3
         clr.w   d3
         moveq   #64,d2
@@ -889,7 +889,7 @@ rkctests:
         bra.s   .d2
 .d3:    bsr     nl
         bra.s   .d1
-.de:    ; double morte (prev1 et prev2 mortes)
+.de:    ; double dead key (prev1 and prev2 dead)
         lea     m_kd2(pc),a0
         bsr     puts
         move.w  #$12,d0
@@ -897,25 +897,25 @@ rkctests:
         move.l  #$23102410,d3       ; prev1 = alt-f, prev2 = alt-g
         moveq   #64,d2
         bsr     rkc1
-        move.l  #$00002310,d3       ; prev2 seule
+        move.l  #$00002310,d3       ; prev2 only
         bsr     rkc1
-        move.l  #$23002310,d3       ; prev1 = f sans alt
+        move.l  #$23002310,d3       ; prev1 = f without alt
         bsr     rkc1
         bsr     nl
-        ; chaîne de deux événements RAWKEY + un non-RAWKEY
+        ; chain of two RAWKEY events + one non-RAWKEY
         lea     m_kc(pc),a0
         bsr     puts
         lea     v_ev(a5),a0
         lea     v_ev2(a5),a1
         move.l  a1,(a0)
-        move.l  #$01000020,4(a0)    ; classe 1, sous-classe 0, code $20 (a)
+        move.l  #$01000020,4(a0)    ; class 1, subclass 0, code $20 (a)
         clr.w   8(a0)
         clr.l   10(a0)
         clr.l   14(a0)
         clr.l   18(a0)
         clr.l   (a1)
         move.l  #$01000035,4(a1)    ; b
-        move.w  #1,8(a1)            ; maj
+        move.w  #1,8(a1)            ; shift
         clr.l   10(a1)
         clr.l   14(a1)
         clr.l   18(a1)
@@ -924,7 +924,7 @@ rkctests:
         moveq   #1,d1
         bsr     rkchain
         lea     v_ev(a5),a0
-        move.b  #2,4(a0)            ; premier = RAWMOUSE
+        move.b  #2,4(a0)            ; first = RAWMOUSE
         moveq   #64,d1
         bsr     rkchain
         bsr     nl
@@ -956,8 +956,8 @@ rkchain:
         movem.l (a7)+,d0-d7/a0-a3/a6
         rts
 
-; ---------------------------------------------------------------- commandes de keymap
-kmdoio: ; a1 = io ; d0 = commande, d1 = longueur, a0 = données ; journalise err, actual
+; ---------------------------------------------------------------- keymap commands
+kmdoio: ; a1 = io; d0 = command, d1 = length, a0 = data; logs err, actual
         movem.l d0-d1/a0-a1/a6,-(a7)
         move.w  d0,28(a1)
         move.l  d1,36(a1)
@@ -976,7 +976,7 @@ kmdoio: ; a1 = io ; d0 = commande, d1 = longueur, a0 = données ; journalise err
         movem.l (a7)+,d0-d1/a0-a1/a6
         rts
 
-dumpkm: ; a0 = KeyMap (8 pointeurs)
+dumpkm: ; a0 = KeyMap (8 pointers)
         movem.l d0-d1/a0,-(a7)
         moveq   #7,d1
 .l:     move.l  (a0)+,d0
@@ -1005,14 +1005,14 @@ kmtests:
         move.l  14(a2),d0           ; lh_Head
         bsr     hex8s
         movea.l d0,a3
-        move.l  (a3),d0             ; succ du premier noeud
+        move.l  (a3),d0             ; succ of the first node
         bsr     hex8s
-        movea.l 10(a3),a0           ; nom
+        movea.l 10(a3),a0           ; name
         bsr     puts
         bsr     nl
         lea     14(a3),a0
         bsr     dumpkm
-        ; ASK sur l'unité, longueur 32 puis 31 puis 33
+        ; ASK on the unit, length 32 then 31 then 33
         lea     v_wio(a5),a1
         lea     v_km(a5),a0
         moveq   #9,d0
@@ -1031,8 +1031,8 @@ kmtests:
         lea     v_km2(a5),a0
         bsr     kmdoio
         bsr     dumpkm
-        ; keymap modifiée : LoKeyMap copiée, code $20 (a) -> 'z' / 'Z'
-        movea.l v_km2(a5),a0        ; (inutile : on lit le pointeur ci-dessous)
+        ; modified keymap: LoKeyMap copied, code $20 (a) -> 'z' / 'Z'
+        movea.l v_km2(a5),a0        ; (unused: the pointer is read below)
         lea     v_km2(a5),a0
         movea.l 4(a0),a1            ; LoKeyMap
         lea     v_mytab(a5),a2
@@ -1049,7 +1049,7 @@ kmtests:
         lea     v_km(a5),a0
         lea     v_mytab(a5),a1
         move.l  a1,4(a0)
-        ; SETDEFAULT puis RawKeyConvert(NULL) sur s, puis unité existante (ASK), puis nouvelle unité
+        ; SETDEFAULT then RawKeyConvert(NULL) on s, then existing unit (ASK), then new unit
         lea     v_wio(a5),a1
         moveq   #12,d0
         moveq   #32,d1
@@ -1069,7 +1069,7 @@ kmtests:
         moveq   #32,d1
         bsr     kmdoio
         bsr     dumpkm
-        ; nouvelle unité sur la même fenêtre
+        ; new unit on the same window
         lea     v_xio(a5),a1
         move.l  v_win(a5),40(a1)
         lea     conname(pc),a0
@@ -1093,7 +1093,7 @@ kmtests:
         lea     v_xio(a5),a1
         movea.l 4.w,a6
         jsr     _CloseDevice(a6)
-        ; SETKEYMAP sur l'unité principale, puis restauration du défaut
+        ; SETKEYMAP on the main unit, then restore the default
         lea     v_wio(a5),a1
         lea     v_km(a5),a0
         moveq   #10,d0
@@ -1115,7 +1115,7 @@ kmtests:
         bsr     flush
         rts
 
-; ---------------------------------------------------------------- commandes diverses
+; ---------------------------------------------------------------- miscellaneous commands
 cmdtests:
         lea     m_cmd(pc),a0
         bsr     puts
@@ -1123,7 +1123,7 @@ cmdtests:
         lea     cmdl(pc),a3
 .l:     move.w  (a3)+,d0
         bmi.w   .e
-        lea     v_xio(a5),a1        ; requête jetable sur la même unité
+        lea     v_xio(a5),a1        ; throwaway request on the same unit
         lea     v_wio(a5),a0
         move.l  20(a0),20(a1)
         move.l  24(a0),24(a1)
@@ -1147,10 +1147,10 @@ cmdtests:
         bsr     hex2s
         move.l  32(a1),d0
         bsr     hex8s
-        move.b  8(a1),d0            ; ln_Type (7 = NT_REPLYMSG si répondu)
+        move.b  8(a1),d0            ; ln_Type (7 = NT_REPLYMSG if replied)
         bsr     hex2s
         bsr     nl
-        ; si la requête est encore en file (READ), l'annuler
+        ; if the request is still queued (READ), abort it
         lea     v_xio(a5),a1
         btst    #0,30(a1)
         bne.w   .l
@@ -1163,7 +1163,7 @@ cmdtests:
 .w:     lea     v_xio(a5),a1
         jsr     _WaitIO(a6)
         bra.w   .l
-.e:     ; CMD_CLEAR et CMD_UPDATE envoyés SANS IOF_QUICK : sont-ils répondus ?
+.e:     ; CMD_CLEAR and CMD_UPDATE sent WITHOUT IOF_QUICK: are they replied?
         lea     cmdnq(pc),a3
 .l2:    move.w  (a3)+,d0
         bmi.s   .e2
@@ -1192,11 +1192,11 @@ cmdtests:
         bsr     nl
         cmp.b   #7,8(a1)
         bne.s   .l2
-        movea.l 4.w,a6              ; retirer la réponse du port
+        movea.l 4.w,a6              ; remove the reply from the port
         lea     v_xio(a5),a1
         jsr     _WaitIO(a6)
         bra.s   .l2
-.e2:    ; CMD_STOP puis lecture d'un rapport, START
+.e2:    ; CMD_STOP then read a report, START
         lea     m_stop(pc),a0
         bsr     puts
         bsr     nl
@@ -1218,13 +1218,13 @@ cmdtests:
         bsr     flush
         rts
 
-; ---------------------------------------------------------------- entrée clavier par input.device
-; chaque élément : classe, code, qualif, prev (long) ; puis lecture
+; ---------------------------------------------------------------- keyboard input via input.device
+; each entry: class, code, qualif, prev (long); then read
 inputtests:
         lea     m_inp(pc),a0
         bsr     puts
         bsr     nl
-        ; l'unité active a-t-elle survécu à l'ouverture/fermeture d'une 2e unité sur la fenêtre ?
+        ; did the active unit survive the opening/closing of a 2nd unit on the window?
         lea     m_act(pc),a0
         bsr     puts
         movea.l v_cdev(a5),a0
@@ -1269,7 +1269,7 @@ inputtests:
         bsr     inject
         moveq   #10,d7
         bsr     conread
-        movea.l v_cdev(a5),a0       ; à défaut : forcer l'unité active (lecture/écriture privée, sonde seulement)
+        movea.l v_cdev(a5),a0       ; failing that: force the active unit (private read/write, probe only)
         tst.l   $4A(a0)
         bne.s   .act
         move.l  v_unit(a5),$4A(a0)
@@ -1279,7 +1279,7 @@ inputtests:
         lea     inl(pc),a3
 .l:     move.w  (a3)+,d0
         bmi.s   .e
-        cmp.w   #$7FFF,d0           ; écriture console intercalée
+        cmp.w   #$7FFF,d0           ; interleaved console write
         bne.s   .ev
         move.w  (a3)+,d0
         lea     tests(pc),a0
@@ -1287,7 +1287,7 @@ inputtests:
         moveq   #0,d1
         bsr     runtest
         bra.s   .l
-.ev:    cmp.w   #$7FFE,d0           ; lecture
+.ev:    cmp.w   #$7FFE,d0           ; read
         bne.s   .in
         moveq   #10,d7
         bsr     conread
@@ -1300,7 +1300,7 @@ inputtests:
 .e:     bsr     flush
         rts
 
-; ---------------------------------------------------------------- redimensionnement
+; ---------------------------------------------------------------- resizing
 resizetests:
         lea     m_t(pc),a0
         bsr     puts
@@ -1337,7 +1337,7 @@ resizetests:
         lea     m_shot(pc),a0
         moveq   #'r',d0
         bsr     shot
-        ; agrandissement
+        ; enlarging
         movea.l v_ib(a5),a6
         movea.l v_win(a5),a0
         move.l  #200,d0
@@ -1361,7 +1361,7 @@ resizetests:
         rts
 
 ;
-; ---------------------------------------------------------------- autre fenêtre (a0 = NewWindow, a4 = liste d'offsets de tests)
+; ---------------------------------------------------------------- other window (a0 = NewWindow, a4 = test offset list)
 altwin: movem.l d0-d7/a0-a4/a6,-(a7)
         lea     s_title(pc),a1
         move.l  a1,26(a0)
@@ -1412,9 +1412,9 @@ altwin: movem.l d0-d7/a0-a4/a6,-(a7)
 .x:     movem.l (a7)+,d0-d7/a0-a4/a6
         rts
 
-; ---------------------------------------------------------------- clavier réel (le harnais tape)
+; ---------------------------------------------------------------- real keyboard (the harness types)
 livekeys:
-        lea     v_wio(a5),a1        ; keymap de l'unité remise au défaut
+        lea     v_wio(a5),a1        ; unit keymap reset to the default
         lea     v_km2(a5),a0
         moveq   #10,d0
         moveq   #32,d1
@@ -1433,7 +1433,7 @@ livekeys:
         dbra    d5,.l
         rts
 
-shot:   bsr     puts                ; a0 = « @S », d0 = lettre
+shot:   bsr     puts                ; a0 = "@S", d0 = letter
         bsr     putc
         bsr     nl
         bsr     flush
@@ -1442,7 +1442,7 @@ shot:   bsr     puts                ; a0 = « @S », d0 = lettre
         dbra    d0,.w
         rts
 
-; ---------------------------------------------------------------- sorties
+; ---------------------------------------------------------------- output
 hex8s:  bsr.s   hex8
         bra.s   space
 hex4s:  bsr.s   hex4
@@ -1520,33 +1520,33 @@ serc:   movem.l d0/d2,-(a7)
         movem.l (a7)+,d0/d2
         rts
 
-; ---------------------------------------------------------------- données
+; ---------------------------------------------------------------- data
 quals:  dc.w    0,1,$10,$11,8,9,$18,$19,4,5,2,$20,$C,$14,-1
-; tests supplémentaires RawKeyConvert : code, qualif, prev (long), longueur
+; extra RawKeyConvert tests: code, qualif, prev (long), length
 rkx:    dc.w    $A0,0
         dc.l    0
-        dc.w    64                  ; relâchement de a
+        dc.w    64                  ; release of a
         dc.w    $C4,0
         dc.l    0
-        dc.w    64                  ; relâchement de Return
+        dc.w    64                  ; release of Return
         dc.w    $20,$200
         dc.l    0
-        dc.w    64                  ; a répétée
+        dc.w    64                  ; a repeated
         dc.w    $44,$200
         dc.l    0
-        dc.w    64                  ; Return répétée (non répétable)
+        dc.w    64                  ; Return repeated (not repeatable)
         dc.w    $43,$200
         dc.l    0
-        dc.w    64                  ; Enter répétée
+        dc.w    64                  ; Enter repeated
         dc.w    $4C,$200
         dc.l    0
-        dc.w    64                  ; flèche répétée
+        dc.w    64                  ; arrow repeated
         dc.w    $20,0
         dc.l    0
-        dc.w    0                   ; longueur 0
+        dc.w    0                   ; length 0
         dc.w    $50,0
         dc.l    0
-        dc.w    2                   ; F1 (3 octets) dans 2
+        dc.w    2                   ; F1 (3 bytes) into 2
         dc.w    $50,0
         dc.l    0
         dc.w    3
@@ -1555,16 +1555,16 @@ rkx:    dc.w    $A0,0
         dc.w    2                   ; Help
         dc.w    $23,$10
         dc.l    0
-        dc.w    0                   ; alt-f (morte) longueur 0
+        dc.w    0                   ; alt-f (dead) length 0
         dc.w    $12,0
         dc.l    $23100000
-        dc.w    0                   ; e après morte, longueur 0
+        dc.w    0                   ; e after dead key, length 0
         dc.w    $60,0
         dc.l    0
-        dc.w    64                  ; Maj gauche seule
+        dc.w    64                  ; Left Shift alone
         dc.w    $63,0
         dc.l    0
-        dc.w    64                  ; Ctrl seule
+        dc.w    64                  ; Ctrl alone
         dc.w    $70,0
         dc.l    0
         dc.w    64
@@ -1573,13 +1573,13 @@ rkx:    dc.w    $A0,0
         dc.w    64
         dc.w    -1
 deadk:  dc.w    $23,$10, $24,$10, $25,$10, $26,$10, $27,$10, $23,$11, $25,$20, $23,0, -1
-; touches modifiables : code, qualif
+; modifiable keys: code, qualif
 modk:   dc.w    $40,0, $40,1, $20,0, $20,1, $12,0, $12,1, $17,0, $17,1, $18,0, $18,1
         dc.w    $16,0, $16,1, $15,0, $15,1, $36,0, $36,1, $20,4, $12,$10, $10,0, -1
-; commandes avec IOF_QUICK
+; commands with IOF_QUICK
 cmdl:   dc.w    0,1,4,5,6,7,8,13,14,$7FFF,-1
 cmdnq:  dc.w    5,4,-1
-; entrée par input.device : classe, code, qualif, prev.l ; $7FFF ofs = écriture ; $7FFE = lecture
+; input via input.device: class, code, qualif, prev.l; $7FFF ofs = write; $7FFE = read
 inl:    dc.w    $7FFF,r_reset-tests
         dc.w    1,$20,0
         dc.l    0                   ; a
@@ -1588,37 +1588,37 @@ inl:    dc.w    $7FFF,r_reset-tests
         dc.w    1,$20,1
         dc.l    0                   ; A
         dc.w    1,$4C,0
-        dc.l    0                   ; flèche haut
+        dc.l    0                   ; up arrow
         dc.w    1,$4C,1
-        dc.l    0                   ; maj + haut
+        dc.l    0                   ; shift + up
         dc.w    1,$50,0
         dc.l    0                   ; F1
         dc.w    1,$50,1
-        dc.l    0                   ; maj F1
+        dc.l    0                   ; shift F1
         dc.w    1,$5F,0
         dc.l    0                   ; Help
         dc.w    1,$42,1
-        dc.l    0                   ; maj Tab
+        dc.l    0                   ; shift Tab
         dc.w    1,$45,$10
         dc.l    0                   ; alt Esc
         dc.w    1,$44,8
         dc.l    0                   ; ctrl Return
         dc.w    1,$23,$10
-        dc.l    0                   ; alt f (morte)
+        dc.l    0                   ; alt f (dead)
         dc.w    1,$12,0
-        dc.l    0                   ; e (prev non renseigné par nous)
+        dc.l    0                   ; e (prev not filled in by us)
         dc.w    1,$12,0
-        dc.l    $23100000           ; e avec prev1 = alt-f
+        dc.l    $23100000           ; e with prev1 = alt-f
         dc.w    1,$41,0
         dc.l    0                   ; BS
         dc.w    1,$46,0
         dc.l    0                   ; Del
         dc.w    $7FFE
-        dc.w    $7FFF,r_raw1-tests  ; CSI 1{ : RAWKEY en brut
+        dc.w    $7FFF,r_raw1-tests  ; CSI 1{ : raw RAWKEY
         dc.w    1,$20,$8000
         dc.l    $12345678
         dc.w    $7FFE
-        dc.w    $7FFF,r_raw2-tests  ; CSI 1} CSI 2{ (souris)
+        dc.w    $7FFF,r_raw2-tests  ; CSI 1} CSI 2{ (mouse)
         dc.w    1,$20,0
         dc.l    0
         dc.w    2,$68,0
@@ -1691,7 +1691,7 @@ p_reset: dc.b   $1B,"c",0
 
         even
 
-; NewWindow : 0,0 640x200, gadgets sizing/drag/depth/close, ACTIVATE, SMART_REFRESH, WBENCHSCREEN
+; NewWindow: 0,0 640x200, sizing/drag/depth/close gadgets, ACTIVATE, SMART_REFRESH, WBENCHSCREEN
 nw1:    dc.w    0,0,640,200
         dc.b    0,1
         dc.l    0, $100F, 0, 0, 0, 0, 0
@@ -1700,7 +1700,7 @@ nw1:    dc.w    0,0,640,200
 CTEST   MACRO
         dc.w    \1-tests,\2,\3
         ENDM
-; SIMPLE_REFRESH ($40), sans ACTIVATE
+; SIMPLE_REFRESH ($40), without ACTIVATE
 nw2:    dc.w    100,60,400,100
         dc.b    0,1
         dc.l    0, $004F, 0, 0, 0, 0, 0
@@ -1718,8 +1718,8 @@ altl2:  CTEST   a03,3,30
         CTEST   a05,3,30
         dc.w    0
 
-; ---------------------------------------------------------------- tests d'écriture
-; enregistrements : dc.w décalage, lignes, colonnes ; fin = 0
+; ---------------------------------------------------------------- write tests
+; records: dc.w offset, lines, columns; end = 0
 tests:
         CTEST   t01,2,40
         CTEST   t02,2,40
@@ -1827,7 +1827,7 @@ tests:
 
 RS      EQU     $1B         ; ESC
 CSI     EQU     $9B
-; chaque test commence par ESC c (réinitialisation) puis FF sauf mention
+; each test starts with ESC c (reset) then FF unless stated otherwise
 t01:    dc.b    "base",0,RS,"c",$0C,"ABC",0
 t02:    dc.b    "esc_c_after_text",0,RS,"c",$0C,"HELLO",RS,"c",0
 t03:    dc.b    "ff",0,RS,"c",$0C,"HELLO",$0C,"X",0

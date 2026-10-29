@@ -1,12 +1,12 @@
-; ticks.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire INTUITICKS / répétition clavier / gadget tenu (piste analyse).
-; Ouvre une fenêtre BORDERLESS|ACTIVATE|RMBTRAP 640x160 en (0,0) sur le WB, couverte par un gadget
-; booléen GADGIMMEDIATE|RELVERIFY, IDCMP RAWKEY|GADGETDOWN|GADGETUP|MOUSEBUTTONS|INTUITICKS|
-; ACTIVEWINDOW|INACTIVEWINDOW. Écrit « TKREADY » puis enregistre ~30 s de messages (réponse sous
-; ≤ 20 ms), puis laisse 2 s de messages sans les lire (test d'accumulation), puis imprime le journal :
-;   W fenêtre                         (adresse de la fenêtre)
-;   c code qual secs micros mx my ia  (ia : '=' fenêtre, '0' nul, sinon hex) ; '#' = début du test d'accumulation
-; Code auteur, structures publiques (intuition.h 1.3).
+; ticks.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of INTUITICKS / key repeat / held gadget (analysis track).
+; Opens a BORDERLESS|ACTIVATE|RMBTRAP 640x160 window at (0,0) on the WB, covered by a
+; GADGIMMEDIATE|RELVERIFY boolean gadget, IDCMP RAWKEY|GADGETDOWN|GADGETUP|MOUSEBUTTONS|INTUITICKS|
+; ACTIVEWINDOW|INACTIVEWINDOW. Writes "TKREADY" then records ~30 s of messages (replied within
+; <= 20 ms), then leaves 2 s of messages unread (accumulation test), then prints the log:
+;   W window                          (address of the window)
+;   c code qual secs micros mx my ia  (ia: '=' window, '0' null, else hex); '#' = start of the accumulation test
+; Author's code, public structures (intuition.h 1.3).
 
                 section code,code
 _start:
@@ -33,8 +33,8 @@ _start:
                 lea     ready(pc),a0
                 lea     8(a0),a1
                 bsr     outbuf
-                lea     log,a4               ; pointeur d'écriture du journal
-                move.l  #1500,d5             ; itérations de Delay(1)
+                lea     log,a4               ; log write pointer
+                move.l  #1500,d5             ; Delay(1) iterations
 .loop:          bsr     drain
                 moveq   #1,d1
                 move.l  a6,-(sp)
@@ -43,16 +43,16 @@ _start:
                 move.l  (sp)+,a6
                 subq.l  #1,d5
                 bne.s   .loop
-                move.l  #$23232323,(a4)+     ; marqueur '#'
+                move.l  #$23232323,(a4)+     ; '#' marker
                 lea     20(a4),a4
                 moveq   #100,d1
                 move.l  dosbase(pc),a6
-                jsr     -198(a6)             ; Delay(100) sans lire le port
+                jsr     -198(a6)             ; Delay(100) without reading the port
                 bsr     drain
                 move.l  d7,a6
                 move.l  d6,a0
                 jsr     -72(a6)              ; CloseWindow
-; --- impression
+; --- printing
                 lea     buf,a1
                 lea     t_w(pc),a0
                 bsr     cpy
@@ -77,7 +77,7 @@ _start:
                 move.w  6(a3),d0
                 bsr     hex4
                 move.l  16(a3),d0
-                bsr     hex4                 ; secondes (16 bits bas)
+                bsr     hex4                 ; seconds (low 16 bits)
                 move.l  20(a3),d0
                 bsr     hex
                 move.w  12(a3),d0
@@ -105,7 +105,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-drain:                                       ; vide le UserPort dans le journal, répond
+drain:                                       ; drains the UserPort into the log, replies
                 move.l  4.w,a6
 .d:             move.l  d6,a0
                 move.l  86(a0),a0            ; wd_UserPort
@@ -128,7 +128,7 @@ drain:                                       ; vide le UserPort dans le journal,
 .dx:            move.l  d7,a6
                 rts
 
-clsch:                                       ; classe d0 -> lettre d0
+clsch:                                       ; class d0 -> letter d0
                 lea     ctab(pc),a0
 .c:             tst.l   (a0)
                 beq.s   .cq

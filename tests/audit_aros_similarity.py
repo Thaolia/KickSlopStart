@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-# tests/audit_aros_similarity.py — audit de similarité textuelle entre notre assembleur (src/) et AROS.
+# tests/audit_aros_similarity.py - textual similarity audit between our assembler (src/) and AROS.
 #
-# Usage : python3 -I tests/audit_aros_similarity.py <dossier_src> <dossier_aros> [options]
+# Usage: python3 -I tests/audit_aros_similarity.py <src_dir> <aros_dir> [options]
 #
-# Outil autonome (bibliothèque standard seule). Il mesure, sans jugement a priori :
-#   1. asm contre asm : empreintes de k-grammes de tokens (winnowing façon MOSS) après canonicalisation
-#      des deux dialectes (vasm Motorola chez nous ; GNU as « %reg », MIT « a0@ » et Motorola chez AROS),
-#      à trois niveaux : « exact » (identifiants et nombres conservés), « norm » (identifiants -> ID,
-#      nombres -> N, chaînes -> S), « struct » (norm + registres génériques Dn/An + mnémoniques fusionnées).
-#      Pour chaque niveau : couverture de nos tokens par des passages communs de >= k tokens, recouvrement
-#      d'empreintes par paire de fichiers et passages communs maximaux (fichiers + lignes des deux côtés).
-#   2. asm contre C : la comparaison de tokens n'a pas de sens ; on compare les commentaires (n-grammes de
-#      mots), les identifiants non imposés par l'ABI et les constantes « magiques ».
-#      Liste blanche ABI : tout identifiant ou nombre présent dans les en-têtes publics d'AROS
-#      (compiler/include) et dans les fichiers .conf/.fd (noms de LVO).
-#   3. base sans lien : le même calcul entre l'asm AROS « comparable » (exec, dos, boot...) et un corpus
-#      68000 sans rapport (FPSP/ISP Motorola, libgcc1, AHI, diskimage...) pour situer le bruit de fond,
-#      ainsi qu'entre notre code et ce corpus sans rapport.
+# Standalone tool (standard library only). It measures, without a priori judgement:
+#   1. asm against asm: fingerprints of token k-grams (MOSS-style winnowing) after canonicalising
+#      both dialects (vasm Motorola on our side; GNU as "%reg", MIT "a0@" and Motorola on the AROS side),
+#      at three levels: "exact" (identifiers and numbers kept), "norm" (identifiers -> ID,
+#      numbers -> N, strings -> S), "struct" (norm + generic registers Dn/An + merged mnemonics).
+#      For each level: coverage of our tokens by common passages of >= k tokens, fingerprint
+#      overlap per pair of files and maximal common passages (files + lines on both sides).
+#   2. asm against C: comparing tokens makes no sense; we compare the comments (word
+#      n-grams), the identifiers not mandated by the ABI and the "magic" constants.
+#      ABI whitelist: any identifier or number present in the public AROS headers
+#      (compiler/include) and in the .conf/.fd files (LVO names).
+#   3. unrelated baseline: the same computation between the "comparable" AROS asm (exec, dos, boot...) and an
+#      unrelated 68000 corpus (Motorola FPSP/ISP, libgcc1, AHI, diskimage...) to gauge the background noise,
+#      as well as between our code and that unrelated corpus.
 #
-# Les chemins affichés sont relatifs aux dossiers passés en argument (aucun chemin propre à la machine).
+# The displayed paths are relative to the directories passed as arguments (no machine-specific path).
 
 import argparse
 import json
@@ -33,24 +33,24 @@ OUR_ASM_EXT = ('.s', '.i', '.asm')
 AROS_ASM_EXT = ('.s', '.S', '.asm', '.inc', '.i')
 AROS_C_EXT = ('.c', '.h')
 
-# Sous-arbres AROS sans rapport avec un Kickstart (code 68000 tiers ou hors périmètre) : base de bruit.
+# AROS subtrees unrelated to a Kickstart (third-party 68000 code or out of scope): noise baseline.
 DEFAULT_UNRELATED = [
     'm680x0/', 'libgcc1/', '/stdc/', '/posixc/', 'workbench/devs/AHI/', 'workbench/devs/diskimage/',
     '/inflate/', '/rexxsyslib/', 'workbench/devs/networks/', '/mathieee', 'pfs3/', 'workbench/system/VMM/',
 ]
-# Partie « Amiga tiers » du corpus sans rapport : logiciel système Amiga en asm écrit hors du projet AROS
-# (VMM, AHI, diskimage) ; même domaine et mêmes conventions d'appel que nous, d'où une base plus exigeante
-# que le FPSP Motorola (qui pèse 80 % du corpus sans rapport).
+# "Third-party Amiga" part of the unrelated corpus: Amiga system software in asm written outside the AROS project
+# (VMM, AHI, diskimage); same domain and same calling conventions as ours, hence a more demanding baseline
+# than the Motorola FPSP (which makes up 80 % of the unrelated corpus).
 DEFAULT_AMIGA_TIERS = ['workbench/system/VMM/', 'workbench/devs/AHI/', 'workbench/devs/diskimage/']
 
-# Déclarations et données (constantes, champs de structure, dc/ds) : gardées au niveau « exact » (une table
-# recopiée y apparaît), retirées des niveaux « norm »/« struct » où toute table « NOM equ N » ou « dc.b N,N »
-# se ressemble (faux positifs massifs sinon).
+# Declarations and data (constants, structure fields, dc/ds): kept at the "exact" level (a copied
+# table shows up there), removed from the "norm"/"struct" levels where every "NAME equ N" or "dc.b N,N" table
+# looks alike (massive false positives otherwise).
 DECL = {'equ', 'dc', 'ds', 'dcb', 'rs', 'so', 'fo', 'bitdef', 'structure', 'struct', 'aptr', 'bptr', 'ulong', 'uword', 'ubyte',
         'long', 'word', 'byte', 'label', 'libdef', 'enum', 'eitem', 'cptr', 'short', 'ushort', 'float',
         'double', 'bool', 'rptr', 'fptr'}
 
-# Mnémoniques 680x0 / 6888x (de base, sans suffixe de taille) ; sert à séparer le suffixe MIT (« movel »).
+# 680x0 / 6888x mnemonics (base form, without size suffix); used to split off the MIT suffix ("movel").
 BASE_MNEM = set('''
 abcd add adda addi addq addx and andi asl asr bcc bcs beq bge bgt bhi bhs ble blo bls blt bmi bne bpl bvc bvs
 bra bsr bchg bclr bset btst chk clr cmp cmpa cmpi cmpm dbcc dbcs dbeq dbf dbra dbge dbgt dbhi dble dbls dblt
@@ -72,7 +72,7 @@ STRUCT_MERGE = {'movea': 'move', 'moveq': 'move', 'addq': 'add', 'addi': 'add', 
 DIRECTIVE_MAP = {'.long': 'dc.l', '.int': 'dc.l', '.word': 'dc.w', '.short': 'dc.w', '.byte': 'dc.b',
                  '.ascii': 'dc.b', '.asciz': 'dc.b', '.string': 'dc.b', '.equ': 'equ', '.set': 'equ',
                  'set': 'equ', '=': 'equ', 'mov': 'move'}
-# Directives purement déclaratives (aucune logique) : ignorées pour les empreintes.
+# Purely declarative directives (no logic): ignored for the fingerprints.
 SKIP_DIRECTIVES = {
     'xdef', 'xref', 'section', 'text', 'data', 'bss', 'include', 'incdir', 'align', 'even', 'cnop', 'end',
     'public', 'global', 'ifnd', 'ifd', 'ifne', 'ifeq', 'endc', 'endif', 'else', 'machine', 'mc68000', 'opt',
@@ -133,7 +133,7 @@ def parse_number(tok):
 
 
 def strip_block_comments(text):
-    """Remplace les commentaires /* */ par des espaces (lignes conservées) ; renvoie (texte, [(ligne, txt)])."""
+    """Replaces /* */ comments with spaces (lines preserved); returns (text, [(line, txt)])."""
     out, comments = [], []
     i, n, line = 0, len(text), 1
     while i < n:
@@ -156,7 +156,7 @@ def strip_block_comments(text):
 
 
 def split_comment(line, chars):
-    """Coupe une ligne au premier caractère de commentaire hors chaîne."""
+    """Cuts a line at the first comment character outside a string."""
     q = None
     for i, c in enumerate(line):
         if q:
@@ -172,7 +172,7 @@ def split_comment(line, chars):
 
 
 class AsmFile:
-    """Fichier assembleur canonicalisé : statements, tokens par niveau, commentaires, identifiants, nombres."""
+    """Canonicalised assembler file: statements, tokens per level, comments, identifiers, numbers."""
 
     def __init__(self, rel, text):
         self.rel = rel
@@ -231,7 +231,7 @@ class AsmFile:
         if body:
             parts = body.split(None, 1)
             mnem, ops = parts[0].lower(), (parts[1] if len(parts) > 1 else '')
-            # « NOM equ valeur » / « .equ NOM, valeur »
+            # "NAME equ value" / ".equ NAME, value"
             if mnem in ('.equ', '.set') and ',' in ops:
                 label, ops = ops.split(',', 1)
                 label = label.strip()
@@ -289,8 +289,8 @@ class AsmFile:
                 self._emit(ln, t, t, t, decl)
 
     def _emit_label(self, ln, label):
-        # Définitions de labels : niveau « exact » seulement (en norm/struct, « ID : » n'apporte que du bruit,
-        # par ex. une suite de labels de tables de données).
+        # Label definitions: "exact" level only (in norm/struct, "ID :" only adds noise,
+        # e.g. a run of data table labels).
         if re.fullmatch(r'\d+', label):
             self._emit(ln, 'LL', None, None, True)
         else:
@@ -326,7 +326,7 @@ def walk(root, exts, skip_git=True):
 
 
 # --------------------------------------------------------------------------------------------------------
-# Empreintes : k-grammes de tokens, hachage déterministe (crc32), winnowing (Schleimer et al., 2003).
+# Fingerprints: token k-grams, deterministic hashing (crc32), winnowing (Schleimer et al., 2003).
 # --------------------------------------------------------------------------------------------------------
 
 def kgram_hashes(toks, k):
@@ -352,7 +352,7 @@ def winnow(hashes, w):
 
 
 class Corpus:
-    """Index complet des k-grammes d'un ensemble de fichiers (pour retrouver les passages communs)."""
+    """Full index of the k-grams of a set of files (to find the common passages)."""
 
     def __init__(self, files, lvl, k, w, cap):
         self.files, self.lvl, self.k = files, lvl, k
@@ -375,7 +375,7 @@ class Corpus:
 
 
 def find_runs(qfile, corpus, lvl, k):
-    """Passages maximaux (en tokens) communs entre qfile et le corpus ; un seul par diagonale."""
+    """Maximal passages (in tokens) common to qfile and the corpus; only one per diagonal."""
     qt = qfile.toks[lvl]
     hs = kgram_hashes(qt, k)
     runs = []
@@ -416,7 +416,7 @@ def coverage(qfiles, corpus, lvl, k, min_len):
 
 
 def top_passages(qfiles, corpus, lvl, runs, limit):
-    """Plus longs passages, sans chevauchement côté requête."""
+    """Longest passages, without overlap on the query side."""
     out, taken = [], defaultdict(list)
     for n, qi, i, fi, j in sorted(runs, key=lambda r: -r[0]):
         if any(a < i + n and i < b for a, b in taken[qi]):
@@ -435,7 +435,7 @@ def top_passages(qfiles, corpus, lvl, runs, limit):
 
 
 def pair_overlap(qfiles, qcorpus, corpus, limit):
-    """Recouvrement d'empreintes winnowées par paire : |Fq ∩ Ft| / |Fq| (pourcentage façon MOSS)."""
+    """Overlap of winnowed fingerprints per pair: |Fq ∩ Ft| / |Fq| (MOSS-style percentage)."""
     res = []
     for qi, f in enumerate(qfiles):
         fq = qcorpus.fps[qi]
@@ -474,7 +474,7 @@ def compare_asm(qfiles, tfiles, lvl, k, w, cap, min_len, limit):
 
 
 # --------------------------------------------------------------------------------------------------------
-# Côté C : commentaires, identifiants, constantes.
+# C side: comments, identifiers, constants.
 # --------------------------------------------------------------------------------------------------------
 
 C_STRING_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'')
@@ -519,7 +519,7 @@ def ident_key(name):
 
 
 def is_trivial_number(v):
-    # < $1000 : offsets de structures, tailles, codes de caractères ; trop banals pour signer une origine.
+    # < $1000: structure offsets, sizes, character codes; too commonplace to fingerprint an origin.
     if v < 0x1000:
         return True
     if v % 100 == 0:
@@ -579,10 +579,10 @@ def compare_comments(ours, theirs, n, limit):
 
 
 def build_whitelist(aros_root, unrelated):
-    """Identifiants et nombres imposés par l'ABI : en-têtes publics + listes de fonctions (.conf/.fd/.sfd).
+    """Identifiers and numbers mandated by the ABI: public headers + function lists (.conf/.fd/.sfd).
 
-    En-têtes publics = compiler/include/ et tout dossier « include/ » d'un module (ex. rom/devs/console/include
-    fournit devices/conunit.h), hors sous-arbres sans rapport."""
+    Public headers = compiler/include/ and any "include/" directory of a module (e.g. rom/devs/console/include
+    provides devices/conunit.h), excluding unrelated subtrees."""
     ids, nums = set(), set()
     nfiles = 0
     for rel, p in walk(aros_root, ('.h', '.i', '.inc', '.hpp')):
@@ -731,22 +731,22 @@ def fmt_report(r):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Audit de similarité textuelle src/ <-> AROS')
+    ap = argparse.ArgumentParser(description='Textual similarity audit src/ <-> AROS')
     ap.add_argument('src')
     ap.add_argument('aros')
-    ap.add_argument('-k', type=int, nargs='+', default=[12], help='longueur(s) des k-grammes de tokens')
-    ap.add_argument('-w', type=int, default=8, help='fenêtre de winnowing')
+    ap.add_argument('-k', type=int, nargs='+', default=[12], help='length(s) of the token k-grams')
+    ap.add_argument('-w', type=int, default=8, help='winnowing window')
     ap.add_argument('--levels', nargs='+', default=['exact', 'norm', 'struct'])
-    ap.add_argument('--min-len', type=int, default=0, help='longueur minimale de passage (défaut : k)')
-    ap.add_argument('--cap', type=int, default=200, help='occurrences max par k-gramme (au-delà : banal)')
-    ap.add_argument('--unrelated', nargs='*', default=DEFAULT_UNRELATED, help='motifs de chemins sans rapport')
-    ap.add_argument('--shingle', type=int, default=5, help='n-grammes de mots des commentaires')
+    ap.add_argument('--min-len', type=int, default=0, help='minimum passage length (default: k)')
+    ap.add_argument('--cap', type=int, default=200, help='max occurrences per k-gram (beyond: commonplace)')
+    ap.add_argument('--unrelated', nargs='*', default=DEFAULT_UNRELATED, help='patterns of unrelated paths')
+    ap.add_argument('--shingle', type=int, default=5, help='word n-grams of the comments')
     ap.add_argument('--ident-min-len', type=int, default=6)
     ap.add_argument('--limit', type=int, default=15)
-    ap.add_argument('--draws', type=int, default=5, help='tirages de la base à taille égale')
+    ap.add_argument('--draws', type=int, default=5, help='draws of the equal-size baseline')
     ap.add_argument('--amiga-tiers', nargs='*', default=DEFAULT_AMIGA_TIERS,
-                    help='motifs (inclus dans --unrelated) du sous-corpus Amiga tiers')
-    ap.add_argument('--json', help='écrit aussi les résultats bruts en JSON')
+                    help='patterns (included in --unrelated) of the third-party Amiga sub-corpus')
+    ap.add_argument('--json', help='also writes the raw results as JSON')
     a = ap.parse_args()
 
     ours, comp, unrel, cc, cu = load(a.src, a.aros, a.unrelated)
@@ -777,8 +777,8 @@ def main():
                 res['name'] = name
                 r['asm'].append(res)
                 print(f'[{name}] {lvl} k={k} : couverture {res["coverage_pct"]} %', file=sys.stderr)
-            # Base à taille égale : sous-ensembles tirés au hasard (graine fixe) de l'asm Amiga tiers, de même
-            # nombre de tokens que le corpus comparable ; la couverture croît avec la taille du corpus cible.
+            # Equal-size baseline: randomly drawn subsets (fixed seed) of the third-party Amiga asm, with the same
+            # number of tokens as the comparable corpus; coverage grows with the size of the target corpus.
             target = sum(len(f.toks[lvl]) for f in comp)
             covs = []
             for seed in range(a.draws):

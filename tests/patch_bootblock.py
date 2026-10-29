@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
-# tests/patch_bootblock.py — patche le bootblock (secteurs 0+1 = 1024 o) d'un ADF avec un boot code custom
-# et un checksum additif VALIDE, puis round-trip un validateur (assert bootable). Lance via `python3 -I`.
+# tests/patch_bootblock.py - patches the bootblock (sectors 0+1 = 1024 bytes) of an ADF with custom boot code
+# and a VALID additive checksum, then round-trips through a validator (assert bootable). Run via `python3 -I`.
 #
-# Usage : patch_bootblock.py <adf_formate_in> <bootcode_bin> <adf_out>
+# Usage: patch_bootblock.py <formatted_adf_in> <bootcode_bin> <adf_out>
 #
-# Checksum bootblock AmigaDOS = somme à retenue CIRCULAIRE (one's-complement / end-around carry) des 256
-# longs ; un bloc est valide ssi magic « DOS » ET cette somme (checksum inclus) == 0xFFFFFFFF.
+# AmigaDOS bootblock checksum = sum with CIRCULAR carry (one's-complement / end-around carry) of the 256
+# longwords; a block is valid iff magic "DOS" AND this sum (checksum included) == 0xFFFFFFFF.
 import sys
 import struct
 
 BB_LEN = 1024
-BB_ENTRY = 12          # offset du boot code
-CSUM_OFF = 4           # offset du champ checksum
+BB_ENTRY = 12          # offset of the boot code
+CSUM_OFF = 4           # offset of the checksum field
 
-# Marqueurs spanning (M6z) : 8 octets en tête des blocs logiques 10 et 11. Le bloc 10 est le DERNIER secteur de
-# la piste 0, le bloc 11 le PREMIER de la piste 1 -> une lecture CMD_READ de l'offset 10*512 sur 1024 octets
-# TRAVERSE la frontière piste 0/1 et doit assembler les deux pistes. Blocs libres (zéros) sur un OFS vide : les
-# écrire n'altère ni le bootblock (0-1) ni le root block (880) ; le filesystem n'est pas monté par M6z.
+# Spanning markers (M6z): 8 bytes at the start of logical blocks 10 and 11. Block 10 is the LAST sector of
+# track 0, block 11 the FIRST of track 1 -> a CMD_READ of 1024 bytes from offset 10*512
+# CROSSES the track 0/1 boundary and must assemble both tracks. Free blocks (zeros) on an empty OFS: writing
+# them alters neither the bootblock (0-1) nor the root block (880); the filesystem is not mounted by M6z.
 SECTOR = 512
 SPAN_BLOCKS = {10: b"SPAN0010", 11: b"SPAN0011"}
 
 
 def ones_complement_sum(block):
-    """Somme à retenue circulaire des 256 longs d'un bloc de 1024 o."""
+    """Sum with circular carry of the 256 longwords of a 1024-byte block."""
     s = 0
     for i in range(0, BB_LEN, 4):
         s += struct.unpack(">I", block[i:i + 4])[0]
@@ -48,24 +48,24 @@ def main():
         sys.exit(f"boot code trop gros : {len(code)} o (max {BB_LEN - BB_ENTRY})")
 
     bb = bytearray(img[:BB_LEN])
-    # magic « DOS\0 » (préservé si déjà posé par le format ; on le force pour être sûr)
+    # magic "DOS\0" (preserved if already set by the format; forced here to be sure)
     bb[0:4] = b"DOS\x00"
-    # pointeur rootblock (offset 8) laissé tel que posé par le format (880 sur un DD OFS)
-    # champ checksum à 0 avant calcul
+    # rootblock pointer (offset 8) left as set by the format (880 on a DD OFS)
+    # checksum field set to 0 before the computation
     bb[CSUM_OFF:CSUM_OFF + 4] = b"\x00\x00\x00\x00"
-    # boot code à +12 (le reste reste tel quel / zéro)
+    # boot code at +12 (the rest stays as is / zero)
     bb[BB_ENTRY:BB_ENTRY + len(code)] = code
-    # checksum = complément à un de la somme (champ checksum = 0)
+    # checksum = one's complement of the sum (checksum field = 0)
     csum = (~ones_complement_sum(bb)) & 0xFFFFFFFF
     bb[CSUM_OFF:CSUM_OFF + 4] = struct.pack(">I", csum)
 
-    # round-trip : le bloc patché DOIT être bootable
+    # round-trip: the patched block MUST be bootable
     if not is_bootable(bb):
         sys.exit("ECHEC round-trip : le bootblock patché n'est pas bootable")
 
     img[:BB_LEN] = bb
 
-    # marqueurs spanning (M6z) : posés sur des blocs libres, vérifiés après écriture
+    # spanning markers (M6z): placed on free blocks, checked after writing
     for blk, mark in SPAN_BLOCKS.items():
         off = blk * SECTOR
         if any(img[off:off + len(mark)]):
@@ -78,7 +78,7 @@ def main():
 
     open(adf_out, "wb").write(img)
 
-    # contrôle négatif : l'ADF formaté d'origine NE doit PAS être bootable (checksum=0)
+    # negative check: the original formatted ADF must NOT be bootable (checksum=0)
     orig = open(adf_in, "rb").read(BB_LEN)
     orig_bootable = is_bootable(orig)
     print(f"boot code     : {len(code)} o -> offset +{BB_ENTRY}")

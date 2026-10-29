@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# tests/adf_suite_winuae.sh — non-régression de fin d'étape sous WinUAE Linux (portage Unix de WinUAE, AppImage) en
-# configuration A500 fidèle au matériel : 68000 cycle-exact, OCS, PAL, 512 Ko chip + 512 Ko slow, disquette à
-# vitesse réelle. Chaque disquette de assets/test_adf/ est bootée sur une copie inscriptible, sous Xvfb, sans GUI.
-# Par disquette : bootblock exécuté ? (marqueur ROM « M6Y STRAP BOOTED OK » sur le série), alerte/guru, capture finale.
-# Le série passe par TCP : clé `unix.serial_port` (la clé `serial_port` de WinUAE Windows est inconnue ici).
+# tests/adf_suite_winuae.sh - end-of-step non-regression under WinUAE Linux (Unix port of WinUAE, AppImage) in a
+# hardware-faithful A500 configuration: cycle-exact 68000, OCS, PAL, 512 KB chip + 512 KB slow, floppy at
+# real speed. Each floppy in assets/test_adf/ is booted from a writable copy, under Xvfb, without GUI.
+# Per floppy: bootblock executed? (ROM marker "M6Y STRAP BOOTED OK" on the serial), alert/guru, final capture.
+# The serial goes over TCP: key `unix.serial_port` (the `serial_port` key of Windows WinUAE is unknown here).
 #
-# Usage : tests/adf_suite_winuae.sh [rom] [secondes par disquette] [filtre de nom (grep -i)]
-# Variable : WINUAE = lanceur de WinUAE Linux (AppRun de l'AppImage extraite) ; défaut : « winuae » pris dans le PATH.
-# Sortie : build/adf_suite_winuae/<n>/{screen.png,serial.log,winuae.log,a500.uae} + build/adf_suite_winuae/summary.txt
+# Usage: tests/adf_suite_winuae.sh [rom] [seconds per floppy] [name filter (grep -i)]
+# Variable: WINUAE = WinUAE Linux launcher (AppRun of the extracted AppImage); default: "winuae" taken from the PATH.
+# Output: build/adf_suite_winuae/<n>/{screen.png,serial.log,winuae.log,a500.uae} + build/adf_suite_winuae/summary.txt
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"

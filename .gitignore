@@ -1,22 +1,22 @@
-# Artefacts de build
+# Build artefacts
 /build/
 __pycache__/
 *.pyc
 *.o
 *.obj
 
-# Scratch d'orchestration (ledgers superpowers) et configuration locale de l'assistant
+# Orchestration scratch (superpowers ledgers) and local assistant configuration
 /.superpowers/
 /.claude/
 
-# ROM Kickstart propriétaire — NE JAMAIS committer ni distribuer.
-# Chaque utilisateur fournit sa propre copie dans assets/ (cf. README).
+# Proprietary Kickstart ROM — NEVER commit or distribute.
+# Each user provides their own copy in assets/ (see README).
 /assets/kick34005.A500
 /assets/*.rom
 /assets/*.bin
-# ADF de test — régénérables (tests/mk_boot_adf.sh, xdftool) ; pas de binaires dans le dépôt.
+# Test ADFs — regenerable (tests/mk_boot_adf.sh, xdftool); no binaries in the repository.
 /assets/*.adf
 
-# AROS : référence en LECTURE SEULE (APL, jamais copiée dans src/), clone partiel non versionné
+# AROS: READ-ONLY reference (APL, never copied into src/), untracked partial clone
 third_party/aros/
 /assets/test_adf/

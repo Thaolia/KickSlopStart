@@ -1,348 +1,348 @@
-# SetPatch 1.38 (disquette SysInfo) : remplacements installés, contrats d'ABI, cause du `jsr -$24(a6)`
+# SetPatch 1.38 (SysInfo floppy): installed replacements, ABI contracts, cause of the `jsr -$24(a6)`
 
-Piste **ANALYSE** (« dirty »). Ce document décrit des **comportements et des contrats d'ABI seulement** :
-registres attendus, champs lus/écrits, appels effectués, conditions. **Aucune suite d'instructions n'y est
-recopiée** et il ne contient pas de pseudo-code ligne à ligne. La ROM Kickstart (`assets/kick34005.A500`)
-n'a **pas** été ouverte. Il complète `docs/analysis/setpatch-disk-resource.md` (même binaire, analyse
-antérieure) sans le remplacer.
+**ANALYSIS** track ("dirty"). This document describes **behaviours and ABI contracts only**:
+expected registers, fields read/written, calls made, conditions. **No instruction sequence is
+copied into it** and it contains no line-by-line pseudo-code. The Kickstart ROM (`assets/kick34005.A500`)
+was **not** opened. It complements `docs/analysis/setpatch-disk-resource.md` (same binary, earlier
+analysis) without replacing it.
 
 ## Provenance
 
-- Fichier : `C:SetPatch_1.38` de `assets/test_adf/SysInfo.adf` (lecture seule), extrait par
-  `xdftool … read c/SetPatch_1.38` dans un répertoire scratch. 5964 octets, md5
-  `b78212216d1ddac4901d72199981b942`, chaîne de version « SetPatch 1.38 (24-Sep-90) ».
-- Format hunk LOADSEG, 35 hunks. J'ai relogé les hunks à une base fictive avec un script Python
-  (`python3 -I`), puis désassemblé avec radare2 (`-a m68k`). Toutes les fonctions citées ci-dessous ont
-  été lues dans ce désassemblage.
-- Invocation sur ce disque (`s/startup-sequence`) : **`C:SetPatch_1.38 > NIL:`**, donc **sans argument
-  `r`**. Viennent ensuite `C:Initialize` puis `SYS:SysInfo/SysInfo`.
+- File: `C:SetPatch_1.38` from `assets/test_adf/SysInfo.adf` (read only), extracted with
+  `xdftool … read c/SetPatch_1.38` into a scratch directory. 5964 bytes, md5
+  `b78212216d1ddac4901d72199981b942`, version string "SetPatch 1.38 (24-Sep-90)".
+- LOADSEG hunk format, 35 hunks. I relocated the hunks to a fictitious base with a Python script
+  (`python3 -I`), then disassembled with radare2 (`-a m68k`). All the functions cited below were
+  read in that disassembly.
+- Invocation on this disk (`s/startup-sequence`): **`C:SetPatch_1.38 > NIL:`**, hence **without the `r`
+  argument**. Next come `C:Initialize` then `SYS:SysInfo/SysInfo`.
 
-### Carte des hunks utiles
+### Map of the useful hunks
 
-« Fichier » = offset du premier octet de données du hunk dans le fichier. « +x » = offset dans le hunk.
+"File" = offset of the hunk's first data byte in the file. "+x" = offset within the hunk.
 
-| Hunk | Type, taille | Fichier | Contenu (comportement) |
+| Hunk | Type, size | File | Content (behaviour) |
 |---|---|---|---|
-| 0 | CODE $218 | $0A8 | Startup C : parse des arguments, chemin Workbench, et `_exit` à +$1B2. **Seul `jsr -$24(a6)` du fichier, à +$1DC (fichier $284)** |
-| 1 | DATA $10 | $300 | Variables globales : +0 SysBase, +4 **DOSBase** |
-| 2 | CODE $224 | $31C | Segment BCPL « RUN » embarqué (taille stockée $22C, premier long $89) |
-| 3 | CODE $3DC | $54C | `printf` à +0, `main` à +$30 |
-| 4 | DATA $28C | $B70 | Chaînes (messages) |
-| 5 | CODE $54 | $E08 | Nouveau **Alert** à +0. Ancien vecteur stocké à +$4E |
-| 6 | CODE $1C | $E68 | Nouveau **UserState** à +0, callback superviseur à +$10 |
-| 7 | CODE $B4 | $E90 | Installeur d'AllocEntry à +0, nouvel **AllocEntry** à +$1E |
-| 8 | CODE $E0 | $F50 | Installeur RAD à +0, stub ColdCapture de 44 octets à +$B4 (seul code recopié) |
-| 9 | CODE $78 | $103C | Installeur des vecteurs FPU à +0, adresse ROM mémorisée à +$38, 16 stubs à +$3C, partie commune à +$5E |
-| 10 | CODE $CC | $10D8 | Scanner « mot dont l'octet haut vaut $61 » à +0, décodeur de branchement à +$1E, analyse de DeleteLayer à +$76 |
-| 11 | DATA $0C | $11D8 | 3 pointeurs de routines « internes » de layers |
-| 12 | CODE $3C | $11F0 | Nouveau **DeleteLayer** à +0 |
-| 13 | CODE $CC | $1254 | Installeur disk.resource à +0, nouveau **GetUnit** à +$7C, nouveau **GiveUnit** à +$94, propriétaire à +$B0 (valeur initiale -1), ancien GetUnit à +$B4, ancien GiveUnit à +$B8, nom à +$BC |
-| 14 | CODE $54 | $1348 | Nouveau **MrgCop** à +0, ancien à +$4E |
-| 16 | CODE $3C | $13B4 | Pointeur du segment RUN à +0, glue **Execute** à +4 |
-| 17 | CODE $14 | $1410 | Nouveau **SetFont** à +0, ancien à +$0E |
-| 18 | CODE $30 | $1430 | Nouveau **FindName** à +0 |
-| 19 | CODE $28 | $146C | « Location zero » à +0, callback superviseur à +$16 |
-| 20 | CODE $38 | $14A0 | Nouveau **SetSoftStyle** à +0, ancien stocké à +$32 (jamais utilisé) |
-| 29/30/31/28 | CODE | — | Stubs d'appel exec/dos (convention C → registres) et RawDoFmt/Write |
+| 0 | CODE $218 | $0A8 | C startup: argument parsing, Workbench path, and `_exit` at +$1B2. **Only `jsr -$24(a6)` in the file, at +$1DC (file $284)** |
+| 1 | DATA $10 | $300 | Global variables: +0 SysBase, +4 **DOSBase** |
+| 2 | CODE $224 | $31C | Embedded BCPL "RUN" segment (stored size $22C, first long $89) |
+| 3 | CODE $3DC | $54C | `printf` at +0, `main` at +$30 |
+| 4 | DATA $28C | $B70 | Strings (messages) |
+| 5 | CODE $54 | $E08 | New **Alert** at +0. Old vector stored at +$4E |
+| 6 | CODE $1C | $E68 | New **UserState** at +0, supervisor callback at +$10 |
+| 7 | CODE $B4 | $E90 | AllocEntry installer at +0, new **AllocEntry** at +$1E |
+| 8 | CODE $E0 | $F50 | RAD installer at +0, 44-byte ColdCapture stub at +$B4 (the only copied code) |
+| 9 | CODE $78 | $103C | FPU vector installer at +0, stored ROM address at +$38, 16 stubs at +$3C, common part at +$5E |
+| 10 | CODE $CC | $10D8 | Scanner for "word whose high byte is $61" at +0, branch decoder at +$1E, DeleteLayer analysis at +$76 |
+| 11 | DATA $0C | $11D8 | 3 pointers to "internal" layers routines |
+| 12 | CODE $3C | $11F0 | New **DeleteLayer** at +0 |
+| 13 | CODE $CC | $1254 | disk.resource installer at +0, new **GetUnit** at +$7C, new **GiveUnit** at +$94, owner at +$B0 (initial value -1), old GetUnit at +$B4, old GiveUnit at +$B8, name at +$BC |
+| 14 | CODE $54 | $1348 | New **MrgCop** at +0, old one at +$4E |
+| 16 | CODE $3C | $13B4 | Pointer to the RUN segment at +0, **Execute** glue at +4 |
+| 17 | CODE $14 | $1410 | New **SetFont** at +0, old one at +$0E |
+| 18 | CODE $30 | $1430 | New **FindName** at +0 |
+| 19 | CODE $28 | $146C | "Location zero" at +0, supervisor callback at +$16 |
+| 20 | CODE $38 | $14A0 | New **SetSoftStyle** at +0, old one stored at +$32 (never used) |
+| 29/30/31/28 | CODE | — | exec/dos call stubs (C convention → registers) and RawDoFmt/Write |
 
-Ordre d'exécution dans `main` (hunk 3) : test de `?`, puis RAD si l'argument vaut `r`/`R`. Ensuite
-`FindPort("SetPatch-01")` et, si le port existe, sortie avec le code 5. Sinon création et ajout du port.
-Viennent ensuite, dans cet ordre, disk.resource, Alert, graphics, layers, le bloc exec (FPU, puis
-AllocEntry, UserState, FindName), « location zero » et DOS Execute. En fin de `main` (+$3C0),
-**`cli_Module` (CLI +$3C) est mis à 0**, puis `_exit(0)`.
+Execution order in `main` (hunk 3): test for `?`, then RAD if the argument is `r`/`R`. Then
+`FindPort("SetPatch-01")` and, if the port exists, exit with code 5. Otherwise the port is created and added.
+Then come, in this order, disk.resource, Alert, graphics, layers, the exec block (FPU, then
+AllocEntry, UserState, FindName), "location zero" and DOS Execute. At the end of `main` (+$3C0),
+**`cli_Module` (CLI +$3C) is set to 0**, then `_exit(0)`.
 
 ---
 
-## 1. Mémoire allouée, code recopié, contrats de chaque remplacement
+## 1. Allocated memory, copied code, contracts of each replacement
 
-### 1.1 Tous les appels AllocMem du programme
+### 1.1 All AllocMem calls in the program
 
-| Où | Taille | Flags | Usage | Libéré ? |
+| Where | Size | Flags | Use | Freed? |
 |---|---|---|---|---|
-| Hunk 0 (startup) | $184 | `MEMF_PUBLIC\|MEMF_CLEAR` ($10001) | Tampon des arguments (argv + copie de la ligne). Le long +0 sert au filehandle « NIL: » du chemin Workbench | Oui, dans `_exit` |
-| Hunk 3 (`main`) | 34 | `MEMF_PUBLIC\|MEMF_CLEAR` | MsgPort marqueur « SetPatch-01 » (`ln_Type` = NT_MSGPORT, puis AddPort) | Jamais |
-| Hunk 8 (RAD) | 44 | AllocAbs près de `SysStkLower`, sinon `MEMF_PUBLIC\|MEMF_CHIP` (3) | **Seul code recopié** : stub ColdCapture | Jamais |
-| Hunk 7 (nouvel AllocEntry, au runtime) | 16 + 8×n | `MEMF_CLEAR` seul ($10000) | Copie de la MemList pour le compte de l'appelant, puis une AllocMem par entrée | Par FreeEntry de l'appelant |
+| Hunk 0 (startup) | $184 | `MEMF_PUBLIC\|MEMF_CLEAR` ($10001) | Argument buffer (argv + copy of the line). Long +0 is used for the "NIL:" filehandle of the Workbench path | Yes, in `_exit` |
+| Hunk 3 (`main`) | 34 | `MEMF_PUBLIC\|MEMF_CLEAR` | "SetPatch-01" marker MsgPort (`ln_Type` = NT_MSGPORT, then AddPort) | Never |
+| Hunk 8 (RAD) | 44 | AllocAbs near `SysStkLower`, otherwise `MEMF_PUBLIC\|MEMF_CHIP` (3) | **Only copied code**: ColdCapture stub | Never |
+| Hunk 7 (new AllocEntry, at runtime) | 16 + 8×n | `MEMF_CLEAR` only ($10000) | Copy of the MemList on behalf of the caller, then one AllocMem per entry | By the caller's FreeEntry |
 
-**Conclusion.** Hors chemin RAD, SetPatch **ne recopie aucun code** en mémoire allouée. Tous les
-remplacements installés par SetFunction (et les 16 stubs FPU) s'exécutent **sur place, dans les hunks
-chargés par LoadSeg**. Or ces hunks sont eux-mêmes des blocs AllocMem remplis par copie depuis le
-fichier : c'est très probablement le « bloc alloué et recopié » observé (cf. §2). Le chemin RAD n'est pas
-pris ici, pour trois raisons : il n'y a pas d'argument `r`, il faut `lib_Version` d'exec < 35, et il faut
-`MaxLocMem` > $80000 (512K de chip donnent exactement $80000).
+**Conclusion.** Outside the RAD path, SetPatch **copies no code** into allocated memory. All the
+replacements installed by SetFunction (and the 16 FPU stubs) run **in place, in the hunks
+loaded by LoadSeg**. Yet those hunks are themselves AllocMem blocks filled by copying from the
+file: this is very probably the "allocated and copied block" observed (see §2). The RAD path is not
+taken here, for three reasons: there is no `r` argument, it requires exec `lib_Version` < 35, and it requires
+`MaxLocMem` > $80000 (512K of chip gives exactly $80000).
 
-### 1.2 Conventions communes
+### 1.2 Common conventions
 
-- Tous les remplacements installés par SetFunction rendent la main à l'**ancienne fonction**, quand ils
-  l'appellent, par **la valeur rendue par SetFunction** (d0), rangée dans une variable du hunk. Ils n'ont
-  aucune adresse ROM fixe ni ne relisent la table de vecteurs. Exceptions : Alert (§1.3, saute à
-  ancien+$30 ou +$88), DeleteLayer (§1.8, routines déduites du code de l'ancien) et les vecteurs FPU (§3).
-- **SysBase lu en $4** : par tous les installeurs, par le nouveau GetUnit/GiveUnit (`ThisTask`), par le
-  nouvel Alert (test de validité seulement) et par « location zero ». **Non lu** (a6 supposé valoir
-  SysBase en entrée) par les nouveaux **AllocEntry** et **UserState**. FindName n'utilise pas a6.
-- Aucun remplacement ne lit `AttnFlags`.
+- All replacements installed by SetFunction hand control back to the **old function**, when they
+  call it, through **the value returned by SetFunction** (d0), stored in a variable of the hunk. They have
+  no fixed ROM address and do not re-read the vector table. Exceptions: Alert (§1.3, jumps to
+  old+$30 or +$88), DeleteLayer (§1.8, routines deduced from the old one's code) and the FPU vectors (§3).
+- **SysBase read at $4**: by all installers, by the new GetUnit/GiveUnit (`ThisTask`), by the
+  new Alert (validity test only) and by "location zero". **Not read** (a6 assumed to hold
+  SysBase on entry) by the new **AllocEntry** and **UserState**. FindName does not use a6.
+- No replacement reads `AttnFlags`.
 
-### 1.3 Alert (exec -108). Condition : exec `lib_Version` vaut 33 ou 34
+### 1.3 Alert (exec -108). Condition: exec `lib_Version` is 33 or 34
 
-- Installation : SetFunction, puis test de l'ancien vecteur. S'il n'est **pas** dans
-  `$FC0000..$FFFFFF`, nouveau SetFunction avec l'ancien (annulation) et message « skipped (vector in use) ».
-  Notre ROM est en $FC0000, donc le remplacement est **installé** (le message « Alert patched » le confirme).
-- Entrée : d7 = numéro d'alerte, a5 = pointeur de paramètres (convention Alert). a6 n'est pas utilisé.
-- Comportement : coupe le maître INTENA ($4000). Si le long en $0 vaut déjà `'HELP'`, saute directement
-  au second point d'entrée. Sinon il écrit `'HELP'` en $0, le numéro d'alerte (bit 31 forcé) en $100 et
-  **le long pointé par a5** en $104. Il faut donc a5 pair, sinon erreur d'adresse.
-- Il teste ensuite la validité de SysBase en $4 (le pointeur doit avoir l'octet haut nul et être pair).
-  S'il est valide, il **saute à ancienAlert + $30**, sinon à **ancienAlert + $88**. Ce sont des **points
-  d'entrée internes à la ROM 1.3, calculés depuis l'ancien vecteur**. Il ne revient jamais.
+- Installation: SetFunction, then test of the old vector. If it is **not** in
+  `$FC0000..$FFFFFF`, a new SetFunction with the old one (cancellation) and the message "skipped (vector in use)".
+  Our ROM is at $FC0000, so the replacement is **installed** (the message "Alert patched" confirms it).
+- Entry: d7 = alert number, a5 = parameter pointer (Alert convention). a6 is not used.
+- Behaviour: switches off the INTENA master ($4000). If the long at $0 already holds `'HELP'`, jumps directly
+  to the second entry point. Otherwise it writes `'HELP'` at $0, the alert number (bit 31 forced) at $100 and
+  **the long pointed to by a5** at $104. a5 must therefore be even, otherwise an address error.
+- It then tests the validity of SysBase at $4 (the pointer must have a null high byte and be even).
+  If it is valid, it **jumps to oldAlert + $30**, otherwise to **oldAlert + $88**. These are **entry
+  points internal to the 1.3 ROM, computed from the old vector**. It never returns.
 
-### 1.4 AllocEntry (exec -222). Condition : exec ≤ 35
+### 1.4 AllocEntry (exec -222). Condition: exec ≤ 35
 
-- Entrée : a0 = MemList source, **a6 = SysBase supposé** (aucune lecture de $4).
-- Comportement : alloue une MemList neuve de 16 + 8×`ml_NumEntries` octets (`MEMF_CLEAR`). Elle reçoit
-  `ml_NumEntries` (offset 14) et des champs de nœud à zéro. Pour chaque entrée (à 16 + 8i), la longueur
-  (+4) est recopiée. Si elle est nulle, l'adresse vaut 0 ; sinon l'adresse est rendue par
+- Entry: a0 = source MemList, **a6 = SysBase assumed** (no read of $4).
+- Behaviour: allocates a new MemList of 16 + 8×`ml_NumEntries` bytes (`MEMF_CLEAR`). It receives
+  `ml_NumEntries` (offset 14) and zeroed node fields. For each entry (at 16 + 8i), the length
+  (+4) is copied. If it is null, the address is 0; otherwise the address is the one returned by
   `AllocMem(me_Length, me_Reqs)`.
-- En cas d'échec d'une entrée, il libère dans l'ordre inverse les entrées déjà obtenues puis la liste
-  (même taille), et rend **les `me_Reqs` de l'entrée fautive avec le bit 31 posé**. Si l'allocation de la
-  liste elle-même échoue, il rend $80000000.
-- Sortie : d0 = MemList neuve. d2-d3/a2-a4 préservés ; d1/a0/a1 perdus. **L'ancien AllocEntry n'est
-  jamais appelé.**
+- If an entry fails, it frees, in reverse order, the entries already obtained, then the list
+  (same size), and returns **the `me_Reqs` of the failing entry with bit 31 set**. If the allocation of the
+  list itself fails, it returns $80000000.
+- Exit: d0 = new MemList. d2-d3/a2-a4 preserved; d1/a0/a1 lost. **The old AllocEntry is
+  never called.**
 
-### 1.5 UserState (exec -156). Condition : exec ≤ 35
+### 1.5 UserState (exec -156). Condition: exec ≤ 35
 
-- Entrée : appelé **en mode superviseur**, d0 = pile superviseur à restaurer, **a6 = SysBase supposé**.
-- Comportement : retire l'adresse de retour de la pile, met la pile courante dans USP, puis prend d0 comme
-  nouveau SSP. Il appelle ensuite **exec Supervisor (-30) via a6 alors qu'il est déjà en mode
-  superviseur**, avec a5 = callback (a5 de l'appelant mis de côté puis restauré).
-- Le callback trouve à sp le cadre d'exception 68000 (SR.w, PC.l) que Supervisor a empilé. Il y remplace
-  le PC par l'adresse de retour de l'appelant et efface le bit S du SR empilé. Le RTE renvoie alors
-  l'appelant en mode utilisateur, sur sa pile.
-- Il n'appelle jamais l'ancien UserState.
+- Entry: called **in supervisor mode**, d0 = supervisor stack to restore, **a6 = SysBase assumed**.
+- Behaviour: removes the return address from the stack, puts the current stack into USP, then takes d0 as
+  the new SSP. It then calls **exec Supervisor (-30) via a6 while already in supervisor
+  mode**, with a5 = callback (the caller's a5 saved aside then restored).
+- The callback finds at sp the 68000 exception frame (SR.w, PC.l) that Supervisor pushed. It replaces
+  the PC there with the caller's return address and clears the S bit of the stacked SR. The RTE then returns
+  the caller in user mode, on its own stack.
+- It never calls the old UserState.
 
-### 1.6 FindName (exec -276). Condition : exec ≤ 35
+### 1.6 FindName (exec -276). Condition: exec ≤ 35
 
-- Entrée : a0 = liste, a1 = nom. a6 n'est pas utilisé.
-- Comportement : parcours depuis `lh_Head` jusqu'au nœud sentinelle (`ln_Succ` nul) en **ignorant les
-  nœuds dont `ln_Name` (+10) est NULL**. La comparaison respecte la casse.
-- Sortie : d0 = nœud ou 0. **a1 restauré**, a2 préservé. **a0 et d1 sont détruits** (a0 pointe dans une
-  chaîne). Il n'appelle jamais l'ancien FindName.
+- Entry: a0 = list, a1 = name. a6 is not used.
+- Behaviour: walks from `lh_Head` to the sentinel node (null `ln_Succ`) **skipping
+  nodes whose `ln_Name` (+10) is NULL**. The comparison is case-sensitive.
+- Exit: d0 = node or 0. **a1 restored**, a2 preserved. **a0 and d1 are destroyed** (a0 points into a
+  string). It never calls the old FindName.
 
-### 1.7 disk.resource GetUnit (-18) et GiveUnit (-24). Condition : `lib_Version` ≤ 35
+### 1.7 disk.resource GetUnit (-18) and GiveUnit (-24). Condition: `lib_Version` ≤ 35
 
-Ce correctif est déjà détaillé dans `setpatch-disk-resource.md` §1-3, et le désassemblage le confirme :
+This fix is already detailed in `setpatch-disk-resource.md` §1-3, and the disassembly confirms it:
 
-- Section critique faite à la main : INTENA $4000 et `IDNestCnt` (+$126) +1, puis -1 et INTENA $C000 si
-  le compteur redevient négatif.
-- Nouveau GetUnit : appelle l'ancien en lui transmettant les registres (a0 est écrasé). Si l'ancien rend
-  d0 ≠ 0, le propriétaire devient `ThisTask` (+$114 lu via $4).
-- Nouveau GiveUnit : saute à l'ancien si le propriétaire vaut `ThisTask` ou -1. Sinon il **avale l'appel**.
-- **Ni l'un ni l'autre n'appelle quoi que ce soit via a6.** Le GiveUnit d'origine est atteint par un saut
-  au pointeur mémorisé (hunk 13 +$B8). Aucun champ `dr_*` n'est touché.
+- Hand-made critical section: INTENA $4000 and `IDNestCnt` (+$126) +1, then -1 and INTENA $C000 if
+  the counter becomes negative again.
+- New GetUnit: calls the old one, passing it the registers (a0 is overwritten). If the old one returns
+  d0 ≠ 0, the owner becomes `ThisTask` (+$114 read via $4).
+- New GiveUnit: jumps to the old one if the owner is `ThisTask` or -1. Otherwise it **swallows the call**.
+- **Neither of them calls anything via a6.** The original GiveUnit is reached by a jump
+  to the stored pointer (hunk 13 +$B8). No `dr_*` field is touched.
 
-### 1.8 layers DeleteLayer (-90). Condition : `lib_Version` ≤ 35
+### 1.8 layers DeleteLayer (-90). Condition: `lib_Version` ≤ 35
 
-- Après SetFunction, **analyse du code de l'ancien DeleteLayer** (hunk 10 +$76) :
-  - le mot situé à entrée+2 est décodé comme un branchement (déplacement 8 bits, ou 16 bits si l'octet
-    bas est nul) ;
-  - depuis la cible, le scanner cherche le premier mot dont l'octet haut vaut $61 (BSR) et décode sa
-    cible, ce qui donne la routine n°1. Il reprend après ce BSR pour la routine n°2, puis pour la n°3.
-  - Les trois adresses sont rangées dans le hunk 11.
-- Nouveau DeleteLayer : entrée a1 = Layer. Il appelle la routine n°1 avec `Layer->LayerInfo` (+$44)
-  **passé sur la pile** (convention C). Si elle rend un résultat ≠ 0, il appelle la routine n°2 avec le
-  Layer, puis la n°3 avec le LayerInfo, et rend 1. Sinon il rend 0. Il n'appelle jamais l'ancien.
-- **Dépendance totale à la forme du code de la ROM 1.3.** Sur notre layers, les trois cibles sont des
-  adresses quasi arbitraires : elles pointent dans notre ROM, au voisinage du code de DeleteLayer.
+- After SetFunction, **analysis of the code of the old DeleteLayer** (hunk 10 +$76):
+  - the word at entry+2 is decoded as a branch (8-bit displacement, or 16-bit if the low
+    byte is null);
+  - from the target, the scanner looks for the first word whose high byte is $61 (BSR) and decodes its
+    target, which gives routine no. 1. It resumes after that BSR for routine no. 2, then for no. 3.
+  - The three addresses are stored in hunk 11.
+- New DeleteLayer: entry a1 = Layer. It calls routine no. 1 with `Layer->LayerInfo` (+$44)
+  **passed on the stack** (C convention). If it returns a result ≠ 0, it calls routine no. 2 with the
+  Layer, then no. 3 with the LayerInfo, and returns 1. Otherwise it returns 0. It never calls the old one.
+- **Total dependence on the shape of the 1.3 ROM code.** On our layers, the three targets are
+  quasi-arbitrary addresses: they point into our ROM, near the DeleteLayer code.
 
-### 1.9 graphics MrgCop (-210), SetFont (-66), SetSoftStyle (-90). Condition : `lib_Version` ≤ 35
+### 1.9 graphics MrgCop (-210), SetFont (-66), SetSoftStyle (-90). Condition: `lib_Version` ≤ 35
 
-- **MrgCop** : entrée a1 = View, **a6 = GfxBase supposé**. Il compare le bit LACE ($0004) de `View->Modes`
-  (+16) à celui de `GfxBase->Modes` (+$9E). Si LACE vient d'apparaître dans la View, il parcourt les
-  ViewPort depuis `View->ViewPort` (+0) par `vp_Next` (+0). Pour chaque ViewPort dont `Modes` (+32) a à
-  la fois $2000 et LACE, il appelle **MakeVPort (-216) via a6**. Il finit par **sauter à l'ancien MrgCop**
-  (pointeur mémorisé), a1 restauré.
-- **SetFont** : entrée a0 = font, a1 = RastPort. Si l'un des deux est NULL, retour immédiat. Sinon saut à
-  l'ancien (pointeur mémorisé), registres inchangés.
-- **SetSoftStyle** : entrée a1 = RastPort, d0 = style, d1 = masque, **a6 = GfxBase supposé**. Il appelle
-  AskSoftStyle (-84) via a6 pour obtenir les bits algorithmiquement possibles. Le nouvel `AlgoStyle` (+$38)
-  vaut l'ancien `AlgoStyle` sans les bits (masque ∩ possibles), plus les bits (style ∩ masque ∩
-  possibles). Il le stocke et rend `AlgoStyle | tf_Style` de `rp->Font` (+$34, champ +$16), d2 préservé.
-  L'ancien n'est jamais appelé, bien que son pointeur soit stocké.
+- **MrgCop**: entry a1 = View, **a6 = GfxBase assumed**. It compares the LACE bit ($0004) of `View->Modes`
+  (+16) with that of `GfxBase->Modes` (+$9E). If LACE has just appeared in the View, it walks the
+  ViewPorts from `View->ViewPort` (+0) via `vp_Next` (+0). For each ViewPort whose `Modes` (+32) has
+  both $2000 and LACE, it calls **MakeVPort (-216) via a6**. It ends by **jumping to the old MrgCop**
+  (stored pointer), a1 restored.
+- **SetFont**: entry a0 = font, a1 = RastPort. If either of them is NULL, immediate return. Otherwise jump to
+  the old one (stored pointer), registers unchanged.
+- **SetSoftStyle**: entry a1 = RastPort, d0 = style, d1 = mask, **a6 = GfxBase assumed**. It calls
+  AskSoftStyle (-84) via a6 to obtain the algorithmically possible bits. The new `AlgoStyle` (+$38)
+  is the old `AlgoStyle` without the bits (mask ∩ possible), plus the bits (style ∩ mask ∩
+  possible). It stores it and returns `AlgoStyle | tf_Style` of `rp->Font` (+$34, field +$16), d2 preserved.
+  The old one is never called, although its pointer is stored.
 
-### 1.10 Remarque générale
+### 1.10 General remark
 
-Aucun de ces remplacements ne fait de `jsr` via a6 avec un déplacement de -24 (décimal). Les seuls appels
-via a6 effectués à l'intérieur des remplacements sont AllocMem/FreeMem (AllocEntry), Supervisor
-(UserState), AskSoftStyle (SetSoftStyle) et MakeVPort (MrgCop).
-
----
-
-## 2. Qui peut exécuter un `jsr -24(a6)` / `jsr -$24(a6)` avec a6 = 0 ou 1
-
-**Constat 1 : il n'existe aucun `jsr -24(a6)` (décimal, -$18) dans tout le fichier.** La seule occurrence
-de $FFE8 (-24) est l'**offset passé à SetFunction** pour GiveUnit (hunk 13 +$56, fichier $12AA), et ce
-n'est pas un appel.
-
-**Constat 2 : il existe exactement un `jsr -$24(a6)` (hexadécimal, soit -36, dos `Close`)** : hunk 0 +$1DC
-(fichier $284), dans **`_exit` du startup C** (+$1B2). Les débogueurs UAE affichent les déplacements en
-hexadécimal (`-$0024`). Il est donc très probable que « -24 » soit ce `-$24`. Contrat de `_exit` :
-
-- Il refait `FindTask(NULL)` (a6 = SysBase rechargé depuis $4) et prend **`pr_ReturnAddr` (+$B0) de la
-  tâche courante**. Il pose sp = `pr_ReturnAddr` − 12, puis dépile deux longs posés par le startup : le
-  message Workbench (a2) et le tampon d'arguments (a5).
-- Si le long +0 du tampon (filehandle « NIL: » du chemin Workbench) est non nul, il charge **a6 depuis la
-  variable globale DOSBase (hunk 1 +4)** et appelle `Close` (-$24). Il appelle ensuite CloseLibrary(DOS),
-  puis, si a2 ≠ 0, ReplyMsg du message Workbench sous Forbid. Il libère le tampon ($184 octets) et fait un
-  `rts` à l'adresse située à `pr_ReturnAddr` − 4.
-- **La valeur d'a6 attendue est DOSBase**, qu'aucun registre d'entrée ne fournit. Elle vient d'une
-  variable du hunk DATA 1, remplie au démarrage par `OpenLibrary("dos.library", 0)`. Si a6 vaut 0 ou 1,
-  cette variable a été **écrasée**, ce qui suppose que le bloc du hunk 1 a été libéré puis réalloué.
-- Lancé depuis un CLI, le long +0 du tampon vaut 0 (`MEMF_CLEAR`), donc cet appel **n'est normalement
-  jamais exécuté**. Il ne l'est que si `_exit` dépile un faux tampon. C'est le cas lorsque `pr_ReturnAddr`
-  est faux, ou lorsque la « tâche courante » n'est pas ce process : un Task simple n'a pas de champ +$B0,
-  qui tombe hors de la structure.
-
-**Cause la plus probable : les hunks de SetPatch sont libérés après son exécution.**
-
-- SetPatch suppose que le CLI **ne décharge pas** sa seglist : il met lui-même `cli_Module` (CLI +$3C,
-  via `pr_CLI` +$AC) à 0 juste avant `_exit`. Tout son code résident (remplacements, variables
-  « ancien vecteur », propriétaire disk.resource, stubs FPU des vecteurs $C0-$FC, DOSBase du hunk 1) vit
-  dans ces hunks.
-- Lecture de notre `src/dos/shell.s` : la commande est déchargée via la seglist sauvegardée au lancement
-  (`XF_SEG`), **sans relire `cli_Module`** (`sh_cli_end` le remet d'ailleurs à 0 lui-même). Les hunks de
-  SetPatch sont donc rendus à la mémoire libre alors que ces vecteurs pointent encore dedans :
-  - exec FindName, AllocEntry, UserState et Alert ;
-  - graphics SetFont, SetSoftStyle et MrgCop ;
-  - layers DeleteLayer ;
-  - disk.resource GetUnit et GiveUnit.
-- Ces blocs sont ensuite réalloués par LoadSeg (`C:Initialize`, puis SysInfo, qui sont eux aussi « alloués
-  et recopiés »), par des piles de tâches ou par de petites allocations (sémaphores, messages, IORequest).
-  Toute tâche qui appelle un vecteur patché exécute alors ce qui occupe la place, ou l'ancien code de
-  SetPatch dont les variables sont corrompues.
-- FindName est appelé en interne par OpenLibrary, OpenDevice (audio.device…), OpenResource, FindPort et
-  FindTask(nom). Le contrôleur disque passe par GetUnit/GiveUnit à chaque accès trackdisk. **Toutes les
-  tâches convergent donc vers les mêmes adresses**, ce qui correspond au symptôme « même plantage partout ».
-- Pour départager, **comparer le PC du plantage aux adresses des hunks de SetPatch** relevées pendant son
-  LoadSeg (début du bloc + 8 = données du hunk). Si le PC vaut hunk0 + $1DC, ou tombe dans l'un des hunks
-  5 à 20, la cause est confirmée. Contre-épreuve : ne pas décharger la seglist lorsque `cli_Module` vaut 0
-  au retour ; le plantage doit alors disparaître.
-
-**Causes secondaires possibles, à n'envisager qu'après celle-ci :**
-
-- (a) **Alert** est installé et saute à ancien+$30 / +$88 **au milieu de notre code ROM**. Il lit aussi
-  (a5), qui provoque une erreur d'adresse si a5 est impair. Mais le PC tomberait alors en ROM, pas en RAM.
-- (b) **DeleteLayer** est installé et saute aux trois cibles déduites de notre code. Le PC tomberait
-  également en ROM.
-- (c) **UserState** et **AllocEntry** utilisent a6 tel qu'il est reçu. Un appelant interne qui ne passe pas
-  a6 = SysBase ferait un appel à a6+déplacement (-30, -198 ou -210), mais jamais -24 ni -$24.
+None of these replacements does a `jsr` via a6 with a displacement of -24 (decimal). The only calls
+via a6 made inside the replacements are AllocMem/FreeMem (AllocEntry), Supervisor
+(UserState), AskSoftStyle (SetSoftStyle) and MakeVPort (MrgCop).
 
 ---
 
-## 3. « Exec 68881/68882 exceptions patched » et « DOS Execute call already patched »
+## 2. Who can execute a `jsr -24(a6)` / `jsr -$24(a6)` with a6 = 0 or 1
 
-### 3.1 Vecteurs d'exception FPU (exec ≤ 35, sans SetFunction ni test d'AttnFlags)
+**Finding 1: there is no `jsr -24(a6)` (decimal, -$18) anywhere in the file.** The only occurrence
+of $FFE8 (-24) is the **offset passed to SetFunction** for GiveUnit (hunk 13 +$56, file $12AA), and it
+is not a call.
 
-- SetPatch lit le **vecteur CPU 5** ($14, division par zéro). Il prend l'**octet bas** du premier mot du
-  gestionnaire comme déplacement de branchement court et calcule la cible, puis avance de 6 octets et
-  **exige le mot $E2EF** à cet endroit. Sinon il fait un accès mot à l'adresse impaire $1 : erreur
-  d'adresse, plantage volontaire. Le message ayant été affiché, notre ROM passe ce test.
-- Il mémorise l'adresse « cible + 6 » (hunk 9 +$38) et **écrit directement 16 longs en $C0..$FC**
-  (vecteurs 48 à 63) qui pointent vers 16 stubs de 2 octets du hunk 9. Il n'écrit ni dans les champs
-  d'ExecBase, ni dans les `tc_*`.
-- Un stub empile un long valant **2 × numéro de vecteur** (96 à 126), puis rejoint « cible + 6 » dans la
-  ROM. Le gestionnaire commun de la ROM doit donc accepter à cet endroit un long « 2 × vecteur » au sommet
-  de la pile superviseur.
-- Sur 68000, ces vecteurs ne sont jamais déclenchés (pas de FPU/MMU, interruptions en autovecteur). Ils
-  pointent néanmoins dans les hunks de SetPatch et restent pendants une fois ceux-ci déchargés.
+**Finding 2: there is exactly one `jsr -$24(a6)` (hexadecimal, i.e. -36, dos `Close`)**: hunk 0 +$1DC
+(file $284), in the **C startup's `_exit`** (+$1B2). UAE debuggers display displacements in
+hexadecimal (`-$0024`). It is therefore very likely that "-24" is this `-$24`. Contract of `_exit`:
+
+- It redoes `FindTask(NULL)` (a6 = SysBase reloaded from $4) and takes **`pr_ReturnAddr` (+$B0) of the
+  current task**. It sets sp = `pr_ReturnAddr` − 12, then pops two longs pushed by the startup: the
+  Workbench message (a2) and the argument buffer (a5).
+- If long +0 of the buffer (the "NIL:" filehandle of the Workbench path) is non-null, it loads **a6 from the
+  global variable DOSBase (hunk 1 +4)** and calls `Close` (-$24). It then calls CloseLibrary(DOS),
+  then, if a2 ≠ 0, ReplyMsg of the Workbench message under Forbid. It frees the buffer ($184 bytes) and does an
+  `rts` to the address located at `pr_ReturnAddr` − 4.
+- **The expected value of a6 is DOSBase**, which no entry register supplies. It comes from a
+  variable of DATA hunk 1, filled at start-up by `OpenLibrary("dos.library", 0)`. If a6 is 0 or 1,
+  that variable has been **overwritten**, which implies that the hunk 1 block was freed and then reallocated.
+- Launched from a CLI, long +0 of the buffer is 0 (`MEMF_CLEAR`), so this call **is normally
+  never executed**. It only is if `_exit` pops a bogus buffer. That is the case when `pr_ReturnAddr`
+  is wrong, or when the "current task" is not this process: a plain Task has no +$B0 field,
+  which falls outside the structure.
+
+**Most probable cause: SetPatch's hunks are freed after it has run.**
+
+- SetPatch assumes that the CLI **does not unload** its seglist: it itself sets `cli_Module` (CLI +$3C,
+  via `pr_CLI` +$AC) to 0 just before `_exit`. All its resident code (replacements, "old vector"
+  variables, disk.resource owner, FPU stubs for vectors $C0-$FC, DOSBase in hunk 1) lives
+  in these hunks.
+- Reading our `src/dos/shell.s`: the command is unloaded via the seglist saved at launch
+  (`XF_SEG`), **without re-reading `cli_Module`** (`sh_cli_end` actually resets it to 0 itself). SetPatch's
+  hunks are therefore returned to free memory while these vectors still point into them:
+  - exec FindName, AllocEntry, UserState and Alert;
+  - graphics SetFont, SetSoftStyle and MrgCop;
+  - layers DeleteLayer;
+  - disk.resource GetUnit and GiveUnit.
+- These blocks are then reallocated by LoadSeg (`C:Initialize`, then SysInfo, which are also "allocated
+  and copied"), by task stacks or by small allocations (semaphores, messages, IORequest).
+  Any task that calls a patched vector then executes whatever occupies the space, or SetPatch's old code
+  whose variables are corrupted.
+- FindName is called internally by OpenLibrary, OpenDevice (audio.device...), OpenResource, FindPort and
+  FindTask(name). The disk controller goes through GetUnit/GiveUnit on every trackdisk access. **All the
+  tasks therefore converge on the same addresses**, which matches the symptom "same crash everywhere".
+- To decide, **compare the PC of the crash with the addresses of SetPatch's hunks** recorded during its
+  LoadSeg (start of block + 8 = hunk data). If the PC equals hunk0 + $1DC, or falls into one of hunks
+  5 to 20, the cause is confirmed. Counter-test: do not unload the seglist when `cli_Module` is 0
+  on return; the crash should then disappear.
+
+**Possible secondary causes, to be considered only after this one:**
+
+- (a) **Alert** is installed and jumps to old+$30 / +$88 **in the middle of our ROM code**. It also reads
+  (a5), which causes an address error if a5 is odd. But the PC would then land in ROM, not in RAM.
+- (b) **DeleteLayer** is installed and jumps to the three targets deduced from our code. The PC would
+  also land in ROM.
+- (c) **UserState** and **AllocEntry** use a6 as received. An internal caller that does not pass
+  a6 = SysBase would make a call to a6+displacement (-30, -198 or -210), but never -24 nor -$24.
+
+---
+
+## 3. "Exec 68881/68882 exceptions patched" and "DOS Execute call already patched"
+
+### 3.1 FPU exception vectors (exec ≤ 35, without SetFunction or AttnFlags test)
+
+- SetPatch reads **CPU vector 5** ($14, divide by zero). It takes the **low byte** of the handler's first
+  word as a short branch displacement and computes the target, then advances 6 bytes and
+  **requires the word $E2EF** at that place. Otherwise it does a word access at the odd address $1: address
+  error, deliberate crash. Since the message was displayed, our ROM passes this test.
+- It stores the address "target + 6" (hunk 9 +$38) and **writes 16 longs directly at $C0..$FC**
+  (vectors 48 to 63) pointing to 16 2-byte stubs in hunk 9. It writes neither to the ExecBase
+  fields nor to the `tc_*` ones.
+- A stub pushes a long equal to **2 × vector number** (96 to 126), then joins "target + 6" in the
+  ROM. The ROM's common handler must therefore accept at that place a "2 × vector" long on top
+  of the supervisor stack.
+- On a 68000, these vectors are never triggered (no FPU/MMU, autovectored interrupts). They
+  nevertheless point into SetPatch's hunks and stay dangling once those are unloaded.
 
 ### 3.2 DOS Execute (dos -222)
 
-- Condition : DOSBase `lib_Version` ≤ 35. SetPatch parcourt **sa propre seglist** à partir de
-  `cli_Module` (CLI +$3C, via `pr_CLI` +$AC du process courant) pour y trouver le segment dont le long à −4
-  (taille du bloc) vaut $22C et dont le premier long de données vaut $89. C'est le RUN BCPL du hunk 2 ; s'il
-  est trouvé, il affiche « DOS Execute call ».
-- Il lit ensuite **le premier long de l'entrée -222 de la jump table de DOSBase** et le compare à
-  **$70E56000**, signature des entrées de la jump table BCPL de la ROM 1.3 (chargement de l'index de
-  fonction suivi d'un branchement long vers le dispatcher commun). En cas d'égalité, il fait SetFunction
-  vers la glue du hunk 16 et affiche « patched to use resident RUN ». Sinon il affiche « **already
-  patched** » et **n'installe rien**. C'est notre cas.
-- Si la glue était installée, voici ce qu'elle ferait. Elle réserverait une pile BCPL de $5DC octets
-  **sous** le sp courant (sans l'allouer) et chargerait a2/a5/a6 depuis DOSBase+$2A/+$2E/+$32 (`dl_A2`,
-  `dl_A5`, `dl_A6`). Elle prendrait a4 = code du RUN résident, a0 = 0 et d0 = 12, puis ferait un appel
-  BCPL par a5, avec d1/d2/d3 d'Execute transmis et le résultat rendu en d0 depuis d1. Elle ne s'exécute
-  pas chez nous.
+- Condition: DOSBase `lib_Version` ≤ 35. SetPatch walks **its own seglist** starting from
+  `cli_Module` (CLI +$3C, via `pr_CLI` +$AC of the current process) to find the segment whose long at −4
+  (block size) is $22C and whose first data long is $89. This is the BCPL RUN of hunk 2; if it
+  is found, it displays "DOS Execute call".
+- It then reads **the first long of the -222 entry of DOSBase's jump table** and compares it with
+  **$70E56000**, the signature of the 1.3 ROM's BCPL jump table entries (loading of the function
+  index followed by a long branch to the common dispatcher). If equal, it does SetFunction
+  to the glue in hunk 16 and displays "patched to use resident RUN". Otherwise it displays "**already
+  patched**" and **installs nothing**. This is our case.
+- If the glue were installed, here is what it would do. It would reserve a BCPL stack of $5DC bytes
+  **below** the current sp (without allocating it) and load a2/a5/a6 from DOSBase+$2A/+$2E/+$32 (`dl_A2`,
+  `dl_A5`, `dl_A6`). It would take a4 = code of the resident RUN, a0 = 0 and d0 = 12, then make a BCPL
+  call through a5, with Execute's d1/d2/d3 passed on and the result returned in d0 from d1. It does not run
+  on our system.
 
 ---
 
-## 4. Signatures et adresses ROM recherchées
+## 4. Signatures and ROM addresses looked for
 
-| Correctif | Hypothèse sur la ROM 1.3 |
+| Fix | Assumption about the 1.3 ROM |
 |---|---|
-| Alert | L'ancien vecteur doit être dans `$FC0000..$FFFFFF`. Les points d'entrée internes **ancien + $30** et **ancien + $88** sont fixes. Version exec 33 ou 34 exactement |
-| FPU | Le gestionnaire du vecteur 5 commence par un branchement court. À sa cible + 6 doit se trouver le mot **$E2EF**. Le point d'entrée commun est cible + 6 (long « 2 × vecteur » sur la pile) |
-| Layers DeleteLayer | Entrée + 2 = branchement (court ou 16 bits). Le corps visé contient **trois mots à octet haut $61** (BSR), qui désignent trois routines internes à convention C |
-| DOS Execute | Le premier long de l'entrée -222 vaut **$70E56000** |
-| Location zero | Écriture d'un mot 0 à l'adresse fixe **$F80000** (zone ROM, sans effet attendu) sous Supervisor, puis $0 remis à 0 s'il était non nul |
-| RAD (non pris) | Exec < 35, `MaxLocMem` (+$3E) > $80000, `ColdCapture` (+$2A) nul. Le stub copié recalcule `ChkSum` (+$52) sur les mots +$22..+$4F. Au reset, il compare le long situé à (a5)+$1E (code ROM appelant ColdCapture) à **$B7FC0004** ; en cas d'égalité, il prend `a3 := MaxLocMem` et reprend en a5+$1E, ce qui saute un bout du code ROM |
-| disk.resource, gfx, UserState, FindName, AllocEntry | Aucune signature ni adresse ROM. Seul `lib_Version` ≤ 35 est testé. Jamais `lib_Revision` |
+| Alert | The old vector must be in `$FC0000..$FFFFFF`. The internal entry points **old + $30** and **old + $88** are fixed. Exec version exactly 33 or 34 |
+| FPU | The vector 5 handler starts with a short branch. At its target + 6 there must be the word **$E2EF**. The common entry point is target + 6 ("2 × vector" long on the stack) |
+| Layers DeleteLayer | Entry + 2 = branch (short or 16-bit). The targeted body contains **three words with high byte $61** (BSR), which designate three internal routines with C convention |
+| DOS Execute | The first long of the -222 entry is **$70E56000** |
+| Location zero | Write of a word 0 to the fixed address **$F80000** (ROM area, no effect expected) under Supervisor, then $0 reset to 0 if it was non-null |
+| RAD (not taken) | Exec < 35, `MaxLocMem` (+$3E) > $80000, `ColdCapture` (+$2A) null. The copied stub recomputes `ChkSum` (+$52) over words +$22..+$4F. At reset, it compares the long located at (a5)+$1E (ROM code calling ColdCapture) with **$B7FC0004**; if equal, it takes `a3 := MaxLocMem` and resumes at a5+$1E, which skips a piece of the ROM code |
+| disk.resource, gfx, UserState, FindName, AllocEntry | No ROM signature or address. Only `lib_Version` ≤ 35 is tested. Never `lib_Revision` |
 
-Aucune somme de contrôle ROM, aucune révision et aucun `AttnFlags` ne sont testés.
+No ROM checksum, no revision and no `AttnFlags` are tested.
 
 ---
 
-## Exigences pour notre ROM
+## Requirements for our ROM
 
-**DOS / CLI (cause principale) :**
+**DOS / CLI (main cause):**
 
-1. Au retour d'une commande, **relire `cli_Module` et ne décharger que cette valeur**. Si elle vaut 0, ne
-   rien décharger : la commande s'est rendue résidente. Cela vaut aussi pour tout chemin
-   Execute/Run/BCPL qui décharge une seglist. Ne pas effacer `cli_Module` avant de l'avoir relu.
-2. `pr_ReturnAddr` (+$B0) doit pointer de sorte que `pr_ReturnAddr` − 4 contienne l'adresse de retour vers
-   le CLI : le startup C empile deux longs en dessous et `_exit` repart de `pr_ReturnAddr` − 12. Il doit
-   rester valide pendant toute la commande.
-3. `pr_CLI` (+$AC) → `cli_Module` (+$3C) doit désigner la seglist de la commande en cours, chaînée en BPTR,
-   avec la taille du bloc à −4 de chaque lien (SetPatch y cherche son RUN). DOSBase+$2A/$2E/$32
-   (`dl_A2`/`dl_A5`/`dl_A6`) ne servent que si l'entrée -222 porte la signature BCPL. Ce n'est pas notre
-   cas, donc rien n'est exigé ici.
+1. On return from a command, **re-read `cli_Module` and unload only that value**. If it is 0, do not
+   unload anything: the command has made itself resident. This also applies to any
+   Execute/Run/BCPL path that unloads a seglist. Do not clear `cli_Module` before re-reading it.
+2. `pr_ReturnAddr` (+$B0) must point such that `pr_ReturnAddr` − 4 contains the return address to
+   the CLI: the C startup pushes two longs below it and `_exit` restarts from `pr_ReturnAddr` − 12. It must
+   remain valid throughout the command.
+3. `pr_CLI` (+$AC) → `cli_Module` (+$3C) must designate the seglist of the current command, chained as BPTRs,
+   with the block size at −4 of each link (SetPatch looks for its RUN there). DOSBase+$2A/$2E/$32
+   (`dl_A2`/`dl_A5`/`dl_A6`) are only used if the -222 entry carries the BCPL signature. That is not our
+   case, so nothing is required here.
 
-**Exec :**
+**Exec:**
 
-4. SetFunction doit rendre l'ancienne adresse complète. C'est déjà le cas ; tous les remplacements
-   rappellent l'ancien par cette valeur.
-5. **Alert** : soit placer le vecteur -108 **hors de `$FC0000..$FFFFFF`** (trampoline en RAM), pour que
-   SetPatch annule lui-même son correctif (« skipped ») ; soit garantir qu'ancien+$30 et ancien+$88 sont
-   des points d'entrée valides. Ils seraient atteints INTENA coupé, avec d7 = alerte, $0 = 'HELP' et
-   $100/$104 renseignés ; +$30 si $4 est valide, +$88 sinon ou en cas de récursion. Le trampoline est la
-   solution la plus simple et la plus sûre.
-6. **UserState** remplacé : Supervisor (-30) doit fonctionner **appelé depuis le mode superviseur**. Il
-   doit empiler un cadre 68000 standard (SR.w, PC.l) sur le SSP courant, sans mot supplémentaire, entrer
-   en a5, et le RTE du code a5 doit consommer ce cadre directement. Les appelants d'UserState doivent
-   passer a6 = SysBase.
-7. **AllocEntry** remplacé : a6 = SysBase chez tous les appelants. FreeEntry doit libérer
-   16 + 8×`ml_NumEntries` octets pour la liste, taille allouée par SetPatch. Il ne faut pas se fier aux
-   champs de nœud de la MemList rendue (mis à zéro).
-8. **FindName** remplacé : aucun appelant interne ne doit se fier à a0 ou d1 après FindName (a1 est
-   conservé). Les nœuds à `ln_Name` NULL sont sautés.
-9. `IDNestCnt` à +$126 avec la convention « −1 = autorisé » et `ThisTask` à +$114 : déjà conformes.
-10. Vecteur 5 : la forme actuelle passe déjà le test $E2EF. Si on la modifie, il faut garder un branchement
-    court en tête et le mot $E2EF à cible + 6, sinon SetPatch plante volontairement.
+4. SetFunction must return the complete old address. This is already the case; all the replacements
+   call the old one back through this value.
+5. **Alert**: either place vector -108 **outside `$FC0000..$FFFFFF`** (trampoline in RAM), so that
+   SetPatch cancels its fix itself ("skipped"); or guarantee that old+$30 and old+$88 are
+   valid entry points. They would be reached with INTENA off, with d7 = alert, $0 = 'HELP' and
+   $100/$104 filled in; +$30 if $4 is valid, +$88 otherwise or in case of recursion. The trampoline is the
+   simplest and safest solution.
+6. **UserState** replaced: Supervisor (-30) must work **when called from supervisor mode**. It
+   must push a standard 68000 frame (SR.w, PC.l) on the current SSP, with no extra word, enter
+   at a5, and the RTE of the a5 code must consume that frame directly. Callers of UserState must
+   pass a6 = SysBase.
+7. **AllocEntry** replaced: a6 = SysBase in all callers. FreeEntry must free
+   16 + 8×`ml_NumEntries` bytes for the list, the size allocated by SetPatch. Do not rely on the
+   node fields of the returned MemList (zeroed).
+8. **FindName** replaced: no internal caller may rely on a0 or d1 after FindName (a1 is
+   kept). Nodes with a NULL `ln_Name` are skipped.
+9. `IDNestCnt` at +$126 with the convention "−1 = enabled" and `ThisTask` at +$114: already conformant.
+10. Vector 5: the current form already passes the $E2EF test. If it is modified, a short branch must be kept
+    at the start and the word $E2EF at target + 6, otherwise SetPatch deliberately crashes.
 
-**Graphics / layers / disk.resource :**
+**Graphics / layers / disk.resource:**
 
-11. MrgCop, SetSoftStyle et SetFont doivent être appelés avec a6 = GfxBase. `GfxBase->Modes` (+$9E) doit
-    refléter le LACE de la vue active, MakeVPort (-216) et AskSoftStyle (-84) doivent être de vrais
-    vecteurs, et les offsets RastPort `Font` +$34 / `AlgoStyle` +$38 et ViewPort `Modes` +32 doivent être
-    respectés.
-12. **DeleteLayer** : avec un SetFunction réel, le remplacement est **installé** et ses trois cibles sont
-    déduites de notre code. **Tout DeleteLayer (fermeture de fenêtre ou d'écran) est donc actuellement
-    dangereux.** Il faut choisir une parade : soit une forme de notre DeleteLayer qui fournisse, depuis
-    l'entrée + 2, un branchement vers un corps dont les trois premiers mots à octet haut $61 sont de vrais
-    BSR vers trois routines à convention C (n°1(LayerInfo) → ≠ 0 pour continuer, n°2(Layer), n°3(LayerInfo)) ;
-    soit faire échouer la garde de version (layers > 35), si c'est acceptable pour la compatibilité.
-13. disk.resource : le même task doit faire GetUnit et GiveUnit, sinon GiveUnit est avalé (cf.
-    `setpatch-disk-resource.md` §3). Notre GetUnit doit rendre d0 ≠ 0 en cas d'obtention immédiate.
+11. MrgCop, SetSoftStyle and SetFont must be called with a6 = GfxBase. `GfxBase->Modes` (+$9E) must
+    reflect the LACE of the active view, MakeVPort (-216) and AskSoftStyle (-84) must be real
+    vectors, and the RastPort offsets `Font` +$34 / `AlgoStyle` +$38 and ViewPort `Modes` +32 must be
+    respected.
+12. **DeleteLayer**: with a real SetFunction, the replacement is **installed** and its three targets are
+    deduced from our code. **Any DeleteLayer (closing a window or a screen) is therefore currently
+    dangerous.** A countermeasure must be chosen: either a shape of our DeleteLayer that provides, from
+    entry + 2, a branch to a body whose first three words with high byte $61 are real
+    BSRs to three C-convention routines (no. 1(LayerInfo) → ≠ 0 to continue, no. 2(Layer), no. 3(LayerInfo));
+    or make the version guard fail (layers > 35), if that is acceptable for compatibility.
+13. disk.resource: the same task must do GetUnit and GiveUnit, otherwise GiveUnit is swallowed (see
+    `setpatch-disk-resource.md` §3). Our GetUnit must return d0 ≠ 0 on immediate acquisition.
 
-## Relecture clean-room
+## Clean-room review
 
-Relu : ce document ne contient aucune suite d'instructions transcrite ni de pseudo-code ligne à ligne.
-Il contient uniquement des offsets, des contrats de registres, des champs, des constantes de signature
-(valeurs testées par SetPatch) et des descriptions de comportement.
+Reviewed: this document contains no transcribed instruction sequence and no line-by-line pseudo-code.
+It contains only offsets, register contracts, fields, signature constants
+(values tested by SetPatch) and behaviour descriptions.

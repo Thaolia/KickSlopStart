@@ -1,24 +1,24 @@
-; src/exec/rawdofmt.s — exec RawDoFmt (LVO -522) : formatage « à la printf » utilisé par les programmes (printf des
-; startup C, messages de SetPatch...). Sans lui, ces programmes formatent dans un tampon jamais rempli.
-; Piste IMPLÉMENTATION (« clean ») : AutoDoc exec.library/RawDoFmt (public). AUCUNE lecture ROM.
+; src/exec/rawdofmt.s — exec RawDoFmt (LVO -522): "printf-like" formatting used by programs (printf of the C
+; startups, SetPatch messages...). Without it, these programs format into a buffer that is never filled.
+; IMPLEMENTATION track ("clean"): AutoDoc exec.library/RawDoFmt (public). NO ROM reading.
 ;
-; RawDoFmt(FormatString a0, DataStream a1, PutChProc a2, PutChData a3) -> d0 = DataStream après consommation.
-; Spécification %[-][0][largeur][.limite][l]type ; types d (signé), u (non signé), x (hexa), s (C-string), b (BSTR
-; via BPTR), c (caractère). Les données sont des MOTS (16 bits) sauf avec « l » (32 bits) ; %s et %b prennent
-; toujours un pointeur 32 bits. Chaque caractère produit, NUL final compris, est passé à PutChProc (d0 = caractère,
-; a3 = PutChData) ; a3 peut être modifié par PutChProc et est transmis tel quel à l'appel suivant, mais il est
-; RESTITUÉ à l'appelant au retour (SetPatch mesure ensuite son tampon à partir de a3).
+; RawDoFmt(FormatString a0, DataStream a1, PutChProc a2, PutChData a3) -> d0 = DataStream after consumption.
+; Specification %[-][0][width][.limit][l]type; types d (signed), u (unsigned), x (hex), s (C-string), b (BSTR
+; via BPTR), c (character). The data are WORDS (16 bits) except with "l" (32 bits); %s and %b always take
+; a 32-bit pointer. Each character produced, final NUL included, is passed to PutChProc (d0 = character,
+; a3 = PutChData); a3 may be modified by PutChProc and is passed as is to the next call, but it is
+; RESTORED for the caller on return (SetPatch then measures its buffer from a3).
 
                 include "exec.i"
 
                 xdef    exec_RawDoFmt
 
-RDF_BUF         EQU 12               ; tampon de conversion numérique (32 bits décimal = 11 caractères avec signe)
+RDF_BUF         EQU 12               ; numeric conversion buffer (32-bit decimal = 11 characters with sign)
 
-; registres : a4 = format, a5 = flux de données, a2 = PutChProc, a3 = PutChData
-; d3 = drapeau long, d4 = cadrage à gauche, d5 = caractère de remplissage, d6 = largeur, d7 = limite (-1 = aucune)
+; registers: a4 = format, a5 = data stream, a2 = PutChProc, a3 = PutChData
+; d3 = long flag, d4 = left justification, d5 = fill character, d6 = width, d7 = limit (-1 = none)
 exec_RawDoFmt:
-        movem.l d2-d7/a2-a5,-(sp)            ; a2/a3 restitués à l'appelant (a3 n'évolue qu'entre les PutChProc)
+        movem.l d2-d7/a2-a5,-(sp)            ; a2/a3 restored for the caller (a3 only changes between PutChProc calls)
         lea     -RDF_BUF(sp),sp
         move.l  a0,a4
         move.l  a1,a5
@@ -30,7 +30,7 @@ exec_RawDoFmt:
         bsr     .rf_put
         bra.s   .rf_next
 .rf_end:
-        moveq   #0,d0                ; NUL final transmis à PutChProc
+        moveq   #0,d0                ; final NUL passed to PutChProc
         bsr     .rf_put
         move.l  a5,d0
         lea     RDF_BUF(sp),sp
@@ -79,7 +79,7 @@ exec_RawDoFmt:
         move.b  (a4)+,d0
 .rf_type:
         tst.b   d0
-        beq.s   .rf_end              ; format tronqué après '%'
+        beq.s   .rf_end              ; format truncated after '%'
         cmp.b   #'d',d0
         beq.s   .rf_dec
         cmp.b   #'u',d0
@@ -92,33 +92,33 @@ exec_RawDoFmt:
         beq     .rf_bstr
         cmp.b   #'c',d0
         beq     .rf_char
-        bsr     .rf_put              ; « %% » ou type inconnu : le caractère tel quel
+        bsr     .rf_put              ; "%%" or unknown type: the character as is
         bra     .rf_next
 
-.rf_dec:                             ; décimal signé
+.rf_dec:                             ; signed decimal
         bsr     .rf_fetch_signed
-        moveq   #0,d2                ; d2 = 1 si négatif
+        moveq   #0,d2                ; d2 = 1 if negative
         tst.l   d0
         bpl.s   .rf_decabs
         neg.l   d0
         moveq   #1,d2
         bra.s   .rf_decabs
-.rf_udec:                            ; décimal non signé
+.rf_udec:                            ; unsigned decimal
         bsr     .rf_fetch_unsigned
         moveq   #0,d2
 .rf_decabs:
-        lea     RDF_BUF(sp),a0       ; a0 = fin du tampon (chiffres écrits de droite à gauche)
+        lea     RDF_BUF(sp),a0       ; a0 = end of buffer (digits written right to left)
         move.l  d0,d1
-.rf_dloop:                           ; d1 /= 10 en deux divu 16 bits (68000), chiffre = reste
+.rf_dloop:                           ; d1 /= 10 in two 16-bit divu (68000), digit = remainder
         moveq   #0,d0
         swap    d1
-        move.w  d1,d0                ; d0 = mot haut
-        divu.w  #10,d0               ; d0 = [reste:quotient haut]
+        move.w  d1,d0                ; d0 = high word
+        divu.w  #10,d0               ; d0 = [remainder:high quotient]
         move.w  d0,d1
-        swap    d1                   ; d1 = [quotient haut:mot bas]
-        move.w  d1,d0                ; d0 = [reste:mot bas]
-        divu.w  #10,d0               ; d0 = [chiffre:quotient bas]
-        move.w  d0,d1                ; d1 = quotient complet
+        swap    d1                   ; d1 = [high quotient:low word]
+        move.w  d1,d0                ; d0 = [remainder:low word]
+        divu.w  #10,d0               ; d0 = [digit:low quotient]
+        move.w  d0,d1                ; d1 = complete quotient
         swap    d0
         add.b   #'0',d0
         move.b  d0,-(a0)
@@ -130,8 +130,8 @@ exec_RawDoFmt:
 .rf_numout:
         lea     RDF_BUF(sp),a1
         move.l  a1,d2
-        sub.l   a0,d2                ; d2 = longueur
-        moveq   #-1,d7               ; pas de limite sur un nombre
+        sub.l   a0,d2                ; d2 = length
+        moveq   #-1,d7               ; no limit on a number
         bra     .rf_emit
 
 .rf_hex:
@@ -166,7 +166,7 @@ exec_RawDoFmt:
         moveq   #0,d2
         bra.s   .rf_emit
 
-.rf_bstr:                            ; BPTR vers BSTR (octet de longueur + caractères)
+.rf_bstr:                            ; BPTR to BSTR (length byte + characters)
         move.l  (a5)+,d0
         lsl.l   #2,d0
         beq.s   .rf_empty
@@ -181,8 +181,8 @@ exec_RawDoFmt:
         move.b  d0,-(a0)
         moveq   #1,d2
 
-; .rf_emit : a0 = texte, d2 = longueur ; applique la limite (d7), la largeur (d6), le cadrage (d4) et le
-; remplissage (d5 ; avec '0', un signe '-' en tête passe devant les zéros).
+; .rf_emit: a0 = text, d2 = length; applies the limit (d7), the width (d6), the justification (d4) and the
+; fill (d5; with '0', a leading '-' sign goes before the zeros).
 .rf_emit:
         tst.l   d7
         bmi.s   .rf_nolimit
@@ -190,9 +190,9 @@ exec_RawDoFmt:
         bls.s   .rf_nolimit
         move.l  d7,d2
 .rf_nolimit:
-        sub.l   d2,d6                ; d6 = remplissage nécessaire
+        sub.l   d2,d6                ; d6 = fill needed
         tst.w   d4
-        bne.s   .rf_text             ; cadré à gauche : remplissage après le texte
+        bne.s   .rf_text             ; left-justified: fill after the text
         cmp.b   #'0',d5
         bne.s   .rf_lpad
         tst.l   d2
@@ -219,7 +219,7 @@ exec_RawDoFmt:
         bsr.s   .rf_pad
         bra     .rf_next
 
-; .rf_pad : émet d6 fois d5 si d6 > 0 ; d6 = 0 en sortie.
+; .rf_pad: emits d5 d6 times if d6 > 0; d6 = 0 on exit.
 .rf_pad:
         tst.l   d6
         ble.s   .rf_padz
@@ -231,7 +231,7 @@ exec_RawDoFmt:
         moveq   #0,d6
         rts
 
-; .rf_put : d0.b -> PutChProc(d0, a3). PutChProc peut écraser d0/d1/a0/a1 : a0 (texte en cours) est préservé.
+; .rf_put: d0.b -> PutChProc(d0, a3). PutChProc may clobber d0/d1/a0/a1: a0 (current text) is preserved.
 .rf_put:
         movem.l d1/a0-a1,-(sp)
         and.l   #$FF,d0
@@ -239,7 +239,7 @@ exec_RawDoFmt:
         movem.l (sp)+,d1/a0-a1
         rts
 
-; .rf_digit : d0.b chiffre décimal ? -> C = 0 et d1.w = valeur ; sinon C = 1.
+; .rf_digit: d0.b decimal digit? -> C = 0 and d1.w = value; otherwise C = 1.
 .rf_digit:
         cmp.b   #'0',d0
         blo.s   .rf_nodig
@@ -254,7 +254,7 @@ exec_RawDoFmt:
         or.b    #$01,ccr             ; C = 1
         rts
 
-; .rf_fetch_signed / .rf_fetch_unsigned : d0 = mot (étendu signé / non signé) ou long (si d3) du flux a5.
+; .rf_fetch_signed / .rf_fetch_unsigned: d0 = word (sign/zero-extended) or long (if d3) from stream a5.
 .rf_fetch_signed:
         tst.w   d3
         bne.s   .rf_flong

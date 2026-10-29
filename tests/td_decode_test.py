@@ -1,8 +1,8 @@
-# tests/td_decode_test.py — exécute td_decode_track de NOTRE ROM (unicorn, 68000) sur des pistes MFM synthétiques :
-# 11 secteurs AmigaDOS + gap de 532, 700 ou 830 octets (830 = émulateur amiga500-esp32, piste de 6 399 mots), lecture
-# de TD_RAWWORDS mots commencée après le premier sync de chacun des 11 secteurs (WORDSYNC). Attendu : 11 secteurs,
-# bonne piste, masque $7FF, données identiques à l'ADF. Dépendance : module Python unicorn.
-# Usage : python3 tests/td_decode_test.py <rom> <adresse hexa de td_decode_track (vlink -M)> <adf>
+# tests/td_decode_test.py - runs td_decode_track of OUR ROM (unicorn, 68000) on synthetic MFM tracks:
+# 11 AmigaDOS sectors + a gap of 532, 700 or 830 bytes (830 = amiga500-esp32 emulator, track of 6,399 words), read
+# of TD_RAWWORDS words started after the first sync of each of the 11 sectors (WORDSYNC). Expected: 11 sectors,
+# correct track, mask $7FF, data identical to the ADF. Dependency: Python module unicorn.
+# Usage: python3 tests/td_decode_test.py <rom> <hex address of td_decode_track (vlink -M)> <adf>
 import sys, struct, random
 from unicorn import *
 from unicorn.m68k_const import *
@@ -57,7 +57,7 @@ for gap in (532, 700, 830):
     for track in (0, 41, 159):
         rev, starts = build_rev(track, gap); W = len(rev) // 2
         for k in range(11):
-            w0 = starts[k] // 2 + 1                     # DMA après le 1er sync (WORDSYNC)
+            w0 = starts[k] // 2 + 1                     # DMA after the 1st sync (WORDSYNC)
             raw = b''.join(rev[2 * ((w0 + i) % W): 2 * ((w0 + i) % W) + 2] for i in range(6400))
             n, t, m, sec = run(raw)
             ok = n == 11 and t == track and m == 0x7FF and sec == adf[track * 5632:(track + 1) * 5632]

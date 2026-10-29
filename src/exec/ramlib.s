@@ -1,11 +1,11 @@
-; src/exec/ramlib.s — chargement des librairies et devices depuis le disque (rôle de ramlib.library).
-; OpenLibrary / OpenDevice appellent ram_loadmodule quand le nom est absent des listes système : LoadSeg de
-; « LIBS:nom » ou « DEVS:nom », recherche du ROMTag (RTC_MATCHWORD dont RT_MATCHTAG pointe sur lui-même) dans les
-; segments chargés, puis InitResident(romtag, seglist) qui l'ajoute à la liste système (AUTOINIT) ou appelle son init.
-; Portée : l'appelant doit être un PROCESS (LoadSeg passe par des packets DOS répondus sur son pr_MsgPort) ; une
-; simple tâche obtient l'échec habituel (la vraie ramlib délègue à son propre process : non reproduit).
-; Piste IMPLÉMENTATION (« clean ») : RKRM Libraries (ramlib, LIBS:/DEVS:), format Resident (exec/resident.i),
-; AutoDocs exec OpenLibrary/OpenDevice/InitResident, dos LoadSeg/UnLoadSeg. AUCUNE lecture ROM.
+; src/exec/ramlib.s — loading of libraries and devices from disk (role of ramlib.library).
+; OpenLibrary / OpenDevice call ram_loadmodule when the name is missing from the system lists: LoadSeg of
+; "LIBS:name" or "DEVS:name", search for the ROMTag (RTC_MATCHWORD whose RT_MATCHTAG points to itself) in the
+; loaded segments, then InitResident(romtag, seglist) which adds it to the system list (AUTOINIT) or calls its init.
+; Scope: the caller must be a PROCESS (LoadSeg goes through DOS packets replied on its pr_MsgPort); a plain task
+; gets the usual failure (the real ramlib delegates to its own process: not reproduced).
+; IMPLEMENTATION track ("clean"): RKRM Libraries (ramlib, LIBS:/DEVS:), Resident format (exec/resident.i),
+; AutoDocs exec OpenLibrary/OpenDevice/InitResident, dos LoadSeg/UnLoadSeg. NO ROM reading.
 
                 include "exec.i"
                 include "dospkt.i"
@@ -14,24 +14,24 @@
 
 RL_PATHMAX      EQU 64
 
-; ram_loadmodule(a0 = préfixe C (« LIBS: » / « DEVS: »), a1 = nom C, a6 = SysBase) -> d0 = -1 si un module a été
-; chargé et initialisé, 0 sinon. Un nom contenant déjà ':' est chargé tel quel. Préserve d1-d7/a0-a6.
+; ram_loadmodule(a0 = C prefix ("LIBS:" / "DEVS:"), a1 = C name, a6 = SysBase) -> d0 = -1 if a module was
+; loaded and initialised, 0 otherwise. A name already containing ':' is loaded as is. Preserves d1-d7/a0-a6.
 ram_loadmodule:
         movem.l d1-d4/a0-a3/a6,-(sp)
         move.l  DOS_DOSBASE,d0
-        beq     .rl_fail             ; dos pas encore là (phase de boot)
+        beq     .rl_fail             ; dos not there yet (boot phase)
         move.l  EB_THISTASK(a6),a2
         cmp.b   #NT_PROCESS,LN_TYPE(a2)
         bne     .rl_fail
         lea     -RL_PATHMAX(sp),sp
-        move.l  sp,a2                ; a2 = chemin
+        move.l  sp,a2                ; a2 = path
         move.l  a1,a3
 .rl_colon:
         move.b  (a3)+,d0
         beq.s   .rl_prefix
         cmp.b   #':',d0
         bne.s   .rl_colon
-        bra.s   .rl_name             ; nom avec volume/assign : tel quel
+        bra.s   .rl_name             ; name with volume/assign: as is
 .rl_prefix:
         move.b  (a0)+,(a2)+
         bne.s   .rl_prefix
@@ -52,14 +52,14 @@ ram_loadmodule:
         lea     RL_PATHMAX(sp),sp
         move.l  d0,d3                ; d3 = seglist
         beq     .rl_fail
-        move.l  d0,d2                ; parcours des segments : [taille à BADDR-4][lien][contenu]
+        move.l  d0,d2                ; walk the segments: [size at BADDR-4][link][contents]
 .rl_seg:
         lsl.l   #2,d2
         beq     .rl_none
         move.l  d2,a0
-        move.l  -4(a0),d4            ; taille du bloc (en-tête de 8 octets compris)
-        lea     -4(a0,d4.l),a2       ; fin du bloc
-        lea     4(a0),a1             ; début du contenu
+        move.l  -4(a0),d4            ; block size (8-byte header included)
+        lea     -4(a0,d4.l),a2       ; end of block
+        lea     4(a0),a1             ; start of contents
         sub.l   #RT_SIZE,a2
 .rl_scan:
         cmp.l   a2,a1
@@ -72,7 +72,7 @@ ram_loadmodule:
         addq.l  #2,a1
         bra.s   .rl_scan
 .rl_next:
-        move.l  (a0),d2              ; segment suivant (BPTR)
+        move.l  (a0),d2              ; next segment (BPTR)
         bra.s   .rl_seg
 .rl_found:
         move.l  d3,d1                ; InitResident(a1 = romtag, d1 = seglist)
@@ -82,7 +82,7 @@ ram_loadmodule:
         moveq   #-1,d0
         bra.s   .rl_ret
 .rl_none:
-        move.l  d3,d1                ; pas de ROMTag / init refusée : décharge
+        move.l  d3,d1                ; no ROMTag / init refused: unload
         move.l  DOS_DOSBASE,a6
         jsr     DOS_LVO_UNLOADSEG(a6)
 .rl_fail:

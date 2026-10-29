@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# tests/boot_test.sh — boot headless FS-UAE + assertion (gate CI).
+# tests/boot_test.sh - headless FS-UAE boot + assertion (CI gate).
 #
-# Canal d'assertion PRIMAIRE = log SÉRIE (SERDAT) capturé via un pont PTY socat
-# (conforme à docs/PLAN.md). La ROM émet des marqueurs texte ; le test assère la
-# présence du marqueur de SUCCÈS et l'absence du marqueur d'ÉCHEC.
-# Repli AUTOMATIQUE sur l'assertion couleur d'écran quand aucun série n'est émis
-# (ex. hello-ROM M0 qui ne fait qu'écrire COLOR00).
+# PRIMARY assertion channel = SERIAL log (SERDAT) captured through a socat PTY bridge
+# (as specified in docs/PLAN.md). The ROM emits text markers; the test asserts the
+# presence of the SUCCESS marker and the absence of the FAILURE marker.
+# AUTOMATIC fallback to the screen colour assertion when no serial output is emitted
+# (e.g. the M0 hello-ROM, which only writes COLOR00).
 #
-# Codes de sortie : 0 = succès ; 1 = régression/capture vide ; 2 = prérequis manquant.
-# Usage : tests/boot_test.sh [rom] [secondes] [couleur_hex] [marqueur_succès] [adf]
-# [adf] optionnel : insère une disquette dans DF0 (floppy_drive_count=1) — requis pour les tests de lecture (B2+).
+# Exit codes: 0 = success; 1 = regression/empty capture; 2 = missing prerequisite.
+# Usage: tests/boot_test.sh [rom] [seconds] [hex_colour] [success_marker] [adf]
+# [adf] optional: inserts a floppy in DF0 (floppy_drive_count=1) - required for the read tests (B2+).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"
 WAIT="${2:-10}"
-EXPECT="${3:-FFFFFF}"                 # couleur de succès (repli) ; défaut blanc
-MARKER="${4:-self-test passed}"       # marqueur série de succès
-ADF="${5:-}"                          # disquette optionnelle en DF0
-FAILMARK="FAILED"                     # marqueur série d'échec
-OUT="${BOOT_TEST_OUT:-$ROOT/build/boot}"  # BOOT_TEST_OUT : autre répertoire (deux boots en parallèle)
+EXPECT="${3:-FFFFFF}"                 # success colour (fallback); default white
+MARKER="${4:-self-test passed}"       # serial success marker
+ADF="${5:-}"                          # optional floppy in DF0
+FAILMARK="FAILED"                     # serial failure marker
+OUT="${BOOT_TEST_OUT:-$ROOT/build/boot}"  # BOOT_TEST_OUT: alternate directory (two boots in parallel)
 mkdir -p "$OUT"
 
 [ -f "$ROM" ] || { echo "ROM absente : $ROM (lance 'make')"; exit 2; }
@@ -26,7 +26,7 @@ for t in fs-uae Xvfb xwd convert socat; do
   command -v "$t" >/dev/null || { echo "outil absent : $t"; exit 2; }
 done
 
-# Choisir un display X LIBRE (évite le conflit/stale sur un :N figé).
+# Pick a FREE X display (avoids conflicts/stale locks with a fixed :N).
 DISP=""
 for n in $(seq 99 120); do
   [ -e "/tmp/.X${n}-lock" ] && continue
@@ -42,7 +42,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Pont série : PTY socat. FS-UAE écrit sur ser_uae, on lit ser_cap -> serial.log.
+# Serial bridge: socat PTY. FS-UAE writes to ser_uae, we read ser_cap -> serial.log.
 SERLOG="$OUT/serial.log"
 : > "$SERLOG"
 socat pty,raw,echo=0,link="$OUT/ser_uae" pty,raw,echo=0,link="$OUT/ser_cap" \
@@ -93,8 +93,8 @@ window_height = 568
 fade_in_duration = 0
 serial_port = $OUT/ser_uae
 EOF
-# Lignes de config supplémentaires (ex. cycle-exact pour approcher un vrai A500) via l'env BOOT_TEST_EXTRA_CFG.
-# Exemple : BOOT_TEST_EXTRA_CFG=$'cpu_cycle_exact = 1\nblitter_cycle_exact = 1' tests/boot_test.sh ...
+# Extra config lines (e.g. cycle-exact to get closer to a real A500) via the BOOT_TEST_EXTRA_CFG env variable.
+# Example: BOOT_TEST_EXTRA_CFG=$'cpu_cycle_exact = 1\nblitter_cycle_exact = 1' tests/boot_test.sh ...
 if [ -n "${BOOT_TEST_EXTRA_CFG:-}" ]; then
   printf '%s\n' "${BOOT_TEST_EXTRA_CFG}" >> "$CFG"
 fi
@@ -104,11 +104,11 @@ FPID=$!
 sleep "$WAIT"
 sync
 
-# Capture écran (diagnostic + repli couleur).
-# FRAC = fraction de pixels de la zone active proches (fuzz 20%) de #EXPECT. ORDRE CRITIQUE :
-# noircir d'abord les NON-matchs (+opaque), PUIS blanchir les matchs (-opaque), sinon le blanc
-# préexistant survit et FRAC renvoie ~la fraction d'écran quelle que soit la couleur (bug M4a : un
-# écran blanc matchait « vert » à 0.67). Discriminant correct pour toute couleur, y compris non-blanche.
+# Screen capture (diagnostics + colour fallback).
+# FRAC = fraction of active-area pixels close (fuzz 20%) to #EXPECT. CRITICAL ORDER:
+# first blacken the NON-matches (+opaque), THEN whiten the matches (-opaque), otherwise pre-existing
+# white survives and FRAC returns ~the screen fraction whatever the colour (bug M4a: a white
+# screen matched "green" at 0.67). Correct discriminant for any colour, including non-white ones.
 xwd -root -display "$DISP" -silent 2>/dev/null | convert xwd:- "$OUT/screen.png" 2>/dev/null
 FRAC=""
 if [ -s "$OUT/screen.png" ]; then
@@ -126,7 +126,7 @@ if [ "$SERBYTES" -gt 0 ]; then
 fi
 
 # --- Assertion ---
-# Canal PRIMAIRE série si des octets ont été capturés ; sinon repli couleur.
+# PRIMARY serial channel if bytes were captured; otherwise colour fallback.
 if [ "$SERBYTES" -gt 0 ]; then
   if grep -qi "$FAILMARK" "$SERLOG"; then
     echo "ECHEC : marqueur série d'échec « $FAILMARK » présent."
@@ -140,7 +140,7 @@ if [ "$SERBYTES" -gt 0 ]; then
   exit 1
 fi
 
-# Repli : aucune émission série -> assertion couleur (hello-ROM, etc.).
+# Fallback: no serial output -> colour assertion (hello-ROM, etc.).
 if [ -n "${FRAC:-}" ] && awk "BEGIN{exit !(${FRAC:-0} > 0.5)}"; then
   echo "OK (repli couleur) : écran majoritairement #$EXPECT."
   exit 0

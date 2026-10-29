@@ -1,24 +1,24 @@
-; tests/imenu_probe.s — sonde boîte noire du moteur d'entrées et des menus d'intuition 1.3
-; (ASSET DE TEST, PAS du code ROM ; piste ANALYSE, docs/analysis/intuition-input-menus-v34.md).
-; Code AUTEUR : n'utilise que l'ABI publique (exec/intuition/graphics .fd, structures NDK 1.3,
-; input.device IND_WRITEEVENT) ; lectures privées affichées pour information seulement :
-; IntuitionBase +$50..+$56 (bornes du pointeur), +$378, +$544, +$546.
+; tests/imenu_probe.s - black-box probe of the intuition 1.3 input engine and menus
+; (TEST ASSET, NOT ROM code; ANALYSIS track, docs/analysis/intuition-input-menus-v34.md).
+; AUTHORED code: uses only the public ABI (exec/intuition/graphics .fd, NDK 1.3 structures,
+; input.device IND_WRITEEVENT); private reads displayed for information only:
+; IntuitionBase +$50..+$56 (pointer bounds), +$378, +$544, +$546.
 ;
-; Assemblé en binaire brut (vasm -Fbin -m68000), posé à l'offset 12 d'un ADF par tests/imenu_probe.sh.
-; Étage 1 (dans le bootblock) : relit les 32 premiers Ko de la disquette en chip RAM et y saute.
-; Étage 2 : ouvre deux fenêtres sur l'écran Workbench (A avec un menu, B sans), puis injecte une suite
-; d'événements par input.device IND_WRITEEVENT (positions absolues IECLASS_POINTERPOS, boutons,
-; touches) et journalise sur le port série chaque IntuiMessage reçu :
-;   M <fen> <Class> <Code> <Qualifier> <IAddress> <MouseX> <MouseY> <Seconds> <Micros>
-;   (IAddress « =A »/« =B » = la fenêtre ; Seconds/Micros = horodatage injecté : étape/rang)
-;   P <code> <flags> : chaîne NextSelect d'un MENUPICK (code et Flags de chaque élément)
-; « @S x » : le harnais prend une capture d'écran x ; « @T n » : début de l'étape n ; « IDLE » : fin.
+; Assembled as a raw binary (vasm -Fbin -m68000), placed at offset 12 of an ADF by tests/imenu_probe.sh.
+; Stage 1 (in the bootblock): reads the first 32 KB of the floppy back into chip RAM and jumps there.
+; Stage 2: opens two windows on the Workbench screen (A with a menu, B without), then injects a sequence
+; of events through input.device IND_WRITEEVENT (absolute IECLASS_POINTERPOS positions, buttons,
+; keys) and logs every IntuiMessage received on the serial port:
+;   M <win> <Class> <Code> <Qualifier> <IAddress> <MouseX> <MouseY> <Seconds> <Micros>
+;   (IAddress "=A"/"=B" = the window; Seconds/Micros = injected timestamp: step/rank)
+;   P <code> <flags>: NextSelect chain of a MENUPICK (code and Flags of each item)
+; "@S x": the harness takes screenshot x; "@T n": start of step n; "IDLE": end.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 LOADSZ   EQU 32768
 
-; variables (relatives à A5)
+; variables (relative to A5)
 v_ib     EQU 0
 v_gfx    EQU 4
 v_wa     EQU 8
@@ -29,14 +29,14 @@ v_hold   EQU 22
 v_step   EQU 24
 v_rank   EQU 26
 v_spin   EQU 28
-v_port   EQU 32          ; MsgPort (34 octets)
-v_io     EQU 72          ; IOStdReq (48 octets)
-v_ev     EQU 124         ; InputEvent (22 octets)
-v_lptr   EQU 148         ; pointeur d'écriture du journal en RAM
+v_port   EQU 32          ; MsgPort (34 bytes)
+v_io     EQU 72          ; IOStdReq (48 bytes)
+v_ev     EQU 124         ; InputEvent (22 bytes)
+v_lptr   EQU 148         ; write pointer of the RAM log
 v_size   EQU 160
 
 start:
-; ---------------------------------------------------------------- étage 1 (bootblock)
+; ---------------------------------------------------------------- stage 1 (bootblock)
         movea.l 4.w,a6
         movea.l a1,a2
         move.l  #LOADSZ,d0
@@ -58,7 +58,7 @@ start:
         lea     12(a3),a0
         jmp     stage2-start(a0)
 
-; ---------------------------------------------------------------- étage 2
+; ---------------------------------------------------------------- stage 2
 stage2:
         lea     start(pc),a4
         lea     reloc(pc),a0
@@ -74,7 +74,7 @@ stage2:
         lea     m_hello(pc),a0
         bsr     puts
         suba.l  a1,a1
-        jsr     -294(a6)            ; FindTask(0) : priorité et Forbid/Disable du contexte
+        jsr     -294(a6)            ; FindTask(0): priority and Forbid/Disable of the context
         movea.l d0,a0
         moveq   #0,d0
         move.b  9(a0),d0
@@ -92,7 +92,7 @@ stage2:
         moveq   #0,d0
         jsr     -552(a6)
         move.l  d0,v_gfx(a5)
-        ; fenêtres
+        ; windows
         movea.l v_ib(a5),a6
         lea     nwa(pc),a0
         jsr     -204(a6)            ; OpenWindow
@@ -150,7 +150,7 @@ failed:   lea     m_fail(pc),a0
         bsr     flush
         bra.s   *
 
-; ---------------------------------------------------------------- géométrie
+; ---------------------------------------------------------------- geometry
 dumpgeo:
         lea     m_scr(pc),a0
         bsr     puts
@@ -219,8 +219,8 @@ dumpgeo:
         bra.s   .mn
 .me:    rts
 
-; ---------------------------------------------------------------- interpréteur du script
-; mots : op, arguments
+; ---------------------------------------------------------------- script interpreter
+; words: op, arguments
 runscript:
         lea     script(pc),a3
 .next:  move.w  (a3)+,d0
@@ -259,7 +259,7 @@ runscript:
 .end:   rts
 .opP:   move.w  (a3)+,d1
         move.w  (a3)+,d2
-        add.w   d2,d2               ; écran non entrelacé : Y IB = 2 x Y écran
+        add.w   d2,d2               ; non-interlaced screen: IB Y = 2 x screen Y
         bsr     ptrpos
         bra     .next
 .opB:   bsr     clrev
@@ -317,7 +317,7 @@ runscript:
 .v0:    jsr     -150(a6)            ; ModifyIDCMP
         movea.l 4.w,a6
         bra     .next
-.opD:   movem.w (a3)+,d2-d5         ; y0, y1, x0, x1 : couleurs des pixels de l'écran (plans 0 et 1)
+.opD:   movem.w (a3)+,d2-d5         ; y0, y1, x0, x1: colours of the screen pixels (planes 0 and 1)
         movea.l v_scr(a5),a2
         lea     $B8(a2),a2          ; Screen.BitMap
 .dy:    lea     m_row(pc),a0
@@ -329,16 +329,16 @@ runscript:
         mulu    d2,d0
         move.w  d6,d1
         lsr.w   #3,d1
-        add.w   d1,d0               ; d0 = offset de l'octet
+        add.w   d1,d0               ; d0 = byte offset
         move.w  d6,d1
         not.w   d1
         and.w   #7,d1               ; bit
         moveq   #0,d7
-        movea.l 8(a2),a0            ; plan 0
+        movea.l 8(a2),a0            ; plane 0
         btst    d1,0(a0,d0.l)
         beq.s   .p1
         moveq   #1,d7
-.p1:    movea.l 12(a2),a0           ; plan 1
+.p1:    movea.l 12(a2),a0           ; plane 1
         btst    d1,0(a0,d0.l)
         beq.s   .p2
         addq.w  #2,d7
@@ -360,7 +360,7 @@ runscript:
         moveq   #10,d7
         bsr     pumpn
         bra     .next
-.opPH:  move.w  (a3)+,d0            ; centre du titre du menu n
+.opPH:  move.w  (a3)+,d0            ; centre of the title of menu n
         bsr     menun
         movea.l v_scr(a5),a1
         move.w  4(a0),d1            ; LeftEdge
@@ -373,7 +373,7 @@ runscript:
         moveq   #0,d2
         move.b  $1E(a1),d2          ; BarHeight
         bra     .pyx
-.opPI:  move.w  (a3)+,d0            ; centre de l'élément i du menu n
+.opPI:  move.w  (a3)+,d0            ; centre of item i of menu n
         bsr     menun
         move.w  4(a0),d1
         movea.l 18(a0),a0           ; FirstItem
@@ -381,7 +381,7 @@ runscript:
         bsr     nthn
         bsr     itemxy
         bra     .pyx2
-.opPS:  move.w  (a3)+,d0            ; centre du sous-élément s de l'élément i du menu n
+.opPS:  move.w  (a3)+,d0            ; centre of sub-item s of item i of menu n
         bsr     menun
         move.w  4(a0),d1
         movea.l 18(a0),a0
@@ -394,12 +394,12 @@ runscript:
         bsr     nthn
         bsr     itemxy
         add.w   d4,d2
-.pyx2:  move.w  d2,d0               ; d2 = Y écran du centre
+.pyx2:  move.w  d2,d0               ; d2 = screen Y of the centre
         move.w  d0,d2
         add.w   d2,d2
         bsr     ptrpos
         bra     .next
-.pyx:   ; d2 = BarHeight : Y = BarHeight/2, puis x2 pour l'IB
+.pyx:   ; d2 = BarHeight: Y = BarHeight/2, then x2 for the IB
         lsr.w   #1,d2
         add.w   d2,d2
         bsr     ptrpos
@@ -412,8 +412,8 @@ nthn:   subq.w  #1,d0
 .l:     movea.l (a0),a0
         dbra    d0,.l
 .r:     rts
-; a0 = élément, d1 = menu.LeftEdge (+ item.LeftEdge pour un sous-élément) ; rend d1 = X, d2 = Y (écran)
-; X = d1 + BarVBorder + L + W/2 ; Y = BarHeight + MenuVBorder - 1 + T + H/2
+; a0 = item, d1 = menu.LeftEdge (+ item.LeftEdge for a sub-item); returns d1 = X, d2 = Y (screen)
+; X = d1 + BarVBorder + L + W/2; Y = BarHeight + MenuVBorder - 1 + T + H/2
 itemxy: movea.l v_scr(a5),a1
         moveq   #0,d0
         move.b  $1F(a1),d0
@@ -448,9 +448,9 @@ ptrpos: bsr     clrev
         move.w  #$FF,6(a0)          ; IECODE_NOBUTTON
         move.w  d1,10(a0)
         move.w  d2,12(a0)
-        ; on enchaîne sur inject
+        ; falls through into inject
 
-; injecte v_ev (horodatage = étape / rang), puis laisse se poser 3 trames
+; injects v_ev (timestamp = step / rank), then lets 3 frames settle
 inject: lea     v_ev(a5),a0
         moveq   #0,d0
         move.w  v_step(a5),d0
@@ -468,7 +468,7 @@ inject: lea     v_ev(a5),a0
         bne.s   .nh
         bsr     pump
         movea.l v_gfx(a5),a6
-        jsr     -270(a6)            ; WaitTOF : rend la main pendant l'attente
+        jsr     -270(a6)            ; WaitTOF: yields the CPU while waiting
         movea.l 4.w,a6
         addq.w  #1,v_spin(a5)
         cmp.w   #100,v_spin(a5)
@@ -488,7 +488,7 @@ inject: lea     v_ev(a5),a0
         bsr     pumpn
 .r:     rts
 
-; pompe d7 trames
+; pumps d7 frames
 pumpn:  bsr     pump
         movea.l v_gfx(a5),a6
         jsr     -270(a6)            ; WaitTOF
@@ -497,7 +497,7 @@ pumpn:  bsr     pump
         bne.s   pumpn
         rts
 
-; vide les deux ports
+; drains both ports
 pump:   movem.l d0-d7/a0-a4/a6,-(a7)
         movea.l 4.w,a6
         movea.l v_wa(a5),a2
@@ -604,7 +604,7 @@ chain:  move.w  24(a3),d4
 .z:     bsr     nl
         rts
 
-; ---------------------------------------------------------------- sortie série
+; ---------------------------------------------------------------- serial output
 hex8s:  bsr.s   hex8
         bra.s   space
 hex4s:  bsr.s   hex4
@@ -649,8 +649,8 @@ puts:   move.l  d0,-(a7)
         bra.s   .p
 .e:     move.l  (a7)+,d0
         rts
-; le journal est tamponné en RAM et vidé sur le port série aux points calmes (marqueurs) :
-; écrire le port série caractère par caractère pendant l'activité sature la file d'événements de FS-UAE.
+; the log is buffered in RAM and flushed to the serial port at quiet points (markers):
+; writing the serial port character by character during activity floods the FS-UAE event queue.
 putc:   move.l  a0,-(a7)
         movea.l v_lptr(a5),a0
         move.b  d0,(a0)+
@@ -683,14 +683,14 @@ serc:   movem.l d0/d2,-(a7)
 ; 1 P x y | 2 B code | 3 K code qual | 4 S c | 5 T n | 6 C | 7 R b | 8 M b | 9 V b | 10 H | 11 U
 ; 12 PH m | 13 PI m i | 14 PS m i s
 script:
-        dc.w    5,1                         ; activation par clic
+        dc.w    5,1                         ; activation by click
         dc.w    1,500,60, 2,$68, 2,$E8
         dc.w    1,100,80, 2,$68, 2,$E8
-        dc.w    5,2                         ; menu simple
+        dc.w    5,2                         ; simple menu
         dc.w    12,0, 2,$69, 4,'a', 13,0,1, 4,'b', 15,0,54,0,200, 2,$E9
-        dc.w    5,3                         ; sélection multiple
+        dc.w    5,3                         ; multiple selection
         dc.w    12,0, 2,$69, 13,0,0, 2,$68, 2,$E8, 13,0,1, 2,$68, 2,$E8, 1,300,150, 2,$E9
-        dc.w    5,4                         ; re-sélection de la tête
+        dc.w    5,4                         ; re-selection of the head
         dc.w    12,0, 2,$69, 13,0,0, 2,$68, 2,$E8, 13,0,1, 2,$68, 2,$E8, 13,0,0, 2,$68, 2,$E8
         dc.w    1,300,150, 2,$E9
         dc.w    5,5                         ; CHECKIT / MENUTOGGLE / MutualExclude
@@ -700,33 +700,33 @@ script:
         dc.w    12,1, 2,$69, 4,'d', 15,0,40,60,240, 1,300,150, 2,$E9
         dc.w    5,6                         ; MENUCANCEL
         dc.w    6, 12,0, 2,$69, 13,0,0, 2,$E9
-        dc.w    5,7                         ; raccourcis Amiga droite / gauche
+        dc.w    5,7                         ; right / left Amiga shortcuts
         dc.w    3,$10,$80, 3,$90,$80, 3,$21,$80, 3,$A1,$80, 3,$22,$80, 3,$A2,$80
         dc.w    3,$10,$40, 3,$90,$40
-        dc.w    5,8                         ; sous-menu
+        dc.w    5,8                         ; submenu
         dc.w    12,0, 2,$69, 13,0,3, 4,'e', 14,0,3,1, 4,'f', 15,38,66,0,260, 2,$E9
-        dc.w    5,9                         ; éléments / menus désactivés
+        dc.w    5,9                         ; disabled items / menus
         dc.w    12,0, 2,$69, 13,0,2, 2,$E9
         dc.w    12,2, 2,$69, 4,'g', 13,2,0, 2,$E9
-        dc.w    5,10                        ; REPORTMOUSE sans lecture du port
+        dc.w    5,10                        ; REPORTMOUSE without reading the port
         dc.w    7,1, 10, 1,100,50, 1,101,50, 1,102,50, 1,103,51, 1,104,52, 1,105,53, 11, 7,0
         dc.w    5,11                        ; RMBTRAP
         dc.w    8,1, 2,$69, 2,$E9, 8,0
         dc.w    5,12                        ; VANILLAKEY
         dc.w    9,1, 3,$20,0, 3,$A0,0, 3,$4C,0, 3,$CC,0, 3,$20,$40, 3,$A0,$40, 9,0
-        dc.w    5,13                        ; souris au clavier (Amiga + flèches / Alt)
+        dc.w    5,13                        ; mouse from the keyboard (Amiga + arrows / Alt)
         dc.w    1,100,80, 7,1, 3,$4E,$40, 3,$CE,$40, 3,$4E,$41, 3,$CE,$41, 3,$4E,$240, 3,$4E,$240
         dc.w    3,$CE,$40, 3,$4C,$40, 3,$CC,$40, 7,0
         dc.w    1,100,80, 3,$64,$50, 3,$E4,$40
-        dc.w    5,14                        ; clic sur le fond de l'écran
+        dc.w    5,14                        ; click on the screen background
         dc.w    1,300,190, 2,$68, 2,$E8, 3,$20,0, 3,$A0,0
         dc.w    1,100,80, 2,$68, 2,$E8
-        dc.w    5,15                        ; menu ouvert sur la fenêtre B (sans menu)
+        dc.w    5,15                        ; menu opened over window B (no menu)
         dc.w    1,500,60, 2,$68, 2,$E8, 12,0, 2,$69, 4,'h', 2,$E9
         dc.w    1,100,80, 2,$68, 2,$E8
         dc.w    0
 
-; ---------------------------------------------------------------- données
+; ---------------------------------------------------------------- data
 reloc:  dc.l    nwa+26, nwb+26
         dc.l    menu0, menu0+14, menu0+18, menu1, menu1+14, menu1+18, menu2+14, menu2+18
         dc.l    i00, i00+18, i01, i01+18, i02, i02+18, i03+18, i03+28
@@ -746,7 +746,7 @@ nwb:    dc.w    420,12,210,100
         dc.l    $C2408, $6, 0, 0, s_wb, 0, 0
         dc.w    60,30,640,256,1
 
-; Menu : Next, Left, Top, Width, Height, Flags, Name, FirstItem, Jazz/Beat
+; Menu: Next, Left, Top, Width, Height, Flags, Name, FirstItem, Jazz/Beat
 menu0:  dc.l    menu1
         dc.w    0,0,64,10,1
         dc.l    s_m0, i00
@@ -759,7 +759,7 @@ menu2:  dc.l    0
         dc.w    152,0,56,10,0
         dc.l    s_m2, i20
         dc.w    0,0,0,0
-; MenuItem : Next, Left, Top, Width, Height, Flags, MutEx, ItemFill, SelectFill, Command, pad, SubItem, NextSelect
+; MenuItem: Next, Left, Top, Width, Height, Flags, MutEx, ItemFill, SelectFill, Command, pad, SubItem, NextSelect
 i00:    dc.l    i01
         dc.w    0,0,140,10,$52
         dc.l    0, t_open, 0
@@ -820,7 +820,7 @@ i20:    dc.l    0
         dc.b    'D',0
         dc.l    0
         dc.w    $FFFF
-; IntuiText : FrontPen, BackPen, DrawMode, pad, Left, Top, Font, Text, Next
+; IntuiText: FrontPen, BackPen, DrawMode, pad, Left, Top, Font, Text, Next
 t_open: dc.b    0,1,1,0
         dc.w    2,1
         dc.l    0, s_open, 0

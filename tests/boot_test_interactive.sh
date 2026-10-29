@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# tests/boot_test_interactive.sh — boot headless FS-UAE + INJECTION d'entrée série (CLI interactif, jalons E/F).
+# tests/boot_test_interactive.sh - headless FS-UAE boot + serial input INJECTION (interactive CLI, milestones E/F).
 #
-# Étend boot_test.sh : le pont PTY socat (ser_uae <-> ser_cap) est bidirectionnel. On attend le marqueur
-# « prêt » (la ROM a émis son invite / est en attente d'entrée), puis on INJECTE une ligne dans ser_cap
-# (-> socat -> ser_uae -> RX série FS-UAE -> SERDATR côté ROM), octet par octet avec cadence (évite l'overrun
-# RX : Paula n'a qu'un octet de buffer). On assère ensuite la présence du marqueur de SUCCÈS (l'écho/résultat).
+# Extends boot_test.sh: the socat PTY bridge (ser_uae <-> ser_cap) is bidirectional. We wait for the "ready"
+# marker (the ROM has emitted its prompt / is waiting for input), then INJECT a line into ser_cap
+# (-> socat -> ser_uae -> FS-UAE serial RX -> SERDATR on the ROM side), byte by byte with pacing (avoids RX
+# overrun: Paula has only a one-byte buffer). We then assert the presence of the SUCCESS marker (the echo/result).
 #
-# Pourquoi un harnais séparé : boot_test.sh ne fait que CAPTURER. Les preuves READ/CLI exigent de FEEDER l'entrée.
-# La RX série sous FS-UAE est prouvée (voir mémoire serial-rx-injection-harness).
+# Why a separate harness: boot_test.sh only CAPTURES. The READ/CLI proofs require FEEDING the input.
+# Serial RX under FS-UAE is proven (see memory serial-rx-injection-harness).
 #
-# Usage : boot_test_interactive.sh <rom> <wait_s> <ready_marker> <inject_str> <success_marker> [adf] [per_char_ms]
-#   inject_str : séquence à taper ; \r = CR (fin de ligne), \n = LF. Ex. 'hello\r'
-# Codes de sortie : 0 = succès ; 1 = régression/absent ; 2 = prérequis manquant.
+# Usage: boot_test_interactive.sh <rom> <wait_s> <ready_marker> <inject_str> <success_marker> [adf] [per_char_ms]
+#   inject_str: sequence to type; \r = CR (end of line), \n = LF. E.g. 'hello\r'
+# Exit codes: 0 = success; 1 = regression/missing; 2 = missing prerequisite.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"
@@ -20,9 +20,9 @@ READY="${3:-E1 CON WRITE OK}"
 INJECT="${4:-hello\r}"
 MARKER="${5:-E1 CON READ=hello}"
 ADF="${6:-}"
-PCMS="${7:-50}"                      # ms entre octets injectés (anti-overrun)
-SETTLE="${8:-1}"                     # s d'attente après le marqueur « prêt » (laisse le boot se taire)
-POSTWAIT="${9:-3}"                    # s d'attente APRÈS l'injection (laisse la commande se charger/s'exécuter)
+PCMS="${7:-50}"                      # ms between injected bytes (anti-overrun)
+SETTLE="${8:-1}"                     # s to wait after the "ready" marker (lets the boot go quiet)
+POSTWAIT="${9:-3}"                    # s to wait AFTER the injection (lets the command load/run)
 FAILMARK="FAILED"
 OUT="$ROOT/build/boot_itx"
 mkdir -p "$OUT"
@@ -76,17 +76,17 @@ EOF
 DISPLAY="$DISP" fs-uae "$CFG" >"$OUT/fs-uae.log" 2>&1 &
 FPID=$!
 
-# Attendre le marqueur « prêt »
+# Wait for the "ready" marker
 ready=0
 for _ in $(seq 1 $((WAIT*4))); do
   grep -qF "$READY" "$SERLOG" && { ready=1; break; }
   sleep 0.25
 done
 echo "prêt (« $READY » vu) = $ready"
-sleep "$SETTLE"                      # settle : laisse les marqueurs boot se taire + le client pri basse
-                                     # atteindre son READ bloquant (handler en poll stable) avant d'injecter
+sleep "$SETTLE"                      # settle: lets the boot markers go quiet + the low-pri client
+                                     # reach its blocking READ (handler in stable poll) before injecting
 
-# INJECTION octet par octet, avec cadence (anti-overrun)
+# INJECTION byte by byte, with pacing (anti-overrun)
 exec 7>"$OUT/ser_cap"
 python3 - "$PCMS" >&7 <<PYEOF
 import sys, time
@@ -97,7 +97,7 @@ for ch in s:
     time.sleep(ms/1000.0)
 PYEOF
 exec 7>&-
-sleep "$POSTWAIT"                    # laisse la commande injectée se charger/exécuter (load disque = lent)
+sleep "$POSTWAIT"                    # lets the injected command load/run (disk load = slow)
 
 echo "=== serial.log (fin) ==="
 tr -cd '\11\12\15\40-\176\n' < "$SERLOG" | tail -8 | sed 's/^/  [ser] /'

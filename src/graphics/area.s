@@ -1,17 +1,17 @@
-; src/graphics/area.s — graphics.library : remplissages de polygones et d'ellipses, ellipses, Flood (spec
+; src/graphics/area.s — graphics.library: polygon and ellipse fills, ellipses, Flood (spec
 ; docs/analysis/graphics-area-v34.md).
-; InitArea / InitTmpRas / AreaMove / AreaDraw / AreaEllipse enregistrent les sommets comme la 1.3 (drapeaux $00, $02,
-; $03, $06/$07, ellipse $83 puis $02 ; -1 quand la table est pleine). AreaEnd fabrique un masque d'un plan : points de
-; croisement par ligne de balayage (règle pair/impair, lignes [haut, bas[ de chaque arête non horizontale, bornes de
-; ligne des ellipses), remplissage de chaque ligne de gauche à droite, puis arêtes complètes ajoutées (ou effacées en
-; JAM1 avec AreaPtSz = 2, comme la 1.3) : intérieur et bords inclus. Le masque est rendu ligne par ligne par RectFill
-; (stylos, mode, motif et découpage par les couches de RectFill), puis le contour en AOlPen si AREAOUTLINE.
-; DrawEllipse : algorithme de Kennedy en deux ensembles (pixels identiques aux vecteurs de la spec), rayons nuls
-; tracés comme un segment, points posés par le LVO WritePixel. Flood : remplissage 4-connexe ligne par ligne (graines
-; sur une pile, ReadPixel par LVO), masque puis rendu par RectFill.
-; Écarts : rendu au processeur (pas de blitter ni de BltPattern), table des sommets non translatée, AreaEnd sans TmpRas
-; alloue son masque au lieu d'écrire en mémoire basse, exactement Count entrées lues après une ellipse.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs graphics + structures publiques + spec. AUCUNE lecture ROM.
+; InitArea / InitTmpRas / AreaMove / AreaDraw / AreaEllipse record the vertices like 1.3 (flags $00, $02,
+; $03, $06/$07, ellipse $83 then $02; -1 when the table is full). AreaEnd builds a one-plane mask: crossing
+; points per scan line (even/odd rule, lines [top, bottom[ of each non-horizontal edge, line bounds of the
+; ellipses), each line filled from left to right, then complete edges added (or erased in
+; JAM1 with AreaPtSz = 2, like 1.3): interior and edges included. The mask is rendered line by line by RectFill
+; (RectFill's pens, mode, pattern and clipping by the layers), then the outline in AOlPen if AREAOUTLINE.
+; DrawEllipse: Kennedy's algorithm in two sets (pixels identical to the spec's vectors), zero radii
+; drawn as a segment, points plotted by the WritePixel LVO. Flood: 4-connected line-by-line fill (seeds
+; on a stack, ReadPixel via LVO), mask then rendered by RectFill.
+; Deviations: CPU rendering (no blitter or BltPattern), vertex table not translated, AreaEnd without TmpRas
+; allocates its mask instead of writing to low memory, exactly Count entries read after an ellipse.
+; IMPLEMENTATION track ("clean"): graphics AutoDocs + public structures + spec. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -36,15 +36,15 @@ ai_FirstX       EQU 20
 ai_FirstY       EQU 22
 tr_RasPtr       EQU 0
 tr_Size         EQU 4
-LY_BOUNDS       EQU 16               ; Layer.bounds : MinX, MinY, MaxX, MaxY
+LY_BOUNDS       EQU 16               ; Layer.bounds: MinX, MinY, MaxX, MaxY
 LVO_READPIXEL   EQU -318
 LVO_WRITEPIXEL  EQU -324
 LVO_AREADRAW    EQU -258
-AF_DRAWN        EQU 1                ; bits des drapeaux d'entrée
+AF_DRAWN        EQU 1                ; bits of the entry flags
 AF_OUTLINE      EQU 2
 AF_ELLIPSE      EQU 7
 
-; InitArea(areaInfo a0, tampon a1, maxVectors d0) : tables des sommets (4 octets par entrée) puis des drapeaux.
+; InitArea(areaInfo a0, buffer a1, maxVectors d0): vertex tables (4 bytes per entry) then flag tables.
 gfx_InitArea:
         move.l  a1,ai_VctrTbl(a0)
         move.l  a1,ai_VctrPtr(a0)
@@ -57,16 +57,16 @@ gfx_InitArea:
         move.l  d0,ai_FlagPtr(a0)
         rts
 
-; InitTmpRas(tmpRas a0, tampon a1, taille d0) -> d0 = tmpRas.
+; InitTmpRas(tmpRas a0, buffer a1, size d0) -> d0 = tmpRas.
 gfx_InitTmpRas:
         move.l  a1,tr_RasPtr(a0)
         move.l  d0,tr_Size(a0)
         move.l  a0,d0
         rts
 
-; ar_close(a1 = RastPort, a0 = AreaInfo, a6) -> d0 = 0 | -1 : avant un nouveau polygone ou une ellipse, un AreaMove
-; isolé juste avant est retiré ; sinon un polygone non fermé l'est par AreaDraw(FirstX, FirstY) (LVO). Préserve
-; d2-d7/a1-a6 ; a0 = AreaInfo au retour.
+; ar_close(a1 = RastPort, a0 = AreaInfo, a6) -> d0 = 0 | -1: before a new polygon or an ellipse, an isolated
+; AreaMove just before is removed; otherwise an unclosed polygon is closed by AreaDraw(FirstX, FirstY) (LVO).
+; Preserves d2-d7/a1-a6; a0 = AreaInfo on return.
 ar_close:
         moveq   #0,d0
         tst.w   ai_Count(a0)
@@ -75,13 +75,13 @@ ar_close:
         move.b  -1(a0),d0
         move.l  rp_AreaInfo(a1),a0
         bne.s   .cl_drawn
-        subq.w  #1,ai_Count(a0)      ; AreaMove isolé : remplacé
+        subq.w  #1,ai_Count(a0)      ; isolated AreaMove: replaced
         subq.l  #4,ai_VctrPtr(a0)
         subq.l  #1,ai_FlagPtr(a0)
         moveq   #0,d0
         bra.s   .cl_ret
 .cl_drawn:
-        cmp.w   #2,ai_Count(a0)      ; fin d'une ellipse : rien à fermer
+        cmp.w   #2,ai_Count(a0)      ; end of an ellipse: nothing to close
         blo.s   .cl_poly
         move.l  ai_FlagPtr(a0),a0
         btst    #AF_ELLIPSE,-2(a0)
@@ -89,7 +89,7 @@ ar_close:
         bne.s   .cl_ok
 .cl_poly:
         move.l  ai_VctrPtr(a0),a0
-        move.l  -4(a0),d0            ; dernier sommet (x, y)
+        move.l  -4(a0),d0            ; last vertex (x, y)
         move.l  rp_AreaInfo(a1),a0
         cmp.l   ai_FirstX(a0),d0
         beq.s   .cl_ok
@@ -107,7 +107,7 @@ ar_close:
 .cl_ret:
         rts
 
-; ar_add(a0 = AreaInfo, d0 = x, d1 = y, d2.b = drapeau) -> d0 = 0 | -1 (table pleine). Clobbe d3.
+; ar_add(a0 = AreaInfo, d0 = x, d1 = y, d2.b = flag) -> d0 = 0 | -1 (table full). Clobbers d3.
 ar_add:
         move.w  ai_Count(a0),d3
         cmp.w   ai_MaxCount(a0),d3
@@ -128,14 +128,14 @@ ar_add:
         moveq   #-1,d0
         rts
 
-; AreaMove(rp a1, x d0, y d1) -> d0 = 0 | -1 : ferme le polygone courant, puis nouveau point de départ.
+; AreaMove(rp a1, x d0, y d1) -> d0 = 0 | -1: closes the current polygon, then new starting point.
 gfx_AreaMove:
         movem.l d2-d4,-(sp)
         move.l  d0,d4
         move.l  rp_AreaInfo(a1),a0
         movem.l d0-d1,-(sp)
         bsr     ar_close
-        movem.l (sp)+,d2-d3          ; d2/d3 = x, y (ar_close a rendu d0)
+        movem.l (sp)+,d2-d3          ; d2/d3 = x, y (ar_close returned d0)
         tst.l   d0
         bmi.s   .am_ret
         move.l  d2,d0
@@ -150,8 +150,8 @@ gfx_AreaMove:
         movem.l (sp)+,d2-d4
         rts
 
-; AreaDraw(rp a1, x d0, y d1) -> d0 = 0 | -1 : arête vers (x, y) ; drapeau $02, | $04 si AREAOUTLINE maintenant,
-; | $01 si l'arête n'est pas horizontale.
+; AreaDraw(rp a1, x d0, y d1) -> d0 = 0 | -1: edge to (x, y); flag $02, | $04 if AREAOUTLINE now,
+; | $01 if the edge is not horizontal.
 gfx_AreaDraw:
         movem.l d2-d3,-(sp)
         move.l  rp_AreaInfo(a1),a0
@@ -173,8 +173,8 @@ gfx_AreaDraw:
         movem.l (sp)+,d2-d3
         rts
 
-; AreaEllipse(rp a1, cx d0, cy d1, a d2, b d3) -> d0 = 0 | -1 : deux entrées, coins du rectangle englobant ($83, $02).
-; FirstX/FirstY inchangés.
+; AreaEllipse(rp a1, cx d0, cy d1, a d2, b d3) -> d0 = 0 | -1: two entries, corners of the bounding box ($83, $02).
+; FirstX/FirstY unchanged.
 gfx_AreaEllipse:
         movem.l d2-d5,-(sp)
         movem.l d0-d3,-(sp)
@@ -208,11 +208,11 @@ gfx_AreaEllipse:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; el_gen(d2 = a, d3 = b, a3 = rappel) : points du premier quadrant d'une ellipse (algorithme de Kennedy en deux
-; ensembles, depuis (a, 0) puis depuis (0, b)) ; le rappel reçoit d0 = x, d1 = y relatifs (>= 0), une fois par
-; point (le point de jonction n'est pas répété). Rayons nuls : le segment (x de 0 à a, ou y de 0 à b). Le rappel
-; peut détruire d0/d1/a0/a1 et doit préserver le reste. Préserve d2-d7/a2-a6.
-EG_SIZE         EQU 32               ; variables locales sous a4 (link)
+; el_gen(d2 = a, d3 = b, a3 = callback): points of the first quadrant of an ellipse (Kennedy's algorithm in two
+; sets, from (a, 0) then from (0, b)); the callback receives d0 = x, d1 = y relative (>= 0), once per
+; point (the junction point is not repeated). Zero radii: the segment (x from 0 to a, or y from 0 to b). The
+; callback may destroy d0/d1/a0/a1 and must preserve the rest. Preserves d2-d7/a2-a6.
+EG_SIZE         EQU 32               ; local variables below a4 (link)
 EG_A2           EQU -32              ; 2a²
 EG_B2           EQU -28              ; 2b²
 EG_XC           EQU -24
@@ -220,7 +220,7 @@ EG_YC           EQU -20
 EG_ERR          EQU -16
 EG_SX           EQU -12
 EG_SY           EQU -8
-EG_LAST         EQU -4               ; dernier point émis (x, y)
+EG_LAST         EQU -4               ; last point emitted (x, y)
 el_gen:
         movem.l d2-d7,-(sp)
         link    a4,#-EG_SIZE
@@ -257,7 +257,7 @@ el_gen:
         move.l  d0,d5
         add.l   d0,d0
         move.l  d0,EG_B2(a4)
-        ; ensemble 1 : depuis (a, 0), y croissant
+        ; set 1: from (a, 0), increasing y
         move.l  EG_B2(a4),d0
         move.w  d2,d1
         bsr     el_mul               ; 2b²·a
@@ -292,7 +292,7 @@ el_gen:
         add.l   d1,EG_ERR(a4)
         add.l   d0,EG_XC(a4)
         bra.s   .eg_s1
-.eg_set2:                            ; ensemble 2 : depuis (0, b), x croissant
+.eg_set2:                            ; set 2: from (0, b), increasing x
         move.l  EG_A2(a4),d0
         move.w  d3,d1
         bsr     el_mul               ; 2a²·b
@@ -331,7 +331,7 @@ el_gen:
         unlk    a4
         movem.l (sp)+,d2-d7
         rts
-.eg_emit:                            ; point (d6, d7) s'il diffère du précédent
+.eg_emit:                            ; point (d6, d7) if it differs from the previous one
         move.w  d6,d0
         swap    d0
         move.w  d7,d0
@@ -348,7 +348,7 @@ el_gen:
 .em_r:
         rts
 
-; el_mul(d0.l >= 0, d1.w >= 0) -> d0.l = d0 × d1 (32 × 16 bits, non signé). Clobbe d1.
+; el_mul(d0.l >= 0, d1.w >= 0) -> d0.l = d0 × d1 (32 × 16 bits, unsigned). Clobbers d1.
 el_mul:
         move.l  d2,-(sp)
         move.l  d0,d2
@@ -362,8 +362,8 @@ el_mul:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; DrawEllipse(rp a1, cx d0, cy d1, a d2, b d3) : chaque point par WritePixel (LVO, donc découpé par la couche et
-; sensible à SetFunction), symétrie en quatre quadrants sans doublon sur les axes.
+; DrawEllipse(rp a1, cx d0, cy d1, a d2, b d3): each point via WritePixel (LVO, hence clipped by the layer and
+; subject to SetFunction), four-quadrant symmetry without duplicates on the axes.
 DE_RP           EQU 0
 DE_CX           EQU 4
 DE_CY           EQU 6
@@ -380,7 +380,7 @@ gfx_DrawEllipse:
         lea     DE_SIZE(sp),sp
         movem.l (sp)+,a2-a3/a5
         rts
-de_plot:                             ; (d0 = x, d1 = y relatifs, a5 = cadre, a6 = GfxBase)
+de_plot:                             ; (d0 = x, d1 = y relative, a5 = frame, a6 = GfxBase)
         move.w  d0,d2
         move.w  d1,d3
         bsr.s   .dp_one              ; (+x, +y)
@@ -410,22 +410,22 @@ de_plot:                             ; (d0 = x, d1 = y relatifs, a5 = cadre, a6 
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; Masque d'un plan (AreaEnd, Flood) : cadre en a5.
-MK_BUF          EQU 0                ; long : tampon
-MK_ALLOC        EQU 4                ; long : taille allouée (0 = TmpRas de l'appelant)
-MK_X0           EQU 8                ; word : x absolu de la colonne 0
-MK_Y0           EQU 10               ; word : y absolu de la ligne 0
-MK_L            EQU 12               ; word : octets par ligne
-MK_H            EQU 14               ; word : lignes
-MK_OP           EQU 16               ; word : 0 = mise à 1, 1 = mise à 0, 2 = inversion
-MK_RP           EQU 18               ; long : RastPort de l'appelant
-MK_CX           EQU 22               ; word : centre d'ellipse (rappels)
+; One-plane mask (AreaEnd, Flood): frame in a5.
+MK_BUF          EQU 0                ; long: buffer
+MK_ALLOC        EQU 4                ; long: allocated size (0 = caller's TmpRas)
+MK_X0           EQU 8                ; word: absolute x of column 0
+MK_Y0           EQU 10               ; word: absolute y of row 0
+MK_L            EQU 12               ; word: bytes per row
+MK_H            EQU 14               ; word: rows
+MK_OP           EQU 16               ; word: 0 = set to 1, 1 = set to 0, 2 = invert
+MK_RP           EQU 18               ; long: caller's RastPort
+MK_CX           EQU 22               ; word: ellipse centre (callbacks)
 MK_CY           EQU 24
-MK_TBL          EQU 26               ; long : table des demi-largeurs d'une ellipse
-MK_FLAGS        EQU 30               ; word : rp_Flags sauvé
+MK_TBL          EQU 26               ; long: table of an ellipse's half-widths
+MK_FLAGS        EQU 30               ; word: saved rp_Flags
 MK_SIZE         EQU 32
 
-; mk_bit(d0 = x, d1 = y absolus, a5) : applique MK_OP au point (hors masque : rien). Clobbe d0/d1/a0.
+; mk_bit(d0 = x, d1 = y absolute, a5): applies MK_OP to the point (outside the mask: nothing). Clobbers d0/d1/a0.
 mk_bit:
         sub.w   MK_X0(a5),d0
         bmi.s   .mb_r
@@ -445,7 +445,7 @@ mk_bit:
         lsr.w   #3,d1
         add.w   d1,a0
         not.w   d0
-        and.w   #7,d0                ; bit 7 = pixel de gauche de l'octet
+        and.w   #7,d0                ; bit 7 = leftmost pixel of the byte
         move.w  MK_OP(a5),d2
         beq.s   .mb_set
         subq.w  #1,d2
@@ -462,13 +462,13 @@ mk_bit:
 .mb_r:
         rts
 
-; mk_line(d0/d1 = départ, d2/d3 = arrivée, absolus, a5) : segment au masque, extrémités comprises, parcouru du départ
-; vers l'arrivée par le Bresenham unifié de Draw (mêmes pixels que les arêtes de la 1.3, sens compris).
-; Préserve d2-d7/a1-a6.
+; mk_line(d0/d1 = start, d2/d3 = end, absolute, a5): segment into the mask, endpoints included, walked from the
+; start to the end by Draw's unified Bresenham (same pixels as the 1.3 edges, direction included).
+; Preserves d2-d7/a1-a6.
 mk_line:
         movem.l d2-d7,-(sp)
         move.w  d2,d4
-        sub.w   d0,d4                ; d4 = |dx|, d6 = pas en x
+        sub.w   d0,d4                ; d4 = |dx|, d6 = x step
         moveq   #1,d6
         tst.w   d4
         bpl.s   .ml_1
@@ -476,7 +476,7 @@ mk_line:
         moveq   #-1,d6
 .ml_1:
         move.w  d3,d5
-        sub.w   d1,d5                ; d5 = -|dy|, d7 = pas en y
+        sub.w   d1,d5                ; d5 = -|dy|, d7 = y step
         moveq   #-1,d7
         tst.w   d5
         bmi.s   .ml_2
@@ -484,8 +484,8 @@ mk_line:
         moveq   #1,d7
 .ml_2:
         move.w  d4,-(sp)
-        add.w   d5,(sp)              ; erreur = dx + dy
-        movem.w d0-d1,-(sp)          ; (sp) = x, 2(sp) = y, 4(sp) = erreur
+        add.w   d5,(sp)              ; error = dx + dy
+        movem.w d0-d1,-(sp)          ; (sp) = x, 2(sp) = y, 4(sp) = error
 .ml_lp:
         movem.w (sp),d0-d1
         bsr     mk_bit
@@ -512,8 +512,8 @@ mk_line:
         movem.l (sp)+,d2-d7
         rts
 
-; mk_alloc(d0.w = largeur en pixels depuis MK_X0, d1.w = hauteur, a1 = RastPort, a5) -> Z = 0 si un masque effacé
-; est prêt (TmpRas de l'appelant si elle existe et suffit, sinon mémoire allouée). Clobbe d0/d1/a0.
+; mk_alloc(d0.w = width in pixels from MK_X0, d1.w = height, a1 = RastPort, a5) -> Z = 0 if a cleared mask
+; is ready (caller's TmpRas if it exists and is large enough, otherwise allocated memory). Clobbers d0/d1/a0.
 mk_alloc:
         add.w   #15,d0
         lsr.w   #4,d0
@@ -557,7 +557,7 @@ mk_alloc:
 .ma_r:
         rts
 
-; mk_free(a5) : libère le masque s'il a été alloué. Préserve tout sauf d0/d1/a0/a1.
+; mk_free(a5): frees the mask if it was allocated. Preserves everything except d0/d1/a0/a1.
 mk_free:
         move.l  MK_ALLOC(a5),d0
         beq.s   .mf_r
@@ -569,22 +569,22 @@ mk_free:
 .mf_r:
         rts
 
-; mk_render(a5, a6 = GfxBase) : chaque suite de bits à 1 d'une ligne du masque devient un RectFill sur le RastPort de
-; l'appelant (AREAOUTLINE masqué le temps du rendu). Préserve d2-d7/a2-a6.
+; mk_render(a5, a6 = GfxBase): each run of 1 bits in a mask row becomes a RectFill on the caller's
+; RastPort (AREAOUTLINE masked during rendering). Preserves d2-d7/a2-a6.
 mk_render:
         movem.l d2-d7/a2,-(sp)
         move.l  MK_RP(a5),a1
         move.w  rp_Flags(a1),MK_FLAGS(a5)
         and.w   #~AREAOUTLINE,rp_Flags(a1)
         move.l  MK_BUF(a5),a2
-        moveq   #0,d7                ; d7 = ligne
+        moveq   #0,d7                ; d7 = row
 .mr_row:
         cmp.w   MK_H(a5),d7
         bge.s   .mr_end
-        moveq   #-1,d5               ; d5 = début de la suite en cours (-1 : aucune)
-        moveq   #0,d6                ; d6 = colonne
+        moveq   #-1,d5               ; d5 = start of the current run (-1: none)
+        moveq   #0,d6                ; d6 = column
         move.w  MK_L(a5),d4
-        lsl.w   #3,d4                ; d4 = colonnes
+        lsl.w   #3,d4                ; d4 = columns
 .mr_col:
         cmp.w   d4,d6
         bge.s   .mr_eol
@@ -654,11 +654,11 @@ gfx_AreaEnd:
         move.l  ai_FlagPtr(a2),a0
         tst.b   -1(a0)
         bne.s   .ae_last
-        cmp.w   #1,d0                ; se termine par un AreaMove
+        cmp.w   #1,d0                ; ends with an AreaMove
         bls     .ae_reset
         bra.s   .ae_go
 .ae_last:
-        cmp.w   #2,d0                ; fin d'ellipse : déjà fermée
+        cmp.w   #2,d0                ; end of ellipse: already closed
         blo.s   .ae_cl
         btst    #AF_ELLIPSE,-2(a0)
         bne.s   .ae_go
@@ -678,11 +678,11 @@ gfx_AreaEnd:
         moveq   #-1,d7
         bra     .ae_reset2
 .ae_go:
-        ; rectangle englobant de toutes les entrées
+        ; bounding box of all entries
         move.l  ai_VctrTbl(a2),a0
         move.w  ai_Count(a2),d7
         subq.w  #1,d7
-        move.w  #$7FFF,d2            ; d2/d3 = min x, y ; d4/d5 = max x, y
+        move.w  #$7FFF,d2            ; d2/d3 = min x, y; d4/d5 = max x, y
         move.w  d2,d3
         move.w  #$8000,d4
         move.w  d4,d5
@@ -717,12 +717,12 @@ gfx_AreaEnd:
         addq.w  #1,d1
         bsr     mk_alloc
         beq     .ae_nomem
-        ; passe 1 : points de croisement (inversion), passe 2 : remplissage des lignes
+        ; pass 1: crossing points (inversion), pass 2: line filling
         move.w  #2,MK_OP(a5)
-        moveq   #1,d6                ; passe 1
+        moveq   #1,d6                ; pass 1
         bsr     ae_walk
         bsr     ae_rows
-        ; passe 3 : arêtes complètes (mise à 1, ou à 0 si DrawMode = JAM1 et AreaPtSz = 2)
+        ; pass 3: complete edges (set to 1, or to 0 if DrawMode = JAM1 and AreaPtSz = 2)
         clr.w   MK_OP(a5)
         move.l  MK_RP(a5),a1
         move.b  rp_DrawMode(a1),d0
@@ -734,7 +734,7 @@ gfx_AreaEnd:
 .ae_p3:
         moveq   #3,d6
         bsr     ae_walk
-        bsr     mk_render            ; passe 4 : rendu
+        bsr     mk_render            ; pass 4: rendering
         bsr     ae_outline
         bsr     mk_free
         moveq   #0,d7
@@ -753,20 +753,20 @@ gfx_AreaEnd:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ae_rows(a5) : chaque ligne du masque est remplie de gauche à droite entre les points de croisement (un point
-; ouvre la suite, le suivant la ferme sans être rempli ; les arêtes de la passe 3 complètent). Préserve d2-d7/a2-a6.
+; ae_rows(a5): each mask row is filled from left to right between the crossing points (one point
+; opens the run, the next closes it without being filled; the pass 3 edges complete it). Preserves d2-d7/a2-a6.
 ae_rows:
         movem.l d2-d5/a2,-(sp)
         move.l  MK_BUF(a5),a2
         move.w  MK_H(a5),d4
         subq.w  #1,d4
 .ar_row:
-        moveq   #0,d2                ; état (0 / $FF)
+        moveq   #0,d2                ; state (0 / $FF)
         move.w  MK_L(a5),d5
         subq.w  #1,d5
 .ar_byte:
         move.b  (a2),d0
-        moveq   #0,d1                ; octet résultat
+        moveq   #0,d1                ; result byte
         moveq   #7,d3
 .ar_bit:
         btst    d3,d0
@@ -784,15 +784,15 @@ ae_rows:
         movem.l (sp)+,d2-d5/a2
         rts
 
-; ae_walk(d6 = passe 1 | 3, a2 = AreaInfo, a5) : parcourt les Count entrées. Passe 1 : arêtes non horizontales ->
-; un point par ligne [haut, bas[ ; ellipses -> bornes de chaque ligne. Passe 3 : toutes les arêtes en entier,
-; ellipses par leur tracé. Préserve d2-d7/a2-a6.
+; ae_walk(d6 = pass 1 | 3, a2 = AreaInfo, a5): walks the Count entries. Pass 1: non-horizontal edges ->
+; one point per line [top, bottom[; ellipses -> bounds of each line. Pass 3: all edges in full,
+; ellipses by their outline. Preserves d2-d7/a2-a6.
 ae_walk:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  ai_VctrTbl(a2),a3
         move.l  ai_FlagTbl(a2),a4
         move.w  ai_Count(a2),d7
-        moveq   #0,d4                ; point courant (d4 = x, d5 = y)
+        moveq   #0,d4                ; current point (d4 = x, d5 = y)
         moveq   #0,d5
 .aw_lp:
         subq.w  #1,d7
@@ -800,13 +800,13 @@ ae_walk:
         move.b  (a4)+,d0
         btst    #AF_ELLIPSE,d0
         bne.s   .aw_ell
-        movem.w (a3)+,d2-d3          ; sommet
+        movem.w (a3)+,d2-d3          ; vertex
         btst    #AF_DRAWN,d0
         beq.s   .aw_move
         cmp.w   #1,d6
         bne.s   .aw_full
         cmp.w   d5,d3
-        beq.s   .aw_move             ; horizontale : rien en passe 1
+        beq.s   .aw_move             ; horizontal: nothing in pass 1
         bsr     ae_cross
         bra.s   .aw_move
 .aw_full:
@@ -817,7 +817,7 @@ ae_walk:
         move.w  d2,d4
         move.w  d3,d5
         bra.s   .aw_lp
-.aw_ell:                             ; deux entrées : coins du rectangle englobant
+.aw_ell:                             ; two entries: corners of the bounding box
         subq.w  #1,d7
         bmi     .aw_ret
         addq.l  #1,a4
@@ -826,7 +826,7 @@ ae_walk:
         asr.w   #1,d0                ; centre
         add.w   d3,d1
         asr.w   #1,d1
-        sub.w   d0,d2                ; rayons
+        sub.w   d0,d2                ; radii
         sub.w   d1,d3
         move.w  d0,MK_CX(a5)
         move.w  d1,MK_CY(a5)
@@ -844,11 +844,11 @@ ae_walk:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; ae_cross(d4/d5 = départ, d2/d3 = arrivée, a5) : pour chaque ligne y de [min y, max y[ de l'arête, inversion du point
-; x = x(haut) + arrondi((y - y(haut)) × dx / dy). Préserve d2-d7/a2-a6.
+; ae_cross(d4/d5 = start, d2/d3 = end, a5): for each line y in [min y, max y[ of the edge, inversion of the point
+; x = x(top) + round((y - y(top)) × dx / dy). Preserves d2-d7/a2-a6.
 ae_cross:
         movem.l d2-d7,-(sp)
-        cmp.w   d3,d5                ; (d4, d5) = haut, (d2, d3) = bas
+        cmp.w   d3,d5                ; (d4, d5) = top, (d2, d3) = bottom
         ble.s   .ac_o
         exg     d2,d4
         exg     d3,d5
@@ -857,7 +857,7 @@ ae_cross:
         sub.w   d4,d6                ; dx
         move.w  d3,d7
         sub.w   d5,d7                ; dy > 0
-        moveq   #0,d2                ; d2 = rang de la ligne
+        moveq   #0,d2                ; d2 = line index
 .ac_lp:
         cmp.w   d7,d2
         bge.s   .ac_ret
@@ -867,7 +867,7 @@ ae_cross:
         moveq   #0,d1
         move.w  d7,d1
         add.l   d1,d0                ; + dy
-        add.w   d1,d1                ; diviseur 2·dy
+        add.w   d1,d1                ; divisor 2·dy
         tst.l   d0
         bmi.s   .ac_neg
         divu    d1,d0
@@ -889,15 +889,15 @@ ae_cross:
         movem.l (sp)+,d2-d7
         rts
 
-; ae_ellrows(d2 = a, d3 = b, MK_CX/MK_CY, a5) : table des demi-largeurs par ligne (maximum de x de chaque y du
-; tracé), puis inversion des deux bornes de chaque ligne. Préserve d2-d7/a2-a6.
+; ae_ellrows(d2 = a, d3 = b, MK_CX/MK_CY, a5): table of half-widths per line (maximum x of each y of the
+; outline), then inversion of the two bounds of each line. Preserves d2-d7/a2-a6.
 ae_ellrows:
         movem.l d2-d7/a3,-(sp)
         moveq   #0,d0
         move.w  d3,d0
         addq.l  #1,d0
         add.l   d0,d0
-        move.l  d0,d7                ; taille de la table
+        move.l  d0,d7                ; size of the table
         move.l  #MEMF_PUBLIC,d1
         move.l  a6,-(sp)
         move.l  ($4).w,a6
@@ -913,11 +913,11 @@ ae_ellrows:
         lea     er_max(pc),a3
         bsr     el_gen
         move.l  MK_TBL(a5),a3
-        moveq   #0,d6                ; y relatif
+        moveq   #0,d6                ; relative y
 .er_row:
         cmp.w   d3,d6
         bgt.s   .er_free
-        move.w  (a3)+,d5             ; demi-largeur
+        move.w  (a3)+,d5             ; half-width
         bmi.s   .er_next
         move.w  MK_CY(a5),d4
         add.w   d6,d4
@@ -940,7 +940,7 @@ ae_ellrows:
 .er_ret:
         movem.l (sp)+,d2-d7/a3
         rts
-.er_pair:                            ; ligne d4 : inversion en cx - d5 et cx + d5
+.er_pair:                            ; line d4: inversion at cx - d5 and cx + d5
         move.w  MK_CX(a5),d0
         sub.w   d5,d0
         move.w  d4,d1
@@ -949,7 +949,7 @@ ae_ellrows:
         add.w   d5,d0
         move.w  d4,d1
         bra     mk_bit
-er_max:                              ; rappel : table[y] = max(table[y], x)
+er_max:                              ; callback: table[y] = max(table[y], x)
         move.l  MK_TBL(a5),a0
         add.w   d1,d1
         cmp.w   0(a0,d1.w),d0
@@ -958,7 +958,7 @@ er_max:                              ; rappel : table[y] = max(table[y], x)
 .em_r:
         rts
 
-; mk_ellplot : rappel d'el_gen, les quatre points symétriques autour de MK_CX/MK_CY au masque (MK_OP).
+; mk_ellplot: el_gen callback, the four symmetric points around MK_CX/MK_CY into the mask (MK_OP).
 mk_ellplot:
         move.w  d0,d2
         move.w  d1,d3
@@ -975,8 +975,8 @@ mk_ellplot:
         add.w   d3,d1
         bra     mk_bit
 
-; ae_outline(a2 = AreaInfo, a5, a6) : si AREAOUTLINE, contour en AOlPen, JAM1, ligne pleine, sans motif : Draw (LVO)
-; vers chaque entrée dont le drapeau contour est posé, Move sinon ; ellipses jamais entourées. Préserve d2-d7/a2-a6.
+; ae_outline(a2 = AreaInfo, a5, a6): if AREAOUTLINE, outline in AOlPen, JAM1, solid line, no pattern: Draw (LVO)
+; to each entry whose outline flag is set, Move otherwise; ellipses never outlined. Preserves d2-d7/a2-a6.
 ae_outline:
         move.l  MK_RP(a5),a1
         btst    #3,MK_FLAGS+1(a5)
@@ -1040,15 +1040,15 @@ ae_outline:
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
-; Flood(rp a1, mode d2, x d0, y d1) -> d0 = 1 | 0. Mode 0 : jusqu'à la couleur AOlPen ; mode 1 : tant que la couleur
-; du point de départ. 4-connexe. Sans TmpRas, le mode 1 échoue (comme la 1.3).
-FL_STK          EQU 2048             ; graines en attente (x, y)
+; Flood(rp a1, mode d2, x d0, y d1) -> d0 = 1 | 0. Mode 0: up to the AOlPen colour; mode 1: as long as the colour
+; of the starting point. 4-connected. Without TmpRas, mode 1 fails (like 1.3).
+FL_STK          EQU 2048             ; pending seeds (x, y)
 FL_MODE         EQU MK_SIZE          ; word
-FL_TARGET       EQU MK_SIZE+2        ; word : couleur cible
-FL_W            EQU MK_SIZE+4        ; word : largeur de la zone
-FL_SP           EQU MK_SIZE+6        ; long : sommet de la pile de graines
-FL_STKB         EQU MK_SIZE+10       ; long : base de la pile
-FL_OVF          EQU MK_SIZE+14       ; word : pile débordée
+FL_TARGET       EQU MK_SIZE+2        ; word: target colour
+FL_W            EQU MK_SIZE+4        ; word: width of the area
+FL_SP           EQU MK_SIZE+6        ; long: top of the seed stack
+FL_STKB         EQU MK_SIZE+10       ; long: base of the stack
+FL_OVF          EQU MK_SIZE+14       ; word: stack overflowed
 FL_SIZE         EQU MK_SIZE+16
 gfx_Flood:
         movem.l d2-d7/a2-a5,-(sp)
@@ -1056,14 +1056,14 @@ gfx_Flood:
         move.l  sp,a5
         move.l  a1,MK_RP(a5)
         move.w  d2,FL_MODE(a5)
-        move.w  d0,d6                ; graine
+        move.w  d0,d6                ; seed
         move.w  d1,d7
         tst.w   d2
         beq.s   .fl_m0
         tst.l   rp_TmpRas(a1)
         beq     .fl_fail
 .fl_m0:
-        clr.w   MK_X0(a5)            ; zone : la couche (coordonnées de couche) ou la BitMap
+        clr.w   MK_X0(a5)            ; area: the layer (layer coordinates) or the BitMap
         clr.w   MK_Y0(a5)
         move.l  rp_Layer(a1),d0
         beq.s   .fl_bm
@@ -1082,7 +1082,7 @@ gfx_Flood:
         move.w  bm_Rows(a0),d1
 .fl_sz:
         move.w  d0,FL_W(a5)
-        clr.l   MK_ALLOC(a5)         ; le masque est toujours alloué : la TmpRas n'est pas forcément assez grande
+        clr.l   MK_ALLOC(a5)         ; the mask is always allocated: the TmpRas is not necessarily large enough
         movem.l d0-d1,-(sp)
         add.w   #15,d0
         lsr.w   #4,d0
@@ -1110,7 +1110,7 @@ gfx_Flood:
         beq     .fl_free1
         move.l  d0,FL_SP(a5)
         clr.w   FL_OVF(a5)
-        ; couleur cible
+        ; target colour
         move.w  d6,d0
         move.w  d7,d1
         bsr     fl_read
@@ -1131,7 +1131,7 @@ gfx_Flood:
         bsr     fl_span
         bra.s   .fl_loop
 .fl_more:
-        tst.w   FL_OVF(a5)           ; pile débordée : nouvelles graines au bord des zones déjà remplies
+        tst.w   FL_OVF(a5)           ; stack overflowed: new seeds at the edge of the already filled areas
         beq.s   .fl_done
         clr.w   FL_OVF(a5)
         bsr     fl_rescan
@@ -1156,7 +1156,7 @@ gfx_Flood:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; fl_read(d0 = x, d1 = y) -> d0 = couleur (ReadPixel, LVO ; -1 hors couche). Préserve d1-d7/a1-a6.
+; fl_read(d0 = x, d1 = y) -> d0 = colour (ReadPixel, LVO; -1 outside the layer). Preserves d1-d7/a1-a6.
 fl_read:
         movem.l d1/a1,-(sp)
         ext.l   d0
@@ -1166,7 +1166,7 @@ fl_read:
         movem.l (sp)+,d1/a1
         rts
 
-; fl_ok(d0 = x, d1 = y) -> Z = 0 si le point est à remplir (dans la zone, non visité, bonne couleur). Préserve
+; fl_ok(d0 = x, d1 = y) -> Z = 0 if the point must be filled (in the area, not visited, right colour). Preserves
 ; d1-d7/a1-a6.
 fl_ok:
         tst.w   d0
@@ -1193,13 +1193,13 @@ fl_ok:
         bsr.s   fl_read
         tst.w   FL_MODE(a5)
         bne.s   .fo_m1
-        tst.l   d0                   ; mode 0 : tout sauf la frontière et les points illisibles (-1)
+        tst.l   d0                   ; mode 0: everything except the boundary and unreadable points (-1)
         bmi.s   .fo_n2
         cmp.w   FL_TARGET(a5),d0
         beq.s   .fo_n2
         bra.s   .fo_y2
 .fo_m1:
-        cmp.w   FL_TARGET(a5),d0     ; mode 1 : la couleur de départ seulement
+        cmp.w   FL_TARGET(a5),d0     ; mode 1: the starting colour only
         bne.s   .fo_n2
 .fo_y2:
         movem.l (sp)+,d0-d1
@@ -1211,7 +1211,7 @@ fl_ok:
         moveq   #0,d0
         rts
 
-; fl_push(d0 = x, d1 = y) : graine empilée (pile pleine : FL_OVF). fl_pop -> d0/d1, N = 1 si la pile est vide.
+; fl_push(d0 = x, d1 = y): seed pushed (stack full: FL_OVF). fl_pop -> d0/d1, N = 1 if the stack is empty.
 fl_push:
         move.l  a0,-(sp)
         move.l  FL_SP(a5),a0
@@ -1241,14 +1241,14 @@ fl_pop:
         moveq   #-1,d2
         rts
 
-; fl_span(d0 = x, d1 = y) : étend la graine à gauche et à droite, marque la suite au masque, puis empile une graine
-; par suite remplissable des lignes du dessus et du dessous. Préserve a5/a6.
+; fl_span(d0 = x, d1 = y): extends the seed left and right, marks the run in the mask, then pushes one seed
+; per fillable run of the lines above and below. Preserves a5/a6.
 fl_span:
         move.w  d0,d4
         move.w  d1,d5
         bsr     fl_ok
         beq.s   .fs_r
-        move.w  d4,d6                ; d6 = gauche
+        move.w  d4,d6                ; d6 = left
 .fs_l:
         move.w  d6,d0
         subq.w  #1,d0
@@ -1258,7 +1258,7 @@ fl_span:
         subq.w  #1,d6
         bra.s   .fs_l
 .fs_rt:
-        move.w  d4,d7                ; d7 = droite
+        move.w  d4,d7                ; d7 = right
 .fs_r1:
         move.w  d7,d0
         addq.w  #1,d0
@@ -1277,7 +1277,7 @@ fl_span:
         addq.w  #1,d3
         cmp.w   d7,d3
         ble.s   .fs_mk
-        move.w  d5,d1                ; graines au-dessus puis au-dessous
+        move.w  d5,d1                ; seeds above then below
         subq.w  #1,d1
         bsr.s   fl_seeds
         move.w  d5,d1
@@ -1286,10 +1286,10 @@ fl_span:
 .fs_r:
         rts
 
-; fl_seeds(d1 = ligne, d6..d7 = colonnes) : une graine par suite remplissable de la ligne. Clobbe d0/d2/d3.
+; fl_seeds(d1 = line, d6..d7 = columns): one seed per fillable run of the line. Clobbers d0/d2/d3.
 fl_seeds:
         move.w  d6,d3
-        moveq   #0,d2                ; dans une suite ?
+        moveq   #0,d2                ; inside a run?
 .fd_lp:
         cmp.w   d7,d3
         bgt.s   .fd_r
@@ -1310,8 +1310,8 @@ fl_seeds:
 .fd_r:
         rts
 
-; fl_rescan : après un débordement de la pile, chaque point marqué dont un voisin (haut ou bas) est encore à remplir
-; redevient une graine. Préserve a5/a6.
+; fl_rescan: after a stack overflow, each marked point with a neighbour (above or below) still to be filled
+; becomes a seed again. Preserves a5/a6.
 fl_rescan:
         moveq   #0,d5
 .rs_row:

@@ -1,29 +1,29 @@
-; src/graphics/layers.s — layers.library V34 : couches rectangulaires empilées sur un BitMap commun.
+; src/graphics/layers.s — layers.library V34: rectangular layers stacked on a common BitMap.
 ;
-; Chaque couche porte une liste de ClipRects qui pave ses bornes : visibles (cr_lobs = 0, dessinées directement
-; dans le BitMap commun) ou cachées (cr_lobs = la couche la plus en avant qui les recouvre). Pour une couche
-; LAYERSMART, une ClipRect cachée possède un BitMap de sauvegarde (cr_BitMap) qui garde son contenu ; pour une
-; couche LAYERSIMPLE elle n'a rien : la zone redécouverte est remplie au stylo 0, ajoutée à la DamageList
-; (coordonnées relatives à la couche) et LAYERREFRESH est posé.
-; Origine d'un BitMap de sauvegarde : (MinX & ~15, MinY) de la ClipRect qui l'a créé, rangée dans cr_p1 (deux
-; mots) : la position des bits modulo 16 est la même qu'à l'écran. Les sauvegardes sont en RAM quelconque
-; (MEMF_PUBLIC) : graphics les remplit au processeur.
+; Each layer carries a list of ClipRects that tiles its bounds: visible (cr_lobs = 0, drawn directly
+; into the common BitMap) or hidden (cr_lobs = the frontmost layer that covers them). For a
+; LAYERSMART layer, a hidden ClipRect owns a backup BitMap (cr_BitMap) that keeps its contents; for a
+; LAYERSIMPLE layer it has nothing: the re-exposed area is filled with pen 0, added to the DamageList
+; (coordinates relative to the layer) and LAYERREFRESH is set.
+; Origin of a backup BitMap: (MinX & ~15, MinY) of the ClipRect that created it, stored in cr_p1 (two
+; words): the bit position modulo 16 is the same as on screen. Backups live in any RAM
+; (MEMF_PUBLIC): graphics fills them with the CPU.
 ;
-; RECONSTRUCTION (lr_rebuild), après tout changement d'ordre, de bornes, de création ou de suppression :
-;   1. nouvelles ClipRects de chaque couche (liste ly_crnew), calculées par soustractions de rectangles ;
-;   2. phase A, écran encore intact : chaque ClipRect d'une couche smart qui doit recevoir du contenu (cachée,
-;      ou visible mais déplacée / jamais visible à cet endroit) reçoit un BitMap rempli depuis les anciennes
-;      ClipRects (écran à l'ancienne position, ou anciennes sauvegardes) ;
-;   3. fond découvert (anciennement visible, plus couvert par aucune couche) : effacé au stylo 0 ;
-;   4. phase B : écriture de l'écran — sauvegardes provisoires recopiées puis rendues, zones des couches simple
-;      redécouvertes effacées et ajoutées aux dommages ;
-;   5. anciennes ClipRects (et leurs sauvegardes) libérées, nouvelles listes installées.
-; Les zones écrites à l'écran par la phase B et l'étape 3 sont disjointes : l'ordre n'a pas d'importance.
-; Couches LAYERSUPER : traitées comme LAYERSMART (pas de SuperBitMap séparé, ScrollLayer sans effet).
-; Verrous : chaque opération tient le sémaphore du Layer_Info et celui de chaque couche (LockLayers) ; graphics
-; tient celui de la couche pendant un dessin.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs layers.library + graphics/clip.h, layers.h, regions.h. LVO :
-; ordre de l'AutoDoc, recoupé avec une unité Pascal publique (layers.pas). AUCUNE lecture ROM.
+; REBUILD (lr_rebuild), after any change of order or bounds, creation or deletion:
+;   1. new ClipRects for each layer (ly_crnew list), computed by subtracting rectangles;
+;   2. phase A, screen still intact: each ClipRect of a smart layer that must receive contents (hidden,
+;      or visible but moved / never visible at that place) receives a BitMap filled from the old
+;      ClipRects (screen at the old position, or old backups);
+;   3. exposed background (previously visible, no longer covered by any layer): cleared with pen 0;
+;   4. phase B: writing the screen — temporary backups copied back then freed, re-exposed areas of simple
+;      layers cleared and added to the damage;
+;   5. old ClipRects (and their backups) freed, new lists installed.
+; The areas written to the screen by phase B and step 3 are disjoint: the order does not matter.
+; LAYERSUPER layers: treated as LAYERSMART (no separate SuperBitMap, ScrollLayer has no effect).
+; Locks: each operation holds the Layer_Info semaphore and that of each layer (LockLayers); graphics
+; holds the layer's one during a drawing.
+; IMPLEMENTATION track ("clean"): layers.library AutoDocs + graphics/clip.h, layers.h, regions.h. LVOs:
+; AutoDoc order, cross-checked against a public Pascal unit (layers.pas). NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -44,14 +44,14 @@ LY_MAXX         EQU 20
 LY_MAXY         EQU 22
 LY_FLAGS        EQU 30
 LY_SUPERBM      EQU 32
-LY_CRNEW        EQU 56               ; liste en construction (champ privé « crnew »)
-LY_SAVECR       EQU 64               ; « _cliprects » : liste normale pendant BeginUpdate
+LY_CRNEW        EQU 56               ; list under construction (private field "crnew")
+LY_SAVECR       EQU 64               ; "_cliprects": normal list during BeginUpdate
 LY_LAYERINFO    EQU 68
 LY_LOCK         EQU 72               ; struct SignalSemaphore
-LY_OLDX         EQU 138              ; reserved2 : position avant l'opération en cours
+LY_OLDX         EQU 138              ; reserved2: position before the current operation
 LY_OLDY         EQU 140
-LY_NEW          EQU 142              ; byte : couche créée par l'opération en cours
-LY_CLIPREGION   EQU 126              ; struct Region * : région de découpe de l'application (InstallClipRegion)
+LY_NEW          EQU 142              ; byte: layer created by the current operation
+LY_CLIPREGION   EQU 126              ; struct Region *: the application's clip region (InstallClipRegion)
 LY_DAMAGE       EQU 156              ; struct Region *
 LY_SIZE         EQU 160
 LAYERSIMPLE     EQU 1
@@ -60,7 +60,7 @@ LAYERSUPER      EQU 4
 LAYERUPDATING   EQU $10
 LAYERBACKDROP   EQU $40
 LAYERREFRESH    EQU $80
-LAYER_CLIPRECTS_LOST EQU $0100       ; liste réduite incomplète (mémoire insuffisante)
+LAYER_CLIPRECTS_LOST EQU $0100       ; incomplete reduced list (insufficient memory)
 ; --- struct ClipRect ---
 CR_NEXT         EQU 0
 CR_PREV         EQU 4
@@ -70,26 +70,26 @@ CR_MINX         EQU 16
 CR_MINY         EQU 18
 CR_MAXX         EQU 20
 CR_MAXY         EQU 22
-CR_ORGX         EQU 24               ; _p1 : origine (X, Y) du BitMap de sauvegarde
+CR_ORGX         EQU 24               ; _p1: origin (X, Y) of the backup BitMap
 CR_ORGY         EQU 26
-CR_FLAGS        EQU 36               ; privé : CRF_TEMP / CRF_BORROWED
+CR_FLAGS        EQU 36               ; private: CRF_TEMP / CRF_BORROWED
 CR_SIZE         EQU 40
-CRF_TEMP        EQU 1                ; sauvegarde provisoire (phase A -> B)
-CRF_BORROWED    EQU 2                ; BitMap appartenant à une autre ClipRect (liste de BeginUpdate)
-CRF_EXPOSE      EQU 4                ; visible, en place, en partie découverte : recopie directe en phase B
+CRF_TEMP        EQU 1                ; temporary backup (phase A -> B)
+CRF_BORROWED    EQU 2                ; BitMap belonging to another ClipRect (BeginUpdate list)
+CRF_EXPOSE      EQU 4                ; visible, in place, partly exposed: direct copy in phase B
 ; --- struct Layer_Info ---
 LI_TOP          EQU 0
 LI_LOCK         EQU 24
 LI_GSHEAD       EQU 70
 LI_FLAGS        EQU 88
-LI_LOCKCNT      EQU 91               ; byte : niveau d'imbrication de LockLayers
+LI_LOCKCNT      EQU 91               ; byte: LockLayers nesting level
 LI_SIZE         EQU 102
 NEWLAYERINFO_CALLED EQU 1
-; --- nœud de liste de rectangles (RegionRectangle) ---
+; --- rectangle list node (RegionRectangle) ---
 RR_NEXT         EQU 0
 RR_MINX         EQU 8
 RR_SIZE         EQU 16
-; --- base de la bibliothèque ---
+; --- library base ---
 LB_GFX          EQU LIB_SIZE
 LB_SIZE         EQU LIB_SIZE+4
 
@@ -156,7 +156,7 @@ layers_datatab:
         dc.b    0
         EVEN
 
-; initFunc (d0 = base, a6 = SysBase) : nom, GfxBase (graphics, pri 65, est déjà là).
+; initFunc (d0 = base, a6 = SysBase): name, GfxBase (graphics, pri 65, is already there).
 layers_initfunc:
         move.l  a2,-(sp)
         move.l  d0,a2
@@ -180,9 +180,9 @@ ly_null:
         moveq   #0,d0
         rts
 
-; ============================ Layer_Info et verrous ============================
+; ============================ Layer_Info and locks ============================
 
-; InitLayers(li a0) : Layer_Info vide, sémaphore initialisé.
+; InitLayers(li a0): empty Layer_Info, semaphore initialised.
 ly_InitLayers:
         move.l  a6,-(sp)
         move.l  a0,a1
@@ -195,7 +195,7 @@ ly_InitLayers:
         move.l  ($4).w,a6
         jsr     LVO_INITSEMAPHORE(a6)
         move.l  (sp)+,a0
-        lea     LI_GSHEAD+4(a0),a1   ; MinList vide
+        lea     LI_GSHEAD+4(a0),a1   ; empty MinList
         move.l  a1,LI_GSHEAD(a0)
         clr.l   LI_GSHEAD+4(a0)
         lea     LI_GSHEAD(a0),a1
@@ -203,7 +203,7 @@ ly_InitLayers:
         move.l  (sp)+,a6
         rts
 
-; NewLayerInfo() -> d0 = Layer_Info prêt, ou 0.
+; NewLayerInfo() -> d0 = ready Layer_Info, or 0.
 ly_NewLayerInfo:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
@@ -234,7 +234,7 @@ ly_DisposeLayerInfo:
         move.l  (sp)+,a6
         rts
 
-; FattenLayerInfo(li a0) -> TRUE ; ThinLayerInfo(li a0) : rien à ajouter ni retirer ici.
+; FattenLayerInfo(li a0) -> TRUE; ThinLayerInfo(li a0): nothing to add or remove here.
 ly_FattenLayerInfo:
         moveq   #-1,d0
         rts
@@ -266,8 +266,8 @@ ly_release:
         move.l  (sp)+,a6
         rts
 
-; LockLayers(li a0) : Layer_Info puis chaque couche, de l'avant vers l'arrière. Au premier niveau, la liste réduite
-; de chaque couche qui a une ClipRegion est défaite : les opérations de couches travaillent sur les listes normales.
+; LockLayers(li a0): Layer_Info then each layer, from front to back. At the first level, the reduced list
+; of each layer that has a ClipRegion is undone: layer operations work on the normal lists.
 ly_LockLayers:
         movem.l a2-a4,-(sp)
         move.l  a0,a3
@@ -297,8 +297,8 @@ ly_LockLayers:
 .ll_r:
         movem.l (sp)+,a2-a4
         rts
-; UnlockLayers(li a0). Au dernier niveau, la liste réduite de chaque couche qui a une ClipRegion est reconstruite
-; sur le nouvel arrangement.
+; UnlockLayers(li a0). At the last level, the reduced list of each layer that has a ClipRegion is rebuilt
+; on the new arrangement.
 ly_UnlockLayers:
         movem.l a2/a4,-(sp)
         move.l  a0,-(sp)
@@ -310,7 +310,7 @@ ly_UnlockLayers:
         beq.s   .ul_go
         tst.l   LY_CLIPREGION(a4)
         beq.s   .ul_rn
-        bsr     lr_unclip            ; (région installée pendant le verrou par la même tâche)
+        bsr     lr_unclip            ; (region installed during the lock by the same task)
         bsr     lr_clip
 .ul_rn:
         move.l  LY_BACK(a4),a4
@@ -331,7 +331,7 @@ ly_UnlockLayers:
         movem.l (sp)+,a2/a4
         rts
 
-; WhichLayer(li a0, x d0, y d1) -> d0 = couche la plus en avant contenant le point, ou 0.
+; WhichLayer(li a0, x d0, y d1) -> d0 = frontmost layer containing the point, or 0.
 ly_WhichLayer:
         move.l  LI_TOP(a0),a0
 .wl_lp:
@@ -354,10 +354,10 @@ ly_WhichLayer:
         moveq   #0,d0
         rts
 
-; ============================ ordre des couches ============================
-; Une couche LAYERBACKDROP reste toujours derrière les autres.
+; ============================ layer order ============================
+; A LAYERBACKDROP layer always stays behind the others.
 
-; lr_unlink(a4 = couche) : la retire de la pile de son Layer_Info.
+; lr_unlink(a4 = layer): removes it from its Layer_Info's stack.
 lr_unlink:
         move.l  LY_LAYERINFO(a4),a0
         move.l  LY_FRONT(a4),d0
@@ -379,12 +379,12 @@ lr_unlink:
         clr.l   LY_BACK(a4)
         rts
 
-; lr_insert(a4 = couche, a0 = couche devant laquelle l'insérer, 0 = tout à l'arrière).
+; lr_insert(a4 = layer, a0 = layer in front of which to insert it, 0 = at the very back).
 lr_insert:
         move.l  LY_LAYERINFO(a4),a1
         cmpa.w  #0,a0
         bne.s   .in_before
-        move.l  LI_TOP(a1),d0        ; à l'arrière : après la dernière
+        move.l  LI_TOP(a1),d0        ; at the back: after the last one
         bne.s   .in_last
         move.l  a4,LI_TOP(a1)
         rts
@@ -413,8 +413,8 @@ lr_insert:
         move.l  a4,LY_BACK(a0)
         rts
 
-; lr_frontpos(a4 = couche hors pile) -> a0 = couche devant laquelle la placer « tout devant » : la première pour une
-; couche normale, la première couche backdrop pour une backdrop (0 = à l'arrière).
+; lr_frontpos(a4 = layer outside the stack) -> a0 = layer in front of which to place it "at the very front": the first
+; one for a normal layer, the first backdrop layer for a backdrop (0 = at the back).
 lr_frontpos:
         move.l  LY_LAYERINFO(a4),a0
         move.l  LI_TOP(a0),a0
@@ -423,7 +423,7 @@ lr_frontpos:
         bra     lr_firstbackdrop
 .fp_r:
         rts
-; lr_backpos(a4) -> a0 = position « tout derrière » : première backdrop pour une couche normale, 0 pour une backdrop.
+; lr_backpos(a4) -> a0 = "at the very back" position: first backdrop for a normal layer, 0 for a backdrop.
 lr_backpos:
         suba.l  a0,a0
         btst    #6,LY_FLAGS+1(a4)
@@ -433,7 +433,7 @@ lr_backpos:
         bra     lr_firstbackdrop
 .bp_r:
         rts
-; lr_firstbackdrop(a0 = départ) -> a0 = première couche backdrop à partir de a0, ou 0.
+; lr_firstbackdrop(a0 = start) -> a0 = first backdrop layer starting from a0, or 0.
 lr_firstbackdrop:
         cmpa.w  #0,a0
         beq.s   .fb_r
@@ -444,31 +444,31 @@ lr_firstbackdrop:
 .fb_r:
         rts
 
-; ============================ création / suppression ============================
+; ============================ creation / deletion ============================
 
-; CreateUpfrontLayer(li a0, bm a1, x0 d0, y0 d1, x1 d2, y1 d3, flags d4, bm2 a2) -> d0 = couche ou 0.
+; CreateUpfrontLayer(li a0, bm a1, x0 d0, y0 d1, x1 d2, y1 d3, flags d4, bm2 a2) -> d0 = layer or 0.
 ly_CreateUpfrontLayer:
         movem.l d2-d7/a2-a6,-(sp)
         moveq   #0,d7
         bra     lr_create
-; CreateBehindLayer(...) : même chose, placée derrière.
+; CreateBehindLayer(...): same thing, placed behind.
 ly_CreateBehindLayer:
         movem.l d2-d7/a2-a6,-(sp)
         moveq   #1,d7
-; lr_create : d7 = 0 devant / 1 derrière ; registres de l'appelant déjà empilés.
+; lr_create: d7 = 0 in front / 1 behind; caller's registers already pushed.
 lr_create:
-        move.l  d7,-(sp)             ; position demandée
+        move.l  d7,-(sp)             ; requested position
         move.l  a6,a5                ; a5 = LayersBase
         move.l  a0,a3                ; a3 = Layer_Info
-        movem.w d0-d3,-(sp)          ; bornes
-        move.l  a1,-(sp)             ; BitMap commun
+        movem.w d0-d3,-(sp)          ; bounds
+        move.l  a1,-(sp)             ; common BitMap
         move.l  ($4).w,a6
         move.l  #LY_SIZE+rp_SIZEOF,d0
         move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .cr_fail
-        move.l  d0,a4                ; a4 = couche, RastPort juste après
+        move.l  d0,a4                ; a4 = layer, RastPort right after it
         move.l  (sp)+,d5             ; d5 = BitMap
         movem.w (sp)+,d0-d3
         movem.w d0-d3,LY_MINX(a4)
@@ -500,7 +500,7 @@ lr_create:
         bsr     lr_backpos
 .cr_ins:
         bsr     lr_insert
-        lea     LY_LOCK(a4),a0       ; la nouvelle couche est verrouillée comme les autres pendant l'opération
+        lea     LY_LOCK(a4),a0       ; the new layer is locked like the others during the operation
         bsr     ly_obtain
         move.l  a3,a0
         suba.l  a1,a1
@@ -510,20 +510,20 @@ lr_create:
         move.l  a4,d0
         bra.s   .cr_out
 .cr_fail:
-        lea     16(sp),sp            ; BitMap + bornes + position
+        lea     16(sp),sp            ; BitMap + bounds + position
         moveq   #0,d0
 .cr_out:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; DeleteLayer(dummy a0, l a1) -> TRUE. Les couches de derrière et le fond récupèrent la zone. Trois étapes appelées
-; avec leur argument sur la pile (convention C) : verrou de tout le Layer_Info, retrait de la couche, déverrou.
-; Le mot d'entrée est suivi d'un branchement vers le corps, dont les trois BSR sont les seuls de la séquence :
-; SetPatch 1.38 retrouve ainsi ces trois étapes pour son propre DeleteLayer (docs/analysis/setpatch-138.md §1.8).
+; DeleteLayer(dummy a0, l a1) -> TRUE. The layers behind and the background get the area back. Three steps called
+; with their argument on the stack (C convention): lock of the whole Layer_Info, removal of the layer, unlock.
+; The entry word is followed by a branch to the body, whose three BSRs are the only ones in the sequence:
+; that is how SetPatch 1.38 finds these three steps for its own DeleteLayer (docs/analysis/setpatch-138.md §1.8).
 ly_DeleteLayer:
         nop
         bra.s   ly_dl_body
-; ly_dl_lock(Layer_Info) -> d0 = 1 : couches et Layer_Info verrouillés. Convention C (préserve d2-d7/a2-a6).
+; ly_dl_lock(Layer_Info) -> d0 = 1: layers and Layer_Info locked. C convention (preserves d2-d7/a2-a6).
 ly_dl_lock:
         move.l  4(sp),a0
         bsr     ly_LockLayers
@@ -547,18 +547,18 @@ ly_dl_body:
         moveq   #-1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; ly_dl_remove(couche, a6 = LayersBase) : la couche quitte la pile, la zone est rendue aux couches de derrière et au fond,
-; puis ses ClipRects, sa région de dommages et sa mémoire sont libérées. Le Layer_Info reste verrouillé.
+; ly_dl_remove(layer, a6 = LayersBase): the layer leaves the stack, the area is given back to the layers behind and
+; to the background, then its ClipRects, damage region and memory are freed. The Layer_Info stays locked.
 ly_dl_remove:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  44+4(sp),a4          ; couche (au-dessus des 11 registres sauvés et du retour)
+        move.l  44+4(sp),a4          ; layer (above the 11 saved registers and the return address)
         move.l  a6,a5
         move.l  LY_LAYERINFO(a4),a3
         bsr     lr_unlink
         move.l  a3,a0
-        move.l  a4,a1                ; anciennes ClipRects de la couche supprimée : fond à découvrir
+        move.l  a4,a1                ; old ClipRects of the deleted layer: background to expose
         bsr     lr_rebuild
-        lea     LY_LOCK(a4),a0       ; son verrou n'est plus rendu par UnlockLayers (elle a quitté la pile)
+        lea     LY_LOCK(a4),a0       ; its lock is no longer released by UnlockLayers (it has left the stack)
         bsr     ly_release
         lea     LY_CLIPRECT(a4),a2
         bsr     lr_freecrs
@@ -572,9 +572,9 @@ ly_dl_remove:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ============================ ordre, position, taille ============================
-; lr_op_enter(a1 = couche) : a5 = LayersBase, a4 = couche, a3 = Layer_Info, tout verrouillé.
-; lr_op_leave : reconstruit, déverrouille, d0 = TRUE. (Cadre : d2-d7/a2-a6 empilés par l'appelant.)
+; ============================ order, position, size ============================
+; lr_op_enter(a1 = layer): a5 = LayersBase, a4 = layer, a3 = Layer_Info, everything locked.
+; lr_op_leave: rebuilds, unlocks, d0 = TRUE. (Frame: d2-d7/a2-a6 pushed by the caller.)
 lr_op_enter:
         move.l  a6,a5
         move.l  a1,a4
@@ -608,7 +608,7 @@ lr_reorder:
         bsr     lr_op_leave
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; MoveLayerInFrontOf(l a0, other a1) -> TRUE : l juste devant other.
+; MoveLayerInFrontOf(l a0, other a1) -> TRUE: l just in front of other.
 ly_MoveLayerInFrontOf:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a1,-(sp)
@@ -632,7 +632,7 @@ ly_MoveLayer:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; SizeLayer(dummy a0, l a1, dx d0, dy d1) -> TRUE : coin bas-droit déplacé, contenu gardé dans la partie commune.
+; SizeLayer(dummy a0, l a1, dx d0, dy d1) -> TRUE: bottom-right corner moved, contents kept in the common part.
 ly_SizeLayer:
         movem.l d2-d7/a2-a6,-(sp)
         movem.w d0-d1,-(sp)
@@ -644,14 +644,14 @@ ly_SizeLayer:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ScrollLayer(dummy a0, l a1, dx d0, dy d1) : réservé aux SuperBitMaps, non gérés ici.
+; ScrollLayer(dummy a0, l a1, dx d0, dy d1): reserved for SuperBitMaps, not handled here.
 ly_ScrollLayer:
         rts
 
 ; ============================ BeginUpdate / EndUpdate ============================
 
-; BeginUpdate(l a0) -> TRUE : la liste de ClipRects devient sa partie dans la DamageList (∩ ClipRegion s'il y en a
-; une), pour ne redessiner que les zones abîmées. La couche reste verrouillée jusqu'à EndUpdate.
+; BeginUpdate(l a0) -> TRUE: the ClipRect list becomes its part within the DamageList (∩ ClipRegion if there is
+; one), so that only the damaged areas are redrawn. The layer stays locked until EndUpdate.
 ly_BeginUpdate:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a4
@@ -664,8 +664,8 @@ ly_BeginUpdate:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; InstallClipRegion(l a0, region a1) -> d0 = ancienne région. La liste de ClipRects devient sa partie dans la région
-; (coordonnées de la couche) : un instantané, une région modifiée doit être réinstallée. NULL : liste normale.
+; InstallClipRegion(l a0, region a1) -> d0 = old region. The ClipRect list becomes its part within the region
+; (layer coordinates): a snapshot, a modified region must be reinstalled. NULL: normal list.
 ly_InstallClipRegion:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a4
@@ -682,27 +682,27 @@ ly_InstallClipRegion:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_unclip(a4 = couche) : liste réduite (BeginUpdate ou ClipRegion) libérée, liste normale rétablie. Préserve
+; lr_unclip(a4 = layer): reduced list (BeginUpdate or ClipRegion) freed, normal list restored. Preserves
 ; d2-d7/a2-a6.
 lr_unclip:
         tst.l   LY_SAVECR(a4)
         beq.s   .uc_r
         move.l  a2,-(sp)
         lea     LY_CLIPRECT(a4),a2
-        bsr     lr_freecrs           ; ClipRects empruntées : BitMaps non libérés
+        bsr     lr_freecrs           ; borrowed ClipRects: BitMaps not freed
         move.l  LY_SAVECR(a4),LY_CLIPRECT(a4)
         clr.l   LY_SAVECR(a4)
         move.l  (sp)+,a2
 .uc_r:
         rts
 
-; lr_clip(a4 = couche, liste normale en place) : C = DamageList (∩ ClipRegion) pendant BeginUpdate, sinon ClipRegion ;
-; sans C, rien. Sinon la liste normale est gardée dans ly__cliprects et remplacée par ses ClipRects ∩ C : visibles,
-; et cachées avec sauvegarde (BitMap emprunté : dessiner dedans écrit la sauvegarde). Région sans rectangle : aucun
-; ClipRect. Mémoire insuffisante : liste partielle et LAYER_CLIPRECTS_LOST. Préserve d2-d7/a2-a6.
+; lr_clip(a4 = layer, normal list in place): C = DamageList (∩ ClipRegion) during BeginUpdate, else ClipRegion;
+; without C, nothing. Otherwise the normal list is kept in ly__cliprects and replaced by its ClipRects ∩ C: visible,
+; and hidden with backup (borrowed BitMap: drawing into it writes the backup). Region without rectangles: no
+; ClipRect. Insufficient memory: partial list and LAYER_CLIPRECTS_LOST. Preserves d2-d7/a2-a6.
 lr_clip:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  LY_CLIPREGION(a4),d6 ; d6 = 1re région, d7 = 2e (0 : aucune)
+        move.l  LY_CLIPREGION(a4),d6 ; d6 = 1st region, d7 = 2nd (0: none)
         moveq   #0,d7
         btst    #4,LY_FLAGS+1(a4)    ; LAYERUPDATING
         beq.s   .cl_reg
@@ -713,7 +713,7 @@ lr_clip:
         tst.l   d6
         beq     .cl_ret
 .cl_build:
-        clr.l   -(sp)                ; cellule de la nouvelle liste
+        clr.l   -(sp)                ; cell of the new list
         move.l  sp,a5
         move.l  LY_CLIPRECT(a4),a3
 .cb_cr:
@@ -722,7 +722,7 @@ lr_clip:
         tst.l   CR_LOBS(a3)
         beq.s   .cb_use
         tst.l   CR_BITMAP(a3)
-        beq.s   .cb_next             ; caché sans sauvegarde : rien à dessiner
+        beq.s   .cb_next             ; hidden without backup: nothing to draw
 .cb_use:
         tst.l   d6
         beq.s   .cb_next
@@ -741,7 +741,7 @@ lr_clip:
         bsr.s   .cb_add
         bra.s   .cb_n1
 .cb_two:
-        movem.w d0-d3,-(sp)          ; ClipRect ∩ rectangle de la 1re région
+        movem.w d0-d3,-(sp)          ; ClipRect ∩ rectangle of the 1st region
         move.l  d7,a0
         move.l  8(a0),a6
 .cb_r2:
@@ -766,7 +766,7 @@ lr_clip:
 .cb_next:
         move.l  CR_NEXT(a3),a3
         bra.s   .cb_cr
-.cb_add:                             ; ClipRect d0..d3 en tête de la liste (a5), mêmes lobs/sauvegarde que a3
+.cb_add:                             ; ClipRect d0..d3 at the head of the list (a5), same lobs/backup as a3
         move.l  a5,a1
         bsr     lr_newcr
         cmpa.w  #0,a0
@@ -786,7 +786,7 @@ lr_clip:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_isect(d0..d3 = rectangle, a0 = bornes (4 mots)) -> d0..d3 ∩ bornes ; condition GT si l'intersection est vide.
+; lr_isect(d0..d3 = rectangle, a0 = bounds (4 words)) -> d0..d3 ∩ bounds; condition GT if the intersection is empty.
 lr_isect:
         cmp.w   (a0),d0
         bge.s   .is_1
@@ -810,11 +810,11 @@ lr_isect:
 .is_r:
         rts
 
-; lr_dmgrect(a4 = couche, a0 = région relative à la couche, a2 = son rectangle) -> d0..d3 = rectangle absolu.
-; Clobbe d4.
+; lr_dmgrect(a4 = layer, a0 = region relative to the layer, a2 = its rectangle) -> d0..d3 = absolute rectangle.
+; Clobbers d4.
 lr_dmgrect:
         movem.w RR_MINX(a2),d0-d3
-        move.w  (a0),d4              ; région : bornes relatives à la couche
+        move.w  (a0),d4              ; region: bounds relative to the layer
         add.w   LY_MINX(a4),d4
         add.w   d4,d0
         add.w   d4,d2
@@ -824,7 +824,8 @@ lr_dmgrect:
         add.w   d4,d3
         rts
 
-; EndUpdate(l a0, flag d0) : liste normale rétablie (ou réduite à la ClipRegion) ; flag != 0 -> dommages effacés et LAYERREFRESH retiré.
+; EndUpdate(l a0, flag d0): normal list restored (or reduced to the ClipRegion); flag != 0 -> damage cleared and
+; LAYERREFRESH removed.
 ly_EndUpdate:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a4
@@ -834,7 +835,7 @@ ly_EndUpdate:
         beq.s   .eu_flag
         bsr     lr_unclip
         and.w   #~LAYERUPDATING,LY_FLAGS(a4)
-        bsr     lr_clip              ; ClipRegion seule, s'il y en a une
+        bsr     lr_clip              ; ClipRegion only, if there is one
 .eu_flag:
         tst.l   d7
         beq.s   .eu_unlock
@@ -850,41 +851,41 @@ ly_EndUpdate:
 
 ; ============================ SwapBitsRastPortClipRect ============================
 
-; SwapBitsRastPortClipRect(rp a0, cr a1) : échange le contenu de la zone de la ClipRect dans le BitMap du RastPort
-; avec celui du BitMap de la ClipRect (même alignement des bits : échange octet par octet, bords masqués).
+; SwapBitsRastPortClipRect(rp a0, cr a1): swaps the contents of the ClipRect's area in the RastPort's BitMap
+; with that of the ClipRect's BitMap (same bit alignment: byte-by-byte swap, edges masked).
 ly_SwapBitsRastPortClipRect:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  CR_BITMAP(a1),d0
         beq     .sw_r
-        move.l  d0,a3                ; a3 = BitMap de la ClipRect
-        move.l  rp_BitMap(a0),a2     ; a2 = BitMap du RastPort
+        move.l  d0,a3                ; a3 = BitMap of the ClipRect
+        move.l  rp_BitMap(a0),a2     ; a2 = BitMap of the RastPort
         move.w  CR_MINX(a1),d4
         move.w  CR_MAXX(a1),d5
-        move.w  d4,d0                ; masques de bord
+        move.w  d4,d0                ; edge masks
         and.w   #7,d0
         moveq   #-1,d6
-        lsr.b   d0,d6                ; d6.b = masque gauche
+        lsr.b   d0,d6                ; d6.b = left mask
         move.w  d5,d0
         and.w   #7,d0
         moveq   #7,d1
         sub.w   d0,d1
         moveq   #-1,d7
-        lsl.b   d1,d7                ; d7.b = masque droit
-        lsr.w   #3,d4                ; octets de début / fin (écran)
+        lsl.b   d1,d7                ; d7.b = right mask
+        lsr.w   #3,d4                ; start / end bytes (screen)
         lsr.w   #3,d5
         cmp.w   d4,d5
         bne.s   .sw_m
         and.b   d7,d6
 .sw_m:
-        move.w  CR_MINY(a1),d3       ; d3 = ligne écran
-        moveq   #0,d2                ; d2 = ligne sauvegarde
+        move.w  CR_MINY(a1),d3       ; d3 = screen row
+        moveq   #0,d2                ; d2 = backup row
         move.w  CR_ORGX(a1),d0
         lsr.w   #3,d0
-        move.w  d0,a6                ; a6 = décalage en octets de l'origine de la sauvegarde
+        move.w  d0,a6                ; a6 = byte offset of the backup's origin
 .sw_row:
         cmp.w   CR_MAXY(a1),d3
         bgt     .sw_r
-        moveq   #0,d1                ; plan
+        moveq   #0,d1                ; plane
 .sw_plane:
         cmp.b   bm_Depth(a2),d1
         bge.s   .sw_rnext
@@ -898,18 +899,18 @@ ly_SwapBitsRastPortClipRect:
         move.w  bm_BytesPerRow(a2),d0
         mulu    d3,d0
         add.l   d0,a4
-        add.w   d4,a4                ; a4 = premier octet écran
+        add.w   d4,a4                ; a4 = first screen byte
         moveq   #0,d0
         move.w  bm_BytesPerRow(a3),d0
         mulu    d2,d0
         add.l   d0,a5
         move.w  d4,d0
         sub.w   a6,d0
-        add.w   d0,a5                ; a5 = premier octet sauvegarde
+        add.w   d0,a5                ; a5 = first backup byte
         movem.l d1-d3,-(sp)
-        move.w  d4,d3                ; d3 = octet courant
+        move.w  d4,d3                ; d3 = current byte
 .sw_byte:
-        moveq   #-1,d0               ; d0.b = masque de l'octet
+        moveq   #-1,d0               ; d0.b = mask of the byte
         cmp.w   d4,d3
         bne.s   .sw_nf
         and.b   d6,d0
@@ -918,10 +919,10 @@ ly_SwapBitsRastPortClipRect:
         bne.s   .sw_nl
         and.b   d7,d0
 .sw_nl:
-        move.b  (a4),d1              ; échange sous masque
+        move.b  (a4),d1              ; masked swap
         move.b  (a5),d2
         eor.b   d2,d1
-        and.b   d0,d1                ; d1 = bits à basculer
+        and.b   d0,d1                ; d1 = bits to toggle
         eor.b   d1,(a4)+
         eor.b   d1,(a5)+
         addq.w  #1,d3
@@ -938,10 +939,10 @@ ly_SwapBitsRastPortClipRect:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ============================ outils de ClipRects ============================
+; ============================ ClipRect tools ============================
 
-; lr_newcr(d0..d3 = bornes, a1 = cellule de liste) -> a0 = ClipRect mise à zéro, en tête de la liste, ou 0.
-; Préserve d0-d7/a1-a6.
+; lr_newcr(d0..d3 = bounds, a1 = list cell) -> a0 = zeroed ClipRect, at the head of the list, or 0.
+; Preserves d0-d7/a1-a6.
 lr_newcr:
         movem.l d0-d3/a1/a6,-(sp)
         move.l  ($4).w,a6
@@ -958,7 +959,7 @@ lr_newcr:
 .nc_r:
         rts
 
-; lr_freecrs(a2 = cellule de liste) : libère les ClipRects et les BitMaps qu'elles possèdent (pas les empruntés).
+; lr_freecrs(a2 = list cell): frees the ClipRects and the BitMaps they own (not borrowed ones).
 lr_freecrs:
         movem.l a3/a6,-(sp)
         move.l  ($4).w,a6
@@ -982,7 +983,7 @@ lr_freecrs:
         movem.l (sp)+,a3/a6
         rts
 
-; lr_bmsize(a0 = BitMap de sauvegarde) -> d0 = taille de l'allocation (struct + plans contigus).
+; lr_bmsize(a0 = backup BitMap) -> d0 = size of the allocation (struct + contiguous planes).
 lr_bmsize:
         moveq   #0,d0
         move.w  bm_BytesPerRow(a0),d0
@@ -992,34 +993,34 @@ lr_bmsize:
         mulu    d1,d0
         add.l   #bm_SIZEOF,d0
         rts
-; lr_freebm(a0 = BitMap de sauvegarde, a6 = SysBase).
+; lr_freebm(a0 = backup BitMap, a6 = SysBase).
 lr_freebm:
         bsr     lr_bmsize
         move.l  a0,a1
         jmp     LVO_FREEMEM(a6)
 
-; lr_allocbm(a3 = ClipRect, d7.b = profondeur) -> cr_BitMap + origine posés (0 si mémoire insuffisante).
-; Plans contigus après la structure, mis à zéro. Préserve d2-d7/a2-a6.
+; lr_allocbm(a3 = ClipRect, d7.b = depth) -> cr_BitMap + origin set (0 if insufficient memory).
+; Contiguous planes after the structure, zeroed. Preserves d2-d7/a2-a6.
 lr_allocbm:
         movem.l d2-d4/a6,-(sp)
         move.w  CR_MINX(a3),d2
-        and.w   #~15,d2              ; origine X alignée sur 16
+        and.w   #~15,d2              ; X origin aligned to 16
         move.w  d2,CR_ORGX(a3)
         move.w  CR_MINY(a3),CR_ORGY(a3)
         move.w  CR_MAXX(a3),d3
         sub.w   d2,d3
         lsr.w   #4,d3
         addq.w  #1,d3
-        add.w   d3,d3                ; d3 = octets par ligne
+        add.w   d3,d3                ; d3 = bytes per row
         move.w  CR_MAXY(a3),d4
         sub.w   CR_MINY(a3),d4
-        addq.w  #1,d4                ; d4 = lignes
+        addq.w  #1,d4                ; d4 = rows
         moveq   #0,d0
         move.w  d3,d0
         mulu    d4,d0
         moveq   #0,d1
         move.b  d7,d1
-        mulu    d1,d0                ; plans x profondeur
+        mulu    d1,d0                ; planes x depth
         add.l   #bm_SIZEOF,d0
         move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
         move.l  ($4).w,a6
@@ -1030,9 +1031,9 @@ lr_allocbm:
         move.w  d3,bm_BytesPerRow(a0)
         move.w  d4,bm_Rows(a0)
         move.b  d7,bm_Depth(a0)
-        moveq   #0,d1                ; plans
+        moveq   #0,d1                ; planes
         move.w  d3,d1
-        mulu    d4,d1                ; d1 = taille d'un plan
+        mulu    d4,d1                ; d1 = size of one plane
         lea     bm_SIZEOF(a0),a1
         moveq   #0,d0
 .ab_pl:
@@ -1048,8 +1049,8 @@ lr_allocbm:
         movem.l (sp)+,d2-d4/a6
         rts
 
-; lr_blt : BltBitMap(src a0, sx d0, sy d1, dst a1, dx d2, dy d3, w d4, h d5, minterm d6) via graphics (a5 =
-; LayersBase). Préserve d2-d7/a2-a6.
+; lr_blt: BltBitMap(src a0, sx d0, sy d1, dst a1, dx d2, dy d3, w d4, h d5, minterm d6) via graphics (a5 =
+; LayersBase). Preserves d2-d7/a2-a6.
 lr_blt:
         movem.l d7/a6,-(sp)
         moveq   #-1,d7
@@ -1058,7 +1059,7 @@ lr_blt:
         movem.l (sp)+,d7/a6
         rts
 
-; lr_clear(a0 = BitMap, d0..d3 = rectangle absolu) : zone au stylo 0 (tous les plans à 0). Préserve d0-d7/a2-a6.
+; lr_clear(a0 = BitMap, d0..d3 = absolute rectangle): area set to pen 0 (all planes at 0). Preserves d0-d7/a2-a6.
 lr_clear:
         movem.l d0-d6,-(sp)
         move.w  d2,d4
@@ -1070,13 +1071,13 @@ lr_clear:
         move.w  d0,d2
         move.w  d1,d3
         move.l  a0,a1
-        moveq   #0,d6                ; minterm 0 : résultat nul
+        moveq   #0,d6                ; minterm 0: null result
         bsr     lr_blt
         movem.l (sp)+,d0-d6
         rts
 
-; lr_damage(a4 = couche, d0..d3 = rectangle absolu) : ajouté à la DamageList (relatif à la couche), LAYERREFRESH.
-; Préserve d0-d7/a2-a6 (pas a0/a1).
+; lr_damage(a4 = layer, d0..d3 = absolute rectangle): added to the DamageList (relative to the layer), LAYERREFRESH.
+; Preserves d0-d7/a2-a6 (not a0/a1).
 lr_damage:
         movem.l d0-d3/a6,-(sp)
         sub.w   LY_MINX(a4),d0
@@ -1096,13 +1097,13 @@ lr_damage:
         movem.l (sp)+,d0-d3/a6
         rts
 
-; lr_screenbm(a4 = couche) -> a0 = BitMap commun (celui de son RastPort).
+; lr_screenbm(a4 = layer) -> a0 = common BitMap (the one of its RastPort).
 lr_screenbm:
         move.l  LY_RP(a4),a0
         move.l  rp_BitMap(a0),a0
         rts
 
-; lr_moved(a4) -> Z = 0 si la couche a changé de position pendant l'opération.
+; lr_moved(a4) -> Z = 0 if the layer changed position during the operation.
 lr_moved:
         move.w  LY_MINX(a4),d0
         cmp.w   LY_OLDX(a4),d0
@@ -1112,13 +1113,13 @@ lr_moved:
 .mv_r:
         rts
 
-; ============================ reconstruction ============================
+; ============================ rebuild ============================
 
-; lr_rebuild(a3 = Layer_Info, a1 = couche supprimée ou 0, a5 = LayersBase). Couches verrouillées par l'appelant.
+; lr_rebuild(a3 = Layer_Info, a1 = deleted layer or 0, a5 = LayersBase). Layers locked by the caller.
 lr_rebuild:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  a1,-(sp)             ; (sp) = couche supprimée
-        move.l  LI_TOP(a3),a4        ; 1. nouvelles ClipRects
+        move.l  a1,-(sp)             ; (sp) = deleted layer
+        move.l  LI_TOP(a3),a4        ; 1. new ClipRects
 .rb_1:
         cmpa.w  #0,a4
         beq.s   .rb_2
@@ -1126,7 +1127,7 @@ lr_rebuild:
         move.l  LY_BACK(a4),a4
         bra.s   .rb_1
 .rb_2:
-        move.l  LI_TOP(a3),a4        ; 2. phase A (couches smart)
+        move.l  LI_TOP(a3),a4        ; 2. phase A (smart layers)
 .rb_2l:
         cmpa.w  #0,a4
         beq.s   .rb_3
@@ -1139,7 +1140,7 @@ lr_rebuild:
         bra.s   .rb_2l
 .rb_3:
         move.l  (sp),a1
-        bsr     lr_background        ; 3. fond découvert
+        bsr     lr_background        ; 3. exposed background
         move.l  LI_TOP(a3),a4        ; 4. phase B
 .rb_4l:
         cmpa.w  #0,a4
@@ -1157,7 +1158,7 @@ lr_rebuild:
         move.l  LY_CRNEW(a4),a0
         move.l  a0,LY_CLIPRECT(a4)
         clr.l   LY_CRNEW(a4)
-        suba.l  a1,a1                ; liens arrière
+        suba.l  a1,a1                ; back links
 .rb_prev:
         cmpa.w  #0,a0
         beq.s   .rb_pd
@@ -1176,22 +1177,22 @@ lr_rebuild:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_newcrs(a4 = couche, a3 = Layer_Info) : ly_crnew = ClipRects de ses bornes face aux couches de devant.
-; reste = {bornes} ; pour chaque couche A devant (de l'avant vers l'arrière) : (reste ∩ A) -> ClipRects cachées
-; par A, reste -= A ; ce qui reste est visible.
+; lr_newcrs(a4 = layer, a3 = Layer_Info): ly_crnew = ClipRects of its bounds against the layers in front.
+; rest = {bounds}; for each layer A in front (from front to back): (rest ∩ A) -> ClipRects hidden
+; by A, rest -= A; what remains is visible.
 lr_newcrs:
         movem.l d2-d7/a2-a6,-(sp)
         clr.l   LY_CRNEW(a4)
-        clr.l   -(sp)                ; 4(sp) = reste, (sp) = temporaire
+        clr.l   -(sp)                ; 4(sp) = rest, (sp) = temporary
         clr.l   -(sp)
         lea     4(sp),a2
         lea     LY_MINX(a4),a1
         bsr     rl_add
-        move.l  LI_TOP(a3),a6        ; a6 = couche de devant courante
+        move.l  LI_TOP(a3),a6        ; a6 = current front layer
 .nc_front:
         cmp.l   a4,a6
         beq.s   .nc_vis
-        move.l  sp,a2                ; temporaire = copie du reste ∩ A
+        move.l  sp,a2                ; temporary = copy of rest ∩ A
         move.l  4(sp),a0
 .nc_copy:
         cmpa.w  #0,a0
@@ -1207,7 +1208,7 @@ lr_newcrs:
         move.l  sp,a2
         lea     LY_MINX(a6),a1
         bsr     rl_and
-        move.l  (sp),a0              ; pièces cachées par A
+        move.l  (sp),a0              ; pieces hidden by A
         move.l  a6,d4
         bsr     lr_rr2cr
         move.l  sp,a2
@@ -1218,7 +1219,7 @@ lr_newcrs:
         move.l  LY_BACK(a6),a6
         bra.s   .nc_front
 .nc_vis:
-        move.l  4(sp),a0             ; pièces visibles
+        move.l  4(sp),a0             ; visible pieces
         moveq   #0,d4
         bsr     lr_rr2cr
         lea     4(sp),a2
@@ -1226,7 +1227,7 @@ lr_newcrs:
         addq.l  #8,sp
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; lr_rr2cr(a0 = premier nœud rectangle, d4 = lobs, a4 = couche) : une ClipRect par rectangle, dans ly_crnew.
+; lr_rr2cr(a0 = first rectangle node, d4 = lobs, a4 = layer): one ClipRect per rectangle, in ly_crnew.
 lr_rr2cr:
         cmpa.w  #0,a0
         beq.s   .rc_r
@@ -1244,24 +1245,24 @@ lr_rr2cr:
 .rc_r:
         rts
 
-; lr_phasea(a4 = couche smart) : sauvegardes des nouvelles ClipRects qui doivent recevoir du contenu.
+; lr_phasea(a4 = smart layer): backups of the new ClipRects that must receive contents.
 lr_phasea:
         movem.l d2-d7/a2-a6,-(sp)
         bsr     lr_screenbm
-        move.b  bm_Depth(a0),d7      ; profondeur des sauvegardes
+        move.b  bm_Depth(a0),d7      ; depth of the backups
         move.l  LY_CRNEW(a4),a3
 .pa_lp:
         cmpa.w  #0,a3
         beq.s   .pa_r
         tst.l   CR_LOBS(a3)
-        bne.s   .pa_save             ; cachée : sauvegarde permanente
+        bne.s   .pa_save             ; hidden: permanent backup
         tst.b   LY_NEW(a4)
         bne.s   .pa_temp
         bsr     lr_moved
         bne.s   .pa_temp
-        bsr     lr_oldviscovers      ; déjà visible ici et non déplacée : l'écran est juste
+        bsr     lr_oldviscovers      ; already visible here and not moved: the screen is correct
         beq.s   .pa_next
-        move.b  #CRF_EXPOSE,CR_FLAGS+3(a3)   ; en place : seules les parties découvertes iront à l'écran (phase B)
+        move.b  #CRF_EXPOSE,CR_FLAGS+3(a3)   ; in place: only the exposed parts will go to the screen (phase B)
         bra.s   .pa_next
 .pa_temp:
         move.b  #CRF_TEMP,CR_FLAGS+3(a3)
@@ -1277,8 +1278,8 @@ lr_phasea:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_oldviscovers(a3 = ClipRect, a4 = couche) -> Z = 1 si ses bornes sont couvertes par les anciennes ClipRects
-; visibles de la couche (à la même position).
+; lr_oldviscovers(a3 = ClipRect, a4 = layer) -> Z = 1 if its bounds are covered by the layer's old visible
+; ClipRects (at the same position).
 lr_oldviscovers:
         movem.l d2-d7/a2-a6,-(sp)
         clr.l   -(sp)
@@ -1297,30 +1298,30 @@ lr_oldviscovers:
         move.l  CR_NEXT(a3),a3
         bra.s   .oc_lp
 .oc_end:
-        move.l  (sp),d2              ; reste ?
+        move.l  (sp),d2              ; remainder?
         bsr     rl_free
         addq.l  #4,sp
         tst.l   d2
-        movem.l (sp)+,d2-d7/a2-a6    ; movem vers registres : Z intact
+        movem.l (sp)+,d2-d7/a2-a6    ; movem to registers: Z intact
         rts
 
-; lr_fill(a3 = nouvelle ClipRect avec sauvegarde, a4 = couche) : contenu depuis les anciennes ClipRects (décalées du
-; déplacement), puis la partie sans ancien contenu (agrandissement) en dommages, sauf couche neuve.
+; lr_fill(a3 = new ClipRect with backup, a4 = layer): contents from the old ClipRects (offset by the
+; move), then the part without old contents (enlargement) as damage, except for a new layer.
 lr_fill:
         movem.l d2-d7/a2-a6,-(sp)
         move.w  LY_MINX(a4),d6
-        sub.w   LY_OLDX(a4),d6       ; d6 = décalage X (nouveau - ancien)
+        sub.w   LY_OLDX(a4),d6       ; d6 = X offset (new - old)
         move.w  LY_MINY(a4),d7
-        sub.w   LY_OLDY(a4),d7       ; d7 = décalage Y
-        clr.l   -(sp)                ; zone sans ancien contenu
+        sub.w   LY_OLDY(a4),d7       ; d7 = Y offset
+        clr.l   -(sp)                ; area without old contents
         move.l  sp,a2
         lea     CR_MINX(a3),a1
         bsr     rl_add
-        move.l  LY_CLIPRECT(a4),a6   ; a6 = ancienne ClipRect
+        move.l  LY_CLIPRECT(a4),a6   ; a6 = old ClipRect
 .fi_lp:
         cmpa.w  #0,a6
         beq     .fi_new
-        movem.w CR_MINX(a6),d0-d3    ; ancienne zone, en nouvelles coordonnées
+        movem.w CR_MINX(a6),d0-d3    ; old area, in new coordinates
         add.w   d6,d0
         add.w   d6,d2
         add.w   d7,d1
@@ -1328,9 +1329,9 @@ lr_fill:
         movem.w d0-d3,-(sp)
         move.l  sp,a1
         lea     8(sp),a2
-        bsr     rl_sub               ; retirée de la zone sans contenu
+        bsr     rl_sub               ; removed from the area without contents
         movem.w (sp)+,d0-d3
-        cmp.w   CR_MINX(a3),d0       ; ∩ nouvelle ClipRect
+        cmp.w   CR_MINX(a3),d0       ; ∩ new ClipRect
         bge.s   .fi_1
         move.w  CR_MINX(a3),d0
 .fi_1:
@@ -1352,30 +1353,30 @@ lr_fill:
         bgt.s   .fi_next
         sub.w   d0,d2
         addq.w  #1,d2
-        move.w  d2,d4                ; d4 = largeur
+        move.w  d2,d4                ; d4 = width
         sub.w   d1,d3
         addq.w  #1,d3
-        move.w  d3,d5                ; d5 = hauteur
-        move.w  d0,d2                ; destination : coordonnées dans la sauvegarde de a3
+        move.w  d3,d5                ; d5 = height
+        move.w  d0,d2                ; destination: coordinates within a3's backup
         sub.w   CR_ORGX(a3),d2
         move.w  d1,d3
         sub.w   CR_ORGY(a3),d3
-        sub.w   d6,d0                ; source : ancienne position absolue
+        sub.w   d6,d0                ; source: old absolute position
         sub.w   d7,d1
         tst.l   CR_LOBS(a6)
         bne.s   .fi_bk
-        bsr     lr_screenbm          ; ancienne zone visible : l'écran
+        bsr     lr_screenbm          ; old visible area: the screen
         bra.s   .fi_do
 .fi_bk:
         move.l  CR_BITMAP(a6),a0
         cmpa.w  #0,a0
-        beq.s   .fi_next             ; ancienne zone cachée sans sauvegarde
+        beq.s   .fi_next             ; old hidden area without backup
         sub.w   CR_ORGX(a6),d0
         sub.w   CR_ORGY(a6),d1
 .fi_do:
         move.l  CR_BITMAP(a3),a1
         movem.l d6-d7,-(sp)
-        moveq   #-$40,d6             ; minterm $C0 (copie)
+        moveq   #-$40,d6             ; minterm $C0 (copy)
         bsr     lr_blt
         movem.l (sp)+,d6-d7
 .fi_next:
@@ -1389,7 +1390,7 @@ lr_fill:
         cmpa.w  #0,a0
         beq.s   .fi_free
         movem.w RR_MINX(a0),d0-d3
-        move.l  a0,-(sp)             ; lr_damage écrase a0/a1
+        move.l  a0,-(sp)             ; lr_damage overwrites a0/a1
         bsr     lr_damage
         move.l  (sp)+,a0
         move.l  RR_NEXT(a0),a0
@@ -1401,16 +1402,16 @@ lr_fill:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_expose(a3 = nouvelle ClipRect visible, a4 = couche smart restée en place) : ses parties anciennement cachées
-; et sauvegardées sont recopiées de leur sauvegarde vers l'écran ; les parties sans ancien contenu (agrandissement)
-; sont effacées et abîmées. Les parties déjà visibles ne sont pas touchées.
+; lr_expose(a3 = new visible ClipRect, a4 = smart layer that stayed in place): its previously hidden and backed-up
+; parts are copied from their backup to the screen; the parts without old contents (enlargement)
+; are cleared and damaged. Parts already visible are not touched.
 lr_expose:
         movem.l d2-d7/a2-a6,-(sp)
-        clr.l   -(sp)                ; zone sans ancien contenu
+        clr.l   -(sp)                ; area without old contents
         move.l  sp,a2
         lea     CR_MINX(a3),a1
         bsr     rl_add
-        move.l  LY_CLIPRECT(a4),a6   ; a6 = ancienne ClipRect
+        move.l  LY_CLIPRECT(a4),a6   ; a6 = old ClipRect
 .ex_lp:
         cmpa.w  #0,a6
         beq     .ex_new
@@ -1421,10 +1422,10 @@ lr_expose:
         bsr     rl_sub
         movem.w (sp)+,d0-d3
         tst.l   CR_LOBS(a6)
-        beq.s   .ex_next             ; anciennement visible : déjà à l'écran
+        beq.s   .ex_next             ; previously visible: already on screen
         move.l  CR_BITMAP(a6),d4
-        beq.s   .ex_next             ; cachée sans sauvegarde
-        cmp.w   CR_MINX(a3),d0       ; ∩ nouvelle ClipRect
+        beq.s   .ex_next             ; hidden without backup
+        cmp.w   CR_MINX(a3),d0       ; ∩ new ClipRect
         bge.s   .ex_1
         move.w  CR_MINX(a3),d0
 .ex_1:
@@ -1445,19 +1446,19 @@ lr_expose:
         cmp.w   d3,d1
         bgt.s   .ex_next
         bsr     lr_screenbm
-        move.l  a0,a1                ; destination : l'écran, à la même place
-        move.l  d4,a0                ; source : la sauvegarde
+        move.l  a0,a1                ; destination: the screen, at the same place
+        move.l  d4,a0                ; source: the backup
         sub.w   d0,d2
         addq.w  #1,d2
-        move.w  d2,d4                ; largeur
+        move.w  d2,d4                ; width
         sub.w   d1,d3
         addq.w  #1,d3
-        move.w  d3,d5                ; hauteur
+        move.w  d3,d5                ; height
         move.w  d0,d2
         move.w  d1,d3
         sub.w   CR_ORGX(a6),d0
         sub.w   CR_ORGY(a6),d1
-        moveq   #-$40,d6             ; minterm $C0 (copie)
+        moveq   #-$40,d6             ; minterm $C0 (copy)
         bsr     lr_blt
 .ex_next:
         move.l  CR_NEXT(a6),a6
@@ -1468,7 +1469,7 @@ lr_expose:
         cmpa.w  #0,a0
         beq.s   .ex_free
         movem.w RR_MINX(a0),d0-d3
-        move.l  a0,-(sp)             ; lr_damage écrase a0/a1
+        move.l  a0,-(sp)             ; lr_damage overwrites a0/a1
         bsr     lr_screenbm
         bsr     lr_clear
         bsr     lr_damage
@@ -1482,7 +1483,7 @@ lr_expose:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_phaseb(a4 = couche) : écriture de l'écran pour ses ClipRects visibles.
+; lr_phaseb(a4 = layer): writing the screen for its visible ClipRects.
 lr_phaseb:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  LY_CRNEW(a4),a3
@@ -1494,7 +1495,7 @@ lr_phaseb:
         move.w  LY_FLAGS(a4),d0
         and.w   #LAYERSMART|LAYERSUPER,d0
         beq.s   .pb_simple
-        btst    #0,CR_FLAGS+3(a3)    ; CRF_TEMP : sauvegarde provisoire -> écran, puis rendue
+        btst    #0,CR_FLAGS+3(a3)    ; CRF_TEMP: temporary backup -> screen, then freed
         bne.s   .pb_temp
         btst    #2,CR_FLAGS+3(a3)    ; CRF_EXPOSE
         beq     .pb_next
@@ -1510,9 +1511,9 @@ lr_phaseb:
         sub.w   d1,d3
         addq.w  #1,d3
         move.w  d3,d5
-        move.w  d0,d2                ; destination écran
+        move.w  d0,d2                ; screen destination
         move.w  d1,d3
-        sub.w   CR_ORGX(a3),d0       ; source : sauvegarde
+        sub.w   CR_ORGX(a3),d0       ; source: backup
         sub.w   CR_ORGY(a3),d1
         move.l  a0,-(sp)
         bsr     lr_screenbm
@@ -1529,10 +1530,10 @@ lr_phaseb:
 .pb_simple:
         movem.w CR_MINX(a3),d0-d3
         tst.b   LY_NEW(a4)
-        bne.s   .pb_clr              ; couche neuve : fond seulement
+        bne.s   .pb_clr              ; new layer: background only
         bsr     lr_moved
-        bne.s   .pb_dmg              ; déplacée : tout est à redessiner
-        clr.l   -(sp)                ; non déplacée : seule la partie anciennement cachée
+        bne.s   .pb_dmg              ; moved: everything must be redrawn
+        clr.l   -(sp)                ; not moved: only the previously hidden part
         move.l  sp,a2
         lea     CR_MINX(a3),a1
         bsr     rl_add
@@ -1577,14 +1578,14 @@ lr_phaseb:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; lr_background(a3 = Layer_Info, a1 = couche supprimée ou 0, a5 = LayersBase) : zones anciennement visibles
-; qu'aucune couche ne couvre plus -> stylo 0. Liste = anciennes ClipRects visibles de toutes les couches (et de la
-; supprimée), moins les bornes actuelles de chaque couche. d6 = BitMap commun, d7 = couche supprimée.
+; lr_background(a3 = Layer_Info, a1 = deleted layer or 0, a5 = LayersBase): previously visible areas
+; that no layer covers any more -> pen 0. List = old visible ClipRects of all layers (and of the
+; deleted one), minus the current bounds of each layer. d6 = common BitMap, d7 = deleted layer.
 lr_background:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a1,d7
         moveq   #0,d6
-        clr.l   -(sp)                ; (sp) = liste
+        clr.l   -(sp)                ; (sp) = list
         move.l  LI_TOP(a3),a4
 .bg_all:
         cmpa.w  #0,a4
@@ -1625,7 +1626,7 @@ lr_background:
         addq.l  #4,sp
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; .bg_add1(a4 = couche) : ses anciennes ClipRects visibles ajoutées à la liste (cellule à 4(sp) depuis ici).
+; .bg_add1(a4 = layer): its old visible ClipRects added to the list (cell at 4(sp) from here on).
 .bg_add1:
         move.l  LY_RP(a4),a0
         move.l  rp_BitMap(a0),d6

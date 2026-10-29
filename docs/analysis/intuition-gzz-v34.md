@@ -1,312 +1,312 @@
-# intuition-gzz-v34.md — bordures, couches et coordonnées des fenêtres (GIMMEZEROZERO ou non)
+# intuition-gzz-v34.md — window borders, layers and coordinates (GIMMEZEROZERO or not)
 
-> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, module intuition 34.3
-> (OpenWindow, ajustement des bordures par les gadgets, contexte de gadget, gadgets système,
-> coordonnées souris, IntuiMessage, rendu d'une liste de gadgets, dessin de la fenêtre, AddGadget ;
-> aucune adresse ROM, retirées le 2026-10-29). Cas pratique : `libs/info.library` de `wb133.adf`.
+> ANALYSIS track ("dirty"). Source: ROM `assets/kick34005.A500`, module intuition 34.3
+> (OpenWindow, border adjustment by gadgets, gadget context, system gadgets,
+> mouse coordinates, IntuiMessage, rendering of a gadget list, window drawing, AddGadget;
+> no ROM address, removed on 2026-10-29). Practical case: `libs/info.library` from `wb133.adf`.
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. **Aucune suite d'instructions n'est reproduite** : seuls des règles de calcul, des
-> champs de structures publiques (`intuition.h` 1.3) et des appels de librairie.
+> **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. **No instruction sequence is reproduced**: only calculation rules,
+> fields of public structures (`intuition.h` 1.3) and library calls.
 
-Champs `struct Window` utilisés : LeftEdge +$04, TopEdge +$06, Width +$08, Height +$0A,
+`struct Window` fields used: LeftEdge +$04, TopEdge +$06, Width +$08, Height +$0A,
 MouseY +$0C, MouseX +$0E, Flags +$18, RPort +$32, BorderLeft/Top/Right/Bottom +$36/$37/$38/$39
-(octets signés), BorderRPort +$3A, FirstGadget +$3E, IDCMPFlags +$52, GZZMouseX +$6C,
+(signed bytes), BorderRPort +$3A, FirstGadget +$3E, IDCMPFlags +$52, GZZMouseX +$6C,
 GZZMouseY +$6E, GZZWidth +$70, GZZHeight +$72, WLayer +$7C, IFont +$80.
-`struct Screen` : MouseY +$10, MouseX +$12, WBorTop +$23, WBorLeft +$24, WBorRight +$25,
+`struct Screen`: MouseY +$10, MouseX +$12, WBorTop +$23, WBorLeft +$24, WBorRight +$25,
 WBorBottom +$26, Font (TextAttr*) +$28, ViewPort.Modes +$4C (HIRES $8000), LayerInfo +$E0,
 BarLayer +$14E.
 
 ---
 
-## 1. Calcul des bordures à l'OpenWindow
+## 1. Border calculation at OpenWindow
 
-### 1.1 Valeurs de base [O]
+### 1.1 Base values [O]
 
-Dans cet ordre :
+In this order:
 
-1. **Bordures de l'écran.** Si la fenêtre n'est **pas BORDERLESS** ($800) : BorderLeft,
-   BorderTop, BorderRight et BorderBottom := WBorLeft, WBorTop, WBorRight et WBorBottom de
-   l'écran. Sinon elles valent 0.
-2. **Barre de titre.** Si la fenêtre a WINDOWDRAG, WINDOWDEPTH ou WINDOWCLOSE ($0E), **ou** un
-   Title non nul : **BorderTop += `Screen->Font->ta_YSize` + 1**. C'est la hauteur de la police
-   de l'**écran**, pas celle de la fenêtre. Cette règle s'applique aussi à une fenêtre
-   BORDERLESS.
-3. **Gadget de redimensionnement.** Si la fenêtre a WINDOWSIZING ($01) :
-   - avec **SIZEBBOTTOM** ($20) : **BorderBottom := hauteur de l'image du gadget de taille + 1** ;
-   - avec **SIZEBRIGHT** ($10), **ou si aucun des deux bits n'est mis** : **BorderRight :=
-     largeur de l'image + 2** ;
-   - les deux bits peuvent être mis ensemble.
-   L'image est le gadget de taille système de la résolution de l'écran : variante HIRES si
-   `ViewPort.Modes` a $8000, sinon LORES.
-4. **BACKDROP** ($100) : les bits SIZING, DRAG et DEPTH sont retirés des Flags **avant**
-   l'étape 2 (seul CLOSE peut alors encore provoquer la barre).
+1. **Screen borders.** If the window is **not BORDERLESS** ($800): BorderLeft,
+   BorderTop, BorderRight and BorderBottom := WBorLeft, WBorTop, WBorRight and WBorBottom of
+   the screen. Otherwise they are 0.
+2. **Title bar.** If the window has WINDOWDRAG, WINDOWDEPTH or WINDOWCLOSE ($0E), **or** a
+   non-null Title: **BorderTop += `Screen->Font->ta_YSize` + 1**. This is the height of the
+   **screen's** font, not the window's. This rule also applies to a
+   BORDERLESS window.
+3. **Sizing gadget.** If the window has WINDOWSIZING ($01):
+   - with **SIZEBBOTTOM** ($20): **BorderBottom := height of the sizing gadget's image + 1**;
+   - with **SIZEBRIGHT** ($10), **or if neither bit is set**: **BorderRight :=
+     width of the image + 2**;
+   - both bits can be set together.
+   The image is the system sizing gadget for the screen's resolution: HIRES variant if
+   `ViewPort.Modes` has $8000, otherwise LORES.
+4. **BACKDROP** ($100): the SIZING, DRAG and DEPTH bits are removed from the Flags **before**
+   step 2 (only CLOSE can then still cause the bar).
 
-### 1.2 Ajustement par les gadgets utilisateur (toutes les fenêtres) [O]
+### 1.2 Adjustment by user gadgets (all windows) [O]
 
-Il est fait **après** les valeurs de base et **pour toutes les fenêtres, GZZ ou non**. Le
-parcours couvre **toute la liste `NewWindow.FirstGadget`**, mais pas les gadgets système. Pour
-chaque gadget, intuition calcule sa **boîte** (§4.1) dans son domaine, puis applique les bits
-d'**Activation** :
+It is done **after** the base values and **for all windows, GZZ or not**. The
+walk covers **the whole `NewWindow.FirstGadget` list**, but not the system gadgets. For
+each gadget, intuition computes its **box** (§4.1) in its domain, then applies the
+**Activation** bits:
 
-| Bit d'Activation | Règle (max avec la valeur courante) |
+| Activation bit | Rule (max with the current value) |
 |---|---|
 | **LEFTBORDER** ($20) | BorderLeft := max(BorderLeft, box.Left + box.Width − 1) |
 | **RIGHTBORDER** ($10) | BorderRight := max(BorderRight, Window.Width − box.Left) |
 | **TOPBORDER** ($40) | BorderTop := max(BorderTop, box.Top + box.Height − 1) |
 | **BOTTOMBORDER** ($80) | BorderBottom := max(BorderBottom, Window.Height − box.Top) |
 
-Règles complémentaires :
-- Le résultat est rangé dans l'octet de bordure.
-- Les flags de **type** (GZZGADGET) et de **position** (GRELxxx) n'interviennent **que** dans le
-  calcul de la boîte. Ce sont les **bits xxxBORDER de l'Activation** qui décident.
-- Un gadget sans bit xxxBORDER **n'agrandit jamais** la bordure, même s'il est placé dans le
-  cadre.
-- Les bordures ne sont **jamais réduites** par cette étape.
-- **Non-GZZ** : les bordures sont agrandies de la même façon. La valeur sert ensuite au dessin
-  du cadre, aux coordonnées GZZMouse et à GZZWidth/Height, mais **pas** à une seconde couche
+Additional rules:
+- The result is stored in the border byte.
+- The **type** flags (GZZGADGET) and **position** flags (GRELxxx) play a part **only** in the
+  box calculation. It is the **xxxBORDER bits of the Activation** that decide.
+- A gadget without an xxxBORDER bit **never enlarges** the border, even if it is placed in the
+  frame.
+- Borders are **never reduced** by this step.
+- **Non-GZZ**: the borders are enlarged in the same way. The value is then used for drawing
+  the frame, for the GZZMouse coordinates and for GZZWidth/Height, but **not** for a second layer
   (§2).
 
-**Piège [O]** : au moment de ce calcul, GZZWidth et GZZHeight valent encore **0**, car ils ne
-sont calculés qu'ensuite (§2.3). Dans une fenêtre GZZ, un gadget **non**-GZZGADGET qui porte un
-bit xxxBORDER a donc sa boîte calculée dans un domaine intérieur de taille 0 : un GRELxxx
-n'ajoute rien. Pour un GZZGADGET, le domaine est la fenêtre entière (W×H, origine 0,0) et le
-calcul est exact.
+**Pitfall [O]**: at the time of this calculation, GZZWidth and GZZHeight are still **0**, because they
+are only computed afterwards (§2.3). In a GZZ window, a **non**-GZZGADGET gadget carrying an
+xxxBORDER bit therefore has its box computed in an inner domain of size 0: a GRELxxx
+adds nothing. For a GZZGADGET, the domain is the whole window (W×H, origin 0,0) and the
+calculation is exact.
 
-### 1.3 Exemple vérifié : fenêtre Info d'info.library [O]
+### 1.3 Verified example: info.library's Info window [O]
 
-NewWindow : 604×190, Flags $146F (SIZING | DRAG | DEPTH | CLOSE | **SIZEBBOTTOM** |
-SIMPLE_REFRESH | GIMMEZEROZERO | ACTIVATE). SIZEBRIGHT n'est pas mis.
+NewWindow: 604×190, Flags $146F (SIZING | DRAG | DEPTH | CLOSE | **SIZEBBOTTOM** |
+SIMPLE_REFRESH | GIMMEZEROZERO | ACTIVATE). SIZEBRIGHT is not set.
 
-Liste `NewWindow.FirstGadget`, dans cet ordre :
+`NewWindow.FirstGadget` list, in this order:
 
 | # | Gadget | Left, Top, W×H | Flags | Activation | Type |
 |---|---|---|---|---|---|
-| 1 | **QUIT** | −108, −10, 80×9 | GRELBOTTOM \| GRELRIGHT ($18) | RELVERIFY ($01), **sans** BOTTOMBORDER | GZZGADGET \| BOOLGADGET ($2001) |
+| 1 | **QUIT** | −108, −10, 80×9 | GRELBOTTOM \| GRELRIGHT ($18) | RELVERIFY ($01), **without** BOTTOMBORDER | GZZGADGET \| BOOLGADGET ($2001) |
 | 2 | **SAVE** | 20, −10, 80×9 | GRELBOTTOM ($08) | RELVERIFY \| **BOTTOMBORDER** ($81) | $2001 |
-| 3 | **remplisseur** | 4, −11, 0×0 | GADGHNONE \| GADGIMAGE \| GRELBOTTOM \| GRELWIDTH ($2F) | **BOTTOMBORDER** ($80) | $2001 |
+| 3 | **filler** | 4, −11, 0×0 | GADGHNONE \| GADGIMAGE \| GRELBOTTOM \| GRELWIDTH ($2F) | **BOTTOMBORDER** ($80) | $2001 |
 
-Calcul de BorderBottom, avec Height = 190 :
-- SAVE : Top = −10 + 189 = 179 ⇒ 190 − 179 = 11 ;
-- remplisseur : Top = −11 + 189 = 178 ⇒ 190 − 178 = **12** ;
-- **BorderBottom = max(image de taille + 1, 11, 12) = 12**, si l'image de taille fait moins de
-  12 lignes.
+Calculation of BorderBottom, with Height = 190:
+- SAVE: Top = −10 + 189 = 179 ⇒ 190 − 179 = 11;
+- filler: Top = −11 + 189 = 178 ⇒ 190 − 178 = **12**;
+- **BorderBottom = max(sizing image + 1, 11, 12) = 12**, if the sizing image is less than
+  12 lines tall.
 
-La zone intérieure se termine à la ligne 190 − 12 − 1 = **177**. Le remplisseur commence à la
-ligne 178 (il fait toute la largeur grâce à GRELWIDTH) ; SAVE et QUIT, à la ligne 179, sont
-dessinés par-dessus (§6). QUIT ne joue aucun rôle dans le calcul.
+The inner area ends at line 190 − 12 − 1 = **177**. The filler starts at
+line 178 (it spans the whole width thanks to GRELWIDTH); SAVE and QUIT, at line 179, are
+drawn on top of it (§6). QUIT plays no role in the calculation.
 
 ---
 
-## 2. Les couches
+## 2. The layers
 
-### 2.1 Fenêtre non GZZ [O]
+### 2.1 Non-GZZ window [O]
 
-- **Une seule couche** : **CreateUpfrontLayer**(LayerInfo de l'écran, BitMap de l'écran,
-  rectangle de la fenêtre entière, flags, `NewWindow.BitMap`).
-- Les flags de couche viennent du type de rafraîchissement de la fenêtre :
-  - SIMPLE_REFRESH ($40) ⇒ LAYERSIMPLE (1) ;
-  - SUPER_BITMAP ($80) ⇒ LAYERSUPER (4) ;
-  - sinon (SMART) ⇒ LAYERSMART (2) ;
-  - plus **LAYERBACKDROP ($40)** si BACKDROP.
-- WLayer (+$7C) := cette couche, et `layer->Window` := la fenêtre.
-- RPort (+$32) := le RastPort de la couche ; la police de l'écran lui est appliquée par SetFont.
+- **A single layer**: **CreateUpfrontLayer**(screen's LayerInfo, screen's BitMap,
+  rectangle of the whole window, flags, `NewWindow.BitMap`).
+- The layer flags come from the window's refresh type:
+  - SIMPLE_REFRESH ($40) ⇒ LAYERSIMPLE (1);
+  - SUPER_BITMAP ($80) ⇒ LAYERSUPER (4);
+  - otherwise (SMART) ⇒ LAYERSMART (2);
+  - plus **LAYERBACKDROP ($40)** if BACKDROP.
+- WLayer (+$7C) := this layer, and `layer->Window` := the window.
+- RPort (+$32) := the layer's RastPort; the screen's font is applied to it by SetFont.
 - **BorderRPort (+$3A) = NULL.**
 
-### 2.2 Fenêtre GIMMEZEROZERO [O]
+### 2.2 GIMMEZEROZERO window [O]
 
-Ordre de création :
-1. **Couche extérieure (cadre)** :
-   - rectangle de la fenêtre **entière** ;
-   - flags **LAYERSIMPLE**, toujours, quel que soit le rafraîchissement demandé (plus
-     LAYERBACKDROP si BACKDROP) ;
-   - créée **en premier**, par CreateUpfrontLayer.
-   - Provisoirement WLayer = cette couche et RPort = son RastPort, avec la police d'écran.
-2. Bordures (§1), gadgets système et ajout des gadgets utilisateur.
-3. **Couche intérieure** :
-   - CreateUpfrontLayer sur le rectangle
+Creation order:
+1. **Outer layer (frame)**:
+   - rectangle of the **whole** window;
+   - flags **LAYERSIMPLE**, always, whatever refresh is requested (plus
+     LAYERBACKDROP if BACKDROP);
+   - created **first**, by CreateUpfrontLayer.
+   - Temporarily WLayer = this layer and RPort = its RastPort, with the screen font.
+2. Borders (§1), system gadgets and addition of the user gadgets.
+3. **Inner layer**:
+   - CreateUpfrontLayer on the rectangle
      **(LeftEdge + BorderLeft, TopEdge + BorderTop) – (LeftEdge + Width − 1 − BorderRight,
-     TopEdge + Height − 1 − BorderBottom)** ;
-   - flags = **type de rafraîchissement demandé** (SIMPLE, SMART ou SUPER, plus BACKDROP), avec
-     `NewWindow.BitMap` en super-bitmap ;
-   - puis **MoveLayerInFrontOf(intérieure, extérieure)**.
-4. Affectations finales :
-   - `inner->Window` := la fenêtre, **WLayer (+$7C) := couche intérieure** ;
-   - **BorderRPort (+$3A) := RastPort de la couche extérieure** ;
-   - **RPort (+$32) := RastPort de la couche intérieure**, dont TmpRas et AreaInfo sont remis à
+     TopEdge + Height − 1 − BorderBottom)**;
+   - flags = **requested refresh type** (SIMPLE, SMART or SUPER, plus BACKDROP), with
+     `NewWindow.BitMap` as super-bitmap;
+   - then **MoveLayerInFrontOf(inner, outer)**.
+4. Final assignments:
+   - `inner->Window` := the window, **WLayer (+$7C) := inner layer**;
+   - **BorderRPort (+$3A) := RastPort of the outer layer**;
+   - **RPort (+$32) := RastPort of the inner layer**, whose TmpRas and AreaInfo are reset to
      NULL.
 
-Si la création d'une couche échoue, OpenWindow échoue.
+If creating a layer fails, OpenWindow fails.
 
 ### 2.3 GZZWidth / GZZHeight [O]
 
-Calculés après les couches, pour **toutes** les fenêtres :
-- **GZZWidth = Width − BorderLeft − BorderRight** ;
+Computed after the layers, for **all** windows:
+- **GZZWidth = Width − BorderLeft − BorderRight**;
 - **GZZHeight = Height − BorderTop − BorderBottom**.
 
-### 2.4 Divers [O]
+### 2.4 Miscellaneous [O]
 
-Pour une fenêtre BACKDROP sur un écran dont la barre de titre est affichée, intuition fait
-MoveLayerInFrontOf(BarLayer de l'écran, couche de la fenêtre).
-
----
-
-## 3. Coordonnées de la souris
-
-- **Window.MouseX / MouseY** [O] : Screen.MouseX − LeftEdge et Screen.MouseY − TopEdge. Elles
-  sont **relatives au coin de la fenêtre entière**, GZZ ou non.
-- **GZZMouseX / GZZMouseY** [O] : MouseX − BorderLeft et MouseY − BorderTop. Elles sont
-  calculées **pour toutes les fenêtres**, au même moment.
-- **IntuiMessage.MouseX / MouseY** (+$20 / +$22) [O] :
-  - copie de **Window.MouseX / MouseY**, donc relatives à la fenêtre **entière**, **même pour
-    une fenêtre GZZ** ;
-  - exception : avec **DELTAMOVE** ($100000) dans IDCMPFlags, ce sont des deltas.
-  - Une application GZZ doit donc soustraire les bordures ou lire GZZMouseX/Y.
+For a BACKDROP window on a screen whose title bar is displayed, intuition does
+MoveLayerInFrontOf(screen's BarLayer, window's layer).
 
 ---
 
-## 4. Domaines des gadgets
+## 3. Mouse coordinates
 
-### 4.1 Boîte d'un gadget dans son domaine [O]
+- **Window.MouseX / MouseY** [O]: Screen.MouseX − LeftEdge and Screen.MouseY − TopEdge. They
+  are **relative to the corner of the whole window**, GZZ or not.
+- **GZZMouseX / GZZMouseY** [O]: MouseX − BorderLeft and MouseY − BorderTop. They are
+  computed **for all windows**, at the same time.
+- **IntuiMessage.MouseX / MouseY** (+$20 / +$22) [O]:
+  - copy of **Window.MouseX / MouseY**, hence relative to the **whole** window, **even for
+    a GZZ window**;
+  - exception: with **DELTAMOVE** ($100000) in IDCMPFlags, they are deltas.
+  - A GZZ application must therefore subtract the borders or read GZZMouseX/Y.
 
-Le domaine fournit une largeur DW et une hauteur DH. La boîte est relative à l'**origine du
-domaine** :
+---
 
-| Champ | Valeur |
+## 4. Gadget domains
+
+### 4.1 Box of a gadget in its domain [O]
+
+The domain provides a width DW and a height DH. The box is relative to the **origin of the
+domain**:
+
+| Field | Value |
 |---|---|
 | Left | LeftEdge + (GRELRIGHT ? DW − 1 : 0) |
 | Top | TopEdge + (GRELBOTTOM ? DH − 1 : 0) |
 | Width | Width + (GRELWIDTH ? DW : 0) |
 | Height | Height + (GRELHEIGHT ? DH : 0) |
 
-### 4.2 Domaine selon le type de fenêtre et de gadget [O]
+### 4.2 Domain according to window and gadget type [O]
 
-| Fenêtre | Gadget | Domaine (origine ; taille) | Couche de rendu |
+| Window | Gadget | Domain (origin; size) | Rendering layer |
 |---|---|---|---|
-| non GZZ | tout gadget | (0,0) ; Width × Height | WLayer |
-| GZZ | **GZZGADGET** ($2000) | (0,0) ; **Width × Height** (fenêtre entière) | **couche du BorderRPort** (cadre) |
-| GZZ | **non GZZGADGET** | (**BorderLeft, BorderTop**) ; **GZZWidth × GZZHeight** | **WLayer** (couche intérieure) |
+| non-GZZ | any gadget | (0,0); Width × Height | WLayer |
+| GZZ | **GZZGADGET** ($2000) | (0,0); **Width × Height** (whole window) | **BorderRPort's layer** (frame) |
+| GZZ | **non-GZZGADGET** | (**BorderLeft, BorderTop**); **GZZWidth × GZZHeight** | **WLayer** (inner layer) |
 
-Conséquences :
-- **Un gadget non-GZZGADGET d'une fenêtre GZZ** a des coordonnées **relatives à l'intérieur**,
-  et ses GRELxxx sont relatifs à **GZZWidth / GZZHeight**.
-- Gadgets de requester (REQGADGET $1000) et d'écran (SCRGADGET $4000) : autres domaines (celui du
-  requester, l'écran), hors sujet ici.
+Consequences:
+- **A non-GZZGADGET gadget in a GZZ window** has coordinates **relative to the interior**,
+  and its GRELxxx are relative to **GZZWidth / GZZHeight**.
+- Requester gadgets (REQGADGET $1000) and screen gadgets (SCRGADGET $4000): other domains (that of the
+  requester, the screen), out of scope here.
 
-### 4.3 Gadgets système [O]
+### 4.3 System gadgets [O]
 
-- Les gadgets système (taille, glisser, profondeur, fermeture) sont créés selon les Flags de la
-  fenêtre, à partir des modèles d'IntuitionBase et dans la variante de la résolution de l'écran.
-- **Pour une fenêtre GZZ, chacun reçoit le bit GZZGADGET** : ils appartiennent au domaine
-  « fenêtre entière » et sont **dessinés dans la couche du cadre**.
-- Ils sont placés **en tête** de la liste de la fenêtre, avant les gadgets utilisateur.
-
----
-
-## 5. Couche de dessin au rafraîchissement
-
-- **Gadgets** : chacun est rendu dans la couche de son domaine (§4.2). Dans une fenêtre GZZ :
-  - GZZGADGET et gadgets système ⇒ couche extérieure (BorderRPort) ;
-  - autres gadgets ⇒ couche intérieure (RPort / WLayer). Ils sont donc découpés par la zone
-    intérieure : un gadget non-GZZ posé dans le cadre serait invisible. [O pour le choix de
-    couche, D pour la conséquence]
-- **Cadre et titre** : dans une fenêtre GZZ, ils vont dans la couche extérieure, puisque c'est
-  le seul RastPort qui couvre le cadre [D].
-- **Fenêtre non GZZ** : tout est dans l'unique couche. Les gadgets du cadre partagent le
-  RastPort de l'application [O : couche unique].
-- **Couche extérieure toujours LAYERSIMPLE** : quand elle est découverte, intuition doit
-  redessiner le cadre et les GZZGADGET, puisque les layers n'en gardent pas de copie [D,
-  conséquence de LAYERSIMPLE].
+- The system gadgets (sizing, drag, depth, close) are created according to the window's Flags,
+  from the templates in IntuitionBase and in the variant for the screen's resolution.
+- **For a GZZ window, each one receives the GZZGADGET bit**: they belong to the
+  "whole window" domain and are **drawn in the frame layer**.
+- They are placed **at the head** of the window's list, before the user gadgets.
 
 ---
 
-## 6. Ordre de dessin des gadgets [O]
+## 5. Drawing layer on refresh
 
-### 6.1 Routine commune de rendu d'une liste
+- **Gadgets**: each one is rendered in the layer of its domain (§4.2). In a GZZ window:
+  - GZZGADGET and system gadgets ⇒ outer layer (BorderRPort);
+  - other gadgets ⇒ inner layer (RPort / WLayer). They are therefore clipped by the inner
+    area: a non-GZZ gadget placed in the frame would be invisible. [O for the choice of
+    layer, D for the consequence]
+- **Frame and title**: in a GZZ window, they go into the outer layer, since it is
+  the only RastPort that covers the frame [D].
+- **Non-GZZ window**: everything is in the single layer. The frame gadgets share the
+  application's RastPort [O: single layer].
+- **Outer layer always LAYERSIMPLE**: when it is uncovered, intuition must
+  redraw the frame and the GZZGADGETs, since layers keeps no copy of them [D,
+  consequence of LAYERSIMPLE].
 
-Tous les chemins listés en §6.2 passent par **la même routine**, qui reçoit le premier gadget et
-un compte `n`. Elle travaille en deux passes.
+---
 
-1. **Passe de rendu, à rebours.** Elle avance d'abord jusqu'au **dernier** gadget de la plage :
-   le n-ième, ou la fin de liste si `n` est −1 ou −2. Elle dessine ensuite **de ce dernier
-   jusqu'au premier**, en remontant la liste (chaque fois le gadget dont le Next pointe sur le
-   courant). Pour chaque gadget, **dans cet ordre** :
-   1. le rendu : PropGadget (cadre et bouton), sinon **DrawImage** de GadgetRender si
-      GADGIMAGE, sinon **DrawBorder** de GadgetRender (rien si le pointeur est NULL) ;
-   2. son **GadgetText** (PrintIText) ;
-   3. pour un STRGADGET, son texte ;
-   4. si **GADGDISABLED**, le motif de grisé sur sa boîte.
+## 6. Gadget drawing order [O]
 
-   Il n'y a donc **pas** de passe « toutes les images, puis tous les textes » : chaque gadget est
-   terminé avant de passer au précédent. **Le premier gadget de la liste est dessiné en dernier,
-   donc au-dessus des autres.**
-2. **Passe de surbrillance, à l'endroit**, du premier au dernier de la plage : pour chaque gadget
-   **SELECTED**, application de son mode de surbrillance (GADGHCOMP, etc.).
+### 6.1 Common list rendering routine
 
-Chaque gadget est dessiné dans la couche de son domaine (§4.2), avec sa boîte calculée au moment
-du dessin.
+All the paths listed in §6.2 go through **the same routine**, which receives the first gadget and
+a count `n`. It works in two passes.
 
-### 6.2 Qui appelle cette routine, avec quelle plage
+1. **Rendering pass, backwards.** It first advances to the **last** gadget of the range:
+   the n-th, or the end of the list if `n` is −1 or −2. It then draws **from that last one
+   up to the first**, walking back up the list (each time the gadget whose Next points to the
+   current one). For each gadget, **in this order**:
+   1. the rendering: PropGadget (container and knob), otherwise **DrawImage** of GadgetRender if
+      GADGIMAGE, otherwise **DrawBorder** of GadgetRender (nothing if the pointer is NULL);
+   2. its **GadgetText** (PrintIText);
+   3. for a STRGADGET, its text;
+   4. if **GADGDISABLED**, the ghosting pattern over its box.
 
-| Événement | Gadget de départ | Compte |
+   So there is **no** "all images, then all texts" pass: each gadget is
+   finished before moving to the previous one. **The first gadget of the list is drawn last,
+   hence on top of the others.**
+2. **Highlight pass, forwards**, from the first to the last of the range: for each
+   **SELECTED** gadget, application of its highlight mode (GADGHCOMP, etc.).
+
+Each gadget is drawn in the layer of its domain (§4.2), with its box computed at the time
+of drawing.
+
+### 6.2 Who calls this routine, with what range
+
+| Event | Starting gadget | Count |
 |---|---|---|
-| **OpenWindow** (dessin initial, après le cadre) | `Window->FirstGadget` : gadgets système en tête, puis toute la liste NewWindow | −1 (toute la liste) |
-| **RefreshWindowFrame** (−456), et la **réparation du cadre** quand la couche du cadre (GZZ) ou la couche unique a LAYERREFRESH (BeginUpdate de la couche du cadre, cadre redessiné, tous les gadgets, EndUpdate) | `Window->FirstGadget` | −1 |
-| **RefreshGadgets**(gad, win, req) (−222) | `gad` | **−2** (jusqu'à la fin de la liste) |
-| RefreshGList (V36+, absent en 1.3) | — | — |
-| Dessin d'un requester | premier gadget du requester | −1 |
-| Barre de titre d'écran | gadgets de l'écran | −1 |
-| Rafraîchissement ponctuel (activation ou désactivation de fenêtre, gadgets du cadre) | un gadget | 1 |
-| **AddGadget**(win, gad, pos) (−42) | — | **ne dessine rien** : simple insertion à la position `pos` (−1 = fin), le gadget n'est affiché qu'au prochain Refresh |
+| **OpenWindow** (initial drawing, after the frame) | `Window->FirstGadget`: system gadgets at the head, then the whole NewWindow list | −1 (whole list) |
+| **RefreshWindowFrame** (−456), and **frame repair** when the frame layer (GZZ) or the single layer has LAYERREFRESH (BeginUpdate of the frame layer, frame redrawn, all gadgets, EndUpdate) | `Window->FirstGadget` | −1 |
+| **RefreshGadgets**(gad, win, req) (−222) | `gad` | **−2** (up to the end of the list) |
+| RefreshGList (V36+, absent in 1.3) | — | — |
+| Drawing of a requester | first gadget of the requester | −1 |
+| Screen title bar | screen gadgets | −1 |
+| One-off refresh (window activation or deactivation, frame gadgets) | one gadget | 1 |
+| **AddGadget**(win, gad, pos) (−42) | — | **draws nothing**: simple insertion at position `pos` (−1 = end), the gadget is only displayed at the next Refresh |
 
-### 6.3 Application à la fenêtre Info (info.library) [O]
+### 6.3 Application to the Info window (info.library) [O]
 
-- **Liste initiale** passée par `NewWindow.FirstGadget` : **QUIT → SAVE → remplisseur**. Les
-  modèles sont copiés dans un bloc AllocRemember et chaînés dans cet ordre. OpenWindow insère
-  les gadgets système **devant** cette liste.
-- **Après OpenWindow**, info.library ajoute les autres gadgets par **AddGadget(win, g, −1)**,
-  donc **à la fin** :
-  - les 4 cases de protection ;
-  - les gadgets chaîne (outil par défaut, tool types…) ;
-  - les flèches de défilement ;
-  - ADD et DEL.
-  Elle les retire et les rajoute de la même façon (RemoveGadget, puis AddGadget −1) quand le
-  contenu change.
-- **Rafraîchissement** : info.library appelle toujours **RefreshGadgets(win->FirstGadget, win,
-  NULL)**, donc toute la liste, gadgets système compris.
-- **Ordre de dessin qui en résulte** : derniers ajoutés (ADD/DEL…), …, **remplisseur**, puis
-  **SAVE**, puis **QUIT**, puis les gadgets système.
-  - Le remplisseur, une image de 598×10 à PlanePick 0 et PlaneOnOff 2, donc un rectangle plein
-    de couleur 2, est peint **avant** SAVE et QUIT.
-  - Leurs textes JAM2 (« SAVE », « QUIT ») sont donc écrits **par-dessus**.
-  - C'est l'ordre « de la fin vers le début » de la routine commune qui garantit le résultat à
-    chaque rafraîchissement : à OpenWindow, à chaque RefreshGadgets, à chaque réparation du
-    cadre.
-- Une implémentation qui dessinerait à l'endroit (premier → dernier) recouvrirait SAVE et QUIT
-  par le remplisseur.
+- **Initial list** passed via `NewWindow.FirstGadget`: **QUIT → SAVE → filler**. The
+  templates are copied into an AllocRemember block and chained in this order. OpenWindow inserts
+  the system gadgets **in front of** this list.
+- **After OpenWindow**, info.library adds the other gadgets with **AddGadget(win, g, −1)**,
+  hence **at the end**:
+  - the 4 protection boxes;
+  - the string gadgets (default tool, tool types…);
+  - the scroll arrows;
+  - ADD and DEL.
+  It removes them and adds them back in the same way (RemoveGadget, then AddGadget −1) when the
+  contents change.
+- **Refresh**: info.library always calls **RefreshGadgets(win->FirstGadget, win,
+  NULL)**, hence the whole list, system gadgets included.
+- **Resulting drawing order**: last added (ADD/DEL…), …, **filler**, then
+  **SAVE**, then **QUIT**, then the system gadgets.
+  - The filler, a 598×10 image with PlanePick 0 and PlaneOnOff 2, hence a solid rectangle
+    of colour 2, is painted **before** SAVE and QUIT.
+  - Their JAM2 texts ("SAVE", "QUIT") are therefore written **on top**.
+  - It is the "end to start" order of the common routine that guarantees the result at
+    every refresh: at OpenWindow, at every RefreshGadgets, at every frame
+    repair.
+- An implementation that drew forwards (first → last) would cover SAVE and QUIT
+  with the filler.
 
 ---
 
-## 7. Vecteurs de test
+## 7. Test vectors
 
-| Cas | Attendu |
+| Case | Expected |
 |---|---|
-| Fenêtre non-GZZ, gadget avec BOTTOMBORDER à Top −10 GRELBOTTOM, Height 190 | BorderBottom ≥ 11 ; une seule couche ; BorderRPort = NULL |
-| Fenêtre Info (604×190, $146F, QUIT/SAVE/remplisseur) | 2 couches ; BorderBottom = 12 ; intérieure de (L+BL, T+BT) à (L+603−BR, T+177) ; GZZHeight = 190 − BT − 12 ; SAVE et QUIT visibles par-dessus le remplisseur |
-| Clic à 5,5 dans l'intérieur d'une GZZ | IntuiMessage.MouseX = 5 + BorderLeft ; Window.GZZMouseX = 5 |
-| Gadget non-GZZ dans une GZZ, LeftEdge 0 TopEdge 0 | dessiné au coin haut-gauche de la zone intérieure |
-| Liste A→B→C qui se chevauchent, RefreshGadgets(A) | ordre de dessin C, B, A : A visible au-dessus |
-| AddGadget(win, g, −1) seul | rien n'est dessiné tant qu'aucun Refresh n'a lieu |
+| Non-GZZ window, gadget with BOTTOMBORDER at Top −10 GRELBOTTOM, Height 190 | BorderBottom ≥ 11; a single layer; BorderRPort = NULL |
+| Info window (604×190, $146F, QUIT/SAVE/filler) | 2 layers; BorderBottom = 12; inner from (L+BL, T+BT) to (L+603−BR, T+177); GZZHeight = 190 − BT − 12; SAVE and QUIT visible on top of the filler |
+| Click at 5,5 in the interior of a GZZ | IntuiMessage.MouseX = 5 + BorderLeft; Window.GZZMouseX = 5 |
+| Non-GZZ gadget in a GZZ, LeftEdge 0 TopEdge 0 | drawn at the top-left corner of the inner area |
+| Overlapping list A→B→C, RefreshGadgets(A) | drawing order C, B, A: A visible on top |
+| AddGadget(win, g, −1) alone | nothing is drawn until a Refresh takes place |
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Uniquement des règles de calcul (formules sur des champs publics), l'ordre des créations
-  de couches, des appels de librairie (layers CreateUpfrontLayer −36, MoveLayerInFrontOf −168 ;
-  graphics SetFont) et des constantes publiques (Flags, Activation, GadgetType, IDCMP). Aucune
-  séquence d'instructions recopiée.
-- [x] §6 : l'ordre de dessin est décrit comme une règle (à rebours, puis surbrillance à
-  l'endroit) avec la table des appelants. La liste d'info.library est donnée par son ordre et
-  ses appels publics (AddGadget −1, RefreshGadgets(FirstGadget)), sans code recopié.
-- [x] **Correction du 2026-10-29** : retirées les 13 adresses de routines ROM de l'en-tête,
-  remplacées par la liste des fonctions étudiées ; corps inchangé.
+- [x] Only calculation rules (formulas on public fields), the order of layer
+  creations, library calls (layers CreateUpfrontLayer −36, MoveLayerInFrontOf −168;
+  graphics SetFont) and public constants (Flags, Activation, GadgetType, IDCMP). No
+  instruction sequence copied.
+- [x] §6: the drawing order is described as a rule (backwards, then highlighting
+  forwards) with the table of callers. info.library's list is given by its order and
+  its public calls (AddGadget −1, RefreshGadgets(FirstGadget)), without copied code.
+- [x] **Correction of 2026-10-29**: removed the 13 ROM routine addresses from the header,
+  replaced by the list of functions studied; body unchanged.

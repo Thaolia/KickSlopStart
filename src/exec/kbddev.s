@@ -1,25 +1,25 @@
-; src/exec/kbddev.s — keyboard.device : interface exec du clavier (événements bruts, matrice, gestionnaires de reset).
+; src/exec/kbddev.s — keyboard.device: exec interface of the keyboard (raw events, matrix, reset handlers).
 ;
-; Le décodage série reste dans keyboard.s (kbd_interrupt) ; il remet ici chaque keycode brut (bit 7 = relâché)
-; via kbd_devevent : la matrice des touches enfoncées est tenue à jour, puis l'événement satisfait la première
-; requête KBD_READEVENT en attente, ou est mis en tampon (16 événements) pour la suivante.
-; Commandes : CMD_CLEAR (vide le tampon), KBD_READEVENT (un InputEvent IECLASS_RAWKEY par requête),
-; KBD_READMATRIX (16 octets, bit n = touche n enfoncée), KBD_ADDRESETHANDLER / KBD_REMRESETHANDLER (liste triée
-; par priorité), KBD_RESETHANDLERDONE. La séquence de reset clavier (Ctrl-Amiga-Amiga) n'est pas encore relayée
-; aux gestionnaires : la liste est tenue, elle n'est pas appelée.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs keyboard.device + devices/keyboard.i + devices/inputevent.i.
-; AUCUNE lecture ROM.
+; Serial decoding stays in keyboard.s (kbd_interrupt); it hands each raw keycode (bit 7 = released) over here
+; via kbd_devevent: the matrix of pressed keys is kept up to date, then the event satisfies the first
+; pending KBD_READEVENT request, or is buffered (16 events) for the next one.
+; Commands: CMD_CLEAR (empties the buffer), KBD_READEVENT (one IECLASS_RAWKEY InputEvent per request),
+; KBD_READMATRIX (16 bytes, bit n = key n pressed), KBD_ADDRESETHANDLER / KBD_REMRESETHANDLER (list sorted
+; by priority), KBD_RESETHANDLERDONE. The keyboard reset sequence (Ctrl-Amiga-Amiga) is not yet relayed
+; to the handlers: the list is maintained, it is not called.
+; IMPLEMENTATION track ("clean"): AutoDocs keyboard.device + devices/keyboard.i + devices/inputevent.i.
+; NO ROM reading.
 
                 include "exec.i"
 
                 xdef    kbd_devevent
 
-KD_MATRIX       EQU LIB_SIZE         ; 16 octets
-KD_READQ        EQU LIB_SIZE+16      ; struct List des KBD_READEVENT en attente
-KD_RESETQ       EQU KD_READQ+14      ; struct List des gestionnaires de reset
-KD_BHEAD        EQU KD_RESETQ+14     ; word : tête du tampon (offset octet)
-KD_BTAIL        EQU KD_BHEAD+2       ; word : queue du tampon
-KD_BUF          EQU KD_BTAIL+2       ; 16 entrées de 4 octets : keycode.w, qualifieurs.w
+KD_MATRIX       EQU LIB_SIZE         ; 16 bytes
+KD_READQ        EQU LIB_SIZE+16      ; struct List of the pending KBD_READEVENTs
+KD_RESETQ       EQU KD_READQ+14      ; struct List of the reset handlers
+KD_BHEAD        EQU KD_RESETQ+14     ; word: buffer head (byte offset)
+KD_BTAIL        EQU KD_BHEAD+2       ; word: buffer tail
+KD_BUF          EQU KD_BTAIL+2       ; 16 entries of 4 bytes: keycode.w, qualifiers.w
 KD_BMASK        EQU 63
 KD_SIZE         EQU KD_BUF+64
 
@@ -65,7 +65,7 @@ kbddev_datatab:
         dc.b    0
         EVEN
 
-; initFunc (d0 = base) : nom, listes, tampon vide, matrice à zéro ; publie la base pour kbd_devevent.
+; initFunc (d0 = base): name, lists, empty buffer, zeroed matrix; publishes the base for kbd_devevent.
 kbddev_initfunc:
         move.l  d0,a1
         lea     kbddev_name(pc),a0
@@ -100,7 +100,7 @@ kd_null:
         moveq   #0,d0
         rts
 
-; kd_fill : a1 = KBD_READEVENT, d0.l = (keycode << 16) | qualifieurs -> InputEvent RAWKEY dans io_Data.
+; kd_fill: a1 = KBD_READEVENT, d0.l = (keycode << 16) | qualifiers -> RAWKEY InputEvent in io_Data.
 kd_fill:
         move.l  IO_DATA3(a1),a0
         clr.l   (a0)                 ; ie_NextEvent
@@ -152,7 +152,7 @@ kd_beginio:
         bsr     kd_fill
         bra   .kb_done
 .kb_wait:
-        bclr    #0,IO_FLAGS(a1)      ; IOF_QUICK : la requête sera rendue par ReplyMsg
+        bclr    #0,IO_FLAGS(a1)      ; IOF_QUICK: the request will be returned by ReplyMsg
         lea     KD_READQ(a2),a0
         jsr     LVO_ADDTAIL(a6)
         jsr     LVO_ENABLE(a6)
@@ -198,7 +198,7 @@ kd_beginio:
         movem.l (sp)+,a2/a6
         rts
 
-; AbortIO(ioreq a1, device a6) : une KBD_READEVENT encore en attente est retirée et rendue avec IOERR_ABORTED.
+; AbortIO(ioreq a1, device a6): a KBD_READEVENT still pending is removed and returned with IOERR_ABORTED.
 kd_abortio:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
@@ -207,7 +207,7 @@ kd_abortio:
         move.l  KD_READQ(a2),a0
 .ka_lp:
         tst.l   (a0)
-        beq.s   .ka_out              ; fin de liste : déjà servie
+        beq.s   .ka_out              ; end of list: already served
         cmp.l   a0,a1
         beq.s   .ka_hit
         move.l  (a0),a0
@@ -224,8 +224,8 @@ kd_abortio:
         movem.l (sp)+,a2/a6
         rts
 
-; kbd_devevent(d0.b = keycode brut, bit 7 = relâché) : appelé par kbd_interrupt (interruption CIA-A).
-; Préserve tous les registres.
+; kbd_devevent(d0.b = raw keycode, bit 7 = released): called by kbd_interrupt (CIA-A interrupt).
+; Preserves all registers.
 kbd_devevent:
         movem.l d0-d2/a0-a2/a6,-(sp)
         move.l  KBD_DEVBASE,d1
@@ -234,18 +234,18 @@ kbd_devevent:
         moveq   #0,d2
         move.b  d0,d2
         moveq   #$7F,d1
-        and.w   d2,d1                ; d1 = n° de touche
+        and.w   d2,d1                ; d1 = key number
         move.w  d1,d0
-        lsr.w   #3,d0                ; octet de la matrice
+        lsr.w   #3,d0                ; matrix byte
         btst    #7,d2
         bne.s   .ke_up
-        bset    d1,KD_MATRIX(a2,d0.w)  ; bset sur mémoire : n° de bit modulo 8
+        bset    d1,KD_MATRIX(a2,d0.w)  ; bset on memory: bit number modulo 8
         bra.s   .ke_ev
 .ke_up:
         bclr    d1,KD_MATRIX(a2,d0.w)
 .ke_ev:
         swap    d2
-        move.w  KBD_QUAL,d2          ; d2 = (keycode << 16) | qualifieurs
+        move.w  KBD_QUAL,d2          ; d2 = (keycode << 16) | qualifiers
         move.l  ($4).w,a6
         lea     KD_READQ(a2),a0
         jsr     LVO_REMHEAD(a6)
@@ -262,7 +262,7 @@ kbd_devevent:
         addq.w  #4,d1
         and.w   #KD_BMASK,d1
         cmp.w   KD_BHEAD(a2),d1
-        beq.s   .ke_out              ; tampon plein : l'événement est perdu
+        beq.s   .ke_out              ; buffer full: the event is lost
         move.l  d2,KD_BUF(a2,d0.w)
         move.w  d1,KD_BTAIL(a2)
 .ke_out:

@@ -1,17 +1,17 @@
-; reqtest.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Non-régression des requesters d'intuition sur NOTRE ROM (spec intuition-requesters-v34) : Request / EndRequest,
-; REQSET / REQCLEAR, INREQUEST et ReqCount, fin par ENDGADGET (clic du harnais), puis AutoRequest (clic ou Amiga-V).
-; Une ligne par étape, écrite tout de suite sur Output() :
-;   A req1 flags count layer      Request(R1) ; flags = Window.Flags & INREQUEST
-;   M classe                      message IDCMP reçu (répondu)
-;   B req2 count layer            Request(R2, avec un ENDGADGET)
-;   C count r1layer firstreq      EndRequest(R1) (pas en tête) : pas de REQCLEAR attendu
-;   D                             attente du clic sur le gadget de R2
-;   E count flags firstreq        après REQCLEAR
-;   F résultat avant après        AutoRequest ; AvailMem(MEMF_ANY) avant / après (fuite si différents)
-;   G a b c                       écran perso ouvert : FirstScreen = lui (a = 0) ; ScreenToFront(WB) : FirstScreen =
-;                                 WB (b = 0) ; ScreenToBack(WB) : FirstScreen = l'écran perso (c = 0) ; 2 s entre chaque
-; Code auteur, structures publiques (intuition 1.3).
+; reqtest.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Non-regression of intuition requesters on OUR ROM (spec intuition-requesters-v34): Request / EndRequest,
+; REQSET / REQCLEAR, INREQUEST and ReqCount, end via ENDGADGET (harness click), then AutoRequest (click or Amiga-V).
+; One line per step, written immediately to Output():
+;   A req1 flags count layer      Request(R1); flags = Window.Flags & INREQUEST
+;   M class                       IDCMP message received (replied)
+;   B req2 count layer            Request(R2, with an ENDGADGET)
+;   C count r1layer firstreq      EndRequest(R1) (not at the head): no REQCLEAR expected
+;   D                             waiting for the click on R2's gadget
+;   E count flags firstreq        after REQCLEAR
+;   F result before after         AutoRequest; AvailMem(MEMF_ANY) before / after (leak if they differ)
+;   G a b c                       custom screen opened: FirstScreen = it (a = 0); ScreenToFront(WB): FirstScreen =
+;                                 WB (b = 0); ScreenToBack(WB): FirstScreen = the custom screen (c = 0); 2 s apart
+; Authored code, public structures (intuition 1.3).
 
 INREQUEST       EQU     $4000
 REQSET          EQU     $80
@@ -35,7 +35,7 @@ _start:
                 jsr     -204(a6)             ; OpenWindow
                 move.l  d0,win-V(a5)
                 beq     .ret
-; A : Request(R1)
+; A: Request(R1)
                 lea     req1,a0
                 jsr     -138(a6)             ; InitRequester
                 lea     req1,a0
@@ -64,7 +64,7 @@ _start:
                 bsr     hex
                 bsr     flush
                 bsr     drain
-; B : Request(R2) avec un gadget ENDGADGET
+; B: Request(R2) with an ENDGADGET gadget
                 lea     req2,a0
                 jsr     -138(a6)
                 lea     req2,a0
@@ -91,7 +91,7 @@ _start:
                 bsr     hex
                 bsr     flush
                 bsr     drain
-; C : EndRequest(R1), qui n'est pas en tête
+; C: EndRequest(R1), which is not at the head
                 lea     req1,a0
                 move.l  win(pc),a1
                 jsr     -120(a6)             ; EndRequest
@@ -107,16 +107,16 @@ _start:
                 move.l  win(pc),a0
                 move.l  36(a0),d0
                 lea     req2,a1
-                sub.l   a1,d0                ; 0 si FirstRequest = R2
+                sub.l   a1,d0                ; 0 if FirstRequest = R2
                 bsr     hex
                 bsr     flush
                 bsr     drain
-; D : attente du clic sur END (GADGETUP puis REQCLEAR)
+; D: wait for the click on END (GADGETUP then REQCLEAR)
                 lea     line,a4
                 move.b  #'D',(a4)+
                 bsr     flush
 .wait:
-                bsr     waitmsg              ; d0 = classe
+                bsr     waitmsg              ; d0 = class
                 cmp.l   #REQCLEAR,d0
                 bne.s   .wait
                 lea     line,a4
@@ -134,7 +134,7 @@ _start:
                 move.l  36(a0),d0
                 bsr     hex
                 bsr     flush
-; F : AutoRequest
+; F: AutoRequest
                 move.l  4.w,a6
                 moveq   #0,d1
                 jsr     -216(a6)             ; AvailMem
@@ -160,7 +160,7 @@ _start:
                 jsr     -216(a6)
                 bsr     hex
                 bsr     flush
-; G : ScreenToFront / ScreenToBack
+; G: ScreenToFront / ScreenToBack
                 move.l  intbase(pc),a6
                 lea     ns(pc),a0
                 jsr     -198(a6)             ; OpenScreen
@@ -200,13 +200,13 @@ _start:
                 moveq   #0,d0
                 rts
 
-; waitmsg -> d0 = classe du prochain message (ligne « M classe » écrite, message répondu)
+; waitmsg -> d0 = class of the next message ("M class" line written, message replied)
 waitmsg:
                 move.l  4.w,a6
                 move.l  win(pc),a0
                 move.l  86(a0),a0            ; UserPort
                 jsr     -384(a6)             ; WaitPort
-; drain : chaque message en attente -> « M classe » ; d0 = dernière classe
+; drain: each pending message -> "M class"; d0 = last class
 drain:
                 moveq   #0,d7
 .dl:
@@ -248,7 +248,7 @@ hex:            moveq   #7,d3
                 dbra    d3,.hl
                 move.b  #' ',(a4)+
                 rts
-flush:                                       ; Write(Output(), line, a4 - line) avec saut de ligne
+flush:                                       ; Write(Output(), line, a4 - line) with a newline
                 move.b  #10,(a4)+
                 move.l  dosbase(pc),a6
                 jsr     -60(a6)              ; Output

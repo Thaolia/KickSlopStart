@@ -1,23 +1,23 @@
-; src/exec/audio.s — audio.device : attribution des 4 canaux Paula et lecture d'échantillons par DMA.
+; src/exec/audio.s — audio.device: allocation of the 4 Paula channels and sample playback by DMA.
 ;
-; ATTRIBUTION : chaque canal porte une clé (0 = libre) et une précédence. ADCMD_ALLOCATE essaie les combinaisons
-; (ioa_Data) dans l'ordre : la première sans canal à voler l'emporte, sinon celle qui vole les précédences les plus
-; basses, toujours strictement inférieures à ln_Pri. Un canal volé perd ses E/S (IOERR_ABORTED) et sa clé change.
-; Un canal verrouillé (ADCMD_LOCK) n'est pas volé directement : son verrou est rendu avec ADIOERR_CHANNELSTOLEN et
-; l'allocation attend que le canal soit libéré. Les allocations en attente sont retentées à chaque ADCMD_FREE,
-; ADCMD_SETPREC et CloseDevice.
-; LECTURE : Paula déclenche l'interruption AUDn chaque fois qu'il recharge position et longueur, c'est-à-dire au
-; début de chaque passage (cycle) dans l'échantillon. Le compteur ACH_CNT compte ces débuts ; quand le dernier
-; cycle commence, on charge déjà l'échantillon suivant de la file (enchaînement sans trou) ou un mot de silence ;
-; au début suivant, l'écriture terminée est rendue et la suivante devient courante.
-; Écarts assumés : les commandes s'exécutent directement sous Disable (pas de file de commandes séparée) ;
-; ADCMD_FINISH immédiat rend l'écriture avec IOERR_ABORTED, synchronisé (ADIOF_SYNCCYCLE) sans erreur.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs audio.device + devices/audio.h + HRM (Paula audio). AUCUNE lecture ROM.
+; ALLOCATION: each channel carries a key (0 = free) and a precedence. ADCMD_ALLOCATE tries the combinations
+; (ioa_Data) in order: the first one with no channel to steal wins, otherwise the one that steals the lowest
+; precedences, always strictly lower than ln_Pri. A stolen channel loses its I/O (IOERR_ABORTED) and its key changes.
+; A locked channel (ADCMD_LOCK) is not stolen directly: its lock is returned with ADIOERR_CHANNELSTOLEN and
+; the allocation waits until the channel is freed. Pending allocations are retried at each ADCMD_FREE,
+; ADCMD_SETPREC and CloseDevice.
+; PLAYBACK: Paula raises the AUDn interrupt each time it reloads position and length, i.e. at the
+; start of each pass (cycle) through the sample. The ACH_CNT counter counts these starts; when the last
+; cycle starts, we already load the next sample of the queue (gapless chaining) or a silence word;
+; at the following start, the completed write is returned and the next one becomes current.
+; Accepted deviations: commands are executed directly under Disable (no separate command queue);
+; immediate ADCMD_FINISH returns the write with IOERR_ABORTED, synchronised (ADIOF_SYNCCYCLE) without error.
+; IMPLEMENTATION track ("clean"): AutoDocs audio.device + devices/audio.h + HRM (Paula audio). NO ROM reading.
 
                 include "exec.i"
 
 ; --- struct IOAudio (devices/audio.h) ---
-IO_UNITB        EQU IO_UNIT+3        ; octet bas de io_Unit = carte des canaux
+IO_UNITB        EQU IO_UNIT+3        ; low byte of io_Unit = channel map
 IOA_ALLOCKEY    EQU 32
 IOA_DATA        EQU 34
 IOA_LENGTH      EQU 38
@@ -38,32 +38,32 @@ ADIOERR_NOALLOCATION EQU -10
 ADIOERR_ALLOCFAILED EQU -11
 ADIOERR_CHANNELSTOLEN EQU -12
 
-; --- état d'un canal ---
-ACH_KEY         EQU 0                ; word : clé d'attribution (0 = libre)
-ACH_PREC        EQU 2                ; byte : précédence
-ACH_STOP        EQU 3                ; byte : arrêté par CMD_STOP
-ACH_CUR         EQU 4                ; long : écriture en cours (0 = aucune)
-ACH_CNT         EQU 8                ; word : débuts de cycle vus pour l'écriture en cours
-ACH_TARGET      EQU 10               ; word : cycles à jouer (0 = infini)
-ACH_NEXT        EQU 12               ; byte : déjà chargé pour l'après-dernier cycle (0 rien, 1 suivante, 2 silence)
-ACH_PPV         EQU 13               ; byte : période/volume en attente (ADCMD_PERVOL synchronisé)
+; --- channel state ---
+ACH_KEY         EQU 0                ; word: allocation key (0 = free)
+ACH_PREC        EQU 2                ; byte: precedence
+ACH_STOP        EQU 3                ; byte: stopped by CMD_STOP
+ACH_CUR         EQU 4                ; long: write in progress (0 = none)
+ACH_CNT         EQU 8                ; word: cycle starts seen for the write in progress
+ACH_TARGET      EQU 10               ; word: cycles to play (0 = infinite)
+ACH_NEXT        EQU 12               ; byte: already loaded for after the last cycle (0 nothing, 1 next, 2 silence)
+ACH_PPV         EQU 13               ; byte: pending period/volume (synchronised ADCMD_PERVOL)
 ACH_PPER        EQU 14               ; word
 ACH_PVOL        EQU 16               ; word
-ACH_LOCK        EQU 18               ; long : requête ADCMD_LOCK (0 = non verrouillé)
-ACH_WQ          EQU 22               ; struct List : CMD_WRITE en file
-ACH_CQ          EQU 36               ; struct List : ADCMD_WAITCYCLE en attente
-ACH_INT         EQU 50               ; struct Interrupt (vecteur AUDn)
-ACH_NUM         EQU 72               ; word : n° de canal
-ACH_DEV         EQU 74               ; long : base du device
+ACH_LOCK        EQU 18               ; long: ADCMD_LOCK request (0 = not locked)
+ACH_WQ          EQU 22               ; struct List: queued CMD_WRITEs
+ACH_CQ          EQU 36               ; struct List: pending ADCMD_WAITCYCLEs
+ACH_INT         EQU 50               ; struct Interrupt (AUDn vector)
+ACH_NUM         EQU 72               ; word: channel number
+ACH_DEV         EQU 74               ; long: device base
 ACH_SIZE        EQU 78
-; --- base du device ---
-AD_KEYGEN       EQU LIB_SIZE         ; word : dernière clé générée
-AD_SILENCE      EQU LIB_SIZE+2       ; long : mot nul en chip (alloué à la première écriture)
-AD_ALLOCQ       EQU LIB_SIZE+6       ; struct List : ADCMD_ALLOCATE en attente
+; --- device base ---
+AD_KEYGEN       EQU LIB_SIZE         ; word: last generated key
+AD_SILENCE      EQU LIB_SIZE+2       ; long: null word in chip (allocated at the first write)
+AD_ALLOCQ       EQU LIB_SIZE+6       ; struct List: pending ADCMD_ALLOCATEs
 AD_CH           EQU LIB_SIZE+20      ; 4 x ACH_SIZE
 AD_SIZE         EQU AD_CH+4*ACH_SIZE
 
-AUD0LC          EQU CUSTOM+$0A0      ; canal n : +16*n ; LC.l, LEN.w (+4), PER.w (+6), VOL.w (+8)
+AUD0LC          EQU CUSTOM+$0A0      ; channel n: +16*n; LC.l, LEN.w (+4), PER.w (+6), VOL.w (+8)
 ADKCON_A        EQU CUSTOM+$09E
 DMACON_A        EQU CUSTOM+$096
 INTB_AUD0       EQU 7
@@ -100,7 +100,7 @@ audio_datatab:
         dc.b    0
         EVEN
 
-; initFunc (d0 = base) : état vierge. Le matériel n'est touché qu'à la première attribution (CMD_RESET du canal).
+; initFunc (d0 = base): blank state. The hardware is only touched at the first allocation (CMD_RESET of the channel).
 audio_initfunc:
         movem.l d2/a2,-(sp)
         move.l  d0,a2
@@ -146,7 +146,7 @@ ad_expunge:
         moveq   #0,d0
         rts
 
-; OpenDevice(unité d0 ignorée, ioreq a1, flags d1 ignorés) : clé chargée, attribution sans attente si ioa_Length.
+; OpenDevice(unit d0 ignored, ioreq a1, flags d1 ignored): key loaded, allocation without waiting if ioa_Length.
 ad_open:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -173,7 +173,7 @@ ad_open:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; CloseDevice(ioreq a1) : libère les canaux de io_Unit tenus avec la clé, puis io_Device = -1, io_Unit = 0.
+; CloseDevice(ioreq a1): frees the channels of io_Unit held with the key, then io_Device = -1, io_Unit = 0.
 ad_close:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -193,8 +193,8 @@ ad_close:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; BeginIO(ioreq a1, device a6). Chaque commande tourne sous Disable avec a3 = ioreq, a5 = device, a6 = SysBase ;
-; elle rend d0 = 0 (terminée : réponse sauf IOF_QUICK) ou 1 (asynchrone : IOF_QUICK effacé, réponse plus tard).
+; BeginIO(ioreq a1, device a6). Each command runs under Disable with a3 = ioreq, a5 = device, a6 = SysBase;
+; it returns d0 = 0 (completed: reply unless IOF_QUICK) or 1 (asynchronous: IOF_QUICK cleared, reply later).
 ad_beginio:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -248,8 +248,8 @@ ad_cmdtab:
         dc.w    ad_lock-ad_cmdtab    ; 13 ADCMD_LOCK
         dc.w    ad_waitcycle-ad_cmdtab ; 14 ADCMD_WAITCYCLE
 
-; --- commandes multi-canaux : ad_forchan applique l'opération a2 à chaque canal de io_Unit dont la clé est
-; celle de la requête (a4 = canal, d7 = n°) ; les autres sortent de io_Unit avec ADIOERR_NOALLOCATION. ---
+; --- multi-channel commands: ad_forchan applies operation a2 to each channel of io_Unit whose key is
+; that of the request (a4 = channel, d7 = number); the others leave io_Unit with ADIOERR_NOALLOCATION. ---
 ad_nop:
         lea     ach_nop(pc),a2
         bra.s   ad_multi
@@ -286,7 +286,7 @@ ad_setprec:
         bsr     ad_retry
         moveq   #0,d0
         rts
-; ADCMD_LOCK : asynchrone si la clé est bonne (rendu quand tous ses canaux sont libérés, ou volé).
+; ADCMD_LOCK: asynchronous if the key is right (returned when all its channels are freed, or stolen).
 ad_lock:
         lea     ach_lock(pc),a2
         bsr     ad_forchan
@@ -300,7 +300,7 @@ ad_lock:
         rts
 
 ad_forchan:
-        moveq   #0,d6                ; d6 = canaux traités
+        moveq   #0,d6                ; d6 = channels processed
         lea     AD_CH(a5),a4
         moveq   #0,d7
 .fc_lp:
@@ -323,7 +323,7 @@ ad_forchan:
         move.b  d6,IO_UNITB(a3)
         rts
 
-; ad_single : premier canal de io_Unit -> a4 (clé vérifiée), io_Unit réduit à ce canal. d0 = 0 si valable.
+; ad_single: first channel of io_Unit -> a4 (key checked), io_Unit reduced to that channel. d0 = 0 if valid.
 ad_single:
         lea     AD_CH(a5),a4
         moveq   #0,d7
@@ -351,7 +351,7 @@ ad_single:
         moveq   #-1,d0
         rts
 
-; CMD_READ : ioa_Data = écriture en cours du canal (0 si aucune).
+; CMD_READ: ioa_Data = write in progress of the channel (0 if none).
 ad_read:
         bsr.s   ad_single
         bne.s   .ar_r
@@ -360,7 +360,7 @@ ad_read:
         moveq   #0,d0
         rts
 
-; ADCMD_WAITCYCLE : attend la fin du cycle en cours s'il y a une écriture, sinon répond tout de suite.
+; ADCMD_WAITCYCLE: waits for the end of the current cycle if there is a write, otherwise replies at once.
 ad_waitcycle:
         bsr.s   ad_single
         bne.s   .aw_sync
@@ -375,7 +375,7 @@ ad_waitcycle:
         moveq   #0,d0
         rts
 
-; CMD_WRITE : file d'écriture du canal ; démarre tout de suite si le canal est inactif et non arrêté.
+; CMD_WRITE: write queue of the channel; starts at once if the channel is idle and not stopped.
 ad_write:
         bsr.s   ad_single
         bne.s   .wr_sync
@@ -396,7 +396,7 @@ ad_write:
         jsr     LVO_ADDTAIL(a6)
         tst.l   ACH_CUR(a4)
         beq.s   .wr_go
-        cmp.b   #2,ACH_NEXT(a4)      ; dernier cycle déjà lancé avec silence derrière : enchaîner sur celle-ci
+        cmp.b   #2,ACH_NEXT(a4)      ; last cycle already started with silence behind: chain onto this one
         bne.s   .wr_async
         move.l  a3,a0
         bsr     ach_load
@@ -421,7 +421,7 @@ ad_allocate:
         tst.l   d0
         beq.s   .aa_r
         cmp.l   #1,d0
-        bne.s   .aa_wait             ; canaux verrouillés à libérer : attendre même en ADIOF_NOWAIT
+        bne.s   .aa_wait             ; locked channels to free: wait even with ADIOF_NOWAIT
         btst    #ADIOB_NOWAIT,IO_FLAGS(a3)
         beq.s   .aa_wait
         move.b  #ADIOERR_ALLOCFAILED,IO_ERROR(a3)
@@ -436,20 +436,20 @@ ad_allocate:
         moveq   #1,d0
         rts
 
-; ad_needkey : ioa_AllocKey = nouvelle clé unique si nulle.
+; ad_needkey: ioa_AllocKey = new unique key if null.
 ad_needkey:
         tst.w   IOA_ALLOCKEY(a3)
         bne.s   .nk_r
         addq.w  #1,AD_KEYGEN(a5)
         bne.s   .nk_set
-        addq.w  #1,AD_KEYGEN(a5)     ; jamais 0
+        addq.w  #1,AD_KEYGEN(a5)     ; never 0
 .nk_set:
         move.w  AD_KEYGEN(a5),IOA_ALLOCKEY(a3)
 .nk_r:
         rts
 
-; ad_tryalloc (a3 = ioreq) -> d0 = 0 attribué (io_Unit, clé posés), 1 impossible, 2 attente de canaux verrouillés.
-; d2 = combinaison retenue, d3 = sa précédence volée max, d4 = clé demandée, d5 = combinaison testée.
+; ad_tryalloc (a3 = ioreq) -> d0 = 0 allocated (io_Unit, key set), 1 impossible, 2 waiting for locked channels.
+; d2 = chosen combination, d3 = its max stolen precedence, d4 = requested key, d5 = combination being tested.
 ad_tryalloc:
         move.w  IOA_ALLOCKEY(a3),d4
         moveq   #-1,d2
@@ -464,13 +464,13 @@ ad_tryalloc:
 .ta_combo:
         moveq   #$0F,d5
         and.b   (a0)+,d5
-        bsr     ad_maxprec           ; d0.w = précédence volée max (-129 si aucun vol)
+        bsr     ad_maxprec           ; d0.w = max stolen precedence (-129 if no theft)
         cmp.w   #-129,d0
         beq.s   .ta_free
         move.b  LN_PRIO(a3),d6
         ext.w   d6
         cmp.w   d6,d0
-        bge.s   .ta_nextc            ; voler exige une précédence strictement inférieure
+        bge.s   .ta_nextc            ; stealing requires a strictly lower precedence
         cmp.w   d3,d0
         bge.s   .ta_nextc
         move.w  d0,d3
@@ -485,7 +485,7 @@ ad_tryalloc:
         move.w  d5,d2
         bra.s   .ta_take
 .ta_steal:
-        ; verrous dans la combinaison retenue : rendus avec ADIOERR_CHANNELSTOLEN, on attend leur libération
+        ; locks in the chosen combination: returned with ADIOERR_CHANNELSTOLEN, we wait for their release
         moveq   #0,d5
         lea     AD_CH(a5),a4
         moveq   #0,d7
@@ -516,7 +516,7 @@ ad_tryalloc:
 .ta_set:
         btst    d7,d2
         beq.s   .ta_setnext
-        bsr     ach_reset            ; E/S d'un éventuel propriétaire volé : IOERR_ABORTED
+        bsr     ach_reset            ; I/O of a possible stolen owner: IOERR_ABORTED
         move.w  d4,ACH_KEY(a4)
         move.b  LN_PRIO(a3),ACH_PREC(a4)
 .ta_setnext:
@@ -529,8 +529,8 @@ ad_tryalloc:
         moveq   #0,d0
         rts
 
-; ad_maxprec : d5 = combinaison, d4 = clé du demandeur -> d0.w = précédence max des canaux tenus par d'autres
-; (-129 si aucun). Utilise d6/d7/a4.
+; ad_maxprec: d5 = combination, d4 = requester's key -> d0.w = max precedence of the channels held by others
+; (-129 if none). Uses d6/d7/a4.
 ad_maxprec:
         move.w  #-129,d0
         lea     AD_CH(a5),a4
@@ -554,14 +554,14 @@ ad_maxprec:
         bcs.s   .mp_lp
         rts
 
-; ad_retry : retente chaque ADCMD_ALLOCATE en attente ; celles qui aboutissent sont rendues.
+; ad_retry: retries each pending ADCMD_ALLOCATE; those that succeed are returned.
 ad_retry:
         move.l  a3,-(sp)
         move.l  AD_ALLOCQ(a5),a3
 .rt_lp:
         move.l  (a3),d0
         beq.s   .rt_out
-        move.l  d0,-(sp)             ; successeur, avant un éventuel Remove
+        move.l  d0,-(sp)             ; successor, before a possible Remove
         bsr     ad_tryalloc
         tst.l   d0
         bne.s   .rt_next
@@ -576,7 +576,7 @@ ad_retry:
         move.l  (sp)+,a3
         rts
 
-; --- opérations par canal (a4 = canal, d7 = n°, a3 = requête, a5 = device, a6 = SysBase) ---
+; --- per-channel operations (a4 = channel, d7 = number, a3 = request, a5 = device, a6 = SysBase) ---
 ach_nop:
         rts
 
@@ -588,7 +588,7 @@ ach_lock:
         move.l  a3,ACH_LOCK(a4)
         rts
 
-; ach_free : remise à zéro, clé effacée ; un verrou perd ce canal et est rendu quand il n'en a plus.
+; ach_free: reset, key cleared; a lock loses this channel and is returned when it has none left.
 ach_free:
         bsr.s   ach_reset
         clr.w   ACH_KEY(a4)
@@ -604,7 +604,7 @@ ach_free:
 .af_r:
         rts
 
-; ach_reset : registres audio et modulation à zéro, vecteur AUDn posé, E/S annulées, canal non arrêté.
+; ach_reset: audio and modulation registers at zero, AUDn vector set, I/O cancelled, channel not stopped.
 ach_reset:
         bsr.s   ach_flush
         clr.b   ACH_STOP(a4)
@@ -616,13 +616,13 @@ ach_reset:
         move.w  d0,d1
         lsl.w   #4,d1
         or.w    d1,d0
-        move.w  d0,ADKCON_A          ; USEn : modulations de/vers ce canal coupées
+        move.w  d0,ADKCON_A          ; USEn: modulations from/to this channel cut
         moveq   #INTB_AUD0,d0
         add.w   d7,d0
         lea     ACH_INT(a4),a1
         jmp     LVO_SETINTVECTOR(a6)
 
-; ach_flush : coupe le canal, rend l'écriture en cours, la file et les ADCMD_WAITCYCLE avec IOERR_ABORTED.
+; ach_flush: cuts the channel, returns the write in progress, the queue and the ADCMD_WAITCYCLEs with IOERR_ABORTED.
 ach_flush:
         bsr     ach_off
         move.l  ACH_CUR(a4),d0
@@ -634,7 +634,7 @@ ach_flush:
         lea     ACH_WQ(a4),a0
         bsr.s   ach_abortlist
         lea     ACH_CQ(a4),a0
-; ach_abortlist : a0 = liste -> chaque requête retirée et rendue avec IOERR_ABORTED.
+; ach_abortlist: a0 = list -> each request removed and returned with IOERR_ABORTED.
 ach_abortlist:
         move.l  a0,-(sp)
 .al_lp:
@@ -656,7 +656,7 @@ ach_stop:
         move.b  #1,ACH_STOP(a4)
         bra     ach_off
 
-; ach_start : un canal arrêté reprend son écriture depuis le début, ou démarre la suivante de la file.
+; ach_start: a stopped channel resumes its write from the start, or starts the next one in the queue.
 ach_start:
         tst.b   ACH_STOP(a4)
         beq.s   .st_r
@@ -668,15 +668,15 @@ ach_start:
 .st_r:
         rts
 
-; ach_finish : arrête l'écriture en cours, tout de suite (IOERR_ABORTED) ou à la fin de son cycle (sans erreur).
+; ach_finish: stops the write in progress, at once (IOERR_ABORTED) or at the end of its cycle (without error).
 ach_finish:
         move.l  ACH_CUR(a4),d0
         beq.s   .fi_r
         btst    #ADIOB_SYNCCYCLE,IO_FLAGS(a3)
         beq.s   .fi_now
         move.w  ACH_CNT(a4),d0
-        beq.s   .fi_now              ; aucun cycle commencé : rien à laisser finir
-        move.w  d0,ACH_TARGET(a4)    ; le prochain début de cycle termine l'écriture
+        beq.s   .fi_now              ; no cycle started: nothing to let finish
+        move.w  d0,ACH_TARGET(a4)    ; the next cycle start ends the write
         tst.b   ACH_NEXT(a4)
         bne.s   .fi_r
         bra     ach_loadafter
@@ -689,7 +689,7 @@ ach_finish:
 .fi_r:
         rts
 
-; ach_pervol : période/volume de l'écriture en cours, tout de suite ou au prochain début de cycle.
+; ach_pervol: period/volume of the write in progress, at once or at the next cycle start.
 ach_pervol:
         tst.l   ACH_CUR(a4)
         beq.s   .pv_r
@@ -706,7 +706,7 @@ ach_pervol:
 .pv_r:
         rts
 
-; ach_regs : a0 = registres matériels du canal d7 (préserve d0/d1).
+; ach_regs: a0 = hardware registers of channel d7 (preserves d0/d1).
 ach_regs:
         move.w  d7,a0
         add.w   a0,a0
@@ -716,7 +716,7 @@ ach_regs:
         add.l   #AUD0LC,a0
         rts
 
-; ach_off : DMA et interruption du canal coupés, état d'enchaînement effacé.
+; ach_off: DMA and interrupt of the channel cut, chaining state cleared.
 ach_off:
         moveq   #0,d0
         bset    d7,d0
@@ -728,7 +728,7 @@ ach_off:
         clr.b   ACH_PPV(a4)
         rts
 
-; ach_startnext : canal inactif et non arrêté -> joue la première écriture de la file.
+; ach_startnext: idle and not stopped channel -> plays the first write of the queue.
 ach_startnext:
         tst.b   ACH_STOP(a4)
         bne.s   .sn_r
@@ -743,7 +743,7 @@ ach_startnext:
 .sn_r:
         rts
 
-; ach_play : a0 = écriture -> devient courante et démarre (DMA + interruption du canal).
+; ach_play: a0 = write -> becomes current and starts (DMA + channel interrupt).
 ach_play:
         move.l  a0,ACH_CUR(a4)
         clr.w   ACH_CNT(a4)
@@ -763,8 +763,8 @@ ach_play:
         move.w  d0,DMACON_A
         rts
 
-; ach_begin : a0 = écriture qui commence -> position/longueur (+ période/volume si ADIOF_PERVOL), message de
-; démarrage (ADIOF_WRITEMESSAGE). Préserve a0.
+; ach_begin: a0 = write that starts -> position/length (+ period/volume if ADIOF_PERVOL), start message
+; (ADIOF_WRITEMESSAGE). Preserves a0.
 ach_begin:
         move.l  a0,-(sp)
         bsr.s   ach_load
@@ -783,17 +783,17 @@ ach_begin:
         move.l  (sp)+,a0
         rts
 
-; ach_load : a0 = écriture -> AUDnLC / AUDnLEN (pris en compte au prochain rechargement de Paula).
+; ach_load: a0 = write -> AUDnLC / AUDnLEN (taken into account at Paula's next reload).
 ach_load:
         move.l  a0,a1
         bsr     ach_regs
         move.l  IOA_DATA(a1),(a0)
         move.l  IOA_LENGTH(a1),d0
         lsr.l   #1,d0
-        move.w  d0,4(a0)             ; 65536 mots -> 0
+        move.w  d0,4(a0)             ; 65536 words -> 0
         rts
 
-; ach_loadafter : charge ce qui suit le dernier cycle : la prochaine écriture de la file, sinon le silence.
+; ach_loadafter: loads what follows the last cycle: the next write of the queue, otherwise silence.
 ach_loadafter:
         move.l  ACH_WQ(a4),a0
         tst.l   (a0)
@@ -808,8 +808,8 @@ ach_loadafter:
         move.b  #2,ACH_NEXT(a4)
         rts
 
-; ach_int : interruption AUDn (a1 = canal). Un début de cycle : fin du précédent (ADCMD_WAITCYCLE rendues),
-; écriture terminée rendue au début qui suit son dernier cycle, préchargement au début du dernier cycle.
+; ach_int: AUDn interrupt (a1 = channel). A cycle start: end of the previous one (ADCMD_WAITCYCLEs returned),
+; completed write returned at the start following its last cycle, preloading at the start of the last cycle.
 ach_int:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a4
@@ -822,7 +822,7 @@ ach_int:
         move.w  d0,INTREQ
         tst.l   ACH_CUR(a4)
         bne.s   .in_cur
-        move.w  d0,INTENA            ; aucune écriture : interruption orpheline coupée
+        move.w  d0,INTENA            ; no write: orphan interrupt cut
         bra     .in_out
 .in_cur:
         addq.w  #1,ACH_CNT(a4)
@@ -837,20 +837,20 @@ ach_int:
         beq.s   .in_fin
         move.l  a4,a0
         add.w   #ACH_CQ,a0
-        bsr     ach_replylist        ; fin d'un cycle
+        bsr     ach_replylist        ; end of a cycle
 .in_fin:
         move.w  ACH_TARGET(a4),d0
-        beq     .in_out              ; cycles infinis
+        beq     .in_out              ; infinite cycles
         addq.w  #1,d0
         cmp.w   ACH_CNT(a4),d0
         bne.s   .in_last
-        move.l  ACH_CUR(a4),a1       ; dernier cycle achevé : écriture rendue
+        move.l  ACH_CUR(a4),a1       ; last cycle completed: write returned
         clr.l   ACH_CUR(a4)
         clr.b   IO_ERROR(a1)
         jsr     LVO_REPLYMSG(a6)
         cmp.b   #1,ACH_NEXT(a4)
         bne.s   .in_stop
-        lea     ACH_WQ(a4),a0        ; la suivante joue déjà (préchargée)
+        lea     ACH_WQ(a4),a0        ; the next one is already playing (preloaded)
         jsr     LVO_REMHEAD(a6)
         move.l  d0,a0
         move.l  a0,ACH_CUR(a4)
@@ -880,12 +880,12 @@ ach_int:
         bne.s   .in_out
         tst.b   ACH_NEXT(a4)
         bne.s   .in_out
-        bsr     ach_loadafter        ; dernier cycle commencé : préparer la suite
+        bsr     ach_loadafter        ; last cycle started: prepare what follows
 .in_out:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ach_replylist : a0 = liste -> chaque requête retirée et rendue sans erreur.
+; ach_replylist: a0 = list -> each request removed and returned without error.
 ach_replylist:
         move.l  a0,-(sp)
 .rl_lp:
@@ -901,7 +901,7 @@ ach_replylist:
         addq.l  #4,sp
         rts
 
-; AbortIO(ioreq a1, device a6) : écriture en cours -> arrêtée ; requête en file -> retirée ; rendue IOERR_ABORTED.
+; AbortIO(ioreq a1, device a6): write in progress -> stopped; queued request -> removed; returned IOERR_ABORTED.
 ad_abortio:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -944,7 +944,7 @@ ad_abortio:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ad_inlist : a0 = liste, a3 = requête -> Z si la requête y est.
+; ad_inlist: a0 = list, a3 = request -> Z if the request is in it.
 ad_inlist:
         move.l  (a0),a0
 .il_lp:

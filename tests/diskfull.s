@@ -1,22 +1,22 @@
-; diskfull.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde du comportement « disque plein » (spec docs/analysis/disk-full-write-v34.md), à lancer depuis la
-; startup-sequence d'une disquette DF0: inscriptible ayant moins de 200000 octets libres.
-; Assembler avec -kick1hunks (la 1.3 refuse HUNK_DREL32). Deux lignes par étape, sur Output() :
-;   <lettre> r1 r2
+; diskfull.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Probe of the "disk full" behaviour (spec docs/analysis/disk-full-write-v34.md), to be run from the
+; startup-sequence of a writable DF0: floppy with less than 200000 bytes free.
+; Assemble with -kick1hunks (1.3 rejects HUNK_DREL32). Two lines per step, on Output():
+;   <letter> r1 r2
 ;    pos used
-;     r1/r2 = dp_Res1/dp_Res2 (packet brut) ou valeur rendue/IoErr (appel dos) ; pr_Result2 remis à 0 avant
-;     pos   = Seek(fh, 0, OFFSET_CURRENT) après l'étape ; used = id_NumBlocksUsed de Info(lock "df0:")
-;   A  Open("df0:big", MODE_NEWFILE) : r1 = fh
-;   B  packet ACTION_WRITE brut, 200000 octets
-;   C  packet ACTION_WRITE brut, 1000 octets
+;     r1/r2 = dp_Res1/dp_Res2 (raw packet) or returned value/IoErr (dos call); pr_Result2 reset to 0 beforehand
+;     pos   = Seek(fh, 0, OFFSET_CURRENT) after the step; used = id_NumBlocksUsed from Info(lock "df0:")
+;   A  Open("df0:big", MODE_NEWFILE): r1 = fh
+;   B  raw ACTION_WRITE packet, 200000 bytes
+;   C  raw ACTION_WRITE packet, 1000 bytes
 ;   D  dos Write(fh, 1000)
-;   E  packet ACTION_WRITE brut, 200000 octets, depuis pos 2000 (au-delà des blocs déjà alloués)
+;   E  raw ACTION_WRITE packet, 200000 bytes, from pos 2000 (beyond the blocks already allocated)
 ;   F  dos Write(fh, 200000)
-;   G  dos Write(fh, 1000) (disque plein)
-;   H  Close(fh) : pos non significatif
-;   I  Open("df0:big3", MODE_NEWFILE) (disque plein) : r1 = fh
-;   ZZ fin
-; Code auteur, structures publiques (exec/dos 1.3).
+;   G  dos Write(fh, 1000) (disk full)
+;   H  Close(fh): pos not meaningful
+;   I  Open("df0:big3", MODE_NEWFILE) (disk full): r1 = fh
+;   ZZ end
+; Author's code, public structures (exec/dos 1.3).
 
 ACTION_WRITE    EQU     87
 pr_MsgPort      EQU     $5C
@@ -110,7 +110,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-; dos Write(d7, SRC, d5), puis ligne (lettre d1)
+; dos Write(d7, SRC, d5), then line (letter d1)
 doswrite:
                 move.l  d1,d6
                 bsr     clr2
@@ -122,7 +122,7 @@ doswrite:
                 move.l  d6,d1
                 bra     dosline
 
-; ligne « lettre d0 IoErr pos used » (d1 = lettre, d0 = valeur rendue)
+; line "letter d0 IoErr pos used" (d1 = letter, d0 = returned value)
 dosline:
                 move.l  d0,d6
                 lea     line,a4
@@ -135,7 +135,7 @@ dosline:
                 bsr     hex
                 bra     tail
 
-; packet ACTION_WRITE brut de d5 octets depuis SRC sur le FileHandle d7, puis ligne (lettre d1)
+; raw ACTION_WRITE packet of d5 bytes from SRC on FileHandle d7, then line (letter d1)
 rawwrite:
                 move.l  d1,d6
                 lea     pkt,a0
@@ -154,7 +154,7 @@ rawwrite:
                 move.l  $24(a2),20(a1)       ; dp_Arg1 = fh_Args
                 move.l  #SRC,24(a1)
                 move.l  d5,28(a1)
-                move.l  8(a2),a0             ; fh_Type = port du handler
+                move.l  8(a2),a0             ; fh_Type = handler port
                 lea     pkt,a1
                 move.l  4.w,a6
                 jsr     -366(a6)             ; PutMsg
@@ -173,9 +173,9 @@ rawwrite:
                 bsr     hex
                 bra     tail
 
-; ajoute pos et used puis écrit la ligne
+; appends pos and used, then writes the line
 tail:
-                bsr     flush                ; résultat d'abord : Seek/Info ne doivent pas le masquer
+                bsr     flush                ; result first: Seek/Info must not mask it
                 lea     line,a4
                 move.b  #' ',(a4)+
                 moveq   #-1,d0
@@ -214,7 +214,7 @@ hex:            moveq   #7,d3
                 move.b  #' ',(a4)+
                 rts
 
-flush:                                       ; Write(Output(), line, a4 - line) avec saut de ligne
+flush:                                       ; Write(Output(), line, a4 - line) with newline
                 move.b  #10,(a4)+
                 move.l  dosbase(pc),a6
                 jsr     -60(a6)              ; Output

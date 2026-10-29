@@ -1,11 +1,11 @@
-; src/exec/romboot.s — romboot.library 34 (spec docs/analysis/uae-hd-boot-v34.md §2) : résident COLDSTART pri -40.
-; À son init, pour chaque carte autoconfig à configurer (CDF_CONFIGME) dont la DiagArea a été copiée en RAM (Diag
-; valide, moment CONFIGTIME), la première ROMTag trouvée dans cette copie est initialisée (InitResident), la carte
-; étant la « liaison courante » d'expansion (pilote de disque dur d'une carte : uaehf.device sous UAE). RomBoot
-; (LVO -30), appelée par strap quand DF0: n'est pas amorçable, appelle le BootPoint de chaque BootNode amorçable de
-; eb_MountList (ln_Type NT_BOOTNODE, ln_Name = ConfigDev de la carte) ; un BootPoint qui démarre dos ne revient pas.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs expansion + NDK libraries/configvars.i, configregs.i, expansionbase.i
-; + spec. AUCUNE lecture ROM.
+; src/exec/romboot.s — romboot.library 34 (spec docs/analysis/uae-hd-boot-v34.md §2): COLDSTART resident pri -40.
+; At its init, for each autoconfig board to configure (CDF_CONFIGME) whose DiagArea was copied to RAM (valid
+; Diag, CONFIGTIME moment), the first ROMTag found in that copy is initialised (InitResident), the board
+; being the "current binding" of expansion (hard disk driver of a board: uaehf.device under UAE). RomBoot
+; (LVO -30), called by strap when DF0: is not bootable, calls the BootPoint of each bootable BootNode of
+; eb_MountList (ln_Type NT_BOOTNODE, ln_Name = ConfigDev of the board); a BootPoint that starts dos does not return.
+; IMPLEMENTATION track ("clean"): AutoDocs expansion + NDK libraries/configvars.i, configregs.i, expansionbase.i
+; + spec. NO ROM reading.
 
                 include "exec.i"
                 include "expansion.i"
@@ -54,8 +54,8 @@ rb_null:
         moveq   #0,d0
         rts
 
-; rb_diag(a2 = ConfigDev) -> a0 = copie RAM de sa DiagArea si elle est utilisable (Diag valide, copie présente,
-; moment CONFIGTIME), Z = 1 sinon. Préserve tout le reste.
+; rb_diag(a2 = ConfigDev) -> a0 = RAM copy of its DiagArea if it is usable (valid Diag, copy present,
+; CONFIGTIME moment), Z = 1 otherwise. Preserves everything else.
 rb_diag:
         suba.l  a0,a0
         btst    #ERTB_DIAGVALID,ER_TYPE(a2)
@@ -64,13 +64,13 @@ rb_diag:
         cmpa.w  #0,a0
         beq.s   .dg_ret
         btst    #4,DA_CONFIG(a0)     ; DAC_CONFIGTIME
-        bne.s   .dg_ret              ; Z = 0 : utilisable
+        bne.s   .dg_ret              ; Z = 0: usable
         suba.l  a0,a0
         cmpa.w  #0,a0                ; Z = 1
 .dg_ret:
         rts
 
-; initFunc (d0 = base, a6 = SysBase) -> d0 = base : nom, puis ROMTags des cartes (spec §2.1).
+; initFunc (d0 = base, a6 = SysBase) -> d0 = base: name, then ROMTags of the boards (spec §2.1).
 romboot_initfunc:
         movem.l d2-d3/a2-a5,-(sp)
         move.l  d0,a4                ; a4 = RombootBase
@@ -82,7 +82,7 @@ romboot_initfunc:
         tst.l   d0
         beq     .in_ret
         move.l  d0,a5                ; a5 = ExpansionBase
-        move.l  EB_BOARDLIST(a5),a2  ; a2 = ConfigDev courant
+        move.l  EB_BOARDLIST(a5),a2  ; a2 = current ConfigDev
 .in_cd:
         tst.l   (a2)
         beq.s   .in_done
@@ -91,7 +91,7 @@ romboot_initfunc:
         move.l  a6,-(sp)
         move.l  a5,a6
         jsr     EXP_LVO_OBTAINBINDING(a6)
-        clr.l   -(sp)                ; CurrentBinding : ConfigDev, puis FileName / ProductString / ToolTypes nuls
+        clr.l   -(sp)                ; CurrentBinding: ConfigDev, then null FileName / ProductString / ToolTypes
         clr.l   -(sp)
         clr.l   -(sp)
         move.l  a2,-(sp)
@@ -103,7 +103,7 @@ romboot_initfunc:
         bsr.s   rb_diag
         beq.s   .in_rel
         moveq   #0,d2
-        move.w  DA_SIZE(a0),d2       ; d2 = octets à parcourir
+        move.w  DA_SIZE(a0),d2       ; d2 = bytes to scan
         move.l  a0,a3
 .in_scan:
         subq.l  #2,d2
@@ -112,7 +112,7 @@ romboot_initfunc:
         bne.s   .in_step
         cmpa.l  RT_MATCHTAG(a3),a3
         bne.s   .in_step
-        move.l  a3,a1                ; première ROMTag de la carte : initialisée (une seule)
+        move.l  a3,a1                ; first ROMTag of the board: initialised (only one)
         moveq   #0,d1
         jsr     LVO_INITRESIDENT(a6)
         bra.s   .in_rel
@@ -135,9 +135,9 @@ romboot_initfunc:
         movem.l (sp)+,d2-d3/a2-a5
         rts
 
-; RomBoot() (a6 = RombootBase) -> d0 = 0 : BootPoint de chaque BootNode amorçable de eb_MountList, dans l'ordre de la
-; liste (spec §2.2), avec A0 = adresse appelée, A1 = ConfigDev (aussi en 4(sp)), A6 = ExecBase ; un BootPoint qui
-; revient laisse passer au suivant. Un BootPoint nul est ignoré (au lieu de sauter au début de la copie).
+; RomBoot() (a6 = RombootBase) -> d0 = 0: BootPoint of each bootable BootNode of eb_MountList, in list order
+; (spec §2.2), with A0 = called address, A1 = ConfigDev (also at 4(sp)), A6 = ExecBase; a BootPoint that
+; returns lets the next one go. A null BootPoint is ignored (instead of jumping to the start of the copy).
 rb_romboot:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  ($4).w,a6
@@ -147,9 +147,9 @@ rb_romboot:
         tst.l   d0
         beq.s   .rb_ret
         move.l  d0,a5                ; a5 = ExpansionBase
-        move.l  EB_MOUNTLIST(a5),a4  ; a4 = BootNode courant
+        move.l  EB_MOUNTLIST(a5),a4  ; a4 = current BootNode
 .rb_node:
-        move.l  (a4),d7              ; d7 = suivant (relu avant l'appel)
+        move.l  (a4),d7              ; d7 = next (reread before the call)
         beq.s   .rb_done
         tst.l   BN_DEVICENODE(a4)
         beq.s   .rb_next
@@ -166,7 +166,7 @@ rb_romboot:
         add.l   d0,a0                ; a0 = BootPoint
         move.l  a2,a1
         movem.l d7/a4-a5,-(sp)
-        move.l  a2,-(sp)             ; 4(sp) à l'entrée du BootPoint
+        move.l  a2,-(sp)             ; 4(sp) on entry to the BootPoint
         move.l  ($4).w,a6
         jsr     (a0)
         addq.l  #4,sp

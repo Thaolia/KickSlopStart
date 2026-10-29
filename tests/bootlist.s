@@ -1,11 +1,11 @@
-; bootlist.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire du démarrage sur carte à DiagArea (piste analyse) :
-;   RM adr pri flags type nom      : ExecBase->ResModules (tableau, bit 31 = suite)
-;   DV adr nom / LB adr nom        : DeviceList / LibList d'exec
+; bootlist.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of booting with a DiagArea board (analysis track):
+;   RM adr pri flags type name     : ExecBase->ResModules (array, bit 31 = continuation)
+;   DV adr name / LB adr name      : exec DeviceList / LibList
 ;   BN adr type pri flags lnname devnode : expansion eb_MountList ($4A)
 ;   RN fhseg                       : RootNode+$1C (rn_FileHandlerSegment)
-;   DN adr type task lock handler startup seglist gv nom : DosInfo->di_DevInfo
-; Sortie : Output() (lancer « bootlist >SER: »). Code auteur, structures publiques.
+;   DN adr type task lock handler startup seglist gv name : DosInfo->di_DevInfo
+; Output: Output() (run "bootlist >SER:"). Author's code, public structures.
 
                 section code,code
 _start:
@@ -141,7 +141,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-nodes:                                       ; liste exec a2, préfixe a4
+nodes:                                       ; exec list a2, prefix a4
                 move.l  (a2),a2
 .n:             tst.l   (a2)
                 beq.s   .ne
@@ -156,7 +156,7 @@ nodes:                                       ; liste exec a2, préfixe a4
                 bra.s   .n
 .ne:            rts
 
-cpyn:                                        ; nom C a0 (≤ 31 car.) en (a1)+, NULL toléré
+cpyn:                                        ; C name a0 (<= 31 chars) to (a1)+, NULL tolerated
                 move.l  a0,d0
                 beq.s   .x
                 moveq   #31,d1
@@ -185,7 +185,7 @@ hex:
                 dbra    d3,.h
                 move.b  #' ',(a1)+
                 rts
-outbuf:                                      ; écrit [a0, a1) sur Output()
+outbuf:                                      ; writes [a0, a1) to Output()
                 move.l  a1,d3
                 sub.l   a0,d3
                 move.l  a0,d2

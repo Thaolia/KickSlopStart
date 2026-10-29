@@ -1,7 +1,7 @@
-; tests/reslist.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : liste des segments résidents de dos.
-; Suit DOSBase->dl_Root->rn_Info->DosInfo+16 (BPTR, chaîne !0) et émet sur le série une ligne par nœud :
-; « RS adresse usage seglist nom ». Sonde boîte noire pour comparer la liste initiale de la vraie 1.3 et la nôtre.
-; Clean-room : structures publiques dos (RootNode, DosInfo, nœuds Resident), code auteur.
+; tests/reslist.s - test HUNK executable (TEST ASSET, NOT ROM code): list of the dos resident segments.
+; Follows DOSBase->dl_Root->rn_Info->DosInfo+16 (BPTR, chain !0) and emits one line per node on the serial port:
+; "RS address usage seglist name". Black-box probe to compare the initial list of the real 1.3 with ours.
+; Clean-room: public dos structures (RootNode, DosInfo, Resident nodes), authored code.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -35,7 +35,7 @@ _start:
                 move.l  8(a2),d0
                 bsr.s   puthex
                 moveq   #0,d4
-                move.b  12(a2),d4            ; BSTR à +12
+                move.b  12(a2),d4            ; BSTR at +12
                 lea     13(a2),a3
 .nm:
                 subq.w  #1,d4
@@ -66,7 +66,7 @@ puts:
                 bra.s   puts
 .r:
                 rts
-; putc(d1.b) : attend que le tampon d'émission soit libre, puis émet (8 bits + stop).
+; putc(d1.b): waits until the transmit buffer is free, then transmits (8 bits + stop).
 putc:
                 move.w  SERDATR,d2
                 btst    #13,d2
@@ -75,7 +75,7 @@ putc:
                 or.w    #$0100,d1
                 move.w  d1,SERDAT
                 rts
-; puthex(d0) : 8 chiffres hexadécimaux puis un espace.
+; puthex(d0): 8 hexadecimal digits followed by a space.
 puthex:
                 moveq   #7,d3
 .h:

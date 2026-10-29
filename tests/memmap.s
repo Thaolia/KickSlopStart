@@ -1,8 +1,8 @@
-; tests/memmap.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : carte de la mémoire libre.
-; Parcourt ExecBase->MemList sous Forbid et émet sur le série (SERDAT, comme cmd_e3.s) une ligne par MemHeader
-; (« MH bas haut libre attributs ») puis une ligne par bloc libre (« FR adresse taille »). Sert à comparer la
-; disposition mémoire de notre ROM avec celle de la vraie 1.3 au même point d'une startup-sequence (programmes qui
-; écrivent à des adresses absolues). Clean-room : structures publiques exec (MemHeader/MemChunk), code auteur.
+; tests/memmap.s - HUNK test executable (TEST ASSET, NOT ROM code): map of free memory.
+; Walks ExecBase->MemList under Forbid and sends to the serial port (SERDAT, like cmd_e3.s) one line per MemHeader
+; ("MH lower upper free attributes") then one line per free block ("FR address size"). Used to compare the
+; memory layout of our ROM with that of the real 1.3 at the same point of a startup-sequence (programs that
+; write to absolute addresses). Clean-room: public exec structures (MemHeader/MemChunk), authored code.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -18,7 +18,7 @@ _start:
                 movem.l d2-d7/a2-a6,-(sp)
                 move.l  4.w,a6
                 jsr     -132(a6)             ; Forbid
-                move.l  EB_MEMLIST(a6),a2    ; 1er MemHeader
+                move.l  EB_MEMLIST(a6),a2    ; 1st MemHeader
 .mh:
                 tst.l   (a2)
                 beq.s   .end
@@ -65,7 +65,7 @@ puts:
                 rts
 putnl:
                 moveq   #10,d1
-; putc(d1.b) : attend que le tampon d'émission soit libre, puis émet (8 bits + stop).
+; putc(d1.b): waits for the transmit buffer to be empty, then sends (8 bits + stop).
 putc:
                 move.w  SERDATR,d2
                 btst    #13,d2
@@ -74,7 +74,7 @@ putc:
                 or.w    #$0100,d1
                 move.w  d1,SERDAT
                 rts
-; puthex(d0) : 8 chiffres hexadécimaux puis un espace.
+; puthex(d0): 8 hexadecimal digits followed by a space.
 puthex:
                 moveq   #7,d3
 .h:

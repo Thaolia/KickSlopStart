@@ -1,319 +1,319 @@
-# preferences-13.md — SYS:Prefs/Preferences (wb133.adf) : format du fichier et démarrage
+# preferences-13.md — SYS:Prefs/Preferences (wb133.adf): file format and start-up
 
-> Piste ANALYSE (« dirty »). Source : `Prefs/Preferences` de `assets/wb133.adf` (56 180
-> octets, 03-10-1990), extrait dans le scratch de la piste analyse, inspecté avec `hunktool` et un
-> parseur de hunks, puis relogé à plat pour la lecture. Règles et structures publiques
-> uniquement, aucune suite d'instructions recopiée.
+> ANALYSIS track ("dirty"). Source: `Prefs/Preferences` from `assets/wb133.adf` (56,180
+> bytes, 03-10-1990), extracted into the analysis track's scratch area, inspected with `hunktool` and a
+> hunk parser, then relocated flat for reading. Public rules and structures
+> only, no instruction sequence copied.
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé.
+> **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed.
 
 ---
 
-## 1. Structure du fichier [O]
+## 1. File structure [O]
 
-- **HUNK_HEADER** : aucune bibliothèque résidente, **table de 52 hunks**, first = 0, last = 51.
-  **Aucun bit de mémoire** dans les tailles (bits 30–31 à 0 partout) : allocation en mémoire
-  publique quelconque.
-- **Blocs présents**, exclusivement :
-  - HUNK_CODE ($3E9) × **30** ;
-  - HUNK_DATA ($3EA) × **22** ;
-  - HUNK_RELOC32 ($3EC) × 32 ;
+- **HUNK_HEADER**: no resident library, **table of 52 hunks**, first = 0, last = 51.
+  **No memory bits** in the sizes (bits 30–31 at 0 everywhere): allocation in any
+  public memory.
+- **Blocks present**, exclusively:
+  - HUNK_CODE ($3E9) × **30**;
+  - HUNK_DATA ($3EA) × **22**;
+  - HUNK_RELOC32 ($3EC) × 32;
   - HUNK_END ($3F2) × 52.
-- **Absents** : HUNK_BSS, RELOC16/8, DREL32, RELOC32SHORT ($3FC), HUNK_SYMBOL, HUNK_DEBUG,
-  **HUNK_OVERLAY ($3F5), HUNK_BREAK ($3F6)**. Ce n'est **pas** un exécutable à overlay. Le seul
-  mot $000003F6 du fichier est une donnée à l'intérieur d'une table de relocation.
-- **13 hunks de taille 0** : n° **7, 9, 13, 25, 27, 31, 36, 37, 40, 42, 44, 45, 51**. Ce sont des
-  CODE ou DATA de 0 long-mot, mais ils sont bien présents dans la table et dans le fichier (bloc
-  de longueur 0 suivi de HUNK_END).
-- **Relocations** :
-  - toutes en RELOC32 ;
-  - de nombreuses cibles sont **en avant** : le hunk 0 vise les hunks 1, 10 et 46 ; le hunk 2
-    vise 3, 4, 8, 47 et 48… ;
-  - cible maximale : hunk 50 ;
-  - **aucune relocation ne vise un hunk de taille 0** ;
-  - le hunk 3 (DATA, 6 580 octets) contient 159 pointeurs vers lui-même (tables de structures).
+- **Absent**: HUNK_BSS, RELOC16/8, DREL32, RELOC32SHORT ($3FC), HUNK_SYMBOL, HUNK_DEBUG,
+  **HUNK_OVERLAY ($3F5), HUNK_BREAK ($3F6)**. This is **not** an overlay executable. The only
+  word $000003F6 in the file is data inside a relocation table.
+- **13 hunks of size 0**: nos. **7, 9, 13, 25, 27, 31, 36, 37, 40, 42, 44, 45, 51**. They are
+  CODE or DATA of 0 longwords, but they are indeed present in the table and in the file (block
+  of length 0 followed by HUNK_END).
+- **Relocations**:
+  - all RELOC32;
+  - many targets are **forward**: hunk 0 targets hunks 1, 10 and 46; hunk 2
+    targets 3, 4, 8, 47 and 48...;
+  - highest target: hunk 50;
+  - **no relocation targets a hunk of size 0**;
+  - hunk 3 (DATA, 6,580 bytes) contains 159 pointers to itself (tables of structures).
 
-Tailles en octets, de #0 à #51 :
+Sizes in bytes, from #0 to #51:
 524, 428, 1176, 6580, 4080, 116, 2700, **0**, 828, **0**, 6456, 992, 936, **0**, 1080, 92,
 244, 132, 3032, 308, 1492, 2116, 3736, 140, 472, **0**, 24, **0**, 1528, 160, 208, **0**,
 3292, 284, 320, 28, **0**, **0**, 20, 220, **0**, 36, **0**, 116, **0**, **0**, 320, 592, 368,
 88, 484, **0**.
 
-Rôles :
-- #0 : code de démarrage ;
-- #1 : ses variables ;
-- **#10 : `main`** ;
-- **#46 à #50 : vecteurs d'appel des bibliothèques** (un petit stub par fonction : charge la
-  base depuis une globale, puis JSR −LVO).
+Roles:
+- #0: start-up code;
+- #1: its variables;
+- **#10: `main`**;
+- **#46 to #50: library call vectors** (one small stub per function: loads the
+  base from a global, then JSR −LVO).
 
-## 2. Code de démarrage (hunk 0) [O]
+## 2. Start-up code (hunk 0) [O]
 
-C'est un démarrage C classique « à l'ancienne », du type `AStartup` : variables absolues, **pas
-de registre de base A4**, aucun overlay.
+It is a classic "old-style" C start-up, of the `AStartup` kind: absolute variables, **no
+A4 base register**, no overlay.
 
-**Entrée** : le démarrage mémorise **SP, D0 (longueur de la ligne de commande) et A0 (son
-adresse)**. Il lit **SysBase en $4**, puis fait **FindTask(NULL)** (exec −294). Aucun autre
-registre n'est lu (ni D1, ni A1–A6, ni A4).
+**Entry**: the start-up saves **SP, D0 (length of the command line) and A0 (its
+address)**. It reads **SysBase at $4**, then does **FindTask(NULL)** (exec −294). No other
+register is read (neither D1, nor A1–A6, nor A4).
 
-**Lancement par le Workbench** (`pr_CLI` (+$AC) = 0) :
-1. **OpenLibrary("dos.library", 0)** (exec −552). En cas d'échec : Alert $00038007 (AG_OpenLib |
-   AO_DOSLib), puis retour 100.
-2. **WaitPort(&pr_MsgPort)** (exec −384), puis **GetMsg** (exec −372) : le WBStartup est rangé
-   dans une globale.
-3. Si `sm_ArgList` (+$24) ≠ 0 : **CurrentDir(ArgList[0].wa_Lock)** (dos −126).
-4. Si **`sm_ToolWindow` (+$20) ≠ 0** : **Open(ToolWindow, MODE_OLDFILE)** (dos −30), puis
-   `pr_ConsoleTask` (+$A4) := `fh_Type` (+$08) du FileHandle. Ce handle sert aussi d'entrée et de
-   sortie standard.
-5. **`main(0, WBStartup)`** : saut au début du hunk 10.
-6. Au retour :
-   - CloseLibrary(dos) ;
-   - **Forbid** (exec −132) puis **ReplyMsg(WBStartup)** (exec −378) ;
-   - restauration de SP et retour avec D0.
+**Launch from the Workbench** (`pr_CLI` (+$AC) = 0):
+1. **OpenLibrary("dos.library", 0)** (exec −552). On failure: Alert $00038007 (AG_OpenLib |
+   AO_DOSLib), then return 100.
+2. **WaitPort(&pr_MsgPort)** (exec −384), then **GetMsg** (exec −372): the WBStartup is stored
+   in a global.
+3. If `sm_ArgList` (+$24) ≠ 0: **CurrentDir(ArgList[0].wa_Lock)** (dos −126).
+4. If **`sm_ToolWindow` (+$20) ≠ 0**: **Open(ToolWindow, MODE_OLDFILE)** (dos −30), then
+   `pr_ConsoleTask` (+$A4) := `fh_Type` (+$08) of the FileHandle. This handle also serves as standard input and
+   output.
+5. **`main(0, WBStartup)`**: jump to the start of hunk 10.
+6. On return:
+   - CloseLibrary(dos);
+   - **Forbid** (exec −132) then **ReplyMsg(WBStartup)** (exec −378);
+   - SP restored and return with D0.
 
-**Lancement par le CLI** :
-1. OpenLibrary("dos") ;
-2. `argv[0]` = `cli_CommandName` (+$10, BSTR) ;
-3. découpe de la ligne D0/A0 en argv : guillemets, et `*N` / `*E` traités ;
-4. **Input() (dos −54)** et **Output() (dos −60)** ;
+**Launch from the CLI**:
+1. OpenLibrary("dos");
+2. `argv[0]` = `cli_CommandName` (+$10, BSTR);
+3. splitting of the D0/A0 line into argv: quotes, and `*N` / `*E` handled;
+4. **Input() (dos −54)** and **Output() (dos −60)**;
 5. main(argc, argv).
 
-**Début de `main` en mode Workbench** :
-1. **OpenLibrary("icon.library", 0)**, par le stub exec −552 ;
-2. on prend `ArgList[1]` si `sm_NumArgs` > 1 (projet), sinon `ArgList[0]` ;
-3. **CurrentDir(wa_Lock)** ;
-4. **GetDiskObject(wa_Name)** (icon −78) ;
-5. **FindToolType(do_ToolTypes (+$36), "PREFS")** (icon −96) ;
-6. **MatchToolValue** (icon −102) avec `"pointer"`, `"printer"` et `"serial"` ;
-7. FreeDiskObject (icon −90) ;
-8. CurrentDir(ancien) ;
+**Start of `main` in Workbench mode**:
+1. **OpenLibrary("icon.library", 0)**, through the exec −552 stub;
+2. `ArgList[1]` is taken if `sm_NumArgs` > 1 (project), otherwise `ArgList[0]`;
+3. **CurrentDir(wa_Lock)**;
+4. **GetDiskObject(wa_Name)** (icon −78);
+5. **FindToolType(do_ToolTypes (+$36), "PREFS")** (icon −96);
+6. **MatchToolValue** (icon −102) with `"pointer"`, `"printer"` and `"serial"`;
+7. FreeDiskObject (icon −90);
+8. CurrentDir(old);
 9. CloseLibrary(icon).
 
-L'ouverture de l'écran et des fenêtres vient ensuite (intuition et graphics, non détaillés ici).
+The opening of the screen and windows comes next (intuition and graphics, not detailed here).
 
-## 3. Hypothèses sur le saut dans les données [S, classées]
+## 3. Hypotheses about the jump into data [S, ranked]
 
-Symptôme : instruction illégale. Le PC pointe sur un **long-mot de données qui contient une
-adresse** (le mot $00C2 n'est pas un opcode valide). On a donc **sauté vers une adresse
-calculée ou relogée fausse**, ou **retourné sur une pile corrompue**. Il n'y a pas d'overlay en
-jeu (§1).
+Symptom: illegal instruction. The PC points to a **data longword that contains an
+address** (the word $00C2 is not a valid opcode). So there was **a jump to a wrongly computed or wrongly
+relocated address**, or **a return on a corrupted stack**. No overlay is
+involved (§1).
 
-1. **Hunks de taille 0 mal traités par notre LoadSeg** — hypothèse la plus probable.
-   - Le vrai LoadSeg crée un segment pour **chacun** des 52 hunks : la taille plus le lien, soit
-     au minimum 8 octets pour un hunk vide, chaîné dans la seglist. **La numérotation des hunks
-     reste celle de la table.**
-   - Si notre loader saute les hunks de taille 0, les fusionne ou ne leur donne pas d'adresse,
-     **toutes les relocations vers les hunks suivants sont décalées** : jusqu'à 13 rangs pour les
-     derniers. Les JSR vers les stubs des hunks 46–50 atterrissent alors dans d'autres hunks,
-     souvent des DATA.
-   - Même effet si `main` (hunk 10, juste après le hunk 9 vide) est mal adressé : le JSR de
-     démarrage tombe dans le hunk suivant ou précédent.
-2. **Relocations en avant** : le hunk 0 vise déjà les hunks 10 et 46. Le vrai LoadSeg
-   **alloue tous les hunks à la lecture de HUNK_HEADER**, avant toute relocation. Un loader qui
-   alloue au fil de l'eau et reloge avec une base encore inconnue (0 ou garbage) produirait
-   exactement ce type de saut.
-3. **Table de hunks de taille fixe** : 52 entrées, cibles jusqu'à 50. Une limite interne (32,
-   48…) déborderait.
-4. Moins probable : un retour de `main` ou d'un stub sur une pile corrompue (usp contient une
-   adresse plausible de code), ou une base de bibliothèque fausse lue par un stub (a6 = $C021DE
-   est impair : c'est un indice si a6 devait être une base de bibliothèque). Voir la méthode
-   ci-dessous.
+1. **Size-0 hunks mishandled by our LoadSeg** — the most probable hypothesis.
+   - The real LoadSeg creates a segment for **each** of the 52 hunks: the size plus the link, i.e.
+     at least 8 bytes for an empty hunk, chained into the seglist. **Hunk numbering
+     stays that of the table.**
+   - If our loader skips size-0 hunks, merges them or gives them no address,
+     **all relocations to the following hunks are shifted**: by up to 13 positions for the
+     last ones. The JSRs to the stubs in hunks 46–50 then land in other hunks,
+     often DATA ones.
+   - Same effect if `main` (hunk 10, right after the empty hunk 9) is wrongly addressed: the start-up
+     JSR lands in the next or previous hunk.
+2. **Forward relocations**: hunk 0 already targets hunks 10 and 46. The real LoadSeg
+   **allocates all hunks when reading HUNK_HEADER**, before any relocation. A loader that
+   allocates as it goes and relocates with a base still unknown (0 or garbage) would produce
+   exactly this kind of jump.
+3. **Fixed-size hunk table**: 52 entries, targets up to 50. An internal limit (32,
+   48...) would overflow.
+4. Less probable: a return from `main` or from a stub on a corrupted stack (usp contains a
+   plausible code address), or a wrong library base read by a stub (a6 = $C021DE
+   is odd: that is a clue if a6 was supposed to be a library base). See the method
+   below.
 
-**Méthode de confirmation [D]** :
-1. Afficher la seglist créée par notre LoadSeg : pour chaque segment, adresse = BADDR(lien) + 4
-   et taille. Vérifier qu'il y a **52 segments** et que les 13 hunks vides existent.
-2. Situer **pc = $C2AB30** et **(usp) = $C2D1D2** dans cette seglist, au format (n° de hunk,
-   offset), puis comparer avec le tableau des tailles ci-dessus.
-   - Si (usp) tombe dans un hunk de **CODE** juste après un JSR absolu, la cible de ce JSR, prise
-     dans le fichier, dit quel hunk était visé. On voit alors le décalage de numérotation.
-   - Si pc tombe dans un hunk de DATA voisin du hunk visé, l'hypothèse 1 ou 2 est confirmée.
+**Confirmation method [D]**:
+1. Display the seglist created by our LoadSeg: for each segment, address = BADDR(link) + 4
+   and size. Check that there are **52 segments** and that the 13 empty hunks exist.
+2. Locate **pc = $C2AB30** and **(usp) = $C2D1D2** in this seglist, as (hunk no.,
+   offset), then compare with the table of sizes above.
+   - If (usp) falls in a **CODE** hunk right after an absolute JSR, the target of that JSR, taken
+     from the file, tells which hunk was targeted. The numbering shift then becomes visible.
+   - If pc falls in a DATA hunk neighbouring the targeted hunk, hypothesis 1 or 2 is confirmed.
 
 ---
 
-## 4. De main jusqu'à l'affichage : appels et sorties silencieuses (lancement Workbench) [O sauf mention]
+## 4. From main to display: calls and silent exits (Workbench launch) [O unless stated]
 
-Suite de la partie icon.library (§2). « Sortie » désigne le retour au démarrage, qui ferme dos,
-fait ReplyMsg du WBStartup et revient avec D0.
+Continuation of the icon.library part (§2). "Exit" means the return to the start-up code, which closes dos,
+does ReplyMsg of the WBStartup and returns with D0.
 
-| # | Appel (bibliothèque, LVO) | Condition de sortie | Visible ? |
+| # | Call (library, LVO) | Exit condition | Visible? |
 |---|---|---|---|
-| 1 | exec **FindPort("preferences_inuse.task")** (−390) | **port trouvé ⇒ sortie code 0**, garde-fou contre une deuxième instance | **silencieux** |
-| 2 | création du port public `"preferences_inuse.task"` : AllocSignal, AllocMem, AddPort (exec −330/−198/−354) | échec ⇒ sortie 0 | silencieux |
-| 3 | exec **OpenLibrary("graphics.library", 0)** | échec ⇒ **DisplayAlert en boucle** (pas de sortie) | alerte |
-| 4 | exec **OpenLibrary("intuition.library", 0)** | idem | alerte |
-| 5 | intuition **AllocRemember**(… , taille, **MEMF_CHIP**) × 6 : copie en CHIP des données d'images | un échec ⇒ DisplayAlert, FreeRemember, CloseLibrary × 2, sortie | alerte |
-| 6 | exec **AllocMem(5984, MEMF_PUBLIC\|CLEAR)** : 136 gadgets de 44 octets | échec ⇒ DisplayAlert, sortie | alerte |
-| 7 | exec InitSemaphore / AddTail (deux SignalSemaphore privés) | — | — |
-| 8 | intuition **GetPrefs(buffer, 232)** (−132) ; deux copies de sauvegarde de 232 octets | aucune (retour non testé) | — |
+| 1 | exec **FindPort("preferences_inuse.task")** (−390) | **port found ⇒ exit with code 0**, safeguard against a second instance | **silent** |
+| 2 | creation of the public port `"preferences_inuse.task"`: AllocSignal, AllocMem, AddPort (exec −330/−198/−354) | failure ⇒ exit 0 | silent |
+| 3 | exec **OpenLibrary("graphics.library", 0)** | failure ⇒ **DisplayAlert in a loop** (no exit) | alert |
+| 4 | exec **OpenLibrary("intuition.library", 0)** | same | alert |
+| 5 | intuition **AllocRemember**(... , size, **MEMF_CHIP**) × 6: copy of the image data into CHIP | a failure ⇒ DisplayAlert, FreeRemember, CloseLibrary × 2, exit | alert |
+| 6 | exec **AllocMem(5984, MEMF_PUBLIC\|CLEAR)**: 136 gadgets of 44 bytes | failure ⇒ DisplayAlert, exit | alert |
+| 7 | exec InitSemaphore / AddTail (two private SignalSemaphores) | — | — |
+| 8 | intuition **GetPrefs(buffer, 232)** (−132); two backup copies of 232 bytes | none (return not tested) | — |
 | 9 | dos **DateStamp** (−192) | — | — |
-| 10 | intuition **ViewAddress** (−294), puis éventuellement **RemakeDisplay** (−384) pour recentrer l'affichage selon les champs View/Preferences de la ligne suivante | — | — |
-| 11 | intuition **OpenWindow** d'une fenêtre **1×1** : Left 0, Top 0, Flags $00021006 (DRAG, DEPTH, ACTIVATE, NOCAREREFRESH), IDCMP 0, MaxW 640, MaxH 200, Type WBENCHSCREEN, Title = pointeur interne | échec ⇒ DisplayAlert, FreeMem, CloseLibrary, sortie | alerte |
-| 12 | **MoveScreen(win->WScreen, −Screen.LeftEdge, −Screen.TopEdge)** (−162) : ramène l'écran WB en (0,0) ; puis **CloseWindow** (−72) de la fenêtre 1×1 | — | — |
-| 13 | intuition **OpenWindow** de la vraie fenêtre : **640×200** en (0,0), **IDCMP $70** (MOUSEMOVE, GADGETDOWN, GADGETUP), FirstGadget = jeu de gadgets du mode, mêmes Flags | échec ⇒ DisplayAlert, retour 0 ⇒ restauration des Prefs puis sortie | alerte |
-| 14 | graphics **OpenFont({"topaz.font", 9, 0, FPF_ROMFONT})** (−72) | voir ligne 15 | — |
-| 15 | graphics **SetFont(win->RPort, font)** (−66) ; **D0 est testé au retour** | **D0 = 0 ⇒ CloseFont, CloseWindow, DisplayAlert, retour 0 ⇒ sortie** | alerte |
-| 16 | dessin de l'écran du mode (graphics), ObtainSemaphore / ReleaseSemaphore (exec −564/−570) | — | — |
-| 17 | intuition **RefreshGadgets**(gadgets, fenêtre, NULL) (−222) | — | — |
-| 18 | boucle : exec **Wait(1 << UserPort->mp_SigBit)** (−318), **GetMsg** (−372), ReplyMsg ; les MOUSEMOVE en attente sont vidés | — | — |
+| 10 | intuition **ViewAddress** (−294), then possibly **RemakeDisplay** (−384) to recentre the display according to the View/Preferences fields of the next row | — | — |
+| 11 | intuition **OpenWindow** of a **1×1** window: Left 0, Top 0, Flags $00021006 (DRAG, DEPTH, ACTIVATE, NOCAREREFRESH), IDCMP 0, MaxW 640, MaxH 200, Type WBENCHSCREEN, Title = internal pointer | failure ⇒ DisplayAlert, FreeMem, CloseLibrary, exit | alert |
+| 12 | **MoveScreen(win->WScreen, −Screen.LeftEdge, −Screen.TopEdge)** (−162): brings the WB screen back to (0,0); then **CloseWindow** (−72) of the 1×1 window | — | — |
+| 13 | intuition **OpenWindow** of the real window: **640×200** at (0,0), **IDCMP $70** (MOUSEMOVE, GADGETDOWN, GADGETUP), FirstGadget = the mode's gadget set, same Flags | failure ⇒ DisplayAlert, return 0 ⇒ Prefs restored then exit | alert |
+| 14 | graphics **OpenFont({"topaz.font", 9, 0, FPF_ROMFONT})** (−72) | see row 15 | — |
+| 15 | graphics **SetFont(win->RPort, font)** (−66); **D0 is tested on return** | **D0 = 0 ⇒ CloseFont, CloseWindow, DisplayAlert, return 0 ⇒ exit** | alert |
+| 16 | drawing of the mode's screen (graphics), ObtainSemaphore / ReleaseSemaphore (exec −564/−570) | — | — |
+| 17 | intuition **RefreshGadgets**(gadgets, window, NULL) (−222) | — | — |
+| 18 | loop: exec **Wait(1 << UserPort->mp_SigBit)** (−318), **GetMsg** (−372), ReplyMsg; pending MOUSEMOVEs are drained | — | — |
 
-**Pièges pour une ROM réimplémentée** :
-- **Ligne 15 (SetFont)** : le vrai SetFont 1.3 **ne touche pas D0**. D0 contient donc encore la
-  valeur de l'OpenFont précédent, le pointeur de police, que le stub du programme n'a pas
-  écrasé. Le programme y voit « succès ».
-  - Un SetFont qui **met D0 à 0** fait sortir le programme.
-  - De même, un OpenFont qui rend NULL : le programme le passe tel quel à SetFont.
-- **Ligne 14 (OpenFont)** : le vrai OpenFont 1.3 **ne demande pas la taille exacte**. Il
-  parcourt les polices de même nom (`GfxBase->TextFonts`) et rend la **meilleure
-  correspondance** :
-  - score de départ $7FFF ;
-  - pénalité **256 par ligne de trop** et **64 par ligne de moins** ;
-  - pénalités supplémentaires pour les différences de style et de drapeaux ;
-  - retenue si le score est > 0.
-  Une demande topaz 9 rend donc topaz 8 si topaz 9 n'existe pas. La vraie ROM contient topaz 8
-  **et** 9. Un OpenFont exigeant la taille exacte rend NULL, ce qui mène à la ligne 15.
-- **DisplayAlert** : toutes les sorties « alerte » ci-dessus deviennent **silencieuses** si notre
-  DisplayAlert ne fait rien. Les appels sont `DisplayAlert(RECOVERY_ALERT (0), texte, 60)`.
-- **Ligne 1** : le port `"preferences_inuse.task"` n'est retiré qu'à la sortie normale. Après un
-  **plantage** de Preferences (comme avec l'ancien LoadSeg), il reste dans la liste des ports
-  publics, et **toute nouvelle exécution sort aussitôt, en silence, avec le code 0**. Il faut
-  rebooter, ou vérifier FindPort, avant de conclure.
+**Pitfalls for a reimplemented ROM**:
+- **Row 15 (SetFont)**: the real 1.3 SetFont **does not touch D0**. D0 therefore still holds the
+  value from the preceding OpenFont, the font pointer, which the program's stub has not
+  overwritten. The program sees "success" in it.
+  - A SetFont that **sets D0 to 0** makes the program exit.
+  - Likewise, an OpenFont that returns NULL: the program passes it as is to SetFont.
+- **Row 14 (OpenFont)**: the real 1.3 OpenFont **does not require the exact size**. It
+  walks the fonts with the same name (`GfxBase->TextFonts`) and returns the **best
+  match**:
+  - starting score $7FFF;
+  - penalty of **256 per line too many** and **64 per line too few**;
+  - additional penalties for style and flag differences;
+  - kept if the score is > 0.
+  A request for topaz 9 therefore returns topaz 8 if topaz 9 does not exist. The real ROM contains topaz 8
+  **and** 9. An OpenFont requiring the exact size returns NULL, which leads to row 15.
+- **DisplayAlert**: all the "alert" exits above become **silent** if our
+  DisplayAlert does nothing. The calls are `DisplayAlert(RECOVERY_ALERT (0), text, 60)`.
+- **Row 1**: the port `"preferences_inuse.task"` is only removed on normal exit. After a
+  **crash** of Preferences (as with the old LoadSeg), it remains in the list of public
+  ports, and **any new run exits immediately, silently, with code 0**. One must
+  reboot, or check FindPort, before drawing conclusions.
 
-**Champs lus directement** :
-- `Window` : WScreen (+$2E), RPort (+$32), UserPort (+$56) → mp_SigBit (+$0F) ;
-- `Screen` : LeftEdge (+$08), TopEdge (+$0A) ;
-- `View` (de ViewAddress) : DyOffset (+$0C), DxOffset (+$0E) ;
-- `IntuiMessage` : Class (+$14), comparé à MOUSEMOVE ;
-- `Preferences` (buffer de 232 octets) : ViewXOffset/ViewYOffset (+$76/+$77), ViewInitX/Y
-  (+$78/+$7A), +$7C (seuls les 2 bits de poids fort sont gardés) et les champs +$A4, +$A6, +$B2.
-- **Aucun champ privé d'IntuitionBase ou de GfxBase** n'est lu dans cette séquence [O, par
+**Fields read directly**:
+- `Window`: WScreen (+$2E), RPort (+$32), UserPort (+$56) → mp_SigBit (+$0F);
+- `Screen`: LeftEdge (+$08), TopEdge (+$0A);
+- `View` (from ViewAddress): DyOffset (+$0C), DxOffset (+$0E);
+- `IntuiMessage`: Class (+$14), compared with MOUSEMOVE;
+- `Preferences` (232-byte buffer): ViewXOffset/ViewYOffset (+$76/+$77), ViewInitX/Y
+  (+$78/+$7A), +$7C (only the 2 most significant bits are kept) and the fields +$A4, +$A6, +$B2.
+- **No private field of IntuitionBase or GfxBase** is read in this sequence [O, by
   absence].
 
-**Ordre de vérification conseillé [D]** :
-1. FindPort("preferences_inuse.task") après reboot ;
-2. retour de SetFont (D0 préservé) et OpenFont(topaz 9) ;
-3. DisplayAlert visible ;
-4. OpenWindow 640×200 sur l'écran WB (hauteur ≥ 200).
+**Recommended order of checks [D]**:
+1. FindPort("preferences_inuse.task") after reboot;
+2. return of SetFont (D0 preserved) and OpenFont(topaz 9);
+3. DisplayAlert visible;
+4. OpenWindow 640×200 on the WB screen (height ≥ 200).
 
-## 5. Fenêtre principale : cadre de centrage de l'écran et son petit carré [O sauf mention]
+## 5. Main window: the screen-centring frame and its small square [O unless stated]
 
-Repères (image relogée à $100000, hunks contigus alignés sur 8) : constructeur des gadgets
-$104A4C, tableaux de champs $103278… (un mot par gadget et par champ), PropInfo $1039E8 (22 octets
-chacun), Image $103B04 (20 octets chacune), dessin de fond d'un mode $1003C0, séquence initiale
-$104726…$1047DA, retour au mode principal $104F78…$104FDA.
+Landmarks (image relocated at $100000, contiguous hunks aligned on 8): gadget constructor
+$104A4C, field arrays $103278... (one word per gadget and per field), PropInfo $1039E8 (22 bytes
+each), Image $103B04 (20 bytes each), background drawing of a mode $1003C0, initial sequence
+$104726...$1047DA, return to the main mode $104F78...$104FDA.
 
-### 5.1 C'est un seul gadget proportionnel : le gadget n° 17
+### 5.1 It is a single proportional gadget: gadget no. 17
 
-Le grand cadre **et** le petit carré sont tous deux dessinés par **intuition**, lors du rendu de
-ce gadget. Preferences ne trace rien de spécifique dans cette zone : son seul dessin qui la touche
-est le fond général de la fenêtre, en couleur 2.
+The large frame **and** the small square are both drawn by **intuition**, when rendering
+this gadget. Preferences draws nothing specific in this area: its only drawing that touches it
+is the general window background, in colour 2.
 
-| Champ `Gadget` | Valeur |
+| `Gadget` field | Value |
 |---|---|
-| LeftEdge, TopEdge, Width, Height | **200, 62, 240, 70** (coordonnées fenêtre) |
-| Flags | **$0007** = GADGHNONE (3) \| GADGIMAGE (4) ; aucun GRELxxx, pas SELECTED ni DISABLED |
+| LeftEdge, TopEdge, Width, Height | **200, 62, 240, 70** (window coordinates) |
+| Flags | **$0007** = GADGHNONE (3) \| GADGIMAGE (4); no GRELxxx, neither SELECTED nor DISABLED |
 | Activation | **$000B** = RELVERIFY \| GADGIMMEDIATE \| FOLLOWMOUSE |
-| GadgetType | **$0003** = PROPGADGET (pas de REQGADGET, pas de GZZGADGET) |
-| GadgetRender | Image du knob (ci-dessous) |
-| SelectRender | **la même** Image (même pointeur) |
+| GadgetType | **$0003** = PROPGADGET (no REQGADGET, no GZZGADGET) |
+| GadgetRender | knob Image (below) |
+| SelectRender | **the same** Image (same pointer) |
 | GadgetText, MutualExclude, UserData | NULL / 0 / NULL |
-| SpecialInfo | PropInfo ci-dessous |
+| SpecialInfo | PropInfo below |
 | GadgetID | 17 |
 
-| Champ `PropInfo` | Valeur initiale |
+| `PropInfo` field | Initial value |
 |---|---|
-| Flags | **$0006** = FREEHORIZ \| FREEVERT ; **pas AUTOKNOB**, **pas PROPBORDERLESS** |
-| HorizPot / VertPot | calculés avant OpenWindow à partir des prefs (§5.4) |
+| Flags | **$0006** = FREEHORIZ \| FREEVERT; **no AUTOKNOB**, **no PROPBORDERLESS** |
+| HorizPot / VertPot | computed before OpenWindow from the prefs (§5.4) |
 | HorizBody / VertBody | **$0800 / $0800** |
-| CWidth…TopBorder | 0 (remplis par intuition) |
+| CWidth...TopBorder | 0 (filled in by intuition) |
 
-| Champ `Image` du knob | Valeur |
+| Knob `Image` field | Value |
 |---|---|
-| LeftEdge, TopEdge | 0, 0 (réécrits par intuition à la position du knob) |
+| LeftEdge, TopEdge | 0, 0 (rewritten by intuition at the knob position) |
 | Width × Height × Depth | **16 × 8 × 1** |
-| ImageData | **non NULL** : copie en mémoire CHIP (AllocRemember MEMF_CHIP au démarrage, pointeur patché) |
+| ImageData | **non-NULL**: copy in CHIP memory (AllocRemember MEMF_CHIP at start-up, pointer patched) |
 | PlanePick / PlaneOnOff | **1 / 0** |
 | NextImage | NULL |
 
-Géométrie des données (sans les reproduire) : la **première ligne** est entièrement à 1, et sur
-les **7 lignes suivantes** seules les **deux colonnes de gauche** sont à 1 ; tout le reste est à 0.
-Avec PlanePick 1 et PlaneOnOff 0, DrawImage donne **couleur 1 (blanc)** sur ces bits et **couleur
-0** partout ailleurs, plan 1 compris. Le knob est donc un « L » blanc (1 ligne en haut, 2 pixels
-à gauche) sur un fond de couleur 0. **Il n'est pas plein** : son intérieur a la même couleur que
-l'intérieur du conteneur, d'où l'aspect « liseré seul » sur la vraie ROM.
+Geometry of the data (without reproducing it): the **first line** is entirely 1, and on
+the **next 7 lines** only the **two leftmost columns** are 1; everything else is 0.
+With PlanePick 1 and PlaneOnOff 0, DrawImage gives **colour 1 (white)** on those bits and **colour
+0** everywhere else, plane 1 included. The knob is therefore a white "L" (1 line at the top, 2 pixels
+on the left) on a colour 0 background. **It is not solid**: its interior has the same colour as
+the interior of the container, hence the "outline only" look on the real ROM.
 
-La fenêtre est ouverte avec **NewWindow.DetailPen = BlockPen = $FF**. Intuition reprend donc
-les stylos de l'écran Workbench : **Window.DetailPen = 0**, **BlockPen = 1** [D, règle publique
-d'OpenWindow ; aucune autre valeur n'est fournie].
+The window is opened with **NewWindow.DetailPen = BlockPen = $FF**. Intuition therefore takes
+the Workbench screen's pens: **Window.DetailPen = 0**, **BlockPen = 1** [D, public OpenWindow
+rule; no other value is supplied].
 
-### 5.2 Ce qui produit le fond de couleur 0 du grand cadre
+### 5.2 What produces the colour 0 background of the large frame
 
-C'est le rendu standard d'un PROPGADGET par intuition (`intuition-prop-v34.md` §3.1), appliqué
-à ce gadget :
-1. **RectFill de toute la boîte** (200,62)–(439,131) en **Window.DetailPen = 0**, en JAM2 ⇒ fond
-   bleu ;
-2. **cadre** de la boîte en **BlockPen = 1** (blanc), puisque PROPBORDERLESS est absent. C'est le
-   « grand cadre » ;
-3. **DrawImage(GadgetRender)** à la position du knob ⇒ le « L » blanc.
+It is intuition's standard rendering of a PROPGADGET (`intuition-prop-v34.md` §3.1), applied
+to this gadget:
+1. **RectFill of the whole box** (200,62)–(439,131) in **Window.DetailPen = 0**, in JAM2 ⇒ blue
+   background;
+2. **frame** of the box in **BlockPen = 1** (white), since PROPBORDERLESS is absent. This is the
+   "large frame";
+3. **DrawImage(GadgetRender)** at the knob position ⇒ the white "L".
 
-GADGHNONE : aucun surlignage, même quand le gadget est sélectionné.
+GADGHNONE: no highlighting, even when the gadget is selected.
 
-### 5.3 Ordre d'appel et moment du dessin
+### 5.3 Call order and time of drawing
 
-Ouverture (§4, lignes 13 à 17) :
-1. **OpenWindow** (−204) avec FirstGadget = la liste du mode, qui contient le gadget 17. Intuition
-   y fait un premier rendu des gadgets.
+Opening (§4, rows 13 to 17):
+1. **OpenWindow** (−204) with FirstGadget = the mode's list, which contains gadget 17. Intuition
+   does a first rendering of the gadgets there.
 2. OpenFont / SetFont (§4).
-3. **Fond du mode** ($1003C0, rastport de la fenêtre, mode 0) :
-   - **SetDrMd(rp, JAM1)** (−354) ;
-   - pour chaque rectangle du mode : SetAPen (−342), puis **RectFill** (−306). Le premier
-     rectangle est **(1,10)–(637,198) en stylo 2** : il recouvre toute la fenêtre, gadget 17
-     compris, **et efface le premier rendu** ;
-   - les rectangles suivants (cadres stylo 1 et intérieurs stylo 0 des autres zones) **ne
-     touchent pas** la boîte du gadget 17 ;
-   - viennent ensuite des traits (Move/Draw −240/−246) et des textes (Move, SetAPen, Text −60),
-     eux aussi hors de la boîte.
-4. Dessins annexes : palette, pointeur, valeurs ($109CF0, $1005D2, $10557A), tous hors de la
-   boîte du gadget 17. Au démarrage, $10557A n'appelle pas ModifyProp.
-5. **RefreshGadgets(premier gadget du mode, fenêtre, NULL)** (−222). C'est ce rendu qui laisse
-   le fond **en couleur 0**, le cadre blanc et le knob (§5.2).
+3. **Mode background** ($1003C0, window rastport, mode 0):
+   - **SetDrMd(rp, JAM1)** (−354);
+   - for each rectangle of the mode: SetAPen (−342), then **RectFill** (−306). The first
+     rectangle is **(1,10)–(637,198) in pen 2**: it covers the whole window, gadget 17
+     included, **and erases the first rendering**;
+   - the following rectangles (pen 1 frames and pen 0 interiors of the other areas) **do not
+     touch** the box of gadget 17;
+   - next come lines (Move/Draw −240/−246) and texts (Move, SetAPen, Text −60),
+     also outside the box.
+4. Ancillary drawings: palette, pointer, values ($109CF0, $1005D2, $10557A), all outside the
+   box of gadget 17. At start-up, $10557A does not call ModifyProp.
+5. **RefreshGadgets(first gadget of the mode, window, NULL)** (−222). This is the rendering that leaves
+   the background **in colour 0**, the white frame and the knob (§5.2).
 
-Retour au mode principal depuis un autre mode ($104F78) :
-- même fond $1003C0 ;
-- **AddGadget(win, gadget i, −1)** (−42) pour i = 0…37 ;
-- dessins annexes, puis RefreshGadgets(gadget 0, win, NULL). Même résultat.
+Return to the main mode from another mode ($104F78):
+- same background $1003C0;
+- **AddGadget(win, gadget i, −1)** (−42) for i = 0...37;
+- ancillary drawings, then RefreshGadgets(gadget 0, win, NULL). Same result.
 
-Plus tard :
+Later:
 - **ModifyProp(gad, win, NULL, PropInfo.Flags, HPot, VPot, HBody, VBody)** (−156) ($105616,
-  appelé par $10557A) est utilisé quand les prefs sont rechargées en bloc (boutons de
-  restauration). Il redessine le gadget, fond compris.
-- Le glissement du knob est géré par intuition (FOLLOWMOUSE + MOUSEMOVE dans l'IDCMP $70).
-  Au relâchement, Preferences recalcule ViewX/YOffset puis appelle RemakeDisplay
-  ($1057FA, §4 ligne 10).
+  called by $10557A) is used when the prefs are reloaded wholesale (restore
+  buttons). It redraws the gadget, background included.
+- Dragging the knob is handled by intuition (FOLLOWMOUSE + MOUSEMOVE in IDCMP $70).
+  On release, Preferences recomputes ViewX/YOffset then calls RemakeDisplay
+  ($1057FA, §4 row 10).
 
-### 5.4 Pots initiaux (formule) [O]
+### 5.4 Initial pots (formula) [O]
 
-HorizPot = (31 − (129 − ViewInitX) + ViewXOffset) × 2048, et VertPot = (31 − (56 − ViewInitY) +
-ViewYOffset) × 2048, sur 16 bits. Les offsets sont bornés à −32..+31 lors de leur réécriture.
+HorizPot = (31 − (129 − ViewInitX) + ViewXOffset) × 2048, and VertPot = (31 − (56 − ViewInitY) +
+ViewYOffset) × 2048, on 16 bits. The offsets are clamped to −32..+31 when they are rewritten.
 
-### 5.5 Diagnostic de l'écart observé [D]
+### 5.5 Diagnosis of the observed discrepancy [D]
 
-- **Fond resté en couleur 2** : notre rendu de PROPGADGET ne remplit pas la boîte du gadget en
-  Window.DetailPen avant le cadre et le knob. Une autre possibilité est un DetailPen de fenêtre
-  qui n'est pas résolu en 0 depuis le $FF de la NewWindow. Le fond général (stylo 2) peint par
-  Preferences reste alors visible.
-- **Petit carré « plein »** : notre knob est correct (intérieur couleur 0, L blanc). Il paraît
-  plein uniquement parce qu'il est posé sur un fond de couleur 2. Une fois l'étape 1 de §5.2
-  faite, il doit se fondre dans le fond et ne laisser voir que le L.
-- Correspondance avec la capture : la boîte (200..439, 62..131) s'accorde avec x ≈ 388..636 et
-  y ≈ 246..390 de la capture, si l'on applique un décalage horizontal d'environ +188 et un
-  doublement vertical [D].
+- **Background left in colour 2**: our PROPGADGET rendering does not fill the gadget box in
+  Window.DetailPen before the frame and the knob. Another possibility is a window DetailPen
+  that is not resolved to 0 from the NewWindow's $FF. The general background (pen 2) painted by
+  Preferences then remains visible.
+- **"Solid" small square**: our knob is correct (colour 0 interior, white L). It only looks
+  solid because it sits on a colour 2 background. Once step 1 of §5.2
+  is done, it should blend into the background and show only the L.
+- Correspondence with the screenshot: the box (200..439, 62..131) matches x ≈ 388..636 and
+  y ≈ 246..390 of the screenshot, if a horizontal offset of about +188 and a vertical
+  doubling are applied [D].
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions recopiée : format de fichier public (hunks), structures
-  publiques (Process, WBStartup, WBArg, DiskObject, FileHandle), appels de bibliothèque et
-  hypothèses.
-- [x] Aucune donnée du programme reproduite, hormis des chaînes et des tailles.
-- [x] §4 (relu) : séquence d'appels publics, conditions de sortie, champs de structures publiques,
-  règle de choix d'OpenFont décrite par ses pondérations. Aucune suite d'instructions recopiée.
-- [x] §5 (relu) : champs publics Gadget/PropInfo/Image/NewWindow, appels de bibliothèque et ordre
-  de dessin ; image du knob décrite en géométrie seulement (aucune donnée reproduite).
+- [x] No instruction sequence copied: public file format (hunks), public
+  structures (Process, WBStartup, WBArg, DiskObject, FileHandle), library calls and
+  hypotheses.
+- [x] No program data reproduced, apart from strings and sizes.
+- [x] §4 (reviewed): sequence of public calls, exit conditions, fields of public structures,
+  OpenFont selection rule described by its weightings. No instruction sequence copied.
+- [x] §5 (reviewed): public Gadget/PropInfo/Image/NewWindow fields, library calls and drawing
+  order; knob image described in geometry only (no data reproduced).

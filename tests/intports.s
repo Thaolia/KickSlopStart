@@ -1,12 +1,12 @@
-; intports.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire de l'état des interruptions (piste analyse, carte UAE à DiagArea) :
-;   IE intenar intreqr rtarea_int        : INTENAR/INTREQR + octet $F0FFEB (drapeau « uae_int » d'UAE)
+; intports.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of the interrupt state (analysis track, UAE board with DiagArea):
+;   IE intenar intreqr rtarea_int        : INTENAR/INTREQR + byte $F0FFEB (UAE "uae_int" flag)
 ;   IV n iv_Data iv_Code iv_Node         : ExecBase->IntVects[n] ($54 + 12*n), n = 0..13
-;   SV n nœud type<<8|pri is_Data is_Code nom : serveurs des listes de PORTS (3), VERTB (5), EXTER (13)
-;   DA copie +off l0 l1 l2 l3            : copie RAM de DiagArea (er_Reserved0c) de chaque ConfigDev
-;   RT adr flags.ver.type.pri nom idstring : ROMTags trouvées dans ces copies (pas de 2 octets)
-;   RS adr nom                           : ExecBase->ResourceList ($150)
-; Sortie : Output() (lancer « intports >SER: »). Code auteur, structures publiques.
+;   SV n node type<<8|pri is_Data is_Code name : servers of the PORTS (3), VERTB (5), EXTER (13) lists
+;   DA copy +off l0 l1 l2 l3             : RAM copy of the DiagArea (er_Reserved0c) of each ConfigDev
+;   RT adr flags.ver.type.pri name idstring : ROMTags found in these copies (2-byte step)
+;   RS adr name                          : ExecBase->ResourceList ($150)
+; Output: Output() (run "intports >SER:"). Author's code, public structures.
 
                 section code,code
 _start:
@@ -23,8 +23,8 @@ _start:
                 jsr     -552(a6)
                 move.l  d0,d6
                 lea     buf,a1
-                jsr     -120(a6)             ; Disable (lecture cohérente)
-; --- INTENAR / INTREQR / drapeau rtarea
+                jsr     -120(a6)             ; Disable (consistent read)
+; --- INTENAR / INTREQR / rtarea flag
                 lea     t_ie(pc),a0
                 bsr     cpy
                 moveq   #0,d0
@@ -56,14 +56,14 @@ _start:
                 addq.w  #1,d4
                 cmp.w   #14,d4
                 bne.s   .iv
-; --- chaînes de serveurs
+; --- server chains
                 moveq   #3,d4
                 bsr     servers
                 moveq   #5,d4
                 bsr     servers
                 moveq   #13,d4
                 bsr     servers
-; --- copies de DiagArea
+; --- DiagArea copies
                 tst.l   d6
                 beq     .noda
                 move.l  d6,a2
@@ -89,7 +89,7 @@ _start:
                 add.l   #16,d4
                 cmp.l   #$90,d4
                 bne.s   .dal
-                move.l  d5,a3                ; ROMTags dans les $200 premiers octets
+                move.l  d5,a3                ; ROMTags in the first $200 bytes
                 move.l  a3,d7
                 add.l   #$200,d7
 .rt:            cmp.w   #$4afc,(a3)
@@ -136,7 +136,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-servers:                                     ; d4 = n ; liste = IntVects[n].iv_Data
+servers:                                     ; d4 = n; list = IntVects[n].iv_Data
                 move.l  d4,d0
                 mulu    #12,d0
                 move.l  $54(a6,d0.l),d0
@@ -167,7 +167,7 @@ servers:                                     ; d4 = n ; liste = IntVects[n].iv_D
                 bra.s   .s
 .x:             rts
 
-cpyn:                                        ; nom C a0 (≤ 31 car.) en (a1)+, NULL toléré
+cpyn:                                        ; C name a0 (<= 31 chars) to (a1)+, NULL tolerated
                 move.l  a0,d0
                 beq.s   .x
                 moveq   #31,d1
@@ -196,7 +196,7 @@ hex:
                 dbra    d3,.h
                 move.b  #' ',(a1)+
                 rts
-outbuf:                                      ; écrit [a0, a1) sur Output()
+outbuf:                                      ; writes [a0, a1) to Output()
                 move.l  a1,d3
                 sub.l   a0,d3
                 move.l  a0,d2

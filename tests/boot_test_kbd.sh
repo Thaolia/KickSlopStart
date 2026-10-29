@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# tests/boot_test_kbd.sh — boot headless FS-UAE + INJECTION CLAVIER via xdotool (jalon F2b).
+# tests/boot_test_kbd.sh - headless FS-UAE boot + KEYBOARD INJECTION via xdotool (milestone F2b).
 #
-# Prouve la chaîne CLAVIER bout-en-bout : xdotool key -> fenêtre FS-UAE (XTEST) -> clavier émulé CIA-A ->
-# kbd_interrupt (ICR bit 3) -> keymap -> ring SPSC -> con_handler READ -> shell -> dispatch. Contrairement au
-# harnais série (socat), l'entrée arrive par le VRAI clavier émulé. XTEST (pas XSendEvent/--window que SDL ignore).
+# Proves the KEYBOARD chain end to end: xdotool key -> FS-UAE window (XTEST) -> emulated CIA-A keyboard ->
+# kbd_interrupt (ICR bit 3) -> keymap -> SPSC ring -> con_handler READ -> shell -> dispatch. Unlike the
+# serial harness (socat), the input arrives through the REAL emulated keyboard. XTEST (not XSendEvent/--window,
+# which SDL ignores).
 #
-# Usage : boot_test_kbd.sh <rom> <adf> <ready_marker> <keys...> <success_marker> [wait] [settle] [postwait]
-#   keys : séquence de noms de touches xdotool séparés par des espaces (ex. "v e r Return") ; jetons spéciaux :
-#          « click » = bouton gauche souris, « sleep:N » = pause de N secondes.
-# Codes de sortie : 0 = succès ; 1 = régression/absent ; 2 = prérequis manquant.
+# Usage: boot_test_kbd.sh <rom> <adf> <ready_marker> <keys...> <success_marker> [wait] [settle] [postwait]
+#   keys: sequence of xdotool key names separated by spaces (e.g. "v e r Return"); special tokens:
+#         "click" = left mouse button, "sleep:N" = pause of N seconds.
+# Exit codes: 0 = success; 1 = regression/missing; 2 = missing prerequisite.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:-$ROOT/build/kick13.rom}"
@@ -63,7 +64,7 @@ window_height = 568
 fade_in_duration = 0
 serial_port = $OUT/ser_uae
 EOF
-# Lignes de config FS-UAE supplémentaires (ex. BOOT_TEST_EXTRA_CFG='slow_memory = 512'), comme boot_test.sh.
+# Extra FS-UAE config lines (e.g. BOOT_TEST_EXTRA_CFG='slow_memory = 512'), as in boot_test.sh.
 if [ -n "${BOOT_TEST_EXTRA_CFG:-}" ]; then printf '%s\n' "${BOOT_TEST_EXTRA_CFG}" >> "$CFG"; fi
 
 DISPLAY="$DISP" fs-uae "$CFG" >"$OUT/fs-uae.log" 2>&1 &
@@ -91,17 +92,17 @@ fi
 echo "=== injection clavier (XTEST) : $KEYS ==="
 for k in $KEYS; do
   case "$k" in
-    click)   # bouton gauche souris Amiga, TENU 200 ms : un programme qui sonde CIA-A PRA une fois par frame
-             # (20 ms) rate un clic xdotool instantané
+    click)   # Amiga left mouse button, HELD 200 ms: a program polling CIA-A PRA once per frame
+             # (20 ms) misses an instantaneous xdotool click
              DISPLAY="$DISP" xdotool mousedown 1 2>/dev/null; sleep 0.2
              DISPLAY="$DISP" xdotool mouseup 1 2>/dev/null ;;
-    sleep:*) sleep "${k#sleep:}" ;;                                   # pause (ex. sleep:5) entre deux écrans
+    sleep:*) sleep "${k#sleep:}" ;;                                   # pause (e.g. sleep:5) between two screens
     *)       DISPLAY="$DISP" xdotool key --clearmodifiers "$k" 2>/dev/null ;;
   esac
   sleep 0.22
 done
 sleep "$POSTWAIT"
-# Capture écran finale (diagnostic : état affiché après l'injection).
+# Final screen capture (diagnostics: displayed state after the injection).
 xwd -root -display "$DISP" -silent 2>/dev/null | convert xwd:- "$OUT/screen.png" 2>/dev/null
 
 echo "=== serial.log (fin) ==="

@@ -1,5 +1,6 @@
-# tests/dskchg_dump.py — relit au débogueur FS-UAE le journal mémoire de tests/dskchg.s (ASSET DE TEST, piste analyse).
-# Usage : python3 -I tests/dskchg_dump.py <fifo débogueur> <journal fs-uae> <fichier de sortie> (appelé par dskchg_run.sh).
+# tests/dskchg_dump.py - reads back, through the FS-UAE debugger, the memory log of tests/dskchg.s (TEST ASSET,
+# analysis track).
+# Usage: python3 -I tests/dskchg_dump.py <debugger fifo> <fs-uae log> <output file> (called by dskchg_run.sh).
 import sys, time, re, struct
 fifo, log, out = sys.argv[1:4]
 f = open(fifo, 'w')

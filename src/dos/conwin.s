@@ -1,11 +1,11 @@
-; src/dos/conwin.s — handler console ROM des nœuds CON: et RAW: (segment BCPL de dn_SegList, GV partagé). Chaque Open
-; de « CON:x/y/l/h/titre » démarre un process (starthandler) qui ouvre sa fenêtre sur l'écran Workbench, y branche
-; console.device et sert les packets jusqu'au dernier END. dn_Startup (Arg2 du packet de démarrage) : 0 = CON (ligne
-; éditée avec écho : retour arrière, Ctrl-\ = fin de fichier), 1 = RAW (caractères bruts, sans écho).
-; Packets : FINDINPUT/FINDOUTPUT/FINDUPDATE (flux interactif), READ, WRITE, END, WAIT_CHAR, SCREEN_MODE, DISK_INFO.
-; Les touches arrivent par une lecture console.device toujours en attente, en parallèle des packets.
-; Piste IMPLÉMENTATION (« clean ») : spec docs/analysis/handlers-v34.md §2-3 + AutoDocs (console.device, intuition,
-; packets). AUCUNE lecture ROM.
+; src/dos/conwin.s - ROM console handler of the CON: and RAW: nodes (BCPL segment of dn_SegList, shared GV). Each Open
+; of "CON:x/y/w/h/title" starts a process (starthandler) that opens its window on the Workbench screen, attaches
+; console.device to it and serves packets until the last END. dn_Startup (Arg2 of the startup packet): 0 = CON (line
+; edited with echo: backspace, Ctrl-\ = end of file), 1 = RAW (raw characters, no echo).
+; Packets: FINDINPUT/FINDOUTPUT/FINDUPDATE (interactive stream), READ, WRITE, END, WAIT_CHAR, SCREEN_MODE, DISK_INFO.
+; Keys arrive through a console.device read that is always pending, in parallel with the packets.
+; IMPLEMENTATION track ("clean"): spec docs/analysis/handlers-v34.md §2-3 + AutoDocs (console.device, intuition,
+; packets). NO ROM reading.
 
                 include "exec.i"
                 include "dospkt.i"
@@ -23,27 +23,27 @@ LVO_CLOSEWINDOW_I EQU -72
 ID_DISKTYPE     EQU 24               ; InfoData
 ID_VOLUMENODE   EQU 28
 
-; état du handler (AllocMem, a5)
-CW_PKT          EQU 0                ; BPTR du packet en cours
-CW_MODE         EQU 4                ; LONG : 0 CON, sinon RAW
-CW_OPENS        EQU 8                ; flux ouverts
+; handler state (AllocMem, a5)
+CW_PKT          EQU 0                ; BPTR of the current packet
+CW_MODE         EQU 4                ; LONG: 0 CON, otherwise RAW
+CW_OPENS        EQU 8                ; open streams
 CW_IBASE        EQU 12
 CW_WIN          EQU 16
-CW_RPORT        EQU 20               ; MsgPort des lectures console
-CW_EOF          EQU 24               ; BYTE : Ctrl-\ reçu, rendu à la prochaine lecture
-CW_RDON         EQU 25               ; BYTE : lecture console en cours
-CW_KEY          EQU 26               ; BYTE : caractère reçu
-CW_LLEN         EQU 28               ; LONG : octets tapés dans CW_LINE
-CW_DLV          EQU 32               ; LONG : octets livrables (ligne terminée en CON, tout en RAW)
-CW_RQN          EQU 36               ; LONG : lectures en attente
-CW_RQ           EQU 40               ; CW_RQMAX x BPTR packets READ en attente
+CW_RPORT        EQU 20               ; MsgPort for console reads
+CW_EOF          EQU 24               ; BYTE: Ctrl-\ received, returned on the next read
+CW_RDON         EQU 25               ; BYTE: console read in progress
+CW_KEY          EQU 26               ; BYTE: character received
+CW_LLEN         EQU 28               ; LONG: bytes typed into CW_LINE
+CW_DLV          EQU 32               ; LONG: deliverable bytes (completed line in CON, everything in RAW)
+CW_RQN          EQU 36               ; LONG: pending reads
+CW_RQ           EQU 40               ; CW_RQMAX x BPTR of pending READ packets
 CW_RQMAX        EQU 8
-CW_RIO          EQU CW_RQ+CW_RQMAX*4 ; IOStdReq de lecture (48)
-CW_WIO          EQU CW_RIO+48        ; IOStdReq d'écriture (48)
+CW_RIO          EQU CW_RQ+CW_RQMAX*4 ; read IOStdReq (48)
+CW_WIO          EQU CW_RIO+48        ; write IOStdReq (48)
 CW_NW           EQU CW_WIO+48        ; NewWindow (48)
-CW_TITLE        EQU CW_NW+48         ; titre (CW_TITLEMAX)
+CW_TITLE        EQU CW_NW+48         ; title (CW_TITLEMAX)
 CW_TITLEMAX     EQU 80
-CW_LINE         EQU CW_TITLE+CW_TITLEMAX  ; tampon de ligne
+CW_LINE         EQU CW_TITLE+CW_TITLEMAX  ; line buffer
 CW_LINEMAX      EQU 256
 CW_SIZE         EQU CW_LINE+CW_LINEMAX
 ; NewWindow
@@ -56,26 +56,26 @@ CW_WINFLAGS     EQU $00021007        ; SIZING, DRAG, DEPTH, ACTIVATE, NOCAREREFR
 
                 cnop    0,4
 conwin_seg:
-                dc.l    0                    ; lien
+                dc.l    0                    ; link
 cw_data:
                 dc.l    (cw_end-cw_data)/4
 
-; start(pkt) (globale 1) : D1 = BPTR du packet de démarrage (Arg1 = BSTR du nom complet, Arg2 = dn_Startup). Ne
-; revient pas : le process se termine par RemTask quand le dernier flux est fermé.
+; start(pkt) (global 1): D1 = BPTR of the startup packet (Arg1 = BSTR of the full name, Arg2 = dn_Startup). Does
+; not return: the process ends with RemTask when the last stream is closed.
 cw_start:
-                move.l  d1,d7                ; d7 = BPTR du packet de démarrage
+                move.l  d1,d7                ; d7 = BPTR of the startup packet
                 move.l  ($4).w,a6
                 move.l  #CW_SIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .st_fail
-                move.l  d0,a5                ; a5 = état
+                move.l  d0,a5                ; a5 = state
                 move.l  d7,CW_PKT(a5)
                 lsl.l   #2,d7
                 move.l  d7,a0
                 move.l  DP_ARG2(a0),CW_MODE(a5)
-                move.l  DP_ARG1(a0),d0       ; nom -> fenêtre
+                move.l  DP_ARG1(a0),d0       ; name -> window
                 bsr     cw_parse
                 beq     .st_bad
                 lea     cw_intname(pc),a1
@@ -89,7 +89,7 @@ cw_start:
                 move.l  ($4).w,a6
                 move.l  d0,CW_WIN(a5)
                 beq     .st_bad
-                ; port des lectures console (signal propre)
+                ; console read port (own signal)
                 moveq   #-1,d0
                 jsr     LVO_ALLOCSIGNAL(a6)
                 move.l  d0,d6
@@ -108,7 +108,7 @@ cw_start:
                 addq.l  #4,a1
                 move.l  a1,-4(a1)
                 clr.l   (a1)
-                lea     CW_RIO(a5),a1        ; console.device sur la fenêtre (la requête d'écriture en est une copie)
+                lea     CW_RIO(a5),a1        ; console.device on the window (the write request is a copy of it)
                 move.l  CW_RPORT(a5),MN_REPLYPORT(a1)
                 move.l  CW_WIN(a5),IOSTD_DATA(a1)
                 lea     cw_conname(pc),a0
@@ -124,7 +124,7 @@ cw_start:
                 move.l  (a0)+,(a1)+
                 dbra    d0,.st_cpy
                 bsr     cw_startread
-                moveq   #-1,d0               ; packet de démarrage : succès
+                moveq   #-1,d0               ; startup packet: success
                 moveq   #0,d1
                 move.l  CW_PKT(a5),d2
                 bsr     cw_reply
@@ -135,7 +135,7 @@ cw_start:
                 jsr     LVO_CLOSEWINDOW_I(a6)
                 move.l  ($4).w,a6
 .st_bad:
-                moveq   #0,d0                ; nom invalide, fenêtre ou device indisponible
+                moveq   #0,d0                ; invalid name, window or device unavailable
                 move.l  #ERROR_BAD_STREAM,d1
                 move.l  CW_PKT(a5),d2
                 bsr     cw_reply
@@ -155,7 +155,7 @@ cw_start:
                 sub.l   a1,a1
                 jsr     LVO_REMTASK(a6)
 
-; cw_loop : attend les packets (port du process) et les touches (port des lectures console).
+; cw_loop: waits for packets (process port) and keys (console read port).
 cw_loop:
                 move.l  ($4).w,a6
                 move.l  EB_THISTASK(a6),a3
@@ -196,7 +196,7 @@ cw_loop:
                 bsr     cw_packet
                 bra.s   .lp_pkt
 
-; cw_packet(a4 = packet, d2 = son BPTR, a5) : sert un packet (READ peut rester en attente).
+; cw_packet(a4 = packet, d2 = its BPTR, a5): serves a packet (READ may stay pending).
 cw_packet:
                 move.l  DP_TYPE(a4),d0
                 cmp.l   #ACTION_READ,d0
@@ -220,7 +220,7 @@ cw_packet:
                 moveq   #0,d0
                 move.l  #ERROR_ACTION_UNKNOWN,d1
                 bra     cw_reply
-.pk_open:                                    ; flux interactif sur cette fenêtre
+.pk_open:                                    ; interactive stream on this window
                 move.l  DP_ARG1(a4),d0
                 lsl.l   #2,d0
                 beq.s   .pk_onofh
@@ -232,7 +232,7 @@ cw_packet:
                 moveq   #-1,d0
                 moveq   #0,d1
                 bra     cw_reply
-.pk_wait:                                    ; un caractère est-il disponible ? (pas d'attente)
+.pk_wait:                                    ; is a character available? (no waiting)
                 moveq   #0,d0
                 tst.l   CW_DLV(a5)
                 beq.s   .pk_w0
@@ -240,10 +240,10 @@ cw_packet:
 .pk_w0:
                 moveq   #0,d1
                 bra     cw_reply
-.pk_mode:                                    ; Arg1 : 0 = CON (ligne), sinon RAW
+.pk_mode:                                    ; Arg1: 0 = CON (line), otherwise RAW
                 move.l  DP_ARG1(a4),CW_MODE(a5)
                 beq.s   .pk_m0
-                move.l  CW_LLEN(a5),CW_DLV(a5)   ; passage en RAW : tout ce qui est tapé devient livrable
+                move.l  CW_LLEN(a5),CW_DLV(a5)   ; switch to RAW: everything typed becomes deliverable
 .pk_m0:
                 bsr     cw_serve
                 moveq   #-1,d0
@@ -254,10 +254,10 @@ cw_packet:
                 lsl.l   #2,d0
                 beq.s   .pk_i0
                 move.l  d0,a0
-                move.l  #$434F4E00,ID_DISKTYPE(a0)   ; « CON\0 »
+                move.l  #$434F4E00,ID_DISKTYPE(a0)   ; "CON\0"
                 tst.l   CW_MODE(a5)
                 beq.s   .pk_icon
-                move.l  #$52415700,ID_DISKTYPE(a0)   ; « RAW\0 »
+                move.l  #$52415700,ID_DISKTYPE(a0)   ; "RAW\0"
 .pk_icon:
                 move.l  CW_WIN(a5),ID_VOLUMENODE(a0)
 .pk_i0:
@@ -281,7 +281,7 @@ cw_packet:
                 addq.l  #1,CW_RQN(a5)
                 bra     cw_serve
 .pk_rfull:
-                moveq   #-1,d0               ; trop de lectures simultanées : erreur
+                moveq   #-1,d0               ; too many simultaneous reads: error
                 move.l  #ERROR_ACTION_UNKNOWN,d1
                 bra     cw_reply
 .pk_end:
@@ -290,11 +290,11 @@ cw_packet:
                 bsr     cw_reply
                 subq.l  #1,CW_OPENS(a5)
                 bgt.s   .pk_eret
-                bra     cw_close             ; dernier flux : fenêtre fermée, fin du process
+                bra     cw_close             ; last stream: window closed, end of process
 .pk_eret:
                 rts
 
-; cw_serve(a5) : rend autant de lectures en attente que possible (données livrables, ou fin de fichier en CON).
+; cw_serve(a5): returns as many pending reads as possible (deliverable data, or end of file in CON).
 cw_serve:
                 movem.l d2-d6/a2-a4,-(sp)
 .sv_lp:
@@ -304,19 +304,19 @@ cw_serve:
                 bne.s   .sv_data
                 tst.b   CW_EOF(a5)
                 beq.s   .sv_ret
-                clr.b   CW_EOF(a5)           ; Ctrl-\ : cette lecture rend 0 (fin de fichier)
+                clr.b   CW_EOF(a5)           ; Ctrl-\: this read returns 0 (end of file)
                 moveq   #0,d5
                 bra.s   .sv_give
 .sv_data:
                 move.l  CW_RQ(a5),d0
                 lsl.l   #2,d0
                 move.l  d0,a4
-                move.l  DP_ARG3(a4),d5       ; d5 = octets demandés
+                move.l  DP_ARG3(a4),d5       ; d5 = bytes requested
                 cmp.l   d4,d5
                 bls.s   .sv_n
                 move.l  d4,d5
 .sv_n:
-                move.l  DP_ARG2(a4),a1       ; copie puis décalage du tampon
+                move.l  DP_ARG2(a4),a1       ; copy then shift the buffer
                 lea     CW_LINE(a5),a0
                 move.l  d5,d0
                 bra.s   .sv_cn
@@ -335,7 +335,7 @@ cw_serve:
                 dbra    d0,.sv_mv
                 sub.l   d5,CW_DLV(a5)
 .sv_give:
-                move.l  CW_RQ(a5),d2         ; la plus ancienne lecture est rendue
+                move.l  CW_RQ(a5),d2         ; the oldest read is returned
                 lea     CW_RQ(a5),a0
                 moveq   #CW_RQMAX-2,d0
 .sv_sh:
@@ -350,14 +350,14 @@ cw_serve:
                 movem.l (sp)+,d2-d6/a2-a4
                 rts
 
-; cw_key(d0.b = caractère, a5) : RAW -> livrable tel quel ; CON -> édition de ligne avec écho (retour arrière,
-; Entrée termine la ligne, Ctrl-\ = fin de fichier).
+; cw_key(d0.b = character, a5): RAW -> deliverable as is; CON -> line editing with echo (backspace,
+; Return ends the line, Ctrl-\ = end of file).
 cw_key:
                 movem.l d2/a2,-(sp)
                 move.b  d0,d2
                 tst.l   CW_MODE(a5)
                 bne.s   .ky_raw
-                cmp.b   #8,d2                ; retour arrière : seulement sur la ligne non encore livrable
+                cmp.b   #8,d2                ; backspace: only on the line not yet deliverable
                 bne.s   .ky_ncr
                 move.l  CW_LLEN(a5),d0
                 cmp.l   CW_DLV(a5),d0
@@ -369,14 +369,14 @@ cw_key:
                 bsr     cw_out
                 bra.s   .ky_ret
 .ky_ncr:
-                cmp.b   #28,d2               ; Ctrl-\ : fin de fichier
+                cmp.b   #28,d2               ; Ctrl-\: end of file
                 bne.s   .ky_cr
                 st      CW_EOF(a5)
                 bra.s   .ky_ret
 .ky_cr:
                 cmp.b   #13,d2
                 bne.s   .ky_put
-                moveq   #10,d2               ; la ligne se termine par '\n'
+                moveq   #10,d2               ; the line ends with '\n'
                 bsr.s   .ky_store
                 beq.s   .ky_ret
                 move.l  CW_LLEN(a5),CW_DLV(a5)
@@ -386,11 +386,11 @@ cw_key:
                 bsr     cw_out
                 bra.s   .ky_ret
 .ky_put:
-                cmp.b   #' ',d2              ; autres caractères de contrôle ignorés en mode ligne
+                cmp.b   #' ',d2              ; other control characters ignored in line mode
                 blo.s   .ky_ret
                 bsr.s   .ky_store
                 beq.s   .ky_ret
-                move.b  d2,CW_KEY(a5)        ; écho
+                move.b  d2,CW_KEY(a5)        ; echo
                 lea     CW_KEY(a5),a0
                 move.l  a0,d0
                 moveq   #1,d1
@@ -403,7 +403,7 @@ cw_key:
 .ky_ret:
                 movem.l (sp)+,d2/a2
                 rts
-.ky_store:                                   ; d2.b ajouté au tampon ; Z = 1 s'il est plein
+.ky_store:                                   ; d2.b appended to the buffer; Z = 1 if it is full
                 move.l  CW_LLEN(a5),d0
                 cmp.l   #CW_LINEMAX-1,d0
                 bhs.s   .ks_full
@@ -415,7 +415,7 @@ cw_key:
                 moveq   #0,d0                ; Z = 1
                 rts
 
-; cw_out(d0 = données, d1 = longueur, a5) : écrit dans la fenêtre (console.device, synchrone). Préserve d2-d7/a2-a5.
+; cw_out(d0 = data, d1 = length, a5): writes into the window (console.device, synchronous). Preserves d2-d7/a2-a5.
 cw_out:
                 move.l  a6,-(sp)
                 lea     CW_WIO(a5),a1
@@ -427,7 +427,7 @@ cw_out:
                 move.l  (sp)+,a6
                 rts
 
-; cw_startread(a5) : relance la lecture console d'un caractère (réponse sur CW_RPORT). Préserve d2-d7/a2-a5.
+; cw_startread(a5): restarts the one-character console read (reply on CW_RPORT). Preserves d2-d7/a2-a5.
 cw_startread:
                 move.l  a6,-(sp)
                 lea     CW_RIO(a5),a1
@@ -441,7 +441,7 @@ cw_startread:
                 move.l  (sp)+,a6
                 rts
 
-; cw_reply(d0 = Res1, d1 = Res2, d2 = BPTR du packet) : réponse (returnpkt) à l'émetteur. Préserve d2-d7/a2-a5.
+; cw_reply(d0 = Res1, d1 = Res2, d2 = BPTR of the packet): reply (returnpkt) to the sender. Preserves d2-d7/a2-a5.
 cw_reply:
                 movem.l a2-a3/a6,-(sp)
                 lsl.l   #2,d2
@@ -460,8 +460,8 @@ cw_reply:
                 movem.l (sp)+,a2-a3/a6
                 rts
 
-; cw_close(a5) : dernier flux fermé : lectures en attente rendues (0), lecture console annulée, device et fenêtre
-; fermés, état rendu, fin du process.
+; cw_close(a5): last stream closed: pending reads returned (0), console read aborted, device and window
+; closed, state freed, end of process.
 cw_close:
 .cl_rq:
                 tst.l   CW_RQN(a5)
@@ -499,19 +499,19 @@ cw_exit:
                 move.l  #CW_SIZE,d0
                 jsr     LVO_FREEMEM(a6)
                 sub.l   a1,a1
-                jsr     LVO_REMTASK(a6)      ; ne revient pas
+                jsr     LVO_REMTASK(a6)      ; does not return
 .ex_hang:
                 bra.s   .ex_hang
 
-; cw_parse(d0 = BPTR du BSTR « CON:x/y/l/h/titre », a5) -> NewWindow et titre dans l'état ; Z = 1 si le nom est
-; invalide. Les nombres commencent au 5e caractère (préfixe de 4 : CON:/RAW:).
+; cw_parse(d0 = BPTR of the BSTR "CON:x/y/w/h/title", a5) -> NewWindow and title in the state; Z = 1 if the name is
+; invalid. The numbers start at the 5th character (4-character prefix: CON:/RAW:).
 cw_parse:
                 movem.l d2-d4/a2-a3,-(sp)
                 lsl.l   #2,d0
                 beq     .pa_bad
                 move.l  d0,a2
                 moveq   #0,d3
-                move.b  (a2)+,d3             ; longueur
+                move.b  (a2)+,d3             ; length
                 subq.w  #4,d3
                 ble     .pa_bad
                 addq.l  #4,a2
@@ -519,7 +519,7 @@ cw_parse:
                 moveq   #3,d4
 .pa_num:
                 moveq   #0,d1
-                moveq   #0,d2                ; chiffres lus
+                moveq   #0,d2                ; digits read
 .pa_dig:
                 tst.w   d3
                 beq.s   .pa_bad
@@ -540,7 +540,7 @@ cw_parse:
                 beq.s   .pa_bad
                 move.w  d1,(a3)+
                 dbra    d4,.pa_num
-                lea     CW_TITLE(a5),a0      ; titre = le reste
+                lea     CW_TITLE(a5),a0      ; title = the rest
                 moveq   #CW_TITLEMAX-2,d0
 .pa_tc:
                 tst.w   d3
@@ -551,12 +551,12 @@ cw_parse:
 .pa_te:
                 clr.b   (a0)
                 lea     CW_NW(a5),a0
-                move.w  #$FFFF,NW_DETAILPEN_C(a0)    ; stylos de l'écran
+                move.w  #$FFFF,NW_DETAILPEN_C(a0)    ; screen pens
                 move.l  #CW_WINFLAGS,NW_FLAGS_C(a0)
                 lea     CW_TITLE(a5),a1
                 move.l  a1,NW_TITLE_C(a0)
                 move.l  #$00500028,NW_MINWIDTH_C(a0)     ; MinWidth 80, MinHeight 40
-                move.l  #$FFFFFFFF,NW_MINWIDTH_C+4(a0)   ; pas de maximum
+                move.l  #$FFFFFFFF,NW_MINWIDTH_C+4(a0)   ; no maximum
                 move.w  #1,NW_TYPE_C(a0)                 ; WBENCHSCREEN
                 moveq   #1,d0                ; Z = 0
                 bra.s   .pa_ret
@@ -575,7 +575,7 @@ cw_bs:
 cw_crlf:
                 dc.b    13,10
                 cnop    0,4
-                dc.l    0                    ; fin de la table de globin
-                dc.l    1,cw_start-cw_data   ; globale 1 = start
-                dc.l    1                    ; plus grande globale définie
+                dc.l    0                    ; end of the globin table
+                dc.l    1,cw_start-cw_data   ; global 1 = start
+                dc.l    1                    ; highest global defined
 cw_end:

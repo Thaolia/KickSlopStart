@@ -1,26 +1,26 @@
-; src/intuition/menus.s — menus d'intuition : SetMenuStrip/ClearMenuStrip, ItemAddress, OnMenu/OffMenu, PrintIText,
-; IntuiTextLength, et l'interaction au bouton droit (tâche d'entrée d'intuition).
-; Bouton droit enfoncé sur la fenêtre active qui a une barre de menus (et pas RMBTRAP) : la barre de l'écran est
-; recouverte par une couche simple portant les titres des menus ; le pointeur dans la barre déroule le menu visé
-; (une seconde couche simple sous la barre, éléments ITEMTEXT ou images) ; l'élément sous le pointeur est mis en
-; surbrillance (inversion) s'il est actif. Au relâchement : MENUPICK à la fenêtre avec le code du choix (MENUNULL
-; sinon), couches supprimées ; layers rend la zone aux fenêtres (sauvegarde des fenêtres smart, REFRESHWINDOW des
-; fenêtres simple via it_refresh). Les éléments ou menus inactifs sont grisés par des rayures horizontales au stylo
-; du fond.
-; Raccourcis COMMSEQ (spec intuition-input-menus-v34 §3.5) : le caractère Command à droite de l'élément, précédé du
-; symbole de la touche Amiga — ici un petit chat dessiné pour KickSlopStart (pas le glyphe de la ROM), au même format.
-; Raccourcis clavier (§3.11) : Amiga droite + touche convertie en un caractère ; le handler cherche dans la barre de la
-; fenêtre active (menus, éléments, sous-éléments ; Command & $5F, COMMSEQ non testé), avale la touche, et la tâche
-; d'entrée envoie MENUPICK (MENUNULL si le menu, l'élément ou le sous-élément est inactif).
-; Coches (§3.5) : un élément CHECKIT et CHECKED reçoit l'image Window->CheckMark en (x de l'élément, y de l'élément +
-; TopEdge de son ItemFill) ; coche interne = empreinte de patte de chat (motif propre), même format que le chat.
-; Sous-menus (§3.5, §3.7) : pointeur sur un élément à sous-éléments -> boîte de sous-éléments (couche simple au-dessus,
-; la boîte d'éléments est une couche smart qui se restaure à sa fermeture), placée sur l'élément selon l'étendue de
-; ses sous-éléments ; un sous-élément touché est mis en surbrillance (l'élément parent rallumé) ; hors sous-éléments,
-; la boîte reste ; un titre la retire. Code MENUPICK avec le n° de sous-élément ; élément à sous-éléments sans
-; sous-élément choisi -> MENUNULL.
-; Portée : pas de multi-sélection, ni de MENUVERIFY, ni de MutualExclude, ni de HIGHBOX/HIGHIMAGE distincts.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + intuition/intuition.h. AUCUNE lecture ROM.
+; src/intuition/menus.s - intuition menus: SetMenuStrip/ClearMenuStrip, ItemAddress, OnMenu/OffMenu, PrintIText,
+; IntuiTextLength, and the right-button interaction (intuition input task).
+; Right button pressed over the active window that has a menu strip (and no RMBTRAP): the screen's title bar is
+; covered by a simple layer carrying the menu titles; the pointer in the bar pulls down the targeted menu
+; (a second simple layer under the bar, ITEMTEXT or image items); the item under the pointer is
+; highlighted (inversion) if it is enabled. On release: MENUPICK to the window with the selection code (MENUNULL
+; otherwise), layers deleted; layers gives the area back to the windows (backup of smart windows, REFRESHWINDOW for
+; simple windows via it_refresh). Disabled items or menus are ghosted by horizontal stripes in the
+; background pen.
+; COMMSEQ shortcuts (spec intuition-input-menus-v34 §3.5): the Command character to the right of the item, preceded by
+; the Amiga key symbol - here a small cat drawn for KickSlopStart (not the ROM glyph), in the same format.
+; Keyboard shortcuts (§3.11): right Amiga + key converted to a character; the handler searches the menu strip of the
+; active window (menus, items, sub-items; Command & $5F, COMMSEQ not tested), swallows the key, and the input
+; task sends MENUPICK (MENUNULL if the menu, the item or the sub-item is disabled).
+; Check marks (§3.5): a CHECKIT and CHECKED item receives the Window->CheckMark image at (x of the item, y of the item +
+; TopEdge of its ItemFill); internal check mark = cat paw print (own design), same format as the cat.
+; Sub-menus (§3.5, §3.7): pointer on an item with sub-items -> sub-item box (simple layer on top,
+; the item box is a smart layer that restores itself when it closes), placed over the item according to the extent of
+; its sub-items; a hit sub-item is highlighted (the parent item lit again); outside the sub-items,
+; the box stays; a title removes it. MENUPICK code with the sub-item number; item with sub-items without a
+; chosen sub-item -> MENUNULL.
+; Scope: no multi-selection, no MENUVERIFY, no MutualExclude, no separate HIGHBOX/HIGHIMAGE.
+; IMPLEMENTATION track ("clean"): AutoDocs intuition.library + intuition/intuition.h. NO ROM reading.
 
                 include "exec.i"
                 include "intuition.i"
@@ -47,12 +47,12 @@
                 xref    kbd_cook
                 xref    intuition_DrawImage
 
-MB_MARGIN       EQU 2                ; marge intérieure du menu déroulé (cadre compris)
-MI_COMMAND      EQU 26               ; MenuItem : caractère du raccourci (COMMSEQ)
+MB_MARGIN       EQU 2                ; inner margin of the pulled-down menu (border included)
+MI_COMMAND      EQU 26               ; MenuItem: shortcut character (COMMSEQ)
 COMMSEQ         EQU $0004
-SC_BARH_M       EQU 9                ; hauteur de la barre de l'écran (lignes 0..9), comme screens.s
+SC_BARH_M       EQU 9                ; height of the screen's title bar (lines 0..9), as in screens.s
 
-; SetMenuStrip(fenêtre a0, menu a1) -> d0 = TRUE. ClearMenuStrip(fenêtre a0).
+; SetMenuStrip(window a0, menu a1) -> d0 = TRUE. ClearMenuStrip(window a0).
 intuition_SetMenuStrip:
         move.l  a1,WD_MENUSTRIP(a0)
         moveq   #1,d0
@@ -61,20 +61,20 @@ intuition_ClearMenuStrip:
         clr.l   WD_MENUSTRIP(a0)
         rts
 
-; ItemAddress(menustrip a0, code d0) -> d0 = MenuItem (ou sous-élément) désigné, 0 pour MENUNULL ou hors liste.
+; ItemAddress(menustrip a0, code d0) -> d0 = designated MenuItem (or sub-item), 0 for MENUNULL or outside the list.
 intuition_ItemAddress:
         bsr.s   mn_find
         move.l  a0,d0
         rts
 
-; mn_find(a0 = premier menu, d0.w = code) -> a0 = élément | 0, a1 = menu | 0, d1.w = n° d'élément ($3F : aucun).
-; Clobbe d0.
+; mn_find(a0 = first menu, d0.w = code) -> a0 = item | 0, a1 = menu | 0, d1.w = item number ($3F: none).
+; Clobbers d0.
 mn_find:
         move.l  d2,-(sp)
         move.w  d0,d2
         cmp.w   #MENUNULL,d2
         beq.s   .fd_none
-        and.w   #$1F,d0              ; n° de menu
+        and.w   #$1F,d0              ; menu number
 .fd_menu:
         move.l  a0,d1
         beq.s   .fd_none
@@ -86,7 +86,7 @@ mn_find:
         move.l  a0,a1
         move.w  d2,d1
         lsr.w   #5,d1
-        and.w   #$3F,d1              ; n° d'élément
+        and.w   #$3F,d1              ; item number
         cmp.w   #$3F,d1
         beq.s   .fd_menuonly
         move.l  MU_FIRSTITEM(a1),a0
@@ -95,7 +95,7 @@ mn_find:
         beq.s   .fd_out
         move.w  d2,d0
         lsr.w   #8,d0
-        lsr.w   #3,d0                ; n° de sous-élément
+        lsr.w   #3,d0                ; sub-item number
         cmp.w   #$1F,d0
         beq.s   .fd_out
         move.l  MI_SUBITEM(a0),a0
@@ -111,7 +111,7 @@ mn_find:
 .fd_out:
         move.l  (sp)+,d2
         rts
-.fd_walk:                            ; a0 = d0-ième de la chaîne (MI_NEXTITEM) | 0 ; Z = 1 si absent
+.fd_walk:                            ; a0 = d0-th of the chain (MI_NEXTITEM) | 0; Z = 1 if absent
         cmpa.w  #0,a0
         beq.s   .fw_ret
         subq.w  #1,d0
@@ -123,8 +123,8 @@ mn_find:
 .fw_ret:
         rts
 
-; OffMenu(fenêtre a0, code d0) / OnMenu(fenêtre a0, code d0) : désactive / active l'élément désigné (sous-élément
-; compris), ou le menu entier si le n° d'élément vaut NOITEM.
+; OffMenu(window a0, code d0) / OnMenu(window a0, code d0): disables / enables the designated item (sub-item
+; included), or the whole menu if the item number is NOITEM.
 intuition_OffMenu:
         moveq   #0,d1
         bra.s   mn_onoff
@@ -152,11 +152,11 @@ mn_onoff:
         bset    #4,MI_FLAGS+1(a0)
         rts
 
-; PrintIText(rp a0, itext a1, x d0, y d1) : chaque IntuiText de la chaîne aux stylos et mode qu'elle porte, son
-; coin haut-gauche en (x + LeftEdge, y + TopEdge). Police unique 8x8 (ITextFont ignorée).
+; PrintIText(rp a0, itext a1, x d0, y d1): each IntuiText of the chain with the pens and mode it carries, its
+; top-left corner at (x + LeftEdge, y + TopEdge). Single 8x8 font (ITextFont ignored).
 intuition_PrintIText:
         movem.l d2-d3/a2-a3/a6,-(sp)
-        move.b  rp_FgPen(a0),-(sp)   ; stylos et mode rendus intacts, comme en 1.3 (sondé : tests/itextstate.s)
+        move.b  rp_FgPen(a0),-(sp)   ; pens and mode left intact, as in 1.3 (probed: tests/itextstate.s)
         move.b  rp_BgPen(a0),-(sp)
         move.b  rp_DrawMode(a0),-(sp)
         move.l  a0,a2
@@ -199,14 +199,14 @@ intuition_PrintIText:
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 
-; IntuiTextLength(itext a0) -> d0 = largeur en pixels de son texte (police 8x8).
+; IntuiTextLength(itext a0) -> d0 = width in pixels of its text (8x8 font).
 intuition_IntuiTextLength:
         move.l  IT_ITEXT(a0),a0
         bsr.s   mn_strlen
         lsl.l   #3,d0
         rts
 
-; mn_strlen(a0 = chaîne C) -> d0 = longueur. Préserve a0.
+; mn_strlen(a0 = C string) -> d0 = length. Preserves a0.
 mn_strlen:
         move.l  a0,-(sp)
         moveq   #-1,d0
@@ -217,8 +217,8 @@ mn_strlen:
         move.l  (sp)+,a0
         rts
 
-; it_menubutton(a4 = écran de tête, a5 = IntuitionBase, d7.w = code, d4/d5 = pointeur dans l'écran) : contexte
-; tâche d'entrée. Enfoncé : affiche la barre de menus de la fenêtre active ; relâché : fin du choix.
+; it_menubutton(a4 = front screen, a5 = IntuitionBase, d7.w = code, d4/d5 = pointer in the screen): input task
+; context. Pressed: displays the menu bar of the active window; released: end of the selection.
 it_menubutton:
         cmp.w   #IECODE_RBUTTON,d7
         bne     mn_end
@@ -231,9 +231,9 @@ it_menubutton:
         bne.s   .mb_ret
         tst.l   WD_MENUSTRIP(a3)
         beq.s   .mb_ret
-        btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP : le bouton droit appartient à l'application
+        btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP: the right button belongs to the application
         bne.s   .mb_ret
-        move.l  WD_FIRSTREQUEST(a3),d0   ; requester sans NOISYREQ : pas de menus (spec intuition-requesters-v34 §3.2)
+        move.l  WD_FIRSTREQUEST(a3),d0   ; requester without NOISYREQ: no menus (spec intuition-requesters-v34 §3.2)
         beq.s   .mb_menus
         move.l  d0,a0
         btst    #2,RQ_FLAGS+1(a0)    ; NOISYREQ
@@ -268,12 +268,12 @@ it_menubutton:
 .mb_ret:
         rts
 
-; mn_drawbar(a3 = fenêtre, a4 = écran, a5) : fond au stylo BlockPen, titres des menus au stylo DetailPen à leur
-; LeftEdge ; un menu inactif est grisé.
+; mn_drawbar(a3 = window, a4 = screen, a5): background in pen BlockPen, menu titles in pen DetailPen at their
+; LeftEdge; a disabled menu is ghosted.
 mn_drawbar:
         movem.l d2-d7/a2,-(sp)
         move.l  IB_MENUBAR(a5),a2
-        move.l  IL_RP(a2),a2         ; a2 = RastPort de la barre
+        move.l  IL_RP(a2),a2         ; a2 = RastPort of the bar
         move.l  IB_GFXBASE(a5),a6
         move.l  a2,a1
         moveq   #0,d0
@@ -320,8 +320,8 @@ mn_drawbar:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; mn_ghost(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a4 = écran, a5) : rayures horizontales (une ligne sur deux) au stylo
-; BlockPen sur le rectangle (une ligne par RectFill : peu d'appels). Clobbe d0-d3/a0/a1/a6.
+; mn_ghost(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a4 = screen, a5): horizontal stripes (every other line) in pen
+; BlockPen over the rectangle (one line per RectFill: few calls). Clobbers d0-d3/a0/a1/a6.
 mn_ghost:
         movem.l d4-d7/a2,-(sp)
         move.l  a1,a2
@@ -335,7 +335,7 @@ mn_ghost:
         moveq   #0,d0
         move.b  SC_BLOCKPEN(a4),d0
         jsr     LVO_SETAPEN(a6)
-        addq.w  #1,d5                ; lignes impaires du rectangle
+        addq.w  #1,d5                ; odd lines of the rectangle
 .gh_lp:
         cmp.w   d7,d5
         bgt.s   .gh_ret
@@ -351,15 +351,15 @@ mn_ghost:
         movem.l (sp)+,d4-d7/a2
         rts
 
-; it_menumove(a5, d4/d5 = pointeur) : pointeur dans la barre -> le menu visé est déroulé (aucun élément choisi) ;
-; dans le menu déroulé -> l'élément visé est mis en surbrillance ; ailleurs -> aucun élément.
+; it_menumove(a5, d4/d5 = pointer): pointer in the bar -> the targeted menu is pulled down (no item selected);
+; in the pulled-down menu -> the targeted item is highlighted; elsewhere -> no item.
 it_menumove:
         tst.l   IB_MENUWIN(a5)
         beq     .mm_ret
         bsr     it_scrxy
         beq     .mm_ret
         move.l  IB_MENUWIN(a5),a3
-        tst.l   IB_SUBBOX(a5)        ; règle 1 : un sous-élément sous le pointeur
+        tst.l   IB_SUBBOX(a5)        ; rule 1: a sub-item under the pointer
         beq.s   .mm_bar
         bsr     mn_subhit
         bsr     mn_setsub
@@ -368,7 +368,7 @@ it_menumove:
 .mm_bar:
         cmp.w   #SC_BARH_M,d5
         bgt.s   .mm_items
-        move.l  WD_MENUSTRIP(a3),a2  ; menu sous le pointeur
+        move.l  WD_MENUSTRIP(a3),a2  ; menu under the pointer
         moveq   #0,d6
 .mm_find:
         move.l  a2,d0
@@ -399,7 +399,7 @@ it_menumove:
         move.l  IB_MENUCUR(a5),a0
         move.l  MU_FIRSTITEM(a0),a2
         moveq   #0,d6
-        move.w  d4,d2                ; position relative au premier élément
+        move.w  d4,d2                ; position relative to the first item
         sub.w   IB_BOX(a5),d2
         subq.w  #MB_MARGIN,d2
         move.w  d5,d3
@@ -425,9 +425,9 @@ it_menumove:
 .mm_ret:
         rts
 
-; mn_setitem(a2 = élément visé | 0, d6.w = son n°, a4, a5) : l'élément touché change -> boîte de sous-éléments d'un
-; autre élément retirée, surbrillance déplacée (si le visé et son menu sont actifs), boîte de ses sous-éléments
-; affichée. Hors éléments : surbrillance éteinte, la boîte de sous-éléments reste.
+; mn_setitem(a2 = targeted item | 0, d6.w = its number, a4, a5): the hit item changes -> sub-item box of another
+; item removed, highlight moved (if the targeted item and its menu are enabled), box of its sub-items
+; displayed. Outside the items: highlight off, the sub-item box stays.
 mn_setitem:
         cmp.l   IB_ITEMHIT(a5),a2
         beq.s   .si_ret
@@ -449,8 +449,8 @@ mn_setitem:
 .si_ret:
         rts
 
-; mn_unlight(a5) : éteint l'élément en surbrillance. mn_light(a2 = élément, d6.w = n°, a5) : l'allume s'il est actif
-; et son menu aussi. Clobbent d0-d3/a0/a1/a6.
+; mn_unlight(a5): turns off the highlighted item. mn_light(a2 = item, d6.w = number, a5): lights it if it is enabled
+; and its menu too. Both clobber d0-d3/a0/a1/a6.
 mn_unlight:
         tst.l   IB_ITEMCUR(a5)
         beq.s   .ul_ret
@@ -470,9 +470,9 @@ mn_light:
 .li_ret:
         rts
 
-; mn_hilite(a5) : inverse le rectangle de l'élément courant dans la boîte d'éléments ; mn_hlsub(a5) : celui du
-; sous-élément courant dans la boîte de sous-éléments. mn_hlrect(a0 = élément, a1 = couche, d0/d1 = origine des
-; éléments dans la couche) : HIGHNONE -> rien. Clobbent d0-d3/a0/a1/a6.
+; mn_hilite(a5): inverts the rectangle of the current item in the item box; mn_hlsub(a5): that of the
+; current sub-item in the sub-item box. mn_hlrect(a0 = item, a1 = layer, d0/d1 = origin of the
+; items in the layer): HIGHNONE -> nothing. All clobber d0-d3/a0/a1/a6.
 mn_hilite:
         move.l  IB_ITEMCUR(a5),a0
         move.l  IB_MENUBOX(a5),a1
@@ -514,8 +514,8 @@ mn_hlrect:
 .hl_ret:
         rts
 
-; mn_subhit(d4/d5 = pointeur, a5) -> a2 = premier sous-élément de IB_SUBITEM qui contient le point | 0, d6.w = son
-; n°. Clobbe d0-d3.
+; mn_subhit(d4/d5 = pointer, a5) -> a2 = first sub-item of IB_SUBITEM that contains the point | 0, d6.w = its
+; number. Clobbers d0-d3.
 mn_subhit:
         move.l  IB_SUBITEM(a5),a2
         move.l  MI_SUBITEM(a2),a2
@@ -546,9 +546,9 @@ mn_subhit:
 .sh_ret:
         rts
 
-; mn_setsub(a2 = sous-élément visé | 0, d6.w = son n°, a4, a5) : la surbrillance passe de l'ancien sous-élément au
-; visé ; un sous-élément touché rallume son élément parent ; il n'est allumé que si lui, son élément et son menu
-; sont actifs. Préserve a2.
+; mn_setsub(a2 = targeted sub-item | 0, d6.w = its number, a4, a5): the highlight moves from the old sub-item to the
+; targeted one; a hit sub-item lights its parent item again; it is lit only if it, its item and its menu
+; are enabled. Preserves a2.
 mn_setsub:
         cmp.l   IB_SUBCUR(a5),a2
         beq.s   .ss_ret
@@ -560,7 +560,7 @@ mn_setsub:
         move.l  a2,d0
         beq.s   .ss_ret
         movem.l d6/a2,-(sp)
-        move.l  IB_SUBITEM(a5),a2    ; élément parent : touché et rallumé
+        move.l  IB_SUBITEM(a5),a2    ; parent item: hit and lit again
         move.l  a2,IB_ITEMHIT(a5)
         cmp.l   IB_ITEMCUR(a5),a2
         beq.s   .ss_lit
@@ -569,9 +569,9 @@ mn_setsub:
         bsr     mn_light
 .ss_lit:
         movem.l (sp)+,d6/a2
-        move.l  IB_ITEMCUR(a5),d0    ; parent éteint (inactif) -> rien
+        move.l  IB_ITEMCUR(a5),d0    ; parent off (disabled) -> nothing
         beq.s   .ss_ret
-        btst    #4,MI_FLAGS+1(a2)    ; ITEMENABLED du sous-élément
+        btst    #4,MI_FLAGS+1(a2)    ; ITEMENABLED of the sub-item
         beq.s   .ss_ret
         move.l  a2,IB_SUBCUR(a5)
         move.w  d6,IB_SUBNUM(a5)
@@ -579,15 +579,15 @@ mn_setsub:
 .ss_ret:
         rts
 
-; mn_openbox(a2 = menu, a4 = écran, a5) : couche smart sous la barre, à la LeftEdge du menu (décalée pour rester
-; dans l'écran), juste assez grande pour ses éléments ; fond BlockPen, cadre DetailPen, éléments (texte ou image),
-; éléments inactifs grisés. Origine de la couche dans IB_BOX. Préserve d2-d7/a2-a4.
+; mn_openbox(a2 = menu, a4 = screen, a5): smart layer under the bar, at the menu's LeftEdge (shifted to stay
+; within the screen), just big enough for its items; background BlockPen, border DetailPen, items (text or image),
+; disabled items ghosted. Origin of the layer in IB_BOX. Preserves d2-d7/a2-a4.
 mn_openbox:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  MU_FIRSTITEM(a2),d0
         beq     .ob_ret
         move.l  d0,a3
-        moveq   #0,d6                ; d6/d7 = étendue des éléments (droite, bas)
+        moveq   #0,d6                ; d6/d7 = extent of the items (right, bottom)
         moveq   #0,d7
 .ob_ext:
         move.w  MI_LEFTEDGE(a3),d0
@@ -605,12 +605,12 @@ mn_openbox:
         move.l  MI_NEXTITEM(a3),d0
         move.l  d0,a3
         bne.s   .ob_ext
-        add.w   #2*MB_MARGIN-1,d6    ; d6/d7 = largeur / hauteur - 1
+        add.w   #2*MB_MARGIN-1,d6    ; d6/d7 = width / height - 1
         add.w   #2*MB_MARGIN-1,d7
         move.w  MU_LEFTEDGE(a2),d0
         move.w  SC_WIDTH(a4),d1
         subq.w  #1,d1
-        sub.w   d6,d1                ; x0 maximal
+        sub.w   d6,d1                ; maximum x0
         cmp.w   d1,d0
         ble.s   .ob_x
         move.w  d1,d0
@@ -631,7 +631,7 @@ mn_openbox:
         move.w  d4,d3
 .ob_y:
         movem.w d0-d1,IB_BOX(a5)
-        moveq   #IL_SMART,d4         ; smart : la boîte de sous-éléments posée dessus la laisse intacte
+        moveq   #IL_SMART,d4         ; smart: the sub-item box placed on top of it leaves it intact
         lea     SC_LAYERINFO(a4),a0
         lea     SC_BITMAP(a4),a1
         move.l  a2,-(sp)
@@ -642,7 +642,7 @@ mn_openbox:
         move.l  d0,IB_MENUBOX(a5)
         beq     .ob_ret
         move.l  d0,a3
-        move.l  IL_RP(a3),a3         ; a3 = RastPort du menu
+        move.l  IL_RP(a3),a3         ; a3 = RastPort of the menu
         move.l  IB_GFXBASE(a5),a6
         move.l  a3,a1
         moveq   #JAM2,d0
@@ -669,7 +669,7 @@ mn_openbox:
         jsr     it_box
         move.w  #MB_MARGIN,IB_DOX(a5)
         move.w  #MB_MARGIN,IB_DOY(a5)
-        btst    #0,MU_FLAGS+1(a2)    ; menu inactif : tous ses éléments grisés
+        btst    #0,MU_FLAGS+1(a2)    ; disabled menu: all its items ghosted
         seq     IB_DGHOST(a5)
         move.l  MU_FIRSTITEM(a2),a2
         bsr     mn_drawitems
@@ -677,9 +677,9 @@ mn_openbox:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; mn_drawitems(a2 = premier élément, a3 = RastPort de la boîte, a4 = écran, a5) : chaque élément en (IB_DOX +
-; LeftEdge, IB_DOY + TopEdge) : ItemFill (texte ou image), coche, raccourci ; inactif (ou boîte IB_DGHOST) : grisé.
-; Préserve d2-d7/a3-a5.
+; mn_drawitems(a2 = first item, a3 = RastPort of the box, a4 = screen, a5): each item at (IB_DOX +
+; LeftEdge, IB_DOY + TopEdge): ItemFill (text or image), check mark, shortcut; disabled (or IB_DGHOST box): ghosted.
+; Preserves d2-d7/a3-a5.
 mn_drawitems:
 .ob_it:
         move.l  a2,d0
@@ -706,11 +706,11 @@ mn_drawitems:
         bne.s   .ob_nck
         bsr     mn_drawcheck
 .ob_nck:
-        btst    #2,MI_FLAGS+1(a2)    ; COMMSEQ : symbole + caractère du raccourci
+        btst    #2,MI_FLAGS+1(a2)    ; COMMSEQ: symbol + shortcut character
         beq.s   .ob_gh
         bsr     mn_commseq
 .ob_gh:
-        btst    #4,MI_FLAGS+1(a2)    ; inactif (ou toute la boîte grisée) : grisé
+        btst    #4,MI_FLAGS+1(a2)    ; disabled (or the whole box ghosted): ghosted
         beq.s   .ob_g
         tst.b   IB_DGHOST(a5)
         beq.s   .ob_nx
@@ -735,15 +735,15 @@ mn_drawitems:
 .ob_ret:
         rts
 
-; mn_opensub(a2 = élément à sous-éléments, d6.w = son n°, a4, a5) : boîte de sous-éléments. Étendue des
-; sous-éléments (relative à l'élément) élargie de MB_MARGIN, bornée pour toucher l'élément (gauche <= Width - 1,
-; droite >= 0, haut <= Height - 1, bas >= 0), placée sur l'élément puis ramenée dans l'écran ; couche simple, fond
-; BlockPen, cadre DetailPen, sous-éléments dessinés (grisés aussi si le menu ou l'élément est inactif).
-; Préserve d2-d7/a2-a4.
+; mn_opensub(a2 = item with sub-items, d6.w = its number, a4, a5): sub-item box. Extent of the
+; sub-items (relative to the item) widened by MB_MARGIN, bounded to touch the item (left <= Width - 1,
+; right >= 0, top <= Height - 1, bottom >= 0), placed over the item then brought back into the screen; simple layer,
+; background BlockPen, border DetailPen, sub-items drawn (also ghosted if the menu or the item is disabled).
+; Preserves d2-d7/a2-a4.
 mn_opensub:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  MI_SUBITEM(a2),a0
-        move.w  #$7FFF,d0            ; d0..d3 = gauche, haut, droite, bas (relatifs à l'élément)
+        move.w  #$7FFF,d0            ; d0..d3 = left, top, right, bottom (relative to the item)
         move.w  d0,d1
         move.w  #$8000,d2
         move.w  d2,d3
@@ -797,7 +797,7 @@ mn_opensub:
         bpl.s   .os_c4
         moveq   #0,d3
 .os_c4:
-        move.w  IB_BOX(a5),d4        ; d4/d5 = position écran de l'élément
+        move.w  IB_BOX(a5),d4        ; d4/d5 = screen position of the item
         add.w   #MB_MARGIN,d4
         add.w   MI_LEFTEDGE(a2),d4
         move.w  IB_BOX+2(a5),d5
@@ -807,7 +807,7 @@ mn_opensub:
         add.w   d4,d2
         add.w   d5,d1
         add.w   d5,d3
-        move.w  SC_WIDTH(a4),d7      ; dans l'écran : décalée à gauche, puis à droite si besoin
+        move.w  SC_WIDTH(a4),d7      ; within the screen: shifted left, then right if needed
         subq.w  #1,d7
         sub.w   d2,d7
         bpl.s   .os_x1
@@ -819,7 +819,7 @@ mn_opensub:
         sub.w   d7,d0
         sub.w   d7,d2
 .os_x2:
-        move.w  SC_HEIGHT(a4),d7     ; vers le haut, sans remonter dans la barre
+        move.w  SC_HEIGHT(a4),d7     ; upwards, without going back up into the bar
         subq.w  #1,d7
         sub.w   d3,d7
         bpl.s   .os_y1
@@ -838,7 +838,7 @@ mn_opensub:
         move.w  d4,IB_SUBOX(a5)
         sub.w   d1,d5
         move.w  d5,IB_SUBOY(a5)
-        move.w  d2,d6                ; d6/d7 = largeur / hauteur - 1
+        move.w  d2,d6                ; d6/d7 = width / height - 1
         sub.w   d0,d6
         move.w  d3,d7
         sub.w   d1,d7
@@ -857,10 +857,10 @@ mn_opensub:
         move.l  d0,IB_SUBBOX(a5)
         beq     .os_ret
         move.l  a2,IB_SUBITEM(a5)
-        move.w  4*4+2(sp),IB_SUBPNUM(a5)   ; d6 d'entrée (mot bas du 5e long du movem)
+        move.w  4*4+2(sp),IB_SUBPNUM(a5)   ; input d6 (low word of the 5th long of the movem)
         clr.l   IB_SUBCUR(a5)
         move.l  d0,a3
-        move.l  IL_RP(a3),a3         ; a3 = RastPort de la boîte
+        move.l  IL_RP(a3),a3         ; a3 = RastPort of the box
         move.l  IB_GFXBASE(a5),a6
         move.l  a3,a1
         moveq   #JAM2,d0
@@ -890,7 +890,7 @@ mn_opensub:
         move.l  IB_MENUCUR(a5),a0
         btst    #0,MU_FLAGS+1(a0)
         seq     IB_DGHOST(a5)
-        btst    #4,MI_FLAGS+1(a2)    ; élément parent inactif : sous-éléments grisés
+        btst    #4,MI_FLAGS+1(a2)    ; parent item disabled: sub-items ghosted
         bne.s   .os_draw
         st      IB_DGHOST(a5)
 .os_draw:
@@ -900,7 +900,7 @@ mn_opensub:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; mn_closesub(a5) : retire la boîte de sous-éléments (s'il y en a une) et répare ce qu'elle couvrait. Préserve
+; mn_closesub(a5): removes the sub-item box (if there is one) and repairs what it covered. Preserves
 ; d2-d7/a2-a4.
 mn_closesub:
         move.l  IB_SUBBOX(a5),d0
@@ -918,18 +918,18 @@ mn_closesub:
 .cs_ret:
         rts
 
-; mn_commseq(a2 = élément, a3 = RastPort de la boîte, a4 = écran, a5 = IntuitionBase) : le caractère Command en
-; x = élément + Width - largeur du caractère - 2 (stylo DetailPen, JAM1), à la hauteur du texte de l'élément, et le
-; chat juste à sa gauche (2 pixels d'écart). Préserve d2-d7/a2-a5.
+; mn_commseq(a2 = item, a3 = RastPort of the box, a4 = screen, a5 = IntuitionBase): the Command character at
+; x = item + Width - character width - 2 (pen DetailPen, JAM1), at the height of the item's text, and the
+; cat just to its left (2 pixels apart). Preserves d2-d7/a2-a5.
 mn_commseq:
         movem.l d2-d4/a6,-(sp)
         move.w  IB_DOX(a5),d2
         add.w   MI_LEFTEDGE(a2),d2
         add.w   MI_WIDTH(a2),d2
         sub.w   rp_TxWidth(a3),d2
-        subq.w  #2,d2                ; d2 = x du caractère
+        subq.w  #2,d2                ; d2 = x of the character
         move.w  IB_DOY(a5),d3
-        add.w   MI_TOPEDGE(a2),d3    ; d3 = y (haut du texte de l'élément)
+        add.w   MI_TOPEDGE(a2),d3    ; d3 = y (top of the item's text)
         btst    #1,MI_FLAGS+1(a2)
         beq.s   .cq_y
         move.l  MI_ITEMFILL(a2),d0
@@ -956,7 +956,7 @@ mn_commseq:
         lea     MI_COMMAND(a2),a0
         moveq   #1,d0
         jsr     LVO_TEXT(a6)
-        lea     mn_cat_lo(pc),a1     ; chat : version hires si l'écran l'est
+        lea     mn_cat_lo(pc),a1     ; cat: hires version if the screen is hires
         tst.w   SC_VIEWPORT+vp_Modes(a4)
         bpl.s   .cq_lo
         lea     mn_cat_hi(pc),a1
@@ -973,8 +973,8 @@ mn_commseq:
         movem.l (sp)+,d2-d4/a6
         rts
 
-; mn_drawcheck(a2 = élément, a3 = RastPort de la boîte, a4 = écran, a5 = IntuitionBase) : coche de la fenêtre du menu
-; (Window->CheckMark, sinon l'interne) en (x de l'élément, y de l'élément + TopEdge de son ItemFill). Préserve
+; mn_drawcheck(a2 = item, a3 = RastPort of the box, a4 = screen, a5 = IntuitionBase): check mark of the menu's window
+; (Window->CheckMark, otherwise the internal one) at (x of the item, y of the item + TopEdge of its ItemFill). Preserves
 ; d2-d7/a2-a5.
 mn_drawcheck:
         move.l  a6,-(sp)
@@ -994,7 +994,7 @@ mn_drawcheck:
         move.l  MI_ITEMFILL(a2),d0
         beq.s   .dc_y
         move.l  d0,a0
-        btst    #1,MI_FLAGS+1(a2)    ; ITEMTEXT : IntuiText.TopEdge, sinon Image.TopEdge
+        btst    #1,MI_FLAGS+1(a2)    ; ITEMTEXT: IntuiText.TopEdge, otherwise Image.TopEdge
         beq.s   .dc_iy
         add.w   IT_TOPEDGE(a0),d1
         bra.s   .dc_y
@@ -1011,7 +1011,7 @@ mn_drawcheck:
         move.l  (sp)+,a6
         rts
 
-; mn_defcheck(a4 = écran) -> d0 = coche interne (hires si le ViewPort de l'écran l'est). Préserve le reste.
+; mn_defcheck(a4 = screen) -> d0 = internal check mark (hires if the screen's ViewPort is). Preserves the rest.
 mn_defcheck:
         lea     mn_chk_lo(pc),a0
         move.l  a0,d0
@@ -1022,8 +1022,8 @@ mn_defcheck:
 .df_r:
         rts
 
-; Coche interne des menus : une empreinte de patte de chat (motif propre à KickSlopStart, sans rapport avec l'image
-; de la 1.3 ; LeftEdge 2, bits à 1 = fond, dessin à 0).
+; Internal menu check mark: a cat paw print (KickSlopStart's own design, unrelated to the 1.3 image;
+; LeftEdge 2, bits at 1 = background, drawing at 0).
 mn_chk_hi:
         dc.w    2,0,15,8,1
         dc.l    mn_chk_hi_data
@@ -1034,13 +1034,13 @@ mn_chk_lo:
         dc.l    mn_chk_lo_data
         dc.b    1,0
         dc.l    0
-mn_chk_hi_data:                      ; empreinte de patte de chat : quatre doigts et le coussinet (15 x 8)
+mn_chk_hi_data:                      ; cat paw print: four toes and the pad (15 x 8)
         dc.w    $F39F,$E38F,$9FF3,$9833,$F01F,$E00F,$E00F,$F11F
-mn_chk_lo_data:                      ; la même en basse résolution (9 x 8)
+mn_chk_lo_data:                      ; the same in low resolution (9 x 8)
         dc.w    $DDFF,$9CFF,$7F7F,$637F,$C1FF,$80FF,$80FF,$C9FF
 
-; Le chat de la touche Amiga (struct Image : Left, Top, Width, Height, Depth, ImageData, PlanePick, PlaneOnOff, Next).
-; Format de la 1.3 : PlanePick 1, PlaneOnOff 0, bits à 1 = fond (couleur 1), dessin à 0 (couleur 0).
+; The Amiga-key cat (struct Image: Left, Top, Width, Height, Depth, ImageData, PlanePick, PlaneOnOff, Next).
+; 1.3 format: PlanePick 1, PlaneOnOff 0, bits at 1 = background (color 1), drawing at 0 (color 0).
 mn_cat_hi:
         dc.w    0,0,23,8,1
         dc.l    mn_cat_hi_data
@@ -1051,7 +1051,7 @@ mn_cat_lo:
         dc.l    mn_cat_lo_data
         dc.b    1,0
         dc.l    0
-mn_cat_hi_data:                      ; oreilles, yeux, moustaches, nez, menton (23 x 8)
+mn_cat_hi_data:                      ; ears, eyes, whiskers, nose, chin (23 x 8)
         dc.w    $FDFF,$7FFF
         dc.w    $FCFE,$7FFF
         dc.w    $FC00,$7FFF
@@ -1060,7 +1060,7 @@ mn_cat_hi_data:                      ; oreilles, yeux, moustaches, nez, menton (
         dc.w    $FC10,$7FFF
         dc.w    $E101,$0FFF
         dc.w    $FF01,$FFFF
-mn_cat_lo_data:                      ; le même en basse résolution (14 x 8)
+mn_cat_lo_data:                      ; the same in low resolution (14 x 8)
         dc.w    $EFDF
         dc.w    $E79F
         dc.w    $E01F
@@ -1070,7 +1070,7 @@ mn_cat_lo_data:                      ; le même en basse résolution (14 x 8)
         dc.w    $9027
         dc.w    $F87F
 
-; mn_closebox(a4, a5) : supprime le menu déroulé (s'il existe) et répare l'écran. Préserve d2-d7/a2-a4.
+; mn_closebox(a4, a5): deletes the pulled-down menu (if it exists) and repairs the screen. Preserves d2-d7/a2-a4.
 mn_closebox:
         bsr     mn_closesub
         clr.l   IB_ITEMHIT(a5)
@@ -1088,8 +1088,8 @@ mn_closebox:
 .cb_ret:
         rts
 
-; mn_select(a0 = élément ou sous-élément choisi) : NextSelect := MENUNULL ; CHECKIT : CHECKED posé, ou basculé avec
-; MENUTOGGLE. Préserve tout.
+; mn_select(a0 = chosen item or sub-item): NextSelect := MENUNULL; CHECKIT: CHECKED set, or toggled with
+; MENUTOGGLE. Preserves everything.
 mn_select:
         move.w  #MENUNULL,MI_NEXTSELECT(a0)
         btst    #0,MI_FLAGS+1(a0)    ; CHECKIT
@@ -1103,9 +1103,9 @@ mn_select:
 .sl_ret:
         rts
 
-; mn_keyshort(a0 = fenêtre active, a1 = IntuitionBase, a3 = InputEvent, d0.w = code brut d'une touche enfoncée avec
-; Amiga droite) : handler d'input.device. Fenêtre sans requester, ni menus en cours, ni RMBTRAP, avec une barre ;
-; touche convertie par la keymap (kbd_cook) -> d0.l = code de menu (mn_keyfind) ou -1. Clobbe d1 ; préserve a0/a1.
+; mn_keyshort(a0 = active window, a1 = IntuitionBase, a3 = InputEvent, d0.w = raw code of a key pressed with
+; right Amiga): input.device handler. Window with no requester, no menus in progress, no RMBTRAP, with a menu strip;
+; key converted by the keymap (kbd_cook) -> d0.l = menu code (mn_keyfind) or -1. Clobbers d1; preserves a0/a1.
 mn_keyshort:
         move.l  WD_FLAGS(a0),d1
         and.l   #INREQUEST|MENUSTATE|RMBTRAP,d1
@@ -1123,20 +1123,20 @@ mn_keyshort:
         moveq   #-1,d0
         rts
 
-; mn_keyfind(a0 = fenêtre, d0.b = caractère) -> d0.l = code du premier élément (sans sous-éléments) ou sous-élément
-; dont Command & $5F = caractère & $5F, dans l'ordre menus -> éléments -> sous-éléments ; -1 si aucun ou si
-; caractère & $5F = 0. Préserve tout sauf d0.
+; mn_keyfind(a0 = window, d0.b = character) -> d0.l = code of the first item (without sub-items) or sub-item
+; whose Command & $5F = character & $5F, in the order menus -> items -> sub-items; -1 if none or if
+; character & $5F = 0. Preserves everything but d0.
 mn_keyfind:
         movem.l d1-d4/a0-a2,-(sp)
         and.b   #$5F,d0
         beq.s   .kf_no
         move.l  WD_MENUSTRIP(a0),a1
-        moveq   #0,d2                ; n° de menu
+        moveq   #0,d2                ; menu number
 .kf_menu:
         move.l  a1,d1
         beq.s   .kf_no
         move.l  MU_FIRSTITEM(a1),a2
-        moveq   #0,d3                ; n° d'élément
+        moveq   #0,d3                ; item number
 .kf_item:
         move.l  a2,d1
         beq.s   .kf_nm
@@ -1150,7 +1150,7 @@ mn_keyfind:
         beq.s   .kf_hit
         bra.s   .kf_ni
 .kf_sub:
-        moveq   #0,d4                ; n° de sous-élément
+        moveq   #0,d4                ; sub-item number
 .kf_sl:
         move.b  MI_COMMAND(a0),d1
         and.b   #$5F,d1
@@ -1170,7 +1170,7 @@ mn_keyfind:
         bra.s   .kf_menu
 .kf_hit:
         moveq   #0,d0
-        move.w  d4,d0                ; sous-élément << 11 | élément << 5 | menu
+        move.w  d4,d0                ; sub-item << 11 | item << 5 | menu
         lsl.w   #6,d0
         or.w    d3,d0
         lsl.w   #5,d0
@@ -1182,9 +1182,9 @@ mn_keyfind:
         movem.l (sp)+,d1-d4/a0-a2
         rts
 
-; mn_keypick(a5, d4.w = code de menu, d5.w = qualificatif) : tâche d'entrée — raccourci Amiga droite. Menu, élément
-; et sous-élément actifs : mn_select, puis MENUPICK avec le code à la fenêtre active ; sinon MENUPICK MENUNULL.
-; Rien si la fenêtre a perdu sa barre ou si un menu est ouvert. Préserve d2-d7/a2-a5.
+; mn_keypick(a5, d4.w = menu code, d5.w = qualifier): input task - right Amiga shortcut. Menu, item
+; and sub-item enabled: mn_select, then MENUPICK with the code to the active window; otherwise MENUPICK MENUNULL.
+; Nothing if the window has lost its menu strip or if a menu is open. Preserves d2-d7/a2-a5.
 mn_keypick:
         move.l  IB_ACTIVEWINDOW(a5),d0
         beq     .kp_ret
@@ -1204,14 +1204,14 @@ mn_keypick:
         move.l  MU_FIRSTITEM(a0),d0
         beq.s   .kp_null
         move.l  d0,a0
-        move.w  d4,d1                ; élément
+        move.w  d4,d1                ; item
         lsr.w   #5,d1
         and.w   #$3F,d1
         bsr.s   .kp_walk
         beq.s   .kp_null
         btst    #4,MI_FLAGS+1(a0)    ; ITEMENABLED
         beq.s   .kp_null
-        move.w  d4,d1                ; sous-élément
+        move.w  d4,d1                ; sub-item
         moveq   #11,d0
         lsr.w   d0,d1
         cmp.w   #$1F,d1
@@ -1239,7 +1239,7 @@ mn_keypick:
         movem.l (sp)+,d2-d4/a3
 .kp_ret:
         rts
-.kp_walk:                            ; a0 = premier maillon, d1 = rang -> a0 = maillon (Z = 1 : liste trop courte)
+.kp_walk:                            ; a0 = first link, d1 = rank -> a0 = link (Z = 1: list too short)
         bra.s   .kw_e
 .kw_l:
         move.l  (a0),d0              ; NextMenu / NextItem (offset 0)
@@ -1251,8 +1251,8 @@ mn_keypick:
 .kw_r:
         rts
 
-; mn_end(a4, a5) : bouton droit relâché. Code du choix (élément actif en surbrillance, sinon MENUNULL) ; un élément
-; CHECKIT est coché (MENUTOGGLE : basculé). Couches supprimées, écran réparé, puis MENUPICK à la fenêtre.
+; mn_end(a4, a5): right button released. Selection code (enabled highlighted item, otherwise MENUNULL); a
+; CHECKIT item is checked (MENUTOGGLE: toggled). Layers deleted, screen repaired, then MENUPICK to the window.
 mn_end:
         move.l  IB_MENUWIN(a5),d0
         beq     .me_ret
@@ -1262,7 +1262,7 @@ mn_end:
         beq.s   .me_item
         move.l  d0,a0
         bsr     mn_select
-        move.w  IB_SUBNUM(a5),d7     ; sous-élément << 11 | élément << 5 | menu
+        move.w  IB_SUBNUM(a5),d7     ; sub-item << 11 | item << 5 | menu
         lsl.w   #6,d7
         or.w    IB_SUBPNUM(a5),d7
         lsl.w   #5,d7
@@ -1272,7 +1272,7 @@ mn_end:
         move.l  IB_ITEMCUR(a5),d0
         beq.s   .me_close
         move.l  d0,a0
-        tst.l   MI_SUBITEM(a0)       ; élément à sous-éléments, aucun choisi : MENUNULL
+        tst.l   MI_SUBITEM(a0)       ; item with sub-items, none chosen: MENUNULL
         bne.s   .me_close
         bsr     mn_select
         move.w  IB_ITEMNUM(a5),d7

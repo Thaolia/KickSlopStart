@@ -1,13 +1,13 @@
-; src/exec/expansion.s — expansion.library 34 : autoconfig Zorro II.
+; src/exec/expansion.s — expansion.library 34: Zorro II autoconfig.
 ;
-; Résident pri 110 (1er après exec, la slow RAM est déjà dans la MemList). Son init libère l'espace mémoire Zorro II
-; ($200000-$9FFFFF) et l'espace E/S ($E90000-$EFFFFF) dans la table des slots de 64 Ko, puis configure la chaîne en
-; $E80000 (ConfigChain) : chaque carte lue (ReadExpansionRom) reçoit un bloc de slots (premier ajusté, E/S d'abord
-; pour les cartes de moins de 8 slots), son adresse lui est écrite, sa RAM devient un MemHeader « expansion ram »
-; (MEMF_FAST|MEMF_PUBLIC, pri 0) ou sa DiagArea est copiée et exécutée ; sans place, la carte est mise en sommeil.
-; Les ConfigDev (y compris ceux des cartes en sommeil) sont chaînés dans eb_BoardList dans l'ordre de la chaîne.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs expansion.library, NDK configregs/configvars/expansionbase, spec
-; docs/analysis/autoconfig-v34.md. AUCUNE lecture ROM.
+; Resident pri 110 (1st after exec, the slow RAM is already in the MemList). Its init frees the Zorro II memory space
+; ($200000-$9FFFFF) and the I/O space ($E90000-$EFFFFF) in the table of 64 KB slots, then configures the chain at
+; $E80000 (ConfigChain): each board read (ReadExpansionRom) receives a block of slots (first fit, I/O first
+; for boards smaller than 8 slots), its address is written to it, its RAM becomes an "expansion ram" MemHeader
+; (MEMF_FAST|MEMF_PUBLIC, pri 0) or its DiagArea is copied and executed; without room, the board is shut up.
+; The ConfigDevs (including those of shut-up boards) are linked into eb_BoardList in chain order.
+; IMPLEMENTATION track ("clean"): AutoDocs expansion.library, NDK configregs/configvars/expansionbase, spec
+; docs/analysis/autoconfig-v34.md. NO ROM reading.
 
                 include "exec.i"
                 include "expansion.i"
@@ -16,7 +16,7 @@
 
                 xref    newlist          ; lists.s
 
-; --- ROMTag expansion.library (scanné par build_reslist) ---
+; --- expansion.library ROMTag (scanned by build_reslist) ---
                 EVEN
 expansion_romtag:
         dc.w    RTC_MATCHWORD
@@ -25,7 +25,7 @@ expansion_romtag:
         dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,110  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    expansion_name           ; RT_NAME
         dc.l    expansion_name           ; RT_IDSTRING
-        dc.l    expansion_inittab        ; RT_INIT -> table AUTOINIT
+        dc.l    expansion_inittab        ; RT_INIT -> AUTOINIT table
 expansion_name:
         dc.b    "expansion.library",0
 exp_ramname:
@@ -38,40 +38,40 @@ expansion_inittab:
         dc.l    expansion_vectors        ; funcTable
         dc.l    expansion_datatab        ; dataTable (InitStruct)
         dc.l    expansion_initfunc       ; initFunc
-; table ABSOLUE terminée par -1. Vecteur N -> LVO -6*N.
+; ABSOLUTE table terminated by -1. Vector N -> LVO -6*N.
 expansion_vectors:
-        dc.l    exp_open                 ; 1  : LVO -6
-        dc.l    exp_close                ; 2  : LVO -12
-        dc.l    exp_expunge              ; 3  : LVO -18
-        dc.l    exp_null                 ; 4  : LVO -24 (réservé)
-        dc.l    exp_addconfigdev         ; 5  : LVO -30 AddConfigDev(cd a0)
-        dc.l    exp_addram               ; 6  : LVO -36 (privé) AddMemList « expansion ram »(taille d0, attr d1, base a0)
-        dc.l    exp_allocboardmem        ; 7  : LVO -42 AllocBoardMem(slotSpec d0)
-        dc.l    exp_allocconfigdev       ; 8  : LVO -48 AllocConfigDev()
-        dc.l    exp_allocexpmem          ; 9  : LVO -54 AllocExpansionMem(numSlots d0, slotDépart d1)
-        dc.l    exp_configboard          ; 10 : LVO -60 ConfigBoard(board a0, cd a1)
-        dc.l    exp_configchain          ; 11 : LVO -66 ConfigChain(baseAddr a0)
-        dc.l    exp_findconfigdev        ; 12 : LVO -72 FindConfigDev(old a0, manu d0, prod d1)
-        dc.l    exp_freeboardmem         ; 13 : LVO -78 FreeBoardMem(startSlot d0, slotSpec d1)
-        dc.l    exp_freeconfigdev        ; 14 : LVO -84 FreeConfigDev(cd a0)
-        dc.l    exp_freeexpmem           ; 15 : LVO -90 FreeExpansionMem(startSlot d0, numSlots d1)
-        dc.l    exp_readbyte             ; 16 : LVO -96 ReadExpansionByte(board a0, offset d0)
-        dc.l    exp_readrom              ; 17 : LVO -102 ReadExpansionRom(board a0, cd a1)
-        dc.l    exp_remconfigdev         ; 18 : LVO -108 RemConfigDev(cd a0)
-        dc.l    exp_writebyte            ; 19 : LVO -114 WriteExpansionByte(board a0, offset d0, octet d1)
-        dc.l    exp_obtainbinding        ; 20 : LVO -120 ObtainConfigBinding()
-        dc.l    exp_releasebinding       ; 21 : LVO -126 ReleaseConfigBinding()
-        dc.l    exp_setbinding           ; 22 : LVO -132 SetCurrentBinding(binding a0, taille d0)
-        dc.l    exp_getbinding           ; 23 : LVO -138 GetCurrentBinding(binding a0, taille d0) -> 16
-        dc.l    exp_makedosnode          ; 24 : LVO -144 MakeDosNode(parmPacket a0)
-        dc.l    exp_adddosnode           ; 25 : LVO -150 AddDosNode(bootPri d0, flags d1, dosNode a0)
+        dc.l    exp_open                 ; 1:  LVO -6
+        dc.l    exp_close                ; 2:  LVO -12
+        dc.l    exp_expunge              ; 3:  LVO -18
+        dc.l    exp_null                 ; 4:  LVO -24 (reserved)
+        dc.l    exp_addconfigdev         ; 5:  LVO -30 AddConfigDev(cd a0)
+        dc.l    exp_addram               ; 6:  LVO -36 (private) AddMemList "expansion ram"(size d0, attr d1, base a0)
+        dc.l    exp_allocboardmem        ; 7:  LVO -42 AllocBoardMem(slotSpec d0)
+        dc.l    exp_allocconfigdev       ; 8:  LVO -48 AllocConfigDev()
+        dc.l    exp_allocexpmem          ; 9:  LVO -54 AllocExpansionMem(numSlots d0, startSlot d1)
+        dc.l    exp_configboard          ; 10: LVO -60 ConfigBoard(board a0, cd a1)
+        dc.l    exp_configchain          ; 11: LVO -66 ConfigChain(baseAddr a0)
+        dc.l    exp_findconfigdev        ; 12: LVO -72 FindConfigDev(old a0, manu d0, prod d1)
+        dc.l    exp_freeboardmem         ; 13: LVO -78 FreeBoardMem(startSlot d0, slotSpec d1)
+        dc.l    exp_freeconfigdev        ; 14: LVO -84 FreeConfigDev(cd a0)
+        dc.l    exp_freeexpmem           ; 15: LVO -90 FreeExpansionMem(startSlot d0, numSlots d1)
+        dc.l    exp_readbyte             ; 16: LVO -96 ReadExpansionByte(board a0, offset d0)
+        dc.l    exp_readrom              ; 17: LVO -102 ReadExpansionRom(board a0, cd a1)
+        dc.l    exp_remconfigdev         ; 18: LVO -108 RemConfigDev(cd a0)
+        dc.l    exp_writebyte            ; 19: LVO -114 WriteExpansionByte(board a0, offset d0, byte d1)
+        dc.l    exp_obtainbinding        ; 20: LVO -120 ObtainConfigBinding()
+        dc.l    exp_releasebinding       ; 21: LVO -126 ReleaseConfigBinding()
+        dc.l    exp_setbinding           ; 22: LVO -132 SetCurrentBinding(binding a0, size d0)
+        dc.l    exp_getbinding           ; 23: LVO -138 GetCurrentBinding(binding a0, size d0) -> 16
+        dc.l    exp_makedosnode          ; 24: LVO -144 MakeDosNode(parmPacket a0)
+        dc.l    exp_adddosnode           ; 25: LVO -150 AddDosNode(bootPri d0, flags d1, dosNode a0)
         dc.l    -1
 expansion_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)  ; INITBYTE(LN_TYPE, NT_LIBRARY)
         dc.w    $D000,LIB_VERSION,34           ; INITWORD(LIB_VERSION, 34)
         dc.b    0
         EVEN
-; er_Type & 7 -> nombre de slots de 64 Ko, puis slot de départ de la recherche générale (8 Mo et 4 Mo : $20).
+; er_Type & 7 -> number of 64 KB slots, then start slot of the general search (8 MB and 4 MB: $20).
 sz_slots:
         dc.b    $80,$01,$02,$04,$08,$10,$20,$40
         dc.b    $20,$00,$00,$00,$00,$00,$00,$20
@@ -85,15 +85,15 @@ exp_close:
         moveq   #0,d0
         rts
 exp_expunge:
-        moveq   #0,d0               ; base résidente : pas d'expunge
+        moveq   #0,d0               ; resident base: no expunge
         rts
 exp_null:
         moveq   #0,d0
         rts
 
-; SetCurrentBinding(binding a0, taille d0) : min(taille, 16) octets vers la base, complétés à 16 par des 0.
-; GetCurrentBinding(binding a0, taille d0) -> 16 : min(taille, 16) octets vers le tampon, puis des 0 jusqu'à 16 octets
-; dans le tampon (comme en 1.3 : le tampon doit faire 16 octets).
+; SetCurrentBinding(binding a0, size d0): min(size, 16) bytes to the base, padded to 16 with 0s.
+; GetCurrentBinding(binding a0, size d0) -> 16: min(size, 16) bytes to the buffer, then 0s up to 16 bytes
+; in the buffer (as in 1.3: the buffer must be 16 bytes).
 exp_setbinding:
         lea     EB_BINDING(a6),a1    ; source = argument (a0), destination = base (a1)
         bra.s   exp_cpbinding
@@ -107,7 +107,7 @@ exp_cpbinding:
         bls.s   .cb_n
         move.l  d1,d0
 .cb_n:
-        sub.l   d0,d1                ; d1 = octets à mettre à zéro
+        sub.l   d0,d1                ; d1 = bytes to zero
         move.l  d0,d2
         bra.s   .cb_cpe
 .cb_cp:
@@ -138,10 +138,10 @@ exp_releasebinding:
         move.l  (sp)+,a6
         rts
 
-; AddConfigDev(cd a0) : en queue de eb_BoardList, sous Forbid.
+; AddConfigDev(cd a0): at the tail of eb_BoardList, under Forbid.
 exp_addconfigdev:
                 ifne    EXP_NO_ENQUEUE
-        rts                         ; RED EXP_NO_ENQUEUE : n'ajoute rien -> FindConfigDev échouera
+        rts                         ; RED EXP_NO_ENQUEUE: adds nothing -> FindConfigDev will fail
                 endc
         move.l  a6,-(sp)
         move.l  a0,a1
@@ -152,7 +152,7 @@ exp_addconfigdev:
         jsr     LVO_PERMIT(a6)
         move.l  (sp)+,a6
         rts
-; RemConfigDev(cd a0) : retire le ConfigDev de sa liste, sous Forbid.
+; RemConfigDev(cd a0): removes the ConfigDev from its list, under Forbid.
 exp_remconfigdev:
         move.l  a6,-(sp)
         move.l  a0,a1
@@ -163,7 +163,7 @@ exp_remconfigdev:
         move.l  (sp)+,a6
         rts
 
-; AllocConfigDev() -> d0 = ConfigDev* | 0 (mis à zéro).
+; AllocConfigDev() -> d0 = ConfigDev* | 0 (zeroed).
 exp_allocconfigdev:
         move.l  a6,-(sp)
         move.l  EB_EXECBASE(a6),a6
@@ -172,7 +172,7 @@ exp_allocconfigdev:
         jsr     LVO_ALLOCMEM(a6)
         move.l  (sp)+,a6
         rts
-; FreeConfigDev(cd a0) : ne le retire pas de la liste (l'appelant fait RemConfigDev avant).
+; FreeConfigDev(cd a0): does not remove it from the list (the caller does RemConfigDev beforehand).
 exp_freeconfigdev:
         move.l  a6,-(sp)
         move.l  a0,a1
@@ -182,8 +182,8 @@ exp_freeconfigdev:
         move.l  (sp)+,a6
         rts
 
-; FindConfigDev(oldConfigDev a0, manufacturer d0, product d1) -> d0 = ConfigDev* | 0. old = 0 : depuis la tête, sinon
-; depuis le suivant de old. -1 (long) = joker ; sinon comparaison sur le mot er_Manufacturer / l'octet er_Product.
+; FindConfigDev(oldConfigDev a0, manufacturer d0, product d1) -> d0 = ConfigDev* | 0. old = 0: from the head, otherwise
+; from the successor of old. -1 (long) = wildcard; otherwise comparison on the er_Manufacturer word / er_Product byte.
 exp_findconfigdev:
         movem.l d2/d3/a2,-(sp)
         move.l  d0,d2
@@ -195,7 +195,7 @@ exp_findconfigdev:
 .fcd_fromsucc:
         move.l  (a0),a2
 .fcd_loop:
-        move.l  (a2),d0              ; Succ nul : a2 = sentinelle de queue -> fin
+        move.l  (a2),d0              ; null Succ: a2 = tail sentinel -> end
         beq.s   .fcd_none
         cmp.l   #-1,d2
         beq.s   .fcd_chkprod
@@ -218,8 +218,8 @@ exp_findconfigdev:
         movem.l (sp)+,d2/d3/a2
         rts
 
-; ReadExpansionByte(board a0, offset d0) -> d0 : l'octet logique n porte son quartet haut dans le quartet haut de
-; board+4n, son quartet bas dans le quartet haut de board+4n+2. Sans inversion.
+; ReadExpansionByte(board a0, offset d0) -> d0: logical byte n carries its high nibble in the high nibble of
+; board+4n, its low nibble in the high nibble of board+4n+2. Without inversion.
 exp_readbyte:
         and.l   #$FF,d0
         lsl.w   #2,d0
@@ -230,8 +230,8 @@ exp_readbyte:
         or.b    d1,d0
         and.l   #$FF,d0
         rts
-; WriteExpansionByte(board a0, offset d0, octet d1) -> 0 : quartet bas en board+4n+2, puis quartet haut en board+4n
-; (en dernier : c'est l'écriture du quartet haut du registre d'adresse qui fait prendre son adresse à la carte).
+; WriteExpansionByte(board a0, offset d0, byte d1) -> 0: low nibble at board+4n+2, then high nibble at board+4n
+; (last: writing the high nibble of the address register is what makes the board take its address).
 exp_writebyte:
         and.l   #$FF,d0
         lsl.w   #2,d0
@@ -243,9 +243,9 @@ exp_writebyte:
         moveq   #0,d0
         rts
 
-; ReadExpansionRom(board a0, cd a1) -> d0 = 0 | EE_NOMEMORY (pas de carte, ROM invalide ou instable). 17 octets
-; logiques rangés à partir de cd_Rom : er_Type tel quel, les suivants inversés. Valide si er_Flags & $3F = 0,
-; er_Reserved03 = 0, er_Manufacturer ni 0 ni $FFFF, et si 11 relectures des 16 premiers octets concordent.
+; ReadExpansionRom(board a0, cd a1) -> d0 = 0 | EE_NOMEMORY (no board, invalid or unstable ROM). 17 logical
+; bytes stored from cd_Rom: er_Type as is, the following ones inverted. Valid if er_Flags & $3F = 0,
+; er_Reserved03 = 0, er_Manufacturer neither 0 nor $FFFF, and if 11 rereads of the first 16 bytes agree.
 exp_readrom:
         movem.l d2-d4/a2-a3,-(sp)
         move.l  a0,a2
@@ -283,7 +283,7 @@ exp_readrom:
         move.l  d4,d0
         movem.l (sp)+,d2-d4/a2-a3
         rts
-; rr_byte(a2 = carte, d2.w = index) -> d0.b = octet logique, inversé sauf l'index 0. Clobbe d0/d1/a0.
+; rr_byte(a2 = board, d2.w = index) -> d0.b = logical byte, inverted except index 0. Clobbers d0/d1/a0.
 rr_byte:
         move.l  a2,a0
         moveq   #0,d0
@@ -295,8 +295,8 @@ rr_byte:
 .rb_r:
         rts
 
-; AllocExpansionMem(numSlots d0, slotDépart d1) -> d0 = premier slot | -1. Moins de 8 slots : essai dans l'espace E/S
-; [$E8, $F0) par pas de numSlots ; puis dans [départ, 256) par pas de numSlots. Premier bloc entièrement libre : pris.
+; AllocExpansionMem(numSlots d0, startSlot d1) -> d0 = first slot | -1. Fewer than 8 slots: try in the I/O space
+; [$E8, $F0) in steps of numSlots; then in [start, 256) in steps of numSlots. First entirely free block: taken.
 exp_allocexpmem:
         movem.l d2/d4,-(sp)
         move.l  d0,d2
@@ -324,7 +324,7 @@ exp_allocexpmem:
 .ae_ret:
         movem.l (sp)+,d2/d4
         rts
-; ae_scan(d2 = slots, d4 = premier candidat, d1 = fin exclusive) -> d0 = slot | -1. Clobbe d0/d4/a0.
+; ae_scan(d2 = slots, d4 = first candidate, d1 = exclusive end) -> d0 = slot | -1. Clobbers d0/d4/a0.
 ae_scan:
         move.l  d4,d0
         add.l   d2,d0
@@ -352,8 +352,8 @@ ae_scan:
         moveq   #-1,d0
         rts
 
-; FreeExpansionMem(startSlot d0, numSlots d1) : slots rendus libres. Hors table, ou slot déjà libre : Alert
-; AN_BADEXPFREE et arrêt (les slots précédents restent libérés).
+; FreeExpansionMem(startSlot d0, numSlots d1): slots made free. Outside the table, or slot already free: Alert
+; AN_BADEXPFREE and stop (the previous slots remain freed).
 exp_freeexpmem:
         move.l  d0,a0
         add.l   d1,d0
@@ -378,7 +378,7 @@ exp_freeexpmem:
         movem.l (sp)+,d7/a6
         rts
 
-; AllocBoardMem(slotSpec d0) -> d0 = slot | -1 ; FreeBoardMem(startSlot d0, slotSpec d1). slotSpec = er_Type & 7.
+; AllocBoardMem(slotSpec d0) -> d0 = slot | -1; FreeBoardMem(startSlot d0, slotSpec d1). slotSpec = er_Type & 7.
 exp_allocboardmem:
         and.l   #7,d0
         lea     sz_slots(pc),a0
@@ -394,11 +394,11 @@ exp_freeboardmem:
         and.l   #$FF,d1
         bra.s   exp_freeexpmem
 
-; ConfigBoard(board a0, cd a1) -> d0 = 0 | EE_NOEXPANSION. Chaîne bouchée (EBB_CLOGGED) : rien. Place trouvée : champs
-; du ConfigDev, CDF_CONFIGME, adresse écrite à la carte, puis sa RAM ajoutée (ERTF_MEMLIST) ou sa DiagArea traitée
-; (ERTF_DIAGVALID). Sans place : carte mise en sommeil (CDF_SHUTUP, EBB_SHORTMEM) ; une carte qui refuse le sommeil
-; (ERFF_NOSHUTUP) reste en $E80000 et bouche la chaîne (EBB_CLOGGED, slot -1) — sans post-configuration ici : en 1.3
-; elle tournerait sur l'adresse -1, ce qui ne peut que corrompre la mémoire.
+; ConfigBoard(board a0, cd a1) -> d0 = 0 | EE_NOEXPANSION. Clogged chain (EBB_CLOGGED): nothing. Room found: fields
+; of the ConfigDev, CDF_CONFIGME, address written to the board, then its RAM added (ERTF_MEMLIST) or its DiagArea
+; processed (ERTF_DIAGVALID). Without room: board shut up (CDF_SHUTUP, EBB_SHORTMEM); a board that refuses shut-up
+; (ERFF_NOSHUTUP) stays at $E80000 and clogs the chain (EBB_CLOGGED, slot -1) — without post-configuration here: in
+; 1.3 it would run at address -1, which can only corrupt memory.
 exp_configboard:
         movem.l d2/a2-a3,-(sp)
         move.l  a0,a2
@@ -442,7 +442,7 @@ exp_configboard:
 .cb_ret:
         movem.l (sp)+,d2/a2-a3
         rts
-; cb_fill(d0 = slot, d2 = slotSpec, a3 = cd) : cd_SlotAddr/BoardAddr/SlotSize/BoardSize. Préserve d0.
+; cb_fill(d0 = slot, d2 = slotSpec, a3 = cd): cd_SlotAddr/BoardAddr/SlotSize/BoardSize. Preserves d0.
 cb_fill:
         move.w  d0,CD_SLOTADDR(a3)
         move.l  d0,d1
@@ -456,7 +456,7 @@ cb_fill:
         swap    d1
         move.l  d1,CD_BOARDSIZE(a3)
         rts
-; cb_post(a3 = cd configuré, a6 = ExpansionBase) : RAM de la carte ajoutée, ou DiagArea (carte sans RAM).
+; cb_post(a3 = configured cd, a6 = ExpansionBase): board RAM added, or DiagArea (board without RAM).
 cb_post:
         btst    #ERTB_MEMLIST,ER_TYPE(a3)
         beq.s   .cp_diag
@@ -469,7 +469,7 @@ cb_post:
         bne.s   exp_diag
         rts
 
-; (LVO -36, privé) (taille d0, attributs d1, base a0) : AddMemList(taille, attributs, pri 0, base, « expansion ram »).
+; (LVO -36, private) (size d0, attributes d1, base a0): AddMemList(size, attributes, pri 0, base, "expansion ram").
 exp_addram:
         movem.l d2/a6,-(sp)
         moveq   #0,d2
@@ -479,10 +479,10 @@ exp_addram:
         movem.l (sp)+,d2/a6
         rts
 
-; exp_diag(a3 = cd configuré, a6 = ExpansionBase) : DiagArea en cd_BoardAddr + er_InitDiagVec, prise en compte si
-; (da_Config & $30) = DAC_CONFIGTIME et la largeur de bus est connue ; copiée (da_Size octets, selon la largeur) dans
-; un AllocMem(da_Size, 0) rangé dans er_Reserved0c ; DiagPoint (s'il existe) appelé avec A0 = carte, A2 = copie,
-; A3 = ConfigDev, A5 = ExpansionBase, A6 = ExecBase ; un retour 0 libère la copie (er_Reserved0c = 0).
+; exp_diag(a3 = configured cd, a6 = ExpansionBase): DiagArea at cd_BoardAddr + er_InitDiagVec, taken into account if
+; (da_Config & $30) = DAC_CONFIGTIME and the bus width is known; copied (da_Size bytes, according to the width) into
+; an AllocMem(da_Size, 0) stored in er_Reserved0c; DiagPoint (if it exists) called with A0 = board, A2 = copy,
+; A3 = ConfigDev, A5 = ExpansionBase, A6 = ExecBase; a return of 0 frees the copy (er_Reserved0c = 0).
 exp_diag:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -490,7 +490,7 @@ exp_diag:
         move.w  ER_INITDIAGVEC(a3),d0
         beq     .dg_ret
         move.l  CD_BOARDADDR(a3),a4
-        add.l   d0,a4                ; a4 = DiagArea dans la carte
+        add.l   d0,a4                ; a4 = DiagArea in the board
         move.b  DA_CONFIG(a4),d4
         moveq   #DAC_BOOTTIME,d0
         and.b   d4,d0
@@ -499,7 +499,7 @@ exp_diag:
         and.b   #DAC_BUSWIDTH,d4
         cmp.b   #DAC_BUSWIDTH,d4
         beq.s   .dg_ret
-        lea     -DA_HDRSIZE(sp),sp   ; en-tête recopié selon la largeur
+        lea     -DA_HDRSIZE(sp),sp   ; header copied according to the width
         move.l  a4,a0
         move.l  sp,a1
         moveq   #DA_HDRSIZE,d0
@@ -527,7 +527,7 @@ exp_diag:
         beq.s   .dg_ret
         lea     0(a2,d6.l),a1
         move.l  CD_BOARDADDR(a3),a0
-        movem.l d5/a2-a3/a5,-(sp)    ; le code de la carte peut tout écraser
+        movem.l d5/a2-a3/a5,-(sp)    ; the board's code may clobber everything
         move.l  EB_EXECBASE(a5),a6
         jsr     (a1)
         movem.l (sp)+,d5/a2-a3/a5
@@ -541,8 +541,8 @@ exp_diag:
 .dg_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; dg_copy(a0 = DiagArea dans la carte, a1 = destination, d0 = octets, d4 = largeur) : WORDWIDE contigu ; BYTEWIDE un
-; octet sur deux ; NIBBLEWIDE octet = quartets hauts de +0 et +2, pas de 4. a5 = ExpansionBase. Clobbe d0/d1/d7/a0/a1.
+; dg_copy(a0 = DiagArea in the board, a1 = destination, d0 = bytes, d4 = width): WORDWIDE contiguous; BYTEWIDE one
+; byte out of two; NIBBLEWIDE byte = high nibbles of +0 and +2, step 4. a5 = ExpansionBase. Clobbers d0/d1/d7/a0/a1.
 dg_copy:
         cmp.b   #DAC_WORDWIDE,d4
         beq.s   .dc_word
@@ -573,8 +573,8 @@ dg_copy:
         move.l  (sp)+,a6
         rts
 
-; ConfigChain(baseAddr a0) -> d0 = 0 | EE_NOMEMORY (plus de mémoire pour un ConfigDev). Tant qu'une carte valide
-; répond en baseAddr : ConfigBoard ; configurée ou mise en sommeil -> AddConfigDev ; sinon fin de chaîne.
+; ConfigChain(baseAddr a0) -> d0 = 0 | EE_NOMEMORY (no more memory for a ConfigDev). As long as a valid board
+; answers at baseAddr: ConfigBoard; configured or shut up -> AddConfigDev; otherwise end of chain.
 exp_configchain:
         movem.l a2-a3,-(sp)
         move.l  a0,a2
@@ -613,11 +613,11 @@ exp_configchain:
         movem.l (sp)+,a2-a3
         rts
 
-; MakeDosNode(parmPacket a0) -> d0 = DeviceNode | 0. parmPacket : nom DOS (C), nom du device exec (C), unité, drapeaux
-; d'OpenDevice, puis l'environnement (de_TableSize en tête). Cinq blocs PUBLIC|CLEAR (AllocEntry) : DeviceNode,
-; FileSysStartupMsg, copie de l'environnement ((de_TableSize + 1) longs), BSTR du nom DOS, BSTR du nom du device.
+; MakeDosNode(parmPacket a0) -> d0 = DeviceNode | 0. parmPacket: DOS name (C), exec device name (C), unit,
+; OpenDevice flags, then the environment (de_TableSize first). Five PUBLIC|CLEAR blocks (AllocEntry): DeviceNode,
+; FileSysStartupMsg, copy of the environment ((de_TableSize + 1) longs), BSTR of the DOS name, BSTR of the device name.
 ; dn_StackSize = 600, dn_Priority = 10.
-MD_ML           EQU 0                ; MemList modèle sur la pile (5 entrées)
+MD_ML           EQU 0                ; template MemList on the stack (5 entries)
 MD_SIZE         EQU ML_ME+5*8
 exp_makedosnode:
         movem.l d2-d3/a2-a4/a6,-(sp)
@@ -634,7 +634,7 @@ exp_makedosnode:
         move.l  16(a2),d0            ; de_TableSize
         addq.l  #1,d0
         lsl.l   #2,d0
-        move.l  d0,d3                ; d3 = octets d'environnement
+        move.l  d0,d3                ; d3 = environment bytes
         move.l  d0,(a0)+
         move.l  d1,(a0)+
         move.l  (a2),a1
@@ -650,7 +650,7 @@ exp_makedosnode:
         tst.l   d0
         bmi.s   .md_fail
         move.l  d0,a4
-        lea     ML_ME(a4),a4         ; a4 -> me_Addr des 5 blocs
+        lea     ML_ME(a4),a4         ; a4 -> me_Addr of the 5 blocks
         move.l  (a4),a3              ; a3 = DeviceNode
         move.l  #600,DN_STACKSIZE(a3)
         move.l  #10,DN_PRIORITY(a3)
@@ -660,17 +660,17 @@ exp_makedosnode:
         move.l  d0,DN_STARTUP(a3)
         move.l  8(a2),FSSM_UNIT(a1)
         move.l  12(a2),FSSM_FLAGS(a1)
-        move.l  16(a4),d0            ; environnement
+        move.l  16(a4),d0            ; environment
         move.l  d0,d2
         lsr.l   #2,d0
         move.l  d0,FSSM_ENVIRON(a1)
-        move.l  32(a4),d0            ; BSTR du nom du device
+        move.l  32(a4),d0            ; BSTR of the device name
         move.l  d0,a0
         lsr.l   #2,d0
         move.l  d0,FSSM_DEVICE(a1)
         move.l  4(a2),a1
         bsr.s   md_bstr
-        move.l  24(a4),d0            ; BSTR du nom DOS
+        move.l  24(a4),d0            ; BSTR of the DOS name
         move.l  d0,a0
         lsr.l   #2,d0
         move.l  d0,DN_NAME(a3)
@@ -688,7 +688,7 @@ exp_makedosnode:
         lea     MD_SIZE(sp),sp
         movem.l (sp)+,d2-d3/a2-a4/a6
         rts
-; md_bstrsize(a1 = chaîne C) -> d0 = longueur + 2 (octet de longueur, caractères, NUL). Préserve a0/d1.
+; md_bstrsize(a1 = C string) -> d0 = length + 2 (length byte, characters, NUL). Preserves a0/d1.
 md_bstrsize:
         moveq   #2,d0
 .bs_lp:
@@ -698,7 +698,7 @@ md_bstrsize:
         bra.s   .bs_lp
 .bs_r:
         rts
-; md_bstr(a0 = destination, a1 = chaîne C) : BSTR (octet de longueur puis caractères ; bloc déjà à zéro).
+; md_bstr(a0 = destination, a1 = C string): BSTR (length byte then characters; block already zeroed).
 md_bstr:
         move.l  a0,d1
         addq.l  #1,a0
@@ -712,9 +712,9 @@ md_bstr:
         move.b  d1,(a1)
         rts
 
-; AddDosNode(bootPri d0, flags d1, dosNode a0) -> d0 = 1 | 0. dos.library présente : le DeviceNode entre dans la liste
-; des devices DOS (DosInfo->di_DevInfo, sous Forbid). Sinon : BootNode (ln_Pri = bootPri, bn_Flags = flags,
-; bn_DeviceNode, ln_Name = nom du DeviceNode) inséré par priorité dans eb_MountList, monté plus tard.
+; AddDosNode(bootPri d0, flags d1, dosNode a0) -> d0 = 1 | 0. dos.library present: the DeviceNode enters the list
+; of DOS devices (DosInfo->di_DevInfo, under Forbid). Otherwise: BootNode (ln_Pri = bootPri, bn_Flags = flags,
+; bn_DeviceNode, ln_Name = name of the DeviceNode) inserted by priority into eb_MountList, mounted later.
 exp_adddosnode:
         movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a0,d2
@@ -769,8 +769,8 @@ exp_adddosnode:
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 
-; initFunc (d0 = base, a0 = segList, a6 = ExecBase) -> d0 = base : libère l'espace mémoire Zorro II (slots $20-$9F)
-; et l'espace E/S (slots $E9-$EF ; $E8 = adresse de configuration, jamais libre), puis configure la chaîne en $E80000.
+; initFunc (d0 = base, a0 = segList, a6 = ExecBase) -> d0 = base: frees the Zorro II memory space (slots $20-$9F)
+; and the I/O space (slots $E9-$EF; $E8 = configuration address, never free), then configures the chain at $E80000.
 expansion_initfunc:
         movem.l d2/a2/a6,-(sp)
         move.l  d0,a2

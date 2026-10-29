@@ -1,15 +1,15 @@
-; src/graphics/draw.s — primitives de dessin de graphics.library dans un RastPort (BitMap planaire, rendu CPU).
+; src/graphics/draw.s — graphics.library drawing primitives into a RastPort (planar BitMap, CPU rendering).
 ; SetAPen/SetBPen/SetDrMd/Move/Draw/WritePixel/RectFill/SetRast/ClearEOL/ClearScreen/ScrollRaster/Text/TextLength/SetFont/
-; InitRastPort/InitBitMap/ReadPixel/BltBitMap. Si rp_Layer est posé, ses bornes donnent le décalage (coordonnées
-; relatives à la couche) et le dessin passe par ses ClipRects (layers.library) : ClipRect visible -> BitMap du
-; RastPort ; ClipRect cachée avec sauvegarde (cr_BitMap, origine dans cr_p1) -> la sauvegarde ; cachée sans
-; sauvegarde -> rien. Le verrou de la couche est tenu pendant le dessin (dr_ctx ... dr_end). Sans couche : une seule
-; pseudo-ClipRect = le BitMap entier. Texte : police du RastPort (TextFont quelconque, topaz 8 par défaut),
-; dessinée en JAM1/JAM2/COMPLEMENT/INVERSVID, gras et souligné algorithmiques. ScrollRaster : défilement vertical seul.
-; Accès mémoire OCTET par octet (une ligne de BitMap peut commencer à une adresse impaire).
-; Au-delà de la convention (d2-d7/a2-a6), toutes ces fonctions laissent a1 (le RastPort) intact : intuition et
-; console.device enchaînent leurs appels sur le même RastPort sans le recharger.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs graphics.library + includes NDK publics. AUCUNE lecture ROM.
+; InitRastPort/InitBitMap/ReadPixel/BltBitMap. If rp_Layer is set, its bounds give the offset (coordinates
+; relative to the layer) and drawing goes through its ClipRects (layers.library): visible ClipRect -> the
+; RastPort's BitMap; hidden ClipRect with backup (cr_BitMap, origin in cr_p1) -> the backup; hidden without
+; backup -> nothing. The layer lock is held during drawing (dr_ctx ... dr_end). Without a layer: a single
+; pseudo-ClipRect = the whole BitMap. Text: the RastPort's font (any TextFont, topaz 8 by default),
+; drawn in JAM1/JAM2/COMPLEMENT/INVERSVID, algorithmic bold and underline. ScrollRaster: vertical scrolling only.
+; Memory accessed BYTE by byte (a BitMap row can start at an odd address).
+; Beyond the convention (d2-d7/a2-a6), all these functions leave a1 (the RastPort) intact: intuition and
+; console.device chain their calls on the same RastPort without reloading it.
+; IMPLEMENTATION track ("clean"): graphics.library AutoDocs + public NDK includes. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -45,33 +45,33 @@
                 xref    gfx_DisownBlitter
                 xref    gfx_OrRectRegion
 
-; --- contexte de dessin (sur la pile, pointé par a5) ---
-DC_OX           EQU 0                ; décalage X (bornes du Layer) ; WORD
+; --- drawing context (on the stack, pointed to by a5) ---
+DC_OX           EQU 0                ; X offset (Layer bounds); WORD
 DC_OY           EQU 2
-DC_MINX         EQU 4                ; rectangle de découpage absolu (inclusif)
+DC_MINX         EQU 4                ; absolute clipping rectangle (inclusive)
 DC_MINY         EQU 6
 DC_MAXX         EQU 8
 DC_MAXY         EQU 10
 DC_BM           EQU 12               ; BitMap
 DC_RP           EQU 16               ; RastPort
-DC_MINTERM      EQU 20               ; byte : minterm des copies de bits (dr_bits)
-DC_LAYER        EQU 22               ; couche du RastPort (0 = aucune)
-DC_FIRST        EQU 26               ; première ClipRect à parcourir (celles de la couche, ou DC_PSEUDO)
-DC_CMINX        EQU 30               ; ClipRect courante : rectangle de découpage absolu
+DC_MINTERM      EQU 20               ; byte: minterm of the bit copies (dr_bits)
+DC_LAYER        EQU 22               ; layer of the RastPort (0 = none)
+DC_FIRST        EQU 26               ; first ClipRect to walk (those of the layer, or DC_PSEUDO)
+DC_CMINX        EQU 30               ; current ClipRect: absolute clipping rectangle
 DC_CMINY        EQU 32
 DC_CMAXX        EQU 34
 DC_CMAXY        EQU 36
-DC_CBM          EQU 38               ; BitMap où dessiner
-DC_BX           EQU 42               ; origine de ce BitMap en coordonnées absolues (0 pour l'écran)
+DC_CBM          EQU 38               ; BitMap to draw into
+DC_BX           EQU 42               ; origin of this BitMap in absolute coordinates (0 for the screen)
 DC_BY           EQU 44
-DC_PSEUDO       EQU 46               ; pseudo-ClipRect sans couche (Next, prev, lobs, BitMap, bornes)
+DC_PSEUDO       EQU 46               ; pseudo-ClipRect without a layer (Next, prev, lobs, BitMap, bounds)
 DC_SIZE         EQU 70
-; champs de ClipRect lus ici (graphics/clip.h)
+; ClipRect fields read here (graphics/clip.h)
 CR_NEXT         EQU 0
 CR_LOBS         EQU 8
 CR_BITMAP       EQU 12
 CR_MINX         EQU 16
-CR_ORGX         EQU 24               ; origine de la sauvegarde (privé layers : cr_p1)
+CR_ORGX         EQU 24               ; origin of the backup (layers private: cr_p1)
 CR_ORGY         EQU 26
 LY_CLIPRECT     EQU 8
 LY_FLAGS        EQU 30
@@ -79,7 +79,7 @@ LY_LOCK         EQU 72
 LY_DAMAGE       EQU 156
 LAYERREFRESH    EQU $80
 
-; dr_ctx(a1 = RastPort, a5 = contexte) : remplit le contexte et prend le verrou de la couche. Clobbe d0/d1/a0.
+; dr_ctx(a1 = RastPort, a5 = context): fills the context and takes the layer lock. Clobbers d0/d1/a0.
 dr_ctx:
         bsr     dr_ctx0
         move.l  rp_Layer(a1),d0
@@ -94,7 +94,7 @@ dr_ctx:
         movem.l (sp)+,a1/a6
         rts
 .cx_pseudo:
-        lea     DC_PSEUDO(a5),a0     ; pseudo-ClipRect visible = zone de découpage entière
+        lea     DC_PSEUDO(a5),a0     ; visible pseudo-ClipRect = the whole clipping area
         move.l  a0,DC_FIRST(a5)
         clr.l   CR_NEXT(a0)
         clr.l   CR_LOBS(a0)
@@ -102,7 +102,7 @@ dr_ctx:
         move.l  DC_MINX(a5),CR_MINX(a0)
         move.l  DC_MAXX(a5),CR_MINX+4(a0)
         rts
-; dr_end(a5) : rend le verrou de la couche. Préserve tous les registres.
+; dr_end(a5): releases the layer lock. Preserves all registers.
 dr_end:
         tst.l   DC_LAYER(a5)
         beq.s   .de_r
@@ -114,8 +114,8 @@ dr_end:
         movem.l (sp)+,d0-d1/a0-a1/a6
 .de_r:
         rts
-; dr_crset(a0 = ClipRect, a5) : ClipRect courante -> DC_C*, DC_CBM, DC_BX/BY. Z = 1 si inutilisable (cachée sans
-; sauvegarde, ou vide une fois découpée au BitMap). Préserve tout sauf d0.
+; dr_crset(a0 = ClipRect, a5): current ClipRect -> DC_C*, DC_CBM, DC_BX/BY. Z = 1 if unusable (hidden without
+; backup, or empty once clipped to the BitMap). Preserves everything except d0.
 dr_crset:
         tst.l   CR_LOBS(a0)
         beq.s   .cs_vis
@@ -129,7 +129,7 @@ dr_crset:
 .cs_vis:
         move.l  DC_BM(a5),DC_CBM(a5)
         clr.l   DC_BX(a5)
-        move.l  CR_MINX(a0),DC_CMINX(a5)   ; ∩ zone de découpage (bornes du BitMap)
+        move.l  CR_MINX(a0),DC_CMINX(a5)   ; ∩ clipping area (BitMap bounds)
         move.l  CR_MINX+4(a0),DC_CMAXX(a5)
         move.w  DC_MINX(a5),d0
         cmp.w   DC_CMINX(a5),d0
@@ -151,20 +151,20 @@ dr_crset:
         bge.s   .cs_ok
         move.w  d0,DC_CMAXY(a5)
 .cs_ok:
-        move.w  DC_CMINX(a5),d0      ; vide ?
+        move.w  DC_CMINX(a5),d0      ; empty?
         cmp.w   DC_CMAXX(a5),d0
         bgt.s   .cs_empty
         move.w  DC_CMINY(a5),d0
         cmp.w   DC_CMAXY(a5),d0
         bgt.s   .cs_empty
-        moveq   #1,d0                ; Z = 0 : utilisable
+        moveq   #1,d0                ; Z = 0: usable
         rts
 .cs_empty:
         moveq   #0,d0
 .cs_r:
         rts
 
-; dr_ctx0(a1 = RastPort, a5) : décalage, zone de découpage (bornes de la couche ∩ BitMap), BitMap.
+; dr_ctx0(a1 = RastPort, a5): offset, clipping area (layer bounds ∩ BitMap), BitMap.
 dr_ctx0:
         move.l  a1,DC_RP(a5)
         move.l  rp_BitMap(a1),a0
@@ -183,7 +183,7 @@ dr_ctx0:
         move.l  d0,a0
         move.w  lr_MinX(a0),DC_OX(a5)
         move.w  lr_MinY(a0),DC_OY(a5)
-        move.w  lr_MinX(a0),d0       ; intersection bornes du Layer / BitMap
+        move.w  lr_MinX(a0),d0       ; intersection of Layer bounds / BitMap
         cmp.w   DC_MINX(a5),d0
         ble.s   .dc_x0
         move.w  d0,DC_MINX(a5)
@@ -205,16 +205,16 @@ dr_ctx0:
 .dc_ret:
         rts
 
-; dr_span(a5 = contexte, d0.w = x0, d1.w = y, d2.w = x1 (absolus, x0 <= x1), d3.b = stylo) : remplit les pixels
-; [x0..x1] de la ligne y avec le stylo (rp_DrawMode COMPLEMENT : inverse) dans chaque ClipRect utilisable, plans
-; filtrés par rp_Mask. Préserve tout.
+; dr_span(a5 = context, d0.w = x0, d1.w = y, d2.w = x1 (absolute, x0 <= x1), d3.b = pen): fills the pixels
+; [x0..x1] of row y with the pen (rp_DrawMode COMPLEMENT: invert) in each usable ClipRect, planes
+; filtered by rp_Mask. Preserves everything.
 dr_span:
         movem.l d0/a0,-(sp)
         move.l  DC_FIRST(a5),a0
 .ds_lp:
         cmpa.w  #0,a0
         beq.s   .ds_r
-        cmp.w   CR_MINX+2(a0),d1     ; la ligne doit croiser la ClipRect
+        cmp.w   CR_MINX+2(a0),d1     ; the row must cross the ClipRect
         blt.s   .ds_n
         cmp.w   CR_MINX+6(a0),d1
         bgt.s   .ds_n
@@ -228,7 +228,7 @@ dr_span:
 .ds_r:
         movem.l (sp)+,d0/a0
         rts
-; dr_span1 : comme dr_span, dans la ClipRect courante (DC_C*, DC_CBM, origine DC_BX/BY). Préserve tout.
+; dr_span1: like dr_span, within the current ClipRect (DC_C*, DC_CBM, origin DC_BX/BY). Preserves everything.
 dr_span1:
         movem.l d0-d7/a0-a3,-(sp)
         cmp.w   DC_CMINY(a5),d1
@@ -246,23 +246,23 @@ dr_span1:
         cmp.w   d2,d0
         bgt     .sp_ret
         move.l  DC_CBM(a5),a3
-        sub.w   DC_BX(a5),d0         ; coordonnées dans ce BitMap (l'origine X est multiple de 16)
+        sub.w   DC_BX(a5),d0         ; coordinates within this BitMap (the X origin is a multiple of 16)
         sub.w   DC_BX(a5),d2
         sub.w   DC_BY(a5),d1
         moveq   #0,d4
         move.w  bm_BytesPerRow(a3),d4
         mulu    d1,d4
-        move.l  d4,a1                ; a1 = décalage de la ligne
+        move.l  d4,a1                ; a1 = offset of the row
         move.w  d0,d5
-        lsr.w   #3,d5                ; d5 = octet de début
+        lsr.w   #3,d5                ; d5 = start byte
         move.w  d2,d6
         lsr.w   #3,d6
-        sub.w   d5,d6                ; d6 = octets après le premier
-        moveq   #-1,d7               ; d7.b = masque de début : pixels >= x0
+        sub.w   d5,d6                ; d6 = bytes after the first one
+        moveq   #-1,d7               ; d7.b = start mask: pixels >= x0
         move.w  d0,d4
         and.w   #7,d4
         lsr.b   d4,d7
-        move.w  d2,d4                ; d2.b = masque de fin : pixels <= x1
+        move.w  d2,d4                ; d2.b = end mask: pixels <= x1
         and.w   #7,d4
         moveq   #7,d1
         sub.w   d4,d1
@@ -270,30 +270,30 @@ dr_span1:
         lsl.b   d1,d2
         tst.w   d6
         bne.s   .sp_masks
-        and.b   d2,d7                ; un seul octet
+        and.b   d2,d7                ; a single byte
 .sp_masks:
         move.l  DC_RP(a5),a0
-        move.b  rp_Mask(a0),d1       ; d1.b = plans autorisés
+        move.b  rp_Mask(a0),d1       ; d1.b = allowed planes
         moveq   #0,d0
         move.b  rp_DrawMode(a0),d0
         and.b   #COMPLEMENT,d0
-        move.l  d0,a2                ; a2 != 0 : inversion
+        move.l  d0,a2                ; a2 != 0: inversion
         moveq   #0,d0
         move.b  bm_Depth(a3),d0
-        subq.w  #1,d0                ; d0 = compteur de plans (dbra)
+        subq.w  #1,d0                ; d0 = plane counter (dbra)
         lea     bm_Planes(a3),a3
 .sp_plane:
         move.l  (a3)+,a0
         btst    #0,d1
         beq.s   .sp_pnext
         add.l   a1,a0
-        add.w   d5,a0                ; a0 = premier octet
+        add.w   d5,a0                ; a0 = first byte
         move.b  d7,d4
         bsr.s   .sp_ap
         tst.w   d6
         beq.s   .sp_pnext
         move.w  d6,d4
-        subq.w  #2,d4                ; octets pleins - 1 (d6 - 1 octets pleins)
+        subq.w  #2,d4                ; full bytes - 1 (d6 - 1 full bytes)
         bmi.s   .sp_last
         cmpa.w  #0,a2
         bne.s   .sp_minv
@@ -315,12 +315,12 @@ dr_span1:
         bsr.s   .sp_ap
 .sp_pnext:
         lsr.b   #1,d1
-        lsr.b   #1,d3                ; bit du stylo pour le plan suivant
+        lsr.b   #1,d3                ; pen bit for the next plane
         dbra    d0,.sp_plane
 .sp_ret:
         movem.l (sp)+,d0-d7/a0-a3
         rts
-; .sp_ap : applique le masque d4.b à l'octet (a0)+ selon le bit 0 de d3 (stylo) ou l'inversion (a2 != 0).
+; .sp_ap: applies mask d4.b to byte (a0)+ according to bit 0 of d3 (pen) or the inversion (a2 != 0).
 .sp_ap:
         cmpa.w  #0,a2
         beq.s   .ap_set
@@ -336,36 +336,36 @@ dr_span1:
         and.b   d4,(a0)+
         rts
 
-; dr_rect(a5 = contexte, d0/d1 = coin haut gauche, d2/d3 = coin bas droit (absolus, inclusifs), d4.b = stylo A,
-; d5.b = stylo B, a0 = motif (0 : plein), d6.w = masque des lignes du motif) : remplit le rectangle dans chaque
-; ClipRect utilisable, plans filtrés par rp_Mask, selon rp_DrawMode. Plein : stylo A (COMPLEMENT : inversion). Motif :
-; bits à 1 au stylo A (COMPLEMENT : inversion), bits à 0 au stylo B en JAM2 seul, laissés sinon ; mot de la ligne y =
-; motif[(y - OY) & masque], bit 15 = pixel x tel que (x - OX) ≡ 0 (mod 16). Découpage, masques et adresse calculés une
-; fois par ClipRect et par plan : le coût par pixel ne dépend plus du nombre de ClipRects. Préserve tout.
-RC_X0           EQU 0                ; rectangle demandé (absolu) : X0 Y0 X1 Y1
+; dr_rect(a5 = context, d0/d1 = top-left corner, d2/d3 = bottom-right corner (absolute, inclusive), d4.b = pen A,
+; d5.b = pen B, a0 = pattern (0: solid), d6.w = pattern row mask): fills the rectangle in each
+; usable ClipRect, planes filtered by rp_Mask, according to rp_DrawMode. Solid: pen A (COMPLEMENT: inversion). Pattern:
+; 1 bits in pen A (COMPLEMENT: inversion), 0 bits in pen B in JAM2 only, left alone otherwise; word for row y =
+; pattern[(y - OY) & mask], bit 15 = pixel x such that (x - OX) ≡ 0 (mod 16). Clipping, masks and address computed once
+; per ClipRect and per plane: the per-pixel cost no longer depends on the number of ClipRects. Preserves everything.
+RC_X0           EQU 0                ; requested rectangle (absolute): X0 Y0 X1 Y1
 RC_Y0           EQU 2
 RC_X1           EQU 4
 RC_Y1           EQU 6
-RC_FG           EQU 8                ; byte : stylo A
-RC_BG           EQU 9                ; byte : stylo B
-RC_PAT          EQU 10               ; motif (0 : plein)
-RC_PMASK        EQU 14               ; masque des lignes du motif
-RC_NB           EQU 16               ; octets de la ligne après le premier
-RC_FM           EQU 18               ; byte : masque du premier octet
-RC_LM           EQU 19               ; byte : masque du dernier octet
-RC_ROWS         EQU 20               ; lignes - 1
-RC_BPR          EQU 22               ; octets par ligne du BitMap
-RC_ROFF         EQU 24               ; décalage du premier octet dans un plan
-RC_SHIFT        EQU 28               ; rotation du mot de motif (premier pixel du premier octet -> bit 15)
-RC_PROW         EQU 30               ; ligne du motif de la première ligne
-RC_COMP         EQU 32               ; byte : COMPLEMENT
-RC_JAM2         EQU 33               ; byte : bits à 0 du motif au stylo B
-RC_F            EQU 34               ; byte : bit 0 = stylo A du plan courant
-RC_G            EQU 35               ; byte : bit 0 = stylo B du plan courant
-RC_PR           EQU 36               ; ligne du motif courante
-RC_RCNT         EQU 38               ; lignes restantes (motif)
-RC_PW           EQU 40               ; mot de motif tourné de la ligne courante
-RC_PSTEP        EQU 42               ; octets du motif d'un plan (motif multicolore), 0 sinon
+RC_FG           EQU 8                ; byte: pen A
+RC_BG           EQU 9                ; byte: pen B
+RC_PAT          EQU 10               ; pattern (0: solid)
+RC_PMASK        EQU 14               ; pattern row mask
+RC_NB           EQU 16               ; bytes of the row after the first one
+RC_FM           EQU 18               ; byte: mask of the first byte
+RC_LM           EQU 19               ; byte: mask of the last byte
+RC_ROWS         EQU 20               ; rows - 1
+RC_BPR          EQU 22               ; bytes per row of the BitMap
+RC_ROFF         EQU 24               ; offset of the first byte within a plane
+RC_SHIFT        EQU 28               ; rotation of the pattern word (first pixel of the first byte -> bit 15)
+RC_PROW         EQU 30               ; pattern row of the first row
+RC_COMP         EQU 32               ; byte: COMPLEMENT
+RC_JAM2         EQU 33               ; byte: 0 bits of the pattern in pen B
+RC_F            EQU 34               ; byte: bit 0 = pen A of the current plane
+RC_G            EQU 35               ; byte: bit 0 = pen B of the current plane
+RC_PR           EQU 36               ; current pattern row
+RC_RCNT         EQU 38               ; remaining rows (pattern)
+RC_PW           EQU 40               ; rotated pattern word of the current row
+RC_PSTEP        EQU 42               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
 RC_SIZE         EQU 44
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
@@ -391,7 +391,7 @@ dr_rect:
         cmpa.w  #0,a3
         beq.s   .rc_ret
         movem.w RC_X0(a4),d0-d3
-        cmp.w   CR_MINX+2(a3),d3     ; le rectangle doit croiser la ClipRect
+        cmp.w   CR_MINX+2(a3),d3     ; the rectangle must cross the ClipRect
         blt.s   .rc_n
         cmp.w   CR_MINX+6(a3),d1
         bgt.s   .rc_n
@@ -410,7 +410,7 @@ dr_rect:
         lea     RC_SIZE(sp),sp
         movem.l (sp)+,d0-d7/a0-a4/a6
         rts
-; rc_one(a4 = variables de dr_rect, a5) : le rectangle dans la ClipRect courante. Préserve a3-a5.
+; rc_one(a4 = dr_rect variables, a5): the rectangle within the current ClipRect. Preserves a3-a5.
 rc_one:
         movem.w RC_X0(a4),d0-d3
         cmp.w   DC_CMINX(a5),d0
@@ -439,7 +439,7 @@ rc_one:
         sub.w   d1,d3
         move.w  d3,RC_ROWS(a4)
         move.l  DC_CBM(a5),a0
-        sub.w   DC_BX(a5),d0         ; coordonnées dans ce BitMap
+        sub.w   DC_BX(a5),d0         ; coordinates within this BitMap
         sub.w   DC_BX(a5),d2
         sub.w   DC_BY(a5),d1
         moveq   #0,d4
@@ -448,36 +448,36 @@ rc_one:
         mulu    d1,d4
         moveq   #0,d5
         move.w  d0,d5
-        lsr.w   #3,d5                ; d5 = octet de début
+        lsr.w   #3,d5                ; d5 = start byte
         add.l   d5,d4
         move.l  d4,RC_ROFF(a4)
         move.w  d2,d6
         lsr.w   #3,d6
         sub.w   d5,d6
         move.w  d6,RC_NB(a4)
-        moveq   #-1,d7               ; masque de début : pixels >= x0
+        moveq   #-1,d7               ; start mask: pixels >= x0
         move.w  d0,d4
         and.w   #7,d4
         lsr.b   d4,d7
-        move.w  d2,d4                ; masque de fin : pixels <= x1
+        move.w  d2,d4                ; end mask: pixels <= x1
         not.w   d4
         and.w   #7,d4
         moveq   #-1,d3
         lsl.b   d4,d3
         tst.w   d6
         bne.s   .o_5
-        and.b   d3,d7                ; un seul octet
+        and.b   d3,d7                ; a single byte
 .o_5:
         move.b  d7,RC_FM(a4)
         move.b  d3,RC_LM(a4)
-        lsl.w   #3,d5                ; x absolu du premier pixel du premier octet (l'origine X est multiple de 16)
+        lsl.w   #3,d5                ; absolute x of the 1st pixel of the 1st byte (the X origin is a multiple of 16)
         add.w   DC_BX(a5),d5
         sub.w   DC_OX(a5),d5
         and.w   #15,d5
         move.w  d5,RC_SHIFT(a4)
         move.l  DC_RP(a5),a1
-        move.b  rp_Mask(a1),d6       ; d6 = plans autorisés
-        move.b  RC_FG(a4),d5         ; d5/d4 : bit 0 = stylo A/B du plan courant
+        move.b  rp_Mask(a1),d6       ; d6 = allowed planes
+        move.b  RC_FG(a4),d5         ; d5/d4: bit 0 = pen A/B of the current plane
         move.b  RC_BG(a4),d4
         moveq   #0,d7
         move.b  bm_Depth(a0),d7
@@ -494,7 +494,7 @@ rc_one:
         lsr.b   #1,d6
         lsr.b   #1,d5
         lsr.b   #1,d4
-        move.w  RC_PSTEP(a4),d0      ; motif multicolore : bloc du plan suivant
+        move.w  RC_PSTEP(a4),d0      ; multicolour pattern: block of the next plane
         add.w   d0,RC_PAT+2(a4)
         bcc.s   .o_pe
         addq.w  #1,RC_PAT(a4)
@@ -503,8 +503,8 @@ rc_one:
         move.l  (sp)+,RC_PAT(a4)
 .o_ret:
         rts
-; rc_plane(a1 = premier octet de la première ligne, d5.b/d4.b bit 0 = stylos A/B de ce plan, a4) : remplit le
-; rectangle dans un plan. Clobbe d0-d3/a0/a1/a6.
+; rc_plane(a1 = first byte of the first row, d5.b/d4.b bit 0 = pens A/B of this plane, a4): fills the
+; rectangle in one plane. Clobbers d0-d3/a0/a1/a6.
 rc_plane:
         movem.l d4-d7/a2,-(sp)
         move.w  RC_ROWS(a4),d7
@@ -561,8 +561,8 @@ rc_plane:
         adda.w  RC_BPR(a4),a1
         dbra    d7,.pl_inv
         bra     .pl_ret
-; motif : chaque octet devient ((octet & K) | S) ^ X, K/S/X tirés du masque et des bits du motif (rc_kpx) ; les
-; octets pleins alternent les deux octets du mot tourné (pair : octet haut, impair : octet bas).
+; pattern: each byte becomes ((byte & K) | S) ^ X, K/S/X derived from the mask and the pattern bits (rc_kpx); the
+; full bytes alternate the two bytes of the rotated word (even: high byte, odd: low byte).
 .pl_pat:
         move.b  d5,RC_F(a4)
         move.b  d4,RC_G(a4)
@@ -584,22 +584,22 @@ rc_plane:
         bsr     rc_apply
         move.w  RC_NB(a4),d1
         beq     .pp_nx
-        moveq   #-1,d0               ; octets pleins pairs -> d5/d6/d7
+        moveq   #-1,d0               ; even full bytes -> d5/d6/d7
         move.b  RC_PW(a4),d1
         bsr     rc_kpx
         move.b  d2,d5
         move.b  d3,d6
         move.b  d4,d7
-        moveq   #-1,d0               ; octets pleins impairs -> d2/d3/d4
+        moveq   #-1,d0               ; odd full bytes -> d2/d3/d4
         move.b  RC_PW+1(a4),d1
         bsr     rc_kpx
         move.w  RC_NB(a4),d1
-        subq.w  #1,d1                ; octets pleins, le premier impair
+        subq.w  #1,d1                ; full bytes, the first one odd
         beq.s   .pp_last
         move.l  a0,d0
         btst    #0,d0
         beq.s   .pp_even
-        move.b  (a0),d0              ; adresse impaire : un octet impair, puis des mots (pair, impair)
+        move.b  (a0),d0              ; odd address: one odd byte, then words (even, odd)
         and.b   d2,d0
         or.b    d3,d0
         eor.b   d4,d0
@@ -616,7 +616,7 @@ rc_plane:
         exg     d4,d7
         bra.s   .pp_w
 .pp_even:
-        lsl.w   #8,d2                ; adresse paire : des mots (impair, pair)
+        lsl.w   #8,d2                ; even address: words (odd, even)
         move.b  d5,d2
         lsl.w   #8,d3
         move.b  d6,d3
@@ -636,7 +636,7 @@ rc_plane:
         dbra    d5,.pp_wl
         btst    #0,d1
         beq.s   .pp_last
-        lsr.w   #8,d2                ; octet restant : celui de l'octet haut des mots
+        lsr.w   #8,d2                ; remaining byte: that of the high byte of the words
         lsr.w   #8,d3
         lsr.w   #8,d4
         bsr     rc_apply
@@ -657,16 +657,16 @@ rc_plane:
 .pl_ret:
         movem.l (sp)+,d4-d7/a2
         rts
-; rc_kpx(d0.b = masque, d1.b = bits du motif, a4) -> d2.b = K, d3.b = S, d4.b = X pour ((octet & K) | S) ^ X.
-; Clobbe d0/d1.
+; rc_kpx(d0.b = mask, d1.b = pattern bits, a4) -> d2.b = K, d3.b = S, d4.b = X for ((byte & K) | S) ^ X.
+; Clobbers d0/d1.
 rc_kpx:
         move.b  d1,d4
-        and.b   d0,d4                ; d4 = bits à 1 dans le masque
+        and.b   d0,d4                ; d4 = 1 bits in the mask
         not.b   d1
-        and.b   d0,d1                ; d1 = bits à 0 dans le masque
+        and.b   d0,d1                ; d1 = 0 bits in the mask
         tst.b   RC_COMP(a4)
         beq.s   .kx_n
-        moveq   #-1,d2               ; COMPLEMENT : inversion des bits à 1 seulement
+        moveq   #-1,d2               ; COMPLEMENT: inversion of the 1 bits only
         moveq   #0,d3
         rts
 .kx_n:
@@ -688,7 +688,7 @@ rc_kpx:
 .kx_x:
         moveq   #0,d4
         rts
-; rc_apply(a0, d2/d3/d4 = K/S/X) : (a0)+ = (((a0) & K) | S) ^ X. Clobbe d0.
+; rc_apply(a0, d2/d3/d4 = K/S/X): (a0)+ = (((a0) & K) | S) ^ X. Clobbers d0.
 rc_apply:
         move.b  (a0),d0
         and.b   d2,d0
@@ -696,8 +696,8 @@ rc_apply:
         eor.b   d4,d0
         move.b  d0,(a0)+
         rts
-; rc_fill(a0, d1.w = nombre d'octets, d0.l = valeur répétée) : écrit d0 sur d1 octets à partir de a0 (avancé), par
-; longs dès que l'adresse est paire. rc_finv : même parcours, inversion par d0. Clobbent d1/d2.
+; rc_fill(a0, d1.w = byte count, d0.l = repeated value): writes d0 over d1 bytes starting at a0 (advanced), as
+; longs as soon as the address is even. rc_finv: same walk, inversion by d0. Clobber d1/d2.
 rc_fill:
         tst.w   d1
         beq.s   .fl_r
@@ -749,32 +749,32 @@ rc_finv:
 .fi_r:
         rts
 
-; dr_line(a5 = contexte, d4/d5 = départ, d6/d7 = arrivée (absolus)) : segment au stylo A dans chaque ClipRect
-; utilisable, plans filtrés par rp_Mask (COMPLEMENT : inversion). Bresenham : e = dx - |dy| ; à chaque point, pas en x
-; si 2e >= -|dy|, pas en y si 2e <= dx. Dans une ClipRect, l'adresse suit le point (ligne ± BytesPerRow) et chaque
-; plan reçoit un bset/bclr/bchg : plus de recherche de ClipRect par pixel. Préserve tout.
-LN_X0           EQU 0                ; départ et arrivée absolus : X0 Y0 X1 Y1
+; dr_line(a5 = context, d4/d5 = start, d6/d7 = end (absolute)): segment in pen A in each usable
+; ClipRect, planes filtered by rp_Mask (COMPLEMENT: inversion). Bresenham: e = dx - |dy|; at each point, step in x
+; if 2e >= -|dy|, step in y if 2e <= dx. Within a ClipRect, the address follows the point (row ± BytesPerRow) and each
+; plane gets a bset/bclr/bchg: no more ClipRect lookup per pixel. Preserves everything.
+LN_X0           EQU 0                ; absolute start and end: X0 Y0 X1 Y1
 LN_Y0           EQU 2
 LN_X1           EQU 4
 LN_Y1           EQU 6
 LN_DX           EQU 8                ; |dx|
 LN_DY           EQU 10               ; -|dy|
-LN_SX           EQU 12               ; pas en x (±1)
-LN_SY           EQU 14               ; pas en y (±1)
-LN_BX0          EQU 16               ; boîte englobante absolue : BX0 BY0 BX1 BY1
+LN_SX           EQU 12               ; x step (±1)
+LN_SY           EQU 14               ; y step (±1)
+LN_BX0          EQU 16               ; absolute bounding box: BX0 BY0 BX1 BY1
 LN_BY0          EQU 18
 LN_BX1          EQU 20
 LN_BY1          EQU 22
-LN_MINX         EQU 24               ; ClipRect courante dans son BitMap : MINX MINY MAXX MAXY
+LN_MINX         EQU 24               ; current ClipRect within its BitMap: MINX MINY MAXX MAXY
 LN_MINY         EQU 26
 LN_MAXX         EQU 28
 LN_MAXY         EQU 30
-LN_EX           EQU 32               ; arrivée dans ce BitMap
+LN_EX           EQU 32               ; end point within this BitMap
 LN_EY           EQU 34
-LN_AE           EQU 36               ; fin de la liste A (plans mis à 1, ou inversés)
-LN_BE           EQU 40               ; fin de la liste B (plans mis à 0)
-LN_COMP         EQU 44               ; byte : COMPLEMENT
-LN_A            EQU 46               ; 8 plans au plus
+LN_AE           EQU 36               ; end of list A (planes set to 1, or inverted)
+LN_BE           EQU 40               ; end of list B (planes set to 0)
+LN_COMP         EQU 44               ; byte: COMPLEMENT
+LN_A            EQU 46               ; 8 planes at most
 LN_B            EQU 78
 LN_SIZE         EQU 110
 dr_line:
@@ -821,7 +821,7 @@ dr_line:
 .ln_lp:
         cmpa.w  #0,a3
         beq.s   .ln_ret
-        move.w  LN_BY1(a4),d0        ; la boîte du segment doit croiser la ClipRect
+        move.w  LN_BY1(a4),d0        ; the segment's box must cross the ClipRect
         cmp.w   CR_MINX+2(a3),d0
         blt.s   .ln_n
         move.w  LN_BY0(a4),d0
@@ -844,8 +844,8 @@ dr_line:
         lea     LN_SIZE(sp),sp
         movem.l (sp)+,d0-d7/a0-a4/a6
         rts
-; ln_one(a4 = variables de dr_line, a5) : le segment entier parcouru, points tracés dans la ClipRect courante.
-; Préserve a3-a5.
+; ln_one(a4 = dr_line variables, a5): the whole segment walked, points plotted within the current ClipRect.
+; Preserves a3-a5.
 ln_one:
         move.l  a3,-(sp)
         move.w  DC_BX(a5),d2
@@ -868,7 +868,7 @@ ln_one:
         move.w  LN_Y1(a4),d0
         sub.w   d3,d0
         move.w  d0,LN_EY(a4)
-        move.l  DC_CBM(a5),a2        ; listes de plans : A = bset (bchg en COMPLEMENT), B = bclr
+        move.l  DC_CBM(a5),a2        ; plane lists: A = bset (bchg in COMPLEMENT), B = bclr
         move.l  DC_RP(a5),a0
         move.b  rp_Mask(a0),d6
         move.b  rp_FgPen(a0),d5
@@ -898,24 +898,24 @@ ln_one:
         dbra    d7,.lo_pl
         move.l  a0,LN_AE(a4)
         move.l  a1,LN_BE(a4)
-        move.w  LN_X0(a4),d0         ; d0/d1 = point courant dans ce BitMap
+        move.w  LN_X0(a4),d0         ; d0/d1 = current point within this BitMap
         sub.w   d2,d0
         move.w  LN_Y0(a4),d1
         sub.w   d3,d1
         move.w  d4,d3
         muls    d1,d3
-        move.l  d3,a3                ; a3 = décalage de la ligne du point (peut être négatif hors BitMap)
+        move.l  d3,a3                ; a3 = offset of the point's row (may be negative outside the BitMap)
         moveq   #0,d2
         move.w  d4,d2
         tst.w   LN_SY(a4)
         bpl.s   .lo_sy
         neg.l   d2
 .lo_sy:
-        move.l  d2,a6                ; a6 = pas de ligne
+        move.l  d2,a6                ; a6 = row step
         move.w  LN_DX(a4),d4
         move.w  LN_DY(a4),d5
         move.w  d4,d2
-        add.w   d5,d2                ; d2 = erreur
+        add.w   d5,d2                ; d2 = error
 .lo_pt:
         cmp.w   LN_MINX(a4),d0
         blt.s   .lo_np
@@ -926,9 +926,9 @@ ln_one:
         cmp.w   LN_MAXY(a4),d1
         bgt.s   .lo_np
         move.w  d0,d3
-        lsr.w   #3,d3                ; d3 = octet
+        lsr.w   #3,d3                ; d3 = byte
         move.w  d0,d7
-        not.w   d7                   ; d7 = bit (modulo 8 : 7 pour le pixel de gauche)
+        not.w   d7                   ; d7 = bit (modulo 8: 7 for the leftmost pixel)
         lea     LN_A(a4),a2
         tst.b   LN_COMP(a4)
         bne.s   .lo_c
@@ -978,11 +978,11 @@ ln_one:
         move.l  (sp)+,a3
         rts
 
-; --- LVO simples ---
-gfx_SetAPen:                         ; SetAPen(rp a1, stylo d0)
+; --- simple LVOs ---
+gfx_SetAPen:                         ; SetAPen(rp a1, pen d0)
         move.b  d0,rp_FgPen(a1)
         rts
-gfx_SetBPen:                         ; SetBPen(rp a1, stylo d0)
+gfx_SetBPen:                         ; SetBPen(rp a1, pen d0)
         move.b  d0,rp_BgPen(a1)
         rts
 gfx_SetDrMd:                         ; SetDrMd(rp a1, mode d0)
@@ -992,7 +992,7 @@ gfx_Move:                            ; Move(rp a1, x d0, y d1)
         move.w  d0,rp_cp_x(a1)
         move.w  d1,rp_cp_y(a1)
         rts
-gfx_TextLength:                      ; TextLength(rp a1, chaîne a0, nombre d0) -> largeur en pixels (comme Text)
+gfx_TextLength:                      ; TextLength(rp a1, string a0, count d0) -> width in pixels (like Text)
         movem.l d2-d3/a2-a3,-(sp)
         bsr     tx_font
         move.l  a0,a3
@@ -1014,8 +1014,8 @@ gfx_TextLength:                      ; TextLength(rp a1, chaîne a0, nombre d0) 
         ext.l   d0
         movem.l (sp)+,d2-d3/a2-a3
         rts
-; SetFont(rp a1, police a0) : police et métriques du RastPort (0 : ignoré). D0 n'est pas touché, comme en 1.3 :
-; Preferences teste au retour le D0 laissé par son OpenFont.
+; SetFont(rp a1, font a0): font and metrics of the RastPort (0: ignored). D0 is not touched, as in 1.3:
+; Preferences tests on return the D0 left by its OpenFont.
 gfx_SetFont:
         cmpa.w  #0,a0
         beq.s   .sf_r
@@ -1026,8 +1026,8 @@ gfx_SetFont:
 .sf_r:
         rts
 
-; InitRastPort(rp a1, a6 = GfxBase) : RastPort à zéro, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, police
-; par défaut (gb_DefaultFont).
+; InitRastPort(rp a1, a6 = GfxBase): RastPort zeroed, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, default
+; font (gb_DefaultFont).
 gfx_InitRastPort:
         move.l  a1,a0
         moveq   #rp_SIZEOF/2-1,d0
@@ -1045,7 +1045,7 @@ gfx_InitRastPort:
         lea     topaz8_font,a0
         bra.s   gfx_SetFont
 
-; InitBitMap(bm a0, profondeur d0, largeur d1, hauteur d2) : BytesPerRow = largeur arrondie au mot ; plans non touchés.
+; InitBitMap(bm a0, depth d0, width d1, height d2): BytesPerRow = width rounded to a word; planes not touched.
 gfx_InitBitMap:
         add.w   #15,d1
         lsr.w   #4,d1
@@ -1057,7 +1057,7 @@ gfx_InitBitMap:
         clr.w   6(a0)                ; bm_Pad
         rts
 
-; WritePixel(rp a1, x d0, y d1) -> 0 : un pixel au stylo A.
+; WritePixel(rp a1, x d0, y d1) -> 0: one pixel in pen A.
 gfx_WritePixel:
         movem.l d2-d3/a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -1076,10 +1076,10 @@ gfx_WritePixel:
         moveq   #0,d0
         rts
 
-; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) : rectangle au stylo A (relatif au Layer), motif de SetAfPt
-; s'il y en a un (dr_rect ; AreaPtSz = -n : motif multicolore, 2^n mots par plan, plans consécutifs). AREAOUTLINE :
-; intérieur (réduit d'un pixel de chaque côté en COMPLEMENT, pour ne pas inverser deux fois le bord), puis contour
-; Move/Draw (LVO) en AOlPen et JAM1 ; cp reste en (xmin, ymin) (spec graphics-area-v34 §8).
+; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3): rectangle in pen A (relative to the Layer), SetAfPt pattern
+; if there is one (dr_rect; AreaPtSz = -n: multicolour pattern, 2^n words per plane, consecutive planes). AREAOUTLINE:
+; interior (shrunk by one pixel on each side in COMPLEMENT, so as not to invert the edge twice), then outline
+; Move/Draw (LVO) in AOlPen and JAM1; cp stays at (xmin, ymin) (spec graphics-area-v34 §8).
 gfx_RectFill:
         btst    #3,rp_Flags+1(a1)    ; AREAOUTLINE
         bne.s   rf_outline
@@ -1097,7 +1097,7 @@ rf_fill:
         move.b  rp_FgPen(a1),d4
         move.b  rp_BgPen(a1),d5
         move.l  rp_AreaPtrn(a1),a0
-        moveq   #0,d6                ; d6 = pas entre plans (mot haut) | masque des lignes
+        moveq   #0,d6                ; d6 = step between planes (high word) | row mask
         move.b  rp_AreaPtSz(a1),d7
         bpl.s   .rf_mono
         neg.b   d7
@@ -1171,7 +1171,7 @@ rf_outline:
         movem.l (sp)+,d2-d5/a2
         rts
 
-; SetRast(rp a1, stylo d0) : remplit toute la zone du RastPort (bornes du Layer, sinon le BitMap).
+; SetRast(rp a1, pen d0): fills the whole RastPort area (Layer bounds, else the BitMap).
 gfx_SetRast:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -1179,7 +1179,7 @@ gfx_SetRast:
         move.b  d0,d3
         bsr     dr_ctx
         move.b  rp_DrawMode(a1),-(sp)
-        clr.b   rp_DrawMode(a1)      ; remplissage plein, quel que soit le mode
+        clr.b   rp_DrawMode(a1)      ; solid fill, whatever the mode
         move.b  d3,d4
         movem.w DC_MINX(a5),d0-d3    ; MINX MINY MAXX MAXY
         suba.l  a0,a0
@@ -1190,9 +1190,9 @@ gfx_SetRast:
         movem.l (sp)+,d2-d7/a5
         rts
 
-; ClearEOL(rp a1) : efface de la position courante au bord droit, sur la hauteur de la police (cellule posée sur la
-; ligne de base, là où Text écrirait). ClearScreen(rp a1) : ClearEOL puis toute la zone sous cette ligne. Couleur :
-; stylo B en JAM2, 0 sinon ; remplissage plein, cp inchangé.
+; ClearEOL(rp a1): clears from the current position to the right edge, over the font height (cell sitting on the
+; baseline, where Text would write). ClearScreen(rp a1): ClearEOL then the whole area below that line. Colour:
+; pen B in JAM2, 0 otherwise; solid fill, cp unchanged.
 gfx_ClearEOL:
         moveq   #0,d1
         bra.s   cl_go
@@ -1233,8 +1233,8 @@ cl_go:
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
         rts
-; cl_box(a5, d3.b = stylo, d4 = x0, d5..d7 = lignes absolues) : lignes [d5..d7] ∩ zone, de x0 au bord droit.
-; Clobbe d0-d2/d5 ; d7 n'est réduit que s'il dépasse le bas de la zone.
+; cl_box(a5, d3.b = pen, d4 = x0, d5..d7 = absolute rows): rows [d5..d7] ∩ area, from x0 to the right edge.
+; Clobbers d0-d2/d5; d7 is reduced only if it goes past the bottom of the area.
 cl_box:
         cmp.w   DC_MINY(a5),d5
         bge.s   .cb_0
@@ -1255,13 +1255,13 @@ cl_box:
         movem.l (sp)+,d3-d6/a0
         rts
 
-; Draw(rp a1, x d0, y d1) : segment de (cp_x, cp_y) à (x, y) au stylo A, puis cp := (x, y). Horizontales et verticales
-; par dr_rect (mêmes pixels), les autres par dr_line (Bresenham).
+; Draw(rp a1, x d0, y d1): segment from (cp_x, cp_y) to (x, y) in pen A, then cp := (x, y). Horizontal and vertical
+; ones via dr_rect (same pixels), the others via dr_line (Bresenham).
 gfx_Draw:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        move.w  rp_cp_x(a1),d4       ; d4,d5 = point courant ; d6,d7 = arrivée
+        move.w  rp_cp_x(a1),d4       ; d4,d5 = current point; d6,d7 = end
         move.w  rp_cp_y(a1),d5
         move.w  d0,d6
         move.w  d1,d7
@@ -1276,7 +1276,7 @@ gfx_Draw:
         add.w   d0,d7
         cmp.w   d5,d7
         bne.s   .dw_nh
-        move.w  d4,d0                ; horizontale : une ligne de dr_rect
+        move.w  d4,d0                ; horizontal: one dr_rect row
         move.w  d6,d2
         cmp.w   d2,d0
         ble.s   .dw_h
@@ -1288,7 +1288,7 @@ gfx_Draw:
 .dw_nh:
         cmp.w   d4,d6
         bne.s   .dw_line
-        move.w  d4,d0                ; verticale : une colonne de dr_rect
+        move.w  d4,d0                ; vertical: one dr_rect column
         move.w  d4,d2
         move.w  d5,d1
         move.w  d7,d3
@@ -1308,24 +1308,24 @@ gfx_Draw:
         movem.l (sp)+,d2-d7/a5
         rts
 
-; --- variables de Text, après le contexte de dessin (a5) ---
-TX_FONT         EQU DC_SIZE          ; police
-TX_W            EQU DC_SIZE+4        ; largeur du glyphe (bits, 32 au plus)
-TX_RW           EQU DC_SIZE+6        ; largeur rendue (glyphe + étalement du gras)
-TX_H            EQU DC_SIZE+8        ; hauteur (tf_YSize)
+; --- Text variables, after the drawing context (a5) ---
+TX_FONT         EQU DC_SIZE          ; font
+TX_W            EQU DC_SIZE+4        ; glyph width (bits, 32 at most)
+TX_RW           EQU DC_SIZE+6        ; rendered width (glyph + bold smear)
+TX_H            EQU DC_SIZE+8        ; height (tf_YSize)
 TX_MOD          EQU DC_SIZE+10       ; tf_Modulo
-TX_SH           EQU DC_SIZE+12       ; décalage du glyphe dans son premier octet
+TX_SH           EQU DC_SIZE+12       ; offset of the glyph within its first byte
 TX_BASE         EQU DC_SIZE+14       ; tf_Baseline
 TX_SMEAR        EQU DC_SIZE+16       ; tf_BoldSmear
-TX_ADV          EQU DC_SIZE+18       ; avance du caractère courant
-TX_STYLE        EQU DC_SIZE+20       ; byte : styles algorithmiques rendus (gras, souligné)
-TX_SOK          EQU DC_SIZE+21       ; byte : voie « chaîne » permise (police fixe de 8 pixels, sans style)
-TX_GP           EQU DC_SIZE+22       ; TX_NMAX pointeurs de glyphes de la tranche courante
+TX_ADV          EQU DC_SIZE+18       ; advance of the current character
+TX_STYLE        EQU DC_SIZE+20       ; byte: rendered algorithmic styles (bold, underline)
+TX_SOK          EQU DC_SIZE+21       ; byte: "string" path allowed (fixed 8-pixel font, no style)
+TX_GP           EQU DC_SIZE+22       ; TX_NMAX glyph pointers of the current slice
 TX_NMAX         EQU 16
 TX_FRAME        EQU DC_SIZE+22+4*TX_NMAX
 
-; dr_cellcr(d4, d5 = coin d'une cellule de TX_W x TX_H, absolu) : cherche une ClipRect utilisable qui contient
-; toute la cellule et en fait la ClipRect courante. Z = 0 si trouvée. Préserve tout sauf d0.
+; dr_cellcr(d4, d5 = corner of a TX_W x TX_H cell, absolute): looks for a usable ClipRect that contains
+; the whole cell and makes it the current ClipRect. Z = 0 if found. Preserves everything except d0.
 dr_cellcr:
         move.l  a0,-(sp)
         move.l  DC_FIRST(a5),a0
@@ -1359,7 +1359,7 @@ dr_cellcr:
         move.l  (sp)+,a0
         rts
 
-; tx_font(rp a1) -> a2 = police du RastPort, topaz 8 de la ROM s'il n'en a pas. Préserve le reste.
+; tx_font(rp a1) -> a2 = the RastPort's font, the ROM topaz 8 if it has none. Preserves the rest.
 tx_font:
         move.l  rp_Font(a1),a2
         cmpa.w  #0,a2
@@ -1367,8 +1367,8 @@ tx_font:
         lea     topaz8_font,a2
 .tf_r:
         rts
-; tx_index(a2 = police, d0.w = caractère) -> d0.w = indice dans tf_CharLoc ; hors LoChar..HiChar : le glyphe par
-; défaut qui suit HiChar. Clobbe d1.
+; tx_index(a2 = font, d0.w = character) -> d0.w = index into tf_CharLoc; outside LoChar..HiChar: the default
+; glyph that follows HiChar. Clobbers d1.
 tx_index:
         moveq   #0,d1
         move.b  tf_HiChar(a2),d1
@@ -1385,8 +1385,8 @@ tx_index:
         addq.w  #1,d0
 .ti_r:
         rts
-; tx_metrics(a2 = police, d0.w = indice) -> d0.w = espacement (tf_CharSpace ou tf_XSize), d1.w = crénage
-; (tf_CharKern ou 0). Clobbe a0.
+; tx_metrics(a2 = font, d0.w = index) -> d0.w = spacing (tf_CharSpace or tf_XSize), d1.w = kerning
+; (tf_CharKern or 0). Clobbers a0.
 tx_metrics:
         add.w   d0,d0
         move.l  tf_CharKern(a2),d1
@@ -1403,34 +1403,34 @@ tx_metrics:
         move.w  tf_XSize(a2),d0
         rts
 
-; BltTemplate(gabarit a0, xSrc d0, srcMod d1, rp a1, xDest d2, yDest d3, xSize d4, ySize d5) : gabarit d'un plan
-; (bit à 1 = pixel du motif), ligne i à a0 + i × srcMod, premier pixel au bit xSrc. Bits à 1 au stylo A (inversés en
-; COMPLEMENT) ; bits à 0 au stylo B en JAM2 ; INVERSVID permute. Coordonnées relatives à la couche, découpage par
-; ses ClipRects, plans filtrés par rp_Mask. Par ClipRect et par plan, une opération fixe sur l'octet g du gabarit
-; (NON g si l'inversion s'applique) : OU (JAM1, stylo à 1), ET-NON (JAM1, stylo à 0), OU exclusif (COMPLEMENT),
-; mise à 1 / à 0 (JAM2, stylos A et B égaux), remplacement (JAM2, stylos différents) ; octets de bord masqués.
-BT_SRC          EQU DC_SIZE          ; gabarit
-BT_MOD          EQU DC_SIZE+4        ; WORD : srcMod
-BT_XS           EQU DC_SIZE+6        ; WORD : xSrc
-BT_X            EQU DC_SIZE+8        ; WORD : x absolu du premier pixel
-BT_Y            EQU DC_SIZE+10       ; WORD : y absolu de la première ligne
-BT_W            EQU DC_SIZE+12       ; WORD : largeur
-BT_H            EQU DC_SIZE+14       ; WORD : hauteur
-BT_NB           EQU DC_SIZE+16       ; WORD : octets de la ligne après le premier
-BT_FM           EQU DC_SIZE+18       ; byte : masque du premier octet
-BT_LM           EQU DC_SIZE+19       ; byte : masque du dernier octet
-BT_ROWS         EQU DC_SIZE+20       ; WORD : lignes - 1
-BT_RC           EQU DC_SIZE+22       ; WORD : lignes restantes
-BT_ROFF         EQU DC_SIZE+24       ; décalage du premier octet dans un plan
-BT_SROW         EQU DC_SIZE+28       ; premier octet de gabarit lu pour la première ligne
-BT_SH           EQU DC_SIZE+32       ; WORD : 8 - (bit de départ & 7)
-BT_FGS          EQU DC_SIZE+34       ; byte : stylo A, décalé d'un bit par plan
-BT_BGS          EQU DC_SIZE+35       ; byte : stylo B
-BT_MSK          EQU DC_SIZE+36       ; byte : rp_Mask
-BT_INV          EQU DC_SIZE+37       ; byte : $FF en INVERSVID
-BT_BPR          EQU DC_SIZE+38       ; WORD : octets par ligne du BitMap
+; BltTemplate(template a0, xSrc d0, srcMod d1, rp a1, xDest d2, yDest d3, xSize d4, ySize d5): one-plane template
+; (1 bit = pattern pixel), row i at a0 + i × srcMod, first pixel at bit xSrc. 1 bits in pen A (inverted in
+; COMPLEMENT); 0 bits in pen B in JAM2; INVERSVID swaps. Coordinates relative to the layer, clipping by
+; its ClipRects, planes filtered by rp_Mask. Per ClipRect and per plane, a fixed operation on the template byte g
+; (NOT g if inversion applies): OR (JAM1, pen 1), AND-NOT (JAM1, pen 0), exclusive OR (COMPLEMENT),
+; set to 1 / to 0 (JAM2, pens A and B equal), replace (JAM2, different pens); edge bytes masked.
+BT_SRC          EQU DC_SIZE          ; template
+BT_MOD          EQU DC_SIZE+4        ; WORD: srcMod
+BT_XS           EQU DC_SIZE+6        ; WORD: xSrc
+BT_X            EQU DC_SIZE+8        ; WORD: absolute x of the first pixel
+BT_Y            EQU DC_SIZE+10       ; WORD: absolute y of the first row
+BT_W            EQU DC_SIZE+12       ; WORD: width
+BT_H            EQU DC_SIZE+14       ; WORD: height
+BT_NB           EQU DC_SIZE+16       ; WORD: bytes of the row after the first one
+BT_FM           EQU DC_SIZE+18       ; byte: mask of the first byte
+BT_LM           EQU DC_SIZE+19       ; byte: mask of the last byte
+BT_ROWS         EQU DC_SIZE+20       ; WORD: rows - 1
+BT_RC           EQU DC_SIZE+22       ; WORD: remaining rows
+BT_ROFF         EQU DC_SIZE+24       ; offset of the first byte within a plane
+BT_SROW         EQU DC_SIZE+28       ; first template byte read for the first row
+BT_SH           EQU DC_SIZE+32       ; WORD: 8 - (start bit & 7)
+BT_FGS          EQU DC_SIZE+34       ; byte: pen A, shifted by one bit per plane
+BT_BGS          EQU DC_SIZE+35       ; byte: pen B
+BT_MSK          EQU DC_SIZE+36       ; byte: rp_Mask
+BT_INV          EQU DC_SIZE+37       ; byte: $FF in INVERSVID
+BT_BPR          EQU DC_SIZE+38       ; WORD: bytes per row of the BitMap
 BT_FRAME        EQU DC_SIZE+40
-BTO_OR          EQU 0                ; opérations (indice x 4 dans les tables)
+BTO_OR          EQU 0                ; operations (index x 4 in the tables)
 BTO_ANDN        EQU 4
 BTO_XOR         EQU 8
 BTO_SET         EQU 12
@@ -1446,7 +1446,7 @@ gfx_BltTemplate:
         move.w  d4,BT_W(a5)
         move.w  d5,BT_H(a5)
         movem.w d2-d3,-(sp)
-        bsr     dr_ctx               ; clobbe d0/d1/a0
+        bsr     dr_ctx               ; clobbers d0/d1/a0
         movem.w (sp)+,d2-d3
         add.w   DC_OX(a5),d2
         move.w  d2,BT_X(a5)
@@ -1460,7 +1460,7 @@ gfx_BltTemplate:
 .bt_lp:
         cmpa.w  #0,a3
         beq.s   .bt_end
-        move.w  BT_Y(a5),d1          ; le rectangle du gabarit doit croiser la ClipRect
+        move.w  BT_Y(a5),d1          ; the template rectangle must cross the ClipRect
         cmp.w   CR_MINX+6(a3),d1
         bgt.s   .bt_n
         add.w   BT_H(a5),d1
@@ -1486,9 +1486,9 @@ gfx_BltTemplate:
         lea     BT_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a2-a6
         rts
-; bt_one(a1 = rp, a5) : le gabarit dans la ClipRect courante. Préserve a1/a3/a5.
+; bt_one(a1 = rp, a5): the template within the current ClipRect. Preserves a1/a3/a5.
 bt_one:
-        move.w  BT_X(a5),d0          ; d0..d2 = colonnes, d1..d3 = lignes gardées (absolues)
+        move.w  BT_X(a5),d0          ; d0..d2 = columns, d1..d3 = rows kept (absolute)
         move.w  d0,d2
         add.w   BT_W(a5),d2
         subq.w  #1,d2
@@ -1518,13 +1518,13 @@ bt_one:
         bgt     .bo_ret
         sub.w   d1,d3
         move.w  d3,BT_ROWS(a5)
-        move.w  d1,d4                ; première ligne du gabarit lue : (y gardé - BT_Y) × srcMod
+        move.w  d1,d4                ; first template row read: (kept y - BT_Y) × srcMod
         sub.w   BT_Y(a5),d4
         muls    BT_MOD(a5),d4
         move.l  BT_SRC(a5),a0
         add.l   d4,a0
         move.l  DC_CBM(a5),a2
-        sub.w   DC_BX(a5),d0         ; coordonnées dans ce BitMap
+        sub.w   DC_BX(a5),d0         ; coordinates within this BitMap
         sub.w   DC_BX(a5),d2
         sub.w   DC_BY(a5),d1
         moveq   #0,d4
@@ -1533,14 +1533,14 @@ bt_one:
         mulu    d1,d4
         moveq   #0,d5
         move.w  d0,d5
-        lsr.w   #3,d5                ; d5 = premier octet
+        lsr.w   #3,d5                ; d5 = first byte
         add.l   d5,d4
         move.l  d4,BT_ROFF(a5)
         move.w  d2,d6
         lsr.w   #3,d6
         sub.w   d5,d6
         move.w  d6,BT_NB(a5)
-        moveq   #-1,d7               ; masques de bord
+        moveq   #-1,d7               ; edge masks
         move.w  d0,d4
         and.w   #7,d4
         lsr.b   d4,d7
@@ -1555,7 +1555,7 @@ bt_one:
 .bo_5:
         move.b  d7,BT_FM(a5)
         move.b  d3,BT_LM(a5)
-        lsl.w   #3,d5                ; bit du gabarit sous le pixel 0 du premier octet (peut être négatif)
+        lsl.w   #3,d5                ; template bit under pixel 0 of the first byte (may be negative)
         add.w   DC_BX(a5),d5
         sub.w   BT_X(a5),d5
         add.w   BT_XS(a5),d5
@@ -1599,15 +1599,15 @@ bt_one:
         dbra    d7,.bo_pl
 .bo_ret:
         rts
-; bt_plane(a0 = premier octet de la première ligne, a1 = rp, a5) : opération du plan, puis ligne par ligne : premier
-; octet masqué, octets pleins, dernier octet masqué. Flux du gabarit : d3.w = octet précédent (haut) et courant,
-; octet g = (d3 >> BT_SH) ^ d7. Clobbe d0-d7/a0-a3/a6.
+; bt_plane(a0 = first byte of the first row, a1 = rp, a5): the plane's operation, then row by row: first
+; byte masked, full bytes, last byte masked. Template stream: d3.w = previous (high) and current byte,
+; byte g = (d3 >> BT_SH) ^ d7. Clobbers d0-d7/a0-a3/a6.
 bt_plane:
-        move.b  BT_INV(a5),d7        ; d7 = inversion du gabarit
+        move.b  BT_INV(a5),d7        ; d7 = template inversion
         moveq   #BTO_XOR,d6
         btst    #1,rp_DrawMode(a1)   ; COMPLEMENT
         bne.s   .bp_go
-        btst    #0,rp_DrawMode(a1)   ; JAM2 : selon les deux stylos
+        btst    #0,rp_DrawMode(a1)   ; JAM2: according to both pens
         bne.s   .bp_j2
         moveq   #BTO_OR,d6
         btst    #0,BT_FGS(a5)
@@ -1620,19 +1620,19 @@ bt_plane:
         eor.b   d0,d1
         btst    #0,d1
         bne.s   .bp_rp
-        moveq   #BTO_SET,d6          ; stylos égaux : couleur pleine
+        moveq   #BTO_SET,d6          ; equal pens: solid colour
         btst    #0,d0
         bne.s   .bp_go
         moveq   #BTO_CLR,d6
         bra.s   .bp_go
 .bp_rp:
-        moveq   #BTO_REPL,d6         ; stylos différents : le gabarit, inversé si le stylo A vaut 0
+        moveq   #BTO_REPL,d6         ; different pens: the template, inverted if pen A is 0
         btst    #0,d0
         bne.s   .bp_go
         not.b   d7
 .bp_go:
         lea     bt_mops(pc),a6
-        move.l  0(a6,d6.w),a6        ; a6 = boucle des octets pleins
+        move.l  0(a6,d6.w),a6        ; a6 = full-byte loop
         move.w  BT_SH(a5),d4
         move.l  BT_SROW(a5),a2
         move.w  BT_ROWS(a5),BT_RC(a5)
@@ -1642,7 +1642,7 @@ bt_plane:
         moveq   #0,d3
         move.b  (a2)+,d3
         lsl.w   #8,d3
-        move.b  (a2)+,d3             ; premier octet
+        move.b  (a2)+,d3             ; first byte
         move.w  d3,d0
         lsr.w   d4,d0
         eor.b   d7,d0
@@ -1653,7 +1653,7 @@ bt_plane:
         beq.s   .bp_nx
         subq.w  #1,d1
         beq.s   .bp_last
-        subq.w  #1,d1                ; octets pleins - 1 (dbra)
+        subq.w  #1,d1                ; full bytes - 1 (dbra)
         jsr     (a6)
 .bp_last:
         move.b  (a2)+,d3
@@ -1670,7 +1670,7 @@ bt_plane:
         subq.w  #1,BT_RC(a5)
         bpl.s   .bp_row
         rts
-; bt_mask(a0, d0.b = g, d2.b = masque, d6 = opération) : un octet de bord, (a0)+. Clobbe d0/d2.
+; bt_mask(a0, d0.b = g, d2.b = mask, d6 = operation): one edge byte, (a0)+. Clobbers d0/d2.
 bt_mask:
         jmp     .bm_t(pc,d6.w)
 .bm_t:
@@ -1705,7 +1705,7 @@ bt_mask:
         not.b   d2
         and.b   d2,(a0)+
         rts
-; boucles des octets pleins : d1 = nombre - 1, a0 = destination, a2/d3/d4/d7 = flux du gabarit. Clobbent d0.
+; full-byte loops: d1 = count - 1, a0 = destination, a2/d3/d4/d7 = template stream. Clobber d0.
 bt_mops:
         dc.l    .mo_or,.mo_andn,.mo_xor,.mo_set,.mo_clr,.mo_repl
 .mo_or:
@@ -1745,7 +1745,7 @@ bt_mops:
         move.b  d0,(a0)+
         dbra    d1,.mo_repl
         rts
-.mo_set:                             ; SET et CLR ne lisent pas le gabarit (ni ici ni au dernier octet)
+.mo_set:                             ; SET and CLR do not read the template (neither here nor at the last byte)
         st      (a0)+
         dbra    d1,.mo_set
         rts
@@ -1754,19 +1754,19 @@ bt_mops:
         dbra    d1,.mo_clr
         rts
 
-; Text(rp a1, chaîne a0, nombre d0) : caractères de la police du RastPort (topaz 8 par défaut), coin haut du glyphe
-; à cp_y - tf_Baseline, à cp_x + crénage ; cp_x avance du crénage + espacement + rp_TxSpacing. JAM1 : pixels du
-; glyphe (stylo A) ; JAM2 : fond au stylo B ; COMPLEMENT : glyphe inversé ; INVERSVID : glyphe et fond permutés.
-; Styles algorithmiques (rp_AlgoStyle) : gras (glyphe étalé de tf_BoldSmear) et souligné (ligne sous la base).
-; Voies rapides, police fixe de 8 pixels sans style : « chaîne » (.tx_str, tout mode, jusqu'à TX_NMAX glyphes alignés
-; d'un coup), sinon glyphe par glyphe (.tx_fast, JAM1/JAM2) ; il faut la cellule entière dans une ClipRect. Sinon
-; rendu par plages de pixels.
+; Text(rp a1, string a0, count d0): characters of the RastPort's font (topaz 8 by default), top of the glyph
+; at cp_y - tf_Baseline, at cp_x + kerning; cp_x advances by kerning + spacing + rp_TxSpacing. JAM1: glyph
+; pixels (pen A); JAM2: background in pen B; COMPLEMENT: glyph inverted; INVERSVID: glyph and background swapped.
+; Algorithmic styles (rp_AlgoStyle): bold (glyph smeared by tf_BoldSmear) and underline (line below the baseline).
+; Fast paths, fixed 8-pixel font without style: "string" (.tx_str, any mode, up to TX_NMAX aligned glyphs
+; at once), otherwise glyph by glyph (.tx_fast, JAM1/JAM2); the whole cell must lie in one ClipRect. Otherwise
+; rendering by pixel spans.
 gfx_Text:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -TX_FRAME(sp),sp
         move.l  sp,a5
-        move.l  a0,a4                ; a4 = chaîne
-        move.w  d0,d7                ; d7 = nombre restant
+        move.l  a0,a4                ; a4 = string
+        move.w  d0,d7                ; d7 = remaining count
         bsr     dr_ctx
         bsr     tx_font
         move.l  a2,TX_FONT(a5)
@@ -1803,28 +1803,28 @@ gfx_Text:
         moveq   #0,d0
         move.b  (a4)+,d0
         bsr     tx_index
-        move.w  d0,d3                ; d3 = indice
+        move.w  d0,d3                ; d3 = index
         bsr     tx_metrics
         add.w   d1,d0
         add.w   rp_TxSpacing(a1),d0
         move.w  d0,TX_ADV(a5)
         move.w  rp_cp_x(a1),d4
         add.w   d1,d4
-        add.w   DC_OX(a5),d4         ; d4 = x absolu
+        add.w   DC_OX(a5),d4         ; d4 = absolute x
         move.w  rp_cp_y(a1),d5
         sub.w   TX_BASE(a5),d5
-        add.w   DC_OY(a5),d5         ; d5 = y absolu de la première ligne
+        add.w   DC_OY(a5),d5         ; d5 = absolute y of the first row
         move.l  tf_CharLoc(a2),a0
         lsl.w   #2,d3
-        move.w  0(a0,d3.w),d1        ; décalage en bits du glyphe
-        move.w  2(a0,d3.w),d0        ; largeur
+        move.w  0(a0,d3.w),d1        ; bit offset of the glyph
+        move.w  2(a0,d3.w),d0        ; width
         cmp.w   #32,d0
         bls.s   .tx_wok
         moveq   #32,d0
 .tx_wok:
         move.w  d0,TX_W(a5)
         move.w  d0,TX_RW(a5)
-        btst    #1,TX_STYLE(a5)      ; FSF_BOLD : le glyphe s'élargit de l'étalement
+        btst    #1,TX_STYLE(a5)      ; FSF_BOLD: the glyph widens by the smear
         beq.s   .tx_nb
         add.w   TX_SMEAR(a5),d0
         cmp.w   #32,d0
@@ -1838,7 +1838,7 @@ gfx_Text:
         and.w   #7,d0
         move.w  d0,TX_SH(a5)
         lsr.w   #3,d1
-        add.w   d1,a3                ; a3 = premier octet du glyphe (ligne 0)
+        add.w   d1,a3                ; a3 = first byte of the glyph (row 0)
         tst.w   TX_RW(a5)
         beq.s   .tx_adv
         tst.b   TX_STYLE(a5)
@@ -1847,18 +1847,18 @@ gfx_Text:
         bne.s   .tx_slow
         cmp.w   #8,TX_W(a5)
         bne.s   .tx_slow
-        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT : rendu par plages
+        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT: rendering by spans
         bne.s   .tx_slow
-        bsr     dr_cellcr            ; cellule entière dans une seule ClipRect utilisable ?
+        bsr     dr_cellcr            ; whole cell within a single usable ClipRect?
         beq.s   .tx_slow
         bsr     .tx_fast
         bra.s   .tx_adv
 .tx_slow:
-        moveq   #0,d6                ; d6 = ligne du glyphe
+        moveq   #0,d6                ; d6 = glyph row
 .tx_row:
         cmp.w   TX_H(a5),d6
         bhs.s   .tx_adv
-        bsr     .tx_bits             ; d2.l = ligne, pixel gauche en bit 31
+        bsr     .tx_bits             ; d2.l = row, left pixel in bit 31
         btst    #1,TX_STYLE(a5)
         beq.s   .tx_nbold
         move.l  d2,d0
@@ -1866,7 +1866,7 @@ gfx_Text:
         lsr.l   d1,d0
         or.l    d0,d2
 .tx_nbold:
-        btst    #0,TX_STYLE(a5)      ; FSF_UNDERLINED : ligne pleine juste sous la base
+        btst    #0,TX_STYLE(a5)      ; FSF_UNDERLINED: solid line just below the baseline
         beq.s   .tx_nul
         move.w  TX_BASE(a5),d0
         addq.w  #1,d0
@@ -1891,9 +1891,9 @@ gfx_Text:
         lea     TX_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
         rts
-; .tx_try : voie « chaîne » sur les TX_NMAX prochains caractères au plus : glyphes de 8 pixels alignés sur l'octet,
-; plage entière dans une ClipRect. Z = 0 si des caractères ont été rendus (a4, d7 et cp_x avancés). Si la plage
-; déborde de toute ClipRect, la voie est abandonnée pour le reste de l'appel. Clobbe d0-d6/a0/a2/a3.
+; .tx_try: "string" path over at most the next TX_NMAX characters: 8-pixel glyphs aligned on the byte,
+; whole span within one ClipRect. Z = 0 if characters were rendered (a4, d7 and cp_x advanced). If the span
+; overflows every ClipRect, the path is abandoned for the rest of the call. Clobbers d0-d6/a0/a2/a3.
 .tx_try:
         move.w  d7,d6
         cmp.w   #TX_NMAX,d6
@@ -1902,7 +1902,7 @@ gfx_Text:
 .tt_n:
         move.l  TX_FONT(a5),a2
         lea     TX_GP(a5),a3
-        moveq   #0,d5                ; d5 = glyphes acceptés
+        moveq   #0,d5                ; d5 = accepted glyphs
 .tt_gl:
         cmp.w   d6,d5
         bge.s   .tt_pos
@@ -1911,9 +1911,9 @@ gfx_Text:
         bsr     tx_index
         lsl.w   #2,d0
         move.l  tf_CharLoc(a2),a0
-        cmp.w   #8,2(a0,d0.w)        ; largeur
+        cmp.w   #8,2(a0,d0.w)        ; width
         bne.s   .tt_pos
-        move.w  0(a0,d0.w),d1        ; décalage en bits
+        move.w  0(a0,d0.w),d1        ; bit offset
         moveq   #7,d2
         and.w   d1,d2
         bne.s   .tt_pos
@@ -1924,7 +1924,7 @@ gfx_Text:
         addq.w  #1,d5
         bra.s   .tt_gl
 .tt_pos:
-        move.w  d5,d6                ; d6 = caractères de la tranche
+        move.w  d5,d6                ; d6 = characters of the slice
         beq.s   .tt_none
         move.w  rp_cp_x(a1),d4
         add.w   DC_OX(a5),d4
@@ -1948,23 +1948,23 @@ gfx_Text:
 .tt_none:
         moveq   #0,d0                ; Z = 1
         rts
-; .tx_str(d6.w = n caractères, glyphes en TX_GP, d4/d5 = coin absolu, a1 = rp, ClipRect courante) : plan par plan
-; et ligne par ligne, flux des octets de glyphe décalé de x & 7. JAM2 : octet g -> (g ET m1) OU-exclusif m2 (m1 =
-; stylos A et B différents, m2 = stylo B ; INVERSVID : m2 ^= m1), les bits hors de la plage des deux octets de bord
-; sont conservés. Autres modes (.to_*) : g (INVERSVID : NON g) touche seulement ses bits à 1 : dst = (dst ET K) OU-
-; exclusif V avec K = NON g OU E et V = g ET F (JAM1 stylo à 1 : E = 0, F = $FF ; stylo à 0 : E = F = 0 ;
-; COMPLEMENT : E = F = $FF). Préserve tout sauf d0/d1.
-TS_N            EQU 0                ; WORD : caractères
-TS_PLW          EQU 2                ; plan suivant (bm_Planes)
-TS_PC           EQU 6                ; WORD : plans restants
-TS_FG           EQU 8                ; byte : stylo A, décalé d'un bit par plan
+; .tx_str(d6.w = n characters, glyphs in TX_GP, d4/d5 = absolute corner, a1 = rp, current ClipRect): plane by plane
+; and row by row, stream of glyph bytes shifted by x & 7. JAM2: byte g -> (g AND m1) exclusive-OR m2 (m1 =
+; pens A and B differ, m2 = pen B; INVERSVID: m2 ^= m1), the bits outside the span of the two edge bytes
+; are kept. Other modes (.to_*): g (INVERSVID: NOT g) touches only its 1 bits: dst = (dst AND K) exclusive-
+; OR V with K = NOT g OR E and V = g AND F (JAM1 pen 1: E = 0, F = $FF; pen 0: E = F = 0;
+; COMPLEMENT: E = F = $FF). Preserves everything except d0/d1.
+TS_N            EQU 0                ; WORD: characters
+TS_PLW          EQU 2                ; next plane (bm_Planes)
+TS_PC           EQU 6                ; WORD: remaining planes
+TS_FG           EQU 8                ; byte: pen A, shifted by one bit per plane
 TS_BG           EQU 9
 TS_MSK          EQU 10
-TS_MODE         EQU 11               ; byte : rp_DrawMode
-TS_RC           EQU 12               ; WORD : lignes restantes
-TS_DST          EQU 14               ; premier octet de la ligne courante
-TS_O0           EQU 18               ; byte : octet de gauche d'origine
-TS_F            EQU 19               ; byte : F des modes autres que JAM2
+TS_MODE         EQU 11               ; byte: rp_DrawMode
+TS_RC           EQU 12               ; WORD: remaining rows
+TS_DST          EQU 14               ; first byte of the current row
+TS_O0           EQU 18               ; byte: original left byte
+TS_F            EQU 19               ; byte: F of the modes other than JAM2
 TS_SIZE         EQU 20
 .tx_str:
         movem.l d2-d7/a1-a4/a6,-(sp)
@@ -1976,18 +1976,18 @@ TS_SIZE         EQU 20
         move.b  rp_Mask(a1),TS_MSK(a3)
         move.b  rp_DrawMode(a1),TS_MODE(a3)
         move.l  DC_CBM(a5),a2
-        sub.w   DC_BX(a5),d4         ; coordonnées dans le BitMap de la ClipRect
+        sub.w   DC_BX(a5),d4         ; coordinates within the ClipRect's BitMap
         sub.w   DC_BY(a5),d5
         moveq   #0,d0
         move.w  bm_BytesPerRow(a2),d0
-        move.l  d0,a6                ; a6 = pas d'une ligne
+        move.l  d0,a6                ; a6 = row step
         mulu    d5,d0
         moveq   #0,d1
         move.w  d4,d1
         lsr.w   #3,d1
         add.l   d1,d0
-        move.l  d0,a4                ; a4 = décalage du premier octet
-        and.w   #7,d4                ; d4 = décalage dans l'octet
+        move.l  d0,a4                ; a4 = offset of the first byte
+        and.w   #7,d4                ; d4 = offset within the byte
         moveq   #0,d0
         move.b  bm_Depth(a2),d0
         move.w  d0,TS_PC(a3)
@@ -2001,18 +2001,18 @@ TS_SIZE         EQU 20
         move.l  a2,TS_PLW(a3)
         move.b  TS_FG(a3),d0
         lsr.b   #1,d0
-        scs     d6                   ; (scs avant le move, qui efface C)
+        scs     d6                   ; (scs before the move, which clears C)
         move.b  d0,TS_FG(a3)
         move.b  TS_BG(a3),d0
         lsr.b   #1,d0
-        scs     d7                   ; d7 = m2 = bit du stylo B
+        scs     d7                   ; d7 = m2 = pen B bit
         move.b  d0,TS_BG(a3)
         move.b  TS_MSK(a3),d0
         lsr.b   #1,d0
         scs     d1
         move.b  d0,TS_MSK(a3)
         tst.b   d1
-        beq.s   .ts_plane            ; plan protégé par rp_Mask
+        beq.s   .ts_plane            ; plane protected by rp_Mask
         move.b  TS_MODE(a3),d0
         and.b   #JAM2|COMPLEMENT,d0
         cmp.b   #JAM2,d0
@@ -2022,8 +2022,8 @@ TS_SIZE         EQU 20
         beq.s   .ts_ni
         eor.b   d6,d7
 .ts_ni:
-        add.l   a4,a0                ; a0 = premier octet, ligne 0
-        moveq   #0,d5                ; d5 = décalage de la ligne dans le glyphe
+        add.l   a4,a0                ; a0 = first byte, row 0
+        moveq   #0,d5                ; d5 = offset of the row within the glyph
         move.w  TX_H(a5),TS_RC(a3)
 .ts_row:
         subq.w  #1,TS_RC(a3)
@@ -2033,7 +2033,7 @@ TS_SIZE         EQU 20
         lea     TX_GP(a5),a2
         move.w  TS_N(a3),d2
         subq.w  #1,d2
-        moveq   #0,d3                ; d3 = octet précédent (8 bits hauts) et courant
+        moveq   #0,d3                ; d3 = previous byte (high 8 bits) and current one
 .ts_ch:
         move.l  (a2)+,a1
         move.b  0(a1,d5.l),d0
@@ -2047,15 +2047,15 @@ TS_SIZE         EQU 20
         dbra    d2,.ts_ch
         tst.w   d4
         beq.s   .ts_nx
-        lsl.w   #8,d3                ; octet de droite : fin du dernier glyphe
+        lsl.w   #8,d3                ; right byte: end of the last glyph
         lsr.w   d4,d3
         moveq   #-1,d0
-        lsr.b   d4,d0                ; d0 = bits de droite conservés ($FF >> décalage)
+        lsr.b   d4,d0                ; d0 = right bits kept ($FF >> shift)
         move.b  (a0),d1
         and.b   d0,d1
         or.b    d3,d1
         move.b  d1,(a0)
-        move.l  TS_DST(a3),a0        ; octet de gauche : ses bits hors plage sont restitués
+        move.l  TS_DST(a3),a0        ; left byte: its bits outside the span are restored
         not.b   d0
         and.b   TS_O0(a3),d0
         or.b    d0,(a0)
@@ -2066,8 +2066,8 @@ TS_SIZE         EQU 20
         move.w  TX_MOD(a5),d0
         add.l   d0,d5
         bra.s   .ts_row
-.to_plane:                           ; d6 = bit du stylo A ($FF / 0)
-        moveq   #0,d7                ; d7 = inversion du glyphe (INVERSVID)
+.to_plane:                           ; d6 = pen A bit ($FF / 0)
+        moveq   #0,d7                ; d7 = glyph inversion (INVERSVID)
         btst    #2,TS_MODE(a3)
         beq.s   .to_ni
         moveq   #-1,d7
@@ -2109,7 +2109,7 @@ TS_SIZE         EQU 20
         dbra    d2,.to_ch
         tst.w   d4
         beq.s   .to_nx
-        lsl.w   #8,d3                ; octet de droite : fin du dernier glyphe
+        lsl.w   #8,d3                ; right byte: end of the last glyph
         lsr.w   d4,d3
         move.b  d3,d0
         move.b  d0,d1
@@ -2129,8 +2129,8 @@ TS_SIZE         EQU 20
         lea     TS_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a4/a6
         rts
-; .tx_bits(d6 = ligne, a3 = glyphe) -> d2.l = TX_W bits de la ligne, cadrés à gauche (bit 31 = pixel gauche), le
-; reste à 0. Lecture par octets (le strike peut commencer à une adresse impaire). Clobbe d0/d1/a0.
+; .tx_bits(d6 = row, a3 = glyph) -> d2.l = TX_W bits of the row, left-aligned (bit 31 = left pixel), the
+; rest 0. Read by bytes (the strike can start at an odd address). Clobbers d0/d1/a0.
 .tx_bits:
         move.w  d6,d0
         mulu    TX_MOD(a5),d0
@@ -2156,29 +2156,29 @@ TS_SIZE         EQU 20
         and.l   d1,d2
 .tb_r:
         rts
-; .tx_fast : glyphe a3 (8 pixels, aligné) à (d4, d5) aligné sur un octet, dans la ClipRect courante, mode JAM2 :
-; chaque plan autorisé par rp_Mask reçoit directement ses octets (bit à 1 -> bit du stylo A, bit à 0 -> bit du
-; stylo B). Préserve d4-d7.
+; .tx_fast: glyph a3 (8 pixels, aligned) at (d4, d5) aligned on a byte, within the current ClipRect, JAM2 mode:
+; each plane allowed by rp_Mask receives its bytes directly (1 bit -> pen A bit, 0 bit -> pen B
+; bit). Preserves d4-d7.
 .tx_fast:
         movem.l d4-d7/a4/a6,-(sp)
         move.l  DC_CBM(a5),a2
-        sub.w   DC_BX(a5),d4         ; coordonnées dans le BitMap de la ClipRect
+        sub.w   DC_BX(a5),d4         ; coordinates within the ClipRect's BitMap
         sub.w   DC_BY(a5),d5
         moveq   #0,d6
         move.w  bm_BytesPerRow(a2),d6
-        move.l  d6,a4                ; a4 = pas d'une ligne
+        move.l  d6,a4                ; a4 = row step
         move.w  d5,d0
         mulu    d6,d0
         moveq   #0,d1
         move.w  d4,d1
         lsr.w   #3,d1
-        add.l   d1,d0                ; d0 = décalage du premier octet touché
+        add.l   d1,d0                ; d0 = offset of the first byte touched
         move.l  d0,-(sp)
         moveq   #7,d6
-        and.w   d4,d6                ; d6 = décalage du glyphe dans l'octet (0..7)
+        and.w   d4,d6                ; d6 = offset of the glyph within the byte (0..7)
         moveq   #0,d3
         move.b  bm_Depth(a2),d3
-        subq.w  #1,d3                ; d3 = compteur de plans (dbra)
+        subq.w  #1,d3                ; d3 = plane counter (dbra)
         lea     bm_Planes(a2),a2
         move.b  rp_FgPen(a1),d1
         move.b  rp_BgPen(a1),d2
@@ -2188,19 +2188,19 @@ TS_SIZE         EQU 20
         btst    #0,d7
         beq.s   .tf_next
         add.l   (sp),a0
-        move.l  a3,a6                ; a6 = ligne du glyphe
+        move.l  a3,a6                ; a6 = glyph row
         move.w  TX_H(a5),d4
-        subq.w  #1,d4                ; d4 = compteur de lignes (dbra)
+        subq.w  #1,d4                ; d4 = row counter (dbra)
 .tf_row:
-        move.b  (a6),d0              ; d0 = pixels du glyphe
+        move.b  (a6),d0              ; d0 = glyph pixels
         btst    #2,rp_DrawMode(a1)   ; INVERSVID
         beq.s   .tf_ni
         not.b   d0
 .tf_ni:
-        moveq   #0,d5                ; d5 = valeur ; d0 = pixels touchés
-        btst    #0,rp_DrawMode(a1)   ; JAM2 : toute la cellule
+        moveq   #0,d5                ; d5 = value; d0 = pixels touched
+        btst    #0,rp_DrawMode(a1)   ; JAM2: the whole cell
         bne.s   .tf_jam2
-        btst    #0,d1                ; JAM1 : le glyphe seul, au stylo A
+        btst    #0,d1                ; JAM1: the glyph only, in pen A
         beq.s   .tf_put
         move.b  d0,d5
         bra.s   .tf_put
@@ -2216,13 +2216,13 @@ TS_SIZE         EQU 20
 .tf_nb:
         moveq   #-1,d0
 .tf_put:
-        and.w   #$FF,d0              ; pixels touchés et valeur, placés sur deux octets selon le décalage
+        and.w   #$FF,d0              ; pixels touched and value, placed across two bytes according to the shift
         and.w   #$FF,d5
         lsl.w   #8,d0
         lsl.w   #8,d5
         lsr.w   d6,d0
         lsr.w   d6,d5
-        ror.w   #8,d0                ; octet de gauche
+        ror.w   #8,d0                ; left byte
         ror.w   #8,d5
         not.b   d0
         and.b   d0,(a0)
@@ -2230,7 +2230,7 @@ TS_SIZE         EQU 20
         not.b   d0
         tst.w   d6
         beq.s   .tf_adv
-        ror.w   #8,d0                ; octet de droite
+        ror.w   #8,d0                ; right byte
         ror.w   #8,d5
         not.b   d0
         and.b   d0,1(a0)
@@ -2240,27 +2240,27 @@ TS_SIZE         EQU 20
         add.w   TX_MOD(a5),a6
         dbra    d4,.tf_row
 .tf_next:
-        lsr.b   #1,d1                ; bits des stylos et du masque pour le plan suivant
+        lsr.b   #1,d1                ; pen and mask bits for the next plane
         lsr.b   #1,d2
         lsr.b   #1,d7
         dbra    d3,.tf_plane
         addq.l  #4,sp
         movem.l (sp)+,d4-d7/a4/a6
         rts
-; .tx_runs : ligne d2.l (bit 31 = pixel gauche) de TX_RW pixels à (d4, d5) : découpe en plages de bits égaux ;
-; bit 1 -> stylo A (ou inversion en COMPLEMENT) ; bit 0 -> stylo B en JAM2 seulement. Préserve d4-d7. Pour des lignes
-; de glyphe (une dizaine de pixels), quelques dr_span suffisent.
+; .tx_runs: row d2.l (bit 31 = left pixel) of TX_RW pixels at (d4, d5): split into runs of equal bits;
+; bit 1 -> pen A (or inversion in COMPLEMENT); bit 0 -> pen B in JAM2 only. Preserves d4-d7. For glyph
+; rows (about ten pixels), a few dr_span calls are enough.
 .tx_runs:
         movem.l d4-d7,-(sp)
-        moveq   #0,d6                ; d6 = index du pixel courant
+        moveq   #0,d6                ; d6 = index of the current pixel
 .tr_run:
         cmp.w   TX_RW(a5),d6
         bge.s   .tr_ret
-        move.w  d6,d7                ; d7 = début de la plage
+        move.w  d6,d7                ; d7 = start of the run
         moveq   #31,d0
         sub.w   d6,d0
         btst    d0,d2
-        sne     d3                   ; d3.b = valeur de la plage ($FF / 0)
+        sne     d3                   ; d3.b = value of the run ($FF / 0)
 .tr_ext:
         addq.w  #1,d6
         cmp.w   TX_RW(a5),d6
@@ -2271,11 +2271,11 @@ TS_SIZE         EQU 20
         sne     d1
         cmp.b   d1,d3
         beq.s   .tr_ext
-.tr_emit:                            ; plage [d7 .. d6-1] de valeur d3
+.tr_emit:                            ; run [d7 .. d6-1] of value d3
         movem.l d2-d3,-(sp)
         tst.b   d3
         bne.s   .tr_fgp
-        move.b  rp_DrawMode(a1),d0   ; fond : seulement en JAM2 (sans COMPLEMENT)
+        move.b  rp_DrawMode(a1),d0   ; background: only in JAM2 (without COMPLEMENT)
         and.b   #JAM2|COMPLEMENT,d0
         cmp.b   #JAM2,d0
         bne.s   .tr_skip
@@ -2298,24 +2298,24 @@ TS_SIZE         EQU 20
         movem.l (sp)+,d4-d7
         rts
 
-; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5) : décale le contenu du rectangle de dy lignes
-; vers le HAUT (dy > 0) ou le bas (dy < 0) et remplit la bande libérée au stylo B. dx ignoré (défilement vertical seul,
-; suffisant pour console.device). Coordonnées relatives au Layer. Chaque ligne destination est recopiée ClipRect par
-; ClipRect depuis les ClipRects qui contiennent la ligne source (écran ou sauvegardes : même alignement des bits
-; modulo 16, copie par octets masqués). Une partie dont la source est cachée sans sauvegarde (couche simple) rend
-; le rectangle entier « abîmé » (DamageList + LAYERREFRESH).
-SC_XMIN         EQU 0                ; variables sur la pile (a4)
+; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5): shifts the contents of the rectangle by dy rows
+; UP (dy > 0) or down (dy < 0) and fills the freed band with pen B. dx ignored (vertical scrolling only,
+; enough for console.device). Coordinates relative to the Layer. Each destination row is copied ClipRect by
+; ClipRect from the ClipRects that contain the source row (screen or backups: same bit alignment
+; modulo 16, copy by masked bytes). A part whose source is hidden without backup (simple layer) marks
+; the whole rectangle "damaged" (DamageList + LAYERREFRESH).
+SC_XMIN         EQU 0                ; variables on the stack (a4)
 SC_XMAX         EQU 2
 SC_DY           EQU 4
-SC_Y            EQU 6                ; ligne destination courante
-SC_SY           EQU 8                ; ligne source
-SC_DMINX        EQU 10               ; ClipRect destination retenue : bornes en X, BitMap, origine
+SC_Y            EQU 6                ; current destination row
+SC_SY           EQU 8                ; source row
+SC_DMINX        EQU 10               ; selected destination ClipRect: X bounds, BitMap, origin
 SC_DMAXX        EQU 12
 SC_DBM          EQU 14
 SC_DBX          EQU 18
 SC_DBY          EQU 20
-SC_COVER        EQU 22               ; pixels de la ligne destination couverts par une source
-SC_LOST         EQU 24               ; byte : une source manquait
+SC_COVER        EQU 22               ; pixels of the destination row covered by a source
+SC_LOST         EQU 24               ; byte: a source was missing
 SC_YMIN         EQU 26
 SC_YMAX         EQU 28
 SC_SIZE         EQU 30
@@ -2332,7 +2332,7 @@ gfx_ScrollRaster:
         add.w   DC_OX(a5),d4
         add.w   DC_OY(a5),d3
         add.w   DC_OY(a5),d5
-        cmp.w   DC_MINX(a5),d2       ; découpage à la zone du RastPort
+        cmp.w   DC_MINX(a5),d2       ; clipping to the RastPort area
         bge.s   .sc_c0
         move.w  DC_MINX(a5),d2
 .sc_c0:
@@ -2364,7 +2364,7 @@ gfx_ScrollRaster:
         bne     .sc_fast
         move.w  SC_DY(a4),d1
         bmi.s   .sc_down
-        move.w  SC_YMIN(a4),d6       ; vers le haut : ligne y <- y+dy, y croissant
+        move.w  SC_YMIN(a4),d6       ; upwards: row y <- y+dy, increasing y
 .sc_up:
         move.w  d6,d0
         add.w   d1,d0
@@ -2376,11 +2376,11 @@ gfx_ScrollRaster:
         move.w  SC_DY(a4),d1
         addq.w  #1,d6
         bra.s   .sc_up
-.sc_fillu:                           ; lignes [d6 .. ymax] au stylo B
+.sc_fillu:                           ; rows [d6 .. ymax] in pen B
         move.w  SC_YMAX(a4),d4
         bra.s   .sc_fill
 .sc_down:
-        move.w  SC_YMAX(a4),d6       ; vers le bas : y <- y+dy (dy < 0), y décroissant
+        move.w  SC_YMAX(a4),d6       ; downwards: y <- y+dy (dy < 0), decreasing y
 .sc_dn:
         move.w  d6,d0
         add.w   d1,d0
@@ -2392,7 +2392,7 @@ gfx_ScrollRaster:
         move.w  SC_DY(a4),d1
         subq.w  #1,d6
         bra.s   .sc_dn
-.sc_filld:                           ; lignes [ymin .. d6]
+.sc_filld:                           ; rows [ymin .. d6]
         move.w  d6,d4
         move.w  SC_YMIN(a4),d6
 .sc_fill:
@@ -2419,13 +2419,13 @@ gfx_ScrollRaster:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; Voie rapide : une seule ClipRect visible contient tout le rectangle (fenêtre non recouverte) -> rectangle copié au
-; blitter quand les plans sont en mémoire chip, sinon lignes copiées directement sans parcourir les ClipRects.
+; Fast path: a single visible ClipRect contains the whole rectangle (uncovered window) -> rectangle copied with the
+; blitter when the planes are in chip memory, otherwise rows copied directly without walking the ClipRects.
 .sc_fast:
         bsr     .sc_blit
         tst.l   d0
         beq.s   .sf_cpu
-        move.w  SC_DY(a4),d1         ; lignes découvertes, comme à la fin des boucles ligne à ligne
+        move.w  SC_DY(a4),d1         ; exposed rows, as at the end of the row-by-row loops
         bmi.s   .sf_bdn
         move.w  SC_YMAX(a4),d6
         sub.w   d1,d6
@@ -2467,11 +2467,11 @@ gfx_ScrollRaster:
         subq.w  #1,d6
         bra.s   .sf_dn
 
-; .sc_blit(a6 = GfxBase) -> d0 = 1 si le rectangle déplacé ([SC_XMIN..SC_XMAX], hauteur moins |dy| lignes, au moins
-; une) a été copié au blitter dans SC_DBM (source = destination), 0 sinon (plan hors mémoire chip, rectangle trop large
-; ou trop haut pour un blit, ou entièrement découvert : rien de fait). Un blit par plan : A = $FFFF constant masqué
-; (premier/dernier mot), B = source, C = destination, D = AB + ~AC ; vers le bas : mode descendant (adresses de fin,
-; masques échangés). Blitter pris par OwnBlitter. Préserve d2-d7/a1-a6.
+; .sc_blit(a6 = GfxBase) -> d0 = 1 if the moved rectangle ([SC_XMIN..SC_XMAX], height minus |dy| rows, at least
+; one) was copied with the blitter in SC_DBM (source = destination), 0 otherwise (plane not in chip memory, rectangle
+; too wide or too tall for a blit, or entirely exposed: nothing done). One blit per plane: A = constant $FFFF masked
+; (first/last word), B = source, C = destination, D = AB + ~AC; downwards: descending mode (end addresses,
+; masks swapped). Blitter taken by OwnBlitter. Preserves d2-d7/a1-a6.
 BLT_CON0        EQU $040
 BLT_CON1        EQU $042
 BLT_AFWM        EQU $044
@@ -2488,7 +2488,7 @@ BLT_DMACONR     EQU $002
 .sc_blit:
         movem.l d2-d7/a1-a3/a6,-(sp)
         move.l  SC_DBM(a4),a2        ; a2 = BitMap
-        move.w  SC_YMAX(a4),d4       ; d4 = lignes copiées
+        move.w  SC_YMAX(a4),d4       ; d4 = rows copied
         sub.w   SC_YMIN(a4),d4
         addq.w  #1,d4
         move.w  SC_DY(a4),d0
@@ -2496,7 +2496,7 @@ BLT_DMACONR     EQU $002
         neg.w   d0
 .bl_ady:
         sub.w   d0,d4
-        ble     .bl_no               ; tout est découvert : seul le remplissage reste
+        ble     .bl_no               ; everything is exposed: only the fill remains
         cmp.w   #1024,d4
         bhi     .bl_no
         move.l  a6,a3                ; a3 = GfxBase
@@ -2509,41 +2509,41 @@ BLT_DMACONR     EQU $002
         lsl.w   #2,d0
         move.l  bm_Planes(a2,d0.w),a1
         jsr     LVO_TYPEOFMEM(a6)
-        btst    #1,d0                ; MEMF_CHIP : seule mémoire que le blitter atteint
+        btst    #1,d0                ; MEMF_CHIP: the only memory the blitter can reach
         beq     .bl_no
         addq.w  #1,d6
         bra.s   .bl_chip
 .bl_go:
-        move.w  SC_XMIN(a4),d2       ; colonnes relatives au BitMap
+        move.w  SC_XMIN(a4),d2       ; columns relative to the BitMap
         sub.w   SC_DBX(a4),d2
         move.w  SC_XMAX(a4),d3
         sub.w   SC_DBX(a4),d3
         move.w  d2,d6
-        lsr.w   #4,d6                ; d6 = premier mot
+        lsr.w   #4,d6                ; d6 = first word
         move.w  d3,d5
         lsr.w   #4,d5
         sub.w   d6,d5
-        addq.w  #1,d5                ; d5 = mots par ligne
+        addq.w  #1,d5                ; d5 = words per row
         cmp.w   #64,d5
         bhi     .bl_no
         lsl.w   #6,d4
-        or.w    d5,d4                ; d4 = BLTSIZE (hauteur << 6 | mots ; 1024 lignes = 0)
+        or.w    d5,d4                ; d4 = BLTSIZE (height << 6 | words; 1024 rows = 0)
         and.w   #15,d2
         moveq   #-1,d0
         lsr.w   d2,d0
-        move.w  d0,d2                ; d2 = masque du mot de gauche
+        move.w  d0,d2                ; d2 = left word mask
         and.w   #15,d3
         moveq   #15,d1
         sub.w   d3,d1
         moveq   #-1,d3
-        lsl.w   d1,d3                ; d3 = masque du mot de droite
-        move.w  SC_YMIN(a4),d0       ; vers le haut : destination ymin, source ymin + dy, premier mot
+        lsl.w   d1,d3                ; d3 = right word mask
+        move.w  SC_YMIN(a4),d0       ; upwards: destination ymin, source ymin + dy, first word
         tst.w   SC_DY(a4)
         bpl.s   .bl_rows
-        move.w  SC_YMAX(a4),d0       ; vers le bas : dernière ligne et dernier mot, en descendant
+        move.w  SC_YMAX(a4),d0       ; downwards: last row and last word, descending
         add.w   d5,d6
         subq.w  #1,d6
-        exg     d2,d3                ; en descendant, le premier mot traité est celui de droite
+        exg     d2,d3                ; when descending, the first word processed is the rightmost one
 .bl_rows:
         move.w  d0,d1
         add.w   SC_DY(a4),d1
@@ -2551,14 +2551,14 @@ BLT_DMACONR     EQU $002
         sub.w   SC_DBY(a4),d1
         moveq   #0,d7
         move.w  bm_BytesPerRow(a2),d7
-        mulu    d7,d0                ; d0 = décalage destination
-        mulu    d7,d1                ; d1 = décalage source
+        mulu    d7,d0                ; d0 = destination offset
+        mulu    d7,d1                ; d1 = source offset
         add.w   d6,d6
         and.l   #$FFFF,d6
         add.l   d6,d0
         add.l   d6,d1
         add.w   d5,d5
-        sub.w   d5,d7                ; d7 = modulo (octets sautés par ligne)
+        sub.w   d5,d7                ; d7 = modulo (bytes skipped per row)
         moveq   #0,d6                ; d6 = BLTCON1
         tst.w   SC_DY(a4)
         bpl.s   .bl_own
@@ -2568,9 +2568,9 @@ BLT_DMACONR     EQU $002
         movem.l d0-d1,-(sp)
         jsr     gfx_OwnBlitter
         movem.l (sp)+,d0-d1
-        move.w  #$8240,DMACON        ; DMA maître + blitter
+        move.w  #$8240,DMACON        ; master DMA + blitter
         lea     CUSTOM,a0
-        moveq   #0,d5                ; d5 = plan
+        moveq   #0,d5                ; d5 = plane
 .bl_plane:
         cmp.b   bm_Depth(a2),d5
         bge.s   .bl_done
@@ -2578,11 +2578,11 @@ BLT_DMACONR     EQU $002
         add.w   a1,a1
         add.w   a1,a1
         move.l  bm_Planes(a2,a1.w),a1
-        btst    #6,BLT_DMACONR(a0)   ; lecture bidon (quirk A1000), puis attente du blit précédent
+        btst    #6,BLT_DMACONR(a0)   ; dummy read (A1000 quirk), then wait for the previous blit
 .bl_wait:
         btst    #6,BLT_DMACONR(a0)
         bne.s   .bl_wait
-        move.w  #$07CA,BLT_CON0(a0)  ; B, C, D actifs ; minterme AB + ~AC
+        move.w  #$07CA,BLT_CON0(a0)  ; B, C, D enabled; minterm AB + ~AC
         move.w  d6,BLT_CON1(a0)
         move.w  d2,BLT_AFWM(a0)
         move.w  d3,BLT_ALWM(a0)
@@ -2612,8 +2612,8 @@ BLT_DMACONR     EQU $002
         movem.l (sp)+,d2-d7/a1-a3/a6
         rts
 
-; .sc_whole -> Z = 0 si une ClipRect visible contient tout [SC_XMIN..SC_XMAX] x [SC_YMIN..SC_YMAX] : elle devient
-; la ClipRect courante (source) et la destination (SC_DBM/DBX/DBY). Clobbe d0/a0.
+; .sc_whole -> Z = 0 if a visible ClipRect contains the whole [SC_XMIN..SC_XMAX] x [SC_YMIN..SC_YMAX]: it becomes
+; the current ClipRect (source) and the destination (SC_DBM/DBX/DBY). Clobbers d0/a0.
 .sc_whole:
         move.l  DC_FIRST(a5),a0
 .sw_lp:
@@ -2646,10 +2646,10 @@ BLT_DMACONR     EQU $002
         moveq   #0,d0
         rts
 
-; .sc_line : ligne SC_Y <- ligne SC_SY sur [SC_XMIN..SC_XMAX], ClipRect par ClipRect. Préserve d4-d7/a1.
+; .sc_line: row SC_Y <- row SC_SY over [SC_XMIN..SC_XMAX], ClipRect by ClipRect. Preserves d4-d7/a1.
 .sc_line:
         movem.l d4-d7/a1-a3,-(sp)
-        move.l  DC_FIRST(a5),a2      ; a2 = ClipRect destination
+        move.l  DC_FIRST(a5),a2      ; a2 = destination ClipRect
 .sl_dst:
         cmpa.w  #0,a2
         beq     .sl_r
@@ -2661,7 +2661,7 @@ BLT_DMACONR     EQU $002
         blt     .sl_dnext
         cmp.w   DC_CMAXY(a5),d0
         bgt     .sl_dnext
-        move.w  SC_XMIN(a4),d0       ; segment destination
+        move.w  SC_XMIN(a4),d0       ; destination segment
         cmp.w   DC_CMINX(a5),d0
         bge.s   .sl_1
         move.w  DC_CMINX(a5),d0
@@ -2678,7 +2678,7 @@ BLT_DMACONR     EQU $002
         move.l  DC_CBM(a5),SC_DBM(a4)
         move.l  DC_BX(a5),SC_DBX(a4)   ; BX, BY
         clr.w   SC_COVER(a4)
-        move.l  DC_FIRST(a5),a3      ; a3 = ClipRect source
+        move.l  DC_FIRST(a5),a3      ; a3 = source ClipRect
 .sl_src:
         cmpa.w  #0,a3
         beq.s   .sl_check
@@ -2690,7 +2690,7 @@ BLT_DMACONR     EQU $002
         blt.s   .sl_snext
         cmp.w   DC_CMAXY(a5),d0
         bgt.s   .sl_snext
-        move.w  SC_DMINX(a4),d2      ; segment commun
+        move.w  SC_DMINX(a4),d2      ; common segment
         cmp.w   DC_CMINX(a5),d2
         bge.s   .sl_3
         move.w  DC_CMINX(a5),d2
@@ -2716,7 +2716,7 @@ BLT_DMACONR     EQU $002
         addq.w  #1,d0
         cmp.w   SC_COVER(a4),d0
         ble.s   .sl_dnext
-        st      SC_LOST(a4)          ; une partie n'avait pas de source
+        st      SC_LOST(a4)          ; a part had no source
 .sl_dnext:
         move.l  CR_NEXT(a2),a2
         bra     .sl_dst
@@ -2724,11 +2724,11 @@ BLT_DMACONR     EQU $002
         movem.l (sp)+,d4-d7/a1-a3
         rts
 
-; .sc_copy(d2..d4 = segment absolu ; source = ClipRect courante (DC_CBM, DC_BX/BY, ligne SC_SY) ; destination =
-; SC_DBM / SC_DBX / SC_DBY, ligne SC_Y) : pixels copiés plan par plan, octets de bord masqués. Préserve d4-d7/a1-a3.
+; .sc_copy(d2..d4 = absolute segment; source = current ClipRect (DC_CBM, DC_BX/BY, row SC_SY); destination =
+; SC_DBM / SC_DBX / SC_DBY, row SC_Y): pixels copied plane by plane, edge bytes masked. Preserves d4-d7/a1-a3.
 .sc_copy:
         movem.l d4-d7/a1-a3,-(sp)
-        move.l  DC_CBM(a5),a2        ; a2 = BitMap source, a3 = BitMap destination
+        move.l  DC_CBM(a5),a2        ; a2 = source BitMap, a3 = destination BitMap
         move.l  SC_DBM(a4),a3
         move.w  SC_SY(a4),d0
         sub.w   DC_BY(a5),d0
@@ -2738,7 +2738,7 @@ BLT_DMACONR     EQU $002
         move.w  d2,d0
         sub.w   DC_BX(a5),d0
         lsr.w   #3,d0
-        add.l   d0,d5                ; d5 = décalage du premier octet source
+        add.l   d0,d5                ; d5 = offset of the first source byte
         move.w  SC_Y(a4),d0
         sub.w   SC_DBY(a4),d0
         moveq   #0,d6
@@ -2747,13 +2747,13 @@ BLT_DMACONR     EQU $002
         move.w  d2,d0
         sub.w   SC_DBX(a4),d0
         lsr.w   #3,d0
-        add.l   d0,d6                ; d6 = décalage du premier octet destination
-        move.w  d4,d7                ; d7 = octets après le premier
+        add.l   d0,d6                ; d6 = offset of the first destination byte
+        move.w  d4,d7                ; d7 = bytes after the first one
         lsr.w   #3,d7
         move.w  d2,d0
         lsr.w   #3,d0
         sub.w   d0,d7
-        move.w  d2,d0                ; d2.b = masque gauche, d3.b = masque droit
+        move.w  d2,d0                ; d2.b = left mask, d3.b = right mask
         and.w   #7,d0
         moveq   #-1,d2
         lsr.b   d0,d2
@@ -2765,9 +2765,9 @@ BLT_DMACONR     EQU $002
         lsl.b   d1,d3
         tst.w   d7
         bne.s   .cp_m
-        and.b   d3,d2                ; octet unique : masques combinés
+        and.b   d3,d2                ; single byte: masks combined
 .cp_m:
-        moveq   #0,d4                ; d4 = plan
+        moveq   #0,d4                ; d4 = plane
 .cp_plane:
         cmp.b   bm_Depth(a2),d4
         bge.s   .cp_r
@@ -2779,16 +2779,16 @@ BLT_DMACONR     EQU $002
         move.l  bm_Planes(a3,d0.w),a1
         add.l   d5,a0
         add.l   d6,a1
-        move.b  d2,d0                ; premier octet
+        move.b  d2,d0                ; first byte
         bsr.s   .cp_mask
         tst.w   d7
         beq.s   .cp_pdone
         move.w  d7,d1
-        subq.w  #1,d1                ; octets pleins
+        subq.w  #1,d1                ; full bytes
         beq.s   .cp_last
         bsr.s   .cp_run
 .cp_last:
-        move.b  d3,d0                ; dernier octet
+        move.b  d3,d0                ; last byte
         bsr.s   .cp_mask
 .cp_pdone:
         addq.w  #1,d4
@@ -2796,13 +2796,13 @@ BLT_DMACONR     EQU $002
 .cp_r:
         movem.l (sp)+,d4-d7/a1-a3
         rts
-; .cp_run(d1.w = octets, > 0) : copie (a0)+ -> (a1)+, par longs quand les deux adresses ont la même parité (cas du
-; défilement : même abscisse). Clobbe d0/d1.
+; .cp_run(d1.w = bytes, > 0): copies (a0)+ -> (a1)+, as longs when both addresses have the same parity (the
+; scrolling case: same abscissa). Clobbers d0/d1.
 .cp_run:
         move.l  a0,d0
         sub.l   a1,d0
         btst    #0,d0
-        bne.s   .cr_bx               ; parités différentes : octet par octet
+        bne.s   .cr_bx               ; different parities: byte by byte
         move.w  a0,d0
         btst    #0,d0
         beq.s   .cr_even
@@ -2823,7 +2823,7 @@ BLT_DMACONR     EQU $002
 .cr_bx:
         dbra    d1,.cr_b
         rts
-; .cp_mask(d0.b = masque) : dst = (dst & ~m) | (src & m) pour l'octet courant ; avance a0/a1. Clobbe d0/d1.
+; .cp_mask(d0.b = mask): dst = (dst & ~m) | (src & m) for the current byte; advances a0/a1. Clobbers d0/d1.
 .cp_mask:
         move.b  (a0)+,d1
         and.b   d0,d1
@@ -2832,7 +2832,7 @@ BLT_DMACONR     EQU $002
         or.b    d1,(a1)+
         rts
 
-; .sc_damage : rectangle de défilement (relatif à la couche) ajouté à la DamageList de la couche + LAYERREFRESH.
+; .sc_damage: scroll rectangle (relative to the layer) added to the layer's DamageList + LAYERREFRESH.
 .sc_damage:
         move.l  DC_LAYER(a5),d0
         beq.s   .sd_r
@@ -2845,7 +2845,7 @@ BLT_DMACONR     EQU $002
         move.w  SC_XMAX(a4),-(sp)
         move.w  SC_YMIN(a4),-(sp)
         move.w  SC_XMIN(a4),-(sp)
-        move.w  16(a0),d1            ; bornes de la couche
+        move.w  16(a0),d1            ; layer bounds
         sub.w   d1,(sp)
         sub.w   d1,4(sp)
         move.w  18(a0),d1
@@ -2859,12 +2859,12 @@ BLT_DMACONR     EQU $002
 .sd_r:
         rts
 
-; BltMaskBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, largeur d4, hauteur d5,
-; minterm d6, masque a2) (spec graphics-blitter-v34 §5.4) : trois passes de BltBitMapRastPort, source en $90
-; (D = non(B ou-exclusif C)), puis le masque (BitMap fictive : en-tête de la source, tous les plans sur le masque)
-; avec le minterm de l'appelant, puis la source de nouveau en $90. Avec $E0 : la source là où le masque vaut 1, la
-; destination intacte ailleurs. Masque NULL : rien. Préserve d2-d7/a1-a5.
-BMB_ARGS        EQU bm_SIZEOF        ; arguments sauvés au-dessus de la BitMap fictive : d0/d1/d6/a0
+; BltMaskBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, width d4, height d5,
+; minterm d6, mask a2) (spec graphics-blitter-v34 §5.4): three passes of BltBitMapRastPort, source with $90
+; (D = not(B exclusive-or C)), then the mask (dummy BitMap: header of the source, all planes on the mask)
+; with the caller's minterm, then the source again with $90. With $E0: the source where the mask is 1, the
+; destination intact elsewhere. NULL mask: nothing. Preserves d2-d7/a1-a5.
+BMB_ARGS        EQU bm_SIZEOF        ; arguments saved above the dummy BitMap: d0/d1/d6/a0
 gfx_BltMaskBitMapRastPort:
         cmpa.w  #0,a2
         beq.s   .bm_ret
@@ -2877,15 +2877,15 @@ gfx_BltMaskBitMapRastPort:
 .bm_pl:
         move.l  a2,(a0)+
         dbra    d0,.bm_pl
-        movem.l BMB_ARGS(sp),d0-d1   ; passe 1 : source, $90
+        movem.l BMB_ARGS(sp),d0-d1   ; pass 1: source, $90
         move.l  BMB_ARGS+12(sp),a0
         move.l  #$90,d6
         bsr     gfx_BltBitMapRastPort
-        movem.l BMB_ARGS(sp),d0-d1   ; passe 2 : masque, minterm de l'appelant
+        movem.l BMB_ARGS(sp),d0-d1   ; pass 2: mask, caller's minterm
         move.l  BMB_ARGS+8(sp),d6
         move.l  sp,a0
         bsr     gfx_BltBitMapRastPort
-        movem.l BMB_ARGS(sp),d0-d1   ; passe 3 : source, $90
+        movem.l BMB_ARGS(sp),d0-d1   ; pass 3: source, $90
         move.l  BMB_ARGS+12(sp),a0
         move.l  #$90,d6
         bsr     gfx_BltBitMapRastPort
@@ -2894,12 +2894,12 @@ gfx_BltMaskBitMapRastPort:
 .bm_ret:
         rts
 
-; ClipBlit(RastPort source a0, srcX d0, srcY d1, RastPort dest a1, destX d2, destY d3, largeur d4, hauteur d5,
-; minterm d6) -> d0 = 1 (spec graphics-blitter-v34 §5.3) : le rectangle source est découpé par les ClipRects de sa
-; couche (partie visible : BitMap de l'écran ; cachée et sauvegardée : la sauvegarde ; cachée sans sauvegarde : la
-; destination reste intacte) ; chaque morceau passe par BltBitMapRastPort, qui découpe côté destination. Écarts :
-; ni SuperBitMap source, ni réordonnancement des ClipRects pour une copie qui se recouvre dans le même RastPort.
-CB_SX   EQU 0                        ; arguments sauvés (mots) : sx, sy, dx, dy, w, h ; minterm (long) ; RastPort dest
+; ClipBlit(source RastPort a0, srcX d0, srcY d1, dest RastPort a1, destX d2, destY d3, width d4, height d5,
+; minterm d6) -> d0 = 1 (spec graphics-blitter-v34 §5.3): the source rectangle is clipped by the ClipRects of its
+; layer (visible part: the screen BitMap; hidden and backed up: the backup; hidden without backup: the
+; destination stays intact); each piece goes through BltBitMapRastPort, which clips on the destination side. Deviations:
+; no source SuperBitMap, no reordering of the ClipRects for an overlapping copy within the same RastPort.
+CB_SX   EQU 0                        ; saved arguments (words): sx, sy, dx, dy, w, h; minterm (long); dest RastPort
 CB_SY   EQU 2
 CB_DX   EQU 4
 CB_DY   EQU 6
@@ -2917,9 +2917,9 @@ gfx_ClipBlit:
         move.l  d6,CB_MT(sp)
         move.l  a1,CB_DRP(sp)
         move.l  a0,a1
-        bsr     dr_ctx               ; contexte de la RastPort source (verrou de sa couche)
+        bsr     dr_ctx               ; context of the source RastPort (lock of its layer)
         move.w  DC_OX(a5),d0
-        add.w   d0,CB_SX(sp)         ; source en coordonnées absolues
+        add.w   d0,CB_SX(sp)         ; source in absolute coordinates
         move.w  DC_OY(a5),d0
         add.w   d0,CB_SY(sp)
         move.l  DC_FIRST(a5),a4
@@ -2955,19 +2955,19 @@ gfx_ClipBlit:
 .cb_y1:
         move.w  d2,d4
         sub.w   d0,d4
-        addq.w  #1,d4                ; largeur du morceau
+        addq.w  #1,d4                ; width of the piece
         ble.s   .cb_next
         move.w  d3,d5
         sub.w   d1,d5
-        addq.w  #1,d5                ; hauteur du morceau
+        addq.w  #1,d5                ; height of the piece
         ble.s   .cb_next
-        move.w  d0,d2                ; destination décalée comme le morceau dans la source
+        move.w  d0,d2                ; destination offset like the piece within the source
         sub.w   CB_SX(sp),d2
         add.w   CB_DX(sp),d2
         move.w  d1,d3
         sub.w   CB_SY(sp),d3
         add.w   CB_DY(sp),d3
-        sub.w   DC_BX(a5),d0         ; position dans le BitMap de ce morceau
+        sub.w   DC_BX(a5),d0         ; position of this piece within the BitMap
         sub.w   DC_BY(a5),d1
         ext.l   d0
         ext.l   d1
@@ -2991,23 +2991,23 @@ gfx_ClipBlit:
         moveq   #1,d0
         rts
 
-; BltBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, largeur d4, hauteur d5, minterm d6) :
-; copie le rectangle source dans le RastPort (relatif au Layer, découpé au contexte), plan par plan selon rp_Mask.
-; Minterm appliqué (B = source, C = destination). Plan source NULL = tout à 0,
-; -1 = tout à 1 (les plans au-delà de la profondeur source valent 0). Rendu CPU octet par octet, bords masqués.
+; BltBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, width d4, height d5, minterm d6):
+; copies the source rectangle into the RastPort (relative to the Layer, clipped to the context), plane by plane per
+; rp_Mask. Minterm applied (B = source, C = destination). NULL source plane = all 0,
+; -1 = all 1 (planes beyond the source depth are 0). CPU rendering byte by byte, edges masked.
 gfx_BltBitMapRastPort:
         movem.l d2-d7/a1-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        move.l  a0,a4                ; a4 = BitMap source
+        move.l  a0,a4                ; a4 = source BitMap
         move.b  d6,DC_MINTERM(a5)
         movem.w d0-d1,-(sp)
         bsr     dr_ctx
         movem.w (sp)+,d0-d1
         add.w   DC_OX(a5),d2
         add.w   DC_OY(a5),d3
-        movem.w d0-d5,-(sp)          ; 4(sp) : arguments (destination absolue)
-        move.l  DC_FIRST(a5),-(sp)   ; (sp) : ClipRect courante
+        movem.w d0-d5,-(sp)          ; 4(sp): arguments (absolute destination)
+        move.l  DC_FIRST(a5),-(sp)   ; (sp): current ClipRect
 .bb_cr:
         move.l  (sp),a0
         cmpa.w  #0,a0
@@ -3025,11 +3025,11 @@ gfx_BltBitMapRastPort:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a5
-        moveq   #1,d0                ; rend toujours vrai (spec graphics-blitter-v34 §5.2)
+        moveq   #1,d0                ; always returns true (spec graphics-blitter-v34 §5.2)
         rts
-; .bb_one(d0..d5 = sx, sy, dx, dy absolus, largeur, hauteur) : partie dans la ClipRect courante. Clobbe d0-d7/a0-a3.
+; .bb_one(d0..d5 = absolute sx, sy, dx, dy, width, height): part within the current ClipRect. Clobbers d0-d7/a0-a3.
 .bb_one:
-        move.w  DC_CMINX(a5),d6      ; découpage gauche/haut : décale aussi la source
+        move.w  DC_CMINX(a5),d6      ; left/top clipping: also shifts the source
         sub.w   d2,d6
         ble.s   .bb_l
         add.w   d6,d0
@@ -3043,7 +3043,7 @@ gfx_BltBitMapRastPort:
         sub.w   d6,d5
         add.w   d6,d3
 .bb_t:
-        move.w  DC_CMAXX(a5),d6      ; découpage droit/bas
+        move.w  DC_CMAXX(a5),d6      ; right/bottom clipping
         sub.w   d2,d6
         addq.w  #1,d6
         cmp.w   d6,d4
@@ -3061,10 +3061,10 @@ gfx_BltBitMapRastPort:
         ble     .bb_oret
         tst.w   d5
         ble     .bb_oret
-        sub.w   DC_BX(a5),d2         ; coordonnées dans le BitMap de la ClipRect
+        sub.w   DC_BX(a5),d2         ; coordinates within the ClipRect's BitMap
         sub.w   DC_BY(a5),d3
-        move.l  DC_CBM(a5),a3        ; a3 = BitMap destination
-        moveq   #0,d7                ; d7 = plan
+        move.l  DC_CBM(a5),a3        ; a3 = destination BitMap
+        moveq   #0,d7                ; d7 = plane
 .bb_plane:
         moveq   #0,d6
         move.b  bm_Depth(a3),d6
@@ -3074,7 +3074,7 @@ gfx_BltBitMapRastPort:
         move.b  rp_Mask(a0),d6
         btst    d7,d6
         beq     .bb_pnext
-        moveq   #0,d6                ; a2 = plan source (0 / -1 / adresse)
+        moveq   #0,d6                ; a2 = source plane (0 / -1 / address)
         move.b  bm_Depth(a4),d6
         sub.l   a2,a2
         cmp.w   d6,d7
@@ -3083,10 +3083,10 @@ gfx_BltBitMapRastPort:
         lsl.w   #2,d6
         move.l  bm_Planes(a4,d6.w),a2
 .bb_src:
-        movem.l d0-d5/d7/a2,-(sp)    ; lignes : d1 = ligne source, d3 = ligne destination, d5 = compteur
+        movem.l d0-d5/d7/a2,-(sp)    ; rows: d1 = source row, d3 = destination row, d5 = counter
 .bb_row:
         movem.l d0-d5/d7/a2,-(sp)
-        move.l  a2,d6                ; adresse de la ligne source (sauf plan constant)
+        move.l  a2,d6                ; address of the source row (except constant plane)
         beq.s   .bb_const
         cmp.l   #-1,d6
         beq.s   .bb_const
@@ -3095,7 +3095,7 @@ gfx_BltBitMapRastPort:
         mulu    d1,d6
         add.l   d6,a2
 .bb_const:
-        move.w  d7,d6                ; a1 = ligne destination
+        move.w  d7,d6                ; a1 = destination row
         lsl.w   #2,d6
         move.l  bm_Planes(a3,d6.w),a1
         moveq   #0,d6
@@ -3114,31 +3114,31 @@ gfx_BltBitMapRastPort:
         bra     .bb_plane
 .bb_oret:
         rts
-; dr_bits(a2 = ligne source | 0 | -1, d0 = bit source, a1 = ligne destination, d2 = bit destination, d4 = largeur,
-; a5 = contexte : DC_MINTERM) : combine d4 bits. Pour chaque octet destination : 8 bits source alignés (deux octets
-; lus puis décalés), masques de bord calculés une fois ; résultat = minterm(B = source, C = destination), le canal A
-; du blitter valant 1 (seuls les bits 7-4 du minterm comptent). Clobbe d0-d7/a0.
+; dr_bits(a2 = source row | 0 | -1, d0 = source bit, a1 = destination row, d2 = destination bit, d4 = width,
+; a5 = context: DC_MINTERM): combines d4 bits. For each destination byte: 8 aligned source bits (two bytes
+; read then shifted), edge masks computed once; result = minterm(B = source, C = destination), the blitter's A
+; channel being 1 (only bits 7-4 of the minterm matter). Clobbers d0-d7/a0.
 dr_bits:
         move.w  d2,d5
-        lsr.w   #3,d5                ; d5 = octet destination courant (le premier)
-        move.w  d5,-(sp)             ; (sp) = premier octet
+        lsr.w   #3,d5                ; d5 = current destination byte (the first one)
+        move.w  d5,-(sp)             ; (sp) = first byte
         move.w  d2,d7
         add.w   d4,d7
-        subq.w  #1,d7                ; d7 = dernier bit destination
-        moveq   #-1,d1               ; d1.b = masque du premier octet : pixels >= destX
+        subq.w  #1,d7                ; d7 = last destination bit
+        moveq   #-1,d1               ; d1.b = mask of the first byte: pixels >= destX
         move.w  d2,d3
         and.w   #7,d3
         lsr.b   d3,d1
-        move.w  d7,d3                ; d2.b = masque du dernier octet : pixels <= dernier bit
+        move.w  d7,d3                ; d2.b = mask of the last byte: pixels <= last bit
         and.w   #7,d3
         moveq   #7,d4
         sub.w   d3,d4
-        sub.w   d2,d0                ; d0 = bit source - bit destination
+        sub.w   d2,d0                ; d0 = source bit - destination bit
         moveq   #-1,d2
         lsl.b   d4,d2
-        lsr.w   #3,d7                ; d7 = dernier octet destination
-        cmp.b   #$C0,DC_MINTERM(a5)  ; voie rapide : copie d'un plan réel, décalage multiple de 8 (sauvegardes de
-        bne.s   .bt_byte             ; layers : même position des bits modulo 16) -> octets recopiés tels quels
+        lsr.w   #3,d7                ; d7 = last destination byte
+        cmp.b   #$C0,DC_MINTERM(a5)  ; fast path: copy of a real plane, shift a multiple of 8 (layers
+        bne.s   .bt_byte             ; backups: same bit position modulo 16) -> bytes copied as is
         move.l  a2,d4
         beq.s   .bt_byte
         addq.l  #1,d4
@@ -3149,11 +3149,11 @@ dr_bits:
         move.l  a1,-(sp)
         asr.w   #3,d0
         lea     0(a2,d0.w),a0
-        add.w   d5,a0                ; a0 = source du premier octet destination
+        add.w   d5,a0                ; a0 = source of the first destination byte
         add.w   d5,a1
         cmp.w   d5,d7
         bne.s   .bf_multi
-        and.b   d2,d1                ; un seul octet : les deux masques
+        and.b   d2,d1                ; a single byte: both masks
         move.b  (a0),d4
         and.b   d1,d4
         not.b   d1
@@ -3161,15 +3161,15 @@ dr_bits:
         or.b    d4,(a1)
         bra.s   .bf_done
 .bf_multi:
-        move.b  (a0)+,d4             ; premier octet (masqué)
+        move.b  (a0)+,d4             ; first byte (masked)
         and.b   d1,d4
         not.b   d1
         and.b   d1,(a1)
         or.b    d4,(a1)+
         sub.w   d5,d7
-        subq.w  #1,d7                ; d7 = octets pleins
+        subq.w  #1,d7                ; d7 = full bytes
         beq.s   .bf_last
-        move.w  a0,d3                ; même parité : alignement sur un mot puis copie par longs
+        move.w  a0,d3                ; same parity: align to a word then copy as longs
         move.w  a1,d4
         eor.w   d4,d3
         btst    #0,d3
@@ -3195,7 +3195,7 @@ dr_bits:
         move.b  (a0)+,(a1)+
         dbra    d7,.bf_mid
 .bf_last:
-        move.b  (a0),d4              ; dernier octet (masqué)
+        move.b  (a0),d4              ; last byte (masked)
         and.b   d2,d4
         not.b   d2
         and.b   d2,(a1)
@@ -3205,7 +3205,7 @@ dr_bits:
         addq.l  #2,sp
         rts
 .bt_byte:
-        moveq   #-1,d6               ; d6.b = masque de l'octet
+        moveq   #-1,d6               ; d6.b = mask of the byte
         cmp.w   (sp),d5
         bne.s   .bt_nf
         and.b   d1,d6
@@ -3215,15 +3215,15 @@ dr_bits:
         and.b   d2,d6
 .bt_nl:
         move.l  a2,d4
-        beq.s   .bt_put              ; plan source nul : 0
+        beq.s   .bt_put              ; null source plane: 0
         moveq   #-1,d4
         cmp.l   a2,d4
-        beq.s   .bt_put              ; plan source -1 : 1
-        move.w  d5,d3                ; bit source du pixel de gauche de l'octet
+        beq.s   .bt_put              ; source plane -1: 1
+        move.w  d5,d3                ; source bit of the leftmost pixel of the byte
         lsl.w   #3,d3
         add.w   d0,d3
         move.w  d3,d4
-        asr.w   #3,d4                ; octet source (-1 possible au bord gauche : bits masqués)
+        asr.w   #3,d4                ; source byte (-1 possible at the left edge: bits masked)
         lea     0(a2,d4.w),a0
         move.b  (a0)+,d4
         lsl.w   #8,d4
@@ -3233,10 +3233,10 @@ dr_bits:
         lsr.w   #8,d4
 .bt_put:
         cmp.b   #$C0,DC_MINTERM(a5)
-        beq.s   .bt_copy             ; copie : voie directe
+        beq.s   .bt_copy             ; copy: direct path
         movem.l d0-d2,-(sp)
         move.b  0(a1,d5.w),d3        ; C = destination
-        moveq   #0,d1                ; d1 = résultat
+        moveq   #0,d1                ; d1 = result
         move.b  DC_MINTERM(a5),d0
         btst    #7,d0                ; B & C
         beq.s   .mt_6
@@ -3278,26 +3278,27 @@ dr_bits:
         addq.l  #2,sp
         rts
 
-; BltBitMap(src a0, srcX d0, srcY d1, dest a1, destX d2, destY d3, largeur d4, hauteur d5, minterm d6, masque d7,
-; tampon a2 ignoré) -> d0 = nombre de plans traités. Rectangle découpé aux deux BitMaps. Plans : ceux du masque
-; présents dans les DEUX BitMaps (plan destination NULL ou -1 ignoré) ; un plan source NULL ou -1 vaut 0 / 1. Même BitMap source et destination : chaque ligne source passe par un tampon (aucun recouvrement
-; possible dans la ligne) et les lignes sont parcourues du bas vers le haut si la destination est plus basse.
-; Cadre : contexte DC (DC_MINTERM pour dr_bits) suivi des variables BB_*.
+; BltBitMap(src a0, srcX d0, srcY d1, dest a1, destX d2, destY d3, width d4, height d5, minterm d6, mask d7,
+; buffer a2 ignored) -> d0 = number of planes processed. Rectangle clipped to both BitMaps. Planes: those of the mask
+; present in BOTH BitMaps (NULL or -1 destination plane ignored); a NULL or -1 source plane counts as 0 / 1. Same
+; source and destination BitMap: each source row goes through a buffer (no overlap possible within the row) and the
+; rows are walked from bottom to top if the destination is lower.
+; Frame: DC context (DC_MINTERM for dr_bits) followed by the BB_* variables.
 BB_SX           EQU DC_SIZE
 BB_SY           EQU DC_SIZE+2
 BB_DX           EQU DC_SIZE+4
 BB_DY           EQU DC_SIZE+6
 BB_W            EQU DC_SIZE+8
 BB_H            EQU DC_SIZE+10
-BB_PLANE        EQU DC_SIZE+12           ; n° du plan courant
-BB_COUNT        EQU DC_SIZE+14           ; plans traités
-BB_STEP         EQU DC_SIZE+16           ; +1 / -1 entre lignes
-BB_CSY          EQU DC_SIZE+18           ; ligne source courante
-BB_CDY          EQU DC_SIZE+20           ; ligne destination courante
-BB_N            EQU DC_SIZE+22           ; lignes restantes
+BB_PLANE        EQU DC_SIZE+12           ; current plane number
+BB_COUNT        EQU DC_SIZE+14           ; planes processed
+BB_STEP         EQU DC_SIZE+16           ; +1 / -1 between rows
+BB_CSY          EQU DC_SIZE+18           ; current source row
+BB_CDY          EQU DC_SIZE+20           ; current destination row
+BB_N            EQU DC_SIZE+22           ; remaining rows
 BB_MASK         EQU DC_SIZE+24           ; byte
-BB_BUF          EQU DC_SIZE+26           ; long : tampon de ligne (0 si BitMaps distincts)
-BB_SPLANE       EQU DC_SIZE+30           ; long : plan source courant (0 / -1 / adresse)
+BB_BUF          EQU DC_SIZE+26           ; long: row buffer (0 if distinct BitMaps)
+BB_SPLANE       EQU DC_SIZE+30           ; long: current source plane (0 / -1 / address)
 BB_SIZE         EQU DC_SIZE+34
 gfx_BltBitMap:
         movem.l d2-d7/a2-a6,-(sp)
@@ -3308,7 +3309,7 @@ gfx_BltBitMap:
         move.l  a0,a4                ; a4 = source, a3 = destination
         move.l  a1,a3
         clr.w   BB_COUNT(a5)
-        tst.w   d0                   ; découpage aux deux BitMaps : bords gauche / haut
+        tst.w   d0                   ; clipping to both BitMaps: left / top edges
         bpl.s   .bm_1
         add.w   d0,d4
         sub.w   d0,d2
@@ -3332,7 +3333,7 @@ gfx_BltBitMap:
         sub.w   d3,d1
         moveq   #0,d3
 .bm_4:
-        move.w  bm_BytesPerRow(a4),d6    ; bords droit / bas
+        move.w  bm_BytesPerRow(a4),d6    ; right / bottom edges
         lsl.w   #3,d6
         sub.w   d0,d6
         cmp.w   d6,d4
@@ -3366,14 +3367,14 @@ gfx_BltBitMap:
         clr.l   BB_BUF(a5)
         cmp.l   a3,a4
         bne.s   .bm_go
-        moveq   #0,d0                ; même BitMap : tampon de ligne (+1 octet de marge de chaque côté)
+        moveq   #0,d0                ; same BitMap: row buffer (+1 byte of margin on each side)
         move.w  bm_BytesPerRow(a4),d0
         addq.l  #4,d0
         moveq   #MEMF_PUBLIC,d1
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq     .bm_ret              ; pas de tampon : on refuse plutôt que de corrompre
+        beq     .bm_ret              ; no buffer: refuse rather than corrupt
         addq.l  #1,d0
         move.l  d0,BB_BUF(a5)
 .bm_go:
@@ -3384,8 +3385,8 @@ gfx_BltBitMap:
         move.b  bm_Depth(a3),d0
         cmp.w   d0,d6
         bge     .bm_free
-        move.b  bm_Depth(a4),d0      ; seuls les plans communs aux deux BitMaps (spec graphics-blitter-v34 §1.1 :
-        cmp.w   d0,d6                ; source de 2 plans vers 3 plans -> 2 copiés, le 3e plan reste intact)
+        move.b  bm_Depth(a4),d0      ; only the planes common to both BitMaps (spec graphics-blitter-v34 §1.1:
+        cmp.w   d0,d6                ; 2-plane source to 3 planes -> 2 copied, the 3rd plane stays intact)
         bge     .bm_free
         move.b  BB_MASK(a5),d0
         btst    d6,d0
@@ -3408,7 +3409,7 @@ gfx_BltBitMap:
         move.w  BB_DY(a5),d0
         cmp.w   BB_SY(a5),d0
         ble.s   .bm_row
-        move.w  BB_H(a5),d0          ; destination plus basse : du bas vers le haut
+        move.w  BB_H(a5),d0          ; lower destination: from bottom to top
         subq.w  #1,d0
         add.w   d0,BB_CSY(a5)
         add.w   d0,BB_CDY(a5)
@@ -3422,10 +3423,10 @@ gfx_BltBitMap:
         moveq   #0,d0
         move.w  bm_BytesPerRow(a4),d0
         mulu    BB_CSY(a5),d0
-        add.l   d0,a2                ; a2 = ligne source
+        add.l   d0,a2                ; a2 = source row
         move.l  BB_BUF(a5),d0
         beq.s   .bm_dst
-        move.l  d0,a0                ; même BitMap : ligne recopiée dans le tampon d'abord
+        move.l  d0,a0                ; same BitMap: row copied into the buffer first
         move.l  a2,a1
         move.w  bm_BytesPerRow(a4),d0
         subq.w  #1,d0
@@ -3440,7 +3441,7 @@ gfx_BltBitMap:
         moveq   #0,d0
         move.w  bm_BytesPerRow(a3),d0
         mulu    BB_CDY(a5),d0
-        add.l   d0,a1                ; a1 = ligne destination
+        add.l   d0,a1                ; a1 = destination row
         move.w  BB_SX(a5),d0
         move.w  BB_DX(a5),d2
         move.w  BB_W(a5),d4
@@ -3470,8 +3471,8 @@ gfx_BltBitMap:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ReadPixel(rp a1, x d0, y d1) -> d0 = n° de couleur du pixel (relatif à la couche), -1 s'il n'est dans aucune
-; ClipRect lisible (hors zone, ou caché sans sauvegarde).
+; ReadPixel(rp a1, x d0, y d1) -> d0 = colour number of the pixel (relative to the layer), -1 if it is in no
+; readable ClipRect (outside the area, or hidden without backup).
 gfx_ReadPixel:
         movem.l d2-d4/a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -3512,13 +3513,13 @@ gfx_ReadPixel:
         mulu    d3,d1
         move.w  d2,d4
         lsr.w   #3,d4
-        add.l   d4,d1                ; d1 = décalage de l'octet
+        add.l   d4,d1                ; d1 = offset of the byte
         not.w   d2
-        and.w   #7,d2                ; d2 = n° du bit (7 = pixel de gauche)
+        and.w   #7,d2                ; d2 = bit number (7 = leftmost pixel)
         moveq   #0,d0
         moveq   #0,d3
         move.b  bm_Depth(a0),d3
-        subq.w  #1,d3                ; du plan le plus haut au plan 0
+        subq.w  #1,d3                ; from the highest plane to plane 0
 .rp_pl:
         add.w   d0,d0
         move.w  d3,d4
@@ -3536,23 +3537,23 @@ gfx_ReadPixel:
         movem.l (sp)+,d2-d4/a5
         rts
 
-; gfx_putrow(rp a1, couleurs a0, x d0, y d1, nombre d2) : pose une ligne de pixels (un octet de couleur par pixel,
-; 255 = transparent) à (x, y) relatifs au RastPort, par plages de même couleur, à travers ses ClipRects, en JAM2
-; quel que soit rp_DrawMode (rp_Mask respecté). Sert au dessin des GELs. Préserve d2-d7/a1-a6.
+; gfx_putrow(rp a1, colours a0, x d0, y d1, count d2): draws a row of pixels (one colour byte per pixel,
+; 255 = transparent) at (x, y) relative to the RastPort, by runs of the same colour, through its ClipRects, in JAM2
+; whatever rp_DrawMode (rp_Mask respected). Used for drawing GELs. Preserves d2-d7/a1-a6.
 gfx_putrow:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        move.l  a0,a2                ; a2 = couleurs
+        move.l  a0,a2                ; a2 = colours
         movem.w d0-d1,-(sp)
         bsr     dr_ctx
         movem.w (sp)+,d4-d5
-        add.w   DC_OX(a5),d4         ; d4 = x absolu du premier pixel
-        add.w   DC_OY(a5),d5         ; d5 = y absolu
+        add.w   DC_OX(a5),d4         ; d4 = absolute x of the first pixel
+        add.w   DC_OY(a5),d5         ; d5 = absolute y
         move.b  rp_DrawMode(a1),d6
         move.b  #JAM2,rp_DrawMode(a1)
-        move.w  d2,d7                ; d7 = nombre
-        moveq   #0,d0                ; d0 = index courant
+        move.w  d2,d7                ; d7 = count
+        moveq   #0,d0                ; d0 = current index
 .pr_lp:
         cmp.w   d7,d0
         bge.s   .pr_end
@@ -3569,7 +3570,7 @@ gfx_putrow:
         bge.s   .pr_emit
         cmp.b   0(a2,d2.w),d3
         beq.s   .pr_ext
-.pr_emit:                            ; plage [d0 .. d2-1]
+.pr_emit:                            ; run [d0 .. d2-1]
         move.w  d2,-(sp)
         subq.w  #1,d2
         add.w   d4,d0
@@ -3585,10 +3586,10 @@ gfx_putrow:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; LockLayerRom(layer a5) / UnlockLayerRom(layer a5) : sémaphore de la couche. Préservent tous les registres, comme
-; l'exige l'AutoDoc.
+; LockLayerRom(layer a5) / UnlockLayerRom(layer a5): the layer's semaphore. Preserve all registers, as
+; the AutoDoc requires.
 gfx_LockLayerRom:
-        cmpa.w  #0,a5                ; RastPort sans couche : rien à verrouiller
+        cmpa.w  #0,a5                ; RastPort without a layer: nothing to lock
         beq.s   .lock_r
         movem.l d0-d1/a0-a1/a6,-(sp)
         lea     LY_LOCK(a5),a0
@@ -3598,7 +3599,7 @@ gfx_LockLayerRom:
 .lock_r:
         rts
 gfx_UnlockLayerRom:
-        cmpa.w  #0,a5                ; RastPort sans couche : rien à verrouiller
+        cmpa.w  #0,a5                ; RastPort without a layer: nothing to lock
         beq.s   .unlo_r
         movem.l d0-d1/a0-a1/a6,-(sp)
         lea     LY_LOCK(a5),a0
@@ -3607,8 +3608,8 @@ gfx_UnlockLayerRom:
         movem.l (sp)+,d0-d1/a0-a1/a6
 .unlo_r:
         rts
-; AttemptLockLayerRom(layer a5) -> d0 = vrai si la couche est verrouillée (sans attendre), faux si elle est tenue par
-; une autre tâche. Préserve d1/a0/a1/a6.
+; AttemptLockLayerRom(layer a5) -> d0 = true if the layer is locked (without waiting), false if it is held by
+; another task. Preserves d1/a0/a1/a6.
 gfx_AttemptLockLayerRom:
         moveq   #1,d0
         cmpa.w  #0,a5

@@ -1,7 +1,7 @@
-; adn.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire : MakeDosNode + AddDosNode(0, 0, dn) APRÈS l'init de dos (piste analyse).
-; Paquet : "ZZ0", "trackdisk.device", unité 1, géométrie DD 880 Ko. Le device n'est jamais accédé.
-; Écrit « AD dn résultat » ; relancer bootlist ensuite pour voir DevInfo / eb_MountList.
+; adn.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe: MakeDosNode + AddDosNode(0, 0, dn) AFTER dos init (analysis track).
+; Packet: "ZZ0", "trackdisk.device", unit 1, DD 880 KB geometry. The device is never accessed.
+; Writes "AD dn result"; run bootlist afterwards to see DevInfo / eb_MountList.
 
                 section code,code
 _start:
@@ -24,7 +24,7 @@ _start:
                 move.l  a1,(a0)
                 lea     n_exec(pc),a1
                 move.l  a1,4(a0)
-                jsr     -144(a6)             ; MakeDosNode(a0 paquet)
+                jsr     -144(a6)             ; MakeDosNode(a0 packet)
                 move.l  d0,d6
                 beq.s   .out
                 moveq   #0,d0                ; bootPri
@@ -65,8 +65,8 @@ hex:            moveq   #7,d3
                 move.b  #' ',(a1)+
                 rts
                 cnop    0,4
-pp:             dc.l    0,0                  ; noms DOS / exec
-                dc.l    1                    ; unité
+pp:             dc.l    0,0                  ; DOS / exec names
+                dc.l    1                    ; unit
                 dc.l    0                    ; flags OpenDevice
                 dc.l    11                   ; de_TableSize
                 dc.l    128,0,2,1,11,2,0,0,0,79,5

@@ -1,90 +1,90 @@
-; src/intuition/intuition.i — layout IntuitionBase V34 + constantes M5.
-; Piste IMPLÉMENTATION (« clean ») : NDK intuition.i/intuitionbase.i + intuition_lib.fd (public). AUCUNE lecture ROM.
-; LIB_SIZE est défini dans exec.i (inclus AVANT ce fichier).
+; src/intuition/intuition.i - IntuitionBase V34 layout + M5 constants.
+; IMPLEMENTATION track ("clean"): NDK intuition.i/intuitionbase.i + intuition_lib.fd (public). NO ROM reading.
+; LIB_SIZE is defined in exec.i (included BEFORE this file).
 
-; --- IntuitionBase : champs publics 1re génération (stables V34 ; intuitionbase.i) ---
-; ib_LibNode = base Library ; ib_ViewLord = View embarqué d'intuition (le « ViewLord », renvoyé par ViewAddress).
-IB_VIEWLORD      EQU LIB_SIZE          ; 34 : struct View embarquée (v_SIZEOF = 18)
+; --- IntuitionBase: 1st-generation public fields (stable in V34; intuitionbase.i) ---
+; ib_LibNode = Library base; ib_ViewLord = intuition's embedded View (the "ViewLord", returned by ViewAddress).
+IB_VIEWLORD      EQU LIB_SIZE          ; 34: embedded struct View (v_SIZEOF = 18)
 IB_ACTIVEWINDOW  EQU IB_VIEWLORD+18    ; 52
 IB_ACTIVESCREEN  EQU IB_ACTIVEWINDOW+4 ; 56
-IB_FIRSTSCREEN   EQU IB_ACTIVESCREEN+4 ; 60 : Screen frontal (liste front->back)
+IB_FIRSTSCREEN   EQU IB_ACTIVESCREEN+4 ; 60: front Screen (front->back list)
 IB_FLAGS         EQU IB_FIRSTSCREEN+4  ; 64
 IB_MOUSEY        EQU IB_FLAGS+4        ; 68
 IB_MOUSEX        EQU IB_MOUSEY+2       ; 70
 IB_SECONDS       EQU IB_MOUSEX+2       ; 72
 IB_MICROS        EQU IB_SECONDS+4      ; 76
-; champs privés (au-delà de la partie publique) :
-IB_GFXBASE       EQU IB_MICROS+4       ; 80 : GfxBase (trouvée à l'init)
-IB_WBSCREEN      EQU IB_GFXBASE+4      ; 84 : écran Workbench ouvert (0 sinon)
-IB_PTRSS         EQU IB_WBSCREEN+4     ; 88 : SimpleSprite du pointeur (canal 0)
-IB_LAYERSBASE    EQU IB_PTRSS+12       ; 100 : LayersBase (trouvée à l'init)
-; tâche d'entrée d'intuition : l'interruption souris dépose les boutons dans un anneau, la tâche les traite
-IB_INTASK        EQU IB_LAYERSBASE+4   ; tâche d'entrée (0 tant qu'elle n'a pas son signal)
-IB_INSIG         EQU IB_INTASK+4       ; masque du signal d'événement
-IB_EVHEAD        EQU IB_INSIG+4        ; UWORD : prochaine case écrite (interruption)
-IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD : prochaine case lue (tâche)
-IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN cases de IB_EVSZ octets : code, x, y (écran)
+; private fields (beyond the public part):
+IB_GFXBASE       EQU IB_MICROS+4       ; 80: GfxBase (found at init)
+IB_WBSCREEN      EQU IB_GFXBASE+4      ; 84: open Workbench screen (0 otherwise)
+IB_PTRSS         EQU IB_WBSCREEN+4     ; 88: pointer SimpleSprite (channel 0)
+IB_LAYERSBASE    EQU IB_PTRSS+12       ; 100: LayersBase (found at init)
+; intuition input task: the mouse interrupt drops the buttons into a ring, the task processes them
+IB_INTASK        EQU IB_LAYERSBASE+4   ; input task (0 until it has its signal)
+IB_INSIG         EQU IB_INTASK+4       ; event signal mask
+IB_EVHEAD        EQU IB_INSIG+4        ; UWORD: next slot written (interrupt)
+IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD: next slot read (task)
+IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN slots of IB_EVSZ bytes: code, x, y (screen)
 IB_EVN           EQU 8
 IB_EVSZ          EQU 6
-IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE : la tâche veut aussi les mouvements (glisser, menus)
-IB_MOVED         EQU IB_TRACK+1        ; BYTE : mouvement à traiter
-IB_DRAGWIN       EQU IB_MOVED+1        ; fenêtre en cours de déplacement / redimensionnement | 0
-IB_DRAGMODE      EQU IB_DRAGWIN+4      ; UWORD : IT_DRAGMOVE / IT_DRAGSIZE
-IB_DRAGSX        EQU IB_DRAGMODE+2     ; position du pointeur au début du geste (écran)
+IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE: the task also wants the movements (drag, menus)
+IB_MOVED         EQU IB_TRACK+1        ; BYTE: movement to process
+IB_DRAGWIN       EQU IB_MOVED+1        ; window being moved / resized | 0
+IB_DRAGMODE      EQU IB_DRAGWIN+4      ; UWORD: IT_DRAGMOVE / IT_DRAGSIZE
+IB_DRAGSX        EQU IB_DRAGMODE+2     ; pointer position at the start of the gesture (screen)
 IB_DRAGSY        EQU IB_DRAGSX+2
-IB_BOX           EQU IB_DRAGSY+2       ; cadre fantôme affiché : x0, y0, x1, y1
-IB_BOXON         EQU IB_BOX+8          ; BYTE : cadre fantôme affiché
-IB_MENUWIN       EQU IB_BOXON+2        ; fenêtre dont la barre de menus est affichée | 0
-IB_MENUBAR       EQU IB_MENUWIN+4      ; couche de la barre de menus | 0
-IB_MENUBOX       EQU IB_MENUBAR+4      ; couche du menu déroulé | 0
-IB_MENUCUR       EQU IB_MENUBOX+4      ; Menu déroulé | 0
-IB_ITEMCUR       EQU IB_MENUCUR+4      ; MenuItem en surbrillance | 0
-IB_MENUNUM       EQU IB_ITEMCUR+4      ; UWORD : n° du menu déroulé
-IB_ITEMNUM       EQU IB_MENUNUM+2      ; UWORD : n° de l'élément en surbrillance
-IB_PICK          EQU IB_ITEMNUM+2      ; UWORD : code MENUPICK en construction
-IB_GADACT        EQU IB_PICK+2         ; gadget d'application enfoncé (bouton gauche tenu) | 0
-IB_GADWIN        EQU IB_GADACT+4       ; sa fenêtre
-IB_STRGAD        EQU IB_GADWIN+4       ; gadget texte actif (reçoit le clavier) | 0
-IB_STRWIN        EQU IB_STRGAD+4       ; sa fenêtre
-IB_SYSACT        EQU IB_STRWIN+4       ; UWORD : gadget système enfoncé (IT_SYSCLOSE / BACK / FRONT) | 0
-IB_SYSWIN        EQU IB_SYSACT+2       ; sa fenêtre
-IB_PKX           EQU IB_SYSWIN+4       ; gadget proportionnel : knob (relatif au conteneur) pendant un glissement
+IB_BOX           EQU IB_DRAGSY+2       ; ghost frame displayed: x0, y0, x1, y1
+IB_BOXON         EQU IB_BOX+8          ; BYTE: ghost frame displayed
+IB_MENUWIN       EQU IB_BOXON+2        ; window whose menu bar is displayed | 0
+IB_MENUBAR       EQU IB_MENUWIN+4      ; layer of the menu bar | 0
+IB_MENUBOX       EQU IB_MENUBAR+4      ; layer of the pulled-down menu | 0
+IB_MENUCUR       EQU IB_MENUBOX+4      ; pulled-down Menu | 0
+IB_ITEMCUR       EQU IB_MENUCUR+4      ; highlighted MenuItem | 0
+IB_MENUNUM       EQU IB_ITEMCUR+4      ; UWORD: number of the pulled-down menu
+IB_ITEMNUM       EQU IB_MENUNUM+2      ; UWORD: number of the highlighted item
+IB_PICK          EQU IB_ITEMNUM+2      ; UWORD: MENUPICK code being built
+IB_GADACT        EQU IB_PICK+2         ; pressed application gadget (left button held) | 0
+IB_GADWIN        EQU IB_GADACT+4       ; its window
+IB_STRGAD        EQU IB_GADWIN+4       ; active text gadget (receives the keyboard) | 0
+IB_STRWIN        EQU IB_STRGAD+4       ; its window
+IB_SYSACT        EQU IB_STRWIN+4       ; UWORD: pressed system gadget (IT_SYSCLOSE / BACK / FRONT) | 0
+IB_SYSWIN        EQU IB_SYSACT+2       ; its window
+IB_PKX           EQU IB_SYSWIN+4       ; proportional gadget: knob (relative to the container) during a drag
 IB_PKY           EQU IB_PKX+2
-IB_PMX           EQU IB_PKY+2          ; dernière position du pointeur (écran) pendant le glissement
+IB_PMX           EQU IB_PKY+2          ; last pointer position (screen) during the drag
 IB_PMY           EQU IB_PMX+2
-IB_PREFS         EQU IB_PMY+2          ; Preferences courantes (PF_SIZE octets), lues par GetPrefs, posées par SetPrefs
-IB_PREMX         EQU IB_PREFS+PF_SIZE  ; reste du mouvement souris par axe (division par PointerTicks)
+IB_PREFS         EQU IB_PMY+2          ; current Preferences (PF_SIZE bytes), read by GetPrefs, set by SetPrefs
+IB_PREMX         EQU IB_PREFS+PF_SIZE  ; remainder of the mouse movement per axis (division by PointerTicks)
 IB_PREMY         EQU IB_PREMX+2
-IB_PTRDATA       EQU IB_PREMY+2        ; données chip du sprite du pointeur par défaut | 0
-IB_VINITX        EQU IB_PTRDATA+4      ; DxOffset / DyOffset de la vue à l'init (ViewInitX/Y des Preferences)
+IB_PTRDATA       EQU IB_PREMY+2        ; chip data of the default pointer sprite | 0
+IB_VINITX        EQU IB_PTRDATA+4      ; DxOffset / DyOffset of the view at init (ViewInitX/Y of the Preferences)
 IB_VINITY        EQU IB_VINITX+2
-IB_TATTR         EQU IB_VINITY+2       ; TextAttr de la police par défaut (topaz 8 ou 9 selon FontHeight)
-IB_SUBBOX        EQU IB_TATTR+8        ; couche de la boîte de sous-éléments | 0
-IB_SUBITEM       EQU IB_SUBBOX+4       ; élément dont les sous-éléments sont affichés | 0
-IB_SUBCUR        EQU IB_SUBITEM+4      ; sous-élément en surbrillance | 0
-IB_ITEMHIT       EQU IB_SUBCUR+4       ; élément sous le pointeur, actif ou non | 0
-IB_SUBNUM        EQU IB_ITEMHIT+4      ; UWORD : n° du sous-élément en surbrillance
-IB_SUBPNUM       EQU IB_SUBNUM+2       ; UWORD : n° de l'élément IB_SUBITEM
-IB_SUBLX         EQU IB_SUBPNUM+2      ; position écran de la boîte de sous-éléments
+IB_TATTR         EQU IB_VINITY+2       ; TextAttr of the default font (topaz 8 or 9 depending on FontHeight)
+IB_SUBBOX        EQU IB_TATTR+8        ; layer of the sub-item box | 0
+IB_SUBITEM       EQU IB_SUBBOX+4       ; item whose sub-items are displayed | 0
+IB_SUBCUR        EQU IB_SUBITEM+4      ; highlighted sub-item | 0
+IB_ITEMHIT       EQU IB_SUBCUR+4       ; item under the pointer, enabled or not | 0
+IB_SUBNUM        EQU IB_ITEMHIT+4      ; UWORD: number of the highlighted sub-item
+IB_SUBPNUM       EQU IB_SUBNUM+2       ; UWORD: number of the IB_SUBITEM item
+IB_SUBLX         EQU IB_SUBPNUM+2      ; screen position of the sub-item box
 IB_SUBLY         EQU IB_SUBLX+2
-IB_SUBOX         EQU IB_SUBLY+2        ; origine des sous-éléments dans cette boîte
+IB_SUBOX         EQU IB_SUBLY+2        ; origin of the sub-items in this box
 IB_SUBOY         EQU IB_SUBOX+2
-IB_DOX           EQU IB_SUBOY+2        ; origine des éléments dans la boîte en cours de dessin (mn_drawitems)
+IB_DOX           EQU IB_SUBOY+2        ; origin of the items in the box being drawn (mn_drawitems)
 IB_DOY           EQU IB_DOX+2
-IB_DGHOST        EQU IB_DOY+2          ; BYTE : boîte en cours de dessin toute grisée (menu ou élément parent inactif)
+IB_DGHOST        EQU IB_DOY+2          ; BYTE: box being drawn entirely ghosted (menu or parent item disabled)
 INTUITIONBASE_SIZE EQU IB_DGHOST+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
-IT_KEYCODE       EQU $0200             ; anneau d'entrée : code >= IT_KEYCODE = touche (keycode en bits 0-6), x = qualificatif
-IT_TICKCODE      EQU $0400             ; anneau d'entrée : tic IECLASS_TIMER d'input.device (INTUITICKS)
-IT_DISKINCODE    EQU $0401             ; anneau d'entrée : IECLASS_DISKINSERTED
-IT_DISKOUTCODE   EQU $0402             ; anneau d'entrée : IECLASS_DISKREMOVED
-IT_MENUKEYCODE   EQU $0403             ; anneau d'entrée : raccourci Amiga droite, x = code de menu, y = qualificatif
+IT_KEYCODE       EQU $0200             ; input ring: code >= IT_KEYCODE = key (keycode in bits 0-6), x = qualifier
+IT_TICKCODE      EQU $0400             ; input ring: IECLASS_TIMER tick from input.device (INTUITICKS)
+IT_DISKINCODE    EQU $0401             ; input ring: IECLASS_DISKINSERTED
+IT_DISKOUTCODE   EQU $0402             ; input ring: IECLASS_DISKREMOVED
+IT_MENUKEYCODE   EQU $0403             ; input ring: right Amiga shortcut, x = menu code, y = qualifier
 IT_DRAGMOVE      EQU 1
 IT_DRAGSIZE      EQU 2
 
-; --- layers.library (graphics/clip.h, layers.h ; LVO de l'AutoDoc) ---
+; --- layers.library (graphics/clip.h, layers.h; LVOs from the AutoDoc) ---
 LVO_INITLAYERS          EQU -30
 LVO_CREATEUPFRONTLAYER  EQU -36
 LVO_CREATEBEHINDLAYER   EQU -42
@@ -99,21 +99,21 @@ LVO_INSTALLCLIPREGION   EQU -174
 LVO_DELETELAYER         EQU -90
 LVO_LOCKLAYERS          EQU -108
 LVO_UNLOCKLAYERS        EQU -114
-IL_RP           EQU 12               ; struct Layer : RastPort
-IL_MINX         EQU 16               ; bornes (coordonnées de l'écran)
+IL_RP           EQU 12               ; struct Layer: RastPort
+IL_MINX         EQU 16               ; bounds (screen coordinates)
 IL_MINY         EQU 18
 IL_MAXX         EQU 20
 IL_MAXY         EQU 22
 IL_FLAGS        EQU 30               ; Flags (UWORD)
-IL_WINDOW       EQU 40               ; Window (réservé à l'interface utilisateur)
-IL_LOCK         EQU 72               ; SignalSemaphore de la couche
-IL_CLIPREGION   EQU 126              ; région de découpe de l'application (InstallClipRegion)
+IL_WINDOW       EQU 40               ; Window (reserved for the user interface)
+IL_LOCK         EQU 72               ; SignalSemaphore of the layer
+IL_CLIPREGION   EQU 126              ; application clip region (InstallClipRegion)
 IL_DAMAGE       EQU 156              ; DamageList (struct Region *)
 IL_SIMPLE       EQU 1                ; LAYERSIMPLE
 IL_SMART        EQU 2                ; LAYERSMART
 IL_SUPER        EQU 4                ; LAYERSUPER
 IL_BACKDROP     EQU $40              ; LAYERBACKDROP
-ILB_REFRESH     EQU 7                ; LAYERREFRESH (bit de l'octet bas de Flags)
+ILB_REFRESH     EQU 7                ; LAYERREFRESH (bit of the low byte of Flags)
 
 ; --- struct NewScreen / struct Screen (intuition/screens.h V34) ---
 NS_LEFTEDGE     EQU 0
@@ -162,7 +162,7 @@ SC_BARLAYER     EQU 334
 SC_EXTDATA      EQU 338
 SC_USERDATA     EQU 342
 SC_SIZEOF       EQU 346
-; types / drapeaux d'écran
+; screen types / flags
 WBENCHSCREEN    EQU $0001
 CUSTOMSCREEN    EQU $000F
 SCREENTYPE      EQU $000F
@@ -207,22 +207,22 @@ WD_BORDERLEFT   EQU 54
 WD_BORDERTOP    EQU 55
 WD_BORDERRIGHT  EQU 56
 WD_BORDERBOTTOM EQU 57
-WD_BORDERRPORT  EQU 58              ; GIMMEZEROZERO : RastPort de la couche du cadre (0 sinon)
+WD_BORDERRPORT  EQU 58              ; GIMMEZEROZERO: RastPort of the border layer (0 otherwise)
 WD_FIRSTGADGET  EQU 62
-WD_PARENT       EQU 66              ; fenêtre active à l'ouverture (activée à la fermeture de celle-ci)
+WD_PARENT       EQU 66              ; window active at open time (activated when this one closes)
 WD_DESCENDANT   EQU 70
 WD_IDCMPFLAGS   EQU 82
 WD_USERPORT     EQU 86
 WD_DETAILPEN    EQU 98
 WD_BLOCKPEN     EQU 99
-WD_CHECKMARK    EQU 100             ; Image de la coche des menus (NewWindow.CheckMark, sinon l'interne)
-WD_SCREENTITLE  EQU 104             ; titre d'écran montré quand la fenêtre est active (0 : celui de l'écran)
+WD_CHECKMARK    EQU 100             ; menu check mark Image (NewWindow.CheckMark, otherwise the internal one)
+WD_SCREENTITLE  EQU 104             ; screen title shown when the window is active (0: the screen's own)
 WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114
-WD_USERDATA     EQU 120              ; UserData (le WB y garde les vrais dommages, spec wb-icon-clipping-v34 §1)
+WD_USERDATA     EQU 120              ; UserData (the WB keeps the real damage there, spec wb-icon-clipping-v34 §1)
 WD_WLAYER       EQU 124
 WD_SIZE         EQU 132
-; drapeaux de fenêtre (wd_Flags)
+; window flags (wd_Flags)
 WINDOWSIZING    EQU $0001
 WINDOWDRAG      EQU $0002
 WINDOWDEPTH     EQU $0004
@@ -231,33 +231,33 @@ SIZEBRIGHT      EQU $0010
 SIZEBBOTTOM     EQU $0020
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
-GIMMEZEROZERO   EQU $0400           ; NewWindow : intérieur dans sa propre couche, origine dans l'intérieur
-ACTIVATE        EQU $1000           ; NewWindow : fenêtre activée à l'ouverture
+GIMMEZEROZERO   EQU $0400           ; NewWindow: interior in its own layer, origin in the interior
+ACTIVATE        EQU $1000           ; NewWindow: window activated at open time
 WINDOWACTIVE    EQU $2000
 RMBTRAP         EQU $00010000
 
-; --- struct Preferences V34 (intuition/preferences.h, 232 octets) : champs utilisés ---
+; --- struct Preferences V34 (intuition/preferences.h, 232 bytes): fields used ---
 PF_FONTHEIGHT   EQU $00
-PF_KEYRPTSPEED  EQU $04                ; timeval : période de répétition des touches
-PF_KEYRPTDELAY  EQU $0C                ; timeval : délai avant la 1re répétition
-PF_DBLCLICK     EQU $14                ; timeval : secondes, microsecondes
-PF_PTRMATRIX    EQU $1C                ; 36 mots : POS, CTL, 16 lignes (2 plans), 0, 0
-PF_XOFFSET      EQU $64                ; octets signés : décalage de l'image par rapport au point chaud
+PF_KEYRPTSPEED  EQU $04                ; timeval: key repeat period
+PF_KEYRPTDELAY  EQU $0C                ; timeval: delay before the 1st repeat
+PF_DBLCLICK     EQU $14                ; timeval: seconds, microseconds
+PF_PTRMATRIX    EQU $1C                ; 36 words: POS, CTL, 16 lines (2 planes), 0, 0
+PF_XOFFSET      EQU $64                ; signed bytes: image offset relative to the hot spot
 PF_YOFFSET      EQU $65
-PF_COLOR17      EQU $66                ; couleurs 17..19 (pointeur)
+PF_COLOR17      EQU $66                ; colors 17..19 (pointer)
 PF_PTRTICKS     EQU $6C
-PF_COLOR0       EQU $6E                ; couleurs 0..3 (Workbench)
-PF_VIEWXOFF     EQU $76                ; octets signés
+PF_COLOR0       EQU $6E                ; colors 0..3 (Workbench)
+PF_VIEWXOFF     EQU $76                ; signed bytes
 PF_VIEWYOFF     EQU $77
 PF_VIEWINITX    EQU $78
 PF_VIEWINITY    EQU $7A
 PF_EXTSIZE      EQU $E7
 PF_SIZE         EQU 232
-PF_VIEWEND      EQU PF_VIEWINITY+2     ; taille minimale pour que ViewInitX/Y soient copiés
-SC_BGCOLOR      EQU $7C3               ; couleur 0 : vert pomme (thème AmigaSlopDOS, défaut des Preferences)
+PF_VIEWEND      EQU PF_VIEWINITY+2     ; minimum size for ViewInitX/Y to be copied
+SC_BGCOLOR      EQU $7C3               ; color 0: apple green (AmigaSlopDOS theme, Preferences default)
 
-; --- struct IntuiMessage (intuition/intuition.h) et classes IDCMP ---
-IM_CLASS        EQU 20               ; après la struct Message
+; --- struct IntuiMessage (intuition/intuition.h) and IDCMP classes ---
+IM_CLASS        EQU 20               ; after the struct Message
 IM_CODE         EQU 24
 IM_QUALIFIER    EQU 26
 IM_IADDRESS     EQU 28
@@ -273,16 +273,16 @@ MOUSEBUTTONS    EQU $00000008
 MOUSEMOVE       EQU $00000010
 GADGETDOWN      EQU $00000020
 GADGETUP        EQU $00000040
-REPORTMOUSE     EQU $00000200       ; WD_FLAGS : la fenêtre reçoit les mouvements (MOUSEMOVE)
+REPORTMOUSE     EQU $00000200       ; WD_FLAGS: the window receives the movements (MOUSEMOVE)
 MENUPICK        EQU $00000100
 CLOSEWINDOW     EQU $00000200
 RAWKEY          EQU $00000400
 NEWPREFS        EQU $00004000
-DISKINSERTED    EQU $00008000           ; une disquette a été insérée (toutes les fenêtres qui le demandent)
+DISKINSERTED    EQU $00008000           ; a floppy disk was inserted (all windows that ask for it)
 DISKREMOVED     EQU $00010000
-INTUITICKS      EQU $00400000           ; ~10 par seconde à la fenêtre active, un seul en circulation
+INTUITICKS      EQU $00400000           ; ~10 per second to the active window, only one in circulation
 MENUNULL        EQU $FFFF
-SELECTDOWN      EQU $68                ; im_Code de MOUSEBUTTONS
+SELECTDOWN      EQU $68                ; im_Code of MOUSEBUTTONS
 SELECTUP        EQU $E8
 
 ; --- struct Menu / struct MenuItem / struct IntuiText (intuition/intuition.h) ---
@@ -338,30 +338,30 @@ RM_REMEMBERSIZE EQU 4
 RM_MEMORY       EQU 8
 RM_SIZEOF       EQU 12
 
-; --- LVO intuition.library (lvo/intuition_lib.i, autoritatif) ---
-LVO_VIEWADDRESS  EQU -294              ; ViewAddress() -> View courant (vecteur 49)
-LVO_OPENWORKBENCH EQU -210             ; OpenWorkBench() -> Screen Workbench
+; --- intuition.library LVOs (lvo/intuition_lib.i, authoritative) ---
+LVO_VIEWADDRESS  EQU -294              ; ViewAddress() -> current View (vector 49)
+LVO_OPENWORKBENCH EQU -210             ; OpenWorkBench() -> Workbench Screen
 
-; --- struct Gadget / struct Requester (NDK intuition/intuition.i) — requester insert-disk cliquable ---
+; --- struct Gadget / struct Requester (NDK intuition/intuition.i) - clickable insert-disk requester ---
 GG_NEXTGADGET EQU 0
-GG_LEFTEDGE   EQU 4             ; WORD (relatif au requester)
+GG_LEFTEDGE   EQU 4             ; WORD (relative to the requester)
 GG_TOPEDGE    EQU 6             ; WORD
 GG_WIDTH      EQU 8             ; WORD
 GG_HEIGHT     EQU 10            ; WORD
 GG_FLAGS      EQU 12            ; UWORD
 GG_ACTIVATION EQU 14           ; UWORD
 GG_GADGETTYPE EQU 16           ; UWORD
-GG_GADGETRENDER EQU 18         ; APTR Border ou Image (GADGIMAGE)
-GG_SELECTRENDER EQU 22         ; APTR : rendu sélectionné (GADGHIMAGE)
+GG_GADGETRENDER EQU 18         ; APTR Border or Image (GADGIMAGE)
+GG_SELECTRENDER EQU 22         ; APTR: selected rendering (GADGHIMAGE)
 GG_GADGETTEXT EQU 26           ; APTR IntuiText
-GG_SPECIALINFO EQU 34          ; APTR : StringInfo d'un STRGADGET
+GG_SPECIALINFO EQU 34          ; APTR: StringInfo of a STRGADGET
 GG_GADGETID   EQU 38           ; UWORD
 GG_SIZEOF     EQU 44
 ; gg_Flags
 GADGHIGHBITS  EQU $0003        ; GADGHCOMP 0 / GADGHBOX 1 / GADGHIMAGE 2 / GADGHNONE 3
 GADGHBOX      EQU $0001
 GADGHIMAGE    EQU $0002
-GADGIMAGE     EQU $0004        ; GadgetRender est une Image (sinon une Border)
+GADGIMAGE     EQU $0004        ; GadgetRender is an Image (otherwise a Border)
 GRELBOTTOM    EQU $0008
 GRELRIGHT     EQU $0010
 GRELWIDTH     EQU $0020
@@ -372,7 +372,7 @@ GADGDISABLED  EQU $0100
 RELVERIFY     EQU $0001
 GADGIMMEDIATE EQU $0002
 TOGGLESELECT  EQU $0100
-LONGINT       EQU $0800        ; STRGADGET : entier, converti dans si_LongInt
+LONGINT       EQU $0800        ; STRGADGET: integer, converted into si_LongInt
 ; gg_GadgetType
 SYSGADGET     EQU $8000
 ; struct Border (intuition/intuition.h)
@@ -383,11 +383,11 @@ BD_DRAWMODE   EQU 6
 BD_COUNT      EQU 7
 BD_XY         EQU 8
 BD_NEXTBORDER EQU 12
-BOOLGADGET    EQU 1             ; gg_GadgetType : bouton booléen
-STRGADGET     EQU 4             ; gg_GadgetType : texte éditable (SpecialInfo = StringInfo)
-PROPGADGET    EQU 3             ; gg_GadgetType : proportionnel (SpecialInfo = PropInfo)
-FOLLOWMOUSE   EQU $0008         ; gg_Activation : MOUSEMOVE pendant que le gadget est tenu
-PI_FLAGS      EQU 0             ; struct PropInfo (V34, 22 octets)
+BOOLGADGET    EQU 1             ; gg_GadgetType: boolean button
+STRGADGET     EQU 4             ; gg_GadgetType: editable text (SpecialInfo = StringInfo)
+PROPGADGET    EQU 3             ; gg_GadgetType: proportional (SpecialInfo = PropInfo)
+FOLLOWMOUSE   EQU $0008         ; gg_Activation: MOUSEMOVE while the gadget is held
+PI_FLAGS      EQU 0             ; struct PropInfo (V34, 22 bytes)
 PI_HPOT       EQU 2
 PI_VPOT       EQU 4
 PI_HBODY      EQU 6
@@ -403,53 +403,53 @@ FREEHORIZ     EQU $0002
 FREEVERT      EQU $0004
 PROPBORDERLESS EQU $0008
 KNOBHIT       EQU $0100
-GTYP_MASK     EQU $0007         ; type de base dans gg_GadgetType
-GZZGADGET     EQU $2000         ; gg_GadgetType : gadget du cadre d'une fenêtre GIMMEZEROZERO
+GTYP_MASK     EQU $0007         ; base type in gg_GadgetType
+GZZGADGET     EQU $2000         ; gg_GadgetType: border gadget of a GIMMEZEROZERO window
 ; struct StringInfo (intuition/intuition.h)
-SI_BUFFER     EQU 0             ; APTR : texte, terminé par NUL
-SI_UNDOBUFFER EQU 4             ; APTR : copie à l'activation (Amiga droite + Q) | 0
-SI_BUFFERPOS  EQU 8             ; WORD : position du curseur
-SI_MAXCHARS   EQU 10            ; WORD : taille du tampon, NUL compris
-SI_DISPPOS    EQU 12            ; WORD : premier caractère affiché
+SI_BUFFER     EQU 0             ; APTR: text, NUL-terminated
+SI_UNDOBUFFER EQU 4             ; APTR: copy at activation (right Amiga + Q) | 0
+SI_BUFFERPOS  EQU 8             ; WORD: cursor position
+SI_MAXCHARS   EQU 10            ; WORD: buffer size, NUL included
+SI_DISPPOS    EQU 12            ; WORD: first displayed character
 SI_UNDOPOS    EQU 14
 SI_NUMCHARS   EQU 16
-SI_DISPCOUNT  EQU 18            ; WORD : caractères visibles
-SI_LONGINT    EQU 28            ; LONG : valeur d'un gadget LONGINT
+SI_DISPCOUNT  EQU 18            ; WORD: visible characters
+SI_LONGINT    EQU 28            ; LONG: value of a LONGINT gadget
 LVO_ACTIVATEGADGET EQU -462
 RQ_OLDERREQ   EQU 0
 RQ_LEFTEDGE   EQU 4             ; WORD
 RQ_TOPEDGE    EQU 6             ; WORD
 RQ_WIDTH      EQU 8             ; WORD
 RQ_HEIGHT     EQU 10            ; WORD
-RQ_RELLEFT    EQU 12            ; WORD (POINTREL : double-menu)
+RQ_RELLEFT    EQU 12            ; WORD (POINTREL: double-menu)
 RQ_RELTOP     EQU 14            ; WORD
-RQ_REQGADGET  EQU 16           ; APTR liste de gadgets
+RQ_REQGADGET  EQU 16           ; APTR gadget list
 RQ_REQBORDER  EQU 20           ; APTR Border
-RQ_REQTEXT    EQU 24           ; APTR texte
+RQ_REQTEXT    EQU 24           ; APTR text
 RQ_FLAGS      EQU 28           ; UWORD
-RQ_BACKFILL   EQU 30           ; UBYTE : stylo du fond
-RQ_REQLAYER   EQU 32           ; APTR couche du requester
+RQ_BACKFILL   EQU 30           ; UBYTE: background pen
+RQ_REQLAYER   EQU 32           ; APTR requester layer
 RQ_IMAGEBMAP  EQU 68           ; APTR BitMap (PREDRAWN)
-RQ_RWINDOW    EQU 72           ; APTR fenêtre
+RQ_RWINDOW    EQU 72           ; APTR window
 RQ_SIZEOF     EQU 112
-PREDRAWN      EQU $0002         ; RQ_FLAGS : ImageBMap recopié au lieu du dessin
-NOISYREQ      EQU $0004         ; RQ_FLAGS : les événements continuent d'aller à la fenêtre
-REQACTIVE     EQU $2000         ; RQ_FLAGS : affiché
-REQGADGET     EQU $1000         ; gg_GadgetType : gadget d'un requester
-ENDGADGET     EQU $0004         ; gg_Activation : son relâchement termine le requester
+PREDRAWN      EQU $0002         ; RQ_FLAGS: ImageBMap copied instead of drawing
+NOISYREQ      EQU $0004         ; RQ_FLAGS: events keep going to the window
+REQACTIVE     EQU $2000         ; RQ_FLAGS: displayed
+REQGADGET     EQU $1000         ; gg_GadgetType: gadget of a requester
+ENDGADGET     EQU $0004         ; gg_Activation: its release ends the requester
 WD_FIRSTREQUEST EQU 36          ; struct Window
 WD_DMREQUEST  EQU 40
 WD_REQCOUNT   EQU 44            ; WORD
-INREQUEST     EQU $00004000     ; WD_FLAGS : au moins un requester
-MENUSTATE     EQU $00008000     ; WD_FLAGS : menus en cours
+INREQUEST     EQU $00004000     ; WD_FLAGS: at least one requester
+MENUSTATE     EQU $00008000     ; WD_FLAGS: menus in progress
 REQSET        EQU $00000080     ; IDCMP
 REQCLEAR      EQU $00001000
-; REQ_NO_HITTEST=1 (RED requester) : req_input_handler ne fait PAS le hit-test -> un clic DANS le gadget ne pose pas
-; REQ_HIT -> « REQUESTER CLICK OK » absent. Isole le hit-test du gadget. Défaut 0.
+; REQ_NO_HITTEST=1 (RED requester): req_input_handler does NOT do the hit-test -> a click INSIDE the gadget does not set
+; REQ_HIT -> "REQUESTER CLICK OK" absent. Isolates the gadget hit-test. Default 0.
 REQ_NO_HITTEST EQU 0
 
-; M5 : intuition.library comme module résident (squelette + ViewAddress). M5I_BAD_VIEWADDR=1 (RED) : ViewAddress
-; renvoie 0 au lieu de &ib_ViewLord -> la preuve « ViewAddress()==IntuitionBase+34 » échoue -> « M5I INTUI LIB OK »
-; absent. Isole la primitive neuve (le routage NT_LIBRARY->LibList est déjà RED-prouvé par M4C1_WRONG_TYPE).
-; Défaut 0 (inerte).
+; M5: intuition.library as a resident module (skeleton + ViewAddress). M5I_BAD_VIEWADDR=1 (RED): ViewAddress
+; returns 0 instead of &ib_ViewLord -> the "ViewAddress()==IntuitionBase+34" proof fails -> "M5I INTUI LIB OK"
+; absent. Isolates the new primitive (the NT_LIBRARY->LibList routing is already RED-proven by M4C1_WRONG_TYPE).
+; Default 0 (inert).
 M5I_BAD_VIEWADDR EQU 0

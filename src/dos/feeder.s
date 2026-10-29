@@ -1,49 +1,49 @@
-; src/dos/feeder.s — feeder clavier -> input.device (intégration F, item 1).
+; src/dos/feeder.s - keyboard feeder -> input.device (integration F, item 1).
 ;
-; Process (proc_create) qui DRAINE le ring BRUT du clavier (KBD_FEEDRING, alimenté par kbd_interrupt au même point
-; que le push cuit) et injecte chaque frappe comme un InputEvent RAWKEY dans input.device via IND_WRITEEVENT ->
-; input.device devient la SOURCE UNIQUE du clavier ; ses handlers (console.device) cuisent. Poll COOP-safe à chaque
-; trame (timer.device VBLANK, BeginIO TR_ADDREQUEST + Wait) -> pas de busy-poll. Rôle de la tâche d'input.device 1.3
-; (spec docs/analysis/intuiticks-repeat-v34.md) : un événement IECLASS_TIMER toutes les 5 trames (10 par seconde) et la
-; répétition automatique de la dernière touche enfoncée (délai et période d'input.device, IND_SETTHRESH/SETPERIOD).
+; Process (proc_create) that DRAINS the RAW keyboard ring (KBD_FEEDRING, filled by kbd_interrupt at the same point
+; as the cooked push) and injects each keystroke as a RAWKEY InputEvent into input.device via IND_WRITEEVENT ->
+; input.device becomes the SINGLE keyboard SOURCE; its handlers (console.device) do the cooking. COOP-safe poll on every
+; frame (timer.device VBLANK, BeginIO TR_ADDREQUEST + Wait) -> no busy-poll. Role of the 1.3 input.device task
+; (spec docs/analysis/intuiticks-repeat-v34.md): an IECLASS_TIMER event every 5 frames (10 per second) and the
+; auto-repeat of the last key pressed (input.device delay and period, IND_SETTHRESH/SETPERIOD).
 ;
-; SELF-TEST (ifeq SHELL_ON_SCREEN, item 1) : après avoir injecté la 1re frappe, lit console.device CMD_READ (que
-; son handler a cuit) et émet « FEEDER OK=<char> » sur série (prouve clavier -> feeder -> input.device -> console).
-; Quand SHELL_ON_SCREEN=1 (item 2), pas de self-test : le shell (via le handler écran) consomme console.device.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs input.device/timer.device + exec. AUCUNE lecture ROM.
+; SELF-TEST (ifeq SHELL_ON_SCREEN, item 1): after injecting the 1st keystroke, reads console.device CMD_READ (which
+; its handler has cooked) and emits "FEEDER OK=<char>" on serial (proves keyboard -> feeder -> input.device -> console).
+; When SHELL_ON_SCREEN=1 (item 2), no self-test: the shell (via the screen handler) consumes console.device.
+; IMPLEMENTATION track ("clean"): input.device/timer.device + exec AutoDocs. NO ROM reading.
 
                 include "exec.i"
                 include "dospkt.i"
 
                 xdef    feeder_main
-                xref    ser_lock             ; exec/boot.s (émission série atomique)
+                xref    ser_lock             ; exec/boot.s (atomic serial output)
                 xref    ser_unlock
-                xref    kbd_pushcooked       ; exec/keyboard.s (caractère cuit vers l'anneau du CLI)
+                xref    kbd_pushcooked       ; exec/keyboard.s (cooked character to the CLI ring)
 
-IO_DATA2     EQU 40               ; IOStdReq io_Data (local : feeder.s n'inclut pas disk.i)
+IO_DATA2     EQU 40               ; IOStdReq io_Data (local: feeder.s does not include disk.i)
 IO_LENGTH    EQU 36               ; IOStdReq io_Length
 IO_ACTUAL    EQU 32               ; IOStdReq io_Actual
 CMD_READ     EQU 2                ; console.device CMD_READ
-FD_NOREPEAT  EQU $FFFF            ; FD_RPTCODE : aucune répétition
-TICK_FRAMES  EQU 5                ; IECLASS_TIMER toutes les 5 trames (100 ms en PAL)
-KEY_NOREPEAT EQU $60              ; codes >= $60 (qualificatifs) : jamais répétés, arrêtent la répétition
+FD_NOREPEAT  EQU $FFFF            ; FD_RPTCODE: no repeat
+TICK_FRAMES  EQU 5                ; IECLASS_TIMER every 5 frames (100 ms in PAL)
+KEY_NOREPEAT EQU $60              ; codes >= $60 (qualifiers): never repeated, they stop the repeat
 
-; bloc d'état (AllocMem)
+; state block (AllocMem)
 FD_INPUT   EQU 0                  ; APTR base input.device
-FD_CON     EQU 4                  ; APTR base console.device (self-test)
+FD_CON     EQU 4                  ; APTR console.device base (self-test)
 FD_TBASE   EQU 8                  ; APTR base timer.device
 FD_RPORT   EQU 12                 ; APTR reply MsgPort
 FD_TREQ    EQU 16                 ; APTR timerequest
-FD_SIGMASK EQU 20                 ; LONG masque signal du reply port
-FD_DONE    EQU 24                 ; BYTE self-test émis
-FD_IOREQ   EQU 28                 ; IOStdReq (48) pour input BeginIO
+FD_SIGMASK EQU 20                 ; LONG signal mask of the reply port
+FD_DONE    EQU 24                 ; BYTE self-test emitted
+FD_IOREQ   EQU 28                 ; IOStdReq (48) for input BeginIO
 FD_EVENT   EQU 76                 ; InputEvent (22)
-FD_RDBUF   EQU 100                ; 4 octets : buffer de lecture console (self-test)
-FD_REVENT  EQU 104                ; InputEvent (22) : touche qui se répète (qualificatif | IEQUALIFIER_REPEAT)
-FD_RPTCODE EQU 126                ; WORD : code de la touche qui se répète ($FFFF : aucune)
-FD_RPTDUE  EQU 128                ; LONG : trame (VBL_COUNT) de la prochaine répétition
-FD_TICKDUE EQU 132                ; LONG : trame du prochain IECLASS_TIMER
-FD_GSTREQ  EQU 136                ; timerequest (40) : TR_GETSYSTIME pour l'horodatage
+FD_RDBUF   EQU 100                ; 4 bytes: console read buffer (self-test)
+FD_REVENT  EQU 104                ; InputEvent (22): repeating key (qualifier | IEQUALIFIER_REPEAT)
+FD_RPTCODE EQU 126                ; WORD: code of the repeating key ($FFFF: none)
+FD_RPTDUE  EQU 128                ; LONG: frame (VBL_COUNT) of the next repeat
+FD_TICKDUE EQU 132                ; LONG: frame of the next IECLASS_TIMER
+FD_GSTREQ  EQU 136                ; timerequest (40): TR_GETSYSTIME for the timestamp
 FD_SIZE    EQU 176
 
 feeder_main:
@@ -52,8 +52,8 @@ feeder_main:
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq     .fm_idle             ; pas de RAM -> idle
-                move.l  d0,a5                ; a5 = état (persistant)
+                beq     .fm_idle             ; no RAM -> idle
+                move.l  d0,a5                ; a5 = state (persistent)
                 lea     EB_DEVICELIST(a6),a0 ; input.device
                 lea     fd_inputname(pc),a1
                 jsr     LVO_FINDNAME(a6)
@@ -63,7 +63,7 @@ feeder_main:
                 lea     fd_conname(pc),a1
                 jsr     LVO_FINDNAME(a6)
                 move.l  d0,FD_CON(a5)
-                ; --- setup timer.device MICROHZ (poll COOP) ---
+                ; --- set up timer.device MICROHZ (COOP poll) ---
                 lea     EB_DEVICELIST(a6),a0
                 lea     fd_timername(pc),a1
                 jsr     LVO_FINDNAME(a6)
@@ -75,7 +75,7 @@ feeder_main:
                 moveq   #1,d1
                 lsl.l   d0,d1
                 move.l  d1,FD_SIGMASK(a5)
-                move.l  d0,d3                ; d3 = n° de bit
+                move.l  d0,d3                ; d3 = bit number
                 move.l  #MP_SIZE,d0          ; reply port
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
@@ -87,7 +87,7 @@ feeder_main:
                 move.b  #PA_SIGNAL,MP_FLAGS(a3)
                 move.b  d3,MP_SIGBIT(a3)
                 move.l  EB_THISTASK(a6),MP_SIGTASK(a3)
-                lea     MP_MSGLIST(a3),a1    ; NEWLIST en ligne
+                lea     MP_MSGLIST(a3),a1    ; NEWLIST inline
                 move.l  a1,d0
                 addq.l  #4,d0
                 move.l  d0,(a1)
@@ -107,43 +107,43 @@ feeder_main:
                 move.l  FD_TBASE(a5),IO_DEVICE(a1)
                 move.w  #FD_NOREPEAT,FD_RPTCODE(a5)
 .fm_loop:
-                bsr     fd_poll_wait         ; une trame (COOP)
-                bsr     fd_timed             ; tic IECLASS_TIMER et répétition échue
+                bsr     fd_poll_wait         ; one frame (COOP)
+                bsr     fd_timed             ; IECLASS_TIMER tick and due repeat
 .fm_drain:
                 move.w  KBD_FHEAD,d2
                 cmp.w   KBD_FTAIL,d2
-                beq.s   .fm_loop             ; ring vide -> prochaine trame
+                beq.s   .fm_loop             ; ring empty -> next frame
                 lea     KBD_FEEDRING,a0
                 move.w  0(a0,d2.w),d4        ; d4 = (qual<<8)|keycode
                 addq.w  #2,d2
                 and.w   #KBD_FRMASK,d2
-                move.w  d2,KBD_FHEAD         ; avance HEAD (consommé)
-                ; construit l'InputEvent RAWKEY
+                move.w  d2,KBD_FHEAD         ; advance HEAD (consumed)
+                ; build the RAWKEY InputEvent
                 lea     FD_EVENT(a5),a1
                 clr.l   IE_NEXTEVENT(a1)
                 move.b  #IECLASS_RAWKEY,IE_CLASS(a1)
-                move.b  d4,IE_CODE+1(a1)     ; keycode (octet bas de ie_Code word)
+                move.b  d4,IE_CODE+1(a1)     ; keycode (low byte of the ie_Code word)
                 clr.b   IE_CODE(a1)
                 moveq   #0,d0
                 move.w  d4,d0
-                lsr.w   #8,d0                ; qualifieurs
+                lsr.w   #8,d0                ; qualifiers
                 move.w  d0,IE_QUALIFIER(a1)
                 bsr     fd_stamp
-                bsr     fd_repeat_key        ; arme / arrête la répétition selon cette frappe
+                bsr     fd_repeat_key        ; arm / stop the repeat according to this keystroke
                 lea     FD_EVENT(a5),a0
                 bsr     fd_write
                 ifeq    SHELL_ON_SCREEN
-                bsr     fd_selftest          ; item 1 : émet « FEEDER OK=<char> » une fois (lit console.device)
+                bsr     fd_selftest          ; item 1: emit "FEEDER OK=<char>" once (reads console.device)
                 endc
                 bra.s   .fm_drain
 .fm_idle:
-                move.l  ($4).w,a6            ; échec setup : dort sur un signal jamais reçu (COOP, ne spin pas)
+                move.l  ($4).w,a6            ; setup failed: sleep on a signal that never arrives (COOP, does not spin)
 .fm_idle_lp:
                 moveq   #0,d0
                 jsr     LVO_WAIT(a6)
                 bra.s   .fm_idle_lp
 
-; fd_write(a0 = InputEvent) : IND_WRITEEVENT vers input.device. a5 = état, a6 = SysBase. Préserve a5/a6.
+; fd_write(a0 = InputEvent): IND_WRITEEVENT to input.device. a5 = state, a6 = SysBase. Preserves a5/a6.
 fd_write:
                 ifeq    FEEDER_NO_WRITEEVENT
                 movem.l a2-a3,-(sp)
@@ -156,10 +156,10 @@ fd_write:
                 jsr     -30(a6)              ; input BeginIO (IND_WRITEEVENT)
                 move.l  ($4).w,a6
                 movem.l (sp)+,a2-a3
-                endc                         ; RED FEEDER_NO_WRITEEVENT : n'injecte rien dans input.device
+                endc                         ; RED FEEDER_NO_WRITEEVENT: injects nothing into input.device
                 rts
 
-; fd_stamp(a1 = InputEvent) : ie_TimeStamp = heure système (timer.device TR_GETSYSTIME, synchrone). Préserve a1/a5/a6.
+; fd_stamp(a1 = InputEvent): ie_TimeStamp = system time (timer.device TR_GETSYSTIME, synchronous). Preserves a1/a5/a6.
 fd_stamp:
                 movem.l a1-a2/a6,-(sp)
                 move.l  a1,a2
@@ -174,7 +174,7 @@ fd_stamp:
                 movem.l (sp)+,a1-a2/a6
                 rts
 
-; fd_frames(a0 = timeval) -> d0 = nombre de trames : max(1, secondes × 50 + ⌈µs / 20 000⌉), comme UNIT_VBLANK.
+; fd_frames(a0 = timeval) -> d0 = number of frames: max(1, seconds x 50 + ceil(us / 20000)), like UNIT_VBLANK.
 fd_frames:
                 move.l  (a0),d0
                 mulu    #50,d0
@@ -188,10 +188,10 @@ fd_frames:
 .fr_r:
                 rts
 
-; fd_repeat_key(a1 = événement RAWKEY de la frappe) : enfoncement d'une touche < $60 -> elle devient la touche qui se
-; répète (copie avec IEQUALIFIER_REPEAT, 1re répétition après le délai) ; enfoncement d'un qualificatif (>= $60) ->
-; arrêt ; relâchement de la touche qui se répète, ou qualificatif différent (masques $05FF / $07FF) -> arrêt.
-; a5 = état. Préserve a1/a5/a6.
+; fd_repeat_key(a1 = RAWKEY event of the keystroke): press of a key < $60 -> it becomes the repeating
+; key (copy with IEQUALIFIER_REPEAT, 1st repeat after the delay); press of a qualifier (>= $60) ->
+; stop; release of the repeating key, or different qualifier (masks $05FF / $07FF) -> stop.
+; a5 = state. Preserves a1/a5/a6.
 fd_repeat_key:
                 move.w  IE_CODE(a1),d0
                 bclr    #7,d0
@@ -227,8 +227,8 @@ fd_repeat_key:
 .rk_ret:
                 rts
 
-; fd_timed : à chaque trame, IECLASS_TIMER si son échéance est atteinte (toutes les TICK_FRAMES trames), puis
-; répétition de la touche tenue si son échéance est atteinte (réarmée à la période). a5 = état, a6 = SysBase.
+; fd_timed: on every frame, IECLASS_TIMER if its deadline is reached (every TICK_FRAMES frames), then
+; repeat of the held key if its deadline is reached (re-armed with the period). a5 = state, a6 = SysBase.
 fd_timed:
                 move.l  VBL_COUNT,d0
                 sub.l   FD_TICKDUE(a5),d0
@@ -239,7 +239,7 @@ fd_timed:
                 lea     FD_EVENT(a5),a1
                 clr.l   IE_NEXTEVENT(a1)
                 move.w  #IECLASS_TIMER<<8,IE_CLASS(a1)
-                clr.l   IE_CODE(a1)          ; code et qualificatif
+                clr.l   IE_CODE(a1)          ; code and qualifier
                 clr.l   IE_X(a1)
                 bsr     fd_stamp
                 move.l  a1,a0
@@ -255,8 +255,8 @@ fd_timed:
                 bsr     fd_frames
                 add.l   VBL_COUNT,d0
                 move.l  d0,FD_RPTDUE(a5)
-                lea     FD_REVENT(a5),a0     ; le modèle reste intact (un handler peut neutraliser l'événement
-                lea     FD_EVENT(a5),a1      ; transmis, ex. intuition vers une fenêtre RAWKEY)
+                lea     FD_REVENT(a5),a0     ; the template stays intact (a handler may neutralise the event
+                lea     FD_EVENT(a5),a1      ; passed on, e.g. intuition to a RAWKEY window)
                 moveq   #IE_SIZEOF/2-1,d0
 .td_cp:
                 move.w  (a0)+,(a1)+
@@ -266,15 +266,15 @@ fd_timed:
                 bsr     fd_stamp
                 move.l  a1,a0
                 bsr     fd_write
-                move.w  FD_REVENT+IE_CODE(a5),d0  ; le CLI de l'écran lit l'anneau cuit, pas input.device : la
-                move.w  FD_REVENT+IE_QUALIFIER(a5),d1 ; répétition y dépose aussi son caractère
-                jsr     LVO_DISABLE(a6)      ; (deux producteurs : l'interruption clavier et nous)
+                move.w  FD_REVENT+IE_CODE(a5),d0  ; the screen CLI reads the cooked ring, not input.device: the
+                move.w  FD_REVENT+IE_QUALIFIER(a5),d1 ; repeat also deposits its character there
+                jsr     LVO_DISABLE(a6)      ; (two producers: the keyboard interrupt and us)
                 jsr     kbd_pushcooked
                 jsr     LVO_ENABLE(a6)
 .td_ret:
                 rts
 
-; fd_poll_wait : attente d'une trame via timer.device VBLANK. a5 = état, a6 = SysBase. Préserve a5.
+; fd_poll_wait: wait for one frame via timer.device VBLANK. a5 = state, a6 = SysBase. Preserves a5.
 fd_poll_wait:
                 movem.l d2-d4/a0-a4,-(sp)
                 move.l  FD_TREQ(a5),a1
@@ -294,14 +294,14 @@ fd_poll_wait:
                 rts
 
                 ifeq    SHELL_ON_SCREEN
-; fd_selftest : item 1 — lit UNE fois console.device CMD_READ (cuit par son handler) et émet « FEEDER OK=<char> »
-; sur série. Done-flag dans FD_DONE. a5 = état, a6 = SysBase. Préserve a5.
+; fd_selftest: item 1 - reads console.device CMD_READ ONCE (cooked by its handler) and emits "FEEDER OK=<char>"
+; on serial. Done flag in FD_DONE. a5 = state, a6 = SysBase. Preserves a5.
 fd_selftest:
                 tst.b   FD_DONE(a5)
                 bne.s   .st_ret
                 move.l  FD_CON(a5),d0
                 beq.s   .st_ret
-                lea     FD_IOREQ(a5),a3      ; console CMD_READ 1 octet -> FD_RDBUF
+                lea     FD_IOREQ(a5),a3      ; console CMD_READ 1 byte -> FD_RDBUF
                 move.l  FD_CON(a5),IO_DEVICE(a3)
                 move.w  #CMD_READ,IO_COMMAND(a3)
                 lea     FD_RDBUF(a5),a0
@@ -314,12 +314,12 @@ fd_selftest:
                 jsr     -30(a6)              ; console BeginIO (CMD_READ)
                 move.l  ($4).w,a6
                 tst.l   IO_ACTUAL(a3)
-                beq.s   .st_ret              ; rien lu ce tick -> réessaie au prochain
-                st      FD_DONE(a5)          ; self-test émis une seule fois
-                jsr     ser_lock             ; marqueur entier atomique (pas d'entrelacement)
-                lea     fd_msg_ok(pc),a0     ; « FEEDER OK= »
+                beq.s   .st_ret              ; nothing read this tick -> retry on the next one
+                st      FD_DONE(a5)          ; self-test emitted only once
+                jsr     ser_lock             ; whole marker atomic (no interleaving)
+                lea     fd_msg_ok(pc),a0     ; "FEEDER OK="
                 bsr     fd_puts
-                move.b  FD_RDBUF(a5),d0      ; le char cuit
+                move.b  FD_RDBUF(a5),d0      ; the cooked char
                 bsr     fd_putc
                 moveq   #13,d0
                 bsr     fd_putc
@@ -329,7 +329,7 @@ fd_selftest:
 .st_ret:
                 rts
 
-; fd_puts(a0 = chaîne NUL-term) / fd_putc(d0.b) : émission série bornée (TBE). Clobbe d0/d1.
+; fd_puts(a0 = NUL-terminated string) / fd_putc(d0.b): bounded serial output (TBE). Clobbers d0/d1.
 fd_puts:
                 move.b  (a0)+,d0
                 beq.s   .ps_ret
@@ -337,7 +337,7 @@ fd_puts:
                 bra.s   fd_puts
 .ps_ret:
                 rts
-fd_putc:                                     ; émet d0.b sur série (poll TBE borné). Clobbe d0/d1/d2 ; préserve a0.
+fd_putc:                                     ; emits d0.b on serial (bounded TBE poll). Clobbers d0/d1/d2; preserves a0.
                 and.w   #$00FF,d0
                 or.w    #$0100,d0            ; bit stop
                 move.w  #$3000,d1            ; timeout
@@ -346,7 +346,7 @@ fd_putc:                                     ; émet d0.b sur série (poll TBE b
                 btst    #13,d2               ; TBE (transmit buffer empty) ?
                 bne.s   .pc_tx
                 dbra    d1,.pc_wt
-                rts                          ; timeout -> abandonne ce caractère
+                rts                          ; timeout -> give up on this character
 .pc_tx:
                 move.w  d0,SERDAT
                 rts

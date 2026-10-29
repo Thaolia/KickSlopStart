@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# tests/audio_probe.sh — harnais de la sonde tests/audio_probe.s (piste analyse, docs/analysis/audio-device-v34.md).
-# Fabrique une disquette OFS amorçable (xdftool) dont la startup-sequence lance la sonde, boote FS-UAE headless (Xvfb)
-# sur la ROM donnée, capture le série dans <out>/serial.log. Attend qu'aucun autre FS-UAE ne tourne (un seul à la fois).
-# Usage : tests/audio_probe.sh <rom> <exécutable audio_probe> <répertoire de sortie> [durée s, défaut 120]
-# OpenAL est forcé sur son pilote « null » (ALSOFT_DRIVERS) : un périphérique de sortie existe même sous Xvfb.
+# tests/audio_probe.sh - harness for the probe tests/audio_probe.s (analysis track, docs/analysis/audio-device-v34.md).
+# Builds a bootable OFS floppy (xdftool) whose startup-sequence runs the probe, boots FS-UAE headless (Xvfb)
+# on the given ROM, captures the serial output in <out>/serial.log. Waits until no other FS-UAE runs (one at a time).
+# Usage: tests/audio_probe.sh <rom> <audio_probe executable> <output directory> [duration s, default 120]
+# OpenAL is forced onto its "null" driver (ALSOFT_DRIVERS): an output device exists even under Xvfb.
 set -u
 ROM="${1:?rom}"; EXE="${2:?exe}"; OUT="${3:?sortie}"; DUR="${4:-120}"
 rm -rf "$OUT"; mkdir -p "$OUT/base"

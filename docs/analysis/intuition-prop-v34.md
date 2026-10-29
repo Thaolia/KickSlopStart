@@ -1,152 +1,152 @@
-# intuition-prop-v34.md — gadgets proportionnels (intuition 34.3)
+# intuition-prop-v34.md — proportional gadgets (intuition 34.3)
 
-> Piste ANALYSE (« dirty »). Source : ROM `assets/kick34005.A500`, intuition 34.3. Fonctions couvertes : bordures du conteneur
-> à l'ouverture, boîte et conteneur, préparation des gadgets, taille et position du knob, pas et
-> saut de page, glissement, bornage, redessin du knob, rendu, test KNOBHIT, ModifyProp /
-> NewModifyProp. Aucune adresse ROM (retirées le 2026-10-29).
+> ANALYSIS track ("dirty"). Source: ROM `assets/kick34005.A500`, intuition 34.3. Functions covered: container borders
+> at opening, box and container, gadget preparation, knob size and position, page step and
+> page jump, dragging, clamping, knob redraw, rendering, KNOBHIT test, ModifyProp /
+> NewModifyProp. No ROM addresses (removed on 2026-10-29).
 >
-> **Légende** : **[O]** observé · **[D]** déduit · **[S]** supposé. Règles et layouts
-> uniquement, aucune suite d'instructions recopiée.
+> **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. Rules and layouts
+> only, no instruction sequence copied.
 
 ---
 
-## 1. `struct PropInfo` (V34) — 22 octets [O]
+## 1. `struct PropInfo` (V34) — 22 bytes [O]
 
-| Off. | Champ | Écrit par intuition ? |
+| Off. | Field | Written by intuition? |
 |---|---|---|
-| +$00 | Flags (UWORD) | KNOBHIT ($0100) seulement |
-| +$02 | HorizPot | oui, pendant le glissement et au saut de page |
-| +$04 | VertPot | idem |
-| +$06 | HorizBody | non (application, ou ModifyProp) |
-| +$08 | VertBody | non |
-| +$0A | CWidth | **oui** : largeur du conteneur, à chaque préparation |
-| +$0C | CHeight | **oui** : hauteur du conteneur |
-| +$0E | HPotRes | **oui** : pas de page horizontal (§3.3) |
-| +$10 | VPotRes | **oui** : pas de page vertical |
-| +$12 | LeftBorder | **oui** : à l'ajout du gadget dans la fenêtre |
-| +$14 | TopBorder | **oui** : idem |
+| +$00 | Flags (UWORD) | KNOBHIT ($0100) only |
+| +$02 | HorizPot | yes, during dragging and on page jump |
+| +$04 | VertPot | same |
+| +$06 | HorizBody | no (application, or ModifyProp) |
+| +$08 | VertBody | no |
+| +$0A | CWidth | **yes**: container width, at each preparation |
+| +$0C | CHeight | **yes**: container height |
+| +$0E | HPotRes | **yes**: horizontal page step (§3.3) |
+| +$10 | VPotRes | **yes**: vertical page step |
+| +$12 | LeftBorder | **yes**: when the gadget is added to the window |
+| +$14 | TopBorder | **yes**: same |
 
-Bits de Flags : **AUTOKNOB $0001**, **FREEHORIZ $0002**, **FREEVERT $0004**, **PROPBORDERLESS
-$0008**, **KNOBHIT $0100** (posé et effacé par intuition).
+Flags bits: **AUTOKNOB $0001**, **FREEHORIZ $0002**, **FREEVERT $0004**, **PROPBORDERLESS
+$0008**, **KNOBHIT $0100** (set and cleared by intuition).
 
-**LeftBorder / TopBorder** : fixés quand le gadget entre dans une fenêtre, à l'OpenWindow et à
-l'AddGadget.
+**LeftBorder / TopBorder**: set when the gadget enters a window, at OpenWindow and at
+AddGadget.
 - PROPBORDERLESS ⇒ 0 / 0.
-- Sinon ⇒ **WBorLeft / WBorTop de l'écran** (Screen +$24 / +$23).
-- Les valeurs posées par l'application sont **écrasées**.
+- Otherwise ⇒ **the screen's WBorLeft / WBorTop** (Screen +$24 / +$23).
+- Values set by the application are **overwritten**.
 
-## 2. Géométrie [O]
+## 2. Geometry [O]
 
-### 2.1 Boîte et conteneur
+### 2.1 Box and container
 
-- **Boîte du gadget** : la boîte habituelle (LeftEdge/TopEdge/Width/Height avec GRELxxx dans le
-  domaine, voir `intuition-gzz-v34.md` §4).
-- **Conteneur** : la boîte réduite de **LeftBorder à gauche et à droite**, et de **TopBorder en
-  haut et en bas** :
+- **Gadget box**: the usual box (LeftEdge/TopEdge/Width/Height with GRELxxx in the
+  domain, see `intuition-gzz-v34.md` §4).
+- **Container**: the box shrunk by **LeftBorder on the left and on the right**, and by **TopBorder at
+  the top and at the bottom**:
   `CL = L + LB, CT = T + TB, CW = W − 2·LB, CH = H − 2·TB`.
-  CWidth et CHeight reçoivent CW et CH.
+  CWidth and CHeight receive CW and CH.
 
-### 2.2 Taille du knob
+### 2.2 Knob size
 
-Elle n'est calculée que pour **AUTOKNOB**. Sans AUTOKNOB, c'est la taille de l'Image fournie
-dans GadgetRender qui sert.
-- **FREEHORIZ** : `kw = (HorizBody × CW) >> 16, plus 1`, ramené à **au moins 6** et **au plus
-  CW**, puis à au moins 1.
-- Sans FREEHORIZ : **kw = CW**, et le knob est collé à gauche (x = 0).
-- **FREEVERT** : `kh = (VertBody × CH) >> 16, plus 1`, ramené à **au moins 4** et **au plus CH**,
-  puis à au moins 1.
-- Sans FREEVERT : **kh = CH**, y = 0.
-- Ces valeurs sont **écrites dans l'Image** de GadgetRender : Width (+$04) et Height (+$06). Pour
-  AUTOKNOB, l'application fournit une `struct Image` vide qu'intuition remplit.
+It is computed only for **AUTOKNOB**. Without AUTOKNOB, the size of the Image supplied
+in GadgetRender is used.
+- **FREEHORIZ**: `kw = (HorizBody × CW) >> 16, plus 1`, clamped to **at least 6** and **at most
+  CW**, then to at least 1.
+- Without FREEHORIZ: **kw = CW**, and the knob sits at the left (x = 0).
+- **FREEVERT**: `kh = (VertBody × CH) >> 16, plus 1`, clamped to **at least 4** and **at most CH**,
+  then to at least 1.
+- Without FREEVERT: **kh = CH**, y = 0.
+- These values are **written into the GadgetRender Image**: Width (+$04) and Height (+$06). For
+  AUTOKNOB, the application supplies an empty `struct Image` that intuition fills in.
 
-### 2.3 Position du knob (relative au conteneur)
+### 2.3 Knob position (relative to the container)
 
-- FREEHORIZ : `kx = ((CW − kw) × (HorizPot + 1)) >> 16`.
-- FREEVERT : `ky = ((CH − kh) × (VertPot + 1)) >> 16`.
-- Résultat **écrit dans LeftEdge/TopEdge (+$00/+$02) de l'Image GadgetRender**, et aussi dans
-  celle de **SelectRender** si elle existe.
-- Position à l'écran = coin du conteneur + (kx, ky).
+- FREEHORIZ: `kx = ((CW − kw) × (HorizPot + 1)) >> 16`.
+- FREEVERT: `ky = ((CH − kh) × (VertPot + 1)) >> 16`.
+- Result **written into LeftEdge/TopEdge (+$00/+$02) of the GadgetRender Image**, and also into
+  that of **SelectRender** if it exists.
+- On-screen position = container corner + (kx, ky).
 
-### 2.4 Inverse (glissement)
+### 2.4 Inverse (dragging)
 
-Pendant un glissement, la position du knob suit la souris, **bornée au conteneur**. Les Pot sont
-alors recalculés :
-- `HorizPot = (kx << 16) / (CW − kw)`, **ramené dans 0..$FFFF** ; si CW = kw ⇒ **$FFFF** ;
-- même règle pour VertPot avec CH, kh, ky.
-- Seuls les axes FREEHORIZ et FREEVERT sont modifiés.
+During a drag, the knob position follows the mouse, **clamped to the container**. The Pots are
+then recomputed:
+- `HorizPot = (kx << 16) / (CW − kw)`, **clamped to 0..$FFFF**; if CW = kw ⇒ **$FFFF**;
+- same rule for VertPot with CH, kh, ky.
+- Only the FREEHORIZ and FREEVERT axes are modified.
 
-## 3. Rendu [O]
+## 3. Rendering [O]
 
-### 3.1 Dessin complet (refresh d'un gadget proportionnel)
+### 3.1 Full drawing (refresh of a proportional gadget)
 
-Ordre :
-1. **RectFill de toute la boîte du gadget** en **DetailPen de la fenêtre** (JAM2). Pour une
-   fenêtre WB, c'est le stylo 0.
-2. **Cadre**, sauf si PROPBORDERLESS : contour de la **boîte** (pas du conteneur) en **BlockPen**,
-   JAM1. Traits verticaux de **WBorLeft/2** pixels, traits horizontaux de **WBorTop/2** pixels.
-   Il se trouve donc dans la marge LeftBorder/TopBorder.
-3. **Knob** :
-   - **AUTOKNOB** : **rectangle plein** (kx, ky, kw, kh) en **BlockPen**. Si le gadget est
-     SELECTED **et** que KNOBHIT est posé, le stylo est **inversé** (complément du numéro).
-   - **Image fournie** : DrawImage de GadgetRender en (kx, ky), ou de SelectRender si SELECTED
-     + KNOBHIT + GADGHIMAGE et que SelectRender existe. Avec SELECTED + KNOBHIT + GADGHCOMP, la
-     boîte du knob est ensuite **inversée**.
-4. Texte (GadgetText) et grisé GADGDISABLED, comme pour tout gadget.
+Order:
+1. **RectFill of the whole gadget box** in **the window's DetailPen** (JAM2). For a
+   WB window, this is pen 0.
+2. **Frame**, unless PROPBORDERLESS: outline of the **box** (not the container) in **BlockPen**,
+   JAM1. Vertical strokes of **WBorLeft/2** pixels, horizontal strokes of **WBorTop/2** pixels.
+   It therefore lies within the LeftBorder/TopBorder margin.
+3. **Knob**:
+   - **AUTOKNOB**: **filled rectangle** (kx, ky, kw, kh) in **BlockPen**. If the gadget is
+     SELECTED **and** KNOBHIT is set, the pen is **inverted** (complement of the pen number).
+   - **Supplied Image**: DrawImage of GadgetRender at (kx, ky), or of SelectRender if SELECTED
+     + KNOBHIT + GADGHIMAGE and SelectRender exists. With SELECTED + KNOBHIT + GADGHCOMP, the
+     knob box is then **inverted**.
+4. Text (GadgetText) and GADGDISABLED ghosting, as for any gadget.
 
-### 3.2 Déplacement du knob
+### 3.2 Knob movement
 
-- Rien n'est redessiné si la position ne change pas.
-- Sinon, le nouveau knob est dessiné, puis **les parties de l'ancien rectangle non recouvertes**
-  par le nouveau sont **remplies en DetailPen** (la couleur du fond).
-- Le cadre n'est pas redessiné.
+- Nothing is redrawn if the position does not change.
+- Otherwise, the new knob is drawn, then **the parts of the old rectangle not covered**
+  by the new one are **filled in DetailPen** (the background colour).
+- The frame is not redrawn.
 
-### 3.3 Pas de page (HPotRes / VPotRes)
+### 3.3 Page step (HPotRes / VPotRes)
 
-`pas(Body) = $FFFF` si Body ≥ $8000, sinon `(Body << 16) / ($FFFF − Body)`.
+`step(Body) = $FFFF` if Body ≥ $8000, otherwise `(Body << 16) / ($FFFF − Body)`.
 
-## 4. Interaction [O sauf mention]
+## 4. Interaction [O unless stated]
 
-1. **Clic dans la boîte du gadget**, le point devant être dans le **conteneur** :
-   - si le point est dans le **knob élargi** (knob agrandi de LeftBorder de chaque côté et de
-     TopBorder en haut et en bas) ⇒ **KNOBHIT posé** ;
-   - sinon ⇒ KNOBHIT effacé.
-2. **Hors knob** (saut de page), pour chaque axe libre :
-   - **Pot += signe × pas(Body)**, ramené à 0..$FFFF ;
-   - le signe vient de la position du clic par rapport au knob : avant ⇒ −1, après ⇒ +1, sur
-     l'axe ⇒ 0 ;
-   - puis le knob est recalculé (§2.3) et redessiné (§3.2).
-   - **Un seul saut par clic** : pas de répétition tant que le bouton reste appuyé [O, pas de
-     boucle sur ce chemin].
-3. **Sur le knob** (glissement) : à chaque mouvement de la souris, nouvelle position = position
-   précédente + déplacement, bornée au conteneur. Les Pot sont recalculés (§2.4) et le knob est
-   redessiné (§3.2).
-4. **Messages** :
-   - GADGETDOWN au clic si **GADGIMMEDIATE** ;
-   - pendant le glissement, MOUSEMOVE si **FOLLOWMOUSE** (IAddress = le gadget, comme les autres
-     MOUSEMOVE de gadget) [D] ;
-   - **GADGETUP au relâchement si RELVERIFY**, IAddress = le gadget.
-   - Les Pot sont **à jour dans PropInfo** au moment de ces messages.
+1. **Click in the gadget box**, the point having to be in the **container**:
+   - if the point is in the **enlarged knob** (knob grown by LeftBorder on each side and by
+     TopBorder at the top and at the bottom) ⇒ **KNOBHIT set**;
+   - otherwise ⇒ KNOBHIT cleared.
+2. **Outside the knob** (page jump), for each free axis:
+   - **Pot += sign × step(Body)**, clamped to 0..$FFFF;
+   - the sign comes from the click position relative to the knob: before ⇒ −1, after ⇒ +1, on
+     the axis ⇒ 0;
+   - then the knob is recomputed (§2.3) and redrawn (§3.2).
+   - **A single jump per click**: no repeat while the button stays pressed [O, no
+     loop on this path].
+3. **On the knob** (dragging): on each mouse movement, new position = previous
+   position + displacement, clamped to the container. The Pots are recomputed (§2.4) and the knob is
+   redrawn (§3.2).
+4. **Messages**:
+   - GADGETDOWN on click if **GADGIMMEDIATE**;
+   - during the drag, MOUSEMOVE if **FOLLOWMOUSE** (IAddress = the gadget, like the other
+     gadget MOUSEMOVEs) [D];
+   - **GADGETUP on release if RELVERIFY**, IAddress = the gadget.
+   - The Pots are **up to date in PropInfo** at the time of these messages.
 
-## 5. ModifyProp (−156) et NewModifyProp (−468) [O]
+## 5. ModifyProp (−156) and NewModifyProp (−468) [O]
 
-- **NewModifyProp existe** dans intuition 34.3 (vecteur −468).
-- `ModifyProp(gad, win, req, Flags, HPot, VPot, HBody, VBody)` :
-  - écrit **Flags, HorizPot, VertPot, HorizBody, VertBody** dans le PropInfo ;
-  - recalcule et **redessine à partir de ce gadget jusqu'à la fin de la liste** (compte −2).
-    Tous les gadgets suivants sont donc redessinés aussi : c'est le comportement 1.x.
-- `NewModifyProp(…, NumGad)` : même chose, mais ne redessine que **NumGad** gadgets à partir de
-  `gad`. NumGad = 1 ⇒ seulement ce gadget.
-- Le redessin passe par la préparation (§2 : CWidth, CHeight, PotRes, knob), puis par le rendu
-  complet (§3.1), cadre compris.
-- Le paramètre `req` n'est pas utilisé directement : un gadget de requester est reconnu par son
-  type REQGADGET.
+- **NewModifyProp exists** in intuition 34.3 (vector −468).
+- `ModifyProp(gad, win, req, Flags, HPot, VPot, HBody, VBody)`:
+  - writes **Flags, HorizPot, VertPot, HorizBody, VertBody** into the PropInfo;
+  - recomputes and **redraws from this gadget to the end of the list** (count −2).
+    All the following gadgets are therefore redrawn too: this is the 1.x behaviour.
+- `NewModifyProp(…, NumGad)`: same thing, but only redraws **NumGad** gadgets starting from
+  `gad`. NumGad = 1 ⇒ only this gadget.
+- The redraw goes through preparation (§2: CWidth, CHeight, PotRes, knob), then through full
+  rendering (§3.1), frame included.
+- The `req` parameter is not used directly: a requester gadget is recognised by its
+  REQGADGET type.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions recopiée : formules sur des champs publics (PropInfo, Image,
-  Gadget, Screen), ordre de dessin, stylos et constantes.
-- [x] Aucun bitmap.
-- [x] **Correction du 2026-10-29** : retiré le bloc « Repères » d'en-tête (17 adresses de routines
-  ROM), remplacé par la liste des fonctions couvertes ; corps inchangé.
+- [x] No instruction sequence copied: formulas on public fields (PropInfo, Image,
+  Gadget, Screen), drawing order, pens and constants.
+- [x] No bitmap.
+- [x] **Correction of 2026-10-29**: removed the header "Landmarks" block (17 ROM routine
+  addresses), replaced by the list of functions covered; body unchanged.

@@ -1,18 +1,18 @@
-; gdisp_probe.s — sonde boîte noire de la construction d'affichage de graphics.library (PISTE ANALYSE).
-; ASSET DE TEST, PAS du code ROM. Code auteur ; structures publiques (graphics 1.3 : View, ViewPort,
+; gdisp_probe.s - black-box probe of graphics.library display construction (ANALYSIS TRACK).
+; TEST ASSET, NOT ROM code. Authored code; public structures (graphics 1.3: View, ViewPort,
 ; RasInfo, BitMap, ColorMap, CopList, cprlist, UCopList).
-; Deux morceaux dans un même source :
-;   - LOADER défini : bootblock qui lit BLOBSZ octets à l'offset disque 1024 dans une zone CHIP et y saute ;
-;   - sinon : le corps de la sonde, binaire brut indépendant de la position, chargé par le bootblock.
-; Toutes les sorties partent sur la série (SERDAT en scrutation), en hexadécimal.
-; Les adresses de plans sont fictives ($2kiii) pour être lisibles dans les listes copper produites.
+; Two pieces in the same source:
+;   - LOADER defined: bootblock that reads BLOBSZ bytes at disk offset 1024 into a CHIP area and jumps there;
+;   - otherwise: the probe body, a position-independent raw binary loaded by the bootblock.
+; All output goes to the serial port (SERDAT, polled), in hexadecimal.
+; Bitplane addresses are fake ($2kiii) so that they are readable in the generated copper lists.
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 BLOBSZ   EQU 24576
 
         IFD LOADER
-boot:   movea.l a1,a5                   ; IOStdReq trackdisk fourni par strap
+boot:   movea.l a1,a5                   ; trackdisk IOStdReq provided by strap
         move.l  #BLOBSZ,d0
         move.l  #$10002,d1              ; MEMF_CHIP|MEMF_CLEAR
         jsr     -198(a6)                ; AllocMem
@@ -30,7 +30,7 @@ boot:   movea.l a1,a5                   ; IOStdReq trackdisk fourni par strap
         rts
         ELSE
 
-; ---------------------------------------------------------------- offsets (structures publiques)
+; ---------------------------------------------------------------- offsets (public structures)
 V_VP     EQU 0
 V_LOF    EQU 4
 V_SHF    EQU 8
@@ -50,16 +50,16 @@ VP_DY    EQU 30
 VP_MODES EQU 32
 VP_RI    EQU 36
 
-; ---------------------------------------------------------------- variables (base a4)
+; ---------------------------------------------------------------- variables (a4 base)
 O_GFX    EQU 0
 O_EXEC   EQU 4
 O_OLDV   EQU 8
-O_VIEW   EQU 12                         ; View 18 octets (+pad)
-O_VPS    EQU 32                         ; 2 ViewPorts de 40
+O_VIEW   EQU 12                         ; View 18 bytes (+pad)
+O_VPS    EQU 32                         ; 2 ViewPorts of 40
 O_RI     EQU 112                        ; 2 x (RI 12 + RI2 12)
 O_BM     EQU 160                        ; 2 x (BM 40 + BM2 40)
 O_UCL    EQU 320                        ; 2 x UCopList 12
-O_TMP    EQU 344                        ; 64 octets
+O_TMP    EQU 344                        ; 64 bytes
 O_END    EQU 408
 
 start:  lea     vars(pc),a4
@@ -70,7 +70,7 @@ start:  lea     vars(pc),a4
         jsr     -552(a6)                ; OpenLibrary
         move.l  d0,O_GFX(a4)
         movea.l d0,a6
-        move.l  $22(a6),O_OLDV(a4)      ; ActiView au moment de la sonde
+        move.l  $22(a6),O_OLDV(a4)      ; ActiView at probe time
         lea     m_head(pc),a0
         bsr     puts
         move.l  a6,d0
@@ -79,7 +79,7 @@ start:  lea     vars(pc),a4
         bsr     hex8
         bsr     nl
 
-; ----- GfxBase $22..$F0 (mots) et VBlankFrequency d'exec
+; ----- GfxBase $22..$F0 (words) and exec's VBlankFrequency
         lea     m_gb(pc),a0
         bsr     puts
         lea     $22(a6),a0
@@ -96,7 +96,7 @@ start:  lea     vars(pc),a4
         bsr     nl
         bsr     dumpcopinit
 
-; ----- InitView / InitVPort sur zones pré-remplies à $AA
+; ----- InitView / InitVPort on areas pre-filled with $AA
         lea     m_iv(pc),a0
         bsr     puts
         lea     O_TMP(a4),a1
@@ -143,7 +143,7 @@ start:  lea     vars(pc),a4
         movea.l a3,a0
         moveq   #2,d0
         moveq   #15,d1
-        moveq   #$10,d2                 ; bits hauts doivent être masqués
+        moveq   #$10,d2                 ; high bits must be masked
         moveq   #$21,d3
         jsr     -630(a6)                ; SetRGB4CM(cm,2,15,$10,$21)
         bsr     hex8
@@ -152,7 +152,7 @@ start:  lea     vars(pc),a4
         moveq   #1,d1
         moveq   #1,d2
         moveq   #1,d3
-        jsr     -630(a6)                ; SetRGB4CM(cm,4,...) hors bornes
+        jsr     -630(a6)                ; SetRGB4CM(cm,4,...) out of range
         bsr     hex8
         suba.l  a0,a0
         moveq   #0,d0
@@ -167,7 +167,7 @@ start:  lea     vars(pc),a4
         bsr     hex8
         bsr     nl
         moveq   #40,d0
-        jsr     -570(a6)                ; GetColorMap(40) : au-delà de la table par défaut ?
+        jsr     -570(a6)                ; GetColorMap(40): beyond the default table?
         movea.l d0,a3
         lea     m_cm40(pc),a0
         bsr     puts
@@ -175,7 +175,7 @@ start:  lea     vars(pc),a4
         moveq   #40-1,d1
         bsr     dumpw
 
-; ----- configurations MakeVPort + MrgCop
+; ----- MakeVPort + MrgCop configurations
         lea     cfgtab(pc),a2
 .cfg:   tst.w   (a2)
         bmi.s   .cfgend
@@ -184,12 +184,12 @@ start:  lea     vars(pc),a4
         bra.s   .cfg
 .cfgend:
 
-; ----- LoadView / ScrollVPort / SetRGB4 / LoadRGB4 / WaitBOVP sur une vue réelle
+; ----- LoadView / ScrollVPort / SetRGB4 / LoadRGB4 / WaitBOVP on a real view
         lea     cfg_lace(pc),a2
         bsr     build
         movea.l O_GFX(a4),a6
         lea     O_VIEW(a4),a1
-        jsr     -222(a6)                ; LoadView(view entrelacée)
+        jsr     -222(a6)                ; LoadView(interlaced view)
         lea     m_lv(pc),a0
         bsr     puts
         bsr     gbview
@@ -204,7 +204,7 @@ start:  lea     vars(pc),a4
         bsr     puts
         bsr     nl
         bsr     dumpall2
-        ; non entrelacé
+        ; non-interlaced
         lea     cfg_scr(pc),a2
         bsr     build
         movea.l O_GFX(a4),a6
@@ -224,7 +224,7 @@ start:  lea     vars(pc),a4
         bsr     puts
         bsr     nl
         bsr     dumpall2
-        ; couleurs à chaud
+        ; live colours
         lea     O_VPS(a4),a0
         moveq   #1,d0
         moveq   #1,d1
@@ -241,7 +241,7 @@ start:  lea     vars(pc),a4
         moveq   #1,d1
         moveq   #2,d2
         moveq   #3,d3
-        jsr     -288(a6)                ; SetRGB4(vp,40,...) hors bornes
+        jsr     -288(a6)                ; SetRGB4(vp,40,...) out of range
         move.l  d0,d5
         lea     m_rgbset(pc),a0
         bsr     puts
@@ -252,7 +252,7 @@ start:  lea     vars(pc),a4
         bsr     nl
         bsr     dumpall2
         bsr     dumpcopinit
-        ; temps : VBeamPos, WaitTOF, WaitBOVP
+        ; timing: VBeamPos, WaitTOF, WaitBOVP
         lea     m_beam(pc),a0
         bsr     puts
         jsr     -384(a6)
@@ -276,7 +276,7 @@ start:  lea     vars(pc),a4
         bsr     puts
         bsr     gbview
         bsr     dumpcopinit
-        ; FreeVPortCopLists : pointeurs remis à zéro ?
+        ; FreeVPortCopLists: pointers reset to zero?
         lea     O_VPS(a4),a0
         jsr     -540(a6)
         lea     m_fvp(pc),a0
@@ -284,17 +284,17 @@ start:  lea     vars(pc),a4
         lea     O_VPS(a4),a0
         moveq   #12-1,d1
         bsr     dumpw
-        ; restauration
+        ; restore
         movea.l O_OLDV(a4),a1
         jsr     -222(a6)
         lea     m_end(pc),a0
         bsr     puts
 .idle:  bra.s   .idle
 
-; ---------------------------------------------------------------- construction d'une configuration
-; a2 = descripteur : w vModes, vDx(0=défaut), vDy(0=défaut), nvp, puis nvp x 14 mots :
+; ---------------------------------------------------------------- building a configuration
+; a2 = descriptor: w vModes, vDx(0=default), vDy(0=default), nvp, then nvp x 14 words:
 ;  modes, DW, DH, Dx, Dy, depth, bpr, rows, rx, ry, depth2, rx2, cmcount, ucop
-; En sortie a2 pointe après le descripteur.
+; On exit a2 points past the descriptor.
 build:  movem.l d2-d7/a3/a5,-(a7)
         movea.l O_GFX(a4),a6
         lea     O_VIEW(a4),a0
@@ -317,8 +317,8 @@ build:  movem.l d2-d7/a3/a5,-(a7)
         beq.s   .ndy
         move.w  d0,V_DY(a1)
 .ndy:   move.w  (a2)+,d7                ; nvp
-        moveq   #0,d6                   ; index vp
-        lea     O_VIEW+V_VP(a4),a5      ; adresse du lien précédent
+        moveq   #0,d6                   ; vp index
+        lea     O_VIEW+V_VP(a4),a5      ; address of the previous link
 .vp:    cmp.w   d7,d6
         bge     .vpd
         movea.l a2,a0
@@ -356,13 +356,13 @@ build:  movem.l d2-d7/a3/a5,-(a7)
         move.l  #$20000,d5
         move.l  d6,d0
         swap    d0
-        add.l   d0,d5                   ; plans vp k : $2k000 + i*$1000
+        add.l   d0,d5                   ; planes of vp k: $2k000 + i*$1000
         bsr     setbm
         move.w  (a2)+,d2                ; depth2
         move.w  (a2)+,d0                ; rx2
         tst.w   d2
         beq.s   .npf2
-        lea     12(a0),a3               ; RI2 (a3 temporairement)
+        lea     12(a0),a3               ; RI2 (a3 temporarily)
         move.l  a3,(a0)                 ; RI->Next
         lea     40(a1),a1
         move.l  a1,4(a3)
@@ -383,7 +383,7 @@ build:  movem.l d2-d7/a3/a5,-(a7)
         bsr     mkucop
 .nuc:   addq.l  #1,d6
         bra     .vp
-.vpd:   ; MakeVPort de chaque vp puis MrgCop
+.vpd:   ; MakeVPort of each vp then MrgCop
         movea.l O_VIEW+V_VP(a4),a3
 .mk:    move.l  a3,d0
         beq.s   .mkd
@@ -397,7 +397,7 @@ build:  movem.l d2-d7/a3/a5,-(a7)
         movem.l (a7)+,d2-d7/a3/a5
         rts
 
-; a1 = BitMap, d2 depth, d3 bpr, d4 rows, d5 adresse du plan 0
+; a1 = BitMap, d2 depth, d3 bpr, d4 rows, d5 address of plane 0
 setbm:  move.l  a1,-(a7)
         move.w  d3,(a1)
         move.w  d4,2(a1)
@@ -460,7 +460,7 @@ mkucop: movem.l a2/a3/a5,-(a7)
         rts
 
 ; ---------------------------------------------------------------- dumps
-dumpall:                                ; listes intermédiaires de chaque vp + listes matérielles
+dumpall:                                ; intermediate lists of each vp + hardware lists
         movem.l a3,-(a7)
         movea.l O_VIEW+V_VP(a4),a3
 .v:     move.l  a3,d0
@@ -489,7 +489,7 @@ dumpall2:
         bsr     puts
         movea.l O_VIEW+V_SHF(a4),a0
         bsr     dumpcpr
-        lea     m_cls(pc),a0            ; CopLStart/CopSStart de chaque DspIns
+        lea     m_cls(pc),a0            ; CopLStart/CopSStart of each DspIns
         bsr     puts
         movea.l O_VIEW+V_VP(a4),a3
 .v2:    move.l  a3,d0
@@ -507,7 +507,7 @@ dumpall2:
         movem.l (a7)+,a3
         rts
 
-; a0 = CopList (intermédiaire) : en-tête puis instructions op:a:b ; suit CPRNXTBUF
+; a0 = CopList (intermediate): header then op:a:b instructions; follows CPRNXTBUF
 dumpcl: movem.l d2-d4/a2,-(a7)
         move.l  a0,d0
         bsr     hex8
@@ -520,7 +520,7 @@ dumpcl: movem.l d2-d4/a2,-(a7)
         move.w  32(a2),d0
         bsr     hex4
         bsr     nl
-        move.w  #300,d4                 ; garde-fou
+        move.w  #300,d4                 ; safety guard
 .blk:   movea.l 12(a2),a1               ; CopIns
         move.w  28(a2),d3               ; Count
         moveq   #0,d2
@@ -538,7 +538,7 @@ dumpcl: movem.l d2-d4/a2,-(a7)
         and.w   #3,d0
         cmp.w   #2,d0
         bne.s   .nx
-        movea.l 2(a1),a2                ; CPRNXTBUF -> CopList suivante
+        movea.l 2(a1),a2                ; CPRNXTBUF -> next CopList
         bsr     nl
         bra.s   .blk
 .nx:    addq.l  #6,a1
@@ -554,7 +554,7 @@ dumpcl: movem.l d2-d4/a2,-(a7)
         movem.l (a7)+,d2-d4/a2
         rts
 
-; a0 = cprlist : adresse, start, MaxCount puis mots jusqu'à $FFFF,$FFFE
+; a0 = cprlist: address, start, MaxCount then words up to $FFFF,$FFFE
 dumpcpr:
         movem.l d2-d3/a2,-(a7)
         move.l  a0,d0
@@ -624,7 +624,7 @@ gbview: movea.l O_GFX(a4),a0
         bsr     hex8
 .n:     bra     nl
 
-; a0 = adresse, d1 = nombre de mots - 1
+; a0 = address, d1 = number of words - 1
 dumpw:  move.l  d2,-(a7)
         moveq   #0,d2
 .w:     move.w  (a0)+,d0
@@ -695,32 +695,32 @@ putc:   movem.l d0/d2,-(a7)
 ; ---------------------------------------------------------------- configurations
 ; vModes, vDx, vDy, nvp | modes, DW, DH, Dx, Dy, depth, bpr, rows, rx, ry, depth2, rx2, cm, ucop
 cfgtab:
-c01:    dc.w    0,0,0,1, $0000,320,200,0,0, 2,40,200,0,0, 0,0, 4,0       ; lores 2 plans
-c02:    dc.w    0,0,0,1, $8000,640,200,0,0, 4,80,200,0,0, 0,0, 16,0      ; hires 4 plans
-c03:    dc.w    4,0,0,1, $0004,320,400,0,0, 1,40,400,0,0, 0,0, 2,0       ; entrelacé
-c04:    dc.w    0,0,0,2, $0000,320,100,0,0, 2,40,100,0,0, 0,0, 4,0       ; deux vp empilées
+c01:    dc.w    0,0,0,1, $0000,320,200,0,0, 2,40,200,0,0, 0,0, 4,0       ; lores 2 planes
+c02:    dc.w    0,0,0,1, $8000,640,200,0,0, 4,80,200,0,0, 0,0, 16,0      ; hires 4 planes
+c03:    dc.w    4,0,0,1, $0004,320,400,0,0, 1,40,400,0,0, 0,0, 2,0       ; interlaced
+c04:    dc.w    0,0,0,2, $0000,320,100,0,0, 2,40,100,0,0, 0,0, 4,0       ; two stacked vps
         dc.w             $8000,640,100,0,102, 1,80,100,0,0, 0,0, 2,0
 c05:    dc.w    0,0,0,1, $0400,320,200,0,0, 2,40,200,0,0, 2,3, 16,0      ; DUALPF, PF2 rx=3
 c06:    dc.w    0,0,0,1, $0800,320,200,0,0, 6,40,200,0,0, 0,0, 16,0      ; HAM
 c07:    dc.w    0,0,0,1, $0080,320,200,0,0, 6,40,200,0,0, 0,0, 32,0      ; EHB
 c08:    dc.w    0,0,0,1, $4000,320,200,0,0, 2,40,200,0,0, 0,0, 32,0      ; SPRITES
-c09:    dc.w    0,0,0,1, $0000,320,200,0,0, 2,80,400,5,3, 0,0, 4,0       ; défilement rx=5 ry=3
-c10:    dc.w    0,0,0,1, $0000,320,200,-10,0, 1,40,200,0,0, 0,0, 2,0     ; Dx=-10 (rognage gauche)
-c11:    dc.w    0,0,0,1, $0000,400,200,0,0, 1,50,200,0,0, 0,0, 2,0       ; DW=400 (rognage droit)
-c12:    dc.w    0,0,0,1, $8000,640,256,0,0, 4,80,256,0,0, 0,0, 16,0      ; hires 4 plans 256 lignes
-c13:    dc.w    0,0,0,1, $0000,320,256,0,0, 1,40,256,0,0, 0,0, 2,0       ; lores 256 lignes
+c09:    dc.w    0,0,0,1, $0000,320,200,0,0, 2,80,400,5,3, 0,0, 4,0       ; scrolling rx=5 ry=3
+c10:    dc.w    0,0,0,1, $0000,320,200,-10,0, 1,40,200,0,0, 0,0, 2,0     ; Dx=-10 (left clipping)
+c11:    dc.w    0,0,0,1, $0000,400,200,0,0, 1,50,200,0,0, 0,0, 2,0       ; DW=400 (right clipping)
+c12:    dc.w    0,0,0,1, $8000,640,256,0,0, 4,80,256,0,0, 0,0, 16,0      ; hires 4 planes 256 lines
+c13:    dc.w    0,0,0,1, $0000,320,256,0,0, 1,40,256,0,0, 0,0, 2,0       ; lores 256 lines
 c14:    dc.w    0,0,0,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 2,1       ; UCopList
-c15:    dc.w    0,0,0,2, $0000,320,100,0,0, 1,40,100,0,0, 0,0, 2,0       ; VP_HIDE sur vp1
+c15:    dc.w    0,0,0,2, $0000,320,100,0,0, 1,40,100,0,0, 0,0, 2,0       ; VP_HIDE on vp1
         dc.w             $2000,320,100,0,110, 1,40,100,0,0, 0,0, 2,0
 c16:    dc.w    0,0,0,1, $0000,200,100,20,50, 1,40,200,0,0, 0,0, 2,0     ; Dx=20 Dy=50 DW=200
 c17:    dc.w    0,$85,$30,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 2,0   ; View Dx=$85 Dy=$30
 c18:    dc.w    0,0,0,1, $8000,640,200,0,0, 2,80,200,3,0, 0,0, 4,0       ; hires rx=3
-c19:    dc.w    0,0,0,1, $0004,320,400,0,0, 1,40,400,0,0, 0,0, 2,0       ; vp LACE, vue non LACE
-c20:    dc.w    4,0,0,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 2,0       ; vue LACE, vp non LACE
-c21:    dc.w    0,0,0,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 0,0       ; sans ColorMap
-c22:    dc.w    0,0,0,2, $0000,320,100,0,0, 1,40,100,0,0, 0,0, 2,0       ; vp1 Dy=100 (contiguë)
+c19:    dc.w    0,0,0,1, $0004,320,400,0,0, 1,40,400,0,0, 0,0, 2,0       ; LACE vp, non-LACE view
+c20:    dc.w    4,0,0,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 2,0       ; LACE view, non-LACE vp
+c21:    dc.w    0,0,0,1, $0000,320,200,0,0, 1,40,200,0,0, 0,0, 0,0       ; without ColorMap
+c22:    dc.w    0,0,0,2, $0000,320,100,0,0, 1,40,100,0,0, 0,0, 2,0       ; vp1 Dy=100 (contiguous)
         dc.w             $0000,320,100,0,100, 1,40,100,0,0, 0,0, 2,0
-c23:    dc.w    0,0,0,1, $8000,640,200,0,0, 5,80,200,0,0, 0,0, 32,0      ; hires 5 plans demandés
+c23:    dc.w    0,0,0,1, $8000,640,200,0,0, 5,80,200,0,0, 0,0, 32,0      ; hires 5 planes requested
 c24:    dc.w    0,0,0,1, $0400,320,200,0,0, 3,40,200,0,0, 3,0, 16,0      ; DUALPF 3+3
         dc.w    -1
 cfg_lace:

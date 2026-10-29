@@ -1,11 +1,11 @@
-; src/intuition/request.s — intuition.library : requesters (spec docs/analysis/intuition-requesters-v34.md §1-§4).
-; Request pose un requester dans une fenêtre : une couche LAYERSMART devant celle de la fenêtre (ou devant le requester
-; précédent), au coin LeftEdge/TopEdge (intérieur d'une fenêtre GIMMEZEROZERO), rognée à la fenêtre ; fond au stylo
-; BackFill, ReqBorder, ReqText, gadgets (ou ImageBMap recopié si PREDRAWN). Tant qu'un requester est là, seuls ses
-; gadgets répondent (gadgets.s) et, sans NOISYREQ, la fenêtre ne reçoit plus touches, boutons, mouvements ni menus
-; (screens.s). REQSET à la pose, REQCLEAR à la fin ; ENDGADGET ou EndRequest le retirent. Les couches des requesters
-; suivent la fenêtre quand elle bouge ou change de profondeur.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition + structures publiques + spec. AUCUNE lecture ROM.
+; src/intuition/request.s - intuition.library: requesters (spec docs/analysis/intuition-requesters-v34.md §1-§4).
+; Request puts up a requester in a window: a LAYERSMART layer in front of the window's layer (or in front of the
+; previous requester), at corner LeftEdge/TopEdge (inside a GIMMEZEROZERO window), clipped to the window; background in
+; pen BackFill, ReqBorder, ReqText, gadgets (or ImageBMap copied if PREDRAWN). While a requester is up, only its
+; gadgets respond (gadgets.s) and, without NOISYREQ, the window no longer receives keys, buttons, movements or menus
+; (screens.s). REQSET when put up, REQCLEAR at the end; ENDGADGET or EndRequest remove it. The requester layers
+; follow the window when it moves or changes depth.
+; IMPLEMENTATION track ("clean"): AutoDocs intuition + public structures + spec. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
@@ -29,7 +29,7 @@
                 xref    wn_sendmsg           ; screens.s
                 xref    it_refresh
 
-; Request(requester a0, fenêtre a1) -> d0 = TRUE ; FALSE si la couche n'a pu être créée (rien n'est chaîné).
+; Request(requester a0, window a1) -> d0 = TRUE; FALSE if the layer could not be created (nothing is linked).
 intuition_Request:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5
@@ -50,7 +50,7 @@ intuition_Request:
         bra.s   .rq_mark
 .rq_chain:
         move.l  ($4).w,a6
-        jsr     LVO_FORBID(a6)       ; la tâche d'entrée lit la chaîne
+        jsr     LVO_FORBID(a6)       ; the input task reads the chain
         move.l  a2,WD_FIRSTREQUEST(a3)
         addq.w  #1,WD_REQCOUNT(a3)
         or.l    #INREQUEST,WD_FLAGS(a3)
@@ -67,15 +67,15 @@ intuition_Request:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; rq_mklayer(a2 = requester, a3 = fenêtre, a5 = IntuitionBase) -> Z = 0 si réussi : couche créée (ou aucune si la
-; taille rognée à la fenêtre est nulle : réussite aussi), placée devant le requester précédent, sinon devant la
-; fenêtre ; RastPort à la police de l'écran. Clobbe d0-d7/a0/a1/a4/a6.
+; rq_mklayer(a2 = requester, a3 = window, a5 = IntuitionBase) -> Z = 0 if successful: layer created (or none if the
+; size clipped to the window is zero: also a success), placed in front of the previous requester, otherwise in front of
+; the window; RastPort set to the screen font. Clobbers d0-d7/a0/a1/a4/a6.
 rq_mklayer:
         move.l  a2,a0
-        jsr     rq_origin            ; d0/d1 = coin dans la fenêtre
-        move.w  RQ_WIDTH(a2),d2      ; taille rognée à la place disponible
+        jsr     rq_origin            ; d0/d1 = corner in the window
+        move.w  RQ_WIDTH(a2),d2      ; size clipped to the available room
         move.w  RQ_HEIGHT(a2),d3
-        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO : jusqu'à la taille intérieure
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO: up to the inner size
         beq.s   .ml_win
         tst.l   WD_BORDERRPORT(a3)
         beq.s   .ml_win
@@ -88,7 +88,7 @@ rq_mklayer:
         add.w   d6,d5
         bra.s   .ml_clip
 .ml_win:
-        move.w  WD_WIDTH(a3),d4      ; sinon jusqu'aux bordures droite et basse
+        move.w  WD_WIDTH(a3),d4      ; otherwise up to the right and bottom borders
         moveq   #0,d6
         move.b  WD_BORDERRIGHT(a3),d6
         sub.w   d6,d4
@@ -96,7 +96,7 @@ rq_mklayer:
         move.b  WD_BORDERBOTTOM(a3),d6
         sub.w   d6,d5
 .ml_clip:
-        sub.w   d0,d4                ; place à droite / en bas du coin
+        sub.w   d0,d4                ; room to the right / below the corner
         sub.w   d1,d5
         cmp.w   d4,d2
         ble.s   .ml_w
@@ -110,7 +110,7 @@ rq_mklayer:
         ble     .ml_none
         tst.w   d3
         ble     .ml_none
-        add.w   WD_LEFTEDGE(a3),d0   ; bornes à l'écran
+        add.w   WD_LEFTEDGE(a3),d0   ; bounds at the screen
         add.w   WD_TOPEDGE(a3),d1
         add.w   d0,d2
         subq.w  #1,d2
@@ -121,7 +121,7 @@ rq_mklayer:
         ext.l   d2
         ext.l   d3
         move.l  WD_WSCREEN(a3),a4
-        move.l  WD_WLAYER(a3),a1     ; a1 = couche devant laquelle se placer : requester précédent, sinon fenêtre
+        move.l  WD_WLAYER(a3),a1     ; a1 = layer to be placed in front of: previous requester, otherwise window
         move.l  RQ_OLDERREQ(a2),d4
         beq.s   .ml_other
         move.l  d4,a0
@@ -137,13 +137,13 @@ rq_mklayer:
         suba.l  a2,a2
         move.l  IB_LAYERSBASE(a5),a6
         move.l  (sp),d5
-        cmp.l   SC_LAYERINFO(a4),d5  ; (Layer_Info.top_layer : offset 0) déjà tout devant : une seule opération
+        cmp.l   SC_LAYERINFO(a4),d5  ; (Layer_Info.top_layer: offset 0) already frontmost: a single operation
         bne.s   .ml_behind
         jsr     LVO_CREATEUPFRONTLAYER(a6)
         addq.l  #4,sp
         bra.s   .ml_made
 .ml_behind:
-        jsr     LVO_CREATEBEHINDLAYER(a6)    ; créée derrière, puis placée devant (spec §2.2)
+        jsr     LVO_CREATEBEHINDLAYER(a6)    ; created behind, then placed in front (spec §2.2)
         move.l  (sp)+,a1
         tst.l   d0
         beq.s   .ml_made
@@ -154,11 +154,11 @@ rq_mklayer:
 .ml_made:
         move.l  (sp)+,a2
         tst.l   d0
-        beq.s   .ml_ret              ; Z = 1 : échec
+        beq.s   .ml_ret              ; Z = 1: failure
         move.l  d0,RQ_REQLAYER(a2)
         move.l  d0,a0
         move.l  a3,IL_WINDOW(a0)
-        move.l  RQ_REQLAYER(a2),a1   ; police de l'écran
+        move.l  RQ_REQLAYER(a2),a1   ; screen font
         move.l  IL_RP(a1),a1
         move.l  SC_RASTPORT+rp_Font(a4),a0
         move.l  IB_GFXBASE(a5),a6
@@ -168,15 +168,15 @@ rq_mklayer:
 .ml_ret:
         rts
 
-; rq_render(a2 = requester, a3 = fenêtre, a5 = IntuitionBase) : REQACTIVE ; PropInfo de ses gadgets ; dans sa couche,
-; ImageBMap recopié (PREDRAWN) ou fond BackFill + ReqBorder + ReqText ; puis ses gadgets (à rebours, comme une
-; fenêtre). Sans couche : rien n'est dessiné. Clobbe d0-d7/a0/a1/a4/a6.
+; rq_render(a2 = requester, a3 = window, a5 = IntuitionBase): REQACTIVE; PropInfo of its gadgets; in its layer,
+; ImageBMap copied (PREDRAWN) or BackFill background + ReqBorder + ReqText; then its gadgets (in reverse order, like a
+; window). Without a layer: nothing is drawn. Clobbers d0-d7/a0/a1/a4/a6.
 rq_render:
         or.w    #REQACTIVE,RQ_FLAGS(a2)
         move.l  RQ_REQLAYER(a2),d0
         beq     .rr_ret
         move.l  d0,a4
-        move.l  IL_RP(a4),a4         ; a4 = RastPort de la couche
+        move.l  IL_RP(a4),a4         ; a4 = RastPort of the layer
         move.l  a2,-(sp)
         move.l  RQ_REQGADGET(a2),a2
         jsr     gad_propinitl
@@ -243,8 +243,8 @@ rq_render:
 .rr_ret:
         rts
 
-; rq_send(a3 = fenêtre, d0 = REQSET / REQCLEAR) : message IDCMP à la fenêtre (si elle l'a demandé), sous Forbid : la
-; tâche d'entrée puise dans la même réserve de messages. Préserve d2-d7/a2-a5.
+; rq_send(a3 = window, d0 = REQSET / REQCLEAR): IDCMP message to the window (if it asked for it), under Forbid: the
+; input task draws from the same message pool. Preserves d2-d7/a2-a5.
 rq_send:
         movem.l d2-d3/d6,-(sp)
         move.l  d0,d2
@@ -260,14 +260,14 @@ rq_send:
         movem.l (sp)+,d2-d3/d6
         rts
 
-; rq_remove(a2 = requester, a3 = fenêtre, a5 = IntuitionBase) -> Z = 1 s'il n'était pas dans la chaîne de la fenêtre
-; (rien n'est fait) ; sinon : plus REQACTIVE, retiré de la chaîne, ses gadgets oubliés s'ils étaient tenus, sa couche
-; supprimée (layers répare la zone découverte). Clobbe d0/d1/a0/a1/a6.
+; rq_remove(a2 = requester, a3 = window, a5 = IntuitionBase) -> Z = 1 if it was not in the window's chain
+; (nothing is done); otherwise: no longer REQACTIVE, removed from the chain, its gadgets forgotten if they were held,
+; its layer deleted (layers repairs the uncovered area). Clobbers d0/d1/a0/a1/a6.
 rq_remove:
         and.w   #~REQACTIVE,RQ_FLAGS(a2)
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
-        lea     WD_FIRSTREQUEST(a3),a0   ; RQ_OLDERREQ est à l'offset 0 : la tête se traite comme un maillon
+        lea     WD_FIRSTREQUEST(a3),a0   ; RQ_OLDERREQ is at offset 0: the head is handled like a link
 .rm_find:
         move.l  (a0),d0
         beq.s   .rm_absent
@@ -303,7 +303,7 @@ rq_remove:
         moveq   #1,d0                ; Z = 0
         rts
 
-; rq_count(a3 = fenêtre) : un requester de moins ; à zéro, INREQUEST effacé. Préserve tout sauf d0 ; Z = 1 si zéro.
+; rq_count(a3 = window): one requester less; at zero, INREQUEST cleared. Preserves everything but d0; Z = 1 if zero.
 rq_count:
         subq.w  #1,WD_REQCOUNT(a3)
         bgt.s   .rc_ret
@@ -313,8 +313,8 @@ rq_count:
 .rc_ret:
         rts
 
-; EndRequest(requester a0, fenêtre a1) : retiré (rien s'il n'est pas dans la fenêtre) ; au dernier requester, REQCLEAR
-; et INREQUEST effacé ; la fenêtre est réparée.
+; EndRequest(requester a0, window a1): removed (nothing if it is not in the window); at the last requester, REQCLEAR
+; and INREQUEST cleared; the window is repaired.
 intuition_EndRequest:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5
@@ -334,8 +334,8 @@ intuition_EndRequest:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; rq_endgadget(a3 = fenêtre, a5 = IntuitionBase) : tâche d'entrée, relâchement d'un ENDGADGET du requester le plus
-; récent : il est retiré, REQCLEAR (à chaque fois), un de moins, fenêtre réparée (spec §3.3). Préserve d2-d7/a2-a5.
+; rq_endgadget(a3 = window, a5 = IntuitionBase): input task, release of an ENDGADGET of the most recent
+; requester: it is removed, REQCLEAR (every time), one less, window repaired (spec §3.3). Preserves d2-d7/a2-a5.
 rq_endgadget:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  WD_FIRSTREQUEST(a3),d0
@@ -352,8 +352,8 @@ rq_endgadget:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; rq_closeall(a3 = fenêtre, a5 = IntuitionBase) : CloseWindow — les requesters encore posés sont retirés (leurs couches
-; ne doivent pas survivre à la fenêtre). Préserve d2-d7/a2-a5.
+; rq_closeall(a3 = window, a5 = IntuitionBase): CloseWindow - the requesters still up are removed (their layers
+; must not outlive the window). Preserves d2-d7/a2-a5.
 rq_closeall:
         movem.l d2-d7/a2-a5,-(sp)
 .ca_lp:
@@ -367,8 +367,8 @@ rq_closeall:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; rq_move(a3 = fenêtre, d2.l/d3.l = déplacement, a5 = IntuitionBase) : MoveWindow — les couches des requesters suivent.
-; Préserve d2-d7/a2-a5.
+; rq_move(a3 = window, d2.l/d3.l = displacement, a5 = IntuitionBase): MoveWindow - the requester layers follow.
+; Preserves d2-d7/a2-a5.
 rq_move:
         movem.l a2/a6,-(sp)
         move.l  IB_LAYERSBASE(a5),a6
@@ -390,15 +390,15 @@ rq_move:
         movem.l (sp)+,a2/a6
         rts
 
-; rq_restack(a3 = fenêtre, a5 = IntuitionBase) : après un changement de profondeur de la fenêtre, ses requesters
-; reviennent juste devant elle, du plus ancien au plus récent. Préserve d2-d7/a2-a5.
+; rq_restack(a3 = window, a5 = IntuitionBase): after a depth change of the window, its requesters
+; come back just in front of it, from oldest to most recent. Preserves d2-d7/a2-a5.
 rq_restack:
         movem.l d2-d3/a2/a6,-(sp)
         move.l  IB_LAYERSBASE(a5),a6
-        move.l  WD_WLAYER(a3),d2     ; d2 = couche devant laquelle placer le suivant
-        suba.l  a2,a2                ; a2 = dernier requester placé (0 : aucun)
+        move.l  WD_WLAYER(a3),d2     ; d2 = layer in front of which to place the next one
+        suba.l  a2,a2                ; a2 = last placed requester (0: none)
 .rs_pass:
-        move.l  WD_FIRSTREQUEST(a3),a0   ; cherche celui dont le plus ancien est a2 (le suivant vers la tête)
+        move.l  WD_FIRSTREQUEST(a3),a0   ; look for the one whose older requester is a2 (the next one towards the head)
         moveq   #0,d3
 .rs_find:
         cmpa.w  #0,a0
@@ -424,7 +424,7 @@ rq_restack:
         movem.l (sp)+,d2-d3/a2/a6
         rts
 
-; InitRequester(requester a0) : les 112 octets mis à zéro.
+; InitRequester(requester a0): the 112 bytes set to zero.
 intuition_InitRequester:
         moveq   #RQ_SIZEOF/4-1,d0
 .ir_lp:
@@ -432,8 +432,8 @@ intuition_InitRequester:
         dbra    d0,.ir_lp
         rts
 
-; SetDMRequest(fenêtre a0, requester a1) -> d0 = TRUE ; FALSE (rien de changé) si le DMRequest actuel est affiché.
-; ClearDMRequest(fenêtre a0) : la même chose avec NULL.
+; SetDMRequest(window a0, requester a1) -> d0 = TRUE; FALSE (nothing changed) if the current DMRequest is displayed.
+; ClearDMRequest(window a0): the same with NULL.
 intuition_ClearDMRequest:
         suba.l  a1,a1
 intuition_SetDMRequest:

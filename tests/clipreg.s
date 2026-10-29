@@ -1,11 +1,11 @@
-; clipreg.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire de layers.library InstallClipRegion (piste analyse).
-; Fenêtre BORDERLESS 100x50 en (100,50) sur le WB ; on installe des régions sur sa couche, on remplit
-; toute la couche (RectFill) et on relit les pixels dans le RastPort de l'écran (sans couche).
-; Lignes :  CR minx miny maxx maxy lobs bitmap        (ClipRects de la couche, coordonnées écran)
-;           Tn ...                                     (valeurs du test n, cf. commentaires)
-;           P x y pen                                  (pixel écran)
-; Code auteur, structures publiques (graphics/layers 1.3).
+; clipreg.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of layers.library InstallClipRegion (analysis track).
+; BORDERLESS 100x50 window at (100,50) on the WB; regions are installed on its layer, the whole layer is
+; filled (RectFill) and the pixels are read back through the screen's RastPort (no layer).
+; Lines:    CR minx miny maxx maxy lobs bitmap        (layer ClipRects, screen coordinates)
+;           Tn ...                                     (values of test n, see comments)
+;           P x y pen                                  (screen pixel)
+; Authored code, public structures (graphics/layers 1.3).
 
 L_CLIPREGION    EQU     $7e
 
@@ -38,7 +38,7 @@ _start:
                 lea     84(a1),a1            ; Screen.RastPort
                 move.l  a1,srp-V(a5)
                 lea     buf,a4
-; T0 : état initial
+; T0: initial state
                 moveq   #0,d0
                 bsr     tline
                 move.l  lay(pc),a0
@@ -53,7 +53,7 @@ _start:
                 bsr     orrect
                 moveq   #0,d0
                 bsr     fill
-; T1 : Install(R1) -> ancien, ClipRegion ; ClipRects ; remplissage pen 1 ; pixels
+; T1: Install(R1) -> old, ClipRegion; ClipRects; fill with pen 1; pixels
                 moveq   #1,d0
                 bsr     tline
                 move.l  r1(pc),a1
@@ -68,7 +68,7 @@ _start:
                 bsr     fill
                 lea     pts1(pc),a3
                 bsr     pixels
-; T2 : R1 modifiée après installation (ajout 50,30-59,39), remplissage pen 2, puis réinstallation
+; T2: R1 modified after installation (adding 50,30-59,39), fill with pen 2, then reinstallation
                 moveq   #2,d0
                 bsr     tline
                 bsr     nl
@@ -88,7 +88,7 @@ _start:
                 bsr     fill
                 lea     pts2(pc),a3
                 bsr     pixels
-; T3 : Install(NULL) -> ancien ; ClipRects ; remplissage pen 0
+; T3: Install(NULL) -> old; ClipRects; fill with pen 0
                 moveq   #3,d0
                 bsr     tline
                 suba.l  a1,a1
@@ -103,7 +103,7 @@ _start:
                 bsr     fill
                 lea     pts1(pc),a3
                 bsr     pixels
-; T4 : région vide
+; T4: empty region
                 moveq   #4,d0
                 bsr     tline
                 bsr     newreg
@@ -121,7 +121,7 @@ _start:
                 bsr     pixels
                 suba.l  a1,a1
                 bsr     install
-; T5 : région débordant la couche (-20,-20 .. 200,200)
+; T5: region overflowing the layer (-20,-20 .. 200,200)
                 moveq   #5,d0
                 bsr     tline
                 bsr     nl
@@ -133,7 +133,7 @@ _start:
                 bsr     crs
                 suba.l  a1,a1
                 bsr     install
-; T6 : opération de couche avec région installée : MoveWindow(+20,+10)
+; T6: layer operation with a region installed: MoveWindow(+20,+10)
                 moveq   #6,d0
                 bsr     tline
                 bsr     nl
@@ -158,7 +158,7 @@ _start:
                 bsr     pixels
                 suba.l  a1,a1
                 bsr     install
-; fin
+; end
                 move.l  intbase(pc),a6
                 move.l  win(pc),a0
                 jsr     -72(a6)              ; CloseWindow
@@ -174,7 +174,7 @@ open:           moveq   #0,d0
                 jsr     -552(a6)
                 lea     V(pc),a5
                 rts
-tline6:                                      ; « L minx miny cliprgn »
+tline6:                                      ; "L minx miny cliprgn"
                 move.b  #'L',(a4)+
                 move.b  #' ',(a4)+
                 move.w  16(a0),d0
@@ -195,13 +195,13 @@ newreg:         move.l  gfxbase(pc),a6
                 jsr     -516(a6)             ; NewRegion
                 rts
 orrect:         move.l  gfxbase(pc),a6
-                jsr     -510(a6)             ; OrRectRegion(a0 région, a1 rect)
+                jsr     -510(a6)             ; OrRectRegion(a0 region, a1 rect)
                 rts
 install:        move.l  laybase(pc),a6
                 move.l  lay(pc),a0
-                jsr     -174(a6)             ; InstallClipRegion(a0 couche, a1 région) -> d0
+                jsr     -174(a6)             ; InstallClipRegion(a0 layer, a1 region) -> d0
                 rts
-fill:                                        ; SetAPen(d0) + RectFill de toute la couche
+fill:                                        ; SetAPen(d0) + RectFill of the whole layer
                 move.l  gfxbase(pc),a6
                 move.l  rp(pc),a1
                 jsr     -342(a6)             ; SetAPen
@@ -213,7 +213,7 @@ fill:                                        ; SetAPen(d0) + RectFill de toute l
                 jsr     -306(a6)             ; RectFill
                 jsr     -228(a6)             ; WaitBlit
                 rts
-pixels:                                      ; liste (x,y) en a3, fin = -1
+pixels:                                      ; (x,y) list at a3, end = -1
 .p:             move.w  (a3)+,d4
                 bmi.s   .px
                 move.w  (a3)+,d5
@@ -234,7 +234,7 @@ pixels:                                      ; liste (x,y) en a3, fin = -1
                 bsr     nl
                 bra.s   .p
 .px:            rts
-crs:                                         ; ClipRects de la couche
+crs:                                         ; ClipRects of the layer
                 move.l  lay(pc),a0
                 move.l  8(a0),a2
 .c:             move.l  a2,d0

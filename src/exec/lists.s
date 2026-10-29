@@ -1,7 +1,7 @@
-; src/exec/lists.s — exec.library : primitives de listes doublement chaînées
-; (newlist, AddHead, AddTail, Remove, FindName). Convention Amiga : scratch =
-; d0/d1/a0/a1 ; a6 = library base.
-; Piste IMPLÉMENTATION (« clean ») : docs/analysis/exec-spec.md + ABI publique.
+; src/exec/lists.s — exec.library: doubly-linked list primitives
+; (newlist, AddHead, AddTail, Remove, FindName). Amiga convention: scratch =
+; d0/d1/a0/a1; a6 = library base.
+; IMPLEMENTATION track ("clean"): docs/analysis/exec-spec.md + public ABI.
 
                 include "exec.i"
 
@@ -15,7 +15,7 @@
                 xdef    exec_Enqueue
                 xdef    exec_FindName
 
-; newlist : struct List vide (a1 = &List ; conserve a6 ; clobbers a0)
+; newlist: empty struct List (a1 = &List; preserves a6; clobbers a0)
 newlist:
         move.l  a1,a0
         addq.l  #LH_TAIL,a0
@@ -46,10 +46,10 @@ exec_AddTail:
         move.l  a1,(a0)              ; old_TailPred.Succ = node
         rts
 
-; Insert(list a0, node a1, pred a2) : insère node APRÈS pred ; pred NULL -> AddHead
+; Insert(list a0, node a1, pred a2): inserts node AFTER pred; pred NULL -> AddHead
 exec_Insert:
         move.l  a2,d0
-        beq.s   exec_AddHead         ; pred NULL -> tête
+        beq.s   exec_AddHead         ; pred NULL -> head
         move.l  (a2),d0              ; succ = pred->Succ
         move.l  d0,(a1)              ; node->Succ = succ
         move.l  a2,LN_PRED(a1)       ; node->Pred = pred
@@ -67,26 +67,26 @@ exec_Remove:
         move.l  LN_PRED(a1),LN_PRED(a0) ; Succ.Pred = Pred
         rts
 
-; RemHead(list a0) -> d0 = node retiré | 0 (liste vide)
+; RemHead(list a0) -> d0 = removed node | 0 (empty list)
 exec_RemHead:
         move.l  (a0),a1              ; node = lh_Head
         move.l  (a1),d0              ; succ = node->Succ
-        beq.s   .rh_none             ; Succ==0 -> node est la sentinelle = vide
+        beq.s   .rh_none             ; Succ==0 -> node is the sentinel = empty
         move.l  d0,(a0)              ; lh_Head = succ
-        exg     d0,a1                ; a1 = succ, d0 = node (à retourner)
+        exg     d0,a1                ; a1 = succ, d0 = node (to return)
         move.l  a0,LN_PRED(a1)       ; succ->Pred = &lh_Head (= list)
         rts
 .rh_none:
         moveq   #0,d0
         rts
 
-; RemTail(list a0) -> d0 = node retiré | 0 (liste vide)
+; RemTail(list a0) -> d0 = removed node | 0 (empty list)
 exec_RemTail:
         move.l  8(a0),a1             ; node = lh_TailPred
         move.l  LN_PRED(a1),d0       ; pred = node->Pred
-        beq.s   .rt_none             ; Pred==0 -> node est la sentinelle = vide
+        beq.s   .rt_none             ; Pred==0 -> node is the sentinel = empty
         move.l  d0,8(a0)             ; lh_TailPred = pred
-        exg     d0,a1                ; a1 = pred, d0 = node (à retourner)
+        exg     d0,a1                ; a1 = pred, d0 = node (to return)
         lea     LH_TAIL(a0),a0       ; a0 = &lh_Tail (= list+4)
         move.l  a0,(a1)              ; pred->Succ = &lh_Tail
         rts
@@ -94,16 +94,16 @@ exec_RemTail:
         moveq   #0,d0
         rts
 
-; Enqueue(list a0, node a1) : insertion triée par LN_PRI décroissant (FIFO à pri égale)
+; Enqueue(list a0, node a1): insertion sorted by descending LN_PRI (FIFO at equal pri)
 exec_Enqueue:
-        move.b  LN_PRI(a1),d1        ; d1.b = priorité du nouveau noeud (signée)
-        move.l  (a0),a0              ; a0 = cur = lh_Head (1er noeud ou sentinelle)
+        move.b  LN_PRI(a1),d1        ; d1.b = priority of the new node (signed)
+        move.l  (a0),a0              ; a0 = cur = lh_Head (1st node or sentinel)
 .eq_loop:
         move.l  (a0),d0              ; cur->Succ
-        beq.s   .eq_insert           ; cur = sentinelle tail -> insérer avant
-        move.b  LN_PRI(a0),d0        ; priorité de cur
-        cmp.b   d1,d0                ; cur - new (signé)
-        blt.s   .eq_insert           ; cur->pri < new->pri -> insérer avant cur
+        beq.s   .eq_insert           ; cur = tail sentinel -> insert before
+        move.b  LN_PRI(a0),d0        ; priority of cur
+        cmp.b   d1,d0                ; cur - new (signed)
+        blt.s   .eq_insert           ; cur->pri < new->pri -> insert before cur
         move.l  (a0),a0              ; cur = cur->Succ
         bra.s   .eq_loop
 .eq_insert:
@@ -120,11 +120,11 @@ exec_FindName:
         move.l  (a0),a0              ; node = lh_Head
 .fn_loop:
         move.l  (a0),d0              ; node->Succ
-        beq.s   .fn_none             ; atteint le sentinel (Succ==0)
+        beq.s   .fn_none             ; reached the sentinel (Succ==0)
         move.l  LN_NAME(a0),d1
-        beq.s   .fn_next             ; pas de nom
+        beq.s   .fn_next             ; no name
         movem.l d2/a0/a1,-(sp)
-        move.l  d1,a0                ; nom du nœud
+        move.l  d1,a0                ; name of the node
 .fn_cmp:
         move.b  (a0)+,d0
         move.b  (a1)+,d2
@@ -133,7 +133,7 @@ exec_FindName:
         tst.b   d0
         bne.s   .fn_cmp
         movem.l (sp)+,d2/a0/a1
-        move.l  a0,d0                ; match -> retourne le nœud
+        move.l  a0,d0                ; match -> return the node
         rts
 .fn_nomatch:
         movem.l (sp)+,d2/a0/a1

@@ -1,196 +1,196 @@
-# FastFonts `C:FF` (Workbench 1.3.3) : remplacement de `Text()`, contrats d'ABI, cause du texte invisible
+# FastFonts `C:FF` (Workbench 1.3.3): replacement of `Text()`, ABI contracts, cause of the invisible text
 
-Piste **ANALYSE** (« dirty »). Ce document décrit des **comportements et des contrats d'ABI seulement** :
-registres attendus, champs lus/écrits (offsets publics), appels de bibliothèque, conditions. **Aucune
-suite d'instructions n'y est recopiée** et il ne contient pas de pseudo-code ligne à ligne. La ROM
-Kickstart (`assets/kick34005.A500`) n'a **pas** été ouverte : la cible est un programme tiers sur
-disquette.
+**ANALYSIS** track ("dirty"). This document describes **behaviours and ABI contracts only**:
+expected registers, fields read/written (public offsets), library calls, conditions. **No
+instruction sequence is copied here** and it contains no line-by-line pseudo-code. The Kickstart
+ROM (`assets/kick34005.A500`) was **not** opened: the target is a third-party program on
+floppy.
 
 ## Provenance
 
-- Fichier : `C:FF` de `assets/test_adf/Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`
-  (lecture seule), extrait par `xdftool … read c/FF`. 3320 octets, md5
-  `d8c8c0034a3f6b6b3f289144a0ac7dfa`. Bannière : « FastFonts V1.31 Copyright © 1987 by C.Heath of
-  Microsmiths, Inc ».
-- Hunks : CODE $BF0, DATA $7C, BSS $4. Relogé à une base fictive (script `python3 -I`), désassemblé
-  avec radare2 (`-a m68k`). Toutes les affirmations ci-dessous viennent de ce désassemblage.
-- Invocation (`s/startup-sequence`, ligne 9) : **`FF >NIL: -0 ;speed up Text`**.
-- Bibliothèques ouvertes (OldOpenLibrary, sans version) : dos, graphics, intuition ; diskfont seulement
-  si un nom de police est passé ou si l'option `1` est active. **Aucun test de version** de bibliothèque.
+- File: `C:FF` from `assets/test_adf/Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`
+  (read only), extracted by `xdftool … read c/FF`. 3320 bytes, md5
+  `d8c8c0034a3f6b6b3f289144a0ac7dfa`. Banner: "FastFonts V1.31 Copyright © 1987 by C.Heath of
+  Microsmiths, Inc".
+- Hunks: CODE $BF0, DATA $7C, BSS $4. Relocated to a dummy base (script `python3 -I`), disassembled
+  with radare2 (`-a m68k`). All the statements below come from this disassembly.
+- Invocation (`s/startup-sequence`, line 9): **`FF >NIL: -0 ;speed up Text`**.
+- Libraries opened (OldOpenLibrary, without version): dos, graphics, intuition; diskfont only
+  if a font name is passed or if option `1` is active. **No version test** of any library.
 
-## Options de ligne de commande et état partagé
+## Command-line options and shared state
 
-- Un mot de drapeaux (valeur initiale : bits 0, 1, 2 posés) est modifié par chaque option `-x` :
+- A flag word (initial value: bits 0, 1, 2 set) is modified by each `-x` option:
 
-  | Option | Effet sur les drapeaux | Sens |
+  | Option | Effect on the flags | Meaning |
   |---|---|---|
-  | `B`/`b` | pose bits 0 et 1 | remplacer topaz 8 et topaz 9 par la police donnée |
-  | `8` / `9` | pose bit 0 / bit 1 | remplacer seulement topaz 8 / topaz 9 |
-  | `1` | pose bit 3 | traiter aussi topaz 11 (chargée via diskfont) |
-  | **`0`** | **efface bits 0, 1 et 3** | **aucun remplacement de police** ; FastText (bit 2) intact |
-  | `F`/`f` | pose bit 2 | FastText actif |
-  | `N`/`n` | efface bit 2 | FastText inactif |
-  | `Q`/`q` | efface tout | terminer FastFonts (tout restaurer) |
+  | `B`/`b` | sets bits 0 and 1 | replace topaz 8 and topaz 9 with the given font |
+  | `8` / `9` | sets bit 0 / bit 1 | replace only topaz 8 / topaz 9 |
+  | `1` | sets bit 3 | also handle topaz 11 (loaded via diskfont) |
+  | **`0`** | **clears bits 0, 1 and 3** | **no font replacement**; FastText (bit 2) intact |
+  | `F`/`f` | sets bit 2 | FastText active |
+  | `N`/`n` | clears bit 2 | FastText inactive |
+  | `Q`/`q` | clears everything | terminate FastFonts (restore everything) |
 
-  Option inconnue → « Bad command line switch ». Un mot sans `-` est le nom d'une police disque.
-- **`-0` signifie donc : « accélérer Text seulement, ne toucher à aucune police »**. Pas de copie de
-  police ni de remplacement de topaz dans la configuration de la startup-sequence.
-- État persistant : un MsgPort public nommé `FF2:)` (FindPort ; sinon AllocMem $48 octets
-  PUBLIC|CLEAR, ln_Type = NT_MSGPORT, mp_Flags = PA_IGNORE, AddPort). Il garde les TextFont ouvertes
-  (topaz 8 via `OpenFont({"topaz.font",8})`, topaz 9, topaz 11 facultatif) et les deux blocs de patch
-  (un pour topaz 8, un pour topaz 11). Un second lancement de FF retrouve le port, **retire d'abord** les
-  patchs existants, puis réinstalle selon les nouveaux drapeaux.
-- Lancé depuis le Workbench (pr_CLI à $AC nul) : attend/réplique le WBStartup sur pr_MsgPort ($5C).
+  Unknown option → "Bad command line switch". A word without `-` is the name of a disk font.
+- **`-0` therefore means: "speed up Text only, touch no font"**. No copy of
+  a font nor replacement of topaz in the startup-sequence configuration.
+- Persistent state: a public MsgPort named `FF2:)` (FindPort; otherwise AllocMem $48 bytes
+  PUBLIC|CLEAR, ln_Type = NT_MSGPORT, mp_Flags = PA_IGNORE, AddPort). It keeps the open TextFonts
+  (topaz 8 via `OpenFont({"topaz.font",8})`, topaz 9, optional topaz 11) and the two patch blocks
+  (one for topaz 8, one for topaz 11). A second launch of FF finds the port, **first removes** the
+  existing patches, then reinstalls according to the new flags.
+- Launched from the Workbench (pr_CLI at $AC null): waits for/replies to the WBStartup on pr_MsgPort ($5C).
 
-### Remplacement de police (inactif avec `-0`, pour mémoire)
+### Font replacement (inactive with `-0`, for the record)
 
-OpenDiskFont(nom, taille) ; refus si tf_Flags ($17) bit FPF_PROPORTIONAL, si tf_XSize ($18) ou tf_YSize
-($14) diffèrent, ou si tf_Baseline ($1A) diffère. Sinon FF **échange en place** le contenu de la TextFont
-topaz (même adresse de structure) avec celle de la police disque : mots de tf_BoldSmear ($1C) et de
-tf_LoChar ($20) à tf_CharKern ($30) inclus. Cela suppose la TextFont topaz modifiable (en RAM).
+OpenDiskFont(name, size); refused if tf_Flags ($17) has bit FPF_PROPORTIONAL, if tf_XSize ($18) or tf_YSize
+($14) differ, or if tf_Baseline ($1A) differs. Otherwise FF **swaps in place** the contents of the topaz
+TextFont (same structure address) with those of the disk font: words of tf_BoldSmear ($1C) and from
+tf_LoChar ($20) to tf_CharKern ($30) inclusive. This assumes the topaz TextFont is modifiable (in RAM).
 
-## 1. Fonction remplacée et conditions de prise en main
+## 1. Replaced function and takeover conditions
 
-- **Une seule fonction est patchée : `graphics.library Text()`, LVO −60 ($FFC4)**, via
-  `exec SetFunction` (−420) entre Forbid/Permit. La valeur rendue (ancien vecteur) est stockée dans le
-  bloc de patch et sert de repli (saut absolu vers l'ancienne Text).
-- Un bloc par police accélérée : topaz 8 toujours (si FastText actif), topaz 11 si ouverte (option `1`).
-  Le second patch chaîne sur le premier (son « ancienne Text » est le patch topaz 8).
-- **Conditions d'installation** (sur un RastPort local initialisé par InitRastPort puis SetFont) :
-  rp_TxWidth ($3C) **= 8** et 4 ≤ rp_TxHeight ($3A) ≤ 16. Sinon pas de patch. Aucun test de tf_Style,
-  tf_Flags ni d'adresse ROM/RAM.
-- **Conditions à l'exécution** (sinon saut direct à l'ancienne Text, registres intacts) :
-  1. rp_AlgoStyle ($38) = 0 ;
-  2. count (D0) ≤ 120 (comparaison signée) ;
-  3. **rp_Font ($34) = exactement l'adresse de TextFont** obtenue par OpenFont à l'installation.
-- **Non testés** : DrawMode, FgPen/BgPen, Mask, rp_Layer, rp_TxSpacing, rp_TxFlags, BitMap, profondeur.
-  Tout cela est délégué à BltTemplate (voir § 2).
-- Garde de réentrance : pendant le chemin rapide, la constante de police comparée est altérée (puis
-  rétablie à la sortie). Un appel concurrent (autre tâche) ou imbriqué avec la même police tombe donc
-  dans l'**ancienne** Text : la Text de la ROM doit rester correcte et réentrante.
-- count = 0 : rien n'est dessiné, pas de verrou, sortie par WaitBlit.
+- **Only one function is patched: `graphics.library Text()`, LVO −60 ($FFC4)**, via
+  `exec SetFunction` (−420) between Forbid/Permit. The returned value (old vector) is stored in the
+  patch block and serves as the fallback (absolute jump to the old Text).
+- One block per accelerated font: topaz 8 always (if FastText active), topaz 11 if opened (option `1`).
+  The second patch chains onto the first (its "old Text" is the topaz 8 patch).
+- **Installation conditions** (on a local RastPort initialised by InitRastPort then SetFont):
+  rp_TxWidth ($3C) **= 8** and 4 ≤ rp_TxHeight ($3A) ≤ 16. Otherwise no patch. No test of tf_Style,
+  tf_Flags nor of a ROM/RAM address.
+- **Run-time conditions** (otherwise direct jump to the old Text, registers intact):
+  1. rp_AlgoStyle ($38) = 0;
+  2. count (D0) ≤ 120 (signed comparison);
+  3. **rp_Font ($34) = exactly the TextFont address** obtained by OpenFont at installation.
+- **Not tested**: DrawMode, FgPen/BgPen, Mask, rp_Layer, rp_TxSpacing, rp_TxFlags, BitMap, depth.
+  All of that is delegated to BltTemplate (see § 2).
+- Reentrancy guard: during the fast path, the compared font constant is altered (then
+  restored on exit). A concurrent (other task) or nested call with the same font therefore falls
+  into the **old** Text: the ROM's Text must remain correct and reentrant.
+- count = 0: nothing is drawn, no lock, exit through WaitBlit.
 
-## 2. Comment le chemin rapide dessine
+## 2. How the fast path draws
 
-Contrat d'entrée = celui de Text : A1 = RastPort, A0 = chaîne, D0 = count, **A6 = GfxBase (utilisé tel
-quel pour appeler d'autres LVO graphics)**.
+Entry contract = that of Text: A1 = RastPort, A0 = string, D0 = count, **A6 = GfxBase (used as
+is to call other graphics LVOs)**.
 
-1. **Verrou** : si rp_Layer ($00) ≠ NULL, `LockLayerRom` (graphics −432, **couche en A5**) ; après le
-   dessin, `UnlockLayerRom` (−438, A5). FF suppose que LockLayerRom **préserve D0/A0/A1** (il réutilise
-   chaîne, RastPort et count juste après) et qu'il est **imbriquable** (BltTemplate peut verrouiller à son
-   tour).
-2. **Construction d'un gabarit 1 plan au CPU** dans un tampon **CHIP** privé (alloué MEMF_CHIP|PUBLIC
-   à l'installation : 120 octets × 8 lignes = 960 octets, ×2 si hauteur > 8). Pas de pas de ligne
-   variable : **modulo fixe 120 octets**, un octet (8 pixels) par caractère, une ligne par rangée de la
-   police, à partir d'une table de glyphes pré-calculée (§ 3). Le code est auto-modifié à l'installation
-   (adresse du tampon, ligne de base, hauteur, déroulage selon TxHeight) et copié dans le bloc de patch.
-3. **Dessin : un seul appel `BltTemplate`** (graphics **−36**) avec :
-   A0 = début du gabarit, D0 = 0 (xSrc), D1 = 120 (srcMod en octets), A1 = RastPort,
-   D2 = rp_cp_x ($24), D3 = rp_cp_y ($26) − TxBaseline (constante figée à l'installation),
-   D4 = count × 8 (largeur en pixels), D5 = TxHeight (constante figée).
-4. **Mise à jour** : rp_cp_x += count × 8 (rp_TxSpacing ignoré), rp_cp_y inchangé.
-5. **Sortie** : saut terminal vers `WaitBlit` (graphics −228).
+1. **Lock**: if rp_Layer ($00) ≠ NULL, `LockLayerRom` (graphics −432, **layer in A5**); after the
+   drawing, `UnlockLayerRom` (−438, A5). FF assumes that LockLayerRom **preserves D0/A0/A1** (it reuses
+   string, RastPort and count right afterwards) and that it is **nestable** (BltTemplate may lock in
+   turn).
+2. **Construction of a 1-plane template by the CPU** in a private **CHIP** buffer (allocated MEMF_CHIP|PUBLIC
+   at installation: 120 bytes × 8 lines = 960 bytes, ×2 if height > 8). No variable line
+   stride: **fixed modulo of 120 bytes**, one byte (8 pixels) per character, one line per row of the
+   font, from a pre-computed glyph table (§ 3). The code is self-modified at installation
+   (buffer address, baseline, height, unrolling according to TxHeight) and copied into the patch block.
+3. **Drawing: a single `BltTemplate` call** (graphics **−36**) with:
+   A0 = start of the template, D0 = 0 (xSrc), D1 = 120 (srcMod in bytes), A1 = RastPort,
+   D2 = rp_cp_x ($24), D3 = rp_cp_y ($26) − TxBaseline (constant frozen at installation),
+   D4 = count × 8 (width in pixels), D5 = TxHeight (frozen constant).
+4. **Update**: rp_cp_x += count × 8 (rp_TxSpacing ignored), rp_cp_y unchanged.
+5. **Exit**: terminal jump to `WaitBlit` (graphics −228).
 
-Conséquences :
-- **Aucun registre matériel n'est écrit par FF** ; aucun accès direct au blitter ; le blitter n'est
-  utilisé qu'à travers BltTemplate de la ROM.
-- Champs lus par FF : RastPort rp_Layer ($00), rp_cp_x/cp_y ($24/$26, cp_x écrit), rp_Font ($34),
-  rp_AlgoStyle ($38). À l'installation : rp_TxHeight ($3A), rp_TxWidth ($3C), rp_TxBaseline ($3E)
-  (remplis par SetFont), écriture de rp_BitMap ($04) du RastPort local. TextFont : tf_YSize ($14) au
-  retrait, tf_LoChar ($20). **Aucun champ de BitMap de destination, de Layer (hors pointeur passé à
-  LockLayerRom) ni de ClipRect n'est lu.** Aucun format privé de Layer/ClipRect n'est supposé : le
-  clipping, les couches cachées, la smart refresh et la super bitmap sont entièrement à la charge de
+Consequences:
+- **No hardware register is written by FF**; no direct access to the blitter; the blitter is
+  only used through the ROM's BltTemplate.
+- Fields read by FF: RastPort rp_Layer ($00), rp_cp_x/cp_y ($24/$26, cp_x written), rp_Font ($34),
+  rp_AlgoStyle ($38). At installation: rp_TxHeight ($3A), rp_TxWidth ($3C), rp_TxBaseline ($3E)
+  (filled by SetFont), write of rp_BitMap ($04) of the local RastPort. TextFont: tf_YSize ($14) on
+  removal, tf_LoChar ($20). **No field of the destination BitMap, of the Layer (apart from the pointer passed to
+  LockLayerRom) nor of a ClipRect is read.** No private Layer/ClipRect format is assumed: the
+  clipping, hidden layers, smart refresh and super bitmap are entirely the responsibility of
   BltTemplate.
-- LVO utilisées (graphics) : Text −60 (ancienne, à l'installation), SetFont −66, OpenFont −72,
+- LVOs used (graphics): Text −60 (old, at installation), SetFont −66, OpenFont −72,
   CloseFont −78, InitRastPort −198, WaitBlit −228, InitBitMap −390, LockLayerRom −432,
-  UnlockLayerRom −438, **BltTemplate −36**. Exec : Forbid/Permit, AllocMem/FreeMem, SetFunction,
-  FindPort/AddPort/RemPort, GetMsg/ReplyMsg/WaitPort, OldOpenLibrary/CloseLibrary. Dos : Output/Write,
-  Delay(30) au retrait.
+  UnlockLayerRom −438, **BltTemplate −36**. Exec: Forbid/Permit, AllocMem/FreeMem, SetFunction,
+  FindPort/AddPort/RemPort, GetMsg/ReplyMsg/WaitPort, OldOpenLibrary/CloseLibrary. Dos: Output/Write,
+  Delay(30) on removal.
 
-## 3. Pré-calcul de la police (pas de copie de strike)
+## 3. Pre-computation of the font (no strike copy)
 
-- FF **ne lit jamais tf_CharData/tf_CharLoc/tf_Modulo directement** et ne copie pas le strike. Il
-  fait rendre chaque glyphe par **l'ancienne Text de la ROM** :
-  - RastPort local sur la pile (non initialisé → doit être entièrement remis à zéro par InitRastPort),
-    InitRastPort puis SetFont(police) ;
-  - BitMap locale par `InitBitMap(bm, depth 1, width 1024, height 8)` → **BytesPerRow attendu = 128** ;
-    bm_Planes[0] ($08) = le tampon CHIP ; rp_BitMap = &bm ; **rp_Layer = NULL** ;
-  - pour chaque caractère : cp_x = 0, cp_y = TxBaseline, `Text(rp, &c, 1)` (pinceau par défaut
-    d'InitRastPort : FgPen −1, BgPen 0, JAM2, Mask $FF), puis lecture au CPU de TxHeight octets de la
-    colonne 0 avec un **pas fixe de 128 octets** ;
-  - **même pour une police de hauteur 11 la BitMap déclare 8 lignes** : Text sans couche ne doit pas
-    rogner sur bm_Rows (le tampon est assez grand).
-- Table résultante dans le bloc de patch : 256 entrées × 8 octets (×16 si hauteur > 8), indexée par le
-  code du caractère. Si tf_LoChar = $20, les codes $00–$1F reçoivent les glyphes de $40–$5F **inversés**
-  (rendu « vidéo inverse » des caractères de contrôle). Les codes hors [LoChar, HiChar] reçoivent ce que
-  l'ancienne Text dessine pour eux.
-- Le tampon CHIP sert ensuite de gabarit au chemin rapide (il est réutilisé, d'où la garde de
-  réentrance).
-- Retrait (`-q`, `-n` ou relance) : SetFunction(ancienne valeur) ; si la valeur rendue n'est pas le
-  point d'entrée de FF (quelqu'un a re-patché par-dessus), FF remet en place la valeur qu'il vient de
-  retirer, affiche « Text() vector altered-aborting » et quitte (code 5) ; sinon Delay(30) (laisser
-  sortir les tâches encore dans le patch) puis FreeMem du tampon et du bloc.
+- FF **never reads tf_CharData/tf_CharLoc/tf_Modulo directly** and does not copy the strike. It
+  has each glyph rendered by **the ROM's old Text**:
+  - local RastPort on the stack (uninitialised → must be entirely zeroed by InitRastPort),
+    InitRastPort then SetFont(font);
+  - local BitMap via `InitBitMap(bm, depth 1, width 1024, height 8)` → **expected BytesPerRow = 128**;
+    bm_Planes[0] ($08) = the CHIP buffer; rp_BitMap = &bm; **rp_Layer = NULL**;
+  - for each character: cp_x = 0, cp_y = TxBaseline, `Text(rp, &c, 1)` (InitRastPort default
+    brush: FgPen −1, BgPen 0, JAM2, Mask $FF), then CPU read of TxHeight bytes of
+    column 0 with a **fixed stride of 128 bytes**;
+  - **even for a font of height 11 the BitMap declares 8 lines**: Text without a layer must not
+    clip at bm_Rows (the buffer is large enough).
+- Resulting table in the patch block: 256 entries × 8 bytes (×16 if height > 8), indexed by the
+  character code. If tf_LoChar = $20, codes $00–$1F receive the glyphs of $40–$5F **inverted**
+  ("reverse video" rendering of control characters). Codes outside [LoChar, HiChar] receive what
+  the old Text draws for them.
+- The CHIP buffer then serves as the template for the fast path (it is reused, hence the reentrancy
+  guard).
+- Removal (`-q`, `-n` or relaunch): SetFunction(old value); if the returned value is not FF's
+  entry point (someone re-patched on top), FF puts back the value it just
+  removed, displays "Text() vector altered-aborting" and exits (code 5); otherwise Delay(30) (let
+  the tasks still inside the patch leave) then FreeMem of the buffer and of the block.
 
-## 4. Pourquoi les glyphes n'apparaissent pas sur notre ROM (par ordre de probabilité)
+## 4. Why the glyphs do not appear on our ROM (in order of probability)
 
-1. **BltTemplate (graphics −36) n'est pas implémenté** — **vérifié** : dans
-   `src/graphics/graphics_lib.s`, les entrées 6..8 (LVO −36..−48) pointent sur `graphics_null`. Tout
-   texte topaz 8, AlgoStyle 0, ≤ 120 caractères passe par le chemin rapide, qui ne dessine *que* par
-   BltTemplate : rien n'est écrit. Le fond visible vient des effacements faits par la console/intuition
-   eux-mêmes. Avant que SetFunction soit réel, le patch ne s'installait pas, d'où l'ancien bon
-   comportement. **Cause quasi certaine.**
-2. Une fois BltTemplate implémenté, une table de glyphes vide (glyphes muets mais fond JAM2 dessiné)
-   viendrait de l'**installation** : Text sur RastPort **sans Layer** vers une BitMap privée qui ne
-   dessine pas ; InitRastPort qui ne remet pas tout à zéro (rp_Layer résiduel de la pile) ou ne met pas
-   FgPen = −1 / Mask = $FF ; InitBitMap qui ne donne pas BytesPerRow = 128 pour 1024 pixels ; Text qui
-   rogne à bm_Rows.
-3. BltTemplate implémenté mais incomplet : srcMod interprété en mots, xSrc mal géré, pas de prise en
-   compte de rp_Layer (décalage des bornes de la couche, ClipRects, cr_BitMap des parties cachées),
-   DrawMode/FgPen/BgPen/Mask ignorés, ou verrou de couche non imbriquable (blocage, FF tenant déjà
+1. **BltTemplate (graphics −36) is not implemented** — **verified**: in
+   `src/graphics/graphics_lib.s`, entries 6..8 (LVO −36..−48) point to `graphics_null`. Any
+   topaz 8 text, AlgoStyle 0, ≤ 120 characters goes through the fast path, which draws *only* through
+   BltTemplate: nothing is written. The visible background comes from the clears done by the console/intuition
+   themselves. Before SetFunction was real, the patch did not install, hence the former good
+   behaviour. **Near-certain cause.**
+2. Once BltTemplate is implemented, an empty glyph table (silent glyphs but JAM2 background drawn)
+   would come from the **installation**: Text on a RastPort **without Layer** to a private BitMap that does not
+   draw; InitRastPort that does not zero everything (residual rp_Layer from the stack) or does not set
+   FgPen = −1 / Mask = $FF; InitBitMap that does not give BytesPerRow = 128 for 1024 pixels; Text that
+   clips at bm_Rows.
+3. BltTemplate implemented but incomplete: srcMod interpreted in words, xSrc mishandled, rp_Layer not
+   taken into account (offset of the layer bounds, ClipRects, cr_BitMap of hidden parts),
+   DrawMode/FgPen/BgPen/Mask ignored, or non-nestable layer lock (deadlock, FF already holding
    LockLayerRom).
-4. LockLayerRom/UnlockLayerRom qui ne prennent pas la couche en **A5** ou qui détruisent D0/A0/A1 →
-   chaîne/count/RastPort corrompus.
-5. Appel interne de Text via le vecteur avec **A6 ≠ GfxBase** : le chemin rapide appellerait des LVO
-   relatifs à une autre base.
-6. AllocMem(MEMF_CHIP) rendant de la mémoire non-CHIP alors que BltTemplate utilise le blitter.
+4. LockLayerRom/UnlockLayerRom that do not take the layer in **A5** or that destroy D0/A0/A1 →
+   string/count/RastPort corrupted.
+5. Internal call of Text via the vector with **A6 ≠ GfxBase**: the fast path would call LVOs
+   relative to another base.
+6. AllocMem(MEMF_CHIP) returning non-CHIP memory whereas BltTemplate uses the blitter.
 
-## Exigences pour notre ROM
+## Requirements for our ROM
 
-- **Implémenter `BltTemplate`** (LVO −36), contrat AutoDocs : A0 = gabarit (adresse paire), D0 = xSrc
-  (décalage en bits dans le premier mot, 0..15), D1 = srcMod (**octets** par ligne), A1 = RastPort,
-  D2/D3 = destination (coordonnées du RastPort, donc relatives à la couche si rp_Layer), D4 = largeur,
-  D5 = hauteur en pixels. Bit 1 du gabarit = FgPen, bit 0 = BgPen en JAM2 / transparent en JAM1 ;
-  COMPLEMENT et INVERSVID ; respecter rp_Mask et la profondeur de la BitMap ; clipper par les ClipRects
-  de rp_Layer (parties cachées vers cr_BitMap en smart refresh, ignorées en simple refresh, super
-  bitmap) et aux limites de la BitMap sans couche ; coordonnées négatives clippées. Préserver D2–D7/A2–A6
-  (FF relit A5 après l'appel).
-- Le verrou de couche interne à BltTemplate doit être **imbriquable** par la même tâche (FF tient déjà
+- **Implement `BltTemplate`** (LVO −36), AutoDocs contract: A0 = template (even address), D0 = xSrc
+  (bit offset in the first word, 0..15), D1 = srcMod (**bytes** per line), A1 = RastPort,
+  D2/D3 = destination (RastPort coordinates, hence relative to the layer if rp_Layer), D4 = width,
+  D5 = height in pixels. Template bit 1 = FgPen, bit 0 = BgPen in JAM2 / transparent in JAM1;
+  COMPLEMENT and INVERSVID; respect rp_Mask and the BitMap depth; clip by the ClipRects
+  of rp_Layer (hidden parts to cr_BitMap in smart refresh, ignored in simple refresh, super
+  bitmap) and to the BitMap limits without a layer; negative coordinates clipped. Preserve D2–D7/A2–A6
+  (FF re-reads A5 after the call).
+- The layer lock internal to BltTemplate must be **nestable** by the same task (FF already holds
   LockLayerRom).
-- `LockLayerRom`/`UnlockLayerRom` : couche en **A5**, préservent **tous** les registres, imbriquables.
-- `InitRastPort` : remet tout le RastPort à zéro puis valeurs par défaut (FgPen −1, AOlPen −1, BgPen 0,
-  Mask $FF, JAM2, LinePtrn $FFFF, police par défaut). `SetFont` remplit TxHeight/TxWidth/TxBaseline
+- `LockLayerRom`/`UnlockLayerRom`: layer in **A5**, preserve **all** registers, nestable.
+- `InitRastPort`: zeroes the whole RastPort then default values (FgPen −1, AOlPen −1, BgPen 0,
+  Mask $FF, JAM2, LinePtrn $FFFF, default font). `SetFont` fills TxHeight/TxWidth/TxBaseline
   ($3A/$3C/$3E).
-- `InitBitMap` : BytesPerRow = ((width + 15) / 16) × 2, Rows, Depth, sans toucher aux Planes.
-- `Text` avec rp_Layer = NULL : dessiner directement dans rp_BitMap, sans rogner à bm_Rows (cas topaz 11).
-  Rester réentrante (repli concurrent depuis le patch).
-- `SetFunction` : rendre l'ancienne adresse ; le retrait de FF compare la valeur rendue à son point
-  d'entrée.
-- Tout appel de Text par le vecteur doit avoir A6 = GfxBase ; `WaitBlit` appelable depuis n'importe
-  quel contexte de tâche.
-- `OpenFont({"topaz.font",8})` doit rendre la **même adresse** de TextFont que celle placée dans rp_Font
-  des fenêtres (sinon FF est simplement inactif, sans dégât).
-- Test de non-régression proposé : après `FF -0`, un `Text` topaz 8 de ≤ 120 caractères dans une
-  fenêtre (console + PrintIText de menu + nom d'icône) doit afficher les glyphes ; un texte > 120
-  caractères ou en gras doit aussi s'afficher (chemin de repli).
+- `InitBitMap`: BytesPerRow = ((width + 15) / 16) × 2, Rows, Depth, without touching the Planes.
+- `Text` with rp_Layer = NULL: draw directly into rp_BitMap, without clipping at bm_Rows (topaz 11 case).
+  Remain reentrant (concurrent fallback from the patch).
+- `SetFunction`: return the old address; FF's removal compares the returned value with its entry
+  point.
+- Every call of Text through the vector must have A6 = GfxBase; `WaitBlit` callable from any
+  task context.
+- `OpenFont({"topaz.font",8})` must return the **same address** of TextFont as the one placed in rp_Font
+  of the windows (otherwise FF is simply inactive, without damage).
+- Proposed non-regression test: after `FF -0`, a topaz 8 `Text` of ≤ 120 characters in a
+  window (console + menu PrintIText + icon name) must display the glyphs; a text > 120
+  characters or in bold must also display (fallback path).
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Cible = programme tiers `C:FF` (FastFonts V1.31, disque Workbench) ; la ROM Kickstart n'a pas été
-  ouverte. Aucune adresse de routine ROM, aucun extrait de désassemblage (ni de FF ni de la ROM).
-- [x] Aucune donnée de la ROM Kickstart transcrite : pas de glyphe, pas de strike topaz, pas de table ;
-  la table de glyphes de FF est décrite (taille, indexation, inversion des codes de contrôle) sans
-  contenu. Les offsets cités sont ceux des structures publiques (RastPort, TextFont, BitMap, Process)
-  et les LVO publics.
-- [x] Les exigences pour notre ROM sont formulées comme contrats AutoDocs/ABI (registres, champs).
+- [x] Target = third-party program `C:FF` (FastFonts V1.31, Workbench disk); the Kickstart ROM was not
+  opened. No ROM routine address, no disassembly excerpt (neither of FF nor of the ROM).
+- [x] No Kickstart ROM data transcribed: no glyph, no topaz strike, no table;
+  FF's glyph table is described (size, indexing, inversion of control codes) without
+  contents. The offsets cited are those of the public structures (RastPort, TextFont, BitMap, Process)
+  and the public LVOs.
+- [x] The requirements for our ROM are formulated as AutoDocs/ABI contracts (registers, fields).

@@ -1,12 +1,12 @@
-; tests/tdwrite.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire « écriture trackdisk » (piste analyse, docs/analysis/trackdisk-write-v34.md).
-; Lancée depuis la startup-sequence d'une disquette OFS vierge (tests/tdwrite_run.sh). Envoie une suite de
-; requêtes à trackdisk.device unité 0 et écrit chaque résultat sur le série direct (SERDAT), une ligne par étape :
-;   « <étape> E=<io_Error> A=<io_Actual> L=<premier long lu> » (hex).
-; io_Actual est préchargé à $DEADBEEF avant chaque requête pour voir s'il est modifié.
-; Blocs utilisés : 1100 (piste 100), 220 (piste 20), piste 158 (formatée). Tampons en CHIP (exigé par le blitter).
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/tdwrite tests/tdwrite.s
-; Code auteur ; structures publiques (exec/io.h, devices/trackdisk.h).
+; tests/tdwrite.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box "trackdisk write" probe (analysis track, docs/analysis/trackdisk-write-v34.md).
+; Started from the startup-sequence of a blank OFS floppy (tests/tdwrite_run.sh). Sends a series of
+; requests to trackdisk.device unit 0 and writes each result to the direct serial port (SERDAT), one line per step:
+;   "<step> E=<io_Error> A=<io_Actual> L=<first long read>" (hex).
+; io_Actual is preloaded with $DEADBEEF before each request to see whether it gets modified.
+; Blocks used: 1100 (track 100), 220 (track 20), track 158 (formatted). Buffers in CHIP (required by the blitter).
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/tdwrite tests/tdwrite.s
+; Author's code; public structures (exec/io.h, devices/trackdisk.h).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -55,27 +55,27 @@ _start:
                 bne     .out
                 lea     msg0(pc),a0
                 bsr     puts
-; A : lecture bloc 1100 (piste 100)
+; A: read block 1100 (track 100)
                 moveq   #'A',d7
                 moveq   #2,d2
                 move.l  #1100*512,d3
                 move.l  #512,d4
                 bsr     doio
-; B : écriture motif 11111111 sur 1100 (tampon seulement)
+; B: write pattern 11111111 to 1100 (buffer only)
                 move.l  #$11111111,d0
                 bsr     fill
                 moveq   #'B',d7
                 moveq   #3,d2
                 bsr     doio
-; C : CMD_CLEAR
+; C: CMD_CLEAR
                 moveq   #'C',d7
                 moveq   #5,d2
                 bsr     doio
-; D : relecture 1100 (ancien contenu attendu si CLEAR jette le tampon)
+; D: re-read 1100 (old contents expected if CLEAR discards the buffer)
                 moveq   #'D',d7
                 moveq   #2,d2
                 bsr     doio
-; E : réécriture 22222222 + F : CMD_UPDATE + G : CLEAR + relecture
+; E: rewrite 22222222 + F: CMD_UPDATE + G: CLEAR + re-read
                 move.l  #$22222222,d0
                 bsr     fill
                 moveq   #'E',d7
@@ -90,7 +90,7 @@ _start:
                 moveq   #'G',d7
                 moveq   #2,d2
                 bsr     doio
-; H : écriture longueur 0 (motif 33333333), UPDATE, CLEAR, relecture
+; H: zero-length write (pattern 33333333), UPDATE, CLEAR, re-read
                 move.l  #$33333333,d0
                 bsr     fill
                 moveq   #'H',d7
@@ -107,7 +107,7 @@ _start:
                 moveq   #'I',d7
                 moveq   #2,d2
                 bsr     doio
-; J : écriture + UPDATE sur la piste 20 (bloc 220), comparaison precomp au journal disque
+; J: write + UPDATE on track 20 (block 220), precomp comparison in the disk log
                 move.l  #$44444444,d0
                 bsr     fill
                 moveq   #'J',d7
@@ -117,12 +117,12 @@ _start:
                 moveq   #'j',d7
                 moveq   #4,d2
                 bsr     doio
-; K : TD_FORMAT longueur 512 (non multiple d'une piste)
+; K: TD_FORMAT length 512 (not a multiple of a track)
                 moveq   #'K',d7
                 moveq   #11,d2
                 move.l  #158*TRKB,d3
                 bsr     doio
-; L : TD_FORMAT piste 158 entière, motif 55555555, puis relecture
+; L: TD_FORMAT whole track 158, pattern 55555555, then re-read
                 move.l  #$55555555,d0
                 bsr     fill
                 moveq   #'L',d7
@@ -133,7 +133,7 @@ _start:
                 moveq   #'l',d7
                 moveq   #2,d2
                 bsr     doio
-; M : TD_PROTSTATUS ; N : CMD_WRITE décalage impair ; O : TD_MOTOR 0 (état précédent dans io_Actual)
+; M: TD_PROTSTATUS; N: CMD_WRITE odd offset; O: TD_MOTOR 0 (previous state in io_Actual)
                 moveq   #'M',d7
                 moveq   #15,d2
                 bsr     doio
@@ -153,14 +153,14 @@ _start:
                 moveq   #0,d0
                 rts
 
-; fill(d0) : remplit le tampon (une piste, 5632 octets) avec le long d0
+; fill(d0): fills the buffer (one track, 5632 bytes) with the long d0
 fill:           move.l  buf(pc),a0
                 move.w  #TRKB/4-1,d1
 .f:             move.l  d0,(a0)+
                 dbra    d1,.f
                 rts
 
-; doio : commande d2, offset d3, longueur d4, étiquette d7 ; affiche le résultat
+; doio: command d2, offset d3, length d4, label d7; prints the result
 doio:           lea     ioreq(pc),a1
                 move.w  d2,IO_CMD(a1)
                 clr.b   30(a1)
@@ -198,7 +198,7 @@ doio:           lea     ioreq(pc),a1
                 moveq   #10,d1
                 bra.s   putc
 
-; hex : d0 sur d5+1 chiffres, puis espace
+; hex: d0 on d5+1 digits, then a space
 hex:            move.l  d0,d6
                 move.w  d5,d1
                 addq.w  #1,d1

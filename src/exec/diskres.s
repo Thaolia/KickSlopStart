@@ -1,11 +1,11 @@
-; src/exec/diskres.s — disk.resource : arbitrage du matériel disque entre pilotes (trackdisk, chargeurs NDOS).
+; src/exec/diskres.s — disk.resource: arbitration of the disk hardware between drivers (trackdisk, NDOS loaders).
 ;
-; AllocUnit/FreeUnit réservent une unité (bits DRF_ALLOCn) ; GetUnit/GiveUnit prêtent le contrôleur disque à UN
-; pilote à la fois (les demandeurs suivants attendent dans dr_Waiting et reçoivent ReplyMsg de leur DRU quand le
-; contrôleur se libère) ; GetUnitID rend l'identifiant de lecteur lu au démarrage. La ressource possède les
-; interruptions DSKBLK / DSKSYNC et l'index CIA-B FLG et les relaie aux interruptions du DRU courant.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs disk.resource + resources/disk.h + HRM (identifiant de lecteur).
-; AUCUNE lecture ROM.
+; AllocUnit/FreeUnit reserve a unit (DRF_ALLOCn bits); GetUnit/GiveUnit lend the disk controller to ONE
+; driver at a time (subsequent requesters wait in dr_Waiting and receive ReplyMsg of their DRU when the
+; controller becomes free); GetUnitID returns the drive identifier read at startup. The resource owns the
+; DSKBLK / DSKSYNC interrupts and the CIA-B FLG index and relays them to the interrupts of the current DRU.
+; IMPLEMENTATION track ("clean"): AutoDocs disk.resource + resources/disk.h + HRM (drive identifier).
+; NO ROM reading.
 
                 include "exec.i"
                 include "disk.i"
@@ -18,7 +18,7 @@ DRU_DISCSYNC    EQU MN_SIZE+IS_SIZE
 DRU_INDEX       EQU MN_SIZE+2*IS_SIZE
 DRU_SIZE        EQU MN_SIZE+3*IS_SIZE
 ; --- struct DiscResource ---
-DR_CURRENT      EQU LIB_SIZE         ; DRU propriétaire actuel (ou dernier propriétaire)
+DR_CURRENT      EQU LIB_SIZE         ; current owner DRU (or last owner)
 DR_FLAGS        EQU LIB_SIZE+4
 DR_SYSLIB       EQU LIB_SIZE+6
 DR_CIARES       EQU LIB_SIZE+10
@@ -28,7 +28,7 @@ DR_DISCBLOCK    EQU DR_WAITING+14   ; sizeof(struct List)
 DR_DISCSYNC     EQU DR_DISCBLOCK+IS_SIZE
 DR_INDEX        EQU DR_DISCSYNC+IS_SIZE
 DR_CURRTASK     EQU DR_INDEX+IS_SIZE
-DR_NOBODY       EQU DR_CURRTASK+4    ; DRU vide : « dernier pilote » tant que personne n'a pris le contrôleur
+DR_NOBODY       EQU DR_CURRTASK+4    ; empty DRU: "last driver" as long as nobody has taken the controller
 DR_SIZE         EQU DR_NOBODY+DRU_SIZE
 
 DRB_ACTIVE      EQU 7
@@ -36,7 +36,7 @@ DR_NUNITS       EQU 4
 INTB_DSKBLK     EQU 1
 INTB_DSKSYNC    EQU 12
 INTF_DSKSYNC    EQU $1000
-CIAICRB_FLG     EQU 4                ; CIA-B FLG = impulsion d'index du lecteur
+CIAICRB_FLG     EQU 4                ; CIA-B FLG = drive index pulse
 CIAF_DSKSEL1    EQU $10
 
         EVEN
@@ -54,11 +54,11 @@ ciab_resname:
         dc.b    "ciab.resource",0
         EVEN
 diskres_vectors:
-        dc.l    dr_allocunit         ; -6  AllocUnit(unité d0)
-        dc.l    dr_freeunit          ; -12 FreeUnit(unité d0)
+        dc.l    dr_allocunit         ; -6  AllocUnit(unit d0)
+        dc.l    dr_freeunit          ; -12 FreeUnit(unit d0)
         dc.l    dr_getunit           ; -18 GetUnit(dru a1)
         dc.l    dr_giveunit          ; -24 GiveUnit()
-        dc.l    dr_getunitid         ; -30 GetUnitID(unité d0)
+        dc.l    dr_getunitid         ; -30 GetUnitID(unit d0)
         dc.l    -1
 
 diskres_init:
@@ -71,7 +71,7 @@ diskres_init:
         jsr     LVO_MAKELIBRARY(a6)
         tst.l   d0
         beq     .ri_ret
-        move.l  d0,a3                ; a3 = DiscResource (MakeLibrary ne met pas la zone positive à zéro)
+        move.l  d0,a3                ; a3 = DiscResource (MakeLibrary does not zero the positive area)
         lea     LIB_SIZE(a3),a0
         move.w  #(DR_SIZE-LIB_SIZE)/2-1,d1
 .ri_clr:
@@ -85,7 +85,7 @@ diskres_init:
         move.l  a0,DR_CURRENT(a3)
         lea     DR_WAITING(a3),a1
         jsr     newlist
-        ; identifiants : DF0 n'a pas de registre d'identification (toujours DRT_AMIGA = 0)
+        ; identifiers: DF0 has no identification register (always DRT_AMIGA = 0)
         moveq   #1,d2
 .ri_id:
         bsr     dr_readid
@@ -95,7 +95,7 @@ diskres_init:
         addq.l  #1,d2
         cmp.l   #DR_NUNITS,d2
         bcs.s   .ri_id
-        ; vecteurs exclusifs DSKBLK / DSKSYNC + index CIA-B (laissé désactivé : AbleICR au pilote)
+        ; exclusive DSKBLK / DSKSYNC vectors + CIA-B index (left disabled: AbleICR up to the driver)
         lea     DR_DISCBLOCK(a3),a1
         lea     dr_blkint(pc),a0
         moveq   #INTB_DSKBLK,d0
@@ -117,7 +117,7 @@ diskres_init:
         moveq   #CIAICRB_FLG,d0
         jsr     -6(a6)               ; AddICRVector(FLG, &dr_Index)
         moveq   #1<<CIAICRB_FLG,d0
-        jsr     -18(a6)              ; AbleICR(FLG) : désactive
+        jsr     -18(a6)              ; AbleICR(FLG): disable
         move.l  ($4).w,a6
 .ri_add:
         move.l  a3,a1
@@ -127,28 +127,28 @@ diskres_init:
         movem.l (sp)+,d2-d3/a2-a3
         rts
 
-; dr_setint : a1 = struct Interrupt de la ressource, a0 = code, d0 = n° d'interruption ; a3 = ressource.
+; dr_setint: a1 = struct Interrupt of the resource, a0 = code, d0 = interrupt number; a3 = resource.
 dr_setint:
         move.b  #NT_INTERRUPT,LN_TYPE(a1)
         move.l  a3,IS_DATA(a1)
         move.l  a0,IS_CODE(a1)
         jmp     LVO_SETINTVECTOR(a6)
 
-; dr_readid : d2 = unité 1..3 -> d0 = identifiant 32 bits (HRM : moteur on puis off avec le lecteur sélectionné
-; remet à zéro son registre d'identification ; ensuite 32 sélections successives, chacune présente un bit sur
-; /RDY, poids fort d'abord, bit = 1 quand /RDY est haut). Absent -> $FFFFFFFF (DRT_EMPTY).
+; dr_readid: d2 = unit 1..3 -> d0 = 32-bit identifier (HRM: motor on then off with the drive selected
+; resets its identification register; then 32 successive selections, each one presents one bit on
+; /RDY, most significant first, bit = 1 when /RDY is high). Absent -> $FFFFFFFF (DRT_EMPTY).
 dr_readid:
         moveq   #CIAF_DSKSEL1>>1,d3
         lsl.b   d2,d3
-        not.b   d3                   ; d3 = PRB avec SELn bas, le reste haut (moteur off)
+        not.b   d3                   ; d3 = PRB with SELn low, the rest high (motor off)
         move.b  #$FF,CIAB_DDRB
         move.b  #PRB_OFF,CIAB_PRB
         move.b  #PRB_MOTOR_ON,CIAB_PRB
         move.b  d3,d0
         and.b   #PRB_MOTOR_ON,d0
-        move.b  d0,CIAB_PRB          ; sélection avec moteur bas : latche moteur on
+        move.b  d0,CIAB_PRB          ; selection with motor low: latches motor on
         move.b  #PRB_OFF,CIAB_PRB
-        move.b  d3,CIAB_PRB          ; sélection avec moteur haut : latche moteur off
+        move.b  d3,CIAB_PRB          ; selection with motor high: latches motor off
         move.b  #PRB_OFF,CIAB_PRB
         moveq   #0,d0
         moveq   #31,d1
@@ -163,8 +163,8 @@ dr_readid:
         dbra    d1,.rd_bit
         rts
 
-; AllocUnit(unité d0) -> d0 = 1 si l'unité est attribuée, 0 si déjà prise ou invalide. bset = lecture-écriture
-; indivisible sur 68000 (aucune interruption entre le test et la pose).
+; AllocUnit(unit d0) -> d0 = 1 if the unit is granted, 0 if already taken or invalid. bset = indivisible
+; read-modify-write on 68000 (no interrupt between the test and the set).
 dr_allocunit:
         cmp.l   #DR_NUNITS,d0
         bcc.s   .au_no
@@ -176,7 +176,7 @@ dr_allocunit:
         moveq   #0,d0
         rts
 
-; FreeUnit(unité d0).
+; FreeUnit(unit d0).
 dr_freeunit:
         cmp.l   #DR_NUNITS,d0
         bcc.s   .fu_r
@@ -184,7 +184,7 @@ dr_freeunit:
 .fu_r:
         rts
 
-; GetUnitID(unité d0) -> d0 = type de lecteur.
+; GetUnitID(unit d0) -> d0 = drive type.
 dr_getunitid:
         cmp.l   #DR_NUNITS,d0
         bcc.s   .gi_empty
@@ -195,8 +195,8 @@ dr_getunitid:
         moveq   #-1,d0
         rts
 
-; GetUnit(dru a1) -> d0 = DRU du dernier pilote si le contrôleur est libre (il passe à a1), sinon 0 et a1 est mis
-; en attente : GiveUnit lui fera ReplyMsg, l'appelant retente alors GetUnit.
+; GetUnit(dru a1) -> d0 = DRU of the last driver if the controller is free (it passes to a1), otherwise 0 and a1 is
+; put on hold: GiveUnit will ReplyMsg it, the caller then retries GetUnit.
 dr_getunit:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
@@ -218,7 +218,7 @@ dr_getunit:
         movem.l (sp)+,a2/a6
         rts
 
-; GiveUnit() : libère le contrôleur et réveille le premier pilote en attente.
+; GiveUnit(): frees the controller and wakes up the first waiting driver.
 dr_giveunit:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
@@ -236,8 +236,8 @@ dr_giveunit:
         movem.l (sp)+,a2/a6
         rts
 
-; Relais d'interruption (a1 = ressource) : acquitte puis appelle l'interruption correspondante du DRU courant,
-; seulement si un pilote tient le contrôleur et a posé un IS_CODE (appelé avec a1 = IS_DATA).
+; Interrupt relay (a1 = resource): acknowledges then calls the corresponding interrupt of the current DRU,
+; only if a driver holds the controller and has set an IS_CODE (called with a1 = IS_DATA).
 dr_blkint:
         move.w  #INTF_DSKBLK,INTREQ
         moveq   #DRU_DISCBLOCK,d0
@@ -247,7 +247,7 @@ dr_syncint:
         moveq   #DRU_DISCSYNC,d0
         bra.s   dr_relay
 dr_idxint:
-        moveq   #DRU_INDEX,d0        ; le dispatch CIA a déjà acquitté l'ICR
+        moveq   #DRU_INDEX,d0        ; the CIA dispatch has already acknowledged the ICR
 dr_relay:
         btst    #DRB_ACTIVE,DR_FLAGS(a1)
         beq.s   .rl_r
@@ -258,5 +258,5 @@ dr_relay:
         move.l  d1,-(sp)
         move.l  IS_DATA(a0),a1
 .rl_r:
-        rts                          ; avec IS_CODE empilé : saut vers le handler, qui revient à notre appelant
+        rts                          ; with IS_CODE pushed: jump to the handler, which returns to our caller
 diskres_end:

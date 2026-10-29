@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# tests/alert_probe.sh — sonde boîte noire d'intuition DisplayAlert / exec Alert sous FS-UAE avec la VRAIE ROM 1.3
-# (piste ANALYSE). Bootblock = tests/alert_probe.s (MODE choisi). Harnais RÉACTIF : il lit la série et, à chaque
-# marqueur « @X » (juste avant un DisplayAlert), prend des captures horodatées puis clique (gauche ou droit).
-# Après le dernier marqueur, il capture et clique à gauche toutes les 6 s jusqu'à « IDLE » (cas du Guru d'alert.hook).
-# Un seul FS-UAE à la fois sur la machine : attendre que `pgrep -x fs-uae` soit vide.
+# tests/alert_probe.sh - black-box probe of intuition DisplayAlert / exec Alert under FS-UAE with the REAL 1.3 ROM
+# (ANALYSIS track). Bootblock = tests/alert_probe.s (chosen MODE). REACTIVE harness: it reads the serial log and, at
+# each "@X" marker (just before a DisplayAlert), takes timestamped screenshots then clicks (left or right).
+# After the last marker, it captures and left-clicks every 6 s until "IDLE" (case of the alert.hook Guru).
+# Only one FS-UAE at a time on the machine: wait until `pgrep -x fs-uae` is empty.
 #
-# Usage : tests/alert_probe.sh <mode> <chip_ko> <slow_ko> <durée_max_s>
-# Variables : ALERT_OUT (obligatoire) ; CLICK_A/CLICK_B/CLICK_C = L ou R (défaut L, R, L).
+# Usage: tests/alert_probe.sh <mode> <chip_kb> <slow_kb> <max_duration_s>
+# Variables: ALERT_OUT (mandatory); CLICK_A/CLICK_B/CLICK_C = L or R (default L, R, L).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="${1:?mode}"; CHIP="${2:-512}"; SLOW="${3:-0}"; DUR="${4:-90}"

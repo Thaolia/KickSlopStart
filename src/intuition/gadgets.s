@@ -1,19 +1,19 @@
-; src/intuition/gadgets.s — intuition.library : gadgets d'application des fenêtres (liste wd_FirstGadget). Rendu
-; (Border ou Image, IntuiText, surbrillance), sélection au bouton gauche avec GADGETDOWN / GADGETUP (im_IAddress = le
+; src/intuition/gadgets.s - intuition.library: application gadgets of windows (wd_FirstGadget list). Rendering
+; (Border or Image, IntuiText, highlight), left-button selection with GADGETDOWN / GADGETUP (im_IAddress = the
 ; gadget), AddGadget/AddGList, RemoveGadget/RemoveGList, RefreshGadgets/RefreshGList, OnGadget/OffGadget, DrawBorder.
-; Gadgets texte (STRGADGET, StringInfo) : activés par un clic ou ActivateGadget, ils reçoivent le clavier (routé par
-; le handler de pointeur, cf. it_keyin) : insertion, Backspace, Del, flèches (Shift : début / fin), Amiga droite + X
-; (effacer) et + Q (annuler) ; Return / Enter termine (LONGINT converti, GADGETUP si RELVERIFY), un clic ailleurs
-; désactive sans message. Texte aligné à gauche (STRINGCENTER / STRINGRIGHT ignorés). Les autres types sont traités
-; comme des boutons ; pas de motif « fantôme » pour un gadget désactivé (il ne répond simplement plus).
-; Piste IMPLÉMENTATION (« clean ») : structures publiques intuition/intuition.h + AutoDocs intuition. AUCUNE lecture ROM.
+; Text gadgets (STRGADGET, StringInfo): activated by a click or ActivateGadget, they receive the keyboard (routed by
+; the pointer handler, see it_keyin): insertion, Backspace, Del, arrows (Shift: start / end), right Amiga + X
+; (clear) and + Q (undo); Return / Enter ends (LONGINT converted, GADGETUP if RELVERIFY), a click elsewhere
+; deactivates without a message. Left-aligned text (STRINGCENTER / STRINGRIGHT ignored). The other types are handled
+; as buttons; no "ghost" pattern for a disabled gadget (it simply no longer responds).
+; IMPLEMENTATION track ("clean"): public structures intuition/intuition.h + AutoDocs intuition. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
                 include "intuition.i"
 
                 xdef    intuition_AddGadget
-                xref    it_unclip            ; screens.s : dessin hors de la ClipRegion de l'application
+                xref    it_unclip            ; screens.s: drawing outside the application's ClipRegion
                 xref    it_reclip
                 xdef    intuition_AddGList
                 xdef    intuition_RemoveGadget
@@ -41,20 +41,20 @@
                 xdef    gad_propinitl
                 xdef    gad_drawrev
                 xdef    rq_origin
-                xref    rq_endgadget         ; request.s : fin du requester par un ENDGADGET
+                xref    rq_endgadget         ; request.s: end of the requester through an ENDGADGET
                 xdef    prop_track
                 xdef    intuition_ModifyProp
                 xdef    intuition_NewModifyProp
 
-; gad_rect(a3 = fenêtre, a0 = gadget, a1 = 4 mots x0, y0, x1, y1) : rectangle du gadget en coordonnées de la fenêtre,
-; positions et tailles relatives au bord droit / bas résolues. Gadget intérieur d'une fenêtre GIMMEZEROZERO : relatif à
-; l'intérieur (taille GZZ), puis décalé des bordures gauche et haute. Gadget de requester : relatif au requester
-; (sa taille, décalé de son coin, spec intuition-requesters-v34 §2.4). Clobbe d0/d1.
+; gad_rect(a3 = window, a0 = gadget, a1 = 4 words x0, y0, x1, y1): gadget rectangle in window coordinates,
+; positions and sizes relative to the right / bottom edge resolved. Inner gadget of a GIMMEZEROZERO window: relative to
+; the interior (GZZ size), then offset by the left and top borders. Requester gadget: relative to the requester
+; (its size, offset by its corner, spec intuition-requesters-v34 §2.4). Clobbers d0/d1.
 gad_rect:
         movem.l d2-d5,-(sp)
-        moveq   #0,d4                ; d4/d5 = coin du domaine dans la fenêtre
+        moveq   #0,d4                ; d4/d5 = corner of the domain in the window
         moveq   #0,d5
-        move.w  WD_WIDTH(a3),d2      ; d2/d3 = taille du domaine
+        move.w  WD_WIDTH(a3),d2      ; d2/d3 = size of the domain
         move.w  WD_HEIGHT(a3),d3
         bsr     gad_reqof
         beq.s   .gr_win
@@ -77,14 +77,14 @@ gad_rect:
 .gr_ref:
         move.w  GG_FLAGS(a0),d1
         move.w  GG_LEFTEDGE(a0),d0
-        btst    #4,d1                ; GRELRIGHT : bord droit du domaine (largeur - 1) + LeftEdge
+        btst    #4,d1                ; GRELRIGHT: right edge of the domain (width - 1) + LeftEdge
         beq.s   .gr_x
         add.w   d2,d0
         subq.w  #1,d0
 .gr_x:
         move.w  d0,(a1)
         move.w  GG_TOPEDGE(a0),d0
-        btst    #3,d1                ; GRELBOTTOM : bord bas du domaine (hauteur - 1) + TopEdge
+        btst    #3,d1                ; GRELBOTTOM: bottom edge of the domain (height - 1) + TopEdge
         beq.s   .gr_y
         add.w   d3,d0
         subq.w  #1,d0
@@ -116,8 +116,8 @@ gad_rect:
 gad_skip:
         rts
 
-; gad_reqof(a3 = fenêtre, a0 = gadget) -> d0 = requester de la fenêtre qui porte ce gadget (REQGADGET), 0 sinon ;
-; Z = 1 si aucun. Préserve tout le reste.
+; gad_reqof(a3 = window, a0 = gadget) -> d0 = the window's requester that carries this gadget (REQGADGET), 0 otherwise;
+; Z = 1 if none. Preserves everything else.
 gad_reqof:
         moveq   #0,d0
         btst    #4,GG_GADGETTYPE(a0) ; REQGADGET ($1000)
@@ -132,7 +132,7 @@ gad_reqof:
         cmpa.w  #0,a2
         beq.s   .rq_next
         cmpa.l  a0,a2
-        beq.s   .rq_ret              ; d0 = ce requester
+        beq.s   .rq_ret              ; d0 = this requester
         move.l  GG_NEXTGADGET(a2),a2
         bra.s   .rq_gad
 .rq_next:
@@ -144,14 +144,14 @@ gad_reqof:
 .ro_none:
         rts
 
-; rq_origin(a3 = fenêtre, a0 = requester) -> d0.w/d1.w = coin du requester dans la fenêtre : LeftEdge/TopEdge, plus
-; les bordures dans une fenêtre GIMMEZEROZERO (relatif à l'intérieur). Préserve tout le reste.
+; rq_origin(a3 = window, a0 = requester) -> d0.w/d1.w = corner of the requester in the window: LeftEdge/TopEdge, plus
+; the borders in a GIMMEZEROZERO window (relative to the interior). Preserves everything else.
 rq_origin:
         move.w  RQ_LEFTEDGE(a0),d0
         move.w  RQ_TOPEDGE(a0),d1
         btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO
         beq.s   .og_ret
-        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP : une seule couche)
+        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP: a single layer)
         beq.s   .og_ret
         move.l  d2,-(sp)
         moveq   #0,d2
@@ -163,42 +163,42 @@ rq_origin:
 .og_ret:
         rts
 
-; gad_nolayer(a3 = fenêtre, a2 = gadget) -> Z = 0 si c'est un gadget de requester sans couche (requester rogné à
-; rien) : rien à dessiner. Préserve tout le reste.
+; gad_nolayer(a3 = window, a2 = gadget) -> Z = 0 if it is a requester gadget without a layer (requester clipped to
+; nothing): nothing to draw. Preserves everything else.
 gad_nolayer:
         movem.l d0/a0,-(sp)
         move.l  a2,a0
         bsr.s   gad_reqof
-        beq.s   .nl_ret              ; Z = 1 : pas un gadget de requester
+        beq.s   .nl_ret              ; Z = 1: not a requester gadget
         move.l  d0,a0
         tst.l   RQ_REQLAYER(a0)
-        seq     d0                   ; d0 = $FF si pas de couche
+        seq     d0                   ; d0 = $FF if no layer
         tst.b   d0
 .nl_ret:
-        movem.l (sp)+,d0/a0          ; (movem ne touche pas les drapeaux)
+        movem.l (sp)+,d0/a0          ; (movem does not touch the flags)
         rts
 
-; gad_inner(a3 = fenêtre, a0 = gadget) -> Z = 0 si c'est un gadget de l'intérieur d'une fenêtre GIMMEZEROZERO (pas
-; GZZGADGET) : dessiné dans la couche intérieure, à l'origine de l'intérieur. Préserve tout.
+; gad_inner(a3 = window, a0 = gadget) -> Z = 0 if it is an interior gadget of a GIMMEZEROZERO window (not
+; GZZGADGET): drawn in the inner layer, at the origin of the interior. Preserves everything.
 gad_inner:
         btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO
         beq.s   .gn_ret
-        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP : une seule couche)
+        tst.l   WD_BORDERRPORT(a3)   ; (BACKDROP: a single layer)
         beq.s   .gn_ret
-        btst    #5,GG_GADGETTYPE(a0) ; GZZGADGET ($2000) : dans le cadre -> Z = 1 ; sinon Z = 0
+        btst    #5,GG_GADGETTYPE(a0) ; GZZGADGET ($2000): in the border -> Z = 1; otherwise Z = 0
         eori.b  #4,ccr
 .gn_ret:
         rts
 
-; gad_rpof(a3 = fenêtre, a2 = gadget) -> a0 = RastPort où le dessiner : celui de la couche du requester pour un gadget
-; de requester (appelant : gad_nolayer vérifié), celui du cadre pour un gadget GZZGADGET d'une fenêtre GIMMEZEROZERO,
-; sinon celui de la fenêtre (l'intérieur). Préserve tout le reste.
+; gad_rpof(a3 = window, a2 = gadget) -> a0 = RastPort to draw it in: that of the requester's layer for a requester
+; gadget (caller: gad_nolayer checked), that of the border for a GZZGADGET gadget of a GIMMEZEROZERO window,
+; otherwise that of the window (the interior). Preserves everything else.
 gad_rpof:
         move.l  d0,-(sp)
         move.l  a2,a0
         bsr     gad_reqof
         beq.s   .ro_win
-        move.l  d0,a0                ; gadget de requester : la couche du requester
+        move.l  d0,a0                ; requester gadget: the requester's layer
         move.l  RQ_REQLAYER(a0),a0
         move.l  IL_RP(a0),a0
         move.l  (sp)+,d0
@@ -216,9 +216,9 @@ gad_rpof:
 .ro_ret:
         rts
 
-; gad_rp(a3 = fenêtre, a2 = gadget, a1 = rectangle de gad_rect) -> a1 inchangé, a0 = RastPort où le dessiner (gad_rpof) ;
-; le rectangle est ramené dans ce RastPort (gadget intérieur d'une fenêtre GIMMEZEROZERO : moins les bordures ; gadget
-; de requester : moins le coin du requester). Clobbe d0.
+; gad_rp(a3 = window, a2 = gadget, a1 = rectangle from gad_rect) -> a1 unchanged, a0 = RastPort to draw in (gad_rpof);
+; the rectangle is brought into this RastPort (inner gadget of a GIMMEZEROZERO window: minus the borders; requester
+; gadget: minus the requester's corner). Clobbers d0.
 gad_rp:
         bsr.s   gad_rpof
         move.l  a0,-(sp)
@@ -226,7 +226,7 @@ gad_rp:
         bsr     gad_reqof
         beq.s   .rp_win
         move.l  d1,-(sp)
-        move.l  d0,a0                ; gadget de requester : rectangle relatif au coin du requester
+        move.l  d0,a0                ; requester gadget: rectangle relative to the requester's corner
         bsr     rq_origin
         sub.w   d0,(a1)
         sub.w   d0,4(a1)
@@ -251,13 +251,13 @@ gad_rp:
 .rp_ret:
         rts
 
-; gad_inside(a3 = fenêtre, a0 = gadget, d2/d3 = point dans la fenêtre) -> Z = 0 si le point est dans le gadget.
-; Clobbe d0/d1/a1.
+; gad_inside(a3 = window, a0 = gadget, d2/d3 = point in the window) -> Z = 0 if the point is in the gadget.
+; Clobbers d0/d1/a1.
 gad_inside:
         lea     -8(sp),sp
         move.l  sp,a1
         bsr     gad_rect
-        moveq   #0,d0                ; Z = 1 par défaut (dehors)
+        moveq   #0,d0                ; Z = 1 by default (outside)
         cmp.w   (sp),d2
         blt.s   .gi_out
         cmp.w   4(sp),d2
@@ -272,9 +272,9 @@ gad_inside:
         tst.l   d0
         rts
 
-; gad_draw(a3 = fenêtre, a2 = gadget, a5 = IntuitionBase) : image ou bordure (SelectRender si sélectionné en
-; GADGHIMAGE), texte, puis surbrillance d'un gadget sélectionné en GADGHCOMP / GADGHBOX. gad_render : sans cette
-; surbrillance. Préserve d2-d7/a2-a6.
+; gad_draw(a3 = window, a2 = gadget, a5 = IntuitionBase): image or border (SelectRender if selected in
+; GADGHIMAGE), text, then highlight of a selected gadget in GADGHCOMP / GADGHBOX. gad_render: without this
+; highlight. Preserves d2-d7/a2-a6.
 gad_draw:
         moveq   #1,d0
         bra.s   gad_drw
@@ -288,18 +288,18 @@ gad_drw:
         bra     it_reclip
 gad_drw_nc:
         movem.l d2-d7/a2-a6,-(sp)
-        move.w  d0,d7                ; d7 = surbrillance voulue
+        move.w  d0,d7                ; d7 = wanted highlight
         lea     -8(sp),sp
         move.l  a2,a0
         move.l  sp,a1
         bsr     gad_rect
         bsr     gad_rp
-        move.l  a0,a4                ; a4 = RastPort du gadget, rectangle ramené dedans
+        move.l  a0,a4                ; a4 = RastPort of the gadget, rectangle brought into it
         move.w  GG_GADGETTYPE(a2),d0
         and.w   #GTYP_MASK,d0
         cmp.w   #PROPGADGET,d0
         bne.s   .gd_nprop
-        bsr     prop_render          ; proportionnel : boîte, cadre, knob ; puis son texte
+        bsr     prop_render          ; proportional: box, border, knob; then its text
         move.l  a5,a6
         bra     .gd_txt
 .gd_nprop:
@@ -348,7 +348,7 @@ gad_drw_nc:
 .gd_sel:
         tst.w   d7
         beq.s   .gd_ret
-        cmp.w   #PROPGADGET,d0       ; (proportionnel : son knob porte déjà l'état tenu)
+        cmp.w   #PROPGADGET,d0       ; (proportional: its knob already carries the held state)
         beq.s   .gd_ret
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
         beq.s   .gd_ret
@@ -358,18 +358,18 @@ gad_drw_nc:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; gad_comp(a3 = fenêtre, a2 = gadget, a5, rectangle en 4(sp)) : surbrillance par inversion, de tout le gadget
-; (GADGHCOMP) ou de son contour (GADGHBOX) ; une seconde inversion l'efface. Préserve d2-d7/a2-a5.
+; gad_comp(a3 = window, a2 = gadget, a5, rectangle at 4(sp)): highlight by inversion, of the whole gadget
+; (GADGHCOMP) or of its outline (GADGHBOX); a second inversion erases it. Preserves d2-d7/a2-a5.
 gad_comp:
         move.w  GG_FLAGS(a2),d0
         and.w   #GADGHIGHBITS,d0
         cmp.w   #GADGHBOX,d0
-        bhi.s   .gc_ret              ; GADGHIMAGE / GADGHNONE : rien à inverser
+        bhi.s   .gc_ret              ; GADGHIMAGE / GADGHNONE: nothing to invert
         movem.l d2-d7/a2-a3/a6,-(sp)
-        move.w  d0,d7                ; d7 = 0 tout / 1 contour
-        bsr     gad_rpof             ; RastPort du gadget (rectangle déjà ramené dedans par l'appelant)
-        move.l  a0,a3                ; a3 = RastPort désormais
-        movem.w 4+36(sp),d4-d6/a2    ; x0 y0 x1 y1 (a2 = y1, étendu)
+        move.w  d0,d7                ; d7 = 0 whole / 1 outline
+        bsr     gad_rpof             ; RastPort of the gadget (rectangle already brought into it by the caller)
+        move.l  a0,a3                ; a3 = RastPort from now on
+        movem.w 4+36(sp),d4-d6/a2    ; x0 y0 x1 y1 (a2 = y1, extended)
         move.l  a2,d3
         move.l  IB_GFXBASE(a5),a6
         move.l  a3,a1
@@ -386,24 +386,24 @@ gad_comp:
         bsr.s   .gc_fill             ; d3 = y1
         bra.s   .gc_end
 .gc_box:
-        move.w  d4,d0                ; haut
+        move.w  d4,d0                ; top
         move.w  d5,d1
         move.w  d6,d2
         move.l  d3,-(sp)
         move.w  d5,d3
         bsr.s   .gc_fill
         move.l  (sp)+,d3
-        move.w  d4,d0                ; bas
+        move.w  d4,d0                ; bottom
         move.w  d3,d1
         move.w  d6,d2
         bsr.s   .gc_fill
-        move.w  d4,d0                ; gauche (sans les coins déjà inversés)
+        move.w  d4,d0                ; left (without the corners already inverted)
         move.w  d5,d1
         addq.w  #1,d1
         move.w  d4,d2
         subq.w  #1,d3
         bsr.s   .gc_fill
-        move.w  d6,d0                ; droite
+        move.w  d6,d0                ; right
         move.w  d5,d1
         addq.w  #1,d1
         move.w  d6,d2
@@ -415,7 +415,7 @@ gad_comp:
         movem.l (sp)+,d2-d7/a2-a3/a6
 .gc_ret:
         rts
-.gc_fill:                            ; RectFill(rp, d0, d1, d2, d3) si le rectangle n'est pas vide
+.gc_fill:                            ; RectFill(rp, d0, d1, d2, d3) if the rectangle is not empty
         cmp.w   d0,d2
         blt.s   .gf_ret
         cmp.w   d1,d3
@@ -431,7 +431,7 @@ gad_comp:
 .gf_ret:
         rts
 
-; gad_drawall(a3 = fenêtre, a5 = IntuitionBase) : tous les gadgets d'application de la fenêtre. Préserve tout.
+; gad_drawall(a3 = window, a5 = IntuitionBase): all the application gadgets of the window. Preserves everything.
 gad_drawall:
         movem.l d0-d2/a0-a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
@@ -440,13 +440,13 @@ gad_drawall:
         movem.l (sp)+,d0-d2/a0-a2
         rts
 
-; gad_drawrev(a2 = premier gadget, d2 = nombre (-1 = jusqu'à la fin), a3 = fenêtre, a5) : comme intuition 1.3, la
-; plage est rendue à rebours, du dernier au premier, si bien que le premier de la liste finit par-dessus (info.library
-; compte dessus pour que SAVE/QUIT, en tête, recouvrent leur remplisseur) ; puis, à l'endroit, la surbrillance des
-; gadgets sélectionnés. Parcours quadratique sans pile (listes courtes). Les gadgets système sont dessinés avec le
-; cadre. Clobbe d0-d2/a0-a2.
+; gad_drawrev(a2 = first gadget, d2 = count (-1 = up to the end), a3 = window, a5): as in intuition 1.3, the
+; range is rendered in reverse, from last to first, so that the first of the list ends up on top (info.library
+; relies on it so that SAVE/QUIT, at the head, cover their filler); then, in forward order, the highlight of the
+; selected gadgets. Quadratic walk without a stack (short lists). The system gadgets are drawn with the
+; border. Clobbers d0-d2/a0-a2.
 gad_drawrev:
-        move.l  a2,a0                ; a0 = fin de plage (gadget qui suit le dernier, ou NULL)
+        move.l  a2,a0                ; a0 = end of range (gadget following the last one, or NULL)
 .dr_end:
         move.l  a0,d0
         beq.s   .dr_go
@@ -456,11 +456,11 @@ gad_drawrev:
         move.l  GG_NEXTGADGET(a0),a0
         bra.s   .dr_end
 .dr_go:
-        movem.l a0/a2,-(sp)          ; fin de plage, premier gadget
+        movem.l a0/a2,-(sp)          ; end of range, first gadget
 .dr_lp:
         cmp.l   a2,a0
-        beq.s   .dr_hl               ; plage vide ou entièrement rendue
-        move.l  a2,a1                ; cherche le prédécesseur de la fin
+        beq.s   .dr_hl               ; range empty or fully rendered
+        move.l  a2,a1                ; look for the predecessor of the end
 .dr_pred:
         cmp.l   GG_NEXTGADGET(a1),a0
         beq.s   .dr_got
@@ -474,7 +474,7 @@ gad_drawrev:
         bsr     gad_render
         move.l  4+4(sp),a2
 .dr_skip:
-        move.l  (sp)+,a0             ; ce gadget devient la nouvelle fin
+        move.l  (sp)+,a0             ; this gadget becomes the new end
         bra.s   .dr_lp
 .dr_hl:
         movem.l (sp)+,a0/a2
@@ -487,7 +487,7 @@ gad_drawrev:
         beq.s   .dr_hnext
         move.w  GG_FLAGS(a2),d0
         and.w   #GADGHIGHBITS,d0
-        cmp.w   #GADGHIMAGE,d0       ; SelectRender déjà rendu
+        cmp.w   #GADGHIMAGE,d0       ; SelectRender already rendered
         beq.s   .dr_hnext
         move.l  a0,-(sp)
         bsr     gad_hilite
@@ -498,8 +498,8 @@ gad_drawrev:
 .dr_ret:
         rts
 
-; gad_hilite(a3, a2, a5) : l'état SELECTED vient de changer -> surbrillance mise à jour (inversion, ou image redessinée
-; en GADGHIMAGE). Préserve d2-d7/a2-a5.
+; gad_hilite(a3, a2, a5): the SELECTED state just changed -> highlight updated (inversion, or image redrawn
+; in GADGHIMAGE). Preserves d2-d7/a2-a5.
 gad_hilite:
         bsr     gad_nolayer
         bne     gad_skip
@@ -520,10 +520,10 @@ gad_hilite_nc:
         lea     8(sp),sp
         rts
 
-; gad_down(a3 = fenêtre, a5, d2/d3 = clic dans la fenêtre) -> Z = 0 si un gadget d'application actif l'a pris :
-; il est sélectionné (ou basculé en TOGGLESELECT), GADGETDOWN s'il est GADGIMMEDIATE, et il reste enfoncé jusqu'au
-; relâchement (gad_up). Avec un requester, les gadgets de la fenêtre sont inertes : seuls ceux du plus récent
-; comptent, si le clic tombe sur sa couche (spec intuition-requesters-v34 §3.1). Clobbe d0/d1/d6/a0/a1/a6.
+; gad_down(a3 = window, a5, d2/d3 = click in the window) -> Z = 0 if an enabled application gadget took it:
+; it is selected (or toggled in TOGGLESELECT), GADGETDOWN if it is GADGIMMEDIATE, and it stays pressed until the
+; release (gad_up). With a requester, the window's gadgets are inert: only those of the most recent one
+; count, if the click lands on its layer (spec intuition-requesters-v34 §3.1). Clobbers d0/d1/d6/a0/a1/a6.
 gad_down:
         move.l  a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
@@ -534,7 +534,7 @@ gad_down:
         move.l  RQ_REQLAYER(a0),d0
         beq.s   .gn_lp
         move.l  d0,a1
-        move.w  d2,d0                ; clic -> coordonnées de l'écran
+        move.w  d2,d0                ; click -> screen coordinates
         add.w   WD_LEFTEDGE(a3),d0
         cmp.w   IL_MINX(a1),d0
         blt.s   .gn_lp
@@ -567,7 +567,7 @@ gad_down:
         beq.s   .gn_prop
         cmp.w   #STRGADGET,d0
         bne.s   .gn_bool
-        bsr     str_activate         ; d2 = abscisse du clic : place le curseur
+        bsr     str_activate         ; d2 = x of the click: places the cursor
         bra.s   .gn_taken
 .gn_prop:
         bsr     prop_down
@@ -599,15 +599,15 @@ gad_down:
         moveq   #0,d0                ; Z = 1
         rts
 
-; gad_send(a3, a0 = gadget, d0 = classe, d1 = code, d2/d3 = souris) : message IDCMP dont im_IAddress est le gadget.
+; gad_send(a3, a0 = gadget, d0 = class, d1 = code, d2/d3 = mouse): IDCMP message whose im_IAddress is the gadget.
 gad_send:
         movem.l d2-d7/a2-a5,-(sp)
         jsr     wn_sendgad
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; gad_up(a5, d4/d5 = pointeur écran) : relâchement d'un gadget enfoncé. Hors TOGGLESELECT il est désélectionné ;
-; GADGETUP s'il est RELVERIFY et que le pointeur est encore dessus. Clobbe d0-d3/d6/a0/a1/a3/a6.
+; gad_up(a5, d4/d5 = screen pointer): release of a pressed gadget. Except in TOGGLESELECT it is deselected;
+; GADGETUP if it is RELVERIFY and the pointer is still over it. Clobbers d0-d3/d6/a0/a1/a3/a6.
 gad_up:
         move.l  a2,-(sp)
         move.l  IB_GADACT(a5),a2
@@ -624,7 +624,7 @@ gad_up:
         bsr     prop_up
         bra.s   .gu_ret
 .gu_nprop:
-        btst    #0,GG_ACTIVATION(a2) ; TOGGLESELECT : l'état basculé au clic reste
+        btst    #0,GG_ACTIVATION(a2) ; TOGGLESELECT: the state toggled on click stays
         bne.s   .gu_verify
         bclr    #7,GG_FLAGS+1(a2)
         bsr     gad_hilite
@@ -639,7 +639,7 @@ gad_up:
         move.l  a2,a0
         bsr.s   gad_send
 .gu_end:
-        btst    #2,GG_ACTIVATION+1(a2)   ; ENDGADGET relâché dessus : fin du requester le plus récent
+        btst    #2,GG_ACTIVATION+1(a2)   ; ENDGADGET released over it: end of the most recent requester
         beq.s   .gu_ret
         move.l  a2,a0
         bsr     gad_inside
@@ -654,10 +654,10 @@ gad_up:
         move.l  (sp)+,a2
         rts
 
-; gad_forget(a0 = fenêtre | gadget) : oublie le gadget enfoncé s'il appartient à cette fenêtre ou est ce gadget
-; (fenêtre fermée, gadget retiré). a6 = IntuitionBase. Clobbe d0.
+; gad_forget(a0 = window | gadget): forgets the pressed gadget if it belongs to this window or is this gadget
+; (window closed, gadget removed). a6 = IntuitionBase. Clobbers d0.
 gad_forget:
-        cmp.l   IB_SYSWIN(a6),a0     ; gadget système enfoncé dans cette fenêtre : oublié
+        cmp.l   IB_SYSWIN(a6),a0     ; system gadget pressed in this window: forgotten
         bne.s   .gf_sys
         clr.w   IB_SYSACT(a6)
 .gf_sys:
@@ -677,9 +677,9 @@ gad_forget:
 .gf_r:
         rts
 
-; --- gadgets proportionnels (spec intuition-prop-v34) ----------------------------------------------------------
-; zone de travail : boîte et conteneur en coordonnées du RastPort du gadget, knob relatif au conteneur, décalage
-; fenêtre -> RastPort
+; --- proportional gadgets (spec intuition-prop-v34) ----------------------------------------------------------
+; work area: box and container in coordinates of the gadget's RastPort, knob relative to the container, window ->
+; RastPort offset
 PP_L            EQU 0
 PP_T            EQU 2
 PP_R            EQU 4
@@ -696,15 +696,15 @@ PP_DX           EQU 24
 PP_DY           EQU 26
 PP_SIZE         EQU 28
 
-; gad_propinit(a3 = fenêtre) : bordures du PropInfo de chaque gadget proportionnel de la fenêtre, comme à l'entrée
-; d'un gadget dans une fenêtre : WBorLeft / WBorTop de l'écran, 0 / 0 si PROPBORDERLESS (spec §1). Préserve tout.
+; gad_propinit(a3 = window): PropInfo borders of each proportional gadget of the window, as when a gadget
+; enters a window: WBorLeft / WBorTop of the screen, 0 / 0 if PROPBORDERLESS (spec §1). Preserves everything.
 gad_propinit:
         move.l  a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
         bsr.s   gad_propinitl
         move.l  (sp)+,a2
         rts
-; gad_propinitl(a3 = fenêtre, a2 = premier gadget d'une liste) : idem pour cette liste (gadgets d'un requester).
+; gad_propinitl(a3 = window, a2 = first gadget of a list): same for this list (gadgets of a requester).
 gad_propinitl:
         movem.l d0-d1/a0-a2,-(sp)
         move.l  WD_WSCREEN(a3),a1
@@ -737,15 +737,15 @@ gad_propinitl:
         movem.l (sp)+,d0-d1/a0-a2
         rts
 
-; prop_prep(a3 = fenêtre, a2 = gadget, a1 = zone PP_SIZE) -> a0 = RastPort du gadget, zone remplie (spec §2). Écrit
-; CWidth/CHeight et les PotRes du PropInfo, la taille du knob dans l'Image de rendu (AUTOKNOB) et sa position dans
-; les Images de rendu et de sélection. Préserve d2-d7/a2-a6.
+; prop_prep(a3 = window, a2 = gadget, a1 = PP_SIZE area) -> a0 = RastPort of the gadget, area filled (spec §2). Writes
+; CWidth/CHeight and the PotRes of the PropInfo, the knob size into the render Image (AUTOKNOB) and its position into
+; the render and select Images. Preserves d2-d7/a2-a6.
 prop_prep:
         movem.l d2-d7/a2-a4,-(sp)
         move.l  a1,a4
         move.l  a2,a0
         bsr     gad_rect
-        move.l  (a4),d2              ; coin de la boîte dans la fenêtre (x, y)
+        move.l  (a4),d2              ; corner of the box in the window (x, y)
         move.l  a4,a1
         bsr     gad_rp
         move.l  a0,-(sp)
@@ -758,7 +758,7 @@ prop_prep:
         move.l  GG_SPECIALINFO(a2),a1
         move.w  PI_LBORDER(a1),d4
         move.w  PI_TBORDER(a1),d5
-        move.w  PP_L(a4),d0          ; conteneur = boîte moins les bordures du PropInfo
+        move.w  PP_L(a4),d0          ; container = box minus the PropInfo borders
         add.w   d4,d0
         move.w  d0,PP_CL(a4)
         move.w  PP_T(a4),d0
@@ -784,10 +784,10 @@ prop_prep:
         move.w  PI_VBODY(a1),d0
         bsr     .pp_step
         move.w  d0,PI_VPOTRES(a1)
-        move.l  GG_GADGETRENDER(a2),a0   ; a0 = Image du knob
-        btst    #0,PI_FLAGS+1(a1)    ; AUTOKNOB : taille d'après Body
+        move.l  GG_GADGETRENDER(a2),a0   ; a0 = knob Image
+        btst    #0,PI_FLAGS+1(a1)    ; AUTOKNOB: size from Body
         beq.s   .pp_img
-        move.w  PP_CW(a4),d4         ; largeur
+        move.w  PP_CW(a4),d4         ; width
         btst    #1,PI_FLAGS+1(a1)    ; FREEHORIZ
         beq.s   .pp_kw
         moveq   #0,d0
@@ -800,7 +800,7 @@ prop_prep:
         bsr     .pp_clamp
         move.w  d0,d4
 .pp_kw:
-        move.w  PP_CH(a4),d5         ; hauteur
+        move.w  PP_CH(a4),d5         ; height
         btst    #2,PI_FLAGS+1(a1)    ; FREEVERT
         beq.s   .pp_kh
         moveq   #0,d0
@@ -822,7 +822,7 @@ prop_prep:
 .pp_pos:
         move.w  d4,PP_KW(a4)
         move.w  d5,PP_KH(a4)
-        moveq   #0,d6                ; x du knob
+        moveq   #0,d6                ; knob x
         btst    #1,PI_FLAGS+1(a1)
         beq.s   .pp_kx
         move.w  PP_CW(a4),d0
@@ -831,7 +831,7 @@ prop_prep:
         bsr     .pp_place
         move.w  d0,d6
 .pp_kx:
-        moveq   #0,d7                ; y du knob
+        moveq   #0,d7                ; knob y
         btst    #2,PI_FLAGS+1(a1)
         beq.s   .pp_ky
         move.w  PP_CH(a4),d0
@@ -853,7 +853,7 @@ prop_prep:
         move.l  (sp)+,a0
         movem.l (sp)+,d2-d7/a2-a4
         rts
-.pp_step:                            ; d0.w = Body -> d0.w = pas de page ($FFFF dès Body >= $8000). Clobbe d1.
+.pp_step:                            ; d0.w = Body -> d0.w = page step ($FFFF as soon as Body >= $8000). Clobbers d1.
         cmp.w   #$8000,d0
         bhs.s   .ps_max
         moveq   #0,d1
@@ -867,7 +867,7 @@ prop_prep:
 .ps_max:
         moveq   #-1,d0
         rts
-.pp_clamp:                           ; d0.w ramené à [d1, d2] puis à au moins 1
+.pp_clamp:                           ; d0.w brought into [d1, d2] then to at least 1
         cmp.w   d1,d0
         bge.s   .pc_lo
         move.w  d1,d0
@@ -881,7 +881,7 @@ prop_prep:
         moveq   #1,d0
 .pc_r:
         rts
-.pp_place:                           ; d0.w = course, d1.w = Pot -> d0.w = (course × (Pot + 1)) >> 16 (course < 0 : 0)
+.pp_place:                           ; d0.w = travel, d1.w = Pot -> d0.w = (travel x (Pot + 1)) >> 16 (travel < 0: 0)
         tst.w   d0
         bpl.s   .pl_ok
         moveq   #0,d0
@@ -895,17 +895,17 @@ prop_prep:
         move.w  d1,d0
         rts
 
-; prop_render(a3 = fenêtre, a2 = gadget, a5) : dessin complet (spec §3.1) : boîte au DetailPen, cadre au BlockPen
-; (montants de WBorLeft/2, traits de WBorTop/2) sauf PROPBORDERLESS, puis le knob. Préserve d2-d7/a2-a5 ; clobbe
+; prop_render(a3 = window, a2 = gadget, a5): full drawing (spec §3.1): box in DetailPen, border in BlockPen
+; (sides of WBorLeft/2, lines of WBorTop/2) except PROPBORDERLESS, then the knob. Preserves d2-d7/a2-a5; clobbers
 ; d0/d1/a0/a1/a6.
 prop_render:
         lea     prop_rend(pc),a1
         bra.s   prop_keep
 
-; prop_keep(a1 = routine de dessin d'un gadget proportionnel, a2/a3/a5, d4-d7 transmis) : la routine est appelée,
-; puis les stylos et le mode du RastPort du gadget sont rendus : il est souvent celui de la fenêtre, où
-; l'application dessine sans les reposer (la liste de fichiers d'OctaMED, redessinée après RefreshGList de son
-; ascenseur, devenait invisible). Clobbe d0/d1/a0/a1/a6.
+; prop_keep(a1 = drawing routine of a proportional gadget, a2/a3/a5, d4-d7 passed on): the routine is called,
+; then the pens and mode of the gadget's RastPort are restored: it is often the window's, where
+; the application draws without setting them again (OctaMED's file list, redrawn after RefreshGList of its
+; scroller, became invisible). Clobbers d0/d1/a0/a1/a6.
 prop_keep:
         move.l  a1,-(sp)
         bsr     gad_rpof
@@ -936,7 +936,7 @@ prop_rend:
         move.b  WD_DETAILPEN(a3),d0
         move.l  a4,a1
         jsr     LVO_SETAPEN(a6)
-        movem.w (sp),d0-d3           ; boîte
+        movem.w (sp),d0-d3           ; box
         move.l  a4,a1
         jsr     LVO_RECTFILL(a6)
         move.l  GG_SPECIALINFO(a2),a0
@@ -952,10 +952,10 @@ prop_rend:
         move.l  WD_WSCREEN(a3),a0
         moveq   #0,d6
         move.b  SC_WBORLEFT(a0),d6
-        lsr.w   #1,d6                ; d6 = épaisseur des montants
+        lsr.w   #1,d6                ; d6 = thickness of the sides
         moveq   #0,d7
         move.b  SC_WBORTOP(a0),d7
-        lsr.w   #1,d7                ; d7 = épaisseur des traits
+        lsr.w   #1,d7                ; d7 = thickness of the lines
         tst.w   d6
         beq.s   .pr_h
         movem.w (sp),d0-d3
@@ -991,9 +991,9 @@ prop_rend:
         move.l  a4,a1
         jmp     LVO_RECTFILL(a6)
 
-; prop_knob(a3 = fenêtre, a2 = gadget, a4 = RastPort, a1 = zone préparée, a5, a6 = GfxBase) : le knob (spec §3.1) :
-; AUTOKNOB = rectangle plein au BlockPen (complémenté s'il est tenu : SELECTED et KNOBHIT) ; sinon l'Image de rendu
-; (de sélection en GADGHIMAGE), inversée en GADGHCOMP quand il est tenu. Clobbe d0/d1/a0/a1 ; rend a6 = GfxBase.
+; prop_knob(a3 = window, a2 = gadget, a4 = RastPort, a1 = prepared area, a5, a6 = GfxBase): the knob (spec §3.1):
+; AUTOKNOB = filled rectangle in BlockPen (complemented if held: SELECTED and KNOBHIT); otherwise the render Image
+; (select Image in GADGHIMAGE), inverted in GADGHCOMP when held. Clobbers d0/d1/a0/a1; returns a6 = GfxBase.
 prop_knob:
         movem.l d2-d5,-(sp)
         move.w  PP_CL(a1),d4
@@ -1007,8 +1007,8 @@ prop_knob:
         subq.w  #1,d2
         move.w  d1,d3
         add.w   PP_KH(a1),d3
-        subq.w  #1,d3                ; d0-d3 = boîte du knob
-        moveq   #0,d5                ; d5 = knob tenu ?
+        subq.w  #1,d3                ; d0-d3 = knob box
+        moveq   #0,d5                ; d5 = knob held?
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
         beq.s   .pk_held
         move.l  GG_SPECIALINFO(a2),a0
@@ -1047,7 +1047,7 @@ prop_knob:
         beq.s   .pk_draw
         move.l  GG_SELECTRENDER(a2),a1
 .pk_draw:
-        move.l  a4,a0                ; coin du conteneur = boîte du knob - position du knob dans l'Image
+        move.l  a4,a0                ; container corner = knob box - knob position in the Image
         move.w  (sp),d0
         move.w  2(sp),d1
         sub.w   IG_LEFTEDGE(a1),d0
@@ -1062,7 +1062,7 @@ prop_knob:
         beq.s   .pk_ret
         move.w  GG_FLAGS(a2),d4
         and.w   #GADGHIGHBITS,d4
-        bne.s   .pk_ret              ; GADGHCOMP seulement
+        bne.s   .pk_ret              ; GADGHCOMP only
         movem.w d0-d3,-(sp)
         move.l  a4,a1
         moveq   #COMPLEMENT,d0
@@ -1074,10 +1074,10 @@ prop_knob:
         movem.l (sp)+,d2-d5
         rts
 
-; prop_update(a3 = fenêtre, a2 = gadget, a5, d4-d7 = ancienne boîte du knob x0, y0, x1, y1) : le knob est redessiné
-; à sa nouvelle position, puis les parties de l'ancien qu'il ne recouvre plus sont rendues au DetailPen (spec §3.2).
-; Rien si la position n'a pas changé. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
-PU_NEW          EQU PP_SIZE          ; nouvelle boîte du knob (4 mots)
+; prop_update(a3 = window, a2 = gadget, a5, d4-d7 = old knob box x0, y0, x1, y1): the knob is redrawn
+; at its new position, then the parts of the old one it no longer covers are restored in DetailPen (spec §3.2).
+; Nothing if the position has not changed. Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
+PU_NEW          EQU PP_SIZE          ; new knob box (4 words)
 prop_update:
         bsr     gad_nolayer
         bne     gad_skip
@@ -1118,7 +1118,7 @@ prop_upd:
         move.b  WD_DETAILPEN(a3),d0
         move.l  a4,a1
         jsr     LVO_SETAPEN(a6)
-        move.w  d4,d0                ; au-dessus de la nouvelle boîte
+        move.w  d4,d0                ; above the new box
         move.w  d5,d1
         move.w  d6,d2
         move.w  PU_NEW+2(sp),d3
@@ -1128,7 +1128,7 @@ prop_upd:
         move.w  d7,d3
 .pu_t:
         bsr     .pu_fill
-        move.w  d4,d0                ; au-dessous
+        move.w  d4,d0                ; below
         move.w  PU_NEW+6(sp),d1
         addq.w  #1,d1
         cmp.w   d5,d1
@@ -1138,7 +1138,7 @@ prop_upd:
         move.w  d6,d2
         move.w  d7,d3
         bsr.s   .pu_fill
-        move.w  PU_NEW+2(sp),d1      ; bande commune : à gauche et à droite
+        move.w  PU_NEW+2(sp),d1      ; common band: left and right
         cmp.w   d5,d1
         bge.s   .pu_m0
         move.w  d5,d1
@@ -1170,7 +1170,7 @@ prop_upd:
         lea     PP_SIZE+8(sp),sp
         movem.l (sp)+,d2-d7/a4
         rts
-.pu_fill:                            ; RectFill(d0..d3) si le rectangle n'est pas vide. Clobbe d0/d1/a1.
+.pu_fill:                            ; RectFill(d0..d3) if the rectangle is not empty. Clobbers d0/d1/a1.
         cmp.w   d0,d2
         blt.s   .pf_r
         cmp.w   d1,d3
@@ -1180,9 +1180,9 @@ prop_upd:
 .pf_r:
         rts
 
-; prop_down(a3 = fenêtre, a2 = gadget, a5, d2/d3 = clic dans la fenêtre, d4/d5 = pointeur écran) : le gadget est tenu
-; (SELECTED). Clic dans le knob élargi des bordures : KNOBHIT, glissement suivi (IB_TRACK) ; ailleurs : saut d'une
-; page sur chaque axe libre, vers le clic (spec §4). Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+; prop_down(a3 = window, a2 = gadget, a5, d2/d3 = click in the window, d4/d5 = screen pointer): the gadget is held
+; (SELECTED). Click in the knob widened by the borders: KNOBHIT, drag tracked (IB_TRACK); elsewhere: jump of one
+; page on each free axis, towards the click (spec §4). Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 prop_down:
         movem.l d2-d7/a4,-(sp)
         move.l  a2,IB_GADACT(a5)
@@ -1194,9 +1194,9 @@ prop_down:
         move.l  sp,a1
         bsr     prop_prep
         move.l  a0,a4
-        sub.w   PP_DX(sp),d2         ; d2/d3 = clic dans le RastPort
+        sub.w   PP_DX(sp),d2         ; d2/d3 = click in the RastPort
         sub.w   PP_DY(sp),d3
-        move.w  PP_CL(sp),d4         ; d4-d7 = boîte du knob
+        move.w  PP_CL(sp),d4         ; d4-d7 = knob box
         add.w   PP_KX(sp),d4
         move.w  d4,d6
         add.w   PP_KW(sp),d6
@@ -1207,7 +1207,7 @@ prop_down:
         add.w   PP_KH(sp),d7
         subq.w  #1,d7
         move.l  GG_SPECIALINFO(a2),a0
-        move.w  d4,d0                ; knob élargi des bordures du PropInfo
+        move.w  d4,d0                ; knob widened by the PropInfo borders
         sub.w   PI_LBORDER(a0),d0
         cmp.w   d0,d2
         blt.s   .pd_page
@@ -1229,7 +1229,7 @@ prop_down:
         st      IB_TRACK(a5)
         move.l  IB_GFXBASE(a5),a6
         move.l  sp,a1
-        bsr     prop_knob            ; knob tenu
+        bsr     prop_knob            ; knob held
         bra.s   .pd_ret
 .pd_page:
         bclr    #0,PI_FLAGS(a0)
@@ -1277,9 +1277,9 @@ prop_down:
         movem.l (sp)+,d2-d7/a4
         rts
 
-; prop_track(a5, d4/d5 = pointeur) -> Z = 0 si un knob est tenu et que ce mouvement lui revient : nouvelle position
-; = précédente + déplacement, bornée au conteneur ; Pot recalculés (spec §2.4) ; knob redessiné ; MOUSEMOVE si
-; FOLLOWMOUSE. Clobbe d0-d7/a0-a4/a6.
+; prop_track(a5, d4/d5 = pointer) -> Z = 0 if a knob is held and this movement belongs to it: new position
+; = previous + displacement, bounded to the container; Pots recomputed (spec §2.4); knob redrawn; MOUSEMOVE if
+; FOLLOWMOUSE. Clobbers d0-d7/a0-a4/a6.
 prop_track:
         move.l  IB_GADACT(a5),d0
         beq     .pt_no
@@ -1294,7 +1294,7 @@ prop_track:
         move.l  IB_GADWIN(a5),a3
         jsr     it_scrxy
         beq     .pt_yes
-        move.w  d4,d2                ; d2/d3 = déplacement
+        move.w  d4,d2                ; d2/d3 = displacement
         sub.w   IB_PMX(a5),d2
         move.w  d5,d3
         sub.w   IB_PMY(a5),d3
@@ -1303,7 +1303,7 @@ prop_track:
         lea     -PP_SIZE(sp),sp
         move.l  sp,a1
         bsr     prop_prep
-        move.w  PP_CL(sp),d4         ; d4-d7 = boîte actuelle du knob
+        move.w  PP_CL(sp),d4         ; d4-d7 = current knob box
         add.w   PP_KX(sp),d4
         move.w  d4,d6
         add.w   PP_KW(sp),d6
@@ -1317,7 +1317,7 @@ prop_track:
         btst    #1,PI_FLAGS+1(a0)    ; FREEHORIZ
         beq.s   .pt_v
         move.w  PP_CW(sp),d1
-        sub.w   PP_KW(sp),d1         ; course
+        sub.w   PP_KW(sp),d1         ; travel
         move.w  IB_PKX(a5),d0
         add.w   d2,d0
         bsr.s   .pt_axis
@@ -1352,7 +1352,7 @@ prop_track:
 .pt_no:
         moveq   #0,d0                ; Z = 1
         rts
-.pt_axis:                            ; d0.w = position voulue, d1.w = course -> d0 = position bornée, d1 = Pot
+.pt_axis:                            ; d0.w = wanted position, d1.w = travel -> d0 = bounded position, d1 = Pot
         tst.w   d0
         bpl.s   .pa_lo
         moveq   #0,d0
@@ -1360,7 +1360,7 @@ prop_track:
         tst.w   d1
         bgt.s   .pa_hi
         moveq   #0,d0
-        moveq   #-1,d1               ; conteneur plein : Pot = $FFFF
+        moveq   #-1,d1               ; full container: Pot = $FFFF
         rts
 .pa_hi:
         cmp.w   d1,d0
@@ -1371,7 +1371,7 @@ prop_track:
 .pa_div:
         swap    d1
         clr.w   d1
-        swap    d1                   ; d1 = course (long)
+        swap    d1                   ; d1 = travel (long)
         move.l  d0,-(sp)
         and.l   #$FFFF,d0
         swap    d0                   ; position << 16
@@ -1380,12 +1380,12 @@ prop_track:
         move.l  (sp)+,d0
         rts
 
-; prop_up(a3 = fenêtre, a2 = gadget, a5, d2/d3 = pointeur dans la fenêtre) : relâchement : le gadget n'est plus tenu,
-; le suivi s'arrête, knob redessiné ; GADGETUP s'il est RELVERIFY, où que soit le pointeur.
+; prop_up(a3 = window, a2 = gadget, a5, d2/d3 = pointer in the window): release: the gadget is no longer held,
+; tracking stops, knob redrawn; GADGETUP if it is RELVERIFY, wherever the pointer is.
 prop_up:
         bclr    #7,GG_FLAGS+1(a2)
         move.l  GG_SPECIALINFO(a2),a0
-        btst    #0,PI_FLAGS(a0)      ; KNOBHIT : glissement suivi
+        btst    #0,PI_FLAGS(a0)      ; KNOBHIT: drag tracked
         beq.s   .pu2_draw
         clr.b   IB_TRACK(a5)
 .pu2_draw:
@@ -1399,9 +1399,9 @@ prop_up:
 .pu2_ret:
         rts
 
-; ModifyProp(gadget a0, fenêtre a1, requester a2, Flags d0, HorizPot d1, VertPot d2, HorizBody d3, VertBody d4) :
-; nouvelles valeurs du PropInfo, puis redessin de ce gadget jusqu'à la fin de la liste. NewModifyProp(…, nombre d5) :
-; seulement « nombre » gadgets à partir de celui-ci (spec §5).
+; ModifyProp(gadget a0, window a1, requester a2, Flags d0, HorizPot d1, VertPot d2, HorizBody d3, VertBody d4):
+; new PropInfo values, then redraw from this gadget up to the end of the list. NewModifyProp(..., count d5):
+; only "count" gadgets starting from this one (spec §5).
 intuition_NewModifyProp:
         movem.l d2-d7/a2-a3/a5,-(sp)
         move.l  d5,d7
@@ -1420,15 +1420,15 @@ mp_set:
         move.w  d3,PI_HBODY(a0)
         move.w  d4,PI_VBODY(a0)
         move.l  a3,d0
-        beq.s   .mp_ret              ; sans fenêtre : rien à redessiner
+        beq.s   .mp_ret              ; without a window: nothing to redraw
         move.l  d7,d2
         bsr     gad_drawrev
 .mp_ret:
         movem.l (sp)+,d2-d7/a2-a3/a5
         rts
 
-; --- gadgets texte ---------------------------------------------------------------------------------------------
-; str_len(a0 = StringInfo) -> si_NumChars recalculé (longueur du texte, bornée à MaxChars - 1), d0 = ce nombre.
+; --- text gadgets ---------------------------------------------------------------------------------------------
+; str_len(a0 = StringInfo) -> si_NumChars recomputed (text length, capped at MaxChars - 1), d0 = that number.
 str_len:
         move.l  a1,-(sp)
         move.l  SI_BUFFER(a0),a1
@@ -1450,9 +1450,9 @@ str_len:
         move.l  (sp)+,a1
         rts
 
-; str_text(a3 = fenêtre, a2 = gadget, a5 = IntuitionBase) : zone de texte du gadget (son rectangle) effacée puis
-; remplie avec les caractères visibles depuis si_DispPos, curseur inversé s'il est actif ; la position d'affichage
-; suit le curseur. Stylos et mode du RastPort restaurés. Préserve d2-d7/a2-a6.
+; str_text(a3 = window, a2 = gadget, a5 = IntuitionBase): text area of the gadget (its rectangle) cleared then
+; filled with the visible characters from si_DispPos, cursor inverted if it is active; the display position
+; follows the cursor. RastPort pens and mode restored. Preserves d2-d7/a2-a6.
 str_text:
         bsr     gad_nolayer
         bne     gad_skip
@@ -1468,7 +1468,7 @@ str_text_nc:
         move.l  a2,a0
         move.l  sp,a1
         bsr     gad_rect
-        bsr     gad_rp               ; rectangle ramené dans le RastPort du gadget
+        bsr     gad_rp               ; rectangle brought into the gadget's RastPort
         move.l  a4,a0
         bsr     str_len
         move.l  WD_RPORT(a3),a1
@@ -1477,7 +1477,7 @@ str_text_nc:
         bne.s   .st_cw
         moveq   #8,d6
 .st_cw:
-        move.w  4(sp),d0             ; caractères visibles = largeur / largeur de caractère
+        move.w  4(sp),d0             ; visible characters = width / character width
         sub.w   (sp),d0
         addq.w  #1,d0
         ext.l   d0
@@ -1485,7 +1485,7 @@ str_text_nc:
         move.w  d0,SI_DISPCOUNT(a4)
         cmp.l   IB_STRGAD(a5),a2
         bne.s   .st_disp
-        move.w  SI_BUFFERPOS(a4),d1  ; actif : curseur visible
+        move.w  SI_BUFFERPOS(a4),d1  ; active: cursor visible
         cmp.w   SI_DISPPOS(a4),d1
         bge.s   .st_d1
         move.w  d1,SI_DISPPOS(a4)
@@ -1505,7 +1505,7 @@ str_text_nc:
 .st_dok:
         move.l  IB_GFXBASE(a5),a6
         bsr     gad_rpof
-        move.l  a0,a3                ; a3 = RastPort du gadget désormais
+        move.l  a0,a3                ; a3 = RastPort of the gadget from now on
         move.b  rp_FgPen(a3),-(sp)
         move.b  rp_BgPen(a3),-(sp)
         move.b  rp_DrawMode(a3),-(sp)
@@ -1515,7 +1515,7 @@ str_text_nc:
         move.l  a3,a1
         moveq   #JAM1,d0
         jsr     LVO_SETDRMD(a6)
-        movem.w 6(sp),d0-d3          ; x0 y0 x1 y1 (sous les 3 sauvegardes, 6 octets)
+        movem.w 6(sp),d0-d3          ; x0 y0 x1 y1 (under the 3 saved values, 6 bytes)
         ext.l   d0
         ext.l   d1
         ext.l   d2
@@ -1533,7 +1533,7 @@ str_text_nc:
         jsr     LVO_SETDRMD(a6)
         moveq   #0,d4
         move.w  SI_NUMCHARS(a4),d4
-        sub.w   SI_DISPPOS(a4),d4    ; d4 = caractères à écrire
+        sub.w   SI_DISPPOS(a4),d4    ; d4 = characters to write
         cmp.w   SI_DISPCOUNT(a4),d4
         ble.s   .st_n
         move.w  SI_DISPCOUNT(a4),d4
@@ -1569,7 +1569,7 @@ str_text_nc:
         move.w  d1,d3
         add.w   rp_TxHeight(a3),d3
         subq.w  #1,d3
-        cmp.w   12(sp),d3            ; borné au bas du gadget
+        cmp.w   12(sp),d3            ; bounded to the bottom of the gadget
         ble.s   .st_cy
         move.w  12(sp),d3
 .st_cy:
@@ -1597,9 +1597,9 @@ str_text_nc:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; str_activate(a3 = fenêtre, a2 = gadget STRGADGET, a5, d2.w = abscisse du clic dans la fenêtre | -1) : le gadget
-; devient le gadget texte actif (l'ancien est désactivé), son texte est copié dans le tampon d'annulation, le curseur
-; est placé sous le clic (sinon gardé, borné au texte) ; GADGETDOWN s'il est GADGIMMEDIATE. Préserve d2-d7/a2-a6.
+; str_activate(a3 = window, a2 = STRGADGET gadget, a5, d2.w = x of the click in the window | -1): the gadget becomes the
+; active text gadget (the old one is deactivated), its text is copied into the undo buffer, the cursor is placed under
+; the click (otherwise kept, bounded to the text); GADGETDOWN if it is GADGIMMEDIATE. Preserves d2-d7/a2-a6.
 str_activate:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  GG_SPECIALINFO(a2),d0
@@ -1668,7 +1668,7 @@ str_activate:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; str_deact(a5) : le gadget texte actif (s'il y en a un) ne l'est plus ; redessiné sans curseur. Préserve tout.
+; str_deact(a5): the active text gadget (if any) is no longer active; redrawn without the cursor. Preserves everything.
 str_deact:
         movem.l d0-d1/a0-a3,-(sp)
         move.l  IB_STRGAD(a5),d0
@@ -1681,8 +1681,8 @@ str_deact:
         movem.l (sp)+,d0-d1/a0-a3
         rts
 
-; str_clickout(a5, d4/d5 = clic dans l'écran) : un clic hors du gadget texte actif le désactive (sans message).
-; Préserve tout.
+; str_clickout(a5, d4/d5 = click in the screen): a click outside the active text gadget deactivates it (no message).
+; Preserves everything.
 str_clickout:
         movem.l d0-d3/a0-a3,-(sp)
         move.l  IB_STRGAD(a5),d0
@@ -1700,8 +1700,8 @@ str_clickout:
         movem.l (sp)+,d0-d3/a0-a3
         rts
 
-; str_key(a5, d0.w = IT_KEYCODE + keycode, d4.w = qualificatif) : tâche d'entrée — une touche pour le gadget texte
-; actif. Préserve a5.
+; str_key(a5, d0.w = IT_KEYCODE + keycode, d4.w = qualifier): input task - a key for the active text
+; gadget. Preserves a5.
 str_key:
         move.l  IB_STRGAD(a5),d1
         beq     .sk_ret
@@ -1710,10 +1710,10 @@ str_key:
         move.l  IB_STRWIN(a5),a3
         move.l  GG_SPECIALINFO(a2),a4
         and.w   #$007F,d0
-        move.w  SI_BUFFERPOS(a4),d2  ; d2 = curseur, d3 = longueur
+        move.w  SI_BUFFERPOS(a4),d2  ; d2 = cursor, d3 = length
         move.w  SI_NUMCHARS(a4),d3
         move.l  SI_BUFFER(a4),a0
-        cmp.w   #$4F,d0              ; flèche gauche
+        cmp.w   #$4F,d0              ; left arrow
         bne.s   .sk_nl
         moveq   #0,d1
         move.w  d4,d1
@@ -1727,7 +1727,7 @@ str_key:
         moveq   #0,d2
         bra     .sk_pos
 .sk_nl:
-        cmp.w   #$4E,d0              ; flèche droite
+        cmp.w   #$4E,d0              ; right arrow
         bne.s   .sk_nr
         move.w  d4,d1
         and.w   #KQ_SHIFT,d1
@@ -1744,19 +1744,19 @@ str_key:
         beq     .sk_enter
         cmp.w   #$43,d0              ; Enter
         beq     .sk_enter
-        cmp.w   #$41,d0              ; Backspace : supprime avant le curseur
+        cmp.w   #$41,d0              ; Backspace: deletes before the cursor
         bne.s   .sk_nbs
         tst.w   d2
         beq     .sk_done
         subq.w  #1,d2
         bra.s   .sk_del
 .sk_nbs:
-        cmp.w   #$46,d0              ; Del : supprime sous le curseur
+        cmp.w   #$46,d0              ; Del: deletes under the cursor
         bne.s   .sk_ndel
         cmp.w   d3,d2
         bge     .sk_done
 .sk_del:
-        lea     0(a0,d2.w),a1        ; texte décalé d'un cran vers la gauche, NUL compris
+        lea     0(a0,d2.w),a1        ; text shifted one step to the left, NUL included
 .sk_dl:
         move.b  1(a1),(a1)+
         bne.s   .sk_dl
@@ -1764,12 +1764,12 @@ str_key:
         bra     .sk_pos
 .sk_ndel:
         move.w  d4,d1
-        jsr     kbd_cook             ; d0 = caractère (0 : pas de caractère)
+        jsr     kbd_cook             ; d0 = character (0: no character)
         and.w   #$00FF,d0
         beq     .sk_done
         btst    #KQB_RCOMMAND,d4
         beq.s   .sk_char
-        or.b    #$20,d0              ; Amiga droite : X efface, Q annule
+        or.b    #$20,d0              ; right Amiga: X clears, Q undoes
         cmp.b   #'x',d0
         bne.s   .sk_nx
         clr.b   (a0)
@@ -1802,7 +1802,7 @@ str_key:
         blo     .sk_done
         cmp.b   #$7F,d0
         beq     .sk_done
-        btst    #3,GG_ACTIVATION(a2) ; LONGINT ($0800) : chiffres et signe seulement
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT ($0800): digits and sign only
         beq.s   .sk_ins
         cmp.b   #'-',d0
         beq.s   .sk_ins
@@ -1814,10 +1814,10 @@ str_key:
         move.w  SI_MAXCHARS(a4),d1
         subq.w  #1,d1
         cmp.w   d1,d3
-        bge     .sk_done             ; plein
-        lea     0(a0,d3.w),a1        ; décale [curseur .. NUL] d'un cran vers la droite
+        bge     .sk_done             ; full
+        lea     0(a0,d3.w),a1        ; shifts [cursor .. NUL] one step to the right
         move.w  d3,d1
-        sub.w   d2,d1                ; octets à décaler, NUL compris : d1 + 1
+        sub.w   d2,d1                ; bytes to shift, NUL included: d1 + 1
 .sk_il:
         move.b  (a1),1(a1)
         subq.l  #1,a1
@@ -1834,9 +1834,9 @@ str_key:
 .sk_ret:
         rts
 .sk_enter:
-        btst    #3,GG_ACTIVATION(a2) ; LONGINT : valeur décimale signée dans si_LongInt
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT: signed decimal value in si_LongInt
         beq.s   .sk_up
-        moveq   #0,d1                ; d1 = valeur, d2 = négatif
+        moveq   #0,d1                ; d1 = value, d2 = negative
         moveq   #0,d2
         cmp.b   #'-',(a0)
         bne.s   .sk_dg
@@ -1849,7 +1849,7 @@ str_key:
         bcs.s   .sk_dend
         cmp.b   #9,d0
         bhi.s   .sk_dend
-        add.l   d1,d1                ; × 10 = × 2 + × 8
+        add.l   d1,d1                ; x 10 = x 2 + x 8
         move.l  d1,d3
         lsl.l   #2,d3
         add.l   d3,d1
@@ -1873,8 +1873,8 @@ str_key:
         bsr     gad_send
         bra.s   .sk_done
 
-; ActivateGadget(gadget a0, fenêtre a1, requester a2) -> d0 = TRUE si un gadget texte actif (non désactivé) de cette
-; fenêtre est devenu le gadget actif (curseur gardé), FALSE sinon.
+; ActivateGadget(gadget a0, window a1, requester a2) -> d0 = TRUE if an enabled (not disabled) text gadget of this
+; window became the active gadget (cursor kept), FALSE otherwise.
 intuition_ActivateGadget:
         movem.l d2/a2-a3/a5,-(sp)
         move.l  a6,a5
@@ -1899,15 +1899,15 @@ intuition_ActivateGadget:
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------
-; AddGadget(fenêtre a0, gadget a1, position d0) -> d0 = position effective. AddGList(fenêtre a0, gadget a1, position
-; d0, nombre d1 (-1 = toute la chaîne), requester a2) : la chaîne de gadgets est insérée à la position (-1 = à la
-; fin) dans wd_FirstGadget. Rien n'est redessiné (RefreshGadgets / RefreshGList).
+; AddGadget(window a0, gadget a1, position d0) -> d0 = effective position. AddGList(window a0, gadget a1, position
+; d0, count d1 (-1 = the whole chain), requester a2): the gadget chain is inserted at the position (-1 = at the
+; end) in wd_FirstGadget. Nothing is redrawn (RefreshGadgets / RefreshGList).
 intuition_AddGadget:
         moveq   #1,d1
 intuition_AddGList:
         movem.l d2/a2-a3/a6,-(sp)
-        move.l  a0,a3                ; a3 = fenêtre
-        move.l  a1,a2                ; a2 = dernier gadget de la chaîne à insérer
+        move.l  a0,a3                ; a3 = window
+        move.l  a1,a2                ; a2 = last gadget of the chain to insert
 .ag_last:
         subq.l  #1,d1
         beq.s   .ag_got
@@ -1920,11 +1920,11 @@ intuition_AddGList:
         movem.l d0/a0-a1,-(sp)
         jsr     LVO_FORBID(a6)
         movem.l (sp)+,d0/a0-a1
-        lea     WD_FIRSTGADGET(a0),a0    ; maillon précédent (le lien est au début d'un gadget)
+        lea     WD_FIRSTGADGET(a0),a0    ; previous link (the link is at the start of a gadget)
         moveq   #0,d2
 .ag_pos:
         cmp.l   d0,d2
-        bhs.s   .ag_ins              ; position atteinte (-1 = jamais : jusqu'à la fin)
+        bhs.s   .ag_ins              ; position reached (-1 = never: up to the end)
         tst.l   (a0)
         beq.s   .ag_ins
         move.l  (a0),a0
@@ -1934,19 +1934,19 @@ intuition_AddGList:
         move.l  (a0),GG_NEXTGADGET(a2)
         move.l  a1,(a0)
         jsr     LVO_PERMIT(a6)
-        bsr     gad_propinit         ; bordures des gadgets proportionnels entrés dans la fenêtre
+        bsr     gad_propinit         ; borders of the proportional gadgets that entered the window
         move.l  d2,d0
         movem.l (sp)+,d2/a2-a3/a6
         rts
 
-; RemoveGadget(fenêtre a0, gadget a1) -> d0 = position qu'il occupait | -1. RemoveGList(fenêtre a0, gadget a1, nombre
-; d0 (-1 = jusqu'à la fin)) : les gadgets quittent la liste, le dernier retiré est terminé par NULL.
+; RemoveGadget(window a0, gadget a1) -> d0 = position it occupied | -1. RemoveGList(window a0, gadget a1, count
+; d0 (-1 = up to the end)): the gadgets leave the list, the last one removed is terminated by NULL.
 intuition_RemoveGadget:
         moveq   #1,d0
 intuition_RemoveGList:
         movem.l d2/a2/a6,-(sp)
         move.l  a6,-(sp)
-        move.l  d0,d1                ; d1 = nombre
+        move.l  d0,d1                ; d1 = count
         move.l  ($4).w,a6
         movem.l d1/a0-a1,-(sp)
         jsr     LVO_FORBID(a6)
@@ -1962,7 +1962,7 @@ intuition_RemoveGList:
         addq.l  #1,d2
         bra.s   .rg_find
 .rg_found:
-        move.l  a1,a2                ; a2 = dernier retiré
+        move.l  a1,a2                ; a2 = last removed
 .rg_last:
         subq.l  #1,d1
         beq.s   .rg_cut
@@ -1988,8 +1988,8 @@ intuition_RemoveGList:
         movem.l (sp)+,d2/a2/a6
         rts
 
-; RefreshGadgets(gadgets a0, fenêtre a1, requester a2) : redessine depuis ce gadget jusqu'à la fin de la liste.
-; RefreshGList(gadgets a0, fenêtre a1, requester a2, nombre d0) : au plus nombre gadgets (-1 = tous).
+; RefreshGadgets(gadgets a0, window a1, requester a2): redraws from this gadget up to the end of the list.
+; RefreshGList(gadgets a0, window a1, requester a2, count d0): at most count gadgets (-1 = all).
 intuition_RefreshGadgets:
         moveq   #-1,d0
 intuition_RefreshGList:
@@ -1998,20 +1998,20 @@ intuition_RefreshGList:
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d2
-        cmp.l   WD_FIRSTGADGET(a3),a2    ; depuis la tête de liste : les gadgets système (en tête chez intuition 1.3)
-        seq     -(sp)                    ; sont redessinés en dernier, par-dessus
+        cmp.l   WD_FIRSTGADGET(a3),a2    ; from the head of the list: the system gadgets (at the head in intuition 1.3)
+        seq     -(sp)                    ; are redrawn last, on top
         bsr     gad_drawrev
         tst.b   (sp)+
         beq.s   .rf_ret
-        btst    #3,WD_FLAGS+2(a3)        ; (aucun sur une fenêtre BORDERLESS)
+        btst    #3,WD_FLAGS+2(a3)        ; (none on a BORDERLESS window)
         bne.s   .rf_ret
         jsr     wn_sysgads
 .rf_ret:
         movem.l (sp)+,d2/a2-a3/a5
         rts
 
-; OnGadget(gadget a0, fenêtre a1, requester a2) / OffGadget(...) : le gadget redevient actif / est désactivé, puis il
-; est redessiné.
+; OnGadget(gadget a0, window a1, requester a2) / OffGadget(...): the gadget becomes enabled again / is disabled, then it
+; is redrawn.
 intuition_OnGadget:
         bclr    #0,GG_FLAGS(a0)
         bra.s   gad_onoff
@@ -2024,9 +2024,9 @@ gad_onoff:
         moveq   #1,d0
         bra.s   intuition_RefreshGList
 
-; DrawBorder(rp a0, border a1, x d0, y d1) : chaque Border de la chaîne, ligne brisée de Count points (paires XY)
-; décalés de (x + LeftEdge, y + TopEdge), au stylo FrontPen dans le mode DrawMode. Stylos et mode du RastPort rendus
-; intacts, comme en 1.3 (sondé : tests/itextstate.s).
+; DrawBorder(rp a0, border a1, x d0, y d1): each Border of the chain, polyline of Count points (XY pairs)
+; offset by (x + LeftEdge, y + TopEdge), in pen FrontPen in mode DrawMode. RastPort pens and mode left
+; intact, as in 1.3 (probed: tests/itextstate.s).
 intuition_DrawBorder:
         movem.l d2-d7/a2-a6,-(sp)
         move.b  rp_FgPen(a0),-(sp)
@@ -2054,9 +2054,9 @@ intuition_DrawBorder:
         bmi.s   .db_next
         move.l  BD_XY(a3),a4
         move.w  d6,d4
-        add.w   BD_LEFTEDGE(a3),d4   ; d4 = origine x
+        add.w   BD_LEFTEDGE(a3),d4   ; d4 = x origin
         move.w  d7,d3
-        add.w   BD_TOPEDGE(a3),d3    ; d3 = origine y
+        add.w   BD_TOPEDGE(a3),d3    ; d3 = y origin
         bsr.s   .db_pt
         jsr     LVO_MOVE(a6)
         bra.s   .db_nx
@@ -2074,7 +2074,7 @@ intuition_DrawBorder:
         move.b  (sp)+,rp_FgPen(a2)
         movem.l (sp)+,d2-d7/a2-a6
         rts
-.db_pt:                              ; point suivant (a4)+ -> d0/d1 absolus, a1 = rp
+.db_pt:                              ; next point (a4)+ -> absolute d0/d1, a1 = rp
         move.w  (a4)+,d0
         add.w   d4,d0
         ext.l   d0

@@ -1,17 +1,17 @@
-; tests/drawperf.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : chronométrage de Draw et RectFill
-; de graphics.library. Lancer « drawperf >df0:dp.out » ; une ligne par mesure. Assembler avec -kick1hunks.
-; Écran CUSTOMSCREEN 640x200 HIRES 2 plans. Mesures sur le RastPort de l'écran (sans couche), puis dans une fenêtre
-; BORDERLESS 400x150 en (100,20) recouverte en partie par une seconde fenêtre 120x60 en (420,110) : la couche de la
-; première a alors plusieurs ClipRects.
-;   H : 100 Draw horizontaux (620 px sur l'écran, 390 dans la fenêtre)
-;   V : 100 Draw verticaux (180 px / 140 px)
-;   D : 50 Draw diagonaux (coin à coin)
-;   R : 10 RectFill pleins
-;   P : 1 RectFill à motif de 2 lignes (comme les barres des fenêtres)
-;   X1..X4 : 20 Text de 70 caractères (45 dans la fenêtre), en JAM2, JAM1, COMPLEMENT et gras
-;   B : 20 BltTemplate de 560 x 8 (360 x 8 dans la fenêtre), comme FastFonts
-; Chaque ligne : « nom F L » = trames VERTB écoulées et différence de ligne vidéo (durée ≈ F × 313 + L lignes de 64 µs).
-; Clean-room : structures publiques (NewScreen, NewWindow, Screen, Window), code auteur.
+; tests/drawperf.s - HUNK test executable (TEST ASSET, NOT ROM code): timing of graphics.library Draw and
+; RectFill. Run "drawperf >df0:dp.out"; one line per measurement. Assemble with -kick1hunks.
+; CUSTOMSCREEN 640x200 HIRES 2 planes. Measurements on the screen's RastPort (no layer), then in a BORDERLESS
+; 400x150 window at (100,20) partly covered by a second 120x60 window at (420,110): the first one's layer
+; then has several ClipRects.
+;   H: 100 horizontal Draws (620 px on the screen, 390 in the window)
+;   V: 100 vertical Draws (180 px / 140 px)
+;   D: 50 diagonal Draws (corner to corner)
+;   R: 10 solid RectFills
+;   P: 1 RectFill with a 2-line pattern (like the window title bars)
+;   X1..X4: 20 Texts of 70 characters (45 in the window), in JAM2, JAM1, COMPLEMENT and bold
+;   B: 20 BltTemplates of 560 x 8 (360 x 8 in the window), like FastFonts
+; Each line: "name F L" = elapsed VERTB frames and video line difference (duration ~= F x 313 + L lines of 64 us).
+; Clean-room: public structures (NewScreen, NewWindow, Screen, Window), authored code.
 
                 section code,code
 _start:
@@ -36,7 +36,7 @@ _start:
                 lea     intbase(pc),a0
                 move.l  d0,(a0)
                 beq     .ret
-                ; serveur VERTB de mesure
+                ; measurement VERTB server
                 lea     vbint(pc),a1
                 move.b  #2,8(a1)
                 move.b  #-100,9(a1)
@@ -59,7 +59,7 @@ _start:
                 move.l  d0,30(a0)            ; nw_Screen
                 lea     nw2(pc),a0
                 move.l  d0,30(a0)
-                ; --- écran, sans couche ---
+                ; --- screen, no layer ---
                 move.l  scr(pc),a0
                 lea     84(a0),a2            ; Screen.RastPort
                 lea     limscr(pc),a3
@@ -67,7 +67,7 @@ _start:
                 bsr     ps
                 bsr     nl
                 bsr     suite
-                ; --- fenêtre recouverte ---
+                ; --- covered window ---
                 move.l  intbase(pc),a6
                 lea     nw1(pc),a0
                 jsr     -204(a6)             ; OpenWindow
@@ -110,12 +110,12 @@ _start:
                 moveq   #0,d0
                 rts
 
-vbcode:                                      ; serveur VERTB : a1 = &vbcnt
+vbcode:                                      ; VERTB server: a1 = &vbcnt
                 addq.l  #1,(a1)
                 moveq   #0,d0
                 rts
 
-; suite(a2 = RastPort, a3 = limites x0,y0,x1,y1) : les quatre mesures H V D R
+; suite(a2 = RastPort, a3 = bounds x0,y0,x1,y1): the four measurements H V D R
 suite:
                 move.l  gfxbase(pc),a6
                 move.l  a2,a1
@@ -178,14 +178,14 @@ suite:
                 moveq   #1,d0
                 and.w   d7,d0
                 addq.w  #1,d0
-                jsr     -342(a6)             ; SetAPen 1 / 2 en alternance
+                jsr     -342(a6)             ; SetAPen 1 / 2 alternately
                 move.l  a2,a1
                 movem.w (a3),d0-d3
                 jsr     -306(a6)             ; RectFill
                 dbra    d7,.r
                 lea     s_r(pc),a0
                 bsr     stopt
-                ; P : un seul RectFill de même taille avec un motif de 2 lignes (SetAfPt), comme les barres des fenêtres
+                ; P: a single RectFill of the same size with a 2-line pattern (SetAfPt), like the window title bars
                 lea     pat2(pc),a0
                 move.l  a0,8(a2)             ; rp_AreaPtrn
                 move.b  #1,29(a2)            ; rp_AreaPtSz
@@ -205,7 +205,7 @@ suite:
                 bsr     stopt
                 clr.l   8(a2)
                 clr.b   29(a2)
-                ; X1..X4 : 20 lignes de 70 caractères à l'abscisse x0+1 (non alignée) : JAM2, JAM1, COMPLEMENT, gras
+                ; X1..X4: 20 lines of 70 characters at x = x0+1 (unaligned): JAM2, JAM1, COMPLEMENT, bold
                 moveq   #1,d4                ; JAM2
                 lea     s_x1(pc),a0
                 bsr     txt
@@ -220,7 +220,7 @@ suite:
                 lea     s_x4(pc),a0
                 bsr     txt
                 clr.b   56(a2)
-                ; B : 20 BltTemplate de 560 x 8 pixels en JAM1 (rendu de FastFonts)
+                ; B: 20 BltTemplates of 560 x 8 pixels in JAM1 (FastFonts rendering)
                 move.l  a2,a1
                 moveq   #0,d0
                 jsr     -354(a6)
@@ -241,13 +241,13 @@ suite:
                 move.w  #45*8,d4
 .bw:
                 moveq   #8,d5
-                jsr     -36(a6)              ; BltTemplate (octets du message comme gabarit)
+                jsr     -36(a6)              ; BltTemplate (message bytes used as template)
                 addq.w  #7,d6
                 dbra    d7,.b
                 lea     s_b(pc),a0
                 bsr     stopt
                 rts
-; txt(a2 = RastPort, a3 = limites, d4 = mode, a0 = étiquette) : chronomètre 20 Text de 70 caractères
+; txt(a2 = RastPort, a3 = bounds, d4 = mode, a0 = label): times 20 Texts of 70 characters
 txt:
                 move.l  a0,-(sp)
                 move.l  a2,a1
@@ -269,7 +269,7 @@ txt:
                 move.l  a2,a1
                 lea     msg(pc),a0
                 moveq   #MSGLEN,d0
-                cmp.w   #400,4(a3)           ; dans la fenêtre : 45 caractères (390 pixels)
+                cmp.w   #400,4(a3)           ; in the window: 45 characters (390 pixels)
                 bhi.s   .w
                 moveq   #45,d0
 .w:
@@ -282,7 +282,7 @@ txt:
                 moveq   #0,d0
                 jmp     -354(a6)
 
-; start : mémorise l'instant ; stop(a0 = étiquette) : écrit « étiquette F L »
+; start: records the current instant; stop(a0 = label): writes "label F L"
 start:
                 bsr.s   now
                 movem.l d0-d1,t0
@@ -296,7 +296,7 @@ stopt:
                 move.l  d1,d0
                 bsr     ph
                 bra     nl
-; now : d0 = trames, d1 = ligne verticale (0..312), relu jusqu'à cohérence
+; now: d0 = frames, d1 = vertical line (0..312), re-read until consistent
 now:
                 move.l  vbcnt(pc),d0
                 move.l  $dff004,d1
@@ -306,12 +306,12 @@ now:
                 bne.s   now
                 rts
 
-ps:                                          ; copie la chaîne a0 en (a4)+
+ps:                                          ; copies the string a0 to (a4)+
                 move.b  (a0)+,(a4)+
                 bne.s   ps
                 subq.l  #1,a4
                 rts
-ph:                                          ; d0 en 8 chiffres + espace
+ph:                                          ; d0 as 8 digits + space
                 movem.l d1/d3,-(sp)
                 moveq   #7,d3
 .h:
@@ -328,7 +328,7 @@ ph:                                          ; d0 en 8 chiffres + espace
                 move.b  #' ',(a4)+
                 movem.l (sp)+,d1/d3
                 rts
-nl:                                          ; termine la ligne et l'écrit sur Output()
+nl:                                          ; terminates the line and writes it to Output()
                 movem.l d0-d3/a0-a1/a6,-(sp)
                 move.b  #10,(a4)+
                 lea     line(pc),a0
@@ -366,11 +366,11 @@ t_end:          dc.b    "END",0
 limscr:         dc.w    10,10,629,189
 pat2:           dc.w    $aaaa,$5555
 limwin:         dc.w    5,5,394,144
-ns:             dc.w    0,0,640,200,2        ; NewScreen : Left Top Width Height Depth
+ns:             dc.w    0,0,640,200,2        ; NewScreen: Left Top Width Height Depth
                 dc.b    0,1                  ; DetailPen BlockPen
                 dc.w    $8000,$000f          ; HIRES, CUSTOMSCREEN
                 dc.l    0,0,0,0              ; Font DefaultTitle Gadgets CustomBitMap
-nw1:            dc.w    100,20,400,150       ; NewWindow : Left Top Width Height
+nw1:            dc.w    100,20,400,150       ; NewWindow: Left Top Width Height
                 dc.b    0,1
                 dc.l    0,$0800              ; IDCMP, BORDERLESS
                 dc.l    0,0,0,0,0            ; FirstGadget CheckMark Title Screen BitMap

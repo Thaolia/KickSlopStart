@@ -1,51 +1,51 @@
-# Discipline salle blanche (clean-room)
+# Clean-room discipline
 
-## Le principe
+## The principle
 
-« Salle blanche » a un sens juridique précis : un **mur** sépare qui lit l'original copyrighté de qui
-écrit le remplacement. L'implémenteur ne doit jamais avoir vu l'expression originale, pour que le
-résultat ne soit pas une œuvre dérivée. Désassembler la ROM *et* en écrire le code dans le même flux
-est l'exact opposé : c'est ce qu'on s'interdit ici.
+"Clean room" has a precise legal meaning: a **wall** separates whoever reads the copyrighted original from whoever
+writes the replacement. The implementer must never have seen the original expression, so that the
+result is not a derivative work. Disassembling the ROM *and* writing its code in the same flow
+is the exact opposite: it is what we forbid ourselves here.
 
-## Les deux pistes
+## The two tracks
 
-### Piste ANALYSE (« dirty »)
-- **Entrées** : la ROM `assets/kick34005.A500` (lecture seule), radare2 / Ghidra headless.
-- **Sorties** : exclusivement `docs/analysis/*.md`.
-- **Autorisé** : adresses, offsets, tailles et layout de structures (= ABI, interopérabilité),
-  ordres d'opérations, valeurs de constantes d'ABI, comportements observables, vecteurs de test.
-- **Interdit** : écrire dans `src/` ; recopier des suites d'instructions désassemblées ; produire du
-  code d'implémentation.
+### ANALYSIS track ("dirty")
+- **Inputs**: the ROM `assets/kick34005.A500` (read-only), radare2 / Ghidra headless.
+- **Outputs**: exclusively `docs/analysis/*.md`.
+- **Allowed**: addresses, offsets, sizes and layout of structures (= ABI, interoperability),
+  orders of operations, values of ABI constants, observable behaviours, test vectors.
+- **Forbidden**: writing to `src/`; copying disassembled instruction sequences; producing
+  implementation code.
 
-### Piste IMPLÉMENTATION (« clean »)
-- **Entrées** : docs publiques (RKRM, AutoDocs, NDK, fichiers `.fd`/SFD = contrat d'ABI), source AROS
-  (`third_party/`, **lecture seule**), et les specs **comportementales** de `docs/analysis/`.
-- **Sorties** : `src/`.
-- **Interdit** : lire la ROM d'origine ou son désassemblage.
+### IMPLEMENTATION track ("clean")
+- **Inputs**: public docs (RKRM, AutoDocs, NDK, `.fd`/SFD files = ABI contract), AROS source
+  (`third_party/`, **read-only**), and the **behavioural** specs in `docs/analysis/`.
+- **Outputs**: `src/`.
+- **Forbidden**: reading the original ROM or its disassembly.
 
-## Porte de revue de spec
+## Spec review gate
 
-Avant qu'une spec de `docs/analysis/` ne soit consommée par la piste implémentation, elle est relue
-pour confirmer qu'elle **ne contient aucune suite d'instructions transcrite** depuis la ROM. C'est ce
-contrôle qui donne au mur sa valeur réelle.
+Before a spec from `docs/analysis/` is consumed by the implementation track, it is reviewed
+to confirm that it **contains no instruction sequence transcribed** from the ROM. It is this
+check that gives the wall its real value.
 
-## Pourquoi les docs publiques d'abord
+## Why public docs first
 
-Les fichiers `.fd` et les AutoDocs/RKRM **définissent déjà** l'API (noms, LVO, signatures) de façon
-légale : c'est la base de l'implémentation. La ROM ne sert qu'à **lever des ambiguïtés
-comportementales** que les docs publiques — qui décrivent surtout la 2.0/3.x — ne couvrent pas pour la
-1.3. Ce delta (ce que fait réellement la V34 vs ce que disent les docs 2.0) est capturé *par la piste
-analyse dans les specs*, puisque la piste implémentation ne peut pas aller le chercher dans la ROM.
+The `.fd` files and the AutoDocs/RKRM **already define** the API (names, LVOs, signatures) in a
+legal way: they are the basis of the implementation. The ROM only serves to **resolve behavioural
+ambiguities** that the public docs — which mostly describe 2.0/3.x — do not cover for
+1.3. This delta (what V34 actually does vs what the 2.0 docs say) is captured *by the analysis
+track in the specs*, since the implementation track cannot go and fetch it from the ROM.
 
 ## Licences
 
-- **AROS** est sous **APL v1.1** (copyleft par fichier, non-OSI, incompatible GPL) : on la **lit**, on
-  ne **copie pas** ses sources dans `src/` → notre licence reste libre.
-- **NDK / RKRM** : licences propriétaires, **consultées**, **jamais redistribuées** dans le dépôt.
-- La **ROM Kickstart** est propriétaire : jamais committée, jamais modifiée.
+- **AROS** is under **APL v1.1** (per-file copyleft, non-OSI, GPL-incompatible): we **read** it, we
+  do **not copy** its sources into `src/` → our licence stays free.
+- **NDK / RKRM**: proprietary licences, **consulted**, **never redistributed** in the repository.
+- The **Kickstart ROM** is proprietary: never committed, never modified.
 
-## Honnêteté sur la portée
+## Honesty about the scope
 
-Deux rôles d'agents dans une même session *approchent* le mur (l'implémenteur ne voit pas l'expression
-originale) sans équivaloir à une séparation de personnes « niveau tribunal ». Pour une posture
-juridique maximale, l'analyse et l'implémentation devraient être confiées à des personnes différentes.
+Two agent roles in the same session *approach* the wall (the implementer does not see the original
+expression) without amounting to a "court-grade" separation of people. For a maximal legal
+posture, analysis and implementation should be entrusted to different people.

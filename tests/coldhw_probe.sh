@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tests/coldhw_probe.sh — sonde boîte noire du coldstart sous FS-UAE avec la VRAIE ROM 1.3 (piste ANALYSE).
-# Construit un ADF dont le bootblock est tests/coldhw_probe.s (MODE choisi), boote, capture la série et des
-# écrans horodatés, et peut injecter des clics gauches (pour acquitter un Guru). Sortie : $OUT/serial.log,
-# $OUT/shot_*.png. Un seul FS-UAE à la fois sur la machine : attendre que `pgrep -x fs-uae` soit vide.
+# tests/coldhw_probe.sh - black-box probe of the coldstart under FS-UAE with the REAL 1.3 ROM (ANALYSIS track).
+# Builds an ADF whose bootblock is tests/coldhw_probe.s (chosen MODE), boots it, captures the serial output and
+# timestamped screenshots, and can inject left clicks (to acknowledge a Guru). Output: $OUT/serial.log,
+# $OUT/shot_*.png. Only one FS-UAE at a time on the machine: wait until `pgrep -x fs-uae` is empty.
 #
-# Usage : tests/coldhw_probe.sh <mode> <chip_ko> <slow_ko> <durée_s> [clics "t1 t2 ..."] [captures "t1 t2 ..."]
+# Usage: tests/coldhw_probe.sh <mode> <chip_kb> <slow_kb> <duration_s> [clicks "t1 t2 ..."] [captures "t1 t2 ..."]
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="${1:?mode}"; CHIP="${2:-512}"; SLOW="${3:-0}"; DUR="${4:-30}"; CLICKS="${5:-}"; SHOTS="${6:-}"

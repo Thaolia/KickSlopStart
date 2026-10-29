@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# tests/gblit_probe.sh — harnais de la sonde tests/gblit_probe.s (piste analyse, docs/analysis/graphics-blitter-v34.md).
-# Fabrique une disquette OFS amorçable (xdftool) dont la startup-sequence lance la sonde, boote FS-UAE headless (Xvfb)
-# sur la ROM donnée, capture le série dans <out>/serial.log. Attend qu'aucun autre FS-UAE ne tourne (un seul à la fois).
-# Usage : tests/gblit_probe.sh <rom> <exécutable gblit_probe> <répertoire de sortie> [durée s, défaut 120]
+# tests/gblit_probe.sh - harness for the probe tests/gblit_probe.s (analysis track,
+# docs/analysis/graphics-blitter-v34.md).
+# Builds a bootable OFS floppy (xdftool) whose startup-sequence runs the probe, boots FS-UAE headless (Xvfb)
+# on the given ROM, captures the serial output into <out>/serial.log. Waits until no other FS-UAE is running (one at a
+# time).
+# Usage: tests/gblit_probe.sh <rom> <gblit_probe executable> <output directory> [duration s, default 120]
 set -u
 ROM="${1:?rom}"; EXE="${2:?exe}"; OUT="${3:?sortie}"; DUR="${4:-120}"
 rm -rf "$OUT"; mkdir -p "$OUT/base"

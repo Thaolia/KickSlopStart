@@ -1,79 +1,79 @@
-; src/exec/disk.i — registres disque Paula/OCS + bits de contrôle drive (B2). Clean-room (HRM + NDK hardware/*).
-; CUSTOM / CIAA_HW / CIAB_HW / DMACON / INTREQ / INTREQR sont définis dans exec.i (inclus AVANT ce fichier).
+; src/exec/disk.i — Paula/OCS disk registers + drive control bits (B2). Clean-room (HRM + NDK hardware/*).
+; CUSTOM / CIAA_HW / CIAB_HW / DMACON / INTREQ / INTREQR are defined in exec.i (included BEFORE this file).
 
-; --- registres disque custom (offsets depuis CUSTOM = $DFF000) ---
-DSKPT    EQU CUSTOM+$020       ; pointeur DMA disque (longword, chip RAM)
-DSKLEN   EQU CUSTOM+$024       ; longueur en MOTS | DMAEN(b15) | WRITE(b14)
-DSKSYNC  EQU CUSTOM+$07E       ; mot de synchro recherché quand WORDSYNC actif
-ADKCON   EQU CUSTOM+$09E       ; contrôle audio/disque (SETCLR|WORDSYNC...)
-DSKBYTR  EQU CUSTOM+$01A       ; état octet disque (lecture)
+; --- custom disk registers (offsets from CUSTOM = $DFF000) ---
+DSKPT    EQU CUSTOM+$020       ; disk DMA pointer (longword, chip RAM)
+DSKLEN   EQU CUSTOM+$024       ; length in WORDS | DMAEN(b15) | WRITE(b14)
+DSKSYNC  EQU CUSTOM+$07E       ; sync word searched for when WORDSYNC is active
+ADKCON   EQU CUSTOM+$09E       ; audio/disk control (SETCLR|WORDSYNC...)
+DSKBYTR  EQU CUSTOM+$01A       ; disk byte status (read)
 
-; --- bits DMACON / ADKCON / INTREQ (dmabits.i, adkbits.i, intbits.i) ---
-DMAF_DISK     EQU $0010        ; DMACON : canal DMA disque (DSKEN)
-DMAF_MASTER   EQU $0200        ; DMA maître
+; --- DMACON / ADKCON / INTREQ bits (dmabits.i, adkbits.i, intbits.i) ---
+DMAF_DISK     EQU $0010        ; DMACON: disk DMA channel (DSKEN)
+DMAF_MASTER   EQU $0200        ; DMA master
 DMAF_SETCLR   EQU $8000
 ADKF_SETCLR   EQU $8000
-ADKF_WORDSYNC EQU $0400        ; active la recherche du mot DSKSYNC par le DMA de lecture
-ADKF_FAST     EQU $0100        ; débit disque : 1 = 2 us/bit (standard DD) ; 0 = 4 us/bit -> mauvais rythme = garbage
-ADKF_MFMPREC  EQU $1000        ; MFM precompensation (mode lecture par défaut du KS1.3 officiel = $9100)
-INTF_DSKBLK   EQU $0002        ; INTREQ/INTREQR : fin du DMA bloc disque (niveau 1)
+ADKF_WORDSYNC EQU $0400        ; enables the search for the DSKSYNC word by the read DMA
+ADKF_FAST     EQU $0100        ; disk rate: 1 = 2 us/bit (standard DD); 0 = 4 us/bit -> wrong rhythm = garbage
+ADKF_MFMPREC  EQU $1000        ; MFM precompensation (default read mode of the official KS1.3 = $9100)
+INTF_DSKBLK   EQU $0002        ; INTREQ/INTREQR: end of disk block DMA (level 1)
 
-; --- CIA-B PRB (contrôle drive, $BFD100) — toutes les lignes sont ACTIVES BAS (0 = asserté) ---
+; --- CIA-B PRB (drive control, $BFD100) — all lines are ACTIVE LOW (0 = asserted) ---
 CIAB_PRB      EQU CIAB_HW+$0100
 CIAB_DDRB     EQU CIAB_HW+$0300
-CIAF_DSKMOTOR EQU $80          ; moteur (0 = allumé)
-CIAF_DSKSEL0  EQU $08          ; select DF0 (0 = sélectionné)
-CIAF_DSKSIDE  EQU $04          ; face
-CIAF_DSKDIREC EQU $02          ; direction de seek
-CIAF_DSKSTEP  EQU $01          ; impulsion de pas
-; valeurs PRB précalculées (B2 minimal) : tout haut sauf moteur / moteur+select
-PRB_MOTOR_ON   EQU $7F         ; moteur=0 (on), SEL/side/dir/step=1 (déselectionné) — pose l'intention moteur
-PRB_SEL0_ON    EQU $77         ; moteur=0, SEL0=0 (DF0) — le front SEL0 latche moteur=on
-PRB_OFF        EQU $FF         ; tout haut : moteur off + déselectionné
+CIAF_DSKMOTOR EQU $80          ; motor (0 = on)
+CIAF_DSKSEL0  EQU $08          ; select DF0 (0 = selected)
+CIAF_DSKSIDE  EQU $04          ; side
+CIAF_DSKDIREC EQU $02          ; seek direction
+CIAF_DSKSTEP  EQU $01          ; step pulse
+; precomputed PRB values (minimal B2): all high except motor / motor+select
+PRB_MOTOR_ON   EQU $7F         ; motor=0 (on), SEL/side/dir/step=1 (deselected) — sets the motor intention
+PRB_SEL0_ON    EQU $77         ; motor=0, SEL0=0 (DF0) — the SEL0 edge latches motor=on
+PRB_OFF        EQU $FF         ; all high: motor off + deselected
 
-; --- CIA-A PRA (statut drive, $BFE001) — ACTIF BAS ---
+; --- CIA-A PRA (drive status, $BFE001) — ACTIVE LOW ---
 CIAA_PRA_HW    EQU CIAA_HW     ; = $BFE001
-DSKB_RDY       EQU 5           ; DSKRDY (0 = prêt)
-DSKB_TRACK0    EQU 4           ; DSKTRACK0 (0 = tête sur piste 0)
-DSKB_CHANGE    EQU 2           ; /CHNG (0 = disque retiré/changé depuis le dernier pas)
-PRB_SEL0_OFF   EQU $F7         ; SEL0=0 moteur=1 : sélectionne DF0 en latchant moteur OFF (lecture /CHNG)
+DSKB_RDY       EQU 5           ; DSKRDY (0 = ready)
+DSKB_TRACK0    EQU 4           ; DSKTRACK0 (0 = head on track 0)
+DSKB_CHANGE    EQU 2           ; /CHNG (0 = disk removed/changed since the last step)
+PRB_SEL0_OFF   EQU $F7         ; SEL0=0 motor=1: selects DF0 latching motor OFF (/CHNG read)
 
-; --- lecture de piste brute ---
-TD_RAWWORDS  EQU $1900         ; mots lus = 6400 (12800 o, > une piste DD) ; tient dans un compteur dbra 16 bits
+; --- raw track read ---
+TD_RAWWORDS  EQU $1900         ; words read = 6400 (12800 bytes, > one DD track); fits in a 16-bit dbra counter
 TD_RAWBYTES  EQU TD_RAWWORDS*2
-TD_SECBODY   EQU 1080          ; octets MFM d'un secteur après ses syncs : en-tête 56 + données 1024
-TD_ALLSECT   EQU $7FF          ; masque des 11 secteurs d'une piste
-TD_FILLTRIES EQU 4             ; lectures d'une piste incomplète avant de rendre une erreur
-TD_SYNC      EQU $4489         ; mot de synchro MFM standard Amiga (impossible dans du MFM normal -> 0 faux positif)
+TD_SECBODY   EQU 1080          ; MFM bytes of a sector after its syncs: header 56 + data 1024
+TD_ALLSECT   EQU $7FF          ; mask of the 11 sectors of a track
+TD_FILLTRIES EQU 4             ; reads of an incomplete track before returning an error
+TD_SYNC      EQU $4489         ; standard Amiga MFM sync word (impossible in normal MFM -> 0 false positives)
 
-; TD_NO_DMA=1 (RED B2) : la lecture n'arme PAS le DMA disque (ni DMACON DSKEN ni DSKLEN start) -> le buffer
-; MEMF_CLEAR reste à 0 -> aucun mot $4489 -> « M6U TRACKDISK READ OK » absent. Isole l'armement du DMA. Défaut 0.
+; TD_NO_DMA=1 (RED B2): the read does NOT arm the disk DMA (neither DMACON DSKEN nor DSKLEN start) -> the MEMF_CLEAR
+; buffer stays at 0 -> no $4489 word -> "M6U TRACKDISK READ OK" absent. Isolates the DMA arming. Default 0.
 TD_NO_DMA EQU 0
 
-; --- décodage MFM (B3) ---
-MFM_MASK      EQU $55555555   ; masque des bits de DONNÉES (les bits d'horloge MFM sont en $AAAAAAAA)
-MFM_SECTSZ    EQU 512         ; octets de données décodées par secteur
-MFM_NSECT     EQU 11          ; secteurs par piste (DD)
-MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632 : buffer des secteurs décodés (indexés par numéro logique) = octets/piste
-; --- géométrie DD (M6z : CMD_READ multi-piste) ---
-TD_NTRACKS    EQU 160                    ; 80 cylindres x 2 faces (pistes 0..159)
-TD_DISKBYTES  EQU TD_NTRACKS*MFM_SECBUF  ; 901120 : taille totale du disque DD (garde de borne CMD_READ)
-; offsets dans un secteur MFM depuis info_odd (format public Amiga/ADF-FAQ ; verrouillé par round-trip Python) :
+; --- MFM decoding (B3) ---
+MFM_MASK      EQU $55555555   ; mask of the DATA bits (the MFM clock bits are in $AAAAAAAA)
+MFM_SECTSZ    EQU 512         ; decoded data bytes per sector
+MFM_NSECT     EQU 11          ; sectors per track (DD)
+MFM_SECBUF    EQU MFM_SECTSZ*MFM_NSECT   ; 5632: buffer of the decoded sectors (indexed by logical number) = bytes/track
+; --- DD geometry (M6z: multi-track CMD_READ) ---
+TD_NTRACKS    EQU 160                    ; 80 cylinders x 2 sides (tracks 0..159)
+TD_DISKBYTES  EQU TD_NTRACKS*MFM_SECBUF  ; 901120: total size of the DD disk (CMD_READ bound guard)
+; offsets within an MFM sector from info_odd (public Amiga/ADF-FAQ format; locked by Python round-trip):
 ;   +0 info(odd,even,2 longs) +8 label(4 odd+4 even,8 longs) +40 hdrchk(odd,even) +48 datachk(odd,even)
-;   +56 data_odd(128 longs=512o) +568 data_even(128 longs=512o) ; fin du secteur à +1080
-; MFM_BAD_DECODE=1 (RED B3) : saute le <<1 du combine des DATA -> données décodées fausses -> secteur 0 != « DOS\0 »
-; -> « M6V TRACKDISK DECODE OK » absent (les checksums, calculés sur le MFM BRUT, passent quand même -> isole
-; spécifiquement la correction du décodage des données). Défaut 0.
+;   +56 data_odd(128 longs=512b) +568 data_even(128 longs=512b); end of the sector at +1080
+; MFM_BAD_DECODE=1 (RED B3): skips the <<1 of the DATA combine -> wrong decoded data -> sector 0 != "DOS\0"
+; -> "M6V TRACKDISK DECODE OK" absent (the checksums, computed on the RAW MFM, still pass -> specifically
+; isolates the correctness of the data decoding). Default 0.
 MFM_BAD_DECODE EQU 0
 
-; --- CMD_READ (B4) : BeginIO device ---
-CMD_READ      EQU 2            ; commande standard de lecture (io.i : INVALID=0, RESET=1, READ=2)
-IO_ACTUAL     EQU 32           ; IOStdReq : octets réellement transférés
-IO_LENGTH     EQU 36           ; octets demandés
-IO_DATA       EQU 40           ; APTR buffer destination
-IO_OFFSET     EQU 44           ; offset octet sur le disque (secteur logique * 512)
-TDERR_NotSpec EQU 20           ; erreur trackdisk générique (trackdisk.i : TDERR_NotSpecified)
-TDERR_WriteProt EQU 28         ; disquette protégée en écriture
+; --- CMD_READ (B4): device BeginIO ---
+CMD_READ      EQU 2            ; standard read command (io.i: INVALID=0, RESET=1, READ=2)
+IO_ACTUAL     EQU 32           ; IOStdReq: bytes actually transferred
+IO_LENGTH     EQU 36           ; bytes requested
+IO_DATA       EQU 40           ; APTR destination buffer
+IO_OFFSET     EQU 44           ; byte offset on the disk (logical sector * 512)
+TDERR_NotSpec EQU 20           ; generic trackdisk error (trackdisk.i: TDERR_NotSpecified)
+TDERR_WriteProt EQU 28         ; write-protected floppy
 CMD_RESET     EQU 1
 CMD_WRITE     EQU 3
 CMD_UPDATE    EQU 4
@@ -91,34 +91,34 @@ TD_PROTSTATUS EQU 15
 TD_GETNUMTRACKS EQU 19
 TD_ADDCHANGEINT EQU 20
 TD_REMCHANGEINT EQU 21
-DSKB_PROT     EQU 3            ; CIA-A PRA : /WPRO (0 = disquette protégée)
-ADKF_PRECOMP140 EQU $2000      ; précompensation 140 ns (pistes >= TD_PCTRACK)
-TD_PCTRACK    EQU 81             ; première piste (cylindre*2 + face) écrite avec précompensation (spec trackdisk-write-v34)
-; écriture d'une piste (spec trackdisk-write-v34 §2) : garde de 1660 octets en tête, 11 secteurs de 1088 octets MFM
-; (préambule, sync, en-tête, label, sommes, données), mot de queue : 6815 mots, ~218 ms. La piste dépasse nettement un
-; tour : la fin recouvre la garde, jamais un secteur, même sur un lecteur lent (~+4 %) ; aucun reste de l'ancienne piste.
+DSKB_PROT     EQU 3            ; CIA-A PRA: /WPRO (0 = protected floppy)
+ADKF_PRECOMP140 EQU $2000      ; 140 ns precompensation (tracks >= TD_PCTRACK)
+TD_PCTRACK    EQU 81             ; first track (cylinder*2 + side) written with precompensation (spec trackdisk-write-v34)
+; writing a track (spec trackdisk-write-v34 §2): 1660-byte guard at the head, 11 sectors of 1088 MFM bytes
+; (preamble, sync, header, label, sums, data), tail word: 6815 words, ~218 ms. The track clearly exceeds one
+; revolution: the end overlaps the guard, never a sector, even on a slow drive (~+4 %); nothing left of the old track.
 TD_WRGAP      EQU 1660
 TD_SECRAW     EQU 1088
-TD_WRTAIL     EQU $AAA8          ; mot de queue après le dernier secteur
+TD_WRTAIL     EQU $AAA8          ; tail word after the last sector
 TD_WRBYTES    EQU TD_WRGAP+MFM_NSECT*TD_SECRAW+2
 TD_WRWORDS    EQU TD_WRBYTES/2
-; TD_READ_NOCMD=1 (RED B4) : BeginIO ne reconnaît PAS CMD_READ (retombe sur IOERR_NOCMD) -> io_Data reste à 0 ->
-; secteur lu != « DOS\0 » -> « M6W TRACKDISK CMD_READ OK » absent. Isole le handler de commande. Défaut 0.
+; TD_READ_NOCMD=1 (RED B4): BeginIO does NOT recognise CMD_READ (falls back to IOERR_NOCMD) -> io_Data stays at 0 ->
+; sector read != "DOS\0" -> "M6W TRACKDISK CMD_READ OK" absent. Isolates the command handler. Default 0.
 TD_READ_NOCMD EQU 0
 
-; SEEK_NOSTEP=1 (RED B2b) : td_read_track saute le step-in -> la tête reste à la piste 0 -> lire la piste 2 renvoie
-; en fait la piste 0 -> le n° de piste décodé != 2 -> « M6X TRACKDISK SEEK OK » absent. Isole le seek. Défaut 0.
+; SEEK_NOSTEP=1 (RED B2b): td_read_track skips the step-in -> the head stays at track 0 -> reading track 2 actually
+; returns track 0 -> the decoded track number != 2 -> "M6X TRACKDISK SEEK OK" absent. Isolates the seek. Default 0.
 SEEK_NOSTEP EQU 0
 
-; TD_NO_CYLTRACK=1 (RED cylinder-tracking) : force la recalibration (step OUT jusqu'à DSKTRACK0) à CHAQUE lecture
-; au lieu de stepper le delta depuis TD_CURCYL -> lectures LENTES (ancien comportement C). Correct mais lent :
-; sous l'ordonnanceur, le boot disquette complet ne tient plus dans WAIT=90 -> « D3B HANDLER OK » absent à ce WAIT.
-; Isole le GAIN de vitesse du cylinder-tracking (discriminant = D3B présent à WAIT serré). Défaut 0.
+; TD_NO_CYLTRACK=1 (RED cylinder-tracking): forces recalibration (step OUT until DSKTRACK0) on EVERY read
+; instead of stepping the delta from TD_CURCYL -> SLOW reads (old C behaviour). Correct but slow:
+; under the scheduler, the full floppy boot no longer fits in WAIT=90 -> "D3B HANDLER OK" absent at that WAIT.
+; Isolates the speed GAIN of cylinder-tracking (discriminant = D3B present at tight WAIT). Default 0.
 TD_NO_CYLTRACK EQU 0
 
-; TD_NOSEEK=1 (RED M6z) : BeginIO CMD_READ ignore la composante PISTE de l'offset et lit TOUJOURS la piste 0 (le
-; secteur-dans-piste et l'octet-dans-piste restent corrects -> la lecture aboutit, pas de hors-borne). Une lecture
-; du root block (bloc 880 = piste 80) renvoie alors la piste 0 (bootblock) -> « DOS\0 » != T_SHORT ; une lecture
-; spanning renvoie des secteurs de la piste 0 -> marqueurs faux -> « M6Z ... OK » absent. Isole le mapping
-; offset->piste SANS crash (discipline RED M6D_BAD_BPTR : la lecture aboutit, c'est la comparaison qui échoue). Défaut 0.
+; TD_NOSEEK=1 (RED M6z): BeginIO CMD_READ ignores the TRACK component of the offset and ALWAYS reads track 0 (the
+; sector-in-track and byte-in-track remain correct -> the read succeeds, no out-of-bounds). A read
+; of the root block (block 880 = track 80) then returns track 0 (bootblock) -> "DOS\0" != T_SHORT; a spanning
+; read returns sectors of track 0 -> wrong markers -> "M6Z ... OK" absent. Isolates the offset->track
+; mapping WITHOUT crash (RED M6D_BAD_BPTR discipline: the read succeeds, the comparison fails). Default 0.
 TD_NOSEEK EQU 0

@@ -1,13 +1,13 @@
-; tests/drawcheck.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : empreinte des pixels produits par
-; Draw, RectFill (plein et à motif), SetRast, ClearEOL, ClearScreen, Text et
-; BltTemplate. Sert de non-régression quand ces primitives
-; changent d'implémentation : deux ROM qui dessinent pareil écrivent le même fichier.
-; Lancer « drawcheck >df0:dc.out ». Assembler avec -kick1hunks.
-; Écran CUSTOMSCREEN|SCREENQUIET 640x200 HIRES 2 plans. Partie ÉCRAN : chaque test part de plans mis à zéro par
-; le processeur, puis « Tn s0 s1 » = empreinte de chaque plan. Partie FENÊTRE : les mêmes tests, cumulés, dans une
-; fenêtre BORDERLESS recouverte en partie par une seconde (ClipRects cachées avec sauvegarde) ; après chaque test,
-; empreinte de l'écran, et une dernière après fermeture de la seconde fenêtre (la partie cachée réapparaît).
-; Clean-room : structures publiques (NewScreen, NewWindow, Screen, Window, RastPort, BitMap), code auteur.
+; tests/drawcheck.s - HUNK test executable (TEST ASSET, NOT ROM code): fingerprint of the pixels produced by
+; Draw, RectFill (solid and patterned), SetRast, ClearEOL, ClearScreen, Text and
+; BltTemplate. Serves as a non-regression check when these primitives
+; change implementation: two ROMs that draw the same way write the same file.
+; Run "drawcheck >df0:dc.out". Assemble with -kick1hunks.
+; CUSTOMSCREEN|SCREENQUIET 640x200 HIRES 2-plane screen. SCREEN part: each test starts from planes cleared by
+; the CPU, then "Tn s0 s1" = fingerprint of each plane. WINDOW part: the same tests, cumulative, in a
+; BORDERLESS window partly covered by a second one (hidden ClipRects with backing save); after each test,
+; a fingerprint of the screen, and a last one after closing the second window (the hidden part reappears).
+; Clean-room: public structures (NewScreen, NewWindow, Screen, Window, RastPort, BitMap), authored code.
 
 RP_AREAPTRN     EQU 8
 RP_MASK         EQU 24
@@ -42,15 +42,15 @@ _start:
                 move.l  d0,30(a0)
                 lea     nw2(pc),a0
                 move.l  d0,30(a0)
-                ; --- écran ---
+                ; --- screen ---
                 move.l  scr(pc),a0
                 lea     84(a0),a2            ; Screen.RastPort
                 lea     s_scr(pc),a0
                 bsr     ps
                 bsr     nl
-                moveq   #1,d7                ; effacer avant chaque test
+                moveq   #1,d7                ; clear before each test
                 bsr     tests
-                ; --- fenêtre recouverte ---
+                ; --- covered window ---
                 move.l  scr(pc),a0
                 lea     84(a0),a2
                 bsr     clear
@@ -68,7 +68,7 @@ _start:
                 lea     s_win(pc),a0
                 bsr     ps
                 bsr     nl
-                moveq   #0,d7                ; tests cumulés
+                moveq   #0,d7                ; cumulative tests
                 bsr     tests
                 move.l  intbase(pc),a6
                 move.l  win2(pc),a0
@@ -92,7 +92,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-; tests(a2 = RastPort, d7 = 1 : effacer les plans de l'écran avant chaque test)
+; tests(a2 = RastPort, d7 = 1: clear the screen planes before each test)
 tests:
                 lea     tlist(pc),a3
 .t:
@@ -110,7 +110,7 @@ tests:
                 bsr     rstpen
                 move.l  (sp)+,a0
                 jsr     (a0)
-                move.l  (a3)+,a0             ; étiquette
+                move.l  (a3)+,a0             ; label
                 bsr     ps
                 bsr     cks
                 bra.s   .t
@@ -118,7 +118,7 @@ tests:
                 rts
 tlist:          dc.l    t_star,s_t1, t_starc,s_t2, t_rect,s_t3, t_pat,s_t4, t_rast,s_t5, t_hv,s_t6, t_mask,s_t7, t_text,s_t8, t_tmpl,s_t9, 0
 
-; rstpen(a2) : stylos 1/0, JAM1, masque plein, sans motif
+; rstpen(a2): pens 1/0, JAM1, full mask, no pattern
 rstpen:
                 move.l  gfxbase(pc),a6
                 move.l  a2,a1
@@ -135,7 +135,7 @@ rstpen:
                 clr.b   RP_AREAPTSZ(a2)
                 rts
 
-; T1 : étoile de 3 couleurs, du centre vers des points du pourtour (certains hors du RastPort)
+; T1: 3-colour star, from the centre to points on the perimeter (some outside the RastPort)
 t_star:
                 moveq   #0,d4
 .lp:
@@ -151,7 +151,7 @@ t_star:
                 cmp.w   #NSTAR,d4
                 blt.s   .lp
                 rts
-; T2 : même étoile en COMPLEMENT, deux fois décalée (les recouvrements s'annulent ou non)
+; T2: same star in COMPLEMENT, twice with an offset (overlaps cancel out or not)
 t_starc:
                 move.l  a2,a1
                 moveq   #2,d0
@@ -166,7 +166,7 @@ t_starc:
                 cmp.w   #NSTAR,d4
                 blt.s   .lp
                 rts
-; starpt(d4 = index) : Move(centre) puis Draw(point d4)
+; starpt(d4 = index): Move(centre) then Draw(point d4)
 starpt:
                 move.l  a2,a1
                 move.w  #200,d0
@@ -180,10 +180,10 @@ starpt:
                 movem.w 0(a0,d0.w),d0-d1
                 jmp     -246(a6)             ; Draw
 
-; T3 : rectangles pleins, débuts et largeurs variés, stylos 0..3, débordements
+; T3: solid rectangles, various starts and widths, pens 0..3, overflows
 t_rect:
                 lea     rects(pc),a5
-; rlist(a5 = liste de rectangles)
+; rlist(a5 = list of rectangles)
 rlist:
                 move.w  (a5)+,d0
                 bmi.s   .r
@@ -195,7 +195,7 @@ rlist:
                 bra.s   rlist
 .r:
                 rts
-; T4 : rectangles à motif : JAM1, JAM2, COMPLEMENT ; motifs de 2 et 4 lignes
+; T4: patterned rectangles: JAM1, JAM2, COMPLEMENT; 2- and 4-line patterns
 t_pat:
                 lea     pat2(pc),a0
                 move.l  a0,RP_AREAPTRN(a2)
@@ -222,7 +222,7 @@ t_pat:
                 jsr     -354(a6)             ; JAM2|INVERSVID
                 lea     rects4(pc),a5
                 bra     rlist
-; T5 : SetRast, puis ClearEOL et ClearScreen en JAM2 (stylo B) depuis une position texte
+; T5: SetRast, then ClearEOL and ClearScreen in JAM2 (B pen) from a text position
 t_rast:
                 move.l  a2,a1
                 moveq   #2,d0
@@ -250,14 +250,14 @@ t_rast:
                 jsr     -48(a6)              ; ClearScreen
                 move.l  a2,a1
                 moveq   #0,d0
-                jsr     -354(a6)             ; JAM1 : ClearEOL efface à 0
+                jsr     -354(a6)             ; JAM1: ClearEOL clears to 0
                 move.l  a2,a1
                 moveq   #5,d0
                 moveq   #60,d1
                 jsr     -240(a6)
                 move.l  a2,a1
                 jmp     -42(a6)
-; T6 : horizontales et verticales en COMPLEMENT qui se croisent, dont des points isolés et des sens inverses
+; T6: crossing horizontal and vertical lines in COMPLEMENT, including single points and reversed directions
 t_hv:
                 move.l  a2,a1
                 moveq   #2,d0
@@ -279,7 +279,7 @@ t_hv:
                 bra.s   .lp
 .r:
                 rts
-; T7 : masque de plans 1 (plan 0 seul) : étoile + rectangles
+; T7: plane mask 1 (plane 0 only): star + rectangles
 t_mask:
                 move.b  #1,RP_MASK(a2)
                 move.l  a2,a1
@@ -294,7 +294,7 @@ t_mask:
                 lea     rects(pc),a5
                 bra     rlist
 
-; T8 : Text dans tous les modes et styles, abscisses non alignées, lignes qui traversent la seconde fenêtre
+; T8: Text in all modes and styles, unaligned x positions, lines crossing the second window
 t_text:
                 lea     tx(pc),a5
 .lp:
@@ -322,7 +322,7 @@ t_text:
                 clr.b   56(a2)
                 rts
 
-; T9 : BltTemplate (gabarit de 64 x 12, départ au bit 3, 61 pixels de large) dans tous les modes
+; T9: BltTemplate (64 x 12 template, starting at bit 3, 61 pixels wide) in all modes
 t_tmpl:
                 lea     bt(pc),a5
 .lp:
@@ -349,7 +349,7 @@ t_tmpl:
 .r:
                 rts
 
-; clear(a2 = RastPort de l'écran) : plans mis à zéro par le processeur
+; clear(a2 = screen RastPort): planes cleared by the CPU
 clear:
                 move.l  4(a2),a0             ; rp_BitMap
                 moveq   #0,d0
@@ -364,7 +364,7 @@ clear:
                 dbra    d1,.c
                 dbra    d0,.pl
                 rts
-; cks : empreinte de chaque plan du BitMap de l'écran, ajoutée à la ligne, puis la ligne est écrite
+; cks: fingerprint of each plane of the screen BitMap, appended to the line, then the line is written
 cks:
                 move.l  scr(pc),a0
                 lea     84(a0),a0
@@ -385,12 +385,12 @@ cks:
                 dbra    d2,.pl
                 bra     nl
 
-ps:                                          ; copie la chaîne a0 en (a4)+
+ps:                                          ; copies the string a0 to (a4)+
                 move.b  (a0)+,(a4)+
                 bne.s   ps
                 subq.l  #1,a4
                 rts
-ph:                                          ; d0 en 8 chiffres + espace
+ph:                                          ; d0 as 8 digits + space
                 movem.l d1/d3,-(sp)
                 moveq   #7,d3
 .h:
@@ -407,7 +407,7 @@ ph:                                          ; d0 en 8 chiffres + espace
                 move.b  #' ',(a4)+
                 movem.l (sp)+,d1/d3
                 rts
-nl:                                          ; termine la ligne et l'écrit sur Output()
+nl:                                          ; terminates the line and writes it to Output()
                 movem.l d0-d3/a0-a1/a6,-(sp)
                 move.b  #10,(a4)+
                 lea     line(pc),a0
@@ -441,13 +441,13 @@ s_t9:           dc.b    "T9 ",0
 msg:            dc.b    "Quick fox 0123 {|}~ jumps!"
 MSGLEN          EQU *-msg
                 even
-; pourtour : points (x, y) relatifs au RastPort, au-delà des bords pour certains
+; perimeter: (x, y) points relative to the RastPort, some beyond the edges
 pts:            dc.w    -40,-30, 0,-5, 37,0, 81,-12, 120,3, 199,0, 200,-50, 241,1, 300,-7, 333,15
                 dc.w    399,0, 420,22, 460,40, 700,-20, 640,70, 450,70, 391,99, 420,143, 380,149, 300,140
                 dc.w    260,260, 201,150, 200,140, 199,139, 150,145, 90,160, 30,149, 0,120, -60,100, 3,71
                 dc.w    0,70, 10,69, 7,40, -1,-1, 201,71, 202,70, 200,71, 263,98, 137,42, 380,70
 NSTAR           EQU 40
-; rectangles : stylo, x0, y0, x1, y1 ; -1 = fin
+; rectangles: pen, x0, y0, x1, y1; -1 = end
 rects:          dc.w    1, 0,0,0,0
                 dc.w    2, 3,2,3,40
                 dc.w    3, 5,5,12,9
@@ -479,7 +479,7 @@ rects4:         dc.w    2, 101,51,301,91
                 dc.w    -1
 pat2:           dc.w    $aaaa,$5555
 pat4:           dc.w    $f00f,$3c3c,$0ff0,$c3c3
-; textes : mode.w, style.b, stylo.b, x.w, y.w ; -1 = fin. Styles : 1 souligné, 2 gras. Modes : 0 JAM1, 1 JAM2,
+; texts: mode.w, style.b, pen.b, x.w, y.w; -1 = end. Styles: 1 underlined, 2 bold. Modes: 0 JAM1, 1 JAM2,
 ; 2 COMPLEMENT, 4 INVERSVID.
 tx:             dc.w    1
                 dc.b    0,1
@@ -527,7 +527,7 @@ tx:             dc.w    1
                 dc.b    0,1
                 dc.w    380,150
                 dc.w    -1
-; BltTemplate : mode, stylo, x, y ; -1 = fin
+; BltTemplate: mode, pen, x, y; -1 = end
 bt:             dc.w    0,3,5,5, 1,2,70,9, 2,3,13,20, 4,1,140,30, 5,3,201,41, 1,3,350,100, 0,2,370,130
                 dc.w    2,1,-30,60, 1,1,300,140, -1
 tmpl:           dc.b    $f0,$0f,$aa,$55,$ff,$00,$81,$7e, $3c,$c3,$5a,$a5,$0f,$f0,$e7,$18
@@ -536,14 +536,14 @@ tmpl:           dc.b    $f0,$0f,$aa,$55,$ff,$00,$81,$7e, $3c,$c3,$5a,$a5,$0f,$f0
                 dc.b    $aa,$aa,$aa,$aa,$55,$55,$55,$55, $fe,$dc,$ba,$98,$76,$54,$32,$10
                 dc.b    $00,$ff,$00,$ff,$00,$ff,$00,$ff, $c0,$03,$e0,$07,$f0,$0f,$f8,$1f
                 dc.b    $69,$96,$69,$96,$69,$96,$69,$96, $11,$22,$44,$88,$11,$22,$44,$88
-; horizontales/verticales : x0,y0,x1,y1 ; $7fff = fin
+; horizontals/verticals: x0,y0,x1,y1; $7fff = end
 hv:             dc.w    10,10,300,10, 300,12,10,12, 150,0,150,149, 152,149,152,0, 20,10,20,10
                 dc.w    0,50,399,50, 5,48,5,52, 6,47,6,53, 7,46,7,54, 8,45,8,55, 380,-20,380,300
                 dc.w    -50,100,500,100, 33,33,33,33, 34,33,34,33, 395,140,410,140, 1,1,8,1
                 dc.w    $7fff
 ns:             dc.w    0,0,640,200,2        ; NewScreen
                 dc.b    0,1
-                dc.w    $8000,$010f          ; HIRES ; CUSTOMSCREEN|SCREENQUIET
+                dc.w    $8000,$010f          ; HIRES; CUSTOMSCREEN|SCREENQUIET
                 dc.l    0,0,0,0
 nw1:            dc.w    100,20,400,150       ; NewWindow
                 dc.b    0,1

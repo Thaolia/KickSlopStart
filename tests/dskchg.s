@@ -1,36 +1,37 @@
-; tests/dskchg.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire « changement de disquette » (piste analyse, disk-change-v34.md).
-; À lancer en tâche de fond depuis la startup-sequence (run >NIL: dskchg [opts]). Toutes les 100 ms :
-;   - vide le port IDCMP d'une petite fenêtre WBENCHSCREEN (IDCMP DISKINSERTED|DISKREMOVED) et émet
-;       « t=NNNN EV classe secondes micros » ;
-;   - option T : interroge trackdisk.device unité 0 (TD_CHANGENUM 13, TD_CHANGESTATE 14) et émet
-;     « TD n état » au changement ;
-;   - photographie la DosList (sous Forbid) et, si elle a changé : « DL nombre », puis les nœuds nouveaux ou
-;     modifiés « N index adresse +4 +8 +C +10 +14 +18 +1C +20 +24 nom » (index = rang dans la liste, longs bruts
-;     du nœud, nom BSTR de +$28 ; un nœud peut réapparaître identique si les octets après son nom ont changé)
-;     et les nœuds disparus « X adresse » ; battement « t=NNNN HB » toutes les 10 s ;
-;   - option D : toutes les secondes, ACTION_DISK_INFO (25) au dn_Task
-;     du nœud « DF0 », émet « DI état... » quand le résultat change (attente bornée à 2 s, sans renvoi
-;     tant que la réponse n'est pas revenue) ;
-;   - option L : prend au démarrage un lock partagé sur « DF0:c » (gardé jusqu'à la fin) ;
-;   - option A (avec L) : 3 s après le premier DISKREMOVED, Examine(ce lock), Lock("Workbench1.3:c"),
-;     Lock("DF0:") ; « AX/AV/AD résultat IoErr » (appels bloquants si un requester s'affiche).
-; Options = lettres D/T/L/A/S n'importe où dans les arguments. Sortie : journal mémoire de 32 Ko (long 0 = longueur,
-; puis texte, lignes terminées par LF) dont l'adresse est publiée en $3F0 (marqueur 'DCLG' en $3F4), relu au
-; débogueur FS-UAE ; option S : copie aussi sur le série direct (SERDAT). Durée : 4000 itérations (~400 s). Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks (LoadSeg 1.3).
-; Code auteur ; structures publiques (dos/dosextens.h, exec/io.h, devices/trackdisk.h, intuition.h 1.3).
+; tests/dskchg.s - test HUNK executable (TEST ASSET, NOT ROM code).
+; Black-box "disk change" probe (analysis track, disk-change-v34.md).
+; To be run in the background from the startup-sequence (run >NIL: dskchg [opts]). Every 100 ms:
+;   - drains the IDCMP port of a small WBENCHSCREEN window (IDCMP DISKINSERTED|DISKREMOVED) and emits
+;       "t=NNNN EV class seconds micros";
+;   - option T: queries trackdisk.device unit 0 (TD_CHANGENUM 13, TD_CHANGESTATE 14) and emits
+;     "TD n state" on change;
+;   - snapshots the DosList (under Forbid) and, if it changed: "DL count", then the new or
+;     modified nodes "N index address +4 +8 +C +10 +14 +18 +1C +20 +24 name" (index = rank in the list, raw longs
+;     of the node, BSTR name from +$28; a node may reappear unchanged if the bytes after its name changed)
+;     and the vanished nodes "X address"; heartbeat "t=NNNN HB" every 10 s;
+;   - option D: every second, ACTION_DISK_INFO (25) to the dn_Task
+;     of the "DF0" node, emits "DI state..." when the result changes (wait bounded to 2 s, no resend
+;     until the reply has come back);
+;   - option L: takes a shared lock on "DF0:c" at startup (held until the end);
+;   - option A (with L): 3 s after the first DISKREMOVED, Examine(that lock), Lock("Workbench1.3:c"),
+;     Lock("DF0:"); "AX/AV/AD result IoErr" (blocking calls if a requester is shown).
+; Options = letters D/T/L/A/S anywhere in the arguments. Output: 32 KB memory log (long 0 = length,
+; then text, LF-terminated lines) whose address is published at $3F0 (marker 'DCLG' at $3F4), read back with the
+; FS-UAE debugger; option S: also copies to the serial port directly (SERDAT). Duration: 4000 iterations (~400 s).
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks (LoadSeg 1.3).
+; Authored code; public structures (dos/dosextens.h, exec/io.h, devices/trackdisk.h, intuition.h 1.3).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
-NNODE    EQU 40                       ; nœuds photographiés au plus
-LOGSZ    EQU 32768                    ; journal mémoire
-NSZ      EQU 72                       ; adresse + 9 longs + 32 octets de nom
+NNODE    EQU 40                       ; maximum number of nodes snapshotted
+LOGSZ    EQU 32768                    ; memory log
+NSZ      EQU 72                       ; address + 9 longs + 32 bytes of name
 
                 section code,code
 _start:
                 movem.l d2-d7/a2-a6,-(sp)
                 lea     vars,a4
-; options : lettres D, T, L n'importe où dans la ligne d'arguments (A0/D0)
+; options: letters D, T, L anywhere in the argument line (A0/D0)
 .arg:           subq.l  #1,d0
                 bmi.s   .argf
                 move.b  (a0)+,d1
@@ -51,7 +52,7 @@ _start:
                 st      optl-vars(a4)
                 bra.s   .arg
 .argf:
-; journal mémoire : adresse publiée en $3F0 (vecteur utilisateur inutilisé), marqueur 'DCLG' en $3F4
+; memory log: address published at $3F0 (unused user vector), marker 'DCLG' at $3F4
                 move.l  4.w,a6
                 move.l  #LOGSZ,d0
                 move.l  #$10001,d1           ; MEMF_PUBLIC|MEMF_CLEAR
@@ -70,12 +71,12 @@ _start:
                 jsr     -552(a6)
                 move.l  d0,intb-vars(a4)
                 beq     .ret
-; ports privés (paquets dos, trackdisk)
+; private ports (dos packets, trackdisk)
                 lea     pkport,a0
                 bsr     mkport
                 lea     tdport,a0
                 bsr     mkport
-; trackdisk unité 0 (option T seulement)
+; trackdisk unit 0 (option T only)
                 st      tdok-vars(a4)
                 tst.b   optt-vars(a4)
                 beq.s   .notd
@@ -89,12 +90,12 @@ _start:
                 jsr     -444(a6)             ; OpenDevice
                 move.b  d0,tdok-vars(a4)
 .notd:
-; fenêtre
+; window
                 move.l  intb-vars(a4),a6
                 lea     nw(pc),a0
                 jsr     -204(a6)             ; OpenWindow
                 move.l  d0,win-vars(a4)
-; option L : lock sur DF0:c
+; option L: lock on DF0:c
                 tst.b   optl-vars(a4)
                 beq.s   .nol
                 move.l  dosb-vars(a4),a6
@@ -127,7 +128,7 @@ _start:
                 swap    d0
                 tst.w   d0
                 bne.s   .nohb
-                bsr     stamp                ; battement toutes les 10 s : « t=NNNN HB »
+                bsr     stamp                ; heartbeat every 10 s: "t=NNNN HB"
                 lea     t_hb(pc),a0
                 bsr     puts
                 bsr     nl
@@ -149,7 +150,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-; mkport(a0) : MsgPort privé PA_SIGNAL sur un nouveau signal de la tâche courante.
+; mkport(a0): private PA_SIGNAL MsgPort on a new signal of the current task.
 mkport:
                 move.l  a0,a2
                 move.l  4.w,a6
@@ -168,13 +169,13 @@ mkport:
                 move.l  a0,-(a0)             ; lh_Head
                 rts
 
-stamp:                                       ; « t=NNNNNNNN »
+stamp:                                       ; "t=NNNNNNNN"
                 lea     t_t(pc),a0
                 bsr     puts
                 move.l  tick-vars(a4),d0
                 bra     puthex
 
-; drainwin : messages IDCMP de la fenêtre
+; drainwin: IDCMP messages of the window
 drainwin:
                 move.l  win-vars(a4),d0
                 beq.s   .r
@@ -191,7 +192,7 @@ drainwin:
                 lea     t_ev(pc),a0
                 bsr     puts
                 move.l  20(a2),d0            ; im_Class
-                cmp.l   #$10000,d0           ; DISKREMOVED : arme l'essai d'accès (option A) 3 s plus tard
+                cmp.l   #$10000,d0           ; DISKREMOVED: arms the access attempt (option A) 3 s later
                 bne.s   .nrm
                 tst.l   acct-vars(a4)
                 bne.s   .nrm
@@ -212,7 +213,7 @@ drainwin:
 .r:
                 rts
 
-; tdpoll : TD_CHANGENUM / TD_CHANGESTATE
+; tdpoll: TD_CHANGENUM / TD_CHANGESTATE
 tdpoll:
                 tst.b   tdok-vars(a4)
                 bne.s   .r
@@ -244,7 +245,7 @@ tdpoll:
 .r:
                 rts
 
-; snap : photographie de la DosList dans cur, comparée à prev
+; snap: snapshot of the DosList into cur, compared with prev
 snap:
                 move.l  4.w,a6
                 jsr     -132(a6)             ; Forbid
@@ -255,7 +256,7 @@ snap:
                 move.l  d0,a0
                 move.l  4(a0),d0             ; di_DevInfo
                 lea     cur,a1
-                moveq   #0,d4                ; nombre de nœuds
+                moveq   #0,d4                ; number of nodes
 .nd:
                 lsl.l   #2,d0
                 beq.s   .fin
@@ -285,7 +286,7 @@ snap:
 .fin:
                 jsr     -138(a6)             ; Permit
                 move.w  d4,ncur-vars(a4)
-; comparaison
+; comparison
                 cmp.w   nprev-vars(a4),d4
                 bne.s   .diff
                 lea     cur,a0
@@ -298,7 +299,7 @@ snap:
 .ce:            dbra    d1,.cl
                 rts
 .diff:
-; n'émet que les nœuds nouveaux ou modifiés (« N index adresse ... nom ») et les nœuds disparus (« X adresse »)
+; emits only the new or modified nodes ("N index address ... name") and the vanished nodes ("X address")
                 bsr     stamp
                 lea     t_dl(pc),a0
                 bsr     puts
@@ -319,7 +320,7 @@ snap:
 .cm:            cmpm.l  (a0)+,(a1)+
                 bne.s   .nx2
                 dbra    d1,.cm
-                bra.s   .same                ; identique : rien à émettre
+                bra.s   .same                ; identical: nothing to emit
 .nx2:           lea     NSZ(a3),a3
 .se2:           dbra    d5,.sp
                 bsr     pnode
@@ -353,7 +354,7 @@ snap:
 .r:
                 rts
 
-; dinfo : ACTION_DISK_INFO au handler de DF0, une fois par seconde
+; dinfo: ACTION_DISK_INFO to the DF0 handler, once per second
 dinfo:
                 tst.b   pkbusy-vars(a4)
                 bne     .wait
@@ -362,7 +363,7 @@ dinfo:
                 swap    d0
                 tst.w   d0
                 bne     .r
-; trouve le nœud « DF0 »
+; find the "DF0" node
                 move.l  4.w,a6
                 jsr     -132(a6)             ; Forbid
                 move.l  dosb-vars(a4),a0
@@ -390,7 +391,7 @@ dinfo:
 .ff:            jsr     -138(a6)             ; Permit
                 tst.l   d3
                 beq     .r
-; paquet
+; packet
                 lea     pkt,a2
                 lea     20(a2),a0            ; sp_Pkt
                 move.l  a0,10(a2)            ; ln_Name = &sp_Pkt
@@ -400,7 +401,7 @@ dinfo:
                 move.l  #25,8(a0)            ; ACTION_DISK_INFO
                 lea     info,a1
                 moveq   #8,d0
-.ci:            move.l  #$5A5A5A5A,(a1)+     ; motif : champ non écrit = 5A5A5A5A
+.ci:            move.l  #$5A5A5A5A,(a1)+     ; pattern: unwritten field = 5A5A5A5A
                 dbra    d0,.ci
                 move.l  #info,d0
                 lsr.l   #2,d0
@@ -420,7 +421,7 @@ dinfo:
                 cmp.w   #20,pkwait-vars(a4)
                 bne.s   .r
                 bsr     stamp
-                lea     t_dto(pc),a0         ; pas de réponse en 2 s (une seule fois)
+                lea     t_dto(pc),a0         ; no reply within 2 s (only once)
                 bsr     puts
                 bsr     nl
                 bra.s   .r
@@ -456,7 +457,7 @@ dinfo:
 .r:
                 rts
 
-; pnode(a2 = enregistrement, d6 = index) : « N index adresse +4..+24 nom »
+; pnode(a2 = record, d6 = index): "N index address +4..+24 name"
 pnode:
                 lea     t_n(pc),a0
                 bsr     puts
@@ -469,7 +470,7 @@ pnode:
                 bsr     puthex
                 dbra    d5,.pl
                 moveq   #0,d5
-                move.b  (a3),d5              ; longueur BSTR
+                move.b  (a3),d5              ; BSTR length
                 cmp.b   #31,d5
                 bls.s   .ok
                 moveq   #31,d5
@@ -480,9 +481,9 @@ pnode:
 .se:            dbra    d5,.sl
                 bra     nl
 
-; access : option A, une seule fois, 3 s après le premier DISKREMOVED : Examine(lock gardé), puis
-; Lock("Workbench1.3:c"), puis Lock("DF0:") ; émet « AX/AV/AD résultat IoErr » après chaque appel (bloquant
-; si un requester s'affiche : le journal reprend à sa disparition).
+; access: option A, only once, 3 s after the first DISKREMOVED: Examine(held lock), then
+; Lock("Workbench1.3:c"), then Lock("DF0:"); emits "AX/AV/AD result IoErr" after each call (blocking
+; if a requester is shown: the log resumes when it goes away).
 access:
                 tst.b   opta-vars(a4)
                 beq     .r
@@ -532,7 +533,7 @@ puts:
                 bra.s   puts
 .r:
                 rts
-; putc(d1.b) : ajoute l'octet au journal mémoire (long 0 = longueur) ; série directe seulement avec l'option S
+; putc(d1.b): appends the byte to the memory log (long 0 = length); direct serial only with option S
 putc:
                 move.l  a0,-(sp)
                 move.l  logbuf-vars(a4),d2
@@ -570,7 +571,7 @@ puthex:
                 bra.s   putc
 
                 cnop    0,4
-; NewWindow (intuition.h) : 60x10 en (0,190), BORDERLESS, IDCMP DISKINSERTED|DISKREMOVED, WBENCHSCREEN
+; NewWindow (intuition.h): 60x10 at (0,190), BORDERLESS, IDCMP DISKINSERTED|DISKREMOVED, WBENCHSCREEN
 nw:             dc.w    0,190,60,10
                 dc.b    0,1
                 dc.l    $00018000            ; IDCMP DISKINSERTED ($8000) | DISKREMOVED ($10000)

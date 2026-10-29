@@ -1,10 +1,10 @@
-; tests/cfgdev2.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : variante étendue de tests/cfgdev.s.
-; Écrit sur la sortie du CLI une ligne par ConfigDev (FindConfigDev(prev, -1, -1)) :
-;   « CD BoardAddr BoardSize Flags/Type/Product/ErFlags Manufacturer SlotAddr/SlotSize
-;        InitDiagVec er_Reserved0c..0f cd_Driver ln_Type<<16|cd_Pad »
-; puis une ligne par MemHeader d'ExecBase->MemList : « MH bas haut attributs<<16|ln_Type<<8|priorité libre nom ».
-; Vecteurs attendus (vraie ROM 34.5) : docs/analysis/autoconfig-v34.md §8. Lancer « cfgdev2 >SER: » pour capturer en série.
-; Clean-room : structures publiques, code auteur.
+; tests/cfgdev2.s - HUNK test executable (TEST ASSET, NOT ROM code): extended variant of tests/cfgdev.s.
+; Writes to the CLI output one line per ConfigDev (FindConfigDev(prev, -1, -1)):
+;   "CD BoardAddr BoardSize Flags/Type/Product/ErFlags Manufacturer SlotAddr/SlotSize
+;        InitDiagVec er_Reserved0c..0f cd_Driver ln_Type<<16|cd_Pad"
+; then one line per MemHeader of ExecBase->MemList: "MH lower upper attributes<<16|ln_Type<<8|priority free name".
+; Expected vectors (real ROM 34.5): docs/analysis/autoconfig-v34.md §8. Run "cfgdev2 >SER:" to capture on serial.
+; Clean-room: public structures, author's code.
 
 EB_MEMLIST EQU $142
 
@@ -69,7 +69,7 @@ _start:
                 bra     .cd
 .mem:
                 move.l  4.w,a6
-                jsr     -132(a6)             ; Forbid (lecture de MemList ; Write ensuite hors Forbid)
+                jsr     -132(a6)             ; Forbid (MemList read; Write afterwards outside Forbid)
                 move.l  EB_MEMLIST(a6),a2
                 lea     buf(pc),a1
 .mh:
@@ -112,12 +112,12 @@ _start:
                 moveq   #0,d0
                 rts
 
-cpy:                                         ; copie la chaîne a0 en (a1)+ (sans le NUL)
+cpy:                                         ; copies string a0 to (a1)+ (without the NUL)
                 move.b  (a0)+,(a1)+
                 bne.s   cpy
                 subq.l  #1,a1
                 rts
-hex:                                         ; d0 en 8 chiffres + espace, en (a1)+
+hex:                                         ; d0 as 8 digits + space, to (a1)+
                 moveq   #7,d3
 .h:
                 rol.l   #4,d0
@@ -132,10 +132,10 @@ hex:                                         ; d0 en 8 chiffres + espace, en (a1
                 dbra    d3,.h
                 move.b  #' ',(a1)+
                 rts
-out:                                         ; termine la ligne en (a1) et l'écrit
+out:                                         ; terminates the line at (a1) and writes it
                 move.b  #10,(a1)+
                 lea     line(pc),a0
-outbuf:                                      ; écrit [a0, a1) sur Output()
+outbuf:                                      ; writes [a0, a1) to Output()
                 move.l  a1,d3
                 sub.l   a0,d3
                 move.l  a0,d2
@@ -143,7 +143,7 @@ outbuf:                                      ; écrit [a0, a1) sur Output()
                 move.l  dosbase(pc),a6
                 jsr     -60(a6)              ; Output
                 move.l  d0,d1
-                jsr     -48(a6)              ; Write(fh d1, tampon d2, longueur d3)
+                jsr     -48(a6)              ; Write(fh d1, buffer d2, length d3)
                 move.l  (sp)+,a6
                 rts
 

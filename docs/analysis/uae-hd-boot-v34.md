@@ -1,270 +1,270 @@
-# uae-hd-boot-v34.md — démarrage et montage depuis une carte à DiagArea (cas « uaehf » de FS-UAE)
+# uae-hd-boot-v34.md — booting and mounting from a board with a DiagArea (FS-UAE "uaehf" case)
 
-> Piste ANALYSE (« dirty »). Sources : ROM `kick34005.A500` (exec 34.2, expansion 34.1, romboot 34.1,
-> strap 34.4, dos 34.3) lue sous radare2 ; sondes boîte noire sur la vraie ROM sous FS-UAE 3.2.35
-> (`tests/bootlist.s`, `tests/adn.s`, `tests/cfgdev2.s`, vecteurs §7) ; code source GPL de FS-UAE 3.2.35
-> (`src/filesys.cpp`, `src/filesys.asm` — logiciel indépendant de la ROM) pour le côté émulateur.
-> On décrit le **quoi** ; aucune suite d'instructions transcrite, aucune adresse de routine.
+> ANALYSIS track ("dirty"). Sources: ROM `kick34005.A500` (exec 34.2, expansion 34.1, romboot 34.1,
+> strap 34.4, dos 34.3) read under radare2; black-box probes on the real ROM under FS-UAE 3.2.35
+> (`tests/bootlist.s`, `tests/adn.s`, `tests/cfgdev2.s`, vectors §7); GPL source code of FS-UAE 3.2.35
+> (`src/filesys.cpp`, `src/filesys.asm` — software independent of the ROM) for the emulator side.
+> We describe the **what**; no instruction sequence transcribed, no routine address.
 >
-> Légende : **[R]** analyse ROM · **[S]** sonde · **[U]** source FS-UAE · **[D]** doc publique.
-> Prérequis : `autoconfig-v34.md` (ConfigChain, DiagArea, `er_Reserved0c`, MakeDosNode/AddDosNode).
+> Legend: **[R]** ROM analysis · **[S]** probe · **[U]** FS-UAE source · **[D]** public documentation.
+> Prerequisite: `autoconfig-v34.md` (ConfigChain, DiagArea, `er_Reserved0c`, MakeDosNode/AddDosNode).
 
 ---
 
-## 0. Réponse courte : pourquoi « rien n'apparaît » sur notre ROM
+## 0. Short answer: why "nothing appears" on our ROM
 
-Sur la vraie 1.3, la DiagPoint de la carte UAE **ne fait presque rien** : elle construit une **ROMTag**
-(`uaehf.device`, RTF_AUTOINIT|RTF_COLDSTART, NT_DEVICE) dans la **copie RAM de sa DiagArea** (à
-`copie + $10`) et rend D0 = 1 **[U]**. C'est **romboot.library** (résident COLDSTART pri −40) qui, à son
-init, cherche cette ROMTag dans la copie de DiagArea de chaque carte configurée et l'**InitResident()** **[R]**.
-L'init de `uaehf.device` (code UAE) ouvre alors expansion.library, **ajoute le ConfigDev « factice » en
-$F00000** (AddConfigDev), crée les DeviceNodes (MakeDosNode) et **enfile un BootNode par unité amorçable dans
-`eb_MountList`** **[U]**. Ensuite strap essaie DF0:, puis appelle romboot qui saute au **BootPoint** de la
-carte ; et **dos.library, à son init, chaîne les DeviceNodes de `eb_MountList`** dans sa liste de devices
-(DH0: monté) ; **la tête de `eb_MountList` devient SYS:** — après un bootblock DF0: réussi, strap y a ajouté
-un BootNode DF0: de priorité 5, si bien qu'une carte de priorité ≥ 5 démarre même avec une disquette
-amorçable **[R+S]**. Il manque donc, dans l'ordre : (1) le balayage de ROMTag de romboot, (2) l'appel du
-BootPoint par romboot depuis strap (et le BootNode DF0: de strap), (3) la consommation de `eb_MountList` par
+On the real 1.3, the UAE board's DiagPoint **does almost nothing**: it builds a **ROMTag**
+(`uaehf.device`, RTF_AUTOINIT|RTF_COLDSTART, NT_DEVICE) in the **RAM copy of its DiagArea** (at
+`copy + $10`) and returns D0 = 1 **[U]**. It is **romboot.library** (COLDSTART resident pri −40) that, at its
+init, looks for this ROMTag in the DiagArea copy of each configured board and **InitResident()**s it **[R]**.
+The init of `uaehf.device` (UAE code) then opens expansion.library, **adds the "dummy" ConfigDev at
+$F00000** (AddConfigDev), creates the DeviceNodes (MakeDosNode) and **enqueues one BootNode per bootable unit in
+`eb_MountList`** **[U]**. Then strap tries DF0:, then calls romboot which jumps to the board's **BootPoint**;
+and **dos.library, at its init, chains the DeviceNodes of `eb_MountList`** into its device list
+(DH0: mounted); **the head of `eb_MountList` becomes SYS:** — after a successful DF0: bootblock, strap has added
+a DF0: BootNode of priority 5 there, so that a board of priority ≥ 5 boots even with a bootable
+floppy **[R+S]**. What is missing, in order: (1) romboot's ROMTag scan, (2) the call of the
+BootPoint by romboot from strap (and strap's DF0: BootNode), (3) the consumption of `eb_MountList` by
 dos.
 
 ---
 
-## 1. Résidents hors ROM Kickstart (exec, coldstart) **[R ; S]**
+## 1. Residents outside the Kickstart ROM (exec, coldstart) **[R; S]**
 
-- Au coldstart, avant toute init de résident, exec construit `ExecBase->ResModules` (+$12C) en balayant une
-  table de plages **[début, fin)** : **`$FC0000–$1000000`** (deux fois, entrée répétée dans la table 34.5) puis
-  **`$F00000–$F80000`**. Donc **oui, la zone `$F00000–$F7FFFF` est balayée**, dans le **même** tri que la ROM.
-- Critère : mot `RTC_MATCHWORD = $4AFC` à une adresse **paire** et `rt_MatchTag == adresse de la structure` ;
-  après une ROMTag reconnue, le balayage reprend à `rt_EndSkip`. Aucune condition sur `rt_Flags` pour
-  l'inscription.
-- Doublons (même `rt_Name`) : la nouvelle remplace l'ancienne si `rt_Version` est **supérieure**, ou égale avec
-  `rt_Pri` **≥** ; sinon elle est ignorée. Le tri final est par `rt_Pri` décroissant (règle de
-  `module-map.md`). Les ROMTags de `KickTagPtr` (si `KickCheckSum` valide) sont fusionnées de la même façon.
-- Ensuite `InitCode(RTF_COLDSTART, 0)` initialise, par priorité, toutes les entrées ayant RTF_COLDSTART, qu'elles
-  viennent de `$FC…` ou de `$F0…`.
-- Indépendamment (tout au début du reset, avant même la RAM) : si exec ne s'exécute pas déjà depuis `$F00000`
-  et que le mot en `$F00000` vaut **`$1111`**, il saute en `$F00002` (ROM de diagnostic/cartouche).
-- **Ce n'est PAS par là que la carte UAE s'installe** : la zone `$F00000` d'UAE (« rtarea ») ne contient pas
-  de ROMTag visible par ce balayage (sonde §7 : aucune entrée de ResModules hors `$FC…–$FF…`) et ne commence pas
-  par `$1111`. **[S]** (vecteur C1 : 24 entrées, toutes en `$FC…`–`$FF…` ; `uaehf.device` n'est pas dans
-  ResModules mais dans DeviceList.)
+- At coldstart, before any resident init, exec builds `ExecBase->ResModules` (+$12C) by scanning a
+  table of **[start, end)** ranges: **`$FC0000–$1000000`** (twice, entry repeated in the 34.5 table) then
+  **`$F00000–$F80000`**. So **yes, the `$F00000–$F7FFFF` area is scanned**, in the **same** sort as the ROM.
+- Criterion: word `RTC_MATCHWORD = $4AFC` at an **even** address and `rt_MatchTag == address of the structure`;
+  after a recognised ROMTag, scanning resumes at `rt_EndSkip`. No condition on `rt_Flags` for
+  registration.
+- Duplicates (same `rt_Name`): the new one replaces the old one if `rt_Version` is **higher**, or equal with
+  `rt_Pri` **≥**; otherwise it is ignored. The final sort is by decreasing `rt_Pri` (rule of
+  `module-map.md`). The ROMTags of `KickTagPtr` (if `KickCheckSum` is valid) are merged in the same way.
+- Then `InitCode(RTF_COLDSTART, 0)` initialises, by priority, all entries having RTF_COLDSTART, whether they
+  come from `$FC…` or from `$F0…`.
+- Independently (at the very start of reset, even before RAM): if exec is not already running from `$F00000`
+  and the word at `$F00000` is **`$1111`**, it jumps to `$F00002` (diagnostic/cartridge ROM).
+- **This is NOT how the UAE board installs itself**: UAE's `$F00000` area ("rtarea") contains no
+  ROMTag visible to this scan (probe §7: no ResModules entry outside `$FC…–$FF…`) and does not start
+  with `$1111`. **[S]** (vector C1: 24 entries, all in `$FC…`–`$FF…`; `uaehf.device` is not in
+  ResModules but in DeviceList.)
 
 ---
 
 ## 2. romboot.library 34.1 **[R]**
 
-Résident COLDSTART, NT_LIBRARY, pri **−40** (après intuition, avant strap). Une seule fonction publique (LVO
-−30, « RomBoot »), plus Open/Close/Expunge.
+COLDSTART resident, NT_LIBRARY, pri **−40** (after intuition, before strap). A single public function (LVO
+−30, "RomBoot"), plus Open/Close/Expunge.
 
-### 2.1 Init : ROMTags des cartes (« InitResidents »)
+### 2.1 Init: board ROMTags ("InitResidents")
 
-1. `OpenLibrary("expansion.library", 33)` ; échec ⇒ rien.
-2. Pour chaque ConfigDev de `eb_BoardList` (ordre de la liste) dont `cd_Flags & CDF_CONFIGME ($02)` :
-   1. `ObtainConfigBinding()` ; `SetCurrentBinding({cb_ConfigDev = cd, FileName = 0, ProductString = 0,
-      ToolTypes = 0}, 16)` ;
-   2. si `er_Type & ERTF_DIAGVALID ($10)` et que `cd_Rom.er_Reserved0c` (pointeur de la **copie RAM** de la
-      DiagArea, posé par expansion, `autoconfig-v34.md` §6) est non nul, et que `da_Config & DAC_CONFIGTIME
-      ($10)` : recherche, par pas de 2 octets depuis le début de la copie et sur `da_Size` octets, de la
-      **première** ROMTag (`$4AFC` + `rt_MatchTag` = elle-même) ; si trouvée : **`InitResident(tag, 0)`**
-      (une seule par carte) ;
+1. `OpenLibrary("expansion.library", 33)`; failure ⇒ nothing.
+2. For each ConfigDev of `eb_BoardList` (list order) with `cd_Flags & CDF_CONFIGME ($02)`:
+   1. `ObtainConfigBinding()`; `SetCurrentBinding({cb_ConfigDev = cd, FileName = 0, ProductString = 0,
+      ToolTypes = 0}, 16)`;
+   2. if `er_Type & ERTF_DIAGVALID ($10)` and `cd_Rom.er_Reserved0c` (pointer to the **RAM copy** of the
+      DiagArea, set by expansion, `autoconfig-v34.md` §6) is non-zero, and `da_Config & DAC_CONFIGTIME
+      ($10)`: search, in 2-byte steps from the start of the copy and over `da_Size` bytes, for the
+      **first** ROMTag (`$4AFC` + `rt_MatchTag` = itself); if found: **`InitResident(tag, 0)`**
+      (only one per board);
    3. `ReleaseConfigBinding()`.
-3. `CloseLibrary(expansion)`. `CDF_CONFIGME` n'est pas effacé (c'est BindDrivers qui le fait).
+3. `CloseLibrary(expansion)`. `CDF_CONFIGME` is not cleared (BindDrivers does that).
 
-À ce moment toutes les libraries/devices ROM sont initialisés (expansion est dans LibList, graphics,
-intuition, timer, trackdisk… existent), **mais pas dos**.
+At this point all ROM libraries/devices are initialised (expansion is in LibList, graphics,
+intuition, timer, trackdisk… exist), **but not dos**.
 
-### 2.2 RomBoot (LVO −30) : appel des BootPoint
+### 2.2 RomBoot (LVO −30): calling the BootPoints
 
 1. `OpenLibrary("expansion.library", 33)`.
-2. Parcours de `eb_MountList` dans l'ordre (Enqueue ⇒ `ln_Pri` décroissant). Un nœud est retenu si
-   `bn_DeviceNode ≠ 0`, **`ln_Type == NT_BOOTNODE (16)`** et `ln_Name ≠ 0` (dans un BootNode, `ln_Name` porte
-   le **ConfigDev** de la carte). Pour chaque nœud retenu, avec ce ConfigDev :
-   - si `er_Type & DIAGVALID`, copie DiagArea non nulle, et `da_Config & DAC_CONFIGTIME` : appel de
-     **`copie + da_BootPoint`** (`da_BootPoint` = UWORD à +6, non signé) avec **A0 = adresse appelée,
-     A1 = ConfigDev**, le ConfigDev aussi en argument sur la pile (4(SP)), **A6 = ExecBase**.
-   - **pas de test `da_BootPoint == 0`** : une DiagArea sans BootPoint ferait sauter au début de la copie
-     (ne pas reproduire tel quel : traiter 0 comme « pas de BootPoint » est plus sûr et invisible en pratique).
-   - si le BootPoint **revient**, le parcours continue avec le nœud suivant (sa valeur de retour est ignorée).
-3. `CloseLibrary` ; retour (D0 = 0) à l'appelant.
+2. Walk of `eb_MountList` in order (Enqueue ⇒ decreasing `ln_Pri`). A node is kept if
+   `bn_DeviceNode ≠ 0`, **`ln_Type == NT_BOOTNODE (16)`** and `ln_Name ≠ 0` (in a BootNode, `ln_Name` carries
+   the board's **ConfigDev**). For each kept node, with this ConfigDev:
+   - if `er_Type & DIAGVALID`, DiagArea copy non-zero, and `da_Config & DAC_CONFIGTIME`: call of
+     **`copy + da_BootPoint`** (`da_BootPoint` = UWORD at +6, unsigned) with **A0 = called address,
+     A1 = ConfigDev**, the ConfigDev also as an argument on the stack (4(SP)), **A6 = ExecBase**.
+   - **no `da_BootPoint == 0` test**: a DiagArea without a BootPoint would jump to the start of the copy
+     (do not reproduce as is: treating 0 as "no BootPoint" is safer and invisible in practice).
+   - if the BootPoint **returns**, the walk continues with the next node (its return value is ignored).
+3. `CloseLibrary`; return (D0 = 0) to the caller.
 
-Les BootNodes posés par `AddDosNode` avant dos (`ln_Type` non initialisé, `ln_Name` = nom C du device,
-`autoconfig-v34.md` §7) **ne sont pas** des BootNodes amorçables pour romboot (type ≠ 16 en pratique) :
-seuls ceux enfilés par le pilote lui-même avec `ln_Type = NT_BOOTNODE` et `ln_Name = ConfigDev` le sont.
+The BootNodes set by `AddDosNode` before dos (`ln_Type` uninitialised, `ln_Name` = C name of the device,
+`autoconfig-v34.md` §7) **are not** bootable BootNodes for romboot (type ≠ 16 in practice):
+only those enqueued by the driver itself with `ln_Type = NT_BOOTNODE` and `ln_Name = ConfigDev` are.
 
 ---
 
-## 3. strap 34.4 : essai floppy, RomBoot, BootNode DF0: **[R ; S]**
+## 3. strap 34.4: floppy attempt, RomBoot, DF0: BootNode **[R; S]**
 
-1. Alloue un bloc de `$488` octets (MEMF_CHIP|MEMF_CLEAR, tampon d'amorce + variables), un port, ouvre
-   trackdisk.device unité 0.
-2. **Essai DF0:** (CMD_CLEAR, TD_CHANGENUM, lecture de 1024 octets) : mot `'DOS\0'` et somme de contrôle
-   (somme avec retenue des 256 longs, complémentée = 0) ⇒ exécution du bootblock (A1 = IORequest,
-   A6 = ExecBase). Si D0 ≠ 0 au retour ⇒ Alert `$30000001`. Si D0 = 0 :
-   - strap **crée le DeviceNode DF0: et le déclare comme BootNode** : `OpenLibrary("expansion.library", 33)`,
-     `MakeDosNode` avec le paquet {`"DF0"`, `"trackdisk.device"`, unité 0, flags 0, environnement
+1. Allocates a block of `$488` bytes (MEMF_CHIP|MEMF_CLEAR, boot buffer + variables), a port, opens
+   trackdisk.device unit 0.
+2. **DF0: attempt** (CMD_CLEAR, TD_CHANGENUM, read of 1024 bytes): word `'DOS\0'` and checksum
+   (sum with carry of the 256 longs, complemented = 0) ⇒ execution of the bootblock (A1 = IORequest,
+   A6 = ExecBase). If D0 ≠ 0 on return ⇒ Alert `$30000001`. If D0 = 0:
+   - strap **creates the DF0: DeviceNode and declares it as a BootNode**: `OpenLibrary("expansion.library", 33)`,
+     `MakeDosNode` with the packet {`"DF0"`, `"trackdisk.device"`, unit 0, flags 0, environment
      `de_TableSize = 12`, SizeBlock 128, SecOrg 0, Surfaces 2, SectorPerBlock 1, BlocksPerTrack 11,
-     Reserved 2, PreAlloc 0, Interleave 0, LowCyl 0, HighCyl 79, NumBuffers 5, BufMemType 2 (CHIP)}, puis
-     **`AddDosNode(5, 0, dn)`** — dos n'existant pas encore, c'est un BootNode **`ln_Pri = 5`**, `ln_Type` non
-     initialisé, `ln_Name = "DF0"`, enfilé (Enqueue) **derrière** les nœuds de priorité ≥ 5 déjà présents ;
-   - puis saut au point d'entrée rendu par le bootblock en A0 (l'init de dos).
-3. **Si DF0: n'est pas amorçable** (pas de disque, pas DOS, somme fausse) : **une seule fois**,
-   `OpenLibrary("romboot.library")` → **RomBoot()** (§2.2) → CloseLibrary. Aucun BootNode DF0: n'est créé sur ce
-   chemin. Un BootPoint qui démarre dos ne revient pas.
-4. Si RomBoot revient : nouvel essai DF0:, puis écran « insérer une disquette » et attente de changement de
-   disque, essais DF0: suivants **sans** rappeler romboot.
+     Reserved 2, PreAlloc 0, Interleave 0, LowCyl 0, HighCyl 79, NumBuffers 5, BufMemType 2 (CHIP)}, then
+     **`AddDosNode(5, 0, dn)`** — dos not existing yet, it is a BootNode **`ln_Pri = 5`**, `ln_Type`
+     uninitialised, `ln_Name = "DF0"`, enqueued (Enqueue) **behind** the nodes of priority ≥ 5 already present;
+   - then jump to the entry point returned by the bootblock in A0 (the dos init).
+3. **If DF0: is not bootable** (no disk, not DOS, wrong checksum): **only once**,
+   `OpenLibrary("romboot.library")` → **RomBoot()** (§2.2) → CloseLibrary. No DF0: BootNode is created on this
+   path. A BootPoint that starts dos does not return.
+4. If RomBoot returns: new DF0: attempt, then "insert a disk" screen and wait for a disk
+   change, subsequent DF0: attempts **without** calling romboot again.
 
-Le **choix du volume de démarrage** n'est donc pas fait par strap mais par dos (§4.1) : c'est la **tête de
-`eb_MountList`** qui gagne. Le bootblock d'une disquette amorçable s'exécute toujours en premier, mais
-**une carte dont le BootNode a `ln_Pri ≥ 5` devient quand même SYS:** (son nœud précède celui de DF0:, pri 5,
-enfilé plus tard) ; avec `ln_Pri < 5`, DF0: devient SYS: et la carte est seulement montée. **[R+S]**
-(vecteurs P10, P5, P1, C1, C2).
-
----
-
-## 4. dos.library 34.3 et `eb_MountList` **[R ; S]**
-
-### 4.1 À l'init de dos (appelée par le bootblock DF0: ou par le BootPoint de la carte)
-
-Dans la partie assembleur de l'init, avant le démarrage du CLI initial :
-1. `OpenLibrary("expansion.library", 0)` (jamais refermée ; pas de test d'échec).
-2. **Chaînage** : parcours de `eb_MountList` ; pour chaque couple de nœuds consécutifs (N, N+1) tant que
-   `N.bn_DeviceNode ≠ 0`, que `N.bn_DeviceNode->dn_Next == 0` et que `(N+1).bn_DeviceNode ≠ 0` :
-   `N.bn_DeviceNode->dn_Next = BPTR((N+1).bn_DeviceNode)`. Les DeviceNodes de **tous** les nœuds (quel que
-   soit `ln_Type`) forment ainsi une chaîne dans l'ordre de la liste.
-3. **`RemHead(eb_MountList)`** : le **premier** nœud est retiré (non libéré) ; son `bn_DeviceNode` (APTR) est
-   passé à la partie BCPL de l'init (rangé provisoirement dans `RootNode+$1C`, qui reprend ensuite sa valeur
-   normale `rn_FileHandlerSegment`). Ce DeviceNode est le **périphérique de démarrage** (SYS:) et la chaîne
-   qui commence à lui est placée dans `DosInfo->di_DevInfo`, au **fond** de la liste (les nœuds créés ensuite
-   par dos — RAM, CON, RAW, SER, PAR, PRT, volumes, assigns — sont insérés devant). **[R+S]**
-4. Les autres nœuds **restent** dans `eb_MountList` (sonde : après un boot DF0: avec DH0 pri 0 ou 1, le
-   BootNode de DH0 y est toujours). **[S]**
-5. Si le périphérique de démarrage n'est pas le DF0: de strap (boot par BootPoint, ou carte prioritaire), dos
-   crée **son propre** DeviceNode DF0: (insertion devant) ; si un BootNode DF0: de strap était aussi présent
-   (carte prioritaire + disquette amorçable), **DF0 apparaît deux fois** dans la liste des devices (les deux
-   montés sur la même disquette) — artefact fidèle de la 1.3. **[S]** (vecteur P10/P5)
-
-### 4.2 AddDosNode après l'init de dos **[R ; S]**
-
-`AddDosNode(bootPri, flags, dn)` (expansion −150) tente d'abord `OpenLibrary("dos.library")` ; si dos existe :
-- si `dn_Task`, `dn_Handler` et `dn_SegList` sont tous nuls : `dn_SegList = rn_FileHandlerSegment` (le
-  handler OFS de la ROM) ;
-- sous Forbid, **insertion en tête** de `di_DevInfo` (`dn_Next = ancienne tête`) ;
-- si `flags & 1` : appel interne de dos (entrée privée, D1 = BPTR du DeviceNode) — non sondé ;
-- CloseLibrary(dos) ; comme CloseLibrary de dos rend 0, la fonction **enfile en plus** un BootNode dans
-  `eb_MountList` (`ln_Pri = bootPri`, `ln_Name` = nom C du device) et rend **1**. Ce BootNode supplémentaire est
-  inoffensif (dos ne relit `eb_MountList` qu'à son init). **[R+S]** (vecteur ADN)
-
-### 4.3 Avant l'init de dos
-
-`AddDosNode` ⇒ BootNode de 20 octets non effacé enfilé dans `eb_MountList` (`autoconfig-v34.md` §7) ; il sera
-chaîné et monté par §4.1, et peut même devenir SYS: s'il est en tête ; il n'est pas amorçable par romboot
-(§2.2), faute de `ln_Type = NT_BOOTNODE` et de ConfigDev.
+The **choice of the boot volume** is therefore not made by strap but by dos (§4.1): the **head of
+`eb_MountList`** wins. The bootblock of a bootable floppy is always executed first, but
+**a board whose BootNode has `ln_Pri ≥ 5` still becomes SYS:** (its node precedes that of DF0:, pri 5,
+enqueued later); with `ln_Pri < 5`, DF0: becomes SYS: and the board is only mounted. **[R+S]**
+(vectors P10, P5, P1, C1, C2).
 
 ---
 
-## 5. Séquence complète observée pour la carte UAE (`hard_drive_0 = <répertoire>`)
+## 4. dos.library 34.3 and `eb_MountList` **[R; S]**
 
-1. exec : balayage ROMTags (ROM + `$F00000–$F7FFFF`) — aucune ROMTag UAE trouvée —, init COLDSTART ;
-   **expansion** (pri 110) : ConfigChain ⇒ carte UAE en `$E90000` (`er_Type $D1`, manuf. 2011,
-   `InitDiagVec $2000`), copie de la DiagArea en slow RAM (`$C01AE0`), **DiagPoint** appelé (A0/A2/A3/A5/A6,
-   `autoconfig-v34.md` §6) ⇒ ROMTag `uaehf.device` écrite à copie+$10 (`$C01AF0`) ; D0 = 1. **[S+U]**
-2. … résidents ROM (graphics … intuition, alert.hook, mathffp) …
-3. **romboot init** (pri −40) : ROMTag trouvée dans la copie ⇒ `InitResident` ⇒ device `uaehf.device` dans
-   DeviceList, dont l'init (code UAE) fait `AddConfigDev` d'un ConfigDev en **`$F00000`** (64 Ko, `er_Type $01`,
-   produit 4, manuf. 2011, série 1), puis par unité MakeDosNode + BootNode (`ln_Type = 16`, `ln_Pri =
-   bootpri`, `ln_Name` = **ConfigDev de la carte `$E90000`**) Enqueue dans `eb_MountList`. **[U ; S]**
-4. **strap** (pri −60) : DF0: amorçable ⇒ bootblock + BootNode DF0: pri 5 + init dos ; sinon RomBoot ⇒
-   BootPoint de la carte UAE ⇒ `FindResident("dos.library")` + appel de son `rt_Init`. **[R+U ; S]**
-5. **dos init** : chaînage + RemHead de `eb_MountList` ⇒ SYS: = tête de liste, DH0: monté dans tous les cas.
+### 4.1 At dos init (called by the DF0: bootblock or by the board's BootPoint)
+
+In the assembler part of the init, before the initial CLI is started:
+1. `OpenLibrary("expansion.library", 0)` (never closed; no failure test).
+2. **Chaining**: walk of `eb_MountList`; for each pair of consecutive nodes (N, N+1) as long as
+   `N.bn_DeviceNode ≠ 0`, `N.bn_DeviceNode->dn_Next == 0` and `(N+1).bn_DeviceNode ≠ 0`:
+   `N.bn_DeviceNode->dn_Next = BPTR((N+1).bn_DeviceNode)`. The DeviceNodes of **all** nodes (whatever
+   `ln_Type`) thus form a chain in list order.
+3. **`RemHead(eb_MountList)`**: the **first** node is removed (not freed); its `bn_DeviceNode` (APTR) is
+   passed to the BCPL part of the init (stored temporarily in `RootNode+$1C`, which later takes back its
+   normal value `rn_FileHandlerSegment`). This DeviceNode is the **boot device** (SYS:) and the chain
+   starting at it is placed in `DosInfo->di_DevInfo`, at the **bottom** of the list (the nodes created later
+   by dos — RAM, CON, RAW, SER, PAR, PRT, volumes, assigns — are inserted in front). **[R+S]**
+4. The other nodes **remain** in `eb_MountList` (probe: after a DF0: boot with DH0 pri 0 or 1, the
+   DH0 BootNode is still there). **[S]**
+5. If the boot device is not strap's DF0: (boot via BootPoint, or priority board), dos
+   creates **its own** DF0: DeviceNode (inserted in front); if a strap DF0: BootNode was also present
+   (priority board + bootable floppy), **DF0 appears twice** in the device list (both
+   mounted on the same floppy) — a faithful artefact of 1.3. **[S]** (vector P10/P5)
+
+### 4.2 AddDosNode after dos init **[R; S]**
+
+`AddDosNode(bootPri, flags, dn)` (expansion −150) first tries `OpenLibrary("dos.library")`; if dos exists:
+- if `dn_Task`, `dn_Handler` and `dn_SegList` are all zero: `dn_SegList = rn_FileHandlerSegment` (the
+  ROM's OFS handler);
+- under Forbid, **insertion at the head** of `di_DevInfo` (`dn_Next = old head`);
+- if `flags & 1`: internal dos call (private entry, D1 = BPTR of the DeviceNode) — not probed;
+- CloseLibrary(dos); since dos's CloseLibrary returns 0, the function **additionally enqueues** a BootNode in
+  `eb_MountList` (`ln_Pri = bootPri`, `ln_Name` = C name of the device) and returns **1**. This extra BootNode is
+  harmless (dos only re-reads `eb_MountList` at its init). **[R+S]** (vector ADN)
+
+### 4.3 Before dos init
+
+`AddDosNode` ⇒ uncleared 20-byte BootNode enqueued in `eb_MountList` (`autoconfig-v34.md` §7); it will be
+chained and mounted by §4.1, and may even become SYS: if it is at the head; it is not bootable by romboot
+(§2.2), lacking `ln_Type = NT_BOOTNODE` and a ConfigDev.
+
+---
+
+## 5. Complete sequence observed for the UAE board (`hard_drive_0 = <directory>`)
+
+1. exec: ROMTag scan (ROM + `$F00000–$F7FFFF`) — no UAE ROMTag found —, COLDSTART init;
+   **expansion** (pri 110): ConfigChain ⇒ UAE board at `$E90000` (`er_Type $D1`, manuf. 2011,
+   `InitDiagVec $2000`), copy of the DiagArea in slow RAM (`$C01AE0`), **DiagPoint** called (A0/A2/A3/A5/A6,
+   `autoconfig-v34.md` §6) ⇒ ROMTag `uaehf.device` written at copy+$10 (`$C01AF0`); D0 = 1. **[S+U]**
+2. … ROM residents (graphics … intuition, alert.hook, mathffp) …
+3. **romboot init** (pri −40): ROMTag found in the copy ⇒ `InitResident` ⇒ device `uaehf.device` in
+   DeviceList, whose init (UAE code) does `AddConfigDev` of a ConfigDev at **`$F00000`** (64 KB, `er_Type $01`,
+   product 4, manuf. 2011, serial 1), then per unit MakeDosNode + BootNode (`ln_Type = 16`, `ln_Pri =
+   bootpri`, `ln_Name` = **ConfigDev of the `$E90000` board**) Enqueue into `eb_MountList`. **[U; S]**
+4. **strap** (pri −60): DF0: bootable ⇒ bootblock + DF0: BootNode pri 5 + dos init; otherwise RomBoot ⇒
+   BootPoint of the UAE board ⇒ `FindResident("dos.library")` + call of its `rt_Init`. **[R+U; S]**
+5. **dos init**: chaining + RemHead of `eb_MountList` ⇒ SYS: = head of list, DH0: mounted in all cases.
    **[R+S]**
 
-Minimum pour notre ROM : (a) romboot §2.1 (balayage de la copie de DiagArea + InitResident sous
-ConfigBinding) ; (b) strap §3 (dont le BootNode DF0: pri 5 après un bootblock réussi) + RomBoot §2.2 ;
-(c) dos §4.1 (chaînage de `eb_MountList`, tête = SYS:, DF0: créé par dos s'il n'est pas le périphérique de
-démarrage) ; (d) un InitResident d'AUTOINIT NT_DEVICE appelé depuis un résident doit marcher (AddDevice) ;
-(e) le balayage `$F00000` d'exec n'est pas nécessaire pour UAE mais fait partie du comportement 1.3.
+Minimum for our ROM: (a) romboot §2.1 (scan of the DiagArea copy + InitResident under
+ConfigBinding); (b) strap §3 (including the DF0: BootNode pri 5 after a successful bootblock) + RomBoot §2.2;
+(c) dos §4.1 (chaining of `eb_MountList`, head = SYS:, DF0: created by dos if it is not the boot
+device); (d) an InitResident of an AUTOINIT NT_DEVICE called from a resident must work (AddDevice);
+(e) exec's `$F00000` scan is not needed for UAE but is part of the 1.3 behaviour.
 
 ---
 
-## 6. Côté émulateur (FS-UAE 3.2.35) — repères **[U]**
+## 6. Emulator side (FS-UAE 3.2.35) — landmarks **[U]**
 
-- Journal `~/FS-UAE/Cache/Logs/fs-uae.log.txt` : `filesystem: diagentry <copie+$10> configdev <ConfigDev>`
-  au moment de la DiagPoint.
-- `filesys_init` (appelée par l'init de `uaehf.device`) essaie `OpenLibrary("expansion.library", 36)` puis 0 ;
-  crée le ConfigDev factice (sauf option « hide autoconfig ») ; `make_dev` par unité ; sur KS ≥ 34 crée en plus
-  une tâche de montage.
-- BootPoint UAE = `FindResident("dos.library")` puis appel de `rt_Init` (A6 = ExecBase requis).
-- La DiagPoint UAE installe aussi `uae.resource` et deux serveurs d'interruption (PORTS pri 20, VERTB pri −10) ;
-  mécanisme « uae_int » (PORTS) et blocage niveau 2 de notre ROM : voir `uae-int2-v34.md`.
+- Log `~/FS-UAE/Cache/Logs/fs-uae.log.txt`: `filesystem: diagentry <copy+$10> configdev <ConfigDev>`
+  at DiagPoint time.
+- `filesys_init` (called by the init of `uaehf.device`) tries `OpenLibrary("expansion.library", 36)` then 0;
+  creates the dummy ConfigDev (unless the "hide autoconfig" option is set); `make_dev` per unit; on KS ≥ 34 also creates
+  a mounting task.
+- UAE BootPoint = `FindResident("dos.library")` then call of `rt_Init` (A6 = ExecBase required).
+- The UAE DiagPoint also installs `uae.resource` and two interrupt servers (PORTS pri 20, VERTB pri −10);
+  "uae_int" mechanism (PORTS) and level-2 blocking of our ROM: see `uae-int2-v34.md`.
 
 ---
 
-## 7. Vecteurs de test
+## 7. Test vectors
 
-Sondes : `tests/bootlist.s`, `tests/cfgdev2.s`, `tests/adn.s` (+ commandes C:CD/Assign/Info), sur la vraie
-ROM 34.5, FS-UAE 3.2.35, `slow_memory = 512`, `fast_memory = 2048`, `hard_drive_0 = <rép. hôte>` (contenant
-`s/startup-sequence`, `c/`, `l/Port-Handler`, `devs/serial.device`, les sondes). Disquette = copie du WB
-1.3.3 (sondes dans sa startup-sequence) ou ADF vierge formaté sans bootblock. Formats :
-`BN nœud type<<24|pri<<16|bn_Flags ln_Name bn_DeviceNode` ; `DN adr type task lock handler startup seglist gv nom`.
+Probes: `tests/bootlist.s`, `tests/cfgdev2.s`, `tests/adn.s` (+ commands C:CD/Assign/Info), on the real
+ROM 34.5, FS-UAE 3.2.35, `slow_memory = 512`, `fast_memory = 2048`, `hard_drive_0 = <host dir>` (containing
+`s/startup-sequence`, `c/`, `l/Port-Handler`, `devs/serial.device`, the probes). Floppy = copy of WB
+1.3.3 (probes in its startup-sequence) or blank formatted ADF without bootblock. Formats:
+`BN node type<<24|pri<<16|bn_Flags ln_Name bn_DeviceNode`; `DN addr type task lock handler startup seglist gv name`.
 
 ```
-=== C1 : WB amorçable + DH0 (bootpri 0)
-FLOPPYBOOT                                   (startup de la disquette)
-RM … 24 lignes, toutes $FC…/$FF… (aucune en $F0…)
-DV 00C04A34 uaehf.device                     (device initialisé, absent de ResModules)
-BN 00C04DD8 10000000 00C01620 00C04E10       BootNode UAE : type 16, pri 0, ln_Name = ConfigDev $E90000 (C01620)
-DN … RAM / DF0 00C04D80 / DH0 00C04E10 en fin de liste
+=== C1 : bootable WB + DH0 (bootpri 0)
+FLOPPYBOOT                                   (startup of the floppy)
+RM … 24 lines, all $FC…/$FF… (none at $F0…)
+DV 00C04A34 uaehf.device                     (device initialised, absent from ResModules)
+BN 00C04DD8 10000000 00C01620 00C04E10       UAE BootNode: type 16, pri 0, ln_Name = ConfigDev $E90000 (C01620)
+DN … RAM / DF0 00C04D80 / DH0 00C04E10 at the end of the list
 DN 00C04E10 00000000 00C0757C 00000000 003C3F94 0030117A 003C0002 FFFFFFFF DH0
 CD 00E90000 00010000 02D15240 000007DB 00E90001 00002000 00C01AE0 …
-CD 00F00000 00010000 00010400 000007DB 00000000 …               ConfigDev ajouté par uaehf
+CD 00F00000 00010000 00010400 000007DB 00000000 …               ConfigDev added by uaehf
 Assign : SYS = Workbench1.3:      Info : DF0: Workbench1.3, DH0: hddir
-AD 00C0A070 00000001                         AddDosNode(0,0,"ZZ0") après dos : rend 1
+AD 00C0A070 00000001                         AddDosNode(0,0,"ZZ0") after dos: returns 1
 BN 00C04DD8 10000000 00C01620 00C04E10
-BN 00C0A038 00000000 00C014D1 00C0A070       + BootNode enfilé (type 0, nom "ZZ0")
-DN 00C0A070 … 003FE9E2 … ZZ0                 en tête de DevInfo, dn_SegList = rn_FileHandlerSegment
-=== C2 : ADF vierge non amorçable + DH0 (bootpri 0)
-HDBOOT                                        (startup de DH0 ⇒ BootPoint appelé)
-(aucune ligne BN : eb_MountList vide)
-DN 00C0097C … DF0                            DF0 créé par dos, en tête
-DN 00C04E10 … DH0                            au fond de la liste
+BN 00C0A038 00000000 00C014D1 00C0A070       + BootNode enqueued (type 0, name "ZZ0")
+DN 00C0A070 … 003FE9E2 … ZZ0                 at head of DevInfo, dn_SegList = rn_FileHandlerSegment
+=== C2 : blank non-bootable ADF + DH0 (bootpri 0)
+HDBOOT                                        (startup of DH0 ⇒ BootPoint called)
+(no BN line: eb_MountList empty)
+DN 00C0097C … DF0                            DF0 created by dos, at head
+DN 00C04E10 … DH0                            at the bottom of the list
 Assign : SYS = hddir:
-=== P1 : WB amorçable + DH0 bootpri 1
-FLOPPYBOOT ; BN 00C04DD8 10010000 00C01620 00C04E10 (reste) ; SYS = Workbench1.3:
-=== P5 et P10 : WB amorçable + DH0 bootpri 5 / 10 (résultats identiques)
-HDBOOT                                        (bootblock DF0 exécuté, mais SYS = DH0)
-BN 00C04D48 00050000 00C04DB1 00C04D80       BootNode DF0: de strap restant : type 0, pri 5, "DF0"
-DN 00C08F5C … DF0                            DF0 recréé par dos
+=== P1 : bootable WB + DH0 bootpri 1
+FLOPPYBOOT ; BN 00C04DD8 10010000 00C01620 00C04E10 (remains) ; SYS = Workbench1.3:
+=== P5 and P10 : bootable WB + DH0 bootpri 5 / 10 (identical results)
+HDBOOT                                        (DF0 bootblock executed, but SYS = DH0)
+BN 00C04D48 00050000 00C04DB1 00C04D80       remaining strap DF0: BootNode: type 0, pri 5, "DF0"
+DN 00C08F5C … DF0                            DF0 recreated by dos
 DN 00C04E10 … DH0
-DN 00C04D80 … DF0                            DF0 de strap chaîné derrière DH0 ⇒ DF0 listé 2 fois
+DN 00C04D80 … DF0                            strap's DF0 chained behind DH0 ⇒ DF0 listed 2 times
 Assign : SYS = hddir:
 ```
 
-Journal FS-UAE (C1) : `filesystem: diagentry 00c01af0 configdev 00c01620` puis `Mounting uaehf.device 0 (0)`.
-Non-régression proposée pour notre ROM : C2 (boot DH0 par BootPoint, SYS = DH0) et C1 (boot disquette, DH0 monté,
-ConfigDev `$F00000` présent).
+FS-UAE log (C1): `filesystem: diagentry 00c01af0 configdev 00c01620` then `Mounting uaehf.device 0 (0)`.
+Proposed non-regression for our ROM: C2 (DH0 boot via BootPoint, SYS = DH0) and C1 (floppy boot, DH0 mounted,
+ConfigDev `$F00000` present).
 
 ---
 
-## 8. Non sondé / incertain
+## 8. Not probed / uncertain
 
-- **Mécanisme exact du choix SYS: dans la partie BCPL de dos** : déduit (tête de `eb_MountList` retirée par
-  RemHead et passée au BCPL) et confirmé par les cinq vecteurs, mais le code BCPL n'a pas été suivi.
-- Cas « carte prioritaire + disquette amorçable » : le bootblock de la disquette s'exécute (strap) avant que dos
-  ne démarre sur DH0 ; un bootblock non standard (qui ne rend pas l'init de dos) court-circuiterait tout — non sondé.
-- `AddDosNode` avec `flags & 1` (appel interne de dos) : ROM seulement, non sondé.
-- BootPoint d'une DiagArea avec `da_BootPoint = 0` : ROM seulement (saut au début de la copie).
-- Une carte à DiagArea **BYTEWIDE/NIBBLEWIDE** avec ROMTag : romboot balaie la copie RAM, donc indifférent ;
-  non sondé.
-- Balayage `$F00000–$F7FFFF` par exec et saut `$1111` en `$F00000` : ROM seulement (aucune ROM de cartouche
-  disponible dans l'émulateur).
-- Le ln_Type « non initialisé » des BootNodes d'AddDosNode valait 0 dans les sondes (AllocMem sans CLEAR) ; une
-  valeur résiduelle 16 rendrait le nœud éligible à RomBoot avec un ln_Name qui n'est pas un ConfigDev — non
-  reproduit.
+- **Exact mechanism of the SYS: choice in the BCPL part of dos**: deduced (head of `eb_MountList` removed by
+  RemHead and passed to the BCPL) and confirmed by the five vectors, but the BCPL code was not followed.
+- "Priority board + bootable floppy" case: the floppy's bootblock is executed (strap) before dos
+  starts on DH0; a non-standard bootblock (that does not return the dos init) would short-circuit everything — not probed.
+- `AddDosNode` with `flags & 1` (internal dos call): ROM only, not probed.
+- BootPoint of a DiagArea with `da_BootPoint = 0`: ROM only (jump to the start of the copy).
+- A **BYTEWIDE/NIBBLEWIDE** DiagArea board with a ROMTag: romboot scans the RAM copy, so it makes no difference;
+  not probed.
+- `$F00000–$F7FFFF` scan by exec and `$1111` jump at `$F00000`: ROM only (no cartridge ROM
+  available in the emulator).
+- The "uninitialised" ln_Type of AddDosNode's BootNodes was 0 in the probes (AllocMem without CLEAR); a
+  residual value of 16 would make the node eligible for RomBoot with an ln_Name that is not a ConfigDev — not
+  reproduced.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions transcrite ni paraphrasée ; aucune adresse de routine ROM (seuls des
-  offsets de structures publiques/privées, des constantes d'ABI et des plages matérielles).
-- [x] Les sondes citées sont du code auteur (`tests/`, en-tête « ASSET DE TEST, PAS du code ROM »).
+- [x] No instruction sequence transcribed or paraphrased; no ROM routine address (only
+  offsets of public/private structures, ABI constants and hardware ranges).
+- [x] The probes cited are author code (`tests/`, header "ASSET DE TEST, PAS du code ROM").

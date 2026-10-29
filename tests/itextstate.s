@@ -1,8 +1,8 @@
-; tests/itextstate.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : état du RastPort après PrintIText
-; et DrawBorder. Règle stylo A = 5, stylo B = 6, mode JAM2 sur un RastPort privé (BitMap chip d'un plan), appelle
-; PrintIText (IntuiText stylos 2/1, JAM1) puis DrawBorder (Border stylo 3, COMPLEMENT) et écrit sur la sortie du
-; CLI « IT avant après » et « BD avant après », chaque valeur = FgPen<<16 | BgPen<<8 | DrawMode. Sonde boîte noire :
-; une ROM qui restaure les stylos rend la même valeur avant et après. Clean-room : structures publiques, code auteur.
+; tests/itextstate.s - HUNK test executable (TEST ASSET, NOT ROM code): RastPort state after PrintIText
+; and DrawBorder. Sets pen A = 5, pen B = 6, JAM2 mode on a private RastPort (one-plane chip BitMap), calls
+; PrintIText (IntuiText pens 2/1, JAM1) then DrawBorder (Border pen 3, COMPLEMENT) and writes to the CLI
+; output "IT before after" and "BD before after", each value = FgPen<<16 | BgPen<<8 | DrawMode. Black-box probe:
+; a ROM that restores the pens gives the same value before and after. Clean-room: public structures, author's code.
 
 RP_FG    EQU 25
 RP_BG    EQU 26
@@ -29,7 +29,7 @@ _start:
                 lea     dosbase(pc),a0
                 move.l  d0,(a0)
                 beq     .ret
-                move.l  #800,d0              ; plan 320 x 20
+                move.l  #800,d0              ; plane 320 x 20
                 move.l  #$10002,d1           ; MEMF_CHIP | MEMF_CLEAR
                 jsr     -198(a6)             ; AllocMem
                 tst.l   d0
@@ -40,7 +40,7 @@ _start:
                 moveq   #1,d0
                 move.l  #320,d1
                 moveq   #20,d2
-                jsr     -390(a6)             ; InitBitMap(bm a0, profondeur, largeur, hauteur)
+                jsr     -390(a6)             ; InitBitMap(bm a0, depth, width, height)
                 lea     rport(pc),a1
                 jsr     -198(a6)             ; InitRastPort
                 lea     rport(pc),a1
@@ -101,7 +101,7 @@ getstate:                                    ; -> d0 = Fg<<16 | Bg<<8 | DrawMode
                 lsl.w   #8,d0
                 move.b  RP_DRMD(a0),d0
                 rts
-report:                                      ; a0 = étiquette, d4 = avant, d5 = après : une ligne sur Output()
+report:                                      ; a0 = label, d4 = before, d5 = after: one line on Output()
                 lea     line(pc),a1
 .cp:
                 move.b  (a0)+,(a1)+
@@ -114,17 +114,17 @@ report:                                      ; a0 = étiquette, d4 = avant, d5 =
                 move.b  #10,(a1)+
                 lea     line(pc),a0
                 move.l  a1,d3
-                sub.l   a0,d3                ; longueur
+                sub.l   a0,d3                ; length
                 move.l  a6,-(sp)
                 move.l  dosbase(pc),a6
                 jsr     -60(a6)              ; Output
                 move.l  d0,d1
                 lea     line(pc),a0
                 move.l  a0,d2
-                jsr     -48(a6)              ; Write(fh d1, tampon d2, longueur d3)
+                jsr     -48(a6)              ; Write(fh d1, buffer d2, length d3)
                 move.l  (sp)+,a6
                 rts
-; puthex(d0) : 8 chiffres hexadécimaux puis un espace, en (a1)+.
+; puthex(d0): 8 hexadecimal digits then a space, to (a1)+.
 puthex:
                 moveq   #7,d3
 .h:

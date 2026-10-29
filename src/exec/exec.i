@@ -1,8 +1,8 @@
-; src/exec/exec.i — constantes partagées exec.library (M2.3).
-; Inclus par boot.s / lists.s / memory.s / library.s. Uniquement des EQU
-; (faits d'ABI publics + carte mémoire du projet) : aucune logique, aucune donnée.
-; Piste IMPLÉMENTATION (« clean ») : valeurs issues de docs/analysis/exec-spec.md,
-; docs/exec-lvo-table.md et de l'ABI publique. AUCUNE lecture de la ROM.
+; src/exec/exec.i — shared exec.library constants (M2.3).
+; Included by boot.s / lists.s / memory.s / library.s. EQUs only
+; (public ABI facts + the project's memory map): no logic, no data.
+; IMPLEMENTATION track ("clean"): values taken from docs/analysis/exec-spec.md,
+; docs/exec-lvo-table.md and the public ABI. NO reading of the ROM.
 
                 ifnd    EXEC_I
 EXEC_I          equ     1
@@ -12,42 +12,42 @@ CUSTOM   EQU $DFF000
 DMACON   EQU CUSTOM+$096
 INTENA   EQU CUSTOM+$09A
 INTREQ   EQU CUSTOM+$09C
-INTENAR  EQU CUSTOM+$01C      ; M7g : lecture des interruptions activées
-INTREQR  EQU CUSTOM+$01E      ; M7g : lecture des interruptions en attente
+INTENAR  EQU CUSTOM+$01C      ; M7g: read of the enabled interrupts
+INTREQR  EQU CUSTOM+$01E      ; M7g: read of the pending interrupts
 SERDAT   EQU CUSTOM+$030
 SERPER   EQU CUSTOM+$032
 SERDATR  EQU CUSTOM+$018
 COLOR00  EQU CUSTOM+$180
-POTINP   EQU CUSTOM+$016      ; POTGOR : bit 10 (DATLY) = bouton droit du port 0, actif-bas
-JOY0DAT  EQU CUSTOM+$00A      ; compteurs quadrature souris port 0 (octet bas = X, octet haut = Y ; 8 bits wrap)
+POTINP   EQU CUSTOM+$016      ; POTGOR: bit 10 (DATLY) = right button of port 0, active-low
+JOY0DAT  EQU CUSTOM+$00A      ; port 0 mouse quadrature counters (low byte = X, high byte = Y; 8-bit wrap)
 
 ; --- CIA-A (overlay / LED) ---
 CIAA_PRA  EQU $BFE001
 CIAA_DDRA EQU $BFE201
 
-; --- Carte mémoire cible A500 512K ---
+; --- A500 512K target memory map ---
 MAXCHIP      EQU $00080000
-MH_CHIP      EQU $00000400     ; MemHeader chip
-LOWVARS_LO   EQU $00000500     ; variables globales en RAM basse [LOWVARS_LO, LOWVARS_HI), mises à zéro au coldstart
+MH_CHIP      EQU $00000400     ; chip MemHeader
+LOWVARS_LO   EQU $00000500     ; global variables in low RAM [LOWVARS_LO, LOWVARS_HI), zeroed at coldstart
 LOWVARS_HI   EQU $00000800
-TST_LIST     EQU $00000420     ; scratch auto-test (listes)
+TST_LIST     EQU $00000420     ; self-test scratch (lists)
 TST_N1       EQU $00000440
 TST_N2       EQU $00000460
-; Zone système en CHIP BASSE, juste au-dessus des variables de RAM basse : le haut de la chip reste libre jusqu'à
-; $80000 comme sur la vraie 1.3, car des programmes y écrivent en absolu (intros : pile à $7FFFE, routines à $7F000,
-; plans à $70000+). ExecBase ne doit pas s'y trouver.
-EXEC_BLOCK   EQU $00001000     ; bas de la jump table d'exec
-EXEC_NEGSIZE EQU $276          ; 105 vecteurs V34 (cf docs/exec-lvo-table.md)
-EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase (table V34 complète en dessous)
+; System area in LOW CHIP, just above the low-RAM variables: the top of chip stays free up to
+; $80000 as on the real 1.3, because programs write there at absolute addresses (intros: stack at $7FFFE, routines
+; at $7F000, planes at $70000+). ExecBase must not be located there.
+EXEC_BLOCK   EQU $00001000     ; bottom of exec's jump table
+EXEC_NEGSIZE EQU $276          ; 105 V34 vectors (cf docs/exec-lvo-table.md)
+EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase (complete V34 table below)
 EXEC_POSSIZE EQU $230
-FTEST_LO     EQU $00001500     ; région DISJOINTE du tas pour le test multi-header (selftest M2.4a) ; libre ensuite,
-FTEST_HI     EQU $00002500     ; elle sert de marge sous la pile superviseur (un débordement n'atteint pas ExecBase)
-SSP_LOWER    EQU $00002500     ; pile superviseur partagée [SSP_LOWER, STACKTOP)
+FTEST_LO     EQU $00001500     ; region DISJOINT from the heap for the multi-header test (M2.4a selftest); then free,
+FTEST_HI     EQU $00002500     ; it serves as a margin below the supervisor stack (an overflow does not reach ExecBase)
+SSP_LOWER    EQU $00002500     ; shared supervisor stack [SSP_LOWER, STACKTOP)
 STACKTOP     EQU $00003500
-HEAP_LOWER   EQU $00003500     ; tas géré (chip)
+HEAP_LOWER   EQU $00003500     ; managed heap (chip)
 HEAP_UPPER   EQU MAXCHIP
 
-; --- Phases (RGB 12 bits) ---
+; --- Phases (12-bit RGB) ---
 C_RED    EQU $0F00
 C_BLUE   EQU $000F
 C_CYAN   EQU $00FF
@@ -57,36 +57,36 @@ C_FAIL   EQU $0F0F
 SERPER_9600_PAL EQU 368
 ROMBASE  EQU $FC0000
 
-; --- Interruptions (hardware/intbits.i + autovecteurs 68000) ---
-INTF_SETCLR  EQU $8000        ; INTENA/INTREQ : 1 = pose les bits, 0 = les efface
-INTF_INTEN   EQU $4000        ; maître (INTEN)
-INTF_COPER   EQU $0010        ; M7g : Copper (niveau 3, bit 4)
-INTF_VERTB   EQU $0020        ; VBlank (niveau 3)
-INTF_BLIT    EQU $0040        ; M7g : Blitter (niveau 3, bit 6)
+; --- Interrupts (hardware/intbits.i + 68000 autovectors) ---
+INTF_SETCLR  EQU $8000        ; INTENA/INTREQ: 1 = sets the bits, 0 = clears them
+INTF_INTEN   EQU $4000        ; master (INTEN)
+INTF_COPER   EQU $0010        ; M7g: Copper (level 3, bit 4)
+INTF_VERTB   EQU $0020        ; VBlank (level 3)
+INTF_BLIT    EQU $0040        ; M7g: Blitter (level 3, bit 6)
 INTF_PORTS   EQU $0008        ; INT2 / CIA-A
 INTF_EXTER   EQU $2000        ; INT6 / CIA-B
-INTF_RBF     EQU $0800        ; E1 : bit 11 = RBF (serial receive buffer full) ; acquitter -> efface SERDATR bit 14
-AUTOVEC_L1   EQU $64          ; autovecteur niveau 1 (TBE / DSKBLK / SOFTINT)
-AUTOVEC_L4   EQU $70          ; autovecteur niveau 4 (AUD0..AUD3)
-AUTOVEC_L5   EQU $74          ; autovecteur niveau 5 (RBF / DSKSYNC)
-INTM_L1      EQU $0007        ; sources du niveau 1
-INTM_L4      EQU $0780        ; sources du niveau 4
-INTM_L5      EQU $1800        ; sources du niveau 5
-AUTOVEC_L2   EQU $68          ; autovecteur 68000 niveau 2 (INT2 / CIA-A / PORTS)
-AUTOVEC_L3   EQU $6C          ; vecteur d'exception 68000, interruption niveau 3
-AUTOVEC_L6   EQU $78          ; autovecteur 68000 niveau 6 (INT6 / CIA-B / EXTER)
-ROM_BASE     EQU $00FC0000     ; début de la ROM (256 Ko)
-PRIV_VEC     EQU $20          ; violation de privilège : entrée d'exec en superviseur (EXEC_SVC)
-SVC_MAGIC    EQU $4AFC        ; mot qui suit le « ori.w #0,sr » d'un site EXEC_SVC (ILLEGAL, jamais exécuté)
+INTF_RBF     EQU $0800        ; E1: bit 11 = RBF (serial receive buffer full); acknowledging -> clears SERDATR bit 14
+AUTOVEC_L1   EQU $64          ; level 1 autovector (TBE / DSKBLK / SOFTINT)
+AUTOVEC_L4   EQU $70          ; level 4 autovector (AUD0..AUD3)
+AUTOVEC_L5   EQU $74          ; level 5 autovector (RBF / DSKSYNC)
+INTM_L1      EQU $0007        ; level 1 sources
+INTM_L4      EQU $0780        ; level 4 sources
+INTM_L5      EQU $1800        ; level 5 sources
+AUTOVEC_L2   EQU $68          ; 68000 level 2 autovector (INT2 / CIA-A / PORTS)
+AUTOVEC_L3   EQU $6C          ; 68000 exception vector, level 3 interrupt
+AUTOVEC_L6   EQU $78          ; 68000 level 6 autovector (INT6 / CIA-B / EXTER)
+ROM_BASE     EQU $00FC0000     ; start of the ROM (256 KB)
+PRIV_VEC     EQU $20          ; privilege violation: exec entry into supervisor (EXEC_SVC)
+SVC_MAGIC    EQU $4AFC        ; word following the "ori.w #0,sr" of an EXEC_SVC site (ILLEGAL, never executed)
 
-; EXEC_SVC service : passe en superviseur et saute à « service » avec un cadre d'exception {SR, PC = retour}, comme
-; un TRAP. Comme la vraie exec, on n'utilise aucun vecteur TRAP (les programmes y installent souvent leur code pour
-; entrer en superviseur) : en mode user, l'instruction privilégiée déclenche le vecteur $20, dont le gestionnaire
-; reconnaît le site ; en superviseur, le cadre est construit ici.
+; EXEC_SVC service: switches to supervisor and jumps to "service" with an exception frame {SR, PC = return}, like
+; a TRAP. Like the real exec, we use no TRAP vector (programs often install their code there to
+; enter supervisor): in user mode, the privileged instruction triggers vector $20, whose handler
+; recognises the site; in supervisor, the frame is built here.
 EXEC_SVC     macro
         move.w  sr,-(sp)
         btst    #5,(sp)
-        addq.l  #2,sp                ; (addq vers An : drapeaux intacts)
+        addq.l  #2,sp                ; (addq to An: flags intact)
         bne.s   .svs\@
         ori.w   #0,sr
         dc.w    SVC_MAGIC
@@ -98,381 +98,387 @@ EXEC_SVC     macro
         jmp     \1
 .svr\@:
              endm
-LVO_SUPERVISOR EQU -30        ; exec Supervisor() : appelle une routine (a5) en mode superviseur (requis par flt-intro)
-; M7c — frame de contexte (miroir movem d0-d7/a0-a6 + {SR,PC} du CPU), posée sur la pile de la tâche.
-; 15 longs GPR (60 o) + SR (mot, offset 60) + PC (long, offset 62) = 66 o (pair -> copie mot par mot).
-FRAME_SR     EQU 60           ; offset du SR sauvegardé dans la frame (test du bit S = frontière user)
-FRAME_SIZE   EQU 66           ; taille totale de la frame relocalisée (GPR+SR+PC)
-INTB_PORTS   EQU 3            ; numéro d'interruption Paula PORTS (INT2) — cf. hardware/intbits.i
-INTB_COPER   EQU 4            ; M7g : numéro COPER (INT3) — INTF_COPER=$0010=bit4
-INTB_VERTB   EQU 5            ; M7f : numéro VERTB (INT3) — INTF_VERTB=$0020=bit5
-INTB_BLIT    EQU 6            ; M7g : numéro BLIT (INT3) — INTF_BLIT=$0040=bit6
-INTB_EXTER   EQU 13           ; numéro d'interruption Paula EXTER (INT6)
-INTB_SOFTINT EQU 2            ; interruption logicielle (niveau 1) — Cause
+LVO_SUPERVISOR EQU -30        ; exec Supervisor(): calls a routine (a5) in supervisor mode (required by flt-intro)
+; M7c — context frame (mirror of movem d0-d7/a0-a6 + CPU {SR,PC}), placed on the task's stack.
+; 15 GPR longs (60 bytes) + SR (word, offset 60) + PC (long, offset 62) = 66 bytes (even -> word-by-word copy).
+FRAME_SR     EQU 60           ; offset of the saved SR in the frame (S bit test = user boundary)
+FRAME_SIZE   EQU 66           ; total size of the relocated frame (GPR+SR+PC)
+INTB_PORTS   EQU 3            ; Paula PORTS interrupt number (INT2) — cf. hardware/intbits.i
+INTB_COPER   EQU 4            ; M7g: COPER number (INT3) — INTF_COPER=$0010=bit4
+INTB_VERTB   EQU 5            ; M7f: VERTB number (INT3) — INTF_VERTB=$0020=bit5
+INTB_BLIT    EQU 6            ; M7g: BLIT number (INT3) — INTF_BLIT=$0040=bit6
+INTB_EXTER   EQU 13           ; Paula EXTER interrupt number (INT6)
+INTB_SOFTINT EQU 2            ; software interrupt (level 1) — Cause
 INTF_SOFTINT EQU $0004
-NT_SOFTINT   EQU 11            ; exec/nodes.i : Interrupt en attente dans la file logicielle
-; struct Interrupt (exec/interrupts.i) — serveur / vecteur ICR
-IS_DATA      EQU 14           ; APTR passé en a1 au serveur
-IS_CODE      EQU 18           ; APTR code du serveur (appelé a1=data, a5=code, a6=SysBase, a0=$DFF000)
+NT_SOFTINT   EQU 11            ; exec/nodes.i: Interrupt pending in the software queue
+; struct Interrupt (exec/interrupts.i) — server / ICR vector
+IS_DATA      EQU 14           ; APTR passed in a1 to the server
+IS_CODE      EQU 18           ; APTR server code (called a1=data, a5=code, a6=SysBase, a0=$DFF000)
 IS_SIZE      EQU 22           ; sizeof(struct Interrupt) = LN(14) + IS_DATA(4) + IS_CODE(4)
-IS_STRIDE    EQU 24           ; IS_SIZE arrondi à un multiple de 4 (nœuds alignés dans un tableau)
-; M7b — dispatcher par numéro : ExecBase.IntVects[16] public (exec/execbase.i, offset $54), entrées struct
-; IntVector {iv_Data, iv_Code, iv_Node}. Chaîne (AddIntServer) : iv_Data = &svlist[n], iv_Code =
-; intr_chain_walker ; vecteur exclusif (SetIntVector) : IS_DATA/IS_CODE copiés, iv_Node = l'Interrupt. Des
-; programmes lisent iv_Data directement (ex. IntVects[INTB_BLIT].iv_Data = GfxBase). Les svlist[n] (struct List de
-; serveurs, triés par LN_PRI) sont dans un bloc AllocMem'd (EB_INTSVL).
+IS_STRIDE    EQU 24           ; IS_SIZE rounded to a multiple of 4 (aligned nodes in an array)
+; M7b — by-number dispatcher: public ExecBase.IntVects[16] (exec/execbase.i, offset $54), entries struct
+; IntVector {iv_Data, iv_Code, iv_Node}. Chain (AddIntServer): iv_Data = &svlist[n], iv_Code =
+; intr_chain_walker; exclusive vector (SetIntVector): IS_DATA/IS_CODE copied, iv_Node = the Interrupt. Some
+; programs read iv_Data directly (e.g. IntVects[INTB_BLIT].iv_Data = GfxBase). The svlist[n] (struct List of
+; servers, sorted by LN_PRI) are in an AllocMem'd block (EB_INTSVL).
 IV_DATA      EQU 0
 IV_CODE      EQU 4
 IV_NODE      EQU 8
 IV_SIZE      EQU 12
-INTVECTS_NVEC EQU 16          ; numéros 0..15 (14 = INTEN inusité, 15 = NMI)
-IV_LIST_SIZE EQU 14           ; sizeof(struct List) d'une chaîne de serveurs
-INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 224 (PAS d'espace : vasm tronque l'opérande à l'espace)
-; CIA timers A et B — registres (offsets depuis la base CIA = registre<<8)
+INTVECTS_NVEC EQU 16          ; numbers 0..15 (14 = INTEN unused, 15 = NMI)
+IV_LIST_SIZE EQU 14           ; sizeof(struct List) of a server chain
+INTSVL_TOTAL EQU (INTVECTS_NVEC*IV_LIST_SIZE) ; 224 (NO space: vasm truncates the operand at the space)
+; CIA timers A and B — registers (offsets from the CIA base = register<<8)
 CIA_TALO     EQU $400         ; timer A low
-CIA_TAHI     EQU $500         ; timer A high (l'écriture charge le latch)
+CIA_TAHI     EQU $500         ; timer A high (writing loads the latch)
 CIA_TBLO     EQU $600         ; timer B low
-CIA_TBHI     EQU $700         ; timer B high (l'écriture charge le latch)
+CIA_TBHI     EQU $700         ; timer B high (writing loads the latch)
 CIA_CRA      EQU $E00         ; control register A (b0=START, b3=RUNMODE 1-shot, b4=LOAD)
-CIA_CRB      EQU $F00         ; control register B (mêmes bits ; b7 = ALARM, b5-6 = INMODE)
-VBL_COUNT    EQU $00000500    ; compteur VBlank en RAM basse réservée (sous le tas)
-SCHED_ON     EQU $00000504    ; drapeau : 1 = ordonnanceur armé (le handler switch)
-WP_HTASK     EQU $00000508    ; démo M3e/f : TCB de task_H (pour que task_L la signale)
-WP_CONS      EQU $0000050C    ; démo M3e/f : réveils consommés par task_H (via yield-sur-Permit)
-WP_PROD      EQU $00000510    ; démo M3e/f : itérations de task_L (producteur, ne bloque jamais)
-WP_SPIN      EQU $00000514    ; démo M3f : itérations de task_S (dispatchée SEULEMENT par préemption)
-WP_STAT      EQU $00000518    ; démo M3f : b0 = marqueur « M3F LIVE » déjà émis
-RES_LASTPRI  EQU $0000051C    ; démo M4 : dernière RT_PRI initée (vérif ordre décroissant)
-RES_COUNT    EQU $00000520    ; démo M4 : nombre de résidents démo initialisés
-; $00000524 : ex-VBL_SVC (hook VBlank M6a) — RETIRÉ en M7f (timer_vblank est un serveur de chaîne VERTB)
-VBL_SVCDATA  EQU $00000528    ; M6a : base du timer.device (passée en a1 au serveur ; lue par timer_micro_service)
-CIAA_PTR     EQU $0000052C    ; M6b : base ciaa.resource (0 tant que non créé)
-CIAB_PTR     EQU $00000530    ; M6b : base ciab.resource
-CIA_FIRED    EQU $00000534    ; M6b : compteur — un vecteur ICR a été servi (preuve)
-WP_TCONS     EQU $00000538    ; M7a démo : réveils de task_timer (bloque sur l'unité MICROHZ)
-VBL_INSURG   EQU $0000053C    ; M7a : UBYTE — chirurgie de listes du scheduler EN COURS (vbl_handler).
-                              ; Posé AVANT l'Enqueue/RemHead TaskReady, effacé APRÈS, à IPL7 (donc
-                              ; invisible à INT6). Une source de niveau > 3 (INT6/CIA-B) qui l'observe
-                              ; posée a préempté la chirurgie = hazard de ré-entrance -> incrémente VBL_CLASH.
-VBL_CLASH    EQU $00000540    ; M7a : compteur de clashs observés (0 si le gate IPL7 tient ; > 0 en RED)
-INT2_SRV2    EQU $00000544    ; M7b : compteur du 2e serveur de la chaîne PORTS (prouve AddIntServer)
-INT2_ORDER_SNAP EQU $00000548 ; M7b : CIA_FIRED au 1er appel du 2e serveur (> 0 => cia pri 10 avant srv2 pri 0)
-WP_HEART     EQU $0000054C    ; M7c : battement de la tâche user-mode (first-light : survit aux préemptions)
-WP_UMODE     EQU $00000550    ; M7c : UBYTE — une tâche s'est observée en USER mode (SR bit S == 0)
-M7C_STAT     EQU $00000554    ; M7c : UBYTE — b0 = marqueur « M7C USERMODE OK » déjà émis
-WP_UPREEMPT  EQU $00000558    ; M7c : préemptions observées (VBL_COUNT au démarrage de la preuve)
-; M7d — preuve de concurrence ports interrupt-safe : port partagé martelé par une TÂCHE et une INTERRUPTION
-WP_SPORT     EQU $0000055C    ; APTR : port de stress partagé (0 tant que non créé)
-WP_PORTT     EQU $00000560    ; itérations GetMsg+PutMsg de task_port (consommateur TÂCHE)
-WP_PORTI     EQU $00000564    ; itérations GetMsg+PutMsg du service MICROHZ (producteur INTERRUPTION)
-WP_PORTFAIL  EQU $00000568    ; != 0 : corruption détectée côté interruption (MAGIC/IN_HAND KO)
-M7D_STAT     EQU $0000056C    ; UBYTE : b0 = « M7D PORTS OK » déjà émis
-STRESS_TICK  EQU $0000056D    ; UBYTE : compteur pour rate-limiter le stress côté INT6 (1 sur 4)
-; M7D_STRESS_MAX : 0 = démo de COEXISTENCE (task_port pri 0 + stress rate-limité 1/4, coexiste avec
-; M3f/M7a/M7c). 1 = CONTENTION MAXIMALE (task_port pri haute + stress à chaque INT6) : config dédiée au
-; RED A/B des ports interrupt-safe (Forbid corrompt la liste du port / Disable non). Défaut 0 (arbre).
+CIA_CRB      EQU $F00         ; control register B (same bits; b7 = ALARM, b5-6 = INMODE)
+VBL_COUNT    EQU $00000500    ; VBlank counter in reserved low RAM (below the heap)
+SCHED_ON     EQU $00000504    ; flag: 1 = scheduler armed (the handler switches)
+WP_HTASK     EQU $00000508    ; M3e/f demo: TCB of task_H (so that task_L signals it)
+WP_CONS      EQU $0000050C    ; M3e/f demo: wake-ups consumed by task_H (via yield-on-Permit)
+WP_PROD      EQU $00000510    ; M3e/f demo: iterations of task_L (producer, never blocks)
+WP_SPIN      EQU $00000514    ; M3f demo: iterations of task_S (dispatched ONLY by preemption)
+WP_STAT      EQU $00000518    ; M3f demo: b0 = "M3F LIVE" marker already emitted
+RES_LASTPRI  EQU $0000051C    ; M4 demo: last RT_PRI initialised (descending order check)
+RES_COUNT    EQU $00000520    ; M4 demo: number of demo residents initialised
+; $00000524: ex-VBL_SVC (M6a VBlank hook) — REMOVED in M7f (timer_vblank is a VERTB chain server)
+VBL_SVCDATA  EQU $00000528    ; M6a: timer.device base (passed in a1 to the server; read by timer_micro_service)
+CIAA_PTR     EQU $0000052C    ; M6b: ciaa.resource base (0 until created)
+CIAB_PTR     EQU $00000530    ; M6b: ciab.resource base
+CIA_FIRED    EQU $00000534    ; M6b: counter — an ICR vector was served (proof)
+WP_TCONS     EQU $00000538    ; M7a demo: wake-ups of task_timer (blocks on the MICROHZ unit)
+VBL_INSURG   EQU $0000053C    ; M7a: UBYTE — scheduler list surgery IN PROGRESS (vbl_handler).
+                              ; Set BEFORE the TaskReady Enqueue/RemHead, cleared AFTER, at IPL7 (hence
+                              ; invisible to INT6). A source of level > 3 (INT6/CIA-B) that observes it
+                              ; set has preempted the surgery = re-entry hazard -> increments VBL_CLASH.
+VBL_CLASH    EQU $00000540    ; M7a: counter of observed clashes (0 if the IPL7 gate holds; > 0 in RED)
+INT2_SRV2    EQU $00000544    ; M7b: counter of the 2nd server of the PORTS chain (proves AddIntServer)
+INT2_ORDER_SNAP EQU $00000548 ; M7b: CIA_FIRED at the 1st call of the 2nd server (> 0 => cia pri 10 before srv2 pri 0)
+WP_HEART     EQU $0000054C    ; M7c: heartbeat of the user-mode task (first-light: survives preemptions)
+WP_UMODE     EQU $00000550    ; M7c: UBYTE — a task observed itself in USER mode (SR bit S == 0)
+M7C_STAT     EQU $00000554    ; M7c: UBYTE — b0 = "M7C USERMODE OK" marker already emitted
+WP_UPREEMPT  EQU $00000558    ; M7c: observed preemptions (VBL_COUNT at the start of the proof)
+; M7d — concurrency proof of interrupt-safe ports: shared port hammered by a TASK and an INTERRUPT
+WP_SPORT     EQU $0000055C    ; APTR: shared stress port (0 until created)
+WP_PORTT     EQU $00000560    ; GetMsg+PutMsg iterations of task_port (TASK consumer)
+WP_PORTI     EQU $00000564    ; GetMsg+PutMsg iterations of the MICROHZ service (INTERRUPT producer)
+WP_PORTFAIL  EQU $00000568    ; != 0: corruption detected on the interrupt side (MAGIC/IN_HAND failed)
+M7D_STAT     EQU $0000056C    ; UBYTE: b0 = "M7D PORTS OK" already emitted
+STRESS_TICK  EQU $0000056D    ; UBYTE: counter to rate-limit the stress on the INT6 side (1 in 4)
+; M7D_STRESS_MAX: 0 = COEXISTENCE demo (task_port pri 0 + stress rate-limited 1/4, coexists with
+; M3f/M7a/M7c). 1 = MAXIMUM CONTENTION (task_port high pri + stress on every INT6): config dedicated to
+; the A/B RED of the interrupt-safe ports (Forbid corrupts the port's list / Disable does not). Default 0 (tree).
 M7D_STRESS_MAX EQU 0
-; message de stress : struct Message (MN_SIZE=20) + MAGIC + IN_HAND (détecteurs de corruption de liste)
-MSG_MAGIC_OFF  EQU 20         ; sentinelle : un GetMsg corrompu (mauvais pointeur) la rate
-MSG_INHAND_OFF EQU 24         ; 1 = message « en main » hors liste ; un GetMsg qui le rend = doublon = corruption
+; stress message: struct Message (MN_SIZE=20) + MAGIC + IN_HAND (list corruption detectors)
+MSG_MAGIC_OFF  EQU 20         ; sentinel: a corrupted GetMsg (wrong pointer) misses it
+MSG_INHAND_OFF EQU 24         ; 1 = message "in hand" outside the list; a GetMsg returning it = duplicate = corruption
 STRESS_MSG_SIZE EQU 28
-STRESS_MAGIC  EQU $5D7C0DE5   ; valeur MAGIC attendue
-; M7e — fidélité IPL-par-niveau : les handlers tournent à leur IPL NATIF (vbl=3, int2=2, int6=6)
-; au lieu d'IPL7 uniforme. Preuve SÉLECTIVE : INT6 (niveau 6) préempte le CORPS de vbl (niveau 3)
-; MAIS la chirurgie de listes du scheduler reste atomique (section critique du switch montée à IPL7).
-VBL_INBODY       EQU $0000056E ; UBYTE : corps de vbl_handler en cours (fenêtre préemptible par INT6)
-VBL_IPL          EQU $0000056F ; UBYTE : IPL lu par vbl via « move sr » (value-check : doit == 3, pas 7)
-VBL_PREEMPT_COUNT EQU $00000570 ; long : INT6 a observé VBL_INBODY posé (préempté le corps) -> > 0 en GREEN
-IDLE_ENTERED     EQU $00000574 ; long : épisodes d'idle du dispatcher (instrumentation ; > 0 dans un run normal)
-M7E_STAT         EQU $00000578 ; UBYTE : b0 = marqueur « M7E IPL OK » déjà émis
-; Gates A/B M7e (reproductibilité ; défaut 0 = GREEN en arbre, comme M7D_STRESS_MAX) :
-; M7E_SURGERY_INTENA=1 (RED1) : la chirurgie du switch est masquée par INTENA-off AU LIEU d'IPL7 ->
-;   l'écriture INTENA a un délai de propagation -> INT6 chevauche la fenêtre VBL_INSURG -> VBL_CLASH>0
-;   (overlap, précondition de corruption ; « M7A FAILED »). Prouve que l'IPL7 est load-bearing.
-; M7E_PROLOGUE_IPL7=1 (RED2) : le prologue vbl remonte IPL7 (modèle M7a, tout le handler IPL7) -> INT6
-;   ne préempte plus le CORPS de vbl -> VBL_PREEMPT_COUNT==0 -> « M7E IPL OK » jamais émis. Prouve que
-;   l'IPL natif (absence d'IPL7 au prologue) est load-bearing, pas cosmétique.
+STRESS_MAGIC  EQU $5D7C0DE5   ; expected MAGIC value
+; M7e — per-level IPL fidelity: the handlers run at their NATIVE IPL (vbl=3, int2=2, int6=6)
+; instead of a uniform IPL7. SELECTIVE proof: INT6 (level 6) preempts the BODY of vbl (level 3)
+; BUT the scheduler's list surgery stays atomic (critical section of the switch raised to IPL7).
+VBL_INBODY       EQU $0000056E ; UBYTE: vbl_handler body in progress (window preemptible by INT6)
+VBL_IPL          EQU $0000056F ; UBYTE: IPL read by vbl via "move sr" (value-check: must == 3, not 7)
+VBL_PREEMPT_COUNT EQU $00000570 ; long: INT6 observed VBL_INBODY set (preempted the body) -> > 0 in GREEN
+IDLE_ENTERED     EQU $00000574 ; long: idle episodes of the dispatcher (instrumentation; > 0 in a normal run)
+M7E_STAT         EQU $00000578 ; UBYTE: b0 = "M7E IPL OK" marker already emitted
+; M7e A/B gates (reproducibility; default 0 = GREEN in tree, like M7D_STRESS_MAX):
+; M7E_SURGERY_INTENA=1 (RED1): the switch surgery is masked by INTENA-off INSTEAD of IPL7 ->
+;   the INTENA write has a propagation delay -> INT6 overlaps the VBL_INSURG window -> VBL_CLASH>0
+;   (overlap, precondition of corruption; "M7A FAILED"). Proves that IPL7 is load-bearing.
+; M7E_PROLOGUE_IPL7=1 (RED2): the vbl prologue raises IPL7 (M7a model, whole handler at IPL7) -> INT6
+;   no longer preempts the BODY of vbl -> VBL_PREEMPT_COUNT==0 -> "M7E IPL OK" never emitted. Proves that
+;   the native IPL (absence of IPL7 in the prologue) is load-bearing, not cosmetic.
 M7E_SURGERY_INTENA EQU 0
 M7E_PROLOGUE_IPL7  EQU 0
-; M7E_COOP=1 : non-régression COOPÉRATIVE (SCHED_ON=0, préemption OFF). Retire les 2 spinners purs
-; (task_S, task_port) qui monopoliseraient sans préemption, et met SPIN_THRESH=0 -> « M3F LIVE » émis
-; par le seul chemin YIELD (trap1->dispatch->switch). Prouve que la voie yield->dispatch tient sans
-; préemption après M7e. Défaut 0 (build préemptif complet M3f/M7a/M7c/M7d/M7e).
+; M7E_COOP=1: COOPERATIVE non-regression (SCHED_ON=0, preemption OFF). Removes the 2 pure spinners
+; (task_S, task_port) that would hog the CPU without preemption, and sets SPIN_THRESH=0 -> "M3F LIVE" emitted
+; through the YIELD path alone (trap1->dispatch->switch). Proves that the yield->dispatch path holds without
+; preemption after M7e. Default 0 (full preemptive build M3f/M7a/M7c/M7d/M7e).
 M7E_COOP           EQU 0
-; PROD=1 : ROM de PRODUCTION — sort le HARNAIS DE DÉVELOPPEMENT du chemin de boot. Gaté : tâches démo M7
-; (task_h/l/s/timer/port/fa/fb), clients de test D3 (echo d3a, d3c_client, d3d..d3j), port de stress M7d,
-; instrumentation de preuve (serveur de queue VERTB vbl_tail, source COPER de test). GARDÉ : init exec +
-; scan résident -> TOUS les vrais modules (cia/timer/gfx/intuition/dos/trackdisk...), timer CIA-B/MICROHZ,
-; gameport live, montage DF0: (handler OFS + driver + DeviceNode), con_handler, feeder, strap (boot floppy
-; OU écran insert-disk), Initial CLI. Les marqueurs série de diagnostic restent (POST ; émis par le chemin
-; RÉEL, pas par le harnais). Défaut 0 = ROM dev prouvée, byte-identique. SURCHARGÉ par -DPROD=1 (make
-; kick-prod) -> aucune édition de source pour produire la variante prod. Le `ifnd` protège le défaut.
+; PROD=1: PRODUCTION ROM — takes the DEVELOPMENT HARNESS out of the boot path. Gated: M7 demo tasks
+; (task_h/l/s/timer/port/fa/fb), D3 test clients (echo d3a, d3c_client, d3d..d3j), M7d stress port,
+; proof instrumentation (VERTB tail server vbl_tail, test COPER source). KEPT: exec init +
+; resident scan -> ALL the real modules (cia/timer/gfx/intuition/dos/trackdisk...), CIA-B/MICROHZ timer,
+; live gameport, DF0: mount (OFS handler + driver + DeviceNode), con_handler, feeder, strap (floppy boot
+; OR insert-disk screen), Initial CLI. The diagnostic serial markers remain (POST; emitted by the REAL
+; path, not by the harness). Default 0 = proven dev ROM, byte-identical. OVERRIDDEN by -DPROD=1 (make
+; kick-prod) -> no source edit needed to produce the prod variant. The `ifnd` protects the default.
         ifnd    PROD
 PROD               EQU 0
         endif
-; LOADSCREEN_DEMO=1 (-DLOADSCREEN_DEMO=1) : après l'init, affiche un ÉCRAN DE CHARGEMENT (src/graphics/
-; loadscreen.s) — monte une View sur le bitplane texte de la console, écrit « Chargement bigseg... » + une
-; barre de progression pendant la lecture STREAMING de « bigseg », puis « OK ». NE REVIENT PAS (tient l'écran).
-; Démo autonome du feedback visuel de chargement. Défaut 0 (boot normal).
+; LOADSCREEN_DEMO=1 (-DLOADSCREEN_DEMO=1): after the init, displays a LOADING SCREEN (src/graphics/
+; loadscreen.s) — sets up a View on the console's text bitplane, writes "Chargement bigseg..." + a
+; progress bar during the STREAMING read of "bigseg", then "OK". DOES NOT RETURN (holds the screen).
+; Standalone demo of the loading visual feedback. Default 0 (normal boot).
         ifnd    LOADSCREEN_DEMO
 LOADSCREEN_DEMO    EQU 0
         endif
-; F2A_NO_HANDSHAKE=1 (RED F2a) : kbd_selftest NE fait PAS le handshake clavier (pulse CRA bit 6) -> le clavier
-; émulé stalle après le 1er octet -> $FE (terminate power-up) jamais reçu -> « F2 KBD OK » absent. Isole le
-; handshake (load-bearing : sans ack, le flux clavier ne progresse pas). Défaut 0.
+; F2A_NO_HANDSHAKE=1 (RED F2a): kbd_selftest does NOT do the keyboard handshake (pulse CRA bit 6) -> the emulated
+; keyboard stalls after the 1st byte -> $FE (terminate power-up) never received -> "F2 KBD OK" absent. Isolates the
+; handshake (load-bearing: without ack, the keyboard stream does not progress). Default 0.
 F2A_NO_HANDSHAKE   EQU 0
-; F2B_NO_FEED=1 (RED F2b) : kbd_interrupt décode+handshake mais NE pousse PAS l'ASCII dans le ring clavier ->
-; une commande tapée au clavier n'atteint jamais le shell -> « E2 SHELL ver OK » absent après injection. Isole
-; le câblage clavier->console (load-bearing). La réception/décodage (F2a « F2 KBD OK ») reste intacte. Défaut 0.
+; F2B_NO_FEED=1 (RED F2b): kbd_interrupt decodes+handshakes but does NOT push the ASCII into the keyboard ring ->
+; a command typed on the keyboard never reaches the shell -> "E2 SHELL ver OK" absent after injection. Isolates
+; the keyboard->console wiring (load-bearing). Reception/decoding (F2a "F2 KBD OK") stays intact. Default 0.
 F2B_NO_FEED        EQU 0
-; INPUT_NO_PROPAGATE=1 (RED #2) : IND_WRITEEVENT ne parcourt PAS la chaîne de handlers -> l'event injecté
-; n'atteint aucun handler -> « INPUT OK » absent (ADDHANDLER a pourtant réussi). Isole la propagation. Défaut 0.
+; INPUT_NO_PROPAGATE=1 (RED #2): IND_WRITEEVENT does NOT walk the handler chain -> the injected event
+; reaches no handler -> "INPUT OK" absent (ADDHANDLER did succeed though). Isolates the propagation. Default 0.
 INPUT_NO_PROPAGATE EQU 0
-; CON_NO_BLIT=1 (RED #3a) : CMD_WRITE avance le curseur mais NE blitte PAS le glyphe -> le bitplane reste à 0 ->
-; le readback des cellules non-espace ne correspond pas aux glyphes -> « CONSOLE WRITE OK » absent. Isole le blitter. Défaut 0.
+; CON_NO_BLIT=1 (RED #3a): CMD_WRITE advances the cursor but does NOT blit the glyph -> the bitplane stays at 0 ->
+; the readback of the non-space cells does not match the glyphs -> "CONSOLE WRITE OK" absent. Isolates the blitter.
+; Default 0.
 CON_NO_BLIT        EQU 0
-; CON_NO_READBUF=1 (RED #3b) : console_input_handler cuit le RAWKEY mais NE le pousse PAS dans le read buffer ->
-; CMD_READ ne rend rien -> « CONSOLE READ=v » absent. Isole le câblage input.device->console READ. Défaut 0.
+; CON_NO_READBUF=1 (RED #3b): console_input_handler cooks the RAWKEY but does NOT push it into the read buffer ->
+; CMD_READ returns nothing -> "CONSOLE READ=v" absent. Isolates the input.device->console READ wiring. Default 0.
 CON_NO_READBUF     EQU 0
-; DV_CORRUPT=1 (RED #4) : le disk-validator corrompt le bloc bitmap après lecture (flip d'un octet) -> son checksum
-; OFS (somme des longs == 0) échoue -> dv_validate rejette -> « DISK VALID OK » absent. Isole la vérif d'intégrité. Défaut 0.
+; DV_CORRUPT=1 (RED #4): the disk-validator corrupts the bitmap block after reading (one byte flipped) -> its OFS
+; checksum (sum of the longs == 0) fails -> dv_validate rejects -> "DISK VALID OK" absent. Isolates the integrity
+; check. Default 0.
 DV_CORRUPT         EQU 0
-; KEYMAP_AZERTY=1 : la keymap.resource installe par défaut la keymap FR AZERTY (sinon US QWERTY). Produit la
-; variante AZERTY de la ROM (kbd_cook cuit selon AZERTY). Défaut 0 (US). Build : make kick après avoir mis à 1.
+; KEYMAP_AZERTY=1: keymap.resource installs the FR AZERTY keymap by default (otherwise US QWERTY). Produces the
+; AZERTY variant of the ROM (kbd_cook cooks according to AZERTY). Default 0 (US). Build: make kick after setting
+; it to 1.
 KEYMAP_AZERTY      EQU 0
-; KM_NO_SHIFT=1 (RED #5) : kbd_cook ignore le qualifieur SHIFT (toujours la table non-shiftée) -> l'assertion
-; q+SHIFT=='Q' du test échoue -> « KEYMAP OK » absent. Isole la gestion des qualifieurs. Défaut 0.
+; KM_NO_SHIFT=1 (RED #5): kbd_cook ignores the SHIFT qualifier (always the unshifted table) -> the test's
+; q+SHIFT=='Q' assertion fails -> "KEYMAP OK" absent. Isolates qualifier handling. Default 0.
 KM_NO_SHIFT        EQU 0
-; FEEDER_NO_WRITEEVENT=1 (RED feeder) : le feeder draine le ring mais N'APPELLE PAS IND_WRITEEVENT -> input.device
-; ne reçoit rien -> console.device ne reçoit rien -> « FEEDER OK » absent. Isole le feeder -> input.device. Défaut 0.
+; FEEDER_NO_WRITEEVENT=1 (RED feeder): the feeder drains the ring but does NOT CALL IND_WRITEEVENT -> input.device
+; receives nothing -> console.device receives nothing -> "FEEDER OK" absent. Isolates feeder -> input.device. Default 0.
 FEEDER_NO_WRITEEVENT EQU 0
-; SHELL_ON_SCREEN=1 : le shell (Initial CLI) est branché sur le handler console backé par console.device (écran +
-; miroir série + clavier via le feeder) au lieu du con_handler série. Défaut 0 (shell sur série ; = contrôle/RED du swap).
+; SHELL_ON_SCREEN=1: the shell (Initial CLI) is plugged into the console handler backed by console.device (screen +
+; serial mirror + keyboard via the feeder) instead of the serial con_handler. Default 0 (shell on serial; = control/RED
+; of the swap).
 SHELL_ON_SCREEN    EQU 0
-; M7f — VERTB en chaîne de serveurs. structs Interrupt (IS_SIZE=22) en RAM BASSE RÉSERVÉE (< HEAP_LOWER
-; $1000 -> hors pool AllocMem ; AddIntServer les Enqueue donc elles doivent être inscriptibles).
-SCHED_INT      EQU $00000580 ; struct Interrupt du serveur scheduler (quantum round-robin), pri 20
-TIMER_VBL_INT  EQU $00000596 ; struct Interrupt du serveur VBLANK timer.device, pri 0
-VBL_TAIL_INT   EQU $000005AC ; struct Interrupt du serveur de preuve (queue de chaîne), pri -10
-VERTB_CHAIN_N  EQU $000005C2 ; long : incréments du serveur de queue -> prouve que le walker parcourt
-                             ; TOUTE la chaîne VERTB (donc >= 2 serveurs avant lui)
-M7F_STAT       EQU $000005C6 ; UBYTE : b0 = marqueur « M7F VERTB OK » déjà émis
-VERTB_CHAIN_THRESH EQU 50     ; parcours complets de chaîne requis pour « M7F VERTB OK »
-; Gate A/B M7f (reproductibilité ; défaut 0 = GREEN) :
-; M7F_SCHED_STOPS_CHAIN=1 (RED) : sched_server retourne Z-CLAIR (« géré, stop ») au lieu de Z-set ->
-;   le walker ARRÊTE la chaîne après sched -> timer_vblank + serveur de queue jamais appelés ->
-;   VERTB_CHAIN_N figé + unité VBLANK morte (M6A échoue tôt). Prouve la sémantique « call-all » (Z-set)
-;   de la chaîne = la marche dispatche BIEN les serveurs suivants en séquence.
+; M7f — VERTB as a server chain. struct Interrupts (IS_SIZE=22) in RESERVED LOW RAM (< HEAP_LOWER
+; $1000 -> outside the AllocMem pool; AddIntServer Enqueues them so they must be writable).
+SCHED_INT      EQU $00000580 ; struct Interrupt of the scheduler server (round-robin quantum), pri 20
+TIMER_VBL_INT  EQU $00000596 ; struct Interrupt of the timer.device VBLANK server, pri 0
+VBL_TAIL_INT   EQU $000005AC ; struct Interrupt of the proof server (chain tail), pri -10
+VERTB_CHAIN_N  EQU $000005C2 ; long: increments of the tail server -> proves that the walker goes through
+                             ; the WHOLE VERTB chain (hence >= 2 servers before it)
+M7F_STAT       EQU $000005C6 ; UBYTE: b0 = "M7F VERTB OK" marker already emitted
+VERTB_CHAIN_THRESH EQU 50     ; complete chain walks required for "M7F VERTB OK"
+; M7f A/B gate (reproducibility; default 0 = GREEN):
+; M7F_SCHED_STOPS_CHAIN=1 (RED): sched_server returns Z-CLEAR ("handled, stop") instead of Z-set ->
+;   the walker STOPS the chain after sched -> timer_vblank + tail server never called ->
+;   VERTB_CHAIN_N frozen + VBLANK unit dead (M6A fails early). Proves the "call-all" semantics (Z-set)
+;   of the chain = the walk DOES dispatch the following servers in sequence.
 M7F_SCHED_STOPS_CHAIN EQU 0
-; M7g — décodage INTREQR multi-source : preuve qu'int3 dispatche une 2e source de niveau 3 (COPER)
-COPER_FIRED    EQU $000005C8 ; long : appels de coper_test (2e source niveau 3, servie via le décodage)
-COPER_TICK     EQU $000005CC ; UBYTE : rate-limiteur du déclenchement logiciel de COPER (1 VBlank sur 4)
-M7G_STAT       EQU $000005CD ; UBYTE : b0 = marqueur « M7G MULTISRC OK » déjà émis
-COPER_THRESH   EQU 20        ; appels de coper_test requis pour « M7G MULTISRC OK »
-; Gate A/B M7g (reproductibilité ; défaut 0 = GREEN) :
-; M7G_MONO_SOURCE=1 (RED) : int3 décode ET acke COPER/BLIT mais NE les DISPATCHE PAS (comportement
-;   mono-dispatch) -> COPER_FIRED figé, pas de storm (COPER reste ackée), tout le reste identique ->
-;   « M7G MULTISRC OK » absent. Prouve que le DISPATCH par source décodée est load-bearing.
+; M7g — multi-source INTREQR decoding: proof that int3 dispatches a 2nd level 3 source (COPER)
+COPER_FIRED    EQU $000005C8 ; long: calls of coper_test (2nd level 3 source, served via the decoding)
+COPER_TICK     EQU $000005CC ; UBYTE: rate limiter of the software triggering of COPER (1 VBlank in 4)
+M7G_STAT       EQU $000005CD ; UBYTE: b0 = "M7G MULTISRC OK" marker already emitted
+COPER_THRESH   EQU 20        ; coper_test calls required for "M7G MULTISRC OK"
+; M7g A/B gate (reproducibility; default 0 = GREEN):
+; M7G_MONO_SOURCE=1 (RED): int3 decodes AND acks COPER/BLIT but does NOT DISPATCH them (mono-dispatch
+;   behaviour) -> COPER_FIRED frozen, no storm (COPER stays acked), everything else identical ->
+;   "M7G MULTISRC OK" absent. Proves that DISPATCH by decoded source is load-bearing.
 M7G_MONO_SOURCE EQU 0
-; M7h — quantum réel : sched_server préempte après M7H_QUANTUM ticks (comme exec, défaut 4) au lieu de
-; chaque tick. QUANTUM_ELAPSED = ticks depuis le dernier changement de tâche (reset par dispatch_in sur
-; changement RÉEL). QUANTUM_EXPIRE_N = nombre d'expirations (preuve du débit). Observable SEULEMENT en
-; isolation (M7H_QUANTUM_DEMO) : dans la démo par défaut INT6 dispatche ~140/s -> ELAPSED reset avant
-; d'atteindre le quantum -> quasi-no-op (non-régression : M3F passe via la rotation INT6, découverte M7f).
-QUANTUM_ELAPSED EQU $000005CE ; UBYTE : ticks VBlank du time-slice courant
-QUANTUM_EXPIRE_N EQU $000005D0 ; long : expirations de quantum (débit : ~VBL_COUNT/QUANTUM en isolation)
-Q2_RUNS        EQU $000005D4 ; long : itérations du 2e spinner d'isolation (prouve la rotation réelle)
-M7H_STAT       EQU $000005D8 ; UBYTE : b0 = marqueur « M7H QUANTUM OK » déjà émis
-; M7H_QUANTUM : longueur du time-slice en ticks VBlank. GREEN=4 (fidèle exec). RED=1 (préemption chaque
-; tick = ancien comportement M7f) -> en isolation, rotation chaque tick -> QUANTUM_EXPIRE_N≈VBL_COUNT ->
-; le discriminant (EXPIRE_N*2 < VBL_COUNT) échoue -> « M7H QUANTUM OK » absent.
+; M7h — real quantum: sched_server preempts after M7H_QUANTUM ticks (like exec, default 4) instead of
+; every tick. QUANTUM_ELAPSED = ticks since the last task change (reset by dispatch_in on a
+; REAL change). QUANTUM_EXPIRE_N = number of expirations (throughput proof). Observable ONLY in
+; isolation (M7H_QUANTUM_DEMO): in the default demo INT6 dispatches ~140/s -> ELAPSED reset before
+; reaching the quantum -> quasi-no-op (non-regression: M3F passes via the INT6 rotation, found in M7f).
+QUANTUM_ELAPSED EQU $000005CE ; UBYTE: VBlank ticks of the current time slice
+QUANTUM_EXPIRE_N EQU $000005D0 ; long: quantum expirations (throughput: ~VBL_COUNT/QUANTUM in isolation)
+Q2_RUNS        EQU $000005D4 ; long: iterations of the 2nd isolation spinner (proves the real rotation)
+M7H_STAT       EQU $000005D8 ; UBYTE: b0 = "M7H QUANTUM OK" marker already emitted
+; M7H_QUANTUM: length of the time slice in VBlank ticks. GREEN=4 (faithful to exec). RED=1 (preemption every
+; tick = old M7f behaviour) -> in isolation, rotation every tick -> QUANTUM_EXPIRE_N~=VBL_COUNT ->
+; the discriminant (EXPIRE_N*2 < VBL_COUNT) fails -> "M7H QUANTUM OK" absent.
 M7H_QUANTUM     EQU 4
-; M7H_QUANTUM_DEMO=1 : démo d'ISOLATION (2 spinners pri 0, PAS d'autres tâches) pour rendre le quantum
-; observable (aucun préempteur prioritaire ; INT6 tourne mais ne Signale personne -> ne fait pas tourner).
+; M7H_QUANTUM_DEMO=1: ISOLATION demo (2 spinners pri 0, NO other tasks) to make the quantum
+; observable (no higher-priority preemptor; INT6 runs but Signals nobody -> does not rotate).
 M7H_QUANTUM_DEMO EQU 0
-; M7j — RemTask (cycle de vie) : preuve qu'une tâche qui se termine libère sa pile + TCB (AvailMem remonte)
-RM_RUNS          EQU $000005DC ; long : itérations de task_rm avant qu'elle ne RTS (-> task_exit -> RemTask self)
-M7J_AVAIL_BEFORE EQU $000005E0 ; long : AvailMem capturé AVANT la création de task_rm (baseline)
-M7J_STAT         EQU $000005E4 ; UBYTE : b0 = marqueur « M7J REMTASK OK » déjà émis
-RM_THRESH        EQU 20        ; itérations de task_rm avant auto-retrait
-M7J_RECOVER      EQU 1024      ; AvailMem doit remonter d'au moins ça (pile 2048 + TCB) pour prouver le free
-; M7J_DEMO=1 : ajoute task_rm (tâche qui tourne RM_THRESH fois puis RTS -> RemTask self) et la preuve
-; AvailMem dans une tâche survivante. Défaut 0 (RemTask compilé mais non exercé -> non-régression).
+; M7j — RemTask (life cycle): proof that a terminating task frees its stack + TCB (AvailMem goes back up)
+RM_RUNS          EQU $000005DC ; long: iterations of task_rm before it RTSes (-> task_exit -> RemTask self)
+M7J_AVAIL_BEFORE EQU $000005E0 ; long: AvailMem captured BEFORE the creation of task_rm (baseline)
+M7J_STAT         EQU $000005E4 ; UBYTE: b0 = "M7J REMTASK OK" marker already emitted
+RM_THRESH        EQU 20        ; iterations of task_rm before self-removal
+M7J_RECOVER      EQU 1024      ; AvailMem must go back up by at least this much (stack 2048 + TCB) to prove the free
+; M7J_DEMO=1: adds task_rm (task that runs RM_THRESH times then RTS -> RemTask self) and the AvailMem
+; proof in a surviving task. Default 0 (RemTask compiled but not exercised -> non-regression).
 M7J_DEMO         EQU 0
-; M7J_NOFREE=1 (RED) : RemTask marque/retire mais SAUTE les FreeMem -> AvailMem ne remonte pas (fuite) ->
-; « M7J REMTASK OK » absent. Prouve que le FreeMem pile+TCB est load-bearing.
+; M7J_NOFREE=1 (RED): RemTask marks/removes but SKIPS the FreeMems -> AvailMem does not go back up (leak) ->
+; "M7J REMTASK OK" absent. Proves that the stack+TCB FreeMem is load-bearing.
 M7J_NOFREE       EQU 0
 
-; M7l — calibration µs réelle MICROHZ. L'unité MICROHZ est cadencée par le timer B de CIA-A (ciaa.resource, ICR bit 1,
-; niveau 2, comme la 1.3 : spec docs/analysis/timer-v34.md), en mode ONE-SHOT armé sur l'échéance la plus proche (au plus
-; TIMER_CAP ticks E). Horloge E PAL = 709379 Hz (= CPU 7,09379 MHz / 10). Une requête garde son reste en (secondes,
-; ticks E dans la seconde) ; le temps écoulé est lu sur le compteur du CIA (plus juste que la comptabilité nominale de
-; la 1.3). La latence entre fin du one-shot et réarmement n'est pas comptée : armer large (TIMER_CAP) la rend
-; négligeable. File vide : timer arrêté. Aucun timer de CIA-B n'est programmé par l'OS (les jeux les prennent).
-E_PER_SEC      EQU 709379     ; ticks E-clock par seconde (PAL)
-TIMER_CAP      EQU $FFFF      ; armement maximal (~92 ms)
-; Preuve = inter-horloges : une requête MICROHZ LONGUE connue, mesurée contre l'horloge VBLANK (50 Hz,
-; indépendante : raster display vs E-clock CPU). 0,5 s doit s'écouler en ~25 ticks VBLANK. NON tautologique
-; (les deux horloges dérivent de matériels différents) : valide la constante E à ~±10 %.
-M7L_CAL_US     EQU 500000     ; durée de la requête de calibration (µs) = 0,5 s
-M7L_LO         EQU 22         ; bande basse (ticks VBLANK) ; 0,5 s = 25 ticks ; RED OLD_CONV -> ~0-1
-M7L_HI         EQU 28         ; bande haute ; la latence d'ordonnancement ne fait qu'INFLATER (jamais < 25)
-M7L_VBL_BEFORE EQU $000005E8  ; long : VBL_COUNT au départ de la requête de calibration (T0)
-M7L_ELAPSED    EQU $000005EC  ; long : ticks VBLANK écoulés pendant la calibration (mesure)
-M7L_STAT       EQU $000005F0  ; UBYTE : b0 = marqueur « M7L MICROHZ CALIB OK » déjà émis
-GFX_COPLIST_PTR EQU $000005F4 ; M4a : long — adresse chip de la copper list (publiée par gfx_display_init)
-DOS_HANDLERPORT EQU $000005F8 ; D3a : long — APTR du pr_MsgPort du process handler echo (publié par le setup)
-DOS_FSPORT      EQU $000005FC ; D3b : long — APTR du pr_MsgPort du process file-handler DF0: (OFS)
-TD_CURCYL       EQU $00000600 ; trackdisk : word — cylindre courant de la tête (valide ssi TD_CYLVALID != 0)
-TD_CYLVALID     EQU $00000602 ; trackdisk : byte — 0 = position inconnue (recalibrer) ; !=0 = TD_CURCYL fiable
-DOS_CONPORT     EQU $00000604 ; E1 : long — APTR du pr_MsgPort du process handler console-série (publié par le setup)
-CON_STATE       EQU $00000608 ; E1 : long — APTR du bloc d'état du handler console (timer.device + reply port + requête)
-; F2b : ring clavier SPSC (producteur = kbd_interrupt/INT2 ; consommateur = con_handler READ). Lock-free :
-; le producteur écrit la donnée puis avance KBD_TAIL ; le consommateur lit puis avance KBD_HEAD. Pas de masquage.
-KBD_RING        EQU $0000060C ; F2b : 64 octets — tampon circulaire d'ASCII décodé du clavier
-KBD_RSIZE       EQU 64        ; taille du ring (puissance de 2)
-KBD_RMASK       EQU 63        ; masque d'index (KBD_RSIZE-1)
-KBD_HEAD        EQU $0000064C ; F2b : word — index de LECTURE (consommateur : con_handler)
-KBD_TAIL        EQU $0000064E ; F2b : word — index d'ÉCRITURE (producteur : kbd_interrupt)
+; M7l — real us calibration of MICROHZ. The MICROHZ unit is clocked by CIA-A timer B (ciaa.resource, ICR bit 1,
+; level 2, like 1.3: spec docs/analysis/timer-v34.md), in ONE-SHOT mode armed on the nearest deadline (at most
+; TIMER_CAP E ticks). PAL E clock = 709379 Hz (= CPU 7.09379 MHz / 10). A request keeps its remainder as (seconds,
+; E ticks within the second); the elapsed time is read from the CIA counter (more accurate than the nominal
+; accounting of 1.3). The latency between end of one-shot and re-arming is not counted: arming wide (TIMER_CAP)
+; makes it negligible. Empty queue: timer stopped. No CIA-B timer is programmed by the OS (games take them).
+E_PER_SEC      EQU 709379     ; E-clock ticks per second (PAL)
+TIMER_CAP      EQU $FFFF      ; maximum arming (~92 ms)
+; Proof = cross-clock: a known LONG MICROHZ request, measured against the VBLANK clock (50 Hz,
+; independent: display raster vs CPU E-clock). 0.5 s must elapse in ~25 VBLANK ticks. NOT tautological
+; (the two clocks derive from different hardware): validates the E constant to ~+/-10 %.
+M7L_CAL_US     EQU 500000     ; duration of the calibration request (us) = 0.5 s
+M7L_LO         EQU 22         ; low band (VBLANK ticks); 0.5 s = 25 ticks; RED OLD_CONV -> ~0-1
+M7L_HI         EQU 28         ; high band; scheduling latency can only INFLATE (never < 25)
+M7L_VBL_BEFORE EQU $000005E8  ; long: VBL_COUNT at the start of the calibration request (T0)
+M7L_ELAPSED    EQU $000005EC  ; long: VBLANK ticks elapsed during the calibration (measurement)
+M7L_STAT       EQU $000005F0  ; UBYTE: b0 = "M7L MICROHZ CALIB OK" marker already emitted
+GFX_COPLIST_PTR EQU $000005F4 ; M4a: long — chip address of the copper list (published by gfx_display_init)
+DOS_HANDLERPORT EQU $000005F8 ; D3a: long — APTR of the pr_MsgPort of the echo handler process (published by the setup)
+DOS_FSPORT      EQU $000005FC ; D3b: long — APTR of the pr_MsgPort of the DF0: (OFS) file-handler process
+TD_CURCYL       EQU $00000600 ; trackdisk: word — current cylinder of the head (valid iff TD_CYLVALID != 0)
+TD_CYLVALID     EQU $00000602 ; trackdisk: byte — 0 = unknown position (recalibrate); !=0 = TD_CURCYL reliable
+DOS_CONPORT     EQU $00000604 ; E1: long — APTR of the serial console handler process's pr_MsgPort (published by setup)
+CON_STATE       EQU $00000608 ; E1: long — APTR of the console handler state block (timer.device + reply port + request)
+; F2b: SPSC keyboard ring (producer = kbd_interrupt/INT2; consumer = con_handler READ). Lock-free:
+; the producer writes the data then advances KBD_TAIL; the consumer reads then advances KBD_HEAD. No masking.
+KBD_RING        EQU $0000060C ; F2b: 64 bytes — circular buffer of decoded keyboard ASCII
+KBD_RSIZE       EQU 64        ; ring size (power of 2)
+KBD_RMASK       EQU 63        ; index mask (KBD_RSIZE-1)
+KBD_HEAD        EQU $0000064C ; F2b: word — READ index (consumer: con_handler)
+KBD_TAIL        EQU $0000064E ; F2b: word — WRITE index (producer: kbd_interrupt)
 
-; --- input.device + InputEvent (#2) — ABI publique (devices/input.i, devices/inputevent.i) ---
-IND_ADDHANDLER  EQU 9            ; io_Command : ajoute un handler (struct Interrupt) à la chaîne
-IND_REMHANDLER  EQU 10           ; io_Command : retire un handler de la chaîne
-IND_WRITEEVENT  EQU 11           ; io_Command : injecte une liste d'InputEvents dans la chaîne de handlers
-IND_SETTHRESH   EQU 12           ; io_Command : délai avant la 1re répétition (timeval de la requête)
-IND_SETPERIOD   EQU 13           ; io_Command : période des répétitions suivantes
-ID_HANDLERS     EQU LIB_SIZE     ; base input.device : struct List (chaîne des handlers)
-ID_THRESH       EQU LIB_SIZE+14  ; timeval : délai de répétition (défaut 0,8 s)
-ID_PERIOD       EQU LIB_SIZE+22  ; timeval : période de répétition (défaut 0,1 s)
+; --- input.device + InputEvent (#2) — public ABI (devices/input.i, devices/inputevent.i) ---
+IND_ADDHANDLER  EQU 9            ; io_Command: adds a handler (struct Interrupt) to the chain
+IND_REMHANDLER  EQU 10           ; io_Command: removes a handler from the chain
+IND_WRITEEVENT  EQU 11           ; io_Command: injects a list of InputEvents into the handler chain
+IND_SETTHRESH   EQU 12           ; io_Command: delay before the 1st repeat (timeval of the request)
+IND_SETPERIOD   EQU 13           ; io_Command: period of the following repeats
+ID_HANDLERS     EQU LIB_SIZE     ; input.device base: struct List (handler chain)
+ID_THRESH       EQU LIB_SIZE+14  ; timeval: repeat delay (default 0.8 s)
+ID_PERIOD       EQU LIB_SIZE+22  ; timeval: repeat period (default 0.1 s)
 INPUT_SIZE      EQU LIB_SIZE+30
-IECLASS_NULL    EQU 0            ; ie_Class : événement neutralisé (ignoré par les handlers suivants)
-IECLASS_RAWKEY  EQU 1            ; ie_Class : touche brute (keycode + up/down)
-IECLASS_RAWMOUSE EQU 2           ; ie_Class : souris brute (bouton + position)
-IECLASS_TIMER   EQU 6            ; ie_Class : tic d'input.device (10 par seconde)
-IECLASS_DISKREMOVED EQU 15       ; ie_Class : disquette éjectée (émis par le file-system, spec disk-change-v34 §3)
-IECLASS_DISKINSERTED EQU 16      ; ie_Class : disquette insérée et montée
-IEQUALIFIER_REPEAT EQU $0200     ; ie_Qualifier : événement de répétition automatique d'une touche
-IECODE_LBUTTON  EQU $68          ; ie_Code : bouton gauche (down ; up = | $80)
-IECODE_RBUTTON  EQU $69          ; ie_Code : bouton droit (down ; up = | $80)
-IECODE_NOBUTTON EQU $FF          ; ie_Code : event de mouvement pur (aucun bouton)
-IECODE_UP_PREFIX EQU $80         ; ie_Code : relâchement (code bouton | $80)
-IE_NEXTEVENT    EQU 0            ; struct InputEvent : APTR event suivant
-IE_CLASS        EQU 4            ; UBYTE classe
-IE_SUBCLASS     EQU 5            ; UBYTE sous-classe
-IE_CODE         EQU 6            ; UWORD code (keycode pour RAWKEY ; bouton pour RAWMOUSE)
-IE_QUALIFIER    EQU 8            ; UWORD qualifieurs
-IE_X            EQU 10           ; WORD ie_position.ie_xy.ie_x (position souris ; absolue dans notre injection)
+IECLASS_NULL    EQU 0            ; ie_Class: neutralised event (ignored by the following handlers)
+IECLASS_RAWKEY  EQU 1            ; ie_Class: raw key (keycode + up/down)
+IECLASS_RAWMOUSE EQU 2           ; ie_Class: raw mouse (button + position)
+IECLASS_TIMER   EQU 6            ; ie_Class: input.device tick (10 per second)
+IECLASS_DISKREMOVED EQU 15       ; ie_Class: floppy ejected (emitted by the file system, spec disk-change-v34 §3)
+IECLASS_DISKINSERTED EQU 16      ; ie_Class: floppy inserted and mounted
+IEQUALIFIER_REPEAT EQU $0200     ; ie_Qualifier: automatic key repeat event
+IECODE_LBUTTON  EQU $68          ; ie_Code: left button (down; up = | $80)
+IECODE_RBUTTON  EQU $69          ; ie_Code: right button (down; up = | $80)
+IECODE_NOBUTTON EQU $FF          ; ie_Code: pure movement event (no button)
+IECODE_UP_PREFIX EQU $80         ; ie_Code: release (button code | $80)
+IE_NEXTEVENT    EQU 0            ; struct InputEvent: APTR next event
+IE_CLASS        EQU 4            ; UBYTE class
+IE_SUBCLASS     EQU 5            ; UBYTE subclass
+IE_CODE         EQU 6            ; UWORD code (keycode for RAWKEY; button for RAWMOUSE)
+IE_QUALIFIER    EQU 8            ; UWORD qualifiers
+IE_X            EQU 10           ; WORD ie_position.ie_xy.ie_x (mouse position; absolute in our injection)
 IE_Y            EQU 12           ; WORD ie_position.ie_xy.ie_y
-IE_TIMESTAMP    EQU 14           ; struct timeval : heure système de l'événement
+IE_TIMESTAMP    EQU 14           ; struct timeval: system time of the event
 IE_SIZEOF       EQU 22           ; sizeof(struct InputEvent)
-; proof globals input.device (#2), RAM basse réservée (positionnés par les handlers de test de boot.s)
-INPUT_SEQ       EQU $00000650 ; word : compteur d'ordre d'appel des handlers (parcours de chaîne)
-INPUT_H1_ORD    EQU $00000652 ; word : ordre où le handler pri-haute a tourné (doit = 1)
-INPUT_H2_ORD    EQU $00000654 ; word : ordre où le handler pri-basse a tourné (doit = 2)
-INPUT_CODE      EQU $00000656 ; word : ie_Code vu par les handlers (doit = keycode synthétique injecté)
+; input.device proof globals (#2), reserved low RAM (set by the boot.s test handlers)
+INPUT_SEQ       EQU $00000650 ; word: counter of handler call order (chain walk)
+INPUT_H1_ORD    EQU $00000652 ; word: order in which the high-pri handler ran (must = 1)
+INPUT_H2_ORD    EQU $00000654 ; word: order in which the low-pri handler ran (must = 2)
+INPUT_CODE      EQU $00000656 ; word: ie_Code seen by the handlers (must = injected synthetic keycode)
 
-; --- keymap.resource + cook (#5) : keycode(+qualifiers) -> ASCII, keymaps US/AZERTY ---
-KBD_QUAL     EQU $00000658 ; word : état des qualifieurs suivi par kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
-KM_RESBASE   EQU $0000065A ; long : base keymap.resource (publiée à l'init ; lue par kbd_cook)
-KMR_LO       EQU LIB_SIZE      ; base keymap.resource : APTR table non-shiftée (km_xx_lo)
-KMR_HI       EQU LIB_SIZE+4    ; APTR table shiftée (km_xx_hi)
+; --- keymap.resource + cook (#5): keycode(+qualifiers) -> ASCII, US/AZERTY keymaps ---
+KBD_QUAL     EQU $00000658 ; word: qualifier state tracked by kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
+KM_RESBASE   EQU $0000065A ; long: keymap.resource base (published at init; read by kbd_cook)
+KMR_LO       EQU LIB_SIZE      ; keymap.resource base: APTR unshifted table (km_xx_lo)
+KMR_HI       EQU LIB_SIZE+4    ; APTR shifted table (km_xx_hi)
 KMR_SIZE     EQU LIB_SIZE+8
-KQ_SHIFT     EQU $03           ; masque ie_Qualifier : LSHIFT | RSHIFT
-KQB_CAPS     EQU 2             ; bit CAPSLOCK dans ie_Qualifier ($04)
-KQB_CTRL     EQU 3             ; bit CONTROL dans ie_Qualifier ($08)
-KQB_RCOMMAND EQU 7             ; bit Amiga droite dans ie_Qualifier ($80)
-; feeder clavier -> input.device (intégration F, item 1) : ring BRUT alimenté par kbd_interrupt (raw tap au même
-; point que le push cuit, après filtre qualifieurs), drainé par le process feeder -> IND_WRITEEVENT(RAWKEY).
-KBD_FHEAD    EQU $0000065E ; word : tête (consommateur = feeder)
-KBD_FTAIL    EQU $00000660 ; word : queue (producteur = kbd_interrupt) ; indices = OFFSETS OCTET (pas de 2)
-KBD_FEEDRING EQU $00000662 ; 32 octets : 16 entrées word = (KBD_QUAL<<8 | keycode) snapshotées par frappe
-KBD_FRMASK   EQU $1E       ; masque d'offset octet (taille 32 - 2)
-REQ_HIT      EQU $00000682 ; word : requester — gadget touché par un clic (posé par req_input_handler, preuve)
+KQ_SHIFT     EQU $03           ; ie_Qualifier mask: LSHIFT | RSHIFT
+KQB_CAPS     EQU 2             ; CAPSLOCK bit in ie_Qualifier ($04)
+KQB_CTRL     EQU 3             ; CONTROL bit in ie_Qualifier ($08)
+KQB_RCOMMAND EQU 7             ; right Amiga bit in ie_Qualifier ($80)
+; keyboard feeder -> input.device (integration F, item 1): RAW ring fed by kbd_interrupt (raw tap at the same
+; point as the cooked push, after the qualifier filter), drained by the feeder process -> IND_WRITEEVENT(RAWKEY).
+KBD_FHEAD    EQU $0000065E ; word: head (consumer = feeder)
+KBD_FTAIL    EQU $00000660 ; word: tail (producer = kbd_interrupt); indices = BYTE OFFSETS (step 2)
+KBD_FEEDRING EQU $00000662 ; 32 bytes: 16 word entries = (KBD_QUAL<<8 | keycode) snapshotted per keystroke
+KBD_FRMASK   EQU $1E       ; byte offset mask (size 32 - 2)
+REQ_HIT      EQU $00000682 ; word: requester — gadget hit by a click (set by req_input_handler, proof)
 
-; --- gameport.device (souris matérielle) + accumulateur de pointeur Intuition (câblage M6R live) ---
-; gameport lit JOY0DAT (deltas quadrature) + CIAA_PRA bit 6 (bouton gauche, actif-bas) chaque VBlank, calcule
-; les deltas signés (wraparound 8 bits), détecte les fronts de bouton, et injecte des InputEvents RAWMOUSE dans
-; input.device via IND_WRITEEVENT (pattern du feeder clavier ; pas d'input.task — déviation documentée). Le
-; pointer_input_handler (intuition, pri 50) accumule ces deltas RELATIFS en position ABSOLUE clampée à l'écran et
-; réécrit ie_X/ie_Y -> le req_input_handler (pri 0) existant hit-teste en absolu, inchangé = le câblage live.
-PTR_XMAX     EQU 320            ; bornes écran pour le clamp du pointeur (320x256 : console/bootscreen)
+; --- gameport.device (hardware mouse) + Intuition pointer accumulator (live M6R wiring) ---
+; gameport reads JOY0DAT (quadrature deltas) + CIAA_PRA bit 6 (left button, active-low) every VBlank, computes
+; the signed deltas (8-bit wraparound), detects the button edges, and injects RAWMOUSE InputEvents into
+; input.device via IND_WRITEEVENT (keyboard feeder pattern; no input.task — documented deviation). The
+; pointer_input_handler (intuition, pri 50) accumulates these RELATIVE deltas into an ABSOLUTE position clamped to
+; the screen and rewrites ie_X/ie_Y -> the existing req_input_handler (pri 0) hit-tests in absolute, unchanged = the
+; live wiring.
+PTR_XMAX     EQU 320            ; screen bounds for the pointer clamp (320x256: console/bootscreen)
 PTR_YMAX     EQU 256
-GP_POLLS_THRESH EQU 25          ; polls VBlank (~0,5 s) avant « GP VBLANK LIVE OK » (serveur vit dans le système)
-PTR_X        EQU $00000684 ; word : pointeur absolu X (accumulé par pointer_input_handler, clampé)
-PTR_Y        EQU $00000686 ; word : pointeur absolu Y
-INT_IBASE    EQU $00000740 ; long : IntuitionBase (posé à son init) — le handler de pointeur y déplace le sprite
-KBD_DEVBASE  EQU $00000744 ; long : base keyboard.device (posée à son init) — kbd_interrupt lui remet chaque keycode
-TD_CDIRTY    EQU $00000748 ; trackdisk : TD_NCACHE bytes — emplacement modifié par CMD_WRITE, pas encore écrit sur disque
-TD_CHGCNT    EQU $00000750 ; trackdisk : long — compteur de changements de disque (TD_CHANGENUM)
-DOS_OWCTX    EQU $00000754 ; dos : long — contexte d'écriture OFS (ofswrite.s), alloué au premier besoin
-EXEC_SOFTLIST EQU $00000758 ; exec : struct List (14 o) des interruptions logicielles en attente (Cause)
-EXEC_ALERTSTUB EQU $00000766 ; exec : 6 o — JMP exec_Alert en RAM : le vecteur Alert pointe ici (hors ROM, cf. setpatch-138.md)
-DOS_HSEM     EQU $0000076C ; dos : SignalSemaphore (46 o, jusqu'à $799) — un seul démarrage de handler à la fois
-HND_CTX      EQU $000007C0 ; dos : long — contexte du file-handler DF0: (changement de disquette, handler.s)
-HND_REFVOL   EQU $000007C4 ; dos : long — BPTR du volume absent du dernier refus 218 du handler DF0: (« replace »)
-MT_TABLE     EQU $0000079C ; long : table du traceur d'allocations (ROM de diagnostic -DMEMTRACK=1 seulement)
-INT2_BUSY    EQU $000007A0 ; byte : int2_dispatch sert la chaîne PORTS (lu par la reprise du serveur VBLANK de timer.device)
-TD_DMATASK   EQU $000007A2 ; trackdisk : long — tâche qui attend la fin d'un DMA disque (SIGF_SINGLE), 0 : aucune
-TD_DMATMO    EQU $000007A6 ; trackdisk : word — trames restantes avant d'abandonner ce DMA (décomptées au VBlank)
-TD_DMADONE   EQU $000007A8 ; trackdisk : byte — DSKBLK reçu pour le DMA en cours
-TD_DSKINT    EQU $000007AA ; trackdisk : struct Interrupt (22 o, jusqu'à $7BF) du vecteur DSKBLK (niveau 1)
-GP_PREV_JOY  EQU $00000688 ; word : JOY0DAT précédent (base du delta ; primé à gp_install = JOY0DAT courant, PAS 0)
-GP_PREV_BTN  EQU $0000068A ; byte : bouton gauche précédent (edge-detect ; 0=relâché 1=pressé)
-GP_PREV_RBTN EQU $0000068B ; byte : bouton droit précédent (idem)
-GP_POLLS     EQU $0000068C ; long : compteur de polls de gp_vblank_server (preuve live : avance sur VBlanks réels)
-GP_INPUTBASE EQU $00000690 ; long : base input.device pour l'injection RAWMOUSE (0 = pas d'injection)
-GP_CAP_N     EQU $00000694 ; word : events RAWMOUSE vus par le handler de capture (tests gameport)
-GP_CAP_CODE  EQU $00000696 ; word : dernier ie_Code capturé
-GP_CAP_DX    EQU $00000698 ; word : dernier ie_X (delta) capturé
-GP_CAP_DY    EQU $0000069A ; word : dernier ie_Y (delta) capturé
-GP_LIVE_STAT EQU $0000069C ; byte : b0 = « GP VBLANK LIVE OK » déjà émis +pad $69D
-GP_VBL_INT   EQU $000006A0 ; struct Interrupt (IS_SIZE=22) du serveur gameport VBlank -> $6A0..$6B5
-; Handlers CONSOMMATEURS du requester, enregistrés PERSISTANTS sur input.device dans la branche M6R insert-disk
-; (pas de teardown) -> la chaîne gameport->input.device->pointeur->requester est VIVANTE dans le système tournant
-; (symétrique du serveur producteur gp_vblank_server). structs Interrupt en RAM basse réservée.
-PTR_INT      EQU $000006B6 ; struct Interrupt (22) de pointer_input_handler (pri 50) -> $6B6..$6CB
-REQ_INT      EQU $000006CC ; struct Interrupt (22) de req_input_handler (pri 0) -> $6CC..$6E1
-FORBID_TEST_FLAG EQU $000006E2 ; long : preuve d'atomicité Forbid — task_fb le pose à 1 quand elle tourne
-FB_TASK      EQU $000006E6 ; long : TCB de task_fb (pour que task_fa la signale)
-SH_STK       EQU 8192       ; pile du CLI initial (shell.s) : les commandes lancées tournent dessus
-TD_CACHEBUF  EQU $000006EA ; trackdisk : long — cache de pistes décodées (TD_CNSLOTS x 5632 o ; 0 = pas encore alloué)
-TD_CNSLOTS   EQU $000006EE ; trackdisk : word — nombre d'emplacements du cache (TD_NCACHE, ou 1 si mémoire juste)
-TD_MOTORON   EQU $00000700 ; trackdisk : byte — moteur DF0 allumé (latché) : pas de spin-up à la prochaine lecture
-TD_BUSY      EQU $00000701 ; trackdisk : byte — accès au lecteur en cours (le serveur VBlank ne coupe pas le moteur)
-TD_MOTORCNT  EQU $00000702 ; trackdisk : word — ticks VBlank avant extinction du moteur inactif
-TD_VBLINT    EQU $00000704 ; trackdisk : struct Interrupt (22 o) du serveur VBlank d'extinction du moteur
-TD_MOTORIDLE EQU 100       ; 2 s d'inactivité (50 Hz) avant extinction, comme le délai du trackdisk d'origine
-TD_CTICK     EQU $0000071A ; trackdisk : word — horloge LRU du cache de pistes
-TD_CTRK      EQU $00000720 ; trackdisk : TD_NCACHE words — piste de chaque emplacement ($FFFF = vide)
-TD_CAGE      EQU $00000730 ; trackdisk : TD_NCACHE words — dernier accès (TD_CTICK) de chaque emplacement
-TD_NCACHE    EQU 8         ; pistes gardées en cache (8 x 5632 = 44 Ko ; 16 : gain marginal mesuré, 87 s -> 83 s)
-DOS_DOSBASE  EQU $000006F0 ; long : DosBase (posé par dos initFunc) — le runtime BCPL n'a pas a6 = DosBase
-; GP_NO_WRAP=1 (RED) : gp_delta8 soustrait en MOT les compteurs 0..255 (sans sign-extend octet) -> au passage
-; $FF/$00 le delta est faux ($FE->$01 donne -253 au lieu de +3) -> « GAMEPORT OK » absent (le vecteur de wrap du
-; test gp_poll échoue). Isole le modèle de wraparound 8 bits des compteurs quadrature (load-bearing). Défaut 0.
+GP_POLLS_THRESH EQU 25          ; VBlank polls (~0.5 s) before "GP VBLANK LIVE OK" (server lives in the system)
+PTR_X        EQU $00000684 ; word: absolute pointer X (accumulated by pointer_input_handler, clamped)
+PTR_Y        EQU $00000686 ; word: absolute pointer Y
+INT_IBASE    EQU $00000740 ; long: IntuitionBase (set at its init) — the pointer handler moves the sprite with it
+KBD_DEVBASE  EQU $00000744 ; long: keyboard.device base (set at its init) — kbd_interrupt hands each keycode to it
+TD_CDIRTY    EQU $00000748 ; trackdisk: TD_NCACHE bytes — slot modified by CMD_WRITE, not yet written to disk
+TD_CHGCNT    EQU $00000750 ; trackdisk: long — disk change counter (TD_CHANGENUM)
+DOS_OWCTX    EQU $00000754 ; dos: long — OFS write context (ofswrite.s), allocated on first need
+EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending software interrupts (Cause)
+EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
+DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
+HND_CTX      EQU $000007C0 ; dos: long — context of the DF0: file-handler (disk change, handler.s)
+HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the DF0: handler's last 218 refusal ("replace")
+MT_TABLE     EQU $0000079C ; long: allocation tracer table (diagnostic ROM -DMEMTRACK=1 only)
+INT2_BUSY    EQU $000007A0 ; byte: int2_dispatch serves the PORTS chain (read by timer.device VBLANK server recovery)
+TD_DMATASK   EQU $000007A2 ; trackdisk: long — task waiting for the end of a disk DMA (SIGF_SINGLE), 0: none
+TD_DMATMO    EQU $000007A6 ; trackdisk: word — frames left before giving up on this DMA (counted down at VBlank)
+TD_DMADONE   EQU $000007A8 ; trackdisk: byte — DSKBLK received for the current DMA
+TD_DSKINT    EQU $000007AA ; trackdisk: struct Interrupt (22 bytes, up to $7BF) of the DSKBLK vector (level 1)
+GP_PREV_JOY  EQU $00000688 ; word: previous JOY0DAT (delta base; primed at gp_install = current JOY0DAT, NOT 0)
+GP_PREV_BTN  EQU $0000068A ; byte: previous left button (edge-detect; 0=released 1=pressed)
+GP_PREV_RBTN EQU $0000068B ; byte: previous right button (same)
+GP_POLLS     EQU $0000068C ; long: poll counter of gp_vblank_server (live proof: advances on real VBlanks)
+GP_INPUTBASE EQU $00000690 ; long: input.device base for RAWMOUSE injection (0 = no injection)
+GP_CAP_N     EQU $00000694 ; word: RAWMOUSE events seen by the capture handler (gameport tests)
+GP_CAP_CODE  EQU $00000696 ; word: last captured ie_Code
+GP_CAP_DX    EQU $00000698 ; word: last captured ie_X (delta)
+GP_CAP_DY    EQU $0000069A ; word: last captured ie_Y (delta)
+GP_LIVE_STAT EQU $0000069C ; byte: b0 = "GP VBLANK LIVE OK" already emitted +pad $69D
+GP_VBL_INT   EQU $000006A0 ; struct Interrupt (IS_SIZE=22) of the gameport VBlank server -> $6A0..$6B5
+; CONSUMER handlers of the requester, registered PERSISTENTLY on input.device in the M6R insert-disk branch
+; (no teardown) -> the gameport->input.device->pointer->requester chain is LIVE in the running system
+; (symmetric of the producer server gp_vblank_server). struct Interrupts in reserved low RAM.
+PTR_INT      EQU $000006B6 ; struct Interrupt (22) of pointer_input_handler (pri 50) -> $6B6..$6CB
+REQ_INT      EQU $000006CC ; struct Interrupt (22) of req_input_handler (pri 0) -> $6CC..$6E1
+FORBID_TEST_FLAG EQU $000006E2 ; long: Forbid atomicity proof — task_fb sets it to 1 when it runs
+FB_TASK      EQU $000006E6 ; long: TCB of task_fb (so that task_fa signals it)
+SH_STK       EQU 8192       ; stack of the initial CLI (shell.s): the commands it launches run on it
+TD_CACHEBUF  EQU $000006EA ; trackdisk: long — cache of decoded tracks (TD_CNSLOTS x 5632 bytes; 0 = not yet allocated)
+TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE, or 1 if memory is tight)
+TD_MOTORON   EQU $00000700 ; trackdisk: byte — DF0 motor on (latched): no spin-up at the next read
+TD_BUSY      EQU $00000701 ; trackdisk: byte — drive access in progress (the VBlank server does not turn the motor off)
+TD_MOTORCNT  EQU $00000702 ; trackdisk: word — VBlank ticks before turning off the idle motor
+TD_VBLINT    EQU $00000704 ; trackdisk: struct Interrupt (22 bytes) of the motor turn-off VBlank server
+TD_MOTORIDLE EQU 100       ; 2 s of inactivity (50 Hz) before turn-off, like the delay of the original trackdisk
+TD_CTICK     EQU $0000071A ; trackdisk: word — LRU clock of the track cache
+TD_CTRK      EQU $00000720 ; trackdisk: TD_NCACHE words — track of each slot ($FFFF = empty)
+TD_CAGE      EQU $00000730 ; trackdisk: TD_NCACHE words — last access (TD_CTICK) of each slot
+TD_NCACHE    EQU 8         ; tracks kept in cache (8 x 5632 = 44 KB; 16: marginal gain measured, 87 s -> 83 s)
+DOS_DOSBASE  EQU $000006F0 ; long: DosBase (set by dos initFunc) — the BCPL runtime does not have a6 = DosBase
+; GP_NO_WRAP=1 (RED): gp_delta8 subtracts the 0..255 counters as WORDS (without byte sign-extend) -> when crossing
+; $FF/$00 the delta is wrong ($FE->$01 gives -253 instead of +3) -> "GAMEPORT OK" absent (the wrap vector of the
+; gp_poll test fails). Isolates the 8-bit wraparound model of the quadrature counters (load-bearing). Default 0.
 GP_NO_WRAP   EQU 0
 
-; SCHED_NO_FORBID_GATE=1 (RED atomicité Forbid) : retire la garde EB_TDNEST/EB_IDNEST d'intr_isr_defer -> un
-; dispatch différé (AttnResched) se produit MÊME sous Forbid -> une tâche émettrice sous Forbid est préemptée en
-; plein ser_puts -> « FORBID ATOMIC OK » absent (task_fb préempte task_fa pendant son Forbid et pose le flag).
-; M3F LIVE reste présent (la fenêtre Forbid de task_l est courte + son yield-sur-Permit veut justement task_h).
-; Isole la garde Forbid au point de consommation de la préemption. Défaut 0.
+; SCHED_NO_FORBID_GATE=1 (RED Forbid atomicity): removes the EB_TDNEST/EB_IDNEST guard of intr_isr_defer -> a
+; deferred dispatch (AttnResched) happens EVEN under Forbid -> a task printing under Forbid is preempted in
+; the middle of ser_puts -> "FORBID ATOMIC OK" absent (task_fb preempts task_fa during its Forbid and sets the flag).
+; M3F LIVE stays present (task_l's Forbid window is short + its yield-on-Permit wants task_h precisely).
+; Isolates the Forbid guard at the preemption consumption point. Default 0.
 SCHED_NO_FORBID_GATE EQU 0
-; GP_NO_EDGE=1 (RED) : gp_poll émet un event bouton à CHAQUE poll où le bouton est pressé (pas de front) -> un
-; bouton TENU produit N events au lieu d'1 -> le compteur du test edge (2 attendus) passe à 3 -> « GAMEPORT OK »
-; absent. Isole l'edge-detection (load-bearing : sans elle, flood d'events down). Défaut 0.
+; GP_NO_EDGE=1 (RED): gp_poll emits a button event on EVERY poll where the button is pressed (no edge) -> a
+; HELD button produces N events instead of 1 -> the counter of the edge test (2 expected) goes to 3 -> "GAMEPORT OK"
+; absent. Isolates edge-detection (load-bearing: without it, flood of down events). Default 0.
 GP_NO_EDGE   EQU 0
-; PTR_NO_CLAMP=1 (RED) : pointer_input_handler n'écrête PAS la position aux bornes écran -> un mouvement qui
-; dépasse un bord sort de l'écran (négatif) -> la position accumulée est fausse -> le hit-test du gadget rate ->
-; « M6R LIVE OK » absent. Isole le clamp (load-bearing). Défaut 0.
+; PTR_NO_CLAMP=1 (RED): pointer_input_handler does NOT clip the position to the screen bounds -> a movement that
+; goes past an edge leaves the screen (negative) -> the accumulated position is wrong -> the gadget hit-test misses ->
+; "M6R LIVE OK" absent. Isolates the clamp (load-bearing). Default 0.
 PTR_NO_CLAMP EQU 0
 
-; --- Taille max d'un fichier bufferisé (handler HS_BUF + LoadSeg) : cap-bump 16K -> 32K (PAS du streaming) ---
-; Le cap de LECTURE est le buffer whole-file du handler (HND_FILEMAX) + celui de dos_loadseg (D2). On le relève
-; à 32 Ko (handles un exécutable jusqu'à 32 Ko, était 16 Ko) ; 2 buffers concurrents = 64 Ko transitoire (sûr sur le
-; tas A500 ~500 Ko). La lecture incrémentale OFS réelle (streaming, pas de buffer whole-file) reste une DETTE différée.
-; LOADSEG_CAP16K=1 (RED) : re-plafonne à 16 Ko -> un exécutable > 16 Ko (bigseg) tronque à FINDINPUT -> ne charge/tourne
-; pas -> « LOADSEG BIG OK » absent (D3E/d3dtest, petit, reste OK). Isole le cap-bump (prouve qu'il est load-bearing). Défaut 0.
+; --- Max size of a buffered file (handler HS_BUF + LoadSeg): cap-bump 16K -> 32K (NOT streaming) ---
+; The READ cap is the handler's whole-file buffer (HND_FILEMAX) + that of dos_loadseg (D2). We raise it
+; to 32 KB (handles an executable up to 32 KB, was 16 KB); 2 concurrent buffers = 64 KB transient (safe on the
+; A500 heap ~500 KB). Real incremental OFS reading (streaming, no whole-file buffer) remains a deferred DEBT.
+; LOADSEG_CAP16K=1 (RED): re-caps at 16 KB -> an executable > 16 KB (bigseg) truncates at FINDINPUT -> does not
+; load/run -> "LOADSEG BIG OK" absent (D3E/d3dtest, small, stays OK). Isolates the cap-bump (proves it is
+; load-bearing). Default 0.
 LOADSEG_CAP16K EQU 0
                 ifne    LOADSEG_CAP16K
 DOS_FILEMAX  EQU 16384
@@ -481,41 +487,41 @@ DOS_FILEMAX  EQU 16384
 DOS_FILEMAX  EQU 32768
                 endc
 
-; --- console.device (#3a) : rendu texte via blitter de glyphes 8x8 dans un bitplane (1 plan) ---
-CON_COLS     EQU 40            ; colonnes de caractères (320 px / 8)
-CON_BYTEW    EQU 40            ; octets par ligne du bitplane (= CON_COLS, 1 octet = 8 px = 1 glyphe de large)
-CON_PXH      EQU 256           ; hauteur du bitplane en pixels (32 lignes de texte)
-CON_BMSIZE   EQU CON_BYTEW*CON_PXH ; 10240 octets : taille du bitplane (chip RAM)
-; base console.device = Library + état texte
+; --- console.device (#3a): text rendering by blitting 8x8 glyphs into a bitplane (1 plane) ---
+CON_COLS     EQU 40            ; character columns (320 px / 8)
+CON_BYTEW    EQU 40            ; bytes per bitplane line (= CON_COLS, 1 byte = 8 px = 1 glyph wide)
+CON_PXH      EQU 256           ; bitplane height in pixels (32 text lines)
+CON_BMSIZE   EQU CON_BYTEW*CON_PXH ; 10240 bytes: bitplane size (chip RAM)
+; console.device base = Library + text state
 CONB_BITMAP  EQU LIB_SIZE      ; APTR bitplane
-CONB_BWIDTH  EQU LIB_SIZE+4    ; UWORD octets/ligne (stride)
-CONB_PXROWS  EQU LIB_SIZE+6    ; UWORD hauteur px
-CONB_CURX    EQU LIB_SIZE+8    ; UWORD colonne char courante (0..CON_COLS-1)
-CONB_CURY    EQU LIB_SIZE+10   ; UWORD ligne pixel courante (0,8,16,... multiple de 8)
-; #3b : buffer de lecture (clavier via input.device) + struct Interrupt du handler enregistré sur input.device
-CONB_RHEAD   EQU LIB_SIZE+12   ; UWORD index de lecture du read buffer (consommateur = CMD_READ)
-CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD index d'écriture (producteur = console_input_handler)
-CONB_RBUF    EQU LIB_SIZE+16   ; 16 octets : ring ASCII cuit depuis les RAWKEY reçus via input.device
-CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) du handler enregistré via IND_ADDHANDLER
-CONB_ESC     EQU LIB_SIZE+56   ; UBYTE état du filtre de séquences : 0 normal, 1 après ESC, 2 dans un CSI
-CONB_RQ      EQU LIB_SIZE+60   ; APTR file des CMD_READ en attente (chaînée par LN_SUCC), unités ouvertes
-CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase : rendu dans le RastPort des fenêtres (unités ConUnit)
-CONB_UNITS   EQU LIB_SIZE+68   ; APTR liste des ConUnit ouvertes (chaînées par CU_NEXT) : routage des touches
-CONB_IBASE   EQU LIB_SIZE+72   ; APTR IntuitionBase (cherchée au premier besoin : intuition s'initialise après)
+CONB_BWIDTH  EQU LIB_SIZE+4    ; UWORD bytes/line (stride)
+CONB_PXROWS  EQU LIB_SIZE+6    ; UWORD height px
+CONB_CURX    EQU LIB_SIZE+8    ; UWORD current char column (0..CON_COLS-1)
+CONB_CURY    EQU LIB_SIZE+10   ; UWORD current pixel line (0,8,16,... multiple of 8)
+; #3b: read buffer (keyboard via input.device) + struct Interrupt of the handler registered on input.device
+CONB_RHEAD   EQU LIB_SIZE+12   ; UWORD read index of the read buffer (consumer = CMD_READ)
+CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD write index (producer = console_input_handler)
+CONB_RBUF    EQU LIB_SIZE+16   ; 16 bytes: ASCII ring cooked from the RAWKEYs received via input.device
+CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) of the handler registered via IND_ADDHANDLER
+CONB_ESC     EQU LIB_SIZE+56   ; UBYTE state of the sequence filter: 0 normal, 1 after ESC, 2 inside a CSI
+CONB_RQ      EQU LIB_SIZE+60   ; APTR queue of the pending CMD_READs (linked by LN_SUCC), open units
+CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase: rendering into the windows' RastPort (ConUnit units)
+CONB_UNITS   EQU LIB_SIZE+68   ; APTR list of the open ConUnits (linked by CU_NEXT): key routing
+CONB_IBASE   EQU LIB_SIZE+72   ; APTR IntuitionBase (looked up on first need: intuition initialises afterwards)
 CONDEV_SIZE  EQU LIB_SIZE+76
-CON_RBSIZE   EQU 16            ; taille du read buffer (puissance de 2)
+CON_RBSIZE   EQU 16            ; read buffer size (power of 2)
 CON_RBMASK   EQU 15
-; M7L_OLD_CONV=1 (RED) : restaure l'ancienne conversion VBLANK (/20000) sur l'unité MICROHZ -> la requête
-; de 0,5 s expire en ~25 interruptions ≈ 9 ms < 1 tick VBLANK -> hors bande -> « M7L » NON émis. La valeur
-; de requête de la boucle task_timer est gatée en parallèle (TT_MICRO_REQ) pour que la PÉRIODE reste ~7 ms
-; sous les deux conversions -> RED chirurgical : seul M7L tombe, M3F..M7G restent verts.
+; M7L_OLD_CONV=1 (RED): restores the old VBLANK conversion (/20000) on the MICROHZ unit -> the 0.5 s
+; request expires in ~25 interrupts ~= 9 ms < 1 VBLANK tick -> out of band -> "M7L" NOT emitted. The request
+; value of the task_timer loop is gated in parallel (TT_MICRO_REQ) so that the PERIOD stays ~7 ms
+; under both conversions -> surgical RED: only M7L falls, M3F..M7G stay green.
 M7L_OLD_CONV   EQU 0
 
-; --- Offsets struct Node / List / Library / ExecBase (exec-spec.md) ---
+; --- struct Node / List / Library / ExecBase offsets (exec-spec.md) ---
 LN_SUCC      EQU 0
 LN_PRED      EQU 4
 LN_TYPE      EQU 8
-LN_PRI       EQU 9           ; priorité (BYTE signé) — tri Enqueue
+LN_PRI       EQU 9           ; priority (signed BYTE) — Enqueue sorting
 LN_NAME      EQU 10
 LH_TAIL      EQU 4
 NT_LIBRARY   EQU 9
@@ -525,31 +531,31 @@ LIB_VERSION  EQU $14
 LIB_REVISION EQU $16
 LIB_IDSTRING EQU $18
 LIB_OPENCNT  EQU $20
-LIB_SIZE     EQU 34            ; sizeof(struct Library) (base mini pour MakeLibrary)
-LIB_FLAGS    EQU $0E           ; exec/libraries.i : lib_Flags
-LIB_SUM      EQU $1C           ; lib_Sum : somme de contrôle de la table de vecteurs
-LIBB_CHANGED EQU 1             ; LIBF_CHANGED : table modifiée (SetFunction), somme à recalculer
-LIBB_SUMUSED EQU 2             ; LIBF_SUMUSED : la somme est vérifiée
-TIMER_VBLQ   EQU LIB_SIZE      ; timer.device : liste de requêtes de l'unité VBLANK (struct List)
-TIMER_MICROQ EQU LIB_SIZE+14   ; liste de requêtes de l'unité MICROHZ (timer B de CIA-A, niveau 2) (struct List)
-TIMER_SYSSECS EQU LIB_SIZE+28  ; heure système : secondes à la référence (TR_SETSYSTIME)
-TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT à la référence
-TIMER_ARMED  EQU LIB_SIZE+36   ; long : ticks E armés sur le timer B de CIA-A (0 = arrêté)
-TIMER_UNIQ   EQU LIB_SIZE+40   ; long : µs ajoutées aux lectures d'heure faites dans le tic TIMER_UVBL (heure strictement croissante)
-TIMER_UVBL   EQU LIB_SIZE+44   ; long : VBL_COUNT de la dernière lecture d'heure
-TD_SIZE      EQU LIB_SIZE+48   ; taille de la base timer.device (Library + 2 listes d'unité + heure système + armement)
-UNIT_MICROHZ EQU 0             ; sélecteur d'unité dans IO_UNIT (= numérotation réelle timer.device)
-UNIT_VBLANK  EQU 1             ; (OpenDevice poserait un struct Unit* ; notre impl minimale = l'index)
+LIB_SIZE     EQU 34            ; sizeof(struct Library) (minimal base for MakeLibrary)
+LIB_FLAGS    EQU $0E           ; exec/libraries.i: lib_Flags
+LIB_SUM      EQU $1C           ; lib_Sum: checksum of the vector table
+LIBB_CHANGED EQU 1             ; LIBF_CHANGED: table modified (SetFunction), sum to recompute
+LIBB_SUMUSED EQU 2             ; LIBF_SUMUSED: the sum is checked
+TIMER_VBLQ   EQU LIB_SIZE      ; timer.device: request list of the VBLANK unit (struct List)
+TIMER_MICROQ EQU LIB_SIZE+14   ; request list of the MICROHZ unit (CIA-A timer B, level 2) (struct List)
+TIMER_SYSSECS EQU LIB_SIZE+28  ; system time: seconds at the reference (TR_SETSYSTIME)
+TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT at the reference
+TIMER_ARMED  EQU LIB_SIZE+36   ; long: E ticks armed on CIA-A timer B (0 = stopped)
+TIMER_UNIQ   EQU LIB_SIZE+40   ; long: us added to time reads made within the TIMER_UVBL tick (strictly increasing time)
+TIMER_UVBL   EQU LIB_SIZE+44   ; long: VBL_COUNT of the last time read
+TD_SIZE      EQU LIB_SIZE+48   ; size of the timer.device base (Library + 2 unit lists + system time + arming)
+UNIT_MICROHZ EQU 0             ; unit selector in IO_UNIT (= real timer.device numbering)
+UNIT_VBLANK  EQU 1             ; (OpenDevice would set a struct Unit*; our minimal impl = the index)
 EB_CHKBASE    EQU $26
 EB_MAXLOCMEM  EQU $3E
-EB_THISTASK   EQU $114         ; tâche courante (struct Task *)
+EB_THISTASK   EQU $114         ; current task (struct Task *)
 EB_IDNEST     EQU $126
 EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
-EB_ATTNRESCHED EQU $12A         ; UWORD : reschedule en attente (posé par Signal, consommé
-                                ; par Permit/Enable au déverrouillage du nesting = yield)
-EB_RESMODULES EQU $12C          ; APTR : tableau NUL-terminé de struct Resident* (pri-trié)
-EB_TASKTRAPCODE EQU $130        ; APTR : gestionnaire de traps par défaut des tâches
+EB_ATTNRESCHED EQU $12A         ; UWORD: pending reschedule (set by Signal, consumed
+                                ; by Permit/Enable when the nesting unlocks = yield)
+EB_RESMODULES EQU $12C          ; APTR: NUL-terminated array of struct Resident* (pri-sorted)
+EB_TASKTRAPCODE EQU $130        ; APTR: default trap handler of the tasks
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E
@@ -558,22 +564,22 @@ EB_LIBLIST      EQU $17A
 EB_PORTLIST     EQU $188
 EB_TASKREADY    EQU $196
 EB_TASKWAIT     EQU $1A4
-EB_LASTALERT    EQU $202       ; LastAlert[4] : numéro et second nombre de la dernière alerte (-1 : aucune)
+EB_LASTALERT    EQU $202       ; LastAlert[4]: number and second number of the last alert (-1: none)
 EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
-EB_INTVECTS     EQU $54         ; IntVects[16] (struct IntVector, 12 octets) : public, jusqu'à ThisTask ($114)
-EB_INTSVL       EQU $222        ; M7b : APTR -> bloc des 16 listes de serveurs (AddIntServer), AllocMem'd
-                                ; à init_ints. Tient dans la zone positive ($222+4 <= EXEC_POSSIZE $230).
+EB_INTVECTS     EQU $54         ; IntVects[16] (struct IntVector, 12 bytes): public, up to ThisTask ($114)
+EB_INTSVL       EQU $222        ; M7b: APTR -> block of the 16 server lists (AddIntServer), AllocMem'd
+                                ; at init_ints. Fits in the positive area ($222+4 <= EXEC_POSSIZE $230).
 
-; struct MemHeader / MemChunk + attributs mémoire (exec/memory.i, V34)
+; struct MemHeader / MemChunk + memory attributes (exec/memory.i, V34)
 NT_MEMORY     EQU 10
 MEMF_PUBLIC   EQU $1
 MEMF_CHIP     EQU $2
 MEMF_FAST     EQU $4
-MEMF_TYPEMASK EQU $7           ; bits de TYPE mémoire en V34 (PUBLIC|CHIP|FAST)
+MEMF_TYPEMASK EQU $7           ; memory TYPE bits in V34 (PUBLIC|CHIP|FAST)
 MEMF_CLEAR    EQU $10000
-MEMF_LARGEST  EQU $20000       ; AvailMem : plus grand bloc contigu (pas la somme)
+MEMF_LARGEST  EQU $20000       ; AvailMem: largest contiguous block (not the sum)
 MH_ATTRIBUTES EQU 14
 MH_FIRST      EQU 16          ; -> struct MemChunk
 MH_LOWER      EQU 20
@@ -583,13 +589,13 @@ MH_SIZE       EQU 32          ; sizeof(struct MemHeader)
 MC_NEXT       EQU 0
 MC_BYTES      EQU 4
 
-; struct Task (exec/tasks.i) — base à LN_SIZE=14
+; struct Task (exec/tasks.i) — base at LN_SIZE=14
 NT_TASK       EQU 1
 NT_INTERRUPT  EQU 2
-TS_RUN        EQU 2           ; tâche en cours d'exécution
+TS_RUN        EQU 2           ; task running
 TS_READY      EQU 3
-TS_WAIT       EQU 4           ; tâche bloquée (Wait/WaitPort) -> liste TaskWait
-TS_REMOVED    EQU 5           ; M7j : tâche en cours de retrait (RemTask)
+TS_WAIT       EQU 4           ; task blocked (Wait/WaitPort) -> TaskWait list
+TS_REMOVED    EQU 5           ; M7j: task being removed (RemTask)
 TC_FLAGS      EQU 14
 TC_STATE      EQU 15
 TC_IDNESTCNT  EQU 16
@@ -598,22 +604,22 @@ TC_SIGALLOC   EQU 18
 TC_SIGWAIT    EQU 22
 TC_SIGRECVD   EQU 26
 TC_SIGEXCEPT  EQU 30
-TC_TRAPALLOC  EQU 34          ; UWORD : traps 0-15 attribués (AllocTrap)
+TC_TRAPALLOC  EQU 34          ; UWORD: traps 0-15 allocated (AllocTrap)
 TC_TRAPABLE   EQU 36
-TC_TRAPDATA   EQU 46          ; APTR : donnée libre du gestionnaire de traps de la tâche
-TC_TRAPCODE   EQU 50          ; APTR : gestionnaire des exceptions CPU de la tâche (0 -> TaskTrapCode)
+TC_TRAPDATA   EQU 46          ; APTR: free data of the task's trap handler
+TC_TRAPCODE   EQU 50          ; APTR: handler of the task's CPU exceptions (0 -> TaskTrapCode)
 TC_SPREG      EQU 54
 TC_SPLOWER    EQU 58
 TC_SPUPPER    EQU 62
-TC_MEMENTRY   EQU 74          ; struct List : MemLists libérées par RemTask (FreeEntry)
+TC_MEMENTRY   EQU 74          ; struct List: MemLists freed by RemTask (FreeEntry)
 TC_SIZE       EQU 92
-ML_NUMENTRIES EQU 14          ; exec/memory.i : struct MemList (Node, NumEntries, MemEntry[])
+ML_NUMENTRIES EQU 14          ; exec/memory.i: struct MemList (Node, NumEntries, MemEntry[])
 ML_ME         EQU 16
 LVO_ALLOCENTRY EQU -222
 LVO_FREEENTRY EQU -228
-SYS_SIGALLOC  EQU $FFFF        ; signaux 0-15 pré-alloués (réservés système)
+SYS_SIGALLOC  EQU $FFFF        ; signals 0-15 pre-allocated (reserved for the system)
 
-; struct MsgPort (exec/ports.i) — base à LN_SIZE=14
+; struct MsgPort (exec/ports.i) — base at LN_SIZE=14
 NT_MSGPORT    EQU 4
 NT_MESSAGE    EQU 5
 NT_REPLYMSG   EQU 7
@@ -622,7 +628,7 @@ MP_SIGBIT     EQU 15
 MP_SIGTASK    EQU 16
 MP_MSGLIST    EQU 20          ; struct List
 MP_SIZE       EQU 34
-PF_ACTION     EQU 3           ; masque des bits d'action
+PF_ACTION     EQU 3           ; mask of the action bits
 PA_SIGNAL     EQU 0
 PA_IGNORE     EQU 2
 ; struct Message (exec/ports.i)
@@ -641,41 +647,41 @@ IOSTD_ACTUAL EQU 32          ; struct IOStdReq
 IOSTD_LENGTH EQU 36
 IOSTD_DATA   EQU 40
 IOSTD_OFFSET EQU 44
-TR_TIME      EQU 32          ; struct timeval (dans une timerequest)
+TR_TIME      EQU 32          ; struct timeval (in a timerequest)
 TV_SECS      EQU 32
 TV_MICRO     EQU 36
 TR_SIZE      EQU 40
-TR_ADDREQUEST EQU 9          ; commande timer.device (= CMD_NONSTD)
+TR_ADDREQUEST EQU 9          ; timer.device command (= CMD_NONSTD)
 TR_GETSYSTIME EQU 10
 TR_SETSYSTIME EQU 11
 IOERR_OPENFAIL EQU -1
-IOF_QUICK    EQU 1           ; io_Flags : requête rapide (terminée sur place, pas de ReplyMsg)
+IOF_QUICK    EQU 1           ; io_Flags: quick request (completed in place, no ReplyMsg)
 IOERR_NOCMD  EQU -3
 IOERR_ABORTED EQU -2
-TD_BEGINIO   EQU -30         ; offset BeginIO dans la jump table d'un device
+TD_BEGINIO   EQU -30         ; offset of BeginIO in a device's jump table
 
-; struct Resident (exec/resident.i, V34) — ROMTag scanné au boot pour bâtir l'OS
-RTC_MATCHWORD EQU $4AFC        ; RT_MATCHWORD : signature d'un ROMTag
-RTF_AUTOINIT  EQU $80          ; RT_FLAGS bit 7 : RT_INIT -> table auto-init (MakeLibrary)
+; struct Resident (exec/resident.i, V34) — ROMTag scanned at boot to build the OS
+RTC_MATCHWORD EQU $4AFC        ; RT_MATCHWORD: signature of a ROMTag
+RTF_AUTOINIT  EQU $80          ; RT_FLAGS bit 7: RT_INIT -> auto-init table (MakeLibrary)
 RTF_COLDSTART EQU $01
 NT_DEVICE     EQU 3
 NT_RESOURCE   EQU 8
 RT_MATCHWORD  EQU 0            ; UWORD
-RT_MATCHTAG   EQU 2            ; APTR -> self (valide le match vs un $4AFC fortuit)
-RT_ENDSKIP    EQU 6            ; APTR -> reprise du scan (fin du module)
+RT_MATCHTAG   EQU 2            ; APTR -> self (validates the match vs a stray $4AFC)
+RT_ENDSKIP    EQU 6            ; APTR -> scan resume point (end of the module)
 RT_FLAGS      EQU 10           ; UBYTE
 RT_VERSION    EQU 11           ; UBYTE
 RT_TYPE       EQU 12           ; UBYTE
-RT_PRI        EQU 13           ; BYTE signé (ordre d'init décroissant)
+RT_PRI        EQU 13           ; signed BYTE (descending init order)
 RT_NAME       EQU 14           ; APTR
 RT_IDSTRING   EQU 18           ; APTR
-RT_INIT       EQU 22           ; APTR -> routine d'init (ou table si AUTOINIT)
+RT_INIT       EQU 22           ; APTR -> init routine (or table if AUTOINIT)
 RT_SIZE       EQU 26
-RESSCAN_LO    EQU ROMBASE          ; plage de scan des ROMTags = toute la ROM
-RESSCAN_HI    EQU ROMBASE+$40000   ; (256K ; le padding/footer ne contient pas de ROMTag valide)
-RESMAX        EQU 32              ; capacité du tableau ResModules (résidents + terminateur NUL)
+RESSCAN_LO    EQU ROMBASE          ; ROMTag scan range = the whole ROM
+RESSCAN_HI    EQU ROMBASE+$40000   ; (256K; the padding/footer contains no valid ROMTag)
+RESMAX        EQU 32              ; capacity of the ResModules array (residents + NUL terminator)
 
-; LVO (offsets négatifs confirmés par docs/analysis/exec-spec.md + exec-lvo-table.md)
+; LVOs (negative offsets confirmed by docs/analysis/exec-spec.md + exec-lvo-table.md)
 LVO_OPEN     EQU -6
 LVO_CLOSE    EQU -12
 LVO_EXPUNGE  EQU -18
@@ -736,11 +742,11 @@ LVO_ABORTIO      EQU -480
 LVO_COPYMEM      EQU -624
 LVO_COPYMEMQUICK EQU -630
 LVO_ALERT        EQU -108       ; Alert(alertNum d7)
-AN_TIMERCIARSRC  EQU $15058020  ; Alert : timer.device sans ciaa.resource (AN_TimerDev|AG_OpenRes|AO_CIARsrc)
-LVO_ADDMEMLIST   EQU -618       ; AddMemList(taille d0, attributs d1, pri d2, base a0, nom a1)
+AN_TIMERCIARSRC  EQU $15058020  ; Alert: timer.device without ciaa.resource (AN_TimerDev|AG_OpenRes|AO_CIARsrc)
+LVO_ADDMEMLIST   EQU -618       ; AddMemList(size d0, attributes d1, pri d2, base a0, name a1)
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
-LVO_OLDOPENLIBRARY EQU -408      ; OpenLibrary pré-V33 (sans gate de version)
+LVO_OLDOPENLIBRARY EQU -408      ; pre-V33 OpenLibrary (without version gate)
 LVO_CLOSELIBRARY   EQU -414
 LVO_RAWDOFMT       EQU -522     ; RawDoFmt(fmt a0, data a1, putch a2, putchdata a3)
 LVO_INITSEMAPHORE    EQU -558
@@ -752,22 +758,22 @@ LVO_ADDSEMAPHORE     EQU -600
 LVO_REMSEMAPHORE     EQU -606
 LVO_OPENLIBRARY    EQU -552      ; OpenLibrary(libName a1, version d0)
 
-; OPENLIB_NO_VERCHECK=1 (RED OpenLibrary) : exec_OpenLibrary saute la gate de version -> une ouverture
-; en version trop haute réussit À TORT au lieu de renvoyer 0. Isole la branche de comparaison de version.
-; Défaut 0 (arbre).
+; OPENLIB_NO_VERCHECK=1 (RED OpenLibrary): exec_OpenLibrary skips the version gate -> opening with
+; too high a version WRONGLY succeeds instead of returning 0. Isolates the version comparison branch.
+; Default 0 (tree).
 OPENLIB_NO_VERCHECK EQU 0
 
-; cia.resource (M5b) — fonctions a6-relatives (base resource), struct, matériel.
+; cia.resource (M5b) — a6-relative functions (resource base), struct, hardware.
 CIA_ADDICRVECTOR EQU -6
 CIA_REMICRVECTOR EQU -12
 CIA_ABLEICR      EQU -18
 CIA_SETICR       EQU -24
-CIAR_HWBASE      EQU LIB_SIZE        ; APTR base matérielle CIA (après le nœud Library)
-CIAR_ICRMASK     EQU LIB_SIZE+4      ; UBYTE shadow du masque ICR activé (+pad)
-CIAR_VECTORS     EQU LIB_SIZE+6      ; 5 APTR : slots struct Interrupt* (timerA/B/TOD/ser/flag)
+CIAR_HWBASE      EQU LIB_SIZE        ; APTR CIA hardware base (after the Library node)
+CIAR_ICRMASK     EQU LIB_SIZE+4      ; UBYTE shadow of the enabled ICR mask (+pad)
+CIAR_VECTORS     EQU LIB_SIZE+6      ; 5 APTR: struct Interrupt* slots (timerA/B/TOD/ser/flag)
 CIAR_SIZE        EQU LIB_SIZE+6+20
-CIAA_HW          EQU $BFE001         ; base CIA-A
-CIAB_HW          EQU $BFD000         ; base CIA-B
-CIA_ICR_OFF      EQU $D00            ; offset du registre ICR (registre $D) depuis la base CIA
+CIAA_HW          EQU $BFE001         ; CIA-A base
+CIAB_HW          EQU $BFD000         ; CIA-B base
+CIA_ICR_OFF      EQU $D00            ; offset of the ICR register (register $D) from the CIA base
 
                 endc

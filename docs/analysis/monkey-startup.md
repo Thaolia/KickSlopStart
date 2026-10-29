@@ -1,283 +1,283 @@
-# monkey-startup.md — `monkey_island` (Monkey Island FR [cr Defjam]) : démarrage jusqu'à « Appuyez sur ENTER »
+# monkey-startup.md — `monkey_island` (Monkey Island FR [cr Defjam]): startup up to "Appuyez sur ENTER"
 
-> Piste ANALYSE (« dirty »). Source : disque 1/4, fichier racine `monkey_island` (108 408 o, en-tête
-> bloc 881), extrait par le lecteur OFS tolérant et relogé à plat à $100000.
+> ANALYSIS track ("dirty"). Source: disk 1/4, root file `monkey_island` (108,408 bytes, header
+> block 881), extracted by the tolerant OFS reader and relocated flat at $100000.
 >
-> L'exécutable **n'est pas compacté**. C'est un programme C (Lattice, données adressées par A4 =
-> début du hunk 4) avec 5 hunks :
-> - #0 : stub ajouté par le crack ;
-> - #1 : stub ;
-> - #2 : CODE de 98 800 o ;
-> - #3 : **DATA en CHIP** de 296 o (copper lists) ;
-> - #4 : DATA + BSS de 29 312 o.
+> The executable **is not packed**. It is a C program (Lattice, data addressed through A4 =
+> start of hunk 4) with 5 hunks:
+> - #0: stub added by the crack;
+> - #1: stub;
+> - #2: CODE of 98,800 bytes;
+> - #3: **DATA in CHIP** of 296 bytes (copper lists);
+> - #4: DATA + BSS of 29,312 bytes.
 >
-> Bases de bibliothèques : SysBase (4), IntuitionBase (A4+$7258), GfxBase (A4+$725C),
-> DOSBase (A4+$726C), ConsoleDevice (A4+$6FAC). **Légende** : **[O]** observé · **[D]** déduit ·
-> **[S]** supposé. Appels publics et comportement ; aucune suite d'instructions recopiée, aucune
-> donnée.
+> Library bases: SysBase (4), IntuitionBase (A4+$7258), GfxBase (A4+$725C),
+> DOSBase (A4+$726C), ConsoleDevice (A4+$6FAC). **Legend**: **[O]** observed · **[D]** deduced ·
+> **[S]** assumed. Public calls and behaviour; no instruction sequence copied, no
+> data.
 
 ---
 
-## 0. Ajout du crack (hunk 0) [O]
+## 0. Crack addition (hunk 0) [O]
 
-Avant le démarrage C, le stub du crack **copie une routine de 50 octets à l'adresse absolue
-$300–$35F**, dans la zone des vecteurs utilisateur. Elle est appelée plus tard par le code du jeu à
-la place de la protection. **$300–$360 doit donc rester libre et intact.**
+Before the C startup, the crack's stub **copies a 50-byte routine to the absolute address
+$300–$35F**, in the user vector area. It is called later by the game code in
+place of the protection. **$300–$360 must therefore remain free and intact.**
 
-## 1. Démarrage C (Lattice) [O]
+## 1. C startup (Lattice) [O]
 
-- Effacement du BSS ; SetSignal(0, $3000) (exec −306).
-- OpenLibrary("dos.library", 0) (−552). Échec ⇒ sortie, code 100.
-- ExecBase->ThisTask (+$114) : pr_CurrentDir est gardé.
-- **Lancé depuis le CLI** (pr_CLI ≠ 0) : argv est construit à partir de `cli_CommandName` et de
-  la ligne d'arguments. Il n'y a **ni Open ni WaitPort**.
-- **Lancé depuis le WB** :
-  - WaitPort/GetMsg (−384/−372) du WBStartup sur pr_MsgPort ;
-  - CurrentDir(sm_ArgList→wa_Lock) (−126) ;
-  - si sm_ToolWindow existe : Open(ToolWindow, MODE_OLDFILE) (−30), et pr_ConsoleTask reçoit le
-    port de son handler.
-- Appel de `main`. La sortie passe par CloseLibrary, Forbid et ReplyMsg du WBStartup s'il y en a
-  un.
+- Clearing of the BSS; SetSignal(0, $3000) (exec −306).
+- OpenLibrary("dos.library", 0) (−552). Failure ⇒ exit, code 100.
+- ExecBase->ThisTask (+$114): pr_CurrentDir is kept.
+- **Launched from the CLI** (pr_CLI ≠ 0): argv is built from `cli_CommandName` and
+  the argument line. There is **neither Open nor WaitPort**.
+- **Launched from the WB**:
+  - WaitPort/GetMsg (−384/−372) of the WBStartup on pr_MsgPort;
+  - CurrentDir(sm_ArgList→wa_Lock) (−126);
+  - if sm_ToolWindow exists: Open(ToolWindow, MODE_OLDFILE) (−30), and pr_ConsoleTask receives the
+    port of its handler.
+- Call of `main`. The exit goes through CloseLibrary, Forbid and ReplyMsg of the WBStartup if there is
+  one.
 
-## 2. Initialisation (fonction $11414C), dans l'ordre [O]
+## 2. Initialisation (function $11414C), in order [O]
 
-1. AllocMem(n, MEMF_PUBLIC) (exec −198). Échec ⇒ retour 0, **sortie silencieuse**.
-2. Init interne (réglages, puis tables de la souris et du pointeur).
-3. **OpenLibrary("intuition.library", 1)** et **OpenLibrary("graphics.library", 1)**. Un échec
-   ferme ce qui est ouvert, puis sortie silencieuse.
-   - **GfxBase+$CF bit 2** est testé : c'est l'octet bas de `gb_DisplayFlags`, bit **PAL**. Le
-     programme en tire deux paramètres : (5, 5) en PAL, (4, 6) en NTSC.
-4. **OpenDevice("console.device", −1, ioreq local, 0)** (exec −444) : io_Device est gardé comme
-   **ConsoleDevice**, qui ne servira qu'à RawKeyConvert. **Le résultat d'OpenDevice n'est pas
-   testé.**
-5. Intuition **CloseWorkBench()** (−78). Le résultat n'est pas testé.
-6. **Bitmaps du jeu** ($114436) :
-   - graphics **InitBitMap(bm1 = A4+$6FE6, profondeur 5, 320, 200)** (−390) ;
-   - graphics **InitBitMap(bm2 = A4+$700E, profondeur 5, 320, …)** ;
-   - pour chacun, **AllocMem(40 000, MEMF_CHIP|MEMF_PUBLIC)** (−198), découpé à la main en
-     5 plans de 8 000 o, à +0, +$1F40, +$3E80, +$5DC0 et +$7D00. Il n'y a pas d'AllocRaster.
-   - Échec d'une allocation ⇒ DisplayAlert (point 11) avec le code 6, puis sortie.
-7. AllocMem($24, PUBLIC|CLEAR) (code 5 en cas d'échec).
-8. **OpenScreen(NewScreen)** (−198), avec la NewScreen de A4+$151A :
+1. AllocMem(n, MEMF_PUBLIC) (exec −198). Failure ⇒ return 0, **silent exit**.
+2. Internal init (settings, then mouse and pointer tables).
+3. **OpenLibrary("intuition.library", 1)** and **OpenLibrary("graphics.library", 1)**. A failure
+   closes whatever is open, then silent exit.
+   - **GfxBase+$CF bit 2** is tested: it is the low byte of `gb_DisplayFlags`, **PAL** bit. The
+     program derives two parameters from it: (5, 5) in PAL, (4, 6) in NTSC.
+4. **OpenDevice("console.device", −1, local ioreq, 0)** (exec −444): io_Device is kept as
+   **ConsoleDevice**, which will only be used for RawKeyConvert. **The result of OpenDevice is not
+   tested.**
+5. Intuition **CloseWorkBench()** (−78). The result is not tested.
+6. **Game bitmaps** ($114436):
+   - graphics **InitBitMap(bm1 = A4+$6FE6, depth 5, 320, 200)** (−390);
+   - graphics **InitBitMap(bm2 = A4+$700E, depth 5, 320, …)**;
+   - for each one, **AllocMem(40,000, MEMF_CHIP|MEMF_PUBLIC)** (−198), split by hand into
+     5 planes of 8,000 bytes, at +0, +$1F40, +$3E80, +$5DC0 and +$7D00. There is no AllocRaster.
+   - Failure of an allocation ⇒ DisplayAlert (point 11) with code 6, then exit.
+7. AllocMem($24, PUBLIC|CLEAR) (code 5 on failure).
+8. **OpenScreen(NewScreen)** (−198), with the NewScreen at A4+$151A:
 
-   | Champ | Valeur |
+   | Field | Value |
    |---|---|
    | LeftEdge, TopEdge, Width, Height | 0, 0, **320, 200** |
    | Depth | **5** |
    | DetailPen, BlockPen | 0, 1 |
-   | ViewModes | **$4000 (SPRITES)** : lores, ni HIRES ni LACE |
-   | Type | **$004F = CUSTOMSCREEN \| CUSTOMBITMAP**. **Ni SCREENQUIET ($0100) ni SHOWTITLE ($0010)** |
+   | ViewModes | **$4000 (SPRITES)**: lores, neither HIRES nor LACE |
+   | Type | **$004F = CUSTOMSCREEN \| CUSTOMBITMAP**. **Neither SCREENQUIET ($0100) nor SHOWTITLE ($0010)** |
    | Font | **TextAttr { "topaz.font", 8, style 0, FPF_ROMFONT }** |
    | DefaultTitle, Gadgets | NULL, NULL |
-   | **CustomBitMap** | **bm1 (A4+$6FE6)**, renseigné juste avant l'appel |
+   | **CustomBitMap** | **bm1 (A4+$6FE6)**, filled in just before the call |
 
-   Échec ⇒ code 4, sortie.
-9. **ShowTitle(screen, FALSE)** (−282) : la barre de titre passe derrière les fenêtres BACKDROP.
-10. **OpenWindow(NewWindow)** (−204), avec la NewWindow de A4+$153A et `Screen` = cet écran :
+   Failure ⇒ code 4, exit.
+9. **ShowTitle(screen, FALSE)** (−282): the title bar goes behind BACKDROP windows.
+10. **OpenWindow(NewWindow)** (−204), with the NewWindow at A4+$153A and `Screen` = this screen:
 
-    | Champ | Valeur |
+    | Field | Value |
     |---|---|
     | LeftEdge, TopEdge, Width, Height | 0, 0, 320, 200 |
     | DetailPen, BlockPen | 0, 1 |
-    | **IDCMPFlags** | **$0004840C** : REFRESHWINDOW, MOUSEBUTTONS, **RAWKEY**, DISKINSERTED, ACTIVEWINDOW |
-    | **Flags** | **$00011940** : SIMPLE_REFRESH ($40), **BACKDROP** ($100), **BORDERLESS** ($800), **ACTIVATE** ($1000), **RMBTRAP** ($10000) |
+    | **IDCMPFlags** | **$0004840C**: REFRESHWINDOW, MOUSEBUTTONS, **RAWKEY**, DISKINSERTED, ACTIVEWINDOW |
+    | **Flags** | **$00011940**: SIMPLE_REFRESH ($40), **BACKDROP** ($100), **BORDERLESS** ($800), **ACTIVATE** ($1000), **RMBTRAP** ($10000) |
     | FirstGadget, CheckMark, Title, BitMap | NULL |
     | Min / Max | 48×24 / 320×189 |
     | Type | CUSTOMSCREEN |
 
-    Échec ⇒ code 2, sortie.
-11. Chaque sortie sur erreur passe par la routine $11430E. Celle-ci **DisplayAlert(0 =
-    RECOVERY, texte, 50)** (−90), puis ferme dans l'ordre inverse : RemIntServer, pointeur,
+    Failure ⇒ code 2, exit.
+11. Every exit on error goes through routine $11430E. It does **DisplayAlert(0 =
+    RECOVERY, text, 50)** (−90), then closes in reverse order: RemIntServer, pointer,
     CloseWindow, CloseScreen, FreeMem, **OpenWorkBench** (−210), CloseLibrary.
-12. **Mise en place de l'affichage ($114ED0)** : voir §3.
-13. FindTask(NULL) (−294) : **pr_WindowPtr (+$B8) := la fenêtre**, l'ancienne valeur étant
-    gardée. Les requesters de dos s'ouvrent donc sur cet écran.
-14. Tables internes ; init du pointeur ($113BA8 : AllocMem, **SetPointer** −270, ClearPointer
+12. **Display setup ($114ED0)**: see §3.
+13. FindTask(NULL) (−294): **pr_WindowPtr (+$B8) := the window**, the old value being
+    kept. dos requesters therefore open on this screen.
+14. Internal tables; pointer init ($113BA8: AllocMem, **SetPointer** −270, ClearPointer
     −60, FreeMem).
-15. **AddIntServer(INTB_VERTB = 5, &interrupt)** (exec −168) :
-    - Interrupt : ln_Type 2, **ln_Pri −60**, is_Data = A4+$59C4 ;
-    - le serveur **ajoute une vitesse à un compteur et incrémente un compteur de trames**, puis
-      rend 0, ce qui laisse la chaîne continuer ;
-    - **le jeu chronomètre tout avec ce compteur.**
-16. Détection du support ($114568) :
-    - dos **CurrentDir(0)** puis CurrentDir(ancien) (−126) ;
-    - **Info(lock, InfoData)** (−114) ;
-    - **id_NumBlocks (+$0C) = 1758** ⇒ indicateur « disquette ».
-17. **GetPrefs(buf, 232)** (−132) : ViewXOffset/ViewYOffset (+$76/+$77) et ViewInitX/ViewInitY
-    (+$78/+$7A) servent à placer la ligne de séparation de la copper list (§3).
+15. **AddIntServer(INTB_VERTB = 5, &interrupt)** (exec −168):
+    - Interrupt: ln_Type 2, **ln_Pri −60**, is_Data = A4+$59C4;
+    - the server **adds a speed to a counter and increments a frame counter**, then
+      returns 0, which lets the chain continue;
+    - **the game times everything with this counter.**
+16. Media detection ($114568):
+    - dos **CurrentDir(0)** then CurrentDir(old) (−126);
+    - **Info(lock, InfoData)** (−114);
+    - **id_NumBlocks (+$0C) = 1758** ⇒ "floppy" flag.
+17. **GetPrefs(buf, 232)** (−132): ViewXOffset/ViewYOffset (+$76/+$77) and ViewInitX/ViewInitY
+    (+$78/+$7A) are used to place the split line of the copper list (§3).
 
-Le jeu lit ensuite ses données (§4) et arrive à l'écran « Appuyez sur ENTER ». Ce texte n'est
-**pas** une chaîne du programme : il vient des données de jeu (charsets et scripts SCUMM des
-fichiers Rooms). Il est **dessiné par le jeu lui-même dans bm1/bm2**, au CPU et au blitter :
-- **OwnBlitter (−456) / WaitBlit (−228) / DisownBlitter (−462)** ;
-- registres blitter écrits directement.
+The game then reads its data (§4) and reaches the "Appuyez sur ENTER" screen. This text is
+**not** a string of the program: it comes from the game data (charsets and SCUMM scripts in the
+Rooms files). It is **drawn by the game itself into bm1/bm2**, with the CPU and the blitter:
+- **OwnBlitter (−456) / WaitBlit (−228) / DisownBlitter (−462)**;
+- blitter registers written directly.
 
-**Il n'y a ni Text(), ni Move(), ni SetAPen, ni SetRast, ni OpenFont, ni OpenDiskFont.**
+**There is no Text(), no Move(), no SetAPen, no SetRast, no OpenFont, no OpenDiskFont.**
 
-## 3. Construction de l'affichage : liste copper utilisateur + copper lists maison en CHIP [O]
+## 3. Building the display: user copper list + home-made copper lists in CHIP [O]
 
-$114ED0, appelée avec la fenêtre :
-1. **LoadRGB4(&Screen.ViewPort, table, 1)** (−192) : **une seule couleur** (COLOR00). Les autres
-   couleurs sont écrites plus tard par le jeu, dans ses propres copper lists.
-2. **Lecture des 5 pointeurs de plan de `Screen.BitMap`** (Screen +$B8, Planes à +8), recopiés
-   dans la copper list maison n°1 du hunk 3 (CHIP, $118240). Les 5 plans de **bm2** sont recopiés
-   dans la liste n°2 ($118320).
-3. **Lecture de gb_copinit (GfxBase +$26)**, recopié dans les deux listes maison pour y recharger
-   COP1LC.
-4. AllocMem(12, MEMF_CHIP? $10002 = CLEAR|CHIP), puis graphics **UCopperListInit(ucl, 12)**
-   (−594), puis les instructions :
-   - **CWait(v = −1, h = $24)** (−378) et CBump (−366) ;
-   - **CMove(BPLCON0, $0200)** (−372) et CBump ;
-   - **CMove(COP1LCH, haut de la liste n°1)**, CMove(COP1LCL, bas), **CMove(COPJMP1, 0)** :
-     **le copper système saute dans la liste maison** ;
-   - CWait(100, 128), CWait(10000, 255) : fin de liste.
-5. **Screen.ViewPort.UCopIns (Screen +$40) := ucl**, puis intuition **RethinkDisplay()** (−390).
+$114ED0, called with the window:
+1. **LoadRGB4(&Screen.ViewPort, table, 1)** (−192): **a single colour** (COLOR00). The other
+   colours are written later by the game, in its own copper lists.
+2. **Reading of the 5 plane pointers of `Screen.BitMap`** (Screen +$B8, Planes at +8), copied
+   into home-made copper list no. 1 of hunk 3 (CHIP, $118240). The 5 planes of **bm2** are copied
+   into list no. 2 ($118320).
+3. **Reading of gb_copinit (GfxBase +$26)**, copied into both home-made lists to reload
+   COP1LC there.
+4. AllocMem(12, MEMF_CHIP? $10002 = CLEAR|CHIP), then graphics **UCopperListInit(ucl, 12)**
+   (−594), then the instructions:
+   - **CWait(v = −1, h = $24)** (−378) and CBump (−366);
+   - **CMove(BPLCON0, $0200)** (−372) and CBump;
+   - **CMove(COP1LCH, high part of list no. 1)**, CMove(COP1LCL, low part), **CMove(COPJMP1, 0)**:
+     **the system copper jumps into the home-made list**;
+   - CWait(100, 128), CWait(10000, 255): end of list.
+5. **Screen.ViewPort.UCopIns (Screen +$40) := ucl**, then intuition **RethinkDisplay()** (−390).
 
-Copper lists maison (hunk 3, CHIP), décrites en registres :
+Home-made copper lists (hunk 3, CHIP), described in terms of registers:
 
-| Liste n°1 ($118240) | Liste n°2 ($118320) |
+| List no. 1 ($118240) | List no. 2 ($118320) |
 |---|---|
 | BPLCON2/BPLCON1 := 0 | |
-| **COLOR00–COLOR31** (32 MOVE, valeurs posées par le jeu) | |
-| DMACON := $0000 ; **COP1LC := liste n°2 et COPJMP1** (ce MOVE est activé ou désactivé par le jeu, en réécrivant son registre) | |
-| DMACON := $8100 (BPLEN) ; **BPLCON0 := $5200** (5 plans, COLOR) | DMACON := $8100 ; **BPLCON0 := $5200** |
-| **BPL1PT…BPL5PT := plans de Screen.BitMap** | **BPL1PT…BPL5PT := plans de bm2** |
+| **COLOR00–COLOR31** (32 MOVEs, values set by the game) | |
+| DMACON := $0000; **COP1LC := list no. 2 and COPJMP1** (this MOVE is enabled or disabled by the game, by rewriting its register) | |
+| DMACON := $8100 (BPLEN); **BPLCON0 := $5200** (5 planes, COLOR) | DMACON := $8100; **BPLCON0 := $5200** |
+| **BPL1PT…BPL5PT := planes of Screen.BitMap** | **BPL1PT…BPL5PT := planes of bm2** |
 | **COP1LC := gb_copinit** | **COP1LC := gb_copinit** |
-| WAIT ligne de séparation ($80E1 ou $00E1, puis (200 + décalage) << 8) | idem |
-| BPLCON0 := $0200 (écran éteint sous la zone) ; fin | idem |
+| WAIT split line ($80E1 or $00E1, then (200 + offset) << 8) | same |
+| BPLCON0 := $0200 (display off below the area); end | same |
 
-**Ce que cela exige de la ROM** :
-- **(a)** OpenScreen avec **CUSTOMBITMAP** doit **afficher la BitMap fournie**. Intuition copie
-  `*ns_CustomBitMap` dans `Screen.BitMap` et **n'alloue aucun plan**. Le jeu lit
-  `Screen.BitMap.Planes[]` et dessine dans bm1. Si notre OpenScreen alloue ses propres plans :
-  - le copper affiche nos plans, vides, donc **un écran noir sans texte** ;
-  - le jeu dessine ailleurs.
-- **(b)** MakeVPort/MrgCop (via RethinkDisplay) doivent **insérer `vp_UCopIns`** dans la copper
-  list de la vue, à la position du CWait relative au ViewPort. Si UCopIns est ignoré :
-  - les listes maison ne tournent jamais ;
-  - on ne voit que l'écran intuition : barre de titre, gadgets, nos plans ;
-  - c'est **exactement le symptôme décrit**.
-- **(c)** `gb_copinit` (GfxBase +$26) doit être la vraie copinit, relancée par le matériel à
-  chaque trame, comme pour les cracktros.
-- **(d)** ShowTitle(FALSE) avec une fenêtre BACKDROP plein écran doit cacher la barre de titre.
-  C'est secondaire : sur la vraie ROM, la liste maison prend la main dès le haut de l'écran.
+**What this requires from the ROM**:
+- **(a)** OpenScreen with **CUSTOMBITMAP** must **display the BitMap provided**. Intuition copies
+  `*ns_CustomBitMap` into `Screen.BitMap` and **allocates no plane**. The game reads
+  `Screen.BitMap.Planes[]` and draws into bm1. If our OpenScreen allocates its own planes:
+  - the copper displays our planes, empty, hence **a black screen without text**;
+  - the game draws elsewhere.
+- **(b)** MakeVPort/MrgCop (via RethinkDisplay) must **insert `vp_UCopIns`** into the view's copper
+  list, at the position of the CWait relative to the ViewPort. If UCopIns is ignored:
+  - the home-made lists never run;
+  - only the intuition screen is visible: title bar, gadgets, our planes;
+  - this is **exactly the symptom described**.
+- **(c)** `gb_copinit` (GfxBase +$26) must be the real copinit, restarted by the hardware at
+  every frame, as for the cracktros.
+- **(d)** ShowTitle(FALSE) with a full-screen BACKDROP window must hide the title bar.
+  This is secondary: on the real ROM, the home-made list takes over from the top of the screen.
 
-## 4. Fichiers [O]
+## 4. Files [O]
 
-Toutes les E/S passent par les enveloppes Lattice :
-- **open** : Lock(nom, SHARED −2) pour tester l'existence, puis UnLock, DeleteFile si création,
-  et Open(MODE_OLDFILE 1005 / MODE_NEWFILE 1006) ;
-- **read** et **write** (−42/−48) : Read(fh, buf, n) ; résultat −1 ⇒ IoErr (−132) ;
-- **lseek** : **Seek(fh, pos, mode − 1)** (−66), donc C 0/1/2 ⇒ OFFSET_BEGINNING −1, CURRENT 0,
-  END 1. Valeur rendue :
-  - SEEK_SET ⇒ pos ;
-  - SEEK_CUR ⇒ **ancienne position rendue par Seek + pos** ;
-  - SEEK_END ⇒ un second **Seek(fh, 0, OFFSET_CURRENT)**.
+All I/O goes through the Lattice wrappers:
+- **open**: Lock(name, SHARED −2) to test existence, then UnLock, DeleteFile if creating,
+  and Open(MODE_OLDFILE 1005 / MODE_NEWFILE 1006);
+- **read** and **write** (−42/−48): Read(fh, buf, n); result −1 ⇒ IoErr (−132);
+- **lseek**: **Seek(fh, pos, mode − 1)** (−66), so C 0/1/2 ⇒ OFFSET_BEGINNING −1, CURRENT 0,
+  END 1. Value returned:
+  - SEEK_SET ⇒ pos;
+  - SEEK_CUR ⇒ **old position returned by Seek + pos**;
+  - SEEK_END ⇒ a second **Seek(fh, 0, OFFSET_CURRENT)**.
 
-  **Cela exige que Seek rende l'ANCIENNE position**, comme le dos 1.3, et −1 en cas d'erreur.
-  Un Seek qui rend la nouvelle position fausse tous les décalages relatifs et les tailles.
+  **This requires Seek to return the OLD position**, like dos 1.3, and −1 on error.
+  A Seek that returns the new position corrupts all relative offsets and sizes.
 - **close** (−36).
 
-Noms construits (chaînes du programme) :
-- "Rooms/%s" et "%sRooms/%s" (préfixe de volume) ;
-- **"music.dat"** et **"sample.dat"** (messages « Can't open … » s'ils manquent) ;
-- "%s.%d\\%s" et "XXX.lfl" (salles) ;
-- **"diskXX.lec"** (DISK01.LEC, 365 Ko, lu par Seek + Read) ;
+Names built (program strings):
+- "Rooms/%s" and "%sRooms/%s" (volume prefix);
+- **"music.dat"** and **"sample.dat"** ("Can't open …" messages if they are missing);
+- "%s.%d\\%s" and "XXX.lfl" (rooms);
+- **"diskXX.lec"** (DISK01.LEC, 365 KB, read by Seek + Read);
 - "savegame._x_".
 
-Messages du moteur en cas d'échec : « Room %d not in disk%02d.LEC », « Please Insert Disk %c »,
-« Unable to find '%s' Press ENTER ». Ils s'affichent eux aussi dans les bitmaps du jeu.
+Engine messages on failure: "Room %d not in disk%02d.LEC", "Please Insert Disk %c",
+"Unable to find '%s' Press ENTER". They are also displayed in the game's bitmaps.
 
-Lecteur de disque (DISKINSERTED dans l'IDCMP) : changements de disquette.
+Disk drive (DISKINSERTED in the IDCMP): floppy changes.
 
-## 5. Accès matériels et vecteurs (lecteur de musique, $100F20–$1017BE) [O]
+## 5. Hardware accesses and vectors (music player, $100F20–$1017BE) [O]
 
-Le lecteur de musique, activé au premier morceau, prend le matériel **directement** :
-- **Autovecteurs écrits directement** (sauvés, puis restaurés à l'arrêt) :
-  - **$6C (niveau 3)** := son handler. Celui-ci appelle le lecteur sur COPER, ou sur VERTB si
-    VHPOSR < ligne $0A, puis **chaîne vers l'ancien vecteur**. La chaîne VERTB de l'OS continue
-    donc ;
-  - **$70 (niveau 4, audio)** := son handler, **sans chaînage** : audio.device ne voit plus ses
-    interruptions ;
-  - **$78 (niveau 6, EXTER)** := son handler. Il lit l'ICR de CIA-B, acquitte INTREQ $2000,
-    appelle le lecteur et fait RTE, **sans chaîner vers l'OS**.
-- **CIA-B** :
-  - timer B ($BFD600/$BFD700) := $2E2E si ExecBase->VBlankFrequency (+$212) = 50, ajusté selon
-    un bit de configuration (valeurs $2E2E ou $37F0) ;
-  - **CRB ($BFDF00) := $11** (démarrage, mode continu) ;
-  - **ICR ($BFDD00) := $82** (autorise l'interruption du timer B) ;
+The music player, activated at the first tune, takes over the hardware **directly**:
+- **Autovectors written directly** (saved, then restored on stop):
+  - **$6C (level 3)** := its handler. It calls the player on COPER, or on VERTB if
+    VHPOSR < line $0A, then **chains to the old vector**. The OS's VERTB chain therefore
+    continues;
+  - **$70 (level 4, audio)** := its handler, **without chaining**: audio.device no longer sees its
+    interrupts;
+  - **$78 (level 6, EXTER)** := its handler. It reads CIA-B's ICR, acknowledges INTREQ $2000,
+    calls the player and does RTE, **without chaining to the OS**.
+- **CIA-B**:
+  - timer B ($BFD600/$BFD700) := $2E2E if ExecBase->VBlankFrequency (+$212) = 50, adjusted according to
+    a configuration bit (values $2E2E or $37F0);
+  - **CRB ($BFDF00) := $11** (start, continuous mode);
+  - **ICR ($BFDD00) := $82** (enables the timer B interrupt);
   - **INTENA := $A000** (EXTER).
-- INTENA $8020, DMACON des canaux audio, registres audio $A8/$B8/$C8/$D8, ADKCON $00FF.
-- CIA-A PRA bit 1 (filtre) mis à 1.
+- INTENA $8020, DMACON of the audio channels, audio registers $A8/$B8/$C8/$D8, ADKCON $00FF.
+- CIA-A PRA bit 1 (filter) set to 1.
 
-**Conséquence pour notre ROM [D, à vérifier]** :
-- **Tant que la musique joue, tout ce qui passe par l'interruption de niveau 6 de l'OS est mort.**
-  - Notre timer.device **UNIT_MICROHZ utilise CIA-B / INT6** (notes du projet). Après l'arrivée
-    de la musique, **toute requête MICROHZ, ou tout code qui en dépend, n'est plus jamais
-    servie**.
-  - Cela vaut pour un trackdisk qui attend des délais MICROHZ, un Delay() s'il passe par MICROHZ,
-    la répétition clavier… ⇒ **blocage silencieux du chargement**.
-- **Sur la vraie 1.3, timer.device utilise ciaa.resource** : la chaîne « ciaa.resource » est
-  dans timer.device. Le niveau 6 n'y sert pas à MICROHZ, et la prise du vecteur $78
-  par le jeu est sans effet sur le chargement disque.
-  - trackdisk ouvre bien ciab.resource, mais rien n'indique qu'il ait besoin de
-    l'interruption pour lire [S].
-- **Recommandation** : MICROHZ et tout délai disque doivent passer par CIA-A (niveau 2, PORTS).
-  Sinon, il faut ne dépendre d'aucune interruption de niveau 6 pendant les lectures.
+**Consequence for our ROM [D, to be verified]**:
+- **As long as the music plays, everything that goes through the OS's level 6 interrupt is dead.**
+  - Our timer.device **UNIT_MICROHZ uses CIA-B / INT6** (project notes). Once the music
+    starts, **any MICROHZ request, or any code that depends on it, is never
+    served again**.
+  - This applies to a trackdisk waiting for MICROHZ delays, a Delay() if it goes through MICROHZ,
+    key repeat… ⇒ **silent hang of the loading**.
+- **On the real 1.3, timer.device uses ciaa.resource**: the string "ciaa.resource" is
+  in timer.device. Level 6 is not used there for MICROHZ, and the game's takeover of vector $78
+  has no effect on disk loading.
+  - trackdisk does open ciab.resource, but nothing indicates that it needs
+    the interrupt to read [S].
+- **Recommendation**: MICROHZ and any disk delay must go through CIA-A (level 2, PORTS).
+  Otherwise, nothing may depend on a level 6 interrupt during reads.
 
-## 6. Attente de ENTER [O]
+## 6. Waiting for ENTER [O]
 
-Boucle de lecture des événements ($1136B8), par **GetMsg(window->UserPort)** (−372). C'est une
-scrutation : le jeu ne fait pas de WaitPort dans ce chemin. Puis ReplyMsg (−378).
-- **im_Class = RAWKEY ($400)** :
-  - code 50 (`$32`, avec qualificatifs $30) ⇒ code interne $12D ;
-  - **codes $50–$59 (F1–F10)** ⇒ codes internes, en tenant compte de Shift ;
-  - **bit 7 du code à 1 (touche relâchée) ⇒ ignoré** ;
-  - sinon, construction d'un **InputEvent sur la pile** :
-    - ie_Class = 1 (RAWKEY), ie_SubClass = 0 ;
-    - ie_Code = im_Code, ie_Qualifier = im_Qualifier ;
-    - **ie_EventAddress = *(im_IAddress)** : le long pointé par IAddress, c'est-à-dire les
-      touches précédentes pour les touches mortes ;
-    - puis **RawKeyConvert(ie, buf, 8, keymap NULL)** (console −48). **Seul un résultat de
-      exactement 1** est pris : le caractère. ENTER/RETURN ⇒ $0D.
-- **im_Class = MOUSEBUTTONS ($8)** : SELECTDOWN ($68) / MENUDOWN ($69) avec un test de double
-  clic sur im_Seconds/im_Micros. Le bouton droit est piégé par RMBTRAP.
-- Autres classes : ignorées.
+Event reading loop ($1136B8), through **GetMsg(window->UserPort)** (−372). It is
+polling: the game does no WaitPort on this path. Then ReplyMsg (−378).
+- **im_Class = RAWKEY ($400)**:
+  - code 50 (`$32`, with qualifiers $30) ⇒ internal code $12D;
+  - **codes $50–$59 (F1–F10)** ⇒ internal codes, taking Shift into account;
+  - **bit 7 of the code at 1 (key released) ⇒ ignored**;
+  - otherwise, construction of an **InputEvent on the stack**:
+    - ie_Class = 1 (RAWKEY), ie_SubClass = 0;
+    - ie_Code = im_Code, ie_Qualifier = im_Qualifier;
+    - **ie_EventAddress = *(im_IAddress)**: the long pointed to by IAddress, i.e. the
+      previous keys for dead keys;
+    - then **RawKeyConvert(ie, buf, 8, keymap NULL)** (console −48). **Only a result of
+      exactly 1** is taken: the character. ENTER/RETURN ⇒ $0D.
+- **im_Class = MOUSEBUTTONS ($8)**: SELECTDOWN ($68) / MENUDOWN ($69) with a double-click
+  test on im_Seconds/im_Micros. The right button is trapped by RMBTRAP.
+- Other classes: ignored.
 
-**Exigences [D]** :
-- l'IDCMP RAWKEY doit arriver à cette fenêtre BACKDROP ACTIVATE ;
-- **im_IAddress doit être un pointeur valide** (déréférencé). Un NULL lit l'adresse 0, ce qui
-  est sans danger mais donne une valeur arbitraire ;
-- RawKeyConvert doit rendre **1** et `$0D` pour RETURN ($44) et ENTER du pavé ($43), avec la
-  keymap par défaut.
+**Requirements [D]**:
+- the RAWKEY IDCMP must reach this BACKDROP ACTIVATE window;
+- **im_IAddress must be a valid pointer** (dereferenced). A NULL reads address 0, which
+  is harmless but gives an arbitrary value;
+- RawKeyConvert must return **1** and `$0D` for RETURN ($44) and keypad ENTER ($43), with the
+  default keymap.
 
-## 7. Récapitulatif des points de blocage ou d'écran noir possibles [D]
+## 7. Summary of possible hang or black-screen points [D]
 
-| # | Condition | Effet chez nous |
+| # | Condition | Effect on our side |
 |---|---|---|
-| 1 | OpenScreen **CUSTOMBITMAP** non respecté (plans alloués par nous) | écran noir, aucun texte, jeu vivant |
-| 2 | **vp_UCopIns** ignoré par MakeVPort/MrgCop/RethinkDisplay | écran intuition visible (barre, gadgets), pas d'affichage du jeu |
-| 3 | gb_copinit (GfxBase+$26) faux, ou COP1LC non relancé par trame | affichage incohérent |
-| 4 | **Vecteur $78 pris par la musique, et MICROHZ ou délais disque sur CIA-B/INT6** | chargement gelé sans message |
-| 5 | Serveur VBlank (AddIntServer 5, pri −60) jamais appelé, ou compteur de trames figé | moteur figé (tout est chronométré par trames) |
-| 6 | **Seek** qui rend la nouvelle position au lieu de l'ancienne | mauvaises lectures dans DISK01.LEC, salle introuvable |
-| 7 | RawKeyConvert ≠ 1 caractère pour ENTER, ou RAWKEY non livré | ENTER sans effet (après l'affichage) |
-| 8 | Zone $300–$35F écrasée (routine du crack) | plantage au passage de la protection |
+| 1 | OpenScreen **CUSTOMBITMAP** not honoured (planes allocated by us) | black screen, no text, game alive |
+| 2 | **vp_UCopIns** ignored by MakeVPort/MrgCop/RethinkDisplay | intuition screen visible (bar, gadgets), no game display |
+| 3 | gb_copinit (GfxBase+$26) wrong, or COP1LC not restarted per frame | inconsistent display |
+| 4 | **Vector $78 taken by the music, and MICROHZ or disk delays on CIA-B/INT6** | loading frozen without a message |
+| 5 | VBlank server (AddIntServer 5, pri −60) never called, or frame counter frozen | engine frozen (everything is timed in frames) |
+| 6 | **Seek** returning the new position instead of the old one | wrong reads in DISK01.LEC, room not found |
+| 7 | RawKeyConvert ≠ 1 character for ENTER, or RAWKEY not delivered | ENTER has no effect (after the display) |
+| 8 | Area $300–$35F overwritten (crack routine) | crash when passing the protection |
 
-Ordre conseillé :
-1. sonder `Screen.BitMap.Planes[0]` contre les plans de bm1 (A4+$6FE6+8) ;
-2. vérifier la présence de la liste UCopIns dans la copper list système (MOVE COP1LC puis COPJMP1
-   vers une adresse du hunk 3) ;
-3. vérifier que le vecteur $78 est modifié pendant le chargement, et l'état de nos requêtes
-   MICROHZ.
+Recommended order:
+1. probe `Screen.BitMap.Planes[0]` against the planes of bm1 (A4+$6FE6+8);
+2. check the presence of the UCopIns list in the system copper list (MOVE COP1LC then COPJMP1
+   to an address in hunk 3);
+3. check that vector $78 is modified during loading, and the state of our MICROHZ
+   requests.
 
 ---
 
-## Relecture clean-room
+## Clean-room review
 
-- [x] Aucune suite d'instructions recopiée : appels publics avec LVO et arguments, NewScreen et
-  NewWindow champ par champ, registres matériels et valeurs, conditions.
-- [x] Aucune donnée du jeu (image, musique, texte) reproduite ; les copper lists sont décrites
-  comme des tables registre → rôle.
-- [x] **Correction du 2026-10-29** : retirées les 2 adresses ROM (chaîne dans timer.device,
-  ouverture de ciab.resource par trackdisk) ; constat inchangé.
+- [x] No instruction sequence copied: public calls with LVO and arguments, NewScreen and
+  NewWindow field by field, hardware registers and values, conditions.
+- [x] No game data (image, music, text) reproduced; the copper lists are described
+  as register → role tables.
+- [x] **Correction of 2026-10-29**: removed the 2 ROM addresses (string in timer.device,
+  opening of ciab.resource by trackdisk); finding unchanged.

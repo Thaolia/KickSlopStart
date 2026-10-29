@@ -1,240 +1,240 @@
-# graphics.library 34.1 — remplissages, ellipses, Flood, pixels : spec comportementale
+# graphics.library 34.1 — fills, ellipses, Flood, pixels: behavioural spec
 
-> Piste **ANALYSE** (« dirty »). Sources : ROM `assets/kick34005.A500` (lecture seule, radare2, base
-> `$FC0000` ; notes de désassemblage hors dépôt) et sonde boîte noire `tests/garea_probe.s` (harnais
-> `tests/garea_probe.sh`) exécutée **deux fois** sur la **vraie ROM** sous FS-UAE (A500 PAL, 512 Ko chip +
-> 512 Ko slow, boot DOS sur une disquette dont la startup-sequence lance la sonde) ; les tests T0–T25
-> communs aux deux passes ont donné une sortie **identique octet pour octet**.
-> La sonde dessine dans une BitMap **32 × 20 à 2 plans** en chip RAM, RastPort **sans couche**, puis
-> relève les plans par le processeur après WaitBlit.
-> Ce document décrit des **comportements**, des **valeurs**, des **ordres d'opérations** et des
-> **layouts d'ABI**. Il ne contient aucune suite d'instructions de la ROM ni adresse de routine.
-> Il complète, sans les répéter : `graphics-blitter-v34.md` (§8 BltPattern, moteur de rendu final de
-> tout ce qui suit ; §5 découpage par ClipRects ; §7 allocations), `workbench-task-v34.md` §3.6 (usage de
-> Flood par le Workbench).
+> **ANALYSIS** track ("dirty"). Sources: ROM `assets/kick34005.A500` (read only, radare2, base
+> `$FC0000`; disassembly notes outside the repository) and black-box probe `tests/garea_probe.s` (harness
+> `tests/garea_probe.sh`) run **twice** on the **real ROM** under FS-UAE (PAL A500, 512 KB chip +
+> 512 KB slow, DOS boot on a floppy whose startup-sequence launches the probe); tests T0–T25
+> common to both runs gave **byte-for-byte identical** output.
+> The probe draws into a **32 × 20, 2-plane** BitMap in chip RAM, RastPort **without a layer**, then
+> reads the planes back with the processor after WaitBlit.
+> This document describes **behaviours**, **values**, **orders of operations** and
+> **ABI layouts**. It contains no ROM instruction sequence nor routine address.
+> It complements, without repeating them: `graphics-blitter-v34.md` (§8 BltPattern, final rendering engine of
+> everything that follows; §5 clipping by ClipRects; §7 allocations), `workbench-task-v34.md` §3.6 (use of
+> Flood by the Workbench).
 >
-> **Niveaux de preuve** : **[O]** observé par la sonde sur la vraie ROM · **[D]** déduit de la lecture
-> du code de la ROM (comportement, pas de code) · **[S]** supposition raisonnable, non vérifiée.
+> **Levels of proof**: **[O]** observed by the probe on the real ROM · **[D]** deduced from reading
+> the ROM code (behaviour, not code) · **[S]** reasonable assumption, not verified.
 >
-> Conventions des schémas : une ligne par y (0 en haut), une colonne par x (0 à gauche) ; `.` = couleur
-> 0, sinon le chiffre de la couleur (plan 0 = bit 0, plan 1 = bit 1).
+> Diagram conventions: one line per y (0 at the top), one column per x (0 on the left); `.` = colour
+> 0, otherwise the digit of the colour (plane 0 = bit 0, plane 1 = bit 1).
 
-## 0. Résumé pour l'implémenteur
+## 0. Summary for the implementer
 
-- Les huit LVO `InitArea` (−282), `AreaMove` (−252), `AreaDraw` (−258), `AreaEnd` (−264),
-  `AreaEllipse` (−186), `DrawEllipse` (−180), `InitTmpRas` (−468), `Flood` (−330) sont **tous présents
-  en V34** (vecteurs réels dans la table de 109 entrées). `AreaCircle`, `DrawCircle`, `SetAfPt`,
-  `SetOPen`, `BNDRYOFF` **n'ont pas de LVO** : ce sont des macros d'en-tête (`graphics/gfxmacros.h`). [D]
-- **AreaEnd** = méthode classique du blitter : (1) les arêtes sont tracées **un point par ligne** en
-  **XOR** dans un plan masque (la TmpRas), (2) le masque est rempli par le blitter en **remplissage
-  exclusif, parcours descendant**, (3) **toutes** les arêtes sont tracées à nouveau **en entier** (OU)
-  dans le masque, (4) le masque est rendu par **BltPattern** (stylos, mode, motif, couches). Résultat :
-  règle **pair/impair**, **bords inclus des deux côtés**, y compris les arêtes horizontales. [D][O]
-- **Exception** : si `DrawMode == JAM1` **et** `AreaPtSz == 2`, l'étape (3) **efface** les arêtes au lieu
-  de les ajouter : les bords sont **exclus** (artefact d'une comparaison sur un mot, §4.5). [D][O]
-- **AreaEllipse** occupe **2 entrées** (coins du rectangle englobant) ; le remplissage d'ellipse est
-  **exactement l'intérieur, bord compris, du tracé de DrawEllipse** avec les mêmes rayons. [O]
-- **Valeurs rendues** : 0 = succès, **−1 = plus de place** dans le tampon de sommets (AreaMove/AreaDraw/
-  AreaEllipse, et AreaEnd s'il doit ajouter l'arête de fermeture sans place). AreaEnd sur une liste vide
-  rend une **valeur indéfinie**. Flood rend **1** (succès) ou **0** (échec). WritePixel rend 0 (−1 hors
-  couche) ; ReadPixel rend la couleur (−1 hors couche). [O][D]
-- **Aucun contrôle de taille** : AreaEnd **ignore `TmpRas.Size`** ; Flood l'utilise comme taille d'une
-  **allocation chip supplémentaire**. Sans couche, WritePixel/ReadPixel/AreaEnd ne **découpent rien**. [O][D]
-- **Flood** : remplissage par **graine, 4-connexe** ; mode 0 = « jusqu'à la couleur AOlPen », mode 1 =
-  « tant que la couleur du point de départ » ; rendu final par BltPattern (motif et stylos appliqués).
-  Sans TmpRas : le mode 0 marche encore (chemin lent), le mode 1 **échoue (0)**. [O][D]
+- The eight LVOs `InitArea` (−282), `AreaMove` (−252), `AreaDraw` (−258), `AreaEnd` (−264),
+  `AreaEllipse` (−186), `DrawEllipse` (−180), `InitTmpRas` (−468), `Flood` (−330) are **all present
+  in V34** (real vectors in the 109-entry table). `AreaCircle`, `DrawCircle`, `SetAfPt`,
+  `SetOPen`, `BNDRYOFF` **have no LVO**: they are header macros (`graphics/gfxmacros.h`). [D]
+- **AreaEnd** = classic blitter method: (1) the edges are drawn **one point per line** in
+  **XOR** into a mask plane (the TmpRas), (2) the mask is filled by the blitter in **exclusive
+  fill, descending walk**, (3) **all** the edges are drawn again **in full** (OR)
+  into the mask, (4) the mask is rendered by **BltPattern** (pens, mode, pattern, layers). Result:
+  **even/odd** rule, **edges included on both sides**, including horizontal edges. [D][O]
+- **Exception**: if `DrawMode == JAM1` **and** `AreaPtSz == 2`, step (3) **clears** the edges instead
+  of adding them: the edges are **excluded** (artefact of a comparison on a word, §4.5). [D][O]
+- **AreaEllipse** occupies **2 entries** (corners of the bounding rectangle); the ellipse fill is
+  **exactly the interior, edge included, of DrawEllipse's outline** with the same radii. [O]
+- **Returned values**: 0 = success, **−1 = no more room** in the vertex buffer (AreaMove/AreaDraw/
+  AreaEllipse, and AreaEnd if it has to add the closing edge without room). AreaEnd on an empty list
+  returns an **undefined value**. Flood returns **1** (success) or **0** (failure). WritePixel returns 0 (−1 outside
+  the layer); ReadPixel returns the colour (−1 outside the layer). [O][D]
+- **No size check**: AreaEnd **ignores `TmpRas.Size`**; Flood uses it as the size of an
+  **additional chip allocation**. Without a layer, WritePixel/ReadPixel/AreaEnd **clip nothing**. [O][D]
+- **Flood**: **seed, 4-connected** fill; mode 0 = "up to the AOlPen colour", mode 1 =
+  "as long as the colour of the starting point"; final rendering by BltPattern (pattern and pens applied).
+  Without TmpRas: mode 0 still works (slow path), mode 1 **fails (0)**. [O][D]
 
 ## 1. Structures (ABI)
 
-### 1.1 AreaInfo (24 octets, `graphics/rastport.h`) [D][O]
+### 1.1 AreaInfo (24 bytes, `graphics/rastport.h`) [D][O]
 
-| Décalage | Champ | Usage V34 |
+| Offset | Field | V34 use |
 |---|---|---|
-| $00 | `VctrTbl` (long) | début de la table des sommets (paires de mots x, y) |
-| $04 | `VctrPtr` (long) | prochaine entrée libre de la table des sommets |
-| $08 | `FlagTbl` (long) | début de la table des drapeaux (1 octet par entrée) |
-| $0C | `FlagPtr` (long) | prochain drapeau libre |
-| $10 | `Count` (mot) | nombre d'entrées enregistrées |
-| $12 | `MaxCount` (mot) | capacité en entrées |
-| $14 | `FirstX` (mot) | x du dernier AreaMove (point de fermeture du polygone courant) |
-| $16 | `FirstY` (mot) | y du même point |
+| $00 | `VctrTbl` (long) | start of the vertex table (pairs of words x, y) |
+| $04 | `VctrPtr` (long) | next free entry of the vertex table |
+| $08 | `FlagTbl` (long) | start of the flag table (1 byte per entry) |
+| $0C | `FlagPtr` (long) | next free flag |
+| $10 | `Count` (word) | number of recorded entries |
+| $12 | `MaxCount` (word) | capacity in entries |
+| $14 | `FirstX` (word) | x of the last AreaMove (closing point of the current polygon) |
+| $16 | `FirstY` (word) | y of the same point |
 
-**Tampon fourni à InitArea** : `MaxCount × 5` octets ; les `4 × MaxCount` premiers octets sont la table
-des sommets, les `MaxCount` suivants la table des drapeaux. Observé : InitArea(…, 40) → `FlagTbl =
-tampon + $A0`. [O] Le décalage est ajouté sur **16 bits signés** : au-delà de 8191 entrées la table des
-drapeaux tombe avant le tampon. [D] Le tampon n'est lu et écrit **que par le processeur** : il peut être
-en n'importe quelle RAM. [D] Alignement : pair exigé (accès mots/longs sur 68000). [S]
+**Buffer supplied to InitArea**: `MaxCount × 5` bytes; the first `4 × MaxCount` bytes are the vertex
+table, the following `MaxCount` the flag table. Observed: InitArea(…, 40) → `FlagTbl =
+buffer + $A0`. [O] The offset is added on **16 signed bits**: beyond 8191 entries the flag
+table falls before the buffer. [D] The buffer is read and written **only by the processor**: it can be
+in any RAM. [D] Alignment: even required (word/long accesses on the 68000). [S]
 
-**Drapeau d'une entrée** (octet) [D][O] :
+**Flag of an entry** (byte) [D][O]:
 
-| Bit | Sens |
+| Bit | Meaning |
 |---|---|
-| 0 | arête **non horizontale** (le y du sommet diffère du y du sommet précédent) |
-| 1 | entrée **tracée** (AreaDraw ou ellipse) ; 0 = AreaMove |
-| 2 | **contour demandé** : `AREAOUTLINE` (bit 3 de `rp_Flags`) était posé **au moment de l'AreaDraw** |
-| 7 | première entrée d'une **ellipse** |
+| 0 | **non-horizontal** edge (the vertex's y differs from the previous vertex's y) |
+| 1 | **drawn** entry (AreaDraw or ellipse); 0 = AreaMove |
+| 2 | **outline requested**: `AREAOUTLINE` (bit 3 of `rp_Flags`) was set **at the time of the AreaDraw** |
+| 7 | first entry of an **ellipse** |
 
-Valeurs observées : AreaMove `$00`, AreaDraw horizontal `$02`, oblique/vertical `$03`, mêmes valeurs
-avec contour actif `$06`/`$07`, ellipse `$83` puis `$02`. [O] (T7, T28)
+Observed values: AreaMove `$00`, horizontal AreaDraw `$02`, oblique/vertical `$03`, same values
+with outline active `$06`/`$07`, ellipse `$83` then `$02`. [O] (T7, T28)
 
-### 1.2 TmpRas (8 octets) [D]
+### 1.2 TmpRas (8 bytes) [D]
 
-`$00 RasPtr` (long, tampon en **chip**) · `$04 Size` (long). InitTmpRas n'écrit que ces deux champs.
+`$00 RasPtr` (long, buffer in **chip**) · `$04 Size` (long). InitTmpRas only writes these two fields.
 
-### 1.3 Champs de RastPort concernés [D]
+### 1.3 RastPort fields concerned [D]
 
-`$0C TmpRas` · `$10 AreaInfo` · `$08 AreaPtrn` · `$1D AreaPtSz` (octet signé) · `$1B AOlPen` ·
+`$0C TmpRas` · `$10 AreaInfo` · `$08 AreaPtrn` · `$1D AreaPtSz` (signed byte) · `$1B AOlPen` ·
 `$19 FgPen` · `$1A BgPen` · `$1C DrawMode` · `$20 Flags` (`AREAOUTLINE` = `$0008`, `ONE_DOT` = `$0002`,
 `FRST_DOT` = `$0001`) · `$22 LinePtrn` · `$24 cp_x` · `$26 cp_y` · `$28 minterms[8]`.
-**InitRastPort** pose `AOlPen = −1` (`$FF`) : un contour non configuré est tracé dans **tous** les plans
-(couleur 3 sur 2 plans, T12). [O]
+**InitRastPort** sets `AOlPen = −1` (`$FF`): an unconfigured outline is drawn in **all** planes
+(colour 3 on 2 planes, T12). [O]
 
-## 2. InitArea (−282) et InitTmpRas (−468)
+## 2. InitArea (−282) and InitTmpRas (−468)
 
-- `InitArea(areaInfo A0, buffer A1, maxVectors D0)` : `VctrTbl = VctrPtr = buffer`, `FlagTbl = FlagPtr =
-  buffer + 4 × maxVectors`, `MaxCount = maxVectors` (mot), `Count = 0`. **FirstX/FirstY ne sont pas
-  touchés**. Aucune valeur rendue utile, aucune validation. [D][O] (T0)
-- `InitTmpRas(tmpRas A0, buffer A1, size D0)` : `RasPtr = buffer`, `Size = size` (long) ; **rend `tmpRas`
-  dans D0**. Aucune validation (ni chip, ni alignement, ni taille). [D][O] (T0)
+- `InitArea(areaInfo A0, buffer A1, maxVectors D0)`: `VctrTbl = VctrPtr = buffer`, `FlagTbl = FlagPtr =
+  buffer + 4 × maxVectors`, `MaxCount = maxVectors` (word), `Count = 0`. **FirstX/FirstY are not
+  touched**. No useful returned value, no validation. [D][O] (T0)
+- `InitTmpRas(tmpRas A0, buffer A1, size D0)`: `RasPtr = buffer`, `Size = size` (long); **returns `tmpRas`
+  in D0**. No validation (neither chip, nor alignment, nor size). [D][O] (T0)
 
-## 3. Enregistrement des sommets
+## 3. Recording the vertices
 
 ### 3.1 AreaMove (−252) — `(rp A1, x D0, y D1)` → D0 [D][O]
 
-1. Si `Count + 1 > MaxCount` → rend **−1**, rien n'est modifié.
-2. `Count` est incrémenté.
-3. Si ce n'est pas la première entrée :
-   - si l'entrée précédente est **aussi un AreaMove** (drapeau 0), elle est **remplacée** : Count, VctrPtr
-     et FlagPtr reculent d'une entrée (Count revient à sa valeur initiale) ; observé : AreaMove(4,4) puis
-     AreaMove(6,6) → Count = 1, FirstX/Y = (6,6) (T23) ;
-   - sinon, si le dernier sommet diffère de (FirstX, FirstY), le polygone précédent est **fermé** par un
-     appel d'**AreaDraw(FirstX, FirstY) par son LVO** (sensible à SetFunction). Si cet AreaDraw échoue,
-     AreaMove rend −1 **en laissant Count incrémenté** sans entrée correspondante (AreaInfo incohérente :
-     l'appelant doit refaire InitArea). [D]
-4. `FirstX/FirstY = (x, y)`, sommet écrit, drapeau `$00`, rend **0**.
+1. If `Count + 1 > MaxCount` → returns **−1**, nothing is modified.
+2. `Count` is incremented.
+3. If it is not the first entry:
+   - if the previous entry is **also an AreaMove** (flag 0), it is **replaced**: Count, VctrPtr
+     and FlagPtr go back one entry (Count returns to its initial value); observed: AreaMove(4,4) then
+     AreaMove(6,6) → Count = 1, FirstX/Y = (6,6) (T23);
+   - otherwise, if the last vertex differs from (FirstX, FirstY), the previous polygon is **closed** by a
+     call of **AreaDraw(FirstX, FirstY) through its LVO** (sensitive to SetFunction). If this AreaDraw fails,
+     AreaMove returns −1 **leaving Count incremented** without a corresponding entry (inconsistent AreaInfo:
+     the caller must redo InitArea). [D]
+4. `FirstX/FirstY = (x, y)`, vertex written, flag `$00`, returns **0**.
 
 ### 3.2 AreaDraw (−258) — `(rp A1, x D0, y D1)` → D0 [D][O]
 
-Si `Count + 1 > MaxCount` → **−1** (rien n'est modifié ; observé T23 avec MaxCount = 3). Sinon Count+1,
-sommet écrit, drapeau = `$02` | `$04` si `AREAOUTLINE` est posé maintenant | `$01` si y ≠ y du sommet
-précédent ; rend **0**. AreaDraw **ne vérifie pas** qu'un AreaMove a précédé (il compare y avec le mot
-situé avant la table si c'est la première entrée). [D]
+If `Count + 1 > MaxCount` → **−1** (nothing is modified; observed T23 with MaxCount = 3). Otherwise Count+1,
+vertex written, flag = `$02` | `$04` if `AREAOUTLINE` is set now | `$01` if y ≠ y of the previous
+vertex; returns **0**. AreaDraw **does not check** that an AreaMove preceded (it compares y with the word
+located before the table if it is the first entry). [D]
 
 ### 3.3 AreaEllipse (−186) — `(rp A1, cx D0, cy D1, a D2, b D3)` → D0 [D][O]
 
-1. Si Count ≠ 0 : un AreaMove isolé juste avant est **retiré** (comme 3.1) ; sinon, si l'entrée
-   précédente n'est pas la fin d'une ellipse et que le dernier sommet ≠ (FirstX, FirstY), le polygone
-   courant est **fermé** par AreaDraw (LVO) ; échec → −1.
-2. Si `Count + 2 > MaxCount` → **−1** (T23).
-3. Deux entrées : `(cx − a, cy − b)` drapeau `$83`, puis `(cx + a, cy + b)` drapeau `$02` ; Count += 2 ;
-   rend **0**. [O] (T7 : drapeaux `83 02`)
-4. **FirstX/FirstY ne sont pas mis à jour** ; le bit « contour » n'est **jamais** posé sur une ellipse.
+1. If Count ≠ 0: an isolated AreaMove just before is **removed** (as in 3.1); otherwise, if the previous
+   entry is not the end of an ellipse and the last vertex ≠ (FirstX, FirstY), the current
+   polygon is **closed** by AreaDraw (LVO); failure → −1.
+2. If `Count + 2 > MaxCount` → **−1** (T23).
+3. Two entries: `(cx − a, cy − b)` flag `$83`, then `(cx + a, cy + b)` flag `$02`; Count += 2;
+   returns **0**. [O] (T7: flags `83 02`)
+4. **FirstX/FirstY are not updated**; the "outline" bit is **never** set on an ellipse.
 
-Conséquence observée (T31) : `AreaEllipse` suivi d'`AreaDraw` sans `AreaMove` ferme ensuite le
-polygone vers un **FirstX/FirstY périmé** (celui d'un AreaMove antérieur) et produit un dessin incohérent.
-Il faut toujours commencer un polygone par AreaMove après une ellipse. [O]
+Observed consequence (T31): `AreaEllipse` followed by `AreaDraw` without `AreaMove` then closes the
+polygon towards a **stale FirstX/FirstY** (that of an earlier AreaMove) and produces an inconsistent drawing.
+A polygon must always be started with AreaMove after an ellipse. [O]
 
-`AreaCircle(rp, cx, cy, r)` = macro `AreaEllipse(rp, cx, cy, r, r)`. [D, en-têtes publics]
+`AreaCircle(rp, cx, cy, r)` = macro `AreaEllipse(rp, cx, cy, r, r)`. [D, public headers]
 
 ## 4. AreaEnd (−264) — `(rp A1)` → D0
 
-### 4.1 Fermeture et cas vides [D][O]
+### 4.1 Closing and empty cases [D][O]
 
-- Dernière entrée = AreaMove : si `Count ≤ 1`, **rien n'est dessiné**, la liste est remise à zéro et D0
-  est **indéfini** (observé `$0006` et `$FFFF` selon le contexte, T23/T31). Si `Count > 1`, le dernier
-  AreaMove reste dans la liste (point isolé, sans effet). [D][O]
-- Dernière entrée tracée : si ce n'est pas la fin d'une ellipse et que le dernier sommet ≠ (FirstX,
-  FirstY), AreaEnd appelle **AreaDraw(FirstX, FirstY)** par son LVO ; échec → rend **−1** sans rien
-  dessiner (T23 : 3 entrées sur MaxCount = 3 → −1). **Prévoir une entrée de plus par polygone** non fermé
-  explicitement. [D][O]
-- Dans tous les cas, à la sortie : `Count = 0`, `VctrPtr = VctrTbl`, `FlagPtr = FlagTbl` ; FirstX/FirstY
-  inchangés. Succès → **0**. [D][O] (T1)
+- Last entry = AreaMove: if `Count ≤ 1`, **nothing is drawn**, the list is reset and D0
+  is **undefined** (observed `$0006` and `$FFFF` depending on the context, T23/T31). If `Count > 1`, the last
+  AreaMove stays in the list (isolated point, without effect). [D][O]
+- Last entry drawn: if it is not the end of an ellipse and the last vertex ≠ (FirstX,
+  FirstY), AreaEnd calls **AreaDraw(FirstX, FirstY)** through its LVO; failure → returns **−1** without
+  drawing anything (T23: 3 entries out of MaxCount = 3 → −1). **Provide one extra entry per polygon** not
+  closed explicitly. [D][O]
+- In all cases, on exit: `Count = 0`, `VctrPtr = VctrTbl`, `FlagPtr = FlagTbl`; FirstX/FirstY
+  unchanged. Success → **0**. [D][O] (T1)
 
-### 4.2 Rectangle englobant et TmpRas [D][O]
+### 4.2 Bounding rectangle and TmpRas [D][O]
 
-- Le rectangle englobant porte sur **toutes** les entrées (les ellipses y entrent par leurs deux coins).
-  `x0 = minX & ~15` (arrondi au mot inférieur, arithmétique signée), `y0 = minY`.
-- **Les sommets sont translatés en place** de (−x0, −y0) dans la table (observé T1 : après AreaEnd, la
-  table contient `(2,0) (10,0) (10,8) (2,8) (2,0)` pour le carré (2,2)–(10,10), entrée de fermeture
-  comprise). Le contenu de la table n'est donc **pas réutilisable** après AreaEnd. [O]
-- Masque : un plan de `L = ((maxX + 16) & ~15 − x0) / 8` octets par ligne et `H = maxY − minY + 1` lignes,
-  placé au début de `TmpRas.RasPtr`, effacé par **BltClear** (forme lignes/octets). **Besoin : `L × H`
-  octets de chip.** [D]
-- **`TmpRas.Size` n'est pas lu** : avec `Size = 4`, un remplissage plein écran 32 × 20 (80 octets) est
-  correct (T24). Une TmpRas trop petite **déborde silencieusement**. [O][D]
-- **TmpRas absente** (`rp_TmpRas = NULL`) : le pointeur est déréférencé quand même (lecture de RasPtr à
-  l'adresse 0, puis écriture du masque à l'adresse lue) : corruption de la mémoire basse. [D] (non sondé)
+- The bounding rectangle covers **all** the entries (ellipses enter it through their two corners).
+  `x0 = minX & ~15` (rounded down to the word, signed arithmetic), `y0 = minY`.
+- **The vertices are translated in place** by (−x0, −y0) in the table (observed T1: after AreaEnd, the
+  table contains `(2,0) (10,0) (10,8) (2,8) (2,0)` for the square (2,2)–(10,10), closing entry
+  included). The table's contents are therefore **not reusable** after AreaEnd. [O]
+- Mask: one plane of `L = ((maxX + 16) & ~15 − x0) / 8` bytes per line and `H = maxY − minY + 1` lines,
+  placed at the start of `TmpRas.RasPtr`, cleared by **BltClear** (lines/bytes form). **Requirement: `L × H`
+  bytes of chip.** [D]
+- **`TmpRas.Size` is not read**: with `Size = 4`, a full-screen 32 × 20 fill (80 bytes) is
+  correct (T24). A TmpRas that is too small **overflows silently**. [O][D]
+- **TmpRas absent** (`rp_TmpRas = NULL`): the pointer is dereferenced anyway (read of RasPtr at
+  address 0, then write of the mask at the address read): corruption of low memory. [D] (not probed)
 
-### 4.3 Passe 1 : arêtes « un point par ligne » en XOR [D]
+### 4.3 Pass 1: "one point per line" edges in XOR [D]
 
-Un RastPort temporaire (sans couche, masque d'un plan, mode COMPLEMENT, `ONE_DOT`, motif de ligne plein)
-parcourt la liste :
+A temporary RastPort (without layer, one-plane mask, COMPLEMENT mode, `ONE_DOT`, solid line pattern)
+walks the list:
 
-- entrée tracée non horizontale : ligne du blitter du point courant au sommet, **un seul point par ligne
-  de balayage**, en XOR ; le **premier point de l'arête est omis** quand le sommet de départ n'est pas un
-  extremum local en y (l'arête précédente allait dans le même sens), conservé sinon ;
-- entrée tracée horizontale, ou ellipse : déplacement du point courant (les arêtes horizontales ne
-  produisent aucun point dans cette passe) ; ellipse : **DrawEllipse** de centre `(coin1 + coin2) / 2` et
-  de rayons `coin2 − centre`, en `ONE_DOT` (un point par ligne et par côté), par un traceur XOR direct
-  au processeur ;
-- AreaMove (et fin de liste) : si la première et la dernière arête non horizontales du polygone qui se
-  termine vont **dans le même sens**, le point de départ est inversé une fois de plus (WritePixel par LVO)
-  pour corriger la parité au sommet de fermeture.
+- non-horizontal drawn entry: blitter line from the current point to the vertex, **a single point per scan
+  line**, in XOR; the **first point of the edge is omitted** when the starting vertex is not a
+  local extremum in y (the previous edge went in the same direction), kept otherwise;
+- horizontal drawn entry, or ellipse: move of the current point (horizontal edges
+  produce no point in this pass); ellipse: **DrawEllipse** with centre `(corner1 + corner2) / 2` and
+  radii `corner2 − centre`, in `ONE_DOT` (one point per line and per side), by a direct XOR plotter
+  using the processor;
+- AreaMove (and end of list): if the first and the last non-horizontal edge of the polygon that
+  ends go **in the same direction**, the starting point is inverted once more (WritePixel through LVO)
+  to correct the parity at the closing vertex.
 
-Effet : sur chaque ligne de balayage, le masque contient un nombre pair de points délimitant les spans.
+Effect: on each scan line, the mask contains an even number of points delimiting the spans.
 
-### 4.4 Passe 2 : remplissage du blitter [D]
+### 4.4 Pass 2: blitter fill [D]
 
-Un seul blit sur le masque : canaux C → D, minterm « D = C », **parcours descendant**, **remplissage
-exclusif (EFE)**, FCI = 0, largeur `L/2` mots, hauteur `H`, modulos `−2L` (chaque ligne est traitée de
-droite à gauche, les lignes de haut en bas). En exclusif, le point qui ouvre le span (côté droit) est
-gardé, celui qui le ferme (côté gauche) est perdu : c'est la passe 3 qui rétablit les bords.
+A single blit on the mask: channels C → D, minterm "D = C", **descending walk**, **exclusive
+fill (EFE)**, FCI = 0, width `L/2` words, height `H`, modulos `−2L` (each line is processed from
+right to left, the lines from top to bottom). In exclusive mode, the point that opens the span (right side) is
+kept, the one that closes it (left side) is lost: it is pass 3 that restores the edges.
 
-### 4.5 Passe 3 : arêtes complètes [D][O]
+### 4.5 Pass 3: complete edges [D][O]
 
-Toutes les entrées tracées sont retracées **en entier** (premier point compris, lignes horizontales
-comprises, ellipses par DrawEllipse normal) avec le minterm de ligne :
+All the drawn entries are redrawn **in full** (first point included, horizontal lines
+included, ellipses by normal DrawEllipse) with the line minterm:
 
-- **OU** (point mis à 1) dans le cas général → bords inclus ;
-- **ET NON** (point mis à 0) si le **mot** formé par `DrawMode` et `AreaPtSz` vaut exactement `$0002`,
-  c'est-à-dire `DrawMode = JAM1` et `AreaPtSz = 2`. Observé T29 : carré (2,2)–(12,12) en JAM1 avec un motif
-  plein de 4 lignes → pixels **(3..11, 3..11)** seulement ; même carré avec AreaPtSz = 0 → (2..12, 2..12) ;
-  en JAM2 avec AreaPtSz = 2 (T17) → bords inclus. Un clone compatible doit reproduire ce cas. [O]
+- **OR** (point set to 1) in the general case → edges included;
+- **AND NOT** (point set to 0) if the **word** formed by `DrawMode` and `AreaPtSz` is exactly `$0002`,
+  i.e. `DrawMode = JAM1` and `AreaPtSz = 2`. Observed T29: square (2,2)–(12,12) in JAM1 with a solid
+  4-line pattern → pixels **(3..11, 3..11)** only; same square with AreaPtSz = 0 → (2..12, 2..12);
+  in JAM2 with AreaPtSz = 2 (T17) → edges included. A compatible clone must reproduce this case. [O]
 
-### 4.6 Passe 4 : rendu et contour [D][O]
+### 4.6 Pass 4: rendering and outline [D][O]
 
-- **BltPattern(rp, masque, x0, y0, x0 + 8L − 1, y0 + H − 1, L)** par son **LVO** : stylos, DrawMode, Mask,
-  motif `AreaPtrn/AreaPtSz` et découpage par les ClipRects de la couche sont ceux de BltPattern
-  (`graphics-blitter-v34.md` §8 et §5.2). Coordonnées sans couche : **aucun découpage** aux bornes de la
+- **BltPattern(rp, mask, x0, y0, x0 + 8L − 1, y0 + H − 1, L)** through its **LVO**: pens, DrawMode, Mask,
+  pattern `AreaPtrn/AreaPtSz` and clipping by the layer's ClipRects are those of BltPattern
+  (`graphics-blitter-v34.md` §8 and §5.2). Coordinates without a layer: **no clipping** to the bounds of the
   BitMap. [D]
-- Puis, si `AREAOUTLINE` est posé **au moment d'AreaEnd** : tracé du contour sur le RastPort de
-  l'appelant avec **FgPen = AOlPen, JAM1, LinePtrn = $FFFF, AreaPtrn = NULL** (puis restauration de
-  DrawMode, FgPen, minterms, AreaPtrn, LinePtrn) : chaque entrée **dont le bit 2 est posé** est tracée par
-  **Draw (LVO)** depuis le point précédent, les autres par Move. Le point courant `cp` du RastPort reste
-  sur le dernier sommet. Les **ellipses ne sont jamais entourées**. [D][O]
-  Observé T12 : contour activé seulement après les AreaDraw → seule l'arête de fermeture (ajoutée par
-  AreaEnd) reçoit le contour. T11 : polygones entourés en AOlPen = 2 (bord et intérieur 1), ellipse sans
-  contour.
-- Sans `AREAOUTLINE`, le RastPort de l'appelant (cp compris) n'est pas modifié par AreaEnd. [D]
+- Then, if `AREAOUTLINE` is set **at the time of AreaEnd**: drawing of the outline on the caller's
+  RastPort with **FgPen = AOlPen, JAM1, LinePtrn = $FFFF, AreaPtrn = NULL** (then restoration of
+  DrawMode, FgPen, minterms, AreaPtrn, LinePtrn): each entry **whose bit 2 is set** is drawn by
+  **Draw (LVO)** from the previous point, the others by Move. The RastPort's current point `cp` stays
+  on the last vertex. **Ellipses are never outlined**. [D][O]
+  Observed T12: outline enabled only after the AreaDraws → only the closing edge (added by
+  AreaEnd) gets the outline. T11: polygons outlined in AOlPen = 2 (edge and interior 1), ellipse without
+  outline.
+- Without `AREAOUTLINE`, the caller's RastPort (cp included) is not modified by AreaEnd. [D]
 
-### 4.7 Lecture d'une entrée de trop après une ellipse [D][O]
+### 4.7 Reading one entry too many after an ellipse [D][O]
 
-Chaque ellipse consomme deux entrées en un seul tour de boucle, alors que les passes 1 et 3 font
-`Count` tours : **pour chaque ellipse, une entrée située au-delà de Count est traitée** (sommet et
-drapeau résiduels du tampon, non translatés). Observé : tampon remis à zéro → ellipse propre (T26) ;
-tampon pré-rempli d'entrées `(0,0)` drapeau `$03` → **un point parasite** en (x0, y0) (T27) ; dans T7 et
-T11 (résidus d'anciens tests), des **traits parasites** jusqu'à d'anciens sommets. Aucun logiciel ne peut
-s'appuyer sur ce défaut ; une implémentation propre doit traiter exactement `Count` entrées [S] — mais
-noter que, sur la vraie ROM, un tampon d'AreaInfo **mis à zéro** (AllocMem MEMF_CLEAR, cas courant) rend
-le défaut invisible (entrée résiduelle = AreaMove en (x0, y0)).
+Each ellipse consumes two entries in a single loop iteration, whereas passes 1 and 3 do
+`Count` iterations: **for each ellipse, one entry located beyond Count is processed** (residual vertex and
+flag of the buffer, not translated). Observed: buffer reset to zero → clean ellipse (T26);
+buffer pre-filled with `(0,0)` entries flag `$03` → **one stray point** at (x0, y0) (T27); in T7 and
+T11 (residues of old tests), **stray strokes** up to old vertices. No software can
+rely on this defect; a clean implementation must process exactly `Count` entries [S] — but
+note that, on the real ROM, an AreaInfo buffer **set to zero** (AllocMem MEMF_CLEAR, common case) makes
+the defect invisible (residual entry = AreaMove at (x0, y0)).
 
-### 4.8 Règle de remplissage : vecteurs de test [O]
+### 4.8 Fill rule: test vectors [O]
 
-Tous en APen 1, JAM2, BPen 0, sans motif.
+All in APen 1, JAM2, BPen 0, without pattern.
 
-- **Carré** (2,2)(10,2)(10,10)(2,10) : pixels x 2..10, y 2..10 (**81 pixels, bords inclus**). Même
-  résultat parcouru dans l'autre sens et fermé explicitement (T1, T2).
-- **Triangle** (16,1)(28,14)(4,14) (T3) :
+- **Square** (2,2)(10,2)(10,10)(2,10): pixels x 2..10, y 2..10 (**81 pixels, edges included**). Same
+  result walked in the other direction and closed explicitly (T1, T2).
+- **Triangle** (16,1)(28,14)(4,14) (T3):
 
 ```
   1  ................1...............
@@ -253,8 +253,8 @@ Tous en APen 1, JAM2, BPen 0, sans motif.
  14  ....1111111111111111111111111...
 ```
 
-- **Pentagramme** (16,1)(22,18)(6,7)(26,7)(10,18) (T4) : le pentagone central est **vide** (pair/impair)
-  mais les **arêtes qui le traversent sont tracées** :
+- **Pentagram** (16,1)(22,18)(6,7)(26,7)(10,18) (T4): the central pentagon is **empty** (even/odd)
+  but the **edges that cross it are drawn**:
 
 ```
   1  ................1...............
@@ -277,47 +277,47 @@ Tous en APen 1, JAM2, BPen 0, sans motif.
  18  ..........1...........1.........
 ```
 
-- **Deux carrés dans le même AreaEnd** (2,2)–(14,14) et (8,8)–(20,18) (T5) : l'intersection
-  (9..13, 9..13) est **vide**, ses bords (lignes 8 et 14, colonnes 8 et 14) sont pleins. **Pair/impair,
-  pas non nul.** Le second AreaMove a ajouté l'arête de fermeture du premier (Count = 9).
-- **Polygone concave en C** (2,2)(28,2)(28,6)(8,6)(8,12)(28,12)(28,16)(2,16) (T6) : lignes 2..6 et
-  12..16 pleines de x 2 à 28 ; lignes 7..11 de x 2 à 8 seulement.
-- **Figures dégénérées** (T25) : un polygone d'aire nulle dessine ses **arêtes** : (5,2)–(12,2) → segment
-  x 5..12 ; (3,5)–(20,5) → x 3..20 ; (3,8)–(3,15) → colonne ; (16,8)–(28,16) → segment oblique.
-- **COMPLEMENT** (T16) : deux AreaEnd successifs (carrés (2,2)–(14,14) puis (8,8)–(20,18)) : chaque masque
-  inverse **tous les plans du Mask** (0 → 3), l'intersection bords compris revient à 0.
+- **Two squares in the same AreaEnd** (2,2)–(14,14) and (8,8)–(20,18) (T5): the intersection
+  (9..13, 9..13) is **empty**, its edges (lines 8 and 14, columns 8 and 14) are filled. **Even/odd,
+  not non-zero.** The second AreaMove added the closing edge of the first (Count = 9).
+- **Concave C-shaped polygon** (2,2)(28,2)(28,6)(8,6)(8,12)(28,12)(28,16)(2,16) (T6): lines 2..6 and
+  12..16 filled from x 2 to 28; lines 7..11 from x 2 to 8 only.
+- **Degenerate figures** (T25): a polygon of zero area draws its **edges**: (5,2)–(12,2) → segment
+  x 5..12; (3,5)–(20,5) → x 3..20; (3,8)–(3,15) → column; (16,8)–(28,16) → oblique segment.
+- **COMPLEMENT** (T16): two successive AreaEnds (squares (2,2)–(14,14) then (8,8)–(20,18)): each mask
+  inverts **all the planes of the Mask** (0 → 3), the intersection, edges included, returns to 0.
 
-## 5. Motifs de remplissage (AreaPtrn / AreaPtSz) [O]
+## 5. Fill patterns (AreaPtrn / AreaPtSz) [O]
 
-Rendu par BltPattern, donc commun à AreaEnd, RectFill et Flood.
+Rendered by BltPattern, hence common to AreaEnd, RectFill and Flood.
 
-- **Monochrome** (`AreaPtSz = n ≥ 0`) : `2^n` mots ; la ligne de motif d'un pixel est **`y mod 2^n` en
-  coordonnées absolues du RastPort**, le bit 15 du mot correspond à `x mod 16 = 0`. Observé (T13, motif
-  `$F0F0,$0F0F`, n = 1) : ligne y = 1 → pixels x 4..7, 12..15… ; ligne y = 2 → x 0..3, 8..11… (le motif ne
-  « démarre » pas au sommet de la figure).
-- **JAM1** : bits 1 → APen, bits 0 → **fond conservé** ; **JAM2** : bits 0 → BPen ; **COMPLEMENT** : bits 1
-  → inversion de tous les plans du Mask, bits 0 → inchangé (T30, sur fond de couleur 2 : JAM1 laisse 2,
-  JAM2 met 0, COMPLEMENT change 2 en 1).
-- **Multicolore** (`AreaPtSz = −n`) : `2^n` mots **par plan**, plans consécutifs (plan 0 d'abord). Chaque
-  plan reçoit **son** motif combiné avec le minterm de ce plan (bit du plan dans APen/BPen, DrawMode).
-  T14, motifs plan 0 `$FF00,$FF00`, plan 1 `$F0F0,$0F0F` : en **APen = 3, BPen = 0, JAM2** les couleurs du
-  motif sont reproduites telles quelles (ligne impaire : x 0..3 → 1, 4..7 → 3, 8..11 → 0, 12..15 → 2) ;
-  en APen = 1, JAM1, seul le plan 0 est écrit (couleur 1 sur x 0..7 de chaque groupe de 16).
-- **SetAfPt(rp, ptrn, n)** = macro qui affecte AreaPtrn et AreaPtSz. [D, en-têtes publics]
+- **Monochrome** (`AreaPtSz = n ≥ 0`): `2^n` words; the pattern line of a pixel is **`y mod 2^n` in
+  absolute RastPort coordinates**, bit 15 of the word corresponds to `x mod 16 = 0`. Observed (T13, pattern
+  `$F0F0,$0F0F`, n = 1): line y = 1 → pixels x 4..7, 12..15…; line y = 2 → x 0..3, 8..11… (the pattern does
+  not "start" at the top of the figure).
+- **JAM1**: bits 1 → APen, bits 0 → **background kept**; **JAM2**: bits 0 → BPen; **COMPLEMENT**: bits 1
+  → inversion of all the planes of the Mask, bits 0 → unchanged (T30, on a colour 2 background: JAM1 leaves 2,
+  JAM2 sets 0, COMPLEMENT changes 2 into 1).
+- **Multicolour** (`AreaPtSz = −n`): `2^n` words **per plane**, consecutive planes (plane 0 first). Each
+  plane receives **its** pattern combined with that plane's minterm (plane bit in APen/BPen, DrawMode).
+  T14, patterns plane 0 `$FF00,$FF00`, plane 1 `$F0F0,$0F0F`: in **APen = 3, BPen = 0, JAM2** the pattern's
+  colours are reproduced as is (odd line: x 0..3 → 1, 4..7 → 3, 8..11 → 0, 12..15 → 2);
+  in APen = 1, JAM1, only plane 0 is written (colour 1 on x 0..7 of each group of 16).
+- **SetAfPt(rp, ptrn, n)** = macro that assigns AreaPtrn and AreaPtSz. [D, public headers]
 
 ## 6. DrawEllipse (−180) — `(rp A1, cx D0, cy D1, a D2, b D3)` [D][O]
 
-- Algorithme du **point milieu en deux régions** (arithmétique entière 32 bits, carrés des rayons sur 16
-  bits signés), symétrie en 4 quadrants ; chaque point est posé par **WritePixel** appelé via l'adresse
-  lue dans la table de saut de GfxBase (**SetFunction de WritePixel respecté**), donc découpé par la couche
-  point par point. [D]
-- Raccourci interne : RastPort **sans couche**, `minterms[0] = $6A`, bit 0 de Mask posé et BitMap à **1
-  plan** → inversion directe des bits par le processeur après WaitBlit (cas du masque d'AreaEnd). [D]
-- `ONE_DOT` dans `rp_Flags` : un seul point par ligne de balayage et par côté (usage AreaEnd). [D]
-- Ne modifie pas `cp_x/cp_y`. Aucune valeur rendue. [D]
-- Rayons nuls acceptés (T10) : (3,3,0,0) → le seul pixel (3,3) ; (9,3,1,0) → x 8..10 sur y 3 ;
-  (15,3,0,1) → x 15 sur y 2..4 ; (22,3,3,0) → x 19..25 ; (28,4,0,3) → x 28 sur y 1..7. [O]
-- Pixels exacts (T9 ; T10 pour (8,13,6,5) et (24,13,1,1)) : [O]
+- **Two-region midpoint** algorithm (32-bit integer arithmetic, squares of the radii on 16
+  signed bits), 4-quadrant symmetry; each point is set by **WritePixel** called via the address
+  read in GfxBase's jump table (**SetFunction of WritePixel respected**), hence clipped by the layer
+  point by point. [D]
+- Internal shortcut: RastPort **without layer**, `minterms[0] = $6A`, bit 0 of Mask set and BitMap with **1
+  plane** → direct inversion of the bits by the processor after WaitBlit (case of the AreaEnd mask). [D]
+- `ONE_DOT` in `rp_Flags`: a single point per scan line and per side (AreaEnd use). [D]
+- Does not modify `cp_x/cp_y`. No returned value. [D]
+- Zero radii accepted (T10): (3,3,0,0) → the single pixel (3,3); (9,3,1,0) → x 8..10 on y 3;
+  (15,3,0,1) → x 15 on y 2..4; (22,3,3,0) → x 19..25; (28,4,0,3) → x 28 on y 1..7. [O]
+- Exact pixels (T9; T10 for (8,13,6,5) and (24,13,1,1)): [O]
 
 ```
      00000000001111111111222222222233
@@ -341,7 +341,7 @@ Rendu par BltPattern, donc commun à AreaEnd, RectFill et Flood.
  17  ............111......1.....1....
  18  ......................11111.....
 
-     (8,13,6,5), colonnes 0..15 :
+     (8,13,6,5), columns 0..15:
   8  ......11111.....
   9  ....11.....11...
  10  ...1.........1..
@@ -355,58 +355,58 @@ Rendu par BltPattern, donc commun à AreaEnd, RectFill et Flood.
  18  ......11111.....
 ```
 
-- (24,13,1,1) (T10) : (24,12), (23,13), (25,13), (24,14) — losange de 4 pixels, centre vide. [O]
-- **AreaEllipse** remplit exactement l'intérieur de ce tracé, bord compris (T8 = T9 rempli ;
-  T26 pour (16,10,8,6) : lignes 4 et 16 → x 13..19, 5/15 → 11..21, 6/14 → 10..22, 7/13 → 9..23,
-  8..12 → 8..24). Rayons nuls (T31) : AreaEllipse(3,3,0,0) → le pixel (3,3) ; (10,3,3,0) → x 7..13 ;
-  (20,3,0,2) → x 20 sur y 1..5. [O]
-- `DrawCircle(rp, cx, cy, r)` = macro `DrawEllipse(rp, cx, cy, r, r)`. [D, en-têtes publics]
+- (24,13,1,1) (T10): (24,12), (23,13), (25,13), (24,14) — 4-pixel diamond, empty centre. [O]
+- **AreaEllipse** fills exactly the interior of this outline, edge included (T8 = T9 filled;
+  T26 for (16,10,8,6): lines 4 and 16 → x 13..19, 5/15 → 11..21, 6/14 → 10..22, 7/13 → 9..23,
+  8..12 → 8..24). Zero radii (T31): AreaEllipse(3,3,0,0) → the pixel (3,3); (10,3,3,0) → x 7..13;
+  (20,3,0,2) → x 20 on y 1..5. [O]
+- `DrawCircle(rp, cx, cy, r)` = macro `DrawEllipse(rp, cx, cy, r, r)`. [D, public headers]
 
 ## 7. Flood (−330) — `success = Flood(rp A1, mode D2, x D0, y D1)` → D0
 
-### 7.1 Aiguillage et valeur rendue [D][O]
+### 7.1 Dispatch and returned value [D][O]
 
-1. **Avec couche** : `Layer.Lock` pris (sémaphore) pendant toute l'opération.
-   - Couche **SuperBitMap** : SyncSBitMap, Flood sur la SuperBitMap via une copie du RastPort sans couche,
-     puis CopySBitMap.
-   - Sinon comme ci-dessous, mais le masque est dimensionné sur les **bornes de la couche**.
-2. **TmpRas absente** : mode ≠ 0 → rend **0** sans rien faire (T20) ; mode 0 → **chemin lent** sans
-   allocation (§7.4), rend **1** (T20 : résultat identique au chemin normal).
-3. **TmpRas présente** : chemin normal (§7.2) ; rend **1**, ou **0** si l'allocation chip échoue (T32 :
-   `TmpRas.Size = $F00000` → 0 dans les deux modes, rien de dessiné ; **pas de repli** sur le chemin lent).
-4. Point de départ déjà sur la frontière (mode 0 sur AOlPen) : rien n'est fait, rend **1** (T21).
-   Mode 1 avec APen égal à la couleur de départ : remplissage sans effet visible, rend 1 (T21). [O]
+1. **With a layer**: `Layer.Lock` taken (semaphore) during the whole operation.
+   - **SuperBitMap** layer: SyncSBitMap, Flood on the SuperBitMap via a copy of the RastPort without a layer,
+     then CopySBitMap.
+   - Otherwise as below, but the mask is sized on the **bounds of the layer**.
+2. **TmpRas absent**: mode ≠ 0 → returns **0** without doing anything (T20); mode 0 → **slow path** without
+   allocation (§7.4), returns **1** (T20: result identical to the normal path).
+3. **TmpRas present**: normal path (§7.2); returns **1**, or **0** if the chip allocation fails (T32:
+   `TmpRas.Size = $F00000` → 0 in both modes, nothing drawn; **no fallback** to the slow path).
+4. Starting point already on the boundary (mode 0 on AOlPen): nothing is done, returns **1** (T21).
+   Mode 1 with APen equal to the starting colour: fill without visible effect, returns 1 (T21). [O]
 
-### 7.2 Chemin normal (TmpRas) [D]
+### 7.2 Normal path (TmpRas) [D]
 
-- Couleur cible : mode 0 → `AOlPen` ; mode 1 → `ReadPixel(x, y)` (si −1, hors couche : rien n'est fait).
-- Masque : un plan dans `TmpRas.RasPtr`, de dimensions `BytesPerRow × Rows` de la BitMap (sans couche) ou
-  `RASSIZE(largeur, hauteur)` de la couche ; effacé (SetRast) avant usage.
-- **Allocation chip** (`MEMF_CHIP|MEMF_PUBLIC`) d'un second plan de `TmpRas.Size` octets (sans couche) ou
-  `RASSIZE` de la couche (avec couche), libéré à la fin après WaitBlit. **Exigence pratique : la TmpRas
-  doit couvrir toute la BitMap (ou la couche), et la même quantité de chip doit être libre.** Une
-  `TmpRas.Size` plus petite que le plan provoque un débordement (non sondé).
-- Construction par blits **plan par plan** du plan « pixels de la couleur cible » (ET sur tous les plans
-  de la profondeur d'origine) ; pendant ces blits, la ROM **modifie temporairement la BitMap de
-  l'appelant** (`Depth = 1`, `Planes[0]` = plan courant) puis la restaure (copie de 40 octets). Une autre
-  tâche dessinant dans la même BitMap pendant un Flood voit une BitMap à 1 plan. En mode 1, le plan est
-  ensuite **inversé** : la frontière est « toute couleur différente de la cible ».
-- Remplissage par **graine, ligne de balayage**, sur le masque : spans trouvés par lecture processeur,
-  enregistrés en traçant des lignes horizontales (Move/Draw par LVO) dans le plan de résultat.
-- Rendu final : **BltPattern(rp, résultat, 0, 0, largeur − 1, hauteur − 1, BytesPerRow)** sur toute la
-  BitMap (ou la couche) : APen, BPen, DrawMode, motif et ClipRects s'appliquent (T21 : motif `$F0F0/$0F0F`
-  appliqué au remplissage).
+- Target colour: mode 0 → `AOlPen`; mode 1 → `ReadPixel(x, y)` (if −1, outside the layer: nothing is done).
+- Mask: one plane in `TmpRas.RasPtr`, of dimensions `BytesPerRow × Rows` of the BitMap (without a layer) or
+  `RASSIZE(width, height)` of the layer; cleared (SetRast) before use.
+- **Chip allocation** (`MEMF_CHIP|MEMF_PUBLIC`) of a second plane of `TmpRas.Size` bytes (without a layer) or
+  `RASSIZE` of the layer (with a layer), freed at the end after WaitBlit. **Practical requirement: the TmpRas
+  must cover the whole BitMap (or the layer), and the same amount of chip must be free.** A
+  `TmpRas.Size` smaller than the plane causes an overflow (not probed).
+- Construction by blits, **plane by plane**, of the "pixels of the target colour" plane (AND over all the planes
+  of the original depth); during these blits, the ROM **temporarily modifies the caller's
+  BitMap** (`Depth = 1`, `Planes[0]` = current plane) then restores it (copy of 40 bytes). Another
+  task drawing into the same BitMap during a Flood sees a 1-plane BitMap. In mode 1, the plane is
+  then **inverted**: the boundary is "any colour different from the target".
+- **Seed, scan-line** fill on the mask: spans found by processor reads,
+  recorded by drawing horizontal lines (Move/Draw through LVO) into the result plane.
+- Final rendering: **BltPattern(rp, result, 0, 0, width − 1, height − 1, BytesPerRow)** over the whole
+  BitMap (or layer): APen, BPen, DrawMode, pattern and ClipRects apply (T21: pattern `$F0F0/$0F0F`
+  applied to the fill).
 
-### 7.3 Comportement observé [O]
+### 7.3 Observed behaviour [O]
 
-Scène : diagonale (0,0)–(19,19) et colonne x = 24 en couleur 1, îlot 2 × 2 de couleur 3 en (14,3) ;
-Flood depuis (20,3), APen 2.
+Scene: diagonal (0,0)–(19,19) and column x = 24 in colour 1, 2 × 2 island of colour 3 at (14,3);
+Flood from (20,3), APen 2.
 
-- **Mode 1** (T18) : la zone de couleur 0 à droite de la diagonale est remplie ; **l'îlot de couleur 3
-  reste** ; la zone sous la diagonale (reliée seulement par les coins) **n'est pas atteinte** → **4-connexe**.
-- **Mode 0** avec AOlPen = 1 (T19) : même zone, **l'îlot 3 est recouvert** (seule AOlPen arrête) ; pas de
-  fuite par les coins.
-- Losange fermé par 4 segments obliques (T33) : remplissage intérieur exact, aucune fuite.
+- **Mode 1** (T18): the colour 0 area to the right of the diagonal is filled; **the colour 3 island
+  remains**; the area under the diagonal (connected only by the corners) **is not reached** → **4-connected**.
+- **Mode 0** with AOlPen = 1 (T19): same area, **island 3 is covered** (only AOlPen stops); no
+  leak through the corners.
+- Diamond closed by 4 oblique segments (T33): exact interior fill, no leak.
 
 ```
 T18 (mode 1)                          T19 (mode 0)
@@ -420,96 +420,96 @@ T18 (mode 1)                          T19 (mode 0)
  19  ...................122221       19  ...................122221
 ```
 
-### 7.4 Chemin lent (mode 0 sans TmpRas) [D][O]
+### 7.4 Slow path (mode 0 without TmpRas) [D][O]
 
-Même règle (frontière = AOlPen, 4-connexe), exécuté par le processeur pixel par pixel (ReadPixel) avec
-tracé des spans directement dans le RastPort ; aucune allocation. Résultat identique au chemin normal sur
-la scène T19/T20. [O]
+Same rule (boundary = AOlPen, 4-connected), executed by the processor pixel by pixel (ReadPixel) with
+the spans drawn directly into the RastPort; no allocation. Result identical to the normal path on
+the T19/T20 scene. [O]
 
-## 8. RectFill (−306) avec contour [D][O]
+## 8. RectFill (−306) with outline [D][O]
 
-- Sans `AREAOUTLINE` : `BltPattern(rp, NULL, xmin, ymin, xmax, ymax, 0)` (bornes inclusives, motif et
-  stylos de BltPattern). [D]
-- Avec `AREAOUTLINE` : intérieur rempli d'abord — en **COMPLEMENT**, le rectangle est **réduit d'un pixel
-  de chaque côté** (rien si vide) pour ne pas inverser deux fois le bord ; sinon le rectangle entier — puis
-  contour par **Move(xmin,ymin), Draw(xmin,ymax), Draw(xmax,ymax), Draw(xmax,ymin), Draw(xmin,ymin)** (LVO)
-  avec FgPen = AOlPen et **JAM1**, minterms/FgPen/DrawMode restaurés ensuite. **cp reste en
-  (xmin, ymin)**. [D][O] (T15 : cp = (2,2) ; rectangle (2,2)–(12,9) → bord 2, intérieur 1 ; en COMPLEMENT
-  sur fond 3 avec contour, (18,3)–(27,8) → bord 2, intérieur (19..26, 4..7) à 0 ; sans contour,
-  (18,11)–(27,16) → tout le rectangle à 0.)
+- Without `AREAOUTLINE`: `BltPattern(rp, NULL, xmin, ymin, xmax, ymax, 0)` (inclusive bounds, pattern and
+  pens of BltPattern). [D]
+- With `AREAOUTLINE`: interior filled first — in **COMPLEMENT**, the rectangle is **shrunk by one pixel
+  on each side** (nothing if empty) so as not to invert the edge twice; otherwise the whole rectangle — then
+  outline by **Move(xmin,ymin), Draw(xmin,ymax), Draw(xmax,ymax), Draw(xmax,ymin), Draw(xmin,ymin)** (LVO)
+  with FgPen = AOlPen and **JAM1**, minterms/FgPen/DrawMode restored afterwards. **cp stays at
+  (xmin, ymin)**. [D][O] (T15: cp = (2,2); rectangle (2,2)–(12,9) → edge 2, interior 1; in COMPLEMENT
+  on background 3 with outline, (18,3)–(27,8) → edge 2, interior (19..26, 4..7) at 0; without outline,
+  (18,11)–(27,16) → whole rectangle at 0.)
 
-## 9. WritePixel (−324) et ReadPixel (−318)
+## 9. WritePixel (−324) and ReadPixel (−318)
 
 ### 9.1 WritePixel — `(rp A1, x D0, y D1)` → D0 [D][O]
 
-- **Sans couche** : **aucun contrôle de bornes** ; adresse = `y × BytesPerRow + (x >> 3)` (multiplication
-  signée 16 bits). Observé (T22) : WritePixel(32, 0) sur une BitMap de 32 pixels écrit (0, 1) ;
-  WritePixel(0, 20) avec 20 lignes écrit le plan **suivant** en mémoire. Rend **0** dans tous les cas.
-- Écriture **au blitter**, un mot par plan dont le bit de `Mask` est posé, avec le minterm de
-  `rp_minterms[plan]` (donc FgPen/BgPen/DrawMode) : COMPLEMENT inverse le pixel dans tous les plans du Mask
-  (T22 : 2 → 1, 0 → 3). Pas d'attente finale. [D][O]
-- **Avec couche** : `LockLayerRom` (LVO), coordonnées translatées par les bornes et le défilement de la
-  couche, recherche du ClipRect : visible → écran ; caché avec BitMap de sauvegarde → dans cette BitMap
-  (x relatif à `MinX & ~15`) ; caché sans sauvegarde (SIMPLE_REFRESH) ou hors de tout ClipRect et hors
-  SuperClipRect → rend **−1** sans écrire ; SuperBitMap via la liste SuperClipRect. [D]
+- **Without a layer**: **no bounds check**; address = `y × BytesPerRow + (x >> 3)` (16-bit signed
+  multiplication). Observed (T22): WritePixel(32, 0) on a 32-pixel BitMap writes (0, 1);
+  WritePixel(0, 20) with 20 lines writes the **next** plane in memory. Returns **0** in all cases.
+- Write **by the blitter**, one word per plane whose `Mask` bit is set, with the minterm of
+  `rp_minterms[plane]` (hence FgPen/BgPen/DrawMode): COMPLEMENT inverts the pixel in all the planes of the Mask
+  (T22: 2 → 1, 0 → 3). No final wait. [D][O]
+- **With a layer**: `LockLayerRom` (LVO), coordinates translated by the bounds and the scroll of the
+  layer, lookup of the ClipRect: visible → screen; hidden with a backup BitMap → into that BitMap
+  (x relative to `MinX & ~15`); hidden without backup (SIMPLE_REFRESH) or outside any ClipRect and outside
+  SuperClipRect → returns **−1** without writing; SuperBitMap via the SuperClipRect list. [D]
 
 ### 9.2 ReadPixel — `(rp A1, x D0, y D1)` → D0 [D][O]
 
-- Attend la fin du blitter (WaitBlit), lit **au processeur** le bit du pixel dans les `Depth` plans et
-  rend la couleur (0..2^Depth − 1). **Sans couche, aucun contrôle de bornes** (T22 : ReadPixel(32, 0) rend
-  la couleur de (0, 1)). Avec couche : mêmes règles de recherche que WritePixel, **−1** si le pixel n'est
-  pas lisible. [D][O]
+- Waits for the end of the blitter (WaitBlit), reads **with the processor** the pixel's bit in the `Depth` planes and
+  returns the colour (0..2^Depth − 1). **Without a layer, no bounds check** (T22: ReadPixel(32, 0) returns
+  the colour of (0, 1)). With a layer: same lookup rules as WritePixel, **−1** if the pixel is not
+  readable. [D][O]
 
-## 10. Ce qui diffère sur un vrai A500
+## 10. What differs on a real A500
 
-1. **TmpRas en chip obligatoire** (AreaEnd : BltClear, lignes et remplissage du blitter ; Flood : blits
-   de construction du masque) ; la ROM ne vérifie rien. Une TmpRas en slow RAM (`$C00000`) est adressée
-   tronquée par Agnus : le masque est écrit ailleurs en chip et le rendu est faux. Le tampon de sommets
-   peut être n'importe où (processeur seul). [D]
-2. **Flood alloue en plus `TmpRas.Size` octets de chip contigus** : sur 512 Ko de chip fragmentée
-   (Workbench + écrans), l'allocation échoue plus tôt qu'en émulation généreuse → Flood rend 0 sans rien
-   dessiner. [D][O pour le chemin d'échec]
-3. Le remplissage du blitter (mode EFE descendant) et les lignes `ONE_DOT` sont des fonctions matérielles
-   Agnus standard ; un émulateur qui implémente mal le **mode fill avec DESC** ou le bit **SING** des
-   lignes produit des spans faux sur ce seul chemin. Les résultats de §4.8 sont la référence. [D]
-4. Pas d'attente finale du blitter après AreaEnd (BltPattern) ni après WritePixel : un accès processeur
-   aux plans doit être précédé de WaitBlit (ReadPixel attend lui-même). [D]
-5. Flood est **lent** sur 68000 7 MHz (lecture processeur du masque, une ligne du blitter par span) ; la
-   sonde ne mesure pas de temps. [D]
+1. **TmpRas in chip mandatory** (AreaEnd: BltClear, blitter lines and fill; Flood: mask
+   construction blits); the ROM checks nothing. A TmpRas in slow RAM (`$C00000`) is addressed
+   truncated by Agnus: the mask is written elsewhere in chip and the rendering is wrong. The vertex buffer
+   can be anywhere (processor only). [D]
+2. **Flood additionally allocates `TmpRas.Size` contiguous bytes of chip**: on 512 KB of fragmented chip
+   (Workbench + screens), the allocation fails sooner than in generous emulation → Flood returns 0 without
+   drawing anything. [D][O for the failure path]
+3. The blitter fill (descending EFE mode) and the `ONE_DOT` lines are standard Agnus hardware
+   functions; an emulator that implements the **fill mode with DESC** or the **SING** bit of
+   lines badly produces wrong spans on this path only. The results of §4.8 are the reference. [D]
+4. No final blitter wait after AreaEnd (BltPattern) nor after WritePixel: a processor access
+   to the planes must be preceded by WaitBlit (ReadPixel waits itself). [D]
+5. Flood is **slow** on a 7 MHz 68000 (processor reading of the mask, one blitter line per span); the
+   probe measures no time. [D]
 
-## 11. Sonde
+## 11. Probe
 
-`tests/garea_probe.s` (asset de test, code auteur) : tests T0–T33, une ligne d'en-tête par test (valeurs
-rendues en hexadécimal, structures), puis 20 lignes `plan0 plan1`. Assemblage :
-`vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/garea_probe tests/garea_probe.s` ; exécution :
-`tests/garea_probe.sh assets/kick34005.A500 build/garea_probe <sortie> 240`. Les schémas de ce document
-sont le décodage de `serial.log`. Les tests T7 et T11 dépendent du **contenu résiduel** du tampon de
-sommets (§4.7) et ne sont pas des vecteurs de référence pour un clone.
+`tests/garea_probe.s` (test asset, author code): tests T0–T33, one header line per test (returned values
+in hexadecimal, structures), then 20 `plan0 plan1` lines. Assembly:
+`vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/garea_probe tests/garea_probe.s`; execution:
+`tests/garea_probe.sh assets/kick34005.A500 build/garea_probe <sortie> 240`. The diagrams in this document
+are the decoding of `serial.log`. Tests T7 and T11 depend on the **residual contents** of the vertex
+buffer (§4.7) and are not reference vectors for a clone.
 
-## Points non tranchés
+## Open points
 
-1. **Chemins avec couche** (AreaEnd/Flood/WritePixel/ReadPixel dans une fenêtre, ClipRects cachés,
-   SuperBitMap) : **déduits uniquement** ; la sonde n'utilise qu'un RastPort sans couche. En particulier
-   l'origine du motif (coordonnées de couche ou d'écran) dans une couche n'est pas observée.
-2. **Coordonnées négatives / hors BitMap dans AreaEnd** (x0 arrondi négatif, rendu sans couche non
-   découpé) : déduit, non sondé (écriture hors tampon).
-3. **TmpRas trop petite pour Flood** (allocation de `Size` octets puis copie d'un plan entier) et
-   **TmpRas NULL pour AreaEnd** : débordement/corruption déduits, non sondés.
-4. **Égalité exacte des arêtes d'AreaEnd avec Draw()** : les deux utilisent le tracé de ligne du blitter ;
-   l'identité pixel à pixel n'a été vérifiée que sur des cas simples (T3, T25), pas comparée
-   systématiquement à Draw.
-5. **DrawEllipse en COMPLEMENT** avec un rayon nul (points symétriques confondus inversés deux fois ?) et
-   grands rayons (débordement des produits 16 bits au-delà d'environ 180 pixels de rayon) : non sondés.
-6. **AreaMove en échec de fermeture** (Count laissé incrémenté) : déduit, non observé.
-7. Choix exact du **premier point omis** en passe 1 pour des arêtes consécutives de même sens séparées par
-   une arête horizontale : déduit (l'arête horizontale ne change pas le sens mémorisé), non sondé.
-8. **Temps** (AreaEnd, Flood) sur matériel réel ou WinUAE cycle-exact : non mesurés (sonde sous FS-UAE).
-9. Contenu de D0 rendu par AreaEnd sur liste vide : indéfini ; les deux valeurs observées ne sont pas une
-   règle.
+1. **Paths with a layer** (AreaEnd/Flood/WritePixel/ReadPixel in a window, hidden ClipRects,
+   SuperBitMap): **deduced only**; the probe only uses a RastPort without a layer. In particular
+   the origin of the pattern (layer or screen coordinates) within a layer is not observed.
+2. **Negative coordinates / outside the BitMap in AreaEnd** (x0 rounded negative, rendering without a layer not
+   clipped): deduced, not probed (write outside the buffer).
+3. **TmpRas too small for Flood** (allocation of `Size` bytes then copy of a whole plane) and
+   **TmpRas NULL for AreaEnd**: overflow/corruption deduced, not probed.
+4. **Exact equality of AreaEnd's edges with Draw()**: both use the blitter's line drawing;
+   pixel-for-pixel identity has only been verified on simple cases (T3, T25), not compared
+   systematically with Draw.
+5. **DrawEllipse in COMPLEMENT** with a zero radius (coincident symmetric points inverted twice?) and
+   large radii (overflow of the 16-bit products beyond a radius of about 180 pixels): not probed.
+6. **AreaMove failing to close** (Count left incremented): deduced, not observed.
+7. Exact choice of the **omitted first point** in pass 1 for consecutive edges in the same direction separated by
+   a horizontal edge: deduced (the horizontal edge does not change the stored direction), not probed.
+8. **Timing** (AreaEnd, Flood) on real hardware or cycle-exact WinUAE: not measured (probe under FS-UAE).
+9. Contents of D0 returned by AreaEnd on an empty list: undefined; the two values observed are not a
+   rule.
 
-## Relecture clean-room
+## Clean-room review
 
-- Aucune suite d'instructions de la ROM, aucun listing, aucune adresse de routine : seulement des LVO
-  publics, des décalages de structures publiques (`rastport.h`), des valeurs de drapeaux, des ordres
-  d'opérations et des pixels observés.
-- Les schémas de pixels sont des **sorties** de la vraie ROM (vecteurs de test), pas du code.
+- No ROM instruction sequence, no listing, no routine address: only public
+  LVOs, offsets of public structures (`rastport.h`), flag values, orders of
+  operations and observed pixels.
+- The pixel diagrams are **outputs** of the real ROM (test vectors), not code.

@@ -1,282 +1,282 @@
-# Autoconfig Zorro II de la 1.3 (expansion.library 34.1) — spec comportementale
+# Zorro II Autoconfig of 1.3 (expansion.library 34.1) — behavioural spec
 
-Piste ANALYSE. Source : ROM `kick34005.A500` (34.5) — sondes boîte noire sous FS-UAE 3.2.35 + lecture
-de la ROM limitée aux cas que les sondes ne couvrent pas. Aucune suite d'instructions n'est transcrite :
-on décrit le **quoi** (ordre, valeurs, conditions, layout d'ABI), jamais le **comment**.
+ANALYSIS track. Source: ROM `kick34005.A500` (34.5) — black-box probes under FS-UAE 3.2.35 + reading
+of the ROM limited to the cases the probes do not cover. No instruction sequence is transcribed:
+we describe the **what** (order, values, conditions, ABI layout), never the **how**.
 
-Légende des sources : **[S]** = observé par sonde boîte noire (vecteurs §8) ; **[R]** = établi par analyse
-ROM (comportement seulement) ; **[S+R]** = les deux concordent ; **[D]** = docs publiques (RKRM/NDK).
+Source legend: **[S]** = observed by black-box probe (vectors §8); **[R]** = established by ROM
+analysis (behaviour only); **[S+R]** = both agree; **[D]** = public docs (RKRM/NDK).
 
 ---
 
-## 0. Structures d'ABI utilisées (rappel, offsets V34)
+## 0. ABI structures used (reminder, V34 offsets)
 
-`struct ExpansionBase` (taille 456 = `0x1C8`, = dataSize du résident) **[R, concorde NDK 1.3]** :
+`struct ExpansionBase` (size 456 = `0x1C8`, = dataSize of the resident) **[R, agrees with NDK 1.3]**:
 
-| Off. | Champ | Rôle observé |
+| Off. | Field | Observed role |
 |---:|---|---|
 | `$00` | `eb_LibNode` (34) | |
 | `$22` | `eb_Flags` (UBYTE) | bit 0 `EBB_CLOGGED`, bit 1 `EBB_SHORTMEM` (cf. §3, §2.6) |
 | `$24` | `eb_ExecBase` | |
 | `$28` | `eb_SegList` | |
-| `$2C` | `eb_CurrentBinding` (16 octets) | Get/SetCurrentBinding |
-| `$3C` | `eb_BoardList` (List) | liste des ConfigDev |
-| `$4A` | `eb_MountList` (List) | BootNodes d'AddDosNode (autoboot) |
-| `$58` | `eb_AllocTable[256]` | 1 octet par « slot » de 64 Ko de l'espace 24 bits ; **≠0 = libre, 0 = pris/indisponible** |
+| `$2C` | `eb_CurrentBinding` (16 bytes) | Get/SetCurrentBinding |
+| `$3C` | `eb_BoardList` (List) | list of ConfigDevs |
+| `$4A` | `eb_MountList` (List) | AddDosNode BootNodes (autoboot) |
+| `$58` | `eb_AllocTable[256]` | 1 byte per 64 KB "slot" of the 24-bit space; **≠0 = free, 0 = taken/unavailable** |
 | `$158` | `eb_BindSemaphore` (46) | Obtain/ReleaseConfigBinding |
-| `$186` | `eb_Int2List`, `$19C` `eb_Int6List`, `$1B2` `eb_Int7List` (Interrupt ×3) | non utilisés par l'autoconfig |
+| `$186` | `eb_Int2List`, `$19C` `eb_Int6List`, `$1B2` `eb_Int7List` (Interrupt ×3) | not used by the autoconfig |
 
-`struct ConfigDev` (taille 68 = `0x44`) : `cd_Node` `$00`, `cd_Flags` `$0E` (bit 0 `CDF_SHUTUP`, bit 1
-`CDF_CONFIGME`), `cd_Pad` `$0F`, `cd_Rom` `$10` (ExpansionRom, 16 octets), `cd_BoardAddr` `$20`,
+`struct ConfigDev` (size 68 = `0x44`): `cd_Node` `$00`, `cd_Flags` `$0E` (bit 0 `CDF_SHUTUP`, bit 1
+`CDF_CONFIGME`), `cd_Pad` `$0F`, `cd_Rom` `$10` (ExpansionRom, 16 bytes), `cd_BoardAddr` `$20`,
 `cd_BoardSize` `$24`, `cd_SlotAddr` `$28` (UWORD), `cd_SlotSize` `$2A` (UWORD), `cd_Driver` `$2C`,
 `cd_NextCD` `$30`, `cd_Unused[4]` `$34`.
 
-`struct ExpansionRom` (dans `cd_Rom`, offsets relatifs) : `er_Type` 0, `er_Product` 1, `er_Flags` 2,
+`struct ExpansionRom` (in `cd_Rom`, relative offsets): `er_Type` 0, `er_Product` 1, `er_Flags` 2,
 `er_Reserved03` 3, `er_Manufacturer` 4 (UWORD), `er_SerialNumber` 6 (ULONG), `er_InitDiagVec` 10 (UWORD),
-`er_Reserved0c..0f` 12 (4 octets).
+`er_Reserved0c..0f` 12 (4 bytes).
 
-Codes d'erreur (valeurs numériques renvoyées) : `0` OK, `41` (`EE_NOEXPANSION`, plus d'espace), `42`
-(`EE_NOMEMORY`, aussi renvoyé pour « pas de carte / ROM invalide »).
-
----
-
-## 1. QUAND l'autoconfig a lieu
-
-1. **Dans l'init du résident expansion.library** (`RTF_AUTOINIT|RTF_COLDSTART`, pri **110**, 1er module de la
-   passe `InitCode(RTF_COLDSTART)` après exec — cf. `module-map.md`, `boot-sequence.md`). **[R]**
-   Personne d'autre ne déclenche la configuration de la chaîne : c'est la fonction d'init de la library
-   (appelée par `MakeLibrary` via `InitResident`) qui, dans l'ordre :
-   1. mémorise ExecBase (`eb_ExecBase`) et la seglist ;
-   2. initialise `eb_BindSemaphore` (InitSemaphore) ;
-   3. déclare libres les slots de l'**espace mémoire** : `FreeExpansionMem(0x20, 0x80)` → slots `$20..$9F`
-      = `$200000..$9FFFFF` ;
-   4. déclare libres les slots de l'**espace E/S** : `FreeExpansionMem(0xE9, 7)` → slots `$E9..$EF`
-      = `$E90000..$EFFFFF` (le slot `$E8`, adresse de configuration, n'est **jamais** libre) ;
-   5. initialise (NewList) `eb_BoardList` et `eb_MountList` ;
-   6. appelle `ConfigChain($E80000)` ;
-   7. renvoie la base.
-   Tous les autres slots (`$00..$1F` chip/réservé, `$A0..$E8`, `$F0..$FF`) restent à 0 = indisponibles
-   (la base est allouée remise à zéro par MakeLibrary).
-2. **Après** la mise en place de la mémoire par exec (chip + slow RAM `$C00000`, ExecBase déjà placée) :
-   la fast RAM Zorro II est ajoutée **pendant** l'init d'expansion, donc **avant** tous les autres résidents
-   COLDSTART (graphics, devices, etc.) qui peuvent déjà y allouer. **[S+R]** (sans slow RAM, la fast RAM
-   reçoit les allocations MEMF_PUBLIC des résidents suivants : `mh_Free` < taille, cf. vecteur `f8noslow`.)
-3. La 1.3 **ne déplace pas** ExecBase ni la pile superviseur en fast RAM (ExecBase reste en slow RAM
-   `$C00xxx` ou en chip). **[S]**
+Error codes (numeric values returned): `0` OK, `41` (`EE_NOEXPANSION`, no more space), `42`
+(`EE_NOMEMORY`, also returned for "no board / invalid ROM").
 
 ---
 
-## 2. Protocole appliqué par la 1.3
+## 1. WHEN the autoconfig happens
 
-### 2.1 Accès aux registres (ReadExpansionByte / WriteExpansionByte)
-- Un « octet logique » d'index `n` occupe deux registres physiques : quartet **haut** à `board + 4n`, quartet
-  **bas** à `board + 4n + 2` (dans les deux cas c'est le **quartet haut** de l'octet lu qui porte la donnée).
-  `ReadExpansionByte(board, n)` = `(lire(board+4n) & $F0) | (lire(board+4n+2) >> 4)`, **sans inversion**.
+1. **In the init of the expansion.library resident** (`RTF_AUTOINIT|RTF_COLDSTART`, pri **110**, 1st module of the
+   `InitCode(RTF_COLDSTART)` pass after exec — cf. `module-map.md`, `boot-sequence.md`). **[R]**
+   Nobody else triggers the configuration of the chain: it is the library's init function
+   (called by `MakeLibrary` via `InitResident`) that, in order:
+   1. stores ExecBase (`eb_ExecBase`) and the seglist;
+   2. initialises `eb_BindSemaphore` (InitSemaphore);
+   3. declares free the slots of the **memory space**: `FreeExpansionMem(0x20, 0x80)` → slots `$20..$9F`
+      = `$200000..$9FFFFF`;
+   4. declares free the slots of the **I/O space**: `FreeExpansionMem(0xE9, 7)` → slots `$E9..$EF`
+      = `$E90000..$EFFFFF` (slot `$E8`, the configuration address, is **never** free);
+   5. initialises (NewList) `eb_BoardList` and `eb_MountList`;
+   6. calls `ConfigChain($E80000)`;
+   7. returns the base.
+   All the other slots (`$00..$1F` chip/reserved, `$A0..$E8`, `$F0..$FF`) remain at 0 = unavailable
+   (the base is allocated zeroed by MakeLibrary).
+2. **After** the memory has been set up by exec (chip + slow RAM `$C00000`, ExecBase already placed):
+   the Zorro II fast RAM is added **during** the expansion init, hence **before** all the other COLDSTART
+   residents (graphics, devices, etc.) which may already allocate in it. **[S+R]** (without slow RAM, the fast RAM
+   receives the MEMF_PUBLIC allocations of the following residents: `mh_Free` < size, cf. vector `f8noslow`.)
+3. 1.3 **does not move** ExecBase nor the supervisor stack into fast RAM (ExecBase stays in slow RAM
+   `$C00xxx` or in chip). **[S]**
+
+---
+
+## 2. Protocol applied by 1.3
+
+### 2.1 Register access (ReadExpansionByte / WriteExpansionByte)
+- A "logical byte" of index `n` occupies two physical registers: **high** nibble at `board + 4n`, **low**
+  nibble at `board + 4n + 2` (in both cases it is the **high nibble** of the byte read that carries the data).
+  `ReadExpansionByte(board, n)` = `(read(board+4n) & $F0) | (read(board+4n+2) >> 4)`, **without inversion**.
   **[R]**
-- `WriteExpansionByte(board, n, v)` écrit `v<<4` à `board+4n+2` (quartet bas) **puis** `v` à `board+4n`
-  (quartet haut **en dernier**, car c'est l'écriture du quartet haut du registre `$48` qui fait prendre
-  l'adresse à une carte Zorro II). Renvoie 0. **[R]**
+- `WriteExpansionByte(board, n, v)` writes `v<<4` at `board+4n+2` (low nibble) **then** `v` at `board+4n`
+  (high nibble **last**, because it is the write of the high nibble of register `$48` that makes a Zorro II
+  board take the address). Returns 0. **[R]**
 
-### 2.2 Lecture de l'ExpansionRom (ReadExpansionRom)
-- Lit **17** octets logiques (index 0 à 16) : l'index 0 (`er_Type`, registres `$00/$02`) est pris **tel
-  quel** ; les index 1..16 sont **inversés** (complément à un). Ils sont rangés à partir de `cd_Rom`, donc le
-  17e (index 16 = registres `$40/$42`, inversé) **déborde dans l'octet de poids fort de `cd_BoardAddr`**.
-  **[R]**, conséquence visible **[S]** : une carte mise en sommeil garde `cd_BoardAddr = $FF000000` (cf. §2.6).
-- Validation (sinon retour **42** = « pas de carte ») **[R]** :
-  - `er_Flags & $3F` doit être 0 (seuls les bits 7 `ERFF_MEMSPACE` et 6 `ERFF_NOSHUTUP` sont admis) ;
-  - `er_Reserved03` doit être 0 ;
-  - `er_Manufacturer` ≠ `$0000` et ≠ `$FFFF`.
-  Un bus vide (lectures toutes à 1 ou toutes à 0) échoue donc naturellement → **fin de chaîne**.
-- Anti-rebond : relit ensuite la ROM **11 fois** et compare à chaque fois les 16 premiers octets
-  (`cd_Rom`) ; une seule différence → retour 42. Sinon retour 0. **[R]**
-- Les bits de type `er_Type & $C0` (Zorro II = `$C0`) et le bit « chained » (`$08`) **ne sont pas
-  vérifiés** : seule la taille (`er_Type & 7`) et les bits `$20`/`$10` sont exploités. **[R]**
+### 2.2 Reading the ExpansionRom (ReadExpansionRom)
+- Reads **17** logical bytes (index 0 to 16): index 0 (`er_Type`, registers `$00/$02`) is taken **as
+  is**; indices 1..16 are **inverted** (one's complement). They are stored starting at `cd_Rom`, so the
+  17th (index 16 = registers `$40/$42`, inverted) **overflows into the high-order byte of `cd_BoardAddr`**.
+  **[R]**, visible consequence **[S]**: a board put to sleep keeps `cd_BoardAddr = $FF000000` (cf. §2.6).
+- Validation (otherwise return **42** = "no board") **[R]**:
+  - `er_Flags & $3F` must be 0 (only bits 7 `ERFF_MEMSPACE` and 6 `ERFF_NOSHUTUP` are allowed);
+  - `er_Reserved03` must be 0;
+  - `er_Manufacturer` ≠ `$0000` and ≠ `$FFFF`.
+  An empty bus (reads all at 1 or all at 0) therefore fails naturally → **end of chain**.
+- Debounce: then re-reads the ROM **11 times** and compares each time the first 16 bytes
+  (`cd_Rom`); a single difference → return 42. Otherwise return 0. **[R]**
+- The type bits `er_Type & $C0` (Zorro II = `$C0`) and the "chained" bit (`$08`) **are not
+  checked**: only the size (`er_Type & 7`) and bits `$20`/`$10` are used. **[R]**
 
-### 2.3 Taille (er_Type & 7) → nombre de slots de 64 Ko et départ de recherche **[R, tailles S]**
+### 2.3 Size (er_Type & 7) → number of 64 KB slots and search start **[R, sizes S]**
 
-| code | taille | slots | départ de la recherche générale |
+| code | size | slots | start of the general search |
 |:-:|---|:-:|:-:|
-| 0 | 8 Mo | `$80` | `$20` |
-| 1 | 64 Ko | `$01` | `$00` |
-| 2 | 128 Ko | `$02` | `$00` |
-| 3 | 256 Ko | `$04` | `$00` |
-| 4 | 512 Ko | `$08` | `$00` |
-| 5 | 1 Mo | `$10` | `$00` |
-| 6 | 2 Mo | `$20` | `$00` |
-| 7 | 4 Mo | `$40` | `$20` |
+| 0 | 8 MB | `$80` | `$20` |
+| 1 | 64 KB | `$01` | `$00` |
+| 2 | 128 KB | `$02` | `$00` |
+| 3 | 256 KB | `$04` | `$00` |
+| 4 | 512 KB | `$08` | `$00` |
+| 5 | 1 MB | `$10` | `$00` |
+| 6 | 2 MB | `$20` | `$00` |
+| 7 | 4 MB | `$40` | `$20` |
 
-### 2.4 ConfigBoard(board, configDev) — déroulé observable **[R ; résultats S]**
-1. Si `eb_Flags.CLOGGED` est déjà posé : ne fait rien (retour immédiat, d0 non significatif).
+### 2.4 ConfigBoard(board, configDev) — observable sequence **[R; results S]**
+1. If `eb_Flags.CLOGGED` is already set: does nothing (immediate return, d0 not meaningful).
 2. `slot = AllocBoardMem(er_Type & 7)` (§3).
-3. **Succès** (`slot ≠ -1`) : `cd_Flags |= CDF_CONFIGME` ; `cd_SlotAddr = slot` ; `cd_BoardAddr = slot<<16` ;
-   `cd_SlotSize = nb_slots` ; `cd_BoardSize = nb_slots<<16` ; puis `WriteExpansionByte(board, $12, slot)`
-   (registre `$48/$4A` = bits A23..A16) → la carte prend son adresse et passe la main à la suivante.
-   Puis **post-configuration** :
-   - si `er_Type & $20` (`ERTF_MEMLIST`) : ajout de la mémoire (§4) ;
-   - **sinon** si `er_Type & $10` (`ERTF_DIAGVALID`) : traitement DiagArea (§6) ;
-   - (une carte mémoire avec DIAGVALID n'a donc **pas** sa DiagArea exécutée.)
-   - retour **0**.
-4. **Échec, carte « shut-up-able »** (`er_Flags` bit 6 `NOSHUTUP` à 0) : `WriteExpansionByte(board, $13, 0)`
-   (registre `$4C/$4E` = shut-up) ; `cd_Flags |= CDF_SHUTUP` ; `eb_Flags |= EBB_SHORTMEM` ; retour **41**.
-   `cd_SlotAddr/SlotSize/BoardSize` restent à 0, `cd_BoardAddr` garde l'artefact de §2.2.
-5. **Échec, carte NOSHUTUP** : `eb_Flags |= EBB_CLOGGED` ; la carte reçoit comme adresse son propre slot de
-   configuration (`$E8`, i.e. elle reste en `$E80000` et bouche la chaîne) ; les champs du ConfigDev sont
-   remplis comme au point 3 mais avec `slot = -1` (`cd_SlotAddr = $FFFF`, `cd_BoardAddr = $FFFF0000`),
-   `CDF_CONFIGME` **non** posé ; la post-configuration (point 3) est quand même exécutée ; retour 0.
-   **[R uniquement — non sondé]** (cas pathologique ; reproduire tel quel n'a d'intérêt que pour la fidélité).
+3. **Success** (`slot ≠ -1`): `cd_Flags |= CDF_CONFIGME`; `cd_SlotAddr = slot`; `cd_BoardAddr = slot<<16`;
+   `cd_SlotSize = nb_slots`; `cd_BoardSize = nb_slots<<16`; then `WriteExpansionByte(board, $12, slot)`
+   (register `$48/$4A` = bits A23..A16) → the board takes its address and hands over to the next one.
+   Then **post-configuration**:
+   - if `er_Type & $20` (`ERTF_MEMLIST`): addition of the memory (§4);
+   - **otherwise** if `er_Type & $10` (`ERTF_DIAGVALID`): DiagArea handling (§6);
+   - (a memory board with DIAGVALID therefore does **not** have its DiagArea executed.)
+   - return **0**.
+4. **Failure, "shut-up-able" board** (`er_Flags` bit 6 `NOSHUTUP` at 0): `WriteExpansionByte(board, $13, 0)`
+   (register `$4C/$4E` = shut-up); `cd_Flags |= CDF_SHUTUP`; `eb_Flags |= EBB_SHORTMEM`; return **41**.
+   `cd_SlotAddr/SlotSize/BoardSize` stay at 0, `cd_BoardAddr` keeps the §2.2 artefact.
+5. **Failure, NOSHUTUP board**: `eb_Flags |= EBB_CLOGGED`; the board receives as address its own
+   configuration slot (`$E8`, i.e. it stays at `$E80000` and clogs the chain); the ConfigDev fields are
+   filled as in point 3 but with `slot = -1` (`cd_SlotAddr = $FFFF`, `cd_BoardAddr = $FFFF0000`),
+   `CDF_CONFIGME` **not** set; the post-configuration (point 3) is still executed; return 0.
+   **[R only — not probed]** (pathological case; reproducing it as is is only of interest for fidelity).
 
-### 2.5 ConfigChain(baseAddr) **[R ; résultats S]**
-Boucle :
-1. si `eb_Flags.CLOGGED` → sortie, retour 0 ;
-2. `cd = AllocConfigDev()` ; si NULL → retour **42** ;
-3. `ReadExpansionRom(baseAddr, cd)` ≠ 0 → `FreeConfigDev(cd)`, sortie, retour **0** (fin de chaîne normale) ;
-4. `r = ConfigBoard(baseAddr, cd)` ; si `r == 0` ou `r == 41` → `AddConfigDev(cd)` et on recommence ;
-   sinon `FreeConfigDev(cd)`, sortie, retour 0.
-Conséquences : les cartes mises en sommeil (41) **figurent** dans la liste ; l'ordre de la liste = ordre
-physique de la chaîne. **[S]**
+### 2.5 ConfigChain(baseAddr) **[R; results S]**
+Loop:
+1. if `eb_Flags.CLOGGED` → exit, return 0;
+2. `cd = AllocConfigDev()`; if NULL → return **42**;
+3. `ReadExpansionRom(baseAddr, cd)` ≠ 0 → `FreeConfigDev(cd)`, exit, return **0** (normal end of chain);
+4. `r = ConfigBoard(baseAddr, cd)`; if `r == 0` or `r == 41` → `AddConfigDev(cd)` and start again;
+   otherwise `FreeConfigDev(cd)`, exit, return 0.
+Consequences: boards put to sleep (41) **appear** in the list; the order of the list = physical order
+of the chain. **[S]**
 
-### 2.6 Fin de chaîne / cartes non configurables
-- Absence de carte → ROM invalide → fin (§2.2). **[R]**
-- Carte qui ne tient plus → shut-up + ConfigDev ajouté avec `cd_Flags = $01`, `cd_BoardAddr = $FF000000`
-  (sur UAE : 17e octet inversé = `$FF`), tailles/slots 0 ; **la chaîne continue** (la carte en sommeil
-  passe la main). **[S]** (vecteurs `d8_1`, `d4_8`).
-
----
-
-## 3. Attribution des adresses (AllocBoardMem / AllocExpansionMem) **[S+R]**
-
-- L'espace est géré par `eb_AllocTable` : 256 slots de 64 Ko ; libres au départ : `$20..$9F`
-  (`$200000..$9FFFFF`, 8 Mo) et `$E9..$EF` (`$E90000..$EFFFFF`, 448 Ko). **[R]**
-- Recherche d'un bloc de `n` slots :
-  1. **si `n ≤ 7`** (64, 128 ou 256 Ko) : d'abord dans `[$E8, $F0)`, candidats `$E8, $E8+n, $E8+2n…` ;
-     `$E8` étant toujours pris : 64 Ko → `$E9`, 128 Ko → `$EA`, 256 Ko → `$EC`. **Cela vaut aussi pour les
-     cartes mémoire** : une carte de 256 Ko de RAM finit en `$EC0000` et sa RAM y est ajoutée. **[S]**
-  2. sinon (ou si l'E/S est pleine) : dans `[départ, $100)` (départ de la table §2.3), candidats
-     `départ + k·n`. Comme `$00..$1F` sont pris, cela revient à : **alignement naturel sur la taille** pour
-     512 Ko..2 Mo (premier multiple libre ≥ `$200000`) ; pour **4 Mo** candidats `$200000` puis `$600000`
-     (alignement 4 Mo **relatif à `$200000`**) ; pour **8 Mo** seulement `$200000`.
-  3. un candidat n'est retenu que si ses `n` slots sont tous libres ; ils sont alors marqués pris (0). Le
-     premier candidat convenable gagne (premier ajusté, ordre croissant). Rien n'est réservé en trou :
-     un bloc de 1 Mo placé en `$200000` suivi d'une carte de 4 Mo met celle-ci en `$600000`, laissant
-     `$300000..$5FFFFF` libre pour des cartes ultérieures de ≤ 2 Mo. **[S]** (`d1_4`)
-- **Espace plein** : AllocBoardMem renvoie -1 → carte mise en sommeil (§2.4.4), `EBB_SHORTMEM`. **[S+R]**
-- Ordre : celui de la chaîne physique ; pas de tri par taille (une petite carte en premier peut gaspiller
-  l'alignement de la suivante). **[S]**
-- `er_Flags.MEMSPACE` n'influe **pas** sur le placement en 1.3 ; seul le nombre de slots décide. **[R]**
+### 2.6 End of chain / non-configurable boards
+- No board → invalid ROM → end (§2.2). **[R]**
+- Board that no longer fits → shut-up + ConfigDev added with `cd_Flags = $01`, `cd_BoardAddr = $FF000000`
+  (on UAE: inverted 17th byte = `$FF`), sizes/slots 0; **the chain continues** (the sleeping board
+  hands over). **[S]** (vectors `d8_1`, `d4_8`).
 
 ---
 
-## 4. Cartes mémoire (`ERTF_MEMLIST`) **[S+R]**
+## 3. Address allocation (AllocBoardMem / AllocExpansionMem) **[S+R]**
 
-- Ajout par exec `AddMemList(size = cd_BoardSize, attributes = MEMF_PUBLIC|MEMF_FAST ($0005), pri = 0,
-  base = cd_BoardAddr, name = "expansion ram")` (chaîne exacte, minuscules). **[R]**, résultat **[S]** :
-  - le MemHeader est placé **au début de la carte** : `mh_Lower = base + $20` (32 octets = sizeof MemHeader),
-    `mh_Upper = base + size` (premier octet **après** la carte), `mh_Free = size − $20` ;
-  - `ln_Type = NT_MEMORY ($0A)`, `ln_Pri = 0`, `mh_Attributes = $0005`, nom `"expansion ram"`.
-  - Une MemHeader **par carte** (deux cartes contiguës ne sont pas fusionnées). **[S]** (`d2_1`)
-- Position dans `ExecBase->MemList` (Enqueue par priorité, FIFO à priorité égale) **[S]** :
-  1. slow RAM `$C00000` (`"Fast Memory"`, attr `$0005`, pri 0) — ajoutée par exec avant ;
-  2. les cartes `"expansion ram"` (pri 0) dans l'ordre de configuration ;
+- The space is managed by `eb_AllocTable`: 256 slots of 64 KB; free at the start: `$20..$9F`
+  (`$200000..$9FFFFF`, 8 MB) and `$E9..$EF` (`$E90000..$EFFFFF`, 448 KB). **[R]**
+- Search for a block of `n` slots:
+  1. **if `n ≤ 7`** (64, 128 or 256 KB): first in `[$E8, $F0)`, candidates `$E8, $E8+n, $E8+2n…`;
+     `$E8` being always taken: 64 KB → `$E9`, 128 KB → `$EA`, 256 KB → `$EC`. **This also applies to
+     memory boards**: a 256 KB RAM board ends up at `$EC0000` and its RAM is added there. **[S]**
+  2. otherwise (or if the I/O is full): in `[start, $100)` (start from the §2.3 table), candidates
+     `start + k·n`. Since `$00..$1F` are taken, this amounts to: **natural alignment on the size** for
+     512 KB..2 MB (first free multiple ≥ `$200000`); for **4 MB** candidates `$200000` then `$600000`
+     (4 MB alignment **relative to `$200000`**); for **8 MB** only `$200000`.
+  3. a candidate is only retained if its `n` slots are all free; they are then marked taken (0). The
+     first suitable candidate wins (first fit, increasing order). Nothing is reserved as a hole:
+     a 1 MB block placed at `$200000` followed by a 4 MB board puts the latter at `$600000`, leaving
+     `$300000..$5FFFFF` free for later boards of ≤ 2 MB. **[S]** (`d1_4`)
+- **Space full**: AllocBoardMem returns -1 → board put to sleep (§2.4.4), `EBB_SHORTMEM`. **[S+R]**
+- Order: that of the physical chain; no sorting by size (a small board first may waste
+  the alignment of the next one). **[S]**
+- `er_Flags.MEMSPACE` does **not** influence placement in 1.3; only the number of slots decides. **[R]**
+
+---
+
+## 4. Memory boards (`ERTF_MEMLIST`) **[S+R]**
+
+- Addition by exec `AddMemList(size = cd_BoardSize, attributes = MEMF_PUBLIC|MEMF_FAST ($0005), pri = 0,
+  base = cd_BoardAddr, name = "expansion ram")` (exact string, lower case). **[R]**, result **[S]**:
+  - the MemHeader is placed **at the start of the board**: `mh_Lower = base + $20` (32 bytes = sizeof MemHeader),
+    `mh_Upper = base + size` (first byte **after** the board), `mh_Free = size − $20`;
+  - `ln_Type = NT_MEMORY ($0A)`, `ln_Pri = 0`, `mh_Attributes = $0005`, name `"expansion ram"`.
+  - One MemHeader **per board** (two contiguous boards are not merged). **[S]** (`d2_1`)
+- Position in `ExecBase->MemList` (Enqueue by priority, FIFO at equal priority) **[S]**:
+  1. slow RAM `$C00000` (`"Fast Memory"`, attr `$0005`, pri 0) — added by exec before;
+  2. the `"expansion ram"` boards (pri 0) in configuration order;
   3. chip (`"Chip Memory"`, attr `$0003`, pri −10).
-  Sans slow RAM : expansion ram puis chip. Conséquence : en présence de slow RAM, les allocations sans
-  contrainte vont **d'abord en slow RAM**, pas en fast (ex. la copie DiagArea, vecteur `hd2048`).
-- La RAM n'est pas testée (aucun test mémoire / pas de `EE_BADMEM` observé). **[R]**
+  Without slow RAM: expansion ram then chip. Consequence: in the presence of slow RAM, allocations without
+  constraint go **first into slow RAM**, not fast (e.g. the DiagArea copy, vector `hd2048`).
+- The RAM is not tested (no memory test / no `EE_BADMEM` observed). **[R]**
 
 ---
 
 ## 5. ConfigDev **[S+R]**
 
-- Alloué par `AllocConfigDev` = `AllocMem(68, MEMF_PUBLIC|MEMF_CLEAR)` : tout ce qui n'est pas cité vaut 0
+- Allocated by `AllocConfigDev` = `AllocMem(68, MEMF_PUBLIC|MEMF_CLEAR)`: everything not cited is 0
   (`ln_Type = 0`, `ln_Name = NULL`, `cd_Driver = 0`, `cd_NextCD = 0`). **[S+R]**
-- Carte configurée : `cd_Flags = $02` (CONFIGME), `cd_Rom` = ROM lue (type non inversé, reste inversé),
-  `cd_BoardAddr = slot<<16`, `cd_BoardSize = n<<16`, `cd_SlotAddr = slot`, `cd_SlotSize = n` (unité = 64 Ko,
-  ex. `$0020/$0020` pour 2 Mo en `$200000`, `$00E9/$0001` pour 64 Ko en `$E90000`). **[S]**
-- Carte en sommeil : `cd_Flags = $01`, `cd_BoardAddr = $FF000000` (artefact), le reste 0. **[S]**
-- `cd_Driver` n'est **pas** rempli par expansion (c'est BindDrivers qui le fait et efface CONFIGME). Le
-  pointeur vers la copie RAM de la DiagArea est rangé dans **`cd_Rom.er_Reserved0c`** (ULONG à `cd+$1C`).
+- Configured board: `cd_Flags = $02` (CONFIGME), `cd_Rom` = ROM read (type not inverted, the rest inverted),
+  `cd_BoardAddr = slot<<16`, `cd_BoardSize = n<<16`, `cd_SlotAddr = slot`, `cd_SlotSize = n` (unit = 64 KB,
+  e.g. `$0020/$0020` for 2 MB at `$200000`, `$00E9/$0001` for 64 KB at `$E90000`). **[S]**
+- Sleeping board: `cd_Flags = $01`, `cd_BoardAddr = $FF000000` (artefact), the rest 0. **[S]**
+- `cd_Driver` is **not** filled by expansion (it is BindDrivers that does it and clears CONFIGME). The
+  pointer to the RAM copy of the DiagArea is stored in **`cd_Rom.er_Reserved0c`** (ULONG at `cd+$1C`).
   **[S+R+D]**
-- Liste : `AddConfigDev` = AddTail sur `eb_BoardList` sous Forbid → ordre de la chaîne ; les ConfigDev
-  ajoutés plus tard par des pilotes (ex. UAE ajoute le sien en `$F00000`) viennent après. **[S+R]**
-- `FindConfigDev(old, manuf, prod)` : part du premier nœud si `old == NULL`, sinon du suivant de `old` ;
-  `manuf == -1` (long) = joker, sinon comparaison sur le mot `er_Manufacturer` ; `prod == -1` = joker, sinon
-  comparaison sur l'octet `er_Product` ; renvoie le premier ConfigDev qui correspond ou 0. Pas de Forbid.
-  **[R ; S pour le parcours -1/-1]**
+- List: `AddConfigDev` = AddTail on `eb_BoardList` under Forbid → order of the chain; ConfigDevs
+  added later by drivers (e.g. UAE adds its own at `$F00000`) come after. **[S+R]**
+- `FindConfigDev(old, manuf, prod)`: starts from the first node if `old == NULL`, otherwise from the one after `old`;
+  `manuf == -1` (long) = wildcard, otherwise comparison on the word `er_Manufacturer`; `prod == -1` = wildcard, otherwise
+  comparison on the byte `er_Product`; returns the first matching ConfigDev or 0. No Forbid.
+  **[R; S for the -1/-1 walk]**
 
 ---
 
-## 6. DiagArea (`er_InitDiagVec`) **[R ; exécution prouvée S]**
+## 6. DiagArea (`er_InitDiagVec`) **[R; execution proven S]**
 
-La 1.3 **exécute** la DiagArea, **pendant ConfigBoard**, donc pendant l'init d'expansion.library (avant tous
-les autres résidents COLDSTART : pas de graphics, pas de dos, pas de devices ; seuls exec et expansion).
-Condition : carte configurée avec succès, **sans** `ERTF_MEMLIST`, avec `ERTF_DIAGVALID` ($10).
+1.3 **executes** the DiagArea, **during ConfigBoard**, hence during the init of expansion.library (before all
+the other COLDSTART residents: no graphics, no dos, no devices; only exec and expansion).
+Condition: board configured successfully, **without** `ERTF_MEMLIST`, with `ERTF_DIAGVALID` ($10).
 
-1. Si `er_InitDiagVec == 0` → rien.
-2. DiagArea en ROM = `cd_BoardAddr + er_InitDiagVec` (adresse **configurée**). Son 1er octet `da_Config`
-   doit vérifier `(da_Config & $30) == $10` (`DAC_CONFIGTIME`) sinon rien (BINDTIME seul = ignoré).
-3. Largeur de bus `da_Config & $C0` : `$00` NIBBLEWIDE (octets reconstitués à partir des quartets hauts des
-   octets à +0 et +2, pas de 4), `$40` BYTEWIDE (un octet sur deux, pas de 2), `$80` WORDWIDE (copie
-   contiguë via CopyMem), `$C0` → rien.
-4. Copie de l'en-tête (14 octets : `da_Config, da_Flags, da_Size(W), da_DiagPoint(W), da_BootPoint(W),
-   da_Name(W), da_Reserved01(W), da_Reserved02(W)`) ; si `da_Size == 0` → rien.
-5. `AllocMem(da_Size, 0)` (aucun attribut : premier MemHeader, donc slow RAM si présente) ; échec → rien.
-6. Copie de `da_Size` octets de la DiagArea (même largeur) dans ce tampon ; **`er_Reserved0c` ← tampon**.
-   Aucune relocation : c'est au code de diag de se corriger (cf. RKRM).
-7. Si `da_DiagPoint ≠ 0` : appel de `tampon + da_DiagPoint` avec **A0 = cd_BoardAddr, A2 = tampon (copie
-   DiagArea), A3 = ConfigDev, A6 = ExecBase**, et (non documenté) **A5 = ExpansionBase**. Retour D0 :
-   ≠ 0 = succès (on garde tout) ; **0 = échec** → `FreeMem(tampon, da_Size)` et `er_Reserved0c = 0`.
-   Si `da_DiagPoint == 0`, le tampon est gardé sans appel.
-8. `da_BootPoint` n'est pas appelé ici (c'est l'affaire de strap/romboot via `er_Reserved0c` et
-   `eb_MountList`, hors de cette spec).
+1. If `er_InitDiagVec == 0` → nothing.
+2. DiagArea in ROM = `cd_BoardAddr + er_InitDiagVec` (**configured** address). Its 1st byte `da_Config`
+   must satisfy `(da_Config & $30) == $10` (`DAC_CONFIGTIME`) otherwise nothing (BINDTIME alone = ignored).
+3. Bus width `da_Config & $C0`: `$00` NIBBLEWIDE (bytes rebuilt from the high nibbles of the
+   bytes at +0 and +2, stride 4), `$40` BYTEWIDE (one byte out of two, stride 2), `$80` WORDWIDE (contiguous
+   copy via CopyMem), `$C0` → nothing.
+4. Copy of the header (14 bytes: `da_Config, da_Flags, da_Size(W), da_DiagPoint(W), da_BootPoint(W),
+   da_Name(W), da_Reserved01(W), da_Reserved02(W)`); if `da_Size == 0` → nothing.
+5. `AllocMem(da_Size, 0)` (no attribute: first MemHeader, hence slow RAM if present); failure → nothing.
+6. Copy of `da_Size` bytes of the DiagArea (same width) into this buffer; **`er_Reserved0c` ← buffer**.
+   No relocation: it is up to the diag code to fix itself up (cf. RKRM).
+7. If `da_DiagPoint ≠ 0`: call of `buffer + da_DiagPoint` with **A0 = cd_BoardAddr, A2 = buffer (DiagArea
+   copy), A3 = ConfigDev, A6 = ExecBase**, and (undocumented) **A5 = ExpansionBase**. D0 return:
+   ≠ 0 = success (everything is kept); **0 = failure** → `FreeMem(buffer, da_Size)` and `er_Reserved0c = 0`.
+   If `da_DiagPoint == 0`, the buffer is kept without a call.
+8. `da_BootPoint` is not called here (that is the business of strap/romboot via `er_Reserved0c` and
+   `eb_MountList`, outside this spec).
 
-Minimum pour ne pas casser un contrôleur : copier fidèlement (largeur), ranger le pointeur dans
-`er_Reserved0c`, appeler DiagPoint avec A0/A2/A3/A6 (A5 en bonus), respecter le code retour, et fournir
-`MakeDosNode`/`AddDosNode`/`eb_MountList` utilisables à ce moment-là (dos.library absente). Vecteur `hd2048` :
-la carte UAE (DiagArea, `InitDiagVec=$2000`) obtient sa copie en `$00C01AE0` (slow RAM), son DiagPoint
-s'exécute (il ajoute lui-même un ConfigDev en `$F00000`) et DH0: est monté au boot. **[S]**
+Minimum so as not to break a controller: copy faithfully (width), store the pointer in
+`er_Reserved0c`, call DiagPoint with A0/A2/A3/A6 (A5 as a bonus), respect the return code, and provide
+`MakeDosNode`/`AddDosNode`/`eb_MountList` usable at that moment (dos.library absent). Vector `hd2048`:
+the UAE card (DiagArea, `InitDiagVec=$2000`) gets its copy at `$00C01AE0` (slow RAM), its DiagPoint
+runs (it adds a ConfigDev itself at `$F00000`) and DH0: is mounted at boot. **[S]**
 
 ---
 
-## 7. LVO d'expansion.library V34 (25 vecteurs, biais 30, format table LONG absolu) **[R ; D pour les noms]**
+## 7. expansion.library V34 LVOs (25 vectors, bias 30, absolute LONG table format) **[R; D for the names]**
 
-| LVO | Fonction (regs) | Comportement observable 34.1 |
+| LVO | Function (regs) | Observable 34.1 behaviour |
 |---:|---|---|
 | −30 | `AddConfigDev(cd)(a0)` | Forbid, AddTail(eb_BoardList), Permit. |
-| −36 | *(privé, « expansionUnused » au .fd)* `(size d0, attr d1, base a0)` | AddMemList(d0, d1, pri 0, a0, "expansion ram"). Non utilisé par l'autoconfig (qui appelle exec directement). |
-| −42 | `AllocBoardMem(slotSpec)(d0)` | `AllocExpansionMem(n, départ)` selon la table §2.3 (spec & 7) ; renvoie le slot ou −1. |
+| −36 | *(private, "expansionUnused" in the .fd)* `(size d0, attr d1, base a0)` | AddMemList(d0, d1, pri 0, a0, "expansion ram"). Not used by the autoconfig (which calls exec directly). |
+| −42 | `AllocBoardMem(slotSpec)(d0)` | `AllocExpansionMem(n, start)` according to the §2.3 table (spec & 7); returns the slot or −1. |
 | −48 | `AllocConfigDev()()` | AllocMem(68, PUBLIC|CLEAR). |
-| −54 | `AllocExpansionMem(numSlots, slotAlign)(d0/d1)` | −1 si `numSlots+slotAlign > 256`. Si `numSlots ≤ 7`, essai en E/S `[$E8,$F0)` pas `numSlots`. Puis recherche dans `[slotAlign, $100)` pas `numSlots` (**`slotAlign` = slot de départ**, pas un alignement). Marque pris, renvoie le slot ou −1. |
-| −60 | `ConfigBoard(board, cd)(a0/a1)` | §2.4. Retour 0 / 41. |
-| −66 | `ConfigChain(baseAddr)(a0)` | §2.5. Retour 0 (ou 42 si plus de mémoire pour un ConfigDev). |
+| −54 | `AllocExpansionMem(numSlots, slotAlign)(d0/d1)` | −1 if `numSlots+slotAlign > 256`. If `numSlots ≤ 7`, attempt in I/O `[$E8,$F0)` stride `numSlots`. Then search in `[slotAlign, $100)` stride `numSlots` (**`slotAlign` = start slot**, not an alignment). Marks taken, returns the slot or −1. |
+| −60 | `ConfigBoard(board, cd)(a0/a1)` | §2.4. Return 0 / 41. |
+| −66 | `ConfigChain(baseAddr)(a0)` | §2.5. Return 0 (or 42 if no more memory for a ConfigDev). |
 | −72 | `FindConfigDev(old, manuf, prod)(a0,d0/d1)` | §5. |
 | −78 | `FreeBoardMem(startSlot, slotSpec)(d0/d1)` | `FreeExpansionMem(startSlot, n(spec))`. |
 | −84 | `FreeConfigDev(cd)(a0)` | FreeMem(cd, 68). |
-| −90 | `FreeExpansionMem(startSlot, numSlots)(d0/d1)` | Marque libres (≠0). Si `start+num > 256`, ou si un slot est **déjà libre** : `Alert($0A000001)` (AN_BadExpansionFree, récupérable) et arrêt (les slots précédents restent libérés). |
-| −96 | `ReadExpansionByte(board, offset)(a0,d0)` | §2.1, sans inversion ; renvoie l'octet. |
-| −102 | `ReadExpansionRom(board, cd)(a0/a1)` | §2.2 ; 0 = OK, 42 = absente/invalide/instable. |
+| −90 | `FreeExpansionMem(startSlot, numSlots)(d0/d1)` | Marks free (≠0). If `start+num > 256`, or if a slot is **already free**: `Alert($0A000001)` (AN_BadExpansionFree, recoverable) and stop (the previous slots remain freed). |
+| −96 | `ReadExpansionByte(board, offset)(a0,d0)` | §2.1, without inversion; returns the byte. |
+| −102 | `ReadExpansionRom(board, cd)(a0/a1)` | §2.2; 0 = OK, 42 = absent/invalid/unstable. |
 | −108 | `RemConfigDev(cd)(a0)` | Forbid, Remove, Permit. |
-| −114 | `WriteExpansionByte(board, offset, byte)(a0,d0/d1)` | §2.1 ; renvoie 0. |
+| −114 | `WriteExpansionByte(board, offset, byte)(a0,d0/d1)` | §2.1; returns 0. |
 | −120 | `ObtainConfigBinding()()` | ObtainSemaphore(eb_BindSemaphore). |
 | −126 | `ReleaseConfigBinding()()` | ReleaseSemaphore(eb_BindSemaphore). |
-| −132 | `SetCurrentBinding(binding, size)(a0,d0)` | Copie `min(size,16)` octets dans `eb_CurrentBinding`, complète à 16 par des 0. |
-| −138 | `GetCurrentBinding(binding, size)(a0,d0)` | Copie `min(size,16)` octets **vers** le tampon puis écrit des 0 jusqu'à 16 octets **dans le tampon** (déborde si `size < 16`) ; renvoie toujours **16**. |
-| −144 | `MakeDosNode(parmPacket)(a0)` | AllocEntry de 5 blocs PUBLIC|CLEAR : DeviceNode (44), FileSysStartupMsg (16), environnement `(de_TableSize+1)*4`, BSTR nom DOS, BSTR nom exec ; recopie l'environnement ; `dn_StackSize = 600`, `dn_Priority = 10` ; renvoie le DeviceNode ou 0. |
-| −150 | `AddDosNode(bootPri, flags, dosNode)(d0/d1/a0)` | NULL → 0. Si dos.library s'ouvre : chemin d'ajout côté DOS (non détaillé ici, cf. §9). Sinon BootNode de 20 octets (AllocMem sans CLEAR : `ln_Type` non initialisé) : `ln_Pri = bootPri`, `bn_Flags = flags`, `bn_DeviceNode = dosNode`, `ln_Name` = nom C du DeviceNode, Enqueue dans `eb_MountList` ; renvoie 1 (0 si plus de mémoire). |
+| −132 | `SetCurrentBinding(binding, size)(a0,d0)` | Copies `min(size,16)` bytes into `eb_CurrentBinding`, pads to 16 with 0. |
+| −138 | `GetCurrentBinding(binding, size)(a0,d0)` | Copies `min(size,16)` bytes **to** the buffer then writes 0 up to 16 bytes **in the buffer** (overflows if `size < 16`); always returns **16**. |
+| −144 | `MakeDosNode(parmPacket)(a0)` | AllocEntry of 5 PUBLIC|CLEAR blocks: DeviceNode (44), FileSysStartupMsg (16), environment `(de_TableSize+1)*4`, BSTR DOS name, BSTR exec name; copies the environment; `dn_StackSize = 600`, `dn_Priority = 10`; returns the DeviceNode or 0. |
+| −150 | `AddDosNode(bootPri, flags, dosNode)(d0/d1/a0)` | NULL → 0. If dos.library opens: addition path on the DOS side (not detailed here, cf. §9). Otherwise 20-byte BootNode (AllocMem without CLEAR: `ln_Type` not initialised): `ln_Pri = bootPri`, `bn_Flags = flags`, `bn_DeviceNode = dosNode`, `ln_Name` = C name of the DeviceNode, Enqueue into `eb_MountList`; returns 1 (0 if no more memory). |
 
-Appelés au boot par expansion elle-même : FreeExpansionMem, ConfigChain → AllocConfigDev,
+Called at boot by expansion itself: FreeExpansionMem, ConfigChain → AllocConfigDev,
 ReadExpansionRom (→ ReadExpansionByte), ConfigBoard (→ AllocBoardMem → AllocExpansionMem,
-WriteExpansionByte), AddConfigDev, FreeConfigDev ; exec AddMemList / AllocMem / CopyMem / FreeMem.
+WriteExpansionByte), AddConfigDev, FreeConfigDev; exec AddMemList / AllocMem / CopyMem / FreeMem.
 
 ---
 
-## 8. Vecteurs de test (vraie ROM 34.5, FS-UAE 3.2.35, A500 512 Ko chip)
+## 8. Test vectors (real ROM 34.5, FS-UAE 3.2.35, A500 512 KB chip)
 
-Sonde : `tests/cfgdev2.s` (variante étendue de `tests/cfgdev.s`), lancée par `cfgdev2 >SER:` depuis la
-startup-sequence d'une copie de l'ADF Workbench 1.3.3. Format :
+Probe: `tests/cfgdev2.s` (extended variant of `tests/cfgdev.s`), launched by `cfgdev2 >SER:` from the
+startup-sequence of a copy of the Workbench 1.3.3 ADF. Format:
 `CD BoardAddr BoardSize Flags.Type.Product.ErFlags Manufacturer SlotAddr.SlotSize InitDiagVec er_Reserved0c cd_Driver ln_Type<<16|cd_Pad`
-puis `MH Lower Upper Attr<<16|ln_Type<<8|Pri Free Nom`. Config FS-UAE de base + lignes indiquées
-(`uae_fastmem2_size` = 2e carte Zorro II, en Mo ; `uae_fastmem_size_k` en Ko). Les valeurs `mh_Free` de
-slow/chip dépendent de l'état du boot et ne sont pas normatives. Dans les blocs abrégés, les lignes MH
-slow (`00C004E8 00C7E800 00050A00`) et chip (`00000420 00080000 00030AF6`) sont identiques à `none`.
+then `MH Lower Upper Attr<<16|ln_Type<<8|Pri Free Name`. Base FS-UAE config + indicated lines
+(`uae_fastmem2_size` = 2nd Zorro II board, in MB; `uae_fastmem_size_k` in KB). The `mh_Free` values of
+slow/chip depend on the state of the boot and are not normative. In the abbreviated blocks, the slow MH lines
+(`00C004E8 00C7E800 00050A00`) and chip MH lines (`00000420 00080000 00030AF6`) are identical to `none`.
 
 ```
 === none  (slow_memory = 512)
@@ -318,77 +318,77 @@ MH 00000420 00080000 00030AF6 0006FED8 Chip Memory
 CD 00200000 00800000 02E05180 000007DB 00200080 00000000 00000000 00000000 00000000
 MH 00200020 00A00000 00050A00 007F5580 expansion ram
 MH 000008E8 0007E800 00030AF6 0006DE90 Chip Memory
-=== d2_1  (fast 2048 + 2e carte 1 Mo)
+=== d2_1  (fast 2048 + 2nd board 1 MB)
 CD 00200000 00200000 02E65180 000007DB 00200020 00000000 00000000 00000000 00000000
 CD 00400000 00100000 02E55180 000007DB 00400010 00000000 00000000 00000000 00000000
 MH 00C004E8 00C7E800 00050A00 000734F0 Fast Memory
 MH 00200020 00400000 00050A00 001FFFE0 expansion ram
 MH 00400020 00500000 00050A00 000FFFE0 expansion ram
 MH 00000420 00080000 00030AF6 0006FED8 Chip Memory
-=== d1_4  (fast 1024 + 2e carte 4 Mo)
+=== d1_4  (fast 1024 + 2nd board 4 MB)
 CD 00200000 00100000 02E55180 000007DB 00200010 00000000 00000000 00000000 00000000
 CD 00600000 00400000 02E75180 000007DB 00600040 00000000 00000000 00000000 00000000
 MH 00C004E8 00C7E800 00050A00 000734F0 Fast Memory
 MH 00200020 00300000 00050A00 000FFFE0 expansion ram
 MH 00600020 00A00000 00050A00 003FFFE0 expansion ram
 MH 00000420 00080000 00030AF6 0006FED8 Chip Memory
-=== d8_1  (fast 8192 + 2e carte 1 Mo : plus de place)
+=== d8_1  (fast 8192 + 2nd board 1 MB: no more room)
 CD 00200000 00800000 02E05180 000007DB 00200080 00000000 00000000 00000000 00000000
 CD FF000000 00000000 01E55180 000007DB 00000000 00000000 00000000 00000000 00000000
 MH 00C004E8 00C7E800 00050A00 000734D8 Fast Memory
 MH 00200020 00A00000 00050A00 007FFFE0 expansion ram
 MH 00000420 00080000 00030AF6 0006FED8 Chip Memory
-=== d4_8  (fast 4096 + 2e carte 8 Mo : plus de place)
+=== d4_8  (fast 4096 + 2nd board 8 MB: no more room)
 CD 00200000 00400000 02E75180 000007DB 00200040 00000000 00000000 00000000 00000000
 CD FF000000 00000000 01E05180 000007DB 00000000 00000000 00000000 00000000 00000000
 MH 00200020 00600000 00050A00 003FFFE0 expansion ram
-=== hd2048  (fast 2048 + hard_drive_0 = répertoire hôte → carte UAE à DiagArea)
+=== hd2048  (fast 2048 + hard_drive_0 = host directory → UAE card with DiagArea)
 CD 00200000 00200000 02E65180 000007DB 00200020 00000000 00000000 00000000 00000000
 CD 00E90000 00010000 02D15240 000007DB 00E90001 00002000 00C01AE0 00000000 00000000
 CD 00F00000 00010000 00010400 000007DB 00000000 00000000 00000000 00000000 00000000
 MH 00C004E8 00C7E800 00050A00 00070DF0 Fast Memory
 MH 00200020 00400000 00050A00 001FFFE0 expansion ram
 MH 00000420 00080000 00030AF6 000721D8 Chip Memory
-(+ « info » : DH0: monté, volume hddir — DiagPoint/BootPoint de la carte UAE exécutés.)
+(+ "info": DH0: mounted, volume hddir — DiagPoint/BootPoint of the UAE card executed.)
 ```
 
-Lecture des vecteurs : `er_Type` `$E0..$E7` = Zorro II + MEMLIST + code taille ; `$D1` = Zorro II +
-DIAGVALID + 64 Ko ; `er_Flags` `$80` (MEMSPACE) pour la RAM UAE, `$40` (NOSHUTUP) pour la carte disque UAE.
-La 3e ligne CD de `hd2048` (en `$F00000`, flags 0, `er_Type $10`) est un ConfigDev **ajouté par le code de
-diag UAE** via AddConfigDev, pas par l'autoconfig : une implémentation correcte doit le voir apparaître
-aussi (preuve que DiagPoint a tourné).
+Reading of the vectors: `er_Type` `$E0..$E7` = Zorro II + MEMLIST + size code; `$D1` = Zorro II +
+DIAGVALID + 64 KB; `er_Flags` `$80` (MEMSPACE) for the UAE RAM, `$40` (NOSHUTUP) for the UAE disk card.
+The 3rd CD line of `hd2048` (at `$F00000`, flags 0, `er_Type $10`) is a ConfigDev **added by the UAE
+diag code** via AddConfigDev, not by the autoconfig: a correct implementation must see it appear
+too (proof that DiagPoint ran).
 
-Tests de non-régression proposés pour notre ROM : chaque bloc ci-dessus doit être reproduit à
-l'identique pour les lignes CD et pour Lower/Upper/Attr/nom des MH (le champ Free de slow/chip excepté).
+Proposed non-regression tests for our ROM: each block above must be reproduced
+identically for the CD lines and for Lower/Upper/Attr/name of the MHs (the Free field of slow/chip excepted).
 
 ---
 
-## 9. Non sondé / incertain
+## 9. Not probed / uncertain
 
-- **Carte NOSHUTUP sans place (CLOGGED)** : comportement §2.4.5 lu dans la ROM seulement ; non sondé.
-- **Carte E/S sans DiagArea** et **cartes BYTEWIDE/NIBBLEWIDE** : non sondées (la carte UAE est la seule
-  carte à DiagArea disponible simplement ; sa largeur n'a pas été relevée). Règles de copie = ROM.
-- **DiagPoint renvoyant 0** (libération du tampon, `er_Reserved0c = 0`) : ROM seulement.
-- **Instabilité de lecture** (11 relectures) et ROM invalide (er_Flags bas ≠ 0, manufacturer 0/$FFFF) : ROM.
-- Valeur de l'artefact `cd_BoardAddr` d'une carte en sommeil : `$FF000000` sur UAE ; sur du vrai matériel
-  elle dépend de ce que la carte présente en `$40/$42` (inversé) — non vérifié.
-- `eb_Flags` final (SHORTMEM après `d8_1`) : non lu par sonde (ROM seulement).
-- Carte 64–256 Ko quand l'E/S `$E9..$EF` est pleine : repli vers l'espace mémoire selon la ROM, non sondé.
-- WinUAE non utilisé : FS-UAE suffisait pour deux cartes (`uae_fastmem2_size`) ; Zorro III ignoré (hors A500).
-- Le chemin « dos.library présente » d'AddDosNode et le détail de MakeDosNode ne sont résumés qu'à grands
-  traits (hors autoconfig proprement dit).
+- **NOSHUTUP board without room (CLOGGED)**: behaviour §2.4.5 read in the ROM only; not probed.
+- **I/O board without DiagArea** and **BYTEWIDE/NIBBLEWIDE boards**: not probed (the UAE card is the only
+  DiagArea board simply available; its width was not recorded). Copy rules = ROM.
+- **DiagPoint returning 0** (freeing of the buffer, `er_Reserved0c = 0`): ROM only.
+- **Read instability** (11 re-reads) and invalid ROM (low er_Flags ≠ 0, manufacturer 0/$FFFF): ROM.
+- Value of the `cd_BoardAddr` artefact of a sleeping board: `$FF000000` on UAE; on real hardware
+  it depends on what the board presents at `$40/$42` (inverted) — not verified.
+- Final `eb_Flags` (SHORTMEM after `d8_1`): not read by probe (ROM only).
+- 64–256 KB board when the I/O `$E9..$EF` is full: fallback to the memory space according to the ROM, not probed.
+- WinUAE not used: FS-UAE was enough for two boards (`uae_fastmem2_size`); Zorro III ignored (outside A500).
+- The "dos.library present" path of AddDosNode and the detail of MakeDosNode are only summarised in broad
+  strokes (outside the autoconfig proper).
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Aucune suite d'instructions 68000 transcrite, aucun extrait de désassemblage, aucune adresse de
-  routine ROM : toutes les adresses citées sont celles de l'espace Zorro II (`$E80000`, `$200000..$9FFFFF`,
-  `$E90000..$EFFFFF`), de la slow RAM (`$C00000`), de la carte UAE (`$F00000`) ou des registres de
-  configuration (`$40`/`$48`/`$4C`).
-- [x] Les §1, §2.4, §2.5 et §6 énumèrent des étapes au niveau des **appels publics** (LVO
-  d'expansion/exec) et de leurs résultats ; c'est l'ordre observable du protocole Autoconfig, pas un
-  déroulé de code. Les vecteurs §8 sont des sorties de sonde (code auteur `tests/cfgdev2.s`).
-- [x] Pas de données ROM au-delà de l'ABI : layout `ExpansionBase`/`ConfigDev`/`ExpansionRom`, codes
-  d'erreur, tables de tailles Zorro II (publiques), nom de MemHeader `"expansion ram"`, valeurs
-  `dn_StackSize`/`dn_Priority` de MakeDosNode.
+- [x] No 68000 instruction sequence transcribed, no disassembly excerpt, no ROM
+  routine address: all the addresses cited are those of the Zorro II space (`$E80000`, `$200000..$9FFFFF`,
+  `$E90000..$EFFFFF`), of the slow RAM (`$C00000`), of the UAE card (`$F00000`) or of the configuration
+  registers (`$40`/`$48`/`$4C`).
+- [x] §1, §2.4, §2.5 and §6 enumerate steps at the level of the **public calls** (expansion/exec
+  LVOs) and their results; this is the observable order of the Autoconfig protocol, not a
+  code walk-through. The §8 vectors are probe outputs (author code `tests/cfgdev2.s`).
+- [x] No ROM data beyond the ABI: `ExpansionBase`/`ConfigDev`/`ExpansionRom` layout, error
+  codes, Zorro II size tables (public), MemHeader name `"expansion ram"`, `dn_StackSize`/`dn_Priority`
+  values of MakeDosNode.

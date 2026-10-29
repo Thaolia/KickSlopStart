@@ -1,33 +1,33 @@
-# Tests & banc d'essai
+# Tests & test bench
 
-## boot_test.sh — boot headless d'une ROM sous FS-UAE
+## boot_test.sh - headless boot of a ROM under FS-UAE
 
-Lance FS-UAE dans un display virtuel Xvfb, laisse la ROM booter, capture l'écran émulé et rapporte les
-couleurs dominantes. Pour la hello-ROM M0, un **fond vert** confirme que le coldstart a écrit COLOR00
-(donc que notre code s'exécute sur l'A500 émulée).
+Starts FS-UAE in an Xvfb virtual display, lets the ROM boot, captures the emulated screen and reports the
+dominant colours. For the M0 hello-ROM, a **green background** confirms that the coldstart wrote COLOR00
+(hence that our code runs on the emulated A500).
 
 ```sh
-tests/boot_test.sh [chemin/vers/rom] [secondes_de_boot]
-# défaut : build/kick13-hello.rom, 10 s
+tests/boot_test.sh [path/to/rom] [boot_seconds]
+# default: build/kick13-hello.rom, 10 s
 ```
 
-Prérequis : `fs-uae`, `Xvfb`, `xwd`, `convert` (ImageMagick). Sorties dans `build/boot/` :
-`hello.fs-uae` (config générée), `fs-uae.log`, `screen.png` (capture).
+Prerequisites: `fs-uae`, `Xvfb`, `xwd`, `convert` (ImageMagick). Outputs in `build/boot/`:
+`hello.fs-uae` (generated config), `fs-uae.log`, `screen.png` (capture).
 
-Résultat attendu M0 : couleur dominante `#00FF00` (vert) sur la zone active, log FS-UAE
-« KS ROM … (262144 bytes) » sans erreur.
+Expected M0 result: dominant colour `#00FF00` (green) over the active area, FS-UAE log
+"KS ROM ... (262144 bytes)" without errors.
 
-## À venir (dès M2)
+## Coming next (from M2)
 
-Capture du **log série** (registre SERDAT) comme canal d'assertion primaire, marqueurs série par
-milestone, et comparaison oracle boîte noire contre la vraie KS 1.3 (sondes comportementales ciblées).
+Capture of the **serial log** (SERDAT register) as the primary assertion channel, serial markers per
+milestone, and black-box oracle comparison against the real KS 1.3 (targeted behavioural probes).
 
-## Audit clean-room — audit_rom_similarity.py, audit_aros_similarity.py
+## Clean-room audit - audit_rom_similarity.py, audit_aros_similarity.py
 
-Mesures de similarité publiées dans [docs/AUDIT.md](../docs/AUDIT.md) (synthèse) et `docs/audit/` (détail). Les deux
-outils n'affichent que des statistiques et des emplacements dans le premier argument (notre code).
+Similarity measurements published in [docs/AUDIT.md](../docs/AUDIT.md) (summary) and `docs/audit/` (details). Both
+tools only print statistics and locations in the first argument (our code).
 
 ```sh
-python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom <rom_kick13_de_référence> [--temoin NOM fichiers…] [--selftest]
-python3 -I tests/audit_aros_similarity.py src <clone_aros>
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom <reference_kick13_rom> [--temoin NAME files...] [--selftest]
+python3 -I tests/audit_aros_similarity.py src <aros_clone>
 ```

@@ -1,9 +1,9 @@
-; tests/cleareol.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM) : zone effacée par ClearEOL et
-; ClearScreen. RastPort privé sur une BitMap chip 320 x 20 x 2 plans, police par défaut (topaz 8). Pour chaque appel :
-; SetRast(1), Move(100, 10), réglages, appel, puis ReadPixel de 6 points ; écrit sur la sortie du CLI une ligne
-; « EOL/SCR » + un chiffre hexadécimal par point. EOL : JAM2, stylo B = 2. SCR : JAM1 (couleur 0 attendue).
-; Points : (99,8) (100,4) (319,11) (100,3) (100,12) (0,19). Sonde boîte noire, comparée vraie ROM / la nôtre.
-; Clean-room : structures publiques, code auteur.
+; tests/cleareol.s - test HUNK executable (TEST ASSET, NOT ROM code): area cleared by ClearEOL and
+; ClearScreen. Private RastPort on a chip BitMap 320 x 20 x 2 planes, default font (topaz 8). For each call:
+; SetRast(1), Move(100, 10), settings, call, then ReadPixel of 6 points; writes to the CLI output a line
+; "EOL/SCR" + one hexadecimal digit per point. EOL: JAM2, B pen = 2. SCR: JAM1 (colour 0 expected).
+; Points: (99,8) (100,4) (319,11) (100,3) (100,12) (0,19). Black-box probe, real ROM compared with ours.
+; Clean-room: public structures, authored code.
 
 RP_BM    EQU 4
 
@@ -22,7 +22,7 @@ _start:
                 lea     dosbase(pc),a0
                 move.l  d0,(a0)
                 beq     .ret
-                move.l  #1600,d0             ; 2 plans de 320 x 20
+                move.l  #1600,d0             ; 2 planes of 320 x 20
                 move.l  #$10002,d1           ; MEMF_CHIP | MEMF_CLEAR
                 jsr     -198(a6)             ; AllocMem
                 tst.l   d0
@@ -35,7 +35,7 @@ _start:
                 moveq   #2,d0
                 move.l  #320,d1
                 moveq   #20,d2
-                jsr     -390(a6)             ; InitBitMap(bm a0, profondeur, largeur, hauteur)
+                jsr     -390(a6)             ; InitBitMap(bm a0, depth, width, height)
                 lea     rport(pc),a1
                 jsr     -198(a6)             ; InitRastPort
                 lea     rport(pc),a1
@@ -65,7 +65,7 @@ _start:
                 moveq   #0,d0
                 rts
 
-prep:                                        ; SetRast(1) puis Move(100, 10)
+prep:                                        ; SetRast(1) then Move(100, 10)
                 lea     rport(pc),a1
                 moveq   #1,d0
                 jsr     -234(a6)             ; SetRast
@@ -73,7 +73,7 @@ prep:                                        ; SetRast(1) puis Move(100, 10)
                 moveq   #100,d0
                 moveq   #10,d1
                 jmp     -240(a6)             ; Move
-report:                                      ; a0 = étiquette ; lit les 6 points et écrit la ligne sur Output()
+report:                                      ; a0 = label; reads the 6 points and writes the line to Output()
                 lea     line(pc),a1
 .cp:
                 move.b  (a0)+,(a1)+
@@ -97,14 +97,14 @@ report:                                      ; a0 = étiquette ; lit les 6 point
                 move.b  #10,(a1)+
                 lea     line(pc),a0
                 move.l  a1,d3
-                sub.l   a0,d3                ; longueur
+                sub.l   a0,d3                ; length
                 move.l  a6,-(sp)
                 move.l  dosbase(pc),a6
                 jsr     -60(a6)              ; Output
                 move.l  d0,d1
                 lea     line(pc),a0
                 move.l  a0,d2
-                jsr     -48(a6)              ; Write(fh d1, tampon d2, longueur d3)
+                jsr     -48(a6)              ; Write(fh d1, buffer d2, length d3)
                 move.l  (sp)+,a6
                 rts
 

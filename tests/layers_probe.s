@@ -1,17 +1,17 @@
-; tests/layers_probe.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire de layers.library (piste analyse, docs/analysis/layers-v34.md).
-; Lancée depuis la startup-sequence d'une disquette (tests/layers_probe.sh). Travaille sur une BitMap
-; privée (non affichée) et une Layer_Info privée ; appelle les fonctions par leurs LVO publics et écrit
-; l'état des structures (Layer, ClipRect, DamageList, Layer_Info) sur le série direct, en hexadécimal.
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/layers_probe tests/layers_probe.s
-; Code auteur ; structures publiques (graphics/clip.h, layers.h, gfx.h, regions.h de la 1.3).
+; tests/layers_probe.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of layers.library (analysis track, docs/analysis/layers-v34.md).
+; Run from a floppy's startup-sequence (tests/layers_probe.sh). Works on a private (not displayed) BitMap
+; and a private Layer_Info; calls the functions through their public LVOs and writes
+; the state of the structures (Layer, ClipRect, DamageList, Layer_Info) to the direct serial port, in hexadecimal.
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/layers_probe tests/layers_probe.s
+; Original author code; public structures (graphics/clip.h, layers.h, gfx.h, regions.h from 1.3).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
 SERPER   EQU $DFF032
 SCRW     EQU 320
 SCRH     EQU 200
-PLSZ     EQU SCRW/8*SCRH            ; 8000 octets par plan
+PLSZ     EQU SCRW/8*SCRH            ; 8000 bytes per plane
 SBW      EQU 256
 SBH      EQU 128
 SBPL     EQU SBW/8*SBH              ; 4096
@@ -91,7 +91,7 @@ _start:
                 beq     .out
                 move.l  d0,a5
                 MSG     m_start
-; version de layers
+; layers version
                 move.l  layb-vars(a4),a0
                 move.w  20(a0),d0
                 bsr     phex4
@@ -105,7 +105,7 @@ _start:
                 move.w  18(a0),d0               ; lib_PosSize
                 bsr     phex4
                 bsr     nl
-; écran : BitMap 320x200x2, plans remplis de $FF
+; screen: 320x200x2 BitMap, planes filled with $FF
                 lea     scrbm-vars(a4),a0
                 moveq   #2,d0
                 move.l  #SCRW,d1
@@ -224,7 +224,7 @@ _start:
                 bsr     okline
                 bsr     dumpall
                 bsr     pixset
-; ---------- T8 : SizeLayer(C, +20, +10) puis (-30,-15) ----------
+; ---------- T8 : SizeLayer(C, +20, +10) then (-30,-15) ----------
                 MSG     m_t8
                 move.l  lC-vars(a4),a0
                 bsr     cleardmg
@@ -269,13 +269,13 @@ _start:
                 move.l  lB-vars(a4),a2
                 moveq   #'B',d6
                 bsr     dumpL
-                move.l  lB-vars(a4),a1          ; remettre le défilement à 0
+                move.l  lB-vars(a4),a1          ; reset the scroll offset to 0
                 moveq   #-3,d0
                 moveq   #-4,d1
                 LAY     L_Scroll
 ; ---------- T10 : BeginUpdate / EndUpdate ----------
                 MSG     m_t10
-                move.l  lA-vars(a4),a0          ; A : forcer des dommages connus
+                move.l  lA-vars(a4),a0          ; A: force known damage
                 bsr     cleardmg
                 move.l  lA-vars(a4),a0
                 move.l  $9C(a0),a0
@@ -289,14 +289,14 @@ _start:
                 bsr     dumpL
                 move.l  lA-vars(a4),a0
                 moveq   #1,d0
-                bsr     fill                     ; pen 1 dans A pendant la mise à jour
+                bsr     fill                     ; pen 1 in A during the update
                 move.l  lA-vars(a4),a0
                 moveq   #-1,d0
                 LAY     L_EndUpdate
                 move.l  lA-vars(a4),a2
                 moveq   #'A',d6
                 bsr     dumpL
-                move.l  lA-vars(a4),a0          ; dommages vides
+                move.l  lA-vars(a4),a0          ; empty damage
                 LAY     L_BeginUpdate
                 bsr     okline
                 move.l  lA-vars(a4),a0
@@ -321,7 +321,7 @@ _start:
                 bsr     sp1
                 bra.s   .wl
 .wle:           bsr     nl
-; ---------- T12 : verrous ----------
+; ---------- T12 : locks ----------
                 MSG     m_t12
                 move.l  li-vars(a4),a0
                 LAY     L_LockLayers
@@ -349,7 +349,7 @@ _start:
                 LAY     L_UnlockLayerInfo
                 bsr     dumpcnt
                 bsr     nl
-; ---------- T13 : D BACKDROP|SIMPLE plein écran, puis UpfrontLayer(D) ----------
+; ---------- T13 : D BACKDROP|SIMPLE full screen, then UpfrontLayer(D) ----------
                 MSG     m_t13
                 moveq   #0,d0
                 moveq   #0,d1
@@ -370,7 +370,7 @@ _start:
                 LAY     L_MoveInFrontOf
                 bsr     okline
                 bsr     order
-                move.l  lA-vars(a4),a1          ; BehindLayer(A) : derrière tous sauf backdrop
+                move.l  lA-vars(a4),a1          ; BehindLayer(A): behind all except backdrop
                 LAY     L_Behind
                 bsr     okline
                 bsr     order
@@ -387,7 +387,7 @@ _start:
                 move.l  a1,8(a0)
                 lea     O_SB1(a5),a1
                 move.l  a1,12(a0)
-                lea     O_SB0(a5),a0            ; plan 0 : lignes paires $FFFF, impaires 0
+                lea     O_SB0(a5),a0            ; plane 0: even rows $FFFF, odd rows 0
                 moveq   #SBH-1,d1
 .sbl:           moveq   #SBW/32-1,d0
                 move.l  d1,d2
@@ -411,7 +411,7 @@ _start:
                 move.l  lS-vars(a4),a2
                 moveq   #'S',d6
                 bsr     dumpL
-                move.l  #200,d0                 ; écran (200,120) = sbm (0,0) : 1 ; (200,121) : 0
+                move.l  #200,d0                 ; screen (200,120) = sbm (0,0): 1; (200,121): 0
                 moveq   #120,d1
                 bsr     pix
                 move.l  #200,d0
@@ -426,7 +426,7 @@ _start:
                 move.l  lS-vars(a4),a2
                 moveq   #'S',d6
                 bsr     dumpL
-                move.l  #200,d0                 ; écran (200,120) = sbm (16,7) : 0
+                move.l  #200,d0                 ; screen (200,120) = sbm (16,7): 0
                 moveq   #120,d1
                 bsr     pix
                 move.l  #200,d0
@@ -483,7 +483,7 @@ _start:
                 move.l  li-vars(a4),a0
                 LAY     L_DisposeLayerInfo
                 bsr     okline
-; ---------- T17 : InitLayers sans Fatten (Layer_Info statique) ----------
+; ---------- T17 : InitLayers without Fatten (static Layer_Info) ----------
                 MSG     m_t17
                 lea     sli-vars(a4),a0
                 moveq   #101,d0
@@ -510,7 +510,7 @@ _start:
                 bsr     okline
                 bsr     dumpli
 
-; ---------- T20 : nouvelle Layer_Info ; A SMART, B SIMPLE créé DERRIÈRE ----------
+; ---------- T20 : new Layer_Info; A SMART, B SIMPLE created BEHIND ----------
                 MSG     m_t20
                 clr.l   lA-vars(a4)
                 LAY     L_NewLayerInfo
@@ -553,7 +553,7 @@ _start:
                 bsr     okline
                 bsr     dumpall
                 bsr     pixset2
-; ---------- T22 : MoveLayer(A smart, +8, +4) au-dessus de B simple ----------
+; ---------- T22 : MoveLayer(A smart, +8, +4) above simple B ----------
                 MSG     m_t22
                 move.l  lB-vars(a4),a0
                 bsr     cleardmg
@@ -590,7 +590,7 @@ _start:
                 move.l  swcr-vars(a4),a1
                 LAY     -126
                 bsr     pixset2
-; ---------- T24 : échecs mémoire (CHIP épuisée) ----------
+; ---------- T24 : memory failures (CHIP exhausted) ----------
                 MSG     m_t24
                 move.l  lA-vars(a4),a1
                 LAY     L_Upfront
@@ -599,12 +599,12 @@ _start:
                 move.l  hogn-vars(a4),d0
                 bsr     phex8
                 bsr     nl
-                move.l  lA-vars(a4),a1          ; A smart derrière B simple : tampon CHIP requis
+                move.l  lA-vars(a4),a1          ; smart A behind simple B: CHIP buffer required
                 LAY     L_Behind
                 bsr     okline
                 bsr     order
                 bsr     dumpall
-                moveq   #30,d0                  ; C smart chevauchant
+                moveq   #30,d0                  ; overlapping smart C
                 moveq   #20,d1
                 moveq   #89,d2
                 moveq   #69,d3
@@ -642,13 +642,13 @@ _start:
                 moveq   #0,d0
                 rts
 
-; --- CreateUpfrontLayer(li, scrbm, d0..d3, flags d4, superbm a2) ; rend D0
+; --- CreateUpfrontLayer(li, scrbm, d0..d3, flags d4, superbm a2) ; returns D0
 cup:            move.l  li-vars(a4),a0
                 lea     scrbm-vars(a4),a1
                 move.l  layb-vars(a4),a6
                 jmp     L_CreateUpfront(a6)
 
-; --- remplit toute la couche a0 au stylo d0 (coordonnées couche, via son RastPort)
+; --- fills the whole layer a0 with pen d0 (layer coordinates, through its RastPort)
 fill:           movem.l d2-d3/a2,-(sp)
                 move.l  a0,a2
                 move.l  12(a2),a1
@@ -666,7 +666,7 @@ fill:           movem.l d2-d3/a2,-(sp)
                 movem.l (sp)+,d2-d3/a2
                 rts
 
-; --- vide la DamageList de la couche a0 et efface LAYERREFRESH
+; --- empties the DamageList of layer a0 and clears LAYERREFRESH
 cleardmg:       move.l  a0,-(sp)
                 move.l  $9C(a0),a0
                 move.l  gfxb-vars(a4),a6
@@ -675,7 +675,7 @@ cleardmg:       move.l  a0,-(sp)
                 and.w   #$FF7F,$1E(a0)
                 rts
 
-; --- ligne « = d0 » ; préserve d0
+; --- line "= d0"; preserves d0
 okline:         move.l  d0,-(sp)
                 moveq   #'=',d1
                 bsr     putc
@@ -684,7 +684,7 @@ okline:         move.l  d0,-(sp)
                 move.l  (sp)+,d0
                 rts
 
-; --- pixel écran (d0,d1) : imprime « P x y v »
+; --- screen pixel (d0,d1): prints "P x y v"
 pix:            movem.l d0-d1,-(sp)
                 moveq   #'P',d1
                 bsr     putc
@@ -702,7 +702,7 @@ pix:            movem.l d0-d1,-(sp)
                 rts
 
 
-; --- épuise la CHIP : blocs chaînés (suivant +0, taille +4)
+; --- exhausts CHIP: chained blocks (next +0, size +4)
 hog:            clr.l   hogl-vars(a4)
                 clr.l   hogn-vars(a4)
 .l:             move.l  4.w,a6
@@ -739,7 +739,7 @@ unhog:          move.l  4.w,a6
 pixset2:        lea     ppts2(pc),a3
                 bra     pixset+4
 
-; --- jeu de pixels témoins
+; --- set of witness pixels
 pixset:         lea     ppts(pc),a3
 .l:             move.w  (a3)+,d0
                 bmi.s   .e
@@ -750,7 +750,7 @@ pixset:         lea     ppts(pc),a3
                 bra.s   .l
 .e:             bra     nl
 
-; --- compteurs : LockLayersCount, nest du sémaphore LI, nest du verrou de A
+; --- counters: LockLayersCount, LI semaphore nest count, nest count of A's lock
 dumpcnt:        moveq   #'k',d1
                 bsr     putc
                 move.l  li-vars(a4),a0
@@ -806,14 +806,14 @@ dumpli:         move.l  li-vars(a4),a3
                 seq     d0
                 bsr     phex2
                 bsr     sp1
-                move.l  $46(a3),d0              ; gs_Head non vide ?
+                move.l  $46(a3),d0              ; gs_Head not empty?
                 lea     $4A(a3),a0
                 cmp.l   a0,d0
                 seq     d0
                 bsr     phex2
                 bra     nl
 
-; --- ordre de la pile : tags et priorités depuis top_layer
+; --- stack order: tags and priorities from top_layer
 order:          moveq   #'O',d1
                 bsr     putc
                 move.l  li-vars(a4),a0
@@ -832,7 +832,7 @@ order:          moveq   #'O',d1
                 bra.s   .l
 .e:             bra     nl
 
-; --- toutes les couches de la pile
+; --- all layers in the stack
 dumpall:        move.l  li-vars(a4),a0
                 move.l  (a0),a3
 .l:             move.l  a3,d0
@@ -848,7 +848,7 @@ dumpall:        move.l  li-vars(a4),a0
                 bra.s   .l
 .e:             rts
 
-; --- couche a2, tag d6
+; --- layer a2, tag d6
 dumpL:          moveq   #'L',d1
                 bsr     putc
                 move.b  d6,d1
@@ -912,7 +912,7 @@ dumpL:          moveq   #'L',d1
 .de:            bsr     nl
 .nd:            rts
 
-; --- liste de ClipRects a3, lettre d5
+; --- ClipRect list a3, letter d5
 dumpcr:         move.l  a3,d0
                 beq.s   .e
                 bsr     sp1
@@ -949,7 +949,7 @@ dumpcr:         move.l  a3,d0
                 bra.s   dumpcr
 .e:             rts
 
-; --- d0 = pointeur -> d1 = lettre (A B C D S, 0, 1, sinon ?)
+; --- d0 = pointer -> d1 = letter (A B C D S, 0, 1, otherwise ?)
 tagof:          moveq   #'0',d1
                 tst.l   d0
                 beq.s   .r
@@ -1011,8 +1011,8 @@ putc:           move.w  d0,-(sp)
                 move.w  (sp)+,d0
                 rts
 
-rect1:          dc.w    10,5,29,14              ; dommages forcés dans A (coordonnées couche)
-; pixels témoins : A seul, A∩B, A∩C, B seul, C seul, B∩C, hors tout
+rect1:          dc.w    10,5,29,14              ; damage forced in A (layer coordinates)
+; witness pixels: A only, A&B, A&C, B only, C only, B&C, outside all
 ppts:           dc.w    20,15, 70,40, 105,25, 130,80, 180,30, 140,40, 300,190, 205,35, -1
 ppts2:          dc.w    20,15, 60,40, 100,50, 70,50, 140,85, 115,60, 62,36, -1
 wpts:           dc.w    20,15, 70,40, 105,25, 130,80, 180,30, 300,190, 16,10, 115,59, -1

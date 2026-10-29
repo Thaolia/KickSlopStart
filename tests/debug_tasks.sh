@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# tests/debug_tasks.sh — boot FS-UAE (même configuration que tests/boot_test.sh) avec le débogueur console ; à T0
-# secondes (après un blocage), F12+D puis tests/debug_tasks.py parcourt les listes de tâches d'exec (READY / WAIT :
-# nom, état, signaux attendus et reçus, messages en attente sur le port des process).
-# Usage : tests/debug_tasks.sh <rom> <adf> [T0=240] [répertoire de sortie=build/debug_tasks]
+# tests/debug_tasks.sh - FS-UAE boot (same configuration as tests/boot_test.sh) with the console debugger; at T0
+# seconds (after a hang), F12+D then tests/debug_tasks.py walks exec's task lists (READY / WAIT:
+# name, state, signals waited for and received, messages pending on the processes' port).
+# Usage: tests/debug_tasks.sh <rom> <adf> [T0=240] [output directory=build/debug_tasks]
 set -u
 ROM="${1:?rom}"; ADF="${2:?adf}"; T0="${3:-240}"; S="$(cd "$(dirname "$0")" && pwd)"; OUT="${4:-$S/../build/debug_tasks}"
 mkdir -p "$OUT"; cp "$ADF" "$OUT/disk.adf"; chmod 644 "$OUT/disk.adf"

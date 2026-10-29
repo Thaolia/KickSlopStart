@@ -1,449 +1,449 @@
-# audio.device 34.1 — spec comportementale
+# audio.device 34.1 — behavioural spec
 
-> Piste **ANALYSE** (« dirty »). Sources : ROM `assets/kick34005.A500` (lecture seule, radare2, base
-> `$FC0000` ; notes de désassemblage hors dépôt) et sonde boîte noire `tests/audio_probe.s` (harnais
-> `tests/audio_probe.sh`) exécutée sur la **vraie ROM** sous FS-UAE (A500 PAL, 512 Ko chip + 512 Ko
-> slow, OpenAL forcé sur son pilote `null`).
-> Ce document décrit des **comportements**, des **valeurs**, des **ordres d'opérations** et des
-> **layouts d'ABI**. Il ne contient aucune suite d'instructions de la ROM ni adresse de routine.
-> Spec n° 12 de `coverage-v34.md` (module 13). Usages connus : `octamed-v34.md` §2.5 (allocation des
-> 4 canaux), `monkey-startup.md` (vecteur `$70` écrasé directement, audio.device ne voit plus rien).
+> **ANALYSIS** track ("dirty"). Sources: ROM `assets/kick34005.A500` (read only, radare2, base
+> `$FC0000`; disassembly notes outside the repository) and black-box probe `tests/audio_probe.s` (harness
+> `tests/audio_probe.sh`) run on the **real ROM** under FS-UAE (PAL A500, 512 KB chip + 512 KB
+> slow, OpenAL forced onto its `null` driver).
+> This document describes **behaviours**, **values**, **orders of operations** and
+> **ABI layouts**. It contains no ROM instruction sequence nor routine address.
+> Spec no. 12 of `coverage-v34.md` (module 13). Known uses: `octamed-v34.md` §2.5 (allocation of the
+> 4 channels), `monkey-startup.md` (vector `$70` overwritten directly, audio.device no longer sees anything).
 >
-> **Niveaux de preuve** : **[O]** observé par la sonde sur la vraie ROM · **[D]** déduit de la lecture
-> du code de la ROM (comportement, pas de code) · **[S]** supposition raisonnable, non vérifiée.
+> **Levels of proof**: **[O]** observed by the probe on the real ROM · **[D]** deduced from reading
+> the ROM code (behaviour, not code) · **[S]** reasonable assumption, not verified.
 >
-> Unité de temps des mesures : **la ligne** (64 µs PAL ; horloge de sonde = trames VERTB × 313 + ligne
-> courante). Échantillon de référence : 1000 octets, période 400 ⇒ un passage = 400 000 tops Paula
-> ≈ **1761 lignes** (mesuré sur Paula seule, §8.1).
+> Time unit of the measurements: **the line** (64 µs PAL; probe clock = VERTB frames × 313 + current
+> line). Reference sample: 1000 bytes, period 400 ⇒ one pass = 400,000 Paula ticks
+> ≈ **1761 lines** (measured on Paula alone, §8.1).
 
-## 0. Résumé pour l'implémenteur
+## 0. Summary for the implementer
 
-- Module résident `audio.device`, version 34, révision 1, chaîne d'ID `"audio 34.1 (18 Aug 1987)\r\n"`,
-  RTF_AUTOINIT|RTF_COLDSTART, priorité 40, base de **634 octets** (dataSize), **6 vecteurs** standard
-  (Open, Close, Expunge, réservé, BeginIO, AbortIO). Pas d'unités : le numéro d'unité et les flags
-  d'OpenDevice sont **ignorés**. [D]
-- **Allocation** = choix d'une combinaison de canaux dans `ioa_Data[0..ioa_Length-1]` (octets, masques
-  4 bits) selon la **priorité `ln_Pri`** de la requête ; un canal libre est toujours préféré, un canal
-  occupé n'est volé que si sa **précédence est strictement inférieure** à `ln_Pri` ; parmi les
-  combinaisons possibles, celle qui fait le **moins de dégâts** (niveau de précédence volé le plus bas)
-  puis la **première dans le tableau**. Résultat : `io_Unit` = masque, `ioa_AllocKey` = clé. [D][O]
-- **Toutes les autres commandes** vérifient, canal par canal, que la clé du canal = `ioa_AllocKey` ;
-  sinon `ADIOERR_NOALLOCATION` (−10) et le canal est retiré de `io_Unit`. [D][O]
-- **CMD_WRITE** ne sert que le **canal le plus bas** de `io_Unit` ; file par canal ; la requête suivante
-  est chargée dans AUDxLC/AUDxLEN au **début du dernier cycle** de la courante ⇒ **enchaînement sans
-  trou** ; une requête est rendue au début du bloc suivant (≈ N passages après son démarrage). [D][O]
-- `ioa_Cycles = 0` = boucle infinie (l'interruption du canal est coupée ; seul FINISH/FLUSH/… arrête). [D][O]
-- **Bogue V34 majeur** : **ADCMD_WAITCYCLE sur un canal en lecture ne rend jamais la requête** et
-  corrompt la liste interne des réponses (§5.13) ; sur un canal inactif il est rendu tout de suite. [D][O]
-- Codes produits : −2 (IOERR_ABORTED), −10, −11 (ALLOCFAILED), −12 (CHANNELSTOLEN). **IOERR_NOCMD
-  n'est jamais produit** (le code existe mais est inatteignable) ; une commande inconnue avec
-  `io_Unit = 0` est rendue sans erreur. [D][O]
-- Matériel : interruptions AUD0–3 (bits INTENA/INTREQ 7–10, niveau 4) par **SetIntVector** (pas de
-  chaînage), DMACON bits 0–3 seulement (jamais DMAEN), ADKCON seulement **effacé** (bits de modulation
-  liés au canal) ; ni filtre, ni contrôle de période, ni contrôle de chip RAM. [D][O]
+- Resident module `audio.device`, version 34, revision 1, ID string `"audio 34.1 (18 Aug 1987)\r\n"`,
+  RTF_AUTOINIT|RTF_COLDSTART, priority 40, base of **634 bytes** (dataSize), **6 standard vectors**
+  (Open, Close, Expunge, reserved, BeginIO, AbortIO). No units: the unit number and the OpenDevice
+  flags are **ignored**. [D]
+- **Allocation** = choice of a channel combination in `ioa_Data[0..ioa_Length-1]` (bytes, 4-bit
+  masks) according to the **priority `ln_Pri`** of the request; a free channel is always preferred, a busy
+  channel is only stolen if its **precedence is strictly lower** than `ln_Pri`; among the
+  possible combinations, the one that does the **least damage** (lowest stolen precedence level)
+  then the **first in the array**. Result: `io_Unit` = mask, `ioa_AllocKey` = key. [D][O]
+- **All the other commands** check, channel by channel, that the channel's key = `ioa_AllocKey`;
+  otherwise `ADIOERR_NOALLOCATION` (−10) and the channel is removed from `io_Unit`. [D][O]
+- **CMD_WRITE** only serves the **lowest channel** of `io_Unit`; one queue per channel; the next request
+  is loaded into AUDxLC/AUDxLEN at the **start of the last cycle** of the current one ⇒ **gapless
+  chaining**; a request is returned at the start of the following block (≈ N passes after it started). [D][O]
+- `ioa_Cycles = 0` = infinite loop (the channel's interrupt is turned off; only FINISH/FLUSH/… stop it). [D][O]
+- **Major V34 bug**: **ADCMD_WAITCYCLE on a playing channel never returns the request** and
+  corrupts the internal reply list (§5.13); on an idle channel it is returned at once. [D][O]
+- Codes produced: −2 (IOERR_ABORTED), −10, −11 (ALLOCFAILED), −12 (CHANNELSTOLEN). **IOERR_NOCMD
+  is never produced** (the code exists but is unreachable); an unknown command with
+  `io_Unit = 0` is returned without error. [D][O]
+- Hardware: AUD0–3 interrupts (INTENA/INTREQ bits 7–10, level 4) via **SetIntVector** (no
+  chaining), DMACON bits 0–3 only (never DMAEN), ADKCON only **cleared** (modulation bits
+  linked to the channel); no filter, no period check, no chip RAM check. [D][O]
 
 ## 1. Module, initialisation, Open/Close/Expunge
 
-### 1.1 ROMTag et base [D]
+### 1.1 ROMTag and base [D]
 
-| Élément | Valeur |
+| Element | Value |
 |---|---|
-| Nom (ln_Name de la base et des Interrupt) | `"audio.device"` |
-| ln_Type base | 3 (NT_DEVICE) ; lib_Flags = 6 (SUMUSED\|CHANGED) |
-| Version / révision | 34 / 1 |
-| ROMTag : flags, pri, type | `$81` (AUTOINIT\|COLDSTART), 40, NT_DEVICE |
-| dataSize (taille positive) | 634 octets = en-tête Library + données privées + 4 blocs canal |
-| Vecteurs | 6, format table de WORD relatifs |
+| Name (ln_Name of the base and of the Interrupts) | `"audio.device"` |
+| base ln_Type | 3 (NT_DEVICE); lib_Flags = 6 (SUMUSED\|CHANGED) |
+| Version / revision | 34 / 1 |
+| ROMTag: flags, pri, type | `$81` (AUTOINIT\|COLDSTART), 40, NT_DEVICE |
+| dataSize (positive size) | 634 bytes = Library header + private data + 4 channel blocks |
+| Vectors | 6, table format of relative WORDs |
 
-La structure privée de la base est libre pour une réimplémentation ; le modèle de données nécessaire est
-au §3.
+The private structure of the base is free for a reimplementation; the necessary data model is
+in §3.
 
-### 1.2 Initialisation (appelée par InitResident) [D]
+### 1.2 Initialisation (called by InitResident) [D]
 
-Dans l'ordre :
-1. DMACON := `$000F` (coupe le DMA des 4 canaux, sans toucher DMAEN).
-2. Trois listes vides : réponses en attente, requêtes LOCK, requêtes ALLOCATE en attente.
-3. Une **interruption logicielle** (Interrupt NT_INTERRUPT, nom `"audio.device"`, pri 0, is_Data = liste
-   des réponses) qui rend (ReplyMsg) toutes les requêtes de la liste des réponses.
-4. Pour chaque canal n = 0..3 : listes vides (file d'écriture, file WAITCYCLE) ; une structure Interrupt
-   (NT_INTERRUPT, nom `"audio.device"`, pri 0, is_Data = bloc du canal) installée par
-   **SetIntVector(7 + n)** ; l'**ancien vecteur est mémorisé** (rendu par Expunge) ; masque DMA = 1 << n ;
-   masque d'interruption = `$80` << n ; clé du canal = `$FFFF` (aucun propriétaire) ; précédence =
-   **−129** (valeur sentinelle « libre », inférieure à toute ln_Pri) ; puis **remise à zéro du canal**
-   (§5.1 : AUDxPER := 1, AUDxVOL := 0, ADKCON nettoyé).
-5. Compteur de clés = 0. **INTENA n'est pas touché** à l'init (les bits AUDx restent coupés). [D][O : ie
-   = `$4000` hors lecture]
+In order:
+1. DMACON := `$000F` (turns off the DMA of the 4 channels, without touching DMAEN).
+2. Three empty lists: pending replies, LOCK requests, pending ALLOCATE requests.
+3. A **software interrupt** (Interrupt NT_INTERRUPT, name `"audio.device"`, pri 0, is_Data = reply
+   list) that returns (ReplyMsg) all the requests of the reply list.
+4. For each channel n = 0..3: empty lists (write queue, WAITCYCLE queue); an Interrupt structure
+   (NT_INTERRUPT, name `"audio.device"`, pri 0, is_Data = channel block) installed by
+   **SetIntVector(7 + n)**; the **old vector is stored** (returned by Expunge); DMA mask = 1 << n;
+   interrupt mask = `$80` << n; channel key = `$FFFF` (no owner); precedence =
+   **−129** ("free" sentinel value, lower than any ln_Pri); then **channel reset**
+   (§5.1: AUDxPER := 1, AUDxVOL := 0, ADKCON cleaned).
+5. Key counter = 0. **INTENA is not touched** at init (the AUDx bits stay off). [D][O: ie
+   = `$4000` outside playback]
 
 ### 1.3 OpenDevice [D][O]
 
-- Incrémente lib_OpenCnt, puis transforme la requête en **ADCMD_ALLOCATE** : `io_Command := $20`,
-  `io_Flags := ADIOF_NOWAIT | IOF_QUICK` (`$41`), appel du **BeginIO du device via io_Device**, puis
-  **WaitIO** ; ensuite `io_Flags := 0`. Les champs fournis par l'appelant (`ln_Pri`, `ioa_AllocKey`,
-  `ioa_Data`, `ioa_Length`) sont utilisés tels quels. [D]
-- Succès : efface le drapeau « expunge différé ». `io_Command` **reste à `$0020`**, io_Flags = 0. [O T1/T2]
-- Échec (`io_Error ≠ 0`) : appelle **Close** sur la requête (§1.4) ⇒ `io_Device := −1`, OpenCnt
-  re-décrémenté ; exec renvoie l'erreur en D0. Exemple observé : D0 = `$FFFFFFF5`, io_Error = `$F5`,
+- Increments lib_OpenCnt, then turns the request into an **ADCMD_ALLOCATE**: `io_Command := $20`,
+  `io_Flags := ADIOF_NOWAIT | IOF_QUICK` (`$41`), call of the **device's BeginIO via io_Device**, then
+  **WaitIO**; then `io_Flags := 0`. The fields supplied by the caller (`ln_Pri`, `ioa_AllocKey`,
+  `ioa_Data`, `ioa_Length`) are used as is. [D]
+- Success: clears the "deferred expunge" flag. `io_Command` **stays at `$0020`**, io_Flags = 0. [O T1/T2]
+- Failure (`io_Error ≠ 0`): calls **Close** on the request (§1.4) ⇒ `io_Device := −1`, OpenCnt
+  decremented again; exec returns the error in D0. Observed example: D0 = `$FFFFFFF5`, io_Error = `$F5`,
   io_Unit = 0, AllocKey = 0, io_Device = `$FFFFFFFF`. [O T2c]
-- `ioa_Length = 0` : succès immédiat **sans allocation** ; une clé est quand même attribuée si
-  `ioa_AllocKey` valait 0 (première clé du système = **1**). Au retour d'OpenDevice, io_Unit = 0 (valeur
-  d'entrée `$55` perdue — cf. Points non tranchés). [O T1]
-- Combinaisons `{1,2,4,8}` pri 0 sur device vierge ⇒ io_Unit = 1, clé 2 ; puis `{1,2}` pri 0 ⇒ io_Unit
-  = 2, clé 3 ; puis `{1}` pri 0 ⇒ échec −11 (canal 0 à précédence 0, égalité ⇒ pas de vol). [O T2]
-- Cas limite : si la combinaison choisie contient un canal **verrouillé**, l'ALLOCATE est mis en file
-  **malgré ADIOF_NOWAIT** (§4.4) ⇒ OpenDevice bloque dans WaitIO jusqu'à libération. [D]
+- `ioa_Length = 0`: immediate success **without allocation**; a key is still assigned if
+  `ioa_AllocKey` was 0 (first key of the system = **1**). On return from OpenDevice, io_Unit = 0 (input
+  value `$55` lost — cf. Open points). [O T1]
+- Combinations `{1,2,4,8}` pri 0 on a fresh device ⇒ io_Unit = 1, key 2; then `{1,2}` pri 0 ⇒ io_Unit
+  = 2, key 3; then `{1}` pri 0 ⇒ failure −11 (channel 0 at precedence 0, equality ⇒ no theft). [O T2]
+- Edge case: if the chosen combination contains a **locked** channel, the ALLOCATE is queued
+  **despite ADIOF_NOWAIT** (§4.4) ⇒ OpenDevice blocks in WaitIO until release. [D]
 
 ### 1.4 CloseDevice [D][O]
 
-1. Sauve l'octet bas de io_Command, io_Flags et io_Error.
-2. `io_Unit := $F`, `io_Command := ADCMD_FREE`, **DoIO** (seuls les canaux dont la clé = celle de la
-   requête sont libérés ; les autres donnent −10, ignoré).
-3. Restaure io_Command (octet bas étendu à un mot), io_Flags, io_Error ; **io_Device := −1**.
-4. lib_OpenCnt−− ; s'il tombe à 0 **et** qu'un expunge est différé ⇒ Expunge ; sinon renvoie 0.
-Observé : après Close, io_Device = `$FFFFFFFF`, io_Command = `$0020` (restauré), et le canal 0 qu'elle
-possédait est ré-allouable par une requête de pri −128. [O T16]
+1. Saves the low byte of io_Command, io_Flags and io_Error.
+2. `io_Unit := $F`, `io_Command := ADCMD_FREE`, **DoIO** (only the channels whose key = that of the
+   request are freed; the others give −10, ignored).
+3. Restores io_Command (low byte extended to a word), io_Flags, io_Error; **io_Device := −1**.
+4. lib_OpenCnt−−; if it drops to 0 **and** an expunge is deferred ⇒ Expunge; otherwise returns 0.
+Observed: after Close, io_Device = `$FFFFFFFF`, io_Command = `$0020` (restored), and channel 0 that it
+owned can be reallocated by a request of pri −128. [O T16]
 
 ### 1.5 Expunge [D]
 
-OpenCnt ≠ 0 ⇒ positionne « expunge différé », renvoie 0. Sinon : pour chaque canal, SetIntVector(7+n,
-ancien vecteur mémorisé), Remove de la base, FreeMem(base − NegSize, NegSize + PosSize), renvoie le
-seglist reçu à l'init (0 pour le résident ROM).
+OpenCnt ≠ 0 ⇒ sets "deferred expunge", returns 0. Otherwise: for each channel, SetIntVector(7+n,
+stored old vector), Remove of the base, FreeMem(base − NegSize, NegSize + PosSize), returns the
+seglist received at init (0 for the ROM resident).
 
-## 2. Structure IOAudio (ABI, `devices/audio.h`)
+## 2. IOAudio structure (ABI, `devices/audio.h`)
 
-| Off. | Taille | Champ | Usage par la V34 |
+| Off. | Size | Field | Use by V34 |
 |---:|---:|---|---|
-| 0 | 14 | Node (ln_Pri en +9) | **ln_Pri** = priorité d'allocation (octet signé) et valeur de SETPREC |
-| 14 | 4 | mn_ReplyPort | port de réponse |
-| 20 | 4 | io_Device | mis à −1 par Close |
-| 24 | 4 | io_Unit | **masque de canaux** (bits 0–3) ; **doit être ≤ 15** (§5.0) |
+| 0 | 14 | Node (ln_Pri at +9) | **ln_Pri** = allocation priority (signed byte) and value for SETPREC |
+| 14 | 4 | mn_ReplyPort | reply port |
+| 20 | 4 | io_Device | set to −1 by Close |
+| 24 | 4 | io_Unit | **channel mask** (bits 0–3); **must be ≤ 15** (§5.0) |
 | 28 | 2 | io_Command | |
 | 30 | 1 | io_Flags | IOF_QUICK (bit 0), ADIOF_PERVOL `$10`, ADIOF_SYNCCYCLE `$20`, ADIOF_NOWAIT `$40`, ADIOF_WRITEMESSAGE `$80` |
-| 31 | 1 | io_Error | 0 au début de chaque BeginIO |
-| 32 | 2 | ioa_AllocKey | clé ; 0 ⇒ une clé neuve est attribuée à l'allocation |
-| 34 | 4 | ioa_Data | ALLOCATE : tableau d'octets-masques ; WRITE : échantillon (chip, **pair**) ; READ : rendu |
-| 38 | 4 | ioa_Length | ALLOCATE : nombre de combinaisons ; WRITE : longueur en octets |
+| 31 | 1 | io_Error | 0 at the start of each BeginIO |
+| 32 | 2 | ioa_AllocKey | key; 0 ⇒ a new key is assigned at allocation |
+| 34 | 4 | ioa_Data | ALLOCATE: array of mask bytes; WRITE: sample (chip, **even**); READ: returned |
+| 38 | 4 | ioa_Length | ALLOCATE: number of combinations; WRITE: length in bytes |
 | 42 | 2 | ioa_Period | WRITE/PERVOL |
 | 44 | 2 | ioa_Volume | WRITE/PERVOL (0–64) |
-| 46 | 2 | ioa_Cycles | WRITE : nombre de passages, 0 = infini |
-| 48 | 20 | ioa_WriteMsg | Message rendu au démarrage si ADIOF_WRITEMESSAGE |
-| | 68 | taille totale | |
+| 46 | 2 | ioa_Cycles | WRITE: number of passes, 0 = infinite |
+| 48 | 20 | ioa_WriteMsg | Message returned at start if ADIOF_WRITEMESSAGE |
+| | 68 | total size | |
 
-Période et volume sont lus **ensemble en un mot long** (Period puis Volume, contigus) et écrits d'un seul
-accès long dans AUDxPER puis AUDxVOL : l'ordre des deux champs est donc contractuel. [D]
+Period and volume are read **together as one long word** (Period then Volume, contiguous) and written in a single
+long access into AUDxPER then AUDxVOL: the order of the two fields is therefore contractual. [D]
 
-## 3. Modèle de données (ce qu'une réimplémentation doit garder) [D]
+## 3. Data model (what a reimplementation must keep) [D]
 
-Par canal : clé propriétaire (`$FFFF` = libre), précédence (mot signé, −129 = libre), file d'écriture
-(FIFO), file WAITCYCLE, requête **courante** (celle que Paula joue), requête **armée** (celle dont
-LC/LEN sont dans Paula ; égale à la courante pendant sa lecture), compteur de cycles restant, drapeau
-« arrêté » (CMD_STOP), drapeau « WAITCYCLE en attente », état de l'automate d'interruption (§6).
-Global : masque des canaux verrouillés, liste des LOCK, file des ALLOCATE en attente (triée par ln_Pri,
-`Enqueue`), liste des réponses + interruption logicielle, compteur de clés (mot).
+Per channel: owner key (`$FFFF` = free), precedence (signed word, −129 = free), write queue
+(FIFO), WAITCYCLE queue, **current** request (the one Paula is playing), **armed** request (the one whose
+LC/LEN are in Paula; equal to the current one during its playback), remaining cycle counter,
+"stopped" flag (CMD_STOP), "WAITCYCLE pending" flag, state of the interrupt automaton (§6).
+Global: mask of locked channels, list of LOCKs, queue of pending ALLOCATEs (sorted by ln_Pri,
+`Enqueue`), reply list + software interrupt, key counter (word).
 
-**Clés** : à chaque attribution, compteur + 1 ; s'il devient ≤ 0 il repart à 1 ⇒ clés 1..32767, jamais
-0 ni `$FFFF`. Une clé n'est attribuée que si `ioa_AllocKey = 0` **et** que l'ALLOCATE réussit (ou que
-`ioa_Length = 0`) ; une requête qui garde une clé non nulle la réutilise. Conséquence V34 : une requête
-portant la clé `$FFFF` « possède » tous les canaux libres (non sondé). [D][O : clés 1,2,3,4,5,… ;
-échec ⇒ clé 0 laissée]
+**Keys**: at each assignment, counter + 1; if it becomes ≤ 0 it restarts at 1 ⇒ keys 1..32767, never
+0 nor `$FFFF`. A key is only assigned if `ioa_AllocKey = 0` **and** the ALLOCATE succeeds (or
+`ioa_Length = 0`); a request that keeps a non-zero key reuses it. V34 consequence: a request
+carrying the key `$FFFF` "owns" all the free channels (not probed). [D][O: keys 1,2,3,4,5,…;
+failure ⇒ key 0 left]
 
 ## 4. ADCMD_ALLOCATE (`$20`)
 
-### 4.1 Choix de la combinaison [D][O]
+### 4.1 Choice of the combination [D][O]
 
-1. `ioa_Length = 0` ⇒ succès immédiat, `io_Unit` **inchangé**, clé attribuée si nulle. [O T15 : u = `$33`
-   conservé, k = `$000A`]
-2. Sinon `io_Unit := 0`, puis on classe les canaux par précédence : niveau 0 = canaux libres (−129),
-   puis niveaux croissants des précédences distinctes des canaux alloués.
-3. Niveau maximal utilisable = le plus haut niveau dont la précédence est **strictement < ln_Pri**
-   (le niveau « libre » l'est toujours). Si aucune combinaison n'est un sous-ensemble des canaux des
-   niveaux ≤ maximum ⇒ **échec** (§4.3).
-4. Sinon on cherche le **plus petit niveau** j pour lequel une combinaison tient dans les canaux de
-   niveau ≤ j, et on prend la **première** combinaison du tableau qui y tient.
-Observé (T3) : pri 10 vole un canal de précédence 0 ; `{3, C}` pri 20 avec 2 et 3 libres ⇒ **C** ;
-`{1, 2}` pri 15 avec canal 0 à 10 et canal 1 à 0 ⇒ **2** (moindre dégât) ; `{1}` pri 15 vole le 10 ;
-`{2}` pri 15 contre précédence 15 ⇒ **échec −11**. [O]
-Une combinaison 0 tient toujours ⇒ succès avec io_Unit = 0 (non sondé). [D]
+1. `ioa_Length = 0` ⇒ immediate success, `io_Unit` **unchanged**, key assigned if zero. [O T15: u = `$33`
+   kept, k = `$000A`]
+2. Otherwise `io_Unit := 0`, then the channels are ranked by precedence: level 0 = free channels (−129),
+   then increasing levels of the distinct precedences of the allocated channels.
+3. Maximum usable level = the highest level whose precedence is **strictly < ln_Pri**
+   (the "free" level always is). If no combination is a subset of the channels of the
+   levels ≤ maximum ⇒ **failure** (§4.3).
+4. Otherwise the **smallest level** j for which a combination fits in the channels of
+   level ≤ j is sought, and the **first** combination of the array that fits there is taken.
+Observed (T3): pri 10 steals a channel of precedence 0; `{3, C}` pri 20 with 2 and 3 free ⇒ **C**;
+`{1, 2}` pri 15 with channel 0 at 10 and channel 1 at 0 ⇒ **2** (least damage); `{1}` pri 15 steals the 10;
+`{2}` pri 15 against precedence 15 ⇒ **failure −11**. [O]
+A combination 0 always fits ⇒ success with io_Unit = 0 (not probed). [D]
 
-### 4.2 Succès [D][O]
+### 4.2 Success [D][O]
 
-Si aucun canal choisi n'est verrouillé : `io_Unit := combinaison` (étendue à 32 bits), clé attribuée si
-nulle, puis pour **chaque canal** du masque (du plus bas au plus haut) : **remise à zéro du canal**
-(§5.1 : les écritures de l'ancien propriétaire sont rendues, cf. FLUSH), précédence := ln_Pri, clé :=
-ioa_AllocKey. Le vol est **silencieux** pour l'ancien propriétaire : ses commandes suivantes rendent
-−10 (`io_Unit := 0` pour WRITE). [O T3b : −10 immédiat] Effet ADKCON observé : `$FF` ⇒ `$EE` après
-allocation du canal 0, puis `$88` après le canal 2. [O T5]
+If no chosen channel is locked: `io_Unit := combination` (extended to 32 bits), key assigned if
+zero, then for **each channel** of the mask (lowest to highest): **channel reset**
+(§5.1: the old owner's writes are returned, cf. FLUSH), precedence := ln_Pri, key :=
+ioa_AllocKey. The theft is **silent** for the old owner: its following commands return
+−10 (`io_Unit := 0` for WRITE). [O T3b: −10 immediately] ADKCON effect observed: `$FF` ⇒ `$EE` after
+allocation of channel 0, then `$88` after channel 2. [O T5]
 
-### 4.3 Échec [D][O]
+### 4.3 Failure [D][O]
 
-- **ADIOF_NOWAIT** ⇒ io_Error := **ADIOERR_ALLOCFAILED (−11, `$F5`)**, io_Unit = 0, rendu. [O]
-- Sans NOWAIT ⇒ la requête est **Enqueue**-ée (par ln_Pri) dans la file d'attente, reste en cours
-  (ln_Type = NT_MESSAGE, IOF_QUICK effacé). [O T14 : p = 1]
-- **Ré-essai** de toute la file, dans l'ordre de la liste, après chaque **ADCMD_FREE** et chaque
-  **ADCMD_SETPREC** (donc aussi CloseDevice) — et seulement là. Pendant son ré-essai une requête porte
-  io_Error = 1 (marqueur interne) ; succès ⇒ io_Error := 0, retirée et rendue ; si AbortIO l'a marquée
-  −2 entre-temps ⇒ retirée et rendue avec −2 ; échec et NOWAIT ⇒ −11, rendue ; sinon elle reste
-  en file **avec io_Error = 1** (le marqueur n'est pas effacé). [D]
-  Observé : après SETPREC −100 du propriétaire (pri 50), une requête pri 0 en attente obtient le canal. [O T14]
+- **ADIOF_NOWAIT** ⇒ io_Error := **ADIOERR_ALLOCFAILED (−11, `$F5`)**, io_Unit = 0, returned. [O]
+- Without NOWAIT ⇒ the request is **Enqueue**d (by ln_Pri) into the waiting queue, stays in progress
+  (ln_Type = NT_MESSAGE, IOF_QUICK cleared). [O T14: p = 1]
+- **Retry** of the whole queue, in list order, after each **ADCMD_FREE** and each
+  **ADCMD_SETPREC** (hence also CloseDevice) — and only then. During its retry a request carries
+  io_Error = 1 (internal marker); success ⇒ io_Error := 0, removed and returned; if AbortIO has marked it
+  −2 in the meantime ⇒ removed and returned with −2; failure and NOWAIT ⇒ −11, returned; otherwise it stays
+  in the queue **with io_Error = 1** (the marker is not cleared). [D]
+  Observed: after SETPREC −100 by the owner (pri 50), a waiting pri 0 request gets the channel. [O T14]
 
-### 4.4 Canal verrouillé dans la combinaison choisie [D][O]
+### 4.4 Locked channel in the chosen combination [D][O]
 
-Rien n'est alloué. Toute requête **LOCK** en cours dont io_Unit touche un des canaux verrouillés visés est
-retirée et rendue avec **ADIOERR_CHANNELSTOLEN (−12, `$F4`)**, io_Unit inchangé ; l'ALLOCATE est mis en
-file **même avec ADIOF_NOWAIT** (il n'échoue pas). Le bit « verrouillé » du canal **reste posé** jusqu'à
-un ADCMD_FREE du propriétaire, qui relance la file : l'ALLOCATE obtient alors le canal.
-Observé T13 : LOCK (pri 0) en cours, ALLOCATE pri 50 NOWAIT ⇒ en cours, LOCK rendu −12 u = 8 ; FREE du
-propriétaire ⇒ ALLOCATE rendu 0, u = 8. [O]
+Nothing is allocated. Any **LOCK** request in progress whose io_Unit touches one of the targeted locked channels is
+removed and returned with **ADIOERR_CHANNELSTOLEN (−12, `$F4`)**, io_Unit unchanged; the ALLOCATE is
+queued **even with ADIOF_NOWAIT** (it does not fail). The channel's "locked" bit **stays set** until
+an ADCMD_FREE by the owner, which restarts the queue: the ALLOCATE then gets the channel.
+Observed T13: LOCK (pri 0) in progress, ALLOCATE pri 50 NOWAIT ⇒ in progress, LOCK returned −12 u = 8; FREE by the
+owner ⇒ ALLOCATE returned 0, u = 8. [O]
 
-## 5. Autres commandes
+## 5. Other commands
 
-### 5.0 Cadre commun de BeginIO [D][O]
+### 5.0 Common BeginIO frame [D][O]
 
-- `io_Error := 0` ; tout BeginIO s'exécute sous **Forbid** (Permit à la fin).
-- ALLOCATE (`$20`) : §4. Toute autre commande : parcours des canaux de `io_Unit`, **du bit le plus bas
-  au plus haut**. `io_Unit` sert d'index dans une table de 16 entrées : **une valeur > 15 sort de la
-  table (comportement indéfini)**. `io_Unit = 0` ⇒ aucun canal traité, requête rendue sans erreur, quelle
-  que soit la commande (y compris inconnue). [D][O T15 : cmd `$1F`, u = 0 ⇒ e = 0]
-- Clé fausse sur un canal : io_Error := −10, bit du canal retiré de io_Unit, puis selon la commande :
-  READ, WRITE, LOCK, WAITCYCLE ⇒ `io_Unit := 0` et fin (rendue) ; UPDATE, CLEAR, STOP, FLUSH,
-  FINISH, PERVOL ⇒ canal ignoré, on continue ; START, FREE, SETPREC ⇒ on continue, et si c'était le
-  dernier canal l'action finale de la commande (DMACON groupé, relance des allocations) a quand même
-  lieu ; **CMD_RESET avec clé fausse saute hors de la table d'aiguillage** (indéfini, ne pas reproduire :
-  rendre −10). [D]
-- Commande 0 (CMD_INVALID) ou 15..31, `$21`.. avec un canal valide : aiguillage hors table, indéfini ;
-  une réimplémentation rendra IOERR_NOCMD. [D]
-- Fin : les réponses accumulées par d'autres requêtes (liste interne) sont rendues avant le retour ;
-  puis la requête elle-même est rendue par ReplyMsg **sauf si IOF_QUICK** ; une requête qui reste en
-  cours (WRITE, LOCK, WAITCYCLE en lecture, ALLOCATE en attente) reçoit ln_Type = NT_MESSAGE et
-  IOF_QUICK effacé.
+- `io_Error := 0`; every BeginIO runs under **Forbid** (Permit at the end).
+- ALLOCATE (`$20`): §4. Any other command: walk of the channels of `io_Unit`, **from the lowest bit
+  to the highest**. `io_Unit` serves as an index into a 16-entry table: **a value > 15 goes outside the
+  table (undefined behaviour)**. `io_Unit = 0` ⇒ no channel processed, request returned without error, whatever
+  the command (including unknown). [D][O T15: cmd `$1F`, u = 0 ⇒ e = 0]
+- Wrong key on a channel: io_Error := −10, the channel's bit removed from io_Unit, then depending on the command:
+  READ, WRITE, LOCK, WAITCYCLE ⇒ `io_Unit := 0` and end (returned); UPDATE, CLEAR, STOP, FLUSH,
+  FINISH, PERVOL ⇒ channel ignored, continue; START, FREE, SETPREC ⇒ continue, and if it was the
+  last channel the command's final action (grouped DMACON, restart of the allocations) still
+  takes place; **CMD_RESET with a wrong key jumps outside the dispatch table** (undefined, do not reproduce:
+  return −10). [D]
+- Command 0 (CMD_INVALID) or 15..31, `$21`.. with a valid channel: dispatch outside the table, undefined;
+  a reimplementation will return IOERR_NOCMD. [D]
+- End: the replies accumulated by other requests (internal list) are returned before the return;
+  then the request itself is returned by ReplyMsg **unless IOF_QUICK**; a request that stays in
+  progress (WRITE, LOCK, WAITCYCLE while playing, pending ALLOCATE) gets ln_Type = NT_MESSAGE and
+  IOF_QUICK cleared.
 
-### 5.1 CMD_RESET (1) — remise à zéro d'un canal [D][O]
+### 5.1 CMD_RESET (1) — channel reset [D][O]
 
-Pour chaque canal : SetIntVector(7+n) **réinstallé** (le handler d'audio.device reprend le vecteur même
-si un programme l'avait remplacé) ; **FLUSH** du canal (§5.7) ; **AUDxPER := 1 et AUDxVOL := 0** (un
-seul accès long) ; **ADKCON := masque sans bit SET**, masque selon le canal : 0 ⇒ `$11`, 1 ⇒ `$33`,
-2 ⇒ `$66`, 3 ⇒ `$CC` (bits USEnVm/USEnPm où le canal est modulateur ou modulé) ; drapeau « arrêté »
-effacé. Ne désalloue pas. La même remise à zéro est faite à l'init, à l'allocation et au FREE. [O T5 pour
+For each channel: SetIntVector(7+n) **reinstalled** (audio.device's handler takes the vector back even
+if a program had replaced it); **FLUSH** of the channel (§5.7); **AUDxPER := 1 and AUDxVOL := 0** (a
+single long access); **ADKCON := mask without SET bit**, mask depending on the channel: 0 ⇒ `$11`, 1 ⇒ `$33`,
+2 ⇒ `$66`, 3 ⇒ `$CC` (USEnVm/USEnPm bits where the channel is modulator or modulated); "stopped" flag
+cleared. Does not deallocate. The same reset is done at init, at allocation and at FREE. [O T5 for
 ADKCON]
 
 ### 5.2 CMD_READ (2) [D][O]
 
-Canal le plus bas seulement : `io_Unit := masque du canal`, **`ioa_Data := requête WRITE courante`** (NULL
-si inactif), rendue aussitôt. [O T7 : pendant A, ioa_Data = &A ; après, 0]
+Lowest channel only: `io_Unit := channel mask`, **`ioa_Data := current WRITE request`** (NULL
+if idle), returned at once. [O T7: during A, ioa_Data = &A; afterwards, 0]
 
 ### 5.3 CMD_WRITE (3) [D][O]
 
-Canal le plus bas seulement ; `io_Unit := masque du canal`. Requête **jamais rendue par BeginIO**.
-- Si le canal a déjà une requête armée ⇒ ajout en **fin de file** (FIFO).
-- Sinon : **AUDxLEN := ioa_Length / 2** (division entière ; 0 ⇒ 65536 mots pour Paula ; ≥ 131072
-  tronqué), **AUDxLC := ioa_Data**, compteur := ioa_Cycles, requête armée. Puis :
-  - si une requête courante joue encore (dernier cycle en cours) **ou** si le canal est arrêté : rien
-    d'autre (l'interruption de début de bloc suivante prendra le relais ; canal arrêté ⇒ attend START) ;
-  - sinon **démarrage à froid** : si INTENAR n'a pas le bit du canal : INTREQ := bit (acquitte) puis
-    INTENA := SET|bit ; si ADIOF_PERVOL : **AUDxPER := 1** ; **AUDxDAT := premier octet de l'échantillon
-    recopié dans les deux moitiés du mot** (lecture d'un mot à ioa_Data ⇒ adresse paire obligatoire). Le
-    DMA n'est **pas** encore allumé : Paula, en mode manuel, joue ce mot très vite (période 1) et lève
-    l'interruption, dont le handler allume le DMA (§6).
-- Sans ADIOF_PERVOL, la période/volume restent ceux du canal (après remise à zéro : **période 1, volume
-  0**) : la première écriture d'un canal doit donc porter ADIOF_PERVOL. [D]
-- Période/volume (ADIOF_PERVOL) appliqués **au début du bloc** de la requête (interruption DMA), donc à
-  sa première note, y compris pour une requête enchaînée. [D]
-- ADIOF_WRITEMESSAGE : `ioa_WriteMsg` est rendu (ReplyMsg, via son propre mn_ReplyPort) **quand la
-  requête commence à jouer**. [D]
-- **Rendu** : quand la requête suivante démarre (même interruption), ou s'il n'y en a pas, à
-  l'interruption qui suit la fin du dernier passage : DMA et interruption du canal coupés, puis rendu.
-  io_Error = 0. Mesures (T6) : cycles 1 ⇒ **1773** lignes, 2 ⇒ **3536**, 4 ⇒ **7060** (≈ N × 1761 +
-  ≈ 12) ; pendant la lecture DMACONR = `$0201`, INTENAR = `$4080` ; après, `$0200` / `$4000`. [O]
-- **Enchaînement** : A (1 cycle) puis B (1 cycle) envoyés d'affilée ⇒ A rendu à **1791**, B à **3536**,
-  exactement la durée de A en 2 cycles : pas de trou. [O T7]
-- `ioa_Cycles = 0` : boucle infinie, **INTENA du canal coupé** dès le début (aucune interruption ensuite) ;
-  observé ie = `$4000`, DMA actif, requête toujours en cours après 6000 lignes. [O T11]
+Lowest channel only; `io_Unit := channel mask`. Request **never returned by BeginIO**.
+- If the channel already has an armed request ⇒ added at the **end of the queue** (FIFO).
+- Otherwise: **AUDxLEN := ioa_Length / 2** (integer division; 0 ⇒ 65536 words for Paula; ≥ 131072
+  truncated), **AUDxLC := ioa_Data**, counter := ioa_Cycles, request armed. Then:
+  - if a current request is still playing (last cycle in progress) **or** if the channel is stopped: nothing
+    else (the next start-of-block interrupt will take over; stopped channel ⇒ waits for START);
+  - otherwise **cold start**: if INTENAR does not have the channel's bit: INTREQ := bit (acknowledge) then
+    INTENA := SET|bit; if ADIOF_PERVOL: **AUDxPER := 1**; **AUDxDAT := first byte of the sample
+    copied into both halves of the word** (word read at ioa_Data ⇒ even address mandatory). The
+    DMA is **not** yet turned on: Paula, in manual mode, plays this word very quickly (period 1) and raises
+    the interrupt, whose handler turns on the DMA (§6).
+- Without ADIOF_PERVOL, the period/volume remain those of the channel (after reset: **period 1, volume
+  0**): the first write to a channel must therefore carry ADIOF_PERVOL. [D]
+- Period/volume (ADIOF_PERVOL) applied **at the start of the block** of the request (DMA interrupt), hence at
+  its first note, including for a chained request. [D]
+- ADIOF_WRITEMESSAGE: `ioa_WriteMsg` is returned (ReplyMsg, via its own mn_ReplyPort) **when the
+  request starts playing**. [D]
+- **Return**: when the next request starts (same interrupt), or if there is none, at
+  the interrupt following the end of the last pass: the channel's DMA and interrupt turned off, then returned.
+  io_Error = 0. Measurements (T6): cycles 1 ⇒ **1773** lines, 2 ⇒ **3536**, 4 ⇒ **7060** (≈ N × 1761 +
+  ≈ 12); during playback DMACONR = `$0201`, INTENAR = `$4080`; afterwards, `$0200` / `$4000`. [O]
+- **Chaining**: A (1 cycle) then B (1 cycle) sent back to back ⇒ A returned at **1791**, B at **3536**,
+  exactly the duration of A with 2 cycles: no gap. [O T7]
+- `ioa_Cycles = 0`: infinite loop, **the channel's INTENA turned off** from the start (no interrupt afterwards);
+  observed ie = `$4000`, DMA active, request still in progress after 6000 lines. [O T11]
 
 ### 5.4 CMD_UPDATE (4), CMD_CLEAR (5) [D]
 
-Aucun effet (hors contrôle de clé). Rendues.
+No effect (apart from the key check). Returned.
 
 ### 5.5 CMD_STOP (6) [D][O]
 
-Pour chaque canal : drapeau « arrêté », **INTENA := bit du canal (effacement)**, puis **DMACON := bit du
-canal (effacement)**. Les requêtes restent en place. Observé : DMACONR `$0200`, INTENAR `$4000`, la
-requête n'avance plus (en cours après 6000 lignes). Un WRITE sur canal arrêté est armé (LC/LEN écrits)
-mais ne démarre pas. [O T12]
+For each channel: "stopped" flag, **INTENA := channel bit (clear)**, then **DMACON := channel
+bit (clear)**. The requests stay in place. Observed: DMACONR `$0200`, INTENAR `$4000`, the
+request no longer advances (in progress after 6000 lines). A WRITE on a stopped channel is armed (LC/LEN written)
+but does not start. [O T12]
 
 ### 5.6 CMD_START (7) [D][O]
 
-Pour chaque canal : efface « arrêté » ; si le canal a une requête courante ou armée : ajoute son bit au
-masque DMA et, si INTENAR n'a pas le bit, INTREQ := bit puis INTENA := SET|bit. Après le **dernier**
-canal : **un seul DMACON := SET | masque** (départ simultané). Paula **repart du début** de l'échantillon
-armé (LC/LEN), et l'interruption de redémarrage **consomme un cycle** : A (2 cycles) arrêté à 500 lignes
-puis relancé à ≈ 6520 est rendu à **8383** (= reprise + un passage entier). STOP puis WRITE puis START ⇒
-rendu à 1771 après START. [O T12]
+For each channel: clears "stopped"; if the channel has a current or armed request: adds its bit to the
+DMA mask and, if INTENAR does not have the bit, INTREQ := bit then INTENA := SET|bit. After the **last**
+channel: **a single DMACON := SET | mask** (simultaneous start). Paula **restarts from the beginning** of the armed
+sample (LC/LEN), and the restart interrupt **consumes one cycle**: A (2 cycles) stopped at 500 lines
+then restarted at ≈ 6520 is returned at **8383** (= resumption + one whole pass). STOP then WRITE then START ⇒
+returned at 1771 after START. [O T12]
 
 ### 5.7 CMD_FLUSH (8) [D][O]
 
-Pour chaque canal, sous Disable :
-1. si une requête est armée : la **suivante de la file** est chargée dans LC/LEN (comme à une fin de
-   cycle) ; l'ancienne armée, si elle n'était pas la courante, est rendue avec −2 ;
-2. la courante est coupée : s'il n'y a rien d'armé (ou canal arrêté) ⇒ DMACON := bit, INTENA := bit,
-   courante rendue (io_Error 0) ; sinon DMA coupé et redémarrage par l'automate (§6, état
-   « redémarrage ») ⇒ la courante est rendue (io_Error **0**) quand la suivante démarre ;
-3. toutes les requêtes **restant** en file d'écriture ⇒ io_Error −2, rendues ; drapeau WAITCYCLE effacé ;
-   file WAITCYCLE ⇒ −2, rendues.
-**Particularité V34** : la première requête en file n'est **pas** annulée, elle est promue et joue en
-entier. Observé (T10) : A (5 cycles) + B (2 cycles), FLUSH à ≈ 330 ⇒ FLUSH rendu à 330, **A rendu
-e = 0 à 1777**, **B rendu e = 0 à 5302** (deux passages). [O]
+For each channel, under Disable:
+1. if a request is armed: the **next one in the queue** is loaded into LC/LEN (as at an end of
+   cycle); the old armed one, if it was not the current one, is returned with −2;
+2. the current one is cut: if nothing is armed (or the channel is stopped) ⇒ DMACON := bit, INTENA := bit,
+   current one returned (io_Error 0); otherwise DMA turned off and restart by the automaton (§6,
+   "restart" state) ⇒ the current one is returned (io_Error **0**) when the next one starts;
+3. all the requests **remaining** in the write queue ⇒ io_Error −2, returned; WAITCYCLE flag cleared;
+   WAITCYCLE queue ⇒ −2, returned.
+**V34 peculiarity**: the first request in the queue is **not** cancelled, it is promoted and plays
+entirely. Observed (T10): A (5 cycles) + B (2 cycles), FLUSH at ≈ 330 ⇒ FLUSH returned at 330, **A returned
+e = 0 at 1777**, **B returned e = 0 at 5302** (two passes). [O]
 
 ### 5.8 ADCMD_FREE (9) [D][O]
 
-Pour chaque canal : remise à zéro (§5.1), clé := `$FFFF`, précédence := −129. Après le dernier canal :
-si des canaux libérés étaient verrouillés, leurs bits sont ôtés du masque de verrouillage et de
-l'io_Unit de chaque LOCK en cours ; un LOCK dont io_Unit tombe à 0 est rendu (io_Error 0, io_Unit 0)
-[O T13] ; **`io_Unit := 0`** [O T4] ; puis relance de la file d'ALLOCATE (§4.3). Canal d'un autre
-propriétaire ⇒ −10. [O T4]
+For each channel: reset (§5.1), key := `$FFFF`, precedence := −129. After the last channel:
+if freed channels were locked, their bits are removed from the lock mask and from the
+io_Unit of each LOCK in progress; a LOCK whose io_Unit drops to 0 is returned (io_Error 0, io_Unit 0)
+[O T13]; **`io_Unit := 0`** [O T4]; then restart of the ALLOCATE queue (§4.3). Channel of another
+owner ⇒ −10. [O T4]
 
 ### 5.9 ADCMD_SETPREC (10) [D][O]
 
-Pour chaque canal : précédence := ln_Pri de la requête. Après le dernier : relance de la file
-d'ALLOCATE. [O T14]
+For each channel: precedence := ln_Pri of the request. After the last one: restart of the ALLOCATE
+queue. [O T14]
 
 ### 5.10 ADCMD_FINISH (11) [D][O]
 
-Pour chaque canal, sous Disable : comme l'étape 1 de FLUSH (la suivante de la file est armée, la file
-n'est pas vidée), puis :
-- **ADIOF_SYNCCYCLE** : la courante finit **à la fin de son passage en cours** (l'interruption du canal
-  est ré-autorisée si besoin). Observé sur cycles infinis : FINISH à 6104, requête rendue à **7060**
-  (fin du 4ᵉ passage). [O T11]
-- sans SYNCCYCLE : coupure immédiate (même traitement que l'étape 2 de FLUSH). Observé, rien en file :
-  rendue **81 lignes** après FINISH, DMA et interruption coupés. [O T11]
-La requête FINISH est rendue aussitôt ; la requête écrite rendue garde io_Error = 0. [O]
+For each channel, under Disable: like step 1 of FLUSH (the next one in the queue is armed, the queue
+is not emptied), then:
+- **ADIOF_SYNCCYCLE**: the current one finishes **at the end of its pass in progress** (the channel's interrupt
+  is re-enabled if needed). Observed on infinite cycles: FINISH at 6104, request returned at **7060**
+  (end of the 4th pass). [O T11]
+- without SYNCCYCLE: immediate cut (same handling as step 2 of FLUSH). Observed, nothing queued:
+  returned **81 lines** after FINISH, DMA and interrupt off. [O T11]
+The FINISH request is returned at once; the written request returned keeps io_Error = 0. [O]
 
 ### 5.11 ADCMD_PERVOL (12) [D]
 
-Pour chaque canal : si **ADIOF_SYNCCYCLE** et que le canal est dans l'état « comptage de cycles » (§6) :
-ioa_Period/ioa_Volume mémorisés, l'automate passe dans l'état « PERVOL différé » et l'interruption du
-canal est autorisée si besoin ⇒ AUDxPER/AUDxVOL écrits **au début du bloc suivant**, ce début comptant
-comme un cycle. Sinon : AUDxPER puis AUDxVOL écrits immédiatement (accès long). Rendu aussitôt.
-(Registres en écriture seule : non observé.)
+For each channel: if **ADIOF_SYNCCYCLE** and the channel is in the "cycle counting" state (§6):
+ioa_Period/ioa_Volume stored, the automaton goes into the "deferred PERVOL" state and the channel's
+interrupt is enabled if needed ⇒ AUDxPER/AUDxVOL written **at the start of the next block**, that start counting
+as a cycle. Otherwise: AUDxPER then AUDxVOL written immediately (long access). Returned at once.
+(Write-only registers: not observed.)
 
 ### 5.12 ADCMD_LOCK (13) [D][O]
 
-Clé contrôlée sur **tous** les canaux (une seule clé fausse ⇒ −10, io_Unit 0, rendu) ; ensuite masque
-de verrouillage |= io_Unit, requête ajoutée à la liste des LOCK, **reste en cours**. Rendue par : FREE de
-tous ses canaux (io_Error 0, io_Unit 0) ; tentative de vol par une allocation plus prioritaire
-(−12, io_Unit inchangé, §4.4) ; AbortIO (−2). [O T13]
+Key checked on **all** channels (a single wrong key ⇒ −10, io_Unit 0, returned); then lock
+mask |= io_Unit, request added to the list of LOCKs, **stays in progress**. Returned by: FREE of
+all its channels (io_Error 0, io_Unit 0); attempted theft by a higher-priority allocation
+(−12, io_Unit unchanged, §4.4); AbortIO (−2). [O T13]
 
-### 5.13 ADCMD_WAITCYCLE (14) — bogue [D][O]
+### 5.13 ADCMD_WAITCYCLE (14) — bug [D][O]
 
-Canal le plus bas seulement, `io_Unit := masque`. Canal **inactif** ⇒ rendu immédiatement, io_Error 0
-[O T8]. Canal **en lecture** ⇒ drapeau WAITCYCLE, ajout à la file WAITCYCLE du canal, interruption
-autorisée ; à l'interruption suivante, la V34 veut transférer cette file dans la liste des réponses mais
-prend le **premier élément de la file pour l'en-tête de liste** : la liste des réponses est corrompue
-(pointeurs pris dans les octets ln_Type/ln_Pri/ln_Name de la requête). Observé (T17) : WAITCYCLE pendant
-un WRITE de 3 cycles ⇒ **ni le WAITCYCLE ni le WRITE ne sont jamais rendus** (8000 lignes) ; lors d'une
-première passe, les tests suivants étaient pollués. Une réimplémentation fera le comportement voulu :
-rendre les WAITCYCLE à la fin du cycle en cours (interruption suivante). Un FLUSH/RESET les rend avec −2. [D]
+Lowest channel only, `io_Unit := mask`. **Idle** channel ⇒ returned immediately, io_Error 0
+[O T8]. **Playing** channel ⇒ WAITCYCLE flag, added to the channel's WAITCYCLE queue, interrupt
+enabled; at the next interrupt, V34 wants to transfer this queue into the reply list but
+takes the **first element of the queue for the list header**: the reply list is corrupted
+(pointers taken from the ln_Type/ln_Pri/ln_Name bytes of the request). Observed (T17): WAITCYCLE during
+a 3-cycle WRITE ⇒ **neither the WAITCYCLE nor the WRITE are ever returned** (8000 lines); during a
+first run, the following tests were polluted. A reimplementation will do the intended behaviour:
+return the WAITCYCLEs at the end of the cycle in progress (next interrupt). A FLUSH/RESET returns them with −2. [D]
 
-## 6. Automate d'interruption par canal (niveau 4) [D][O]
+## 6. Per-channel interrupt automaton (level 4) [D][O]
 
-Le handler (Interrupt de SetIntVector, is_Data = canal) reçoit A0 = `$DFF000`. États :
+The handler (SetIntVector Interrupt, is_Data = channel) receives A0 = `$DFF000`. States:
 
-| État | À l'interruption |
+| State | On the interrupt |
 |---|---|
-| **Démarrage** (après démarrage à froid §5.3, ou coupure avec suite armée) | INTREQ := bit (acquit), **DMACON := SET\|bit** ; passe à « Début de bloc » |
-| **Début de bloc** (la requête armée vient d'être chargée par Paula) | si ADIOF_PERVOL : AUDxPER/AUDxVOL := ioa_Period/ioa_Volume ; l'ancienne courante est mise dans les réponses (io_Error inchangé) ; courante := armée ; si ADIOF_WRITEMESSAGE : ioa_WriteMsg mis dans les réponses ; puis **enchaîne immédiatement** sur « Comptage » |
-| **Comptage** | compteur − 1 : > 0 ⇒ acquit ; = 0 ⇒ **charge la suivante** (AUDxLEN, AUDxLC, compteur := ses cycles, armée := elle, retirée de la file, état « Début de bloc ») ou, file vide, armée := aucune et état « Fin » ; puis acquit. Compteur déjà 0 (cycles infinis) ⇒ reste 0, **INTENA := bit (coupe)**, acquit |
-| **Fin** | **DMACON := bit (coupe), INTENA := bit (coupe)**, courante mise dans les réponses, courante := aucune ; **pas d'acquit INTREQ** (l'interruption est masquée ; le prochain démarrage à froid acquitte avant d'autoriser) |
-| **PERVOL différé** | AUDxPER/AUDxVOL := valeurs mémorisées puis enchaîne sur « Comptage » |
+| **Start** (after a cold start §5.3, or a cut with an armed continuation) | INTREQ := bit (ack), **DMACON := SET\|bit**; goes to "Start of block" |
+| **Start of block** (the armed request has just been loaded by Paula) | if ADIOF_PERVOL: AUDxPER/AUDxVOL := ioa_Period/ioa_Volume; the old current one is put in the replies (io_Error unchanged); current := armed; if ADIOF_WRITEMESSAGE: ioa_WriteMsg put in the replies; then **chains immediately** into "Counting" |
+| **Counting** | counter − 1: > 0 ⇒ ack; = 0 ⇒ **loads the next one** (AUDxLEN, AUDxLC, counter := its cycles, armed := it, removed from the queue, "Start of block" state) or, empty queue, armed := none and "End" state; then ack. Counter already 0 (infinite cycles) ⇒ stays 0, **INTENA := bit (off)**, ack |
+| **End** | **DMACON := bit (off), INTENA := bit (off)**, current one put in the replies, current := none; **no INTREQ ack** (the interrupt is masked; the next cold start acknowledges before enabling) |
+| **Deferred PERVOL** | AUDxPER/AUDxVOL := stored values then chains into "Counting" |
 
-Fin commune : si le drapeau WAITCYCLE est posé ⇒ transfert de la file WAITCYCLE (bogue §5.13) et
-**Cause** de l'interruption logicielle ; sinon si la liste des réponses n'est pas vide ⇒ **Cause**. Les
-ReplyMsg ne sont donc jamais faits au niveau 4 : ils le sont par l'interruption logicielle (retrait de
-chaque nœud sous Disable, ReplyMsg hors Disable) ou, depuis BeginIO/AbortIO, directement avant le retour.
-Le compteur est décrémenté dès le début du premier bloc : avec N cycles, la suivante est chargée au début
-du N-ième passage, d'où le rendu à ≈ N passages (§5.3). [O]
+Common end: if the WAITCYCLE flag is set ⇒ transfer of the WAITCYCLE queue (bug §5.13) and
+**Cause** of the software interrupt; otherwise if the reply list is not empty ⇒ **Cause**. The
+ReplyMsg calls are therefore never made at level 4: they are made by the software interrupt (removal of
+each node under Disable, ReplyMsg outside Disable) or, from BeginIO/AbortIO, directly before returning.
+The counter is decremented from the start of the first block: with N cycles, the next one is loaded at the start
+of the N-th pass, hence the return at ≈ N passes (§5.3). [O]
 
 ## 7. AbortIO [D][O]
 
-Canal visé = le plus bas de `io_Unit & $F`. Selon io_Command :
-- WAITCYCLE (14) : retrait de la file WAITCYCLE de ce canal ; LOCK (13) : de la liste des LOCK ;
-  ≥ `$20` : de la file d'ALLOCATE. Trouvée ⇒ retirée et rendue, **io_Error := −2** ; si elle porte
-  le marqueur 1 (ré-essai en cours), elle est seulement marquée −2 et c'est le ré-essai qui la rend. [O T14 : ALLOCATE en attente ⇒ −2, io_Unit 0]
-- ≤ 3 (WRITE) : sous Disable ; si c'est la requête **armée** ⇒ traitement de l'étape 1 de FLUSH ; si c'est
-  la **courante** ⇒ coupure comme l'étape 2 de FLUSH ⇒ rendue avec **io_Error 0** (pas −2) quand la
-  suivante démarre, ou tout de suite s'il n'y a pas de suite ; sinon recherche dans la file d'écriture ⇒
-  −2. Observé (T9) : A (5 cycles) + B + C, AbortIO(C) à 327 ⇒ **−2** immédiat ; AbortIO(A) ⇒ A rendu
-  **e = 0 à 1783**, B rendu à 3539 (un passage). [O]
-- 4..12 : aucun effet.
-Toujours : les réponses accumulées sont rendues avant le retour. AbortIO ne renvoie pas de valeur
-significative. [D]
+Targeted channel = the lowest of `io_Unit & $F`. Depending on io_Command:
+- WAITCYCLE (14): removal from that channel's WAITCYCLE queue; LOCK (13): from the list of LOCKs;
+  ≥ `$20`: from the ALLOCATE queue. Found ⇒ removed and returned, **io_Error := −2**; if it carries
+  marker 1 (retry in progress), it is only marked −2 and it is the retry that returns it. [O T14: pending ALLOCATE ⇒ −2, io_Unit 0]
+- ≤ 3 (WRITE): under Disable; if it is the **armed** request ⇒ handling of step 1 of FLUSH; if it is
+  the **current** one ⇒ cut as in step 2 of FLUSH ⇒ returned with **io_Error 0** (not −2) when the
+  next one starts, or at once if there is no continuation; otherwise search in the write queue ⇒
+  −2. Observed (T9): A (5 cycles) + B + C, AbortIO(C) at 327 ⇒ **−2** immediately; AbortIO(A) ⇒ A returned
+  **e = 0 at 1783**, B returned at 3539 (one pass). [O]
+- 4..12: no effect.
+Always: the accumulated replies are returned before the return. AbortIO returns no
+meaningful value. [D]
 
-## 8. Registres matériels : ordres d'écriture et acquittements
+## 8. Hardware registers: write orders and acknowledgements
 
-### 8.1 Oracle Paula seule (sans audio.device) [O T0]
+### 8.1 Paula-only oracle (without audio.device) [O T0]
 
-AUD0 1000 octets, période 400, interruption masquée, scrutation d'INTREQR : DMA allumé ⇒ INTREQ bit 7 à
-**1 ligne** (chargement initial), puis à **1761** et **3523** (rechargements = début de chaque bloc).
-Démarrage manuel : AUD0DAT écrit avec AUD0PER = 1, DMA éteint ⇒ INTREQ à 1 ligne ; DMA allumé ensuite ⇒
-INTREQ à 22 lignes, puis 1745, 3507. L'interruption marque donc le **début** d'un bloc (LC/LEN déjà
-copiés : on peut y écrire le bloc suivant).
+AUD0 1000 bytes, period 400, interrupt masked, polling of INTREQR: DMA on ⇒ INTREQ bit 7 at
+**1 line** (initial load), then at **1761** and **3523** (reloads = start of each block).
+Manual start: AUD0DAT written with AUD0PER = 1, DMA off ⇒ INTREQ at 1 line; DMA turned on afterwards ⇒
+INTREQ at 22 lines, then 1745, 3507. The interrupt therefore marks the **start** of a block (LC/LEN already
+copied: the next block can be written there).
 
-### 8.2 Récapitulatif des accès d'audio.device [D]
+### 8.2 Summary of audio.device's accesses [D]
 
-| Registre | Écritures |
+| Register | Writes |
 |---|---|
-| DMACON | init `$000F` ; STOP/Fin/coupure : bit du canal sans SET ; démarrage : SET\|bit ; START : SET\|masque groupé. Jamais DMAEN ni autre bit. |
-| INTENA | SET\|bit avant tout démarrage (si INTENAR ne l'a pas déjà, précédé de INTREQ := bit) ; bit sans SET à STOP, à Fin et en cycles infinis |
-| INTREQ | bit du canal (acquit) en fin de chaque interruption sauf l'état Fin ; avant d'autoriser |
-| AUDxLC / AUDxLEN | WRITE : **LEN d'abord, puis LC** (au démarrage à froid comme à l'enchaînement) |
-| AUDxPER / AUDxVOL | accès long (PER puis VOL) : remise à zéro (1, 0), début de bloc avec PERVOL, PERVOL ; AUDxPER seul := 1 au démarrage à froid avec PERVOL |
-| AUDxDAT | démarrage à froid : premier octet dupliqué |
-| ADKCON | remise à zéro de canal : effacement `$11`/`$33`/`$66`/`$CC` ; jamais de SET (les modulations sont à la charge du programme) |
-| Lus | INTENAR (bit du canal) uniquement |
+| DMACON | init `$000F`; STOP/End/cut: channel bit without SET; start: SET\|bit; START: grouped SET\|mask. Never DMAEN nor any other bit. |
+| INTENA | SET\|bit before any start (if INTENAR does not already have it, preceded by INTREQ := bit); bit without SET at STOP, at End and in infinite cycles |
+| INTREQ | channel bit (ack) at the end of each interrupt except the End state; before enabling |
+| AUDxLC / AUDxLEN | WRITE: **LEN first, then LC** (at cold start as at chaining) |
+| AUDxPER / AUDxVOL | long access (PER then VOL): reset (1, 0), start of block with PERVOL, PERVOL; AUDxPER alone := 1 at cold start with PERVOL |
+| AUDxDAT | cold start: first byte duplicated |
+| ADKCON | channel reset: clearing `$11`/`$33`/`$66`/`$CC`; never SET (modulations are up to the program) |
+| Read | INTENAR (channel bit) only |
 
-### 8.3 Vecteurs d'interruption [D]
+### 8.3 Interrupt vectors [D]
 
-SetIntVector(INTB_AUD0..3 = 7..10), sans chaînage vers l'ancien vecteur ; réinstallés à chaque remise à
-zéro de canal. Un programme qui écrit directement le vecteur 68000 `$70` (cf. monkey-startup) court-
-circuite exec et audio.device.
+SetIntVector(INTB_AUD0..3 = 7..10), without chaining to the old vector; reinstalled at each channel
+reset. A program that writes the 68000 vector `$70` directly (cf. monkey-startup) short-
+circuits exec and audio.device.
 
-## 9. Ce qui diffère sur un vrai A500
+## 9. What differs on a real A500
 
-- **Filtre** : audio.device ne touche jamais la CIA-A (bit 1 de PRA, LED/filtre). [D]
-- **Période** : aucune borne. Le HRM fixe un minimum de **124** pour le DMA (sinon Paula ne peut pas
-  être alimentée à temps : échantillons répétés/sautés) ; la V34 transmet ioa_Period tel quel. La période
-  1 écrite au démarrage à froid sert au mode manuel (DMA éteint) et n'est pas concernée. [D][S]
-- **Chip RAM** : non vérifiée ; un échantillon en fast/slow RAM est lu par le DMA à la même adresse
-  (son faux). Une adresse **impaire** provoque une erreur d'adresse 68000 au démarrage à froid (lecture
-  d'un mot). [D]
-- **Coupure de DMA en cours de bloc** (FLUSH, FINISH sans SYNCCYCLE, AbortIO de la courante, avec une
-  suite armée) : la V34 compte sur l'interruption « mode manuel » que Paula lève après le mot en cours
-  quand AUDxEN tombe. Sous FS-UAE cette interruption n'est arrivée qu'à la fin théorique du bloc
-  (rendus à ≈ 1780 au lieu de ≈ 330) ; sur vrai matériel elle devrait suivre de quelques lignes. [O][S]
+- **Filter**: audio.device never touches CIA-A (bit 1 of PRA, LED/filter). [D]
+- **Period**: no bound. The HRM sets a minimum of **124** for DMA (otherwise Paula cannot
+  be fed in time: repeated/skipped samples); V34 passes ioa_Period as is. The period
+  1 written at cold start serves the manual mode (DMA off) and is not concerned. [D][S]
+- **Chip RAM**: not checked; a sample in fast/slow RAM is read by the DMA at the same address
+  (wrong sound). An **odd** address causes a 68000 address error at cold start (word
+  read). [D]
+- **DMA cut in the middle of a block** (FLUSH, FINISH without SYNCCYCLE, AbortIO of the current one, with an
+  armed continuation): V34 relies on the "manual mode" interrupt that Paula raises after the current word
+  when AUDxEN drops. Under FS-UAE this interrupt only arrived at the theoretical end of the block
+  (returns at ≈ 1780 instead of ≈ 330); on real hardware it should follow within a few lines. [O][S]
 
-## 10. Points non tranchés
+## 10. Open points
 
-1. **Délai de coupure sur vrai Paula** (§9, dernier point) : FS-UAE rend la courante coupée à la fin de
-   son passage ; le comportement réel (interruption quasi immédiate selon l'automate HRM) n'est pas
-   mesuré. Une réimplémentation doit seulement reproduire l'ordre : courante rendue (0), puis suivante.
-2. **io_Unit après OpenDevice avec ioa_Length = 0** : observé 0 alors que BeginIO direct le laisse
-   inchangé ; l'écriture vient vraisemblablement de l'OpenDevice d'exec (unité 0), non vérifié.
-3. **ADCMD_PERVOL** et la valeur exacte d'AUDxPER/AUDxVOL aux différents moments : registres en écriture
-   seule, déduits du code seulement (le débogueur FS-UAE n'a pas été employé).
-4. **CMD_RESET avec clé fausse**, commandes 0 et 15..31 sur un canal valide, io_Unit > 15 : sauts hors
-   table dans la V34 (non sondés : risque de plantage). À traiter en erreur propre.
-5. **WAITCYCLE en lecture** : corruption démontrée par le code et la sonde ; l'étendue exacte des dégâts
-   mémoire (adresses écrites) dépend du contenu de la requête et n'a pas été caractérisée.
-6. **Clé `$FFFF`** donnant accès aux canaux libres : déduit, non sondé.
-7. Période minimale 124 et filtre : tirés du HRM, aucune mesure sur matériel réel.
+1. **Cut delay on a real Paula** (§9, last point): FS-UAE returns the cut current request at the end of
+   its pass; the real behaviour (near-immediate interrupt according to the HRM automaton) is not
+   measured. A reimplementation only has to reproduce the order: current returned (0), then next.
+2. **io_Unit after OpenDevice with ioa_Length = 0**: observed 0 whereas a direct BeginIO leaves it
+   unchanged; the write most likely comes from exec's OpenDevice (unit 0), not verified.
+3. **ADCMD_PERVOL** and the exact value of AUDxPER/AUDxVOL at the various moments: write-only
+   registers, deduced from the code only (the FS-UAE debugger was not used).
+4. **CMD_RESET with a wrong key**, commands 0 and 15..31 on a valid channel, io_Unit > 15: jumps outside
+   the table in V34 (not probed: risk of crash). To be handled as a clean error.
+5. **WAITCYCLE while playing**: corruption demonstrated by the code and the probe; the exact extent of the memory
+   damage (addresses written) depends on the contents of the request and has not been characterised.
+6. **Key `$FFFF`** giving access to the free channels: deduced, not probed.
+7. Minimum period 124 and filter: taken from the HRM, no measurement on real hardware.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
-  aucune adresse de routine ROM (seuls `$DFF000` et le vecteur 68000 `$70`, adresses matérielles/CPU).
-- [x] L'automate d'interruption (§6) et les commandes (§4-§7) sont décrits par **états, effets sur les
-  registres Paula et ordre des rendus**, recoupés par la sonde boîte noire [O] ; la table d'aiguillage
-  interne n'est évoquée que pour signaler les cas indéfinis à traiter en erreur.
-- [x] Pas de données ROM au-delà de l'ABI : chaîne d'ID, taille de base, nombre de vecteurs, masques
-  ADKCON par canal (valeurs écrites dans un registre, observables), sentinelles de clé/précédence.
-- [x] La sonde citée (`tests/audio_probe.s`) est du code auteur.
+- [x] No 68000 instruction sequence transcribed or paraphrased, no disassembly excerpt,
+  no ROM routine address (only `$DFF000` and the 68000 vector `$70`, hardware/CPU addresses).
+- [x] The interrupt automaton (§6) and the commands (§4-§7) are described by **states, effects on the
+  Paula registers and order of the returns**, cross-checked by the black-box probe [O]; the internal
+  dispatch table is only mentioned to flag the undefined cases to be handled as errors.
+- [x] No ROM data beyond the ABI: ID string, base size, number of vectors, per-channel ADKCON
+  masks (values written into a register, observable), key/precedence sentinels.
+- [x] The probe cited (`tests/audio_probe.s`) is author code.

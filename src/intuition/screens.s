@@ -1,17 +1,17 @@
-; src/intuition/screens.s — écrans et fenêtres d'intuition.library : OpenScreen/CloseScreen, OpenWorkBench,
+; src/intuition/screens.s - intuition.library screens and windows: OpenScreen/CloseScreen, OpenWorkBench,
 ; GetScreenData, OpenWindow/CloseWindow, WindowToFront/WindowToBack, MoveWindow, SizeWindow, WindowLimits,
 ; BeginRefresh/EndRefresh, menus (SetMenuStrip/ClearMenuStrip/ItemAddress/OnMenu/OffMenu).
-; Un écran = struct Screen (V34) + BitMap en chip RAM + ColorMap + son Layer_Info (sc_LayerInfo) ; l'écran de tête
-; est affiché via le View d'IntuitionBase (ib_ViewLord : MakeVPort/MrgCop/LoadView). La barre de titre de l'écran est
-; une couche simple « backdrop » (sc_BarLayer). Chaque fenêtre est une couche de layers.library (simple, smart ou
-; super selon ses drapeaux ; backdrop pour BACKDROP) : son RPort est celui de la couche, le recouvrement et la
-; sauvegarde des fenêtres smart sont gérés par layers. Après une opération sur les couches, it_refresh redessine les
-; bordures abîmées et envoie REFRESHWINDOW aux fenêtres qui l'ont demandé (sinon les dommages sont effacés).
-; La liste des fenêtres de l'écran suit l'ordre des couches (it_relist). Les boutons de la souris sont traités par
-; une tâche d'entrée (it_intask) : gadgets système (fermeture, profondeur, déplacement, taille) et menus.
-; Décor (barres de titre, gadgets dessinés) : rendu propre à ce projet, aux couleurs des préférences 1.3.
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs intuition.library + includes NDK publics (screens.h, intuition.h).
-; AUCUNE lecture ROM.
+; A screen = struct Screen (V34) + BitMap in chip RAM + ColorMap + its Layer_Info (sc_LayerInfo); the front screen
+; is displayed through the IntuitionBase View (ib_ViewLord: MakeVPort/MrgCop/LoadView). The screen's title bar is
+; a simple "backdrop" layer (sc_BarLayer). Each window is a layers.library layer (simple, smart or
+; super depending on its flags; backdrop for BACKDROP): its RPort is the layer's, the overlapping and the
+; backup of smart windows are handled by layers. After an operation on the layers, it_refresh redraws the
+; damaged borders and sends REFRESHWINDOW to the windows that asked for it (otherwise the damage is cleared).
+; The screen's window list follows the order of the layers (it_relist). The mouse buttons are handled by
+; an input task (it_intask): system gadgets (close, depth, drag, size) and menus.
+; Decoration (title bars, drawn gadgets): rendering specific to this project, in the colors of the 1.3 preferences.
+; IMPLEMENTATION track ("clean"): AutoDocs intuition.library + public NDK includes (screens.h, intuition.h).
+; NO ROM reading.
 
                 include "exec.i"
                 include "intuition.i"
@@ -59,11 +59,11 @@
                 xdef    intuition_ShowTitle
                 xdef    intuition_ViewPortAddress
                 xref    gad_forget
-                xref    it_menubutton        ; menus.s : bouton droit
+                xref    it_menubutton        ; menus.s: right button
                 xref    it_menumove
-                xref    mn_keyshort          ; menus.s : raccourci Amiga droite (handler)
-                xref    mn_keypick           ; menus.s : raccourci Amiga droite (tâche d'entrée)
-                xref    mn_defcheck          ; menus.s : coche interne des menus
+                xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
+                xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
+                xref    mn_defcheck          ; menus.s: internal menu check mark
                 xdef    it_startinput
                 xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
@@ -76,27 +76,27 @@
                 xdef    intuition_BeginRefresh
                 xdef    intuition_EndRefresh
 
-; extension privée derrière la struct Screen (même allocation)
+; private extension behind the struct Screen (same allocation)
 SCX_RASINFO     EQU SC_SIZEOF        ; struct RasInfo (12)
 SCX_COLORMAP    EQU SCX_RASINFO+ri_SIZEOF   ; struct ColorMap (8)
-SCX_COLORTAB    EQU SCX_COLORMAP+GCM_SIZEOF ; 32 couleurs
-SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; taille d'un plan alloué ici (0 : BitMap fournie par l'appelant)
+SCX_COLORTAB    EQU SCX_COLORMAP+GCM_SIZEOF ; 32 colors
+SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; size of a plane allocated here (0: BitMap supplied by the caller)
 SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
-SC_BARH         EQU 9                ; BarHeight : la barre de titre couvre les lignes 0..9
-; fenêtre : struct Window + messages IDCMP (même allocation) ; RastPort et couche viennent de layers.library
-WDX_IMSG        EQU WD_SIZE          ; IntuiMessage REFRESHWINDOW (réutilisé une fois répondu)
-WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; IntuiMessages des événements (boutons, fermeture), réutilisés une fois répondus
+SC_BARH         EQU 9                ; BarHeight: the title bar covers lines 0..9
+; window: struct Window + IDCMP messages (same allocation); RastPort and layer come from layers.library
+WDX_IMSG        EQU WD_SIZE          ; REFRESHWINDOW IntuiMessage (reused once replied)
+WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; event IntuiMessages (buttons, close), reused once replied
 WDX_NEMSG       EQU 4
-WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO : couche du cadre (WD_WLAYER = l'intérieur) | 0
-WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; ClipRegion de l'application retirée pendant un dessin d'intuition
-WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD : imbrication de it_unclip
+WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO: border layer (WD_WLAYER = the interior) | 0
+WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; application ClipRegion removed during an intuition drawing
+WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD: nesting of it_unclip
 WDX_SIZE        EQU WDX_CLIPNEST+2
-WD_TBARH        EQU 10               ; hauteur de la barre de titre d'une fenêtre (BorderTop)
+WD_TBARH        EQU 10               ; height of a window's title bar (BorderTop)
 
-; OpenScreen(newscreen a0) -> d0 = Screen | 0. Alloue la struct, la BitMap (plans chip effacés, sauf CUSTOMBITMAP),
-; la palette par défaut (32 couleurs, dont celles du pointeur), dessine la barre de titre (sauf SCREENQUIET), place
-; l'écran en tête de liste et l'affiche.
+; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
+; CUSTOMBITMAP), the default palette (32 colors, including those of the pointer), draws the title bar (except
+; SCREENQUIET), places the screen at the head of the list and displays it.
 intuition_OpenScreen:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5                ; a5 = IntuitionBase
@@ -110,20 +110,20 @@ intuition_OpenScreen:
         move.l  d0,a3                ; a3 = Screen
         move.w  NS_LEFTEDGE(a2),SC_LEFTEDGE(a3)
         move.w  NS_TOPEDGE(a2),SC_TOPEDGE(a3)
-        move.w  NS_WIDTH(a2),d4      ; d4 = largeur (<= 0 : 320 ou 640 selon le mode)
+        move.w  NS_WIDTH(a2),d4      ; d4 = width (<= 0: 320 or 640 depending on the mode)
         bgt.s   .os_wok
         move.w  #320,d4
         tst.w   NS_VIEWMODES(a2)
         bpl.s   .os_wok
         move.w  #640,d4
 .os_wok:
-        move.w  NS_HEIGHT(a2),d5     ; d5 = hauteur (<= 0 : 256, PAL)
+        move.w  NS_HEIGHT(a2),d5     ; d5 = height (<= 0: 256, PAL)
         bgt.s   .os_hok
         move.w  #256,d5
 .os_hok:
         move.w  d4,SC_WIDTH(a3)
         move.w  d5,SC_HEIGHT(a3)
-        move.w  NS_DEPTH(a2),d6      ; d6 = profondeur, ramenée à 1..6
+        move.w  NS_DEPTH(a2),d6      ; d6 = depth, brought into 1..6
         bgt.s   .os_d1
         moveq   #1,d6
 .os_d1:
@@ -166,7 +166,7 @@ intuition_OpenScreen:
         jsr     LVO_INITBITMAP(a6)
         move.l  ($4).w,a6
         move.w  SC_BITMAP+bm_BytesPerRow(a3),d7
-        mulu    d5,d7                ; d7 = taille d'un plan
+        mulu    d5,d7                ; d7 = size of a plane
         move.l  d7,SCX_PLANESIZE(a3)
         lea     SC_BITMAP+bm_Planes(a3),a4
         move.w  d6,d3
@@ -179,7 +179,7 @@ intuition_OpenScreen:
         beq     .os_nomem
         dbra    d3,.os_plane
 .os_bmok:
-        ; palette : 32 couleurs quelle que soit la profondeur (les couleurs 17-19 sont celles du pointeur)
+        ; palette: 32 colors whatever the depth (colors 17-19 are those of the pointer)
         move.w  #SC_MAXCOLORS,SCX_COLORMAP+cm_Count(a3)
         lea     SCX_COLORTAB(a3),a0
         move.l  a0,SCX_COLORMAP+cm_ColorTable(a3)
@@ -188,7 +188,7 @@ intuition_OpenScreen:
 .os_pal:
         move.w  (a1)+,(a0)+
         dbra    d0,.os_pal
-        moveq   #SCREENTYPE,d0       ; écran Workbench : couleurs 0-3 et 17-19 des Preferences
+        moveq   #SCREENTYPE,d0       ; Workbench screen: colors 0-3 and 17-19 from the Preferences
         and.w   NS_TYPE(a2),d0
         cmp.w   #WBENCHSCREEN,d0
         bne.s   .os_ras
@@ -223,7 +223,7 @@ intuition_OpenScreen:
         move.w  SC_FLAGS(a3),d0
         and.w   #SCREENQUIET,d0
         bne.s   .os_quiet
-        move.l  a2,-(sp)             ; barre de titre : couche simple backdrop, derrière les fenêtres
+        move.l  a2,-(sp)             ; title bar: simple backdrop layer, behind the windows
         lea     SC_LAYERINFO(a3),a0
         lea     SC_BITMAP(a3),a1
         moveq   #0,d0
@@ -256,8 +256,8 @@ intuition_OpenScreen:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; sc_free(a3 = Screen, a5 = IntuitionBase) : libère le fragment copper, les plans alloués par OpenScreen et la
-; struct. a6 ressort = SysBase. Clobbe d0/d1/a0/a1/a4/d3.
+; sc_free(a3 = Screen, a5 = IntuitionBase): frees the copper fragment, the planes allocated by OpenScreen and the
+; struct. a6 on exit = SysBase. Clobbers d0/d1/a0/a1/a4/d3.
 sc_free:
         lea     SC_VIEWPORT(a3),a0
         move.l  IB_GFXBASE(a5),a6
@@ -269,7 +269,7 @@ sc_free:
         moveq   #7,d3
 .sf_lp:
         move.l  (a4)+,d1
-        beq.s   .sf_planes           ; plans contigus dans le tableau : le premier vide termine
+        beq.s   .sf_planes           ; contiguous planes in the array: the first empty one terminates
         move.l  d1,a1
         move.l  SCX_PLANESIZE(a3),d0
         jsr     LVO_FREEMEM(a6)
@@ -279,8 +279,9 @@ sc_free:
         move.l  #SCX_SIZE,d0
         jmp     LVO_FREEMEM(a6)
 
-; wn_scrtitle(a3 = fenêtre devenue active, a5 = IntuitionBase) : la barre de son écran montre wd_ScreenTitle, ou le titre
-; par défaut de l'écran s'il est nul ; toujours redessinée (un même tampon peut avoir changé de contenu). Préserve tout.
+; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle, or the
+; screen's default title if it is null; always redrawn (the same buffer may have changed contents). Preserves
+; everything.
 wn_scrtitle:
         movem.l d0-d3/a0-a1/a3/a6,-(sp)
         move.l  WD_SCREENTITLE(a3),d1
@@ -297,9 +298,9 @@ wn_scrtitle:
         movem.l (sp)+,d0-d3/a0-a1/a3/a6
         rts
 
-; intuition_SetWindowTitles(fenêtre a0, titre a1, titre d'écran a2, a6 = IntuitionBase) : -1 laisse le titre
-; inchangé. Nouveau titre de fenêtre : bordure redessinée. Nouveau titre d'écran : montré tout de suite si la fenêtre
-; est active, ou si aucune ne l'est.
+; intuition_SetWindowTitles(window a0, title a1, screen title a2, a6 = IntuitionBase): -1 leaves the title
+; unchanged. New window title: border redrawn. New screen title: shown immediately if the window
+; is active, or if none is.
 intuition_SetWindowTitles:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -324,8 +325,8 @@ intuition_SetWindowTitles:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; intuition_DisplayBeep(écran a0 | 0 = écran de tête, a6 = IntuitionBase) : signal visuel des 1.x, la couleur 0 de
-; l'écran complémentée pendant BEEP_FRAMES trames puis rétablie (attente active sur la position du faisceau).
+; intuition_DisplayBeep(screen a0 | 0 = front screen, a6 = IntuitionBase): 1.x visual signal, color 0 of the
+; screen complemented for BEEP_FRAMES frames then restored (busy wait on the beam position).
 BEEP_FRAMES     EQU 6
 intuition_DisplayBeep:
         movem.l d3/a2/a5,-(sp)
@@ -341,7 +342,7 @@ intuition_DisplayBeep:
         bsr     it_remake
         moveq   #BEEP_FRAMES-1,d3
 .bp_frame:
-        move.l  $DFF004,d0           ; VPOSR/VHPOSR : ligne = bits 16..8
+        move.l  $DFF004,d0           ; VPOSR/VHPOSR: line = bits 16..8
         lsr.l   #8,d0
         and.w   #$1FF,d0
         cmp.w   #200,d0
@@ -354,15 +355,15 @@ intuition_DisplayBeep:
         bhs.s   .bp_top
         dbra    d3,.bp_frame
         move.l  SCX_COLORMAP+cm_ColorTable(a2),a0
-        eor.w   #$0FFF,(a0)          ; second complément = couleur d'origine (it_remake ne garde pas d2/d3)
+        eor.w   #$0FFF,(a0)          ; second complement = original color (it_remake does not keep d2/d3)
         bsr     it_remake
 .bp_ret:
         movem.l (sp)+,d3/a2/a5
         rts
 
-; sc_drawbar(a3 = Screen, a5 = IntuitionBase) : barre de titre (lignes 0..BarHeight) au stylo BlockPen, titre au
-; stylo DetailPen, gadgets de profondeur d'écran à droite (pictogrammes des fenêtres, spec intuition-frame-v34 §6).
-; Écran SCREENQUIET (aucune couche de barre) : rien, jamais de barre. Clobbe d0-d3/a0/a1/a6.
+; sc_drawbar(a3 = Screen, a5 = IntuitionBase): title bar (lines 0..BarHeight) in pen BlockPen, title in
+; pen DetailPen, screen depth gadgets on the right (window pictograms, spec intuition-frame-v34 §6).
+; SCREENQUIET screen (no bar layer): nothing, never a bar. Clobbers d0-d3/a0/a1/a6.
 sc_drawbar:
         tst.l   SC_BARLAYER(a3)
         beq.s   .db_quiet
@@ -380,7 +381,7 @@ sc_drawbar:
         jsr     LVO_RECTFILL(a6)
         move.l  a3,a0
         bsr     sc_geo
-        move.w  SC_WIDTH(a3),d2      ; largeur disponible pour le titre : jusqu'aux gadgets de profondeur
+        move.w  SC_WIDTH(a3),d2      ; width available for the title: up to the depth gadgets
         sub.w   GEO_TX1(a0),d2
         subq.w  #5,d2
         bsr.s   sc_barrp
@@ -403,15 +404,15 @@ sc_drawbar:
 .db_quiet:
         rts
 
-; sc_barrp(a3 = Screen avec couche de barre) -> a1 = RastPort de cette couche (recouvrement par les fenêtres).
-; Préserve tout le reste.
+; sc_barrp(a3 = Screen with a bar layer) -> a1 = RastPort of this layer (overlapping by the windows).
+; Preserves everything else.
 sc_barrp:
         move.l  SC_BARLAYER(a3),a1
         move.l  IL_RP(a1),a1
         rts
 
-; it_title(a1 = RastPort, a0 = titre C | 0, d0 = stylo texte, d1 = stylo fond, d2.w = largeur max en pixels,
-; d3.w = x, a6 = GfxBase) : écrit le titre en JAM2 sur la ligne de base 7 (barre de 10 lignes). Clobbe d0-d3/a0.
+; it_title(a1 = RastPort, a0 = C title | 0, d0 = text pen, d1 = background pen, d2.w = max width in pixels,
+; d3.w = x, a6 = GfxBase): writes the title in JAM2 on baseline 7 (10-line bar). Clobbers d0-d3/a0.
 it_title:
         move.l  d4,-(sp)
         move.l  a0,d4
@@ -428,7 +429,7 @@ it_title:
         jsr     LVO_MOVE(a6)
         move.l  (sp)+,a0
         move.l  a0,d4
-        moveq   #0,d0                ; d0 = longueur, bornée à la largeur disponible
+        moveq   #0,d0                ; d0 = length, bounded to the available width
         asr.w   #3,d2
 .tt_len:
         tst.b   (a0)+
@@ -444,7 +445,7 @@ it_title:
         move.l  (sp)+,d4
         rts
 
-; it_box(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a6 = GfxBase) : cadre de 1 pixel au stylo A. Clobbe d0-d3/a0.
+; it_box(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a6 = GfxBase): 1-pixel frame in pen A. Clobbers d0-d3/a0.
 it_box:
         movem.l d4-d7,-(sp)
         movem.w d0-d3,-(sp)
@@ -467,8 +468,8 @@ it_box:
         movem.l (sp)+,d4-d7
         rts
 
-; RemakeDisplay() / RethinkDisplay() (a6 = IntuitionBase) : copper list refaite depuis les structures de l'écran de
-; tête (un programme qui a changé BitMap.Depth ou les couleurs à la main est ainsi affiché tel quel).
+; RemakeDisplay() / RethinkDisplay() (a6 = IntuitionBase): copper list rebuilt from the structures of the front
+; screen (a program that changed BitMap.Depth or the colors by hand is thus displayed as is).
 intuition_RemakeDisplay:
         move.l  a5,-(sp)
         move.l  a6,a5
@@ -476,8 +477,8 @@ intuition_RemakeDisplay:
         move.l  (sp)+,a5
         rts
 
-; it_remake(a5 = IntuitionBase) : affiche l'écran de tête (sa ViewPort seule dans ib_ViewLord), ou coupe
-; l'affichage s'il n'y a plus d'écran. Préserve tout sauf d0/d1/a0/a1.
+; it_remake(a5 = IntuitionBase): displays the front screen (its ViewPort alone in ib_ViewLord), or turns off
+; the display if there is no screen left. Preserves everything but d0/d1/a0/a1.
 it_remake:
         movem.l a2/a6,-(sp)
         lea     IB_VIEWLORD(a5),a2
@@ -503,8 +504,8 @@ it_remake:
         movem.l (sp)+,a2/a6
         rts
 
-; ScreenToFront(écran a0) / ScreenToBack(écran a0) : l'écran passe en tête / en queue de la liste des écrans ; seul
-; l'écran de tête est affiché (it_remake). Rien si l'écran n'est pas dans la liste.
+; ScreenToFront(screen a0) / ScreenToBack(screen a0): the screen moves to the head / tail of the screen list; only
+; the front screen is displayed (it_remake). Nothing if the screen is not in the list.
 intuition_ScreenToFront:
         moveq   #0,d1
         bra.s   sc_depth
@@ -516,7 +517,7 @@ sc_depth:
         move.l  a0,a2
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
-        lea     IB_FIRSTSCREEN(a5),a0 ; maillon précédent (SC_NEXTSCREEN à l'offset 0)
+        lea     IB_FIRSTSCREEN(a5),a0 ; previous link (SC_NEXTSCREEN at offset 0)
 .sd_find:
         move.l  (a0),d0
         beq.s   .sd_none
@@ -551,8 +552,8 @@ sc_depth:
         movem.l (sp)+,a2/a5-a6
         rts
 
-; CloseScreen(screen a0) -> d0 = TRUE. Retire l'écran de la liste, libère ses ressources et réaffiche l'écran
-; suivant. Les fenêtres encore ouvertes dessus ne sont pas fermées (contrat AutoDoc : l'appelant les ferme avant).
+; CloseScreen(screen a0) -> d0 = TRUE. Removes the screen from the list, frees its resources and redisplays the next
+; screen. The windows still open on it are not closed (AutoDoc contract: the caller closes them beforehand).
 intuition_CloseScreen:
         movem.l d3/a3-a5,-(sp)
         move.l  a6,a5
@@ -561,7 +562,7 @@ intuition_CloseScreen:
         beq.s   .cs_ret
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
-        lea     IB_FIRSTSCREEN(a5),a0 ; a0 = maillon précédent (SC_NEXTSCREEN à l'offset 0)
+        lea     IB_FIRSTSCREEN(a5),a0 ; a0 = previous link (SC_NEXTSCREEN at offset 0)
 .cs_find:
         move.l  (a0),d0
         beq.s   .cs_unl
@@ -581,7 +582,7 @@ intuition_CloseScreen:
         clr.l   IB_WBSCREEN(a5)
 .cs_wb:
         jsr     LVO_PERMIT(a6)
-        bsr     it_remake            ; d'abord réafficher : le fragment de cet écran n'est plus utilisé
+        bsr     it_remake            ; redisplay first: this screen's fragment is no longer used
         move.l  SC_BARLAYER(a3),d0
         beq.s   .cs_nobar
         move.l  d0,a1
@@ -596,7 +597,7 @@ intuition_CloseScreen:
         movem.l (sp)+,d3/a3-a5
         rts
 
-; OpenWorkBench() -> d0 = Screen Workbench : l'ouvre s'il ne l'est pas (640x256, 2 plans, HIRES).
+; OpenWorkBench() -> d0 = Workbench Screen: opens it if it is not open (640x256, 2 planes, HIRES).
 intuition_OpenWorkBench:
         move.l  IB_WBSCREEN(a6),d0
         bne.s   .ow_ret
@@ -606,8 +607,8 @@ intuition_OpenWorkBench:
 .ow_ret:
         rts
 
-; GetScreenData(buffer a0, taille d0, type d1, écran a1) -> d0 = TRUE | FALSE : copie min(taille, sizeof Screen)
-; octets de l'écran (type WBENCHSCREEN : l'écran Workbench, ouvert au besoin).
+; GetScreenData(buffer a0, size d0, type d1, screen a1) -> d0 = TRUE | FALSE: copies min(size, sizeof Screen)
+; bytes of the screen (type WBENCHSCREEN: the Workbench screen, opened if needed).
 intuition_GetScreenData:
         movem.l d2/a2,-(sp)
         move.l  a0,a2
@@ -634,11 +635,11 @@ intuition_GetScreenData:
         movem.l (sp)+,d2/a2
         rts
 
-; OpenWindow(newwindow a0) -> d0 = Window | 0. Écran : nw_Screen si nw_Type = CUSTOMSCREEN, sinon le Workbench
-; (ouvert au besoin). Position/taille ramenées dans l'écran ; bordures selon les drapeaux (BORDERLESS : aucune ;
-; titre/gadgets système : barre de 10 lignes ; WINDOWSIZING : bordure droite de 18, ou basse de 9 si SIZEBBOTTOM).
-; RPort = RastPort propre (BitMap de l'écran, couche aux bornes de la fenêtre). Le cadre est dessiné, l'intérieur
-; effacé au stylo 0, et la fenêtre devient la fenêtre active.
+; OpenWindow(newwindow a0) -> d0 = Window | 0. Screen: nw_Screen if nw_Type = CUSTOMSCREEN, otherwise the Workbench
+; (opened if needed). Position/size brought into the screen; borders according to the flags (BORDERLESS: none;
+; title/system gadgets: 10-line bar; WINDOWSIZING: right border of 18, or bottom of 9 if SIZEBBOTTOM).
+; RPort = own RastPort (screen BitMap, layer at the window bounds). The border is drawn, the interior
+; cleared in pen 0, and the window becomes the active window.
 intuition_OpenWindow:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5                ; a5 = IntuitionBase
@@ -662,7 +663,7 @@ intuition_OpenWindow:
         tst.l   d0
         beq     .ow_fail
         move.l  d0,a3                ; a3 = Window
-        ; géométrie ramenée dans l'écran
+        ; geometry brought into the screen
         move.w  NW_LEFTEDGE(a2),d4
         bpl.s   .ow_x0
         moveq   #0,d4
@@ -685,7 +686,7 @@ intuition_OpenWindow:
 .ow_y1:
         move.w  NW_WIDTH(a2),d6
         move.w  SC_WIDTH(a4),d0
-        sub.w   d4,d0                ; largeur maximale
+        sub.w   d4,d0                ; maximum width
         cmp.w   d0,d6
         ble.s   .ow_w1
         move.w  d0,d6
@@ -714,18 +715,18 @@ intuition_OpenWindow:
         move.w  NW_MAXWIDTH(a2),WD_MAXWIDTH(a3)
         move.w  NW_MAXHEIGHT(a2),WD_MAXHEIGHT(a3)
         move.l  NW_FLAGS(a2),d0
-        and.l   #~WINDOWACTIVE,d0    ; posé seulement si la fenêtre est activée (ACTIVATE)
+        and.l   #~WINDOWACTIVE,d0    ; set only if the window is activated (ACTIVATE)
         move.l  d0,WD_FLAGS(a3)
         move.l  NW_TITLE(a2),WD_TITLE(a3)
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
         move.l  NW_FIRSTGADGET(a2),WD_FIRSTGADGET(a3)
         move.l  a4,WD_WSCREEN(a3)
-        move.l  NW_CHECKMARK(a2),d0  ; coche des menus : celle de l'application, sinon l'interne (selon HIRES)
+        move.l  NW_CHECKMARK(a2),d0  ; menu check mark: the application's, else the internal one (according to HIRES)
         bne.s   .ow_ck
         jsr     mn_defcheck
 .ow_ck:
         move.l  d0,WD_CHECKMARK(a3)
-        move.b  NW_DETAILPEN(a2),d0  ; stylos : -1 = ceux de l'écran
+        move.b  NW_DETAILPEN(a2),d0  ; pens: -1 = those of the screen
         cmp.b   #-1,d0
         bne.s   .ow_dp
         move.b  SC_DETAILPEN(a4),d0
@@ -737,7 +738,7 @@ intuition_OpenWindow:
         move.b  SC_BLOCKPEN(a4),d0
 .ow_bp:
         move.b  d0,WD_BLOCKPEN(a3)
-        ; bordures
+        ; borders
         move.l  WD_FLAGS(a3),d1
         btst    #11,d1               ; BORDERLESS
         bne.s   .ow_bord
@@ -758,15 +759,15 @@ intuition_OpenWindow:
         btst    #5,d1                ; SIZEBBOTTOM
         beq.s   .ow_szr
         move.b  #9,WD_BORDERBOTTOM(a3)
-        btst    #4,d1                ; SIZEBRIGHT en plus
+        btst    #4,d1                ; SIZEBRIGHT as well
         beq.s   .ow_bord
 .ow_szr:
         move.b  #18,WD_BORDERRIGHT(a3)
 .ow_bord:
-        jsr     gad_propinit         ; bordures des gadgets proportionnels de la NewWindow
+        jsr     gad_propinit         ; borders of the NewWindow's proportional gadgets
         bsr     wn_gadborders
         bsr     wn_gzz
-        lea     WD_MINWIDTH(a3),a0   ; limites nulles : taille courante (AutoDoc OpenWindow)
+        lea     WD_MINWIDTH(a3),a0   ; zero limits: current size (AutoDoc OpenWindow)
         moveq   #3,d1
 .ow_lim:
         tst.w   (a0)
@@ -781,11 +782,11 @@ intuition_OpenWindow:
         move.l  ($4).w,a6
         tst.l   WD_IDCMPFLAGS(a3)
         beq.s   .ow_noport
-        bsr     wn_mkport            ; port IDCMP (signal de la tâche appelante)
+        bsr     wn_mkport            ; IDCMP port (signal of the calling task)
         tst.l   WD_USERPORT(a3)
-        beq     .ow_nolayer          ; pas de port : échec
+        beq     .ow_nolayer          ; no port: failure
 .ow_noport:
-        ; couche : simple / smart / super selon les drapeaux, backdrop pour BACKDROP (derrière les autres)
+        ; layer: simple / smart / super according to the flags, backdrop for BACKDROP (behind the others)
         movem.l d4-d7/a2,-(sp)
         move.w  d4,d0
         move.w  d5,d1
@@ -796,9 +797,9 @@ intuition_OpenWindow:
         add.w   d7,d3
         subq.w  #1,d3
         move.l  WD_FLAGS(a3),d5
-        suba.l  a1,a1                ; a1 = SuperBitMap éventuelle
+        suba.l  a1,a1                ; a1 = optional SuperBitMap
         moveq   #IL_SMART,d4
-        moveq   #$C0,d6              ; type de rafraîchissement
+        moveq   #$C0,d6              ; refresh type
         and.l   d5,d6
         cmp.b   #$40,d6              ; SIMPLE_REFRESH
         bne.s   .ow_nsimple
@@ -809,8 +810,8 @@ intuition_OpenWindow:
         moveq   #IL_SMART|IL_SUPER,d4
         move.l  NW_BITMAP(a2),a1
 .ow_nsuper:
-        btst    #10,d5               ; GIMMEZEROZERO (hors BACKDROP) : la couche du cadre est toujours simple,
-        beq.s   .ow_type             ; l'intérieur prend le rafraîchissement demandé (wn_gzzlayer)
+        btst    #10,d5               ; GIMMEZEROZERO (except BACKDROP): the border layer is always simple,
+        beq.s   .ow_type             ; the interior takes the requested refresh mode (wn_gzzlayer)
         btst    #8,d5
         bne.s   .ow_type
         moveq   #IL_SIMPLE,d4
@@ -843,13 +844,13 @@ intuition_OpenWindow:
         move.l  a0,WD_WLAYER(a3)
         move.l  a3,IL_WINDOW(a0)
         move.l  IL_RP(a0),WD_RPORT(a3)
-        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO (sauf BACKDROP) : intérieur dans une seconde couche, devant
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO (except BACKDROP): interior in a second layer, in front
         beq.s   .ow_one
         btst    #0,WD_FLAGS+2(a3)
         bne.s   .ow_one
         bsr     wn_gzzlayer
         bne.s   .ow_one
-        move.l  IB_LAYERSBASE(a5),a6 ; échec : la couche du cadre est rendue
+        move.l  IB_LAYERSBASE(a5),a6 ; failure: the border layer is given back
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_DELETELAYER(a6)
@@ -859,7 +860,7 @@ intuition_OpenWindow:
 .ow_one:
         bsr     it_relist
         jsr     LVO_FORBID(a6)
-        move.l  IB_ACTIVEWINDOW(a5),d0   ; chaîne Parent/Descendant : juste après la fenêtre active (intuition 34.3)
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; Parent/Descendant chain: right after the active window (intuition 34.3)
         move.l  d0,WD_PARENT(a3)
         beq.s   .ow_nopar
         move.l  d0,a0
@@ -871,10 +872,10 @@ intuition_OpenWindow:
         move.l  d1,a0
         move.l  a3,WD_PARENT(a0)
 .ow_nopar:
-        btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE : seule une fenêtre qui le demande devient active
+        btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE: only a window that asks for it becomes active
         beq.s   .ow_noact
         jsr     LVO_PERMIT(a6)
-        bsr     it_setactive         ; (la nouvelle barre est redessinée avec le cadre juste après)
+        bsr     it_setactive         ; (the new bar is redrawn with the border right after)
         bsr     wn_scrtitle
         bra.s   .ow_linked
 .ow_noact:
@@ -890,10 +891,10 @@ intuition_OpenWindow:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; wn_gadborders(a3 = fenêtre) : les gadgets d'application marqués LEFTBORDER / RIGHTBORDER / TOPBORDER / BOTTOMBORDER
-; (Activation) agrandissent la bordure correspondante pour y tenir, jamais ne la réduisent (spec intuition-gzz-v34 §1) :
-; gauche >= droite du gadget, droite >= largeur - gauche du gadget, haut >= bas du gadget, bas >= hauteur - haut du
-; gadget. Préserve d2-d7/a2-a6.
+; wn_gadborders(a3 = window): the application gadgets marked LEFTBORDER / RIGHTBORDER / TOPBORDER / BOTTOMBORDER
+; (Activation) enlarge the corresponding border to fit in it, never shrink it (spec intuition-gzz-v34 §1):
+; left >= right of the gadget, right >= width - left of the gadget, top >= bottom of the gadget, bottom >= height - top
+; of the gadget. Preserves d2-d7/a2-a6.
 wn_gadborders:
         movem.l d2-d3/a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
@@ -906,7 +907,7 @@ wn_gadborders:
         beq.s   .gb_nx
         move.l  a2,a0
         move.l  sp,a1
-        jsr     gad_rect             ; (sp) = x0, y0, x1, y1 dans la fenêtre
+        jsr     gad_rect             ; (sp) = x0, y0, x1, y1 in the window
         btst    #5,d2                ; LEFTBORDER
         beq.s   .gb_r
         move.w  4(sp),d3
@@ -939,7 +940,7 @@ wn_gadborders:
         lea     8(sp),sp
         movem.l (sp)+,d2-d3/a2
         rts
-.gb_max:                             ; octet (a0) := max((a0), d3) (d3 borné à 0..255)
+.gb_max:                             ; byte (a0) := max((a0), d3) (d3 bounded to 0..255)
         tst.w   d3
         bmi.s   .gm_ret
         cmp.w   #255,d3
@@ -954,10 +955,10 @@ wn_gadborders:
 .gm_ret:
         rts
 
-; wn_gzzlayer(a3 = fenêtre dont WD_WLAYER est la couche entière, a5) -> Z = 0 si réussi : la couche entière devient
-; celle du cadre (WDX_BLAYER, WD_BORDERRPORT) et une couche couvrant l'intérieur (fenêtre moins bordures), de même mode
-; de rafraîchissement, est créée devant : elle devient WD_WLAYER / WD_RPORT (origine dans l'intérieur). a6 = SysBase
-; au retour. Préserve d2-d7/a2-a5.
+; wn_gzzlayer(a3 = window whose WD_WLAYER is the whole layer, a5) -> Z = 0 if successful: the whole layer becomes
+; the border layer (WDX_BLAYER, WD_BORDERRPORT) and a layer covering the interior (window minus borders), with the
+; same refresh mode, is created in front: it becomes WD_WLAYER / WD_RPORT (origin in the interior). a6 = SysBase
+; on return. Preserves d2-d7/a2-a5.
 wn_gzzlayer:
         movem.l d2-d5/a2,-(sp)
         move.l  WD_WLAYER(a3),a0
@@ -1011,8 +1012,8 @@ wn_gzzlayer:
         movem.l (sp)+,d2-d5/a2
         rts
 
-; wn_brp(a3 = fenêtre) -> a1 = RastPort du cadre (celui de la couche du cadre d'une fenêtre GIMMEZEROZERO, sinon le
-; RastPort de la fenêtre). Préserve tout le reste.
+; wn_brp(a3 = window) -> a1 = border RastPort (that of the border layer of a GIMMEZEROZERO window, otherwise the
+; window's RastPort). Preserves everything else.
 wn_brp:
         move.l  WD_BORDERRPORT(a3),a1
         cmpa.w  #0,a1
@@ -1021,11 +1022,11 @@ wn_brp:
 .bp_ret:
         rts
 
-; wn_border(a3 = Window, a5 = IntuitionBase) : cadre complet (spec intuition-frame-v34 §2). Sauf BORDERLESS : bordures
-; gauche, droite et basse effacées au stylo 0, contour au BlockPen (montants de BorderLeft/2 pixels aux deux bords,
-; lignes du haut et du bas), fond de la barre de titre jusqu'à BorderTop-2, titre et motif (wn_titlebar). Puis les
-; gadgets d'application, les gadgets système par-dessus (wn_sysgads), et le voile si la fenêtre n'est pas active. État de dessin
-; rendu aux clients : JAM2, stylos 1/0. Clobbe d0-d7/a0/a1/a6.
+; wn_border(a3 = Window, a5 = IntuitionBase): full border (spec intuition-frame-v34 §2). Except BORDERLESS: left,
+; right and bottom borders cleared in pen 0, outline in BlockPen (sides of BorderLeft/2 pixels at both edges,
+; top and bottom lines), title bar background down to BorderTop-2, title and pattern (wn_titlebar). Then the
+; application gadgets, the system gadgets on top (wn_sysgads), and the veil if the window is not active. Drawing state
+; given back to the clients: JAM2, pens 1/0. Clobbers d0-d7/a0/a1/a6.
 wn_border:
         bsr     it_unclip
         bsr     wn_border_nc
@@ -1108,7 +1109,7 @@ wn_border_nc:
 .df_tb:
         moveq   #0,d3
         move.b  WD_BORDERTOP(a3),d3
-        subq.w  #2,d3                ; fond jusqu'à BorderTop - 2 (la ligne suivante reste au stylo 0)
+        subq.w  #2,d3                ; background down to BorderTop - 2 (the next line stays in pen 0)
         bmi.s   .df_gad
         moveq   #0,d0
         moveq   #0,d1
@@ -1116,8 +1117,8 @@ wn_border_nc:
         bsr     .df_fill
         bsr     wn_titlebar
 .df_gad:
-        bsr     gad_drawall          ; gadgets d'application, redessinés avec le cadre
-        btst    #3,WD_FLAGS+2(a3)    ; gadgets système (sauf BORDERLESS) en tête de liste : dessinés en dernier
+        bsr     gad_drawall          ; application gadgets, redrawn with the border
+        btst    #3,WD_FLAGS+2(a3)    ; system gadgets (except BORDERLESS) at the head of the list: drawn last
         bne.s   .df_veil
         bsr     wn_sysgads
 .df_veil:
@@ -1125,7 +1126,7 @@ wn_border_nc:
         bne.s   .df_rp
         bsr     wn_veil
 .df_rp:
-        move.l  WD_RPORT(a3),a1      ; état de dessin rendu aux clients : JAM2, stylos 1/0
+        move.l  WD_RPORT(a3),a1      ; drawing state given back to the clients: JAM2, pens 1/0
         moveq   #1,d0
         jsr     LVO_SETAPEN(a6)
         move.l  WD_RPORT(a3),a1
@@ -1142,18 +1143,18 @@ wn_border_nc:
         bsr     wn_brp
         jmp     LVO_RECTFILL(a6)
 
-; --- géométrie du cadre par résolution (spec intuition-frame-v34 §3.1, §5.2) : décalages en pixels ; les positions
-; relatives au bord droit / bas se lisent W - valeur / H - valeur.
-GEO_CX0         EQU 0                ; gadget de fermeture : x0..x1 (clic)
+; --- border geometry per resolution (spec intuition-frame-v34 §3.1, §5.2): offsets in pixels; positions
+; relative to the right / bottom edge read as W - value / H - value.
+GEO_CX0         EQU 0                ; close gadget: x0..x1 (click)
 GEO_CX1         EQU 2
-GEO_BACK        EQU 4                ; profondeur arrière : W - BACK .. W - FRONT - 1
-GEO_FRONT       EQU 6                ; profondeur avant : W - FRONT .. W - FEND
+GEO_BACK        EQU 4                ; back depth: W - BACK .. W - FRONT - 1
+GEO_FRONT       EQU 6                ; front depth: W - FRONT .. W - FEND
 GEO_FEND        EQU 8
-GEO_SW          EQU 10               ; gadget de taille : (W - SW, H - SH) jusqu'au coin
+GEO_SW          EQU 10               ; size gadget: (W - SW, H - SH) up to the corner
 GEO_SH          EQU 12
-GEO_TX0         EQU 14               ; début du titre avec fermeture
-GEO_TX1         EQU 16               ; fin du titre avec profondeur : W - TX1
-GEO_PCLOSE      EQU 18               ; pictogrammes
+GEO_TX0         EQU 14               ; start of the title with close gadget
+GEO_TX1         EQU 16               ; end of the title with depth gadgets: W - TX1
+GEO_PCLOSE      EQU 18               ; pictograms
 GEO_PSIZE       EQU 22
 GEO_PBACK       EQU 26
 GEO_PFRONT      EQU 30
@@ -1164,8 +1165,8 @@ wn_geo_lo:
         dc.w    0,13,34,17,1,11,10,16,35
         dc.l    pic_close_l,pic_size_l,pic_back_l,pic_front_l
 
-; wn_geo(a3 = fenêtre) -> a0 = géométrie de la résolution de son écran ; sc_geo(a0 = écran) -> a0 idem. Préserve
-; tout le reste.
+; wn_geo(a3 = window) -> a0 = geometry for its screen's resolution; sc_geo(a0 = screen) -> a0 same. Preserves
+; everything else.
 wn_geo:
         move.l  WD_WSCREEN(a3),a0
         cmpa.w  #0,a0
@@ -1180,8 +1181,8 @@ wn_geolo:
         rts
 
 
-; wn_titlex(a3 = fenêtre) -> d2 = début, d3 = fin de la zone de titre (spec §3.1) : après le gadget de fermeture s'il
-; existe (sinon WBorLeft de l'écran), jusqu'avant les gadgets de profondeur (sinon W - 1). Clobbe d0/a0.
+; wn_titlex(a3 = window) -> d2 = start, d3 = end of the title area (spec §3.1): after the close gadget if it
+; exists (otherwise the screen's WBorLeft), up to before the depth gadgets (otherwise W - 1). Clobbers d0/a0.
 wn_titlex:
         bsr     wn_geo
         moveq   #0,d2
@@ -1205,9 +1206,9 @@ wn_titlex:
         sub.w   GEO_TX1(a0),d3
         rts
 
-; wn_titlebar(a3 = fenêtre, a5) : zone de titre au BlockPen, titre (DetailPen sur BlockPen, JAM2) au début de la
-; zone, puis, avec WINDOWDRAG, le motif de glissement (lignes 2, 3, 6, 7 de chaque groupe de 8 au DetailPen) du bout
-; du titre + 3 jusqu'à la fin de la zone - 3 (spec §3.2). Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+; wn_titlebar(a3 = window, a5): title area in BlockPen, title (DetailPen on BlockPen, JAM2) at the start of the
+; area, then, with WINDOWDRAG, the drag pattern (lines 2, 3, 6, 7 of each group of 8 in DetailPen) from the end
+; of the title + 3 up to the end of the area - 3 (spec §3.2). Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 wn_titlebar:
         bsr     it_unclip
         bsr     wn_titlebar_nc
@@ -1217,12 +1218,12 @@ wn_titlebar_nc:
         move.l  IB_GFXBASE(a5),a6
         moveq   #0,d7
         move.b  WD_BORDERTOP(a3),d7
-        subq.w  #2,d7                ; d7 = dernière ligne de la barre
+        subq.w  #2,d7                ; d7 = last line of the bar
         bmi     .tb_ret
         bsr     wn_titlex
         cmp.w   d3,d2
         bge     .tb_ret
-        move.w  d2,d4                ; d4 = début, d5 = fin
+        move.w  d2,d4                ; d4 = start, d5 = end
         move.w  d3,d5
         bsr     wn_brp
         moveq   #JAM1,d0
@@ -1238,7 +1239,7 @@ wn_titlebar_nc:
         move.w  d7,d3
         jsr     LVO_RECTFILL(a6)
         move.w  d4,d6
-        addq.w  #3,d6                ; d6 = début du motif
+        addq.w  #3,d6                ; d6 = start of the pattern
         move.l  WD_TITLE(a3),d0
         beq.s   .tb_drag
         move.l  d0,a0
@@ -1263,7 +1264,7 @@ wn_titlebar_nc:
         move.w  d5,d2
         subq.w  #3,d2
         move.w  d7,d3
-        subq.w  #1,d3                ; jusqu'à BorderTop - 3
+        subq.w  #1,d3                ; down to BorderTop - 3
         lea     wn_dragpat(pc),a2
         moveq   #3,d6
         move.b  WD_DETAILPEN(a3),d7
@@ -1272,8 +1273,8 @@ wn_titlebar_nc:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; wn_veil(a3 = fenêtre, a5) : voile d'une fenêtre inactive (spec §4.2) : un pixel sur quatre au BlockPen sur la zone
-; de titre, lignes 1 à BorderTop - 3. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+; wn_veil(a3 = window, a5): veil of an inactive window (spec §4.2): one pixel out of four in BlockPen over the title
+; area, lines 1 to BorderTop - 3. Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 wn_veil:
         movem.l d2-d7/a2,-(sp)
         move.l  IB_GFXBASE(a5),a6
@@ -1294,9 +1295,9 @@ wn_veil:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; wn_patfill(a3 = fenêtre, a6 = GfxBase, a2 = motif, d6 = log2 de ses lignes, d7.b = stylo, d0-d3 = rectangle) :
-; RectFill à motif en JAM1 dans le RastPort du cadre, son motif d'origine rendu ensuite. Rectangle vide : rien.
-; Clobbe d0-d3/a0/a1.
+; wn_patfill(a3 = window, a6 = GfxBase, a2 = pattern, d6 = log2 of its lines, d7.b = pen, d0-d3 = rectangle):
+; patterned RectFill in JAM1 in the border RastPort, its original pattern restored afterwards. Empty rectangle: nothing.
+; Clobbers d0-d3/a0/a1.
 wn_patfill:
         cmp.w   d0,d2
         blt.s   .pf_ret
@@ -1324,8 +1325,8 @@ wn_patfill:
 .pf_ret:
         rts
 
-; wn_sysgads(a3 = fenêtre, a5) : pictogrammes des gadgets système (spec §5) : fermeture en (0,0), taille dans le coin
-; bas-droit, profondeur arrière puis avant à droite de la barre. Préserve d2-d7/a2-a5 ; clobbe d0/d1/a0/a1/a6.
+; wn_sysgads(a3 = window, a5): system gadget pictograms (spec §5): close at (0,0), size in the bottom-right
+; corner, back then front depth on the right of the bar. Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 wn_sysgads:
         bsr     it_unclip
         bsr     wn_sysgads_nc
@@ -1334,9 +1335,9 @@ wn_sysgads_nc:
         movem.l d2/a2/a4,-(sp)
         move.l  IB_GFXBASE(a5),a6
         bsr     wn_brp
-        move.l  a1,a4                ; a4 = RastPort du cadre
+        move.l  a1,a4                ; a4 = border RastPort
         bsr     wn_geo
-        move.l  a0,a2                ; a2 = géométrie
+        move.l  a0,a2                ; a2 = geometry
         move.l  WD_FLAGS(a3),d2
         btst    #3,d2                ; WINDOWCLOSE
         beq.s   .sg_size
@@ -1362,8 +1363,8 @@ wn_sysgads_nc:
         movem.l (sp)+,d2/a2/a4
         rts
 
-; wn_depthpics(a2 = géométrie, a4 = RastPort, d0.w = largeur de la fenêtre ou de l'écran, a6) : pictogrammes de
-; profondeur arrière et avant, ancrés au bord droit, ligne 0. Clobbe d0/d1/a0/a1.
+; wn_depthpics(a2 = geometry, a4 = RastPort, d0.w = width of the window or screen, a6): back and front depth
+; pictograms, anchored to the right edge, line 0. Clobbers d0/d1/a0/a1.
 wn_depthpics:
         move.w  d0,-(sp)
         move.l  GEO_PBACK(a2),a0
@@ -1374,10 +1375,10 @@ wn_depthpics:
         move.l  GEO_PFRONT(a2),a0
         sub.w   GEO_FRONT(a2),d0
         moveq   #0,d1
-;       (suite dans wn_picto)
+;       (continued in wn_picto)
 
-; wn_picto(a0 = pictogramme, a4 = RastPort, d0.w/d1.w = coin haut-gauche, a6) : suite de rectangles pleins (stylo,
-; x0, y0, x1, y1 en octets, terminée par $FF) dessinés en JAM1. Clobbe d0/d1/a0/a1.
+; wn_picto(a0 = pictogram, a4 = RastPort, d0.w/d1.w = top-left corner, a6): sequence of filled rectangles (pen,
+; x0, y0, x1, y1 in bytes, terminated by $FF) drawn in JAM1. Clobbers d0/d1/a0/a1.
 wn_picto:
         movem.l d2-d5/a2,-(sp)
         move.l  a0,a2
@@ -1412,8 +1413,8 @@ wn_picto:
         movem.l (sp)+,d2-d5/a2
         rts
 
-; wn_sysat(a3 = fenêtre, d2/d3 = point dans la fenêtre, dans la barre de titre) -> d0.w = IT_SYSCLOSE / IT_SYSBACK /
-; IT_SYSFRONT si le point est dans la boîte de ce gadget (spec intuition-frame-v34 §5.2), Z = 1 sinon. Clobbe d1/a0.
+; wn_sysat(a3 = window, d2/d3 = point in the window, in the title bar) -> d0.w = IT_SYSCLOSE / IT_SYSBACK /
+; IT_SYSFRONT if the point is in that gadget's box (spec intuition-frame-v34 §5.2), Z = 1 otherwise. Clobbers d1/a0.
 wn_sysat:
         bsr     wn_geo
         btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
@@ -1424,12 +1425,12 @@ wn_sysat:
         cmp.w   GEO_CX1(a0),d2
         ble.s   .sa_hit
 .sa_depth:
-        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH : arrière puis avant, ancrés au bord droit
+        btst    #2,WD_FLAGS+3(a3)    ; WINDOWDEPTH: back then front, anchored to the right edge
         beq.s   .sa_none
         move.w  WD_WIDTH(a3),d1
         sub.w   GEO_FEND(a0),d1
         cmp.w   d1,d2
-        bgt.s   .sa_none             ; au-delà du gadget avant : glissement
+        bgt.s   .sa_none             ; beyond the front gadget: drag
         move.w  WD_WIDTH(a3),d1
         sub.w   GEO_BACK(a0),d1
         cmp.w   d1,d2
@@ -1447,8 +1448,8 @@ wn_sysat:
         moveq   #0,d0
         rts
 
-; wn_sysinv(a3 = fenêtre, d0.w = gadget système, a5) : inverse sa boîte (surbrillance GADGHCOMP) dans le RastPort du
-; cadre, mode de dessin rendu ensuite. Clobbe d0-d3/a0/a1/a6.
+; wn_sysinv(a3 = window, d0.w = system gadget, a5): inverts its box (GADGHCOMP highlight) in the border
+; RastPort, drawing mode restored afterwards. Clobbers d0-d3/a0/a1/a6.
 wn_sysinv:
         bsr     it_unclip
         bsr     wn_sysinv_nc
@@ -1456,7 +1457,7 @@ wn_sysinv:
 wn_sysinv_nc:
         move.w  d0,d3
         bsr     wn_geo
-        moveq   #0,d1                ; boîte : y 0..9, x selon le gadget
+        moveq   #0,d1                ; box: y 0..9, x according to the gadget
         cmp.w   #IT_SYSCLOSE,d3
         bne.s   .si_depth
         move.w  GEO_CX0(a0),d0
@@ -1493,8 +1494,8 @@ wn_sysinv_nc:
         addq.l  #8,sp
         rts
 
-; it_sysup(a5, d4/d5 = pointeur écran) : relâchement d'un gadget système : sa boîte reprend son aspect, puis, si le
-; pointeur est encore dessus, l'action : CLOSEWINDOW, WindowToBack ou WindowToFront.
+; it_sysup(a5, d4/d5 = screen pointer): release of a system gadget: its box gets its look back, then, if the
+; pointer is still over it, the action: CLOSEWINDOW, WindowToBack or WindowToFront.
 it_sysup:
         move.l  IB_SYSWIN(a5),a3
         move.w  IB_SYSACT(a5),d0
@@ -1510,12 +1511,12 @@ it_sysup:
         moveq   #0,d0
         move.b  WD_BORDERTOP(a3),d0
         cmp.w   d0,d3
-        bge.s   .su_out              ; hors de la barre de titre
+        bge.s   .su_out              ; outside the title bar
         bsr     wn_sysat
         beq.s   .su_out
-        move.w  (sp)+,d1             ; gadget enfoncé
+        move.w  (sp)+,d1             ; pressed gadget
         cmp.w   d0,d1
-        bne.s   .su_ret              ; relâché sur un autre gadget : rien
+        bne.s   .su_ret              ; released over another gadget: nothing
         move.l  a3,a0
         move.l  a5,a6
         cmp.w   #IT_SYSBACK,d1
@@ -1530,8 +1531,8 @@ it_sysup:
 .su_ret:
         rts
 
-; it_setactive(a3 = nouvelle fenêtre active | 0, a5) : l'ancienne fenêtre active perd WINDOWACTIVE et reçoit le
-; voile ; la nouvelle prend WINDOWACTIVE et sa barre de titre est redessinée (voile effacé) (spec §4). Préserve tout.
+; it_setactive(a3 = new active window | 0, a5): the old active window loses WINDOWACTIVE and receives the
+; veil; the new one takes WINDOWACTIVE and its title bar is redrawn (veil cleared) (spec §4). Preserves everything.
 it_setactive:
         movem.l d0-d1/a0-a1/a3/a6,-(sp)
         move.l  IB_ACTIVEWINDOW(a5),d0
@@ -1553,22 +1554,22 @@ it_setactive:
         movem.l (sp)+,d0-d1/a0-a1/a3/a6
         rts
 
-; motifs de remplissage (SetAfPt) : glissement (8 lignes : 2, 3, 6, 7 pleines) et voile (4 lignes, un pixel sur
-; quatre, décalé d'une ligne à l'autre)
+; fill patterns (SetAfPt): drag (8 lines: 2, 3, 6, 7 filled) and veil (4 lines, one pixel out of
+; four, shifted from one line to the next)
 wn_dragpat:
         dc.w    0,0,$FFFF,$FFFF,0,0,$FFFF,$FFFF
 wn_veilpat:
         dc.w    $8888,$2222,$8888,$2222
 
-; pictogrammes des gadgets système, dessinés librement d'après leur description géométrique (spec §5.3) : rectangles
-; pleins (stylo, x0, y0, x1, y1). Stylos : 0 fond de l'écran, 1 blanc, 2 noir.
-pic_front_h:                         ; 29 x 10 : carré noir derrière un carré creux devant
+; system gadget pictograms, drawn freely from their geometric description (spec §5.3): filled
+; rectangles (pen, x0, y0, x1, y1). Pens: 0 screen background, 1 white, 2 black.
+pic_front_h:                         ; 29 x 10: black square behind a hollow square in front
         dc.b    1,0,0,28,9, 0,0,0,1,9, 2,4,1,7,6, 2,4,1,17,1, 0,8,2,21,8, 1,10,3,19,7, 0,24,0,25,9, $FF
-pic_back_h:                          ; 24 x 10 : carré creux derrière un rectangle noir devant
+pic_back_h:                          ; 24 x 10: hollow square behind a black rectangle in front
         dc.b    1,0,0,23,9, 0,0,0,1,9, 0,4,1,17,6, 1,6,2,15,5, 2,8,3,21,8, $FF
-pic_close_h:                         ; 28 x 10 : cadre creux et petit carré noir au centre
+pic_close_h:                         ; 28 x 10: hollow frame and small black square in the center
         dc.b    1,0,0,27,9, 0,4,0,5,9, 0,8,1,23,8, 1,10,2,21,7, 2,14,4,17,5, 0,26,0,27,9, $FF
-pic_size_h:                          ; 16 x 9 : deux rectangles creux qui se chevauchent
+pic_size_h:                          ; 16 x 9: two overlapping hollow rectangles
         dc.b    1,0,0,15,8, 0,2,1,7,3, 1,4,2,5,2, 0,6,3,13,7, 1,8,4,11,6, $FF
 pic_front_l:                         ; 17 x 10
         dc.b    1,0,0,16,9, 0,0,0,1,9, 2,4,1,7,6, 2,4,1,10,1, 0,8,2,14,8, 1,9,3,13,7, $FF
@@ -1576,26 +1577,26 @@ pic_back_l:                          ; 17 x 10
         dc.b    1,0,0,16,9, 0,0,0,1,9, 0,4,1,10,6, 1,5,2,9,5, 2,8,3,14,8, $FF
 pic_close_l:                         ; 14 x 10
         dc.b    1,0,0,13,9, 0,2,1,11,8, 1,3,2,10,7, 2,6,4,7,5, $FF
-pic_size_l:                          ; 11 x 10 : deux carrés noirs qui se touchent par un coin
+pic_size_l:                          ; 11 x 10: two black squares touching at a corner
         dc.b    1,0,0,10,9, 2,2,1,4,3, 2,5,4,8,8, $FF
         even
 
-; CloseWindow(fenêtre a0) : supprime sa couche (layers rend la zone aux couches de derrière et au fond), la retire de
-; son écran, redessine ce qui a été abîmé (it_refresh), puis libère son port IDCMP et la fenêtre.
+; CloseWindow(window a0): deletes its layer (layers gives the area back to the layers behind and to the background),
+; removes it from its screen, redraws what was damaged (it_refresh), then frees its IDCMP port and the window.
 intuition_CloseWindow:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
         move.l  a0,a3
         move.l  a0,d0
         beq     .cw_ret
-        bsr     gad_forget           ; un gadget de cette fenêtre restait enfoncé
-        jsr     rq_closeall          ; ses requesters (et leurs couches) d'abord
-        move.l  WD_WSCREEN(a3),a4    ; a4 = écran
+        bsr     gad_forget           ; a gadget of this window was still pressed
+        jsr     rq_closeall          ; its requesters (and their layers) first
+        move.l  WD_WSCREEN(a3),a4    ; a4 = screen
         move.l  IB_LAYERSBASE(a5),a6
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_DELETELAYER(a6)
-        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO : puis la couche du cadre
+        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO: then the border layer
         beq.s   .cw_onel
         move.l  d0,a1
         suba.l  a0,a0
@@ -1604,7 +1605,7 @@ intuition_CloseWindow:
         move.l  ($4).w,a6
         bsr     it_relist
         jsr     LVO_FORBID(a6)
-        move.l  WD_PARENT(a3),d2     ; retirée de la chaîne Parent/Descendant
+        move.l  WD_PARENT(a3),d2     ; removed from the Parent/Descendant chain
         move.l  WD_DESCENDANT(a3),d0
         tst.l   d2
         beq.s   .cw_np
@@ -1619,12 +1620,12 @@ intuition_CloseWindow:
         jsr     LVO_PERMIT(a6)
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .cw_act
-        clr.l   IB_ACTIVEWINDOW(a5)  ; était active : son Parent, sinon la première fenêtre de l'écran, sinon aucune
+        clr.l   IB_ACTIVEWINDOW(a5)  ; was active: its Parent, otherwise the first window of the screen, otherwise none
         tst.l   d2
         bne.s   .cw_new
         move.l  SC_FIRSTWINDOW(a4),d2
         bne.s   .cw_new
-        movem.l a3/a6,-(sp)          ; plus de fenêtre : la barre reprend le titre de l'écran
+        movem.l a3/a6,-(sp)          ; no more windows: the bar gets the screen's title back
         move.l  a4,a3
         move.l  SC_DEFAULTTITLE(a3),SC_TITLE(a3)
         bsr     sc_drawbar
@@ -1647,13 +1648,13 @@ intuition_CloseWindow:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; it_relist(a4 = écran) : la liste des fenêtres (sc_FirstWindow / wd_NextWindow) reprend l'ordre des couches, de
-; l'avant vers l'arrière (couches sans fenêtre, comme la barre, ignorées). Préserve tout sauf d0/a0/a1.
+; it_relist(a4 = screen): the window list (sc_FirstWindow / wd_NextWindow) takes the order of the layers back, from
+; front to back (layers without a window, like the bar, ignored). Preserves everything but d0/a0/a1.
 it_relist:
         move.l  a6,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
-        lea     SC_FIRSTWINDOW(a4),a1    ; maillon à remplir (wd_NextWindow est à l'offset 0)
+        lea     SC_FIRSTWINDOW(a4),a1    ; link to fill (wd_NextWindow is at offset 0)
         move.l  SC_LAYERINFO(a4),a0      ; top_layer
 .rl_lp:
         cmpa.w  #0,a0
@@ -1661,13 +1662,13 @@ it_relist:
         move.l  IL_WINDOW(a0),d0
         beq.s   .rl_n
         exg     d0,a1
-        cmpa.l  WD_WLAYER(a1),a0     ; couche du cadre d'une fenêtre GIMMEZEROZERO : déjà comptée
+        cmpa.l  WD_WLAYER(a1),a0     ; border layer of a GIMMEZEROZERO window: already counted
         exg     d0,a1
         bne.s   .rl_n
         move.l  d0,(a1)
         move.l  d0,a1
 .rl_n:
-        move.l  4(a0),a0                 ; couche suivante (back)
+        move.l  4(a0),a0                 ; next layer (back)
         bra.s   .rl_lp
 .rl_end:
         clr.l   (a1)
@@ -1675,10 +1676,10 @@ it_relist:
         move.l  (sp)+,a6
         rts
 
-; it_refresh(a4 = écran, a5 = IntuitionBase) : barre et fenêtres dont la couche est abîmée (LAYERREFRESH). La barre
-; est redessinée dans sa zone abîmée. Une fenêtre voit sa bordure redessinée dans sa zone abîmée ; si elle a demandé
-; REFRESHWINDOW, ses dommages restent pour son propriétaire (BeginRefresh/EndRefresh) et le message lui est envoyé,
-; sinon ils sont effacés. Préserve d2-d7/a2-a6.
+; it_refresh(a4 = screen, a5 = IntuitionBase): bar and windows whose layer is damaged (LAYERREFRESH). The bar
+; is redrawn in its damaged area. A window gets its border redrawn in its damaged area; if it asked for
+; REFRESHWINDOW, its damage stays for its owner (BeginRefresh/EndRefresh) and the message is sent to it,
+; otherwise it is cleared. Preserves d2-d7/a2-a6.
 it_refresh:
         movem.l d2-d7/a2-a3/a6,-(sp)
         move.l  SC_BARLAYER(a4),d0
@@ -1700,7 +1701,7 @@ it_refresh:
 .ir_lp:
         cmpa.w  #0,a3
         beq     .ir_r
-        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO : le cadre, dans sa propre couche
+        move.l  WDX_BLAYER(a3),d0    ; GIMMEZEROZERO: the border, in its own layer
         beq.s   .ir_inner
         move.l  d0,a2
         btst    #ILB_REFRESH,IL_FLAGS+1(a2)
@@ -1720,21 +1721,21 @@ it_refresh:
         move.l  IB_LAYERSBASE(a5),a6
         move.l  a2,a0
         jsr     LVO_BEGINUPDATE(a6)
-        tst.l   WDX_BLAYER(a3)       ; intérieur d'une fenêtre GIMMEZEROZERO : ses gadgets seulement ; ceux du cadre
-        beq.s   .ir_bord             ; (GZZGADGET) le sont aussi, les gadgets système restent par-dessus
+        tst.l   WDX_BLAYER(a3)       ; interior of a GIMMEZEROZERO window: its gadgets only; those of the border
+        beq.s   .ir_bord             ; (GZZGADGET) are drawn too, the system gadgets stay on top
         bsr     gad_drawall
         bsr     wn_sysgads
         bra.s   .ir_dmg
 .ir_bord:
         bsr     wn_border
 .ir_dmg:
-        moveq   #1,d2                ; d2 = dommages à effacer ?
+        moveq   #1,d2                ; d2 = damage to clear?
         tst.l   WD_USERPORT(a3)
         beq.s   .ir_end
         moveq   #REFRESHWINDOW,d0
         and.l   WD_IDCMPFLAGS(a3),d0
         beq.s   .ir_end
-        moveq   #0,d2                ; gardés : le propriétaire redessine
+        moveq   #0,d2                ; kept: the owner redraws
 .ir_end:
         move.l  IB_LAYERSBASE(a5),a6
         move.l  a2,a0
@@ -1750,8 +1751,8 @@ it_refresh:
         movem.l (sp)+,d2-d7/a2-a3/a6
         rts
 
-; WindowToFront(fenêtre a0) / WindowToBack(fenêtre a0) : couche devant / derrière (une fenêtre BACKDROP reste
-; derrière les autres), liste des fenêtres remise dans l'ordre, zones abîmées redessinées.
+; WindowToFront(window a0) / WindowToBack(window a0): layer to the front / back (a BACKDROP window stays
+; behind the others), window list put back in order, damaged areas redrawn.
 intuition_WindowToFront:
         moveq   #LVO_UPFRONTLAYER,d1
         bra.s   wn_depth
@@ -1764,9 +1765,9 @@ wn_depth:
         move.l  WD_WSCREEN(a3),a4
         move.l  IB_LAYERSBASE(a5),a6
         move.w  d1,d2
-        move.l  WD_WLAYER(a3),a2     ; a2 = première couche traitée, d3 = seconde | 0 (GIMMEZEROZERO : l'intérieur
-        move.l  WDX_BLAYER(a3),d3    ; doit rester devant son cadre -> devant : cadre puis intérieur ; derrière :
-        beq.s   .wd_go               ; intérieur puis cadre)
+        move.l  WD_WLAYER(a3),a2     ; a2 = first layer handled, d3 = second | 0 (GIMMEZEROZERO: the interior
+        move.l  WDX_BLAYER(a3),d3    ; must stay in front of its border -> to front: border then interior; to back:
+        beq.s   .wd_go               ; interior then border)
         cmp.w   #LVO_BEHINDLAYER,d2
         beq.s   .wd_go
         exg     d3,a2
@@ -1780,15 +1781,15 @@ wn_depth:
         move.l  d3,a1
         jsr     0(a6,d2.w)
 .wd_one:
-        jsr     rq_restack           ; les requesters restent juste devant la fenêtre
+        jsr     rq_restack           ; the requesters stay just in front of the window
         bsr     it_relist
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ShowTitle(écran a0, montrer d0) : la barre de titre de l'écran passe devant (d0 != 0) ou derrière (d0 = 0) les
-; fenêtres BACKDROP (sa couche est une backdrop : elle reste toujours derrière les autres fenêtres) ; zones abîmées
-; redessinées. Écran sans barre (SCREENQUIET) : rien.
+; ShowTitle(screen a0, show d0): the screen's title bar moves in front of (d0 != 0) or behind (d0 = 0) the
+; BACKDROP windows (its layer is a backdrop: it always stays behind the other windows); damaged areas
+; redrawn. Screen without a bar (SCREENQUIET): nothing.
 intuition_ShowTitle:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -1809,19 +1810,19 @@ intuition_ShowTitle:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ViewPortAddress(fenêtre a0) -> d0 = ViewPort de l'écran de la fenêtre.
+; ViewPortAddress(window a0) -> d0 = ViewPort of the window's screen.
 intuition_ViewPortAddress:
         move.l  WD_WSCREEN(a0),d0
         add.l   #SC_VIEWPORT,d0
         rts
 
-; MoveWindow(fenêtre a0, dx d0, dy d1) : déplacement borné à l'écran, puis zones abîmées redessinées.
+; MoveWindow(window a0, dx d0, dy d1): displacement bounded to the screen, then damaged areas redrawn.
 intuition_MoveWindow:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
         move.l  a0,a3
         move.l  WD_WSCREEN(a3),a4
-        move.w  WD_LEFTEDGE(a3),d2   ; nouvelle position bornée : 0 .. taille de l'écran - taille de la fenêtre
+        move.w  WD_LEFTEDGE(a3),d2   ; new bounded position: 0 .. screen size - window size
         add.w   d0,d2
         bpl.s   .mw_x0
         moveq   #0,d2
@@ -1854,7 +1855,7 @@ intuition_MoveWindow:
         move.l  IB_LAYERSBASE(a5),a6
         move.l  d0,d2
         move.l  d1,d3
-        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO : le cadre d'abord
+        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO: the border first
         beq.s   .mw_in
         move.l  d4,a1
         suba.l  a0,a0
@@ -1865,12 +1866,12 @@ intuition_MoveWindow:
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
         jsr     LVO_MOVELAYER(a6)
-        jsr     rq_move              ; les requesters suivent
+        jsr     rq_move              ; the requesters follow
         bsr     it_refresh
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; BeginRefresh(fenêtre a0) / EndRefresh(fenêtre a0, complet d0) : BeginUpdate / EndUpdate de sa couche.
+; BeginRefresh(window a0) / EndRefresh(window a0, complete d0): BeginUpdate / EndUpdate of its layer.
 intuition_BeginRefresh:
         move.l  a6,-(sp)
         move.l  WD_WLAYER(a0),a0
@@ -1886,8 +1887,8 @@ intuition_EndRefresh:
         move.l  (sp)+,a6
         rts
 
-; wn_refreshmsg(a3 = fenêtre) : si elle a demandé REFRESHWINDOW et que son message n'est pas en attente, le lui
-; envoie (sans port de réponse : ReplyMsg le marque répondu, il est réutilisé). Préserve d2-d7/a2-a6.
+; wn_refreshmsg(a3 = window): if it asked for REFRESHWINDOW and its message is not pending, sends it
+; (without a reply port: ReplyMsg marks it replied, it is reused). Preserves d2-d7/a2-a6.
 wn_refreshmsg:
         move.l  WD_USERPORT(a3),d0
         beq.s   .rf_ret
@@ -1896,7 +1897,7 @@ wn_refreshmsg:
         beq.s   .rf_ret
         lea     WDX_IMSG(a3),a1
         cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        beq.s   .rf_ret              ; le précédent n'a pas été lu : il suffit
+        beq.s   .rf_ret              ; the previous one has not been read: it is enough
         move.l  a6,-(sp)
         move.l  d0,-(sp)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
@@ -1913,9 +1914,9 @@ wn_refreshmsg:
 .rf_ret:
         rts
 
-; intuition_ModifyIDCMP(fenêtre a0, classes d0) : nouvelles classes IDCMP. 0 : le UserPort est fermé (ses messages en
-; attente retirés) ; non nul sans UserPort : un port signalant la tâche appelante est créé. Sous Forbid : la tâche
-; d'entrée ne poste pas pendant le changement.
+; intuition_ModifyIDCMP(window a0, classes d0): new IDCMP classes. 0: the UserPort is closed (its pending messages
+; removed); non-zero without a UserPort: a port signaling the calling task is created. Under Forbid: the input
+; task does not post during the change.
 intuition_ModifyIDCMP:
         movem.l a3/a6,-(sp)
         move.l  a0,a3
@@ -1935,8 +1936,8 @@ intuition_ModifyIDCMP:
         movem.l (sp)+,a3/a6
         rts
 
-; wn_mkport(a3 = fenêtre, a6 = SysBase) : port IDCMP (WD_USERPORT) signalant la tâche appelante ; laissé à 0 si
-; plus de signal ou de mémoire. Préserve d2-d7/a2-a6.
+; wn_mkport(a3 = window, a6 = SysBase): IDCMP port (WD_USERPORT) signaling the calling task; left at 0 if
+; out of signals or memory. Preserves d2-d7/a2-a6.
 wn_mkport:
         move.l  a2,-(sp)
         moveq   #-1,d0
@@ -1968,8 +1969,8 @@ wn_mkport:
         move.l  (sp)+,a2
         rts
 
-; wn_freeport(a3 = fenêtre, a6 = SysBase) : retire du port le message en attente éventuel, libère le signal et le port.
-; Préserve d2-d7/a2-a6.
+; wn_freeport(a3 = window, a6 = SysBase): removes any pending message from the port, frees the signal and the port.
+; Preserves d2-d7/a2-a6.
 wn_freeport:
         move.l  WD_USERPORT(a3),d0
         beq.s   .fp_ret
@@ -1977,7 +1978,7 @@ wn_freeport:
         move.l  d0,a2
         jsr     LVO_DISABLE(a6)
         move.l  d2,-(sp)
-        lea     WDX_IMSG(a3),a1      ; messages encore en file : retirés avant de libérer la fenêtre
+        lea     WDX_IMSG(a3),a1      ; messages still queued: removed before freeing the window
         moveq   #WDX_NEMSG,d2
 .fp_lp:
         cmp.b   #NT_MESSAGE,LN_TYPE(a1)
@@ -1985,7 +1986,7 @@ wn_freeport:
         move.l  a1,-(sp)
         jsr     LVO_REMOVE(a6)
         move.l  (sp)+,a1
-        move.b  #NT_REPLYMSG,LN_TYPE(a1) ; de nouveau libre dans la réserve (ModifyIDCMP peut rouvrir un port)
+        move.b  #NT_REPLYMSG,LN_TYPE(a1) ; free again in the pool (ModifyIDCMP can reopen a port)
 .fp_nomsg:
         lea     IM_SIZEOF(a1),a1
         dbra    d2,.fp_lp
@@ -2001,37 +2002,37 @@ wn_freeport:
 .fp_ret:
         rts
 
-; DrawImage(rp a0, image a1, x d0, y d1) : dessine la chaîne d'Images (struct Image) à (x + LeftEdge, y + TopEdge).
-; Chaque Image devient une BitMap temporaire de 8 plans : plan d'image i -> i-ème plan désigné par PlanePick, les autres
-; plans valent 0 ou 1 selon PlaneOnOff (pointeurs NULL / -1) ; un seul BltBitMapRastPort la copie dans le RastPort.
+; DrawImage(rp a0, image a1, x d0, y d1): draws the chain of Images (struct Image) at (x + LeftEdge, y + TopEdge). Each
+; Image becomes a temporary 8-plane BitMap: image plane i -> i-th plane designated by PlanePick, the other planes are 0
+; or 1 according to PlaneOnOff (NULL / -1 pointers); a single BltBitMapRastPort copies it into the RastPort.
 intuition_DrawImage:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  IB_GFXBASE(a6),a6
         move.l  a0,a2                ; a2 = RastPort
-        move.l  a1,a3                ; a3 = Image courante
-        movem.w d0-d1,-(sp)          ; (sp) = x, 2(sp) = y de base
+        move.l  a1,a3                ; a3 = current Image
+        movem.w d0-d1,-(sp)          ; (sp) = base x, 2(sp) = base y
         lea     -bm_SIZEOF(sp),sp
-        move.l  sp,a4                ; a4 = BitMap temporaire
+        move.l  sp,a4                ; a4 = temporary BitMap
 .di_img:
         move.l  a3,d0
         beq     .di_done
-        move.w  IG_WIDTH(a3),d0      ; octets par ligne = mots entiers
+        move.w  IG_WIDTH(a3),d0      ; bytes per line = whole words
         add.w   #15,d0
         lsr.w   #4,d0
         add.w   d0,d0
         move.w  d0,bm_BytesPerRow(a4)
         move.w  IG_HEIGHT(a3),bm_Rows(a4)
         move.b  #8,bm_Depth(a4)
-        mulu    IG_HEIGHT(a3),d0     ; d0 = taille d'un plan d'image
+        mulu    IG_HEIGHT(a3),d0     ; d0 = size of an image plane
         move.l  IG_IMAGEDATA(a3),a0
-        moveq   #0,d1                ; d1 = plan de la BitMap
-        moveq   #0,d2                ; d2 = plans d'image consommés
+        moveq   #0,d1                ; d1 = BitMap plane
+        moveq   #0,d2                ; d2 = image planes consumed
         lea     bm_Planes(a4),a1
 .di_plane:
         btst    d1,IG_PLANEPICK(a3)
         beq.s   .di_onoff
         cmp.w   IG_DEPTH(a3),d2
-        bge.s   .di_zero             ; plan choisi sans données : 0
+        bge.s   .di_zero             ; chosen plane without data: 0
         move.l  a0,(a1)+
         add.l   d0,a0
         addq.w  #1,d2
@@ -2047,7 +2048,7 @@ intuition_DrawImage:
         addq.w  #1,d1
         cmp.w   #8,d1
         blo.s   .di_plane
-        move.l  a4,a0                ; BltBitMapRastPort(bm, 0, 0, rp, x, y, l, h, copie)
+        move.l  a4,a0                ; BltBitMapRastPort(bm, 0, 0, rp, x, y, w, h, copy)
         moveq   #0,d0
         moveq   #0,d1
         move.l  a2,a1
@@ -2066,8 +2067,8 @@ intuition_DrawImage:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; AllocRemember(clé a0, taille d0, drapeaux d1) -> d0 = mémoire | 0 : alloue et chaîne un nœud Remember en tête de
-; *clé. FreeRemember(clé a0, oublier d0) : libère les nœuds (et leur mémoire si oublier != 0), *clé := 0.
+; AllocRemember(key a0, size d0, flags d1) -> d0 = memory | 0: allocates and links a Remember node at the head of
+; *key. FreeRemember(key a0, forget d0): frees the nodes (and their memory if forget != 0), *key := 0.
 intuition_AllocRemember:
         movem.l d2-d3/a2/a6,-(sp)
         move.l  a0,a2
@@ -2086,7 +2087,7 @@ intuition_AllocRemember:
         move.l  (sp)+,a1
         tst.l   d0
         bne.s   .ar_ok
-        moveq   #RM_SIZEOF,d0        ; mémoire refusée : rend le nœud
+        moveq   #RM_SIZEOF,d0        ; memory refused: gives the node back
         jsr     LVO_FREEMEM(a6)
         moveq   #0,d0
         bra.s   .ar_ret
@@ -2123,23 +2124,23 @@ intuition_FreeRemember:
         movem.l (sp)+,d2/a2-a3/a6
         rts
 
-; it_event(d0.w = ie_Code) : appelé par le handler de pointeur (interruption VBlank) pour chaque RAWMOUSE, après la
-; mise à jour de PTR_X/PTR_Y. Un bouton est déposé dans l'anneau avec la position du pointeur (anneau plein : perdu) ;
-; un mouvement n'est signalé que si la tâche d'entrée suit le pointeur (geste ou menu en cours) ou si la fenêtre
-; active demande les mouvements (REPORTMOUSE et IDCMP MOUSEMOVE). Tout le traitement
-; (fenêtres, couches, menus) se fait dans la tâche : rien ici ne peut attendre. Préserve tout.
+; it_event(d0.w = ie_Code): called by the pointer handler (VBlank interrupt) for each RAWMOUSE, after the
+; update of PTR_X/PTR_Y. A button is dropped into the ring with the pointer position (ring full: lost);
+; a movement is signaled only if the input task is tracking the pointer (gesture or menu in progress) or if the active
+; window asks for movements (REPORTMOUSE and IDCMP MOUSEMOVE). All the processing
+; (windows, layers, menus) is done in the task: nothing here may wait. Preserves everything.
 it_event:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
         beq.s   .ev_ret
         move.l  d1,a1
         tst.l   IB_INSIG(a1)
-        beq.s   .ev_ret              ; tâche pas encore prête
+        beq.s   .ev_ret              ; task not ready yet
         cmp.w   #IECODE_NOBUTTON,d0
         bne.s   .ev_btn
         tst.b   IB_TRACK(a1)
         bne.s   .ev_mv
-        move.l  IB_ACTIVEWINDOW(a1),d1   ; fenêtre active qui demande les mouvements (REPORTMOUSE + MOUSEMOVE)
+        move.l  IB_ACTIVEWINDOW(a1),d1   ; active window that asks for movements (REPORTMOUSE + MOUSEMOVE)
         beq.s   .ev_ret
         move.l  d1,a0
         btst    #1,WD_FLAGS+2(a0)    ; REPORTMOUSE
@@ -2161,8 +2162,8 @@ it_event:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (mot haut) : y (mot bas)) : case déposée dans l'anneau de la tâche
-; d'entrée, puis signal (anneau plein : perdue). Clobbe d0/d1/a0/a6.
+; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word)): slot dropped into the input task's
+; ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
 it_push:
         move.l  d2,-(sp)
         move.w  IB_EVHEAD(a1),d2
@@ -2180,13 +2181,13 @@ it_push:
         move.w  d1,(a0)+
         swap    d1
         move.w  d1,(a0)
-        move.w  d2,IB_EVHEAD(a1)     ; publiée après les données
+        move.w  d2,IB_EVHEAD(a1)     ; published after the data
         move.l  (sp)+,d2
         bra.s   it_signal
 .pu_full:
         move.l  (sp)+,d2
         rts
-; it_signal(a1 = IntuitionBase) : réveille la tâche d'entrée. Clobbe d0/d1/a0/a6.
+; it_signal(a1 = IntuitionBase): wakes up the input task. Clobbers d0/d1/a0/a6.
 it_signal:
         move.l  a1,-(sp)
         move.l  IB_INSIG(a1),d0
@@ -2196,11 +2197,11 @@ it_signal:
         move.l  (sp)+,a1
         rts
 
-; it_keyin(a3 = InputEvent RAWKEY) : handler de pointeur (input.device). Le clavier va à un gadget texte actif ; sinon
-; une touche Amiga droite qui désigne un élément de la barre de la fenêtre active (mn_keyshort) est avalée et déposée
-; dans l'anneau (IT_MENUKEYCODE) ; sinon la touche va à la fenêtre active si elle a demandé RAWKEY : l'événement est
-; alors neutralisé (IECLASS_NULL, la console ne le voit pas) et déposé dans l'anneau (code IT_KEYCODE + code brut,
-; relâchement compris ; x = qualificatif). Un gadget texte ne reçoit que les touches enfoncées. Préserve tout.
+; it_keyin(a3 = RAWKEY InputEvent): pointer handler (input.device). The keyboard goes to an active text gadget;
+; otherwise a right Amiga key that designates an item of the active window's menu strip (mn_keyshort) is swallowed and
+; dropped into the ring (IT_MENUKEYCODE); otherwise the key goes to the active window if it asked for RAWKEY: the event
+; is then neutralized (IECLASS_NULL, the console does not see it) and dropped into the ring (code IT_KEYCODE + raw code,
+; release included; x = qualifier). A text gadget only receives pressed keys. Preserves everything.
 it_keyin:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
@@ -2218,10 +2219,10 @@ it_keyin:
         bne.s   .ki_raw
         btst    #KQB_RCOMMAND,IE_QUALIFIER+1(a3)
         beq.s   .ki_raw
-        jsr     mn_keyshort          ; d0 = code de menu | -1
+        jsr     mn_keyshort          ; d0 = menu code | -1
         tst.l   d0
         bmi.s   .ki_nmk
-        clr.b   IE_CLASS(a3)         ; avalé : le relâchement arrivera normalement
+        clr.b   IE_CLASS(a3)         ; swallowed: the release will arrive normally
         move.w  d0,d1
         swap    d1
         move.w  IE_QUALIFIER(a3),d1
@@ -2239,7 +2240,7 @@ it_keyin:
 .ki_str:
         clr.b   IE_CLASS(a3)
         btst    #7,d0
-        bne.s   .ki_ret              ; relâchement : avalé
+        bne.s   .ki_ret              ; release: swallowed
 .ki_push:
         and.w   #$00FF,d0
         or.w    #IT_KEYCODE,d0
@@ -2251,9 +2252,9 @@ it_keyin:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_unclip(a3 = fenêtre) : avant un dessin d'intuition dans la fenêtre, la couche est verrouillée et, au premier
-; niveau, la ClipRegion de l'application est retirée (spec installclipregion-v34 §5) : cadre et gadgets ne sont pas
-; découpés par elle. it_reclip la remet et déverrouille. Préservent tout.
+; it_unclip(a3 = window): before an intuition drawing in the window, the layer is locked and, at the first
+; level, the application's ClipRegion is removed (spec installclipregion-v34 §5): border and gadgets are not
+; clipped by it. it_reclip puts it back and unlocks. Both preserve everything.
 it_unclip:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  WD_WLAYER(a3),d0
@@ -2297,8 +2298,8 @@ it_reclip:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_tickin(a3 = InputEvent IECLASS_TIMER) : handler de pointeur (input.device). Le tic passe à la tâche d'entrée, qui
-; envoie INTUITICKS (it_tick). Préserve tout.
+; it_tickin(a3 = IECLASS_TIMER InputEvent): pointer handler (input.device). The tick goes to the input task, which
+; sends INTUITICKS (it_tick). Preserves everything.
 it_tickin:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
@@ -2313,8 +2314,8 @@ it_tickin:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_diskin(a3 = InputEvent IECLASS_DISKINSERTED | IECLASS_DISKREMOVED) : handler de pointeur (input.device). Passe à la
-; tâche d'entrée (it_diskbc). Préserve tout.
+; it_diskin(a3 = IECLASS_DISKINSERTED | IECLASS_DISKREMOVED InputEvent): pointer handler (input.device). Passes it to
+; the input task (it_diskbc). Preserves everything.
 it_diskin:
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  INT_IBASE,d1
@@ -2333,9 +2334,9 @@ it_diskin:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_diskbc(a5, d0.w = IT_DISKINCODE | IT_DISKOUTCODE) : DISKINSERTED / DISKREMOVED à toutes les fenêtres de tous les
-; écrans qui l'ont demandé, active ou non (spec disk-change-v34 §3) ; souris relative à chaque fenêtre.
-; Préserve d2-d7/a2-a5.
+; it_diskbc(a5, d0.w = IT_DISKINCODE | IT_DISKOUTCODE): DISKINSERTED / DISKREMOVED to all the windows of all the
+; screens that asked for it, active or not (spec disk-change-v34 §3); mouse relative to each window.
+; Preserves d2-d7/a2-a5.
 it_diskbc:
         movem.l d2-d7/a3-a4,-(sp)
         move.l  #DISKINSERTED,d7
@@ -2357,7 +2358,7 @@ it_diskbc:
         sub.w   WD_TOPEDGE(a3),d3
         move.l  d7,d0
         moveq   #0,d1
-        bsr     wn_sendmsg           ; seulement si la fenêtre a demandé la classe
+        bsr     wn_sendmsg           ; only if the window asked for the class
         move.l  WD_NEXTWINDOW(a3),a3
         bra.s   .db_win
 .db_nscr:
@@ -2367,9 +2368,9 @@ it_diskbc:
         movem.l (sp)+,d2-d7/a3-a4
         rts
 
-; it_tick(a5) : INTUITICKS à la fenêtre active si elle l'a demandé et si son précédent INTUITICKS a été rendu (au plus
-; un en circulation, comme WINDOWTICKED en 1.3) ; souris relative à la fenêtre (spec intuiticks-repeat-v34 §3).
-; Préserve d2-d7/a2-a5.
+; it_tick(a5): INTUITICKS to the active window if it asked for it and if its previous INTUITICKS was returned (at most
+; one in circulation, like WINDOWTICKED in 1.3); mouse relative to the window (spec intuiticks-repeat-v34 §3).
+; Preserves d2-d7/a2-a5.
 it_tick:
         move.l  IB_ACTIVEWINDOW(a5),d1
         beq.s   .tk_ret
@@ -2384,7 +2385,7 @@ it_tick:
         cmp.b   #NT_MESSAGE,LN_TYPE(a1)
         bne.s   .tk_nx
         cmp.l   #INTUITICKS,IM_CLASS(a1)
-        beq.s   .tk_done             ; le précédent n'est pas encore rendu
+        beq.s   .tk_done             ; the previous one has not been returned yet
 .tk_nx:
         lea     IM_SIZEOF(a1),a1
         dbra    d0,.tk_scan
@@ -2404,8 +2405,8 @@ it_tick:
 .tk_ret:
         rts
 
-; it_startinput(a2 = IntuitionBase, a6 = SysBase) : crée la tâche d'entrée (pri 20, comme celle d'input.device).
-; Sans mémoire : pas de tâche, les boutons sont ignorés. Préserve d2-d7/a2-a6.
+; it_startinput(a2 = IntuitionBase, a6 = SysBase): creates the input task (pri 20, like that of input.device).
+; Without memory: no task, the buttons are ignored. Preserves d2-d7/a2-a6.
 IT_STACK        EQU 4096
 it_startinput:
         movem.l a2-a4,-(sp)
@@ -2434,7 +2435,7 @@ it_startinput:
         move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)
         move.l  a4,a1
         lea     it_intask(pc),a2
-        move.l  a2,a3                ; ne revient jamais
+        move.l  a2,a3                ; never returns
         jsr     LVO_ADDTASK(a6)
 .si_ret:
         movem.l (sp)+,a2-a4
@@ -2443,8 +2444,8 @@ it_inname:
         dc.b    "intuition input",0
         even
 
-; it_intask : corps de la tâche d'entrée. Alloue son signal et se publie, puis traite dans l'ordre les boutons de
-; l'anneau et, quand elle suit le pointeur, son dernier mouvement.
+; it_intask: body of the input task. Allocates its signal and publishes itself, then processes in order the buttons of
+; the ring and, when it is tracking the pointer, its last movement.
 it_intask:
         move.l  ($4).w,a6
         move.l  INT_IBASE,a5
@@ -2465,7 +2466,7 @@ it_intask:
         lea     IB_EVRING(a5),a0
         add.w   d1,a0
         move.w  (a0)+,d0             ; code
-        move.w  (a0)+,d4             ; x, y (pointeur)
+        move.w  (a0)+,d4             ; x, y (pointer)
         move.w  (a0),d5
         addq.w  #IB_EVSZ,d1
         cmp.w   #IB_EVN*IB_EVSZ,d1
@@ -2488,9 +2489,9 @@ it_intask:
 .in_key:
         tst.l   IB_STRGAD(a5)
         beq.s   .in_raw
-        btst    #7,d0                ; gadget texte : touches enfoncées seulement
+        btst    #7,d0                ; text gadget: pressed keys only
         bne.s   .in_next
-        bsr     str_key              ; d0 = touche, d4 = qualificatif
+        bsr     str_key              ; d0 = key, d4 = qualifier
         bra.s   .in_next
 .in_raw:
         bsr     it_rawkey
@@ -2502,7 +2503,7 @@ it_intask:
         bsr     it_diskbc
         bra.s   .in_next
 .in_mkey:
-        jsr     mn_keypick           ; d4 = code de menu, d5 = qualificatif
+        jsr     mn_keypick           ; d4 = menu code, d5 = qualifier
         bra     .in_next
 .in_move:
         tst.b   IB_MOVED(a5)
@@ -2513,8 +2514,8 @@ it_intask:
         bsr     it_domove
         bra     .in_next
 
-; it_rawkey(a5, d0.w = IT_KEYCODE + code brut, d4.w = qualificatif) : message RAWKEY à la fenêtre active, si elle
-; l'a demandé. Préserve d2-d7/a2-a5.
+; it_rawkey(a5, d0.w = IT_KEYCODE + raw code, d4.w = qualifier): RAWKEY message to the active window, if it
+; asked for it. Preserves d2-d7/a2-a5.
 it_rawkey:
         move.l  IB_ACTIVEWINDOW(a5),d1
         beq.s   .rk_ret
@@ -2530,8 +2531,8 @@ it_rawkey:
 .rk_ret:
         rts
 
-; it_scrxy(a5, d4.w/d5.w = pointeur) -> a4 = écran de tête, d4/d5 = position dans cet écran (HIRES : x doublé) ;
-; Z = 1 s'il n'y a pas d'écran. Clobbe d0.
+; it_scrxy(a5, d4.w/d5.w = pointer) -> a4 = front screen, d4/d5 = position in this screen (HIRES: x doubled);
+; Z = 1 if there is no screen. Clobbers d0.
 it_scrxy:
         move.l  IB_FIRSTSCREEN(a5),d0
         beq.s   .sx_ret
@@ -2544,8 +2545,8 @@ it_scrxy:
 .sx_ret:
         rts
 
-; it_winat(a4 = écran, d4/d5 = position) -> a3 = fenêtre la plus en avant sous le point, d2/d3 = position relative ;
-; Z = 1 si aucune. Clobbe d0.
+; it_winat(a4 = screen, d4/d5 = position) -> a3 = frontmost window under the point, d2/d3 = relative position;
+; Z = 1 if none. Clobbers d0.
 it_winat:
         move.l  SC_FIRSTWINDOW(a4),a3
 .wa_lp:
@@ -2569,10 +2570,10 @@ it_winat:
 .wa_ret:
         rts
 
-; it_dobutton(a5 = IntuitionBase, d0.w = code, d4/d5 = pointeur) : contexte tâche d'entrée. Bouton gauche enfoncé
-; sur une fenêtre : elle devient active (y compris une fenêtre BACKDROP, pour ses menus) ; gadget de fermeture -> CLOSEWINDOW, gadgets de profondeur -> derrière /
-; devant, barre de titre (WINDOWDRAG) ou gadget de taille -> geste avec cadre fantôme ; sinon MOUSEBUTTONS. Le
-; relâchement termine un geste en cours, sinon il va à la fenêtre active (SELECTUP). Bouton droit : menus. Préserve a5.
+; it_dobutton(a5 = IntuitionBase, d0.w = code, d4/d5 = pointer): input task context. Left button pressed over a window:
+; it becomes active (including a BACKDROP window, for its menus); close gadget -> CLOSEWINDOW, depth gadgets -> back /
+; front, title bar (WINDOWDRAG) or size gadget -> gesture with ghost frame; otherwise MOUSEBUTTONS. The release ends a
+; gesture in progress, otherwise it goes to the active window (SELECTUP). Right button: menus. Preserves a5.
 it_dobutton:
         move.w  d0,d7                ; d7 = code
         bsr     it_scrxy
@@ -2588,14 +2589,14 @@ it_dobutton:
         cmp.w   #IECODE_RBUTTON,d0
         beq     it_menubutton
         tst.l   IB_MENUWIN(a5)
-        bne     .db_ret              ; menus affichés : le bouton gauche est ignoré
+        bne     .db_ret              ; menus displayed: the left button is ignored
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
         bne.s   .db_down
         tst.w   IB_SYSACT(a5)
-        bne     it_sysup             ; un gadget système était enfoncé
+        bne     it_sysup             ; a system gadget was pressed
         tst.l   IB_GADACT(a5)
-        bne     gad_up               ; un gadget d'application était enfoncé
-        move.l  IB_ACTIVEWINDOW(a5),d0   ; relâchement : à la fenêtre active (celle du clic), où qu'il ait lieu
+        bne     gad_up               ; an application gadget was pressed
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; release: to the active window (the clicked one), wherever it happens
         beq     .db_ret
         move.l  d0,a3
         cmp.l   WD_WSCREEN(a3),a4
@@ -2610,23 +2611,23 @@ it_dobutton:
 .db_down:
         cmp.w   #IECODE_LBUTTON,d7
         bne.s   .db_nstr
-        bsr     str_clickout         ; un clic hors du gadget texte actif le désactive
+        bsr     str_clickout         ; a click outside the active text gadget deactivates it
 .db_nstr:
         bsr     it_winat
         beq     .db_ret
         cmp.w   #IECODE_LBUTTON,d7
         bne     .db_mb
-        bsr     it_setactive         ; la fenêtre cliquée devient active (BACKDROP compris : ses menus)
+        bsr     it_setactive         ; the clicked window becomes active (BACKDROP included: its menus)
         bsr     wn_scrtitle
-        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : aucun gadget système
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS: no system gadget
         bne     .db_mb
         cmp.b   #WD_TBARH,WD_BORDERTOP(a3)
         bne.s   .db_size
         cmp.w   #WD_TBARH,d3
         bge.s   .db_size
-        bsr     wn_sysat             ; fermeture / profondeur : boîte inversée, action au relâchement
+        bsr     wn_sysat             ; close / depth: box inverted, action on release
         beq.s   .db_ndepth
-        cmp.w   #IT_SYSCLOSE,d0      ; fermeture refusée tant qu'un requester est posé
+        cmp.w   #IT_SYSCLOSE,d0      ; close refused while a requester is up
         bne.s   .db_sys
         tst.l   WD_FIRSTREQUEST(a3)
         bne     .db_ret
@@ -2640,7 +2641,7 @@ it_dobutton:
         moveq   #IT_DRAGMOVE,d0
         bra     it_dragstart
 .db_size:
-        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING : gadget dans le coin bas-droit
+        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING: gadget in the bottom-right corner
         beq.s   .db_mb
         bsr     wn_geo
         move.w  WD_WIDTH(a3),d0
@@ -2656,7 +2657,7 @@ it_dobutton:
 .db_mb:
         cmp.w   #IECODE_LBUTTON,d7
         bne.s   .db_ret
-        bsr     gad_down             ; un gadget d'application prend le clic ?
+        bsr     gad_down             ; does an application gadget take the click?
         bne.s   .db_ret
         move.l  #MOUSEBUTTONS,d0
         moveq   #SELECTDOWN,d1
@@ -2664,9 +2665,9 @@ it_dobutton:
 .db_ret:
         rts
 
-; it_dragstart(a3 = fenêtre, a4 = écran, d0 = IT_DRAGMOVE | IT_DRAGSIZE, d4/d5 = pointeur) : début d'un geste. Les
-; couches de l'écran sont verrouillées jusqu'au relâchement (personne ne dessine sous le cadre fantôme, tracé en
-; mode COMPLEMENT dans le RastPort de l'écran). Préserve a5.
+; it_dragstart(a3 = window, a4 = screen, d0 = IT_DRAGMOVE | IT_DRAGSIZE, d4/d5 = pointer): start of a gesture. The
+; screen's layers are locked until the release (nobody draws under the ghost frame, drawn in
+; COMPLEMENT mode in the screen's RastPort). Preserves a5.
 it_dragstart:
         move.l  a3,IB_DRAGWIN(a5)
         move.w  d0,IB_DRAGMODE(a5)
@@ -2680,12 +2681,12 @@ it_dragstart:
         st      IB_BOXON(a5)
         bra     it_boxxor
 
-; it_domove(a5, d4/d5 = pointeur) : geste en cours -> le cadre fantôme suit le pointeur ; menus -> surbrillance.
+; it_domove(a5, d4/d5 = pointer): gesture in progress -> the ghost frame follows the pointer; menus -> highlight.
 it_domove:
         tst.l   IB_MENUWIN(a5)
         bne     it_menumove
-        jsr     prop_track           ; knob d'un gadget proportionnel tenu ; la fenêtre active reçoit aussi le
-        beq.s   .dm_np               ; mouvement si elle a REPORTMOUSE
+        jsr     prop_track           ; knob of a held proportional gadget; the active window also receives the
+        beq.s   .dm_np               ; movement if it has REPORTMOUSE
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         bra     it_reportmove
@@ -2695,14 +2696,14 @@ it_domove:
         move.l  d0,a3
         bsr     it_scrxy
         beq.s   .dm_ret
-        bsr     it_boxxor            ; efface l'ancien
+        bsr     it_boxxor            ; erase the old one
         bsr     it_dragrect
         bra     it_boxxor
 .dm_ret:
         rts
 
-; it_reportmove(a5, d4/d5 = pointeur) : la fenêtre active qui demande les mouvements reçoit MOUSEMOVE (position
-; relative). Un MOUSEMOVE encore non répondu est mis à jour plutôt que doublé : le port ne déborde pas.
+; it_reportmove(a5, d4/d5 = pointer): the active window that asks for movements receives MOUSEMOVE (relative
+; position). A MOUSEMOVE not yet replied is updated rather than duplicated: the port does not overflow.
 it_reportmove:
         move.l  IB_ACTIVEWINDOW(a5),d0
         beq.s   .rm_ret
@@ -2740,7 +2741,7 @@ it_reportmove:
 .rm_ret:
         rts
 
-; ReportMouse(drapeau d0, fenêtre a0) : la fenêtre reçoit (ou plus) les mouvements de la souris (REPORTMOUSE).
+; ReportMouse(flag d0, window a0): the window receives (or no longer receives) the mouse movements (REPORTMOUSE).
 intuition_ReportMouse:
         tst.w   d0
         beq.s   .rp_off
@@ -2750,8 +2751,8 @@ intuition_ReportMouse:
         and.l   #~REPORTMOUSE,WD_FLAGS(a0)
         rts
 
-; it_dragend(a5, a4 = écran, d4/d5 = pointeur au relâchement) : efface le cadre, applique le déplacement ou la
-; nouvelle taille, puis rend les couches.
+; it_dragend(a5, a4 = screen, d4/d5 = pointer at release): erases the frame, applies the move or the
+; new size, then releases the layers.
 it_dragend:
         move.l  IB_DRAGWIN(a5),a3
         bsr     it_boxxor
@@ -2789,12 +2790,12 @@ it_dragend:
         move.l  IB_LAYERSBASE(a5),a6
         jmp     LVO_UNLOCKLAYERS(a6)
 
-; it_dragrect(a3 = fenêtre, a4 = écran, a5, d4/d5 = pointeur) : rectangle visé par le geste -> IB_BOX (x0,y0,x1,y1).
-; Déplacement : la fenêtre reste dans l'écran ; taille : bornée par les limites de la fenêtre et l'écran.
+; it_dragrect(a3 = window, a4 = screen, a5, d4/d5 = pointer): rectangle targeted by the gesture -> IB_BOX (x0,y0,x1,y1).
+; Move: the window stays within the screen; size: bounded by the window limits and the screen.
 it_dragrect:
         movem.l d2-d7,-(sp)
         move.w  d4,d6
-        sub.w   IB_DRAGSX(a5),d6     ; d6/d7 = déplacement du pointeur
+        sub.w   IB_DRAGSX(a5),d6     ; d6/d7 = pointer displacement
         move.w  d5,d7
         sub.w   IB_DRAGSY(a5),d7
         move.w  WD_LEFTEDGE(a3),d0
@@ -2815,7 +2816,7 @@ it_dragrect:
         exg     d0,d1
         bra.s   .dr_out
 .dr_size:
-        add.w   d6,d2                ; largeur : [MinWidth, min(MaxWidth, écran - LeftEdge)]
+        add.w   d6,d2                ; width: [MinWidth, min(MaxWidth, screen - LeftEdge)]
         move.w  SC_WIDTH(a4),d4
         sub.w   d0,d4
         cmp.w   WD_MAXWIDTH(a3),d4
@@ -2838,7 +2839,7 @@ it_dragrect:
         bsr.s   it_clamp
         exg     d0,d3
 .dr_out:
-        add.w   d0,d2                ; x1 = x0 + largeur - 1
+        add.w   d0,d2                ; x1 = x0 + width - 1
         subq.w  #1,d2
         add.w   d1,d3
         subq.w  #1,d3
@@ -2847,7 +2848,7 @@ it_dragrect:
         rts
 .dr_clamp0:                          ; d0 := clamp(d0, 0, d4)
         moveq   #0,d5
-; it_clamp : d0.w := clamp(d0, d5, d4) (d4 prime si d5 > d4).
+; it_clamp: d0.w := clamp(d0, d5, d4) (d4 wins if d5 > d4).
 it_clamp:
         cmp.w   d5,d0
         bge.s   .cl_1
@@ -2859,8 +2860,8 @@ it_clamp:
 .cl_2:
         rts
 
-; it_boxxor(a3 = fenêtre du geste, a5) : inverse le cadre IB_BOX (1 pixel) dans le RastPort de son écran ; quatre
-; segments disjoints, pour qu'un second appel l'efface exactement. Préserve d2-d7/a2-a5.
+; it_boxxor(a3 = window of the gesture, a5): inverts the IB_BOX frame (1 pixel) in its screen's RastPort; four
+; disjoint segments, so that a second call erases it exactly. Preserves d2-d7/a2-a5.
 it_boxxor:
         movem.l d2-d7/a2,-(sp)
         move.l  WD_WSCREEN(a3),a2
@@ -2870,7 +2871,7 @@ it_boxxor:
         moveq   #COMPLEMENT,d0
         jsr     LVO_SETDRMD(a6)
         movem.w IB_BOX(a5),d4-d7     ; x0, y0, x1, y1
-        move.l  a2,a1                ; haut
+        move.l  a2,a1                ; top
         move.w  d4,d0
         move.w  d5,d1
         move.w  d6,d2
@@ -2878,7 +2879,7 @@ it_boxxor:
         jsr     LVO_RECTFILL(a6)
         cmp.w   d5,d7
         ble.s   .bx_done
-        move.l  a2,a1                ; bas
+        move.l  a2,a1                ; bottom
         move.w  d4,d0
         move.w  d7,d1
         move.w  d6,d2
@@ -2888,7 +2889,7 @@ it_boxxor:
         subq.w  #1,d3
         cmp.w   d5,d3
         ble.s   .bx_done
-        move.l  a2,a1                ; gauche
+        move.l  a2,a1                ; left
         move.w  d4,d0
         move.w  d5,d1
         addq.w  #1,d1
@@ -2896,7 +2897,7 @@ it_boxxor:
         jsr     LVO_RECTFILL(a6)
         cmp.w   d4,d6
         ble.s   .bx_done
-        move.l  a2,a1                ; droite
+        move.l  a2,a1                ; right
         move.w  d6,d0
         move.w  d5,d1
         addq.w  #1,d1
@@ -2911,15 +2912,15 @@ it_boxxor:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; SizeWindow(fenêtre a0, dx d0, dy d1) : nouvelle taille bornée (16 pixels au moins, sans sortir de l'écran). La
-; couche suit (SizeLayer) ; les anciennes bordures devenues intérieures et l'ancien gadget de taille sont effacés,
-; le cadre redessiné, NEWSIZE envoyé, puis les zones abîmées réparées (REFRESHWINDOW pour la fenêtre elle-même).
+; SizeWindow(window a0, dx d0, dy d1): new bounded size (at least 16 pixels, without leaving the screen). The
+; layer follows (SizeLayer); the old borders that became interior and the old size gadget are erased,
+; the border redrawn, NEWSIZE sent, then the damaged areas repaired (REFRESHWINDOW for the window itself).
 intuition_SizeWindow:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
         move.l  a0,a3
         move.l  WD_WSCREEN(a3),a4
-        move.w  WD_WIDTH(a3),d6      ; d6/d7 = ancienne taille
+        move.w  WD_WIDTH(a3),d6      ; d6/d7 = old size
         move.w  WD_HEIGHT(a3),d7
         move.w  d6,d2
         add.w   d0,d2
@@ -2937,7 +2938,7 @@ intuition_SizeWindow:
         bsr     it_clamp
         exg     d0,d3
         move.w  d2,d0
-        sub.w   d6,d0                ; d0/d1 = variation effective
+        sub.w   d6,d0                ; d0/d1 = effective change
         move.w  d3,d1
         sub.w   d7,d1
         move.w  d0,d4
@@ -2948,8 +2949,8 @@ intuition_SizeWindow:
         ext.l   d0
         ext.l   d1
         move.l  IB_LAYERSBASE(a5),a6
-        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO : le cadre, puis l'intérieur de la même variation (d6/d7 =
-        beq.s   .sw_in               ; ancienne taille, gardés pour wn_unborder)
+        move.l  WDX_BLAYER(a3),d4    ; GIMMEZEROZERO: the border, then the interior by the same change (d6/d7 =
+        beq.s   .sw_in               ; old size, kept for wn_unborder)
         movem.l d0-d1,-(sp)
         move.l  d4,a1
         suba.l  a0,a0
@@ -2972,8 +2973,8 @@ intuition_SizeWindow:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; WindowLimits(fenêtre a0, minW d0, minH d1, maxW d2, maxH d3) -> d0 = TRUE : limites du gadget de taille ; une
-; valeur nulle laisse la limite inchangée.
+; WindowLimits(window a0, minW d0, minH d1, maxW d2, maxH d3) -> d0 = TRUE: limits of the size gadget; a
+; zero value leaves the limit unchanged.
 intuition_WindowLimits:
         lea     WD_MINWIDTH(a0),a0
         tst.w   d0
@@ -2995,7 +2996,7 @@ intuition_WindowLimits:
         moveq   #1,d0
         rts
 
-; wn_gzz(a3 = fenêtre) : GZZWidth / GZZHeight = taille moins les bordures. Clobbe d0/d1.
+; wn_gzz(a3 = window): GZZWidth / GZZHeight = size minus the borders. Clobbers d0/d1.
 wn_gzz:
         moveq   #0,d0
         move.b  WD_BORDERLEFT(a3),d0
@@ -3015,18 +3016,18 @@ wn_gzz:
         move.w  d0,WD_GZZHEIGHT(a3)
         rts
 
-; wn_unborder(a3 = fenêtre, a5, d6/d7 = ancienne taille) : efface (stylo 0) les bandes de bordure droite / basse
-; touchées par le changement de taille, de min(ancienne, nouvelle) jusqu'aux nouveaux bords (ancienne bordure devenue
-; intérieure, ou intérieur passé sous la nouvelle bordure), et l'ancien gadget de taille ; wn_border redessine ensuite
-; le cadre. Clobbe d0-d5/a0/a1/a6.
+; wn_unborder(a3 = window, a5, d6/d7 = old size): erases (pen 0) the right / bottom border bands
+; touched by the size change, from min(old, new) up to the new edges (old border that became
+; interior, or interior that went under the new border), and the old size gadget; wn_border then redraws
+; the border. Clobbers d0-d5/a0/a1/a6.
 wn_unborder:
-        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS : rien à effacer
+        btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS: nothing to erase
         bne     .ub_ret
         move.l  IB_GFXBASE(a5),a6
         bsr     wn_brp
         moveq   #0,d0
         jsr     LVO_SETAPEN(a6)
-        move.w  WD_WIDTH(a3),d0      ; bande droite : [min(oldW, W) - BR, W - 1] x [BT, H - 1]
+        move.w  WD_WIDTH(a3),d0      ; right band: [min(oldW, W) - BR, W - 1] x [BT, H - 1]
         cmp.w   d6,d0
         ble.s   .ub_wmin
         move.w  d6,d0
@@ -3041,7 +3042,7 @@ wn_unborder:
         move.w  WD_HEIGHT(a3),d3
         subq.w  #1,d3
         bsr.s   .ub_fill
-        move.w  WD_HEIGHT(a3),d1     ; bande basse : [0, W - 1] x [min(oldH, H) - BB, H - 1]
+        move.w  WD_HEIGHT(a3),d1     ; bottom band: [0, W - 1] x [min(oldH, H) - BB, H - 1]
         cmp.w   d7,d1
         ble.s   .ub_hmin
         move.w  d7,d1
@@ -3056,7 +3057,7 @@ wn_unborder:
         subq.w  #1,d3
         bsr.s   .ub_fill
 .ub_gad:
-        btst    #0,WD_FLAGS+3(a3)    ; ancien gadget de taille
+        btst    #0,WD_FLAGS+3(a3)    ; old size gadget
         beq.s   .ub_ret
         move.w  d6,d0
         sub.w   #18,d0
@@ -3066,7 +3067,7 @@ wn_unborder:
         subq.w  #1,d2
         move.w  d7,d3
         subq.w  #1,d3
-.ub_fill:                            ; RectFill si le rectangle n'est pas vide
+.ub_fill:                            ; RectFill if the rectangle is not empty
         cmp.w   d0,d2
         blt.s   .ub_ret
         cmp.w   d1,d3
@@ -3076,14 +3077,14 @@ wn_unborder:
 .ub_ret:
         rts
 
-; wn_sendmsg(a3 = fenêtre, d0 = classe IDCMP, d1.w = code, d2.w/d3.w = souris relative) : si la fenêtre a demandé
-; cette classe, prend un IntuiMessage libre de sa réserve, l'horodate (compteur VBlank : 50 Hz) et l'envoie sur son
-; UserPort ; réserve épuisée : événement perdu. im_IAddress = la fenêtre ; wn_sendgad : im_IAddress = a0 (le gadget
-; de GADGETDOWN / GADGETUP) ; wn_sendkey : im_Qualifier = d4.w (RAWKEY). Clobbe d0/d1/d6/a0/a1/a6.
+; wn_sendmsg(a3 = window, d0 = IDCMP class, d1.w = code, d2.w/d3.w = relative mouse): if the window asked for
+; this class, takes a free IntuiMessage from its pool, timestamps it (VBlank counter: 50 Hz) and sends it on its
+; UserPort; pool exhausted: event lost. im_IAddress = the window; wn_sendgad: im_IAddress = a0 (the gadget
+; of GADGETDOWN / GADGETUP); wn_sendkey: im_Qualifier = d4.w (RAWKEY). Clobbers d0/d1/d6/a0/a1/a6.
 wn_sendmsg:
         move.l  a3,a0
 wn_sendgad:
-        clr.w   -(sp)                ; qualificatif
+        clr.w   -(sp)                ; qualifier
         bra.s   wn_post
 wn_sendkey:
         move.l  a3,a0
@@ -3093,8 +3094,8 @@ wn_post:
         beq     .sm_ret
         and.l   WD_IDCMPFLAGS(a3),d0
         beq     .sm_ret
-        move.l  WD_FIRSTREQUEST(a3),d6   ; requester sans NOISYREQ : touches, boutons, mouvements, tics et menus
-        beq.s   .sm_take                 ; sont avalés (spec intuition-requesters-v34 §3.2)
+        move.l  WD_FIRSTREQUEST(a3),d6   ; requester without NOISYREQ: keys, buttons, movements, ticks and menus
+        beq.s   .sm_take                 ; are swallowed (spec intuition-requesters-v34 §3.2)
         move.l  d6,a1
         btst    #2,RQ_FLAGS+1(a1)    ; NOISYREQ
         bne.s   .sm_take
@@ -3120,19 +3121,19 @@ wn_post:
         move.l  a0,IM_IADDRESS(a1)
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
-        move.l  GP_POLLS,d0          ; secondes / microsecondes depuis le démarrage (VBlanks)
+        move.l  GP_POLLS,d0          ; seconds / microseconds since startup (VBlanks)
         moveq   #0,d1
         swap    d0
         move.w  d0,d1
-        divu    #50,d1               ; division longue en deux temps (le quotient peut dépasser 16 bits)
+        divu    #50,d1               ; long division in two steps (the quotient may exceed 16 bits)
         move.w  d1,d6
         swap    d6
         swap    d0
         move.w  d0,d1
         divu    #50,d1
-        move.w  d1,d6                ; d6 = secondes
+        move.w  d1,d6                ; d6 = seconds
         swap    d1
-        mulu    #20000,d1            ; reste (1/50 s) -> microsecondes
+        mulu    #20000,d1            ; remainder (1/50 s) -> microseconds
         move.l  d6,IM_SECONDS(a1)
         move.l  d1,IM_MICROS(a1)
         move.l  a3,IM_IDCMPWINDOW(a1)
@@ -3143,10 +3144,10 @@ wn_post:
         addq.l  #2,sp
         rts
 
-; DoubleClick(secondes d0, micros d1, secondes d2, micros d3) -> d0 = TRUE si le second clic suit le premier de moins
-; que le délai de double-clic des Preferences (a6 = IntuitionBase).
+; DoubleClick(seconds d0, micros d1, seconds d2, micros d3) -> d0 = TRUE if the second click follows the first by less
+; than the double-click delay of the Preferences (a6 = IntuitionBase).
 intuition_DoubleClick:
-        sub.l   d0,d2                ; (d2, d3) = écart (secondes, microsecondes)
+        sub.l   d0,d2                ; (d2, d3) = gap (seconds, microseconds)
         bmi.s   .dc_no
         sub.l   d1,d3
         bpl.s   .dc_cmp
@@ -3166,17 +3167,17 @@ intuition_DoubleClick:
         moveq   #0,d0
         rts
 
-; NewScreen du Workbench
+; Workbench NewScreen
 sc_wbnewscreen:
         dc.w    0,0,640,256,2        ; LeftEdge, TopEdge, Width, Height, Depth
-        dc.b    2,1                  ; DetailPen (titres et gadgets : noir), BlockPen (barres : blanc)
+        dc.b    2,1                  ; DetailPen (titles and gadgets: black), BlockPen (bars: white)
         dc.w    V_HIRES              ; ViewModes
         dc.w    WBENCHSCREEN         ; Type
         dc.l    0                    ; Font
         dc.l    sc_wbtitle           ; DefaultTitle
         dc.l    0,0                  ; Gadgets, CustomBitMap
-; palette par défaut : thème du projet (fond vert pomme au lieu du bleu des préférences 1.3, blanc, noir, orange), puis
-; couleurs de remplissage (16..19 : pointeur)
+; default palette: project theme (apple-green background instead of the blue of the 1.3 preferences, white, black,
+; orange), then fill colors (16..19: pointer)
 sc_palette:
         dc.w    SC_BGCOLOR,$FFF,$000,$F80,$00F,$F0F,$0FF,$FFF
         dc.w    $620,$E50,$9F1,$EB0,$55F,$92F,$0F8,$CCC

@@ -1,42 +1,42 @@
-; src/exec/console.s — console.device (#3a : rendu texte à l'écran via blitter de glyphes 8x8).
+; src/exec/console.s — console.device (#3a: on-screen text rendering by blitting 8x8 glyphs).
 ;
-; ROMTag RTF_AUTOINIT NT_DEVICE pri 20 -> MakeLibrary (chemin AUTOINIT) crée la base, Enqueue dans EB_DEVICELIST.
-; initfunc alloue un BITPLANE 1-plan (CON_BMSIZE octets, chip RAM) et l'état texte (curseur). BeginIO dispatche :
-;   CMD_WRITE (io_Data=buf, io_Length=len) : interprète le flux octet par octet (con_putglyph) — caractère
-;     imprimable -> BLIT du glyphe 8x8 (copie CPU de 8 octets depuis font8x8 dans le bitplane à (curx,cury)) +
-;     avance colonne ; CR -> colonne 0 ; LF / dépassement de colonne -> ligne suivante (+8 px, clampée).
-; Blitter = COPIE CPU synchrone (pas le Blitter matériel) : simple ET immédiat (le readback de preuve voit les
-; octets tout de suite, pas d'attente blitter-done). graphics.library n'a pas de Text() -> rendu fait ici.
+; ROMTag RTF_AUTOINIT NT_DEVICE pri 20 -> MakeLibrary (AUTOINIT path) creates the base, Enqueue into EB_DEVICELIST.
+; initfunc allocates a 1-plane BITPLANE (CON_BMSIZE bytes, chip RAM) and the text state (cursor). BeginIO dispatches:
+;   CMD_WRITE (io_Data=buf, io_Length=len): interprets the stream byte by byte (con_putglyph) — printable
+;     character -> BLIT of the 8x8 glyph (CPU copy of 8 bytes from font8x8 into the bitplane at (curx,cury)) +
+;     advances the column; CR -> column 0; LF / column overflow -> next line (+8 px, clamped).
+; Blitter = synchronous CPU COPY (not the hardware Blitter): simple AND immediate (the proof readback sees the
+; bytes at once, no blitter-done wait). graphics.library has no Text() -> rendering done here.
 ;
-; Portée #3a : rendu WRITE prouvé par READBACK du bitplane (headless, marqueur série « CONSOLE WRITE OK ») ; le
-; rendu À L'ÉCRAN (pointer le Copper sur ce bitplane) et la lecture clavier (#3b, via input.device) sont séparés.
-; Déviations assumées : pas de scrolling (clamp en bas), pas de séquences CSI/ANSI, pas de curseur visible.
-; Police 8x8 HAND-AUTHORED (domaine public, tests/mk_font8x8.py) — JAMAIS la topaz de la ROM (clean-room).
-; Piste IMPLÉMENTATION (« clean ») : AutoDocs console.device + includes NDK publics. AUCUNE lecture ROM.
+; Scope #3a: WRITE rendering proven by READBACK of the bitplane (headless, serial marker "CONSOLE WRITE OK"); the
+; ON-SCREEN rendering (pointing the Copper at this bitplane) and keyboard reading (#3b, via input.device) are separate.
+; Accepted deviations: no scrolling (clamped at the bottom), no CSI/ANSI sequences, no visible cursor.
+; HAND-AUTHORED 8x8 font (public domain, tests/mk_font8x8.py) — NEVER the ROM's topaz (clean-room).
+; IMPLEMENTATION track ("clean"): AutoDocs console.device + public NDK includes. NO ROM reading.
 
                 include "exec.i"
                 include "graphics.i"
                 include "intuition.i"
 
-                xref    font8x8          ; graphics/font8x8.s (glyphes 8x8, ASCII 0x20..0x7F)
-                xref    kbd_cook         ; exec/keymap.s (#5 : cook keycode(+qualifiers)->ASCII, US/AZERTY)
+                xref    font8x8          ; graphics/font8x8.s (8x8 glyphs, ASCII 0x20..0x7F)
+                xref    kbd_cook         ; exec/keymap.s (#5: cook keycode(+qualifiers)->ASCII, US/AZERTY)
 
-CMD_READ     EQU 2                ; io_Command standard (io.i : READ=2, WRITE=3)
+CMD_READ     EQU 2                ; standard io_Command (io.i: READ=2, WRITE=3)
 CMD_WRITE    EQU 3
-IO_DATA2     EQU 40               ; IOStdReq io_Data (local : console.s n'inclut pas disk.i)
+IO_DATA2     EQU 40               ; IOStdReq io_Data (local: console.s does not include disk.i)
 IO_LEN2      EQU 36               ; IOStdReq io_Length
 IO_ACTUAL2   EQU 32               ; IOStdReq io_Actual
 
-; --- ROMTag console.device (scanné par build_reslist) ---
+; --- console.device ROMTag (scanned by build_reslist) ---
                 EVEN
 console_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    console_romtag       ; RT_MATCHTAG = self
         dc.l    console_end          ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,20  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20 : place roadmap console)
+        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_DEVICE,20  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI (20: console roadmap slot)
         dc.l    console_name         ; RT_NAME
         dc.l    console_name         ; RT_IDSTRING
-        dc.l    console_inittab      ; RT_INIT -> table AUTOINIT
+        dc.l    console_inittab      ; RT_INIT -> AUTOINIT table
 console_name:
         dc.b    "console.device",0
         EVEN
@@ -45,15 +45,15 @@ console_inittab:
         dc.l    console_vectors      ; funcTable
         dc.l    console_datatab      ; dataTable (InitStruct)
         dc.l    console_initfunc     ; initFunc
-console_vectors:                     ; table ABSOLUE, terminée par -1 (ordre device standard)
+console_vectors:                     ; ABSOLUTE table, terminated by -1 (standard device order)
         dc.l    console_open         ; LVO -6
         dc.l    console_close        ; LVO -12
         dc.l    console_expunge      ; LVO -18
-        dc.l    console_null         ; LVO -24 (réservé)
+        dc.l    console_null         ; LVO -24 (reserved)
         dc.l    console_beginio      ; LVO -30
         dc.l    console_abortio      ; LVO -36
-        dc.l    console_null         ; LVO -42 CDInputHandler (non impl.)
-        dc.l    console_rawkeyconvert ; LVO -48 RawKeyConvert(events a0, buffer a1, longueur d1, keymap a2)
+        dc.l    console_null         ; LVO -42 CDInputHandler (not impl.)
+        dc.l    console_rawkeyconvert ; LVO -48 RawKeyConvert(events a0, buffer a1, length d1, keymap a2)
         dc.l    -1
 console_datatab:
         dc.w    $E000,LN_TYPE,(NT_DEVICE<<8)   ; INITBYTE(LN_TYPE, NT_DEVICE)
@@ -61,15 +61,15 @@ console_datatab:
         dc.b    0
         EVEN
 
-; Open(iorequest a1, unité d0, flags d1) : io_Data = fenêtre (NEWCON:, CON:) -> io_Unit = ConUnit allouée pour
-; cette fenêtre (devices/conunit.h : cu_Window, curseur, bornes de la zone de texte) ; io_Data = 0 -> io_Unit = la
-; base (bitplane partagé, sans fenêtre). Les requêtes d'une unité ouverte suivent la sémantique exec standard
-; (réponse ReplyMsg hors IOF_QUICK, CMD_READ mis en attente tant qu'aucun caractère n'est arrivé).
+; Open(iorequest a1, unit d0, flags d1): io_Data = window (NEWCON:, CON:) -> io_Unit = ConUnit allocated for
+; that window (devices/conunit.h: cu_Window, cursor, bounds of the text area); io_Data = 0 -> io_Unit = the
+; base (shared bitplane, without window). The requests of an open unit follow the standard exec semantics
+; (ReplyMsg reply unless IOF_QUICK, CMD_READ put on hold as long as no character has arrived).
 console_open:
         movem.l a2/a6,-(sp)
         move.l  a1,a2
         clr.b   IO_ERROR(a2)
-        addq.l  #1,d0                ; unité -1 (CONU_LIBRARY) : pas de fenêtre, base seule (RawKeyConvert)
+        addq.l  #1,d0                ; unit -1 (CONU_LIBRARY): no window, base only (RawKeyConvert)
         beq.s   .co_lib
         move.l  IO_DATA2(a2),d0
         bne.s   .co_win
@@ -81,7 +81,7 @@ console_open:
         move.l  #CU_SIZE,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
-        move.l  4(sp),a6             ; a6 = base console
+        move.l  4(sp),a6             ; a6 = console base
         tst.l   d0
         bne.s   .co_unit
         move.b  #-1,IO_ERROR(a2)     ; IOERR_OPENFAIL
@@ -91,10 +91,10 @@ console_open:
         move.l  IO_DATA2(a2),a1
         bsr     cu_init
         move.l  a0,IO_UNIT(a2)
-        move.l  a0,-(sp)             ; unité chaînée dans CONB_UNITS (routage des touches vers la fenêtre active)
+        move.l  a0,-(sp)             ; unit linked into CONB_UNITS (routing of keys to the active window)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        move.l  4+4(sp),a1           ; a1 = base console
+        move.l  4+4(sp),a1           ; a1 = console base
         move.l  (sp),a0
         move.l  CONB_UNITS(a1),CU_NEXT(a0)
         move.l  a0,CONB_UNITS(a1)
@@ -106,20 +106,20 @@ console_open:
 .co_ret:
         movem.l (sp)+,a2/a6
         rts
-; RawKeyConvert(events a0, buffer a1, longueur d1, keymap a2 ignorée : keymap active) -> d0 = caractères écrits, -1 si
-; le tampon est trop court. Un appui RAWKEY donne son caractère (kbd_cook : Shift/Caps/Ctrl) ; flèches, F1-F10 et Help
-; donnent leur séquence CSI ($9B) comme la console ; relâchement et autres classes : 0.
+; RawKeyConvert(events a0, buffer a1, length d1, keymap a2 ignored: active keymap) -> d0 = characters written, -1 if
+; the buffer is too short. A RAWKEY press gives its character (kbd_cook: Shift/Caps/Ctrl); arrows, F1-F10 and Help
+; give their CSI ($9B) sequence like the console; release and other classes: 0.
 console_rawkeyconvert:
         movem.l d2-d3/a2,-(sp)
-        move.l  d1,d3                ; d3 = place disponible
+        move.l  d1,d3                ; d3 = space available
         moveq   #0,d0
         cmp.b   #IECLASS_RAWKEY,IE_CLASS(a0)
         bne.s   .rk_ret
         move.w  IE_CODE(a0),d2
-        btst    #7,d2                ; relâchement
+        btst    #7,d2                ; release
         bne.s   .rk_ret
         move.w  IE_QUALIFIER(a0),d1
-        lea     rk_seq(pc),a2        ; touches à séquence : [code, normal, shifté] (chaînes après CSI)
+        lea     rk_seq(pc),a2        ; keys with a sequence: [code, normal, shifted] (strings after CSI)
 .rk_find:
         move.b  (a2)+,d0
         bmi.s   .rk_cook
@@ -128,10 +128,10 @@ console_rawkeyconvert:
         addq.l  #4,a2
         bra.s   .rk_find
 .rk_seq:
-        move.b  (a2)+,d0             ; décalage de la chaîne normale
+        move.b  (a2)+,d0             ; offset of the normal string
         and.w   #KQ_SHIFT,d1
         beq.s   .rk_ns
-        move.b  (a2),d0              ; décalage de la chaîne shiftée
+        move.b  (a2),d0              ; offset of the shifted string
 .rk_ns:
         ext.w   d0
         lea     rk_str(pc,d0.w),a2
@@ -163,7 +163,7 @@ console_rawkeyconvert:
 .rk_ret:
         movem.l (sp)+,d2-d3/a2
         rts
-rk_seq:                              ; code, décalage normal, décalage shifté, bourrage
+rk_seq:                              ; code, normal offset, shifted offset, padding
         dc.b    $4C,rk_up-rk_str,rk_sup-rk_str,0
         dc.b    $4D,rk_dn-rk_str,rk_sdn-rk_str,0
         dc.b    $4E,rk_rt-rk_str,rk_srt-rk_str,0
@@ -212,7 +212,7 @@ rk_sf10: dc.b   "19~",0
 rk_hlp: dc.b    "?~",0
         even
 
-; Close(iorequest a1) : libère la ConUnit d'une unité fenêtre.
+; Close(iorequest a1): frees the ConUnit of a window unit.
 console_close:
         subq.w  #1,LIB_OPENCNT(a6)
         move.l  IO_UNIT(a1),d0
@@ -224,7 +224,7 @@ console_close:
         move.l  d0,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        move.l  4(sp),a0             ; a0 = base console : unité retirée de CONB_UNITS
+        move.l  4(sp),a0             ; a0 = console base: unit removed from CONB_UNITS
         lea     CONB_UNITS(a0),a0
         move.l  (sp),d0
 .cc_find:
@@ -253,13 +253,13 @@ console_expunge:
 console_null:
         moveq   #0,d0
         rts
-; AbortIO(iorequest a1) : retire un CMD_READ en attente (io_Error = IOERR_ABORTED) et y répond. -> d0 = 0.
+; AbortIO(iorequest a1): removes a pending CMD_READ (io_Error = IOERR_ABORTED) and replies to it. -> d0 = 0.
 console_abortio:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        lea     CONB_RQ(a2),a0       ; a0 = maillon précédent (LN_SUCC à l'offset 0)
+        lea     CONB_RQ(a2),a0       ; a0 = previous link (LN_SUCC at offset 0)
 .ca_lp:
         move.l  (a0),d0
         beq.s   .ca_none
@@ -268,7 +268,7 @@ console_abortio:
         move.l  d0,a0
         bra.s   .ca_lp
 .ca_found:
-        move.l  (a1),(a0)            ; décroche
+        move.l  (a1),(a0)            ; unhook
         move.b  #IOERR_ABORTED,IO_ERROR(a1)
         jsr     LVO_ENABLE(a6)
         jsr     LVO_REPLYMSG(a6)
@@ -280,14 +280,14 @@ console_abortio:
         movem.l (sp)+,a2/a6
         rts
 
-; console_beginio(device a6, ioreq a1) : CMD_WRITE -> rend le flux. Synchrone. a6 ressort = base device.
+; console_beginio(device a6, ioreq a1): CMD_WRITE -> renders the stream. Synchronous. a6 on exit = device base.
 console_beginio:
         movem.l d4/a2-a4,-(sp)
-        move.l  a6,a2                ; a2 = base device (= état console)
+        move.l  a6,a2                ; a2 = device base (= console state)
         move.l  a1,a3                ; a3 = ioreq
         clr.b   IO_ERROR(a3)
         tst.l   IO_UNIT(a3)
-        bne     .bi_unit             ; unité ouverte : sémantique asynchrone
+        bne     .bi_unit             ; open unit: asynchronous semantics
         move.w  IO_COMMAND(a3),d0
         cmp.w   #CMD_WRITE,d0
         beq.s   .bi_write
@@ -297,24 +297,24 @@ console_beginio:
         bra.s   .bi_done
 .bi_write:
         move.l  IO_DATA2(a3),a4      ; a4 = buffer
-        move.l  IO_LEN2(a3),d4       ; d4 = longueur
+        move.l  IO_LEN2(a3),d4       ; d4 = length
 .bi_wl:
         tst.l   d4
         beq.s   .bi_done
         move.b  (a4)+,d0
-        bsr     con_putglyph         ; rend un octet (a2 = base ; clobbe d0/d1/a0/a1)
+        bsr     con_putglyph         ; renders one byte (a2 = base; clobbers d0/d1/a0/a1)
         subq.l  #1,d4
         bra.s   .bi_wl
-.bi_read:                            ; #3b : draine le read buffer (ASCII cuit via input.device) vers io_Data
+.bi_read:                            ; #3b: drains the read buffer (ASCII cooked via input.device) into io_Data
         move.l  IO_DATA2(a3),a4      ; dest
         move.l  IO_LEN2(a3),d4       ; max
-        moveq   #0,d0                ; compte lu
+        moveq   #0,d0                ; count read
 .bi_rl:
         tst.l   d4
         beq.s   .bi_rdone
         move.w  CONB_RHEAD(a2),d1
         cmp.w   CONB_RTAIL(a2),d1
-        beq.s   .bi_rdone            ; read buffer vide
+        beq.s   .bi_rdone            ; read buffer empty
         lea     CONB_RBUF(a2),a0
         move.b  0(a0,d1.w),(a4)+
         addq.w  #1,d1
@@ -324,12 +324,12 @@ console_beginio:
         subq.l  #1,d4
         bra.s   .bi_rl
 .bi_rdone:
-        move.l  d0,IO_ACTUAL2(a3)    ; io_Actual = octets lus
+        move.l  d0,IO_ACTUAL2(a3)    ; io_Actual = bytes read
 .bi_done:
-        move.l  a2,a6                ; a6 = base device (convention BeginIO)
+        move.l  a2,a6                ; a6 = device base (BeginIO convention)
         movem.l (sp)+,d4/a2-a4
         rts
-; --- unité ouverte (requête issue d'OpenDevice) : appelants synchrones directs = IO_UNIT nul (chemin ci-dessus) ---
+; --- open unit (request from OpenDevice): direct synchronous callers = null IO_UNIT (path above) ---
 .bi_unit:
         move.w  IO_COMMAND(a3),d0
         cmp.w   #CMD_WRITE,d0
@@ -341,7 +341,7 @@ console_beginio:
 .bu_write:
         move.l  IO_DATA2(a3),a4
         move.l  IO_LEN2(a3),d4
-        cmp.l   #-1,d4               ; io_Length = -1 : chaîne terminée par 0
+        cmp.l   #-1,d4               ; io_Length = -1: 0-terminated string
         bne.s   .bu_len
         moveq   #0,d4
         move.l  a4,a0
@@ -354,10 +354,10 @@ console_beginio:
         move.l  d4,IO_ACTUAL2(a3)
         move.l  IO_UNIT(a3),a0
         cmp.l   a2,a0
-        beq.s   .bu_wl               ; unité sans fenêtre : bitplane partagé
+        beq.s   .bu_wl               ; unit without window: shared bitplane
         move.l  CU_WINDOW(a0),a1
         tst.l   WD_RPORT(a1)
-        beq.s   .bu_wl               ; fenêtre sans RastPort : bitplane partagé
+        beq.s   .bu_wl               ; window without RastPort: shared bitplane
         tst.l   CONB_GFXBASE(a2)
         beq.s   .bu_wl
         bsr     cu_write
@@ -372,18 +372,18 @@ console_beginio:
 .bu_read:
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
-        bsr     con_target           ; une console a la fenêtre active : seules ses lectures prennent les touches
+        bsr     con_target           ; a console has the active window: only its reads take the keys
         beq.s   .bu_rany
         cmp.l   IO_UNIT(a3),d0
         bne.s   .bu_queue
 .bu_rany:
         move.l  a3,a1
-        bsr     con_fillread         ; d0 = octets copiés
+        bsr     con_fillread         ; d0 = bytes copied
         tst.l   d0
         bne.s   .bu_rgot
 .bu_queue:
-        bclr    #0,IO_FLAGS(a3)      ; rien à lire : en attente (réponse par le handler d'input)
-        clr.l   (a3)                 ; LN_SUCC = fin de file
+        bclr    #0,IO_FLAGS(a3)      ; nothing to read: on hold (reply by the input handler)
+        clr.l   (a3)                 ; LN_SUCC = end of queue
         lea     CONB_RQ(a2),a0
 .bu_tail:
         tst.l   (a0)
@@ -397,15 +397,15 @@ console_beginio:
 .bu_rgot:
         jsr     LVO_ENABLE(a6)
 .bu_reply:
-        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK : terminé sur place
+        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK: completed in place
         bne     .bi_done
         move.l  ($4).w,a6
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
         bra     .bi_done
 
-; con_fillread(a1 = CMD_READ, a2 = base) : copie le read buffer dans io_Data (max io_Length) -> d0 = octets copiés
-; = io_Actual. Appelé sous Disable. Clobbe d1/a0.
+; con_fillread(a1 = CMD_READ, a2 = base): copies the read buffer into io_Data (max io_Length) -> d0 = bytes copied
+; = io_Actual. Called under Disable. Clobbers d1/a0.
 con_fillread:
         movem.l d2/a3,-(sp)
         move.l  IO_DATA2(a1),a3
@@ -430,20 +430,20 @@ con_fillread:
         movem.l (sp)+,d2/a3
         rts
 
-; con_putglyph(d0.b = caractère, a2 = base console) : rend un octet. Clobbe d0/d1/a0/a1 ; préserve le reste
-; (sauve d2/d3 pour le blit). CR -> colonne 0 ; LF / wrap -> ligne suivante (+8, clampée) ; imprimable -> blit.
+; con_putglyph(d0.b = character, a2 = console base): renders one byte. Clobbers d0/d1/a0/a1; preserves the rest
+; (saves d2/d3 for the blit). CR -> column 0; LF / wrap -> next line (+8, clamped); printable -> blit.
 con_putglyph:
-        tst.b   CONB_ESC(a2)         ; séquence ESC / CSI en cours : ignorée (pas d'interprétation ANSI)
+        tst.b   CONB_ESC(a2)         ; ESC / CSI sequence in progress: ignored (no ANSI interpretation)
         beq.s   .cpg_plain
         cmp.b   #1,CONB_ESC(a2)
         bne.s   .cpg_csi
-        move.b  #2,CONB_ESC(a2)      ; ESC suivi de '[' = CSI ; autre caractère = fin de séquence
+        move.b  #2,CONB_ESC(a2)      ; ESC followed by '[' = CSI; other character = end of sequence
         cmp.b   #'[',d0
         beq     .cpg_ret
         clr.b   CONB_ESC(a2)
         rts
 .cpg_csi:
-        cmp.b   #$40,d0              ; octet final d'un CSI : $40..$7E
+        cmp.b   #$40,d0              ; final byte of a CSI: $40..$7E
         blo     .cpg_ret
         cmp.b   #$7E,d0
         bhi     .cpg_ret
@@ -465,14 +465,14 @@ con_putglyph:
         cmp.b   #10,d0
         beq     .cpg_nl
         cmp.b   #$20,d0
-        blo     .cpg_ret             ; contrôle (<space) non géré -> ignore
+        blo     .cpg_ret             ; control (<space) not handled -> ignore
         cmp.b   #$7F,d0
         bhi     .cpg_ret
                 ifeq    CON_NO_BLIT
         move.l  CONB_BITMAP(a2),d1
         bne.s   .cpg_have
-        movem.l d0/a6,-(sp)          ; bitplane de l'unité sans fenêtre : alloué à la première écriture (10 Ko de
-        move.l  ($4).w,a6            ; chip que les systèmes à fenêtres n'utilisent jamais)
+        movem.l d0/a6,-(sp)          ; bitplane of the windowless unit: allocated at the first write (10 KB of
+        move.l  ($4).w,a6            ; chip that windowed systems never use)
         move.l  #CON_BMSIZE,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -480,18 +480,18 @@ con_putglyph:
         move.l  d0,d1
         movem.l (sp)+,d0/a6
         tst.l   d1
-        beq.s   .cpg_advance         ; pas de bitplane (alloc échouée) -> n'écrit pas, avance quand même
+        beq.s   .cpg_advance         ; no bitplane (alloc failed) -> does not write, advances anyway
 .cpg_have:
         movem.l d2/d3,-(sp)
         moveq   #0,d1
         move.b  d0,d1
         subi.w  #$20,d1
-        lsl.w   #3,d1                ; (char-0x20)*8 = offset du glyphe
+        lsl.w   #3,d1                ; (char-0x20)*8 = glyph offset
         move.l  #font8x8,a0
-        add.l   d1,a0                ; a0 = glyphe (8 octets)
+        add.l   d1,a0                ; a0 = glyph (8 bytes)
         move.l  CONB_BITMAP(a2),a1
         moveq   #0,d2
-        move.w  CONB_BWIDTH(a2),d2   ; d2 = stride (octets/ligne)
+        move.w  CONB_BWIDTH(a2),d2   ; d2 = stride (bytes/line)
         moveq   #0,d1
         move.w  CONB_CURY(a2),d1
         mulu    d2,d1                ; cury * stride (cury<256, stride=40 -> <10240)
@@ -499,45 +499,46 @@ con_putglyph:
         moveq   #0,d1
         move.w  CONB_CURX(a2),d1
         add.l   d1,a1                ; a1 = dest = bitplane + cury*stride + curx
-        moveq   #7,d3                ; 8 lignes
+        moveq   #7,d3                ; 8 lines
 .cpg_row:
-        move.b  (a0)+,(a1)           ; octet glyphe -> bitplane
-        add.w   d2,a1                ; ligne suivante (+stride)
+        move.b  (a0)+,(a1)           ; glyph byte -> bitplane
+        add.w   d2,a1                ; next line (+stride)
         dbra    d3,.cpg_row
         movem.l (sp)+,d2/d3
-                endc                 ; RED CON_NO_BLIT : blit sauté -> cellules non-espace restent à 0
+                endc                 ; RED CON_NO_BLIT: blit skipped -> non-space cells stay at 0
 .cpg_advance:
-        addq.w  #1,CONB_CURX(a2)     ; avance la colonne
+        addq.w  #1,CONB_CURX(a2)     ; advance the column
         cmp.w   #CON_COLS,CONB_CURX(a2)
         blo.s   .cpg_ret
-        clr.w   CONB_CURX(a2)        ; dépassement -> colonne 0 + ligne suivante
+        clr.w   CONB_CURX(a2)        ; overflow -> column 0 + next line
         bra.s   .cpg_nl
 .cpg_cr:
-        clr.w   CONB_CURX(a2)        ; retour chariot
+        clr.w   CONB_CURX(a2)        ; carriage return
         bra.s   .cpg_ret
 .cpg_nl:
-        move.w  CONB_CURY(a2),d0     ; ligne suivante (+8 px)
+        move.w  CONB_CURY(a2),d0     ; next line (+8 px)
         add.w   #8,d0
         cmp.w   #CON_PXH,d0
         blo.s   .cpg_sety
-        move.w  #CON_PXH-8,d0        ; clamp en bas (pas de scroll ce milestone)
+        move.w  #CON_PXH-8,d0        ; clamp at the bottom (no scroll this milestone)
 .cpg_sety:
         move.w  d0,CONB_CURY(a2)
 .cpg_ret:
         rts
 
-; console_input_handler(a0 = liste d'InputEvents, a1 = is_Data = base console) : #3b — handler enregistré sur
-; input.device via IND_ADDHANDLER. Cuit chaque RAWKEY key-down (keycode -> ASCII via kbd_keymap) et le pousse dans
-; le read buffer de console.device (que CMD_READ ressert). Rend d0 = liste inchangée (pass-through). Convention
-; handler : préserve d2-d7/a2-a6 (on sauve d2/d3/a2/a3). Cook minimal (keymap US de F2b ; shift/ctrl = keymap.resource #5).
+; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): #3b — handler registered on
+; input.device via IND_ADDHANDLER. Cooks each key-down RAWKEY (keycode -> ASCII via kbd_keymap) and pushes it into
+; the read buffer of console.device (which CMD_READ serves). Returns d0 = unchanged list (pass-through). Handler
+; convention: preserves d2-d7/a2-a6 (we save d2/d3/a2/a3). Minimal cook (F2b US keymap; shift/ctrl =
+; keymap.resource #5).
 console_input_handler:
         movem.l d2/d3/a2/a3,-(sp)
-        move.l  a0,d3                ; d3 = liste originale (retour pass-through)
-        move.l  a1,a2                ; a2 = base console
-        move.l  a0,a3                ; a3 = event courant
+        move.l  a0,d3                ; d3 = original list (pass-through return)
+        move.l  a1,a2                ; a2 = console base
+        move.l  a0,a3                ; a3 = current event
 .cih_loop:
         move.l  a3,d0
-        beq.s   .cih_done            ; NextEvent == 0 -> fin de liste
+        beq.s   .cih_done            ; NextEvent == 0 -> end of list
         cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
         bne.s   .cih_next
         move.w  IE_CODE(a3),d2       ; keycode (bit 7 = up/down)
@@ -545,40 +546,40 @@ console_input_handler:
         bne.s   .cih_next            ; key-up -> ignore
         and.w   #$007F,d2
         move.l  d2,d0                ; d0 = keycode
-        move.w  IE_QUALIFIER(a3),d1  ; d1 = qualifieurs de l'event (shift/caps/ctrl)
-        jsr     kbd_cook             ; #5 : cuisson via keymap active (préserve d2/a0/a1)
-        move.b  d0,d2                ; d2.b = ASCII cuit (0 = non mappé)
+        move.w  IE_QUALIFIER(a3),d1  ; d1 = qualifiers of the event (shift/caps/ctrl)
+        jsr     kbd_cook             ; #5: cooking via the active keymap (preserves d2/a0/a1)
+        move.b  d0,d2                ; d2.b = cooked ASCII (0 = unmapped)
         beq.s   .cih_next
                 ifeq    CON_NO_READBUF
-        move.w  CONB_RTAIL(a2),d0    ; push ASCII dans le read buffer
+        move.w  CONB_RTAIL(a2),d0    ; push ASCII into the read buffer
         move.w  d0,d1
         addq.w  #1,d1
         and.w   #CON_RBMASK,d1
         cmp.w   CONB_RHEAD(a2),d1
-        beq.s   .cih_next            ; plein -> drop
+        beq.s   .cih_next            ; full -> drop
         lea     CONB_RBUF(a2),a0
         move.b  d2,0(a0,d0.w)
         move.w  d1,CONB_RTAIL(a2)
-        bsr     con_servereads       ; un CMD_READ d'unité ouverte attendait : servi et répondu
-                endc                 ; RED CON_NO_READBUF : cuit mais ne bufferise pas -> CMD_READ vide
+        bsr     con_servereads       ; a CMD_READ of an open unit was waiting: served and replied
+                endc                 ; RED CON_NO_READBUF: cooks but does not buffer -> empty CMD_READ
 .cih_next:
-        move.l  IE_NEXTEVENT(a3),a3  ; event suivant
+        move.l  IE_NEXTEVENT(a3),a3  ; next event
         bra.s   .cih_loop
 .cih_done:
-        move.l  d3,d0                ; rend la liste originale (pass-through)
+        move.l  d3,d0                ; return the original list (pass-through)
         movem.l (sp)+,d2/d3/a2/a3
         rts
 
-; con_servereads(a2 = base) : si un CMD_READ attend et que le read buffer a des octets, le remplit, le décroche
-; et y répond. Si la fenêtre active est celle d'une console, seule une lecture de cette unité est servie (sinon les
-; touches attendent dans le tampon) ; sinon la tête de file. Préserve d2-d7/a2-a6.
+; con_servereads(a2 = base): if a CMD_READ is waiting and the read buffer has bytes, fills it, unhooks it
+; and replies to it. If the active window is that of a console, only a read from that unit is served (otherwise the
+; keys wait in the buffer); otherwise the head of the queue. Preserves d2-d7/a2-a6.
 con_servereads:
         movem.l a3-a4/a6,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
         bsr     con_target
-        move.l  d0,d1                ; d1 = unité visée | 0
-        lea     CONB_RQ(a2),a4       ; a4 = maillon précédent
+        move.l  d0,d1                ; d1 = targeted unit | 0
+        lea     CONB_RQ(a2),a4       ; a4 = previous link
 .sr_find:
         move.l  (a4),d0
         beq.s   .sr_none
@@ -594,7 +595,7 @@ con_servereads:
         bsr     con_fillread
         tst.l   d0
         beq.s   .sr_none
-        move.l  (a3),(a4)            ; décroche la requête servie
+        move.l  (a3),(a4)            ; unhook the served request
         jsr     LVO_ENABLE(a6)
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
@@ -605,9 +606,9 @@ con_servereads:
         movem.l (sp)+,a3-a4/a6
         rts
 
-; con_target(a2 = base) -> d0 = ConUnit dont la fenêtre est la fenêtre active d'intuition, 0 sinon (Z en
-; conséquence). IntuitionBase est cherchée dans la liste des bibliothèques au premier besoin. Appelé sous Disable.
-; Préserve tout sauf d0.
+; con_target(a2 = base) -> d0 = ConUnit whose window is intuition's active window, 0 otherwise (Z
+; accordingly). IntuitionBase is looked up in the library list on first need. Called under Disable.
+; Preserves everything except d0.
 con_target:
         movem.l d1/a0-a1/a6,-(sp)
         move.l  CONB_IBASE(a2),d0
@@ -620,7 +621,7 @@ con_target:
         beq.s   .tg_ret
 .tg_have:
         move.l  d0,a0
-        move.l  52(a0),d1            ; ib_ActiveWindow (offset public)
+        move.l  52(a0),d1            ; ib_ActiveWindow (public offset)
         beq.s   .tg_no
         move.l  CONB_UNITS(a2),d0
 .tg_lp:
@@ -640,12 +641,12 @@ console_intname:
         dc.b    "intuition.library",0
         even
 
-; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Pose le nom, alloue le bitplane, init l'état,
-; et ENREGISTRE le handler d'input sur input.device (IND_ADDHANDLER) -> le clavier (via input.device) alimentera
-; le read buffer. input.device (pri 40) est inité AVANT console (pri 20) -> présent à ce stade.
+; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Sets the name, allocates the bitplane, inits the state,
+; and REGISTERS the input handler on input.device (IND_ADDHANDLER) -> the keyboard (via input.device) will feed
+; the read buffer. input.device (pri 40) is initialised BEFORE console (pri 20) -> present at this point.
 console_initfunc:
         movem.l d2/a2/a3,-(sp)
-        move.l  d0,a2                ; a2 = base device
+        move.l  d0,a2                ; a2 = device base
         lea     console_name(pc),a0
         move.l  a0,LN_NAME(a2)
         move.w  #CON_BYTEW,CONB_BWIDTH(a2)
@@ -654,22 +655,22 @@ console_initfunc:
         clr.w   CONB_CURY(a2)
         clr.w   CONB_RHEAD(a2)
         clr.w   CONB_RTAIL(a2)
-        lea     EB_LIBLIST(a6),a0    ; GfxBase (graphics.library, pri 65, initialisée avant console, pri 20)
+        lea     EB_LIBLIST(a6),a0    ; GfxBase (graphics.library, pri 65, initialised before console, pri 20)
         lea     console_gfxname(pc),a1
         jsr     LVO_FINDNAME(a6)
         move.l  d0,CONB_GFXBASE(a2)
-        ; prépare le struct Interrupt du handler (dans la base) + enregistre sur input.device
+        ; prepares the handler's struct Interrupt (in the base) + registers it on input.device
         move.b  #0,CONB_INT+LN_PRI(a2)
         move.l  #console_input_handler,CONB_INT+IS_CODE(a2)
-        move.l  a2,CONB_INT+IS_DATA(a2)     ; is_Data = base console (reçu en a1 par le handler)
+        move.l  a2,CONB_INT+IS_DATA(a2)     ; is_Data = console base (received in a1 by the handler)
         lea     EB_DEVICELIST(a6),a0
         lea     console_inputdev(pc),a1     ; FindName("input.device")
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq.s   .ci_done
-        move.l  d0,a3                        ; a3 = base input.device
-        move.l  a3,-(sp)                     ; (AllocMem clobbe a0/a1/d0/d1 ; a2/a3 préservés)
-        move.l  #64,d0                        ; ioreq temporaire
+        move.l  d0,a3                        ; a3 = input.device base
+        move.l  a3,-(sp)                     ; (AllocMem clobbers a0/a1/d0/d1; a2/a3 preserved)
+        move.l  #64,d0                        ; temporary ioreq
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  (sp)+,a3
@@ -680,15 +681,15 @@ console_initfunc:
         move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
         lea     CONB_INT(a2),a0
         move.l  a0,IO_DATA2(a1)
-        move.l  a1,-(sp)                     ; sauve ioreq (pour le free)
-        move.l  a3,a6                        ; a6 = base input.device pour BeginIO
-        jsr     -30(a6)                      ; input BeginIO IND_ADDHANDLER (Enqueue CONB_INT dans la chaîne)
-        move.l  ($4).w,a6                    ; restaure a6 = SysBase
+        move.l  a1,-(sp)                     ; save ioreq (for the free)
+        move.l  a3,a6                        ; a6 = input.device base for BeginIO
+        jsr     -30(a6)                      ; input BeginIO IND_ADDHANDLER (Enqueue CONB_INT into the chain)
+        move.l  ($4).w,a6                    ; restore a6 = SysBase
         move.l  (sp)+,a1                     ; ioreq
         move.l  #64,d0
         jsr     LVO_FREEMEM(a6)
 .ci_done:
-        move.l  a2,d0                ; retourne la base
+        move.l  a2,d0                ; return the base
         movem.l (sp)+,d2/a2/a3
         rts
 
@@ -698,14 +699,14 @@ console_gfxname:
         dc.b    "graphics.library",0
         EVEN
 
-; === unités fenêtre (ConUnit) : rendu dans le RastPort de la fenêtre via graphics.library ===
-; Zone de texte = intérieur de la fenêtre (bordures exclues), cellules 8x8. Contrôles : BEL ignoré, BS, TAB (tous les
-; 8), LF (avec retour en colonne 0), VT, FF (efface), CR, ESC c (réinitialise), $84 IND, $85 NEL, $8D RI. CSI
-; (ESC [ ou $9B) : A B C D E F (déplacements), H f (position), J K (effacements), L M (insertion / suppression de
-; lignes), m (stylos 30-37/40-47, inversion 7, 0 = défaut : texte stylo 2, fond 0), SPACE p (curseur visible ou
-; non). CSI P (suppression de caractères) efface jusqu'à la fin de la ligne (pas de décalage horizontal) ; @, t, u,
-; x, y, q ignorés. Retour à la ligne automatique en écrivant au-delà de la dernière colonne, défilement d'une ligne en bas de zone. Curseur :
-; cellule inversée (mode COMPLEMENT), retirée avant chaque écriture et redessinée après.
+; === window units (ConUnit): rendering into the window's RastPort via graphics.library ===
+; Text area = inside of the window (borders excluded), 8x8 cells. Controls: BEL ignored, BS, TAB (every
+; 8), LF (with return to column 0), VT, FF (clears), CR, ESC c (resets), $84 IND, $85 NEL, $8D RI. CSI
+; (ESC [ or $9B): A B C D E F (movements), H f (position), J K (erasures), L M (line insertion / deletion),
+; m (pens 30-37/40-47, inverse 7, 0 = default: text pen 2, background 0), SPACE p (cursor visible or
+; not). CSI P (character deletion) erases up to the end of the line (no horizontal shift); @, t, u,
+; x, y, q ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
+; area. Cursor: inverted cell (COMPLEMENT mode), removed before each write and redrawn afterwards.
 CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
 CU_XCP          EQU 38
 CU_YCP          EQU 40
@@ -719,21 +720,21 @@ CU_XREXTANT     EQU 54
 CU_YREXTANT     EQU 56
 CU_FGPEN        EQU 259
 CU_BGPEN        EQU 260
-CU_ESC          EQU 296              ; privé : 0 normal, 1 après ESC, 2 dans un CSI
-CU_NPAR         EQU 297              ; privé : index du paramètre CSI courant (0..1)
-CU_PSEEN        EQU 298              ; privé : un chiffre a été lu pour le paramètre 0
-CU_INTER        EQU 299              ; privé : octet intermédiaire du CSI ($20..$2F)
-CU_PAR0         EQU 300              ; privé : paramètres CSI
+CU_ESC          EQU 296              ; private: 0 normal, 1 after ESC, 2 inside a CSI
+CU_NPAR         EQU 297              ; private: index of the current CSI parameter (0..1)
+CU_PSEEN        EQU 298              ; private: a digit has been read for parameter 0
+CU_INTER        EQU 299              ; private: CSI intermediate byte ($20..$2F)
+CU_PAR0         EQU 300              ; private: CSI parameters
 CU_PAR1         EQU 302
-CU_CUROFF       EQU 304              ; privé : curseur masqué (CSI 0 SPACE p)
-CU_CURVIS       EQU 305              ; privé : curseur actuellement dessiné
-CU_INV          EQU 306              ; privé : vidéo inverse (CSI 7 m)
-CU_NEXT         EQU 308              ; privé : unité suivante (liste CONB_UNITS)
+CU_CUROFF       EQU 304              ; private: cursor hidden (CSI 0 SPACE p)
+CU_CURVIS       EQU 305              ; private: cursor currently drawn
+CU_INV          EQU 306              ; private: inverse video (CSI 7 m)
+CU_NEXT         EQU 308              ; private: next unit (CONB_UNITS list)
 CU_SIZE         EQU 312
-CU_DEFFG        EQU 2                ; stylo du texte par défaut : noir sur le fond vert (thème du projet ; 1.3 : 1)
+CU_DEFFG        EQU 2                ; default text pen: black on the green background (project theme; 1.3: 1)
 
-; cu_init(a0 = ConUnit effacée, a1 = Window) : bornes de la zone de texte depuis la géométrie de la fenêtre.
-; Préserve tout sauf d0/d1.
+; cu_init(a0 = cleared ConUnit, a1 = Window): bounds of the text area from the window geometry.
+; Preserves everything except d0/d1.
 cu_init:
         move.l  a1,CU_WINDOW(a0)
         move.w  #GFX_FONTW,CU_XRSIZE(a0)
@@ -781,8 +782,8 @@ cu_init:
         clr.b   CU_BGPEN(a0)
         rts
 
-; cu_write(a0 = ConUnit, a4 = données, d4 = longueur, a2 = base console) : interprète le flux dans la fenêtre.
-; Préserve d2-d7/a2-a6 (a4/d4 consommés : sauvés).
+; cu_write(a0 = ConUnit, a4 = data, d4 = length, a2 = console base): interprets the stream in the window.
+; Preserves d2-d7/a2-a6 (a4/d4 consumed: saved).
 cu_write:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a0,a5                ; a5 = ConUnit
@@ -808,7 +809,7 @@ cu_write:
         bsr     cu_ctl
         bra.s   .cw_lp
 .cw_print:
-        move.w  CU_XCP(a5),d0        ; colonne au-delà de la dernière : retour à la ligne avant d'écrire
+        move.w  CU_XCP(a5),d0        ; column beyond the last one: line wrap before writing
         cmp.w   CU_XMAX(a5),d0
         ble.s   .cw_fit
         clr.w   CU_XCP(a5)
@@ -816,9 +817,9 @@ cu_write:
 .cw_fit:
         move.w  CU_XMAX(a5),d3
         sub.w   CU_XCP(a5),d3
-        addq.w  #1,d3                ; d3 = cellules restantes sur la ligne
-        move.l  a4,a2                ; a2 = début de la plage
-        moveq   #0,d2                ; d2 = longueur de la plage
+        addq.w  #1,d3                ; d3 = cells left on the line
+        move.l  a4,a2                ; a2 = start of the run
+        moveq   #0,d2                ; d2 = length of the run
 .cw_cnt:
         cmp.w   d3,d2
         bge.s   .cw_out
@@ -847,7 +848,7 @@ cu_write:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; cu_isprint(d0.b) -> Z = 1 si caractère imprimable ($20..$7E, $A0..$FF). Ne touche que les codes conditions.
+; cu_isprint(d0.b) -> Z = 1 if printable character ($20..$7E, $A0..$FF). Only touches the condition codes.
 cu_isprint:
         cmp.b   #$20,d0
         blo.s   .ip_no
@@ -862,7 +863,7 @@ cu_isprint:
         move.w  #0,ccr               ; Z = 0
         rts
 
-; cu_cellxy(a5) -> d0.w/d1.w = coin haut-gauche de la cellule du curseur (coordonnées de la fenêtre).
+; cu_cellxy(a5) -> d0.w/d1.w = top-left corner of the cursor cell (window coordinates).
 cu_cellxy:
         move.w  CU_XCP(a5),d0
         lsl.w   #3,d0
@@ -872,7 +873,7 @@ cu_cellxy:
         add.w   CU_YRORIGIN(a5),d1
         rts
 
-; cu_setpens(a5, a3 = RastPort, a6 = GfxBase) : stylos A/B effectifs (permutés en vidéo inverse). Clobbe d0/d1/a0/a1.
+; cu_setpens(a5, a3 = RastPort, a6 = GfxBase): effective A/B pens (swapped in inverse video). Clobbers d0/d1/a0/a1.
 cu_setpens:
         moveq   #0,d0
         move.b  CU_FGPEN(a5),d0
@@ -882,14 +883,14 @@ cu_setpens:
         beq.s   .sp_n
         exg     d0,d1
 .sp_n:
-        move.l  d2,-(sp)             ; texte et fond confondus avec les plans de la BitMap (écran réduit à 1 plan par un
-        move.l  rp_BitMap(a3),a0     ; programme : noir du thème = fond) -> le texte prend la couleur voisine du fond
+        move.l  d2,-(sp)             ; text and background merged by the BitMap's planes (screen reduced to 1 plane by a
+        move.l  rp_BitMap(a3),a0     ; program: theme black = background) -> text uses the colour next to the background
         moveq   #0,d2
         move.b  bm_Depth(a0),d2
         moveq   #1,d0
         lsl.l   d2,d0
         subq.l  #1,d0
-        move.l  d0,d2                ; d2 = masque des stylos affichables
+        move.l  d0,d2                ; d2 = mask of the displayable pens
         moveq   #0,d0
         move.b  CU_FGPEN(a5),d0
         tst.b   CU_INV(a5)
@@ -899,11 +900,11 @@ cu_setpens:
         eor.l   d1,d0
         and.l   d2,d0
         bne.s   .sp_vis
-        move.l  d1,d0                ; confondus : fond ^ 1
+        move.l  d1,d0                ; merged: background ^ 1
         eor.b   #1,d0
         bra.s   .sp_ok
 .sp_vis:
-        eor.l   d1,d0                ; d0 = stylo d'origine
+        eor.l   d1,d0                ; d0 = original pen
 .sp_ok:
         move.l  (sp)+,d2
         move.l  d1,-(sp)
@@ -913,7 +914,7 @@ cu_setpens:
         move.l  a3,a1
         jmp     LVO_SETBPEN(a6)
 
-; cu_curoff / cu_curon(a5, a3, a6) : retire / dessine le curseur (cellule inversée). Clobbe d0-d3/a0/a1.
+; cu_curoff / cu_curon(a5, a3, a6): removes / draws the cursor (inverted cell). Clobbers d0-d3/a0/a1.
 cu_curoff:
         tst.b   CU_CURVIS(a5)
         beq.s   cu_ret
@@ -924,7 +925,7 @@ cu_curon:
         bne.s   cu_ret
         move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
-        bgt.s   cu_ret               ; en attente de retour à la ligne : pas de cellule
+        bgt.s   cu_ret               ; waiting for a line wrap: no cell
         st      CU_CURVIS(a5)
 cu_cplcell:
         move.l  a3,a1
@@ -943,7 +944,7 @@ cu_cplcell:
 cu_ret:
         rts
 
-; cu_fill(d0..d3 = rectangle, a3, a6) : remplit au stylo de fond effectif. Clobbe d0-d3/a0/a1.
+; cu_fill(d0..d3 = rectangle, a3, a6): fills with the effective background pen. Clobbers d0-d3/a0/a1.
 cu_fill:
         movem.w d0-d3,-(sp)
         move.l  a3,a1
@@ -959,8 +960,8 @@ cu_fill:
         jsr     LVO_RECTFILL(a6)
         bra     cu_setpens
 
-; cu_scroll(d1.w = dy en pixels, d3.w = première ligne en pixels, a3, a6) : décale [d3 .. YRExtant] de la zone de
-; texte (vers le haut si dy > 0), bande libérée au stylo B. Clobbe d0-d3/a0/a1.
+; cu_scroll(d1.w = dy in pixels, d3.w = first line in pixels, a3, a6): shifts [d3 .. YRExtant] of the text
+; area (upwards if dy > 0), freed band in pen B. Clobbers d0-d3/a0/a1.
 cu_scroll:
         movem.l d4/d5,-(sp)
         moveq   #0,d0
@@ -972,7 +973,7 @@ cu_scroll:
         movem.l (sp)+,d4/d5
         rts
 
-; cu_lf(a5, a3, a6) : ligne suivante ; en bas de zone, défilement d'une ligne. Clobbe d0-d3/a0/a1.
+; cu_lf(a5, a3, a6): next line; at the bottom of the area, one-line scroll. Clobbers d0-d3/a0/a1.
 cu_lf:
         move.w  CU_YCP(a5),d0
         cmp.w   CU_YMAX(a5),d0
@@ -985,7 +986,7 @@ cu_lf:
         move.w  CU_YRORIGIN(a5),d3
         bra.s   cu_scroll
 
-; cu_eol(a5, a3, a6) : efface de la cellule du curseur à la fin de la ligne. Clobbe d0-d3/a0/a1.
+; cu_eol(a5, a3, a6): erases from the cursor cell to the end of the line. Clobbers d0-d3/a0/a1.
 cu_eol:
         move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
@@ -996,8 +997,8 @@ cu_eol:
         addq.w  #GFX_FONTH-1,d3
         bra.s   cu_fill
 
-; cu_ctl(d0.b = octet de contrôle ou de séquence, a5, a3, a6) : contrôles et séquences ESC / CSI.
-; Clobbe d0-d3/d5-d7/a0/a1.
+; cu_ctl(d0.b = control or sequence byte, a5, a3, a6): controls and ESC / CSI sequences.
+; Clobbers d0-d3/d5-d7/a0/a1.
 cu_ctl:
         move.b  CU_ESC(a5),d1
         beq.s   .ct_plain
@@ -1016,7 +1017,7 @@ cu_ctl:
         bne.s   .ct_nbs
         tst.w   CU_XCP(a5)
         beq.s   .ct_ret
-        move.w  CU_XCP(a5),d0        ; après une ligne pleine, BS revient sur la dernière colonne
+        move.w  CU_XCP(a5),d0        ; after a full line, BS goes back to the last column
         cmp.w   CU_XMAX(a5),d0
         ble.s   .ct_bs
         move.w  CU_XMAX(a5),CU_XCP(a5)
@@ -1064,7 +1065,7 @@ cu_ctl:
         clr.w   CU_XCP(a5)
         bra     cu_lf
 .ct_nnel:
-        cmp.b   #$8D,d0              ; RI : ligne précédente, défilement vers le bas en haut de zone
+        cmp.b   #$8D,d0              ; RI: previous line, scroll down at the top of the area
         bne.s   .ct_ret
         tst.w   CU_YCP(a5)
         beq.s   .ct_ri
@@ -1074,11 +1075,11 @@ cu_ctl:
         moveq   #-GFX_FONTH,d1
         move.w  CU_YRORIGIN(a5),d3
         bra     cu_scroll
-.ct_esc:                             ; après ESC
+.ct_esc:                             ; after ESC
         clr.b   CU_ESC(a5)
         cmp.b   #'[',d0
         beq.s   .ct_csistart
-        cmp.b   #'c',d0              ; RIS : réinitialisation (stylos, curseur, effacement)
+        cmp.b   #'c',d0              ; RIS: reset (pens, cursor, erasure)
         bne     .ct_ret
         move.b  #CU_DEFFG,CU_FGPEN(a5)
         clr.b   CU_BGPEN(a5)
@@ -1099,7 +1100,7 @@ cu_ctl:
         clr.b   CU_PSEEN(a5)
         clr.b   CU_INTER(a5)
         rts
-.ct_csi:                             ; dans un CSI : paramètres, intermédiaires, octet final
+.ct_csi:                             ; inside a CSI: parameters, intermediates, final byte
         cmp.b   #'0',d0
         blo.s   .ct_nd
         cmp.b   #'9',d0
@@ -1132,14 +1133,14 @@ cu_ctl:
         bhs.s   .ct_final
         cmp.b   #$20,d0
         blo.s   .ct_abort
-        move.b  d0,CU_INTER(a5)      ; intermédiaire ($20..$3F hors chiffres et ';')
+        move.b  d0,CU_INTER(a5)      ; intermediate ($20..$3F except digits and ';')
         rts
 .ct_abort:
-        clr.b   CU_ESC(a5)           ; octet de contrôle dans un CSI : séquence abandonnée
+        clr.b   CU_ESC(a5)           ; control byte inside a CSI: sequence abandoned
         rts
 .ct_final:
         clr.b   CU_ESC(a5)
-        move.w  CU_PAR0(a5),d6       ; d6 = n (paramètre 0, au moins 1 pour les déplacements)
+        move.w  CU_PAR0(a5),d6       ; d6 = n (parameter 0, at least 1 for movements)
         bne.s   .ct_n1
         moveq   #1,d6
 .ct_n1:
@@ -1186,7 +1187,7 @@ cu_ctl:
         cmp.b   #'f',d0
         bne.s   .ct_nH
 .ct_pos:
-        move.w  CU_PAR1(a5),d1       ; colonne (1 par défaut)
+        move.w  CU_PAR1(a5),d1       ; column (1 by default)
         bne.s   .ct_pc
         moveq   #1,d1
 .ct_pc:
@@ -1199,7 +1200,7 @@ cu_ctl:
         cmp.b   #'J',d0
         bne.s   .ct_nJ
         bsr     cu_eol
-        move.w  CU_YCP(a5),d1        ; puis les lignes suivantes
+        move.w  CU_YCP(a5),d1        ; then the following lines
         cmp.w   CU_YMAX(a5),d1
         bge     .ct_ret2
         addq.w  #1,d1
@@ -1218,7 +1219,7 @@ cu_ctl:
         beq.s   .ct_lines
         cmp.b   #'M',d0
         bne.s   .ct_nM
-.ct_lines:                           ; L : insère n lignes (vers le bas) ; M : en supprime n (vers le haut)
+.ct_lines:                           ; L: inserts n lines (downwards); M: deletes n of them (upwards)
         move.w  d6,d1
         lsl.w   #3,d1
         cmp.b   #'L',d0
@@ -1245,7 +1246,7 @@ cu_ctl:
         bne.s   .ct_ret2
         cmp.b   #' ',CU_INTER(a5)
         bne.s   .ct_ret2
-        clr.b   CU_CUROFF(a5)        ; CSI SPACE p : visible ; CSI 0 SPACE p : masqué
+        clr.b   CU_CUROFF(a5)        ; CSI SPACE p: visible; CSI 0 SPACE p: hidden
         tst.b   CU_PSEEN(a5)
         beq.s   .ct_ret2
         tst.w   CU_PAR0(a5)
@@ -1253,7 +1254,7 @@ cu_ctl:
         st      CU_CUROFF(a5)
 .ct_ret2:
         rts
-; .ct_sgr(d0.w = paramètre SGR) : 0 défaut, 7 inverse, 30..37 / 39 premier plan, 40..47 / 49 fond.
+; .ct_sgr(d0.w = SGR parameter): 0 default, 7 inverse, 30..37 / 39 foreground, 40..47 / 49 background.
 .ct_sgr:
         tst.w   d0
         bne.s   .sg_n0
@@ -1291,7 +1292,7 @@ cu_ctl:
         move.b  d0,CU_BGPEN(a5)
 .sg_ret:
         rts
-; .ct_setx / .ct_sety(d1.w = position voulue) : bornée à la zone de texte.
+; .ct_setx / .ct_sety(d1.w = desired position): clamped to the text area.
 .ct_setx:
         tst.w   d1
         bpl.s   .sx_lo

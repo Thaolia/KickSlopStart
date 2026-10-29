@@ -1,12 +1,12 @@
-; src/dos/ofswrite.s — écriture OFS pour le handler DF0: : création de fichiers et de répertoires, flux d'écriture,
-; suppression, renommage/déplacement, protection, commentaire, informations disque. Les blocs passent par
-; trackdisk.device (CMD_WRITE dans son cache de pistes, CMD_UPDATE à la fin de chaque opération).
-; Format OFS public (ADF-FAQ / AmigaDOS Technical Reference) : header (type 2, clé = son bloc, high_seq, first_data,
-; table des blocs de données remplie depuis la fin, taille, nom, chaîne de hachage, parent, extension, type
-; secondaire), bloc de données (type 8, clé du header, n° de séquence, taille, suivant, 488 octets), bloc d'extension
-; (type 16), bitmap (bit à 1 = bloc libre, bit 0 du long 1 = bloc 2, somme de contrôle au long 0), somme de contrôle des
-; autres blocs au long 5 (somme de tous les longs = 0).
-; Piste IMPLÉMENTATION (« clean ») : format public + AutoDocs dos. AUCUNE lecture ROM.
+; src/dos/ofswrite.s - OFS writing for the DF0: handler: creation of files and directories, write streams,
+; deletion, renaming/moving, protection, comment, disk information. Blocks go through
+; trackdisk.device (CMD_WRITE into its track cache, CMD_UPDATE at the end of each operation).
+; Public OFS format (ADF-FAQ / AmigaDOS Technical Reference): header (type 2, key = its own block, high_seq, first_data,
+; data block table filled from the end, size, name, hash chain, parent, extension, secondary
+; type), data block (type 8, header key, sequence number, size, next, 488 bytes), extension block
+; (type 16), bitmap (bit set = free block, bit 0 of long 1 = block 2, checksum at long 0), checksum of the
+; other blocks at long 5 (sum of all longs = 0).
+; IMPLEMENTATION track ("clean"): public format + dos AutoDocs. NO ROM reading.
 
                 include "exec.i"
                 include "ofs.i"
@@ -25,50 +25,50 @@
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
-                xref    dos_now              ; dos_lib.s : heure système en DateStamp
+                xref    dos_now              ; dos_lib.s: system time as a DateStamp
 
-OFS_T_LIST      EQU 16               ; bloc d'extension
-OFSB_KEY        EQU 4                ; clé (le bloc lui-même)
-OFSB_HIGHSEQ    EQU 8                ; header : blocs dans sa table ; données : n° de séquence
+OFS_T_LIST      EQU 16               ; extension block
+OFSB_KEY        EQU 4                ; key (the block itself)
+OFSB_HIGHSEQ    EQU 8                ; header: blocks in its table; data: sequence number
 OFSB_CKSUM      EQU 20
-OFSB_EXT        EQU 504              ; bloc d'extension suivant
-OFS_TABN        EQU 72               ; entrées de table d'un header / d'une extension
-OFSB_TABEND     EQU OFSB_HASHTAB+(OFS_TABN-1)*4  ; dernière entrée = premier bloc de données
-WS_MAGICV       EQU $57524954        ; « WRIT » : état d'écriture (l'état de lecture commence par la base trackdisk)
+OFSB_EXT        EQU 504              ; next extension block
+OFS_TABN        EQU 72               ; table entries of a header / of an extension
+OFSB_TABEND     EQU OFSB_HASHTAB+(OFS_TABN-1)*4  ; last entry = first data block
+WS_MAGICV       EQU $57524954        ; "WRIT": write state (the read state starts with the trackdisk base)
 ID_VALIDATED    EQU 82
-OFSB_VDAYS      EQU 472              ; racine : date de dernière modification du disque
+OFSB_VDAYS      EQU 472              ; root: date of the last modification of the disk
 
-; contexte d'écriture (un seul, alloué au premier besoin ; pointeur en DOS_OWCTX)
+; write context (a single one, allocated on first need; pointer in DOS_OWCTX)
 OW_TD           EQU 0
 OW_IO           EQU 4                ; IOStdReq
-OW_BMBLK        EQU OW_IO+IOREQ_SZ   ; bloc bitmap (0 = pas encore lu)
+OW_BMBLK        EQU OW_IO+IOREQ_SZ   ; bitmap block (0 = not read yet)
 OW_BMDIRTY      EQU OW_BMBLK+4
-OW_ERR          EQU OW_BMDIRTY+4     ; dernière erreur d'entrée-sortie (code dos)
+OW_ERR          EQU OW_BMDIRTY+4     ; last I/O error (dos code)
 OW_BM           EQU OW_ERR+4         ; bitmap (512)
 OW_B1           EQU OW_BM+OFS_BSIZE
 OW_B2           EQU OW_B1+OFS_BSIZE
-OW_PATH         EQU OW_B2+OFS_BSIZE  ; copie de chemin (OW_PATHMAX)
+OW_PATH         EQU OW_B2+OFS_BSIZE  ; path copy (OW_PATHMAX)
 OW_PATHMAX      EQU 128
-OW_NAME         EQU OW_PATH+OW_PATHMAX   ; nom final (32)
+OW_NAME         EQU OW_PATH+OW_PATHMAX   ; final name (32)
 OW_SIZE         EQU OW_NAME+32
 
-; état d'écriture d'un fichier ouvert (FINDOUTPUT)
+; write state of an open file (FINDOUTPUT)
 WS_MAGIC        EQU 0
-WS_HDR          EQU 4                ; bloc header
-WS_SIZE         EQU 8                ; octets écrits
-WS_NBLK         EQU 12               ; blocs de données
-WS_CUR          EQU 16               ; bloc de données courant (0 = aucun)
-WS_CURLEN       EQU 20               ; octets dans le bloc courant
-WS_EXT          EQU 24               ; extension courante (0 = la table du header)
-WS_EXTN         EQU 28               ; entrées dans la table courante
-WS_FIRST        EQU 32               ; premier bloc de données
-WS_HBUF         EQU 40               ; (WS_VOL en 36 : ofs.i)
+WS_HDR          EQU 4                ; header block
+WS_SIZE         EQU 8                ; bytes written
+WS_NBLK         EQU 12               ; data blocks
+WS_CUR          EQU 16               ; current data block (0 = none)
+WS_CURLEN       EQU 20               ; bytes in the current block
+WS_EXT          EQU 24               ; current extension (0 = the header's table)
+WS_EXTN         EQU 28               ; entries in the current table
+WS_FIRST        EQU 32               ; first data block
+WS_HBUF         EQU 40               ; (WS_VOL at 36: ofs.i)
 WS_XBUF         EQU WS_HBUF+OFS_BSIZE
 WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE
 
 ; ------------------------------------------------------------------------------------------------------------------
-; ow_ctx(a6) -> a5 = contexte (alloué au premier appel, bitmap pas encore lue) ; Z = 1 si impossible. Clobbe d0/d1/a0/a1.
+; ow_ctx(a6) -> a5 = context (allocated on first call, bitmap not read yet); Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 ow_ctx:
         move.l  DOS_OWCTX,d0
         bne.s   .cx_have
@@ -96,7 +96,7 @@ ow_ctx:
         moveq   #0,d0
         rts
 
-; ow_io(d0 = bloc, a0 = tampon, d1.w = commande, a5, a6) -> d0 = 1 ok / 0 (OW_ERR posé). Préserve d2-d7/a2-a6.
+; ow_io(d0 = block, a0 = buffer, d1.w = command, a5, a6) -> d0 = 1 ok / 0 (OW_ERR set). Preserves d2-d7/a2-a6.
 ow_io:
         move.l  a2,-(sp)
         lea     OW_IO(a5),a1
@@ -132,15 +132,16 @@ ow_io:
 ow_rd:
         moveq   #2,d1                ; CMD_READ
         bra.s   ow_io
-; ow_wr(d0 = bloc, a0 = tampon) : somme de contrôle posée (long 5), puis écriture dans le cache trackdisk.
+; ow_wr(d0 = block, a0 = buffer): checksum set (long 5), then write into the trackdisk cache.
 ow_wr:
         move.l  d0,-(sp)
         bsr.s   ow_cksum
         move.l  (sp)+,d0
         moveq   #3,d1                ; CMD_WRITE
         bra.s   ow_io
-; ow_inhibit(d0 = Arg1 d'ACTION_INHIBIT, a6) : inhibition -> bitmap modifiée écrite (le disque va être réécrit par un
-; autre, DiskCopy) ; levée -> bitmap oubliée, relue au prochain accès (le disque a pu changer). Préserve d2-d7/a2-a6.
+; ow_inhibit(d0 = Arg1 of ACTION_INHIBIT, a6): inhibit -> modified bitmap written (the disk is about to be rewritten by
+; someone else, DiskCopy); release -> bitmap forgotten, re-read on next access (the disk may have changed).
+; Preserves d2-d7/a2-a6.
 ow_inhibit:
         move.l  a5,-(sp)
         move.l  d0,-(sp)
@@ -158,12 +159,12 @@ ow_inhibit:
         move.l  (sp)+,a5
         rts
 
-; ow_sync(a5) -> d0 = 1 ok / 0 : bitmap écrite si modifiée, puis CMD_UPDATE (pistes du cache vers le disque).
+; ow_sync(a5) -> d0 = 1 ok / 0: bitmap written if modified, then CMD_UPDATE (cached tracks to the disk).
 ow_sync:
         tst.l   OW_BMDIRTY(a5)
         beq.s   .sy_upd
         clr.l   OW_BMDIRTY(a5)
-        lea     OW_BM(a5),a0         ; somme de la bitmap au long 0
+        lea     OW_BM(a5),a0         ; bitmap checksum at long 0
         clr.l   (a0)
         moveq   #0,d0
         moveq   #127,d1
@@ -185,7 +186,7 @@ ow_sync:
         bsr     ow_io
 .sy_ret:
         rts
-; ow_cksum(a0 = bloc) : long 5 = -(somme des autres longs). Préserve a0 et d2-d7.
+; ow_cksum(a0 = block): long 5 = -(sum of the other longs). Preserves a0 and d2-d7.
 ow_cksum:
         clr.l   OFSB_CKSUM(a0)
         move.l  a0,a1
@@ -198,7 +199,7 @@ ow_cksum:
         move.l  d0,OFSB_CKSUM(a0)
         rts
 
-; ow_bmload(a5) -> d0 = 1 ok / 0 : la bitmap (désignée par le bloc racine) est lue une fois et gardée.
+; ow_bmload(a5) -> d0 = 1 ok / 0: the bitmap (designated by the root block) is read once and kept.
 ow_bmload:
         tst.l   OW_BMBLK(a5)
         bne.s   .bl_ok
@@ -208,7 +209,7 @@ ow_bmload:
         tst.l   d0
         beq.s   .bl_ret
         lea     OW_B1(a5),a0
-        moveq   #-1,d0               ; bitmap non validée : pas d'écriture
+        moveq   #-1,d0               ; bitmap not validated: no writing
         cmp.l   OFSB_BMFLAG(a0),d0
         bne.s   .bl_nv
         move.l  OFSB_BMPAGES(a0),d0
@@ -227,7 +228,7 @@ ow_bmload:
         move.l  #ERROR_DISK_NOT_VALIDATED,OW_ERR(a5)
         moveq   #0,d0
         rts
-; ow_bmbit(d0 = bloc) -> a0 = long de la bitmap, d1 = n° de bit. Clobbe d0.
+; ow_bmbit(d0 = block) -> a0 = bitmap long, d1 = bit number. Clobbers d0.
 ow_bmbit:
         subq.l  #2,d0
         move.l  d0,d1
@@ -237,7 +238,7 @@ ow_bmbit:
         add.l   d0,a0
         and.w   #31,d1
         rts
-; ow_alloc(a5) -> d0 = bloc libre pris dans la bitmap (recherche à partir de la racine, puis depuis le début) | 0.
+; ow_alloc(a5) -> d0 = free block taken from the bitmap (search from the root, then from the start) | 0.
 ow_alloc:
         movem.l d2-d3,-(sp)
         move.l  #OFS_ROOTBLK+1,d2
@@ -247,7 +248,7 @@ ow_alloc:
         blo.s   .al_try
         cmp.l   #OFS_NBLK,d3
         bne.s   .al_full
-        moveq   #2,d2                ; deuxième passe : du début à la racine
+        moveq   #2,d2                ; second pass: from the start to the root
         move.l  #OFS_ROOTBLK,d3
 .al_try:
         move.l  d2,d0
@@ -269,7 +270,7 @@ ow_alloc:
 .al_ret:
         movem.l (sp)+,d2-d3
         rts
-; ow_free(d0 = bloc, a5) : le bloc redevient libre (blocs hors disque ignorés).
+; ow_free(d0 = block, a5): the block becomes free again (blocks outside the disk ignored).
 ow_free:
         cmp.l   #2,d0
         blo.s   .fr_ret
@@ -283,15 +284,15 @@ ow_free:
 .fr_ret:
         rts
 
-; ow_parent(a0 = chemin, d0 = répertoire de départ (0 = racine), a5) -> d0 = répertoire qui contient l'objet | 0,
-; a1 = nom final (OW_NAME). Le chemin est coupé après son dernier « / » ou « : » ; le préfixe (séparateur compris :
-; « vol: » = racine, « / » = parent) est résolu par ofs_name_to_block. Nom vide ou > 30 : échec. B2 = le répertoire.
+; ow_parent(a0 = path, d0 = starting directory (0 = root), a5) -> d0 = directory containing the object | 0,
+; a1 = final name (OW_NAME). The path is cut after its last "/" or ":"; the prefix (separator included:
+; "vol:" = root, "/" = parent) is resolved by ofs_name_to_block. Empty name or > 30: failure. B2 = the directory.
 ow_parent:
         movem.l d2-d3,-(sp)
         move.l  d0,d2
         lea     OW_PATH(a5),a1
         moveq   #OW_PATHMAX-2,d1
-        moveq   #0,d3                ; d3 = position après le dernier séparateur | 0
+        moveq   #0,d3                ; d3 = position after the last separator | 0
 .pa_cp:
         move.b  (a0)+,d0
         move.b  d0,(a1)+
@@ -306,13 +307,13 @@ ow_parent:
         dbra    d1,.pa_cp
         clr.b   (a1)
 .pa_end:
-        lea     OW_PATH(a5),a0       ; a0 = nom (tout le chemin s'il n'y a pas de séparateur)
+        lea     OW_PATH(a5),a0       ; a0 = name (the whole path if there is no separator)
         tst.l   d3
         beq.s   .pa_name
         move.l  d3,a0
 .pa_name:
-        lea     OW_NAME(a5),a1       ; nom : 1 à 30 caractères
-        moveq   #30,d1               ; 30 caractères + NUL au plus
+        lea     OW_NAME(a5),a1       ; name: 1 to 30 characters
+        moveq   #30,d1               ; 30 characters + NUL at most
 .pa_nc:
         move.b  (a0)+,(a1)+
         dbeq    d1,.pa_nc
@@ -323,7 +324,7 @@ ow_parent:
         move.l  d2,d0
         tst.l   d3
         beq.s   .pa_dir
-        move.l  d3,a0                ; le préfixe s'arrête au séparateur inclus
+        move.l  d3,a0                ; the prefix ends at the separator, included
         clr.b   (a0)
         lea     OW_PATH(a5),a0
         move.l  d2,d0
@@ -335,7 +336,7 @@ ow_parent:
         tst.l   d3
         bne.s   .pa_nf
 .pa_rd:
-        move.l  d0,d2                ; le parent doit être un répertoire
+        move.l  d0,d2                ; the parent must be a directory
         lea     OW_B2(a5),a0
         bsr     ow_rd
         tst.l   d0
@@ -361,11 +362,11 @@ ow_parent:
         movem.l (sp)+,d2-d3
         rts
 
-; ow_lookup(d0 = répertoire, a1 = nom, a5) -> d0 = bloc de l'objet | 0 ; d2 = prédécesseur dans la chaîne (0 = la
-; table du répertoire), d3 = index de hachage. B2 contient l'objet trouvé. Clobbe d1/a0/a1/a4.
+; ow_lookup(d0 = directory, a1 = name, a5) -> d0 = block of the object | 0; d2 = predecessor in the chain (0 = the
+; directory's table), d3 = hash index. B2 holds the object found. Clobbers d1/a0/a1/a4.
 ow_lookup:
         movem.l d4-d5,-(sp)
-        move.l  d0,d4                ; d4 = répertoire
+        move.l  d0,d4                ; d4 = directory
         move.l  a1,a4
         moveq   #OFS_HTDEF,d3
         jsr     ofs_hash             ; d1 = index
@@ -378,7 +379,7 @@ ow_lookup:
         lea     OW_B2(a5),a0
         move.l  d3,d0
         lsl.l   #2,d0
-        move.l  OFSB_HASHTAB(a0,d0.l),d5 ; d5 = bloc courant
+        move.l  OFSB_HASHTAB(a0,d0.l),d5 ; d5 = current block
         moveq   #0,d2
 .lk_lp:
         tst.l   d5
@@ -406,10 +407,10 @@ ow_lookup:
         movem.l (sp)+,d4-d5
         rts
 
-; ow_unlink(d4 = répertoire, d5 = objet (en B2), d2 = prédécesseur, d3 = index, a5) -> d0 = 1/0 : l'objet quitte la
-; chaîne de hachage de son répertoire. B1 est utilisé, B2 conservé.
+; ow_unlink(d4 = directory, d5 = object (in B2), d2 = predecessor, d3 = index, a5) -> d0 = 1/0: the object leaves the
+; hash chain of its directory. B1 is used, B2 preserved.
 ow_unlink:
-        move.l  OW_B2+OFSB_HASHCHAIN(a5),-(sp)   ; suivant de l'objet
+        move.l  OW_B2+OFSB_HASHCHAIN(a5),-(sp)   ; next of the object
         move.l  d2,d0
         bne.s   .ul_pred
         move.l  d4,d0
@@ -438,8 +439,8 @@ ow_unlink:
         moveq   #0,d0
         rts
 
-; ow_link(d4 = répertoire, d5 = objet, a1 = son nom, a5) -> d0 = 1/0 : l'objet (en B1, nom/parent déjà posés) entre en
-; tête de la chaîne de son index dans le répertoire ; l'objet puis le répertoire sont écrits. B2 est utilisé.
+; ow_link(d4 = directory, d5 = object, a1 = its name, a5) -> d0 = 1/0: the object (in B1, name/parent already set) goes
+; at the head of its index's chain in the directory; the object then the directory are written. B2 is used.
 ow_link:
         move.l  a4,-(sp)
         move.l  a1,a4
@@ -462,14 +463,14 @@ ow_link:
         bsr     ow_wr
         tst.l   d0
         beq.s   .lnk_ret
-        lea     OW_B2(a5),a0         ; le répertoire change : sa date aussi
+        lea     OW_B2(a5),a0         ; the directory changes: so does its date
         bsr     ow_stamp
         move.l  d4,d0
         bsr     ow_wr
 .lnk_ret:
         rts
 
-; ow_setname(a0 = bloc, a1 = nom C) : nom BCPL (longueur + caractères) au long 108.
+; ow_setname(a0 = block, a1 = C name): BCPL name (length + characters) at long 108.
 ow_setname:
         lea     OFSB_NAME+1(a0),a0
         moveq   #0,d0
@@ -484,7 +485,7 @@ ow_setname:
         move.b  d0,-1(a0)
         rts
 
-; ow_clear(a0 = bloc) : 128 longs à 0. Préserve a0.
+; ow_clear(a0 = block): 128 longs set to 0. Preserves a0.
 ow_clear:
         move.l  a0,a1
         moveq   #127,d0
@@ -493,8 +494,8 @@ ow_clear:
         dbra    d0,.cl_lp
         rts
 
-; ow_stamp(a0 = bloc d'en-tête) : date de modification (+420) = maintenant ; pour la racine, aussi celle du disque
-; (+472). Préserve tout sauf d0.
+; ow_stamp(a0 = header block): modification date (+420) = now; for the root, also the disk's date
+; (+472). Preserves everything except d0.
 ow_stamp:
         move.l  a0,-(sp)
         lea     OFSB_DAYS(a0),a0
@@ -509,7 +510,7 @@ ow_stamp:
 .st_ret:
         rts
 
-; ow_touch(d0 = répertoire, a5) -> d0 = 1/0 : le répertoire (lu dans B1) reçoit la date du jour et est réécrit.
+; ow_touch(d0 = directory, a5) -> d0 = 1/0: the directory (read into B1) gets today's date and is rewritten.
 ow_touch:
         move.l  d0,-(sp)
         lea     OW_B1(a5),a0
@@ -524,10 +525,10 @@ ow_touch:
         addq.l  #4,sp
         rts
 
-; ow_freeobj(d5 = objet (en B2), a5) : rend ses blocs : header, et pour un fichier ses blocs de données et extensions.
+; ow_freeobj(d5 = object (in B2), a5): frees its blocks: header, and for a file its data blocks and extensions.
 ow_freeobj:
         movem.l d2-d3/d5,-(sp)
-        lea     OW_B2(a5),a0         ; table du header copiée en B1 (B2 sert ensuite aux extensions)
+        lea     OW_B2(a5),a0         ; header table copied into B1 (B2 is then used for the extensions)
         lea     OW_B1(a5),a1
         moveq   #127,d0
 .fo_cp:
@@ -563,11 +564,11 @@ ow_freeobj:
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------
-; ow_create(a0 = chemin, d0 = répertoire de départ, d1 = type secondaire (fichier -3 / répertoire 2), a6) -> d0 = bloc
-; du nouvel objet | 0, d1 = erreur dos. Un fichier existant du même nom est remplacé ; un répertoire est refusé.
+; ow_create(a0 = path, d0 = starting directory, d1 = secondary type (file -3 / directory 2), a6) -> d0 = block
+; of the new object | 0, d1 = dos error. An existing file of the same name is replaced; a directory is refused.
 ow_create:
         movem.l d2-d7/a2-a5,-(sp)
-        move.l  d1,d7                ; d7 = type secondaire
+        move.l  d1,d7                ; d7 = secondary type
         move.l  d0,d6
         move.l  a0,a2
         bsr     ow_ctx
@@ -576,15 +577,15 @@ ow_create:
         beq     ow_fail
         move.l  a2,a0
         move.l  d6,d0
-        bsr     ow_parent            ; d0 = répertoire, a1 = nom
+        bsr     ow_parent            ; d0 = directory, a1 = name
         tst.l   d0
         beq     ow_fail
         move.l  d0,d4
-        move.l  a1,a3                ; a3 = nom
+        move.l  a1,a3                ; a3 = name
         bsr     ow_lookup
         tst.l   d0
         beq.s   .cr_new
-        move.l  d0,d5                ; existe déjà : un fichier est remplacé
+        move.l  d0,d5                ; already exists: a file is replaced
         cmp.l   #OFS_ST_FILE,d7
         bne.s   .cr_exists
         cmp.l   #OFS_ST_FILE,OW_B2+OFSB_SECTYPE(a5)
@@ -597,7 +598,7 @@ ow_create:
         bsr     ow_alloc
         tst.l   d0
         beq     ow_fail
-        move.l  d0,d5                ; d5 = nouveau bloc
+        move.l  d0,d5                ; d5 = new block
         lea     OW_B1(a5),a0
         bsr     ow_clear
         move.l  #OFS_T_SHORT,OFSB_TYPE(a0)
@@ -630,7 +631,7 @@ ow_fail0:
         moveq   #0,d0
         bra.s   ow_ret
 
-; ow_delete(a0 = chemin, d0 = répertoire de départ, a6) -> d0 = -1 / 0, d1 = erreur. Un répertoire doit être vide.
+; ow_delete(a0 = path, d0 = starting directory, a6) -> d0 = -1 / 0, d1 = error. A directory must be empty.
 ow_delete:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  d0,d6
@@ -651,7 +652,7 @@ ow_delete:
         move.l  d0,d5
         cmp.l   #OFS_ST_USERDIR,OW_B2+OFSB_SECTYPE(a5)
         bne.s   .de_go
-        lea     OW_B2+OFSB_HASHTAB(a5),a0  ; répertoire non vide : refusé
+        lea     OW_B2+OFSB_HASHTAB(a5),a0  ; directory not empty: refused
         moveq   #OFS_TABN-1,d0
 .de_em:
         tst.l   (a0)+
@@ -679,11 +680,11 @@ ow_delete:
         move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
         bra     ow_fail
 
-; ow_rename(a0 = ancien chemin, d0 = son départ, a1 = nouveau chemin, d1 = son départ, a6) -> d0 = -1 / 0, d1 = erreur.
-; L'objet quitte la chaîne de son répertoire, prend le nouveau nom et le nouveau parent, entre dans la nouvelle chaîne.
+; ow_rename(a0 = old path, d0 = its start, a1 = new path, d1 = its start, a6) -> d0 = -1 / 0, d1 = error.
+; The object leaves its directory's chain, takes the new name and the new parent, enters the new chain.
 ow_rename:
         movem.l d2-d7/a2-a5,-(sp)
-        movem.l d1/a1,-(sp)          ; nouveau (départ, chemin)
+        movem.l d1/a1,-(sp)          ; new (start, path)
         move.l  d0,d6
         move.l  a0,a2
         bsr     ow_ctx
@@ -699,19 +700,19 @@ ow_rename:
         bsr     ow_lookup
         tst.l   d0
         beq     .rn_nf
-        move.l  d0,d5                ; d5 = objet
-        bsr     ow_unlink            ; retiré de l'ancien répertoire (B2 = l'objet)
+        move.l  d0,d5                ; d5 = object
+        bsr     ow_unlink            ; removed from the old directory (B2 = the object)
         tst.l   d0
         beq     .rn_f
-        movem.l (sp),d1/a0           ; nouveau répertoire et nom
+        movem.l (sp),d1/a0           ; new directory and name
         move.l  d1,d0
         bsr     ow_parent
         tst.l   d0
-        beq.s   .rn_relink           ; destination invalide : l'objet retourne d'où il vient
+        beq.s   .rn_relink           ; invalid destination: the object goes back where it came from
         move.l  d0,d7
         move.l  a1,a3
         move.l  d7,d0
-        bsr     ow_lookup            ; nom déjà pris -> refus (l'objet retourne d'où il vient)
+        bsr     ow_lookup            ; name already taken -> refused (the object goes back where it came from)
         tst.l   d0
         bne.s   .rn_taken
         move.l  d5,d0
@@ -719,7 +720,7 @@ ow_rename:
         bsr     ow_rd
         tst.l   d0
         beq     .rn_f
-        lea     OW_B1+OFSB_NAME(a5),a0   ; ancien nom effacé (32 octets)
+        lea     OW_B1+OFSB_NAME(a5),a0   ; old name cleared (32 bytes)
         moveq   #7,d0
 .rn_cn:
         clr.l   (a0)+
@@ -743,11 +744,11 @@ ow_rename:
 .rn_taken:
         move.l  #ERROR_OBJECT_EXISTS,OW_ERR(a5)
 .rn_relink:
-        move.l  OW_ERR(a5),-(sp)     ; remis dans son répertoire d'origine sous son nom
+        move.l  OW_ERR(a5),-(sp)     ; put back into its original directory under its name
         move.l  d5,d0
         lea     OW_B1(a5),a0
         bsr     ow_rd
-        lea     OW_B1+OFSB_NAME+1(a5),a0   ; nom C reconstitué dans OW_PATH
+        lea     OW_B1+OFSB_NAME+1(a5),a0   ; C name rebuilt in OW_PATH
         lea     OW_PATH(a5),a1
         moveq   #0,d0
         move.b  OW_B1+OFSB_NAME(a5),d0
@@ -772,8 +773,8 @@ ow_rename:
         addq.l  #8,sp
         bra     ow_fail0
 
-; ow_setfield(a0 = chemin, d0 = départ, d1 = 0 protection (d2 = masque) / 1 commentaire (d2 = BPTR BSTR), a6) ->
-; d0 = -1 / 0, d1 = erreur.
+; ow_setfield(a0 = path, d0 = start, d1 = 0 protection (d2 = mask) / 1 comment (d2 = BPTR BSTR), a6) ->
+; d0 = -1 / 0, d1 = error.
 ow_setfield:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  d1,d7
@@ -797,7 +798,7 @@ ow_setfield:
         move.l  a3,OFSB_PROTECT(a0)
         bra.s   .sf_w
 .sf_com:
-        move.l  a3,d0                ; commentaire BSTR, 79 caractères au plus
+        move.l  a3,d0                ; BSTR comment, 79 characters at most
         lsl.l   #2,d0
         move.l  d0,a1
         lea     OFSB_COMMENT(a0),a0
@@ -830,8 +831,8 @@ ow_setfield:
         move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
         bra     ow_fail
 
-; ow_diskinfo(a0 = InfoData, a1 = nœud volume (BPTR), a6) -> d0 = -1 : état du disque (validé), blocs, blocs utilisés
-; comptés dans la bitmap, 488 octets par bloc, type DOS\0.
+; ow_diskinfo(a0 = InfoData, a1 = volume node (BPTR), a6) -> d0 = -1: disk state (validated), blocks, used blocks
+; counted in the bitmap, 488 bytes per block, type DOS\0.
 ow_diskinfo:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a0,a2
@@ -844,13 +845,13 @@ ow_diskinfo:
         move.l  #ID_VALIDATED,8(a2)  ; id_DiskState
         move.l  #OFS_NBLK-2,12(a2)   ; id_NumBlocks
         move.l  #OFS_DMAX,20(a2)     ; id_BytesPerBlock
-        move.l  #$444F5300,24(a2)    ; id_DiskType « DOS\0 »
+        move.l  #$444F5300,24(a2)    ; id_DiskType "DOS\0"
         move.l  d6,28(a2)            ; id_VolumeNode
         bsr     ow_ctx
         beq.s   .di_ret
         bsr     ow_bmload
         beq.s   .di_ret
-        moveq   #0,d2                ; blocs libres : bits à 1 de la bitmap
+        moveq   #0,d2                ; free blocks: set bits of the bitmap
         lea     OW_BM+4(a5),a0
         move.w  #OFS_NBLK-2-1,d3
         moveq   #0,d1
@@ -876,7 +877,7 @@ ow_diskinfo:
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------
-; ws_open(a0 = chemin, d0 = départ, a6) -> d0 = état d'écriture | 0, d1 = erreur : crée (ou remplace) le fichier.
+; ws_open(a0 = path, d0 = start, a6) -> d0 = write state | 0, d1 = error: creates (or replaces) the file.
 ws_open:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a0,a2
@@ -886,7 +887,7 @@ ws_open:
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.s   .wo_mem
-        move.l  d0,a3                ; a3 = état
+        move.l  d0,a3                ; a3 = state
         move.l  a2,a0
         move.l  d6,d0
         moveq   #OFS_ST_FILE,d1
@@ -895,7 +896,7 @@ ws_open:
         beq.s   .wo_fail
         move.l  #WS_MAGICV,WS_MAGIC(a3)
         move.l  d0,WS_HDR(a3)
-        move.l  DOS_OWCTX,a5         ; header (écrit vide par ow_create) gardé dans l'état
+        move.l  DOS_OWCTX,a5         ; header (written empty by ow_create) kept in the state
         lea     OW_B1(a5),a0
         lea     WS_HBUF(a3),a1
         moveq   #127,d1
@@ -920,14 +921,14 @@ ws_open:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ws_write(a1 = état, a0 = données, d0 = longueur, a6) -> d0 = longueur | -1, d1 = erreur. Les blocs de données se
-; remplissent un à un ; un bloc plein est écrit quand le suivant est alloué (son lien vers lui est alors connu).
+; ws_write(a1 = state, a0 = data, d0 = length, a6) -> d0 = length | -1, d1 = error. Data blocks are filled
+; one by one; a full block is written when the next one is allocated (its link to it is then known).
 ws_write:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a3
         move.l  a0,a2
-        move.l  d0,d7                ; d7 = reste
-        move.l  d0,d6                ; d6 = demandé
+        move.l  d0,d7                ; d7 = remaining
+        move.l  d0,d6                ; d6 = requested
         bsr     ow_ctx
         beq     .ww_err
 .ww_lp:
@@ -941,10 +942,10 @@ ws_write:
         bsr     ow_alloc
         tst.l   d0
         beq     .ww_err
-        move.l  d0,d5                ; d5 = nouveau bloc
+        move.l  d0,d5                ; d5 = new block
         move.l  WS_CUR(a3),d0
         beq.s   .ww_first
-        lea     WS_DBUF(a3),a0       ; bloc précédent : complet, lié au nouveau
+        lea     WS_DBUF(a3),a0       ; previous block: complete, linked to the new one
         move.l  #OFS_DMAX,OFSB_DSIZE(a0)
         move.l  d5,OFSB_NEXT(a0)
         bsr     ow_wr
@@ -967,7 +968,7 @@ ws_write:
         tst.l   d0
         beq     .ww_err
 .ww_copy:
-        move.l  #OFS_DMAX,d4         ; n = min(place, reste)
+        move.l  #OFS_DMAX,d4         ; n = min(room, remaining)
         sub.l   WS_CURLEN(a3),d4
         cmp.l   d7,d4
         bls.s   .ww_n
@@ -1000,14 +1001,14 @@ ws_write:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ws_tabadd(d0 = bloc de données, a3 = état, a5) -> d0 = 1/0 : le bloc entre dans la table courante (remplie depuis la
-; fin) ; une table pleine fait allouer une extension, chaînée depuis le header ou l'extension précédente (écrite).
+; ws_tabadd(d0 = data block, a3 = state, a5) -> d0 = 1/0: the block enters the current table (filled from the
+; end); a full table causes an extension to be allocated, chained from the header or the previous extension (written).
 ws_tabadd:
         move.l  d2,-(sp)
         move.l  d0,d2
         cmp.l   #OFS_TABN,WS_EXTN(a3)
         blo.s   .ta_put
-        bsr     ow_alloc             ; nouvelle extension
+        bsr     ow_alloc             ; new extension
         tst.l   d0
         beq.s   .ta_ret
         move.l  d0,-(sp)
@@ -1016,7 +1017,7 @@ ws_tabadd:
         move.l  d0,WS_HBUF+OFSB_EXT(a3)
         bra.s   .ta_newx
 .ta_prev:
-        lea     WS_XBUF(a3),a0       ; extension pleine : liée à la nouvelle et écrite
+        lea     WS_XBUF(a3),a0       ; extension full: linked to the new one and written
         move.l  d0,OFSB_EXT(a0)
         move.l  #OFS_TABN,OFSB_HIGHSEQ(a0)
         move.l  WS_EXT(a3),d0
@@ -1053,12 +1054,12 @@ ws_tabadd:
         moveq   #0,d0
         bra.s   .ta_ret
 
-; ws_close(a1 = état, a6) -> d0 = -1 / 0 : dernier bloc de données, extension courante et header (taille, nombre de
-; blocs de sa table, premier bloc) écrits, bitmap et cache vidés ; l'état est libéré.
+; ws_close(a1 = state, a6) -> d0 = -1 / 0: last data block, current extension and header (size, number of
+; blocks in its table, first block) written, bitmap and cache flushed; the state is freed.
 ws_close:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a3
-        moveq   #0,d7                ; d7 = résultat
+        moveq   #0,d7                ; d7 = result
         bsr     ow_ctx
         beq.s   .wc_free
         move.l  WS_CUR(a3),d0

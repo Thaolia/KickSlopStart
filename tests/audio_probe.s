@@ -1,10 +1,10 @@
-; tests/audio_probe.s — exécutable HUNK de test (ASSET DE TEST, PAS du code ROM).
-; Sonde boîte noire « audio.device » (piste analyse, docs/analysis/audio-device-v34.md).
-; Lancée depuis la startup-sequence d'une disquette (tests/audio_probe.sh). Appelle audio.device par OpenDevice/BeginIO
-; et écrit chaque résultat sur le série direct (SERDAT), une ligne par test, en hexadécimal.
-; Mesure du temps : trames (serveur VERTB) × 313 + ligne courante (une unité = une ligne, 64 µs).
-; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/audio_probe tests/audio_probe.s
-; Code auteur ; structures publiques (exec/io.h, devices/audio.h).
+; tests/audio_probe.s - HUNK test executable (TEST ASSET, NOT ROM code).
+; Black-box probe of "audio.device" (analysis track, docs/analysis/audio-device-v34.md).
+; Run from a floppy's startup-sequence (tests/audio_probe.sh). Calls audio.device through OpenDevice/BeginIO
+; and writes each result to the direct serial port (SERDAT), one line per test, in hexadecimal.
+; Time measurement: frames (VERTB server) x 313 + current line (one unit = one line, 64 us).
+; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/audio_probe tests/audio_probe.s
+; Original author code; public structures (exec/io.h, devices/audio.h).
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -24,7 +24,7 @@ LN_PRI   EQU 9
 RSZ      EQU 80
 NREQ     EQU 12
 SLEN     EQU 1000
-LIM      EQU 40000            ; garde de temps par attente (lignes, ≈ 2,5 s)
+LIM      EQU 40000            ; timeout per wait (lines, ~2.5 s)
 
 LR      macro
         lea     reqs-vars+(\1)*RSZ(a4),a1
@@ -67,7 +67,7 @@ _start:
                 addq.l  #4,a0
                 clr.l   (a0)
                 move.l  a0,-(a0)
-; requêtes
+; requests
                 lea     reqs-vars(a4),a0
                 move.w  #NREQ-1,d0
 .ri:            move.w  #RSZ/2-1,d1
@@ -89,7 +89,7 @@ _start:
                 PS      <10,"ADP debut",10>
                 move.l  #LIM,d7
 
-; ---------- T0 : Paula seule (sans audio.device), interruptions AUD0 masquées, scrutation d'INTREQR ----------
+; ---------- T0 : Paula alone (without audio.device), AUD0 interrupts masked, polling INTREQR ----------
                 PS      "T0"
                 move.w  #$0080,$DFF09A
                 move.w  #$0001,$DFF096
@@ -114,7 +114,7 @@ _start:
                 bsr     phex6
                 move.w  #$0001,$DFF096
                 move.w  #$0080,$DFF09C
-                PS      " /"                    ; démarrage manuel : AUD0DAT avec PER=1 puis DMA
+                PS      " /"                    ; manual start: AUD0DAT with PER=1 then DMA
                 move.w  #1,$DFF0A6
                 bsr     now
                 move.l  d0,t0-vars(a4)
@@ -140,14 +140,14 @@ _start:
                 move.w  #$0080,$DFF09C
                 bsr     nl
 
-; ---------- T1 : OpenDevice sans allocation (ioa_Length = 0) ----------
+; ---------- T1 : OpenDevice without allocation (ioa_Length = 0) ----------
                 PS      "T1"
                 LR      0
                 move.l  #$55,IO_UNIT(a1)
                 bsr     opn
                 bsr     nl
 
-; ---------- T2 : OpenDevice avec allocation ----------
+; ---------- T2 : OpenDevice with allocation ----------
                 PS      "T2a"
                 LR      1
                 lea     cmb1248-vars(a4),a0
@@ -173,8 +173,8 @@ _start:
                 move.l  IO_DEV(a1),dev-vars(a4)
                 move.w  A_KEY(a1),key1-vars(a4)
 
-; ---------- T3 : préemption / choix de combinaison ----------
-                PS      "T3a"                   ; pri 10 vole le canal 0 (pri 0)
+; ---------- T3 : preemption / combination choice ----------
+                PS      "T3a"                   ; pri 10 steals channel 0 (pri 0)
                 LR      4
                 lea     cmb1-vars(a4),a0
                 moveq   #1,d0
@@ -185,14 +185,14 @@ _start:
                 bsr     fin
                 bsr     pkey
                 bsr     nl
-                PS      "T3b"                   ; ancien propriétaire écrit : NOALLOCATION
+                PS      "T3b"                   ; former owner writes: NOALLOCATION
                 LR      1
                 moveq   #1,d0
                 bsr     wset
                 bsr     go
                 bsr     fin
                 bsr     nl
-                PS      "T3c"                   ; pri 20, {3,C} : canaux libres préférés -> C
+                PS      "T3c"                   ; pri 20, {3,C}: free channels preferred -> C
                 LR      5
                 lea     cmb3C-vars(a4),a0
                 moveq   #2,d0
@@ -203,7 +203,7 @@ _start:
                 bsr     fin
                 bsr     pkey
                 bsr     nl
-                PS      "T3d"                   ; pri 15, {1,2} : 1 = pri 10, 2 = pri 0 -> 2 (moindre dégât)
+                PS      "T3d"                   ; pri 15, {1,2}: 1 = pri 10, 2 = pri 0 -> 2 (least damage)
                 LR      6
                 lea     cmb12-vars(a4),a0
                 moveq   #2,d0
@@ -214,7 +214,7 @@ _start:
                 bsr     fin
                 bsr     pkey
                 bsr     nl
-                PS      "T3e"                   ; pri 15, {1} : pri 10 < 15 -> vol
+                PS      "T3e"                   ; pri 15, {1}: pri 10 < 15 -> steal
                 LR      7
                 lea     cmb1-vars(a4),a0
                 moveq   #1,d0
@@ -225,7 +225,7 @@ _start:
                 bsr     fin
                 bsr     pkey
                 bsr     nl
-                PS      "T3f"                   ; pri 15, {2} : canal 1 à pri 15 (égal) -> échec
+                PS      "T3f"                   ; pri 15, {2}: channel 1 at pri 15 (equal) -> failure
                 LR      8
                 lea     cmb2-vars(a4),a0
                 moveq   #1,d0
@@ -239,13 +239,13 @@ _start:
 
 ; ---------- T4 : ADCMD_FREE ----------
                 PS      "T4"
-                LR      1                       ; tout volé : F6
+                LR      1                       ; all stolen: F6
                 moveq   #9,d0
                 moveq   #$F,d1
                 bsr     cset
                 bsr     go
                 bsr     fin
-                LR      4                       ; canal 0 volé par R7
+                LR      4                       ; channel 0 stolen by R7
                 moveq   #9,d0
                 moveq   #1,d1
                 bsr     cset2
@@ -277,7 +277,7 @@ _start:
                 bsr     fin
                 bsr     nl
 
-; ---------- T5 : ADKCON nettoyé par l'allocation ----------
+; ---------- T5 : ADKCON cleared by the allocation ----------
                 PS      "T5"
                 move.w  #$80FF,$DFF09E
                 bsr     regs
@@ -310,7 +310,7 @@ _start:
                 LR      1
                 move.w  A_KEY(a1),key1-vars(a4)
 
-; ---------- T6 : CMD_WRITE, durée selon ioa_Cycles ----------
+; ---------- T6 : CMD_WRITE, duration depending on ioa_Cycles ----------
                 PS      "T6"
                 moveq   #1,d0
                 bsr     t6one
@@ -321,7 +321,7 @@ _start:
                 bsr     regs
                 bsr     nl
 
-; ---------- T7 : enchaînement A puis B, CMD_READ ----------
+; ---------- T7 : A then B chained, CMD_READ ----------
                 PS      "T7"
                 LR      9
                 moveq   #1,d0
@@ -359,7 +359,7 @@ _start:
                 bsr     phex8
                 bsr     nl
 
-; ---------- T8 : ADCMD_WAITCYCLE sur canal inactif (le cas « canal en lecture » est en T17, en dernier) ----------
+; ---------- T8 : ADCMD_WAITCYCLE on an idle channel (the "channel playing" case is in T17, last) ----------
                 PS      "T8"
                 LR      11
                 moveq   #14,d0
@@ -421,7 +421,7 @@ _start:
                 bsr     fin
                 bsr     nl
 
-; ---------- T11 : ADCMD_FINISH (cycles infinis) ----------
+; ---------- T11 : ADCMD_FINISH (infinite cycles) ----------
                 PS      "T11"
                 LR      9
                 moveq   #0,d0
@@ -485,7 +485,7 @@ _start:
                 LR      9
                 bsr     fin
                 PS      " /"
-                LR      6                       ; STOP d'abord, puis WRITE sur canal arrêté
+                LR      6                       ; STOP first, then WRITE on the stopped channel
                 moveq   #6,d0
                 moveq   #1,d1
                 bsr     cset
@@ -507,7 +507,7 @@ _start:
                 bsr     fin
                 bsr     nl
 
-; ---------- T13 : ADCMD_LOCK et vol ----------
+; ---------- T13 : ADCMD_LOCK and stealing ----------
                 PS      "T13"
                 LR      2
                 lea     cmb8-vars(a4),a0
@@ -517,7 +517,7 @@ _start:
                 bsr     alloc
                 bsr     go
                 bsr     fin
-                LR      8                       ; LOCK avec la clé de R2
+                LR      8                       ; LOCK with R2's key
                 moveq   #13,d0
                 moveq   #8,d1
                 bsr     cset
@@ -525,7 +525,7 @@ _start:
                 move.w  A_KEY(a0),A_KEY(a1)
                 bsr     bio
                 bsr     pend
-                LR      4                       ; pri 50 NOWAIT sur canal verrouillé
+                LR      4                       ; pri 50 NOWAIT on a locked channel
                 clr.w   A_KEY(a1)
                 lea     cmb8-vars(a4),a0
                 moveq   #1,d0
@@ -550,7 +550,7 @@ _start:
                 bsr     fin
                 bsr     pkey
                 PS      " /"
-                LR      9                       ; LOCK par R4 puis FREE : LOCK rendu
+                LR      9                       ; LOCK by R4 then FREE: LOCK returned
                 moveq   #13,d0
                 moveq   #8,d1
                 bsr     cset
@@ -569,7 +569,7 @@ _start:
                 move.l  #LIM,d7
                 bsr     nl
 
-; ---------- T14 : file d'attente d'allocation, AbortIO, SETPREC ----------
+; ---------- T14 : allocation wait queue, AbortIO, SETPREC ----------
                 PS      "T14"
                 LR      4
                 lea     cmb8-vars(a4),a0
@@ -600,7 +600,7 @@ _start:
                 bsr     alloc
                 bsr     go
                 bsr     pend
-                LR      4                       ; SETPREC -100 : R5 (pri 0) obtient le canal
+                LR      4                       ; SETPREC -100: R5 (pri 0) gets the channel
                 moveq   #10,d0
                 moveq   #8,d1
                 bsr     cset2
@@ -618,7 +618,7 @@ _start:
                 bsr     fin
                 bsr     nl
 
-; ---------- T15 : ALLOCATE ioa_Length = 0 ; commande inconnue avec io_Unit = 0 ----------
+; ---------- T15 : ALLOCATE ioa_Length = 0 ; unknown command with io_Unit = 0 ----------
                 PS      "T15"
                 LR      6
                 clr.w   A_KEY(a1)
@@ -638,7 +638,7 @@ _start:
                 bsr     fin
                 bsr     nl
 
-; ---------- T16 : CloseDevice libère les canaux ----------
+; ---------- T16 : CloseDevice frees the channels ----------
                 PS      "T16"
                 LR      1
                 jsr     -450(a6)
@@ -670,7 +670,7 @@ _start:
                 bsr     regs
                 bsr     nl
 
-; ---------- T17 : ADCMD_WAITCYCLE pendant une lecture (dernier test : peut corrompre la mémoire) ----------
+; ---------- T17 : ADCMD_WAITCYCLE during playback (last test: may corrupt memory) ----------
                 PS      "T17"
                 LR      1
                 move.l  dev-vars(a4),IO_DEV(a1)
@@ -714,8 +714,8 @@ _start:
                 moveq   #0,d0
                 rts
 
-; ---------- sous-programmes ----------
-; opn : a1 = requête (ln_Pri = 0) ; OpenDevice ; affiche d0, err, unit, clé, flags, cmd, device
+; ---------- subroutines ----------
+; opn: a1 = request (ln_Pri = 0); OpenDevice; prints d0, err, unit, key, flags, cmd, device
 opn:            move.l  a1,-(sp)
                 lea     devname-vars(a4),a0
                 moveq   #0,d0
@@ -744,7 +744,7 @@ opn:            move.l  a1,-(sp)
                 bsr     phex8
                 rts
 
-; alloc : a1 = requête, a0 = combinaisons, d0 = longueur, d1 = pri, d2 = flags
+; alloc: a1 = request, a0 = combinations, d0 = length, d1 = pri, d2 = flags
 alloc:          move.w  #32,IO_CMD(a1)
                 move.l  a0,A_DATA(a1)
                 move.l  d0,A_LEN(a1)
@@ -753,16 +753,16 @@ alloc:          move.w  #32,IO_CMD(a1)
                 move.l  dev-vars(a4),IO_DEV(a1)
                 rts
 
-; cset : a1 = requête, d0 = commande, d1 = io_Unit ; clé = key1 ; flags 0
+; cset: a1 = request, d0 = command, d1 = io_Unit; key = key1; flags 0
 cset:           move.w  key1-vars(a4),A_KEY(a1)
-; cset2 : idem sans toucher la clé
+; cset2: same without touching the key
 cset2:          move.w  d0,IO_CMD(a1)
                 move.l  d1,IO_UNIT(a1)
                 clr.b   IO_FLG(a1)
                 move.l  dev-vars(a4),IO_DEV(a1)
                 rts
 
-; wset : a1 = requête, d0 = cycles ; CMD_WRITE canal 0, ADIOF_PERVOL
+; wset: a1 = request, d0 = cycles; CMD_WRITE channel 0, ADIOF_PERVOL
 wset:           move.w  #3,IO_CMD(a1)
                 move.b  #$10,IO_FLG(a1)
                 move.l  #1,IO_UNIT(a1)
@@ -790,19 +790,19 @@ t6one:          move.l  d0,-(sp)
                 LR      9
                 bra     fin
 
-; go : t0 = maintenant puis BeginIO
+; go: t0 = now then BeginIO
 go:             move.l  d0,-(sp)
                 bsr     now
                 move.l  d0,t0-vars(a4)
                 move.l  (sp)+,d0
-; bio : BeginIO(a1) sans toucher io_Flags
+; bio: BeginIO(a1) without touching io_Flags
 bio:            movem.l d0-d1/a0-a1/a6,-(sp)
                 move.l  IO_DEV(a1),a6
                 jsr     -30(a6)
                 movem.l (sp)+,d0-d1/a0-a1/a6
                 rts
 
-; fin : a1 = requête ; attend sa fin (CheckIO) au plus d7 lignes depuis t0 ; affiche t, err, unit
+; fin: a1 = request; waits for its completion (CheckIO) at most d7 lines since t0; prints t, err, unit
 fin:            movem.l d2/a2,-(sp)
                 move.l  a1,a2
 .l:             move.l  a2,a1
@@ -836,7 +836,7 @@ fin:            movem.l d2/a2,-(sp)
                 movem.l (sp)+,d2/a2
                 rts
 
-; pend : a1 = requête ; affiche p=1 si encore en cours
+; pend: a1 = request; prints p=1 if still in progress
 pend:           move.l  a1,-(sp)
                 PS      " p="
                 move.l  (sp),a1
@@ -871,7 +871,7 @@ regs:           move.l  a1,-(sp)
                 move.l  (sp)+,a1
                 rts
 
-; now : d0 = horloge en lignes = trames (serveur VERTB) * 313 + ligne courante ; lue sous Disable
+; now: d0 = clock in lines = frames (VERTB server) * 313 + current line; read under Disable
 now:            movem.l d1/a6,-(sp)
                 move.l  4.w,a6
                 jsr     -120(a6)
@@ -896,7 +896,7 @@ vbsrv:          addq.l  #1,(a1)
                 moveq   #0,d0
                 rts
 
-; hwt : attend que INTREQR bit 7 (AUD0) passe à 1, au plus 40000 lignes ; d0 = lignes écoulées depuis t0
+; hwt: waits for INTREQR bit 7 (AUD0) to become 1, at most 40000 lines; d0 = lines elapsed since t0
 hwt:            bsr     now
                 sub.l   t0-vars(a4),d0
                 nop
@@ -908,7 +908,7 @@ hwt:            bsr     now
 .to:            moveq   #-1,d0
                 rts
 
-; dly : attend d0 lignes
+; dly: waits d0 lines
 dly:            movem.l d2-d3,-(sp)
                 move.l  d0,d3
                 bsr     now

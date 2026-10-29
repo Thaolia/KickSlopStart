@@ -1,311 +1,311 @@
-# trackdisk-official-timing.md — Comportement & timing de la lecture de piste (trackdisk.device V34.1, ROM `kick34005.A500`)
+# trackdisk-official-timing.md — Track read behaviour & timing (trackdisk.device V34.1, ROM `kick34005.A500`)
 
-> **Piste ANALYSE (« dirty »).** Faits dérivés UNIQUEMENT de la lecture de la ROM propriétaire
-> (radare2, 68000 big-endian, base `$FC0000`). Ce document décrit le **COMPORTEMENT** (séquence
-> d'opérations, ordre des accès registres, **durées**) et le **layout d'ABI** (offsets de champs
-> d'unité, valeurs de constantes). **Aucune suite d'instructions n'est reproduite** : pas de
-> désassemblage, pas d'extrait de code 68k, pas d'adresse de routine ROM. Les adresses/valeurs de
-> registres matériels et les constantes de timing sont des **faits matériels/ABI**, pas du code.
+> **ANALYSIS track ("dirty").** Facts derived SOLELY from reading the proprietary ROM
+> (radare2, 68000 big-endian, base `$FC0000`). This document describes **BEHAVIOUR** (sequence
+> of operations, order of register accesses, **durations**) and the **ABI layout** (unit field
+> offsets, constant values). **No instruction sequence is reproduced**: no
+> disassembly, no 68k code excerpt, no ROM routine address. Hardware register addresses/values
+> and timing constants are **hardware/ABI facts**, not code.
 >
-> Cible : trackdisk.device, `rt_IdString` = `trackdisk 34.1 (18 Aug 1987)`. La ROM globale est **34.5 / Kickstart 1.3**.
+> Target: trackdisk.device, `rt_IdString` = `trackdisk 34.1 (18 Aug 1987)`. The overall ROM is **34.5 / Kickstart 1.3**.
 >
-> Matériel (rappel) : CIAB PRB `$BFD100` = `/MTR`(b7) `/SEL0`(b3) `/SIDE`(b2) `/DIR`(b1) `/STEP`(b0),
-> tous **actifs-bas**. CIAA PRA `$BFE001` = `/RDY`(b5) `/TRACK0`(b4) `/WPRO`(b3) `/CHNG`(b2), tous
-> actifs-bas. Paula `$DFF0xx` : DSKPT `$20`, DSKLEN `$24`, DSKSYNC `$7E`, ADKCON `$9E`, INTENA `$9A`,
+> Hardware (reminder): CIAB PRB `$BFD100` = `/MTR`(b7) `/SEL0`(b3) `/SIDE`(b2) `/DIR`(b1) `/STEP`(b0),
+> all **active-low**. CIAA PRA `$BFE001` = `/RDY`(b5) `/TRACK0`(b4) `/WPRO`(b3) `/CHNG`(b2), all
+> active-low. Paula `$DFF0xx`: DSKPT `$20`, DSKLEN `$24`, DSKSYNC `$7E`, ADKCON `$9E`, INTENA `$9A`,
 > INTREQ `$9C`, DMACON `$96`.
 
 ---
 
-## 0. Vue d'ensemble & fonctions du driver
+## 0. Overview & driver functions
 
-Le driver tient un **shadow RAM** de l'octet de sortie CIAB PRB dans la structure d'unité à
-**offset `+0x41`** : toute manipulation des lignes lecteur se fait d'abord sur le shadow, puis le
-shadow est écrit en `$BFD100`. Ce shadow est la source de vérité ; `$BFD100` étant *write-only*, le
-driver ne relit jamais le port de contrôle.
+The driver keeps a **RAM shadow** of the CIAB PRB output byte in the unit structure at
+**offset `+0x41`**: every manipulation of the drive lines is done first on the shadow, then the
+shadow is written to `$BFD100`. This shadow is the source of truth; since `$BFD100` is *write-only*, the
+driver never reads the control port back.
 
-| Fonction | Rôle comportemental |
+| Function | Behavioural role |
 |----------|---------------------|
-| Moteur | **MOTEUR** (on/off + délai de spin-up) |
-| Recalibrate | **RECALIBRATE** (step vers `/TRACK0`, vérif, erreur 30 sinon) |
-| Seek | **SEEK** (vers cylindre cible : delta, `/DIR`+`/SIDE`, N pas) |
-| Pas | **UN PAS** (pulse `/STEP` + délai inter-pas) |
-| Lecture | **LECTURE DMA** d'un bloc brut (pas de WORDSYNC, pas de precomp) |
-| Écriture | **ÉCRITURE DMA** (teste `/WPRO`, applique write-precompensation ADKCON) |
-| Délai | **DÉLAI temporisé** en µs ; `≥ 300 µs` → requête timer.device, `< 300 µs` → attente CPU |
-| Attente fin DMA | `Wait()` sur signal + `GetMsg()` (interruption, PAS de polling) |
-| Acquisition | **GetUnit** disk.resource (acquisition exclusive du canal DMA disque) |
-| Libération | **GiveUnit** disk.resource (libération du canal DMA disque) |
-| Teardown DMA | déselection lecteurs + remise ADKCON au mode lecture par défaut |
-| Défauts par type | deux jeux de paramètres par type de lecteur (step, settle, precomp, nb pistes), cf. §2.4 |
+| Motor | **MOTOR** (on/off + spin-up delay) |
+| Recalibrate | **RECALIBRATE** (step towards `/TRACK0`, check, error 30 otherwise) |
+| Seek | **SEEK** (to target cylinder: delta, `/DIR`+`/SIDE`, N steps) |
+| Step | **ONE STEP** (`/STEP` pulse + inter-step delay) |
+| Read | **DMA READ** of a raw block (no WORDSYNC, no precomp) |
+| Write | **DMA WRITE** (tests `/WPRO`, applies ADKCON write-precompensation) |
+| Delay | **TIMED DELAY** in µs; `≥ 300 µs` → timer.device request, `< 300 µs` → CPU wait |
+| Wait for end of DMA | `Wait()` on signal + `GetMsg()` (interrupt, NOT polling) |
+| Acquisition | disk.resource **GetUnit** (exclusive acquisition of the disk DMA channel) |
+| Release | disk.resource **GiveUnit** (release of the disk DMA channel) |
+| DMA teardown | deselect drives + reset ADKCON to the default read mode |
+| Per-type defaults | two parameter sets per drive type (step, settle, precomp, number of tracks), see §2.4 |
 
-**Dépendances externes** (ouvertes à l'init) : `timer.device` (unité MICROHZ, pour TOUS les délais
-temporisés), `disk.resource` (arbitrage du canal DMA disque partagé entre df0..df3), `ciab.resource`,
-`keyboard.device`. Les délais ne sont JAMAIS des busy-loops CPU au-delà de 300 µs : ils passent par
-une requête `timer.device` synchrone (DoIO).
+**External dependencies** (opened at init): `timer.device` (MICROHZ unit, for ALL the timed
+delays), `disk.resource` (arbitration of the disk DMA channel shared between df0..df3), `ciab.resource`,
+`keyboard.device`. Delays are NEVER CPU busy-loops beyond 300 µs: they go through
+a synchronous `timer.device` request (DoIO).
 
-**Point d'ABI majeur (DMACON) :** le driver **n'écrit JAMAIS DMACON `$DFF096`** (vérifié : zéro
-écriture `$96` dans tout le module trackdisk). L'activation maître du DMA disque
-(DMACON `DSKEN` b4 + `DMAEN` b9) est donc posée **globalement et une seule fois** ailleurs dans le
-système ; trackdisk se contente d'**armer chaque transfert via la double-écriture DSKLEN** (cf. §3).
+**Major ABI point (DMACON):** the driver **NEVER writes DMACON `$DFF096`** (verified: zero
+writes to `$96` in the whole trackdisk module). The master enable of disk DMA
+(DMACON `DSKEN` b4 + `DMAEN` b9) is therefore set **globally and only once** elsewhere in the
+system; trackdisk merely **arms each transfer via the DSKLEN double write** (see §3).
 
 ---
 
-## 1. MOTEUR & READY
+## 1. MOTOR & READY
 
-### 1.1 Allumage moteur
+### 1.1 Motor switch-on
 
-Le moteur est contrôlé par `/MTR` (b7) dans le shadow `+0x41`, mais la **latch moteur du lecteur
-se fait sur le front de `/SEL`** (le lecteur Amiga mémorise l'état de `/MTR` au moment où `/SEL`
-passe actif). La routine :
+The motor is controlled by `/MTR` (b7) in the `+0x41` shadow, but the **drive's motor latch
+happens on the `/SEL` edge** (the Amiga drive latches the state of `/MTR` at the moment `/SEL`
+goes active). The routine:
 
-1. Compare l'état `/MTR` demandé à l'état courant (shadow). **Si inchangé → retour immédiat, aucun
-   délai.** (Conséquence : le DOS laissant le moteur allumé entre deux accès, le délai de spin-up
-   n'est payé **qu'une fois**, pas à chaque lecture.)
-2. Met à jour `/MTR` dans le shadow.
-3. Acquiert le canal disque (`GetUnit`).
-4. Produit la **séquence de deux écritures `$BFD100`** nécessaire pour générer le front `/SEL` qui
-   *latch* le nouvel état moteur dans le lecteur (d'abord l'état avec `/SEL` relâché, puis l'état
-   shadow avec `/SEL` asserté).
-5. **Si on vient d'ALLUMER le moteur** : délai **FIXE de 500 ms** (`500000 µs`, via le délai
-   temporisé → requête timer.device). Si on éteint : pas de délai.
-6. Retourne l'ancien état moteur (pour que l'appelant puisse le restaurer).
+1. Compares the requested `/MTR` state with the current state (shadow). **If unchanged → immediate return, no
+   delay.** (Consequence: since DOS leaves the motor on between two accesses, the spin-up delay
+   is paid **only once**, not on every read.)
+2. Updates `/MTR` in the shadow.
+3. Acquires the disk channel (`GetUnit`).
+4. Produces the **sequence of two `$BFD100` writes** needed to generate the `/SEL` edge that
+   *latches* the new motor state in the drive (first the state with `/SEL` released, then the shadow
+   state with `/SEL` asserted).
+5. **If the motor has just been switched ON**: **FIXED 500 ms** delay (`500000 µs`, via the timed
+   delay → timer.device request). If switching off: no delay.
+6. Returns the old motor state (so that the caller can restore it).
 
-### 1.2 Attente « ready » — le fait central
+### 1.2 Waiting for "ready" — the central fact
 
-**Le trackdisk officiel n'attend PAS `/RDY`. Il n'interroge JAMAIS `/RDY` (CIAA PRA b5).**
+**The official trackdisk does NOT wait for `/RDY`. It NEVER queries `/RDY` (CIAA PRA b5).**
 
-- Recherche exhaustive sur toute la ROM : le **seul** test de `/RDY` (b5 de `$BFE001`) se trouve
-  **hors** de trackdisk (zone disk.resource / exec). À l'intérieur de trackdisk.device,
-  il n'y a **aucun** accès au bit 5.
-- Le « ready » après allumage est donc un **délai aveugle, temporisé, de 500 ms fixe**, indépendant
-  de l'état réel du lecteur. C'est le timer.device (unité MICROHZ) qui compte, pas un busy-loop.
-- `/RDY` sur un lecteur Amiga ne signifie pas simplement « moteur à vitesse » : la ligne sert aussi
-  à horloger l'ID 32 bits du lecteur (quand on toggle `/SEL` moteur éteint). Cette logique d'ID est
-  dans disk.resource, pas dans le chemin de spin-up de trackdisk — d'où l'absence de poll `/RDY` ici.
+- Exhaustive search over the whole ROM: the **only** test of `/RDY` (b5 of `$BFE001`) is
+  **outside** trackdisk (disk.resource / exec area). Inside trackdisk.device,
+  there is **no** access to bit 5.
+- The "ready" after switch-on is therefore a **blind, timed, fixed 500 ms delay**, independent
+  of the drive's actual state. It is timer.device (MICROHZ unit) that counts, not a busy-loop.
+- `/RDY` on an Amiga drive does not simply mean "motor up to speed": the line is also used
+  to clock out the drive's 32-bit ID (when `/SEL` is toggled with the motor off). That ID logic is
+  in disk.resource, not in trackdisk's spin-up path — hence the absence of a `/RDY` poll here.
 
-### 1.3 « Timeout » / présence disque
+### 1.3 "Timeout" / disk presence
 
-Il n'y a pas de timeout sur un `/RDY` (puisque `/RDY` n'est pas lu). Les conditions d'erreur liées
-au lecteur viennent d'ailleurs :
+There is no timeout on `/RDY` (since `/RDY` is not read). Drive-related error conditions
+come from elsewhere:
 
-- **Présence disque** : testée via `/CHNG` (CIAA PRA **b2**) au début de chaque transfert DMA
-  (§3). Disque absent/changé → code **29** (`TDERR_DiskChanged`, `$1D`).
-- **Positionnement** : après recalibrate, si `/TRACK0` (b4) n'est pas atteint → code **30**
+- **Disk presence**: tested via `/CHNG` (CIAA PRA **b2**) at the start of each DMA transfer
+  (§3). Disk absent/changed → code **29** (`TDERR_DiskChanged`, `$1D`).
+- **Positioning**: after recalibrate, if `/TRACK0` (b4) is not reached → code **30**
   (`TDERR_SeekError`, `$1E`).
 
 ---
 
 ## 2. SEEK & STEP
 
-### 2.1 Séquence d'un pas unique
+### 2.1 Sequence of a single step
 
-Effets observables d'un pas sur le port de contrôle, dans l'ordre :
+Observable effects of a step on the control port, in order:
 
-1. Lire le shadow `+0x41` (il contient déjà la direction `/DIR` voulue, posée par l'appelant — cf.
+1. Read the `+0x41` shadow (it already contains the wanted `/DIR` direction, set by the caller — see
    §2.3).
-2. **Asserter `/STEP` bas** : une écriture `$BFD100` avec b0 = 0 (et b1/`DIR` + b2/`SIDE` dans leur
-   état courant, écrits dans la **même** écriture atomique).
-3. **Maintien du pulse** : une attente délibérée très courte (de l'ordre de **1 µs**, quelques
-   cycles CPU à 7,09 MHz) entre l'assertion et la relâche.
-4. **Relâcher `/STEP` haut** : une seconde écriture `$BFD100` restaurant b0 = 1.
-5. **Libérer le canal disque** (`GiveUnit`) pendant le temps de settle qui suit.
-6. **Délai inter-pas** = valeur d'unité `+0x2C` = **3000 µs = 3 ms** (lecteur 3,5" par défaut), via
-   requête timer.device.
-7. **Ré-acquérir le canal** (`GetUnit`) et réécrire le shadow en `$BFD100` (état stable, `/STEP`
-   haut, `/DIR` maintenu).
+2. **Assert `/STEP` low**: one `$BFD100` write with b0 = 0 (and b1/`DIR` + b2/`SIDE` in their
+   current state, written in the **same** atomic write).
+3. **Pulse hold**: a deliberate very short wait (of the order of **1 µs**, a few
+   CPU cycles at 7.09 MHz) between assertion and release.
+4. **Release `/STEP` high**: a second `$BFD100` write restoring b0 = 1.
+5. **Release the disk channel** (`GiveUnit`) during the settle time that follows.
+6. **Inter-step delay** = unit value `+0x2C` = **3000 µs = 3 ms** (default 3.5" drive), via
+   a timer.device request.
+7. **Re-acquire the channel** (`GetUnit`) and rewrite the shadow to `$BFD100` (stable state, `/STEP`
+   high, `/DIR` held).
 
-**Largeur du pulse `/STEP` bas** = durée de la 2e écriture CIA + l'attente courte intercalée,
-**délibérée** : elle élargit le pulse au-delà de ce que donneraient deux écritures CIA dos-à-dos.
-(Le même petit délai sépare aussi une écriture `$BFD100` d'une relecture `$BFE001` : c'est le temps
-de recouvrement/propagation du 8520.)
+**Width of the `/STEP` low pulse** = duration of the 2nd CIA write + the short wait inserted,
+**deliberate**: it widens the pulse beyond what two back-to-back CIA writes would give.
+(The same small delay also separates a `$BFD100` write from a `$BFE001` read-back: this is the
+recovery/propagation time of the 8520.)
 
-**Setup de direction :** `/DIR` et `/STEP`-bas sont posés dans la **même** écriture CIA atomique ⇒
-`/DIR` est valide exactement au front descendant de `/STEP` (le lecteur échantillonne `/DIR` sur ce
-front). Il n'y a pas de délai de setup `/DIR` *séparé*, mais `/DIR` est **stable et maintenu** sur
-toute la durée du seek (réécrit après chaque pas), donc jamais modifié pendant qu'un pulse est actif.
+**Direction setup:** `/DIR` and `/STEP`-low are set in the **same** atomic CIA write ⇒
+`/DIR` is valid exactly at the falling edge of `/STEP` (the drive samples `/DIR` on that
+edge). There is no *separate* `/DIR` setup delay, but `/DIR` is **stable and held** for
+the whole duration of the seek (rewritten after each step), so it is never changed while a pulse is active.
 
-### 2.2 Détection `/TRACK0` et recalibrate
+### 2.2 `/TRACK0` detection and recalibrate
 
-- `/TRACK0` = CIAA PRA **b4** (actif-bas : 0 = tête sur piste 0).
-- Recalibrate = poser `/DIR` « vers l'extérieur », puis **stepper** (pas unitaires du §2.1, donc avec
-  les 3 ms inter-pas) jusqu'à ce que `/TRACK0` soit asserté, borné par un compteur dérivé du **nombre
-  total de pistes** (unité `+0x36` = **160** pistes = 80 cyl × 2 faces pour le lecteur par défaut).
-- Après recalibrate/seek réussi : **délai de settle = valeur d'unité `+0x30` = 15000 µs = 15 ms**
-  (via timer.device) **avant de rendre la main** / lire.
-- Échec (`/TRACK0` non atteint) → `TDERR_SeekError` = 30.
+- `/TRACK0` = CIAA PRA **b4** (active-low: 0 = head on track 0).
+- Recalibrate = set `/DIR` "outwards", then **step** (single steps as in §2.1, hence with
+  the 3 ms inter-step delay) until `/TRACK0` is asserted, bounded by a counter derived from the **total
+  number of tracks** (unit `+0x36` = **160** tracks = 80 cyl × 2 sides for the default drive).
+- After a successful recalibrate/seek: **settle delay = unit value `+0x30` = 15000 µs = 15 ms**
+  (via timer.device) **before returning** / reading.
+- Failure (`/TRACK0` not reached) → `TDERR_SeekError` = 30.
 
-### 2.3 Seek vers un cylindre
+### 2.3 Seek to a cylinder
 
-1. Position courante conservée dans l'unité `+0x4C`, encodée `(cyl × 2) | face`.
-2. Acquiert le canal disque (`GetUnit`).
-3. Pose `/SIDE` (b2) selon la face cible — écriture `$BFD100` immédiate.
-4. Calcule le **delta** de cylindres ; choisit `/DIR` (b1) selon le signe (pose `/DIR` dans le
-   shadow, **sans** écriture `$BFD100` séparée — il sera appliqué par le 1er pas).
-5. Émet **|delta| pas** unitaires (§2.1, donc **3 ms entre chaque pas**).
-6. Après le dernier pas : **settle 15 ms** (unité `+0x30`), puis libère le canal.
+1. Current position kept in unit `+0x4C`, encoded `(cyl × 2) | side`.
+2. Acquires the disk channel (`GetUnit`).
+3. Sets `/SIDE` (b2) according to the target side — immediate `$BFD100` write.
+4. Computes the cylinder **delta**; chooses `/DIR` (b1) according to the sign (sets `/DIR` in the
+   shadow, **without** a separate `$BFD100` write — it will be applied by the 1st step).
+5. Issues **|delta| single steps** (§2.1, hence **3 ms between each step**).
+6. After the last step: **15 ms settle** (unit `+0x30`), then releases the channel.
 
-### 2.4 Résumé des durées de pas/seek
+### 2.4 Summary of step/seek durations
 
-| Grandeur | Valeur (lecteur 3,5" défaut) | Source |
+| Quantity | Value (default 3.5" drive) | Source |
 |----------|------------------------------|--------|
-| Largeur pulse `/STEP` bas | ≈ 1 µs d'attente + 1 accès CIA (≈ qq µs) | codé en dur |
-| Setup `/DIR` avant le front `/STEP` | 0 (même écriture CIA) ; `/DIR` maintenu tout le seek | pas unitaire |
-| **Délai inter-pas (step rate)** | **3 ms** (`3000 µs`, unité `+0x2C`) | défauts type 1 |
-| **Settle post-seek / post-recal** | **15 ms** (`15000 µs`, unité `+0x30`) | défauts type 1 |
-| Nombre de pistes (borne recal) | 160 | défauts type 1 |
-| Type de lecteur alternatif | step **6 ms**, settle 15 ms, 80 pistes | défauts type 2 |
+| `/STEP` low pulse width | ≈ 1 µs wait + 1 CIA access (≈ a few µs) | hard-coded |
+| `/DIR` setup before the `/STEP` edge | 0 (same CIA write); `/DIR` held for the whole seek | single step |
+| **Inter-step delay (step rate)** | **3 ms** (`3000 µs`, unit `+0x2C`) | type 1 defaults |
+| **Post-seek / post-recal settle** | **15 ms** (`15000 µs`, unit `+0x30`) | type 1 defaults |
+| Number of tracks (recal bound) | 160 | type 1 defaults |
+| Alternative drive type | step **6 ms**, settle 15 ms, 80 tracks | type 2 defaults |
 
 ---
 
-## 3. LECTURE DMA (WORDSYNC — le point le plus important)
+## 3. DMA READ (WORDSYNC — the most important point)
 
-### 3.1 Fait central : la lecture officielle N'UTILISE PAS WORDSYNC
+### 3.1 Central fact: the official read does NOT USE WORDSYNC
 
-Vérifié exhaustivement sur tout le module trackdisk :
+Exhaustively verified over the whole trackdisk module:
 
-- **Zéro écriture du registre DSKSYNC `$DFF07E`.** Le driver ne charge jamais `$4489` (ni rien)
-  dans DSKSYNC. (La valeur `$44894489` qui apparaît dans la ROM est écrite dans un **buffer** de
-  comparaison, pas dans le registre — elle sert au décodage MFM **logiciel**.)
-- **WORDSYNC jamais activé.** Les seules écritures ADKCON `$DFF09E` de tout le module sont :
-  (a) la **write-precompensation** dans le chemin d'écriture (effacement des bits precomp, puis
-  pose du niveau selon le cylindre), et (b) le **teardown** (`$0600` = *clear* WORDSYNC+MSBSYNC,
-  puis `$9100` = *set* MFMPREC+FAST). Le mode « par défaut » posé
-  par trackdisk a donc **WORDSYNC explicitement à 0**.
+- **Zero writes to the DSKSYNC register `$DFF07E`.** The driver never loads `$4489` (or anything)
+  into DSKSYNC. (The value `$44894489` that appears in the ROM is written into a comparison
+  **buffer**, not into the register — it is used for **software** MFM decoding.)
+- **WORDSYNC never enabled.** The only ADKCON `$DFF09E` writes in the whole module are:
+  (a) the **write-precompensation** in the write path (clearing of the precomp bits, then
+  setting of the level according to the cylinder), and (b) the **teardown** (`$0600` = *clear* WORDSYNC+MSBSYNC,
+  then `$9100` = *set* MFMPREC+FAST). The "default" mode set
+  by trackdisk therefore has **WORDSYNC explicitly at 0**.
 
-**Conséquence comportementale :** le trackdisk officiel lit une **piste brute entière, non
-synchronisée matériellement**, sur **plus d'une révolution** (buffer pré-rempli de `$AAAAAAAA` =
-motif de gap MFM ; longueur DMA dimensionnée pour garantir la capture de tous les secteurs quelle
-que soit la position rotationnelle), puis **retrouve les marques de synchro `$4489` en logiciel**
-lors du décodage MFM. Il ne dépend donc PAS de l'alignement matériel WORDSYNC.
+**Behavioural consequence:** the official trackdisk reads a **whole raw track, not
+hardware-synchronised**, over **more than one revolution** (buffer pre-filled with `$AAAAAAAA` =
+MFM gap pattern; DMA length sized to guarantee capture of all sectors whatever
+the rotational position), then **finds the `$4489` sync marks in software**
+during MFM decoding. It therefore does NOT depend on WORDSYNC hardware alignment.
 
-### 3.2 Séquence d'armement DMA observable sur les registres (lecture)
+### 3.2 DMA arming sequence observable on the registers (read)
 
-Ordre des opérations (une lecture de bloc brut) :
+Order of operations (one raw block read):
 
-1. **Acquérir** le canal disque : `GetUnit` disk.resource — bloquant tant qu'un autre
-   lecteur détient le DMA.
-2. Réécrire le shadow `+0x41` en `$BFD100` (rafraîchir la sélection lecteur).
-3. **DSKLEN `$DFF024` ← `$4000`** : garantit DMA disque **désarmé** (bit15 `DMAEN` = 0) avant
+1. **Acquire** the disk channel: disk.resource `GetUnit` — blocking as long as another
+   drive holds the DMA.
+2. Rewrite the `+0x41` shadow to `$BFD100` (refresh the drive selection).
+3. **DSKLEN `$DFF024` ← `$4000`**: guarantees disk DMA is **disarmed** (bit15 `DMAEN` = 0) before
    reconfiguration.
-4. **Délai de 1000 µs (1 ms)** (timer.device) — temps de stabilisation après select, **avant**
-   d'armer le DMA.
-5. **DSKPT `$DFF020` ← adresse buffer** (écriture long, pointeur DMA).
-6. **INTREQ `$DFF09C` ← `$1002`** : efface les interruptions disque **pendantes** (bit12 `DSKSYN`
+4. **1000 µs (1 ms) delay** (timer.device) — stabilisation time after select, **before**
+   arming the DMA.
+5. **DSKPT `$DFF020` ← buffer address** (long write, DMA pointer).
+6. **INTREQ `$DFF09C` ← `$1002`**: clears **pending** disk interrupts (bit12 `DSKSYN`
    + bit1 `DSKBLK`).
-7. **INTENA `$DFF09A` ← `$8002`** : `SET | DSKBLK`(b1) → **active l'interruption fin-de-bloc disque**.
-8. **Test présence disque** : `/CHNG` (`$BFE001` b2). Absent → code 29 (`TDERR_DiskChanged`), sortie.
-9. **Armer le DMA = DOUBLE-ÉCRITURE DSKLEN `$DFF024`** : la **même** valeur `$8000 | (longueur_octets / 2)`
-   est écrite **deux fois de suite**. `$8000` = bit15 `DMAEN` ; la valeur basse est le **compte de
-   MOTS** (DSKLEN compte des words, d'où le `/2`). La double-écriture est le mécanisme matériel
-   obligatoire de déclenchement (sécurité anti-DMA parasite du hardware disque).
-10. **Attendre la fin** : `Wait()` sur le **signal de la tâche** (masque `$400`)
-    puis `GetMsg()` sur le port d'unité `+0xAE`. **C'est de l'interruption, pas du polling** : le
-    serveur d'interruption `DSKBLK` signale la tâche, qui dort dans `Wait()` entre-temps.
-11. **Teardown** : INTENA ← `$0002` (clear DSKBLK), **DSKLEN ← `$4000`** (DMA désarmé).
-12. **Re-tester `/CHNG`** (le disque a pu être retiré pendant le transfert) → code 29 sinon succès.
-13. Libérer le canal (`GiveUnit`) et remettre ADKCON au mode par défaut (WORDSYNC off).
+7. **INTENA `$DFF09A` ← `$8002`**: `SET | DSKBLK`(b1) → **enables the disk end-of-block interrupt**.
+8. **Disk presence test**: `/CHNG` (`$BFE001` b2). Absent → code 29 (`TDERR_DiskChanged`), exit.
+9. **Arm the DMA = DSKLEN `$DFF024` DOUBLE WRITE**: the **same** value `$8000 | (length_bytes / 2)`
+   is written **twice in a row**. `$8000` = bit15 `DMAEN`; the low value is the **WORD
+   count** (DSKLEN counts words, hence the `/2`). The double write is the mandatory hardware
+   trigger mechanism (protection of the disk hardware against stray DMA).
+10. **Wait for the end**: `Wait()` on the **task's signal** (mask `$400`)
+    then `GetMsg()` on the unit port `+0xAE`. **This is interrupt-driven, not polling**: the
+    `DSKBLK` interrupt server signals the task, which sleeps in `Wait()` in the meantime.
+11. **Teardown**: INTENA ← `$0002` (clear DSKBLK), **DSKLEN ← `$4000`** (DMA disarmed).
+12. **Re-test `/CHNG`** (the disk may have been removed during the transfer) → code 29, otherwise success.
+13. Release the channel (`GiveUnit`) and reset ADKCON to the default mode (WORDSYNC off).
 
-### 3.3 Écriture — pour mémoire
+### 3.3 Write — for the record
 
-Même squelette, plus : test `/WPRO` (`$BFE001` b3) avant d'écrire ; **write-precompensation** posée
-dans ADKCON selon le cylindre courant (seuils d'unité `+0x26`/`+0x28`/`+0x2A`, défaut 1er seuil à
-cyl 40, c.-à-d. `$4C` = cyl×2 = 80) ; DSKLEN armé avec le bit14 (`WRITE`) en plus de `DMAEN` ; et un
-**délai supplémentaire de 2000 µs (2 ms)** autour du flush DMA d'écriture.
+Same skeleton, plus: `/WPRO` test (`$BFE001` b3) before writing; **write-precompensation** set
+in ADKCON according to the current cylinder (unit thresholds `+0x26`/`+0x28`/`+0x2A`, default 1st threshold at
+cyl 40, i.e. `$4C` = cyl×2 = 80); DSKLEN armed with bit14 (`WRITE`) in addition to `DMAEN`; and an
+**extra 2000 µs (2 ms) delay** around the write DMA flush.
 
-### 3.4 Résumé séquence/timing DMA lecture
+### 3.4 Summary of the DMA read sequence/timing
 
-| Étape | Registre / action | Valeur | Note |
+| Step | Register / action | Value | Note |
 |-------|-------------------|--------|------|
-| Désarmer | DSKLEN `$24` | `$4000` | DMAEN=0 |
-| **Attendre** | timer.device | **1 ms** | settle avant armement |
-| Pointeur | DSKPT `$20` | buffer | long |
-| Clear IRQ | INTREQ `$9C` | `$1002` | DSKSYN+DSKBLK pendantes |
+| Disarm | DSKLEN `$24` | `$4000` | DMAEN=0 |
+| **Wait** | timer.device | **1 ms** | settle before arming |
+| Pointer | DSKPT `$20` | buffer | long |
+| Clear IRQ | INTREQ `$9C` | `$1002` | pending DSKSYN+DSKBLK |
 | Enable IRQ | INTENA `$9A` | `$8002` | SET \| DSKBLK |
-| Présence | `/CHNG` `$BFE001` b2 | — | absent → err 29 |
-| **Armer** | DSKLEN `$24` | `$8000 \| mots` **×2** | **double-écriture obligatoire** |
-| Fin | Wait(signal `$400`)+GetMsg | — | **interruption, pas de poll INTREQR** |
-| Désarmer | INTENA `$9A` / DSKLEN `$24` | `$0002` / `$4000` | teardown |
-| ADKCON | `$9E` | `$0600` puis `$9100` | **WORDSYNC remis à 0**, MFMPREC+FAST |
-| DMACON `$96` | — | **jamais écrit** | activation maître DMA disque = globale, ailleurs |
+| Presence | `/CHNG` `$BFE001` b2 | — | absent → err 29 |
+| **Arm** | DSKLEN `$24` | `$8000 \| words` **×2** | **mandatory double write** |
+| End | Wait(signal `$400`)+GetMsg | — | **interrupt, no INTREQR polling** |
+| Disarm | INTENA `$9A` / DSKLEN `$24` | `$0002` / `$4000` | teardown |
+| ADKCON | `$9E` | `$0600` then `$9100` | **WORDSYNC reset to 0**, MFMPREC+FAST |
+| DMACON `$96` | — | **never written** | disk DMA master enable = global, elsewhere |
 
 ---
 
-## 4. Constantes de timing (récapitulatif)
+## 4. Timing constants (summary)
 
-| Paramètre | Valeur officielle | Mécanisme | Offset/source |
+| Parameter | Official value | Mechanism | Offset/source |
 |-----------|-------------------|-----------|---------------|
-| Spin-up moteur (on) | **500 ms** fixe | timer.device, aveugle (pas de `/RDY`) | constante 500000 µs |
-| Attente `/RDY` | **aucune** | — | `/RDY` jamais lu dans trackdisk |
-| Largeur pulse `/STEP` | ≈ 1 µs + accès CIA | codé en dur | pas unitaire |
-| Step rate (inter-pas) | **3 ms** (3000 µs) | timer.device | unité `+0x2C`, défauts type 1 |
-| Settle post-seek/recal | **15 ms** (15000 µs) | timer.device | unité `+0x30`, défauts type 1 |
-| Settle avant armement DMA | **1 ms** (1000 µs) | timer.device | constante 1000 µs |
-| Seuil busy-loop vs timer | 300 µs | délai temporisé | `< 300 µs` → attente CPU |
-| Fin DMA | interruption `DSKBLK` + `Wait` | exec | signal `$400` |
-| Nb pistes | 160 (80 cyl × 2) | — | unité `+0x36` |
+| Motor spin-up (on) | **500 ms** fixed | timer.device, blind (no `/RDY`) | constant 500000 µs |
+| `/RDY` wait | **none** | — | `/RDY` never read in trackdisk |
+| `/STEP` pulse width | ≈ 1 µs + CIA access | hard-coded | single step |
+| Step rate (inter-step) | **3 ms** (3000 µs) | timer.device | unit `+0x2C`, type 1 defaults |
+| Post-seek/recal settle | **15 ms** (15000 µs) | timer.device | unit `+0x30`, type 1 defaults |
+| Settle before DMA arming | **1 ms** (1000 µs) | timer.device | constant 1000 µs |
+| Busy-loop vs timer threshold | 300 µs | timed delay | `< 300 µs` → CPU wait |
+| End of DMA | `DSKBLK` interrupt + `Wait` | exec | signal `$400` |
+| Number of tracks | 160 (80 cyl × 2) | — | unit `+0x36` |
 
 ---
 
-## 5. Différences probables qui cassent sur émulateur timing-exact (WinUAE)
+## 5. Probable differences that break on a timing-exact emulator (WinUAE)
 
-Comparaison à notre implémentation naïve connue (pulse `/STEP` ≈ 1,4 µs = deux écritures CIA
-dos-à-dos ; attente READY = busy-loop poll `/RDY` ≈ 0,5 s sans délai moteur fixe ; pas de délai de
-setup direction ; lecture via WORDSYNC matériel + DSKSYNC = `$4489`). Par ordre de risque décroissant :
+Comparison with our known naive implementation (`/STEP` pulse ≈ 1.4 µs = two back-to-back CIA
+writes; READY wait = busy-loop polling `/RDY` ≈ 0.5 s with no fixed motor delay; no direction setup
+delay; read via hardware WORDSYNC + DSKSYNC = `$4489`). In decreasing order of risk:
 
-1. **Settle inter-pas absent (le plus grave).** L'officiel attend **3 ms après CHAQUE pas**
-   (timer.device). Notre seek enchaîne les pulses quasi dos-à-dos. Sur WinUAE timing-exact, la tête
-   émulée ne « rattrape » pas sa position : stepper plus vite que ~3 ms/pas fait que le modèle de
-   position de tête décroche, et la lecture suivante tombe sur le **mauvais cylindre** → données
-   fausses / hang (exactement le profil du bug déjà vu : seek court qui hang, seek long qui passe).
+1. **Missing inter-step settle (the most serious).** The official one waits **3 ms after EACH step**
+   (timer.device). Our seek chains the pulses almost back-to-back. On timing-exact WinUAE, the
+   emulated head does not "catch up" with its position: stepping faster than ~3 ms/step makes the head
+   position model lose track, and the next read lands on the **wrong cylinder** → wrong
+   data / hang (exactly the profile of the bug already seen: short seek that hangs, long seek that passes).
 
-2. **Settle post-seek de 15 ms absent.** L'officiel attend **15 ms** après le dernier pas avant de
-   lire. Lire immédiatement = lire pendant que la tête se stabilise encore → secteurs illisibles de
-   façon intermittente (dépend du cylindre et de la position rotationnelle).
+2. **Missing 15 ms post-seek settle.** The official one waits **15 ms** after the last step before
+   reading. Reading immediately = reading while the head is still settling → intermittently unreadable
+   sectors (depends on the cylinder and the rotational position).
 
-3. **Attente moteur : poll `/RDY` au lieu d'un délai fixe de 500 ms.** L'officiel ne lit JAMAIS
-   `/RDY` et applique un **délai aveugle de 500 ms** au seul front d'allumage. Un busy-poll `/RDY`
-   sur WinUAE peut (a) se terminer trop tôt (sémantique `/RDY` du lecteur émulé ≠ « moteur à
-   vitesse » — `/RDY` encode aussi l'ID lecteur), menant à une lecture avant stabilisation
-   rotationnelle, ou (b) ne jamais voir le niveau attendu selon la modélisation → hang. Corollaire :
-   notre impl risque de repayer l'attente à chaque accès, alors que l'officiel ne la paie qu'au
-   changement d'état moteur.
+3. **Motor wait: polling `/RDY` instead of a fixed 500 ms delay.** The official one NEVER reads
+   `/RDY` and applies a **blind 500 ms delay** only on the switch-on edge. A busy-poll of `/RDY`
+   on WinUAE can (a) end too early (`/RDY` semantics of the emulated drive ≠ "motor up to
+   speed" — `/RDY` also encodes the drive ID), leading to a read before rotational
+   stabilisation, or (b) never see the expected level depending on the modelling → hang. Corollary:
+   our impl risks paying the wait again on every access, whereas the official one only pays it on a
+   motor state change.
 
-4. **WORDSYNC matériel vs lecture brute + synchro logicielle.** L'officiel lit une **piste brute
-   complète (> 1 révolution), WORDSYNC OFF, DSKSYNC jamais écrit**, et retrouve `$4489` en logiciel.
-   Notre lecture WORDSYNC exige que (a) DSKSYNC contienne bien `$4489`, (b) le DMA soit armé AVANT
-   que la marque passe sous la tête, (c) la longueur couvre réellement un secteur après synchro.
-   Si la longueur vaut pile une piste et que l'armement rate la fenêtre de synchro, on perd des
-   secteurs — défaut invisible sur un émulateur « lâche » qui aligne tout, mais exposé par un timing
-   rotationnel exact. (Approche officielle = robuste par construction ; l'approche WORDSYNC est
-   viable mais seulement si l'armement et la longueur sont irréprochables.)
+4. **Hardware WORDSYNC vs raw read + software sync.** The official one reads a **complete raw
+   track (> 1 revolution), WORDSYNC OFF, DSKSYNC never written**, and finds `$4489` in software.
+   Our WORDSYNC read requires that (a) DSKSYNC really contains `$4489`, (b) the DMA is armed BEFORE
+   the mark passes under the head, (c) the length really covers a sector after sync.
+   If the length is exactly one track and the arming misses the sync window, sectors are
+   lost — a defect invisible on a "loose" emulator that aligns everything, but exposed by exact
+   rotational timing. (Official approach = robust by construction; the WORDSYNC approach is
+   viable but only if the arming and the length are flawless.)
 
-5. **Pulse `/STEP` trop étroit + pas de délai de stabilisation avant armement DMA.** L'officiel
-   élargit délibérément le pulse `/STEP` (largeur garantie) et attend **1 ms après le select,
-   avant d'armer le DMA** (étapes 3–4 du §3.2). Une impl qui émet un pulse dos-à-dos sans padding
-   et/ou arme le DMA immédiatement après le select peut, sur timing-exact, voir le lecteur rater le
-   pas et/ou le DMA démarrer sur un bus pas encore stabilisé.
+5. **`/STEP` pulse too narrow + no stabilisation delay before DMA arming.** The official one
+   deliberately widens the `/STEP` pulse (guaranteed width) and waits **1 ms after the select,
+   before arming the DMA** (steps 3–4 of §3.2). An impl that issues a back-to-back pulse without padding
+   and/or arms the DMA immediately after the select may, under exact timing, see the drive miss the
+   step and/or the DMA start on a bus not yet stabilised.
 
-**Détail d'ABI à ne pas oublier (cause possible de « rien ne se lit ») :** trackdisk **n'active
-jamais DMACON lui-même** — il suppose `DSKEN`+`DMAEN` déjà posés globalement et n'arme que via la
-**double-écriture DSKLEN**. Une impl qui compterait sur trackdisk pour activer DMACON, ou qui
-oublierait la **double** écriture DSKLEN, n'obtiendra aucun transfert.
+**ABI detail not to forget (possible cause of "nothing reads"):** trackdisk **never enables
+DMACON itself** — it assumes `DSKEN`+`DMAEN` are already set globally and only arms via the
+**DSKLEN double write**. An impl that relied on trackdisk to enable DMACON, or that
+forgot the **double** DSKLEN write, would get no transfer.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] **Corrigé** : retirées toutes les adresses ROM (une cinquantaine) : ROMTag, `rt_Init` et
-  bornes du module, « carte des routines » (moteur, seek, pas, lecture, écriture, délai, attente DMA,
-  GetUnit/GiveUnit, teardown), tables de défauts par type de lecteur, emplacements des écritures
-  ADKCON et des constantes de délai, emplacement du test `/RDY` hors trackdisk. La carte est
-  remplacée par une liste de fonctions par rôle.
-- [x] **Corrigé** : la description du pulse `/STEP` citait les instructions elles-mêmes (« deux
-  `NOP` », idiome « écrire CIA → 2 NOP → accès CIA ») ; reformulée en durée observable (≈ 1 µs
-  d'attente délibérée) sans nommer d'instruction. Titres « déroulé exact / routine » reformulés en
-  effets observables sur le port de contrôle.
-- [x] Conservé (comportement matériel observable, vérifiable sur un émulateur par trace des accès
-  registres) : ordre des écritures `$BFD100`/DSKLEN/DSKPT/INTREQ/INTENA/ADKCON et leurs valeurs,
-  durées (500 ms, 3 ms, 15 ms, 1 ms, 2 ms, seuil 300 µs), codes d'erreur publics, offsets de champs
-  de l'unité (structure privée, layout).
-- [x] Aucune donnée ROM au-delà de ces constantes (le motif de gap `$AAAAAAAA` et la marque `$4489`
-  sont des valeurs du format MFM Amiga public).
+- [x] **Fixed**: removed all ROM addresses (about fifty): ROMTag, `rt_Init` and
+  module bounds, "routine map" (motor, seek, step, read, write, delay, DMA wait,
+  GetUnit/GiveUnit, teardown), per-drive-type default tables, locations of the ADKCON
+  writes and of the delay constants, location of the `/RDY` test outside trackdisk. The map is
+  replaced by a list of functions by role.
+- [x] **Fixed**: the description of the `/STEP` pulse cited the instructions themselves ("two
+  `NOP`s", idiom "write CIA → 2 NOP → CIA access"); reworded as an observable duration (≈ 1 µs
+  deliberate wait) without naming any instruction. Headings "exact sequence / routine" reworded as
+  observable effects on the control port.
+- [x] Kept (observable hardware behaviour, verifiable on an emulator by tracing register
+  accesses): order of the `$BFD100`/DSKLEN/DSKPT/INTREQ/INTENA/ADKCON writes and their values,
+  durations (500 ms, 3 ms, 15 ms, 1 ms, 2 ms, 300 µs threshold), public error codes, unit field
+  offsets (private structure, layout).
+- [x] No ROM data beyond these constants (the gap pattern `$AAAAAAAA` and the mark `$4489`
+  are values of the public Amiga MFM format).

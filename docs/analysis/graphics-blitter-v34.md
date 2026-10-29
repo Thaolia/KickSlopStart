@@ -1,476 +1,476 @@
-# graphics.library 34.1 — opérations blitter : spec comportementale
+# graphics.library 34.1 — blitter operations: behavioural spec
 
-> Piste **ANALYSE** (« dirty »). Sources : ROM `assets/kick34005.A500` (lecture seule, radare2, base
-> `$FC0000` ; notes de désassemblage hors dépôt) et sonde boîte noire `tests/gblit_probe.s`
-> (harnais `tests/gblit_probe.sh`) exécutée sur la **vraie ROM** sous FS-UAE (A500 PAL, 512 Ko chip +
-> 512 Ko slow, boot DOS sur une disquette dont la startup-sequence lance la sonde).
-> Ce document décrit des **comportements**, des **valeurs**, des **ordres d'opérations** et des
-> **layouts d'ABI**. Il ne contient aucune suite d'instructions de la ROM ni adresse de routine.
-> Il complète, sans les répéter : `fastfonts-ff.md` (contrat de BltTemplate vu de FastFonts),
-> `installclipregion-v34.md` (sauvegarde des ClipRects par BltBitMap), `timer-v34.md` §6 (alarme TOD
-> de la CIA-B utilisée par QBSBlit), `wb-icon-clipping-v34.md` §3 (usage des icônes).
+> **ANALYSIS** track ("dirty"). Sources: ROM `assets/kick34005.A500` (read only, radare2, base
+> `$FC0000`; disassembly notes outside the repository) and black-box probe `tests/gblit_probe.s`
+> (harness `tests/gblit_probe.sh`) run on the **real ROM** under FS-UAE (PAL A500, 512 KB chip +
+> 512 KB slow, DOS boot on a floppy whose startup-sequence launches the probe).
+> This document describes **behaviours**, **values**, **orders of operations** and
+> **ABI layouts**. It contains no ROM instruction sequence nor routine address.
+> It complements, without repeating them: `fastfonts-ff.md` (BltTemplate contract as seen from FastFonts),
+> `installclipregion-v34.md` (saving of the ClipRects by BltBitMap), `timer-v34.md` §6 (TOD alarm
+> of CIA-B used by QBSBlit), `wb-icon-clipping-v34.md` §3 (use by the icons).
 >
-> **Niveaux de preuve** : **[O]** observé par la sonde sur la vraie ROM · **[D]** déduit de la lecture
-> du code de la ROM (comportement, pas de code) · **[S]** supposition raisonnable, non vérifiée.
+> **Levels of proof**: **[O]** observed by the probe on the real ROM · **[D]** deduced from reading
+> the ROM code (behaviour, not code) · **[S]** reasonable assumption, not verified.
 
-## 0. Résumé pour l'implémenteur
+## 0. Summary for the implementer
 
-- Le cœur est **BltBitMap** : un **descripteur de 28 octets par plan** est préparé (au plus 8, sur la
-  pile), puis la fonction prend le blitter par le **LVO OwnBlitter**, programme les plans **un par un en
-  attendant BBUSY entre chaque**, et rend le blitter par le **LVO DisownBlitter** **sans attendre la fin
-  du dernier plan** (sauf si elle a dû allouer un tampon temporaire). [D]
-- **Seul le quartet haut du minterm compte** (fonction de B = source et C = destination) ; le quartet
-  bas est remplacé par `$A` : le canal A sert de **masque de bord** (BLTADAT = `$FFFF` ou ligne de
-  masque en mémoire), et hors masque la destination est recopiée telle quelle. [D][O]
-- Le **recouvrement** est traité exactement lorsque source et destination ont le **même BytesPerRow**
-  (critère : comparaison des BytesPerRow et des adresses, pas de l'identité des BitMap) : six schémas de
-  parcours (§1.4), dont deux utilisent une **ligne de masque en chip RAM** (TempA, 128 octets alloués si
-  l'appelant n'en fournit pas). [D][O]
-- **Aucune validation** des arguments dans BltBitMap/BltTemplate (sans couche) : pas de clipping aux
-  bornes de la BitMap, pas de test des plans `NULL`/`-1` (ils sont traités comme des adresses), largeur
-  ou hauteur nulle = **blit maximal** du matériel (64 mots / 1024 lignes). [D][O]
-- Les fonctions « RastPort » (BltBitMapRastPort, ClipBlit, BltMaskBitMapRastPort, BltTemplate,
-  BltPattern) découpent par les **ClipRects** de la couche et appellent **BltBitMap par son LVO** (donc
-  sensibles à SetFunction) une fois par morceau visible ou sauvegardé. [D]
-- File de blits : **QBlit** appelle la fonction **immédiatement, dans le contexte de l'appelant**, si
-  le blitter est libre ; sinon le nœud est chaîné et l'interruption BLIT (niveau 3) déroule la file.
-  **QBSBlit n'attend le faisceau que si `gb_VBlank ≠ 0` ou si un blit synchronisé est déjà en attente** ;
-  sinon il se comporte comme QBlit. [D][O]
+- The core is **BltBitMap**: a **28-byte descriptor per plane** is prepared (at most 8, on the
+  stack), then the function takes the blitter through the **OwnBlitter LVO**, programs the planes **one by one,
+  waiting for BBUSY between each**, and gives the blitter back through the **DisownBlitter LVO** **without waiting for the end
+  of the last plane** (unless it had to allocate a temporary buffer). [D]
+- **Only the high nibble of the minterm counts** (function of B = source and C = destination); the low
+  nibble is replaced by `$A`: channel A serves as an **edge mask** (BLTADAT = `$FFFF` or mask line
+  in memory), and outside the mask the destination is copied as is. [D][O]
+- **Overlap** is handled exactly when source and destination have the **same BytesPerRow**
+  (criterion: comparison of the BytesPerRow and of the addresses, not of the BitMap identity): six walk
+  schemes (§1.4), two of which use a **mask line in chip RAM** (TempA, 128 bytes allocated if
+  the caller does not supply one). [D][O]
+- **No validation** of the arguments in BltBitMap/BltTemplate (without a layer): no clipping to the
+  BitMap bounds, no test of `NULL`/`-1` planes (they are treated as addresses), zero width
+  or height = **maximal blit** of the hardware (64 words / 1024 lines). [D][O]
+- The "RastPort" functions (BltBitMapRastPort, ClipBlit, BltMaskBitMapRastPort, BltTemplate,
+  BltPattern) clip by the layer's **ClipRects** and call **BltBitMap through its LVO** (hence
+  sensitive to SetFunction) once per visible or saved piece. [D]
+- Blit queue: **QBlit** calls the function **immediately, in the caller's context**, if
+  the blitter is free; otherwise the node is chained and the BLIT interrupt (level 3) unrolls the queue.
+  **QBSBlit only waits for the beam if `gb_VBlank ≠ 0` or if a synchronised blit is already waiting**;
+  otherwise it behaves like QBlit. [D][O]
 
 ## 1. BltBitMap (LVO −30)
 
-### 1.1 Contrat d'appel
+### 1.1 Calling contract
 
 `planes = BltBitMap(srcBM A0, srcX D0, srcY D1, dstBM A1, dstX D2, dstY D3, sizeX D4, sizeY D5,
-minterm D6, mask D7, TempA A2)`, A6 = GfxBase. Seuls les **mots bas** de D0–D6 et l'**octet bas** de D7
-sont utilisés. Registres conservés : D2–D7/A2–A6 (A0/A1/D1 détruits). [D]
+minterm D6, mask D7, TempA A2)`, A6 = GfxBase. Only the **low words** of D0–D6 and the **low byte** of D7
+are used. Registers preserved: D2–D7/A2–A6 (A0/A1/D1 destroyed). [D]
 
-**Valeur rendue (D0, long)** : le **nombre de plans effectivement blittés**, c'est-à-dire
-`min(srcBM.Depth, dstBM.Depth)` moins les plans dont le bit de `mask` est à 0. Rend **0 sans rien
-faire** (ni prise du blitter, ni attente) si l'une des deux profondeurs vaut 0 ou si l'octet `mask`
-vaut 0. Plans parcourus de 0 vers le haut ; le bit *i* de `mask` sélectionne le plan *i*. [D]
-Observé : profondeurs 3→3, masque `$05` → 2 ; masque `$00` → 0 ; profondeurs 2→3, masque `$FF` → 2 ;
+**Returned value (D0, long)**: the **number of planes actually blitted**, i.e.
+`min(srcBM.Depth, dstBM.Depth)` minus the planes whose `mask` bit is 0. Returns **0 without doing
+anything** (neither taking the blitter, nor waiting) if either of the two depths is 0 or if the `mask` byte
+is 0. Planes walked from 0 upwards; bit *i* of `mask` selects plane *i*. [D]
+Observed: depths 3→3, mask `$05` → 2; mask `$00` → 0; depths 2→3, mask `$FF` → 2;
 3→3, `$FF` → 3. [O]
 
-### 1.2 Arguments non validés
+### 1.2 Arguments not validated
 
-- **Pas de clipping** aux dimensions de la BitMap (`Rows`, `BytesPerRow`) ; coordonnées et tailles sont
-  converties en adresses par décalages **non signés** (un X négatif devient une très grande valeur).
-  L'adresse de ligne utilise une multiplication **signée 16 bits** `y × BytesPerRow`. [D]
-- **Plans `NULL` ou `-1`** : aucun traitement particulier en V34 (la convention « plan à 0 = tout à 0,
-  plan à −1 = tout à 1 » n'existe pas encore) ; le pointeur est utilisé comme adresse de plan. [D]
-- **sizeY = 0** : le champ hauteur de BLTSIZE vaut 0, soit **1024 lignes** pour le matériel. Observé :
-  BltBitMap(…, 16 × 0) entre deux BitMap de BytesPerRow 2 a écrit **1024 lignes**. [O]
-- **sizeX = 0** : le nombre de mots calculé vaut 0 si dstX est multiple de 16 (BLTSIZE largeur 0 =
-  **64 mots**, masques `$FFFF`), donc 128 octets écrits par ligne. Observé : à x = 16, 64 mots écrits
-  sur la ligne. Si dstX n'est pas multiple de 16, un mot est traité avec un masque nul (aucun effet
-  visible). Si dstX = 0, le calcul déborde (largeur « −1 » en non signé) et **corrompt le champ hauteur**
-  de BLTSIZE avec un modulo aberrant : **écriture hors de la BitMap**. [D][O]
-- **Largeur > 1008 pixels environ** (> 64 mots, ou > 62 mots dans les schémas à mot supplémentaire) et
-  **hauteur > 1024** : débordent des champs de BLTSIZE (limite OCS), sans contrôle. [D]
-- **Négatifs** : sizeX/sizeY négatifs ne sont pas rejetés (même effet de débordement). [D]
+- **No clipping** to the dimensions of the BitMap (`Rows`, `BytesPerRow`); coordinates and sizes are
+  converted to addresses by **unsigned** shifts (a negative X becomes a very large value).
+  The line address uses a **signed 16-bit** multiplication `y × BytesPerRow`. [D]
+- **`NULL` or `-1` planes**: no special handling in V34 (the convention "plane at 0 = all 0,
+  plane at −1 = all 1" does not exist yet); the pointer is used as a plane address. [D]
+- **sizeY = 0**: the height field of BLTSIZE is 0, i.e. **1024 lines** for the hardware. Observed:
+  BltBitMap(…, 16 × 0) between two BitMaps of BytesPerRow 2 wrote **1024 lines**. [O]
+- **sizeX = 0**: the computed number of words is 0 if dstX is a multiple of 16 (BLTSIZE width 0 =
+  **64 words**, masks `$FFFF`), hence 128 bytes written per line. Observed: at x = 16, 64 words written
+  on the line. If dstX is not a multiple of 16, one word is processed with a null mask (no visible
+  effect). If dstX = 0, the computation overflows (width "−1" in unsigned) and **corrupts the height field**
+  of BLTSIZE with an aberrant modulo: **write outside the BitMap**. [D][O]
+- **Width > about 1008 pixels** (> 64 words, or > 62 words in the schemes with an extra word) and
+  **height > 1024**: overflow the BLTSIZE fields (OCS limit), without check. [D]
+- **Negatives**: negative sizeX/sizeY are not rejected (same overflow effect). [D]
 
-Le **contrat à respecter** par un appelant correct est donc : 1 ≤ sizeX ≤ 1008 (ou moins selon le
-schéma), 1 ≤ sizeY ≤ 1024, rectangles entièrement dans les BitMap. Une implémentation compatible peut
-rejeter les cas dégénérés (rendre 0) sans casser de logiciel connu ; elle ne doit pas les « réparer »
-autrement. [S]
+The **contract to be respected** by a correct caller is therefore: 1 ≤ sizeX ≤ 1008 (or less depending on the
+scheme), 1 ≤ sizeY ≤ 1024, rectangles entirely within the BitMaps. A compatible implementation may
+reject the degenerate cases (return 0) without breaking known software; it must not "repair" them
+otherwise. [S]
 
-### 1.3 Programmation du blitter (commune à tous les schémas)
+### 1.3 Blitter programming (common to all schemes)
 
-Canaux : **A = masque** (constante `$FFFF` dans BLTADAT, sauf schémas à tampon), **B = source**,
-**C = D = destination** (même pointeur, même modulo). BLTCON0 = `USEB|USEC|USED` (+ `USEA` pour les
-schémas à tampon) | `(minterm & $F0)` | `$0A` | décalage ASH ; BLTCON1 = décalage BSH (+ `DESC`).
-Le quartet `$0A` signifie : là où A = 0 (hors masque), D = C. [D]
+Channels: **A = mask** (constant `$FFFF` in BLTADAT, except buffer schemes), **B = source**,
+**C = D = destination** (same pointer, same modulo). BLTCON0 = `USEB|USEC|USED` (+ `USEA` for the
+buffer schemes) | `(minterm & $F0)` | `$0A` | ASH shift; BLTCON1 = BSH shift (+ `DESC`).
+The nibble `$0A` means: where A = 0 (outside the mask), D = C. [D]
 
-Observé avec source `$FF00`, destination `$F0F0`, 16 × 1 : minterm `$C0`, `$CF`, `$C5` → tous
-`$FF00` ; `$60` et `$6A` → tous deux `$0FF0` (B xor C) ; `$30` → `$00FF` ; `$0A` → `$0000`. Le
-quartet bas est donc **ignoré** et le minterm `$0A` (« garder C » au sens matériel) donne **0** : en V34,
-la fonction est entièrement définie par le quartet haut, un quartet haut nul efface la zone. [O]
+Observed with source `$FF00`, destination `$F0F0`, 16 × 1: minterm `$C0`, `$CF`, `$C5` → all
+`$FF00`; `$60` and `$6A` → both `$0FF0` (B xor C); `$30` → `$00FF`; `$0A` → `$0000`. The
+low nibble is therefore **ignored** and the minterm `$0A` ("keep C" in the hardware sense) gives **0**: in V34,
+the function is entirely defined by the high nibble, a null high nibble clears the area. [O]
 
-Masques de bord (tables de 16 mots) : premier mot = `$FFFF >> (x & 15)` ; dernier mot =
-`$FFFF << (15 − ((x + w − 1) & 15))`, calculés en coordonnées **destination** dans les schémas
-ascendants et en coordonnées **source** dans les schémas descendants (où A est décalé du même ASH que
+Edge masks (tables of 16 words): first word = `$FFFF >> (x & 15)`; last word =
+`$FFFF << (15 − ((x + w − 1) & 15))`, computed in **destination** coordinates in the ascending
+schemes and in **source** coordinates in the descending schemes (where A is shifted by the same ASH as
 B). [D]
 
-**Ordre d'écriture des registres pour chaque plan**, après une attente BBUSY : BLTCON0+BLTCON1 (un
-long), BLTAFWM+BLTALWM (un long), puis soit BLTAPT + BLTAMOD (tampon), soit BLTADAT = `$FFFF` ; puis
-BLTBPT, BLTBMOD, BLTCPT, BLTDPT, BLTCMOD, BLTDMOD, et **BLTSIZE en dernier** (démarre le blit). [D]
+**Register write order for each plane**, after a BBUSY wait: BLTCON0+BLTCON1 (one
+long), BLTAFWM+BLTALWM (one long), then either BLTAPT + BLTAMOD (buffer), or BLTADAT = `$FFFF`; then
+BLTBPT, BLTBMOD, BLTCPT, BLTDPT, BLTCMOD, BLTDMOD, and **BLTSIZE last** (starts the blit). [D]
 
-**Séquence d'ensemble** : préparation de tous les descripteurs (éventuel remplissage du tampon de
-masque au processeur) → **OwnBlitter par son LVO** → pour chaque plan : attente BBUSY puis
-programmation → **DisownBlitter par son LVO** juste après le BLTSIZE du dernier plan. Si un tampon a été
-alloué par la fonction : attente BBUSY, puis libération. **Pas d'attente finale sinon** : l'appelant qui
-veut lire ou écrire la destination au processeur doit appeler WaitBlit. [D]
+**Overall sequence**: preparation of all the descriptors (possible filling of the mask buffer by the
+processor) → **OwnBlitter through its LVO** → for each plane: BBUSY wait then
+programming → **DisownBlitter through its LVO** just after the BLTSIZE of the last plane. If a buffer was
+allocated by the function: BBUSY wait, then freeing. **No final wait otherwise**: a caller that
+wants to read or write the destination with the processor must call WaitBlit. [D]
 
-### 1.4 Choix du sens de parcours et recouvrement
+### 1.4 Choice of walk direction and overlap
 
-Notations : `S` = adresse du premier mot source de la première ligne, `D` idem destination,
-`sx = srcX & 15`, `dx = dstX & 15`. Quatre parcours sont obtenus en combinant le mode ascendant/
-descendant du blitter (sens dans la ligne) et le **signe des modulos** (sens des lignes : un modulo
-« négatif » de −(BytesPerRow + largeur) fait progresser à l'inverse du mode). [D]
+Notation: `S` = address of the first source word of the first line, `D` same for destination,
+`sx = srcX & 15`, `dx = dstX & 15`. Four walks are obtained by combining the blitter's ascending/
+descending mode (direction within the line) and the **sign of the modulos** (direction of the lines: a
+"negative" modulo of −(BytesPerRow + width) progresses opposite to the mode). [D]
 
-| Cas | Condition | Mode | Décalage | Lignes | Départ |
+| Case | Condition | Mode | Shift | Lines | Start |
 |---|---|---|---|---|---|
-| P1 | même BPR, D < S, dx ≥ sx | ascendant | B décalé à droite de dx−sx | haut → bas | coin haut-gauche |
-| P2 | (BPR différents, dx ≥ sx) ou (même BPR, D ≥ S, dx > sx, D au-delà du dernier mot source de la ligne) | ascendant | dx−sx | **bas → haut** | coin bas-gauche |
-| P3 | même BPR, D ≥ S, dx ≤ sx | descendant | B et A décalés à gauche de sx−dx | bas → haut | coin bas-droit |
-| P4 | (BPR différents, dx < sx) ou (même BPR, D < S, dx < sx, dernier mot destination de la ligne avant S) | descendant | sx−dx | **haut → bas** | coin haut-droit |
-| P5 | même BPR, D < S, dx < sx, dernier mot destination de la ligne ≥ S (glissement à gauche dans la même ligne) | ascendant + **canal A en mémoire** | (dx−sx) & 15, destination commencée **un mot plus tôt** | haut → bas | |
-| P6 | même BPR, D ≥ S, dx > sx, D ≤ dernier mot source de la ligne (glissement à droite dans la même ligne) | descendant + **canal A en mémoire** | (sx−dx) & 15, un mot de plus à droite | haut → bas | |
+| P1 | same BPR, D < S, dx ≥ sx | ascending | B shifted right by dx−sx | top → bottom | top-left corner |
+| P2 | (different BPR, dx ≥ sx) or (same BPR, D ≥ S, dx > sx, D beyond the last source word of the line) | ascending | dx−sx | **bottom → top** | bottom-left corner |
+| P3 | same BPR, D ≥ S, dx ≤ sx | descending | B and A shifted left by sx−dx | bottom → top | bottom-right corner |
+| P4 | (different BPR, dx < sx) or (same BPR, D < S, dx < sx, last destination word of the line before S) | descending | sx−dx | **top → bottom** | top-right corner |
+| P5 | same BPR, D < S, dx < sx, last destination word of the line ≥ S (slide left within the same line) | ascending + **channel A in memory** | (dx−sx) & 15, destination started **one word earlier** | top → bottom | |
+| P6 | same BPR, D ≥ S, dx > sx, D ≤ last source word of the line (slide right within the same line) | descending + **channel A in memory** | (sx−dx) & 15, one more word to the right | top → bottom | |
 
-Largeur en mots : P1/P2 = étendue en mots de la **destination** ; P3/P4 = étendue de la **source** ;
-P5/P6 = étendue destination **+ 2**. [D]
+Width in words: P1/P2 = extent in words of the **destination**; P3/P4 = extent of the **source**;
+P5/P6 = destination extent **+ 2**. [D]
 
-P5/P6 exigent une **ligne de masque** de (étendue destination + 2) mots. P5 : un mot nul, le masque de
-premier mot (`$FFFF >> dx`), des `$FFFF`, le dernier mot ET-é avec le masque de fin. P6 : le masque de
-premier mot, des `$FFFF`, le dernier mot ET-é avec le masque de fin, puis un mot nul. Observé : glissement
-de 2 → 5 sur 40 px : `07FF FFFF FFF8 0000` ; 20 → 3 sur 30 px : `0000 1FFF FFFF 8000` ; 3 → 20 :
-`0FFF FFFF C000 0000` (le 4ᵉ mot, nul, est le mot final). [O] Elle est lue par le canal A avec un modulo négatif égal
-à sa longueur (la même ligne est relue pour chaque ligne). Elle est écrite au processeur **une seule fois
-par appel** (le premier plan concerné), dans :
-- **TempA** (A2) si l'appelant le fournit — après une attente BBUSY ;
-- sinon un bloc de **128 octets** `MEMF_CHIP` alloué par la fonction (une fois par appel), libéré en fin
-  d'appel après une attente BBUSY. En cas d'échec d'AllocMem, repli sur le tampon de dernier recours
+P5/P6 require a **mask line** of (destination extent + 2) words. P5: a null word, the first-word
+mask (`$FFFF >> dx`), `$FFFF`s, the last word ANDed with the end mask. P6: the first-word
+mask, `$FFFF`s, the last word ANDed with the end mask, then a null word. Observed: slide
+from 2 → 5 over 40 px: `07FF FFFF FFF8 0000`; 20 → 3 over 30 px: `0000 1FFF FFFF 8000`; 3 → 20:
+`0FFF FFFF C000 0000` (the 4th word, null, is the final word). [O] It is read by channel A with a negative modulo equal
+to its length (the same line is re-read for each line). It is written by the processor **only once
+per call** (the first plane concerned), into:
+- **TempA** (A2) if the caller supplies it — after a BBUSY wait;
+- otherwise a **128-byte** `MEMF_CHIP` block allocated by the function (once per call), freed at the end
+  of the call after a BBUSY wait. If AllocMem fails, fallback to the last-resort buffer
   `gb_LCMptr` (§7). [D]
 
-Conséquence : 128 octets limitent ces deux schémas à 62 mots + 2 ; au-delà la ligne de masque déborde du
-bloc. Aucun autre cas n'utilise TempA. [D]
+Consequence: 128 bytes limit these two schemes to 62 words + 2; beyond that the mask line overflows the
+block. No other case uses TempA. [D]
 
-Vérification [O] (`gblit_probe`, BitMap 64 × 4, BytesPerRow 8, motif d'octets `11 + 37 i`, minterm
-`$C0`, TempA pré-rempli de `$DEAD`) : les 14 déplacements testés (gauche/droite de 3, 17, 16 pixels dans
-la même ligne, haut/bas d'une ligne avec et sans décalage, diagonales) donnent **exactement** le
-résultat d'une copie « memmove » calculée sur l'hôte ; TempA n'est modifié que pour les glissements
-horizontaux où les adresses de mot diffèrent (P5/P6 : 2 → 5, 20 → 3, 3 → 20) — **pas** pour 5 → 2
-(même mot de départ, D = S : schéma P3 descendant, sans tampon) ; avec TempA = NULL le résultat est
-identique (tampon interne) ; aucun octet de garde (16 octets de part et d'autre) n'est modifié. [O]
+Verification [O] (`gblit_probe`, BitMap 64 × 4, BytesPerRow 8, byte pattern `11 + 37 i`, minterm
+`$C0`, TempA pre-filled with `$DEAD`): the 14 moves tested (left/right by 3, 17, 16 pixels within
+the same line, up/down by one line with and without shift, diagonals) give **exactly** the
+result of a "memmove" copy computed on the host; TempA is only modified for the horizontal
+slides where the word addresses differ (P5/P6: 2 → 5, 20 → 3, 3 → 20) — **not** for 5 → 2
+(same starting word, D = S: descending scheme P3, without buffer); with TempA = NULL the result is
+identical (internal buffer); no guard byte (16 bytes on each side) is modified. [O]
 
 ## 2. WaitBlit (LVO −228)
 
-Lit **deux fois** le bit BBUSY (bit 14 de DMACONR) — la première lecture absorbe le défaut d'Agnus
-ancien, qui peut montrer BBUSY = 0 juste après l'écriture de BLTSIZE — puis, si occupé, reboucle sur la
-lecture jusqu'à BBUSY = 0. Ne touche aucun registre (hormis CCR), n'utilise ni A6 ni la pile en dehors
-du retour, **ne prend pas le blitter**, ne teste pas BLTEN/DMAEN (si le DMA blitter est coupé pendant un
-blit, WaitBlit boucle indéfiniment). Appelable depuis une interruption. [D]
+Reads the BBUSY bit (bit 14 of DMACONR) **twice** — the first read absorbs the defect of the old
+Agnus, which may show BBUSY = 0 just after the write of BLTSIZE — then, if busy, loops on the
+read until BBUSY = 0. Touches no register (apart from CCR), uses neither A6 nor the stack apart from
+the return, **does not take the blitter**, does not test BLTEN/DMAEN (if blitter DMA is turned off during a
+blit, WaitBlit loops forever). Callable from an interrupt. [D]
 
-Toute la bibliothèque utilise la même **double lecture** avant chaque programmation de registres
-(BltBitMap, BltTemplate, BltClear, file QBlit, DisownBlitter). C'est le point « vrai A500 » n°1 :
-une implémentation qui ne teste BBUSY qu'une fois immédiatement après BLTSIZE peut réécrire les
-registres d'un blit en cours. [D]
+The whole library uses the same **double read** before each register programming
+(BltBitMap, BltTemplate, BltClear, QBlit queue, DisownBlitter). This is "real A500" point no. 1:
+an implementation that tests BBUSY only once immediately after BLTSIZE may rewrite the
+registers of a blit in progress. [D]
 
 ## 3. OwnBlitter (−456) / DisownBlitter (−462)
 
-État dans GfxBase (layout public `graphics/gfxbase.h`) : `BlitLock` (WORD, $AA) = **compteur de
-demandeurs − 1** (`−1` = libre, initialisé à −1), `BlitWaitQ` (List, $AE) = tâches en attente,
-`Flags` ($A8, WORD) : bit 1 = **le blitter appartient à la file QBlit**, bit 2 = **passation en attente**
-(privés). `BlitNest` ($AC) initialisé à −1, non utilisé par ces fonctions. **`BlitOwner` ($BC) n'est jamais
-écrit en V34.** [D] Observé : BlitLock = `$FFFF` avant, `$0000` après OwnBlitter, `$FFFF` après
-DisownBlitter ; BlitOwner = 0 ; `Flags` = 0 après. [O]
+State in GfxBase (public layout `graphics/gfxbase.h`): `BlitLock` (WORD, $AA) = **count of
+requesters − 1** (`−1` = free, initialised to −1), `BlitWaitQ` (List, $AE) = waiting tasks,
+`Flags` ($A8, WORD): bit 1 = **the blitter belongs to the QBlit queue**, bit 2 = **handover pending**
+(private). `BlitNest` ($AC) initialised to −1, not used by these functions. **`BlitOwner` ($BC) is never
+written in V34.** [D] Observed: BlitLock = `$FFFF` before, `$0000` after OwnBlitter, `$FFFF` after
+DisownBlitter; BlitOwner = 0; `Flags` = 0 after. [O]
 
-**OwnBlitter** : incrémente BlitLock ; si le résultat est 0, rend immédiatement (chemin rapide : ni
-Disable, ni Forbid, registres tous conservés). Sinon, sous Disable : si le drapeau « passation en
-attente » est mis, il est effacé et la tâche est propriétaire ; sinon la tâche place sur sa pile un nœud
-de 16 octets (le pointeur de tâche dans le champ `ln_Name`), efface le signal **SIGF_BLIT (bit 4,
-`$10`)**, s'ajoute en queue de BlitWaitQ et fait `Wait($10)` ; Enable. **Non imbriquable** : un second
-OwnBlitter de la même tâche se bloque pour toujours. **N'attend pas** la fin d'un blit en cours (faire
-WaitBlit avant d'écrire les registres). Registres D0/D1/A0/A1 conservés. [D]
+**OwnBlitter**: increments BlitLock; if the result is 0, returns immediately (fast path: neither
+Disable, nor Forbid, all registers preserved). Otherwise, under Disable: if the "handover pending" flag
+is set, it is cleared and the task is the owner; otherwise the task places on its stack a 16-byte
+node (the task pointer in the `ln_Name` field), clears the signal **SIGF_BLIT (bit 4,
+`$10`)**, adds itself at the tail of BlitWaitQ and does `Wait($10)`; Enable. **Not nestable**: a second
+OwnBlitter from the same task blocks forever. **Does not wait** for the end of a blit in progress (do
+WaitBlit before writing the registers). Registers D0/D1/A0/A1 preserved. [D]
 
-**DisownBlitter** : décrémente BlitLock ; si le résultat est négatif (personne d'autre), rend
-immédiatement. Sinon, sous Disable : si la file QBlit ou la file synchronisée n'est pas vide, le
-blitter est donné à la file (drapeau bit 1), l'interruption BLIT est autorisée (INTENA SET|BLIT) et, si
-le blitter est déjà au repos, **provoquée** (INTREQ SET|BLIT) ; sinon la première tâche de BlitWaitQ est
-retirée et reçoit `Signal(task, $10)` ; si la liste est vide (demandeur entre son incrément et son
-AddTail), le drapeau « passation en attente » est mis. Enable. Un DisownBlitter **non apparié** amène
-BlitLock à −2 et le prochain OwnBlitter attend indéfiniment. [D]
+**DisownBlitter**: decrements BlitLock; if the result is negative (nobody else), returns
+immediately. Otherwise, under Disable: if the QBlit queue or the synchronised queue is not empty, the
+blitter is given to the queue (flag bit 1), the BLIT interrupt is enabled (INTENA SET|BLIT) and, if
+the blitter is already idle, **caused** (INTREQ SET|BLIT); otherwise the first task of BlitWaitQ is
+removed and receives `Signal(task, $10)`; if the list is empty (requester between its increment and its
+AddTail), the "handover pending" flag is set. Enable. An **unpaired** DisownBlitter brings
+BlitLock to −2 and the next OwnBlitter waits forever. [D]
 
-Priorité : **les blits de la file QBlit passent avant les tâches en attente** à chaque DisownBlitter. [D]
+Priority: **QBlit queue blits pass before the waiting tasks** at each DisownBlitter. [D]
 
 ## 4. BltClear (LVO −300)
 
-`BltClear(memBlock A1, byteCount D0, flags D1)`. Prend le blitter **en interne** (même protocole que
-OwnBlitter mais sans passer par le LVO), attend BBUSY, programme BLTCON1 = 0, BLTDMOD = 0,
-BLTCON0 = `$0100` (D seul, minterm 0), BLTDPT = memBlock, puis un ou plusieurs BLTSIZE ; rend le
-blitter (protocole DisownBlitter interne). Rien n'est rendu (D0 indéfini). [D]
+`BltClear(memBlock A1, byteCount D0, flags D1)`. Takes the blitter **internally** (same protocol as
+OwnBlitter but without going through the LVO), waits for BBUSY, programs BLTCON1 = 0, BLTDMOD = 0,
+BLTCON0 = `$0100` (D only, minterm 0), BLTDPT = memBlock, then one or more BLTSIZEs; gives back the
+blitter (internal DisownBlitter protocol). Nothing is returned (D0 undefined). [D]
 
-- **flags bit 0** : attendre la fin du dernier blit avant de rendre. Sinon retour pendant l'effacement.
-- **flags bit 1** : D0 = `(lignes << 16) | octetsParLigne`. Si octetsParLigne ≤ 128 : **un seul blit**
-  hauteur = lignes, largeur = octetsParLigne / 2 ; le nombre de lignes est pris **modulo 1024** (0 =
-  1024) sans contrôle. Si octetsParLigne > 128 : le produit lignes × octetsParLigne (16 × 16 bits) est
-  traité en mode linéaire.
-- **Mode linéaire** (bit 1 à 0, ou cas ci-dessus) : nombre de mots = octets / 2 (**un octet impair final
-  n'est pas effacé**) ; d'abord une ligne de (mots mod 64) mots, puis un blit de ⌊mots/64⌋ mod 1024
-  lignes de 64 mots, puis autant de blits de 1024 × 64 mots (128 Ko) que nécessaire ; le pointeur D
-  continue d'un blit à l'autre ; attente BBUSY entre deux BLTSIZE.
-- **Bit 2 (remplissage par valeur, V36)** : ignoré. [D]
+- **flags bit 0**: wait for the end of the last blit before returning. Otherwise return during the clearing.
+- **flags bit 1**: D0 = `(lines << 16) | bytesPerLine`. If bytesPerLine ≤ 128: **a single blit**
+  height = lines, width = bytesPerLine / 2; the number of lines is taken **modulo 1024** (0 =
+  1024) without check. If bytesPerLine > 128: the product lines × bytesPerLine (16 × 16 bits) is
+  handled in linear mode.
+- **Linear mode** (bit 1 at 0, or the case above): number of words = bytes / 2 (**a final odd byte
+  is not cleared**); first one line of (words mod 64) words, then one blit of ⌊words/64⌋ mod 1024
+  lines of 64 words, then as many blits of 1024 × 64 words (128 KB) as needed; the D pointer
+  continues from one blit to the next; BBUSY wait between two BLTSIZEs.
+- **Bit 2 (fill by value, V36)**: ignored. [D]
 
-Observé : 7 octets → 6 effacés, le 7ᵉ intact ; `(1100 << 16) | 2`, flags 3 → **152** octets effacés
-(76 lignes = 1100 mod 1024) ; `(3 << 16) | 130`, flags 3 → 390 ; 130 octets linéaires → 130 ;
+Observed: 7 bytes → 6 cleared, the 7th intact; `(1100 << 16) | 2`, flags 3 → **152** bytes cleared
+(76 lines = 1100 mod 1024); `(3 << 16) | 130`, flags 3 → 390; 130 linear bytes → 130;
 `(5 << 16) | 8` → 40. [O]
 
-## 5. Fonctions « RastPort » et découpage par les couches
+## 5. "RastPort" functions and clipping by the layers
 
-### 5.1 Tampon TempA commun
+### 5.1 Common TempA buffer
 
-BltBitMapRastPort, ClipBlit et BltMaskBitMapRastPort obtiennent **avant tout** un TempA : `TmpRas.RasPtr`
-de la RastPort destination si `rp_TmpRas ≠ NULL` et `TmpRas.Size ≥ 128` ; pour ClipBlit, à défaut celui
-de la RastPort **source** ; sinon allocation de **128 octets MEMF_CHIP** (repli `gb_LCMptr`, §7),
-libérée en fin d'appel **après WaitBlit**. Ce TempA est passé à chaque BltBitMap. [D]
-Conséquence : une RastPort avec un TmpRas de ≥ 128 octets évite toute allocation ; les sorties
-avec allocation **attendent la fin** du dernier blit avant de rendre, les autres non. [D]
+BltBitMapRastPort, ClipBlit and BltMaskBitMapRastPort obtain **first of all** a TempA: `TmpRas.RasPtr`
+of the destination RastPort if `rp_TmpRas ≠ NULL` and `TmpRas.Size ≥ 128`; for ClipBlit, failing that the one
+of the **source** RastPort; otherwise allocation of **128 bytes MEMF_CHIP** (fallback `gb_LCMptr`, §7),
+freed at the end of the call **after WaitBlit**. This TempA is passed to each BltBitMap. [D]
+Consequence: a RastPort with a TmpRas of ≥ 128 bytes avoids any allocation; the exits
+with allocation **wait for the end** of the last blit before returning, the others do not. [D]
 
-### 5.2 Découpage destination (BltBitMapRastPort, BltMaskBitMapRastPort, ClipBlit)
+### 5.2 Destination clipping (BltBitMapRastPort, BltMaskBitMapRastPort, ClipBlit)
 
-Masque de plans = **`rp_Mask`** de la RastPort destination. [D]
+Plane mask = **`rp_Mask`** of the destination RastPort. [D]
 
-- **Sans couche** (`rp_Layer = NULL`) : un seul BltBitMap vers `rp_BitMap`, coordonnées telles quelles,
-  **sans clipping**. [D]
-- **Avec couche** : verrou de la couche (ObtainSemaphore sur `Layer.Lock`, imbriquable) pour la durée de
-  l'appel. Rectangle destination converti en coordonnées écran : `+ bounds.MinX − Scroll_X`,
-  `+ bounds.MinY − Scroll_Y`. Pour chaque ClipRect de `Layer.ClipRect`, dans l'ordre de la liste :
-  intersection (bornes inclusives) ; si non vide —
-  - ClipRect visible (`lobs = NULL`) : BltBitMap vers `rp_BitMap` aux coordonnées écran ;
-  - ClipRect caché avec `cr_BitMap` (smart refresh) : vers `cr_BitMap`, X relatif à `MinX & ~15`,
-    Y relatif à `MinY` ;
-  - caché sans BitMap (simple refresh) : **ignoré**.
-  Puis, si `Layer.SuperBitMap ≠ NULL`, pour chaque ClipRect de `Layer.SuperClipRect`, intersection avec
-  le rectangle **en coordonnées de couche** et BltBitMap vers la SuperBitMap. [D]
-- **Couche SUPER_BITMAP en destination de BltBitMapRastPort / BltMaskBitMapRastPort** : la fonction
-  synchronise d'abord la SuperBitMap depuis l'écran (équivalent SyncSBitMap), met temporairement
-  `rp_Layer = NULL` et `rp_BitMap = SuperBitMap`, blitte **directement dans la SuperBitMap sans
-  clipping**, restaure, puis recopie vers l'écran (équivalent CopySBitMap). [D]
+- **Without a layer** (`rp_Layer = NULL`): a single BltBitMap to `rp_BitMap`, coordinates as they are,
+  **without clipping**. [D]
+- **With a layer**: lock of the layer (ObtainSemaphore on `Layer.Lock`, nestable) for the duration of
+  the call. Destination rectangle converted to screen coordinates: `+ bounds.MinX − Scroll_X`,
+  `+ bounds.MinY − Scroll_Y`. For each ClipRect of `Layer.ClipRect`, in list order:
+  intersection (inclusive bounds); if not empty —
+  - visible ClipRect (`lobs = NULL`): BltBitMap to `rp_BitMap` at screen coordinates;
+  - hidden ClipRect with `cr_BitMap` (smart refresh): to `cr_BitMap`, X relative to `MinX & ~15`,
+    Y relative to `MinY`;
+  - hidden without BitMap (simple refresh): **ignored**.
+  Then, if `Layer.SuperBitMap ≠ NULL`, for each ClipRect of `Layer.SuperClipRect`, intersection with
+  the rectangle **in layer coordinates** and BltBitMap to the SuperBitMap. [D]
+- **SUPER_BITMAP layer as destination of BltBitMapRastPort / BltMaskBitMapRastPort**: the function
+  first synchronises the SuperBitMap from the screen (equivalent to SyncSBitMap), temporarily sets
+  `rp_Layer = NULL` and `rp_BitMap = SuperBitMap`, blits **directly into the SuperBitMap without
+  clipping**, restores, then copies back to the screen (equivalent to CopySBitMap). [D]
 
-**BltBitMapRastPort (−606)** : `(srcBM A0, srcX D0, srcY D1, destRP A1, destX D2, destY D3, sizeX D4,
-sizeY D5, minterm D6)`. Rend **toujours 1** (D0 = TRUE). [D] Observé : 1 ; ClipBlit sans couche : 1. [O]
+**BltBitMapRastPort (−606)**: `(srcBM A0, srcX D0, srcY D1, destRP A1, destX D2, destY D3, sizeX D4,
+sizeY D5, minterm D6)`. Returns **always 1** (D0 = TRUE). [D] Observed: 1; ClipBlit without a layer: 1. [O]
 
 ### 5.3 ClipBlit (LVO −552)
 
 `ClipBlit(srcRP A0, srcX D0, srcY D1, destRP A1, destX D2, destY D3, xSize D4, ySize D5, minterm D6)`.
-Rend **1**. [D]
+Returns **1**. [D]
 
-1. **Verrous** : si les deux couches existent, sont différentes et ont la même `LayerInfo`, prise du
-   sémaphore de la LayerInfo, puis verrou source, verrou destination, puis libération de la LayerInfo
-   (évite l'étreinte fatale) ; sinon verrou source puis destination. Libération : source puis
+1. **Locks**: if both layers exist, are different and have the same `LayerInfo`, the
+   LayerInfo semaphore is taken, then source lock, destination lock, then release of the LayerInfo
+   (avoids deadlock); otherwise source lock then destination. Release: source then
    destination. [D]
-2. **Même RastPort et SuperBitMap** : synchronisation, blit interne à la SuperBitMap sans couche,
-   recopie (comme §5.2). [D]
-3. **Même RastPort, rectangles source et destination qui se touchent** : la liste `Layer.ClipRect` est
-   **retriée en place, définitivement** (les champs `prev` sont reconstruits) pour que les morceaux soient
-   copiés dans l'ordre sûr : pour deux ClipRects qui se chevauchent verticalement, tri par MinX dans le
-   sens opposé au déplacement horizontal (déplacement vers la droite → ClipRect le plus à droite
-   d'abord) ; sinon tri par MinY dans le sens opposé au déplacement vertical. [D]
-4. **Découpage source** : sans couche source, un seul passage avec `srcRP.BitMap` ; avec couche, le
-   rectangle source (coordonnées écran de la couche source) est intersecté avec chaque ClipRect de la
-   source (BitMap = `rp_BitMap`, `cr_BitMap` ou ignoré, comme §5.2), puis avec les `SuperClipRect`
-   (BitMap = SuperBitMap). Chaque morceau source est envoyé au **découpage destination** de §5.2 avec la
-   position destination décalée d'autant. Le résultat est l'intersection des parties visibles ou
-   sauvegardées des deux côtés ; une partie source cachée sans sauvegarde **laisse la destination
-   intacte**. [D]
-5. Les rectangles ne sont **pas** contrôlés : xSize/ySize ≤ 0 produisent des intersections « vides
-   inversées » qui sont quand même transmises à BltBitMap (cf. §1.2). [D]
+2. **Same RastPort and SuperBitMap**: synchronisation, blit internal to the SuperBitMap without a layer,
+   copy back (as in §5.2). [D]
+3. **Same RastPort, source and destination rectangles that touch**: the `Layer.ClipRect` list is
+   **re-sorted in place, permanently** (the `prev` fields are rebuilt) so that the pieces are
+   copied in the safe order: for two ClipRects that overlap vertically, sort by MinX in the
+   direction opposite to the horizontal move (move to the right → rightmost ClipRect
+   first); otherwise sort by MinY in the direction opposite to the vertical move. [D]
+4. **Source clipping**: without a source layer, a single pass with `srcRP.BitMap`; with a layer, the
+   source rectangle (screen coordinates of the source layer) is intersected with each ClipRect of the
+   source (BitMap = `rp_BitMap`, `cr_BitMap` or ignored, as in §5.2), then with the `SuperClipRect`s
+   (BitMap = SuperBitMap). Each source piece is sent to the **destination clipping** of §5.2 with the
+   destination position shifted by the same amount. The result is the intersection of the visible or
+   saved parts on both sides; a hidden source part without backup **leaves the destination
+   intact**. [D]
+5. The rectangles are **not** checked: xSize/ySize ≤ 0 produce "empty inverted" intersections
+   which are still passed to BltBitMap (cf. §1.2). [D]
 
 ### 5.4 BltMaskBitMapRastPort (LVO −636)
 
 `(srcBM A0, srcX D0, srcY D1, destRP A1, destX D2, destY D3, sizeX D4, sizeY D5, minterm D6,
-bltMask A2)`. Rien n'est rendu (D0 indéfini). [D]
+bltMask A2)`. Nothing is returned (D0 undefined). [D]
 
-- **bltMask = NULL : la fonction ne fait rien** (aucun verrou, aucun blit). [D][O]
-- Sinon une BitMap fictive est construite sur la pile : en-tête copié de `srcBM` (donc **même
-  BytesPerRow, Rows, Depth**), tous les plans pointant sur `bltMask`. Le masque doit donc avoir la
-  géométrie d'un plan de la source et être en chip RAM. [D]
-- Trois passes complètes du découpage destination (§5.2), chacune sur tous les plans de `rp_Mask` et tous
-  les ClipRects : (1) source → destination, minterm **`$90`** (D = ¬(B ⊕ C)) ; (2) masque → destination,
-  **minterm de l'appelant** ; (3) source → destination, `$90`. Avec le minterm documenté
-  `ABC|ABNC|ANBC` (`$E0`, D = B ∨ C) on obtient « source là où le masque vaut 1, destination intacte
-  ailleurs » ; avec `ANBC` (`$20`) « source inversée à travers le masque ». [D][O]
-- Effet visible : la destination passe par deux états intermédiaires (scintillement possible), coût ≈ 3
-  BltBitMap. [D]
+- **bltMask = NULL: the function does nothing** (no lock, no blit). [D][O]
+- Otherwise a dummy BitMap is built on the stack: header copied from `srcBM` (hence **same
+  BytesPerRow, Rows, Depth**), all planes pointing to `bltMask`. The mask must therefore have the
+  geometry of one plane of the source and be in chip RAM. [D]
+- Three complete passes of the destination clipping (§5.2), each over all the planes of `rp_Mask` and all
+  the ClipRects: (1) source → destination, minterm **`$90`** (D = ¬(B ⊕ C)); (2) mask → destination,
+  **caller's minterm**; (3) source → destination, `$90`. With the documented minterm
+  `ABC|ABNC|ANBC` (`$E0`, D = B ∨ C) one gets "source where the mask is 1, destination intact
+  elsewhere"; with `ANBC` (`$20`) "source inverted through the mask". [D][O]
+- Visible effect: the destination goes through two intermediate states (possible flicker), cost ≈ 3
+  BltBitMaps. [D]
 
-Observé (32 × 1, source `$FF00FF00`, destination `$0F0F0F0F`, masque `$FFFF0000`) : `$E0` →
-`$FF000F0F` ; `$20` → `$00FF0F0F` ; masque NULL → `$0F0F0F0F` (inchangé). [O]
+Observed (32 × 1, source `$FF00FF00`, destination `$0F0F0F0F`, mask `$FFFF0000`): `$E0` →
+`$FF000F0F`; `$20` → `$00FF0F0F`; NULL mask → `$0F0F0F0F` (unchanged). [O]
 
 ## 6. BltTemplate (LVO −36)
 
-Contrat d'appel décrit dans `fastfonts-ff.md` §2/Exigences ; ce qui suit précise le comportement V34.
+Calling contract described in `fastfonts-ff.md` §2/Requirements; what follows details the V34 behaviour.
 
-- **Plans** : de 0 à `Depth − 1` de la BitMap destination, ignorés si le bit correspondant de `rp_Mask`
-  est à 0. **Minterm du plan i = `rp_minterms[i]`** (tableau de 8 octets à l'offset `$28` de la RastPort,
-  précalculé par SetAPen/SetBPen/SetDrMd) OR `$0A`, avec USEB|USEC|USED (+USEA/décalage selon le
-  schéma). B = gabarit (modulo `srcMod − largeur`), C = D = plan destination, A = masque de bord. [D]
-- **Un seul descripteur** (même géométrie pour tous les plans) construit par le même moteur que
-  BltBitMap (mêmes six schémas, « BytesPerRow source » = srcMod). BLTADAT/masques/BLTCON1/modulos ne sont
-  écrits **qu'au premier plan** ; ensuite seuls BLTCON0, BLTBPT, BLTCPT, BLTDPT, BLTSIZE. Attente BBUSY
-  avant chaque plan. Prise/restitution du blitter par les **LVO** OwnBlitter/DisownBlitter, pas
-  d'attente finale. [D]
-- **Sans couche** : pas de clipping (contrairement à ce que demande `fastfonts-ff.md` Exigences, la ROM
-  ne rogne **ni** aux bornes de la BitMap **ni** les coordonnées négatives). **xSrc n'est pas normalisé** :
-  seuls ses 4 bits bas décalent ; sa partie mots (xSrc ≥ 16) n'avance **pas** le pointeur de gabarit.
-  [D] Observé (gabarit `$0000 $FFFF $0F0F`, JAM2, APen 1, BPen 0, 16 × 1) : xSrc 0 → `$0000`, xSrc 16 →
-  `$0000` (et non `$FFFF`), xSrc 4 → `$000F` (dans les trois cas le second mot `$5555` est intact). [O]
-- **Avec couche** : `LockLayerRom` / `UnlockLayerRom` **par leurs LVO** (−432/−438, couche en A5) autour
-  de tout l'appel. Coordonnées converties comme §5.2 ; pour chaque ClipRect, rognage à gauche/en haut
-  (avance de xSrc et du pointeur de `srcMod` par ligne sautée), rognage à droite/en bas, morceau ignoré
-  si largeur ≤ 0 ou hauteur ≤ 0 ; **puis xSrc est normalisé** (pointeur + (xSrc ≫ 4) × 2, xSrc & 15) —
-  donc xSrc ≥ 16 fonctionne avec couche. Destination : rp_BitMap, cr_BitMap (relative à `MinX & ~15`,
-  `MinY`), ignorée si cachée sans BitMap ; puis SuperClipRects vers la SuperBitMap. [D]
-- Valeur rendue : aucune (D0 indéfini). [D]
-- Le registre A2 transmis au moteur commun est le pointeur de **BitMap destination** : si le gabarit
-  recouvrait une ligne de la destination avec srcMod = BytesPerRow (schémas P5/P6), la ligne de masque
-  serait écrite dans la structure BitMap. Cas pathologique, à ne pas reproduire. [D]
+- **Planes**: from 0 to `Depth − 1` of the destination BitMap, skipped if the corresponding bit of `rp_Mask`
+  is 0. **Minterm of plane i = `rp_minterms[i]`** (8-byte array at offset `$28` of the RastPort,
+  precomputed by SetAPen/SetBPen/SetDrMd) OR `$0A`, with USEB|USEC|USED (+USEA/shift depending on the
+  scheme). B = template (modulo `srcMod − width`), C = D = destination plane, A = edge mask. [D]
+- **A single descriptor** (same geometry for all planes) built by the same engine as
+  BltBitMap (same six schemes, "source BytesPerRow" = srcMod). BLTADAT/masks/BLTCON1/modulos are
+  written **only for the first plane**; afterwards only BLTCON0, BLTBPT, BLTCPT, BLTDPT, BLTSIZE. BBUSY wait
+  before each plane. Taking/giving back the blitter through the **LVOs** OwnBlitter/DisownBlitter, no
+  final wait. [D]
+- **Without a layer**: no clipping (contrary to what `fastfonts-ff.md` Requirements asks, the ROM
+  clips **neither** to the BitMap bounds **nor** negative coordinates). **xSrc is not normalised**:
+  only its low 4 bits shift; its word part (xSrc ≥ 16) does **not** advance the template pointer.
+  [D] Observed (template `$0000 $FFFF $0F0F`, JAM2, APen 1, BPen 0, 16 × 1): xSrc 0 → `$0000`, xSrc 16 →
+  `$0000` (and not `$FFFF`), xSrc 4 → `$000F` (in all three cases the second word `$5555` is intact). [O]
+- **With a layer**: `LockLayerRom` / `UnlockLayerRom` **through their LVOs** (−432/−438, layer in A5) around
+  the whole call. Coordinates converted as in §5.2; for each ClipRect, clipping on the left/at the top
+  (advance of xSrc and of the pointer by `srcMod` per skipped line), clipping on the right/at the bottom, piece skipped
+  if width ≤ 0 or height ≤ 0; **then xSrc is normalised** (pointer + (xSrc ≫ 4) × 2, xSrc & 15) —
+  so xSrc ≥ 16 works with a layer. Destination: rp_BitMap, cr_BitMap (relative to `MinX & ~15`,
+  `MinY`), skipped if hidden without BitMap; then SuperClipRects to the SuperBitMap. [D]
+- Returned value: none (D0 undefined). [D]
+- The A2 register passed to the common engine is the **destination BitMap** pointer: if the template
+  overlapped a line of the destination with srcMod = BytesPerRow (schemes P5/P6), the mask line
+  would be written into the BitMap structure. Pathological case, not to be reproduced. [D]
 
-## 7. Allocation temporaire et mémoire de dernier recours
+## 7. Temporary allocation and last-resort memory
 
-Toutes les allocations temporaires du blitter passent par un même allocateur : `AllocMem(taille,
-MEMF_CHIP)` ; en cas d'échec, si taille > 2048 → `Alert($82011234)` ; puis (et dans tous les cas
-d'échec) prise du sémaphore **`gb_LastChanceMemory`** (GfxBase $E0) et usage du bloc **`gb_LCMptr`**
-(GfxBase $E4), **2048 octets chip** alloués à l'initialisation de la bibliothèque ; la libération
-correspondante relâche le sémaphore si le pointeur est `gb_LCMptr`, sinon FreeMem. Le tampon de dernier
-recours **sérialise** donc tous les blits à court de mémoire. [D]
+All the blitter's temporary allocations go through one allocator: `AllocMem(size,
+MEMF_CHIP)`; on failure, if size > 2048 → `Alert($82011234)`; then (and in all cases
+of failure) the **`gb_LastChanceMemory`** semaphore (GfxBase $E0) is taken and the block **`gb_LCMptr`**
+(GfxBase $E4), **2048 bytes of chip** allocated at the library's initialisation, is used; the corresponding
+freeing releases the semaphore if the pointer is `gb_LCMptr`, otherwise FreeMem. The last-resort
+buffer therefore **serialises** all the blits short of memory. [D]
 
-Tailles demandées : 128 octets (TempA de BltBitMap et des fonctions RastPort) ; BltPattern : `bytecnt ×
-hauteur` (copie réalignée du masque, §8). [D]
+Sizes requested: 128 bytes (TempA of BltBitMap and of the RastPort functions); BltPattern: `bytecnt ×
+height` (realigned copy of the mask, §8). [D]
 
 ## 8. BltPattern (LVO −312)
 
-`BltPattern(rp A1, mask A0, xl D0, yl D1, maxX D2, maxY D3, bytecnt D4)`, bornes **inclusives**. [D]
+`BltPattern(rp A1, mask A0, xl D0, yl D1, maxX D2, maxY D3, bytecnt D4)`, **inclusive** bounds. [D]
 
-- Sans couche : moteur direct ; avec couche : moteur découpé par ClipRects (même logique que §5.2). [D]
-- **mask = NULL** : remplissage du rectangle (C, D actifs, BLTCON0 `$0300`|minterm), masques de bord
-  `$FFFF >> (xl & 15)` / complément de `$FFFF >> ((maxX + 1) & 15)`. Motif `rp_AreaPtrn` sur `2^|AreaPtSz|`
-  lignes (AreaPtSz < 0 = motif multicolore, un motif par plan), stylos et mode via `rp_minterms`. [D]
-- **mask ≠ NULL** : canal A = masque, modulo A = `bytecnt − largeur`, décalage A = `xl & 15`. Si la
-  largeur en mots du rectangle ne correspond pas à `bytecnt`, le masque est **recopié et réaligné** dans
-  un tampon chip temporaire de `bytecnt × hauteur` octets (BltClear puis BltBitMap `$CA` d'un plan),
-  libéré après WaitBlit. [D]
-- Valeur rendue : aucune. Comportement fin du moteur (≈ 3,6 Ko) non entièrement décrit ici : voir
-  « Points non tranchés ». [D]
+- Without a layer: direct engine; with a layer: engine clipped by ClipRects (same logic as §5.2). [D]
+- **mask = NULL**: fill of the rectangle (C, D active, BLTCON0 `$0300`|minterm), edge masks
+  `$FFFF >> (xl & 15)` / complement of `$FFFF >> ((maxX + 1) & 15)`. Pattern `rp_AreaPtrn` on `2^|AreaPtSz|`
+  lines (AreaPtSz < 0 = multicolour pattern, one pattern per plane), pens and mode via `rp_minterms`. [D]
+- **mask ≠ NULL**: channel A = mask, A modulo = `bytecnt − width`, A shift = `xl & 15`. If the
+  width in words of the rectangle does not match `bytecnt`, the mask is **copied and realigned** into
+  a temporary chip buffer of `bytecnt × height` bytes (BltClear then BltBitMap `$CA` of one plane),
+  freed after WaitBlit. [D]
+- Returned value: none. Fine behaviour of the engine (≈ 3.6 KB) not entirely described here: see
+  "Open points". [D]
 
-## 9. QBlit (−276) et QBSBlit (−294) : files de blits
+## 9. QBlit (−276) and QBSBlit (−294): blit queues
 
-Nœud (`hardware/blit.h`, `struct bltnode`, 18 octets) : `n` (+0, suivant), `function` (+4), `stat`
-(+8, octet, `CLEANUP = $40`), `blitsize` (+$A, non utilisé par la ROM), `beamsync` (+$C, ligne),
-`cleanup` (+$E). GfxBase : `blthd/blttl` ($3A/$3E) file normale, `bsblthd/bsblttl` ($42/$46) file
-synchronisée, `BeamSync` ($A2, WORD) = beamsync du premier nœud synchronisé en attente, `VBlank` ($A0,
-octet). [D]
+Node (`hardware/blit.h`, `struct bltnode`, 18 bytes): `n` (+0, next), `function` (+4), `stat`
+(+8, byte, `CLEANUP = $40`), `blitsize` (+$A, not used by the ROM), `beamsync` (+$C, line),
+`cleanup` (+$E). GfxBase: `blthd/blttl` ($3A/$3E) normal queue, `bsblthd/bsblttl` ($42/$46) synchronised
+queue, `BeamSync` ($A2, WORD) = beamsync of the first waiting synchronised node, `VBlank` ($A0,
+byte). [D]
 
-### 9.1 Appel de la fonction utilisateur
+### 9.1 Call of the user function
 
-- Entrée : **A0 = `$DFF000`**, **A1 = nœud**, A6 = GfxBase (appel direct) ; la fonction peut détruire
-  D0/D1/A0/A1 (A5 est rechargé par la ROM). [D] Observé : A0 = `$00DFF000`, A1 = nœud, A6 = GfxBase,
-  **SR = `$0000`** (mode utilisateur, IPL 0 : appel depuis la tâche, interruptions masquées seulement par
+- Entry: **A0 = `$DFF000`**, **A1 = node**, A6 = GfxBase (direct call); the function may destroy
+  D0/D1/A0/A1 (A5 is reloaded by the ROM). [D] Observed: A0 = `$00DFF000`, A1 = node, A6 = GfxBase,
+  **SR = `$0000`** (user mode, IPL 0: call from the task, interrupts masked only by
   Disable/INTENA). [O]
-- **Sortie : le résultat est lu dans les codes conditions (Z)**, pas dans D0 : Z = 1 (« 0 ») = nœud
-  terminé ; Z = 0 = la fonction a lancé un blit et veut être rappelée. Une fonction doit donc finir par
-  une instruction qui positionne Z selon D0 (p. ex. `moveq`). [D]
-- Avant chaque appel la ROM attend que le blitter soit au repos (double test BBUSY). [D]
-- Si la fonction rend « non nul » et que le blitter est **déjà au repos** au retour (aucun blit lancé,
-  ou blit très court), la ROM **rappelle immédiatement** la fonction (en tâche : en ouvrant brièvement
-  Disable/Enable entre deux appels). Observé : une fonction rendant non nul deux fois sans lancer de
-  blit est appelée 3 fois avant le retour de QBlit, puis `cleanup` une fois. [O]
-- Fin d'un nœud : attente BBUSY, appel de `cleanup` si `stat & CLEANUP`, BlitLock décrémenté.
+- **Exit: the result is read in the condition codes (Z)**, not in D0: Z = 1 ("0") = node
+  finished; Z = 0 = the function has started a blit and wants to be called again. A function must therefore end with
+  an instruction that sets Z according to D0 (e.g. `moveq`). [D]
+- Before each call the ROM waits for the blitter to be idle (double BBUSY test). [D]
+- If the function returns "non-zero" and the blitter is **already idle** on return (no blit started,
+  or a very short blit), the ROM **calls the function again immediately** (in a task: briefly opening
+  Disable/Enable between two calls). Observed: a function returning non-zero twice without starting a
+  blit is called 3 times before QBlit returns, then `cleanup` once. [O]
+- End of a node: BBUSY wait, call of `cleanup` if `stat & CLEANUP`, BlitLock decremented.
 
 ### 9.2 QBlit
 
-Met `n = NULL`, puis sous Disable + Forbid : si la file normale n'est pas vide, ajout en queue
-(BlitLock incrémenté, INTENA SET|BLIT). Sinon incrément de BlitLock : si le blitter est **libre**, la
-fonction est appelée **tout de suite, dans le contexte de l'appelant** (tâche), avec le drapeau
-« blitter à la file » posé et l'interruption BLIT acquittée, jusqu'à ce qu'elle rende « terminé » ou
-qu'un blit soit en cours (le nœud devient alors tête de file et l'interruption BLIT prend le relais) ;
-si le blitter est **pris** par une tâche, le nœud devient tête de file et attend le DisownBlitter.
-Permit + Enable. Observé : appel synchrone (avant le retour de QBlit) quand le blitter est libre. [D][O]
+Sets `n = NULL`, then under Disable + Forbid: if the normal queue is not empty, added at the tail
+(BlitLock incremented, INTENA SET|BLIT). Otherwise increment of BlitLock: if the blitter is **free**, the
+function is called **right away, in the caller's context** (task), with the
+"blitter to the queue" flag set and the BLIT interrupt acknowledged, until it returns "finished" or
+a blit is in progress (the node then becomes the head of the queue and the BLIT interrupt takes over);
+if the blitter is **held** by a task, the node becomes the head of the queue and waits for the DisownBlitter.
+Permit + Enable. Observed: synchronous call (before QBlit returns) when the blitter is free. [D][O]
 
-### 9.3 Interruption BLIT (niveau 3, vecteur posé par SetIntVector, is_Data = GfxBase)
+### 9.3 BLIT interrupt (level 3, vector set by SetIntVector, is_Data = GfxBase)
 
-Acquitte INTREQ BLIT ; si la file normale est vide, traite la file synchronisée (ci-dessous) ; si le
-drapeau « blitter à la file » n'est pas posé, sort (le blitter appartient à une tâche) ; sinon boucle :
-appel de la tête, fin de nœud (§9.1), passage au suivant. File vidée : effacement du drapeau, passation
-aux tâches en attente (§3) et **INTENA CLR|BLIT**. [D]
+Acknowledges INTREQ BLIT; if the normal queue is empty, processes the synchronised queue (below); if the
+"blitter to the queue" flag is not set, exits (the blitter belongs to a task); otherwise loops:
+call of the head, end of node (§9.1), move to the next. Queue emptied: clearing of the flag, handover
+to the waiting tasks (§3) and **INTENA CLR|BLIT**. [D]
 
-### 9.4 QBSBlit et synchronisation faisceau
+### 9.4 QBSBlit and beam synchronisation
 
-- **Si `gb_VBlank = 0` et `gb_BeamSync = 0` : QBSBlit se comporte exactement comme QBlit** (beamsync
-  ignoré). `gb_VBlank` est **remis à 0 par le serveur VBlank de graphics à chaque trame** et mis à 1 par
-  **DrawGList** ; hors usage des GELs, QBSBlit n'attend donc pas le faisceau. [D] Observé : nœud avec
-  beamsync = 200 soumis à la ligne 50 → fonction appelée **à la ligne 51**, avant le
-  retour de QBSBlit (retour ligne 53) ; `gb_VBlank` = 0 et `gb_BeamSync` = 0 ; deux essais identiques. [O]
-- Sinon : beamsync est plafonné à `gb_MaxDisplayRow` ; si la file synchronisée n'est pas vide, ajout en
-  queue (**pas de tri par ligne**) ; sinon, si la file normale est occupée, le nœud devient tête
-  synchronisée (BeamSync = sa ligne, INTENA SET|BLIT) ; sinon, si la ligne courante (VPOSR/VHPOSR) est
-  **avant** beamsync, l'**alarme TOD de la CIA-B** est programmée (TOD = compteur de lignes, remis à la
-  ligne courante par le serveur VBlank ; valeur divisée par 2 si le bit `$0002` de `gb_system_bplcon0`
-  est mis) et le nœud attend ; si la ligne est déjà atteinte : exécution comme QBlit.
-- Dans l'interruption BLIT, quand la file normale est vide et `BeamSync ≠ 0` : ligne courante (0 lue
-  comme MaxDisplayRow + 1) ≥ BeamSync → la tête synchronisée passe en tête de file normale et est
-  exécutée ; sinon, si `gb_VBlank ≠ 0`, réarmement de l'alarme (avec, si une VERTB est pendante, une
-  fenêtre brève à IPL 2 pour la laisser passer), et si `gb_VBlank = 0` **toute la file synchronisée est
-  transférée devant la file normale** et exécutée sans attendre. [D]
-- Serveur d'alarme (ICR bit 2, cf. `timer-v34.md` §6) : désautorise l'alarme ; si la file normale est
-  vide, autorise et **provoque** l'interruption BLIT. [D]
+- **If `gb_VBlank = 0` and `gb_BeamSync = 0`: QBSBlit behaves exactly like QBlit** (beamsync
+  ignored). `gb_VBlank` is **reset to 0 by graphics' VBlank server at every frame** and set to 1 by
+  **DrawGList**; outside the use of GELs, QBSBlit therefore does not wait for the beam. [D] Observed: node with
+  beamsync = 200 submitted at line 50 → function called **at line 51**, before the
+  return of QBSBlit (return at line 53); `gb_VBlank` = 0 and `gb_BeamSync` = 0; two identical attempts. [O]
+- Otherwise: beamsync is capped at `gb_MaxDisplayRow`; if the synchronised queue is not empty, added at the
+  tail (**no sorting by line**); otherwise, if the normal queue is busy, the node becomes the synchronised
+  head (BeamSync = its line, INTENA SET|BLIT); otherwise, if the current line (VPOSR/VHPOSR) is
+  **before** beamsync, the **CIA-B TOD alarm** is programmed (TOD = line counter, reset to the
+  current line by the VBlank server; value divided by 2 if bit `$0002` of `gb_system_bplcon0`
+  is set) and the node waits; if the line is already reached: execution as QBlit.
+- In the BLIT interrupt, when the normal queue is empty and `BeamSync ≠ 0`: current line (0 read
+  as MaxDisplayRow + 1) ≥ BeamSync → the synchronised head moves to the head of the normal queue and is
+  executed; otherwise, if `gb_VBlank ≠ 0`, re-arming of the alarm (with, if a VERTB is pending, a
+  brief window at IPL 2 to let it through), and if `gb_VBlank = 0` **the whole synchronised queue is
+  transferred in front of the normal queue** and executed without waiting. [D]
+- Alarm server (ICR bit 2, cf. `timer-v34.md` §6): disables the alarm; if the normal queue is
+  empty, enables and **causes** the BLIT interrupt. [D]
 
-## 10. Initialisation (ce qui concerne le blitter)
+## 10. Initialisation (as far as the blitter is concerned)
 
-À l'init de graphics : BLTCON0 = BLTCON1 = 0, un BLTSIZE `$0041` (1 mot × 1 ligne) avant et après
-DMACON SET|BLTEN (`$8040`) ; vecteur BLIT posé par **SetIntVector** (pas de chaîne de serveurs) ;
-serveur VBlank ajouté (AddIntServer) ; alarme TOD de la CIA-B enregistrée (AddICRVector bit 2) et CRB
-bit 7 (écriture de l'alarme) mis ; BlitLock = BlitNest = −1, listes BlitWaitQ et TOF_WaitQ initialisées ;
-bloc LCM 2048 octets chip + sémaphore. **Le bit BLTPRI (« nasty ») n'est jamais mis par graphics V34.** [D]
+At graphics init: BLTCON0 = BLTCON1 = 0, a BLTSIZE `$0041` (1 word × 1 line) before and after
+DMACON SET|BLTEN (`$8040`); BLIT vector set by **SetIntVector** (no server chain);
+VBlank server added (AddIntServer); CIA-B TOD alarm registered (AddICRVector bit 2) and CRB
+bit 7 (alarm write) set; BlitLock = BlitNest = −1, BlitWaitQ and TOF_WaitQ lists initialised;
+LCM block of 2048 bytes of chip + semaphore. **The BLTPRI ("nasty") bit is never set by graphics V34.** [D]
 
-## 11. Points « vrai A500 »
+## 11. "Real A500" points
 
-1. **Chip RAM obligatoire** : plans, gabarits, masques, TempA, TmpRas doivent être en chip (512 Ko sur
-   OCS : adresses < `$80000`). La ROM ne vérifie rien : un plan en slow RAM (`$C00000`) est lu/écrit par
-   le blitter à l'adresse tronquée (données d'une autre zone chip). Les allocations internes de la ROM
-   demandent toutes MEMF_CHIP. [D]
-2. **BBUSY** : double lecture systématique (§2) avant toute programmation. [D]
-3. **Pas de mode nasty** : le 68000 garde ses cycles pendant les blits graphics ; un logiciel qui met
-   BLTPRI lui-même change les temps, pas la sémantique. [D]
-4. **Pas d'attente finale** dans BltBitMap/BltTemplate/BltClear (bit 0 à 0)/ClipBlit sans allocation :
-   le premier accès processeur à la destination doit être précédé de WaitBlit (FastFonts, Workbench et
-   intuition le font). Un émulateur « instantané » masque l'oubli. [D]
-5. Les limites OCS de BLTSIZE (1024 lignes, 64 mots) s'appliquent **sans contrôle** (§1.2, §4). [D][O]
+1. **Chip RAM mandatory**: planes, templates, masks, TempA, TmpRas must be in chip (512 KB on
+   OCS: addresses < `$80000`). The ROM checks nothing: a plane in slow RAM (`$C00000`) is read/written by
+   the blitter at the truncated address (data from another chip area). The ROM's internal allocations
+   all request MEMF_CHIP. [D]
+2. **BBUSY**: systematic double read (§2) before any programming. [D]
+3. **No nasty mode**: the 68000 keeps its cycles during graphics blits; software that sets
+   BLTPRI itself changes the timings, not the semantics. [D]
+4. **No final wait** in BltBitMap/BltTemplate/BltClear (bit 0 at 0)/ClipBlit without allocation:
+   the first processor access to the destination must be preceded by WaitBlit (FastFonts, Workbench and
+   intuition do it). An "instantaneous" emulator hides the omission. [D]
+5. The OCS limits of BLTSIZE (1024 lines, 64 words) apply **without check** (§1.2, §4). [D][O]
 
-## 12. Ce qui relie le blitter aux layers
+## 12. What links the blitter to the layers
 
-- layers.library sauvegarde/restaure les ClipRects cachés par **BltBitMap** via le LVO de graphics
-  (`installclipregion-v34.md` §3) ; la règle « X relatif à `MinX & ~15` » de cr_BitMap (§5.2) est la
-  même des deux côtés. [D]
-- Les verrous pris par le blitter côté graphics sont : `Layer.Lock` (ObtainSemaphore direct) pour
-  BltBitMapRastPort/ClipBlit/BltMaskBitMapRastPort, `LockLayerRom` (LVO) pour BltTemplate ; la LayerInfo
-  seulement transitoirement dans ClipBlit (§5.3). Tous imbriquables pour la même tâche. [D]
-- ClipBlit **modifie l'ordre de la liste `Layer.ClipRect`** (§5.3) : les layers ne doivent pas dépendre
-  de cet ordre. [D]
+- layers.library saves/restores the hidden ClipRects by **BltBitMap** via graphics' LVO
+  (`installclipregion-v34.md` §3); the "X relative to `MinX & ~15`" rule of cr_BitMap (§5.2) is the
+  same on both sides. [D]
+- The locks taken by the blitter on the graphics side are: `Layer.Lock` (direct ObtainSemaphore) for
+  BltBitMapRastPort/ClipBlit/BltMaskBitMapRastPort, `LockLayerRom` (LVO) for BltTemplate; the LayerInfo
+  only transiently in ClipBlit (§5.3). All nestable for the same task. [D]
+- ClipBlit **modifies the order of the `Layer.ClipRect` list** (§5.3): the layers must not depend
+  on that order. [D]
 
-## Points non tranchés
+## Open points
 
-1. **BltPattern** : seuls les grands cas sont décrits (masque nul, masque réaligné, motif) ; le choix
-   exact des modulos et la gestion du motif multicolore n'ont pas été sondés. À sonder avant
-   implémentation fine.
-2. **Comportement de QBSBlit quand `gb_VBlank ≠ 0`** (après DrawGList) : la logique d'alarme TOD est
-   déduite mais **non observée** ; l'effet du bit `$0002` de `gb_system_bplcon0` (division par 2) n'est
-   pas expliqué (ERSY ? entrelacé ?).
-3. **Comportement réel d'Agnus** pour les cas dégénérés de §1.2 (dstX = 0, sizeX = 0) : déduit, non
-   sondé (écrit hors tampon, dangereux pour la sonde).
-4. **Plans `NULL`/`-1`** : non sondés (écriture en basse mémoire) ; la conclusion « adresse brute » est
-   déduite.
-5. **Ordre des ClipRects après tri** quand des ClipRects se chevauchent à la fois en X et en Y de façon
-   non transitive : le tri par insertion n'est pas une relation d'ordre totale ; l'ordre résultant pour
-   des dispositions complexes n'a pas été vérifié.
-6. **Tampon de masque de 128 octets** au-delà de 62 mots (≈ 990 pixels, SuperBitMap très large) :
-   débordement déduit, non sondé.
-7. **Bit 0 de `stat`** et champ `blitsize` du bltnode : non lus par la ROM d'après le code ; aucune
-   sonde.
-8. Les chemins **avec couche** (ClipRects cachés, SuperBitMap, tri de ClipBlit) sont **déduits
-   uniquement** : la sonde n'utilise que des RastPorts sans couche. Une sonde en fenêtre (smart refresh
-   recouverte) serait la suite logique.
+1. **BltPattern**: only the main cases are described (null mask, realigned mask, pattern); the
+   exact choice of modulos and the handling of the multicolour pattern have not been probed. To be probed before
+   fine implementation.
+2. **QBSBlit behaviour when `gb_VBlank ≠ 0`** (after DrawGList): the TOD alarm logic is
+   deduced but **not observed**; the effect of bit `$0002` of `gb_system_bplcon0` (division by 2) is
+   not explained (ERSY? interlace?).
+3. **Real behaviour of Agnus** for the degenerate cases of §1.2 (dstX = 0, sizeX = 0): deduced, not
+   probed (writes outside the buffer, dangerous for the probe).
+4. **`NULL`/`-1` planes**: not probed (write into low memory); the "raw address" conclusion is
+   deduced.
+5. **Order of the ClipRects after sorting** when ClipRects overlap both in X and in Y in a
+   non-transitive way: the insertion sort is not a total order relation; the resulting order for
+   complex arrangements has not been verified.
+6. **128-byte mask buffer** beyond 62 words (≈ 990 pixels, very wide SuperBitMap):
+   overflow deduced, not probed.
+7. **Bit 0 of `stat`** and `blitsize` field of the bltnode: not read by the ROM according to the code; no
+   probe.
+8. The paths **with a layer** (hidden ClipRects, SuperBitMap, ClipBlit sorting) are **deduced
+   only**: the probe only uses RastPorts without a layer. A probe in a window (covered smart refresh)
+   would be the logical next step.
 
-## Relecture clean-room
+## Clean-room review
 
-Relecture du 2026-10-29.
+Review of 2026-10-29.
 
-- [x] Aucune suite d'instructions 68000 transcrite ni paraphrasée, aucun extrait de désassemblage,
-  aucune adresse de routine ROM (seules adresses : registres custom `$DFF000`, RAM chip/slow).
-- [x] Les moteurs (BltBitMap, BltTemplate, BltClear, files QBlit/QBSBlit) sont décrits par **contrats
-  d'appel, ordre des écritures de registres blitter, choix de schéma et résultats observés** [O] ; la
-  mention « instruction qui positionne Z » (§9.1) est une contrainte imposée aux fonctions de
-  l'appelant, pas du code ROM.
-- [x] Pas de données ROM au-delà de l'ABI : offsets publics de `GfxBase`/`RastPort`/`bltnode`, valeurs
-  de registres (BLTCON0, masques de bord calculés), code d'alerte `$82011234`, tailles de tampons.
-- [x] La sonde citée (`tests/gblit_probe.s`) est du code auteur.
+- [x] No 68000 instruction sequence transcribed or paraphrased, no disassembly excerpt,
+  no ROM routine address (only addresses: custom registers `$DFF000`, chip/slow RAM).
+- [x] The engines (BltBitMap, BltTemplate, BltClear, QBlit/QBSBlit queues) are described by **calling
+  contracts, order of the blitter register writes, choice of scheme and observed results** [O]; the
+  mention "instruction that sets Z" (§9.1) is a constraint imposed on the caller's functions,
+  not ROM code.
+- [x] No ROM data beyond the ABI: public offsets of `GfxBase`/`RastPort`/`bltnode`, register values
+  (BLTCON0, computed edge masks), alert code `$82011234`, buffer sizes.
+- [x] The probe cited (`tests/gblit_probe.s`) is author code.
