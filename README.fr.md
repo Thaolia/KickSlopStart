@@ -14,6 +14,13 @@ un LLM qui a pu voir des sources de Kickstart fuitées, cette affirmation est v�
 pour acquise : voir l'[audit clean-room](docs/AUDIT.fr.md) (comparaison binaire avec la ROM 1.3, comparaison des
 sources avec AROS, relecture des notes d'analyse, et liste des données de la ROM gardées pour la compatibilité).
 
+## Téléchargement
+
+Des images ROM prêtes à l'emploi sont publiées sur la page [Releases](https://github.com/Thaolia/KickSlopStart/releases).
+Chaque image est construite depuis les sources du tag par un workflow GitHub (`.github/workflows/release.yml`, toolchain
+épinglée) : elle est identique à l'octet à un `make kick-prod` local du même commit, et son SHA-256 figure dans les notes
+de la release. Pour publier une nouvelle release, pousser un tag : `git tag v0.1.0 && git push origin v0.1.0`.
+
 ## Ce qui fonctionne
 
 Tous les résultats ci-dessous viennent d'un démarrage de la ROM en émulateur (FS-UAE, et WinUAE en mode A500 au cycle

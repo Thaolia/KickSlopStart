@@ -1,0 +1,84 @@
+# Builds the production ROM from source and publishes it as a GitHub release.
+# Trigger: pushing a tag v* (e.g. `git tag v0.1.0 && git push origin v0.1.0`). A manual run (workflow_dispatch)
+# builds the ROM and keeps it as a workflow artifact without publishing a release.
+# The toolchain is pinned to the versions the project is developed with, so the published image is byte-identical
+# to a local `make kick-prod` of the same commit.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VASM_TAG: vasm2_0f
+  VLINK_TAG: vlink0_18a
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build vasm and vlink (pinned)
+        run: |
+          mkdir -p "$RUNNER_TEMP/tc" && cd "$RUNNER_TEMP/tc"
+          curl -fsSL "http://phoenix.owl.de/tags/${VASM_TAG}.tar.gz" | tar xz
+          curl -fsSL "http://phoenix.owl.de/tags/${VLINK_TAG}.tar.gz" | tar xz
+          make -C vasm CPU=m68k SYNTAX=mot -j"$(nproc)"
+          make -C vlink -j"$(nproc)"
+          echo "$RUNNER_TEMP/tc/vasm" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/tc/vlink" >> "$GITHUB_PATH"
+
+      - name: Install romtool (amitools)
+        run: pipx install amitools
+
+      - name: Build the production ROM
+        run: |
+          vasmm68k_mot 2>&1 | head -1
+          vlink 2>&1 | head -1
+          make kick-prod
+
+      - name: Check the image (romtool is_kick)
+        run: |
+          romtool info build/kick13-prod.rom | tee romtool.txt
+          grep -Eq 'is_kick +ok' romtool.txt
+
+      - name: Name and checksum the image
+        id: pkg
+        run: |
+          name="KickSlopStart-${GITHUB_REF_NAME}.rom"
+          [ "$GITHUB_REF_TYPE" = tag ] || name="KickSlopStart-${GITHUB_SHA::7}.rom"
+          mkdir -p dist
+          cp build/kick13-prod.rom "dist/$name"
+          (cd dist && sha256sum "$name" > SHA256SUMS && md5sum "$name" > MD5SUMS)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          {
+            cat .github/release-notes.md
+            echo
+            echo "## Checksums"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS dist/MD5SUMS
+            echo '```'
+            echo
+            echo "Built from commit ${GITHUB_SHA} with ${VASM_TAG} and ${VLINK_TAG} (\`make kick-prod\`)."
+          } > dist/notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: dist/
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KickSlopStart ${{ github.ref_name }}
+          body_path: dist/notes.md
+          files: |
+            dist/${{ steps.pkg.outputs.name }}
+            dist/SHA256SUMS

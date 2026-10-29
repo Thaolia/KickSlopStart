@@ -886,6 +886,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     CHECKIT checkmarks drawn (Window->CheckMark, our own internal checkmark).
     Submenus displayed (sub-item box, tracking, codes with sub-item).
     Remaining in the menus: MENUVERIFY, MutualExclude, multi-selection, HIGHBOX/HIGHIMAGE.
+    Clean-room audit (docs/AUDIT.md), code comments and docs/ translated to English (ROM md5 unchanged), and GitHub
+    releases: a tag v* makes .github/workflows/release.yml build the production ROM (pinned vasm 2.0f / vlink 0.18a)
+    and publish it with its SHA-256.
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).
