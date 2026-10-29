@@ -884,7 +884,8 @@ octets : **mot ROM-ID (`0x1111`) + `4EF9` (JMP) + adresse de coldstart** (notre 
     multicolore de RectFill, symbole de la touche Amiga (un chat) dans les menus. Specs d'analyse rendues : layers,
     audio-device, console-keymap. Raccourcis Amiga-droite des menus (§3.11 : MENUPICK, MENUNULL si inactif).
     Coches CHECKIT dessinées (Window->CheckMark, coche interne à nous).
-    Reste dans les menus : sous-menus affichés, MENUVERIFY, MutualExclude, multi-sélection.
+    Sous-menus affichés (boîte de sous-éléments, suivi, codes avec sous-élément).
+    Reste dans les menus : MENUVERIFY, MutualExclude, multi-sélection, HIGHBOX/HIGHIMAGE.
     trackdisk robuste aux pistes longues (émulateur ESP32 amiga500-esp32, erreur 121) : décodeur jusqu'au ras du
     tampon, masque des secteurs distincts, relecture d'une piste incomplète (4 fois), erreur plutôt que contenu
     périmé ; test unicorn tests/td_decode_test.py (99/99, l'ancien code 30 échecs sur 33 avec un gap de 830 octets).

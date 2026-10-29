@@ -59,7 +59,20 @@ IB_PTRDATA       EQU IB_PREMY+2        ; données chip du sprite du pointeur par
 IB_VINITX        EQU IB_PTRDATA+4      ; DxOffset / DyOffset de la vue à l'init (ViewInitX/Y des Preferences)
 IB_VINITY        EQU IB_VINITX+2
 IB_TATTR         EQU IB_VINITY+2       ; TextAttr de la police par défaut (topaz 8 ou 9 selon FontHeight)
-INTUITIONBASE_SIZE EQU IB_TATTR+8
+IB_SUBBOX        EQU IB_TATTR+8        ; couche de la boîte de sous-éléments | 0
+IB_SUBITEM       EQU IB_SUBBOX+4       ; élément dont les sous-éléments sont affichés | 0
+IB_SUBCUR        EQU IB_SUBITEM+4      ; sous-élément en surbrillance | 0
+IB_ITEMHIT       EQU IB_SUBCUR+4       ; élément sous le pointeur, actif ou non | 0
+IB_SUBNUM        EQU IB_ITEMHIT+4      ; UWORD : n° du sous-élément en surbrillance
+IB_SUBPNUM       EQU IB_SUBNUM+2       ; UWORD : n° de l'élément IB_SUBITEM
+IB_SUBLX         EQU IB_SUBPNUM+2      ; position écran de la boîte de sous-éléments
+IB_SUBLY         EQU IB_SUBLX+2
+IB_SUBOX         EQU IB_SUBLY+2        ; origine des sous-éléments dans cette boîte
+IB_SUBOY         EQU IB_SUBOX+2
+IB_DOX           EQU IB_SUBOY+2        ; origine des éléments dans la boîte en cours de dessin (mn_drawitems)
+IB_DOY           EQU IB_DOX+2
+IB_DGHOST        EQU IB_DOY+2          ; BYTE : boîte en cours de dessin toute grisée (menu ou élément parent inactif)
+INTUITIONBASE_SIZE EQU IB_DGHOST+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

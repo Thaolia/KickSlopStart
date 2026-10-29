@@ -602,10 +602,21 @@ l'ordre de **priorité décroissante**. Les 24 modules de la 34.5 et le détail 
     - Sonde `tests/menucat.s` et commande `keyraw` de `tests/dskchg_run.sh` (Super_R = Amiga droite) : O → $F800,
       S → $F820, élément inactif → MENUNULL, Q seul → rien ; choix à la souris inchangé ($F800).
   - intuition, coches des menus (§3.5) : OpenWindow pose `Window->CheckMark` (+$64) = NewWindow.CheckMark, sinon notre
-    coche interne (hires 15 × 8 ou lores 9 × 8 selon l'écran, LeftEdge 2, dessinée pour KickSlopStart, format du chat).
+    coche interne (hires 15 × 8 ou lores 9 × 8 selon l'écran, LeftEdge 2, format du chat) : une empreinte de patte de
+    chat. Le premier dessin (un trait de coche) ressemblait trop à l'image de la 1.3, que la spec montre : remplacé
+    après l'audit du 2026-10-29 (docs/audit/specs-review.md).
     Un élément CHECKIT et CHECKED la reçoit en (x de l'élément, y de l'élément + TopEdge de son ItemFill). Le
     basculement reste fait à la fermeture (souris) ou au raccourci : pas de redessin dans une boîte ouverte. Sonde
     `tests/menucat.s`, menu « Option » : « Coche » cochée au départ, « Bascule » cochée puis décochée par Amiga-droite+B.
+  - intuition, sous-menus (§3.5, §3.7) : pointeur sur un élément qui a des sous-éléments → boîte de sous-éléments
+    (couche simple au-dessus ; la boîte d'éléments est désormais une couche SMART, restaurée telle quelle quand la boîte
+    de sous-éléments se ferme). Étendue des sous-éléments (relative à l'élément) élargie de la marge, bornée pour
+    toucher l'élément, posée sur lui puis ramenée dans l'écran. Suivi : un sous-élément touché passe en surbrillance et
+    rallume son élément parent ; hors sous-éléments la boîte reste ; un autre élément ou un titre la retire. Dessin des
+    éléments factorisé (`mn_drawitems`, origine IB_DOX/IB_DOY, grisé de toute la boîte si le menu ou l'élément parent
+    est inactif). MENUPICK = sous-élément << 11 | élément << 5 | menu ; élément à sous-éléments sans sous-élément choisi
+    → MENUNULL. Sonde `tests/menucat.s`, « Export » : Texte → $0080 (souris et Amiga-droite+T), Image → $0880, retour sur
+    « Quitter » : boîte retirée, boîte d'éléments intacte.
   (7f) **Blitter et alertes d'après les specs graphics-blitter-v34 et alert-v34** (2026-10-28).
   - graphics : BltMaskBitMapRastPort (−636 : trois passes de BltBitMapRastPort, source en $90, masque au minterm de
     l'appelant via une BitMap fictive dont tous les plans pointent sur le masque, source en $90 ; masque NULL : rien),

@@ -2,7 +2,8 @@
 ; Ouvre une fenêtre sur l'écran Workbench avec un menu « Projet » dont les éléments ont des raccourcis (COMMSEQ) :
 ; en dérouler le menu (bouton droit) montre le symbole de la touche Amiga (le chat de KickSlopStart) devant chaque
 ; lettre. L'élément « Grise » ('G') est inactif. Menu « Option » : « Bascule » (CHECKIT|MENUTOGGLE, 'B') et « Coche »
-; (CHECKIT, coché au départ) : la coche des menus. Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
+; (CHECKIT, coché au départ) : la coche des menus. « Export » (Projet, élément 4) a deux sous-éléments en (100, 0) et
+; (100, 10) : « Texte » ('T') et « Image ». Chaque MENUPICK reçu (souris ou Amiga droite + lettre) est affiché
 ; dans le titre de la fenêtre : « MENUPICK cccc qqqq #n » (code, qualificatif, rang du message).
 ; Assemblage : vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/menucat tests/menucat.s
 ; Code auteur ; structures publiques (intuition/intuition.h, exec/ports.h).
@@ -114,7 +115,7 @@ item3:          dc.l    item4
                 dc.b    'Q',0
                 dc.l    0
                 dc.w    0
-item4:          dc.l    0
+item4:          dc.l    item5
                 dc.w    0,30,150,10
                 dc.w    $0046                ; ITEMTEXT|COMMSEQ|HIGHCOMP, inactif
                 dc.l    0
@@ -122,6 +123,39 @@ item4:          dc.l    0
                 dc.b    'G',0
                 dc.l    0
                 dc.w    0
+item5:          dc.l    0
+                dc.w    0,40,150,10
+                dc.w    $0052                ; ITEMTEXT|ITEMENABLED|HIGHCOMP
+                dc.l    0
+                dc.l    it5,0
+                dc.b    0,0
+                dc.l    sub1
+                dc.w    0
+sub1:           dc.l    sub2
+                dc.w    100,0,90,10
+                dc.w    $0056                ; ITEMTEXT|COMMSEQ|ITEMENABLED|HIGHCOMP
+                dc.l    0
+                dc.l    st1,0
+                dc.b    'T',0
+                dc.l    0
+                dc.w    0
+sub2:           dc.l    0
+                dc.w    100,10,90,10
+                dc.w    $0052
+                dc.l    0
+                dc.l    st2,0
+                dc.b    0,0
+                dc.l    0
+                dc.w    0
+it5:            dc.b    0,1,1,0
+                dc.w    2,1
+                dc.l    0,t5,0
+st1:            dc.b    0,1,1,0
+                dc.w    2,1
+                dc.l    0,s1,0
+st2:            dc.b    0,1,1,0
+                dc.w    2,1
+                dc.l    0,s2,0
 menu2:          dc.l    0
                 dc.w    90,0,80,10
                 dc.w    1
@@ -176,4 +210,7 @@ t1:             dc.b    "Ouvrir",0
 t2:             dc.b    "Sauver",0
 t3:             dc.b    "Quitter",0
 t4:             dc.b    "Grise",0
+t5:             dc.b    "Export  >>",0
+s1:             dc.b    "Texte",0
+s2:             dc.b    "Image",0
                 even
