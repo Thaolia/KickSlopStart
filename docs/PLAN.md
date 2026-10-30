@@ -893,6 +893,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     Clean-room audit (docs/AUDIT.md), code comments and docs/ translated to English (ROM md5 unchanged), and GitHub
     releases: a tag v* makes .github/workflows/release.yml build the production ROM (pinned vasm 2.0f / vlink 0.18a)
     and publish it with its SHA-256.
+    Real keymaps (struct KeyMap, keymap.resource V34 layout, console CD_* commands, dead keys) and SetMap support: the
+    German Workbench 1.3.3 disk boots with its keyboard (GitHub user report). Remaining: Latin-1 glyphs in the font.
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).

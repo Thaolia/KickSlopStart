@@ -79,19 +79,25 @@ LY_LOCK         EQU 72
 LY_DAMAGE       EQU 156
 LAYERREFRESH    EQU $80
 
-; dr_ctx(a1 = RastPort, a5 = context): fills the context and takes the layer lock. Clobbers d0/d1/a0.
+; dr_ctx(a1 = RastPort, a5 = context): takes the layer lock, then fills the context. The lock comes FIRST: a
+; rebuild in another task (window opened, moved, resized) frees the old ClipRect list and changes the bounds while
+; it holds the lock, so both must be read once we own it. Clobbers d0/d1/a0.
 dr_ctx:
-        bsr     dr_ctx0
         move.l  rp_Layer(a1),d0
         move.l  d0,DC_LAYER(a5)
-        beq.s   .cx_pseudo
-        move.l  d0,a0
-        move.l  LY_CLIPRECT(a0),DC_FIRST(a5)
+        beq.s   .cx_nolock
         movem.l a1/a6,-(sp)
+        move.l  d0,a0
         lea     LY_LOCK(a0),a0
         move.l  ($4).w,a6
         jsr     LVO_OBTAINSEMAPHORE(a6)
         movem.l (sp)+,a1/a6
+.cx_nolock:
+        bsr     dr_ctx0
+        move.l  DC_LAYER(a5),d0
+        beq.s   .cx_pseudo
+        move.l  d0,a0
+        move.l  LY_CLIPRECT(a0),DC_FIRST(a5)
         rts
 .cx_pseudo:
         lea     DC_PSEUDO(a5),a0     ; visible pseudo-ClipRect = the whole clipping area

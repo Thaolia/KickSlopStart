@@ -564,6 +564,32 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7h) **Real keymaps and SetMap: the German Workbench 1.3.3 boots** (2026-10-30; specs `console-keymap-v34.md`,
+  `setmap-13.md`). Reported by a user: the German WB 1.3.3 disk hung in `SYS:System/SetMap d`.
+  - keymap.resource now has the V34 layout (§1.1): Node, kr_List with one built-in KeyMapNode ("usa", or "f" in the
+    AZERTY build), no function vectors. SetMap walks kr_List with FindName and AddHeads the loaded node; our old
+    library-style base had no list there.
+  - Keymaps are real `struct KeyMap`s (`tests/mk_keymaps.py` -> `keymapdata.s`, hand-authored US and AZERTY:
+    VANILLA printable keys, CSI strings for cursor keys, F1-F10, Help and Shift-Tab, Ctrl-Return = LF).
+  - `km_conv` (`src/exec/keymap.s`) converts one RAWKEY through any KeyMap per §5.2: repeat filter, NOP, KCF_DOWNUP,
+    Shift / Caps (Capsable) / Alt / Ctrl, VANILLA with the Ctrl rule, byte arrays, KCF_STRING, KCF_DEAD with
+    modifiable keys and double dead keys (previous keys from ie_X / ie_Y). `kbd_cook` is now a one-byte wrapper over
+    the current default KeyMap (KM_DEFKM).
+  - console.device: default keymap copied from the resource's first node, each unit gets a copy (cu_KeyMapStruct);
+    CD_ASKKEYMAP / CD_SETKEYMAP / CD_ASKDEFAULTKEYMAP / CD_SETDEFAULTKEYMAP (length 32, else -4); RawKeyConvert walks
+    the whole chain with the given or default keymap; the input handler converts with the active unit's keymap and
+    pushes the whole sequence or nothing; CloseDevice ignores io_Unit = -1 (SetMap restores it before closing).
+  - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
+    ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
+    CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.
+  - Verified under FS-UAE: the German disk boots to the Workbench; in its CLI, z and y are swapped and the umlaut keys
+    give their Latin-1 codes (shown as blocks: our 8x8 font is ASCII only).
+  - graphics race fixed (user report: Guru #00000003 when launching Calculator from the German Workbench, after a few
+    launches): `dr_ctx` read the layer's ClipRect list and bounds BEFORE taking the layer lock. While the Workbench
+    redrew the screen title ("free memory"), Calculator's OpenWindow rebuilt the layers in another task; the
+    Workbench then walked the freed old list (a node reused as a RegionRectangle -> bitmap pointer = bounds 639, 69 ->
+    address error in RectFill). The lock is now taken first. Reproduced deterministically with Workbench
+    double-clicks (tests/dskchg_run.sh), fixed: no failure over 9 launches.
   (7g) **Polygon and ellipse fills, Flood, Amiga-key cat** (2026-10-28; spec
   `docs/analysis/graphics-area-v34.md`).
   - graphics (`src/graphics/area.s`): InitArea (−282), InitTmpRas (−468), AreaMove/AreaDraw/AreaEnd (−252..−264),
