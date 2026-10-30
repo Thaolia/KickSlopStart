@@ -615,6 +615,13 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
     - The feeder's "FEEDER OK" self-test read the console once and took a byte of the first key typed after boot,
       such as the 'B' of cursor-down. It is now dev-ROM only.
 
+  - Workbench icon selection (GitHub issue #7): a selected icon was always inverted (COMPLEMENT). `wb_invert` now
+    follows the highlighting mode of `do_Gadget.Flags` (RKM, Workbench icons). With GADGHIMAGE and a SelectRender,
+    it draws the alternate image (open drawer, open trashcan) over the cleared rectangle, and the normal image again
+    on deselection. Other modes keep the inversion. The callers update WBS_SELW/WBS_SELI first, so `wb_invert`
+    draws the current state. Proven under FS-UAE with the Workbench 1.3.3 [m] disk: the selected "Empty" drawer
+    shows its open drawer, and a click elsewhere restores it.
+
   (7h) **Real keymaps and SetMap: the German Workbench 1.3.3 boots** (2026-10-30; specs `console-keymap-v34.md`,
   `setmap-13.md`). Reported by a user: the German WB 1.3.3 disk hung in `SYS:System/SetMap d`.
   - keymap.resource now has the V34 layout (§1.1): Node, kr_List with one built-in KeyMapNode ("usa", or "f" in the

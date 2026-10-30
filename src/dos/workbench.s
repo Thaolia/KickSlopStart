@@ -1849,17 +1849,46 @@ wb_drawicon:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; wb_invert(d7.w = window, d1.w = icon, a5): inverts (COMPLEMENT) the rectangle of the icon. Preserves d2-d7/a2-a5.
+; wb_invert(d7.w = window, d1.w = icon, a5): shows the selection state of the icon, just changed in WBS_SELW/WBS_SELI
+; by the caller. Highlighting from do_Gadget.Flags (RKM, Workbench icons): GADGHIMAGE with a SelectRender -> the
+; alternate image (open drawer) or the normal one, drawn over the cleared rectangle; otherwise the rectangle is
+; inverted (COMPLEMENT: a toggle). Preserves d2-d7/a2-a5.
 wb_invert:
-        movem.l d2-d3/a2-a4/a6,-(sp)
-        move.w  d1,-(sp)
+        movem.l d2-d4/a2-a4/a6,-(sp)
+        move.w  d1,d4                ; d4 = icon
         moveq   #1,d0
         bsr     wb_updopen
-        move.w  (sp)+,d1
+        move.w  d4,d1
         bsr     wb_iconrect
-        beq.s   .iv_end
+        beq     .iv_end
         movem.w d0-d3,-(sp)
         bsr     wb_window
+        move.w  DO_GADGET+GG_FLAGS(a2),d0
+        and.w   #3,d0
+        cmp.w   #GADGHIMAGE,d0
+        bne.s   .iv_comp
+        tst.l   DO_GADGET+GG_SELECTRENDER(a2)
+        beq.s   .iv_comp
+        move.l  WBS_GFXBASE(a5),a6
+        move.l  WD_RPORT(a3),a1
+        moveq   #0,d0
+        jsr     LVO_SETAPEN(a6)
+        movem.w (sp),d0-d3
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_RECTFILL(a6)
+        move.l  DO_GADGET+GG_GADGETRENDER(a2),a1
+        cmp.w   WBS_SELW(a5),d7
+        bne.s   .iv_img
+        cmp.w   WBS_SELI(a5),d4
+        bne.s   .iv_img
+        move.l  DO_GADGET+GG_SELECTRENDER(a2),a1
+.iv_img:
+        movem.w (sp)+,d0-d3
+        move.l  WBS_IBASE(a5),a6
+        move.l  WD_RPORT(a3),a0
+        jsr     LVO_DRAWIMAGE(a6)
+        bra.s   .iv_end
+.iv_comp:
         move.l  WBS_GFXBASE(a5),a6
         move.l  WD_RPORT(a3),a1
         moveq   #COMPLEMENT,d0
@@ -1872,7 +1901,7 @@ wb_invert:
         jsr     LVO_SETDRMD(a6)
 .iv_end:
         bsr     wb_updclose
-        movem.l (sp)+,d2-d3/a2-a4/a6
+        movem.l (sp)+,d2-d4/a2-a4/a6
         rts
 
 ; wb_click(d7.w = window, d4/d5 = mouse in the window, d6/a0 = timestamp, a5): on an icon -> selection (the

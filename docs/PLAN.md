@@ -905,6 +905,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     Ed 1.14 works (issue #6): console window bounds report, CSI @/P line shifts, BCPL output through an
     overridden wrch, and the feeder self-test that stole a key is removed from the production ROM.
     Remaining: horizontal ScrollRaster (dx), ACTION_WAIT_CHAR timeout (answers at once).
+    Workbench icons selected with their alternate image when the icon asks for it (GADGHIMAGE, issue #7).
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).
