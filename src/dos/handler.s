@@ -1,4 +1,5 @@
-; src/dos/handler.s - DF0: file-handler process (D3b). Body of a Process (created by proc_create) that loops
+; src/dos/handler.s - floppy file-handler process (D3b), one per drive (DF0:, DF1:). Body of a Process (created
+; by proc_create) that loops
 ; WaitPort/GetMsg on its pr_MsgPort and serves DOS packets: ACTION_FINDINPUT/READ/SEEK/END + LOCATE_OBJECT/
 ; FREE_LOCK/EXAMINE_OBJECT/EXAMINE_NEXT, relying on the OFS machinery (ofs_stream_* / ofs_name_to_block /
 ; ofs_fill_fib / ofs_dir_next). INTERNAL machinery (no user-facing dos.library = D3c).
@@ -11,6 +12,8 @@
 ; advances in the state; RES1=bytes, 0=EOF). SEEK repositions via ofs_stream_seek (returns the old position). END
 ; frees the state.
 ; REAL STREAMING: no more whole-file buffer -> no file size cap (O(1) footprint = 512 bytes per handle).
+; Drive: the unit of the FileSysStartupMsg of the DeviceNode whose dn_Task is this process's port. Per-drive state
+; (mounted volume, disk change, write context) lives in the handler context, published in tc_UserData (ofs.i).
 ; IMPLEMENTATION track ("clean"): analysis spec + exec AutoDocs. NO ROM reading.
 
                 include "exec.i"
@@ -19,7 +22,7 @@
                 include "dos.i"
                 include "disk.i"
 
-                xdef    dos_handler_df0
+                xdef    dos_handler
                 xref    ofs_name_to_block    ; LOCATE_OBJECT: path -> block
                 xref    ofs_fill_fib         ; EXAMINE_OBJECT: block -> FIB
                 xref    ofs_dir_next         ; EXAMINE_NEXT: next directory entry
@@ -47,9 +50,9 @@ DT_DOS          EQU $444F5300        ; "DOS\0"
 DT_NDOS         EQU $4E444F53        ; "NDOS": DOS boot block but invalid root block
 DT_BAD          EQU $42414400        ; "BAD\0": block 0 unreadable
 
-; handler context (allocated at its startup, pointer in HND_CTX)
-HC_TDIO         EQU 0                ; trackdisk IOStdReq (disk change queries), then a 512-byte block
-HC_TMPORT       EQU HC_TDIO+IOREQ_SZ+OFS_BSIZE  ; timer reply port (MP_SIZE, rounded)
+; handler context (allocated at its startup, pointer in tc_UserData; HC_TDIO and HC_OWCTX: ofs.i)
+HC_VOLUME       EQU HC_OWCTX+4       ; BPTR: volume node of the floppy mounted in this drive | 0
+HC_TMPORT       EQU HC_VOLUME+4      ; timer reply port (MP_SIZE, rounded)
 HC_TMREQ        EQU HC_TMPORT+36     ; timerequest (40)
 HC_INPORT       EQU HC_TMREQ+40      ; input.device reply port
 HC_INIO         EQU HC_INPORT+36     ; IOStdReq input.device
@@ -66,18 +69,18 @@ ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer acc
 WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
 HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
 
-; dos_handler_df0: process body. GPRs at zero on entry (AddTask frame) -> reload SysBase.
+; dos_handler: process body. GPRs at zero on entry (AddTask frame) -> reload SysBase.
 ; a2 = pr_MsgPort (persistent); a3 = current Message; a4 = current DosPacket.
 ; Disk change (spec disk-change-v34 §2): woken by a packet or by a 1 s timer tick; on each wakeup
 ; hnd_check queries trackdisk (TD_CHANGESTATE / TD_CHANGENUM): ejection -> volume detached, DISKREMOVED;
 ; insertion -> volume found again (same name, same creation date) or created, DISKINSERTED.
-dos_handler_df0:
+dos_handler:
                 move.l  ($4).w,a6
                 move.l  EB_THISTASK(a6),a2
                 lea     PR_MSGPORT(a2),a2    ; a2 = its own pr_MsgPort
                 bsr     hnd_init
 .hl:
-                move.l  HND_CTX,d0
+                bsr     hnd_ctx
                 beq.s   .hl_port             ; no context: packets only
                 move.l  d0,a0
                 move.l  HC_SIGS(a0),d0
@@ -398,7 +401,7 @@ dos_handler_df0:
 .inhibit:                                            ; (ARG1: DOSTRUE = inhibit, 0 = release)
                 move.l  DP_ARG1(a4),d0
                 jsr     ow_inhibit                     ; bitmap written / forgotten
-                move.l  HND_CTX,d0
+                bsr     hnd_ctx
                 beq.s   .ih_ok
                 move.l  d0,a0
                 tst.l   DP_ARG1(a4)
@@ -577,8 +580,10 @@ dos_handler_df0:
 .di_go:
                 lsl.l   #2,d0
                 move.l  d0,a0
-                move.l  DOS_DOSBASE,a1
-                move.l  DL_VOLUME(a1),d1
+                bsr     hnd_ctx
+                beq.s   .di_none
+                move.l  d0,a1
+                move.l  HC_VOLUME(a1),d1
                 beq.s   .di_none
                 move.l  d1,a1
                 jsr     ow_diskinfo
@@ -592,7 +597,7 @@ dos_handler_df0:
                 lea     -36(a0),a0
                 move.l  #ID_VALIDATING,8(a0)
                 moveq   #-1,d1
-                move.l  HND_CTX,d0
+                bsr     hnd_ctx
                 beq.s   .di_ty
                 move.l  d0,a1
                 move.l  HC_DTYPE(a1),d1
@@ -696,8 +701,9 @@ hnd_inname:
                 even
 
 
-; hnd_init(a2 = pr_MsgPort, a6): context, timer port and request (UNIT_VBLANK, 1 s), input.device, then first
-; mount. Without memory: the handler runs anyway, without change detection. Preserves d2-d7/a2-a6.
+; hnd_init(a2 = pr_MsgPort, a6): context (tc_UserData), trackdisk opened on the drive of the handler, timer port
+; and request (UNIT_VBLANK, 1 s), input.device, then first mount. Without memory: the handler runs anyway, without
+; a disk (no volume is ever mounted). Preserves d2-d7/a2-a6.
 hnd_init:
                 movem.l d2/a3,-(sp)
                 moveq   #0,d2
@@ -706,15 +712,18 @@ hnd_init:
                 move.l  #HC_SIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
-                move.l  d0,HND_CTX
+                tst.l   d0
                 beq     .in_ret
                 move.l  d0,a3
+                move.l  EB_THISTASK(a6),a0
+                move.l  a3,TC_USERDATA(a0)
                 move.l  d2,HC_SIGS(a3)
                 move.l  #-1,HC_DTYPE(a3)
-                lea     EB_DEVICELIST(a6),a0
-                lea     hnd_tdname(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                move.l  d0,HC_TDIO+IO_DEVICE(a3)
+                bsr     hnd_unit                      ; d0 = unit
+                lea     HC_TDIO(a3),a1
+                lea     hnd_tdname(pc),a0
+                moveq   #0,d1
+                jsr     LVO_OPENDEVICE(a6)            ; failure: io_Device = 0, the drive is never examined
                 lea     HC_TMPORT(a3),a0
                 bsr     hnd_port
                 beq.s   .in_input
@@ -748,6 +757,32 @@ hnd_init:
                 bsr     hnd_check
 .in_ret:
                 movem.l (sp)+,d2/a3
+                rts
+; hnd_unit(a2 = port, a6) -> d0 = trackdisk unit of the DeviceNode served by this handler (dn_Task = port), from
+; its FileSysStartupMsg; 0 if none is found. Clobbers a0.
+hnd_unit:
+                bsr     hnd_devinfo
+                move.l  (a0),d0
+.un_lp:
+                lsl.l   #2,d0
+                beq.s   .un_ret
+                move.l  d0,a0
+                move.l  DN_NEXT(a0),d0
+                tst.l   DN_TYPE(a0)                   ; DLT_DEVICE
+                bne.s   .un_lp
+                cmp.l   DN_TASK(a0),a2
+                bne.s   .un_lp
+                move.l  DN_STARTUP(a0),d0
+                lsl.l   #2,d0
+                beq.s   .un_ret
+                move.l  d0,a0
+                move.l  FSSM_UNIT(a0),d0
+.un_ret:
+                rts
+; hnd_ctx(a6) -> d0 = context of this handler | 0 (Z = 1). Clobbers a1.
+hnd_ctx:
+                move.l  EB_THISTASK(a6),a1
+                move.l  TC_USERDATA(a1),d0
                 rts
 ; hnd_port(a0 = MsgPort to set up, a6) -> d0 = mask of its signal (0: no free signal). Clobbers d1/a0/a1.
 hnd_port:
@@ -783,7 +818,7 @@ hnd_arm:
 ; hnd_tick(a6): timer reply received -> request re-armed. Preserves d2-d7/a2-a6.
 hnd_tick:
                 move.l  a3,-(sp)
-                move.l  HND_CTX,d0
+                bsr     hnd_ctx
                 beq.s   .tk_ret
                 move.l  d0,a3
                 tst.b   HC_TMOK(a3)
@@ -815,7 +850,7 @@ hnd_tdcmd:
 ; Nothing during an inhibit. Preserves d2-d7/a2-a6.
 hnd_check:
                 movem.l d2/a3,-(sp)
-                move.l  HND_CTX,d0
+                bsr     hnd_ctx
                 beq.s   .ck_ret
                 move.l  d0,a3
                 tst.l   HC_TDIO+IO_DEVICE(a3)
@@ -848,7 +883,7 @@ hnd_check:
 
 ; hnd_mount(a2 = port, a3 = context, a6): examines the inserted disk (block 0 then root block, spec §2.2.2 and §2.5).
 ; DOS disk: volume node with the same name and creation date reactivated, otherwise created at the head of the
-; DosList; it becomes DL_VOLUME, bitmap forgotten, time set. Then DISKINSERTED, DOS disk or not. Preserves d2-d7/a2-a6.
+; DosList; it becomes HC_VOLUME, bitmap forgotten, time set. Then DISKINSERTED, DOS disk or not. Preserves d2-d7/a2-a6.
 hnd_mount:
                 movem.l d2/a2-a4,-(sp)
                 move.l  a2,a4                         ; a4 = handler port
@@ -897,8 +932,7 @@ hnd_mount:
                 bhi     .mo_type
                 move.l  #DT_DOS,d2
                 bsr     hnd_findvol                   ; d0 = BPTR of the node (reactivated or created) | 0
-                move.l  DOS_DOSBASE,a0
-                move.l  d0,DL_VOLUME(a0)
+                move.l  d0,HC_VOLUME(a3)
                 moveq   #0,d0
                 jsr     ow_inhibit                    ; bitmap of the old disk forgotten
                 bsr     hnd_bootclock
@@ -1035,9 +1069,8 @@ hnd_eject:
                 jsr     ow_inhibit
                 sf      HC_MOUNTED(a3)
                 move.l  #-1,HC_DTYPE(a3)
-                move.l  DOS_DOSBASE,a0
-                move.l  DL_VOLUME(a0),d0
-                clr.l   DL_VOLUME(a0)
+                move.l  HC_VOLUME(a3),d0
+                clr.l   HC_VOLUME(a3)
                 lsl.l   #2,d0
                 beq.s   .ej_ev
                 move.l  d0,a2
@@ -1109,8 +1142,12 @@ hnd_gate:
                 addq.l  #2,a0
                 bra.s   .gt_lp
 .gt_hit:
-                move.l  DOS_DOSBASE,a1
-                move.l  DL_VOLUME(a1),d1              ; d1 = mounted volume | 0
+                moveq   #0,d1                         ; d1 = mounted volume | 0
+                bsr     hnd_ctx
+                beq.s   .gt_vol
+                move.l  d0,a1
+                move.l  HC_VOLUME(a1),d1
+.gt_vol:
                 move.w  (a0),d0                       ; argument offsets (high byte, low byte; 0 = none)
                 tst.b   d0
                 bmi.s   .gt_state
@@ -1148,13 +1185,15 @@ hnd_gate:
                 bne.s   .ga_lock
                 tst.l   d1                            ; root of the mounted disk
                 bne.s   .ga_ok
-                move.l  #ERROR_NO_DISK,d0
-                move.l  HND_CTX,a0
-                cmpa.w  #0,a0
-                beq.s   .ga_err
+                bsr     hnd_ctx
+                beq.s   .ga_nodisk
+                move.l  d0,a0
                 cmp.l   #-1,HC_DTYPE(a0)
-                beq.s   .ga_err
+                beq.s   .ga_nodisk
                 move.l  #ERROR_NOT_A_DOS_DISK,d0
+                bra.s   .ga_err
+.ga_nodisk:
+                move.l  #ERROR_NO_DISK,d0
                 bra.s   .ga_err
 .ga_lock:
                 move.l  d0,a0
@@ -1194,19 +1233,21 @@ hnd_gtab:
                 dc.w    ACTION_SEEK,$80
                 dc.w    0
 
-; hnd_usevol -> d0 = BPTR of the mounted volume (DL_VOLUME) | 0, its use count increased (lock or open file).
+; hnd_usevol -> d0 = BPTR of the mounted volume (HC_VOLUME) | 0, its use count increased (lock or open file).
 ; hnd_unusevol(d0 = BPTR volume | 0): count decreased. Both preserve everything except d0.
 hnd_usevol:
-                move.l  a0,-(sp)
-                move.l  DOS_DOSBASE,a0
-                move.l  DL_VOLUME(a0),d0
+                move.l  a1,-(sp)
+                bsr     hnd_ctx
+                beq.s   .uv_ret
+                move.l  d0,a1
+                move.l  HC_VOLUME(a1),d0
                 beq.s   .uv_ret
                 lsl.l   #2,d0
-                move.l  d0,a0
-                addq.l  #1,DOL_USE(a0)
+                move.l  d0,a1
+                addq.l  #1,DOL_USE(a1)
                 lsr.l   #2,d0
 .uv_ret:
-                move.l  (sp)+,a0
+                move.l  (sp)+,a1
                 rts
 hnd_unusevol:
                 lsl.l   #2,d0

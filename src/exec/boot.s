@@ -51,7 +51,7 @@
                 xref    dos_unloadseg    ; dos/loadseg.s (D2: free a seglist)
                 xref    proc_create      ; dos/process.s (D3: create a Process + pr_MsgPort)
                 xref    dos_sendpkt      ; dos/process.s (D3: send a DOS packet + WaitPort/GetMsg)
-                xref    dos_handler_df0  ; dos/handler.s (D3b: DF0: OFS file-handler process)
+                xref    dos_handler      ; dos/handler.s (D3b: floppy OFS file-handler process, one per drive)
                 xref    ls_load_hunks    ; dos/loadseg.s (D3d: parse hunks from a buffer read via dos)
                 xref    con_handler      ; dos/conhandler.s (E1: serial console handler process)
                 xref    exec_AddTail     ; exec/lists.s (ExecBase in LibList at coldstart)
@@ -2115,7 +2115,6 @@ m6t_pop:
         lea     32(sp),sp            ; free the IORequest (failure)
 m6t_done:
 
-        clr.b   TD_CYLVALID         ; cylinder-tracking: head position unknown before the 1st read -> recalibrate
         ; --- M6u/M6v: raw read (B2) + MFM decoding (B3) — A SINGLE read of DF0 ---
         ; td_read_track0 reads the raw track; M6U counts the $4489 sync words (impossible in normal MFM -> 0
         ; false positives), M6V decodes the sectors (combine odd/even) + checks the header AND data checksums. A
@@ -3923,7 +3922,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         ; --- D3b: create the DF0: file-handler process (OFS) — INFRASTRUCTURE (the CLI resolves DF0: through it). The
         ; fs-driver that follows is a PROOF CLIENT (reads "kickslop" -> "D3B HANDLER OK") -> gated in prod. ---
         lea     d3b_hname(pc),a0
-        move.l  #dos_handler_df0,a1  ; absolute: handler.o linked out of 16-bit lea(pc) range
+        move.l  #dos_handler,a1      ; absolute: handler.o linked out of 16-bit lea(pc) range
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
@@ -3942,30 +3941,11 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         tst.l   d0
         beq     .d3c_noclient        ; no dos.library (should not happen) -> no client
         move.l  d0,a2                ; a2 = DosBase
-        move.l  #DN_SIZEOF+4+FSSM_SIZEOF,d0  ; + BSTR "DF0" + FileSysStartupMsg (long-aligned: BPTR)
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
+        move.l  DOS_FSPORT,d0        ; dn_Task = port of the OFS file-handler process
+        moveq   #0,d1
+        bsr     fl_node
         beq     .d3c_noclient
-        move.l  d0,a3                ; a3 = DeviceNode (dn_Type = DLT_DEVICE = 0 via MEMF_CLEAR)
-        move.l  DOS_FSPORT,DN_TASK(a3)   ; dn_Task = port of the OFS file-handler process
-        move.l  #$03444630,DN_SIZEOF(a3) ; BSTR: length 3, "DF0"
-        lea     DN_SIZEOF(a3),a0
-        move.l  a0,d0
-        lsr.l   #2,d0
-        move.l  d0,DN_NAME(a3)       ; dn_Name -> dos resolves "DF0:" through this node
-        lea     DN_SIZEOF+4(a3),a0   ; FileSysStartupMsg: unit 0 (MEMF_CLEAR), "trackdisk.device", DD geometry
-        lea     df0_device(pc),a1
-        move.l  a1,d0
-        lsr.l   #2,d0
-        move.l  d0,FSSM_DEVICE(a0)
-        lea     df0_environ(pc),a1
-        move.l  a1,d0
-        lsr.l   #2,d0
-        move.l  d0,FSSM_ENVIRON(a0)
-        move.l  a0,d0
-        lsr.l   #2,d0
-        move.l  d0,DN_STARTUP(a3)
+        move.l  a0,a3                ; a3 = DeviceNode of DF0:
         move.l  DL_ROOT(a2),a0       ; RootNode (APTR)
         move.l  RN_INFO(a0),d0       ; BPTR DosInfo
         lsl.l   #2,d0
@@ -3973,6 +3953,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         move.l  a3,d0
         lsr.l   #2,d0                ; BPTR(DeviceNode)
         move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open resolves DF0: through this node
+        bsr     mount_df1
                 ifeq    PROD            ; PROD: D3 test clients (d3c..d3j read kickslop/D3DTest/bigseg/BigData,
                                         ; absent from a real Workbench disk) -> out of prod; the DF0: MOUNT above stays
         lea     d3c_cname(pc),a0
@@ -4990,6 +4971,81 @@ task_aud:
         clr.w   AUT_VOLUME(a1)
         move.w  d2,AUT_CYCLES(a1)
         rts
+
+; fl_node(d0 = port of the file-handler, d1 = trackdisk unit, a6) -> a0 = DeviceNode "DF<unit>" (dn_Type =
+; DLT_DEVICE, FileSysStartupMsg: unit, "trackdisk.device", DD geometry), not linked; Z = 1 if no memory.
+; Clobbers d0/d1/a1.
+fl_node:
+        movem.l d2-d3,-(sp)
+        move.l  d0,d2
+        move.l  d1,d3
+        move.l  #DN_SIZEOF+4+FSSM_SIZEOF,d0  ; + BSTR "DFn" + FileSysStartupMsg (long-aligned: BPTR)
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .fn_ret
+        move.l  d0,a0                ; dn_Type = DLT_DEVICE = 0 via MEMF_CLEAR
+        move.l  d2,DN_TASK(a0)
+        move.l  #$03444630,d0        ; BSTR: length 3, "DF0" + unit
+        add.l   d3,d0
+        move.l  d0,DN_SIZEOF(a0)
+        lea     DN_SIZEOF(a0),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NAME(a0)       ; dn_Name -> dos resolves "DFn:" through this node
+        lea     DN_SIZEOF+4(a0),a1   ; FileSysStartupMsg
+        move.l  d3,FSSM_UNIT(a1)
+        lea     df0_device(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_SIZEOF+4+FSSM_DEVICE(a0)
+        lea     df0_environ(pc),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_SIZEOF+4+FSSM_ENVIRON(a0)
+        lea     DN_SIZEOF+4(a0),a1
+        move.l  a1,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_STARTUP(a0)    ; Z = 0
+.fn_ret:
+        movem.l (sp)+,d2-d3          ; (movem does not touch the CCR)
+        rts
+
+; mount_df1(a3 = DeviceNode of DF0:, a6): if disk.resource identified a 3.5" drive as unit 1 (HRM external-drive
+; protocol, read at its startup), a second file-handler process and its "DF1" DeviceNode, linked after DF0:. The
+; handler takes its unit from the node (dn_Task = its port), linked before it first runs. Preserves everything.
+mount_df1:
+        movem.l d0-d1/a0-a1,-(sp)
+        lea     diskres_test_name(pc),a1
+        jsr     LVO_OPENRESOURCE(a6)
+        tst.l   d0
+        beq.s   .m1_ret
+        move.l  a6,-(sp)
+        move.l  d0,a6
+        moveq   #1,d0
+        jsr     -30(a6)              ; GetUnitID(1) (disk.resource LVO -30)
+        move.l  (sp)+,a6
+        tst.l   d0                   ; DRT_AMIGA = 0
+        bne.s   .m1_ret
+        lea     df1_hname(pc),a0
+        move.l  #dos_handler,a1
+        moveq   #6,d0
+        move.l  #D3_STK,d1
+        jsr     proc_create
+        tst.l   d0
+        beq.s   .m1_ret
+        moveq   #1,d1
+        bsr     fl_node
+        beq.s   .m1_ret
+        move.l  a0,d0
+        lsr.l   #2,d0
+        move.l  d0,DN_NEXT(a3)
+.m1_ret:
+        movem.l (sp)+,d0-d1/a0-a1
+        rts
+df1_hname:
+        dc.b    "dos.handler.df1",0
+        even
 
 ; mk_demo_task: a2 = PC of the body, a3 = name, d2.b = priority -> a4 = created TCB.
 ; AllocMem preserves a2/a3/d2; AddTask reads a2 (initPC) / a3 (finalPC=task_exit).

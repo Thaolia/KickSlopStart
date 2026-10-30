@@ -450,7 +450,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
       RED `D3A_NO_REPLY` (handler does not `ReplyMsg` → driver blocked) → D3A absent. GREEN-BOOT (D3A + non-reg
       D1/D2/M3F/M7A/M7C/M7D, 0 FAILED) + RED + COOP (D3A exercised COOPERATIVELY, SCHED_ON=0) + CTRL-NODISK (D3A
       present, disk-independent; D1/D2 absent). GREEN checksum `0x47B39093`. NEXT: D3b (OFS handler).
-    - **D3b — DF0: file-handler process + dos_sendpkt (DONE).** `src/dos/handler.s` (`dos_handler_df0`): a real
+    - **D3b — DF0: file-handler process + dos_sendpkt (DONE).** `src/dos/handler.s` (`dos_handler_df0`, `dos_handler` since DF1): a real
       process that loops `WaitPort`/`GetMsg` and serves `ACTION_FINDINPUT`/`READ`/`END` via `ofs_read_file` (D1).
       `FINDINPUT` (ARG1=BPTR FileHandle, ARG3=BSTR name) reads the WHOLE file into a handler buffer (deliberate
       simplification: incremental OFS reads deferred), sets `fh_Arg1`=state{buffer,size,pos}; `READ`(key,buf,len)
@@ -918,6 +918,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     BltClear, PolyDraw, VBeamPos, FreeSprite, GetRGB4; intuition: ShowTitle, ViewPortAddress. Proven under FS-UAE
     (tests/dskchg_run.sh): welcome screen, editor, FILES (disk list), PLAY, PLAY SONG (playback, TIMER),
     STOP, keyboard arrows; harness: serial capture (DSKCHG_SERIAL), key command, keyboard joystick turned off.
+    DF1: external drive (2026-10-30, user request: Extras 1.3 icon with the Extras disk in DF1): trackdisk units
+    1-3 made real (per-unit select line, motor, head position, change counter; device semaphore; shared cache keyed
+    by unit), one file-handler process per drive (context in tc_UserData, unit from the FileSysStartupMsg), "DF1"
+    DeviceNode mounted when disk.resource identifies a 3.5" drive. Proven under Copperline (Extras 1.3 icon, 1-drive
+    boot unchanged, DF1 insertion after boot). Remaining: DF2/DF3 mounting, writes to DF1 not exercised on a
+    writable disk yet.
     **Interleaved — SetPatch / SysInfo (user request 2026-10-21, before resuming the Workbench)**: complete V34
     exec (real SetFunction & 33 other LVOs), shell that honours `cli_Module`, Alert relay, DeleteLayer in three
     steps, public V34 GfxBase, CIA TODs started, DF0 FileSysStartupMsg; SysInfo displays its whole page

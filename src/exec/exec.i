@@ -327,8 +327,7 @@ M7L_STAT       EQU $000005F0  ; UBYTE: b0 = "M7L MICROHZ CALIB OK" marker alread
 GFX_COPLIST_PTR EQU $000005F4 ; M4a: long — chip address of the copper list (published by gfx_display_init)
 DOS_HANDLERPORT EQU $000005F8 ; D3a: long — APTR of the pr_MsgPort of the echo handler process (published by the setup)
 DOS_FSPORT      EQU $000005FC ; D3b: long — APTR of the pr_MsgPort of the DF0: (OFS) file-handler process
-TD_CURCYL       EQU $00000600 ; trackdisk: word — current cylinder of the head (valid iff TD_CYLVALID != 0)
-TD_CYLVALID     EQU $00000602 ; trackdisk: byte — 0 = unknown position (recalibrate); !=0 = TD_CURCYL reliable
+TD_CUNIT        EQU $00000600 ; trackdisk: long — state of the unit being accessed (in the device base)
 DOS_CONPORT     EQU $00000604 ; E1: long — APTR of the serial console handler process's pr_MsgPort (published by setup)
 CON_STATE       EQU $00000608 ; E1: long — APTR of the console handler state block (timer.device + reply port + request)
 ; F2b: SPSC keyboard ring (producer = kbd_interrupt/INT2; consumer = con_handler READ). Lock-free:
@@ -379,7 +378,6 @@ INPUT_CODE      EQU $00000656 ; word: ie_Code seen by the handlers (must = injec
 KBD_QUAL     EQU $00000658 ; word: qualifier state tracked by kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
 KM_RESBASE   EQU $0000065A ; long: keymap.resource base (published at init)
 KM_DEFKM     EQU $000007C8 ; long: current default struct KeyMap (resource node, then console.device's copy)
-TD_SEM       EQU $000007CC ; trackdisk: SignalSemaphore (46 bytes, up to $7F9) — one request at a time on the drive
 KR_LIST      EQU 14            ; keymap.resource (V34): Node, then kr_List
 KR_NODE      EQU 28            ; built-in KeyMapNode (Node + struct KeyMap)
 KN_KEYMAP    EQU 14            ; KeyMapNode: struct KeyMap after the Node
@@ -412,13 +410,11 @@ PTR_Y        EQU $00000686 ; word: absolute pointer Y
 INT_IBASE    EQU $00000740 ; long: IntuitionBase (set at its init) — the pointer handler moves the sprite with it
 KBD_DEVBASE  EQU $00000744 ; long: keyboard.device base (set at its init) — kbd_interrupt hands each keycode to it
 TD_CDIRTY    EQU $00000748 ; trackdisk: TD_NCACHE bytes — slot modified by CMD_WRITE, not yet written to disk
-TD_CHGCNT    EQU $00000750 ; trackdisk: long — disk change counter (TD_CHANGENUM)
-DOS_OWCTX    EQU $00000754 ; dos: long — OFS write context (ofswrite.s), allocated on first need
+TD_BASEP     EQU $00000750 ; trackdisk: long — device base (semaphore and units for td_disk_present / slot flushes)
 EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending software interrupts (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
-HND_CTX      EQU $000007C0 ; dos: long — context of the DF0: file-handler (disk change, handler.s)
-HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the DF0: handler's last 218 refusal ("replace")
+HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the last 218 refusal of a floppy handler ("replace")
 MT_TABLE     EQU $0000079C ; long: allocation tracer table (diagnostic ROM -DMEMTRACK=1 only)
 INT2_BUSY    EQU $000007A0 ; byte: int2_dispatch serves the PORTS chain (read by timer.device VBLANK server recovery)
 TD_DMATASK   EQU $000007A2 ; trackdisk: long — task waiting for the end of a disk DMA (SIGF_SINGLE), 0: none
@@ -446,9 +442,7 @@ FB_TASK      EQU $000006E6 ; long: TCB of task_fb (so that task_fa signals it)
 SH_STK       EQU 8192       ; stack of the initial CLI (shell.s): the commands it launches run on it
 TD_CACHEBUF  EQU $000006EA ; trackdisk: long — cache of decoded tracks (TD_CNSLOTS x 5632 bytes; 0 = not yet allocated)
 TD_CNSLOTS   EQU $000006EE ; trackdisk: word — number of cache slots (TD_NCACHE, or 1 if memory is tight)
-TD_MOTORON   EQU $00000700 ; trackdisk: byte — DF0 motor on (latched): no spin-up at the next read
 TD_BUSY      EQU $00000701 ; trackdisk: byte — drive access in progress (the VBlank server does not turn the motor off)
-TD_MOTORCNT  EQU $00000702 ; trackdisk: word — VBlank ticks before turning off the idle motor
 TD_VBLINT    EQU $00000704 ; trackdisk: struct Interrupt (22 bytes) of the motor turn-off VBlank server
 TD_MOTORIDLE EQU 100       ; 2 s of inactivity (50 Hz) before turn-off, like the delay of the original trackdisk
 TD_CTICK     EQU $0000071A ; trackdisk: word — LRU clock of the track cache
@@ -617,6 +611,7 @@ TC_SPREG      EQU 54
 TC_SPLOWER    EQU 58
 TC_SPUPPER    EQU 62
 TC_MEMENTRY   EQU 74          ; struct List: MemLists freed by RemTask (FreeEntry)
+TC_USERDATA   EQU 88          ; APTR free for the owner of the task (file-handlers: their context, ofs.i)
 TC_SIZE       EQU 92
 ML_NUMENTRIES EQU 14          ; exec/memory.i: struct MemList (Node, NumEntries, MemEntry[])
 ML_ME         EQU 16

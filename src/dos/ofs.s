@@ -1,6 +1,6 @@
 ; src/dos/ofs.s - OFS read-only (D1): ofs_read_file(name, dest, max) -> size read | 0.
 ; INTERNAL filesystem machinery (NO packets / BCPL file-handler yet = D3). Relies on trackdisk
-; CMD_READ (M6z multi-track) to read 512-byte logical blocks of DF0:. OFS algorithm locked down
+; CMD_READ (M6z multi-track) to read 512-byte logical blocks of the floppy (drive: ofs.i). OFS algorithm locked down
 ; empirically on a test ADF (asset, NOT the ROM): root@880; hash h=len, h=(h*13+toupper(c))&$7FF,
 ; idx=h%ht_size; hash table -> header (BCPL name, sec_type, first_data, hash_chain); OFS data block
 ; (type 8, data_size, next_data, data @+24). Clean-room: ADF-FAQ / AmigaDOS Technical Reference (public)
@@ -208,10 +208,18 @@ ofs_split:
                 rts
 
 ; ofs_read_block(d0=block num, a2=trackdisk, a3=ioreq, a6=SysBase) -> d0 = 1 OK / 0 failed; fills a3+IOREQ_SZ.
+; Drive = the one of the calling file-handler (ofs.i), DF0 otherwise.
 ; Only uses d0/d1/a0/a1 as scratch (BeginIO preserves d2-d7/a2-a5) -> the caller's loop state survives.
 ofs_read_block:
                 lsl.l   #8,d0
                 lsl.l   #1,d0                        ; offset = block * 512 (< 901120, no 32-bit overflow)
+                move.l  EB_THISTASK(a6),a0
+                move.l  TC_USERDATA(a0),d1
+                beq.s   .rb_unit                     ; not a file-handler: io_Unit 0 = DF0
+                move.l  d1,a0
+                move.l  HC_TDIO+IO_UNIT(a0),d1
+.rb_unit:
+                move.l  d1,IO_UNIT(a3)
                 move.l  a2,IO_DEVICE(a3)
                 move.w  #CMD_READ,IO_COMMAND(a3)
                 move.l  #OFS_BSIZE,IO_LENGTH(a3)
