@@ -147,6 +147,8 @@ con_handler:
                 beq     .read
                 cmp.l   #ACTION_END,d0
                 beq     .end
+                cmp.l   #ACTION_DISK_INFO,d0
+                beq     .info
                 move.l  #DOSFALSE,DP_RES1(a4)
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -278,9 +280,31 @@ con_handler:
                 bra     .reply
 .rd_eof:
                 clr.l   DP_RES1(a4)
+; DISK_INFO (ARG1 = BPTR InfoData): console disk type "CON\0", the window as volume node, and in id_InUse the
+; console IOStdReq of the window (SetMap sends CD_SETKEYMAP to its unit), 0 without a window.
+.info:
+                move.l  #DOSTRUE,DP_RES1(a4)
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                beq.s   .reply
+                move.l  d0,a0
+                move.l  #$434F4E00,24(a0)    ; id_DiskType
+                clr.l   28(a0)               ; id_VolumeNode
+                clr.l   32(a0)               ; id_InUse
+                move.l  CON_STATE,d0
+                beq.s   .reply
+                move.l  d0,a1
+                move.l  CS_WIN(a1),d0
+                beq.s   .reply
+                move.l  d0,28(a0)
+                lea     CS_WIO(a1),a1
+                move.l  a1,32(a0)
+; reply through dp_Port (returnpkt): BCPL-style senders such as SetMap do not set mn_ReplyPort
 .reply:
+                move.l  DP_PORT(a4),a0
+                move.l  a2,DP_PORT(a4)
                 move.l  a3,a1
-                jsr     LVO_REPLYMSG(a6)
+                jsr     LVO_PUTMSG(a6)
                 bra     .hl
 
 ; con_putc: emits d0.b on serial (bounded TBE poll). Clobbers d0/d1/d2; preserves the rest.

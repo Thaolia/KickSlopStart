@@ -19,9 +19,14 @@
                 include "intuition.i"
 
                 xref    font8x8          ; graphics/font8x8.s (8x8 glyphs, ASCII 0x20..0x7F)
-                xref    kbd_cook         ; exec/keymap.s (#5: cook keycode(+qualifiers)->ASCII, US/AZERTY)
+                xref    km_conv          ; exec/keymap.s: one RAWKEY event -> bytes through a struct KeyMap
 
 CMD_READ     EQU 2                ; standard io_Command (io.i: READ=2, WRITE=3)
+CD_ASKKEYMAP        EQU 9        ; devices/console.h
+CD_SETKEYMAP        EQU 10
+CD_ASKDEFAULTKEYMAP EQU 11
+CD_SETDEFAULTKEYMAP EQU 12
+IOERR_BADLENGTH     EQU -4
 CMD_WRITE    EQU 3
 IO_DATA2     EQU 40               ; IOStdReq io_Data (local: console.s does not include disk.i)
 IO_LEN2      EQU 36               ; IOStdReq io_Length
@@ -91,6 +96,13 @@ console_open:
         move.l  IO_DATA2(a2),a1
         bsr     cu_init
         move.l  a0,IO_UNIT(a2)
+        lea     CONB_DEFKM(a6),a1    ; the unit's keymap: copy of the current default keymap
+        lea     CU_KEYMAP(a0),a0
+        moveq   #KM_SIZEOF/4-1,d0
+.co_km:
+        move.l  (a1)+,(a0)+
+        dbra    d0,.co_km
+        move.l  IO_UNIT(a2),a0
         move.l  a0,-(sp)             ; unit linked into CONB_UNITS (routing of keys to the active window)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
@@ -106,110 +118,40 @@ console_open:
 .co_ret:
         movem.l (sp)+,a2/a6
         rts
-; RawKeyConvert(events a0, buffer a1, length d1, keymap a2 ignored: active keymap) -> d0 = characters written, -1 if
-; the buffer is too short. A RAWKEY press gives its character (kbd_cook: Shift/Caps/Ctrl); arrows, F1-F10 and Help
-; give their CSI ($9B) sequence like the console; release and other classes: 0.
+; RawKeyConvert(events a0, buffer a1, length d1, keymap a2 | 0 = the default keymap) -> d0 = bytes written for the
+; whole chain (RAWKEY events only), -1 as soon as one result does not fit (spec console-keymap-v34 §5.3).
 console_rawkeyconvert:
-        movem.l d2-d3/a2,-(sp)
-        move.l  d1,d3                ; d3 = space available
-        moveq   #0,d0
-        cmp.b   #IECLASS_RAWKEY,IE_CLASS(a0)
-        bne.s   .rk_ret
-        move.w  IE_CODE(a0),d2
-        btst    #7,d2                ; release
-        bne.s   .rk_ret
-        move.w  IE_QUALIFIER(a0),d1
-        lea     rk_seq(pc),a2        ; keys with a sequence: [code, normal, shifted] (strings after CSI)
-.rk_find:
-        move.b  (a2)+,d0
-        bmi.s   .rk_cook
-        cmp.b   d0,d2
-        beq.s   .rk_seq
-        addq.l  #4,a2
-        bra.s   .rk_find
-.rk_seq:
-        move.b  (a2)+,d0             ; offset of the normal string
-        and.w   #KQ_SHIFT,d1
-        beq.s   .rk_ns
-        move.b  (a2),d0              ; offset of the shifted string
-.rk_ns:
-        ext.w   d0
-        lea     rk_str(pc,d0.w),a2
-        moveq   #0,d0
-        subq.l  #1,d3
-        bmi.s   .rk_over
-        move.b  #$9B,(a1)+
-        addq.l  #1,d0
-.rk_scp:
-        tst.b   (a2)
-        beq.s   .rk_ret
-        subq.l  #1,d3
-        bmi.s   .rk_over
-        move.b  (a2)+,(a1)+
-        addq.l  #1,d0
-        bra.s   .rk_scp
-.rk_cook:
-        move.b  d2,d0
-        jsr     kbd_cook             ; d0.b = ASCII | 0
-        and.l   #$FF,d0
-        beq.s   .rk_ret
-        tst.l   d3
-        beq.s   .rk_over
-        move.b  d0,(a1)
-        moveq   #1,d0
-        bra.s   .rk_ret
-.rk_over:
-        moveq   #-1,d0
+        movem.l d2-d3/a2-a4,-(sp)
+        move.l  a2,d0
+        bne.s   .rk_km
+        lea     CONB_DEFKM(a6),a2
+.rk_km:
+        move.l  a0,a3                ; a3 = event
+        move.l  a1,a4                ; a4 = output
+        move.l  d1,d3                ; d3 = room
+        moveq   #0,d2                ; d2 = total
+.rk_lp:
+        move.l  a3,d0
+        beq.s   .rk_done
+        cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
+        bne.s   .rk_nx
+        move.l  a3,a0
+        move.l  a4,a1
+        move.l  d3,d1
+        jsr     km_conv
+        tst.l   d0
+        bmi.s   .rk_ret
+        add.l   d0,a4
+        add.l   d0,d2
+        sub.l   d0,d3
+.rk_nx:
+        move.l  IE_NEXTEVENT(a3),a3
+        bra.s   .rk_lp
+.rk_done:
+        move.l  d2,d0
 .rk_ret:
-        movem.l (sp)+,d2-d3/a2
+        movem.l (sp)+,d2-d3/a2-a4
         rts
-rk_seq:                              ; code, normal offset, shifted offset, padding
-        dc.b    $4C,rk_up-rk_str,rk_sup-rk_str,0
-        dc.b    $4D,rk_dn-rk_str,rk_sdn-rk_str,0
-        dc.b    $4E,rk_rt-rk_str,rk_srt-rk_str,0
-        dc.b    $4F,rk_lt-rk_str,rk_slt-rk_str,0
-        dc.b    $50,rk_f1-rk_str,rk_sf1-rk_str,0
-        dc.b    $51,rk_f2-rk_str,rk_sf2-rk_str,0
-        dc.b    $52,rk_f3-rk_str,rk_sf3-rk_str,0
-        dc.b    $53,rk_f4-rk_str,rk_sf4-rk_str,0
-        dc.b    $54,rk_f5-rk_str,rk_sf5-rk_str,0
-        dc.b    $55,rk_f6-rk_str,rk_sf6-rk_str,0
-        dc.b    $56,rk_f7-rk_str,rk_sf7-rk_str,0
-        dc.b    $57,rk_f8-rk_str,rk_sf8-rk_str,0
-        dc.b    $58,rk_f9-rk_str,rk_sf9-rk_str,0
-        dc.b    $59,rk_f10-rk_str,rk_sf10-rk_str,0
-        dc.b    $5F,rk_hlp-rk_str,rk_hlp-rk_str,0
-        dc.b    -1
-rk_str:
-rk_up:  dc.b    "A",0
-rk_dn:  dc.b    "B",0
-rk_rt:  dc.b    "C",0
-rk_lt:  dc.b    "D",0
-rk_sup: dc.b    "T",0
-rk_sdn: dc.b    "S",0
-rk_srt: dc.b    " @",0
-rk_slt: dc.b    " A",0
-rk_f1:  dc.b    "0~",0
-rk_f2:  dc.b    "1~",0
-rk_f3:  dc.b    "2~",0
-rk_f4:  dc.b    "3~",0
-rk_f5:  dc.b    "4~",0
-rk_f6:  dc.b    "5~",0
-rk_f7:  dc.b    "6~",0
-rk_f8:  dc.b    "7~",0
-rk_f9:  dc.b    "8~",0
-rk_f10: dc.b    "9~",0
-rk_sf1: dc.b    "10~",0
-rk_sf2: dc.b    "11~",0
-rk_sf3: dc.b    "12~",0
-rk_sf4: dc.b    "13~",0
-rk_sf5: dc.b    "14~",0
-rk_sf6: dc.b    "15~",0
-rk_sf7: dc.b    "16~",0
-rk_sf8: dc.b    "17~",0
-rk_sf9: dc.b    "18~",0
-rk_sf10: dc.b   "19~",0
-rk_hlp: dc.b    "?~",0
         even
 
 ; Close(iorequest a1): frees the ConUnit of a window unit.
@@ -218,6 +160,8 @@ console_close:
         move.l  IO_UNIT(a1),d0
         beq.s   .cc_ret
         cmp.l   a6,d0
+        beq.s   .cc_ret
+        cmp.l   #-1,d0               ; unit -1 (SetMap restores it before CloseDevice): no ConUnit
         beq.s   .cc_ret
         clr.l   IO_UNIT(a1)
         move.l  a6,-(sp)
@@ -335,7 +279,41 @@ console_beginio:
         cmp.w   #CMD_WRITE,d0
         beq.s   .bu_write
         cmp.w   #CMD_READ,d0
-        beq.s   .bu_read
+        beq     .bu_read
+        cmp.w   #CD_ASKKEYMAP,d0     ; CD_ASKKEYMAP, CD_SETKEYMAP, CD_ASKDEFAULTKEYMAP, CD_SETDEFAULTKEYMAP
+        blo.s   .bu_nocmd
+        cmp.w   #CD_SETDEFAULTKEYMAP,d0
+        bhi.s   .bu_nocmd
+        cmp.l   #KM_SIZEOF,IO_LEN2(a3)
+        beq.s   .bu_kmlen
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a3)
+        bra     .bu_reply
+.bu_kmlen:
+        lea     CONB_DEFKM(a2),a0    ; device default keymap, or the unit's own (CD_ASK/SETKEYMAP on a window unit)
+        cmp.w   #CD_ASKDEFAULTKEYMAP,d0
+        bhs.s   .bu_kmsel
+        move.l  IO_UNIT(a3),a1
+        cmp.l   a2,a1
+        beq.s   .bu_kmsel
+        lea     CU_KEYMAP(a1),a0
+.bu_kmsel:
+        move.l  IO_DATA2(a3),a1
+        btst    #0,d0                ; odd = ASK (copy out), even = SET (copy in)
+        bne.s   .bu_kmcp
+        exg     a0,a1
+.bu_kmcp:
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        moveq   #KM_SIZEOF/4-1,d1
+.bu_kml:
+        move.l  (a0)+,(a1)+
+        dbra    d1,.bu_kml
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
+        move.l  #KM_SIZEOF,IO_ACTUAL2(a3)
+        bra     .bu_reply
+.bu_nocmd:
         move.b  #IOERR_NOCMD,IO_ERROR(a3)
         bra     .bu_reply
 .bu_write:
@@ -526,48 +504,62 @@ con_putglyph:
 .cpg_ret:
         rts
 
-; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): #3b — handler registered on
-; input.device via IND_ADDHANDLER. Cooks each key-down RAWKEY (keycode -> ASCII via kbd_keymap) and pushes it into
-; the read buffer of console.device (which CMD_READ serves). Returns d0 = unchanged list (pass-through). Handler
-; convention: preserves d2-d7/a2-a6 (we save d2/d3/a2/a3). Minimal cook (F2b US keymap; shift/ctrl =
-; keymap.resource #5).
+; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): handler registered on input.device via
+; IND_ADDHANDLER. Each RAWKEY is converted through the keymap of the unit whose window is active (the default keymap
+; otherwise); the bytes go into the read buffer only if they all fit, then a waiting CMD_READ is served. Returns
+; d0 = unchanged list (pass-through). Preserves d2-d7/a2-a6.
 console_input_handler:
-        movem.l d2/d3/a2/a3,-(sp)
+        movem.l d2-d4/a2-a3,-(sp)
+        lea     -16(sp),sp           ; conversion buffer
         move.l  a0,d3                ; d3 = original list (pass-through return)
         move.l  a1,a2                ; a2 = console base
         move.l  a0,a3                ; a3 = current event
 .cih_loop:
         move.l  a3,d0
-        beq.s   .cih_done            ; NextEvent == 0 -> end of list
+        beq     .cih_done
         cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
         bne.s   .cih_next
-        move.w  IE_CODE(a3),d2       ; keycode (bit 7 = up/down)
-        btst    #7,d2
-        bne.s   .cih_next            ; key-up -> ignore
-        and.w   #$007F,d2
-        move.l  d2,d0                ; d0 = keycode
-        move.w  IE_QUALIFIER(a3),d1  ; d1 = qualifiers of the event (shift/caps/ctrl)
-        jsr     kbd_cook             ; #5: cooking via the active keymap (preserves d2/a0/a1)
-        move.b  d0,d2                ; d2.b = cooked ASCII (0 = unmapped)
-        beq.s   .cih_next
+        bsr     con_target           ; keymap of the active console unit, else the default one
+        lea     CONB_DEFKM(a2),a1
+        beq.s   .cih_km
+        move.l  d0,a1
+        lea     CU_KEYMAP(a1),a1
+.cih_km:
+        move.l  a2,-(sp)
+        move.l  a1,a2
+        move.l  a3,a0
+        lea     4(sp),a1
+        moveq   #16,d1
+        jsr     km_conv
+        move.l  (sp)+,a2
+        move.l  d0,d2                ; d2 = bytes
+        ble.s   .cih_next
                 ifeq    CON_NO_READBUF
-        move.w  CONB_RTAIL(a2),d0    ; push ASCII into the read buffer
-        move.w  d0,d1
-        addq.w  #1,d1
-        and.w   #CON_RBMASK,d1
-        cmp.w   CONB_RHEAD(a2),d1
-        beq.s   .cih_next            ; full -> drop
-        lea     CONB_RBUF(a2),a0
-        move.b  d2,0(a0,d0.w)
-        move.w  d1,CONB_RTAIL(a2)
+        move.w  CONB_RHEAD(a2),d0    ; free room in the ring
+        sub.w   CONB_RTAIL(a2),d0
+        subq.w  #1,d0
+        and.w   #CON_RBMASK,d0
+        cmp.w   d2,d0
+        blo.s   .cih_next            ; does not fit: dropped
+        lea     (sp),a0
+        lea     CONB_RBUF(a2),a1
+        move.w  CONB_RTAIL(a2),d0
+        subq.w  #1,d2
+.cih_push:
+        move.b  (a0)+,0(a1,d0.w)
+        addq.w  #1,d0
+        and.w   #CON_RBMASK,d0
+        dbra    d2,.cih_push
+        move.w  d0,CONB_RTAIL(a2)
         bsr     con_servereads       ; a CMD_READ of an open unit was waiting: served and replied
-                endc                 ; RED CON_NO_READBUF: cooks but does not buffer -> empty CMD_READ
+                endc                 ; RED CON_NO_READBUF: converts but does not buffer -> empty CMD_READ
 .cih_next:
-        move.l  IE_NEXTEVENT(a3),a3  ; next event
-        bra.s   .cih_loop
+        move.l  IE_NEXTEVENT(a3),a3
+        bra     .cih_loop
 .cih_done:
         move.l  d3,d0                ; return the original list (pass-through)
-        movem.l (sp)+,d2/d3/a2/a3
+        lea     16(sp),sp
+        movem.l (sp)+,d2-d4/a2-a3
         rts
 
 ; con_servereads(a2 = base): if a CMD_READ is waiting and the read buffer has bytes, fills it, unhooks it
@@ -655,6 +647,16 @@ console_initfunc:
         clr.w   CONB_CURY(a2)
         clr.w   CONB_RHEAD(a2)
         clr.w   CONB_RTAIL(a2)
+        move.l  KM_DEFKM,d0          ; default keymap = the KeyMap of keymap.resource's first node
+        beq.s   .ci_nokm
+        move.l  d0,a0
+        lea     CONB_DEFKM(a2),a1
+        move.l  a1,KM_DEFKM          ; from now on the default keymap is this copy (CD_SETDEFAULTKEYMAP)
+        moveq   #KM_SIZEOF/4-1,d0
+.ci_km:
+        move.l  (a0)+,(a1)+
+        dbra    d0,.ci_km
+.ci_nokm:
         lea     EB_LIBLIST(a6),a0    ; GfxBase (graphics.library, pri 65, initialised before console, pri 20)
         lea     console_gfxname(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -730,6 +732,7 @@ CU_CUROFF       EQU 304              ; private: cursor hidden (CSI 0 SPACE p)
 CU_CURVIS       EQU 305              ; private: cursor currently drawn
 CU_INV          EQU 306              ; private: inverse video (CSI 7 m)
 CU_NEXT         EQU 308              ; private: next unit (CONB_UNITS list)
+CU_KEYMAP       EQU 66               ; cu_KeyMapStruct (devices/conunit.h): the unit's struct KeyMap
 CU_SIZE         EQU 312
 CU_DEFFG        EQU 2                ; default text pen: black on the green background (project theme; 1.3: 1)
 

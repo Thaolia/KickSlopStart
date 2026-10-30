@@ -377,10 +377,13 @@ INPUT_CODE      EQU $00000656 ; word: ie_Code seen by the handlers (must = injec
 
 ; --- keymap.resource + cook (#5): keycode(+qualifiers) -> ASCII, US/AZERTY keymaps ---
 KBD_QUAL     EQU $00000658 ; word: qualifier state tracked by kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
-KM_RESBASE   EQU $0000065A ; long: keymap.resource base (published at init; read by kbd_cook)
-KMR_LO       EQU LIB_SIZE      ; keymap.resource base: APTR unshifted table (km_xx_lo)
-KMR_HI       EQU LIB_SIZE+4    ; APTR shifted table (km_xx_hi)
-KMR_SIZE     EQU LIB_SIZE+8
+KM_RESBASE   EQU $0000065A ; long: keymap.resource base (published at init)
+KM_DEFKM     EQU $000007C8 ; long: current default struct KeyMap (resource node, then console.device's copy)
+KR_LIST      EQU 14            ; keymap.resource (V34): Node, then kr_List
+KR_NODE      EQU 28            ; built-in KeyMapNode (Node + struct KeyMap)
+KN_KEYMAP    EQU 14            ; KeyMapNode: struct KeyMap after the Node
+KM_SIZEOF    EQU 32            ; struct KeyMap: 8 pointers
+KMR_SIZE     EQU KR_NODE+KN_KEYMAP+KM_SIZEOF   ; 74 bytes
 KQ_SHIFT     EQU $03           ; ie_Qualifier mask: LSHIFT | RSHIFT
 KQB_CAPS     EQU 2             ; CAPSLOCK bit in ie_Qualifier ($04)
 KQB_CTRL     EQU 3             ; CONTROL bit in ie_Qualifier ($08)
@@ -508,7 +511,8 @@ CONB_RQ      EQU LIB_SIZE+60   ; APTR queue of the pending CMD_READs (linked by 
 CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase: rendering into the windows' RastPort (ConUnit units)
 CONB_UNITS   EQU LIB_SIZE+68   ; APTR list of the open ConUnits (linked by CU_NEXT): key routing
 CONB_IBASE   EQU LIB_SIZE+72   ; APTR IntuitionBase (looked up on first need: intuition initialises afterwards)
-CONDEV_SIZE  EQU LIB_SIZE+76
+CONB_DEFKM   EQU LIB_SIZE+76   ; struct KeyMap (32 bytes): default keymap (CD_SETDEFAULTKEYMAP), copied into new units
+CONDEV_SIZE  EQU LIB_SIZE+108
 CON_RBSIZE   EQU 16            ; read buffer size (power of 2)
 CON_RBMASK   EQU 15
 ; M7L_OLD_CONV=1 (RED): restores the old VBLANK conversion (/20000) on the MICROHZ unit -> the 0.5 s

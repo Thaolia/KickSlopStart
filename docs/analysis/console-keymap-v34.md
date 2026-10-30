@@ -863,8 +863,9 @@ text recognised per line and cursor position (XCP, YCP).
    resized window [O ROM]; the visible effect on an inactive console has not been probed.
 3. **SUPER_BITMAP**: not probed (the recomputation clears nothing and does not reposition the cursor; cursor
    possibly not redisplayed — to be checked).
-4. **SetMap of Workbench 1.3.3**: whether it calls CD_SETDEFAULTKEYMAP and/or CD_SETKEYMAP and on which
-   unit has not been verified on the disk (D, documented use).
+4. **SetMap of Workbench 1.3.3**: resolved in `setmap-13.md` — FindName/AddHead on kr_List (resource + $0E),
+   CD_SETDEFAULTKEYMAP on a unit −1 request, then CD_SETKEYMAP on the CLI's unit taken from `id_InUse` of an
+   ACTION_DISK_INFO to `pr_ConsoleTask` [O SetMap + probe].
 5. **Overflow of parameter values** (> 32767): CSI 65535C bounded the cursor as expected,
    but the exact arithmetic (16 × 16 signed product, partial saturation) is not specified beyond that.
 6. **BEL**: DisplayBeep read in the ROM, visual effect (screen flash) not captured.

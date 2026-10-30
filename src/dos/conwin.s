@@ -22,6 +22,7 @@ LVO_OPENWINDOW_I EQU -204
 LVO_CLOSEWINDOW_I EQU -72
 ID_DISKTYPE     EQU 24               ; InfoData
 ID_VOLUMENODE   EQU 28
+ID_INUSE        EQU 32               ; id_InUse: our console IOStdReq (SetMap sends CD_SETKEYMAP to its unit)
 
 ; handler state (AllocMem, a5)
 CW_PKT          EQU 0                ; BPTR of the current packet
@@ -33,6 +34,7 @@ CW_RPORT        EQU 20               ; MsgPort for console reads
 CW_EOF          EQU 24               ; BYTE: Ctrl-\ received, returned on the next read
 CW_RDON         EQU 25               ; BYTE: console read in progress
 CW_KEY          EQU 26               ; BYTE: character received
+CW_CSI          EQU 27               ; BYTE: inside a CSI sequence (line mode skips cursor and function keys)
 CW_LLEN         EQU 28               ; LONG: bytes typed into CW_LINE
 CW_DLV          EQU 32               ; LONG: deliverable bytes (completed line in CON, everything in RAW)
 CW_RQN          EQU 36               ; LONG: pending reads
@@ -260,6 +262,8 @@ cw_packet:
                 move.l  #$52415700,ID_DISKTYPE(a0)   ; "RAW\0"
 .pk_icon:
                 move.l  CW_WIN(a5),ID_VOLUMENODE(a0)
+                lea     CW_RIO(a5),a1
+                move.l  a1,ID_INUSE(a0)
 .pk_i0:
                 moveq   #-1,d0
                 moveq   #0,d1
@@ -356,7 +360,21 @@ cw_key:
                 movem.l d2/a2,-(sp)
                 move.b  d0,d2
                 tst.l   CW_MODE(a5)
-                bne.s   .ky_raw
+                bne     .ky_raw
+                tst.b   CW_CSI(a5)           ; CSI sequence (cursor, function, Help keys): skipped up to its final byte
+                beq.s   .ky_ncsi
+                cmp.b   #$40,d2
+                blo     .ky_ret
+                cmp.b   #$7E,d2
+                bhi     .ky_ret
+                clr.b   CW_CSI(a5)
+                bra     .ky_ret
+.ky_ncsi:
+                cmp.b   #$9B,d2
+                bne.s   .ky_nbs
+                st      CW_CSI(a5)
+                bra     .ky_ret
+.ky_nbs:
                 cmp.b   #8,d2                ; backspace: only on the line not yet deliverable
                 bne.s   .ky_ncr
                 move.l  CW_LLEN(a5),d0
