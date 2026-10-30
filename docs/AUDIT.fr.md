@@ -105,7 +105,7 @@ clean-room y répond.
 | Élément | Statut |
 |---|---|
 | Palette et Preferences par défaut, ~50 chaînes affichées (Guru, CLI, requesters, Workbench) | Gardées volontairement : valeurs observables nécessaires à la compatibilité. |
-| Keymap | **Pas une copie.** Seuls les caractères ASCII de la disposition US coïncident ; les colonnes Alt et Ctrl, les touches mortes et les octets Capsable/Repeatable sont absents. |
+| Keymap | **Pas une copie de la disposition** : écrite à la main par `tests/mk_keymaps.py`, sans colonne Alt ni touches mortes. Les 16 chaînes de touches (curseur, F1-F10, Help, Shift-Tab) sont les séquences CSI documentées pour console.device, au format public `struct KeyMap`. Cette table coïncide avec la ROM sur 76 mots ; ce sont des données imposées (voir la mise à jour du 2026-10-30 dans [rom-similarity.md](audit/rom-similarity.md)). |
 | Glyphes de la police | Dessinés à la main ; ils ne correspondent pas à la ROM (contrôle 1). |
 | **Coche des menus** | **Corrigée.** Le premier dessin, fait juste après la lecture d'une note qui montrait l'image de la ROM, en partageait 4 lignes sur 8. Il est remplacé par un motif sans rapport : une empreinte de patte de chat. |
 | **Pictogrammes des gadgets système** (fermeture, profondeur, taille) | **Ouvert.** Ils suivent la géométrie au pixel de `intuition-frame-v34.md` §5.3 et ressemblent donc à ceux de la 1.3. La compatibilité ne l'exige pas ; une refonte est proposée. |

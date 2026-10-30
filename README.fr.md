@@ -29,9 +29,9 @@ près), avec captures d'écran ou sortie série à l'appui.
 - **exec** : la table de fonctions V34 complète, un ordonnanceur préemptif, des tâches en mode utilisateur, des
   serveurs d'interruption, des modules résidents, des bibliothèques et des devices, des sémaphores et un allocateur
   mémoire.
-- **Devices et ressources** : trackdisk (lecture et écriture, DMA par interruption), timer (VBLANK et MICROHZ),
-  keyboard, input, console, gameport (souris), audio, cia, disk, misc, potgo, keymap (US et AZERTY), expansion
-  (autoconfig Zorro II), romboot.
+- **Devices et ressources** : trackdisk (lecture et écriture, DMA par interruption, lecteurs DF0 interne et DF1
+  externe), timer (VBLANK et MICROHZ), keyboard, input, console, gameport (souris), audio, cia, disk, misc, potgo,
+  keymap (US et AZERTY), expansion (autoconfig Zorro II), romboot.
 - **Graphismes** : graphics.library (views, listes copper, blitter, texte, régions, GELs) et layers.library.
 - **Intuition** : écrans, fenêtres au cadre de la 1.3, gadgets (booléens, proportionnels), menus, requesters,
   AutoRequest, Preferences.
@@ -40,10 +40,37 @@ près), avec captures d'écran ou sortie série à l'appui.
   UAE (DH0:).
 - **Workbench 1.3.3** démarre jusqu'au bureau : icônes de disque et de tiroirs, Shell, menus, Info, Duplicate/DiskCopy,
   Clean Up et Preferences fonctionnent.
-- **Logiciels testés** : SetPatch 1.38, SysInfo, Holiday Lemmings (jouable), Caesar, SimCity 1.2, The Secret of
+- **Logiciels testés** : SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (jouable), Caesar, SimCity 1.2, The Secret of
   Monkey Island (disquette 1), Scooby-Doo and Scrappy-Doo.
 
 Les manques connus et la feuille de route détaillée sont dans [`docs/PLAN.md`](docs/PLAN.md).
+
+## Différences voulues (pas des bugs)
+
+Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de ne pas les signaler comme des bugs
+(voir l'[issue #5](https://github.com/Thaolia/KickSlopStart/issues/5)) :
+
+- **Couleurs** : l'écran du Workbench est vert pomme avec du texte noir au lieu du bleu. J'aime cette couleur, et elle
+  montre d'un coup d'œil quel Kickstart tourne.
+- **Écran de démarrage** : à la place de la main qui tient une disquette, un chaton tient une disquette
+  « KickSlopStart », parce que j'aime les chats. Voici l'image telle que la ROM la dessine (la photo en haut de cette
+  page est l'illustration d'origine) :
+
+  <p align="center"><img src="assets/boot_screen/cat_boot_ref.png" alt="Écran de démarrage de KickSlopStart, tel que la ROM le dessine" width="352"></p>
+
+- **Menus** : la coche est une empreinte de patte de chat, et le symbole de la touche Amiga des raccourcis clavier est
+  un petit chat.
+- **Fenêtre de démarrage** : la fenêtre du CLI de boot s'appelle « AmigaSlopDOS ».
+
+## Pourquoi ce projet, et le réutiliser
+
+Pour moi, c'est un **projet éducatif** : une façon d'apprendre le fonctionnement interne d'AmigaOS 1.3, et de voir
+jusqu'où peut aller une réimplémentation en salle blanche écrite avec un LLM, quand chaque étape doit être prouvée en
+émulateur.
+
+Vous êtes libres de le reprendre pour **faire votre propre Kickstart**. Changez les couleurs, remplacez le chat par
+votre animal, ajoutez des fonctions ou améliorez la compatibilité. Le code est sous licence MIT, et les outils d'audit
+de salle blanche de `tests/` vous permettent de vérifier vos propres modifications de la même façon.
 
 ## Méthode de salle blanche
 

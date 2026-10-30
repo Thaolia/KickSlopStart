@@ -28,9 +28,9 @@ screenshots or serial output as evidence.
 
 - **exec**: the full V34 function table, a preemptive scheduler, user-mode tasks, interrupt servers, resident
   modules, libraries and devices, semaphores and a memory allocator.
-- **Devices and resources**: trackdisk (read and write, interrupt-driven DMA), timer (VBLANK and MICROHZ), keyboard,
-  input, console, gameport (mouse), audio, cia, disk, misc, potgo, keymap (US and French AZERTY), expansion (Zorro II
-  autoconfig), romboot.
+- **Devices and resources**: trackdisk (read and write, interrupt-driven DMA, internal DF0 and external DF1), timer
+  (VBLANK and MICROHZ), keyboard, input, console, gameport (mouse), audio, cia, disk, misc, potgo, keymap (US and
+  French AZERTY), expansion (Zorro II autoconfig), romboot.
 - **Graphics**: graphics.library (views, copper lists, blitter, text, regions, GELs) and layers.library.
 - **Intuition**: screens, windows with 1.3-style frames, gadgets (boolean, proportional), menus, requesters,
   AutoRequest, Preferences.
@@ -38,10 +38,34 @@ screenshots or serial output as evidence.
   shell, RAM:, PIPE:, AUX:, NEWCON:, a disk validator, and booting from a UAE hard disk (DH0:).
 - **Workbench 1.3.3** boots to its desktop: disk and drawer icons, Shell, menus, Info, Duplicate/DiskCopy, Clean Up
   and Preferences all work.
-- **Software tested**: SetPatch 1.38, SysInfo, Holiday Lemmings (playable), Caesar, SimCity 1.2, The Secret of Monkey
+- **Software tested**: SetPatch 1.38, Ed, SysInfo, Holiday Lemmings (playable), Caesar, SimCity 1.2, The Secret of Monkey
   Island (disk 1), Scooby-Doo and Scrappy-Doo.
 
 Known gaps and the detailed roadmap are in [`docs/PLAN.md`](docs/PLAN.md).
+
+## Deliberate differences (not bugs)
+
+A few things look different from the original Kickstart 1.3 on purpose. Please don't report them as bugs (see
+[issue #5](https://github.com/Thaolia/KickSlopStart/issues/5)):
+
+- **Colours**: the Workbench screen is apple green with black text instead of blue. I like that colour, and it shows
+  at a glance which Kickstart is running.
+- **Boot screen**: instead of the hand holding a floppy, a kitten holds a "KickSlopStart" disk, because I love cats.
+  This is the image as the ROM draws it (the photo at the top of this page is the original artwork):
+
+  <p align="center"><img src="assets/boot_screen/cat_boot_ref.png" alt="KickSlopStart boot screen, as rendered by the ROM" width="352"></p>
+
+- **Menus**: the check mark is a cat's paw print, and the Amiga-key symbol of keyboard shortcuts is a small cat.
+- **Startup window**: the boot CLI window is called "AmigaSlopDOS".
+
+## Why this project, and reusing it
+
+For me this is an **educational project**: a way to learn how AmigaOS 1.3 works from the inside, and to see how far a
+clean-room reimplementation written with an LLM can go when every step has to be proven in an emulator.
+
+You are welcome to take it and **make your own Kickstart**. Change the colours, swap the cat for your own pet, add
+features or fix compatibility. The code is under the MIT License, and the clean-room audit tools in `tests/` let you
+check your own changes the same way.
 
 ## Clean-room method
 

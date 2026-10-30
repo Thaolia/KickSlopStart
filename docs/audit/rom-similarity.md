@@ -230,6 +230,29 @@ entropy:
   calls, which loose mode reduces to a repeated pattern;
 - `bcpl_rtdata+$8` (`src/dos/bcpl.s`, 46 bytes, 23 tokens): BCPL runtime data.
 
+### Update 2026-10-30: keymap string tables (after commit `2ad7da5`)
+
+The real keymaps (`struct KeyMap` format, commit `2ad7da5`) came after this measurement. The audit of PR #9
+(`docs/audit/pr-9.md`, builds of `2c64df4` and `2dc68e4`, same tool, controls and threshold) found one new range above
+the threshold, identical in both builds:
+
+| symbol | source | longest (tokens) | nature |
+|---|---|---|---|
+| `km_us_s42+$0` | `src/exec/keymapdata.s` | 76 words (`mots`); 17 instructions (`instr`, below 19) | string table of the US keymap |
+| `km_fr_s42+$0` | `src/exec/keymapdata.s` | same | the same table, repeated in the AZERTY keymap |
+
+**Why this match is mandated.** The range holds the 16 key strings of the keymap, 161 bytes in all:
+- Tab / Shift-Tab, the four cursor keys, F1-F10 and Help;
+- each string has its public `struct KeyMap` descriptor (length and offset of the plain and shifted strings),
+  followed by its bytes.
+
+`tests/mk_keymaps.py` generates them from the CSI sequences documented for console.device (`CSI A`..`CSI D`,
+`CSI T`/`CSI S`/`CSI SPACE @`/`CSI SPACE A` shifted, `CSI n~` and `CSI 1n~`, `CSI ?~`, `CSI Z`), in ascending key
+order. Those sequences and that layout fix almost every byte. The match is therefore expected, as for the vector
+tables above, and the classifier files it as "code/table" only because it cannot recognise this data. No code
+match appeared: the `instr` maxima (17) stay below the threshold, and the PR #9 audit adds no code match longer
+than that.
+
 ### For transparency: the longest code matches below the threshold
 
 None reaches the unrelated baseline (39 words, 18 instructions). They are listed with their nature:

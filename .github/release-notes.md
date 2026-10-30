@@ -17,3 +17,6 @@ for the measured evidence. It is released under the MIT License.
 
 Work in progress: large parts of exec, graphics, layers, intuition, dos and the Workbench run, but some programs
 still fail. Bug reports with the disk image name and a screenshot are welcome as GitHub issues.
+
+Some differences are deliberate and are not bugs: the green Workbench colours, the kitten boot screen and the cat
+symbols in menus. See "Deliberate differences" in the README.

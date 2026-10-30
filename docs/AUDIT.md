@@ -101,7 +101,7 @@ appears in the AROS autodoc; it was rewritten as a plain French comment.
 | Item | Status |
 |---|---|
 | Default palette, default Preferences, ~50 user-visible strings (Guru, CLI, requesters, Workbench) | Kept on purpose: observable values needed for compatibility. |
-| Keymap | **Not a copy.** Only the US-layout ASCII characters coincide; the Alt and Ctrl columns, dead keys and Capsable/Repeatable bytes are absent. |
+| Keymap | **Not a copy of the layout**: hand-authored by `tests/mk_keymaps.py`, no Alt column and no dead keys. The 16 key strings (cursor keys, F1-F10, Help, Shift-Tab) are the CSI sequences documented for console.device, in the public `struct KeyMap` format. That table matches the ROM over 76 words; it is mandated data (see the 2026-10-30 update in [rom-similarity.md](audit/rom-similarity.md)). |
 | Font bitmaps | Hand-drawn; they do not match the ROM (check 1). |
 | **Menu check mark** | **Fixed.** The first version, drawn right after reading a note that showed the ROM image, shared 4 of 8 rows with it. It was replaced by an unrelated motif (a cat paw print). |
 | **System gadget pictograms** (close, depth, size) | **Open.** They follow the pixel geometry described in `intuition-frame-v34.md` §5.3 and therefore render like the 1.3 originals. Compatibility does not require this; a redesign is proposed. |
