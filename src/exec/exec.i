@@ -379,6 +379,7 @@ INPUT_CODE      EQU $00000656 ; word: ie_Code seen by the handlers (must = injec
 KBD_QUAL     EQU $00000658 ; word: qualifier state tracked by kbd_interrupt (LSHIFT$01 RSHIFT$02 CAPS$04 CTRL$08)
 KM_RESBASE   EQU $0000065A ; long: keymap.resource base (published at init)
 KM_DEFKM     EQU $000007C8 ; long: current default struct KeyMap (resource node, then console.device's copy)
+TD_SEM       EQU $000007CC ; trackdisk: SignalSemaphore (46 bytes, up to $7F9) — one request at a time on the drive
 KR_LIST      EQU 14            ; keymap.resource (V34): Node, then kr_List
 KR_NODE      EQU 28            ; built-in KeyMapNode (Node + struct KeyMap)
 KN_KEYMAP    EQU 14            ; KeyMapNode: struct KeyMap after the Node

@@ -37,6 +37,7 @@ ai_FirstY       EQU 22
 tr_RasPtr       EQU 0
 tr_Size         EQU 4
 LY_BOUNDS       EQU 16               ; Layer.bounds: MinX, MinY, MaxX, MaxY
+LY_LOCK         EQU 72               ; Layer.Lock (SignalSemaphore)
 LVO_READPIXEL   EQU -318
 LVO_WRITEPIXEL  EQU -324
 LVO_AREADRAW    EQU -258
@@ -1049,12 +1050,14 @@ FL_W            EQU MK_SIZE+4        ; word: width of the area
 FL_SP           EQU MK_SIZE+6        ; long: top of the seed stack
 FL_STKB         EQU MK_SIZE+10       ; long: base of the stack
 FL_OVF          EQU MK_SIZE+14       ; word: stack overflowed
-FL_SIZE         EQU MK_SIZE+16
+FL_LAYER        EQU MK_SIZE+16       ; long: layer locked for the whole Flood (spec §7.1) | 0
+FL_SIZE         EQU MK_SIZE+20
 gfx_Flood:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -FL_SIZE(sp),sp
         move.l  sp,a5
         move.l  a1,MK_RP(a5)
+        clr.l   FL_LAYER(a5)
         move.w  d2,FL_MODE(a5)
         move.w  d0,d6                ; seed
         move.w  d1,d7
@@ -1067,6 +1070,13 @@ gfx_Flood:
         clr.w   MK_Y0(a5)
         move.l  rp_Layer(a1),d0
         beq.s   .fl_bm
+        move.l  d0,FL_LAYER(a5)      ; the layer stays locked until the end: its bounds and contents are stable
+        movem.l d0/a1/a6,-(sp)
+        move.l  d0,a0
+        lea     LY_LOCK(a0),a0
+        move.l  ($4).w,a6
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        movem.l (sp)+,d0/a1/a6
         move.l  d0,a0
         move.w  LY_BOUNDS+4(a0),d0
         sub.w   LY_BOUNDS(a0),d0
@@ -1152,6 +1162,15 @@ gfx_Flood:
 .fl_fail:
         moveq   #0,d0
 .fl_ret:
+        move.l  FL_LAYER(a5),d1
+        beq.s   .fl_nolk
+        movem.l d0/a6,-(sp)
+        move.l  d1,a0
+        lea     LY_LOCK(a0),a0
+        move.l  ($4).w,a6
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        movem.l (sp)+,d0/a6
+.fl_nolk:
         lea     FL_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
         rts

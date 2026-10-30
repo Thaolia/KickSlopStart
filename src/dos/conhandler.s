@@ -280,6 +280,7 @@ con_handler:
                 bra     .reply
 .rd_eof:
                 clr.l   DP_RES1(a4)
+                bra     .reply
 ; DISK_INFO (ARG1 = BPTR InfoData): console disk type "CON\0", the window as volume node, and in id_InUse the
 ; console IOStdReq of the window (SetMap sends CD_SETKEYMAP to its unit), 0 without a window.
 .info:

@@ -656,6 +656,8 @@ dos_fullreq:
         lea     -32(sp),sp              ; volume name in C
         lea     vr_unknown(pc),a4
         moveq   #1,d3
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)          ; the DF0: handler frees an ejected volume's node (FreeMem overwrites DN_NEXT)
         move.l  DOS_DOSBASE,a0
         move.l  DL_ROOT(a0),a0
         move.l  RN_INFO(a0),d0
@@ -695,6 +697,7 @@ dos_fullreq:
         move.l  DN_NEXT(a0),d0
         bra.s   .fr_node
 .fr_ask:
+        jsr     LVO_PERMIT(a6)          ; the name is copied: the node is no longer needed
         lea     vr_v1(pc),a0
         lea     vr_v3(pc),a1
         moveq   #0,d0                   ; no event counts as Retry
@@ -1461,6 +1464,7 @@ dos_resolve:
         sub.l   a4,d3
         subq.l  #1,d3                   ; d3 = length of the prefix
         beq     .rs_volroot             ; ":rest"
+        bsr     rs_forbid               ; the DF0: handler frees an ejected volume's node (FreeMem overwrites DN_NEXT)
         move.l  DL_ROOT(a6),a2
         move.l  RN_INFO(a2),d0
         lsl.l   #2,d0
@@ -1477,7 +1481,7 @@ dos_resolve:
         moveq   #0,d4
         move.b  (a0)+,d4                ; length of the node's name
         cmp.l   d3,d4
-        bne.s   .rs_next
+        bne     .rs_next
         move.l  a4,a1
 .rs_cmp:
         move.b  (a0)+,d0
@@ -1497,14 +1501,17 @@ dos_resolve:
         beq.s   .rs_unknown
         move.l  d0,a0
         move.l  FL_TASK(a0),a3
+        bsr     rs_permit
         lea     1(a4,d3.l),a4           ; pass on what follows the ':'
         bra     .rs_ret
 .rs_devvol:
         moveq   #0,d6
         move.l  DN_TASK(a2),a3
-        move.l  a3,d0
+        move.l  DN_TYPE(a2),d0
+        bsr     rs_permit               ; a2 is only used further on for a device node, never freed
+        move.l  a3,d1
         bne     .rs_ret
-        tst.l   DN_TYPE(a2)             ; device without a task: start its handler (BCPL spec §13.3)
+        tst.l   d0                      ; device without a task: start its handler (BCPL spec §13.3)
         bne.s   .rs_absent              ; volume known but not in a drive
         ; one startup at a time: the handler only sets dn_Task on receiving its startup packet, and
         ; loading its segment takes long; two processes opening the same device ("run copy x to pipe:a"
@@ -1529,6 +1536,7 @@ dos_resolve:
         move.l  DN_NEXT(a2),d0
         bra     .rs_node
 .rs_unknown:
+        bsr     rs_permit
         tst.l   d3
         beq.s   .rs_fail                ; no prefix: no volume name to ask for
         cmp.l   #3,d3                   ; "NIL:": never a requester (deviceproc spec)
@@ -1563,6 +1571,18 @@ dos_resolve:
         bsr     dos_cdport
 .rs_ret:
         movem.l (sp)+,d3-d4/a2
+        rts
+rs_forbid:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+rs_permit:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
 ; dos_volreq(a4 = name, d3 = length of the prefix before ':') -> d0 = true if the user chose Retry (or inserted a

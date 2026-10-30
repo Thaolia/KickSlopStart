@@ -32,6 +32,7 @@
                 xdef    intuition_ScreenToBack
                 xdef    it_event
                 xdef    it_refresh           ; menus.s
+                xdef    it_alive             ; menus.s
                 xdef    it_title
                 xdef    it_box
                 xdef    it_scrxy
@@ -1545,6 +1546,10 @@ it_setactive:
         and.l   #~WINDOWACTIVE,WD_FLAGS(a3)
         bsr     wn_veil
         move.l  16(sp),a3
+        move.l  a3,d0
+        beq.s   .sa_ret
+        bsr     it_alive             ; closed while the veil waited for a layer lock
+        beq.s   .sa_ret
 .sa_new:
         move.l  a3,d0
         beq.s   .sa_ret
@@ -1589,9 +1594,45 @@ intuition_CloseWindow:
         move.l  a0,a3
         move.l  a0,d0
         beq     .cw_ret
-        bsr     gad_forget           ; a gadget of this window was still pressed
-        jsr     rq_closeall          ; its requesters (and their layers) first
         move.l  WD_WSCREEN(a3),a4    ; a4 = screen
+        ; The input task keeps this window across calls that can block (layer locks): a drag or menus in progress
+        ; finish first, then the window leaves the list and intuition's references in one go. The input task
+        ; checks with it_alive after each blocking call.
+        move.l  ($4).w,a6
+.cw_wait:
+        jsr     LVO_FORBID(a6)
+        cmp.l   IB_DRAGWIN(a5),a3
+        beq.s   .cw_busy
+        cmp.l   IB_MENUWIN(a5),a3
+        bne.s   .cw_detach
+.cw_busy:
+        jsr     LVO_PERMIT(a6)
+        move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_WAITTOF(a6)
+        move.l  ($4).w,a6
+        bra.s   .cw_wait
+.cw_detach:
+        move.l  WD_WLAYER(a3),a0
+        clr.l   IL_WINDOW(a0)
+        move.l  WDX_BLAYER(a3),d0
+        beq.s   .cw_1l
+        move.l  d0,a0
+        clr.l   IL_WINDOW(a0)
+.cw_1l:
+        bsr     it_relist
+        moveq   #0,d7                ; d7 = the window was active
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne.s   .cw_na
+        clr.l   IB_ACTIVEWINDOW(a5)
+        moveq   #1,d7
+.cw_na:
+        move.l  a3,a0
+        exg     a5,a6
+        bsr     gad_forget           ; a gadget of this window was still pressed
+        exg     a5,a6
+        jsr     LVO_PERMIT(a6)
+        move.l  a5,a6
+        jsr     rq_closeall          ; its requesters (and their layers) first
         move.l  IB_LAYERSBASE(a5),a6
         suba.l  a0,a0
         move.l  WD_WLAYER(a3),a1
@@ -1618,9 +1659,8 @@ intuition_CloseWindow:
         move.l  d2,WD_PARENT(a0)
 .cw_nd:
         jsr     LVO_PERMIT(a6)
-        cmp.l   IB_ACTIVEWINDOW(a5),a3
-        bne.s   .cw_act
-        clr.l   IB_ACTIVEWINDOW(a5)  ; was active: its Parent, otherwise the first window of the screen, otherwise none
+        tst.w   d7
+        beq.s   .cw_act              ; was active: its Parent, otherwise the first window of the screen, otherwise none
         tst.l   d2
         bne.s   .cw_new
         move.l  SC_FIRSTWINDOW(a4),d2
@@ -1895,12 +1935,15 @@ wn_refreshmsg:
         moveq   #REFRESHWINDOW,d1
         and.l   WD_IDCMPFLAGS(a3),d1
         beq.s   .rf_ret
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)       ; tested and claimed in one go (posted from the input task and from applications)
         lea     WDX_IMSG(a3),a1
         cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        beq.s   .rf_ret              ; the previous one has not been read: it is enough
-        move.l  a6,-(sp)
-        move.l  d0,-(sp)
+        beq.s   .rf_busy             ; the previous one has not been read: it is enough
         move.b  #NT_MESSAGE,LN_TYPE(a1)
+        jsr     LVO_PERMIT(a6)
+        move.l  d0,-(sp)
         clr.l   MN_REPLYPORT(a1)
         move.w  #IM_SIZEOF,MN_LENGTH(a1)
         move.l  #REFRESHWINDOW,IM_CLASS(a1)
@@ -1908,10 +1951,13 @@ wn_refreshmsg:
         move.l  a3,IM_IADDRESS(a1)
         move.l  a3,IM_IDCMPWINDOW(a1)
         move.l  (sp)+,a0
-        move.l  ($4).w,a6
         jsr     LVO_PUTMSG(a6)
         move.l  (sp)+,a6
 .rf_ret:
+        rts
+.rf_busy:
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
         rts
 
 ; intuition_ModifyIDCMP(window a0, classes d0): new IDCMP classes. 0: the UserPort is closed (its pending messages
@@ -2164,8 +2210,13 @@ it_event:
 
 ; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word)): slot dropped into the input task's
 ; ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
+; Three producers (the feeder task, the DF0: handler, the VBlank interrupt for the mouse): the head is read, the slot
+; written and the head published with interrupts off (bare Disable, as in PutMsg), or two of them fill the same slot.
 it_push:
         move.l  d2,-(sp)
+        move.l  ($4).w,a6
+        addq.b  #1,EB_IDNEST(a6)
+        move.w  #INTF_INTEN,INTENA
         move.w  IB_EVHEAD(a1),d2
         lea     IB_EVRING(a1),a0
         add.w   d2,a0
@@ -2182,10 +2233,18 @@ it_push:
         swap    d1
         move.w  d1,(a0)
         move.w  d2,IB_EVHEAD(a1)     ; published after the data
+        bsr.s   .pu_enable
         move.l  (sp)+,d2
         bra.s   it_signal
 .pu_full:
+        bsr.s   .pu_enable
         move.l  (sp)+,d2
+        rts
+.pu_enable:
+        subq.b  #1,EB_IDNEST(a6)
+        bge.s   .pu_ret
+        move.w  #$C000,INTENA        ; SETCLR + INTEN
+.pu_ret:
         rts
 ; it_signal(a1 = IntuitionBase): wakes up the input task. Clobbers d0/d1/a0/a6.
 it_signal:
@@ -2545,6 +2604,36 @@ it_scrxy:
 .sx_ret:
         rts
 
+; it_alive(a3 = window, a5 = IntuitionBase) -> Z = 1 if the window is no longer in any screen's list (CloseWindow
+; takes it out first). Never reads the window itself, which may already be freed. Preserves everything.
+it_alive:
+        movem.l d0/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        moveq   #0,d0
+        move.l  IB_FIRSTSCREEN(a5),a0
+.al_scr:
+        cmpa.w  #0,a0
+        beq.s   .al_end
+        move.l  SC_FIRSTWINDOW(a0),a1
+.al_win:
+        cmpa.w  #0,a1
+        beq.s   .al_nscr
+        cmp.l   a3,a1
+        beq.s   .al_found
+        move.l  WD_NEXTWINDOW(a1),a1
+        bra.s   .al_win
+.al_nscr:
+        move.l  SC_NEXTSCREEN(a0),a0
+        bra.s   .al_scr
+.al_found:
+        moveq   #1,d0
+.al_end:
+        jsr     LVO_PERMIT(a6)
+        tst.l   d0
+        movem.l (sp)+,d0/a0-a1/a6
+        rts
+
 ; it_winat(a4 = screen, d4/d5 = position) -> a3 = frontmost window under the point, d2/d3 = relative position;
 ; Z = 1 if none. Clobbers d0.
 it_winat:
@@ -2619,6 +2708,8 @@ it_dobutton:
         bne     .db_mb
         bsr     it_setactive         ; the clicked window becomes active (BACKDROP included: its menus)
         bsr     wn_scrtitle
+        bsr     it_alive             ; both draw and may wait for a lock: the window may have been closed
+        beq     .db_ret
         btst    #3,WD_FLAGS+2(a3)    ; BORDERLESS: no system gadget
         bne     .db_mb
         cmp.b   #WD_TBARH,WD_BORDERTOP(a3)
@@ -3103,6 +3194,8 @@ wn_post:
         and.l   #RAWKEY|MOUSEBUTTONS|MOUSEMOVE|INTUITICKS|MENUPICK,d6
         bne     .sm_ret
 .sm_take:
+        move.l  ($4).w,a6            ; free slot found and claimed in one go: the input task and the application
+        jsr     LVO_FORBID(a6)       ; (SizeWindow, ActivateGadget...) both post to the same pool
         lea     WDX_EMSG(a3),a1
         moveq   #WDX_NEMSG-1,d6
 .sm_find:
@@ -3110,9 +3203,11 @@ wn_post:
         bne.s   .sm_free
         lea     IM_SIZEOF(a1),a1
         dbra    d6,.sm_find
+        jsr     LVO_PERMIT(a6)
         bra.s   .sm_ret
 .sm_free:
         move.b  #NT_MESSAGE,LN_TYPE(a1)
+        jsr     LVO_PERMIT(a6)
         clr.l   MN_REPLYPORT(a1)
         move.w  #IM_SIZEOF,MN_LENGTH(a1)
         move.l  d0,IM_CLASS(a1)

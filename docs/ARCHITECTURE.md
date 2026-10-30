@@ -564,6 +564,57 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7i) **Memory usage and race fixes** (2026-10-30).
+  - Memory: an idle English Workbench leaves ~60 KB less free than on 1.3. Breakdown by caller in
+    `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
+    12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate. The console
+    self-test #3a in `boot.s` left a 10 KB chip bitmap allocated; it now frees `CONB_BITMAP` and resets the
+    cursor.
+  - Flood (`area.s`) holds the layer lock for the whole fill. Before, it read the layer bounds without the lock,
+    the same family as the `dr_ctx` race. The exec semaphore is re-entrant, so the drawing calls Flood makes
+    still work.
+  - `conhandler.s`: a READ answered with EOF (no timer state) fell into the new DISK_INFO code. That code then
+    wrote an InfoData at ARG1 and returned DOSTRUE. It now replies directly.
+  - Race audit of `src/`. A separate read-only agent ranked 12 suspects; these fixes followed:
+    - trackdisk: one SignalSemaphore (`TD_SEM`, low RAM `$7CC`) held for the whole BeginIO, td_dmawait included.
+      BeginIO runs in the caller's task, so before this the DF0: handler's 1 s TD_CHANGESTATE could deselect the
+      drive in the middle of another task's DMA. A second CMD_READ also took over TD_DMATASK, and the first waiter
+      was never woken. There is no lock before multitasking starts, and only the owner releases it.
+    - input.device and gameport.device reply to requests without IOF_QUICK. Before, SendIO + WaitIO hung. Every
+      BeginIO call on input inside the ROM now sets IOF_QUICK: feeder, gameport VBlank, console, Preferences and
+      the boot self-tests.
+    - Intuition event ring (`it_push`): the head is read, the slot written and the head published with
+      interrupts off. Its producers are the feeder, the DF0: handler and the VBlank mouse path.
+    - DosList: `dos_resolve` and `dos_fullreq` walk it under Forbid. The DF0: handler frees an ejected volume's
+      node, and FreeMem overwrites DN_NEXT.
+    - console input handler: the active unit's KeyMap is copied with interrupts off before conversion. A CON:
+      handler can close the unit in between.
+    - IntuiMessage pool (`wn_post`, `wn_refreshmsg`): finding a free slot and claiming it now happen under
+      Forbid. Both the input task and the application post to the same pool.
+    - CloseWindow first waits until no drag or menu is in progress on the window. Then, under Forbid, it takes
+      the window out of its layers and the window list and clears the active-window and pressed-gadget
+      references. The input task checks with `it_alive` after each call that can block (it_setactive's veil,
+      wn_scrtitle, CreateUpfrontLayer for the menu bar). `mn_end` clears IB_MENUWIN only after its MENUPICK.
+    - Still open: lock order in ClipBlit (source then destination) and in ScrollRaster (layer then blitter);
+      dos_sendpkt takes the first message as the reply; the boot CLI's console handler serves no packet while a
+      READ waits; GELs release the layer lock between saving and restoring the background.
+
+  - Ed 1.14 (GitHub issue #6: window opened, then hung). Four causes:
+    - console.device: `CSI q` / `CSI 0 SPACE q` (Window Status Request) is answered with the Window Bounds Report
+      `CSI 1;1;<lines>;<columns> SPACE r` in the read stream (console.doc). Ed waits for it twice (lines, then
+      columns), so it hung. The read ring now has two producers, so `con_push` adds bytes with interrupts off.
+      `cu_report` finds the console base through the new private `CU_BASE` field.
+    - BCPL runtime: writef, writes, writen, writet and newline send their characters through global 56 (wrch)
+      when a program has replaced it (`wf_flush`, `WF_WRCH`), as BCPL output does. Ed points wrch at its own screen
+      buffer around its `writef("*E[%N;%NH")` cursor positioning. Before, those sequences went to the current
+      output stream instead, and every line was drawn on row 1. `rt_fault`, called from assembly, keeps direct
+      output (`WFRAW`).
+    - console.device: `CSI n @` and `CSI n P` shift the rest of the line right or left. The shift is a ClipBlit
+      in the window, done in slices from the right for insertion, because BltBitMapRastPort copies forward even
+      when source and destination overlap. graphics' ScrollRaster still ignores dx.
+    - The feeder's "FEEDER OK" self-test read the console once and took a byte of the first key typed after boot,
+      such as the 'B' of cursor-down. It is now dev-ROM only.
+
   (7h) **Real keymaps and SetMap: the German Workbench 1.3.3 boots** (2026-10-30; specs `console-keymap-v34.md`,
   `setmap-13.md`). Reported by a user: the German WB 1.3.3 disk hung in `SYS:System/SetMap d`.
   - keymap.resource now has the V34 layout (§1.1): Node, kr_List with one built-in KeyMapNode ("usa", or "f" in the

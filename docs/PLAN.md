@@ -895,6 +895,16 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     and publish it with its SHA-256.
     Real keymaps (struct KeyMap, keymap.resource V34 layout, console CD_* commands, dead keys) and SetMap support: the
     German Workbench 1.3.3 disk boots with its keyboard (GitHub user report). Remaining: Latin-1 glyphs in the font.
+    Memory audit against 1.3 (docs/MEMORY-USAGE.md, MEMTRACK now records the caller): the 45 KB track cache and
+    the 4 KB intuition input task are kept on purpose; the 10 KB chip bitmap left by the console boot self-test is
+    now freed. Race audit: Flood holds the layer lock, and a CON handler EOF READ no longer falls into
+    DISK_INFO. Also fixed: trackdisk serialized by a semaphore; input and gameport reply to non-QUICK requests;
+    the intuition event ring, the IntuiMessage pool and the console keymap are made atomic; the DosList is walked
+    under Forbid; CloseWindow no longer races the input task (clicks, drags, menus). Remaining suspects: lock
+    order in ClipBlit/ScrollRaster, sendpkt reply matching, the boot CLI console handler blocking on READ.
+    Ed 1.14 works (issue #6): console window bounds report, CSI @/P line shifts, BCPL output through an
+    overridden wrch, and the feeder self-test that stole a key is removed from the production ROM.
+    Remaining: horizontal ScrollRaster (dx), ACTION_WAIT_CHAR timeout (answers at once).
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).

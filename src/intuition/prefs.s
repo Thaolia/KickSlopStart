@@ -198,11 +198,13 @@ pf_keyrpt:
         move.l  IB_PREFS+PF_KEYRPTDELAY(a3),TV_SECS(a2)
         move.l  IB_PREFS+PF_KEYRPTDELAY+4(a3),TV_MICRO(a2)
         move.l  a2,a1
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     TD_BEGINIO(a6)
         move.w  #IND_SETPERIOD,IO_COMMAND(a2)
         move.l  IB_PREFS+PF_KEYRPTSPEED(a3),TV_SECS(a2)
         move.l  IB_PREFS+PF_KEYRPTSPEED+4(a3),TV_MICRO(a2)
         move.l  a2,a1
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     TD_BEGINIO(a6)
         lea     TR_SIZE(sp),sp
 .kr_ret:

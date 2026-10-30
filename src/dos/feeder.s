@@ -132,7 +132,7 @@ feeder_main:
                 bsr     fd_repeat_key        ; arm / stop the repeat according to this keystroke
                 lea     FD_EVENT(a5),a0
                 bsr     fd_write
-                ifeq    SHELL_ON_SCREEN
+                ifeq    SHELL_ON_SCREEN|PROD     ; the self-test steals a byte of the first key typed: dev ROM only
                 bsr     fd_selftest          ; item 1: emit "FEEDER OK=<char>" once (reads console.device)
                 endc
                 bra.s   .fm_drain
@@ -153,6 +153,7 @@ fd_write:
                 move.l  a0,IO_DATA2(a3)
                 move.l  FD_INPUT(a5),a6
                 move.l  a3,a1
+                move.b  #IOF_QUICK,IO_FLAGS(a1)
                 jsr     -30(a6)              ; input BeginIO (IND_WRITEEVENT)
                 move.l  ($4).w,a6
                 movem.l (sp)+,a2-a3
@@ -293,7 +294,7 @@ fd_poll_wait:
                 movem.l (sp)+,d2-d4/a0-a4
                 rts
 
-                ifeq    SHELL_ON_SCREEN
+                ifeq    SHELL_ON_SCREEN|PROD
 ; fd_selftest: item 1 - reads console.device CMD_READ ONCE (cooked by its handler) and emits "FEEDER OK=<char>"
 ; on serial. Done flag in FD_DONE. a5 = state, a6 = SysBase. Preserves a5.
 fd_selftest:

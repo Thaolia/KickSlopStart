@@ -82,6 +82,13 @@ gameport_abortio:
 ; no input.task. Every io command therefore gets IOERR_NOCMD (the device node exists for the ROMTag/map parity).
 gameport_beginio:
         move.b  #IOERR_NOCMD,IO_ERROR(a1)
+        btst    #0,IO_FLAGS(a1)      ; IOF_QUICK: the caller does not wait for a reply
+        bne.s   .gb_ret
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_REPLYMSG(a6)     ; SendIO + WaitIO (GPD_READEVENT, RKM pattern) must not hang
+        move.l  (sp)+,a6
+.gb_ret:
         rts
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Sets the name (V34 quirk). The VBlank poller is NOT
@@ -202,6 +209,7 @@ gp_poll:
         move.l  sp,IO_DATA2(a3)     ; io_Data = &event (stack base)
         move.l  a4,a6
         move.l  a3,a1
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)             ; input.device BeginIO (IND_WRITEEVENT) — walks the handler chain
         move.l  ($4).w,a6           ; reload SysBase
         lea     72(sp),sp

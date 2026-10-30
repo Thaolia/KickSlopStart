@@ -751,6 +751,11 @@ rt_unrdch:
         rts
 
 ; --- output buffer of writef & co: a3 = position, a5 = start (on the caller's stack, WF_BUFSZ) ---
+; WF_BUFSZ(a5) = wrch routine to send the characters to, 0 = straight to the output stream. BCPL output goes through
+; the wrch of the GV: Ed points global 56 at its own screen buffer around its writef calls (cursor positioning),
+; so the characters must reach that routine, not the current stream.
+WF_WRCH         EQU WF_BUFSZ
+WF_FRAMEGAP     EQU 128              ; the called wrch's frame starts this far above the global's frame (its arguments)
 ; wf_putc(d0.b): appends a character, flushes if full. Preserves everything except a3.
 wf_putc:
         move.b  d0,(a3)+
@@ -761,6 +766,8 @@ wf_putc:
         movem.l (sp)+,d0             ; movem does not touch the CCR
         blo     wf_ret
 wf_flush:                            ; flushes the buffer (a5..a3); preserves everything except a3 (reset to a5)
+        tst.l   WF_WRCH(a5)
+        bne.s   wf_gvout
         movem.l d0/a0,-(sp)
         move.l  a3,d0
         sub.l   a5,d0
@@ -769,6 +776,46 @@ wf_flush:                            ; flushes the buffer (a5..a3); preserves ev
         move.l  a5,a3
         movem.l (sp)+,d0/a0
 wf_ret:
+        rts
+wf_gvout:                            ; one BCPL call per character, with the global's own frame and GV
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  WF_WRCH(a5),-(sp)    ; 8(sp) = routine
+        move.l  a3,-(sp)             ; 4(sp) = end
+        move.l  a5,-(sp)             ; (sp) = cursor
+        move.l  WF_WRCH+4+4(a5),a1   ; a1 and a2 saved by BENTER just above the buffer
+        move.l  WF_WRCH+4+8(a5),a2
+.gv_lp:
+        move.l  (sp),a3
+        cmp.l   4(sp),a3
+        bhs.s   .gv_end
+        moveq   #0,d1
+        move.b  (a3)+,d1
+        move.l  a3,(sp)
+        move.l  8(sp),a4
+        sub.l   a0,a0
+        move.l  #WF_FRAMEGAP,d0
+        lea     bcpl_call(pc),a5
+        lea     bcpl_ret(pc),a6
+        jsr     (a5)
+        bra.s   .gv_lp
+.gv_end:
+        lea     12(sp),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        move.l  a5,a3
+        rts
+
+; wf_gvsel(a5 = buffer opened right after BENTER): WF_WRCH := global 56 of the caller's GV if it is no longer our wrch.
+wf_gvsel:
+        movem.l d0/a0,-(sp)
+        move.l  WF_WRCH+4+8(a5),a0   ; a2 = GV, saved by BENTER
+        move.l  56*4(a0),d0
+        lea     g_wrch(pc),a0
+        cmp.l   a0,d0
+        bne.s   .gs_set
+        moveq   #0,d0
+.gs_set:
+        move.l  d0,WF_WRCH(a5)
+        movem.l (sp)+,d0/a0
         rts
 
 ; wf_bstr(d1 = BSTR) -> writes the characters; d2 = number written. Preserves d1.
@@ -2015,14 +2062,21 @@ g_output:
         jmp     (a6)
 
 ; --- formatted output: each global opens a WF_BUFSZ buffer on the stack (a5 = start, a3 = position) ---
-WFOPEN          MACRO
-        lea     -WF_BUFSZ(sp),sp
+WFOPEN          MACRO                ; in a BCPL global, right after BENTER
+        lea     -WF_BUFSZ-4(sp),sp
         move.l  sp,a5
         move.l  sp,a3
+        bsr     wf_gvsel
+                ENDM
+WFRAW           MACRO                ; called from assembly (no GV): straight to the output stream
+        lea     -WF_BUFSZ-4(sp),sp
+        move.l  sp,a5
+        move.l  sp,a3
+        clr.l   WF_WRCH(a5)
                 ENDM
 WFCLOSE         MACRO
         bsr     wf_flush
-        lea     WF_BUFSZ(sp),sp
+        lea     WF_BUFSZ+4(sp),sp
                 ENDM
 
 ; 53 writet(s, w): BSTR then spaces up to w columns.
@@ -2789,7 +2843,7 @@ rt_fault:
         move.l  DOS_DOSBASE,a6
         jsr     DOS_LVO_UNLOADSEG(a6)
 .rf_fallback:
-        WFOPEN
+        WFRAW
         lea     ft_msg(pc),a0
 .rf_lp:
         move.b  (a0)+,d0

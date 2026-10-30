@@ -70,8 +70,9 @@ input_abortio:
         moveq   #0,d0
         rts
 
-; input_beginio(device a6, ioreq a1): dispatch on io_Command. Synchronous. a6 on exit = device base (BeginIO
-; conv.: the caller reloads SysBase if it needs it). Preserves a2-a5; clobbers d0/d1/a0/a1.
+; input_beginio(device a6, ioreq a1): dispatch on io_Command. Synchronous: replied unless IOF_QUICK (every caller
+; inside the ROM sets it). a6 on exit = device base (BeginIO conv.: the caller reloads SysBase if it needs it).
+; Preserves a2-a5; clobbers d0/d1/a0/a1.
 input_beginio:
         movem.l a2-a5,-(sp)
         move.l  a6,a2                ; a2 = device base
@@ -124,6 +125,12 @@ input_beginio:
         move.l  (sp)+,a4             ; a4 = Succ (advance)
         bra.s   .bi_wloop
 .bi_done:
+        btst    #0,IO_FLAGS(a3)      ; IOF_QUICK
+        bne.s   .bi_quick
+        move.l  ($4).w,a6            ; (a handler of the chain may have changed it)
+        move.l  a3,a1
+        jsr     LVO_REPLYMSG(a6)
+.bi_quick:
         move.l  a2,a6                ; a6 = device base (BeginIO convention)
         movem.l (sp)+,a2-a5
         rts

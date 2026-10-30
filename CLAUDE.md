@@ -16,6 +16,36 @@ Roadmap → `docs/PLAN.md`. Architecture → `docs/ARCHITECTURE.md`. Discipline 
   it (see `docs/AUDIT.md`).
 - The proprietary ROM is NEVER committed (gitignore) nor modified (it is `chmod 444`).
 
+## Pull requests — clean-room audit gate (BEFORE any merge)
+
+Outside contributors are not bound by our firewall. A PR is merged only after this audit, even when it looks clean.
+1. **Isolate**: `git fetch origin pull/<N>/head:pr-<N>`, then a worktree in the scratchpad. Never merge, rebase or
+   build the PR inside the main tree before the verdict.
+2. **Build** in the worktree: `make` and `make kick-prod` (`is_kick ok`), plus the vlink map of the production ROM
+   (commands in `docs/audit/rom-similarity.md`, "Commands"). Build `main` the same way: it is the baseline.
+3. **Binary audit = separate analysis agent** (it reads the ROM, so never inline). Brief it to:
+   - run `tests/audit_rom_similarity.py` on the PR ROM AND on the `main` ROM, with the same controls, `--map` and
+     `--base tiers` as in `docs/audit/rom-similarity.md`;
+   - report only statistics, offsets and symbols from the map, never ROM content;
+   - write in English.
+4. **Verdict rules**:
+   - FAIL if any code/table match reaches the "notable" threshold: the longest `tiers` match + 1, currently
+     19 instructions / 40 words.
+   - Otherwise, any code match that is new compared with `main` and longer than `main`'s longest code match (13
+     instructions) must be located with the map. If it falls inside lines changed by the PR, review it before
+     going on.
+5. **AROS audit**: `tests/audit_aros_similarity.py` on the files changed by the PR (`docs/audit/aros-similarity.md`).
+   ABI-imposed sequences (`bcpl_call`/`bcpl_ret`) are expected; anything else above the baseline is reviewed.
+6. **Manual diff review** (implementation side, no ROM). Reject or ask about:
+   - ROM routine addresses, offsets inside the ROM, or "taken from / seen in the ROM" wording;
+   - instruction listings in comments or docs;
+   - data tables, strings, images or fonts whose provenance is not stated (see the data cases in `docs/AUDIT.md`);
+   - `docs/analysis/` specs added by the PR, which need the same "no transcribed code" check.
+7. **Provenance**: ask the contributor, in a PR comment drafted for the user to post, to confirm they did not use
+   the ROM or its disassembly.
+8. **Record** the result in `docs/audit/pr-<N>.md` (English: commands, figures, verdict). Give the user the verdict
+   in French. Merge only with the user's go-ahead, then rerun the full validation on the merged tree.
+
 ## Routing: when to delegate to a dedicated agent
 
 - Any **ROM analysis** task → a separate "analysis" agent, to keep the wall. Do not mix analysis and implementation

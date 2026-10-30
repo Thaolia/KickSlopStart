@@ -43,6 +43,7 @@
                 xref    it_box
                 xref    it_scrxy
                 xref    wn_sendmsg
+                xref    it_alive
                 xref    wn_sendkey
                 xref    kbd_cook
                 xref    intuition_DrawImage
@@ -225,19 +226,19 @@ it_menubutton:
         tst.l   IB_MENUWIN(a5)
         bne     .mb_ret
         move.l  IB_ACTIVEWINDOW(a5),d0
-        beq.s   .mb_ret
+        beq     .mb_ret
         move.l  d0,a3
         cmp.l   WD_WSCREEN(a3),a4
-        bne.s   .mb_ret
+        bne     .mb_ret
         tst.l   WD_MENUSTRIP(a3)
-        beq.s   .mb_ret
+        beq     .mb_ret
         btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP: the right button belongs to the application
-        bne.s   .mb_ret
+        bne     .mb_ret
         move.l  WD_FIRSTREQUEST(a3),d0   ; requester without NOISYREQ: no menus (spec intuition-requesters-v34 §3.2)
         beq.s   .mb_menus
         move.l  d0,a0
         btst    #2,RQ_FLAGS+1(a0)    ; NOISYREQ
-        beq.s   .mb_ret
+        beq     .mb_ret
 .mb_menus:
         clr.l   IB_MENUBOX(a5)
         clr.l   IB_MENUCUR(a5)
@@ -258,7 +259,15 @@ it_menubutton:
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_CREATEUPFRONTLAYER(a6)
         move.l  d0,IB_MENUBAR(a5)
-        beq.s   .mb_ret
+        beq     .mb_ret
+        jsr     it_alive             ; the layer creation may wait: the window may have been closed meanwhile
+        bne.s   .mb_on
+        move.l  d0,a1
+        clr.l   IB_MENUBAR(a5)
+        suba.l  a0,a0
+        jsr     LVO_DELETELAYER(a6)
+        jmp     it_refresh
+.mb_on:
         move.l  a3,IB_MENUWIN(a5)
         bsr     mn_drawbar
         st      IB_TRACK(a5)
@@ -1282,7 +1291,6 @@ mn_end:
 .me_close:
         bsr     mn_closebox
         clr.l   IB_MENUCUR(a5)
-        clr.l   IB_MENUWIN(a5)
         clr.b   IB_TRACK(a5)
         move.l  IB_MENUBAR(a5),a1
         clr.l   IB_MENUBAR(a5)
@@ -1296,6 +1304,7 @@ mn_end:
         sub.w   WD_TOPEDGE(a3),d3
         move.l  #MENUPICK,d0
         move.w  d7,d1
-        bra     wn_sendmsg
+        jsr     wn_sendmsg
+        clr.l   IB_MENUWIN(a5)       ; only now: CloseWindow waits for it, and the deletion above may have blocked
 .me_ret:
         rts

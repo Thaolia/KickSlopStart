@@ -2613,6 +2613,7 @@ d2_done:
 .input_beginio:                         ; helper: BeginIO(input, a3=ioreq) + reloads SysBase. a2=device base.
         move.l  a3,a1
         move.l  a2,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)                 ; input_beginio (LVO -30)
         move.l  ($4).w,a6               ; reload a6 = SysBase (BeginIO exits with a6 = device base)
         rts
@@ -2676,6 +2677,15 @@ d2_done:
         lea     msg_console_ok(pc),a0
         bsr     ser_puts                 ; "CONSOLE WRITE OK"
 .con_free:
+        move.l  CONB_BITMAP(a2),d0       ; the test's bitplane is returned: nothing displays the windowless console,
+        beq.s   .con_nobm                ; it would keep 10 KB of chip RAM (re-allocated if something writes there)
+        clr.l   CONB_BITMAP(a2)
+        clr.w   CONB_CURX(a2)
+        clr.w   CONB_CURY(a2)
+        move.l  d0,a1
+        move.l  #CON_BMSIZE,d0
+        jsr     LVO_FREEMEM(a6)
+.con_nobm:
         move.l  a3,a1
         move.l  #64,d0
         jsr     LVO_FREEMEM(a6)
@@ -2719,6 +2729,7 @@ d2_done:
         move.l  a0,INP_IO_DATA(a3)
         move.l  a3,a1
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)                 ; input BeginIO WRITEEVENT
         move.l  ($4).w,a6
         clr.b   80(a3)                  ; console CMD_READ 1 byte -> must be cooked 'v'
@@ -2905,6 +2916,7 @@ d2_done:
         bra.s   .req_done
 .req_bio:                            ; helper: input BeginIO(a1=ioreq) + reloads SysBase. a4=input base.
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts
@@ -3004,6 +3016,7 @@ d2_done:
         bra.s   .gp_done
 .gp_bio:                                ; input BeginIO(a1=ioreq) + reloads SysBase. a4=input base.
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts
@@ -3109,6 +3122,7 @@ d2_done:
         move.l  a0,INP_IO_DATA(a1)
 .m6r_bio:
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts
@@ -5640,6 +5654,7 @@ ptr_wire:
         move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
         move.l  #PTR_INT,INP_IO_DATA(a1)
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)
         move.l  ($4).w,a6
         lea     48(sp),sp
@@ -5712,6 +5727,7 @@ m6r_wire_requester:
 .mw_bio:
         move.l  a2,a1
         move.l  a4,a6
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)
         move.l  ($4).w,a6
         rts

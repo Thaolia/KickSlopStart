@@ -112,7 +112,8 @@ exec_AllocMem:
         moveq   #0,d0
 .am_exit:
                 ifd     MEMTRACK
-        bsr     mt_alloc             ; d0 = block | 0, d2 = size
+        move.l  28(sp),d4            ; caller of AllocMem (above the saved d2-d5/a2-a4)
+        bsr     mt_allocc            ; d0 = block | 0, d2 = size, d4 = caller
                 endc
         jsr     LVO_PERMIT(a6)       ; Permit does not touch d0
         movem.l (sp)+,d2-d5/a2-a4
@@ -467,20 +468,27 @@ mh_name:
         EVEN
 
                 ifd     MEMTRACK
-; --- allocation tracer (diagnostic ROM, -DMEMTRACK=1): each successful AllocMem is recorded (address, size) in
+; --- allocation tracer (diagnostic ROM, -DMEMTRACK=1): each successful AllocMem is recorded (address, size, caller) in
 ; a table of MT_N entries (AllocAbs too); each FreeMem is looked up in it: different size -> "MTSZ address returned-size
 ; recorded-size caller", unknown address -> "MTUNK address size caller". Under Forbid (callers).
 MT_N            EQU 3000
-; mt_alloc(d0 = block | 0, d2 = size, a6): preserves everything.
+; mt_alloc(d0 = block | 0, d2 = size, a6) / mt_allocc (same, d4 = caller): preserve everything. Entries of
+; 12 bytes: address, size, caller (0 for AllocAbs); the blocks still allocated stay in the table (debugger dump).
 mt_alloc:
+        move.l  d4,-(sp)
+        moveq   #0,d4
+        bsr.s   mt_allocc
+        move.l  (sp)+,d4
+        rts
+mt_allocc:
         movem.l d0-d1/a0-a1,-(sp)
         tst.l   d0
         beq.s   .ma_ret
         move.l  MT_TABLE,d1
         bne.s   .ma_have
-        cmp.l   #MT_N*8,d2           ; the table itself (allocated below) is not recorded
+        cmp.l   #MT_N*12,d2          ; the table itself (allocated below) is not recorded
         beq.s   .ma_ret
-        move.l  #MT_N*8,d0
+        move.l  #MT_N*12,d0
         move.l  #MEMF_CHIP|MEMF_CLEAR,d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,MT_TABLE
@@ -493,12 +501,13 @@ mt_alloc:
 .ma_lp:
         tst.l   (a0)
         beq.s   .ma_put
-        addq.l  #8,a0
+        lea     12(a0),a0
         dbra    d1,.ma_lp
         bra.s   .ma_ret              ; table full
 .ma_put:
         move.l  d0,(a0)+
-        move.l  d2,(a0)
+        move.l  d2,(a0)+
+        move.l  d4,(a0)
 .ma_ret:
         movem.l (sp)+,d0-d1/a0-a1
         rts
@@ -512,7 +521,7 @@ mt_free:
 .mf_lp:
         cmp.l   (a0),a1
         beq.s   .mf_found
-        addq.l  #8,a0
+        lea     12(a0),a0
         dbra    d1,.mf_lp
         lea     mt_unk(pc),a0        ; address never allocated (or already returned)
         jsr     ser_puts

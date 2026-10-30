@@ -108,6 +108,7 @@ console_open:
         jsr     LVO_DISABLE(a6)
         move.l  4+4(sp),a1           ; a1 = console base
         move.l  (sp),a0
+        move.l  a1,CU_BASE(a0)
         move.l  CONB_UNITS(a1),CU_NEXT(a0)
         move.l  a0,CONB_UNITS(a1)
         jsr     LVO_ENABLE(a6)
@@ -382,6 +383,41 @@ console_beginio:
         jsr     LVO_REPLYMSG(a6)
         bra     .bi_done
 
+; con_push(a0 = bytes, d2.w = count > 0, a2 = base) -> Z = 1 if they do not all fit (nothing pushed). Two producers
+; (the input handler, the window bounds report of a write), the input chain also runs in the VBlank interrupt:
+; bare Disable. Clobbers d0-d2/a0/a1.
+con_push:
+        move.l  ($4).w,a1
+        addq.b  #1,EB_IDNEST(a1)
+        move.w  #INTF_INTEN,INTENA
+        move.w  CONB_RHEAD(a2),d0    ; free room in the ring
+        sub.w   CONB_RTAIL(a2),d0
+        subq.w  #1,d0
+        and.w   #CON_RBMASK,d0
+        cmp.w   d2,d0
+        blo.s   .ps_full
+        lea     CONB_RBUF(a2),a1
+        move.w  CONB_RTAIL(a2),d0
+        subq.w  #1,d2
+.ps_lp:
+        move.b  (a0)+,0(a1,d0.w)
+        addq.w  #1,d0
+        and.w   #CON_RBMASK,d0
+        dbra    d2,.ps_lp
+        move.w  d0,CONB_RTAIL(a2)
+        moveq   #1,d2                ; Z = 0
+        bra.s   .ps_on
+.ps_full:
+        moveq   #0,d2                ; Z = 1
+.ps_on:
+        move.l  ($4).w,a1
+        subq.b  #1,EB_IDNEST(a1)
+        bge.s   .ps_ret
+        move.w  #$C000,INTENA        ; SETCLR + INTEN
+.ps_ret:
+        tst.l   d2
+        rts
+
 ; con_fillread(a1 = CMD_READ, a2 = base): copies the read buffer into io_Data (max io_Length) -> d0 = bytes copied
 ; = io_Actual. Called under Disable. Clobbers d1/a0.
 con_fillread:
@@ -508,25 +544,40 @@ con_putglyph:
 ; IND_ADDHANDLER. Each RAWKEY is converted through the keymap of the unit whose window is active (the default keymap
 ; otherwise); the bytes go into the read buffer only if they all fit, then a waiting CMD_READ is served. Returns
 ; d0 = unchanged list (pass-through). Preserves d2-d7/a2-a6.
+CIH_KEYMAP      EQU 16                   ; frame: conversion buffer (16 bytes), copy of the struct KeyMap (32 bytes)
 console_input_handler:
-        movem.l d2-d4/a2-a3,-(sp)
-        lea     -16(sp),sp           ; conversion buffer
+        movem.l d2-d4/a2-a3/a6,-(sp)
+        lea     -(CIH_KEYMAP+32)(sp),sp
         move.l  a0,d3                ; d3 = original list (pass-through return)
         move.l  a1,a2                ; a2 = console base
         move.l  a0,a3                ; a3 = current event
+        move.l  ($4).w,a6
 .cih_loop:
         move.l  a3,d0
         beq     .cih_done
         cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
-        bne.s   .cih_next
+        bne     .cih_next
+        ; A CON: handler that preempts this task can CloseDevice and free the unit: its keymap is copied with
+        ; interrupts off (bare Disable: the input chain also runs from the VBlank interrupt).
+        addq.b  #1,EB_IDNEST(a6)
+        move.w  #INTF_INTEN,INTENA
         bsr     con_target           ; keymap of the active console unit, else the default one
-        lea     CONB_DEFKM(a2),a1
+        lea     CONB_DEFKM(a2),a0
         beq.s   .cih_km
-        move.l  d0,a1
-        lea     CU_KEYMAP(a1),a1
+        move.l  d0,a0
+        lea     CU_KEYMAP(a0),a0
 .cih_km:
+        lea     CIH_KEYMAP(sp),a1
+        moveq   #8-1,d0
+.cih_kmcp:
+        move.l  (a0)+,(a1)+
+        dbra    d0,.cih_kmcp
+        subq.b  #1,EB_IDNEST(a6)
+        bge.s   .cih_conv
+        move.w  #$C000,INTENA        ; SETCLR + INTEN
+.cih_conv:
         move.l  a2,-(sp)
-        move.l  a1,a2
+        lea     4+CIH_KEYMAP(sp),a2
         move.l  a3,a0
         lea     4(sp),a1
         moveq   #16,d1
@@ -535,22 +586,9 @@ console_input_handler:
         move.l  d0,d2                ; d2 = bytes
         ble.s   .cih_next
                 ifeq    CON_NO_READBUF
-        move.w  CONB_RHEAD(a2),d0    ; free room in the ring
-        sub.w   CONB_RTAIL(a2),d0
-        subq.w  #1,d0
-        and.w   #CON_RBMASK,d0
-        cmp.w   d2,d0
-        blo.s   .cih_next            ; does not fit: dropped
         lea     (sp),a0
-        lea     CONB_RBUF(a2),a1
-        move.w  CONB_RTAIL(a2),d0
-        subq.w  #1,d2
-.cih_push:
-        move.b  (a0)+,0(a1,d0.w)
-        addq.w  #1,d0
-        and.w   #CON_RBMASK,d0
-        dbra    d2,.cih_push
-        move.w  d0,CONB_RTAIL(a2)
+        bsr     con_push
+        beq.s   .cih_next            ; does not fit: dropped
         bsr     con_servereads       ; a CMD_READ of an open unit was waiting: served and replied
                 endc                 ; RED CON_NO_READBUF: converts but does not buffer -> empty CMD_READ
 .cih_next:
@@ -558,8 +596,8 @@ console_input_handler:
         bra     .cih_loop
 .cih_done:
         move.l  d3,d0                ; return the original list (pass-through)
-        lea     16(sp),sp
-        movem.l (sp)+,d2-d4/a2-a3
+        lea     CIH_KEYMAP+32(sp),sp
+        movem.l (sp)+,d2-d4/a2-a3/a6
         rts
 
 ; con_servereads(a2 = base): if a CMD_READ is waiting and the read buffer has bytes, fills it, unhooks it
@@ -685,6 +723,7 @@ console_initfunc:
         move.l  a0,IO_DATA2(a1)
         move.l  a1,-(sp)                     ; save ioreq (for the free)
         move.l  a3,a6                        ; a6 = input.device base for BeginIO
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
         jsr     -30(a6)                      ; input BeginIO IND_ADDHANDLER (Enqueue CONB_INT into the chain)
         move.l  ($4).w,a6                    ; restore a6 = SysBase
         move.l  (sp)+,a1                     ; ioreq
@@ -706,8 +745,8 @@ console_gfxname:
 ; 8), LF (with return to column 0), VT, FF (clears), CR, ESC c (resets), $84 IND, $85 NEL, $8D RI. CSI
 ; (ESC [ or $9B): A B C D E F (movements), H f (position), J K (erasures), L M (line insertion / deletion),
 ; m (pens 30-37/40-47, inverse 7, 0 = default: text pen 2, background 0), SPACE p (cursor visible or
-; not). CSI P (character deletion) erases up to the end of the line (no horizontal shift); @, t, u,
-; x, y, q ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
+; not), q (window bounds report into the read stream), @ / P (insertion / deletion of characters: the rest of
+; the line shifts); t, u, x, y ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
 ; area. Cursor: inverted cell (COMPLEMENT mode), removed before each write and redrawn afterwards.
 CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
 CU_XCP          EQU 38
@@ -733,7 +772,8 @@ CU_CURVIS       EQU 305              ; private: cursor currently drawn
 CU_INV          EQU 306              ; private: inverse video (CSI 7 m)
 CU_NEXT         EQU 308              ; private: next unit (CONB_UNITS list)
 CU_KEYMAP       EQU 66               ; cu_KeyMapStruct (devices/conunit.h): the unit's struct KeyMap
-CU_SIZE         EQU 312
+CU_BASE         EQU 312              ; private: console base (cu_write reuses a2)
+CU_SIZE         EQU 316
 CU_DEFFG        EQU 2                ; default text pen: black on the green background (project theme; 1.3: 1)
 
 ; cu_init(a0 = cleared ConUnit, a1 = Window): bounds of the text area from the window geometry.
@@ -989,16 +1029,150 @@ cu_lf:
         move.w  CU_YRORIGIN(a5),d3
         bra.s   cu_scroll
 
+; cu_hshift(d1.w = dx in pixels, a5, a3, a6): shifts the line from the cursor cell to the right edge of the area by
+; dx (> 0: to the left), the uncovered cells cleared. ClipBlit within the window (graphics' ScrollRaster only scrolls
+; vertically). Clobbers d0-d3/a0/a1.
+cu_hshift:
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        bgt     cu_ret
+        movem.l d4-d7,-(sp)
+        move.w  d1,d7                ; d7 = dx
+        bsr     cu_cellxy
+        move.w  d0,d2                ; d2 = x0, d1 = y0
+        move.w  CU_XREXTANT(a5),d4
+        sub.w   d0,d4
+        addq.w  #1,d4                ; d4 = width of the shifted part
+        move.w  d7,d6
+        bpl.s   .hs_abs
+        neg.w   d6                   ; d6 = |dx|
+.hs_abs:
+        sub.w   d6,d4                ; d4 = width that stays visible
+        ble.s   .hs_clear            ; everything goes out: only the clearing
+        tst.w   d7
+        bmi.s   .hs_ins
+        movem.w d1-d2,-(sp)          ; deletion: source x0 + n -> x0 (a copy to the left never overwrites its source)
+        move.w  d2,d0
+        add.w   d6,d0
+        move.w  d1,d3
+        bsr.s   .hs_blit
+        movem.w (sp)+,d1-d2
+        add.w   d4,d2                ; cleared strip: x0 + visible width, n wide
+        bra.s   .hs_fill
+.hs_ins:                             ; insertion: copied by slices of n pixels from the right (ClipBlit copies
+        movem.w d1-d2,-(sp)          ; forward, so no slice may cover its own source)
+        move.w  d4,d5                ; d5 = width still to copy
+.hs_slice:
+        tst.w   d5
+        ble.s   .hs_sdone
+        move.w  d6,d4                ; d4 = slice width = min(n, rest)
+        cmp.w   d5,d4
+        ble.s   .hs_sw
+        move.w  d5,d4
+.hs_sw:
+        sub.w   d4,d5
+        movem.w (sp),d1-d2           ; y0, x0
+        move.w  d2,d0
+        add.w   d5,d0                ; source x0 + rest
+        move.w  d0,d2
+        add.w   d6,d2                ; destination = source + n
+        move.w  d1,d3
+        move.w  d5,-(sp)
+        bsr.s   .hs_blit
+        move.w  (sp)+,d5
+        bra.s   .hs_slice
+.hs_sdone:
+        movem.w (sp)+,d1-d2          ; cleared strip: x0, n wide
+.hs_fill:
+        move.w  d2,d0
+        add.w   d6,d2
+        subq.w  #1,d2
+        bra.s   .hs_rect
+.hs_clear:
+        move.w  d2,d0
+        move.w  CU_XREXTANT(a5),d2
+.hs_rect:
+        move.w  d1,d3
+        addq.w  #GFX_FONTH-1,d3
+        bsr     cu_fill
+        movem.l (sp)+,d4-d7
+        rts
+.hs_blit:                            ; ClipBlit within the window: d0/d1 source, d2/d3 destination, d4 width
+        movem.l d6-d7,-(sp)
+        move.l  a3,a0
+        move.l  a3,a1
+        moveq   #GFX_FONTH,d5
+        move.w  #$C0,d6
+        jsr     LVO_CLIPBLIT(a6)
+        movem.l (sp)+,d6-d7
+        rts
+
 ; cu_eol(a5, a3, a6): erases from the cursor cell to the end of the line. Clobbers d0-d3/a0/a1.
 cu_eol:
         move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
-        bgt.s   cu_ret
+        bgt     cu_ret
         bsr     cu_cellxy
         move.w  CU_XREXTANT(a5),d2
         move.w  d1,d3
         addq.w  #GFX_FONTH-1,d3
-        bra.s   cu_fill
+        bra     cu_fill
+
+; cu_report(a5 = unit): answer to the Window Status Request (CSI q, CSI 0 SPACE q): the Window
+; Bounds Report CSI 1;1;<lines>;<columns> SPACE r goes into the read stream (console.doc). Ed waits for it to size its
+; display. Clobbers d0-d3/a0/a1.
+cu_report:
+        move.l  a2,-(sp)
+        move.l  CU_BASE(a5),a2
+        lea     -20(sp),sp
+        move.l  sp,a0
+        move.b  #$9B,(a0)+
+        move.b  #'1',(a0)+
+        move.b  #';',(a0)+
+        move.b  #'1',(a0)+
+        move.b  #';',(a0)+
+        move.w  CU_YMAX(a5),d0
+        addq.w  #1,d0
+        bsr.s   .rp_dec
+        move.b  #';',(a0)+
+        move.w  CU_XMAX(a5),d0
+        addq.w  #1,d0
+        bsr.s   .rp_dec
+        move.b  #' ',(a0)+
+        move.b  #'r',(a0)+
+        move.l  a0,d2
+        sub.l   sp,d2
+        move.l  sp,a0
+        bsr     con_push
+        beq.s   .rp_out
+        bsr     con_servereads
+.rp_out:
+        lea     20(sp),sp
+        move.l  (sp)+,a2
+        rts
+.rp_dec:                             ; d0.w (0..999) in decimal at (a0)+, no leading zero. Clobbers d0/d1/d3.
+        moveq   #0,d3                ; d3 = a digit has been written
+        moveq   #100,d1
+        bsr.s   .rp_dig
+        moveq   #10,d1
+        bsr.s   .rp_dig
+        add.b   #'0',d0
+        move.b  d0,(a0)+
+        rts
+.rp_dig:
+        ext.l   d0
+        divu    d1,d0                ; quotient in the low word, remainder in the high word
+        tst.w   d0
+        bne.s   .rp_put
+        tst.b   d3
+        beq.s   .rp_skip
+.rp_put:
+        add.b   #'0',d0
+        move.b  d0,(a0)+
+        st      d3
+.rp_skip:
+        swap    d0                   ; d0.w = remainder
+        rts
 
 ; cu_ctl(d0.b = control or sequence byte, a5, a3, a6): controls and ESC / CSI sequences.
 ; Clobbers d0-d3/d5-d7/a0/a1.
@@ -1216,8 +1390,15 @@ cu_ctl:
 .ct_nJ:
         cmp.b   #'K',d0
         beq     cu_eol
+        move.w  d6,d1
+        lsl.w   #3,d1                ; d1 = n cells in pixels
         cmp.b   #'P',d0
-        beq     cu_eol
+        beq     cu_hshift            ; P: deletes n characters (the rest of the line moves left)
+        cmp.b   #'@',d0
+        bne.s   .ct_nat
+        neg.w   d1                   ; @: inserts n blanks (the rest of the line moves right)
+        bra     cu_hshift
+.ct_nat:
         cmp.b   #'L',d0
         beq.s   .ct_lines
         cmp.b   #'M',d0
@@ -1245,6 +1426,8 @@ cu_ctl:
 .ct_sgrdone:
         bra     cu_setpens
 .ct_nm:
+        cmp.b   #'q',d0
+        beq     cu_report
         cmp.b   #'p',d0
         bne.s   .ct_ret2
         cmp.b   #' ',CU_INTER(a5)

@@ -109,6 +109,7 @@ trackdisk_null:
 trackdisk_beginio:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a2                ; a2 = ioreq
+        bsr     td_lock
         clr.b   IO_ERROR(a2)
         move.w  IO_COMMAND(a2),d0
         cmp.w   #TD_FORMAT,d0        ; TD_FORMAT does not touch io_Actual (spec trackdisk-write-v34 §8, steps K and L)
@@ -255,6 +256,7 @@ trackdisk_beginio:
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
 .td_restore:
         move.l  a4,a6                ; restore a6 = device base
+        bsr     td_unlock
 .td_reply:
         btst    #0,IO_FLAGS(a2)      ; IOF_QUICK (bit 0)?
         bne.s   .td_bdone
@@ -271,6 +273,39 @@ trackdisk_abortio:
         moveq   #0,d0
         rts
 
+; BeginIO runs in the caller's task, and the drive state (head, DSKPT, cache, TD_DMATASK) is global: without this
+; lock, the DF0: handler's TD_CHANGESTATE deselects the drive in the middle of another task's DMA, and a second
+; CMD_READ steals TD_DMATASK so the first waiter is never woken. Before multitasking there is no other task: no lock.
+; Held across td_dmawait (re-entrant, like any exec semaphore). Preserve everything.
+TD_SS_OWNER     EQU 40
+td_lock:
+        tst.b   SCHED_ON
+        beq.s   .tl_ret
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        tst.l   EB_THISTASK(a6)
+        beq.s   .tl_out
+        lea     TD_SEM,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+.tl_out:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+.tl_ret:
+        rts
+
+; Released only by its owner: a request started before multitasking took no lock.
+td_unlock:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),d0
+        beq.s   .tu_out
+        lea     TD_SEM,a0
+        cmp.l   TD_SS_OWNER(a0),d0
+        bne.s   .tu_out
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.tu_out:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Sets the name (V34 quirk). The placeholder unit areas
 ; need no init in B1 (will become Unit+MsgPort to initialise in B2).
 trackdisk_initfunc:
@@ -281,8 +316,10 @@ trackdisk_initfunc:
         sf      TD_MOTORON
         sf      TD_BUSY
         clr.w   TD_MOTORCNT
-        movem.l d0/a1,-(sp)          ; VBlank server that turns off the idle motor
-        lea     TD_VBLINT,a1
+        movem.l d0/a1,-(sp)
+        lea     TD_SEM,a0
+        jsr     LVO_INITSEMAPHORE(a6)
+        lea     TD_VBLINT,a1         ; VBlank server that turns off the idle motor
         clr.l   LN_SUCC(a1)
         clr.l   LN_PRED(a1)
         move.b  #NT_INTERRUPT,LN_TYPE(a1)
