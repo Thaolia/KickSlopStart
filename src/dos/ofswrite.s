@@ -1,4 +1,4 @@
-; src/dos/ofswrite.s - OFS writing for the DF0: handler: creation of files and directories, write streams,
+; src/dos/ofswrite.s - OFS writing for the floppy handlers: creation of files and directories, write streams,
 ; deletion, renaming/moving, protection, comment, disk information. Blocks go through
 ; trackdisk.device (CMD_WRITE into its track cache, CMD_UPDATE at the end of each operation).
 ; Public OFS format (ADF-FAQ / AmigaDOS Technical Reference): header (type 2, key = its own block, high_seq, first_data,
@@ -38,7 +38,7 @@ WS_MAGICV       EQU $57524954        ; "WRIT": write state (the read state start
 ID_VALIDATED    EQU 82
 OFSB_VDAYS      EQU 472              ; root: date of the last modification of the disk
 
-; write context (a single one, allocated on first need; pointer in DOS_OWCTX)
+; write context (one per file-handler, allocated on first need; pointer in HC_OWCTX of its context)
 OW_TD           EQU 0
 OW_IO           EQU 4                ; IOStdReq
 OW_BMBLK        EQU OW_IO+IOREQ_SZ   ; bitmap block (0 = not read yet)
@@ -68,32 +68,39 @@ WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE
 
 ; ------------------------------------------------------------------------------------------------------------------
-; ow_ctx(a6) -> a5 = context (allocated on first call, bitmap not read yet); Z = 1 if impossible. Clobbers d0/d1/a0/a1.
+; ow_ctx(a6) -> a5 = context of this file-handler (allocated on first call, bitmap not read yet, requests on the
+; handler's drive); Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 ow_ctx:
-        move.l  DOS_OWCTX,d0
+        bsr.s   ow_slot
+        beq.s   .cx_ret              ; not a file-handler
+        move.l  (a0),d0
         bne.s   .cx_have
+        tst.l   HC_TDIO+IO_DEVICE-HC_OWCTX(a0)
+        beq.s   .cx_ret              ; drive not opened
+        move.l  a0,-(sp)
         move.l  #OW_SIZE,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
+        move.l  (sp)+,a0
         tst.l   d0
         beq.s   .cx_ret
         move.l  d0,a5
-        lea     EB_DEVICELIST(a6),a0
-        lea     ow_tdname(pc),a1
-        jsr     LVO_FINDNAME(a6)
-        move.l  d0,OW_TD(a5)
-        beq.s   .cx_free
-        move.l  a5,DOS_OWCTX
+        move.l  HC_TDIO+IO_DEVICE-HC_OWCTX(a0),OW_TD(a5)
+        move.l  HC_TDIO+IO_UNIT-HC_OWCTX(a0),OW_IO+IO_UNIT(a5)
+        move.l  a5,(a0)
         move.l  a5,d0
 .cx_have:
         move.l  d0,a5
 .cx_ret:
         rts
-.cx_free:
-        move.l  a5,a1
-        move.l  #OW_SIZE,d0
-        jsr     LVO_FREEMEM(a6)
-        moveq   #0,d0
+; ow_slot(a6) -> a0 = &HC_OWCTX of the calling file-handler; Z = 1 (a0 = 0) if the task is not one. Preserves d0-d1.
+ow_slot:
+        move.l  EB_THISTASK(a6),a0
+        move.l  TC_USERDATA(a0),a0
+        cmpa.w  #0,a0
+        beq.s   .sl_ret
+        lea     HC_OWCTX(a0),a0
+.sl_ret:
         rts
 
 ; ow_io(d0 = block, a0 = buffer, d1.w = command, a5, a6) -> d0 = 1 ok / 0 (OW_ERR set). Preserves d2-d7/a2-a6.
@@ -896,7 +903,8 @@ ws_open:
         beq.s   .wo_fail
         move.l  #WS_MAGICV,WS_MAGIC(a3)
         move.l  d0,WS_HDR(a3)
-        move.l  DOS_OWCTX,a5         ; header (written empty by ow_create) kept in the state
+        bsr     ow_slot
+        move.l  (a0),a5              ; header (written empty by ow_create) kept in the state
         lea     OW_B1(a5),a0
         lea     WS_HBUF(a3),a1
         moveq   #127,d1
@@ -993,7 +1001,9 @@ ws_write:
 .ww_err:
         moveq   #-1,d0
         move.l  #ERROR_DISK_FULL,d1
-        move.l  DOS_OWCTX,d2
+        bsr     ow_slot
+        beq.s   .ww_ret
+        move.l  (a0),d2
         beq.s   .ww_ret
         move.l  d2,a5
         move.l  OW_ERR(a5),d1
@@ -1105,6 +1115,3 @@ ws_close:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-ow_tdname:
-        dc.b    "trackdisk.device",0
-        even

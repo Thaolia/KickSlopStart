@@ -28,7 +28,6 @@ CIAF_DSKDIREC EQU $02          ; seek direction
 CIAF_DSKSTEP  EQU $01          ; step pulse
 ; precomputed PRB values (minimal B2): all high except motor / motor+select
 PRB_MOTOR_ON   EQU $7F         ; motor=0 (on), SEL/side/dir/step=1 (deselected) — sets the motor intention
-PRB_SEL0_ON    EQU $77         ; motor=0, SEL0=0 (DF0) — the SEL0 edge latches motor=on
 PRB_OFF        EQU $FF         ; all high: motor off + deselected
 
 ; --- CIA-A PRA (drive status, $BFE001) — ACTIVE LOW ---
@@ -36,7 +35,6 @@ CIAA_PRA_HW    EQU CIAA_HW     ; = $BFE001
 DSKB_RDY       EQU 5           ; DSKRDY (0 = ready)
 DSKB_TRACK0    EQU 4           ; DSKTRACK0 (0 = head on track 0)
 DSKB_CHANGE    EQU 2           ; /CHNG (0 = disk removed/changed since the last step)
-PRB_SEL0_OFF   EQU $F7         ; SEL0=0 motor=1: selects DF0 latching motor OFF (/CHNG read)
 
 ; --- raw track read ---
 TD_RAWWORDS  EQU $1900         ; words read = 6400 (12800 bytes, > one DD track); fits in a 16-bit dbra counter
@@ -111,7 +109,7 @@ TD_READ_NOCMD EQU 0
 SEEK_NOSTEP EQU 0
 
 ; TD_NO_CYLTRACK=1 (RED cylinder-tracking): forces recalibration (step OUT until DSKTRACK0) on EVERY read
-; instead of stepping the delta from TD_CURCYL -> SLOW reads (old C behaviour). Correct but slow:
+; instead of stepping the delta from TDU_CYL -> SLOW reads (old C behaviour). Correct but slow:
 ; under the scheduler, the full floppy boot no longer fits in WAIT=90 -> "D3B HANDLER OK" absent at that WAIT.
 ; Isolates the speed GAIN of cylinder-tracking (discriminant = D3B present at tight WAIT). Default 0.
 TD_NO_CYLTRACK EQU 0

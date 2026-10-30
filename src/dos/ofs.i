@@ -7,6 +7,12 @@ OFS_ROOTBLK     EQU 880           ; root block of a DD disk (1760 logical blocks
 OFS_NBLK        EQU 1760          ; total number of blocks -> valid block in [2,1760) (0/1 = bootblock)
 IOREQ_SZ        EQU 48            ; IOStdReq (the block buffer follows at +IOREQ_SZ)
 
+; File-handler context (handler.s), one per drive, in tc_UserData of its process: the OFS layer (ofs.s, ofswrite.s)
+; runs in that process and takes from it the drive to read (io_Unit of HC_TDIO, opened on the handler's unit) and
+; the write context. Other callers (boot probes, tc_UserData = 0) read DF0.
+HC_TDIO         EQU 0             ; trackdisk IOStdReq (disk change queries), then a 512-byte block
+HC_OWCTX        EQU HC_TDIO+IOREQ_SZ+OFS_BSIZE   ; APTR: write context (ofswrite.s), allocated on first need | 0
+
 ; LONG offsets (in bytes from the start of the block)
 OFSB_TYPE       EQU 0             ; long[0]: primary type (T_SHORT=2 / T_DATA=8)
 OFSB_HTSIZE     EQU 12            ; long[3]: hash_table_size (root)

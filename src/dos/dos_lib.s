@@ -2151,7 +2151,6 @@ dos_initfunc:
         movem.l d3/a2,-(sp)         ; a2/d3 non-scratch: preserved for MakeLibrary (AllocMem preserves them too)
         move.l  d0,a2               ; a2 = DosBase
         move.l  d0,DOS_DOSBASE      ; published for the BCPL runtime (no a6 = DosBase in BCPL code)
-        clr.l   DOS_OWCTX           ; low memory not cleared on reset
         lea     DOS_HSEM,a0
         jsr     LVO_INITSEMAPHORE(a6)
         lea     dos_name(pc),a0
