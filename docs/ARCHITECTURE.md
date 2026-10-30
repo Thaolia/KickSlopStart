@@ -595,9 +595,18 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
       the window out of its layers and the window list and clears the active-window and pressed-gadget
       references. The input task checks with `it_alive` after each call that can block (it_setactive's veil,
       wn_scrtitle, CreateUpfrontLayer for the menu bar). `mn_end` clears IB_MENUWIN only after its MENUPICK.
-    - Still open: lock order in ClipBlit (source then destination) and in ScrollRaster (layer then blitter);
-      dos_sendpkt takes the first message as the reply; the boot CLI's console handler serves no packet while a
-      READ waits; GELs release the layer lock between saving and restoring the background.
+    - Second round (same day): the remaining suspects.
+      - ClipBlit takes both layer locks first (`cb_lock2`): front to back when they share a Layer_Info, as
+        LockLayers does, otherwise by address. Before, it held the source lock while BltBitMapRastPort took the
+        destination one, so two copies in opposite directions could deadlock.
+      - ScrollRaster takes the blitter only if it is free (AttemptSemaphore on gb_BlitSem), otherwise it copies
+        with the CPU. A program holding the blitter no longer stalls a scroll that holds a layer lock.
+      - `dos_waitreply` (process.s) waits for our own message on the process port. Other messages (replied
+        IORequests of a BCPL handler, packets) are put back in order, with their type. It is used by
+        dos_sendpkt, the BCPL global sendpkt and the startup of BCPL handlers (which used to drop them).
+      - Boot CLI console handler: while a READ waits for its line, WRITE packets (output of `run` jobs) are
+        served at once (`con_side`, `con_dowrite`); other packets are put aside and requeued when the READ ends.
+    - Still open: GELs release the layer lock between saving and restoring the background (cosmetic).
 
   - Ed 1.14 (GitHub issue #6: window opened, then hung). Four causes:
     - console.device: `CSI q` / `CSI 0 SPACE q` (Window Status Request) is answered with the Window Bounds Report
@@ -609,9 +618,14 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
       buffer around its `writef("*E[%N;%NH")` cursor positioning. Before, those sequences went to the current
       output stream instead, and every line was drawn on row 1. `rt_fault`, called from assembly, keeps direct
       output (`WFRAW`).
-    - console.device: `CSI n @` and `CSI n P` shift the rest of the line right or left. The shift is a ClipBlit
-      in the window, done in slices from the right for insertion, because BltBitMapRastPort copies forward even
-      when source and destination overlap. graphics' ScrollRaster still ignores dx.
+    - console.device: `CSI n @` and `CSI n P` shift the rest of the line right or left, with ScrollRaster.
+    - graphics: ScrollRaster now handles dx (`sr_horiz`, before the vertical pass). The kept part is copied with
+      ClipBlit within the RastPort, by slices of |dx| columns from the right when shifting right, because
+      BltBitMapRastPort copies forward even when source and destination overlap. The freed columns are filled
+      with pen B. Deviation: a source hidden without backup is not reported as damage by this pass.
+    - conwin: ACTION_WAIT_CHAR waits up to its delay (Arg1, microseconds). It answers TRUE as soon as a character
+      is deliverable, FALSE when the delay (timer.device VBLANK, opened on first use, replied on the console read
+      port) runs out, and at once for a delay of 0. Ed asks it after `$9B` to tell a lone CSI from a sequence.
     - The feeder's "FEEDER OK" self-test read the console once and took a byte of the first key typed after boot,
       such as the 'B' of cursor-down. It is now dev-ROM only.
 

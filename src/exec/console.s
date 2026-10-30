@@ -746,7 +746,7 @@ console_gfxname:
 ; (ESC [ or $9B): A B C D E F (movements), H f (position), J K (erasures), L M (line insertion / deletion),
 ; m (pens 30-37/40-47, inverse 7, 0 = default: text pen 2, background 0), SPACE p (cursor visible or
 ; not), q (window bounds report into the read stream), @ / P (insertion / deletion of characters: the rest of
-; the line shifts); t, u, x, y ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
+; the line shifts, ScrollRaster); t, u, x, y ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
 ; area. Cursor: inverted cell (COMPLEMENT mode), removed before each write and redrawn afterwards.
 CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
 CU_XCP          EQU 38
@@ -1030,81 +1030,25 @@ cu_lf:
         bra.s   cu_scroll
 
 ; cu_hshift(d1.w = dx in pixels, a5, a3, a6): shifts the line from the cursor cell to the right edge of the area by
-; dx (> 0: to the left), the uncovered cells cleared. ClipBlit within the window (graphics' ScrollRaster only scrolls
-; vertically). Clobbers d0-d3/a0/a1.
+; dx (> 0: to the left) with ScrollRaster, which clears the uncovered cells. Clobbers d0-d3/a0/a1.
 cu_hshift:
         move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
         bgt     cu_ret
-        movem.l d4-d7,-(sp)
-        move.w  d1,d7                ; d7 = dx
-        bsr     cu_cellxy
-        move.w  d0,d2                ; d2 = x0, d1 = y0
-        move.w  CU_XREXTANT(a5),d4
-        sub.w   d0,d4
-        addq.w  #1,d4                ; d4 = width of the shifted part
-        move.w  d7,d6
-        bpl.s   .hs_abs
-        neg.w   d6                   ; d6 = |dx|
-.hs_abs:
-        sub.w   d6,d4                ; d4 = width that stays visible
-        ble.s   .hs_clear            ; everything goes out: only the clearing
-        tst.w   d7
-        bmi.s   .hs_ins
-        movem.w d1-d2,-(sp)          ; deletion: source x0 + n -> x0 (a copy to the left never overwrites its source)
-        move.w  d2,d0
-        add.w   d6,d0
-        move.w  d1,d3
-        bsr.s   .hs_blit
-        movem.w (sp)+,d1-d2
-        add.w   d4,d2                ; cleared strip: x0 + visible width, n wide
-        bra.s   .hs_fill
-.hs_ins:                             ; insertion: copied by slices of n pixels from the right (ClipBlit copies
-        movem.w d1-d2,-(sp)          ; forward, so no slice may cover its own source)
-        move.w  d4,d5                ; d5 = width still to copy
-.hs_slice:
-        tst.w   d5
-        ble.s   .hs_sdone
-        move.w  d6,d4                ; d4 = slice width = min(n, rest)
-        cmp.w   d5,d4
-        ble.s   .hs_sw
-        move.w  d5,d4
-.hs_sw:
-        sub.w   d4,d5
-        movem.w (sp),d1-d2           ; y0, x0
-        move.w  d2,d0
-        add.w   d5,d0                ; source x0 + rest
+        movem.l d4/d5,-(sp)
+        move.w  d1,d4
+        bsr     cu_cellxy            ; d0 = x, d1 = y of the cursor cell
         move.w  d0,d2
-        add.w   d6,d2                ; destination = source + n
         move.w  d1,d3
-        move.w  d5,-(sp)
-        bsr.s   .hs_blit
-        move.w  (sp)+,d5
-        bra.s   .hs_slice
-.hs_sdone:
-        movem.w (sp)+,d1-d2          ; cleared strip: x0, n wide
-.hs_fill:
-        move.w  d2,d0
-        add.w   d6,d2
-        subq.w  #1,d2
-        bra.s   .hs_rect
-.hs_clear:
-        move.w  d2,d0
-        move.w  CU_XREXTANT(a5),d2
-.hs_rect:
-        move.w  d1,d3
-        addq.w  #GFX_FONTH-1,d3
-        bsr     cu_fill
-        movem.l (sp)+,d4-d7
-        rts
-.hs_blit:                            ; ClipBlit within the window: d0/d1 source, d2/d3 destination, d4 width
-        movem.l d6-d7,-(sp)
-        move.l  a3,a0
+        move.w  d4,d0
+        ext.l   d0
+        moveq   #0,d1
+        move.w  CU_XREXTANT(a5),d4
+        move.w  d3,d5
+        addq.w  #GFX_FONTH-1,d5
         move.l  a3,a1
-        moveq   #GFX_FONTH,d5
-        move.w  #$C0,d6
-        jsr     LVO_CLIPBLIT(a6)
-        movem.l (sp)+,d6-d7
+        jsr     LVO_SCROLLRASTER(a6)
+        movem.l (sp)+,d4/d5
         rts
 
 ; cu_eol(a5, a3, a6): erases from the cursor cell to the end of the line. Clobbers d0-d3/a0/a1.

@@ -41,7 +41,6 @@
                 xdef    gfx_AttemptLockLayerRom
                 xdef    gfx_putrow
                 xref    topaz8_font
-                xref    gfx_OwnBlitter
                 xref    gfx_DisownBlitter
                 xref    gfx_OrRectRegion
 
@@ -76,6 +75,8 @@ CR_ORGY         EQU 26
 LY_CLIPRECT     EQU 8
 LY_FLAGS        EQU 30
 LY_LOCK         EQU 72
+LY_FRONT        EQU 0
+LY_LAYERINFO    EQU 68
 LY_DAMAGE       EQU 156
 LAYERREFRESH    EQU $80
 
@@ -2304,9 +2305,124 @@ TS_SIZE         EQU 20
         movem.l (sp)+,d4-d7
         rts
 
-; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5): shifts the contents of the rectangle by dy rows
-; UP (dy > 0) or down (dy < 0) and fills the freed band with pen B. dx ignored (vertical scrolling only,
-; enough for console.device). Coordinates relative to the Layer. Each destination row is copied ClipRect by
+; sr_horiz(rp a1, dx d0 (!= 0), xmin d2, ymin d3, xmax d4, ymax d5): horizontal pass of ScrollRaster. The kept part
+; is copied with ClipBlit within the RastPort (which follows the ClipRects, backups included); BltBitMapRastPort
+; copies forward, so a shift to the right goes by slices of |dx| columns from the right, none covering its own
+; source. Then the freed columns are filled with pen B. Deviation: a source hidden without backup (simple layer) is
+; not reported as damage, unlike the vertical pass. Preserves everything.
+sr_horiz:
+        movem.l d0-d7/a0-a2,-(sp)
+        move.l  a1,a2                ; a2 = RastPort
+        move.w  d0,d7                ; d7 = dx
+        move.w  d4,d6
+        sub.w   d2,d6
+        addq.w  #1,d6                ; d6 = width of the rectangle
+        move.w  d7,d1
+        bpl.s   .sh_abs
+        neg.w   d1                   ; d1 = |dx|
+.sh_abs:
+        sub.w   d1,d6                ; d6 = width that stays
+        ble.s   .sh_all
+        movem.w d1-d5,-(sp)          ; (sp) n, xmin, ymin, xmax, ymax
+        move.w  d5,d0
+        sub.w   d3,d0
+        addq.w  #1,d0
+        move.w  d0,d5                ; d5 = height
+        tst.w   d7
+        bmi.s   .sh_right
+        move.w  2(sp),d2             ; left: source xmin + n -> xmin, in one copy
+        move.w  d2,d0
+        add.w   (sp),d0
+        move.w  4(sp),d1
+        move.w  d1,d3
+        move.w  d6,d4
+        bsr.s   .sh_blit
+        movem.w (sp)+,d1-d5
+        move.w  d4,d0                ; freed columns [xmax - n + 1 .. xmax]
+        sub.w   d1,d0
+        addq.w  #1,d0
+        move.w  d4,d2
+        bra.s   .sh_fill
+.sh_right:                           ; right: slices of n columns from the right
+        move.w  d6,d7                ; d7 = width still to copy
+.sh_slice:
+        tst.w   d7
+        ble.s   .sh_rdone
+        move.w  (sp),d4              ; slice width = min(n, rest)
+        cmp.w   d7,d4
+        ble.s   .sh_sw
+        move.w  d7,d4
+.sh_sw:
+        sub.w   d4,d7
+        move.w  2(sp),d0
+        add.w   d7,d0                ; source xmin + rest
+        move.w  d0,d2
+        add.w   (sp),d2              ; destination = source + n
+        move.w  4(sp),d1
+        move.w  d1,d3
+        bsr.s   .sh_blit
+        bra.s   .sh_slice
+.sh_rdone:
+        movem.w (sp)+,d1-d5
+        move.w  d2,d0                ; freed columns [xmin .. xmin + n - 1]
+        add.w   d1,d2
+        subq.w  #1,d2
+        bra.s   .sh_fill
+.sh_all:                             ; everything goes out: the whole rectangle is filled
+        move.w  d2,d0
+        move.w  d4,d2
+.sh_fill:                            ; d0..d2 = x0..x1, rows d3..d5
+        move.w  d5,d4
+        move.w  d3,d1
+        move.w  d4,d3
+        move.l  a2,a1
+        bsr     sr_bgfill
+        movem.l (sp)+,d0-d7/a0-a2
+        rts
+.sh_blit:                            ; ClipBlit within the RastPort: d0/d1 source, d2/d3 destination, d4 x d5 (height)
+        movem.l d5-d7,-(sp)
+        move.l  a2,a0
+        move.l  a2,a1
+        move.w  #$C0,d6
+        bsr     gfx_ClipBlit
+        movem.l (sp)+,d5-d7
+        rts
+
+; sr_bgfill(rp a1, d0 = x0, d1 = y0, d2 = x1, d3 = y1, relative to the Layer, x0 <= x1): fills with pen B in the
+; RastPort's ClipRects (like the freed band of the vertical pass). Preserves everything.
+sr_bgfill:
+        movem.l d0-d7/a0-a1/a5,-(sp)
+        lea     -DC_SIZE(sp),sp
+        move.l  sp,a5
+        movem.w d0-d3,-(sp)
+        bsr     dr_ctx
+        movem.w (sp)+,d4-d7          ; d4..d7 = x0, y0, x1, y1
+        add.w   DC_OX(a5),d4
+        add.w   DC_OX(a5),d6
+        add.w   DC_OY(a5),d5
+        add.w   DC_OY(a5),d7
+        move.b  rp_DrawMode(a1),-(sp)
+        clr.b   rp_DrawMode(a1)
+        move.b  rp_BgPen(a1),d3
+.bf_lp:
+        cmp.w   d7,d5
+        bgt.s   .bf_done
+        move.w  d4,d0
+        move.w  d5,d1
+        move.w  d6,d2
+        bsr     dr_span
+        addq.w  #1,d5
+        bra.s   .bf_lp
+.bf_done:
+        move.b  (sp)+,rp_DrawMode(a1)
+        bsr     dr_end
+        lea     DC_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a1/a5
+        rts
+
+; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5): shifts the contents of the rectangle by dx
+; columns LEFT (dx > 0) or right (dx < 0) and by dy rows UP (dy > 0) or down (dy < 0), and fills the freed bands with
+; pen B. The horizontal pass (sr_horiz) runs first, then the vertical one below. Coordinates relative to the Layer. Each destination row is copied ClipRect by
 ; ClipRect from the ClipRects that contain the source row (screen or backups: same bit alignment
 ; modulo 16, copy by masked bytes). A part whose source is hidden without backup (simple layer) marks
 ; the whole rectangle "damaged" (DamageList + LAYERREFRESH).
@@ -2326,6 +2442,13 @@ SC_YMIN         EQU 26
 SC_YMAX         EQU 28
 SC_SIZE         EQU 30
 gfx_ScrollRaster:
+        tst.w   d0
+        beq.s   sr_vert
+        bsr     sr_horiz
+        tst.w   d1
+        bne.s   sr_vert
+        rts
+sr_vert:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -2477,7 +2600,7 @@ gfx_ScrollRaster:
 ; one) was copied with the blitter in SC_DBM (source = destination), 0 otherwise (plane not in chip memory, rectangle
 ; too wide or too tall for a blit, or entirely exposed: nothing done). One blit per plane: A = constant $FFFF masked
 ; (first/last word), B = source, C = destination, D = AB + ~AC; downwards: descending mode (end addresses,
-; masks swapped). Blitter taken by OwnBlitter. Preserves d2-d7/a1-a6.
+; masks swapped). Blitter taken only if free (AttemptSemaphore on gb_BlitSem), otherwise 0. Preserves d2-d7/a1-a6.
 BLT_CON0        EQU $040
 BLT_CON1        EQU $042
 BLT_AFWM        EQU $044
@@ -2570,10 +2693,13 @@ BLT_DMACONR     EQU $002
         bpl.s   .bl_own
         moveq   #2,d6                ; DESC
 .bl_own:
+        movem.l d0-d1,-(sp)          ; the layer is locked: a program that holds the blitter (OwnBlitter) must not
+        lea     gb_BlitSem(a3),a0    ; stall us here while the input task waits on this layer -> CPU copy instead
+        jsr     LVO_ATTEMPTSEMAPHORE(a6)
         move.l  a3,a6
-        movem.l d0-d1,-(sp)
-        jsr     gfx_OwnBlitter
-        movem.l (sp)+,d0-d1
+        tst.l   d0
+        movem.l (sp)+,d0-d1          ; (movem does not touch the CCR)
+        beq     .bl_no
         move.w  #$8240,DMACON        ; master DMA + blitter
         lea     CUSTOM,a0
         moveq   #0,d5                ; d5 = plane
@@ -2913,7 +3039,9 @@ CB_W    EQU 8
 CB_H    EQU 10
 CB_MT   EQU 12
 CB_DRP  EQU 16
-CB_SIZE EQU 20
+CB_L1   EQU 20                       ; both layers locked up front (cb_lock2), 0 if not needed
+CB_L2   EQU 24
+CB_SIZE EQU 28
 gfx_ClipBlit:
         movem.l d2-d7/a1-a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -2922,6 +3050,10 @@ gfx_ClipBlit:
         movem.w d0-d5,(sp)
         move.l  d6,CB_MT(sp)
         move.l  a1,CB_DRP(sp)
+        move.l  rp_Layer(a0),d0
+        move.l  rp_Layer(a1),d1
+        lea     CB_L1(sp),a2
+        bsr     cb_lock2
         move.l  a0,a1
         bsr     dr_ctx               ; context of the source RastPort (lock of its layer)
         move.w  DC_OX(a5),d0
@@ -2992,9 +3124,78 @@ gfx_ClipBlit:
         bra     .cb_lp
 .cb_done:
         bsr     dr_end
+        lea     CB_L1(sp),a2
+        bsr     cb_unlock2
         lea     CB_SIZE+DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a5
         moveq   #1,d0
+        rts
+
+; cb_lock2(d0 = source layer, d1 = destination layer, a2 = 2 longs): ClipBlit holds the source lock while
+; BltBitMapRastPort takes the destination one: two ClipBlits in opposite directions would deadlock. Both are taken
+; first, in the order LockLayers uses (front to back) when they share a Layer_Info, by address otherwise; the inner
+; obtains then only nest. Stores them at (a2) / 4(a2), zeros if one is missing or both are the same. Preserves
+; everything but d0/d1.
+cb_lock2:
+        clr.l   (a2)
+        clr.l   4(a2)
+        tst.l   d0
+        beq.s   .l2_ret
+        tst.l   d1
+        beq.s   .l2_ret
+        cmp.l   d0,d1
+        beq.s   .l2_ret
+        movem.l d2/a0-a1/a6,-(sp)
+        move.l  d0,d2                ; d2 = source layer, d1 = destination layer
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)       ; the stack order is read without Layer_Info: no other task changes it meanwhile
+        move.l  d2,a0
+        move.l  d1,a1
+        move.l  LY_LAYERINFO(a0),d0
+        cmp.l   LY_LAYERINFO(a1),d0
+        bne.s   .l2_addr
+.l2_front:                           ; is the destination in front of the source?
+        move.l  LY_FRONT(a0),d0
+        beq.s   .l2_src
+        move.l  d0,a0
+        cmp.l   a0,a1
+        beq.s   .l2_dst
+        bra.s   .l2_front
+.l2_addr:
+        cmp.l   d2,d1
+        bhi.s   .l2_src
+.l2_dst:
+        move.l  d1,(a2)
+        move.l  d2,4(a2)
+        bra.s   .l2_take
+.l2_src:
+        move.l  d2,(a2)
+        move.l  d1,4(a2)
+.l2_take:
+        jsr     LVO_PERMIT(a6)
+        move.l  (a2),a0
+        lea     LY_LOCK(a0),a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  4(a2),a0
+        lea     LY_LOCK(a0),a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        movem.l (sp)+,d2/a0-a1/a6
+.l2_ret:
+        rts
+; cb_unlock2(a2 = the 2 longs of cb_lock2): releases what it took. Preserves everything.
+cb_unlock2:
+        tst.l   (a2)
+        beq.s   .u2_ret
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  4(a2),a0
+        lea     LY_LOCK(a0),a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        move.l  (a2),a0
+        lea     LY_LOCK(a0),a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        movem.l (sp)+,d0-d1/a0-a1/a6
+.u2_ret:
         rts
 
 ; BltBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, width d4, height d5, minterm d6):

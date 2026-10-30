@@ -36,6 +36,7 @@
                 xref    ser_puthex
                 xref    dos_resolve          ; dos_lib.s: name -> handler port + lock (deviceproc)
                 xref    dos_sendpkt          ; process.s: synchronous packet (a0 = StandardPacket, a1 = port)
+                xref    dos_waitreply        ; process.s: wait for our message, other ones put back
 
 GV_NEGSLOTS     EQU 50               ; slots -50..-1
 GV_MAX          EQU 150              ; GV[0] = highest allowed global
@@ -401,19 +402,11 @@ bcpl_starthandler:
         move.l  d2,DP_RES2(a0)
         move.l  a3,a0
         jsr     LVO_PUTMSG(a6)       ; PutMsg(port a0, message a1)
-.sh_wait:
+        bsr.s   .sh_msg
         move.l  d6,a0
-        jsr     LVO_WAITPORT(a6)
-        move.l  d6,a0
-        jsr     LVO_GETMSG(a6)
-        move.l  sp,d1
-        btst    #1,d1
-        beq.s   .sh_galign
-        addq.l  #2,d1
-.sh_galign:
-        cmp.l   d1,d0
-        bne.s   .sh_wait
-        move.l  d0,a0
+        jsr     dos_waitreply        ; other messages of the port are put back, not dropped
+        bsr.s   .sh_msg
+        move.l  a1,a0
         move.l  SP_PKT+DP_RES1(a0),d7
         move.l  SP_PKT+DP_RES2(a0),d2
         lea     SP_SIZEOF+2(sp),sp
@@ -439,6 +432,14 @@ bcpl_starthandler:
         moveq   #0,d0
 .sh_ret:
         movem.l (sp)+,d1-d7/a0-a6
+        rts
+.sh_msg:                             ; a1 = our message (long-aligned in the caller's frame, above this return address)
+        lea     4(sp),a1
+        move.l  a1,d0
+        btst    #1,d0
+        beq.s   .sm_ret
+        addq.l  #2,a1
+.sm_ret:
         rts
 .sh_free_a4:                         ; free the BSTR of the full name (a4 = BPTR | 0)
         move.l  a4,d0
@@ -1990,13 +1991,9 @@ g_sendpkt:
         move.l  sp,a1                ; a1 = message
         move.l  MN_SIZE(sp),a0       ; a0 = destination (argument 2)
         jsr     LVO_PUTMSG(a6)       ; PutMsg(port a0, message a1)
-.sk_wait:
         move.l  a3,a0
-        jsr     LVO_WAITPORT(a6)
-        move.l  a3,a0
-        jsr     LVO_GETMSG(a6)
-        tst.l   d0
-        beq     .sk_wait
+        move.l  sp,a1
+        jsr     dos_waitreply
         move.l  DP_RES1(a4),d0
         move.l  DP_RES2(a4),d1
         jsr     dos_pktretry         ; volume ejected: "Please replace volume", Retry -> resend

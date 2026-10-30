@@ -904,7 +904,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     order in ClipBlit/ScrollRaster, sendpkt reply matching, the boot CLI console handler blocking on READ.
     Ed 1.14 works (issue #6): console window bounds report, CSI @/P line shifts, BCPL output through an
     overridden wrch, and the feeder self-test that stole a key is removed from the production ROM.
-    Remaining: horizontal ScrollRaster (dx), ACTION_WAIT_CHAR timeout (answers at once).
+    ScrollRaster scrolls horizontally too, ACTION_WAIT_CHAR waits up to its delay, and the last race suspects are
+    fixed: ClipBlit lock order, ScrollRaster without waiting for a busy blitter, sendpkt reply matching
+    (dos_waitreply), boot CLI console serving WRITEs while a READ waits.
     Workbench icons selected with their alternate image when the icon asks for it (GADGHIMAGE, issue #7).
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale

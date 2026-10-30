@@ -54,7 +54,9 @@ CS_WIO          EQU 96               ; IOStdReq (48) console.device on the windo
 CS_NW           EQU 144              ; NewWindow (48)
 CS_TITLE        EQU 192              ; title (C string, CS_TITLEMAX bytes)
 CS_TITLEMAX     EQU 32
-CS_SIZE         EQU CS_TITLE+CS_TITLEMAX
+CS_SIDEH        EQU CS_TITLE+CS_TITLEMAX ; APTR/APTR packets put aside during a READ (head, tail), 0 = none
+CS_SIDET        EQU CS_SIDEH+4
+CS_SIZE         EQU CS_SIDET+4
 ; NewWindow (intuition/intuition.h) and console window constants
 NW_LEFTEDGE     EQU 0
 NW_DETAILPEN    EQU 8
@@ -178,42 +180,7 @@ con_handler:
                 bra     .reply
 
 .write:
-                ifne    E1_NO_WRITE
-                move.l  DP_ARG3(a4),DP_RES1(a4)  ; RED E1_NO_WRITE: pretends to write, emits nothing
-                bra     .reply
-                endc
-                move.l  DP_ARG3(a4),DP_RES1(a4)  ; RES1 = len
-                move.l  DP_ARG2(a4),a0
-                move.l  DP_ARG3(a4),d0
-                bsr     con_win_write        ; console window (if open)
-                ifne    SHELL_ON_SCREEN
-                ; item 2: renders the WHOLE buffer on screen via console.device CMD_WRITE (the serial mirror follows)
-                move.l  CON_STATE,a0
-                move.l  a0,d0
-                beq.s   .wr_mirror
-                move.l  CS_CONBASE(a0),d0
-                beq.s   .wr_mirror
-                lea     CS_CONIO(a0),a1
-                move.l  d0,IO_DEVICE(a1)
-                move.w  #CON_CMD_WRITE,IO_COMMAND(a1)
-                move.l  DP_ARG2(a4),CON_IODATA(a1)
-                move.l  DP_ARG3(a4),CON_IOLEN(a1)
-                move.l  d0,a6                ; a6 = console.device base for BeginIO
-                jsr     -30(a6)              ; console BeginIO (screen CMD_WRITE)
-                move.l  ($4).w,a6            ; restore a6 = SysBase
-.wr_mirror:
-                endc
-                move.l  DP_ARG2(a4),a5       ; src (a5 survives con_putc)
-                move.l  DP_ARG3(a4),d3       ; len (d3 survives con_putc)
-                tst.l   d3
-                beq     .reply
-                jsr     ser_lock             ; whole buffer atomic on serial (no marker interleaving)
-.wr_lp:
-                move.b  (a5)+,d0
-                bsr     con_putc
-                subq.l  #1,d3
-                bne.s   .wr_lp
-                jsr     ser_unlock
+                bsr     con_dowrite
                 bra     .reply
 
 .read:
@@ -224,6 +191,7 @@ con_handler:
                 move.l  DP_ARG3(a4),CS_MAX(a0)
                 clr.l   CS_CNT(a0)
 .rd_tick:
+                bsr     con_side             ; other packets meanwhile: WRITEs served, the rest kept for later
                 bsr     con_poll_wait        ; ~20 ms (preserves a2/a3/a4/a6)
 .rd_drain:
                 ifne    SHELL_ON_SCREEN
@@ -275,6 +243,7 @@ con_handler:
                 beq.s   .rd_done
                 bra.s   .rd_drain            ; drain other bytes available this tick
 .rd_done:
+                bsr     con_sideback
                 move.l  CON_STATE,a0
                 move.l  CS_CNT(a0),DP_RES1(a4)
                 bra     .reply
@@ -307,6 +276,108 @@ con_handler:
                 move.l  a3,a1
                 jsr     LVO_PUTMSG(a6)
                 bra     .hl
+
+; con_dowrite(a4 = WRITE packet, a6 = SysBase): window, screen and serial output of the buffer, RES1 = length.
+; Also called while a READ waits (con_side). Clobbers d0/d1/a0/a1.
+con_dowrite:
+                movem.l d2-d4/a5,-(sp)
+                ifne    E1_NO_WRITE
+                move.l  DP_ARG3(a4),DP_RES1(a4)  ; RED E1_NO_WRITE: pretends to write, emits nothing
+                bra     .dw_ret
+                endc
+                move.l  DP_ARG3(a4),DP_RES1(a4)  ; RES1 = len
+                move.l  DP_ARG2(a4),a0
+                move.l  DP_ARG3(a4),d0
+                bsr     con_win_write        ; console window (if open)
+                ifne    SHELL_ON_SCREEN
+                ; item 2: renders the WHOLE buffer on screen via console.device CMD_WRITE (the serial mirror follows)
+                move.l  CON_STATE,a0
+                move.l  a0,d0
+                beq.s   .dw_mirror
+                move.l  CS_CONBASE(a0),d0
+                beq.s   .dw_mirror
+                lea     CS_CONIO(a0),a1
+                move.l  d0,IO_DEVICE(a1)
+                move.w  #CON_CMD_WRITE,IO_COMMAND(a1)
+                move.l  DP_ARG2(a4),CON_IODATA(a1)
+                move.l  DP_ARG3(a4),CON_IOLEN(a1)
+                move.l  d0,a6                ; a6 = console.device base for BeginIO
+                jsr     -30(a6)              ; console BeginIO (screen CMD_WRITE)
+                move.l  ($4).w,a6            ; restore a6 = SysBase
+.dw_mirror:
+                endc
+                move.l  DP_ARG2(a4),a5       ; src (a5 survives con_putc)
+                move.l  DP_ARG3(a4),d3       ; len (d3 survives con_putc)
+                tst.l   d3
+                beq     .dw_ret
+                jsr     ser_lock             ; whole buffer atomic on serial (no marker interleaving)
+.dw_lp:
+                move.b  (a5)+,d0
+                bsr     con_putc
+                subq.l  #1,d3
+                bne.s   .dw_lp
+                jsr     ser_unlock
+.dw_ret:
+                movem.l (sp)+,d2-d4/a5
+                rts
+
+; con_side(a2 = our pr_MsgPort, a6 = SysBase): called while a READ waits for its line. A WRITE that arrives (output of
+; a "run" job, for instance) is served at once; any other packet is put aside (CS_SIDEH/T) and goes back to the port
+; when the READ ends (con_sideback). Preserves everything.
+con_side:
+                movem.l d0-d4/a0-a1/a3-a5,-(sp)
+.cs_lp:
+                move.l  a2,a0
+                jsr     LVO_GETMSG(a6)
+                tst.l   d0
+                beq.s   .cs_ret
+                move.l  d0,a3
+                move.l  LN_NAME(a3),a4
+                cmp.l   #ACTION_WRITE,DP_TYPE(a4)
+                bne.s   .cs_aside
+                clr.l   DP_RES2(a4)
+                bsr     con_dowrite
+                move.l  DP_PORT(a4),a0
+                move.l  a2,DP_PORT(a4)
+                move.l  a3,a1
+                jsr     LVO_PUTMSG(a6)
+                bra.s   .cs_lp
+.cs_aside:
+                move.l  CON_STATE,a0
+                clr.l   LN_SUCC(a3)
+                move.l  CS_SIDET(a0),d0
+                beq.s   .cs_first
+                move.l  d0,a1
+                move.l  a3,LN_SUCC(a1)
+                bra.s   .cs_tail
+.cs_first:
+                move.l  a3,CS_SIDEH(a0)
+.cs_tail:
+                move.l  a3,CS_SIDET(a0)
+                bra.s   .cs_lp
+.cs_ret:
+                movem.l (sp)+,d0-d4/a0-a1/a3-a5
+                rts
+
+; con_sideback(a2 = our pr_MsgPort, a6 = SysBase): the packets put aside go back to the port, in order. Preserves
+; everything.
+con_sideback:
+                movem.l d0-d2/a0-a1,-(sp)
+                move.l  CON_STATE,a0
+                move.l  CS_SIDEH(a0),d2
+                clr.l   CS_SIDEH(a0)
+                clr.l   CS_SIDET(a0)
+.sb_lp:
+                tst.l   d2
+                beq.s   .sb_ret
+                move.l  d2,a1
+                move.l  LN_SUCC(a1),d2
+                move.l  a2,a0
+                jsr     LVO_PUTMSG(a6)
+                bra.s   .sb_lp
+.sb_ret:
+                movem.l (sp)+,d0-d2/a0-a1
+                rts
 
 ; con_putc: emits d0.b on serial (bounded TBE poll). Clobbers d0/d1/d2; preserves the rest.
 con_putc:

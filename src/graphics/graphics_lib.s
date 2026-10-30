@@ -15,7 +15,6 @@
 ; --- graphics.library ROMTag (scanned by build_reslist) ---
         EVEN
 ; drawing primitives: src/graphics/draw.s
-                xdef    gfx_OwnBlitter       ; draw.s (ScrollRaster with the blitter)
                 xdef    gfx_DisownBlitter
                 xref    gfx_BltTemplate
                 xref    gfx_InitArea
@@ -829,7 +828,7 @@ gfx_QBlit:
         rts
 
 ; gfx_OwnBlitter(): takes the blitter (gb_BlitSem semaphore: waits until no other task owns it), then waits
-; for it to be idle. The system uses it too (ScrollRaster): a program that holds it holds it for everyone.
+; for it to be idle. ScrollRaster only uses the blitter when nobody holds it (AttemptSemaphore).
 gfx_OwnBlitter:
         move.l  a6,-(sp)
         lea     gb_BlitSem(a6),a0

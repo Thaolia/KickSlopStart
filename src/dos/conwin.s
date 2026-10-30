@@ -47,7 +47,11 @@ CW_TITLE        EQU CW_NW+48         ; title (CW_TITLEMAX)
 CW_TITLEMAX     EQU 80
 CW_LINE         EQU CW_TITLE+CW_TITLEMAX  ; line buffer
 CW_LINEMAX      EQU 256
-CW_SIZE         EQU CW_LINE+CW_LINEMAX
+CW_WCPKT        EQU CW_LINE+CW_LINEMAX   ; BPTR of a WAIT_CHAR waiting for a key or its delay, 0 = none
+CW_TOPEN        EQU CW_WCPKT+4       ; BYTE: timer.device opened (first WAIT_CHAR that has to wait)
+CW_TON          EQU CW_TOPEN+1       ; BYTE: the delay is running
+CW_TIO          EQU CW_TOPEN+2       ; timerequest (TR_SIZE), replied on CW_RPORT like the console read
+CW_SIZE         EQU CW_TIO+TR_SIZE
 ; NewWindow
 NW_DETAILPEN_C  EQU 8
 NW_FLAGS_C      EQU 14
@@ -173,6 +177,13 @@ cw_loop:
                 jsr     LVO_GETMSG(a6)
                 tst.l   d0
                 beq.s   .lp_pkt
+                lea     CW_TIO(a5),a0
+                cmp.l   a0,d0
+                bne.s   .lp_rd
+                clr.b   CW_TON(a5)           ; delay of a WAIT_CHAR over: no character came
+                bsr     cw_wcdone
+                bra.s   .lp_key
+.lp_rd:
                 clr.b   CW_RDON(a5)
                 tst.b   CW_RIO+IO_ERROR(a5)
                 bne.s   .lp_rearm
@@ -234,12 +245,20 @@ cw_packet:
                 moveq   #-1,d0
                 moveq   #0,d1
                 bra     cw_reply
-.pk_wait:                                    ; is a character available? (no waiting)
-                moveq   #0,d0
+.pk_wait:                                    ; Arg1 = delay in microseconds: answered as soon as a
+                moveq   #-1,d0                       ; character is available, FALSE when the delay runs out
                 tst.l   CW_DLV(a5)
-                beq.s   .pk_w0
-                moveq   #-1,d0
-.pk_w0:
+                bne.s   .pk_wnow
+                moveq   #0,d0
+                move.l  DP_ARG1(a4),d1
+                beq.s   .pk_wnow
+                tst.l   CW_WCPKT(a5)
+                bne.s   .pk_wnow             ; one WAIT_CHAR at a time (a second one: FALSE at once)
+                bsr     cw_wcstart
+                beq.s   .pk_wnow             ; no timer.device: FALSE at once
+                move.l  d2,CW_WCPKT(a5)
+                rts
+.pk_wnow:
                 moveq   #0,d1
                 bra     cw_reply
 .pk_mode:                                    ; Arg1: 0 = CON (line), otherwise RAW
@@ -351,7 +370,83 @@ cw_serve:
                 bsr     cw_reply
                 bra.s   .sv_lp
 .sv_ret:
+                tst.l   CW_WCPKT(a5)         ; a WAIT_CHAR waits and a character is there: TRUE
+                beq.s   .sv_end
+                tst.l   CW_DLV(a5)
+                beq.s   .sv_end
+                bsr     cw_wcdone
+.sv_end:
                 movem.l (sp)+,d2-d6/a2-a4
+                rts
+
+; cw_wcstart(d1 = delay in microseconds, a5): starts the delay of a WAIT_CHAR (timer.device VBLANK unit, opened on
+; first use, reply on CW_RPORT). Z = 1 if timer.device cannot be opened. Preserves d2-d7/a2-a5.
+cw_wcstart:
+                move.l  a6,-(sp)
+                move.l  ($4).w,a6
+                lea     CW_TIO(a5),a1
+                tst.b   CW_TOPEN(a5)
+                bne.s   .ws_open
+                move.l  d1,-(sp)
+                move.l  CW_RPORT(a5),MN_REPLYPORT(a1)
+                lea     cw_timername(pc),a0
+                moveq   #UNIT_VBLANK,d0
+                moveq   #0,d1
+                jsr     LVO_OPENDEVICE(a6)
+                move.l  (sp)+,d1
+                tst.l   d0
+                bne.s   .ws_fail
+                st      CW_TOPEN(a5)
+                lea     CW_TIO(a5),a1
+.ws_open:
+                moveq   #0,d0                ; seconds and microseconds (68000: no 32-bit divide)
+.ws_sec:
+                cmp.l   #1000000,d1
+                blo.s   .ws_set
+                sub.l   #1000000,d1
+                addq.l  #1,d0
+                bra.s   .ws_sec
+.ws_set:
+                move.l  d0,TV_SECS(a1)
+                move.l  d1,TV_MICRO(a1)
+                move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
+                jsr     LVO_SENDIO(a6)
+                st      CW_TON(a5)
+                moveq   #1,d0                ; Z = 0
+                bra.s   .ws_ret
+.ws_fail:
+                moveq   #0,d0
+.ws_ret:
+                move.l  (sp)+,a6
+                rts
+
+; cw_wcdone(a5): answers the waiting WAIT_CHAR (TRUE if a character is available, otherwise FALSE) and stops its
+; delay if it still runs. Preserves d2-d7/a2-a5.
+cw_wcdone:
+                move.l  d2,-(sp)
+                move.l  CW_WCPKT(a5),d2
+                beq.s   .wd_ret
+                clr.l   CW_WCPKT(a5)
+                tst.b   CW_TON(a5)
+                beq.s   .wd_reply
+                clr.b   CW_TON(a5)
+                move.l  a6,-(sp)
+                move.l  ($4).w,a6
+                lea     CW_TIO(a5),a1
+                jsr     LVO_ABORTIO(a6)
+                lea     CW_TIO(a5),a1
+                jsr     LVO_WAITIO(a6)
+                move.l  (sp)+,a6
+.wd_reply:
+                moveq   #0,d0
+                tst.l   CW_DLV(a5)
+                beq.s   .wd_r
+                moveq   #-1,d0
+.wd_r:
+                moveq   #0,d1
+                bsr     cw_reply
+.wd_ret:
+                move.l  (sp)+,d2
                 rts
 
 ; cw_key(d0.b = character, a5): RAW -> deliverable as is; CON -> line editing with echo (backspace,
@@ -488,7 +583,13 @@ cw_close:
                 bsr     cw_serve
                 bra.s   .cl_rq
 .cl_io:
+                bsr     cw_wcdone            ; a waiting WAIT_CHAR: FALSE, delay stopped
                 move.l  ($4).w,a6
+                tst.b   CW_TOPEN(a5)
+                beq.s   .cl_rd
+                lea     CW_TIO(a5),a1
+                jsr     LVO_CLOSEDEVICE(a6)
+.cl_rd:
                 tst.b   CW_RDON(a5)
                 beq.s   .cl_dev
                 lea     CW_RIO(a5),a1
@@ -588,6 +689,8 @@ cw_intname:
                 dc.b    "intuition.library",0
 cw_conname:
                 dc.b    "console.device",0
+cw_timername:
+                dc.b    "timer.device",0
 cw_bs:
                 dc.b    8,32,8
 cw_crlf:
