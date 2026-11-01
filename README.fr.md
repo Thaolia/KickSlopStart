@@ -21,6 +21,15 @@ Chaque image est construite depuis les sources du tag par un workflow GitHub (`.
 épinglée) : elle est identique à l'octet à un `make kick-prod` local du même commit, et son SHA-256 figure dans les notes
 de la release. Pour publier une nouvelle release, pousser un tag : `git tag v0.1.0 && git push origin v0.1.0`.
 
+## Essayer dans le navigateur
+
+**[Lancer KickSlopStart dans vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%7D)** : l'émulateur Amiga du navigateur démarre avec la dernière ROM publiée
+au lieu de la sienne. Sans disquette, il s'arrête sur l'écran d'insertion ; insérez votre propre ADF depuis le menu
+disquette de vAmigaWeb ou en la déposant sur la fenêtre. Le lien passe la ROM par le réglage `kickstart_rom_url` de
+vAmigaWeb (`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, encodé). La ROM vient de la branche `rom`
+(`KickSlopStart.rom`), que le workflow de release met à jour à chaque tag : le navigateur ne laisse vAmigaWeb charger
+qu'un fichier servi avec un en-tête CORS, ce que fait `raw.githubusercontent.com` et pas le téléchargement des releases.
+
 ## Ce qui fonctionne
 
 Tous les résultats ci-dessous viennent d'un démarrage de la ROM en émulateur (FS-UAE, et WinUAE en mode A500 au cycle

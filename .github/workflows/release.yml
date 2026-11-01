@@ -1,6 +1,6 @@
-# Builds the production ROM from source and publishes it as a GitHub release.
-# Trigger: pushing a tag v* (e.g. `git tag v0.1.0 && git push origin v0.1.0`). A manual run (workflow_dispatch)
-# builds the ROM and keeps it as a workflow artifact without publishing a release.
+# Builds the production ROM from source and publishes it as a GitHub release, and on the "rom" branch for
+# browser emulators. Trigger: pushing a tag v* (e.g. `git tag v0.1.0 && git push origin v0.1.0`). A manual run
+# (workflow_dispatch) builds the ROM and keeps it as a workflow artifact without publishing anything.
 # The toolchain is pinned to the versions the project is developed with, so the published image is byte-identical
 # to a local `make kick-prod` of the same commit.
 name: release
@@ -82,3 +82,33 @@ jobs:
           files: |
             dist/${{ steps.pkg.outputs.name }}
             dist/SHA256SUMS
+
+      # Browser emulators (vAmigaWeb) fetch the ROM from JavaScript, which needs a CORS header: release assets have
+      # none, raw.githubusercontent.com has one. The orphan branch "rom" therefore carries the latest image under a
+      # fixed name (KickSlopStart.rom) and a copy per tag.
+      - name: Publish the ROM on the rom branch
+        if: github.ref_type == 'tag'
+        env:
+          NAME: ${{ steps.pkg.outputs.name }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          dir="$RUNNER_TEMP/rom"
+          if git ls-remote --exit-code --heads origin rom >/dev/null; then
+            git fetch --depth=1 origin rom
+            git worktree add --detach "$dir" FETCH_HEAD
+          else
+            git worktree add --detach "$dir" HEAD
+            git -C "$dir" checkout --orphan rom
+            git -C "$dir" rm -rfq .
+          fi
+          cp "dist/$NAME" "$dir/KickSlopStart.rom"
+          cp "dist/$NAME" "$dir/$NAME"
+          (cd "$dir" && sha256sum KickSlopStart-*.rom KickSlopStart.rom > SHA256SUMS)
+          printf '%s\n' "# KickSlopStart ROM images" "" \
+            "Production ROM of each release, built by the release workflow. KickSlopStart.rom is the latest one" \
+            "(${GITHUB_REF_NAME}). This branch exists so that browser emulators can load the ROM (CORS)." \
+            > "$dir/README.md"
+          git -C "$dir" add -A
+          git -C "$dir" commit -qm "ROM ${GITHUB_REF_NAME}"
+          git -C "$dir" push origin HEAD:refs/heads/rom
