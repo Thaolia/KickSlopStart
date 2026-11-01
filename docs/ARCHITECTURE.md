@@ -564,6 +564,40 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7j) **Window resizing: simple layers, real SuperBitMaps** (GitHub issue #10, 2026-11-01; specs
+  `layers-v34.md` §4-§6 and §10.1, `intuition-gzz-v34.md` §2.5, completed by `tests/resize_probe.s` on the real ROM).
+  Reported with the Workbench 1.2 disk: resizing the Lines demo gave a Guru #5, resizing Clock left old dials.
+  - graphics `dr_rect`: the high word of d6 (bytes per plane of a multicolour pattern) is only used with a pattern.
+    Draw, SetRast and ClearEOL pass no pattern but left anything there, so a null pattern pointer was advanced
+    between planes and the next plane was filled from a bogus odd address (address error in Lines at launch).
+    Regression of the multicolour RectFill (7g).
+  - layers, simple layers: MoveLayer and SizeLayer damage the whole layer (SizeLayer empties the DamageList
+    first) and clear its visible parts. The 1.3 ROM keeps nothing of a resized simple layer and only thin strips
+    of a moved one; we clear everything. Clock, which does not erase its background, now redraws on a blank window.
+  - layers, LAYERSUPER with a SuperBitMap: 4 SuperClipRects (one block, `SuperSaveClipRects`) cover the SuperBitMap
+    outside the window, rebuilt at creation and after Move/Size/ScrollLayer. Deviation: their bounds are absolute,
+    like the other ClipRects, so graphics can filter every ClipRect the same way; `cr_lobs` = the layer marks them.
+    SizeLayer, MoveLayer and ScrollLayer save the layer into the SuperBitMap first (SyncSBitMap) and show it again
+    afterwards (CopySBitMap); such a layer is never damaged. ScrollLayer changes Scroll_X/Y (also without a
+    SuperBitMap). SyncSBitMap/CopySBitMap are graphics LVO -444/-450 (code in `layers.s`).
+  - graphics: the drawing offset is bounds - Scroll. The write loops (span, rect, line, text cell, BltTemplate,
+    BltBitMapRastPort) go on with the SuperClipRects after the layer's list (`dr_next`); `dr_crset` points such a
+    piece at the SuperBitMap. ClipBlit's source side, ScrollRaster and ReadPixel stay on the window. `dr_line`
+    stops walking a segment once it leaves the current ClipRect again (x and y are monotonic, so the points
+    inside form one run); `tests/drawcheck.s` gives the same fingerprints as before.
+  - The boot self-test of layers expected a resized simple layer to keep its contents; it now expects 0.
+  - intuition: the interior layer of a GIMMEZEROZERO | SUPER_BITMAP window gets NewWindow.BitMap as SuperBitMap
+    (it had none, so Lines read `Layer->SuperBitMap->Rows` from low memory and divided by 0).
+  - Proven under FS-UAE with the Workbench 1.2 disk, programs started from the shell: Lines shrunk to its minimum
+    and enlarged without Guru, contents back from the SuperBitMap; Clock enlarged three times then shrunk, no old
+    dial left after enlarging.
+  - Still open: the real ROM sends no NEWSIZE for a SizeWindow() call (probe Q4; untested for a drag of the
+    size gadget, which is what Lines and Clock rely on); we send it for both. After a shrink, Clock may leave a
+    sliver drawn with its old size before it handles NEWSIZE. Lines draws about 37 lines/s with our CPU line
+    drawing into its 1008 x 512 SuperBitMap, so its small window changes much less often than on the 1.3 ROM
+    (frozen for ~16 s there too, then bursts every few seconds). A non-GZZ SUPER_BITMAP window's frame is not put
+    into the SuperBitMap as the 1.3 ROM does (probe Q6). The Workbench 1.2 disk does not reach its desktop on our
+    ROM (1.2 `If`, `Echo` with a quoted argument, `LoadWB`): separate work.
   (7i) **Memory usage and race fixes** (2026-10-30).
   - Memory: an idle English Workbench leaves ~60 KB less free than on 1.3. Breakdown by caller in
     `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is

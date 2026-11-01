@@ -4,6 +4,8 @@
 > headless Ghidra decompilation, base `$FC0000`, notes outside the repository) and black-box probe
 > `tests/layers_probe.s` (harness `tests/layers_probe.sh`) run **twice** on the **real ROM**
 > under FS-UAE (A500 PAL, 512 KB chip + 512 KB slow), identical results apart from pointers.
+> Resizing/moving content and the intuition side were added from `tests/resize_probe.s` (harness
+> `tests/resize_probe.sh`, pixel readback, four runs with identical results apart from pointers, §10.1).
 > This document describes **behaviours**, **values**, **orders of operations** and
 > **ABI layouts**; it contains no ROM instruction sequence and no routine address.
 >
@@ -249,9 +251,9 @@ hidden (60,30)-(115,59) lobs B. [O]
 
 | Flags | Hidden parts | Re-exposure | Move | Size (grow) | Size (shrink) |
 |---|---|---|---|---|---|
-| **LAYERSIMPLE (1)** | ClipRect without buffer: drawings there are lost | cleared to 0 + damage + LAYERREFRESH | **whole layer** damaged + LAYERREFRESH; content largely cleared (§5.6) [O] | whole layer damaged + LAYERREFRESH [O] | same |
+| **LAYERSIMPLE (1)** | ClipRect without buffer: drawings there are lost | cleared to 0 + damage + LAYERREFRESH | **whole layer** damaged + LAYERREFRESH; content kept **only** where it came from the part of the old position that the new position does not overlap, everything else 0 (§5.6) [O] | whole layer damaged + LAYERREFRESH; **the whole layer is 0**, nothing of the old content survives, covered or not (§5.7) [O] | same: whole (new) layer damaged and 0 [O] |
 | **LAYERSMART (2)** | CHIP buffer | restored, no damage | content copied, no damage [O] | right strip `(W−dx … W−1) × whole height` and bottom strip `(whole width) × (H−dy … H−1)` as damage + LAYERREFRESH; the strips are 0 [O] | damage **not** trimmed (§5.7) [O] |
-| **LAYERSUPER (4)** (without SMART) | CHIP buffer, like SMART [D] | restored [D] | content copied [D] | no damage; content taken from the SuperBitMap [O] | same [D] |
+| **LAYERSUPER (4)** (without SMART) | CHIP buffer, like SMART [D] | restored [D] | content copied [D] | no damage, no LAYERREFRESH; old part kept, newly visible part taken from the SuperBitMap [O] | same [D] |
 | **LAYERBACKDROP ($40)** | (according to SIMPLE/SMART) | | | | |
 
 - A SMART bit is never tested: **everything that does not have LAYERSIMPLE is treated as SMART**. A layer
@@ -346,7 +348,16 @@ Detailed in installclipregion-v34 §4.1; additions:
 - The `Layer` structure **keeps its address**; so does its `rp`. The SUPER bit is not passed on to T (the
   copy goes through the ClipRects, SuperClipRects unchanged). [D]
 - **SIMPLE layer**: the content is largely **lost** (the areas of the old position
-  covered by T are cleared before the copy) and the whole layer is damaged. In addition, the
+  covered by T are cleared before the copy) and the whole layer is damaged. Exact rule [O for the case
+  below, D for the generalisation]: T (SIMPLE) is cleared to 0 when it is created; the original then
+  only keeps visible what T does not overlap, i.e. **old rectangle minus new rectangle** (minus what
+  other layers cover); that part is copied to the **same layer-relative coordinates** in T; every other
+  pixel of the moved layer is 0. The strips of the old position that no layer covers any more are
+  cleared to 0 (re-exposure of the background, as for DeleteLayer, T15).
+  Observed (B SIMPLE 100×60 at (60,30), 8×8 checker drawn over the whole layer, MoveLayer(+8,+4), so
+  new bounds (68,34)-(167,93)): layer rows 0-3 (all 100 columns) and layer columns 0-7 (all 60 rows)
+  hold the pattern **at the right layer-relative position** (content moved with the layer); all other
+  pixels of the layer are 0; screen strips x 60-67 and y 30-33 (old position only) are 0. In addition, the
   DamageList receives **spurious** rectangles: for each hidden ClipRect without buffer of the original,
   a rectangle whose MinX/MinY are relative to the ClipRect and MaxX/MaxY in screen coordinates. Observed
   (B 100×60 moved by (+8,+4)): region with bounds `(0,0)-(149,89)` instead of `(0,0)-(99,59)`. No
@@ -359,6 +370,21 @@ Detailed in installclipregion-v34 §4.1; additions:
 Same scheme as MoveLayer with T = (MinX, MinY, MaxX + dx, MaxY + dy). Differences:
 - Non-SUPER layer: copy of content from the original to T over `min(widths) × min(heights)`; SUPER:
   **SyncSBitMap** of the original instead.
+- **SIMPLE layer: nothing survives.** With the rule of §5.6 (only the part of the original outside T
+  is copied, to the same layer-relative coordinates), a grow leaves no such part and a shrink leaves
+  only the right/bottom strips, which fall outside `min(widths) × min(heights)`. Result: the **whole
+  new layer is 0**, and the old area outside the new bounds is 0 too when no layer is behind it. [O]
+  Observed, B SIMPLE (60,30)-(159,89) filled with an 8×8 checker:
+  - SizeLayer(+20,+10) alone: every pixel of (60,30)-(179,99) is 0; Flags `$0081`; DamageList
+    = one rectangle `(0,0)-(119,69)` (the whole new layer).
+  - SizeLayer(−30,−15) alone: every pixel of the old area (60,30)-(159,89) is 0 (the new layer
+    (60,30)-(129,74) and the uncovered rest); DamageList = `(0,0)-(69,44)` (whole new layer: here
+    trimmed, because the original's DamageList was empty before the call).
+  - Same two calls with C SMART (130,60)-(199,109) **in front** of B (B partly covered): identical result
+    for B (all its visible pixels 0, DamageList = whole new layer **including** the part hidden by C:
+    `(0,0)-(119,69)` and `(0,0)-(69,44)`); after the grow B gets a hidden ClipRect under C without
+    buffer (`(130,60)-(179,99)`, lobs C); **C is untouched** (content kept, Flags `$0002`, empty
+    DamageList).
 - Damage: T SIMPLE ⇒ T's DamageList **emptied** then = the whole layer, LAYERREFRESH. T SMART non-
   SUPER ⇒ `dx > 0`: right strip `(W−dx, 0)-(W−1, H−1)`; `dy > 0`: bottom strip `(0, H−dy)-(W−1, H−1)`
   (W, H = new dimensions), LAYERREFRESH; `dx < 0` or `dy < 0`: the DamageList **of T** is trimmed
@@ -429,6 +455,15 @@ Observed: on a hidden ClipRect of A (smart) under B (simple, area at 0), the scr
   to NULL. Neither one locks. [D]
 - Observed: at creation, the screen pixel at the layer's corner = pixel (0,0) of the SuperBitMap; after
   ScrollLayer(16,7) = pixel (16,7). SizeLayer(+8,+4): no LAYERREFRESH. [O]
+- Observed through intuition (`intuition-gzz-v34.md` §2.5): the inner layer of a GIMMEZEROZERO |
+  SUPER_BITMAP window (flags `$0004`, `SuperBitMap` = `NewWindow.BitMap`) grown by (+40,+20): every
+  newly visible pixel equals the SuperBitMap pixel at the same layer-relative position, the old part is
+  unchanged, no damage, no LAYERREFRESH, and the SuperBitMap itself is unchanged (the visible part
+  was synced back unchanged). SuperClipRects rebuilt: 178×76 layer on a 320×200 SuperBitMap →
+  `(0,76)-(177,199)`, `(178,0)-(319,199)`; 218×96 → `(0,96)-(217,199)`, `(218,0)-(319,199)`. [O]
+- Non-GZZ SUPER_BITMAP window: the frame drawn by intuition lives in the same SUPER layer and ends up
+  **in the SuperBitMap** (already right after OpenWindow, before any resize); see
+  `intuition-gzz-v34.md` §2.5 for the resize consequences. [O]
 
 ---
 
@@ -553,6 +588,29 @@ T24 CHIP exhausted : BehindLayer(A)=0, CreateUpfrontLayer=NULL, SizeLayer=0, Mov
 
 Proposed non-regression: reproduce these lines (except pointers).
 
+### 10.1 Resize/move content (probe `tests/resize_probe.s`)
+
+Private BitMap 320×200×2, background pen 3; pattern = 8×8 checker of pens 1/2 relative to the layer
+origin, drawn through the layer's RastPort over the whole layer. Grid lines `R ya-yb runs` (decimal
+screen coordinates, `#` = pattern at the current layer position, `b` = pattern at both old and new
+positions, `.` = 0, `z` = pen 3 not matching, number = run length).
+
+```
+T1a B SIMPLE (60,30)-(159,89), SizeLayer(+20,+10) =1 : LB 0081 … D 0000000000770045 (one rect)
+    R 30-99 z4.120z4                 whole new layer 0
+T1b SizeLayer(-30,-15) =1 : LB 0081 … 003C001E0081004A D 000000000045002C
+    R 30-89 z4.100z24                old area 0 (new layer and uncovered rest)
+T2a + C SMART (130,60)-(199,109) in front, filled pen 3 ; SizeLayer(B,+20,+10) =1
+    LB 0081 … C (130,30)-(179,59) 0, C (60,30)-(129,99) 0, C (130,60)-(179,99) lobs C no buffer
+    D 0000000000770045 ; LC 0002 … D empty
+    R 30-59 z4.120z24 / R 60-99 z4.70z74      B 0, C intact
+T2b SizeLayer(B,-30,-15) =1 : D 000000000045002C ; R 30-59 z4.100z44 / R 60-89 z4.70z74
+T3  MoveLayer(B,+8,+4) =1 : LB 0081 … 0044002200A7005D
+    D 00000000009F0059 + 4 rects (bounds (0,0)-(159,89) overflow the 100×60 layer, §5.6)
+    R 30-33 z4.100z16    R 34-37 z4.8#100z8    R 38-41 z4.8b8.92z8    R 42-45 z4.8#8.92z8 …
+    R 90-93 z12#8.92z8   (rows 0-3 and columns 0-7 of the moved layer keep the pattern, rest 0)
+```
+
 ---
 
 ## Open points
@@ -576,6 +634,10 @@ Proposed non-regression: reproduce these lines (except pointers).
    (mixed coordinates) is deduced. Nothing indicates that any 1.3 software reads these bounds.
 9. Deadlocks between tasks (ObtainSemaphoreList while another task holds a `Layer.Lock` and
    waits for `li->Lock`): not studied.
+10. MoveLayer of a SIMPLE layer with a **negative** offset, or partly covered: only the (+8,+4) case on
+    an uncovered layer is observed; the "old minus new rectangle" rule is the deduced generalisation.
+11. Non-GZZ SUPER_BITMAP window after SizeWindow: how frame pixels reach the SuperBitMap without
+    reaching the screen (`intuition-gzz-v34.md` §2.5) is observed, not explained.
 
 ---
 
@@ -585,4 +647,5 @@ Proposed non-regression: reproduce these lines (except pointers).
   LVOs, offsets of public/private structures, sizes, ABI constants and hardware registers).
 - [x] The algorithms are described by their **effect** (shapes, orders, values), verified by probe where
   marked [O].
-- [x] The cited probe is author code (`tests/layers_probe.s`, header "ASSET DE TEST, PAS du code ROM").
+- [x] The cited probes are author code (`tests/layers_probe.s`, header "ASSET DE TEST, PAS du code ROM";
+  `tests/resize_probe.s`, header "TEST ASSET, NOT ROM code"); §10.1 is pure black-box readback.

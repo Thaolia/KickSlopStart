@@ -74,6 +74,10 @@ CR_ORGX         EQU 24               ; origin of the backup (layers private: cr_
 CR_ORGY         EQU 26
 LY_CLIPRECT     EQU 8
 LY_FLAGS        EQU 30
+LY_SUPERBM      EQU 32
+LY_SUPERCR      EQU 36               ; SuperClipRect list: pieces of the SuperBitMap outside the window
+LY_SCROLLX      EQU 44
+LY_SCROLLY      EQU 46
 LY_LOCK         EQU 72
 LY_FRONT        EQU 0
 LY_LAYERINFO    EQU 68
@@ -122,10 +126,13 @@ dr_end:
 .de_r:
         rts
 ; dr_crset(a0 = ClipRect, a5): current ClipRect -> DC_C*, DC_CBM, DC_BX/BY. Z = 1 if unusable (hidden without
-; backup, or empty once clipped to the BitMap). Preserves everything except d0.
+; backup, or empty once clipped to the BitMap). A SuperClipRect (cr_lobs = the layer itself, absolute bounds)
+; targets the SuperBitMap, whose origin in absolute coordinates is the drawing offset. Preserves everything except d0.
 dr_crset:
-        tst.l   CR_LOBS(a0)
+        move.l  CR_LOBS(a0),d0
         beq.s   .cs_vis
+        cmp.l   DC_LAYER(a5),d0
+        beq.s   .cs_super
         move.l  CR_BITMAP(a0),d0
         beq     .cs_r                ; Z = 1
         move.l  d0,DC_CBM(a5)
@@ -157,6 +164,15 @@ dr_crset:
         cmp.w   DC_CMAXY(a5),d0
         bge.s   .cs_ok
         move.w  d0,DC_CMAXY(a5)
+        bra.s   .cs_ok
+.cs_super:
+        move.l  a1,-(sp)
+        move.l  d0,a1
+        move.l  LY_SUPERBM(a1),DC_CBM(a5)
+        move.l  (sp)+,a1
+        move.l  DC_OX(a5),DC_BX(a5)  ; BX, BY = OX, OY
+        move.l  CR_MINX(a0),DC_CMINX(a5)
+        move.l  CR_MINX+4(a0),DC_CMAXX(a5)
 .cs_ok:
         move.w  DC_CMINX(a5),d0      ; empty?
         cmp.w   DC_CMAXX(a5),d0
@@ -169,6 +185,28 @@ dr_crset:
 .cs_empty:
         moveq   #0,d0
 .cs_r:
+        rts
+
+; dr_next(a0 = ClipRect, a5) -> a0 = next ClipRect to draw into (0 at the end): after the layer's list come the
+; SuperClipRects of its SuperBitMap, recognised by cr_lobs = the layer. Preserves everything else.
+dr_next:
+        move.l  d0,-(sp)
+        move.l  CR_NEXT(a0),d0
+        bne.s   .nx_r
+        move.l  DC_LAYER(a5),d0
+        beq.s   .nx_r
+        cmp.l   CR_LOBS(a0),d0
+        beq.s   .nx_end              ; end of the SuperClipRects
+        move.l  d0,a0
+        tst.l   LY_SUPERBM(a0)
+        beq.s   .nx_end
+        move.l  LY_SUPERCR(a0),d0
+        bra.s   .nx_r
+.nx_end:
+        moveq   #0,d0
+.nx_r:
+        move.l  d0,a0
+        move.l  (sp)+,d0
         rts
 
 ; dr_ctx0(a1 = RastPort, a5): offset, clipping area (layer bounds ∩ BitMap), BitMap.
@@ -188,8 +226,12 @@ dr_ctx0:
         move.l  rp_Layer(a1),d0
         beq.s   .dc_ret
         move.l  d0,a0
-        move.w  lr_MinX(a0),DC_OX(a5)
-        move.w  lr_MinY(a0),DC_OY(a5)
+        move.w  lr_MinX(a0),d0       ; offset = bounds - Scroll (layers-v34 §3)
+        sub.w   LY_SCROLLX(a0),d0
+        move.w  d0,DC_OX(a5)
+        move.w  lr_MinY(a0),d0
+        sub.w   LY_SCROLLY(a0),d0
+        move.w  d0,DC_OY(a5)
         move.w  lr_MinX(a0),d0       ; intersection of Layer bounds / BitMap
         cmp.w   DC_MINX(a5),d0
         ble.s   .dc_x0
@@ -230,7 +272,7 @@ dr_span:
         move.l  (sp),d0
         bsr     dr_span1
 .ds_n:
-        move.l  CR_NEXT(a0),a0
+        bsr     dr_next
         bra.s   .ds_lp
 .ds_r:
         movem.l (sp)+,d0/a0
@@ -344,7 +386,8 @@ dr_span1:
         rts
 
 ; dr_rect(a5 = context, d0/d1 = top-left corner, d2/d3 = bottom-right corner (absolute, inclusive), d4.b = pen A,
-; d5.b = pen B, a0 = pattern (0: solid), d6.w = pattern row mask): fills the rectangle in each
+; d5.b = pen B, a0 = pattern (0: solid), d6.w = pattern row mask, high word of d6 = bytes per plane of a multicolour
+; pattern, ignored when solid since the callers that pass no pattern leave anything there): fills the rectangle in each
 ; usable ClipRect, planes filtered by rp_Mask, according to rp_DrawMode. Solid: pen A (COMPLEMENT: inversion). Pattern:
 ; 1 bits in pen A (COMPLEMENT: inversion), 0 bits in pen B in JAM2 only, left alone otherwise; word for row y =
 ; pattern[(y - OY) & mask], bit 15 = pixel x such that (x - OX) ≡ 0 (mod 16). Clipping, masks and address computed once
@@ -382,6 +425,9 @@ dr_rect:
         move.b  d4,RC_FG(a4)
         move.b  d5,RC_BG(a4)
         move.l  a0,RC_PAT(a4)
+        bne.s   .rc_pat
+        moveq   #0,d6
+.rc_pat:
         move.w  d6,RC_PMASK(a4)
         swap    d6
         move.w  d6,RC_PSTEP(a4)
@@ -411,7 +457,9 @@ dr_rect:
         beq.s   .rc_n
         bsr.s   rc_one
 .rc_n:
-        move.l  CR_NEXT(a3),a3
+        exg     a0,a3
+        bsr     dr_next
+        exg     a0,a3
         bra.s   .rc_lp
 .rc_ret:
         lea     RC_SIZE(sp),sp
@@ -845,13 +893,16 @@ dr_line:
         beq.s   .ln_n
         bsr.s   ln_one
 .ln_n:
-        move.l  CR_NEXT(a3),a3
+        exg     a0,a3
+        bsr     dr_next
+        exg     a0,a3
         bra.s   .ln_lp
 .ln_ret:
         lea     LN_SIZE(sp),sp
         movem.l (sp)+,d0-d7/a0-a4/a6
         rts
-; ln_one(a4 = dr_line variables, a5): the whole segment walked, points plotted within the current ClipRect.
+; ln_one(a4 = dr_line variables, a5): the segment walked from its start until it leaves the current ClipRect again,
+; points plotted within it.
 ; Preserves a3-a5.
 ln_one:
         move.l  a3,-(sp)
@@ -923,15 +974,17 @@ ln_one:
         move.w  LN_DY(a4),d5
         move.w  d4,d2
         add.w   d5,d2                ; d2 = error
+        suba.l  a1,a1                ; a1 != 0 once a point fell inside the ClipRect
 .lo_pt:
         cmp.w   LN_MINX(a4),d0
-        blt.s   .lo_np
+        blt.s   .lo_out
         cmp.w   LN_MAXX(a4),d0
-        bgt.s   .lo_np
+        bgt.s   .lo_out
         cmp.w   LN_MINY(a4),d1
-        blt.s   .lo_np
+        blt.s   .lo_out
         cmp.w   LN_MAXY(a4),d1
-        bgt.s   .lo_np
+        bgt.s   .lo_out
+        movea.w #1,a1
         move.w  d0,d3
         lsr.w   #3,d3                ; d3 = byte
         move.w  d0,d7
@@ -962,6 +1015,9 @@ ln_one:
         adda.l  a3,a0
         bchg    d7,0(a0,d3.w)
         bra.s   .lo_c
+.lo_out:                             ; x and y are monotonic: once out again, the rest stays out
+        cmpa.w  #0,a1
+        bne.s   .lo_ret
 .lo_np:
         cmp.w   LN_EX(a4),d0
         bne.s   .lo_st
@@ -976,7 +1032,7 @@ ln_one:
         add.w   LN_SX(a4),d0
 .lo_nx:
         cmp.w   d4,d6
-        bgt.s   .lo_pt
+        bgt     .lo_pt
         add.w   d4,d2
         add.w   LN_SY(a4),d1
         adda.l  a6,a3
@@ -1358,7 +1414,7 @@ dr_cellcr:
         moveq   #1,d0
         bra.s   .cc_r
 .cc_n:
-        move.l  CR_NEXT(a0),a0
+        bsr     dr_next
         bra.s   .cc_lp
 .cc_no:
         moveq   #0,d0
@@ -1486,7 +1542,9 @@ gfx_BltTemplate:
         beq.s   .bt_n
         bsr.s   bt_one
 .bt_n:
-        move.l  CR_NEXT(a3),a3
+        exg     a0,a3
+        bsr     dr_next
+        exg     a0,a3
         bra.s   .bt_lp
 .bt_end:
         bsr     dr_end
@@ -3225,7 +3283,8 @@ gfx_BltBitMapRastPort:
         bsr.s   .bb_one
 .bb_crn:
         move.l  (sp),a0
-        move.l  CR_NEXT(a0),(sp)
+        bsr     dr_next
+        move.l  a0,(sp)
         bra.s   .bb_cr
 .bb_done:
         lea     16(sp),sp

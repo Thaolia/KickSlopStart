@@ -1758,8 +1758,8 @@ glt_end:
         ; --- layers.library: a SIMPLE layer (L1) and a SMART one (L2) on an off-screen 64x32x2 BitMap. Drawing,
         ; BehindLayer (simple area uncovered again: cleared + damage; hidden smart area: saved), drawing in the
         ; hidden part of L2 (read by ReadPixel), BeginUpdate/EndUpdate of L1, UpfrontLayer (restoration), MoveLayer,
-        ; SizeLayer of L2 (smart enlargement: damage), DeleteLayer (background and layer below), SizeLayer of L1,
-        ; WhichLayer. Expected: pixel-level Python model. ---
+        ; SizeLayer of L2 (smart enlargement: damage), DeleteLayer (background and layer below), SizeLayer of L1
+        ; (simple: cleared, as measured on the 1.3 ROM), WhichLayer. Expected: pixel-level Python model. ---
         movem.l d2-d7/a2-a5,-(sp)
         lea     -16(sp),sp
         move.l  sp,a5                ; 0 BitMap, 4 L1, 8 L2, 12 Layer_Info
@@ -1910,13 +1910,13 @@ glt_end:
         btst    #7,31(a0)
         beq     lyt_fail
         bsr     lyt_clrdmg
-        move.l  4(a5),a1             ; SizeLayer(L1, +8, +4)
-        moveq   #8,d0
+        move.l  4(a5),a1             ; SizeLayer(L1 simple, +8, +4): nothing kept, all cleared and damaged
+        moveq   #8,d0                ; (layers-v34 §5.7)
         moveq   #4,d1
         moveq   #-66,d7
         bsr     lyt_lcall
         LYT_PIX 35,17,0
-        LYT_PIX 5,5,3
+        LYT_PIX 5,5,0
         move.l  4(a5),a0
         btst    #7,31(a0)
         beq     lyt_fail

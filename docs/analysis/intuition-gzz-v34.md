@@ -4,6 +4,8 @@
 > (OpenWindow, border adjustment by gadgets, gadget context, system gadgets,
 > mouse coordinates, IntuiMessage, rendering of a gadget list, window drawing, AddGadget;
 > no ROM address, removed on 2026-10-29). Practical case: `libs/info.library` from `wb133.adf`.
+> §2.5 (SizeWindow and the window's layers) comes from the black-box probe `tests/resize_probe.s`
+> (harness `tests/resize_probe.sh`, FS-UAE A500 PAL, real ROM, pixel readback of the screen BitMap).
 >
 > **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. **No instruction sequence is reproduced**: only calculation rules,
 > fields of public structures (`intuition.h` 1.3) and library calls.
@@ -147,6 +149,79 @@ Computed after the layers, for **all** windows:
 
 For a BACKDROP window on a screen whose title bar is displayed, intuition does
 MoveLayerInFrontOf(screen's BarLayer, window's layer).
+
+### 2.5 SizeWindow and the window's layers [O]
+
+Probe setup: windows on the Workbench screen (640 wide, 2 planes) at (100,30), 200×80, no title, no
+gadget except the sizing gadget (`WINDOWSIZING`), IDCMPFlags = NEWSIZE | REFRESHWINDOW ($6). Borders
+measured: BorderLeft 4, BorderTop 2, BorderRight 18, BorderBottom 2. Pattern = 8×8 checker of pens 1/2
+relative to the origin of the drawn RastPort. Pixels read from the screen BitMap about 2 s after the
+call (50 × Delay(2) while draining the UserPort), **before** any BeginRefresh. Coordinates below are
+window-relative.
+
+**Messages.**
+- **No NEWSIZE is ever posted by SizeWindow()** in these runs: SIMPLE, SMART, SUPER, GZZ SUPER windows,
+  IDCMP NEWSIZE|REFRESHWINDOW, and a control window with IDCMP = NEWSIZE alone (nothing received in
+  4 s), although the size is applied (`Width`/`Height` updated). This contradicts
+  `intuition-input-menus-v34.md` §2.4 ("NEWSIZE at the end of each SizeWindow"); NEWSIZE after a
+  drag of the sizing gadget by the user was not tested here.
+- REFRESHWINDOW: **one** message after each SizeWindow of a window whose (single) layer ends up with
+  LAYERREFRESH: SIMPLE (grow and shrink), SMART (grow +16,+8), non-GZZ SUPER (grow). **None** for the
+  GZZ SUPER window. None at OpenWindow (SIMPLE: the layer has LAYERREFRESH from its creation, Flags
+  `$0081`, empty DamageList, but no message).
+
+**SIMPLE_REFRESH, non-GZZ** (single layer, Flags `$0081` after OpenWindow):
+- SizeWindow(+40,+20) → 240×100: the **whole window is 0** (old interior included) except the frame,
+  which intuition has redrawn completely at the new size (top and bottom lines, 2-pixel left line,
+  right band with its line, sizing gadget) before REFRESHWINDOW. Layer Flags `$0081`, DamageList =
+  one rectangle `(0,0)-(239,99)` (whole layer). Matches layers `layers-v34.md` §5.7 (SIMPLE: nothing
+  survives).
+- BeginRefresh + EndRefresh(TRUE) with no drawing: Flags `$0001`, DamageList empty, pixels unchanged.
+- Interior refilled, then SizeWindow(−60,−30) → 180×70: interior 0 again, frame complete at the new
+  size. Flags `$0081`. DamageList bounds `(0,0)-(239,99)` = the **old** size, rectangles: whole new
+  window `(0,0)-(179,69)`, old right band `(222,1)-(239,99)`, new right band extended to the old height
+  `(162,70)-(179,99)`, old bottom band `(0,98)-(161,99)` and `(180,98)-(221,99)`, new bottom band
+  extended to the old width `(180,68)-(221,69)`, pixel `(239,0)`. These bands of the old and new frame
+  are not produced by layers for a SIMPLE layer (whole new layer only), so intuition adds them [D].
+  Implementations: the DamageList may extend beyond the shrunken layer.
+
+**GIMMEZEROZERO | SUPER_BITMAP** (`NewWindow.BitMap` = InitBitMap'ed 320×200×2, filled by the CPU):
+- `RPort->Layer` = `WLayer` = inner layer; its **`SuperBitMap` = the supplied BitMap** (same pointer);
+  inner Flags **`$0004`** (SUPER alone); inner bounds = window rectangle minus borders, 178×76.
+- `BorderRPort->Layer` = outer layer, Flags **`$0081`** after OpenWindow (SIMPLE + LAYERREFRESH).
+- After OpenWindow the interior shows the SuperBitMap from its (0,0) (inner layer origin ↔ SuperBitMap
+  (0,0)).
+- SizeWindow(+40,+20): **no message at all**; every interior pixel, newly visible ones included
+  (218×96), equals the SuperBitMap; inner Flags `$0004`, DamageList empty; outer Flags `$0001`, empty
+  DamageList (frame repaired by intuition itself, complete); the SuperBitMap is unchanged (sampled
+  over (0,0)-(241,101)).
+
+**SUPER_BITMAP without GIMMEZEROZERO** (single layer = whole window):
+- Layer Flags `$0004`, `SuperBitMap` = supplied BitMap, BorderRPort = NULL. Layer origin = window origin
+  ↔ SuperBitMap (0,0): the frame is drawn over the SuperBitMap content (border bands 0, lines pen 1).
+- Right after OpenWindow the **SuperBitMap already contains the frame** (rows 0-79, columns 0-199
+  equal to the screen); the rest of the SuperBitMap is unchanged.
+- SizeWindow(+40,+20) → 240×100: one REFRESHWINDOW; Flags **`$0084`** (LAYERREFRESH set although layers
+  gives no damage to a SUPER layer, `layers-v34.md` §5.7); DamageList bounds `(0,0)-(239,99)`,
+  rectangles: old right band `(182,1)-(199,79)`, new right band `(222,1)-(239,79)`, old bottom band
+  `(0,78)-(181,79)`, new bottom band `(0,98)-(182,99)`, pixels `(199,0)` and `(239,0)`, new sizing gadget
+  `(224,91)-(239,99)` — only frame pieces, added by intuition [D].
+- Screen: old interior kept; newly exposed pixels (columns 200-239, rows 80-99) come from the
+  SuperBitMap; inside the DamageList everything is 0 except the new frame drawn there. The new frame is
+  drawn **only inside these rectangles**: the left border on rows 80-97, the right band on rows 80-90,
+  the top line on columns 200-238 and the bottom band on columns 183-223 are **not drawn** and show the
+  SuperBitMap pattern. The old border bands inside the new interior are 0.
+- The SuperBitMap after the resize is **not** equal to the screen: it holds frame pixels that the
+  screen does not show (complete top line 0-239; left band columns 0-3 = 0 on rows 1-77 and 80-97,
+  i.e. without its line; right band 222-239 = 0 with its line on rows 1-77 and without line on rows
+  80-90; new sizing gadget on rows 91-99), plus the old border bands as 0.
+- BeginRefresh + EndRefresh(TRUE) without drawing: Flags `$0004`, DamageList empty, screen and
+  SuperBitMap unchanged (EndRefresh repairs nothing).
+- Consequence for an implementation: a non-GZZ SUPER_BITMAP window is left with an incomplete frame
+  after SizeWindow on 1.3; the application is expected to redraw the frame (or use GZZ). How the frame
+  pixels reach the SuperBitMap without reaching the screen is not established.
+
+**SMART_REFRESH, non-GZZ** (control): SizeWindow(+16,+8) → one REFRESHWINDOW, no NEWSIZE.
 
 ---
 
@@ -296,6 +371,10 @@ of drawing.
 | Non-GZZ gadget in a GZZ, LeftEdge 0 TopEdge 0 | drawn at the top-left corner of the inner area |
 | Overlapping list A→B→C, RefreshGadgets(A) | drawing order C, B, A: A visible on top |
 | AddGadget(win, g, −1) alone | nothing is drawn until a Refresh takes place |
+| SizeWindow(±dx,±dy) on any window, IDCMP NEWSIZE\|REFRESHWINDOW | no NEWSIZE; one REFRESHWINDOW unless GZZ SUPER (§2.5) |
+| SIMPLE non-GZZ 200×80, interior filled, SizeWindow(+40,+20) | whole window 0 except a complete new frame; Flags $0081; damage (0,0)-(239,99) |
+| GZZ SUPER (NewWindow.BitMap 320×200×2), SizeWindow(+40,+20) | inner SuperBitMap = BitMap, inner Flags $0004, outer $0081→$0001; whole interior = SuperBitMap; no message |
+| non-GZZ SUPER, SizeWindow(+40,+20) | Flags $0084, REFRESHWINDOW; frame redrawn only inside the damaged frame bands (§2.5) |
 
 ---
 
@@ -310,3 +389,5 @@ of drawing.
   its public calls (AddGadget −1, RefreshGadgets(FirstGadget)), without copied code.
 - [x] **Correction of 2026-10-29**: removed the 13 ROM routine addresses from the header,
   replaced by the list of functions studied; body unchanged.
+- [x] §2.5 (2026-11-01): black-box readback only (pixels, Flags, DamageList, IDCMP classes) from the
+  author probe `tests/resize_probe.s`; no ROM code read for it.

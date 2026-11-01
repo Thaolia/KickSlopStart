@@ -17,6 +17,8 @@
 ; drawing primitives: src/graphics/draw.s
                 xdef    gfx_DisownBlitter
                 xref    gfx_BltTemplate
+                xref    gfx_SyncSBitMap
+                xref    gfx_CopySBitMap
                 xref    gfx_InitArea
                 xref    gfx_InitTmpRas
                 xref    gfx_AreaMove
@@ -180,7 +182,8 @@ graphics_vectors:                    ; ABSOLUTE table, vector N -> LVO -6*N, com
         dc.l    gfx_MoveSprite           ; 71: LVO -426
         dc.l    gfx_LockLayerRom         ; 72: LVO -432
         dc.l    gfx_UnlockLayerRom       ; 73: LVO -438
-        dcb.l   2,graphics_null          ; 74..75: LVO -444..-450 (not implemented)
+        dc.l    gfx_SyncSBitMap          ; 74: LVO -444 SyncSBitMap(layer a0)
+        dc.l    gfx_CopySBitMap          ; 75: LVO -450 CopySBitMap(layer a0)
         dc.l    gfx_OwnBlitter           ; 76: LVO -456
         dc.l    gfx_DisownBlitter        ; 77: LVO -462
         dc.l    gfx_InitTmpRas           ; 78: LVO -468 InitTmpRas(tmpRas a0, buffer a1, size d0)

@@ -908,6 +908,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     fixed: ClipBlit lock order, ScrollRaster without waiting for a busy blitter, sendpkt reply matching
     (dos_waitreply), boot CLI console serving WRITEs while a READ waits.
     Workbench icons selected with their alternate image when the icon asks for it (GADGHIMAGE, issue #7).
+    Window resizing (issue #10): simple layers come out blank and fully damaged after Move/SizeLayer, real
+    SuperBitMap layers (SuperClipRects, ScrollLayer, Sync/CopySBitMap, GZZ interior), RectFill pattern regression
+    fixed. Next: Workbench 1.2 boot (`If`, quoted `Echo`, `LoadWB` 1.2), NEWSIZE only for the size gadget.
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).

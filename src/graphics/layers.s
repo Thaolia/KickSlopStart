@@ -19,7 +19,12 @@
 ;      layers cleared and added to the damage;
 ;   5. old ClipRects (and their backups) freed, new lists installed.
 ; The areas written to the screen by phase B and step 3 are disjoint: the order does not matter.
-; LAYERSUPER layers: treated as LAYERSMART (no separate SuperBitMap, ScrollLayer has no effect).
+; LAYERSUPER layers with a SuperBitMap: smart for their hidden parts, plus a SuperClipRect list (pieces of the
+; SuperBitMap outside the window, cr_lobs = the layer itself so that graphics recognises them) that graphics draws
+; into directly. Unlike the 1.3 ROM, their bounds are absolute like those of the other ClipRects (graphics filters
+; every ClipRect by its bounds in one coordinate system), hence rebuilt after MoveLayer as well. SizeLayer and
+; ScrollLayer go through the SuperBitMap (SyncSBitMap before, CopySBitMap after) and never damage such a layer
+; (layers-v34 §5.7, §5.8, §6).
 ; Locks: each operation holds the Layer_Info semaphore and that of each layer (LockLayers); graphics
 ; holds the layer's one during a drawing.
 ; IMPLEMENTATION track ("clean"): layers.library AutoDocs + graphics/clip.h, layers.h, regions.h. LVOs:
@@ -28,6 +33,8 @@
                 include "exec.i"
                 include "graphics.i"
 
+                xdef    gfx_SyncSBitMap
+                xdef    gfx_CopySBitMap
                 xref    rl_add
                 xref    rl_sub
                 xref    rl_and
@@ -44,7 +51,11 @@ LY_MAXX         EQU 20
 LY_MAXY         EQU 22
 LY_FLAGS        EQU 30
 LY_SUPERBM      EQU 32
+LY_SUPERCR      EQU 36               ; SuperClipRect: pieces of the SuperBitMap outside the window
+LY_SCROLLX      EQU 44
+LY_SCROLLY      EQU 46
 LY_CRNEW        EQU 56               ; list under construction (private field "crnew")
+LY_SUPERSAVE    EQU 60               ; SuperSaveClipRects: one block of SB_NCR ClipRects for the SuperClipRect list
 LY_SAVECR       EQU 64               ; "_cliprects": normal list during BeginUpdate
 LY_LAYERINFO    EQU 68
 LY_LOCK         EQU 72               ; struct SignalSemaphore
@@ -77,6 +88,7 @@ CR_SIZE         EQU 40
 CRF_TEMP        EQU 1                ; temporary backup (phase A -> B)
 CRF_BORROWED    EQU 2                ; BitMap belonging to another ClipRect (BeginUpdate list)
 CRF_EXPOSE      EQU 4                ; visible, in place, partly exposed: direct copy in phase B
+SB_NCR          EQU 4                ; at most 4 SuperClipRects: left, right, top and bottom of the window
 ; --- struct Layer_Info ---
 LI_TOP          EQU 0
 LI_LOCK         EQU 24
@@ -469,6 +481,22 @@ lr_create:
         tst.l   d0
         beq     .cr_fail
         move.l  d0,a4                ; a4 = layer, RastPort right after it
+        btst    #2,d4                ; LAYERSUPER: the SuperBitMap is kept, with its ClipRects
+        bne.s   .cr_super
+        suba.l  a2,a2
+.cr_super:
+        move.l  a2,d0
+        beq.s   .cr_nosb
+        move.l  #SB_NCR*CR_SIZE,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,LY_SUPERSAVE(a4)
+        bne.s   .cr_nosb
+        move.l  a4,a1
+        move.l  #LY_SIZE+rp_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        bra     .cr_fail
+.cr_nosb:
         move.l  (sp)+,d5             ; d5 = BitMap
         movem.w (sp)+,d0-d3
         movem.w d0-d3,LY_MINX(a4)
@@ -505,6 +533,8 @@ lr_create:
         move.l  a3,a0
         suba.l  a1,a1
         bsr     lr_rebuild
+        moveq   #1,d0                ; SUPER: the layer shows the SuperBitMap from its corner (0,0)
+        bsr     lr_sbsync
         move.l  a3,a0
         bsr     ly_UnlockLayers
         move.l  a4,d0
@@ -566,6 +596,12 @@ ly_dl_remove:
         move.l  LY_DAMAGE(a4),a0
         jsr     LVO_DISPOSEREGION_G(a6)
         move.l  ($4).w,a6
+        move.l  LY_SUPERSAVE(a4),d0
+        beq.s   .rm_nosb
+        move.l  d0,a1
+        move.l  #SB_NCR*CR_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+.rm_nosb:
         move.l  a4,a1
         move.l  #LY_SIZE+rp_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
@@ -618,34 +654,331 @@ ly_MoveLayerInFrontOf:
         move.l  (sp)+,a0
         bra     lr_reorder
 
-; MoveLayer(dummy a0, l a1, dx d0, dy d1) -> TRUE.
+; MoveLayer(dummy a0, l a1, dx d0, dy d1) -> TRUE. A simple layer comes out blank and damaged as a whole; a layer
+; with a SuperBitMap is saved into it and shown from it again at the new place (layers-v34 §5.6).
 ly_MoveLayer:
         movem.l d2-d7/a2-a6,-(sp)
         movem.w d0-d1,-(sp)
         bsr     lr_op_enter
+        moveq   #0,d0
+        bsr     lr_sbsync
         movem.w (sp)+,d0-d1
         add.w   d0,LY_MINX(a4)
         add.w   d0,LY_MAXX(a4)
         add.w   d1,LY_MINY(a4)
         add.w   d1,LY_MAXY(a4)
-        bsr     lr_op_leave
-        movem.l (sp)+,d2-d7/a2-a6
-        rts
+        or.w    d1,d0
+        beq.s   .mv_leave
+        bsr     lr_dmgall
+.mv_leave:
+        bra.s   lr_szmv_leave
 
 ; SizeLayer(dummy a0, l a1, dx d0, dy d1) -> TRUE: bottom-right corner moved, contents kept in the common part.
+; A simple layer starts again from an empty DamageList and is then damaged as a whole; a layer with a
+; SuperBitMap is saved into it first and filled from it afterwards, without damage (layers-v34 §5.7).
 ly_SizeLayer:
         movem.l d2-d7/a2-a6,-(sp)
         movem.w d0-d1,-(sp)
         bsr     lr_op_enter
+        moveq   #0,d0
+        bsr     lr_sbsync
         movem.w (sp)+,d0-d1
         add.w   d0,LY_MAXX(a4)
         add.w   d1,LY_MAXY(a4)
-        bsr     lr_op_leave
+        or.w    d1,d0
+        beq.s   .sz_leave
+        btst    #0,LY_FLAGS+1(a4)    ; LAYERSIMPLE
+        beq.s   .sz_leave
+        move.l  LB_GFX(a5),a6
+        move.l  LY_DAMAGE(a4),a0
+        jsr     LVO_CLEARREGION_G(a6)
+        bsr.s   lr_dmgall
+.sz_leave:
+; end of MoveLayer / SizeLayer: rebuild, a simple layer comes out blank, a SuperBitMap one from its SuperBitMap.
+lr_szmv_leave:
+        move.l  a3,a0
+        suba.l  a1,a1
+        bsr     lr_rebuild
+        bsr.s   lr_clrall
+        moveq   #1,d0
+        bsr     lr_sbsync
+        move.l  a3,a0
+        bsr     ly_UnlockLayers
+        moveq   #-1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; ScrollLayer(dummy a0, l a1, dx d0, dy d1): reserved for SuperBitMaps, not handled here.
+; lr_clrall(a4 = layer, a5): the visible parts of a simple layer set to pen 0. On the 1.3 ROM nothing of a resized
+; simple layer survives, and a moved one keeps only thin strips (layers-v34 §5.6, §5.7): here it is all cleared.
+; Preserves d2-d7/a2-a6.
+lr_clrall:
+        btst    #0,LY_FLAGS+1(a4)    ; LAYERSIMPLE
+        beq.s   .ca_r
+        move.l  a3,-(sp)
+        move.l  LY_CLIPRECT(a4),a3
+.ca_lp:
+        cmpa.w  #0,a3
+        beq.s   .ca_end
+        tst.l   CR_LOBS(a3)
+        bne.s   .ca_n
+        bsr     lr_screenbm
+        movem.w CR_MINX(a3),d0-d3
+        bsr     lr_clear
+.ca_n:
+        move.l  CR_NEXT(a3),a3
+        bra.s   .ca_lp
+.ca_end:
+        move.l  (sp)+,a3
+.ca_r:
+        rts
+
+; lr_dmgall(a4 = layer, a5): a simple layer that moves or changes size is damaged as a whole, at its new
+; bounds (layers-v34 §5.6, §5.7). Clobbers d0-d3/a0/a1.
+lr_dmgall:
+        btst    #0,LY_FLAGS+1(a4)    ; LAYERSIMPLE
+        beq.s   .da_r
+        movem.w LY_MINX(a4),d0-d3
+        bra     lr_damage
+.da_r:
+        rts
+
+; ScrollLayer(dummy a0, l a1, dx d0, dy d1): Scroll_X/Y += (dx, dy), not bounded. With a SuperBitMap the window
+; then shows it from the new offset (SyncSBitMap, scroll, CopySBitMap, SuperClipRects); without, only the fields
+; change (layers-v34 §5.8). Under the layer's lock only.
 ly_ScrollLayer:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a1,a4
+        movem.w d0-d1,-(sp)
+        lea     LY_LOCK(a4),a0
+        bsr     ly_obtain
+        moveq   #0,d0
+        bsr     lr_sbsync
+        movem.w (sp)+,d0-d1
+        add.w   d0,LY_SCROLLX(a4)
+        add.w   d1,LY_SCROLLY(a4)
+        moveq   #1,d0
+        bsr     lr_sbsync
+        lea     LY_LOCK(a4),a0
+        bsr     ly_release
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; ============================ SuperBitMap ============================
+
+; lr_sbsync(a4 = layer, a5 = LayersBase, d0 = 0: layer -> SuperBitMap, else SuperBitMap -> layer and new
+; SuperClipRects). Nothing without a SuperBitMap. Preserves d2-d7/a2-a6.
+lr_sbsync:
+        tst.l   LY_SUPERBM(a4)
+        beq.s   .ss_r
+        move.l  a6,-(sp)
+        move.l  d0,-(sp)
+        move.l  LB_GFX(a5),a6
+        bsr.s   lr_sbcopy
+        tst.l   (sp)+
+        beq.s   .ss_done
+        bsr     lr_superclip
+.ss_done:
+        move.l  (sp)+,a6
+.ss_r:
+        rts
+
+; SyncSBitMap(l a0) (graphics -444): the layer's contents (visible parts from the screen, hidden ones from their
+; backups) copied into the SuperBitMap, layer (0,0) = SuperBitMap (Scroll_X, Scroll_Y). CopySBitMap(l a0)
+; (graphics -450): the reverse. Neither one locks (layers-v34 §6).
+gfx_SyncSBitMap:
+        moveq   #0,d0
+        bra.s   lr_sbentry
+gfx_CopySBitMap:
+        moveq   #1,d0
+lr_sbentry:
+        move.l  a4,-(sp)
+        move.l  a0,a4
+        bsr.s   lr_sbcopy
+        move.l  (sp)+,a4
+        rts
+
+; lr_sbcopy(a4 = layer, d0 = 0: layer -> SuperBitMap, else SuperBitMap -> layer, a6 = GfxBase): one BltBitMap
+; per ClipRect of the normal list (the one kept aside during BeginUpdate or a ClipRegion), clipped to the
+; SuperBitMap; hidden ClipRects without backup are skipped. Preserves d2-d7/a2-a6.
+lr_sbcopy:
+        movem.l d2-d7/a2-a3/a5,-(sp)
+        move.l  LY_SUPERBM(a4),d1
+        beq     .sb_r
+        move.l  d1,a5                ; a5 = SuperBitMap
+        move.w  d0,-(sp)             ; (sp) = direction
+        move.l  LY_SAVECR(a4),d1
+        bne.s   .sb_list
+        move.l  LY_CLIPRECT(a4),d1
+.sb_list:
+        move.l  d1,a3
+.sb_lp:
+        cmpa.w  #0,a3
+        beq     .sb_end
+        movem.w CR_MINX(a3),d0-d3    ; absolute rectangle
+        move.w  d0,d4                ; d4/d5 = its corner in the SuperBitMap
+        sub.w   LY_MINX(a4),d4
+        add.w   LY_SCROLLX(a4),d4
+        move.w  d1,d5
+        sub.w   LY_MINY(a4),d5
+        add.w   LY_SCROLLY(a4),d5
+        tst.w   d4
+        bge.s   .sb_1
+        sub.w   d4,d0
+        moveq   #0,d4
+.sb_1:
+        tst.w   d5
+        bge.s   .sb_2
+        sub.w   d5,d1
+        moveq   #0,d5
+.sb_2:
+        sub.w   d0,d2                ; d2/d3 = size, bounded by the SuperBitMap
+        addq.w  #1,d2
+        move.w  bm_BytesPerRow(a5),d6
+        lsl.w   #3,d6
+        sub.w   d4,d6
+        cmp.w   d6,d2
+        ble.s   .sb_3
+        move.w  d6,d2
+.sb_3:
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  bm_Rows(a5),d6
+        sub.w   d5,d6
+        cmp.w   d6,d3
+        ble.s   .sb_4
+        move.w  d6,d3
+.sb_4:
+        tst.w   d2
+        ble.s   .sb_next
+        tst.w   d3
+        ble.s   .sb_next
+        tst.l   CR_LOBS(a3)          ; a0 + (d0, d1): the layer's side
+        bne.s   .sb_hid
+        move.l  LY_RP(a4),a0
+        move.l  rp_BitMap(a0),a0
+        bra.s   .sb_do
+.sb_hid:
+        move.l  CR_BITMAP(a3),d6
+        beq.s   .sb_next
+        move.l  d6,a0
+        sub.w   CR_ORGX(a3),d0
+        sub.w   CR_ORGY(a3),d1
+.sb_do:
+        exg     d2,d4                ; destination (d2, d3) = SuperBitMap, size (d4, d5)
+        exg     d3,d5
+        move.l  a5,a1
+        tst.w   (sp)
+        beq.s   .sb_blt
+        exg     a0,a1                ; CopySBitMap: from the SuperBitMap to the layer
+        exg     d0,d2
+        exg     d1,d3
+.sb_blt:
+        moveq   #-$40,d6             ; minterm $C0 (copy)
+        moveq   #-1,d7
+        suba.l  a2,a2
+        jsr     LVO_BLTBITMAP_G(a6)
+.sb_next:
+        move.l  CR_NEXT(a3),a3
+        bra     .sb_lp
+.sb_end:
+        addq.l  #2,sp
+.sb_r:
+        movem.l (sp)+,d2-d7/a2-a3/a5
+        rts
+
+; lr_superclip(a4 = layer): SuperClipRect list rebuilt = the SuperBitMap minus the window [Scroll_X, Scroll_X + W - 1]
+; x [Scroll_Y, Scroll_Y + H - 1]: left and right pieces over the whole height, top and bottom ones over the window's
+; columns, each inserted at the head (list: bottom, top, right, left; layers-v34 §6); bounds then made absolute
+; (+ bounds - Scroll). Preserves d2-d7/a2-a6.
+lr_superclip:
+        movem.l d2-d7/a1,-(sp)
+        clr.l   LY_SUPERCR(a4)
+        move.l  LY_SUPERBM(a4),d0
+        beq     .sc_r
+        move.w  LY_MINX(a4),d0       ; 4(sp), 6(sp) below: SuperBitMap -> absolute offset
+        sub.w   LY_SCROLLX(a4),d0
+        move.w  LY_MINY(a4),d1
+        sub.w   LY_SCROLLY(a4),d1
+        movem.w d0-d1,-(sp)
+        move.l  LY_SUPERBM(a4),a0
+        move.w  bm_BytesPerRow(a0),d6
+        lsl.w   #3,d6
+        subq.w  #1,d6                ; d6/d7 = last column / row of the SuperBitMap
+        move.w  bm_Rows(a0),d7
+        subq.w  #1,d7
+        move.l  LY_SUPERSAVE(a4),a1
+        move.w  LY_SCROLLX(a4),d4    ; d4/d5 = window corner in the SuperBitMap
+        move.w  LY_SCROLLY(a4),d5
+        move.w  LY_MAXX(a4),d0
+        sub.w   LY_MINX(a4),d0
+        add.w   d4,d0
+        move.w  LY_MAXY(a4),d1
+        sub.w   LY_MINY(a4),d1
+        add.w   d5,d1
+        movem.w d0-d1,-(sp)          ; (sp) = last column, 2(sp) = last row of the window
+        moveq   #0,d0                ; left
+        moveq   #0,d1
+        move.w  d4,d2
+        subq.w  #1,d2
+        move.w  d7,d3
+        bsr.s   .sc_add
+        move.w  (sp),d0              ; right
+        addq.w  #1,d0
+        moveq   #0,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        bsr.s   .sc_add
+        move.w  d4,d0                ; top
+        moveq   #0,d1
+        move.w  (sp),d2
+        move.w  d5,d3
+        subq.w  #1,d3
+        bsr.s   .sc_add
+        move.w  d4,d0                ; bottom
+        move.w  2(sp),d1
+        addq.w  #1,d1
+        move.w  (sp),d2
+        move.w  d7,d3
+        bsr.s   .sc_add
+        addq.l  #8,sp
+.sc_r:
+        movem.l (sp)+,d2-d7/a1
+        rts
+; .sc_add: (d0,d1)-(d2,d3) clipped to (0,0)-(d6,d7); if not empty, the next ClipRect of a1 goes at the head with
+; these bounds made absolute (offset at 8(sp)/10(sp) above the return address and the window's last column/row).
+.sc_add:
+        tst.w   d0
+        bge.s   .sa_1
+        moveq   #0,d0
+.sa_1:
+        tst.w   d1
+        bge.s   .sa_2
+        moveq   #0,d1
+.sa_2:
+        cmp.w   d6,d2
+        ble.s   .sa_3
+        move.w  d6,d2
+.sa_3:
+        cmp.w   d7,d3
+        ble.s   .sa_4
+        move.w  d7,d3
+.sa_4:
+        cmp.w   d2,d0
+        bgt.s   .sa_r
+        cmp.w   d3,d1
+        bgt.s   .sa_r
+        add.w   8(sp),d0
+        add.w   8(sp),d2
+        add.w   10(sp),d1
+        add.w   10(sp),d3
+        move.l  LY_SUPERCR(a4),CR_NEXT(a1)
+        move.l  a4,CR_LOBS(a1)
+        clr.l   CR_BITMAP(a1)
+        movem.w d0-d3,CR_MINX(a1)
+        move.l  a1,LY_SUPERCR(a4)
+        lea     CR_SIZE(a1),a1
+.sa_r:
         rts
 
 ; ============================ BeginUpdate / EndUpdate ============================
@@ -1077,8 +1410,11 @@ lr_clear:
         rts
 
 ; lr_damage(a4 = layer, d0..d3 = absolute rectangle): added to the DamageList (relative to the layer), LAYERREFRESH.
+; A layer with a SuperBitMap is never damaged: its contents come back from its backups or from the SuperBitMap.
 ; Preserves d0-d7/a2-a6 (not a0/a1).
 lr_damage:
+        tst.l   LY_SUPERBM(a4)
+        bne.s   .dm_r
         movem.l d0-d3/a6,-(sp)
         sub.w   LY_MINX(a4),d0
         sub.w   LY_MINX(a4),d2
@@ -1095,6 +1431,7 @@ lr_damage:
         addq.l  #8,sp
         or.w    #LAYERREFRESH,LY_FLAGS(a4)
         movem.l (sp)+,d0-d3/a6
+.dm_r:
         rts
 
 ; lr_screenbm(a4 = layer) -> a0 = common BitMap (the one of its RastPort).

@@ -956,10 +956,11 @@ wn_gadborders:
 .gm_ret:
         rts
 
-; wn_gzzlayer(a3 = window whose WD_WLAYER is the whole layer, a5) -> Z = 0 if successful: the whole layer becomes
-; the border layer (WDX_BLAYER, WD_BORDERRPORT) and a layer covering the interior (window minus borders), with the
-; same refresh mode, is created in front: it becomes WD_WLAYER / WD_RPORT (origin in the interior). a6 = SysBase
-; on return. Preserves d2-d7/a2-a5.
+; wn_gzzlayer(a2 = NewWindow, a3 = window whose WD_WLAYER is the whole layer, a5) -> Z = 0 if successful: the whole
+; layer becomes the border layer (WDX_BLAYER, WD_BORDERRPORT) and a layer covering the interior (window minus
+; borders), with the same refresh mode (SUPER_BITMAP: NewWindow.BitMap as SuperBitMap, intuition-gzz-v34), is
+; created in front: it becomes WD_WLAYER / WD_RPORT (origin in the interior). a6 = SysBase on return. Preserves
+; d2-d7/a2-a5.
 wn_gzzlayer:
         movem.l d2-d5/a2,-(sp)
         move.l  WD_WLAYER(a3),a0
@@ -985,11 +986,17 @@ wn_gzzlayer:
         moveq   #IL_SMART,d4
         moveq   #$C0,d5
         and.b   WD_FLAGS+3(a3),d5
+        move.l  NW_BITMAP(a2),a2
+        cmp.b   #$80,d5              ; SUPER_BITMAP: NewWindow.BitMap is the interior's SuperBitMap
+        bne.s   .gl_nsuper
+        moveq   #IL_SMART|IL_SUPER,d4
+        bra.s   .gl_type
+.gl_nsuper:
+        suba.l  a2,a2
         cmp.b   #$40,d5              ; SIMPLE_REFRESH
         bne.s   .gl_type
         moveq   #IL_SIMPLE,d4
 .gl_type:
-        suba.l  a2,a2
         move.l  WD_WSCREEN(a3),a0
         lea     SC_BITMAP(a0),a1
         lea     SC_LAYERINFO(a0),a0
