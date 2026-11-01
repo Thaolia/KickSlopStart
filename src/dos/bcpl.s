@@ -2547,16 +2547,16 @@ rt_tplflags:
         movem.l (sp)+,d1-d5/a0
         rts
 
-; rt_tplcount(d1 = BSTR template) -> d0 = number of keys (0 for an empty template).
+; rt_tplcount(d1 = BSTR template) -> d0 = number of keys = commas + 1. Empty names are keys, so an empty template is
+; one positional key (spec §5.4): the 1.2 Echo reads its text with rdargs("").
 rt_tplcount:
         movem.l d1/d5/a0,-(sp)
-        moveq   #0,d0
+        moveq   #1,d0
         lsl.l   #2,d1
         move.l  d1,a0
         moveq   #0,d5
         move.b  (a0)+,d5
         beq     .tc_ret
-        moveq   #1,d0
 .tc_lp:
         cmp.b   #',',(a0)+
         bne     .tc_next

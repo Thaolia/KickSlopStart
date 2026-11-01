@@ -910,7 +910,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     Workbench icons selected with their alternate image when the icon asks for it (GADGHIMAGE, issue #7).
     Window resizing (issue #10): simple layers come out blank and fully damaged after Move/SizeLayer, real
     SuperBitMap layers (SuperClipRects, ScrollLayer, Sync/CopySBitMap, GZZ interior), RectFill pattern regression
-    fixed. Next: Workbench 1.2 boot (`If`, quoted `Echo`, `LoadWB` 1.2), NEWSIZE only for the size gadget.
+    fixed. Workbench 1.2 boots to its desktop: rdargs("") = one key, startup-sequence run as cli_CurrentInput,
+    commands looked up in the CLI path. Next: NEWSIZE only for the size gadget.
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).

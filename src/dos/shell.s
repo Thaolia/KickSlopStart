@@ -26,8 +26,6 @@
                 xref    bcpl_cli_setup
                 xref    bcpl_cli_register
 
-SH_SCRIPTMAX    EQU 2048             ; max size of the startup-sequence read (F1)
-
 SHELL_LINEMAX   EQU 128              ; max size of a line read
 SH_ECHO_ARGOFF  EQU 5                ; offset of the args after "echo" + 1 space
 
@@ -111,7 +109,7 @@ shell_main:
                 bra.s   .loop
 
 ; sh_dispatch_line(a3 = line, d6 = length): builtins ver/echo, otherwise external command (sh_extern). Called by the
-; interactive loop AND by the startup-sequence executor (F1). -> d0/a0 as sh_extern (builtin: d0 = -1).
+; interactive loop AND by sh_runscript (Execute scripts, startup-sequence). -> d0/a0 as sh_extern (builtin: d0 = -1).
 ; Clobbers d0/d1/d4 + a0/a1/a4; preserves d2/d3/d5/d6/d7 + a2/a3/a5/a6.
 sh_dispatch_line:
                 ifne    E2_NO_DISPATCH
@@ -150,6 +148,8 @@ sh_dispatch_line:
                 bsr     sh_match
                 tst.l   d0
                 beq.s   .dl_extern
+                bsr     sh_cecho             ; the disk's C:Echo if there is one (its own quotes and *N)
+                bne.s   .dl_extern
                 move.l  d6,d4                ; args = line + SH_ECHO_ARGOFF, len = length - SH_ECHO_ARGOFF
                 sub.l   #SH_ECHO_ARGOFF,d4
                 bls.s   .dl_ret              ; "echo" without args
@@ -243,8 +243,8 @@ sh_extern:
                 moveq   #-1,d0
                 rts
 
-; sh_runscript(): as long as cli_CurrentInput is not the standard input (c:Execute put a script there), its lines are
-; read and executed; at its end it is closed, its temporary file deleted and the standard input resumed (FailLevel
+; sh_runscript(): as long as cli_CurrentInput is not the standard input (a script of c:Execute or the startup-sequence),
+; its lines are read and executed (builtins included); at its end it is closed, its temporary file deleted and the standard input resumed (FailLevel
 ; 10). Preserves everything.
 sh_runscript:
                 movem.l d0-d7/a0-a6,-(sp)
@@ -260,7 +260,7 @@ sh_runscript:
                 tst.l   d6
                 bmi.s   .sr_eof
                 clr.b   0(a3,d6.l)
-                bsr     sh_extern
+                bsr     sh_dispatch_line
                 moveq   #0,d1
                 bsr     sh_report
                 tst.l   d0
@@ -338,7 +338,7 @@ sh_match:
 
 ; sh_exec_cmd(a0 = C string name, a1 = raw arguments, d1 = length of the arguments): loads+executes a command via
 ; dos -> d0 = 1 if found + loaded, 0 otherwise. Search: the name as is (current directory, or "device:"/assign),
-; then "C:<name>" if the name has no ':'. CLI calling convention: a0 = arguments terminated by '\n', d0 = their
+; then, for a name without ':', each directory of cli_CommandDir (Path ADD) and "C:<name>". CLI calling convention: a0 = arguments terminated by '\n', d0 = their
 ; length, 4(sp) = stack size. The command may clobber all registers: seglist, DosBase and flag live
 ; in a frame on the stack. Preserves the shell context (movem d2-d7/a2-a6); a6 = SysBase on exit.
 XF_FLAG         EQU 0                ; LONG: 1 if found + loaded
@@ -362,12 +362,14 @@ XF_FOUT         EQU XF_FIN+4         ; BPTR: file of ">name" | 0
 XF_RIN          EQU XF_FOUT+4        ; name of "<name" (SH_REDMAX, empty = no redirection)
 SH_REDMAX       EQU 64
 XF_ROUT         EQU XF_RIN+SH_REDMAX ; name of ">name"
-XF_SIZE         EQU XF_ROUT+SH_REDMAX
+XF_OLDCD        EQU XF_ROUT+SH_REDMAX ; BPTR: CLI's current directory while a CLI path entry is current | 0
+XF_SIZE         EQU XF_OLDCD+4
 SH_DEFSTACK     EQU 1000             ; default stack of a command, in longs (cli_DefaultStack)
 sh_exec_cmd:
                 movem.l d2-d7/a2-a6,-(sp)
                 lea     -XF_SIZE(sp),sp
                 clr.l   XF_FLAG(sp)
+                clr.l   XF_OLDCD(sp)
                 move.l  a0,d5                ; d5 = name
                 lea     XF_ARGS(sp),a2
                 bsr     sh_build_args        ; (a1, d1) -> filtered arguments in (a2); d0 = length
@@ -393,14 +395,35 @@ sh_exec_cmd:
                 moveq   #SHARED_LOCK,d2
                 jsr     DOS_LVO_LOCK(a6)     ; BPTR lock | 0
                 tst.l   d0
-                bne.s   .x_locked
-                move.l  d5,a0                ; "C:<name>" fallback only for a name without ':'
+                bne     .x_locked
+                move.l  d5,a0                ; a name without ':' is then looked up in the CLI path, then in C:
 .x_colon:
                 move.b  (a0)+,d0
-                beq.s   .x_tryc
+                beq.s   .x_path
                 cmp.b   #':',d0
                 bne.s   .x_colon
-                bra.s   .x_nolock
+                bra     .x_nolock
+.x_path:                                     ; cli_CommandDir: nodes [next BPTR, lock] (Path ADD)
+                bsr     sh_cli_ptr
+                beq.s   .x_tryc
+                move.l  CLI_COMMANDDIR(a1),d3
+.x_plp:
+                lsl.l   #2,d3
+                beq.s   .x_tryc
+                move.l  d3,a0
+                move.l  (a0),d3
+                move.l  4(a0),d1
+                jsr     DOS_LVO_CURRENTDIR(a6)
+                move.l  d0,XF_OLDCD(sp)
+                move.l  d5,d1
+                moveq   #SHARED_LOCK,d2
+                jsr     DOS_LVO_LOCK(a6)
+                tst.l   d0
+                bne.s   .x_locked            ; found: this directory stays current until LoadSeg
+                move.l  XF_OLDCD(sp),d1
+                clr.l   XF_OLDCD(sp)
+                jsr     DOS_LVO_CURRENTDIR(a6)
+                bra.s   .x_plp
 .x_tryc:
                 lea     XF_NAME(sp),a1
                 move.b  #'C',(a1)+
@@ -449,6 +472,7 @@ sh_exec_cmd:
                 bne.s   .x_loaded
                 move.l  #2,XF_FLAG(sp)       ; found but not loadable
 .x_loaded:
+                bsr     .x_restcd
                 move.l  ($4).w,a6
                 tst.l   d7
                 beq     .x_closelib
@@ -626,6 +650,7 @@ sh_exec_cmd:
                 move.l  XF_SEG(sp),d0
                 jsr     dos_unloadseg
 .x_closelib:
+                bsr     .x_restcd
                 move.l  ($4).w,a6
                 move.l  XF_DOS(sp),a1
                 jsr     LVO_CLOSELIBRARY(a6)
@@ -633,6 +658,17 @@ sh_exec_cmd:
                 move.l  XF_FLAG(sp),d0
                 lea     XF_SIZE(sp),sp
                 movem.l (sp)+,d2-d7/a2-a6
+                rts
+; .x_restcd: back to the CLI's current directory if a CLI path entry was made current (frame 4 bytes higher).
+.x_restcd:
+                move.l  XF_OLDCD+4(sp),d1
+                beq.s   .rc_r
+                clr.l   XF_OLDCD+4(sp)
+                move.l  a6,-(sp)
+                move.l  XF_DOS+8(sp),a6
+                jsr     DOS_LVO_CURRENTDIR(a6)
+                move.l  (sp)+,a6
+.rc_r:
                 rts
 
 ; sh_redclose(): closes the redirection files of the command (caller's XF frame, at 4(sp)). Preserves d0.
@@ -875,108 +911,34 @@ sh_build_args:
                 move.l  d2,d0
                 rts
 
-; sh_run_startup(): F1 - reads "s/startup-sequence" (OFS subdirectory of the boot disk) via dos and executes
-; each line via sh_dispatch_line (same builtins + loading of external commands as interactive). No
-; startup-sequence -> nothing (OK). Empty lines and ";" comments ignored. Preserves everything (movem). F1
-; simplification: file in the ROOT (not "s/") -> OFS subdirectory traversal is deferred (documented deviation, see
-; strap.s).
+; sh_run_startup(): F1 - opens "s/startup-sequence" (OFS subdirectory of the boot disk) as cli_CurrentInput and runs
+; it through sh_runscript, like the 1.3 initial CLI: the commands see CurrentInput != StandardInput (the 1.2 If
+; refuses to run otherwise) and can read the script themselves (If/Skip consume lines up to EndIf/Lab). No
+; startup-sequence -> nothing. Preserves everything.
 sh_run_startup:
-                movem.l d2-d7/a2-a6,-(sp)
+                movem.l d0-d3/a0-a1/a6,-(sp)
                 move.l  ($4).w,a6
                 lea     sh_doslib(pc),a1
                 moveq   #0,d0
                 jsr     LVO_OPENLIBRARY(a6)
                 tst.l   d0
-                beq     .s_ret
-                move.l  d0,a4                ; a4 = DosBase
-                move.l  #SH_SCRIPTMAX,d0
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq     .s_closelib
-                move.l  d0,a5                ; a5 = script buffer
-                move.l  a4,a6                ; a6 = DosBase
+                beq.s   .s_ret
+                move.l  d0,a6
                 move.l  #sh_startupname,d1
                 move.l  #MODE_OLDFILE,d2
                 jsr     DOS_LVO_OPEN(a6)     ; BPTR fh | 0 (0 = no startup-sequence)
-                tst.l   d0
-                beq     .s_free
-                move.l  d0,d7                ; d7 = BPTR fh
-                move.l  d7,d1
-                move.l  a5,d2
-                move.l  #SH_SCRIPTMAX,d3
-                jsr     DOS_LVO_READ(a6)     ; d0 = bytes read
-                move.l  d0,d5                ; d5 = script size
-                move.l  d7,d1
-                jsr     DOS_LVO_CLOSE(a6)
-                move.l  ($4).w,a6            ; SysBase
-                tst.l   d5
-                beq.s   .s_free
-                ; a2 stays the StandardPacket (sh_write/sh_readline depend on it!) -> pos/end/DosBase in DATA registers.
-                move.l  a5,d3
-                add.l   d5,d3                ; d3 = end of the buffer (BEFORE reusing d5)
-                move.l  a4,d5                ; d5 = DosBase (safe across sh_dispatch_line)
-                move.l  a5,d2                ; d2 = current position (start)
-.sl_loop:
-                cmp.l   d3,d2
-                bcc.s   .sl_done             ; pos >= end
-                move.l  d2,a3                ; a3 = start of line
-                move.l  d2,a0                ; scan
-.sl_scan:
-                cmp.l   d3,a0
-                bcc.s   .sl_eol
-                move.b  (a0),d0
-                cmp.b   #13,d0
-                beq.s   .sl_eol
-                cmp.b   #10,d0
-                beq.s   .sl_eol
-                addq.l  #1,a0
-                bra.s   .sl_scan
-.sl_eol:
-                move.l  a0,d6
-                sub.l   a3,d6                ; d6 = line length (excluding the terminator)
-                move.l  a0,d2                ; pos = position of the terminator
-                cmp.l   d3,d2
-                bcc.s   .sl_check            ; end reached, no terminator to skip
-                move.l  d2,a0
-                move.b  (a0),d0
-                cmp.b   #13,d0
-                bne.s   .sl_notcr
-                addq.l  #1,d2                ; skip CR
-                cmp.l   d3,d2
-                bcc.s   .sl_check
-                move.l  d2,a0
-                move.b  (a0),d0
-.sl_notcr:
-                cmp.b   #10,d0
-                bne.s   .sl_check
-                addq.l  #1,d2                ; skip LF
-.sl_check:
-                tst.l   d6
-                beq.s   .sl_loop             ; empty line
-                move.b  (a3),d0
-                cmp.b   #';',d0
-                beq.s   .sl_loop             ; comment
-                bsr     sh_dispatch_line     ; a2=StandardPacket intact, a3=line, d6=length
-                moveq   #0,d1
-                bsr     sh_report
-                tst.l   d0
-                bne.s   .sl_done             ; failure: the rest of the startup-sequence is abandoned
-                bsr     sh_runscript         ; Execute may have switched the CLI input to a script
-                bra.s   .sl_loop
-.sl_done:
-                move.l  d5,a4                ; restore DosBase
-.s_free:
+                move.l  d0,d3
+                move.l  a6,a1
                 move.l  ($4).w,a6
-                move.l  a5,a1
-                move.l  #SH_SCRIPTMAX,d0
-                jsr     LVO_FREEMEM(a6)
-.s_closelib:
-                move.l  ($4).w,a6
-                move.l  a4,a1
                 jsr     LVO_CLOSELIBRARY(a6)
+                tst.l   d3
+                beq.s   .s_ret
+                bsr     sh_cli_ptr
+                beq.s   .s_ret
+                move.l  d3,CLI_CURRENTINPUT(a1)
+                bsr     sh_runscript         ; closes the script at its end and resumes the standard input
 .s_ret:
-                movem.l (sp)+,d2-d7/a2-a6
+                movem.l (sp)+,d0-d3/a0-a1/a6
                 rts
 
 sh_doslib:
@@ -1072,7 +1034,33 @@ sh_cmd_ver:
                 dc.b    "ver",0
 sh_cmd_echo:
                 dc.b    "echo",0
+sh_cechoname:
+                dc.b    "C:Echo",0
                 EVEN
+
+; sh_cecho() -> Z = 0 if C:Echo exists (no "insert volume" requester while looking). Preserves all but d0/d1/a0/a1.
+sh_cecho:
+                movem.l d2/a6,-(sp)
+                move.l  ($4).w,a0
+                move.l  EB_THISTASK(a0),a0
+                move.l  PR_WINDOWPTR(a0),-(sp)
+                moveq   #-1,d0
+                move.l  d0,PR_WINDOWPTR(a0)
+                move.l  #sh_cechoname,d1
+                moveq   #SHARED_LOCK,d2
+                move.l  DOS_DOSBASE,a6
+                jsr     DOS_LVO_LOCK(a6)
+                move.l  d0,d2
+                beq.s   .ce_no
+                move.l  d0,d1
+                jsr     DOS_LVO_UNLOCK(a6)
+.ce_no:
+                move.l  ($4).w,a0
+                move.l  EB_THISTASK(a0),a0
+                move.l  (sp)+,PR_WINDOWPTR(a0)
+                tst.l   d2
+                movem.l (sp)+,d2/a6
+                rts
 
 ; ============================== ROM CLI (BCPL segment of rn_ConsoleSegment) ==============================
 ; Run (and Execute) use this segment as entry 4 of the segarray of a background CLI when no "CLI" resident
@@ -1373,6 +1361,8 @@ rcli_rdline:
                 bne.s   .rl_eofd
 .rl_got:
                 cmp.b   #10,d2
+                beq.s   .rl_ret
+                cmp.b   #13,d2               ; CR ends a line too (deviation: harness scripts are CR-terminated)
                 beq.s   .rl_ret
                 cmp.w   #SHELL_LINEMAX,d6
                 bhs.s   .rl_ch               ; line too long: the rest is ignored

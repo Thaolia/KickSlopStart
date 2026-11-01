@@ -564,6 +564,22 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7k) **The Workbench 1.2 disk boots to its desktop** (2026-11-01, after issue #10). Its startup-sequence stopped at
+  the 1.2 commands, which are BCPL and stricter than the 1.3 ones.
+  - BCPL `rdargs`: an empty template is one positional key, like an empty name between commas (spec
+    `bcpl-runtime-v34.md` §5.4). The 1.2 `Echo` reads its text with `rdargs("")` and reported "Invalid argument".
+  - Initial shell: `s/startup-sequence` is opened as cli_CurrentInput and run by `sh_runscript`, the loop already
+    used for Execute scripts, instead of a private 2 KB buffer. The 1.2 `If` refuses to run when CurrentInput equals
+    StandardInput ("IF only valid within command files"), and a false `If` or a `Skip` reads the lines to jump over
+    from that stream. Scripts go through `sh_dispatch_line`, so the builtins stay available to them.
+  - Command lookup (`sh_exec_cmd`): current directory, then each entry of cli_CommandDir (Path ADD), then C:. The
+    path entry stays the current directory until LoadSeg, then the CLI's one is restored. `SetMap`, in SYS:System,
+    was not found before.
+  - The builtin `echo` gives way to the disk's `C:Echo` when there is one (quotes and `*N` handled by the real
+    command); it remains for disks without C: (harness ADFs). Deviation: `rcli_rdline` also ends a line at CR, as
+    the harness scripts are CR-terminated.
+  - Proven under FS-UAE: the Workbench 1.2 desktop comes up by itself, the issue #10 scenario (Demos drawer, Lines
+    started from its icon and resized) runs without Guru; Workbench 1.3.3 still boots to its desktop.
   (7j) **Window resizing: simple layers, real SuperBitMaps** (GitHub issue #10, 2026-11-01; specs
   `layers-v34.md` §4-§6 and §10.1, `intuition-gzz-v34.md` §2.5, completed by `tests/resize_probe.s` on the real ROM).
   Reported with the Workbench 1.2 disk: resizing the Lines demo gave a Guru #5, resizing Clock left old dials.
@@ -596,8 +612,7 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
     sliver drawn with its old size before it handles NEWSIZE. Lines draws about 37 lines/s with our CPU line
     drawing into its 1008 x 512 SuperBitMap, so its small window changes much less often than on the 1.3 ROM
     (frozen for ~16 s there too, then bursts every few seconds). A non-GZZ SUPER_BITMAP window's frame is not put
-    into the SuperBitMap as the 1.3 ROM does (probe Q6). The Workbench 1.2 disk does not reach its desktop on our
-    ROM (1.2 `If`, `Echo` with a quoted argument, `LoadWB`): separate work.
+    into the SuperBitMap as the 1.3 ROM does (probe Q6). The Workbench 1.2 disk did not reach its desktop: see (7k).
   (7i) **Memory usage and race fixes** (2026-10-30).
   - Memory: an idle English Workbench leaves ~60 KB less free than on 1.3. Breakdown by caller in
     `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
