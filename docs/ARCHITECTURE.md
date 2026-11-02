@@ -1474,5 +1474,31 @@ differs.
     `CDInputHandler` (returns 0), dos `WaitForChar` (ACTION_WAIT_CHAR, served by `conwin`).
   - Tests: `tests/bltpat_test.s`, `tests/imisc_test.s`, `tests/lmisc_test.s` (run with `tests/garea_probe.sh`);
     `gdisp_probe` and `iscr_probe` give the spec's values for the functions above.
+- **Lot 2 specs implemented (2026-11-02)**:
+  - exec scheduling (`tasks.s`, `interrupts.s`, `execmisc.s`, `semaphores.s`, spec exec-scheduling-v34): real
+    `Schedule`/`Reschedule`/`Switch`/`Dispatch`/`ExitIntr`/`Exception` vectors on the scheduler paths (Wait goes
+    through -54, Permit/Enable/Reschedule through -42, RemTask(self) through -60, the interrupt exit joins the
+    Schedule body), `tc_Launch`/`tc_Switch` hooks, task exceptions in user mode, the SAR flag (formerly
+    "AttnResched"), V34 message semaphores `Procure`/`Vacate`, `SumKickData`, a polling serial `Debug` monitor
+    (`r`/`g`). Kept: our 4-tick round-robin (the server sets TQE + SAR), Signal's "woken > current" rule.
+    `EB_INTSVL` moved out of KickMemPtr ($222 -> $230).
+  - trackdisk (`trackdisk.s`, spec trackdisk-raw-changeint-v34): `TD_RAWREAD`/`TD_RAWWRITE` (disk.resource
+    `GetUnit`, no sync, optional INDEXSYNC through the FLG relay), real `TD_SEEK`, `TD_GETDRIVETYPE` (3.5"),
+    `TD_REMOVE`, `TD_ADDCHANGEINT`/`TD_REMCHANGEINT`; disk change counts and causes the interrupts on removal and
+    insertion (count = 1 after a boot with a disk). Still synchronous (no unit task): changes are seen on each
+    command and by the handler's 1 s `TD_CHANGESTATE` poll. CMD_RESET/STOP/START/FLUSH return -3.
+  - keyboard.device / input.device (`kbddev.s`, `input.s`, `gameport.s`, spec keyboard-input-devices-v34): full
+    command tables, 31-entry event ring with `$7D` overflow, 13-byte READMATRIX, NUMERICPAD qualifier, KDAT reset
+    pulse; input `IND_SETMPORT`/`SETMTYPE`/`SETMTRIG` replay the gameport GPD_SETCTYPE/SETTRIGGER sequence and
+    move the system mouse to port 0 or 1 (`gp_mousesrc`); STOP/START/RESET suspend the system mouse only.
+  - resources (`cia.s`, `potgo.s`, `diskres.s`, `misc.s`, spec resources-v34): cia base in the 1.3 layout
+    (pending mask, IntVector array at $40), real `SetICR`, disabled flags kept pending; `AllocPotBits` grants the
+    OUTxx bits too, `WritePotgo` masks against the shadow; disk.resource `AllocUnit` returns `$FF`, `GiveUnit`
+    deselects the drives; versions 34.1.
+  - dos (`dos_lib.s`, `shell.s`, spec dos-exit-packets-v34): `Exit` returns to pr_ReturnAddr-4 with d0 = code
+    (RemTask when there is no return point); `GetPacket`/`QueuePacket` stay null (the spec's safest option); the
+    shell sets `cli_Result2` after a command.
+  - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
+    `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 
 See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.

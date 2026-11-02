@@ -957,10 +957,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   FreeCopList/WaitBOVP/BltPattern/ScrollVPort (+ RasInfo offsets in MakeVPort), intuition SetPointer/ClearPointer/
   Lock-UnlockIBase/CurrentTime/Intuition()/AlohaWorkbench/CloseWorkBench/WBenchToFront-Back/MoveScreen/MakeScreen/
   ActivateWindow/RefreshWindowFrame, layers Fatten/ThinLayerInfo, console CDInputHandler, dos WaitForChar.
-  Open (new specs of 2026-11-02, lot 2): gameport GPD_* (done by f1f5e23), keyboard/input generic commands and
-  IND_SETMPORT/MTYPE/MTRIG, trackdisk RAWREAD/RAWWRITE/GETDRIVETYPE/CHANGEINT/SEEK, cia SetICR, exec
-  Schedule/Switch/Dispatch/Exception/Procure/Vacate/SumKickData, dos Exit/GetPacket/QueuePacket; screens below the
-  front one are not displayed (MoveScreen only updates the fields).
+  **Lot 2 specs (2026-11-02)**: done — gameport GPD_* (f1f5e23), keyboard/input generic commands and
+  IND_SETMPORT/MTYPE/MTRIG, trackdisk RAWREAD/RAWWRITE/GETDRIVETYPE/CHANGEINT/SEEK/REMOVE, cia SetICR and the
+  resource layouts, exec Schedule/Reschedule/Switch/Dispatch/ExitIntr/Exception/Debug/Procure/Vacate/SumKickData,
+  dos Exit (GetPacket/QueuePacket left null on purpose). Binary and AROS similarity audits at the base level.
+  Open: trackdisk unit task (autonomous change polling), input.device task, joystick types through SETMTYPE,
+  INDEXSYNC now that SetICR exists, screens below the front one are not displayed (MoveScreen only updates the
+  fields); the Workbench 1.3.3 disk icon double-click under the Amiberry harness does not open the window, already
+  before lot 1 (2d78317): harness or older regression, to investigate.
 
 ## Immediately actionable work (start of implementation, upon approval)
 
