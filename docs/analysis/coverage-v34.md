@@ -108,7 +108,7 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 | 14 | input.device | common area (≈ 0.8 KB) | partial: repeat, thresholds, handler chain | intuiticks-repeat, disk-change §3 | `src/exec/input.s` | P2 |
 | 15 | layers.library 34.1 | 13,312 | partial: InstallClipRegion, Begin/EndUpdate, locks | installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | P1 |
 | 16 | console.device | common area (≈ 5.5 KB) | **almost none** | handlers-v34 §2 (CON: side) | `src/exec/console.s` (READ/WRITE only) | P1 |
-| 17 | trackdisk.device 34.1 | 6,908 | partial: reading and timing, disk change | trackdisk-official-timing, disk-change | `src/exec/trackdisk.s` | P2 (writing: other agent) |
+| 17 | trackdisk.device 34.1 | 6,908 | partial: reading and timing, disk change, writing, raw I/O, change interrupts, control commands | trackdisk-official-timing, disk-change, trackdisk-write, trackdisk-raw-changeint | `src/exec/trackdisk.s` | P2 (writing: other agent) |
 | 18 | intuition.library 34.3 | 52,248 | partial: requesters, prefs, frame, GZZ, prop | intuition-* | `src/intuition/*` (58/74) | P1 |
 | 19 | alert.hook | 658 | none (cited) | boot-sequence, module-map | absent (Alert = serial message) | P1 |
 | 20 | mathffp.library | 1,324 | none | — | `src/exec/mathffp.s` | P3 |
@@ -681,7 +681,7 @@ are partly **common** to the four devices in the ROM (same code for several entr
 | 6 | `CMD_STOP` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
 | 7 | `CMD_START` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
 | 8 | `CMD_FLUSH` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 9 | `TD_MOTOR` | partial — intuition-requesters §7.1 ; trackdisk-official-timing §1 | yes | 22 / 342 | P3 |
+| 9 | `TD_MOTOR` | partial — intuition-requesters §7.1 ; trackdisk-official-timing §1 ; trackdisk-write §5.1 (return `$FF`/0) | yes | 22 / 342 | P3 |
 | 10 | `TD_SEEK` | yes — trackdisk-official-timing §2 ; trackdisk-raw-changeint §3 | no-op | 38 / 628 | P3 |
 | 11 | `TD_FORMAT` | out of scope (write agent) | yes | 374 / 1668 | — |
 | 12 | `TD_REMOVE` | yes — disk-change §2.1 ; trackdisk-raw-changeint §5.1 | no-op | 12 / 72 | P2 |
@@ -854,6 +854,8 @@ those that a tolerant emulator hides.
     from DEVS: (terminal, printer), trackdisk and the keyboard for the ICR. *A500 risk*: **high** — a
     real external drive is detected by shifting its identifier on the SEL lines, and a serial cable
     plugged in for debugging conflicts with serial.device if the allocation is not respected.
+    **Update 2026-11-02**: [resources-v34.md](resources-v34.md) specifies all the LVOs of cia, disk, potgo and
+    misc.resource (the per-module counts of §0 and the "Specified?" columns of §3 predate it).
 
 **Update 2026-11-02**: [custom-chips-v34.md](custom-chips-v34.md) covers the custom-chip side of #9 (potgo.resource,
 gameport VBlank reader, mouse path), #11 (autovector dispatch, server chains, softints, `SetIntVector`,

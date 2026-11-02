@@ -134,7 +134,7 @@ Columns: register (HRM name, public offset), access, who (module — public func
 | | W | exec `AddIntServer` / `RemIntServer` | SET of the chain's bit at every add; CLR when the chain becomes empty (buggy, §3.1). [M:s] | §3.1 |
 | | W | exec softint dispatcher | `$0004` (CLR SOFTINT) while processing the queues, `$8004` at the end. [M:s] | §3.3 |
 | | W | exec Switch/Dispatch | `$C000`, then `$4000` again if the incoming task was switched out while disabled (its saved IDNestCnt ≥ 0). [M:sd] | exec-spec |
-| | W | exec `Debug` (ROM-Wack) | Saves INTENAR, clears TBE\|RBF (`$0801`) for the session, restores on exit. [M:s] | §4.3 |
+| | W | exec `Debug` (ROM-Wack) | Saves INTENAR, clears TBE\|RBF (`$0801`) for the session; the exit write has no SET bit, so TBE/RBF stay disabled (*corrected 2026-11-02, see `exec-scheduling-v34.md` §9*). [M:s] | §4.3 |
 | | W | graphics `LoadView` | `$0020` (VERTB off) … `$8020`. [M:sd] | graphics-display §7.1 |
 | | W | graphics `QBlit`/`QBSBlit`, BLIT handler | `$8040` (BLIT) when a queue starts (if INTENAR shows BLIT off); the BLIT handler writes `$0040` when both queues are empty. The beam-sync path also tests INTREQR VERTB. [M:s] | blitter §9 |
 | | W | audio.device | Per-channel bits 7-10 SET/CLR. [M:s] | audio §5-§6 |
@@ -254,7 +254,11 @@ The **first** pending-and-enabled source wins: its `IntVects[n]` entry is entere
 A5 := `iv_Code`, and the return address set to exec's interrupt exit (`ExitIntr`, LVO −36, which performs a
 pending reschedule when returning to user mode with task switching allowed). Only one source is dispatched per
 entry: another pending source of the same level re-interrupts at once. If none matches, plain RTE (no
-acknowledge).
+acknowledge). Both early exits (INTEN clear, no matching source) restore the registers and RTE **directly, not
+through `ExitIntr`**, so no schedule check is made on them (*Corrected 2026-11-02, see
+`exec-scheduling-v34.md` §8*). Register contract at `iv_Code` entry: A0 = `$DFF000`, A1 = `iv_Data`, A5 =
+`iv_Code`, A6 = ExecBase, D1 = INTENAR AND INTREQR (all levels' bits); the handler ends with RTS, may destroy
+D0/D1/A0/A1/A5/A6 and must preserve D2-D7/A2-A4 (`exec-scheduling-v34.md` §8).
 
 | Level | Sources tested, in this order | Vectors at boot (insert-disk and Workbench, identical) |
 |---|---|---|
@@ -275,9 +279,13 @@ chain and installs exec's server dispatcher as `iv_Code` with the header as `iv_
 standard `List` (14 bytes), then the CLR mask word (`1 << n`), the SET mask word (`$8000 | 1 << n`), the
 **acknowledge** word (PORTS `$0008`, VERTB `$0020`, COPER `$0010`, EXTER `$2000`, NMI `$0000`) and a spare word.
 The dispatcher saves the acknowledge word, calls each server in list (priority) order with A1 := `is_Data`,
-A5 := `is_Code`, **stops early when a server returns with Z clear** (non-zero), then writes the saved word to
-INTREQ (CLR form) — once, **after** the whole chain, and not at all for NMI. A0 is not reloaded between servers:
-only the first server can rely on A0 = `$DFF000` (the ROM's own servers do not rely on it). [M:s]
+A5 := `is_Code`, **stops early when a server returns with Z clear**, then writes the saved word to
+INTREQ (CLR form) — once, **after** the whole chain, and not at all for NMI. The stop test is the **Z flag** of
+the condition codes on return, not an explicit test of D0 (a server returning D0 = 0 with Z clear stops the
+chain). A0, A6 and D1 are not reloaded between servers: only the first server can rely on A0 = `$DFF000`,
+A6 = ExecBase and D1 = pending mask (the ROM's own servers do not rely on A0); D0 at server entry is non-zero
+garbage. The dispatcher walks the list with A2, so **a server must preserve A2** (and D2-D7/A3/A4). [M:s]
+(*Corrected 2026-11-02, see `exec-scheduling-v34.md` §8: Z-flag test, A6/D1 not reloaded, A2 preserved.*)
 
 **Software interrupts.** The SOFTINT vector code: acknowledges INTREQ `$0004`, then tests the "software
 interrupt pending" SysFlags bit (bit 5 at ExecBase `$124`); if clear it returns (the SOFTINT was a reschedule
@@ -287,7 +295,9 @@ request, handled by `ExitIntr`). Otherwise INTENA `$0004` (SOFTINT off), then fo
 end IPL 1 and INTENA `$8004`. `Cause(intr)`: under DISABLE, if the node is not already `NT_SOFTINT`, sets the
 type, appends it to the queue chosen by `(ln_Pri & $F0)`, sets the pending bit and writes INTREQ `$8004`.
 Reschedule (LVO −48): sets the reschedule bit (SysFlags bit 7); if task switching is allowed and interrupts
-are enabled the switch is made at once (through the supervisor path), if interrupts are disabled INTREQ
+are enabled the switch is made at once (through the supervisor path) when the caller is in user mode, while a
+caller already in supervisor mode (interrupt or Supervisor code) just returns and the switch is made by
+`ExitIntr` (*corrected 2026-11-02, see `exec-scheduling-v34.md` §2.1*); if interrupts are disabled INTREQ
 `$8004` is posted once (only when the bit was not already set), if task switching is forbidden only the flag
 is set. [M:s]
 
@@ -368,8 +378,11 @@ only double write in the ROM is DSKLEN). [M:s]
 **potgo.resource** (3 LVOs; base: ExecBase pointer, allocated-bits word, POTGO shadow word) [M:s]:
 - `AllocPotBits(bits)` (−6): under DISABLE. Bits already allocated are refused; allocating a DATxx bit also
   reserves its OUTxx partner. START (bit 0) is refused if some pin is allocated as a pot input (DAT without OUT);
-  if the caller gets START, only complete DAT/OUT pairs are granted with it. Returns the granted bits.
-- `FreePotBits(bits)` (−12): clears the bits (a DAT bit frees its OUT partner too).
+  if START is **already allocated** (by anyone), only complete DAT/OUT pairs are granted. Returns the granted
+  bits. (*Corrected 2026-11-02, see resources-v34.md §3.2: the pair-only rule depends on START being already
+  allocated, not on the caller obtaining it.*)
+- `FreePotBits(bits)` (−12): clears the DAT bits and START given (a DAT bit frees its OUT partner too); **an OUT
+  bit passed alone frees nothing** (*corrected 2026-11-02, see resources-v34.md §3.3*).
 - `WritePotgo(word, mask)` (−18): under DISABLE, `POTGO := (shadow AND NOT mask) OR (word AND mask)`; the shadow
   keeps only the high byte (START is never remembered). No check against the allocated bits.
 
@@ -408,8 +421,11 @@ Private exec LVOs (`.fd`: RawIOInit/RawMayGetChar/RawPutChar) [M:s]:
   Then polls the receiver: a received **Ctrl-S** (`$13`) blocks output until any other byte arrives (XOFF/any);
   a received **DEL** (`$7F`) enters `Debug`. No LF→CR translation, no NUL filtering.
 - **`Debug` (−114, ROM-Wack)**: saves INTENAR, clears TBE and RBF enables for the session, re-runs RawIOInit,
-  then runs a polled serial monitor; restores INTENA on exit. Serial interrupts are therefore never used by the
-  ROM.
+  then runs a polled serial monitor. On exit it writes the saved value back to INTENA, but that value is
+  INTENAR masked to TBE/RBF and carries **no SET bit** (bit 15), so the write can only clear: TBE and RBF are
+  **not** re-enabled and stay disabled after a Debug session (*corrected 2026-11-02, see
+  `exec-scheduling-v34.md` §9*; the earlier wording "restores INTENA on exit" was imprecise). Serial interrupts
+  are therefore never used by the ROM.
 - During a normal boot the real ROM sends **nothing** on the serial port (SERDAT never written, [M:d]).
 
 ### 4.4 Background colour

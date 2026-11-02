@@ -39,8 +39,13 @@
   screen exists and input.device is not open: only the internal data is set.
 - First OpenLibrary (OpenCnt = 0) [O]: re-applies the prefs (§3.3, without copy), then
   **IB+$40 (Flags) := $1000** — which clears bit 16 ("rows/columns already adjusted", §3.3)
-  — then opens timer.device and input.device (IORequest at IB+$182) and installs the input
-  handler (IND_ADDHANDLER, priority 50). So the **first SetPrefs after opening**
+  — then obtains the timer.device base and opens input.device (IORequest at IB+$182) and installs the
+  input handler (IND_ADDHANDLER, priority 50). timer.device is not really opened: OpenDevice is called with
+  the invalid unit −1 on a stack-local request, fails, and only the `io_Device` left by exec is kept
+  (IB+$6C); that request is never closed. Between the prefs and the Flags write, sprite and bitplane DMA are
+  turned off (DMACON `$0020`, `$0100`). `lib_OpenCnt` goes 0 → 1 once and never changes again (Close and
+  Expunge return 0 and do nothing). (*Corrected 2026-11-02, see `intuition-misc-v34.md` §1.1, §1.2.*)
+  So the **first SetPrefs after opening**
   (the one from system-configuration) can still adjust rows/columns, and it is the first one able
   to pass KeyRpt on to input.device.
 

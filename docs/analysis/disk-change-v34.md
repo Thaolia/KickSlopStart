@@ -28,7 +28,9 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
    **TD_REMOVE (12)** interrupt with trackdisk; it only **resets a "disk
    changed" flag to 0**. The FS tests this flag at **each wake-up** of its loop (packet received or **1 s
    timer tick**, UNIT_VBLANK); flag at 0 ⇒ it sets it back to "seen" then queries **TD_CHANGESTATE (14)**.
-   No polling of TD_CHANGENUM, no TD_ADDCHANGEINT (V36). [O ROM]
+   No polling of TD_CHANGENUM, no TD_ADDCHANGEINT. [O ROM] (*Corrected 2026-11-02, see
+   trackdisk-raw-changeint-v34.md §5: TD_ADDCHANGEINT exists and works in V34, it is not V36; the FS simply
+   does not use it.*)
 2. **Ejection**: the FS now answers `DiskType = −1`; it **detaches the current volume**:
    if it has **no lock** open ⇒ the volume node is **removed from the DosList and freed**; otherwise its
    locks are hooked onto `dl_LockList` and **`dl_Task := 0`** (the node stays in place). Then
@@ -90,6 +92,14 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
   changed" flag** and whose code merely writes 0 into the long pointed to by `is_Data`
   (A1), then installs it by **TD_REMOVE (12)** on its trackdisk IORequest. The flag starts at 0
   ("changed") ⇒ a first mount is attempted from the first pass of the loop.
+- Trackdisk side (*Corrected 2026-11-02, see trackdisk-raw-changeint-v34.md §5.1, §5.4, §6.2*): the unit has a
+  **single** remove-interrupt slot (TD_REMOVE replaces any previous one; NULL clears it; replied at once). At each
+  change seen by the unit's own polling, **on removal and on insertion alike**, trackdisk first increments the
+  change counter (TD_CHANGENUM), then `Cause()`s the TD_REMOVE interrupt (if set), then the Interrupt of every
+  TD_ADDCHANGEINT request of the unit, in installation order. The FS flag is therefore reset on insertion
+  too; the FS cannot tell the two apart and relies on TD_CHANGESTATE. TD_ADDCHANGEINT requests are **never
+  replied** while installed (only TD_REMCHANGEINT replies them). A swap seen within one poll gives two
+  increments and two rounds of `Cause()`s.
 - The timer request is re-armed with **tv_secs = 1, tv_micro = 0** (TR_ADDREQUEST): the FS wakes up
   at least once per second even without a packet (`boot-clock-v34.md` §4.3).
 - At each wake-up (before processing the received packet): if the flag is 0 ⇒ flag := −1; then,
@@ -99,7 +109,8 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
   - **present** ⇒ start of the validator (§2.5);
   - **absent** ⇒ ejection (§2.2.1).
 - Consequence: the FS latency = detection by trackdisk (its own polling of the /CHNG
-  line, not measured here) + at most ~1 s. Measured (emulated time, from the increment of
+  line: every ~0.5 s with a disk present, ~2.5 s with the drive empty, plus before/after each queued
+  command — trackdisk-raw-changeint-v34.md §6.2, ROM reading; not measured here) + at most ~1 s. Measured (emulated time, from the increment of
   TD_CHANGENUM): ejection recognised in **0.1–0.3 s**. [O]
 
 ### 2.2 Volume nodes of the DosList (A2)
@@ -343,7 +354,9 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
 ## 6. Open points
 
 - Detection delay **by trackdisk** itself (polling of /CHNG, motor stopped): not measured
-  (FS-UAE menu paused); only the FS delay (≤ ~1 s after the TD_REMOVE interrupt) is established.
+  (FS-UAE menu paused); only the FS delay (≤ ~1 s after the TD_REMOVE interrupt) is established. The poll
+  period is now known from the ROM (~0.5 s disk present, ~2.5 s empty: trackdisk-raw-changeint-v34.md §6.2,
+  added 2026-11-02); the measurement remains open.
 - Semantics of the two internal states that prevent detachment on ejection (§2.2.1 point 2),
   text of the corresponding requester (ROM path seen, not probed); split "replace" / "insert" between dos and FS (§2.4).
 - What happens to the node when the **last lock of an absent volume** is freed (ACTION_FREE_LOCK

@@ -187,7 +187,10 @@ GETSYSTIME and SETSYSTIME act on the clock **whichever unit** is open.
      else; it reloads it on each task switch;
   2. **clock fold-over** (§4) if the high byte of the CIA-A TOD ≠ 0;
   3. processing of the VBLANK list.
-  Then Enable, ReplyMsg of the completed requests; returns d0 = 0 (the chain continues).
+  Then Enable, ReplyMsg of the completed requests; returns d0 = 0 **with the Z flag set** (the chain
+  continues: exec tests the Z flag, not D0 — *precision added 2026-11-02, see `exec-scheduling-v34.md` §8*).
+  Setting TQE does **not** request a reschedule (SAR untouched): the quantum never preempts on its own
+  in V34 (`exec-scheduling-v34.md` §2.3).
 
 ---
 
@@ -418,7 +421,10 @@ Goal: a game that hijacks `$78` (level 6) must break **no** system delay.
    list with FIFO for ties, request `tv` modified in place, IOF_QUICK cleared by
    ADDREQUEST, AbortIO returning −1 if the request is not queued. timer.device sets Quantum = 16 and
    provides the quantum tick (SysFlags bit 14) from its VBLANK server: if our exec depends
-   on another time-slice source, keep it consistent with 16 frames.
+   on another time-slice source, keep it consistent with 16 frames. Note: in the 1.3 exec the TQE bit
+   only matters inside `Schedule` when a lower-priority task heads the ready list, and never triggers a
+   switch by itself, so the real ROM does **not** time-slice equal-priority CPU-bound tasks (*corrected
+   2026-11-02, see `exec-scheduling-v34.md` §2.3*).
 8. Accepted side effect: a game that hijacks `$68` (level 2) kills MICROHZ **and** the keyboard, as on
    the real 1.3 (HJ2).
 

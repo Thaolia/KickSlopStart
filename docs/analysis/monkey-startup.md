@@ -221,7 +221,9 @@ The music player, activated at the first tune, takes over the hardware **directl
   in timer.device. Level 6 is not used there for MICROHZ, and the game's takeover of vector $78
   has no effect on disk loading.
   - trackdisk does open ciab.resource, but nothing indicates that it needs
-    the interrupt to read [S].
+    the interrupt to read [S]. (*Confirmed 2026-11-02, see trackdisk-raw-changeint-v34.md §4.3: trackdisk uses
+    the CIA-B FLG (index) interrupt only for `TD_RAWREAD`/`TD_RAWWRITE` with `IOTDF_INDEXSYNC`; normal reads
+    do not need level 6.*)
 - **Recommendation**: MICROHZ and any disk delay must go through CIA-A (level 2, PORTS).
   Otherwise, nothing may depend on a level 6 interrupt during reads.
 

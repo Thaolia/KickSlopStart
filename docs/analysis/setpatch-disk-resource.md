@@ -155,7 +155,11 @@ Ranked from most to least likely given the analysis above:
    `dr_Current` points to a DRU **on a stack** (case of the boot self-test, DRU on the
    supervisor/boot stack) or to freed memory and the active bit stays/becomes true, a disk/index
    interrupt executed **in the context of the current task** would jump to a value read from a stack
-   area → PC in a stack, attributed to the interrupted task (here the BCPL `execute`). BCPL frames
+   area → PC in a stack, attributed to the interrupted task (here the BCPL `execute`). (*Corrected
+   2026-11-02, see resources-v34.md §2.3: in the V34 disk.resource the relay goes to `dr_Current` **whether or
+   not the active bit is set** — `dr_Current` is never cleared, so the last owner's DRU keeps receiving disk
+   and index interrupts after `GiveUnit`; a stale stack/freed DRU is therefore dangerous even with the channel
+   released.*) BCPL frames
    precisely contain stack addresses. Discriminating experiment: keep the resource but
    remove `SetPatch` from the startup-sequence (or the reverse: SetPatch present, resource renamed so that
    OpenResource fails but interrupts are kept).

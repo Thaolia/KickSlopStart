@@ -179,8 +179,18 @@ offset V36). The implementation track must refuse/ignore these LVOs to stay fait
 ### Mutual exclusion
 - `Forbid()` / `Permit()`: increment/decrement `TDNestCnt`. Forbid prevents
   rescheduling (cooperative) as long as the counter has not returned to its initial state; **nestable**.
-- `Disable()` / `Enable()`: prevent interrupts via `IDNestCnt`; nestable.
+  Forbid only blocks **involuntary** switches: `Wait()` does not test it and switches anyway, the
+  `IDNestCnt`/`TDNestCnt` pair being saved per task (`tc_IDNestCnt`/`tc_TDNestCnt`) and reloaded when the
+  task is dispatched again, so the Forbid resumes when the waiting task runs again. (*Corrected 2026-11-02,
+  see `exec-scheduling-v34.md` §2.4, §2.7.*)
+- `Disable()` / `Enable()`: prevent interrupts via `IDNestCnt`; nestable. `Enable()` never schedules
+  directly: a switch requested while disabled arrives through the software interrupt posted by `Reschedule`
+  or at the next interrupt exit (`exec-scheduling-v34.md` §2.1, §2.7).
   Rule: keep Disable sections **very short**.
+- Scheduling (V34): the head of `TaskReady` preempts the running task when its priority is **greater than
+  or equal to** the running one; the 16-frame quantum (`Quantum`/`Elapsed`, TQE) **never causes a switch
+  on its own**, so there is no time slicing between CPU-bound tasks of equal priority except as a side
+  effect of other preemptions (`exec-scheduling-v34.md` §2.2, §2.3).
 
 ## 5. Uncertainties
 - The ExecBase layout (section 2) is public ABI; it cannot be verified field by field in the

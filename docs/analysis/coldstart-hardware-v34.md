@@ -196,8 +196,12 @@ Any failure → cold path (ExecBase rebuilt, RAM cleared, Kick pointers lost).
   LVO −612) and compares it with `KickCheckSum`:
   - start `$FFFFFFFF`;
   - for each `MemList` of the `KickMemPtr` chain (followed via `LN_Succ`): addition of
-    **`2·ml_NumEntries + 5` consecutive longs** from the start of the node (i.e. the whole node **plus one
-    extra long**, a peculiarity to reproduce);
+    **`2·ml_NumEntries + 4` consecutive longs** from the start of the node, i.e. exactly the whole
+    `MemList` (Node header and `ml_NumEntries` = 4 longs, `LN_SUCC` included, plus 2 longs per `MemEntry`), no
+    extra long (*corrected 2026-11-02, see `exec-scheduling-v34.md` §7; the earlier "+ 5 / one extra long"
+    was an off-by-one in reading the loop count*);
+  - `KickMemPtr` and `KickTagPtr` are zeroed during the computation and written back unchanged at the end
+    (`exec-scheduling-v34.md` §7);
   - then, for the `KickTagPtr` table: addition of each positive entry; an entry with bit 31 set is a
     link (bit cleared → next table, not summed); 0 terminates.
 - Equality → each entry of each `MemList` is reserved by **AllocAbs**; if **all** succeed,

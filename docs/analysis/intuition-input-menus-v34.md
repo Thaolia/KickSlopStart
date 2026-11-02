@@ -50,8 +50,14 @@
 
 - Installed at the first OpenLibrary (see `intuition-prefs-v34.md` §1): `IND_ADDHANDLER`, Interrupt
   structure in IntuitionBase, `ln_Pri` = **50**, `is_Data` = IntuitionBase, `is_Code` = a relay that
-  calls the public function **`Intuition(ie)` (LVO −36, A0 = list of InputEvents)** with A6 = IB and
-  returns its D0 to input.device.
+  receives the handler convention (A0 = list of InputEvents, A1 = `is_Data`), sets A6 := IB, **pushes A0 on
+  the stack and calls the body of `Intuition()` directly** (not through LVO −36), then returns the body's D0
+  to input.device with A0 and A6 preserved.
+- LVO −36 `Intuition()` jumps straight into that same body, which reads the event list from **the first
+  long on the stack** (4(SP) at entry); **A0 is ignored**, contrary to the fd file
+  (`Intuition(iEvent)(A0)`). An external caller of LVO −36 must push the list pointer. (*Corrected
+  2026-11-02, see `intuition-misc-v34.md` §2.1; the earlier text said LVO −36 takes the list in A0 and that
+  the relay calls the LVO.*)
 - A handler of priority > 50 sees the raw events before intuition; a handler of priority < 50
   (console.device) sees **only** the list returned by intuition.
 - `Intuition(NULL)` returns 0 without doing anything.

@@ -216,7 +216,7 @@ immediately. Bit 5 (WORDSYNC) is not handled in V34. `io_Actual` is not filled i
 | 2 / 3 | `CMD_READ` / `CMD_WRITE` | same engine (§5.2) |
 | 4 | `CMD_UPDATE` | flush of the buffer if it is dirty |
 | 5 | `CMD_CLEAR` | **invalidates the buffer and DISCARDS the dirty data** without writing |
-| 9 | `TD_MOTOR` | `io_Length` 0/1; `io_Actual` = previous state (1 = on) |
+| 9 | `TD_MOTOR` | `io_Length` 0 = off, non-zero = on; `io_Actual` = previous state: **`$FF` (non-zero) if the motor was on**, 0 if it was off (*Corrected 2026-11-02 by ROM reading, previously "1 = on"; `io_Actual` is the long `$000000FF` or 0, `io_Error` 0. Not covered by trackdisk-raw-changeint-v34.md, which complements this page*) |
 | 10 | `TD_SEEK` | seek only |
 | 11 | `TD_FORMAT` | §5.4 |
 | 15 | `TD_PROTSTATUS` | §5.5 |
