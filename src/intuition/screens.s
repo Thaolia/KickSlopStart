@@ -118,9 +118,13 @@ intuition_OpenScreen:
         bpl.s   .os_wok
         move.w  #640,d4
 .os_wok:
-        move.w  NS_HEIGHT(a2),d5     ; d5 = height (<= 0: 256, PAL)
-        bgt.s   .os_hok
-        move.w  #256,d5
+        move.w  NS_HEIGHT(a2),d5     ; d5 = height (<= 0: the display height, NormalDisplayRows: 256 PAL, 200 NTSC,
+        bgt.s   .os_hok              ; doubled with LACE — intuition-screens-v34 §2.2)
+        move.l  IB_GFXBASE(a5),a0
+        move.w  gb_NormalDisplayRows(a0),d5
+        btst    #2,NS_VIEWMODES+1(a2) ; LACE ($0004)
+        beq.s   .os_hok
+        add.w   d5,d5
 .os_hok:
         move.w  d4,SC_WIDTH(a3)
         move.w  d5,SC_HEIGHT(a3)
@@ -598,7 +602,7 @@ intuition_CloseScreen:
         movem.l (sp)+,d3/a3-a5
         rts
 
-; OpenWorkBench() -> d0 = Workbench Screen: opens it if it is not open (640x256, 2 planes, HIRES).
+; OpenWorkBench() -> d0 = Workbench Screen: opens it if it is not open (640 x display height, 2 planes, HIRES).
 intuition_OpenWorkBench:
         move.l  IB_WBSCREEN(a6),d0
         bne.s   .ow_ret
@@ -3271,7 +3275,7 @@ intuition_DoubleClick:
 
 ; Workbench NewScreen
 sc_wbnewscreen:
-        dc.w    0,0,640,256,2        ; LeftEdge, TopEdge, Width, Height, Depth
+        dc.w    0,0,640,-1,2         ; LeftEdge, TopEdge, Width, Height (-1: 256 PAL, 200 NTSC), Depth
         dc.b    2,1                  ; DetailPen (titles and gadgets: black), BlockPen (bars: white)
         dc.w    V_HIRES              ; ViewModes
         dc.w    WBENCHSCREEN         ; Type

@@ -367,6 +367,7 @@ IECLASS_DISKINSERTED EQU 16      ; ie_Class: floppy inserted and mounted
 IEQUALIFIER_REPEAT EQU $0200     ; ie_Qualifier: automatic key repeat event
 IECODE_LBUTTON  EQU $68          ; ie_Code: left button (down; up = | $80)
 IECODE_RBUTTON  EQU $69          ; ie_Code: right button (down; up = | $80)
+IECODE_MBUTTON  EQU $6A          ; ie_Code: middle button (down; up = | $80)
 IECODE_NOBUTTON EQU $FF          ; ie_Code: pure movement event (no button)
 IECODE_UP_PREFIX EQU $80         ; ie_Code: release (button code | $80)
 IE_NEXTEVENT    EQU 0            ; struct InputEvent: APTR next event
@@ -412,8 +413,8 @@ REQ_HIT      EQU $00000682 ; word: requester — gadget hit by a click (set by r
 ; pointer_input_handler (intuition, pri 50) accumulates these RELATIVE deltas into an ABSOLUTE position clamped to
 ; the screen and rewrites ie_X/ie_Y -> the existing req_input_handler (pri 0) hit-tests in absolute, unchanged = the
 ; live wiring.
-PTR_XMAX     EQU 320            ; screen bounds for the pointer clamp (320x256: console/bootscreen)
-PTR_YMAX     EQU 256
+PTR_XMAX     EQU 320            ; pointer X bound (lores pixels)
+PTR_YLIM     EQU $0000069E ; word: pointer Y bound = GfxBase NormalDisplayRows (256 PAL, 200 NTSC), set by graphics init
 GP_POLLS_THRESH EQU 25          ; VBlank polls (~0.5 s) before "GP VBLANK LIVE OK" (server lives in the system)
 PTR_X        EQU $00000684 ; word: absolute pointer X (accumulated by pointer_input_handler, clamped)
 PTR_Y        EQU $00000686 ; word: absolute pointer Y
@@ -440,7 +441,8 @@ GP_CAP_N     EQU $00000694 ; word: RAWMOUSE events seen by the capture handler (
 GP_CAP_CODE  EQU $00000696 ; word: last captured ie_Code
 GP_CAP_DX    EQU $00000698 ; word: last captured ie_X (delta)
 GP_CAP_DY    EQU $0000069A ; word: last captured ie_Y (delta)
-GP_LIVE_STAT EQU $0000069C ; byte: b0 = "GP VBLANK LIVE OK" already emitted +pad $69D
+GP_LIVE_STAT EQU $0000069C ; byte: b0 = "GP VBLANK LIVE OK" already emitted
+GP_PREV_MBTN EQU $0000069D ; byte: previous middle button (edge-detect, like GP_PREV_RBTN)
 GP_VBL_INT   EQU $000006A0 ; struct Interrupt (IS_SIZE=22) of the gameport VBlank server -> $6A0..$6B5
 ; CONSUMER handlers of the requester, registered PERSISTENTLY on input.device in the M6R insert-disk branch
 ; (no teardown) -> the gameport->input.device->pointer->requester chain is LIVE in the running system

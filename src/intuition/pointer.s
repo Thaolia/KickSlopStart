@@ -23,7 +23,7 @@
                 xref    it_diskin
 
 ; pointer_input_handler(a0 = InputEvent list, a1 = is_Data): input.device handler (pri 50). For each
-; RAWMOUSE: PTR += signed relative (ie_X, ie_Y), clamp [0, PTR_?MAX-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
+; RAWMOUSE: PTR += signed relative (ie_X, ie_Y), clamp [0, PTR_XMAX-1] x [0, PTR_YLIM-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
 ; list (pass-through). Preserves d2-d7/a2-a6 (saves d2/d3/d4/a3).
 pointer_input_handler:
                 movem.l d2/d3/d4/a3,-(sp)
@@ -72,9 +72,10 @@ pointer_input_handler:
                 bpl.s   .pih_ylo
                 moveq   #0,d4
 .pih_ylo:
-                cmp.w   #PTR_YMAX,d4
+                cmp.w   PTR_YLIM,d4
                 blt.s   .pih_yhi
-                move.w  #PTR_YMAX-1,d4
+                move.w  PTR_YLIM,d4
+                subq.w  #1,d4
 .pih_yhi:
                 endc
                 move.w  d4,PTR_Y

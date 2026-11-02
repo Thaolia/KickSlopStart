@@ -508,10 +508,21 @@ Ordered by expected impact on real software / a real A500.
 
 ### 7.0 Status (2026-11-02)
 
-Items 1-4 are **done** (see §7.1 for what was changed). What remains open: §7.2, §7.3, plus three follow-ups of
-item 4 — intuition and the boot screen still assume 256 lines (on NTSC the bottom is cut), `LoadView(NULL)`
-does not force a long frame through VPOSW, and `gb_VBlank` still holds the frame rate instead of being a
-per-frame flag.
+Items 1-4 are **done** (see §7.1 for what was changed), and so are the POTGO part of item 6 and the NTSC screen
+height (2026-11-02, second pass):
+- **POTGO**: gameport allocates `$0F00` (OUTLY|DATLY|OUTLX|DATLX) and its VBlank server calls `WritePotgo($0F00,
+  $0F00)` after reading the mouse, every frame (watch on POTGO: ~50 writes of `$0F00` per second, all from the
+  server). The middle button (POTGOR DATLX, active low) produces RAWMOUSE `$6A` / `$EA` (dev marker
+  `GAMEPORT OK` now covers it). potgo.resource `WritePotgo` uses the inline DISABLE/ENABLE of `exec/ables.i`:
+  the `Enable` LVO may reschedule, which is not allowed from the interrupt that now calls it.
+- **NTSC screens**: `OpenScreen` with Height ≤ 0 takes GfxBase NormalDisplayRows (doubled with LACE,
+  intuition-screens-v34 §2.2) and the Workbench screen is opened with Height −1: 640 × 200 on NTSC, 640 × 256 on
+  PAL (checked under Amiberry: the whole Workbench is visible on NTSC). The pointer is bounded by the same
+  height (low-RAM word `PTR_YLIM`, written by graphics init).
+
+Still open: the rest of §7.2 and §7.3; the boot picture (352 × 272 PAL overscan art) loses its bottom rows on
+NTSC; `LoadView(NULL)` does not force a long frame through VPOSW; `gb_VBlank` holds the frame rate instead of being
+a per-frame flag.
 
 ### 7.1 High (done)
 
@@ -569,7 +580,7 @@ Original findings:
    - server chains use a bare 14-byte `List` as `iv_Data` (official: 22-byte header with CLR/SET/ack words,
      §3.3). Only software that reads past the `List` would notice.
    - `SetIntVector(n, NULL)` stores 0/0 (official: `-1`/`-1`); ours is safer since the dispatcher skips code 0.
-6. **Mouse buttons / POTGO** (`src/exec/gameport.s`): we allocate and write POTGO `$0C00` (OUTLY|DATLY) **once**
+6. **Mouse buttons / POTGO** (`src/exec/gameport.s`; POTGO and middle button **done**, see §7.0): we allocate and write POTGO `$0C00` (OUTLY|DATLY) **once**
    at init; official gameport writes `$0F00` (adds OUTLX|DATLX, the middle button) **every vertical blank**
    through `WritePotgo` (§4.2). A program that writes POTGO directly and exits leaves our right button broken
    until reboot; the middle button is never read. Unit 1 (JOY1DAT, joystick types) and `GPD_*` commands are

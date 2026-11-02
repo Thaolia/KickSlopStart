@@ -948,8 +948,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Custom-chip parity (2026-11-02)**: `docs/analysis/custom-chips-v34.md` maps every Agnus/Denise/Paula access of
   the official ROM to its module and LVO; its §7 lists our gaps by impact. Done the same day: AddIntServer /
   RemIntServer drive INTENA, LoadView(NULL) keeps the DMA on (empty list + CPU display reset), DSKEN enabled once
-  by disk.resource, PAL/NTSC detected from the beam. Open: autovector order and acknowledge timing, POTGO every
-  frame and middle button, raw serial, 200-line screens on NTSC.
+  by disk.resource, PAL/NTSC detected from the beam. Then: POTGO rewritten every frame by the gameport server,
+  middle button events, Workbench and default-height screens 200 lines on NTSC (pointer bounded likewise). Open:
+  autovector order and acknowledge timing, raw serial, the 272-line boot picture on NTSC.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

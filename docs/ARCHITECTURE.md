@@ -1433,5 +1433,9 @@ differs.
   (`src/graphics/graphics_lib.s`); disk.resource enables DSKEN once, trackdisk only arms DSKLEN and leaves the
   audio ADKCON bits alone (`src/exec/diskres.s`, `trackdisk.s`); graphics init detects PAL/NTSC from the beam and
   fills the standard-dependent GfxBase fields and ExecBase VBlankFrequency (`gfx_detect_std`).
+  Then the gameport VBlank server rewrites POTGO `$0F00` every frame through `WritePotgo` (inline DISABLE/ENABLE,
+  callable from interrupts) and reports the middle button (`$6A`); `OpenScreen` Height ≤ 0 and the Workbench screen
+  follow NormalDisplayRows (200 lines on NTSC), and the pointer is bounded by `PTR_YLIM` (`src/exec/gameport.s`,
+  `potgo.s`, `src/intuition/screens.s`, `pointer.s`).
 
 See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.

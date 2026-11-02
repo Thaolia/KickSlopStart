@@ -3022,18 +3022,19 @@ d2_done:
         move.w  #$00FE,GP_PREV_JOY      ; movement+wrap: prev (X=$FE,Y=$00), poll JOY=$0001 (X=$01,Y=$00) -> dx=+3 dy=0
         clr.b   GP_PREV_BTN
         clr.b   GP_PREV_RBTN
+        clr.b   GP_PREV_MBTN
         clr.w   GP_CAP_N
         move.w  #$0001,d0
         move.w  #$00FF,d1               ; CIAA_PRA bit6=1 -> button released
         jsr     gp_poll
         cmp.w   #1,GP_CAP_N             ; one event (pure movement)
-        bne.s   .gp_cfree
+        bne     .gp_cfree
         cmp.w   #IECODE_NOBUTTON,GP_CAP_CODE
-        bne.s   .gp_cfree
+        bne     .gp_cfree
         cmp.w   #3,GP_CAP_DX            ; dx=+3 when crossing $FE->$01 (RED GP_NO_WRAP -> -253)
-        bne.s   .gp_cfree
+        bne     .gp_cfree
         tst.w   GP_CAP_DY               ; dy=0
-        bne.s   .gp_cfree
+        bne     .gp_cfree
         move.w  #$1234,GP_PREV_JOY      ; button edge: CONSTANT position (cur==prev -> dx=dy=0) to isolate the edge
         clr.b   GP_PREV_BTN             ; released at start
         clr.w   GP_CAP_N
@@ -3050,9 +3051,22 @@ d2_done:
         move.w  #$00FF,d1
         jsr     gp_poll
         cmp.w   #2,GP_CAP_N             ; exactly 2 events (down + up); RED GP_NO_EDGE -> 3
-        bne.s   .gp_cfree
+        bne     .gp_cfree
         cmp.w   #(IECODE_LBUTTON|IECODE_UP_PREFIX),GP_CAP_CODE  ; last = up ($E8)
-        bne.s   .gp_cfree
+        bne     .gp_cfree
+        clr.w   GP_CAP_N
+        move.w  #$1234,d0               ; E: middle pressed (DATLX) -> MBUTTON down
+        move.w  #$02FF,d1
+        jsr     gp_poll
+        cmp.w   #IECODE_MBUTTON,GP_CAP_CODE
+        bne     .gp_cfree
+        move.w  #$1234,d0               ; F: middle released -> MBUTTON up
+        move.w  #$00FF,d1
+        jsr     gp_poll
+        cmp.w   #2,GP_CAP_N
+        bne     .gp_cfree
+        cmp.w   #(IECODE_MBUTTON|IECODE_UP_PREFIX),GP_CAP_CODE
+        bne     .gp_cfree
         lea     msg_gameport_ok(pc),a0
         bsr     ser_puts                ; "GAMEPORT OK"
 .gp_cfree:
@@ -6079,7 +6093,7 @@ msg_req_drawn:
 msg_req_click:
         dc.b    "REQUESTER CLICK OK (RAWMOUSE via input.device: click inside gadget -> hit, click outside -> miss)",13,10,0
 msg_gameport_ok:
-        dc.b    "GAMEPORT OK (gameport.device logic: gp_delta8 8-bit wraparound, button edge-detect, RAWMOUSE emitted via IND_WRITEEVENT)",13,10,0
+        dc.b    "GAMEPORT OK (gameport.device logic: gp_delta8 8-bit wraparound, left and middle button edge-detect, RAWMOUSE emitted via IND_WRITEEVENT)",13,10,0
 msg_m6r_live_ok:
         dc.b    "M6R LIVE OK (relative RAWMOUSE deltas -> pointer accumulator -> absolute clamped pos -> requester hit-test: on gadget -> hit, off -> miss)",13,10,0
 msg_gp_live_ok:

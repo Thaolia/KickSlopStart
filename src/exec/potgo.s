@@ -118,12 +118,14 @@ pg_free:
         and.w   d0,PG_ALLOC(a6)      ; memory and.w: indivisible on 68000
         rts
 
-; WritePotgo(word d0, mask d1).
+; WritePotgo(word d0, mask d1). Called every frame by the gameport VBlank server: inline DISABLE/ENABLE (exec/ables.i)
+; instead of the LVOs, whose Enable may reschedule — not allowed from an interrupt.
 pg_write:
         movem.l d2/a6,-(sp)
         move.l  a6,a0
         move.l  ($4).w,a6
-        jsr     LVO_DISABLE(a6)
+        move.w  #INTF_INTEN,INTENA
+        addq.b  #1,EB_IDNEST(a6)
         move.w  d1,d2
         and.w   #$FF00,d2
         not.w   d2
@@ -136,7 +138,10 @@ pg_write:
         and.w   #PGF_START,d1
         or.w    d1,d2                ; START only if it is written now
         move.w  d2,POTGO_HW
-        jsr     LVO_ENABLE(a6)
+        subq.b  #1,EB_IDNEST(a6)
+        bge.s   .pw_ret
+        move.w  #INTF_SETCLR|INTF_INTEN,INTENA
+.pw_ret:
         movem.l (sp)+,d2/a6
         rts
 potgo_end:

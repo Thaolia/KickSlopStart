@@ -316,6 +316,7 @@ gfx_detect_std:
         addq.l  #1,a0
         move.w  (a0)+,gb_DisplayFlags(a2)
         move.w  (a0)+,gb_MaxDisplayRow(a2)
+        move.w  (a0),PTR_YLIM        ; the intuition pointer stays within the display height
         move.w  (a0)+,gb_NormalDisplayRows(a2)
         move.w  (a0)+,gb_NormalDPMX(a2)
         move.w  (a0)+,gb_NormalDPMY(a2)

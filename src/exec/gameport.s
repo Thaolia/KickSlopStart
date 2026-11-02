@@ -23,7 +23,7 @@
                 xdef    gp_install
                 xdef    gameport_dev_name
 
-GP_POTBITS      EQU $0C00            ; OUTLY | DATLY (port 0, pin 9 = right button)
+GP_POTBITS      EQU $0F00            ; OUTLY|DATLY|OUTLX|DATLX: port 0 pins 9 (right) and 5 (middle) driven high
 POTGO_W         EQU CUSTOM+$034
 IO_DATA2        EQU 40               ; IOStdReq io_Data (APTR) — local (avoids including disk.i)
 GAMEPORT_SIZE   EQU LIB_SIZE         ; gameport.device base: Library node only (no own device state)
@@ -113,10 +113,11 @@ gp_delta8:
         ext.w   d0                  ; byte -> word sign-extend: correct signed delta despite the wraparound
         rts
 
-; gp_poll(d0.w = current JOY0DAT, d1.w = current CIAA_PRA | $100 if right button pressed): logical core. Computes
-; dx/dy (vs GP_PREV_JOY, via gp_delta8), detects the left button edge (vs GP_PREV_BTN; PRA bit 6 active-low),
-; otherwise the right button edge (vs GP_PREV_RBTN; a simultaneous right edge waits for the next poll), and if
-; movement OR edge, builds a RAWMOUSE InputEvent (ie_Code = $68/$69 down, $E8/$E9 up, $FF movement; ie_X=dx
+; gp_poll(d0.w = current JOY0DAT, d1.w = current CIAA_PRA | $100 if right button pressed | $200 if middle button
+; pressed): logical core. Computes dx/dy (vs GP_PREV_JOY, via gp_delta8), detects the left button edge (vs
+; GP_PREV_BTN; PRA bit 6 active-low), otherwise the right button edge (vs GP_PREV_RBTN), otherwise the middle one (vs
+; GP_PREV_MBTN); a simultaneous second edge waits for the next poll. If movement OR edge, builds a RAWMOUSE
+; InputEvent (ie_Code = $68/$69/$6A down, | $80 up, $FF movement; ie_X=dx
 ; ie_Y=dy) and injects it into input.device (GP_INPUTBASE) via IND_WRITEEVENT. Updates GP_PREV_JOY/GP_PREV_BTN.
 ; a6 = SysBase on entry (reloaded via ($4).w), a6 = SysBase on exit. Preserves d2-d7/a2-a4 (VERTB server convention).
 gp_poll:
@@ -176,12 +177,28 @@ gp_poll:
         move.b  GP_PREV_RBTN,d2
         move.b  d7,GP_PREV_RBTN
         cmp.b   d2,d7
-        beq.s   .gp_motion
+        beq.s   .gp_middle
         move.w  #IECODE_RBUTTON,d3
         moveq   #1,d1
         tst.b   d7
         bne.s   .gp_motion
         move.w  #(IECODE_RBUTTON|IECODE_UP_PREFIX),d3
+        bra.s   .gp_motion
+.gp_middle:
+        moveq   #0,d7               ; middle button (DATLX): same edge detection
+        btst    #9,d6
+        beq.s   .gp_mup
+        moveq   #1,d7
+.gp_mup:
+        move.b  GP_PREV_MBTN,d2
+        move.b  d7,GP_PREV_MBTN
+        cmp.b   d2,d7
+        beq.s   .gp_motion
+        move.w  #IECODE_MBUTTON,d3
+        moveq   #1,d1
+        tst.b   d7
+        bne.s   .gp_motion
+        move.w  #(IECODE_MBUTTON|IECODE_UP_PREFIX),d3
 .gp_motion:
         tst.b   d1
         bne.s   .gp_emit            ; button event already decided -> emit it (with current dx/dy)
@@ -217,11 +234,15 @@ gp_poll:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; gp_vblank_server: hardware SHIM. Server on the VERTB chain (AddIntServer) -> runs every frame in the
-; running system. Reads the real mouse registers and calls gp_poll. Server convention: a6=SysBase (provided),
-; preserves d2-d7/a2-a4 (gp_poll guarantees it), returns Z-set (d0=0 -> "continue the chain"). Headless: static
-; JOY0DAT -> gp_poll finds neither movement nor edge -> no IND_WRITEEVENT (inert, no effect on M7).
+; gp_vblank_server(a1 = is_Data = potgo.resource base or 0): hardware SHIM. Server on the VERTB chain (AddIntServer)
+; -> runs every frame in the running system. Reads the real mouse registers and calls gp_poll, then rewrites POTGO
+; through WritePotgo, as the 1.3 gameport does every frame (custom-chips-v34 §4.2): a program that drove the pins
+; differently cannot leave the right/middle buttons dead. Server convention: a6=SysBase (provided), preserves
+; d2-d7/a2-a4, returns Z-set (d0=0 -> "continue the chain"). Headless: static JOY0DAT -> gp_poll finds neither
+; movement nor edge -> no IND_WRITEEVENT (inert, no effect on M7).
 gp_vblank_server:
+        move.l  a2,-(sp)
+        move.l  a1,a2               ; a2 = potgo.resource base (gp_poll preserves a2)
         addq.l  #1,GP_POLLS         ; live proof: one more poll on a REAL VBlank
         move.w  JOY0DAT,d0          ; mouse quadrature counters (hardware shim)
         moveq   #0,d1
@@ -230,7 +251,24 @@ gp_vblank_server:
         bne.s   .vs_noright
         bset    #8,d1
 .vs_noright:
+        btst    #8-8,POTINP         ; middle button (DATLX, active-low)
+        bne.s   .vs_nomid
+        bset    #9,d1
+.vs_nomid:
         bsr     gp_poll
+        move.l  a2,d0
+        beq.s   .vs_rawpot
+        move.l  a6,-(sp)
+        move.l  a2,a6
+        move.l  #GP_POTBITS,d0
+        move.l  #GP_POTBITS,d1
+        jsr     -18(a6)              ; WritePotgo
+        move.l  (sp)+,a6
+        bra.s   .vs_ret
+.vs_rawpot:
+        move.w  #GP_POTBITS,POTGO_W
+.vs_ret:
+        move.l  (sp)+,a2
         moveq   #0,d0               ; Z-set -> call-all server: continue the VERTB chain
         rts
 
@@ -254,10 +292,10 @@ gp_install:
         moveq   #1,d1
 .gi_btndone:
         move.b  d1,GP_PREV_BTN
-        lea     EB_RESOURCELIST(a6),a0 ; right button (pin 9 of port 0): OUTLY|DATLY as output at 1 (potgo.resource),
-        lea     gp_potgoname(pc),a1  ; pressing pulls the line to 0 -> DATLY read as 0
+        lea     EB_RESOURCELIST(a6),a0 ; right/middle buttons (pins 9/5 of port 0): driven high through potgo.resource,
+        lea     gp_potgoname(pc),a1  ; pressing pulls the line to 0 -> DATLY/DATLX read as 0
         jsr     LVO_FINDNAME(a6)
-        tst.l   d0
+        move.l  d0,GP_VBL_INT+IS_DATA ; the server rewrites POTGO through it every frame
         beq.s   .gi_rawpot
         move.l  a6,-(sp)
         move.l  d0,a6
@@ -277,8 +315,13 @@ gp_install:
         moveq   #1,d1
 .gi_rdone:
         move.b  d1,GP_PREV_RBTN
+        moveq   #0,d1
+        btst    #8-8,POTINP
+        bne.s   .gi_mdone
+        moveq   #1,d1
+.gi_mdone:
+        move.b  d1,GP_PREV_MBTN
         clr.l   GP_VBL_INT+LN_SUCC   ; struct Interrupt in reserved low RAM (not guaranteed zero at power-on)
-        clr.l   GP_VBL_INT+IS_DATA
         move.b  #5,GP_VBL_INT+LN_PRI ; pri 5: between sched(20) and timer_vblank(0)/vbl_tail(-10) in the VERTB chain
         move.l  #gp_vblank_server,GP_VBL_INT+IS_CODE
         moveq   #INTB_VERTB,d0
