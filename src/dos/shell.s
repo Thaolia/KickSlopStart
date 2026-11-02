@@ -640,14 +640,30 @@ sh_exec_cmd:
                 move.l  XF_RC(sp),d0
                 bra.s   .x_ran
 .x_nostack:
-                moveq   #-1,d0               ; stack impossible: special "unable to launch" code
+                bsr     sh_cli_ptr           ; stack impossible: "Unable to load <name>: ... 103"
+                beq.s   .x_nsc
+                move.l  #ERROR_NO_FREE_STORE,CLI_RESULT2(a1)
+.x_nsc:
+                moveq   #-1,d0               ; special "unable to launch" code
 .x_ran:
                 cmp.l   #-1,d0               ; code -1 (Exit(-1) or no stack) = command not started (spec dos-exit
-                bne.s   .x_cend              ; §1.3): "Unknown command", script abandoned whatever FailAt, codes 0/0
-                clr.l   XF_FLAG(sp)
-                moveq   #0,d0
+                bne.s   .x_cend              ; §1.3): reported like a failed lookup, script abandoned whatever
+                clr.l   XF_FLAG(sp)          ; FailAt, cli_ReturnCode 0. Result2 0/205/218: "Unknown command",
+                moveq   #0,d0                ; cli_Result2 0; any other: "Unable to load", Result2 kept
                 bsr     sh_cli_ptr
                 beq.s   .x_cend
+                move.l  CLI_RESULT2(a1),d1   ; the command's pr_Result2, saved before the redirections closed
+                beq.s   .x_unk
+                cmp.l   #ERROR_OBJECT_NOT_FOUND,d1
+                beq.s   .x_unk
+                cmp.l   #ERROR_DEVICE_NOT_MOUNTED,d1
+                beq.s   .x_unk
+                move.l  #2,XF_FLAG(sp)
+                move.l  ($4).w,a0            ; sh_report prints pr_Result2 after "Unable to load <name>: "
+                move.l  EB_THISTASK(a0),a0
+                move.l  d1,PR_RESULT2(a0)
+                bra.s   .x_cend
+.x_unk:
                 clr.l   CLI_RESULT2(a1)
 .x_cend:
                 bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0; d1 = module to unload

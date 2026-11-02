@@ -85,24 +85,38 @@
   the CLI is not interactive; `UnLoadSeg(cli_Module)`.
 - Code **−1** is the special value "command could not be started" (§4.4 there). A program that ends
   with Exit(−1) is treated by the CLI **exactly like a command that could not be loaded**. Observed on the
-  real ROM (probe `tests/dosexit_test.s` mode `e`: Exit(−1) from four nested 512-byte frames, with
-  pr_Result2 = 205 set just before; Amiberry and FS-UAE, 2026-11-02) [O] (probe):
-  - **message**: the CLI prints **`Unknown command <name>`** on its console (`<name>` = the command name as
-    typed, e.g. `Unknown command df0:dosexit_test`), the same text as for a command that does not exist.
-    No "failed returncode" line is printed.
-  - **cli_ReturnCode = 0, cli_Result2 = 0** afterwards, as read by the next command typed in an interactive
+  real ROM (probe `tests/dosexit_test.s` modes `e`/`u`/`v`/`w`: Exit(−1) from four nested 512-byte frames,
+  with pr_Result2 = 205 / 0 / 103 / 218 set just before; mode `e` on Amiberry and FS-UAE, modes `u`/`v`/`w` on
+  Amiberry, 2026-11-02) [O] (probe):
+  - **message**: chosen from the **pr_Result2** value left by the program, exactly as for a lookup failure
+    (`bcpl-runtime-v34.md` §4.1) [O] (probe):
+
+    | pr_Result2 at Exit(−1) | Line printed by the CLI |
+    |---|---|
+    | 205 (object not found) | `Unknown command <name>` |
+    | 218 (not mounted) | `Unknown command <name>` |
+    | 0 | `Unknown command <name>` |
+    | 103 (insufficient free store) | `Unable to load <name>: Error code 103` |
+
+    `<name>` = the command name as typed (e.g. `df0:dosexit_test`). So 0, 205 and 218 give the same text as a
+    command that does not exist; any other tested value gives "Unable to load", whose error text in 1.3 is
+    the plain form `Error code <n>` (decimal). No "failed returncode" line is printed in any case.
+  - **cli_ReturnCode = 0** afterwards in every case, as read by the next command typed in an interactive
     CLI (a previous cli_ReturnCode of 20 is overwritten with 0; in a script the next line never runs, see
-    below). The pr_Result2 value left by the program (205)
-    is **not** copied to cli_Result2. A genuinely missing command gives the same 0 / 0.
-  - **script**: in a non-interactive CLI (startup-sequence) the script is **abandoned** at once, and this
+    below). **cli_Result2** depends on the message path [O] (probe): **0** after an "Unknown command" line
+    (pr_Result2 = 0, 205 or 218: the 205/218 left by the program is **not** copied), but **103** after
+    `Unable to load … Error code 103` (the program's pr_Result2 **is** kept). A genuinely missing command
+    gives 0 / 0.
+  - **script**: in a non-interactive CLI (startup-sequence) the script is **abandoned** at once, whichever
+    message is printed (observed for pr_Result2 = 0, 103, 205 and 218 under the default FailAt), and this
     does **not** depend on `cli_FailLevel`: abandoned with the default FailAt 10 and also after `FailAt 30`
     (the Workbench 1.3.3 `C:FailAt`, which in the same run let an Exit(20) command continue silently). A genuinely missing command
     (`Unknown command df0:nosuchcmd`) abandons the script the same way under FailAt 30. In an interactive
     CLI there is no abandon; the prompt comes back.
-  - **Uncertain**: the probe always had pr_Result2 = 205 (object not found) at Exit time, and the lookup
-    failure path chooses between "Unknown command" (error 205 or 218) and "Unable to load %S: <error
-    text>" (other errors) (`bcpl-runtime-v34.md` §4.1). Whether Exit(−1) with another pr_Result2 prints
-    "Unable to load …" instead was **not probed**. FailAt values above 30 were not tried.
+  - **Uncertain**: only pr_Result2 = 0, 103, 205 and 218 were probed; other values are expected to follow
+    the 103 row (rule of `bcpl-runtime-v34.md` §4.1, which the 0 row shows also routes 0 to "Unknown
+    command"). The FailAt-independence was checked with pr_Result2 = 205 only, and FailAt values above 30
+    were not tried.
 
 ### 1.4 Process case: `endtask` (= finalPC) [O]
 

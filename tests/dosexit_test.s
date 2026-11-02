@@ -14,6 +14,7 @@
 ;   e  (Exit(-1) from 4 nested 512-byte frames, pr_Result2 = 205): not in the default run. With MODES="e c f n"
 ;      the shell treats it as a command that could not be loaded: "Unknown command df0:dosexit_test", script
 ;      abandoned whatever FailAt (no CLI/DOSEXIT line follows); interactively cli_ReturnCode = cli_Result2 = 0
+;   u / v / w  same as e with pr_Result2 = 0 / 103 / 218 at Exit time (which message the shell prints)
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -43,6 +44,12 @@ start:  move.l  a0,a2
         beq     mode_z
         cmp.b   #'e',d3
         beq     mode_e
+        cmp.b   #'u',d3
+        beq     mode_u
+        cmp.b   #'v',d3
+        beq     mode_v
+        cmp.b   #'w',d3
+        beq     mode_w
         cmp.b   #'c',d3
         beq     mode_c
         cmp.b   #'f',d3
@@ -120,7 +127,14 @@ mode_a: move.l  #205,d6
 mode_z: move.l  #205,d6
         moveq   #0,d7
         bra.s   deep_go
+mode_u: moveq   #0,d6
+        bra.s   exit_m1
+mode_v: moveq   #103,d6
+        bra.s   exit_m1
+mode_w: move.l  #218,d6
+        bra.s   exit_m1
 mode_e: move.l  #205,d6
+exit_m1:
         moveq   #-1,d7
 deep_go:
         move.l  4.w,a0

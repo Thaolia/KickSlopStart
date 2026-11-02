@@ -1500,7 +1500,8 @@ differs.
   - dos (`dos_lib.s`, `shell.s`, spec dos-exit-packets-v34): `Exit` returns to pr_ReturnAddr-4 with d0 = code
     (RemTask when there is no return point); `GetPacket`/`QueuePacket` stay null (the spec's safest option); the
     shell sets `cli_Result2` after a command, and treats code -1 like a command that could not be loaded
-    ("Unknown command <name>", codes 0/0, script abandoned whatever FailAt; probed on 1.3).
+    (script abandoned whatever FailAt, cli_ReturnCode 0; pr_Result2 0/205/218: "Unknown command <name>" and
+    cli_Result2 0, any other: "Unable to load <name>: <error>" with cli_Result2 kept; probed on 1.3).
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
     `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 
