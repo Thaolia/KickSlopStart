@@ -6,15 +6,28 @@ Roadmap → `docs/PLAN.md`. Architecture → `docs/ARCHITECTURE.md`. Discipline 
 ## Clean-room firewall — ABSOLUTE RULE
 
 - Two **sealed** tracks. NEVER write `src/` code based on the ROM disassembly.
-- **ANALYSIS** track ("dirty"): reads the ROM (`assets/`, radare2/ghidra), writes ONLY to `docs/analysis/` (and its
-  probes in `tests/`). Describes behaviour + ABI layout; never copied instruction sequences, never ROM routine
-  addresses.
+- **ANALYSIS** track ("dirty"): reads the ROM (`assets/`, radare2/ghidra, Amiberry), only inside a dedicated agent
+  (next section), writes ONLY documentation in `docs/analysis/`. Describes behaviour + ABI layout; never copied
+  instruction sequences, never ROM routine addresses.
 - **IMPLEMENTATION** track ("clean"): reads public docs (RKRM/NDK/AutoDocs/`.fd`), AROS (`third_party/`, read-only)
   and `docs/analysis/`; writes `src/`. NEVER reads the ROM or its disassembly.
 - Before an analysis spec feeds the implementation: check that it contains **no transcribed code** and no ROM
   addresses. ROM *data* shown in a spec (images, tables) is described, never redrawn from memory right after reading
   it (see `docs/AUDIT.md`).
 - The proprietary ROM is NEVER committed (gitignore) nor modified (it is `chmod 444`).
+
+## Official Kickstart: reverse engineering only in a dedicated documentation agent — ABSOLUTE RULE
+
+- FORBIDDEN in the main context and in any implementation agent: reading, disassembling, decompiling, running,
+  debugging or probing the official Kickstart ROM (`assets/kick34005.A500`, or any copy of it under another name).
+- Such work runs ONLY in a **separate agent spawned for that purpose**. That agent writes **no code at all** (nothing
+  in `src/`, `tests/`, scripts, `Makefile`): **documentation only**, in `docs/analysis/`, in English, behaviour and
+  ABI, with no ROM address and no transcribed instruction. If a probe program would help, the agent describes it in
+  its report; it is written outside the agent, from that description only.
+- To run the ROM, the agent uses the `/amiberry` skill when it is available (`amiberry-session start --analysis`:
+  sessions in `build/amiberry/analysis/`). The main context never reads those sessions, nor any raw output of the
+  agent (disassembly, dumps, logs): only its final report and the `docs/analysis/` pages, after the
+  "no transcribed code" check above.
 
 ## Pull requests — clean-room audit gate (BEFORE any merge)
 
@@ -48,8 +61,8 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
 
 ## Routing: when to delegate to a dedicated agent
 
-- Any **ROM analysis** task → a separate "analysis" agent, to keep the wall. Do not mix analysis and implementation
-  in the same context.
+- Any **ROM analysis** task → a separate "analysis" agent that writes documentation only (section above), to keep the
+  wall. Do not mix analysis and implementation in the same context.
 - A module's implementation can be done inline, but its context must hold only specs + public docs.
 
 ## Language
