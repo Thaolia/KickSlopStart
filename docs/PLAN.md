@@ -963,8 +963,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   dos Exit (GetPacket/QueuePacket left null on purpose). Binary and AROS similarity audits at the base level.
   Open: trackdisk unit task (autonomous change polling), input.device task, joystick types through SETMTYPE,
   INDEXSYNC now that SetICR exists, screens below the front one are not displayed (MoveScreen only updates the
-  fields); the Workbench 1.3.3 disk icon double-click under the Amiberry harness does not open the window, already
-  before lot 1 (2d78317): harness or older regression, to investigate.
+  fields). In the Workbench 1.3.3 [m2] disk window, the "Empty" icon overlaps "Diverse" (not examined yet).
 
 ## Immediately actionable work (start of implementation, upon approval)
 
