@@ -17,6 +17,9 @@
                 xdef    it_ptrinit
                 xdef    it_ptrmoved
                 xdef    ptr_image
+                xdef    it_ptrapply
+                xdef    intuition_SetPointer
+                xdef    intuition_ClearPointer
                 xref    it_event             ; screens.s: buttons and movements -> input task
                 xref    it_keyin
                 xref    it_tickin
@@ -128,8 +131,9 @@ ptr_ticks:
 .pt_ret:
                 rts
 
-; it_ptrmoved(): places the pointer sprite at (PTR_X, PTR_Y) shifted by the Preferences XOffset/YOffset, and
-; updates ib_MouseX/Y (HIRES screen coordinates: x doubled). Nothing before intuition init. Preserves everything.
+; it_ptrmoved(): places the pointer sprite at (PTR_X, PTR_Y) shifted by the XOffset/YOffset of the displayed
+; pointer (the window's own, otherwise the Preferences'), and updates ib_MouseX/Y (HIRES screen coordinates: x
+; doubled). Nothing before intuition init. Preserves everything.
 it_ptrmoved:
                 movem.l d0-d1/a0-a1/a6,-(sp)
                 move.l  INT_IBASE,d0
@@ -142,10 +146,16 @@ it_ptrmoved:
                 move.l  IB_GFXBASE(a1),d0
                 beq.s   .pm_ret
                 move.l  d0,a6
-                move.b  IB_PREFS+PF_XOFFSET(a1),d0
+                lea     IB_PREFS+PF_XOFFSET(a1),a0  ; (XOffset, YOffset) byte pair
+                move.l  IB_PTRWIN(a1),d0
+                beq.s   .pm_off
+                move.l  d0,a0
+                lea     WD_XOFFSET(a0),a0
+.pm_off:
+                move.b  (a0)+,d0
                 ext.w   d0
                 add.w   PTR_X,d0
-                move.b  IB_PREFS+PF_YOFFSET(a1),d1
+                move.b  (a0),d1
                 ext.w   d1
                 add.w   PTR_Y,d1
                 lea     IB_PTRSS(a1),a1
@@ -195,6 +205,70 @@ it_ptrinit:
                 move.l  (sp)+,a2
 .pi_ret:
                 movem.l (sp)+,a3/a6
+                rts
+
+; SetPointer(window a0, data a1, height d0, width d1, xOffset d2, yOffset d3) / ClearPointer(window a0): the
+; window's own pointer (spec intuition-misc-v34 §3), shown at once if the window is the active one, otherwise when it
+; becomes active. The data (CHIP RAM) is used in place. ClearPointer leaves the offsets alone.
+intuition_SetPointer:
+                move.l  a1,WD_POINTER(a0)
+                move.b  d0,WD_PTRHEIGHT(a0)
+                move.b  d1,WD_PTRWIDTH(a0)
+                move.b  d2,WD_XOFFSET(a0)
+                move.b  d3,WD_YOFFSET(a0)
+                bra.s   sp_show
+intuition_ClearPointer:
+                clr.l   WD_POINTER(a0)
+                clr.b   WD_PTRHEIGHT(a0)
+                clr.b   WD_PTRWIDTH(a0)
+sp_show:
+                move.l  a6,-(sp)
+                move.l  a0,-(sp)
+                move.l  ($4).w,a6
+                jsr     LVO_FORBID(a6)
+                move.l  (sp)+,a0
+                move.l  (sp),a1              ; IntuitionBase
+                cmp.l   IB_ACTIVEWINDOW(a1),a0
+                bne.s   .ss_nact
+                bsr.s   it_ptrapply
+.ss_nact:
+                jsr     LVO_PERMIT(a6)
+                move.l  (sp)+,a6
+                rts
+
+; it_ptrapply(a0 = window | 0): displays the window's own pointer if it has one (Pointer non-zero), otherwise the
+; default pointer: sprite 0 gets the image (ChangeSprite, height = signed byte) and is placed with its offsets.
+; Called by SetPointer/ClearPointer, on activation and when the active window closes. Preserves everything.
+it_ptrapply:
+                movem.l d0-d1/a0-a2/a6,-(sp)
+                move.l  INT_IBASE,d0
+                beq.s   .pa_ret
+                move.l  d0,a2
+                tst.l   IB_GFXBASE(a2)
+                beq.s   .pa_ret
+                clr.l   IB_PTRWIN(a2)
+                move.l  IB_PTRDATA(a2),d1
+                moveq   #PTR_HEIGHT,d0
+                cmpa.w  #0,a0
+                beq.s   .pa_def
+                tst.l   WD_POINTER(a0)
+                beq.s   .pa_def
+                move.l  WD_POINTER(a0),d1
+                move.b  WD_PTRHEIGHT(a0),d0
+                ext.w   d0
+                move.l  a0,IB_PTRWIN(a2)
+.pa_def:
+                tst.l   d1
+                beq.s   .pa_ret              ; no default image (no chip memory at init)
+                lea     IB_PTRSS(a2),a1
+                move.w  d0,ss_height(a1)
+                move.l  IB_GFXBASE(a2),a6
+                sub.l   a0,a0
+                move.l  d1,a2
+                jsr     LVO_CHANGESPRITE(a6)
+                jsr     it_ptrmoved
+.pa_ret:
+                movem.l (sp)+,d0-d1/a0-a2/a6
                 rts
 
 ; pointer image (drawn for this project): arrow, pixel = plane1*2 + plane0 -> colors 17 (red), 18 (black)

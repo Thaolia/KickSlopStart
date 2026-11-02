@@ -72,7 +72,14 @@ IB_SUBOY         EQU IB_SUBOX+2
 IB_DOX           EQU IB_SUBOY+2        ; origin of the items in the box being drawn (mn_drawitems)
 IB_DOY           EQU IB_DOX+2
 IB_DGHOST        EQU IB_DOY+2          ; BYTE: box being drawn entirely ghosted (menu or parent item disabled)
-INTUITIONBASE_SIZE EQU IB_DGHOST+2
+IB_PTRWIN        EQU IB_DGHOST+2       ; window whose own pointer is displayed (SetPointer) | 0 = default pointer
+IB_WBPORT        EQU IB_PTRWIN+4       ; Workbench port registered by AlohaWorkbench | 0
+IB_WBRPORT       EQU IB_WBPORT+4       ; "WBenchPort" reply port, created at the first message | 0
+IB_WBMSG         EQU IB_WBRPORT+4      ; IntuiMessage sent to the Workbench (WBENCHOPEN / WBENCHCLOSE)
+IB_LOCKS         EQU IB_WBMSG+IM_SIZEOF ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_NLOCKS        EQU 7
+IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
+INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -212,6 +219,13 @@ WD_BORDERRPORT  EQU 58              ; GIMMEZEROZERO: RastPort of the border laye
 WD_FIRSTGADGET  EQU 62
 WD_PARENT       EQU 66              ; window active at open time (activated when this one closes)
 WD_DESCENDANT   EQU 70
+WD_POINTER      EQU 74              ; sprite data of the window's own pointer (SetPointer) | 0
+WD_PTRHEIGHT    EQU 78              ; BYTE
+WD_PTRWIDTH     EQU 79              ; BYTE (stored, never used)
+WD_XOFFSET      EQU 80              ; BYTE: hot spot offsets, low-resolution pixels / lines
+WD_YOFFSET      EQU 81              ; BYTE
+WBENCHWINDOW    EQU $02000000       ; Window.Flags: window of the Workbench
+WBENCHMESSAGE   EQU $00020000       ; IDCMP class of the messages sent to the Workbench
 WD_IDCMPFLAGS   EQU 82
 WD_USERPORT     EQU 86
 WD_DETAILPEN    EQU 98

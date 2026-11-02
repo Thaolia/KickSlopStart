@@ -68,6 +68,17 @@
                 xref    intuition_PrintIText
                 xref    intuition_IntuiTextLength
                 xref    it_startinput            ; screens.s: input task (buttons, gadgets, menus)
+                xref    intuition_CloseWorkBench
+                xref    intuition_CurrentTime
+                xref    intuition_MoveScreen
+                xref    intuition_WBenchToBack
+                xref    intuition_WBenchToFront
+                xref    intuition_MakeScreen
+                xref    intuition_ActivateWindow
+                xref    intuition_RefreshWindowFrame
+                xref    intuition_SetPointer     ; pointer.s
+                xref    intuition_ClearPointer
+                xref    pointer_input_handler
 
 ; --- intuition.library ROMTag (scanned by build_reslist) ---
         EVEN
@@ -94,14 +105,16 @@ intuition_vectors:
         dc.l    intuition_close          ; 2: LVO -12
         dc.l    intuition_expunge        ; 3: LVO -18
         dc.l    intuition_null           ; 4: LVO -24 (reserved)
-        dcb.l   2,intuition_null         ; 5..6: LVO -30..-36 (not impl.)
+        dc.l    intuition_open           ; 5: LVO -30 OpenIntuition() = library Open
+        dc.l    intuition_Intuition      ; 6: LVO -36 Intuition(events on the stack)
         dc.l    intuition_AddGadget      ; 7: LVO -42 AddGadget(window a0, gadget a1, position d0)
         dc.l    intuition_ClearDMRequest ; 8: LVO -48 ClearDMRequest(window a0)
         dc.l    intuition_ClearMenuStrip ; 9: LVO -54 ClearMenuStrip(window a0)
-        dc.l    intuition_null           ; 10: LVO -60 ClearPointer (not impl.)
+        dc.l    intuition_ClearPointer   ; 10: LVO -60 ClearPointer(window a0)
         dc.l    intuition_CloseScreen    ; 11: LVO -66 CloseScreen(screen a0)
         dc.l    intuition_CloseWindow    ; 12: LVO -72 CloseWindow(window a0)
-        dcb.l   2,intuition_null         ; 13..14: LVO -78..-84 (CloseWorkBench, CurrentTime: not impl.)
+        dc.l    intuition_CloseWorkBench ; 13: LVO -78 CloseWorkBench() -> d0
+        dc.l    intuition_CurrentTime    ; 14: LVO -84 CurrentTime(seconds a0, micros a1)
         dc.l    intuition_DisplayAlert   ; 15: LVO -90 DisplayAlert(number d0, string a0, height d1) -> d0
         dc.l    intuition_DisplayBeep    ; 16: LVO -96 DisplayBeep(screen a0 | 0)
         dc.l    intuition_DoubleClick    ; 17: LVO -102 DoubleClick(s1 d0, us1 d1, s2 d2, us2 d3)
@@ -114,7 +127,7 @@ intuition_vectors:
         dc.l    intuition_ItemAddress    ; 24: LVO -144 ItemAddress(menustrip a0, code d0)
         dc.l    intuition_ModifyIDCMP    ; 25: LVO -150 ModifyIDCMP(window a0, classes d0)
         dc.l    intuition_ModifyProp     ; 26: LVO -156 ModifyProp(gadget a0, window a1, requester a2, Flags d0, Pots d1/d2, Bodies d3/d4)
-        dc.l    intuition_null           ; 27: LVO -162 MoveScreen (not impl.)
+        dc.l    intuition_MoveScreen     ; 27: LVO -162 MoveScreen(screen a0, dx d0, dy d1)
         dc.l    intuition_MoveWindow     ; 28: LVO -168 MoveWindow(window a0, dx d0, dy d1)
         dc.l    intuition_OffGadget      ; 29: LVO -174 OffGadget(gadget a0, window a1, requester a2)
         dc.l    intuition_OffMenu        ; 30: LVO -180 OffMenu(window a0, code d0)
@@ -132,7 +145,7 @@ intuition_vectors:
         dc.l    intuition_ScreenToFront  ; 42: LVO -252 ScreenToFront(screen a0)
         dc.l    intuition_SetDMRequest   ; 43: LVO -258 SetDMRequest(window a0, requester a1)
         dc.l    intuition_SetMenuStrip   ; 44: LVO -264 SetMenuStrip(window a0, menu a1)
-        dc.l    intuition_null           ; 45: LVO -270 SetPointer (not impl.)
+        dc.l    intuition_SetPointer     ; 45: LVO -270 SetPointer(window a0, data a1, h d0, w d1, xo d2, yo d3)
         dc.l    intuition_SetWindowTitles ; 46: LVO -276 SetWindowTitles(window a0, title a1, screen title a2)
         dc.l    intuition_ShowTitle      ; 47: LVO -282 ShowTitle(screen a0, show d0)
         dc.l    intuition_SizeWindow     ; 48: LVO -288 SizeWindow(window a0, dx d0, dy d1)
@@ -143,24 +156,27 @@ intuition_vectors:
         dc.l    intuition_WindowLimits   ; 53: LVO -318 WindowLimits(window a0, minW d0, minH d1, maxW d2, maxH d3)
         dc.l    intuition_SetPrefs       ; 54: LVO -324 SetPrefs(prefs a0, size d0, inform d1)
         dc.l    intuition_IntuiTextLength ; 55: LVO -330 IntuiTextLength(itext a0)
-        dcb.l   2,intuition_null         ; 56..57: LVO -336..-342 (not impl.)
+        dc.l    intuition_WBenchToBack   ; 56: LVO -336 WBenchToBack() -> d0
+        dc.l    intuition_WBenchToFront  ; 57: LVO -342 WBenchToFront() -> d0
         dc.l    intuition_AutoRequest    ; 58: LVO -348 AutoRequest(window a0, body a1, yes a2, no a3, ...)
         dc.l    intuition_BeginRefresh   ; 59: LVO -354 BeginRefresh(window a0)
         dc.l    intuition_BuildSysRequest ; 60: LVO -360 BuildSysRequest(window a0, body a1, pos a2, neg a3, IDCMP d0, w d2, h d3)
         dc.l    intuition_EndRefresh     ; 61: LVO -366 EndRefresh(window a0, complete d0)
         dc.l    intuition_FreeSysRequest ; 62: LVO -372 FreeSysRequest(window a0)
-        dc.l    intuition_null           ; 63: LVO -378 (not impl.)
+        dc.l    intuition_MakeScreen     ; 63: LVO -378 MakeScreen(screen a0)
         dc.l    intuition_RemakeDisplay  ; 64: LVO -384 RemakeDisplay()
         dc.l    intuition_RemakeDisplay  ; 65: LVO -390 RethinkDisplay()
         dc.l    intuition_AllocRemember  ; 66: LVO -396 AllocRemember(key a0, size d0, flags d1)
-        dc.l    intuition_null           ; 67: LVO -402 AlohaWorkbench (not impl.)
+        dc.l    intuition_AlohaWorkbench ; 67: LVO -402 AlohaWorkbench(port a0)
         dc.l    intuition_FreeRemember   ; 68: LVO -408 FreeRemember(key a0, forget d0)
-        dcb.l   2,intuition_null         ; 69..70: LVO -414..-420 (not impl.)
+        dc.l    intuition_LockIBase      ; 69: LVO -414 LockIBase(lock d0) -> d0
+        dc.l    intuition_UnlockIBase    ; 70: LVO -420 UnlockIBase(lock a0)
         dc.l    intuition_GetScreenData  ; 71: LVO -426 GetScreenData(buffer a0, size d0, type d1, screen a1)
         dc.l    intuition_RefreshGList   ; 72: LVO -432 RefreshGList(gadgets a0, window a1, requester a2, count d0)
         dc.l    intuition_AddGList       ; 73: LVO -438 AddGList(window a0, gadget a1, position d0, count d1, req a2)
         dc.l    intuition_RemoveGList    ; 74: LVO -444 RemoveGList(window a0, gadget a1, count d0)
-        dcb.l   2,intuition_null         ; 75..76: LVO -450..-456 (not impl.)
+        dc.l    intuition_ActivateWindow ; 75: LVO -450 ActivateWindow(window a0)
+        dc.l    intuition_RefreshWindowFrame ; 76: LVO -456 RefreshWindowFrame(window a0)
         dc.l    intuition_ActivateGadget ; 77: LVO -462 ActivateGadget(gadget a0, window a1, requester a2)
         dc.l    intuition_NewModifyProp  ; 78: LVO -468 NewModifyProp(..., number of gadgets d5)
         dc.l    -1
@@ -170,14 +186,76 @@ intuition_datatab:
         dc.b    0
         EVEN
 
-; Open(lib a6): increments the open count, returns the base (OpenLibrary convention).
+; Open(lib a6) = OpenIntuition(): returns the base. As on 1.3 (spec intuition-misc §1.1) the open count goes from 0 to
+; 1 once and Close leaves it there: intuition is never expunged.
 intuition_open:
-        addq.w  #1,LIB_OPENCNT(a6)
+        tst.w   LIB_OPENCNT(a6)
+        bne.s   .io_ret
+        move.w  #1,LIB_OPENCNT(a6)
+.io_ret:
         move.l  a6,d0
         rts
 intuition_close:
-        subq.w  #1,LIB_OPENCNT(a6)
         moveq   #0,d0
+        rts
+
+; Intuition(events) (LVO -36): the event list is the first long on the stack, A0 is ignored (spec intuition-misc
+; §2.1). Same processing as the input handler; returns d0 = the list to pass on.
+intuition_Intuition:
+        move.l  4(sp),a0
+        move.l  a6,a1
+        bra     pointer_input_handler
+
+; AlohaWorkbench(port a0): registers the Workbench port that receives WBENCHOPEN / WBENCHCLOSE (0 unregisters).
+intuition_AlohaWorkbench:
+        move.l  a0,IB_WBPORT(a6)
+        rts
+
+; LockIBase(lock d0) -> d0 = lock / UnlockIBase(lock a0) (spec intuition-screens §9, intuition-misc §6): the
+; SignalSemaphores of IntuitionBase; lock 0 also takes lock 5 (released in the reverse order). A number >= 7 is
+; ignored (1.3 corrupts IntuitionBase).
+intuition_LockIBase:
+        movem.l d0/a6,-(sp)
+        move.l  a6,a1
+        move.l  ($4).w,a6
+        cmp.l   #IB_NLOCKS,d0
+        bhs.s   .lk_ret
+        tst.l   d0
+        bne.s   .lk_one
+        lea     IB_LOCKS(a1),a0
+        move.l  a1,-(sp)
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  (sp)+,a1
+        moveq   #5,d0
+.lk_one:
+        mulu    #IB_SSSIZE,d0
+        lea     IB_LOCKS(a1),a0
+        add.l   d0,a0
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+.lk_ret:
+        movem.l (sp)+,d0/a6
+        rts
+intuition_UnlockIBase:
+        move.l  a6,-(sp)
+        move.l  a6,a1
+        move.l  ($4).w,a6
+        move.l  a0,d0
+        cmp.l   #IB_NLOCKS,d0
+        bhs.s   .ul_ret
+        tst.l   d0
+        bne.s   .ul_one
+        lea     IB_LOCKS+5*IB_SSSIZE(a1),a0
+        move.l  a1,-(sp)
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        move.l  (sp)+,a1
+        moveq   #0,d0
+.ul_one:
+        mulu    #IB_SSSIZE,d0
+        lea     IB_LOCKS(a1),a0
+        add.l   d0,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.ul_ret:
+        move.l  (sp)+,a6
         rts
 intuition_expunge:
         moveq   #0,d0               ; no expunge in this milestone (resident base)
@@ -212,6 +290,14 @@ intuition_initfunc:
         lea     intuition_layersname(pc),a1
         jsr     LVO_FINDNAME(a6)     ; layers.library (pri 31) is already initialized
         move.l  d0,IB_LAYERSBASE(a2)
+        moveq   #IB_NLOCKS-1,d0      ; LockIBase semaphores
+        lea     IB_LOCKS(a2),a0
+.if_lk:
+        movem.l d0/a0,-(sp)
+        jsr     LVO_INITSEMAPHORE(a6)
+        movem.l (sp)+,d0/a0
+        lea     IB_SSSIZE(a0),a0
+        dbra    d0,.if_lk
         jsr     it_prefsinit         ; prefs.s: default Preferences (before the pointer, which takes its image from it)
         jsr     it_ptrinit           ; pointer.s: pointer sprite
         jsr     it_startinput

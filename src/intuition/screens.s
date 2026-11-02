@@ -30,6 +30,15 @@
                 xdef    intuition_RemakeDisplay
                 xdef    intuition_ScreenToFront
                 xdef    intuition_ScreenToBack
+                xdef    intuition_CloseWorkBench
+                xdef    intuition_WBenchToFront
+                xdef    intuition_WBenchToBack
+                xdef    intuition_MoveScreen
+                xdef    intuition_MakeScreen
+                xdef    intuition_ActivateWindow
+                xdef    intuition_RefreshWindowFrame
+                xdef    intuition_CurrentTime
+                xref    it_ptrapply          ; pointer.s
                 xdef    it_event
                 xdef    it_refresh           ; menus.s
                 xdef    it_alive             ; menus.s
@@ -625,7 +634,166 @@ intuition_OpenWorkBench:
         lea     sc_wbnewscreen(pc),a0
         bsr     intuition_OpenScreen
         move.l  d0,IB_WBSCREEN(a6)
+        beq.s   .ow_ret
+        move.l  d0,-(sp)
+        moveq   #1,d0                ; WBENCHOPEN to a registered Workbench
+        bsr     it_wbmsg
+        move.l  (sp)+,d0
 .ow_ret:
+        rts
+
+; CloseWorkBench() -> d0 = TRUE | FALSE (spec intuition-screens §6.2): FALSE without a Workbench screen or if a window
+; on it is not a Workbench window; otherwise WBENCHCLOSE to a registered Workbench (synchronous), then the screen is
+; closed (even if windows remain) and TRUE.
+intuition_CloseWorkBench:
+        move.l  IB_WBSCREEN(a6),d0
+        beq.s   .cwb_no
+        move.l  d0,a0
+        move.l  SC_FIRSTWINDOW(a0),d0
+.cwb_win:
+        beq.s   .cwb_ok
+        move.l  d0,a1
+        move.l  WD_FLAGS(a1),d1
+        and.l   #WBENCHWINDOW,d1
+        beq.s   .cwb_no
+        move.l  WD_NEXTWINDOW(a1),d0
+        bra.s   .cwb_win
+.cwb_ok:
+        moveq   #2,d0                ; WBENCHCLOSE
+        bsr     it_wbmsg
+        move.l  IB_WBSCREEN(a6),d0
+        beq.s   .cwb_no              ; closed meanwhile by the Workbench
+        move.l  d0,a0
+        bsr     intuition_CloseScreen
+        moveq   #1,d0
+        rts
+.cwb_no:
+        moveq   #0,d0
+        rts
+
+; it_wbmsg(code d0, a6 = IntuitionBase): WBENCHMESSAGE (Code 1 = WBENCHOPEN, 2 = WBENCHCLOSE) to the port registered by
+; AlohaWorkbench, then waits for the reply on the public "WBenchPort" (created at the first message, kept). Nothing if
+; no Workbench is registered. Preserves everything but d0/d1/a0/a1.
+it_wbmsg:
+        tst.l   IB_WBPORT(a6)
+        beq     .wm_ret
+        movem.l d2/a2/a5-a6,-(sp)
+        move.l  a6,a5
+        move.w  d0,d2
+        move.l  ($4).w,a6
+        move.l  IB_WBRPORT(a5),d0
+        bne.s   .wm_port
+        moveq   #MP_SIZE,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .wm_out
+        move.l  d0,a1
+        move.b  #NT_MSGPORT,LN_TYPE(a1)
+        lea     it_wbpname(pc),a0
+        move.l  a0,LN_NAME(a1)
+        lea     MP_MSGLIST+4(a1),a0  ; empty list: head -> &tail, tailpred -> &head
+        move.l  a0,MP_MSGLIST(a1)
+        lea     MP_MSGLIST(a1),a0
+        move.l  a0,MP_MSGLIST+8(a1)
+        move.l  a1,IB_WBRPORT(a5)
+        jsr     LVO_ADDPORT(a6)
+        move.l  IB_WBRPORT(a5),d0
+.wm_port:
+        move.l  d0,a2
+        moveq   #-1,d0
+        jsr     LVO_ALLOCSIGNAL(a6)
+        move.b  d0,MP_SIGBIT(a2)
+        sub.l   a1,a1
+        jsr     LVO_FINDTASK(a6)
+        move.l  d0,MP_SIGTASK(a2)
+        lea     IB_WBMSG(a5),a1
+        move.b  #NT_MESSAGE,LN_TYPE(a1)
+        move.l  a2,MN_REPLYPORT(a1)
+        move.w  #IM_SIZEOF,MN_LENGTH(a1)
+        move.l  #WBENCHMESSAGE,IM_CLASS(a1)
+        move.w  d2,IM_CODE(a1)
+        move.l  IB_WBPORT(a5),a0
+        jsr     LVO_PUTMSG(a6)
+        moveq   #0,d0
+        move.b  MP_SIGBIT(a2),d1
+        bset    d1,d0
+        jsr     LVO_WAIT(a6)
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)
+        moveq   #0,d0
+        move.b  MP_SIGBIT(a2),d0
+        jsr     LVO_FREESIGNAL(a6)
+.wm_out:
+        movem.l (sp)+,d2/a2/a5-a6
+.wm_ret:
+        rts
+it_wbpname:
+        dc.b    "WBenchPort",0
+        even
+
+; WBenchToFront() / WBenchToBack() -> d0 = TRUE | FALSE: ScreenToFront / ScreenToBack of the Workbench screen.
+intuition_WBenchToFront:
+        moveq   #0,d1
+        bra.s   wb_depth
+intuition_WBenchToBack:
+        moveq   #1,d1
+wb_depth:
+        move.l  IB_WBSCREEN(a6),d0
+        beq.s   .wd_ret
+        move.l  d0,a0
+        bsr     sc_depth
+        moveq   #1,d0
+.wd_ret:
+        rts
+
+; MoveScreen(screen a0, dx d0, dy d1) (spec intuition-screens §8.2): dx ignored; TopEdge += dy if the result is >= 0,
+; otherwise 0 if TopEdge > 0, otherwise nothing; ViewPort DyOffset := TopEdge; display rebuilt. Deviation: only the
+; front screen is displayed, at the top of the display.
+intuition_MoveScreen:
+        move.w  SC_TOPEDGE(a0),d0
+        add.w   d1,d0
+        bpl.s   .ms_set
+        tst.w   SC_TOPEDGE(a0)
+        ble.s   .ms_ret
+        moveq   #0,d0
+.ms_set:
+        move.w  d0,SC_TOPEDGE(a0)
+        move.w  d0,SC_VIEWPORT+vp_DyOffset(a0)
+        bra     intuition_RemakeDisplay
+.ms_ret:
+        rts
+
+; MakeScreen(screen a0): MakeVPort of the screen's ViewPort in intuition's View; neither MrgCop nor LoadView (the
+; caller then calls RethinkDisplay).
+intuition_MakeScreen:
+        move.l  a6,-(sp)
+        lea     SC_VIEWPORT(a0),a1
+        lea     IB_VIEWLORD(a6),a0
+        move.l  IB_GFXBASE(a6),a6
+        jsr     LVO_MAKEVPORT(a6)
+        move.l  (sp)+,a6
+        rts
+
+; ActivateWindow(window a0): the window becomes the active window (frame and pointer), if it is still open.
+intuition_ActivateWindow:
+        movem.l a3/a5,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
+        bsr     it_alive
+        beq.s   .aw_ret
+        bsr     it_setactive
+.aw_ret:
+        movem.l (sp)+,a3/a5
+        rts
+
+; RefreshWindowFrame(window a0): redraws the whole frame (borders, title bar, system gadgets), spec intuition-frame §2.
+intuition_RefreshWindowFrame:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  a6,a5
+        move.l  a0,a3
+        bsr     wn_border
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 ; GetScreenData(buffer a0, size d0, type d1, screen a1) -> d0 = TRUE | FALSE: copies min(size, sizeof Screen)
@@ -1567,6 +1735,8 @@ it_setactive:
         cmp.l   a3,d0
         beq.s   .sa_ret
         move.l  a3,IB_ACTIVEWINDOW(a5)
+        move.l  a3,a0
+        jsr     it_ptrapply          ; the new active window's own pointer, or the default one
         tst.l   d0
         beq.s   .sa_new
         move.l  d0,a3
@@ -1652,6 +1822,8 @@ intuition_CloseWindow:
         bne.s   .cw_na
         clr.l   IB_ACTIVEWINDOW(a5)
         moveq   #1,d7
+        sub.l   a0,a0
+        jsr     it_ptrapply          ; its pointer data may go with it: default pointer
 .cw_na:
         move.l  a3,a0
         exg     a5,a6
@@ -3243,20 +3415,8 @@ wn_post:
         move.l  a0,IM_IADDRESS(a1)
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
-        move.l  GP_POLLS,d0          ; seconds / microseconds since startup (VBlanks)
-        moveq   #0,d1
-        swap    d0
-        move.w  d0,d1
-        divu    #50,d1               ; long division in two steps (the quotient may exceed 16 bits)
-        move.w  d1,d6
-        swap    d6
-        swap    d0
-        move.w  d0,d1
-        divu    #50,d1
-        move.w  d1,d6                ; d6 = seconds
-        swap    d1
-        mulu    #20000,d1            ; remainder (1/50 s) -> microseconds
-        move.l  d6,IM_SECONDS(a1)
+        bsr     it_now
+        move.l  d0,IM_SECONDS(a1)
         move.l  d1,IM_MICROS(a1)
         move.l  a3,IM_IDCMPWINDOW(a1)
         move.l  WD_USERPORT(a3),a0
@@ -3264,6 +3424,37 @@ wn_post:
         jsr     LVO_PUTMSG(a6)
 .sm_ret:
         addq.l  #2,sp
+        rts
+
+; it_now() -> d0 = seconds, d1 = microseconds since startup (VBlank count GP_POLLS): the clock of the IntuiMessages.
+it_now:
+        move.l  d2,-(sp)
+        move.l  GP_POLLS,d0
+        moveq   #0,d1
+        swap    d0
+        move.w  d0,d1
+        divu    #50,d1               ; long division in two steps (the quotient may exceed 16 bits)
+        move.w  d1,d2
+        swap    d2
+        swap    d0
+        move.w  d0,d1
+        divu    #50,d1
+        move.w  d1,d2                ; d2 = seconds
+        swap    d1
+        mulu    #20000,d1            ; remainder (1/50 s) -> microseconds
+        move.l  d2,d0
+        move.l  (sp)+,d2
+        rts
+
+; CurrentTime(seconds a0, micros a1): the current time on the IntuiMessage clock (spec intuition-misc §5 takes the
+; time stamp of the last input event; ours is the same clock as IntuiMessage Seconds/Micros, so that DoubleClick and
+; time comparisons with messages agree).
+intuition_CurrentTime:
+        movem.l a0-a1,-(sp)
+        bsr.s   it_now
+        movem.l (sp)+,a0-a1
+        move.l  d0,(a0)
+        move.l  d1,(a1)
         rts
 
 ; DoubleClick(seconds d0, micros d1, seconds d2, micros d3) -> d0 = TRUE if the second click follows the first by less
