@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Reporting guide
+    url: https://github.com/Thaolia/KickSlopStart/blob/main/docs/ISSUE.md
+    about: What to include in a report, and what must never be attached (clean-room rules).
+  - name: Deliberate differences (not bugs)
+    url: https://github.com/Thaolia/KickSlopStart/blob/main/README.md#deliberate-differences-not-bugs
+    about: The green Workbench, the kitten boot screen and the cat symbols are on purpose.
+  - name: Roadmap and known gaps
+    url: https://github.com/Thaolia/KickSlopStart/blob/main/docs/PLAN.md
+    about: What is done and what is still missing.

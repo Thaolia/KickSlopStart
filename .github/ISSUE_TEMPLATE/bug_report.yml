@@ -1,0 +1,102 @@
+name: Bug or incompatibility
+description: A program that fails, hangs or behaves differently on KickSlopStart than on a real Kickstart 1.3.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please read the [reporting guide](https://github.com/Thaolia/KickSlopStart/blob/main/docs/ISSUE.md) first.
+        Some differences are deliberate (green Workbench, kitten boot screen, cat symbols): see
+        [Deliberate differences](https://github.com/Thaolia/KickSlopStart/blob/main/README.md#deliberate-differences-not-bugs).
+  - type: input
+    id: rom
+    attributes:
+      label: ROM version
+      description: Release tag (e.g. v0.2.6), or the file name and its SHA-256.
+      placeholder: v0.2.6
+    validations:
+      required: true
+  - type: dropdown
+    id: loading
+    attributes:
+      label: How the ROM is loaded
+      options:
+        - Emulator (Kickstart ROM file)
+        - Soft-kick disk
+        - EPROM on real hardware
+        - Other (explain below)
+    validations:
+      required: true
+  - type: input
+    id: emulator
+    attributes:
+      label: Emulator and version
+      description: FS-UAE, WinUAE, Amiberry, vAmiga/vAmigaWeb... or "real hardware".
+      placeholder: WinUAE 5.3.0
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Machine configuration
+      description: An OCS Agnus (A500) addresses at most 512 KB of chip RAM, whatever size the emulator is given.
+      value: |
+        CPU: 68000
+        Chipset / Agnus: OCS
+        Chip RAM: 512 KB
+        Slow RAM: 512 KB
+        Fast RAM: 0
+    validations:
+      required: true
+  - type: input
+    id: program
+    attributes:
+      label: Program and disk image
+      description: Program name, exact disk image name and where it comes from.
+      placeholder: Holiday Lemmings 1993, "HolidayLemmings93.adf"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: From power-on.
+      placeholder: |
+        1. Boot the disk
+        2. Click "Play"
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour (real Kickstart 1.3, same configuration)
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour on KickSlopStart
+      description: Quote exact values and messages, and where they are shown (e.g. "Workbench title bar shows 4009448 free memory").
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: Drag and drop an image here.
+  - type: textarea
+    id: serial
+    attributes:
+      label: Serial output
+      description: Optional. KickSlopStart prints boot messages on the serial port.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked the deliberate differences in the README.
+          required: true
+        - label: I attached no Kickstart ROM, no disassembly of it and no Commodore source code.
+          required: true

@@ -1,0 +1,38 @@
+name: Missing OS function or feature
+description: A program needs an OS function, device command or feature that KickSlopStart does not provide yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the known gaps in [docs/PLAN.md](https://github.com/Thaolia/KickSlopStart/blob/main/docs/PLAN.md)
+        and the [reporting guide](https://github.com/Thaolia/KickSlopStart/blob/main/docs/ISSUE.md) first.
+  - type: input
+    id: program
+    attributes:
+      label: Program that needs it
+      description: Program name and disk image, if a program needs it.
+  - type: input
+    id: function
+    attributes:
+      label: Library / device and function
+      description: If known, e.g. "graphics.library ScrollVPort" or "trackdisk.device TD_RAWREAD".
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today on KickSlopStart
+    validations:
+      required: true
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What you would like
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I attached no Kickstart ROM, no disassembly of it and no Commodore source code.
+          required: true

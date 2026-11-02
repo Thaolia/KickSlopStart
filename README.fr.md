@@ -87,6 +87,13 @@ Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de 
   au lieu de rouge. Une disquette Workbench affiche toujours le pointeur de son `devs:system-configuration`, comme
   sur la 1.3 d'origine.
 
+## Signaler un problème
+
+Les signalements de bugs et d'incompatibilités sont les bienvenus en [issues GitHub](https://github.com/Thaolia/KickSlopStart/issues/new/choose).
+Le [guide de signalement](docs/ISSUE.fr.md) dit quoi indiquer (version de la ROM, émulateur et configuration
+mémoire, programme, capture d'écran) et ce qu'il ne faut jamais joindre (la ROM d'origine, son désassemblage, du
+code Commodore).
+
 ## Pourquoi ce projet, et le réutiliser
 
 Pour moi, c'est un **projet éducatif** : une façon d'apprendre le fonctionnement interne d'AmigaOS 1.3, et de voir

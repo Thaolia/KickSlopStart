@@ -82,6 +82,12 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 - **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in dark purple instead of
   red. A Workbench disk still shows the pointer stored in its `devs:system-configuration`, as on the original 1.3.
 
+## Reporting a problem
+
+Bug reports and compatibility reports are welcome as [GitHub issues](https://github.com/Thaolia/KickSlopStart/issues/new/choose).
+The [reporting guide](docs/ISSUE.md) lists what to include (ROM version, emulator and memory configuration,
+program, screenshot) and what must never be attached (the original ROM, its disassembly, Commodore sources).
+
 ## Why this project, and reusing it
 
 For me this is an **educational project**: a way to learn how AmigaOS 1.3 works from the inside, and to see how far a
