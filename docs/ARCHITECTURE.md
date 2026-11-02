@@ -1502,6 +1502,12 @@ differs.
     shell sets `cli_Result2` after a command, and treats code -1 like a command that could not be loaded
     (script abandoned whatever FailAt, cli_ReturnCode 0; pr_Result2 0/205/218: "Unknown command <name>" and
     cli_Result2 0, any other: "Unable to load <name>: <error>" with cli_Result2 kept; probed on 1.3).
+  - intuition ghosting (`gadgets.s`, `menus.s`, specs intuition-gzz-v34 §6.4 and intuition-input-menus-v34 §3.5):
+    a GADGDISABLED gadget is ghosted at every rendering of its list (pattern $4444/$1111 in the window's
+    BlockPen, the screen's for a SCRGADGET, BPen 0, JAM1, over its inclusive box, origin = its layer; SysInfo's
+    cache buttons on a 68000); OnGadget/OffGadget redraw from the gadget to the end of the list, without erasing.
+    Disabled menu titles and items use the same pattern in the menu window's BlockPen, rotated so that its x phase
+    is the screen's (`mn_ghost`); test `tests/ghost_test.s`.
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
     `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 

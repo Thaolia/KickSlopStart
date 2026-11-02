@@ -309,7 +309,7 @@ a count `n`. It works in two passes.
       GADGIMAGE, otherwise **DrawBorder** of GadgetRender (nothing if the pointer is NULL);
    2. its **GadgetText** (PrintIText);
    3. for a STRGADGET, its text;
-   4. if **GADGDISABLED**, the ghosting pattern over its box.
+   4. if **GADGDISABLED**, the ghosting pattern over its box (exact rule in §6.4).
 
    So there is **no** "all images, then all texts" pass: each gadget is
    finished before moving to the previous one. **The first gadget of the list is drawn last,
@@ -332,6 +332,14 @@ of drawing.
 | Screen title bar | screen gadgets | −1 |
 | One-off refresh (window activation or deactivation, frame gadgets) | one gadget | 1 |
 | **AddGadget**(win, gad, pos) (−42) | — | **draws nothing**: simple insertion at position `pos` (−1 = end), the gadget is only displayed at the next Refresh |
+| **OffGadget**(gad, win, req) (−174) / **OnGadget**(gad, win, req) (−186) | `gad` | **−2**: set / clear GADGDISABLED, then exactly the RefreshGadgets(gad, win) path (§6.4) |
+
+Requester gadgets (GTYP REQGADGET), for every caller of the routine [O, ROM reading, not probed]: the
+requester is the one of the window's requester list whose gadget list contains `gad`; if it is not
+displayed (no ReqLayer) nothing is drawn. If that requester has Flags bit $0002 (PREDRAWN in the
+public headers) nothing is drawn either. With a count of −2 the range starts at the requester's
+**first** gadget (`ReqGadget`), not at `gad`: RefreshGadgets/OnGadget/OffGadget on any requester
+gadget redraw the whole requester list.
 
 ### 6.3 Application to the Info window (info.library) [O]
 
@@ -359,6 +367,80 @@ of drawing.
 - An implementation that drew forwards (first → last) would cover SAVE and QUIT
   with the filler.
 
+### 6.4 Ghosting of GADGDISABLED gadgets
+
+Sources: ROM reading of the gadget list routine, of the gadget environment set-up and of
+OnGadget/OffGadget [O]; black-box check on SysInfo 4.4 and on Workbench 1.3.3 menus, Amiberry,
+real ROM 34.5, screen pixels read from the emulator picture [O, screenshot].
+
+**What is drawn** [O]. In step 4 of the rendering pass (§6.1), after the gadget's rendering, its
+GadgetText and (STRGADGET) its text, a gadget whose Flags has **GADGDISABLED ($0100)** gets a
+patterned **RectFill** over its box. It applies to **every gadget type** (boolean, proportional,
+string) and to every domain (window, GZZ frame, requester, screen gadgets): the test is the flag
+only.
+
+- **Rectangle**: the gadget's box as computed for the domain in §4.1, i.e. after GRELRIGHT,
+  GRELBOTTOM, GRELWIDTH and GRELHEIGHT; inclusive corners (Left, Top) – (Left + Width − 1,
+  Top + Height − 1), in the coordinates of the domain's rendering layer (§4.2; for a requester
+  gadget its requester's layer, for a screen gadget the screen's title-bar layer). Nothing is drawn
+  if the resolved Width or Height is ≤ 0. The fill does **not** extend to a GadgetText, a Border or an
+  Image that lies outside the box; inside the box the dots are laid over whatever the rendering drew.
+- **Pattern**: AreaPtrn = 4 words **$4444, $1111, $4444, $1111**, AreaPtSz = **2** (4 lines; the
+  visible period is 2 lines). One pixel out of four on every line: on pattern lines 0 and 2 the
+  pixels with x mod 4 = 1, on lines 1 and 3 those with x mod 4 = 3 (diagonal dot grid).
+- **Pens**: APen = the **BlockPen of the gadget environment**, BPen = 0, DrawMode = **JAM1** (only
+  the dots are written; the other pixels keep what the gadget rendering left). The environment's
+  BlockPen is `Window->BlockPen` for window gadgets **and for requester gadgets** (not the
+  requester's BackFill), and `Screen->BlockPen` for screen gadgets (SCRGADGET).
+- **RastPort**: the list is drawn in a copy of the domain's RastPort held in IntuitionBase (layer of
+  §4.2), so AreaPtrn/AreaPtSz/pens set for the ghosting are not left in `Window->RPort`. While the
+  list is drawn, the layer is locked, its clip region is removed (InstallClipRegion NULL) and its
+  Scroll_X/Scroll_Y are forced to 0; all three are restored afterwards [O].
+- **Pattern origin** [O, ROM reading of graphics BltPattern]: the pattern is aligned on the
+  **coordinates of the RastPort that is drawn into**, in both directions: the pixel at RastPort
+  coordinates (x, y) (layer coordinates; for gadgets the scroll is 0, see above, so the origin is
+  the layer's top-left corner) uses word `y mod 4`, bit `15 − (x mod 16)`.
+  In a layer, graphics shifts the pattern line by the layer's vertical offset and rotates the pattern
+  word by its horizontal offset, so the grid follows the window, not the screen. (The SysInfo check
+  below has its window at (0,0), so it confirms the phase but does not discriminate layer from
+  screen origin; the layer case is ROM reading only, for the visible ClipRects; obscured
+  ClipRects and SuperBitMap layers are assumed to behave the same [S].)
+
+**When it is drawn** [O].
+- At every rendering of the list (§6.2): OpenWindow, RefreshGadgets, RefreshWindowFrame/frame
+  repair, requester drawing, screen title bar, one-off frame-gadget refreshes. A gadget whose
+  GADGDISABLED is set by the application **before** OpenWindow (in the NewWindow list) is ghosted
+  at the initial drawing.
+- **OffGadget**(gad, win, req): sets GADGDISABLED, then redraws from `gad` to the **end** of the list
+  (count −2: not just this gadget). The `req` argument is not used: for a requester gadget the
+  requester is found from the gadget (see the note under §6.2, which also makes it redraw the whole
+  requester list). The redraw does **not** erase first: the rendering is drawn again over what is
+  there, then the dots.
+- **OnGadget**(gad, win, req): clears GADGDISABLED, then the same redraw (count −2), still **without
+  erasing the box**. The dots disappear only where the gadget rendering itself overwrites them: a
+  full Image or a JAM2 text covers them, a Border (lines only) does not, so the dots stay between the
+  lines of a Border gadget until the application clears the area and refreshes [D from the absence
+  of any erase step in the path; not probed].
+- **SELECTED disabled gadget**: the highlight pass (§6.1, step 2) does not test GADGDISABLED; a
+  SELECTED gadget is highlighted (e.g. GADGHCOMP complements its box) **after** being ghosted, so the
+  dots are complemented with the rest.
+- **Hit test**: when the button goes down over a disabled gadget, the search stops on it and reports
+  no gadget (a gadget behind it in the list is not reached).
+
+**SysInfo 4.4 on the real ROM** [O, screenshot]. On a 68000, the main window (BORDERLESS backdrop
+window at (0,0), 640×256 hires screen, Window BlockPen = 1) has six 64×10 boolean gadgets
+(GADGHIMAGE, RELVERIFY) at (420/489/558, 176/188): ICACHE, DCACHE, IBURST, DBURST, CBACK, ALL. In
+the live window their Flags are $0102 (GADGDISABLED set); in the program file the same structures
+have $0002, and neither OffGadget nor OnGadget is called while SysInfo starts (hardware
+breakpoints on both never fired, while the ghosting fill fired): SysInfo sets GADGDISABLED itself
+before the gadgets are first drawn, and the ghosting comes from the ordinary list rendering. On
+screen the six buttons show a regular grid of single pen-1 dots (white in SysInfo's palette) over
+their grey/white/black imagery: every second line has a dot every 4 pixels, the lines between have
+the same spacing shifted by 2 pixels; e.g. on line 177 dots at x = 423, 427, … 483 and on line 178 at
+x = 421, 425, …, i.e. x mod 4 = 3 on odd lines and 1 on even lines, as the rule above gives for a
+layer at (0,0). No dot appears outside x 420..483 / y 176..185 of the ICACHE box. The other buttons
+(QUIT, MEMORY, …: Flags $0002) have no dots.
+
 ---
 
 ## 7. Test vectors
@@ -375,6 +457,8 @@ of drawing.
 | SIMPLE non-GZZ 200×80, interior filled, SizeWindow(+40,+20) | whole window 0 except a complete new frame; Flags $0081; damage (0,0)-(239,99) |
 | GZZ SUPER (NewWindow.BitMap 320×200×2), SizeWindow(+40,+20) | inner SuperBitMap = BitMap, inner Flags $0004, outer $0081→$0001; whole interior = SuperBitMap; no message |
 | non-GZZ SUPER, SizeWindow(+40,+20) | Flags $0084, REFRESHWINDOW; frame redrawn only inside the damaged frame bands (§2.5) |
+| SysInfo 4.4 on a 68000, main window at (0,0), BlockPen 1 | ICACHE box (420,176) 64×10, Flags $0102: pen-1 dots at x mod 4 = 3 on odd lines, x mod 4 = 1 on even lines, only inside x 420..483, y 176..185 (§6.4) |
+| Disabled gadget, then OnGadget, Border rendering only | flag cleared, gadget and the rest of the list redrawn, box not erased: dots between the border lines remain [D] |
 
 ---
 
@@ -389,5 +473,9 @@ of drawing.
   its public calls (AddGadget −1, RefreshGadgets(FirstGadget)), without copied code.
 - [x] **Correction of 2026-10-29**: removed the 13 ROM routine addresses from the header,
   replaced by the list of functions studied; body unchanged.
+- [x] §6.4 (2026-11-02): ghosting described as a rule (pattern words, pens, rectangle, alignment, callers);
+  public structure fields and library calls only (RectFill, InstallClipRegion, OnGadget/OffGadget LVOs); no
+  instruction sequence and no ROM address. SysInfo figures are its own gadget data read from the live
+  window and screen pixels from the emulator picture.
 - [x] §2.5 (2026-11-01): black-box readback only (pixels, Flags, DamageList, IDCMP classes) from the
   author probe `tests/resize_probe.s`; no ROM code read for it.

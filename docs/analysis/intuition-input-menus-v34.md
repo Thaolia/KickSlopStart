@@ -480,7 +480,10 @@ Uses:
   (Menu.LeftEdge, 0), hence text at x = LeftEdge + BarHBorder, y = BarVBorder.
 - A menu without MENUENABLED still opens: title not highlighted, box displayed with all its
   items ghosted, any selection gives MENUNULL [O, probe]. Its title is "ghosted" by a pattern fill over (BarHBorder + LeftEdge, 0)–(BarHBorder
-  + LeftEdge + Width − 1, BarHeight − 1), 2-line pattern **$4444 / $1111**, colour BlockPen, JAM1.
+  + LeftEdge + Width − 1, BarHeight − 1), pattern **$4444 / $1111** (4 words $4444,$1111,$4444,$1111,
+  AreaPtSz 2), colour BlockPen of the active window, BPen 0, JAM1. It is drawn in the screen's title-bar
+  layer, whose origin is the screen's (0,0), so the dot grid is screen-aligned (rule in
+  `intuition-gzz-v34.md` §6.4).
 - Closing: the screen's title bar is rebuilt (screen title) and the layer goes back
   behind according to ShowTitle (screens spec).
 
@@ -514,7 +517,13 @@ on 16 pixels; **allocation failure ⇒ the box is simply not displayed**):
    - COMMSEQ: character `Command` at x = x_item + Width − char_width − 2, same y, IntuiText
      {DetailPen, 0, JAM1, current font}; Amiga symbol just to the left (x − image_width − 2);
    - item without ITEMENABLED, or menu disabled (for sub-items: menu **or** item
-     disabled): ghosted with pattern $4444/$1111 in BlockPen, JAM1, over the item's rectangle.
+     disabled): ghosted with pattern $4444/$1111 (AreaPtSz 2) in BlockPen, BPen 0, JAM1, over the item's
+     rectangle (x, y) – (x + Width − 1, y + Height − 1), drawn after the item's rendering (and checkmark /
+     command key). The fill goes into the **off-screen BitMap** (RastPort without layer), so the pattern
+     follows that BitMap's coordinates: line 0 of the pattern is the **top line of the box** (y0 of the box
+     on screen, BarHeight − 1 for an item box), and horizontally the BitMap starts at the 16-pixel boundary
+     at or left of the box's x0, so the x phase is the screen's. [O, ROM reading; vertical phase confirmed by
+     screenshot, see open point 9]
 4. **SwapBitsRastPortClipRect** (layers) between this BitMap and the screen's RastPort: the box appears and
    the screen content is preserved; closing redoes the swap. Layers are not used.
 
@@ -791,8 +800,14 @@ IDLE
    LONGINT, ActivateGadget): outside the scope of this spec, not described.
 8. **DISKINSERTED/REMOVED and NEWPREFS**: broadcast read in the ROM; on the Workbench side, see
    `disk-change-v34.md`; no dedicated probe here.
-9. The ghosting pattern $4444/$1111 is read in the ROM; its exact alignment (pattern origin = line 0 of the
-   screen's RastPort or of the layer) has not been verified pixel by pixel.
+9. **Settled (2026-11-02)**: ghosting alignment. Items and sub-items: the pattern origin is the off-screen
+   box BitMap (§3.5), i.e. pattern line 0 = the box's top screen line, x phase = screen x. Observed [O,
+   screenshot, Amiberry, real ROM 34.5, Workbench 1.3.3, Disk menu with nothing selected, both items
+   ghosted]: BarHeight 10, item box top at screen line 9; on screen lines 12 and 18 (pattern lines 3 and
+   9 → $1111) the white BlockPen dots fall on x mod 4 = 3 (e.g. x 131 and 135 inside the "E" of
+   "Empty Trash"), and on line 15 (pattern line 6 → $4444) on x mod 4 = 1. A screen-aligned pattern would
+   put $4444 on the even lines: refuted. Menu titles (title-bar layer at screen origin) and gadgets
+   (`intuition-gzz-v34.md` §6.4) follow the coordinates of the layer they are drawn in.
 10. **Method**: under FS-UAE 3.2.35, writing to the serial port character by character during menu
     activity caused hangs ("out of event2's!" in the FS-UAE log: event queue
     saturated, level-6 interrupt left active); the probe therefore buffers its log in RAM and only

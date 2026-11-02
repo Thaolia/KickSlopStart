@@ -5,8 +5,8 @@
 ; (a second simple layer under the bar, ITEMTEXT or image items); the item under the pointer is
 ; highlighted (inversion) if it is enabled. On release: MENUPICK to the window with the selection code (MENUNULL
 ; otherwise), layers deleted; layers gives the area back to the windows (backup of smart windows, REFRESHWINDOW for
-; simple windows via it_refresh). Disabled items or menus are ghosted by horizontal stripes in the
-; background pen.
+; simple windows via it_refresh). Disabled items or menus are ghosted by the 1.3 dot pattern in
+; BlockPen.
 ; COMMSEQ shortcuts (spec intuition-input-menus-v34 §3.5): the Command character to the right of the item, preceded by
 ; the Amiga key symbol - here a small cat drawn for KickSlopStart (not the ROM glyph), in the same format.
 ; Keyboard shortcuts (§3.11): right Amiga + key converted to a character; the handler searches the menu strip of the
@@ -329,34 +329,52 @@ mn_drawbar:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; mn_ghost(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a4 = screen, a5): horizontal stripes (every other line) in pen
-; BlockPen over the rectangle (one line per RectFill: few calls). Clobbers d0-d3/a0/a1/a6.
+; mn_ghost(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a4 = screen, a5): ghosting (spec intuition-input-menus-v34 §3.5):
+; pattern $4444/$1111 in the BlockPen of the menu's window (the screen's without one), BPen 0, JAM1, RectFill over the
+; rectangle. Rows follow the RastPort (line 0 = top of the box layer), the x phase is the screen's: the pattern is
+; rotated by the layer's MinX. RastPort state restored. Clobbers d0-d3/a0/a1/a6.
 mn_ghost:
         movem.l d4-d7/a2,-(sp)
         move.l  a1,a2
-        movem.w d0-d3,-(sp)
-        movem.w (sp)+,d4-d7
+        move.l  rp_AreaPtrn(a2),-(sp)
+        move.b  rp_AreaPtSz(a2),-(sp)
+        move.b  rp_FgPen(a2),-(sp)
+        move.b  rp_BgPen(a2),-(sp)
+        move.b  rp_DrawMode(a2),-(sp)
+        move.w  rp_Flags(a2),-(sp)
+        move.l  #$44441111,d4        ; pattern rows 0 / 1
+        move.l  rp_Layer(a2),d5
+        beq.s   .gh_rot
+        move.l  d5,a0
+        move.w  lr_MinX(a0),d5
+        and.w   #3,d5
+        rol.w   d5,d4                ; screen x phase: bit 15 of a row = x of the layer's left edge
+        swap    d4
+        rol.w   d5,d4
+        swap    d4
+.gh_rot:
+        move.l  d4,-(sp)
+        move.l  sp,rp_AreaPtrn(a2)
+        move.b  #1,rp_AreaPtSz(a2)
+        move.b  SC_BLOCKPEN(a4),rp_FgPen(a2)
+        move.l  IB_MENUWIN(a5),d4
+        beq.s   .gh_pen
+        move.l  d4,a0
+        move.b  WD_BLOCKPEN(a0),rp_FgPen(a2)
+.gh_pen:
+        clr.b   rp_BgPen(a2)
+        move.b  #JAM1,rp_DrawMode(a2)
+        bclr    #3,rp_Flags+1(a2)    ; no AREAOUTLINE
         move.l  IB_GFXBASE(a5),a6
         move.l  a2,a1
-        moveq   #JAM1,d0
-        jsr     LVO_SETDRMD(a6)
-        move.l  a2,a1
-        moveq   #0,d0
-        move.b  SC_BLOCKPEN(a4),d0
-        jsr     LVO_SETAPEN(a6)
-        addq.w  #1,d5                ; odd lines of the rectangle
-.gh_lp:
-        cmp.w   d7,d5
-        bgt.s   .gh_ret
-        move.l  a2,a1
-        move.w  d4,d0
-        move.w  d5,d1
-        move.w  d6,d2
-        move.w  d5,d3
         jsr     LVO_RECTFILL(a6)
-        addq.w  #2,d5
-        bra.s   .gh_lp
-.gh_ret:
+        addq.l  #4,sp
+        move.w  (sp)+,rp_Flags(a2)
+        move.b  (sp)+,rp_DrawMode(a2)
+        move.b  (sp)+,rp_BgPen(a2)
+        move.b  (sp)+,rp_FgPen(a2)
+        move.b  (sp)+,rp_AreaPtSz(a2)
+        move.l  (sp)+,rp_AreaPtrn(a2)
         movem.l (sp)+,d4-d7/a2
         rts
 

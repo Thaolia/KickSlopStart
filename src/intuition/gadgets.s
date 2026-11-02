@@ -5,7 +5,7 @@
 ; the pointer handler, see it_keyin): insertion, Backspace, Del, arrows (Shift: start / end), right Amiga + X
 ; (clear) and + Q (undo); Return / Enter ends (LONGINT converted, GADGETUP if RELVERIFY), a click elsewhere
 ; deactivates without a message. Left-aligned text (STRINGCENTER / STRINGRIGHT ignored). The other types are handled
-; as buttons; no "ghost" pattern for a disabled gadget (it simply no longer responds).
+; as buttons. A GADGDISABLED gadget no longer responds and is ghosted (spec intuition-gzz-v34 §6.4).
 ; IMPLEMENTATION track ("clean"): public structures intuition/intuition.h + AutoDocs intuition. NO ROM reading.
 
                 include "exec.i"
@@ -342,10 +342,17 @@ gad_drw_nc:
         move.w  GG_GADGETTYPE(a2),d0
         and.w   #GTYP_MASK,d0
         cmp.w   #STRGADGET,d0
-        bne.s   .gd_sel
+        bne.s   .gd_ghost
         bsr     str_text
-        bra.s   .gd_ret
+.gd_ghost:
+        btst    #0,GG_FLAGS(a2)      ; GADGDISABLED: ghosting over the box, before the highlight
+        beq.s   .gd_sel
+        bsr     gad_ghost
 .gd_sel:
+        move.w  GG_GADGETTYPE(a2),d0 ; (str_text clobbers d0)
+        and.w   #GTYP_MASK,d0
+        cmp.w   #STRGADGET,d0
+        beq.s   .gd_ret
         tst.w   d7
         beq.s   .gd_ret
         cmp.w   #PROPGADGET,d0       ; (proportional: its knob already carries the held state)
@@ -436,9 +443,52 @@ gad_drawall:
         movem.l d0-d2/a0-a2,-(sp)
         move.l  WD_FIRSTGADGET(a3),a2
         moveq   #-1,d2
-        bsr.s   gad_drawrev
+        bsr     gad_drawrev
         movem.l (sp)+,d0-d2/a0-a2
         rts
+
+; gad_ghost(a3 = window, a2 = gadget, a4 = RastPort, a5, box x0, y0, x1, y1 at 4(sp)): ghosting of a disabled
+; gadget (spec intuition-gzz-v34 §6.4): pattern $4444/$1111 in BlockPen (the screen's for a SCRGADGET), BPen 0,
+; JAM1, over the inclusive box; nothing for an empty box. RastPort state restored. Preserves d0/d2-d7/a2-a5.
+gad_ghost:
+        movem.l d0-d3/a0-a1/a6,-(sp)
+        movem.w 4+28(sp),d0-d3
+        cmp.w   d0,d2
+        blt.s   .gh_ret
+        cmp.w   d1,d3
+        blt.s   .gh_ret
+        move.l  rp_AreaPtrn(a4),-(sp)
+        move.b  rp_AreaPtSz(a4),-(sp)
+        move.b  rp_FgPen(a4),-(sp)
+        move.b  rp_BgPen(a4),-(sp)
+        move.b  rp_DrawMode(a4),-(sp)
+        move.w  rp_Flags(a4),-(sp)
+        move.b  WD_BLOCKPEN(a3),rp_FgPen(a4)
+        btst    #6,GG_GADGETTYPE(a2) ; SCRGADGET ($4000)
+        beq.s   .gh_pen
+        move.l  WD_WSCREEN(a3),a0
+        move.b  SC_BLOCKPEN(a0),rp_FgPen(a4)
+.gh_pen:
+        clr.b   rp_BgPen(a4)
+        move.b  #JAM1,rp_DrawMode(a4)
+        bclr    #3,rp_Flags+1(a4)    ; no AREAOUTLINE
+        lea     gad_ghostpat(pc),a0
+        move.l  a0,rp_AreaPtrn(a4)
+        move.b  #1,rp_AreaPtSz(a4)
+        move.l  a4,a1
+        move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_RECTFILL(a6)
+        move.w  (sp)+,rp_Flags(a4)
+        move.b  (sp)+,rp_DrawMode(a4)
+        move.b  (sp)+,rp_BgPen(a4)
+        move.b  (sp)+,rp_FgPen(a4)
+        move.b  (sp)+,rp_AreaPtSz(a4)
+        move.l  (sp)+,rp_AreaPtrn(a4)
+.gh_ret:
+        movem.l (sp)+,d0-d3/a0-a1/a6
+        rts
+gad_ghostpat:
+        dc.w    $4444,$1111
 
 ; gad_drawrev(a2 = first gadget, d2 = count (-1 = up to the end), a3 = window, a5): as in intuition 1.3, the
 ; range is rendered in reverse, from last to first, so that the first of the list ends up on top (info.library
@@ -2010,8 +2060,9 @@ intuition_RefreshGList:
         movem.l (sp)+,d2/a2-a3/a5
         rts
 
-; OnGadget(gadget a0, window a1, requester a2) / OffGadget(...): the gadget becomes enabled again / is disabled, then it
-; is redrawn.
+; OnGadget(gadget a0, window a1, requester a2) / OffGadget(...): the gadget becomes enabled again / is disabled, then the
+; list is redrawn from it to the end (spec intuition-gzz-v34 §6.2: no erase, so the ghost dots stay where the
+; rendering does not cover them, as on 1.3).
 intuition_OnGadget:
         bclr    #0,GG_FLAGS(a0)
         bra.s   gad_onoff
@@ -2021,7 +2072,7 @@ intuition_OffGadget:
         bsr     gad_forget
         move.l  (sp)+,a0
 gad_onoff:
-        moveq   #1,d0
+        moveq   #-1,d0
         bra.s   intuition_RefreshGList
 
 ; DrawBorder(rp a0, border a1, x d0, y d1): each Border of the chain, polyline of Count points (XY pairs)
