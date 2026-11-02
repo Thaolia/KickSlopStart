@@ -732,8 +732,8 @@ drt_clr:
         dbra    d0,drt_clr
         move.l  a2,a6
         moveq   #0,d0
-        jsr     -6(a6)               ; AllocUnit(0) -> 1
-        cmp.l   #1,d0
+        jsr     -6(a6)               ; AllocUnit(0) -> $FF
+        cmp.l   #$FF,d0
         bne     drt_fail
         moveq   #0,d0
         jsr     -6(a6)               ; already taken -> 0
@@ -742,8 +742,8 @@ drt_clr:
         moveq   #0,d0
         jsr     -12(a6)              ; FreeUnit(0)
         moveq   #0,d0
-        jsr     -6(a6)               ; free again -> 1
-        cmp.l   #1,d0
+        jsr     -6(a6)               ; free again -> $FF
+        cmp.l   #$FF,d0
         bne     drt_fail
         moveq   #0,d0
         jsr     -12(a6)
@@ -815,8 +815,8 @@ drt_done:
         tst.w   d0
         bne     pgt_fail
         move.w  #$0C00,d0
-        jsr     -6(a6)               ; DATLY as output -> granted
-        cmp.w   #$0400,d0
+        jsr     -6(a6)               ; DATLY as output -> granted (OUTLY + DATLY)
+        cmp.w   #$0C00,d0
         bne     pgt_fail
         move.w  #$0100,d0
         jsr     -6(a6)               ; DATLX already taken -> refused
@@ -919,6 +919,54 @@ kdt_clr:
         bne     kdt_fail
         cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
         bne     kdt_fail
+        moveq   #$60,d0              ; left Shift then keypad 7: qualifier $0001, then $0101 (NUMERICPAD)
+        jsr     kbd_devevent
+        moveq   #$3D,d0
+        jsr     kbd_devevent
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bsr     kdt_read
+        cmp.w   #$0001,48+IE_QUALIFIER(a3)
+        bne     kdt_fail
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bsr     kdt_read
+        cmp.w   #$3D,48+IE_CODE(a3)
+        bne     kdt_fail
+        cmp.w   #$0101,48+IE_QUALIFIER(a3)
+        bne     kdt_fail
+        move.l  #$BD,d0
+        jsr     kbd_devevent
+        move.l  #$E0,d0
+        jsr     kbd_devevent
+        bsr     kdt_clear
+        move.l  d2,-(sp)             ; 32 events (code $70, outside the matrix) into the 31-entry ring: 31 read back,
+        moveq   #31,d2               ; the last one turned into the overflow code $7D
+kdt_ovf:
+        moveq   #$70,d0
+        jsr     kbd_devevent
+        dbra    d2,kdt_ovf
+        moveq   #0,d2
+kdt_drain:
+        move.b  #IOF_QUICK_K,IO_FLAGS(a3)
+        bsr     kdt_read
+        btst    #0,IO_FLAGS(a3)
+        beq.s   kdt_dend             ; ring empty: the request stays pending
+        addq.w  #1,d2
+        bra.s   kdt_drain
+kdt_dend:
+        move.l  a3,a1
+        move.l  a2,a6
+        jsr     -36(a6)              ; AbortIO
+        move.l  ($4).w,a6
+        moveq   #0,d0
+        cmp.w   #31,d2
+        bne.s   kdt_ovres
+        cmp.w   #$7D,48+IE_CODE(a3)
+        bne.s   kdt_ovres
+        moveq   #1,d0
+kdt_ovres:
+        move.l  (sp)+,d2
+        tst.l   d0
+        beq     kdt_fail
         lea     72(a3),a0            ; reset handler: added then removed
         move.b  #NT_INTERRUPT,LN_TYPE(a0)
         move.l  a0,KDT_DATA(a3)
@@ -954,7 +1002,7 @@ kdt_done:
 kdt_matrix:
         move.w  #10,IO_COMMAND(a3)   ; KBD_READMATRIX
         move.b  #IOF_QUICK_K,IO_FLAGS(a3)
-        moveq   #16,d0
+        moveq   #13,d0           ; exactly 13 bytes (keys $00-$67)
         bra.s   kdt_rd2
 kdt_read:
         move.w  #9,IO_COMMAND(a3)    ; KBD_READEVENT
@@ -6389,7 +6437,7 @@ msg_audio_fail:
 kbddev_test_name:
         dc.b    "keyboard.device",0
 msg_kbddev_ok:
-        dc.b    "KBDDEV OK (keyboard.device: READMATRIX, READEVENT buffered + pending replied by event, CMD_CLEAR, AbortIO, ADD/REMRESETHANDLER)",13,10,0
+        dc.b    "KBDDEV OK (keyboard.device: READMATRIX, READEVENT buffered + pending replied by event, CMD_CLEAR, AbortIO, NUMERICPAD qualifier, ring overflow $7D, ADD/REMRESETHANDLER)",13,10,0
 msg_kbddev_fail:
         dc.b    "KBDDEV FAIL",13,10,0
 potgo_test_name:

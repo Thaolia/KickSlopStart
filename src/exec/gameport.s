@@ -27,6 +27,7 @@
                 xdef    gp_vblank_server
                 xdef    gp_install
                 xdef    gameport_dev_name
+                xdef    gp_mousesrc
 
 POTGO_W         EQU CUSTOM+$034
 JOY1DAT_W       EQU CUSTOM+$00C
@@ -61,12 +62,16 @@ GU_SIZE         EQU GU_RING+8*8
 GUF_REL         EQU 0
 GUF_SKIP        EQU 1
 GUF_UNIT1       EQU 2
+GPMS_PORT1      EQU 0                ; GPB_MSRC: mouse on port 1 (connector 2)
+GPMS_STOPPED    EQU 6                ; input.device stopped (CMD_STOP)
+GPMS_NONE       EQU 7                ; no mouse (failed open, or type other than GPCT_MOUSE)
 
 GPB_POTGO       EQU LIB_SIZE         ; potgo.resource base
 GPB_REQ         EQU LIB_SIZE+4       ; pot bits requested for both units
 GPB_ALLOC       EQU LIB_SIZE+6       ; pot bits granted by AllocPotBits
 GPB_DATA        EQU LIB_SIZE+8       ; POTGO data word written every frame
-GPB_UNIT0       EQU LIB_SIZE+10
+GPB_MSRC        EQU LIB_SIZE+10      ; byte: system mouse source (gp_mousesrc), 0 = port 0 running
+GPB_UNIT0       EQU LIB_SIZE+12
 GPB_UNIT1       EQU GPB_UNIT0+GU_SIZE
 GAMEPORT_SIZE   EQU GPB_UNIT1+GU_SIZE
 
@@ -870,7 +875,8 @@ gp_poll:
         rts
 
 ; gp_vblank_server(a1 = is_Data = gameport.device base): hardware SHIM. Server on the VERTB chain (AddIntServer)
-; -> runs every frame in the running system. Reads the real mouse registers and calls gp_poll (mouse -> input.device),
+; -> runs every frame in the running system. Reads the mouse registers of the port input.device chose (GPB_MSRC) and
+; calls gp_poll (mouse -> input.device), unless there is no mouse or input.device is stopped;
 ; runs one frame of unit 0 then unit 1 (gp_unit_frame: events for GPD_READEVENT), then rewrites POTGO through
 ; WritePotgo(data, allocated), as the 1.3 gameport does every frame (gameport-v34 §7): a program that drove the pins
 ; differently cannot leave the right/middle buttons dead. Server convention: a6=SysBase (provided), preserves
@@ -880,18 +886,12 @@ gp_vblank_server:
         movem.l a2-a3,-(sp)
         move.l  a1,a2               ; a2 = gameport.device base (gp_poll preserves a2)
         addq.l  #1,GP_POLLS         ; live proof: one more poll on a REAL VBlank
-        move.w  JOY0DAT,d0          ; mouse quadrature counters (hardware shim)
-        moveq   #0,d1
-        move.b  CIAA_PRA,d1         ; left button (bit 6, active-low)
-        btst    #10-8,POTINP        ; right button (DATLY, active-low)
-        bne.s   .vs_noright
-        bset    #8,d1
-.vs_noright:
-        btst    #8-8,POTINP         ; middle button (DATLX, active-low)
-        bne.s   .vs_nomid
-        bset    #9,d1
-.vs_nomid:
+        move.b  GPB_MSRC(a2),d0
+        and.b   #(1<<GPMS_NONE)|(1<<GPMS_STOPPED),d0
+        bne.s   .vs_units           ; no mouse, or input.device stopped: the deltas wait in the counters
+        bsr     gp_mread
         bsr     gp_poll
+.vs_units:
         lea     GPB_UNIT0(a2),a3
         bsr     gp_unit_frame
         lea     GPB_UNIT1(a2),a3
@@ -975,6 +975,70 @@ gp_install:
         moveq   #INTB_VERTB,d0
         lea     GP_VBL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
+        rts
+
+; gp_mread(gameport base a2) -> d0.w = JOYxDAT of the mouse port, d1.w in the gp_poll format: bit 6 = left button
+; released, | $100 right pressed, | $200 middle pressed. Port 1: CIAA PRA bit 7, POTINP DATRY / DATRX.
+gp_mread:
+        moveq   #0,d1
+        move.b  CIAA_PRA,d1
+        btst    #GPMS_PORT1,GPB_MSRC(a2)
+        bne.s   .mr_p1
+        move.w  JOY0DAT,d0
+        btst    #10-8,POTINP        ; right button (DATLY, active-low)
+        bne.s   .mr_r0
+        bset    #8,d1
+.mr_r0:
+        btst    #8-8,POTINP         ; middle button (DATLX, active-low)
+        bne.s   .mr_ret
+        bset    #9,d1
+.mr_ret:
+        rts
+.mr_p1:
+        lsr.b   #1,d1               ; fire of port 1 (bit 7) onto bit 6
+        move.w  JOY1DAT_W,d0
+        btst    #14-8,POTINP        ; DATRY
+        bne.s   .mr_r1
+        bset    #8,d1
+.mr_r1:
+        btst    #12-8,POTINP        ; DATRX
+        bne.s   .mr_ret
+        bset    #9,d1
+        rts
+
+; gp_mousesrc(d0.b = source, a0 = gameport base): called by input.device (IND_SETMPORT/SETMTYPE/SETMTRIG, CMD_STOP/
+; START/RESET). Bit 0 = port, bit 6 = input.device stopped, bit 7 = no mouse. When the port or the no-mouse bit
+; changes, the delta and button references are taken again from the new port (no spurious first event); a stop
+; alone keeps them, so the motion made meanwhile arrives at the restart. Task context. Preserves d2-d7/a2-a6.
+gp_mousesrc:
+        move.l  a2,-(sp)
+        move.l  a0,a2
+        bsr     gp_dis
+        move.b  GPB_MSRC(a2),d1
+        move.b  d0,GPB_MSRC(a2)
+        eor.b   d0,d1
+        and.b   #(1<<GPMS_NONE)|(1<<GPMS_PORT1),d1
+        beq.s   .ms_ena
+        bsr.s   gp_mread
+        move.w  d0,GP_PREV_JOY
+        moveq   #0,d0
+        btst    #6,d1
+        seq     d0
+        neg.b   d0
+        move.b  d0,GP_PREV_BTN
+        moveq   #0,d0
+        btst    #8,d1
+        sne     d0
+        neg.b   d0
+        move.b  d0,GP_PREV_RBTN
+        moveq   #0,d0
+        btst    #9,d1
+        sne     d0
+        neg.b   d0
+        move.b  d0,GP_PREV_MBTN
+.ms_ena:
+        bsr     gp_ena
+        move.l  (sp)+,a2
         rts
 
 gp_inputname:
