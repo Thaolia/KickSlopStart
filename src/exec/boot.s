@@ -4882,16 +4882,24 @@ task_semr:
 ; task_aud: real CMD_WRITE on channel 0 (volume 0: DMA and interrupts without audible sound). w1 then w2 (30 cycles
 ; each) queued; ADCMD_WAITCYCLE must be returned before w1 (end of the 1st cycle), w1 before w2 (chaining
 ; through the queue), CMD_READ returns w1 during playback then 0, and the channel's DMA is cut at the end.
-; Stack: 3 IOAudio (ioa1 = commands, w1, w2). d5 = order findings (b0 WAITCYCLE before w1, b1 w1 before w2).
+; The three replies go to a PA_IGNORE port, whose queue keeps their order: the check does not depend on how
+; often this task runs while the stress tasks of the dev ROM hold Forbid (polling a ~210 ms window did).
+; Stack: 3 IOAudio (ioa1 = commands, w1, w2) + the reply port at TA_PORT.
+TA_PORT         EQU 216
+TA_FRAME        EQU TA_PORT+MP_SIZE+2
 task_aud:
         move.l  ($4).w,a6
-        lea     -216(sp),sp
+        lea     -TA_FRAME(sp),sp
         move.l  sp,a3
         move.l  a3,a0
-        moveq   #53,d0
+        moveq   #TA_FRAME/4-1,d0
 .ta_clr:
         clr.l   (a0)+
         dbra    d0,.ta_clr
+        lea     TA_PORT(a3),a1
+        move.b  #PA_IGNORE,MP_FLAGS(a1)
+        lea     MP_MSGLIST(a1),a1
+        jsr     newlist
         moveq   #64,d0
         move.l  #MEMF_CHIP|MEMF_CLEAR,d1
         jsr     LVO_ALLOCMEM(a6)
@@ -4930,32 +4938,35 @@ task_aud:
         bne     .ta_failp
         move.l  a3,a1                ; ADCMD_WAITCYCLE (asynchronous)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
+        lea     TA_PORT(a3),a0
+        move.l  a0,MN_REPLYPORT(a1)
         clr.b   IO_FLAGS(a1)
         move.w  #14,IO_COMMAND(a1)
         bsr     aut_io
         jsr     LVO_PERMIT(a6)
-        moveq   #0,d5
-        move.l  #2000000,d4
+        move.l  #2000000,d4          ; bound on the wait for w2 (playback ~430 ms)
 .ta_poll:
-        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
-        bne.s   .ta_p1
-        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
-        beq.s   .ta_p1
-        bset    #0,d5                ; WAITCYCLE returned, w1 still in progress
-.ta_p1:
-        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
-        bne.s   .ta_p2
-        cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
-        beq.s   .ta_p2
-        bset    #1,d5                ; w1 returned, w2 still in progress
-.ta_p2:
         cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
         beq.s   .ta_end
         subq.l  #1,d4
         bne.s   .ta_poll
         bra     .ta_fail
 .ta_end:
-        cmp.b   #3,d5
+        moveq   #0,d5                ; replies in the port's order: WAITCYCLE, w1, w2, nothing else
+.ta_order:
+        lea     TA_PORT(a3),a0
+        jsr     LVO_GETMSG(a6)
+        move.l  d5,d1
+        mulu    #72,d1
+        add.l   a3,d1
+        cmp.l   d1,d0
+        bne     .ta_fail
+        addq.w  #1,d5
+        cmp.w   #3,d5
+        bne.s   .ta_order
+        lea     TA_PORT(a3),a0
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
         bne     .ta_fail
         tst.b   IO_ERROR+72(a3)
         bne     .ta_fail
@@ -4993,7 +5004,7 @@ task_aud:
         moveq   #64,d0
         jsr     LVO_FREEMEM(a6)
 .ta_fail0:
-        lea     216(sp),sp
+        lea     TA_FRAME(sp),sp
         rts
 ; .ta_mkw: a1 = IOAudio to prepare as a CMD_WRITE of d2 cycles (period 400, volume 0, ADIOF_PERVOL).
 .ta_mkw:
@@ -5003,6 +5014,8 @@ task_aud:
         move.w  #3,IO_COMMAND(a1)
         move.b  #$10,IO_FLAGS(a1)
         move.b  #NT_MESSAGE,LN_TYPE(a1)
+        lea     TA_PORT(a3),a0
+        move.l  a0,MN_REPLYPORT(a1)
         move.l  a4,AUT_DATA(a1)
         moveq   #64,d0
         move.l  d0,AUT_LENGTH(a1)
