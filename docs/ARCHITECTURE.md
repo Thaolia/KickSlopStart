@@ -564,6 +564,10 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7l) **Pointer colour** (2026-11-02). Our default pointer (`ptr_image`, drawn for the project) was compared with
+  the original by an analysis agent (`intuition-prefs-v34.md` §4.2): a different arrow, 80 pixels out of 256 differ.
+  Its fill (colour 17, `pf_defaults` in `prefs.s`) is now dark purple ($517) instead of red, a deliberate difference
+  listed in the README. A Workbench disk still loads the pointer and colours of its `devs:system-configuration`.
   (7k) **The Workbench 1.2 disk boots to its desktop** (2026-11-01, after issue #10). Its startup-sequence stopped at
   the 1.2 commands, which are BCPL and stricter than the 1.3 ones.
   - BCPL `rdargs`: an empty template is one positional key, like an empty name between commas (spec

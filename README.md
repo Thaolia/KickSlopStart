@@ -66,6 +66,8 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 
 - **Menus**: the check mark is a cat's paw print, and the Amiga-key symbol of keyboard shortcuts is a small cat.
 - **Startup window**: the boot CLI window is called "AmigaSlopDOS".
+- **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in dark purple instead of
+  red. A Workbench disk still shows the pointer stored in its `devs:system-configuration`, as on the original 1.3.
 
 ## Why this project, and reusing it
 

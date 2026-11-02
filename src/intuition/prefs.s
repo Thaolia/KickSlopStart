@@ -292,7 +292,7 @@ pf_defaults:
         dc.l    1,500000                 ; DoubleClick
         dcb.w   36,0                     ; PointerMatrix (image filled in by GetDefPrefs)
         dc.b    0,0                      ; XOffset, YOffset
-        dc.w    $0E44,$0000,$0EEC        ; color17..19 (pointer)
+        dc.w    $0517,$0000,$0EEC        ; color17..19 (pointer): dark purple fill, a deliberate difference
         dc.w    2                        ; PointerTicks
         dc.w    SC_BGCOLOR,$0FFF,$0000,$0F80 ; color0..3 (Workbench)
         dc.b    0,0                      ; ViewXOffset, ViewYOffset

@@ -70,6 +70,9 @@ Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de 
 - **Menus** : la coche est une empreinte de patte de chat, et le symbole de la touche Amiga des raccourcis clavier est
   un petit chat.
 - **Fenêtre de démarrage** : la fenêtre du CLI de boot s'appelle « AmigaSlopDOS ».
+- **Pointeur de souris** : le pointeur propre à la ROM est une autre flèche que l'original, remplie de violet sombre
+  au lieu de rouge. Une disquette Workbench affiche toujours le pointeur de son `devs:system-configuration`, comme
+  sur la 1.3 d'origine.
 
 ## Pourquoi ce projet, et le réutiliser
 

@@ -912,6 +912,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     SuperBitMap layers (SuperClipRects, ScrollLayer, Sync/CopySBitMap, GZZ interior), RectFill pattern regression
     fixed. Workbench 1.2 boots to its desktop: rdargs("") = one key, startup-sequence run as cli_CurrentInput,
     commands looked up in the CLI path. Next: NEWSIZE only for the size gadget.
+    Default pointer filled in dark purple (deliberate difference; a different arrow from the original, measured).
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).
