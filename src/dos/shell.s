@@ -609,6 +609,12 @@ sh_exec_cmd:
                 bsr     sh_cli_ptr           ; after the command (spec §4.4): selectoutput(cli_StandardOutput),
                 beq.s   .x_noresel           ; selectinput(cli_CurrentInput) - the command may
                                              ; have changed or closed its streams
+                moveq   #0,d0                ; cli_Result2 := pr_Result2 if code != 0, else 0 (read before any
+                tst.l   XF_RC(sp)            ; Close of the redirections rewrites pr_Result2)
+                beq.s   .x_r2
+                move.l  PR_RESULT2(a2),d0
+.x_r2:
+                move.l  d0,CLI_RESULT2(a1)
                 move.l  CLI_STANDARDOUTPUT(a1),PR_COS(a2)
                 move.l  CLI_CURRENTINPUT(a1),PR_CIS(a2)
 .x_noresel:

@@ -137,7 +137,7 @@ dos_vectors:
         dc.l    dos_fn_currentdir        ; 21: LVO -126 CurrentDir(lock d1) -> old lock
         dc.l    dos_fn_ioerr             ; 22: LVO -132 IoErr() -> pr_Result2
         dc.l    dos_fn_createproc        ; 23: LVO -138 CreateProc(name d1, pri d2, seglist d3, stack d4)
-        dc.l    dos_null                 ; 24: LVO -144 (Exit not implemented)
+        dc.l    dos_fn_exit              ; 24: LVO -144 Exit(code d1): back to pr_ReturnAddr-4, never returns
                 ifeq    LOADSEG_LVO_UNWIRED
         dc.l    dos_fn_loadseg           ; 25: LVO -150 LoadSeg(name d1) -> BPTR seglist
                 endc
@@ -145,7 +145,7 @@ dos_vectors:
         dc.l    dos_null                 ; RED LOADSEG_LVO_UNWIRED: LoadSeg not wired -> jsr -150 returns 0
                 endc
         dc.l    dos_fn_unloadseg         ; 26: LVO -156 UnLoadSeg(seglist d1)
-        dcb.l   2,dos_null               ; 27..28: LVO -162/-168 (GetPacket/QueuePacket, private)
+        dcb.l   2,dos_null               ; 27..28: LVO -162/-168 GetPacket/QueuePacket: no V34 packet function, -> 0
         dc.l    dos_fn_deviceproc        ; 29: LVO -174 DeviceProc(name d1) -> handler port
         dc.l    dos_fn_setcomment        ; 30: LVO -180 SetComment(name d1, comment d2)
         dc.l    dos_fn_setprotection     ; 31: LVO -186 SetProtection(name d1, mask d2)
@@ -1297,7 +1297,8 @@ dos_fn_createproc:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; cpr_exit: a process launched by CreateProc whose code returns (rts): name + segarray block freed, then RemTask
+; cpr_exit: finalPC of a process launched by CreateProc, reached by rts or Exit (code discarded): name + segarray
+; block freed, then RemTask. The seglist, streams and current directory are left alone (spec dos-exit-packets §1.4)
 ; (does not return). Under Forbid: the freed name is no longer visible before the process ends.
 cpr_exit:
         move.l  ($4).w,a6
@@ -1310,6 +1311,27 @@ cpr_exit:
         jsr     LVO_REMTASK(a6)
 .ce_hang:
         bra.s   .ce_hang
+
+; Exit(code d1): SP := pr_ReturnAddr - 4, then rts with d0 = code (spec dos-exit-packets-v34 §1). Nothing is closed or
+; freed here: the long below pr_ReturnAddr decides where it lands - the return point of the CLI/runcommand launch
+; (same as the command returning), or the finalPC of a CreateProc/BCPL process (end of the process). A caller with no
+; return point (plain Task, or pr_ReturnAddr = 0 outside a command) would get a wild SP: it is removed instead.
+dos_fn_exit:
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .ex_task
+        move.l  PR_RETURNADDR(a0),d0
+        beq.s   .ex_task
+        move.l  d0,sp
+        subq.l  #4,sp
+        move.l  d1,d0
+        rts
+.ex_task:
+        sub.l   a1,a1
+        jsr     LVO_REMTASK(a6)
+.ex_hang:
+        bra.s   .ex_hang
 
 ; WaitForChar(fh d1 [BPTR FileHandle], timeout d2 [microseconds]) -> d0 = dp_Res1 of ACTION_WAIT_CHAR (-1: a character
 ; is available, 0: none within the timeout); pr_Result2 = dp_Res2. A handle without a handler (NIL:) gives 0 at once,
