@@ -94,7 +94,9 @@ LI_TOP          EQU 0
 LI_LOCK         EQU 24
 LI_GSHEAD       EQU 70
 LI_FLAGS        EQU 88
+LI_FATTEN       EQU 90               ; byte: fatten_count, -1 = thin
 LI_LOCKCNT      EQU 91               ; byte: LockLayers nesting level
+LI_EXTRASZ      EQU 92               ; word: LayerInfo_extra_size, $42 once fattened
 LI_SIZE         EQU 102
 NEWLAYERINFO_CALLED EQU 1
 ; --- rectangle list node (RegionRectangle) ---
@@ -212,6 +214,7 @@ ly_InitLayers:
         clr.l   LI_GSHEAD+4(a0)
         lea     LI_GSHEAD(a0),a1
         move.l  a1,LI_GSHEAD+8(a0)
+        st      LI_FATTEN(a0)        ; thin
         move.l  (sp)+,a6
         rts
 
@@ -229,15 +232,16 @@ ly_NewLayerInfo:
         move.l  d0,a0
         move.l  a2,a6
         bsr     ly_InitLayers
-        move.l  (sp)+,d0
-        move.l  d0,a0
-        or.w    #NEWLAYERINFO_CALLED,LI_FLAGS(a0)
+        move.l  (sp)+,a0
+        bsr.s   ly_FattenLayerInfo
+        move.l  a0,d0
 .nl_r:
         movem.l (sp)+,a2/a6
         rts
 
-; DisposeLayerInfo(li a0).
+; DisposeLayerInfo(li a0): ThinLayerInfo, then the structure is freed.
 ly_DisposeLayerInfo:
+        bsr.s   ly_ThinLayerInfo
         move.l  a6,-(sp)
         move.l  a0,a1
         moveq   #LI_SIZE,d0
@@ -246,11 +250,18 @@ ly_DisposeLayerInfo:
         move.l  (sp)+,a6
         rts
 
-; FattenLayerInfo(li a0) -> TRUE; ThinLayerInfo(li a0): nothing to add or remove here.
+; FattenLayerInfo(li a0) -> d0 = 1 / ThinLayerInfo(li a0) (spec layers-v34 §5.10): fatten_count +1 / -1,
+; NEWLAYERINFO_CALLED set / cleared, extra_size $42 from the first fattening on. Deviation: the extra context and
+; the blitbuff, which layers never reads, are not allocated. Preserve a0.
 ly_FattenLayerInfo:
-        moveq   #-1,d0
+        addq.b  #1,LI_FATTEN(a0)
+        move.w  #$42,LI_EXTRASZ(a0)
+        or.w    #NEWLAYERINFO_CALLED,LI_FLAGS(a0)
+        moveq   #1,d0
         rts
 ly_ThinLayerInfo:
+        subq.b  #1,LI_FATTEN(a0)
+        and.w   #~NEWLAYERINFO_CALLED,LI_FLAGS(a0)
         rts
 
 ; LockLayerInfo(li a0) / UnlockLayerInfo(li a0).

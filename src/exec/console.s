@@ -57,7 +57,7 @@ console_vectors:                     ; ABSOLUTE table, terminated by -1 (standar
         dc.l    console_null         ; LVO -24 (reserved)
         dc.l    console_beginio      ; LVO -30
         dc.l    console_abortio      ; LVO -36
-        dc.l    console_null         ; LVO -42 CDInputHandler (not impl.)
+        dc.l    console_CDInputHandler ; LVO -42 CDInputHandler(events a0, console a1) -> 0
         dc.l    console_rawkeyconvert ; LVO -48 RawKeyConvert(events a0, buffer a1, length d1, keymap a2)
         dc.l    -1
 console_datatab:
@@ -538,6 +538,13 @@ con_putglyph:
 .cpg_sety:
         move.w  d0,CONB_CURY(a2)
 .cpg_ret:
+        rts
+
+; CDInputHandler(events a0, console device a1) -> d0 = 0: the console's input processing for a chain handed over by
+; the caller, which it consumes (spec console-keymap-v34 §6.1).
+console_CDInputHandler:
+        bsr.s   console_input_handler
+        moveq   #0,d0
         rts
 
 ; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): handler registered on input.device via

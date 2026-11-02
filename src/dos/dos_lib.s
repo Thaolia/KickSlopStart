@@ -1311,9 +1311,30 @@ cpr_exit:
 .ce_hang:
         bra.s   .ce_hang
 
-; WaitForChar(fh d1, us d2) -> DOSFALSE: no character available (the console does not handle this packet yet).
+; WaitForChar(fh d1 [BPTR FileHandle], timeout d2 [microseconds]) -> d0 = dp_Res1 of ACTION_WAIT_CHAR (-1: a character
+; is available, 0: none within the timeout); pr_Result2 = dp_Res2. A handle without a handler (NIL:) gives 0 at once,
+; Result2 unchanged (spec dos-exit-packets-v34 §2.1). a6 = DosBase on entry. From a PROCESS.
 dos_fn_waitforchar:
+        movem.l d2-d7/a2-a6,-(sp)
+        move.l  d2,d5
+        lsl.l   #2,d1
+        beq.s   .wc_no
+        move.l  d1,a2
+        move.l  FH_TYPE(a2),d0
+        beq.s   .wc_no
+        move.l  d0,a1                   ; handler port
+        move.l  ($4).w,a6
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        move.l  #ACTION_WAIT_CHAR,d0
+        move.l  d5,d1                   ; ARG1 = timeout
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        bra.s   .wc_ret
+.wc_no:
         moveq   #0,d0
+.wc_ret:
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 ; ParentDir(lock d1) -> lock of the parent | 0 (root): ACTION_PARENT to the lock's handler. a6 = DosBase.

@@ -99,6 +99,7 @@ ACTION_FINDOUTPUT  EQU 1006        ; = MODE_NEWFILE
 ACTION_READ        EQU 82          ; 'R'
 ACTION_WRITE       EQU 87          ; 'W'
 ACTION_SEEK        EQU 1008
+ACTION_WAIT_CHAR   EQU 20          ; WaitForChar: (ARG1 timeout in microseconds) -> RES1 -1 = character, 0 = none
 ACTION_END         EQU 1007
 ACTION_LOCATE_OBJECT EQU 8          ; Lock: (ARG1 parent lock, ARG2 BSTR name, ARG3 mode) -> RES1 = BPTR lock
 ACTION_FREE_LOCK   EQU 15          ; UnLock: (ARG1 BPTR lock) -> frees the lock
