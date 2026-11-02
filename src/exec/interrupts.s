@@ -53,6 +53,7 @@
                 xdef    dispatch_in        ; M7c: half-restore of the switch (launch of the 1st task = boot.s)
                 xdef    exec_SetIntVector  ; M7b: by-number dispatcher (exclusive vector)
                 xdef    exec_AddIntServer  ; M7b: by-number dispatcher (server chain)
+                xdef    intr_chain_walker  ; execmisc.s (RemIntServer)
 
                 xref    task_freemem      ; tasks.s
                 xref    alert_show        ; execmisc.s (Guru of a task's exception)
@@ -585,12 +586,15 @@ exec_SetIntVector:
 
 ; AddIntServer(intNum d0, interrupt a1) -> void. Adds the server to the chain of the number, sorted by
 ; LN_PRI. 1st server: NEWLISTs the svlist, sets IV_DATA=&svlist / IV_CODE=intr_chain_walker. a6=SysBase.
+; Then enables the chain's source in INTENA, as the 1.3 exec does at every add (custom-chips-v34 §3.1): software
+; that adds a COPER server counts on it. Masked: the chain may be walked by its interrupt meanwhile.
 exec_AddIntServer:
         movem.l d2/a2/a3,-(sp)
         move.l  a1,a2               ; a2 = interrupt (preserved by newlist/Enqueue)
         move.l  EB_INTSVL(a6),a3    ; a3 = block of the server lists
         move.l  a3,d1
         beq.s   .ais_ret            ; block missing (defensive)
+        move.w  #INTF_INTEN,INTENA
         move.l  d0,d2               ; d2 = number
         move.w  d2,d1               ; &IntVects[n] = ExecBase + EB_INTVECTS + n*12
         mulu    #IV_SIZE,d1
@@ -614,6 +618,12 @@ exec_AddIntServer:
         lea     0(a3,d1.l),a0       ; a0 = &svlist[n]
         move.l  a2,a1               ; a1 = interrupt
         jsr     LVO_ENQUEUE(a6)     ; inserts by LN_PRI (head = highest pri)
+        move.w  #INTF_SETCLR,d1
+        bset    d2,d1
+        move.w  d1,INTENA
+        tst.b   EB_IDNEST(a6)       ; under Disable: do not restore INTEN
+        bge.s   .ais_ret
+        move.w  #INTF_SETCLR|INTF_INTEN,INTENA
 .ais_ret:
         movem.l (sp)+,d2/a2/a3
         rts

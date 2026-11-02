@@ -248,16 +248,9 @@ graphics_initfunc:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,gb_SprNull(a2)
-        move.b  #50,gb_VBlank(a2)    ; PAL display (European A500): public values read by programs
         move.w  #GFX_COLOR_BIT,gb_system_bplcon0(a2)
-        move.w  #DISPF_PAL,gb_DisplayFlags(a2)
-        move.w  #312,gb_MaxDisplayRow(a2)
-        move.w  #452,gb_MaxDisplayColumn(a2)
-        move.w  #256,gb_NormalDisplayRows(a2)
-        move.w  #640,gb_NormalDisplayColumns(a2)
-        move.w  #1280,gb_NormalDPMX(a2)
-        move.w  #1280,gb_NormalDPMY(a2)
-        move.w  #64*256,gb_MicrosPerLine(a2)
+        bsr     gfx_detect_std       ; PAL or NTSC: public GfxBase values + ExecBase VBlankFrequency
+        move.b  EB_VBLANKFREQ(a6),gb_VBlank(a2)
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter permanently enabled, like 1.3: a
@@ -277,17 +270,68 @@ graphics_initfunc:
         lea     gb_vbsrv(a2),a1
         move.b  #GFX_VBPRI,LN_PRI(a1)
         lea     gfx_vblank(pc),a0
-        bsr.s   gfx_intinit
+        bsr     gfx_intinit
         moveq   #INTB_VERTB,d0
         jsr     LVO_ADDINTSERVER(a6)
         lea     gb_bltsrv(a2),a1     ; blitter vector: some programs look for GfxBase there (iv_Data)
         lea     gfx_bltint(pc),a0
-        bsr.s   gfx_intinit
+        bsr     gfx_intinit
         moveq   #INTB_BLIT,d0
         jsr     LVO_SETINTVECTOR(a6)
         move.l  a2,d0
         move.l  (sp)+,a2
         rts
+
+; gfx_detect_std(GfxBase a2, SysBase a6): the standard is the Agnus's, read from the beam as 1.3 does
+; (graphics-display-v34 §8.1; the Agnus ID bits of VPOSR are never used): a line above 270 means PAL; climbing
+; above 100 then wrapping below 50 without passing 270 means NTSC. Bounded loop (PAL if the beam never moves).
+; Fills the standard-dependent GfxBase fields (§1.8) and ExecBase VBlankFrequency. Clobbers d0/d1/a0.
+gfx_detect_std:
+        move.l  d2,-(sp)
+        move.l  #10000,d2            ; ~20 us per pass on a 7 MHz 68000: ~10 frames before giving up
+        moveq   #0,d1                ; d1 = 1 once the beam was seen above line 100
+.ds_lp:
+        bsr     gfx_VBeamPos
+        cmp.w   #270,d0
+        bhi.s   .ds_pal
+        cmp.w   #100,d0
+        bls.s   .ds_low
+        moveq   #1,d1
+        bra.s   .ds_next
+.ds_low:
+        tst.b   d1
+        beq.s   .ds_next
+        cmp.w   #50,d0
+        bcs.s   .ds_ntsc
+.ds_next:
+        subq.l  #1,d2
+        bne.s   .ds_lp
+.ds_pal:
+        lea     gfx_std_pal(pc),a0
+        bra.s   .ds_set
+.ds_ntsc:
+        lea     gfx_std_ntsc(pc),a0
+.ds_set:
+        move.b  (a0)+,EB_VBLANKFREQ(a6)
+        addq.l  #1,a0
+        move.w  (a0)+,gb_DisplayFlags(a2)
+        move.w  (a0)+,gb_MaxDisplayRow(a2)
+        move.w  (a0)+,gb_NormalDisplayRows(a2)
+        move.w  (a0)+,gb_NormalDPMX(a2)
+        move.w  (a0)+,gb_NormalDPMY(a2)
+        move.w  #$1D1,gb_MaxDisplayColumn(a2) ; the same for both standards
+        move.w  #640,gb_NormalDisplayColumns(a2)
+        move.w  #$3F9D,gb_MicrosPerLine(a2)
+        move.w  #$30,gb_MinDisplayColumn(a2)
+        move.l  (sp)+,d2
+        rts
+; VBlankFrequency (+ pad), DisplayFlags, MaxDisplayRow, NormalDisplayRows, NormalDPMX, NormalDPMY (spec §1.8, §8.2)
+gfx_std_pal:
+        dc.b    50,0
+        dc.w    DISPF_PAL,311,256,$4CA,$513
+gfx_std_ntsc:
+        dc.b    60,0
+        dc.w    DISPF_NTSC,261,200,$500,$44A
 
 ; gfx_intinit(interrupt a1, code a0, GfxBase a2): NT_INTERRUPT node named "graphics.library", is_Data = GfxBase.
 gfx_intinit:
@@ -303,12 +347,10 @@ gfx_bltint:
         move.w  #INTF_BLIT,INTREQ-CUSTOM(a0)
         rts
 
-; gfx_vblank(a1 = GfxBase): VBlank server. Reloads COP2LC with the list of the displayed view: a program that writes
-; COP2LC with interrupts off sees its list executed by the copinit until it re-enables them (Caesar's FLT
-; intro). Returns Z = 1 (the chain continues).
+; gfx_vblank(a1 = GfxBase): VBlank server. Reloads COP2LC with gb_LOFlist (the displayed view's list, or the empty
+; list after LoadView(NULL)), as 1.3 does: a program that writes COP2LC with interrupts off sees its list executed
+; by the copinit until it re-enables them (Caesar's FLT intro). Returns Z = 1 (the chain continues).
 gfx_vblank:
-        tst.l   gb_ActiView(a1)
-        beq.s   .vb_ret
         move.l  gb_LOFlist(a1),d0
         beq.s   .vb_ret
         move.l  d0,COP2LC
@@ -322,6 +364,7 @@ gfx_copinit:
         dc.w    COPJMP2-CUSTOM,0     ; jump to COP2LC
         dc.w    $FFFF,$FFFE
 GFX_COPINIT_SIZE EQU 12
+GFX_COPINIT_END  EQU 8               ; offset of the final WAIT: the empty list of LoadView(NULL)
 
 ; === M4c2: display engine (copper list GENERATED from the structures) ===
 ; Amiga convention for the 3 functions: a6 = GfxBase, preserve d2-d7/a2-a6, scratch d0/d1/a0/a1.
@@ -754,11 +797,10 @@ gfx_sprmoves:
         rts
 
 ; gfx_LoadView(view a1): a1 != 0 -> rewrites the sprite pointers of v_LOFCprList, installs it (COP2LC, behind the
-; COP1LC copinit) + enables
-; Copper/bitplane/sprite DMA + sets
-; gb_ActiView. a1 == 0 (NULL view) -> BLANKS the display: turns off the system's bitplane (RASTER) AND copper
-; DMA, so that the caller (e.g. flt-intro) can set up ITS own COP1LC + bitplanes without our boot copper
-; overwriting them. REQUIRED by flt-intro, which does LoadView(NULL) before taking over the hardware.
+; COP1LC copinit) + enables Copper/bitplane/sprite DMA + sets gb_ActiView. a1 == 0 (NULL view), as on 1.3
+; (graphics-display-v34 §7.1, custom-chips-v34 §2): the DMA stays on, the copinit now jumps to an empty list
+; (no system list overwrites the caller's hardware set-up any more) and the CPU resets the display registers to
+; the system defaults. A program that only loads COP1LC afterwards finds the copper running.
 gfx_LoadView:
         move.l  a1,gb_ActiView(a6)   ; GfxBase.ActiView = view (0 if NULL)
         move.l  a1,d0
@@ -788,8 +830,25 @@ gfx_LoadView:
         rts
 .lv_null:
         clr.l   gb_SprCop(a6)
-        move.w  #(DMAF_RASTER|DMAF_COPPER|DMAF_SPRITE),DMACON  ; clear (SETCLR=0) bitplane/copper/sprite DMA -> system
-        rts                                        ; display stopped (flt-intro will install its own COP1LC/bitplanes)
+        clr.w   gb_Modes(a6)
+        move.l  gb_copinit(a6),d0
+        beq.s   .lv_nregs
+        addq.l  #GFX_COPINIT_END,d0  ; the copinit's own end-of-list WAIT = an empty list
+        move.l  d0,gb_LOFlist(a6)
+        move.l  d0,COP2LC            ; at once, not only at the next VBlank
+.lv_nregs:
+        move.w  gb_system_bplcon0(a6),d0
+        or.w    #$1200,d0            ; 1 plane + COLOR
+        move.w  d0,BPLCON0
+        move.w  #0,BPLCON1
+        move.w  #GFX_BPLCON2,BPLCON2
+        move.w  #0,BPL1MOD
+        move.w  #0,BPL2MOD
+        move.w  #$2C81,DIWSTRT       ; standard 320x256 window and fetch
+        move.w  #$F4C1,DIWSTOP
+        move.w  #$0038,DDFSTRT
+        move.w  #$00D0,DDFSTOP
+        rts
 
 ; gfx_WaitBlit(): waits until the blitter is idle (poll DMACONR, bit 14 = BBUSY). Double read (A1000 quirk).
 gfx_WaitBlit:

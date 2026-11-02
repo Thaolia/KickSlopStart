@@ -31,6 +31,7 @@
                 xdef    exec_RawPutChar
                 xdef    exec_ObtainSemaphoreList
                 xdef    exec_ReleaseSemaphoreList
+                xref    intr_chain_walker    ; interrupts.s (RemIntServer: is IntVects[n] a server chain?)
 
 LVO_SUPERVISOR_X EQU -30
 ME_SIZE         EQU 8                ; struct MemEntry: me_Reqs|me_Addr, me_Length
@@ -414,13 +415,28 @@ exec_GetCC:
         and.l   #$FF,d0
         rts
 
-; RemIntServer(intNum d0, interrupt a1): the server leaves its chain, interrupts masked during the removal.
+; RemIntServer(intNum d0, interrupt a1): the server leaves its chain, interrupts masked during the removal. When the
+; chain becomes empty its source is disabled (AutoDocs). The 1.3 exec clears a wrong bit there (custom-chips-v34
+; §3.1); the documented behaviour is kept instead.
 exec_RemIntServer:
         move.w  INTENAR,d1
         move.w  #INTF_INTEN,INTENA
-        move.l  d1,-(sp)
+        movem.l d0-d1,-(sp)
         jsr     LVO_REMOVE(a6)
-        move.l  (sp)+,d1
+        move.l  (sp),d0              ; d0 = number (d1 = saved INTENAR stays on the stack)
+        move.w  d0,d1
+        mulu    #IV_SIZE,d1
+        lea     EB_INTVECTS(a6,d1.l),a0
+        cmp.l   #intr_chain_walker,IV_CODE(a0)
+        bne.s   .ri_on
+        move.l  IV_DATA(a0),a0       ; &svlist[n]
+        cmp.l   LH_TAILPRED(a0),a0   ; empty list: lh_TailPred == &lh_Head
+        bne.s   .ri_on
+        moveq   #0,d1
+        bset    d0,d1
+        move.w  d1,INTENA            ; CLR the chain's source
+.ri_on:
+        movem.l (sp)+,d0-d1
         btst    #INTENA_INTEN,d1
         beq.s   .ri_ret
         move.w  #(INTF_SETCLR|INTF_INTEN),INTENA

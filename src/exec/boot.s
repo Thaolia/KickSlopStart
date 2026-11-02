@@ -2577,6 +2577,21 @@ d2_done:
         jsr     LVO_REMINTSERVER(a6)
         lea     msg_m7b_ok(pc),a0
         bsr     ser_puts             ; "M7B PORTS OK"
+                ifeq    PROD            ; AddIntServer/RemIntServer drive INTENA (custom-chips-v34 §3.1)
+        move.w  #INTF_COPER,INTENA   ; COPER off: adding a server must turn it on
+        moveq   #INTB_COPER,d0
+        lea     IS_STRIDE(a3),a1     ; srvB again, alone on the COPER chain
+        jsr     LVO_ADDINTSERVER(a6)
+        btst    #INTB_COPER,INTENAR+1
+        beq     m7b_fail
+        moveq   #INTB_COPER,d0
+        lea     IS_STRIDE(a3),a1
+        jsr     LVO_REMINTSERVER(a6)
+        btst    #INTB_COPER,INTENAR+1 ; chain empty again: source off
+        bne     m7b_fail
+        lea     msg_intsrv_ok(pc),a0
+        bsr     ser_puts
+                endc
 
         jsr     kbd_install          ; F2b: installs the LIVE keyboard driver (AddICRVector bit 3 -> kbd_interrupt)
         tst.l   d0
@@ -6123,6 +6138,11 @@ msg_m6a_ok:
         dc.b    "M6A TIMER OK (VBLANK unit: request replied after ~5 ticks)",13,10,0
 msg_m6a_fail:
         dc.b    "M6A FAILED: timer VBLANK unit incorrect",13,10,0
+                ifeq    PROD
+msg_intsrv_ok:
+        dc.b    "INTSRV INTENA OK (AddIntServer enables the source, RemIntServer of the last server disables it)",13,10,0
+        even
+                endc
 msg_m7b_ok:
         dc.b    "M7B PORTS OK (per-number dispatch: AddIntServer chain, 2 servers in pri order)",13,10,0
 msg_m7b_fail:

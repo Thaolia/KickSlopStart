@@ -95,6 +95,8 @@ diskres_init:
         addq.l  #1,d2
         cmp.l   #DR_NUNITS,d2
         bcs.s   .ri_id
+        move.w  #$4000,DSKLEN        ; disk DMA disarmed, channel enabled for good (1.3: custom-chips-v34 §3.2); the
+        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON ; master bit stands for the one the 1.3 coldstart sets
         ; exclusive DSKBLK / DSKSYNC vectors + CIA-B index (left disabled: AbleICR up to the driver)
         lea     DR_DISCBLOCK(a3),a1
         lea     dr_blkint(pc),a0

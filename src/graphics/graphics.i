@@ -213,6 +213,7 @@ gb_NormalDisplayColumns EQU 218
 gb_NormalDPMX EQU 220
 gb_NormalDPMY EQU 222
 gb_MicrosPerLine EQU 232      ; UWORD: 256 × duration of one line in µs
+gb_MinDisplayColumn EQU 234
 GB_PUBLIC    EQU 242          ; end of the V34 public part (including reserved[2])
 ; private fields: hardware sprites
 gb_SprNull   EQU GB_PUBLIC    ; APTR: empty sprite (chip, POS/CTL = 0) for channels without an image
@@ -222,6 +223,7 @@ gb_SprUsed   EQU GB_PUBLIC+40 ; WORD: channels reserved by GetSprite (bit n = ch
 gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 bytes): blitter ownership (OwnBlitter / DisownBlitter)
 GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
 GFXBASE_SIZE EQU GB_PUBLIC+42+46
+DISPF_NTSC   EQU 1
 DISPF_PAL    EQU 4
 
 ; --- struct SimpleSprite (graphics/sprite.h) and sprite registers ---

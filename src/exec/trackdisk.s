@@ -573,7 +573,7 @@ td_read_track:
         bsr     td_position           ; motor, selection, seek, side (IRQs restored)
 .rd_dma:
         move.w  #INTF_DSKBLK,INTREQ   ; clear pending DSKBLK
-        move.w  #$7FFF,ADKCON         ; clear all ADKCON bits
+        move.w  #$7F00,ADKCON         ; clear the disk bits 8-14 only: bits 0-7 belong to audio.device
                 ifeq    TD_NO_DMA
         ; $9500 = SETCLR|MFMPREC|FAST|WORDSYNC. The FAST bit (rate 2 us/bit, standard DD) is the WinUAE FIX:
         ; without it (old $8400, FAST=0 = 4 us/bit) Paula samples the stream at the WRONG rhythm -> the bytes
@@ -584,7 +584,8 @@ td_read_track:
         move.w  #TD_SYNC,DSKSYNC      ; $4489
         move.l  a2,DSKPT             ; DMA pointer = buffer (longword)
         move.w  #$4000,DSKLEN        ; reset/disable (quirk before arming)
-        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON  ; $8210: master + disk DMA
+        move.w  #(DMAF_SETCLR|DMAF_DISK),DMACON  ; DSKEN is already on since disk.resource init: re-set only in
+                                     ; case a program cleared it (the master bit is left to its owner)
         move.w  #($8000|TD_RAWWORDS),DSKLEN   ; arms the read (DMAEN|len)
         move.w  #($8000|TD_RAWWORDS),DSKLEN   ; write 2x to start (hardware quirk)
                 endc                 ; RED TD_NO_DMA: DMA not armed -> buffer stays at 0 -> no sync
@@ -603,8 +604,7 @@ td_read_track:
         movem.l (sp)+,d2/d3/d6/a2
         rts
 .rd_stop:
-        move.w  #$4000,DSKLEN        ; disable disk DMA
-        move.w  #DMAF_DISK,DMACON    ; cut ONLY DSKEN (SETCLR=0 -> clear; do NOT touch MASTER = display)
+        move.w  #$4000,DSKLEN        ; disarm the disk DMA (DSKEN stays on, as on 1.3: custom-chips-v34 §3.1)
         move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
         move.b  #PRB_MOTOR_ON,CIAB_PRB ; deselect, motor left on (latched): the next read avoids the spin-up
         move.l  TD_CUNIT,a0
@@ -1347,7 +1347,7 @@ td_write_track:
         move.w  d0,ADKCON
         move.l  a2,DSKPT
         move.w  #$4000,DSKLEN
-        move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_DISK),DMACON
+        move.w  #(DMAF_SETCLR|DMAF_DISK),DMACON
         move.w  #($C000|TD_WRWORDS),DSKLEN   ; DMAEN | WRITE | length
         move.w  #($C000|TD_WRWORDS),DSKLEN
         bsr     td_dmawait
@@ -1362,7 +1362,6 @@ td_write_track:
         moveq   #0,d2
 .wt_stop:
         move.w  #$4000,DSKLEN
-        move.w  #DMAF_DISK,DMACON
         move.w  #INTF_DSKBLK,INTREQ
         move.b  #PRB_MOTOR_ON,CIAB_PRB
         move.l  TD_CUNIT,a0

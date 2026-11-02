@@ -533,6 +533,7 @@ LN_TYPE      EQU 8
 LN_PRI       EQU 9           ; priority (signed BYTE) — Enqueue sorting
 LN_NAME      EQU 10
 LH_TAIL      EQU 4
+LH_TAILPRED  EQU 8
 NT_LIBRARY   EQU 9
 LIB_NEGSIZE  EQU $10
 LIB_POSSIZE  EQU $12

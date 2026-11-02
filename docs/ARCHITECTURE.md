@@ -1426,5 +1426,12 @@ differs.
   **M7k postponed** (decision 2026-10-15): the INTREQR decoding of levels INT1/INT4/INT5 has no real consumer
   today (audio=M4+, disk=M6, serial later) -> folded into the relevant subsystem when it
   arrives, with a real consumer and a real test (not a throwaway synthetic self-test).
+- **Custom-chip parity with 1.3 (2026-11-02)** (`docs/analysis/custom-chips-v34.md` §7): `AddIntServer` enables the
+  chain's INTENA source and `RemIntServer` disables it when the chain empties (`src/exec/interrupts.s`,
+  `execmisc.s`; dev marker `INTSRV INTENA OK`); `LoadView(NULL)` leaves the DMA on, sends the copinit to an empty
+  list and resets the display registers by CPU, and the VBlank server reloads COP2LC even without a View
+  (`src/graphics/graphics_lib.s`); disk.resource enables DSKEN once, trackdisk only arms DSKLEN and leaves the
+  audio ADKCON bits alone (`src/exec/diskres.s`, `trackdisk.s`); graphics init detects PAL/NTSC from the beam and
+  fills the standard-dependent GfxBase fields and ExecBase VBlankFrequency (`gfx_detect_std`).
 
 See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.

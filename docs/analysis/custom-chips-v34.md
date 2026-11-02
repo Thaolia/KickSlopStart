@@ -504,9 +504,35 @@ Review of 2026-11-02.
 
 Written by the implementation track **after** the clean-room check above, by reading only this page and our
 own `src/` (never the ROM). Each line compares the behaviour described in §2-§4 with what our code does today.
-Ordered by expected impact on real software / a real A500. Leads only: nothing is implemented here.
+Ordered by expected impact on real software / a real A500.
 
-### 7.1 High
+### 7.0 Status (2026-11-02)
+
+Items 1-4 are **done** (see §7.1 for what was changed). What remains open: §7.2, §7.3, plus three follow-ups of
+item 4 — intuition and the boot screen still assume 256 lines (on NTSC the bottom is cut), `LoadView(NULL)`
+does not force a long frame through VPOSW, and `gb_VBlank` still holds the frame rate instead of being a
+per-frame flag.
+
+### 7.1 High (done)
+
+- **Done 1**: `AddIntServer` SETs the chain's source in INTENA after the insertion, interrupts masked during the
+  insertion; `RemIntServer` CLRs the source (the right bit) when the chain becomes empty. Dev-ROM proof:
+  serial marker `INTSRV INTENA OK` (COPER chain: on after the add, off after the last remove).
+- **Done 2**: `LoadView(NULL)` keeps the DMA on, points `gb_LOFlist`/COP2LC at the copinit's final WAIT (an empty
+  list) and resets BPLCON0-2, the modulos and DIW/DDF by CPU; the VBlank server reloads COP2LC from `gb_LOFlist`
+  even with no active View. Proof: Holiday Lemmings (FLT cracktro, which calls `LoadView(NULL)`) shows the same
+  cracktro and the same game menu as before. The COPJMP1 strobe of a non-NULL `LoadView` is kept.
+- **Done 3**: disk.resource init disarms DSKLEN and enables DSKEN (plus the master bit that the 1.3 coldstart
+  sets) for good; trackdisk no longer clears DSKEN and only re-SETs it before arming (no master bit), and its read
+  path clears ADKCON bits 8-14 only (it used to clear the audio bits 0-7 as well). Production ROM on the
+  Workbench: DMACONR `$03F0`, INTENAR `$602C`, the values of §3.1. The trackdisk write probe gives the same
+  results as before.
+- **Done 4**: graphics init decides PAL/NTSC from the beam (§3.5) and fills DisplayFlags, MaxDisplayRow,
+  NormalDisplayRows, NormalDPMX/Y and ExecBase VBlankFrequency with the values of graphics-display-v34 §1.8
+  (MaxDisplayColumn `$1D1`, MicrosPerLine `$3F9D`, MinDisplayColumn `$30` for both). Checked under Amiberry: PAL
+  50/4/311/256/`$4CA`/`$513`, NTSC 60/1/261/200/`$500`/`$44A`.
+
+Original findings:
 
 1. **`AddIntServer` never enables the INTENA bit** (`src/exec/interrupts.s`, `exec_AddIntServer`): §3.1 shows the
    official exec SETs the chain's bit at every add. Software that adds a COPER (or VERTB/PORTS/EXTER) server
