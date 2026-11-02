@@ -28,6 +28,7 @@
                 xref    ciaa_server      ; cia.s (PORTS/INT2 server)
                 xref    ciab_server      ; cia.s (EXTER/INT6 server, exclusive vector)
                 xref    gfx_display_init ; graphics/gfx.s (M4a: first Copper-driven display)
+                xref    exec_RawIOInit   ; exec/execmisc.s (coldstart: SERPER as in 1.3)
                 xref    strap_boot       ; exec/strap.s (M6r: boot decision -> insert-disk if not bootable)
                 xref    alert_boothook   ; exec/execmisc.s (role of alert.hook)
                 xref    kbd_selftest     ; exec/keyboard.s (F2a: CIA-A keyboard reception+decoding)
@@ -212,7 +213,7 @@ coldstart:                        ; $FC00D2
         clr.l   (a0)+
         dbra    d0,.lv_clr
         move.w  #C_BLUE,COLOR00
-        move.w  #SERPER_9600_PAL,SERPER
+        jsr     exec_RawIOInit       ; as the 1.3 coldstart does
         lea     msg_cold(pc),a0
         bsr     ser_puts
 

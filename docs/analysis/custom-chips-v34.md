@@ -480,8 +480,8 @@ them to the current unit owner (trackdisk via `GetUnit`). All timing and values:
 ## Open points
 
 - Exact VSprite band/allocation algorithm in `DrawGList` (only its register targets are mapped here).
-- The gameport START-bit path (a flag in the gameport shadow can set POTGO bit 0) was never observed to fire;
-  whether any 1.3 controller type uses it is unknown.
+- ~~The gameport START-bit path~~ resolved: no 1.3 command or controller type ever sets the flag
+  ([gameport-v34.md](gameport-v34.md) §7.3).
 - The dynamic INTENA/INTREQ lists may miss rare writers (watch ring overflow); rare writes rely on the static pass.
 
 ## Clean-room review
@@ -520,7 +520,11 @@ height (2026-11-02, second pass):
   PAL (checked under Amiberry: the whole Workbench is visible on NTSC). The pointer is bounded by the same
   height (low-RAM word `PTR_YLIM`, written by graphics init).
 
-Still open: the rest of §7.2 and §7.3; the boot picture (352 × 272 PAL overscan art) loses its bottom rows on
+Done too (2026-11-02, third pass): gameport units 0/1 with every GPD_* command (gameport-v34), and the exec raw
+serial I/O of item 7 (RawIOInit sets SERPER 372 and the coldstart calls it, RawMayGetChar 7 bits, RawPutChar waits
+for TBE then honours Ctrl-S and calls Debug on DEL; Debug itself is still an empty LVO, no ROM-Wack).
+
+Still open: the rest of §7.2 (item 5) and the boot serial markers of item 7; the boot picture (352 × 272 PAL overscan art) loses its bottom rows on
 NTSC; `LoadView(NULL)` does not force a long frame through VPOSW; `gb_VBlank` holds the frame rate instead of being
 a per-frame flag.
 

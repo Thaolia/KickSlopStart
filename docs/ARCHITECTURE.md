@@ -583,6 +583,18 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7p) **gameport units 0/1 and exec raw serial** (2026-11-02). gameport.device implements both units and the
+  commands of spec `gameport-v34.md`: GPD_READEVENT queue, 8-slot event ring (7 usable), trigger
+  (keys/timeout/deltas), ASK/SETCTYPE (mouse, relative and absolute joystick), ASK/SETTRIGGER, CMD_CLEAR/STOP/
+  START/FLUSH/RESET, AbortIO; `gp_unit_frame` samples each unit in the VERTB server (JOYxDAT, CIA-A PRA bits 6/7,
+  POTGOR) and the server writes POTGO with the pot bits of both units. Unit 0 is set as input.device leaves it on
+  1.3 (mouse, trigger {3,0,1,1}); the mouse still reaches input.device through IND_WRITEEVENT. Our AllocPotBits
+  returns the DATxx bits only, so gameport adds their OUTxx partners to the WritePotgo mask. Proven under Amiberry
+  with a probe program (startup-sequence, unit 1): ABSJOYSTICK gives {+1,0} / {0,0} / {0,-1}, fire `$68`/`$E8`
+  with qualifier `$4000`; RELJOYSTICK one event per frame with X = -1 and qualifier `$8000`. exec raw serial
+  follows custom-chips §4.3 (SERPER 372 from RawIOInit at coldstart, 7-bit RawMayGetChar, Ctrl-S/DEL in
+  RawPutChar; Debug still empty). Found on the way: a bootblock that blocks in DoIO hangs on our ROM, because the
+  strap runs before the scheduler starts (not fixed).
   (7o) **SCREENBEHIND** (2026-11-02). `OpenScreen` links a screen whose type has `$0080` at the tail of the screen
   list and leaves ActiveScreen alone (spec `intuition-screens-v34.md` §2.1 step 21, checked on the real ROM with
   SimCity in `intuition-screenbehind-v34.md`); it was always put at the front. SimCity opens its title screen that

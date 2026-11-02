@@ -328,31 +328,46 @@ raw_puts:
 .rp_ret:
         rts
 
-; RawIOInit(): the serial port is already set up at startup. RawMayGetChar() -> d0 = received character | -1.
-; RawPutChar(char d0): bounded wait for TBE then output (8 bits + stop bit). Preserves d1-d2/a0/a1.
+; Polled serial I/O of exec, as in 1.3 (custom-chips-v34 §4.3). RawIOInit(): SERPER only (8 bits, no interrupt).
+; RawMayGetChar() -> d0 = received character (7 bits, RBF acknowledged) | -1. RawPutChar(char d0): waits for TBE,
+; sends the byte with one stop bit, then looks at the receiver: Ctrl-S holds the output until any other byte
+; arrives, DEL calls Debug. Preserves d1-d2/a0/a1/a6.
 exec_RawIOInit:
+        move.w  #SERPER_RAW,SERPER
         rts
 exec_RawMayGetChar:
         move.w  SERDATR,d0
         btst    #14,d0               ; RBF
         beq.s   .rg_none
-        and.l   #$FF,d0
+        and.l   #$7F,d0
         move.w  #INTF_RBF,INTREQ
         rts
 .rg_none:
         moveq   #-1,d0
         rts
 exec_RawPutChar:
-        movem.l d1-d2,-(sp)
-        move.w  #$2000,d1
+        movem.l d1-d2/a0-a1/a6,-(sp)
 .rpc_wt:
-        move.w  SERDATR,d2
-        btst    #13,d2               ; TBE
-        dbne    d1,.rpc_wt
+        btst    #13-8,SERDATR        ; TBE
+        beq.s   .rpc_wt
         and.w   #$FF,d0
         or.w    #$100,d0
         move.w  d0,SERDAT
-        movem.l (sp)+,d1-d2
+        bsr.s   exec_RawMayGetChar
+        cmp.b   #$13,d0              ; Ctrl-S (XOFF): hold until any other byte
+        bne.s   .rpc_del
+.rpc_xoff:
+        bsr.s   exec_RawMayGetChar
+        tst.l   d0
+        bmi.s   .rpc_xoff
+        bra.s   .rpc_ret
+.rpc_del:
+        cmp.b   #$7F,d0
+        bne.s   .rpc_ret
+        move.l  ($4).w,a6
+        jsr     -114(a6)             ; Debug
+.rpc_ret:
+        movem.l (sp)+,d1-d2/a0-a1/a6
         rts
 
 ; SetSR(newSR d0, mask d1) -> d0 = old SR: the bits of mask take the value of newSR (via Supervisor; the SR

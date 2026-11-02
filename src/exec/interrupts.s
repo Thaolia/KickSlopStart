@@ -700,7 +700,7 @@ exc_common:
 ; exception occurring in supervisor mode (interrupt, Supervisor) is unrecoverable: message then halt.
 exc_default:
         movem.l d0-d2/a0-a1,-(sp)
-        move.w  #SERPER_9600_PAL,SERPER  ; a program may have changed the port speed: readable message
+        move.w  #SERPER_RAW,SERPER   ; a program may have changed the port speed: readable message
         lea     exc_msg1(pc),a0
         bsr     exc_puts
         move.l  20(sp),d1            ; trap number

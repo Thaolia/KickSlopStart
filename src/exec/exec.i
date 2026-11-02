@@ -53,7 +53,7 @@ C_CYAN   EQU $00FF
 C_WHITE  EQU $0FFF
 C_FAIL   EQU $0F0F
 
-SERPER_9600_PAL EQU 368
+SERPER_RAW      EQU 372          ; RawIOInit value (custom-chips-v34 §4.3): 9509 Bd PAL, 9597 Bd NTSC, 8 bits
 ; RAMKICK=1 (make kick-ram): image linked at $C00000, loaded into slow RAM by the soft-kick disk (src/softkick/).
 ; The first SLOW_RSV bytes of slow RAM hold the image and stay out of the free memory. Default 0 = ROM image.
         ifnd    RAMKICK

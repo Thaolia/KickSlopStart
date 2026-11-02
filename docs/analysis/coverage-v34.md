@@ -102,7 +102,7 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 | 8 | ramlib.library | 1,564 | none (cited at boot) | boot-sequence, dos-boot-sequence | `src/exec/ramlib.s` (without its own process) | P2 |
 | 9 | graphics.library 34.1 | 59,816 | **very weak**: contracts deduced from callers | fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (78/105, table too short) | P1 |
 | 10 | keyboard.device | common area (≈ 1.1 KB by closure) | partial: reception, reset | keyboard-handshake | `src/exec/kbddev.s`, `keyboard.s` | P1 (hardware) |
-| 11 | gameport.device | common area (≈ 1.2 KB) | none | — | `src/exec/gameport.s` (BeginIO refuses everything) | P1 |
+| 11 | gameport.device | common area (≈ 1.2 KB) | **complete** (all 14 commands, VERTB server) | gameport-v34 | `src/exec/gameport.s` (BeginIO refuses everything) | P1 |
 | 12 | timer.device 34.1 | 2,040 | **complete** | timer-v34 | `src/exec/timer.s` | — |
 | 13 | audio.device 34.1 | 4,204 | none | — | `src/exec/audio.s` | P2 |
 | 14 | input.device | common area (≈ 0.8 KB) | partial: repeat, thresholds, handler chain | intuiticks-repeat, disk-change §3 | `src/exec/input.s` | P2 |
@@ -613,20 +613,20 @@ are partly **common** to the four devices in the ROM (same code for several entr
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | no | no (IOERR_NOCMD) | 8 / 134 | P3 |
-| 1 | `CMD_RESET` | no | no (IOERR_NOCMD) | 14 / 238 | P3 |
-| 2 | `CMD_READ` | no | no (IOERR_NOCMD) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 3 | `CMD_WRITE` | no | no (IOERR_NOCMD) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 4 | `CMD_UPDATE` | no | no (IOERR_NOCMD) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 5 | `CMD_CLEAR` | no | no (IOERR_NOCMD) | 38 / 38 | P2 |
-| 6 | `CMD_STOP` | no | no (IOERR_NOCMD) | 16 / 142 | P3 |
-| 7 | `CMD_START` | no | no (IOERR_NOCMD) | 44 / 170 | P3 |
-| 8 | `CMD_FLUSH` | no | no (IOERR_NOCMD) | 32 / 164 | P3 |
-| 9 | `GPD_READEVENT` | no | no (IOERR_NOCMD) | 268 / 394 | P1 |
-| 10 | `GPD_ASKCTYPE` | no | no (IOERR_NOCMD) | 42 / 42 | P1 |
-| 11 | `GPD_SETCTYPE` | cited — intuiticks-repeat §1.1 | no (IOERR_NOCMD) | 84 / 84 | P1 |
-| 12 | `GPD_ASKTRIGGER` | no | no (IOERR_NOCMD) | 48 / 48 | P1 |
-| 13 | `GPD_SETTRIGGER` | no | no (IOERR_NOCMD) | 48 / 48 | P1 |
+| 0 | `CMD_INVALID` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | P3 |
+| 1 | `CMD_RESET` | yes — gameport-v34 | yes | 14 / 238 | P3 |
+| 2 | `CMD_READ` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
+| 3 | `CMD_WRITE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
+| 4 | `CMD_UPDATE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
+| 5 | `CMD_CLEAR` | yes — gameport-v34 | yes | 38 / 38 | P2 |
+| 6 | `CMD_STOP` | yes — gameport-v34 | yes | 16 / 142 | P3 |
+| 7 | `CMD_START` | yes — gameport-v34 | yes | 44 / 170 | P3 |
+| 8 | `CMD_FLUSH` | yes — gameport-v34 | yes | 32 / 164 | P3 |
+| 9 | `GPD_READEVENT` | yes — gameport-v34 | yes | 268 / 394 | P1 |
+| 10 | `GPD_ASKCTYPE` | yes — gameport-v34 | yes | 42 / 42 | P1 |
+| 11 | `GPD_SETCTYPE` | yes — gameport-v34 | yes | 84 / 84 | P1 |
+| 12 | `GPD_ASKTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | P1 |
+| 13 | `GPD_SETTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | P1 |
 
 #### input.device (17 commands, 0–16)
 
@@ -672,28 +672,28 @@ are partly **common** to the four devices in the ROM (same code for several entr
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | no | yes | 12 / 72 (shared routine ×5) | P3 |
-| 1 | `CMD_RESET` | no | no-op | 12 / 72 (shared routine ×5) | P3 |
+| 0 | `CMD_INVALID` | yes — trackdisk-raw-changeint §8 | yes | 12 / 72 (shared routine ×5) | P3 |
+| 1 | `CMD_RESET` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
 | 2 | `CMD_READ` | yes — trackdisk-official-timing §1–§3 | yes | 520 / 2880 (shared routine ×2) | — |
 | 3 | `CMD_WRITE` | out of scope (write agent) | yes | 520 / 2880 (shared routine ×2) | — |
 | 4 | `CMD_UPDATE` | out of scope (write agent) | yes | 50 / 1086 | — |
 | 5 | `CMD_CLEAR` | partial — disk-change §2.1 ; uae-hd-boot §3 | yes | 22 / 82 | P3 |
-| 6 | `CMD_STOP` | no | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 7 | `CMD_START` | no | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 8 | `CMD_FLUSH` | no | no-op | 12 / 72 (shared routine ×5) | P3 |
+| 6 | `CMD_STOP` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
+| 7 | `CMD_START` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
+| 8 | `CMD_FLUSH` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
 | 9 | `TD_MOTOR` | partial — intuition-requesters §7.1 ; trackdisk-official-timing §1 | yes | 22 / 342 | P3 |
-| 10 | `TD_SEEK` | yes — trackdisk-official-timing §2 | no-op | 38 / 628 | P3 |
+| 10 | `TD_SEEK` | yes — trackdisk-official-timing §2 ; trackdisk-raw-changeint §3 | no-op | 38 / 628 | P3 |
 | 11 | `TD_FORMAT` | out of scope (write agent) | yes | 374 / 1668 | — |
-| 12 | `TD_REMOVE` | yes — disk-change §2.1 | no-op | 12 / 72 | P2 |
+| 12 | `TD_REMOVE` | yes — disk-change §2.1 ; trackdisk-raw-changeint §5.1 | no-op | 12 / 72 | P2 |
 | 13 | `TD_CHANGENUM` | partial — uae-hd-boot §3 ; disk-change §2.1 | yes | 12 / 72 | P3 |
 | 14 | `TD_CHANGESTATE` | partial — disk-change §2.1 | yes | 20 / 80 | P3 |
 | 15 | `TD_PROTSTATUS` | partial — disk-change §2.5 | yes | 90 / 410 | P3 |
-| 16 | `TD_RAWREAD` | no | no (IOERR_NOCMD) | 120 / 756 | P2 |
-| 17 | `TD_RAWWRITE` | no (belongs to the write agent) | no (IOERR_NOCMD) | 4 / 4 (ROM stub) | — |
-| 18 | `TD_GETDRIVETYPE` | no | no (IOERR_NOCMD) | 18 / 78 | P2 |
-| 19 | `TD_GETNUMTRACKS` | no | yes | 18 / 78 | P3 |
-| 20 | `TD_ADDCHANGEINT` | cited — disk-change §2.1 (called "V36", cf. §5) | no-op | 28 / 28 | P2 |
-| 21 | `TD_REMCHANGEINT` | cited — disk-change §2.1 | no-op | 22 / 82 | P2 |
+| 16 | `TD_RAWREAD` | yes — trackdisk-raw-changeint §4 | no (IOERR_NOCMD) | 120 / 756 (shared with 17) | P2 |
+| 17 | `TD_RAWWRITE` | yes — trackdisk-raw-changeint §4 ; trackdisk-write §3.2 | no (IOERR_NOCMD) | 4 / ≈ 756 (4-byte prologue into the routine shared with 16; *corrected 2026-11-02, see trackdisk-raw-changeint §0/§4: the former "4 / 4 (ROM stub)" was a measurement artefact, the command is fully implemented*) | P2 |
+| 18 | `TD_GETDRIVETYPE` | yes — trackdisk-raw-changeint §2.3 | no (IOERR_NOCMD) | 18 / 78 | P2 |
+| 19 | `TD_GETNUMTRACKS` | yes — trackdisk-raw-changeint §2.3 | yes | 18 / 78 | P3 |
+| 20 | `TD_ADDCHANGEINT` | yes — trackdisk-raw-changeint §5.2, §5.4 (exists and works in V34; *corrected 2026-11-02*) | no-op | 28 / 28 | P2 |
+| 21 | `TD_REMCHANGEINT` | yes — trackdisk-raw-changeint §5.3 | no-op | 22 / 82 | P2 |
 
 ## 5. Inconsistencies found in the existing analysis documentation (to be fixed by the analysis track)
 
@@ -709,6 +709,10 @@ are partly **common** to the four devices in the ROM (same code for several entr
    table point to **dedicated** routines (≈ 28 and 22 bytes), distinct from the "invalid
    command" routine. To be settled by a black-box probe (DoIO `TD_ADDCHANGEINT` on the real 1.3:
    io_Error, and is the interrupt called on ejection?).
+   **Settled 2026-11-02** (ROM reading, see trackdisk-raw-changeint-v34.md §5): `TD_ADDCHANGEINT` and
+   `TD_REMCHANGEINT` exist and work in V34; the interrupt is `Cause()`d on ejection **and** on insertion; the
+   request is never replied while installed (so it must be sent with `SendIO`, not `DoIO`); `disk-change-v34.md`
+   has been corrected.
 4. **`module-map.md`** states that the number of LVOs of the non-AUTOINIT modules "cannot be measured without
    tracing MakeLibrary". It can, by reading the tables: graphics 109, layers 29, exec 105, timer 9,
    console 8, keyboard/gameport/input/audio/trackdisk 6, romboot 5, disk 5, cia 4, potgo 3, misc 2,
@@ -865,7 +869,7 @@ allocation of `DrawGList` and the `GPD_*` command semantics remain open.
 18. mathffp.library (12 functions, ≈ 1 KB): FFP format, edge cases, condition codes (programs
     compiled with FFP floating point, AmigaBASIC).
 19. trackdisk: `TD_RAWREAD`, `TD_GETDRIVETYPE`, `TD_ADDCHANGEINT/REMCHANGEINT`, `TD_REMOVE` (to be
-    coordinated with the write agent).
+    coordinated with the write agent). **Done 2026-11-02**: trackdisk-raw-changeint-v34.md.
 20. dos: `Exit`, `WaitForChar` (contracts already sketched in bcpl-runtime §4.3/§8.2: an implementation
     gap more than an analysis one).
 

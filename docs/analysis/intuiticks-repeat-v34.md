@@ -18,7 +18,8 @@
 At its init (COLDSTART resident pri 40), input.device opens **timer.device unit 1 = UNIT_VBLANK** and
 keyboard.device unit 0, then creates its task (`"input.device"`, NT_TASK, **pri 20**, 4 KB stack). The task
 opens gameport.device (unit = `IND_SETMPORT`, 0 by default), sends it `GPD_SETCTYPE` (1 = GPCT_MOUSE by
-default) and `GPD_SETTRIGGER` (default `keys = 3` (DOWNKEYS|UPKEYS), `timeout = 1`, `xdelta = 1`, `ydelta = 1`).
+default) and `GPD_SETTRIGGER` (default `keys = 3` (DOWNKEYS|UPKEYS), `timeout = 0`, `xdelta = 1`, `ydelta = 1`;
+corrected 2026-11-02, measured in the live gameport unit: see `gameport-v34.md` §3.4).
 
 Three independent timerequests on the same VBLANK open, plus one for `TR_GETSYSTIME`:
 
@@ -36,7 +37,7 @@ Three independent timerequests on the same VBLANK open, plus one for `TR_GETSYST
 | repeat period | **{0 s, 100,000 µs}** | `IND_SETPERIOD` (13) |
 | mouse port | 0 | `IND_SETMPORT` (14), 1 byte |
 | controller type | 1 (mouse) | `IND_SETMTYPE` (15), 1 byte |
-| trigger | {3, 1, 1, 1} | `IND_SETMTRIG` (16), 8 bytes (io_Length < 8 ⇒ IOERR_BADLENGTH −4; io_Actual = 8) |
+| trigger | {3, 0, 1, 1} (gameport-v34 §3.4) | `IND_SETMTRIG` (16), 8 bytes (io_Length < 8 ⇒ IOERR_BADLENGTH −4; io_Actual = 8) |
 
 - `IND_SETTHRESH`/`IND_SETPERIOD`: copy the timerequest's `timeval` (`+$20` seconds, `+$24` µs)
   **immediately** ("quick" command, replied to at once). The new value is used for the **next**
