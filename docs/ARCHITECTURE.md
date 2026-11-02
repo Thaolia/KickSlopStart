@@ -1508,6 +1508,9 @@ differs.
     cache buttons on a 68000); OnGadget/OffGadget redraw from the gadget to the end of the list, without erasing.
     Disabled menu titles and items use the same pattern in the menu window's BlockPen, rotated so that its x phase
     is the screen's (`mn_ghost`); test `tests/ghost_test.s`.
+  - trackdisk track cache: the 8 slots only in fast memory (slow RAM included), otherwise 1 slot, so that a 512 KB
+    chip-only A500 keeps its chip RAM for games (Bubble Bobble starts again; `docs/MEMORY-USAGE.md`).
+    Debugging tool `tests/allocsnoop.s`: SetFunction spy of AllocMem on the serial port.
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
     `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 

@@ -37,7 +37,12 @@ memory.
 
 **How it behaves.**
 - It is allocated at the first `CMD_READ`, not at boot.
-- If 45 KB is not available, it falls back to a single slot of 5,632 bytes.
+- The 8 slots are taken only from fast memory (`MEMF_FAST`, which includes the A501 slow RAM at `$C00000`).
+  Without fast memory, or if 45 KB of it is not available, it falls back to a single slot of 5,632 bytes, the
+  size of the 1.3 track buffer. On a 512 KB chip-only A500 the 45 KB cache came out of the chip RAM that games
+  need: Bubble Bobble could not start (its last chip requests failed). With one slot, the free chip RAM at the
+  game's startup-sequence is 411,392 bytes, against 395,392 on the original Kickstart 1.3 (black-box
+  measurement, 2026-11-02).
 - A track enters the cache only if all 11 sectors decoded and carry the requested track number.
 - A disk change (`/CHNG`) or `CMD_CLEAR` empties the cache.
 - Writes (`CMD_WRITE`) update cached tracks and mark them dirty. Only `CMD_UPDATE` writes them back;

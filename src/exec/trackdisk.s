@@ -209,24 +209,8 @@ trackdisk_beginio:
         cmp.l   #TD_DISKBYTES,d0
         bhi     .td_badrange
         bsr     td_check_change      ; disk changed/removed -> invalidates cache + head position
-        tst.l   TD_CACHEBUF          ; track cache, allocated at the first CMD_READ (TD_NCACHE slots, 1 at worst)
-        bne.s   .td_havebuf
-        move.l  #MFM_SECBUF*TD_NCACHE,d0
-        moveq   #MEMF_PUBLIC,d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.w  #TD_NCACHE,TD_CNSLOTS
-        tst.l   d0
-        bne.s   .td_gotcache
-        move.l  #MFM_SECBUF,d0
-        moveq   #MEMF_PUBLIC,d1
-        jsr     LVO_ALLOCMEM(a6)
-        move.w  #1,TD_CNSLOTS
-        tst.l   d0
+        bsr     td_cachebuf          ; track cache, allocated at the first access
         beq     .td_nomem
-.td_gotcache:
-        move.l  d0,TD_CACHEBUF
-        bsr     td_cache_flush
-.td_havebuf:
         move.l  IO_DATA(a2),a5       ; a5 = destination (advances)
 .td_bio_loop:
         tst.l   d2
@@ -1426,13 +1410,15 @@ td_wr:
         move.b  #TDERR_NotSpec,IO_ERROR(a2)
         rts
 
-; td_cachebuf(a6): allocates the track cache at first access (TD_NCACHE slots, 1 if memory is short).
+; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in fast memory (slow RAM at
+; $C00000 included); otherwise a single slot, the footprint of the 1.3 track buffer: on a 512 KB chip-only A500 the
+; 44 KB cache would be taken from the chip RAM that games need (Bubble Bobble then fails to start).
 ; Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 td_cachebuf:
         tst.l   TD_CACHEBUF
         bne.s   .cb_ok
         move.l  #MFM_SECBUF*TD_NCACHE,d0
-        moveq   #MEMF_PUBLIC,d1
+        moveq   #MEMF_FAST,d1
         jsr     LVO_ALLOCMEM(a6)
         move.w  #TD_NCACHE,TD_CNSLOTS
         tst.l   d0

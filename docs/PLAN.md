@@ -963,7 +963,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   dos Exit (GetPacket/QueuePacket left null on purpose). Binary and AROS similarity audits at the base level.
   Open: trackdisk unit task (autonomous change polling), input.device task, joystick types through SETMTYPE,
   INDEXSYNC now that SetICR exists, the Workbench menu items (Open, Info, Discard...) stay enabled while no
-  icon is selected (our workbench task; 1.3 behaviour to probe), screens below the front one are not displayed (MoveScreen only updates the
+  icon is selected (our workbench task; 1.3 behaviour to probe), trackdisk allocates its 12.8 KB chip DMA buffer
+  at each read (1.3 shows no such per-read allocation: a chip-full game could lose its disk reads), Bubble Bobble
+  makes two allocations on 1.3 (9,876 and 177,152 bytes) that it does not make on ours (other code path, cause
+  unknown), screens below the front one are not displayed (MoveScreen only updates the
   fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
 
