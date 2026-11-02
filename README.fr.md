@@ -2,7 +2,7 @@
 
 *[English version](README.md)*
 
-<p align="center"><img src="assets/boot_screen/cat_amiga_kickslopstart.jpg" alt="Écran de démarrage KickSlopStart" width="480"></p>
+<p align="center"><img src="assets/logo/kss_logo.jpg" alt="Logo de KickSlopStart" width="320"></p>
 
 KickSlopStart est une réimplémentation libre de la ROM **Kickstart 1.3** (34.5) de l'Amiga. Elle est écrite de zéro en
 assembleur 68000, selon une méthode de **salle blanche**. L'image fait **256 Kio, chargée à `$FC0000`**, et tourne sur
