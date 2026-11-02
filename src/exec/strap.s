@@ -1,6 +1,7 @@
 ; src/exec/strap.s — strap (romboot): reads, validates and EXECUTES the bootblock of DF0: (milestone C "it boots!").
 ; strap_boot(a6=SysBase) -> d0 = 0 if NO bootable volume (the caller displays the insert-disk screen),
-;                           d0 != 0 if the bootblock was executed successfully (a real boot would not return).
+;                           d0 != 0 if the bootblock was executed successfully, a0 = the entry point it returned
+;                           (the dos init for a standard bootblock, a game's own entry for a custom loader).
 ;
 ; Chain: FindName("trackdisk.device") -> CMD_READ(offset 0, len 1024 = sectors 0+1 = bootblock, IN track 0)
 ; via BeginIO -30 (pattern proven by M6w) -> validates magic "DOS" + additive checksum -> JSR to the boot code at +12.
@@ -107,15 +108,23 @@ strap_boot:
         ; --- valid bootblock -> execute the boot code at +BB_ENTRY ---
                 ifeq    STRAP_NO_EXEC
         move.l  a3,-(sp)             ; protect the ioreq (any boot code may clobber a3)
+        move.w  sr,-(sp)
         lea     BB_ENTRY(a2),a0
         move.l  a3,a1                ; A1 = reusable ioreq; A6 = SysBase (bootblock convention)
-        jsr     (a0)                 ; D0 = bootblock return (0 = success); A0 (dos handoff) IGNORED in C
+        and.w   #$F8FF,sr            ; interrupts on during the boot code: loaders wait on them (1.3: never IPL 7)
+        jsr     (a0)                 ; D0 = bootblock return (0 = success), A0 = entry point to jump to
+        move.w  (sp)+,sr
         move.l  (sp)+,a3
         move.l  ($4).w,a6            ; reload SysBase (the bootblock may have clobbered a6)
         tst.l   d0
         bne.s   .boot_failed         ; the boot code reported an error -> insert-disk
                 endc                 ; RED STRAP_NO_EXEC: skips the JSR -> "CBOOT" absent, but "booted"
+                ifne    STRAP_NO_EXEC
+        suba.l  a0,a0                ; no entry: the caller starts dos
+                endc
+        move.l  a0,-(sp)             ; normally the dos init; a game's own loader returns its entry point
         bsr.s   .free
+        move.l  (sp)+,a0
         moveq   #1,d0                ; booted -> the caller does NOT show the insert-disk
         bra.s   .ret
 .boot_failed:

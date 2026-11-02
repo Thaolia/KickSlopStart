@@ -3353,7 +3353,22 @@ d2_done:
         jsr     proc_create
         bra.s   boot_strap_done
 .m6r_floppy:
+        move.l  a0,-(sp)
         jsr     dos_df0bootnode      ; DF0: BootNode (pri 5) in eb_MountList, as after a 1.3 bootblock
+        move.l  ($4).w,a6
+        lea     dos_libname,a1
+        jsr     LVO_FINDRESIDENT(a6)
+        move.l  (sp)+,a0             ; entry returned by the bootblock (uae-hd-boot-v34 §3 item 2)
+        cmp.w   #0,a0
+        beq.s   boot_dos_start       ; no entry (RED STRAP_NO_EXEC)
+        tst.l   d0
+        beq.s   .bb_game
+        move.l  d0,a1
+        cmp.l   RT_INIT(a1),a0
+        beq.s   boot_dos_start       ; the dos init: dos starts on DF0: (what dos_rtinit would do)
+.bb_game:
+        move.w  #$2000,sr            ; a game loaded by its own bootblock: it runs in supervisor with the
+        jmp     (a0)                 ; interrupts it relies on enabled (1.3: IPL 3 seen, never 7)
 ; boot_dos_start: dos startup (after a DF0: bootblock, or from the rt_Init of dos.library called by the
 ; BootPoint of a board): mount list -> boot device, then Initial CLI. Does not return.
 boot_dos_start:
