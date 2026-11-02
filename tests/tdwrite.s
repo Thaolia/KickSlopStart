@@ -4,7 +4,8 @@
 ; requests to trackdisk.device unit 0 and writes each result to the direct serial port (SERDAT), one line per step:
 ;   "<step> E=<io_Error> A=<io_Actual> L=<first long read>" (hex).
 ; io_Actual is preloaded with $DEADBEEF before each request to see whether it gets modified.
-; Blocks used: 1100 (track 100), 220 (track 20), track 158 (formatted). Buffers in CHIP (required by the blitter).
+; Blocks used: 1100 (track 100), 220 (track 20), 880/891 (tracks 80/81, rewritten unchanged: steps P-R, T-V),
+; track 158 (formatted). Buffers in CHIP (required by the blitter).
 ; Assembly: vasmm68k_mot -Fhunkexe -kick1hunks -nosym -o build/tdwrite tests/tdwrite.s
 ; Author's code; public structures (exec/io.h, devices/trackdisk.h).
 
@@ -117,6 +118,14 @@ _start:
                 moveq   #'j',d7
                 moveq   #4,d2
                 bsr     doio
+; P/Q: precompensation boundary, tracks 80 (block 880, the root) and 81 (block 891): each block is read, written
+; back unchanged and flushed (UPDATE), so the disk log shows the ADKCON of a write on each side of the threshold
+                move.l  #880*512,d3
+                moveq   #'P',d7
+                bsr     rwback
+                move.l  #891*512,d3
+                moveq   #'T',d7
+                bsr     rwback
 ; K: TD_FORMAT length 512 (not a multiple of a track)
                 moveq   #'K',d7
                 moveq   #11,d2
@@ -152,6 +161,16 @@ _start:
 .out:           movem.l (sp)+,d2-d7/a2-a6
                 moveq   #0,d0
                 rts
+
+; rwback: block at offset d3 read (label d7), written back (d7+1), UPDATE (d7+2); d4 = 512
+rwback:         moveq   #2,d2
+                bsr     doio
+                addq.b  #1,d7
+                moveq   #3,d2
+                bsr     doio
+                addq.b  #1,d7
+                moveq   #4,d2
+                bra     doio
 
 ; fill(d0): fills the buffer (one track, 5632 bytes) with the long d0
 fill:           move.l  buf(pc),a0

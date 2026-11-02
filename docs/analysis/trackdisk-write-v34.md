@@ -177,7 +177,10 @@ Default values [O]:
 | 5.25" (ID `$55555555`) | 40 | `$FFFF` | `$FFFF` | tracks 0–40: none; 41–79: 140 ns |
 
 The 280/560 ns levels are never reached with the default tables. Probe: track 20 → ADKCON `$1100`,
-tracks 100 and 158 → `$3100`. [O] (probe)
+tracks 100 and 158 → `$3100`. [O] (probe) Boundary probe (blocks 880 and 891 read, written back unchanged,
+then `CMD_UPDATE`): track **80** (cyl 40 side 0) → ADKCON `$1100` (no precompensation), track **81** (cyl 40
+side 1) → `$3100` (140 ns). The first precompensated track of a 3.5" unit is therefore **81**; the test is
+"track > threshold1", not "track ≥ threshold1". [O] (probe)
 
 ### 3.2 `TD_RAWWRITE` (command 17)
 
@@ -356,6 +359,8 @@ Blank OFS floppy, unit 0, CHIP buffer. `io_Actual` preloaded with `$DEADBEEF`.
 | g/G | CLEAR then READ | 0 / 0 | — / 512 | `22222222` (written) |
 | H/h/i/I | WRITE length 0 `33333333`, UPDATE, CLEAR, READ | 0 | 512 (H) | `33333333` (one sector written) |
 | J/j | WRITE block 220 (track 20) + UPDATE | 0 | 512 | log: ADKCON `$1100` |
+| P/Q/R | READ block 880 (track 80), WRITE it back unchanged, UPDATE | 0 / 0 / 0 | 512 / 512 / unchanged | `00000002`; log: ADKCON `$1100` |
+| T/U/V | READ block 891 (track 81), WRITE it back unchanged, UPDATE | 0 / 0 / 0 | 512 / 512 / unchanged | `00000000`; log: ADKCON `$3100` |
 | K | FORMAT length 512 | −4 | unchanged | — |
 | L/l | FORMAT track 158, pattern `55555555`, then READ | 0 / 0 | unchanged / 512 | `55555555` |
 | M | PROTSTATUS | 0 | 0 | — |
@@ -364,6 +369,11 @@ Blank OFS floppy, unit 0, CHIP buffer. `io_Actual` preloaded with `$DEADBEEF`.
 
 Disk log: all writes `LEN=1A9F (6815)`, DSKPT = start of the track buffer (gap); reads
 `LEN=1CBE (7358)`, DSKPT = buffer + 1664 bytes.
+Track writes in the disk log, in order (run of 2026-11-02): track 100 `$3100` (UPDATE F), track 100 again
+`$3100` (UPDATE h, the only flush between F and j: the zero-length WRITE H dirtied the track buffer, so the
+flush really writes the track),
+track 20 `$1100` (j), track 80 `$1100` (R), track 81 `$3100` (V), track 158 `$3100` (FORMAT L): six track
+writes. [O] (probe)
 
 ---
 

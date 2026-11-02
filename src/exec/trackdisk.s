@@ -1337,9 +1337,17 @@ td_wr:
         bsr     td_cachebuf          ; cache allocated (first access)
         beq     .wr_err
         move.l  IO_DATA(a2),a5
+        tst.l   d2                   ; zero-length CMD_WRITE: the track at io_Offset is still loaded and marked
+        bne.s   .wr_loop             ; modified, so the next UPDATE writes it (spec trackdisk-write §8, probe)
+        tst.l   d7
+        bne     .wr_done
+        cmp.l   #TD_DISKBYTES,d3
+        bhs     .wr_done
+        bra.s   .wr_body
 .wr_loop:
         tst.l   d2
         beq     .wr_done
+.wr_body:
         move.l  d3,d0                ; track, byte in track, n = up to the end of the track
         lsr.l   #8,d0
         lsr.l   #1,d0
@@ -1385,10 +1393,12 @@ td_wr:
         move.l  a5,a0
         move.l  d5,d0
         lsr.l   #2,d0
+        beq.s   .wr_mark
         subq.l  #1,d0
 .wr_cp:
         move.l  (a0)+,(a1)+
         dbra    d0,.wr_cp
+.wr_mark:
         lea     TD_CDIRTY,a0
         st      0(a0,d1.w)
         add.l   d5,a5

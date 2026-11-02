@@ -89,6 +89,14 @@ disk.resource (`resources-v34.md` §2.5). A drive plugged in later is invisible.
 | **number of tracks** (`+$36`, word) | **160** | **80** |
 | disk size in bytes (`+$38`, long) | 901,120 | 450,560 |
 
+The precomp thresholds are **track numbers** (cyl × 2 + side) compared with the head's current track using
+**strictly greater than**: a write on track p gets the 140 ns level only when p > threshold 1 (the higher levels
+when p > threshold 2 / 3, unreachable with `$FFFF`). For a 3.5" unit, tracks 0–80 (up to and including cyl 40
+side 0) are written **without** precompensation and the **first precompensated track is 81** (cyl 40 side 1);
+for a 5.25" unit (same comparison, threshold 40; not probed separately), tracks 0–40 without, first
+precompensated track 41. Full rule and ADKCON values:
+`trackdisk-write-v34.md` §3.1. [O] (probe: track 80 → no precomp, track 81 → 140 ns)
+
 11 sectors per track in both cases (byte offsets are always converted with 512-byte sectors and 11 sectors per
 track). [O] Values for unit 0 confirmed at run time: type 1, 160 tracks, 901,120, 3000, 15000, 10. [P]
 

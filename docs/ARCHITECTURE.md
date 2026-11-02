@@ -1486,7 +1486,9 @@ differs.
     `GetUnit`, no sync, optional INDEXSYNC through the FLG relay), real `TD_SEEK`, `TD_GETDRIVETYPE` (3.5"),
     `TD_REMOVE`, `TD_ADDCHANGEINT`/`TD_REMCHANGEINT`; disk change counts and causes the interrupts on removal and
     insertion (count = 1 after a boot with a disk). Still synchronous (no unit task): changes are seen on each
-    command and by the handler's 1 s `TD_CHANGESTATE` poll. CMD_RESET/STOP/START/FLUSH return -3.
+    command and by the handler's 1 s `TD_CHANGESTATE` poll. CMD_RESET/STOP/START/FLUSH return -3. A zero-length
+    CMD_WRITE still loads its track and marks it modified (the next UPDATE writes it, as on 1.3); write
+    precompensation starts at track 81 (probed).
   - keyboard.device / input.device (`kbddev.s`, `input.s`, `gameport.s`, spec keyboard-input-devices-v34): full
     command tables, 31-entry event ring with `$7D` overflow, 13-byte READMATRIX, NUMERICPAD qualifier, KDAT reset
     pulse; input `IND_SETMPORT`/`SETMTYPE`/`SETMTRIG` replay the gameport GPD_SETCTYPE/SETTRIGGER sequence and
@@ -1497,7 +1499,8 @@ differs.
     deselects the drives; versions 34.1.
   - dos (`dos_lib.s`, `shell.s`, spec dos-exit-packets-v34): `Exit` returns to pr_ReturnAddr-4 with d0 = code
     (RemTask when there is no return point); `GetPacket`/`QueuePacket` stay null (the spec's safest option); the
-    shell sets `cli_Result2` after a command.
+    shell sets `cli_Result2` after a command, and treats code -1 like a command that could not be loaded
+    ("Unknown command <name>", codes 0/0, script abandoned whatever FailAt; probed on 1.3).
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
     `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 

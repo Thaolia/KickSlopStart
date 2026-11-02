@@ -3,13 +3,14 @@
 # Copy of tests/garea_probe.sh with a startup-sequence that runs the test once per mode (see the header of
 # dosexit_test.s). Boots FS-UAE headless (Xvfb) on the given ROM, captures the serial output into <out>/serial.log.
 # Waits until no other FS-UAE is running (one at a time).
+# MODES="e c f n" overrides the list of modes run by the startup-sequence.
 # Usage: tests/dosexit_probe.sh <rom> <dosexit_test executable> <output directory> [duration s, default 120]
 set -u
 ROM="${1:?rom}"; EXE="${2:?exe}"; OUT="${3:?sortie}"; DUR="${4:-120}"
 rm -rf "$OUT"; mkdir -p "$OUT/base"
 for t in fs-uae Xvfb socat xdftool; do command -v "$t" >/dev/null || { echo "outil absent : $t"; exit 2; }; done
 ADF="$OUT/gap_$(date +%s).adf"
-printf 'df0:dosexit_test %s\n' m a c z c f n > "$OUT/startup"
+printf 'df0:dosexit_test %s\n' ${MODES:-m a c z c f n} > "$OUT/startup"
 xdftool "$ADF" create + format Probe ofs + boot install + makedir s + write "$OUT/startup" s/startup-sequence \
   + write "$EXE" dosexit_test >/dev/null || { echo "xdftool en échec"; exit 2; }
 while pgrep -x fs-uae >/dev/null || { sleep 3; pgrep -x fs-uae >/dev/null; }; do sleep 2; done

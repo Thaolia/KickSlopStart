@@ -642,6 +642,14 @@ sh_exec_cmd:
 .x_nostack:
                 moveq   #-1,d0               ; stack impossible: special "unable to launch" code
 .x_ran:
+                cmp.l   #-1,d0               ; code -1 (Exit(-1) or no stack) = command not started (spec dos-exit
+                bne.s   .x_cend              ; §1.3): "Unknown command", script abandoned whatever FailAt, codes 0/0
+                clr.l   XF_FLAG(sp)
+                moveq   #0,d0
+                bsr     sh_cli_ptr
+                beq.s   .x_cend
+                clr.l   CLI_RESULT2(a1)
+.x_cend:
                 bsr     sh_cli_end           ; cli_ReturnCode = d0, cli_Module = 0; d1 = module to unload
                 tst.l   d1
                 bmi.s   .x_mod

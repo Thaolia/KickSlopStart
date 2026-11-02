@@ -11,6 +11,9 @@
 ;   c  CLI 00000000 00000000 <same avail>         code 0 -> cli_Result2 = 0; no memory lost
 ;   f  DOSEXIT END, then Exit(20): the shell prints "dosexit_test failed returncode 20" and abandons the script
 ;   n  NEVER (must not appear)
+;   e  (Exit(-1) from 4 nested 512-byte frames, pr_Result2 = 205): not in the default run. With MODES="e c f n"
+;      the shell treats it as a command that could not be loaded: "Unknown command df0:dosexit_test", script
+;      abandoned whatever FailAt (no CLI/DOSEXIT line follows); interactively cli_ReturnCode = cli_Result2 = 0
 
 SERDAT   EQU $DFF030
 SERDATR  EQU $DFF018
@@ -38,6 +41,8 @@ start:  move.l  a0,a2
         beq     mode_a
         cmp.b   #'z',d3
         beq     mode_z
+        cmp.b   #'e',d3
+        beq     mode_e
         cmp.b   #'c',d3
         beq     mode_c
         cmp.b   #'f',d3
@@ -114,6 +119,9 @@ mode_a: move.l  #205,d6
         bra.s   deep_go
 mode_z: move.l  #205,d6
         moveq   #0,d7
+        bra.s   deep_go
+mode_e: move.l  #205,d6
+        moveq   #-1,d7
 deep_go:
         move.l  4.w,a0
         move.l  276(a0),a0

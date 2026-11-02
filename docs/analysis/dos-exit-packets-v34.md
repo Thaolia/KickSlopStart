@@ -3,8 +3,9 @@
 > ANALYSIS track ("dirty"). Sources: ROM `kick34005.A500` (read-only, radare2 static reading of the
 > dos kernel, BLIB, console handler and file system segments) and the Workbench 1.3.3 disk
 > (`assets/wb133.adf`, files extracted to the session scratch directory, scanned for library calls).
-> No probe was run for this page. We describe the **what**: entry/exit registers, fields, packet
-> contents, order of observable effects, return values. No instruction sequence, no ROM address.
+> No probe was run for this page, except §1.3 (Exit(−1), black-box probe of 2026-11-02, marked
+> "[O] (probe)"). We describe the **what**: entry/exit registers, fields, packet contents, order of
+> observable effects, return values. No instruction sequence, no ROM address.
 >
 > **Legend**: **[O]** observed (read in the ROM / WB binaries) · **[D]** deduced · **[S]** assumed.
 >
@@ -82,8 +83,26 @@
 - The CLI then applies `bcpl-runtime-v34.md` §4.4: `cli_ReturnCode` := code; `cli_Result2` :=
   `pr_Result2` if code ≠ 0, else 0; "failed returncode" + script abandon if code ≥ `cli_FailLevel` and
   the CLI is not interactive; `UnLoadSeg(cli_Module)`.
-- Code **−1** is the special value "command could not be started" (§4.4 there): a program calling
-  Exit(−1) is treated by the CLI as a load failure [D from §4.4].
+- Code **−1** is the special value "command could not be started" (§4.4 there). A program that ends
+  with Exit(−1) is treated by the CLI **exactly like a command that could not be loaded**. Observed on the
+  real ROM (probe `tests/dosexit_test.s` mode `e`: Exit(−1) from four nested 512-byte frames, with
+  pr_Result2 = 205 set just before; Amiberry and FS-UAE, 2026-11-02) [O] (probe):
+  - **message**: the CLI prints **`Unknown command <name>`** on its console (`<name>` = the command name as
+    typed, e.g. `Unknown command df0:dosexit_test`), the same text as for a command that does not exist.
+    No "failed returncode" line is printed.
+  - **cli_ReturnCode = 0, cli_Result2 = 0** afterwards, as read by the next command typed in an interactive
+    CLI (a previous cli_ReturnCode of 20 is overwritten with 0; in a script the next line never runs, see
+    below). The pr_Result2 value left by the program (205)
+    is **not** copied to cli_Result2. A genuinely missing command gives the same 0 / 0.
+  - **script**: in a non-interactive CLI (startup-sequence) the script is **abandoned** at once, and this
+    does **not** depend on `cli_FailLevel`: abandoned with the default FailAt 10 and also after `FailAt 30`
+    (the Workbench 1.3.3 `C:FailAt`, which in the same run let an Exit(20) command continue silently). A genuinely missing command
+    (`Unknown command df0:nosuchcmd`) abandons the script the same way under FailAt 30. In an interactive
+    CLI there is no abandon; the prompt comes back.
+  - **Uncertain**: the probe always had pr_Result2 = 205 (object not found) at Exit time, and the lookup
+    failure path chooses between "Unknown command" (error 205 or 218) and "Unable to load %S: <error
+    text>" (other errors) (`bcpl-runtime-v34.md` §4.1). Whether Exit(−1) with another pr_Result2 prints
+    "Unable to load …" instead was **not probed**. FailAt values above 30 were not tried.
 
 ### 1.4 Process case: `endtask` (= finalPC) [O]
 
