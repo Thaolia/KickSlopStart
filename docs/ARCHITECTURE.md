@@ -583,6 +583,11 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7n) **Chip RAM sized up to 2 MB** (2026-11-02). `init_memory` sizes the chip RAM as 1.3 does (spec
+  `coldstart-hardware-v34.md` §2: a long at each 4 KB boundary, sentinel at `$0` to catch the mirror), from 512 KB
+  up to 2 MB, and sets `MaxLocMem` and the chip MemHeader from it; it used to stop at a fixed 512 KB. Found with
+  Caesar on vAmigaWeb (2 MB chip + 2 MB fast): `csr.exe` failed with error 103 (no free store). Proven under
+  Amiberry, chip 2048 KB ECS without fast: `MaxLocMem` = 2 MB and Caesar loads; 512 KB configs unchanged.
   (7m) **ColdCapture, ExecBase ChkSum, soft-kick disk** (2026-11-02). `coldstart` now honours the ColdCapture of
   an ExecBase that survived the reset (spec `coldstart-hardware-v34.md` §5.1: `*(4)` even, ChkBase, word sum of
   `+$22..+$52` = `$FFFF`; the vector is cleared, then called with SR `$2700`, A6 = ExecBase, return address in A5),

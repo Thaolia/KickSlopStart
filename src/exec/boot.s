@@ -242,7 +242,6 @@ coldstart:                        ; $FC00D2
         move.w  #34,LIB_VERSION(a6)
         move.w  #2,LIB_REVISION(a6)
         move.l  #exec_id,LIB_IDSTRING(a6)
-        move.l  #MAXCHIP,EB_MAXLOCMEM(a6)
         move.w  #0,EB_ATTNFLAGS(a6)
         move.b  #50,EB_VBLANKFREQ(a6)
         move.b  #50,EB_POWERFREQ(a6)

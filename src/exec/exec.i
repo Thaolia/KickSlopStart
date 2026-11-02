@@ -26,7 +26,7 @@ CIAA_PRA  EQU $BFE001
 CIAA_DDRA EQU $BFE201
 
 ; --- A500 512K target memory map ---
-MAXCHIP      EQU $00080000
+MAXCHIP      EQU $00080000     ; chip assumed at reset; init_memory sizes the rest (up to 2 MB)
 MH_CHIP      EQU $00000400     ; chip MemHeader
 LOWVARS_LO   EQU $00000500     ; global variables in low RAM [LOWVARS_LO, LOWVARS_HI), zeroed at coldstart
 LOWVARS_HI   EQU $00000800
@@ -45,7 +45,6 @@ FTEST_HI     EQU $00002500     ; it serves as a margin below the supervisor stac
 SSP_LOWER    EQU $00002500     ; shared supervisor stack [SSP_LOWER, STACKTOP)
 STACKTOP     EQU $00003500
 HEAP_LOWER   EQU $00003500     ; managed heap (chip)
-HEAP_UPPER   EQU MAXCHIP
 
 ; --- Phases (12-bit RGB) ---
 C_RED    EQU $0F00

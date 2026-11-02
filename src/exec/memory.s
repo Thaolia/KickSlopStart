@@ -365,11 +365,34 @@ exec_TypeOfMem:
         jsr     LVO_PERMIT(a6)       ; preserves d0
         rts
 
-; init_memory: chip MemHeader @ MH_CHIP + initial chunk covering the heap
+; init_memory: sizes the chip RAM, then chip MemHeader @ MH_CHIP + initial chunk covering the heap.
+; Sizing as on 1.3 (spec coldstart-hardware-v34.md §2): a long written at each 4 KB boundary must read back while
+; the sentinel long at $0 stays 0 (a mirror of a smaller chip wraps onto $0), up to 2 MB. The first MAXCHIP bytes
+; are assumed: they already hold ExecBase, the stack and the low variables.
+CHIP_LIMIT      EQU $00200000
+CHIP_STEP       EQU $00001000
+CHIP_PATTERN    EQU $5AA5C33C
 init_memory:                         ; a6 = SysBase (jump table already built)
                 ifd     MEMTRACK
         clr.l   MT_TABLE             ; low RAM not cleared at reset
                 endc
+        move.l  #MAXCHIP,d1          ; d1 = chip size
+        clr.l   ($0).w
+.im_size:
+        cmp.l   #CHIP_LIMIT,d1
+        beq.s   .im_sized
+        move.l  d1,a1
+        move.l  #CHIP_PATTERN,(a1)
+        tst.l   ($0).w
+        bne.s   .im_mirror
+        cmp.l   #CHIP_PATTERN,(a1)
+        bne.s   .im_sized
+        add.l   #CHIP_STEP,d1
+        bra.s   .im_size
+.im_mirror:
+        clr.l   ($0).w
+.im_sized:
+        move.l  d1,EB_MAXLOCMEM(a6)
         lea     MH_CHIP,a0
         moveq   #7,d0                ; 32 bytes to zero
         move.l  a0,a1
@@ -381,11 +404,12 @@ init_memory:                         ; a6 = SysBase (jump table already built)
         move.l  #mh_name,LN_NAME(a0)
         move.w  #(MEMF_CHIP|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
         move.l  #HEAP_LOWER,MH_LOWER(a0)
-        move.l  #HEAP_UPPER,MH_UPPER(a0)
-        move.l  #(HEAP_UPPER-HEAP_LOWER),MH_FREE(a0)
+        move.l  d1,MH_UPPER(a0)
+        sub.l   #HEAP_LOWER,d1
+        move.l  d1,MH_FREE(a0)
         move.l  #HEAP_LOWER,a1       ; initial chunk = the whole heap
         clr.l   MC_NEXT(a1)
-        move.l  #(HEAP_UPPER-HEAP_LOWER),MC_BYTES(a1)
+        move.l  d1,MC_BYTES(a1)
         move.l  a1,MH_FIRST(a0)
         lea     EB_MEMLIST(a6),a0    ; AddTail(MemList, MemHeader)
         lea     MH_CHIP,a1
