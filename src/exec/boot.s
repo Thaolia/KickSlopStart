@@ -2208,7 +2208,7 @@ m6t_done:
         ; single read for both (a 2nd timeout without a disk would shift the M7A proof). Without a disk -> nothing,
         ; without FAILED.
         moveq   #0,d4                ; d4 = "disk present" flag (M6W gate: avoids a 2nd timeout without a disk)
-        bsr     td_read_track0
+        jsr     td_read_track0
         tst.l   d0
         beq     m6uv_done
         moveq   #1,d4                ; disk present
@@ -2318,7 +2318,7 @@ m6w_done:
         tst.l   d4
         beq     m6x_done
         moveq   #2,d0
-        bsr     td_read_track        ; d0 = rawbuf (track 2) | 0
+        jsr     td_read_track        ; d0 = rawbuf (track 2) | 0
         tst.l   d0
         beq     m6x_done
         move.l  d0,a4                ; a4 = rawbuf
@@ -3323,7 +3323,7 @@ d2_done:
         ; RED STRAP_FAKE_BOOTDEV: d0!=0 without reading -> M6Y present but CBOOT absent. RED STRAP_NO_EXEC: validates
         ; but does not jump -> CBOOT absent, M6Y present. RED STRAP_BAD_CSUM: rejects a good block -> M6R.
         jsr     alert_boothook       ; alert.hook: Guru of a dead-end alert from before the reset, before the strap
-        bsr     strap_boot
+        jsr     strap_boot
         tst.l   d0
         bne.s   .m6r_floppy
         jsr     strap_romboot        ; DF0: not bootable: BootPoint of the boards (a BootPoint that starts dos jumps to
@@ -5242,7 +5242,7 @@ task_l:                              ; low priority, never blocks
         moveq   #1,d0
         moveq   #DEMO_SIG,d1
         lsl.l   d1,d0
-        jsr     LVO_SIGNAL(a6)       ; wakes task_H + sets AttnResched (pri 10 > 0)
+        jsr     LVO_SIGNAL(a6)       ; wakes task_H + sets SAR (pri 10 > 0)
         jsr     LVO_PERMIT(a6)       ; <- YIELD: dispatches task_H immediately
         cmp.l   #SENT_L,d7
         bne.w   demo_fail
@@ -5277,7 +5277,7 @@ task_fb:
         move.l  #1,FORBID_TEST_FLAG  ; "I ran" (observed by task_fa)
         bra.s   .fb_loop
 
-; task_fa (pri 3, Forbid atomicity proof): takes Forbid, wakes task_fb (pri 7 > 3 -> arms AttnResched),
+; task_fa (pri 3, Forbid atomicity proof): takes Forbid, wakes task_fb (pri 7 > 3 -> arms SAR),
 ; waits 2 VBlanks UNDER Forbid (guarantees >= 1 IRQ exit during the Forbid, where intr_isr_defer could switch).
 ; If FORBID_TEST_FLAG stayed 0 -> task_fb did NOT preempt under Forbid -> "FORBID ATOMIC OK". Runs ONCE
 ; then blocks (no hogging). RED SCHED_NO_FORBID_GATE: fb preempts during the Forbid -> flag=1 -> absent.
@@ -5285,7 +5285,7 @@ task_fa:
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)       ; atomic output section to be proven
         clr.l   FORBID_TEST_FLAG
-        move.l  FB_TASK,a1           ; wakes task_fb (pri 7 > current 3 -> exec_Signal sets AttnResched)
+        move.l  FB_TASK,a1           ; wakes task_fb (pri 7 > current 3 -> exec_Signal sets SAR)
         moveq   #1,d0
         moveq   #FB_SIG,d1
         lsl.l   d1,d0

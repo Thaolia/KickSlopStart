@@ -14,7 +14,7 @@
 ;     used a bespoke routine (timer_reply) because PutMsg/ReplyMsg called Permit (SYNCHRONOUS
 ;     reschedule forbidden in an interrupt). M7d made PutMsg/ReplyMsg interrupt-safe (Disable INTENA +
 ;     raw_enable, WITHOUT Permit/yield tail) -> M7i removed timer_reply and calls ReplyMsg directly.
-;     Signal (via PutMsg) sets AttnResched without rescheduling -> the switch happens on handler exit.
+;     Signal (via PutMsg) sets SAR without rescheduling -> the switch happens on handler exit.
 ; MICROHZ UNIT (CIA-A timer B, level 2, like 1.3 — spec docs/analysis/timer-v34.md):
 ;   the init takes bit 1 (timer B) of ciaa.resource through AddICRVector; timer_micro_service is called by
 ;   cia_dispatch (PORTS server) at each end of one-shot. The one-shot is armed on the nearest deadline; the
