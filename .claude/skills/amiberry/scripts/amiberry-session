@@ -1,0 +1,557 @@
+#!/usr/bin/env bash
+# amiberry-session - concurrent headless Amiberry sessions for this project: serial output logged to a file, the
+# WinUAE GDB server for live debugging with gdb-multiarch, the IPC socket for control, screenshots and scripted input.
+# Each session owns a directory (build/amiberry/sessions/<name>/, or build/amiberry/analysis/<name>/ for the analysis
+# track), two TCP ports (serial, GDB), an Xvfb display and an IPC socket. Run without arguments for the usage.
+set -u
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$SKILL_DIR/../../.." && pwd)"
+BASE="$ROOT/build/amiberry"
+LOCK="$BASE/.lock"
+PORT_BASE=24100                      # session i: serial PORT_BASE+2i, GDB PORT_BASE+2i+1
+MAX_SESSIONS=16
+COMMODORE_ROM="$ROOT/assets/kick34005.A500"
+GDB_INIT="$SKILL_DIR/scripts/m68k.gdb"
+
+die() { echo "amiberry-session: $*" >&2; exit 2; }
+
+usage() {
+  cat <<'EOF'
+usage: amiberry-session <command> [arguments]
+  config [--amiberry PATH] [--cwd DIR]     resolved Amiberry binary and working directory
+  start  [--name N] [--rom ROM] [--adf ADF]... [--chip KB] [--slow KB] [--fast MB] [--cycle-exact]
+         [--visible] [--analysis] [--amiberry PATH] [--cwd DIR] [--timeout S] [-- AMIBERRY_ARGS...]
+  list                                     sessions and whether they run
+  status <name>                            processes, ports, IPC PING and GET_STATUS
+  stop   <name>... | --all                 QUIT through IPC, then kill what is left (logs are kept)
+  serial <name> [--follow]                 serial output (printable characters)
+  wait-serial <name> [--new] <text> [s]    wait for <text> on the serial output (--new: written from now on);
+                                           exit 1 on timeout
+  ipc    <name> COMMAND [ARG]...           one IPC command (arguments joined with TABs); exit 1 on ERROR
+  gdb    <name> [--interactive] [GDB ARGS] gdb-multiarch attached to the session (batch unless --interactive)
+  shot   <name> <file.png> [--via xwd|ipc|gdb]
+  input  <name> <script-file | ->          scripted keyboard/mouse/joystick input (see SKILL.md)
+EOF
+  exit 2
+}
+
+# ---------------------------------------------------------------- configuration
+# Priority: command-line option > environment (AMIBERRY_BIN, AMIBERRY_CWD) > config.env > default.
+resolve_config() {
+  local opt_bin="$1" opt_cwd="$2" cfg_bin cfg_cwd
+  cfg_bin="$( (unset AMIBERRY_BIN AMIBERRY_CWD; [ -f "$SKILL_DIR/config.env" ] && . "$SKILL_DIR/config.env"; printf '%s' "${AMIBERRY_BIN-}") )"
+  cfg_cwd="$( (unset AMIBERRY_BIN AMIBERRY_CWD; [ -f "$SKILL_DIR/config.env" ] && . "$SKILL_DIR/config.env"; printf '%s' "${AMIBERRY_CWD-}") )"
+  if [ -n "$opt_bin" ]; then BIN="$opt_bin"; BIN_FROM="option --amiberry"
+  elif [ -n "${AMIBERRY_BIN-}" ]; then BIN="$AMIBERRY_BIN"; BIN_FROM="environment AMIBERRY_BIN"
+  elif [ -n "$cfg_bin" ]; then BIN="$cfg_bin"; BIN_FROM="config.env"
+  else BIN="$HOME/dev/tools/amiberry/build/amiberry"; BIN_FROM="default"; fi
+  if [ -n "$opt_cwd" ]; then CWD="$opt_cwd"; CWD_FROM="option --cwd"
+  elif [ -n "${AMIBERRY_CWD-}" ]; then CWD="$AMIBERRY_CWD"; CWD_FROM="environment AMIBERRY_CWD"
+  elif [ -n "$cfg_cwd" ]; then CWD="$cfg_cwd"; CWD_FROM="config.env"
+  else CWD="$(dirname "$BIN")/.."; CWD_FROM="default (parent of the binary's directory)"; fi
+}
+
+check_config() {
+  [ -x "$BIN" ] || die "Amiberry binary not executable: $BIN ($BIN_FROM)"
+  [ -d "$CWD" ] || die "working directory not found: $CWD ($CWD_FROM)"
+  BIN="$(readlink -f "$BIN")"
+  CWD="$(cd "$CWD" && pwd)"
+}
+
+cmd_config() {
+  local ob="" oc=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --amiberry) ob="${2:?}"; shift 2 ;;
+      --cwd) oc="${2:?}"; shift 2 ;;
+      *) die "config: unknown option $1" ;;
+    esac
+  done
+  resolve_config "$ob" "$oc"
+  check_config
+  echo "binary:            $BIN   [$BIN_FROM]"
+  echo "working directory: $CWD   [$CWD_FROM]"
+  "$BIN" --help 2>&1 | grep -m1 'VER:' | sed 's/^/version:           /'
+  for t in gdb-multiarch socat Xvfb xwd convert flock ss; do
+    command -v "$t" >/dev/null || echo "missing tool:      $t"
+  done
+}
+
+# ---------------------------------------------------------------- sessions
+session_dir() {
+  local n="$1"
+  if [ -f "$BASE/sessions/$n/session.env" ]; then echo "$BASE/sessions/$n"
+  elif [ -f "$BASE/analysis/$n/session.env" ]; then echo "$BASE/analysis/$n"
+  else die "no session named '$n' (see: amiberry-session list)"; fi
+}
+
+load_session() {
+  SDIR="$(session_dir "$1")"
+  # shellcheck disable=SC1091
+  . "$SDIR/session.env"
+}
+
+alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+
+port_free() { ! ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+
+ipc_raw() {   # ipc_raw SOCKET LINE
+  printf '%s\n' "$2" | timeout "${IPC_TIMEOUT:-5}" socat -t 2 - "UNIX-CONNECT:$1" 2>/dev/null
+}
+
+ipc_line() {  # ipc_line COMMAND ARGS... -> reply on stdout, status 1 on ERROR / no reply
+  local line="$1"; shift
+  local a
+  for a in "$@"; do line="$line"$'\t'"$a"; done
+  local r
+  r="$(ipc_raw "$SOCK" "$line")"
+  printf '%s\n' "$r"
+  case "$r" in OK*) return 0 ;; *) return 1 ;; esac
+}
+
+is_commodore_rom() {
+  local rom="$1"
+  case "$(basename "$rom")" in *kick34005*|*[Kk]ickstart*1.3*) return 0 ;; esac
+  [ -f "$COMMODORE_ROM" ] || return 1
+  [ "$(sha256sum < "$rom" | cut -d' ' -f1)" = "$(sha256sum < "$COMMODORE_ROM" | cut -d' ' -f1)" ]
+}
+
+cmd_start() {
+  local name="" rom="$ROOT/build/kick13.rom" chip=512 slow=512 fast=0 cycle=0 visible=0 analysis=0
+  local ob="" oc="" tmo=30
+  local -a adfs=() extra=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="${2:?}"; shift 2 ;;
+      --rom) rom="${2:?}"; shift 2 ;;
+      --adf) adfs+=("${2:?}"); shift 2 ;;
+      --chip) chip="${2:?}"; shift 2 ;;
+      --slow) slow="${2:?}"; shift 2 ;;
+      --fast) fast="${2:?}"; shift 2 ;;
+      --cycle-exact) cycle=1; shift ;;
+      --visible) visible=1; shift ;;
+      --analysis) analysis=1; shift ;;
+      --amiberry) ob="${2:?}"; shift 2 ;;
+      --cwd) oc="${2:?}"; shift 2 ;;
+      --timeout) tmo="${2:?}"; shift 2 ;;
+      --) shift; extra=("$@"); break ;;
+      *) die "start: unknown option $1" ;;
+    esac
+  done
+  [ ${#adfs[@]} -le 4 ] || die "start: at most 4 floppies (DF0-DF3)"
+  resolve_config "$ob" "$oc"
+  check_config
+  for t in socat flock ss; do command -v "$t" >/dev/null || die "missing tool: $t"; done
+  [ "$visible" = 1 ] || command -v Xvfb >/dev/null || die "missing tool: Xvfb"
+  [ -f "$rom" ] || die "ROM not found: $rom"
+  rom="$(readlink -f "$rom")"
+  if is_commodore_rom "$rom" && [ "$analysis" != 1 ]; then
+    die "refused: $rom is the Commodore ROM. Only a separate analysis agent may run it (CLAUDE.md, clean-room
+firewall), with --analysis; its findings go to docs/analysis/ as behaviour only. See SKILL.md."
+  fi
+  local a
+  for a in "${adfs[@]}"; do [ -f "$a" ] || die "ADF not found: $a"; done
+  case "$chip$slow$fast" in *[!0-9]*) die "start: --chip/--slow/--fast take numbers" ;; esac
+  [ $((chip % 512)) = 0 ] && [ "$chip" -gt 0 ] || die "start: --chip must be a multiple of 512 KB"
+  [ $((slow % 256)) = 0 ] || die "start: --slow must be a multiple of 256 KB"
+
+  mkdir -p "$BASE/sessions" "$BASE/analysis" "$BASE/slots"
+  local kind="sessions"; [ "$analysis" = 1 ] && kind="analysis"
+  exec 9>"$LOCK"
+  flock 9
+  # slot file = "<kind>/<name> <pid of the start command>": held while that start command runs (its session.env
+  # does not exist yet) or while the session's Amiberry runs; otherwise reclaimed
+  local i idx="" slotname starter spid held=" "
+  for i in $(seq 0 $((MAX_SESSIONS - 1))); do
+    if [ -f "$BASE/slots/$i" ]; then
+      read -r slotname starter < "$BASE/slots/$i"
+      spid="$( (. "$BASE/$slotname/session.env" 2>/dev/null; printf '%s' "${AMI_PID-}") )"
+      if alive "$spid" || alive "$starter"; then held="$held${slotname#*/} "; continue; fi
+      rm -f "$BASE/slots/$i"
+    fi
+    [ -n "$idx" ] && continue
+    port_free $((PORT_BASE + 2 * i)) && port_free $((PORT_BASE + 2 * i + 1)) && idx="$i"
+  done
+  [ -n "$idx" ] || { flock -u 9; die "no free session slot (max $MAX_SESSIONS) or ports busy"; }
+  [ -n "$name" ] || { name="s$idx"; while [[ "$held" == *" $name "* ]]; do name="$name.x"; done; }
+  case "$name" in *[!A-Za-z0-9._-]*|"") flock -u 9; die "start: session name: letters, digits, . _ - only" ;; esac
+  [[ "$held" == *" $name "* ]] && { flock -u 9; die "session '$name' is already running"; }
+  local dir="$BASE/$kind/$name"
+  rm -rf "$BASE/sessions/$name" "$BASE/analysis/$name"
+  mkdir -p "$dir/home/conf"
+  echo "$kind/$name $$" > "$BASE/slots/$idx"
+  local sport=$((PORT_BASE + 2 * idx)) gport=$((PORT_BASE + 2 * idx + 1))
+  local xdg
+  xdg="/tmp/ab$(id -u)-$idx"                # short: a Unix socket path is limited to 108 bytes
+  rm -rf "$xdg"; mkdir -m 700 "$xdg"
+
+  local disp xvfb_pid=""
+  if [ "$visible" = 1 ]; then
+    disp="${DISPLAY:-:0}"
+  else
+    local n
+    disp=""
+    for n in $(seq 99 160); do
+      [ -e "/tmp/.X$n-lock" ] && continue
+      Xvfb ":$n" -screen 0 1024x768x24 -nolisten tcp > "$dir/xvfb.log" 2>&1 < /dev/null 9>&- &
+      xvfb_pid=$!
+      local _
+      for _ in $(seq 1 50); do
+        xwd -root -display ":$n" -silent > /dev/null 2>&1 && { disp=":$n"; break; }
+        alive "$xvfb_pid" || break
+        sleep 0.1
+      done
+      [ -n "$disp" ] && break
+      kill "$xvfb_pid" 2>/dev/null; xvfb_pid=""
+    done
+    [ -n "$disp" ] || { rm -f "$BASE/slots/$idx"; flock -u 9; die "could not start Xvfb"; }
+  fi
+  flock -u 9
+
+  local -a floppy=()
+  local d=0 base
+  for a in "${adfs[@]}"; do
+    base="df$d-$(basename "$a")"
+    cp "$a" "$dir/$base" && chmod u+w "$dir/$base"
+    floppy+=("-$d" "$dir/$base")
+    d=$((d + 1))
+  done
+  local -a opts=(--log --model A500 -G -r "$rom" "${floppy[@]}"
+    -s use_gui=no -s "chipmem_size=$((chip / 512))" -s "bogomem_size=$((slow / 256))"
+    -s cpu_threaded=false -s debugging_features=gdbserver -s "gdb_port=$gport"
+    -s "serial_port=TCP://127.0.0.1:$sport/wait")
+  [ "$fast" -gt 0 ] && opts+=(-F "$fast")
+  [ "$cycle" = 1 ] && opts+=(-s cpu_compatible=true -s cpu_cycle_exact=true -s cycle_exact=true)
+  opts+=("${extra[@]}")
+
+  : > "$dir/serial.log"
+  # the serial port waits for its client (/wait): emulation starts once the logger is connected, nothing is lost
+  setsid bash -c 'for _ in $(seq 1 400); do socat -u "TCP:127.0.0.1:$1" - >> "$2" 2>/dev/null && break; sleep 0.25; done' \
+    _ "$sport" "$dir/serial.log" > /dev/null 2>&1 < /dev/null 9>&- &
+  local ser_pid=$!
+  # SDL3 reads SDL_VIDEO_DRIVER / SDL_AUDIO_DRIVER; the SDL2 names are set too
+  ( cd "$CWD" && exec env DISPLAY="$disp" SDL_VIDEO_DRIVER=x11 SDL_VIDEODRIVER=x11 \
+      SDL_AUDIO_DRIVER=dummy SDL_AUDIODRIVER=dummy \
+      AMIBERRY_HOME_DIR="$dir/home" AMIBERRY_CONFIG_DIR="$dir/home/conf" XDG_RUNTIME_DIR="$xdg" \
+      setsid "$BIN" "${opts[@]}" ) > "$dir/amiberry.log" 2>&1 < /dev/null 9>&- &
+  local ami_pid=$!
+
+  {
+    printf 'NAME=%q\nINDEX=%q\nKIND=%q\nDIR=%q\n' "$name" "$idx" "$kind" "$dir"
+    printf 'SERIAL_PORT=%q\nGDB_PORT=%q\nDISP=%q\nXDG=%q\nSOCK=%q\n' "$sport" "$gport" "$disp" "$xdg" "$xdg/amiberry.sock"
+    printf 'AMI_PID=%q\nSER_PID=%q\nXVFB_PID=%q\nVISIBLE=%q\n' "$ami_pid" "$ser_pid" "$xvfb_pid" "$visible"
+    printf 'ROM=%q\nADFS=%q\nBIN=%q\nCWD=%q\nSTARTED=%q\n' "$rom" "${adfs[*]}" "$BIN" "$CWD" "$(date '+%F %T')"
+  } > "$dir/session.env"
+
+  local t ok=0
+  for t in $(seq 1 $((tmo * 4))); do
+    alive "$ami_pid" || break
+    grep -aq "WinUAE GDB: listening" "$dir/amiberry.log" && [ -S "$xdg/amiberry.sock" ] && { ok=1; break; }
+    sleep 0.25
+  done
+  if [ "$ok" != 1 ]; then
+    echo "amiberry-session: session '$name' did not come up; end of amiberry.log:" >&2
+    tail -15 "$dir/amiberry.log" >&2
+    SDIR="$dir"; NAME="$name"; stop_one
+    exit 1
+  fi
+  echo "session $name started ($kind)"
+  echo "  dir:    $dir"
+  echo "  serial: 127.0.0.1:$sport -> $dir/serial.log"
+  echo "  gdb:    127.0.0.1:$gport   (amiberry-session gdb $name ...)"
+  echo "  ipc:    $xdg/amiberry.sock"
+  echo "  screen: DISPLAY=$disp"
+}
+
+stop_one() {   # needs SDIR (session.env loaded or not)
+  . "$SDIR/session.env"
+  if alive "${AMI_PID:-}"; then
+    [ -S "${SOCK:-}" ] && ipc_raw "$SOCK" "QUIT" > /dev/null
+    local _
+    for _ in $(seq 1 20); do alive "$AMI_PID" || break; sleep 0.25; done
+    alive "$AMI_PID" && kill "$AMI_PID" 2>/dev/null
+    sleep 0.5
+    alive "$AMI_PID" && kill -9 "$AMI_PID" 2>/dev/null
+  fi
+  alive "${SER_PID:-}" && kill -- "-$SER_PID" 2>/dev/null
+  alive "${XVFB_PID:-}" && kill "$XVFB_PID" 2>/dev/null
+  [ -n "${XDG:-}" ] && rm -rf "$XDG"
+  local held_by=""
+  [ -n "${INDEX:-}" ] && [ -f "$BASE/slots/$INDEX" ] && read -r held_by _ < "$BASE/slots/$INDEX"
+  [ "$held_by" = "$KIND/$NAME" ] && rm -f "$BASE/slots/$INDEX"
+  echo "session $NAME stopped (logs kept in $SDIR)"
+}
+
+cmd_stop() {
+  [ $# -ge 1 ] || usage
+  local n
+  if [ "$1" = "--all" ]; then
+    for n in "$BASE"/sessions/*/session.env "$BASE"/analysis/*/session.env; do
+      [ -f "$n" ] || continue
+      SDIR="$(dirname "$n")"
+      local p; p="$( (. "$n"; printf '%s' "${AMI_PID-}") )"
+      local x; x="$( (. "$n"; printf '%s' "${XVFB_PID-}") )"
+      alive "$p" || alive "$x" || continue
+      stop_one
+    done
+    return 0
+  fi
+  for n in "$@"; do SDIR="$(session_dir "$n")"; stop_one; done
+}
+
+cmd_list() {
+  local f any=0
+  printf '%-14s %-9s %-5s %-8s %-7s %-7s %s\n' NAME KIND SLOT STATE SERIAL GDB DISPLAY
+  for f in "$BASE"/sessions/*/session.env "$BASE"/analysis/*/session.env; do
+    [ -f "$f" ] || continue
+    any=1
+    ( . "$f"; st=stopped; alive "$AMI_PID" && st=running
+      printf '%-14s %-9s %-5s %-8s %-7s %-7s %s\n' "$NAME" "$KIND" "$INDEX" "$st" "$SERIAL_PORT" "$GDB_PORT" "$DISP" )
+  done
+  [ "$any" = 1 ] || echo "(no session)"
+}
+
+cmd_status() {
+  [ $# -eq 1 ] || usage
+  load_session "$1"
+  local st=stopped; alive "$AMI_PID" && st=running
+  echo "session $NAME: $st   ($KIND, slot $INDEX, started $STARTED)"
+  echo "  rom: $ROM"
+  [ -n "$ADFS" ] && echo "  adf: $ADFS"
+  echo "  amiberry pid $AMI_PID, serial logger pid $SER_PID${XVFB_PID:+, Xvfb pid $XVFB_PID}"
+  echo "  serial 127.0.0.1:$SERIAL_PORT ($(wc -c < "$SDIR/serial.log") bytes logged), gdb 127.0.0.1:$GDB_PORT, DISPLAY=$DISP"
+  [ "$st" = running ] || return 1
+  printf '  ipc PING: '; ipc_line PING || true
+  printf '  ipc GET_STATUS: '; ipc_line GET_STATUS | cut -c1-200 || true
+}
+
+cmd_serial() {
+  [ $# -ge 1 ] || usage
+  load_session "$1"
+  if [ "${2:-}" = "--follow" ]; then
+    tail -n +1 -f "$SDIR/serial.log" | tr -cd '\11\12\40-\176'
+  else
+    tr -cd '\11\12\40-\176' < "$SDIR/serial.log"
+  fi
+}
+
+cmd_wait_serial() {   # NAME [--new] TEXT [SECONDS]; SERIAL_FROM (bytes) = part of the log already seen
+  [ $# -ge 2 ] || usage
+  load_session "$1"; shift
+  local from="${SERIAL_FROM:-0}"
+  if [ "$1" = "--new" ]; then from="$(wc -c < "$SDIR/serial.log")"; shift; fi
+  local text="${1:?text}" secs="${2:-60}" t
+  for t in $(seq 1 $((secs * 4))); do
+    tail -c +"$((from + 1))" "$SDIR/serial.log" 2>/dev/null | grep -aqF -- "$text" && { echo "found: $text"; return 0; }
+    alive "$AMI_PID" || { echo "amiberry-session: session $NAME is not running" >&2; return 1; }
+    sleep 0.25
+  done
+  echo "amiberry-session: timeout ($secs s) waiting for: $text" >&2
+  return 1
+}
+
+cmd_ipc() {
+  [ $# -ge 2 ] || usage
+  load_session "$1"; shift
+  alive "$AMI_PID" || die "session $NAME is not running"
+  ipc_line "$@"
+}
+
+gdb_run() {   # gdb_run ARGS... (session loaded)
+  local -a g=(gdb-multiarch -q -nx -x "$GDB_INIT" -ex "target remote 127.0.0.1:$GDB_PORT")
+  {
+    printf '\n==== %s gdb' "$(date '+%F %T')"; printf ' %q' "$@"; printf '\n'
+  } >> "$SDIR/gdb.log"
+  if [ "${INTERACTIVE:-0}" = 1 ]; then
+    "${g[@]}" "$@"
+  else
+    # batch: detach at the end (resumes the emulation); closing the client also resumes it if gdb is cut short
+    timeout "${GDB_TIMEOUT:-120}" "${g[@]}" -batch "$@" -ex detach 2>&1 | tee -a "$SDIR/gdb.log"
+    return "${PIPESTATUS[0]}"
+  fi
+}
+
+cmd_gdb() {
+  [ $# -ge 1 ] || usage
+  load_session "$1"; shift
+  alive "$AMI_PID" || die "session $NAME is not running"
+  command -v gdb-multiarch > /dev/null || die "missing tool: gdb-multiarch"
+  if [ "${1:-}" = "--interactive" ]; then shift; INTERACTIVE=1; fi
+  gdb_run "$@"
+}
+
+shot_file() {   # shot_file PNG VIA (session loaded)
+  local png="$1" via="${2:-xwd}"
+  case "$png" in /*) ;; *) png="$SDIR/$png" ;; esac
+  mkdir -p "$(dirname "$png")"
+  rm -f "$png"
+  case "$via" in
+    xwd) xwd -root -display "$DISP" -silent | convert xwd:- "$png" ;;
+    ipc) ipc_line SCREENSHOT "$png" > /dev/null || { echo "amiberry-session: IPC SCREENSHOT failed" >&2; return 1; } ;;
+    gdb) GDB_TIMEOUT=30 gdb_run -ex "monitor screenshot $png" > /dev/null ;;
+    *) die "shot: --via xwd|ipc|gdb" ;;
+  esac
+  local _
+  for _ in $(seq 1 20); do [ -s "$png" ] && break; sleep 0.1; done
+  [ -s "$png" ] || { echo "amiberry-session: no image written ($via)" >&2; return 1; }
+  echo "$png"
+}
+
+cmd_shot() {
+  [ $# -ge 2 ] || usage
+  load_session "$1"
+  alive "$AMI_PID" || die "session $NAME is not running"
+  local png="$2" via="xwd"
+  [ "${3:-}" = "--via" ] && via="${4:?--via xwd|ipc|gdb}"
+  shot_file "$png" "$via"
+}
+
+# ---------------------------------------------------------------- scripted input
+hex32() { printf '%x' $(( $1 & 0xffffffff )); }
+
+mon_input() {
+  local r
+  r="$(ipc_line MONITOR "input event $*")" || { echo "amiberry-session: input event $* -> ${r:-no reply}" >&2; return 1; }
+}
+
+# keys go through SEND_KEY (raw keycode in decimal), which IPC also accepts while gdb holds the connection
+key_set() {   # key_set HEXCODE 0|1
+  local r
+  r="$(ipc_line SEND_KEY "$((16#$1))" "$2")" || { echo "amiberry-session: SEND_KEY $1 $2 -> ${r:-no reply}" >&2; return 1; }
+}
+
+key_tap() {   # key_tap HEXCODE [SHIFT]
+  if [ "${2:-0}" = 1 ]; then key_set 60 1 || return 1; fi
+  key_set "$1" 1 || return 1
+  sleep 0.08
+  key_set "$1" 0 || return 1
+  sleep 0.04
+  if [ "${2:-0}" = 1 ]; then key_set 60 0 || return 1; fi
+}
+
+# US layout: character -> raw keycode (hex) and shift flag
+char_key() {
+  local c="$1" lower="abcdefghijklmnopqrstuvwxyz" codes
+  codes=(20 35 33 22 12 23 24 25 17 26 27 28 37 36 18 19 10 13 21 14 16 34 11 32 15 31)
+  local i
+  for i in $(seq 0 25); do
+    [ "$c" = "${lower:$i:1}" ] && { echo "${codes[$i]} 0"; return; }
+    [ "$c" = "$(printf '%s' "${lower:$i:1}" | tr a-z A-Z)" ] && { echo "${codes[$i]} 1"; return; }
+  done
+  case "$c" in
+    1) echo "01 0" ;; 2) echo "02 0" ;; 3) echo "03 0" ;; 4) echo "04 0" ;; 5) echo "05 0" ;;
+    6) echo "06 0" ;; 7) echo "07 0" ;; 8) echo "08 0" ;; 9) echo "09 0" ;; 0) echo "0a 0" ;;
+    '!') echo "01 1" ;; '@') echo "02 1" ;; '#') echo "03 1" ;; '$') echo "04 1" ;; '%') echo "05 1" ;;
+    '^') echo "06 1" ;; '&') echo "07 1" ;; '*') echo "08 1" ;; '(') echo "09 1" ;; ')') echo "0a 1" ;;
+    ' ') echo "40 0" ;; '-') echo "0b 0" ;; '_') echo "0b 1" ;; '=') echo "0c 0" ;; '+') echo "0c 1" ;;
+    '[') echo "1a 0" ;; '{') echo "1a 1" ;; ']') echo "1b 0" ;; '}') echo "1b 1" ;;
+    ';') echo "29 0" ;; ':') echo "29 1" ;; "'") echo "2a 0" ;; '"') echo "2a 1" ;;
+    ',') echo "38 0" ;; '<') echo "38 1" ;; '.') echo "39 0" ;; '>') echo "39 1" ;;
+    '/') echo "3a 0" ;; '?') echo "3a 1" ;; '\') echo "0d 0" ;; '|') echo "0d 1" ;;
+    '`') echo "00 0" ;; '~') echo "00 1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# mouse_move DX DY: relative mouse counts (no host scaling). The Amiga reads 8-bit counters once per frame, so
+# steps are kept small and more than a frame apart: two large steps in one frame would wrap and be lost.
+MOUSE_STEP=32
+mouse_move() {
+  local dx="$1" dy="$2" sx sy
+  while [ "$dx" != 0 ] || [ "$dy" != 0 ]; do
+    sx=$dx; [ "$sx" -gt $MOUSE_STEP ] && sx=$MOUSE_STEP; [ "$sx" -lt -$MOUSE_STEP ] && sx=-$MOUSE_STEP
+    sy=$dy; [ "$sy" -gt $MOUSE_STEP ] && sy=$MOUSE_STEP; [ "$sy" -lt -$MOUSE_STEP ] && sy=-$MOUSE_STEP
+    if [ "$sx" != 0 ]; then mon_input "1 0 0 $(hex32 "$sx")" || return 1; fi
+    if [ "$sy" != 0 ]; then mon_input "1 0 1 $(hex32 "$sy")" || return 1; fi
+    dx=$((dx - sx)); dy=$((dy - sy))
+    sleep 0.04
+  done
+}
+
+buttons() {
+  local r
+  r="$(ipc_line SEND_MOUSE 0 0 "$1")" || { echo "amiberry-session: SEND_MOUSE -> ${r:-no reply}" >&2; return 1; }
+}
+
+run_action() {   # run_action TOKEN (session loaded); returns non-zero on a failed check
+  local tok="$1" arg="${1#*:}"
+  echo "> $tok"
+  case "$tok" in
+    key:*) key_tap "$arg" ;;
+    down:*) key_set "$arg" 1 ;;
+    up:*) key_set "$arg" 0 ;;
+    text:*)
+      local i c kc
+      for i in $(seq 0 $((${#arg} - 1))); do
+        c="${arg:$i:1}"
+        kc="$(char_key "$c")" || { echo "amiberry-session: no key for '$c'" >&2; return 1; }
+        key_tap $kc || return 1
+      done ;;
+    mouse:*) mouse_move "${arg%,*}" "${arg#*,}" ;;
+    click) buttons 1 && sleep 0.2 && buttons 0 ;;
+    rclick) buttons 2 && sleep 0.2 && buttons 0 ;;
+    dclick) buttons 1 && sleep 0.1 && buttons 0 && sleep 0.15 && buttons 1 && sleep 0.1 && buttons 0 ;;
+    ldown) buttons 1 ;;
+    lup|rup) buttons 0 ;;
+    rdown) buttons 2 ;;
+    joy:*)
+      local port dir st
+      IFS=, read -r port dir st <<< "$arg"
+      case "$dir" in left) dir=0 ;; right) dir=1 ;; up) dir=2 ;; down) dir=3 ;; fire) dir=4 ;; esac
+      mon_input "2 $port $dir ${st:-1}" ;;
+    wait:*) sleep "$(awk "BEGIN{print $arg/1000}")" ;;
+    frames:*) ipc_line PAUSE > /dev/null; ipc_line FRAME_ADVANCE "$arg" > /dev/null; ipc_line RESUME > /dev/null ;;
+    shot:*) shot_file "$arg" xwd > /dev/null ;;
+    wait-serial:*)
+      local text="${arg%,*}" secs=60
+      [ "$text" != "$arg" ] && secs="${arg##*,}"
+      cmd_wait_serial "$NAME" "$text" "$secs" > /dev/null || return 1
+      SERIAL_FROM="$(wc -c < "$SDIR/serial.log")" ;;
+    *) echo "amiberry-session: unknown input action: $tok" >&2; return 1 ;;
+  esac
+}
+
+cmd_input() {
+  [ $# -eq 2 ] || usage
+  load_session "$1"
+  alive "$AMI_PID" || die "session $NAME is not running"
+  local src="$2" line tok rest
+  SERIAL_FROM="$(wc -c < "$SDIR/serial.log")"   # wait-serial: only output produced by this script counts
+  [ "$src" = "-" ] && src=/dev/stdin
+  [ "$src" = /dev/stdin ] || [ -f "$src" ] || die "input: no such script: $src"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    while :; do
+      line="${line#"${line%%[![:space:]]*}"}"
+      [ -n "$line" ] || break
+      if [[ "$line" == text:* || "$line" == wait-serial:* ]]; then   # these two take the rest of the line
+        rest="${line%"${line##*[![:space:]]}"}"
+        run_action "$rest" || return 1
+        break
+      fi
+      tok="${line%%[[:space:]]*}"
+      line="${line#"$tok"}"
+      run_action "$tok" || return 1
+    done
+  done < "$src"
+}
+
+# ---------------------------------------------------------------- main
+[ $# -ge 1 ] || usage
+cmd="$1"; shift
+case "$cmd" in
+  config) cmd_config "$@" ;;
+  start) cmd_start "$@" ;;
+  stop) cmd_stop "$@" ;;
+  list) cmd_list ;;
+  status) cmd_status "$@" ;;
+  serial) cmd_serial "$@" ;;
+  wait-serial) cmd_wait_serial "$@" ;;
+  ipc) cmd_ipc "$@" ;;
+  gdb) cmd_gdb "$@" ;;
+  shot) cmd_shot "$@" ;;
+  input) cmd_input "$@" ;;
+  -h|--help|help) usage ;;
+  *) usage ;;
+esac

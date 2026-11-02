@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Pre-push validation of the dev ROM, three Amiberry sessions in parallel (replaces the FS-UAE runs):
+#   pp512 / pp0 : assets/boot_c.adf with 512 KB / 0 KB of slow RAM -> "E3 CMD RAN OK", no FAIL line, marker list
+#   pplem       : assets/lemmings_flt.adf (slow 512) -> FAIRLIGHT intro, left click, game menu screenshot to look at
+# Usage (repository root): .claude/skills/amiberry/scripts/prepush-check [rom]   (default build/kick13.rom)
+# Exit 0 when both serial runs pass; the Lemmings screenshot is checked by eye.
+set -u
+cd "$(dirname "$0")/../../../.." || exit 2
+A=.claude/skills/amiberry/scripts/amiberry-session
+ROM="${1:-build/kick13.rom}"
+SESS=build/amiberry/sessions
+MARKERS=("RAWDOFMT OK" "DOS LOCK EXAMINE OK" "M6U TRACKDISK READ OK" "D1 OFS READ OK" "D2LOADSEG OK"
+  "CONSOLE WRITE OK" "REQUESTER DRAWN OK" "F1BOOTOK" "E3 CMD RAN OK" "M7A TIMER OK" "M7E IPL OK" "MATHFFP OK"
+  "DISKRES OK" "POTGO OK" "KBDDEV OK" "AUDIO ALLOC OK" "AUDIO PLAY OK" "SEM OK" "SEM WAIT OK" "REGIONS OK"
+  "LAYERS OK" "GAMEPORT OK" "KEYMAP OK")
+
+t0=$(date +%s)
+md5sum "$ROM"
+$A stop pp512 pp0 pplem >/dev/null 2>&1
+rm -rf "$SESS/pp512" "$SESS/pp0" "$SESS/pplem"
+$A start --name pp512 --rom "$ROM" --adf assets/boot_c.adf --slow 512 >/dev/null &
+$A start --name pp0 --rom "$ROM" --adf assets/boot_c.adf --slow 0 >/dev/null &
+$A start --name pplem --rom "$ROM" --adf assets/lemmings_flt.adf --slow 512 >/dev/null &
+wait
+
+lemmings() {
+  $A wait-serial pplem "M6Y STRAP BOOTED" 120 >/dev/null || { echo "pplem: disk not booted"; return 1; }
+  sleep 30
+  printf 'click\nwait:60000\n' | $A input pplem - >/dev/null
+  $A shot pplem lemmings.png --via ipc >/dev/null
+  echo "pplem: screenshot $SESS/pplem/lemmings.png"
+}
+lemmings > "$SESS/pplem.result" 2>&1 &
+lem_pid=$!
+
+rc=0
+for s in pp512 pp0; do
+  if $A wait-serial "$s" "E3 CMD RAN OK" 280 >/dev/null; then
+    log="$SESS/$s/serial.log"
+    missing=()
+    for m in "${MARKERS[@]}"; do grep -aqF "$m" "$log" || missing+=("$m"); done
+    failed=$(grep -ac FAIL "$log")
+    echo "$s: $(grep -a 'MEM SLOW' "$log" | tr -d '\r') FAIL=$failed missing=[${missing[*]}]"
+    [ "$failed" = 0 ] && [ ${#missing[@]} = 0 ] || rc=1
+  else
+    echo "$s: E3 CMD RAN OK not reached"; rc=1
+  fi
+  $A stop "$s" >/dev/null
+done
+wait "$lem_pid"
+cat "$SESS/pplem.result"
+$A stop pplem >/dev/null
+echo "total: $(( $(date +%s) - t0 )) s"
+exit $rc

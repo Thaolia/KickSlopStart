@@ -7,7 +7,14 @@ __pycache__/
 
 # Orchestration scratch (superpowers ledgers) and local assistant configuration
 /.superpowers/
-/.claude/
+# .claude/: only the scoped rules and the amiberry skill are shared
+/.claude/*
+!/.claude/rules/
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/amiberry/
+# Personal assistant preferences
+/CLAUDE.local.md
 
 # Proprietary Kickstart ROM — NEVER commit or distribute.
 # Each user provides their own copy in assets/ (see README).
