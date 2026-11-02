@@ -55,7 +55,18 @@ C_WHITE  EQU $0FFF
 C_FAIL   EQU $0F0F
 
 SERPER_9600_PAL EQU 368
+; RAMKICK=1 (make kick-ram): image linked at $C00000, loaded into slow RAM by the soft-kick disk (src/softkick/).
+; The first SLOW_RSV bytes of slow RAM hold the image and stay out of the free memory. Default 0 = ROM image.
+        ifnd    RAMKICK
+RAMKICK  EQU 0
+        endif
+        if      RAMKICK
+ROMBASE  EQU $C00000
+SLOW_RSV EQU $40000
+        else
 ROMBASE  EQU $FC0000
+SLOW_RSV EQU 0
+        endif
 
 ; --- Interrupts (hardware/intbits.i + 68000 autovectors) ---
 INTF_SETCLR  EQU $8000        ; INTENA/INTREQ: 1 = sets the bits, 0 = clears them
@@ -75,7 +86,7 @@ INTM_L5      EQU $1800        ; level 5 sources
 AUTOVEC_L2   EQU $68          ; 68000 level 2 autovector (INT2 / CIA-A / PORTS)
 AUTOVEC_L3   EQU $6C          ; 68000 exception vector, level 3 interrupt
 AUTOVEC_L6   EQU $78          ; 68000 level 6 autovector (INT6 / CIA-B / EXTER)
-ROM_BASE     EQU $00FC0000     ; start of the ROM (256 KB)
+ROM_BASE     EQU ROMBASE       ; start of the ROM image (256 KB)
 PRIV_VEC     EQU $20          ; privilege violation: exec entry into supervisor (EXEC_SVC)
 SVC_MAGIC    EQU $4AFC        ; word following the "ori.w #0,sr" of an EXEC_SVC site (ILLEGAL, never executed)
 
@@ -545,7 +556,10 @@ TIMER_UVBL   EQU LIB_SIZE+44   ; long: VBL_COUNT of the last time read
 TD_SIZE      EQU LIB_SIZE+48   ; size of the timer.device base (Library + 2 unit lists + system time + arming)
 UNIT_MICROHZ EQU 0             ; unit selector in IO_UNIT (= real timer.device numbering)
 UNIT_VBLANK  EQU 1             ; (OpenDevice would set a struct Unit*; our minimal impl = the index)
+EB_SOFTVER    EQU $22
 EB_CHKBASE    EQU $26
+EB_COLDCAPTURE EQU $2A
+EB_CHKSUM     EQU $52         ; complement of the word sum of +$22..+$4E (checked over +$22..+$52 = $FFFF)
 EB_MAXLOCMEM  EQU $3E
 EB_THISTASK   EQU $114         ; current task (struct Task *)
 EB_IDNEST     EQU $126

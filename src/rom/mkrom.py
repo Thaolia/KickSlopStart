@@ -20,7 +20,7 @@ import sys
 CSUM_FROM_END = 0x18    # offset of the checksum from the end
 SIZE_FROM_END = 0x14    # offset of the size field from the end
 FOOTER_FROM_END = 0x10  # offset of the 8 footer words from the end
-ROMBASE = 0xFC0000      # base of a 256K image
+ROMBASE = 0xFC0000      # base of a 256K ROM image (--base for the soft-kick image)
 
 
 def kick_sum(data: bytes) -> int:
@@ -33,7 +33,7 @@ def kick_sum(data: bytes) -> int:
     return s
 
 
-def build(src: bytes, size: int) -> bytes:
+def build(src: bytes, size: int, base: int = ROMBASE) -> bytes:
     if len(src) > size:
         sys.exit(f"erreur : binaire ({len(src)} o) plus grand que la ROM ({size} o)")
 
@@ -45,9 +45,9 @@ def build(src: bytes, size: int) -> bytes:
     pc = int.from_bytes(rom[4:8], "big")
     if rom[0:2] != b"\x11\x11":
         sys.exit(f"erreur : mot ROM-ID attendu 0x1111, trouve 0x{rom[0]:02X}{rom[1]:02X}")
-    if not (ROMBASE <= pc <= ROMBASE + size - 1):
+    if not (base <= pc <= base + size - 1):
         sys.exit(f"erreur : PC de reset 0x{pc:08X} hors de la ROM "
-                 f"[0x{ROMBASE:06X}..0x{ROMBASE + size - 1:06X}]")
+                 f"[0x{base:06X}..0x{base + size - 1:06X}]")
 
     # Kickstart footer: 8 words 0x0018..0x001F starting at size-0x10
     # (see amitools KickRomAccess.write_footer; check_footer validates 0x19..0x1F).
@@ -82,11 +82,13 @@ def main() -> None:
     # milestone (base + ROM-ID will need parameters), not just a size change.
     ap.add_argument("--size", type=int, default=256, choices=(256,),
                     help="taille en Kio (256 uniquement pour l'instant)")
+    ap.add_argument("--base", type=lambda v: int(v, 0), default=ROMBASE,
+                    help="adresse de lien de l'image (0xC00000 pour make kick-ram)")
     args = ap.parse_args()
 
     with open(args.src, "rb") as f:
         src = f.read()
-    rom = build(src, args.size * 1024)
+    rom = build(src, args.size * 1024, args.base)
     with open(args.dst, "wb") as f:
         f.write(rom)
 

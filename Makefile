@@ -11,6 +11,8 @@ ROMTOOL ?= romtool
 # VASMDEF: defines passed to vasm (empty = dev ROM). `make kick-prod` sets -DPROD=1 -> production variant
 # (takes the dev harness out of the boot path; see src/exec/exec.i). No source edit required.
 VASMDEF ?=
+# MKROMBASE: link address checked by mkrom (`make kick-ram` links at $C00000).
+MKROMBASE ?= 0xFC0000
 
 BUILD   := build
 MKROM   := src/rom/mkrom.py
@@ -50,7 +52,7 @@ KICK_ROM  := $(BUILD)/kick13.rom
 HELLO_SRC := src/rom/start.s
 HELLO_ROM := $(BUILD)/kick13-hello.rom
 
-.PHONY: all kick kick-prod hello verify clean
+.PHONY: all kick kick-prod kick-ram adf hello verify clean
 
 all: kick
 kick: $(KICK_ROM)
@@ -60,6 +62,16 @@ hello: $(HELLO_ROM)
 # Objects kept in build/prod/ (the dev ROM build/*.o stays intact); final image build/kick13-prod.rom.
 kick-prod:
 	$(MAKE) BUILD=build/prod VASMDEF=-DPROD=1 KICK_ROM=build/kick13-prod.rom kick
+
+# kick-ram: production image linked at $C00000 (-DRAMKICK=1, see src/exec/exec.i), loaded into slow RAM by the
+# soft-kick disk. adf: that disk, build/KickSlopStart.adf (bootblock src/softkick/bootblock.s + the image).
+kick-ram:
+	$(MAKE) BUILD=build/ram VASMDEF="-DPROD=1 -DRAMKICK=1" LDSCRIPT=$(EXEC_DIR)/kick-ram.ld MKROMBASE=0xC00000 \
+	  KICK_ROM=build/kick13-ram.bin kick
+adf: kick-ram $(BUILD)/bootblock.bin
+	$(PYTHON) src/softkick/mkadf.py --boot $(BUILD)/bootblock.bin --image build/kick13-ram.bin --out $(BUILD)/KickSlopStart.adf
+$(BUILD)/bootblock.bin: src/softkick/bootblock.s | $(BUILD)
+	$(VASM) -Fbin -m68000 -o $@ $<
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -117,7 +129,7 @@ $(BUILD)/shell.o: $(DOS_DIR)/dospkt.i
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
 	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ)
 $(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
-	$(PYTHON) $(MKROM) --in $< --out $@ --size 256
+	$(PYTHON) $(MKROM) --in $< --out $@ --size 256 --base $(MKROMBASE)
 
 $(BUILD)/hello.bin: $(HELLO_SRC) | $(BUILD)
 	$(VASM) -Fbin -m68000 -o $@ $<

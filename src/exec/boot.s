@@ -177,6 +177,34 @@ coldstart:                        ; $FC00D2
         ; --- Phase 2: overlay off then install the stack ---
         move.b  #$03,CIAA_DDRA
         move.b  #$02,CIAA_PRA        ; OVL off -> chip RAM at $0
+        ; ColdCapture of an ExecBase that survived the reset (docs/analysis/coldstart-hardware-v34.md §5.1):
+        ; *(4) even, ChkBase, word sum of +$22..+$52 = $FFFF; the vector is cleared, then called with the return
+        ; address in a5. This is how the soft-kick image in slow RAM survives a reset.
+        move.l  ($4).w,d0
+        btst    #0,d0
+        bne.s   .cc_done
+        cmp.l   #MAXCHIP,d0
+        bhs.s   .cc_done
+        move.l  d0,a6
+        add.l   EB_CHKBASE(a6),d0
+        not.l   d0
+        bne.s   .cc_done
+        lea     EB_SOFTVER(a6),a0
+        moveq   #0,d1
+        moveq   #(EB_CHKSUM-EB_SOFTVER)/2,d0
+.cc_sum:
+        add.w   (a0)+,d1
+        dbra    d0,.cc_sum
+        not.w   d1
+        bne.s   .cc_done
+        move.l  EB_COLDCAPTURE(a6),d0
+        beq.s   .cc_done
+        clr.l   EB_COLDCAPTURE(a6)
+        move.l  d0,a0
+        lea     .cc_done(pc),a5
+        move.l  #STACKTOP,sp
+        jmp     (a0)
+.cc_done:
         move.l  #STACKTOP,sp
         lea     LOWVARS_LO,a0        ; low-RAM variables zeroed: RAM is not null at power-on on a
         move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; real machine nor under WinUAE (an odd keyboard buffer index there
@@ -279,6 +307,17 @@ coldstart:                        ; $FC00D2
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
+        if      RAMKICK
+        move.l  #coldstart,EB_COLDCAPTURE(a6) ; a reset comes back to the image in slow RAM
+        endif
+        lea     EB_SOFTVER(a6),a0    ; ChkSum: the fields +$22..+$4E are final from here on
+        moveq   #0,d1
+        moveq   #(EB_CHKSUM-EB_SOFTVER)/2-2,d0
+.cks:
+        add.w   (a0)+,d1
+        dbra    d0,.cks
+        not.w   d1
+        move.w  d1,EB_CHKSUM(a6)
         bsr     rdf_selftest         ; RawDoFmt (-522): formatting compared with an expected string
         ; --- M3a: arm VBlank and prove that the interrupt chain runs ---
         jsr     init_ints
@@ -5675,11 +5714,12 @@ disk_watch:
         jsr     LVO_SUPERVISOR(a6)   ; does not return
         bra.s   .dw_lp
 ; dw_reboot (supervisor): RESET reinitialises the chips (the overlay puts the ROM back at $0); the JMP must be in the
-; same long word as the RESET (already prefetched). Entry = initial PC of the ROM (long at $FC0004).
+; same long word as the RESET (already prefetched). Entry = initial PC of our image (long at ROMBASE+4: the ROM,
+; or slow RAM for the soft-kick image, which RESET does not touch).
         cnop    0,4
 dw_reboot:
         move.w  #$2700,sr
-        move.l  ($FC0004).l,a0
+        move.l  (ROMBASE+4).l,a0
         bra.s   dw_rst
         cnop    0,4
 dw_rst:
@@ -5982,7 +6022,11 @@ task_q2_name:
 task_rm_name:
         dc.b    "demo.rm",0
 msg_cold:
+        if      RAMKICK
+        dc.b    "EXEC coldstart: overlay off, stack live (RAM)",13,10,0
+        else
         dc.b    "EXEC coldstart: overlay off, stack live",13,10,0
+        endif
 msg_f2kbd:
         dc.b    "F2 KBD OK (CIA-A keyboard: power-up stream received+decoded, $FD initiate + $FE terminate; handshake drives the stream)",13,10,0
 msg_f2bkbd:

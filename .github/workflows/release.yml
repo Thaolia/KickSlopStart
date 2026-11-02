@@ -1,8 +1,9 @@
-# Builds the production ROM from source and publishes it as a GitHub release, and on the "rom" branch for
-# browser emulators. Trigger: pushing a tag v* (e.g. `git tag v0.1.0 && git push origin v0.1.0`). A manual run
-# (workflow_dispatch) builds the ROM and keeps it as a workflow artifact without publishing anything.
-# The toolchain is pinned to the versions the project is developed with, so the published image is byte-identical
-# to a local `make kick-prod` of the same commit.
+# Builds the production ROM and the soft-kick disk (an ADF that loads KickSlopStart into slow RAM from a real
+# Kickstart 1.3) from source and publishes them as a GitHub release, and on the "rom" branch for browser emulators.
+# Trigger: pushing a tag v* (e.g. `git tag v0.1.0 && git push origin v0.1.0`). A manual run (workflow_dispatch)
+# builds both and keeps them as a workflow artifact without publishing anything.
+# The toolchain is pinned to the versions the project is developed with, so the published files are byte-identical
+# to a local `make kick-prod adf` of the same commit.
 name: release
 
 on:
@@ -41,11 +42,14 @@ jobs:
           vasmm68k_mot 2>&1 | head -1
           vlink 2>&1 | head -1
           make kick-prod
+          make adf
 
       - name: Check the image (romtool is_kick)
         run: |
           romtool info build/kick13-prod.rom | tee romtool.txt
           grep -Eq 'is_kick +ok' romtool.txt
+          romtool info build/kick13-ram.bin | tee romtool-ram.txt
+          grep -Eq 'chk_sum +ok' romtool-ram.txt
 
       - name: Name and checksum the image
         id: pkg
@@ -53,9 +57,12 @@ jobs:
           name="KickSlopStart-${GITHUB_REF_NAME}.rom"
           [ "$GITHUB_REF_TYPE" = tag ] || name="KickSlopStart-${GITHUB_SHA::7}.rom"
           mkdir -p dist
+          adf="${name%.rom}.adf"
           cp build/kick13-prod.rom "dist/$name"
-          (cd dist && sha256sum "$name" > SHA256SUMS && md5sum "$name" > MD5SUMS)
+          cp build/KickSlopStart.adf "dist/$adf"
+          (cd dist && sha256sum "$name" "$adf" > SHA256SUMS && md5sum "$name" "$adf" > MD5SUMS)
           echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "adf=$adf" >> "$GITHUB_OUTPUT"
           {
             cat .github/release-notes.md
             echo
@@ -65,7 +72,7 @@ jobs:
             cat dist/SHA256SUMS dist/MD5SUMS
             echo '```'
             echo
-            echo "Built from commit ${GITHUB_SHA} with ${VASM_TAG} and ${VLINK_TAG} (\`make kick-prod\`)."
+            echo "Built from commit ${GITHUB_SHA} with ${VASM_TAG} and ${VLINK_TAG} (\`make kick-prod adf\`)."
           } > dist/notes.md
 
       - uses: actions/upload-artifact@v4
@@ -81,15 +88,17 @@ jobs:
           body_path: dist/notes.md
           files: |
             dist/${{ steps.pkg.outputs.name }}
+            dist/${{ steps.pkg.outputs.adf }}
             dist/SHA256SUMS
 
       # Browser emulators (vAmigaWeb) fetch the ROM from JavaScript, which needs a CORS header: release assets have
       # none, raw.githubusercontent.com has one. The orphan branch "rom" therefore carries the latest image under a
-      # fixed name (KickSlopStart.rom) and a copy per tag.
+      # fixed name (KickSlopStart.rom) and a copy per tag, with the soft-kick disk next to it.
       - name: Publish the ROM on the rom branch
         if: github.ref_type == 'tag'
         env:
           NAME: ${{ steps.pkg.outputs.name }}
+          ADF: ${{ steps.pkg.outputs.adf }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -104,10 +113,15 @@ jobs:
           fi
           cp "dist/$NAME" "$dir/KickSlopStart.rom"
           cp "dist/$NAME" "$dir/$NAME"
-          (cd "$dir" && sha256sum KickSlopStart-*.rom KickSlopStart.rom > SHA256SUMS)
+          cp "dist/$ADF" "$dir/KickSlopStart.adf"
+          cp "dist/$ADF" "$dir/$ADF"
+          (cd "$dir" && sha256sum KickSlopStart*.rom KickSlopStart*.adf > SHA256SUMS)
           printf '%s\n' "# KickSlopStart ROM images" "" \
             "Production ROM of each release, built by the release workflow. KickSlopStart.rom is the latest one" \
-            "(${GITHUB_REF_NAME}). This branch exists so that browser emulators can load the ROM (CORS)." \
+            "(${GITHUB_REF_NAME}). This branch exists so that browser emulators can load the ROM (CORS)." "" \
+            "KickSlopStart.adf is the soft-kick disk of the same release: booted on an A500 with its Kickstart 1.3" \
+            "and 512 KB of slow RAM (\$C00000), it loads KickSlopStart into that RAM and starts it. A reset comes" \
+            "back to KickSlopStart; switching the machine off returns to the Kickstart in ROM." \
             > "$dir/README.md"
           git -C "$dir" add -A
           git -C "$dir" commit -qm "ROM ${GITHUB_REF_NAME}"

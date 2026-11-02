@@ -400,6 +400,7 @@ init_memory:                         ; a6 = SysBase (jump table already built)
 ; to TWO addresses before reading back: a floating bus that retains the last written value does not pass.
 ; Following blocks: rejected if alias of block 0 (incomplete decoding). a6 = SysBase. Called after the memory
 ; selftest (which assumes chip at the head of the list). Returns d0 = bytes of slow RAM detected (0 = none).
+; RAMKICK: the image occupies the first SLOW_RSV bytes, so the probes and the MemHeader start above it.
 SLOW_BASE       EQU $00C00000
 SLOW_STEP       EQU $00080000        ; 512 KB granularity
 SLOW_MAXBLK     EQU 3                ; up to 1.5 MB ($C00000-$D7FFFF)
@@ -409,8 +410,8 @@ add_slow_memory:
 .as_blk:
         cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d2
         beq.s   .as_add
-        lea     SLOW_BASE,a2
-        add.l   d2,a2                ; a2 = candidate block
+        lea     SLOW_BASE+SLOW_RSV,a2
+        add.l   d2,a2                ; a2 = candidate block (+ reserved image area)
         move.w  #$5A3C,$1FE(a2)
         move.w  #$A5C3,$3FE(a2)
         cmp.w   #$5A3C,$1FE(a2)
@@ -421,7 +422,7 @@ add_slow_memory:
         bne.s   .as_add
         tst.l   d2                   ; block 0: no alias possible
         beq.s   .as_ok
-        lea     SLOW_BASE,a3
+        lea     SLOW_BASE+SLOW_RSV,a3
         move.w  #$1234,$1FE(a3)      ; mark block 0...
         move.w  #$4321,$1FE(a2)      ; ...write the current block...
         cmp.w   #$1234,$1FE(a3)      ; ...has block 0 changed? -> alias
@@ -432,7 +433,10 @@ add_slow_memory:
 .as_add:
         move.l  d2,d4                ; d4 = detected size (return value)
         beq.s   .as_ret              ; no slow RAM: nothing to do
-        lea     SLOW_BASE,a0         ; MemHeader at the start of the area, 1st chunk right after
+        lea     SLOW_BASE+SLOW_RSV,a0 ; MemHeader at the start of the area, 1st chunk right after
+        if      SLOW_RSV
+        sub.l   #SLOW_RSV,d2
+        endif
         moveq   #(MH_SIZE/4)-1,d0
         move.l  a0,a1
 .as_z:

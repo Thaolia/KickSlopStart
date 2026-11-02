@@ -30,6 +30,17 @@ vAmigaWeb (`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, encodé).
 (`KickSlopStart.rom`), que le workflow de release met à jour à chaque tag : le navigateur ne laisse vAmigaWeb charger
 qu'un fichier servi avec un en-tête CORS, ce que fait `raw.githubusercontent.com` et pas le téléchargement des releases.
 
+## Disquette de soft-kick (sans changer de ROM)
+
+Chaque release fournit aussi `KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Bootez-la sur un
+Amiga 500 qui garde son Kickstart 1.3 et dispose de 512 Kio de slow RAM en `$C00000` (extension A501 de la trappe) :
+son bootblock charge KickSlopStart dans les 256 premiers Kio de cette RAM et le démarre ; le reste de la slow RAM reste
+disponible. KickSlopStart affiche alors son écran d'insertion : retirez la disquette de soft-kick, insérez celle que
+vous voulez, et il la boote. Un reset (Ctrl+Amiga+Amiga) revient sur KickSlopStart, grâce au vecteur ColdCapture que le Kickstart en
+ROM appelle au reset ; éteindre la machine ramène au Kickstart en ROM. Sans slow RAM, la disquette boote normalement
+sur le Kickstart en ROM. Pour la construire : `make adf` (`build/KickSlopStart.adf`).
+
 ## Ce qui fonctionne
 
 Tous les résultats ci-dessous viennent d'un démarrage de la ROM en émulateur (FS-UAE, et WinUAE en mode A500 au cycle
@@ -108,6 +119,7 @@ Les instructions d'installation sont dans [`docs/HARDWARE.md`](docs/HARDWARE.md)
 make             # build/kick13.rom       ROM de développement (avec le harnais d'auto-test)
 make kick-prod   # build/kick13-prod.rom  ROM de production (-DPROD=1, sans harnais de test)
 make verify      # vérifie la taille (256 Kio) et que romtool donne is_kick = ok
+make adf         # build/KickSlopStart.adf disquette de soft-kick (image liée en $C00000, -DRAMKICK=1)
 ```
 
 Pour un usage courant en émulateur, prendre `build/kick13-prod.rom`. La ROM de développement lance aussi des tâches
@@ -137,6 +149,7 @@ src/graphics/    graphics.library, layers.library, écran de démarrage
 src/intuition/   intuition.library
 src/dos/         dos.library, handlers, CLI/shell, Workbench
 src/rom/         assemblage de l'image (remplissage, pied, somme de contrôle) et la hello-ROM M0
+src/softkick/    disquette de soft-kick : bootblock chargeur et construction de l'ADF
 docs/            plan, architecture, matériel et outils, règles de salle blanche
 docs/analysis/   spécifications écrites par la piste analyse
 tests/           harnais d'émulation et programmes de test

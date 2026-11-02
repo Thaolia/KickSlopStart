@@ -30,6 +30,17 @@ dropping it on the window. The link passes the ROM through vAmigaWeb's `kickstar
 (`KickSlopStart.rom`), which the release workflow updates at each tag: browsers only let vAmigaWeb fetch a file that
 is served with a CORS header, which `raw.githubusercontent.com` sends and release downloads do not.
 
+## Soft-kick disk (no ROM swap)
+
+Each release also comes with `KickSlopStart-<version>.adf`, and the `rom` branch carries the latest one as
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on an
+Amiga 500 that keeps its own Kickstart 1.3 and has 512 KiB of slow RAM at `$C00000` (A501 trapdoor expansion): its
+bootblock loads KickSlopStart into the first 256 KiB of that RAM and starts it, and the remaining slow RAM stays
+available. KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want,
+and it boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
+in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. Without slow RAM, the disk boots
+normally on the Kickstart in ROM. Build it with `make adf` (`build/KickSlopStart.adf`).
+
 ## What works
 
 All results below come from booting the ROM in an emulator (FS-UAE, and WinUAE in cycle-exact A500 mode), with
@@ -101,6 +112,7 @@ Installation instructions are in [`docs/HARDWARE.md`](docs/HARDWARE.md).
 make             # build/kick13.rom       development ROM (includes the self-test harness)
 make kick-prod   # build/kick13-prod.rom  production ROM (-DPROD=1, no test harness)
 make verify      # checks the size (256 KiB) and that romtool reports is_kick = ok
+make adf         # build/KickSlopStart.adf soft-kick disk (image linked at $C00000, -DRAMKICK=1)
 ```
 
 Use `build/kick13-prod.rom` for everyday use in an emulator. The development ROM also runs demo tasks and test
@@ -130,6 +142,7 @@ src/graphics/    graphics.library, layers.library, boot screen
 src/intuition/   intuition.library
 src/dos/         dos.library, handlers, CLI/shell, Workbench
 src/rom/         ROM packer (padding, footer, checksum) and the M0 hello ROM
+src/softkick/    soft-kick disk: loader bootblock and ADF builder
 docs/            plan, architecture, hardware/toolchain, clean-room rules
 docs/analysis/   specs written by the analysis track
 tests/           emulator harnesses and test programs
