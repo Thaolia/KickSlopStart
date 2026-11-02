@@ -23,10 +23,12 @@ new release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
 ## Try it in your browser
 
-**[Run KickSlopStart in vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%7D)**: the browser Amiga emulator starts with the latest released ROM instead of
+**[Run KickSlopStart in vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)**: the browser Amiga emulator starts with the latest released ROM instead of
 its own. With no disk it stops on the insert-disk screen; insert an ADF of your own from vAmigaWeb's disk menu or by
 dropping it on the window. The link passes the ROM through vAmigaWeb's `kickstart_rom_url` setting
-(`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, URL-encoded). The ROM comes from the `rom` branch
+(`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, URL-encoded); it also puts the mouse on game port 1
+(`"mouse":true`) and, through a `startup_script`, turns on the activity monitor and opens the live memory view once
+the emulator runs. The ROM comes from the `rom` branch
 (`KickSlopStart.rom`), which the release workflow updates at each tag: browsers only let vAmigaWeb fetch a file that
 is served with a CORS header, which `raw.githubusercontent.com` sends and release downloads do not.
 
