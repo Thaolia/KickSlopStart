@@ -130,6 +130,10 @@ cursor up/down/right/left `4c 4d 4e 4f`, Help `5f`, left/right Shift `60 61`, Ca
 Mouse aiming: the start position is unknown, so go to the top-left corner first (`mouse:-900,-400`), take
 `shot --via ipc`, read the target's pixel position on that picture and move by its offset from the pointer's tip:
 one mouse count is one pixel of the IPC picture, in both directions (measured with the Workbench pointer).
+Aim at the **middle of the icon image**: only the image is clickable, not its label, and the hot spot is the
+pointer's tip, so a pointer whose body covers the icon can still miss it. On the Workbench 1.3.3 desktop,
+`mouse:565,90` lands a few pixels left of the "Workbench1.3" disk image (the click deselects, the double-click
+opens nothing); `mouse:591,97` hits it.
 
 A test is: input, then `wait-serial` for the expected serial line, then a screenshot to look at:
 
