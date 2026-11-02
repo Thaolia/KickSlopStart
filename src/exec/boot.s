@@ -20,6 +20,7 @@
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
                 xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
+                xref    slow_probe       ; memory.s (end of the slow RAM, before ExecBase is built)
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c: launch of the 1st task = user-mode transition)
@@ -184,8 +185,13 @@ coldstart:                        ; $FC00D2
         move.l  ($4).w,d0
         btst    #0,d0
         bne.s   .cc_done
-        cmp.l   #MAXCHIP,d0
+        cmp.l   #MAXCHIP,d0          ; ExecBase in chip, or in slow RAM (where it goes when there is some)
+        blo.s   .cc_eb
+        cmp.l   #SLOW_BASE,d0
+        blo.s   .cc_done
+        cmp.l   #SLOW_BASE+SLOW_MAXBLK*SLOW_STEP,d0
         bhs.s   .cc_done
+.cc_eb:
         move.l  d0,a6
         add.l   EB_CHKBASE(a6),d0
         not.l   d0
@@ -229,13 +235,19 @@ coldstart:                        ; $FC00D2
 
         ; --- Phase 3: ExecBase + jump table ---
         move.w  #C_CYAN,COLOR00
-        lea     EXECBASE,a0          ; zero-fill the area of the positive fields
-        move.w  #(EXEC_POSSIZE/4)-1,d0
+        jsr     slow_probe           ; d0 = end of the slow RAM (MaxExtMem) or 0
+        lea     EXECBASE,a6          ; a6 = SysBase (library base convention): low chip without slow RAM,
+        tst.l   d0
+        beq.s   .eb_at
+        lea     SLOW_BASE+SLOW_RSV+EXEC_NEGSIZE,a6 ; bottom of the slow RAM with it (coldstart-hardware-v34 §4.1)
+.eb_at:
+        move.l  a6,a0                ; zero-fill the area of the positive fields
+        move.w  #(EXEC_POSSIZE/4)-1,d1
 .zf:
         clr.l   (a0)+
-        dbf     d0,.zf
+        dbf     d1,.zf
+        move.l  d0,EB_MAXEXTMEM(a6)
 
-        lea     EXECBASE,a6          ; a6 = SysBase (library base convention)
         move.b  #NT_LIBRARY,LN_TYPE(a6)
         move.l  #exec_name,LN_NAME(a6)
         move.w  #EXEC_NEGSIZE,LIB_NEGSIZE(a6)
@@ -248,7 +260,7 @@ coldstart:                        ; $FC00D2
         move.b  #50,EB_POWERFREQ(a6)
         move.b  #-1,EB_IDNEST(a6)
         move.b  #-1,EB_TDNEST(a6)
-        move.l  #EXECBASE,d0
+        move.l  a6,d0
         not.l   d0
         move.l  d0,EB_CHKBASE(a6)
 
@@ -282,7 +294,7 @@ coldstart:                        ; $FC00D2
         move.l  a6,($4).w
 
         move.l  ($4).w,d0
-        cmp.l   #EXECBASE,d0
+        cmp.l   a6,d0
         bne     eb_fail
         cmp.w   #34,LIB_VERSION(a6)
         bne     eb_fail

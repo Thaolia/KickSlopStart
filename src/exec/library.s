@@ -123,7 +123,7 @@
 ; ============================ jump table ============================
 ; Fills the 105 entries (V34) with _unimpl then patches the implemented LVOs.
 build_jumptable:                     ; a6 = SysBase; clobbers d0/d1/a0
-        lea     EXEC_BLOCK,a0
+        lea     -EXEC_NEGSIZE(a6),a0
         move.w  #(EXEC_NEGSIZE/6)-1,d0
         move.l  #_unimpl,d1
 .fill:

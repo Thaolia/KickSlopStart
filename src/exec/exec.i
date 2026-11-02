@@ -36,9 +36,11 @@ TST_N2       EQU $00000460
 ; System area in LOW CHIP, just above the low-RAM variables: the top of chip stays free up to
 ; $80000 as on the real 1.3, because programs write there at absolute addresses (intros: stack at $7FFFE, routines
 ; at $7F000, planes at $70000+). ExecBase must not be located there.
-EXEC_BLOCK   EQU $00001000     ; bottom of exec's jump table
+; With slow RAM, the jump table and ExecBase go to the bottom of it instead (after the soft-kick image), as on 1.3
+; (coldstart-hardware-v34 §4.1): games load over low chip and still read ExecBase (Zool reads MaxExtMem there).
+EXEC_BLOCK   EQU $00001000     ; bottom of exec's jump table without slow RAM
 EXEC_NEGSIZE EQU $276          ; 105 V34 vectors (cf docs/exec-lvo-table.md)
-EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase (complete V34 table below)
+EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase without slow RAM (complete V34 table below)
 EXEC_POSSIZE EQU $234          ; V34 fields end at KickCheckSum ($22E); +$230 = our EB_INTSVL
 FTEST_LO     EQU $00001500     ; region DISJOINT from the heap for the multi-header test (M2.4a selftest); then free,
 FTEST_HI     EQU $00002500     ; it serves as a margin below the supervisor stack (an overflow does not reach ExecBase)
@@ -66,6 +68,9 @@ SLOW_RSV EQU $40000
 ROMBASE  EQU $FC0000
 SLOW_RSV EQU 0
         endif
+SLOW_BASE   EQU $00C00000      ; A500 "slow" RAM (trapdoor)
+SLOW_STEP   EQU $00080000      ; 512 KB granularity
+SLOW_MAXBLK EQU 3              ; up to 1.5 MB ($C00000-$D7FFFF)
 
 ; --- Interrupts (hardware/intbits.i + 68000 autovectors) ---
 INTF_SETCLR  EQU $8000        ; INTENA/INTREQ: 1 = sets the bits, 0 = clears them
@@ -570,6 +575,7 @@ EB_CHKBASE    EQU $26
 EB_COLDCAPTURE EQU $2A
 EB_CHKSUM     EQU $52         ; complement of the word sum of +$22..+$4E (checked over +$22..+$52 = $FFFF)
 EB_MAXLOCMEM  EQU $3E
+EB_MAXEXTMEM  EQU $4E         ; end of the slow RAM, 0 without
 EB_DEBUGENTRY EQU $42          ; APTR: entry of the debugger (Debug)
 EB_THISTASK   EQU $114         ; current task (struct Task *)
 EB_IDLECOUNT  EQU $118         ; ULONG: idle wake-ups of the dispatcher

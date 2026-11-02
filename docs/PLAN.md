@@ -969,6 +969,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   unknown), screens below the front one are not displayed (MoveScreen only updates the
   fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
+  **Zool (2026-11-02)**: stuck on "PLEASE PRESS FIRE TO START" (issue seen on a real A500, reproduced under
+  Amiberry); the game had crashed after copying its code to the wrong place, because ExecBase (in low chip) was
+  overwritten by its load and MaxExtMem was never set. Fixed: ExecBase at the bottom of the slow RAM as on 1.3,
+  MaxExtMem set. Zool reaches its front-end and hiscores with port-2 fire, on the ROM and through the soft-kick
+  disk; on 1.3, port-1 fire, left click and Space do not start it either (oracle probe).
   **First run on real hardware (2026-11-02)**: the soft-kick disk boots KickSlopStart on a real A500 (512 KB chip +
   512 KB slow RAM, the minimum for the `.adf`, now stated in the README). Workbench 1.2 then reached its screen, but
   the title bar kept switching to the menu strip (right button read as pressed and released) and the pointer froze

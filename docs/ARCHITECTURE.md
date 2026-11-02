@@ -1158,6 +1158,13 @@ differs.
   - **ExecBase, jump table and supervisor stack in low chip**: table $1000-$1276, ExecBase $1276, region of the
     multi-header test $1500-$2500 (margin below the stack afterwards), supervisor stack $2500-$3500, heap $3500-$80000. The top of
     chip stays free as on the real 1.3 (intros: routine at $7F000, stack at $7FFFE, planes at $70000+).
+    **With slow RAM** (coldstart-hardware-v34 §4.1), the jump table and ExecBase go to the bottom of it instead:
+    ExecBase $C00276 (ROM) or $C40276 (soft-kick image, which fills $C00000-$C3FFFF), and the "Fast Memory"
+    MemHeader starts right after ExecBase's positive part. `slow_probe` (`memory.s`) runs before ExecBase is built
+    and gives `MaxExtMem` (+$4E, end of the slow RAM, 0 without), which `add_slow_memory` then uses. Zool loads over
+    low chip, then reads MaxLocMem/MaxExtMem to choose where to copy its code ($C10000 with 512 KB slow); with
+    ExecBase in chip or MaxExtMem at 0 it overwrote its own VBlank routine and never read fire. The exec code jumps
+    through the vectors of `*(4)` (Switch, Schedule, Dispatch), never through a fixed address.
   - **No TRAP vector used by exec**: Wait/yield/RemTask(self)/Supervisor enter supervisor mode through a
     privilege violation at a known site in the ROM (EXEC_SVC macro: `ori.w #0,sr`, magic word, address of the
     service; handler at vector $20). Programs often install their code at the TRAP #0 vector to switch

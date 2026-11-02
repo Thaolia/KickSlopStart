@@ -258,7 +258,9 @@ schedule_body:                      ; entry with the 60-byte frame already pushe
         jsr     LVO_ENQUEUE(a6)     ; behind the ready tasks of its own priority (round-robin)
         move.w  #$2000,sr
         movem.l (sp)+,d0-d7/a0-a6
-        jmp     EXECBASE+LVO_SWITCH
+        move.l  ($4).w,-(sp)        ; jump through the vector, frame and registers untouched
+        add.l   #LVO_SWITCH,(sp)
+        rts
 
 ; Switch (-54): supervisor; {SR, PC} of the outgoing task on the SSP, D0-D7/A0-A6 = its registers, USP = its stack;
 ; ThisTask already filed (TaskReady or TaskWait) with its state set. Never returns.
@@ -521,7 +523,7 @@ trap2_handler:
         jsr     task_freemem        ; tc_MemEntry (TCB and stack included if they are in it) — safe: we run on the SSP
                 endc
         move.l  #STACKTOP,sp        ; clean SSP (like boot.s)
-        jmp     EXECBASE+LVO_DISPATCH
+        jmp     LVO_DISPATCH(a6)
 
 ; ============================ by-number dispatcher (M7b) ==========
 ; SetIntVector/AddIntServer + generic INT2(PORTS)/INT6(EXTER) autovectors + chain walker.

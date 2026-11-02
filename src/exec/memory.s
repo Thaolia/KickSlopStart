@@ -25,6 +25,7 @@
                 xdef    exec_AddMemList
                 xdef    init_memory
                 xdef    add_slow_memory
+                xdef    slow_probe
 
 ; Allocate(memHeader a0, byteSize d0) -> d0 = block | 0: first-fit + split within the chunks of ONE MemHeader, size
 ; rounded to 8 bytes (AutoDoc: the caller protects the header, Forbid or semaphore). Clobbers d1/a0/a1.
@@ -416,75 +417,81 @@ init_memory:                         ; a6 = SysBase (jump table already built)
         jsr     LVO_ADDTAIL(a6)
         rts
 
-; add_slow_memory: detects the A500 "slow" RAM (trapdoor, $C00000..) and adds it AT THE HEAD of the MemList
+; slow_probe: detects the A500 "slow" RAM (trapdoor, $C00000..). Called by coldstart BEFORE ExecBase is built,
+; since ExecBase goes into that RAM when it exists. Without slow RAM, the area may mirror the custom registers
+; ($DFF000, partial decoding): each probe is at offset $1FE/$3FE of a block (= NO-OP register if mirrored ->
+; harmless write). Two crossed patterns written to TWO addresses before reading back: a floating bus that retains
+; the last written value does not pass. Following blocks: rejected if alias of block 0 (incomplete decoding).
+; RAMKICK: the image occupies the first SLOW_RSV bytes, so the probes start above it.
+; Returns d0 = end of the slow RAM (the MaxExtMem value), 0 = none. Clobbers d1/a0/a1.
+slow_probe:
+        moveq   #0,d0                ; d0 = detected size
+.sp_blk:
+        cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d0
+        beq.s   .sp_end
+        lea     SLOW_BASE+SLOW_RSV,a0
+        add.l   d0,a0                ; a0 = candidate block (+ reserved image area)
+        move.w  #$5A3C,$1FE(a0)
+        move.w  #$A5C3,$3FE(a0)
+        cmp.w   #$5A3C,$1FE(a0)
+        bne.s   .sp_end
+        move.w  #$A5C3,$1FE(a0)
+        move.w  #$5A3C,$3FE(a0)
+        cmp.w   #$A5C3,$1FE(a0)
+        bne.s   .sp_end
+        tst.l   d0                   ; block 0: no alias possible
+        beq.s   .sp_ok
+        lea     SLOW_BASE+SLOW_RSV,a1
+        move.w  #$1234,$1FE(a1)      ; mark block 0...
+        move.w  #$4321,$1FE(a0)      ; ...write the current block...
+        cmp.w   #$1234,$1FE(a1)      ; ...has block 0 changed? -> alias
+        bne.s   .sp_end
+.sp_ok:
+        add.l   #SLOW_STEP,d0
+        bra.s   .sp_blk
+.sp_end:
+        tst.l   d0
+        beq.s   .sp_ret
+        add.l   #SLOW_BASE,d0
+.sp_ret:
+        rts
+
+; add_slow_memory: adds the slow RAM found by slow_probe (ExecBase MaxExtMem) AT THE HEAD of the MemList
 ; (MEMF_FAST|MEMF_PUBLIC) -> allocations without MEMF_CHIP go there first; chip stays for DMA. A game that
 ; requests ~400 KB of CHIP (Lemmings) only fits under this condition on a 512K chip + 512K slow config.
-; Without slow RAM, the area may mirror the custom registers ($DFF000, partial decoding): each probe is at
-; offset $1FE/$3FE of a block (= NO-OP register if mirrored -> harmless write). Two crossed patterns written
-; to TWO addresses before reading back: a floating bus that retains the last written value does not pass.
-; Following blocks: rejected if alias of block 0 (incomplete decoding). a6 = SysBase. Called after the memory
-; selftest (which assumes chip at the head of the list). Returns d0 = bytes of slow RAM detected (0 = none).
-; RAMKICK: the image occupies the first SLOW_RSV bytes, so the probes and the MemHeader start above it.
-SLOW_BASE       EQU $00C00000
-SLOW_STEP       EQU $00080000        ; 512 KB granularity
-SLOW_MAXBLK     EQU 3                ; up to 1.5 MB ($C00000-$D7FFFF)
+; ExecBase sits at the bottom of that RAM, so the MemHeader starts right after its positive part. a6 = SysBase.
+; Called after the memory selftest (which assumes chip at the head of the list). Returns d0 = bytes of slow RAM
+; (0 = none).
 add_slow_memory:
-        movem.l d2-d4/a2-a3,-(sp)
-        moveq   #0,d2                ; d2 = detected size
-.as_blk:
-        cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d2
-        beq.s   .as_add
-        lea     SLOW_BASE+SLOW_RSV,a2
-        add.l   d2,a2                ; a2 = candidate block (+ reserved image area)
-        move.w  #$5A3C,$1FE(a2)
-        move.w  #$A5C3,$3FE(a2)
-        cmp.w   #$5A3C,$1FE(a2)
-        bne.s   .as_add
-        move.w  #$A5C3,$1FE(a2)
-        move.w  #$5A3C,$3FE(a2)
-        cmp.w   #$A5C3,$1FE(a2)
-        bne.s   .as_add
-        tst.l   d2                   ; block 0: no alias possible
-        beq.s   .as_ok
-        lea     SLOW_BASE+SLOW_RSV,a3
-        move.w  #$1234,$1FE(a3)      ; mark block 0...
-        move.w  #$4321,$1FE(a2)      ; ...write the current block...
-        cmp.w   #$1234,$1FE(a3)      ; ...has block 0 changed? -> alias
-        bne.s   .as_add
-.as_ok:
-        add.l   #SLOW_STEP,d2
-        bra.s   .as_blk
-.as_add:
-        move.l  d2,d4                ; d4 = detected size (return value)
-        beq.s   .as_ret              ; no slow RAM: nothing to do
-        lea     SLOW_BASE+SLOW_RSV,a0 ; MemHeader at the start of the area, 1st chunk right after
-        if      SLOW_RSV
-        sub.l   #SLOW_RSV,d2
-        endif
-        moveq   #(MH_SIZE/4)-1,d0
+        move.l  EB_MAXEXTMEM(a6),d0
+        beq.s   .as_ret
+        move.l  d0,-(sp)
+        lea     EXEC_POSSIZE+7(a6),a0
+        move.l  a0,d1
+        and.w   #$FFF8,d1
+        move.l  d1,a0                ; a0 = MemHeader, 1st chunk right after
+        moveq   #(MH_SIZE/4)-1,d1
         move.l  a0,a1
 .as_z:
         clr.l   (a1)+
-        dbf     d0,.as_z
+        dbf     d1,.as_z
         move.b  #NT_MEMORY,LN_TYPE(a0)
         move.l  #slow_name,LN_NAME(a0)
         move.w  #(MEMF_FAST|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
         lea     MH_SIZE(a0),a1       ; a1 = 1st chunk
         move.l  a1,MH_LOWER(a0)
         move.l  a1,MH_FIRST(a0)
-        move.l  d2,d3
-        add.l   a0,d3
-        move.l  d3,MH_UPPER(a0)
-        sub.l   #MH_SIZE,d2          ; d2 = free bytes
-        move.l  d2,MH_FREE(a0)
+        move.l  d0,MH_UPPER(a0)
+        sub.l   a1,d0                ; d0 = free bytes
+        move.l  d0,MH_FREE(a0)
         clr.l   MC_NEXT(a1)
-        move.l  d2,MC_BYTES(a1)
+        move.l  d0,MC_BYTES(a1)
         move.l  a0,a1                ; AddHead(MemList, header)
         lea     EB_MEMLIST(a6),a0
         jsr     LVO_ADDHEAD(a6)
+        move.l  (sp)+,d0
+        sub.l   #SLOW_BASE,d0
 .as_ret:
-        move.l  d4,d0
-        movem.l (sp)+,d2-d4/a2-a3
         rts
 
 slow_name:

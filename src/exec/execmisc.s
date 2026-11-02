@@ -441,11 +441,15 @@ exec_Exception:
 svc_schedule:
         btst    #5,(sp)
         bne.s   svc_rte
-        jmp     EXECBASE+LVO_SCHEDULE
+        move.l  ($4).w,-(sp)         ; jump through the vector, frame and registers untouched
+        add.l   #LVO_SCHEDULE,(sp)
+        rts
 svc_switch:
         btst    #5,(sp)
         bne.s   svc_rte
-        jmp     EXECBASE+LVO_SWITCH
+        move.l  ($4).w,-(sp)
+        add.l   #LVO_SWITCH,(sp)
+        rts
 svc_rte:
         rte
 
