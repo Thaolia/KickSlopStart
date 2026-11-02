@@ -89,6 +89,17 @@ TD_PROTSTATUS EQU 15
 TD_GETNUMTRACKS EQU 19
 TD_ADDCHANGEINT EQU 20
 TD_REMCHANGEINT EQU 21
+TD_RAWREAD    EQU 16
+TD_RAWWRITE   EQU 17
+TD_GETDRIVETYPE EQU 18
+DRIVE3_5      EQU 1            ; TD_GETDRIVETYPE: 3.5" drive (the only type our units accept)
+IOTDB_INDEXSYNC EQU 4          ; io_Flags: raw transfer starts at the index pulse
+TD_RAWMAX     EQU 32768        ; raw io_Length must stay below this (DSKLEN word count, 14 bits)
+TDERR_DiskChanged EQU 29
+TDERR_SeekError EQU 30
+ADKF_MSBSYNC  EQU $0200
+ADKF_PRECOMPMASK EQU $6000     ; both precompensation bits
+CIAICRF_FLG   EQU $10          ; CIA-B FLG = drive index pulse
 DSKB_PROT     EQU 3            ; CIA-A PRA: /WPRO (0 = protected floppy)
 ADKF_PRECOMP140 EQU $2000      ; 140 ns precompensation (tracks >= TD_PCTRACK)
 TD_PCTRACK    EQU 81             ; first track (cylinder*2 + side) written with precompensation (spec trackdisk-write-v34)

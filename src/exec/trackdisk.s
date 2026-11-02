@@ -26,6 +26,19 @@ IOERR_BADLENGTH EQU -4               ; io_Offset/io_Length not a multiple of the
 TDERR_BadDriveType EQU 33            ; no Amiga 3.5" drive on this unit
 DR_LVO_GETUNITID EQU -30             ; disk.resource GetUnitID(unit d0) -> d0 = DRT_AMIGA (0): 3.5" DD drive
 TD_SEMSIZE     EQU 46                ; struct SignalSemaphore
+; struct DiscResourceUnit (resources/disk.h) and the disk.resource / ciab.resource vectors used here
+DRU_DISCBLOCK  EQU MN_SIZE
+DRU_DISCSYNC   EQU MN_SIZE+IS_SIZE
+DRU_INDEX      EQU MN_SIZE+2*IS_SIZE
+DRU_SIZE       EQU MN_SIZE+3*IS_SIZE
+DR_LVO_GETUNIT EQU -18
+DR_LVO_GIVEUNIT EQU -24
+CIA_LVO_ABLEICR EQU -18
+CIA_LVO_SETICR EQU -24
+TD_LVO_CAUSE   EQU -180              ; exec Cause
+SIGB_SINGLE    EQU 4
+; commands that never write io_Actual
+TD_KEEPACT     EQU (1<<TD_SEEK)|(1<<TD_FORMAT)|(1<<TD_REMOVE)|(1<<TD_RAWREAD)|(1<<TD_RAWWRITE)|(1<<TD_ADDCHANGEINT)|(1<<TD_REMCHANGEINT)
 ; per-unit state (device base + TDU_UNIT0 + unit * TDU_UNITSZ; io_Unit points to it)
 TDU_KEY        EQU 0                 ; word: unit << 8 (high byte of the cache keys of this drive)
 TDU_SEL        EQU 2                 ; byte: CIA-B PRB with this drive selected, everything else high (motor off)
@@ -34,11 +47,20 @@ TDU_CYLOK      EQU 4                 ; byte: 0 = head position unknown (recalibr
 TDU_PRESENT    EQU 5                 ; byte: a 3.5" DD drive is connected
 TDU_CYL        EQU 6                 ; word: current cylinder of the head
 TDU_MCNT       EQU 8                 ; word: VBlank ticks before turning off the idle motor
-TDU_CHG        EQU 10                ; long: disk change counter (TD_CHANGENUM)
-TDU_UNITSZ     EQU 16
+TDU_CHG        EQU 10                ; long: disk change counter (TD_CHANGENUM): +1 per removal, +1 per insertion
+TDU_ABSENT     EQU 16                ; byte: != 0 = no disk (last state seen on /CHNG); set at init, so the first
+                                     ; poll that finds a disk counts one insertion (counter 1 after a boot)
+TDU_REMINT     EQU 18                ; long: struct Interrupt of TD_REMOVE (0 = none)
+TDU_CHGLIST    EQU 22                ; struct List: TD_ADDCHANGEINT requests (linked through their own node)
+TDU_DRU        EQU 36                ; struct DiscResourceUnit: disk.resource ownership of the raw commands
+TDU_UNITSZ     EQU TDU_DRU+DRU_SIZE
 TDU_UNIT0      EQU LIB_SIZE          ; 34: unit 0 (the M6T proof checks io_Unit = base + 34)
 TDB_SEM        EQU TDU_UNIT0+NUMUNITS*TDU_UNITSZ   ; SignalSemaphore: one drive access at a time
-TDBASE_SIZE    EQU TDB_SEM+TD_SEMSIZE
+TDB_DRES       EQU TDB_SEM+TD_SEMSIZE              ; disk.resource | 0
+TDB_CIAB       EQU TDB_DRES+4                      ; ciab.resource | 0 (FLG index interrupt of INDEXSYNC)
+TDB_IDXLEN     EQU TDB_CIAB+4                      ; word: DSKLEN value the index interrupt writes
+TDB_IDXCNT     EQU TDB_IDXLEN+2                    ; byte: index pulses still to see before starting the DMA
+TDBASE_SIZE    EQU TDB_IDXCNT+2
 
 ; TD_NO_UNITCHECK=1 (RED): Open skips the unit number validation -> unit 4 (invalid) wrongly opens ->
 ; the "unit 4 fails" proof breaks -> "M6T TRACKDISK OK" absent. Isolates the unit validation. Default 0.
@@ -85,7 +107,7 @@ trackdisk_open:
         bcc.s   .td_badunit          ; unit >= 4 (unsigned comparison) -> OpenDevice fails
                 endc
         move.l  d0,d1                ; d1 = unit (flags no longer needed)
-        lsl.l   #4,d1                ; unit * TDU_UNITSZ
+        mulu    #TDU_UNITSZ,d1
         lea     TDU_UNIT0(a6),a0
         add.l   d1,a0                ; a0 = &unit[unit]
                 ifeq    TD_NO_UNITCHECK
@@ -144,8 +166,12 @@ trackdisk_beginio:
         move.l  d0,TD_CUNIT
         clr.b   IO_ERROR(a2)
         move.w  IO_COMMAND(a2),d0
-        cmp.w   #TD_FORMAT,d0        ; TD_FORMAT does not touch io_Actual (spec trackdisk-write-v34 §8, steps K and L)
-        beq.s   .td_nact
+        cmp.w   #31,d0               ; commands that leave io_Actual alone (TD_FORMAT: spec trackdisk-write-v34 §8;
+        bhi.s   .td_clract           ; seek, raw, remove and change interrupts: trackdisk-raw-changeint-v34)
+        move.l  #TD_KEEPACT,d1
+        btst    d0,d1
+        bne.s   .td_nact
+.td_clract:
         clr.l   IO_ACTUAL(a2)
 .td_nact:
                 ifeq    TD_READ_NOCMD
@@ -287,6 +313,8 @@ trackdisk_beginio:
 .td_restore:
         lea     TDB_SEM(a4),a0
         jsr     LVO_RELEASESEMAPHORE(a6)
+        cmp.w   #TD_ADDCHANGEINT,IO_COMMAND(a2)
+        beq.s   .td_bdone            ; installed change interrupt: only TD_REMCHANGEINT replies it
         btst    #0,IO_FLAGS(a2)      ; IOF_QUICK (bit 0)?
         bne.s   .td_bdone
         move.l  a2,a1                ; not quick -> ReplyMsg(ioreq)
@@ -333,6 +361,25 @@ trackdisk_initfunc:
         clr.w   TDU_CYL(a1)
         clr.w   TDU_MCNT(a1)
         clr.l   TDU_CHG(a1)
+        st      TDU_ABSENT(a1)
+        clr.l   TDU_REMINT(a1)
+        lea     TDU_CHGLIST(a1),a0
+        move.l  a0,LH_TAILPRED(a0)
+        clr.b   LH_TAILPRED+4(a0)    ; lh_Type
+        addq.l  #LH_TAIL,a0
+        clr.l   (a0)
+        move.l  a0,-LH_TAIL(a0)
+        lea     TDU_DRU(a1),a0       ; DiscResourceUnit: no block/sync interrupt (DSKBLK is trackdisk's own
+        moveq   #DRU_SIZE/2-1,d0     ; vector), index interrupt = start of an INDEXSYNC transfer
+.ti_dru:
+        clr.w   (a0)+
+        dbra    d0,.ti_dru
+        move.w  #DRU_SIZE,TDU_DRU+MN_LENGTH(a1)
+        move.b  #NT_INTERRUPT,TDU_DRU+DRU_INDEX+LN_TYPE(a1)
+        lea     trackdisk_name(pc),a0
+        move.l  a0,TDU_DRU+DRU_INDEX+LN_NAME(a1)
+        move.l  a2,TDU_DRU+DRU_INDEX+IS_DATA(a1)
+        move.l  #td_index_int,TDU_DRU+DRU_INDEX+IS_CODE(a1)
         tst.w   d2
         seq     TDU_PRESENT(a1)      ; DF0: no identification register, always present
         beq.s   .ti_next
@@ -349,7 +396,12 @@ trackdisk_initfunc:
         lea     TDU_UNITSZ(a1),a1
         addq.w  #1,d2
         cmp.w   #NUMUNITS,d2
-        blo.s   .ti_unit
+        blo     .ti_unit
+        move.l  a3,TDB_DRES(a2)
+        lea     td_ciabname(pc),a1
+        jsr     LVO_OPENRESOURCE(a6)
+        move.l  d0,TDB_CIAB(a2)
+        clr.b   TDB_IDXCNT(a2)
         lea     TD_VBLINT,a1         ; VBlank server that turns off the idle motors
         clr.l   LN_SUCC(a1)
         clr.l   LN_PRED(a1)
@@ -376,6 +428,8 @@ trackdisk_initfunc:
         rts
 td_drname:
         dc.b    "disk.resource",0
+td_ciabname:
+        dc.b    "ciab.resource",0
         even
 
 ; td_cache_flush(): empties all the cache slots (disk changed, init). Preserves everything.
@@ -527,11 +581,14 @@ td_select:
         move.b  d0,CIAB_PRB
         rts
 
-; td_check_change(): selects the current drive (motor state kept) and reads /CHNG (low = disk removed/changed since
-; the last head step; only a step with a disk present releases it). Low -> invalidates the unit's cached tracks AND
-; its head position (recalibration). Clobbers d0. Cost: 3 PRB writes, no spin-up.
+; td_check_change(a6 = SysBase): selects the current drive (motor state kept) and reads /CHNG (low = disk
+; removed/changed since the last head step; only a step with a disk present releases it). Low -> invalidates the
+; unit's cached tracks AND its head position (recalibration). A transition of the unit's disk state is a change:
+; removal (low while a disk was there) or insertion (high while none was), counted in TD_CHANGENUM, then the
+; TD_REMOVE interrupt and the TD_ADDCHANGEINT interrupts are Cause()d (spec trackdisk-raw-changeint-v34 §5.4, §6.2).
+; Clobbers d0. Cost: 3 PRB writes, no spin-up.
 td_check_change:
-        movem.l d1/a0,-(sp)
+        movem.l d1/a0-a1,-(sp)
         move.l  TD_CUNIT,a0
         st      TD_BUSY
         move.b  #$FF,CIAB_DDRB
@@ -542,12 +599,47 @@ td_check_change:
         move.b  d0,CIAB_PRB
         sf      TD_BUSY
         tst.b   d1
-        bne.s   .cc_ret
+        bne.s   .cc_high
         bsr     td_cache_drop
         sf      TDU_CYLOK(a0)
+        tst.b   TDU_ABSENT(a0)
+        bne.s   .cc_ret              ; still no disk
+        st      TDU_ABSENT(a0)       ; removal
+        bra.s   .cc_event
+.cc_high:
+        tst.b   TDU_ABSENT(a0)
+        beq.s   .cc_ret
+        sf      TDU_ABSENT(a0)       ; insertion (the cache was dropped when /CHNG was seen low)
+.cc_event:
         addq.l  #1,TDU_CHG(a0)
+        bsr.s   td_signal_change
 .cc_ret:
-        movem.l (sp)+,d1/a0
+        movem.l (sp)+,d1/a0-a1
+        rts
+
+; td_signal_change(a0 = unit, a6 = SysBase): Cause() of the TD_REMOVE interrupt, then of the interrupt (io_Data) of
+; every TD_ADDCHANGEINT request, in installation order. Preserves everything.
+td_signal_change:
+        movem.l d0-d1/a0-a2,-(sp)
+        move.l  a0,a2
+        move.l  TDU_REMINT(a2),d0
+        beq.s   .sg_list
+        move.l  d0,a1
+        jsr     TD_LVO_CAUSE(a6)
+.sg_list:
+        move.l  TDU_CHGLIST(a2),a2   ; lh_Head
+.sg_lp:
+        tst.l   (a2)                 ; ln_Succ = 0: list tail
+        beq.s   .sg_ret
+        move.l  IO_DATA(a2),d0
+        beq.s   .sg_nx
+        move.l  d0,a1
+        jsr     TD_LVO_CAUSE(a6)
+.sg_nx:
+        move.l  (a2),a2
+        bra.s   .sg_lp
+.sg_ret:
+        movem.l (sp)+,d0-d1/a0-a2
         rts
 
 ; td_read_track0(a6=SysBase) -> d0 = chip buffer (raw MFM track) | 0 (timeout / no disk), on the current unit
@@ -558,7 +650,7 @@ td_check_change:
 ; Writes ONLY CIA-B PRB/DDRB (ports) -> the CIA-B timers (MICROHZ/M7a unit) are not touched.
 ; B2b: td_read_track(d0 = track number) seeks to the track first; td_read_track0 = reads track 0 (wrapper for
 ; the existing callers: M6U/M6V, BeginIO). track = cylinder*2 + side. CYLINDER-TRACKING: we follow TDU_CYL and
-; step the DELTA towards the target (recalibration to 0 only if TDU_CYLOK==0) -> correct AND fast (cf. .rd_seek).
+; step the DELTA towards the target (recalibration to 0 only if TDU_CYLOK==0) -> correct AND fast (cf. td_seek).
 td_read_track0:
         moveq   #0,d0                 ; track 0
 td_read_track:
@@ -606,6 +698,7 @@ td_read_track:
 .rd_stop:
         move.w  #$4000,DSKLEN        ; disarm the disk DMA (DSKEN stays on, as on 1.3: custom-chips-v34 §3.1)
         move.w  #INTF_DSKBLK,INTREQ  ; clear DSKBLK
+        move.w  #ADKF_WORDSYNC,ADKCON ; WORDSYNC off again: the raw commands read from an arbitrary bit phase
         move.b  #PRB_MOTOR_ON,CIAB_PRB ; deselect, motor left on (latched): the next read avoids the spin-up
         move.l  TD_CUNIT,a0
         move.w  #TD_MOTORIDLE,TDU_MCNT(a0) ; the VBlank server will turn it off after TD_MOTORIDLE idle ticks
@@ -618,7 +711,15 @@ td_read_track:
 TD_DMATICKS     EQU 50                ; 1 s: a track needs at most two revolutions (400 ms)
 SIGF_SINGLE     EQU $10
 td_dmawait:
+        move.l  d0,-(sp)
+        moveq   #TD_DMATICKS,d0
+        bsr.s   td_dmawaitn
+        movem.l (sp)+,d0             ; (movem does not touch the CCR)
+        rts
+; td_dmawaitn(d0.w = delay in frames): same as td_dmawait with another delay.
+td_dmawaitn:
         movem.l d0-d2/a0-a1,-(sp)
+        move.w  d0,d2
         tst.b   SCHED_ON
         beq.s   .dw_poll
         tst.l   EB_THISTASK(a6)
@@ -627,7 +728,7 @@ td_dmawait:
         moveq   #SIGF_SINGLE,d1
         jsr     LVO_SETSIGNAL(a6)    ; a leftover SIGF_SINGLE must not wake the wait
         sf      TD_DMADONE
-        move.w  #TD_DMATICKS,TD_DMATMO
+        move.w  d2,TD_DMATMO
         move.l  EB_THISTASK(a6),TD_DMATASK
         move.w  #(INTF_SETCLR|INTF_DSKBLK),INTENA   ; (already finished: the interrupt fires at once)
 .dw_wait:
@@ -669,10 +770,10 @@ td_dskblk_int:
 .di_ret:
         rts
 
-; td_position(d6 = track, a6 = SysBase): motor on (spin-up if needed), current drive (TD_CUNIT) selected, head
-; brought to the cylinder (cylinder tracking, recalibration if position unknown), side chosen. TD_BUSY set (cleared
-; by the caller at the end of its access). Clobbers d0-d3/a0.
-td_position:
+; td_motor_on(a6 = SysBase): motor on (spin-up if needed), current drive (TD_CUNIT) selected -> a0 = unit, d1 = PRB
+; value (drive selected, motor on, side 0, direction out, no step). TD_BUSY set (cleared by the caller at the end of
+; its access). Clobbers d0/d2.
+td_motor_on:
         st      TD_BUSY               ; the VBlank server no longer touches the drive
         move.l  TD_CUNIT,a0           ; a0 = unit
         move.b  TDU_SEL(a0),d1
@@ -682,12 +783,12 @@ td_position:
         move.b  #PRB_MOTOR_ON,CIAB_PRB ; motor on (intention), everything deselected
         move.b  d1,CIAB_PRB           ; select the drive -> the SELx edge latches motor=on
         tst.b   TDU_MOTOR(a0)         ; motor left on since the previous read: already at speed
-        bne.s   .rd_seek
+        bne.s   .mo_ready
         st      TDU_MOTOR(a0)
         move.l  #$00040000,d2         ; spin-up: busy-loop + DSKRDY poll (timeout = drive absent/empty)
 .rd_spin:
         btst    #DSKB_RDY,CIAA_PRA_HW ; DSKRDY = 0 when ready
-        beq.s   .rd_seek
+        beq.s   .mo_ready
         subq.l  #1,d2
         bne.s   .rd_spin
         ; DSKRDY not asserted within the spin-up window. CORRECTION (real-A500 debt lifted): on a real A500 /
@@ -696,8 +797,19 @@ td_position:
         ; timing-exact WinUAE, proven stage=2). We NO LONGER FAIL here: the loop has already allowed ~0.5-1 s of motor
         ; spin-up; we CONTINUE to the seek+DMA, where the DMA's WORDSYNC sync is the REAL presence test (the
         ; pre-B2 behaviour). Without a disk -> no sync -> DMA timeout further down -> returns 0 (slower than
-        ; the old "no disk" probe but CORRECT). /RDY remains the FAST path via the "beq.s .rd_seek" above.
-.rd_seek:
+        ; the old "no disk" probe but CORRECT). /RDY remains the FAST path via the "beq.s .mo_ready" above.
+.mo_ready:
+        rts
+
+; td_position(d6 = track, a6 = SysBase): td_motor_on, then td_seek. -> d0 = 0 | TDERR_SeekError. Clobbers d1-d3/a0.
+td_position:
+        bsr     td_motor_on
+; td_seek(d1 = PRB value of the selected drive, motor bit as wanted; d6 = track; a0 = unit; a6 = SysBase): head
+; brought to the cylinder (cylinder tracking, recalibration if position unknown), side chosen; the motor latch is not
+; changed. -> d0 = 0, or TDERR_SeekError if a recalibration did not find track 0 (the head is then assumed on
+; cylinder 0 anyway, as before). Clobbers d2/d3.
+td_seek:
+        clr.w   -(sp)                 ; result
         ; CRITICAL SECTION of the seek: the step pulses write CIAB_PRB, and the MICROHZ source (CIA-B
         ; timer A, INT6) shares the SAME chip. An INT6 IRQ landing between the PRB writes of a step corrupts the
         ; head positioning -> the next read falls over (hang observed on a big seek towards a high
@@ -728,6 +840,10 @@ td_position:
         bsr     .rd_stepwait
         dbra    d2,.rd_recal
 .rd_recdone:
+        btst    #DSKB_TRACK0,CIAA_PRA_HW
+        beq.s   .rd_rcok
+        move.w  #TDERR_SeekError,(sp)
+.rd_rcok:
         bsr     .rd_settle
         clr.w   TDU_CYL(a0)         ; known position = cylinder 0
         st      TDU_CYLOK(a0)
@@ -763,6 +879,8 @@ td_position:
         move.b  d0,CIAB_PRB         ; side 1 (DSKSIDE=0, bit2=0; odd track)
 .rd_pend:
         jsr     LVO_ENABLE(a6)      ; end of the seek critical section
+        moveq   #0,d0
+        move.w  (sp)+,d0
         rts
 ; Head delays (subq/bne loops ~= 2.54 us per iteration at 7.09 MHz): 3 ms between two steps (step rate of a DD
 ; drive) and 18 ms of settling ONCE after the last step. Before: ~83 ms after EACH step (3.3 s for 40 cyl).
@@ -829,17 +947,273 @@ td_cmdtab:
         TDCMD   TD_CHANGENUM,td_cmd_chgnum
         TDCMD   TD_CHANGESTATE,td_cmd_chgstate
         TDCMD   TD_GETNUMTRACKS,td_cmd_ntracks
-        TDCMD   CMD_RESET,td_cmd_nop
-        TDCMD   CMD_STOP,td_cmd_nop
-        TDCMD   CMD_START,td_cmd_nop
-        TDCMD   CMD_FLUSH,td_cmd_nop
-        TDCMD   TD_SEEK,td_cmd_nop
-        TDCMD   TD_REMOVE,td_cmd_nop
-        TDCMD   TD_ADDCHANGEINT,td_cmd_nop
-        TDCMD   TD_REMCHANGEINT,td_cmd_nop
-        dc.w    -1
+        TDCMD   TD_GETDRIVETYPE,td_cmd_drivetype
+        TDCMD   TD_SEEK,td_cmd_seek
+        TDCMD   TD_RAWREAD,td_cmd_rawread
+        TDCMD   TD_RAWWRITE,td_cmd_rawwrite
+        TDCMD   TD_REMOVE,td_cmd_remove
+        TDCMD   TD_ADDCHANGEINT,td_cmd_addchg
+        TDCMD   TD_REMCHANGEINT,td_cmd_remchg
+        dc.w    -1                   ; CMD_RESET/STOP/START/FLUSH included: IOERR_NOCMD, no effect (spec §8)
 
-td_cmd_nop:
+td_cmd_drivetype:
+        move.l  #DRIVE3_5,IO_ACTUAL(a2)
+        rts
+; TD_REMOVE: io_Data = the unit's single remove interrupt (0 clears it), replacing the previous one.
+td_cmd_remove:
+        move.l  TD_CUNIT,a0
+        move.l  IO_DATA(a2),TDU_REMINT(a0)
+        rts
+; TD_ADDCHANGEINT: the request itself joins the unit's change list and stays in use (never replied while installed;
+; IOF_QUICK cleared, so DoIO would wait for ever, as on 1.3); its io_Data is Cause()d at each disk change.
+td_cmd_addchg:
+        move.l  TD_CUNIT,a0
+        lea     TDU_CHGLIST(a0),a0
+        move.l  a2,a1
+        jsr     LVO_ADDTAIL(a6)
+        move.b  #NT_MESSAGE,LN_TYPE(a2)
+        bclr    #0,IO_FLAGS(a2)
+        rts
+; TD_REMCHANGEINT: the request (the one given to TD_ADDCHANGEINT) leaves the list it is on; replied normally.
+td_cmd_remchg:
+        move.l  a2,a1
+        jmp     LVO_REMOVE(a6)
+
+; TD_SEEK: io_Offset = byte offset (multiple of 512, up to the disk size INCLUDED: 901120 seeks to track 160);
+; head moved to its track, motor latch untouched. A failed recalibration is not reported (spec §3).
+td_cmd_seek:
+        move.l  IO_OFFSET(a2),d0
+        move.l  d0,d1
+        and.l   #MFM_SECTSZ-1,d1
+        bne.s   .sk_bad
+        cmp.l   #TD_DISKBYTES,d0
+        bhi.s   .sk_bad
+        lsr.l   #8,d0
+        lsr.l   #1,d0
+        divu    #MFM_NSECT,d0
+        moveq   #0,d6
+        move.w  d0,d6                ; d6 = track (0..160)
+        bsr     td_check_change
+        move.l  TD_CUNIT,a0
+        st      TD_BUSY
+        move.b  #$FF,CIAB_DDRB
+        bsr     td_select            ; d0 = PRB with the drive selected, motor bit as latched
+        move.b  d0,d1
+        bsr     td_seek
+        move.l  TD_CUNIT,a0
+        bsr     td_select
+        or.b    #PRB_DESEL,d0
+        move.b  d0,CIAB_PRB
+        sf      TD_BUSY
+        rts
+.sk_bad:
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a2)
+        rts
+
+; TD_RAWREAD / TD_RAWWRITE (spec §4): io_Offset = track, io_Length = bytes (< 32768, odd byte dropped), io_Data =
+; word-aligned chip buffer, not checked. Order: disk controller taken (disk.resource), motor on, track bound, seek
+; (error 30), length bound, DMA of raw MFM words to/from io_Data (no sync word: arbitrary bit phase; IOTDF_INDEXSYNC =
+; start at an index pulse), /CHNG checked before and after (29), /WPRO for a write (28), 140 ns precompensation on
+; the inner tracks, 2 ms drain after a write. io_Actual is never written; the track cache is not used, except that a
+; raw write drops the clean cached copy of the track it overwrites (our cache keeps several tracks: a stale copy
+; would outlive the 1.3 single track buffer).
+TD_RAWTICKS     EQU 100              ; 2 s: up to two index pulses then 0.52 s of DMA
+td_cmd_rawread:
+        moveq   #0,d7
+        bra.s   td_raw
+td_cmd_rawwrite:
+        moveq   #1,d7
+td_raw:
+        bsr     td_check_change
+        bsr     td_getunit
+        move.l  IO_OFFSET(a2),d6     ; d6 = track
+        bsr     td_motor_on          ; a0 = unit, d1 = PRB of the selected drive
+        moveq   #IOERR_BADLENGTH,d5
+        cmp.l   #TD_NTRACKS,d6
+        bhs     .rw_end              ; out of range: the motor stays on
+        bsr     td_seek
+        move.l  d0,d5
+        bne     .rw_end
+        moveq   #IOERR_BADLENGTH,d5
+        cmp.l   #TD_RAWMAX,IO_LENGTH(a2)
+        bhs     .rw_end
+        move.w  #INTF_DSKBLK,INTREQ
+        move.w  #$4000,DSKLEN
+        move.l  IO_DATA(a2),DSKPT
+        move.w  #(DMAF_SETCLR|DMAF_DISK),DMACON
+        moveq   #TDERR_DiskChanged,d5
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        beq     .rw_end
+        move.l  IO_LENGTH(a2),d0
+        lsr.l   #1,d0
+        or.w    #$8000,d0            ; DMAEN | words
+        tst.l   d7
+        beq.s   .rw_arm
+        moveq   #TDERR_WriteProt,d5
+        btst    #DSKB_PROT,CIAA_PRA_HW
+        beq     .rw_end
+        move.w  #ADKF_PRECOMPMASK,ADKCON
+        cmp.l   #TD_PCTRACK,d6
+        blo.s   .rw_nopc
+        move.w  #(ADKF_SETCLR|ADKF_PRECOMP140),ADKCON
+.rw_nopc:
+        or.w    #$4000,d0            ; WRITE
+.rw_arm:
+        btst    #IOTDB_INDEXSYNC,IO_FLAGS(a2)
+        beq.s   .rw_now
+        move.l  TDB_CIAB(a4),d1
+        beq.s   .rw_now              ; no ciab.resource: started at once
+        ; Two index interrupts are awaited and the DMA starts at the second: the first one may be a FLG flag
+        ; latched by an older pulse (our SetICR cannot clear it yet), so only the second is surely a fresh pulse.
+        move.w  d0,TDB_IDXLEN(a4)
+        move.b  #2,TDB_IDXCNT(a4)
+        move.l  a6,-(sp)
+        move.l  d1,a6
+        moveq   #CIAICRF_FLG,d0
+        jsr     CIA_LVO_SETICR(a6)
+        move.l  #$80|CIAICRF_FLG,d0
+        jsr     CIA_LVO_ABLEICR(a6)
+        move.l  (sp)+,a6
+        bra.s   .rw_wait
+.rw_now:
+        move.w  d0,DSKLEN
+        move.w  d0,DSKLEN
+.rw_wait:
+        moveq   #TD_RAWTICKS,d0
+        bsr     td_dmawaitn
+        sne     d4                   ; d4 = $FF: end of DMA seen
+        btst    #IOTDB_INDEXSYNC,IO_FLAGS(a2)
+        beq.s   .rw_flg
+        move.l  TDB_CIAB(a4),d0
+        beq.s   .rw_flg
+        clr.b   TDB_IDXCNT(a4)
+        move.l  a6,-(sp)
+        move.l  d0,a6
+        moveq   #CIAICRF_FLG,d0
+        jsr     CIA_LVO_ABLEICR(a6)  ; FLG off (already off if the DMA was started)
+        move.l  (sp)+,a6
+.rw_flg:
+        tst.l   d7
+        beq.s   .rw_tdown
+        move.l  #800,d0              ; ~2 ms: the last word leaves the head
+.rw_tail:
+        subq.l  #1,d0
+        bne.s   .rw_tail
+.rw_tdown:
+        move.w  #$4000,DSKLEN
+        move.w  #INTF_DSKBLK,INTREQ
+        moveq   #TDERR_NotSpec,d5
+        tst.b   d4
+        beq.s   .rw_end              ; no end of DMA (no disk turning, no index pulse)
+        moveq   #TDERR_DiskChanged,d5
+        btst    #DSKB_CHANGE,CIAA_PRA_HW
+        beq.s   .rw_end
+        moveq   #0,d5
+.rw_end:
+        move.b  #PRB_MOTOR_ON,CIAB_PRB ; deselect, motor left on (latched)
+        move.l  TD_CUNIT,a0
+        move.w  #TD_MOTORIDLE,TDU_MCNT(a0)
+        sf      TD_BUSY
+        bsr     td_giveunit
+        move.b  d5,IO_ERROR(a2)
+        tst.l   d7
+        beq.s   .rw_ret
+        moveq   #0,d0                ; raw write: the clean cached copy of this track is dropped
+        move.b  d6,d0
+        or.w    TDU_KEY(a0),d0
+        lea     TD_CTRK,a0
+        lea     TD_CDIRTY,a1
+        moveq   #TD_NCACHE-1,d1
+.rw_cache:
+        cmp.w   (a0)+,d0
+        bne.s   .rw_cnx
+        tst.b   (a1)
+        bne.s   .rw_cnx
+        move.w  #$FFFF,-2(a0)
+.rw_cnx:
+        addq.l  #1,a1
+        dbra    d1,.rw_cache
+.rw_ret:
+        rts
+
+; td_index_int (disk.resource relay of the CIA-B FLG index pulse to the controller owner, a1 = device base, a6 =
+; SysBase): at the last awaited pulse, starts the prepared raw DMA (DSKLEN written twice) and turns FLG off.
+td_index_int:
+        tst.b   TDB_IDXCNT(a1)
+        beq.s   .ix_ret
+        subq.b  #1,TDB_IDXCNT(a1)
+        bne.s   .ix_ret
+        move.w  TDB_IDXLEN(a1),d0
+        move.w  d0,DSKLEN
+        move.w  d0,DSKLEN
+        move.l  a6,-(sp)
+        move.l  TDB_CIAB(a1),a6
+        moveq   #CIAICRF_FLG,d0
+        jsr     CIA_LVO_ABLEICR(a6)
+        move.l  (sp)+,a6
+.ix_ret:
+        rts
+
+; td_getunit(a6 = SysBase): the disk controller is taken through disk.resource for the current unit (GetUnit; if
+; another driver holds it, waits for the reply of the DRU on a reply port built on the stack, signal SIGB_SINGLE).
+; If the previous owner was another unit or driver, ADKCON's disk mode is reset (no WORDSYNC/MSBSYNC; MFM
+; precompensation, 2 us cells). Clobbers d0/d1/a0/a1.
+td_getunit:
+        movem.l a2-a3/a5,-(sp)
+        move.l  TD_BASEP,a0
+        move.l  TDB_DRES(a0),d0
+        beq.s   .gu_ret
+        move.l  d0,a5                ; a5 = disk.resource
+        lea     -MP_SIZE(sp),sp
+        move.l  sp,a3                ; a3 = reply port
+        move.b  #NT_MSGPORT,LN_TYPE(a3)
+        move.b  #PA_SIGNAL,MP_FLAGS(a3)
+        move.b  #SIGB_SINGLE,MP_SIGBIT(a3)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a3)
+        lea     MP_MSGLIST(a3),a0
+        move.l  a0,LH_TAILPRED(a0)
+        addq.l  #LH_TAIL,a0
+        clr.l   (a0)
+        move.l  a0,-LH_TAIL(a0)
+        move.l  TD_CUNIT,a2
+        lea     TDU_DRU(a2),a2       ; a2 = DRU of the unit
+        move.l  a3,MN_REPLYPORT(a2)
+.gu_try:
+        move.l  a2,a1
+        exg     a5,a6
+        jsr     DR_LVO_GETUNIT(a6)
+        exg     a5,a6
+        tst.l   d0
+        bne.s   .gu_got
+.gu_wait:
+        move.l  a3,a0
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        bne.s   .gu_try
+        moveq   #1<<SIGB_SINGLE,d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .gu_wait
+.gu_got:
+        clr.l   MN_REPLYPORT(a2)
+        lea     MP_SIZE(sp),sp
+        cmp.l   a2,d0
+        beq.s   .gu_ret
+        move.w  #(ADKF_WORDSYNC|ADKF_MSBSYNC),ADKCON
+        move.w  #(ADKF_SETCLR|ADKF_MFMPREC|ADKF_FAST),ADKCON
+.gu_ret:
+        movem.l (sp)+,a2-a3/a5
+        rts
+
+; td_giveunit(a6 = SysBase): the disk controller is given back to disk.resource. Preserves everything.
+td_giveunit:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        move.l  TD_BASEP,a0
+        move.l  TDB_DRES(a0),d0
+        beq.s   .gv_ret
+        move.l  d0,a6
+        jsr     DR_LVO_GIVEUNIT(a6)
+.gv_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 td_cmd_ntracks:
         move.l  #TD_NTRACKS,IO_ACTUAL(a2)
@@ -862,7 +1236,9 @@ td_cmd_chgstate:
         bne.s   .cs_out
         bsr     td_present
         tst.l   d0
-        bne.s   .cs_in
+        beq.s   .cs_out
+        bsr     td_check_change      ; /CHNG released by the probe step: insertion counted and signalled
+        bra.s   .cs_in
 .cs_out:
         moveq   #1,d0
         bra.s   .cs_set
@@ -1173,7 +1549,7 @@ td_flush_slot:
         moveq   #0,d0
         move.w  d6,d0
         lsr.w   #8,d0
-        lsl.w   #4,d0                ; unit * TDU_UNITSZ
+        mulu    #TDU_UNITSZ,d0
         move.l  TD_BASEP,a0
         lea     TDU_UNIT0(a0,d0.w),a0
         move.l  a0,TD_CUNIT
