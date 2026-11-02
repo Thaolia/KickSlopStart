@@ -24,6 +24,7 @@
                 xdef    gfx_AreaEnd
                 xdef    gfx_DrawEllipse
                 xdef    gfx_Flood
+                xdef    gfx_BltPattern
 
 AREAOUTLINE     EQU $0008
 ai_VctrTbl      EQU 0
@@ -424,7 +425,8 @@ MK_CX           EQU 22               ; word: ellipse centre (callbacks)
 MK_CY           EQU 24
 MK_TBL          EQU 26               ; long: table of an ellipse's half-widths
 MK_FLAGS        EQU 30               ; word: saved rp_Flags
-MK_SIZE         EQU 32
+MK_COLS         EQU 32               ; word: columns rendered by mk_render
+MK_SIZE         EQU 34
 
 ; mk_bit(d0 = x, d1 = y absolute, a5): applies MK_OP to the point (outside the mask: nothing). Clobbers d0/d1/a0.
 mk_bit:
@@ -520,6 +522,10 @@ mk_alloc:
         lsr.w   #4,d0
         add.w   d0,d0
         move.w  d0,MK_L(a5)
+        move.w  d0,MK_COLS(a5)
+        lsl.w   MK_COLS(a5)          ; x 8: columns
+        lsl.w   MK_COLS(a5)
+        lsl.w   MK_COLS(a5)
         move.w  d1,MK_H(a5)
         mulu    d0,d1
         clr.l   MK_ALLOC(a5)
@@ -584,8 +590,7 @@ mk_render:
         bge.s   .mr_end
         moveq   #-1,d5               ; d5 = start of the current run (-1: none)
         moveq   #0,d6                ; d6 = column
-        move.w  MK_L(a5),d4
-        lsl.w   #3,d4                ; d4 = columns
+        move.w  MK_COLS(a5),d4       ; d4 = columns
 .mr_col:
         cmp.w   d4,d6
         bge.s   .mr_eol
@@ -640,6 +645,48 @@ mk_render:
         move.l  MK_RP(a5),a1
         jsr     LVO_RECTFILL(a6)
         movem.l (sp)+,d2-d7/a2
+        rts
+
+; ---------------------------------------------------------------------------------------------------------------
+; BltPattern(rp a1, mask a0, xl d0, yl d1, maxX d2, maxY d3, bytecnt d4), inclusive bounds (spec graphics-blitter
+; §8): RectFill's pens, mode, pattern and layer clipping, without the AREAOUTLINE outline. mask NULL: the whole
+; rectangle; otherwise only the pixels whose mask bit is set (bit 7 of the first byte of a row = column xl, rows
+; bytecnt bytes apart). CPU rendering like the rest of this file.
+gfx_BltPattern:
+        movem.l d2-d4/a5,-(sp)
+        lea     -MK_SIZE(sp),sp
+        move.l  sp,a5
+        move.l  a1,MK_RP(a5)
+        cmpa.w  #0,a0
+        bne.s   .bp_mask
+        move.w  rp_Flags(a1),MK_FLAGS(a5)
+        and.w   #~AREAOUTLINE,rp_Flags(a1)
+        jsr     LVO_RECTFILL(a6)
+        move.l  MK_RP(a5),a1
+        move.w  MK_FLAGS(a5),rp_Flags(a1)
+        bra.s   .bp_ret
+.bp_mask:
+        move.l  a0,MK_BUF(a5)
+        move.w  d0,MK_X0(a5)
+        move.w  d1,MK_Y0(a5)
+        move.w  d4,MK_L(a5)
+        sub.w   d1,d3
+        addq.w  #1,d3
+        ble.s   .bp_ret
+        move.w  d3,MK_H(a5)
+        sub.w   d0,d2
+        addq.w  #1,d2
+        ble.s   .bp_ret
+        lsl.w   #3,d4                ; never past the end of a mask row
+        cmp.w   d4,d2
+        ble.s   .bp_cols
+        move.w  d4,d2
+.bp_cols:
+        move.w  d2,MK_COLS(a5)
+        bsr     mk_render
+.bp_ret:
+        lea     MK_SIZE(sp),sp
+        movem.l (sp)+,d2-d4/a5
         rts
 
 ; ---------------------------------------------------------------------------------------------------------------
@@ -1098,6 +1145,10 @@ gfx_Flood:
         lsr.w   #4,d0
         add.w   d0,d0
         move.w  d0,MK_L(a5)
+        move.w  d0,MK_COLS(a5)
+        lsl.w   MK_COLS(a5)          ; x 8: columns
+        lsl.w   MK_COLS(a5)
+        lsl.w   MK_COLS(a5)
         move.w  d1,MK_H(a5)
         mulu    d1,d0
         move.l  d0,d3

@@ -86,9 +86,12 @@ vp_DWidth    EQU 24
 vp_DHeight   EQU 26
 vp_DyOffset  EQU 30
 vp_Modes     EQU 32
+vp_SpritePri EQU 34           ; SpritePriorities (byte)
 vp_RasInfo   EQU 36
 vp_SIZEOF    EQU 40
 ri_BitMap    EQU 4            ; RasInfo
+ri_RxOffset  EQU 8
+ri_RyOffset  EQU 10
 ri_SIZEOF    EQU 12
 bm_BytesPerRow EQU 0          ; BitMap
 bm_Rows      EQU 2
@@ -192,6 +195,7 @@ LVO_BLTBITMAPRASTPORT EQU -606
 LVO_CHANGESPRITE EQU -420
 LVO_MOVESPRITE EQU -426
 V_HIRES       EQU $8000        ; vp_Modes: high resolution (640 px)
+VP_HIDE       EQU $2000        ; vp_Modes: ViewPort hidden behind another screen
 
 ; --- GfxBase: public V34 layout (graphics/gfxbase.i) then private fields beyond ---
 gb_ActiView  EQU 34           ; APTR: active View (set by LoadView)
