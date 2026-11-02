@@ -31,7 +31,19 @@
                 xdef    exec_RawPutChar
                 xdef    exec_ObtainSemaphoreList
                 xdef    exec_ReleaseSemaphoreList
+                xdef    exec_Debug
+                xdef    debug_entry          ; library.s: ExecBase DebugEntry
+                xdef    exec_SumKickData
+                xdef    exec_ExitIntr        ; scheduling entries (exec-scheduling-v34 §2), with interrupts.s
+                xdef    exec_Reschedule
+                xdef    exec_Exception
+                xdef    svc_schedule
+                xdef    svc_switch
+                xdef    except_default       ; library.s: ExecBase TaskExceptCode / TaskExitCode
+                xdef    task_exit_default
+                xref    exec_Schedule        ; interrupts.s
                 xref    intr_chain_walker    ; interrupts.s (RemIntServer: is IntVects[n] a server chain?)
+                xref    task_excpending      ; tasks.s (SetExcept: exception pending -> TB_EXCEPT + Reschedule)
 
 LVO_SUPERVISOR_X EQU -30
 ME_SIZE         EQU 8                ; struct MemEntry: me_Reqs|me_Addr, me_Length
@@ -370,6 +382,237 @@ exec_RawPutChar:
         movem.l (sp)+,d1-d2/a0-a1/a6
         rts
 
+; ============================ scheduling entries (exec-scheduling-v34 §2) ============================
+; The scheduler core (Schedule, Switch, Dispatch, the dispatcher) is in interrupts.s. These entries reach it only
+; through vectors or absolute jumps, so they live here, linked after trackdisk: boot.s reaches trackdisk with
+; 16-bit branches and the modules linked between them must stay small.
+
+; ExitIntr (-36): entry = the 1.3 autovector frame: D0, D1, A0, A1, A5, A6 (24 bytes) above {SR, PC}. Resumes the
+; interrupted code unless it was a task in user mode, switching is allowed and a reschedule is pending (SAR).
+; Our own autovector handlers use the 60-byte frame and intr_exit; this entry serves code built for the 1.3 frame.
+exec_ExitIntr:
+        btst    #5,24(sp)           ; S bit of the stacked SR
+        bne.s   .ei_resume
+        move.l  ($4).w,a6
+        tst.b   EB_TDNEST(a6)
+        bge.s   .ei_resume
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
+        beq.s   .ei_resume
+        move.w  #$2000,sr
+        movem.l (sp)+,d0/d1/a0/a1/a5/a6
+        jmp     exec_Schedule       ; the body of Schedule, not its vector (§1)
+.ei_resume:
+        movem.l (sp)+,d0/d1/a0/a1/a5/a6
+        rte
+
+; Reschedule (-48): a6 = ExecBase, d0 destroyed. Sets SAR. Under Forbid: nothing more (Permit or the next
+; interrupt exit switches). Interrupts enabled: from user mode, Schedule through its vector; from supervisor mode
+; (interrupt code), return at once (the interrupt exit schedules). Disabled: if SAR was clear, post a software
+; interrupt so that the switch happens when Enable lets level 1 in.
+exec_Reschedule:
+        bset    #SFB_SAR,EB_SYSFLAGS(a6)
+        sne     d0                  ; d0 = $FF: SAR was already set
+        tst.b   EB_TDNEST(a6)
+        bge.s   .rs_ret
+        tst.b   EB_IDNEST(a6)
+        bge.s   .rs_dis
+        EXEC_SVC svc_schedule
+.rs_ret:
+        rts
+.rs_dis:
+        tst.b   d0
+        bne.s   .rs_ret
+        move.w  #(INTF_SETCLR|INTF_SOFTINT),INTREQ
+        rts
+
+; Exception (-66): in 1.3 an internal step of the dispatcher that nobody calls through the vector (§1, §5); the
+; dispatcher here runs it directly too (dispatch_in). A direct call gets a safe meaning: when the running task has
+; an exception pending, ask for the reschedule that delivers it.
+exec_Exception:
+        move.l  EB_THISTASK(a6),a0
+        btst    #TB_EXCEPT,TC_FLAGS(a0)
+        beq.s   .ex_ret
+        jmp     LVO_RESCHEDULE(a6)
+.ex_ret:
+        rts
+
+; svc_schedule / svc_switch (EXEC_SVC services): from a task (user frame), go to Schedule / Switch through the
+; vector; from supervisor mode, return at once (no user context to switch, as the 1.3 Supervisor path).
+svc_schedule:
+        btst    #5,(sp)
+        bne.s   svc_rte
+        jmp     EXECBASE+LVO_SCHEDULE
+svc_switch:
+        btst    #5,(sp)
+        bne.s   svc_rte
+        jmp     EXECBASE+LVO_SWITCH
+svc_rte:
+        rte
+
+; except_default: default tc_ExceptCode (ExecBase TaskExceptCode): re-arms nothing.
+except_default:
+        moveq   #0,d0
+        rts
+
+; task_exit_default: ExecBase TaskExitCode, the final PC of a task added with finalPC 0 (its code returned, user
+; mode): RemTask(self).
+task_exit_default:
+        move.l  ($4).w,a6
+        sub.l   a1,a1
+        jmp     LVO_REMTASK(a6)
+
+; Debug() (exec-scheduling-v34 §9): a polled serial monitor in supervisor mode, entered through Supervisor (EXEC_SVC).
+; Saves every register, INTENAR, then INTENA $0801 (TBE and RBF off), RawIOInit, banner "rom-wack". Commands
+; (echoed): 'r' shows the registers of the caller, 'g' resumes it (RTE, registers preserved). On exit INTENA gets
+; the saved TBE/RBF bits WITHOUT the SET bit, as in 1.3: the write can only clear, TBE and RBF stay disabled.
+; Output does not go through RawPutChar, which would swallow the next command byte while looking for ^S / DEL.
+; Only this command subset of ROM-Wack is provided.
+exec_Debug:
+        EXEC_SVC debug_entry
+        rts
+
+; Frame built on the SSP by debug_entry (offsets from sp after the last push):
+DBG_INTENA      EQU 0                ; word: INTENAR at entry
+DBG_USP         EQU 2
+DBG_REGS        EQU 6                ; D0-D7/A0-A6, then the "reason" long 0 (+66)
+DBG_SR          EQU 70               ; the {SR, PC} frame of the entry
+DBG_PC          EQU 72
+debug_entry:
+        clr.l   -(sp)                ; reason 0
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  usp,a0
+        move.l  a0,-(sp)
+        move.w  INTENAR,-(sp)
+        move.w  #$0801,INTENA        ; TBE and RBF off for the session
+        bsr     exec_RawIOInit
+        lea     dbg_banner(pc),a0
+        bsr     dbg_puts
+.db_cmd:
+        lea     dbg_prompt(pc),a0
+        bsr     dbg_puts
+.db_get:
+        bsr     exec_RawMayGetChar
+        tst.l   d0
+        bmi.s   .db_get
+        bsr     dbg_putc             ; echo
+        cmp.b   #'g',d0
+        beq.s   .db_go
+        cmp.b   #'r',d0
+        bne.s   .db_cmd
+        lea     dbg_dregs(pc),a0
+        bsr     dbg_puts
+        lea     DBG_REGS(sp),a1
+        moveq   #7,d2
+.db_d:
+        move.l  (a1)+,d0
+        bsr     dbg_hex8
+        dbra    d2,.db_d
+        lea     dbg_aregs(pc),a0
+        bsr     dbg_puts
+        moveq   #6,d2
+.db_a:
+        move.l  (a1)+,d0
+        bsr     dbg_hex8
+        dbra    d2,.db_a
+        lea     dbg_misc(pc),a0      ; USP, PC, SR of the caller
+        bsr     dbg_puts
+        move.l  DBG_USP(sp),d0
+        bsr     dbg_hex8
+        move.l  DBG_PC(sp),d0
+        bsr     dbg_hex8
+        moveq   #0,d0
+        move.w  DBG_SR(sp),d0
+        bsr     dbg_hex8
+        bra.s   .db_cmd
+.db_go:
+        lea     dbg_crlf(pc),a0
+        bsr     dbg_puts
+        move.w  (sp)+,d0
+        and.w   #$0801,d0            ; no SET bit: can only clear TBE/RBF
+        move.w  d0,INTENA
+        move.l  (sp)+,a0
+        move.l  a0,usp
+        movem.l (sp)+,d0-d7/a0-a6
+        addq.l  #4,sp                ; reason
+        rte
+
+; dbg_puts(a0) / dbg_putc(d0.b) / dbg_hex8(d0.l + space): polled transmitter only. dbg_putc preserves d0.
+; Clobbers d1/a0 (dbg_hex8: d0/d1/d3/a0).
+dbg_puts:
+        move.b  (a0)+,d0
+        beq.s   .dp_ret
+        bsr.s   dbg_putc
+        bra.s   dbg_puts
+.dp_ret:
+        rts
+dbg_putc:
+        btst    #13-8,SERDATR        ; TBE
+        beq.s   dbg_putc
+        moveq   #0,d1
+        move.b  d0,d1
+        or.w    #$100,d1
+        move.w  d1,SERDAT
+        rts
+dbg_hex8:
+        move.l  d0,d3
+        moveq   #7,d1
+.dh_lp:
+        rol.l   #4,d3
+        moveq   #15,d0
+        and.w   d3,d0
+        lea     al_digits(pc),a0
+        move.b  0(a0,d0.w),d0
+        move.w  d1,-(sp)
+        bsr.s   dbg_putc
+        move.w  (sp)+,d1
+        dbra    d1,.dh_lp
+        moveq   #' ',d0
+        bra.s   dbg_putc
+
+; SumKickData() -> d0 (exec-scheduling-v34 §7): $FFFFFFFF plus, 32-bit wrapping, every long of each KickMemPtr
+; MemList (node header, ml_NumEntries word pair and the MemEntries: 2*NumEntries+4 longs) and every ROMTag
+; POINTER of the KickTagPtr table (0 = end, bit 31 = link to the next table, not summed). Both pointers read
+; 0 during the computation and are written back. Clobbers d1/a0.
+exec_SumKickData:
+        movem.l d2/a1-a2,-(sp)
+        move.l  EB_KICKMEMPTR(a6),a1
+        move.l  EB_KICKTAGPTR(a6),a2
+        clr.l   EB_KICKMEMPTR(a6)
+        clr.l   EB_KICKTAGPTR(a6)
+        moveq   #-1,d0
+        move.l  a1,d1
+.sk_ml:
+        beq.s   .sk_tags
+        move.l  d1,a0
+        move.w  ML_NUMENTRIES(a0),d2
+        add.w   d2,d2
+        addq.w  #3,d2                ; 2*n+4 longs, dbra count
+.sk_mll:
+        add.l   (a0)+,d0
+        dbra    d2,.sk_mll
+        move.l  d1,a0
+        move.l  (a0),d1              ; LN_SUCC
+        bra.s   .sk_ml
+.sk_tags:
+        move.l  a2,d1
+        beq.s   .sk_end
+        move.l  d1,a0
+.sk_tl:
+        move.l  (a0)+,d1
+        beq.s   .sk_end
+        bpl.s   .sk_tag
+        bclr    #31,d1
+        move.l  d1,a0
+        bra.s   .sk_tl
+.sk_tag:
+        add.l   d1,d0
+        bra.s   .sk_tl
+.sk_end:
+        move.l  a1,EB_KICKMEMPTR(a6)
+        move.l  a2,EB_KICKTAGPTR(a6)
+        movem.l (sp)+,d2/a1-a2
+        rts
+
 ; SetSR(newSR d0, mask d1) -> d0 = old SR: the bits of mask take the value of newSR (via Supervisor; the SR
 ; pushed by the trap is modified then restored by RTE).
 exec_SetSR:
@@ -536,9 +779,12 @@ exec_FreeEntry:
         movem.l (sp)+,d2/a2
         rts
 
-; SetExcept(newSignals d0, signalMask d1) -> d0 = old tc_SigExcept (bits of mask replaced).
+; SetExcept(newSignals d0, signalMask d1) -> d0 = old tc_SigExcept (bits of mask replaced), under a bare Disable.
+; A signal already received that is now an exception signal: TB_EXCEPT + Reschedule (exec-scheduling-v34 §2.7).
 exec_SetExcept:
         move.l  d2,-(sp)
+        addq.b  #1,EB_IDNEST(a6)
+        move.w  #INTF_INTEN,INTENA
         move.l  EB_THISTASK(a6),a0
         move.l  TC_SIGEXCEPT(a0),d2
         and.l   d1,d0
@@ -546,6 +792,7 @@ exec_SetExcept:
         and.l   d2,d1
         or.l    d1,d0
         move.l  d0,TC_SIGEXCEPT(a0)
+        bsr     task_excpending
         move.l  d2,d0
         move.l  (sp)+,d2
         rts
@@ -629,4 +876,16 @@ al_press:
         dc.b    "Press left mouse button to continue.",0
 al_guru:
         dc.b    "Guru Meditation #",0
+dbg_banner:
+        dc.b    10,"rom-wack",13,10,0
+dbg_prompt:
+        dc.b    13,10,"> ",0
+dbg_dregs:
+        dc.b    13,10,"D ",0
+dbg_aregs:
+        dc.b    13,10,"A ",0
+dbg_misc:
+        dc.b    13,10,"USP/PC/SR ",0
+dbg_crlf:
+        dc.b    13,10,0
         even

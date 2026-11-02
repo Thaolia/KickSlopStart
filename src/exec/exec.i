@@ -39,7 +39,7 @@ TST_N2       EQU $00000460
 EXEC_BLOCK   EQU $00001000     ; bottom of exec's jump table
 EXEC_NEGSIZE EQU $276          ; 105 V34 vectors (cf docs/exec-lvo-table.md)
 EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase (complete V34 table below)
-EXEC_POSSIZE EQU $230
+EXEC_POSSIZE EQU $234          ; V34 fields end at KickCheckSum ($22E); +$230 = our EB_INTSVL
 FTEST_LO     EQU $00001500     ; region DISJOINT from the heap for the multi-header test (M2.4a selftest); then free,
 FTEST_HI     EQU $00002500     ; it serves as a margin below the supervisor stack (an overflow does not reach ExecBase)
 SSP_LOWER    EQU $00002500     ; shared supervisor stack [SSP_LOWER, STACKTOP)
@@ -109,10 +109,17 @@ EXEC_SVC     macro
 .svr\@:
              endm
 LVO_SUPERVISOR EQU -30        ; exec Supervisor(): calls a routine (a5) in supervisor mode (required by flt-intro)
-; M7c — context frame (mirror of movem d0-d7/a0-a6 + CPU {SR,PC}), placed on the task's stack.
-; 15 GPR longs (60 bytes) + SR (word, offset 60) + PC (long, offset 62) = 66 bytes (even -> word-by-word copy).
-FRAME_SR     EQU 60           ; offset of the saved SR in the frame (S bit test = user boundary)
-FRAME_SIZE   EQU 66           ; total size of the relocated frame (GPR+SR+PC)
+LVO_EXITINTR   EQU -36        ; private scheduling entries (exec_lib.fd V34: ExitIntr..Exception)
+LVO_SCHEDULE   EQU -42
+LVO_RESCHEDULE EQU -48
+LVO_SWITCH     EQU -54
+LVO_DISPATCH   EQU -60
+LVO_EXCEPTION  EQU -66
+; Supervisor-stack frame of an interrupted/switching task: movem d0-d7/a0-a6 (60 bytes) above the CPU {SR, PC}.
+; The context saved on the task's USER stack (tc_SPReg) has the same size but the V34 layout of
+; exec-scheduling-v34 §4.1: PC (long, +0), SR (word, +4), D0-D7 (+6), A0-A6 (+$26); USP = tc_SPReg + 66.
+FRAME_SR     EQU 60           ; offset of the saved SR in the supervisor-stack frame (S bit test = user boundary)
+FRAME_SIZE   EQU 66           ; size of either form (15 registers + SR + PC)
 INTB_PORTS   EQU 3            ; Paula PORTS interrupt number (INT2) — cf. hardware/intbits.i
 INTB_COPER   EQU 4            ; M7g: COPER number (INT3) — INTF_COPER=$0010=bit4
 INTB_VERTB   EQU 5            ; M7f: VERTB number (INT3) — INTF_VERTB=$0020=bit5
@@ -468,7 +475,7 @@ DOS_DOSBASE  EQU $000006F0 ; long: DosBase (set by dos initFunc) — the BCPL ru
 GP_NO_WRAP   EQU 0
 
 ; SCHED_NO_FORBID_GATE=1 (RED Forbid atomicity): removes the EB_TDNEST/EB_IDNEST guard of intr_isr_defer -> a
-; deferred dispatch (AttnResched) happens EVEN under Forbid -> a task printing under Forbid is preempted in
+; deferred dispatch (SAR) happens EVEN under Forbid -> a task printing under Forbid is preempted in
 ; the middle of ser_puts -> "FORBID ATOMIC OK" absent (task_fb preempts task_fa during its Forbid and sets the flag).
 ; M3F LIVE stays present (task_l's Forbid window is short + its yield-on-Permit wants task_h precisely).
 ; Isolates the Forbid guard at the preemption consumption point. Default 0.
@@ -563,14 +570,22 @@ EB_CHKBASE    EQU $26
 EB_COLDCAPTURE EQU $2A
 EB_CHKSUM     EQU $52         ; complement of the word sum of +$22..+$4E (checked over +$22..+$52 = $FFFF)
 EB_MAXLOCMEM  EQU $3E
+EB_DEBUGENTRY EQU $42          ; APTR: entry of the debugger (Debug)
 EB_THISTASK   EQU $114         ; current task (struct Task *)
+EB_IDLECOUNT  EQU $118         ; ULONG: idle wake-ups of the dispatcher
+EB_DISPCOUNT  EQU $11C         ; ULONG: dispatches
+EB_QUANTUM    EQU $120
+EB_ELAPSED    EQU $122
+EB_SYSFLAGS   EQU $124         ; UWORD; as a byte: bit 7 SAR (reschedule pending), bit 6 TQE (quantum elapsed)
+SFB_SAR       EQU 7            ; bit numbers inside the BYTE at EB_SYSFLAGS
+SFB_TQE       EQU 6
 EB_IDNEST     EQU $126
 EB_TDNEST     EQU $127
 EB_ATTNFLAGS  EQU $128
-EB_ATTNRESCHED EQU $12A         ; UWORD: pending reschedule (set by Signal, consumed
-                                ; by Permit/Enable when the nesting unlocks = yield)
 EB_RESMODULES EQU $12C          ; APTR: NUL-terminated array of struct Resident* (pri-sorted)
 EB_TASKTRAPCODE EQU $130        ; APTR: default trap handler of the tasks
+EB_TASKEXCEPTCODE EQU $134      ; APTR: default exception handler of the tasks
+EB_TASKEXITCODE EQU $138        ; APTR: final PC of a task added with finalPC 0
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E
@@ -584,8 +599,11 @@ EB_VBLANKFREQ   EQU $212
 EB_POWERFREQ    EQU $213
 EB_SEMLIST      EQU $214
 EB_INTVECTS     EQU $54         ; IntVects[16] (struct IntVector, 12 bytes): public, up to ThisTask ($114)
-EB_INTSVL       EQU $222        ; M7b: APTR -> block of the 16 server lists (AddIntServer), AllocMem'd
-                                ; at init_ints. Fits in the positive area ($222+4 <= EXEC_POSSIZE $230).
+EB_KICKMEMPTR   EQU $222        ; reset survival: MemList chain
+EB_KICKTAGPTR   EQU $226        ; reset survival: ROMTag pointer table
+EB_KICKCHECKSUM EQU $22A        ; SumKickData() of the two above
+EB_INTSVL       EQU $230        ; M7b: APTR -> block of the 16 server lists (AddIntServer), AllocMem'd at init_ints.
+                                ; Private, after the V34 fields: KickMemPtr ($222) must stay 0 (virus checkers).
 
 ; struct MemHeader / MemChunk + memory attributes (exec/memory.i, V34)
 NT_MEMORY     EQU 10
@@ -610,8 +628,11 @@ NT_INTERRUPT  EQU 2
 TS_RUN        EQU 2           ; task running
 TS_READY      EQU 3
 TS_WAIT       EQU 4           ; task blocked (Wait/WaitPort) -> TaskWait list
-TS_REMOVED    EQU 5           ; M7j: task being removed (RemTask)
+TS_REMOVED    EQU 6           ; task removed (RemTask)
 TC_FLAGS      EQU 14
+TB_EXCEPT     EQU 5           ; tc_Flags bits: exception pending, tc_Switch / tc_Launch hooks enabled
+TB_SWITCH     EQU 6
+TB_LAUNCH     EQU 7
 TC_STATE      EQU 15
 TC_IDNESTCNT  EQU 16
 TC_TDNESTCNT  EQU 17
@@ -621,11 +642,15 @@ TC_SIGRECVD   EQU 26
 TC_SIGEXCEPT  EQU 30
 TC_TRAPALLOC  EQU 34          ; UWORD: traps 0-15 allocated (AllocTrap)
 TC_TRAPABLE   EQU 36
+TC_EXCEPTDATA EQU 38          ; APTR: passed in A1 to tc_ExceptCode
+TC_EXCEPTCODE EQU 42          ; APTR: task exception handler
 TC_TRAPDATA   EQU 46          ; APTR: free data of the task's trap handler
 TC_TRAPCODE   EQU 50          ; APTR: handler of the task's CPU exceptions (0 -> TaskTrapCode)
 TC_SPREG      EQU 54
 TC_SPLOWER    EQU 58
 TC_SPUPPER    EQU 62
+TC_SWITCH     EQU 66          ; APTR: called when the task loses the CPU (TB_SWITCH)
+TC_LAUNCH     EQU 70          ; APTR: called when the task is dispatched (TB_LAUNCH)
 TC_MEMENTRY   EQU 74          ; struct List: MemLists freed by RemTask (FreeEntry)
 TC_USERDATA   EQU 88          ; APTR free for the owner of the task (file-handlers: their context, ofs.i)
 TC_SIZE       EQU 92

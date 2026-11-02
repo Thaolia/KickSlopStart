@@ -4,7 +4,8 @@
 ; M7c/M7e/M7f MODEL (derived from AROS's public spec "The Exec Microkernel" + 68000 mechanics):
 ; - Tasks run in USER mode (SR bit S = 0), each on ITS user stack (USP). Interrupts and
 ;   the kernel run on ONE SHARED supervisor stack (SSP = STACKTOP region).
-; - A task's context lives on ITS user stack; TC_SPREG points to it.
+; - A task's context lives on ITS user stack; TC_SPREG points to it, in the V34 layout PC, SR, D0-D7, A0-A6
+;   (exec-scheduling-v34 §4.1: task monitors read it).
 ; - M7f: the 3 autovectors used are UNIFORM — int2_dispatch(PORTS)/int3_dispatch(VERTB)/
 ;   int6_dispatch(EXTER) all go through intr_dispatch_number(n) -> server chain IntVects[n].
 ;   The scheduling decision (round-robin quantum) is sched_server, a server of the VERTB chain.
@@ -18,11 +19,13 @@
 ;   TC_SPREG<-), then loads the incoming one (copies its frame user stack -> SSP; usp<-end; movem+rte ->
 ;   restarts in USER mode). Saves/restores the PER-TASK nesting (TC_IDNESTCNT/TC_TDNESTCNT <-> EB_*)
 ;   and synchronises INTENA. => SSP never shared between task contexts (hazard neutralised).
-; - VOLUNTARY switch (user-mode): EXEC_SVC trap0_handler (Wait: outgoing already filed) / trap1_handler (yield:
-;   requeue outgoing->Ready). The trap enters supervisor (user frame on SSP) and joins the common epilogue.
+; - Scheduling LVOs (exec-scheduling-v34 §2): Wait switches through the Switch vector (-54); Permit/Enable/
+;   Reschedule go to Schedule (-42) through its vector; the interrupt exit joins the body of Schedule, which
+;   decides (>= priority rule, TQE, pending exception) and continues through the Switch vector; RemTask(self)
+;   goes through Dispatch (-60). SAR/TQE are the SysFlags bits.
 ; - PREEMPTION: round-robin per VBlank tick (SCHED_ON && !Forbid && !Disable && TaskReady not empty).
 ;   DEFERRED DISPATCH FLAG (M7c): int2/int6, if a server woke up a HIGHER-PRIORITY task (Signal
-;   set EB_ATTNRESCHED), request a switch at interrupt EXIT (d7<-AttnResched) instead of
+;   set SAR), request a schedule check at interrupt EXIT (d7<-SAR) instead of
 ;   waiting for a Permit or the next VBlank -> deterministic wake-up (without it: phase resonance).
 ;   Signal never RESCHEDULES from the IRQ (no re-entry): it SETS the flag, the epilogue consumes it.
 ; - M7a/M7e GATE: the list surgery of the switch (dispatch) is made atomic by IPL7 ("move
@@ -51,6 +54,11 @@
                 xdef    exec_Wait
                 xdef    reschedule
                 xdef    dispatch_in        ; M7c: half-restore of the switch (launch of the 1st task = boot.s)
+                xdef    exec_Schedule      ; scheduling LVOs (library.s jump table; the others: execmisc.s)
+                xdef    exec_Switch
+                xdef    exec_Dispatch
+                xref    svc_schedule       ; execmisc.s (EXEC_SVC services of the scheduling entries)
+                xref    svc_switch
                 xdef    exec_SetIntVector  ; M7b: by-number dispatcher (exclusive vector)
                 xdef    exec_AddIntServer  ; M7b: by-number dispatcher (server chain)
                 xdef    intr_chain_walker  ; execmisc.s (RemIntServer)
@@ -98,7 +106,7 @@ init_ints:
         move.l  #int5_dispatch,AUTOVEC_L5         ; RBF / DSKSYNC
         bsr     init_traps                        ; CPU exceptions + TRAP #4-15 -> the task's tc_TrapCode
         ; M7f: registers the SCHEDULER server (round-robin quantum) on the VERTB chain. Faithful:
-        ; the real exec has a VBlank server that sets the AttnResched flag. pri 20 -> head of chain.
+        ; the real exec has a VBlank server that requests a reschedule. pri 20 -> head of chain.
         clr.l   SCHED_INT+LN_SUCC                 ; (reserved low RAM, not guaranteed zero at power-on)
         clr.l   SCHED_INT+IS_DATA                 ; scheduler server: IS_DATA unused (reads the globals)
         move.b  #20,SCHED_INT+LN_PRI              ; pri 20: runs before timer_vblank(0)/vbl_tail(-10)
@@ -120,7 +128,7 @@ init_ints:
 ; like int2/int6) goes through the BY-NUMBER dispatcher + server chain, instead of a dedicated handler.
 ; Body = M7g MULTI-SOURCE DECODING: reads INTREQR & INTENAR, dispatches+acks EACH pending level 3
 ; source (COPER bit4, VERTB bit5, BLIT bit6) via IntVects[n], instead of assuming VERTB only.
-; VERTB -> M3a counter + chain (sched/timer/tail). Epilogue = intr_isr_defer (consumes AttnResched).
+; VERTB -> M3a counter + chain (sched/timer/tail). Epilogue = intr_isr_defer (consumes SAR).
 ; VBL_INBODY (M7e gate) covers the whole body (preemptible by INT6). Bonus: on a SPURIOUS INT3 (ack
 ; propagation delay, cf. M7e) the 3 btst fail -> we dispatch NOTHING (more correct than M7f which
 ; dispatched VERTB unconditionally). d2 = mask of the pending sources, PRESERVED by the server
@@ -166,12 +174,12 @@ int3_dispatch:
                 endc
 .i3_done:
         clr.b   VBL_INBODY          ; M7e: end of the window before dispatch (disjoint from VBL_INSURG)
-        bra     intr_isr_defer      ; common tail: reloads a6 + deferred dispatch if AttnResched (S=0)
+        bra     intr_isr_defer      ; common tail: reloads a6 + deferred schedule check if SAR (S=0)
 
-; sched_server: VERTB server of the SCHEDULER (round-robin quantum). Sets EB_ATTNRESCHED when a
+; sched_server: VERTB server of the SCHEDULER (round-robin quantum). Sets TQE and SAR when a
 ; preemption is due — SCHED_ON && !Forbid && !Disable && TaskReady not empty (same guards as the old
 ; vbl_handler: round-robin RESPECTS Forbid/Disable). Faithful: the real exec has a VBlank server that
-; sets the AttnResched flag; intr_isr_defer consumes it at IRQ exit (like an INT6 wake-up).
+; requests a reschedule; intr_isr_defer consumes SAR at IRQ exit (like an INT6 wake-up).
 ; Server convention: a6=SysBase (re-supplied by the walker), a1=IS_DATA (free), preserves d2-d7/a2-a4;
 ; returns Z-SET (d0=0) = "continue the chain" (call-all server).
 sched_server:
@@ -190,7 +198,8 @@ sched_server:
         bcs.s   .sched_cont         ; ELAPSED < QUANTUM -> the time slice continues (no reschedule)
         clr.b   QUANTUM_ELAPSED     ; quantum elapsed -> reset + request a deferred reschedule (round-robin)
         addq.l  #1,QUANTUM_EXPIRE_N ; throughput proof (~= VBL_COUNT/QUANTUM in isolation; ~=0 in the default demo)
-        move.w  #1,EB_ATTNRESCHED(a6) ; consumed by intr_isr_defer (at IRQ exit)
+        bset    #SFB_TQE,EB_SYSFLAGS(a6) ; quantum elapsed ...
+        bset    #SFB_SAR,EB_SYSFLAGS(a6) ; ... and a schedule check at IRQ exit (intr_isr_defer -> Schedule)
 .sched_cont:
                 ifne    M7F_SCHED_STOPS_CHAIN
         moveq   #1,d0               ; RED2 M7f: Z-CLEAR -> the walker STOPS the chain after sched
@@ -199,68 +208,109 @@ sched_server:
                 endc
         rts
 
-; intr_exit: common EPILOGUE (vbl/int2/int6/trap). d7 = switch requested. We switch ONLY at the
-; USER BOUNDARY: S bit of the SAVED SR (FRAME_SR) == 0. S=1 (nested IRQ / kernel) => user context
-; unavailable => simple resume. This is the nest-count, read directly from the S bit. a6=SysBase.
+; intr_exit: common EPILOGUE (int1-6). d7 = schedule check requested. We schedule ONLY at the USER BOUNDARY: S bit
+; of the SAVED SR (FRAME_SR) == 0. S=1 (nested IRQ / kernel) => simple resume. This plays the part of ExitIntr
+; (exec-scheduling-v34 §2.6) on our 60-byte frame: it joins the body of Schedule with the registers already saved.
 intr_exit:
         tst.b   d7
         beq.s   .ie_noswitch
         move.w  FRAME_SR(sp),d0     ; SR saved on the SSP
         and.w   #$2000,d0           ; S bit (supervisor)?
-        bne.s   .ie_noswitch        ; S=1 -> nested -> no switch (resume the interrupted code)
-        bra     dispatch            ; user boundary -> relocate + switch (does not return here)
+        bne.s   .ie_noswitch        ; S=1 -> nested -> resume the interrupted code
+        move.w  #$2000,sr           ; IPL 0, as ExitIntr before Schedule
+        bra     schedule_body
 .ie_noswitch:
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
-; dispatch: RELOCATES the outgoing task's frame (SSP -> its user stack) then loads the incoming one. Entry:
-; sp = 66-byte frame on the SSP; a6=SysBase; d6=1 -> requeue the outgoing task into TaskReady (round-robin),
-; d6=0 -> outgoing already filed (Wait on TaskWait). M7e: relocation at the caller's native IPL,
-; then surgery masked by a brief IPL7. Does not return (rte to the incoming one, at the IPL/S of the restored SR).
+; ============================ scheduling LVOs (exec-scheduling-v34 §2) ============================
+; Every switch-out goes through the Switch vector (-54): Wait (svc_switch), and preemption (Schedule, reached
+; from Reschedule/Permit/Enable through its vector and from the interrupt exit directly). RemTask(self) goes
+; through the Dispatch vector (-60). A SetFunction on these vectors therefore sees what the 1.3 one sees.
+
+; Schedule (-42): supervisor, {SR, PC} of the code to resume on the SSP, registers = that code's. Clears SAR; the
+; running task loses the CPU when it has an exception pending, or the head of TaskReady has a priority >= its
+; own, or (head lower) the quantum has elapsed (TQE). Then it is enqueued READY and the switch goes through the
+; Switch vector with only the exception frame left on the SSP. Otherwise the code resumes.
+exec_Schedule:
+        movem.l d0-d7/a0-a6,-(sp)
+schedule_body:                      ; entry with the 60-byte frame already pushed (intr_exit)
+        move.l  ($4).w,a6
+        move.w  #$2700,sr
+        bclr    #SFB_SAR,EB_SYSFLAGS(a6)
+        move.l  EB_THISTASK(a6),a1
+        btst    #TB_EXCEPT,TC_FLAGS(a1)
+        bne.s   .sc_switch
+        move.l  EB_TASKREADY(a6),a0
+        tst.l   (a0)
+        beq.s   .sc_stay            ; nobody ready
+        move.b  LN_PRI(a0),d0
+        cmp.b   LN_PRI(a1),d0
+        bge.s   .sc_switch          ; head >= running: equal priority preempts too
+        btst    #SFB_TQE,EB_SYSFLAGS(a6)
+        bne.s   .sc_switch
+.sc_stay:
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+.sc_switch:
+        move.b  #TS_READY,TC_STATE(a1)
+        lea     EB_TASKREADY(a6),a0
+        jsr     LVO_ENQUEUE(a6)     ; behind the ready tasks of its own priority (round-robin)
+        move.w  #$2000,sr
+        movem.l (sp)+,d0-d7/a0-a6
+        jmp     EXECBASE+LVO_SWITCH
+
+; Switch (-54): supervisor; {SR, PC} of the outgoing task on the SSP, D0-D7/A0-A6 = its registers, USP = its stack;
+; ThisTask already filed (TaskReady or TaskWait) with its state set. Never returns.
+exec_Switch:
+        movem.l d0-d7/a0-a6,-(sp)
+        move.l  ($4).w,a6
+; dispatch: saves the outgoing context (66-byte frame on the SSP -> its user stack in the §4.1 layout), its nest
+; counts, calls tc_Switch, then dispatches the head of TaskReady (idle STOP while nobody is ready). M7e: the
+; context copy runs at the caller's IPL (a nested interrupt lands below sp, the frame stays intact); the list
+; surgery is masked by IPL7 (instantaneous, unlike INTENA whose write has a propagation delay). Does not return.
 dispatch:
         move.l  EB_THISTASK(a6),a1  ; outgoing
-        move.b  EB_IDNEST(a6),TC_IDNESTCNT(a1)  ; PER-TASK nesting: save the state of the outgoing task
-        move.b  EB_TDNEST(a6),TC_TDNESTCNT(a1)
-        move.l  usp,a0              ; a0 = outgoing USP (privileged, OK in supervisor)
-        lea     -FRAME_SIZE(a0),a3  ; dest = outgoing user stack - 66
-        move.l  a3,TC_SPREG(a1)     ; outgoing TC_SPREG = base of the relocated frame
-        move.l  sp,a2               ; src = frame on the SSP (disjoint stacks -> ascending copy safe)
-        moveq   #(FRAME_SIZE/2)-1,d0
+        move.w  EB_IDNEST(a6),TC_IDNESTCNT(a1) ; IDNestCnt/TDNestCnt pair -> the task
+        move.l  usp,a0
+        lea     -FRAME_SIZE(a0),a3
+        move.l  a3,TC_SPREG(a1)
+        move.l  FRAME_SR+2(sp),(a3)+ ; PC
+        move.w  FRAME_SR(sp),(a3)+  ; SR
+        move.l  sp,a2
+        moveq   #14,d0
 .d_save:
-        move.w  (a2)+,(a3)+         ; relocate 66 bytes SSP -> user stack (33 words, no long straddling SR)
-        dbf     d0,.d_save          ; (relocation SAFE at native IPL: INT6 nests BELOW sp, frame intact)
-        ; M7e: mask the surgery with IPL7 (SR write = CPU internal, INSTANTANEOUS). NOT INTENA-off:
-        ; the INTENA write has a PROPAGATION DELAY (Amiga quirk modelled by FS-UAE) -> an INT6 already
-        ; asserted on the IPL lines overlaps the VBL_INSURG window = clash (proven empirically, RED1).
-        ; WHY the IPL here but INTENA elsewhere (Signal/ports/Wait): the surgery runs in SUPERVISOR
-        ; (reached via intr_exit/trap) -> "move #imm,sr" LEGAL. Signal/PutMsg/GetMsg/Wait are callable
-        ; from a USER-MODE task where "move to SR" is PRIVILEGED (68000 manual) -> impossible to raise
-        ; the IPL -> they must use INTENA-Disable, which therefore carries the write-delay caveat (cf. header).
+        move.l  (a2)+,(a3)+         ; D0-D7/A0-A6 (word-aligned longs: legal on 68000)
+        dbf     d0,.d_save
+        move.w  #-1,EB_IDNEST(a6)   ; both counts -1 between tasks, INTEN on
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
+        btst    #TB_SWITCH,TC_FLAGS(a1)
+        beq.s   .d_surg
+        move.l  a1,a3               ; tc_Switch: A3 = task, A6 = ExecBase, supervisor IPL 0, JSR
+        move.l  TC_SWITCH(a3),a0
+        move.w  #$2000,sr
+        jsr     (a0)
+        move.l  ($4).w,a6
+.d_surg:
                 ifne    M7E_SURGERY_INTENA
         move.w  #INTF_INTEN,INTENA  ; RED1: mask by INTENA-off (propagation delay) -> clash observed
                 else
         move.w  #$2700,sr           ; GREEN: mask by IPL7 (instantaneous)
                 endc
-        move.b  #1,VBL_INSURG       ; list surgery (Enqueue/RemHead) = contended section (M7a detector)
-        tst.b   d6
-        beq.s   .d_pick             ; outgoing already filed (Wait) -> no requeue
-        move.b  #TS_READY,TC_STATE(a1)
-        lea     EB_TASKREADY(a6),a0
-        jsr     LVO_ENQUEUE(a6)     ; round-robin: requeue the outgoing task (a1 preserved)
-        clr.w   EB_ATTNRESCHED(a6)  ; a switch satisfies any reschedule request
-.d_pick:
+        move.b  #1,VBL_INSURG       ; list surgery (RemHead) = contended section (M7a detector)
+dispatch_pick:                      ; IPL7, a6 = ExecBase, sp = 66-byte slot
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_REMHEAD(a6)     ; d0 = incoming | 0
         tst.l   d0
         bne.s   .d_have
         addq.l  #1,IDLE_ENTERED     ; M7e: instrumentation (idle episode; must be > 0 in a normal run)
-.d_idle:                            ; nobody ready (Wait with no other ready task): wait for a Signal
-        clr.b   VBL_INSURG          ; idle wait -> no surgery in progress (no false clash)
-        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA ; M7e: re-enable INTEN to receive the waking Signal
-                                    ; (the Wait->idle path arrives INTEN-off from exec_Wait -> necessary)
-        move.w  #$2000,sr           ; supervisor IPL0 -> every IRQ gets through (nested frame, S=1 -> no dispatch)
-        nop
-        move.w  #$2700,sr           ; IPL7: masks the RemHead surgery (instantaneous, cf. non-idle)
+.d_idle:                            ; nobody ready: sleep until an interrupt readies a task
+        clr.b   VBL_INSURG
+        addq.l  #1,EB_IDLECOUNT(a6)
+        bset    #SFB_SAR,EB_SYSFLAGS(a6)
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
+        stop    #$2000              ; supervisor IPL 0 (nested frame, S=1 -> no dispatch from the interrupt)
+        move.w  #$2700,sr
         move.b  #1,VBL_INSURG
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_REMHEAD(a6)
@@ -271,40 +321,124 @@ dispatch:
         clr.b   VBL_INSURG          ; surgery finished (RemHead done)
         ; falls through into dispatch_in
 
-; dispatch_in: half-restore — loads the incoming task (a1) and rte's in USER mode. Also used by the
-; LAUNCH of the 1st task (boot.s), which performs the supervisor->user transition. sp = 66-byte SSP slot.
+; dispatch_in: loads the incoming task (a1) and rte's to it. Also used by the launch of the 1st task (boot.s).
+; sp = 66-byte SSP slot. Order (§2.5): ThisTask, DispCount, TQE cleared, RUN, nest counts, tc_Launch, exception.
 dispatch_in:
         cmp.l   EB_THISTASK(a6),a1  ; M7h: REAL task change (incoming != outgoing)?
         beq.s   .di_samequantum
         clr.b   QUANTUM_ELAPSED     ; yes -> new time slice (no reset on dispatch-to-self)
 .di_samequantum:
         move.l  a1,EB_THISTASK(a6)
+        addq.l  #1,EB_DISPCOUNT(a6)
+        bclr    #SFB_TQE,EB_SYSFLAGS(a6)
         move.b  #TS_RUN,TC_STATE(a1)
-        move.b  TC_IDNESTCNT(a1),EB_IDNEST(a6)  ; restore the incoming task's nesting
-        move.b  TC_TDNESTCNT(a1),EB_TDNEST(a6)
-        tst.b   EB_IDNEST(a6)
-        bge.s   .di_dis             ; incoming Disabled -> INTEN off
-        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA  ; incoming permitted -> INTEN on (touches ONLY bit14)
-        bra.s   .di_copy
-.di_dis:
-        move.w  #INTF_INTEN,INTENA  ; clear INTEN (bit14; without SETCLR = clears)
-.di_copy:
-        move.l  TC_SPREG(a1),a2     ; src = frame of the incoming task (its user stack)
-        move.l  sp,a3               ; dest = SSP slot (overwrites the location of the outgoing frame)
-        moveq   #(FRAME_SIZE/2)-1,d0
-.di_loop:
-        move.w  (a2)+,(a3)+
-        dbf     d0,.di_loop
+        bsr.s   di_nest
+        move.b  TC_FLAGS(a1),d0
+        and.b   #(1<<TB_LAUNCH)|(1<<TB_EXCEPT),d0
+        bne.s   di_hooks
+; di_restore: context at tc_SPReg (a1) -> SSP slot (movem layout) then rte. USP = tc_SPReg + 66.
+di_restore:
         move.l  TC_SPREG(a1),a2
-        lea     FRAME_SIZE(a2),a2   ; incoming USP = after its restored frame
+        move.l  (a2)+,d1            ; PC
+        move.w  (a2)+,d2            ; SR
+        move.l  sp,a3
+        moveq   #14,d0
+.dr_lp:
+        move.l  (a2)+,(a3)+
+        dbf     d0,.dr_lp
+        move.w  d2,(a3)+
+        move.l  d1,(a3)
         move.l  a2,usp
-        movem.l (sp)+,d0-d7/a0-a6   ; pop the incoming task's GPRs
-        rte                         ; pops {SR,PC} -> restarts in USER mode (saved SR S=0) on its USP
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+
+; di_nest: ExecBase nest counts := the task's (a1); INTEN follows IDNestCnt.
+di_nest:
+        move.w  TC_IDNESTCNT(a1),EB_IDNEST(a6)
+        tst.b   EB_IDNEST(a6)
+        bge.s   .dn_dis
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
+        rts
+.dn_dis:
+        move.w  #INTF_INTEN,INTENA
+        rts
+
+; di_hooks: supervisor IPL 0. tc_Launch (A3 = task, A6 = ExecBase, D0 = tc_Flags), then the exception step (§5):
+; TB_EXCEPT cleared; sigs = SigRecvd & SigExcept removed from both; tc_Flags..tc_TDNestCnt (one long) and the
+; return address exc_return pushed below the saved context; ExecBase IDNestCnt exactly 0 -> -1 + INTEN on;
+; tc_ExceptCode entered in USER mode (SR 0) with D0 = sigs, A1 = tc_ExceptData, A6 = ExecBase.
+di_hooks:
+        move.w  #$2000,sr
+        btst    #TB_LAUNCH,TC_FLAGS(a1)
+        beq.s   .dh_exc
+        move.l  a1,-(sp)
+        move.l  a1,a3
+        moveq   #0,d0
+        move.b  TC_FLAGS(a3),d0
+        move.l  TC_LAUNCH(a3),a0
+        jsr     (a0)
+        move.l  (sp)+,a1
+        move.l  ($4).w,a6
+.dh_exc:
+        bclr    #TB_EXCEPT,TC_FLAGS(a1)
+        beq.s   di_restore
+        move.w  #$2700,sr           ; Signal from an interrupt also updates these masks
+        move.l  TC_SIGRECVD(a1),d0
+        and.l   TC_SIGEXCEPT(a1),d0
+        move.l  d0,d1
+        not.l   d1
+        and.l   d1,TC_SIGRECVD(a1)
+        and.l   d1,TC_SIGEXCEPT(a1)
+        move.w  #$2000,sr
+        move.l  TC_SPREG(a1),a2
+        move.l  TC_FLAGS(a1),-(a2)
+        move.l  #exc_return,-(a2)
+        move.l  a2,usp
+        tst.b   EB_IDNEST(a6)
+        bne.s   .dh_go
+        st      EB_IDNEST(a6)
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
+.dh_go:
+        lea     FRAME_SIZE(sp),sp   ; drop the slot: the SSP is back at its base
+        move.l  TC_EXCEPTCODE(a1),-(sp)
+        clr.w   -(sp)
+        move.l  TC_EXCEPTDATA(a1),a1
+        rte
+
+; exc_return: where tc_ExceptCode returns (user mode), D0 = signals to re-arm in tc_SigExcept. USP points at the
+; saved tc_Flags long, right below the context.
+exc_return:
+        EXEC_SVC exc_resume
+; exc_resume (supervisor, the 6-byte frame of exc_return on the SSP): re-arms, restores tc_Flags..tc_TDNestCnt,
+; tc_SPReg back to the context, ExecBase nest counts from the task, resumes the context.
+exc_resume:
+        addq.l  #6,sp
+        move.w  #$2700,sr
+        move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a1
+        or.l    d0,TC_SIGEXCEPT(a1)
+        move.l  usp,a2
+        move.l  (a2)+,TC_FLAGS(a1)
+        move.l  a2,TC_SPREG(a1)
+        lea     -FRAME_SIZE(sp),sp
+        bsr     di_nest
+        bra     di_restore
+
+; Dispatch (-60): supervisor, nothing to save (RemTask of the running task). Nest counts -1/-1, INTEN on, then the
+; dispatcher loop. sp = where the dispatched context's frame slot goes.
+exec_Dispatch:
+        move.w  #$2700,sr
+        move.l  ($4).w,a6
+        move.w  #-1,EB_IDNEST(a6)
+        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA
+        lea     -FRAME_SIZE(sp),sp
+        move.b  #1,VBL_INSURG
+        bra     dispatch_pick
 
 ; exec_Wait(signalSet d0.l) -> d0 = received signals. Blocks ThisTask (USER mode) until reception.
-; Critical section via BARE Disable (INTENA, user-safe); blocking via EXEC_SVC (enters supervisor ->
-; dispatch relocates). On wake-up (re-dispatched after the trap), re-tests (robust to spurious wake-ups).
-; BARE exit (raw_enable): the woken task is already running -> no yield (preserves the M3d semantics).
+; Critical section via BARE Disable (INTENA, user-safe); blocking via EXEC_SVC svc_switch (Switch vector, outgoing
+; already on TaskWait). Forbid is not tested: the nest counts are saved per task. On wake-up, re-tests (an
+; exception signal alone wakes it without satisfying the mask). BARE exit (raw_enable).
 exec_Wait:
         addq.b  #1,EB_IDNEST(a6)    ; BARE Disable: critical section vs scheduler
         move.w  #INTF_INTEN,INTENA  ; INTEN off (bit14)
@@ -317,7 +451,7 @@ exec_Wait:
         move.b  #TS_WAIT,TC_STATE(a1)
         lea     EB_TASKWAIT(a6),a0
         jsr     LVO_ADDTAIL(a6)     ; ThisTask (a1) -> TaskWait (a1 preserved)
-        EXEC_SVC trap0_handler      ; -> supervisor -> dispatch (outgoing already on TaskWait, d6=0)
+        EXEC_SVC svc_switch
         move.l  EB_THISTASK(a6),a1  ; re-dispatched: a6/a1 restored by the switch (defensive reload)
         bra.s   .wa_check           ; re-test (spurious -> block again)
 .wa_got:
@@ -326,40 +460,20 @@ exec_Wait:
         bsr     raw_enable          ; INTEN on if IDNest<0 (BARE exit, no reschedule tail)
         rts
 
-; reschedule: voluntary synchronous YIELD (yield-on-Permit, M3e). Called by Permit/Enable (USER mode,
-; permitted & enabled, AttnResched set). EXEC_SVC trap1_handler -> dispatch requeues the current task (d6=1) +
-; switches to the higher-priority woken task. On return (re-dispatched), rts to Permit/Enable.
+; reschedule: yield of Permit/Enable (permitted & enabled, SAR set): Schedule through its vector when a task is
+; ready (from supervisor mode svc_schedule returns at once). Clobbers a0.
 reschedule:
-        tst.w   EB_ATTNRESCHED(a6)  ; still requested? (a tick may have consumed it)
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
         beq.s   .rs_none
         move.l  EB_TASKREADY(a6),a0
-        tst.l   (a0)                ; a ready task available? (defensive)
-        beq.s   .rs_none
-        EXEC_SVC trap1_handler      ; yield: dispatch requeues self->Ready + RemHead
-        rts                         ; re-dispatched -> return to Permit/Enable
+        tst.l   (a0)                ; a ready task available?
+        beq.s   .rs_clr
+        EXEC_SVC svc_schedule
 .rs_none:
-        clr.w   EB_ATTNRESCHED(a6)
         rts
-
-; trap0_handler (EXEC_SVC): voluntary Wait-style switch — the outgoing task is ALREADY filed (TaskWait).
-; trap1_handler (EXEC_SVC): yield — dispatch requeues the outgoing task into TaskReady (round-robin).
-; From a task, the {user SR, PC} frame comes from the privilege violation -> the saved SR has S=0 -> epilogue
-; dispatch guaranteed.
-; M7e: no more raising to IPL7 — the trap enters at the task's IPL (0); the atomicity of the switch relies
-; ENTIRELY on dispatch's Disable. trap0 (Wait) arrives already Disabled (exec_Wait did INTEN-off
-; before EXEC_SVC) -> idempotent Disable. trap1 (yield) arrives INTEN-on -> fresh but correct Disable.
-trap0_handler:
-        movem.l d0-d7/a0-a6,-(sp)
-        move.l  ($4).w,a6
-        moveq   #1,d7
-        moveq   #0,d6               ; do NOT requeue (outgoing on TaskWait)
-        bra     intr_exit
-trap1_handler:
-        movem.l d0-d7/a0-a6,-(sp)
-        move.l  ($4).w,a6
-        moveq   #1,d7
-        moveq   #1,d6               ; requeue outgoing -> TaskReady
-        bra     intr_exit
+.rs_clr:
+        bclr    #SFB_SAR,EB_SYSFLAGS(a6)
+        rts
 
 ; trap3_handler (EXEC_SVC): exec Supervisor — NOT a task switch. The {SR, PC} frame is on the SSP and we
 ; are in supervisor. We jump directly to the user routine (a5), which runs in supervisor
@@ -392,11 +506,11 @@ priv_handler:
         move.l  (sp)+,a0
         bra     exc_table+2*(8-TRAPVEC_FIRST)
 
-; trap2_handler (EXEC_SVC): M7j — RemTask(self). The outgoing task REMOVES itself: we do NOT save its context
-; (it is discarded). In supervisor, on the SSP -> the outgoing task's user stack is no longer used = freeable.
+; trap2_handler (EXEC_SVC): RemTask(self). The outgoing task REMOVES itself: its context is not saved (it is
+; discarded). In supervisor, on the SSP -> the outgoing task's user stack is no longer used = freeable.
 ; External Forbid (FreeMem's internal Permit does not yield) + IPL7 (masks IRQs during the teardown).
-; Clear EB_THISTASK BEFORE freeing tc_MemEntry (dispatch_in reads EB_THISTASK). Then switch like the launch of
-; the 1st task (RemHead + dispatch_in). DOES NOT RETURN.
+; Clear EB_THISTASK BEFORE freeing tc_MemEntry (dispatch_in reads EB_THISTASK). Then a clean SSP and the Dispatch
+; vector (tc_Switch is not called). DOES NOT RETURN.
 trap2_handler:
         move.w  #$2700,sr           ; IPL7 (supervisor -> legal): masks IRQs during the teardown
         move.l  ($4).w,a6           ; SysBase
@@ -406,21 +520,8 @@ trap2_handler:
                 ifeq    M7J_NOFREE
         jsr     task_freemem        ; tc_MemEntry (TCB and stack included if they are in it) — safe: we run on the SSP
                 endc
-        move.l  #STACKTOP,sp        ; final switch: clean SSP + 66-byte slot (like boot.s)
-        lea     -FRAME_SIZE(sp),sp
-.t2_pick:
-        lea     EB_TASKREADY(a6),a0
-        jsr     LVO_REMHEAD(a6)
-        tst.l   d0
-        bne.s   .t2_have
-        move.w  #(INTF_SETCLR|INTF_INTEN),INTENA ; no ready task -> idle (IRQ Signal; not reached
-        move.w  #$2000,sr           ; in demo: other tasks are ready). IPL0 -> IRQ gets through (S=1 -> no
-        nop                         ; nested dispatch), IPL7, re-RemHead.
-        move.w  #$2700,sr
-        bra.s   .t2_pick
-.t2_have:
-        move.l  d0,a1
-        bra     dispatch_in         ; load the incoming task + rte (per-task IPL/INTEN/nesting restored)
+        move.l  #STACKTOP,sp        ; clean SSP (like boot.s)
+        jmp     EXECBASE+LVO_DISPATCH
 
 ; ============================ by-number dispatcher (M7b) ==========
 ; SetIntVector/AddIntServer + generic INT2(PORTS)/INT6(EXTER) autovectors + chain walker.
@@ -429,7 +530,7 @@ trap2_handler:
 ; scheduler's atomicity no longer comes from the IPL but from the Disable (INTEN off) around the surgery in dispatch.
 ; M7c: int2/int6 share the prologue (movem) and the epilogue (intr_exit). DEFERRED DISPATCH
 ; FLAG (AROS spec "The Exec Microkernel"): if a server woke up a HIGHER-PRIORITY task (Signal
-; set EB_ATTNRESCHED), the epilogue dispatches IMMEDIATELY at interrupt exit (at the user
+; set SAR), the epilogue schedules IMMEDIATELY at interrupt exit (at the user
 ; boundary S=0) instead of waiting for a Permit/Enable or the next VBlank. Without it, a task woken by an
 ; IRQ depends on the phase lottery (which task is running + calls Permit) -> erratic wake-up (resonance).
 ; Signal never RESCHEDULES itself from the interrupt (no re-entry): it SETS the flag,
@@ -497,25 +598,24 @@ int6_dispatch:
         move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6 BEFORE the chain (same reason as PORTS)
         moveq   #INTB_EXTER,d0
         bsr     intr_dispatch_number
-; intr_isr_defer: common int2/int3/int6 tail — deferred dispatch flag (EB_ATTNRESCHED).
+; intr_isr_defer: common interrupt tail — deferred schedule check (SAR).
 intr_isr_defer:
         move.l  ($4).w,a6           ; M7f: RELOADS a6=SysBase — the walker does NOT restore a6 after the
                                     ; last server, which may have clobbered it (convention preserves d2-d7/a2-a4
                                     ; only). Without this, the EB_* reads below would read garbage.
-        moveq   #1,d6               ; round-robin: requeue the interrupted task if we dispatch
         moveq   #0,d7
                 ifeq    SCHED_NO_FORBID_GATE
         tst.b   EB_TDNEST(a6)       ; Forbid() active? -> deferred dispatch SUPPRESSED at the CONSUMPTION point:
-        bge.s   intr_isr_exit       ;   AttnResched may have been set BEFORE the Forbid (stale quantum) or by
+        bge.s   intr_isr_exit       ;   SAR may have been set BEFORE the Forbid (stale quantum) or by
         tst.b   EB_IDNEST(a6)       ;   Signal() of a higher-priority task DURING the Forbid -> do NOT switch here.
-        bge.s   intr_isr_exit       ; Disable() active? -> same (critical section vs scheduler). AttnResched stays
+        bge.s   intr_isr_exit       ; Disable() active? -> same (critical section vs scheduler). SAR stays
                                     ;   pending -> consumed at the next non-forbidden IRQ exit, or by the voluntary
                                     ;   yield of Permit/Enable (EXEC_SVC, not guarded). Same guards as sched_server.
                 endc                ; RED SCHED_NO_FORBID_GATE: guards removed -> switch even under Forbid (orig. bug:
                                     ;   a serial printer under Forbid got preempted -> interleaved markers).
-        tst.w   EB_ATTNRESCHED(a6)  ; did a server wake up a higher-priority task?
+        btst    #SFB_SAR,EB_SYSFLAGS(a6) ; reschedule pending (Signal of a higher-priority task, quantum, idle)?
         beq.s   intr_isr_exit
-        moveq   #1,d7               ; deferred dispatch flag -> switch on exit (if S=0)
+        moveq   #1,d7               ; deferred dispatch flag -> Schedule on exit (if S=0)
 intr_isr_exit:
         bra     intr_exit
 

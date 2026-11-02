@@ -5,7 +5,7 @@
 ; on its stack into ss_WaitQueue and waits for SIGF_SINGLE; the Release that frees the semaphore hands it over
 ; directly (owner and nesting set up for it) before signalling it.
 ; Everything is done under Forbid: the wake-up of a requester only happens at Permit.
-; ObtainSemaphoreList / ReleaseSemaphoreList / Procure / Vacate are not provided (remain neutral).
+; Procure / Vacate work on the OLD V34 message semaphore (struct Semaphore), see below.
 ; IMPLEMENTATION track ("clean"): AutoDocs exec.library + exec/semaphores.h. NO ROM reading.
 
                 include "exec.i"
@@ -17,6 +17,8 @@
                 xdef    exec_AddSemaphore
                 xdef    exec_RemSemaphore
                 xdef    exec_FindSemaphore
+                xdef    exec_Procure
+                xdef    exec_Vacate
 
 SS_NESTCOUNT    EQU 14
 SS_WAITQUEUE    EQU 16               ; struct MinList (12)
@@ -147,3 +149,38 @@ exec_RemSemaphore:
 exec_FindSemaphore:
         lea     EB_SEMLIST(a6),a0
         jmp     LVO_FINDNAME(a6)
+
+; V34 message semaphore (exec/semaphores.i, old form; exec-scheduling-v34 §6): a MsgPort followed by sm_Bids
+; (WORD, -1 = free); sm_LockMsg is the port's mp_SigTask field. Set up by the user (sm_Bids -1, message list
+; initialised, PA_IGNORE). No Forbid/Disable: the caller provides the atomicity it needs.
+SM_BIDS         EQU 34
+SM_LOCKMSG      EQU MP_SIGTASK
+
+; Procure(semaphore a0, bidMessage a1) -> d0 = 1 owned at once (sm_LockMsg = the bid, not queued) | 0 bid queued
+; on the port (PutMsg); the owner learns it holds the semaphore when its bid is replied.
+exec_Procure:
+        addq.w  #1,SM_BIDS(a0)
+        bne.s   .pr_queue
+        move.l  a1,SM_LOCKMSG(a0)
+        moveq   #1,d0
+        rts
+.pr_queue:
+        jsr     LVO_PUTMSG(a6)
+        moveq   #0,d0
+        rts
+
+; Vacate(semaphore a0): sm_LockMsg 0, sm_Bids - 1; still bidders -> the next bid becomes sm_LockMsg and is
+; replied (it now owns the semaphore).
+exec_Vacate:
+        clr.l   SM_LOCKMSG(a0)
+        subq.w  #1,SM_BIDS(a0)
+        bmi.s   .va_ret
+        move.l  a0,-(sp)
+        jsr     LVO_GETMSG(a6)
+        move.l  (sp)+,a0
+        move.l  d0,SM_LOCKMSG(a0)
+        beq.s   .va_ret
+        move.l  d0,a1
+        jsr     LVO_REPLYMSG(a6)
+.va_ret:
+        rts

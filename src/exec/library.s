@@ -95,6 +95,19 @@
                 xref    exec_SetExcept
                 xref    exec_AllocTrap
                 xref    trap3_handler        ; interrupts.s (Supervisor via EXEC_SVC)
+                xref    exec_ExitIntr        ; interrupts.s (scheduling, exec-scheduling-v34 §2)
+                xref    exec_Schedule
+                xref    exec_Reschedule
+                xref    exec_Switch
+                xref    exec_Dispatch
+                xref    exec_Exception
+                xref    exec_Debug           ; execmisc.s
+                xref    debug_entry
+                xref    except_default
+                xref    task_exit_default
+                xref    exec_SumKickData
+                xref    exec_Procure         ; semaphores.s (V34 message semaphore)
+                xref    exec_Vacate
                 xref    exec_FreeTrap
                 xref    exec_RemResource
                 xref    exec_RawIOInit
@@ -119,6 +132,19 @@ build_jumptable:                     ; a6 = SysBase; clobbers d0/d1/a0
         dbf     d0,.fill
         move.w  #$4EF9,LVO_SUPERVISOR(a6)      ; -30: exec Supervisor (required by the flt-intro cracktro)
         move.l  #exec_Supervisor,LVO_SUPERVISOR+2(a6)
+        move.l  #exec_ExitIntr,LVO_EXITINTR+2(a6)
+        move.l  #exec_Schedule,LVO_SCHEDULE+2(a6)
+        move.l  #exec_Reschedule,LVO_RESCHEDULE+2(a6)
+        move.l  #exec_Switch,LVO_SWITCH+2(a6)
+        move.l  #exec_Dispatch,LVO_DISPATCH+2(a6)
+        move.l  #exec_Exception,LVO_EXCEPTION+2(a6)
+        move.l  #exec_Debug,-114+2(a6)          ; Debug
+        move.l  #debug_entry,EB_DEBUGENTRY(a6)
+        move.l  #except_default,EB_TASKEXCEPTCODE(a6)
+        move.l  #task_exit_default,EB_TASKEXITCODE(a6)
+        move.l  #exec_Procure,-540+2(a6)        ; Procure
+        move.l  #exec_Vacate,-546+2(a6)         ; Vacate
+        move.l  #exec_SumKickData,-612+2(a6)    ; SumKickData
         move.w  #$4EF9,LVO_OPEN(a6)
         move.l  #exec_Open,LVO_OPEN+2(a6)
         move.w  #$4EF9,LVO_CLOSE(a6)
@@ -400,14 +426,14 @@ exec_Forbid:
         addq.b  #1,EB_TDNEST(a6)
         rts
 ; Permit: unlocks the Forbid; on return to the permitted state (TDNest < 0) AND not Disabled,
-; if a reschedule is pending (AttnResched, set by Signal for a woken task with
-; priority) -> immediate SYNCHRONOUS yield (M3e). Otherwise the woken task would wait for a tick.
+; if a reschedule is pending (SAR, set by Signal for a woken task with priority, Reschedule, the quantum or
+; the idle loop) -> Schedule through its vector (exec-scheduling-v34 §2.7).
 exec_Permit:
         subq.b  #1,EB_TDNEST(a6)
         bge.s   .pm_ret             ; nesting: still forbidden -> nothing
         tst.b   EB_IDNEST(a6)
         bge.s   .pm_ret             ; still Disabled -> Enable will do the yield
-        tst.w   EB_ATTNRESCHED(a6)
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
         beq.s   .pm_ret
         jsr     reschedule          ; returns here when the current task is re-dispatched
 .pm_ret:
@@ -433,7 +459,7 @@ exec_Enable:
         bge.s   .en_ret             ; still Disabled (nesting) -> no yield
         tst.b   EB_TDNEST(a6)
         bge.s   .en_ret             ; still Forbidden -> Permit will do the yield
-        tst.w   EB_ATTNRESCHED(a6)
+        btst    #SFB_SAR,EB_SYSFLAGS(a6)
         beq.s   .en_ret
         jsr     reschedule
 .en_ret:
