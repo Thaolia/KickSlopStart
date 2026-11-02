@@ -917,6 +917,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     $C00000 into slow RAM from a real Kickstart 1.3; coldstart honours ColdCapture and exec computes ChkSum, so a
     reset comes back to the image.
     Chip RAM sized up to 2 MB as on 1.3 (was a fixed 512 KB): Caesar loads with 2 MB chip and no fast RAM.
+    SCREENBEHIND honoured by OpenScreen: SimCity's title screen stays hidden while it is drawn.
     trackdisk robust to long tracks (ESP32 emulator amiga500-esp32, error 121): decoder up to the very end of the
     buffer, mask of distinct sectors, re-read of an incomplete track (4 times), error rather than stale
     contents; unicorn test tests/td_decode_test.py (99/99, the old code 30 failures out of 33 with an 830-byte gap).

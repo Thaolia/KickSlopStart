@@ -583,6 +583,12 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7o) **SCREENBEHIND** (2026-11-02). `OpenScreen` links a screen whose type has `$0080` at the tail of the screen
+  list and leaves ActiveScreen alone (spec `intuition-screens-v34.md` §2.1 step 21, checked on the real ROM with
+  SimCity in `intuition-screenbehind-v34.md`); it was always put at the front. SimCity opens its title screen that
+  way, draws it plane by plane and sets its palette, then calls ScreenToFront: the user saw the picture being drawn
+  in three wrong colour stages. Now the Workbench stays up and the finished title appears in one frame (~26 s after
+  the double-click, as on 1.3).
   (7n) **Chip RAM sized up to 2 MB** (2026-11-02). `init_memory` sizes the chip RAM as 1.3 does (spec
   `coldstart-hardware-v34.md` §2: a long at each 4 KB boundary, sentinel at `$0` to catch the mirror), from 512 KB
   up to 2 MB, and sets `MaxLocMem` and the chip MemHeader from it; it used to stop at a fixed 512 KB. Found with

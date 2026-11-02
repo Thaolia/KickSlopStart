@@ -97,7 +97,9 @@ WD_TBARH        EQU 10               ; height of a window's title bar (BorderTop
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
 ; CUSTOMBITMAP), the default palette (32 colors, including those of the pointer), draws the title bar (except
-; SCREENQUIET), places the screen at the head of the list and displays it.
+; SCREENQUIET), places the screen at the head of the list and displays it. SCREENBEHIND: at the tail of the list,
+; so it stays hidden until it is brought to the front (programs draw it, set its colours, then ScreenToFront), and
+; ActiveScreen is left alone (intuition-screens-v34 §2.1 step 21, intuition-screenbehind-v34).
 intuition_OpenScreen:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5                ; a5 = IntuitionBase
@@ -245,9 +247,23 @@ intuition_OpenScreen:
 .os_quiet:
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
+        move.w  SC_FLAGS(a3),d0
+        and.w   #SCREENBEHIND,d0
+        beq.s   .os_front
+        lea     IB_FIRSTSCREEN(a5),a0 ; previous link (SC_NEXTSCREEN at offset 0); SC_NEXTSCREEN(a3) is 0
+.os_tail:
+        move.l  (a0),d0
+        beq.s   .os_link
+        move.l  d0,a0
+        bra.s   .os_tail
+.os_link:
+        move.l  a3,(a0)
+        bra.s   .os_linked
+.os_front:
         move.l  IB_FIRSTSCREEN(a5),SC_NEXTSCREEN(a3)
         move.l  a3,IB_FIRSTSCREEN(a5)
         move.l  a3,IB_ACTIVESCREEN(a5)
+.os_linked:
         jsr     LVO_PERMIT(a6)
         bsr     it_remake
         move.l  a3,d0
