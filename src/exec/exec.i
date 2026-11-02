@@ -785,9 +785,12 @@ CIA_REMICRVECTOR EQU -12
 CIA_ABLEICR      EQU -18
 CIA_SETICR       EQU -24
 CIAR_HWBASE      EQU LIB_SIZE        ; APTR CIA hardware base (after the Library node)
-CIAR_ICRMASK     EQU LIB_SIZE+4      ; UBYTE shadow of the enabled ICR mask (+pad)
-CIAR_VECTORS     EQU LIB_SIZE+6      ; 5 APTR: struct Interrupt* slots (timerA/B/TOD/ser/flag)
-CIAR_SIZE        EQU LIB_SIZE+6+20
+CIAR_INTBIT      EQU LIB_SIZE+4      ; UWORD INTENA/INTREQ bit of the CIA's level (PORTS / EXTER)
+CIAR_ICRMASK     EQU LIB_SIZE+6      ; UBYTE software copy of the enabled ICR mask
+CIAR_PENDING     EQU LIB_SIZE+7      ; UBYTE ICR flags read but not dispatched yet
+CIAR_SERVER      EQU LIB_SIZE+8      ; struct Interrupt slot of the 1.3 layout (our servers are registered by boot.s)
+CIAR_VECTORS     EQU LIB_SIZE+30     ; 5 struct IntVector (data, code, node), ICR bits 0-4
+CIAR_SIZE        EQU LIB_SIZE+30+5*IV_SIZE
 CIAA_HW          EQU $BFE001         ; CIA-A base
 CIAB_HW          EQU $BFD000         ; CIA-B base
 CIA_ICR_OFF      EQU $D00            ; offset of the ICR register (register $D) from the CIA base

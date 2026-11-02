@@ -40,6 +40,8 @@ misc_init:
         lea     misc_name(pc),a0
         move.l  a0,LN_NAME(a1)
         move.b  #NT_RESOURCE,LN_TYPE(a1)
+        move.b  #(1<<LIBB_SUMUSED)|(1<<LIBB_CHANGED),LIB_FLAGS(a1)
+        move.l  #(34<<16)|1,LIB_VERSION(a1)   ; version 34, revision 1
         jsr     LVO_ADDRESOURCE(a6)
 .mi_ret:
         moveq   #0,d0

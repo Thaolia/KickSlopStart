@@ -3,9 +3,11 @@
 ; build_reslist; InitResident calls cia_init which creates BOTH CIA resources via
 ; MakeLibrary (library-like base + AddICRVector/RemICRVector/AbleICR/SetICR jump table),
 ; names them (ciaa/ciab), sets the hardware base, AddResource. The functions manage the
-; ICR vector slots (5 per CIA) + the shadow of the ICR mask + the chip's ICR register.
-; INTERRUPT DISPATCH: cia_dispatch reads the chip's ICR once (ACK + clears all pending) and
-; calls the vector of each set bit. In M7b, cia_server (wraps cia_dispatch) is registered as
+; ICR vector slots (5 per CIA, base layout of docs/analysis/resources-v34.md §1.1), a software copy of
+; the enabled ICR mask and a software PENDING mask: flags read from the chip on a disabled bit stay latched
+; until that bit is enabled (AbleICR then re-requests the CIA's level) or cleared by SetICR.
+; INTERRUPT DISPATCH: cia_dispatch reads the chip's ICR once (ACK), merges it into the pending mask and
+; calls the vector of each pending and enabled bit. In M7b, cia_server (wraps cia_dispatch) is registered as
 ; PORTS/EXTER SERVER via exec's by-number dispatcher (AddIntServer/SetIntVector) instead of a
 ; hardcoded autovector -> cia.resource IS the PORTS/EXTER handler, as in the real exec.
 ; Convention: functions called with a6 = resource base; scratch = d0/d1/a0/a1.
@@ -88,6 +90,13 @@ cia_make:
         move.l  a2,LN_NAME(a1)
         move.b  #NT_RESOURCE,LN_TYPE(a1)
         move.l  d2,CIAR_HWBASE(a1)
+        move.w  #INTF_PORTS,CIAR_INTBIT(a1)
+        cmp.l   #CIAA_HW,d2
+        beq.s   .cm_add
+        move.w  #INTF_EXTER,CIAR_INTBIT(a1)
+        or.b    #$C0,CIAB_HW         ; CIA-B /DTR and /RTS high (inactive),
+        or.b    #$C0,CIAB_HW+$200    ; then outputs (DDRA)
+.cm_add:
         jsr     LVO_ADDRESOURCE(a6)  ; AddResource(a1=base) (preserves a1 and d2)
         cmp.l   #CIAA_HW,d2          ; publish the base pointer for the interrupt handler
         bne.s   .cm_notA
@@ -98,77 +107,121 @@ cia_make:
 .cm_ret:
         rts
 
-; --- cia.resource functions (a6 = resource base) ---
+; --- cia.resource functions (a6 = resource base, spec resources-v34 §1.4-1.7) ---
+; All run under an inline Disable (INTENA + IDNestCnt): they are called from interrupt handlers too (trackdisk index,
+; timer), where the Enable LVO must not reschedule.
 
-; AddICRVector(iCRBit d0, interrupt a1) -> d0 = NULL (ok) | interrupt occupying the bit.
-; Stores the vector in the slot + enables the ICR bit (shadow + chip register).
+cia_dis:
+        move.l  a0,-(sp)
+        move.l  ($4).w,a0
+        move.w  #INTF_INTEN,INTENA
+        addq.b  #1,EB_IDNEST(a0)
+        move.l  (sp)+,a0
+        rts
+cia_ena:
+        move.l  a0,-(sp)
+        move.l  ($4).w,a0
+        subq.b  #1,EB_IDNEST(a0)
+        bge.s   .ce_ret
+        move.w  #INTF_SETCLR|INTF_INTEN,INTENA
+.ce_ret:
+        move.l  (sp)+,a0
+        rts
+
+; cia_vec(d0 = ICR bit) -> a0 = its IntVector. Clobbers d1.
+cia_vec:
+        move.w  d0,d1
+        mulu    #IV_SIZE,d1
+        lea     CIAR_VECTORS(a6,d1.l),a0
+        rts
+
+; AddICRVector(iCRBit d0, interrupt a1) -> d0 = 0, or the Interrupt that already owns the bit (nothing changed).
+; is_Data/is_Code are copied into the vector now; the bit is then enabled (a latched flag fires at once).
 cia_AddICRVector:
-        move.l  d0,d1
-        lsl.l   #2,d1                ; d1 = slot offset = bit*4 (index, preserved)
-        lea     CIAR_VECTORS(a6),a0
-        tst.l   0(a0,d1.l)           ; slot occupied? (without clobbering index d1)
-        bne.s   .aiv_owned
-        move.l  a1,0(a0,d1.l)        ; store the vector
-        moveq   #1,d1
-        lsl.l   d0,d1                ; d1 = 1<<bit
-        or.b    d1,CIAR_ICRMASK(a6)  ; shadow |= bit
-        or.b    #$80,d1              ; chip: set-bits
-        move.l  CIAR_HWBASE(a6),a0
-        move.b  d1,CIA_ICR_OFF(a0)
-        moveq   #0,d0                ; success
-        rts
-.aiv_owned:
-        move.l  0(a0,d1.l),d0        ; return the occupant of the bit
-        rts
+        bsr.s   cia_dis
+        bsr.s   cia_vec
+        move.l  IV_NODE(a0),d1
+        bne.s   .aiv_out
+        move.l  a1,IV_NODE(a0)
+        move.l  IS_DATA(a1),IV_DATA(a0)
+        move.l  IS_CODE(a1),IV_CODE(a0)
+        moveq   #0,d1
+        bset    d0,d1
+        bset    #7,d1
+        move.l  d1,d0
+        bsr.s   cia_ablecore
+        moveq   #0,d1
+.aiv_out:
+        move.l  d1,d0
+        bra.s   cia_ena
 
-; RemICRVector(iCRBit d0, interrupt a1) -> void. Frees the slot + disables the ICR bit.
+; RemICRVector(iCRBit d0, interrupt a1) -> d0 = 0. The owner is not checked; the bit is disabled.
 cia_RemICRVector:
-        move.l  d0,d1
-        lsl.l   #2,d1
-        lea     CIAR_VECTORS(a6),a0
-        clr.l   0(a0,d1.l)           ; slot freed
-        moveq   #1,d1
-        lsl.l   d0,d1                ; d1 = 1<<bit (chip: clear-bits, no $80)
-        move.b  d1,d0
-        not.b   d0
-        and.b   d0,CIAR_ICRMASK(a6)  ; shadow &= ~bit
-        move.l  CIAR_HWBASE(a6),a0
-        move.b  d1,CIA_ICR_OFF(a0)
-        rts
-
-; AbleICR(mask d0) -> d0 = old mask. bit7=1: enable (mask&$7F); bit7=0: disable;
-; d0=0: read-only of the current mask (shadow).
-cia_AbleICR:
-        move.l  d2,-(sp)
-        moveq   #0,d2
-        move.b  CIAR_ICRMASK(a6),d2  ; old mask (to return)
-        move.l  d0,d1
-        btst    #7,d1
-        beq.s   .ai_clear
-        and.b   #$7F,d1              ; enable these bits
-        or.b    d1,CIAR_ICRMASK(a6)
-        or.b    #$80,d1              ; chip: set-bits
-        bra.s   .ai_hw
-.ai_clear:
-        and.b   #$7F,d1
-        beq.s   .ai_done             ; mask == 0 -> read-only
-        move.b  d1,d0
-        not.b   d0
-        and.b   d0,CIAR_ICRMASK(a6)  ; shadow &= ~bits (chip: clear-bits, d1 without $80)
-.ai_hw:
-        move.l  CIAR_HWBASE(a6),a0
-        move.b  d1,CIA_ICR_OFF(a0)
-.ai_done:
-        move.l  d2,d0                ; old mask
-        move.l  (sp)+,d2
-        rts
-
-; SetICR(mask d0) -> d0. Minimal STUB this milestone (handling of the interrupt status deferred
-; with the INT2/INT6 dispatch): returns 0, does not touch the chip (an ICR read would clear
-; the status). To be completed with the dispatch.
-cia_SetICR:
+        bsr.s   cia_dis
+        bsr.s   cia_vec
+        clr.l   IV_NODE(a0)
+        moveq   #0,d1
+        bset    d0,d1
+        move.l  d1,d0
+        bsr.s   cia_ablecore
         moveq   #0,d0
+        bra.s   cia_ena
+
+; AbleICR(mask d0) -> d0 = enabled mask before the change. Bit 7 set enables the listed bits, clear disables them;
+; AbleICR(0) only reads the mask.
+cia_AbleICR:
+        bsr.s   cia_dis
+        bsr.s   cia_ablecore
+        bra.s   cia_ena
+
+; cia_ablecore(d0.b = mask): AbleICR body, caller holds Disable. -> d0 = old enabled mask. Clobbers d1/a0.
+cia_ablecore:
+        move.l  CIAR_HWBASE(a6),a0
+        move.b  d0,CIA_ICR_OFF(a0)
+        moveq   #0,d1
+        move.b  CIAR_ICRMASK(a6),d1
+        exg     d0,d1
+        bclr    #7,d1
+        beq.s   .ac_off
+        or.b    d1,CIAR_ICRMASK(a6)
+        bra.s   cia_retrig
+.ac_off:
+        not.b   d1
+        and.b   d1,CIAR_ICRMASK(a6)
+; cia_retrig: flags pending on enabled bits -> request the CIA's interrupt level by software so the server runs.
+; Preserves d0, clobbers d1.
+cia_retrig:
+        move.b  CIAR_ICRMASK(a6),d1
+        and.b   CIAR_PENDING(a6),d1
+        beq.s   .rt_ret
+        move.w  CIAR_INTBIT(a6),d1
+        or.w    #INTF_SETCLR,d1
+        move.w  d1,INTREQ
+.rt_ret:
         rts
+
+; SetICR(mask d0) -> d0 = pending mask after merging the hardware flags, before the change. The hardware ICR is read
+; (and so acknowledged) into the pending mask first; bit 7 set adds the listed flags (software CIA interrupt), clear
+; removes them. SetICR(0) samples the flags.
+cia_SetICR:
+        bsr     cia_dis
+        move.l  CIAR_HWBASE(a6),a0
+        move.b  CIA_ICR_OFF(a0),d1
+        and.b   #$7F,d1
+        or.b    d1,CIAR_PENDING(a6)
+        moveq   #0,d1
+        move.b  CIAR_PENDING(a6),d1
+        exg     d0,d1
+        bclr    #7,d1
+        beq.s   .si_off
+        or.b    d1,CIAR_PENDING(a6)
+        bra.s   .si_trig
+.si_off:
+        not.b   d1
+        and.b   d1,CIAR_PENDING(a6)
+.si_trig:
+        bsr.s   cia_retrig
+        bra     cia_ena
 
 ; --- CIA interrupt server (M6b -> M7b) ---
 ; ciaa_server / ciab_server: PORTS / EXTER servers called by the generic by-number dispatcher
@@ -193,22 +246,25 @@ cia_dispatch:                        ; a2 = resource base (0 ok), a6 = SysBase
         move.l  a2,d0
         beq.s   .cd_ret
         move.l  CIAR_HWBASE(a2),a0
-        move.b  CIA_ICR_OFF(a0),d3   ; ICR READ: pending (b7=IR, b0-4 sources) + chip ACK
-        and.b   CIAR_ICRMASK(a2),d3  ; only enabled sources: the ICR read also reports masked sources
+        move.b  CIA_ICR_OFF(a0),d3   ; ICR read once: acknowledges the chip
+        and.b   #$7F,d3
+        or.b    CIAR_PENDING(a2),d3  ; d3 = all pending flags
+        move.b  d3,d0
+        and.b   CIAR_ICRMASK(a2),d3  ; d3 = active (pending and enabled)
+        eor.b   d3,d0                ; disabled flags stay latched in software
+        move.b  d0,CIAR_PENDING(a2)
+        tst.b   d3
         beq.s   .cd_ret
-        moveq   #0,d2                ; bit 0..4
+        moveq   #0,d2                ; bits 0..4 in order
 .cd_loop:
         btst    d2,d3
         beq.s   .cd_next
-        move.l  d2,d0
-        lsl.l   #2,d0
-        lea     CIAR_VECTORS(a2),a0
-        move.l  0(a0,d0.l),d0        ; struct Interrupt* of the slot
+        move.w  d2,d0
+        mulu    #IV_SIZE,d0
+        movem.l CIAR_VECTORS(a2,d0.l),a1/a5   ; a1 = iv_Data, a5 = iv_Code
+        move.l  a5,d0
         beq.s   .cd_next
-        move.l  d0,a0
-        move.l  IS_DATA(a0),a1
-        move.l  IS_CODE(a0),a5
-        jsr     (a5)                 ; server (a1=data, a5=code, a6=SysBase)
+        jsr     (a5)
 .cd_next:
         addq.l  #1,d2
         cmp.l   #5,d2

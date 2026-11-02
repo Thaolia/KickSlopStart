@@ -1,10 +1,10 @@
 ; src/exec/potgo.s — potgo.resource: sharing of the POTGO register (analogue ports / pins 5 and 9 of the joysticks).
 ;
-; AllocPotBits grants START / DATxx bits not yet taken (an input DATxx requires that nobody else holds START:
-; a foreign START would restart its counters; START requires that no input DATxx is already taken). The OUTxx
-; requested together with a granted DATxx are remembered. WritePotgo writes the bits of the mask; the high byte
-; is kept for subsequent writes, START is never kept (written only when explicitly requested).
-; IMPLEMENTATION track ("clean"): AutoDocs potgo.resource + hardware/custom.i. NO ROM reading.
+; AllocPotBits grants START / DATxx / OUTxx bits not yet taken (an input DATxx requires that nobody else holds
+; START: a foreign START would restart its counters; START requires that no input DATxx is already taken).
+; WritePotgo writes the bits of the mask; the high byte is kept for subsequent writes, START is never kept.
+; IMPLEMENTATION track ("clean"): AutoDocs potgo.resource + hardware/custom.i + docs/analysis/resources-v34.md §3.
+; NO ROM reading.
 
                 include "exec.i"
 
@@ -43,7 +43,7 @@ potgo_init:
         tst.l   d0
         beq.s   .pi_ret
         move.l  d0,a1
-        clr.l   PG_ALLOC(a1)         ; PG_ALLOC + PG_SHADOW
+        move.b  #(1<<LIBB_SUMUSED)|(1<<LIBB_CHANGED),LIB_FLAGS(a1)
         lea     potgo_name(pc),a0
         move.l  a0,LN_NAME(a1)
         move.b  #NT_RESOURCE,LN_TYPE(a1)
@@ -52,59 +52,50 @@ potgo_init:
         moveq   #0,d0
         rts
 
-; pg_inputs: d1 = allocated bits -> d1 = DATxx allocated as inputs (matching OUTxx at 0), Z if none. Uses d0.
-pg_inputs:
-        move.w  d1,d0
-        lsr.w   #1,d0                ; OUTxx shifted down onto the position of their DATxx
-        not.w   d0
-        and.w   #PGM_DAT,d0
-        and.w   d0,d1
-        rts
-
-; AllocPotBits(bits d0) -> d0 = granted START/DATxx bits. Atomic (Disable).
+; AllocPotBits(bits d0) -> d0 = granted bits (subset of the request). Atomic (Disable). Rules (resources-v34 §3.2):
+; bits already taken are refused, and so is the OUTxx of a taken DATxx; START is refused while a DATxx is held as an
+; input (without its OUTxx); while START is held by someone, only complete OUTxx+DATxx pairs are granted.
 pg_alloc:
-        movem.l d2-d4/a6,-(sp)
+        movem.l d2-d3/a6,-(sp)
         move.w  d0,d2                ; d2 = request
         move.l  a6,a0
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
         move.w  PG_ALLOC(a0),d3      ; d3 = already allocated
-        moveq   #0,d4                ; d4 = granted (DATxx + OUTxx + START)
-        moveq   #3,d1
-        move.w  #$0100,d0            ; d0 = current DATxx
-.pa_dat:
-        move.w  d0,-(sp)
-        and.w   d2,d0
-        beq.s   .pa_next             ; not requested
-        and.w   d3,d0
-        bne.s   .pa_next             ; already taken
-        move.w  (sp),d0
-        add.w   d0,d0                ; OUTxx
-        and.w   d2,d0
-        bne.s   .pa_grant            ; output: foreign START has no effect
-        btst    #0,d3
-        bne.s   .pa_next             ; input while someone else holds START
-.pa_grant:
-        or.w    (sp),d4
-        or.w    d0,d4                ; OUTxx requested with the DATxx
-.pa_next:
-        move.w  (sp)+,d0
-        lsl.w   #2,d0
-        dbra    d1,.pa_dat
-        btst    #0,d2
-        beq.s   .pa_done
-        btst    #0,d3
-        bne.s   .pa_done             ; START already taken
         move.w  d3,d1
-        bsr.s   pg_inputs
-        bne.s   .pa_done             ; input DATxx are already taken
-        or.w    #PGF_START,d4
+        and.w   #PGM_DAT,d1
+        add.w   d1,d1                ; OUTxx of the taken DATxx
+        or.w    d3,d1
+        not.w   d1
+        and.w   d1,d2
+        btst    #0,d2
+        beq.s   .pa_pairs
+        move.w  d3,d1
+        lsr.w   #1,d1                ; OUTxx moved onto their DATxx
+        not.w   d1
+        and.w   d3,d1
+        and.w   #PGM_DAT,d1          ; DATxx taken as inputs
+        beq.s   .pa_pairs
+        bclr    #0,d2
+.pa_pairs:
+        btst    #0,d3
+        beq.s   .pa_done
+        move.w  d2,d1                ; START held: complete pairs only
+        lsr.w   #1,d1
+        and.w   d2,d1
+        and.w   #PGM_DAT,d1
+        move.w  d1,d0
+        add.w   d0,d0
+        or.w    d0,d1
+        and.w   #$00FF,d2
+        or.w    d1,d2
 .pa_done:
-        or.w    d4,PG_ALLOC(a0)
+        and.w   #$FF01,d2
+        or.w    d2,PG_ALLOC(a0)
         jsr     LVO_ENABLE(a6)
-        move.w  d4,d0
-        and.l   #PGM_DAT|PGF_START,d0
-        movem.l (sp)+,d2-d4/a6
+        moveq   #0,d0
+        move.w  d2,d0
+        movem.l (sp)+,d2-d3/a6
         rts
 
 ; FreePotBits(bits d0): frees the given START/DATxx and the associated OUTxx.
@@ -118,30 +109,24 @@ pg_free:
         and.w   d0,PG_ALLOC(a6)      ; memory and.w: indivisible on 68000
         rts
 
-; WritePotgo(word d0, mask d1). Called every frame by the gameport VBlank server: inline DISABLE/ENABLE (exec/ables.i)
-; instead of the LVOs, whose Enable may reschedule — not allowed from an interrupt.
+; WritePotgo(word d0, mask d1): POTGO = (shadow & ~mask) | (word & mask); only the high byte is kept afterwards
+; (START and the low bits are one-shot). Called every frame by the gameport VBlank server: inline DISABLE/ENABLE
+; (exec/ables.i) instead of the LVOs, whose Enable may reschedule — not allowed from an interrupt.
 pg_write:
-        movem.l d2/a6,-(sp)
         move.l  a6,a0
-        move.l  ($4).w,a6
+        move.l  ($4).w,a1
         move.w  #INTF_INTEN,INTENA
-        addq.b  #1,EB_IDNEST(a6)
-        move.w  d1,d2
-        and.w   #$FF00,d2
-        not.w   d2
-        and.w   PG_SHADOW(a0),d2     ; high byte kept outside the mask
-        and.w   d0,d1                ; requested bits
-        move.w  d1,d0
-        and.w   #$FF00,d0
-        or.w    d0,d2
-        move.w  d2,PG_SHADOW(a0)
-        and.w   #PGF_START,d1
-        or.w    d1,d2                ; START only if it is written now
-        move.w  d2,POTGO_HW
-        subq.b  #1,EB_IDNEST(a6)
+        addq.b  #1,EB_IDNEST(a1)
+        and.w   d1,d0
+        not.w   d1
+        and.w   PG_SHADOW(a0),d1
+        or.w    d1,d0
+        move.w  d0,POTGO_HW
+        clr.b   d0
+        move.w  d0,PG_SHADOW(a0)
+        subq.b  #1,EB_IDNEST(a1)
         bge.s   .pw_ret
         move.w  #INTF_SETCLR|INTF_INTEN,INTENA
 .pw_ret:
-        movem.l (sp)+,d2/a6
         rts
 potgo_end:

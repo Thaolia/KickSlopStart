@@ -80,6 +80,7 @@ diskres_init:
         lea     diskres_name(pc),a0
         move.l  a0,LN_NAME(a3)
         move.b  #NT_RESOURCE,LN_TYPE(a3)
+        move.l  #(34<<16)|1,LIB_VERSION(a3)   ; version 34, revision 1
         move.l  a6,DR_SYSLIB(a3)
         lea     DR_NOBODY(a3),a0
         move.l  a0,DR_CURRENT(a3)
@@ -165,14 +166,14 @@ dr_readid:
         dbra    d1,.rd_bit
         rts
 
-; AllocUnit(unit d0) -> d0 = 1 if the unit is granted, 0 if already taken or invalid. bset = indivisible
+; AllocUnit(unit d0) -> d0 = $FF if the unit is granted, 0 if already taken or invalid. bset = indivisible
 ; read-modify-write on 68000 (no interrupt between the test and the set).
 dr_allocunit:
         cmp.l   #DR_NUNITS,d0
         bcc.s   .au_no
         bset    d0,DR_FLAGS(a6)
         bne.s   .au_no
-        moveq   #1,d0
+        move.l  #$FF,d0
         rts
 .au_no:
         moveq   #0,d0
@@ -220,26 +221,30 @@ dr_getunit:
         movem.l (sp)+,a2/a6
         rts
 
-; GiveUnit(): frees the controller and wakes up the first waiting driver.
+; GiveUnit(): deselects the drives (motors keep their latched state), frees the controller and wakes up the first
+; waiting driver, which must call GetUnit again.
 dr_giveunit:
         movem.l a2/a6,-(sp)
         move.l  a6,a2
         move.l  DR_SYSLIB(a2),a6
         jsr     LVO_DISABLE(a6)
+        move.b  #PRB_OFF,CIAB_PRB
         bclr    #DRB_ACTIVE,DR_FLAGS(a2)
         lea     DR_WAITING(a2),a0
         jsr     LVO_REMHEAD(a6)
-        tst.l   d0
+        move.l  d0,-(sp)
+        jsr     LVO_ENABLE(a6)
+        move.l  (sp)+,d0
         beq.s   .gv_out
         move.l  d0,a1
         jsr     LVO_REPLYMSG(a6)
 .gv_out:
-        jsr     LVO_ENABLE(a6)
         movem.l (sp)+,a2/a6
         rts
 
-; Interrupt relay (a1 = resource): acknowledges then calls the corresponding interrupt of the current DRU,
-; only if a driver holds the controller and has set an IS_CODE (called with a1 = IS_DATA).
+; Interrupt relay (a1 = resource): acknowledges then jumps to the corresponding interrupt of the current DRU, with
+; a1 = IS_DATA and a5 = IS_CODE, only while a driver holds the controller and has set an IS_CODE. (1.3 also relays
+; to the last owner after GiveUnit; not done here: that DRU may be gone, e.g. a stack DRU of a finished program.)
 dr_blkint:
         move.w  #INTF_DSKBLK,INTREQ
         moveq   #DRU_DISCBLOCK,d0
@@ -257,8 +262,9 @@ dr_relay:
         add.l   d0,a0
         move.l  IS_CODE(a0),d1
         beq.s   .rl_r
-        move.l  d1,-(sp)
+        move.l  d1,a5
         move.l  IS_DATA(a0),a1
+        jmp     (a5)                 ; the handler returns to our caller
 .rl_r:
-        rts                          ; with IS_CODE pushed: jump to the handler, which returns to our caller
+        rts
 diskres_end:
