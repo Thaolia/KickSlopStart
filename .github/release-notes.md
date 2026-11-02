@@ -13,8 +13,9 @@ for the measured evidence. It is released under the MIT License.
 - **Soft-kick disk:** the `.adf` loads KickSlopStart into slow RAM from an A500 that keeps its Kickstart 1.3
   (512 KiB slow RAM at `$C00000` required), then waits on its insert-disk screen for the disk to boot. A reset comes
   back to KickSlopStart; switching off returns to the Kickstart in ROM.
-- **Real hardware:** not tested yet. A 256 KiB image is what a Kickstart 1.3 socket expects; EPROM adapters may need
-  the image doubled or byte-swapped, depending on the chip.
+- **Real hardware:** the soft-kick disk boots on a real A500 (minimum 512 KiB chip + 512 KiB slow RAM). The `.rom`
+  in an EPROM is not tested yet: a 256 KiB image is what a Kickstart 1.3 socket expects; EPROM adapters may need the
+  image doubled or byte-swapped, depending on the chip.
 
 ## Status
 

@@ -969,6 +969,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   unknown), screens below the front one are not displayed (MoveScreen only updates the
   fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
+  **First run on real hardware (2026-11-02)**: the soft-kick disk boots KickSlopStart on a real A500 (512 KB chip +
+  512 KB slow RAM, the minimum for the `.adf`, now stated in the README). Workbench 1.2 then reached its screen, but
+  the title bar kept switching to the menu strip (right button read as pressed and released) and the pointer froze
+  while the mouse moved; no desktop icon was shown yet. Not reproduced under Amiberry (WB 1.2, 512+512 KB, 40 fast
+  right-button toggles while moving: no freeze). Suspected cause: a badly seated mouse (pin 7 +5 V, pin 9 right
+  button). To retest after reseating it; if it persists, try the same mouse on the real Kickstart 1.3, then have an
+  analysis agent probe what 1.3 writes to POTGO.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

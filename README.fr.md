@@ -7,7 +7,8 @@
 KickSlopStart est une réimplémentation libre de la ROM **Kickstart 1.3** (34.5) de l'Amiga. Elle est écrite de zéro en
 assembleur 68000, selon une méthode de **salle blanche**. L'image fait **256 Kio, chargée à `$FC0000`**, et tourne sur
 un simple **68000**. Elle vise à remplacer directement le Kickstart d'origine sur A500, A1000 et A2000. Elle démarre
-aujourd'hui en émulateur ; le démarrage sur un vrai A500 depuis une EPROM est un objectif ultérieur.
+en émulateur, et sur un vrai A500 avec la disquette de soft-kick ci-dessous ; le démarrage depuis une EPROM est un
+objectif ultérieur.
 
 Ce dépôt ne contient **aucun code de Commodore** et ne fournit **pas** la ROM d'origine. Le code ayant été écrit avec
 un LLM qui a pu voir des sources de Kickstart fuitées, cette affirmation est vérifiée par la mesure plutôt que tenue
@@ -33,6 +34,9 @@ dès que l'émulateur tourne. La ROM vient de la branche `rom`
 qu'un fichier servi avec un en-tête CORS, ce que fait `raw.githubusercontent.com` et pas le téléchargement des releases.
 
 ## Disquette de soft-kick (sans changer de ROM)
+
+**Minimum : 512 Kio de chip RAM + 512 Kio de slow RAM** (un A500 avec son extension A501 dans la trappe). Sans slow
+RAM, le `.adf` ne peut pas lancer KickSlopStart, qui s'y installe. Testée sur un vrai A500.
 
 Chaque release fournit aussi `KickSlopStart-<version>.adf`, et la branche `rom` porte la dernière sous le nom
 [`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Bootez-la sur un
