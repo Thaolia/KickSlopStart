@@ -963,7 +963,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   dos Exit (GetPacket/QueuePacket left null on purpose). Binary and AROS similarity audits at the base level.
   Open: trackdisk unit task (autonomous change polling), input.device task, joystick types through SETMTYPE,
   INDEXSYNC now that SetICR exists, screens below the front one are not displayed (MoveScreen only updates the
-  fields). In the Workbench 1.3.3 [m2] disk window, the "Empty" icon overlaps "Diverse" (not examined yet).
+  fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
+  "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
 
 ## Immediately actionable work (start of implementation, upon approval)
 
