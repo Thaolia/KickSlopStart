@@ -1455,5 +1455,24 @@ differs.
   callable from interrupts) and reports the middle button (`$6A`); `OpenScreen` Height ≤ 0 and the Workbench screen
   follow NormalDisplayRows (200 lines on NTSC), and the pointer is bounded by `PTR_YLIM` (`src/exec/gameport.s`,
   `potgo.s`, `src/intuition/screens.s`, `pointer.s`).
+- **Already-specified LVOs implemented (lot 1, 2026-11-02)**:
+  - graphics (`graphics_lib.s`, `area.s`): `InitView`, `InitVPort`, `GetColorMap` (32-entry default table) /
+    `FreeColorMap`, `FreeCopList` (shared with `FreeVPortCopLists`), `FreeCprList` (frees our single-block View
+    list), `WaitBOVP`, `BltPattern` (the AreaEnd/Flood mask renderer `mk_render`, bounded by `MK_COLS`; NULL mask
+    = RectFill without outline), `ScrollVPort`. `MakeVPort` now applies RasInfo `RxOffset`/`RyOffset`
+    (`gfx_scrollpar`: DDFSTRT, BPLCON1, modulos, plane offset, graphics-display §4.4) and `ScrollVPort` patches
+    the same MOVEs in place in the fragment and the displayed list (`gfx_fragmst`, shared with `SetRGB4`).
+    `SetRGB4` returns 0/-1, writes COLORn when vp is NULL and preserves d2/d3.
+  - intuition (`pointer.s`, `screens.s`, `intuition_lib.s`): per-window pointer (`SetPointer`/`ClearPointer`,
+    Window $4A-$51, `it_ptrapply` on activation and when the active window closes, `IB_PTRWIN` selects the
+    offsets used by `it_ptrmoved`); `LockIBase`/`UnlockIBase` (7 semaphores in IntuitionBase); `CurrentTime`
+    on the IntuiMessage clock (`it_now`); `Intuition()` reading its list on the stack; `OpenIntuition` = Open
+    with the open count frozen at 1; `AlohaWorkbench` + WBENCHOPEN/WBENCHCLOSE through "WBenchPort"
+    (`it_wbmsg`); `CloseWorkBench`, `WBenchToFront/Back`, `MoveScreen` (fields only: we display the front screen
+    alone), `MakeScreen`, `ActivateWindow`, `RefreshWindowFrame`.
+  - layers `FattenLayerInfo`/`ThinLayerInfo` (fatten count, flag, extra_size; no extra buffers), console
+    `CDInputHandler` (returns 0), dos `WaitForChar` (ACTION_WAIT_CHAR, served by `conwin`).
+  - Tests: `tests/bltpat_test.s`, `tests/imisc_test.s`, `tests/lmisc_test.s` (run with `tests/garea_probe.sh`);
+    `gdisp_probe` and `iscr_probe` give the spec's values for the functions above.
 
 See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.

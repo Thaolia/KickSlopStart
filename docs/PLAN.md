@@ -953,6 +953,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   by disk.resource, PAL/NTSC detected from the beam. Then: POTGO rewritten every frame by the gameport server,
   middle button events, Workbench and default-height screens 200 lines on NTSC (pointer bounded likewise). Open:
   autovector order and acknowledge timing, raw serial, the 272-line boot picture on NTSC.
+  **Already-specified LVOs (lot 1, 2026-11-02)**: done — graphics InitView/InitVPort/Get-FreeColorMap/FreeCprList/
+  FreeCopList/WaitBOVP/BltPattern/ScrollVPort (+ RasInfo offsets in MakeVPort), intuition SetPointer/ClearPointer/
+  Lock-UnlockIBase/CurrentTime/Intuition()/AlohaWorkbench/CloseWorkBench/WBenchToFront-Back/MoveScreen/MakeScreen/
+  ActivateWindow/RefreshWindowFrame, layers Fatten/ThinLayerInfo, console CDInputHandler, dos WaitForChar.
+  Open (new specs of 2026-11-02, lot 2): gameport GPD_* (done by f1f5e23), keyboard/input generic commands and
+  IND_SETMPORT/MTYPE/MTRIG, trackdisk RAWREAD/RAWWRITE/GETDRIVETYPE/CHANGEINT/SEEK, cia SetICR, exec
+  Schedule/Switch/Dispatch/Exception/Procure/Vacate/SumKickData, dos Exit/GetPacket/QueuePacket; screens below the
+  front one are not displayed (MoveScreen only updates the fields).
 
 ## Immediately actionable work (start of implementation, upon approval)
 
