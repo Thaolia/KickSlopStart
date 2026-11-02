@@ -21,6 +21,10 @@ The OS builds itself through a scan of resident modules (struct `Resident`, matc
 `console`/`trackdisk`(20) → `intuition`(10) → `alert.hook`(5) → `mathffp`/`workbench.task`/`dos`(0) →
 `romboot`(-40) → `strap`(-60).
 
+Custom-chip ownership (which module writes which Agnus/Denise/Paula register and bit, interrupt dispatch,
+acknowledge rules) on the official ROM: `docs/analysis/custom-chips-v34.md`; its §7 lists where `src/`
+differs.
+
 ## `src/` structure (clean track)
 
 | Folder | Planned contents |

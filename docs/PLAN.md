@@ -944,6 +944,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     **Next**: `SetFunction`, NIL:/redirections, LoadWB (workbench, icon.library, layers).
 - **M7+ — long tail**: layers, console, input, audio, gameport, mathffp, workbench.task, parity;
   then **real A500 EPROM** (256K ROM, wiring/adapter).
+  **Custom-chip parity (2026-11-02)**: `docs/analysis/custom-chips-v34.md` maps every Agnus/Denise/Paula access of
+  the official ROM to its module and LVO; its §7 lists our gaps by impact (AddIntServer does not enable INTENA,
+  LoadView(NULL) stops copper DMA, trackdisk toggles DSKEN, PAL hard-coded, autovector order, POTGO once
+  instead of every frame, raw serial). To be picked up before the real A500 EPROM step.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

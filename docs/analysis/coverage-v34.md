@@ -851,6 +851,11 @@ those that a tolerant emulator hides.
     real external drive is detected by shifting its identifier on the SEL lines, and a serial cable
     plugged in for debugging conflicts with serial.device if the allocation is not respected.
 
+**Update 2026-11-02**: [custom-chips-v34.md](custom-chips-v34.md) covers the custom-chip side of #9 (potgo.resource,
+gameport VBlank reader, mouse path), #11 (autovector dispatch, server chains, softints, `SetIntVector`,
+`AddIntServer`/`RemIntServer`, raw serial I/O) and #13 (sprite functions, collisions); the VSprite band
+allocation of `DrawGList` and the `GPD_*` command semantics remain open.
+
 ### Next ones (16+)
 
 16. graphics — text and fonts (`Text` ≈ 1.3 KB, `OpenFont`, `AddFont/RemFont/AskFont`, algorithmic
