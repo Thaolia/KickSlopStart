@@ -241,11 +241,21 @@ SPR0PTH      EQU CUSTOM+$120  ; SPRxPTH = SPR0PTH + x*4
 DMAF_SPRITE  EQU $0020
 
 ; --- Sizes of the generated copper lists (chip RAM) ---
-; MakeVPort is generic: DIW/DDF (4) + BPLCON0/1/2/BPL1MOD/BPL2MOD (5) + depth*2 (plane pointers) + Count
-; (colours) MOVEs. Sized for this project's worst case (6 planes + 32 colours = 53 MOVEs = 106 words);
-; MrgCop copies the whole fragment -> the zeroed remainder (MEMF_CLEAR) = inert MOVEs to BLTDDAT, harmless.
+; A ViewPort fragment (vp_DspIns, built by MakeVPort) is a list of 2-word entries: copper MOVEs (register offset,
+; value) and pseudo-entries that MrgCop translates (graphics-display-v34 §4.3, §5.2):
+;   entry 0          header: master-list address of the translated fragment (written by MrgCop, 0 = not merged)
+;   $FFFF,v / h,0 / NOP   WAIT(v, h), v relative to the top of the ViewPort (View.DyOffset + vp.DyOffset + v);
+;                    MrgCop turns the 3 entries into [WAIT, NOP, NOP] or, at the first line past 255,
+;                    [WAIT $FFDF, WAIT, NOP] (3 entries both ways: master offsets = fragment offsets - 4)
+;   $FFFF,$8000      end of the fragment (not copied)
+; Worst case: header, L0 wait, 9 + 2*6 planes + 32 colours MOVEs, top wait + BPLCON0, GFX_UCOPMAX user instructions
+; as waits, bottom wait + BPLCON0, end.
+GFX_PSEUDO     EQU $FFFF          ; word 0 of a pseudo-entry
+GFX_PEND       EQU $8000          ; word 1 of the end marker
+GFX_NOP        EQU $01FE          ; copper no-op register (MOVE to $1FE)
 GFX_UCOPMAX    EQU 64             ; user instructions (vp_UCopIns) kept in a fragment
-GFX_FRAG_WORDS EQU 106+GFX_UCOPMAX*2+2 ; + a WAIT for passing line 255
+GFX_FRAG_ENTRIES EQU 1+3+53+4+GFX_UCOPMAX*3+4+1
+GFX_FRAG_WORDS EQU GFX_FRAG_ENTRIES*2
 ; struct UCopList / CopList / CopIns (graphics/copper.h)
 ucl_FirstCopList EQU 4
 ucl_CopList  EQU 8
@@ -262,7 +272,9 @@ ci_Word2     EQU 4               ; DestData / HWaitPos
 CI_SIZEOF    EQU 6
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
 GFX_SPRCOP_SIZE EQU 8*2*4            ; SPR0PTH/L..SPR7PTH/L: 16 MOVEs added by MrgCop
-GFX_MASTER_SIZE EQU GFX_FRAG_SIZE+GFX_SPRCOP_SIZE+4   ; + final WAIT added by MrgCop
+; Master list (v_LOFCprList) = SPRCOP + one translated fragment per merged ViewPort + final WAIT. Its chip block
+; starts with its size in bytes (long), v_LOFCprList points just after it (FreeCprList reads it back).
+GFX_MASTER_FIXED EQU 4+GFX_SPRCOP_SIZE+4
 
 ; --- Layout of the structure block AllocMem'd by gfx_display_init ---
 GFX_O_VIEW     EQU 0

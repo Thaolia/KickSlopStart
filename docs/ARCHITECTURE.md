@@ -1530,6 +1530,14 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - Stacked ViewPorts (issue #19, graphics-display §4.3/§5): a fragment holds MOVEs and 3-entry pseudo-WAITs
+    relative to the top of its ViewPort (lead-in L0 with planes off, top + BPLCON0 on, user instructions, bottom +
+    BPLCON0 off; DIW open from line 5 to $140) plus a header where MrgCop records where it landed. MrgCop sorts
+    the non-hidden ViewPorts by DyOffset, turns the pseudo-WAITs into WAITs on View.DyOffset + vp.DyOffset + v
+    (WAIT $FFDF before the first line past 255, capped at MaxDisplayRow - 1) and sizes the master list to the
+    ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
+    header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
+    not interleaved by line (ViewPorts do not overlap).
   - Mouse position fields (issue #18): the input task (`it_setmouse`, before each button event and pointer move)
     writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
     (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from

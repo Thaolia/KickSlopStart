@@ -377,14 +377,15 @@ GFX_COPINIT_END  EQU 8               ; offset of the final WAIT: the empty list 
 ; Amiga convention for the 3 functions: a6 = GfxBase, preserve d2-d7/a2-a6, scratch d0/d1/a0/a1.
 ; AllocMem requires a6 = SysBase -> we save/restore a6 and take SysBase via ($4).w.
 
-; gfx_MakeVPort(view a0, vp a1): generates the ViewPort's copper fragment in vp_DspIns (chip RAM).
-; GENERIC (like the real graphics.library): display window according to the mode (HIRES 640 px; low resolution
-; 320 px, or overscan 352x272 if DWidth > 320), height = DHeight (standard windows), modulo = BytesPerRow - bytes
-; fetched per row; BPLCON0 from BitMap.Depth; ONE BPLxPT pointer per plane (BitMap.Planes[0..depth-1]); cm_Count
-; colours COLOR00..COLOR(Count-1) from ColorTable. An existing fragment is reused (cleared then rewritten).
-; view unused (only 1 ViewPort). No final WAIT (added by MrgCop).
+; gfx_MakeVPort(view a0, vp a1): builds the ViewPort's copper fragment in vp_DspIns (chip RAM), layout in graphics.i.
+; GENERIC (like the real graphics.library, spec graphics-display §4.3): settings at the lead-in line L0 (-1, -2 with
+; more than 4 planes) with the planes off - DIW (vertical window open from line 5 to $140, BPLCON0 cuts each
+; ViewPort out), DDF, BPLCON0-2, modulos, one BPLxPT per plane, the colours -; then WAIT(top) + BPLCON0 on, the
+; user instructions, WAIT(bottom) + BPLCON0 off. Lines are relative to the top of the ViewPort: MrgCop adds
+; View.DyOffset + vp.DyOffset, so moving a ViewPort only needs MrgCop. Horizontal window by mode: HIRES 640 px;
+; low resolution 320 px, or overscan 352x272 (top 8 lines higher) if DWidth > 320. An existing fragment is reused.
 gfx_MakeVPort:
-        movem.l d2-d7/a2/a3/a4/a6,-(sp)
+        movem.l d2-d7/a2/a3/a4/a5/a6,-(sp)
         move.l  a1,a2                ; a2 = ViewPort
         move.l  vp_DspIns(a2),d0
         bne.s   .mv_have
@@ -399,34 +400,42 @@ gfx_MakeVPort:
         move.l  a3,a1
         move.w  #(GFX_FRAG_SIZE/2)-1,d1
 .mv_clr:
-        clr.w   (a1)+                ; remainder = inert MOVEs (see GFX_FRAG_WORDS)
+        clr.w   (a1)+
         dbra    d1,.mv_clr
-        move.l  a3,a1                ; a1 = write pointer
+        lea     4(a3),a1             ; a1 = write pointer, after the header (0: not merged)
         move.l  vp_RasInfo(a2),a0
         move.l  ri_BitMap(a0),a4     ; a4 = BitMap
         bsr     gfx_vpwin
+        move.w  d1,d7                ; DIWSTOP horizontal byte
+        moveq   #0,d3
+        move.b  (a0),d3
+        sub.w   #$2C,d3
+        move.w  d3,a5                ; a5 = top of the ViewPort (0; -8 in overscan)
+        moveq   #-1,d0               ; lead-in line L0
+        cmp.b   #4,bm_Depth(a4)
+        bls.s   .mv_l0
+        moveq   #-2,d0
+.mv_l0:
+        add.w   d3,d0
+        moveq   #0,d1
+        bsr     gfx_pwait
         move.w  #DIWSTRT-CUSTOM,(a1)+
-        move.w  (a0)+,(a1)+
+        move.w  (a0)+,d0
+        and.w   #$00FF,d0
+        or.w    #$0500,d0
+        move.w  d0,(a1)+
         move.w  #DIWSTOP-CUSTOM,(a1)+
-        move.w  d1,(a1)+
+        and.w   #$00FF,d7
+        or.w    #$4000,d7
+        move.w  d7,(a1)+
         bsr     gfx_scrollpar
         move.w  #DDFSTRT-CUSTOM,(a1)+
         move.w  d0,(a1)+
         move.w  #DDFSTOP-CUSTOM,(a1)+
         move.w  2(a0),(a1)+
         move.w  d6,d5                ; d5 = modulo
-        moveq   #0,d4
-        move.b  bm_Depth(a4),d4      ; d4 = depth (plane counter)
-        move.w  d4,d2
-        lsl.w   #8,d2
-        lsl.w   #4,d2                ; depth << 12
-        or.w    #GFX_COLOR_BIT,d2    ; | COLOR
-        tst.w   vp_Modes(a2)
-        bpl.s   .mv_lores
-        or.w    #GFX_HIRES_BIT,d2    ; | HIRES (vp_Modes bit 15)
-.mv_lores:
         move.w  #BPLCON0-CUSTOM,(a1)+
-        move.w  d2,(a1)+
+        move.w  #GFX_COLOR_BIT,(a1)+ ; planes off until the top of the ViewPort
         move.w  #BPLCON1-CUSTOM,(a1)+
         swap    d6
         move.w  d6,(a1)+             ; fine scroll
@@ -437,6 +446,8 @@ gfx_MakeVPort:
         move.w  #BPL2MOD-CUSTOM,(a1)+
         move.w  d5,(a1)+
         ; bitplane pointers: one BPLxPTH/L per plane (Planes[i])
+        moveq   #0,d4
+        move.b  bm_Depth(a4),d4      ; d4 = plane counter
         lea     bm_Planes(a4),a0     ; a0 = &Planes[0]
         move.w  #BPL1PTH-CUSTOM,d3   ; d3 = offset of the current BPLxPTH register
 .mv_plane:
@@ -452,9 +463,13 @@ gfx_MakeVPort:
         addq.w  #2,d3                ; -> BPL(x+1)PTH
         subq.w  #1,d4
         bne.s   .mv_plane
-        ; colours: cm_Count MOVEs COLOR00..COLOR(Count-1)
+        ; colours: cm_Count MOVEs COLOR00..COLOR(Count-1), at most 32
         move.l  vp_ColorMap(a2),a0
         move.w  cm_Count(a0),d4      ; d4 = number of colours
+        cmp.w   #32,d4
+        bls.s   .mv_ncol
+        moveq   #32,d4
+.mv_ncol:
         move.l  cm_ColorTable(a0),a0 ; a0 = ColorTable
         move.w  #COLOR00-CUSTOM,d3   ; d3 = offset of the current COLORxx register
 .mv_color:
@@ -463,15 +478,47 @@ gfx_MakeVPort:
         addq.w  #2,d3
         subq.w  #1,d4
         bne.s   .mv_color
-        bsr     gfx_ucopemit         ; user instructions (vp_UCopIns) at the end of the fragment
+        move.w  a5,d0                ; top of the ViewPort: planes on
+        moveq   #0,d1
+        bsr     gfx_pwait
+        moveq   #0,d2
+        move.b  bm_Depth(a4),d2
+        lsl.w   #8,d2
+        lsl.w   #4,d2                ; depth << 12
+        or.w    #GFX_COLOR_BIT,d2    ; | COLOR
+        tst.w   vp_Modes(a2)
+        bpl.s   .mv_lores
+        or.w    #GFX_HIRES_BIT,d2    ; | HIRES (vp_Modes bit 15)
+.mv_lores:
+        move.w  #BPLCON0-CUSTOM,(a1)+
+        move.w  d2,(a1)+
+        bsr     gfx_ucopemit         ; user instructions (vp_UCopIns)
+        move.w  a5,d0                ; bottom of the ViewPort: planes off
+        add.w   vp_DHeight(a2),d0
+        moveq   #0,d1
+        bsr     gfx_pwait
+        move.w  #BPLCON0-CUSTOM,(a1)+
+        move.w  #GFX_COLOR_BIT,(a1)+
+        move.w  #GFX_PSEUDO,(a1)+    ; end of the fragment
+        move.w  #GFX_PEND,(a1)+
         move.l  a3,vp_DspIns(a2)     ; publishes the fragment
 .mv_ret:
-        movem.l (sp)+,d2-d7/a2/a3/a4/a6
+        movem.l (sp)+,d2-d7/a2/a3/a4/a5/a6
         rts
 
-; gfx_vpwin(vp a2) -> a0 = window table (DIWSTRT, DDFSTRT, DDFSTOP, bytes fetched per row), d1 = DIWSTOP.
-; HIRES 640 px; low resolution 320 px, or overscan 352x272 if DWidth > 320; standard windows end DHeight lines
-; below line $2C.
+; gfx_pwait(a1 = write pointer, d0.w = line relative to the top of the ViewPort, d1.w = horizontal position):
+; writes the 3-entry pseudo-WAIT that MrgCop translates (graphics.i). a1 advances by 12.
+gfx_pwait:
+        move.w  #GFX_PSEUDO,(a1)+
+        move.w  d0,(a1)+
+        move.w  d1,(a1)+
+        clr.w   (a1)+
+        move.w  #GFX_NOP,(a1)+
+        clr.w   (a1)+
+        rts
+
+; gfx_vpwin(vp a2) -> a0 = window table (DIWSTRT, DDFSTRT, DDFSTOP, bytes fetched per row), d1 = DIWSTOP whose
+; low byte is the horizontal stop. HIRES 640 px; low resolution 320 px, or overscan 352x272 if DWidth > 320.
 gfx_vpwin:
         lea     gfx_win_over(pc),a0
         move.w  #GFX_DIWSTOP,d1
@@ -484,10 +531,7 @@ gfx_vpwin:
         bhi.s   .vw_ret
         lea     gfx_win_lores(pc),a0
 .vw_std:
-        move.w  vp_DHeight(a2),d1    ; vstop = $2C + DHeight (V8 derived from V7 by the hardware)
-        add.w   #$2C,d1
-        lsl.w   #8,d1
-        move.b  #$C1,d1
+        move.w  #$00C1,d1
 .vw_ret:
         rts
 
@@ -541,27 +585,28 @@ gfx_scrollpar:
         movem.l (sp)+,d1-d2/a1
         rts
 
-; gfx_fragmst(vp a0) -> d0 = address of the ViewPort's fragment in the displayed master list, or 0 (not in the
-; active View). Master list: sprites, then one fragment per ViewPort that has one, in View order. Clobbers d1/a1.
+; gfx_fragmst(vp a0) -> d0 = address in the displayed master list where MrgCop put the ViewPort's fragment (its
+; entry 1; the fragment's header), or 0 (not in the active View, hidden, or not merged). Clobbers a1.
 gfx_fragmst:
         move.l  gb_ActiView(a6),d0
         beq.s   .fm_ret
         move.l  d0,a1
-        move.l  v_LOFCprList(a1),d0
-        beq.s   .fm_ret
-        add.l   #GFX_SPRCOP_SIZE,d0
+        tst.l   v_LOFCprList(a1)
+        beq.s   .fm_none
         move.l  v_ViewPort(a1),a1
 .fm_vp:
         cmpa.w  #0,a1
         beq.s   .fm_none
         cmpa.l  a0,a1
-        beq.s   .fm_ret
-        tst.l   vp_DspIns(a1)
-        beq.s   .fm_nx
-        add.l   #GFX_FRAG_SIZE,d0
-.fm_nx:
+        beq.s   .fm_in
         move.l  vp_Next(a1),a1
         bra.s   .fm_vp
+.fm_in:
+        move.l  vp_DspIns(a0),d0
+        beq.s   .fm_ret
+        move.l  d0,a1
+        move.l  (a1),d0
+        rts
 .fm_none:
         moveq   #0,d0
 .fm_ret:
@@ -600,7 +645,7 @@ gfx_ScrollVPort:
         move.b  bm_Depth(a4),d3
         add.w   d3,d3
         addq.w  #9-1,d3              ; system MOVEs: DIW/DDF (4), BPLCON0-2 and modulos (5), 2 per plane
-        move.l  a3,a0
+        lea     16(a3),a0            ; after the header and the lead-in WAIT
 .sv_mv:
         move.w  (a0)+,d0             ; register offset
         cmp.w   #DDFSTRT-CUSTOM,d0
@@ -643,22 +688,26 @@ gfx_ScrollVPort:
         bsr     gfx_fragmst
         tst.l   d0
         beq.s   .sv_ret
-        move.l  d0,a1                ; the whole fragment into the displayed list
-        move.l  a3,a0
-        move.w  #(GFX_FRAG_SIZE/2)-1,d0
+        move.l  d0,a1                ; the same settings MOVEs into the displayed list
+        lea     12(a1),a1
+        lea     16(a3),a0
+        moveq   #0,d0
+        move.b  bm_Depth(a4),d0
+        add.w   d0,d0
+        addq.w  #9-1,d0
 .sv_cp:
-        move.w  (a0)+,(a1)+
+        move.l  (a0)+,(a1)+
         dbra    d0,.sv_cp
 .sv_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
 ; gfx_ucopemit(a1 = write pointer in the fragment, a2 = ViewPort, a3 = fragment): copies the instructions of
-; vp_UCopIns (the user's CMove/CWait) to the end of the fragment, in the remaining space. A WAIT gives line
-; v + $2C + DyOffset of the ViewPort (beyond 255, preceded by the passing WAIT $FFDF); v >= 10000 = end of list
-; (CEND). Clobbers d0/d1/a0.
+; vp_UCopIns (the user's CMove/CWait) into the fragment, leaving room for the bottom WAIT, BPLCON0 and the end
+; marker. A WAIT stays relative to the top of the ViewPort (MrgCop adds the offsets); v >= 10000 = end (CEND).
+; Clobbers d0/d1/a0.
 gfx_ucopemit:
-        movem.l d2-d4/a4,-(sp)
+        movem.l d2/a4,-(sp)
         move.l  vp_UCopIns(a2),d0
         beq.s   .ue_ret
         move.l  d0,a0
@@ -667,14 +716,13 @@ gfx_ucopemit:
         move.l  d0,a4
         move.l  cl_CopIns(a4),a0
         move.w  cl_Count(a4),d2      ; d2 = instructions
-        lea     GFX_FRAG_SIZE(a3),a4 ; a4 = end of the fragment
-        moveq   #0,d4                ; d4 = passing WAIT for line 255 already emitted
+        lea     GFX_FRAG_SIZE-5*4(a3),a4 ; a4 = limit (bottom WAIT, BPLCON0, end marker after it)
 .ue_lp:
         subq.w  #1,d2
         bmi.s   .ue_ret
         move.l  a4,d0
         sub.l   a1,d0
-        cmp.l   #8,d0                ; room for one instruction (+ a passing WAIT)
+        cmp.l   #12,d0               ; room for one instruction
         blo.s   .ue_ret
         move.w  ci_Word1(a0),d0
         move.w  ci_Word2(a0),d1
@@ -687,30 +735,13 @@ gfx_ucopemit:
 .ue_wait:
         cmp.w   #10000,d0
         bge.s   .ue_ret              ; CEND
-        add.w   #$2C,d0
-        add.w   vp_DyOffset(a2),d0
-        bpl.s   .ue_pos
-        moveq   #0,d0
-.ue_pos:
-        cmp.w   #255,d0
-        ble.s   .ue_line
-        tst.w   d4
-        bne.s   .ue_line
-        st      d4
-        move.w  #$FFDF,(a1)+         ; waits for the end of line 255
-        move.w  #$FFFE,(a1)+
-.ue_line:
-        lsl.w   #8,d0                ; line (low 8 bits) in VP
         and.w   #$FE,d1              ; even horizontal position
-        or.w    d1,d0
-        or.w    #1,d0
-        move.w  d0,(a1)+
-        move.w  #$FFFE,(a1)+
+        bsr     gfx_pwait
 .ue_nx:
         addq.l  #CI_SIZEOF,a0
         bra.s   .ue_lp
 .ue_ret:
-        movem.l (sp)+,d2-d4/a4
+        movem.l (sp)+,d2/a4
         rts
 
 ; gfx_LoadRGB4(vp a0, colours a1, count d0): the first "count" colours ($0RGB) via SetRGB4.
@@ -771,7 +802,7 @@ gfx_SetRGB4:
         move.l  vp_DspIns(a0),d2
         beq.s   .sr_ok
         move.l  d2,a1
-        moveq   #GFX_FRAG_WORDS/2-1,d3
+        move.w  #GFX_FRAG_WORDS/2-1,d3
 .sr_find:
         cmp.w   (a1),d0
         beq.s   .sr_hit
@@ -788,7 +819,7 @@ gfx_SetRGB4:
         beq.s   .sr_ok               ; ViewPort not in the displayed view
         move.l  d0,a1
         add.l   d3,a1
-        move.w  d2,2(a1)
+        move.w  d2,-2(a1)            ; master = fragment offset - 4 (no header there)
 .sr_ok:
         moveq   #0,d0
         bra.s   .sr_ret
@@ -926,47 +957,136 @@ gfx_CBump:
 .cb_ret:
         rts
 
-; gfx_MrgCop(view a1): merges the vp_DspIns fragment of each ViewPort into v_LOFCprList (master, chip RAM)
-; + final WAIT. An existing list is reused. 1 ViewPort here. Gated by M4C2_NO_MRGCOP (RED): skips the merge ->
-; master = WAIT only -> white screen.
+; gfx_MrgCop(view a1): builds v_LOFCprList (master, chip RAM, layout in graphics.i): the sprite pointers, then the
+; fragment of each ViewPort that is not VP_HIDE, by increasing DyOffset (chain order on a tie; ViewPorts do not
+; overlap: intuition leaves empty lines between screens), then the end WAIT (spec graphics-display §5). Pseudo-WAITs
+; become WAITs on View.DyOffset + vp.DyOffset + v, capped at MaxDisplayRow - 1; the first line past 255 is preceded
+; by WAIT $FFDF. Each fragment's header receives where it landed. The list is reused if it is big enough,
+; otherwise freed and reallocated. Gated by M4C2_NO_MRGCOP (RED): no fragment -> blank screen.
 gfx_MrgCop:
-        movem.l d2/a2/a3/a4/a5/a6,-(sp)
+        movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5                ; a5 = GfxBase
         move.l  a1,a2                ; a2 = View
-        move.l  v_LOFCprList(a2),d0  ; list already allocated: rewritten in place (fixed size)
-        bne.s   .mc_have
+        move.l  #GFX_MASTER_FIXED,d3 ; d3 = size of the block
+        move.l  v_ViewPort(a2),a0
+.mc_cnt:
+        move.l  a0,d0
+        beq.s   .mc_sized
+        move.l  vp_DspIns(a0),d0
+        beq.s   .mc_cn
+        move.l  d0,a1
+        clr.l   (a1)                 ; header: not merged
+        move.w  vp_Modes(a0),d0
+        and.w   #VP_HIDE,d0
+        bne.s   .mc_cn
+        add.l   #GFX_FRAG_SIZE-4,d3
+.mc_cn:
+        move.l  vp_Next(a0),a0
+        bra.s   .mc_cnt
+.mc_sized:
+        move.l  v_LOFCprList(a2),d0
+        beq.s   .mc_alloc
+        move.l  d0,a3
+        cmp.l   -4(a3),d3
+        bls.s   .mc_have             ; big enough: rewritten in place
+        move.l  d0,a0
+        bsr     gfx_FreeCprList
+        clr.l   v_LOFCprList(a2)
+.mc_alloc:
         move.l  ($4).w,a6            ; SysBase
-        move.l  #GFX_MASTER_SIZE,d0
+        move.l  d3,d0
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .mc_ret
+        beq     .mc_ret
+        move.l  d0,a3
+        move.l  d3,(a3)+             ; size of the block, then the list
 .mc_have:
-        move.l  d0,a3                ; a3 = master
         move.l  a3,a4                ; a4 = write pointer
-        bsr     gfx_sprmoves         ; at the head: SPR0PT..SPR7PT (fixed position, rewritten by LoadView/ChangeSprite)
+        bsr     gfx_sprmoves         ; at the head: SPR0PT..SPR7PT (rewritten by LoadView/ChangeSprite)
                 ifeq    M4C2_NO_MRGCOP
-        move.l  v_ViewPort(a2),a0    ; 1st ViewPort
-.mc_vp:
-        move.l  a0,d2
+        moveq   #0,d7                ; d7 != 0: line 255 already passed
+        move.w  gb_MaxDisplayRow(a5),d6
+        subq.w  #1,d6                ; d6 = last line a WAIT may name
+.mc_pick:
+        sub.l   a1,a1                ; a1 = not yet merged ViewPort with the smallest DyOffset
+        move.l  v_ViewPort(a2),a0
+.mc_scan:
+        move.l  a0,d0
+        beq.s   .mc_picked
+        move.l  vp_DspIns(a0),d0
+        beq.s   .mc_sn
+        move.l  d0,a6
+        tst.l   (a6)
+        bne.s   .mc_sn               ; already merged
+        move.w  vp_Modes(a0),d0
+        and.w   #VP_HIDE,d0
+        bne.s   .mc_sn
+        cmpa.w  #0,a1
+        beq.s   .mc_take
+        move.w  vp_DyOffset(a0),d0
+        cmp.w   vp_DyOffset(a1),d0
+        bge.s   .mc_sn
+.mc_take:
+        move.l  a0,a1
+.mc_sn:
+        move.l  vp_Next(a0),a0
+        bra.s   .mc_scan
+.mc_picked:
+        cmpa.w  #0,a1
         beq.s   .mc_end
-        move.l  vp_DspIns(a0),a1     ; fragment of this ViewPort
-        move.l  a1,d2
-        beq.s   .mc_next             ; no fragment
-        move.w  #(GFX_FRAG_SIZE/2)-1,d2
-.mc_copy:
-        move.w  (a1)+,(a4)+
-        dbf     d2,.mc_copy
-.mc_next:
-        move.l  vp_Next(a0),a0       ; next ViewPort
-        bra.s   .mc_vp
+        move.l  vp_DspIns(a1),a0
+        move.l  a4,(a0)+             ; header = where this fragment lands
+        move.w  v_DyOffset(a2),d5
+        add.w   vp_DyOffset(a1),d5   ; d5 = line of the top of the ViewPort
+.mc_tr:
+        move.w  (a0)+,d0
+        move.w  (a0)+,d1
+        cmp.w   #GFX_PSEUDO,d0
+        beq.s   .mc_ps
+        move.w  d0,(a4)+             ; MOVE: copied
+        move.w  d1,(a4)+
+        bra.s   .mc_tr
+.mc_ps:
+        cmp.w   #GFX_PEND,d1
+        beq.s   .mc_pick
+        add.w   d5,d1                ; absolute line
+        bpl.s   .mc_lo
+        moveq   #0,d1
+.mc_lo:
+        cmp.w   d6,d1
+        ble.s   .mc_hi
+        move.w  d6,d1
+.mc_hi:
+        move.w  (a0),d2              ; horizontal position
+        addq.l  #8,a0                ; past the position and no-op entries
+        and.w   #$FE,d2
+        or.w    #1,d2
+        moveq   #2,d3                ; no-ops that complete the 3 entries
+        cmp.w   #255,d1
+        ble.s   .mc_w
+        sub.w   #256,d1              ; past line 255, lines are named modulo 256
+        tst.b   d7
+        bne.s   .mc_w
+        st      d7
+        move.l  #$FFDFFFFE,(a4)+     ; the first time: wait for the end of line 255
+        moveq   #1,d3
+.mc_w:
+        lsl.w   #8,d1
+        or.w    d2,d1
+        move.w  d1,(a4)+
+        move.w  #$FFFE,(a4)+
+.mc_nop:
+        move.l  #GFX_NOP<<16,(a4)+
+        subq.w  #1,d3
+        bne.s   .mc_nop
+        bra.s   .mc_tr
 .mc_end:
                 endc
-        move.w  #$FFFF,(a4)+         ; WAIT $FFFF,$FFFE = end of list
-        move.w  #$FFFE,(a4)+
-        move.l  a3,v_LOFCprList(a2) ; publishes the master
+        move.l  #$FFFFFFFE,(a4)+     ; WAIT $FFFF,$FFFE = end of list
+        move.l  a3,v_LOFCprList(a2)  ; publishes the master
 .mc_ret:
-        movem.l (sp)+,d2/a2/a3/a4/a5/a6
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 ; gfx_sprmoves(a4 = write pointer, a5 = GfxBase): 8 pairs of SPRxPTH/SPRxPTL MOVEs (gb_SprData[x], else the empty
@@ -1286,15 +1406,15 @@ gfx_FreeColorMap:
         movem.l (sp)+,a2/a6
         rts
 
-; FreeCprList(cprlist a0): our View copper list is a single chip block of GFX_MASTER_SIZE bytes (what MrgCop
-; stores in v_LOFCprList), freed whole. NULL: nothing. Nothing in the View is reset (as on 1.3).
+; FreeCprList(cprlist a0): our View copper list (what MrgCop stores in v_LOFCprList) is one chip block whose size
+; sits in the long before it; freed whole. NULL: nothing. Nothing in the View is reset (as on 1.3).
 gfx_FreeCprList:
         move.l  a0,d0
         beq.s   .fp_ret
         move.l  a6,-(sp)
         move.l  ($4).w,a6
-        move.l  a0,a1
-        move.l  #GFX_MASTER_SIZE,d0
+        lea     -4(a0),a1
+        move.l  (a1),d0
         jsr     LVO_FREEMEM(a6)
         move.l  (sp)+,a6
 .fp_ret:

@@ -78,6 +78,8 @@ loadscreen_demo:
         ; View -> ViewPort
         lea     GFX_O_VP(a2),a0
         move.l  a0,GFX_O_VIEW+v_ViewPort(a2)
+        move.w  #$2C,GFX_O_VIEW+v_DyOffset(a2) ; InitView's offsets: MrgCop places the ViewPort from them
+        move.w  #$81,GFX_O_VIEW+v_DxOffset(a2)
         ; --- 3. graphics.library: MakeVPort/MrgCop/LoadView -> displays the console bitplane ---
         lea     EB_LIBLIST(a6),a0
         lea     ls_gfxname(pc),a1
