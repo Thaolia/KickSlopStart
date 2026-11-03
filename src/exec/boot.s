@@ -210,6 +210,15 @@ coldstart:                        ; $FC00D2
 .cc_sum:
         add.w   (a0)+,d1
         dbra    d0,.cc_sum
+        if      RAMKICK
+        tst.l   EB_COLDCAPTURE(a6)   ; the Kickstart in ROM cleared our ColdCapture (= coldstart) before calling it,
+        bne.s   .cc_chk              ; without fixing ChkSum: count the cleared vector back in
+        move.l  #coldstart,d0
+        add.w   d0,d1
+        swap    d0
+        add.w   d0,d1
+.cc_chk:
+        endif
         not.w   d1
         bne.s   .cc_done
         move.l  a6,d6

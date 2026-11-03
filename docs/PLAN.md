@@ -1003,7 +1003,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Warm reset (2026-11-03)**: an ExecBase that passes the full §5.1 check of `coldstart-hardware-v34.md` keeps
   KickMemPtr/KickTagPtr/KickCheckSum and CoolCapture/WarmCapture; the KickMem areas are reserved with AllocAbs, the
   KickTags merged into ResModules by name, version and priority, and CoolCapture called before
-  InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`). Open: CoolCapture runs in supervisor mode without tasks (user
+  InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
   **Issue #20 (2026-11-03)**: 68010 and 68020 CPUs (exception frame format word, MOVE from SR in user mode,

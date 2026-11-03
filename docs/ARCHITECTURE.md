@@ -603,7 +603,13 @@ differs.
   LED, just before `InitCode(RTF_COLDSTART)`, in supervisor mode (1.3 calls it in user mode with multitasking
   running; ours has no tasks yet at that point). WarmCapture is kept but never called: on 1.3 it follows an
   InitCode that does not return. Test: `tests/kicktag_test.s` (a KickTag of its own, a KickTag named
-  "keymap.resource" at version 1 that must lose, a link entry, CoolCapture; an IPC RESET under Amiberry).
+  "keymap.resource" at version 1 that must lose, a link entry, CoolCapture; an IPC RESET under Amiberry; the
+  routines also count their calls in memory, because Amiberry stops draining the serial port after a reset).
+  Soft-kick (RAMKICK): the Kickstart in ROM clears our ColdCapture before calling it but leaves ChkSum as it was, so
+  the image adds the cleared vector (its own `coldstart`) back into the word sum when ColdCapture reads 0; KickTags
+  and CoolCapture then survive a reset of a soft-kicked machine too. A program that overwrites the slow RAM
+  (Spaceballs "State of the Art") or clears `$4` (Kefrens "Desert Dream") still sends a reset back to the
+  Kickstart in ROM: it validates ExecBase before our image gets control.
   (7p) **gameport units 0/1 and exec raw serial** (2026-11-02). gameport.device implements both units and the
   commands of spec `gameport-v34.md`: GPD_READEVENT queue, 8-slot event ring (7 usable), trigger
   (keys/timeout/deltas), ASK/SETCTYPE (mouse, relative and absolute joystick), ASK/SETTRIGGER, CMD_CLEAR/STOP/

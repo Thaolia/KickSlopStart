@@ -8,7 +8,9 @@
 ;       write "KICKTAG WRONG";
 ;   - KickCheckSum = SumKickData(), CoolCapture = a routine writing "COOLCAPTURE", ExecBase ChkSum recomputed.
 ; Writes "KICK ARMED" through dos and then sleeps; the harness resets the machine. After a warm reset the serial
-; port must show "COOLCAPTURE" then "KICKTAG INIT", and never "KICKTAG WRONG".
+; port must show "COOLCAPTURE" then "KICKTAG INIT", and never "KICKTAG WRONG". Each routine also counts its calls
+; in the three longs just before table1 (KickTagPtr - 12: cool, tag1, tag2), for a debugger to read when the
+; serial port is not drained after an emulated reset (the serial wait gives up after a while).
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o kicktag_test tests/kicktag_test.s
 
         section code,code
@@ -49,32 +51,46 @@ start:
 ; serout(a0 = text ended by 0): polled write to SERDAT (no system call: CoolCapture and the tag inits run during
 ; the boot).
 serout:
+        move.l  d1,-(sp)
+.so_ch:
         move.b  (a0)+,d0
         beq.s   .so_end
+        move.l  #100000,d1
 .so_wait:
         btst    #13-8,$DFF018        ; SERDATR TBE
-        beq.s   .so_wait
+        bne.s   .so_put
+        subq.l  #1,d1
+        bne.s   .so_wait
+        bra.s   .so_end
+.so_put:
         and.w   #$FF,d0
         or.w    #$100,d0             ; stop bit
         move.w  d0,$DFF030           ; SERDAT
-        bra.s   serout
+        bra.s   .so_ch
 .so_end:
+        move.l  (sp)+,d1
         rts
 
 cool:
         movem.l d0/a0,-(sp)
+        lea     hits(pc),a0
+        addq.l  #1,(a0)
         lea     m_cool(pc),a0
         bsr.s   serout
         movem.l (sp)+,d0/a0
         rts
 
 init1:
+        lea     hits+4(pc),a0
+        addq.l  #1,(a0)
         lea     m_init(pc),a0
         bsr.s   serout
         moveq   #0,d0
         rts
 
 init2:
+        lea     hits+8(pc),a0
+        addq.l  #1,(a0)
         lea     m_wrong(pc),a0
         bsr.s   serout
         moveq   #0,d0
@@ -91,6 +107,8 @@ tag2:
         dc.l    tag2,codeend
         dc.b    $01,1,8,0            ; RTF_COLDSTART, version 1, NT_RESOURCE, pri 0
         dc.l    name2,name2,init2
+hits:
+        dc.l    0,0,0                ; calls of cool, init1, init2
 table1:
         dc.l    tag1
         dc.l    table2+$80000000     ; link to the next table
