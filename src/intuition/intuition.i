@@ -236,6 +236,7 @@ WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114
 WD_USERDATA     EQU 120              ; UserData (the WB keeps the real damage there, spec wb-icon-clipping-v34 §1)
 WD_WLAYER       EQU 124
+WD_IFONT        EQU 128              ; IFont: the font of the window's RastPort
 WD_SIZE         EQU 132
 ; window flags (wd_Flags)
 WINDOWSIZING    EQU $0001

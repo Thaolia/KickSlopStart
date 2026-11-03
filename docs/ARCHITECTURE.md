@@ -1530,6 +1530,10 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - Cluedo (2026-11-03): LoadSeg ends a hunk implicitly when a CODE/DATA/BSS block follows another one with no
+    HUNK_END (C:border); OpenWindow fills wd_IFont (offset 128) with the RastPort font; Seek also returns its result
+    in D1 (C:Type reads the length there; not in a spec yet); td_fill clears TDU_CYLOK when it reads another track
+    than the one asked, so the next try recalibrates (the game steps DF0 itself through CIA-B).
   - WinUAE suite fixes (2026-11-03, dos-v34-spec §4b, dos-boot-sequence.md): LoadSeg accepts up to 4096 hunks
     (was 64; Shanghai has 180) and ignores a HUNK_END that follows no CODE/DATA/BSS block (headbanger doubles it);
     the boot assigns C L S DEVS LIBS FONTS always exist, with lock 0 (= root of the boot volume, dos_resolve takes

@@ -197,9 +197,9 @@ ls_load_stream:
                 bne     .body_done           ; file consumed
                 and.l   #$3FFFFFFF,d0        ; the id carries a copy of the memory flags (e.g. $400003EB = chip BSS)
                 cmp.l   #HUNK_CODE,d0
-                beq.s   .b_content
+                beq     .b_content
                 cmp.l   #HUNK_DATA,d0
-                beq.s   .b_content
+                beq     .b_content
                 cmp.l   #HUNK_BSS,d0
                 beq.s   .b_bss
                 cmp.l   #HUNK_RELOC32,d0
@@ -229,6 +229,10 @@ ls_load_stream:
                 bsr     ls_skip
                 bra.s   .b_symbol
 .b_bss:
+                tst.l   d6                   ; a block after a block: implicit end of the previous hunk (C:border
+                beq.s   .bss_new             ; on the Cluedo disk has CODE then DATA with no HUNK_END between)
+                addq.l  #1,d2
+.bss_new:
                 moveq   #1,d6
                 bsr     ls_rdl               ; nlongs (no data; memory already CLEAR)
                 bra.s   .b_chk
@@ -239,6 +243,10 @@ ls_load_stream:
                 addq.l  #1,d2                ; next hunk
                 bra     .body_loop
 .b_content:
+                tst.l   d6                   ; implicit end of the previous hunk, as for BSS
+                beq.s   .ct_new
+                addq.l  #1,d2
+.ct_new:
                 moveq   #1,d6
                 cmp.l   d4,d2
                 bhs     .fail_fmt            ; more content hunks than declared -> corrupted

@@ -1033,6 +1033,8 @@ intuition_OpenWindow:
         move.l  a0,WD_WLAYER(a3)
         move.l  a3,IL_WINDOW(a0)
         move.l  IL_RP(a0),WD_RPORT(a3)
+        move.l  IL_RP(a0),a1
+        move.l  rp_Font(a1),WD_IFONT(a3) ; C:border (Cluedo disk) divides by IFont->tf_XSize
         btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO (except BACKDROP): interior in a second layer, in front
         beq.s   .ow_one
         btst    #0,WD_FLAGS+2(a3)

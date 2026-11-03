@@ -576,6 +576,7 @@ dos_fn_seek:
 .sk_err:
         moveq   #-1,d0
 .sk_ret:
+        move.l  d0,d1                   ; also in D1: Cluedo's C:Type takes the file length from D1 after Seek
         movem.l (sp)+,d2-d7/a2-a6
         rts
 

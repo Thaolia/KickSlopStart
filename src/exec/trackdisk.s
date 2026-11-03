@@ -1470,6 +1470,8 @@ td_fill:
         cmp.b   d6,d1
         beq.s   .fi_same
         moveq   #0,d3                ; wrong track: its sectors replaced the good ones
+        move.l  TD_CUNIT,a0          ; and the head is not where we think (a program stepped the drive itself,
+        sf      TDU_CYLOK(a0)        ; Cluedo): the next try recalibrates
         bra.s   .fi_free
 .fi_same:
         move.l  a0,d0

@@ -978,6 +978,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
   **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
   any KickSlopStart image without a hash database; documented as a stable format in the README.
+  **Cluedo, 2026-11-03**: reaches its player selection (implicit hunk end, wd_IFont, Seek result in D1, trackdisk
+  recalibration after a wrong track). To confirm on 1.3 through the analysis track: dos LVOs returning their result in
+  D1 too, and how 1.3 trackdisk recovers when a program moved the head behind its back.
   **WinUAE suite, 2026-11-03**: Shanghai (hunk count bound, doubled HUNK_END, LED bit of CIA-A PRA) and the
   Lemmings demo (boot assigns with lock 0 for missing directories, TAB in command lines) start as on 1.3.
   Not checked on 1.3: whether S and SYS also get a lock-0 assign when missing (we create S).
