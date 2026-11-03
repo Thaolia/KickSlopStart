@@ -47,6 +47,7 @@
                 xref    wn_sendkey
                 xref    it_verify
                 xref    it_dmreq
+                xref    it_dmrnear
                 xref    kbd_cook
                 xref    intuition_DrawImage
 
@@ -246,16 +247,20 @@ it_menubutton:
         moveq   #MENUHOT,d1
         jsr     it_verify
         cmp.l   #MENUCANCEL,d0
-        beq     .mb_cancel
+        beq     mn_mcancel
         cmp.l   #4,d0
         beq     .mb_ret
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne     .mb_ret
         jsr     it_dmreq             ; right double click: the DMRequest instead
-        bne     .mb_ret
+        cmp.l   #1,d0
+        beq     .mb_ret
+        tst.l   d0
+        bne.s   .mb_bar              ; DMRequest first press: the bar only, for now
         bsr     mn_waiting
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne     .mb_ret
+.mb_bar:
         clr.l   IB_MENUBOX(a5)
         clr.l   IB_MENUCUR(a5)
         clr.l   IB_ITEMCUR(a5)
@@ -287,14 +292,28 @@ it_menubutton:
         move.l  a3,IB_MENUWIN(a5)
         bsr     mn_drawbar
         st      IB_TRACK(a5)
+        tst.w   IB_DMRSTATE(a5)
+        bne.s   .mb_ret              ; DMRequest: no tracking while the second click may come
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         bra     it_menumove
 .mb_ret:
         rts
 
-; .mb_cancel: MENUCANCEL: no menu; the release comes to the window as MOUSEBUTTONS MENUUP (it_rbutton).
-.mb_cancel:
+; mn_rmbar(a5): closes the boxes and removes the bar layer, then repairs.
+mn_rmbar:
+        bsr     mn_closebox
+        clr.l   IB_MENUCUR(a5)
+        clr.b   IB_TRACK(a5)
+        move.l  IB_MENUBAR(a5),a1
+        clr.l   IB_MENUBAR(a5)
+        suba.l  a0,a0
+        move.l  IB_LAYERSBASE(a5),a6
+        jsr     LVO_DELETELAYER(a6)
+        bra     it_refresh
+
+; mn_mcancel(a3, a5): MENUCANCEL: no menu; the release comes to the window as MOUSEBUTTONS MENUUP (it_rbutton).
+mn_mcancel:
         move.l  a3,IB_RMBWIN(a5)
         rts
 
@@ -447,6 +466,17 @@ mn_ghost:
 it_menumove:
         tst.l   IB_MENUWIN(a5)
         beq     .mm_ret
+        cmp.w   #1,IB_DMRSTATE(a5)   ; DMRequest bar: still near the press and in time -> no menu yet
+        bne.s   .mm_go
+        jsr     it_dmrnear
+        beq     .mm_ret
+        clr.w   IB_DMRSTATE(a5)
+        movem.l a3-a4,-(sp)          ; the bar becomes a menu: MENUWAITING first (§3.3)
+        move.l  IB_MENUWIN(a5),a3
+        move.l  WD_WSCREEN(a3),a4
+        bsr     mn_waiting
+        movem.l (sp)+,a3-a4
+.mm_go:
         bsr     it_scrxy
         beq     .mm_ret
         move.l  IB_MENUWIN(a5),a3
@@ -1354,6 +1384,13 @@ mn_end:
         beq     .me_ret
         move.l  d0,a3
         move.w  #MENUNULL,d7
+        cmp.w   #1,IB_DMRSTATE(a5)   ; DMRequest bar released in time: removed, the second click may come
+        bne.s   .me_sel
+        move.w  #2,IB_DMRSTATE(a5)
+        bsr     mn_rmbar
+        clr.l   IB_MENUWIN(a5)
+        rts
+.me_sel:
         move.l  IB_SUBCUR(a5),d0
         beq.s   .me_item
         move.l  d0,a0
@@ -1376,15 +1413,7 @@ mn_end:
         or.w    IB_MENUNUM(a5),d7
         or.w    #$1F<<11,d7          ; NOSUB
 .me_close:
-        bsr     mn_closebox
-        clr.l   IB_MENUCUR(a5)
-        clr.b   IB_TRACK(a5)
-        move.l  IB_MENUBAR(a5),a1
-        clr.l   IB_MENUBAR(a5)
-        suba.l  a0,a0
-        move.l  IB_LAYERSBASE(a5),a6
-        jsr     LVO_DELETELAYER(a6)
-        bsr     it_refresh
+        bsr     mn_rmbar
         bsr     mn_menuup
         move.w  d4,d2
         sub.w   WD_LEFTEDGE(a3),d2

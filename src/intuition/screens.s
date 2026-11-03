@@ -75,6 +75,8 @@
                 xref    intuition_Request    ; request.s (DMRequest)
                 xdef    it_verify            ; menus.s (MENUVERIFY)
                 xdef    it_dmreq
+                xdef    it_dmrnear
+                xdef    it_dmrtick
                 xref    it_menumove
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
@@ -106,7 +108,8 @@ WDX_NEMSG       EQU 4
 WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO: border layer (WD_WLAYER = the interior) | 0
 WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; application ClipRegion removed during an intuition drawing
 WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD: nesting of it_unclip
-WDX_SIZE        EQU WDX_CLIPNEST+2
+WDX_XMSG        EQU WDX_CLIPNEST+2   ; messages allocated when the pool is all in use (IM_SPECIALLINK chain)
+WDX_SIZE        EQU WDX_XMSG+4
 WD_TBARH        EQU 10               ; height of a window's title bar (BorderTop)
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
@@ -2089,6 +2092,7 @@ it_setactive:
         bsr     wn_titlebar
         move.l  #ACTIVEWINDOW,d0
         bsr.s   .sa_msg
+        bsr     it_newactive
 .sa_ret:
         movem.l (sp)+,d0-d3/d6/a0-a1/a3/a6
         rts
@@ -2097,6 +2101,44 @@ it_setactive:
         move.w  WD_MOUSEX(a3),d2
         move.w  WD_MOUSEY(a3),d3
         bra     wn_sendmsg
+
+; it_newactive(a3 = new active window): after an activation, IECLASS_EVENT code 1 (IECODE_NEWACTIVE) with
+; ie_EventAddress = the window goes down the input.device handler chain (IND_WRITEEVENT, quick, in the caller's
+; context), for console.device and the other handlers (intuition-input-menus §1.11). Preserves everything.
+it_newactive:
+        movem.l d0-d1/a0-a2/a6,-(sp)
+        move.l  ($4).w,a6
+        lea     EB_DEVICELIST(a6),a0
+        lea     it_inputname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .na_ret
+        move.l  d0,a6
+        lea     -(IOSTD_DATA+4+IE_SIZEOF)(sp),sp ; an IOStdReq up to io_Data, then the event
+        move.l  sp,a2
+        lea     IOSTD_DATA+4(a2),a0
+        moveq   #IE_SIZEOF/2-1,d0
+.na_clr:
+        clr.w   (a0)+
+        dbra    d0,.na_clr
+        lea     IOSTD_DATA+4(a2),a0
+        move.b  #IECLASS_EVENT,IE_CLASS(a0)
+        move.w  #1,IE_CODE(a0)
+        move.l  a3,IE_X(a0)
+        move.l  a0,IOSTD_DATA(a2)
+        move.l  #IE_SIZEOF,IOSTD_LENGTH(a2)
+        move.l  a6,IO_DEVICE(a2)
+        move.w  #IND_WRITEEVENT,IO_COMMAND(a2)
+        move.b  #IOF_QUICK,IO_FLAGS(a2)
+        move.l  a2,a1
+        jsr     TD_BEGINIO(a6)
+        lea     IOSTD_DATA+4+IE_SIZEOF(sp),sp
+.na_ret:
+        movem.l (sp)+,d0-d1/a0-a2/a6
+        rts
+it_inputname:
+        dc.b    "input.device",0
+        even
 
 ; fill patterns (SetAfPt): drag (8 lines: 2, 3, 6, 7 filled) and veil (4 lines, one pixel out of
 ; four, shifted from one line to the next)
@@ -2222,6 +2264,16 @@ intuition_CloseWindow:
         bsr     it_refresh
         move.l  ($4).w,a6
         bsr     wn_freeport
+        move.l  WDX_XMSG(a3),d2      ; the messages allocated beyond the pool
+.cw_xmsg:
+        beq.s   .cw_free
+        move.l  d2,a1
+        move.l  IM_SPECIALLINK(a1),d2
+        moveq   #IM_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        tst.l   d2
+        bra.s   .cw_xmsg
+.cw_free:
         move.l  a3,a1
         move.l  #WDX_SIZE,d0
         jsr     LVO_FREEMEM(a6)
@@ -2978,6 +3030,7 @@ it_diskbc:
 ; one in circulation, like WINDOWTICKED in 1.3); mouse relative to the window (spec intuiticks-repeat-v34 §3).
 ; Preserves d2-d7/a2-a5.
 it_tick:
+        bsr     it_dmrtick
         move.l  IB_ACTIVEWINDOW(a5),d1
         beq.s   .tk_ret
         movem.l d2-d6/a3-a4,-(sp)
@@ -3194,41 +3247,36 @@ it_verify:
         movem.l (sp)+,d2-d3/d6/a2/a6
         rts
 
-; it_dmreq(a3 = active window, a4 = its screen, a5): plain right press on a window with a DMRequest (intuition-input-
-; menus §3.12). A second press within the double-click time and 10 x 5 pixels of the first one sends REQVERIFY,
-; then (not refused, window still active) puts the POINTREL requester at RelLeft/RelTop from the mouse, inside the
-; window, and calls Request (REQSET): Z = 0, no menu. Otherwise the press is remembered and the menus open (Z = 1).
-; Deviation: the first press opens the menus instead of only showing the bar. Preserves d2-d7/a2-a5.
+; it_dmreq(a3 = active window, a4 = its screen, a5): accepted right press (intuition-input-menus §3.12) -> d0 = 0:
+; open the menus; 1: handled, no menu; 2: window with a DMRequest, first press: only the bar is shown (IB_DMRSTATE 1,
+; start time and window mouse position kept). A press while a previous one was released (state 2) on the same window
+; within the double-click time and 10 x 5 pixels sends REQVERIFY, then (not refused, window still active) puts a
+; POINTREL requester at RelLeft/RelTop from the mouse, inside the window, and calls Request (REQSET). An expired
+; state 2 first gets its MENUPICK MENUNULL. Preserves d2-d7/a2-a5.
 it_dmreq:
         movem.l d2-d4/a2/a6,-(sp)
+        cmp.w   #2,IB_DMRSTATE(a5)
+        bne.s   .dq_new
+        cmp.l   IB_DMRWIN(a5),a3
+        bne.s   .dq_stale
+        bsr     it_dmrnear
+        beq.s   .dq_double
+.dq_stale:
+        bsr     it_dmrnull           ; the first click of a pair that did not come
+.dq_new:
         move.l  WD_DMREQUEST(a3),d0
         beq     .dq_menu
         bsr     it_now
-        move.l  d0,d2                ; d2/d3 = now
-        move.l  d1,d3
-        cmp.l   IB_DMRWIN(a5),a3
-        bne     .dq_first
-        move.w  WD_MOUSEX(a3),d0
-        sub.w   IB_DMRX(a5),d0
-        bpl.s   .dq_ax
-        neg.w   d0
-.dq_ax:
-        cmp.w   #10,d0
-        bgt     .dq_first
-        move.w  WD_MOUSEY(a3),d0
-        sub.w   IB_DMRY(a5),d0
-        bpl.s   .dq_ay
-        neg.w   d0
-.dq_ay:
-        cmp.w   #5,d0
-        bgt.s   .dq_first
-        move.l  IB_DMRSEC(a5),d0
-        move.l  IB_DMRMIC(a5),d1
-        move.l  a5,a6
-        jsr     intuition_DoubleClick
-        tst.l   d0
-        beq.s   .dq_first
-        clr.l   IB_DMRWIN(a5)
+        move.l  a3,IB_DMRWIN(a5)
+        move.l  d0,IB_DMRSEC(a5)
+        move.l  d1,IB_DMRMIC(a5)
+        move.w  WD_MOUSEX(a3),IB_DMRX(a5)
+        move.w  WD_MOUSEY(a3),IB_DMRY(a5)
+        move.w  #1,IB_DMRSTATE(a5)
+        moveq   #2,d0
+        bra.s   .dq_ret
+.dq_double:
+        clr.w   IB_DMRSTATE(a5)
         move.l  #REQVERIFY,d0
         moveq   #0,d1
         bsr     it_verify
@@ -3236,7 +3284,9 @@ it_dmreq:
         beq.s   .dq_done
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .dq_done
-        move.l  WD_DMREQUEST(a3),a2
+        move.l  WD_DMREQUEST(a3),d0
+        beq.s   .dq_done
+        move.l  d0,a2
         btst    #0,RQ_FLAGS+1(a2)    ; POINTREL
         beq.s   .dq_req
         move.w  RQ_RELLEFT(a2),d0
@@ -3257,14 +3307,8 @@ it_dmreq:
         move.l  a5,a6
         jsr     intuition_Request
 .dq_done:
-        moveq   #1,d0                ; Z = 0: handled
+        moveq   #1,d0
         bra.s   .dq_ret
-.dq_first:
-        move.l  a3,IB_DMRWIN(a5)
-        move.l  d2,IB_DMRSEC(a5)
-        move.l  d3,IB_DMRMIC(a5)
-        move.w  WD_MOUSEX(a3),IB_DMRX(a5)
-        move.w  WD_MOUSEY(a3),IB_DMRY(a5)
 .dq_menu:
         moveq   #0,d0
 .dq_ret:
@@ -3280,6 +3324,73 @@ it_dmreq:
         bpl.s   .di_ret
         moveq   #0,d0
 .di_ret:
+        rts
+
+; it_dmrnear(a5) -> Z = 1 if now is within the double-click time of the DMRequest press and IB_DMRWIN's mouse within
+; 10 x 5 pixels of it. Preserves d2-d7/a2-a5.
+it_dmrnear:
+        movem.l d2-d3/a0/a6,-(sp)
+        move.l  IB_DMRWIN(a5),a0
+        move.w  WD_MOUSEX(a0),d0
+        sub.w   IB_DMRX(a5),d0
+        bpl.s   .dn_ax
+        neg.w   d0
+.dn_ax:
+        cmp.w   #10,d0
+        bgt.s   .dn_far
+        move.w  WD_MOUSEY(a0),d0
+        sub.w   IB_DMRY(a5),d0
+        bpl.s   .dn_ay
+        neg.w   d0
+.dn_ay:
+        cmp.w   #5,d0
+        bgt.s   .dn_far
+        bsr     it_now
+        move.l  d0,d2
+        move.l  d1,d3
+        move.l  IB_DMRSEC(a5),d0
+        move.l  IB_DMRMIC(a5),d1
+        move.l  a5,a6
+        jsr     intuition_DoubleClick
+        tst.l   d0
+        beq.s   .dn_far
+        moveq   #0,d0                ; Z = 1: near
+        bra.s   .dn_ret
+.dn_far:
+        moveq   #1,d0
+.dn_ret:
+        movem.l (sp)+,d2-d3/a0/a6
+        rts
+
+; it_dmrnull(a5): a released DMRequest press (state 2) ends without its second click: MENUPICK MENUNULL to its
+; window (if still open), state 0. Preserves d2-d7/a2-a5.
+it_dmrnull:
+        clr.w   IB_DMRSTATE(a5)
+        movem.l d2-d3/d6/a3,-(sp)
+        move.l  IB_DMRWIN(a5),a3
+        bsr     it_alive
+        beq.s   .dl_ret
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        move.l  #MENUPICK,d0
+        move.w  #MENUNULL,d1
+        bsr     wn_sendmsg
+.dl_ret:
+        movem.l (sp)+,d2-d3/d6/a3
+        rts
+
+; it_dmrtick(a5): each event (tick, key) while a DMRequest press is pending: released and expired -> MENUPICK
+; MENUNULL; held and expired or moved away -> the menus open for real (state 0, tracking resumes). Preserves all but
+; d0/d1/a0/a1/a6.
+it_dmrtick:
+        move.w  IB_DMRSTATE(a5),d0
+        beq.s   .dt_ret
+        bsr     it_dmrnear
+        beq.s   .dt_ret
+        cmp.w   #2,IB_DMRSTATE(a5)
+        beq     it_dmrnull
+        clr.w   IB_DMRSTATE(a5)      ; held: the bar becomes a menu
+.dt_ret:
         rts
 
 ; it_vcancel(a3 = window, a6 = SysBase, under Forbid): ModifyIDCMP took away the class of a verification the input
@@ -3373,6 +3484,18 @@ it_rbutton:
 ; keymap instead; a press giving exactly one character sends VANILLAKEY (code = the character), anything else is
 ; swallowed (no RAWKEY either).
 it_rawkey:
+        tst.w   IB_DMRSTATE(a5)      ; a key ends a pending DMRequest press (§3.12)
+        beq.s   .rk_go
+        movem.l d0-d1,-(sp)
+        cmp.w   #2,IB_DMRSTATE(a5)
+        bne.s   .rk_held
+        bsr     it_dmrnull
+        bra.s   .rk_dmr
+.rk_held:
+        clr.w   IB_DMRSTATE(a5)
+.rk_dmr:
+        movem.l (sp)+,d0-d1
+.rk_go:
         move.l  IB_ACTIVEWINDOW(a5),d1
         beq.s   .rk_ret
         movem.l d2-d3/a2-a3,-(sp)
@@ -4203,6 +4326,27 @@ wn_post:
         bne.s   .sm_free
         lea     IM_SIZEOF(a1),a1
         dbra    d6,.sm_find
+        move.l  WDX_XMSG(a3),d6      ; then the extra ones (intuition-input-menus §2.2: the pool grows)
+.sm_xfind:
+        beq.s   .sm_grow
+        move.l  d6,a1
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .sm_free
+        move.l  IM_SPECIALLINK(a1),d6
+        bra.s   .sm_xfind
+.sm_grow:
+        movem.l d0-d1/a0,-(sp)
+        moveq   #IM_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a1
+        movem.l (sp)+,d0-d1/a0
+        move.l  a1,d6
+        beq.s   .sm_none
+        move.l  WDX_XMSG(a3),IM_SPECIALLINK(a1)
+        move.l  a1,WDX_XMSG(a3)
+        bra.s   .sm_free
+.sm_none:
         jsr     LVO_PERMIT(a6)
         bra     .sm_ret
 .sm_free:

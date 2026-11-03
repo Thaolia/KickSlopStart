@@ -51,11 +51,29 @@ pointer_input_handler:
                 bne.s   .pih_mouse
 .pih_dk:
                 jsr     it_diskin            ; DISKINSERTED / DISKREMOVED (input task)
-                bra.s   .pih_next
+                bra     .pih_next
 .pih_mouse:
                 cmp.b   #IECLASS_RAWMOUSE,IE_CLASS(a3)
-                bne.s   .pih_next
+                bne     .pih_next
                 bsr     ptr_ticks            ; deltas scaled to the Preferences speed
+                move.l  INT_IBASE,d0         ; a verification blocks intuition (input-menus §2.5): the pointer stays,
+                beq.s   .pih_vok             ; its movement is held back and applied afterwards
+                move.l  d0,a0
+                tst.l   IB_VWIN(a0)
+                beq.s   .pih_vfree
+                move.w  IE_X(a3),d0
+                add.w   d0,IB_VPX(a0)
+                move.w  IE_Y(a3),d0
+                add.w   d0,IB_VPY(a0)
+                clr.l   IE_X(a3)
+                bra.s   .pih_vok
+.pih_vfree:
+                move.w  IB_VPX(a0),d0
+                add.w   d0,IE_X(a3)
+                move.w  IB_VPY(a0),d0
+                add.w   d0,IE_Y(a3)
+                clr.l   IB_VPX(a0)
+.pih_vok:
                 move.w  PTR_X,d3             ; X: absolute position += relative delta
                 add.w   IE_X(a3),d3
                 ifeq    PTR_NO_CLAMP

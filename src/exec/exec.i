@@ -394,6 +394,7 @@ INPUT_SIZE      EQU LIB_SIZE+30
 IECLASS_NULL    EQU 0            ; ie_Class: neutralised event (ignored by the following handlers)
 IECLASS_RAWKEY  EQU 1            ; ie_Class: raw key (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class: raw mouse (button + position)
+IECLASS_EVENT   EQU 3            ; ie_Class: intuition event (code 1 IECODE_NEWACTIVE, ie_EventAddress = window)
 IECLASS_TIMER   EQU 6            ; ie_Class: input.device tick (10 per second)
 IECLASS_DISKREMOVED EQU 15       ; ie_Class: floppy ejected (emitted by the file system, spec disk-change-v34 §3)
 IECLASS_DISKINSERTED EQU 16      ; ie_Class: floppy inserted and mounted

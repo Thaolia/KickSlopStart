@@ -4,7 +4,8 @@
 ; REQSET, REQCLEAR, CLOSEWINDOW and DELTAMOVE. Every message is written to the CLI output as
 ;   "IM <class> <code> <mousex> <mousey> <extra>"
 ; in hex, extra = the 4 bytes IAddress points at for RAWKEY, IAddress itself otherwise. The first MENUHOT is replied
-; MENUCANCEL, the later ones unchanged. Writes "IDCMP READY" once open; CLOSEWINDOW ends it ("IDCMP END").
+; MENUCANCEL, the later ones unchanged. Writes "IDCMP READY" once open, then reads nothing for 4 s (messages sent
+; meanwhile pile up beyond intuition's pool); CLOSEWINDOW ends it ("IDCMP END").
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o idcmp_test tests/idcmp_test.s
 
         section code,code
@@ -44,6 +45,9 @@ start:
         jsr     -258(a6)             ; SetDMRequest
         lea     m_ready(pc),a0
         bsr     say
+        move.l  a4,a6                ; 4 s without reading: the messages pile up beyond the pool
+        move.l  #50*4,d1
+        jsr     -198(a6)             ; Delay
         moveq   #0,d7                ; d7 = MENUHOT messages seen
 .loop:
         move.l  86(a3),a0            ; UserPort

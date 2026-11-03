@@ -24,7 +24,7 @@ IB_INSIG         EQU IB_INTASK+4       ; event signal mask
 IB_EVHEAD        EQU IB_INSIG+4        ; UWORD: next slot written (interrupt)
 IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD: next slot read (task)
 IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN slots of IB_EVSZ bytes: code, x, y (screen)
-IB_EVN           EQU 8
+IB_EVN           EQU 32                ; (keys wait here while a verification blocks the input task)
 IB_EVSZ          EQU 10                ; code, x, y, then a long (keys: dead-key history)
 IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE: the task also wants the movements (drag, menus)
 IB_MOVED         EQU IB_TRACK+1        ; BYTE: movement to process
@@ -96,7 +96,10 @@ IB_DMRSEC        EQU IB_DMRWIN+4       ; its time and window mouse position
 IB_DMRMIC        EQU IB_DMRSEC+4
 IB_DMRX          EQU IB_DMRMIC+4
 IB_DMRY          EQU IB_DMRX+2
-IB_LOCKS         EQU IB_DMRY+2         ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_DMRSTATE      EQU IB_DMRY+2         ; WORD: DMRequest double click: 0, 1 bar shown (button held), 2 released
+IB_VPX           EQU IB_DMRSTATE+2     ; WORD: pointer movement held back during a verification
+IB_VPY           EQU IB_VPX+2
+IB_LOCKS         EQU IB_VPY+2          ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE
@@ -306,6 +309,7 @@ IM_MOUSEY       EQU 34
 IM_SECONDS      EQU 36
 IM_MICROS       EQU 40
 IM_IDCMPWINDOW  EQU 44
+IM_SPECIALLINK  EQU 48               ; links the messages allocated beyond a window's pool
 IM_KEYHIST      EQU 52               ; our copy of a RAWKEY's dead-key history (IAddress points here)
 IM_SIZEOF       EQU 56
 NEWSIZE         EQU $00000002

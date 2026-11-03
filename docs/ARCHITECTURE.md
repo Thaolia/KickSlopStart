@@ -1610,9 +1610,16 @@ differs.
     menu opens (MENUCANCEL: no menu, the release comes as MOUSEBUTTONS MENUUP through IB_RMBWIN) and before a
     keyboard shortcut (MENUCANCEL: MENUPICK MENUNULL), MENUWAITING to the screen's other MENUVERIFY windows one by
     one (mn_waiting), MOUSEBUTTONS MENUUP to all of them when a menu closes (mn_menuup). SIZEVERIFY before a resize
-    (4 prevents it). DMRequest (it_dmreq): a second plain right press within the double-click time and 10 x 5
-    pixels sends REQVERIFY then opens the requester (POINTREL from the mouse, kept inside the window); deviation:
-    the first press opens the menus.
+    (4 prevents it). DMRequest (it_dmreq, §3.12): the first right press only shows the bar (IB_DMRSTATE 1, no
+    tracking); released within the double-click time it goes (state 2) and a second press within that time and
+    10 x 5 pixels sends REQVERIFY then opens the requester (POINTREL from the mouse, kept inside the window);
+    moving away or running out of time while held turns the bar into the menu (it_menumove, after MENUWAITING);
+    released and expired (checked at ticks, keys and the next press, it_dmrtick) gives MENUPICK MENUNULL. While a
+    verification waits, the pointer handler holds the movement back (IB_VPX/IB_VPY) and applies it afterwards;
+    keys wait in the 32-slot input ring.
+  - After each activation, it_newactive sends IECLASS_EVENT code 1 (IECODE_NEWACTIVE, ie_EventAddress = the window)
+    down the input.device handler chain (IND_WRITEEVENT, quick). A window's message pool grows when its 4 messages
+    are all in use: 56-byte messages chained by IM_SPECIALLINK from WDX_XMSG, freed by CloseWindow.
   - DELTAMOVE and key history: the feeder puts {Prev1DownCode/Qual, Prev2DownCode/Qual} of the previous presses
     below $60 in ie_X/ie_Y (fd_history); it_keyin carries that long through the input ring (IB_EVSZ 10). RAWKEY's
     IAddress points at its copy in the message (IM_KEYHIST, messages are 56 bytes), VANILLAKEY's IAddress is its
