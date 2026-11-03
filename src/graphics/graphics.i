@@ -91,6 +91,7 @@ vp_Modes     EQU 32
 vp_SpritePri EQU 34           ; SpritePriorities (byte)
 vp_RasInfo   EQU 36
 vp_SIZEOF    EQU 40
+ri_Next      EQU 0            ; RasInfo: second playfield's RasInfo (DUALPF)
 ri_BitMap    EQU 4            ; RasInfo
 ri_RxOffset  EQU 8
 ri_RyOffset  EQU 10
@@ -199,6 +200,10 @@ LVO_MOVESPRITE EQU -426
 V_HIRES       EQU $8000        ; vp_Modes: high resolution (640 px)
 VP_HIDE       EQU $2000        ; vp_Modes: ViewPort hidden behind another screen
 V_LACE        EQU $0004        ; v_Modes / vp_Modes: interlace
+V_HAM         EQU $0800        ; vp_Modes: hold and modify (same bit in BPLCON0)
+V_DUALPF      EQU $0400        ; vp_Modes: dual playfield (same bit in BPLCON0)
+V_PFBA        EQU $0040        ; vp_Modes: playfield 2 in front (BPLCON2 PF2PRI)
+V_EHB         EQU $0080        ; vp_Modes: EXTRA_HALFBRITE
 
 ; --- GfxBase: public V34 layout (graphics/gfxbase.i) then private fields beyond ---
 gb_ActiView  EQU 34           ; APTR: active View (set by LoadView)

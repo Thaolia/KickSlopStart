@@ -1538,6 +1538,14 @@ differs.
     ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
     header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
     not interleaved by line (ViewPorts do not overlap).
+  - HAM and dual playfield (graphics-display §4.2-§4.4): MakeVPort (local frame MV_*) puts HIRES, HAM and DUALPF
+    of vp.Modes into BPLCON0 and PFBA into BPLCON2; the depth is capped at 5 unless HAM, DUALPF or EXTRA_HALFBRITE
+    (gfx_vpbm2). DUALPF with RasInfo->Next: playfield 1 feeds BPL1/3/5, playfield 2 BPL2/4/6; gfx_scrollri computes
+    each one's scroll, modulo and plane offset; BPLCON1 = s1 | s2 << 4, DIWSTOP one pixel shorter when they differ,
+    and the playfield whose DDFSTRT is later gets the common one with offset and modulo 2 (HIRES 4) bytes lower. The
+    lead-in line is -2 with more than 4 planes (not DUALPF) or more than 3 with SPRITES. ScrollVPort now rebuilds
+    the fragment through MakeVPort (header kept) and copies its settings and plane MOVEs into the displayed lists;
+    gfx_shfplanes gives each short-frame plane its own playfield's BytesPerRow. Test: tests/hamdpf_test.s.
   - Interlace (graphics-display §4.2-§5.2): a LACE ViewPort counts its fragment lines in interlaced lines (lead-in
     and top doubled, DHeight as is) and MrgCop halves vp.DyOffset + v. BPLCON0 carries the View's LACE bit; with
     View and vp LACE the modulo adds BytesPerRow (gfx_lacemod, also in ScrollVPort). An interlaced View gets

@@ -387,21 +387,38 @@ GFX_COPINIT_END  EQU 8               ; offset of the final WAIT: the empty list 
 ; AllocMem requires a6 = SysBase -> we save/restore a6 and take SysBase via ($4).w.
 
 ; gfx_MakeVPort(view a0, vp a1): builds the ViewPort's copper fragment in vp_DspIns (chip RAM), layout in graphics.i.
-; GENERIC (like the real graphics.library, spec graphics-display §4.3): settings at the lead-in line L0 (-1, -2 with
-; more than 4 planes) with the planes off - DIW (vertical window open from line 5 to $140, BPLCON0 cuts each
-; ViewPort out), DDF, BPLCON0-2, modulos, one BPLxPT per plane, the colours -; then WAIT(top) + BPLCON0 on, the
-; user instructions, WAIT(bottom) + BPLCON0 off. Lines are relative to the top of the ViewPort: MrgCop adds
-; View.DyOffset + vp.DyOffset, so moving a ViewPort only needs MrgCop. Horizontal window by mode: HIRES 640 px;
-; low resolution 320 px, or overscan 352x272 (top 8 lines higher) if DWidth > 320. An existing fragment is reused.
+; GENERIC (like the real graphics.library, spec graphics-display §4.2-4.5): settings at the lead-in line L0 with the
+; planes off - DIW (vertical window open from line 5 to $140, BPLCON0 cuts each ViewPort out), DDF, BPLCON0-2,
+; modulos, one BPLxPT per plane, the colours -; then WAIT(top) + BPLCON0 on, the user instructions, WAIT(bottom) +
+; BPLCON0 off. Lines are relative to the top of the ViewPort: MrgCop adds View.DyOffset + vp.DyOffset, so moving a
+; ViewPort only needs MrgCop. Horizontal window by mode: HIRES 640 px; low resolution 320 px, or overscan 352x272
+; (top 8 lines higher) if DWidth > 320. An existing fragment is reused.
+; Modes: BPLCON0 takes HIRES, HAM and DUALPF from vp.Modes, BPLCON2 takes PFBA. DUALPF with RasInfo->Next: playfield 1
+; (RasInfo) feeds BPL1/3/5, playfield 2 (Next) BPL2/4/6, each with its own scroll (BPLCON1 low/high nibble), modulo
+; and offset; the one that starts fetching later gets the common DDFSTRT and fetches one word more (§4.4). Depth
+; capped at 5 unless HAM, DUALPF or EXTRA_HALFBRITE.
 ; Interlace (§4.2-4.5): a LACE vp counts its lines in interlaced lines (MrgCop halves them); BPLCON0 carries the
 ; View's LACE bit; with View and vp LACE the modulo skips the other field's line and MrgCop gives the short-frame
 ; list the plane pointers + BytesPerRow.
+MV_OFF   EQU -2                      ; BPLCON0 with the planes off
+MV_TOP   EQU -4                      ; top line of the ViewPort (relative)
+MV_DDF   EQU -6
+MV_MOD1  EQU -8
+MV_MOD2  EQU -10
+MV_CON1  EQU -12                     ; BPLCON1
+MV_DIWE  EQU -14                     ; DIWSTOP
+MV_DEPTH EQU -16                     ; planes, both playfields
+MV_OFF1  EQU -20                     ; plane offsets
+MV_OFF2  EQU -24
+MV_BM2   EQU -28                     ; BitMap of playfield 2 | 0
+MV_LOC   EQU 28
 gfx_MakeVPort:
-        movem.l d2-d7/a2/a3/a4/a5/a6,-(sp)
+        movem.l d2-d7/a2-a6,-(sp)
+        link    a5,#-MV_LOC
         move.w  v_Modes(a0),d0
         and.w   #V_LACE,d0
         or.w    #GFX_COLOR_BIT,d0
-        move.w  d0,-(sp)             ; (sp) = BPLCON0 with the planes off
+        move.w  d0,MV_OFF(a5)
         move.l  a1,a2                ; a2 = ViewPort
         move.l  vp_DspIns(a2),d0
         bne.s   .mv_have
@@ -418,17 +435,29 @@ gfx_MakeVPort:
 .mv_clr:
         clr.w   (a1)+
         dbra    d1,.mv_clr
-        lea     4(a3),a1             ; a1 = write pointer, after the header (0: not merged)
         move.l  vp_RasInfo(a2),a0
-        move.l  ri_BitMap(a0),a4     ; a4 = BitMap
+        move.l  ri_BitMap(a0),a4     ; a4 = BitMap of playfield 1
+        bsr     gfx_vpbm2
+        move.l  d0,MV_BM2(a5)
+        move.w  d1,MV_DEPTH(a5)
+        lea     4(a3),a1             ; a1 = write pointer, after the header (0: not merged)
         bsr     gfx_vpwin
-        move.w  d1,d7                ; DIWSTOP horizontal byte
+        move.w  d1,MV_DIWE(a5)
         moveq   #0,d3
         move.b  (a0),d3
         sub.w   #$2C,d3
-        moveq   #-1,d0               ; lead-in line L0
-        cmp.b   #4,bm_Depth(a4)
+        moveq   #-1,d0               ; lead-in line L0: -2 with more than 4 planes (not DUALPF), or more than 3
+        move.w  MV_DEPTH(a5),d1      ; with SPRITES
+        cmp.w   #4,d1
+        bls.s   .mv_l0s3
+        btst    #2,vp_Modes(a2)      ; DUALPF ($0400)
+        beq.s   .mv_l0m2
+.mv_l0s3:
+        cmp.w   #3,d1
         bls.s   .mv_l0
+        btst    #6,vp_Modes(a2)      ; SPRITES ($4000)
+        beq.s   .mv_l0
+.mv_l0m2:
         moveq   #-2,d0
 .mv_l0:
         add.w   d3,d0
@@ -437,45 +466,108 @@ gfx_MakeVPort:
         add.w   d3,d3
         add.w   d0,d0
 .mv_l0s:
-        move.w  d3,a5                ; a5 = top of the ViewPort (0; -8 in overscan, doubled if LACE)
+        move.w  d3,MV_TOP(a5)        ; 0; -8 in overscan; doubled if LACE
         moveq   #0,d1
         bsr     gfx_pwait
         move.w  #DIWSTRT-CUSTOM,(a1)+
-        move.w  (a0)+,d0
+        move.w  (a0)+,d0             ; a0 -> DDFSTRT entry of the window table
         and.w   #$00FF,d0
         or.w    #$0500,d0
         move.w  d0,(a1)+
+        move.l  a1,-(sp)
+        move.l  vp_RasInfo(a2),a1
+        bsr     gfx_scrollri         ; playfield 1
+        move.w  d0,MV_DDF(a5)
+        move.w  MV_OFF(a5),d0
+        bsr     gfx_lacemod
+        move.w  d6,MV_MOD1(a5)
+        move.w  d6,MV_MOD2(a5)
+        swap    d6
+        move.w  d6,MV_CON1(a5)
+        move.l  d7,MV_OFF1(a5)
+        move.l  MV_BM2(a5),d1
+        beq.s   .mv_set
+        move.l  vp_RasInfo(a2),a1    ; playfield 2
+        move.l  ri_Next(a1),a1
+        move.l  a4,-(sp)
+        move.l  d1,a4
+        bsr     gfx_scrollri
+        move.w  MV_OFF(a5),d1
+        exg     d0,d1
+        bsr     gfx_lacemod
+        move.l  (sp)+,a4
+        move.w  d6,MV_MOD2(a5)
+        move.l  d7,MV_OFF2(a5)
+        swap    d6                   ; BPLCON1 = s1 | s2 << 4
+        and.w   #$00F0,d6
+        move.w  MV_CON1(a5),d2
+        and.w   #$000F,d2
+        or.w    d2,d6
+        move.w  d6,MV_CON1(a5)
+        lsr.w   #4,d6
+        cmp.b   d6,d2
+        beq.s   .mv_same
+        subq.w  #1,MV_DIWE(a5)       ; different scrolls: one pixel less on the right
+.mv_same:
+        moveq   #2,d2                ; one more word fetched by the later playfield
+        tst.w   vp_Modes(a2)
+        bpl.s   .mv_step
+        moveq   #4,d2
+.mv_step:
+        cmp.w   MV_DDF(a5),d1        ; d1 = DDFSTRT of playfield 2
+        beq.s   .mv_set
+        bhi.s   .mv_pf2late
+        move.w  d1,MV_DDF(a5)        ; playfield 1 starts later
+        sub.w   d2,MV_MOD1(a5)
+        sub.l   d2,MV_OFF1(a5)
+        bra.s   .mv_set
+.mv_pf2late:
+        sub.w   d2,MV_MOD2(a5)
+        sub.l   d2,MV_OFF2(a5)
+.mv_set:
+        move.l  (sp)+,a1
         move.w  #DIWSTOP-CUSTOM,(a1)+
-        and.w   #$00FF,d7
-        or.w    #$4000,d7
-        move.w  d7,(a1)+
-        bsr     gfx_scrollpar
-        move.w  #DDFSTRT-CUSTOM,(a1)+
+        move.w  MV_DIWE(a5),d0
+        and.w   #$00FF,d0
+        or.w    #$4000,d0
         move.w  d0,(a1)+
+        move.w  #DDFSTRT-CUSTOM,(a1)+
+        move.w  MV_DDF(a5),(a1)+
         move.w  #DDFSTOP-CUSTOM,(a1)+
         move.w  2(a0),(a1)+
-        move.w  (sp),d0
-        bsr     gfx_lacemod
-        move.w  d6,d5                ; d5 = modulo
         move.w  #BPLCON0-CUSTOM,(a1)+
-        move.w  (sp),(a1)+           ; planes off until the top of the ViewPort
+        move.w  MV_OFF(a5),(a1)+     ; planes off until the top of the ViewPort
         move.w  #BPLCON1-CUSTOM,(a1)+
-        swap    d6
-        move.w  d6,(a1)+             ; fine scroll
+        move.w  MV_CON1(a5),(a1)+    ; fine scroll
         move.w  #BPLCON2-CUSTOM,(a1)+
-        move.w  #GFX_BPLCON2,(a1)+   ; sprites in front of both playfields (pointer visible everywhere)
+        move.w  vp_Modes(a2),d0
+        and.w   #V_PFBA,d0
+        or.w    #GFX_BPLCON2,d0      ; sprites in front of both playfields (pointer visible everywhere)
+        move.w  d0,(a1)+
         move.w  #BPL1MOD-CUSTOM,(a1)+
-        move.w  d5,(a1)+
+        move.w  MV_MOD1(a5),(a1)+
         move.w  #BPL2MOD-CUSTOM,(a1)+
-        move.w  d5,(a1)+
-        ; bitplane pointers: one BPLxPTH/L per plane (Planes[i])
-        moveq   #0,d4
-        move.b  bm_Depth(a4),d4      ; d4 = plane counter
-        lea     bm_Planes(a4),a0     ; a0 = &Planes[0]
+        move.w  MV_MOD2(a5),(a1)+
+        ; bitplane pointers: register k = plane k of playfield 1, or with two playfields plane k/2 of playfield
+        ; 1 (k even) or 2 (k odd)
+        moveq   #0,d4                ; d4 = k
         move.w  #BPL1PTH-CUSTOM,d3   ; d3 = offset of the current BPLxPTH register
 .mv_plane:
-        move.l  (a0)+,d5             ; d5 = address of plane i + RasInfo offset
-        add.l   d7,d5
+        cmp.w   MV_DEPTH(a5),d4
+        bhs.s   .mv_planes
+        move.w  d4,d0
+        move.l  a4,a0
+        move.l  MV_OFF1(a5),d5
+        tst.l   MV_BM2(a5)
+        beq.s   .mv_pidx
+        lsr.w   #1,d0
+        btst    #0,d4
+        beq.s   .mv_pidx
+        move.l  MV_BM2(a5),a0
+        move.l  MV_OFF2(a5),d5
+.mv_pidx:
+        lsl.w   #2,d0
+        add.l   bm_Planes(a0,d0.w),d5 ; d5 = address of the plane + offset
         move.w  d3,(a1)+             ; BPLxPTH
         move.l  d5,d2
         swap    d2
@@ -484,8 +576,9 @@ gfx_MakeVPort:
         move.w  d3,(a1)+
         move.w  d5,(a1)+             ; LOW word
         addq.w  #2,d3                ; -> BPL(x+1)PTH
-        subq.w  #1,d4
-        bne.s   .mv_plane
+        addq.w  #1,d4
+        bra.s   .mv_plane
+.mv_planes:
         ; colours: cm_Count MOVEs COLOR00..COLOR(Count-1), at most 32
         move.l  vp_ColorMap(a2),a0
         move.w  cm_Count(a0),d4      ; d4 = number of colours
@@ -501,33 +594,106 @@ gfx_MakeVPort:
         addq.w  #2,d3
         subq.w  #1,d4
         bne.s   .mv_color
-        move.w  a5,d0                ; top of the ViewPort: planes on
+        move.w  MV_TOP(a5),d0        ; top of the ViewPort: planes on
         moveq   #0,d1
         bsr     gfx_pwait
-        moveq   #0,d2
-        move.b  bm_Depth(a4),d2
+        move.w  MV_DEPTH(a5),d2
         lsl.w   #8,d2
         lsl.w   #4,d2                ; depth << 12
-        or.w    (sp),d2              ; | COLOR | View LACE
-        tst.w   vp_Modes(a2)
-        bpl.s   .mv_lores
-        or.w    #GFX_HIRES_BIT,d2    ; | HIRES (vp_Modes bit 15)
-.mv_lores:
+        or.w    MV_OFF(a5),d2        ; | COLOR | View LACE
+        move.w  vp_Modes(a2),d0
+        and.w   #V_HIRES|V_HAM|V_DUALPF,d0
+        or.w    d0,d2                ; same bits in BPLCON0
         move.w  #BPLCON0-CUSTOM,(a1)+
         move.w  d2,(a1)+
         bsr     gfx_ucopemit         ; user instructions (vp_UCopIns)
-        move.w  a5,d0                ; bottom of the ViewPort: planes off
+        move.w  MV_TOP(a5),d0        ; bottom of the ViewPort: planes off
         add.w   vp_DHeight(a2),d0
         moveq   #0,d1
         bsr     gfx_pwait
         move.w  #BPLCON0-CUSTOM,(a1)+
-        move.w  (sp),(a1)+
+        move.w  MV_OFF(a5),(a1)+
         move.w  #GFX_PSEUDO,(a1)+    ; end of the fragment
         move.w  #GFX_PEND,(a1)+
         move.l  a3,vp_DspIns(a2)     ; publishes the fragment
 .mv_ret:
-        addq.l  #2,sp
-        movem.l (sp)+,d2-d7/a2/a3/a4/a5/a6
+        unlk    a5
+        movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; gfx_vpbm2(vp a2, BitMap of playfield 1 a4) -> d0 = BitMap of playfield 2 (DUALPF with RasInfo->Next and a BitMap),
+; else 0; d1.w = planes of both, capped at 5 unless HAM, DUALPF or EXTRA_HALFBRITE, and at 6. Clobbers a6.
+gfx_vpbm2:
+        moveq   #0,d1
+        move.b  bm_Depth(a4),d1
+        moveq   #0,d0
+        btst    #2,vp_Modes(a2)      ; DUALPF
+        beq.s   .b2_cap
+        move.l  vp_RasInfo(a2),a6
+        move.l  ri_Next(a6),d0
+        beq.s   .b2_cap
+        move.l  d0,a6
+        move.l  ri_BitMap(a6),d0
+        beq.s   .b2_cap
+        move.l  d0,a6
+        moveq   #0,d0
+        move.b  bm_Depth(a6),d0
+        add.w   d0,d1
+        move.l  a6,d0
+.b2_cap:
+        cmp.w   #5,d1
+        bls.s   .b2_ret
+        move.l  d0,-(sp)
+        move.w  vp_Modes(a2),d0
+        and.w   #V_HAM|V_DUALPF|V_EHB,d0
+        movem.l (sp)+,d0             ; (flags kept)
+        bne.s   .b2_six
+        moveq   #5,d1
+.b2_six:
+        cmp.w   #6,d1
+        bls.s   .b2_ret
+        moveq   #6,d1
+.b2_ret:
+        rts
+
+; gfx_shfplanes(a0 = first BPLxPTH MOVE of a ViewPort in a short-frame list, a1 = vp): each plane pointer one row
+; further (BytesPerRow of the playfield the plane belongs to). Clobbers d0-d3/a0/a6.
+gfx_shfplanes:
+        move.l  a2,-(sp)
+        move.l  a4,-(sp)
+        move.l  a1,a2
+        move.l  vp_RasInfo(a2),a6
+        move.l  ri_BitMap(a6),a4
+        bsr.s   gfx_vpbm2
+        move.l  d0,d3                ; d3 = BitMap of playfield 2 | 0
+        move.w  d1,d2                ; d2 = planes
+        moveq   #0,d1                ; d1 = k
+.sp_lp:
+        cmp.w   d2,d1
+        bhs.s   .sp_ret
+        move.l  a4,a6
+        tst.l   d3
+        beq.s   .sp_bpr
+        btst    #0,d1
+        beq.s   .sp_bpr
+        move.l  d3,a6
+.sp_bpr:
+        move.w  2(a0),d0
+        swap    d0
+        move.w  6(a0),d0
+        add.w   bm_BytesPerRow(a6),d0 ; (BytesPerRow < 64 KB: carry handled below)
+        bcc.s   .sp_nc
+        add.l   #$10000,d0
+.sp_nc:
+        move.w  d0,6(a0)
+        swap    d0
+        move.w  d0,2(a0)
+        addq.l  #8,a0
+        addq.w  #1,d1
+        bra.s   .sp_lp
+.sp_ret:
+        move.l  (sp)+,a4
+        move.l  (sp)+,a2
         rts
 
 ; gfx_lacemod(d0.w = View Modes (only LACE is read), a2 = vp, a4 = BitMap, d6.w = modulo): with View and vp both
@@ -588,13 +754,12 @@ gfx_vpwin:
 .vw_ret:
         rts
 
-; gfx_scrollpar(a0 = DDFSTRT entry of the window table, a2 = vp, a4 = BitMap) -> d0.w = DDFSTRT, d6 = BPLCON1
-; (high word) : modulo (low word), d7.l = plane offset. RasInfo RxOffset/RyOffset as in graphics-display §4.4:
+; gfx_scrollri(a0 = DDFSTRT entry of the window table, a1 = RasInfo, a2 = vp, a4 = its BitMap) -> d0.w = DDFSTRT,
+; d6 = BPLCON1 (high word) : modulo (low word), d7.l = plane offset. RxOffset/RyOffset as in graphics-display §4.4:
 ; offset = RyOffset * BytesPerRow + 2 * (rx >> 4) (HIRES: rx halved, >> 3); a fine scroll s = (-rx) & 15 (7 in
 ; HIRES) fetches one more word: DDFSTRT - 8, modulo - 2 (HIRES - 4, offset - 2), BPLCON1 = s | s << 4.
-gfx_scrollpar:
+gfx_scrollri:
         movem.l d1-d2/a1,-(sp)
-        move.l  vp_RasInfo(a2),a1
         move.w  bm_BytesPerRow(a4),d7
         muls    ri_RyOffset(a1),d7
         move.w  bm_BytesPerRow(a4),d6
@@ -665,31 +830,30 @@ gfx_fragmst:
 .fm_ret:
         rts
 
-; ScrollVPort(vp a0): re-applies RasInfo RxOffset/RyOffset to the ViewPort's DDFSTRT, BPLCON1, modulos and
-; plane pointers, in its fragment and in the displayed lists, without MrgCop/LoadView (spec graphics-display
-; §7.3), once the beam is past the ViewPort's first line. VP_HIDE or no fragment: nothing. Deviation: the 1.3
-; interlace frame swap is not reproduced (the short-frame list gets its own plane pointers).
+; ScrollVPort(vp a0): re-applies RasInfo RxOffset/RyOffset (both playfields) to the ViewPort's DDFSTRT, BPLCON1,
+; modulos and plane pointers, in its fragment (rebuilt by MakeVPort with the active View) and in the displayed lists,
+; without MrgCop/LoadView (spec graphics-display §7.3), once the beam is past the ViewPort's first line. VP_HIDE or
+; no fragment: nothing. Deviation: the 1.3 interlace frame swap is not reproduced (the short-frame list gets its own
+; plane pointers).
 gfx_ScrollVPort:
-        movem.l d2-d7/a2-a4,-(sp)
+        movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a0,a2
         move.w  vp_Modes(a2),d0
         and.w   #VP_HIDE,d0
-        bne     .sv_ret
+        bne.s   .sv_ret
         move.l  vp_DspIns(a2),d0
-        beq     .sv_ret
+        beq.s   .sv_ret
         move.l  d0,a3
-        move.l  vp_RasInfo(a2),a0
-        move.l  ri_BitMap(a0),a4
-        bsr     gfx_vpwin
-        addq.l  #2,a0
-        bsr     gfx_scrollpar
-        move.w  d0,d5                ; d5 = DDFSTRT
+        move.l  (a3),-(sp)           ; where MrgCop put the fragment: MakeVPort clears it
         move.l  gb_ActiView(a6),d0
-        beq.s   .sv_nlace
+        bne.s   .sv_view
+        lea     gfx_nullview(pc),a0
+        move.l  a0,d0
+.sv_view:
         move.l  d0,a0
-        move.w  v_Modes(a0),d0
-        bsr     gfx_lacemod
-.sv_nlace:
+        move.l  a2,a1
+        bsr     gfx_MakeVPort
+        move.l  (sp)+,(a3)
         move.w  vp_DyOffset(a2),d2   ; wait for the line after the ViewPort's first one
         addq.w  #1,d2
         move.l  gb_ActiView(a6),d0
@@ -700,55 +864,12 @@ gfx_ScrollVPort:
         bsr     gfx_VBeamPos
         cmp.w   d2,d0
         blt.s   .sv_wait
-        moveq   #0,d3
-        move.b  bm_Depth(a4),d3
-        add.w   d3,d3
-        addq.w  #9-1,d3              ; system MOVEs: DIW/DDF (4), BPLCON0-2 and modulos (5), 2 per plane
-        lea     16(a3),a0            ; after the header and the lead-in WAIT
-.sv_mv:
-        move.w  (a0)+,d0             ; register offset
-        cmp.w   #DDFSTRT-CUSTOM,d0
-        bne.s   .sv_c1
-        move.w  d5,(a0)
-        bra.s   .sv_nx
-.sv_c1:
-        cmp.w   #BPLCON1-CUSTOM,d0
-        bne.s   .sv_md
-        swap    d6
-        move.w  d6,(a0)
-        swap    d6
-        bra.s   .sv_nx
-.sv_md:
-        cmp.w   #BPL1MOD-CUSTOM,d0
-        beq.s   .sv_mod
-        cmp.w   #BPL2MOD-CUSTOM,d0
-        bne.s   .sv_pt
-.sv_mod:
-        move.w  d6,(a0)
-        bra.s   .sv_nx
-.sv_pt:
-        sub.w   #BPL1PTH-CUSTOM,d0
-        bcs.s   .sv_nx
-        cmp.w   #8*4,d0
-        bhs.s   .sv_nx
-        move.w  d0,d1
-        and.w   #~3,d1               ; plane index * 4
-        move.l  bm_Planes(a4,d1.w),d4
-        add.l   d7,d4
-        btst    #1,d0
-        bne.s   .sv_lo
-        swap    d4
-.sv_lo:
-        move.w  d4,(a0)
-.sv_nx:
-        addq.l  #2,a0
-        dbra    d3,.sv_mv
         move.l  a2,a0
         bsr     gfx_fragmst
         tst.l   d0
         beq.s   .sv_ret
         move.l  d0,d2                ; d2 = the fragment in the long-frame list
-        move.l  d0,a1                ; the same settings MOVEs into the displayed list
+        move.l  d0,a1                ; the same settings MOVEs into the displayed lists
         bsr.s   .sv_put
         move.l  d2,d0
         bsr     gfx_shfpos
@@ -758,25 +879,14 @@ gfx_ScrollVPort:
         bsr.s   .sv_put
         btst    #2,vp_Modes+1(a2)
         beq.s   .sv_ret
-        move.w  bm_BytesPerRow(a4),d1 ; short frame: one row further
-        ext.l   d1
-        moveq   #0,d3
-        move.b  bm_Depth(a4),d3
-        bra.s   .sv_sn
-.sv_sp:
-        move.w  2(a1),d0
-        swap    d0
-        move.w  6(a1),d0
-        add.l   d1,d0
-        move.w  d0,6(a1)
-        swap    d0
-        move.w  d0,2(a1)
-        addq.l  #8,a1
-.sv_sn:
-        dbra    d3,.sv_sp
-        bra.s   .sv_ret
-; .sv_put(a1 = fragment's place in a hardware list, a3 = fragment, a4 = BitMap): copies the settings MOVEs there;
-; a1 is left on the first BPLxPTH MOVE.
+        move.l  a1,a0
+        move.l  a2,a1
+        bsr     gfx_shfplanes        ; short frame: one row further
+.sv_ret:
+        movem.l (sp)+,d2-d3/a2-a3/a6
+        rts
+; .sv_put(a1 = fragment's place in a hardware list, a3 = fragment): copies the settings MOVEs there, up to the
+; first colour; a1 is left on the first BPLxPTH MOVE. Clobbers d0/a0.
 .sv_put:
         lea     12(a1),a1
         lea     16(a3),a0
@@ -785,18 +895,17 @@ gfx_ScrollVPort:
         move.l  (a0)+,(a1)+
         dbra    d0,.sv_cs
         move.l  a1,-(sp)
-        moveq   #0,d0
-        move.b  bm_Depth(a4),d0
-        add.w   d0,d0
-        subq.w  #1,d0
 .sv_cpp:
+        cmp.w   #COLOR00-CUSTOM,(a0)
+        beq.s   .sv_pe
         move.l  (a0)+,(a1)+
-        dbra    d0,.sv_cpp
+        bra.s   .sv_cpp
+.sv_pe:
         move.l  (sp)+,a1
         rts
-.sv_ret:
-        movem.l (sp)+,d2-d7/a2-a4
-        rts
+gfx_nullview:
+        dcb.b   v_SIZEOF,0
+        even
 
 ; gfx_ucopemit(a1 = write pointer in the fragment, a2 = ViewPort, a3 = fragment): copies the instructions of
 ; vp_UCopIns (the user's CMove/CWait) into the fragment, leaving room for the bottom WAIT, BPLCON0 and the end
@@ -1267,24 +1376,9 @@ gfx_mkshf:
         add.l   d6,d0
         move.l  d0,a0
         lea     12+9*4(a0),a0        ; past the lead-in WAIT and the 9 settings MOVEs: BPLxPTH/L pairs
-        move.l  vp_RasInfo(a1),a6
-        move.l  ri_BitMap(a6),a6
-        moveq   #0,d1
-        move.b  bm_Depth(a6),d1
-        move.w  bm_BytesPerRow(a6),d2
-        ext.l   d2
-        bra.s   .ms_pn
-.ms_pl:
-        move.w  2(a0),d0
-        swap    d0
-        move.w  6(a0),d0
-        add.l   d2,d0
-        move.w  d0,6(a0)
-        swap    d0
-        move.w  d0,2(a0)
-        addq.l  #8,a0
-.ms_pn:
-        dbra    d1,.ms_pl
+        move.l  a1,-(sp)
+        bsr     gfx_shfplanes
+        move.l  (sp)+,a1
 .ms_nvp:
         move.l  vp_Next(a1),a1
         bra.s   .ms_vp

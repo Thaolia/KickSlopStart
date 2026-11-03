@@ -984,6 +984,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/lace_test.s`). Open: the pointer moves in non-interlaced lines (1.3 MouseY is in interlaced lines);
   MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less
   free memory (copper fragments are 1,032 bytes).
+  **HAM and dual playfield (2026-11-03)**: MakeVPort emits HAM/DUALPF/PFBA, two playfields with their own scroll,
+  modulo and offset; ScrollVPort scrolls either playfield (`tests/hamdpf_test.s`). Open from the spec (§4.4): DIW/DDF
+  still come from three fixed windows, so vp.DxOffset, View.DxOffset and other DWidths are ignored; the number of
+  colours emitted is min(Count, 32) instead of the ncol rule.
   **Issue #20 (2026-11-03)**: 68010 and 68020 CPUs (exception frame format word, MOVE from SR in user mode,
   AttnFlags). An emulated A1200 (68020, AGA, 2 MB chip, 24- or 32-bit addressing) boots the Workbench 1.3.3 and runs
   SysInfo (68EC020, AGA Alice 2 MB). Open: 68030/68040 (MMU, other frame formats), FPU (AFF_68881 not set), a real
