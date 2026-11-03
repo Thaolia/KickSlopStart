@@ -3038,16 +3038,9 @@ it_tick:
         move.l  WD_IDCMPFLAGS(a3),d0
         and.l   #INTUITICKS,d0
         beq.s   .tk_done
-        lea     WDX_EMSG(a3),a1
-        moveq   #WDX_NEMSG-1,d0
-.tk_scan:
-        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        bne.s   .tk_nx
-        cmp.l   #INTUITICKS,IM_CLASS(a1)
-        beq.s   .tk_done             ; the previous one has not been returned yet
-.tk_nx:
-        lea     IM_SIZEOF(a1),a1
-        dbra    d0,.tk_scan
+        move.l  #INTUITICKS,d0
+        bsr     wn_pending
+        bne.s   .tk_done             ; the previous one has not been returned yet (only one in circulation, §2.6)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         bsr     it_scrxy
@@ -3062,6 +3055,39 @@ it_tick:
 .tk_done:
         movem.l (sp)+,d2-d6/a3-a4
 .tk_ret:
+        rts
+
+; wn_pending(a3 = window, d0 = IDCMP class) -> Z = 0 if one of its messages of that class is still unreplied, in
+; its pool or among the messages added to it. Clobbers a1.
+wn_pending:
+        move.l  d1,-(sp)
+        lea     WDX_EMSG(a3),a1
+        moveq   #WDX_NEMSG-1,d1
+.wp_fix:
+        bsr.s   .wp_one
+        bne.s   .wp_ret
+        lea     IM_SIZEOF(a1),a1
+        dbra    d1,.wp_fix
+        move.l  WDX_XMSG(a3),d1
+.wp_x:
+        beq.s   .wp_ret              ; Z = 1: none
+        move.l  d1,a1
+        bsr.s   .wp_one
+        bne.s   .wp_ret
+        move.l  IM_SPECIALLINK(a1),d1
+        bra.s   .wp_x
+.wp_ret:
+        movem.l (sp)+,d1             ; (flags kept)
+        rts
+.wp_one:                             ; Z = 0 if (a1) is an unreplied message of class d0
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .wo_no
+        cmp.l   IM_CLASS(a1),d0
+        bne.s   .wo_no
+        moveq   #1,d1                ; (d1 is reloaded by the caller's loop)
+        rts
+.wo_no:
+        cmp.l   d0,d0                ; Z = 1
         rts
 
 ; it_startinput(a2 = IntuitionBase, a6 = SysBase): creates the input task (pri 20, like that of input.device).
@@ -3119,6 +3145,8 @@ it_intask:
         move.l  EB_THISTASK(a6),MP_SIGTASK(a0)
         lea     MP_MSGLIST(a0),a1
         jsr     newlist              ; (a1 = list)
+        move.w  PTR_X,IB_LASTPX(a5)  ; movement deltas start from where the pointer is
+        move.w  PTR_Y,IB_LASTPY(a5)
         move.l  EB_THISTASK(a6),IB_INTASK(a5)
         move.l  d1,IB_INSIG(a5)
 .in_wait:
@@ -3906,8 +3934,10 @@ it_domove:
         rts
 
 ; it_reportmove(a5, d4/d5 = pointer): the active window that asks for movements receives MOUSEMOVE (relative
-; position). A MOUSEMOVE not yet replied is updated rather than duplicated: the port does not overflow.
+; position), one per movement whose effective delta is not zero (intuition-input-menus §1.3 point 5, §2.4).
 it_reportmove:
+        tst.l   IB_DMX(a5)           ; IB_DMX and IB_DMY: no movement
+        beq.s   .rm_ret
         move.l  IB_ACTIVEWINDOW(a5),d0
         beq.s   .rm_ret
         move.l  d0,a3
@@ -3925,28 +3955,7 @@ it_reportmove:
         sub.w   WD_LEFTEDGE(a3),d2
         move.w  d5,d3
         sub.w   WD_TOPEDGE(a3),d3
-        lea     WDX_EMSG(a3),a1
-        moveq   #WDX_NEMSG-1,d6
-.rm_find:
-        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        bne.s   .rm_nx
-        cmp.l   #MOUSEMOVE,IM_CLASS(a1)
-        bne.s   .rm_nx
-        btst    #DELTAMOVEB-16,WD_IDCMPFLAGS+1(a3)
-        bne.s   .rm_delta
-        move.w  d2,IM_MOUSEX(a1)
-        move.w  d3,IM_MOUSEY(a1)
-        rts
-.rm_delta:                           ; still unread: the deltas add up
-        move.w  IB_DMX(a5),d0
-        add.w   d0,IM_MOUSEX(a1)
-        move.w  IB_DMY(a5),d0
-        add.w   d0,IM_MOUSEY(a1)
-        rts
-.rm_nx:
-        lea     IM_SIZEOF(a1),a1
-        dbra    d6,.rm_find
-        move.l  #MOUSEMOVE,d0
+        move.l  #MOUSEMOVE,d0        ; one message per movement, none merged (intuition-input-menus §2.4)
         move.w  #IECODE_NOBUTTON,d1
         bra     wn_sendmsg
 .rm_ret:

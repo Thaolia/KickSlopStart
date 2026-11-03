@@ -1619,7 +1619,10 @@ differs.
     keys wait in the 32-slot input ring.
   - After each activation, it_newactive sends IECLASS_EVENT code 1 (IECODE_NEWACTIVE, ie_EventAddress = the window)
     down the input.device handler chain (IND_WRITEEVENT, quick). A window's message pool grows when its 4 messages
-    are all in use: 56-byte messages chained by IM_SPECIALLINK from WDX_XMSG, freed by CloseWindow.
+    are all in use: 56-byte messages chained by IM_SPECIALLINK from WDX_XMSG, freed by CloseWindow. wn_pending
+    looks for an unreplied message of a class in both: only one INTUITICKS is in circulation (§2.6); MOUSEMOVE is
+    no longer merged, one per processed movement whose delta (IB_DMX/IB_DMY, from IB_LASTPX/Y set when the input
+    task starts) is not zero (§1.3, §2.4).
   - DELTAMOVE and key history: the feeder puts {Prev1DownCode/Qual, Prev2DownCode/Qual} of the previous presses
     below $60 in ie_X/ie_Y (fd_history); it_keyin carries that long through the input ring (IB_EVSZ 10). RAWKEY's
     IAddress points at its copy in the message (IM_KEYHIST, messages are 56 bytes), VANILLAKEY's IAddress is its

@@ -1,7 +1,7 @@
 ; idcmp_test.s - IDCMP verification classes, DELTAMOVE and the RAWKEY dead-key history (implementation track, our own
 ; test program). Opens a window on the Workbench screen at (20,20), 300 x 120, with a one-item menu strip and a
 ; POINTREL DMRequest (one ENDGADGET button), and asks RAWKEY, MOUSEBUTTONS, MENUPICK, MENUVERIFY, SIZEVERIFY, NEWSIZE,
-; REQSET, REQCLEAR, CLOSEWINDOW and DELTAMOVE. Every message is written to the CLI output as
+; REQSET, REQCLEAR, CLOSEWINDOW, INTUITICKS, MOUSEMOVE (REPORTMOUSE) and DELTAMOVE. Every message is written to the CLI output as
 ;   "IM <class> <code> <mousex> <mousey> <extra>"
 ; in hex, extra = the 4 bytes IAddress points at for RAWKEY, IAddress itself otherwise. The first MENUHOT is replied
 ; MENUCANCEL, the later ones unchanged. Writes "IDCMP READY" once open, then reads nothing for 4 s (messages sent
@@ -154,8 +154,8 @@ sayn:
 nw:
         dc.w    20,20,300,120
         dc.b    0,1
-        dc.l    $00102000|$00000400|$00000008|$00000100|$00000001|$00000002|$00000080|$00001000|$00000200
-        dc.l    $0000100F            ; ACTIVATE | WINDOWCLOSE | WINDOWDEPTH | WINDOWDRAG | WINDOWSIZING
+        dc.l    $00102000|$00000400|$00000008|$00000100|$00000001|$00000002|$00000080|$00001000|$00000200|$00400010
+        dc.l    $0000120F            ; ACTIVATE | REPORTMOUSE | WINDOWCLOSE | WINDOWDEPTH | WINDOWDRAG | WINDOWSIZING
         dc.l    0,0,title,0,0
         dc.w    80,40,640,256
         dc.w    1                    ; WBENCHSCREEN
