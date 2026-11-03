@@ -976,6 +976,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Shell after an EndCLI no longer crashes (stale console read, CreateProc block freed twice), 48 bytes per Shell
   cycle (1.3: 56). Open: per-Shell cost ~52 KB vs 33-40 KB on 1.3 (CP_STKEXTRA 4 KB per BCPL stack; 1.3 refresh
   type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
+  **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
+  any KickSlopStart image without a hash database; documented as a stable format in the README.
   **pr_StackSize, issue #16 (2026-11-03)**: set at process creation (dos-v34-spec §4a, measured on 1.3); Directory
   Opus 4.12 starts from its boot disk (it stopped on "Stack must be at least 16384 bytes!"). Differences left: our
   Initial CLI reports 8192 (1.3: 1600, its commands run on a separate stack in both), and the stack block is a

@@ -6,6 +6,10 @@
 - Reset header in the first 8 bytes: longword `$0` = initial SSP (`0x11114EF9`, ROM-ID word
   `0x1111` + opcode `0x4EF9`), longword `$4` = initial PC = coldstart address (`$FC00D2` on an
   authentic ROM; `RESET` instruction `$4E70` at `$FC00D0`).
+- ID block (not in a Commodore ROM, README "Identifying the ROM"): `$18` = ASCII `KSS!`, `$1C` = 64-byte field
+  holding a NUL-terminated version string. `boot.s` reserves it zeroed; `mkrom.py --id` writes `KickSlopStart
+  $(KSS_VERSION)` before the checksum (Makefile: `git describe`, release workflow: the tag or short SHA). A stamp
+  file `build*/kss_version` re-runs mkrom when the version changes. The rest of `$18`-`$CF` stays zero.
 - Footer (container format, see amitools): checksum longword at `taille-0x18`, size field at
   `taille-0x14`, 8 words `0x0018..0x001F` at `taille-0x10`. Valid checksum = sum of the longwords
   (carry folded back) equal to `0xFFFFFFFF`. **Not verified by the OS before V37**, but required by the tools.

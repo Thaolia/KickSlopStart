@@ -22,6 +22,20 @@ Chaque image est construite depuis les sources du tag par un workflow GitHub (`.
 épinglée) : elle est identique à l'octet à un `make kick-prod` local du même commit, et son SHA-256 figure dans les notes
 de la release. Pour publier une nouvelle release, pousser un tag : `git tag v0.1.0 && git push origin v0.1.0`.
 
+## Identifier la ROM
+
+Les émulateurs et outils peuvent reconnaître n'importe quelle image KickSlopStart sans liste de hashes, sauf les
+anciennes releases (v0.2.10 et avant n'ont pas de bloc d'identification). Ce format est stable :
+
+| Offset | Octets | Contenu |
+|---|---|---|
+| `$0C` | 4 | `$0022 $0005` : version 34.5, comme sur le Kickstart 1.3 (des programmes la vérifient ; ce n'est pas notre numéro de release) |
+| `$18` | 4 | ASCII `KSS!` : l'empreinte |
+| `$1C` | 64 | chaîne ASCII terminée par un zéro, par exemple `KickSlopStart v0.2.11` : le tag de la release, ou le hash court du commit pour un build hors tag (`git describe` pour un build local) |
+
+Le même bloc se trouve au début de l'image sur la disquette de soft-kick. Le reste de l'en-tête et le checksum sont
+ceux d'un Kickstart 256 Ko ordinaire.
+
 ## Essayer dans le navigateur
 
 **[Lancer KickSlopStart dans vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)** : l'émulateur Amiga du navigateur démarre avec la dernière ROM publiée

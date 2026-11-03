@@ -11,6 +11,9 @@ ROMTOOL ?= romtool
 # VASMDEF: defines passed to vasm (empty = dev ROM). `make kick-prod` sets -DPROD=1 -> production variant
 # (takes the dev harness out of the boot path; see src/exec/exec.i). No source edit required.
 VASMDEF ?=
+# KSS_VERSION: version written into the ROM ID block at $18 (README "Identifying the ROM"); the release workflow
+# passes the tag, local builds take `git describe`.
+KSS_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
 # MKROMBASE: link address checked by mkrom (`make kick-ram` links at $C00000).
 MKROMBASE ?= 0xFC0000
 
@@ -52,7 +55,7 @@ KICK_ROM  := $(BUILD)/kick13.rom
 HELLO_SRC := src/rom/start.s
 HELLO_ROM := $(BUILD)/kick13-hello.rom
 
-.PHONY: all kick kick-prod kick-ram adf hello verify clean
+.PHONY: all kick kick-prod kick-ram adf hello verify clean FORCE
 
 all: kick
 kick: $(KICK_ROM)
@@ -128,8 +131,12 @@ $(BUILD)/shell.o: $(DOS_DIR)/dospkt.i
 # Link at $FC0000 (script) -> raw binary; mkrom pads + footer/checksum.
 $(BUILD)/kick.bin: $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ) $(LDSCRIPT)
 	$(VLINK) -b rawbin1 -T $(LDSCRIPT) -o $@ $(EXEC_OBJ) $(GFX_OBJ) $(INT_OBJ) $(DOS_OBJ)
-$(KICK_ROM): $(BUILD)/kick.bin $(MKROM)
-	$(PYTHON) $(MKROM) --in $< --out $@ --size 256 --base $(MKROMBASE)
+$(KICK_ROM): $(BUILD)/kick.bin $(MKROM) $(BUILD)/kss_version
+	$(PYTHON) $(MKROM) --in $< --out $@ --size 256 --base $(MKROMBASE) --id "KickSlopStart $(KSS_VERSION)"
+# Stamp rewritten only when KSS_VERSION changes, so a new commit or tag re-runs mkrom without relinking.
+$(BUILD)/kss_version: FORCE | $(BUILD)
+	@echo "$(KSS_VERSION)" | cmp -s - $@ || echo "$(KSS_VERSION)" > $@
+FORCE:
 
 $(BUILD)/hello.bin: $(HELLO_SRC) | $(BUILD)
 	$(VASM) -Fbin -m68000 -o $@ $<

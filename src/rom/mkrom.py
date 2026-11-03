@@ -21,6 +21,10 @@ CSUM_FROM_END = 0x18    # offset of the checksum from the end
 SIZE_FROM_END = 0x14    # offset of the size field from the end
 FOOTER_FROM_END = 0x10  # offset of the 8 footer words from the end
 ROMBASE = 0xFC0000      # base of a 256K ROM image (--base for the soft-kick image)
+ID_MAGIC_OFF = 0x18     # KickSlopStart ID block (src/exec/boot.s): "KSS!" then the version string field
+ID_MAGIC = b"KSS!"
+ID_STR_OFF = 0x1C
+ID_LEN = 64             # field size, NUL included; must match KSS_ID_LEN in boot.s
 
 
 def kick_sum(data: bytes) -> int:
@@ -33,7 +37,19 @@ def kick_sum(data: bytes) -> int:
     return s
 
 
-def build(src: bytes, size: int, base: int = ROMBASE) -> bytes:
+def write_id(rom: bytearray, ident: str) -> None:
+    """Write the version string into the zeroed field of the ID block (refuses an image without the block)."""
+    if rom[ID_MAGIC_OFF:ID_MAGIC_OFF + 4] != ID_MAGIC:
+        sys.exit(f"erreur : bloc ID absent (attendu {ID_MAGIC!r} en 0x{ID_MAGIC_OFF:X})")
+    raw = ident.encode("ascii")
+    if not raw or len(raw) >= ID_LEN or not all(0x20 <= c < 0x7F for c in raw):
+        sys.exit(f"erreur : chaine ID invalide (ASCII imprimable, 1..{ID_LEN - 1} caracteres) : {ident!r}")
+    if any(rom[ID_STR_OFF:ID_STR_OFF + ID_LEN]):
+        sys.exit("erreur : champ ID non vide dans le binaire")
+    rom[ID_STR_OFF:ID_STR_OFF + len(raw)] = raw
+
+
+def build(src: bytes, size: int, base: int = ROMBASE, ident: str = "") -> bytes:
     if len(src) > size:
         sys.exit(f"erreur : binaire ({len(src)} o) plus grand que la ROM ({size} o)")
 
@@ -48,6 +64,9 @@ def build(src: bytes, size: int, base: int = ROMBASE) -> bytes:
     if not (base <= pc <= base + size - 1):
         sys.exit(f"erreur : PC de reset 0x{pc:08X} hors de la ROM "
                  f"[0x{base:06X}..0x{base + size - 1:06X}]")
+
+    if ident:
+        write_id(rom, ident)
 
     # Kickstart footer: 8 words 0x0018..0x001F starting at size-0x10
     # (see amitools KickRomAccess.write_footer; check_footer validates 0x19..0x1F).
@@ -84,11 +103,13 @@ def main() -> None:
                     help="taille en Kio (256 uniquement pour l'instant)")
     ap.add_argument("--base", type=lambda v: int(v, 0), default=ROMBASE,
                     help="adresse de lien de l'image (0xC00000 pour make kick-ram)")
+    ap.add_argument("--id", dest="ident", default="",
+                    help="chaine de version ecrite dans le bloc ID (ex. \"KickSlopStart v0.2.11\")")
     args = ap.parse_args()
 
     with open(args.src, "rb") as f:
         src = f.read()
-    rom = build(src, args.size * 1024, args.base)
+    rom = build(src, args.size * 1024, args.base, args.ident)
     with open(args.dst, "wb") as f:
         f.write(rom)
 

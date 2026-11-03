@@ -157,6 +157,7 @@ TT_MICRO_REQ EQU 7000         ; M7l: 7000 REAL us (~= old rate ~140/s)
 ; The header must land at $FC0000: boot.o is the FIRST object passed to vlink
 ; (cf. Makefile), so its CODE carries the reset vector. hdr_start = offset 0 of the
 ; section; the padding uses an intra-section difference (constant in relocatable output).
+KSS_ID_LEN      EQU 64       ; must match ID_LEN in src/rom/mkrom.py
 hdr_start:
         dc.w    $1111
         dc.w    $4EF9
@@ -165,6 +166,10 @@ hdr_start:
         dc.l    $00220005        ; +0C ROM version 34.5
         dc.l    $00220002        ; +10
         dc.l    $FFFFFFFF        ; +14
+        ; +18 KickSlopStart ID block, a stable format for emulators (README "Identifying the ROM"): the magic, then a
+        ; NUL-terminated ASCII version string that mkrom.py --id writes into the zeroed field at build time.
+        dc.b    "KSS!"           ; +18
+        dcb.b   KSS_ID_LEN,0     ; +1C version string field
         dcb.b   $D0-(*-hdr_start),0
         dc.w    $4E70            ; $FC00D0 RESET (magic_reset)
 

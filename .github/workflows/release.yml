@@ -41,8 +41,10 @@ jobs:
         run: |
           vasmm68k_mot 2>&1 | head -1
           vlink 2>&1 | head -1
-          make kick-prod
-          make adf
+          ver="$GITHUB_REF_NAME"
+          [ "$GITHUB_REF_TYPE" = tag ] || ver="${GITHUB_SHA::7}"
+          make kick-prod KSS_VERSION="$ver"
+          make adf KSS_VERSION="$ver"
 
       - name: Check the image (romtool is_kick)
         run: |
