@@ -979,7 +979,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   any KickSlopStart image without a hash database; documented as a stable format in the README.
   **Issue #19 (2026-11-03)**: screens are stacked on the display and dragged by their title bar (graphics: ViewPorts
   placed by DyOffset; intuition: 1.3 layout, clicks routed to the screen under the pointer, pointer bounds). Screen
-  depth gadgets work (real Gadget structures, act on release). Interlaced screens are displayed
+  depth gadgets work (real Gadget structures with their Images, act on release). Interlaced screens are displayed
   (short-frame copper list, View LACE when a LACE screen is visible), dragged and clicked
   (`tests/lace_test.s`). Open: the pointer moves in non-interlaced lines (1.3 MouseY is in interlaced lines);
   MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less

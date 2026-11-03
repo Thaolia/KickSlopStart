@@ -313,7 +313,17 @@ sc_free:
         move.l  GG_NEXTGADGET(a1),d3
         tst.w   GG_GADGETTYPE(a1)
         bpl.s   .sf_gnx              ; not SYSGADGET
+        move.l  GG_GADGETRENDER(a1),-(sp)
         moveq   #GG_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  (sp)+,d0
+        beq.s   .sf_gnx
+        move.l  d0,a1                ; sc_mkimage's block: Image + 2 planes
+        move.w  IG_WIDTH(a1),d0
+        add.w   #15,d0
+        lsr.w   #4,d0
+        mulu    #2*2*SG_IMGH,d0
+        add.l   #IG_SIZEOF,d0
         jsr     LVO_FREEMEM(a6)
 .sf_gnx:
         tst.l   d3
@@ -323,9 +333,10 @@ sc_free:
         move.l  #SCX_SIZE,d0
         jmp     LVO_FREEMEM(a6)
 
-; sc_mkgads(a2 = NewScreen, a3 = Screen): the three screen system gadgets (front, back, drag; intuition-screens §4)
-; at the head of Screen.FirstGadget, NewScreen.Gadgets after them. SCREENQUIET: GADGHNONE. Their GadgetRender stays
-; 0: the bar draws the depth pictograms itself. A gadget without memory is left out. Clobbers d0/d1/a0/a1/a6.
+; sc_mkgads(a2 = NewScreen, a3 = Screen, a5 = IntuitionBase): the three screen system gadgets (front, back, drag;
+; intuition-screens §4) at the head of Screen.FirstGadget, NewScreen.Gadgets after them. A depth gadget's
+; GadgetRender is a 2-plane chip Image of the pictogram the bar draws (sc_mkimage). SCREENQUIET: GADGHNONE, no
+; Image. A gadget without memory is left out; an Image without memory stays 0. Clobbers d0/d1/a0/a1/a6.
 sc_mkgads:
         movem.l d2-d3/a4,-(sp)
         move.l  ($4).w,a6
@@ -351,8 +362,13 @@ sc_mkgads:
         move.w  12(a4),GG_GADGETTYPE(a0)
         move.w  SC_FLAGS(a3),d1
         and.w   #SCREENQUIET,d1
-        beq.s   .mg_link
+        beq.s   .mg_img
         or.w    #GADGHIGHBITS,GG_FLAGS(a0) ; GADGHNONE
+        bra.s   .mg_link
+.mg_img:
+        tst.l   14(a4)
+        beq.s   .mg_link
+        bsr     sc_mkimage
 .mg_link:
         move.l  a0,d3
 .mg_nx:
@@ -360,16 +376,96 @@ sc_mkgads:
         move.l  d3,SC_FIRSTGADGET(a3)
         movem.l (sp)+,d2-d3/a4
         rts
-; LeftEdge, TopEdge, Width, Height, Flags, Activation, GadgetType (spec intuition-screens §4)
-SG_SIZE         EQU 14
+; LeftEdge, TopEdge, Width, Height, Flags, Activation, GadgetType (spec intuition-screens §4), then our pictogram
+; and its width: the bar draws it one pixel left of the gadget's box (Image LeftEdge -1).
+SG_SIZE         EQU 20
 sc_gadlo:
         dc.w    -16,0,17,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SUPFRONT
+        dc.l    pic_front_l
+        dc.w    17
         dc.w    -33,0,17,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SDOWNBACK
+        dc.l    pic_back_l
+        dc.w    17
         dc.w    0,0,0,10,GRELWIDTH|GADGHIGHBITS,0,SDRAGGING
+        dc.l    0
+        dc.w    0
 sc_gadhi:
         dc.w    -28,0,26,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SUPFRONT
+        dc.l    pic_front_h
+        dc.w    29
         dc.w    -52,0,24,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SDOWNBACK
+        dc.l    pic_back_h
+        dc.w    24
         dc.w    0,0,0,10,GRELWIDTH|GADGHIGHBITS,0,SDRAGGING
+        dc.l    0
+        dc.w    0
+
+SG_IMGH         EQU 10               ; Image height, 2 planes
+; sc_mkimage(a0 = gadget, a4 = its sc_gadlo/hi entry, a5 = IntuitionBase): one chip block = struct Image + its
+; planes; the entry's pictogram is drawn into them through a temporary BitMap and RastPort (allocated: OpenScreen
+; may run on a small handler stack), then the Image becomes the GadgetRender. Preserves a0. Clobbers d0/d1/a1/a6.
+sc_mkimage:
+        movem.l d2-d5/a2-a4,-(sp)
+        move.l  a0,a2                ; a2 = gadget
+        move.l  ($4).w,a6
+        move.l  #bm_SIZEOF+rp_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,d5                ; d5 = BitMap, RastPort after it
+        beq     .mi_ret
+        move.w  18(a4),d2
+        add.w   #15,d2
+        lsr.w   #4,d2
+        add.w   d2,d2                ; d2 = bytes per row
+        move.w  d2,d3
+        mulu    #SG_IMGH,d3          ; d3 = plane size
+        move.l  d3,d0
+        add.l   d0,d0
+        add.l   #IG_SIZEOF,d0
+        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .mi_free
+        move.l  d0,a3                ; a3 = Image
+        move.w  #-1,IG_LEFTEDGE(a3)
+        move.w  18(a4),IG_WIDTH(a3)
+        move.w  #SG_IMGH,IG_HEIGHT(a3)
+        move.w  #2,IG_DEPTH(a3)
+        lea     IG_SIZEOF(a3),a0
+        move.l  a0,IG_IMAGEDATA(a3)
+        move.b  #3,IG_PLANEPICK(a3)
+        move.l  14(a4),d4            ; d4 = pictogram
+        move.l  IB_GFXBASE(a5),a6
+        move.l  d5,a0
+        moveq   #2,d0
+        moveq   #0,d1
+        move.w  18(a4),d1
+        moveq   #SG_IMGH,d2
+        jsr     LVO_INITBITMAP(a6)
+        move.l  d5,a0
+        lea     IG_SIZEOF(a3),a1
+        move.l  a1,bm_Planes(a0)
+        add.l   d3,a1
+        move.l  a1,bm_Planes+4(a0)
+        lea     bm_SIZEOF(a0),a1
+        jsr     LVO_INITRASTPORT(a6)
+        move.l  d5,a0
+        lea     bm_SIZEOF(a0),a4
+        move.l  a0,rp_BitMap(a4)
+        move.l  d4,a0
+        moveq   #0,d0
+        moveq   #0,d1
+        bsr     wn_picto
+        move.l  a3,GG_GADGETRENDER(a2)
+.mi_free:
+        move.l  ($4).w,a6
+        move.l  d5,a1
+        move.l  #bm_SIZEOF+rp_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.mi_ret:
+        move.l  a2,a0
+        movem.l (sp)+,d2-d5/a2-a4
+        rts
 
 ; sc_gadbox(a0 = gadget, a4 = screen) -> d0/d1 - d2/d3 = its box in the screen (GRELRIGHT / GRELWIDTH /
 ; GRELBOTTOM / GRELHEIGHT relative to the screen's size), clipped to the screen width.

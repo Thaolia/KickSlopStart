@@ -1560,7 +1560,9 @@ differs.
     SDRAGGING Gadget structures at the head of Screen.FirstGadget, then NewScreen.Gadgets; sc_free frees the
     SYSGADGET ones. A left click on the bar layer hit-tests that list (sc_gadat, depth gadgets first): SDRAGGING
     starts the screen drag, a depth gadget is complemented (sc_gadinv) and calls ScreenToFront / ScreenToBack when
-    released over it (it_sgadbtn). Deviation: GadgetRender stays 0, the bar draws the pictograms itself.
+    released over it (it_sgadbtn). The depth gadgets' GadgetRender is a 2-plane chip Image (sc_mkimage; LeftEdge
+    -1, as the bar draws it) holding the same pictogram, drawn through a temporary BitMap and RastPort; sc_free
+    frees it with its gadget. SCREENQUIET screens get none. The bar still draws its pictograms directly.
   - Mouse position fields (issue #18): the input task (`it_setmouse`, before each button event and pointer move)
     writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
     (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from
