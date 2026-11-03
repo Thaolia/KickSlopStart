@@ -1538,6 +1538,20 @@ differs.
     ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
     header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
     not interleaved by line (ViewPorts do not overlap).
+  - Hardware sprites (custom-chips §4.1): GetSprite/FreeSprite use the public GfxBase SpriteReserved byte (pick -1
+    = first free from 0; intuition takes 0 for the pointer); GfxBase->SimpleSprites points to gb_SprSS. MoveSprite
+    halves x for a HIRES ViewPort and y for a LACE one, adds the ViewPort's then the active View's offsets, clamps
+    VSTART to 21, writes POS/CTL into the sprite data (CTL bits 3-7 kept), moves the partner of an attached pair,
+    and points the SPRxPT MOVEs of the loaded lists (both frames) at the data or at the empty sprite (hidden
+    ViewPort, y past DHeight) through gfx_sprptr. ChangeSprite = new data + MoveSprite.
+  - VSprites (gels.s gel_vsprites, called by DrawGList with its ViewPort): each VSprite, in list order, gets a
+    hardware sprite outside GelsInfo.sprRsrvd and SpriteReserved that is free from the line before its top,
+    preferably one whose pair partner is usable and idle or shows the same SprColors; none: VSOVERFLOW. vp->SprIns
+    (layout in graphics.i) holds, in the fragment format, a segment on the line before the top at copper position
+    $40 (SPRxPOS, SPRxCTL, SPRxPT = ImageData, and the pair's colours 17+4p.. when they change) and one on the VSTOP
+    line zeroing POS/CTL so the words after the image never re-arm the sprite. MrgCop interleaves that stream with
+    the fragment by line (d7 bit 31 = inside a VSprite segment); FreeVPortCopLists frees it. The VSprites show after
+    MrgCop + LoadView, as on 1.3. Test: tests/vsprite_test.s.
   - HAM and dual playfield (graphics-display §4.2-§4.4): MakeVPort (local frame MV_*) puts HIRES, HAM and DUALPF
     of vp.Modes into BPLCON0 and PFBA into BPLCON2; the depth is capped at 5 unless HAM, DUALPF or EXTRA_HALFBRITE
     (gfx_vpbm2). DUALPF with RasInfo->Next: playfield 1 feeds BPL1/3/5, playfield 2 BPL2/4/6; gfx_scrollri computes

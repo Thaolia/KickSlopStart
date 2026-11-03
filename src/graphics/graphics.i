@@ -83,6 +83,7 @@ v_SIZEOF     EQU 18
 vp_Next      EQU 0            ; ViewPort
 vp_ColorMap  EQU 4
 vp_DspIns    EQU 8
+vp_SprIns    EQU 12           ; VSprite copper block (DrawGList; layout below)
 vp_UCopIns   EQU 20           ; struct UCopList *: user copper instructions (CMove/CWait)
 vp_DWidth    EQU 24
 vp_DHeight   EQU 26
@@ -217,7 +218,9 @@ gb_DefaultFont EQU 154        ; APTR: default RastPort font (topaz 8)
 gb_Modes     EQU 158          ; UWORD: modes of the displayed view (View->Modes)
 gb_VBlank    EQU 160          ; BYTE: frame rate
 gb_system_bplcon0 EQU 164     ; WORD: BPLCON0 bits imposed by the system
+gb_SpriteReserved EQU 166     ; UBYTE: hardware sprites taken by GetSprite (bit n = sprite n)
 gb_DisplayFlags EQU 206       ; UWORD : NTSC 1 / GENLOC 2 / PAL 4
+gb_SimpleSprites EQU 208      ; APTR: table of the 8 SimpleSprites last moved
 gb_MaxDisplayRow EQU 212
 gb_MaxDisplayColumn EQU 214
 gb_NormalDisplayRows EQU 216
@@ -231,10 +234,10 @@ GB_PUBLIC    EQU 242          ; end of the V34 public part (including reserved[2
 gb_SprNull   EQU GB_PUBLIC    ; APTR: empty sprite (chip, POS/CTL = 0) for channels without an image
 gb_SprCop    EQU GB_PUBLIC+4  ; APTR: value word of SPR0PTH in the loaded copper list (0 = none)
 gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR: data (POS/CTL + image) of each channel, 0 = empty sprite
-gb_SprUsed   EQU GB_PUBLIC+40 ; WORD: channels reserved by GetSprite (bit n = channel n)
 gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 bytes): blitter ownership (OwnBlitter / DisownBlitter)
 GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
-GFXBASE_SIZE EQU GB_PUBLIC+42+46
+gb_SprSS     EQU GB_PUBLIC+42+46 ; 8 x APTR: the table GfxBase->SimpleSprites points to
+GFXBASE_SIZE EQU GB_PUBLIC+42+46+32
 DISPF_NTSC   EQU 1
 DISPF_PAL    EQU 4
 
@@ -261,6 +264,10 @@ DMAF_SPRITE  EQU $0020
 GFX_PSEUDO     EQU $FFFF          ; word 0 of a pseudo-entry
 GFX_PEND       EQU $8000          ; word 1 of the end marker
 GFX_NOP        EQU $01FE          ; copper no-op register (MOVE to $1FE)
+; VSprite copper block (vp_SprIns, built by DrawGList, PUBLIC): +0 its allocated size (long), +4 the bytes it
+; takes in a hardware list (long), +8 a stream in the fragment format (pseudo-WAITs relative to the top of the
+; ViewPort and MOVEs), ended by the GFX_PEND marker. MrgCop interleaves it with the fragment by line.
+GFX_SPRI_HDR   EQU 8
 GFX_UCOPMAX    EQU 64             ; user instructions (vp_UCopIns) kept in a fragment
 GFX_FRAG_ENTRIES EQU 1+3+53+4+GFX_UCOPMAX*3+4+1
 GFX_FRAG_WORDS EQU GFX_FRAG_ENTRIES*2

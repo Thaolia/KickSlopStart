@@ -3,9 +3,9 @@
 ; according to PlanePick/PlaneOnOff), masks (InitMasks), collisions (DoCollision, SetCollision) and animation
 ; (AddAnimOb, Animate, GetGBuffers, FreeGBuffers, InitGMasks).
 ; Drawing by pixel rows (gfx_putrow / gfx_ReadPixel): goes through the layers and their ClipRects.
-; Scope: hardware VSprites (VSPRITE flag) stay in the list and take part in collisions but are not
-; displayed; the Before/After ordering of Bobs and double buffering (DBuffer) are not used; overlapped Bobs
-; are not redrawn by RemIBob.
+; Hardware VSprites (VSPRITE flag) are shown through the ViewPort's copper stream (gel_vsprites). Scope: the
+; Before/After ordering of Bobs and double buffering (DBuffer) are not used; overlapped Bobs are not redrawn by
+; RemIBob.
 ; IMPLEMENTATION track ("clean"): public graphics.library AutoDocs, graphics/gels.h and RKM. NO ROM reading.
 
                 include "exec.i"
@@ -52,6 +52,8 @@ VSB_VSPRITE     EQU 0
 VSB_SAVEBACK    EQU 1
 VSB_OVERLAY     EQU 2
 VSB_BACKSAVED   EQU 8
+VSB_VSOVERFLOW  EQU 11
+VS_SPRCOLORS    EQU 48
 ; struct Bob
 BOB_FLAGS       EQU 0
 BOB_SAVE        EQU 2
@@ -62,6 +64,7 @@ BB_BDRAWN       EQU 9
 BB_BOBSAWAY     EQU 10
 BB_BOBNIX       EQU 11
 ; struct GelsInfo
+GI_RSRVD        EQU 0                ; BYTE: hardware sprites the VSprites must not use
 GI_HEAD         EQU 2
 GI_TAIL         EQU 6
 GI_COLL         EQU 18
@@ -256,9 +259,12 @@ gfx_SortGList:
 
 ; ---------------------------------------------------------------------------------------------------------------
 ; DrawGList(rp a1, vp a0): 1) saved backgrounds restored, from the last Bob drawn to the first; 2) in list
-; order: BOBSAWAY Bob removed (BOBNIX), else background saved (SAVEBACK) then image drawn, old position = position.
+; order: BOBSAWAY Bob removed (BOBNIX), else background saved (SAVEBACK) then image drawn, old position = position;
+; 3) the VSprites get hardware sprites through the ViewPort's copper stream (gel_vsprites), shown after MrgCop and
+; LoadView as on 1.3.
 gfx_DrawGList:
         movem.l d2-d7/a2-a5,-(sp)
+        move.l  a0,-(sp)             ; vp
         move.l  rp_GelsInfo(a1),d0
         beq     .dg_ret
         move.l  d0,a5
@@ -279,7 +285,7 @@ gfx_DrawGList:
         move.l  VS_NEXT(a2),a2
 .dg_lp:
         move.l  VS_NEXT(a2),d7       ; d7 = next (the current Bob may leave the list)
-        beq.s   .dg_ret
+        beq.s   .dg_vs
         btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
         bne.s   .dg_nx
         move.l  VS_BOB(a2),d0
@@ -303,8 +309,303 @@ gfx_DrawGList:
 .dg_nx:
         move.l  d7,a2
         bra.s   .dg_lp
+.dg_vs:
+        move.l  (sp),a0
+        bsr     gel_vsprites
 .dg_ret:
+        addq.l  #4,sp
         movem.l (sp)+,d2-d7/a2-a5
+        rts
+
+; gel_vsprites(vp a0, GelsInfo a5, a6 = GfxBase): rebuilds vp->SprIns (layout in graphics.i). The VSprites, in list
+; order (sorted by Y), each take a hardware sprite neither in GelsInfo.sprRsrvd nor reserved by GetSprite that is
+; free from the line before their top, preferably one whose pair partner is usable and idle there or shows the same
+; SprColors (a pair shares its colours); none: VSOVERFLOW. One segment on the line before the top (late in
+; the line, after the sprite DMA slots) loads SPRxPOS/SPRxCTL (VSTART, VSTOP, HSTART as MoveSprite computes them)
+; and SPRxPT = ImageData (2 words per line), plus the pair's three colours from SprColors when they differ from the
+; last ones loaded; one on the VSTOP line zeroes POS/CTL, so that the words after the image never re-arm the sprite.
+; A VSprite whose Y is outside the ViewPort is not shown. No vp or no memory: nothing. Preserves d2-d7/a2-a6.
+VL_FREE  EQU -16                     ; 8 words: line from which a hardware sprite is free (vp lines)
+VL_CLEAN EQU -32                     ; 8 words: line of its pending clean-up, $7FFF = none
+VL_COL   EQU -48                     ; 4 longs: SprColors last loaded for each pair
+VL_AVAIL EQU -50                     ; word: hardware sprites the VSprites may use (low byte)
+VL_LOC   EQU 50
+VL_HPOS  EQU $40                     ; copper position of the segments' WAITs
+gel_vsprites:
+        movem.l d2-d7/a2-a4,-(sp)
+        cmpa.w  #0,a0
+        beq     .vs_ret
+        move.l  a0,a3                ; a3 = vp
+        link    a4,#-VL_LOC
+        moveq   #0,d0                ; size: 60 bytes per VSprite at most
+        move.l  GI_HEAD(a5),a2
+        move.l  VS_NEXT(a2),a2
+.vs_cnt:
+        tst.l   VS_NEXT(a2)
+        beq.s   .vs_counted
+        btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
+        beq.s   .vs_cn
+        add.l   #60,d0
+.vs_cn:
+        move.l  VS_NEXT(a2),a2
+        bra.s   .vs_cnt
+.vs_counted:
+        add.l   #GFX_SPRI_HDR+4,d0
+        move.l  d0,d7                ; d7 = size needed
+        move.l  a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  vp_SprIns(a3),d0
+        beq.s   .vs_alloc
+        move.l  d0,a1
+        cmp.l   (a1),d7
+        bls.s   .vs_have
+        clr.l   vp_SprIns(a3)
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.vs_alloc:
+        move.l  d7,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq     .vs_nomem
+        move.l  d0,a1
+        move.l  d7,(a1)
+        move.l  a1,vp_SprIns(a3)
+        move.l  a1,d0
+.vs_have:
+        move.l  (sp)+,a6
+        move.l  d0,a1
+        addq.l  #GFX_SPRI_HDR,a1     ; a1 = write pointer
+        moveq   #8-1,d0
+        lea     VL_FREE(a4),a0
+.vs_init:
+        move.w  #$8000,(a0)+         ; VL_FREE: free from the start
+        dbra    d0,.vs_init
+        moveq   #8-1,d0
+        lea     VL_CLEAN(a4),a0
+.vs_ini2:
+        move.w  #$7FFF,(a0)+
+        dbra    d0,.vs_ini2
+        clr.l   VL_COL(a4)
+        clr.l   VL_COL+4(a4)
+        clr.l   VL_COL+8(a4)
+        clr.l   VL_COL+12(a4)
+        move.b  GI_RSRVD(a5),d0
+        or.b    gb_SpriteReserved(a6),d0
+        not.b   d0
+        move.w  d0,VL_AVAIL(a4)
+        move.l  GI_HEAD(a5),a2
+        move.l  VS_NEXT(a2),a2
+.vs_lp:
+        tst.l   VS_NEXT(a2)
+        beq     .vs_end
+        btst    #VSB_VSPRITE,VS_FLAGS+1(a2)
+        beq     .vs_nx
+        bclr    #VSB_VSOVERFLOW-8,VS_FLAGS(a2)
+        move.w  VS_Y(a2),d4          ; d4 = Y
+        bmi     .vs_nx
+        cmp.w   vp_DHeight(a3),d4
+        bge     .vs_nx
+        move.w  VS_HEIGHT(a2),d6
+        move.w  d4,d5
+        subq.w  #1,d5                ; d5 = line of the set-up segment (vp lines)
+        btst    #2,vp_Modes+1(a3)
+        beq.s   .vs_nl
+        subq.w  #1,d5                ; LACE ViewPort: interlaced lines
+        add.w   d6,d6
+.vs_nl:
+        add.w   d4,d6                ; d6 = VSTOP line, where the clean-up goes
+        moveq   #0,d3                ; d3 = hardware sprite; first choice: its pair partner is usable and idle
+.vs_p1:                              ; on this line or shows the same colours (the pair shares them)
+        btst    d3,VL_AVAIL+1(a4)
+        beq.s   .vs_p1n
+        move.w  d3,d0
+        add.w   d0,d0
+        cmp.w   VL_FREE(a4,d0.w),d5
+        blt.s   .vs_p1n
+        move.w  d3,d1
+        eor.w   #1,d1
+        btst    d1,VL_AVAIL+1(a4)
+        beq.s   .vs_p1n              ; partner reserved (the pointer's pair): its colours are not ours
+        add.w   d1,d1
+        cmp.w   VL_FREE(a4,d1.w),d5
+        bge     .vs_got
+        move.w  d3,d1
+        lsr.w   #1,d1
+        lsl.w   #2,d1
+        move.l  VL_COL(a4,d1.w),a0
+        cmpa.l  VS_SPRCOLORS(a2),a0
+        beq     .vs_got
+.vs_p1n:
+        addq.w  #1,d3
+        cmp.w   #8,d3
+        blo.s   .vs_p1
+        moveq   #0,d3                ; otherwise any free one
+.vs_ch:
+        btst    d3,VL_AVAIL+1(a4)
+        beq.s   .vs_chn
+        move.w  d3,d0
+        add.w   d0,d0
+        cmp.w   VL_FREE(a4,d0.w),d5
+        bge.s   .vs_got
+.vs_chn:
+        addq.w  #1,d3
+        cmp.w   #8,d3
+        blo.s   .vs_ch
+        bset    #VSB_VSOVERFLOW-8,VS_FLAGS(a2)
+        bra     .vs_nx
+.vs_got:
+        move.w  d5,d0
+        bsr     .vs_flush            ; clean-ups up to this line first
+        move.w  VS_X(a2),d0          ; d0 = HSTART, d1 = VSTART (as MoveSprite)
+        tst.w   vp_Modes(a3)
+        bpl.s   .vs_lx
+        asr.w   #1,d0
+.vs_lx:
+        move.w  d4,d1
+        add.w   vp_DyOffset(a3),d1
+        btst    #2,vp_Modes+1(a3)
+        beq.s   .vs_ly
+        asr.w   #1,d1
+.vs_ly:
+        move.l  gb_ActiView(a6),d7
+        beq.s   .vs_pos
+        move.l  d7,a0
+        add.w   v_DxOffset(a0),d0
+        add.w   v_DyOffset(a0),d1
+.vs_pos:
+        move.w  d1,d7
+        add.w   VS_HEIGHT(a2),d7     ; d7 = VSTOP
+        move.w  d1,d2                ; POS = VSTART[7:0] << 8 | HSTART[8:1]
+        lsl.w   #8,d2
+        ror.w   #1,d0                ; (HSTART0 -> bit 15)
+        move.b  d0,d2
+        lsr.w   #8,d1                ; CTL = VSTOP[7:0] << 8 | VSTART8 << 2 | VSTOP8 << 1 | HSTART0
+        and.w   #1,d1
+        lsl.w   #2,d1
+        tst.w   d0
+        bpl.s   .vs_h0
+        bset    #0,d1
+.vs_h0:
+        btst    #8,d7
+        beq.s   .vs_e8
+        bset    #1,d1
+.vs_e8:
+        lsl.w   #8,d7
+        or.b    d1,d7
+        move.w  d5,d0
+        bsr     .vs_wait
+        move.w  d3,d0
+        lsl.w   #3,d0
+        add.w   #$140,d0             ; SPRxPOS
+        move.w  d0,(a1)+
+        move.w  d2,(a1)+
+        addq.w  #2,d0                ; SPRxCTL
+        move.w  d0,(a1)+
+        move.w  d7,(a1)+
+        move.w  d3,d0
+        lsl.w   #2,d0
+        add.w   #SPR0PTH-CUSTOM,d0
+        move.l  VS_IMAGE(a2),d1
+        swap    d1
+        move.w  d0,(a1)+
+        move.w  d1,(a1)+
+        addq.w  #2,d0
+        swap    d1
+        move.w  d0,(a1)+
+        move.w  d1,(a1)+
+        move.l  VS_SPRCOLORS(a2),d1
+        beq.s   .vs_nocol
+        move.w  d3,d0
+        lsr.w   #1,d0
+        lsl.w   #2,d0                ; pair * 4
+        cmp.l   VL_COL(a4,d0.w),d1
+        beq.s   .vs_nocol
+        move.l  d1,VL_COL(a4,d0.w)
+        move.l  d1,a0
+        add.w   d0,d0
+        add.w   #COLOR00-CUSTOM+17*2,d0 ; COLOR17 + 4 * pair
+        moveq   #3-1,d1
+.vs_col:
+        move.w  d0,(a1)+
+        move.w  (a0)+,(a1)+
+        addq.w  #2,d0
+        dbra    d1,.vs_col
+.vs_nocol:
+        move.w  d3,d0
+        add.w   d0,d0
+        move.w  d6,VL_CLEAN(a4,d0.w)
+        move.w  d6,VL_FREE(a4,d0.w)
+.vs_nx:
+        move.l  VS_NEXT(a2),a2
+        bra     .vs_lp
+.vs_end:
+        move.w  #$7FFF,d0
+        bsr.s   .vs_flush
+        move.w  #GFX_PSEUDO,(a1)+
+        move.w  #GFX_PEND,(a1)+
+        move.l  vp_SprIns(a3),a0
+        move.l  a1,d0
+        sub.l   a0,d0
+        sub.l   #GFX_SPRI_HDR+4,d0
+        move.l  d0,4(a0)             ; bytes in a hardware list (12 per WAIT, 4 per MOVE, as in the stream)
+        bra.s   .vs_out
+.vs_nomem:
+        move.l  (sp)+,a6
+.vs_out:
+        unlk    a4
+.vs_ret:
+        movem.l (sp)+,d2-d7/a2-a4
+        rts
+; .vs_wait(d0.w = line, a1 = write pointer): pseudo-WAIT at VL_HPOS.
+.vs_wait:
+        move.w  #GFX_PSEUDO,(a1)+
+        move.w  d0,(a1)+
+        move.w  #VL_HPOS,(a1)+
+        clr.w   (a1)+
+        move.w  #GFX_NOP,(a1)+
+        clr.w   (a1)+
+        rts
+; .vs_flush(d0.w = line): the pending clean-ups on that line or above, in line order. Preserves d2-d7.
+.vs_flush:
+        movem.l d2-d4,-(sp)
+        move.w  d0,d4
+.vf_lp:
+        moveq   #-1,d3               ; d3 = sprite of the earliest clean-up, d2 = its line
+        move.w  #$7FFF,d2
+        moveq   #0,d1
+.vf_sc:
+        move.w  d1,d0
+        add.w   d0,d0
+        move.w  VL_CLEAN(a4,d0.w),d0
+        cmp.w   d2,d0
+        bge.s   .vf_n
+        move.w  d0,d2
+        move.w  d1,d3
+.vf_n:
+        addq.w  #1,d1
+        cmp.w   #8,d1
+        blo.s   .vf_sc
+        tst.w   d3
+        bmi.s   .vf_ret
+        cmp.w   d4,d2
+        bgt.s   .vf_ret
+        move.w  d2,d0
+        bsr.s   .vs_wait
+        move.w  d3,d0
+        lsl.w   #3,d0
+        add.w   #$140,d0
+        move.w  d0,(a1)+             ; SPRxPOS = 0
+        clr.w   (a1)+
+        addq.w  #2,d0
+        move.w  d0,(a1)+             ; SPRxCTL = 0
+        clr.w   (a1)+
+        move.w  d3,d0
+        add.w   d0,d0
+        move.w  #$7FFF,VL_CLEAN(a4,d0.w)
+        bra.s   .vf_lp
+.vf_ret:
+        movem.l (sp)+,d2-d4
         rts
 
 ; gel_geom(a2 = vs, a1 = rp) -> d4.w = height, d5.w = width in pixels, d6.w = depth of the RastPort's BitMap,

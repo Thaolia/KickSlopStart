@@ -251,6 +251,8 @@ graphics_initfunc:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,gb_SprNull(a2)
+        lea     gb_SprSS(a2),a0
+        move.l  a0,gb_SimpleSprites(a2)
         move.w  #GFX_COLOR_BIT,gb_system_bplcon0(a2)
         bsr     gfx_detect_std       ; PAL or NTSC: public GfxBase values + ExecBase VBlankFrequency
         move.b  EB_VBLANKFREQ(a6),gb_VBlank(a2)
@@ -1061,6 +1063,13 @@ gfx_FreeVPortCopLists:
         move.l  #GFX_FRAG_SIZE,d0
         jsr     LVO_FREEMEM(a6)
 .fv_ucl:
+        move.l  vp_SprIns(a2),d0     ; DrawGList's VSprite block (its size in its first long)
+        beq.s   .fv_ucl2
+        clr.l   vp_SprIns(a2)
+        move.l  d0,a1
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.fv_ucl2:
         move.l  vp_UCopIns(a2),d0    ; user list: its CopLists (instructions included) then the header
         beq.s   .fv_ret
         clr.l   vp_UCopIns(a2)
@@ -1168,6 +1177,8 @@ gfx_CBump:
 .cb_ret:
         rts
 
+; VSprites: a ViewPort's vp_SprIns stream (DrawGList) is interleaved with its fragment, each of its segments (one
+; pseudo-WAIT and its MOVEs) going before the first fragment WAIT on a later line.
 ; gfx_MrgCop(view a1): builds v_LOFCprList (master, chip RAM, layout in graphics.i): the sprite pointers, then the
 ; fragment of each ViewPort that is not VP_HIDE, by increasing DyOffset (chain order on a tie; ViewPorts do not
 ; overlap: intuition leaves empty lines between screens), then the end WAIT (spec graphics-display §5). Pseudo-WAITs
@@ -1194,6 +1205,10 @@ gfx_MrgCop:
         and.w   #VP_HIDE,d0
         bne.s   .mc_cn
         add.l   #GFX_FRAG_SIZE-4,d3
+        move.l  vp_SprIns(a0),d0     ; + its VSprite stream
+        beq.s   .mc_cn
+        move.l  d0,a1
+        add.l   4(a1),d3
 .mc_cn:
         move.l  vp_Next(a0),a0
         bra.s   .mc_cnt
@@ -1248,11 +1263,16 @@ gfx_MrgCop:
         bra.s   .mc_scan
 .mc_picked:
         cmpa.w  #0,a1
-        beq.s   .mc_end
+        beq     .mc_end
         move.l  vp_DspIns(a1),a0
         move.l  a4,(a0)+             ; header = where this fragment lands
         move.w  vp_DyOffset(a1),d5
         move.w  v_DyOffset(a2),d4
+        sub.l   a6,a6
+        move.l  vp_SprIns(a1),d0
+        beq.s   .mc_tr
+        add.l   #GFX_SPRI_HDR,d0
+        move.l  d0,a6                ; a6 = VSprite stream (DrawGList) | 0
 .mc_tr:
         move.w  (a0)+,d0
         move.w  (a0)+,d1
@@ -1261,9 +1281,29 @@ gfx_MrgCop:
         move.w  d0,(a4)+             ; MOVE: copied
         move.w  d1,(a4)+
         bra.s   .mc_tr
-.mc_ps:
+.mc_ps:                              ; d7 bit 31: inside a VSprite segment
+        btst    #31,d7
+        bne.s   .mc_sback
         cmp.w   #GFX_PEND,d1
-        beq.s   .mc_pick
+        beq     .mc_pick             ; (VSprite segments past the bottom are dropped)
+        cmpa.w  #0,a6
+        beq.s   .mc_wt
+        cmp.w   #GFX_PEND,2(a6)
+        beq.s   .mc_wt
+        cmp.w   2(a6),d1
+        ble.s   .mc_wt               ; the next VSprite segment is not above this WAIT
+        subq.l  #4,a0                ; the fragment resumes at this WAIT
+        exg     a0,a6
+        addq.l  #2,a0
+        move.w  (a0)+,d1             ; the segment's line
+        bset    #31,d7
+        bra.s   .mc_wt
+.mc_sback:                           ; next segment or end of the stream: back to the fragment
+        subq.l  #4,a0
+        exg     a0,a6
+        bclr    #31,d7
+        bra.s   .mc_tr
+.mc_wt:
         add.w   d5,d1
         btst    #2,vp_Modes+1(a1)
         beq.s   .mc_nl
@@ -1299,7 +1339,7 @@ gfx_MrgCop:
         move.l  #GFX_NOP<<16,(a4)+
         subq.w  #1,d3
         bne.s   .mc_nop
-        bra.s   .mc_tr
+        bra     .mc_tr
 .mc_end:
                 endc
         btst    #2,v_Modes+1(a2)
@@ -1534,13 +1574,15 @@ gfx_DisownBlitter:
 .db_ret:
         move.l  (sp)+,a6
         rts
-; GetSprite(sprite a0, number d0) -> d0 = reserved channel | -1. d0 = -1: first free channel (0 reserved for the
-; pointer).
+; GetSprite(sprite a0, pick d0) -> d0 = hardware sprite reserved in GfxBase SpriteReserved | -1 (custom-chips §4.1):
+; pick -1 = the first free one (intuition takes 0 for the pointer), otherwise pick & 7 if free. Its number goes to
+; SimpleSprite.num.
 gfx_GetSprite:
-        move.w  gb_SprUsed(a6),d1
+        moveq   #0,d1
+        move.b  gb_SpriteReserved(a6),d1
         tst.w   d0
         bpl.s   .gs_one
-        moveq   #1,d0
+        moveq   #0,d0
 .gs_find:
         btst    d0,d1
         beq.s   .gs_take
@@ -1549,13 +1591,11 @@ gfx_GetSprite:
         blo.s   .gs_find
         bra.s   .gs_fail
 .gs_one:
-        cmp.w   #8,d0
-        bhs.s   .gs_fail
+        and.w   #7,d0
         btst    d0,d1
         bne.s   .gs_fail
 .gs_take:
-        bset    d0,d1
-        move.w  d1,gb_SprUsed(a6)
+        bset    d0,gb_SpriteReserved(a6)
         move.w  d0,ss_num(a0)
         ext.l   d0
         rts
@@ -1563,14 +1603,10 @@ gfx_GetSprite:
         moveq   #-1,d0
         rts
 
-; FreeSprite(number d0): the channel becomes free again for GetSprite.
+; FreeSprite(pick d0): the sprite becomes free again for GetSprite.
 gfx_FreeSprite:
-        cmp.w   #8,d0
-        bhs.s   .fs_ret
-        move.w  gb_SprUsed(a6),d1
-        bclr    d0,d1
-        move.w  d1,gb_SprUsed(a6)
-.fs_ret:
+        and.w   #7,d0
+        bclr    d0,gb_SpriteReserved(a6)
         rts
 
 ; VBeamPos() -> d0 = current video beam line (0..312 in PAL).
@@ -1806,87 +1842,147 @@ gfx_PolyDraw:
         movem.l (sp)+,d2/a2
         rts
 
-; ChangeSprite(vp a0, sprite a1, data a2): new image for channel ss_num (POS/CTL recomputed from ss_x/ss_y);
-; the channel pointer is also written into the loaded copper list.
+; ChangeSprite(vp a0, sprite a1, data a2): new image (POS, CTL, 2 words per line, 0, 0), then MoveSprite with the
+; sprite's current position (custom-chips §4.1).
 gfx_ChangeSprite:
-        movem.l a2-a3,-(sp)
         move.l  a2,ss_posctldata(a1)
-        move.w  ss_num(a1),d0
-        and.w   #7,d0
-        move.w  d0,d1
-        lsl.w   #2,d1
-        lea     gb_SprData(a6),a3
-        move.l  a2,0(a3,d1.w)
-        move.l  gb_SprCop(a6),d1
-        beq.s   .cs_move
-        move.l  d1,a3
-        lsl.w   #3,d0                ; 8 bytes per channel (2 MOVEs)
-        add.w   d0,a3
-        move.l  a2,d1
-        swap    d1
-        move.w  d1,(a3)              ; SPRxPTH
-        swap    d1
-        move.w  d1,4(a3)             ; SPRxPTL
-.cs_move:
-        movem.l (sp)+,a2-a3
         move.w  ss_x(a1),d0
         move.w  ss_y(a1),d1
-        bra.s   gfx_MoveSprite
+;       (continued in gfx_MoveSprite)
 
-; MoveSprite(vp a0, sprite a1, x d0, y d1): positions the sprite; coordinates in low-resolution pixels, relative to
-; the top-left corner of the ViewPort's display window (vp, otherwise that of the active View).
+; MoveSprite(vp a0, sprite a1, x d0, y d1) (custom-chips §4.1): the sprite goes into GfxBase->SimpleSprites, takes
+; x/y, and its POS/CTL words are written into its data: with a ViewPort x is halved for HIRES and y for LACE, and the
+; ViewPort's DyOffset added; then the active View's DxOffset/DyOffset; VSTART at least 21, VSTOP = VSTART + height,
+; CTL bits 3-7 (ATTACH) kept. The copper lists' SPRxPT of that sprite then point at the data, or at the empty
+; sprite when the ViewPort is hidden or y is past its DHeight. The even half of an attached pair (ATTACH in the odd
+; sprite's CTL) moves its partner too. No register is written: sprite DMA takes the change at the next frame.
 gfx_MoveSprite:
-        movem.l d2-d4,-(sp)
-        move.w  d0,ss_x(a1)
-        move.w  d1,ss_y(a1)
-        move.l  ss_posctldata(a1),d2
-        beq.s   .ms_ret
-        move.w  #$80,d2              ; origins: standard window (DIWSTRT $2C81)
-        move.w  #$2C,d3
-        move.l  a0,d4
-        bne.s   .ms_vp
-        move.l  gb_ActiView(a6),d4
-        beq.s   .ms_org
-        move.l  d4,a0
-        move.l  v_ViewPort(a0),a0
-        move.l  a0,d4
-        beq.s   .ms_org
-.ms_vp:
-        tst.w   vp_Modes(a0)
-        bmi.s   .ms_org              ; HIRES: standard window
-        cmp.w   #320,vp_DWidth(a0)
-        bls.s   .ms_org
-        move.w  #(GFX_DIWSTRT&$FF)-1,d2 ; low-resolution overscan
-        move.w  #GFX_DIWSTRT>>8,d3
-.ms_org:
-        add.w   d0,d2                ; d2 = hstart
-        add.w   d1,d3                ; d3 = vstart
-        move.w  d3,d4
-        add.w   ss_height(a1),d4     ; d4 = vstop
-        move.l  ss_posctldata(a1),a0
-        move.w  d3,d0                ; POS = vstart(7..0) << 8 | hstart(8..1)
+        movem.l d2-d6/a2-a3,-(sp)
+        move.l  a0,a2                ; a2 = ViewPort | 0
+        move.l  a1,a3                ; a3 = SimpleSprite
+        move.w  d0,d5                ; d5/d6 = x, y as given
+        move.w  d1,d6
+.ms_one:
+        move.w  d5,ss_x(a3)
+        move.w  d6,ss_y(a3)
+        move.w  ss_num(a3),d2
+        and.w   #7,d2                ; d2 = hardware sprite
+        move.w  d2,d0
+        lsl.w   #2,d0
+        lea     gb_SprSS(a6),a1
+        move.l  a3,0(a1,d0.w)
+        move.w  d5,d3                ; d3 = HSTART
+        move.w  d6,d4                ; d4 = VSTART
+        cmpa.w  #0,a2
+        beq.s   .ms_view
+        tst.w   vp_Modes(a2)
+        bpl.s   .ms_lx
+        asr.w   #1,d3
+.ms_lx:
+        btst    #2,vp_Modes+1(a2)
+        beq.s   .ms_ly
+        asr.w   #1,d4
+.ms_ly:
+        add.w   vp_DyOffset(a2),d4
+.ms_view:
+        move.l  gb_ActiView(a6),d0
+        beq.s   .ms_min
+        move.l  d0,a1
+        add.w   v_DxOffset(a1),d3
+        add.w   v_DyOffset(a1),d4
+.ms_min:
+        cmp.w   #21,d4
+        bge.s   .ms_pos
+        moveq   #21,d4
+.ms_pos:
+        move.l  ss_posctldata(a3),d0
+        beq     .ms_next             ; no image yet
+        move.l  d0,a1
+        move.w  d4,d0                ; POS = VSTART[7:0] << 8 | HSTART[8:1]
         lsl.w   #8,d0
-        move.w  d2,d1
+        move.w  d3,d1
         lsr.w   #1,d1
         move.b  d1,d0
-        move.w  d0,(a0)+
-        move.w  d4,d0                ; CTL = vstop(7..0) << 8 | vstart(8) << 2 | vstop(8) << 1 | hstart(0)
+        move.w  d0,(a1)
+        move.w  d4,d1
+        add.w   ss_height(a3),d1     ; d1 = VSTOP
+        move.w  d1,d0                ; CTL = VSTOP[7:0] << 8 | old bits 3-7 | VSTART8 << 2 | VSTOP8 << 1 | HSTART0
         lsl.w   #8,d0
-        btst    #8,d3
+        move.b  3(a1),d0
+        and.b   #$F8,d0
+        btst    #8,d4
         beq.s   .ms_v8
         bset    #2,d0
 .ms_v8:
-        btst    #8,d4
+        btst    #8,d1
         beq.s   .ms_e8
         bset    #1,d0
 .ms_e8:
-        btst    #0,d2
+        btst    #0,d3
         beq.s   .ms_h0
         bset    #0,d0
 .ms_h0:
-        move.w  d0,(a0)
+        move.w  d0,2(a1)
+        move.l  a1,d0                ; shown, unless its ViewPort hides it
+        cmpa.w  #0,a2
+        beq.s   .ms_show
+        move.w  vp_Modes(a2),d1
+        and.w   #VP_HIDE,d1
+        bne.s   .ms_hide
+        cmp.w   vp_DHeight(a2),d6
+        ble.s   .ms_show
+.ms_hide:
+        moveq   #0,d0
+.ms_show:
+        bsr.s   gfx_sprptr
+.ms_next:
+        btst    #0,d2                ; even half of an attached pair: its partner follows
+        bne.s   .ms_ret
+        addq.w  #1,d2
+        lsl.w   #2,d2
+        lea     gb_SprSS(a6),a1
+        move.l  0(a1,d2.w),d0
+        beq.s   .ms_ret
+        move.l  d0,a1
+        move.l  ss_posctldata(a1),d1
+        beq.s   .ms_ret
+        exg     d1,a1
+        btst    #7,3(a1)             ; ATTACH
+        beq.s   .ms_ret
+        move.l  d1,a3
+        bra     .ms_one
 .ms_ret:
-        movem.l (sp)+,d2-d4
+        movem.l (sp)+,d2-d6/a2-a3
+        rts
+
+; gfx_sprptr(d2.w = hardware sprite, d0 = its data | 0 for the empty sprite, a6 = GfxBase): what the SPRxPT MOVEs of
+; the loaded copper lists (long frame, and short frame in interlace) and of the lists MrgCop builds next point at.
+; Clobbers d0/d1/a0/a1.
+gfx_sprptr:
+        move.w  d2,d1
+        lsl.w   #2,d1
+        lea     gb_SprData(a6),a0
+        move.l  d0,0(a0,d1.w)
+        bne.s   .sp_data
+        move.l  gb_SprNull(a6),d0
+.sp_data:
+        move.l  d0,-(sp)
+        move.l  gb_SprCop(a6),d0
+        beq.s   .sp_done
+        move.w  d2,d1
+        lsl.w   #3,d1                ; 8 bytes per sprite (2 MOVEs)
+        add.w   d1,d0
+        move.l  d0,a0
+        move.w  (sp),(a0)            ; SPRxPTH
+        move.w  2(sp),4(a0)          ; SPRxPTL
+        bsr     gfx_shfpos
+        tst.l   d0
+        beq.s   .sp_done
+        move.l  d0,a0
+        move.w  (sp),(a0)
+        move.w  2(sp),4(a0)
+.sp_done:
+        addq.l  #4,sp
         rts
 
 graphics_end:

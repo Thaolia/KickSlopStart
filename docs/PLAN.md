@@ -984,6 +984,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/lace_test.s`). Open: the pointer moves in non-interlaced lines (1.3 MouseY is in interlaced lines);
   MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less
   free memory (copper fragments are 1,032 bytes).
+  **Sprites (2026-11-03)**: MoveSprite/ChangeSprite/GetSprite as in custom-chips §4.1 (View and ViewPort offsets,
+  HIRES/LACE scaling, attached pairs, hidden ViewPort, SpriteReserved, SimpleSprites); hardware VSprites through
+  DrawGList and MrgCop, with sprite reuse down the screen and pair-colour aware allocation (`tests/vsprite_test.s`).
+  Open: the exact 1.3 VSprite allocation by band is not specified (ours is described in ARCHITECTURE); nextLine and
+  lastColor of the GelsInfo are not filled; a VSprite partly above its ViewPort is not clipped; DoCollision ignores
+  hardware sprite collisions as 1.3 does (software only).
   **HAM and dual playfield (2026-11-03)**: MakeVPort emits HAM/DUALPF/PFBA, two playfields with their own scroll,
   modulo and offset; ScrollVPort scrolls either playfield (`tests/hamdpf_test.s`). Open from the spec (§4.4): DIW/DDF
   still come from three fixed windows, so vp.DxOffset, View.DxOffset and other DWidths are ignored; the number of
