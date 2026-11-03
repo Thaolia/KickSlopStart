@@ -460,6 +460,8 @@ EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending softwa
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
 CPU_FMT      EQU $000007CC ; byte: $FF on a 68010 or later, whose exception frames carry a format word (boot.s)
+FEED_KTASK   EQU $000007D0 ; long: input.device task (feeder) signalled by the keyboard interrupt, 0 = none yet
+FEED_KMASK   EQU $000007D4 ; long: its keyboard signal mask
 HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the last 218 refusal of a floppy handler ("replace")
 MT_TABLE     EQU $0000079C ; long: allocation tracer table (diagnostic ROM -DMEMTRACK=1 only)
 INT2_BUSY    EQU $000007A0 ; byte: int2_dispatch serves the PORTS chain (read by timer.device VBLANK server recovery)

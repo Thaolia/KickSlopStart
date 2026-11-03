@@ -5,6 +5,7 @@
 ; --- display registers (absolute addresses; HRM) ---
 COP1LC   EQU CUSTOM+$080      ; Copper list 1 pointer (longword; reloaded by the hardware at every VBlank)
 VPOSR    EQU CUSTOM+$004      ; beam position high bits; bit 15 = LOF (long frame)
+VHPOSR   EQU CUSTOM+$006      ; beam position: high byte = line (low 8 bits)
 COPJMP1  EQU CUSTOM+$088      ; strobe: (re)starts the Copper on COP1LC (write strobe, value ignored)
 COP2LC   EQU CUSTOM+$084      ; Copper list 2 pointer (copinit jumps to it through a MOVE COPJMP2)
 COPJMP2  EQU CUSTOM+$08A
@@ -216,9 +217,10 @@ gb_bltsrv    EQU 118          ; struct Interrupt: blitter vector (IntVects[INTB_
 gb_TextFonts EQU 140          ; struct List of fonts
 gb_DefaultFont EQU 154        ; APTR: default RastPort font (topaz 8)
 gb_Modes     EQU 158          ; UWORD: modes of the displayed view (View->Modes)
-gb_VBlank    EQU 160          ; BYTE: frame rate
+gb_VBlank    EQU 160          ; BYTE: cleared by the VBlank server each frame (QBSBlit's "VBlank seen" test)
 gb_system_bplcon0 EQU 164     ; WORD: BPLCON0 bits imposed by the system
 gb_SpriteReserved EQU 166     ; UBYTE: hardware sprites taken by GetSprite (bit n = sprite n)
+gb_TOFWaitQ  EQU 192          ; struct List: WaitTOF nodes (ln_Name = waiting task), signalled each VBlank
 gb_DisplayFlags EQU 206       ; UWORD : NTSC 1 / GENLOC 2 / PAL 4
 gb_SimpleSprites EQU 208      ; APTR: table of the 8 SimpleSprites last moved
 gb_MaxDisplayRow EQU 212

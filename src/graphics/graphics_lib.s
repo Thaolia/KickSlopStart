@@ -77,6 +77,7 @@
                 xref    gfx_AttemptLockLayerRom
                 xref    gfx_BltMaskBitMapRastPort
                 xref    gfx_ClipBlit
+                xref    newlist
                 xref    gfx_AndRectRegion
                 xref    gfx_OrRectRegion
                 xref    gfx_NewRegion
@@ -255,7 +256,8 @@ graphics_initfunc:
         move.l  a0,gb_SimpleSprites(a2)
         move.w  #GFX_COLOR_BIT,gb_system_bplcon0(a2)
         bsr     gfx_detect_std       ; PAL or NTSC: public GfxBase values + ExecBase VBlankFrequency
-        move.b  EB_VBLANKFREQ(a6),gb_VBlank(a2)
+        lea     gb_TOFWaitQ(a2),a1
+        jsr     newlist
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter permanently enabled, like 1.3: a
@@ -356,13 +358,16 @@ gfx_bltint:
         move.w  #INTF_BLIT,INTREQ-CUSTOM(a0)
         rts
 
-; gfx_vblank(a1 = GfxBase): VBlank server. Reloads COP2LC with gb_LOFlist (the displayed view's list, or the empty
-; list after LoadView(NULL)), as 1.3 does: a program that writes COP2LC with interrupts off sees its list executed
-; by the copinit until it re-enables them (Caesar's FLT intro). Returns Z = 1 (the chain continues).
-; Interlace: gb_SHFlist on short frames (VPOSR LOF bit clear), for the copinit's jump at line 12 of this frame.
+; gfx_vblank(a1 = GfxBase, a6 = SysBase): VBlank server (graphics-display-v34 §7.2). Clears gb_VBlank, reloads
+; COP2LC with gb_LOFlist (the displayed view's list, or the empty list after LoadView(NULL)), as 1.3 does: a program
+; that writes COP2LC with interrupts off sees its list executed by the copinit until it re-enables them (Caesar's
+; FLT intro). Interlace: gb_SHFlist on short frames (VPOSR LOF bit clear), for the copinit's jump at line 12.
+; Then CIA-B's TOD (an HSYNC counter) restarts from the current line, and every WaitTOF task gets SIGF_SINGLE.
+; Returns Z = 1 (the chain continues). Clobbers d0/d1/a0/a1/a5.
 gfx_vblank:
+        clr.b   gb_VBlank(a1)
         move.l  gb_LOFlist(a1),d0
-        beq.s   .vb_ret
+        beq.s   .vb_tod
         btst    #2,gb_Modes+1(a1)
         beq.s   .vb_set
         tst.w   VPOSR
@@ -372,10 +377,29 @@ gfx_vblank:
         move.l  d1,d0
 .vb_set:
         move.l  d0,COP2LC
+.vb_tod:
+        lea     CIAB_HW,a0
+        bclr    #7,$F00(a0)          ; CRB ALARM = 0: the writes set the time
+        moveq   #0,d0                ; MOVE, not CLR (a CLR reads TODHI first, which latches the TOD)
+        move.b  d0,$A00(a0)          ; TODHI
+        move.b  d0,$900(a0)          ; TODMID
+        move.b  VHPOSR,$800(a0)      ; TODLO = current line, counting restarts
+        bset    #7,$F00(a0)          ; left on ALARM, as 1.3 leaves it
+        move.l  gb_TOFWaitQ(a1),a5
+.vb_sig:
+        tst.l   (a5)
+        beq.s   .vb_ret
+        move.l  LN_NAME(a5),a1
+        moveq   #SIGF_SINGLE,d0
+        jsr     LVO_SIGNAL(a6)
+        move.l  (a5),a5
+        bra.s   .vb_sig
 .vb_ret:
         moveq   #0,d0
         rts
 GFX_VBPRI       EQU 10
+SIGF_SINGLE     EQU $10
+WT_NODE         EQU 14           ; struct Node
 
 gfx_copinit:
         dc.w    $0C01,$FFFE          ; WAIT line 12
@@ -1615,16 +1639,30 @@ gfx_VBeamPos:
         lsr.l   #8,d0
         and.l   #$1FF,d0
         rts
-; WaitTOF(): waits for the start of the next frame (the beam returns to the top of the screen).
+; WaitTOF(): sleeps until the next VBlank (graphics-display-v34 §7.4): a node naming the task joins TOF_WaitQ under
+; Disable, the VBlank server signals it (SIGF_SINGLE).
 gfx_WaitTOF:
-        move.l  d2,-(sp)
-        bsr.s   gfx_VBeamPos
-.wt_lp:
-        move.l  d0,d2
-        bsr.s   gfx_VBeamPos
-        cmp.l   d2,d0
-        bhs.s   .wt_lp
-        move.l  (sp)+,d2
+        movem.l a2/a6,-(sp)
+        lea     -WT_NODE(sp),sp      ; the node lives on the caller's stack
+        move.l  a6,a2
+        move.l  ($4).w,a6
+        sub.l   a1,a1
+        jsr     LVO_FINDTASK(a6)
+        move.l  d0,LN_NAME(sp)
+        jsr     LVO_DISABLE(a6)
+        moveq   #0,d0
+        moveq   #SIGF_SINGLE,d1
+        jsr     LVO_SETSIGNAL(a6)
+        lea     gb_TOFWaitQ(a2),a0
+        move.l  sp,a1
+        jsr     LVO_ADDTAIL(a6)
+        moveq   #SIGF_SINGLE,d0
+        jsr     LVO_WAIT(a6)
+        move.l  sp,a1
+        jsr     LVO_REMOVE(a6)
+        jsr     LVO_ENABLE(a6)
+        lea     WT_NODE(sp),sp
+        movem.l (sp)+,a2/a6
         rts
 
 ; SetRGB4CM(colormap a0, n d0, r d1, g d2, b d3): colour n of the ColorMap only (the display is not touched).

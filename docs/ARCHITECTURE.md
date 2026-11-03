@@ -587,6 +587,17 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7s) **WaitTOF on TOF_WaitQ, graphics VBlank server, event-driven input task** (2026-11-04, spec
+  `graphics-display-v34.md` §7.2/§7.4). WaitTOF puts a node naming the task (on its stack) into GfxBase TOF_WaitQ
+  (offset 192, a NewList at init) under Disable and Waits for SIGF_SINGLE; it used to spin on VBeamPos. The VBlank
+  server (pri 10) clears gb_VBlank, reloads COP2LC, restarts CIA-B's TOD from the current line (CRB alarm bit
+  cleared for the writes, left set, as 1.3 does) and signals every waiting task. Measured with
+  `tests/waittof_probe.s`: 50 WaitTOFs = 50 DateStamp ticks, CIA-B TOD = beam line. The first version returned at
+  lines $21-$53 instead of 1.3's $0C: the keyboard feeder (our input.device task, pri 20) polled the keyboard ring
+  with a one-frame timer request, so it ran before any priority-0 task on every frame. It now sleeps until a
+  keystroke (the keyboard interrupt signals FEED_KTASK with FEED_KMASK) or its next deadline (IECLASS_TIMER every 5
+  frames, or the key repeat): WaitTOF returns from line $12 on most frames. The VERTB chain itself still ends near
+  line $13 (gameport ~6 lines, timer + trackdisk ~9 lines), above 1.3's figure.
   (7r) **trackdisk read errors, retries, ETD commands** (2026-11-04, specs `trackdisk-write-v34.md` §5.2/§5.6,
   `trackdisk-raw-changeint-v34.md` §1). `td_decode_track` also returns a read code in A1: 0 for 11 good sectors,
   otherwise the worst defect seen (25 data checksum, 24 header checksum, 23 format byte or sector number), 26 when

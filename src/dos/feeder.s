@@ -2,9 +2,10 @@
 ;
 ; Process (proc_create) that DRAINS the RAW keyboard ring (KBD_FEEDRING, filled by kbd_interrupt at the same point
 ; as the cooked push) and injects each keystroke as a RAWKEY InputEvent into input.device via IND_WRITEEVENT ->
-; input.device becomes the SINGLE keyboard SOURCE; its handlers (console.device) do the cooking. COOP-safe poll on every
-; frame (timer.device VBLANK, BeginIO TR_ADDREQUEST + Wait) -> no busy-poll. Role of the 1.3 input.device task
-; (spec docs/analysis/intuiticks-repeat-v34.md): an IECLASS_TIMER event every 5 frames (10 per second) and the
+; input.device becomes the SINGLE keyboard SOURCE; its handlers (console.device) do the cooking. The task wakes on a
+; keystroke (the keyboard interrupt signals it) or a deadline (timer.device VBLANK: the next IECLASS_TIMER or key
+; repeat), never on every frame: a frame-rate wake-up delayed every WaitTOF caller of lower priority. Role of the 1.3
+; input.device task (spec docs/analysis/intuiticks-repeat-v34.md): an IECLASS_TIMER event every 5 frames (10 per second) and the
 ; auto-repeat of the last key pressed (input.device delay and period, IND_SETTHRESH/SETPERIOD).
 ;
 ; SELF-TEST (ifeq SHELL_ON_SCREEN, item 1): after injecting the 1st keystroke, reads console.device CMD_READ (which
@@ -36,6 +37,7 @@ FD_RPORT   EQU 12                 ; APTR reply MsgPort
 FD_TREQ    EQU 16                 ; APTR timerequest
 FD_SIGMASK EQU 20                 ; LONG signal mask of the reply port
 FD_DONE    EQU 24                 ; BYTE self-test emitted
+FD_TPEND   EQU 25                 ; BYTE timer request in flight
 FD_IOREQ   EQU 28                 ; IOStdReq (48) for input BeginIO
 FD_EVENT   EQU 76                 ; InputEvent (22)
 FD_RDBUF   EQU 100                ; 4 bytes: console read buffer (self-test)
@@ -107,8 +109,14 @@ feeder_main:
                 lea     FD_GSTREQ(a5),a1
                 move.l  FD_TBASE(a5),IO_DEVICE(a1)
                 move.w  #FD_NOREPEAT,FD_RPTCODE(a5)
+                moveq   #-1,d0               ; keyboard signal, published for the keyboard interrupt (mask first)
+                jsr     LVO_ALLOCSIGNAL(a6)
+                moveq   #1,d1
+                lsl.l   d0,d1
+                move.l  d1,FEED_KMASK
+                move.l  EB_THISTASK(a6),FEED_KTASK
 .fm_loop:
-                bsr     fd_poll_wait         ; one frame (COOP)
+                bsr     fd_poll_wait         ; keystroke or deadline
                 bsr     fd_timed             ; IECLASS_TIMER tick and due repeat
 .fm_drain:
                 move.w  KBD_FHEAD,d2
@@ -294,22 +302,48 @@ fd_timed:
 .td_ret:
                 rts
 
-; fd_poll_wait: wait for one frame via timer.device VBLANK. a5 = state, a6 = SysBase. Preserves a5.
+; fd_poll_wait: sleeps until a keystroke (FEED_KMASK) or the timer request (UNIT_VBLANK) ends. Without one in flight,
+; a request is sent for the frames left to the next deadline: IECLASS_TIMER, or the key repeat if it comes first.
+; A keystroke leaves the request running. a5 = state, a6 = SysBase. Preserves a5.
 fd_poll_wait:
                 movem.l d2-d4/a0-a4,-(sp)
-                move.l  FD_TREQ(a5),a1
-                clr.l   TV_SECS(a1)
+                tst.b   FD_TPEND(a5)
+                bne.s   .pw_wait
+                move.l  FD_TICKDUE(a5),d0
+                cmp.w   #FD_NOREPEAT,FD_RPTCODE(a5)
+                beq.s   .pw_due
+                move.l  FD_RPTDUE(a5),d1
+                cmp.l   d0,d1
+                bge.s   .pw_due
+                move.l  d1,d0
+.pw_due:
+                sub.l   VBL_COUNT,d0         ; d0 = frames left (at least one)
+                bgt.s   .pw_n
                 moveq   #1,d0
+.pw_n:
+                move.l  FD_TREQ(a5),a1
+                divu    #50,d0               ; UNIT_VBLANK counts 20000 us per frame
+                moveq   #0,d1
+                move.w  d0,d1
+                move.l  d1,TV_SECS(a1)
+                swap    d0
+                mulu    #20000,d0
                 move.l  d0,TV_MICRO(a1)
                 move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
-                move.l  FD_TBASE(a5),a0
-                move.l  a0,a6
+                move.l  FD_TBASE(a5),a6
                 jsr     TD_BEGINIO(a6)
                 move.l  ($4).w,a6
+                st      FD_TPEND(a5)
+.pw_wait:
                 move.l  FD_SIGMASK(a5),d0
+                or.l    FEED_KMASK,d0
                 jsr     LVO_WAIT(a6)
                 move.l  FD_RPORT(a5),a0
                 jsr     LVO_GETMSG(a6)
+                tst.l   d0
+                beq.s   .pw_ret
+                sf      FD_TPEND(a5)
+.pw_ret:
                 movem.l (sp)+,d2-d4/a0-a4
                 rts
 

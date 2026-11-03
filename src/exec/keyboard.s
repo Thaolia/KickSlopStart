@@ -207,6 +207,14 @@ kbd_interrupt:
                 lea     KBD_FEEDRING,a0
                 move.w  d3,0(a0,d1.w)        ; write the entry BEFORE publishing TAIL
                 move.w  (sp)+,KBD_FTAIL
+                move.l  FEED_KTASK,d1        ; wake the input.device task (it no longer polls every frame)
+                beq.s   .kf_ret
+                move.l  a6,-(sp)
+                move.l  d1,a1
+                move.l  FEED_KMASK,d0
+                move.l  ($4).w,a6
+                jsr     LVO_SIGNAL(a6)
+                move.l  (sp)+,a6
 .kf_ret:
                 rts
 .ki_out:
