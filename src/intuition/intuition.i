@@ -25,7 +25,7 @@ IB_EVHEAD        EQU IB_INSIG+4        ; UWORD: next slot written (interrupt)
 IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD: next slot read (task)
 IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN slots of IB_EVSZ bytes: code, x, y (screen)
 IB_EVN           EQU 8
-IB_EVSZ          EQU 6
+IB_EVSZ          EQU 10                ; code, x, y, then a long (keys: dead-key history)
 IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE: the task also wants the movements (drag, menus)
 IB_MOVED         EQU IB_TRACK+1        ; BYTE: movement to process
 IB_DRAGWIN       EQU IB_MOVED+1        ; window being moved / resized | 0
@@ -83,7 +83,20 @@ IB_YMIN          EQU IB_SDRAGY+2       ; WORD: pointer Y lower bound (top of the
 IB_SGAD          EQU IB_YMIN+2         ; screen depth gadget held down (SUPFRONT / SDOWNBACK) | 0
 IB_SGADSCR       EQU IB_SGAD+4         ; its screen
 IB_RMBWIN        EQU IB_SGADSCR+4      ; RMBTRAP window that got the MENUDOWN, for its MENUUP | 0
-IB_LOCKS         EQU IB_RMBWIN+4       ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_VPORT         EQU IB_RMBWIN+4       ; MsgPort (signals the input task) where verification messages come back
+IB_VWIN          EQU IB_VPORT+MP_SIZE  ; window of the pending verification | 0
+IB_VMSG          EQU IB_VWIN+4         ; its message
+IB_VCLASS        EQU IB_VMSG+4         ; its class
+IB_DMX           EQU IB_VCLASS+4       ; WORD: pointer delta of the movement being processed (DELTAMOVE)
+IB_DMY           EQU IB_DMX+2
+IB_LASTPX        EQU IB_DMY+2          ; WORD: pointer at the previous movement
+IB_LASTPY        EQU IB_LASTPX+2
+IB_DMRWIN        EQU IB_LASTPY+2       ; window of the last plain right press (DMRequest double click) | 0
+IB_DMRSEC        EQU IB_DMRWIN+4       ; its time and window mouse position
+IB_DMRMIC        EQU IB_DMRSEC+4
+IB_DMRX          EQU IB_DMRMIC+4
+IB_DMRY          EQU IB_DMRX+2
+IB_LOCKS         EQU IB_DMRY+2         ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE
@@ -293,7 +306,8 @@ IM_MOUSEY       EQU 34
 IM_SECONDS      EQU 36
 IM_MICROS       EQU 40
 IM_IDCMPWINDOW  EQU 44
-IM_SIZEOF       EQU 52
+IM_KEYHIST      EQU 52               ; our copy of a RAWKEY's dead-key history (IAddress points here)
+IM_SIZEOF       EQU 56
 NEWSIZE         EQU $00000002
 REFRESHWINDOW   EQU $00000004
 MOUSEBUTTONS    EQU $00000008
@@ -309,6 +323,14 @@ DISKINSERTED    EQU $00008000           ; a floppy disk was inserted (all window
 DISKREMOVED     EQU $00010000
 INTUITICKS      EQU $00400000           ; ~10 per second to the active window, only one in circulation
 ACTIVEWINDOW    EQU $00040000
+SIZEVERIFY      EQU $00000001
+REQVERIFY       EQU $00000800
+MENUVERIFY      EQU $00002000
+DELTAMOVE       EQU $00100000
+DELTAMOVEB      EQU 20
+MENUHOT         EQU 1                   ; im_Code of MENUVERIFY
+MENUCANCEL      EQU 2
+MENUWAITING     EQU 3
 INACTIVEWINDOW  EQU $00080000
 VANILLAKEY      EQU $00200000           ; RAWKEY converted by the default keymap (one character only)
 MENUDOWN        EQU $69                 ; im_Code of MOUSEBUTTONS (RMBTRAP)

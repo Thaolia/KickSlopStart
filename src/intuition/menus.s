@@ -45,6 +45,8 @@
                 xref    wn_sendmsg
                 xref    it_alive
                 xref    wn_sendkey
+                xref    it_verify
+                xref    it_dmreq
                 xref    kbd_cook
                 xref    intuition_DrawImage
 
@@ -240,6 +242,20 @@ it_menubutton:
         btst    #2,RQ_FLAGS+1(a0)    ; NOISYREQ
         beq     .mb_ret
 .mb_menus:
+        move.l  #MENUVERIFY,d0       ; MENUHOT: the application may cancel (intuition-input-menus §3.3, §3.10)
+        moveq   #MENUHOT,d1
+        jsr     it_verify
+        cmp.l   #MENUCANCEL,d0
+        beq     .mb_cancel
+        cmp.l   #4,d0
+        beq     .mb_ret
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne     .mb_ret
+        jsr     it_dmreq             ; right double click: the DMRequest instead
+        bne     .mb_ret
+        bsr     mn_waiting
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne     .mb_ret
         clr.l   IB_MENUBOX(a5)
         clr.l   IB_MENUCUR(a5)
         clr.l   IB_ITEMCUR(a5)
@@ -275,6 +291,54 @@ it_menubutton:
         move.w  PTR_Y,d5
         bra     it_menumove
 .mb_ret:
+        rts
+
+; .mb_cancel: MENUCANCEL: no menu; the release comes to the window as MOUSEBUTTONS MENUUP (it_rbutton).
+.mb_cancel:
+        move.l  a3,IB_RMBWIN(a5)
+        rts
+
+; mn_waiting(a3 = active window, a4 = its screen, a5): MENUWAITING to each other window of the screen that has
+; MENUVERIFY, one by one, each waiting for its reply (ignored). Preserves d2-d7/a2-a5.
+mn_waiting:
+        move.l  a3,-(sp)
+        move.l  SC_FIRSTWINDOW(a4),d0
+.mw_lp:
+        beq.s   .mw_ret
+        move.l  d0,a3
+        cmp.l   (sp),a3
+        beq.s   .mw_nx
+        move.l  #MENUVERIFY,d0
+        moveq   #MENUWAITING,d1
+        jsr     it_verify
+.mw_nx:
+        move.l  WD_NEXTWINDOW(a3),d0
+        bra.s   .mw_lp
+.mw_ret:
+        move.l  (sp)+,a3
+        rts
+
+; mn_menuup(a3 = menu window, a5): at the close of a menu, MOUSEBUTTONS MENUUP to every window of its screen that has
+; MENUVERIFY (the menu window included; wn_sendmsg checks MOUSEBUTTONS). Preserves d2-d7/a2-a5.
+mn_menuup:
+        movem.l d2-d3/d6/a3-a4,-(sp)
+        move.l  WD_WSCREEN(a3),a4
+        move.l  SC_FIRSTWINDOW(a4),d0
+.mu_lp:
+        beq.s   .mu_ret
+        move.l  d0,a3
+        btst    #5,WD_IDCMPFLAGS+2(a3) ; MENUVERIFY ($2000)
+        beq.s   .mu_nx
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        move.l  #MOUSEBUTTONS,d0
+        move.w  #MENUUP,d1
+        jsr     wn_sendmsg
+.mu_nx:
+        move.l  WD_NEXTWINDOW(a3),d0
+        bra.s   .mu_lp
+.mu_ret:
+        movem.l (sp)+,d2-d3/d6/a3-a4
         rts
 
 ; mn_drawbar(a3 = window, a4 = screen, a5): background in pen BlockPen, menu titles in pen DetailPen at their
@@ -1219,6 +1283,11 @@ mn_keypick:
         bne     .kp_ret
         movem.l d2-d4/a3,-(sp)
         move.l  d0,a3
+        move.l  #MENUVERIFY,d0       ; MENUHOT: MENUCANCEL means no selection (intuition-input-menus §3.11)
+        moveq   #MENUHOT,d1
+        jsr     it_verify
+        cmp.l   #MENUCANCEL,d0
+        beq     .kp_null
         move.l  WD_MENUSTRIP(a3),d0
         beq.s   .kp_out
         move.l  d0,a0
@@ -1316,6 +1385,7 @@ mn_end:
         move.l  IB_LAYERSBASE(a5),a6
         jsr     LVO_DELETELAYER(a6)
         bsr     it_refresh
+        bsr     mn_menuup
         move.w  d4,d2
         sub.w   WD_LEFTEDGE(a3),d2
         move.w  d5,d3

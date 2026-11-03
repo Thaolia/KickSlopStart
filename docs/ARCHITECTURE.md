@@ -1603,6 +1603,21 @@ differs.
     the menus. it_keyin also takes keys for windows asking VANILLAKEY; it_rawkey then converts the key with km_conv
     through the default keymap (KM_DEFKM): a press giving exactly one character sends VANILLAKEY with it as code,
     anything else is swallowed. PPShow (17 Bit disks) waits on VANILLAKEY | MOUSEBUTTONS with RMBTRAP.
+  - Verifications (intuition-input-menus §2.5): it_verify(window, class, code) returns 1 when the window does not ask
+    for the class; otherwise the message goes out under Forbid with IB_VPORT (PA_SIGNAL on the input task's event
+    signal) as reply port and the input task waits there: result = the Code at the time of the reply, 4 without a
+    message or when ModifyIDCMP removes the class (it_vcancel replies it with Code 4). MENUVERIFY: MENUHOT before a
+    menu opens (MENUCANCEL: no menu, the release comes as MOUSEBUTTONS MENUUP through IB_RMBWIN) and before a
+    keyboard shortcut (MENUCANCEL: MENUPICK MENUNULL), MENUWAITING to the screen's other MENUVERIFY windows one by
+    one (mn_waiting), MOUSEBUTTONS MENUUP to all of them when a menu closes (mn_menuup). SIZEVERIFY before a resize
+    (4 prevents it). DMRequest (it_dmreq): a second plain right press within the double-click time and 10 x 5
+    pixels sends REQVERIFY then opens the requester (POINTREL from the mouse, kept inside the window); deviation:
+    the first press opens the menus.
+  - DELTAMOVE and key history: the feeder puts {Prev1DownCode/Qual, Prev2DownCode/Qual} of the previous presses
+    below $60 in ie_X/ie_Y (fd_history); it_keyin carries that long through the input ring (IB_EVSZ 10). RAWKEY's
+    IAddress points at its copy in the message (IM_KEYHIST, messages are 56 bytes), VANILLAKEY's IAddress is its
+    value, and km_conv sees it (dead keys in VANILLAKEY). DELTAMOVE windows get the history (keys) or the movement's
+    delta in IntuitionBase units (IB_DMX/IB_DMY, summed into an unread MOUSEMOVE) in MouseX/MouseY, else 0.
   - BOOL results (issue #21): DoubleClick, Request, SetDMRequest, GetScreenData and CloseScreen return TRUE as 1,
     the C value 1.3 returns (intuition-screens §7.3 probed WBenchToFront/Back: 1). Directory Opus 4 sign-extends
     the word returned by DoubleClick and keeps -1 for "first click", so a -1 TRUE never opened an entry.

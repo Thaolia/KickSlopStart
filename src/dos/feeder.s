@@ -44,7 +44,8 @@ FD_RPTCODE EQU 126                ; WORD: code of the repeating key ($FFFF: none
 FD_RPTDUE  EQU 128                ; LONG: frame (VBL_COUNT) of the next repeat
 FD_TICKDUE EQU 132                ; LONG: frame of the next IECLASS_TIMER
 FD_GSTREQ  EQU 136                ; timerequest (40): TR_GETSYSTIME for the timestamp
-FD_SIZE    EQU 176
+FD_PREV    EQU 176                ; 4 bytes: Prev1DownCode/Qual, Prev2DownCode/Qual (dead keys)
+FD_SIZE    EQU 180
 
 feeder_main:
                 move.l  ($4).w,a6
@@ -129,6 +130,7 @@ feeder_main:
                 lsr.w   #8,d0                ; qualifiers
                 move.w  d0,IE_QUALIFIER(a1)
                 bsr     fd_stamp
+                bsr     fd_history
                 bsr     fd_repeat_key        ; arm / stop the repeat according to this keystroke
                 lea     FD_EVENT(a5),a0
                 bsr     fd_write
@@ -193,6 +195,23 @@ fd_frames:
 ; key (copy with IEQUALIFIER_REPEAT, 1st repeat after the delay); press of a qualifier (>= $60) ->
 ; stop; release of the repeating key, or different qualifier (masks $05FF / $07FF) -> stop.
 ; a5 = state. Preserves a1/a5/a6.
+; fd_history(a1 = RAWKEY event, a5): dead-key history (intuiticks-repeat §2.1): a press of a code below $60 carries
+; in ie_X/ie_Y the two previous such presses (code, low byte of the qualifier) and becomes the newest of them; other
+; events carry 0. Clobbers d0/d1.
+fd_history:
+                clr.l   IE_X(a1)
+                move.w  IE_CODE(a1),d0
+                cmp.w   #KEY_NOREPEAT,d0     ; (a release has bit 7 set: above $60 too)
+                bhs.s   .hi_ret
+                move.l  FD_PREV(a5),IE_X(a1)
+                lsl.w   #8,d0
+                move.b  IE_QUALIFIER+1(a1),d0
+                move.w  FD_PREV(a5),d1
+                move.w  d1,FD_PREV+2(a5)
+                move.w  d0,FD_PREV(a5)
+.hi_ret:
+                rts
+
 fd_repeat_key:
                 move.w  IE_CODE(a1),d0
                 bclr    #7,d0

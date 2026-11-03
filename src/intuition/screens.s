@@ -71,6 +71,10 @@
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s: right button
                 xref    km_conv              ; exec/keymap.s: one RAWKEY event through a KeyMap (VANILLAKEY)
+                xref    newlist              ; exec/lists.s (IB_VPORT)
+                xref    intuition_Request    ; request.s (DMRequest)
+                xdef    it_verify            ; menus.s (MENUVERIFY)
+                xdef    it_dmreq
                 xref    it_menumove
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
@@ -2506,6 +2510,9 @@ intuition_ModifyIDCMP:
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
         move.l  d0,WD_IDCMPFLAGS(a3)
+        move.l  d0,-(sp)
+        bsr     it_vcancel
+        move.l  (sp)+,d0
         bne.s   .mi_open
         bsr     wn_freeport
         clr.l   WD_USERPORT(a3)
@@ -2745,8 +2752,8 @@ it_event:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word)): slot dropped into the input task's
-; ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
+; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word), d2 = extra long, kept for keys: the
+; dead-key history): slot dropped into the input task's ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
 ; Three producers (the feeder task, the DF0: handler, the VBlank interrupt for the mouse): the head is read, the slot
 ; written and the head published with interrupts off (bare Disable, as in PutMsg), or two of them fill the same slot.
 it_push:
@@ -2757,7 +2764,7 @@ it_push:
         move.w  IB_EVHEAD(a1),d2
         lea     IB_EVRING(a1),a0
         add.w   d2,a0
-        addq.w  #IB_EVSZ,d2
+        add.w   #IB_EVSZ,d2
         cmp.w   #IB_EVN*IB_EVSZ,d2
         blo.s   .pu_wrap
         moveq   #0,d2
@@ -2768,7 +2775,8 @@ it_push:
         swap    d1
         move.w  d1,(a0)+
         swap    d1
-        move.w  d1,(a0)
+        move.w  d1,(a0)+
+        move.l  (sp),(a0)            ; the caller's d2
         move.w  d2,IB_EVHEAD(a1)     ; published after the data
         bsr.s   .pu_enable
         move.l  (sp)+,d2
@@ -2800,7 +2808,8 @@ it_signal:
 ; is then neutralized (IECLASS_NULL, the console does not see it) and dropped into the ring (code IT_KEYCODE + raw code,
 ; release included; x = qualifier). A text gadget only receives pressed keys. Preserves everything.
 it_keyin:
-        movem.l d0-d1/a0-a1/a6,-(sp)
+        movem.l d0-d2/a0-a1/a6,-(sp)
+        move.l  IE_X(a3),d2          ; dead-key history (input.device)
         move.l  INT_IBASE,d1
         beq.s   .ki_ret
         move.l  d1,a1
@@ -2846,7 +2855,7 @@ it_keyin:
         clr.w   d1
         bsr     it_push
 .ki_ret:
-        movem.l (sp)+,d0-d1/a0-a1/a6
+        movem.l (sp)+,d0-d2/a0-a1/a6
         rts
 
 ; it_unclip(a3 = window): before an intuition drawing in the window, the layer is locked and, at the first
@@ -3050,6 +3059,13 @@ it_intask:
         jsr     LVO_ALLOCSIGNAL(a6)
         moveq   #0,d1
         bset    d0,d1
+        lea     IB_VPORT(a5),a0      ; verification replies come back here, on the same signal
+        move.b  #NT_MSGPORT,LN_TYPE(a0)
+        move.b  #PA_SIGNAL,MP_FLAGS(a0)
+        move.b  d0,MP_SIGBIT(a0)
+        move.l  EB_THISTASK(a6),MP_SIGTASK(a0)
+        lea     MP_MSGLIST(a0),a1
+        jsr     newlist              ; (a1 = list)
         move.l  EB_THISTASK(a6),IB_INTASK(a5)
         move.l  d1,IB_INSIG(a5)
 .in_wait:
@@ -3064,8 +3080,9 @@ it_intask:
         add.w   d1,a0
         move.w  (a0)+,d0             ; code
         move.w  (a0)+,d4             ; x, y (pointer)
-        move.w  (a0),d5
-        addq.w  #IB_EVSZ,d1
+        move.w  (a0)+,d5
+        move.l  (a0),d6              ; keys: dead-key history
+        add.w   #IB_EVSZ,d1
         cmp.w   #IB_EVN*IB_EVSZ,d1
         blo.s   .in_wrap
         moveq   #0,d1
@@ -3109,9 +3126,181 @@ it_intask:
         clr.b   IB_MOVED(a5)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
+        move.w  d4,d0                ; delta since the previous movement, in IntuitionBase units (hires
+        sub.w   IB_LASTPX(a5),d0     ; pixels, interlaced lines), for DELTAMOVE
+        add.w   d0,d0
+        move.w  d0,IB_DMX(a5)
+        move.w  d5,d0
+        sub.w   IB_LASTPY(a5),d0
+        add.w   d0,d0
+        move.w  d0,IB_DMY(a5)
+        move.w  d4,IB_LASTPX(a5)
+        move.w  d5,IB_LASTPY(a5)
         bsr     it_setmouse
         bsr     it_domove
         bra     .in_next
+
+; it_verify(a3 = window, d0 = SIZEVERIFY | MENUVERIFY | REQVERIFY, d1.w = code, a5): input task (intuition-input-menus
+; §2.5). Window without the class: d0 = 1 at once. Otherwise the message goes out with IB_VPORT as its reply port
+; and the input task waits for it: d0 = its Code at the time of the reply, or 4 without a message or when ModifyIDCMP
+; took the class away (it_vcancel). The input task processes nothing meanwhile. Preserves d2-d7/a2-a5.
+it_verify:
+        movem.l d2-d3/d6/a2/a6,-(sp)
+        move.l  WD_IDCMPFLAGS(a3),d2
+        and.l   d0,d2
+        beq.s   .vf_one
+        move.l  d0,IB_VCLASS(a5)
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)       ; the reply port is set before the application can reply
+        bsr     wn_sendmsg
+        tst.l   d6
+        beq.s   .vf_none
+        move.l  d6,a2
+        lea     IB_VPORT(a5),a0
+        move.l  a0,MN_REPLYPORT(a2)
+        move.l  a2,IB_VMSG(a5)
+        move.l  a3,IB_VWIN(a5)
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+.vf_wait:
+        lea     IB_VPORT(a5),a0
+        move.l  ($4).w,a6
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        bne.s   .vf_got
+        move.l  IB_INSIG(a5),d0
+        jsr     LVO_WAIT(a6)
+        bra.s   .vf_wait
+.vf_got:
+        cmp.l   d0,a2
+        bne.s   .vf_wait
+        clr.l   IB_VWIN(a5)
+        clr.l   IB_VMSG(a5)
+        moveq   #0,d0
+        move.w  IM_CODE(a2),d0
+        clr.l   MN_REPLYPORT(a2)
+        move.b  #NT_REPLYMSG,LN_TYPE(a2) ; free again in the pool
+        bra.s   .vf_ret
+.vf_none:
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        moveq   #4,d0
+        bra.s   .vf_ret
+.vf_one:
+        moveq   #1,d0
+.vf_ret:
+        movem.l (sp)+,d2-d3/d6/a2/a6
+        rts
+
+; it_dmreq(a3 = active window, a4 = its screen, a5): plain right press on a window with a DMRequest (intuition-input-
+; menus §3.12). A second press within the double-click time and 10 x 5 pixels of the first one sends REQVERIFY,
+; then (not refused, window still active) puts the POINTREL requester at RelLeft/RelTop from the mouse, inside the
+; window, and calls Request (REQSET): Z = 0, no menu. Otherwise the press is remembered and the menus open (Z = 1).
+; Deviation: the first press opens the menus instead of only showing the bar. Preserves d2-d7/a2-a5.
+it_dmreq:
+        movem.l d2-d4/a2/a6,-(sp)
+        move.l  WD_DMREQUEST(a3),d0
+        beq     .dq_menu
+        bsr     it_now
+        move.l  d0,d2                ; d2/d3 = now
+        move.l  d1,d3
+        cmp.l   IB_DMRWIN(a5),a3
+        bne     .dq_first
+        move.w  WD_MOUSEX(a3),d0
+        sub.w   IB_DMRX(a5),d0
+        bpl.s   .dq_ax
+        neg.w   d0
+.dq_ax:
+        cmp.w   #10,d0
+        bgt     .dq_first
+        move.w  WD_MOUSEY(a3),d0
+        sub.w   IB_DMRY(a5),d0
+        bpl.s   .dq_ay
+        neg.w   d0
+.dq_ay:
+        cmp.w   #5,d0
+        bgt.s   .dq_first
+        move.l  IB_DMRSEC(a5),d0
+        move.l  IB_DMRMIC(a5),d1
+        move.l  a5,a6
+        jsr     intuition_DoubleClick
+        tst.l   d0
+        beq.s   .dq_first
+        clr.l   IB_DMRWIN(a5)
+        move.l  #REQVERIFY,d0
+        moveq   #0,d1
+        bsr     it_verify
+        cmp.l   #4,d0
+        beq.s   .dq_done
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne.s   .dq_done
+        move.l  WD_DMREQUEST(a3),a2
+        btst    #0,RQ_FLAGS+1(a2)    ; POINTREL
+        beq.s   .dq_req
+        move.w  RQ_RELLEFT(a2),d0
+        add.w   WD_MOUSEX(a3),d0
+        move.w  WD_WIDTH(a3),d1
+        sub.w   RQ_WIDTH(a2),d1
+        bsr.s   .dq_in
+        move.w  d0,RQ_LEFTEDGE(a2)
+        move.w  RQ_RELTOP(a2),d0
+        add.w   WD_MOUSEY(a3),d0
+        move.w  WD_HEIGHT(a3),d1
+        sub.w   RQ_HEIGHT(a2),d1
+        bsr.s   .dq_in
+        move.w  d0,RQ_TOPEDGE(a2)
+.dq_req:
+        move.l  a2,a0
+        move.l  a3,a1
+        move.l  a5,a6
+        jsr     intuition_Request
+.dq_done:
+        moveq   #1,d0                ; Z = 0: handled
+        bra.s   .dq_ret
+.dq_first:
+        move.l  a3,IB_DMRWIN(a5)
+        move.l  d2,IB_DMRSEC(a5)
+        move.l  d3,IB_DMRMIC(a5)
+        move.w  WD_MOUSEX(a3),IB_DMRX(a5)
+        move.w  WD_MOUSEY(a3),IB_DMRY(a5)
+.dq_menu:
+        moveq   #0,d0
+.dq_ret:
+        movem.l (sp)+,d2-d4/a2/a6
+        rts
+; .dq_in(d0.w = position, d1.w = largest one that keeps the requester inside) -> d0 within [0, d1]
+.dq_in:
+        cmp.w   d1,d0
+        ble.s   .di_lo
+        move.w  d1,d0
+.di_lo:
+        tst.w   d0
+        bpl.s   .di_ret
+        moveq   #0,d0
+.di_ret:
+        rts
+
+; it_vcancel(a3 = window, a6 = SysBase, under Forbid): ModifyIDCMP took away the class of a verification the input
+; task waits for on this window: the message, if still unread, leaves the UserPort, gets Code 4 and is replied.
+it_vcancel:
+        move.l  INT_IBASE,a1
+        cmp.l   IB_VWIN(a1),a3
+        bne.s   .vc_ret
+        move.l  WD_IDCMPFLAGS(a3),d0
+        and.l   IB_VCLASS(a1),d0
+        bne.s   .vc_ret
+        move.l  IB_VMSG(a1),a1
+        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
+        bne.s   .vc_ret
+        move.l  a1,-(sp)
+        jsr     LVO_REMOVE(a6)
+        move.l  (sp)+,a1
+        move.w  #4,IM_CODE(a1)
+        jsr     LVO_REPLYMSG(a6)
+.vc_ret:
+        rts
 
 ; it_setmouse(a5, d4.w/d5.w = pointer): MouseX/MouseY of the screen under the pointer and of each of its windows, and
 ; GZZMouseX/GZZMouseY (interior of a GIMMEZEROZERO window), follow the pointer. Programs read them instead of the
@@ -3190,8 +3379,8 @@ it_rawkey:
         move.l  d1,a3
         move.w  d0,d1
         and.w   #$00FF,d1
-        moveq   #0,d2
-        moveq   #0,d3
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
         move.l  WD_IDCMPFLAGS(a3),d0
         and.l   #VANILLAKEY,d0
         beq.s   .rk_raw
@@ -3215,6 +3404,7 @@ it_rawkey:
         move.b  #IECLASS_RAWKEY,IE_CLASS(sp)
         move.w  d1,IE_CODE(sp)
         move.w  d4,IE_QUALIFIER(sp)
+        move.l  d6,IE_X(sp)          ; dead keys
         move.l  sp,a0
         lea     IE_SIZEOF(sp),a1
         moveq   #1,d1
@@ -3438,6 +3628,11 @@ it_dobutton:
         sub.w   GEO_SH(a0),d0
         cmp.w   d0,d3
         blt.s   .db_mb
+        move.l  #SIZEVERIFY,d0       ; only a failed or cancelled verification prevents the resize
+        moveq   #0,d1
+        bsr     it_verify
+        cmp.l   #4,d0
+        beq     .db_ret
         moveq   #IT_DRAGSIZE,d0
         bra     it_dragstart
 .db_mb:
@@ -3614,8 +3809,16 @@ it_reportmove:
         bne.s   .rm_nx
         cmp.l   #MOUSEMOVE,IM_CLASS(a1)
         bne.s   .rm_nx
+        btst    #DELTAMOVEB-16,WD_IDCMPFLAGS+1(a3)
+        bne.s   .rm_delta
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
+        rts
+.rm_delta:                           ; still unread: the deltas add up
+        move.w  IB_DMX(a5),d0
+        add.w   d0,IM_MOUSEX(a1)
+        move.w  IB_DMY(a5),d0
+        add.w   d0,IM_MOUSEY(a1)
         rts
 .rm_nx:
         lea     IM_SIZEOF(a1),a1
@@ -3965,14 +4168,17 @@ wn_unborder:
 ; wn_sendmsg(a3 = window, d0 = IDCMP class, d1.w = code, d2.w/d3.w = relative mouse): if the window asked for
 ; this class, takes a free IntuiMessage from its pool, timestamps it (VBlank counter: 50 Hz) and sends it on its
 ; UserPort; pool exhausted: event lost. im_IAddress = the window; wn_sendgad: im_IAddress = a0 (the gadget
-; of GADGETDOWN / GADGETUP); wn_sendkey: im_Qualifier = d4.w (RAWKEY). Clobbers d0/d1/d6/a0/a1/a6.
+; of GADGETDOWN / GADGETUP); wn_sendkey (RAWKEY, VANILLAKEY): im_Qualifier = d4.w, d6 = dead-key history: RAWKEY's
+; IAddress points at a copy of it in the message, VANILLAKEY's is its value (intuition-input-menus §2.2-2.3).
+; DELTAMOVE window: MouseX/MouseY = the event's ie_X/ie_Y instead: the movement's delta, the key history, else 0.
+; -> d6 = the message sent | 0. Clobbers d0/d1/a0/a1/a6.
 wn_sendmsg:
         move.l  a3,a0
 wn_sendgad:
         clr.w   -(sp)                ; qualifier
         bra.s   wn_post
 wn_sendkey:
-        move.l  a3,a0
+        move.l  d6,a0                ; the dead-key history
         move.w  d4,-(sp)
 wn_post:
         move.l  WD_USERPORT(a3),d6
@@ -3998,7 +4204,7 @@ wn_post:
         lea     IM_SIZEOF(a1),a1
         dbra    d6,.sm_find
         jsr     LVO_PERMIT(a6)
-        bra.s   .sm_ret
+        bra     .sm_ret
 .sm_free:
         move.b  #NT_MESSAGE,LN_TYPE(a1)
         jsr     LVO_PERMIT(a6)
@@ -4010,14 +4216,40 @@ wn_post:
         move.l  a0,IM_IADDRESS(a1)
         move.w  d2,IM_MOUSEX(a1)
         move.w  d3,IM_MOUSEY(a1)
+        move.l  d0,d6
+        and.l   #RAWKEY|VANILLAKEY,d6
+        beq.s   .sm_delta
+        move.l  a0,IM_KEYHIST(a1)
+        and.l   #RAWKEY,d6
+        beq.s   .sm_delta
+        lea     IM_KEYHIST(a1),a0
+        move.l  a0,IM_IADDRESS(a1)
+.sm_delta:
+        btst    #DELTAMOVEB-16,WD_IDCMPFLAGS+1(a3)
+        beq.s   .sm_time
+        clr.l   IM_MOUSEX(a1)
+        tst.l   d6
+        beq.s   .sm_dmove
+        move.l  IM_KEYHIST(a1),IM_MOUSEX(a1) ; key: the history bytes
+        bra.s   .sm_time
+.sm_dmove:
+        cmp.l   #MOUSEMOVE,d0
+        bne.s   .sm_time
+        move.l  INT_IBASE,a0
+        move.l  IB_DMX(a0),IM_MOUSEX(a1) ; movement: its delta
+.sm_time:
         bsr     it_now
         move.l  d0,IM_SECONDS(a1)
         move.l  d1,IM_MICROS(a1)
         move.l  a3,IM_IDCMPWINDOW(a1)
         move.l  WD_USERPORT(a3),a0
+        move.l  a1,d6
         move.l  ($4).w,a6
         jsr     LVO_PUTMSG(a6)
+        addq.l  #2,sp
+        rts
 .sm_ret:
+        moveq   #0,d6
         addq.l  #2,sp
         rts
 

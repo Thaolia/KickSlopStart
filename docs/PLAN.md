@@ -985,8 +985,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less
   free memory (copper fragments are 1,032 bytes).
   **IDCMP (2026-11-03)**: ACTIVEWINDOW/INACTIVEWINDOW, MENUDOWN/MENUUP for RMBTRAP windows, VANILLAKEY; PPShow
-  now closes on the right button or a key. Open: DELTAMOVE, SIZEVERIFY/REQVERIFY/MENUVERIFY, the IECLASS_EVENT
-  passed on to the console after an activation, the dead-key history in RAWKEY's IAddress.
+  now closes on the right button or a key. MENUVERIFY (MENUHOT/MENUCANCEL, MENUWAITING, MENUUP), SIZEVERIFY,
+  REQVERIFY with the DMRequest double click, DELTAMOVE and the dead-key history (`tests/idcmp_test.s`). Open: the
+  DMRequest's first press opens the menus (1.3 only shows the bar); the IECLASS_EVENT passed on to the console after
+  an activation; the message pool stays 4 per window (1.3 grows it); verifications do not freeze the pointer.
   **Sprites (2026-11-03)**: MoveSprite/ChangeSprite/GetSprite as in custom-chips §4.1 (View and ViewPort offsets,
   HIRES/LACE scaling, attached pairs, hidden ViewPort, SpriteReserved, SimpleSprites); hardware VSprites through
   DrawGList and MrgCop, with sprite reuse down the screen and pair-colour aware allocation (`tests/vsprite_test.s`).
