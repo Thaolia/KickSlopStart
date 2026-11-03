@@ -1217,58 +1217,33 @@ dl_timername:
         even
 
 ; CreateProc(name d1 [C], pri d2, seglist d3 [BPTR], stack d4 [bytes]) -> d0 = MsgPort of the process | 0 (dos AutoDoc).
-; The process starts directly on the code of the first segment; name copied (the caller may free its own),
-; segarray [3, creator's V!1, V!2, seglist] (BCPL spec §8.3, global -18), ConsoleTask/FileSystemTask/WindowPtr
-; and GV inherited from the creator, null current directory. When the code returns (rts), cpr_exit ends the process.
-; Fields set under Forbid before the process first runs.
-CP_NAMEMAX      EQU 32
+; The process starts directly on the code of the first segment; name copied by proc_create (the caller may free its
+; own), segarray [3, creator's V!1, V!2, seglist] (BCPL spec §8.3, global -18) in the room proc_create leaves after
+; the Process (PRX_SEGA), ConsoleTask/FileSystemTask/WindowPtr and GV inherited from the creator, null current
+; directory. When the code returns (rts), cpr_exit ends the process. Fields set under Forbid before it first runs.
 dos_fn_createproc:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  d1,a2                   ; a2 = name
-        move.l  d2,d5                   ; d5 = pri
-        move.l  d3,d6                   ; d6 = seglist
-        move.l  d4,d7                   ; d7 = stack
         move.l  ($4).w,a6
-        moveq   #CP_NAMEMAX+20,d0       ; name (32) + segarray with getvec header (5 longs)
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq     .cpr_fail
-        move.l  d0,a3                   ; a3 = copied name
-        move.l  a3,a0
-        moveq   #CP_NAMEMAX-2,d1
-.cpr_ncpy:
-        move.b  (a2)+,(a0)+
-        dbeq    d1,.cpr_ncpy
-        lea     CP_NAMEMAX(a3),a4       ; a4 = getvec header of the segarray
-        move.l  #20,(a4)                ; size (for a possible freevec)
-        move.l  #3,4(a4)
-        move.l  d6,16(a4)
-        move.l  EB_THISTASK(a6),a0
-        cmp.b   #NT_PROCESS,LN_TYPE(a0)
-        bne.s   .cpr_noparent
-        move.l  PR_SEGLIST(a0),d0
-        lsl.l   #2,d0
-        beq.s   .cpr_noparent
-        move.l  d0,a1
-        cmp.l   #2,(a1)
-        blt.s   .cpr_noparent
-        move.l  4(a1),8(a4)             ; creator's V!1, V!2
-        move.l  8(a1),12(a4)
-.cpr_noparent:
+        move.l  d3,d6                   ; d6 = seglist
         jsr     LVO_FORBID(a6)
-        move.l  a3,a0
+        move.l  d1,a0                   ; name
         move.l  d6,d0
         lsl.l   #2,d0
         move.l  d0,a1
         addq.l  #4,a1                   ; entry = first segment
-        move.l  d5,d0
-        move.l  d7,d1
+        move.l  d2,d0
+        move.l  d4,d1
         jsr     proc_create             ; d0 = &pr_MsgPort | 0
         move.l  d0,d4
-        beq.s   .cpr_failp
+        beq     .cpr_failp
         move.l  d0,a0
         lea     -PR_MSGPORT(a0),a0      ; a0 = new process
+        lea     PRX_SEGA(a0),a4         ; a4 = getvec header of the segarray
+        move.l  #20,(a4)                ; size (for a possible freevec)
+        move.l  #3,4(a4)
+        clr.l   8(a4)
+        clr.l   12(a4)
+        move.l  d6,16(a4)
         lea     4(a4),a1
         move.l  a1,d0
         lsr.l   #2,d0
@@ -1276,6 +1251,15 @@ dos_fn_createproc:
         move.l  EB_THISTASK(a6),a1
         cmp.b   #NT_PROCESS,LN_TYPE(a1)
         bne.s   .cpr_started
+        move.l  PR_SEGLIST(a1),d0
+        lsl.l   #2,d0
+        beq.s   .cpr_noseg
+        move.l  d0,a2
+        cmp.l   #2,(a2)
+        blt.s   .cpr_noseg
+        move.l  4(a2),8(a4)             ; creator's V!1, V!2
+        move.l  8(a2),12(a4)
+.cpr_noseg:
         move.l  PR_CONSOLETASK(a1),PR_CONSOLETASK(a0)
         move.l  PR_FILESYSTEMTASK(a1),PR_FILESYSTEMTASK(a0)
         move.l  PR_WINDOWPTR(a1),PR_WINDOWPTR(a0)
@@ -1288,25 +1272,16 @@ dos_fn_createproc:
         bra.s   .cpr_ret
 .cpr_failp:
         jsr     LVO_PERMIT(a6)
-        move.l  a3,a1
-        moveq   #CP_NAMEMAX+20,d0
-        jsr     LVO_FREEMEM(a6)
-.cpr_fail:
         moveq   #0,d0
 .cpr_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; cpr_exit: finalPC of a process launched by CreateProc, reached by rts or Exit (code discarded): name + segarray
-; block freed, then RemTask. The seglist, streams and current directory are left alone (spec dos-exit-packets §1.4)
-; (does not return). Under Forbid: the freed name is no longer visible before the process ends.
+; cpr_exit: finalPC of a process launched by CreateProc, reached by rts or Exit (code discarded): RemTask, which
+; frees the Process block with its name and segarray. The seglist, streams and current directory are left alone
+; (spec dos-exit-packets §1.4). Does not return.
 cpr_exit:
         move.l  ($4).w,a6
-        jsr     LVO_FORBID(a6)
-        move.l  EB_THISTASK(a6),a0
-        move.l  LN_NAME(a0),a1
-        moveq   #CP_NAMEMAX+20,d0
-        jsr     LVO_FREEMEM(a6)
         sub.l   a1,a1
         jsr     LVO_REMTASK(a6)
 .ce_hang:

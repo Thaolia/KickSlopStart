@@ -1,6 +1,7 @@
 ; src/dos/shell.s - minimal interactive shell (E2). Body of a Process: opens the console "CON:0/0/640/200/
 ; AmigaSlopDOS" (E1 handler via DOS packets to DOS_CONPORT: window on the Workbench screen + serial mirror), emits a
-; test banner on serial, runs the startup-sequence (window closed if EndCLI has moved the CLI to the background),
+; test banner on serial, runs the startup-sequence (window closed and process ended if EndCLI has moved the CLI to
+; the background),
 ; then loops: writes the prompt, reads ONE LINE, parses the 1st word, dispatches to a builtin. Builtins: "ver"
 ; (version banner) and "echo <args>" (like c:Echo: without enclosing quotes, then a newline);
 ; everything else -> "?". NO BCPL CLI (pr_CLI/CommandLineInterface/Execute = real Bootstrap F).
@@ -86,8 +87,8 @@ shell_main:
                 ifeq    F1_NO_STARTUP
                 bsr     sh_run_startup       ; F1: run s/startup-sequence (OFS subdir) BEFORE the interactive loop
                 endc                         ; RED F1_NO_STARTUP: skips the script -> straight to interactive
-                bsr     sh_cli_ptr           ; EndCLI has moved the CLI to the background: its window closes (END);
-                beq.s   .loop                ; the fallback prompt continues on serial
+                bsr     sh_cli_ptr           ; EndCLI has moved the CLI to the background: its window closes (END)
+                beq.s   .loop                ; and the process ends
                 tst.l   CLI_BACKGROUND(a1)
                 beq.s   .loop
                 move.l  DOS_CONPORT,a1
@@ -97,6 +98,8 @@ shell_main:
                 moveq   #0,d2
                 moveq   #0,d3
                 jsr     dos_sendpkt
+                bsr     rcli_free            ; then the CLI ends as on 1.3: number 1 free for the next Shell
+                bra     rcli_exit
 .loop:
                 move.l  #sh_prompt,a4        ; prompt ">"
                 move.l  #sh_prompt_len,d4

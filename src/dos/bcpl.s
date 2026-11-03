@@ -1386,12 +1386,9 @@ rt_createproc:
         movem.l d1-d2/a0-a1/a3/a6,-(sp)
         move.l  ($4).w,a6
         move.l  d1,d2                ; d2 = GV
-        moveq   #32,d0               ; C name (lives as long as the process)
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq     .cp_fail
-        move.l  d0,a0
+        lea     -32(sp),sp           ; C name, copied by proc_create into the process block
+        move.l  sp,a0
+        clr.b   (a0)
         move.l  d4,d1
         lsl.l   #2,d1
         beq.s   .cp_named
@@ -1406,15 +1403,15 @@ rt_createproc:
         move.b  (a1)+,(a0)+
 .cp_ncpy:
         dbra    d1,.cp_nlp
+        clr.b   (a0)
 .cp_named:
-        move.l  d0,-(sp)             ; C name (freed if the creation fails)
-        move.l  d0,a0
+        move.l  sp,a0
         jsr     LVO_FORBID(a6)
         lea     bcpl_proc_entry(pc),a1
         move.l  d7,d0
         move.l  d6,d1
         jsr     proc_create          ; d0 = &pr_MsgPort | 0
-        move.l  (sp)+,a3             ; (Permit may clobber a0/a1)
+        lea     32(sp),sp
         tst.l   d0
         beq.s   .cp_failp
         move.l  d0,a0
@@ -1433,10 +1430,6 @@ rt_createproc:
         bra.s   .cp_ret
 .cp_failp:
         jsr     LVO_PERMIT(a6)
-        move.l  a3,a1
-        moveq   #32,d0
-        jsr     LVO_FREEMEM(a6)
-.cp_fail:
         moveq   #103,d0
         bsr     rt_setr2
         moveq   #0,d0
@@ -1708,11 +1701,9 @@ bcpl_execute:
         lea     16(sp),sp
         move.l  (sp)+,PR_SEGLIST(a3)
         move.l  DOS_DOSBASE,a6
-        tst.l   d2
-        bpl.s   .ex_owned               ; the created CLI owns the output
-        move.l  d3,d1
-        beq.s   .ex_owned
-        jsr     DOS_LVO_CLOSE(a6)
+        move.l  d3,d1                   ; the "*" opened here: Execute returns once the CLI has read its input to
+        beq.s   .ex_owned               ; the end, and a CLI created by Run leaves the output it was given open
+        jsr     DOS_LVO_CLOSE(a6)       ; (a Workbench Shell window closes after EndCLI only then)
 .ex_owned:
         move.l  d4,d1
         jsr     DOS_LVO_UNLOADSEG(a6)

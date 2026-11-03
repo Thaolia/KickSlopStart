@@ -18,6 +18,7 @@
                 xref    task_alloc           ; exec/tasks.s
 
 ; proc_create(a6=SysBase, a0=name, a1=entryPC, d0=priority.b, d1=stack size) -> d0 = APTR &pr_MsgPort | 0.
+; The name is copied (31 characters at most) after the Process, in the same tc_MemEntry block (PRX_*, dospkt.i).
 proc_create:
                 movem.l d2-d4/a2-a4,-(sp)
                 move.l  a0,a2                ; a2 = name
@@ -26,13 +27,19 @@ proc_create:
                 move.l  d1,d4                ; d4 = stack size
                 addq.l  #7,d4
                 and.w   #-8,d4
-                move.l  #PR_SIZEOF,d0        ; Process + stack described in tc_MemEntry (RemTask will free them)
+                move.l  #PRX_SIZE,d0         ; Process + name + segarray room + stack in tc_MemEntry (RemTask frees them)
                 move.l  d4,d1
                 jsr     task_alloc
                 tst.l   d0
                 beq     .fail
                 move.l  d0,a4                ; a4 = Process (= base Task)
-                move.l  a2,LN_NAME(a4)
+                lea     PRX_NAME(a4),a0
+                move.l  a0,LN_NAME(a4)
+                moveq   #PRX_NAMEMAX-2,d0
+.name:
+                move.b  (a2)+,(a0)+
+                dbeq    d0,.name
+                clr.b   (a0)
                 move.b  d3,LN_PRI(a4)
                 move.b  #NT_PROCESS,LN_TYPE(a4)
                 move.l  #SYS_SIGALLOC,TC_SIGALLOC(a4)   ; bits 0-15 reserved (including DOS_PORTSIG=8)

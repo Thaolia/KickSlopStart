@@ -972,6 +972,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Blitter masks, issue #15 (2026-11-02)**: BLTAFWM/BLTALWM = $FFFF at graphics init; the Kefrens Desert Dream
   spaceship is drawn again. Other blitter registers 1.3 leaves behind are not known (oracle probe if a program needs
   one).
+  **Workbench Shells, issue #13 (2026-11-02)**: EndCLI closes the window, the first Shell is number 1, a second
+  Shell after an EndCLI no longer crashes (stale console read, CreateProc block freed twice), 48 bytes per Shell
+  cycle (1.3: 56). Open: per-Shell cost ~52 KB vs 33-40 KB on 1.3 (CP_STKEXTRA 4 KB per BCPL stack; 1.3 refresh
+  type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
   **Custom bootblocks (2026-11-02)**: the strap jumps to the entry the bootblock returns in A0 and runs the
   boot code with the interrupts enabled. Tintin on the Moon reaches its game (it started AmigaDOS), Spaceballs
   "State of the Art" starts (white screen before); Zool, Kefrens Desert Dream, Workbench 1.3.3 and Lemmings

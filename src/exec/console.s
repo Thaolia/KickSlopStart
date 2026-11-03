@@ -169,9 +169,23 @@ console_close:
         move.l  d0,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
+        move.l  4(sp),a0             ; reads still pending on this unit are unhooked without a reply: a handler
+        lea     CONB_RQ(a0),a0       ; that closes without AbortIO (Newcon-Handler) leaves one, on its stack
+        move.l  (sp),d0
+.cc_rq:
+        move.l  (a0),d1
+        beq.s   .cc_rqd
+        move.l  d1,a1
+        cmp.l   IO_UNIT(a1),d0
+        bne.s   .cc_rqn
+        move.l  (a1),(a0)
+        bra.s   .cc_rq
+.cc_rqn:
+        move.l  a1,a0
+        bra.s   .cc_rq
+.cc_rqd:
         move.l  4(sp),a0             ; a0 = console base: unit removed from CONB_UNITS
         lea     CONB_UNITS(a0),a0
-        move.l  (sp),d0
 .cc_find:
         move.l  (a0),d1
         beq.s   .cc_gone

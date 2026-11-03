@@ -1518,6 +1518,14 @@ differs.
   - Blitter masks (issue #15): graphics init sets BLTAFWM/BLTALWM to $FFFF. Our drawing uses the CPU, so nothing
     else wrote them; the 1.3 blits leave them at $FFFF (inferred: Kefrens Desert Dream draws its spaceship with
     blitter lines without setting the masks, and shows it on 1.3).
+  - Workbench Shells (issue #13, spec dos-cli-v34): Execute closes the "*" output it opened once the CLI has read its
+    input to the end, so EndCLI closes a Shell window; the boot CLI ends after the startup-sequence's EndCLI
+    (`rcli_free` + RemTask), so the first Shell is number 1; console.device CloseDevice unhooks the reads still
+    pending on the closing unit (Newcon-Handler closes without AbortIO, its request lived on its dead stack);
+    proc_create copies the process name into its own tc_MemEntry block, followed by room for a segarray that dos
+    CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
+    (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
+    against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
   - strap: the bootblock runs with the interrupts enabled (supervisor, IPL 0, previous SR restored after), and
     the strap returns the entry point the bootblock gives in A0. When it is dos.library's rt_Init, dos starts on
     DF0: as before; anything else is a game or demo loaded by its own bootblock, entered in supervisor at IPL 0
