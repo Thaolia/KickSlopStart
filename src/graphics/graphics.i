@@ -4,6 +4,7 @@
 
 ; --- display registers (absolute addresses; HRM) ---
 COP1LC   EQU CUSTOM+$080      ; Copper list 1 pointer (longword; reloaded by the hardware at every VBlank)
+VPOSR    EQU CUSTOM+$004      ; beam position high bits; bit 15 = LOF (long frame)
 COPJMP1  EQU CUSTOM+$088      ; strobe: (re)starts the Copper on COP1LC (write strobe, value ignored)
 COP2LC   EQU CUSTOM+$084      ; Copper list 2 pointer (copinit jumps to it through a MOVE COPJMP2)
 COPJMP2  EQU CUSTOM+$08A
@@ -74,6 +75,7 @@ M4C2_NO_MRGCOP EQU 0
 ; --- graphics structure offsets (view.i/gfx.i; base fields, stable in V34) ---
 v_ViewPort   EQU 0            ; View
 v_LOFCprList EQU 4
+v_SHFCprList EQU 8            ; short-frame list (interlace only)
 v_DyOffset   EQU 12
 v_DxOffset   EQU 14
 v_Modes      EQU 16
@@ -196,6 +198,7 @@ LVO_CHANGESPRITE EQU -420
 LVO_MOVESPRITE EQU -426
 V_HIRES       EQU $8000        ; vp_Modes: high resolution (640 px)
 VP_HIDE       EQU $2000        ; vp_Modes: ViewPort hidden behind another screen
+V_LACE        EQU $0004        ; v_Modes / vp_Modes: interlace
 
 ; --- GfxBase: public V34 layout (graphics/gfxbase.i) then private fields beyond ---
 gb_ActiView  EQU 34           ; APTR: active View (set by LoadView)
@@ -272,9 +275,10 @@ ci_Word2     EQU 4               ; DestData / HWaitPos
 CI_SIZEOF    EQU 6
 GFX_FRAG_SIZE  EQU GFX_FRAG_WORDS*2
 GFX_SPRCOP_SIZE EQU 8*2*4            ; SPR0PTH/L..SPR7PTH/L: 16 MOVEs added by MrgCop
-; Master list (v_LOFCprList) = SPRCOP + one translated fragment per merged ViewPort + final WAIT. Its chip block
-; starts with its size in bytes (long), v_LOFCprList points just after it (FreeCprList reads it back).
-GFX_MASTER_FIXED EQU 4+GFX_SPRCOP_SIZE+4
+; Master list (v_LOFCprList) = SPRCOP + one translated fragment per merged ViewPort + (interlace) COP2LCH/L to the
+; other frame's list + final WAIT. Its chip block starts with its size in bytes (long), v_LOFCprList points just
+; after it (FreeCprList reads it back). An interlaced View's v_SHFCprList has the same size and layout.
+GFX_MASTER_FIXED EQU 4+GFX_SPRCOP_SIZE+8+4
 
 ; --- Layout of the structure block AllocMem'd by gfx_display_init ---
 GFX_O_VIEW     EQU 0

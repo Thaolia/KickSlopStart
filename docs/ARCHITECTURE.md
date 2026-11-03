@@ -1538,6 +1538,14 @@ differs.
     ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
     header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
     not interleaved by line (ViewPorts do not overlap).
+  - Interlace (graphics-display §4.2-§5.2): a LACE ViewPort counts its fragment lines in interlaced lines (lead-in
+    and top doubled, DHeight as is) and MrgCop halves vp.DyOffset + v. BPLCON0 carries the View's LACE bit; with
+    View and vp LACE the modulo adds BytesPerRow (gfx_lacemod, also in ScrollVPort). An interlaced View gets
+    v_SHFCprList, a word-for-word copy of the long-frame list whose LACE ViewPorts' plane pointers are one row
+    further (gfx_mkshf); each list ends with MOVE COP2LCH/L to the other. LoadView publishes gb_SHFlist and the
+    sprite MOVEs of both lists; the VBlank server loads gb_SHFlist on short frames (VPOSR bit 15 clear).
+    SetRGB4, ScrollVPort and ChangeSprite's list patch reach the short-frame list at the same offset
+    (gfx_shfpos). Deviation: ScrollVPort does not reproduce 1.3's frame swap.
   - Several screens on display (issue #19, intuition-screens §5.2/§5.3/§8.3): it_remake chains every screen's
     ViewPort in list order and lays them out in interlaced lines: the front screen whole, each following one cut
     3 lines above the visible screen in front of it or hidden (VP_HIDE); DyOffset = TopEdge; MakeVPort of the
@@ -1545,7 +1553,9 @@ differs.
     (the screen of the window during a gesture) and subtracts its TopEdge. A left click on a screen's title bar
     (left of its depth gadgets, not on a window other than a backdrop) starts a drag (IB_SDRAG): each vertical
     move calls MoveScreen; the pointer handler freezes X and keeps Y at or below IB_YMIN (the grab point, or the
-    top of the highest visible screen outside a drag).
+    top of the highest visible screen outside a drag). The View is LACE when a visible screen is (§5.1, a first
+    pass of it_remake). The pointer still moves in non-interlaced lines: it_scrpos doubles its Y on a LACE screen
+    before subtracting TopEdge, and a LACE screen's drag moves it by twice the pointer delta.
   - Screen system gadgets (intuition-screens §4, §8.1): OpenScreen (sc_mkgads) puts SUPFRONT, SDOWNBACK and
     SDRAGGING Gadget structures at the head of Screen.FirstGadget, then NewScreen.Gadgets; sc_free frees the
     SYSGADGET ones. A left click on the bar layer hit-tests that list (sc_gadat, depth gadgets first): SDRAGGING

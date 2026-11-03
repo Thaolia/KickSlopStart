@@ -656,9 +656,10 @@ intuition_RemakeDisplay:
 ; it_remake(a5 = IntuitionBase): every screen's ViewPort in ib_ViewLord, in screen-list order, laid out as in
 ; intuition-screens §5.2 (lengths in interlaced lines, "le"): the front screen is whole; each following one ends 6 le
 ; (3 lines) above the top of the visible screen in front of it (DHeight cut, at most its Height), or is hidden
-; (VP_HIDE) if it starts at that level or lower. DyOffset = TopEdge. MakeVPort of the visible ones, MrgCop,
-; LoadView. Outside a screen drag, the pointer may not go above the highest visible screen (IB_YMIN, §5.3). No
-; screen: display off. Preserves everything but d0/d1/a0/a1.
+; (VP_HIDE) if it starts at that level or lower. DyOffset = TopEdge. The View is interlaced when a visible
+; screen is LACE (§5.1). MakeVPort of the visible ones, MrgCop, LoadView. Outside a screen drag, the pointer may
+; not go above the highest visible screen (IB_YMIN, §5.3). No screen: display off. Preserves everything but
+; d0/d1/a0/a1.
 it_remake:
         movem.l d2-d4/a2/a4/a6,-(sp)
         lea     IB_VIEWLORD(a5),a2
@@ -673,6 +674,24 @@ it_remake:
         move.w  SC_HEIGHT(a4),d0
         bsr     .rm_le2
         add.w   d0,d3                ; d3 = L: bottom of the front screen
+        move.w  d3,d1
+        and.w   #~V_LACE,v_Modes(a2)
+.rm_gl:
+        bsr     .rm_le
+        cmp.w   d1,d0
+        bge.s   .rm_gn
+        move.w  d0,d1
+        subq.w  #6,d1
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
+        beq.s   .rm_gn
+        or.w    #V_LACE,v_Modes(a2)
+.rm_gn:
+        move.l  SC_NEXTSCREEN(a4),d0
+        beq.s   .rm_gd
+        move.l  d0,a4
+        bra.s   .rm_gl
+.rm_gd:
+        move.l  IB_FIRSTSCREEN(a5),a4
         moveq   #0,d4                ; d4 = top of the last visible screen (le)
 .rm_scr:
         lea     SC_VIEWPORT(a4),a1
@@ -3064,7 +3083,12 @@ it_scrxy:
         move.w  SC_VIEWPORT+vp_Modes(a4),d0
         and.w   #VP_HIDE,d0
         bne.s   .sx_nx
-        cmp.w   SC_TOPEDGE(a4),d5
+        move.w  d5,d0
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
+        beq.s   .sx_cmp
+        add.w   d0,d0                ; LACE screen: TopEdge in interlaced lines
+.sx_cmp:
+        cmp.w   SC_TOPEDGE(a4),d0
         bge.s   .sx_got
 .sx_nx:
         move.l  SC_NEXTSCREEN(a4),d0
@@ -3073,13 +3097,23 @@ it_scrxy:
         move.l  d0,a4
         move.l  WD_WSCREEN(a4),a4
 .sx_got:
-        sub.w   SC_TOPEDGE(a4),d5
-        tst.w   SC_VIEWPORT+vp_Modes(a4)
-        bpl.s   .sx_lo
-        add.w   d4,d4
-.sx_lo:
+        bsr.s   it_scrpos
         moveq   #1,d0                ; Z = 0
 .sx_ret:
+        rts
+
+; it_scrpos(a4 = screen, d4.w/d5.w = pointer) -> d4/d5 in this screen's pixels and lines: x doubled if HIRES, y
+; doubled if LACE (the pointer moves in lores pixels and non-interlaced lines), minus TopEdge. Preserves the rest.
+it_scrpos:
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
+        beq.s   .sp_y
+        add.w   d5,d5
+.sp_y:
+        sub.w   SC_TOPEDGE(a4),d5
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .sp_x
+        add.w   d4,d4
+.sp_x:
         rts
 
 ; it_alive(a3 = window, a5 = IntuitionBase) -> Z = 1 if the window is no longer in any screen's list (CloseWindow
@@ -3291,7 +3325,12 @@ it_sbar:
         move.w  PTR_X,IB_SDRAGX(a5)
         move.w  PTR_Y,d0
         move.w  d0,IB_SDRAGY(a5)
-        sub.w   SC_TOPEDGE(a4),d0
+        move.w  SC_TOPEDGE(a4),d1
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
+        beq.s   .sg_ymin
+        asr.w   #1,d1                ; LACE: TopEdge in interlaced lines
+.sg_ymin:
+        sub.w   d1,d0
         move.w  d0,IB_YMIN(a5)
         st      IB_TRACK(a5)         ; the movements reach the input task
         moveq   #1,d0
@@ -3312,11 +3351,7 @@ it_sgadbtn:
         bsr     sc_gadinv
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
-        sub.w   SC_TOPEDGE(a4),d5
-        tst.w   SC_VIEWPORT+vp_Modes(a4)
-        bpl.s   .gu_lo
-        add.w   d4,d4
-.gu_lo:
+        bsr     it_scrpos
         bsr     sc_gadat
         beq.s   .gu_out
         cmp.l   (sp)+,a0
@@ -3352,6 +3387,10 @@ it_domove:
         beq.s   .dm_ret
         move.w  d5,IB_SDRAGY(a5)
         move.l  d0,a0
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a0)
+        beq.s   .dm_ms
+        add.w   d1,d1                ; LACE screen: interlaced lines
+.dm_ms:
         move.l  a6,-(sp)
         move.l  a5,a6
         bsr     intuition_MoveScreen

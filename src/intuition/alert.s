@@ -18,7 +18,6 @@ AL_W            EQU 640              ; alert width (hires pixels)
 AL_BPR          EQU AL_W/8
 AL_BLINK        EQU 46               ; frames per phase of the frame blinking
 AL_TOP          EQU $2C              ; first displayed line (DIWSTRT)
-VPOSR           EQU CUSTOM+$004
 VHPOSR          EQU CUSTOM+$006
 POTGOR          EQU CUSTOM+$016
 DMACONR         EQU CUSTOM+$002
