@@ -1515,6 +1515,9 @@ differs.
     cache buttons on a 68000); OnGadget/OffGadget redraw from the gadget to the end of the list, without erasing.
     Disabled menu titles and items use the same pattern in the menu window's BlockPen, rotated so that its x phase
     is the screen's (`mn_ghost`); test `tests/ghost_test.s`.
+  - Blitter masks (issue #15): graphics init sets BLTAFWM/BLTALWM to $FFFF. Our drawing uses the CPU, so nothing
+    else wrote them; the 1.3 blits leave them at $FFFF (inferred: Kefrens Desert Dream draws its spaceship with
+    blitter lines without setting the masks, and shows it on 1.3).
   - strap: the bootblock runs with the interrupts enabled (supervisor, IPL 0, previous SR restored after), and
     the strap returns the entry point the bootblock gives in A0. When it is dos.library's rt_Init, dos starts on
     DF0: as before; anything else is a game or demo loaded by its own bootblock, entered in supervisor at IPL 0

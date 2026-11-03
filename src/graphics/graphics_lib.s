@@ -257,7 +257,10 @@ graphics_initfunc:
         lea     gb_BlitSem(a2),a0
         jsr     LVO_INITSEMAPHORE(a6)
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter permanently enabled, like 1.3: a
-        jsr     gfx_fontinit         ; program that saves then restores DMACON must find it again
+                                     ; program that saves then restores DMACON must find it again
+        move.l  #-1,CUSTOM+$044      ; BLTAFWM/BLTALWM = $FFFF, as the 1.3 blits leave them: our drawing uses the
+                                     ; CPU, and demos that draw lines with the blitter rely on the masks (Kefrens)
+        jsr     gfx_fontinit
         moveq   #GFX_COPINIT_SIZE,d0 ; copinit (COP1LC): wait for line 12 then jump to COP2LC
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)

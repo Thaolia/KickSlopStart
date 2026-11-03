@@ -969,6 +969,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   unknown), screens below the front one are not displayed (MoveScreen only updates the
   fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
+  **Blitter masks, issue #15 (2026-11-02)**: BLTAFWM/BLTALWM = $FFFF at graphics init; the Kefrens Desert Dream
+  spaceship is drawn again. Other blitter registers 1.3 leaves behind are not known (oracle probe if a program needs
+  one).
   **Custom bootblocks (2026-11-02)**: the strap jumps to the entry the bootblock returns in A0 and runs the
   boot code with the interrupts enabled. Tintin on the Moon reaches its game (it started AmigaDOS), Spaceballs
   "State of the Art" starts (white screen before); Zool, Kefrens Desert Dream, Workbench 1.3.3 and Lemmings
