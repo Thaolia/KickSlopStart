@@ -1,4 +1,4 @@
-# Audit clean-room — 2026-10-29
+# Audit clean-room — 2026-10-29, remesuré le 2026-11-03
 
 *English version: [AUDIT.md](AUDIT.md).*
 
@@ -36,7 +36,7 @@ tous. La méthode est donc capable de détecter une copie.
 
 | Comparaison | Plus longue correspondance de code | Couverture des correspondances ≥ 8 mots |
 |---|---|---|
-| **notre ROM / ROM d'origine** | **20 mots / 13 instructions** | 0,69 % (≥ 16 mots : 0,09 % ; ≥ 32 mots : 0) |
+| **notre ROM / ROM d'origine** (2026-11-03) | **19 mots / 13 instructions** | 1,06 % (≥ 16 mots : 0,24 % ; ≥ 32 mots : 0,18 %, les tables de chaînes des keymaps) |
 | jeux sans rapport / ROM d'origine (référence) | 39 mots / 18 instructions | — |
 | code Commodore du Workbench / ROM d'origine (code apparenté) | 121 mots / 96 instructions | 3,8 % |
 | notre ROM / ROM AROS | 12 mots / 8 instructions | — |
@@ -46,6 +46,10 @@ tous. La méthode est donc capable de détecter une copie.
 - La table de positions des caractères d'une police à chasse fixe de 8 pixels. C'est une simple progression
   arithmétique, et la ROM AROS contient la même table.
 - Les dessins des glyphes, eux, **ne** correspondent **pas**.
+- Les tables de chaînes des keymaps (76 mots), dont la disposition est fixée par l'ABI des keymaps (voir la PR #9 dans
+  `docs/audit/pr-9.md`).
+- Sous le seuil, mais plus longue que tout code : la table des 32 couleurs par défaut d'une ColorMap (32 mots), que les
+  programmes relisent avec `GetRGB4`.
 
 **Verdict :** aucune reprise de code du Kickstart 1.3 n'est mesurée. Notre plus longue correspondance de code est plus
 courte que celle de jeux sans aucun rapport avec la ROM d'origine.
@@ -142,5 +146,6 @@ python3 -I tests/audit_aros_similarity.py src <clone-aros>
 Les deux outils n'affichent que des statistiques et des emplacements dans le premier argument (notre code), jamais le
 contenu de la référence.
 
-Mesures faites sur les builds du commit `ec9f9ab` (2026-10-29). Les corrections listées ci-dessus sont postérieures à
-la mesure ; elles ne font qu'éloigner davantage nos données de l'original.
+Mesures faites sur les builds du commit `ec9f9ab` (2026-10-29), puis refaites sur le commit `2c6b1c6` (2026-11-03,
+v0.2.15) avec les mêmes contrôles : même verdict pour les deux comparaisons (détails dans les sections « Re-run
+2026-11-03 » de [rom-similarity.md](audit/rom-similarity.md) et [aros-similarity.md](audit/aros-similarity.md)).

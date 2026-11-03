@@ -10,6 +10,8 @@ matches are located only in **our** ROM.
 
 ## Verdict
 
+*Re-measured on 2026-11-03 (commit `2c6b1c6`): same verdict, see "Re-run 2026-11-03" below.*
+
 - **No code sequence of our ROM coincides with the original ROM beyond what unrelated
   programs already share with it.** The longest code match in our ROM
   is **20 16-bit words (13 instructions)**. A corpus of third-party games and utilities unrelated
@@ -293,6 +295,116 @@ The `instr-souple` stream has twelve code matches of 8 to 13 instructions, inclu
 - the observable default values (palette, preferences).
 
 The tool classifies them as `texte` (text), `RomTag`, `table d'adresses` (address table), `faible entropie` (low entropy) or `en-tête/pied ROM` (ROM header/footer).
+
+## Re-run 2026-11-03 (commit `2c6b1c6`, tag `v0.2.15`)
+
+The measurement was repeated on the current tree, 69 commits after `ec9f9ab` (intuition screens and gadgets,
+graphics ViewPorts and interlace, exec scheduling and 68010/68020 frames, dos/LoadSeg, keymaps, expansion...). Same
+tool, same controls, same `--base tiers`, run by a separate analysis agent.
+
+### Inputs
+
+| role | file | size | sha1 |
+|---|---|---|---|
+| our ROM (production) | `build/kick13-prod.rom` (`make kick-prod`, `romtool info`: `is_kick ok`, checksum ok) | 262,144 bytes | `f47ae41c84e31f849916bfc26bdd2477ebec0a9f` |
+| our ROM (dev) | `build/kick13.rom` (`make`) | 262,144 bytes | `cf27324bff8c93768eecda44b32ac8e14397faac` |
+| reference | unchanged | 262,144 bytes | `891e9a547772fe0c6c19b610baf8bc4ea7fcb785` |
+
+- **Symbol tables.** Relink of the objects with the object list of "Exact commands" (still the `Makefile` order),
+  into `build/audit/kick-prod.map` and `build/audit/kick-dev.map`. Each relinked binary (216,664 bytes prod,
+  217,720 bytes dev) is byte-for-byte identical to the `kick.bin` of its build. It differs from the first bytes of
+  the ROM only in the 21 bytes of the version string that `mkrom.py --id` now writes into the ID field at
+  `$1C` (`KickSlopStart v0.2.15`); the `cmp` of "Exact commands" therefore reports that field, and nothing else.
+- **Controls.** Same files as in the "Controls" table. The `aros` group comes from
+  `assets/test_adf/bootdisk-amiga-m68k.adf` (`boot/amiga/aros.rom.gz`, `boot/amiga/AROSBootstrap`, `C/`, `Libs/`):
+  it gives exactly the recorded 50 hunks / 1,167,084 bytes. (The other AROS disk of the folder,
+  `aros-bootdisk-amiga-m68k.adf`, is a different build: 1,171,944 bytes.) The `tiers` (21 hunks, 596,048 bytes) and
+  `commodore` (390 hunks, 413,374 bytes) groups are identical to the original audit.
+- **Reproducibility check.** The three control rows "tiers / commodore / aros vs reference" are identical, figure
+  for figure, to the original tables in all three streams. The notable threshold is therefore unchanged:
+  **40 words, 19 instructions, 19 loose instructions**.
+
+### Commands
+
+```sh
+make && make kick-prod && romtool info build/kick13-prod.rom          # is_kick ok
+mkdir -p build/audit
+# OBJS: list of "Exact commands"; d = build/prod (prod) or build (dev)
+vlink -b rawbin1 -T src/exec/kick.ld -Mbuild/audit/kick-prod.map -o build/audit/kick-prod.bin $L
+cmp build/audit/kick-prod.bin build/prod/kick.bin                      # identical
+xdftool "assets/test_adf/<adf>" unpack build/audit/adf/<name>          # lemmings, monkey, simcity, sysinfo, wb133, aros2
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom assets/kick34005.A500 \
+    --temoin tiers <tiers files> --temoin commodore <Workbench files> \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map build/audit/kick-prod.map --base tiers --selftest            # -> build/audit/audit-prod.txt
+# same for the dev ROM (-> audit-dev.txt); full list of matches >= 8 tokens:
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom assets/kick34005.A500 \
+    --map build/audit/kick-prod.map --seuil 8                          # -> build/audit/all8-prod.txt
+```
+
+### Figures (production ROM vs reference)
+
+| stream | metric | 2026-10-29 (`ec9f9ab`) | 2026-11-03 (`2c6b1c6`) | threshold |
+|---|---|---|---|---|
+| mots | A tokens | 96,875 | 105,138 | |
+| mots | max (all) | 218 | 218 | |
+| mots | max code/table | 20 | 76 (keymap string tables, see below) | 40 |
+| mots | max code, hand-qualified data excluded | 20 | **19** (`exp_cpbinding+$22`) | |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 71 (0.69%) / 5 (0.09%) / 0 | 103 (1.06%) / 7 (0.24%) / 3 (0.18%) | |
+| mots | 4/8/16-gram | 2.4 / 0.8 / 0.3% | 2.7 / 0.9 / 0.4% | |
+| instr | max code/table | 13 | 17 (keymap string tables) | 19 |
+| instr | max code, data excluded | 13 | **13** (`exp_cpbinding+$22`) | |
+| instr | code ≥ 8 / ≥ 16 | 4 (0.06%) / 0 | 7 (0.12%) / 2 (0.05%) | |
+| instr-souple | max code/table | 13 | 17 (keymap string tables) | 19 |
+| instr-souple | code ≥ 8 / ≥ 16 | 12 (0.18%) / 0 | 16 (0.24%) / 2 (0.05%) | |
+| self-check | relocated fragments found | 12/12 | 12/12 | |
+
+The rows "our ROM vs tiers / commodore / aros" move by a few matches at most (`mots` code ≥ 8 against `commodore`:
+44 instead of 34; against `aros`: 34 instead of 31), with unchanged maxima (10, 11 and 12 words). The dev ROM gives
+the same maxima (76 / 17 / 17) and the same notable list, give or take address shifts.
+
+### Matches at or above the notable threshold
+
+- **instr / instr-souple (19):** no code/table match. The two low-entropy rows (`rf_outline+$44`, `draw.o`;
+  `bcpl_rtdata+$8`, `bcpl.o`) are unchanged.
+- **mots (40 words):** the two code/table matches are `km_us_s42+$0` (`$0C150`) and `km_fr_s42+$0` (`$0C488`),
+  `src/exec/keymapdata.s`, 76 words: the keymap string tables already qualified in "Update 2026-10-30" (generated
+  by `tests/mk_keymaps.py`). The nine classified data rows are the seven of the original table (five inittabs,
+  `topaz8_loc`, `dos_rtinit+$42`) plus `km_us_himap+$18` and `km_fr_himap+$18` (`keymapdata.o`, 40 words each,
+  address tables: the pointer arrays of the keymap descriptors, reduced to `ADDR` tokens), already present at the
+  PR #9 audit.
+
+### New matches above the original longest code match (20 words / 13 instructions)
+
+| offset | address | words | instr. | symbol | source | nature |
+|---|---|---|---|---|---|---|
+| `$1054E` | `$FD054E` | 32 | — | `gfx_defcolors+$0` | `src/graphics/graphics_lib.s` | default colour table of a new ColorMap, 32 entries, the whole table: observable through `GetColorMap`/`GetRGB4`, already inventoried as reproduced ROM data in `docs/audit/specs-review.md` (`graphics-display-v34.md`, case (i)). Data, below the 40-word threshold |
+
+No **code** match is longer than 13 instructions or 19 words; the longest is still `exp_cpbinding+$22`
+(`src/exec/expansion.s`), unchanged. `mn_chk_hi` (20 words in the original table) is now classified `texte` by the
+tool, with the same length.
+
+### Other new code matches of the `mots` list (≥ 10 words, all below the baseline)
+
+| offset | words | instr. | symbol | source | nature |
+|---|---|---|---|---|---|
+| `$0ADF0` | 15 | — | `input_end+$C` (start of `console.o`) | `src/exec/console.s` | end of the console.device RomTag + public name |
+| `$07636` | 14 | 9 | `exec_CloseLibrary+$1C` | `src/exec/library.s` | end of `CloseLibrary`, then `Forbid` and the start of `Permit`: increment/test of the public `TDNestCnt`/`IDNestCnt`/`SysFlags` fields of ExecBase; `Forbid` is the public `FORBID` macro of `exec/ables.i` |
+| `$26896` | 12 | — | `it_intask+$7C` | `src/intuition/screens.s` | event dispatch of the intuition input task: a run of subroutine-call/branch pairs whose displacements the normalisation erases, hence partly classified low entropy |
+
+The `instr-souple` list ≥ 8 tokens has four more entries than in the original audit: `exec_CloseLibrary+$1C` above,
+the two keymap string tables, and `pg_alloc+$1C` (`src/exec/potgo.s`, 8 tokens: shift/complement/mask arithmetic on the allocated POTGO bits, whose DATxx/OUTxx pairing is fixed by the
+register).
+All loose code matches are at most 10 tokens, except the keymap data (17) and `exp_cpbinding` (13).
+
+### Verdict 2026-11-03
+
+**PASS.** No code match reaches the notable threshold (19 instructions / 40 words). The only code/table matches
+above it are the keymap string tables, data mandated by the documented CSI sequences and already reviewed. The
+longest code match is unchanged (13 instructions, 19 words, `exp_cpbinding`); the only new match longer than the
+original baseline is an observable data table (`gfx_defcolors`, 32 words). The controls are reproduced exactly and
+the self-check finds 12 fragments out of 12.
 
 ## Limits: what the measurement proves and does not prove
 

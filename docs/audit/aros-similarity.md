@@ -10,6 +10,8 @@ AROS is a public project (APL licence). Both sides are therefore quoted freely, 
 
 ## Verdict
 
+*Re-measured on 2026-11-03 (commit `2c6b1c6`, all of `src/`): same verdict, see "Re-run 2026-11-03" below.*
+
 - **No measurable reuse of AROS code beyond the background noise, with one exception, short and
   mandated by the ABI.** At the 20-token threshold, 132 tokens out of 221,721 (0.06%) coincide textually
   with the AROS assembly. At the 30-token threshold, 69 remain (0.03%), in **only two
@@ -364,6 +366,144 @@ attributed to the AutoDoc. If it comes from the AROS AutoDoc and not from the Co
 fix the attribution, or to rephrase it in French.
 
 *Follow-up (2026-10-29): the quotation was removed from `src/dos/dos_lib.s` and replaced by a plain comment.*
+
+## Re-run 2026-11-03 (commit `2c6b1c6`, tag `v0.2.15`)
+
+The measurement was repeated over **all of `src/`** (the procedure of this document), 69 commits after `ec9f9ab`,
+by a separate analysis agent. Same tool, same AROS commit, same options.
+
+### Inputs
+
+| Item | Value |
+|---|---|
+| Our code | `src/` at commit `2c6b1c6`, clean tree; 76 `.s`/`.i` files (the new one is `src/softkick/bootblock.s`), 248,319 tokens (exact level, +12% since `ec9f9ab`), 209,420 at the norm/struct levels |
+| AROS | same commit `4dbf6509f4fea9a48643ec39565f60c9a6acac9a`, same sparse subtrees, cloned into `build/audit/aros` |
+| Corpora | unchanged: comparable AROS asm 65 files / 22,757 tokens; unrelated asm 202 files / 374,229 tokens; third-party Amiga 86 files / 52,214 tokens; 2,439 + 1,308 C files; 599 whitelist files, 30,249 ABI identifiers |
+
+```sh
+python3 -I tests/audit_aros_similarity.py src build/audit/aros -k 12 20 30 --limit 20 \
+    --json build/audit/aros-audit.json > build/audit/aros-audit.md
+# full lists of shared comments, identifiers and constants (same tool, larger limit):
+python3 -I tests/audit_aros_similarity.py src build/audit/aros -k 20 --levels exact --draws 1 --limit 300 \
+    --json build/audit/aros-full.json > build/audit/aros-full.md
+```
+
+The rows that do not depend on our code ("BASELINE: comparable AROS → third-party Amiga", all levels and k) are
+identical to the original table, which confirms the same corpora.
+
+### asm vs asm: coverage of our code (% of tokens), 2026-11-03
+
+Previous values (`ec9f9ab`) in parentheses.
+
+| k | level | src → comparable AROS | src → equal-size baseline (third-party Amiga) | src → third-party Amiga (52 k tokens) | src → all unrelated asm (374 k) | BASELINE: comparable AROS → third-party Amiga |
+|---|---|---|---|---|---|---|
+| 12 | exact | 2.858 (2.876) | 1.601 [1.081–2.061] | 2.670 (2.642) | 3.028 (2.957) | 6.402 |
+| 12 | norm | 6.348 (6.362) | 8.536 [7.268–10.392] | 12.484 (12.751) | 14.069 (14.249) | 13.286 |
+| 12 | struct | 28.206 (28.552) | 33.733 [28.542–39.741] | 42.091 (42.646) | 48.790 (49.337) | 30.073 |
+| 20 | exact | **0.053** (0.060) | 0.003 [0–0.008] | 0.008 (0.009) | 0.047 (0.009) | 0 |
+| 20 | norm | 0.513 (0.517) | 0.425 [0.225–0.731] | 0.830 (0.835) | 0.861 (0.845) | 0.193 |
+| 20 | struct | 3.194 (3.309) | 2.948 [1.694–4.227] | 4.702 (4.939) | 5.746 (5.986) | 2.085 |
+| 30 | exact | **0.028** (0.031) | 0 | 0 | 0.039 (0) | 0 |
+| 30 | norm | 0.124 (0.139) | 0.003 [0–0.015] | 0.015 (0.017) | 0.015 (0.017) | 0 |
+| 30 | struct | 0.584 (0.622) | 0.050 [0–0.078] | 0.093 (0.104) | 0.310 (0.330) | 0.311 |
+
+- **Against comparable AROS, the covered tokens did not grow**: 132 tokens at k = 20 exact and 69 at k = 30 exact,
+  exactly as before, in the same five passages. The percentages fall only because our code grew.
+- **Longest passages, unchanged:** 39 tokens exact (`bcpl_call`, now `src/dos/bcpl.s:55-61`), 42 tokens at the
+  norm and struct levels (the same passage plus the two `bra.s`). Then the 30-token `DateStamp` copy
+  (`src/dos/handler.s:997-999`), `bcpl_ret` (23 tokens, `bcpl.s:63-66`), the double BPTR conversion (20 tokens,
+  `bcpl.s:1938-1942`) and the `movem.l d2-d7/a2-a6` epilogues of `layers.s` (20 tokens): the passages no. 1 to 5 of
+  "Notable matches", moved by a few lines.
+- **New at the struct level, k = 30** (registers and names erased, shape only): 30–35-token passages between
+  function epilogue/prologue pairs (`lea`/`addq` of the stack, `movem.l` restore, `rts`, `movem.l` save) of
+  `intuition/gadgets.s:1645`, `intuition/sysreq.s:123`, `dos/shell.s:289`, `dos/ofs.s:491`, `graphics/gels.s:713`
+  and AROS `callentry.S` / `cachecontrol_.S`; and a character-class test chain in `dos/ofs.s:306` (`sub.b`, `cmp.b`,
+  `bcs`/`bhi`) against `bcpl.S` number parsing. Same nature as passages no. 5 and 6: the Amiga register convention
+  and `cmp`/`branch` chains.
+- **"All unrelated asm" at k = 20/30 exact rises (0.009 → 0.047, 0 → 0.039).** The cause is a single 48-token
+  passage, twice: the zero-filled `dc.l 0,0,0,0` rows of the keymap tables (`src/exec/keymapdata.s:63-68` and
+  `:157-162`) against zero tables of the Motorola 68060 FPSP. Padding, not code.
+
+### Fingerprint overlap per pair of files (maximum), 2026-11-03
+
+| k | exact | norm | struct |
+|---|---|---|---|
+| 12 | 1.45% (`exec/romboot.s` ↔ `bcpl.S`) | 3.33% (`exec/ramlib.s` ↔ `bcpl.S`) | 7.14% (`exec/misc.s` ↔ `bcpl.S`) |
+| 20 | 0.24% (`dos/bcpl.s` ↔ `bcpl.S`) | 0.38% (`dos/bcpl.s` ↔ `bcpl.S`) | 1.79% (`exec/romboot.s` ↔ `cachepredma_.S`) |
+| 30 | 0.08% (`dos/bcpl.s` ↔ `bcpl.S`) | 0.05% (`dos/bcpl.s` ↔ `bcpl.S`) | 0.11% (`graphics/gels.s` ↔ `callentry.S`) |
+
+Same maxima as before, except struct k = 12 (7.14% against 8.57%).
+
+### Comments
+
+- Our comments are now in English (13,708 comment lines: 5,449 identified as English, 74 as French, the rest
+  undetermined). The language bias noted in "Limits" is therefore gone, and the comparison is now meaningful.
+- 66,156 word 5-grams on our side, 169,240 on the AROS side, **102 in common** (4 before, while our comments were in
+  French). All 102 were reviewed (`build/audit/aros-full.json`):
+  - **generic English phrases**, the vast majority: "at the end of the", "to the start of the", "the head of the
+    list", "remove it from the list", "if the screen is not", "the rest of the line"...;
+  - **register lists**: "d0 d1 a0 a1 a2", "d0 d1 a0 a1 a5", "d0 d7 a0 a6 60" (a 15-register frame of 60 bytes);
+  - **public Amiga vocabulary** (RKRM/AutoDoc terms): "parts of a simple layer", "layer in front of which",
+    "contents of the ClipRect's bitmap", "the screen's title bar", "the task's user stack", "Left, Top, Width,
+    Height, Depth" (already listed).
+- The longest common phrases are 6 words. Three were checked against both sources:
+  - `src/graphics/layers.s:547` ("the layer shows the SuperBitMap from its corner (0,0)") ↔
+    `rom/hyperlayers/basicfuncs.c:1202` ("the layer shows the superbitmap from Scroll_X/Y"): a natural description
+    of SUPERBITMAP layers; the rest of the sentences differ;
+  - `src/graphics/layers.s:1198` (`SwapBitsRastPortClipRect`: "swaps the contents of the ClipRect's area...") ↔
+    `rom/hyperlayers/swapbitsrastportcliprect.c:75` ("Display the contents of the ClipRect's BitMap"): the public
+    function name spelt out;
+  - `src/exec/boot.s:820` ("a caller can block itself, the resource does not track owners", attributed to the
+    AutoDoc of `AllocPotBits`) ↔ `arch/m68k-amiga/potgo/freepotbits.c:36` (AROS AutoDoc NOTES: "The resource does
+    not track task ownership"): same fact, four words in common, different sentences.
+- No comment sentence of AROS is reproduced.
+
+### Identifiers
+
+- 9,264 distinct identifiers on our side (8,374 before).
+  - With comparable AROS: 949 in common, 817 of them on the ABI whitelist, **61** outside the ABI (53 before).
+  - With unrelated AROS: 576 in common, 479 ABI, **24** outside the ABI (21 before).
+- All 61 were reviewed; they fall into the same categories as before:
+  - public function names with a module prefix (`exec_openlibrary`, `dos_expunge`, `intuition_open`, `cia_init`,
+    `timer_open`...);
+  - generic words or sizes (`buf_size`, `img_size`, `frame_size`, `.normal`, `.delete`, `task_name`, `msg_fail`,
+    `init_memory`, `resmax`);
+  - lower-case forms of public structure fields and constants (`cr_flags`, `rp_font`, `ib_gfxbase`, `ib_prefs`,
+    `ly_lock`, `ns_type`, `km_name`, `color00`, `tdu_present`, `.findinput`/`.findupdate`/`.diskinfo` after the
+    `ACTION_*` packets);
+  - descriptive names of our trackdisk and Workbench routines (`td_motor_on`, `td_read_track`, `td_select`,
+    `wb_window`, `wb_menupick`, `wb_opendrawer`, `wb_version`) colliding with AROS trackdisk and Workbook names.
+- New since `ec9f9ab`: `cpu_detect` (`src/exec/boot.s:263`, 68010/68020 support) ↔ AROS
+  `arch/m68k-amiga/boot/cpu_detect.S`. The name is descriptive. A dedicated k = 12 run over `exec/boot.s`,
+  `execmisc.s`, `interrupts.s` and `exec.i` finds **no passage** between our routine and `cpu_detect.S`, at any
+  level; the only k = 12 passages of these files against AROS exec are `movem.l` register restores (14 tokens).
+- No distinctive internal AROS name appears.
+
+### Constants
+
+- 904 distinct values on our side, 256 non-trivial (805 / 175 before).
+  - In common with comparable AROS: **26** "magic" ones outside the public headers (22 before).
+  - In common with unrelated AROS: 36 (31 before).
+- The comparable list is still public or trivial: the values of the original review (MFM sync `$4489`/`$44894489`,
+  `'CON\0'`/`'RAW\0'`/`'BAD\0'`/`'BUSY'`/`'HELP'`, `$AD303`, FFP `$80000041`, `$2C81`, `$8240`, the
+  `$DEADBEEF`/`$11111111`/`$8888`/`$2222`/`$F0F0`/`$80008000`/`$30003`/`$20003` patterns), plus:
+  - `$800000C1` (-1.0 in FFP, `src/exec/mathffp.s`), public FFP format;
+  - `$01000200` (`src/intuition/alert.s`, copper move of BPLCON0) and `$F4C1` (`graphics_lib.s`, standard DIWSTOP):
+    custom register values from the HRM;
+  - `$40C0` (`interrupts.s`): the public opcode of `move.w sr,Dn`, tested for 68010 privilege handling;
+  - `$8100` (`pointer.s`, a row of our own pointer image), `$4444` (`gadgets.s`, a fill pattern) and `$B2B2B2B2`
+    (`keymapdata.s`, keymap bytes): coincidences, each found in a single AROS file with an unrelated purpose.
+- No AROS-specific private constant.
+
+### Notable matches and verdict 2026-11-03
+
+- The notable matches are the same six as in "Notable matches", at new line numbers: `bcpl_call` (39 tokens) and
+  `bcpl_ret` (23 tokens), mandated by the BCPL ABI; recommendation (a) has since been applied (`src/dos/bcpl.s:52-54`
+  states that the sequence is fixed and identical to AROS `BCPL_jsr`/`BCPL_rts`). The others are idioms.
+- **No new passage** of 20 tokens or more (exact) comes from the code added since `ec9f9ab`.
+- **Verdict: PASS.** No measurable reuse of AROS code beyond the background noise and the documented, ABI-imposed
+  BCPL entry/return. The positive control (transliterated copy) was not re-run: the tool and its parameters are
+  unchanged.
 
 ## Limits
 

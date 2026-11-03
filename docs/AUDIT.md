@@ -1,4 +1,4 @@
-# Clean-room audit — 2026-10-29
+# Clean-room audit — 2026-10-29, re-measured 2026-11-03
 
 *Version française : [AUDIT.fr.md](AUDIT.fr.md).*
 
@@ -35,7 +35,7 @@ twelve. The method therefore detects real copying.
 
 | Comparison | Longest common code run | Coverage by runs ≥ 8 words |
 |---|---|---|
-| **our ROM vs original ROM** | **20 words / 13 instructions** | 0.69 % (≥ 16 words: 0.09 %, ≥ 32 words: 0) |
+| **our ROM vs original ROM** (2026-11-03) | **19 words / 13 instructions** | 1.06 % (≥ 16 words: 0.24 %, ≥ 32 words: 0.18 %, the keymap string tables) |
 | unrelated games vs original ROM (baseline) | 39 words / 18 instructions | — |
 | Commodore Workbench code vs original ROM (related code) | 121 words / 96 instructions | 3.8 % |
 | our ROM vs AROS ROM | 12 words / 8 instructions | — |
@@ -45,6 +45,9 @@ twelve. The method therefore detects real copying.
 - The character location table of a fixed-width 8-pixel font. It is an arithmetic progression, and the AROS ROM
   contains the same table.
 - The font bitmaps themselves do **not** match.
+- The keymap string tables (76 words), whose layout is fixed by the keymap ABI (see PR #9 in `docs/audit/pr-9.md`).
+- Below the threshold but longer than any code: the 32-entry default ColorMap table (32 words), which programs read
+  back through `GetRGB4`.
 
 **Verdict:** no reuse of Kickstart 1.3 code was found. Our longest code match is shorter than what unrelated games
 share with the original ROM.
@@ -134,5 +137,6 @@ python3 -I tests/audit_aros_similarity.py src <aros-clone>
 
 Both tools print only statistics and locations in the first argument (our code), never content from the reference.
 
-Measured on the builds of commit `ec9f9ab` (2026-10-29). The fixes listed above came after the measurement and only
-make our data more different from the original.
+Measured on the builds of commit `ec9f9ab` (2026-10-29), then again on commit `2c6b1c6` (2026-11-03, v0.2.15) with the
+same controls: same verdict for both comparisons (details in the "Re-run 2026-11-03" sections of
+[rom-similarity.md](audit/rom-similarity.md) and [aros-similarity.md](audit/aros-similarity.md)).

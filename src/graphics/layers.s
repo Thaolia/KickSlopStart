@@ -544,7 +544,7 @@ lr_create:
         move.l  a3,a0
         suba.l  a1,a1
         bsr     lr_rebuild
-        moveq   #1,d0                ; SUPER: the layer shows the SuperBitMap from its corner (0,0)
+        moveq   #1,d0                ; SUPER: SuperBitMap copied in, origin (0,0)
         bsr     lr_sbsync
         move.l  a3,a0
         bsr     ly_UnlockLayers
@@ -1195,8 +1195,8 @@ ly_EndUpdate:
 
 ; ============================ SwapBitsRastPortClipRect ============================
 
-; SwapBitsRastPortClipRect(rp a0, cr a1): swaps the contents of the ClipRect's area in the RastPort's BitMap
-; with that of the ClipRect's BitMap (same bit alignment: byte-by-byte swap, edges masked).
+; SwapBitsRastPortClipRect(rp a0, cr a1): exchanges the pixels the RastPort's BitMap holds under the ClipRect's
+; bounds with the ClipRect's own BitMap (same bit alignment: byte-by-byte swap, edges masked).
 ly_SwapBitsRastPortClipRect:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  CR_BITMAP(a1),d0

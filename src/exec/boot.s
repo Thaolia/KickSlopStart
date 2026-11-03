@@ -817,8 +817,8 @@ drt_done:
         move.l  ($4).w,a6
 
         ; --- potgo.resource: START / DATxx allocation rules + high byte kept by WritePotgo ---
-        ; (expected: AutoDoc AllocPotBits; a caller can block itself, the resource does not track
-        ; owners). POTGO is reset to 0 (all pins as input, reset value) at the end.
+        ; (expected: AutoDoc AllocPotBits; a caller can block itself, ownership is left to the
+        ; callers). POTGO is reset to 0 (all pins as input, reset value) at the end.
         move.l  a2,-(sp)
         lea     potgo_test_name(pc),a1
         jsr     LVO_OPENRESOURCE(a6)
