@@ -1516,9 +1516,15 @@ dos_resolve:
         move.l  DN_LOCK(a2),d6          ; assign: lock of the assigned directory
         move.l  d6,d0
         lsl.l   #2,d0
-        beq.s   .rs_unknown
+        beq.s   .rs_root
         move.l  d0,a0
         move.l  FL_TASK(a0),a3
+        bra.s   .rs_asn
+.rs_root:                               ; lock 0: root of the volume in dn_Task's drive (boot assign of a missing
+        move.l  DN_TASK(a2),a3          ; directory, dos-boot-sequence.md)
+        move.l  a3,d0
+        beq.s   .rs_unknown
+.rs_asn:
         bsr     rs_permit
         lea     1(a4,d3.l),a4           ; pass on what follows the ':'
         bra     .rs_ret
@@ -1788,8 +1794,9 @@ dos_upper:
         rts
 
 ; dos_boot_assigns(a6 = DosBase): called by the initial CLI (process) once the boot disk is mounted. Creates the
-; VOLUME node (name read by Examine of the root), the SYS: assign (root) and the C: S: L: DEVS: LIBS: FONTS: assigns for
-; each directory present on DF0:, then sets pr_CurrentDir = root. No readable disk -> nothing. Preserves everything.
+; VOLUME node (name read by Examine of the root), the SYS: assign (root) and the C: S: L: DEVS: LIBS: FONTS: assigns
+; (lock 0 when the directory is missing), then sets pr_CurrentDir = root. No readable disk -> nothing. Preserves
+; everything.
 BA_PATHMAX      EQU 48
 dos_boot_assigns:
         movem.l d0-d7/a0-a6,-(sp)
@@ -1828,9 +1835,8 @@ dos_boot_assigns:
         moveq   #SHARED_LOCK,d2
         bsr     dos_fn_lock
         clr.b   0(sp,d5.l)              ; "NAME:" again
-        tst.l   d0
-        beq.s   .ba_loop                ; directory missing -> no assign
-        move.l  d0,d1
+        move.l  d0,d1                   ; directory missing -> assign with lock 0 = root of the boot volume, as on 1.3
+                                        ; (Lemmings demo runs C:LEMMINGS!!! with no c directory, dos-boot-sequence.md)
         moveq   #DLT_DIRECTORY,d0
         move.l  a3,a0
         move.l  a4,a1
@@ -2173,13 +2179,13 @@ ba_df0:
         dc.b    "DF0",0
 ba_sysname:
         dc.b    "SYS",0
-ba_tab:
-        dc.b    "C",0,"c",0
-        dc.b    "S",0,"s",0
-        dc.b    "L",0,"l",0
-        dc.b    "DEVS",0,"devs",0
+ba_tab:                                 ; added at the head: the chain reads S L C FONTS DEVS LIBS SYS, as on 1.3
         dc.b    "LIBS",0,"libs",0
+        dc.b    "DEVS",0,"devs",0
         dc.b    "FONTS",0,"fonts",0
+        dc.b    "C",0,"c",0
+        dc.b    "L",0,"l",0
+        dc.b    "S",0,"s",0
         dc.b    0
         EVEN
 

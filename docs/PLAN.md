@@ -978,6 +978,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
   **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
   any KickSlopStart image without a hash database; documented as a stable format in the README.
+  **WinUAE suite, 2026-11-03**: Shanghai (hunk count bound, doubled HUNK_END, LED bit of CIA-A PRA) and the
+  Lemmings demo (boot assigns with lock 0 for missing directories, TAB in command lines) start as on 1.3.
+  Not checked on 1.3: whether S and SYS also get a lock-0 assign when missing (we create S).
   **pr_StackSize, issue #16 (2026-11-03)**: set at process creation (dos-v34-spec §4a, measured on 1.3); Directory
   Opus 4.12 starts from its boot disk (it stopped on "Stack must be at least 16384 bytes!"). Differences left: our
   Initial CLI reports 8192 (1.3: 1600, its commands run on a separate stack in both), and the stack block is a

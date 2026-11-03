@@ -39,7 +39,7 @@ HUNK_NAME       EQU $3E8
 HUNK_SYMBOL     EQU $3F0
 HUNK_DEBUG      EQU $3F1
 LS_FILEMAX      EQU DOS_FILEMAX    ; max size of a loaded hunk executable (cap-bump 32K, exec.i)
-LS_MAXHUNKS     EQU 64            ; bound on the number of hunks (anti-corruption)
+LS_MAXHUNKS     EQU 4096          ; anti-corruption bound (16 KB table); Shanghai has 180 hunks, 1.3 loads them
 
 ; D2_NO_RELOC=1 (RED D2): reads the relocations but does NOT APPLY them -> the absolute pointer stays the link-time
 ; offset (0 in the DATA hunk) -> the loaded code reads low RAM -> wrong bytes -> "D2LOADSEG OK" missing,
@@ -190,6 +190,7 @@ ls_load_stream:
                 bne     .fail_fmt
                 ; --- body: contents + relocations, up to the end of the data ---
                 moveq   #0,d2                ; hidx = 0 (first==0 validated)
+                moveq   #0,d6                ; d6 != 0: a CODE/DATA/BSS block was read for hunk hidx
 .body_loop:
                 bsr     ls_rdl               ; hunk id
                 tst.w   LR_EOF(a5)
@@ -228,12 +229,17 @@ ls_load_stream:
                 bsr     ls_skip
                 bra.s   .b_symbol
 .b_bss:
+                moveq   #1,d6
                 bsr     ls_rdl               ; nlongs (no data; memory already CLEAR)
                 bra.s   .b_chk
-.b_end:
+.b_end:                                      ; a HUNK_END with no block since the last one is ignored, as on 1.3
+                tst.l   d6                   ; (Shanghai's headbanger doubles it after each BSS, dos-v34-spec §4b)
+                beq     .body_loop
+                moveq   #0,d6
                 addq.l  #1,d2                ; next hunk
                 bra     .body_loop
 .b_content:
+                moveq   #1,d6
                 cmp.l   d4,d2
                 bhs     .fail_fmt            ; more content hunks than declared -> corrupted
                 bsr     ls_rdl               ; nlongs

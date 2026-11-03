@@ -219,6 +219,8 @@ sh_extern:
                 beq.s   .dl_noargs
                 cmp.b   #' ',d0
                 beq.s   .dl_cut_sp
+                cmp.b   #9,d0                ; TAB separates too (Lemmings demo: "SKR<TAB>;comment")
+                beq.s   .dl_cut_sp
                 cmp.b   #13,d0
                 beq.s   .dl_cut
                 cmp.b   #10,d0               ; LF (script line) is also a boundary
@@ -327,6 +329,8 @@ sh_match:
 .m_wordend:
                 move.b  (a1),d1              ; character of the line after the prefix
                 cmp.b   #' ',d1
+                beq.s   .m_yes
+                cmp.b   #9,d1
                 beq.s   .m_yes
                 cmp.b   #13,d1               ; CR (end of line)
                 beq.s   .m_yes
@@ -877,7 +881,10 @@ sh_build_args:
                 btst    #1,d4
                 beq.s   .ba_noskip
                 cmp.b   #' ',d0
+                beq.s   .ba_rsp
+                cmp.b   #9,d0
                 bne.s   .ba_rch
+.ba_rsp:
                 cmp.l   #SH_REDMAX-1,d3
                 bne.s   .ba_rend
                 bra.s   .ba_lp               ; spaces between ">" and the name ("cmd > NIL:")
@@ -922,7 +929,10 @@ sh_build_args:
 .ba_plain:
                 moveq   #0,d3
                 cmp.b   #' ',d0
+                beq.s   .ba_sp
+                cmp.b   #9,d0
                 bne.s   .ba_arg
+.ba_sp:
                 moveq   #1,d3
                 bra.s   .ba_put
 .ba_arg:

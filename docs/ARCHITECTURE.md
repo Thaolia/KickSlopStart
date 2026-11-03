@@ -1530,6 +1530,12 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - WinUAE suite fixes (2026-11-03, dos-v34-spec §4b, dos-boot-sequence.md): LoadSeg accepts up to 4096 hunks
+    (was 64; Shanghai has 180) and ignores a HUNK_END that follows no CODE/DATA/BSS block (headbanger doubles it);
+    the boot assigns C L S DEVS LIBS FONTS always exist, with lock 0 (= root of the boot volume, dos_resolve takes
+    dn_Task) when the directory is missing, chained S L C FONTS DEVS LIBS SYS as on 1.3; the shell treats TAB as a
+    separator; coldstart lights the power LED (CIA-A PRA bit 1 = 0) after ResModules, because Shanghai's intro
+    compares the whole PRA byte with $BC.
   - pr_StackSize (issue #16, dos-v34-spec §4a): proc_create writes the stack size it is given, unrounded, so
     CreateProc and Workbench tools get the value they asked for; rt_createproc stores the BCPL size without our
     CP_STKEXTRA margin, because c:NewCLI passes its own pr_StackSize on to the CLI it creates. Directory Opus 4.12

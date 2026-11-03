@@ -367,6 +367,8 @@ coldstart:                        ; $FC00D2
         move.l  #127,RES_LASTPRI     ; upper bound (any RT_PRI <= 127 passes)
         clr.l   RES_COUNT
         jsr     build_reslist        ; scans [RESSCAN_LO,HI) -> ExecBase->ResModules
+        bclr    #1,CIAA_PRA          ; power LED bright (audio filter on), as 1.3 after ResModules (coldstart-hardware
+                                     ; §5): Shanghai's intro waits for CIA-A PRA == $BC, LED bit included
         moveq   #RTF_COLDSTART,d0    ; startClass: cold-start residents
         moveq   #0,d1                ; minimum version 0
         jsr     LVO_INITCODE(a6)     ; init each demo resident (emits its name in pri order)

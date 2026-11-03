@@ -55,6 +55,31 @@ dos publishes in `di_DevInfo` a chain of `DeviceNode`s (cf. `dos-v34-spec.md` §
 - **System assigns**: `"LIBS"`, `"DEVS"`, `"FONTS"`,
   and the reading of `"devs:system-configuration"` for the config.
 
+### Boot assigns when the boot disk lacks the directory [O, real KS 1.3, 2026-11-03]
+
+Observed on the real Kickstart 1.3 under Amiberry (512 KB chip + 512 KB slow, 68000), black box: the
+`di_DevInfo` chain walked with the debugger while the boot disk's first program was running.
+
+- After the floppy boot, the list always holds **seven `DLT_DIRECTORY` (type 1) nodes**, in this
+  chain order: `S`, `L`, `C`, `FONTS`, `DEVS`, `LIBS`, `SYS`; then the boot volume (type 2), then the
+  device nodes (`PRT`, `PAR`, `SER`, `RAW`, `CON`, `RAM`, `DF0`; `DF1` sits at the head when a second
+  drive is present). Every assign node has `dl_Task` = the boot disk handler's port (the `DF0:` handler).
+- **An assign node exists even when the boot disk has no such directory.** Its `dl_Lock` is then
+  **0**; when the directory exists, `dl_Lock` is a real lock on it.
+  - Lemmings demo disk (no `c`, `l`, `devs`, `libs`, `fonts` directory; an `S` directory):
+    `S` and `SYS` have locks; `L`, `C`, `FONTS`, `DEVS`, `LIBS` have lock 0.
+  - Cluedo disk (`c`, `l`, `s`, `devs`, `libs` present, no `fonts`): only `FONTS` has lock 0.
+- An assign with lock 0 and `dl_Task` = the boot handler **resolves to the root of the volume in
+  that drive** (a zero lock means "root" to a 1.3 file handler). Black-box probe: a copy of the
+  Lemmings disk whose startup-sequence is the single line `C:LEMMINGS!!!` (the file sits in the root
+  and there is no `c` directory) runs the program normally; no requester appears.
+- Consequence: `C:x`, `L:x`, `LIBS:x`, `DEVS:x`, `FONTS:x` on such a disk never become a volume
+  lookup. A system that omits the assign when the directory is missing turns `C:` into an unknown
+  volume name and raises *"Please insert volume C in any drive"*; the real 1.3 never does on these
+  disks.
+- Not checked: whether `S` and `SYS` also get lock 0 when missing (`S` existed on both disks), and
+  whether the lock-0 node follows a disk change (it names the handler, not a volume).
+
 ## Phase C — First process ("Initial CLI") and startup script ([ROM] + [inferred])
 
 1. **[ROM]** dos creates the initial CLI process — string `"Initial CLI"`. This process

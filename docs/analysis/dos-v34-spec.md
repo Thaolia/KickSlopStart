@@ -375,6 +375,51 @@ child process `dopus_task` with `CreateProc(…, 16384)` (the value found in the
 CLI, `pr_StackSize = 1600`, no `stack` command) it runs normally on the real 1.3. A `CreateProc`
 that leaves `pr_StackSize` at 0 makes that check fail. [O]
 
+## 4b. Hunk files the real 1.3 loads, and a detached process [O, real KS 1.3, 2026-11-03]
+
+Observed on the real Kickstart 1.3 under Amiberry (512 KB chip + 512 KB slow, 68000), black box:
+the emulator's process break at program entry, segment lists read with the debugger, dos LVO entries
+logged with their name argument. Hunk structure read from the disk files with a hunk lister
+(third-party data).
+
+**`headbanger` (Shanghai disk, 21,980 bytes) loads and runs.** The CLI starts it and its intro
+plays; no "Unable to load" message. The file is unusual in three ways, all accepted:
+- **95 hunks, 45 of them of size 0** (CODE, DATA and BSS of 0 longwords). Each still gets its
+  **own segment in the chain**: the segment list read at entry has all 95 entries in file order,
+  the zero-size ones included (two zero-size segments allocated back to back were 8 bytes apart,
+  so each takes only the segment header; inferred from the spacing).
+- **A doubled `HUNK_END`**: every one of the 25 `HUNK_BSS` blocks is followed by **two**
+  consecutive `HUNK_END` longwords (120 `HUNK_END` for 95 hunks). The extra `HUNK_END` neither
+  creates a segment nor ends the file early.
+- **8 `HUNK_SYMBOL` blocks** (after `HUNK_RELOC32` or directly after a CODE body, before
+  `HUNK_END`): skipped.
+- No memory bits in the header sizes; all segments landed in slow RAM.
+Which of the three a loader rejects with error 121 (`ERROR_FILE_NOT_OBJECT`) was not isolated on
+the real ROM; the real 1.3 accepts the combination. A discriminating probe: three copies of a small
+hunk file, each with one of the features alone. The game file `shanghai` (180 hunks, 71 of size 0,
+one `HUNK_END` per hunk, no symbols) also loads on the real 1.3.
+
+**MEMF_CHIP in the header is honoured.** `clue` (Cluedo disk) has 42 hunks; every size longword in
+`HUNK_HEADER` carries bit 30 (chip), and so does the first hunk id (the others were not checked one
+by one). On the real 1.3 all its loaded segments sit
+in chip RAM, although slow RAM is present and is otherwise used first (a file without memory bits,
+such as `LEMMINGS!!!` or `headbanger`, loads into slow RAM). Here both the header size and the hunk
+id carry the flag, so which of the two the loader reads was not isolated.
+
+**Detached program (Lattice-style "cback" startup), as run by `clue`:**
+- The CLI loads `clue` and runs hunk 0 (a 0x38C-byte stub). The stub calls
+  `CreateProc("BackGround_Process", pri 0, …)`; in the new process the **remaining hunks 1..41** form
+  the seglist at **index 3 of the new process's segarray** (`pr_SegList`; its `V!0` reads 2, the
+  usual two ROM entries sit at indexes 1 and 2). Then the startup-sequence goes on (`endcli >NIL:`)
+  and the Initial CLI ends; `BackGround_Process` and `Workbench` (from the earlier `loadwb`) stay.
+- The first dos call of `BackGround_Process` is `CurrentDir(0)`; its next calls are `Open` of
+  relative names (`titlescreen.big`, `soundz`, `alive.big`, `dead.big`, `board.big`, all in the disk
+  root), which succeed: with current directory 0 a relative name resolves from the root of the boot
+  volume.
+- Libraries and devices in use by then (open counts): dos, graphics, intuition, mathffp, timer.device,
+  audio.device, icon.library (loaded from `LIBS:` by `loadwb`); the file also names `topaz.font`. The program reaches its
+  player-selection screen and stays stable for minutes.
+
 ## 5. Public LVO table of dos.library in V34 (1.3 subset)
 
 **[ABI, `dos_lib.fd` `##bias 30`]** — V34 exposes **only** the functions BEFORE the marker
