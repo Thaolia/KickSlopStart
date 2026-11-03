@@ -1006,6 +1006,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
+  **System clock (2026-11-04)**: CIA-A TOD at the measured mains rate, uniqueness counter, fold-over,
+  PowerSupplyFrequency, UNIT_VBLANK and the input/intuition clocks at the real VBlank rate (`tests/systime_probe.s`).
+  Open: the exec quantum is still counted by our scheduler server, not by timer.device's VBlank server (§3).
   **WaitTOF (2026-11-04)**: signal-based on TOF_WaitQ, VBlank server per spec (gb_VBlank, CIA-B TOD = line),
   input.device task woken by keystrokes and deadlines instead of every frame (`tests/waittof_probe.s`). Open: the
   VERTB chain costs ~19 lines (1.3 returns from WaitTOF at line $0C); QBSBlit is still QBlit.

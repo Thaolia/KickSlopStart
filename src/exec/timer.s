@@ -143,54 +143,90 @@ timer_cmptime:
         moveq   #1,d0
         rts
 
-; BeginIO(device a6, iorequest a1): M6a — enqueues a TR_ADDREQUEST request on the VBLANK unit.
-; Converts the timeval to ticks (secs*50 + micro/20000, min 1), stores the countdown in TV_SECS.
-; Disable around it (queue shared with the VBlank handler).
-; timer_systime(a2 = timer.device base, a6 = SysBase) -> d0 = seconds, d1 = us of the system time: seconds at the
-; reference (TR_SETSYSTIME) + frames elapsed since (50 Hz), plus 1 us per read already made in the same frame:
-; two successive reads never return the same time (like 1.3). Preserves d2-d7/a0-a6.
-timer_systime:
-        move.l  d2,-(sp)
-        jsr     LVO_DISABLE(a6)
-        move.l  VBL_COUNT,d0
-        cmp.l   TIMER_UVBL(a2),d0
-        beq.s   .sy_same
-        move.l  d0,TIMER_UVBL(a2)
-        clr.l   TIMER_UNIQ(a2)
-.sy_same:
-        move.l  TIMER_UNIQ(a2),-(sp)
-        addq.l  #1,TIMER_UNIQ(a2)
-        jsr     LVO_ENABLE(a6)
-        sub.l   TIMER_SYSVBL(a2),d0  ; ticks elapsed since the reference (32/16 division in two steps)
-        swap    d0
-        moveq   #0,d1
-        move.w  d0,d1
-        divu    #50,d1               ; high word
-        move.w  d1,d2
-        swap    d2
-        swap    d0
-        move.w  d0,d1                ; remainder:low word
-        divu    #50,d1
-        move.w  d1,d2                ; d2 = elapsed seconds
-        swap    d1
-        mulu    #20000,d1            ; remainder (ticks) -> us
-        add.l   (sp)+,d1             ; + rank of the read within the frame
-        add.l   TIMER_SYSSECS(a2),d2
-        move.l  d2,d0
-        move.l  (sp)+,d2
+; timer_vbconv(a3 = VBLANK request, a6 = SysBase) -> d0 = frames to its deadline: the k-th VBlank, k = max(1,
+; ceil(T / P)), P = round(1000000 / VBlankFrequency), 0 counting as 60 (timer-v34 §3): 20000 us in PAL, 16667 in
+; NTSC. Whole seconds count VBlankFrequency frames each. Clobbers d1/d2.
+timer_vbconv:
+        moveq   #0,d0
+        move.b  EB_VBLANKFREQ(a6),d0
+        bne.s   .vc_f
+        moveq   #60,d0
+.vc_f:
+        move.l  d0,d1
+        lsr.w   #1,d1
+        add.l   #1000000,d1
+        divu    d0,d1                ; d1.w = P
+        mulu    TV_SECS+2(a3),d0     ; frames of the whole seconds
+        move.l  TV_MICRO(a3),d2
+        beq.s   .vc_min
+        subq.l  #1,d2
+        divu    d1,d2                ; ceil(us / P) = (us - 1) / P + 1
+        and.l   #$0000FFFF,d2
+        addq.l  #1,d2
+        add.l   d2,d0
+.vc_min:
+        tst.l   d0
+        bne.s   .vc_ret
+        moveq   #1,d0
+.vc_ret:
         rts
 
-; timer_setsys(a2 = base, d0 = seconds, d1 = us): new reference; the system time is then
-; d0 + (VBL_COUNT - reference) / 50. Clobbers d0/d1.
+; timer_systime(a2 = timer.device base, a6 = SysBase) -> d0 = seconds, d1 = us of the system time (timer-v34 §4):
+; base + CIA-A TOD converted at the mains rate + the uniqueness counter, which then grows by 1 us, so two reads never
+; return the same time. Preserves d2-d7/a0-a6.
+timer_systime:
+        movem.l d2-d3/a0,-(sp)
+        lea     CIAA_HW,a0
+        jsr     LVO_DISABLE(a6)
+        moveq   #0,d0
+        move.b  CIA_TODHI(a0),d0     ; high byte first: the 8520 latches the reading until the low byte
+        swap    d0
+        move.b  CIA_TODMID(a0),d0
+        lsl.w   #8,d0
+        move.b  CIA_TODLO(a0),d0
+        move.l  TIMER_UNIQ(a2),d3
+        addq.l  #1,TIMER_UNIQ(a2)
+        jsr     LVO_ENABLE(a6)
+        divu    TIMER_TODHZ(a2),d0   ; the fold-over keeps the TOD below 65536 ticks: the quotient fits a word
+        moveq   #0,d2
+        move.w  d0,d2                ; d2 = seconds of TOD
+        clr.w   d0
+        swap    d0                   ; d0 = remaining ticks
+        mulu    TIMER_TODUS(a2),d0
+        move.l  d0,d1
+        add.l   d3,d1
+        add.l   TIMER_SYSMICRO(a2),d1
+        add.l   TIMER_SYSSECS(a2),d2
+.sy_norm:
+        cmp.l   #1000000,d1
+        blo.s   .sy_ret
+        sub.l   #1000000,d1
+        addq.l  #1,d2
+        bra.s   .sy_norm
+.sy_ret:
+        move.l  d2,d0
+        movem.l (sp)+,d2-d3/a0
+        rts
+
+; timer_setsys(a2 = base, d0 = seconds, d1 = us): new base, CIA-A TOD and uniqueness counter back to 0, so the next
+; read returns exactly this time. Clobbers d0/d1/a0.
 timer_setsys:
-        clr.l   TIMER_UNIQ(a2)
-        move.l  VBL_COUNT,TIMER_UVBL(a2)
         move.l  d0,TIMER_SYSSECS(a2)
-        divu    #20000,d1
-        and.l   #$0000FFFF,d1
-        move.l  VBL_COUNT,d0
-        sub.l   d1,d0
-        move.l  d0,TIMER_SYSVBL(a2)
+        move.l  d1,TIMER_SYSMICRO(a2)
+        jsr     LVO_DISABLE(a6)
+        clr.l   TIMER_UNIQ(a2)
+        bsr.s   timer_todzero
+        jmp     LVO_ENABLE(a6)
+
+; timer_todzero: CIA-A TOD := 0 (CRB ALARM cleared, the time is written high byte first, the low byte restarts it).
+; MOVE, not CLR: a CLR reads first, and reading the high byte latches the TOD. Clobbers d0/a0.
+timer_todzero:
+        lea     CIAA_HW,a0
+        bclr    #7,CIA_CRB(a0)
+        moveq   #0,d0
+        move.b  d0,CIA_TODHI(a0)
+        move.b  d0,CIA_TODMID(a0)
+        move.b  d0,CIA_TODLO(a0)
         rts
 
 ; timer_setnow(a6 = SysBase, d0 = seconds, d1 = us): sets the system time (TR_SETSYSTIME without IORequest).
@@ -227,6 +263,9 @@ timer_now:
         move.l  (sp)+,a2
         rts
 
+; BeginIO(device a6, iorequest a1): TR_ADDREQUEST is queued on its unit (VBLANK: countdown in frames; MICROHZ: CIA-A
+; timer B), TR_GETSYSTIME / TR_SETSYSTIME act on the system clock at once. Disable around the queues (shared with
+; the interrupts).
 timer_beginio:
         movem.l d2/a2-a4,-(sp)
         move.l  a6,a2                ; a2 = device base
@@ -275,15 +314,7 @@ timer_beginio:
         bsr     tm_rearm
         bra.s   .bio_queued
 .bio_vbl:
-        move.l  TV_SECS(a3),d0       ; VBLANK: deadline at the k-th VBLANK, k = max(1, ceil(T / 20000 us))
-        move.l  TV_MICRO(a3),d1
-        mulu    #50,d0
-        add.l   #20000-1,d1
-        divu    #20000,d1
-        and.l   #$0000FFFF,d1        ; divu quotient (low word)
-        add.l   d1,d0
-        bne.s   .bio_store
-        moveq   #1,d0                ; min 1 (avoids immediate expiry)
+        bsr     timer_vbconv         ; VBLANK: countdown in frames
 .bio_store:
         move.l  d0,TV_SECS(a3)       ; countdown (TV_SECS reused)
         clr.l   TV_MICRO(a3)
@@ -460,6 +491,61 @@ timer_abortio:
         movem.l (sp)+,a2/a6
         rts
 
+; timer_calibrate(a2 = base, a6 = SysBase): mains frequency (timer-v34 §1.3), under Disable. TOD := 0, CIA-A timer B
+; counts down from $FFFF; at a TOD tick it restarts from $FFFF and stops at the next one: 13090 E ticks or more
+; (value <= $CCDD) is 50 Hz, fewer 60 Hz (PAL 14188, NTSC 11932). No tick for 32768 E ticks (TBHI below $80):
+; recoverable alert, 60 Hz. Sets TIMER_TODHZ, TIMER_TODUS and ExecBase PowerSupplyFrequency. Clobbers d0/d1/a0/a1.
+timer_calibrate:
+        movem.l d2/d7,-(sp)
+        jsr     LVO_DISABLE(a6)
+        bsr     timer_todzero
+        lea     CIAA_HW,a0
+        move.b  #$08,CIA_CRB(a0)
+        st      CIA_TBLO(a0)
+        st      CIA_TBHI(a0)         ; one-shot: writing the high byte starts the countdown
+        bsr.s   .cal_tick
+        bne.s   .cal_60
+        move.b  #$19,CIA_CRB(a0)     ; START | one-shot | LOAD: from $FFFF again
+        bsr.s   .cal_tick
+        bne.s   .cal_60
+        move.b  #$08,CIA_CRB(a0)
+        move.b  CIA_TBHI(a0),d0
+        lsl.w   #8,d0
+        move.b  CIA_TBLO(a0),d0
+        cmp.w   #$CCDD,d0
+        bhi.s   .cal_60h
+        moveq   #50,d0
+        move.w  #20000,d1
+        bra.s   .cal_set
+.cal_60:
+        move.b  #$08,CIA_CRB(a0)
+        move.l  #AN_TIMERNOTOD,d7
+        jsr     LVO_ALERT(a6)
+.cal_60h:
+        moveq   #60,d0
+        move.w  #16667,d1
+.cal_set:
+        move.w  d0,TIMER_TODHZ(a2)
+        move.w  d1,TIMER_TODUS(a2)
+        move.b  d0,EB_POWERFREQ(a6)
+        bsr     timer_todzero
+        jsr     LVO_ENABLE(a6)
+        movem.l (sp)+,d2/d7
+        rts
+; .cal_tick(a0 = CIA-A): waits for the TOD low byte to change -> Z = 1, or Z = 0 if TBHI fell below $80 first.
+.cal_tick:
+        move.b  CIA_TODLO(a0),d2
+.ct_lp:
+        cmp.b   CIA_TODLO(a0),d2
+        bne.s   .ct_ok
+        cmp.b   #$80,CIA_TBHI(a0)
+        bhs.s   .ct_lp
+        moveq   #1,d0
+        rts
+.ct_ok:
+        moveq   #0,d0
+        rts
+
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0 = base. Sets the name (V34 quirk),
 ; NEWLISTs the VBLANK unit, registers the VBlank service.
 timer_initfunc:
@@ -484,6 +570,10 @@ timer_initfunc:
         lea     TIMER_VBL_INT,a1
         jsr     LVO_ADDINTSERVER(a6)
         move.b  #$08,CIAA_HW+CIA_CRB ; CIA-A timer B: one-shot, E clock, stopped
+        move.l  a2,-(sp)
+        move.l  4(sp),a2
+        bsr     timer_calibrate
+        move.l  (sp)+,a2
         lea     timer_cianame(pc),a1 ; MICROHZ: bit 1 (timer B) of ciaa.resource -> level 2
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
@@ -520,6 +610,16 @@ timer_vblank_service:
         bne.s   .svc_vbl
         jsr     ciaa_server
 .svc_vbl:
+        lea     CIAA_HW,a0           ; clock fold-over (timer-v34 §4): once the TOD reaches 65536 ticks, the base takes
+        tst.b   CIA_TODHI(a0)        ; the current time and TOD and counter restart from 0 (reading the high byte
+        bne.s   .svc_fold            ; latches the TOD: the low byte is read to release it)
+        tst.b   CIA_TODLO(a0)
+        bra.s   .svc_q
+.svc_fold:
+        tst.b   CIA_TODLO(a0)
+        bsr     timer_systime
+        bsr     timer_setsys
+.svc_q:
         lea     TIMER_VBLQ(a2),a4
         move.l  (a4),a3              ; a3 = lh_Head (1st request or sentinel)
 .svc_loop:

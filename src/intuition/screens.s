@@ -4406,24 +4406,35 @@ wn_post:
         addq.l  #2,sp
         rts
 
-; it_now() -> d0 = seconds, d1 = microseconds since startup (VBlank count GP_POLLS): the clock of the IntuiMessages.
+; it_now() -> d0 = seconds, d1 = microseconds since startup (VBlank count GP_POLLS at ExecBase VBlankFrequency, 0
+; counting as 60): the clock of the IntuiMessages.
 it_now:
-        move.l  d2,-(sp)
+        movem.l d2-d4/a6,-(sp)
+        move.l  ($4).w,a6
+        moveq   #0,d3
+        move.b  EB_VBLANKFREQ(a6),d3
+        bne.s   .nw_f
+        moveq   #60,d3
+.nw_f:
+        move.l  d3,d4                ; d4 = frame period in us, rounded
+        lsr.w   #1,d4
+        add.l   #1000000,d4
+        divu    d3,d4
         move.l  GP_POLLS,d0
         moveq   #0,d1
         swap    d0
         move.w  d0,d1
-        divu    #50,d1               ; long division in two steps (the quotient may exceed 16 bits)
+        divu    d3,d1                ; long division in two steps (the quotient may exceed 16 bits)
         move.w  d1,d2
         swap    d2
         swap    d0
         move.w  d0,d1
-        divu    #50,d1
+        divu    d3,d1
         move.w  d1,d2                ; d2 = seconds
         swap    d1
-        mulu    #20000,d1            ; remainder (1/50 s) -> microseconds
+        mulu    d4,d1                ; remainder (frames) -> microseconds
         move.l  d2,d0
-        move.l  (sp)+,d2
+        movem.l (sp)+,d2-d4/a6
         rts
 
 ; CurrentTime(seconds a0, micros a1): the current time on the IntuiMessage clock (spec intuition-misc §5 takes the

@@ -185,18 +185,40 @@ fd_stamp:
                 movem.l (sp)+,a1-a2/a6
                 rts
 
-; fd_frames(a0 = timeval) -> d0 = number of frames: max(1, seconds x 50 + ceil(us / 20000)), like UNIT_VBLANK.
-fd_frames:
-                move.l  (a0),d0
-                mulu    #50,d0
-                move.l  4(a0),d1
-                add.l   #20000-1,d1
-                divu    #20000,d1
+; fd_rate(a6 = SysBase) -> d0 = frames per second (VBlankFrequency, 0 counting as 60), d1 = frame period in us,
+; rounded, as UNIT_VBLANK uses them (timer-v34 §3).
+fd_rate:
+                moveq   #0,d0
+                move.b  EB_VBLANKFREQ(a6),d0
+                bne.s   .ra_f
+                moveq   #60,d0
+.ra_f:
+                move.l  d0,d1
+                lsr.w   #1,d1
+                add.l   #1000000,d1
+                divu    d0,d1
                 and.l   #$FFFF,d1
-                add.l   d1,d0
+                rts
+
+; fd_frames(a0 = timeval, a6 = SysBase) -> d0 = number of frames: max(1, seconds x rate + ceil(us / period)), like
+; UNIT_VBLANK. Clobbers d1.
+fd_frames:
+                move.l  d2,-(sp)
+                bsr.s   fd_rate
+                mulu    2(a0),d0
+                move.l  4(a0),d2
+                beq.s   .fr_min
+                subq.l  #1,d2
+                divu    d1,d2
+                and.l   #$FFFF,d2
+                addq.l  #1,d2
+                add.l   d2,d0
+.fr_min:
+                tst.l   d0
                 bne.s   .fr_r
                 moveq   #1,d0
 .fr_r:
+                move.l  (sp)+,d2
                 rts
 
 ; fd_repeat_key(a1 = RAWKEY event of the keystroke): press of a key < $60 -> it becomes the repeating
@@ -321,14 +343,16 @@ fd_poll_wait:
                 bgt.s   .pw_n
                 moveq   #1,d0
 .pw_n:
+                move.l  d0,d2
+                bsr     fd_rate              ; frames -> seconds and microseconds at the VBlank rate
                 move.l  FD_TREQ(a5),a1
-                divu    #50,d0               ; UNIT_VBLANK counts 20000 us per frame
-                moveq   #0,d1
-                move.w  d0,d1
-                move.l  d1,TV_SECS(a1)
-                swap    d0
-                mulu    #20000,d0
-                move.l  d0,TV_MICRO(a1)
+                divu    d0,d2
+                moveq   #0,d0
+                move.w  d2,d0
+                move.l  d0,TV_SECS(a1)
+                swap    d2
+                mulu    d1,d2
+                move.l  d2,TV_MICRO(a1)
                 move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
                 move.l  FD_TBASE(a5),a6
                 jsr     TD_BEGINIO(a6)

@@ -587,11 +587,15 @@ LIBB_CHANGED EQU 1             ; LIBF_CHANGED: table modified (SetFunction), sum
 LIBB_SUMUSED EQU 2             ; LIBF_SUMUSED: the sum is checked
 TIMER_VBLQ   EQU LIB_SIZE      ; timer.device: request list of the VBLANK unit (struct List)
 TIMER_MICROQ EQU LIB_SIZE+14   ; request list of the MICROHZ unit (CIA-A timer B, level 2) (struct List)
-TIMER_SYSSECS EQU LIB_SIZE+28  ; system time: seconds at the reference (TR_SETSYSTIME)
-TIMER_SYSVBL EQU LIB_SIZE+32   ; VBL_COUNT at the reference
+TIMER_SYSSECS EQU LIB_SIZE+28  ; system time base: seconds (TR_SETSYSTIME, or the time at the last TOD fold-over)
+TIMER_SYSMICRO EQU LIB_SIZE+32 ; system time base: microseconds
 TIMER_ARMED  EQU LIB_SIZE+36   ; long: E ticks armed on CIA-A timer B (0 = stopped)
-TIMER_UNIQ   EQU LIB_SIZE+40   ; long: us added to time reads made within the TIMER_UVBL tick (strictly increasing time)
-TIMER_UVBL   EQU LIB_SIZE+44   ; long: VBL_COUNT of the last time read
+TIMER_UNIQ   EQU LIB_SIZE+40   ; long: uniqueness counter, +1 us per read since the base was set (timer-v34 §4)
+TIMER_TODHZ  EQU LIB_SIZE+44   ; word: CIA-A TOD rate, the mains frequency measured at init (50 or 60)
+TIMER_TODUS  EQU LIB_SIZE+46   ; word: microseconds per TOD tick (20000 or 16667)
+CIA_TODLO    EQU $800          ; TOD (event counter): low, middle, high byte; reading the high byte latches the
+CIA_TODMID   EQU $900          ; three until the low one is read, writing the low one restarts counting
+CIA_TODHI    EQU $A00
 TD_SIZE      EQU LIB_SIZE+48   ; size of the timer.device base (Library + 2 unit lists + system time + arming)
 UNIT_MICROHZ EQU 0             ; unit selector in IO_UNIT (= real timer.device numbering)
 UNIT_VBLANK  EQU 1             ; (OpenDevice would set a struct Unit*; our minimal impl = the index)
@@ -819,6 +823,7 @@ LVO_COPYMEM      EQU -624
 LVO_COPYMEMQUICK EQU -630
 LVO_ALERT        EQU -108       ; Alert(alertNum d7)
 AN_TIMERCIARSRC  EQU $15058020  ; Alert: timer.device without ciaa.resource (AN_TimerDev|AG_OpenRes|AO_CIARsrc)
+AN_TIMERNOTOD    EQU $15000002  ; Alert (recoverable): no CIA-A TOD tick during the mains calibration (timer-v34 §1.3)
 LVO_ADDMEMLIST   EQU -618       ; AddMemList(size d0, attributes d1, pri d2, base a0, name a1)
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498

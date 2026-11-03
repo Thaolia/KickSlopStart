@@ -587,6 +587,16 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7t) **System clock on the CIA-A TOD, real frame rate** (2026-11-04, spec `timer-v34.md` §1.3, §3, §4). At
+  init, timer.device measures the mains frequency under Disable: CIA-A timer B counts down from $FFFF between two TOD
+  ticks; 13090 E ticks or more is 50 Hz, otherwise 60 (no tick for 32768 E ticks: recoverable alert $15000002,
+  60 Hz). That sets TIMER_TODHZ/TIMER_TODUS and ExecBase PowerSupplyFrequency. The system time is the base
+  (TIMER_SYSSECS/SYSMICRO) + the TOD converted at that rate + a uniqueness counter that grows by 1 us per read, so
+  reads stay strictly increasing; it used to count VBlanks at a fixed 50 Hz. TR_SETSYSTIME sets the base and zeroes
+  the TOD and the counter. The VBlank server folds the TOD into the base once it reaches 65536 ticks. UNIT_VBLANK
+  deadlines use P = round(1000000 / VBlankFrequency): 16667 us in NTSC. The feeder's frame conversions and
+  intuition's message clock (`it_now`) use the same rate. Test: `tests/systime_probe.s` (PAL 50/50 and NTSC 60/60,
+  +1 us between two reads, exact read after SETSYSTIME, a 2 s VBLANK request = 2.00002 s).
   (7s) **WaitTOF on TOF_WaitQ, graphics VBlank server, event-driven input task** (2026-11-04, spec
   `graphics-display-v34.md` §7.2/§7.4). WaitTOF puts a node naming the task (on its stack) into GfxBase TOF_WaitQ
   (offset 192, a NewList at init) under Disable and Waits for SIGF_SINGLE; it used to spin on VBeamPos. The VBlank
