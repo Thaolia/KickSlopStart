@@ -20,7 +20,7 @@ sources avec AROS, relecture des notes d'analyse, et liste des données de la RO
 Des images ROM prêtes à l'emploi sont publiées sur la page [Releases](https://github.com/Thaolia/KickSlopStart/releases).
 Chaque image est construite depuis les sources du tag par un workflow GitHub (`.github/workflows/release.yml`, toolchain
 épinglée) : elle est identique à l'octet à un `make kick-prod` local du même commit, et son SHA-256 figure dans les notes
-de la release. Pour publier une nouvelle release, pousser un tag : `git tag v0.1.0 && git push origin v0.1.0`.
+de la release, avec les commits depuis la release précédente. Pour publier une nouvelle release, pousser un tag : `git tag v0.1.0 && git push origin v0.1.0`.
 
 ## Identifier la ROM
 

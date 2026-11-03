@@ -18,7 +18,7 @@ review of the analysis notes, and the list of ROM data deliberately kept for com
 
 Ready-to-use ROM images are published on the [Releases](https://github.com/Thaolia/KickSlopStart/releases) page. Each
 image is built from the tagged source by a GitHub workflow (`.github/workflows/release.yml`, pinned toolchain), so it is
-byte-identical to a local `make kick-prod` of the same commit; its SHA-256 is listed in the release notes. To publish a
+byte-identical to a local `make kick-prod` of the same commit; its SHA-256 is listed in the release notes, with the commits since the previous release. To publish a
 new release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
 ## Identifying the ROM
