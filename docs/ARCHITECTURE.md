@@ -1546,6 +1546,11 @@ differs.
     (left of its depth gadgets, not on a window other than a backdrop) starts a drag (IB_SDRAG): each vertical
     move calls MoveScreen; the pointer handler freezes X and keeps Y at or below IB_YMIN (the grab point, or the
     top of the highest visible screen outside a drag).
+  - Screen system gadgets (intuition-screens §4, §8.1): OpenScreen (sc_mkgads) puts SUPFRONT, SDOWNBACK and
+    SDRAGGING Gadget structures at the head of Screen.FirstGadget, then NewScreen.Gadgets; sc_free frees the
+    SYSGADGET ones. A left click on the bar layer hit-tests that list (sc_gadat, depth gadgets first): SDRAGGING
+    starts the screen drag, a depth gadget is complemented (sc_gadinv) and calls ScreenToFront / ScreenToBack when
+    released over it (it_sgadbtn). Deviation: GadgetRender stays 0, the bar draws the pictograms itself.
   - Mouse position fields (issue #18): the input task (`it_setmouse`, before each button event and pointer move)
     writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
     (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from

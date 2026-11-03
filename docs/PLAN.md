@@ -978,8 +978,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
   any KickSlopStart image without a hash database; documented as a stable format in the README.
   **Issue #19 (2026-11-03)**: screens are stacked on the display and dragged by their title bar (graphics: ViewPorts
-  placed by DyOffset; intuition: 1.3 layout, clicks routed to the screen under the pointer, pointer bounds). Open:
-  screen depth gadgets do nothing on a click; LACE screens are laid out but pointer coordinates are not converted
+  placed by DyOffset; intuition: 1.3 layout, clicks routed to the screen under the pointer, pointer bounds). Screen
+  depth gadgets work (real Gadget structures, act on release). Open: LACE screens are laid out but pointer coordinates are not converted
   to interlaced lines; MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop
   has 1,128 bytes less free memory (copper fragments are 1,032 bytes).
   **Issue #18 (2026-11-03)**: Window/Screen MouseX/MouseY follow the pointer; Directory Opus selects entries. Open:

@@ -80,7 +80,9 @@ IB_SDRAG         EQU IB_WBMSG+IM_SIZEOF ; screen dragged by its title bar | 0 (i
 IB_SDRAGX        EQU IB_SDRAG+4        ; WORD: pointer X frozen during the drag
 IB_SDRAGY        EQU IB_SDRAGX+2       ; WORD: pointer Y at the last step of the drag
 IB_YMIN          EQU IB_SDRAGY+2       ; WORD: pointer Y lower bound (top of the highest visible screen, §5.3)
-IB_LOCKS         EQU IB_YMIN+2         ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_SGAD          EQU IB_YMIN+2         ; screen depth gadget held down (SUPFRONT / SDOWNBACK) | 0
+IB_SGADSCR       EQU IB_SGAD+4         ; its screen
+IB_LOCKS         EQU IB_SGADSCR+4      ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE

@@ -371,6 +371,90 @@ sc_gadhi:
         dc.w    -52,0,24,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SDOWNBACK
         dc.w    0,0,0,10,GRELWIDTH|GADGHIGHBITS,0,SDRAGGING
 
+; sc_gadbox(a0 = gadget, a4 = screen) -> d0/d1 - d2/d3 = its box in the screen (GRELRIGHT / GRELWIDTH /
+; GRELBOTTOM / GRELHEIGHT relative to the screen's size), clipped to the screen width.
+sc_gadbox:
+        move.w  GG_LEFTEDGE(a0),d0
+        btst    #4,GG_FLAGS+1(a0)    ; GRELRIGHT
+        beq.s   .gb_x
+        add.w   SC_WIDTH(a4),d0
+.gb_x:
+        move.w  GG_TOPEDGE(a0),d1
+        btst    #3,GG_FLAGS+1(a0)    ; GRELBOTTOM
+        beq.s   .gb_y
+        add.w   SC_HEIGHT(a4),d1
+.gb_y:
+        move.w  GG_WIDTH(a0),d2
+        btst    #5,GG_FLAGS+1(a0)    ; GRELWIDTH
+        beq.s   .gb_w
+        add.w   SC_WIDTH(a4),d2
+.gb_w:
+        add.w   d0,d2
+        subq.w  #1,d2
+        cmp.w   SC_WIDTH(a4),d2
+        blt.s   .gb_h
+        move.w  SC_WIDTH(a4),d2
+        subq.w  #1,d2
+.gb_h:
+        move.w  GG_HEIGHT(a0),d3
+        btst    #6,GG_FLAGS+1(a0)    ; GRELHEIGHT
+        beq.s   .gb_e
+        add.w   SC_HEIGHT(a4),d3
+.gb_e:
+        add.w   d1,d3
+        subq.w  #1,d3
+        rts
+
+; sc_gadat(a4 = screen, d4/d5 = position in the screen) -> a0 = first system gadget of Screen.FirstGadget whose
+; box holds the point (the depth gadgets come before the drag one), Z = 1 if none. Clobbers d0-d3.
+sc_gadat:
+        move.l  SC_FIRSTGADGET(a4),a0
+.ga_lp:
+        move.l  a0,d0
+        beq.s   .ga_ret
+        tst.w   GG_GADGETTYPE(a0)
+        bpl.s   .ga_nx               ; not a system gadget
+        bsr     sc_gadbox
+        cmp.w   d0,d4
+        blt.s   .ga_nx
+        cmp.w   d2,d4
+        bgt.s   .ga_nx
+        cmp.w   d1,d5
+        blt.s   .ga_nx
+        cmp.w   d3,d5
+        ble.s   .ga_hit
+.ga_nx:
+        move.l  GG_NEXTGADGET(a0),a0
+        bra.s   .ga_lp
+.ga_hit:
+        moveq   #1,d0                ; Z = 0
+.ga_ret:
+        rts
+
+; sc_gadinv(a0 = gadget, a4 = screen with a bar layer, a5): complements the gadget's box in the bar (GADGHCOMP
+; highlight). Clobbers d0-d3/a0/a1/a6.
+sc_gadinv:
+        move.l  a3,-(sp)
+        move.l  a4,a3
+        bsr     sc_gadbox
+        movem.w d0-d3,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        bsr     sc_barrp
+        moveq   #0,d0
+        move.b  rp_DrawMode(a1),d0
+        move.w  d0,-(sp)
+        moveq   #COMPLEMENT,d0
+        jsr     LVO_SETDRMD(a6)
+        bsr     sc_barrp
+        movem.w 2(sp),d0-d3
+        jsr     LVO_RECTFILL(a6)
+        bsr     sc_barrp
+        move.w  (sp)+,d0
+        jsr     LVO_SETDRMD(a6)
+        addq.l  #8,sp
+        move.l  (sp)+,a3
+        rts
+
 ; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle, or the
 ; screen's default title if it is null; always redrawn (the same buffer may have changed contents). Preserves
 ; everything.
@@ -3061,6 +3145,8 @@ it_dobutton:
         move.w  d0,d7                ; d7 = code
         tst.l   IB_SDRAG(a5)
         bne     it_sdragbtn
+        tst.l   IB_SGAD(a5)
+        bne     it_sgadbtn
         bsr     it_scrxy
         beq     .db_ret
         tst.l   IB_DRAGWIN(a5)
@@ -3103,7 +3189,7 @@ it_dobutton:
         btst    #0,WD_FLAGS+2(a3)    ; BACKDROP ($100): behind the screen's title bar
         beq.s   .db_win
 .db_bar:
-        bsr     it_sdragstart        ; title bar of the screen: drag
+        bsr     it_sbar              ; system gadgets of the screen's title bar
         bne     .db_ret
         move.l  a3,d0
         beq     .db_ret
@@ -3176,25 +3262,31 @@ it_dragstart:
         st      IB_BOXON(a5)
         bra     it_boxxor
 
-; it_sdragstart(a4 = screen, a3 = window under the pointer | backdrop | 0, d4/d5 = position in the screen, d7 =
-; code) -> Z = 0 if a screen drag starts: left button on the screen's title bar, left of its depth gadgets
-; (intuition-screens §8.3). The pointer X is frozen and its Y may not go above the point where TopEdge would
-; become negative. Preserves a3/a4.
-it_sdragstart:
+; it_sbar(a4 = screen, d4/d5 = position in the screen, d7 = code) -> Z = 0 if the left button went down on a system
+; gadget of the screen's title bar (intuition-screens §4, §8.3): SDRAGGING starts a screen drag (pointer X frozen,
+; Y not above the point where TopEdge would become negative); SUPFRONT / SDOWNBACK are complemented and act on the
+; release (it_sgadbtn). Preserves d2/d3/a3/a4.
+it_sbar:
         cmp.w   #IECODE_LBUTTON,d7
         bne.s   .sg_no
         tst.l   SC_BARLAYER(a4)
-        beq.s   .sg_no               ; SCREENQUIET: no bar
-        moveq   #0,d0
-        move.b  SC_BARHEIGHT(a4),d0
-        cmp.w   d0,d5
+        beq.s   .sg_no               ; no bar layer: the gadgets cannot be reached
+        cmp.w   #SC_BARH,d5
         bgt.s   .sg_no
-        move.l  a4,a0
-        bsr     sc_geo
-        move.w  SC_WIDTH(a4),d0
-        sub.w   GEO_BACK(a0),d0
-        cmp.w   d0,d4
-        bge.s   .sg_no               ; depth gadgets
+        movem.l d2-d3,-(sp)
+        bsr     sc_gadat
+        movem.l (sp)+,d2-d3
+        beq.s   .sg_no
+        cmp.w   #SDRAGGING,GG_GADGETTYPE(a0)
+        beq.s   .sg_drag
+        move.l  a0,IB_SGAD(a5)
+        move.l  a4,IB_SGADSCR(a5)
+        movem.l d2-d3,-(sp)
+        bsr     sc_gadinv
+        movem.l (sp)+,d2-d3
+        moveq   #1,d0
+        rts
+.sg_drag:
         move.l  a4,IB_SDRAG(a5)
         move.w  PTR_X,IB_SDRAGX(a5)
         move.w  PTR_Y,d0
@@ -3206,6 +3298,38 @@ it_sdragstart:
         rts
 .sg_no:
         moveq   #0,d0
+        rts
+
+; it_sgadbtn(a5, d7 = code): release of a held screen depth gadget: its box gets its look back, then, if the pointer
+; is still over it, ScreenToFront (SUPFRONT) or ScreenToBack (SDOWNBACK) (intuition-screens §8.1).
+it_sgadbtn:
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne.s   .gu_ret
+        move.l  IB_SGADSCR(a5),a4
+        move.l  IB_SGAD(a5),a0
+        clr.l   IB_SGAD(a5)
+        move.l  a0,-(sp)
+        bsr     sc_gadinv
+        move.w  PTR_X,d4
+        move.w  PTR_Y,d5
+        sub.w   SC_TOPEDGE(a4),d5
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bpl.s   .gu_lo
+        add.w   d4,d4
+.gu_lo:
+        bsr     sc_gadat
+        beq.s   .gu_out
+        cmp.l   (sp)+,a0
+        bne.s   .gu_ret              ; released elsewhere: nothing
+        move.w  GG_GADGETTYPE(a0),d0
+        move.l  a4,a0
+        move.l  a5,a6
+        cmp.w   #SUPFRONT,d0
+        beq     intuition_ScreenToFront
+        bra     intuition_ScreenToBack
+.gu_out:
+        addq.l  #4,sp
+.gu_ret:
         rts
 
 ; it_sdragbtn(a5, d7 = code): a screen drag ends when the left button is released; the pointer bounds are recomputed.
