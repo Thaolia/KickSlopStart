@@ -82,7 +82,8 @@ IB_SDRAGY        EQU IB_SDRAGX+2       ; WORD: pointer Y at the last step of the
 IB_YMIN          EQU IB_SDRAGY+2       ; WORD: pointer Y lower bound (top of the highest visible screen, §5.3)
 IB_SGAD          EQU IB_YMIN+2         ; screen depth gadget held down (SUPFRONT / SDOWNBACK) | 0
 IB_SGADSCR       EQU IB_SGAD+4         ; its screen
-IB_LOCKS         EQU IB_SGADSCR+4      ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_RMBWIN        EQU IB_SGADSCR+4      ; RMBTRAP window that got the MENUDOWN, for its MENUUP | 0
+IB_LOCKS         EQU IB_RMBWIN+4       ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE
@@ -307,6 +308,11 @@ NEWPREFS        EQU $00004000
 DISKINSERTED    EQU $00008000           ; a floppy disk was inserted (all windows that ask for it)
 DISKREMOVED     EQU $00010000
 INTUITICKS      EQU $00400000           ; ~10 per second to the active window, only one in circulation
+ACTIVEWINDOW    EQU $00040000
+INACTIVEWINDOW  EQU $00080000
+VANILLAKEY      EQU $00200000           ; RAWKEY converted by the default keymap (one character only)
+MENUDOWN        EQU $69                 ; im_Code of MOUSEBUTTONS (RMBTRAP)
+MENUUP          EQU $E9
 MENUNULL        EQU $FFFF
 SELECTDOWN      EQU $68                ; im_Code of MOUSEBUTTONS
 SELECTUP        EQU $E8

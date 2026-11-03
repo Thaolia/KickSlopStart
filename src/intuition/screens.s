@@ -70,6 +70,7 @@
                 xdef    intuition_ViewPortAddress
                 xref    gad_forget
                 xref    it_menubutton        ; menus.s: right button
+                xref    km_conv              ; exec/keymap.s: one RAWKEY event through a KeyMap (VANILLAKEY)
                 xref    it_menumove
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
@@ -2054,10 +2055,11 @@ it_sysup:
 .su_ret:
         rts
 
-; it_setactive(a3 = new active window | 0, a5): the old active window loses WINDOWACTIVE and receives the
-; veil; the new one takes WINDOWACTIVE and its title bar is redrawn (veil cleared) (spec §4). Preserves everything.
+; it_setactive(a3 = new active window | 0, a5): the old active window loses WINDOWACTIVE, receives INACTIVEWINDOW and
+; the veil; the new one takes WINDOWACTIVE, its title bar is redrawn (veil cleared) and it receives ACTIVEWINDOW
+; (spec frame §4, input-menus §1.11). Preserves everything.
 it_setactive:
-        movem.l d0-d1/a0-a1/a3/a6,-(sp)
+        movem.l d0-d3/d6/a0-a1/a3/a6,-(sp)
         move.l  IB_ACTIVEWINDOW(a5),d0
         cmp.l   a3,d0
         beq.s   .sa_ret
@@ -2068,8 +2070,10 @@ it_setactive:
         beq.s   .sa_new
         move.l  d0,a3
         and.l   #~WINDOWACTIVE,WD_FLAGS(a3)
+        move.l  #INACTIVEWINDOW,d0
+        bsr.s   .sa_msg
         bsr     wn_veil
-        move.l  16(sp),a3
+        move.l  28(sp),a3
         move.l  a3,d0
         beq.s   .sa_ret
         bsr     it_alive             ; closed while the veil waited for a layer lock
@@ -2079,9 +2083,16 @@ it_setactive:
         beq.s   .sa_ret
         or.l    #WINDOWACTIVE,WD_FLAGS(a3)
         bsr     wn_titlebar
+        move.l  #ACTIVEWINDOW,d0
+        bsr.s   .sa_msg
 .sa_ret:
-        movem.l (sp)+,d0-d1/a0-a1/a3/a6
+        movem.l (sp)+,d0-d3/d6/a0-a1/a3/a6
         rts
+.sa_msg:
+        moveq   #0,d1
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        bra     wn_sendmsg
 
 ; fill patterns (SetAfPt): drag (8 lines: 2, 3, 6, 7 filled) and veil (4 lines, one pixel out of
 ; four, shifted from one line to the next)
@@ -2784,7 +2795,8 @@ it_signal:
 
 ; it_keyin(a3 = RAWKEY InputEvent): pointer handler (input.device). The keyboard goes to an active text gadget;
 ; otherwise a right Amiga key that designates an item of the active window's menu strip (mn_keyshort) is swallowed and
-; dropped into the ring (IT_MENUKEYCODE); otherwise the key goes to the active window if it asked for RAWKEY: the event
+; dropped into the ring (IT_MENUKEYCODE); otherwise the key goes to the active window if it asked for RAWKEY or
+; VANILLAKEY: the event
 ; is then neutralized (IECLASS_NULL, the console does not see it) and dropped into the ring (code IT_KEYCODE + raw code,
 ; release included; x = qualifier). A text gadget only receives pressed keys. Preserves everything.
 it_keyin:
@@ -2818,7 +2830,7 @@ it_keyin:
         move.w  IE_CODE(a3),d0
 .ki_raw:
         move.l  WD_IDCMPFLAGS(a0),d1
-        and.l   #RAWKEY,d1
+        and.l   #RAWKEY|VANILLAKEY,d1
         beq.s   .ki_ret
         clr.b   IE_CLASS(a3)         ; IECLASS_NULL
         bra.s   .ki_push
@@ -3136,22 +3148,85 @@ it_setmouse:
         movem.l (sp)+,d0/d4-d5/a0/a4
         rts
 
+; it_rbutton(a5, a4 = screen under the pointer, d7.w = code, d4/d5 = pointer in it): right button. A window that is
+; active with RMBTRAP when it goes down receives MOUSEBUTTONS MENUDOWN, then MENUUP when it goes up, and no menu
+; opens (intuition-input-menus §2.6); otherwise the menus.
+it_rbutton:
+        cmp.w   #IECODE_RBUTTON,d7
+        bne.s   .rb_up
+        move.l  IB_ACTIVEWINDOW(a5),d0
+        beq     it_menubutton
+        move.l  d0,a3
+        btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP
+        beq     it_menubutton
+        move.l  a3,IB_RMBWIN(a5)
+        move.w  #MENUDOWN,d1
+        bra.s   .rb_send
+.rb_up:
+        move.l  IB_RMBWIN(a5),d0
+        beq     it_menubutton
+        clr.l   IB_RMBWIN(a5)
+        move.l  d0,a3
+        bsr     it_alive
+        beq.s   .rb_ret
+        move.w  #MENUUP,d1
+.rb_send:
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        move.l  #MOUSEBUTTONS,d0
+        bra     wn_sendmsg
+.rb_ret:
+        rts
+
 ; it_rawkey(a5, d0.w = IT_KEYCODE + raw code, d4.w = qualifier): RAWKEY message to the active window, if it
 ; asked for it. Preserves d2-d7/a2-a5.
+; VANILLAKEY (intuition-input-menus §2.6): when the active window asks for it, the key goes through the default
+; keymap instead; a press giving exactly one character sends VANILLAKEY (code = the character), anything else is
+; swallowed (no RAWKEY either).
 it_rawkey:
         move.l  IB_ACTIVEWINDOW(a5),d1
         beq.s   .rk_ret
-        movem.l d2-d3/a3,-(sp)
+        movem.l d2-d3/a2-a3,-(sp)
         move.l  d1,a3
         move.w  d0,d1
         and.w   #$00FF,d1
         moveq   #0,d2
         moveq   #0,d3
+        move.l  WD_IDCMPFLAGS(a3),d0
+        and.l   #VANILLAKEY,d0
+        beq.s   .rk_raw
+        move.l  KM_DEFKM,d0
+        bne.s   .rk_van
+.rk_raw:
         move.l  #RAWKEY,d0
         bsr     wn_sendkey
-        movem.l (sp)+,d2-d3/a3
+.rk_out:
+        movem.l (sp)+,d2-d3/a2-a3
 .rk_ret:
         rts
+.rk_van:
+        move.l  d0,a2                ; default keymap
+        lea     -(IE_SIZEOF+2)(sp),sp ; an InputEvent then the character
+        move.l  sp,a0
+        moveq   #IE_SIZEOF/2-1,d0
+.rk_clr:
+        clr.w   (a0)+
+        dbra    d0,.rk_clr
+        move.b  #IECLASS_RAWKEY,IE_CLASS(sp)
+        move.w  d1,IE_CODE(sp)
+        move.w  d4,IE_QUALIFIER(sp)
+        move.l  sp,a0
+        lea     IE_SIZEOF(sp),a1
+        moveq   #1,d1
+        jsr     km_conv              ; d0 = characters, -1 if more than one
+        moveq   #0,d1
+        move.b  IE_SIZEOF(sp),d1
+        lea     IE_SIZEOF+2(sp),sp
+        cmp.l   #1,d0
+        bne.s   .rk_out
+        move.l  #VANILLAKEY,d0
+        bsr     wn_sendkey
+        bra.s   .rk_out
 
 ; it_scrxy(a5, d4.w/d5.w = pointer) -> a4 = screen, d4/d5 = position in this screen (y - TopEdge; HIRES: x
 ; doubled); Z = 1 if there is none. During a gesture (window drag, menus, gadget held) the screen of its window;
@@ -3288,7 +3363,7 @@ it_dobutton:
         move.w  d7,d0
         and.w   #~IECODE_UP_PREFIX,d0
         cmp.w   #IECODE_RBUTTON,d0
-        beq     it_menubutton
+        beq     it_rbutton
         tst.l   IB_MENUWIN(a5)
         bne     .db_ret              ; menus displayed: the left button is ignored
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
@@ -3910,7 +3985,7 @@ wn_post:
         btst    #2,RQ_FLAGS+1(a1)    ; NOISYREQ
         bne.s   .sm_take
         move.l  d0,d6
-        and.l   #RAWKEY|MOUSEBUTTONS|MOUSEMOVE|INTUITICKS|MENUPICK,d6
+        and.l   #RAWKEY|VANILLAKEY|MOUSEBUTTONS|MOUSEMOVE|INTUITICKS|MENUPICK,d6
         bne     .sm_ret
 .sm_take:
         move.l  ($4).w,a6            ; free slot found and claimed in one go: the input task and the application

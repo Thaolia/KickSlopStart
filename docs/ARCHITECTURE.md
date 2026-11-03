@@ -1597,6 +1597,12 @@ differs.
     routine the CPU's own form. priv_handler carries out "move.w sr,-(sp)" and "move.w sr,Dn" for user-mode code
     (privileged on a 68010+, used by EXEC_SVC sites and GetCC). exc_default reads SR/PC at the head of any frame and,
     to hold a task, replaces the whole frame (size by format) with a format-0 one. Caches stay off, as at reset.
+  - IDCMP (intuition-input-menus §1.11, §2.4, §2.6): it_setactive sends INACTIVEWINDOW to the old active window and
+    ACTIVEWINDOW to the new one (MouseX/Y of the window). it_rbutton: a window active with RMBTRAP when the right
+    button goes down gets MOUSEBUTTONS MENUDOWN ($69), and MENUUP ($E9) when it goes up (IB_RMBWIN), instead of
+    the menus. it_keyin also takes keys for windows asking VANILLAKEY; it_rawkey then converts the key with km_conv
+    through the default keymap (KM_DEFKM): a press giving exactly one character sends VANILLAKEY with it as code,
+    anything else is swallowed. PPShow (17 Bit disks) waits on VANILLAKEY | MOUSEBUTTONS with RMBTRAP.
   - BOOL results (issue #21): DoubleClick, Request, SetDMRequest, GetScreenData and CloseScreen return TRUE as 1,
     the C value 1.3 returns (intuition-screens §7.3 probed WBenchToFront/Back: 1). Directory Opus 4 sign-extends
     the word returned by DoubleClick and keeps -1 for "first click", so a -1 TRUE never opened an entry.
