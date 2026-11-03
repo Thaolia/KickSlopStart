@@ -41,7 +41,7 @@ TD_RAWWORDS  EQU $1900         ; words read = 6400 (12800 bytes, > one DD track)
 TD_RAWBYTES  EQU TD_RAWWORDS*2
 TD_SECBODY   EQU 1080          ; MFM bytes of a sector after its syncs: header 56 + data 1024
 TD_ALLSECT   EQU $7FF          ; mask of the 11 sectors of a track
-TD_FILLTRIES EQU 4             ; reads of an incomplete track before returning an error
+TD_RETRIES   EQU 10            ; rereads of an incomplete track, recalibrated before the 4th and the 8th
 TD_SYNC      EQU $4489         ; standard Amiga MFM sync word (impossible in normal MFM -> 0 false positives)
 
 ; TD_NO_DMA=1 (RED B2): the read does NOT arm the disk DMA (neither DMACON DSKEN nor DSKLEN start) -> the MEMF_CLEAR
@@ -72,6 +72,14 @@ IO_DATA       EQU 40           ; APTR destination buffer
 IO_OFFSET     EQU 44           ; byte offset on the disk (logical sector * 512)
 TDERR_NotSpec EQU 20           ; generic trackdisk error (trackdisk.i: TDERR_NotSpecified)
 TDERR_WriteProt EQU 28         ; write-protected floppy
+TDERR_NoSecHdr EQU 21          ; read codes (trackdisk-write-v34 §5.6): no sector mark on the track
+TDERR_BadSecID EQU 23          ; format byte, sector number or track of a sector wrong
+TDERR_BadHdrSum EQU 24         ; header checksum
+TDERR_BadSecSum EQU 25         ; data checksum
+TDERR_TooFewSecs EQU 26        ; good sectors only, but not all of them
+TDERR_NoMem   EQU 31
+TDF_EXTCOM    EQU $8000        ; io_Command bit 15: ETD variant (iotd_Count checked against the change counter)
+IOTD_COUNT    EQU 48           ; struct IOExtTD: change count the request is valid for
 CMD_RESET     EQU 1
 CMD_WRITE     EQU 3
 CMD_UPDATE    EQU 4

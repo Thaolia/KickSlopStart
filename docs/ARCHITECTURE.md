@@ -587,6 +587,18 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7r) **trackdisk read errors, retries, ETD commands** (2026-11-04, specs `trackdisk-write-v34.md` §5.2/§5.6,
+  `trackdisk-raw-changeint-v34.md` §1). `td_decode_track` also returns a read code in A1: 0 for 11 good sectors,
+  otherwise the worst defect seen (25 data checksum, 24 header checksum, 23 format byte or sector number), 26 when
+  the missing sectors left no trace, 21 when no sector mark was found. `td_fill` rereads an incomplete track up
+  to 10 times, forcing a recalibration before the 4th and the 8th retry, and returns the code of the last read
+  (23 when the sectors carry another track). CMD_READ and CMD_WRITE put that code in io_Error instead of 20; a
+  request beyond the disk gives -4 like a misaligned one; no floppy gives 29 at once, after one probe step
+  (`td_require`) so that a floppy inserted since is still counted; no memory for the track cache gives 31.
+  BeginIO dispatches on the low byte of io_Command; with bit 15 set (ETD_*), a queued command whose iotd_Count is
+  older than the unit's change counter fails with 29 (the immediate commands never check it). Labels of ETD
+  reads/writes are not handled. Tests: `tests/td_decode_test.py` (unicorn: 99 good tracks, plus damaged tracks for
+  codes 21/24/25/26), `tests/tdcode_probe.s` (-4, 29 for an old count, 0 for a current one, 29 without a floppy).
   (7q) **Warm reset: KickMem, KickTag, CoolCapture** (2026-11-03, spec `coldstart-hardware-v34.md` §5). The
   ColdCapture block records the ExecBase that passed the first three checks (even, ChkBase, word sum) in d6 before
   it clears and calls the vector, and pushes it for phase 3. There, once `slow_probe` has chosen where ExecBase goes,

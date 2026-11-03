@@ -1,7 +1,9 @@
 # tests/td_decode_test.py - runs td_decode_track of OUR ROM (unicorn, 68000) on synthetic MFM tracks:
 # 11 AmigaDOS sectors + a gap of 532, 700 or 830 bytes (830 = amiga500-esp32 emulator, track of 6,399 words), read
 # of TD_RAWWORDS words started after the first sync of each of the 11 sectors (WORDSYNC). Expected: 11 sectors,
-# correct track, mask $7FF, data identical to the ADF. Dependency: Python module unicorn.
+# correct track, mask $7FF, data identical to the ADF, read code 0 in A1. Then damaged tracks must give the read
+# codes of trackdisk-write-v34 §5.6: 21 (no mark), 24 (header sum), 25 (data sum), 26 (sectors missing).
+# Dependency: Python module unicorn.
 # Usage: python3 tests/td_decode_test.py <rom> <hex address of td_decode_track (vlink -M)> <adf>
 import sys, struct, random
 from unicorn import *
@@ -50,7 +52,8 @@ def run(raw):
     mu.mem_write(STOP, b'\x4e\x71\x4e\x71'); mu.mem_write(SP, struct.pack('>I', STOP))
     mu.reg_write(UC_M68K_REG_A7, SP); mu.reg_write(UC_M68K_REG_A0, RAW); mu.reg_write(UC_M68K_REG_A1, SEC)
     mu.emu_start(DEC, STOP, count=5_000_000)
-    return mu.reg_read(UC_M68K_REG_D0), mu.reg_read(UC_M68K_REG_D1), mu.reg_read(UC_M68K_REG_A0), bytes(mu.mem_read(SEC, 5632))
+    return (mu.reg_read(UC_M68K_REG_D0), mu.reg_read(UC_M68K_REG_D1), mu.reg_read(UC_M68K_REG_A0),
+            bytes(mu.mem_read(SEC, 5632)), mu.reg_read(UC_M68K_REG_A1))
 
 bad = 0
 for gap in (532, 700, 830):
@@ -59,9 +62,26 @@ for gap in (532, 700, 830):
         for k in range(11):
             w0 = starts[k] // 2 + 1                     # DMA after the 1st sync (WORDSYNC)
             raw = b''.join(rev[2 * ((w0 + i) % W): 2 * ((w0 + i) % W) + 2] for i in range(6400))
-            n, t, m, sec = run(raw)
-            ok = n == 11 and t == track and m == 0x7FF and sec == adf[track * 5632:(track + 1) * 5632]
+            n, t, m, sec, code = run(raw)
+            ok = n == 11 and t == track and m == 0x7FF and sec == adf[track * 5632:(track + 1) * 5632] and code == 0
             if not ok: bad += 1
             print('gap %d piste %3d début secteur %2d : %2d secteurs, piste %3d, masque %03X %s' % (gap, track, k, n, t, m, 'OK' if ok else 'ECHEC'))
+def damaged(name, rev, starts, want):
+    global bad
+    W = len(rev) // 2; w0 = starts[0] // 2 + 1
+    raw = b''.join(rev[2 * ((w0 + i) % W): 2 * ((w0 + i) % W) + 2] for i in range(6400))
+    n, t, m, sec, code = run(raw)
+    ok = code == want
+    if not ok: bad += 1
+    print('%-22s : %2d secteurs, masque %03X, code %d (attendu %d) %s' % (name, n, m, code, want, 'OK' if ok else 'ECHEC'))
+
+rev, starts = build_rev(41, 700)
+damaged('aucune marque', b'\xAA' * len(rev), starts, 21)
+r = bytearray(rev); r[starts[5] + 4 + 20] ^= 0x10
+damaged('somme en-tete sect 5', bytes(r), starts, 24)
+r = bytearray(rev); r[starts[3] + 4 + 56 + 100] ^= 0x10
+damaged('somme donnees sect 3', bytes(r), starts, 25)
+r = bytearray(rev); r[starts[9]:starts[9] + 2 * 1088] = b'\xAA' * (2 * 1088)
+damaged('secteurs 9-10 absents', bytes(r), starts, 26)
 print('ÉCHECS :', bad)
 sys.exit(1 if bad else 0)

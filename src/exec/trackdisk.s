@@ -37,6 +37,8 @@ CIA_LVO_ABLEICR EQU -18
 CIA_LVO_SETICR EQU -24
 TD_LVO_CAUSE   EQU -180              ; exec Cause
 SIGB_SINGLE    EQU 4
+; commands run in the caller's context on 1.3, which never check the ETD change count (raw-changeint §1)
+TD_IMMEDIATE   EQU $000C61C2
 ; commands that never write io_Actual
 TD_KEEPACT     EQU (1<<TD_SEEK)|(1<<TD_FORMAT)|(1<<TD_REMOVE)|(1<<TD_RAWREAD)|(1<<TD_RAWWRITE)|(1<<TD_ADDCHANGEINT)|(1<<TD_REMCHANGEINT)
 ; per-unit state (device base + TDU_UNIT0 + unit * TDU_UNITSZ; io_Unit points to it)
@@ -165,7 +167,8 @@ trackdisk_beginio:
 .td_unit:
         move.l  d0,TD_CUNIT
         clr.b   IO_ERROR(a2)
-        move.w  IO_COMMAND(a2),d0
+        moveq   #0,d0                ; dispatch on the low byte; bit 15 = ETD variant (raw-changeint §1)
+        move.b  IO_COMMAND+1(a2),d0
         cmp.w   #31,d0               ; commands that leave io_Actual alone (TD_FORMAT: spec trackdisk-write-v34 §8;
         bhi.s   .td_clract           ; seek, raw, remove and change interrupts: trackdisk-raw-changeint-v34)
         move.l  #TD_KEEPACT,d1
@@ -174,6 +177,25 @@ trackdisk_beginio:
 .td_clract:
         clr.l   IO_ACTUAL(a2)
 .td_nact:
+        tst.b   IO_COMMAND(a2)
+        bpl.s   .td_std
+        cmp.w   #31,d0               ; ETD: a queued command whose change count is older than the unit's -> 29
+        bhi.s   .td_etd              ; (the immediate ones never check it)
+        move.l  #TD_IMMEDIATE,d1
+        btst    d0,d1
+        bne.s   .td_std
+.td_etd:
+        bsr     td_check_change
+        move.l  TD_CUNIT,a0
+        move.l  TDU_CHG(a0),d1
+        cmp.l   IOTD_COUNT(a2),d1
+        bls.s   .td_etdok
+        move.b  #TDERR_DiskChanged,IO_ERROR(a2)
+        bra     .td_restore
+.td_etdok:
+        moveq   #0,d0
+        move.b  IO_COMMAND+1(a2),d0
+.td_std:
                 ifeq    TD_READ_NOCMD
         cmp.w   #CMD_READ,d0
         beq.s   .td_read
@@ -209,6 +231,8 @@ trackdisk_beginio:
         cmp.l   #TD_DISKBYTES,d0
         bhi     .td_badrange
         bsr     td_check_change      ; disk changed/removed -> invalidates cache + head position
+        bsr     td_require
+        beq     .td_absent
         bsr     td_cachebuf          ; track cache, allocated at the first access
         beq     .td_nomem
         move.l  IO_DATA(a2),a5       ; a5 = destination (advances)
@@ -244,6 +268,7 @@ trackdisk_beginio:
         bsr     td_cache_slot        ; d1 = slot number, a3 = its buffer; Z = found in cache
         beq.s   .td_cached
         bsr     td_fill              ; d0 = 0 complete track (cached), 1 partial, -1 unreadable
+        move.l  a1,d7                ; d7 = read code if a requested sector is missing
         tst.l   d0
         bmi     .td_noread
         beq.s   .td_cached
@@ -287,18 +312,24 @@ trackdisk_beginio:
         bra.s   .td_restore
 .td_noread:
         move.l  d4,IO_ACTUAL(a2)     ; bytes transferred before the failure (0 if the 1st track fails)
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        move.b  d7,IO_ERROR(a2)
         bra.s   .td_restore          ; sectorbuf = persistent cache: never freed
 .td_badrange:
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a2) ; beyond the disk: same code as a misaligned request (write §5.2)
+        bra.s   .td_restore
+.td_absent:
+        move.b  #TDERR_DiskChanged,IO_ERROR(a2) ; no floppy: 29 at once, without the motor
         bra.s   .td_restore
 .td_nomem:
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        move.b  #TDERR_NoMem,IO_ERROR(a2)
 .td_restore:
         lea     TDB_SEM(a4),a0
         jsr     LVO_RELEASESEMAPHORE(a6)
-        cmp.w   #TD_ADDCHANGEINT,IO_COMMAND(a2)
+        cmp.b   #TD_ADDCHANGEINT,IO_COMMAND+1(a2)
+        bne.s   .td_reply
+        tst.b   IO_ERROR(a2)
         beq.s   .td_bdone            ; installed change interrupt: only TD_REMCHANGEINT replies it
+.td_reply:
         btst    #0,IO_FLAGS(a2)      ; IOF_QUICK (bit 0)?
         bne.s   .td_bdone
         move.l  a2,a1                ; not quick -> ReplyMsg(ioreq)
@@ -1313,13 +1344,18 @@ td_wr:
         move.l  d3,d0
         add.l   d2,d0
         cmp.l   #TD_DISKBYTES,d0
-        bhi     .wr_err
+        bhi     .wr_badlen
         bsr     td_check_change
+        tst.l   d7
+        bne.s   .wr_fmt
+        bsr     td_require
+        beq     .wr_absent
+.wr_fmt:
         bsr     td_sense
         btst    #DSKB_PROT,d1
         beq     .wr_prot
         bsr     td_cachebuf          ; cache allocated (first access)
-        beq     .wr_err
+        beq     .wr_nomem
         move.l  IO_DATA(a2),a5
         tst.l   d2                   ; zero-length CMD_WRITE: the track at io_Offset is still loaded and marked
         bne.s   .wr_loop             ; modified, so the next UPDATE writes it (spec trackdisk-write §8, probe)
@@ -1407,7 +1443,29 @@ td_wr:
         move.b  #TDERR_WriteProt,IO_ERROR(a2)
         rts
 .wr_err:
-        move.b  #TDERR_NotSpec,IO_ERROR(a2)
+        move.l  a1,d0                ; read code of td_fill
+        move.b  d0,IO_ERROR(a2)
+        rts
+.wr_absent:
+        move.b  #TDERR_DiskChanged,IO_ERROR(a2)
+        rts
+.wr_nomem:
+        move.b  #TDERR_NoMem,IO_ERROR(a2)
+        rts
+
+; td_require(a6): after td_check_change, a unit that last saw no floppy probes once (a step pulse re-arms /CHNG if
+; one was inserted since, which is then counted). -> Z = 0 if a floppy is in the drive. Clobbers d0/d1/a0.
+td_require:
+        move.l  TD_CUNIT,a0
+        tst.b   TDU_ABSENT(a0)
+        beq.s   .rq_yes
+        bsr     td_present
+        tst.l   d0
+        beq.s   .rq_ret
+        bsr     td_check_change
+.rq_yes:
+        moveq   #1,d0
+.rq_ret:
         rts
 
 ; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in fast memory (slow RAM at
@@ -1440,9 +1498,10 @@ td_cachebuf:
 ; td_fill(d0.w = cache key of a track of the current unit, d1.w = slot, a3 = its buffer, a6): the slot (written
 ; first if it was modified) receives the read and decoded track; it is only declared valid if its 11 sectors are
 ; good and carry that track.
-; Incomplete track: reread up to TD_FILLTRIES times, the good sectors accumulating (a read of the wrong
-; track cancels them). -> d0 = 0 complete track, 1 incomplete (not cached; a0 = mask of the good sectors), -1
-; unreadable. Preserves d1-d7/a2-a6.
+; Incomplete track: reread up to TD_RETRIES times, the head recalibrated before the 4th and the 8th retry
+; (trackdisk-write-v34 §5.2), the good sectors accumulating (a read of the wrong track cancels them). -> d0 = 0
+; complete track, 1 incomplete (not cached; a0 = mask of the good sectors), -1 unreadable; a1 = read code of the
+; last read (21-27) when the track is not complete. Preserves d1-d7/a2-a6.
 td_fill:
         movem.l d1-d7/a2-a5,-(sp)
         move.w  d0,d6                ; d6 = key
@@ -1454,21 +1513,32 @@ td_fill:
         add.w   d4,d4                ; d4 = offset of the slot
         move.w  #$FFFF,0(a0,d4.w)    ; empty as long as the track is not verified
         moveq   #0,d3                ; d3 = mask of the good sectors
-        moveq   #TD_FILLTRIES-1,d2
+        moveq   #TD_RETRIES,d2
 .fi_try:
+        cmp.w   #TD_RETRIES-4,d2
+        beq.s   .fi_recal
+        cmp.w   #TD_RETRIES-8,d2
+        bne.s   .fi_read
+.fi_recal:
+        move.l  TD_CUNIT,a0
+        sf      TDU_CYLOK(a0)
+.fi_read:
         moveq   #0,d0
         move.b  d6,d0                ; track
         bsr     td_read_track        ; d0 = raw buffer | 0
+        move.w  #TDERR_NoSecHdr,a4   ; a4 = read code (no buffer: nothing could be read)
         tst.l   d0
         beq.s   .fi_end
         move.l  d0,d7
         move.l  d0,a0
         move.l  a3,a1
-        bsr     td_decode_track      ; a0 = mask, d1 = track of the last valid sector
+        bsr     td_decode_track      ; a0 = mask, d1 = track of the last valid sector, a1 = read code
+        move.l  a1,a4
         move.l  a0,d0
         beq.s   .fi_free             ; nothing decoded: the buffer keeps the good sectors from before
         cmp.b   d6,d1
         beq.s   .fi_same
+        move.w  #TDERR_BadSecID,a4
         moveq   #0,d3                ; wrong track: its sectors replaced the good ones
         move.l  TD_CUNIT,a0          ; and the head is not where we think (a program stepped the drive itself,
         sf      TDU_CYLOK(a0)        ; Cluedo): the next try recalibrates
@@ -1484,6 +1554,7 @@ td_fill:
         beq.s   .fi_full
         dbra    d2,.fi_try
 .fi_end:
+        move.l  a4,a1
         moveq   #-1,d0
         tst.l   d3
         beq.s   .fi_ret              ; no good sector: unreadable
@@ -1809,13 +1880,16 @@ td_present:
         rts
 
 ; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = number of DISTINCT sectors decoded+verified (header AND data
-; checksums OK), a0 = their mask (bit n = sector n), d1 = track of the last valid sector.
+; checksums OK), a0 = their mask (bit n = sector n), d1 = track of the last valid sector, a1 = read code: 0 for
+; 11 good sectors, else the worst defect seen (25 data sum, 24 header sum, 23 sector id), 26 if the damaged
+; ones were only missing, 21 if no sector was found.
 ; Scans the raw track for the $4489 syncs; for each sector: decodes info (combines odd/even),
 ; checks format=$FF and sector number < 11, checks the header checksum (XOR of the 10 MFM info+label longs & MASK
 ; == stored decoded checksum) and the data checksum (XOR of the 256 MFM data longs & MASK), then decodes the 512
 ; data bytes into sectorbuf + number*512. Format locked by Python round-trip. a6 not used.
 td_decode_track:
         movem.l d2-d7/a2-a5,-(sp)
+        clr.w   -(sp)                ; worst defect seen (read code), 0 = none
         move.l  a1,a4                ; a4 = sectorbuf base
         lea     (TD_RAWBYTES-TD_SECBODY)(a0),a2 ; a2 = last possible header start: header + data in the
                                      ; buffer (a long track starting before the gap ends flush with the buffer)
@@ -1844,12 +1918,12 @@ td_decode_track:
         move.l  d0,d1
         rol.l   #8,d1
         cmp.b   #$FF,d1              ; format == $FF?
-        bne     .sc_adv
+        bne     .sc_id
         move.l  d0,d6
         lsr.l   #8,d6
         and.l   #$FF,d6              ; d6 = sector number
         cmp.l   #MFM_NSECT,d6
-        bcc     .sc_adv              ; sector >= 11 -> ignore
+        bcc     .sc_id               ; sector >= 11 -> ignore
         ; header checksum: XOR of the 10 longs (info+label) & MASK
         moveq   #0,d2
         move.l  a3,a5
@@ -1866,7 +1940,7 @@ td_decode_track:
         and.l   #MFM_MASK,d1
         or.l    d1,d0
         cmp.l   d2,d0
-        bne     .sc_adv              ; invalid header checksum -> ignore
+        bne     .sc_hdr              ; invalid header checksum -> ignore
         ; data checksum: XOR of the 256 longs (data odd+even) & MASK
         moveq   #0,d2
         lea     56(a3),a5
@@ -1883,7 +1957,7 @@ td_decode_track:
         and.l   #MFM_MASK,d1
         or.l    d1,d0
         cmp.l   d2,d0
-        bne     .sc_adv              ; invalid data checksum -> ignore
+        bne     .sc_dat              ; invalid data checksum -> ignore
         ; decode the 512 data bytes (128 longs) into sectorbuf + sector*512
         move.l  a0,-(sp)            ; save the scan pointer (a0 reused as the even walker)
         move.l  d6,d0
@@ -1912,6 +1986,18 @@ td_decode_track:
         and.l   #$FF,d5            ; d5 = track (seek oracle: must equal the requested track)
         lea     1080(a3),a0        ; skip this sector (header 56 + data 1024) -> scan towards the next sync
         bra     .sc_loop
+.sc_id:
+        moveq   #TDERR_BadSecID,d0
+        bra.s   .sc_bad
+.sc_hdr:
+        moveq   #TDERR_BadHdrSum,d0
+        bra.s   .sc_bad
+.sc_dat:
+        moveq   #TDERR_BadSecSum,d0
+.sc_bad:
+        cmp.w   (sp),d0              ; keep the highest code: data sum > header sum > sector id
+        bls.s   .sc_adv
+        move.w  d0,(sp)
 .sc_adv:
         addq.l  #2,a0
         bra     .sc_loop
@@ -1925,6 +2011,21 @@ td_decode_track:
 .sc_cnt0:
         tst.l   d1
         bne.s   .sc_cnt
+        moveq   #0,d3
+        move.w  (sp)+,d3           ; worst defect
+        cmp.w   #TD_ALLSECT,d7
+        bne.s   .sc_err
+        moveq   #0,d3              ; complete track: no error
+        bra.s   .sc_code
+.sc_err:
+        tst.w   d3
+        bne.s   .sc_code
+        moveq   #TDERR_NoSecHdr,d3 ; no damaged sector seen: no mark at all, or good sectors but too few
+        tst.l   d7
+        beq.s   .sc_code
+        moveq   #TDERR_TooFewSecs,d3
+.sc_code:
+        move.l  d3,a1              ; a1 = read code (trackdisk-write-v34 §5.6), 0 = 11 good sectors
         move.l  d7,a0              ; a0 = mask
         move.l  d5,d1              ; d1 = track number (of the last valid sector) -> B2b seek oracle
         movem.l (sp)+,d2-d7/a2-a5

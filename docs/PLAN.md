@@ -1006,6 +1006,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
+  **trackdisk errors (2026-11-04)**: read codes 21-26 instead of 20, 10 retries with recalibrations, -4 beyond
+  the disk, 29 without a floppy, 31 without memory, ETD_* commands with the change-count check
+  (`tests/tdcode_probe.s`, `tests/td_decode_test.py`). Open: ETD sector labels, codes 22 and 27 (preamble and
+  first-header cases of the 1.3 decoder are not specified precisely enough), TD_FORMAT without a floppy.
   **Issue #20 (2026-11-03)**: 68010 and 68020 CPUs (exception frame format word, MOVE from SR in user mode,
   AttnFlags). An emulated A1200 (68020, AGA, 2 MB chip, 24- or 32-bit addressing) boots the Workbench 1.3.3 and runs
   SysInfo (68EC020, AGA Alice 2 MB). Open: 68030/68040 (MMU, other frame formats), FPU (AFF_68881 not set), a real
