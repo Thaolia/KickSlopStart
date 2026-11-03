@@ -587,6 +587,23 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7q) **Warm reset: KickMem, KickTag, CoolCapture** (2026-11-03, spec `coldstart-hardware-v34.md` §5). The
+  ColdCapture block records the ExecBase that passed the first three checks (even, ChkBase, word sum) in d6 before
+  it clears and calls the vector, and pushes it for phase 3. There, once `slow_probe` has chosen where ExecBase goes,
+  the warm path applies when that old ExecBase sits at the same address, reads 34.2 at `+$14`, has
+  `$40000 <= MaxLocMem <= $80000` and `MaxExtMem` = 0 or `$C40000..$DC0000` on a 256 KB boundary: KickMemPtr,
+  KickTagPtr, KickCheckSum, CoolCapture and WarmCapture are pushed and written back after the zero-fill (ChkSum then
+  covers them); anything else is the cold path, as on 1.3 (1 MB of chip = always cold). `slow_probe` now restores the
+  words it probes, so the slow RAM, ExecBase included, comes back intact. `kick_reserve` (`resident.s`) runs right
+  after `add_slow_memory`, the earliest point where all the RAM is listed and before the boot allocations that could
+  land on the modules: SumKickData must equal KickCheckSum, then each MemEntry is reserved with AllocAbs, and the
+  KickTag table is handed to `build_reslist` only if all of them succeed. `build_reslist` follows the table (bit 31 =
+  link, 0 = end), replaces a resident of the same name when the tag's version is higher, or equal with a priority at
+  least as high, and appends the others before the priority sort. CoolCapture is called with A6 = ExecBase after the
+  LED, just before `InitCode(RTF_COLDSTART)`, in supervisor mode (1.3 calls it in user mode with multitasking
+  running; ours has no tasks yet at that point). WarmCapture is kept but never called: on 1.3 it follows an
+  InitCode that does not return. Test: `tests/kicktag_test.s` (a KickTag of its own, a KickTag named
+  "keymap.resource" at version 1 that must lose, a link entry, CoolCapture; an IPC RESET under Amiberry).
   (7p) **gameport units 0/1 and exec raw serial** (2026-11-02). gameport.device implements both units and the
   commands of spec `gameport-v34.md`: GPD_READEVENT queue, 8-slot event ring (7 usable), trigger
   (keys/timeout/deltas), ASK/SETCTYPE (mouse, relative and absolute joystick), ASK/SETTRIGGER, CMD_CLEAR/STOP/

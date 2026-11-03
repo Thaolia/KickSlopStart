@@ -425,28 +425,39 @@ init_memory:                         ; a6 = SysBase (jump table already built)
 ; RAMKICK: the image occupies the first SLOW_RSV bytes, so the probes start above it.
 ; Returns d0 = end of the slow RAM (the MaxExtMem value), 0 = none. Clobbers d1/a0/a1.
 slow_probe:
+        movem.l d2-d4,-(sp)
         moveq   #0,d0                ; d0 = detected size
 .sp_blk:
         cmp.l   #(SLOW_MAXBLK*SLOW_STEP),d0
         beq.s   .sp_end
         lea     SLOW_BASE+SLOW_RSV,a0
         add.l   d0,a0                ; a0 = candidate block (+ reserved image area)
+        move.w  $1FE(a0),d2          ; probed words put back: a warm reset keeps the slow RAM, ExecBase and the
+        move.w  $3FE(a0),d3          ; KickMem modules included (coldstart-hardware-v34 §5.2)
+        moveq   #-1,d1               ; d1 = block rejected until proven
         move.w  #$5A3C,$1FE(a0)
         move.w  #$A5C3,$3FE(a0)
         cmp.w   #$5A3C,$1FE(a0)
-        bne.s   .sp_end
+        bne.s   .sp_rest
         move.w  #$A5C3,$1FE(a0)
         move.w  #$5A3C,$3FE(a0)
         cmp.w   #$A5C3,$1FE(a0)
-        bne.s   .sp_end
+        bne.s   .sp_rest
+        moveq   #0,d1
         tst.l   d0                   ; block 0: no alias possible
-        beq.s   .sp_ok
+        beq.s   .sp_rest
         lea     SLOW_BASE+SLOW_RSV,a1
+        move.w  $1FE(a1),d4
         move.w  #$1234,$1FE(a1)      ; mark block 0...
         move.w  #$4321,$1FE(a0)      ; ...write the current block...
         cmp.w   #$1234,$1FE(a1)      ; ...has block 0 changed? -> alias
+        sne     d1
+        move.w  d4,$1FE(a1)
+.sp_rest:
+        move.w  d2,$1FE(a0)
+        move.w  d3,$3FE(a0)
+        tst.b   d1
         bne.s   .sp_end
-.sp_ok:
         add.l   #SLOW_STEP,d0
         bra.s   .sp_blk
 .sp_end:
@@ -454,6 +465,7 @@ slow_probe:
         beq.s   .sp_ret
         add.l   #SLOW_BASE,d0
 .sp_ret:
+        movem.l (sp)+,d2-d4
         rts
 
 ; add_slow_memory: adds the slow RAM found by slow_probe (ExecBase MaxExtMem) AT THE HEAD of the MemList

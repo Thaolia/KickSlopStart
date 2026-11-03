@@ -14,17 +14,58 @@
                 include "exec.i"
 
                 xdef    build_reslist
+                xdef    kick_reserve
+                xref    exec_SumKickData
+                xref    exec_AllocAbs
                 xdef    exec_FindResident
                 xdef    exec_InitResident
                 xdef    exec_InitCode
                 xdef    exec_AddResource
                 xdef    exec_OpenResource
 
-; build_reslist: a6 = SysBase. Allocates the array, scans [RESSCAN_LO,RESSCAN_HI), sorts,
-; publishes ExecBase->ResModules. A ROMTag = word $4AFC at an EVEN address whose RT_MATCHTAG
-; points to itself (rejects stray $4AFC). The scan resumes at RT_ENDSKIP.
+; kick_reserve: a6 = SysBase -> d0 = the KickTag table to merge, or 0 (coldstart-hardware-v34 §5.3). KickCheckSum
+; must equal SumKickData(); then every MemEntry of the KickMemPtr chain is reserved with AllocAbs, and the tags are
+; merged only if all of them succeed. A failed check leaves the pointers in ExecBase, unused.
+kick_reserve:
+        movem.l d2-d3/a2-a3,-(sp)
+        moveq   #0,d3
+        move.l  EB_KICKMEMPTR(a6),d0
+        or.l    EB_KICKTAGPTR(a6),d0
+        beq.s   .kr_out              ; nothing kept (cold path)
+        jsr     exec_SumKickData
+        cmp.l   EB_KICKCHECKSUM(a6),d0
+        bne.s   .kr_out
+        move.l  EB_KICKMEMPTR(a6),a2
+.kr_ml:
+        move.l  a2,d0
+        beq.s   .kr_ok
+        lea     ML_ME(a2),a3
+        move.w  ML_NUMENTRIES(a2),d2
+        bra.s   .kr_me
+.kr_lp:
+        move.l  ME_ADDR(a3),a1
+        move.l  ME_LENGTH(a3),d0
+        addq.l  #8,a3
+        jsr     exec_AllocAbs
+        tst.l   d0
+        beq.s   .kr_out              ; an area is taken: the KickTags are ignored
+.kr_me:
+        dbra    d2,.kr_lp
+        move.l  LN_SUCC(a2),a2
+        bra.s   .kr_ml
+.kr_ok:
+        move.l  EB_KICKTAGPTR(a6),d3
+.kr_out:
+        move.l  d3,d0
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+
+; build_reslist: a6 = SysBase, d0 = KickTag table to merge (0 = none). Allocates the array, scans
+; [RESSCAN_LO,RESSCAN_HI), merges the KickTags, sorts, publishes ExecBase->ResModules. A ROMTag = word $4AFC at an
+; EVEN address whose RT_MATCHTAG points to itself (rejects stray $4AFC). The scan resumes at RT_ENDSKIP.
 build_reslist:
-        movem.l d2-d6/a2-a4,-(sp)
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  d0,d7                ; d7 = KickTag table
         move.l  #(RESMAX+1)*4,d0     ; RESMAX pointers + 1 NUL terminator
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
@@ -35,7 +76,7 @@ build_reslist:
         move.l  #RESSCAN_LO,a2       ; a2 = p (scan pointer, always even)
 .scan:
         cmp.l   #RESSCAN_HI,a2
-        bcc.s   .sort                ; p >= end -> scan finished
+        bcc.s   .kick                ; p >= end -> scan finished
         cmp.w   #RTC_MATCHWORD,(a2)
         bne.s   .scan_next
         move.l  RT_MATCHTAG(a2),d0
@@ -54,6 +95,57 @@ build_reslist:
 .scan_next:
         addq.l  #2,a2
         bra.s   .scan
+.kick:
+        ; KickTags (§5.3): an entry with bit 31 set links to the next table, 0 ends it. A tag whose name is already
+        ; listed replaces that resident if its version is higher, or equal with a priority at least as high.
+        move.l  d7,d6                ; d6 = cursor in the KickTag table
+        beq.s   .sort
+.kt_lp:
+        move.l  d6,a0
+        move.l  (a0)+,d0
+        move.l  a0,d6
+        tst.l   d0
+        beq.s   .sort
+        bpl.s   .kt_tag
+        bclr    #31,d0
+        move.l  d0,d6
+        bra.s   .kt_lp
+.kt_tag:
+        move.l  d0,a1                ; a1 = KickTag ROMTag
+        cmp.w   #RTC_MATCHWORD,(a1)
+        bne.s   .kt_lp
+        move.l  a3,a0
+        move.l  d2,d3
+        bra.s   .kt_fe
+.kt_find:
+        move.l  (a0)+,a5             ; a5 = resident already listed
+        move.l  RT_NAME(a5),a2
+        move.l  RT_NAME(a1),a4
+.kt_cmp:
+        move.b  (a2)+,d0
+        cmp.b   (a4)+,d0
+        bne.s   .kt_fe
+        tst.b   d0
+        bne.s   .kt_cmp
+        move.b  RT_VERSION(a1),d0
+        cmp.b   RT_VERSION(a5),d0
+        bhi.s   .kt_repl
+        bne.s   .kt_lp               ; older: the listed one stays
+        move.b  RT_PRI(a1),d0
+        cmp.b   RT_PRI(a5),d0
+        blt.s   .kt_lp
+.kt_repl:
+        move.l  a1,-4(a0)
+        bra.s   .kt_lp
+.kt_fe:
+        dbra    d3,.kt_find
+        cmp.w   #RESMAX,d2
+        bcc.s   .kt_lp               ; array full (defensive)
+        move.l  d2,d0
+        lsl.l   #2,d0
+        move.l  a1,0(a3,d0.l)
+        addq.l  #1,d2
+        bra.s   .kt_lp
 .sort:
         ; descending bubble sort by RT_PRI (small N; no swap at equal pri -> stable
         ; = FIFO in scan order = address order). array = a3, count = d2.
@@ -83,7 +175,7 @@ build_reslist:
         tst.l   d4
         bne.s   .sort_pass           ; a swap took place -> another pass
 .done:
-        movem.l (sp)+,d2-d6/a2-a4
+        movem.l (sp)+,d2-d7/a2-a5
         rts
 
 ; FindResident(name a1) -> d0 = struct Resident* | 0. Looks up in ResModules.

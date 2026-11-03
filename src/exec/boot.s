@@ -25,6 +25,7 @@
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c: launch of the 1st task = user-mode transition)
                 xref    build_reslist    ; resident.s (scan of the ROMTags)
+                xref    kick_reserve     ; resident.s (KickMem/KickTag check of a warm reset)
                 xref    task_alloc
                 xref    ciaa_server      ; cia.s (PORTS/INT2 server)
                 xref    ciab_server      ; cia.s (EXTER/INT6 server, exclusive vector)
@@ -187,6 +188,8 @@ coldstart:                        ; $FC00D2
         ; ColdCapture of an ExecBase that survived the reset (docs/analysis/coldstart-hardware-v34.md §5.1):
         ; *(4) even, ChkBase, word sum of +$22..+$52 = $FFFF; the vector is cleared, then called with the return
         ; address in a5. This is how the soft-kick image in slow RAM survives a reset.
+        ; d6 = the ExecBase that passed these three checks (0 = none), handed to the warm-path test of phase 3.
+        moveq   #0,d6
         move.l  ($4).w,d0
         btst    #0,d0
         bne.s   .cc_done
@@ -209,15 +212,19 @@ coldstart:                        ; $FC00D2
         dbra    d0,.cc_sum
         not.w   d1
         bne.s   .cc_done
+        move.l  a6,d6
         move.l  EB_COLDCAPTURE(a6),d0
         beq.s   .cc_done
-        clr.l   EB_COLDCAPTURE(a6)
+        clr.l   EB_COLDCAPTURE(a6)   ; the checksum no longer matches: phase 3 relies on d6, not on a new check
         move.l  d0,a0
-        lea     .cc_done(pc),a5
+        lea     .cc_back(pc),a5
         move.l  #STACKTOP,sp
         jmp     (a0)
+.cc_back:
+        move.l  ($4).w,d6
 .cc_done:
         move.l  #STACKTOP,sp
+        move.l  d6,-(sp)             ; popped in phase 3
         lea     LOWVARS_LO,a0        ; low-RAM variables zeroed: RAM is not null at power-on on a
         move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; real machine nor under WinUAE (an odd keyboard buffer index there
 .lv_clr:                             ; caused an address error at the 1st key press; FS-UAE clears RAM)
@@ -246,11 +253,50 @@ coldstart:                        ; $FC00D2
         beq.s   .eb_at
         lea     SLOW_BASE+SLOW_RSV+EXEC_NEGSIZE,a6 ; bottom of the slow RAM with it (coldstart-hardware-v34 §4.1)
 .eb_at:
+        ; Warm path (coldstart-hardware-v34 §5.1-5.2): the old ExecBase passed the checks above, sits where this
+        ; boot puts it, is version 34.2, and its memory bounds are those of an A500 (chip <= 512 KB, slow RAM on a
+        ; 256 KB boundary). Then KickMemPtr/KickTagPtr/KickCheckSum and CoolCapture/WarmCapture survive the rebuild.
+        move.l  (sp)+,d6
+        cmp.l   a6,d6
+        bne.s   .eb_cold
+        cmp.l   #$00220002,LIB_VERSION(a6)
+        bne.s   .eb_cold
+        move.l  EB_MAXLOCMEM(a6),d1
+        cmp.l   #$40000,d1
+        blo.s   .eb_cold
+        cmp.l   #$80000,d1
+        bhi.s   .eb_cold
+        move.l  EB_MAXEXTMEM(a6),d1
+        beq.s   .eb_warm
+        cmp.l   #$C40000,d1
+        blo.s   .eb_cold
+        cmp.l   #$DC0000,d1
+        bhi.s   .eb_cold
+        and.l   #$3FFFF,d1
+        bne.s   .eb_cold
+.eb_warm:
+        move.l  EB_KICKMEMPTR(a6),-(sp)
+        move.l  EB_KICKTAGPTR(a6),-(sp)
+        move.l  EB_KICKCHECKSUM(a6),-(sp)
+        move.l  EB_COOLCAPTURE(a6),-(sp)
+        move.l  EB_WARMCAPTURE(a6),-(sp)
+        bra.s   .eb_zero
+.eb_cold:
+        moveq   #5-1,d1
+.eb_none:
+        clr.l   -(sp)
+        dbra    d1,.eb_none
+.eb_zero:
         move.l  a6,a0                ; zero-fill the area of the positive fields
         move.w  #(EXEC_POSSIZE/4)-1,d1
 .zf:
         clr.l   (a0)+
         dbf     d1,.zf
+        move.l  (sp)+,EB_WARMCAPTURE(a6)
+        move.l  (sp)+,EB_COOLCAPTURE(a6)
+        move.l  (sp)+,EB_KICKCHECKSUM(a6)
+        move.l  (sp)+,EB_KICKTAGPTR(a6)
+        move.l  (sp)+,EB_KICKMEMPTR(a6)
         move.l  d0,EB_MAXEXTMEM(a6)
 
         move.b  #NT_LIBRARY,LN_TYPE(a6)
@@ -325,6 +371,8 @@ coldstart:                        ; $FC00D2
         bsr     ser_puthex
         lea     msg_crlf(pc),a0
         bsr     ser_puts
+        jsr     kick_reserve         ; KickMem areas reserved as soon as all the RAM is listed, before any boot
+        move.l  d0,-(sp)             ; allocation can land on them; the KickTag table is popped by the resident scan
         if      RAMKICK
         move.l  #coldstart,EB_COLDCAPTURE(a6) ; a reset comes back to the image in slow RAM
         endif
@@ -367,9 +415,17 @@ coldstart:                        ; $FC00D2
         ; exists. The demo residents only emit their name; nothing is launched by them.
         move.l  #127,RES_LASTPRI     ; upper bound (any RT_PRI <= 127 passes)
         clr.l   RES_COUNT
-        jsr     build_reslist        ; scans [RESSCAN_LO,HI) -> ExecBase->ResModules
+        move.l  (sp)+,d0             ; KickTag table kept by kick_reserve, or 0
+        jsr     build_reslist        ; scans [RESSCAN_LO,HI) -> ExecBase->ResModules, KickTags merged
         bclr    #1,CIAA_PRA          ; power LED bright (audio filter on), as 1.3 after ResModules (coldstart-hardware
                                      ; §5): Shanghai's intro waits for CIA-A PRA == $BC, LED bit included
+        move.l  EB_COOLCAPTURE(a6),d0 ; CoolCapture (§5.3): A6 = ExecBase, just before InitCode(RTF_COLDSTART)
+        beq.s   .no_cool
+        move.l  d0,a0
+        movem.l d2-d7/a2-a6,-(sp)
+        jsr     (a0)
+        movem.l (sp)+,d2-d7/a2-a6
+.no_cool:
         moveq   #RTF_COLDSTART,d0    ; startClass: cold-start residents
         moveq   #0,d1                ; minimum version 0
         jsr     LVO_INITCODE(a6)     ; init each demo resident (emits its name in pri order)

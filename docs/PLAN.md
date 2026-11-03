@@ -1000,6 +1000,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   modulo and offset; ScrollVPort scrolls either playfield (`tests/hamdpf_test.s`). Open from the spec (§4.4): DIW/DDF
   still come from three fixed windows, so vp.DxOffset, View.DxOffset and other DWidths are ignored; the number of
   colours emitted is min(Count, 32) instead of the ncol rule.
+  **Warm reset (2026-11-03)**: an ExecBase that passes the full §5.1 check of `coldstart-hardware-v34.md` keeps
+  KickMemPtr/KickTagPtr/KickCheckSum and CoolCapture/WarmCapture; the KickMem areas are reserved with AllocAbs, the
+  KickTags merged into ResModules by name, version and priority, and CoolCapture called before
+  InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`). Open: CoolCapture runs in supervisor mode without tasks (user
+  mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
+  areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
   **Issue #20 (2026-11-03)**: 68010 and 68020 CPUs (exception frame format word, MOVE from SR in user mode,
   AttnFlags). An emulated A1200 (68020, AGA, 2 MB chip, 24- or 32-bit addressing) boots the Workbench 1.3.3 and runs
   SysInfo (68EC020, AGA Alice 2 MB). Open: 68030/68040 (MMU, other frame formats), FPU (AFF_68881 not set), a real

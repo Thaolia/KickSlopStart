@@ -596,6 +596,8 @@ UNIT_VBLANK  EQU 1             ; (OpenDevice would set a struct Unit*; our minim
 EB_SOFTVER    EQU $22
 EB_CHKBASE    EQU $26
 EB_COLDCAPTURE EQU $2A
+EB_COOLCAPTURE EQU $2E        ; called before InitCode(RTF_COLDSTART) on every boot that keeps it
+EB_WARMCAPTURE EQU $32        ; kept across a warm reset; 1.3 never reaches the point that calls it
 EB_CHKSUM     EQU $52         ; complement of the word sum of +$22..+$4E (checked over +$22..+$52 = $FFFF)
 EB_MAXLOCMEM  EQU $3E
 EB_MAXEXTMEM  EQU $4E         ; end of the slow RAM, 0 without
@@ -685,6 +687,8 @@ TC_USERDATA   EQU 88          ; APTR free for the owner of the task (file-handle
 TC_SIZE       EQU 92
 ML_NUMENTRIES EQU 14          ; exec/memory.i: struct MemList (Node, NumEntries, MemEntry[])
 ML_ME         EQU 16
+ME_ADDR       EQU 0           ; struct MemEntry: address, length (8 bytes)
+ME_LENGTH     EQU 4
 LVO_ALLOCENTRY EQU -222
 LVO_FREEENTRY EQU -228
 SYS_SIGALLOC  EQU $FFFF        ; signals 0-15 pre-allocated (reserved for the system)
