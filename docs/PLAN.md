@@ -966,8 +966,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   icon is selected (our workbench task; 1.3 behaviour to probe), trackdisk allocates its 12.8 KB chip DMA buffer
   at each read (1.3 shows no such per-read allocation: a chip-full game could lose its disk reads), Bubble Bobble
   makes two allocations on 1.3 (9,876 and 177,152 bytes) that it does not make on ours (other code path, cause
-  unknown), screens below the front one are not displayed (MoveScreen only updates the
-  fields). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
+  unknown). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
   **Blitter masks, issue #15 (2026-11-02)**: BLTAFWM/BLTALWM = $FFFF at graphics init; the Kefrens Desert Dream
   spaceship is drawn again. Other blitter registers 1.3 leaves behind are not known (oracle probe if a program needs
@@ -978,6 +977,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
   **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
   any KickSlopStart image without a hash database; documented as a stable format in the README.
+  **Issue #19 (2026-11-03)**: screens are stacked on the display and dragged by their title bar (graphics: ViewPorts
+  placed by DyOffset; intuition: 1.3 layout, clicks routed to the screen under the pointer, pointer bounds). Open:
+  screen depth gadgets do nothing on a click; LACE screens are laid out but pointer coordinates are not converted
+  to interlaced lines; MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop
+  has 1,128 bytes less free memory (copper fragments are 1,032 bytes).
   **Issue #18 (2026-11-03)**: Window/Screen MouseX/MouseY follow the pointer; Directory Opus selects entries. Open:
   on 1.3, are all windows of the screen updated or only the active one; GZZMouse of a non-GZZ window (we copy
   MouseX/Y); MOUSEBUTTONS messages carry qualifier 0 (shift-click); it_scrxy ignores the screen's TopEdge.

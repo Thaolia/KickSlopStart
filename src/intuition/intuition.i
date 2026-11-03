@@ -76,7 +76,11 @@ IB_PTRWIN        EQU IB_DGHOST+2       ; window whose own pointer is displayed (
 IB_WBPORT        EQU IB_PTRWIN+4       ; Workbench port registered by AlohaWorkbench | 0
 IB_WBRPORT       EQU IB_WBPORT+4       ; "WBenchPort" reply port, created at the first message | 0
 IB_WBMSG         EQU IB_WBRPORT+4      ; IntuiMessage sent to the Workbench (WBENCHOPEN / WBENCHCLOSE)
-IB_LOCKS         EQU IB_WBMSG+IM_SIZEOF ; 7 SignalSemaphores of LockIBase / UnlockIBase
+IB_SDRAG         EQU IB_WBMSG+IM_SIZEOF ; screen dragged by its title bar | 0 (intuition-screens §8.3)
+IB_SDRAGX        EQU IB_SDRAG+4        ; WORD: pointer X frozen during the drag
+IB_SDRAGY        EQU IB_SDRAGX+2       ; WORD: pointer Y at the last step of the drag
+IB_YMIN          EQU IB_SDRAGY+2       ; WORD: pointer Y lower bound (top of the highest visible screen, §5.3)
+IB_LOCKS         EQU IB_YMIN+2         ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE

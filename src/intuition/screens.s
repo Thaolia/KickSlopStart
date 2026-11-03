@@ -498,8 +498,8 @@ it_box:
         movem.l (sp)+,d4-d7
         rts
 
-; RemakeDisplay() / RethinkDisplay() (a6 = IntuitionBase): copper list rebuilt from the structures of the front
-; screen (a program that changed BitMap.Depth or the colors by hand is thus displayed as is).
+; RemakeDisplay() / RethinkDisplay() (a6 = IntuitionBase): the display rebuilt from the screens' structures (a
+; program that changed BitMap.Depth or the colours by hand is thus displayed as is).
 intuition_RemakeDisplay:
         move.l  a5,-(sp)
         move.l  a6,a5
@@ -507,20 +507,73 @@ intuition_RemakeDisplay:
         move.l  (sp)+,a5
         rts
 
-; it_remake(a5 = IntuitionBase): displays the front screen (its ViewPort alone in ib_ViewLord), or turns off
-; the display if there is no screen left. Preserves everything but d0/d1/a0/a1.
+; it_remake(a5 = IntuitionBase): every screen's ViewPort in ib_ViewLord, in screen-list order, laid out as in
+; intuition-screens §5.2 (lengths in interlaced lines, "le"): the front screen is whole; each following one ends 6 le
+; (3 lines) above the top of the visible screen in front of it (DHeight cut, at most its Height), or is hidden
+; (VP_HIDE) if it starts at that level or lower. DyOffset = TopEdge. MakeVPort of the visible ones, MrgCop,
+; LoadView. Outside a screen drag, the pointer may not go above the highest visible screen (IB_YMIN, §5.3). No
+; screen: display off. Preserves everything but d0/d1/a0/a1.
 it_remake:
-        movem.l a2/a6,-(sp)
+        movem.l d2-d4/a2/a4/a6,-(sp)
         lea     IB_VIEWLORD(a5),a2
         move.l  IB_GFXBASE(a5),a6
         move.l  IB_FIRSTSCREEN(a5),d0
-        beq.s   .rm_none
+        beq     .rm_none
+        move.l  d0,a4
+        lea     SC_VIEWPORT(a4),a0
+        move.l  a0,v_ViewPort(a2)
+        bsr     .rm_le
+        move.w  d0,d3
+        move.w  SC_HEIGHT(a4),d0
+        bsr     .rm_le2
+        add.w   d0,d3                ; d3 = L: bottom of the front screen
+        moveq   #0,d4                ; d4 = top of the last visible screen (le)
+.rm_scr:
+        lea     SC_VIEWPORT(a4),a1
+        move.l  SC_NEXTSCREEN(a4),d0
+        beq.s   .rm_last
         add.l   #SC_VIEWPORT,d0
-        move.l  d0,a1
-        clr.l   vp_Next(a1)
-        move.l  a1,v_ViewPort(a2)
+.rm_last:
+        move.l  d0,vp_Next(a1)
+        move.w  SC_TOPEDGE(a4),d0
+        bpl.s   .rm_dy
+        moveq   #0,d0
+.rm_dy:
+        move.w  d0,vp_DyOffset(a1)
+        bsr     .rm_le               ; d0 = top (le)
+        cmp.w   d3,d0
+        blt.s   .rm_vis
+        or.w    #VP_HIDE,vp_Modes(a1)
+        bra.s   .rm_next
+.rm_vis:
+        and.w   #~VP_HIDE,vp_Modes(a1)
+        move.w  d0,d4
+        move.w  d3,d1
+        sub.w   d0,d1                ; lines down to L
+        move.w  d0,d3
+        subq.w  #6,d3                ; next L: 3 lines above this one
+        btst    #2,vp_Modes+1(a1)    ; LACE
+        bne.s   .rm_lace
+        lsr.w   #1,d1
+.rm_lace:
+        cmp.w   SC_HEIGHT(a4),d1
+        bls.s   .rm_dh
+        move.w  SC_HEIGHT(a4),d1
+.rm_dh:
+        move.w  d1,vp_DHeight(a1)
         move.l  a2,a0
         jsr     LVO_MAKEVPORT(a6)
+.rm_next:
+        move.l  SC_NEXTSCREEN(a4),d0
+        beq.s   .rm_laid
+        move.l  d0,a4
+        bra.s   .rm_scr
+.rm_laid:
+        tst.l   IB_SDRAG(a5)
+        bne.s   .rm_merge
+        lsr.w   #1,d4
+        move.w  d4,IB_YMIN(a5)
+.rm_merge:
         move.l  a2,a1
         jsr     LVO_MRGCOP(a6)
         move.l  a2,a1
@@ -528,10 +581,22 @@ it_remake:
         bra.s   .rm_ret
 .rm_none:
         clr.l   v_ViewPort(a2)
+        clr.w   IB_YMIN(a5)
         sub.l   a1,a1
         jsr     LVO_LOADVIEW(a6)
 .rm_ret:
-        movem.l (sp)+,a2/a6
+        movem.l (sp)+,d2-d4/a2/a4/a6
+        rts
+; .rm_le(a4 = screen) -> d0.w = TopEdge (>= 0) in le; .rm_le2(d0.w = lines of the screen, a4) -> d0.w in le.
+.rm_le:
+        move.w  SC_TOPEDGE(a4),d0
+        bpl.s   .rm_le2
+        moveq   #0,d0
+.rm_le2:
+        btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
+        bne.s   .rm_lr
+        add.w   d0,d0
+.rm_lr:
         rts
 
 ; ScreenToFront(screen a0) / ScreenToBack(screen a0): the screen moves to the head / tail of the screen list; only
@@ -748,8 +813,7 @@ wb_depth:
         rts
 
 ; MoveScreen(screen a0, dx d0, dy d1) (spec intuition-screens §8.2): dx ignored; TopEdge += dy if the result is >= 0,
-; otherwise 0 if TopEdge > 0, otherwise nothing; ViewPort DyOffset := TopEdge; display rebuilt. Deviation: only the
-; front screen is displayed, at the top of the display.
+; otherwise 0 if TopEdge > 0, otherwise nothing; ViewPort DyOffset := TopEdge; display rebuilt (it_remake).
 intuition_MoveScreen:
         move.w  SC_TOPEDGE(a0),d0
         add.w   d1,d0
@@ -2776,7 +2840,7 @@ it_intask:
         bsr     it_domove
         bra     .in_next
 
-; it_setmouse(a5, d4.w/d5.w = pointer): MouseX/MouseY of the front screen and of each of its windows, and
+; it_setmouse(a5, d4.w/d5.w = pointer): MouseX/MouseY of the screen under the pointer and of each of its windows, and
 ; GZZMouseX/GZZMouseY (interior of a GIMMEZEROZERO window), follow the pointer. Programs read them instead of the
 ; IntuiMessage (Directory Opus computes the clicked list row from Window->MouseY). Preserves everything.
 it_setmouse:
@@ -2828,12 +2892,42 @@ it_rawkey:
 .rk_ret:
         rts
 
-; it_scrxy(a5, d4.w/d5.w = pointer) -> a4 = front screen, d4/d5 = position in this screen (HIRES: x doubled);
-; Z = 1 if there is no screen. Clobbers d0.
+; it_scrxy(a5, d4.w/d5.w = pointer) -> a4 = screen, d4/d5 = position in this screen (y - TopEdge; HIRES: x
+; doubled); Z = 1 if there is none. During a gesture (window drag, menus, gadget held) the screen of its window;
+; otherwise the first visible screen of the list whose top is at or above the pointer (intuition-screens §8.3).
+; Clobbers d0.
 it_scrxy:
+        move.l  IB_DRAGWIN(a5),d0
+        bne.s   .sx_win
+        move.l  IB_MENUWIN(a5),d0
+        bne.s   .sx_win
+        move.l  IB_GADACT(a5),d0
+        beq.s   .sx_sys
+        move.l  IB_GADWIN(a5),d0
+        bne.s   .sx_win
+.sx_sys:
+        tst.w   IB_SYSACT(a5)
+        beq.s   .sx_under
+        move.l  IB_SYSWIN(a5),d0
+        bne.s   .sx_win
+.sx_under:
         move.l  IB_FIRSTSCREEN(a5),d0
+.sx_scan:
         beq.s   .sx_ret
         move.l  d0,a4
+        move.w  SC_VIEWPORT+vp_Modes(a4),d0
+        and.w   #VP_HIDE,d0
+        bne.s   .sx_nx
+        cmp.w   SC_TOPEDGE(a4),d5
+        bge.s   .sx_got
+.sx_nx:
+        move.l  SC_NEXTSCREEN(a4),d0
+        bra.s   .sx_scan
+.sx_win:
+        move.l  d0,a4
+        move.l  WD_WSCREEN(a4),a4
+.sx_got:
+        sub.w   SC_TOPEDGE(a4),d5
         tst.w   SC_VIEWPORT+vp_Modes(a4)
         bpl.s   .sx_lo
         add.w   d4,d4
@@ -2903,6 +2997,8 @@ it_winat:
 ; gesture in progress, otherwise it goes to the active window (SELECTUP). Right button: menus. Preserves a5.
 it_dobutton:
         move.w  d0,d7                ; d7 = code
+        tst.l   IB_SDRAG(a5)
+        bne     it_sdragbtn
         bsr     it_scrxy
         beq     .db_ret
         tst.l   IB_DRAGWIN(a5)
@@ -2941,7 +3037,15 @@ it_dobutton:
         bsr     str_clickout         ; a click outside the active text gadget deactivates it
 .db_nstr:
         bsr     it_winat
+        beq.s   .db_bar
+        btst    #0,WD_FLAGS+2(a3)    ; BACKDROP ($100): behind the screen's title bar
+        beq.s   .db_win
+.db_bar:
+        bsr     it_sdragstart        ; title bar of the screen: drag
+        bne     .db_ret
+        move.l  a3,d0
         beq     .db_ret
+.db_win:
         cmp.w   #IECODE_LBUTTON,d7
         bne     .db_mb
         bsr     it_setactive         ; the clicked window becomes active (BACKDROP included: its menus)
@@ -3010,8 +3114,64 @@ it_dragstart:
         st      IB_BOXON(a5)
         bra     it_boxxor
 
-; it_domove(a5, d4/d5 = pointer): gesture in progress -> the ghost frame follows the pointer; menus -> highlight.
+; it_sdragstart(a4 = screen, a3 = window under the pointer | backdrop | 0, d4/d5 = position in the screen, d7 =
+; code) -> Z = 0 if a screen drag starts: left button on the screen's title bar, left of its depth gadgets
+; (intuition-screens §8.3). The pointer X is frozen and its Y may not go above the point where TopEdge would
+; become negative. Preserves a3/a4.
+it_sdragstart:
+        cmp.w   #IECODE_LBUTTON,d7
+        bne.s   .sg_no
+        tst.l   SC_BARLAYER(a4)
+        beq.s   .sg_no               ; SCREENQUIET: no bar
+        moveq   #0,d0
+        move.b  SC_BARHEIGHT(a4),d0
+        cmp.w   d0,d5
+        bgt.s   .sg_no
+        move.l  a4,a0
+        bsr     sc_geo
+        move.w  SC_WIDTH(a4),d0
+        sub.w   GEO_BACK(a0),d0
+        cmp.w   d0,d4
+        bge.s   .sg_no               ; depth gadgets
+        move.l  a4,IB_SDRAG(a5)
+        move.w  PTR_X,IB_SDRAGX(a5)
+        move.w  PTR_Y,d0
+        move.w  d0,IB_SDRAGY(a5)
+        sub.w   SC_TOPEDGE(a4),d0
+        move.w  d0,IB_YMIN(a5)
+        st      IB_TRACK(a5)         ; the movements reach the input task
+        moveq   #1,d0
+        rts
+.sg_no:
+        moveq   #0,d0
+        rts
+
+; it_sdragbtn(a5, d7 = code): a screen drag ends when the left button is released; the pointer bounds are recomputed.
+it_sdragbtn:
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne.s   .sb_ret
+        clr.l   IB_SDRAG(a5)
+        clr.b   IB_TRACK(a5)
+        bra     it_remake
+.sb_ret:
+        rts
+
+; it_domove(a5, d4/d5 = pointer): gesture in progress -> the ghost frame follows the pointer; screen drag -> the
+; screen follows the pointer's vertical movement (MoveScreen); menus -> highlight.
 it_domove:
+        move.l  IB_SDRAG(a5),d0
+        beq.s   .dm_nsd
+        move.w  d5,d1
+        sub.w   IB_SDRAGY(a5),d1
+        beq.s   .dm_ret
+        move.w  d5,IB_SDRAGY(a5)
+        move.l  d0,a0
+        move.l  a6,-(sp)
+        move.l  a5,a6
+        bsr     intuition_MoveScreen
+        move.l  (sp)+,a6
+        rts
+.dm_nsd:
         tst.l   IB_MENUWIN(a5)
         bne     it_menumove
         jsr     prop_track           ; knob of a held proportional gadget; the active window also receives the

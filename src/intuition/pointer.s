@@ -38,12 +38,12 @@ pointer_input_handler:
                 cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
                 bne.s   .pih_tick
                 jsr     it_keyin             ; keyboard of an active text gadget
-                bra.s   .pih_next
+                bra     .pih_next
 .pih_tick:
                 cmp.b   #IECLASS_TIMER,IE_CLASS(a3)
                 bne.s   .pih_disk
                 jsr     it_tickin            ; INTUITICKS (input task)
-                bra.s   .pih_next
+                bra     .pih_next
 .pih_disk:
                 cmp.b   #IECLASS_DISKREMOVED,IE_CLASS(a3)
                 beq.s   .pih_dk
@@ -67,6 +67,13 @@ pointer_input_handler:
                 move.w  #PTR_XMAX-1,d3       ; high clamp (>= XMAX -> XMAX-1)
 .pih_xhi:
                 endc                         ; RED PTR_NO_CLAMP: no clipping -> off-screen position possible
+                move.l  INT_IBASE,d0
+                beq.s   .pih_xset
+                move.l  d0,a0
+                tst.l   IB_SDRAG(a0)
+                beq.s   .pih_xset
+                move.w  IB_SDRAGX(a0),d3     ; screen drag: X frozen (intuition-screens §8.3)
+.pih_xset:
                 move.w  d3,PTR_X
                 move.w  d3,IE_X(a3)          ; rewritten as absolute for the following handlers
                 move.w  PTR_Y,d4             ; Y: same
@@ -81,6 +88,13 @@ pointer_input_handler:
                 subq.w  #1,d4
 .pih_yhi:
                 endc
+                move.l  INT_IBASE,d0
+                beq.s   .pih_yset
+                move.l  d0,a0
+                cmp.w   IB_YMIN(a0),d4
+                bge.s   .pih_yset
+                move.w  IB_YMIN(a0),d4       ; not above the highest visible screen (§5.3)
+.pih_yset:
                 move.w  d4,PTR_Y
                 move.w  d4,IE_Y(a3)
                 bsr     it_ptrmoved          ; pointer sprite + IB_MOUSEX/Y

@@ -1538,6 +1538,14 @@ differs.
     ViewPorts (size kept in the long before it, for FreeCprList). ScrollVPort/SetRGB4 patch the master through the
     header. Our internal Views (boot screen) now carry InitView's offsets. Deviation: fragments are copied whole,
     not interleaved by line (ViewPorts do not overlap).
+  - Several screens on display (issue #19, intuition-screens §5.2/§5.3/§8.3): it_remake chains every screen's
+    ViewPort in list order and lays them out in interlaced lines: the front screen whole, each following one cut
+    3 lines above the visible screen in front of it or hidden (VP_HIDE); DyOffset = TopEdge; MakeVPort of the
+    visible ones, MrgCop, LoadView. it_scrxy picks the first visible screen whose top is at or above the pointer
+    (the screen of the window during a gesture) and subtracts its TopEdge. A left click on a screen's title bar
+    (left of its depth gadgets, not on a window other than a backdrop) starts a drag (IB_SDRAG): each vertical
+    move calls MoveScreen; the pointer handler freezes X and keeps Y at or below IB_YMIN (the grab point, or the
+    top of the highest visible screen outside a drag).
   - Mouse position fields (issue #18): the input task (`it_setmouse`, before each button event and pointer move)
     writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
     (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from
