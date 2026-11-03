@@ -1654,6 +1654,9 @@ differs.
   - BOOL results (issue #21): DoubleClick, Request, SetDMRequest, GetScreenData and CloseScreen return TRUE as 1,
     the C value 1.3 returns (intuition-screens §7.3 probed WBenchToFront/Back: 1). Directory Opus 4 sign-extends
     the word returned by DoubleClick and keeps -1 for "first click", so a -1 TRUE never opened an entry.
+  - BOOL results of layers.library (Upfront/Behind/Move/Size/MoveLayerInFrontOf, BeginUpdate, DeleteLayer) and of
+    the graphics region functions (Or/Xor/ClearRectRegion, Or/And/XorRegionRegion): 1 for TRUE, as probed on 1.3
+    (layers-v34 §1.1, black-box probe `tests/booltrue_probe.s`). The void AndRectRegion returns 0 like 1.3.
   - Cluedo (2026-11-03): LoadSeg ends a hunk implicitly when a CODE/DATA/BSS block follows another one with no
     HUNK_END (C:border); OpenWindow fills wd_IFont (offset 128) with the RastPort font; Seek also returns its result
     in D1 (C:Type reads the length there; not in a spec yet); td_fill clears TDU_CYLOK when it reads another track

@@ -1011,8 +1011,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   SysInfo (68EC020, AGA Alice 2 MB). Open: 68030/68040 (MMU, other frame formats), FPU (AFF_68881 not set), a real
   A1200's 512 KB ROM at $F80000 (the 256 KB image relies on the emulator's mapping).
   **Issue #21 (2026-11-03)**: intuition BOOL functions return 1 for TRUE; a double-click in a Directory Opus 4
-  lister opens the directory. Open: other libraries still return -1 for TRUE in places (layers, graphics), to check
-  against 1.3 if a program compares with 1.
+  lister opens the directory. layers.library and the graphics region functions return 1 too (2026-11-04, probed
+  on 1.3: layers-v34 §1.1, `tests/booltrue_probe.s`); AndRectRegion leaves d0 = 0 as 1.3 does. Open: other
+  graphics functions not probed.
   **Issue #18 (2026-11-03)**: Window/Screen MouseX/MouseY follow the pointer; Directory Opus selects entries. Open:
   on 1.3, are all windows of the screen updated or only the active one; GZZMouse of a non-GZZ window (we copy
   MouseX/Y); MOUSEBUTTONS messages carry qualifier 0 (shift-click); it_scrxy ignores the screen's TopEdge.

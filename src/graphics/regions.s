@@ -329,7 +329,7 @@ rg_open:
 rg_exit:
         move.l  a3,a0
         bsr     rg_finish
-        moveq   #-1,d0
+        moveq   #1,d0                ; TRUE is 1 (layers-v34 §1.1)
         tst.l   d7
         beq.s   .ex_r
         moveq   #0,d0
@@ -394,6 +394,7 @@ gfx_AndRectRegion:
         bsr     rg_open
         move.l  a4,a1
         bsr     rl_and
+        moveq   #-1,d7               ; void, but 1.3 leaves d0 = 0 (layers-v34 §1.1)
         bra     rg_exit
 
 ; ClearRectRegion(region a0, rectangle a1): region -= rectangle.

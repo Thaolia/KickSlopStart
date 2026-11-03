@@ -585,7 +585,7 @@ ly_dl_body:
         move.l  a3,(sp)
         bsr.s   ly_dl_unlock
         addq.l  #4,sp
-        moveq   #-1,d0
+        moveq   #1,d0                ; TRUE is 1 in every layers BOOL (layers-v34 §1.1)
         movem.l (sp)+,d2-d7/a2-a6
         rts
 ; ly_dl_remove(layer, a6 = LayersBase): the layer leaves the stack, the area is given back to the layers behind and
@@ -634,7 +634,7 @@ lr_op_leave:
         bsr     lr_rebuild
         move.l  a3,a0
         bsr     ly_UnlockLayers
-        moveq   #-1,d0
+        moveq   #1,d0
         rts
 
 ; UpfrontLayer(dummy a0, l a1) -> TRUE.
@@ -715,7 +715,7 @@ lr_szmv_leave:
         bsr     lr_sbsync
         move.l  a3,a0
         bsr     ly_UnlockLayers
-        moveq   #-1,d0
+        moveq   #1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
@@ -1004,7 +1004,7 @@ ly_BeginUpdate:
         bsr     lr_unclip
         or.w    #LAYERUPDATING,LY_FLAGS(a4)
         bsr     lr_clip
-        moveq   #-1,d0
+        moveq   #1,d0
         movem.l (sp)+,d2-d7/a2-a6
         rts
 

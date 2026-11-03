@@ -100,6 +100,46 @@ always taken from `layer->LayerInfo`. [D] No function checks its pointers (NULL 
 The **region functions** (`NewRegion`, `OrRectRegion`, `AndRegionRegion`…) are in
 **graphics.library**, not in layers. [D]
 
+### 1.1 Return value of TRUE [O]
+
+TRUE is **1** (`$00000001`, full 32 bits), never −1, for every BOOL function of layers.library and for the
+graphics.library region functions and AttemptLockLayerRom. The region functions are covered here because no
+separate graphics region spec exists.
+
+Method: black-box probe `tests/booltrue_probe.s` (author code) on Kickstart 1.3 (34.5) under Amiberry,
+512 KB chip + 512 KB slow, run from a CLI; output read on the CLI window. Two regions R1, R2 (NewRegion);
+a 320×200 one-plane BitMap with two SIMPLE layers L1 (10,10)-(100,80) and L2 (50,40)-(200,150) created by
+CreateUpfrontLayer, L2 in front. In a second run, a debugger breakpoint **in the probe's own code** loaded
+the sentinel `$DEADBEEF` into D0 just before each call (except MoveLayer/SizeLayer, whose D0 is the `dx`
+argument: 5 and 10). Both runs gave the same values, so every value below is written by the function: none
+is a value left over in D0.
+
+| Call (in probe order) | Observed D0 | Note |
+|---|---|---|
+| OrRectRegion(R1, A) | `$00000001` | |
+| XorRectRegion(R1, B) | `$00000001` | |
+| ClearRectRegion(R1, C) | `$00000001` | |
+| AndRectRegion(R1, A) | `$00000000` | void in the AutoDocs; D0 is cleared (sentinel overwritten), not left as is. Callers must not rely on it |
+| OrRegionRegion(R1, R2) | `$00000001` | |
+| AndRegionRegion(R1, R2) | `$00000001` | |
+| XorRegionRegion(R1, R2) | `$00000001` | |
+| BehindLayer(L2) | `$00000001` | |
+| UpfrontLayer(L2) | `$00000001` | |
+| UpfrontLayer(L2), already in front | `$00000001` | the "nothing to do" path of §5.3 also returns 1 |
+| MoveLayer(L1, 5, 5) | `$00000001` | |
+| SizeLayer(L1, 10, 10) | `$00000001` | |
+| MoveLayerInFrontOf(L1, L2) | `$00000001` | |
+| MoveLayerInFrontOf(L1, L2), L1 already just in front | `$00000001` | the early-return path of §5.3 also returns 1 |
+| BeginUpdate(L1) | `$00000001` | |
+| AttemptLockLayerRom(L1) (graphics, layer in A5) | `$00000001` | lock obtained |
+| DeleteLayer(L2) | `$00000001` | |
+| DeleteLayer(L1) | `$00000001` | |
+
+No value looks like garbage (no pointer, no leftover sentinel). The only non-1 value is the void
+AndRectRegion, which returns 0 in this case; whether it is always 0 (for example when the result is empty
+or when allocation fails) was not probed. The FALSE paths (memory failure) were not provoked here; §5.3
+gives 0 for them.
+
 ---
 
 ## 2. Structures
