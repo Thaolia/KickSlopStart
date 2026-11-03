@@ -1530,6 +1530,10 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - Mouse position fields (issue #18): the input task (`it_setmouse`, before each button event and pointer move)
+    writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
+    (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from
+    Window->MouseY; it stayed -1 and its task looped on a negative row.
   - Cluedo (2026-11-03): LoadSeg ends a hunk implicitly when a CODE/DATA/BSS block follows another one with no
     HUNK_END (C:border); OpenWindow fills wd_IFont (offset 128) with the RastPort font; Seek also returns its result
     in D1 (C:Type reads the length there; not in a spec yet); td_fill clears TDU_CYLOK when it reads another track

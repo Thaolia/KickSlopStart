@@ -978,6 +978,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   type of the Workbench backdrop and drawers to probe), idle desktop ~22 KB below 1.3 (docs/MEMORY-USAGE.md).
   **ROM ID block (2026-11-03, vAmigaWeb request)**: `KSS!` at `$18` + version string at `$1C`, so emulators label
   any KickSlopStart image without a hash database; documented as a stable format in the README.
+  **Issue #18 (2026-11-03)**: Window/Screen MouseX/MouseY follow the pointer; Directory Opus selects entries. Open:
+  on 1.3, are all windows of the screen updated or only the active one; GZZMouse of a non-GZZ window (we copy
+  MouseX/Y); MOUSEBUTTONS messages carry qualifier 0 (shift-click); it_scrxy ignores the screen's TopEdge.
   **Cluedo, 2026-11-03**: reaches its player selection (implicit hunk end, wd_IFont, Seek result in D1, trackdisk
   recalibration after a wrong track). To confirm on 1.3 through the analysis track: dos LVOs returning their result in
   D1 too, and how 1.3 trackdisk recovers when a program moved the head behind its back.

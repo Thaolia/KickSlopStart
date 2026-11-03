@@ -202,6 +202,8 @@ WD_LEFTEDGE     EQU 4
 WD_TOPEDGE      EQU 6
 WD_WIDTH        EQU 8
 WD_HEIGHT       EQU 10
+WD_MOUSEY       EQU 12
+WD_MOUSEX       EQU 14
 WD_MINWIDTH     EQU 16
 WD_MINHEIGHT    EQU 18
 WD_MAXWIDTH     EQU 20
@@ -232,6 +234,8 @@ WD_DETAILPEN    EQU 98
 WD_BLOCKPEN     EQU 99
 WD_CHECKMARK    EQU 100             ; menu check mark Image (NewWindow.CheckMark, otherwise the internal one)
 WD_SCREENTITLE  EQU 104             ; screen title shown when the window is active (0: the screen's own)
+WD_GZZMOUSEX    EQU 108
+WD_GZZMOUSEY    EQU 110
 WD_GZZWIDTH     EQU 112
 WD_GZZHEIGHT    EQU 114
 WD_USERDATA     EQU 120              ; UserData (the WB keeps the real damage there, spec wb-icon-clipping-v34 §1)

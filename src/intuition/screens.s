@@ -2744,6 +2744,7 @@ it_intask:
         beq.s   .in_mkey
         cmp.w   #IT_KEYCODE,d0
         bhs.s   .in_key
+        bsr     it_setmouse
         bsr     it_dobutton
         bra.s   .in_next
 .in_key:
@@ -2771,8 +2772,44 @@ it_intask:
         clr.b   IB_MOVED(a5)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
+        bsr     it_setmouse
         bsr     it_domove
         bra     .in_next
+
+; it_setmouse(a5, d4.w/d5.w = pointer): MouseX/MouseY of the front screen and of each of its windows, and
+; GZZMouseX/GZZMouseY (interior of a GIMMEZEROZERO window), follow the pointer. Programs read them instead of the
+; IntuiMessage (Directory Opus computes the clicked list row from Window->MouseY). Preserves everything.
+it_setmouse:
+        movem.l d0/d4-d5/a0/a4,-(sp)
+        bsr     it_scrxy
+        beq.s   .smo_ret
+        move.w  d4,SC_MOUSEX(a4)
+        move.w  d5,SC_MOUSEY(a4)
+        move.l  SC_FIRSTWINDOW(a4),a0
+.smo_lp:
+        move.l  a0,d0
+        beq.s   .smo_ret
+        move.w  d4,d0
+        sub.w   WD_LEFTEDGE(a0),d0
+        move.w  d0,WD_MOUSEX(a0)
+        move.w  d0,WD_GZZMOUSEX(a0)
+        move.w  d5,d0
+        sub.w   WD_TOPEDGE(a0),d0
+        move.w  d0,WD_MOUSEY(a0)
+        move.w  d0,WD_GZZMOUSEY(a0)
+        btst    #2,WD_FLAGS+2(a0)    ; GIMMEZEROZERO
+        beq.s   .smo_nxt
+        moveq   #0,d0
+        move.b  WD_BORDERLEFT(a0),d0
+        sub.w   d0,WD_GZZMOUSEX(a0)
+        move.b  WD_BORDERTOP(a0),d0
+        sub.w   d0,WD_GZZMOUSEY(a0)
+.smo_nxt:
+        move.l  WD_NEXTWINDOW(a0),a0
+        bra.s   .smo_lp
+.smo_ret:
+        movem.l (sp)+,d0/d4-d5/a0/a4
+        rts
 
 ; it_rawkey(a5, d0.w = IT_KEYCODE + raw code, d4.w = qualifier): RAWKEY message to the active window, if it
 ; asked for it. Preserves d2-d7/a2-a5.
