@@ -982,6 +982,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   depth gadgets work (real Gadget structures, act on release). Open: LACE screens are laid out but pointer coordinates are not converted
   to interlaced lines; MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop
   has 1,128 bytes less free memory (copper fragments are 1,032 bytes).
+  **Issue #21 (2026-11-03)**: intuition BOOL functions return 1 for TRUE; a double-click in a Directory Opus 4
+  lister opens the directory. Open: other libraries still return -1 for TRUE in places (layers, graphics), to check
+  against 1.3 if a program compares with 1.
   **Issue #18 (2026-11-03)**: Window/Screen MouseX/MouseY follow the pointer; Directory Opus selects entries. Open:
   on 1.3, are all windows of the screen updated or only the active one; GZZMouse of a non-GZZ window (we copy
   MouseX/Y); MOUSEBUTTONS messages carry qualifier 0 (shift-click); it_scrxy ignores the screen's TopEdge.

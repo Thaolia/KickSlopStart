@@ -58,7 +58,7 @@ intuition_Request:
         bsr     rq_render
         move.l  #REQSET,d0
         bsr     rq_send
-        moveq   #-1,d0
+        moveq   #1,d0
         bra.s   .rq_ret
 .rq_fail:
         moveq   #0,d0
@@ -445,7 +445,7 @@ intuition_SetDMRequest:
         bne.s   .dm_no
 .dm_set:
         move.l  a1,WD_DMREQUEST(a0)
-        moveq   #-1,d0
+        moveq   #1,d0
         bra.s   .dm_ret
 .dm_no:
         moveq   #0,d0

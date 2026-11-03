@@ -833,7 +833,7 @@ intuition_CloseScreen:
 .cs_nobar:
         bsr     sc_free
 .cs_ret:
-        moveq   #-1,d0
+        moveq   #1,d0
         move.l  a5,a6
         movem.l (sp)+,d3/a3-a5
         rts
@@ -1029,7 +1029,7 @@ intuition_GetScreenData:
         move.b  (a1)+,(a2)+
         dbra    d2,.gs_cpy
 .gs_ok:
-        moveq   #-1,d0
+        moveq   #1,d0
 .gs_ret:
         movem.l (sp)+,d2/a2
         rts
@@ -3859,7 +3859,7 @@ intuition_DoubleClick:
         cmp.l   IB_PREFS+PF_DBLCLICK+4(a6),d3
         bhs.s   .dc_no
 .dc_yes:
-        moveq   #-1,d0
+        moveq   #1,d0                ; C TRUE: DOpus 4 keeps -1 for "first click"
         rts
 .dc_no:
         moveq   #0,d0
