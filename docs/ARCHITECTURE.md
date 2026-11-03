@@ -1567,6 +1567,14 @@ differs.
     writes Screen MouseX/MouseY of the front screen and Window MouseX/MouseY (offsets 14/12) and GZZMouseX/GZZMouseY
     (108/110, minus the borders for GIMMEZEROZERO) of each of its windows. Directory Opus computes the clicked row from
     Window->MouseY; it stayed -1 and its task looped on a negative row.
+  - 68010 / 68020 (issue #20): cpu_detect (boot.s) tries MOVEC VBR then MOVEC CACR with the illegal-instruction
+    vector pointing at a catch, sets AttnFlags (AFF_68010, AFF_68020) and the low-RAM byte CPU_FMT. Exec keeps its
+    exception frames in the 68000 form {SR, PC}: the FRAME_IN macro (exec.i) drops the format word at the entry of
+    int1-6 and of EXEC_SVC services (priv_handler), FRAME_OUT puts a format-0 word back before each RTE of those
+    frames (interrupt exit, Schedule, dispatcher restore, task exceptions, Debug, svc_rte); Supervisor() hands its
+    routine the CPU's own form. priv_handler carries out "move.w sr,-(sp)" and "move.w sr,Dn" for user-mode code
+    (privileged on a 68010+, used by EXEC_SVC sites and GetCC). exc_default reads SR/PC at the head of any frame and,
+    to hold a task, replaces the whole frame (size by format) with a format-0 one. Caches stay off, as at reset.
   - BOOL results (issue #21): DoubleClick, Request, SetDMRequest, GetScreenData and CloseScreen return TRUE as 1,
     the C value 1.3 returns (intuition-screens §7.3 probed WBenchToFront/Back: 1). Directory Opus 4 sign-extends
     the word returned by DoubleClick and keeps -1 for "first click", so a -1 TRUE never opened an entry.

@@ -6,7 +6,8 @@
 
 KickSlopStart est une réimplémentation libre de la ROM **Kickstart 1.3** (34.5) de l'Amiga. Elle est écrite de zéro en
 assembleur 68000, selon une méthode de **salle blanche**. L'image fait **256 Kio, chargée à `$FC0000`**, et tourne sur
-un simple **68000**. Elle vise à remplacer directement le Kickstart d'origine sur A500, A1000 et A2000. Elle démarre
+un simple **68000**, ainsi que sur 68010 ou 68020 (un A1200 émulé démarre le Workbench 1.3, avec l'AGA en mode OCS et
+2 Mo de mémoire chip). Elle vise à remplacer directement le Kickstart d'origine sur A500, A1000 et A2000. Elle démarre
 en émulateur, et sur un vrai A500 avec la disquette de soft-kick ci-dessous ; le démarrage depuis une EPROM est un
 objectif ultérieur.
 

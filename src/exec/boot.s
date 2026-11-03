@@ -260,7 +260,8 @@ coldstart:                        ; $FC00D2
         move.w  #34,LIB_VERSION(a6)
         move.w  #2,LIB_REVISION(a6)
         move.l  #exec_id,LIB_IDSTRING(a6)
-        move.w  #0,EB_ATTNFLAGS(a6)
+        bsr     cpu_detect
+        move.w  d0,EB_ATTNFLAGS(a6)
         move.b  #50,EB_VBLANKFREQ(a6)
         move.b  #50,EB_POWERFREQ(a6)
         move.b  #-1,EB_IDNEST(a6)
@@ -3406,6 +3407,27 @@ boot_strap_done:
         jsr     LVO_REMHEAD(a6)      ; head = task_H (pri 10) -> it Waits first
         move.l  d0,a1
         bra     dispatch_in          ; -> task_H in USER mode (SR=$0000; VBlank + INT6 + yield active)
+
+; cpu_detect -> d0 = AttnFlags CPU bits (AFF_68010 1, AFF_68020 2) and CPU_FMT set on a 68010 or later. MOVEC VBR
+; and MOVEC CACR are tried with the illegal-instruction vector pointing here: a CPU without them takes the vector.
+; Supervisor, before init_traps. Clobbers d1/a0-a2.
+cpu_detect:
+        moveq   #0,d0
+        move.l  ($10).w,a1
+        lea     .cd_ill(pc),a0
+        move.l  a0,($10).w
+        move.l  sp,a2
+        dc.w    $4E7A,$1801          ; movec vbr,d1 (68010+)
+        moveq   #1,d0
+        st      CPU_FMT
+        dc.w    $4E7A,$1002          ; movec cacr,d1 (68020+)
+        moveq   #3,d0
+.cd_done:
+        move.l  a1,($10).w
+        rts
+.cd_ill:
+        move.l  a2,sp
+        bra.s   .cd_done
 
 eb_fail:
         move.w  #C_FAIL,COLOR00

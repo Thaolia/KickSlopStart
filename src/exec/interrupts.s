@@ -138,6 +138,7 @@ int3_dispatch:
         move.w  #$2700,sr           ; RED2 M7e: M7a model (whole handler at IPL7) -> INT6 does NOT preempt
                                     ; the body -> VBL_PREEMPT_COUNT==0 -> "M7E IPL OK" never emitted.
                 endc
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 3) — INT6 (6) can preempt THIS body
         move.l  ($4).w,a6           ; a6 = SysBase
         st      VBL_INBODY          ; M7e: preemptible window = level 3 decoding+dispatch (INT6 detector)
@@ -221,6 +222,7 @@ intr_exit:
         bra     schedule_body
 .ie_noswitch:
         movem.l (sp)+,d0-d7/a0-a6
+        FRAME_OUT
         rte
 
 ; ============================ scheduling LVOs (exec-scheduling-v34 §2) ============================
@@ -251,6 +253,7 @@ schedule_body:                      ; entry with the 60-byte frame already pushe
         bne.s   .sc_switch
 .sc_stay:
         movem.l (sp)+,d0-d7/a0-a6
+        FRAME_OUT
         rte
 .sc_switch:
         move.b  #TS_READY,TC_STATE(a1)
@@ -352,6 +355,7 @@ di_restore:
         move.l  d1,(a3)
         move.l  a2,usp
         movem.l (sp)+,d0-d7/a0-a6
+        FRAME_OUT
         rte
 
 ; di_nest: ExecBase nest counts := the task's (a1); INTEN follows IDNestCnt.
@@ -405,6 +409,7 @@ di_hooks:
         move.l  TC_EXCEPTCODE(a1),-(sp)
         clr.w   -(sp)
         move.l  TC_EXCEPTDATA(a1),a1
+        FRAME_OUT
         rte
 
 ; exc_return: where tc_ExceptCode returns (user mode), D0 = signals to re-arm in tc_SigExcept. USP points at the
@@ -482,16 +487,22 @@ reschedule:
 ; and ends with RTE: the RTE pops {SR,PC} -> resumes in exec_Supervisor in user mode. We touch
 ; no context (the called code is responsible for preserving the trap's SSP frame, Supervisor contract).
 trap3_handler:
+        FRAME_OUT                   ; the routine's RTE takes the CPU's own frame form
         jmp     (a5)
 
 ; priv_handler (vector $20): privilege violation. An EXEC_SVC site of the ROM ("ori.w #0,sr", SVC_MAGIC, service
 ; address) goes on to its service, with the pushed PC advanced past the site; any other violation follows the
 ; exception path (tc_TrapCode).
+; On a 68010 or later, MOVE from SR is privileged in user mode: "move.w sr,-(sp)" (EXEC_SVC sites) and
+; "move.w sr,Dn" are carried out here for the task, as the 68000 does them.
 priv_handler:
         move.l  a0,-(sp)
         move.l  6(sp),a0             ; faulting PC
+        tst.b   CPU_FMT
+        bne.s   .pv_movesr
+.pv_svc:
         cmp.l   #ROM_BASE,a0
-        blo.s   .pv_exc
+        blo     .pv_exc
         cmp.w   #$007C,(a0)          ; ori.w #imm,sr
         bne.s   .pv_exc
         tst.w   2(a0)
@@ -503,7 +514,40 @@ priv_handler:
         move.l  a0,10(sp)            ; resume after the site
         move.l  4(sp),a0
         move.l  (sp)+,(sp)           ; [service][SR][PC]
+        tst.b   CPU_FMT
+        beq.s   .pv_go
+        move.l  6(sp),8(sp)          ; 68010+: the format word goes, as FRAME_IN
+        move.w  4(sp),6(sp)
+        move.l  (sp),2(sp)
+        addq.l  #2,sp
+.pv_go:
         rts
+.pv_movesr:
+        cmp.w   #$40E7,(a0)          ; move.w sr,-(sp)
+        bne.s   .pv_srdn
+        move.l  a1,-(sp)
+        move.l  usp,a1
+        move.w  8(sp),-(a1)
+        move.l  a1,usp
+        move.l  (sp)+,a1
+        bra.s   .pv_skip
+.pv_srdn:
+        move.l  d0,-(sp)
+        move.w  (a0),d0
+        and.w   #$FFF8,d0
+        cmp.w   #$40C0,d0            ; move.w sr,Dn
+        movem.l (sp)+,d0             ; (flags kept)
+        bne.s   .pv_svc
+        movem.l d0-d7,-(sp)
+        move.w  (a0),d0
+        and.w   #7,d0
+        lsl.w   #2,d0
+        move.w  36(sp),2(sp,d0.w)    ; SR -> low word of Dn
+        movem.l (sp)+,d0-d7
+.pv_skip:
+        addq.l  #2,6(sp)
+        move.l  (sp)+,a0
+        rte
 .pv_exc:
         move.l  (sp)+,a0
         bra     exc_table+2*(8-TRAPVEC_FIRST)
@@ -541,6 +585,7 @@ trap2_handler:
 
 ; int2_dispatch ($68, level 2): only level 2 source = PORTS -> dispatches IntVects[INTB_PORTS].
 int2_dispatch:
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 2) — preemptible by vbl(3)/int6(6)
         move.l  ($4).w,a6
         move.w  #INTF_PORTS,INTREQ  ; ack Paula INT2 BEFORE the chain: a CIA event occurring during the service
@@ -548,21 +593,24 @@ int2_dispatch:
         st      INT2_BUSY
         bsr     intr_dispatch_number
         clr.b   INT2_BUSY
-        bra.s   intr_isr_defer
+        bra     intr_isr_defer
 ; int1/int4/int5_dispatch (autovectors $64/$70/$74): multiple sources with an EXCLUSIVE vector (SetIntVector). For each
 ; pending AND enabled source of the level: handler present -> call (it acknowledges INTREQ itself, RKRM "Exec:
 ; Interrupts"); no handler -> acknowledged here (no storm). Level 1 = TBE(0)/DSKBLK(1)/SOFTINT(2), level 4 =
 ; AUD0..3(7-10), level 5 = RBF(11)/DSKSYNC(12). trackdisk and the serial console poll DSKBLK/RBF with INTENA off:
 ; these sources do not come through here.
 int1_dispatch:
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
         move.w  #INTM_L1,d3
         bra.s   intr_multi
 int4_dispatch:
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
         move.w  #INTM_L4,d3
         bra.s   intr_multi
 int5_dispatch:
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)
         move.w  #INTM_L5,d3
 intr_multi:
@@ -595,6 +643,7 @@ intr_multi:
 
 ; int6_dispatch ($78, level 6): only level 6 source = EXTER -> dispatches IntVects[INTB_EXTER].
 int6_dispatch:
+        FRAME_IN
         movem.l d0-d7/a0-a6,-(sp)   ; M7e PROLOGUE: NATIVE IPL (level 6) — highest level used, never preempted
         move.l  ($4).w,a6
         move.w  #INTF_EXTER,INTREQ  ; ack Paula INT6 BEFORE the chain (same reason as PORTS)
@@ -809,6 +858,8 @@ exc_default:
         move.l  d1,d0
         bsr     exc_puthex
         lea     24(sp),a1            ; a1 = frame
+        tst.b   CPU_FMT
+        bne.s   .ed_short            ; 68010+: SR and PC lead every frame format
         cmp.l   #3,d1
         bhi.s   .ed_short
         addq.l  #8,a1                ; bus/address error: 8 more bytes before SR/PC (68000)
@@ -895,11 +946,11 @@ exc_default:
         lea     exc_msg9(pc),a0      ; BCPL registers: a1 = frame, a2 = GV, a4 = current routine
         bsr     exc_puts
         move.l  16(sp),d0            ; a1 saved by the entry movem
-        bsr.s   .ed_hex32
+        bsr     .ed_hex32
         move.l  a2,d0
-        bsr.s   .ed_hex32
+        bsr     .ed_hex32
         move.l  a4,d0
-        bsr.s   .ed_hex32
+        bsr     .ed_hex32
         lea     exc_crlf(pc),a0
         bsr     exc_puts
         btst    #5,(a1)              ; S bit of the pushed SR (high byte of the SR word)
@@ -914,6 +965,8 @@ exc_default:
         bne.s   .ed_hold
         jmp     alert_reboot
 .ed_hold:
+        tst.b   CPU_FMT
+        bne.s   .ed_hold10
         clr.w   (a1)                 ; resume in user mode, IPL 0
         move.l  #exc_hold,2(a1)
         movem.l (sp)+,d0-d2/a0-a1
@@ -923,6 +976,22 @@ exc_default:
 .ed_pop:
         addq.l  #4,sp                ; remove the trap number -> stack = [SR][PC]
         rte
+.ed_hold10:                          ; 68010+: the whole frame (size by format) becomes a format-0 one
+        move.b  6(a1),d0
+        lsr.b   #4,d0
+        and.w   #$F,d0
+        moveq   #0,d1
+        move.b  .ed_fsize(pc,d0.w),d1
+        lea     0(a1,d1.w),a0        ; end of the frame
+        clr.w   -(a0)                ; format 0
+        move.l  #exc_hold,-(a0)
+        clr.w   -(a0)                ; user mode, IPL 0
+        move.l  a0,20(sp)            ; (over the trap number)
+        movem.l (sp)+,d0-d2/a0-a1
+        move.l  (sp),sp
+        rte
+.ed_fsize:                           ; bytes per frame format 0..$F (68010/68020)
+        dc.b    8,8,12,8,8,8,8,8,58,20,32,92,8,8,8,8
 .ed_hex32:
         swap    d0
         bsr     exc_puthex

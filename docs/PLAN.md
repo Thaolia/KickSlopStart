@@ -984,6 +984,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/lace_test.s`). Open: the pointer moves in non-interlaced lines (1.3 MouseY is in interlaced lines);
   MrgCop copies fragments whole instead of interleaving their WAITs by line; the boot desktop has 1,128 bytes less
   free memory (copper fragments are 1,032 bytes).
+  **Issue #20 (2026-11-03)**: 68010 and 68020 CPUs (exception frame format word, MOVE from SR in user mode,
+  AttnFlags). An emulated A1200 (68020, AGA, 2 MB chip, 24- or 32-bit addressing) boots the Workbench 1.3.3 and runs
+  SysInfo (68EC020, AGA Alice 2 MB). Open: 68030/68040 (MMU, other frame formats), FPU (AFF_68881 not set), a real
+  A1200's 512 KB ROM at $F80000 (the 256 KB image relies on the emulator's mapping).
   **Issue #21 (2026-11-03)**: intuition BOOL functions return 1 for TRUE; a double-click in a Directory Opus 4
   lister opens the directory. Open: other libraries still return -1 for TRUE in places (layers, graphics), to check
   against 1.3 if a program compares with 1.

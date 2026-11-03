@@ -113,6 +113,27 @@ EXEC_SVC     macro
         jmp     \1
 .svr\@:
              endm
+; Exception frames inside exec are kept in the 68000 form {SR, PC}. On a 68010 or later the CPU adds a format word
+; after the PC (format 0 for interrupts, TRAP and privilege violations): FRAME_IN removes it at the entry of such a
+; handler, FRAME_OUT puts one back (format 0) before RTE. Both only change the CCR.
+FRAME_IN     macro
+        tst.b   CPU_FMT
+        beq.s   .fi\@
+        move.w  4(sp),6(sp)
+        move.w  2(sp),4(sp)
+        move.w  (sp),2(sp)
+        addq.l  #2,sp
+.fi\@:
+             endm
+FRAME_OUT    macro
+        tst.b   CPU_FMT
+        beq.s   .fo\@
+        subq.l  #2,sp
+        move.w  2(sp),(sp)
+        move.l  4(sp),2(sp)
+        clr.w   6(sp)
+.fo\@:
+             endm
 LVO_SUPERVISOR EQU -30        ; exec Supervisor(): calls a routine (a5) in supervisor mode (required by flt-intro)
 LVO_EXITINTR   EQU -36        ; private scheduling entries (exec_lib.fd V34: ExitIntr..Exception)
 LVO_SCHEDULE   EQU -42
@@ -437,6 +458,7 @@ TD_BASEP     EQU $00000750 ; trackdisk: long — device base (semaphore and unit
 EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending software interrupts (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
 DOS_HSEM     EQU $0000076C ; dos: SignalSemaphore (46 bytes, up to $799) — only one handler start at a time
+CPU_FMT      EQU $000007CC ; byte: $FF on a 68010 or later, whose exception frames carry a format word (boot.s)
 HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the last 218 refusal of a floppy handler ("replace")
 MT_TABLE     EQU $0000079C ; long: allocation tracer table (diagnostic ROM -DMEMTRACK=1 only)
 INT2_BUSY    EQU $000007A0 ; byte: int2_dispatch serves the PORTS chain (read by timer.device VBLANK server recovery)

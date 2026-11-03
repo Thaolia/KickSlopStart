@@ -400,6 +400,7 @@ exec_ExitIntr:
         beq.s   .ei_resume
         move.w  #$2000,sr
         movem.l (sp)+,d0/d1/a0/a1/a5/a6
+        FRAME_IN
         jmp     exec_Schedule       ; the body of Schedule, not its vector (§1)
 .ei_resume:
         movem.l (sp)+,d0/d1/a0/a1/a5/a6
@@ -451,6 +452,7 @@ svc_switch:
         add.l   #LVO_SWITCH,(sp)
         rts
 svc_rte:
+        FRAME_OUT
         rte
 
 ; except_default: default tc_ExceptCode (ExecBase TaskExceptCode): re-arms nothing.
@@ -538,6 +540,7 @@ debug_entry:
         move.l  a0,usp
         movem.l (sp)+,d0-d7/a0-a6
         addq.l  #4,sp                ; reason
+        FRAME_OUT
         rte
 
 ; dbg_puts(a0) / dbg_putc(d0.b) / dbg_hex8(d0.l + space): polled transmitter only. dbg_putc preserves d0.
@@ -649,6 +652,7 @@ exec_SuperState:
         moveq   #0,d0
         rts
 .su_super:
+        FRAME_IN
         move.l  a1,a5
         move.l  2(sp),a0             ; resume: after the Supervisor trap
         addq.l  #6,sp                ; trap frame removed
@@ -671,7 +675,7 @@ exec_UserState:
 .us_ret:
         rts
 
-; GetCC() -> d0 = condition codes (68000: MOVE from SR allowed in user mode).
+; GetCC() -> d0 = condition codes (68000: MOVE from SR allowed in user mode; 68010+: priv_handler carries it out).
 exec_GetCC:
         move.w  sr,d0
         and.l   #$FF,d0

@@ -6,7 +6,8 @@
 
 KickSlopStart is an open-source reimplementation of the Amiga **Kickstart 1.3** ROM (34.5), written from scratch in
 68000 assembly using **clean-room** methods. The image is **256 KiB, loaded at `$FC0000`** and runs on a plain
-**68000**. It is meant as a drop-in replacement for the original Kickstart on the A500/A1000/A2000. It boots in
+**68000**, and on a 68010 or 68020 (an emulated A1200 boots the Workbench 1.3 with AGA in OCS mode and 2 MB of chip
+RAM). It is meant as a drop-in replacement for the original Kickstart on the A500/A1000/A2000. It boots in
 emulators, and on a real A500 from the soft-kick disk below; booting it from an EPROM is a later goal.
 
 This repository contains **no Commodore code** and does **not** ship the original ROM. Because the code was written
