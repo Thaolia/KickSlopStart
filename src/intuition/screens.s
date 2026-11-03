@@ -254,6 +254,7 @@ intuition_OpenScreen:
         move.l  d0,SC_BARLAYER(a3)
         bsr     sc_drawbar
 .os_quiet:
+        bsr     sc_mkgads
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
         move.w  SC_FLAGS(a3),d0
@@ -305,9 +306,70 @@ sc_free:
         jsr     LVO_FREEMEM(a6)
         dbra    d3,.sf_lp
 .sf_planes:
+        move.l  SC_FIRSTGADGET(a3),d3 ; the system gadgets; NewScreen.Gadgets stay the caller's (§4)
+.sf_gad:
+        beq.s   .sf_struct
+        move.l  d3,a1
+        move.l  GG_NEXTGADGET(a1),d3
+        tst.w   GG_GADGETTYPE(a1)
+        bpl.s   .sf_gnx              ; not SYSGADGET
+        moveq   #GG_SIZEOF,d0
+        jsr     LVO_FREEMEM(a6)
+.sf_gnx:
+        tst.l   d3
+        bra.s   .sf_gad
+.sf_struct:
         move.l  a3,a1
         move.l  #SCX_SIZE,d0
         jmp     LVO_FREEMEM(a6)
+
+; sc_mkgads(a2 = NewScreen, a3 = Screen): the three screen system gadgets (front, back, drag; intuition-screens §4)
+; at the head of Screen.FirstGadget, NewScreen.Gadgets after them. SCREENQUIET: GADGHNONE. Their GadgetRender stays
+; 0: the bar draws the depth pictograms itself. A gadget without memory is left out. Clobbers d0/d1/a0/a1/a6.
+sc_mkgads:
+        movem.l d2-d3/a4,-(sp)
+        move.l  ($4).w,a6
+        move.l  NS_GADGETS(a2),d3    ; d3 = list built backwards
+        lea     sc_gadlo+3*SG_SIZE(pc),a4
+        tst.w   SC_VIEWPORT+vp_Modes(a3)
+        bpl.s   .mg_tab
+        lea     sc_gadhi+3*SG_SIZE(pc),a4
+.mg_tab:
+        moveq   #3-1,d2
+.mg_lp:
+        lea     -SG_SIZE(a4),a4
+        moveq   #GG_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .mg_nx
+        move.l  d0,a0
+        move.l  d3,GG_NEXTGADGET(a0)
+        move.l  (a4),GG_LEFTEDGE(a0)     ; LeftEdge, TopEdge
+        move.l  4(a4),GG_WIDTH(a0)       ; Width, Height
+        move.l  8(a4),GG_FLAGS(a0)       ; Flags, Activation
+        move.w  12(a4),GG_GADGETTYPE(a0)
+        move.w  SC_FLAGS(a3),d1
+        and.w   #SCREENQUIET,d1
+        beq.s   .mg_link
+        or.w    #GADGHIGHBITS,GG_FLAGS(a0) ; GADGHNONE
+.mg_link:
+        move.l  a0,d3
+.mg_nx:
+        dbra    d2,.mg_lp
+        move.l  d3,SC_FIRSTGADGET(a3)
+        movem.l (sp)+,d2-d3/a4
+        rts
+; LeftEdge, TopEdge, Width, Height, Flags, Activation, GadgetType (spec intuition-screens §4)
+SG_SIZE         EQU 14
+sc_gadlo:
+        dc.w    -16,0,17,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SUPFRONT
+        dc.w    -33,0,17,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SDOWNBACK
+        dc.w    0,0,0,10,GRELWIDTH|GADGHIGHBITS,0,SDRAGGING
+sc_gadhi:
+        dc.w    -28,0,26,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SUPFRONT
+        dc.w    -52,0,24,10,GRELRIGHT|GADGIMAGE,RELVERIFY,SDOWNBACK
+        dc.w    0,0,0,10,GRELWIDTH|GADGHIGHBITS,0,SDRAGGING
 
 ; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle, or the
 ; screen's default title if it is null; always redrawn (the same buffer may have changed contents). Preserves

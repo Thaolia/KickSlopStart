@@ -399,6 +399,9 @@ TOGGLESELECT  EQU $0100
 LONGINT       EQU $0800        ; STRGADGET: integer, converted into si_LongInt
 ; gg_GadgetType
 SYSGADGET     EQU $8000
+SDRAGGING     EQU $C030        ; screen system gadgets (intuition-screens §4)
+SUPFRONT      EQU $C050
+SDOWNBACK     EQU $C070
 ; struct Border (intuition/intuition.h)
 BD_LEFTEDGE   EQU 0
 BD_TOPEDGE    EQU 2
