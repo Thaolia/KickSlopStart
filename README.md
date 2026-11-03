@@ -15,55 +15,9 @@ with an LLM that may have seen leaked Kickstart sources, this claim is checked b
 trust: see the [clean-room audit](docs/AUDIT.md) (binary comparison with the 1.3 ROM, source comparison with AROS,
 review of the analysis notes, and the list of ROM data deliberately kept for compatibility).
 
-## Download
-
-Ready-to-use ROM images are published on the [Releases](https://github.com/Thaolia/KickSlopStart/releases) page. Each
-image is built from the tagged source by a GitHub workflow (`.github/workflows/release.yml`, pinned toolchain), so it is
-byte-identical to a local `make kick-prod` of the same commit; its SHA-256 is listed in the release notes, with the commits since the previous release. To publish a
-new release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`.
-
-## Identifying the ROM
-
-Emulators and tools can recognise any KickSlopStart image, past releases excepted (v0.2.10 and earlier have no ID
-block), without a hash list. This layout is stable:
-
-| Offset | Bytes | Content |
-|---|---|---|
-| `$0C` | 4 | `$0022 $0005`: version 34.5, as on Kickstart 1.3 (programs check it; it is not our release number) |
-| `$18` | 4 | ASCII `KSS!`: the fingerprint |
-| `$1C` | 64 | NUL-terminated ASCII string, e.g. `KickSlopStart v0.2.11`: the release tag, or the short commit hash for an untagged build (`git describe` for a local one) |
-
-The same block sits at the start of the image on the soft-kick disk. The rest of the header and the checksum are
-those of a normal 256 KB Kickstart.
-
-## Try it in your browser
-
-**[Run KickSlopStart in vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)**: the browser Amiga emulator starts with the latest released ROM instead of
-its own. With no disk it stops on the insert-disk screen; insert an ADF of your own from vAmigaWeb's disk menu or by
-dropping it on the window. The link passes the ROM through vAmigaWeb's `kickstart_rom_url` setting
-(`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, URL-encoded); it also puts the mouse on game port 1
-(`"mouse":true`) and, through a `startup_script`, turns on the activity monitor and opens the live memory view once
-the emulator runs. The ROM comes from the `rom` branch
-(`KickSlopStart.rom`), which the release workflow updates at each tag: browsers only let vAmigaWeb fetch a file that
-is served with a CORS header, which `raw.githubusercontent.com` sends and release downloads do not.
-
-## Soft-kick disk (no ROM swap)
-
-**Minimum: 512 KiB chip RAM + 512 KiB slow RAM** (an A500 with its A501 trapdoor expansion). The `.adf` cannot run
-KickSlopStart without the slow RAM, since it lives there. Tested on a real A500.
-
-Each release also comes with `KickSlopStart-<version>.adf`, and the `rom` branch carries the latest one as
-[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on an
-Amiga 500 that keeps its own Kickstart 1.3 and has 512 KiB of slow RAM at `$C00000` (A501 trapdoor expansion): its
-bootblock loads KickSlopStart into the first 256 KiB of that RAM and starts it, and the remaining slow RAM stays
-available. KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want,
-and it boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
-in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. Without slow RAM, the disk boots
-normally on the Kickstart in ROM. Build it with `make adf` (`build/KickSlopStart.adf`).
-
 ## What works
 
-All results below come from booting the ROM in an emulator (FS-UAE, and WinUAE in cycle-exact A500 mode), with
+All results below come from booting the ROM in an emulator (FS-UAE, Amiberry, vAmigaWeb and WinUAE in cycle-exact A500 mode), with
 screenshots or serial output as evidence.
 
 - **exec**: the full V34 function table, a preemptive scheduler, user-mode tasks, interrupt servers, resident
@@ -100,6 +54,38 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 - **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in dark purple instead of
   red. A Workbench disk still shows the pointer stored in its `devs:system-configuration`, as on the original 1.3.
 
+## Try it in your browser
+
+**[Run KickSlopStart in vAmigaWeb](https://vamigaweb.github.io/#%7B%22kickstart_rom_url%22%3A%22https%3A%2F%2Fraw.githubusercontent.com%2FThaolia%2FKickSlopStart%2From%2FKickSlopStart.rom%22%2C%22mouse%22%3Atrue%2C%22startup_script%22%3A%22%28function%20t%28%29%7Btry%7Bif%28%21required_roms_loaded%29throw%200%3Bset_activity_monitor%28true%29%3Bset_memview_enabled%28true%29%3Bmemview_open_panel%28%29%3B%7Dcatch%28e%29%7BsetTimeout%28t%2C500%29%3B%7D%7D%29%28%29%3B%22%7D)**: the browser Amiga emulator starts with the latest released ROM instead of
+its own. With no disk it stops on the insert-disk screen; insert an ADF of your own from vAmigaWeb's disk menu or by
+dropping it on the window. The link passes the ROM through vAmigaWeb's `kickstart_rom_url` setting
+(`https://vamigaweb.github.io/#{"kickstart_rom_url":"…"}`, URL-encoded); it also puts the mouse on game port 1
+(`"mouse":true`) and, through a `startup_script`, turns on the activity monitor and opens the live memory view once
+the emulator runs. The ROM comes from the `rom` branch
+(`KickSlopStart.rom`), which the release workflow updates at each tag: browsers only let vAmigaWeb fetch a file that
+is served with a CORS header, which `raw.githubusercontent.com` sends and release downloads do not.
+
+## Download
+
+Ready-to-use ROM images are published on the [Releases](https://github.com/Thaolia/KickSlopStart/releases) page. Each
+image is built from the tagged source by a GitHub workflow (`.github/workflows/release.yml`, pinned toolchain), so it is
+byte-identical to a local `make kick-prod` of the same commit; its SHA-256 is listed in the release notes, with the
+commits since the previous release.
+
+## Soft-kick disk (no ROM swap)
+
+**Minimum: 512 KiB chip RAM + 512 KiB slow RAM** (an A500 with its A501 trapdoor expansion). The `.adf` cannot run
+KickSlopStart without the slow RAM, since it lives there. Tested on a real A500.
+
+Each release also comes with `KickSlopStart-<version>.adf`, and the `rom` branch carries the latest one as
+[`KickSlopStart.adf`](https://raw.githubusercontent.com/Thaolia/KickSlopStart/rom/KickSlopStart.adf). Boot it on an
+Amiga 500 that keeps its own Kickstart 1.3 and has 512 KiB of slow RAM at `$C00000` (A501 trapdoor expansion): its
+bootblock loads KickSlopStart into the first 256 KiB of that RAM and starts it, and the remaining slow RAM stays
+available. KickSlopStart then shows its insert-disk screen: take the soft-kick disk out and insert the disk you want,
+and it boots it. A reset (Ctrl+Amiga+Amiga) comes back to KickSlopStart, through the ColdCapture vector that the Kickstart
+in ROM calls at reset; switching the machine off returns to the Kickstart in ROM. Without slow RAM, the disk boots
+normally on the Kickstart in ROM. Build it with `make adf` (`build/KickSlopStart.adf`).
+
 ## Reporting a problem
 
 Bug reports and compatibility reports are welcome as [GitHub issues](https://github.com/Thaolia/KickSlopStart/issues/new/choose).
@@ -123,6 +109,20 @@ The work is split into two tracks that never mix (see [`docs/CLEANROOM.md`](docs
   descriptions only** to [`docs/analysis/`](docs/analysis/). No instruction sequences are ever copied.
 - **Implementation track**: writes `src/` from public documentation (RKRM, NDK, AutoDocs, `.fd` files), AROS as a
   read-only reference, and the analysis specs. It never reads the ROM or its disassembly.
+
+## Identifying the ROM
+
+Emulators and tools can recognise any KickSlopStart image, past releases excepted (v0.2.10 and earlier have no ID
+block), without a hash list. This layout is stable:
+
+| Offset | Bytes | Content |
+|---|---|---|
+| `$0C` | 4 | `$0022 $0005`: version 34.5, as on Kickstart 1.3 (programs check it; it is not our release number) |
+| `$18` | 4 | ASCII `KSS!`: the fingerprint |
+| `$1C` | 64 | NUL-terminated ASCII string, e.g. `KickSlopStart v0.2.11`: the release tag, or the short commit hash for an untagged build (`git describe` for a local one) |
+
+The same block sits at the start of the image on the soft-kick disk. The rest of the header and the checksum are
+those of a normal 256 KB Kickstart.
 
 ## Building
 
