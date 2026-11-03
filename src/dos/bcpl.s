@@ -1418,6 +1418,9 @@ rt_createproc:
         lea     -PR_MSGPORT(a0),a0   ; a0 = new process
         bsr     rt_this              ; a3 = creator
         move.l  d5,PR_SEGLIST(a0)
+        move.l  d6,d1
+        sub.l   #CP_STKEXTRA,d1      ; pr_StackSize = the BCPL size without our margin: c:NewCLI passes it on
+        move.l  d1,PR_STACKSIZE(a0)
         tst.l   d2
         bne.s   .cp_gv
         move.l  PR_GLOBVEC(a3),d2

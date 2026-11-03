@@ -19,12 +19,14 @@
 
 ; proc_create(a6=SysBase, a0=name, a1=entryPC, d0=priority.b, d1=stack size) -> d0 = APTR &pr_MsgPort | 0.
 ; The name is copied (31 characters at most) after the Process, in the same tc_MemEntry block (PRX_*, dospkt.i).
+; pr_StackSize = d1 (Directory Opus's CreateProc child refuses to run below 16384).
 proc_create:
                 movem.l d2-d4/a2-a4,-(sp)
                 move.l  a0,a2                ; a2 = name
                 move.l  a1,a3                ; a3 = entryPC (process body)
                 move.b  d0,d3                ; d3 = priority
                 move.l  d1,d4                ; d4 = stack size
+                move.l  d1,d2                ; d2 = pr_StackSize as asked (1.3 does not round it, dos-v34-spec §4a)
                 addq.l  #7,d4
                 and.w   #-8,d4
                 move.l  #PRX_SIZE,d0         ; Process + name + segarray room + stack in tc_MemEntry (RemTask frees them)
@@ -35,6 +37,7 @@ proc_create:
                 move.l  d0,a4                ; a4 = Process (= base Task)
                 lea     PRX_NAME(a4),a0
                 move.l  a0,LN_NAME(a4)
+                move.l  d2,PR_STACKSIZE(a4)
                 moveq   #PRX_NAMEMAX-2,d0
 .name:
                 move.b  (a2)+,(a0)+

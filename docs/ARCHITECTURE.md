@@ -1526,6 +1526,10 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - pr_StackSize (issue #16, dos-v34-spec §4a): proc_create writes the stack size it is given, unrounded, so
+    CreateProc and Workbench tools get the value they asked for; rt_createproc stores the BCPL size without our
+    CP_STKEXTRA margin, because c:NewCLI passes its own pr_StackSize on to the CLI it creates. Directory Opus 4.12
+    checks the pr_StackSize of the child it makes with CreateProc(...,16384) and refused to run while it read 0.
   - strap: the bootblock runs with the interrupts enabled (supervisor, IPL 0, previous SR restored after), and
     the strap returns the entry point the bootblock gives in A0. When it is dos.library's rt_Init, dos starts on
     DF0: as before; anything else is a game or demo loaded by its own bootblock, entered in supervisor at IPL 0

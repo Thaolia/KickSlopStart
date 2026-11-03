@@ -97,3 +97,12 @@ total    730792    309328   1040120    394056
   what each region offers after the system's own structures at its bottom were carved out. [D]
 - `total Available` (730 792) is ~6 KB below the title-bar figure of step (e) (736 776): the
   difference is Avail itself being loaded while it runs. [D]
+
+## 7. Stack sizes of CLI processes [O]
+
+Measured on the real 1.3 (details and method: `dos-v34-spec.md` §4a). `pr_StackSize` is the CLI
+process's **own** stack, fixed at creation: Initial CLI 1600 bytes; "Background CLI" (Run), "New
+CLI" (NewCLI) and "AmigaShell" (NewShell) 3200 bytes. Commands run on a separate stack of
+`cli_DefaultStack × 4` bytes (default 1000 longs = 4000 bytes), passed at `4(SP)`. Neither running a
+command nor `Stack N` changes `pr_StackSize`; `Stack N` only sets `cli_DefaultStack := N / 4`
+(truncated), which `Run`/`NewCLI`/`NewShell` copy into the new CLI.

@@ -162,10 +162,10 @@ The offsets from 0x00 to 0xB8 are V34-valid; **everything that follows is "new w
 | 0x5C | `pr_MsgPort` | embedded `struct MsgPort` (34 bytes). **This is the port that `CreateProc`/`DeviceProc` return — as a directly usable `APTR` (byte address), NOT a BPTR** (cf. §4). The "BPTR address" comment in `dosextens.i` is misleading: the arithmetic `Process = return − TC_SIZE` is in bytes, and all the other "handler port" fields here are `APTR`s (`pr_ConsoleTask`, `pr_FileSystemTask`, `fl_Task`, `dn_Task`, `dp_Port`, `fh_Type`). |
 | 0x7E | `pr_Pad` | WORD |
 | 0x80 | `pr_SegList` | BPTR, array of the process's seglists |
-| 0x84 | `pr_StackSize` | LONG |
+| 0x84 | `pr_StackSize` | LONG, size in **bytes** of the process's own stack, set once at creation (§4a) |
 | 0x88 | `pr_GlobVec` | APTR, **BCPL global vector of the process** |
 | 0x8C | `pr_TaskNum` | LONG, CLI task no. (0 if not a CLI) |
-| 0x90 | `pr_StackBase` | BPTR, top of the process stack |
+| 0x90 | `pr_StackBase` | BPTR of the **low end** of the process's own stack (= `tc_SPLower`), measured on the real 1.3 — not its top (§4a) |
 | 0x94 | `pr_Result2` | LONG, secondary result of the last call (= `IoErr`) |
 | 0x98 | `pr_CurrentDir` | BPTR, lock of the current directory |
 | 0x9C | `pr_CIS` | BPTR, current CLI input stream (FileHandle) |
@@ -315,6 +315,65 @@ ACTION_FINDOUTPUT`, `MODE_READWRITE = 1004 = ACTION_FINDUPDATE`.
   the relocations, and **links the segments** BCPL-style: at `BADDR(seg)` one finds the BPTR of the next
   segment, the code starts at `BADDR(seg)+4`. Returns the **BPTR of the 1st segment** (0 = failure, `IoErr`
   set). `UnLoadSeg(seglist)` frees the chain. (Consistent with project milestone D2 "LoadSeg".)
+
+## 4a. `pr_StackSize`: who sets it, to what value, when it changes [O, real KS 1.3]
+
+Observed on the real Kickstart 1.3 (34.5) under Amiberry, 512 KB chip + 512 KB slow, as a black
+box: process structures read with the debugger (`monitor tasks` + memory reads of the `Process`
+fields), program entries caught with the emulator's "process break", data watchpoints on
+`pr_StackSize`, screenshots. Boot disks: a copy of Workbench 1.3.3 with a reduced
+startup-sequence, and a copy of a Directory Opus 4.12 boot disk. All sizes in bytes.
+
+**Rule.** `pr_StackSize` is written **once, by process creation** (`CreateProc` and the BCPL
+`createproc` behind it), with the stack size the process was created with. Nothing written later
+changes it: running a CLI command, `Stack N`, and the end of a command leave it alone.
+- For every process read, `pr_StackSize = tc_SPUpper − tc_SPLower`; the stack block immediately
+  follows the 188-byte `Process` (`tc_SPLower = process + $BC`); `pr_StackBase = BPTR(tc_SPLower)`.
+- The field is zero before creation writes it (the block is cleared); the write happens in the
+  context of the **creating** task, before the new process runs (watchpoint: the `dopus_task` case
+  below, value 0 → 16384 written while the creator was current).
+- **No rounding**, neither by the Workbench nor by process creation: the size is taken as given. A Workbench tool whose icon has `do_StackSize = 6001`
+  never starts: process creation takes an **address error** (a long written at an odd address at the
+  top of the new stack) in the creator's context (the Workbench task), shown as "Software error -
+  task held". The same tool with 6000 starts with `pr_StackSize = 6000`. [O] (`pr_StackSize = 6001`
+  itself was not read, since the creation faults; inferred.)
+
+| Process | `pr_StackSize` | `tc_SPUpper − tc_SPLower` | `cli_DefaultStack` | How observed |
+|---|---:|---:|---|---|
+| Initial CLI (boot CLI), idle at the prompt | 1600 | 1600 | 1000 longs (4000 B) | `tasks` + reads, prompt waiting |
+| Initial CLI while a C command runs (`Wait`; `InitLib` on the Directory Opus disk) | **1600** | 1600 | 1000 longs | stop at the command's entry and again while it waits |
+| Initial CLI after `stack 8002` | 1600 | 1600 | **2000 longs** | reads after the command; `stack` alone prints "current stack size is 8000 bytes" |
+| `Run` → "Background CLI" (parent had `stack 8002`) | 3200 | 3200 | 2000 longs (inherited) | reads while `run wait 40` runs |
+| `NewCLI` → "New CLI", idle and while a command runs | 3200 | 3200 | 2000 longs (inherited) | reads idle, then stop at `Wait`'s entry |
+| `NewShell` (resident `CLI` = L:Shell-Seg) → "AmigaShell" | 3200 | 3200 | 2000 longs (inherited) | reads idle |
+| Workbench tool, icon `do_StackSize = 6000` (More) | 6000 | 6000 | — (`pr_CLI = 0`, `pr_TaskNum = 0`) | stop after launch, reads |
+| Workbench tool, icon `do_StackSize = 0` (Say) | **4096** | 4096 | — | reads while it runs |
+| Workbench tool, icon `do_StackSize = 6001` | — | — | — | creation faults (above) |
+| Child created by a program with `CreateProc` (Directory Opus's `dopus_task`) | 16384 | 16384 | — | watchpoint on the field: written by creation, then read by the child itself |
+| "Workbench" (the WB task started by LoadWB) | 5000 | 5000 | — (`pr_CLI` ≠ 0 but does not point to a plausible CLI; uncertain) | reads (WB 1.3.3 LoadWB and the Directory Opus disk's LoadWB) |
+| ROM file system "File System" (two instances, one per floppy drive of the configuration) | 840 | 840 | — | reads (210 longs, `dn_StackSize` of the resident ROM handler, cf. handlers-v34.md) |
+| CON: handler "CON" (one per window) | 2800 | 2800 | — | reads |
+| RAM: handler "RAM" | 1200 | 1200 | — | reads (Directory Opus disk, whose `L:Ram-Handler` is its own copy) |
+| NEWCON: handler "NEWCON" (WB mountlist `StackSize = 1000`) | 4000 | 4000 | — | reads |
+
+**CLI commands run on another stack.** A C command started by a CLI does **not** run on the
+process's own stack: at its entry the stack pointer is outside `[tc_SPLower, tc_SPUpper]` and
+the long at `4(SP)` is `cli_DefaultStack × 4` (4000, or 8000 after `stack 8002`). While the
+command runs, `pr_StackSize`, `tc_SPLower`, `tc_SPUpper` and `pr_StackBase` keep describing the
+process's own (small) stack; only the saved SP points into the command's stack. [O]
+
+**`Stack N`** sets `cli_DefaultStack := N / 4` (truncated: 8002 → 2000 longs) and touches nothing
+else; it affects only the commands started afterwards by that CLI (`4(SP)`), and is inherited by
+CLIs created by `Run`/`NewCLI`/`NewShell`. It never changes `pr_StackSize`. [O]
+
+**Consequence for programs.** A program started from a CLI that reads `pr_StackSize` of its own
+process sees the CLI's own stack size (1600 for the Initial CLI, 3200 for other CLIs), not the
+stack it actually runs on. Directory Opus 4.12 does **not** test its CLI process: it creates a
+child process `dopus_task` with `CreateProc(…, 16384)` (the value found in the child's
+`pr_StackSize`; the call's argument itself was not read) and it is that child which reads its own
+`pr_StackSize` and compares it with 16384. Started from the boot disk's startup-sequence (Initial
+CLI, `pr_StackSize = 1600`, no `stack` command) it runs normally on the real 1.3. A `CreateProc`
+that leaves `pr_StackSize` at 0 makes that check fail. [O]
 
 ## 5. Public LVO table of dos.library in V34 (1.3 subset)
 
