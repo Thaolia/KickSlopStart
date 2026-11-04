@@ -1382,6 +1382,59 @@ x = BL + 9**. The contents start at BL + 14.
 - Nothing is drawn if the Workbench is "closed" (bit 0 of G+$22) or if the window is not
   open.
 
+### 8.5 Icon placement in a drawer window (measured)
+
+> Black-box run of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, A500
+> cycle-exact, 512 KB chip + 512 KB slow), 2026-11-04, on a session copy of `Workbench 1.3.3 (34.34) -
+> Boot (Commodore) (1991) [m2].adf`; the `Workbench1.3` disk window opened by double-click at its
+> `.info` size (428×94 at 3,70). Tags: **[shot]** = measured on an IPC screenshot (lines doubled, one
+> Amiga line = two picture rows, one hires pixel = one picture column), with the icon images decoded
+> from the disk's `.info` files and matched pixel for pixel; **[mem]** = read from the public
+> `struct Window` through the gdb monitor; **[D]** = deduced. All coordinates below are relative to
+> the window's top-left corner, in hires pixels and Amiga lines.
+
+- **Borders of a disk window** [mem]: BorderLeft 4, BorderTop **11**, BorderRight 18,
+  BorderBottom **10** (topaz 8 screen font). The title bar is drawn on lines 0–9; line 10 is a pen-0
+  line that belongs to the top border: no icon pixel is ever drawn on it (checked after a 1-line
+  scroll, where the first image line of the top-row icons is clipped there) [shot].
+- **Inner (content) area** of the 428×94 window [shot + mem]: lines **11 to 83** (BT to
+  H − BB − 1, 73 lines), columns **18 to 409** (BL + 14 for the gauge, to W − BR − 1). Line 84 is
+  pen 0 inside the bottom border; line 85 is the white top line of the horizontal-bar area. Icon
+  images and labels are clipped exactly at these bounds (an icon straddling the right edge is cut
+  at column 409).
+- **Image position** [shot]: top-left pixel of the icon image (Image LeftEdge/TopEdge 0) =
+  **(BL + 14 + CurrentX − scrollX, BT + CurrentY − scrollY)**, i.e. **(18 + CurrentX, 11 + CurrentY)**
+  for this disk window at scroll 0. Checked on four icons with an exact match of every image pixel:
+
+  | Icon | do_CurrentX/Y | Image top-left (window-relative) |
+  |---|---|---|
+  | Utilities | 11, 0 | 29, 11 |
+  | Shell | 21, 29 | 39, 40 |
+  | Prefs | 107, 29 | 125, 40 |
+  | Empty | 299, 0 | 317, 11 |
+
+  For a drawer (non-disk) window the horizontal origin is BL without the gauge's 14 pixels (§8.2,
+  `wb-icon-clipping-v34.md` §4) [D, not measured here]. Two Shift-clicks on the down arrow scrolled
+  the contents by exactly one line each [shot].
+- **Label** [shot]: the name is drawn in topaz 8, JAM2, pen 1 on a **pen-0 background** (the text
+  cell is opaque). Its **top line is image top + Gadget.Height** (directly under the image: Height 18
+  → label lines 29–36 for an icon at CurrentY 0; baseline 6 lines lower), and it is centred:
+  left = image left + (Gadget.Width − text width) / 2 ("Empty": 40 pixels wide in a 74-wide icon →
+  +17).
+- **Overlapping icons "Empty" (299,0) and "Diverse" (329,15)** [shot]: they are drawn overlapping,
+  **"Empty" in front**. Both images are copied as full opaque rectangles (pen-0 pixels included):
+  Empty's 74×18 rectangle covers the first 3 lines of Diverse's image where they cross (columns
+  347–390), and Empty's opaque label cell (columns 334–373, lines 29–36) cuts a band out of lines 3–10
+  of Diverse's image. Diverse's other pixels and its own label (lines 44–51) are intact. So Diverse
+  is drawn first, Empty after (Empty is nearer the head of the drawer's icon list, drawn last, §5 of
+  `wb-icon-clipping-v34.md`) [D for the list-order reason].
+- **MountMF** (CurrentX/Y 66,74, image 80×35, Gadget 80×36) [shot]: **nothing of it is visible** at
+  the window's initial size, neither image nor name. Its image would start on line 11 + 74 = 85, below
+  the last inner line (83). After scrolling down by 2 lines (two Shift-clicks on the down arrow), its
+  first image line appears on line 83, columns 84–163, confirming the formula at the bottom edge.
+  The vertical bar's knob is smaller than the full track at the initial size: the extent includes the
+  hidden icon (§8.2) [shot].
+
 ---
 
 ## 9. Memory cost of opening a drawer window (GitHub issue #22)
@@ -1564,6 +1617,9 @@ opens 2–4). This is a per-Workbench (not per-window) cost.
   arguments at the exec jump-table entries (in RAM); blocks identified by NDK structure sizes and
   public fields. No ROM address, ROM data or instruction is given; the ROM pointers found inside the
   §9.4 blocks are mentioned, not listed.
+- [x] §8.5 (2026-11-04): measured on emulator screenshots and from the public `struct Window`
+  fields; icon images were decoded from the boot disk's `.info` files, not from the ROM. No ROM
+  address, ROM data or instruction is given.
 - [x] **Correction of 2026-10-29**: removed the 47 remaining ROM addresses (ROMTag, `rt_Name`,
   `rt_IdString`, `rt_Init`, `rt_EndSkip`, entry points, `main`, main loop, abort,
   title-display and Info routines, "Landmark" column of §3.1, exec's AddTask, the
