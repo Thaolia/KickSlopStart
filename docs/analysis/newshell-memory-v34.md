@@ -92,7 +92,8 @@ undisturbed boots used for §3, which also showed 860 992). Kept as a noise samp
    on the first cycle, 112 more on the second, then 0. [O]
 2. The one-time cost is entirely **slow RAM** (`MEMF_PUBLIC`); chip RAM is unchanged by every Shell
    cycle (421 016 throughout). The disk window itself costs 14 024 (5 528 slow + 8 496 chip) and stays.
-   [O]
+   [O] Breakdown of the disk window's cost (12 400 on a first open without queued messages, 11 936 on
+   later opens; the 1 624 difference here is 29 IntuiMessage blocks): `workbench-task-v34.md` §9.
 3. The one-time cost appears in **two steps**: 7 672 bytes are still held right after the first
    `endcli` (839 296), and a further **1 624 bytes** are taken a few seconds later (boot 1: between 8 s
    and 15 s after `endcli`; boot 2: later than 15 s, before Shell #2 had opened). Shell #1 open is

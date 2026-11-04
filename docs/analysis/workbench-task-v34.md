@@ -1384,6 +1384,170 @@ x = BL + 9**. The contents start at BL + 14.
 
 ---
 
+## 9. Memory cost of opening a drawer window (GitHub issue #22)
+
+> Black-box runs of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, cycle-exact
+> A500, 512 KB chip + 512 KB slow RAM, no fast RAM), 2026-11-04, four fresh boots (A–D) of session
+> copies of `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`. Window opened: the boot
+> disk's (`Workbench1.3`), by double-clicking its icon. Boot A: untraced first open, then traced
+> and untraced reopens; boot B: failed trace attempts (discarded); boot C: first open traced from
+> OpenWindow, then a keyboard reopen; boot D: first open fully traced (keyboard double-click).
+>
+> Method: (a) free memory from the exec memory lists, read with the emulation stopped: ExecBase
+> `MemList` → each `MemHeader` (`mh_Free`) and its free-chunk chain, before and after each step; the
+> ranges that were free before and are in use after give the net allocations, their contents were
+> read for identification. The Workbench title figure agreed with `mh_Free` total whenever checked.
+> (b) A gdb breakpoint on the **exec jump-table entries** of AllocMem (−198), FreeMem (−210),
+> AllocEntry (−222) and FreeEntry (−228), i.e. in RAM below ExecBase, logging D0/D1 (size,
+> requirements) and the running task on entry and D0 (result) when the caller's return address is
+> reached; markers on dos Open/Lock/Examine, intuition OpenWindow, layers CreateUpfrontLayer. The
+> two fully traced opens (boot A open 4, boot D open 1) were checked complete: the sum of the live traced blocks equals the free-list delta to
+> the byte. Purpose of each block was identified from its size against NDK 1.3 structure sizes and
+> from its contents (public fields, pointers between blocks), never from ROM code. No ROM address
+> or instruction appears below.
+>
+> Tracing note: each breakpoint stop pauses the emulation; with stops during the first click, the
+> second click of a **mouse** double-click was not seen as a double-click. Fully traced opens were
+> therefore made either with the trace armed at OpenWindow (opens 2+, nothing is allocated before
+> OpenWindow then), or with the keyboard double-click (Left-Amiga held, Left-Alt pressed twice),
+> whose key events are queued by the emulator and survive the stops.
+
+### 9.1 Figures [O]
+
+Bytes, total / slow (`MEMF_PUBLIC|MEMF_FAST` header, first in `MemList`) / chip. "Settled" = no
+change over a further 40 s.
+
+| Step (boot A, mouse double-click, untraced) | Total | Slow | Chip |
+|---|---:|---:|---:|
+| idle desktop after boot | 860 992 | 431 480 | 429 512 |
+| first open, settled (+30 s and +70 s) | 848 592 | 427 576 | 421 016 |
+| → cost of the first open | **12 400** | 3 904 | 8 496 |
+| window closed (close gadget), +30 s | 860 528 | 431 016 | 429 512 |
+| second open, settled | 848 592 | 427 576 | 421 016 |
+| → cost of the second open | **11 936** | 3 440 | 8 496 |
+| closed again / third open / closed / fourth open | 860 528 / 848 592 / 860 528 / 848 592 | | |
+
+- Every open after the first costs **11 936 bytes = 3 440 slow + 8 496 chip**, and every close
+  returns exactly that amount: no cumulative loss over four cycles. [O]
+- The **first** open costs **464 bytes more** (slow RAM), kept after the close for the rest of the
+  session (§9.4). Boot C gave the same figures (first open 12 400, then 860 528 after the close). [O]
+- Variable part: IntuiMessage blocks (56 bytes each, `MEMF_PUBLIC|MEMF_CLEAR`) that Intuition
+  allocates while delivering input and then keeps for reuse (see `newshell-memory-v34.md` §2.5).
+  They are counted in whichever step allocates them. Observed: none during boot A's mouse
+  double-click; **5 × 56 = 280** during boot D's keyboard double-click (first open then cost
+  11 936 + 464 + 280 = **12 680**, and after the close 280 + 464 stayed); one extra 56-byte block
+  during a keyboard reopen in boot C (11 992). These blocks belonged to the **backdrop** window
+  (their reply port is the backdrop window's port), so they stay until that window closes, i.e.
+  for the session. Idle figures also differ by one such block between boots (860 992 or
+  861 048). [O]
+- `newshell-memory-v34.md` §2.4 measured 14 024 for the same disk window (5 528 slow): that is
+  this 12 400 plus 29 such message blocks (1 624, the "late step" described there). [D]
+- The window showed 7 icons; **8** `.info` files were loaded (Expansion, MountMF, Shell, Diverse,
+  Utilities, Prefs, System, Empty); MountMF's icon is not in the visible part of the window
+  (428 × 94). [O for the loads, D for the position]
+
+### 9.2 What the 11 936 bytes are (every open) [O unless stated]
+
+All blocks below are allocated by the Workbench process (Intuition, layers and icon code run on its
+task), except the lock, allocated by the disk handler's task. "Req" = AllocMem requirements;
+sizes are as requested (the allocator rounds to 8).
+
+**Window and display structures: 872 bytes slow, no chip.**
+
+| Count × size | Req | What (evidence) |
+|---|---|---|
+| 1 × 132 | PUBLIC\|CLEAR | `struct Window` (132 = 1.3 `sizeof`): position (3,70), size 428×94, Flags $0240027F, title = the WBObject's name, `WLayer` = the block below. |
+| 1 × 160 | CLEAR | `struct Layer` (160): bounds = the window rectangle, `Window` = the Window above, `rp` = the next block. Allocated inside CreateUpfrontLayer. |
+| 1 × 78 | PUBLIC | the layer's `RastPort` (78 bytes: the 1.3 RastPort up to `RP_User`/`longreserved`; only `Layer` and `BitMap` = the screen's BitMap are non-zero after init: **no TmpRas, no AreaInfo**). |
+| 1 × 12 | CLEAR | a `Region` (bounds + RegionRectangle pointer): the layer's `DamageList`. The same pointer is also found in the Window at +120 (`UserData` in the NDK layout) [O; why it is there: not investigated]. |
+| 5 × 44 | ANY (not cleared) | the five **system gadgets** (`struct Gadget`, 44) chained first in `FirstGadget`: depth front, depth back, sizing, close, drag (types $8040, $8060, $8010, $8080, $8020). |
+| 1 × 34 | PUBLIC\|CLEAR | `MsgPort` (34): the window's **`WindowPort`** (Intuition's reply port, `mp_Flags` = PA_IGNORE, SigTask = Workbench). The IDCMP **`UserPort` is not allocated**: it is the Workbench's single shared port, existing before. |
+| 5 × 40 | CLEAR | `ClipRect`s (40). All five belong to the **backdrop** layer, re-partitioned around the new window: one covering the window rectangle with `lobs` = the new layer and `BitMap` = NULL (obscured part of a SIMPLE_REFRESH layer: nothing saved), four for the strips above, right, left and below. |
+
+The new layer's own ClipRect is a 40-byte block recycled by layers: one 40-byte block stays
+allocated after each close and is reused by the next open (it appears as "40 bytes moved"
+in the free lists), so it does not show in the per-open cost. [O for the block, D for "recycled"]
+
+**Directory lock: 24 bytes slow.** One 24-byte `MEMF_PUBLIC` block allocated by the **disk
+handler's** task: a size long (24) followed by a `FileLock` on the root block (880), shared
+access, `fl_Task` = the handler port. Kept while the window is open (it is the directory lock
+the window works in; freed at close). [O]
+
+**Icons: 2 544 bytes slow + 8 496 chip** (8 icons). Each icon is built as one Workbench object; all
+its blocks are listed in a **MemList** linked into the object's FreeList (WBObject +$8C, §7.3) and are
+freed with the object when the window closes. Per icon:
+
+| Block | Req | Size | Note |
+|---|---|---:|---|
+| WBObject | CLEAR | 168 ($A8) | §7.3 layout; +$4C → DrawerData for drawers. |
+| MemList of the FreeList | CLEAR | 96 | `struct MemList` with `ml_NumEntries` = 10 (14 + 2 + 10 × 8): one list of up to 10 MemEntries per icon, recording the blocks below. |
+| name | ANY | strlen + 1 | e.g. "Expansion" 10, "Shell" 6. |
+| `struct Image` × number of images | CLEAR | 20 each | slow RAM; `ImageData` points to the chip block below. |
+| image data × number of images | **CHIP** (not cleared) | ⌈W/16⌉ × 2 × H × depth | e.g. drawer 74×18×2 planes = 360; Shell 53×18×2 = 288; MountMF 80×35×2 = 700. |
+| DrawerData block (drawer and disk icons only) | **CHIP\|CLEAR** | **446** | `DrawerData` (NewWindow + CurrentX/Y, 56 bytes, read from the `.info`) followed by the Workbench's private per-drawer part (390 bytes): the six scroll gadgets, their PropInfos and Images (§8.1), the drawer's lock slot (+$1BA), a back pointer to the WBObject and an empty list header. Allocated for **every** drawer icon shown, opened or not. |
+| shape mask (icons with a single image only) | **CHIP\|CLEAR** | 1 plane = image size / depth | e.g. Shell 144, MountMF 350. Same width × height as the image, one plane, contents = the icon's filled silhouette (not simply the OR of the planes: holes inside the outline are filled). Not allocated for the drawers, which carry a second (selected) image. Purpose [S]: highlight/drag rendering of GADGHCOMP icons. |
+| tool-specific strings | CLEAR or ANY | | Shell: default tool "SYS:System/CLI" (15, CLEAR). |
+
+Chip RAM per icon on this disk: **drawer 1 168** (2 × 360 images + 448 DrawerData block), **Shell 432**
+(288 + 144), **MountMF 1 056** (704 + 352); slow RAM per icon 296–328 (168 + 96 + Image structs +
+strings). 6 drawers × 1 168 + 432 + 1 056 = 8 496 = the whole chip cost of the open. [O]
+
+Sum: 872 + 24 + 2 544 + 8 496 = **11 936**. [O]
+
+### 9.3 Temporary allocations during an open [O]
+
+Allocated and freed within the open (traced opens, first and later identical in shape). The peak
+in use during the open was **1 616 bytes above** the settled figure (both traced cases).
+
+| Size × count | Req | When / by whom |
+|---|---|---|
+| 278 × 2 | ANY | during CreateUpfrontLayer (Workbench task). |
+| 128 × ~20 | CHIP | 10 during layer creation, then 1–3 after each icon; each freed immediately after allocation. Purpose not identified [S: a small chip scratch buffer of a graphics/layers drawing primitive]. |
+| 12, 16, 40 × many | CLEAR | short-lived small blocks (~56 × 12, ~41 × 16, ~10 × 40) throughout; Region/RegionRectangle-sized, during layer and icon rendering [S]. |
+| 260 | ANY | `FileInfoBlock`, Workbench task, held from the Examine of the directory to the end of the scan. |
+| 608 × 9 | PUBLIC | disk handler task: one per `.info` file open (including a failed/first `".info"` open held for the whole scan), freed at Close. |
+| 448, 328 × 2 | PUBLIC | disk handler task, around the Examine and at the end. |
+| 350 × 4 + 1 050, 432 | PUBLIC\|CHIP / CHIP | Workbench task, while building the shape mask of MountMF (4 one-plane and one three-plane scratch areas) and of Shell (three planes, 3 × 144). [D: "for the mask" from the sizes and timing] |
+| 48 × 9 (PUBLIC\|CLEAR), 24 × 9 (PUBLIC), 70 × 4 (PUBLIC), 12 × 6 (ANY), 16/12 × 2 each and 18 × 1 (CHIP\|CLEAR) | various | 9 of each 48 and 24, as many as the dos Open calls; small icon-loading and packet buffers [S for the roles]. |
+
+Before OpenWindow, each click on the icon makes about 28 small allocations (12/16/40 CLEAR, one
+128 CHIP), all freed; the second click of a double-click then makes a few more temporaries
+(24, 96 and 92 CLEAR and 390 CHIP\|CLEAR, all released by one FreeEntry call on the 96-byte block,
+which is a MemList; 1 014 PUBLIC twice, each freed at once), so nothing stays. The same sequence was seen when a traced double-click was *not* recognised and no window
+opened. On the **first** open only, the two pairs of §9.4 are allocated in the middle of that
+sequence. [O]
+
+### 9.4 The one-time 464 bytes [O for the blocks, S for the purpose]
+
+On the first drawer open after boot, before OpenWindow, the Workbench task allocates **two pairs**:
+a **34-byte** `MEMF_CLEAR` block and a **192-byte** block (requirements 0). Each 34-byte block holds,
+at +12 and +16, a pointer to its 192-byte partner. The 192-byte blocks contain ROM code pointers,
+BPTRs, small counters and an unwritten constant fill pattern: they look like small saved
+execution contexts/stacks, not like any public structure. 40 + 192 + 40 + 192 = **464**. They are
+**not freed** by the close and **not reallocated** by later opens (no allocation of these sizes on
+opens 2–4). This is a per-Workbench (not per-window) cost.
+
+### 9.5 Answers to the issue's questions
+
+1. **Backing store / bitmap per window: none.** The drawer window is SIMPLE_REFRESH: no SuperBitMap,
+   no ClipRect bitmap (the obscured ClipRect of the backdrop layer has `BitMap` = NULL), no TmpRas,
+   no per-window raster. The window structures proper cost 872 bytes of slow RAM (+ 24 for the
+   lock) and **no chip RAM**. [O]
+2. **Chip RAM per icon**: all of the 8 496 chip bytes are icon data: image planes (all icons), a
+   one-plane mask for single-image icons, and the 446-byte DrawerData block for drawer icons
+   (1 168 per drawer icon here). The rest of an icon (WBObject 168, MemList 96, Image structs, strings)
+   is in public (slow) RAM. [O]
+3. **Pool**: there is no allocation pool (exec has none in 1.3). The only grouping is the per-icon
+   FreeList (one 10-entry MemList per icon) through which each object's blocks are freed;
+   Intuition keeps the window's and other windows' replied IntuiMessages for reuse (56-byte
+   blocks, §9.1), and layers recycles one ClipRect. Everything else is plain AllocMem/FreeMem. [O]
+4. **For an implementation matching 1.3** (≈ 11.9 KB per opened disk window with these 8 icons):
+   the memory scales with the icons (≈ 1.2 KB chip + ≈ 0.3 KB slow per drawer icon); a window
+   that costs much more than ~900 bytes of non-icon memory, or that allocates chip RAM for itself,
+   differs from 1.3. [D]
+
+---
+
 ## Clean-room review
 
 - [x] No listing, no instruction sequence transcribed or paraphrased line by line: only
@@ -1396,6 +1560,10 @@ x = BL + 9**. The contents start at BL + 14.
   form, as long as `(tag+42)>>2` gives a correct executable segment — for example placing its
   ROMTag at an address ≡ 2 mod 4 is **not** required; it is enough that `BADDR((tag+42)>>2)+4` is a
   valid entry point).
+- [x] §9 (2026-11-04): measured by reading exec's public memory lists and by logging AllocMem/FreeMem
+  arguments at the exec jump-table entries (in RAM); blocks identified by NDK structure sizes and
+  public fields. No ROM address, ROM data or instruction is given; the ROM pointers found inside the
+  §9.4 blocks are mentioned, not listed.
 - [x] **Correction of 2026-10-29**: removed the 47 remaining ROM addresses (ROMTag, `rt_Name`,
   `rt_IdString`, `rt_Init`, `rt_EndSkip`, entry points, `main`, main loop, abort,
   title-display and Info routines, "Landmark" column of §3.1, exec's AddTask, the
