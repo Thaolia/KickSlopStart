@@ -1017,7 +1017,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   of an absent volume, RENAME of a locked source (spec open point);
   **dos LVO details (2026-11-04)**: D1 = D0 on packet LVOs, Info(0) to pr_FileSystemTask, ParentDir(0) Result2 0,
   IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
-  `tests/fsnodisk_probe.sh`). Open: requester texts for 213 and 225 (ask the analysis track), LoadSeg of HUNK_OVERLAY
+  `tests/fsnodisk_probe.sh`). 213 and 225 requesters done the same day from the analysis track's observation (`fsnodisk_probe.sh notdos|notval`).
+  Open: the validator's own requesters when validation fails ("Error validating disk", "Disk structure corrupt",
+  seen on 1.3; ours fails silently) and the in-memory validation of a read-only disk (1.3 then answers 214, ours
+  213); left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
   files (refused today) and then UnLoadSeg's overlay case, Retry restarting the whole call (name resolution
   included) instead of resending the packet; the mouse does not move the pointer while a dos requester is open on
   a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to

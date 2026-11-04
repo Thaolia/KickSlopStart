@@ -603,9 +603,10 @@ differs.
   RENAME_OBJECT, RENAME_DISK, and 226 "No disk present / in unit n" (an inserted disk counts as Retry); Retry resends
   the packet, Cancel returns the failure; none for a plain task or pr_WindowPtr = -1. The volume and the unit come
   from the handler's new ACTION_CURRENT_VOLUME (Res1 = volume node of the drive or of an open file, Res2 = unit).
-  213 and 225 still fail without a requester: their text was not observed. Checked with `tests/fsgap_probe.sh` (42
-  checks, the 214 requester captured and answered Amiga-B) and `tests/fsnodisk_probe.sh` (226 with and without
-  requester).
+  Since the analysis track observed them on the real ROM (same day): 213 "Volume / <name> / is not validated" for the
+  same packets as 214, and 225 "Not a DOS disk / in unit  n" for the same packets as 226; an inserted disk counts as
+  Retry for 213, 225 and 226. Checked with `tests/fsgap_probe.sh` (42 checks, the 214 requester captured and answered
+  Amiga-B) and `tests/fsnodisk_probe.sh` (cases nodisk 226, notdos 225, notval 213: with and without requester).
   (7y) **File system details: names, 212, root, chain order, write protection** (2026-11-04, spec
   `rom-filesystem-v34.md` §2.2, §2.3, §4.1, §6.2, §6.3, §7.1). Path components are truncated to 30 characters on lookup
   (`ofs_split`) and on creation (`ow_parent`); `ofs_name_to_block` and `ofs_stream_open` return their error in d1:

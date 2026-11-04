@@ -1687,14 +1687,16 @@ dos_pktretry:
 .pr_ret:
         rts
 ; dos_errreq(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket, a6 = SysBase) -> d0 = true if Retry:
-; dos's disk error requester (spec dos-lvo-partial §1.4, rom-filesystem §2.3) in the two cases seen on the real ROM:
-; 214 "Volume / <name> / is write protected" after FINDOUTPUT, DELETE, CREATE_DIR, RENAME_OBJECT and RENAME_DISK
-; (Protect and SetDate fail without one), and 226 "No disk present / in unit n" after any packet but DupLock,
-; FreeLock and END (an inserted disk counts as Retry). The volume and the unit are asked from the handler, whose
+; dos's disk error requester as seen on the real ROM (spec dos-lvo-partial §1.4, rom-filesystem §2.3):
+;   214 "Volume / <name> / is write protected" and 213 "Volume / <name> / is not validated" after FINDOUTPUT,
+;   DELETE, CREATE_DIR, RENAME_OBJECT and RENAME_DISK (Protect and SetDate fail without one);
+;   226 "No disk present / in unit  n" and 225 "Not a DOS disk / in unit  n" after any packet but DupLock, FreeLock,
+;   END and CURRENT_VOLUME.
+; An inserted disk counts as Retry for 213, 225 and 226. The volume and the unit are asked from the handler, whose
 ; port is in dp_Port after the reply (ACTION_CURRENT_VOLUME). A plain Task or pr_WindowPtr = -1: no requester.
 ; Preserves d1-d7/a0-a6.
 dos_errreq:
-        movem.l d1-d4/a0-a1/a4,-(sp)
+        movem.l d1-d5/a0-a2/a4,-(sp)
         moveq   #0,d4                   ; d4 = answer
         tst.l   d0
         beq.s   .er_fail
@@ -1707,10 +1709,21 @@ dos_errreq:
         cmp.l   #-1,PR_WINDOWPTR(a0)
         beq     .er_ret
         move.l  DP_TYPE(a4),d2
+        lea     vr_wprot(pc),a2         ; a2 = the line of the error, d5 = IDCMP classes counting as Retry
+        moveq   #0,d5
         cmp.l   #ERROR_DISK_WRITE_PROTECTED,d1
         beq.s   .er_wp
+        lea     vr_notval(pc),a2
+        move.l  #VR_DISKINSERTED,d5     ; an inserted disk closes the next three (dos-lvo-partial §1.4)
+        cmp.l   #ERROR_DISK_NOT_VALIDATED,d1
+        beq.s   .er_wp
+        lea     vr_nodisk(pc),a2
         cmp.l   #ERROR_NO_DISK,d1
+        beq.s   .er_unit
+        lea     vr_notdos(pc),a2
+        cmp.l   #ERROR_NOT_A_DOS_DISK,d1
         bne     .er_ret
+.er_unit:
         lea     er_nodtab(pc),a0
 .er_nl:
         move.w  (a0)+,d3
@@ -1730,9 +1743,9 @@ dos_errreq:
         move.b  d1,-2(a1)               ; the digit replaces the final '0'
         move.l  sp,a4
         moveq   #10,d3
-        lea     vr_nodisk(pc),a0
+        move.l  a2,a0
         lea     vr_empty(pc),a1
-        move.l  #VR_DISKINSERTED,d0
+        move.l  d5,d0
         bsr     vr_req
         move.l  d0,d4
         lea     12(sp),sp
@@ -1775,15 +1788,15 @@ dos_errreq:
         tst.w   d3
         beq.s   .er_wpdone
         lea     vr_v1(pc),a0            ; "Volume"
-        lea     vr_wprot(pc),a1         ; "is write protected"
-        moveq   #0,d0
+        move.l  a2,a1                   ; "is write protected" / "is not validated"
+        move.l  d5,d0
         bsr     vr_req
         move.l  d0,d4
 .er_wpdone:
         lea     32(sp),sp
 .er_ret:
         move.l  d4,d0
-        movem.l (sp)+,d1-d4/a0-a1/a4
+        movem.l (sp)+,d1-d5/a0-a2/a4
         rts
 ; er_curvol(a4 = replied DosPacket, a6 = SysBase) -> d0 = BPTR of the current volume node of the handler that
 ; replied | 0, d1 = its unit number: ACTION_CURRENT_VOLUME (spec rom-filesystem §7.2). Preserves d2-d7/a2-a6.
@@ -1901,6 +1914,8 @@ vr_l3:          dc.b    "in any drive",0
 vr_v1:          dc.b    "Volume",0
 vr_v3:          dc.b    "is full",0
 vr_wprot:       dc.b    "is write protected",0
+vr_notval:      dc.b    "is not validated",0
+vr_notdos:      dc.b    "Not a DOS disk",0
 vr_nodisk:      dc.b    "No disk present",0
 vr_unit:        dc.b    "in unit  0",0
 vr_empty:       dc.b    0

@@ -1,8 +1,9 @@
-; tests/fsnodisk_test.s - dos's "No disk present / in unit n" requester (implementation-side test of
-; docs/analysis/dos-lvo-partial-v34.md §1.4): CreateDir on DF1: with its drive empty. With pr_WindowPtr = -1 the call
-; fails at once with 226; with pr_WindowPtr = 0 the requester opens ("FSND REQ" is sent first) and the harness
-; (tests/fsnodisk_probe.sh) answers Cancel with left Amiga + B: 0 / 226. Lines "FSND nnnnnnnn OK|FAIL", then
-; "FSND END <failures>".
+; tests/fsnodisk_test.s - dos's unit requesters (implementation-side test of docs/analysis/dos-lvo-partial-v34.md
+; §1.4): CreateDir on DF1:, either empty ("No disk present / in unit  1", 226) or holding a non-DOS disk (argument
+; "d": "Not a DOS disk / in unit  1", 225) or a DOS disk that fails validation (argument "v": "Volume / <name> /
+; is not validated", 213). With pr_WindowPtr = -1 the call fails at once; with pr_WindowPtr = 0 the
+; requester opens ("FSND REQ" is sent first) and the harness (tests/fsnodisk_probe.sh) answers Cancel with left
+; Amiga + B. Lines "FSND nnnnnnnn OK|FAIL", then "FSND END <failures>".
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o build/fsnodisk_test tests/fsnodisk_test.s
 
 SERDAT   EQU $DFF030
@@ -11,7 +12,16 @@ PR_WINDOWPTR EQU $B8
 _CreateDir EQU -120
 _IoErr   EQU -132
 
-start:  move.l  4.w,a6
+start:  move.l  #226,ecode
+        subq.l  #1,d0
+        bmi.s   .arg
+        cmp.b   #'d',(a0)
+        bne.s   .argv
+        move.l  #225,ecode
+.argv:  cmp.b   #'v',(a0)
+        bne.s   .arg
+        move.l  #213,ecode
+.arg:   move.l  4.w,a6
         lea     dosname(pc),a1
         moveq   #0,d0
         jsr     -552(a6)
@@ -26,7 +36,7 @@ start:  move.l  4.w,a6
         moveq   #0,d1
         bsr     check                   ; 1: no requester
         jsr     _IoErr(a6)
-        move.l  #226,d1
+        move.l  ecode,d1
         bsr     check                   ; 2
         bsr     getwin
         clr.l   PR_WINDOWPTR(a0)
@@ -37,7 +47,7 @@ start:  move.l  4.w,a6
         moveq   #0,d1
         bsr     check                   ; 3: Cancel
         jsr     _IoErr(a6)
-        move.l  #226,d1
+        move.l  ecode,d1
         bsr     check                   ; 4
         lea     m_end(pc),a0
         bsr     puts
@@ -112,4 +122,5 @@ m_sp:   dc.b    " ",0
 n_x:    dc.b    "df1:x",0
         even
 tno:    dc.l    0
+ecode:  dc.l    0
 nfail:  dc.l    0

@@ -135,7 +135,8 @@ error in Result2:
 - **Which errors show a requester**: 213 (not validated), 214 (write protected), 218 (volume to replace, "in any
   drive"), 221 (disk full), 225 (not a DOS disk), 226 (no disk present, with the unit number), and two
   non-standard codes 288 ("you must replace volume") and 296 ("read/write error"). The volume name shown comes
-  from the lock's or the handle's volume, or is asked from the handler (ACTION_CURRENT_VOLUME, 7). [S]
+  from the lock's or the handle's volume, or is asked from the handler (ACTION_CURRENT_VOLUME, 7). [S; O for
+  213, 214, 225, 226]
 - **All other errors** (202, 203, 205, 209, 210, 212, 219, 222…): no requester, the LVO fails at once. [O for
   202/205/209/210/219]
 - **Window**: the requester is an AutoRequest-style "System Request" window opened for the **calling process**:
@@ -143,11 +144,60 @@ error in Result2:
   left; otherwise on the screen of that window. Buttons Retry (left) / Cancel (right); left Amiga + B selects
   Cancel. [O for −1 and 0]
 - **Retry** restarts the whole call (name resolution and packet included); **Cancel** returns the failure value
-  with Result2 = the error. [S; O for Cancel]
+  with Result2 = the error. [S; O for Cancel, and for Retry below]
+- **A disk inserted while the requester is up answers it as Retry** [O]: with the requester shown for DF1:
+  (213 and 225 cases below), inserting a valid DOS disk in DF1: closed the window with no click, the call ran
+  again and succeeded (`MakeDir df1:x` / `df1:y` printed nothing, and the directory was then listed on the new
+  disk). Clicking Retry with the faulty disk still in the drive brought the same requester back at once.
+- **Left Amiga + B** did not dismiss the 213/225 requesters in the runs of 2026-11-04 (requester over the boot
+  CLI window, keys sent by the emulator, also after clicking inside the requester); a mouse click on Cancel did.
+  Why it differs from the earlier observation above is not established. [O, ?]
 - Observed [O]: with DF0: reporting "no disk" (the emulator's write-protect switch toggled at run time made
   trackdisk report no disk), `CreateDir("df0:wpdir2")` with `pr_WindowPtr = 0` showed a "System Request"
   window "No disk present / in unit  0" (Retry/Cancel) on the Workbench screen; Cancel → D0 = 0, Result2 = 226.
   The same call with `pr_WindowPtr = −1` returned 0 / 226 immediately, and so did `DeleteFile("df0:nofile")`.
+- **225, not a DOS disk** [O]. Setup: Workbench 1.3.3 copy in DF0: (startup-sequence cut down to SetPatch,
+  Path and a serial marker; the boot CLI stays open, `pr_WindowPtr = 0`), an all-zero image in DF1:.
+  The requester has **two lines and no volume name**: "Not a DOS disk" / "in unit  1" (the drive number, after
+  two spaces, as for 226); buttons Retry / Cancel. After Cancel, C:Why printed "not a valid DOS disk" (225) for
+  every command below. Commands and what they printed after Cancel:
+  - `MakeDir df1:x` (CreateDir): requester; "Can't create directory df1:x".
+  - `Delete df1:x`: requester; "Could not get information for "df1:x" - not a valid DOS disk".
+  - `Echo >df1:x hi` (Open MODE_NEWFILE by the CLI): requester; "CLI error: Unable to open redirection file".
+  - `Type df1:x` (Open MODE_OLDFILE): requester; "Can't open df1:x".
+  - `Dir df1:` (Lock): requester; "Could not get information for df1:" / "not a valid DOS disk".
+  - `CD df1:` (Lock): requester; "Can't find df1:".
+  - `Rename df1:a df1:b`: requester; "Can't rename df1:a as df1:b".
+  - `Protect df1:a r`: **requester** (unlike 214); "Protect failed". Which call inside C:Protect raised it was
+    not traced. [?]
+  - `Relabel df1: Foo`: requester; no message.
+  - `Info df1:`: **no requester**; Info listed "DF1:  Not a DOS disk".
+  With a non-DOS disk every call that reaches the drive's handler fails with 225, so the requester comes from
+  the first call a command makes, whatever it is.
+- **213, not validated** [O]. The requester has **three lines**, like 214: "Volume" / the volume name /
+  "is not validated"; buttons Retry / Cancel. After Cancel, C:Why printed "disk not validated" (213) where the
+  command sets Result2. Commands (DF1: holding a volume with no bitmap loaded, see below):
+  - requester: `MakeDir df1:x` ("Can't create directory df1:x"), `Delete df1:f` ("Not Deleted - disk not
+    validated"), `Echo >df1:x hi` ("CLI error: Unable to open redirection file"), `Rename df1:f df1:g` ("Can't
+    rename df1:f as df1:g"), `Relabel df1: Foo` ("Attempt to rename disk failed");
+  - **no requester**: `Protect df1:f r` ("Protect failed", Why: disk not validated) — the same split as for 214;
+  - reading works normally: `Dir df1:`, `Type df1:f`, `CD df1:`; `Info df1:` shows the status "Validating" and
+    leaves Used/Free/Full empty.
+- **When 213 is actually met** [O]: a volume whose root block bitmap flag is not −1 is handed to the disk
+  validator (`L:Disk-Validator` of the boot disk) when it is mounted.
+  - Well-formed writable disk: validated before the first command was typed; no requester ever; the flag on
+    the disk was −1 afterwards; MakeDir worked.
+  - Same disk read-only: validated in memory (Info "Read Only", with used/free figures); writes gave **214**
+    ("Volume / NoValF / is write protected"), not 213.
+  - `L:Disk-Validator` deleted from the boot disk: no message at all; Info stays "Validating"; writes give the
+    213 requester.
+  - Validation failing (the xdftool test image had the disk type "DOS" + 0 in the hash-chain field of its root
+    block; 1146049280 is that value read as a number): two requesters shown while validating, "Error validating
+    disk" / volume name / "Key 1146049280 out of range", then "Disk structure corrupt" / "Use DISKDOCTOR to
+    correct it" (Retry / Cancel each); afterwards Info stays "Validating" and writes give the 213 requester,
+    **also on a read-only image** (213 is checked before 214). Whether these two validator texts belong to
+    `L:Disk-Validator` or to the ROM was not established. [?]
+  - A write during the validation itself (the window between mount and the end of validation) was not caught. [?]
 - Which LVOs go through it: name-based ones (DeleteFile, CreateDir, Rename, SetComment, SetProtection, Lock),
   lock-based ones (Info, ParentDir, Examine, ExNext) and handle-based ones (Read, Write, Seek). **DupLock does
   not** (plain packet, no retry). [S]
@@ -422,7 +472,11 @@ Review of 2026-11-04.
 - [x] RAM addresses seen during the probes (task, lock and stack addresses) are not reproduced; values quoted
   are results (lengths, positions, error codes, InfoData fields of the test disk).
 - [x] ROM data: the requester texts quoted are the ones **seen on screen** during the probes ("Please insert
-  volume / … / in any drive", "No disk present / in unit 0"); the other requester messages are described by
-  meaning only, not copied.
+  volume / … / in any drive", "No disk present / in unit 0", and on 2026-11-04 "Not a DOS disk / in unit  1",
+  "Volume / <name> / is not validated" and the two validation-failure requesters); the other requester messages
+  are described by meaning only, not copied. Command output quoted in §1.4 is what the Workbench 1.3.3 C:
+  commands printed on screen.
+- [x] The 2026-11-04 runs (§1.4, 213/225) were black-box: commands typed in the boot CLI of the real ROM,
+  screenshots, test disks made with xdftool plus a root-block flag patch; no debugger, no disassembly.
 - [x] No code was written: the probes were debugger register/memory manipulations of the running Workbench
   process; the further probes of §4 are described only.

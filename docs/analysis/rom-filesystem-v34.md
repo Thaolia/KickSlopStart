@@ -152,7 +152,7 @@ Any other value, in particular 0 (NIL), 5 (DIE), 20 (WAIT_CHAR), 33 (DISK_CHANGE
 ### 2.1 Lock and volume checks [D, codes O where noted]
 
 - Lock argument 0: accepted when the drive holds a DOS volume (means the root). Without a disk → 226
-  (ERROR_NO_DISK); with a non-DOS disk → 225 (ERROR_NOT_A_DOS_DISK).
+  (ERROR_NO_DISK); with a non-DOS disk → 225 (ERROR_NOT_A_DOS_DISK) [225 O, §2.3].
 - Lock ≠ 0: it must be in the file system's list of locks for the current volume. If it is not there and its
   `fl_Volume` is a volume node, the answer is **218** (ERROR_DEVICE_NOT_MOUNTED; the case of
   `disk-change-v34.md` §2.4); otherwise **211** (ERROR_INVALID_LOCK).
@@ -172,7 +172,7 @@ Any other value, in particular 0 (NIL), 5 (DIE), 20 (WAIT_CHAR), 33 (DISK_CHANGE
 - A new volume name (RENAME_DISK) must be 1..30 characters with no character below `$20` (after masking
   bit 7), no `/` and no `:`; otherwise 210. [D]
 
-### 2.3 Precondition of every modification [D for the order; 214 O]
+### 2.3 Precondition of every modification [D for the order; 213, 214 and the order O]
 
 Before changing the disk (create, delete, rename, protect, comment, date, relabel, write) the file system checks,
 in this order:
@@ -192,6 +192,17 @@ for Open (FINDOUTPUT), DeleteFile, CreateDir, Rename and Relabel; Cancel returne
 "Attempt to rename disk failed"). C:Protect and C:SetDate failed without a requester ("Protect failed",
 "SetDate failed"). This is dos's error requester (`bcpl-runtime-v34.md`, global 114); the file system itself
 never opens a requester for 214.
+
+Observed 213 [O] (details and command outputs in `dos-lvo-partial-v34.md` §1.4): a volume whose root bitmap
+flag is not −1 is validated at mount by `L:Disk-Validator`. When that succeeds (writable disk: the flag is
+rewritten to −1; read-only disk: bitmap built in memory) no 213 is ever seen, and a read-only disk answers
+writes with 214. When there is no bitmap (validator missing from the boot disk, or validation failed), writes
+answer **0 / 213** — on a read-only image too, which confirms the order above — while reads, Lock, Examine and
+DISK_INFO work (Info: status "Validating"). dos shows "Volume / <name> / is not validated" (Retry / Cancel) for
+FINDOUTPUT, DELETE_OBJECT, CREATE_DIR, RENAME_OBJECT and RENAME_DISK, and nothing for SET_PROTECT, as for 214.
+A non-DOS disk (all-zero image) answers 225 to every request tried, FINDINPUT and LOCATE_OBJECT included,
+while C:Info got its answer with no requester ("DF1:  Not a DOS disk", presumably through DISK_INFO); dos's
+requester then reads "Not a DOS disk / in unit  1". [O]
 
 ### 2.4 Concurrency [D]
 
@@ -681,6 +692,9 @@ Run on our ROM with the same commands; "Why" = output of C:Why after the command
 | V30 | packet type 33 or 99 | 0 / 209 (I10) |
 | V31 | fresh disk, the allocation sequence of §8.1 | the block numbers of §8.1; bitmap moves 881 → 894 at the first flush |
 | V32 | in one hash slot create aa, eu, fh; delete eu; create lb | List: aa, fh, lb |
+| V33 | all-zero image in DF1:, `MakeDir df1:x`, `Type df1:x`, `Dir df1:`, `Protect df1:a r`, `Info df1:` | each → 225 with the requester "Not a DOS disk / in unit  1" (Protect too); Info: "Not a DOS disk", no requester |
+| V34 | OFS disk in DF1: with root bitmap flag 0, boot disk without `L:Disk-Validator`; `MakeDir df1:x`, `Delete df1:f`, `Protect df1:f r`, `Type df1:f` | MakeDir/Delete → 213 with "Volume / <name> / is not validated"; Protect → 213, no requester; Type works; Info status "Validating" |
+| V35 | same disk, validator present | validated at mount (flag −1 on the disk), MakeDir works; read-only image: Info "Read Only", MakeDir → 214 |
 
 ### 10.1 In-flight rewriting results [O-inj]
 
@@ -749,7 +763,9 @@ Review of 2026-11-04.
   `dos-memory-v34.md`).
 - [x] No ROM data reproduced (no strings table, no constant table). Messages quoted are user-visible output of
   Workbench 1.3.3 C: commands and the text of dos's write-protect requester as seen on screen (the same family
-  as the "is full" requester of `disk-full-write-v34.md`).
+  as the "is full" requester of `disk-full-write-v34.md`). On 2026-11-04: "Volume / <name> / is not validated"
+  and "Not a DOS disk / in unit  1", as seen on screen (§2.3, V33-V35).
 - [x] The [O-inj] runs changed packets in memory with the debugger; no program was written. The debugger
   breakpoint locations used for this are not given.
-- [x] Test disks were made with xdftool and C: commands; their contents are described, not copied from the ROM.
+- [x] Test disks were made with xdftool and C: commands (2026-11-04: plus a patch of the root bitmap flag and an
+  all-zero image); their contents are described, not copied from the ROM.
