@@ -667,6 +667,49 @@ code added since `aa656a8` brings a single new 8-word match, the public cleared 
 The new data are a requester text (`is write protected`, 10 words), mandated wording, and the new boot image, which
 matches nothing. The controls are reproduced exactly and the self-check finds 12 fragments out of 12.
 
+### Addendum: commit `3e9b7a5` (e25e626, disk requester texts)
+
+Delta re-run before tagging. Since `ac2546a` a single commit changed `src/`: `e25e626` (`src/dos/dos_lib.s`, the
+requester texts for "volume is not validated" and "not a DOS disk in unit n"). Same tool, same controls (the script
+with the file lists of the `ac2546a` run), same `--map` and `--base tiers`, separate analysis agent.
+
+| role | file | sha1 |
+|---|---|---|
+| our ROM (production) | `build/kick13-prod.rom`, clean worktree of `3e9b7a5`, `is_kick ok`, `chk_sum ok` | `81406134bafadadfae1f2ac9859bfcd1b7b33de7` |
+| our ROM (dev) | `build/kick13.rom`, same worktree, `is_kick ok`, `chk_sum ok` | `0b88d4e0ca93fba6f52bdec0a57ff828b43f4fc4` |
+
+- **Symbol tables.** The `Makefile` is unchanged since `ac2546a`; the 65 objects of the `OBJS` list match the built
+  objects one for one. The relinked binaries (205,200 bytes prod, 206,252 dev, 64 bytes more than at `ac2546a`) are
+  identical to the `kick.bin` of each build and differ from the ROM only in the 33 bytes of the version string.
+- **Controls.** The group sizes and every "tiers / commodore / aros vs reference" row are identical to the
+  `ac2546a` output (`diff` empty), so the notable threshold stays **40 words / 19 instructions**.
+
+| stream | metric | `ac2546a` | `3e9b7a5` |
+|---|---|---|---|
+| mots | A tokens | 102,144 | 102,176 |
+| mots | max code/table | 76 (keymap string tables) | 76 (keymap string tables) |
+| mots | max code, data excluded | 19 (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`, `$0DB84`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 106 / 8 / 3 | 106 / 8 / 3 |
+| instr | max code, data excluded | 13 (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) |
+| instr | code ≥ 8 / ≥ 16 | 7 / 2 | 7 / 2 |
+| instr-souple | code ≥ 8 / ≥ 16 | 16 / 2 | 16 / 2 |
+| self-check | relocated fragments found | 12/12 | 12/12 (prod and dev) |
+
+- The rows "our ROM vs tiers / commodore / aros" keep every figure of `ac2546a` except the A token count. The dev ROM
+  gives the same figures as at `ac2546a` (76 / 17 / 17) apart from its A token count.
+- **Lists compared** by stream, class, object, symbol and length (`audit-prod.txt`, `audit-dev.txt` and the full
+  list `--seuil 8` of the production ROM). The notable lists of both ROMs are unchanged. In the full list, one row is
+  new and none is gone:
+
+| offset | stream | words | class | symbol | nature |
+|---|---|---|---|---|---|
+| `$27DEE` | mots | 8 | `texte` | `vr_notdos+$1` (`src/dos/dos_lib.s`) | the requester line `Not a DOS disk` with its terminator: an on-screen message worded to match what 1.3 displays (row "on-screen messages" of "Provenance of the data that matches"), not code |
+
+- No new code/table match of any length; the new `is not validated` line gives no match of 8 tokens or more.
+
+**Verdict (`3e9b7a5`): PASS.** No code match reaches the notable threshold; the longest code match is still
+13 instructions / 19 words (`exp_cpbinding+$22`). The only new match of 8 words or more is a mandated requester text.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
