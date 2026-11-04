@@ -150,6 +150,8 @@ cmd_start() {
     die "refused: $rom is the Commodore ROM. Only a separate analysis agent may run it (CLAUDE.md, clean-room
 firewall), with --analysis; its findings go to docs/analysis/ as behaviour only. See SKILL.md."
   fi
+  # the real ROM is the timing oracle: always observe it on a cycle-exact A500
+  is_commodore_rom "$rom" && cycle=1
   local a
   for a in "${adfs[@]}"; do [ -f "$a" ] || die "ADF not found: $a"; done
   case "$chip$slow$fast" in *[!0-9]*) die "start: --chip/--slow/--fast take numbers" ;; esac

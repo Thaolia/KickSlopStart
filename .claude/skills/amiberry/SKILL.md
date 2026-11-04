@@ -30,7 +30,9 @@ change touches (the WinUAE ADF suite is no longer run).
   its conclusions and keeps disassembly dumps out of the main context.
 - **The Commodore ROM** (`assets/kick34005.A500`, also recognised by its SHA-256 under any name): `start` refuses
   it unless `--analysis` is given, and `--analysis` may only be used **inside a separate analysis agent**
-  (CLAUDE.md, "Routing"). Such a session lives in `build/amiberry/analysis/<name>/`, which the implementation side
+  (CLAUDE.md, "Routing"). It always runs cycle-exact (`--cycle-exact` is forced: the real ROM is the timing
+  oracle, so its timings must be those of a real A500). Such a session lives in
+  `build/amiberry/analysis/<name>/`, which the implementation side
   never reads. The agent writes **no code** (no `src/`, `tests/`, scripts), only documentation in `docs/analysis/`,
   in English: behaviour and ABI, never instruction sequences, never ROM addresses (`docs/CLEANROOM.md`,
   `docs/AUDIT.md`).
@@ -49,7 +51,9 @@ Brief template for an analysis agent (adapt the goal; always say "English"):
 
 - `start` options: `--name N` (default `s<slot>`), `--rom ROM`, `--adf ADF` (up to 4: DF0-DF3, each copied into the
   session directory, the original is never written), `--chip KB` (512), `--slow KB` (512), `--fast MB` (0),
-  `--cycle-exact` (CPU, memory and blitter cycle-exact, slower), `--visible` (window on the current DISPLAY
+  `--cycle-exact` (sets `cpu_compatible`, `cpu_cycle_exact`, `cycle_exact`; the `--model A500` preset is
+  already fully cycle-exact, checked in a saved config on 2026-11-04, so this only pins it; forced for the
+  Commodore ROM), `--visible` (window on the current DISPLAY
   instead of a private Xvfb), `--analysis`, `--timeout S` (startup, 30), and after `--` any Amiberry argument
   (`-- -s key=value`).
 - Up to 16 sessions at once. Slot `i` owns serial port `24100+2i`, GDB port `24101+2i`, an Xvfb display and the IPC
