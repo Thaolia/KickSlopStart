@@ -56,6 +56,9 @@ Brief template for an analysis agent (adapt the goal; always say "English"):
   Commodore ROM), `--visible` (window on the current DISPLAY
   instead of a private Xvfb), `--analysis`, `--timeout S` (startup, 30), and after `--` any Amiberry argument
   (`-- -s key=value`).
+- Write-protected floppy: `-s floppyNwp=true` does **not** protect the disk (the emulated program still wrote to
+  it, checked 2026-11-04). Give a **read-only** image through the configuration instead: `chmod a-w x.adf`, then
+  `-- -s floppy1=$PWD/x.adf` (not `--adf`, whose copy is made writable). Example: `tests/fsgap_probe.sh`.
 - Up to 16 sessions at once. Slot `i` owns serial port `24100+2i`, GDB port `24101+2i`, an Xvfb display and the IPC
   socket `/tmp/ab<uid>-<i>/amiberry.sock`. Slots are taken under a lock, so concurrent `start`s are safe.
 - Files in `build/amiberry/sessions/<name>/`: `serial.log` (everything the Amiga sent: the serial port waits for
@@ -131,19 +134,22 @@ Raw keycodes: Return `44`, Enter (keypad) `43`, Space `40`, Backspace `41`, Tab 
 cursor up/down/right/left `4c 4d 4e 4f`, Help `5f`, left/right Shift `60 61`, Caps `62`, Ctrl `63`, left/right Alt
 `64 65`, left/right Amiga `66 67`, F1-F10 `50`-`59`, `1`-`9` `01`-`09`, `0` `0a`, `A` `20`.
 
-Mouse aiming: the start position is unknown, so go to the top-left corner first (`mouse:-900,-400`), take
-`shot --via ipc`, read the target's pixel position on that picture and move by its offset from the pointer's tip:
-one mouse count is one pixel of the IPC picture, in both directions (measured with the Workbench pointer).
+Mouse aiming: the start position is unknown, so go to the top-left corner first (`mouse:-900,-400`). The corner is
+the top-left of the Amiga screen, at **(76,40) of the IPC picture** (its overscan border), and one mouse count is one
+pixel of that picture in both directions (measured 2026-11-04): to reach the picture pixel (X,Y) from the corner,
+move `mouse:X-76,Y-40`. The pointer stops at the screen edges, so a move too far right or down lands short.
 Aim at the **middle of the icon image**: only the image is clickable, not its label, and the hot spot is the
 pointer's tip, so a pointer whose body covers the icon can still miss it. On the Workbench 1.3.3 desktop,
 `mouse:565,90` lands a few pixels left of the "Workbench1.3" disk image (the click deselects, the double-click
-opens nothing); `mouse:591,97` hits it.
+opens nothing); `mouse:591,97` hits it. The disk icon appears 9 to 12 s **after** the "Incorrect Revision" line (the
+Workbench is still loading): a double-click sent at once finds nothing, so wait about 15 s first.
 
 A test is: input, then `wait-serial` for the expected serial line, then a screenshot to look at:
 
 ```bash
 cat > /tmp/wb_open.txt <<'EOF'
 # Workbench 1.3.3: open the boot disk's window
+wait:15000                              # the disk icon is not there yet when the marker comes
 mouse:-900,-400 wait:300
 mouse:591,97 wait:300 dclick wait:8000
 shot:wb_open.png

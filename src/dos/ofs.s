@@ -172,11 +172,12 @@ ofs_dir_lookup:
 
 ; ofs_split(a0=path cursor, a4=dest buffer) -> copies the component [a0..] (up to '/' or NUL) into (a4) and
 ; NUL-terminates it; a0 advances PAST the '/' (or stays on the NUL); d0 = 1 if last component (NUL-terminated), else 0.
-; Capped at OFS_COMPMAX-1 chars (the rest of a too-long component is swallowed). Clobbers d0/d1/a0/a1 (a4 preserved).
+; A component longer than 30 characters is truncated to 30, as the file system does when it creates one (spec
+; rom-filesystem §2.2): the rest is swallowed. Clobbers d0/d1/a0/a1 (a4 preserved).
 ; RED OFS_NO_SUBDIR: '/' treated as a normal char -> the whole path becomes a single (last) component.
 ofs_split:
                 move.l  a4,a1                        ; a1 = dest (a4 preserved)
-                moveq   #OFS_COMPMAX-1,d1            ; cap
+                moveq   #30,d1                       ; cap
 .sp_lp:
                 move.b  (a0),d0
                 beq.s   .sp_nul
@@ -329,7 +330,7 @@ ofs_namecmp:
                 rts
 
 ; ofs_fib_fill(d0=header block, a1=fib; block ALREADY read into IOREQ_SZ(a3)): fills the FileInfoBlock like a packet
-; handler: DiskKey = block; DirEntryType = EntryType = sec_type (<0 file, >0 directory); FileName and Comment
+; handler: DiskKey = block; DirEntryType = EntryType = -3 file / 2 directory (root included); FileName and Comment
 ; as BSTRs (length byte + chars + NUL; dos.library converts them to C strings for Examine/ExNext, BCPL clients
 ; that send the packet themselves read the BSTR); Protection, DateStamp; file: Size = byte_size and
 ; NumBlocks = OFS data blocks. The root (ST_ROOT) has neither protection nor comment at these offsets (bm_pages).
@@ -339,8 +340,12 @@ ofs_fib_fill:
                 move.l  d0,FIB_DISKKEY(a1)
                 lea     IOREQ_SZ(a3),a0              ; a0 = header block buffer
                 move.l  OFSB_SECTYPE(a0),d0          ; secondary type
-                move.l  d0,FIB_DIRENTRYTYPE(a1)
-                move.l  d0,FIB_ENTRYTYPE(a1)
+                move.l  d0,d1
+                ble.s   .ff_type
+                moveq   #OFS_ST_USERDIR,d1           ; 2 for any directory, the root included (spec §4.1)
+.ff_type:
+                move.l  d1,FIB_DIRENTRYTYPE(a1)
+                move.l  d1,FIB_ENTRYTYPE(a1)
                 move.l  OFSB_DAYS(a0),FIB_DATE(a1)
                 move.l  OFSB_MINS(a0),FIB_DATE+4(a1)
                 move.l  OFSB_TICKS(a0),FIB_DATE+8(a1)
@@ -393,7 +398,8 @@ ofs_fib_bstr:
                 clr.b   (a1)
                 rts
 
-; ofs_name_to_block(a0=NUL-terminated path, d0=starting directory block (0 = root), a6=SysBase) -> d0 = header block
+; ofs_name_to_block(a0=NUL-terminated path, d0=starting directory block (0 = root), a6=SysBase) -> d1 = 0, or the
+; error when d0 = 0 (205 not found, 212 path through a file); d0 = header block
 ; of the object | 0. AmigaDOS semantics: "xxx:" prefix -> starts from the ROOT (dos has already chosen the volume);
 ; otherwise starts from the given directory (key of the parent lock). Empty path -> the starting directory itself.
 ; '/'-separated components; an EMPTY component (leading "/" or "//") goes up to the PARENT; a final '/' after a name
@@ -416,6 +422,7 @@ ofs_name_to_block:
                 tst.b   (a0)
                 bne.s   .n2b_resolve
                 move.l  d4,d0                         ; empty path -> the starting directory (no alloc)
+                moveq   #0,d1
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 .n2b_resolve:
@@ -468,7 +475,7 @@ ofs_name_to_block:
                 beq.s   .n2b_notfound
                 lea     IOREQ_SZ(a3),a0
                 cmp.l   #OFS_ST_USERDIR,OFSB_SECTYPE(a0)
-                bne.s   .n2b_notfound                ; not a subdir -> invalid path
+                bne.s   .n2b_wrongtype               ; a path through a file: 212 (spec §2.2)
 .n2b_compdone:
                 moveq   #1,d6
                 tst.b   LF_LAST(sp)
@@ -476,18 +483,30 @@ ofs_name_to_block:
 .n2b_hit:
                 move.l  d4,d7                         ; d7 = result block
                 bra.s   .n2b_free
+.n2b_wrongtype:
+                moveq   #-1,d7
+                bra.s   .n2b_free
 .n2b_notfound:
                 moveq   #0,d7
 .n2b_free:
                 move.l  a3,a1                         ; free ioreq + buffer
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 jsr     LVO_FREEMEM(a6)
+                moveq   #0,d1                         ; d7: block, 0 not found, -1 path through a file
                 move.l  d7,d0
+                bgt.s   .n2b_out
+                move.l  #ERROR_OBJECT_NOT_FOUND,d1
+                tst.l   d0
+                beq.s   .n2b_out
+                move.l  #ERROR_OBJECT_WRONG_TYPE,d1
+                moveq   #0,d0
+.n2b_out:
                 lea     OFS_FRAME(sp),sp
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 .n2b_fail:
                 moveq   #0,d0                         ; failure before/during alloc -> nothing to free
+                move.l  #ERROR_OBJECT_NOT_FOUND,d1
                 lea     OFS_FRAME(sp),sp
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
@@ -623,16 +642,16 @@ ofs_dir_next:
                 rts
 
 ; ofs_stream_open(a0=NUL-terminated path, a1=SS_* state, d0=starting directory (0 = root), a6=SysBase) -> d0 = 1 OK /
-; 0 failed. Resolves the path -> header block
+; 0 failed, d1 = its error (205, 212). Resolves the path -> header block
 ; (must be a FILE), FindName trackdisk -> SS_TRACKDISK, reads the header via the state's ioreq, stores SS_SIZE
 ; (byte_size) + SS_FIRSTDATA, initialises the cursor (POS=0, CURBLK=first_data, BLKBASE=0). Allocates NOTHING (the
 ; state, ioreq + block buffer included, is allocated by the caller = the handler).
 ofs_stream_open:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  a1,a5                        ; a5 = state
-                bsr     ofs_name_to_block            ; (a0=path, d0=start) -> d0 = block | 0 (preserves a5)
+                bsr     ofs_name_to_block            ; (a0=path, d0=start) -> d0 = block | 0, d1 = error
                 tst.l   d0
-                beq.s   .so_fail
+                beq.s   .so_ret
                 move.l  d0,d4                         ; d4 = header block
                 lea     EB_DEVICELIST(a6),a0
                 lea     ofs_td_name(pc),a1
@@ -650,7 +669,7 @@ ofs_stream_open:
                 cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
                 bne.s   .so_fail                      ; not a header
                 cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)
-                bne.s   .so_fail                      ; not a FILE (dir -> failure, like the old ofs_read_file)
+                bne.s   .so_dir                       ; a directory: 212 (spec §5.1)
                 move.l  OFSB_FILESIZE(a0),SS_SIZE(a5)
                 move.l  d4,SS_HEADER(a5)
                 move.l  OFSB_FIRSTDATA(a0),d0
@@ -660,8 +679,13 @@ ofs_stream_open:
                 clr.l   SS_BLKBASE(a5)
                 moveq   #1,d0
                 bra.s   .so_ret
+.so_dir:
+                moveq   #0,d0
+                move.l  #ERROR_OBJECT_WRONG_TYPE,d1
+                bra.s   .so_ret
 .so_fail:
                 moveq   #0,d0
+                move.l  #ERROR_OBJECT_NOT_FOUND,d1
 .so_ret:
                 movem.l (sp)+,d2-d7/a2-a5
                 rts

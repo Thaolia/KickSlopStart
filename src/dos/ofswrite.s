@@ -27,6 +27,7 @@
                 xdef    ws_close
                 xdef    ws_discard
                 xdef    ow_relabel
+                xdef    ow_ready
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
@@ -312,7 +313,9 @@ ow_free:
 
 ; ow_parent(a0 = path, d0 = starting directory (0 = root), a5) -> d0 = directory containing the object | 0,
 ; a1 = final name (OW_NAME). The path is cut after its last "/" or ":"; the prefix (separator included:
-; "vol:" = root, "/" = parent) is resolved by ofs_name_to_block. Empty name or > 30: failure. B2 = the directory.
+; "vol:" = root, "/" = parent) is resolved by ofs_name_to_block. A final name longer than 30 characters is truncated
+; (spec rom-filesystem §2.2); an empty one designates the lock itself: 205. A prefix through a file, or a parent
+; that is not a directory: 212. B2 = the directory.
 ow_parent:
         movem.l d2-d3,-(sp)
         move.l  d0,d2
@@ -338,15 +341,15 @@ ow_parent:
         beq.s   .pa_name
         move.l  d3,a0
 .pa_name:
-        lea     OW_NAME(a5),a1       ; name: 1 to 30 characters
-        moveq   #30,d1               ; 30 characters + NUL at most
+        lea     OW_NAME(a5),a1       ; name: up to 30 characters, the rest dropped
+        moveq   #30-1,d1
 .pa_nc:
         move.b  (a0)+,(a1)+
         dbeq    d1,.pa_nc
-        bne.s   .pa_bad
+        clr.b   (a1)
         lea     OW_NAME(a5),a1
         tst.b   (a1)
-        beq.s   .pa_bad
+        beq.s   .pa_nf
         move.l  d2,d0
         tst.l   d3
         beq.s   .pa_dir
@@ -354,13 +357,13 @@ ow_parent:
         clr.b   (a0)
         lea     OW_PATH(a5),a0
         move.l  d2,d0
-        jsr     ofs_name_to_block
+        jsr     ofs_name_to_block    ; d1 = its error (205, 212)
 .pa_dir:
         tst.l   d0
         bne.s   .pa_rd
         move.l  #OFS_ROOTBLK,d0
         tst.l   d3
-        bne.s   .pa_nf
+        bne.s   .pa_err
 .pa_rd:
         move.l  d0,d2                ; the parent must be a directory
         lea     OW_B2(a5),a0
@@ -372,17 +375,18 @@ ow_parent:
         cmp.l   #OFS_ST_ROOT,d0
         beq.s   .pa_ok
         cmp.l   #OFS_ST_USERDIR,d0
-        bne.s   .pa_nf
+        bne.s   .pa_wt
 .pa_ok:
         lea     OW_NAME(a5),a1
         move.l  d2,d0
         bra.s   .pa_ret
-.pa_bad:
-        move.l  #ERROR_INVALID_COMPONENT_NAME,OW_ERR(a5)
-        moveq   #0,d0
-        bra.s   .pa_ret
+.pa_wt:
+        move.l  #ERROR_OBJECT_WRONG_TYPE,d1
+        bra.s   .pa_err
 .pa_nf:
-        move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
+        move.l  #ERROR_OBJECT_NOT_FOUND,d1
+.pa_err:
+        move.l  d1,OW_ERR(a5)
         moveq   #0,d0
 .pa_ret:
         movem.l (sp)+,d2-d3
@@ -466,7 +470,8 @@ ow_unlink:
         rts
 
 ; ow_link(d4 = directory, d5 = object, a1 = its name, a5) -> d0 = 1/0: the object (in B1, name/parent already set) goes
-; at the head of its index's chain in the directory; the object then the directory are written. B2 is used.
+; at the end of its index's chain in the directory; the object, the directory (date) and the previous last entry
+; are written. B2 is used; d3 is clobbered.
 ow_link:
         move.l  a4,-(sp)
         move.l  a1,a4
@@ -474,16 +479,19 @@ ow_link:
         jsr     ofs_hash
         move.l  (sp)+,a4
         lsl.l   #2,d1
-        move.l  d1,-(sp)
+        move.l  d2,-(sp)
+        move.l  d1,d2                ; d2 = offset of the slot in the table
         move.l  d4,d0
         lea     OW_B2(a5),a0
         bsr     ow_rd
-        move.l  (sp)+,d1
         tst.l   d0
         beq.s   .lnk_ret
-        lea     OW_B2(a5),a0
-        move.l  OFSB_HASHTAB(a0,d1.l),OW_B1+OFSB_HASHCHAIN(a5)
-        move.l  d5,OFSB_HASHTAB(a0,d1.l)
+        clr.l   OW_B1+OFSB_HASHCHAIN(a5)
+        lea     OW_B2+OFSB_HASHTAB(a5),a0
+        move.l  0(a0,d2.l),d3        ; d3 = first entry of the slot | 0
+        bne.s   .lnk_obj
+        move.l  d5,0(a0,d2.l)        ; empty slot: the new entry heads it
+.lnk_obj:
         move.l  d5,d0
         lea     OW_B1(a5),a0
         bsr     ow_wr
@@ -493,7 +501,33 @@ ow_link:
         bsr     ow_stamp
         move.l  d4,d0
         bsr     ow_wr
+        tst.l   d0
+        beq.s   .lnk_ret
+        move.w  #OFS_NBLK,d2         ; bound on the walk (a chain that loops)
+.lnk_walk:                           ; otherwise it goes at the end of the chain (spec rom-filesystem §6.3)
+        tst.l   d3
+        beq.s   .lnk_ok
+        move.l  d3,d0
+        lea     OW_B2(a5),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq.s   .lnk_ret
+        move.l  OW_B2+OFSB_HASHCHAIN(a5),d0
+        beq.s   .lnk_end
+        move.l  d0,d3
+        dbra    d2,.lnk_walk
+        moveq   #0,d0
+        bra.s   .lnk_ret
+.lnk_end:
+        move.l  d5,OW_B2+OFSB_HASHCHAIN(a5)
+        move.l  d3,d0
+        lea     OW_B2(a5),a0
+        bsr     ow_wr
+        bra.s   .lnk_ret
+.lnk_ok:
+        moveq   #1,d0
 .lnk_ret:
+        move.l  (sp)+,d2
         rts
 
 ; ow_setname(a0 = block, a1 = C name): BCPL name (length + characters) at long 108.
@@ -698,6 +732,23 @@ ow_delete:
         move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
         bra     ow_fail
 
+; ow_ready(a6) -> d0 = 0, or 213 when the disk in the drive has no valid bitmap: the first precondition of every
+; modification, checked before any name is looked at (spec rom-filesystem §2.3).
+ow_ready:
+        movem.l d2-d7/a2-a5,-(sp)
+        bsr     ow_ctx
+        beq.s   .ry_ok
+        bsr     ow_bmload
+        bne.s   .ry_ok
+        move.l  OW_ERR(a5),d0
+        cmp.l   #ERROR_DISK_NOT_VALIDATED,d0
+        beq.s   .ry_ret
+.ry_ok:
+        moveq   #0,d0
+.ry_ret:
+        movem.l (sp)+,d2-d7/a2-a5
+        rts
+
 ; ow_canremove(d5 = object, read into B2, a5) -> d0 = 1 / 0 with OW_ERR: 202 a lock is held on it (an open file
 ; holds one), 222 delete bit set, 216 directory not empty. The rules of DELETE_OBJECT (spec rom-filesystem §6.1),
 ; also applied when FINDOUTPUT replaces an object.
@@ -758,6 +809,8 @@ ow_rename:
         tst.l   d0
         beq.s   .rn_relink           ; invalid destination: the object goes back where it came from
         move.l  d0,d7
+        cmp.l   d5,d0
+        beq.s   .rn_self
         move.l  a1,a3
         move.l  d7,d0
         bsr     ow_lookup            ; name already taken -> refused (the object goes back where it came from)
@@ -789,6 +842,9 @@ ow_rename:
         moveq   #-1,d0
         moveq   #0,d1
         bra     ow_ret
+.rn_self:
+        move.l  #ERROR_OBJECT_IN_USE,OW_ERR(a5)    ; a directory moved into itself (spec §6.2)
+        bra.s   .rn_relink
 .rn_taken:
         move.l  #ERROR_OBJECT_EXISTS,OW_ERR(a5)
 .rn_relink:
@@ -836,7 +892,12 @@ ow_setfield:
         move.l  d6,d0
         bsr     ow_parent
         tst.l   d0
-        beq     ow_fail
+        bne.s   .sf_dir
+        tst.b   OW_NAME(a5)
+        bne     ow_fail
+        move.l  #ERROR_OBJECT_WRONG_TYPE,OW_ERR(a5)   ; the root itself (empty name): 212 (spec §6.4)
+        bra     ow_fail
+.sf_dir:
         bsr     ow_lookup
         tst.l   d0
         beq.s   .sf_nf

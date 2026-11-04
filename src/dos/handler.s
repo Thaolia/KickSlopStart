@@ -43,6 +43,7 @@
                 xref    ws_close
                 xref    ws_discard
                 xref    ow_relabel
+                xref    ow_ready
                 xdef    hnd_busy
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
                 xref    timer_now            ; system time (exec/timer.s)
@@ -50,6 +51,7 @@
 
 ACTION_MORE_CACHE EQU 18             ; AddBuffers: adds buffers to the filesystem
 ID_VALIDATING   EQU 81               ; InfoData.id_DiskState: no bitmap (no disk, or non-DOS disk)
+ID_WRITE_PROTECTED EQU 80            ; InfoData.id_DiskState: the disk was write-protected when mounted
 IND_WRITEEVENT_C EQU 11              ; input.device
 IE_SIZE         EQU 22               ; struct InputEvent
 DT_DOS          EQU $444F5300        ; "DOS\0"
@@ -71,7 +73,8 @@ HC_MOUNTED      EQU HC_LOCKS+4       ; byte: a disk has been examined since the 
 HC_INHIB        EQU HC_MOUNTED+1     ; byte: ACTION_INHIBIT in progress
 HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
 HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
-HC_SIZE         EQU HC_INOK+1
+HC_WPROT        EQU HC_INOK+1        ; byte: the disk was write-protected when it was mounted (TD_PROTSTATUS)
+HC_SIZE         EQU HC_WPROT+1
 ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
 WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
 HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
@@ -109,6 +112,9 @@ dos_handler:
                 beq     .reply                        ; is written before its reply, only the current block of a
                 clr.l   DP_RES2(a4)                   ; file open for writing waits for END
                 bsr     hnd_gate             ; lock or file of another volume, no disk: refused
+                tst.l   d0
+                bne     .refuse
+                bsr     hnd_modok            ; a modification: 213 / 214 before any name is looked at
                 tst.l   d0
                 bne     .refuse
                 move.l  DP_TYPE(a4),d0
@@ -166,6 +172,15 @@ dos_handler:
 .refuse:
                 move.l  d0,DP_RES2(a4)
                 move.l  #DOSFALSE,DP_RES1(a4)
+                move.l  DP_TYPE(a4),d0                ; READ/WRITE/SEEK fail with -1 (0 would read as EOF)
+                cmp.l   #ACTION_READ,d0
+                beq.s   .ref_m1
+                cmp.l   #ACTION_WRITE,d0
+                beq.s   .ref_m1
+                cmp.l   #ACTION_SEEK,d0
+                bne     .reply
+.ref_m1:
+                move.l  #-1,DP_RES1(a4)
                 bra     .reply
 
 .findinput:
@@ -195,10 +210,10 @@ dos_handler:
                 bsr     hnd_lockkey                    ; d0 = directory block | 0
                 move.l  sp,a0                         ; a0 = path, a1 = state
                 move.l  d6,a1
-                jsr     ofs_stream_open                ; d0 = 1/0 (resolves + inits cursor, WITHOUT reading the file)
+                jsr     ofs_stream_open                ; d0 = 1/0, d1 = 205 / 212 (resolves, WITHOUT reading the file)
                 lea     112(sp),sp                    ; restore the stack (C string consumed)
                 tst.l   d0
-                beq.s   .fi_fail_state                ; not found / not a file
+                beq.s   .fi_fail_state
                 move.l  d6,a1
                 move.l  SS_HEADER(a1),d0
                 moveq   #SHARED_LOCK,d1
@@ -218,7 +233,7 @@ dos_handler:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 .fi_fail_state:
-                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)  ; not found -> IoErr (d3f depends on it)
+                move.l  d1,DP_RES2(a4)                ; 205 not found (d3f depends on it), 212 not a file
 .fi_free:
                 move.l  d6,a1
                 move.l  #SS_ALLOC,d0
@@ -317,12 +332,12 @@ dos_handler:
                 jsr     ofs_name_to_block              ; d0 = block | 0 (a6 = SysBase; preserves a2/a3/a4)
                 lea     112(sp),sp
                 tst.l   d0
-                beq.s   .lo_fail                       ; object not found
+                beq.s   .lo_fail                       ; d1 = 205 not found, 212 path through a file
                 move.l  DP_ARG3(a4),d1                 ; mode: -1 exclusive, any other value shared
                 bra     .newlock
 .lo_fail:
                 move.l  #DOSFALSE,DP_RES1(a4)
-                move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
+                move.l  d1,DP_RES2(a4)
                 bra     .reply
 
 .freelock:                                            ; UnLock: (ARG1 BPTR lock) -> frees
@@ -505,9 +520,8 @@ dos_handler:
                 move.l  DP_ARG2(a4),d0
                 bsr     hnd_lockkey
                 move.l  sp,a0
-                jsr     ofs_name_to_block
+                jsr     ofs_name_to_block              ; d1 = 205 / 212 when d0 = 0
                 lea     HND_NAMEBUF(sp),sp
-                move.l  #ERROR_OBJECT_NOT_FOUND,d1
                 tst.l   d0
                 beq     .w_fail
                 jsr     ws_openold                     ; d0 = state | 0, d1 = error
@@ -676,7 +690,15 @@ dos_handler:
                 move.l  HC_VOLUME(a1),d1
                 beq.s   .di_none
                 move.l  d1,a1
+                move.l  a0,-(sp)
                 jsr     ow_diskinfo
+                move.l  (sp)+,a0
+                bsr     hnd_ctx
+                move.l  d0,a1
+                tst.b   HC_WPROT(a1)
+                beq.s   .di_rw
+                move.l  #ID_WRITE_PROTECTED,8(a0)     ; id_DiskState
+.di_rw:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 .di_none:                                            ; no volume: "validating" state, current type
@@ -1028,6 +1050,10 @@ hnd_mount:
                 bsr     hnd_bootclock
 .mo_type:
                 move.l  d2,HC_DTYPE(a3)
+                moveq   #TD_PROTSTATUS,d0               ; read once per disk (spec rom-filesystem §2.3)
+                bsr     hnd_tdcmd
+                tst.l   d0
+                sne     HC_WPROT(a3)
                 moveq   #TD_CHANGENUM,d0
                 bsr     hnd_tdcmd
                 move.l  d0,HC_CHG(a3)
@@ -1323,6 +1349,34 @@ hnd_gtab:
                 dc.w    ACTION_WRITE,$80
                 dc.w    ACTION_SEEK,$80
                 dc.w    0
+
+; hnd_modok(a4 = DosPacket, a6) -> d0 = 0, or the error of a modification refused before any name is looked at
+; (spec rom-filesystem §2.3): 213 no valid bitmap, then 214 write-protected disk. Clobbers d1/a0/a1.
+hnd_modok:
+                move.l  DP_TYPE(a4),d0
+                lea     hnd_modtab(pc),a0
+.mk_lp:
+                move.w  (a0)+,d1
+                beq.s   .mk_ok
+                cmp.w   d1,d0
+                bne.s   .mk_lp
+                jsr     ow_ready
+                tst.l   d0
+                bne.s   .mk_ret
+                bsr     hnd_ctx
+                beq.s   .mk_ok
+                move.l  d0,a0
+                tst.b   HC_WPROT(a0)
+                beq.s   .mk_ok
+                move.l  #ERROR_DISK_WRITE_PROTECTED,d0
+                rts
+.mk_ok:
+                moveq   #0,d0
+.mk_ret:
+                rts
+hnd_modtab:
+                dc.w    ACTION_FINDOUTPUT,ACTION_DELETE_OBJECT,ACTION_RENAME_OBJECT,ACTION_CREATE_DIR
+                dc.w    ACTION_SET_PROTECT,ACTION_SET_COMMENT,ACTION_SET_DATE,ACTION_RENAME_DISK,0
 
 ; hnd_busy(d0 = header key, d1 = access wanted: -1 exclusive, any other value shared) -> d0 = 0 | 202
 ; (ERROR_OBJECT_IN_USE): per object of the mounted volume, one exclusive lock or any number of shared ones (spec

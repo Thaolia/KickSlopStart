@@ -587,6 +587,17 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7y) **File system details: names, 212, root, chain order, write protection** (2026-11-04, spec
+  `rom-filesystem-v34.md` §2.2, §2.3, §4.1, §6.2, §6.3, §7.1). Path components are truncated to 30 characters on lookup
+  (`ofs_split`) and on creation (`ow_parent`); `ofs_name_to_block` and `ofs_stream_open` return their error in d1:
+  205 not found, 212 for a path through a file or a directory opened as a file (LOCATE, FINDINPUT, FINDOUTPUT,
+  DELETE, FINDUPDATE). DELETE of the root gives 205, SET_* of the root 212. fib_DirEntryType is 2 for any directory,
+  the root included. `ow_link` appends a new entry at the end of its hash chain, so ExNext returns a slot in
+  creation order. RENAME of a directory into itself gives 202. The handler reads TD_PROTSTATUS once per mounted disk
+  (`HC_WPROT`); `hnd_modok` refuses FINDOUTPUT, DELETE, RENAME, CREATE_DIR, SET_* and RENAME_DISK with 213 (no valid
+  bitmap, `ow_ready`) then 214 before any name is looked at; DISK_INFO/INFO report id_DiskState 80 on such a disk.
+  READ/WRITE/SEEK refused by the volume check answer -1 (218), not 0. Checked with `tests/fsgap_probe.sh` (36
+  checks; DF1: is a read-only image, the disk is not modified).
   (7x) **DF0: locks and conflicts, SET_DATE, RENAME_DISK, FLUSH** (2026-11-04, spec `rom-filesystem-v34.md` §3,
   §5.1, §6.1, §6.4, §6.5, §7.4). The handler keeps every FileLock it hands out in a list (`HC_LOCKS`, fl_Link chain,
   all volumes); `hnd_busy` applies §3.1 per object of the mounted volume (one exclusive lock or any number of shared
