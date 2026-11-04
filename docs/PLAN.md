@@ -1014,7 +1014,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   rename into itself 202, 213/214 before the name, id_DiskState 80, -1/218 on an absent volume
   (`tests/fsgap_probe.sh`). Open from the `rom-filesystem-v34` comparison: stateless ExNext (fib_DiskKey and
   fib_FileName), the delayed flush (§8.4) and bm_flag cleared on the first modification, locks kept in dl_LockList
-  of an absent volume, RENAME of a locked source (spec open point); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to
+  of an absent volume, RENAME of a locked source (spec open point);
+  **dos LVO details (2026-11-04)**: D1 = D0 on packet LVOs, Info(0) to pr_FileSystemTask, ParentDir(0) Result2 0,
+  IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
+  `tests/fsnodisk_probe.sh`). Open: requester texts for 213 and 225 (ask the analysis track), LoadSeg of HUNK_OVERLAY
+  files (refused today) and then UnLoadSeg's overlay case, Retry restarting the whole call (name resolution
+  included) instead of resending the packet; the mouse does not move the pointer while a dos requester is open on
+  a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to
   pr_FileSystemTask, disk-error requesters (213/214/225/226), UnLoadSeg of overlays, IsInteractive(0).
   **Console CSI (2026-11-04)**: the §3 automaton and sequences, tab stops, modes, full SGR, font-sized cells, DSR and
   raw-event reports (`tests/con_probe.s` on our ROM). Open: italic is not drawn by Text; MULTIBROADCAST raw events

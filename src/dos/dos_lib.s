@@ -974,6 +974,7 @@ dos_namepkt:
         moveq   #0,d0
 .np_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        move.l  d0,d1                   ; D1 = D0 on return (spec dos-lvo-partial §1.1)
         rts
 
 ; Rename(old d1, new d2) -> DOSTRUE/DOSFALSE: ACTION_RENAME_OBJECT (ARG1 lock, ARG2 BSTR old name, ARG3
@@ -1028,6 +1029,7 @@ dos_fn_rename:
         moveq   #0,d0
 .rn_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        move.l  d0,d1
         rts
 
 ; dos_c2bstr(a0 = long-aligned destination, a1 = C string): BSTR (DOS_NAMEMAX characters max). Preserves a0; a1
@@ -1352,10 +1354,14 @@ dos_fn_parentdir:
         jsr     dos_sendpkt
         lea     SP_SIZEOF(sp),sp
         bra.s   .pd_ret
-.pd_zero:
+.pd_zero:                               ; ParentDir(0): the handler answers 0 with Result2 0 (spec §2.14)
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        clr.l   PR_RESULT2(a0)
         moveq   #0,d0
 .pd_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        move.l  d0,d1
         rts
 
 ; DeviceProc(name d1) -> port of the handler process of the designated device, volume or assign | 0; IoErr = lock of
@@ -1374,7 +1380,8 @@ dos_fn_deviceproc:
         rts
 
 ; DupLock(lock d1) -> new shared lock on the same object | 0 (lock 0 -> 0): ACTION_COPY_DIR. Info(lock d1,
-; infodata d2 [long-aligned]) -> DOSTRUE/DOSFALSE: ACTION_INFO (ARG1 lock, ARG2 BPTR InfoData), lock 0 -> DF0:.
+; infodata d2 [long-aligned]) -> DOSTRUE/DOSFALSE: ACTION_INFO (ARG1 lock, ARG2 BPTR InfoData), lock 0 -> the
+; caller's pr_FileSystemTask.
 dos_fn_duplock:
         tst.l   d1
         beq.s   .dl_zero
@@ -1390,15 +1397,25 @@ dos_fn_info:                            ; D2 is the caller's: the BPTR is built 
         bsr.s   dos_lockpkt
         move.l  (sp)+,d2
         rts
-; dos_lockpkt(d0 = action, d1 = lock (ARG1), d2 = ARG2) -> d0 = dp_Res1: packet to the lock's handler.
+; dos_lockpkt(d0 = action, d1 = lock (ARG1), d2 = ARG2) -> d0 = d1 = dp_Res1: packet to the lock's handler; lock 0
+; goes to the caller's pr_FileSystemTask (spec dos-lvo-partial §2.6), the DF0: handler for a plain task.
 dos_lockpkt:
         movem.l d2-d7/a2-a6,-(sp)
-        move.l  DOS_FSPORT,a1
         move.l  d1,d3
         lsl.l   #2,d3
-        beq.s   .lp_port
+        beq.s   .lp_zero
         move.l  d3,a0
         move.l  FL_TASK(a0),a1
+        bra.s   .lp_port
+.lp_zero:
+        move.l  DOS_FSPORT,a1
+        move.l  ($4).w,a0
+        move.l  EB_THISTASK(a0),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .lp_port
+        move.l  PR_FILESYSTEMTASK(a0),d3
+        beq.s   .lp_port
+        move.l  d3,a1
 .lp_port:
         move.l  ($4).w,a6
         lea     -SP_SIZEOF(sp),sp
@@ -1407,6 +1424,7 @@ dos_lockpkt:
         jsr     dos_sendpkt
         lea     SP_SIZEOF(sp),sp
         movem.l (sp)+,d2-d7/a2-a6
+        move.l  d0,d1
         rts
 
 ; SetComment(name d1, comment d2 [C string]) / SetProtection(name d1, mask d2) -> DOSTRUE/DOSFALSE:
@@ -1456,16 +1474,16 @@ dos_setpkt:
         moveq   #0,d0
 .sp_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        move.l  d0,d1
         rts
 
-; IsInteractive(fh d1) -> fh_Interactive (raw, as in V34: not normalised to -1).
+; IsInteractive(fh d1) -> fh_Interactive (raw, as in V34: not normalised to -1). Like 1.3, a handle 0 is not tested:
+; the long at address 4 is read (ExecBase, non-zero; spec dos-lvo-partial §2.15).
 dos_fn_isinteractive:
         move.l  d1,d0
         lsl.l   #2,d0
-        beq.s   .ii_ret
         move.l  d0,a0
         move.l  FH_INTERACTIVE(a0),d0
-.ii_ret:
         rts
 
 ; dos_resolve(a4 = C string name, a6 = DosBase) -> a3 = handler port | 0, d6 = BPTR starting lock, a4 = name to
@@ -1631,13 +1649,13 @@ dos_volreq:
         lea     vr_l1(pc),a0
         lea     vr_l3(pc),a1
         move.l  #VR_DISKINSERTED,d0
-        bsr.s   vr_req
+        bsr     vr_req
         movem.l (sp)+,a0-a1
         rts
 ; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2 of a replied packet) -> d0 = true if it must be resent: 218 refusal from the
 ; DF0: handler for a lock or file of an ejected volume (HND_REFVOL) -> "Please replace volume / <name> /
-; in any drive" requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry. Preserves
-; d1-d7/a0-a6.
+; in any drive" requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry. Other
+; failures go to dos_errreq (a4 = the packet). Preserves d1-d7/a0-a6.
 dos_pktretry:
         tst.l   d0
         bne.s   .pr_no
@@ -1660,14 +1678,133 @@ dos_pktretry:
         lea     vr_r1(pc),a0
         lea     vr_l3(pc),a1
         move.l  #VR_DISKINSERTED,d0
-        bsr.s   vr_req
+        bsr     vr_req
 .pr_pop:
         movem.l (sp)+,d3/a0-a1/a4
         rts
 .pr_no:
-        moveq   #0,d0
+        bra     dos_errreq
 .pr_ret:
         rts
+; dos_errreq(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket, a6 = SysBase) -> d0 = true if Retry:
+; dos's disk error requester (spec dos-lvo-partial §1.4, rom-filesystem §2.3) in the two cases seen on the real ROM:
+; 214 "Volume / <name> / is write protected" after FINDOUTPUT, DELETE, CREATE_DIR, RENAME_OBJECT and RENAME_DISK
+; (Protect and SetDate fail without one), and 226 "No disk present / in unit n" after any packet but DupLock,
+; FreeLock and END (an inserted disk counts as Retry). The volume and the unit are asked from the handler, whose
+; port is in dp_Port after the reply (ACTION_CURRENT_VOLUME). A plain Task or pr_WindowPtr = -1: no requester.
+; Preserves d1-d7/a0-a6.
+dos_errreq:
+        movem.l d1-d4/a0-a1/a4,-(sp)
+        moveq   #0,d4                   ; d4 = answer
+        tst.l   d0
+        beq.s   .er_fail
+        cmp.l   #-1,d0
+        bne     .er_ret
+.er_fail:
+        move.l  EB_THISTASK(a6),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne     .er_ret
+        cmp.l   #-1,PR_WINDOWPTR(a0)
+        beq     .er_ret
+        move.l  DP_TYPE(a4),d2
+        cmp.l   #ERROR_DISK_WRITE_PROTECTED,d1
+        beq.s   .er_wp
+        cmp.l   #ERROR_NO_DISK,d1
+        bne     .er_ret
+        lea     er_nodtab(pc),a0
+.er_nl:
+        move.w  (a0)+,d3
+        beq.s   .er_nodisk
+        cmp.w   d3,d2
+        beq     .er_ret
+        bra.s   .er_nl
+.er_nodisk:
+        bsr     er_curvol               ; d1 = unit
+        lea     -12(sp),sp              ; "in unit  n"
+        move.l  sp,a1
+        lea     vr_unit(pc),a0
+.er_uc:
+        move.b  (a0)+,(a1)+
+        bne.s   .er_uc
+        add.b   #'0',d1
+        move.b  d1,-2(a1)               ; the digit replaces the final '0'
+        move.l  sp,a4
+        moveq   #10,d3
+        lea     vr_nodisk(pc),a0
+        lea     vr_empty(pc),a1
+        move.l  #VR_DISKINSERTED,d0
+        bsr     vr_req
+        move.l  d0,d4
+        lea     12(sp),sp
+        bra.s   .er_ret
+.er_wp:
+        lea     er_wptab(pc),a0
+.er_wl:
+        move.w  (a0)+,d3
+        beq.s   .er_ret
+        cmp.w   d3,d2
+        bne.s   .er_wl
+        bsr     er_curvol               ; d0 = BPTR of the volume node | 0
+        move.l  d0,d2
+        lea     -32(sp),sp              ; its name, copied under Forbid (an ejected volume's node can be freed)
+        move.l  sp,a4
+        moveq   #0,d3
+        jsr     LVO_FORBID(a6)
+        move.l  d2,d0
+        lsl.l   #2,d0
+        beq.s   .er_nm
+        move.l  d0,a0
+        move.l  DN_NAME(a0),d0
+        lsl.l   #2,d0
+        beq.s   .er_nm
+        move.l  d0,a0
+        move.b  (a0)+,d3
+        cmp.w   #30,d3
+        bls.s   .er_ln
+        moveq   #30,d3
+.er_ln:
+        move.l  sp,a1
+        move.w  d3,d0
+        bra.s   .er_cn
+.er_cc:
+        move.b  (a0)+,(a1)+
+.er_cn:
+        dbra    d0,.er_cc
+.er_nm:
+        jsr     LVO_PERMIT(a6)
+        tst.w   d3
+        beq.s   .er_wpdone
+        lea     vr_v1(pc),a0            ; "Volume"
+        lea     vr_wprot(pc),a1         ; "is write protected"
+        moveq   #0,d0
+        bsr     vr_req
+        move.l  d0,d4
+.er_wpdone:
+        lea     32(sp),sp
+.er_ret:
+        move.l  d4,d0
+        movem.l (sp)+,d1-d4/a0-a1/a4
+        rts
+; er_curvol(a4 = replied DosPacket, a6 = SysBase) -> d0 = BPTR of the current volume node of the handler that
+; replied | 0, d1 = its unit number: ACTION_CURRENT_VOLUME (spec rom-filesystem §7.2). Preserves d2-d7/a2-a6.
+er_curvol:
+        movem.l d2-d4,-(sp)
+        move.l  DP_PORT(a4),a1
+        lea     -SP_SIZEOF(sp),sp
+        move.l  sp,a0
+        moveq   #ACTION_CURRENT_VOLUME,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        jsr     dos_sendpkt
+        lea     SP_SIZEOF(sp),sp
+        movem.l (sp)+,d2-d4
+        rts
+er_wptab:
+        dc.w    ACTION_FINDOUTPUT,ACTION_DELETE_OBJECT,ACTION_CREATE_DIR,ACTION_RENAME_OBJECT,ACTION_RENAME_DISK,0
+er_nodtab:
+        dc.w    ACTION_COPY_DIR,ACTION_FREE_LOCK,ACTION_END,ACTION_CURRENT_VOLUME,0
 ; vr_req(a4 = name, d3 = its length, a0 = 1st line, a1 = 3rd line, d0 = IDCMP classes counting as Retry) -> d0 = true if
 ; Retry: three-line system requester, Retry / Cancel. Preserves d1-d7/a0-a6.
 vr_req:
@@ -1763,6 +1900,10 @@ vr_r1:          dc.b    "Please replace volume",0
 vr_l3:          dc.b    "in any drive",0
 vr_v1:          dc.b    "Volume",0
 vr_v3:          dc.b    "is full",0
+vr_wprot:       dc.b    "is write protected",0
+vr_nodisk:      dc.b    "No disk present",0
+vr_unit:        dc.b    "in unit  0",0
+vr_empty:       dc.b    0
 vr_unknown:     dc.b    "?",0
 vr_retry:       dc.b    "Retry",0
 vr_cancel:      dc.b    "Cancel",0

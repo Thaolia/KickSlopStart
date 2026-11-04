@@ -189,6 +189,7 @@ ACTION_SET_PROTECT EQU 21          ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 ma
 ACTION_SET_COMMENT EQU 28          ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 BSTR comment)
 ACTION_SET_DATE  EQU 34            ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 APTR DateStamp)
 ACTION_RENAME_DISK EQU 9           ; (ARG1 BSTR new volume name)
+ACTION_CURRENT_VOLUME EQU 7        ; (ARG1 fh_Arg1 | 0) -> Res1 = BPTR volume node, Res2 = unit number
 ACTION_FLUSH     EQU 27            ; no argument; the packet comes back as it was sent
 ACTION_DISK_INFO EQU 25            ; (ARG1 BPTR InfoData)
 ACTION_INFO      EQU 26            ; (ARG1 lock, ARG2 BPTR InfoData)

@@ -2,8 +2,9 @@
 ; §2.2, §2.3, §4.1, §4.2, §6.2, §6.3, §7.1): names truncated to 30 characters, 212 for a path through a file or a
 ; directory opened as a file, DELETE of the root 205 and SET_PROTECT of the root 212, fib_DirEntryType 2 for the root,
 ; ExNext in creation order inside a hash slot, a directory renamed into itself 202, and on a write-protected disk in
-; DF1: 214 before the name is looked at and id_DiskState 80. Run by tests/fsgap_probe.sh (DF0: scratch disk running
-; this program, DF1: write-protected disk "WProt" holding a file "wf"). One line per check on the serial port,
+; DF1: 214 before the name is looked at, id_DiskState 80 and the "is write protected" requester (answered Cancel
+; by the harness); also the dos LVO details D1 = D0, IsInteractive(0) and ParentDir(0). Run by tests/fsgap_probe.sh
+; (DF0: scratch disk running this program, DF1: write-protected disk "WProt" holding a file "wf"). One line per check on the serial port,
 ; "FSGP nnnnnnnn OK" or "FSGP nnnnnnnn FAIL <got> <expected>", then "FSGP END <failures>".
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o build/fsgap_test tests/fsgap_test.s
 
@@ -13,6 +14,8 @@ MODE_OLD EQU 1005
 MODE_NEW EQU 1006
 SHARED   EQU -2
 PR_MSGPORT EQU $5C
+PR_RESULT2 EQU $94
+PR_WINDOWPTR EQU $B8
 
 _Open    EQU -30
 _Close   EQU -36
@@ -26,6 +29,8 @@ _CreateDir EQU -120
 _IoErr   EQU -132
 _DeviceProc EQU -174
 _SetProtection EQU -186
+_ParentDir EQU -210
+_IsInteractive EQU -216
 
 FIB_DIRENTRYTYPE EQU 4
 FIB_FILENAME     EQU 8
@@ -155,20 +160,49 @@ start:  move.l  4.w,a6
         move.l  #n_d3,d1
         bsr     lockok                  ; 26: d3 is back in the root
 
-; --- write-protected disk in DF1: -------------------------------------------------------------------------------
+; --- dos LVO details (dos-lvo-partial-v34 §1.1, §2.14, §2.15) --------------------------------------------------------
+        move.l  #n_df0,d1
+        moveq   #SHARED,d2
+        jsr     _Lock(a6)
+        move.l  d0,d4
+        move.l  d1,d0
+        move.l  d4,d1
+        bsr     check                   ; 27: D1 = D0 after a packet LVO
+        move.l  d4,d1
+        jsr     _UnLock(a6)
+        moveq   #0,d1
+        jsr     _IsInteractive(a6)
+        move.l  4.w,d1
+        bsr     check                   ; 28: IsInteractive(0) reads the long at 4
+        move.l  4.w,a0
+        move.l  276(a0),a0
+        moveq   #99,d0
+        move.l  d0,PR_RESULT2(a0)
+        moveq   #0,d1
+        jsr     _ParentDir(a6)
+        moveq   #0,d1
+        bsr     check                   ; 29
+        jsr     _IoErr(a6)
+        moveq   #0,d1
+        bsr     check                   ; 30: ParentDir(0) leaves Result2 0
+
+; --- write-protected disk in DF1: no requester (pr_WindowPtr = -1) -------------------------------------------------
+        bsr     getwin
+        moveq   #-1,d0
+        move.l  d0,PR_WINDOWPTR(a0)
         move.l  #n_wnew,d1
         jsr     _CreateDir(a6)
-        bsr     fail214                 ; 27, 28: CREATE_DIR of a new name
+        bsr     fail214                 ; 31, 32: CREATE_DIR of a new name
         move.l  #n_wf,d1
         jsr     _DeleteFile(a6)
-        bsr     fail214                 ; 29, 30: DELETE of an existing file
+        bsr     fail214                 ; 33, 34: DELETE of an existing file
         move.l  #n_wnone,d1
         jsr     _DeleteFile(a6)
-        bsr     fail214                 ; 31, 32: DELETE of a missing name (214 comes first)
+        bsr     fail214                 ; 35, 36: DELETE of a missing name (214 comes first)
         move.l  #n_wf,d1
         moveq   #0,d2
         jsr     _SetProtection(a6)
-        bsr     fail214                 ; 33, 34
+        bsr     fail214                 ; 37, 38
         move.l  #n_df1,d1
         moveq   #SHARED,d2
         jsr     _Lock(a6)
@@ -178,7 +212,7 @@ start:  move.l  4.w,a6
         jsr     _Info(a6)
         move.l  info+8,d0
         moveq   #80,d1
-        bsr     check                   ; 35: ID_WRITE_PROTECTED
+        bsr     check                   ; 39: ID_WRITE_PROTECTED
         move.l  d4,d1
         jsr     _UnLock(a6)
         move.l  #n_wf,d1
@@ -187,9 +221,18 @@ start:  move.l  4.w,a6
         move.l  d0,d1
         bsr     isset
         moveq   #-1,d1
-        bsr     check                   ; 36: reading still works
+        bsr     check                   ; 40: reading still works
         move.l  d7,d1
         jsr     _Close(a6)
+
+; --- the write-protect requester (pr_WindowPtr = 0): the harness answers Cancel --------------------------------------
+        bsr     getwin
+        clr.l   PR_WINDOWPTR(a0)
+        lea     m_req(pc),a0
+        bsr     puts
+        move.l  #n_wreq,d1
+        jsr     _CreateDir(a6)
+        bsr     fail214                 ; 41, 42: Cancel returns the failure
 
         lea     m_end(pc),a0
         bsr     puts
@@ -253,6 +296,10 @@ nextname:
         move.w  fib+FIB_FILENAME,d0
         swap    d0
         clr.w   d0
+        rts
+; getwin -> a0 = ThisTask (to set pr_WindowPtr).
+getwin: move.l  4.w,a0
+        move.l  276(a0),a0
         rts
 ; handler0: hport = DeviceProc("df0:").
 handler0:
@@ -341,6 +388,7 @@ m_fslk: dc.b    "FSGP ",0
 m_ok:   dc.b    "OK",13,10,0
 m_fail: dc.b    "FAIL ",0
 m_end:  dc.b    "FSGP END ",0
+m_req:  dc.b    "FSGP REQ",13,10,0
 m_nl:   dc.b    13,10,0
 m_sp:   dc.b    " ",0
         even
@@ -360,6 +408,7 @@ n_d3:   dc.b    "df0:d3",0
 n_wnew: dc.b    "df1:new",0
 n_wf:   dc.b    "df1:wf",0
 n_wnone: dc.b   "df1:nothere",0
+n_wreq: dc.b    "df1:req",0
         cnop    0,4
 b_d3:   dc.b    2,"d3"
         cnop    0,4

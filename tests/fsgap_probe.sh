@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tests/fsgap_probe.sh - harness for tests/fsgap_test.s (names, 212/205, root FIB, ExNext order, rename into itself,
-# write-protected disk). DF0: scratch OFS disk whose startup-sequence runs the test; DF1: OFS disk "WProt" holding a
-# file "wf", write-protected (read-only image). Waits for "FSGP END" and prints the result lines.
+# write-protected disk, its requester answered Cancel). DF0: scratch OFS disk whose startup-sequence runs the test;
+# DF1: OFS disk "WProt" holding a file "wf", write-protected (read-only image). Waits for "FSGP END" and prints the
+# result lines.
 # Usage: tests/fsgap_probe.sh <rom> <session name> [timeout s, default 180]
 set -u
 ROM="${1:?rom}"; NAME="${2:?session name}"; TMO="${3:-180}"
@@ -17,8 +18,14 @@ xdftool "$WP" create + format WProt ofs + write "$OUT/wf" wf >/dev/null || { ech
 # configuration because --adf copies the image and makes the copy writable
 chmod a-w "$WP"
 "$A" start --name "$NAME" --rom "$ROM" --adf "$ADF" -- -s "floppy1=$PWD/$WP" >/dev/null || { echo "start failed"; exit 2; }
-"$A" wait-serial "$NAME" "FSGP END" "$TMO"; rc=$?
 SES=build/amiberry/sessions/$NAME
+# the write-protect requester: captured, then Cancel with left Amiga + B (keyboard: no mouse aiming)
+if "$A" wait-serial "$NAME" "FSGP REQ" "$TMO"; then
+  sleep 4
+  "$A" shot "$NAME" req.png --via ipc
+  printf 'down:66 wait:100\nkey:35 wait:100\nup:66\n' | "$A" input "$NAME" - >/dev/null
+fi
+"$A" wait-serial "$NAME" "FSGP END" 60; rc=$?
 grep -a 'FSGP' "$SES/serial.log"
 "$A" stop "$NAME" >/dev/null
 [ $rc -eq 0 ] || { echo "no FSGP END"; exit 1; }

@@ -587,6 +587,18 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7z) **dos LVO details and disk error requesters** (2026-11-04, spec `dos-lvo-partial-v34.md` §1.1, §1.4, §2.6,
+  §2.14, §2.15; `rom-filesystem-v34.md` §2.3, §7.2). The packet LVOs (Lock, CreateDir, DeleteFile, Rename, DupLock,
+  Info, ParentDir, SetComment, SetProtection) return D1 = D0. Info(0) goes to the caller's pr_FileSystemTask;
+  ParentDir(0) leaves Result2 0; IsInteractive(0) reads the long at address 4 like 1.3. After a failed packet,
+  `dos_errreq` (called by `dos_pktretry` for dos_sendpkt and BCPL sendpkt) opens dos's requester for the two cases
+  seen on the real ROM: 214 "Volume / <name> / is write protected" after FINDOUTPUT, DELETE, CREATE_DIR,
+  RENAME_OBJECT, RENAME_DISK, and 226 "No disk present / in unit n" (an inserted disk counts as Retry); Retry resends
+  the packet, Cancel returns the failure; none for a plain task or pr_WindowPtr = -1. The volume and the unit come
+  from the handler's new ACTION_CURRENT_VOLUME (Res1 = volume node of the drive or of an open file, Res2 = unit).
+  213 and 225 still fail without a requester: their text was not observed. Checked with `tests/fsgap_probe.sh` (42
+  checks, the 214 requester captured and answered Amiga-B) and `tests/fsnodisk_probe.sh` (226 with and without
+  requester).
   (7y) **File system details: names, 212, root, chain order, write protection** (2026-11-04, spec
   `rom-filesystem-v34.md` §2.2, §2.3, §4.1, §6.2, §6.3, §7.1). Path components are truncated to 30 characters on lookup
   (`ofs_split`) and on creation (`ow_parent`); `ofs_name_to_block` and `ofs_stream_open` return their error in d1:

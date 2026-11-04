@@ -166,6 +166,8 @@ dos_handler:
                 beq     .info
                 cmp.l   #ACTION_INHIBIT,d0
                 beq     .inhibit
+                cmp.l   #ACTION_CURRENT_VOLUME,d0
+                beq     .curvol
                 move.l  #DOSFALSE,DP_RES1(a4)         ; unknown action
                 move.l  #ERROR_ACTION_NOT_KNOWN,DP_RES2(a4)
                 bra     .reply
@@ -645,6 +647,25 @@ dos_handler:
 .w_fail:
                 move.l  #DOSFALSE,DP_RES1(a4)
                 move.l  d1,DP_RES2(a4)
+                bra     .reply
+.curvol:                                             ; (ARG1 fh_Arg1 | 0) -> RES1 = volume node, RES2 = unit (§7.2)
+                move.l  DP_ARG1(a4),d0
+                beq.s   .cv_cur
+                move.l  d0,a1                          ; an open file: the volume it was opened on
+                move.l  SS_VOL(a1),d0
+                cmp.l   #WS_MAGICV,(a1)
+                bne.s   .cv_set
+                move.l  WS_VOL(a1),d0
+                bra.s   .cv_set
+.cv_cur:
+                bsr     hnd_ctx
+                beq.s   .cv_set
+                move.l  d0,a1
+                move.l  HC_VOLUME(a1),d0
+.cv_set:
+                move.l  d0,DP_RES1(a4)
+                bsr     hnd_unit
+                move.l  d0,DP_RES2(a4)
                 bra     .reply
 .relabel:                                            ; (ARG1 BSTR new name): root block, then the volume node
                 move.l  DP_ARG1(a4),d0
