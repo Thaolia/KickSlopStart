@@ -1,5 +1,5 @@
 ; vsprite_test.s - hardware VSprites through the GEL system (implementation track, our own test program).
-; Opens a lores 320 x 200 screen of 2 planes, sets up a GelsInfo (sprRsrvd = $01: sprite 0 is the pointer) and
+; Opens a lores 320 x 200 screen of 2 planes, sets up a GelsInfo (sprRsrvd = $FC: sprites 2-7 for the VSprites) and
 ; adds six VSprites of 16 x 12: three side by side at Y = 30 (red, green, blue frames) and three more at Y = 60
 ; (yellow, cyan, magenta), which must reuse the same hardware sprites. Each frame: SortGList, DrawGList, MrgCop and
 ; LoadView of ViewAddress() (the RKM sequence), WaitTOF. The six move right by one pixel per frame for 120 frames,
@@ -40,7 +40,7 @@ start:
         beq     fail
         move.l  d0,d7                ; d7 = block, GelsInfo first
         move.l  d0,a2
-        move.b  #$01,(a2)            ; sprRsrvd: not sprite 0
+        move.b  #$FC,(a2)            ; sprRsrvd: the sprites the VSprites may use
         lea     O_NEXTL(a2),a1
         move.l  a1,10(a2)            ; nextLine
         lea     O_LASTC(a2),a1

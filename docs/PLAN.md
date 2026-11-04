@@ -1098,6 +1098,21 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **System clock (2026-11-04)**: CIA-A TOD at the measured mains rate, uniqueness counter, fold-over,
   PowerSupplyFrequency, UNIT_VBLANK and the input/intuition clocks at the real VBlank rate (`tests/systime_probe.s`).
   Open: the exec quantum is still counted by our scheduler server, not by timer.device's VBlank server (§3).
+  **GELs (2026-11-04)**: spec `graphics-gels-v34`. List keyed by the long at VSprite.Y (negative X after positive X),
+  inserted before equal keys; InitGels sentinels at -32767 with head.ClearPath = tail; InitMasks BorderLine from the
+  first image plane (a VSprite's from its first Height x Width words); DrawGList under Forbid with Before/After
+  (BWAITING), DrawPath/ClearPath chains and recursive restore of the Bobs drawn later, BOBUPDATE then BACKSAVED,
+  SAVEBOB never restored, GELGONE, double buffering (DBufPacket swap, SAVEPRESERVE, OUTSTEP removal), PlanePick/
+  PlaneOnOff through ImageShadow and image planes counted over the written planes; VSprites: sprRsrvd is the usable
+  set, nextLine/lastColor kept, pair rules of §5.8, sticky VSOVERFLOW; DoCollision with any HitMask bit, first.MeMask
+  & second.HitMask without bit 0, boundary tests on CollMask/BorderLine pixels (TOPHIT two rows past the bound);
+  Animate moves with the old velocity, (An + Trans + 32) >> 6, sequence switch carries links, flags, position and
+  paths; GetGBuffers chip buffers with ImageShadow = CollMask. `tests/gels_probe.sh` matches §11 (G8 also checked
+  against the real ROM's output: a double-buffered removal must keep alternating the BitMaps) except the V34
+  defects we do not reproduce: a non-OVERLAY PlaneOnOff shape at an X not multiple of 16, the save slot shifted by
+  an rp->Mask hole, collision pairs with the second GEL on the left, a one-member sequence added twice. Our
+  VSprites still go through our SprIns stream (1.3 builds SprIns/ClrIns CopLists). Buffers are cleared on
+  allocation (1.3 leaves them as allocated).
   **ramlib (2026-11-04)**: spec `ramlib-v34`. OpenLibrary/OpenDevice try the base name of a path, then a ROM
   resident, then LoadSeg in the calling process (a plain task fails; 1.3 has no ramlib process either); the RomTag
   is searched in the first hunk only, a module without one runs its first hunk; loads of one base name are

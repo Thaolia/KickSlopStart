@@ -1712,7 +1712,7 @@ glt_img:
         lea     GLT_GI(a4),a0
         lea     GLT_COLL(a4),a1
         move.l  a1,18(a0)            ; collHandler
-        move.l  #$0000001F,22(a0)    ; leftmost 0, rightmost 31
+        move.l  #$0000001A,22(a0)    ; leftmost 0, rightmost 26
         move.l  #$0000000F,26(a0)    ; topmost 0, bottommost 15
         lea     GLT_BM(a4),a0
         moveq   #2,d0
@@ -1740,7 +1740,7 @@ glt_img:
         jsr     -126(a6)             ; InitMasks
         cmp.l   #$FFF0FFF0,GLT_MASK(a4)
         bne     glt_fail
-        cmp.w   #$FFF0,GLT_BORD(a4)
+        cmp.w   #$FF00,GLT_BORD(a4)  ; BorderLine: first image plane only
         bne     glt_fail
         moveq   #0,d0
         lea     glt_coll0(pc),a0
@@ -1781,7 +1781,7 @@ glt_img:
         bsr     glt_check
         bne     glt_fail
         lea     GLT_RP(a4),a1
-        jsr     -108(a6)             ; DoCollision: right border -> routine 0
+        jsr     -108(a6)             ; DoCollision: a BorderLine pixel past rightmost -> routine 0
         cmp.w   #8,GLT_VS1+58(a4)    ; RIGHTHIT
         bne     glt_fail
         cmp.w   #1,GLT_VS2+58(a4)    ; no more overlap
@@ -1809,7 +1809,7 @@ glt_img:
         move.w  #2,4(a2)
         move.l  a2,14(a1)            ; A.NextSeq = B
         move.l  a1,14(a2)            ; B.NextSeq = A
-        move.l  #$00010002,26(a1)    ; A: YTrans 1, XTrans 2
+        move.l  #(1<<6)<<16|(2<<6),26(a1) ; A: YTrans 1, XTrans 2 (pixels, 6-bit fraction)
         lea     GLT_BA(a4),a0
         move.l  a0,34(a1)
         lea     GLT_VA(a4),a1
@@ -1848,7 +1848,7 @@ glt_img:
         lea     GLT_OB(a4),a0
         cmp.l   GLT_KEY(a4),a0
         bne     glt_fail
-        cmp.l   #$00060009,GLT_VA+22(a4)   ; (5 + 1, 7 + 2)
+        tst.l   GLT_VA+22(a4)        ; AddAnimOb leaves the positions
         bne     glt_fail
         bsr     glt_anim
         cmp.w   #10,GLT_VA+24(a4)

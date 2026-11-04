@@ -1744,9 +1744,10 @@ differs.
     VSTART to 21, writes POS/CTL into the sprite data (CTL bits 3-7 kept), moves the partner of an attached pair,
     and points the SPRxPT MOVEs of the loaded lists (both frames) at the data or at the empty sprite (hidden
     ViewPort, y past DHeight) through gfx_sprptr. ChangeSprite = new data + MoveSprite.
-  - VSprites (gels.s gel_vsprites, called by DrawGList with its ViewPort): each VSprite, in list order, gets a
-    hardware sprite outside GelsInfo.sprRsrvd and SpriteReserved that is free from the line before its top,
-    preferably one whose pair partner is usable and idle or shows the same SprColors; none: VSOVERFLOW. vp->SprIns
+  - VSprites (gels.s gel_vsprites, called by DrawGList with its ViewPort, spec graphics-gels-v34 §5.8): usable
+    sprites = GelsInfo.sprRsrvd minus SpriteReserved; nextLine[]/lastColor[] are reset and kept as on 1.3; a pair
+    with exactly one free sprite whose partner shows no colours or the same SprColors pointer, else the even sprite
+    of a free pair, else VSOVERFLOW (left set); clipped to the RastPort's BitMap (GELGONE outside). vp->SprIns
     (layout in graphics.i) holds, in the fragment format, a segment on the line before the top at copper position
     $40 (SPRxPOS, SPRxCTL, SPRxPT = ImageData, and the pair's colours 17+4p.. when they change) and one on the VSTOP
     line zeroing POS/CTL so the words after the image never re-arm the sprite. MrgCop interleaves that stream with
