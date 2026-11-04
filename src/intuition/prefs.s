@@ -109,6 +109,12 @@ it_prefsinit:
         move.l  #PF_SIZE,d0
         bsr     intuition_GetDefPrefs
         bsr.s   pf_tattr
+        move.l  IB_GFXBASE(a2),a6    ; the Preferences font is the default font from the start (1.3: topaz 9
+        jsr     LVO_OPENFONT(a6)     ; without devs:system-configuration, spec graphics-text-v34 §2)
+        tst.l   d0
+        beq.s   .pi_nf
+        move.l  d0,gb_DefaultFont(a6)
+.pi_nf:
         move.l  (sp)+,a6
         rts
 PF_STDX         EQU $81              ; start of the standard PAL display window (DIWSTRT $2C81)

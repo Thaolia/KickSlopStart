@@ -497,7 +497,9 @@ buffer (§4.7) and are not reference vectors for a clone.
    **TmpRas NULL for AreaEnd**: overflow/corruption deduced, not probed.
 4. **Exact equality of AreaEnd's edges with Draw()**: both use the blitter's line drawing;
    pixel-for-pixel identity has only been verified on simple cases (T3, T25), not compared
-   systematically with Draw.
+   systematically with Draw. **Answered 2026-11-04** (`graphics-line-v34.md` §9.2): for eight polygons in both
+   vertex orders, the Move/Draw outline is contained in the fill with identical row extents; the edges are
+   Draw's pixels for the same direction (previous vertex → current vertex). [O]
 5. **DrawEllipse in COMPLEMENT** with a zero radius (coincident symmetric points inverted twice?) and
    large radii (overflow of the 16-bit products beyond a radius of about 180 pixels): not probed.
 6. **AreaMove failing to close** (Count left incremented): deduced, not observed.

@@ -1514,33 +1514,39 @@ FNT_FRAME       EQU 172
         lea     fnt_ta8(pc),a0
         jsr     -72(a6)              ; OpenFont(topaz 8)
         move.l  d0,a2
-        cmp.l   154(a6),d0           ; gb_DefaultFont
-        bne     fnt_fail
         tst.l   d0
         beq     fnt_fail
+        cmp.w   #8,20(a2)            ; tf_YSize
+        bne     fnt_fail
         move.w  30(a2),d3            ; tf_Accessors after the opening
         lea     fnt_ta9(pc),a0
-        jsr     -72(a6)              ; OpenFont(topaz 9) -> topaz 8
-        cmp.l   a2,d0
+        jsr     -72(a6)              ; OpenFont(topaz 9) -> the 9-line ROM font
+        tst.l   d0
+        beq     fnt_fail
+        move.l  d0,a3
+        cmp.w   #9,20(a3)            ; tf_YSize
         bne     fnt_fail
-        addq.w  #1,d3
-        cmp.w   30(a2),d3
+        cmp.w   #10,24(a3)           ; tf_XSize
         bne     fnt_fail
+        move.l  a3,a1
+        jsr     -78(a6)              ; CloseFont(topaz 9)
         lea     fnt_tanone(pc),a0
         jsr     -72(a6)
         tst.l   d0
         bne     fnt_fail
         move.l  a2,a1
-        jsr     -78(a6)              ; CloseFont x2
-        move.l  a2,a1
-        jsr     -78(a6)
-        subq.w  #2,d3
+        jsr     -78(a6)              ; CloseFont(topaz 8)
+        subq.w  #1,d3
         cmp.w   30(a2),d3
         bne     fnt_fail
         lea     FNT_RP(a4),a1
-        jsr     -198(a6)             ; InitRastPort
-        cmp.l   FNT_RP+52(a4),a2     ; rp_Font
+        jsr     -198(a6)             ; InitRastPort: the default font (topaz 9 once intuition has its Preferences)
+        move.l  FNT_RP+52(a4),d0     ; rp_Font
+        cmp.l   154(a6),d0           ; gb_DefaultFont
         bne     fnt_fail
+        lea     FNT_RP(a4),a1
+        move.l  a2,a0
+        jsr     -66(a6)              ; SetFont(topaz 8)
         cmp.l   #$00080008,FNT_RP+58(a4)   ; TxHeight, TxWidth
         bne     fnt_fail
         cmp.w   #6,FNT_RP+62(a4)     ; TxBaseline
@@ -1560,12 +1566,13 @@ FNT_FRAME       EQU 172
         bne     fnt_fail
         clr.w   FNT_RP+64(a4)
         lea     FNT_RP(a4),a1
-        jsr     -84(a6)              ; AskSoftStyle = underlined | bold
-        cmp.l   #3,d0
+        jsr     -84(a6)              ; AskSoftStyle = NOT tf_Style
+        moveq   #-1,d1
+        cmp.l   d1,d0
         bne     fnt_fail
         lea     FNT_RP(a4),a1
-        moveq   #6,d0                ; bold | italic
-        moveq   #-1,d1
+        moveq   #6,d0                ; bold | italic, enable bold only
+        moveq   #2,d1
         jsr     -90(a6)              ; SetSoftStyle -> bold only
         cmp.l   #2,d0
         bne     fnt_fail
@@ -6517,7 +6524,7 @@ fnt_tanone:
         dc.w    8
         dc.b    0,0
 fnt_topaz:
-        dc.b    "TOPAZ.font",0
+        dc.b    "topaz.font",0
 fnt_nope:
         dc.b    "nope.font",0
 fnt_abc:

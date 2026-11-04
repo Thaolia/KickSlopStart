@@ -416,7 +416,8 @@ RC_PR           EQU 36               ; current pattern row
 RC_RCNT         EQU 38               ; remaining rows (pattern)
 RC_PW           EQU 40               ; rotated pattern word of the current row
 RC_PSTEP        EQU 42               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
-RC_SIZE         EQU 44
+RC_INV          EQU 44               ; byte: INVERSVID, the pattern words are inverted
+RC_SIZE         EQU 46
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -RC_SIZE(sp),sp
@@ -436,6 +437,8 @@ dr_rect:
         moveq   #COMPLEMENT,d5
         and.b   d4,d5
         sne     RC_COMP(a4)
+        btst    #2,d4
+        sne     RC_INV(a4)
         and.b   #JAM2|COMPLEMENT,d4
         cmp.b   #JAM2,d4
         seq     RC_JAM2(a4)
@@ -629,6 +632,10 @@ rc_plane:
         add.w   d0,d0
         move.l  RC_PAT(a4),a0
         move.w  0(a0,d0.w),d0
+        tst.b   RC_INV(a4)
+        beq.s   .pp_ninv
+        not.w   d0
+.pp_ninv:
         move.w  RC_SHIFT(a4),d1
         rol.w   d1,d0
         move.w  d0,RC_PW(a4)
@@ -804,107 +811,245 @@ rc_finv:
 .fi_r:
         rts
 
-; dr_line(a5 = context, d4/d5 = start, d6/d7 = end (absolute)): segment in pen A in each usable
-; ClipRect, planes filtered by rp_Mask (COMPLEMENT: inversion). Bresenham: e = dx - |dy|; at each point, step in x
-; if 2e >= -|dy|, step in y if 2e <= dx. Within a ClipRect, the address follows the point (row ± BytesPerRow) and each
-; plane gets a bset/bclr/bchg: no more ClipRect lookup per pixel. Preserves everything.
+; dr_line(a5 = context, d4/d5 = start, d6/d7 = end (absolute)) -> d0 = 1 if the unclipped engine drew the line (no
+; layer, or both ends in one usable ClipRect of the layer), 0 otherwise (spec graphics-line-v34 §4-§7).
+; Pixels: M + 1 points from the start along the major axis (y when |dx| = |dy|), error 2m - M, a tie steps the minor
+; axis. Pattern: pixel k uses bit (phase - k) & 15 of LinePtrn (inverted in INVERSVID); a 1 bit gets pen A (COMPLEMENT:
+; inversion), a 0 bit pen B in JAM2 and nothing otherwise. Unclipped engine: phase = byte RP_PATCNT, ONE_DOT (first
+; pixel of each row), (M + 1) mod 1024 pixels, and in exact COMPLEMENT after a Draw without Move (FRST_DOT clear) the
+; start pixel is inverted first so a shared vertex is inverted once. Clipped pieces (the line crosses the layer's
+; ClipRects): phase = linpatcnt - (major coordinate of the piece's first pixel in its BitMap - major coordinate of cp),
+; no ONE_DOT, no first-dot handling. Without a layer the line is clipped to the BitMap (1.3 writes outside the plane).
+; Rightward/downward solid lines without COMPLEMENT or ONE_DOT go through dr_rect. Preserves everything else.
 LN_X0           EQU 0                ; absolute start and end: X0 Y0 X1 Y1
 LN_Y0           EQU 2
 LN_X1           EQU 4
 LN_Y1           EQU 6
-LN_DX           EQU 8                ; |dx|
-LN_DY           EQU 10               ; -|dy|
-LN_SX           EQU 12               ; x step (±1)
-LN_SY           EQU 14               ; y step (±1)
-LN_BX0          EQU 16               ; absolute bounding box: BX0 BY0 BX1 BY1
-LN_BY0          EQU 18
-LN_BX1          EQU 20
-LN_BY1          EQU 22
+LN_M            EQU 8                ; major delta
+LN_M2           EQU 10               ; 2m
+LN_MM2          EQU 12               ; 2(m - M)
+LN_SX           EQU 14               ; x step (±1)
+LN_SY           EQU 16               ; y step (±1)
+LN_NPIX         EQU 18               ; pixels drawn
+LN_PH           EQU 20               ; phase: pixel k uses bit (LN_PH - k) & 15
+LN_PAT          EQU 22               ; LinePtrn, inverted in INVERSVID
 LN_MINX         EQU 24               ; current ClipRect within its BitMap: MINX MINY MAXX MAXY
 LN_MINY         EQU 26
 LN_MAXX         EQU 28
 LN_MAXY         EQU 30
-LN_EX           EQU 32               ; end point within this BitMap
-LN_EY           EQU 34
-LN_AE           EQU 36               ; end of list A (planes set to 1, or inverted)
-LN_BE           EQU 40               ; end of list B (planes set to 0)
-LN_COMP         EQU 44               ; byte: COMPLEMENT
-LN_A            EQU 46               ; 8 planes at most
-LN_B            EQU 78
-LN_SIZE         EQU 110
+LN_C            EQU 32               ; major coordinate of cp (layer coordinates), clipped pieces
+LN_BPR          EQU 34               ; bytes per row of the current BitMap
+LN_XMAJ         EQU 36               ; byte: x is the major axis
+LN_ONE          EQU 37               ; byte: ONE_DOT honoured
+LN_CLIP         EQU 38               ; byte: clipped piece (phase from linpatcnt at the first pixel)
+LN_PRE          EQU 39               ; byte: invert the start pixel first
+LN_NPL          EQU 40               ; WORD: planes
+LN_OPS          EQU 42               ; 8 x (op for a 1 bit, op for a 0 bit): 0 none, 1 set, 2 clear, 3 invert
+LN_PL           EQU 58               ; 8 plane pointers
+LN_FAST         EQU 90               ; byte: solid horizontal or vertical line, drawn by dr_rect
+LN_SIZE         EQU 92
+RP_LINPATCNT    EQU 30               ; linpatcnt: phase base of the clipped pieces
+RP_PATCNT       EQU 31               ; V34 pattern counter of the line engine (byte after linpatcnt)
 dr_line:
-        movem.l d0-d7/a0-a4/a6,-(sp)
+        movem.l d1-d7/a0-a4/a6,-(sp)
         lea     -LN_SIZE(sp),sp
         move.l  sp,a4
         movem.w d4-d7,LN_X0(a4)
-        move.w  d6,d0
+        move.l  DC_RP(a5),a1
+        move.w  d6,d0                ; |dx|, x step
         sub.w   d4,d0
         moveq   #1,d1
-        move.w  d4,d2
-        move.w  d6,d3
         tst.w   d0
         bpl.s   .ln_1
         neg.w   d0
         moveq   #-1,d1
-        exg     d2,d3
 .ln_1:
-        move.w  d0,LN_DX(a4)
         move.w  d1,LN_SX(a4)
-        move.w  d2,LN_BX0(a4)
-        move.w  d3,LN_BX1(a4)
-        move.w  d7,d0
-        sub.w   d5,d0
+        move.w  d7,d2                ; |dy|, y step
+        sub.w   d5,d2
         moveq   #1,d1
-        move.w  d5,d2
-        move.w  d7,d3
-        tst.w   d0
+        tst.w   d2
         bpl.s   .ln_2
-        neg.w   d0
+        neg.w   d2
         moveq   #-1,d1
-        exg     d2,d3
 .ln_2:
-        neg.w   d0
-        move.w  d0,LN_DY(a4)
         move.w  d1,LN_SY(a4)
-        move.w  d2,LN_BY0(a4)
-        move.w  d3,LN_BY1(a4)
-        move.l  DC_RP(a5),a0
-        moveq   #COMPLEMENT,d0
-        and.b   rp_DrawMode(a0),d0
-        sne     LN_COMP(a4)
-        move.l  DC_FIRST(a5),a3
-.ln_lp:
+        cmp.w   d2,d0
+        shi     LN_XMAJ(a4)
+        bhi.s   .ln_3
+        exg     d0,d2                ; d0 = M, d2 = m
+.ln_3:
+        move.w  d0,LN_M(a4)
+        add.w   d2,d2
+        move.w  d2,LN_M2(a4)
+        sub.w   d0,d2
+        sub.w   d0,d2
+        move.w  d2,LN_MM2(a4)
+        move.w  rp_LinePtrn(a1),d0
+        btst    #2,rp_DrawMode(a1)   ; INVERSVID
+        beq.s   .ln_pat
+        not.w   d0
+.ln_pat:
+        move.w  d0,LN_PAT(a4)
+        clr.b   LN_CLIP(a4)
+        moveq   #0,d0
+        move.b  RP_PATCNT(a1),d0
+        move.w  d0,LN_PH(a4)
+        btst    #1,rp_Flags+1(a1)    ; ONE_DOT
+        sne     LN_ONE(a4)
+        clr.b   LN_PRE(a4)           ; exact COMPLEMENT after a Draw: start pixel inverted first
+        btst    #0,rp_Flags+1(a1)    ; FRST_DOT
+        bne.s   .ln_npre
+        cmp.b   #COMPLEMENT,rp_DrawMode(a1)
+        seq     LN_PRE(a4)
+.ln_npre:
+        move.w  LN_M(a4),d0          ; (M + 1) mod 1024 pixels, 0 meaning 1024
+        addq.w  #1,d0
+        and.w   #1023,d0
+        bne.s   .ln_np
+        move.w  #1024,d0
+.ln_np:
+        move.w  d0,LN_NPIX(a4)
+        clr.b   LN_FAST(a4)          ; solid horizontal/vertical line without COMPLEMENT or ONE_DOT: dr_rect
+        tst.b   LN_ONE(a4)
+        bne.s   .ln_gen
+        cmp.w   #$FFFF,LN_PAT(a4)
+        bne.s   .ln_gen
+        btst    #1,rp_DrawMode(a1)
+        bne.s   .ln_gen
+        cmp.w   #1023,LN_M(a4)
+        bhs.s   .ln_gen
+        move.w  LN_X0(a4),d0
+        cmp.w   LN_X1(a4),d0
+        beq.s   .ln_fast
+        move.w  LN_Y0(a4),d0
+        cmp.w   LN_Y1(a4),d0
+        bne.s   .ln_gen
+.ln_fast:
+        st      LN_FAST(a4)
+.ln_gen:
+        tst.l   DC_LAYER(a5)
+        beq.s   .ln_engine
+        move.l  DC_FIRST(a5),a3      ; layer: a ClipRect holding both ends?
+.ln_find:
         cmpa.w  #0,a3
-        beq.s   .ln_ret
-        move.w  LN_BY1(a4),d0        ; the segment's box must cross the ClipRect
-        cmp.w   CR_MINX+2(a3),d0
-        blt.s   .ln_n
-        move.w  LN_BY0(a4),d0
-        cmp.w   CR_MINX+6(a3),d0
-        bgt.s   .ln_n
-        move.w  LN_BX1(a4),d0
-        cmp.w   CR_MINX(a3),d0
-        blt.s   .ln_n
-        move.w  LN_BX0(a4),d0
-        cmp.w   CR_MINX+4(a3),d0
-        bgt.s   .ln_n
+        beq.s   .ln_clipped
+        move.w  LN_X0(a4),d0
+        bsr     ln_inx
+        bne.s   .ln_fn
+        move.w  LN_X1(a4),d0
+        bsr     ln_inx
+        bne.s   .ln_fn
+        move.w  LN_Y0(a4),d0
+        bsr     ln_iny
+        bne.s   .ln_fn
+        move.w  LN_Y1(a4),d0
+        bsr     ln_iny
+        beq.s   .ln_cont
+.ln_fn:
+        move.l  a3,a0
+        bsr     dr_next
+        move.l  a0,a3
+        bra.s   .ln_find
+.ln_cont:
         move.l  a3,a0
         bsr     dr_crset
-        beq.s   .ln_n
-        bsr.s   ln_one
-.ln_n:
-        exg     a0,a3
+        beq.s   .ln_none             ; hidden without backup: nothing drawn, the engine did not run
+        bsr.s   ln_any
+        moveq   #1,d0
+        bra.s   .ln_ret
+.ln_engine:                          ; no layer: the engine, clipped to the BitMap
+        move.l  DC_FIRST(a5),a0
+        bsr     dr_crset
+        beq.s   .ln_eng1
+        bsr.s   ln_any
+.ln_eng1:
+        moveq   #1,d0
+        bra.s   .ln_ret
+.ln_clipped:                         ; pieces in every ClipRect crossed
+        st      LN_CLIP(a4)
+        clr.b   LN_ONE(a4)
+        clr.b   LN_PRE(a4)
+        move.w  LN_M(a4),d0
+        addq.w  #1,d0
+        move.w  d0,LN_NPIX(a4)
+        move.w  rp_cp_x(a1),d0       ; C = major coordinate of cp (layer coordinates)
+        tst.b   LN_XMAJ(a4)
+        bne.s   .ln_c
+        move.w  rp_cp_y(a1),d0
+.ln_c:
+        move.w  d0,LN_C(a4)
+        tst.b   LN_FAST(a4)
+        beq.s   .ln_cw
+        bsr     ln_rect              ; solid: every ClipRect at once
+        bra.s   .ln_none
+.ln_cw:
+        move.l  DC_FIRST(a5),a3
+.ln_cl:
+        cmpa.w  #0,a3
+        beq.s   .ln_none
+        move.l  a3,a0
+        bsr     dr_crset
+        beq.s   .ln_cn
+        bsr     ln_draw
+.ln_cn:
+        move.l  a3,a0
         bsr     dr_next
-        exg     a0,a3
-        bra.s   .ln_lp
+        move.l  a0,a3
+        bra.s   .ln_cl
+.ln_none:
+        moveq   #0,d0
 .ln_ret:
         lea     LN_SIZE(sp),sp
-        movem.l (sp)+,d0-d7/a0-a4/a6
+        movem.l (sp)+,d1-d7/a0-a4/a6
         rts
-; ln_one(a4 = dr_line variables, a5): the segment walked from its start until it leaves the current ClipRect again,
-; points plotted within it.
+; ln_any: the line in the current ClipRect, by dr_rect when it is solid (LN_FAST), else by the walk.
+ln_any:
+        tst.b   LN_FAST(a4)
+        beq     ln_draw
+; ln_rect(a4, a5): the solid horizontal or vertical line by dr_rect in pen A, over every ClipRect. Preserves all.
+ln_rect:
+        movem.l d0-d7/a0-a3,-(sp)
+        movem.w LN_X0(a4),d0-d3
+        cmp.w   d2,d0
+        ble.s   .lr_x
+        exg     d0,d2
+.lr_x:
+        cmp.w   d3,d1
+        ble.s   .lr_y
+        exg     d1,d3
+.lr_y:
+        move.l  DC_RP(a5),a0
+        move.b  rp_FgPen(a0),d4
+        suba.l  a0,a0
+        bsr     dr_rect
+        movem.l (sp)+,d0-d7/a0-a3
+        rts
+; ln_inx / ln_iny(d0 = absolute coordinate, a3 = ClipRect): Z = 1 if within its x / y bounds. Preserves the rest.
+ln_inx:
+        cmp.w   CR_MINX(a3),d0
+        blt.s   .ix_no
+        cmp.w   CR_MINX+4(a3),d0
+        bgt.s   .ix_no
+        cmp.w   d0,d0
+        rts
+.ix_no:
+        moveq   #1,d0
+        rts
+ln_iny:
+        cmp.w   CR_MINX+2(a3),d0
+        blt.s   .iy_no
+        cmp.w   CR_MINX+6(a3),d0
+        bgt.s   .iy_no
+        cmp.w   d0,d0
+        rts
+.iy_no:
+        moveq   #1,d0
+        rts
+; ln_draw(a4 = dr_line variables, a5 = context with its current ClipRect): bounds and planes of that ClipRect, then
+; the line walked from its start; pixels inside are plotted, and the walk stops once it has left the ClipRect again.
 ; Preserves a3-a5.
-ln_one:
+ln_draw:
         move.l  a3,-(sp)
         move.w  DC_BX(a5),d2
         move.w  DC_BY(a5),d3
@@ -920,149 +1065,262 @@ ln_one:
         move.w  DC_CMAXY(a5),d0
         sub.w   d3,d0
         move.w  d0,LN_MAXY(a4)
-        move.w  LN_X1(a4),d0
-        sub.w   d2,d0
-        move.w  d0,LN_EX(a4)
-        move.w  LN_Y1(a4),d0
-        sub.w   d3,d0
-        move.w  d0,LN_EY(a4)
-        move.l  DC_CBM(a5),a2        ; plane lists: A = bset (bchg in COMPLEMENT), B = bclr
-        move.l  DC_RP(a5),a0
-        move.b  rp_Mask(a0),d6
-        move.b  rp_FgPen(a0),d5
-        lea     LN_A(a4),a0
-        lea     LN_B(a4),a1
+        move.l  DC_RP(a5),a1
+        move.l  DC_CBM(a5),a2        ; per plane: operation for a 1 bit and for a 0 bit
+        move.w  bm_BytesPerRow(a2),LN_BPR(a4)
         moveq   #0,d7
         move.b  bm_Depth(a2),d7
-        move.w  bm_BytesPerRow(a2),d4
+        cmp.w   #8,d7
+        bls.s   .ld_d
+        moveq   #8,d7
+.ld_d:
+        move.w  d7,LN_NPL(a4)
         lea     bm_Planes(a2),a2
-        bra.s   .lo_pe
-.lo_pl:
-        move.l  (a2)+,d0
-        btst    #0,d6
-        beq.s   .lo_pn
-        tst.b   LN_COMP(a4)
-        bne.s   .lo_pa
+        lea     LN_PL(a4),a0
+        lea     LN_OPS(a4),a3
+        move.b  rp_Mask(a1),d4
+        move.b  rp_FgPen(a1),d5
+        move.b  rp_BgPen(a1),d6
+        bra.s   .ld_pe
+.ld_pl:
+        move.l  (a2)+,(a0)+
+        moveq   #0,d0                ; d0 = op for a 1 bit, d1 = op for a 0 bit
+        moveq   #0,d1
+        btst    #0,d4
+        beq.s   .ld_put
+        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT
+        beq.s   .ld_j
+        moveq   #3,d0
+        bra.s   .ld_put
+.ld_j:
+        moveq   #2,d0
         btst    #0,d5
-        bne.s   .lo_pa
-        move.l  d0,(a1)+
-        bra.s   .lo_pn
-.lo_pa:
-        move.l  d0,(a0)+
-.lo_pn:
-        lsr.b   #1,d6
+        beq.s   .ld_j2
+        moveq   #1,d0
+.ld_j2:
+        btst    #0,rp_DrawMode(a1)   ; JAM2: pen B for the 0 bits
+        beq.s   .ld_put
+        moveq   #2,d1
+        btst    #0,d6
+        beq.s   .ld_put
+        moveq   #1,d1
+.ld_put:
+        move.b  d0,(a3)+
+        move.b  d1,(a3)+
+        lsr.b   #1,d4
         lsr.b   #1,d5
-.lo_pe:
-        dbra    d7,.lo_pl
-        move.l  a0,LN_AE(a4)
-        move.l  a1,LN_BE(a4)
-        move.w  LN_X0(a4),d0         ; d0/d1 = current point within this BitMap
-        sub.w   d2,d0
+        lsr.b   #1,d6
+.ld_pe:
+        dbra    d7,.ld_pl
+        move.w  LN_X0(a4),d0         ; walk: d0/d1 = point in this BitMap, d2 = error, d3 = k, d6 = minor step taken
+        sub.w   DC_BX(a5),d0
         move.w  LN_Y0(a4),d1
-        sub.w   d3,d1
-        move.w  d4,d3
-        muls    d1,d3
-        move.l  d3,a3                ; a3 = offset of the point's row (may be negative outside the BitMap)
-        moveq   #0,d2
-        move.w  d4,d2
-        tst.w   LN_SY(a4)
-        bpl.s   .lo_sy
-        neg.l   d2
-.lo_sy:
-        move.l  d2,a6                ; a6 = row step
-        move.w  LN_DX(a4),d4
-        move.w  LN_DY(a4),d5
-        move.w  d4,d2
-        add.w   d5,d2                ; d2 = error
-        suba.l  a1,a1                ; a1 != 0 once a point fell inside the ClipRect
-.lo_pt:
-        cmp.w   LN_MINX(a4),d0
-        blt.s   .lo_out
-        cmp.w   LN_MAXX(a4),d0
-        bgt.s   .lo_out
-        cmp.w   LN_MINY(a4),d1
-        blt.s   .lo_out
-        cmp.w   LN_MAXY(a4),d1
-        bgt.s   .lo_out
-        movea.w #1,a1
-        move.w  d0,d3
-        lsr.w   #3,d3                ; d3 = byte
-        move.w  d0,d7
-        not.w   d7                   ; d7 = bit (modulo 8: 7 for the leftmost pixel)
-        lea     LN_A(a4),a2
-        tst.b   LN_COMP(a4)
-        bne.s   .lo_c
-.lo_s:
-        cmpa.l  LN_AE(a4),a2
-        beq.s   .lo_b0
-        move.l  (a2)+,a0
-        adda.l  a3,a0
-        bset    d7,0(a0,d3.w)
-        bra.s   .lo_s
-.lo_b0:
-        lea     LN_B(a4),a2
-.lo_b:
-        cmpa.l  LN_BE(a4),a2
-        beq.s   .lo_np
-        move.l  (a2)+,a0
-        adda.l  a3,a0
-        bclr    d7,0(a0,d3.w)
-        bra.s   .lo_b
-.lo_c:
-        cmpa.l  LN_AE(a4),a2
-        beq.s   .lo_np
-        move.l  (a2)+,a0
-        adda.l  a3,a0
-        bchg    d7,0(a0,d3.w)
-        bra.s   .lo_c
-.lo_out:                             ; x and y are monotonic: once out again, the rest stays out
-        cmpa.w  #0,a1
-        bne.s   .lo_ret
-.lo_np:
-        cmp.w   LN_EX(a4),d0
-        bne.s   .lo_st
-        cmp.w   LN_EY(a4),d1
-        beq.s   .lo_ret
-.lo_st:
-        move.w  d2,d6
-        add.w   d6,d6                ; 2e
-        cmp.w   d5,d6
-        blt.s   .lo_nx
-        add.w   d5,d2
+        sub.w   DC_BY(a5),d1
+        move.w  d1,d4
+        muls    LN_BPR(a4),d4
+        move.l  d4,a3                ; a3 = offset of the point's row (may be negative outside the BitMap)
+        move.w  LN_M2(a4),d2
+        sub.w   LN_M(a4),d2
+        moveq   #0,d3
+        moveq   #0,d6
+        moveq   #0,d7                ; d7 = inside the ClipRect already
+        tst.b   LN_PRE(a4)
+        beq.s   .ld_pt
+        bsr     ln_in
+        bne.s   .ld_pt
+        bsr     ln_inv
+.ld_pt:
+        bsr     ln_in
+        bne.s   .ld_out
+        tst.b   d7
+        bne.s   .ld_cl
+        st      d7
+        tst.b   LN_CLIP(a4)          ; first pixel of a clipped piece: its phase
+        beq.s   .ld_cl
+        move.w  d0,d4
+        tst.b   LN_XMAJ(a4)
+        bne.s   .ld_s
+        move.w  d1,d4
+.ld_s:
+        moveq   #0,d5
+        move.l  DC_RP(a5),a0
+        move.b  RP_LINPATCNT(a0),d5
+        sub.w   d4,d5
+        add.w   LN_C(a4),d5
+        add.w   d3,d5
+        move.w  d5,LN_PH(a4)
+.ld_cl:
+        tst.b   LN_ONE(a4)           ; ONE_DOT: first pixel of each row only
+        beq.s   .ld_plot
+        tst.w   d3
+        beq.s   .ld_plot
+        tst.b   LN_XMAJ(a4)
+        beq.s   .ld_plot
+        tst.b   d6
+        beq.s   .ld_step
+.ld_plot:
+        bsr     ln_plot
+        bra.s   .ld_step
+.ld_out:
+        tst.b   d7                   ; x and y are monotonic: once out again, the rest stays out
+        bne.s   .ld_ret
+.ld_step:
+        addq.w  #1,d3
+        cmp.w   LN_NPIX(a4),d3
+        bhs.s   .ld_ret
+        moveq   #0,d6
+        tst.w   d2
+        bmi.s   .ld_maj
+        st      d6                   ; minor step
+        add.w   LN_MM2(a4),d2
+        tst.b   LN_XMAJ(a4)
+        bne.s   .ld_my
         add.w   LN_SX(a4),d0
-.lo_nx:
-        cmp.w   d4,d6
-        bgt     .lo_pt
-        add.w   d4,d2
-        add.w   LN_SY(a4),d1
-        adda.l  a6,a3
-        bra     .lo_pt
-.lo_ret:
+        bra.s   .ld_mj
+.ld_my:
+        bsr.s   ln_ystep
+        bra.s   .ld_mj
+.ld_maj:
+        add.w   LN_M2(a4),d2
+.ld_mj:
+        tst.b   LN_XMAJ(a4)          ; major step
+        beq.s   .ld_jy
+        add.w   LN_SX(a4),d0
+        bra     .ld_pt
+.ld_jy:
+        bsr.s   ln_ystep
+        bra     .ld_pt
+.ld_ret:
         move.l  (sp)+,a3
+        rts
+; ln_ystep: one row in the y direction (d1 and the row offset a3). Clobbers d4.
+ln_ystep:
+        add.w   LN_SY(a4),d1
+        move.w  LN_BPR(a4),d4
+        ext.l   d4
+        tst.w   LN_SY(a4)
+        bpl.s   .ys_r
+        neg.l   d4
+.ys_r:
+        adda.l  d4,a3
+        rts
+; ln_in(d0/d1 = point): Z = 1 if inside the current ClipRect (LN_MIN*/LN_MAX*). Preserves everything.
+ln_in:
+        cmp.w   LN_MINX(a4),d0
+        blt.s   .in_no
+        cmp.w   LN_MAXX(a4),d0
+        bgt.s   .in_no
+        cmp.w   LN_MINY(a4),d1
+        blt.s   .in_no
+        cmp.w   LN_MAXY(a4),d1
+        bgt.s   .in_no
+        move.l  d0,-(sp)
+        moveq   #0,d0                ; Z = 1
+        movem.l (sp)+,d0
+        rts
+.in_no:
+        move.l  d0,-(sp)
+        moveq   #1,d0                ; Z = 0
+        movem.l (sp)+,d0
+        rts
+; ln_plot(d0/d1 = point, d3 = k, a3 = row offset): the pixel in every plane according to its pattern bit.
+; Clobbers d4/d5/a0-a2.
+ln_plot:
+        movem.l d6-d7,-(sp)
+        move.w  LN_PH(a4),d4
+        sub.w   d3,d4
+        and.w   #15,d4
+        move.w  LN_PAT(a4),d5
+        lea     LN_OPS(a4),a1
+        btst    d4,d5
+        bne.s   .lp_one
+        addq.l  #1,a1                ; op for a 0 bit
+.lp_one:
+        lea     LN_PL(a4),a0
+        move.w  d0,d4
+        lsr.w   #3,d4                ; d4 = byte
+        move.w  d0,d5
+        not.w   d5                   ; d5 = bit (modulo 8)
+        move.w  LN_NPL(a4),d6
+        bra.s   .lp_pe
+.lp_pl:
+        move.l  (a0)+,a2
+        adda.l  a3,a2
+        move.b  (a1),d7
+        addq.l  #2,a1
+        subq.b  #1,d7
+        bmi.s   .lp_pe
+        beq.s   .lp_set
+        subq.b  #1,d7
+        beq.s   .lp_clr
+        bchg    d5,0(a2,d4.w)
+        bra.s   .lp_pe
+.lp_set:
+        bset    d5,0(a2,d4.w)
+        bra.s   .lp_pe
+.lp_clr:
+        bclr    d5,0(a2,d4.w)
+.lp_pe:
+        dbra    d6,.lp_pl
+        movem.l (sp)+,d6-d7
+        rts
+; ln_inv(d0/d1 = point, a3 = row offset): the pixel inverted in every plane enabled by rp_Mask. Clobbers d4/d5/a0/a2.
+ln_inv:
+        move.w  d0,d4
+        lsr.w   #3,d4
+        move.w  d0,d5
+        not.w   d5
+        lea     LN_PL(a4),a0
+        move.l  d6,-(sp)
+        move.l  DC_RP(a5),a2
+        move.b  rp_Mask(a2),d6
+        move.l  d7,-(sp)
+        move.w  LN_NPL(a4),d7
+        bra.s   .iv_pe
+.iv_pl:
+        move.l  (a0)+,a2
+        btst    #0,d6
+        beq.s   .iv_n
+        adda.l  a3,a2
+        bchg    d5,0(a2,d4.w)
+.iv_n:
+        lsr.b   #1,d6
+.iv_pe:
+        dbra    d7,.iv_pl
+        move.l  (sp)+,d7
+        move.l  (sp)+,d6
         rts
 
 ; --- simple LVOs ---
-gfx_SetAPen:                         ; SetAPen(rp a1, pen d0)
+; SetAPen/SetBPen/SetDrMd(rp a1, d0) and Move(rp a1, x d0, y d1) also restart a line: FRST_DOT set and the line
+; pattern counter back to bit 15 (spec graphics-line-v34 §2).
+gfx_SetAPen:
         move.b  d0,rp_FgPen(a1)
-        rts
-gfx_SetBPen:                         ; SetBPen(rp a1, pen d0)
+        bra.s   ln_restart
+gfx_SetBPen:
         move.b  d0,rp_BgPen(a1)
-        rts
-gfx_SetDrMd:                         ; SetDrMd(rp a1, mode d0)
+        bra.s   ln_restart
+gfx_SetDrMd:
         move.b  d0,rp_DrawMode(a1)
-        rts
-gfx_Move:                            ; Move(rp a1, x d0, y d1)
+        bra.s   ln_restart
+gfx_Move:
         move.w  d0,rp_cp_x(a1)
         move.w  d1,rp_cp_y(a1)
+ln_restart:
+        bset    #0,rp_Flags+1(a1)    ; FRST_DOT
+        move.b  #15,RP_PATCNT(a1)
         rts
-gfx_TextLength:                      ; TextLength(rp a1, string a0, count d0) -> width in pixels (like Text)
+; TextLength(rp a1, string a0, count d0) -> d0 = sum of kerning + spacing + rp_TxSpacing per character, 16 bits
+; zero-extended; count = unsigned low word; styles ignored (spec graphics-text-v34 §6).
+gfx_TextLength:
         movem.l d2-d3/a2-a3,-(sp)
         bsr     tx_font
         move.l  a0,a3
+        moveq   #0,d3
         move.w  d0,d3
         moveq   #0,d2
 .tl_lp:
-        subq.w  #1,d3
+        subq.l  #1,d3
         bmi.s   .tl_r
         moveq   #0,d0
         move.b  (a3)+,d0
@@ -1073,12 +1331,12 @@ gfx_TextLength:                      ; TextLength(rp a1, string a0, count d0) ->
         add.w   d0,d2
         bra.s   .tl_lp
 .tl_r:
+        moveq   #0,d0
         move.w  d2,d0
-        ext.l   d0
         movem.l (sp)+,d2-d3/a2-a3
         rts
-; SetFont(rp a1, font a0): font and metrics of the RastPort (0: ignored). D0 is not touched, as in 1.3:
-; Preferences tests on return the D0 left by its OpenFont.
+; SetFont(rp a1, font a0): font and metrics of the RastPort, algorithmic styles cleared (0: ignored, as SetPatch
+; 1.38 does). D0 is not touched, as in 1.3: Preferences tests on return the D0 left by its OpenFont.
 gfx_SetFont:
         cmpa.w  #0,a0
         beq.s   .sf_r
@@ -1086,6 +1344,7 @@ gfx_SetFont:
         move.w  tf_YSize(a0),rp_TxHeight(a1)
         move.w  tf_XSize(a0),rp_TxWidth(a1)
         move.w  tf_Baseline(a0),rp_TxBaseline(a1)
+        clr.b   rp_AlgoStyle(a1)
 .sf_r:
         rts
 
@@ -1160,6 +1419,16 @@ rf_fill:
         move.b  rp_FgPen(a1),d4
         move.b  rp_BgPen(a1),d5
         move.l  rp_AreaPtrn(a1),a0
+        btst    #2,rp_DrawMode(a1)   ; INVERSVID without a pattern: the solid pattern inverted, i.e. all 0 bits
+        beq.s   .rf_pat
+        cmpa.w  #0,a0
+        bne.s   .rf_pat
+        move.b  rp_DrawMode(a1),d6
+        and.b   #JAM2|COMPLEMENT,d6
+        cmp.b   #JAM2,d6
+        bne.s   .rf_none             ; JAM1, COMPLEMENT: nothing
+        move.b  d5,d4                ; JAM2: pen B
+.rf_pat:
         moveq   #0,d6                ; d6 = step between planes (high word) | row mask
         move.b  rp_AreaPtSz(a1),d7
         bpl.s   .rf_mono
@@ -1172,6 +1441,7 @@ rf_fill:
         lsl.w   d7,d6
         subq.w  #1,d6
         bsr     dr_rect
+.rf_none:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
@@ -1253,73 +1523,64 @@ gfx_SetRast:
         movem.l (sp)+,d2-d7/a5
         rts
 
-; ClearEOL(rp a1): clears from the current position to the right edge, over the font height (cell sitting on the
-; baseline, where Text would write). ClearScreen(rp a1): ClearEOL then the whole area below that line. Colour:
-; pen B in JAM2, 0 otherwise; solid fill, cp unchanged.
+; ClearEOL(rp a1): RectFill from cp_x to the right edge of the BitMap over the text line (top cp_y - TxBaseline,
+; tf_YSize rows). ClearScreen(rp a1): ClearEOL, then RectFill of the whole BitMap width from the next row to the
+; BitMap's last row. Pen B if DrawMode is exactly JAM2, pen 0 otherwise; DrawMode, Mask and the area pattern are
+; RectFill's; pen A restored; cp unchanged (spec graphics-text-v34 §8).
 gfx_ClearEOL:
         moveq   #0,d1
         bra.s   cl_go
 gfx_ClearScreen:
         moveq   #1,d1
 cl_go:
-        movem.l d2-d7/a5,-(sp)
-        lea     -DC_SIZE(sp),sp
-        move.l  sp,a5
+        movem.l d2-d6/a2,-(sp)
         move.w  d1,d6
-        bsr     dr_ctx
-        moveq   #0,d3
-        btst    #0,rp_DrawMode(a1)   ; JAM2
-        beq.s   .cl_pen
-        move.b  rp_BgPen(a1),d3
+        move.b  rp_FgPen(a1),-(sp)
+        moveq   #0,d0
+        cmp.b   #JAM2,rp_DrawMode(a1)
+        bne.s   .cl_pen
+        move.b  rp_BgPen(a1),d0
 .cl_pen:
-        move.b  rp_DrawMode(a1),-(sp)
-        clr.b   rp_DrawMode(a1)
-        move.w  rp_cp_x(a1),d4
-        add.w   DC_OX(a5),d4
-        move.w  rp_cp_y(a1),d5
-        sub.w   rp_TxBaseline(a1),d5
-        add.w   DC_OY(a5),d5
-        move.w  d5,d7
-        add.w   rp_TxHeight(a1),d7
-        subq.w  #1,d7
-        bsr.s   cl_box
+        move.b  d0,rp_FgPen(a1)
+        bsr     tx_font
+        move.l  rp_BitMap(a1),a0
+        move.w  bm_BytesPerRow(a0),d2
+        lsl.w   #3,d2
+        subq.w  #1,d2                ; d2 = last column of the BitMap
+        move.w  bm_Rows(a0),d5
+        subq.w  #1,d5                ; d5 = last row of the BitMap
+        move.w  rp_cp_x(a1),d0
+        move.w  rp_cp_y(a1),d1
+        sub.w   rp_TxBaseline(a1),d1
+        move.w  d1,d3
+        add.w   tf_YSize(a2),d3
+        subq.w  #1,d3
+        move.w  d3,d4                ; d4 = last row of the line
+        cmp.w   d2,d0
+        bgt.s   .cl_below
+        cmp.w   d3,d1
+        bgt.s   .cl_below
+        movem.l d2/d4-d5,-(sp)
+        bsr     gfx_RectFill
+        movem.l (sp)+,d2/d4-d5
+.cl_below:
         tst.w   d6
         beq.s   .cl_ret
-        move.w  DC_MINX(a5),d4
-        move.w  d7,d5
-        addq.w  #1,d5
-        move.w  DC_MAXY(a5),d7
-        bsr.s   cl_box
+        moveq   #0,d0
+        move.w  d4,d1
+        addq.w  #1,d1
+        move.w  d5,d3
+        cmp.w   d3,d1
+        bgt.s   .cl_ret
+        bsr     gfx_RectFill
 .cl_ret:
-        move.b  (sp)+,rp_DrawMode(a1)
-        bsr     dr_end
-        lea     DC_SIZE(sp),sp
-        movem.l (sp)+,d2-d7/a5
-        rts
-; cl_box(a5, d3.b = pen, d4 = x0, d5..d7 = absolute rows): rows [d5..d7] ∩ area, from x0 to the right edge.
-; Clobbers d0-d2/d5; d7 is reduced only if it goes past the bottom of the area.
-cl_box:
-        cmp.w   DC_MINY(a5),d5
-        bge.s   .cb_0
-        move.w  DC_MINY(a5),d5
-.cb_0:
-        cmp.w   DC_MAXY(a5),d7
-        ble.s   .cb_lp
-        move.w  DC_MAXY(a5),d7
-.cb_lp:
-        movem.l d3-d6/a0,-(sp)
-        move.w  d4,d0
-        move.w  d5,d1
-        move.w  DC_MAXX(a5),d2
-        move.b  d3,d4
-        move.w  d7,d3
-        suba.l  a0,a0
-        bsr     dr_rect
-        movem.l (sp)+,d3-d6/a0
+        move.b  (sp)+,rp_FgPen(a1)
+        movem.l (sp)+,d2-d6/a2
         rts
 
-; Draw(rp a1, x d0, y d1): segment from (cp_x, cp_y) to (x, y) in pen A, then cp := (x, y). Horizontal and vertical
-; ones via dr_rect (same pixels), the others via dr_line (Bresenham).
+; Draw(rp a1, x d0, y d1): segment from cp to (x, y), both ends included, then cp := (x, y) (dr_line, spec
+; graphics-line-v34). Pattern counter: decreased by the major length M by the unclipped engine (which also clears
+; FRST_DOT), and once more with a layer, as 1.3 does (§7.3).
 gfx_Draw:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -1328,45 +1589,40 @@ gfx_Draw:
         move.w  rp_cp_y(a1),d5
         move.w  d0,d6
         move.w  d1,d7
-        move.w  d0,rp_cp_x(a1)
-        move.w  d1,rp_cp_y(a1)
         bsr     dr_ctx
+        movem.w d4-d7,-(sp)
         move.w  DC_OX(a5),d0
         add.w   d0,d4
         add.w   d0,d6
         move.w  DC_OY(a5),d0
         add.w   d0,d5
         add.w   d0,d7
-        cmp.w   d5,d7
-        bne.s   .dw_nh
-        move.w  d4,d0                ; horizontal: one dr_rect row
-        move.w  d6,d2
-        cmp.w   d2,d0
-        ble.s   .dw_h
-        exg     d0,d2
-.dw_h:
-        move.w  d5,d1
-        move.w  d5,d3
-        bra.s   .dw_rect
-.dw_nh:
-        cmp.w   d4,d6
-        bne.s   .dw_line
-        move.w  d4,d0                ; vertical: one dr_rect column
-        move.w  d4,d2
-        move.w  d5,d1
-        move.w  d7,d3
-        cmp.w   d3,d1
-        ble.s   .dw_rect
-        exg     d1,d3
-.dw_rect:
-        move.b  rp_FgPen(a1),d4
-        suba.l  a0,a0
-        bsr     dr_rect
-        bra.s   .dw_done
-.dw_line:
         bsr     dr_line
-.dw_done:
         bsr     dr_end
+        movem.w (sp)+,d4-d7
+        move.w  d6,rp_cp_x(a1)
+        move.w  d7,rp_cp_y(a1)
+        sub.w   d4,d6                ; d6 = M = max(|dx|, |dy|)
+        bpl.s   .dw_x
+        neg.w   d6
+.dw_x:
+        sub.w   d5,d7
+        bpl.s   .dw_y
+        neg.w   d7
+.dw_y:
+        cmp.w   d7,d6
+        bhs.s   .dw_m
+        move.w  d7,d6
+.dw_m:
+        tst.b   d0
+        beq.s   .dw_lay
+        bclr    #0,rp_Flags+1(a1)    ; the engine drew: FRST_DOT cleared, counter - M
+        sub.b   d6,RP_PATCNT(a1)
+.dw_lay:
+        tst.l   rp_Layer(a1)
+        beq.s   .dw_ret
+        sub.b   d6,RP_PATCNT(a1)
+.dw_ret:
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
         rts
@@ -1374,15 +1630,9 @@ gfx_Draw:
 ; --- Text variables, after the drawing context (a5) ---
 TX_FONT         EQU DC_SIZE          ; font
 TX_W            EQU DC_SIZE+4        ; glyph width (bits, 32 at most)
-TX_RW           EQU DC_SIZE+6        ; rendered width (glyph + bold smear)
 TX_H            EQU DC_SIZE+8        ; height (tf_YSize)
 TX_MOD          EQU DC_SIZE+10       ; tf_Modulo
-TX_SH           EQU DC_SIZE+12       ; offset of the glyph within its first byte
 TX_BASE         EQU DC_SIZE+14       ; tf_Baseline
-TX_SMEAR        EQU DC_SIZE+16       ; tf_BoldSmear
-TX_ADV          EQU DC_SIZE+18       ; advance of the current character
-TX_STYLE        EQU DC_SIZE+20       ; byte: rendered algorithmic styles (bold, underline)
-TX_SOK          EQU DC_SIZE+21       ; byte: "string" path allowed (fixed 8-pixel font, no style)
 TX_GP           EQU DC_SIZE+22       ; TX_NMAX glyph pointers of the current slice
 TX_NMAX         EQU 16
 TX_FRAME        EQU DC_SIZE+22+4*TX_NMAX
@@ -1819,146 +2069,62 @@ bt_mops:
         dbra    d1,.mo_clr
         rts
 
-; Text(rp a1, string a0, count d0): characters of the RastPort's font (topaz 8 by default), top of the glyph
-; at cp_y - tf_Baseline, at cp_x + kerning; cp_x advances by kerning + spacing + rp_TxSpacing. JAM1: glyph
-; pixels (pen A); JAM2: background in pen B; COMPLEMENT: glyph inverted; INVERSVID: glyph and background swapped.
-; Algorithmic styles (rp_AlgoStyle): bold (glyph smeared by tf_BoldSmear) and underline (line below the baseline).
-; Fast paths, fixed 8-pixel font without style: "string" (.tx_str, any mode, up to TX_NMAX aligned glyphs
-; at once), otherwise glyph by glyph (.tx_fast, JAM1/JAM2); the whole cell must lie in one ClipRect. Otherwise
-; rendering by pixel spans.
+; Text(rp a1, string a0, count d0): characters of the RastPort's font (topaz 8 by default), top row at cp_y -
+; tf_Baseline, tf_YSize rows; cp_x advances by kerning + spacing + rp_TxSpacing per character (spec graphics-text-v34
+; §7). count = unsigned low word. Fixed 8-pixel font without style or spacing: "string" slices (.tx_str) whose cells
+; lie in one ClipRect. Everything else, and the slices that cross ClipRects, goes through tx_line (line composed in a
+; one-plane buffer, styled, drawn by one BltTemplate). Characters past the width of 1.3's line buffer (destination
+; row + 4 bytes) are dropped and not counted in cp_x.
 gfx_Text:
         movem.l d2-d7/a2-a5,-(sp)
         lea     -TX_FRAME(sp),sp
         move.l  sp,a5
         move.l  a0,a4                ; a4 = string
+        moveq   #0,d7
         move.w  d0,d7                ; d7 = remaining count
-        bsr     dr_ctx
+        beq.s   .tx_out
         bsr     tx_font
         move.l  a2,TX_FONT(a5)
+        move.b  rp_AlgoStyle(a1),d0
+        and.b   #FSF_UNDERLINED|FSF_BOLD|FSF_ITALIC,d0
+        bne.s   .tx_line
+        tst.l   tf_CharSpace(a2)
+        bne.s   .tx_line
+        tst.l   tf_CharKern(a2)
+        bne.s   .tx_line
+        cmp.w   #8,tf_XSize(a2)
+        bne.s   .tx_line
+        tst.w   rp_TxSpacing(a1)
+        bne.s   .tx_line
+        bsr     tx_limit
+        subq.l  #1,d0                ; 8-pixel cells: at most (buffer bytes - 1) characters
+        cmp.l   d0,d7
+        bls.s   .tx_cnt
+        move.l  d0,d7
+.tx_cnt:
+        bsr     dr_ctx
+        move.l  TX_FONT(a5),a2
         move.w  tf_YSize(a2),TX_H(a5)
         move.w  tf_Modulo(a2),TX_MOD(a5)
         move.w  tf_Baseline(a2),TX_BASE(a5)
-        move.w  tf_BoldSmear(a2),TX_SMEAR(a5)
-        move.b  rp_AlgoStyle(a1),d0
-        and.b   #FSF_UNDERLINED|FSF_BOLD,d0
-        move.b  d0,TX_STYLE(a5)
-        clr.b   TX_SOK(a5)
-        tst.b   d0
-        bne.s   .tx_char
-        tst.l   tf_CharSpace(a2)
-        bne.s   .tx_char
-        tst.l   tf_CharKern(a2)
-        bne.s   .tx_char
-        cmp.w   #8,tf_XSize(a2)
-        bne.s   .tx_char
-        tst.w   rp_TxSpacing(a1)
-        bne.s   .tx_char
-        st      TX_SOK(a5)
 .tx_char:
-        tst.b   TX_SOK(a5)
-        beq.s   .tx_one
-        cmp.w   #2,d7
-        blt.s   .tx_one
-        bsr     .tx_try
+        tst.l   d7
+        beq.s   .tx_end
+        bsr.s   .tx_try
         bne.s   .tx_char
-.tx_one:
-        subq.w  #1,d7
-        bmi     .tx_ret
-        move.l  TX_FONT(a5),a2
-        moveq   #0,d0
-        move.b  (a4)+,d0
-        bsr     tx_index
-        move.w  d0,d3                ; d3 = index
-        bsr     tx_metrics
-        add.w   d1,d0
-        add.w   rp_TxSpacing(a1),d0
-        move.w  d0,TX_ADV(a5)
-        move.w  rp_cp_x(a1),d4
-        add.w   d1,d4
-        add.w   DC_OX(a5),d4         ; d4 = absolute x
-        move.w  rp_cp_y(a1),d5
-        sub.w   TX_BASE(a5),d5
-        add.w   DC_OY(a5),d5         ; d5 = absolute y of the first row
-        move.l  tf_CharLoc(a2),a0
-        lsl.w   #2,d3
-        move.w  0(a0,d3.w),d1        ; bit offset of the glyph
-        move.w  2(a0,d3.w),d0        ; width
-        cmp.w   #32,d0
-        bls.s   .tx_wok
-        moveq   #32,d0
-.tx_wok:
-        move.w  d0,TX_W(a5)
-        move.w  d0,TX_RW(a5)
-        btst    #1,TX_STYLE(a5)      ; FSF_BOLD: the glyph widens by the smear
-        beq.s   .tx_nb
-        add.w   TX_SMEAR(a5),d0
-        cmp.w   #32,d0
-        bls.s   .tx_rw
-        moveq   #32,d0
-.tx_rw:
-        move.w  d0,TX_RW(a5)
-.tx_nb:
-        move.l  tf_CharData(a2),a3
-        move.w  d1,d0
-        and.w   #7,d0
-        move.w  d0,TX_SH(a5)
-        lsr.w   #3,d1
-        add.w   d1,a3                ; a3 = first byte of the glyph (row 0)
-        tst.w   TX_RW(a5)
-        beq.s   .tx_adv
-        tst.b   TX_STYLE(a5)
-        bne.s   .tx_slow
-        tst.w   TX_SH(a5)
-        bne.s   .tx_slow
-        cmp.w   #8,TX_W(a5)
-        bne.s   .tx_slow
-        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT: rendering by spans
-        bne.s   .tx_slow
-        bsr     dr_cellcr            ; whole cell within a single usable ClipRect?
-        beq.s   .tx_slow
-        bsr     .tx_fast
-        bra.s   .tx_adv
-.tx_slow:
-        moveq   #0,d6                ; d6 = glyph row
-.tx_row:
-        cmp.w   TX_H(a5),d6
-        bhs.s   .tx_adv
-        bsr     .tx_bits             ; d2.l = row, left pixel in bit 31
-        btst    #1,TX_STYLE(a5)
-        beq.s   .tx_nbold
-        move.l  d2,d0
-        move.w  TX_SMEAR(a5),d1
-        lsr.l   d1,d0
-        or.l    d0,d2
-.tx_nbold:
-        btst    #0,TX_STYLE(a5)      ; FSF_UNDERLINED: solid line just below the baseline
-        beq.s   .tx_nul
-        move.w  TX_BASE(a5),d0
-        addq.w  #1,d0
-        cmp.w   d6,d0
-        bne.s   .tx_nul
-        moveq   #-1,d2
-.tx_nul:
-        btst    #2,rp_DrawMode(a1)   ; INVERSVID
-        beq.s   .tx_nv
-        not.l   d2
-.tx_nv:
-        bsr     .tx_runs
-        addq.w  #1,d5
-        addq.w  #1,d6
-        bra.s   .tx_row
-.tx_adv:
-        move.w  TX_ADV(a5),d0
-        add.w   d0,rp_cp_x(a1)
-        bra     .tx_char
-.tx_ret:
         bsr     dr_end
+.tx_line:
+        bsr     tx_line
+        bra.s   .tx_out
+.tx_end:
+        bsr     dr_end
+.tx_out:
         lea     TX_FRAME(sp),sp
         movem.l (sp)+,d2-d7/a2-a5
         rts
 ; .tx_try: "string" path over at most the next TX_NMAX characters: 8-pixel glyphs aligned on the byte,
-; whole span within one ClipRect. Z = 0 if characters were rendered (a4, d7 and cp_x advanced). If the span
-; overflows every ClipRect, the path is abandoned for the rest of the call. Clobbers d0-d6/a0/a2/a3.
+; whole span within one ClipRect. Z = 0 if characters were rendered (a4, d7 and cp_x advanced); Z = 1 otherwise, and
+; the caller renders the rest with tx_line. Clobbers d0-d6/a0/a2/a3.
 .tx_try:
         move.w  d7,d6
         cmp.w   #TX_NMAX,d6
@@ -2000,7 +2166,7 @@ gfx_Text:
         lsl.w   #3,d0
         move.w  d0,TX_W(a5)
         bsr     dr_cellcr
-        beq.s   .tt_off
+        beq.s   .tt_none
         bsr.s   .tx_str
         add.w   d6,a4
         sub.w   d6,d7
@@ -2008,8 +2174,6 @@ gfx_Text:
         add.w   d6,rp_cp_x(a1)
         moveq   #1,d0                ; Z = 0
         rts
-.tt_off:
-        clr.b   TX_SOK(a5)
 .tt_none:
         moveq   #0,d0                ; Z = 1
         rts
@@ -2194,173 +2358,451 @@ TS_SIZE         EQU 20
         lea     TS_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a1-a4/a6
         rts
-; .tx_bits(d6 = row, a3 = glyph) -> d2.l = TX_W bits of the row, left-aligned (bit 31 = left pixel), the
-; rest 0. Read by bytes (the strike can start at an odd address). Clobbers d0/d1/a0.
-.tx_bits:
-        move.w  d6,d0
-        mulu    TX_MOD(a5),d0
-        lea     0(a3,d0.l),a0
-        moveq   #3,d1
-.tb_lp:
-        lsl.l   #8,d2
-        move.b  (a0)+,d2
-        dbra    d1,.tb_lp
-        move.w  TX_SH(a5),d0
-        lsl.l   d0,d2
-        moveq   #0,d1
-        move.b  (a0),d1
-        lsl.w   d0,d1
-        lsr.w   #8,d1
-        or.b    d1,d2
-        move.w  TX_W(a5),d0
-        cmp.w   #32,d0
-        bhs.s   .tb_r
-        moveq   #-1,d1
-        lsr.l   d0,d1
-        not.l   d1
-        and.l   d1,d2
-.tb_r:
+; tx_limit(rp a1) -> d0.l = width in bytes of 1.3's line buffer: BytesPerRow of the destination (the layer's
+; SuperBitMap if it has one, else rp_BitMap) + 4. Preserves the rest.
+tx_limit:
+        move.l  rp_BitMap(a1),a0
+        move.l  rp_Layer(a1),d0
+        beq.s   .lm_bm
+        move.l  d0,a0
+        move.l  LY_SUPERBM(a0),d0
+        move.l  rp_BitMap(a1),a0
+        beq.s   .lm_bm
+        move.l  d0,a0
+.lm_bm:
+        moveq   #0,d0
+        move.w  bm_BytesPerRow(a0),d0
+        addq.l  #4,d0
         rts
-; .tx_fast: glyph a3 (8 pixels, aligned) at (d4, d5) aligned on a byte, within the current ClipRect, JAM2 mode:
-; each plane allowed by rp_Mask receives its bytes directly (1 bit -> pen A bit, 0 bit -> pen B
-; bit). Preserves d4-d7.
-.tx_fast:
-        movem.l d4-d7/a4/a6,-(sp)
-        move.l  DC_CBM(a5),a2
-        sub.w   DC_BX(a5),d4         ; coordinates within the ClipRect's BitMap
-        sub.w   DC_BY(a5),d5
-        moveq   #0,d6
-        move.w  bm_BytesPerRow(a2),d6
-        move.l  d6,a4                ; a4 = row step
-        move.w  d5,d0
-        mulu    d6,d0
-        moveq   #0,d1
-        move.w  d4,d1
+
+; tx_line(rp a1, string a4, count d7.l, a6 = GfxBase): the 1.3 rendering (spec §7.2-§7.5). Pass 1 measures: pen
+; positions and kerned origins give the extent [minX, maxX) relative to cp_x; a character whose extent would reach
+; the buffer width (tx_limit) is dropped with all the following ones. cp_x advances. Pass 2 ORs the glyphs into a
+; cleared buffer (x = 0 at bit TL_PAD), then bold (copy shifted right by tf_BoldSmear), italic (row d above the
+; baseline right by d/2, row k below left by (k+1)/2; pixels pushed left of minX are lost), underline (row
+; Baseline+1, every clear pixel with clear neighbours), and one BltTemplate of the extent at cp_y - tf_Baseline.
+; Preserves a1/a6.
+TL_FONT         EQU 0                ; font
+TL_BUF          EQU 4                ; buffer
+TL_SIZE         EQU 8                ; its size
+TL_N            EQU 12               ; characters drawn
+TL_STR          EQU 16               ; WORD: buffer row stride
+TL_PAD          EQU 18               ; WORD: buffer bit of x = 0
+TL_MINX         EQU 20               ; WORD
+TL_MAXX         EQU 22               ; WORD
+TL_X0           EQU 24               ; WORD: drawn extent, styles included
+TL_X1           EQU 26               ; WORD
+TL_CPX          EQU 28               ; WORD: cp_x on entry
+TL_GMAX         EQU 30               ; WORD: right edge of the glyph images
+TL_GW           EQU 32               ; WORD: width of the current glyph
+TL_STY          EQU 34               ; WORD: algorithmic styles
+TL_ROW          EQU 36               ; WORD: current row
+TL_FRAME        EQU 38
+tx_line:
+        movem.l d2-d7/a1-a4/a6,-(sp)
+        lea     -TL_FRAME(sp),sp
+        move.l  sp,a3
+        bsr     tx_font
+        move.l  a2,TL_FONT(a3)
+        move.w  rp_cp_x(a1),TL_CPX(a3)
+        bsr.s   tx_limit
+        move.l  d0,d6                ; d6 = buffer width in bytes
+        moveq   #0,d2                ; d2 = pen position
+        moveq   #0,d3                ; d3 = minX
+        moveq   #0,d4                ; d4 = maxX
+        moveq   #0,d5                ; d5 = characters accepted
+        clr.w   TL_GMAX(a3)
+.p1:
+        cmp.l   d7,d5
+        bhs     .p1e
+        moveq   #0,d0
+        move.b  0(a4,d5.l),d0
+        bsr     tx_index
+        move.l  tf_CharLoc(a2),a0
+        move.w  d0,d1
+        lsl.w   #2,d1
+        move.w  2(a0,d1.w),TL_GW(a3)
+        bsr     tx_metrics           ; d0 = spacing, d1 = kerning
+        add.w   d2,d1                ; d1 = origin of the glyph
+        add.w   d1,d0
+        add.w   rp_TxSpacing(a1),d0  ; d0 = next pen position
+        move.w  d3,TL_X0(a3)
+        move.w  d4,TL_X1(a3)
+        cmp.w   TL_X0(a3),d1
+        bge.s   .p1a
+        move.w  d1,TL_X0(a3)
+.p1a:
+        cmp.w   TL_X1(a3),d1
+        ble.s   .p1b
+        move.w  d1,TL_X1(a3)
+.p1b:
+        cmp.w   TL_X0(a3),d0
+        bge.s   .p1c
+        move.w  d0,TL_X0(a3)
+.p1c:
+        cmp.w   TL_X1(a3),d0
+        ble.s   .p1d
+        move.w  d0,TL_X1(a3)
+.p1d:
+        add.w   TL_GW(a3),d1
+        move.w  d1,TL_ROW(a3)        ; right edge of this glyph's image
+        move.w  TL_X1(a3),d1
+        sub.w   TL_X0(a3),d1
         lsr.w   #3,d1
-        add.l   d1,d0                ; d0 = offset of the first byte touched
-        move.l  d0,-(sp)
-        moveq   #7,d6
-        and.w   d4,d6                ; d6 = offset of the glyph within the byte (0..7)
-        moveq   #0,d3
-        move.b  bm_Depth(a2),d3
-        subq.w  #1,d3                ; d3 = plane counter (dbra)
-        lea     bm_Planes(a2),a2
-        move.b  rp_FgPen(a1),d1
-        move.b  rp_BgPen(a1),d2
-        move.b  rp_Mask(a1),d7
-.tf_plane:
-        move.l  (a2)+,a0
-        btst    #0,d7
-        beq.s   .tf_next
-        add.l   (sp),a0
-        move.l  a3,a6                ; a6 = glyph row
-        move.w  TX_H(a5),d4
-        subq.w  #1,d4                ; d4 = row counter (dbra)
-.tf_row:
-        move.b  (a6),d0              ; d0 = glyph pixels
-        btst    #2,rp_DrawMode(a1)   ; INVERSVID
-        beq.s   .tf_ni
-        not.b   d0
-.tf_ni:
-        moveq   #0,d5                ; d5 = value; d0 = pixels touched
-        btst    #0,rp_DrawMode(a1)   ; JAM2: the whole cell
-        bne.s   .tf_jam2
-        btst    #0,d1                ; JAM1: the glyph only, in pen A
-        beq.s   .tf_put
-        move.b  d0,d5
-        bra.s   .tf_put
-.tf_jam2:
-        btst    #0,d1
-        beq.s   .tf_nf
-        move.b  d0,d5
-.tf_nf:
-        btst    #0,d2
-        beq.s   .tf_nb
-        not.b   d0
-        or.b    d0,d5
-.tf_nb:
-        moveq   #-1,d0
-.tf_put:
-        and.w   #$FF,d0              ; pixels touched and value, placed across two bytes according to the shift
-        and.w   #$FF,d5
-        lsl.w   #8,d0
-        lsl.w   #8,d5
-        lsr.w   d6,d0
-        lsr.w   d6,d5
-        ror.w   #8,d0                ; left byte
-        ror.w   #8,d5
-        not.b   d0
-        and.b   d0,(a0)
-        or.b    d5,(a0)
-        not.b   d0
-        tst.w   d6
-        beq.s   .tf_adv
-        ror.w   #8,d0                ; right byte
-        ror.w   #8,d5
-        not.b   d0
-        and.b   d0,1(a0)
-        or.b    d5,1(a0)
-.tf_adv:
-        add.l   a4,a0
-        add.w   TX_MOD(a5),a6
-        dbra    d4,.tf_row
-.tf_next:
-        lsr.b   #1,d1                ; pen and mask bits for the next plane
-        lsr.b   #1,d2
-        lsr.b   #1,d7
-        dbra    d3,.tf_plane
-        addq.l  #4,sp
-        movem.l (sp)+,d4-d7/a4/a6
-        rts
-; .tx_runs: row d2.l (bit 31 = left pixel) of TX_RW pixels at (d4, d5): split into runs of equal bits;
-; bit 1 -> pen A (or inversion in COMPLEMENT); bit 0 -> pen B in JAM2 only. Preserves d4-d7. For glyph
-; rows (about ten pixels), a few dr_span calls are enough.
-.tx_runs:
-        movem.l d4-d7,-(sp)
-        moveq   #0,d6                ; d6 = index of the current pixel
-.tr_run:
-        cmp.w   TX_RW(a5),d6
-        bge.s   .tr_ret
-        move.w  d6,d7                ; d7 = start of the run
-        moveq   #31,d0
-        sub.w   d6,d0
-        btst    d0,d2
-        sne     d3                   ; d3.b = value of the run ($FF / 0)
-.tr_ext:
-        addq.w  #1,d6
-        cmp.w   TX_RW(a5),d6
-        bge.s   .tr_emit
-        moveq   #31,d0
-        sub.w   d6,d0
-        btst    d0,d2
-        sne     d1
-        cmp.b   d1,d3
-        beq.s   .tr_ext
-.tr_emit:                            ; run [d7 .. d6-1] of value d3
-        movem.l d2-d3,-(sp)
-        tst.b   d3
-        bne.s   .tr_fgp
-        move.b  rp_DrawMode(a1),d0   ; background: only in JAM2 (without COMPLEMENT)
-        and.b   #JAM2|COMPLEMENT,d0
-        cmp.b   #JAM2,d0
-        bne.s   .tr_skip
-        move.b  rp_BgPen(a1),d3
-        bra.s   .tr_do
-.tr_fgp:
-        move.b  rp_FgPen(a1),d3
-.tr_do:
-        move.w  d4,d0
-        add.w   d7,d0                ; x0
+        cmp.w   d6,d1
+        bhs.s   .p1e                 ; the line buffer is full: this character and the rest are dropped
+        move.w  TL_X0(a3),d3
+        move.w  TL_X1(a3),d4
+        move.w  d0,d2
+        move.w  TL_ROW(a3),d1
+        cmp.w   TL_GMAX(a3),d1
+        ble.s   .p1g
+        move.w  d1,TL_GMAX(a3)
+.p1g:
+        addq.l  #1,d5
+        bra     .p1
+.p1e:
+        add.w   d2,rp_cp_x(a1)
+        move.l  d5,TL_N(a3)
+        beq     .tl_ret
+        move.w  d3,TL_MINX(a3)
+        move.w  d4,TL_MAXX(a3)
+        moveq   #FSF_UNDERLINED|FSF_BOLD|FSF_ITALIC,d0
+        and.b   rp_AlgoStyle(a1),d0
+        move.w  d0,TL_STY(a3)
+        moveq   #0,d6                ; d6 = growth on the right (bold + italic)
+        moveq   #0,d5                ; d5 = growth on the left (italic)
+        btst    #1,d0                ; FSF_BOLD
+        beq.s   .st_i
+        move.w  tf_BoldSmear(a2),d6
+.st_i:
+        btst    #2,d0                ; FSF_ITALIC
+        beq.s   .st_e
+        move.w  tf_Baseline(a2),d1
+        asr.w   #1,d1
+        add.w   d1,d6
+        move.w  tf_YSize(a2),d5
+        subq.w  #1,d5
+        sub.w   tf_Baseline(a2),d5   ; rows below the baseline
+        bgt.s   .st_l
+        moveq   #0,d5
+        bra.s   .st_e
+.st_l:
+        addq.w  #1,d5
+        asr.w   #1,d5
+.st_e:
+        sub.w   d5,d3
+        move.w  d3,TL_X0(a3)         ; x0 = minX - left growth
+        add.w   d6,d4
+        move.w  d4,TL_X1(a3)         ; x1 = maxX + right growth
+        moveq   #0,d0                ; pad = 16 + room for x0 < 0, multiple of 16
+        sub.w   d3,d0
+        bpl.s   .pd_n
+        moveq   #0,d0
+.pd_n:
+        add.w   #15+16,d0
+        and.w   #-16,d0
+        move.w  d0,TL_PAD(a3)
+        move.w  TL_GMAX(a3),d1       ; buffer width: pad + max(x1, glyph images + growth) + 16 bits
+        add.w   d6,d1
+        cmp.w   d4,d1
+        bge.s   .pd_w
+        move.w  d4,d1
+.pd_w:
+        add.w   d0,d1
+        add.w   #16+15,d1
+        lsr.w   #4,d1
+        add.w   d1,d1
+        move.w  d1,TL_STR(a3)
+        mulu    tf_YSize(a2),d1
+        move.l  d1,TL_SIZE(a3)
+        beq     .tl_ret
+        move.l  d1,d0
+        move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
+        move.l  ($4).w,a6
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,TL_BUF(a3)
+        beq     .tl_ret
+        moveq   #0,d2                ; pass 2: glyphs
+        moveq   #0,d5
+.p2:
+        cmp.l   TL_N(a3),d5
+        bhs     .p2e
+        move.l  TL_FONT(a3),a2
+        moveq   #0,d0
+        move.b  0(a4,d5.l),d0
+        bsr     tx_index
+        move.w  d0,d4                ; d4 = index
+        bsr     tx_metrics
+        add.w   d2,d1                ; d1 = origin
+        add.w   d1,d0
+        move.l  6*4+TL_FRAME(sp),a0  ; saved a1 = rp
+        add.w   rp_TxSpacing(a0),d0
+        move.w  d0,d2                ; next pen position
+        add.w   TL_PAD(a3),d1        ; d1 = buffer bit of the origin
+        move.l  tf_CharLoc(a2),a0
+        lsl.w   #2,d4
+        move.w  0(a0,d4.w),d3        ; d3 = bit offset in the strike
+        move.w  2(a0,d4.w),d4        ; d4 = width
+        beq.s   .p2n
+        clr.w   TL_ROW(a3)
+.p2r:
+        move.w  TL_ROW(a3),d0
+        cmp.w   tf_YSize(a2),d0
+        bhs.s   .p2n
+        move.w  d0,d6
+        mulu    tf_Modulo(a2),d0
+        move.l  tf_CharData(a2),a0
+        add.l   d0,a0                ; source row
+        mulu    TL_STR(a3),d6
+        move.l  TL_BUF(a3),a1
+        add.l   d6,a1                ; destination row
+        movem.l d1-d5,-(sp)
+        moveq   #0,d0
+        move.w  d3,d0
+        and.l   #$FFFF,d1
         move.w  d4,d2
-        add.w   d6,d2
-        subq.w  #1,d2                ; x1
-        move.w  d5,d1
-        bsr     dr_span
-.tr_skip:
-        movem.l (sp)+,d2-d3
-        bra.s   .tr_run
-.tr_ret:
-        movem.l (sp)+,d4-d7
+        bsr     tl_or
+        movem.l (sp)+,d1-d5
+        addq.w  #1,TL_ROW(a3)
+        bra.s   .p2r
+.p2n:
+        addq.l  #1,d5
+        bra.s   .p2
+.p2e:
+        move.l  TL_FONT(a3),a2
+        clr.w   TL_ROW(a3)           ; styles, row by row
+.sr:
+        move.w  TL_ROW(a3),d0
+        cmp.w   tf_YSize(a2),d0
+        bhs     .sr_e
+        mulu    TL_STR(a3),d0
+        move.l  TL_BUF(a3),a1
+        add.l   d0,a1                ; a1 = row
+        move.w  TL_STR(a3),d1
+        btst    #1,TL_STY+1(a3)      ; bold: the row ORed with itself shifted by the smear
+        beq.s   .sr_i
+        move.w  tf_BoldSmear(a2),d0
+        beq.s   .sr_i
+        moveq   #1,d2
+        bsr     tl_shr
+.sr_i:
+        btst    #2,TL_STY+1(a3)      ; italic
+        beq.s   .sr_c
+        move.w  tf_Baseline(a2),d0
+        sub.w   TL_ROW(a3),d0        ; d0 = rows above the baseline
+        bmi.s   .sr_il
+        asr.w   #1,d0
+        beq.s   .sr_c
+        moveq   #0,d2
+        bsr     tl_shr
+        bra.s   .sr_c
+.sr_il:
+        neg.w   d0
+        addq.w  #1,d0
+        asr.w   #1,d0
+        bsr     tl_shl
+.sr_c:
+        move.w  TL_PAD(a3),d0        ; pixels left of minX are lost
+        add.w   TL_MINX(a3),d0
+        move.w  d0,d1
+        lsr.w   #3,d1
+        bra.s   .sr_cz
+.sr_cl:
+        clr.b   0(a1,d1.w)
+.sr_cz:
+        dbra    d1,.sr_cl
+        and.w   #7,d0
+        moveq   #-1,d1
+        lsr.b   d0,d1
+        move.w  TL_PAD(a3),d0
+        add.w   TL_MINX(a3),d0
+        lsr.w   #3,d0
+        and.b   d1,0(a1,d0.w)
+        btst    #0,TL_STY+1(a3)      ; underline on row Baseline + 1, if the font has room for it
+        beq.s   .sr_n
+        move.w  tf_Baseline(a2),d0
+        addq.w  #1,d0
+        cmp.w   TL_ROW(a3),d0
+        bne.s   .sr_n
+        addq.w  #1,d0
+        cmp.w   tf_YSize(a2),d0
+        bhi.s   .sr_n
+        move.w  TL_PAD(a3),d0
+        move.w  d0,d1
+        add.w   TL_X0(a3),d0
+        add.w   TL_X1(a3),d1
+        bsr     tl_under
+.sr_n:
+        addq.w  #1,TL_ROW(a3)
+        bra     .sr
+.sr_e:
+        move.l  6*4+TL_FRAME(sp),a1  ; rp
+        move.l  10*4+TL_FRAME(sp),a6 ; GfxBase
+        move.w  TL_PAD(a3),d0
+        add.w   TL_X0(a3),d0
+        move.w  d0,d1
+        lsr.w   #4,d1
+        add.w   d1,d1
+        move.l  TL_BUF(a3),a0
+        add.w   d1,a0                ; template: word of x0
+        and.w   #15,d0               ; xSrc
+        move.w  TL_STR(a3),d1        ; srcMod
+        move.w  TL_CPX(a3),d2
+        add.w   TL_X0(a3),d2         ; xDest
+        move.w  rp_cp_y(a1),d3
+        sub.w   tf_Baseline(a2),d3   ; yDest
+        move.w  TL_X1(a3),d4
+        sub.w   TL_X0(a3),d4         ; xSize
+        move.w  tf_YSize(a2),d5      ; ySize
+        bsr     gfx_BltTemplate
+        move.l  TL_BUF(a3),a1
+        move.l  TL_SIZE(a3),d0
+        move.l  ($4).w,a6
+        jsr     LVO_FREEMEM(a6)
+.tl_ret:
+        lea     TL_FRAME(sp),sp
+        movem.l (sp)+,d2-d7/a1-a4/a6
+        rts
+
+; tl_or(a0 = source row, d0.l = source bit, a1 = destination row, d1.l = destination bit, d2.w = width): ORs the
+; bits, 16 at most at a time (3 bytes read, 3 bytes written). Clobbers d0-d5.
+tl_or:
+        tst.w   d2
+        ble.s   .to_r
+        moveq   #16,d5
+        cmp.w   d5,d2
+        bhs.s   .to_n
+        move.w  d2,d5                ; d5 = bits of this round
+.to_n:
+        move.l  d0,d3
+        lsr.l   #3,d3
+        moveq   #0,d4
+        move.b  0(a0,d3.l),d4
+        lsl.l   #8,d4
+        move.b  1(a0,d3.l),d4
+        lsl.l   #8,d4
+        move.b  2(a0,d3.l),d4
+        lsl.l   #8,d4                ; 24 bits at the top
+        moveq   #7,d3
+        and.w   d0,d3
+        lsl.l   d3,d4                ; first source bit at bit 31
+        moveq   #-1,d3
+        lsr.l   d5,d3
+        not.l   d3
+        and.l   d3,d4                ; d5 bits kept
+        moveq   #7,d3
+        and.w   d1,d3
+        lsr.l   d3,d4
+        move.l  d1,d3
+        lsr.l   #3,d3
+        rol.l   #8,d4
+        or.b    d4,0(a1,d3.l)
+        rol.l   #8,d4
+        or.b    d4,1(a1,d3.l)
+        rol.l   #8,d4
+        or.b    d4,2(a1,d3.l)
+        add.l   d5,d0
+        add.l   d5,d1
+        sub.w   d5,d2
+        bra.s   tl_or
+.to_r:
+        rts
+
+; tl_shr(a1 = row, d0.w = shift, d1.w = stride, d2.w = 0: move, else OR): the row shifted right by d0 bits, 0 bits
+; coming in on the left. Right to left, so each byte is read before it is written. Clobbers d0/d3-d6.
+tl_shr:
+        move.w  d0,d3
+        lsr.w   #3,d3                ; d3 = whole bytes
+        moveq   #7,d4
+        and.w   d0,d4                ; d4 = bits
+        move.w  d1,d6
+        subq.w  #1,d6                ; d6 = destination byte
+.sr_lp:
+        moveq   #0,d5
+        move.w  d6,d0
+        sub.w   d3,d0                ; d0 = source byte
+        bmi.s   .sr_put
+        beq.s   .sr_one
+        move.b  -1(a1,d0.w),d5
+        lsl.w   #8,d5
+.sr_one:
+        move.b  0(a1,d0.w),d5
+        lsr.w   d4,d5
+.sr_put:
+        tst.w   d2
+        bne.s   .sr_or
+        move.b  d5,0(a1,d6.w)
+        bra.s   .sr_nx
+.sr_or:
+        or.b    d5,0(a1,d6.w)
+.sr_nx:
+        dbra    d6,.sr_lp
+        rts
+
+; tl_shl(a1 = row, d0.w = shift, d1.w = stride): the row shifted left by d0 bits, 0 bits coming in on the right.
+; Clobbers d0/d3-d6.
+tl_shl:
+        move.w  d0,d3
+        lsr.w   #3,d3
+        moveq   #7,d4
+        and.w   d0,d4
+        moveq   #0,d6
+.sl_lp:
+        moveq   #0,d5
+        move.w  d6,d0
+        add.w   d3,d0
+        cmp.w   d1,d0
+        bhs.s   .sl_put
+        move.b  0(a1,d0.w),d5
+        lsl.w   #8,d5
+        addq.w  #1,d0
+        cmp.w   d1,d0
+        bhs.s   .sl_sh
+        move.b  0(a1,d0.w),d5
+.sl_sh:
+        lsl.w   d4,d5
+        lsr.w   #8,d5
+.sl_put:
+        move.b  d5,0(a1,d6.w)
+        addq.w  #1,d6
+        cmp.w   d1,d6
+        blo.s   .sl_lp
+        rts
+
+; tl_under(a1 = row, bits d0.w .. d1.w - 1): every clear pixel whose neighbours were clear before is set; the pixel
+; left of the range counts as clear. Clobbers d0/d2-d6.
+tl_under:
+        moveq   #0,d2                ; d2 = previous pixel, before the change
+.tu_lp:
+        cmp.w   d1,d0
+        bge.s   .tu_r
+        move.w  d0,d4
+        lsr.w   #3,d4                ; d4 = byte
+        moveq   #7,d5
+        and.w   d0,d5
+        eor.w   #7,d5                ; d5 = bit
+        btst    d5,0(a1,d4.w)
+        sne     d3                   ; d3 = this pixel
+        tst.w   d5
+        bne.s   .tu_same
+        btst    #7,1(a1,d4.w)
+        bra.s   .tu_nb
+.tu_same:
+        move.w  d5,d6
+        subq.w  #1,d6
+        btst    d6,0(a1,d4.w)
+.tu_nb:
+        sne     d6                   ; d6 = next pixel
+        or.b    d2,d6
+        or.b    d3,d6
+        bne.s   .tu_nx
+        bset    d5,0(a1,d4.w)
+.tu_nx:
+        move.b  d3,d2
+        addq.w  #1,d0
+        bra.s   .tu_lp
+.tu_r:
         rts
 
 ; sr_horiz(rp a1, dx d0 (!= 0), xmin d2, ymin d3, xmax d4, ymax d5): horizontal pass of ScrollRaster. The kept part

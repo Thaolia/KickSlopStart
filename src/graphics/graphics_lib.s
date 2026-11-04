@@ -1881,19 +1881,22 @@ gfx_BltClear:
 .bc_ret:
         rts
 
-; PolyDraw(rp a1, count d0, points a0): Draw to each of the points (pairs of words x, y) from the current
-; position.
+; PolyDraw(rp a1, count d0 (unsigned word), points a0): Draw through its vector (SetFunction honoured) to each of the
+; points (pairs of words x, y) from the current position (spec graphics-line-v34 §9.1).
 gfx_PolyDraw:
-        movem.l d2/a2,-(sp)
+        movem.l d2/a1-a2,-(sp)
         move.l  a0,a2
+        moveq   #0,d2
         move.w  d0,d2
         bra.s   .pd_e
 .pd_l:
         movem.w (a2)+,d0-d1
-        bsr     gfx_Draw
+        move.l  4(sp),a1
+        jsr     LVO_DRAW(a6)
 .pd_e:
-        dbra    d2,.pd_l
-        movem.l (sp)+,d2/a2
+        subq.l  #1,d2
+        bpl.s   .pd_l
+        movem.l (sp)+,d2/a1-a2
         rts
 
 ; ChangeSprite(vp a0, sprite a1, data a2): new image (POS, CTL, 2 words per line, 0, 0), then MoveSprite with the

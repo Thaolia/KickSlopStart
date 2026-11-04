@@ -3,8 +3,11 @@
 #
 # CLEAN-ROOM: these glyphs are AUTHORED HERE (patterns written by hand in this script), NOT extracted from the ROM
 # (the ROM's topaz is proprietary - disassembling/copying it is forbidden). Each glyph = 8 bytes, 1 byte
-# per row (bit 7 = leftmost pixel). Covers printable ASCII 0x20..0x7E; 0x7F -> solid block.
-# Usage: python3 -I tests/mk_font8x8.py > src/graphics/font8x8.s
+# per row (bit 7 = leftmost pixel). Covers printable ASCII 0x20..0x7E; 0x7F -> solid block. Latin-1 0xA0..0xFF:
+# symbols drawn here, accented letters composed from the letters above and the accent marks below.
+# The ROM fonts: topaz 8 (8x8 cells) and topaz 9 (10x9 cells, baseline 6), the latter DERIVED from the same 8x8
+# glyphs by stretching columns 2 and 4 and adding an empty 9th row. Codes 0x80..0x9F and the default glyph share
+# one hollow box. Usage: python3 -I tests/mk_font8x8.py > src/graphics/font8x8.s
 import sys
 
 # Each glyph: 8 rows of 8 columns. '#' = pixel on, '.' = off. Patterns authored by hand.
@@ -107,6 +110,118 @@ G = {
 }
 FULL = ["########"]*8  # 0x7F -> solid block (visible sentinel)
 NOTDEF = ["######..", "#....#..", "#....#..", "#....#..", "#....#..", "#....#..", "######..", "........"]  # outside LoChar..HiChar
+BLANK = ["........"]*8
+
+# Latin-1 symbols, drawn here.
+S = {
+0xA1: ["..##....","........","..##....","..##....","..##....","..##....","..##....","........"],
+0xA2: ["........","..##....",".#####..","##.#....","##.#....",".#####..","..##....","........"],
+0xA3: ["..###...",".##.##..",".##.....","####....",".##.....",".##..#..","######..","........"],
+0xA4: ["........","##...##.",".#####..",".##.##..",".#####..","##...##.","........","........"],
+0xA5: ["##..##..","##..##..",".####...","######..","..##....","######..","..##....","........"],
+0xA6: ["..##....","..##....","..##....","........","..##....","..##....","..##....","........"],
+0xA7: [".####...","##......",".####...","##..##..",".####...","....##..",".####...","........"],
+0xA8: ["##..##..","........","........","........","........","........","........","........"],
+0xA9: [".#####..","#.....#.","#.###.#.","#.#...#.","#.###.#.","#.....#.",".#####..","........"],
+0xAA: [".####...","....##..",".#####..","##..##..",".#####..","........","######..","........"],
+0xAB: ["........","..##.##.",".##.##..","##.##...",".##.##..","..##.##.","........","........"],
+0xAC: ["........","........","######..","....##..","....##..","........","........","........"],
+0xAE: [".#####..","#.....#.","#.##..#.","#.#.#.#.","#.##..#.","#.#.#.#.",".#####..","........"],
+0xAF: ["######..","........","........","........","........","........","........","........"],
+0xB0: [".###....","##.##...",".###....","........","........","........","........","........"],
+0xB1: ["..##....","..##....","######..","..##....","..##....","........","######..","........"],
+0xB2: [".###....","...##...","..##....",".##.....",".####...","........","........","........"],
+0xB3: ["####....","..##....",".###....","...##...","####....","........","........","........"],
+0xB4: ["...##...","..##....","........","........","........","........","........","........"],
+0xB5: ["........","........","##..##..","##..##..","##..##..","##..##..","#####.#.","##......"],
+0xB6: [".######.","####.##.","####.##.",".###.##.","...#.##.","...#.##.","...#.##.","........"],
+0xB7: ["........","........","........","..##....","..##....","........","........","........"],
+0xB8: ["........","........","........","........","........","........","...##...","..##...."],
+0xB9: ["..##....",".###....","..##....","..##....",".####...","........","........","........"],
+0xBA: [".####...","##..##..","##..##..",".####...","........","######..","........","........"],
+0xBB: ["........","##.##...",".##.##..","..##.##.",".##.##..","##.##...","........","........"],
+0xBC: ["#.....#.","#....#..","#...#...","...#.#..","..#.##..",".#.####.","#....#..","........"],
+0xBD: ["#.....#.","#....#..","#...#...","...#.##.","..#...#.",".#...#..","#...###.","........"],
+0xBE: ["##....#.",".#...#..","##..#...","...#.#..","..#.##..",".#.####.","#....#..","........"],
+0xBF: ["..##....","........","..##....",".##.....","##......","##..##..",".####...","........"],
+0xC6: ["..#####.",".##.##..","##..##..","#######.","##..##..","##..##..","##..###.","........"],
+0xD0: ["####....","##.##...","##..##..","####.##.","##..##..","##.##...","####....","........"],
+0xD7: ["........","##...##.",".##.##..","..###...",".##.##..","##...##.","........","........"],
+0xD8: [".####.#.","##..##..","##.###..","######..","###.##..","##..##..","#.####..","........"],
+0xDE: ["##......","#####...","##..##..","##..##..","#####...","##......","##......","........"],
+0xDF: [".####...","##..##..","##.##...","##..##..","##..##..","##.##...","##......","........"],
+0xE6: ["........","........",".##.##..","...##.#.",".######.","##.##...",".##.###.","........"],
+0xF0: ["..##.#..","...##...",".##.##..","....##..",".#####..","##..##..",".####...","........"],
+0xF7: ["........","..##....","........","######..","........","..##....","........","........"],
+0xF8: ["........","......#.",".####...","##.###..","###.##..","##..##..","#.####..","........"],
+0xFE: ["##......","##......","#####...","##..##..","#####...","##......","##......","........"],
+}
+S[0xA0] = BLANK
+S[0xAD] = None   # soft hyphen: same glyph as '-'
+
+# Accent marks: two rows above a lowercase letter (whose rows 0-1 are empty), one row above a capital.
+ACC2 = {'grave': [".##.....","..##...."], 'acute': ["...##...","..##...."], 'circ': ["..##....",".##.##.."],
+        'tilde': [".##.#...","#.##...."], 'diaer': [".##.##..","........"], 'ring': ["..##....",".#..#..."]}
+ACC1 = {'grave': ".##.....", 'acute': "...##...", 'circ': ".####...", 'tilde': ".###.#..", 'diaer': "##..##..",
+        'ring': "..##...."}
+DOTLESS_I = ["........","........",".###....","..##....","..##....","..##....","######..","........"]
+# Capital: the accent on row 0, the letter on rows 1-6 without one of its rows (the one listed, default 1).
+DROP = {'A': 2, 'C': 2, 'O': 2, 'U': 1, 'Y': 3, 'N': 1, 'E': 1, 'I': 1}
+
+def cap(letter, acc):
+    g = G[letter][:7]
+    d = DROP.get(letter, 1)
+    return [ACC1[acc]] + g[:d] + g[d + 1:] + ["........"]
+
+def low(letter, acc):
+    g = DOTLESS_I if letter == 'i' else G[letter]
+    if letter == 'y':                                  # y starts on row 1: one-row accent
+        return [ACC1[acc]] + g[1:]
+    return ACC2[acc] + g[2:]
+
+def cedilla(g):
+    return g[:7] + ["..##...."]
+
+ACCENTED = {
+0xC0: ('A','grave'), 0xC1: ('A','acute'), 0xC2: ('A','circ'), 0xC3: ('A','tilde'), 0xC4: ('A','diaer'),
+0xC5: ('A','ring'), 0xC8: ('E','grave'), 0xC9: ('E','acute'), 0xCA: ('E','circ'), 0xCB: ('E','diaer'),
+0xCC: ('I','grave'), 0xCD: ('I','acute'), 0xCE: ('I','circ'), 0xCF: ('I','diaer'), 0xD1: ('N','tilde'),
+0xD2: ('O','grave'), 0xD3: ('O','acute'), 0xD4: ('O','circ'), 0xD5: ('O','tilde'), 0xD6: ('O','diaer'),
+0xD9: ('U','grave'), 0xDA: ('U','acute'), 0xDB: ('U','circ'), 0xDC: ('U','diaer'), 0xDD: ('Y','acute'),
+}
+
+def latin1(code):
+    if code == 0xC7:
+        return cedilla(G['C'])
+    if code == 0xE7:
+        return cedilla(G['c'])
+    if code == 0xAD:
+        return G['-']
+    if code in S:
+        return S[code]
+    if code in ACCENTED:
+        l, a = ACCENTED[code]
+        return cap(l, a)
+    if code - 0x20 in ACCENTED and code >= 0xE0:       # lowercase counterpart of a capital
+        l, a = ACCENTED[code - 0x20]
+        return low(l.lower(), a)
+    if code == 0xFF:
+        return low('y', 'diaer')
+    raise SystemExit("no glyph for $%02X" % code)
+
+def glyph8(code):
+    if code == 0x7F:
+        return FULL
+    if code < 0x80:
+        return G.get(chr(code), FULL)
+    if code < 0xA0:
+        return NOTDEF
+    return latin1(code)
+
+# topaz 9: 10 columns from the 8 of the cell (columns 2 and 4 doubled), 9 rows (empty last row).
+STRETCH = [0, 1, 2, 2, 3, 4, 4, 5, 6, 7]
+def glyph9(code):
+    return ["".join(r[c] for c in STRETCH) for r in glyph8(code)] + [".........."]
 
 def rowbyte(s):
     b = 0
@@ -115,38 +230,65 @@ def rowbyte(s):
             b |= (0x80 >> i)
     return b
 
+def font(out, name, width, height, glyphfn):
+    """Strike (one slot per distinct glyph, the hollow box shared by 0x80-0x9F and the default) + CharLoc."""
+    slots, index, loc = [], {}, []
+    for code in list(range(0x20, 0x100)) + [None]:
+        g = tuple(NOTDEF_W[width] if code is None else glyphfn(code))
+        if g not in index:
+            index[g] = len(slots)
+            slots.append(g)
+        loc.append(index[g] * width)
+    bits = len(slots) * width
+    mod = ((bits + 15) // 16) * 2
+    out.append("")
+    out.append("; %s_strike: tf_CharData (modulo %s_MOD, %d rows), %d slots of %d pixels." % (name, name.upper(), height, len(slots), width))
+    out.append("                xdef    %s_strike" % name)
+    out.append("                xdef    %s_loc" % name)
+    out.append("%s_MOD EQU     %d" % (name.upper(), mod))
+    out.append("                xdef    %s_MOD" % name.upper())
+    out.append("%s_strike:" % name)
+    for r in range(height):
+        row = [0] * mod
+        for s, g in enumerate(slots):
+            for c in range(width):
+                if g[r][c] == '#':
+                    x = s * width + c
+                    row[x >> 3] |= 0x80 >> (x & 7)
+        for i in range(0, mod, 16):
+            out.append("                dc.b    " + ",".join("$%02X" % b for b in row[i:i + 16]) + ("   ; row %d" % r if i == 0 else ""))
+    out.append("; %s_loc: tf_CharLoc, (bit offset, width) for $20..$FF then the default glyph." % name)
+    out.append("                EVEN")
+    out.append("%s_loc:" % name)
+    for i in range(0, len(loc), 8):
+        out.append("                dc.w    " + ",".join("%d,%d" % (o, width) for o in loc[i:i + 8]))
+
+NOTDEF_W = {8: NOTDEF, 10: ["".join(r[c] for c in STRETCH) for r in NOTDEF] + [".........."]}
+
 def emit():
     out = []
     out.append("; src/graphics/font8x8.s — HAND-AUTHORED 8x8 bitmap font (public domain), GENERATED by")
     out.append("; tests/mk_font8x8.py. CLEAN-ROOM: glyphs authored by hand in the generator, NOT extracted from the")
-    out.append("; ROM (the ROM topaz font is proprietary). Printable ASCII 0x20..0x7F; 8 bytes/glyph (1 byte")
-    out.append("; per row, bit 7 = leftmost pixel). font8x8[(c-0x20)*8 + row]. DO NOT EDIT BY HAND -> regenerate.")
+    out.append("; ROM (the ROM topaz font is proprietary). font8x8: printable ASCII 0x20..0x7F, 8 bytes/glyph (1 byte")
+    out.append("; per row, bit 7 = leftmost pixel), font8x8[(c-0x20)*8 + row]. topaz8/topaz9: strike and CharLoc of the")
+    out.append("; two ROM fonts, codes 0x20..0xFF + default. DO NOT EDIT BY HAND -> regenerate.")
     out.append("")
     out.append("                xdef    font8x8")
     out.append("                EVEN")
     out.append("font8x8:")
     for code in range(0x20, 0x80):
         ch = chr(code)
-        g = FULL if code == 0x7F else G.get(ch)
-        if g is None:
-            g = FULL
-        bytes_ = [rowbyte(r) for r in g]
-        label = ch if 0x20 < code < 0x7f and ch not in (';',) else ("SPC" if code==0x20 else ("DEL" if code==0x7f else hex(code)))
+        bytes_ = [rowbyte(r) for r in glyph8(code)]
         out.append("                dc.b    " + ",".join("$%02X" % b for b in bytes_) + "   ; $%02X" % code + (" '%s'" % ch if (0x21 <= code <= 0x7e and ch != ';') else ""))
-    # Same font in the "strike" format of a TextFont (graphics/text.h): row r = byte r of each glyph
-    # $20..$7F then of the default glyph (outside LoChar..HiChar), side by side; even modulo.
-    glyphs = [FULL if c == 0x7F else G.get(chr(c), FULL) for c in range(0x20, 0x80)] + [NOTDEF]
-    mod = (len(glyphs) + 1) & ~1
-    out.append("")
-    out.append("; topaz8_strike: tf_CharData (modulo TOPAZ8_MOD, 8 rows); glyph n at byte n of each row.")
-    out.append("                xdef    topaz8_strike")
-    out.append("TOPAZ8_MOD      EQU     %d" % mod)
-    out.append("                xdef    TOPAZ8_MOD")
-    out.append("topaz8_strike:")
-    for r in range(8):
-        row = [rowbyte(g[r]) for g in glyphs] + [0] * (mod - len(glyphs))
-        for i in range(0, mod, 16):
-            out.append("                dc.b    " + ",".join("$%02X" % b for b in row[i:i + 16]) + ("   ; row %d" % r if i == 0 else ""))
+    font(out, "topaz8", 8, 8, glyph8)
+    font(out, "topaz9", 10, 9, glyph9)
     return "\n".join(out) + "\n"
 
-sys.stdout.write(emit())
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--preview":
+        for code in range(0x20, 0x100):
+            for fn in (glyph8, glyph9):
+                fn(code)
+        print("ok")
+    else:
+        sys.stdout.write(emit())

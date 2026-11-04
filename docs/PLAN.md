@@ -1040,17 +1040,32 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Text gadgets (2026-11-04)**: ActivateGadget conditions, SELECTED while edited, window activation dropped,
   any-byte insertion, LONGINT filter and conversion, beeps, GADGETUP qualifier, NUMERICPAD on keypad keys
   (`tests/strg_probe.sh`). Open: the 1.3 activation is deferred to the next input event, which is then fed to the
-  editor (ours is immediate); the 1.3 Workbench screen uses topaz 9 (10 px) when there is no system-configuration,
-  our ROM has no topaz 9; the text clear does not write spaces past the NUL as 1.3 does; STRINGCENTER/STRINGRIGHT,
+  editor (ours is immediate); the text clear does not write spaces past the NUL as 1.3 does; STRINGCENTER/STRINGRIGHT,
   GADGHBOX/GADGHIMAGE cursors and the ghost pattern of an edited disabled gadget are not done.
   **Issue #22 (2026-11-04)**: endtask and the end of a BCPL process free the process's segarray (getvec block), as
   1.3 does: a NewShell/EndCLI cycle lost 48 bytes (Shell and Newcon-Handler segarrays). The first cycle still keeps
   `L:Newcon-Handler` loaded in the NEWCON DeviceNode (7504 bytes), as on 1.3 (`docs/analysis/newshell-memory-v34.md`).
   Open: the GV of a handler whose dn_GlobalVec is 0 (makeglobvec) is not freed at its end.
+  **Text and fonts (2026-11-04)**: spec `graphics-text-v34`. Two ROM fonts, topaz 9 (10x9, derived from our 8x8 glyphs)
+  then topaz 8, codes $20-$FF (Latin-1 composed by `tests/mk_font8x8.py`); the Preferences font is the default font
+  from intuition's start (topaz 9 without devs:system-configuration). OpenFont scoring, exact name; CloseFont/AddFont/
+  RemFont/AskSoftStyle/SetSoftStyle as 1.3 (SetSoftStyle returns the SetPatch value). Text: styles, spacing,
+  kerning and other widths drawn through a line buffer and one BltTemplate (bold smear, italic slant, gap
+  underline, JAM2 rectangle = advance extent, truncation at the 1.3 buffer width); the 8-pixel fast path stays.
+  ClearEOL/ClearScreen by RectFill; RectFill honours INVERSVID. `tests/gtext_probe.sh` matches every §10 vector.
+  Open: a removed font replied without a reply port gets NT_REPLYMSG (1.3: NT_FREEMSG, exec ReplyMsg; our boot
+  self-tests rely on NT_REPLYMSG); TmpRas is not used as the line buffer; the 1.3 topaz glyphs are not ours.
+  **Lines (2026-11-04)**: spec `graphics-line-v34`. Draw walks the 1.3 Bresenham (major axis, ties step the minor
+  axis), LinePtrn with the +$1F counter, FRST_DOT and the exact-COMPLEMENT first dot, ONE_DOT, (M+1) mod 1024
+  pixels, and the three V34 layer defects (double counter decrease, clipped-piece phase from linpatcnt, no first dot
+  in clipped pieces); Move and Set*Pen restart the pattern; PolyDraw calls Draw through its vector.
+  `tests/gline_probe.sh` matches §10 except by design: no write outside the BitMap without a layer (clipped), a
+  synchronous CPU Draw (blitter idle on return). Open: rp minterms[] not computed, GfxBase BlitLock (+$AA) not
+  kept, a y-major clipped piece in a hidden buffer uses y - MinY (spec §7.4 deduces + (MinY & 15), not observed).
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
-  in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
-  has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars
-  stay 10 lines whatever the font (measured on 1.3 with topaz 8); menu texts still assume 8-pixel characters.
+  in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: window
+  title bars stay 10 lines whatever the font (measured on 1.3 with topaz 8); menu texts still assume 8-pixel
+  characters.
   **System clock (2026-11-04)**: CIA-A TOD at the measured mains rate, uniqueness counter, fold-over,
   PowerSupplyFrequency, UNIT_VBLANK and the input/intuition clocks at the real VBlank rate (`tests/systime_probe.s`).
   Open: the exec quantum is still counted by our scheduler server, not by timer.device's VBlank server (§3).
