@@ -1821,7 +1821,10 @@ wb_drawicon:
         moveq   #2,d0
         jsr     LVO_SETAPEN(a6)
         move.l  WD_RPORT(a3),a1
-        moveq   #JAM1,d0
+        moveq   #0,d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  WD_RPORT(a3),a1
+        moveq   #JAM2,d0             ; opaque name: it covers an icon drawn earlier (spec §8.5)
         jsr     LVO_SETDRMD(a6)
         move.w  DO_GADGET+GG_WIDTH(a2),d0
         lsr.w   #1,d0
@@ -1830,14 +1833,17 @@ wb_drawicon:
         lsl.w   #2,d1                ; half-width of the text
         sub.w   d1,d0
         move.w  d5,d1
-        add.w   DO_GADGET+GG_HEIGHT(a2),d1
-        add.w   #1+GFX_FONTBASE,d1
+        add.w   DO_GADGET+GG_HEIGHT(a2),d1 ; name right under the image (spec §8.5)
+        add.w   #GFX_FONTBASE,d1
         move.l  WD_RPORT(a3),a1
         jsr     LVO_MOVE(a6)
         move.l  a4,a0
         move.w  d2,d0
         move.l  WD_RPORT(a3),a1
         jsr     LVO_TEXT(a6)
+        move.l  WD_RPORT(a3),a1
+        moveq   #JAM1,d0             ; the other drawings of the Workbench expect JAM1
+        jsr     LVO_SETDRMD(a6)
 .di_sel:
         cmp.w   WBS_SELW(a5),d7
         bne.s   .di_ret

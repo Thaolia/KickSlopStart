@@ -113,7 +113,7 @@ WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD: nesting of it_unclip
 WDX_XMSG        EQU WDX_CLIPNEST+2   ; messages allocated when the pool is all in use (IM_SPECIALLINK chain)
 WDX_SYSGAD      EQU WDX_XMSG+4       ; up to 5 system Gadgets (wn_mksysgads)
 WDX_SIZE        EQU WDX_SYSGAD+5*GG_SIZEOF
-WD_TBARH        EQU 10               ; height of a window's title bar (BorderTop)
+WD_TBARH        EQU 11               ; BorderTop of a titled window: WBorTop 2 + screen font 8 + 1 (intuition-gzz §1; bar on lines 0-9, line 10 blank)
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
 ; CUSTOMBITMAP), the default palette (32 colors, including those of the pointer), draws the title bar (except

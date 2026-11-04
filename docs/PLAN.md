@@ -1133,6 +1133,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   the disk's icon.library, window/layer/port 1,168, arrows 136 kept once), a drawer over a drawer saves no backup,
   and closing both returns everything but the 136 bytes. Still different from 1.3: one IDCMP port per drawer
   (1.3 shares one through ModifyIDCMP) and the 5-message pool reserved in each Window block.
+  **Drawer layout as on 1.3 (2026-11-04)**: a probe of the real 1.3 (workbench-task-v34 §8.5) read BorderTop 11 for
+  a titled window (WBorTop 2 + screen font 8 + 1, as intuition-gzz §1 says), with the bar on lines 0-9 and line 10
+  blank. We used 10, so every drawer's contents sat one line high and the top line of MountMF (CurrentY 74) showed
+  above the scroll bar. `WD_TBARH` is now 11 (the bar drawing already follows BorderTop - 2). Icon names sit right
+  under the image (no extra line) and are drawn JAM2 on pen 0, so Empty's name covers Diverse as on 1.3.
   **vAmiga fast RAM after the insert-disk reboot (2026-11-04)**: vAmiga's RESET instruction does not put Zorro boards
   back into autoconfig mode, so the reboot of `disk_watch` lost the fast RAM. Reset memo at $480 written before that
   RESET and replayed by the expansion init when the chain finds no board (ARCHITECTURE 7ac). Possible follow-ups:
