@@ -2,7 +2,7 @@
 
 > ANALYSIS track ("dirty"). Sources: black-box runs of the real Kickstart 1.3 (`kick34005.A500`, dos 34.3)
 > under Amiberry (`amiberry-session --analysis`), 2026-11-04, on session copies of
-> `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`:
+> the Workbench 1.3.3 boot disk:
 > - a copy whose `S:Startup-Sequence` is reduced to one `echo` line (the Initial CLI then stays at its
 >   prompt; nothing from the Workbench startup is loaded), with a few **modified copies of `C:Echo`** added
 >   (one longword of the hunk file changed, or the file truncated: §3.6);

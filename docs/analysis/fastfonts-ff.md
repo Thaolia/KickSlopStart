@@ -8,7 +8,7 @@ floppy.
 
 ## Provenance
 
-- File: `C:FF` from `assets/test_adf/Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`
+- File: `C:FF` from the Workbench 1.3.3 boot disk
   (read only), extracted by `xdftool … read c/FF`. 3320 bytes, md5
   `d8c8c0034a3f6b6b3f289144a0ac7dfa`. Banner: "FastFonts V1.31 Copyright © 1987 by C.Heath of
   Microsmiths, Inc".

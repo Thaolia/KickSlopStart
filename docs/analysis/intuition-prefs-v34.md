@@ -1,7 +1,7 @@
 # intuition-prefs-v34.md — Preferences: SetPrefs / GetPrefs / GetDefPrefs, system-configuration
 
 > ANALYSIS track ("dirty"). Sources: ROM `assets/kick34005.A500` (intuition 34.3, dos V34 BCPL),
-> file `devs/system-configuration` from `assets/wb133.adf`. Functions covered: SetPrefs (−324),
+> file `devs/system-configuration` from the Workbench 1.3.3 boot disk. Functions covered: SetPrefs (−324),
 > GetPrefs (−132), GetDefPrefs (−126), default prefs table (232 bytes), default pointer
 > image (36 words, not reproduced), TextAttr topaz 8/9, POINTERPOS conversion and PointerTicks
 > accumulator, mouse clamping, NEWPREFS broadcast, intuition init, reading of

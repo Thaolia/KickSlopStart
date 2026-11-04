@@ -3,7 +3,7 @@
 > ANALYSIS track ("dirty"). Source: ROM `assets/kick34005.A500`, module intuition 34.3
 > (OpenWindow, border adjustment by gadgets, gadget context, system gadgets,
 > mouse coordinates, IntuiMessage, rendering of a gadget list, window drawing, AddGadget;
-> no ROM address, removed on 2026-10-29). Practical case: `libs/info.library` from `wb133.adf`.
+> no ROM address, removed on 2026-10-29). Practical case: `libs/info.library` from the Workbench 1.3.3 boot disk.
 > §2.5 (SizeWindow and the window's layers) comes from the black-box probe `tests/resize_probe.s`
 > (harness `tests/resize_probe.sh`, FS-UAE A500 PAL, real ROM, pixel readback of the screen BitMap).
 >

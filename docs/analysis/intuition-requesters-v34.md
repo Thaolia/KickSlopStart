@@ -1,7 +1,7 @@
 # intuition-requesters-v34.md — Request / EndRequest / InitRequester / AutoRequest (intuition 34.3)
 
 > ANALYSIS track ("dirty"). Sources: ROM `assets/kick34005.A500` (intuition 34.3) and
-> `SYS:System/DiskCopy` from `wb133.adf` ("DiskCopy 1.4", `$VER: diskcopy 36.6`). (ROM routine
+> `SYS:System/DiskCopy` from the Workbench 1.3.3 boot disk ("DiskCopy 1.4", `$VER: diskcopy 36.6`). (ROM routine
 > addresses removed from the document: they add nothing to the implementation.)
 >
 > **Legend**: **[O]** observed · **[D]** deduced · **[S]** assumed. Behaviours, ABI

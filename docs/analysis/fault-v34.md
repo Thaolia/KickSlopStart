@@ -1,7 +1,7 @@
 # fault() (BCPL global 104) and C:Fault — V34 / Workbench 1.3.3 behaviour
 
 ANALYSIS track. Sources: ROM `kick34005.A500` (read-only) and `c/Fault`, `c/Copy` extracted from
-`assets/wb133.adf` (Workbench 1.3.3) into a temporary directory. Observable contracts only;
+the Workbench 1.3.3 boot disk into a temporary directory. Observable contracts only;
 no ROM routine address is cited.
 
 Legend: **[O]** observed in the binary · **[D]** deduced (reasoning on what was observed, not executed).

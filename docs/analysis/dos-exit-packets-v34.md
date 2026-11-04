@@ -1,8 +1,8 @@
 # dos-exit-packets-v34.md — dos.library V34: Exit, WaitForChar, GetPacket / QueuePacket
 
 > ANALYSIS track ("dirty"). Sources: ROM `kick34005.A500` (read-only, radare2 static reading of the
-> dos kernel, BLIB, console handler and file system segments) and the Workbench 1.3.3 disk
-> (`assets/wb133.adf`, files extracted to the session scratch directory, scanned for library calls).
+> dos kernel, BLIB, console handler and file system segments) and the Workbench 1.3.3 boot disk
+> (files extracted to the session scratch directory, scanned for library calls).
 > No probe was run for this page, except §1.3 (Exit(−1), black-box probe of 2026-11-02, marked
 > "[O] (probe)"). We describe the **what**: entry/exit registers, fields, packet contents, order of
 > observable effects, return values. No instruction sequence, no ROM address.

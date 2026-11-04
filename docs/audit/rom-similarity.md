@@ -316,9 +316,9 @@ tool, same controls, same `--base tiers`, run by a separate analysis agent.
   the ROM only in the 21 bytes of the version string that `mkrom.py --id` now writes into the ID field at
   `$1C` (`KickSlopStart v0.2.15`); the `cmp` of "Exact commands" therefore reports that field, and nothing else.
 - **Controls.** Same files as in the "Controls" table. The `aros` group comes from
-  `assets/test_adf/bootdisk-amiga-m68k.adf` (`boot/amiga/aros.rom.gz`, `boot/amiga/AROSBootstrap`, `C/`, `Libs/`):
-  it gives exactly the recorded 50 hunks / 1,167,084 bytes. (The other AROS disk of the folder,
-  `aros-bootdisk-amiga-m68k.adf`, is a different build: 1,171,944 bytes.) The `tiers` (21 hunks, 596,048 bytes) and
+  the AROS m68k boot disk (`boot/amiga/aros.rom.gz`, `boot/amiga/AROSBootstrap`, `C/`, `Libs/`):
+  it gives exactly the recorded 50 hunks / 1,167,084 bytes. (The other AROS disk of the folder
+   is a different build: 1,171,944 bytes.) The `tiers` (21 hunks, 596,048 bytes) and
   `commodore` (390 hunks, 413,374 bytes) groups are identical to the original audit.
 - **Reproducibility check.** The three control rows "tiers / commodore / aros vs reference" are identical, figure
   for figure, to the original tables in all three streams. The notable threshold is therefore unchanged:

@@ -2,7 +2,7 @@
 
 > ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (module `wb 34.1 (18 Aug
 > 1987)`, ROMTag, module code and library stubs) and, on the
-> disk `assets/wb133.adf`, `c:LoadWB` (extracted to scratch, to cross-check the interface).
+> Workbench 1.3.3 boot disk, `c:LoadWB` (extracted to scratch, to cross-check the interface).
 > Same conventions as `handlers-v34.md` / `bcpl-runtime-v34.md`: **BPTR** = address/4,
 > "R2" = `pr_Result2`, Process fields: `pr_MsgPort` +$5C, `pr_SegList` +$80, `pr_ConsoleTask`
 > +$A4, `pr_CLI` +$AC, `pr_WindowPtr` +$B8.
@@ -384,7 +384,7 @@ non-zero ⇒ give up (consistent with the "TRUE = give up" correction of step 3)
 
 ## 6. Version / Last Error menus and screen title
 
-Sources: ROM (wb module, landmarks below) and `c:LoadWB` from `wb133.adf` (code hunk no. 4,
+Sources: ROM (wb module, landmarks below) and `c:LoadWB` from the Workbench 1.3.3 boot disk (code hunk no. 4,
 164 bytes = the SetWindowTitles replacement); `libs:version.library` from the same disk (header
 `versionlib 34.34 (05 OCT 1990)`). Globals = the $4F2-byte block (§2.2), addressed below as
 "G+off".
@@ -735,7 +735,7 @@ Reminders:
 
 ## 7. Workbench/Info and info.library
 
-Sources: ROM (Info routine of the wb module) and `libs/info.library` from `wb133.adf`
+Sources: ROM (Info routine of the wb module) and `libs/info.library` from the Workbench 1.3.3 boot disk
 (16 380 bytes, 25 hunks; extracted and relocated in the analysis track's scratch). info.library
 is a **disk binary that we do not reimplement**: this section describes **the calling
 contract** and the **fields** it reads and writes, so that our ROM can call it.

@@ -1,7 +1,7 @@
 # bcpl-runtime-v34.md — BCPL runtime of dos.library V34 (behavioural spec)
 
 > ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (dos 34.3) and the
-> `c:` / `l:Shell-Seg` commands of the disk `assets/wb133.adf` (Workbench 1.3.3).
+> `c:` / `l:Shell-Seg` commands of the Workbench 1.3.3 boot disk.
 > Downstream goal: allow our ROM to run the BCPL commands of Workbench 1.3
 > (AddBuffers, CD, Path, Execute, Run, Wait, Resident, Mount, EndCLI, Shell-Seg).
 >

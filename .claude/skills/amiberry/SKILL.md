@@ -148,7 +148,7 @@ mouse:-900,-400 wait:300
 mouse:591,97 wait:300 dclick wait:8000
 shot:wb_open.png
 EOF
-$A start --name wb --rom build/kick13-prod.rom --adf "assets/test_adf/Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf"
+$A start --name wb --rom build/kick13-prod.rom --adf "<Workbench 1.3.3 boot disk>"
 $A wait-serial wb "Incorrect Revision" 150      # end of the Workbench startup-sequence
 $A input wb /tmp/wb_open.txt && echo "input ok"
 # then Read build/amiberry/sessions/wb/wb_open.png

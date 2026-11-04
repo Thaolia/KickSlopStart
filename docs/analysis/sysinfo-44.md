@@ -10,7 +10,7 @@
 
 | Item | Value |
 |---|---|
-| Floppy | `assets/test_adf/SysInfo.adf` (read-only) |
+| Floppy | SysInfo disk (read-only) |
 | File | `SYS:SysInfo/SysInfo`, 61892 bytes, `$VER: SysInfo 4.4 (11.11.2020)` (T. Geijersson / N. Wilson) |
 | Format | **uncrunched** hunk executable: 7 hunks (CODE 0x8858, CODE 0x1398, CODE 0x3F4, DATA 0x38C4, DATA chip 0x534, BSS 0x20C, BSS chip 0x2564) |
 | Tools | `xdftool read`, `hunktool info`, flat relocation (local Python script), `r2 -a m68k` |

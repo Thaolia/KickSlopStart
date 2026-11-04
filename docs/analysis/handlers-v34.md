@@ -1,7 +1,7 @@
 # handlers-v34.md — Initial DosList, start of the handlers, "file" globals (dos V34)
 
-> ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (dos 34.3) and, on the disk
-> `assets/wb133.adf` (Workbench 1.3.3), `c:MakeDir`, `c:Assign`, `c:Delete`, `c:Rename`,
+> ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (dos 34.3) and, on the Workbench 1.3.3
+> boot disk, `c:MakeDir`, `c:Assign`, `c:Delete`, `c:Rename`,
 > `l:Ram-Handler`, `l:Newcon-Handler`, `l:Aux-Handler`, `l:Port-Handler` (extracted into scratch).
 > Complements `bcpl-runtime-v34.md` (§2, §8, §13) — same conventions: **BPTR** = address/4,
 > **BSTR** = BPTR of a string with a length byte, **taskid** = address (APTR) of the MsgPort of a

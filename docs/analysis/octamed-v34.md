@@ -5,7 +5,7 @@
 >   **executed** under FS-UAE (A500, 512K chip + 512K slow) — no reading of its code was
 >   needed for this document: everything concerning the ROM is **observed** (screenshots, public
 >   structures read back from memory by the FS-UAE debugger afterwards);
-> - floppy `OctaMED Professional v4.00 (1992)(RBF Software)[a].adf` (working copy; the original
+> - OctaMED Professional v4.00 floppy (working copy; the original
 >   is not modified). Program `OctaMED` (143,668 bytes) and `c/LoadWB` (1,136 bytes): third-party software,
 >   unpacked / disassembled to find out **which public functions they call and with which
 >   arguments**.

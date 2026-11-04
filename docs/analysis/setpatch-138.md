@@ -8,7 +8,7 @@ analysis) without replacing it.
 
 ## Provenance
 
-- File: `C:SetPatch_1.38` from `assets/test_adf/SysInfo.adf` (read only), extracted with
+- File: `C:SetPatch_1.38` from the SysInfo disk (read only), extracted with
   `xdftool … read c/SetPatch_1.38` into a scratch directory. 5964 bytes, md5
   `b78212216d1ddac4901d72199981b942`, version string "SetPatch 1.38 (24-Sep-90)".
 - LOADSEG hunk format, 35 hunks. I relocated the hunks to a fictitious base with a Python script

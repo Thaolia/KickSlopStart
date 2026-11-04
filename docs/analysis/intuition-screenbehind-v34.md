@@ -9,7 +9,7 @@
 ## 1. Setup
 
 - A500, 68000, 512 KB chip + 512 KB slow, PAL, not cycle-exact. Disk
-  `SimCity v1.2 (1990)(Infogrames)[cr RZR].adf`: RAZOR cracktro (left click), boot to the Workbench 1.3,
+  of SimCity v1.2 (Infogrames): RAZOR cracktro (left click), boot to the Workbench 1.3,
   open the `SimCity1.2` disk, double-click the `SimCity` icon.
 - During the load, a host script polled through the Amiberry IPC socket, about 10 times per second:
   an IPC screenshot; the screen list (IntuitionBase found by name in exec's LibList, `FirstScreen` at

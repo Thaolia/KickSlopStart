@@ -53,7 +53,7 @@ body:
     attributes:
       label: Program and disk image
       description: Program name, exact disk image name and where it comes from.
-      placeholder: Holiday Lemmings 1993, "HolidayLemmings93.adf"
+      placeholder: Holiday Lemmings 1993, game disk
     validations:
       required: true
   - type: textarea

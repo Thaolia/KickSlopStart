@@ -1,6 +1,6 @@
-# preferences-13.md — SYS:Prefs/Preferences (wb133.adf): file format and start-up
+# preferences-13.md — SYS:Prefs/Preferences (Workbench 1.3.3 disk): file format and start-up
 
-> ANALYSIS track ("dirty"). Source: `Prefs/Preferences` from `assets/wb133.adf` (56,180
+> ANALYSIS track ("dirty"). Source: `Prefs/Preferences` from the Workbench 1.3.3 boot disk (56,180
 > bytes, 03-10-1990), extracted into the analysis track's scratch area, inspected with `hunktool` and a
 > hunk parser, then relocated flat for reading. Public rules and structures
 > only, no instruction sequence copied.

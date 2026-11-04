@@ -1,6 +1,6 @@
 # caesar-boot.md — Caesar (Impressions) [cr FLT]: `caesar.boot` and `flt.exe`
 
-> ANALYSIS track ("dirty"). Source: `assets/test_adf/Caesar (1992)(Impressions)[cr FLT].adf`,
+> ANALYSIS track ("dirty"). Source: a Caesar (Impressions) game disk,
 > files extracted by a tolerant OFS reader (file header blocks 899 and 966). Disassembled
 > with r2. `flt.exe` is packed: it was unpacked offline, in Python, by reproducing the
 > unpacker. ROM functions concerned: graphics 34 (VBlank server, construction of copinit).

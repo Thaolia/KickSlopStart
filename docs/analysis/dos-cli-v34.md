@@ -2,7 +2,7 @@
 
 > ANALYSIS track ("dirty"). Source: black-box run of the real Kickstart 1.3 (`kick34005.A500`) under
 > Amiberry (`amiberry-session --analysis`), 2026-11-02, for GitHub issue #13. Disk:
-> `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf` (session copy), 512 KB chip + 512 KB
+> Workbench 1.3.3 boot disk (session copy), 512 KB chip + 512 KB
 > slow RAM, no fast RAM, default (non cycle-exact) Amiberry settings. Every figure below was read on
 > an emulator screenshot. No ROM content, address or instruction is given.
 >

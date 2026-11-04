@@ -1,6 +1,6 @@
 # SetPatch 1.38 (Workbench 1.3.3) — disk.resource, layers and related patches
 
-**ANALYSIS** track. Source: `C/SetPatch` extracted from a **copy** of `assets/wb133.adf`
+**ANALYSIS** track. Source: `C/SetPatch` extracted from a **copy** of the Workbench 1.3.3 boot disk
 (`xdftool … read C/SetPatch`, 5964 bytes, 35 hunks, version string "SetPatch 1.38 (24-Sep-90)").
 Hunks relocated to a dummy base, then disassembled with radare2 (m68k). The Kickstart ROM was **not**
 opened. This document describes **behaviours** (vectors touched, offsets read/written, expectations);

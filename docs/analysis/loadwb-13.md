@@ -3,7 +3,7 @@
 > ANALYSIS track ("dirty"). Sources:
 > - Monkey Island disk, disk 1/4 [cr Defjam]: `c/loadwb` (header block 891), `c/endcli` (block
 >   903), `s/startup-sequence` (block 997);
-> - `assets/wb133.adf`: `C:LoadWB` (block 1039), `C:EndCLI` (block 979);
+> - Workbench 1.3.3 boot disk: `C:LoadWB` (block 1039), `C:EndCLI` (block 979);
 > - ROM `kick34005.A500`: CLI loop in the BCPL section of dos, workbench.task.
 >
 > Files extracted by the tolerant OFS reader, relocated flat at $100000 and compared byte by
