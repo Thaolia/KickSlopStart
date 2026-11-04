@@ -587,6 +587,20 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7v) **console.device window units: the full CSI set** (2026-11-04, spec `console-keymap-v34.md` §3, §4). The
+  parser follows the §3.2 automaton: ESC and ESC intermediates, ESC Fe as its C1 byte, CSI with 24 parameters (absent
+  = -5, `<=>?` = -1..-4 counted negatively, `:` ignored), intermediates, and abandon with the byte read again
+  (CU_AGAIN). Sequences: CUU/CUD/CUF/CUB/CNL/CPL with the ASM/AWM rules, CUP, CHT/CBT and HT/HTS/CTC/TBC on the
+  cu_TabStops list, ED/EL, IL/DL, ICH/DCH, SU/SD, SM/RM (cu_Modes LNM/ASM/AWM, default 00 00 70), the whole SGR table
+  (bold/italic/underline as soft styles, 2 = pen 2, 7 = INVERSVID, 8 = Mask 0, pens, 0 = reset), DSR 6n, page/line
+  length t/u, origins x/y, raw-event flags {/}, cursor SP p, bounds report q, BEL (DisplayBeep), SO/SI, VT, IND,
+  NEL, RI, ESC c. Cells take the window font (TxWidth + TxSpacing, TxHeight, baseline), origins 0 in a GIMMEZEROZERO
+  window; the clearing colour is BPen, or 0 in inverse video. The input handler turns events of the requested
+  classes into raw reports (CSI class;subclass;code;qualifier;x;y;seconds;microseconds |), truncated byte by byte
+  when the buffer is full. Checked with `tests/con_probe.s` on our ROM (`CON_ROM=build/kick13-prod.rom
+  tests/con_probe.sh`): positions of the §8 vectors, modes `08 00 00` / `06 00 78`, reports; Ed 1.14 edits its file.
+  Kept: the lazy automatic wrap (the cursor waits beyond XMax), the lenient `CSI q` without SPACE (Ed), the ConUnit
+  copy of the RastPort state (cu_Mask..cu_TxSpacing) is not maintained.
   (7u) **Screen font, BarHeight, IntuiTextLength** (2026-11-04, spec `intuition-screens-v34.md` §1.2, §2.5).
   OpenScreen (`sc_font`) opens NewScreen.Font, else intuition's default TextAttr (IB_TATTR), from graphics.library,
   falls back to the default one when it cannot, sets it with its soft style in the screen's RastPort and the bar

@@ -1006,6 +1006,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
+  **Console CSI (2026-11-04)**: the §3 automaton and sequences, tab stops, modes, full SGR, font-sized cells, DSR and
+  raw-event reports (`tests/con_probe.s` on our ROM). Open: italic is not drawn by Text; MULTIBROADCAST raw events
+  go to the active unit only; the RastPort copy in the ConUnit is not kept; IECLASS_SIZEWINDOW does not recompute
+  the geometry yet.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
   has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars

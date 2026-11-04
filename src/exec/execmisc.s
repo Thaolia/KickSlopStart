@@ -800,7 +800,7 @@ exec_SetExcept:
         and.l   d2,d1
         or.l    d1,d0
         move.l  d0,TC_SIGEXCEPT(a0)
-        bsr     task_excpending
+        jsr     task_excpending      ; (other object, too far for a 16-bit bsr)
         move.l  d2,d0
         move.l  (sp)+,d2
         rts

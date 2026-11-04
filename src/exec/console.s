@@ -10,7 +10,8 @@
 ;
 ; Scope #3a: WRITE rendering proven by READBACK of the bitplane (headless, serial marker "CONSOLE WRITE OK"); the
 ; ON-SCREEN rendering (pointing the Copper at this bitplane) and keyboard reading (#3b, via input.device) are separate.
-; Accepted deviations: no scrolling (clamped at the bottom), no CSI/ANSI sequences, no visible cursor.
+; That shared-bitplane path (no window) keeps those limits: no scrolling, no CSI, no cursor. Window units (OpenDevice
+; with a Window) follow docs/analysis/console-keymap-v34.md: see "window units" below.
 ; HAND-AUTHORED 8x8 font (public domain, tests/mk_font8x8.py) — NEVER the ROM's topaz (clean-room).
 ; IMPLEMENTATION track ("clean"): AutoDocs console.device + public NDK includes. NO ROM reading.
 
@@ -562,13 +563,17 @@ console_CDInputHandler:
         rts
 
 ; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): handler registered on input.device via
-; IND_ADDHANDLER. Each RAWKEY is converted through the keymap of the unit whose window is active (the default keymap
+; IND_ADDHANDLER. An event whose class the active unit asked for with CSI n { becomes a raw report (§4)
+; CSI class;subclass;code;qualifier;x;y;seconds;microseconds | in the read buffer, truncated if it does not fit, and is
+; not cooked. Each other RAWKEY is converted through the keymap of the unit whose window is active (the default keymap
 ; otherwise); the bytes go into the read buffer only if they all fit, then a waiting CMD_READ is served. Returns
 ; d0 = unchanged list (pass-through). Preserves d2-d7/a2-a6.
-CIH_KEYMAP      EQU 16                   ; frame: conversion buffer (16 bytes), copy of the struct KeyMap (32 bytes)
+CIH_KEYMAP      EQU 16                   ; frame: conversion buffer (16 bytes), copy of the struct KeyMap (32 bytes),
+CIH_RAW         EQU CIH_KEYMAP+32        ; raw report (96 bytes)
+CIH_SIZE        EQU CIH_RAW+96
 console_input_handler:
         movem.l d2-d4/a2-a3/a6,-(sp)
-        lea     -(CIH_KEYMAP+32)(sp),sp
+        lea     -CIH_SIZE(sp),sp
         move.l  a0,d3                ; d3 = original list (pass-through return)
         move.l  a1,a2                ; a2 = console base
         move.l  a0,a3                ; a3 = current event
@@ -576,6 +581,8 @@ console_input_handler:
 .cih_loop:
         move.l  a3,d0
         beq     .cih_done
+        bsr     con_rawwanted
+        bne     .cih_raw
         cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
         bne     .cih_next
         ; A CON: handler that preempts this task can CloseDevice and free the unit: its keymap is copied with
@@ -615,10 +622,96 @@ console_input_handler:
 .cih_next:
         move.l  IE_NEXTEVENT(a3),a3
         bra     .cih_loop
+.cih_raw:
+        lea     CIH_RAW(sp),a0
+        bsr     con_rawreport        ; a0 = end of the report
+        lea     CIH_RAW(sp),a1
+        move.l  a0,d4
+        sub.l   a1,d4                ; d4 = its length
+.cih_rawpush:                        ; byte by byte: what does not fit is lost (truncated report)
+        move.l  a1,-(sp)
+        move.l  a1,a0
+        moveq   #1,d2
+        bsr     con_push
+        move.l  (sp)+,a1
+        beq.s   .cih_rawend
+        addq.l  #1,a1
+        subq.l  #1,d4
+        bne.s   .cih_rawpush
+.cih_rawend:
+        bsr     con_servereads
+        bra.s   .cih_next
 .cih_done:
         move.l  d3,d0                ; return the original list (pass-through)
-        lea     CIH_KEYMAP+32(sp),sp
+        lea     CIH_SIZE(sp),sp
         movem.l (sp)+,d2-d4/a2-a3/a6
+        rts
+
+; con_rawwanted(a3 = event, a2 = base, a6 = SysBase) -> Z = 0 if the active console unit reports its class raw
+; (cu_RawEvents bit, classes 0..18). Clobbers d0/d1/a0.
+con_rawwanted:
+        moveq   #0,d1
+        move.b  IE_CLASS(a3),d1
+        cmp.w   #18,d1
+        bhi.s   .rw_no
+        addq.b  #1,EB_IDNEST(a6)     ; (the unit can be closed by a preempting task)
+        move.w  #INTF_INTEN,INTENA
+        bsr     con_target
+        beq.s   .rw_off
+        move.l  d0,a0
+        lea     CU_RAWEV(a0),a0
+        move.w  d1,d0
+        lsr.w   #3,d0
+        and.w   #7,d1
+        btst    d1,0(a0,d0.w)
+        sne     d1
+        bra.s   .rw_on
+.rw_off:
+        moveq   #0,d1
+.rw_on:
+        subq.b  #1,EB_IDNEST(a6)
+        bge.s   .rw_ret
+        move.w  #$C000,INTENA        ; SETCLR + INTEN
+.rw_ret:
+        tst.b   d1
+        rts
+.rw_no:
+        moveq   #0,d1
+        rts
+
+; con_rawreport(a3 = event, a0 = buffer) -> a0 = end of CSI class;subclass;code;qualifier;x;y;seconds;microseconds |
+; (decimal, x and y unsigned, bit 31 of the time cleared). Clobbers d0/d1.
+con_rawreport:
+        move.b  #$9B,(a0)+
+        moveq   #0,d0
+        move.b  IE_CLASS(a3),d0
+        bsr.s   .rr_num
+        moveq   #0,d0
+        move.b  IE_SUBCLASS(a3),d0
+        bsr.s   .rr_num
+        moveq   #0,d0
+        move.w  IE_CODE(a3),d0
+        bsr.s   .rr_num
+        moveq   #0,d0
+        move.w  IE_QUALIFIER(a3),d0
+        bsr.s   .rr_num
+        moveq   #0,d0
+        move.w  IE_X(a3),d0
+        bsr.s   .rr_num
+        moveq   #0,d0
+        move.w  IE_Y(a3),d0
+        bsr.s   .rr_num
+        move.l  IE_TIMESTAMP(a3),d0
+        bclr    #31,d0
+        bsr.s   .rr_num
+        move.l  IE_TIMESTAMP+4(a3),d0
+        bclr    #31,d0
+        bsr     cu_dec
+        move.b  #'|',(a0)+
+        rts
+.rr_num:
+        bsr     cu_dec
+        move.b  #';',(a0)+
         rts
 
 ; con_servereads(a2 = base): if a CMD_READ is waiting and the read buffer has bytes, fills it, unhooks it
@@ -762,13 +855,12 @@ console_gfxname:
         EVEN
 
 ; === window units (ConUnit): rendering into the window's RastPort via graphics.library ===
-; Text area = inside of the window (borders excluded), 8x8 cells. Controls: BEL ignored, BS, TAB (every
-; 8), LF (with return to column 0), VT, FF (clears), CR, ESC c (resets), $84 IND, $85 NEL, $8D RI. CSI
-; (ESC [ or $9B): A B C D E F (movements), H f (position), J K (erasures), L M (line insertion / deletion),
-; m (pens 30-37/40-47, inverse 7, 0 = default: text pen 2, background 0), SPACE p (cursor visible or
-; not), q (window bounds report into the read stream), @ / P (insertion / deletion of characters: the rest of
-; the line shifts, ScrollRaster); t, u, x, y ignored. Automatic line wrap when writing beyond the last column, one-line scroll at the bottom of the
-; area. Cursor: inverted cell (COMPLEMENT mode), removed before each write and redrawn afterwards.
+; Behaviour of docs/analysis/console-keymap-v34.md §3: cells of the window font (TxWidth + TxSpacing x TxHeight), the
+; byte automaton of §3.2 (ESC, ESC intermediates, CSI with up to 24 parameters, defaults, < = > ? markers,
+; intermediates, sequences abandoned and the byte read again), the controls of §3.3, tab stops (§3.4), the CSI
+; sequences of §3.5, ESC c (§3.6), SGR (§3.7), modes LNM/ASM/AWM, reports into the read stream (§4: CSI 6n, window
+; bounds, raw events). Automatic wrap is lazy: the cursor waits beyond XMax until the next character. Cursor: cell
+; complemented (COMPLEMENT RectFill), removed before each write and redrawn afterwards.
 CU_WINDOW       EQU 34               ; struct ConUnit (devices/conunit.h)
 CU_XCP          EQU 38
 CU_YCP          EQU 40
@@ -780,70 +872,177 @@ CU_XRORIGIN     EQU 50
 CU_YRORIGIN     EQU 52
 CU_XREXTANT     EQU 54
 CU_YREXTANT     EQU 56
+CU_XCCP         EQU 62
+CU_YCCP         EQU 64
+CU_KEYMAP       EQU 66               ; cu_KeyMapStruct: the unit's struct KeyMap
+CU_TABS         EQU 98               ; cu_TabStops[80]: increasing, $FFFF ends the list when it is not full
 CU_FGPEN        EQU 259
 CU_BGPEN        EQU 260
-CU_ESC          EQU 296              ; private: 0 normal, 1 after ESC, 2 inside a CSI
-CU_NPAR         EQU 297              ; private: index of the current CSI parameter (0..1)
-CU_PSEEN        EQU 298              ; private: a digit has been read for parameter 0
-CU_INTER        EQU 299              ; private: CSI intermediate byte ($20..$2F)
-CU_PAR0         EQU 300              ; private: CSI parameters
-CU_PAR1         EQU 302
+CU_MODES        EQU 290              ; cu_Modes[3]: bit n in byte n/8; byte 2: LNM $10, ASM $20, AWM $40
+CU_RAWEV        EQU 293              ; cu_RawEvents[3]: bit n = IECLASS n reported raw
+CU_ESC          EQU 296              ; private: 0 normal, 1 after ESC, 2 inside a CSI, 3 ESC intermediates
+CU_NPAR         EQU 297              ; private: index of the current CSI parameter (0..23, 24 = the rest is lost)
+CU_NINT         EQU 298              ; private: number of CSI intermediates
+CU_INTER        EQU 299              ; private: first CSI intermediate byte ($20..$2F)
+CU_STYLE        EQU 300              ; private: SGR soft style (FSF_BOLD 2, FSF_ITALIC 4, FSF_UNDERLINED 1)
+CU_SO           EQU 301              ; private: shifted set (SO): $20-$7F shown as byte | $80
+CU_CONCEAL      EQU 302              ; private: SGR 8, RastPort Mask 0
+CU_AGAIN        EQU 303              ; private: the byte just given to cu_ctl must be read again
 CU_CUROFF       EQU 304              ; private: cursor hidden (CSI 0 SPACE p)
 CU_CURVIS       EQU 305              ; private: cursor currently drawn
-CU_INV          EQU 306              ; private: inverse video (CSI 7 m)
+CU_INV          EQU 306              ; private: inverse video (SGR 7)
 CU_NEXT         EQU 308              ; private: next unit (CONB_UNITS list)
-CU_KEYMAP       EQU 66               ; cu_KeyMapStruct (devices/conunit.h): the unit's struct KeyMap
 CU_BASE         EQU 312              ; private: console base (cu_write reuses a2)
-CU_SIZE         EQU 316
+CU_PARS         EQU 316              ; private: 24 CSI parameters (words, CU_PDEF = absent)
+CU_FIXCOL       EQU 364              ; private: line length fixed by CSI u (0 = from the window)
+CU_FIXROW       EQU 366              ; private: page length fixed by CSI t (0 = from the window)
+CU_FIXXO        EQU 368              ; private: XROrigin fixed by CSI x (-1 = from the window)
+CU_FIXYO        EQU 370              ; private: YROrigin fixed by CSI y (-1 = from the window)
+CU_SIZE         EQU 372
+CU_NTABS        EQU 80
+CU_NPARS        EQU 24
+CU_PDEF         EQU -5               ; absent parameter
 CU_DEFFG        EQU 2                ; default text pen: black on the green background (project theme; 1.3: 1)
+CUM_LNM         EQU 4                ; bits of byte 2 of cu_Modes
+CUM_ASM         EQU 5
+CUM_AWM         EQU 6
+LVO_DISPLAYBEEP EQU -96             ; intuition
 
-; cu_init(a0 = cleared ConUnit, a1 = Window): bounds of the text area from the window geometry.
+; cu_init(a0 = cleared ConUnit, a1 = Window): modes LNM/ASM/AWM, default tab stops and pens, automatic geometry.
 ; Preserves everything except d0/d1.
 cu_init:
-        move.l  a1,CU_WINDOW(a0)
-        move.w  #GFX_FONTW,CU_XRSIZE(a0)
-        move.w  #GFX_FONTH,CU_YRSIZE(a0)
+        move.l  a5,-(sp)
+        move.l  a0,a5
+        move.l  a1,CU_WINDOW(a5)
+        move.b  #$70,CU_MODES+2(a5)
+        move.w  #-1,CU_FIXXO(a5)
+        move.w  #-1,CU_FIXYO(a5)
+        move.b  #CU_DEFFG,CU_FGPEN(a5)
+        bsr.s   cu_deftabs
+        bsr.s   cu_geom
+        move.l  a5,a0
+        move.l  (sp)+,a5
+        rts
+
+; cu_deftabs(a5): tab stops 0, 8, ..., 632. Clobbers d0/d1/a0.
+cu_deftabs:
+        lea     CU_TABS(a5),a0
         moveq   #0,d0
+        moveq   #CU_NTABS-1,d1
+.dt_lp:
+        move.w  d0,(a0)+
+        addq.w  #8,d0
+        dbra    d1,.dt_lp
+        rts
+
+; cu_geom(a5): text area from the window and its RastPort font (§3.9): XRSize = TxWidth + TxSpacing, YRSize = TxHeight,
+; origins at the borders (0 in a GIMMEZEROZERO window) unless CSI x / y, XMax / YMax from the useful size unless CSI u / t.
+; Preserves everything except d0/d1.
+cu_geom:
+        movem.l d2/a0-a1,-(sp)
+        move.l  CU_WINDOW(a5),a1
+        moveq   #GFX_FONTW,d0        ; no RastPort yet: the 8 x 8 ROM font
+        moveq   #GFX_FONTH,d1
+        move.l  WD_RPORT(a1),d2
+        beq.s   .gm_sz
+        move.l  d2,a0
+        move.w  rp_TxWidth(a0),d0
+        add.w   rp_TxSpacing(a0),d0
+        move.w  rp_TxHeight(a0),d1
+.gm_sz:
+        tst.w   d0
+        bgt.s   .gm_w
+        moveq   #1,d0
+.gm_w:
+        move.w  d0,CU_XRSIZE(a5)
+        tst.w   d1
+        bgt.s   .gm_h
+        moveq   #1,d1
+.gm_h:
+        move.w  d1,CU_YRSIZE(a5)
+        moveq   #0,d0                ; automatic origins
+        moveq   #0,d1
+        btst    #2,WD_FLAGS+2(a1)    ; GIMMEZEROZERO ($0400)
+        bne.s   .gm_gzz
         move.b  WD_BORDERLEFT(a1),d0
-        move.w  d0,CU_XRORIGIN(a0)
-        move.b  WD_BORDERTOP(a1),d0
-        move.w  d0,CU_YRORIGIN(a0)
-        move.w  WD_WIDTH(a1),d0
-        moveq   #0,d1
-        move.b  WD_BORDERLEFT(a1),d1
-        sub.w   d1,d0
-        move.b  WD_BORDERRIGHT(a1),d1
-        sub.w   d1,d0
-        asr.w   #3,d0
-        subq.w  #1,d0
-        bpl.s   .ci_x
-        moveq   #0,d0
-.ci_x:
-        move.w  d0,CU_XMAX(a0)
-        addq.w  #1,d0
-        lsl.w   #3,d0
-        add.w   CU_XRORIGIN(a0),d0
-        subq.w  #1,d0
-        move.w  d0,CU_XREXTANT(a0)
-        move.w  WD_HEIGHT(a1),d0
-        moveq   #0,d1
         move.b  WD_BORDERTOP(a1),d1
-        sub.w   d1,d0
-        move.b  WD_BORDERBOTTOM(a1),d1
-        sub.w   d1,d0
-        asr.w   #3,d0
-        subq.w  #1,d0
-        bpl.s   .ci_y
+.gm_gzz:
+        tst.w   CU_FIXXO(a5)
+        bmi.s   .gm_xo
+        move.w  CU_FIXXO(a5),d0
+.gm_xo:
+        tst.w   CU_FIXYO(a5)
+        bmi.s   .gm_yo
+        move.w  CU_FIXYO(a5),d1
+.gm_yo:
+        move.w  d0,CU_XRORIGIN(a5)
+        move.w  d1,CU_YRORIGIN(a5)
+        move.w  WD_WIDTH(a1),d0      ; useful width
+        moveq   #0,d2
+        move.b  WD_BORDERRIGHT(a1),d2
+        sub.w   d2,d0
+        sub.w   CU_XRORIGIN(a5),d0
+        btst    #2,WD_FLAGS+2(a1)
+        beq.s   .gm_uw
+        move.b  WD_BORDERLEFT(a1),d2
+        sub.w   d2,d0
+.gm_uw:
+        tst.w   CU_FIXCOL(a5)
+        beq.s   .gm_ac
+        move.w  CU_FIXCOL(a5),d0
+        bra.s   .gm_xm
+.gm_ac:
+        ext.l   d0
+        bpl.s   .gm_dx
         moveq   #0,d0
-.ci_y:
-        move.w  d0,CU_YMAX(a0)
-        addq.w  #1,d0
-        lsl.w   #3,d0
-        add.w   CU_YRORIGIN(a0),d0
+.gm_dx:
+        divu    CU_XRSIZE(a5),d0
+.gm_xm:
         subq.w  #1,d0
-        move.w  d0,CU_YREXTANT(a0)
-        move.b  #CU_DEFFG,CU_FGPEN(a0)
-        clr.b   CU_BGPEN(a0)
+        bpl.s   .gm_x0
+        moveq   #0,d0
+.gm_x0:
+        move.w  d0,CU_XMAX(a5)
+        addq.w  #1,d0
+        mulu    CU_XRSIZE(a5),d0
+        add.w   CU_XRORIGIN(a5),d0
+        subq.w  #1,d0
+        move.w  d0,CU_XREXTANT(a5)
+        move.w  WD_HEIGHT(a1),d0     ; useful height
+        moveq   #0,d2
+        move.b  WD_BORDERBOTTOM(a1),d2
+        sub.w   d2,d0
+        btst    #2,WD_FLAGS+2(a1)
+        beq.s   .gm_nh
+        move.b  WD_BORDERTOP(a1),d2
+        sub.w   d2,d0
+        sub.w   CU_XRORIGIN(a5),d0   ; V34 subtracts the horizontal origin here (§3.9)
+        bra.s   .gm_uh
+.gm_nh:
+        sub.w   CU_YRORIGIN(a5),d0
+.gm_uh:
+        tst.w   CU_FIXROW(a5)
+        beq.s   .gm_ar
+        move.w  CU_FIXROW(a5),d0
+        bra.s   .gm_ym
+.gm_ar:
+        ext.l   d0
+        bpl.s   .gm_dy
+        moveq   #0,d0
+.gm_dy:
+        divu    CU_YRSIZE(a5),d0
+.gm_ym:
+        subq.w  #1,d0
+        bpl.s   .gm_y0
+        moveq   #0,d0
+.gm_y0:
+        move.w  d0,CU_YMAX(a5)
+        addq.w  #1,d0
+        mulu    CU_YRSIZE(a5),d0
+        add.w   CU_YRORIGIN(a5),d0
+        subq.w  #1,d0
+        move.w  d0,CU_YREXTANT(a5)
+        movem.l (sp)+,d2/a0-a1
         rts
 
 ; cu_write(a0 = ConUnit, a4 = data, d4 = length, a2 = console base): interprets the stream in the window.
@@ -854,34 +1053,46 @@ cu_write:
         move.l  CONB_GFXBASE(a2),a6  ; a6 = GfxBase
         move.l  CU_WINDOW(a5),a0
         move.l  WD_RPORT(a0),a3      ; a3 = RastPort
-        move.l  a3,a1
-        moveq   #JAM2,d0
-        jsr     LVO_SETDRMD(a6)
         bsr     cu_setpens
         bsr     cu_curoff
 .cw_lp:
         tst.l   d4
-        beq.s   .cw_end
+        beq     .cw_end
         tst.b   CU_ESC(a5)
         bne.s   .cw_ctl
         move.b  (a4),d0
         bsr     cu_isprint
         beq.s   .cw_print
 .cw_ctl:
-        move.b  (a4)+,d0
-        subq.l  #1,d4
+        move.b  (a4),d0
         bsr     cu_ctl
+        tst.b   CU_AGAIN(a5)
+        beq.s   .cw_next
+        clr.b   CU_AGAIN(a5)         ; sequence abandoned: the byte is read again in the normal state
+        bra.s   .cw_lp
+.cw_next:
+        addq.l  #1,a4
+        subq.l  #1,d4
         bra.s   .cw_lp
 .cw_print:
-        move.w  CU_XCP(a5),d0        ; column beyond the last one: line wrap before writing
-        cmp.w   CU_XMAX(a5),d0
+        move.w  CU_XCP(a5),d0        ; column beyond the last one: line wrap before writing (AWM), or the
+        cmp.w   CU_XMAX(a5),d0       ; last column is written again (no AWM)
         ble.s   .cw_fit
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        beq.s   .cw_noawm
         clr.w   CU_XCP(a5)
         bsr     cu_lf
+        bra.s   .cw_fit
+.cw_noawm:
+        move.w  CU_XMAX(a5),CU_XCP(a5)
 .cw_fit:
         move.w  CU_XMAX(a5),d3
         sub.w   CU_XCP(a5),d3
         addq.w  #1,d3                ; d3 = cells left on the line
+        tst.b   CU_SO(a5)
+        beq.s   .cw_run
+        moveq   #1,d3                ; shifted set: one character at a time
+.cw_run:
         move.l  a4,a2                ; a2 = start of the run
         moveq   #0,d2                ; d2 = length of the run
 .cw_cnt:
@@ -898,25 +1109,46 @@ cu_write:
         bra.s   .cw_cnt
 .cw_out:
         bsr     cu_cellxy
-        addq.w  #GFX_FONTBASE,d1
+        add.w   rp_TxBaseline(a3),d1
         move.l  a3,a1
         jsr     LVO_MOVE(a6)
+        tst.b   CU_SO(a5)
+        bne.s   .cw_so
         move.l  a2,a0
         move.w  d2,d0
         move.l  a3,a1
         jsr     LVO_TEXT(a6)
+        bra.s   .cw_adv
+.cw_so:
+        moveq   #0,d0                ; shifted set: $20-$7F shown as byte | $80
+        move.b  (a2),d0
+        or.b    #$80,d0
+        move.w  d0,-(sp)
+        lea     1(sp),a0
+        moveq   #1,d0
+        move.l  a3,a1
+        jsr     LVO_TEXT(a6)
+        addq.l  #2,sp
+.cw_adv:
         add.w   d2,CU_XCP(a5)
-        bra.s   .cw_lp
+        bra     .cw_lp
 .cw_end:
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        bne.s   .cw_cur
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .cw_cur
+        move.w  CU_XMAX(a5),CU_XCP(a5)
+.cw_cur:
         bsr     cu_curon
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; cu_isprint(d0.b) -> Z = 1 if printable character ($20..$7E, $A0..$FF). Only touches the condition codes.
+; cu_isprint(d0.b) -> Z = 1 if printable character ($20..$7F, $A0..$FF). Only touches the condition codes.
 cu_isprint:
         cmp.b   #$20,d0
         blo.s   .ip_no
-        cmp.b   #$7F,d0
+        cmp.b   #$80,d0
         blo.s   .ip_yes
         cmp.b   #$A0,d0
         blo.s   .ip_no
@@ -930,23 +1162,35 @@ cu_isprint:
 ; cu_cellxy(a5) -> d0.w/d1.w = top-left corner of the cursor cell (window coordinates).
 cu_cellxy:
         move.w  CU_XCP(a5),d0
-        lsl.w   #3,d0
+        mulu    CU_XRSIZE(a5),d0
         add.w   CU_XRORIGIN(a5),d0
         move.w  CU_YCP(a5),d1
-        lsl.w   #3,d1
+        mulu    CU_YRSIZE(a5),d1
         add.w   CU_YRORIGIN(a5),d1
         rts
 
-; cu_setpens(a5, a3 = RastPort, a6 = GfxBase): effective A/B pens (swapped in inverse video). Clobbers d0/d1/a0/a1.
+; cu_setpens(a5, a3 = RastPort, a6 = GfxBase): JAM2 (with INVERSVID for SGR 7), A/B pens, soft style and write mask
+; of the unit. Clobbers d0/d1/a0/a1.
 cu_setpens:
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        tst.b   CU_INV(a5)
+        beq.s   .sp_dm
+        moveq   #JAM2|INVERSVID,d0
+.sp_dm:
+        jsr     LVO_SETDRMD(a6)
+        move.l  a3,a1
         moveq   #0,d0
-        move.b  CU_FGPEN(a5),d0
+        move.b  CU_STYLE(a5),d0
+        moveq   #7,d1
+        jsr     LVO_SETSOFTSTYLE(a6)
+        st      rp_Mask(a3)
+        tst.b   CU_CONCEAL(a5)
+        beq.s   .sp_pen
+        clr.b   rp_Mask(a3)
+.sp_pen:
         moveq   #0,d1
         move.b  CU_BGPEN(a5),d1
-        tst.b   CU_INV(a5)
-        beq.s   .sp_n
-        exg     d0,d1
-.sp_n:
         move.l  d2,-(sp)             ; text and background merged by the BitMap's planes (screen reduced to 1 plane by a
         move.l  rp_BitMap(a3),a0     ; program: theme black = background) -> text uses the colour next to the background
         moveq   #0,d2
@@ -957,10 +1201,6 @@ cu_setpens:
         move.l  d0,d2                ; d2 = mask of the displayable pens
         moveq   #0,d0
         move.b  CU_FGPEN(a5),d0
-        tst.b   CU_INV(a5)
-        beq.s   .sp_m
-        move.b  CU_BGPEN(a5),d0
-.sp_m:
         eor.l   d1,d0
         and.l   d2,d0
         bne.s   .sp_vis
@@ -978,47 +1218,60 @@ cu_setpens:
         move.l  a3,a1
         jmp     LVO_SETBPEN(a6)
 
-; cu_curoff / cu_curon(a5, a3, a6): removes / draws the cursor (inverted cell). Clobbers d0-d3/a0/a1.
+; cu_curoff / cu_curon(a5, a3, a6): removes / draws the cursor (complemented cell); cu_XCCP/YCCP follow it.
+; Clobbers d0-d3/a0/a1.
 cu_curoff:
         tst.b   CU_CURVIS(a5)
         beq.s   cu_ret
         clr.b   CU_CURVIS(a5)
+        move.w  CU_XCCP(a5),d0
+        mulu    CU_XRSIZE(a5),d0
+        add.w   CU_XRORIGIN(a5),d0
+        move.w  CU_YCCP(a5),d1
+        mulu    CU_YRSIZE(a5),d1
+        add.w   CU_YRORIGIN(a5),d1
         bra.s   cu_cplcell
 cu_curon:
+        move.l  CU_XCP(a5),CU_XCCP(a5)
         tst.b   CU_CUROFF(a5)
         bne.s   cu_ret
         move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
         bgt.s   cu_ret               ; waiting for a line wrap: no cell
         st      CU_CURVIS(a5)
+        bsr     cu_cellxy
 cu_cplcell:
+        movem.w d0-d1,-(sp)
         move.l  a3,a1
         moveq   #COMPLEMENT,d0
         jsr     LVO_SETDRMD(a6)
-        bsr     cu_cellxy
+        movem.w (sp)+,d0-d1
         move.w  d0,d2
-        addq.w  #GFX_FONTW-1,d2
+        add.w   CU_XRSIZE(a5),d2
+        subq.w  #1,d2
         move.w  d1,d3
-        addq.w  #GFX_FONTH-1,d3
+        add.w   CU_YRSIZE(a5),d3
+        subq.w  #1,d3
         move.l  a3,a1
         jsr     LVO_RECTFILL(a6)
-        move.l  a3,a1
-        moveq   #JAM2,d0
-        jmp     LVO_SETDRMD(a6)
+        bra     cu_setpens
 cu_ret:
         rts
 
-; cu_fill(d0..d3 = rectangle, a3, a6): fills with the effective background pen. Clobbers d0-d3/a0/a1.
+; cu_fill(d0..d3 = rectangle, a3, a6): clears it in the clearing colour of §3.7: BPen in plain JAM2, colour 0 in
+; inverse video. Clobbers d0-d3/a0/a1.
 cu_fill:
         movem.w d0-d3,-(sp)
         move.l  a3,a1
         moveq   #0,d0
-        move.b  CU_BGPEN(a5),d0
         tst.b   CU_INV(a5)
-        beq.s   .fl_n
-        move.b  CU_FGPEN(a5),d0
+        bne.s   .fl_n
+        move.b  CU_BGPEN(a5),d0
 .fl_n:
         jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
         movem.w (sp)+,d0-d3
         move.l  a3,a1
         jsr     LVO_RECTFILL(a6)
@@ -1037,18 +1290,38 @@ cu_scroll:
         movem.l (sp)+,d4/d5
         rts
 
-; cu_lf(a5, a3, a6): next line; at the bottom of the area, one-line scroll. Clobbers d0-d3/a0/a1.
+; cu_vscroll(d1.w = lines, > 0 up / < 0 down): the whole text area. Clobbers d0-d3/a0/a1.
+cu_vscroll:
+        muls    CU_YRSIZE(a5),d1
+        move.w  CU_YRORIGIN(a5),d3
+        bra.s   cu_scroll
+
+; cu_lf(a5, a3, a6): IND, next line; at the bottom, one-line scroll with ASM, otherwise the last line stays.
+; Clobbers d0-d3/a0/a1.
 cu_lf:
         move.w  CU_YCP(a5),d0
         cmp.w   CU_YMAX(a5),d0
-        bge.s   .lf_scroll
+        bge.s   .lf_bot
         addq.w  #1,CU_YCP(a5)
         rts
-.lf_scroll:
+.lf_bot:
         move.w  CU_YMAX(a5),CU_YCP(a5)
-        moveq   #GFX_FONTH,d1
-        move.w  CU_YRORIGIN(a5),d3
-        bra.s   cu_scroll
+        btst    #CUM_ASM,CU_MODES+2(a5)
+        beq     cu_ret
+        moveq   #1,d1
+        bra.s   cu_vscroll
+
+; cu_ri(a5, a3, a6): RI, previous line; at the top, one-line reverse scroll with ASM. Clobbers d0-d3/a0/a1.
+cu_ri:
+        tst.w   CU_YCP(a5)
+        beq.s   .ri_top
+        subq.w  #1,CU_YCP(a5)
+        rts
+.ri_top:
+        btst    #CUM_ASM,CU_MODES+2(a5)
+        beq     cu_ret
+        moveq   #-1,d1
+        bra.s   cu_vscroll
 
 ; cu_hshift(d1.w = dx in pixels, a5, a3, a6): shifts the line from the cursor cell to the right edge of the area by
 ; dx (> 0: to the left) with ScrollRaster, which clears the uncovered cells. Clobbers d0-d3/a0/a1.
@@ -1066,7 +1339,8 @@ cu_hshift:
         moveq   #0,d1
         move.w  CU_XREXTANT(a5),d4
         move.w  d3,d5
-        addq.w  #GFX_FONTH-1,d5
+        add.w   CU_YRSIZE(a5),d5
+        subq.w  #1,d5
         move.l  a3,a1
         jsr     LVO_SCROLLRASTER(a6)
         movem.l (sp)+,d4/d5
@@ -1080,345 +1354,284 @@ cu_eol:
         bsr     cu_cellxy
         move.w  CU_XREXTANT(a5),d2
         move.w  d1,d3
-        addq.w  #GFX_FONTH-1,d3
+        add.w   CU_YRSIZE(a5),d3
+        subq.w  #1,d3
         bra     cu_fill
 
-; cu_report(a5 = unit): answer to the Window Status Request (CSI q, CSI 0 SPACE q): the Window
-; Bounds Report CSI 1;1;<lines>;<columns> SPACE r goes into the read stream (console.doc). Ed waits for it to size its
-; display. Clobbers d0-d3/a0/a1.
-cu_report:
+; cu_ht(a5, a3, a6): next tab stop strictly beyond XCP; past XMax (or none): column 0 of the next line with AWM,
+; XMax otherwise (§3.4). Clobbers d0-d3/a0/a1.
+cu_ht:
+        lea     CU_TABS(a5),a0
+        moveq   #CU_NTABS-1,d1
+.ht_lp:
+        move.w  (a0)+,d0
+        cmp.w   #$FFFF,d0
+        beq.s   .ht_none
+        cmp.w   CU_XCP(a5),d0
+        bgt.s   .ht_got
+        dbra    d1,.ht_lp
+        bra.s   .ht_none
+.ht_got:
+        cmp.w   CU_XMAX(a5),d0
+        bgt.s   .ht_none
+        move.w  d0,CU_XCP(a5)
+        rts
+.ht_none:
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        beq.s   .ht_end
+        clr.w   CU_XCP(a5)
+        bra     cu_lf
+.ht_end:
+        move.w  CU_XMAX(a5),CU_XCP(a5)
+        rts
+
+; cu_cbt(a5, a3, a6): previous tab stop strictly below XCP; in column 0 with AWM, the line above (reverse scroll at
+; the top with ASM) is searched from its end; without AWM nothing. Clobbers d0-d3/a0/a1.
+cu_cbt:
+        move.w  CU_XCP(a5),d2
+        bne.s   .cb_find
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        beq     cu_ret
+        bsr     cu_ri
+        move.w  CU_XMAX(a5),d2
+        addq.w  #1,d2
+.cb_find:
+        moveq   #0,d3                ; tab stop 0 always exists
+        lea     CU_TABS(a5),a0
+        moveq   #CU_NTABS-1,d1
+.cb_lp:
+        move.w  (a0)+,d0
+        cmp.w   #$FFFF,d0
+        beq.s   .cb_set
+        cmp.w   d2,d0
+        bge.s   .cb_set
+        move.w  d0,d3
+        dbra    d1,.cb_lp
+.cb_set:
+        move.w  d3,CU_XCP(a5)
+        rts
+
+; cu_hts(a5): tab stop at XCP, kept sorted, no duplicate; a full list loses its last one. Clobbers d0-d2/a0.
+cu_hts:
+        move.w  CU_XCP(a5),d2
+        lea     CU_TABS(a5),a0
+        moveq   #CU_NTABS-1,d1
+.hs_lp:
+        move.w  (a0),d0
+        cmp.w   d2,d0
+        beq     cu_ret
+        bhi.s   .hs_ins              ; also $FFFF: end of the list
+        addq.l  #2,a0
+        dbra    d1,.hs_lp
+        rts                          ; beyond the 80 entries: nothing
+.hs_ins:
+        move.w  (a0),d0              ; insertion: each following entry moves up one place
+        move.w  d2,(a0)+
+        move.w  d0,d2
+        dbra    d1,.hs_ins
+        rts
+
+; cu_tbc(a5): clears the tab stop at XCP, except in column 0. Clobbers d0/d1/a0/a1.
+cu_tbc:
+        move.w  CU_XCP(a5),d0
+        beq     cu_ret
+        lea     CU_TABS(a5),a0
+        moveq   #CU_NTABS-1,d1
+.tb_lp:
+        cmp.w   (a0)+,d0
+        dbeq    d1,.tb_lp
+        bne     cu_ret
+        lea     -2(a0),a1            ; found: the following ones move down one place
+        subq.w  #1,d1
+        bmi.s   .tb_end
+.tb_mv:
+        move.w  (a0)+,(a1)+
+        dbra    d1,.tb_mv
+.tb_end:
+        move.w  #$FFFF,(a1)
+        rts
+
+; cu_tclr(a5): only tab stop 0 remains. Clobbers a0.
+cu_tclr:
+        lea     CU_TABS(a5),a0
+        clr.w   (a0)+
+        move.w  #$FFFF,(a0)
+        rts
+
+; cu_dec(d0.l unsigned, a0 = output) -> a0 advanced past the decimal digits. Clobbers d0/d1.
+cu_dec:
+        movem.l d2-d3,-(sp)
+        moveq   #0,d3                ; digits pushed
+.dc_div:
+        moveq   #0,d1                ; d0 / 10 in two 16-bit steps
+        swap    d0
+        move.w  d0,d1
+        divu    #10,d1
+        move.w  d1,d2
+        swap    d2
+        swap    d0
+        move.w  d0,d1
+        divu    #10,d1
+        move.w  d1,d2
+        swap    d1                   ; d1.w = remainder
+        move.w  d1,-(sp)
+        addq.w  #1,d3
+        move.l  d2,d0
+        bne.s   .dc_div
+        subq.w  #1,d3
+.dc_out:
+        move.w  (sp)+,d1
+        add.b   #'0',d1
+        move.b  d1,(a0)+
+        dbra    d3,.dc_out
+        movem.l (sp)+,d2-d3
+        rts
+
+; cu_reply(a0 = end of the report built at 4(sp)..., d2 = its start): pushes the bytes into the read stream (whole or
+; nothing) and serves a waiting read. Clobbers d0-d3/a0/a1.
+cu_reply:
         move.l  a2,-(sp)
         move.l  CU_BASE(a5),a2
-        lea     -20(sp),sp
+        exg     a0,d2
+        sub.l   a0,d2
+        bsr     con_push
+        beq.s   .ry_out
+        bsr     con_servereads
+.ry_out:
+        move.l  (sp)+,a2
+        rts
+
+; cu_report(a5): window bounds report CSI 1;1;<lines>;<columns> SPACE r into the read stream (§4). Ed waits for it to
+; size its display. Clobbers d0-d3/a0/a1.
+cu_report:
+        lea     -24(sp),sp
         move.l  sp,a0
         move.b  #$9B,(a0)+
         move.b  #'1',(a0)+
         move.b  #';',(a0)+
         move.b  #'1',(a0)+
         move.b  #';',(a0)+
+        moveq   #0,d0
         move.w  CU_YMAX(a5),d0
         addq.w  #1,d0
-        bsr.s   .rp_dec
+        bsr     cu_dec
         move.b  #';',(a0)+
+        moveq   #0,d0
         move.w  CU_XMAX(a5),d0
         addq.w  #1,d0
-        bsr.s   .rp_dec
+        bsr     cu_dec
         move.b  #' ',(a0)+
         move.b  #'r',(a0)+
-        move.l  a0,d2
-        sub.l   sp,d2
-        move.l  sp,a0
-        bsr     con_push
-        beq.s   .rp_out
-        bsr     con_servereads
-.rp_out:
-        lea     20(sp),sp
-        move.l  (sp)+,a2
-        rts
-.rp_dec:                             ; d0.w (0..999) in decimal at (a0)+, no leading zero. Clobbers d0/d1/d3.
-        moveq   #0,d3                ; d3 = a digit has been written
-        moveq   #100,d1
-        bsr.s   .rp_dig
-        moveq   #10,d1
-        bsr.s   .rp_dig
-        add.b   #'0',d0
-        move.b  d0,(a0)+
-        rts
-.rp_dig:
-        ext.l   d0
-        divu    d1,d0                ; quotient in the low word, remainder in the high word
-        tst.w   d0
-        bne.s   .rp_put
-        tst.b   d3
-        beq.s   .rp_skip
-.rp_put:
-        add.b   #'0',d0
-        move.b  d0,(a0)+
-        st      d3
-.rp_skip:
-        swap    d0                   ; d0.w = remainder
+        move.l  sp,d2
+        bsr     cu_reply
+        lea     24(sp),sp
         rts
 
-; cu_ctl(d0.b = control or sequence byte, a5, a3, a6): controls and ESC / CSI sequences.
-; Clobbers d0-d3/d5-d7/a0/a1.
-cu_ctl:
-        move.b  CU_ESC(a5),d1
-        beq.s   .ct_plain
-        subq.b  #1,d1
-        beq     .ct_esc
-        bra     .ct_csi
-.ct_plain:
-        cmp.b   #$1B,d0
-        bne.s   .ct_n1b
-        move.b  #1,CU_ESC(a5)
-        rts
-.ct_n1b:
-        cmp.b   #$9B,d0
-        beq     .ct_csistart
-        cmp.b   #8,d0
-        bne.s   .ct_nbs
-        tst.w   CU_XCP(a5)
-        beq.s   .ct_ret
-        move.w  CU_XCP(a5),d0        ; after a full line, BS goes back to the last column
-        cmp.w   CU_XMAX(a5),d0
-        ble.s   .ct_bs
-        move.w  CU_XMAX(a5),CU_XCP(a5)
-        rts
-.ct_bs:
-        subq.w  #1,CU_XCP(a5)
-.ct_ret:
-        rts
-.ct_nbs:
-        cmp.b   #9,d0
-        bne.s   .ct_ntab
-        move.w  CU_XCP(a5),d0
-        or.w    #7,d0
+; cu_dsr(a5): cursor position report CSI <line>;<column> R (base 1). Clobbers d0-d3/a0/a1.
+cu_dsr:
+        lea     -16(sp),sp
+        move.l  sp,a0
+        move.b  #$9B,(a0)+
+        moveq   #0,d0
+        move.w  CU_YCP(a5),d0
         addq.w  #1,d0
+        bsr     cu_dec
+        move.b  #';',(a0)+
+        moveq   #0,d0
+        move.w  CU_XCP(a5),d0
         cmp.w   CU_XMAX(a5),d0
-        ble.s   .ct_tab
+        ble.s   .ds_x
         move.w  CU_XMAX(a5),d0
-.ct_tab:
-        move.w  d0,CU_XCP(a5)
+.ds_x:
+        addq.w  #1,d0
+        bsr     cu_dec
+        move.b  #'R',(a0)+
+        move.l  sp,d2
+        bsr     cu_reply
+        lea     16(sp),sp
         rts
-.ct_ntab:
-        cmp.b   #10,d0
-        bne.s   .ct_nlf
-        clr.w   CU_XCP(a5)
-        bra     cu_lf
-.ct_nlf:
-        cmp.b   #11,d0
-        bne.s   .ct_nvt
-        tst.w   CU_YCP(a5)
-        beq.s   .ct_ret
-        subq.w  #1,CU_YCP(a5)
+
+; cu_beep(a5): BEL = DisplayBeep of the window's screen. Clobbers d0/d1/a0/a1.
+cu_beep:
+        movem.l a2/a6,-(sp)
+        move.l  CU_BASE(a5),a2
+        bsr     con_target           ; (finds IntuitionBase on first need)
+        move.l  CONB_IBASE(a2),d0
+        beq.s   .bp_ret
+        move.l  d0,a6
+        move.l  CU_WINDOW(a5),a0
+        move.l  WD_WSCREEN(a0),a0
+        jsr     LVO_DISPLAYBEEP(a6)
+.bp_ret:
+        movem.l (sp)+,a2/a6
         rts
-.ct_nvt:
-        cmp.b   #12,d0
-        beq     .ct_ff
-        cmp.b   #13,d0
-        bne.s   .ct_ncr
-        clr.w   CU_XCP(a5)
-        rts
-.ct_ncr:
-        cmp.b   #$84,d0              ; IND
-        beq     cu_lf
-        cmp.b   #$85,d0              ; NEL
-        bne.s   .ct_nnel
-        clr.w   CU_XCP(a5)
-        bra     cu_lf
-.ct_nnel:
-        cmp.b   #$8D,d0              ; RI: previous line, scroll down at the top of the area
-        bne.s   .ct_ret
-        tst.w   CU_YCP(a5)
-        beq.s   .ct_ri
-        subq.w  #1,CU_YCP(a5)
-        rts
-.ct_ri:
-        moveq   #-GFX_FONTH,d1
-        move.w  CU_YRORIGIN(a5),d3
-        bra     cu_scroll
-.ct_esc:                             ; after ESC
-        clr.b   CU_ESC(a5)
-        cmp.b   #'[',d0
-        beq.s   .ct_csistart
-        cmp.b   #'c',d0              ; RIS: reset (pens, cursor, erasure)
-        bne     .ct_ret
-        move.b  #CU_DEFFG,CU_FGPEN(a5)
-        clr.b   CU_BGPEN(a5)
-        clr.b   CU_INV(a5)
+
+; cu_ris(a5, a3, a6): ESC c (§3.6): default tab stops, normal set, cursor visible, LNM/ASM/AWM, automatic geometry,
+; SGR 0, cursor at (0,0), area cleared. cu_RawEvents is kept. Clobbers d0-d3/a0/a1.
+cu_ris:
+        bsr     cu_deftabs
+        clr.b   CU_SO(a5)
         clr.b   CU_CUROFF(a5)
+        move.b  #$70,CU_MODES+2(a5)
+        clr.w   CU_FIXCOL(a5)
+        clr.w   CU_FIXROW(a5)
+        move.w  #-1,CU_FIXXO(a5)
+        move.w  #-1,CU_FIXYO(a5)
+        bsr     cu_geom
+        moveq   #0,d0
+        bsr     cu_sgr1
         bsr     cu_setpens
-.ct_ff:
+        ; falls through: FF
+; cu_ff(a5, a3, a6): FF, cursor at (0,0) and the whole text area cleared. Clobbers d0-d3/a0/a1.
+cu_ff:
         clr.l   CU_XCP(a5)           ; XCP = YCP = 0
         move.w  CU_XRORIGIN(a5),d0
         move.w  CU_YRORIGIN(a5),d1
         move.w  CU_XREXTANT(a5),d2
         move.w  CU_YREXTANT(a5),d3
         bra     cu_fill
-.ct_csistart:
-        move.b  #2,CU_ESC(a5)
-        clr.l   CU_PAR0(a5)          ; PAR0 = PAR1 = 0
-        clr.b   CU_NPAR(a5)
-        clr.b   CU_PSEEN(a5)
-        clr.b   CU_INTER(a5)
-        rts
-.ct_csi:                             ; inside a CSI: parameters, intermediates, final byte
-        cmp.b   #'0',d0
-        blo.s   .ct_nd
-        cmp.b   #'9',d0
-        bhi.s   .ct_nd
-        and.w   #$000F,d0
-        lea     CU_PAR0(a5),a0
-        tst.b   CU_NPAR(a5)
-        beq.s   .ct_p0
-        lea     CU_PAR1(a5),a0
-        bra.s   .ct_pacc
-.ct_p0:
-        st      CU_PSEEN(a5)
-.ct_pacc:
-        move.w  (a0),d1
-        mulu    #10,d1
-        add.w   d0,d1
-        cmp.w   #999,d1
-        bls.s   .ct_pst
-        move.w  #999,d1
-.ct_pst:
-        move.w  d1,(a0)
-        rts
-.ct_nd:
-        cmp.b   #';',d0
-        bne.s   .ct_nsc
-        move.b  #1,CU_NPAR(a5)
-        rts
-.ct_nsc:
-        cmp.b   #$40,d0
-        bhs.s   .ct_final
-        cmp.b   #$20,d0
-        blo.s   .ct_abort
-        move.b  d0,CU_INTER(a5)      ; intermediate ($20..$3F except digits and ';')
-        rts
-.ct_abort:
-        clr.b   CU_ESC(a5)           ; control byte inside a CSI: sequence abandoned
-        rts
-.ct_final:
-        clr.b   CU_ESC(a5)
-        move.w  CU_PAR0(a5),d6       ; d6 = n (parameter 0, at least 1 for movements)
-        bne.s   .ct_n1
-        moveq   #1,d6
-.ct_n1:
-        cmp.b   #'A',d0
-        bne.s   .ct_nA
-        move.w  CU_YCP(a5),d1
-        sub.w   d6,d1
-        bra     .ct_sety
-.ct_nA:
-        cmp.b   #'B',d0
-        bne.s   .ct_nB
-        move.w  CU_YCP(a5),d1
-        add.w   d6,d1
-        bra     .ct_sety
-.ct_nB:
-        cmp.b   #'C',d0
-        bne.s   .ct_nC
-        move.w  CU_XCP(a5),d1
-        add.w   d6,d1
-        bra     .ct_setx
-.ct_nC:
-        cmp.b   #'D',d0
-        bne.s   .ct_nD
-        move.w  CU_XCP(a5),d1
-        sub.w   d6,d1
-        bra     .ct_setx
-.ct_nD:
-        cmp.b   #'E',d0
-        bne.s   .ct_nE
-        clr.w   CU_XCP(a5)
-        move.w  CU_YCP(a5),d1
-        add.w   d6,d1
-        bra     .ct_sety
-.ct_nE:
-        cmp.b   #'F',d0
-        bne.s   .ct_nF
-        clr.w   CU_XCP(a5)
-        move.w  CU_YCP(a5),d1
-        sub.w   d6,d1
-        bra     .ct_sety
-.ct_nF:
-        cmp.b   #'H',d0
-        beq.s   .ct_pos
-        cmp.b   #'f',d0
-        bne.s   .ct_nH
-.ct_pos:
-        move.w  CU_PAR1(a5),d1       ; column (1 by default)
-        bne.s   .ct_pc
-        moveq   #1,d1
-.ct_pc:
-        subq.w  #1,d1
-        bsr     .ct_setx
-        move.w  d6,d1
-        subq.w  #1,d1
-        bra     .ct_sety
-.ct_nH:
-        cmp.b   #'J',d0
-        bne.s   .ct_nJ
-        bsr     cu_eol
-        move.w  CU_YCP(a5),d1        ; then the following lines
-        cmp.w   CU_YMAX(a5),d1
-        bge     .ct_ret2
-        addq.w  #1,d1
-        lsl.w   #3,d1
-        add.w   CU_YRORIGIN(a5),d1
-        move.w  CU_XRORIGIN(a5),d0
-        move.w  CU_XREXTANT(a5),d2
-        move.w  CU_YREXTANT(a5),d3
-        bra     cu_fill
-.ct_nJ:
-        cmp.b   #'K',d0
-        beq     cu_eol
-        move.w  d6,d1
-        lsl.w   #3,d1                ; d1 = n cells in pixels
-        cmp.b   #'P',d0
-        beq     cu_hshift            ; P: deletes n characters (the rest of the line moves left)
-        cmp.b   #'@',d0
-        bne.s   .ct_nat
-        neg.w   d1                   ; @: inserts n blanks (the rest of the line moves right)
-        bra     cu_hshift
-.ct_nat:
-        cmp.b   #'L',d0
-        beq.s   .ct_lines
-        cmp.b   #'M',d0
-        bne.s   .ct_nM
-.ct_lines:                           ; L: inserts n lines (downwards); M: deletes n of them (upwards)
-        move.w  d6,d1
-        lsl.w   #3,d1
-        cmp.b   #'L',d0
-        bne.s   .ct_lm
-        neg.w   d1
-.ct_lm:
-        move.w  CU_YCP(a5),d3
-        lsl.w   #3,d3
-        add.w   CU_YRORIGIN(a5),d3
-        bra     cu_scroll
-.ct_nM:
-        cmp.b   #'m',d0
-        bne.s   .ct_nm
-        move.w  CU_PAR0(a5),d0
-        bsr.s   .ct_sgr
-        tst.b   CU_NPAR(a5)
-        beq.s   .ct_sgrdone
-        move.w  CU_PAR1(a5),d0
-        bsr.s   .ct_sgr
-.ct_sgrdone:
-        bra     cu_setpens
-.ct_nm:
-        cmp.b   #'q',d0
-        beq     cu_report
-        cmp.b   #'p',d0
-        bne.s   .ct_ret2
-        cmp.b   #' ',CU_INTER(a5)
-        bne.s   .ct_ret2
-        clr.b   CU_CUROFF(a5)        ; CSI SPACE p: visible; CSI 0 SPACE p: hidden
-        tst.b   CU_PSEEN(a5)
-        beq.s   .ct_ret2
-        tst.w   CU_PAR0(a5)
-        bne.s   .ct_ret2
-        st      CU_CUROFF(a5)
-.ct_ret2:
-        rts
-; .ct_sgr(d0.w = SGR parameter): 0 default, 7 inverse, 30..37 / 39 foreground, 40..47 / 49 background.
-.ct_sgr:
+
+; cu_sgr1(d0.w = SGR parameter, a5): one SGR value (§3.7); default/negative = 0, above 49 ignored. Clobbers d0.
+cu_sgr1:
         tst.w   d0
-        bne.s   .sg_n0
+        bgt.s   .sg_n0
         move.b  #CU_DEFFG,CU_FGPEN(a5)
         clr.b   CU_BGPEN(a5)
         clr.b   CU_INV(a5)
+        clr.b   CU_STYLE(a5)
+        clr.b   CU_CONCEAL(a5)
         rts
 .sg_n0:
+        cmp.w   #1,d0
+        bne.s   .sg_n1
+        or.b    #FSF_BOLD,CU_STYLE(a5)
+        rts
+.sg_n1:
+        cmp.w   #2,d0
+        bne.s   .sg_n2
+        move.b  #2,CU_FGPEN(a5)      ; "faint" = colour 2
+        rts
+.sg_n2:
+        cmp.w   #3,d0
+        bne.s   .sg_n3
+        or.b    #FSF_ITALIC,CU_STYLE(a5)
+        rts
+.sg_n3:
+        cmp.w   #4,d0
+        bne.s   .sg_n4
+        or.b    #FSF_UNDERLINED,CU_STYLE(a5)
+        rts
+.sg_n4:
         cmp.w   #7,d0
         bne.s   .sg_n7
         st      CU_INV(a5)
         rts
 .sg_n7:
+        cmp.w   #8,d0
+        bne.s   .sg_n8
+        st      CU_CONCEAL(a5)
+        rts
+.sg_n8:
         cmp.w   #39,d0
         bne.s   .sg_n39
         move.b  #CU_DEFFG,CU_FGPEN(a5)
@@ -1443,27 +1656,590 @@ cu_ctl:
         move.b  d0,CU_BGPEN(a5)
 .sg_ret:
         rts
-; .ct_setx / .ct_sety(d1.w = desired position): clamped to the text area.
-.ct_setx:
-        tst.w   d1
-        bpl.s   .sx_lo
-        moveq   #0,d1
-.sx_lo:
-        cmp.w   CU_XMAX(a5),d1
-        ble.s   .sx_hi
-        move.w  CU_XMAX(a5),d1
-.sx_hi:
-        move.w  d1,CU_XCP(a5)
+
+; cu_ctl(d0.b = byte, a5, a3, a6): controls and the ESC / CSI automaton (§3.2). Sets CU_AGAIN when the byte must be
+; read again in the normal state. Clobbers d0-d3/d5-d7/a0/a1.
+cu_ctl:
+        move.b  CU_ESC(a5),d1
+        beq.s   cu_plain
+        subq.b  #1,d1
+        beq     .ct_esc
+        subq.b  #1,d1
+        beq     cu_csi
+        ; ESC intermediates: more of them, or the end of an ignored sequence
+        cmp.b   #$20,d0
+        blo     .ct_again
+        cmp.b   #$30,d0
+        blo     cu_ret
+        cmp.b   #$7F,d0
+        bhs     .ct_again
+        clr.b   CU_ESC(a5)
         rts
-.ct_sety:
-        tst.w   d1
-        bpl.s   .sy_lo
+.ct_again:
+        clr.b   CU_ESC(a5)
+        st      CU_AGAIN(a5)
+        rts
+.ct_esc:                             ; after ESC
+        cmp.b   #$20,d0
+        blo.s   .ct_again
+        cmp.b   #$80,d0
+        bhs.s   .ct_again
+        cmp.b   #$30,d0
+        bhs.s   .ct_e30
+        move.b  #3,CU_ESC(a5)        ; intermediate
+        rts
+.ct_e30:
+        cmp.b   #$40,d0
+        blo     cu_ret               ; $30-$3F: ignored, still after ESC
+        clr.b   CU_ESC(a5)
+        cmp.b   #$60,d0
+        bhs.s   .ct_e60
+        add.b   #$40,d0              ; ESC Fe = the C1 control byte + $40
+        bra.s   cu_plain
+.ct_e60:
+        cmp.b   #'c',d0
+        beq     cu_ris
+        rts
+cu_plain:
+        cmp.b   #$1B,d0
+        bne.s   .ct_n1b
+        move.b  #1,CU_ESC(a5)
+        rts
+.ct_n1b:
+        cmp.b   #$9B,d0
+        beq     .ct_csistart
+        cmp.b   #7,d0
+        beq     cu_beep
+        cmp.b   #8,d0
+        beq     .ct_bs
+        cmp.b   #9,d0
+        beq     cu_ht
+        cmp.b   #10,d0
+        bne.s   .ct_nlf
+        btst    #CUM_LNM,CU_MODES+2(a5)
+        beq     .ct_ind
+        clr.w   CU_XCP(a5)
+.ct_ind:
+        move.w  CU_XCP(a5),d0        ; just wrapped (lazy wrap pending): the line feed is that wrap
+        cmp.w   CU_XMAX(a5),d0
+        ble     cu_lf
+        clr.w   CU_XCP(a5)
+        bra     cu_lf
+.ct_nlf:
+        cmp.b   #11,d0
+        beq     cu_ri
+        cmp.b   #12,d0
+        beq     cu_ff
+        cmp.b   #13,d0
+        bne.s   .ct_ncr
+        clr.w   CU_XCP(a5)
+        rts
+.ct_ncr:
+        cmp.b   #14,d0
+        bne.s   .ct_nso
+        st      CU_SO(a5)
+        rts
+.ct_nso:
+        cmp.b   #15,d0
+        bne.s   .ct_nsi
+        clr.b   CU_SO(a5)
+        rts
+.ct_nsi:
+        cmp.b   #$84,d0              ; IND
+        beq.s   .ct_ind
+        cmp.b   #$85,d0              ; NEL
+        bne.s   .ct_nnel
+        clr.w   CU_XCP(a5)
+        bra     .ct_ind
+.ct_nnel:
+        cmp.b   #$88,d0              ; HTS
+        beq     cu_hts
+        cmp.b   #$8D,d0              ; RI
+        beq     cu_ri
+        rts
+.ct_bs:                              ; non-destructive; column 0 with AWM: last column of the previous line
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .ct_bs1
+        move.w  CU_XMAX(a5),CU_XCP(a5) ; after a full line: back to the last column
+        rts
+.ct_bs1:
+        tst.w   d0
+        beq.s   .ct_bs0
+        subq.w  #1,CU_XCP(a5)
+        rts
+.ct_bs0:
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        beq     cu_ret
+        move.w  CU_XMAX(a5),CU_XCP(a5)
+        bra     cu_ri
+.ct_csistart:
+        move.b  #2,CU_ESC(a5)
+        clr.b   CU_NPAR(a5)
+        clr.b   CU_NINT(a5)
+        clr.b   CU_INTER(a5)
+        lea     CU_PARS(a5),a0
+        moveq   #CU_NPARS-1,d1
+.ct_pclr:
+        move.w  #CU_PDEF,(a0)+
+        dbra    d1,.ct_pclr
+        rts
+cu_csi:                              ; inside a CSI
+        cmp.b   #$20,d0              ; C0 / C1 control: sequence abandoned, the byte is read again
+        blo     .ct_again2
+        cmp.b   #$80,d0
+        blo.s   .ct_c7
+        cmp.b   #$A0,d0
+        blo.s   .ct_again2
+        rts                          ; $A0-$FF: ignored
+.ct_c7:
+        tst.b   CU_NINT(a5)
+        bne     .ct_interm
+        cmp.b   #$30,d0
+        blo     .ct_toint
+        cmp.b   #$40,d0
+        bhs     .ct_final
+        lea     CU_PARS(a5),a0       ; parameter bytes
         moveq   #0,d1
-.sy_lo:
-        cmp.w   CU_YMAX(a5),d1
-        ble.s   .sy_hi
-        move.w  CU_YMAX(a5),d1
-.sy_hi:
+        move.b  CU_NPAR(a5),d1
+        cmp.w   #CU_NPARS,d1
+        bhs     cu_ret               ; beyond 24: lost
+        add.w   d1,d1
+        add.w   d1,a0
+        cmp.b   #';',d0
+        bne.s   .ct_nsc
+        addq.b  #1,CU_NPAR(a5)
+        rts
+.ct_nsc:
+        cmp.b   #':',d0
+        beq     cu_ret
+        cmp.b   #'<',d0
+        blo.s   .ct_dig
+        sub.b   #'<'-1,d0            ; < = > ? -> -1 -2 -3 -4
+        ext.w   d0
+        neg.w   d0
+        move.w  d0,(a0)
+        rts
+.ct_dig:
+        and.w   #$000F,d0
+        move.w  (a0),d1
+        cmp.w   #CU_PDEF,d1
+        bne.s   .ct_dacc
+        moveq   #0,d1
+.ct_dacc:
+        muls    #10,d1
+        tst.w   d1
+        bmi.s   .ct_dneg
+        add.w   d0,d1
+        move.w  d1,(a0)
+        rts
+.ct_dneg:
+        sub.w   d0,d1                ; after < = > ?: the digits count negatively (>1 = -31)
+        move.w  d1,(a0)
+        rts
+.ct_again2:
+        clr.b   CU_ESC(a5)
+        st      CU_AGAIN(a5)
+        rts
+.ct_toint:
+        move.b  d0,CU_INTER(a5)
+.ct_addint:
+        addq.b  #1,CU_NINT(a5)
+        rts
+.ct_interm:                          ; after an intermediate
+        cmp.b   #$30,d0
+        blo.s   .ct_addint
+        cmp.b   #$40,d0
+        blo.s   .ct_again2           ; $30-$3F: abandoned, read again (displayed)
+        clr.b   CU_ESC(a5)
+        cmp.b   #$70,d0
+        blo     cu_ret               ; $40-$6F: ignored
+        cmp.b   #1,CU_NINT(a5)       ; $70-$7E: only with a single SPACE
+        bne     cu_ret
+        cmp.b   #' ',CU_INTER(a5)
+        bne     cu_ret
+        cmp.b   #'p',d0
+        bne.s   .ct_nsp
+        clr.b   CU_CUROFF(a5)        ; CSI SPACE p: visible; CSI 0 SPACE p: hidden
+        tst.w   CU_PARS(a5)
+        bne     cu_ret
+        st      CU_CUROFF(a5)
+        rts
+.ct_nsp:
+        cmp.b   #'q',d0
+        beq     cu_report
+        rts
+.ct_final:
+        clr.b   CU_ESC(a5)
+        move.w  CU_PARS(a5),d6       ; d6 = n for movements: default, 0 or negative -> 1
+        bgt.s   .ct_n1
+        moveq   #1,d6
+.ct_n1:
+        lea     ct_finals(pc),a0
+.ct_ftab:
+        move.w  (a0)+,d1
+        beq     cu_ret               ; final not in the table: ignored
+        move.w  (a0)+,d2
+        cmp.b   d1,d0
+        bne.s   .ct_ftab
+        lea     ct_finals(pc),a0
+        jmp     0(a0,d2.w)
+
+FIN             MACRO
+        dc.w    \1,\2-ct_finals
+                ENDM
+ct_finals:
+        FIN     'A',ct_cuu
+        FIN     'B',ct_cud
+        FIN     'C',ct_cuf
+        FIN     'D',ct_cub
+        FIN     'E',ct_cnl
+        FIN     'F',ct_cpl
+        FIN     'H',ct_cup
+        FIN     'f',ct_cup
+        FIN     'I',ct_cht
+        FIN     'J',ct_ed
+        FIN     'K',cu_eol
+        FIN     'L',ct_il
+        FIN     'M',ct_dl
+        FIN     'P',ct_dch
+        FIN     '@',ct_ich
+        FIN     'S',ct_su
+        FIN     'T',ct_sd
+        FIN     'W',ct_ctc
+        FIN     'Z',ct_cbt
+        FIN     'g',ct_tbc
+        FIN     'h',ct_sm
+        FIN     'l',ct_rm
+        FIN     'm',ct_sgr
+        FIN     'n',ct_dsr
+        FIN     'q',cu_report        ; (also without the SPACE: Ed and other programs send CSI q)
+        FIN     't',ct_page
+        FIN     'u',ct_line
+        FIN     'x',ct_xorg
+        FIN     'y',ct_yorg
+        FIN     '{',ct_rawon
+        FIN     '}',ct_rawoff
+        dc.w    0
+
+ct_cuu:                              ; up; beyond the top with ASM: the deficit scrolls down
+        move.w  CU_YCP(a5),d1
+        sub.w   d6,d1
+        bpl.s   .uu_set
+        neg.w   d1
+        clr.w   CU_YCP(a5)
+        btst    #CUM_ASM,CU_MODES+2(a5)
+        beq     cu_ret
+        neg.w   d1
+        bra     cu_vscroll
+.uu_set:
         move.w  d1,CU_YCP(a5)
+        rts
+ct_cud:                              ; down; beyond the bottom with ASM: the excess scrolls up
+        move.w  CU_YCP(a5),d1
+        add.w   d6,d1
+        sub.w   CU_YMAX(a5),d1
+        ble.s   .ud_set
+        move.w  CU_YMAX(a5),CU_YCP(a5)
+        btst    #CUM_ASM,CU_MODES+2(a5)
+        beq     cu_ret
+        bra     cu_vscroll
+.ud_set:
+        add.w   CU_YMAX(a5),d1
+        move.w  d1,CU_YCP(a5)
+        rts
+ct_cnl:
+        clr.w   CU_XCP(a5)
+        bra.s   ct_cud
+ct_cpl:
+        clr.w   CU_XCP(a5)
+        bra.s   ct_cuu
+ct_cuf:                              ; right; past XMax: next lines with AWM, XMax otherwise
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .uf_in
+        move.w  CU_XMAX(a5),d0
+.uf_in:
+        add.w   d6,d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .uf_set
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        bne.s   .uf_wrap
+        move.w  CU_XMAX(a5),d0
+.uf_set:
+        move.w  d0,CU_XCP(a5)
+        rts
+.uf_wrap:
+        move.w  CU_XMAX(a5),d1
+        addq.w  #1,d1
+        ext.l   d0
+        divu    d1,d0
+        swap    d0
+        move.w  d0,CU_XCP(a5)        ; column in the last line reached
+        swap    d0
+        move.w  d0,d7                ; lines to go down
+        subq.w  #1,d7
+.uf_lf:
+        bsr     cu_lf
+        dbra    d7,.uf_lf
+        rts
+ct_cub:                              ; left; before column 0: previous lines with AWM, 0 otherwise
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .ub_in
+        move.w  CU_XMAX(a5),d0
+.ub_in:
+        sub.w   d6,d0
+        bpl.s   .ub_set
+        btst    #CUM_AWM,CU_MODES+2(a5)
+        bne.s   .ub_wrap
+        moveq   #0,d0
+.ub_set:
+        move.w  d0,CU_XCP(a5)
+        rts
+.ub_wrap:
+        move.w  d0,d7
+.ub_lp:
+        add.w   CU_XMAX(a5),d7
+        addq.w  #1,d7
+        bsr     cu_ri
+        tst.w   d7
+        bmi.s   .ub_lp
+        move.w  d7,CU_XCP(a5)
+        rts
+ct_cup:                              ; line;column, base 1, bounded, no scrolling
+        move.w  CU_PARS+2(a5),d1
+        bgt.s   .up_c
+        moveq   #1,d1
+.up_c:
+        subq.w  #1,d1
+        cmp.w   CU_XMAX(a5),d1
+        ble.s   .up_cx
+        move.w  CU_XMAX(a5),d1
+.up_cx:
+        move.w  d1,CU_XCP(a5)
+        move.w  d6,d1
+        subq.w  #1,d1
+        cmp.w   CU_YMAX(a5),d1
+        ble.s   .up_cy
+        move.w  CU_YMAX(a5),d1
+.up_cy:
+        move.w  d1,CU_YCP(a5)
+        rts
+ct_cht:
+        move.w  d6,d7
+        subq.w  #1,d7
+.ch_lp:
+        bsr     cu_ht
+        dbra    d7,.ch_lp
+        rts
+ct_cbt:
+        move.w  d6,d7
+        subq.w  #1,d7
+.cb_lp:
+        bsr     cu_cbt
+        dbra    d7,.cb_lp
+        rts
+ct_ed:                               ; to the end of the line, then all the following lines (parameter ignored)
+        bsr     cu_eol
+        move.w  CU_YCP(a5),d1
+        cmp.w   CU_YMAX(a5),d1
+        bge     cu_ret
+        addq.w  #1,d1
+        mulu    CU_YRSIZE(a5),d1
+        add.w   CU_YRORIGIN(a5),d1
+        move.w  CU_XRORIGIN(a5),d0
+        move.w  CU_XREXTANT(a5),d2
+        move.w  CU_YREXTANT(a5),d3
+        bra     cu_fill
+ct_il:                               ; inserts n lines at the cursor line (downwards)
+        move.w  d6,d1
+        neg.w   d1
+        bra.s   ct_lines
+ct_dl:                               ; deletes n lines (upwards)
+        move.w  d6,d1
+ct_lines:
+        muls    CU_YRSIZE(a5),d1
+        move.w  CU_YCP(a5),d3
+        mulu    CU_YRSIZE(a5),d3
+        add.w   CU_YRORIGIN(a5),d3
+        bra     cu_scroll
+ct_dch:                              ; deletes n characters (the rest of the line moves left)
+        move.w  d6,d1
+        mulu    CU_XRSIZE(a5),d1
+        bra     cu_hshift
+ct_ich:                              ; inserts n blanks (the rest of the line moves right)
+        move.w  d6,d1
+        mulu    CU_XRSIZE(a5),d1
+        neg.w   d1
+        bra     cu_hshift
+ct_su:
+        move.w  d6,d1
+        bra     cu_vscroll
+ct_sd:
+        move.w  d6,d1
+        neg.w   d1
+        bra     cu_vscroll
+ct_dsr:                              ; only the first parameter is looked at: 6 = cursor position report
+        cmp.w   #6,CU_PARS(a5)
+        beq     cu_dsr
+        rts
+ct_page:                             ; CSI n t: fixed page length (n > 0), automatic otherwise
+        move.w  CU_PARS(a5),d0
+        bgt.s   .pg_set
+        moveq   #0,d0
+.pg_set:
+        move.w  d0,CU_FIXROW(a5)
+        bra.s   ct_regeom
+ct_line:                             ; CSI n u: fixed line length
+        move.w  CU_PARS(a5),d0
+        bgt.s   .ln_set
+        moveq   #0,d0
+.ln_set:
+        move.w  d0,CU_FIXCOL(a5)
+        bra.s   ct_regeom
+ct_xorg:                             ; CSI n x: XROrigin in pixels (n >= 0), automatic by default
+        move.w  CU_PARS(a5),d0
+        cmp.w   #CU_PDEF,d0
+        bne.s   .xo_set
+        moveq   #-1,d0
+.xo_set:
+        move.w  d0,CU_FIXXO(a5)
+        bra.s   ct_regeom
+ct_yorg:
+        move.w  CU_PARS(a5),d0
+        cmp.w   #CU_PDEF,d0
+        bne.s   .yo_set
+        moveq   #-1,d0
+.yo_set:
+        move.w  d0,CU_FIXYO(a5)
+ct_regeom:                           ; geometry recomputed at once; the cursor stays within it
+        bsr     cu_geom
+        move.w  CU_YCP(a5),d0
+        cmp.w   CU_YMAX(a5),d0
+        ble.s   .rg_x
+        move.w  CU_YMAX(a5),CU_YCP(a5)
+.rg_x:
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble     cu_ret
+        clr.w   CU_XCP(a5)
+        rts
+
+; CSI lists: each parameter of CU_PARS up to CU_NPAR goes through the routine in a1 (d0.w = parameter).
+ct_each:
+        movem.l d6-d7/a2,-(sp)
+        move.l  a1,a2
+        lea     CU_PARS(a5),a0
+        moveq   #0,d7
+        move.b  CU_NPAR(a5),d7
+        cmp.w   #CU_NPARS-1,d7
+        bls.s   .ea_lp
+        moveq   #CU_NPARS-1,d7
+.ea_lp:
+        move.w  (a0)+,d0
+        movem.l d7/a0,-(sp)
+        jsr     (a2)
+        movem.l (sp)+,d7/a0
+        dbra    d7,.ea_lp
+        movem.l (sp)+,d6-d7/a2
+        rts
+ct_ctc:
+        lea     .tc_one(pc),a1
+        bra.s   ct_each
+.tc_one:                             ; 0/default: set; 2: clear the current one; 4, 5: clear all
+        tst.w   d0
+        ble     cu_hts
+        cmp.w   #2,d0
+        beq     cu_tbc
+        cmp.w   #4,d0
+        beq     cu_tclr
+        cmp.w   #5,d0
+        beq     cu_tclr
+        rts
+ct_tbc:
+        lea     .tg_one(pc),a1
+        bra.s   ct_each
+.tg_one:                             ; 0/default: clear the current one; 3: clear all
+        tst.w   d0
+        ble     cu_tbc
+        cmp.w   #3,d0
+        beq     cu_tclr
+        rts
+ct_sgr:
+        lea     cu_sgr1(pc),a1
+        bsr.s   ct_each
+        bra     cu_setpens
+ct_sm:
+        lea     .sm_one(pc),a1
+        bra.s   ct_each
+.sm_one:
+        bsr.s   ct_modebit
+        bmi     cu_ret
+        bset    d0,0(a0,d1.w)
+        rts
+ct_rm:
+        lea     .rm_one(pc),a1
+        bra     ct_each
+.rm_one:
+        bsr.s   ct_modebit
+        bmi     cu_ret
+        bclr    d0,0(a0,d1.w)
+        rts
+; ct_modebit(d0.w = SM/RM parameter) -> d1.w = byte of cu_Modes, d0 = bit, a0 = cu_Modes; N = 1 when ignored.
+; 0..20 as they are, >1 (-31) = 21 ASM, ?7 (-47) = 22 AWM.
+ct_modebit:
+        cmp.w   #-31,d0
+        bne.s   .mb_n31
+        moveq   #21,d0
+.mb_n31:
+        cmp.w   #-47,d0
+        bne.s   .mb_n47
+        moveq   #22,d0
+.mb_n47:
+        tst.w   d0
+        bmi.s   .mb_ret
+        cmp.w   #22,d0
+        bhi.s   .mb_no
+        lea     CU_MODES(a5),a0
+        moveq   #0,d1
+        move.w  d0,d1
+        lsr.w   #3,d1
+        and.w   #7,d0                ; N = 0
+        rts
+.mb_no:
+        moveq   #-1,d0
+.mb_ret:
+        rts
+ct_rawon:
+        lea     .ro_one(pc),a1
+        bra     ct_each
+.ro_one:
+        bsr.s   ct_rawbit
+        bmi     cu_ret
+        bset    d0,0(a0,d1.w)
+        rts
+ct_rawoff:
+        lea     .rf_one(pc),a1
+        bra     ct_each
+.rf_one:
+        bsr.s   ct_rawbit
+        bmi     cu_ret
+        bclr    d0,0(a0,d1.w)
+        rts
+; ct_rawbit(d0.w = class 0..18) -> d1.w = byte of cu_RawEvents, d0 = bit, a0 = cu_RawEvents; N = 1 when ignored.
+ct_rawbit:
+        tst.w   d0
+        bmi.s   .rb_ret
+        cmp.w   #18,d0
+        bhi.s   .rb_no
+        lea     CU_RAWEV(a5),a0
+        move.w  d0,d1
+        lsr.w   #3,d1
+        and.w   #7,d0
+        rts
+.rb_no:
+        moveq   #-1,d0
+.rb_ret:
         rts
 console_end:
