@@ -27,6 +27,8 @@
                 include "graphics.i"
 
                 xdef    intuition_SetMenuStrip
+                xdef    it_rpsave
+                xdef    it_rprest
                 xdef    intuition_ClearMenuStrip
                 xdef    intuition_ItemAddress
                 xdef    intuition_OnMenu
@@ -155,21 +157,62 @@ mn_onoff:
         bset    #4,MI_FLAGS+1(a0)
         rts
 
-; PrintIText(rp a0, itext a1, x d0, y d1): each IntuiText of the chain with the pens and mode it carries, its
-; top-left corner at (x + LeftEdge, y + TopEdge). Single 8x8 font (ITextFont ignored).
+; it_rpsave(a2 = rp, a0 = 20-byte buffer): the RastPort state DrawBorder and PrintIText restore (intuition-render
+; §1): font fields (Font, AlgoStyle, TxFlags, TxHeight, TxWidth, TxBaseline), pens, DrawMode, Mask, Layer.
+it_rpsave:
+        move.l  rp_Font(a2),(a0)
+        move.l  rp_Font+4(a2),4(a0)
+        move.l  rp_Font+8(a2),8(a0)
+        move.b  rp_FgPen(a2),12(a0)
+        move.b  rp_BgPen(a2),13(a0)
+        move.b  rp_DrawMode(a2),14(a0)
+        move.b  rp_Mask(a2),15(a0)
+        move.l  rp_Layer(a2),16(a0)
+        rts
+; it_rprest(a2 = rp, a0 = buffer of it_rpsave, a6 = GfxBase): font fields written back, pens and mode through
+; SetAPen/SetBPen/SetDrMd (so FRST_DOT is set and the line pattern restarts, as on 1.3), then Mask and Layer.
+; Clobbers d0/d1/a0/a1.
+it_rprest:
+        move.l  a0,-(sp)
+        move.l  (a0),rp_Font(a2)
+        move.l  4(a0),rp_Font+4(a2)
+        move.l  8(a0),rp_Font+8(a2)
+        move.l  a2,a1
+        moveq   #0,d0
+        move.b  12(a0),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  (sp),a0
+        move.l  a2,a1
+        moveq   #0,d0
+        move.b  13(a0),d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  (sp),a0
+        move.l  a2,a1
+        moveq   #0,d0
+        move.b  14(a0),d0
+        jsr     LVO_SETDRMD(a6)
+        move.l  (sp)+,a0
+        move.b  15(a0),rp_Mask(a2)
+        move.l  16(a0),rp_Layer(a2)
+        rts
+
+; PrintIText(rp a0, itext a1, x d0, y d1) (intuition-render §5): each IntuiText of the chain with its pens and mode,
+; its ITextFont when it opens (SetFont + SetSoftStyle of its style), from (x + LeftEdge, y + TopEdge + TxBaseline),
+; Mask $FF; the RastPort state is restored after each font change and at the end; cp is left after the text.
 intuition_PrintIText:
-        movem.l d2-d3/a2-a3/a6,-(sp)
-        move.b  rp_FgPen(a0),-(sp)   ; pens and mode left intact, as in 1.3 (probed: tests/itextstate.s)
-        move.b  rp_BgPen(a0),-(sp)
-        move.b  rp_DrawMode(a0),-(sp)
+        movem.l d2-d3/a2-a4/a6,-(sp)
+        lea     -20(sp),sp
         move.l  a0,a2
         move.l  a1,a3
         move.w  d0,d2
         move.w  d1,d3
         move.l  IB_GFXBASE(a6),a6
+        move.l  sp,a0
+        bsr     it_rpsave
+        st      rp_Mask(a2)
 .pt_lp:
         move.l  a3,d0
-        beq.s   .pt_ret
+        beq     .pt_ret
         move.l  a2,a1
         moveq   #0,d0
         move.b  IT_FRONTPEN(a3),d0
@@ -182,24 +225,53 @@ intuition_PrintIText:
         moveq   #0,d0
         move.b  IT_DRAWMODE(a3),d0
         jsr     LVO_SETDRMD(a6)
+        sub.l   a4,a4                ; a4 = font opened for this IntuiText | 0
+        move.l  IT_ITEXTFONT(a3),d0
+        beq.s   .pt_move
+        move.l  d0,a0
+        jsr     LVO_OPENFONT(a6)
+        tst.l   d0
+        beq.s   .pt_move
+        move.l  d0,a4
+        move.l  d0,a0
+        move.l  a2,a1
+        jsr     LVO_SETFONT(a6)
+        move.l  IT_ITEXTFONT(a3),a0
+        moveq   #0,d0
+        move.b  ta_Style(a0),d0
+        move.l  #$FF,d1
+        move.l  a2,a1
+        jsr     LVO_SETSOFTSTYLE(a6)
+.pt_move:
         move.l  a2,a1
         move.w  d2,d0
         add.w   IT_LEFTEDGE(a3),d0
         move.w  d3,d1
         add.w   IT_TOPEDGE(a3),d1
-        addq.w  #GFX_FONTBASE,d1
+        add.w   rp_TxBaseline(a2),d1
         jsr     LVO_MOVE(a6)
-        move.l  IT_ITEXT(a3),a0
-        bsr.s   mn_strlen
+        move.l  IT_ITEXT(a3),d0
+        beq.s   .pt_font
+        move.l  d0,a0
+        bsr     mn_strlen
         move.l  a2,a1
         jsr     LVO_TEXT(a6)
+.pt_font:
+        move.l  a4,d0
+        beq.s   .pt_next
+        move.l  a4,a1
+        jsr     LVO_CLOSEFONT(a6)
+        move.l  sp,a0
+        bsr     it_rprest
+        st      rp_Mask(a2)
+.pt_next:
         move.l  IT_NEXTTEXT(a3),a3
-        bra.s   .pt_lp
+        bra     .pt_lp
 .pt_ret:
-        move.b  (sp)+,rp_DrawMode(a2)
-        move.b  (sp)+,rp_BgPen(a2)
-        move.b  (sp)+,rp_FgPen(a2)
-        movem.l (sp)+,d2-d3/a2-a3/a6
+        move.l  sp,a0
+        bsr     it_rprest
+        lea     20(sp),sp
+        movem.l (sp)+,d2-d3/a2-a4/a6
         rts
 
 ; IntuiTextLength(itext a0, a6 = IntuitionBase) -> d0 = width in pixels of its text in its own font: ITextFont opened

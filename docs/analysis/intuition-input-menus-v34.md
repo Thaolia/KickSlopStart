@@ -239,7 +239,7 @@ free, otherwise public AllocMem; failure ⇒ `Alert($8400000E)`) and return.
 | activate a window | ActivateWindow; OpenWindow with ACTIVATE; CloseWindow of the active window (successor, `workbench-task-v34.md` §6.8); CloseScreen | §1.11, then event IECLASS_EVENT code 1 passed on |
 | repair a screen | CloseWindow, EndRequest, ShowTitle | damaged layers, REFRESHWINDOW (§2.4) |
 | NEWPREFS | SetPrefs(…, inform = TRUE) | NEWPREFS broadcast (§2.4) |
-| MoveWindow / SizeWindow | MoveWindow / SizeWindow | move / size, then NEWSIZE (§2.4) |
+| MoveWindow / SizeWindow | MoveWindow / SizeWindow | move (no message of its own) / size, then NEWSIZE to the active window (§2.3); details `intuition-windows-v34.md` §4–§5 |
 | WindowToFront / WindowToBack | same | change of layer order |
 | REQSET / REQCLEAR | Request / EndRequest | message (§2.4) |
 | "requester" control | Request | switch to state 7 |

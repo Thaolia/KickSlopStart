@@ -39,6 +39,8 @@
                 xdef    intuition_RefreshWindowFrame
                 xdef    intuition_CurrentTime
                 xref    it_ptrapply          ; pointer.s
+                xref    it_rpsave            ; menus.s
+                xref    it_rprest
                 xdef    it_event
                 xdef    it_refresh           ; menus.s
                 xdef    it_alive             ; menus.s
@@ -159,6 +161,7 @@ intuition_OpenScreen:
         move.b  NS_DETAILPEN(a2),SC_DETAILPEN(a3)
         move.b  NS_BLOCKPEN(a2),SC_BLOCKPEN(a3)
         move.w  NS_TYPE(a2),SC_FLAGS(a3)
+        or.w    #SHOWTITLE,SC_FLAGS(a3)
         move.l  NS_DEFAULTTITLE(a2),SC_TITLE(a3)
         move.l  NS_DEFAULTTITLE(a2),SC_DEFAULTTITLE(a3)
         move.b  #1,SC_BARVBORDER(a3)
@@ -566,28 +569,24 @@ sc_gadinv:
         move.l  (sp)+,a3
         rts
 
-; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle, or the
-; screen's default title if it is null; always redrawn (the same buffer may have changed contents). Preserves
-; everything.
+; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle (OpenWindow
+; sets it to the screen's DefaultTitle; NULL = no text); always redrawn (the same buffer may have changed contents).
+; Preserves everything.
 wn_scrtitle:
         movem.l d0-d3/a0-a1/a3/a6,-(sp)
         move.l  WD_SCREENTITLE(a3),d1
         move.l  WD_WSCREEN(a3),d0
         beq.s   .st_ret
         move.l  d0,a3
-        tst.l   d1
-        bne.s   .st_set
-        move.l  SC_DEFAULTTITLE(a3),d1
-.st_set:
         move.l  d1,SC_TITLE(a3)
         bsr     sc_drawbar
 .st_ret:
         movem.l (sp)+,d0-d3/a0-a1/a3/a6
         rts
 
-; intuition_SetWindowTitles(window a0, title a1, screen title a2, a6 = IntuitionBase): -1 leaves the title
-; unchanged. New window title: border redrawn. New screen title: shown immediately if the window
-; is active, or if none is.
+; intuition_SetWindowTitles(window a0, title a1, screen title a2, a6 = IntuitionBase) (intuition-render §2): -1
+; leaves a title unchanged. New window title: border redrawn. New screen title: stored, and shown at once only if the
+; window is the active one.
 intuition_SetWindowTitles:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -602,12 +601,13 @@ intuition_SetWindowTitles:
         cmp.l   #-1,a2
         beq.s   .swt_ret
         move.l  a2,WD_SCREENTITLE(a3)
-        move.l  IB_ACTIVEWINDOW(a5),d0
-        beq.s   .swt_show
-        cmp.l   d0,a3
-        bne.s   .swt_ret
-.swt_show:
-        bsr     wn_scrtitle
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne.s   .swt_ret             ; an inactive window's screen title waits for its activation
+        move.l  WD_WSCREEN(a3),d0
+        beq.s   .swt_ret
+        move.l  d0,a3
+        move.l  a2,SC_TITLE(a3)      ; NULL: a bar without text
+        bsr     sc_drawbar
 .swt_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
@@ -1168,6 +1168,7 @@ intuition_ActivateWindow:
         tst.l   IB_STRGAD(a5)        ; dropped while a text gadget is edited (spec intuition-strgad-v34 §2)
         bne.s   .aw_ret
         bsr     it_setactive
+        bsr     wn_scrtitle          ; the screen bar takes the window's screen title (intuition-render §2.1)
 .aw_ret:
         movem.l (sp)+,a3/a5
         rts
@@ -1295,6 +1296,7 @@ intuition_OpenWindow:
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
         move.l  NW_FIRSTGADGET(a2),WD_FIRSTGADGET(a3)
         move.l  a4,WD_WSCREEN(a3)
+        move.l  SC_DEFAULTTITLE(a4),WD_SCREENTITLE(a3)  ; (intuition-windows §1.3)
         bsr     wn_mksysgads
         move.l  NW_CHECKMARK(a2),d0  ; menu check mark: the application's, else the internal one (according to HIRES)
         bne.s   .ow_ck
@@ -1824,12 +1826,26 @@ wn_titlebar_nc:
         move.w  d5,d2
         move.w  d7,d3
         jsr     LVO_RECTFILL(a6)
-        move.w  d4,d6
-        addq.w  #3,d6                ; d6 = start of the pattern
+        move.w  d4,d6                ; d6 = start of the pattern: the area's start without a title
         move.l  WD_TITLE(a3),d0
         beq.s   .tb_drag
-        move.l  d0,a0
+        move.l  d0,-(sp)             ; title
         bsr     wn_brp
+        move.l  a1,a2
+        lea     -20(sp),sp
+        move.l  sp,a0
+        bsr     it_rpsave
+        move.l  WD_WSCREEN(a3),a0    ; title drawn and measured in the screen's font and style (intuition-render
+        move.l  SC_RASTPORT+rp_Font(a0),d0   ; §2.2), then the frame RastPort's state back
+        beq.s   .tb_sf
+        move.l  d0,a0
+        move.l  a2,a1
+        jsr     LVO_SETFONT(a6)
+        move.l  WD_WSCREEN(a3),a0
+        move.b  SC_RASTPORT+rp_AlgoStyle(a0),rp_AlgoStyle(a2)
+.tb_sf:
+        move.l  20(sp),a0
+        move.l  a2,a1
         moveq   #0,d0
         move.b  WD_DETAILPEN(a3),d0
         moveq   #0,d1
@@ -1839,9 +1855,11 @@ wn_titlebar_nc:
         addq.w  #1,d2
         move.w  d4,d3
         bsr     it_title
-        bsr     wn_brp
-        move.w  rp_cp_x(a1),d6
+        move.w  rp_cp_x(a2),d6
         addq.w  #3,d6
+        move.l  sp,a0
+        bsr     it_rprest
+        lea     24(sp),sp
 .tb_drag:
         btst    #1,WD_FLAGS+3(a3)    ; WINDOWDRAG
         beq.s   .tb_ret
@@ -2407,6 +2425,11 @@ intuition_CloseWindow:
 .cw_new:
         move.l  a3,-(sp)
         move.l  d2,a3
+        move.l  #INACTIVEWINDOW,d0   ; 1.3 deactivates the successor before activating it (intuition-windows §3.3)
+        moveq   #0,d1
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        bsr     wn_sendmsg
         bsr     it_setactive
         bsr     wn_scrtitle
         move.l  (sp)+,a3
@@ -2580,9 +2603,11 @@ intuition_ShowTitle:
         move.l  SC_BARLAYER(a4),d1
         beq.s   .st_ret
         moveq   #LVO_UPFRONTLAYER,d2
+        bset    #4,SC_FLAGS+1(a4)    ; SHOWTITLE
         tst.l   d0
         bne.s   .st_go
         moveq   #LVO_BEHINDLAYER,d2
+        bclr    #4,SC_FLAGS+1(a4)
 .st_go:
         move.l  IB_LAYERSBASE(a5),a6
         suba.l  a0,a0
@@ -2631,6 +2656,9 @@ intuition_MoveWindow:
         sub.w   WD_LEFTEDGE(a3),d0
         move.w  d3,d1
         sub.w   WD_TOPEDGE(a3),d1
+        move.w  d0,d4
+        or.w    d1,d4
+        beq.s   .mw_ret              ; no movement: nothing at all, no repair (intuition-windows §4)
         move.w  d2,WD_LEFTEDGE(a3)
         move.w  d3,WD_TOPEDGE(a3)
         ext.l   d0
@@ -2651,6 +2679,7 @@ intuition_MoveWindow:
         jsr     LVO_MOVELAYER(a6)
         jsr     rq_move              ; the requesters follow
         bsr     it_refresh
+.mw_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
@@ -2769,20 +2798,21 @@ wn_freeport:
         move.l  a2,-(sp)
         move.l  d0,a2
         jsr     LVO_DISABLE(a6)
-        move.l  d2,-(sp)
-        lea     WDX_IMSG(a3),a1      ; messages still queued: removed before freeing the window
-        moveq   #WDX_NEMSG,d2
-.fp_lp:
-        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        bne.s   .fp_nomsg
-        move.l  a1,-(sp)
-        jsr     LVO_REMOVE(a6)
-        move.l  (sp)+,a1
+.fp_lp:                              ; every message still in the port leaves it: this window's own ones become free
+        move.l  a2,a0                ; again, another window's (shared port) is replied with Code 4 (§3.2)
+        jsr     LVO_GETMSG(a6)
+        tst.l   d0
+        beq.s   .fp_end
+        move.l  d0,a1
+        cmp.l   IM_IDCMPWINDOW(a1),a3
+        bne.s   .fp_other
         move.b  #NT_REPLYMSG,LN_TYPE(a1) ; free again in the pool (ModifyIDCMP can reopen a port)
-.fp_nomsg:
-        lea     IM_SIZEOF(a1),a1
-        dbra    d2,.fp_lp
-        move.l  (sp)+,d2
+        bra.s   .fp_lp
+.fp_other:
+        move.w  #4,IM_CODE(a1)
+        jsr     LVO_REPLYMSG(a6)
+        bra.s   .fp_lp
+.fp_end:
         jsr     LVO_ENABLE(a6)
         moveq   #0,d0
         move.b  MP_SIGBIT(a2),d0
@@ -2821,10 +2851,8 @@ intuition_DrawImage:
         moveq   #0,d2                ; d2 = image planes consumed
         lea     bm_Planes(a4),a1
 .di_plane:
-        btst    d1,IG_PLANEPICK(a3)
-        beq.s   .di_onoff
-        cmp.w   IG_DEPTH(a3),d2
-        bge.s   .di_zero             ; chosen plane without data: 0
+        btst    d1,IG_PLANEPICK(a3)  ; Image.Depth is not read (intuition-render §4): each picked plane takes the
+        beq.s   .di_onoff            ; next data plane
         move.l  a0,(a1)+
         add.l   d0,a0
         addq.w  #1,d2
@@ -4286,9 +4314,10 @@ it_boxxor:
         movem.l (sp)+,d2-d7/a2
         rts
 
-; SizeWindow(window a0, dx d0, dy d1): new bounded size (at least 16 pixels, without leaving the screen). The
-; layer follows (SizeLayer); the old borders that became interior and the old size gadget are erased,
-; the border redrawn, NEWSIZE sent, then the damaged areas repaired (REFRESHWINDOW for the window itself).
+; SizeWindow(window a0, dx d0, dy d1): new bounded size (at least 16 pixels, without leaving the screen: 1.3 does not
+; bound it and draws past the BitMap). The layer follows (SizeLayer); the old borders that became interior and the
+; old size gadget are erased, the border redrawn, NEWSIZE sent to the active window (also for no change, as 1.3), then
+; the damaged areas repaired (REFRESHWINDOW).
 intuition_SizeWindow:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a5
@@ -4317,7 +4346,7 @@ intuition_SizeWindow:
         sub.w   d7,d1
         move.w  d0,d4
         or.w    d1,d4
-        beq     .sw_ret
+        beq     .sw_new
         move.w  d2,WD_WIDTH(a3)
         move.w  d3,WD_HEIGHT(a3)
         ext.l   d0
@@ -4337,37 +4366,71 @@ intuition_SizeWindow:
         bsr     wn_gzz
         bsr     wn_unborder
         bsr     wn_border
+.sw_new:
+        move.l  IB_ACTIVEWINDOW(a5),d0   ; NEWSIZE goes to the active window, even for no change
+        beq.s   .sw_rep                  ; (intuition-windows §5)
+        move.l  a3,-(sp)
+        move.l  d0,a3
         move.l  #NEWSIZE,d0
         moveq   #0,d1
         moveq   #0,d2
         moveq   #0,d3
         bsr     wn_sendmsg
+        move.l  (sp)+,a3
+.sw_rep:
         bsr     it_refresh
 .sw_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; WindowLimits(window a0, minW d0, minH d1, maxW d2, maxH d3) -> d0 = TRUE: limits of the size gadget; a
-; zero value leaves the limit unchanged.
+; WindowLimits(window a0, minW d0, minH d1, maxW d2, maxH d3) -> d0 = 1, or 0 if the current size violates one of
+; the new limits (intuition-windows §7): each value on its own, 0 = unchanged; a minimum is a signed 32-bit compare
+; with the size, a maximum an unsigned 16-bit one; a refused value is not stored, the others are.
 intuition_WindowLimits:
-        lea     WD_MINWIDTH(a0),a0
-        tst.w   d0
+        movem.l d4-d5,-(sp)
+        moveq   #1,d4                ; d4 = result
+        move.w  WD_WIDTH(a0),d5
+        ext.l   d5
+        tst.l   d0
         beq.s   .wl_1
-        move.w  d0,(a0)
+        cmp.l   d0,d5
+        blt.s   .wl_1n
+        move.w  d0,WD_MINWIDTH(a0)
+        bra.s   .wl_1
+.wl_1n:
+        moveq   #0,d4
 .wl_1:
-        tst.w   d1
+        move.w  WD_HEIGHT(a0),d5
+        ext.l   d5
+        tst.l   d1
         beq.s   .wl_2
-        move.w  d1,2(a0)
+        cmp.l   d1,d5
+        blt.s   .wl_2n
+        move.w  d1,WD_MINWIDTH+2(a0)
+        bra.s   .wl_2
+.wl_2n:
+        moveq   #0,d4
 .wl_2:
         tst.w   d2
         beq.s   .wl_3
-        move.w  d2,4(a0)
+        cmp.w   WD_WIDTH(a0),d2
+        blo.s   .wl_3n
+        move.w  d2,WD_MINWIDTH+4(a0)
+        bra.s   .wl_3
+.wl_3n:
+        moveq   #0,d4
 .wl_3:
         tst.w   d3
         beq.s   .wl_4
-        move.w  d3,6(a0)
+        cmp.w   WD_HEIGHT(a0),d3
+        blo.s   .wl_4n
+        move.w  d3,WD_MINWIDTH+6(a0)
+        bra.s   .wl_4
+.wl_4n:
+        moveq   #0,d4
 .wl_4:
-        moveq   #1,d0
+        move.l  d4,d0
+        movem.l (sp)+,d4-d5
         rts
 
 ; wn_gzz(a3 = window): GZZWidth / GZZHeight = size minus the borders. Clobbers d0/d1.

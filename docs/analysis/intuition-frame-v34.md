@@ -79,7 +79,8 @@ Order:
    - the "empty" pixels are not touched (JAM1): they keep the background BP.
    - **Result for BT = 11** (topaz 8, WBorTop 2): two **double horizontal lines in DP**
      at lines **y = 2–3 and y = 6–7**, from the end of the title up to x1 − 3.
-   - Without a title, the pattern starts at x0 + 3, since the text width is 0.
+   - Without a title, the pattern starts at **x0** (the +3 is added only with the text width; corrected
+     2026-11-04 from a measurement, `intuition-render-v34.md` §2.4).
    - Nothing is drawn if the area is empty (x > x1−3 or BT−3 < 1).
 
 ## 4. Active or inactive window [O]

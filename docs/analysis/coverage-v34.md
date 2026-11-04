@@ -147,8 +147,8 @@ version.
 | 5 | cia.resource (ciaa/ciab) | 648 | **complete** | resources §1 ; timer-v34 §1, §6 ; keyboard-handshake §1–§2 | `src/exec/cia.s` | — |
 | 6 | disk.resource | 872 | **complete** | resources §2 ; setpatch-disk-resource ; setpatch-138 §1.7 | `src/exec/diskres.s` | — |
 | 7 | misc.resource | 268 | **complete** | resources §4 | `src/exec/misc.s` | — |
-| 8 | ramlib.library | 1,564 | none (cited at boot) | boot-sequence, dos-boot-sequence | `src/exec/ramlib.s` (without its own process) | P2 |
-| 9 | graphics.library 34.1 | 59,816 | **partial, strong on hardware paths**: blitter, display/copper/VBlank, fills/Flood/ellipses/pixels, sprites, colours; still missing: text and fonts, GELs and animation, regions (return value only), line drawing, SetRast | graphics-blitter, graphics-display, graphics-area, custom-chips §4.1, layers §1.1/§6/§7, fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (103/105, the 2 private ones null) | P2 |
+| 8 | ramlib.library | 1,564 | **complete** (2026-11-04: exec patches, load procedure, concurrency, low-memory expunge; no process in 1.3) | ramlib-v34, boot-sequence, dos-boot-sequence, dos-memory §1.2 | `src/exec/ramlib.s` (without its own process, as 1.3) | P2 |
+| 9 | graphics.library 34.1 | 59,816 | **partial, strong on hardware paths**: blitter, display/copper/VBlank, fills/Flood/ellipses/pixels, sprites, colours; still missing: text and fonts, regions (return value only), line drawing, SetRast | graphics-blitter, graphics-display, graphics-area, custom-chips §4.1, graphics-gels, layers §1.1/§6/§7, fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (103/105, the 2 private ones null) | P2 |
 | 10 | keyboard.device | common area (≈ 1.1 KB by closure) | **complete** (14 commands, handshake, reset) | keyboard-input-devices §2, keyboard-handshake | `src/exec/kbddev.s`, `keyboard.s` | — |
 | 11 | gameport.device | common area (≈ 1.2 KB) | **complete** | gameport-v34, gameport-device-v34 | `src/exec/gameport.s` (14 commands) | — |
 | 12 | timer.device 34.1 | 2,040 | **complete** | timer-v34 | `src/exec/timer.s` | — |
@@ -157,7 +157,7 @@ version.
 | 15 | layers.library 34.1 | 13,312 | **complete** | layers-v34, installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | — |
 | 16 | console.device | common area (≈ 5.5 KB) | **complete** (CSI automaton, keymaps, CDInputHandler, RawKeyConvert, commands) | console-keymap-v34, setmap-13, handlers-v34 §2 | `src/exec/console.s` (READ, WRITE, the 4 keymap commands, both functions; CMD_RESET/CLEAR/STOP/START/FLUSH refused) | P1 |
 | 17 | trackdisk.device 34.1 | 6,908 | **complete** except TD_MOTOR (partial) | trackdisk-official-timing, trackdisk-write, trackdisk-raw-changeint, disk-change | `src/exec/trackdisk.s` (22 commands) | — |
-| 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); still missing: CloseWindow, window operations, SetWindowTitles, rendering helpers | intuition-* (11 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P2 |
+| 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); SetWindowTitles and the rendering helpers (intuition-render); CloseWindow and the window operations (intuition-windows) | intuition-* (13 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P2 |
 | 19 | alert.hook | 658 | **complete** | alert-v34 §4, coldstart-hardware §8.4 | role played from the boot code (`alert_boothook` in `src/exec/execmisc.s`), not a separate resident | — |
 | 20 | mathffp.library | 1,324 | none | — | `src/exec/mathffp.s` | P3 |
 | 21 | workbench.task 34.1 | 35,302 | **strong** | workbench-task, wb-icon-clipping, disk-change §4, loadwb-13 | `src/dos/workbench.s` | — |
@@ -288,20 +288,20 @@ version.
 | -78 | `CloseFont` | cited — intuition-prefs §3.3 ; workbench-task §3.1 | yes | 30 / 30 | P3 |
 | -84 | `AskSoftStyle` | partial — setpatch-138 §1.9 | yes | 36 / 36 | P3 |
 | -90 | `SetSoftStyle` | partial — setpatch-138 §1.9 ; console-keymap §3.7 | yes | 50 / 50 | P3 |
-| -96 | `AddBob` | cited — workbench-task §3.6 | yes | 14 / 116 | P3 |
-| -102 | `AddVSprite` | no | yes | 14 / 88 | P3 |
-| -108 | `DoCollision` | partial — custom-chips §4.1 (software only, blitter overlap test) | yes | 1330 / 1824 | P2 |
-| -114 | `DrawGList` | partial — custom-chips §4.1 (VSprite copper output; band allocation open) ; graphics-blitter §9.4 | yes | 3098 / 6552 | P2 |
-| -120 | `InitGels` | cited — workbench-task §3.1 | yes | 122 / 122 | P3 |
-| -126 | `InitMasks` | no | yes | 12 / 246 | P3 |
-| -132 | `RemIBob` | cited — workbench-task §3.6 | yes | 70 / 3166 | P2 |
-| -138 | `RemVSprite` | no | yes | 12 / 32 | P3 |
-| -144 | `SetCollision` | partial — custom-chips §4.1 (fills the GelsInfo table only) | yes | 42 / 42 | P3 |
-| -150 | `SortGList` | cited — workbench-task §3.6 | yes | 190 / 190 | P3 |
-| -156 | `AddAnimOb` | no | yes | 96 / 198 | P3 |
-| -162 | `Animate` | no | yes | 468 / 570 | P2 |
-| -168 | `GetGBuffers` | no | yes | 350 / 382 | P2 |
-| -174 | `InitGMasks` | no | yes | 70 / 304 | P2 |
+| -96 | `AddBob` | yes — graphics-gels §3.2 | yes | 14 / 116 | — |
+| -102 | `AddVSprite` | yes — graphics-gels §3.2 | yes | 14 / 88 | — |
+| -108 | `DoCollision` | yes — graphics-gels §7 ; custom-chips §4.1 | yes | 1330 / 1824 | — |
+| -114 | `DrawGList` | yes — graphics-gels §5 (VSprite allocation §5.8) ; custom-chips §4.1 | yes | 3098 / 6552 | — |
+| -120 | `InitGels` | yes — graphics-gels §3.1 | yes | 122 / 122 | — |
+| -126 | `InitMasks` | yes — graphics-gels §4 | yes | 12 / 246 | — |
+| -132 | `RemIBob` | yes — graphics-gels §6 | yes | 70 / 3166 | — |
+| -138 | `RemVSprite` | yes — graphics-gels §3.3 | yes | 12 / 32 | — |
+| -144 | `SetCollision` | yes — graphics-gels §7.5 ; custom-chips §4.1 | yes | 42 / 42 | — |
+| -150 | `SortGList` | yes — graphics-gels §3.4 | yes | 190 / 190 | — |
+| -156 | `AddAnimOb` | yes — graphics-gels §8.1 | yes | 96 / 198 | — |
+| -162 | `Animate` | yes — graphics-gels §8.2 | yes | 468 / 570 | — |
+| -168 | `GetGBuffers` | yes — graphics-gels §9 | yes | 350 / 382 | — |
+| -174 | `InitGMasks` | yes — graphics-gels §9 | yes | 70 / 304 | — |
 | -180 | `DrawEllipse` | yes — graphics-area §6 | yes | 22 / 672 | — |
 | -186 | `AreaEllipse` | yes — graphics-area §3.3 | yes | 188 / 188 | — |
 | -192 | `LoadRGB4` | yes — graphics-display §3 | yes | 272 / 676 | — |
@@ -372,7 +372,7 @@ version.
 | -582 | `GetRGB4` | yes — graphics-display §3 | yes | 24 / 24 | — |
 | -588 | `ScrollVPort` | yes — graphics-display §7.3 | yes | 2362 / 3442 | — |
 | -594 | `UCopperListInit` | yes — graphics-display §6 | yes | 16 / 306 | — |
-| -600 | `FreeGBuffers` | no | yes | 254 / 264 | P3 |
+| -600 | `FreeGBuffers` | yes — graphics-gels §9 | yes | 254 / 264 | — |
 | -606 | `BltBitMapRastPort` | yes — graphics-blitter §5.2 | yes | 272 / 3108 | — |
 | -612 | `OrRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1370 | P2 |
 | -618 | `XorRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1906 | P2 |
@@ -394,14 +394,14 @@ version.
 | -54 | `ClearMenuStrip` | yes — intuition-input-menus §3.2 | yes | 44 / 164 | — |
 | -60 | `ClearPointer` | yes — intuition-misc §3 | yes | 66 / 922 | — |
 | -66 | `CloseScreen` | yes — intuition-screens §6.1 | yes | 54 / 12322 | — |
-| -72 | `CloseWindow` | partial — intuition-input-menus §1.10, §2.2 ; workbench-task §6.8 ; intuition-requesters §5.1 | yes | 12 / 2550 | P2 |
+| -72 | `CloseWindow` | yes — intuition-windows §3 ; intuition-input-menus §1.10, §2.2 ; workbench-task §6.8 ; intuition-requesters §5.1 | yes | 12 / 2550 | — |
 | -78 | `CloseWorkBench` | yes — intuition-screens §6.2 ; workbench-task §4 | yes | 84 / 12352 | — |
 | -84 | `CurrentTime` | yes — intuition-misc §5 | yes | 38 / 38 | — |
 | -90 | `DisplayAlert` | yes — alert-v34 §2 | yes | 18 / 2330 | — |
 | -96 | `DisplayBeep` | yes — intuition-screens §9 ; intuition-input-menus §1.3 | yes | 12 / 332 | — |
 | -102 | `DoubleClick` | yes — intuition-input-menus §2.6 ; intuition-prefs §3.3 | yes | 86 / 86 | — |
-| -108 | `DrawBorder` | partial — intuition-gzz §6.1 | yes | 20 / 572 | P2 |
-| -114 | `DrawImage` | partial — intuition-gzz §6.1 ; intuition-prop §3.1 | yes | 20 / 700 | P2 |
+| -108 | `DrawBorder` | yes — intuition-render §3 ; intuition-gzz §6.1 | yes | 20 / 572 | — |
+| -114 | `DrawImage` | yes — intuition-render §4 ; intuition-gzz §6.1 ; intuition-prop §3.1 | yes | 20 / 700 | — |
 | -120 | `EndRequest` | yes — intuition-requesters §4 | yes | 14 / 668 | — |
 | -126 | `GetDefPrefs` | yes — intuition-prefs §4.2 | yes | 68 / 260 | — |
 | -132 | `GetPrefs` | yes — intuition-prefs §4.1 | yes | 50 / 154 | — |
@@ -410,7 +410,7 @@ version.
 | -150 | `ModifyIDCMP` | yes — intuition-input-menus §2.6, §2.2 | yes | 14 / 1014 | — |
 | -156 | `ModifyProp` | yes — intuition-prop §5 | yes | 6 / 6 | — |
 | -162 | `MoveScreen` | yes — intuition-screens §8.2 | yes | 18 / 804 | — |
-| -168 | `MoveWindow` | partial — intuition-input-menus §1.10 (deferred) ; installclipregion §4.2 | yes | 74 / 288 | P3 |
+| -168 | `MoveWindow` | yes — intuition-windows §4 ; intuition-input-menus §1.10 (deferred) ; installclipregion §4.2 | yes | 74 / 288 | — |
 | -174 | `OffGadget` | yes — intuition-gadgets §6 ; intuition-gzz §6.4 | yes | 42 / 7246 | — |
 | -180 | `OffMenu` | yes — intuition-input-menus §3.2 | yes | 40 / 486 | — |
 | -186 | `OnGadget` | yes — intuition-gadgets §6 ; intuition-gzz §6.4 | yes | 42 / 7246 | — |
@@ -418,7 +418,7 @@ version.
 | -198 | `OpenScreen` | yes — intuition-screens §2 ; intuition-screenbehind | yes | 12 / 10462 | — |
 | -204 | `OpenWindow` | yes — intuition-frame §2 ; intuition-gzz §1–§2 | yes | 12 / 15640 | — |
 | -210 | `OpenWorkBench` | yes — intuition-screens §7.2 | yes | 6 / 11734 | — |
-| -216 | `PrintIText` | partial — intuition-gzz §6.1 ; intuition-requesters §2.3 | yes | 20 / 802 | P2 |
+| -216 | `PrintIText` | yes — intuition-render §5 ; intuition-gzz §6.1 ; intuition-requesters §2.3 | yes | 20 / 802 | — |
 | -222 | `RefreshGadgets` | yes — intuition-gadgets §5 ; intuition-gzz §6.2 | yes | 16 / 7220 | — |
 | -228 | `RemoveGadget` | yes — intuition-gadgets §4 | yes | 48 / 498 | — |
 | -234 | `ReportMouse` | yes — intuition-input-menus §2.6 | yes | 66 / 94 | — |
@@ -428,16 +428,16 @@ version.
 | -258 | `SetDMRequest` | yes — intuition-requesters §4.4 | yes | 36 / 82 | — |
 | -264 | `SetMenuStrip` | yes — intuition-input-menus §3.2 | yes | 224 / 1446 | — |
 | -270 | `SetPointer` | yes — intuition-misc §3 | yes | 96 / 952 | — |
-| -276 | `SetWindowTitles` | partial — intuition-frame §3.2 ; workbench-task §6.6 | yes | 122 / 8486 | P2 |
+| -276 | `SetWindowTitles` | yes — intuition-render §2 ; intuition-frame §3.2 ; workbench-task §6.6 | yes | 122 / 8486 | — |
 | -282 | `ShowTitle` | yes — intuition-screens §3.2 | yes | 86 / 7914 | — |
-| -288 | `SizeWindow` | partial — intuition-gzz §2.5 ; intuition-input-menus §1.10 | yes | 74 / 288 | P3 |
+| -288 | `SizeWindow` | yes — intuition-windows §5 ; intuition-gzz §2.5 ; intuition-input-menus §1.10 | yes | 74 / 288 | — |
 | -294 | `ViewAddress` | yes — intuition-screens §9 | yes | 16 / 16 | — |
 | -300 | `ViewPortAddress` | yes — intuition-screens §9 | yes | 28 / 28 | — |
-| -306 | `WindowToBack` | partial — intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | P3 |
-| -312 | `WindowToFront` | partial — intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | P3 |
-| -318 | `WindowLimits` | no | yes | 18 / 142 | P3 |
+| -306 | `WindowToBack` | yes — intuition-windows §6 ; intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | — |
+| -312 | `WindowToFront` | yes — intuition-windows §6 ; intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | — |
+| -318 | `WindowLimits` | yes — intuition-windows §7 | yes | 18 / 142 | — |
 | -324 | `SetPrefs` | yes — intuition-prefs §3 | yes | 98 / 2530 | — |
-| -330 | `IntuiTextLength` | cited — intuition-input-menus §3.5 | yes | 12 / 672 | P2 |
+| -330 | `IntuiTextLength` | yes — intuition-render §6 ; intuition-input-menus §3.5 | yes | 12 / 672 | — |
 | -336 | `WBenchToBack` | yes — intuition-screens §7.3 | yes | 6 / 1020 | — |
 | -342 | `WBenchToFront` | yes — intuition-screens §7.3 | yes | 6 / 1030 | — |
 | -348 | `AutoRequest` | yes — intuition-requesters §5.1 | yes | 270 / 20666 | — |
@@ -776,7 +776,9 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
   FLUSH + START). `CMD_UPDATE` and `CMD_INVALID` are refused by both.
 - **input.device**: `CMD_CLEAR` replies 0, whereas 1.3 never replies it (deliberate, as keyboard-input-devices
   §3.3 recommends).
-- **ramlib.library**: no process of its own (the caller must be a process).
+- **ramlib.library**: no process of its own (the caller must be a process) — **that is also the 1.3 design**
+  (ramlib-v34 §0, §3.1: a plain Task that needs a disk load crashes 1.3). What remains to check against the
+  spec: the AllocMem low-memory expunge, the base-name search, `FindResident` first, same-name serialisation.
 - **alert.hook**: not a separate resident; its role (Guru of a dead-end alert from before the reset) is played
   from the boot code.
 - **Not checked here**: completeness of the routines behind the "yes" entries. Several specs carry their own
@@ -800,15 +802,15 @@ been checked against the V34 behaviour. "Used by" names programs analysed in `do
 | 3 | intuition | `ActivateGadget` and the string-gadget engine (editing, UNDO, LONGINT; IDCMP of GADGETUP from a string gadget) | **specified 2026-11-04** (intuition-strgad-v34, probe `tests/strg_probe.s`) / yes, with gaps (LONGINT accepts a sign anywhere, GADGETUP Qualifier 0, disabled gadget refused) | OctaMED text fields (×11); Workbench Rename and Info (workbench-task §6.8); any requester with a text field. Closure ≈ 1.2 KB plus the input-engine part | P2 |
 | 4 | graphics | Text and fonts: `Text` (full contract: clipping, styles, JAM modes), `TextLength`, `OpenFont`, `CloseFont`, `SetFont`, `AskFont`, `AddFont`, `RemFont`, `AskSoftStyle`/`SetSoftStyle` (algorithmic styles), `ClearEOL`, `ClearScreen` | **specified 2026-11-04** (graphics-text-v34; probe to write: `tests/gtext_probe.s`, §11 of that page) / yes, not yet checked against the spec (the ROM has no topaz 9) | Every window title, menu and CLI line; OctaMED (Text ×55, OpenFont), Workbench (OpenFont failure = dead-end alert, workbench-task §3.1), console. Text ≈ 1.3 KB of closure | P2 |
 | 5 | graphics | `Draw` (line drawing) and `PolyDraw`, `Move` | **specified 2026-11-04** (graphics-line-v34, debugger-injected calls on the real ROM; probe to write: §11) / yes | Workbench drawers and frames, OctaMED (Draw ×16, PolyDraw, Move ×69), Preferences; graphics-area open point 4 answered (AreaEnd's edges are Draw's pixels, graphics-line §9.2). Draw ≈ 3.5 KB of closure. *A500 risk*: blitter line mode (one-dot, octant, BLTAPT sign) | P2 |
-| 6 | graphics | GELs and animation: `DrawGList` (VSprite band allocation), `DoCollision`, `SortGList`, `AddBob`, `RemIBob`, `AddVSprite`, `RemVSprite`, `InitGels`, `InitMasks`, `InitGMasks`, `GetGBuffers`, `FreeGBuffers`, `AddAnimOb`, `Animate` | partial (custom-chips §4.1) or none / yes | Icon dragging on the Workbench (AddBob, DrawGList, RemIBob, SortGList, workbench-task §3.6); games using Bobs/VSprites. DrawGList ≈ 6.5 KB, RemIBob ≈ 3.2 KB, DoCollision ≈ 1.8 KB of closure | P2 |
-| 7 | graphics | Region functions: `AndRectRegion`, `OrRectRegion`, `XorRectRegion`, `ClearRectRegion`, `AndRegionRegion`, `OrRegionRegion`, `XorRegionRegion`, `NewRegion`, `ClearRegion`, `DisposeRegion` | return value only (layers §1.1) / yes | Workbench icon clipping (wb-icon-clipping §1), every InstallClipRegion user, layers damage lists. Closures 1.3–2.6 KB each; the rectangle splitting and the memory-failure paths are unspecified | P2 |
-| 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | partial (deferred-action queue in intuition-input-menus §1.10, GZZ layers in intuition-gzz §2.5) / yes | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | P2 |
-| 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | partial / yes | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | P2 |
+| 6 | graphics | GELs and animation: `DrawGList` (VSprite band allocation), `DoCollision`, `SortGList`, `AddBob`, `RemIBob`, `AddVSprite`, `RemVSprite`, `InitGels`, `InitMasks`, `InitGMasks`, `GetGBuffers`, `FreeGBuffers`, `AddAnimOb`, `Animate` | **specified 2026-11-04** (graphics-gels-v34, debugger-injected calls on the real ROM; probe to write: `tests/gels_probe.s`, §12) / yes, not yet checked against the spec (our side per ARCHITECTURE: VSprite band rule of its own, no Before/After, no double buffering) | Icon dragging on the Workbench (AddBob, DrawGList, RemIBob, SortGList, workbench-task §3.6); games using Bobs/VSprites. DrawGList ≈ 6.5 KB, RemIBob ≈ 3.2 KB, DoCollision ≈ 1.8 KB of closure. V34 defects to decide on: non-OVERLAY PlaneOnOff shape, DoCollision pairs with the second GEL on the left, TOPHIT counting two rows inside the bound, sticky VSOVERFLOW | P2 |
+| 7 | graphics | Region functions: `AndRectRegion`, `OrRectRegion`, `XorRectRegion`, `ClearRectRegion`, `AndRegionRegion`, `OrRegionRegion`, `XorRegionRegion`, `NewRegion`, `ClearRegion`, `DisposeRegion` | **specified 2026-11-04** (graphics-regions-v34, debugger-injected calls on the real ROM; probe to write: `tests/gregion_probe.s`, §12) / yes, not yet checked against the spec | Workbench icon clipping (wb-icon-clipping §1), every InstallClipRegion user, layers damage lists. Closures 1.3–2.6 KB each. Rectangle splitting and order, normalisation of the bounds, the AndRectRegion bounds defect and the memory-failure paths (FALSE vs dead-end alert `$8201000B`) are now specified | P2 |
+| 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | **specified 2026-11-04** (intuition-windows-v34, debugger-injected calls on the real ROM; probe to write: `tests/iwin_probe.s`, §9) / yes, not yet checked against the spec | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | P2 |
+| 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | **specified 2026-11-04** (intuition-render-v34, debugger-injected calls on the real ROM; probe to write: `tests/irender_probe.s`, §8) / yes, not yet checked against the spec | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | P2 |
 | 10 | graphics | `SetRast`, `ScrollRaster`, `RectFill` (full contract), `SetAPen`/`SetBPen`/`SetDrMd` | cited or partial / yes | Layers clear new layers with SetRast (layers §5.1), Workbench window repair (wb-icon-clipping §5), console scrolling (console-keymap §3.7–§3.8), OctaMED (RectFill ×27). SetRast ≈ 1.2 KB of closure | P2 |
 | 11 | exec | `RawDoFmt` | cited / yes | Workbench memory title (workbench-task §6.2–§6.4), SetMap (setmap-13), the Guru text (alert-v34 §3), LoadWB, CLI commands. Closure ≈ 450 b; format edge cases (`%ld` vs `%d`, `%b` BSTR, field width, PutChProc registers) unspecified | P2 |
 | 12 | exec | Messages and I/O: `PutMsg`, `GetMsg`, `ReplyMsg`, `WaitPort`, `DoIO`, `SendIO`, `WaitIO`, `CheckIO`, `AbortIO`, `OpenDevice`, `CloseDevice`, `OpenLibrary`, `OpenResource` | cited (CheckIO partial) / yes | Everything: dos packets (dos-v34-spec §2a), devices, Workbench. The device-side halves are specified per device; the exec-side details (PA_SIGNAL/PA_SOFTINT/PA_IGNORE, IOF_QUICK handling in DoIO/WaitIO, ReplyMsg to a NULL port, OpenLibrary version test and ramlib fallback) are not | P3 |
 | 13 | exec | Memory and semaphores: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`, `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `InitSemaphore`, `ObtainSemaphore`, `ReleaseSemaphore`, `AttemptSemaphore`, `ObtainSemaphoreList`, `ReleaseSemaphoreList`, `Add/Rem/FindSemaphore` | partial or cited / yes | SetPatch 1.38 (AllocEntry, setpatch-138 §1.4), KickMem survival (AllocAbs, coldstart-hardware §5.3), dos memory (dos-memory §2), layers (semaphore lists, layers §7), soft-kick (TypeOfMem). Deallocate ≈ 320 b of closure | P3 |
-| 14 | ramlib.library | loading of LIBS:/DEVS: by ramlib's own process, expunge on low memory | none / partial (no process) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device; a caller that is a plain task cannot load from disk on our side | P2 |
+| 14 | ramlib.library | loading of LIBS:/DEVS: (in the caller's context: 1.3 has no ramlib process), exec patches, expunge on low memory | **specified 2026-11-04** (ramlib-v34; probe to write: `tests/ramlib_probe.s`, §8.1 of that page) / partial (no process, as on 1.3; the rest not yet checked against the spec) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device. A plain task cannot load from disk on 1.3 either (it crashes there) | P2 |
 | 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | none / yes | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | P3 |
 
 Below rank 15: `InitRastPort`/`InitBitMap` beyond the fields already listed; `AllocRaster`/`FreeRaster`;

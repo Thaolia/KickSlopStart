@@ -25,6 +25,8 @@
                 xdef    intuition_OnGadget
                 xdef    intuition_OffGadget
                 xdef    intuition_DrawBorder
+                xref    it_rpsave
+                xref    it_rprest
                 xdef    gad_drawall
                 xdef    gad_rect
                 xdef    gad_down
@@ -2250,19 +2252,21 @@ gad_onoff:
         moveq   #-2,d0
         bra     intuition_RefreshGList
 
-; DrawBorder(rp a0, border a1, x d0, y d1): each Border of the chain, polyline of Count points (XY pairs)
-; offset by (x + LeftEdge, y + TopEdge), in pen FrontPen in mode DrawMode. RastPort pens and mode left
-; intact, as in 1.3 (probed: tests/itextstate.s).
+; DrawBorder(rp a0, border a1, x d0, y d1) (intuition-render §3): each Border of the chain with SetAPen/SetBPen/
+; SetDrMd of its pens and mode, Move to its first point, then Count - 1 Draws (Count is a signed byte: 0, 1 and
+; negative counts only move); points are offsets from (x + LeftEdge, y + TopEdge); Mask $FF while drawing; RastPort
+; state restored (it_rpsave/it_rprest), cp left at the last point.
 intuition_DrawBorder:
         movem.l d2-d7/a2-a6,-(sp)
-        move.b  rp_FgPen(a0),-(sp)
-        move.b  rp_BgPen(a0),-(sp)
-        move.b  rp_DrawMode(a0),-(sp)
+        lea     -20(sp),sp
         move.l  IB_GFXBASE(a6),a6
         move.l  a0,a2
         move.l  a1,a3
         move.w  d0,d6
         move.w  d1,d7
+        move.l  sp,a0
+        bsr     it_rpsave
+        st      rp_Mask(a2)
 .db_lp:
         move.l  a3,d0
         beq.s   .db_ret
@@ -2272,12 +2276,12 @@ intuition_DrawBorder:
         jsr     LVO_SETAPEN(a6)
         move.l  a2,a1
         moveq   #0,d0
+        move.b  BD_BACKPEN(a3),d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  a2,a1
+        moveq   #0,d0
         move.b  BD_DRAWMODE(a3),d0
         jsr     LVO_SETDRMD(a6)
-        moveq   #0,d5
-        move.b  BD_COUNT(a3),d5
-        subq.w  #1,d5
-        bmi.s   .db_next
         move.l  BD_XY(a3),a4
         move.w  d6,d4
         add.w   BD_LEFTEDGE(a3),d4   ; d4 = x origin
@@ -2285,19 +2289,21 @@ intuition_DrawBorder:
         add.w   BD_TOPEDGE(a3),d3    ; d3 = y origin
         bsr.s   .db_pt
         jsr     LVO_MOVE(a6)
-        bra.s   .db_nx
+        move.b  BD_COUNT(a3),d5
+        ext.w   d5
+        subq.w  #2,d5                ; Count - 1 Draws (dbra)
+        bmi.s   .db_next
 .db_seg:
         bsr.s   .db_pt
         jsr     LVO_DRAW(a6)
-.db_nx:
         dbra    d5,.db_seg
 .db_next:
         move.l  BD_NEXTBORDER(a3),a3
         bra.s   .db_lp
 .db_ret:
-        move.b  (sp)+,rp_DrawMode(a2)
-        move.b  (sp)+,rp_BgPen(a2)
-        move.b  (sp)+,rp_FgPen(a2)
+        move.l  sp,a0
+        bsr     it_rprest
+        lea     20(sp),sp
         movem.l (sp)+,d2-d7/a2-a6
         rts
 .db_pt:                              ; next point (a4)+ -> absolute d0/d1, a1 = rp

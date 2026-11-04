@@ -927,6 +927,10 @@ differs.
   - End of a BCPL process (issue #22, 2026-11-04): `rt_endproc`, reached by endtask (global 34) and by the return
     of start(), freevecs the process's segarray (pr_SegList, always a getvec block for createproc processes) and then
     RemTask(0) (bcpl-runtime §13.7.3). The GV is left alone: it is the parent's, dn_GlobalVec, or an AllocMem block.
+  - Intuition rendering (spec intuition-render-v34, 2026-11-04): `it_rpsave`/`it_rprest` (menus.s) save the font
+    fields, pens, mode, Mask and Layer of a RastPort and restore them, the pens through SetAPen/SetBPen/SetDrMd;
+    DrawBorder, PrintIText (around each ITextFont and at the end) and the window title (`wn_titlebar_nc`, which
+    switches the frame RastPort to the screen's font for the title) use them.
   - Regions (spec graphics-regions-v34, 2026-11-04): the public functions of `regions.s` work on absolute nodes
     (rg_toabs) and finish with rg_rel (relative to bounds.MinX/MinY, Prev rebuilt, first Prev = region + 8) or
     rg_norm (1.3 normalisation). OrRectRegion/XorRectRegion cut through a pending list (rg_cut, rg_bands in the

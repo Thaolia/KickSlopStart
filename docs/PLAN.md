@@ -911,7 +911,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     Window resizing (issue #10): simple layers come out blank and fully damaged after Move/SizeLayer, real
     SuperBitMap layers (SuperClipRects, ScrollLayer, Sync/CopySBitMap, GZZ interior), RectFill pattern regression
     fixed. Workbench 1.2 boots to its desktop: rdargs("") = one key, startup-sequence run as cli_CurrentInput,
-    commands looked up in the CLI path. Next: NEWSIZE only for the size gadget.
+    commands looked up in the CLI path. SizeWindow posts NEWSIZE to the active window, as 1.3 does (2026-11-04).
     Default pointer filled in dark purple (deliberate difference; a different arrow from the original, measured).
     Soft-kick disk (`make adf`, published with each release and on the `rom` branch): loads an image linked at
     $C00000 into slow RAM from a real Kickstart 1.3; coldstart honours ColdCapture and exec computes ChkSum, so a
@@ -1051,6 +1051,24 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   1.3 does: a NewShell/EndCLI cycle lost 48 bytes (Shell and Newcon-Handler segarrays). The first cycle still keeps
   `L:Newcon-Handler` loaded in the NEWCON DeviceNode (7504 bytes), as on 1.3 (`docs/analysis/newshell-memory-v34.md`).
   Open: the GV of a handler whose dn_GlobalVec is 0 (makeglobvec) is not freed at its end.
+  **Intuition rendering (2026-11-04)**: spec `intuition-render-v34`. PrintIText honours ITextFont (OpenFont, SetFont,
+  SetSoftStyle) and the font's baseline, DrawBorder sets BackPen and takes Count as a signed byte, both save and
+  restore the RastPort state as 1.3 (font fields, pens through SetAPen/SetBPen/SetDrMd, Mask forced $FF, Layer);
+  DrawImage ignores Image.Depth; window titles are drawn and measured in the screen font, the drag pattern starts
+  at x0 without a title; SetWindowTitles shows a screen title only for the active window (NULL = no text);
+  ActivateWindow updates the screen title; OpenWindow sets ScreenTitle to DefaultTitle; SHOWTITLE is kept in
+  Screen.Flags. `tests/irender_probe.sh` matches every §7 vector (text ink differs with our own glyphs). Open:
+  BorderTop stays 10 (frame spec: WBorTop + font height + 1, which gives 11 on a WBorTop-2 screen with topaz 8,
+  while 10 was measured on 1.3 Workbench windows: the Workbench screen's WBorTop is to be measured).
+  **Windows (2026-11-04)**: spec `intuition-windows-v34`. WindowLimits checks each value as 1.3 (signed 32-bit
+  minima, unsigned 16-bit maxima, a refused value not stored, result 0); SizeWindow posts NEWSIZE to the active
+  window, also for (0,0); the successor of a closed active window gets INACTIVEWINDOW then ACTIVEWINDOW;
+  CloseWindow and ModifyIDCMP(0) reply another window's messages of a shared port with Code 4; MoveWindow(0,0) does
+  nothing. `tests/iwin_probe.sh` matches §8 except deliberate differences: our Move/Size/ToFront/ToBack and the
+  close-time activation run at once (1.3 defers them to the next input event), windows are kept on the screen
+  (1.3 does not bound them and draws past the BitMap), CloseWindow ends the window's requesters (1.3 leaves them
+  orphaned) and gives an empty screen its DefaultTitle. Open: IDCMP ports are not in the public port list; a
+  window holds one REFRESHWINDOW at a time (1.3 sends one per repair while LAYERREFRESH is pending, deduced).
   **Regions (2026-11-04)**: spec `graphics-regions-v34`. The ten Region functions keep the 1.3 node order (no merge,
   no sort: Or cuts the new rectangle through a pending list, Xor puts the old nodes outside first, And keeps or cuts
   nodes in place), the 1.3 bounds (union for Or, normalised minimum and shifted maximum otherwise, +15000 when

@@ -160,6 +160,9 @@ call (50 × Delay(2) while draining the UserPort), **before** any BeginRefresh. 
 window-relative.
 
 **Messages.**
+- **Corrected 2026-11-04** (`intuition-windows-v34.md` §5): SizeWindow does post NEWSIZE, but **to the active
+  window**; the probe windows below were opened without ACTIVATE, so the NEWSIZE went elsewhere. The original
+  observation follows.
 - **No NEWSIZE is ever posted by SizeWindow()** in these runs: SIMPLE, SMART, SUPER, GZZ SUPER windows,
   IDCMP NEWSIZE|REFRESHWINDOW, and a control window with IDCMP = NEWSIZE alone (nothing received in
   4 s), although the size is applied (`Width`/`Height` updated). This contradicts
@@ -221,7 +224,8 @@ window-relative.
   after SizeWindow on 1.3; the application is expected to redraw the frame (or use GZZ). How the frame
   pixels reach the SuperBitMap without reaching the screen is not established.
 
-**SMART_REFRESH, non-GZZ** (control): SizeWindow(+16,+8) → one REFRESHWINDOW, no NEWSIZE.
+**SMART_REFRESH, non-GZZ** (control): SizeWindow(+16,+8) → one REFRESHWINDOW, no NEWSIZE (window not active,
+see the correction above).
 
 ---
 
@@ -481,5 +485,7 @@ layer at (0,0). No dot appears outside x 420..483 / y 176..185 of the ICACHE box
   public structure fields and library calls only (RectFill, InstallClipRegion, OnGadget/OffGadget LVOs); no
   instruction sequence and no ROM address. SysInfo figures are its own gadget data read from the live
   window and screen pixels from the emulator picture.
+- [x] §2.5 correction (2026-11-04): NEWSIZE target explained by debugger-injected calls on the real ROM
+  (`intuition-windows-v34.md` §5, vectors V11–V13); no code and no ROM address added.
 - [x] §2.5 (2026-11-01): black-box readback only (pixels, Flags, DamageList, IDCMP classes) from the
   author probe `tests/resize_probe.s`; no ROM code read for it.
