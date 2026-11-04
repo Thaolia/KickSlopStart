@@ -33,6 +33,7 @@ LOWVARS_HI   EQU $00000800
 TST_LIST     EQU $00000420     ; self-test scratch (lists)
 TST_N1       EQU $00000440
 TST_N2       EQU $00000460
+RESET_MEMO   EQU $00000480     ; expansion reset memo (expansion.s, 108 bytes), outside the area zeroed at coldstart
 ; System area in LOW CHIP, just above the low-RAM variables: the top of chip stays free up to
 ; $80000 as on the real 1.3, because programs write there at absolute addresses (intros: stack at $7FFFE, routines
 ; at $7F000, planes at $70000+). ExecBase must not be located there.

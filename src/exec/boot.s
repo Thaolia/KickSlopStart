@@ -21,6 +21,7 @@
                 xref    init_memory      ; memory.s
                 xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
                 xref    slow_probe       ; memory.s (end of the slow RAM, before ExecBase is built)
+                xref    exp_memosave     ; expansion.s (reset memo of the RAM boards)
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c: launch of the 1st task = user-mode transition)
@@ -5928,6 +5929,8 @@ disk_watch:
 .dw_in:
         tst.l   d7
         beq.s   .dw_lp
+        move.l  ($4).w,a6
+        jsr     exp_memosave         ; expansion.s: RAM boards that RESET does not reset in vAmiga
         lea     dw_reboot(pc),a5
         jsr     LVO_SUPERVISOR(a6)   ; does not return
         bra.s   .dw_lp

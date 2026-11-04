@@ -1126,6 +1126,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Drag test (90 shots per half, title bands counted): 12 garbled before, 0 after; free memory unchanged after the
   drags. The other #22 report (memory not returned after the first NewShell) is the one-time load of
   `L:Newcon-Handler` (7,504 bytes, kept in the DeviceNode as on 1.3), not a leak: later cycles return everything.
+  **vAmiga fast RAM after the insert-disk reboot (2026-11-04)**: vAmiga's RESET instruction does not put Zorro boards
+  back into autoconfig mode, so the reboot of `disk_watch` lost the fast RAM. Reset memo at $480 written before that
+  RESET and replayed by the expansion init when the chain finds no board (ARCHITECTURE 7ac). Possible follow-ups:
+  boot the inserted floppy without a reset as 1.3 does; report the RESET behaviour to vAmiga.
   **ramlib (2026-11-04)**: spec `ramlib-v34`. OpenLibrary/OpenDevice try the base name of a path, then a ROM
   resident, then LoadSeg in the calling process (a plain task fails; 1.3 has no ramlib process either); the RomTag
   is searched in the first hunk only, a module without one runs its first hunk; loads of one base name are

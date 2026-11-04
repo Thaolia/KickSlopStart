@@ -587,6 +587,19 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7ac) **Fast RAM kept across the insert-disk reboot in vAmiga** (2026-11-04, user report: no fast RAM in SysInfo
+  under vAmigaWeb, A500+ ECS, 2 MB chip + 2 MB fast). A floppy inserted on the insert-disk screen makes `disk_watch`
+  reboot with the RESET instruction (1.3 boots the floppy without a reset). RESET puts Zorro boards back into autoconfig
+  mode on the hardware and in Amiberry, but vAmiga only soft-resets: its board stays configured at $200000, the next
+  ConfigChain finds nothing at $E80000 and the RAM is lost. `exp_memosave` (expansion.s, called by `disk_watch` before
+  RESET) records the configured, not shut-up RAM boards (cd_Rom, address, size; at most 4) at `RESET_MEMO` ($480,
+  magic + long checksum). `exp_memoload`, at the end of the expansion init, consumes a valid memo and, only if the chain
+  configured no board, adds back each board whose size matches its er_Type, which lies in $200000-$9FFFFF, whose slots
+  are free and whose first and last longs read back two patterns (ConfigDev in eb_BoardList, slots taken, "expansion
+  ram"). Proven in vAmiga headless (VAHeadless built from vAmiga HEAD, A500_PLUS_1MB, 2 MB chip + 2 MB fast, SysInfo
+  inserted after boot): the released v0.2.21 ROM loses the fast RAM after the reboot, the fixed ROM keeps it (SysInfo
+  MEMORY page); Amiberry: same scenario reboots, one "expansion ram", memo consumed. Not covered: the dead-end alert
+  reboot and a soft reset requested from the emulator, which lose the board in vAmiga as with the real 1.3.
   (7ab) **ramlib as on 1.3** (2026-11-04, spec `ramlib-v34.md`). `src/exec/ramlib.s`: `ram_loadmodule` (base name,
   ROM resident, LoadSeg in the caller's process, RomTag of the first hunk or first-hunk call, kept only if a node of
   the base name appears) with a chain of loads in progress at `RAM_LOADS` ($7D8, records on the loaders' stacks,
