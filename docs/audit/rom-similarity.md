@@ -861,6 +861,78 @@ python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map>
 11 instructions), a rectangle intersection test on public fields, below the baseline. The only `code/table` matches at
 or above 40 words are the already-qualified data (keymap string tables and computed CharLoc tables), unchanged.
 
+### Addendum 2026-11-04 (2): commits 2987398 to b573796 (before a push)
+
+Delta audit of `2987398` (base, last pushed) against `b573796` (head): `67fab75` (intuition: CDE colour theme, issue
+#24: `SC_BGCOLOR` in `src/intuition/intuition.i`, colours 0-3 and pointer colours in `pf_defaults`
+(`src/intuition/prefs.s`) and `sc_palette` (`src/intuition/screens.s`), comments in `src/dos/shell.s` and
+`src/exec/console.s`), `7d27d34` (graphics/intuition, #22/#25: `gfx_LoadView` in `src/graphics/graphics_lib.s` no
+longer restarts a running copper; `it_remake` in `src/intuition/screens.s` merges into new copper lists, loads them,
+waits for a frame and frees the old ones; `LVO_FREECPRLIST` added to `src/graphics/graphics.i`), `b573796` (palette
+constants again, same files as `67fab75`). Same tool, same `tiers`, `commodore` and `aros2` file lists, same
+`--base tiers`, separate analysis agent, production ROMs only, each with the vlink map of the same build. The base
+binary (213,916 bytes) and its map are byte-identical to the `46cd744` head of the previous addendum; the two ROM
+images differ only in 12 bytes (build identifier and checksum). Head binary: 214,008 bytes (+92).
+
+| role | file | sha1 |
+|---|---|---|
+| base ROM (production, `2987398`) | `is_kick ok`, `chk_sum ok` | `7fdf268d1e92c4330b4ad8b7cf32b1ebef6b94f8` |
+| head ROM (production, `b573796`) | `is_kick ok`, `chk_sum ok` | `f35101461353591075f6a695c493a8212d9e008b` |
+
+```sh
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --temoin tiers ... --temoin commodore ... \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <map> --base tiers --selftest                                # each ROM, -> out-<rom>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8   # -> all8-<rom>.txt
+```
+
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The base output is identical, apart from the ROM
+  sha1 line, to the head output of the previous addendum. The notable threshold stays **40 words / 19 instructions**.
+  Self-check: 12/12 in both runs.
+
+| stream | metric | base `2987398` | head `b573796` |
+|---|---|---|---|
+| mots | A tokens | 106,265 | 106,311 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`, unchanged) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`, `$0DDDA`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 114 / 10 / 5 | 113 / 9 / 5 |
+| instr | A tokens / max code/table | 66,277 / 17 (keymap) | 66,286 / 17 (keymap) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) |
+| instr | code ≥ 8 / ≥ 16 | 8 / 2 | 8 / 2 |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17; 19 / 2 (17 rows in the `--seuil 8` list) | 17; 19 / 2 (17 rows) |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** Identical to the base in all three streams once the offsets are ignored: the keymap string
+  tables `km_us_s42`/`km_fr_s42` (76 words), the computed CharLoc tables `topaz8_loc+$2` (281) and `topaz9_loc+$2`
+  (449), the classified init/address tables and `topaz8_loc+$236`, and the two low-entropy `instr-souple` rows
+  (`rf_outline+$46`, `bcpl_rtdata+$8`). No code match reaches 40 words or 19 instructions.
+- **`--seuil 8` lists compared** (rows keyed by stream, class, object, symbol and length, offsets ignored): every row
+  of the head lists exists in the base lists except two, both data:
+  - `mn_chk_hi+$0` (`$26532`, mots 20, `src/intuition/menus.s`, unchanged source): the two `struct Image`
+    descriptors of the menu check marks, filed `texte` again instead of `code/table` because the masked image
+    pointers moved with the layout. Same range and length; this class flip-flop was already recorded at `ac2546a`
+    and in the previous addendum. It is the reason for the drop from 114 to 113 / 10 to 9 code rows in `mots`.
+  - `pf_defaults+$74` (10 words) → `pf_defaults+$76` (`$273A2`, 9 words, `texte`): the default Preferences fields
+    after the Workbench colours. `b573796` changed colours 0 and 2 of the same table (project theme), and the matched
+    run of public default values now starts one word later and is one word shorter. Data, observable through
+    `GetDefPrefs`.
+- **Changed code.** No row of 8 tokens or more, in any stream, falls in `gfx_LoadView` (`$112BA`) or `it_remake`
+  (`$23262`), the two routines changed by `7d27d34`, nor in `cu_setpens` or `sh_sysconfig` (comments only). In the
+  palette tables changed by `67fab75`/`b573796`, the rows `sc_palette+$8` (13 words), `sc_palette+$28` (12),
+  `sc_wbnewscreen+$C` (10), `pf_defaults+$0` (14) and `pf_defaults+$A4` (8) keep their range and length: they lie
+  outside the changed colour words (colours 4-16 and the non-themed Preferences fields, already qualified in
+  "Provenance of the data that matches").
+- **New code matches:** none. No match longer than 13 instructions / 19 words appears, so no baseline review is
+  needed.
+
+**Verdict (head ROM, `b573796`): PASS.** No code match reaches the notable threshold; the longest code match is still
+13 instructions / 19 words (`exp_cpbinding+$22`), and the commits add no new match of 8 tokens or more. The only
+`code/table` matches at or above 40 words are the already-qualified data (keymap string tables and computed CharLoc
+tables), unchanged; the longest data rows below that (`gfx_defcolors`, 32 words; `mn_chk_hi`, 20 words) are unchanged
+in range and length.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
