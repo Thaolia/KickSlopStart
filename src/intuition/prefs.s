@@ -18,7 +18,6 @@
                 xref    it_ptrmoved          ; pointer.s: repositions the sprite (Preferences offset included)
                 xref    wn_sendmsg           ; screens.s: IntuiMessage to a window that asked for the class
 
-LVO_OPENFONT    EQU -72
 LVO_SETRGB4     EQU -288
 
 ; GetPrefs(buffer a0, size d0) -> d0 = buffer: the first "size" bytes of the current copy.

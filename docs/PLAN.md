@@ -1006,6 +1006,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
+  **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
+  in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
+  has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars
+  stay 10 lines whatever the font (measured on 1.3 with topaz 8); menu texts still assume 8-pixel characters.
   **System clock (2026-11-04)**: CIA-A TOD at the measured mains rate, uniqueness counter, fold-over,
   PowerSupplyFrequency, UNIT_VBLANK and the input/intuition clocks at the real VBlank rate (`tests/systime_probe.s`).
   Open: the exec quantum is still counted by our scheduler server, not by timer.device's VBlank server (§3).

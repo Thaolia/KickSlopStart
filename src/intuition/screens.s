@@ -100,7 +100,6 @@ SCX_COLORTAB    EQU SCX_COLORMAP+GCM_SIZEOF ; 32 colors
 SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; size of a plane allocated here (0: BitMap supplied by the caller)
 SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
-SC_BARH         EQU 9                ; BarHeight: the title bar covers lines 0..9
 ; window: struct Window + IDCMP messages (same allocation); RastPort and layer come from layers.library
 WDX_IMSG        EQU WD_SIZE          ; REFRESHWINDOW IntuiMessage (reused once replied)
 WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; event IntuiMessages (buttons, close), reused once replied
@@ -160,8 +159,6 @@ intuition_OpenScreen:
         move.w  NS_TYPE(a2),SC_FLAGS(a3)
         move.l  NS_DEFAULTTITLE(a2),SC_TITLE(a3)
         move.l  NS_DEFAULTTITLE(a2),SC_DEFAULTTITLE(a3)
-        move.l  NS_FONT(a2),SC_FONT(a3)
-        move.b  #SC_BARH,SC_BARHEIGHT(a3)
         move.b  #1,SC_BARVBORDER(a3)
         move.b  #5,SC_BARHBORDER(a3)
         move.b  #2,SC_MENUVBORDER(a3)
@@ -241,6 +238,7 @@ intuition_OpenScreen:
         jsr     LVO_INITRASTPORT(a6)
         lea     SC_BITMAP(a3),a0
         move.l  a0,SC_RASTPORT+rp_BitMap(a3)
+        bsr     sc_font
         move.l  IB_LAYERSBASE(a5),a6
         lea     SC_LAYERINFO(a3),a0
         jsr     LVO_INITLAYERS(a6)
@@ -254,12 +252,19 @@ intuition_OpenScreen:
         moveq   #0,d1
         move.w  SC_WIDTH(a3),d2
         subq.w  #1,d2
-        moveq   #SC_BARH,d3
+        moveq   #0,d3                ; lines 0..BarHeight (intuition-screens §2.5)
+        move.b  SC_BARHEIGHT(a3),d3
         moveq   #IL_SIMPLE|IL_BACKDROP,d4
         suba.l  a2,a2
         jsr     LVO_CREATEBEHINDLAYER(a6)
         move.l  (sp)+,a2
         move.l  d0,SC_BARLAYER(a3)
+        beq.s   .os_quiet
+        move.l  d0,a0                ; the bar writes in the screen's font
+        move.l  IL_RP(a0),a1
+        move.l  SC_RASTPORT+rp_Font(a3),a0
+        move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_SETFONT(a6)
         bsr     sc_drawbar
 .os_quiet:
         bsr     sc_mkgads
@@ -641,7 +646,46 @@ intuition_DisplayBeep:
         movem.l (sp)+,d3/a2/a5
         rts
 
-; sc_drawbar(a3 = Screen, a5 = IntuitionBase): title bar (lines 0..BarHeight) in pen BlockPen, title in
+; sc_font(a2 = NewScreen, a3 = Screen, a5 = IntuitionBase, a6 = GfxBase): screen font (intuition-screens §2.5).
+; NewScreen.Font, else intuition's default TextAttr, is opened from graphics.library (no diskfont); if it cannot be,
+; the default one is used. Its TextFont goes into the screen's RastPort with the TextAttr's soft style; Screen.Font
+; points to the chosen TextAttr (the caller's own structure), and BarHeight = 2 x BarVBorder + its ta_YSize (the size
+; asked for, not the one found). Preserves d2-d7/a2-a6.
+sc_font:
+        movem.l d2/a2,-(sp)
+        move.l  NS_FONT(a2),d2
+        beq.s   .sf_def
+        move.l  d2,a0
+        jsr     LVO_OPENFONT(a6)
+        tst.l   d0
+        bne.s   .sf_got
+.sf_def:
+        lea     IB_TATTR(a5),a0
+        move.l  a0,d2
+        jsr     LVO_OPENFONT(a6)
+        tst.l   d0
+        beq.s   .sf_bar
+.sf_got:
+        move.l  d0,a0
+        lea     SC_RASTPORT(a3),a1
+        jsr     LVO_SETFONT(a6)
+        move.l  d2,a2
+        moveq   #0,d0
+        move.b  ta_Style(a2),d0
+        move.l  #$FF,d1
+        lea     SC_RASTPORT(a3),a1
+        jsr     LVO_SETSOFTSTYLE(a6)
+.sf_bar:
+        move.l  d2,SC_FONT(a3)
+        move.l  d2,a2
+        move.w  ta_YSize(a2),d0
+        add.b   SC_BARVBORDER(a3),d0
+        add.b   SC_BARVBORDER(a3),d0
+        move.b  d0,SC_BARHEIGHT(a3)
+        movem.l (sp)+,d2/a2
+        rts
+
+; sc_drawbar(a3 = Screen, a5 = IntuitionBase): title bar (lines 0..BarHeight-1) in pen BlockPen, title in
 ; pen DetailPen, screen depth gadgets on the right (window pictograms, spec intuition-frame-v34 §6).
 ; SCREENQUIET screen (no bar layer): nothing, never a bar. Clobbers d0-d3/a0/a1/a6.
 sc_drawbar:
@@ -657,7 +701,9 @@ sc_drawbar:
         moveq   #0,d1
         move.w  SC_WIDTH(a3),d2
         subq.w  #1,d2
-        moveq   #SC_BARH,d3
+        moveq   #0,d3
+        move.b  SC_BARHEIGHT(a3),d3
+        subq.w  #1,d3
         jsr     LVO_RECTFILL(a6)
         move.l  a3,a0
         bsr     sc_geo
@@ -692,7 +738,7 @@ sc_barrp:
         rts
 
 ; it_title(a1 = RastPort, a0 = C title | 0, d0 = text pen, d1 = background pen, d2.w = max width in pixels,
-; d3.w = x, a6 = GfxBase): writes the title in JAM2 on baseline 7 (10-line bar). Clobbers d0-d3/a0.
+; d3.w = x, a6 = GfxBase): writes the title in JAM2 in the RastPort's font, top at line 1 (BarVBorder). Clobbers d0-d3/a0.
 it_title:
         move.l  d4,-(sp)
         move.l  a0,d4
@@ -705,12 +751,14 @@ it_title:
         moveq   #JAM2,d0
         jsr     LVO_SETDRMD(a6)
         move.w  d3,d0
-        moveq   #1+GFX_FONTBASE,d1
+        move.w  rp_TxBaseline(a1),d1
+        addq.w  #1,d1
         jsr     LVO_MOVE(a6)
         move.l  (sp)+,a0
         move.l  a0,d4
         moveq   #0,d0                ; d0 = length, bounded to the available width
-        asr.w   #3,d2
+        ext.l   d2
+        divs    rp_TxWidth(a1),d2
 .tt_len:
         tst.b   (a0)+
         beq.s   .tt_out
@@ -3822,8 +3870,10 @@ it_sbar:
         bne.s   .sg_no
         tst.l   SC_BARLAYER(a4)
         beq.s   .sg_no               ; no bar layer: the gadgets cannot be reached
-        cmp.w   #SC_BARH,d5
-        bgt.s   .sg_no
+        moveq   #0,d0
+        move.b  SC_BARHEIGHT(a4),d0
+        cmp.w   d0,d5
+        bge.s   .sg_no
         movem.l d2-d3,-(sp)
         bsr     sc_gadat
         movem.l (sp)+,d2-d3

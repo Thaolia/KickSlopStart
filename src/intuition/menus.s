@@ -54,7 +54,6 @@
 MB_MARGIN       EQU 2                ; inner margin of the pulled-down menu (border included)
 MI_COMMAND      EQU 26               ; MenuItem: shortcut character (COMMSEQ)
 COMMSEQ         EQU $0004
-SC_BARH_M       EQU 9                ; height of the screen's title bar (lines 0..9), as in screens.s
 
 ; SetMenuStrip(window a0, menu a1) -> d0 = TRUE. ClearMenuStrip(window a0).
 intuition_SetMenuStrip:
@@ -203,11 +202,42 @@ intuition_PrintIText:
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 
-; IntuiTextLength(itext a0) -> d0 = width in pixels of its text (8x8 font).
+; IntuiTextLength(itext a0, a6 = IntuitionBase) -> d0 = width in pixels of its text in its own font: ITextFont opened
+; from graphics.library, or GfxBase's default font when it has none or it cannot be opened (TextLength in a RastPort
+; on the stack). Preserves d2-d7/a2-a6.
 intuition_IntuiTextLength:
-        move.l  IT_ITEXT(a0),a0
+        movem.l d2/a2-a3/a6,-(sp)
+        lea     -rp_SIZEOF(sp),sp
+        move.l  a0,a2                ; a2 = IntuiText
+        move.l  IB_GFXBASE(a6),a6
+        move.l  sp,a1
+        jsr     LVO_INITRASTPORT(a6)
+        sub.l   a3,a3                ; a3 = font opened here | 0
+        move.l  IT_ITEXTFONT(a2),d0
+        beq.s   .tl_len
+        move.l  d0,a0
+        jsr     LVO_OPENFONT(a6)
+        move.l  d0,a3
+        tst.l   d0
+        beq.s   .tl_len
+        move.l  d0,a0
+        move.l  sp,a1
+        jsr     LVO_SETFONT(a6)
+.tl_len:
+        move.l  IT_ITEXT(a2),a0
         bsr.s   mn_strlen
-        lsl.l   #3,d0
+        move.l  sp,a1
+        jsr     LVO_TEXTLENGTH(a6)
+        move.l  d0,d2
+        move.l  a3,d0
+        beq.s   .tl_ret
+        move.l  a3,a1
+        jsr     LVO_CLOSEFONT(a6)
+.tl_ret:
+        moveq   #0,d0
+        move.w  d2,d0
+        lea     rp_SIZEOF(sp),sp
+        movem.l (sp)+,d2/a2-a3/a6
         rts
 
 ; mn_strlen(a0 = C string) -> d0 = length. Preserves a0.
@@ -274,7 +304,9 @@ it_menubutton:
         moveq   #0,d1
         move.w  SC_WIDTH(a4),d2
         subq.w  #1,d2
-        moveq   #SC_BARH_M,d3
+        moveq   #0,d3                ; lines 0..BarHeight-1
+        move.b  SC_BARHEIGHT(a4),d3
+        subq.w  #1,d3
         moveq   #IL_SIMPLE,d4
         suba.l  a2,a2
         move.l  IB_LAYERSBASE(a5),a6
@@ -376,7 +408,9 @@ mn_drawbar:
         moveq   #0,d1
         move.w  SC_WIDTH(a4),d2
         subq.w  #1,d2
-        moveq   #SC_BARH_M,d3
+        moveq   #0,d3
+        move.b  SC_BARHEIGHT(a4),d3
+        subq.w  #1,d3
         jsr     LVO_RECTFILL(a6)
         move.l  WD_MENUSTRIP(a3),d7
 .db_lp:
@@ -401,7 +435,9 @@ mn_drawbar:
         move.w  d0,d2
         add.w   MU_WIDTH(a0),d2
         subq.w  #1,d2
-        moveq   #SC_BARH_M,d3
+        moveq   #0,d3
+        move.b  SC_BARHEIGHT(a4),d3
+        subq.w  #1,d3
         move.l  a2,a1
         bsr     mn_ghost
 .db_nx:
@@ -487,8 +523,11 @@ it_menumove:
         move.l  a2,d0
         bne     .mm_ret
 .mm_bar:
-        cmp.w   #SC_BARH_M,d5
-        bgt.s   .mm_items
+        move.l  WD_WSCREEN(a3),a0
+        moveq   #0,d0
+        move.b  SC_BARHEIGHT(a0),d0
+        cmp.w   d0,d5
+        bge.s   .mm_items
         move.l  WD_MENUSTRIP(a3),a2  ; menu under the pointer
         moveq   #0,d6
 .mm_find:
@@ -740,7 +779,8 @@ mn_openbox:
         bpl.s   .ob_x0
         moveq   #0,d0
 .ob_x0:
-        moveq   #SC_BARH_M+1,d1
+        moveq   #0,d1
+        move.b  SC_BARHEIGHT(a4),d1
         move.w  d0,d2
         add.w   d6,d2
         move.w  d1,d3
@@ -947,7 +987,8 @@ mn_opensub:
         add.w   d7,d1
         add.w   d7,d3
 .os_y1:
-        moveq   #SC_BARH_M+1,d7
+        moveq   #0,d7
+        move.b  SC_BARHEIGHT(a4),d7
         sub.w   d1,d7
         ble.s   .os_y2
         add.w   d7,d1

@@ -587,6 +587,17 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7u) **Screen font, BarHeight, IntuiTextLength** (2026-11-04, spec `intuition-screens-v34.md` §1.2, §2.5).
+  OpenScreen (`sc_font`) opens NewScreen.Font, else intuition's default TextAttr (IB_TATTR), from graphics.library,
+  falls back to the default one when it cannot, sets it with its soft style in the screen's RastPort and the bar
+  layer's, points Screen.Font at the chosen TextAttr and sets BarHeight = 2 x BarVBorder + its ta_YSize (10 for
+  topaz 8, 11 for topaz 9; it was a fixed 9). The bar layer covers lines 0..BarHeight, the bar fill and the menu bar
+  0..BarHeight-1, the menu boxes start at BarHeight, the title baseline comes from the font. IntuiTextLength measures
+  the text with TextLength in its ITextFont (or the default font) instead of 8 pixels per character. The initial
+  CLI now assigns DEVS: and reads devs:system-configuration before opening its console, so the Workbench screen
+  opens in the Preferences font (topaz 8 on the WB 1.3 disk: BarHeight 10) as on 1.3; the Workbench backdrop window
+  then starts at BarHeight + 1 = 11. Test: `tests/scrfont_probe.s` (topaz 8 -> 10, topaz 9 -> 11, unknown font ->
+  default TextAttr, IntuiTextLength("Hello") = 40).
   (7t) **System clock on the CIA-A TOD, real frame rate** (2026-11-04, spec `timer-v34.md` §1.3, §3, §4). At
   init, timer.device measures the mains frequency under Disable: CIA-A timer B counts down from $FFFF between two TOD
   ticks; 13090 E ticks or more is 50 Hz, otherwise 60 (no tick for 32768 E ticks: recoverable alert $15000002,

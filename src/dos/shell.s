@@ -37,6 +37,21 @@ shell_main:
                 lea     -(SP_SIZEOF+SHELL_LINEMAX)(sp),sp
                 move.l  sp,a2                ; a2 = StandardPacket
                 lea     SP_SIZEOF(sp),a3     ; a3 = line buffer
+                ; assigns SYS: C: S: L: ... + current directory = root of the disk, then the Preferences of the disk, BEFORE
+                ; the console opens the Workbench screen: its font, hence its title bar height (intuition-screens §2.5),
+                ; must be the one of devs:system-configuration, as on 1.3 (topaz 8: BarHeight 10)
+                lea     sh_doslib(pc),a1
+                moveq   #0,d0
+                jsr     LVO_OPENLIBRARY(a6)
+                tst.l   d0
+                beq.s   .noassign
+                move.l  d0,a6
+                jsr     dos_boot_assigns
+                bsr     sh_sysconfig         ; DEVS: has just been assigned
+                move.l  a6,a1
+                move.l  ($4).w,a6
+                jsr     LVO_CLOSELIBRARY(a6)
+.noassign:
                 ; open the console
                 move.l  DOS_CONPORT,a1
                 move.l  a2,a0
@@ -69,18 +84,6 @@ shell_main:
                 move.l  DOS_CONPORT,PR_CONSOLETASK(a0)   ; "*" of created processes (Run: output of the background CLI)
 .nofh:
                 bsr     sh_make_cli          ; pr_CLI: without it commands believe they were launched by the Workbench
-                lea     sh_doslib(pc),a1     ; assigns SYS: C: S: L: ... + current directory = root of the disk
-                moveq   #0,d0
-                jsr     LVO_OPENLIBRARY(a6)
-                tst.l   d0
-                beq.s   .noassign
-                move.l  d0,a6
-                jsr     dos_boot_assigns
-                bsr     sh_sysconfig         ; Preferences from the disk (DEVS: has just been assigned)
-                move.l  a6,a1
-                move.l  ($4).w,a6
-                jsr     LVO_CLOSELIBRARY(a6)
-.noassign:
                 ; test banner (harness serial marker: the Initial CLI starts; not in the window)
                 lea     sh_banner(pc),a0
                 jsr     ser_puts
