@@ -1640,8 +1640,14 @@ gfx_VBeamPos:
         and.l   #$1FF,d0
         rts
 ; WaitTOF(): sleeps until the next VBlank (graphics-display-v34 §7.4): a node naming the task joins TOF_WaitQ under
-; Disable, the VBlank server signals it (SIGF_SINGLE).
+; Disable, the VBlank server signals it (SIGF_SINGLE). Before multitasking (our strap runs the bootblock before the
+; scheduler starts) nothing could wake a Wait: the beam is watched until it goes back to the top.
 gfx_WaitTOF:
+        tst.b   SCHED_ON
+        beq.s   .wt_beam
+        move.l  ($4).w,a0
+        tst.l   EB_THISTASK(a0)
+        beq.s   .wt_beam
         movem.l a2/a6,-(sp)
         lea     -WT_NODE(sp),sp      ; the node lives on the caller's stack
         move.l  a6,a2
@@ -1663,6 +1669,16 @@ gfx_WaitTOF:
         jsr     LVO_ENABLE(a6)
         lea     WT_NODE(sp),sp
         movem.l (sp)+,a2/a6
+        rts
+.wt_beam:
+        move.l  d2,-(sp)
+        bsr     gfx_VBeamPos
+.wb_lp:
+        move.l  d0,d2
+        bsr     gfx_VBeamPos
+        cmp.l   d2,d0
+        bhs.s   .wb_lp
+        move.l  (sp)+,d2
         rts
 
 ; SetRGB4CM(colormap a0, n d0, r d1, g d2, b d3): colour n of the ColorMap only (the display is not touched).
