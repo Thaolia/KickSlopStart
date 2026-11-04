@@ -11,11 +11,11 @@
 
 - **390 V34 LVOs** inventoried across the 13 modules that expose functions (of which **14 private** in the
   sense of the `.fd`s: 9 exec, 2 graphics, 2 dos, 1 expansion); **376 public**.
-- Coverage by the analysis documentation: **73 specified** (18.7 %), **73 partial** (18.7 %), **123 only
+- Coverage by the analysis documentation: **91 specified** (23.3 %), **55 partial** (14.1 %), **123 only
   cited** as calls made by an analysed piece of software (31.5 %), **121 absent** from any spec (31.0 %).
   Useful coverage (specified + partial): **146 / 390 = 37.4 %**.
-- Implementation on our side (vector tables of `src/`): **327 / 390 = 83.8 %** have a dedicated routine;
-  **6** are stubs (constant return); **57** point to a null vector or fall **outside the table**.
+- Implementation on our side (vector tables of `src/`): **329 / 390 = 84.4 %** have a dedicated routine;
+  **7** are stubs (constant return); **54** point to a null vector or fall **outside the table**.
 - Device commands inventoried in addition: 80 (keyboard 14, gameport 14, input 17, console 13,
   trackdisk 22), plus timer (3) and audio (15) described globally.
 - The four least covered areas, in bytes of unspecified ROM code: **graphics** (≈ 48 KB
@@ -28,7 +28,7 @@
 | graphics | 105 | 0 | 12 | 51 | 42 | 78 | 48,346 |
 | intuition | 74 | 17 | 14 | 28 | 15 | 58 | 42,590 |
 | layers | 25 | 3 | 8 | 6 | 8 | 22 | 12,776 |
-| dos | 33 | 15 | 18 | 0 | 0 | 29 | n/m (BCPL) |
+| dos | 33 | 33 | 0 | 0 | 0 | 31 | n/m (BCPL) |
 | expansion | 21 | 21 | 0 | 0 | 0 | 21 | 1,710 |
 | mathffp | 12 | 0 | 0 | 0 | 12 | 12 | 1,042 |
 | timer (fonctions) | 3 | 3 | 0 | 0 | 0 | 3 | 360 (device entier) |
@@ -37,7 +37,7 @@
 | disk.resource | 5 | 0 | 2 | 0 | 3 | 5 | 234 |
 | potgo.resource | 3 | 0 | 0 | 0 | 3 | 3 | 178 |
 | misc.resource | 2 | 0 | 0 | 0 | 2 | 2 | 68 |
-| **Total** | **390** | **73** | **73** | **123** | **121** | **327** | |
+| **Total** | **390** | **91** | **55** | **123** | **121** | **329** | |
 
 ## 1. Method (reproducible)
 
@@ -454,34 +454,34 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 | -36 | `Close` | yes — bcpl-runtime §5.1 ; dos-v34-spec §2b ; dos-memory §2.1 | yes | n/m | — |
 | -42 | `Read` | yes — dos-v34-spec §3 ; bcpl-runtime §5.1 | yes | n/m | — |
 | -48 | `Write` | yes — disk-full-write §3 ; bcpl-runtime §6.1 | yes | n/m | — |
-| -54 | `Input` | partial — bcpl-runtime §8.1 | yes | n/m | P3 |
-| -60 | `Output` | partial — bcpl-runtime §8.1 | yes | n/m | P3 |
-| -66 | `Seek` | partial — bcpl-runtime §8.3 ; disk-full-write §1 | yes | n/m | P3 |
-| -72 | `DeleteFile` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
-| -78 | `Rename` | partial — bcpl-runtime §8.4.2 | yes | n/m | P3 |
+| -54 | `Input` | specified — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | P3 |
+| -60 | `Output` | specified — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | P3 |
+| -66 | `Seek` | specified — dos-lvo-partial-v34 §2.2 ; bcpl-runtime §8.3 ; disk-full-write §1 | yes | n/m | P3 |
+| -72 | `DeleteFile` | specified — dos-lvo-partial-v34 §2.3 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -78 | `Rename` | specified — dos-lvo-partial-v34 §2.4 ; bcpl-runtime §8.4.2 | yes | n/m | P3 |
 | -84 | `Lock` | yes — dos-v34-spec §2b ; disk-change §2.4 ; dos-memory §2.2 | yes | n/m | — |
 | -90 | `UnLock` | yes — dos-v34-spec §2b ; dos-memory §2.2 | yes | n/m | — |
-| -96 | `DupLock` | partial — bcpl-runtime §8.2 | yes | n/m | P3 |
+| -96 | `DupLock` | specified — dos-lvo-partial-v34 §2.5 ; bcpl-runtime §8.2 | yes | n/m | P3 |
 | -102 | `Examine` | yes — dos-v34-spec §2b | yes | n/m | — |
 | -108 | `ExNext` | yes — dos-v34-spec §2b | yes | n/m | — |
-| -114 | `Info` | partial — bcpl-runtime §8.3 ; disk-change §2.3 | yes | n/m | P3 |
-| -120 | `CreateDir` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
-| -126 | `CurrentDir` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
-| -132 | `IoErr` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
+| -114 | `Info` | specified — dos-lvo-partial-v34 §2.6 ; bcpl-runtime §8.3 ; disk-change §2.3 | yes | n/m | P3 |
+| -120 | `CreateDir` | specified — dos-lvo-partial-v34 §2.7 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -126 | `CurrentDir` | specified — dos-lvo-partial-v34 §2.8 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -132 | `IoErr` | specified — dos-lvo-partial-v34 §2.9 ; bcpl-runtime §8.3 | yes | n/m | P3 |
 | -138 | `CreateProc` | yes — dos-v34-spec §4 ; bcpl-runtime §8.1 ; workbench-task §1.3 ; dos-memory §2.4 | yes | n/m | — |
-| -144 | `Exit` | yes — bcpl-runtime §4.3, §8.1 | no (null vector) | n/m | — |
+| -144 | `Exit` | yes — dos-exit-packets §1 ; bcpl-runtime §4.3, §8.1 | yes | n/m | — |
 | -150 | `LoadSeg` | yes — dos-memory §3 (allocation, hunk memory bits, BSS, failures) ; bcpl-runtime §3 ; dos-boot-sequence §Phase E | yes | n/m | — |
-| -156 | `UnLoadSeg` | partial — bcpl-runtime §8.2 ; dos-memory §3.5 (NULL case not probed) | yes | n/m | P3 |
-| -162 | `dosPrivate1` (= `GetPacket`) *(private)* | yes — bcpl-runtime §1.4 (global anomaly −20) | no (null vector) | n/m | — |
-| -168 | `dosPrivate2` (= `QueuePacket`) *(private)* | yes — bcpl-runtime §1.4 (global −21) | no (null vector) | n/m | — |
+| -156 | `UnLoadSeg` | specified — dos-lvo-partial-v34 §2.10 ; bcpl-runtime §8.2 ; dos-memory §3.5 | yes | n/m | P3 |
+| -162 | `dosPrivate1` (= `GetPacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −20, `clearvec`) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | P3 |
+| -168 | `dosPrivate2` (= `QueuePacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −21, segment load by BSTR name) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | P3 |
 | -174 | `DeviceProc` | yes — handlers-v34 §4.1 | yes | n/m | — |
-| -180 | `SetComment` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
-| -186 | `SetProtection` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
+| -180 | `SetComment` | specified — dos-lvo-partial-v34 §2.11 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -186 | `SetProtection` | specified — dos-lvo-partial-v34 §2.12 ; bcpl-runtime §8.3 | yes | n/m | P3 |
 | -192 | `DateStamp` | yes — bcpl-runtime §8.4.2 ; boot-clock | yes | n/m | — |
-| -198 | `Delay` | partial — bcpl-runtime §8.1 | yes | n/m | P3 |
-| -204 | `WaitForChar` | partial — bcpl-runtime §8.2 | stub (constant return) | n/m | P2 |
-| -210 | `ParentDir` | partial — dos-v34-spec §2b ; bcpl-runtime §8.1 | yes | n/m | P3 |
-| -216 | `IsInteractive` | partial — bcpl-runtime §5.1 | yes | n/m | P3 |
+| -198 | `Delay` | specified — dos-lvo-partial-v34 §2.13 ; bcpl-runtime §8.1 | yes | n/m | P3 |
+| -204 | `WaitForChar` | yes — dos-exit-packets §2 ; bcpl-runtime §8.2 | yes (ACTION_WAIT_CHAR) | n/m | — |
+| -210 | `ParentDir` | specified — dos-lvo-partial-v34 §2.14 ; dos-v34-spec §2b ; bcpl-runtime §8.1 | yes | n/m | P3 |
+| -216 | `IsInteractive` | specified — dos-lvo-partial-v34 §2.15 ; bcpl-runtime §5.1 | yes | n/m | P3 |
 | -222 | `Execute` | yes — bcpl-runtime §0, §13 ; setpatch-138 §3.2 | yes | n/m | — |
 
 ### expansion.library (21 LVOs, −30 to −150)
@@ -739,7 +739,9 @@ are partly **common** to the four devices in the ROM (same code for several entr
   are absent. **keymap.resource** exposes two vectors that do not exist in V34 (without known
   consequence, but the base does not have the same shape).
 - **layers**: `ScrollLayer`, `FattenLayerInfo`, `ThinLayerInfo` are stubs.
-- **dos**: `Exit` and `GetPacket/QueuePacket` null, `WaitForChar` stub (returns 0).
+- **dos**: `GetPacket/QueuePacket` return 0 (1.3: `clearvec` / segment load, dos-exit-packets §3). `Exit` and
+  `WaitForChar` implemented (2026-11). Memory-management gaps against dos-memory-v34: see that page.
+  (Updated 2026-11-04.)
 - **cia.resource**: `SetICR` is a stub (returns 0).
 - **trackdisk**: `TD_SEEK`, `TD_REMOVE`, `TD_ADDCHANGEINT`, `TD_REMCHANGEINT` are no-ops;
   `TD_RAWREAD`, `TD_RAWWRITE`, `TD_GETDRIVETYPE` are refused.
@@ -873,7 +875,24 @@ allocation of `DrawGList` and the `GPD_*` command semantics remain open.
 19. trackdisk: `TD_RAWREAD`, `TD_GETDRIVETYPE`, `TD_ADDCHANGEINT/REMCHANGEINT`, `TD_REMOVE` (to be
     coordinated with the write agent). **Done 2026-11-02**: trackdisk-raw-changeint-v34.md.
 20. dos: `Exit`, `WaitForChar` (contracts already sketched in bcpl-runtime §4.3/§8.2: an implementation
-    gap more than an analysis one).
+    gap more than an analysis one). **Done 2026-11**: dos-exit-packets-v34.md, both implemented.
+21. dos — **ROM file system (OFS handler)**, the largest unspecified part of the dos area: the full packet
+    set as answered by the ROM handler (`ACTION_EXAMINE_NEXT` order and FIB fields, `ACTION_SEEK` edge
+    cases, `ACTION_SET_PROTECT`, `ACTION_SET_COMMENT`, `ACTION_SET_DATE` presence, `ACTION_RENAME_OBJECT`
+    across directories, `ACTION_DELETE_OBJECT` on a non-empty directory, lock modes and conflicts), error
+    codes per packet, block allocation policy when writing (bitmap search start, extension blocks), buffer
+    cache and `ACTION_MORE_CACHE` (AddBuffers). **Done 2026-11**: rom-filesystem-v34 (packet set and codes,
+    locks, ExNext order and FIB, Seek, write-protect, block placement, flush timing). Left: its §11 probes
+    P1–P4 and §12 open points, including `ACTION_END` on an absent volume (Res1 0 there vs −1 in
+    disk-change-v34 §2.4, to be settled by probe P3).
+22. dos — the "partial" LVOs of the table above (`Seek`, `DeleteFile`, `Rename`, `CreateDir`, `Info`,
+    `CurrentDir`, `IoErr`, `SetComment`, `SetProtection`, `Delay`, `IsInteractive`, `ParentDir`, `DupLock`,
+    `Input/Output`, `UnLoadSeg(0)`). **Done 2026-11**: dos-lvo-partial-v34 (registers, Result2, retry
+    requester, NULL cases, test vectors T1–T21); its §4 lists the probes still wanted.
+23. dos — CON:/RAW: handler beyond start-up and WaitForChar (window spec parsing, `ACTION_SCREEN_MODE`,
+    line editing, close behaviour); goes with #8 (console.device).
+24. dos — open points of dos-memory-v34 §9 (roles of the file-system blocks, expunge on failure, the
+    lock-allocation crash, packets on the stack) and the 56-byte Workbench Shell leak of dos-cli-v34 §2.
 
 ## Clean-room review
 
