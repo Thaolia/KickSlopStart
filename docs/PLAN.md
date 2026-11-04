@@ -1227,7 +1227,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   or 1024-row truncation in the three functions; ScrollRaster without a layer clamps a negative min corner to 0 after
   the no-op test (1.3 writes before the BitMap, Guru); SIMPLE-layer damage is exact and the existing DamageList moves
   by (-dx, -dy) with the content (1.3: one pixel too large on the right and bottom, existing damage moved by
-  (+dx, +dy)); the six functions preserve every register (1.3 changes d0/d1, plus a0/a1 for the three drawing ones);
+  (+dx, +dy)); the three setters and ScrollRaster preserve every register, SetRast and RectFill change only
+  d0/d1/a0 (probe R0; 1.3 changes d0/d1, plus a0/a1 for the three drawing ones);
   CPU rendering is synchronous (BBUSY clear on return, BlitLock untouched). Assumptions and open points: RectFill,
   SetRast and the ScrollRaster fill compute the minterm from FgPen/BgPen/DrawMode at the call instead of reading
   rp_minterms (the same whenever the setters are used; our intuition writes pens directly); wrapped row pieces keep
