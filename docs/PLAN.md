@@ -998,8 +998,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   hardware sprite collisions as 1.3 does (software only).
   **HAM and dual playfield (2026-11-03)**: MakeVPort emits HAM/DUALPF/PFBA, two playfields with their own scroll,
   modulo and offset; ScrollVPort scrolls either playfield (`tests/hamdpf_test.s`). Open from the spec (§4.4): DIW/DDF
-  still come from three fixed windows, so vp.DxOffset, View.DxOffset and other DWidths are ignored; the number of
-  colours emitted is min(Count, 32) instead of the ncol rule.
+  still come from three fixed windows, shifted by vp.DxOffset + View.DxOffset (issue #23) but without the left/right
+  clipping steps, so other DWidths are ignored; the number of colours emitted is min(Count, 32) instead of the ncol
+  rule.
+  **Issue #23 (2026-11-04)**: since v0.2.16 MoveSprite adds View.DxOffset (spec) but MakeVPort ignored it, so a
+  Preferences ViewXOffset moved the pointer and not the screen (-4 = clicks 8 hires pixels right of the tip).
+  MakeVPort now shifts the display window by vp.DxOffset + View.DxOffset - $81 (§4.4 steps 3-6: DIW, DDF by words,
+  BPLCON1 for the rest). Checked with a WB 1.3.3 copy whose system-configuration has ViewXOffset -4.
   **Warm reset (2026-11-03)**: an ExecBase that passes the full §5.1 check of `coldstart-hardware-v34.md` keeps
   KickMemPtr/KickTagPtr/KickCheckSum and CoolCapture/WarmCapture; the KickMem areas are reserved with AllocAbs, the
   KickTags merged into ResModules by name, version and priority, and CoolCapture called before

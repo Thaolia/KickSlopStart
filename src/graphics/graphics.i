@@ -88,6 +88,7 @@ vp_SprIns    EQU 12           ; VSprite copper block (DrawGList; layout below)
 vp_UCopIns   EQU 20           ; struct UCopList *: user copper instructions (CMove/CWait)
 vp_DWidth    EQU 24
 vp_DHeight   EQU 26
+vp_DxOffset  EQU 28
 vp_DyOffset  EQU 30
 vp_Modes     EQU 32
 vp_SpritePri EQU 34           ; SpritePriorities (byte)

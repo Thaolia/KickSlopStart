@@ -437,10 +437,21 @@ MV_DEPTH EQU -16                     ; planes, both playfields
 MV_OFF1  EQU -20                     ; plane offsets
 MV_OFF2  EQU -24
 MV_BM2   EQU -28                     ; BitMap of playfield 2 | 0
-MV_LOC   EQU 28
+MV_XS    EQU -30                     ; horizontal shift x' = vp.DxOffset (halved in HIRES) + View.DxOffset - $81
+MV_DD    EQU -32                     ; DDFSTRT/DDFSTOP change for that shift
+MV_LOC   EQU 32
 gfx_MakeVPort:
         movem.l d2-d7/a2-a6,-(sp)
         link    a5,#-MV_LOC
+        move.w  vp_DxOffset(a1),d0   ; horizontal position (spec graphics-display §4.4)
+        tst.w   vp_Modes(a1)
+        bpl.s   .mv_xl
+        asr.w   #1,d0
+.mv_xl:
+        add.w   v_DxOffset(a0),d0
+        sub.w   #$81,d0
+        move.w  d0,MV_XS(a5)
+        clr.w   MV_DD(a5)
         move.w  v_Modes(a0),d0
         and.w   #V_LACE,d0
         or.w    #GFX_COLOR_BIT,d0
@@ -497,6 +508,7 @@ gfx_MakeVPort:
         bsr     gfx_pwait
         move.w  #DIWSTRT-CUSTOM,(a1)+
         move.w  (a0)+,d0             ; a0 -> DDFSTRT entry of the window table
+        add.w   MV_XS(a5),d0
         and.w   #$00FF,d0
         or.w    #$0500,d0
         move.w  d0,(a1)+
@@ -551,16 +563,23 @@ gfx_MakeVPort:
         sub.w   d2,MV_MOD2(a5)
         sub.l   d2,MV_OFF2(a5)
 .mv_set:
+        move.w  MV_XS(a5),d0
+        beq.s   .mv_xs0
+        bsr     mv_hshift
+.mv_xs0:
         move.l  (sp)+,a1
         move.w  #DIWSTOP-CUSTOM,(a1)+
         move.w  MV_DIWE(a5),d0
+        add.w   MV_XS(a5),d0
         and.w   #$00FF,d0
         or.w    #$4000,d0
         move.w  d0,(a1)+
         move.w  #DDFSTRT-CUSTOM,(a1)+
         move.w  MV_DDF(a5),(a1)+
         move.w  #DDFSTOP-CUSTOM,(a1)+
-        move.w  2(a0),(a1)+
+        move.w  2(a0),d0
+        add.w   MV_DD(a5),d0
+        move.w  d0,(a1)+
         move.w  #BPLCON0-CUSTOM,(a1)+
         move.w  MV_OFF(a5),(a1)+     ; planes off until the top of the ViewPort
         move.w  #BPLCON1-CUSTOM,(a1)+
@@ -760,6 +779,61 @@ gfx_pwait:
         clr.w   (a1)+
         move.w  #GFX_NOP,(a1)+
         clr.w   (a1)+
+        rts
+
+; mv_hshift(d0 = x' != 0, a2 = vp, a5 = MakeVPort frame): the display window moves by x' (low-resolution pixels):
+; DDFSTRT/DDFSTOP by (x' >> 1) & ~7 (HIRES ~3), the rest by the fine scroll, s := (x' & m) + s with m = 15 (HIRES
+; 7); past m it wraps and the extra word fetched for the RasInfo scroll is no longer needed (spec graphics-display
+; §4.4 steps 3-6). With two playfields each scroll wraps and the common fetch is kept. Clobbers d0-d3.
+mv_hshift:
+        moveq   #15,d2               ; d2 = m
+        moveq   #-8,d1
+        tst.w   vp_Modes(a2)
+        bpl.s   .hs_lo
+        moveq   #7,d2
+        moveq   #-4,d1
+.hs_lo:
+        move.w  d0,d3
+        asr.w   #1,d3
+        and.w   d1,d3
+        move.w  d3,MV_DD(a5)
+        add.w   d3,MV_DDF(a5)
+        and.w   d2,d0                ; d0 = x' & m
+        move.w  MV_CON1(a5),d1
+        and.w   #15,d1               ; d1 = scroll of playfield 1
+        move.w  d1,d3
+        add.w   d0,d3
+        cmp.w   d2,d3
+        bls.s   .hs_s1
+        and.w   d2,d3
+        tst.l   MV_BM2(a5)
+        bne.s   .hs_s1
+        tst.w   d1                   ; the RasInfo scroll's extra word is given back
+        beq.s   .hs_s1
+        addq.w  #8,MV_DDF(a5)
+        addq.w  #2,MV_MOD1(a5)
+        tst.w   vp_Modes(a2)
+        bpl.s   .hs_s1
+        addq.w  #2,MV_MOD1(a5)
+        addq.l  #2,MV_OFF1(a5)
+.hs_s1:
+        tst.l   MV_BM2(a5)
+        bne.s   .hs_dpf
+        move.w  MV_MOD1(a5),MV_MOD2(a5)
+        move.w  d3,d1
+        lsl.w   #4,d1
+        or.w    d3,d1
+        move.w  d1,MV_CON1(a5)
+        rts
+.hs_dpf:
+        move.w  MV_CON1(a5),d1
+        lsr.w   #4,d1
+        and.w   #15,d1
+        add.w   d0,d1
+        and.w   d2,d1
+        lsl.w   #4,d1
+        or.w    d3,d1
+        move.w  d1,MV_CON1(a5)
         rts
 
 ; gfx_vpwin(vp a2) -> a0 = window table (DIWSTRT, DDFSTRT, DDFSTOP, bytes fetched per row), d1 = DIWSTOP whose
