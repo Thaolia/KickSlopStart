@@ -865,6 +865,12 @@ differs.
     CD_ASKKEYMAP / CD_SETKEYMAP / CD_ASKDEFAULTKEYMAP / CD_SETDEFAULTKEYMAP (length 32, else -4); RawKeyConvert walks
     the whole chain with the given or default keymap; the input handler converts with the active unit's keymap and
     pushes the whole sequence or nothing; CloseDevice ignores io_Unit = -1 (SetMap restores it before closing).
+  - console.device standard commands on an open unit (spec console-keymap §2.4, 2026-11-04): CMD_CLEAR empties the
+    input buffer, CMD_STOP holds the unit's CMD_READs (a per-unit flag, `CU_STOP` or `CONB_STOP` for the unit without
+    window; writes go on), CMD_START serves the held read, CMD_FLUSH returns the unit's queued reads with
+    IOERR_ABORTED, CMD_RESET = STOP + FLUSH + START. io_Error = 0 for all five (1.3 leaves the caller's D0 there), and
+    CMD_CLEAR replies like the others (1.3 never returns it). Probe: `tests/concmd_probe.sh` (window unit, PA_IGNORE
+    reply port, reports from CSI 6n).
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

@@ -551,6 +551,7 @@ CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD write index (producer = console_input_han
 CONB_RBUF    EQU LIB_SIZE+16   ; 16 bytes: ASCII ring cooked from the RAWKEYs received via input.device
 CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) of the handler registered via IND_ADDHANDLER
 CONB_ESC     EQU LIB_SIZE+56   ; UBYTE state of the sequence filter: 0 normal, 1 after ESC, 2 inside a CSI
+CONB_STOP    EQU LIB_SIZE+57   ; UBYTE reads of the unit without window held by CMD_STOP
 CONB_RQ      EQU LIB_SIZE+60   ; APTR queue of the pending CMD_READs (linked by LN_SUCC), open units
 CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase: rendering into the windows' RastPort (ConUnit units)
 CONB_UNITS   EQU LIB_SIZE+68   ; APTR list of the open ConUnits (linked by CU_NEXT): key routing

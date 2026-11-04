@@ -22,7 +22,12 @@
                 xref    font8x8          ; graphics/font8x8.s (8x8 glyphs, ASCII 0x20..0x7F)
                 xref    km_conv          ; exec/keymap.s: one RAWKEY event -> bytes through a struct KeyMap
 
-CMD_READ     EQU 2                ; standard io_Command (io.i: READ=2, WRITE=3)
+CMD_RESET    EQU 1                ; standard io_Command (exec/io.i)
+CMD_READ     EQU 2
+CMD_CLEAR    EQU 5
+CMD_STOP     EQU 6
+CMD_START    EQU 7
+CMD_FLUSH    EQU 8
 CD_ASKKEYMAP        EQU 9        ; devices/console.h
 CD_SETKEYMAP        EQU 10
 CD_ASKDEFAULTKEYMAP EQU 11
@@ -293,11 +298,16 @@ console_beginio:
 .bi_unit:
         move.w  IO_COMMAND(a3),d0
         cmp.w   #CMD_WRITE,d0
-        beq.s   .bu_write
+        beq     .bu_write
         cmp.w   #CMD_READ,d0
         beq     .bu_read
+        cmp.w   #CMD_RESET,d0
+        beq     .bu_ctl
+        cmp.w   #CMD_CLEAR,d0
+        blo.s   .bu_nocmd            ; CMD_INVALID, CMD_UPDATE
+        cmp.w   #CMD_FLUSH,d0
+        bls     .bu_ctl
         cmp.w   #CD_ASKKEYMAP,d0     ; CD_ASKKEYMAP, CD_SETKEYMAP, CD_ASKDEFAULTKEYMAP, CD_SETDEFAULTKEYMAP
-        blo.s   .bu_nocmd
         cmp.w   #CD_SETDEFAULTKEYMAP,d0
         bhi.s   .bu_nocmd
         cmp.l   #KM_SIZEOF,IO_LEN2(a3)
@@ -358,7 +368,7 @@ console_beginio:
         bra     .bu_reply
 .bu_wl:
         tst.l   d4
-        beq.s   .bu_reply
+        beq     .bu_reply
         move.b  (a4)+,d0
         bsr     con_putglyph
         subq.l  #1,d4
@@ -366,6 +376,9 @@ console_beginio:
 .bu_read:
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
+        move.l  a3,a1
+        bsr     con_stopped
+        bne.s   .bu_queue            ; CMD_STOP: reads wait for CMD_START
         bsr     con_target           ; a console has the active window: only its reads take the keys
         beq.s   .bu_rany
         cmp.l   IO_UNIT(a3),d0
@@ -390,6 +403,64 @@ console_beginio:
         bra     .bi_done
 .bu_rgot:
         jsr     LVO_ENABLE(a6)
+        bra     .bu_reply
+; CMD_CLEAR empties the input buffer, CMD_STOP holds the unit's reads (writes go on), CMD_START releases them,
+; CMD_FLUSH returns the unit's queued reads with IOERR_ABORTED, CMD_RESET = STOP + FLUSH + START. io_Error = 0
+; (1.3 leaves the caller's D0 there), and CMD_CLEAR replies like the others (1.3 never returns it).
+.bu_ctl:
+        move.w  d0,d4
+        move.l  IO_UNIT(a3),a4
+        cmp.l   #-1,a4               ; SetMap's unit -1: no ConUnit
+        beq.s   .bu_reply
+        lea     CU_STOP(a4),a4
+        cmp.l   IO_UNIT(a3),a2
+        bne.s   .bc_flag
+        lea     CONB_STOP(a2),a4     ; unit without window
+.bc_flag:
+        move.l  ($4).w,a6
+        jsr     LVO_DISABLE(a6)
+        cmp.w   #CMD_CLEAR,d4
+        bne.s   .bc_nclr
+        move.w  CONB_RTAIL(a2),CONB_RHEAD(a2)
+.bc_nclr:
+        cmp.w   #CMD_STOP,d4
+        bne.s   .bc_nstop
+        st      (a4)
+.bc_nstop:
+        cmp.w   #CMD_FLUSH,d4
+        beq.s   .bc_flush
+        cmp.w   #CMD_RESET,d4
+        bne.s   .bc_nflush
+.bc_flush:
+        lea     CONB_RQ(a2),a0       ; a0 = previous link
+.bc_fl:
+        move.l  (a0),d1
+        beq.s   .bc_nflush
+        move.l  d1,a1
+        move.l  IO_UNIT(a1),d1
+        cmp.l   IO_UNIT(a3),d1
+        beq.s   .bc_abort
+        move.l  a1,a0
+        bra.s   .bc_fl
+.bc_abort:
+        move.l  (a1),(a0)            ; unhook
+        move.b  #IOERR_ABORTED,IO_ERROR(a1)
+        move.l  a0,-(sp)
+        jsr     LVO_REPLYMSG(a6)
+        move.l  (sp)+,a0
+        bra.s   .bc_fl
+.bc_nflush:
+        cmp.w   #CMD_START,d4
+        beq.s   .bc_run
+        cmp.w   #CMD_RESET,d4
+        bne.s   .bc_end
+.bc_run:
+        sf      (a4)
+.bc_end:
+        jsr     LVO_ENABLE(a6)
+        cmp.w   #CMD_START,d4
+        bne.s   .bu_reply
+        bsr     con_servereads
 .bu_reply:
         btst    #0,IO_FLAGS(a3)      ; IOF_QUICK: completed in place
         bne     .bi_done
@@ -728,10 +799,14 @@ con_servereads:
         move.l  (a4),d0
         beq.s   .sr_none
         move.l  d0,a3
+        move.l  a3,a1
+        bsr     con_stopped
+        bne.s   .sr_next
         tst.l   d1
         beq.s   .sr_take
         cmp.l   IO_UNIT(a3),d1
         beq.s   .sr_take
+.sr_next:
         move.l  a3,a4
         bra.s   .sr_find
 .sr_take:
@@ -748,6 +823,23 @@ con_servereads:
         jsr     LVO_ENABLE(a6)
 .sr_ret:
         movem.l (sp)+,a3-a4/a6
+        rts
+
+; con_stopped(a1 = ioreq, a2 = base) -> Z = 0 when the request's unit is stopped by CMD_STOP. Preserves all but d0.
+con_stopped:
+        move.l  a0,-(sp)
+        move.l  IO_UNIT(a1),a0
+        moveq   #0,d0
+        cmp.l   #-1,a0
+        beq.s   .st_ret
+        cmp.l   a2,a0
+        bne.s   .st_cu
+        lea     CONB_STOP-CU_STOP(a2),a0
+.st_cu:
+        move.b  CU_STOP(a0),d0
+.st_ret:
+        movem.l (sp)+,a0
+        tst.b   d0
         rts
 
 ; con_target(a2 = base) -> d0 = ConUnit whose window is intuition's active window, 0 otherwise (Z
@@ -891,6 +983,7 @@ CU_AGAIN        EQU 303              ; private: the byte just given to cu_ctl mu
 CU_CUROFF       EQU 304              ; private: cursor hidden (CSI 0 SPACE p)
 CU_CURVIS       EQU 305              ; private: cursor currently drawn
 CU_INV          EQU 306              ; private: inverse video (SGR 7)
+CU_STOP         EQU 307              ; private: reads held by CMD_STOP
 CU_NEXT         EQU 308              ; private: next unit (CONB_UNITS list)
 CU_BASE         EQU 312              ; private: console base (cu_write reuses a2)
 CU_PARS         EQU 316              ; private: 24 CSI parameters (words, CU_PDEF = absent)

@@ -1018,6 +1018,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   raw-event reports (`tests/con_probe.s` on our ROM). Open: italic is not drawn by Text; MULTIBROADCAST raw events
   go to the active unit only; the RastPort copy in the ConUnit is not kept; IECLASS_SIZEWINDOW does not recompute
   the geometry yet.
+  **Console commands (2026-11-04)**: CMD_RESET, CMD_CLEAR, CMD_STOP, CMD_START and CMD_FLUSH on open units
+  (`tests/concmd_probe.sh`); the last P1 gap of `docs/analysis/coverage-v34.md`. Open: the input ring is 16 bytes
+  shared by all units (1.3: 255 bytes per unit), and CMD_READ with io_Length 0 still waits instead of replying -4.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
   has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars
