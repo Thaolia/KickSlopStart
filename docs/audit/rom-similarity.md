@@ -933,6 +933,92 @@ python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map>
 tables), unchanged; the longest data rows below that (`gfx_defcolors`, 32 words; `mn_chk_hi`, 20 words) are unchanged
 in range and length.
 
+### Addendum 2026-11-04 (3): commits b573796 to 81c5105 (before a push)
+
+Delta audit up to `81c5105` (head). The base of the push, `023475a` (already on `origin/main`), was not itself audited:
+after the `b573796` head of the previous addendum came `1a0da17` (docs only) and `023475a` (another session:
+expansion.library reset memo, `exp_memosave`, `xm_sum` and `exp_memoload` added at the end of
+`src/exec/expansion.s`, one call to `exp_memoload` at the end of `expansion_initfunc`, one call to `exp_memosave` in
+`disk_watch` in `src/exec/boot.s`, `RESET_MEMO` in `src/exec/exec.i`). So this addendum covers two deltas:
+`b573796` → `023475a` (compared with the head figures of the previous addendum) and `023475a` → `81c5105`:
+`f9a5c5b` (`src/dos/workbench.s`: the NewWindow flag constants of `wb_desktop` and `wb_opendrawer` gain
+`SIMPLE_REFRESH`; `src/intuition/intuition.i`: new `SIMPLE_REFRESH` EQU) and `81c5105` (docs only). Same tool, same
+`tiers`, `commodore` and `aros2` file lists, same `--base tiers`, separate analysis agent, production ROMs only, each
+with the vlink map of the same build.
+
+Binary sizes: `b573796` 214,008 bytes, `023475a` 214,404 bytes (+396: `boot.o` +12, `expansion.o` +384),
+`81c5105` 214,404 bytes (+0). The `023475a` and `81c5105` maps give the same address to every symbol; the two ROM
+images differ in 14 bytes only: the build identifier and the checksum, plus one byte at `$316D7` (inside
+`wb_desktop`, `$31676`-`$31730`) and one at `$32A27` (inside `wb_opendrawer`, `$32964`-`$32A7A`), the two flag
+constants changed by `f9a5c5b`.
+
+| role | file | sha1 |
+|---|---|---|
+| previous head ROM (production, `b573796`) | `is_kick ok`, `chk_sum ok` | `f35101461353591075f6a695c493a8212d9e008b` |
+| base ROM (production, `023475a`) | `is_kick ok`, `chk_sum ok` | `d31849a002b7fc4e89d2818df4340198e8d8030a` |
+| head ROM (production, `81c5105`) | `is_kick ok`, `chk_sum ok` | `7f634848064ef1b7442bde47d42f9c045aa16ada` |
+
+```sh
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --temoin tiers ... --temoin commodore ... \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <map> --base tiers --selftest                                # each ROM, -> out-<rom>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8   # -> all8-<rom>.txt
+```
+
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the previous head, base and head runs. The notable threshold stays
+  **40 words / 19 instructions**. Self-check: 12/12 in both runs.
+
+| stream | metric | previous head `b573796` | base `023475a` | head `81c5105` |
+|---|---|---|---|---|
+| mots | A tokens | 106,311 | 106,509 | 106,509 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`, `$0DDE6`) | **19** (same) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 113 / 9 / 5 | 113 / 10 / 5 | 113 / 10 / 5 |
+| instr | A tokens / max code/table | 66,286 / 17 (keymap) | 66,408 / 16 (keymap) | 66,407 / 16 (keymap) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 8 / 2 | 8 / 2 | 8 / 2 |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17; 19 / 2 | 16; 19 / 2 | 16; 19 / 2 |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 265 / 46 / 84 | 265 / 44 / 81 | 265 / 44 / 81 |
+| self-check | relocated fragments found | 12/12 | 12/12 | 12/12 |
+
+- **Notable lists.** Identical in the three runs once the offsets are ignored: the keymap string tables
+  `km_us_s42`/`km_fr_s42` (76 words), the computed CharLoc tables `topaz8_loc+$2` (281) and `topaz9_loc+$2` (449),
+  the classified init/address tables and `topaz8_loc+$236`, and the two low-entropy `instr-souple` rows
+  (`rf_outline+$46`, `bcpl_rtdata+$8`). No code match reaches 40 words or 19 instructions.
+- **`023475a` against the previous head** (`--seuil 8` lists keyed by stream, class, object, symbol and length,
+  offsets ignored). Every changed row lies in an unchanged source file and is data or a layout effect; none is in
+  the code added by `023475a`:
+  - `km_fr_s42+$0` (17 instructions, `instr` and `instr-souple`) → `km_fr_s42+$2` (`$0D29E`, 16): the French keymap
+    string table, already qualified; the matched run now starts one word later, like the `km_us_s42+$2` row
+    (16, unchanged). This is the drop of the `instr` max code/table from 17 to 16.
+  - `mn_chk_hi+$0` (`$266BE`, mots 20): the menu check-mark `struct Image` descriptors flip back from `texte` to
+    `code/table` as the layout moved (same range and length; the flip-flop already recorded at `ac2546a` and in the
+    two previous addenda). It accounts for the rise of mots code ≥ 16 from 9 to 10.
+  - `graphics_romtag+$C` (mots 15): filed `texte` instead of `code/table+texte` (`$1064C`); `gfx_display_init+$12C`
+    (mots 10, `$1062C`): `texte` instead of `texte+RomTag`. Same symbols and lengths, class only. The first one
+    offsets the `mn_chk_hi` change in mots code ≥ 8 (113 both).
+  - 8- and 9-instruction text rows on the resident names (`trackdisk_name`, `gameport_dev_name`, `intuition_name`,
+    `console_name`, `graphics_name`) and the low-entropy `km_us_lotypes+$2` (`$0CCF0`, `instr-souple` 8): rows that
+    appear, disappear or move by one word because the instruction streams re-segment the ROM strings and tables
+    after the layout shift. Data only; 5 rows fewer in total.
+- **Code changed by `023475a`.** No row of 8 tokens or more, in any stream, lies in `exp_memosave`, `xm_sum`,
+  `exp_memoload` (`$0E40E`-`$0E58A`, up to `expansion_end`) or in `disk_watch` (`$042BC`-`$042F8`). The only row in
+  `expansion_initfunc` is `expansion_initfunc+$E` (`$0E3BC`, mots 8, `code/table`), present at the same symbol offset
+  and length in the previous head (`$0E3B0`); it ends before the inserted call near the end of the routine.
+- **`023475a` → `81c5105`.** The two `--seuil 8` lists are identical row for row (offsets included); the notable
+  lists too. The instr streams count one token fewer; no row changes. No row of 8 tokens or more lies in
+  `wb_desktop` or `wb_opendrawer`.
+- **New code matches:** none in either delta. No match longer than 13 instructions / 19 words appears, so no
+  baseline review is needed.
+
+**Verdict (head ROM, `81c5105`, and base `023475a`): PASS.** No code match reaches the notable threshold; the longest
+code match is still 13 instructions / 19 words (`exp_cpbinding+$22`), and neither `023475a` nor `f9a5c5b` adds a new
+code match of 8 tokens or more. The only `code/table` matches at or above 40 words are the already-qualified data
+(keymap string tables and computed CharLoc tables), unchanged; the longest data rows below that (`gfx_defcolors`,
+32 words; `mn_chk_hi`, 20 words) keep their range and length.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
