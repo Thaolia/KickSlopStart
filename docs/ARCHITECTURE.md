@@ -914,6 +914,15 @@ differs.
     a refresh draws a requester gadget only while its requester is up and not PREDRAWN, and a count of -2
     (RefreshGadgets, OnGadget, OffGadget) redraws the whole requester list. A PREDRAWN requester shows its ImageBMap
     only. `tests/reqg_probe.sh` gives the same output on our ROM and on 1.3.
+  - Text gadgets (spec intuition-strgad-v34, 2026-11-04): ActivateGadget succeeds only for a STRGADGET of the active
+    window with the requester argument equal to FirstRequest and nothing else going on (no gadget held or edited,
+    no menu), disabled gadgets included, and never activates the window; while a gadget is edited it is SELECTED
+    and ActivateWindow / OpenWindow ACTIVATE are dropped. Editing inserts any single byte (control and Latin-1
+    characters too); LONGINT accepts a sign only at the start and digits only while the value converts, recomputes
+    LongInt after each edit, and DisplayBeep answers refusals and a full buffer. The GADGETUP carries the key's
+    qualifier (the feeder now sets IEQUALIFIER_NUMERICPAD on keypad keys, from keyboard.device's `kd_numpad`).
+    Measurements use the screen's font; GADGHNONE draws no cursor. `tests/strg_probe.sh` (typed keys) matches 1.3
+    except the 1.3 activation being deferred to the next input event (ours is immediate) and the font width.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

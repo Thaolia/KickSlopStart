@@ -1,10 +1,12 @@
 ; src/intuition/gadgets.s - intuition.library: application gadgets of windows (wd_FirstGadget list). Rendering
 ; (Border or Image, IntuiText, highlight), left-button selection with GADGETDOWN / GADGETUP (im_IAddress = the
 ; gadget), AddGadget/AddGList, RemoveGadget/RemoveGList, RefreshGadgets/RefreshGList, OnGadget/OffGadget, DrawBorder.
-; Text gadgets (STRGADGET, StringInfo): activated by a click or ActivateGadget, they receive the keyboard (routed by
-; the pointer handler, see it_keyin): insertion, Backspace, Del, arrows (Shift: start / end), right Amiga + X
-; (clear) and + Q (undo); Return / Enter ends (LONGINT converted, GADGETUP if RELVERIFY), a click elsewhere
-; deactivates without a message. Left-aligned text (STRINGCENTER / STRINGRIGHT ignored). The other types are handled
+; Text gadgets (STRGADGET, StringInfo, spec intuition-strgad-v34): activated by a click or ActivateGadget, SELECTED
+; while edited, they receive the keyboard (routed by the pointer handler, see it_keyin): insertion of any single byte,
+; Backspace, Del, arrows (Shift: start / end), right Amiga + X (clear) and + Q (undo); LONGINT takes a sign at the
+; start and digits that keep the value in range (LongInt follows each edit), refusals and a full buffer beep; Return /
+; Enter ends (GADGETUP with the key's qualifier if RELVERIFY), a click elsewhere deactivates without a message.
+; Measured in the screen's font. Left-aligned text (STRINGCENTER / STRINGRIGHT ignored). The other types are handled
 ; as buttons. A GADGDISABLED gadget no longer responds and is ghosted (spec intuition-gzz-v34 §6.4).
 ; IMPLEMENTATION track ("clean"): public structures intuition/intuition.h + AutoDocs intuition. NO ROM reading.
 
@@ -35,6 +37,8 @@
                 xref    intuition_DrawImage
                 xref    intuition_PrintIText
                 xref    wn_sendgad
+                xref    wn_sendgadq
+                xref    intuition_DisplayBeep
                 xref    wn_sysgads
                 xref    it_scrxy
                 xdef    gad_propinit
@@ -539,6 +543,10 @@ gad_drawrev:
         tst.w   GG_GADGETTYPE(a2)
         bmi.s   .dr_hnext
         btst    #7,GG_FLAGS+1(a2)    ; SELECTED
+        beq.s   .dr_hnext
+        move.w  GG_GADGETTYPE(a2),d0 ; (a text gadget's highlight is its cursor, str_text)
+        and.w   #GTYP_MASK,d0
+        cmp.w   #STRGADGET,d0
         beq.s   .dr_hnext
         move.w  GG_FLAGS(a2),d0
         and.w   #GADGHIGHBITS,d0
@@ -1526,7 +1534,8 @@ str_text_nc:
         bsr     gad_rp               ; rectangle brought into the gadget's RastPort
         move.l  a4,a0
         bsr     str_len
-        move.l  WD_RPORT(a3),a1
+        move.l  WD_WSCREEN(a3),a1    ; measurements in the screen's font (spec intuition-strgad-v34 §4.1)
+        lea     SC_RASTPORT(a1),a1
         moveq   #0,d6
         move.w  rp_TxWidth(a1),d6
         bne.s   .st_cw
@@ -1610,6 +1619,10 @@ str_text_nc:
 .st_cur:
         cmp.l   IB_STRGAD(a5),a2
         bne.s   .st_end
+        moveq   #GADGHIGHBITS,d0     ; the cursor is the gadget's highlight: none with GADGHNONE (§4.3)
+        and.w   GG_FLAGS(a2),d0
+        cmp.w   #3,d0
+        beq.s   .st_end
         move.l  a3,a1
         moveq   #COMPLEMENT,d0
         jsr     LVO_SETDRMD(a6)
@@ -1691,7 +1704,8 @@ str_activate:
         bpl.s   .sa_div
         moveq   #0,d0
 .sa_div:
-        move.l  WD_RPORT(a3),a0
+        move.l  WD_WSCREEN(a3),a0    ; the screen's font (§3.4)
+        lea     SC_RASTPORT(a0),a0
         move.w  rp_TxWidth(a0),d1
         bne.s   .sa_cw
         moveq   #8,d1
@@ -1710,6 +1724,7 @@ str_activate:
 .sa_c2:
         move.l  a3,IB_STRWIN(a5)
         move.l  a2,IB_STRGAD(a5)
+        bset    #7,GG_FLAGS+1(a2)    ; SELECTED while it is edited (spec intuition-strgad-v34 §2)
         bsr     str_text
         btst    #1,GG_ACTIVATION+1(a2)   ; GADGIMMEDIATE
         beq.s   .sa_ret
@@ -1731,6 +1746,7 @@ str_deact:
         move.l  d0,a2
         move.l  IB_STRWIN(a5),a3
         clr.l   IB_STRGAD(a5)
+        bclr    #7,GG_FLAGS+1(a2)
         bsr     str_text
 .sd_ret:
         movem.l (sp)+,d0-d1/a0-a3
@@ -1824,20 +1840,21 @@ str_key:
         beq     .sk_done
         btst    #KQB_RCOMMAND,d4
         beq.s   .sk_char
-        or.b    #$20,d0              ; right Amiga: X clears, Q undoes
-        cmp.b   #'x',d0
+        move.b  d0,d5
+        or.b    #$20,d5              ; right Amiga: X clears, Q undoes, other keys are inserted
+        cmp.b   #'x',d5
         bne.s   .sk_nx
         clr.b   (a0)
         moveq   #0,d2
         moveq   #0,d3
         clr.w   SI_DISPPOS(a4)
-        bra.s   .sk_pos
+        bra     .sk_pos
 .sk_nx:
-        cmp.b   #'q',d0
-        bne     .sk_done
-        move.l  SI_UNDOBUFFER(a4),d0
-        beq     .sk_done
-        move.l  d0,a1
+        cmp.b   #'q',d5
+        bne.s   .sk_char
+        move.l  SI_UNDOBUFFER(a4),d5
+        beq.s   .sk_char             ; no undo buffer: Q is an ordinary key
+        move.l  d5,a1
         move.w  SI_MAXCHARS(a4),d0
         bra.s   .sk_qx
 .sk_qc:
@@ -1849,27 +1866,33 @@ str_key:
         move.w  d0,d3
         move.w  SI_UNDOPOS(a4),d2
         cmp.w   d3,d2
-        ble.s   .sk_pos
+        ble     .sk_pos
         move.w  d3,d2
-        bra.s   .sk_pos
-.sk_char:
-        cmp.b   #$20,d0
-        blo     .sk_done
-        cmp.b   #$7F,d0
-        beq     .sk_done
-        btst    #3,GG_ACTIVATION(a2) ; LONGINT ($0800): digits and sign only
-        beq.s   .sk_ins
-        cmp.b   #'-',d0
-        beq.s   .sk_ins
-        cmp.b   #'0',d0
-        blo     .sk_done
-        cmp.b   #'9',d0
-        bhi     .sk_done
-.sk_ins:
+        bra     .sk_pos
+.sk_char:                            ; any single byte, control characters and Latin-1 included (§3.2)
         move.w  SI_MAXCHARS(a4),d1
         subq.w  #1,d1
         cmp.w   d1,d3
-        bge     .sk_done             ; full
+        bge     .sk_beep             ; full: MaxChars counts the NUL
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT ($0800): a sign at the start, digits that keep the value in range
+        beq.s   .sk_ins
+        cmp.b   #'-',d0
+        beq.s   .sk_sign
+        cmp.b   #'+',d0
+        beq.s   .sk_sign
+        cmp.b   #'0',d0
+        blo     .sk_beep
+        cmp.b   #'9',d0
+        bhi     .sk_beep
+        bra.s   .sk_ins
+.sk_sign:
+        tst.w   d2
+        bne     .sk_beep
+        cmp.b   #'-',(a0)
+        beq     .sk_beep
+        cmp.b   #'+',(a0)
+        beq     .sk_beep
+.sk_ins:
         lea     0(a0,d3.w),a1        ; shifts [cursor .. NUL] one step to the right
         move.w  d3,d1
         sub.w   d2,d1                ; bytes to shift, NUL included: d1 + 1
@@ -1880,74 +1903,157 @@ str_key:
         move.b  d0,0(a0,d2.w)
         addq.w  #1,d2
         addq.w  #1,d3
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT digit: refused if the text no longer converts (overflow)
+        beq.s   .sk_pos
+        cmp.b   #'0',d0
+        blo.s   .sk_pos
+        move.l  a4,a0
+        bsr     str_conv
+        beq.s   .sk_pos
+        move.l  SI_BUFFER(a4),a0     ; the digit is taken back out
+        subq.w  #1,d2
+        subq.w  #1,d3
+        lea     0(a0,d2.w),a1
+.sk_ul:
+        move.b  1(a1),(a1)+
+        bne.s   .sk_ul
+        move.w  d3,SI_NUMCHARS(a4)
+        move.l  a4,a0
+        bsr     str_conv
+        bra.s   .sk_beep
 .sk_pos:
         move.w  d2,SI_BUFFERPOS(a4)
         move.w  d3,SI_NUMCHARS(a4)
+        btst    #3,GG_ACTIVATION(a2) ; LONGINT: LongInt follows every edit (§3.6)
+        beq.s   .sk_draw
+        move.l  a4,a0
+        bsr     str_conv
+.sk_draw:
         bsr     str_text
 .sk_done:
         movem.l (sp)+,d2-d7/a2-a4
 .sk_ret:
         rts
+.sk_beep:
+        move.l  IB_ACTIVESCREEN(a5),a0
+        move.l  a5,a6
+        jsr     intuition_DisplayBeep
+        bra.s   .sk_done
 .sk_enter:
         btst    #3,GG_ACTIVATION(a2) ; LONGINT: signed decimal value in si_LongInt
         beq.s   .sk_up
-        moveq   #0,d1                ; d1 = value, d2 = negative
-        moveq   #0,d2
-        cmp.b   #'-',(a0)
-        bne.s   .sk_dg
-        moveq   #1,d2
-        addq.l  #1,a0
-.sk_dg:
-        moveq   #0,d0
-        move.b  (a0)+,d0
-        sub.b   #'0',d0
-        bcs.s   .sk_dend
-        cmp.b   #9,d0
-        bhi.s   .sk_dend
-        add.l   d1,d1                ; x 10 = x 2 + x 8
-        move.l  d1,d3
-        lsl.l   #2,d3
-        add.l   d3,d1
-        add.l   d0,d1
-        bra.s   .sk_dg
-.sk_dend:
-        tst.w   d2
-        beq.s   .sk_pl
-        neg.l   d1
-.sk_pl:
-        move.l  d1,SI_LONGINT(a4)
+        move.l  a4,a0
+        bsr     str_conv
 .sk_up:
         bsr     str_deact
-        btst    #0,GG_ACTIVATION+1(a2)   ; RELVERIFY
+        btst    #0,GG_ACTIVATION+1(a2)   ; RELVERIFY: GADGETUP, Code 0, Qualifier of the key (§5.1)
         beq.s   .sk_done
         moveq   #GADGETUP,d0
         moveq   #0,d1
         moveq   #0,d2
         moveq   #0,d3
         move.l  a2,a0
-        bsr     gad_send
+        movem.l d2-d7/a2-a5,-(sp)
+        jsr     wn_sendgadq          ; d4 = qualifier
+        movem.l (sp)+,d2-d7/a2-a5
         bra.s   .sk_done
 
-; ActivateGadget(gadget a0, window a1, requester a2) -> d0 = TRUE if an enabled (not disabled) text gadget of this
-; window became the active gadget (cursor kept), FALSE otherwise.
+; str_conv(a0 = StringInfo) -> si_LongInt from the text, Z = 0 on overflow (spec intuition-strgad-v34 §3.5): one
+; leading '-' or '+' skipped, then every byte up to the NUL taken as a digit (byte - '0', not checked), base 10; a
+; magnitude above 2147483648 stops the conversion (LongInt keeps the digits taken so far). Clobbers d0/d1.
+str_conv:
+        movem.l d2-d3/a1,-(sp)
+        move.l  SI_BUFFER(a0),a1
+        moveq   #0,d2                ; d2 = negative
+        moveq   #0,d3                ; d3 = magnitude
+        move.b  (a1),d0
+        cmp.b   #'-',d0
+        bne.s   .cv_plus
+        moveq   #1,d2
+        addq.l  #1,a1
+        bra.s   .cv_lp
+.cv_plus:
+        cmp.b   #'+',d0
+        bne.s   .cv_lp
+        addq.l  #1,a1
+.cv_lp:
+        moveq   #0,d0
+        move.b  (a1)+,d0
+        beq.s   .cv_ok
+        sub.w   #'0',d0
+        ext.l   d0
+        cmp.l   #214748364,d3
+        bhi.s   .cv_over
+        move.l  d3,d1                ; d1 = previous magnitude
+        lsl.l   #2,d3
+        add.l   d1,d3                ; x 5
+        add.l   d3,d3                ; x 10
+        add.l   d0,d3
+        cmp.l   #$80000000,d3
+        bls.s   .cv_lp
+        move.l  d1,d3                ; one step too far: the previous value stays
+        bra.s   .cv_over
+.cv_ok:
+        bsr.s   .cv_store
+        moveq   #0,d0                ; Z = 1
+        bra.s   .cv_ret
+.cv_over:
+        bsr.s   .cv_store
+        moveq   #1,d0                ; Z = 0
+.cv_ret:
+        movem.l (sp)+,d2-d3/a1
+        rts
+.cv_store:
+        tst.w   d2
+        beq.s   .cv_pos
+        neg.l   d3
+.cv_pos:
+        move.l  d3,SI_LONGINT(a0)
+        rts
+
+; ActivateGadget(gadget a0, window a1, requester a2) -> d0 = 1 if the text gadget is now edited (cursor kept), 0
+; otherwise (spec intuition-strgad-v34 §1.1): only a STRGADGET of the active window (never activated here), with the
+; requester argument equal to Window.FirstRequest, while nothing else is going on (no gadget held or edited, no
+; menu); a requester gadget needs its requester up. GADGDISABLED is not checked; the gadget already edited gives 1.
+; The 1.3 activation waits for the next input event; here it is immediate.
 intuition_ActivateGadget:
         movem.l d2/a2-a3/a5,-(sp)
         move.l  a6,a5
+        move.l  a2,d2                ; d2 = requester
         move.l  a0,a2
         move.l  a1,a3
         moveq   #0,d0
         move.l  a2,d1
         beq.s   .ag_ret
-        move.l  a3,d1
-        beq.s   .ag_ret
         move.w  GG_GADGETTYPE(a2),d1
-        and.w   #GTYP_MASK,d1
+        and.w   #$03FF,d1            ; SYSGADGET, SCRGADGET, GZZGADGET, REQGADGET and the two bits below left out
         cmp.w   #STRGADGET,d1
         bne.s   .ag_ret
-        btst    #0,GG_FLAGS(a2)      ; GADGDISABLED
+        cmp.l   IB_STRGAD(a5),a2
+        beq.s   .ag_ok
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .ag_ret
+        cmp.l   WD_FIRSTREQUEST(a3),d2
+        bne.s   .ag_ret
+        tst.l   IB_STRGAD(a5)
+        bne.s   .ag_ret
+        tst.l   IB_GADACT(a5)
+        bne.s   .ag_ret
+        tst.l   IB_MENUWIN(a5)
+        bne.s   .ag_ret
+        btst    #4,GG_GADGETTYPE(a2) ; REQGADGET
+        beq.s   .ag_go
+        move.l  a2,a0
+        bsr     gad_reqof
+        beq.s   .ag_ret
+        move.l  d0,a0
+        moveq   #0,d0
+        tst.l   RQ_REQLAYER(a0)
+        beq.s   .ag_ret
+.ag_go:
         moveq   #-1,d2
         bsr     str_activate
+.ag_ok:
         moveq   #1,d0
 .ag_ret:
         movem.l (sp)+,d2/a2-a3/a5

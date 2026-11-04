@@ -1034,6 +1034,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   click) and requester gadgets (AddGList/RemoveGList/refresh rules, PREDRAWN = image only), `tests/reqg_probe.sh`
   identical to 1.3. Open: AddGadget on a REQGADGET goes to the window list (1.3 uses whatever D2 holds); the
   highlight of a clicked gadget in a PREDRAWN requester is not specified.
+  **Text gadgets (2026-11-04)**: ActivateGadget conditions, SELECTED while edited, window activation dropped,
+  any-byte insertion, LONGINT filter and conversion, beeps, GADGETUP qualifier, NUMERICPAD on keypad keys
+  (`tests/strg_probe.sh`). Open: the 1.3 activation is deferred to the next input event, which is then fed to the
+  editor (ours is immediate); the 1.3 Workbench screen uses topaz 9 (10 px) when there is no system-configuration,
+  our ROM has no topaz 9; the text clear does not write spaces past the NUL as 1.3 does; STRINGCENTER/STRINGRIGHT,
+  GADGHBOX/GADGHIMAGE cursors and the ghost pattern of an edited disabled gadget are not done.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
   has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars

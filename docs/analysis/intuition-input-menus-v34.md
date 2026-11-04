@@ -177,6 +177,7 @@ Handling of **presses** whose qualifier contains LCOMMAND ($40) or RCOMMAND ($80
 | 10 | editing a string gadget | SELECTDOWN on string gadget | end of editing |
 | 11 ($B) | right button "handed to the application" | RMBTRAP, MENUCANCEL | MENUUP |
 | 12 ($C) | dragging/resizing a window (ghost frame) | SELECTDOWN on WDRAGGING/SIZING | SELECTUP |
+| 13 ($D) | string gadget to activate (ActivateGadget done, not yet carried out) | ActivateGadget | next event: becomes 10 (`intuition-strgad-v34.md` §1.3) |
 
 An unknown state causes `Alert($8400000C)`. In state 1:
 
@@ -793,11 +794,12 @@ IDLE
 4. **Blocking of other tasks** during a menu (LockLayers, state lock): deduced from the semantics
    of LockLayers/ObtainSemaphore; no probe in which a second task draws or calls ClearMenuStrip
    while a menu is open.
-5. **Dropping of ActivateWindow** requested during a menu/gadget (§1.10): ROM only.
+5. **Dropping of ActivateWindow** requested during a menu/gadget (§1.10): ROM only, except while a string
+   gadget is being edited (OpenWindow ACTIVATE dropped, probe `tests/strg_probe.s`, `intuition-strgad-v34.md` §2).
 6. **Off-screen allocation impossible** (§3.5, box not displayed) and **message not allocated ⇒ event
    passed on** (§2.2): ROM only.
-7. **Target of messages during a NOISYREQ requester**, state 10 (string gadget: editing, UNDO,
-   LONGINT, ActivateGadget): outside the scope of this spec, not described.
+7. **Target of messages during a NOISYREQ requester**: not described. State 10 and 13 (string gadget:
+   editing, UNDO, LONGINT, ActivateGadget) are specified in `intuition-strgad-v34.md`.
 8. **DISKINSERTED/REMOVED and NEWPREFS**: broadcast read in the ROM; on the Workbench side, see
    `disk-change-v34.md`; no dedicated probe here.
 9. **Settled (2026-11-02)**: ghosting alignment. Items and sub-items: the pattern origin is the off-screen

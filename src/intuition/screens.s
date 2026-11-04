@@ -48,6 +48,7 @@
                 xdef    wn_sendmsg
                 xdef    wn_sendkey
                 xdef    wn_sendgad
+                xdef    wn_sendgadq
                 xdef    wn_sysgads
                 xref    gad_drawall          ; gadgets.s
                 xref    gad_propinit
@@ -1164,6 +1165,8 @@ intuition_ActivateWindow:
         move.l  a0,a3
         bsr     it_alive
         beq.s   .aw_ret
+        tst.l   IB_STRGAD(a5)        ; dropped while a text gadget is edited (spec intuition-strgad-v34 §2)
+        bne.s   .aw_ret
         bsr     it_setactive
 .aw_ret:
         movem.l (sp)+,a3/a5
@@ -1446,8 +1449,10 @@ intuition_OpenWindow:
         move.l  d1,a0
         move.l  a3,WD_PARENT(a0)
 .ow_nopar:
-        btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE: only a window that asks for it becomes active
-        beq.s   .ow_noact
+        btst    #4,WD_FLAGS+2(a3)    ; ACTIVATE: only a window that asks for it becomes active, not while a text
+        beq.s   .ow_noact            ; gadget is edited (spec intuition-strgad-v34 §2)
+        tst.l   IB_STRGAD(a5)
+        bne.s   .ow_noact
         jsr     LVO_PERMIT(a6)
         bsr     it_setactive         ; (the new bar is redrawn with the border right after)
         bsr     wn_scrtitle
@@ -4457,6 +4462,9 @@ wn_sendmsg:
         move.l  a3,a0
 wn_sendgad:
         clr.w   -(sp)                ; qualifier
+        bra.s   wn_post
+wn_sendgadq:                         ; (d4.w = qualifier: the GADGETUP of a text gadget carries its key's)
+        move.w  d4,-(sp)
         bra.s   wn_post
 wn_sendkey:
         move.l  d6,a0                ; the dead-key history

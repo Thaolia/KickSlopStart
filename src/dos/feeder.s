@@ -20,6 +20,7 @@
                 xref    ser_lock             ; exec/boot.s (atomic serial output)
                 xref    ser_unlock
                 xref    kbd_pushcooked       ; exec/keyboard.s (cooked character to the CLI ring)
+                xref    kd_numpad            ; exec/kbddev.s (keypad raw codes)
 
 IO_DATA2     EQU 40               ; IOStdReq io_Data (local: feeder.s does not include disk.i)
 IO_LENGTH    EQU 36               ; IOStdReq io_Length
@@ -137,6 +138,15 @@ feeder_main:
                 move.w  d4,d0
                 lsr.w   #8,d0                ; qualifiers
                 move.w  d0,IE_QUALIFIER(a1)
+                moveq   #$7F,d1              ; keypad key: IEQUALIFIER_NUMERICPAD, as keyboard.device gives it
+                and.b   d4,d1
+                move.w  d1,d0
+                lsr.w   #3,d0
+                lea     kd_numpad,a0
+                btst    d1,0(a0,d0.w)
+                beq.s   .fm_nopad
+                or.w    #$0100,IE_QUALIFIER(a1)
+.fm_nopad:
                 bsr     fd_stamp
                 bsr     fd_history
                 bsr     fd_repeat_key        ; arm / stop the repeat according to this keystroke

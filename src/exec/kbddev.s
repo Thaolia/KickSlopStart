@@ -15,6 +15,7 @@
                 include "exec.i"
 
                 xdef    kbd_devevent
+                xdef    kd_numpad
 
 KD_MATRIX       EQU LIB_SIZE         ; 13 bytes used (keys $00-$67), 16 reserved
 KD_READQ        EQU LIB_SIZE+16      ; struct List of the queued KBD_READEVENTs (io_Unit)
