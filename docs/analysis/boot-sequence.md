@@ -89,9 +89,10 @@ In THIS ROM, only the following timing bits are present:
 
 - **alert.hook** (pri 5, type UNKNOWN): hook installed early for the display of Guru Meditations
   (recovery/alert); set up before the lower-priority modules.
-- **ramlib.library** (AUTOINIT, without COLDSTART): service for loading libraries/devices from
-  disk (`LDDemon`). Since it is not marked COLDSTART, it is brought in by a dedicated / on-demand path
-  rather than by the `InitCode(RTF_COLDSTART)` pass. *(inferred)*
+- **ramlib.library** (AUTOINIT, without COLDSTART): loading of libraries/devices from disk. Not started by
+  the `InitCode(RTF_COLDSTART)` pass: dos.library's init calls `FindResident`/`InitResident` on it right
+  after adding dos to the library list. It has no process in 1.3 (no `LDDemon`, a 2.0 name); see
+  `ramlib-v34.md`.
 - **romboot.library** (pri -40): handles autoboot / booting from expansion cards (expansion.library).
 - **strap** (pri -60, type UNKNOWN, "bootstrap"): **last** COLDSTART resident. It is the one that
   looks for a bootable device, reads the boot block, and starts up the DOS side. It explicitly brings in
@@ -117,8 +118,8 @@ reset → coldstart exec (reset PC = exec's rt_Init)
 - The detail of phases 1 and 2 (fine order of the custom registers touched, exact RAM probing
   mechanism, precise placement of ExecBase vs reset survival) is **inferred** from standard exec
   V34 behaviour and not verified line by line (clean-room constraint: no code transcription).
-- The exact point where ramlib, dos and workbench.task are initialised (dedicated path vs strap bootstrap)
-  is inferred from their flags (`rt_Flags` without a timing bit); the implementation track will have to
+- The exact point where dos and workbench.task are initialised (dedicated path vs strap bootstrap)
+  is inferred from their flags (ramlib: settled, initialised by dos, `ramlib-v34.md` §1.1) (`rt_Flags` without a timing bit); the implementation track will have to
   confirm it through observable behaviour (opening `dos.library` possible only after boot).
 
 ## Clean-room review

@@ -90,8 +90,8 @@ The contracts of getvec (29), freevec (30), getmem (19) and makeglobvec (13) are
 - When a request fails, unused libraries are expunged before the failure is returned: during the first
   failing request of a session, `mathffp.library` (open count 0) was removed from the library list and its
   130-byte base freed, in the requesting task's context; the request then still failed (it was impossible
-  by construction). A second failing request freed nothing. [O] Attribution of the expunge to the ramlib stub
-  rather than to exec is [D].
+  by construction). A second failing request freed nothing. [O] The expunge belongs to ramlib's AllocMem
+  replacement, not to exec (confirmed in `ramlib-v34.md` §6).
 - Consequence: free-memory figures measured after a failure can be higher than before by the size of the
   expunged libraries (136 bytes here); this is not dos behaviour.
 
@@ -455,7 +455,6 @@ Other real-side figures useful to `docs/MEMORY-USAGE.md` [O]:
 
 - Role of the 244-byte boot block of §2.10, of the 20-byte block of §4.2, and of the file system's
   608/448/408/328-byte blocks (only their sizes and lifetimes are observed).
-- Whether the expunge-on-failure belongs to the ramlib stub or to exec (§1.2).
 - Cause of the crash of §5.3.
 - §2.3 (packets) is deduced from the absence of allocations.
 

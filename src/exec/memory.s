@@ -10,12 +10,14 @@
 ; IMPLEMENTATION track ("clean"): docs/analysis/exec-spec.md + public ABI.
 
                 include "exec.i"
+                include "dospkt.i"
                 ifd     MEMTRACK
                 xref    ser_puts
                 xref    ser_puthex
                 endc
 
                 xdef    exec_AllocMem
+                xref    ram_expungeall   ; ramlib.s
                 xdef    exec_FreeMem
                 xdef    exec_AvailMem
                 xdef    exec_TypeOfMem
@@ -75,6 +77,7 @@ exec_Allocate:
 exec_AllocMem:
         movem.l d2-d5/a2-a4,-(sp)
         jsr     LVO_FORBID(a6)
+        moveq   #0,d3                ; d3 = second attempt done
         move.l  d1,d4                ; flags (for MEMF_CLEAR)
         move.l  d1,d5
         and.w   #MEMF_TYPEMASK,d5    ; reqType = requested TYPE bits (V34)
@@ -109,7 +112,27 @@ exec_AllocMem:
         subq.l  #1,d1
         bne.s   .am_clr
         bra.s   .am_exit
-.am_fail:
+.am_fail:                            ; 1.3 (ramlib-v34 §6): modules nobody has open are expunged, then one more try
+        tst.w   d3
+        bne.s   .am_nomem
+        tst.b   RAM_LOWMEM
+        bne.s   .am_nomem
+        moveq   #1,d3
+        st      RAM_LOWMEM
+        jsr     ram_expungeall
+        sf      RAM_LOWMEM
+        lea     EB_MEMLIST(a6),a4
+        move.l  (a4),a4
+        bra     .am_hdr
+.am_nomem:
+        move.l  EB_THISTASK(a6),d0   ; a process gets ERROR_NO_FREE_STORE
+        beq.s   .am_none
+        move.l  d0,a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .am_none
+        moveq   #103,d0
+        move.l  d0,PR_RESULT2(a0)
+.am_none:
         moveq   #0,d0
 .am_exit:
                 ifd     MEMTRACK

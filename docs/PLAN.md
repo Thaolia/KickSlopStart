@@ -1098,6 +1098,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **System clock (2026-11-04)**: CIA-A TOD at the measured mains rate, uniqueness counter, fold-over,
   PowerSupplyFrequency, UNIT_VBLANK and the input/intuition clocks at the real VBlank rate (`tests/systime_probe.s`).
   Open: the exec quantum is still counted by our scheduler server, not by timer.device's VBlank server (§3).
+  **ramlib (2026-11-04)**: spec `ramlib-v34`. OpenLibrary/OpenDevice try the base name of a path, then a ROM
+  resident, then LoadSeg in the calling process (a plain task fails; 1.3 has no ramlib process either); the RomTag
+  is searched in the first hunk only, a module without one runs its first hunk; loads of one base name are
+  serialised (waiters on SIGF_SINGLE, a failed load retried by each waiter); Close/Expunge seglists are freed and
+  returned; a failed AllocMem expunges every unused library and device once, then retries; IoErr 103 on failure.
+  `tests/ramlib_probe.sh` matches §8 (T1-T10, CONC). Differences: LoadSeg gets "LIBS:"/"DEVS:" + name (1.3:
+  CurrentDir(LIBS:) + the name as given), our ROM libraries never expunge (mathffp stays), a seglist is only freed
+  for a module whose vector points into RAM, no ramlib.library node or exec SetFunction patches.
   **WaitTOF (2026-11-04)**: signal-based on TOF_WaitQ, VBlank server per spec (gb_VBlank, CIA-B TOD = line),
   input.device task woken by keystrokes and deadlines instead of every frame (`tests/waittof_probe.s`). Open: the
   VERTB chain costs ~19 lines (1.3 returns from WaitTOF at line $0C); QBSBlit is still QBlit.

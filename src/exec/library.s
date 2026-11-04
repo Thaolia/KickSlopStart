@@ -69,6 +69,8 @@
                 xref    exec_AbortIO
                 xref    exec_CopyMem
                 xref    ram_loadmodule   ; ramlib.s (loading from LIBS:/DEVS:)
+                xref    ram_basename
+                xref    ram_freeseg
                 xref    exec_CopyMemQuick
                 xref    exec_AddLibrary
                 xref    exec_RemLibrary
@@ -354,9 +356,10 @@ exec_Expunge:
         moveq   #0,d0                ; exec never expunges itself
         rts
 
-; OpenLibrary(libName a1, version d0) -> d0 = base (or 0). Forbid-guarded: FindName(LibList) + version
-; gate (lib_Version >= requested version, otherwise 0) + call of the lib's Open vector (-6) (OpenCnt++).
-; Disk loading via ramlib if not resident = deferred (M6): not found -> 0. Preserves d2/a2.
+; OpenLibrary(libName a1, version d0) -> d0 = base (or 0). Forbid-guarded: FindName(LibList) of the name as given, else
+; of its base name (after the last '/' or ':'), else ram_loadmodule (ROM resident or LIBS:, ramlib-v34 §3); then the
+; version gate (lib_Version >= requested version, otherwise 0: a module just loaded stays in the list) and the lib's
+; Open vector (-6) (OpenCnt++). Preserves d2/a2.
 exec_OpenLibrary:
         movem.l d2/a2,-(sp)
         move.w  d0,d2                ; d2 = requested version (UWORD)
@@ -367,16 +370,26 @@ exec_OpenLibrary:
         jsr     LVO_FINDNAME(a6)     ; d0 = lib node (or 0)
         tst.l   d0
         bne.s   .ol_found
-        jsr     LVO_PERMIT(a6)       ; missing: load from LIBS: (ramlib), outside Forbid
+        move.l  a2,a1                ; the base name of a path ("LIBS:x.library" opens a loaded x.library)
+        jsr     ram_basename
+        cmpa.l  a2,a0
+        beq.s   .ol_load
+        move.l  a0,a1
+        lea     EB_LIBLIST(a6),a0
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        bne.s   .ol_found
+.ol_load:
+        jsr     LVO_PERMIT(a6)       ; missing: ramlib, outside Forbid
+        move.l  a3,-(sp)
         lea     ol_libsdir(pc),a0
         move.l  a2,a1
-        jsr     ram_loadmodule
+        lea     EB_LIBLIST(a6),a3
+        exg     a2,a3
+        jsr     ram_loadmodule       ; d0 = node of the base name | 0
+        exg     a2,a3
+        move.l  (sp)+,a3
         jsr     LVO_FORBID(a6)
-        tst.l   d0
-        beq.s   .ol_fail
-        lea     EB_LIBLIST(a6),a0
-        move.l  a2,a1
-        jsr     LVO_FINDNAME(a6)
         tst.l   d0
         beq.s   .ol_fail
 .ol_found:
@@ -413,12 +426,16 @@ exec_CloseLibrary:
         movem.l a2,-(sp)
         move.l  a1,a2                ; a2 = lib
         jsr     LVO_FORBID(a6)
+        move.l  LVO_CLOSE+2(a2),-(sp) ; where the Close vector jumps (the base may be gone after the call)
         move.l  a6,-(sp)
         move.l  a2,a6
-        jsr     LVO_CLOSE(a6)        ; -12: OpenCnt--
+        jsr     LVO_CLOSE(a6)        ; -12: OpenCnt--, d0 = seglist of a delayed expunge | 0
         move.l  (sp)+,a6
+        move.l  (sp)+,a0
+        jsr     ram_freeseg
+        move.l  d0,-(sp)
         jsr     LVO_PERMIT(a6)
-        moveq   #0,d0
+        move.l  (sp)+,d0
         movem.l (sp)+,a2
         rts
 

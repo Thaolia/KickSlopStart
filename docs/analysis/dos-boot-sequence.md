@@ -35,7 +35,9 @@ Trigger: the bootstrap code (bootblock + `strap`) locates the dos resident
 4. **[ROM]** Opening of the libraries dos depends on — strings measured near the init code:
    `"expansion.library"`, `"ramlib.library"`, `"intuition.library"`, `"timer.device"`,
    `"console.device"`, `"input.device"`. expansion provides the config of the mountable units; ramlib
-   (`LDDemon`) allows `LoadSeg` of disk handlers/commands; intuition is used for disk error
+   is not opened but initialised here (`FindResident` + `InitResident` right after `AddLibrary(dos)`); it has
+   no process in 1.3 and makes exec `OpenLibrary`/`OpenDevice` load `LIBS:`/`DEVS:` in the caller's context
+   (`ramlib-v34.md`); intuition is used for disk error
    **requesters** (cf. Phase D).
 
 ## Phase B — Mount table: devices, volumes, assigns ([ROM] anchors)

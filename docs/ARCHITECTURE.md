@@ -587,6 +587,13 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7ab) **ramlib as on 1.3** (2026-11-04, spec `ramlib-v34.md`). `src/exec/ramlib.s`: `ram_loadmodule` (base name,
+  ROM resident, LoadSeg in the caller's process, RomTag of the first hunk or first-hunk call, kept only if a node of
+  the base name appears) with a chain of loads in progress at `RAM_LOADS` ($7D8, records on the loaders' stacks,
+  waiters on SIGF_SINGLE); `ram_freeseg` frees the seglist returned by a Close/Expunge vector that points into RAM
+  (CloseLibrary, CloseDevice, RemLibrary, RemDevice return it in D0); `ram_expungeall` runs RemLibrary/RemDevice on
+  every unused node with a real Expunge vector when AllocMem fails (`RAM_LOWMEM` guards against recursion), then
+  AllocMem retries once; a failed AllocMem in a process sets IoErr 103. Probe: `tests/ramlib_probe.sh`.
   (7aa) **Boot image in 16 colours, ByteRun1** (2026-11-04, user request: the ROM image was 222 KB, the kitten raw 60 KB
   of it). `mk_bootscreen.py` quantizes to 16 colours (4 planes) and packs the planes with ByteRun1 (IFF ILBM scheme,
   one stream, runs may cross rows): 39,073 bytes instead of 59,840; the production ROM goes from 225,564 to 204,820

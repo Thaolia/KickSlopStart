@@ -21,6 +21,8 @@
                 xdef    exec_AddDevice
                 xdef    exec_RemDevice
                 xref    ram_loadmodule   ; ramlib.s
+                xref    ram_basename
+                xref    ram_freeseg
 
 DEV_OPEN        EQU -6
 DEV_CLOSE       EQU -12
@@ -42,19 +44,28 @@ exec_OpenDevice:
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.s   .od_found
-        jsr     LVO_PERMIT(a6)       ; missing: load from DEVS: (ramlib), outside Forbid
-        lea     od_devsdir(pc),a0
-        move.l  a3,a1
-        jsr     ram_loadmodule
-        jsr     LVO_FORBID(a6)
-        tst.l   d0
-        beq.s   .od_nodev
+        move.l  a3,a1                ; the base name of a path
+        jsr     ram_basename
+        cmpa.l  a3,a0
+        beq.s   .od_load
+        move.l  a0,a1
         lea     EB_DEVICELIST(a6),a0
-        move.l  a3,a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
         bne.s   .od_found
+.od_load:
+        jsr     LVO_PERMIT(a6)       ; missing: ramlib (ROM resident or DEVS:), outside Forbid
+        lea     od_devsdir(pc),a0
+        move.l  a3,a1
+        move.l  a2,-(sp)
+        lea     EB_DEVICELIST(a6),a2
+        jsr     ram_loadmodule       ; d0 = node of the base name | 0
+        move.l  (sp)+,a2
+        jsr     LVO_FORBID(a6)
+        tst.l   d0
+        bne.s   .od_found
 .od_nodev:
+        clr.l   IO_DEVICE(a2)        ; failure: io_Device 0, io_Error -1 (ramlib-v34 §3)
         move.b  #IOERR_OPENFAIL,IO_ERROR(a2)
         bra.s   .od_done
 .od_found:
@@ -85,9 +96,14 @@ exec_CloseDevice:
         jsr     LVO_FORBID(a6)
         move.l  a6,-(sp)
         move.l  IO_DEVICE(a1),a6
+        move.l  DEV_CLOSE+2(a6),-(sp) ; where the Close vector jumps (the base may be gone after the call)
         jsr     DEV_CLOSE(a6)
+        move.l  (sp)+,a0
         move.l  (sp)+,a6
+        jsr     ram_freeseg
+        move.l  d0,-(sp)
         jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,d0
         move.l  (sp)+,a6
         rts
 
@@ -215,8 +231,11 @@ exec_RemDevice:
         jsr     LVO_FORBID(a6)
         move.l  a6,-(sp)
         move.l  a1,a6
+        move.l  -16(a6),-(sp)        ; where the Expunge vector jumps
         jsr     -18(a6)              ; Expunge
+        move.l  (sp)+,a0
         move.l  (sp)+,a6
+        jsr     ram_freeseg
         move.l  d0,-(sp)
         jsr     LVO_PERMIT(a6)
         move.l  (sp)+,d0
