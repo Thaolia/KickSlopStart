@@ -5,39 +5,73 @@
 > (`kick34005.A500`, radare2, read only) an **effort indicator** (size in bytes) for each
 > function. No ROM instruction, no listing, no routine address appears in it: only
 > public ABI names (`.fd`), LVOs, command numbers, counts and sizes.
-> State as of 2026-10-27 (repository at commit `15b9e8f`).
+>
+> **Refreshed 2026-11-04 at commit `c4bdddc`.** First version: 2026-10-27 at commit `15b9e8f`. The ROM size
+> columns are unchanged from the first version (the ROM does not change; radare2 was not re-run). The
+> "Specified?" and "Implemented on our side" columns and the priorities were recomputed (§1).
+
+**Changes since the previous version** (2026-10-27, `15b9e8f`):
+
+- New specs counted: `graphics-area-v34`, `graphics-blitter-v34`, `graphics-display-v34`, `layers-v34`,
+  `intuition-screens-v34`, `intuition-screenbehind-v34`, `intuition-input-menus-v34`, `intuition-misc-v34`,
+  `exec-scheduling-v34`, `coldstart-hardware-v34`, `alert-v34`, `custom-chips-v34`, `resources-v34`,
+  `console-keymap-v34`, `setmap-13`, `keyboard-input-devices-v34`, `gameport-device-v34`, `audio-device-v34`,
+  `trackdisk-write-v34`, `trackdisk-raw-changeint-v34`, `rom-filesystem-v34`, `dos-lvo-partial-v34`,
+  `dos-exit-packets-v34`, `dos-memory-v34`, `dos-cli-v34`, `softkick-real-ks13`.
+- Spec coverage of the 390 LVOs: **91 → 242 specified**, 55 → 46 partial, 123 → 58 cited, 121 → 44 absent.
+  Useful coverage (specified + partial) goes from 37.4 % to **73.8 %**. 151 functions moved up to "yes"
+  (62 of them from "no", 56 from "cited", 33 from "partial").
+- Fully specified now: layers (25/25), the four resources (cia, disk, potgo, misc), console functions,
+  keymap.resource, every command of keyboard, gameport, input, console, audio and trackdisk (21/22, TD_MOTOR
+  partial), alert.hook, exec scheduling and private LVOs, intuition screens, menus, input engine and misc.
+- Implementation: **329 → 386** LVOs with a dedicated routine; **7 → 0** stubs; **54 → 4** null vectors.
+  The graphics table now has its 109 vectors (it stopped at −636); the fills, ellipses, Flood, ClipBlit,
+  ColorMap, ScrollVPort, QBlit/QBSBlit, BltPattern, SuperBitMap and AttemptLockLayerRom gaps are closed, as are
+  the exec private LVOs, Debug, Procure/Vacate, SumKickData, the intuition null vectors (SetPointer, DisplayAlert,
+  CloseWorkBench, MoveScreen, LockIBase…), the layers stubs, cia SetICR, console CDInputHandler and the keymap,
+  trackdisk raw and change-interrupt commands. The remaining null vectors are graphicsPrivate1/2 (ROM stubs
+  themselves) and dos GetPacket/QueuePacket.
+- The ranked list of §7 replaces the former "next 15 analysis specs", almost all written since.
+- §5: items 3 and 4 settled; items 1 and 2 still open.
 
 ## 0. Summary in figures
 
 - **390 V34 LVOs** inventoried across the 13 modules that expose functions (of which **14 private** in the
   sense of the `.fd`s: 9 exec, 2 graphics, 2 dos, 1 expansion); **376 public**.
-- Coverage by the analysis documentation: **91 specified** (23.3 %), **55 partial** (14.1 %), **123 only
-  cited** as calls made by an analysed piece of software (31.5 %), **121 absent** from any spec (31.0 %).
-  Useful coverage (specified + partial): **146 / 390 = 37.4 %**.
-- Implementation on our side (vector tables of `src/`): **329 / 390 = 84.4 %** have a dedicated routine;
-  **7** are stubs (constant return); **54** point to a null vector or fall **outside the table**.
-- Device commands inventoried in addition: 80 (keyboard 14, gameport 14, input 17, console 13,
-  trackdisk 22), plus timer (3) and audio (15) described globally.
-- The four least covered areas, in bytes of unspecified ROM code: **graphics** (≈ 48 KB
-  reached from its vectors, 0 function specified), **intuition** (≈ 42 KB, input engine, menus,
-  screens), **layers** (≈ 13 KB, stack operations), **console.device** (≈ 5.5 KB, nothing specified).
+- Coverage by the analysis documentation: **242 specified** (62.1 %), **46 partial** (11.8 %), **58 only
+  cited** as calls made by an analysed piece of software (14.9 %), **44 absent** from any spec (11.3 %).
+  Useful coverage (specified + partial): **288 / 390 = 73.8 %**.
+- Implementation on our side (vector tables of `src/` at `c4bdddc`): **386 / 390 = 99.0 %** have a dedicated
+  routine (which does not mean complete); **0** stubs; **4** null vectors (graphicsPrivate1/2, dos
+  GetPacket/QueuePacket); nothing falls outside a table any more.
+- Device commands inventoried in addition: 80 (keyboard 14, gameport 14, input 17, console 13, trackdisk 22):
+  **79 specified, 1 partial** (TD_MOTOR). Implemented: 75; **5 refused** by us although 1.3 implements them
+  (console CMD_RESET, CMD_CLEAR, CMD_STOP, CMD_START, CMD_FLUSH). Timer (3) and audio (15) are described
+  globally in §4: both fully specified and implemented.
+- What remains unspecified is concentrated in: **graphics** (≈ 11.8 KB of "own" ROM code in 53 unspecified or
+  partial LVOs: text and fonts, GELs/animation, regions, line drawing, SetRast), **intuition** gadget lists,
+  string gadgets and window operations (small own code but large closures: RefreshGList ≈ 7.2 KB,
+  SetWindowTitles ≈ 8.5 KB, CloseWindow ≈ 2.5 KB), **exec** messages/IO/semaphores/memory at AutoDoc level
+  (≈ 3 KB, mostly "cited"), and **mathffp** (12 LVOs, nothing specified).
 
 | Module | V34 LVOs | Specified | Partial | Cited | Absent | Implemented (dedicated routine) | ROM bytes reached from the vectors |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| exec | 101 | 14 | 15 | 38 | 34 | 90 | 6,778 |
-| graphics | 105 | 0 | 12 | 51 | 42 | 78 | 48,346 |
-| intuition | 74 | 17 | 14 | 28 | 15 | 58 | 42,590 |
-| layers | 25 | 3 | 8 | 6 | 8 | 22 | 12,776 |
+| exec | 101 | 39 | 12 | 34 | 16 | 101 | 6,778 |
+| graphics | 105 | 52 | 22 | 16 | 15 | 103 | 48,346 |
+| intuition | 74 | 53 | 12 | 8 | 1 | 74 | 42,590 |
+| layers | 25 | 25 | 0 | 0 | 0 | 25 | 12,776 |
 | dos | 33 | 33 | 0 | 0 | 0 | 31 | n/m (BCPL) |
 | expansion | 21 | 21 | 0 | 0 | 0 | 21 | 1,710 |
 | mathffp | 12 | 0 | 0 | 0 | 12 | 12 | 1,042 |
-| timer (fonctions) | 3 | 3 | 0 | 0 | 0 | 3 | 360 (device entier) |
-| console (fonctions) | 2 | 0 | 1 | 0 | 1 | 1 | 3,658 (vecteurs) + 1,878 (commandes) |
-| cia.resource | 4 | 0 | 3 | 0 | 1 | 3 | 256 |
-| disk.resource | 5 | 0 | 2 | 0 | 3 | 5 | 234 |
-| potgo.resource | 3 | 0 | 0 | 0 | 3 | 3 | 178 |
-| misc.resource | 2 | 0 | 0 | 0 | 2 | 2 | 68 |
-| **Total** | **390** | **91** | **55** | **123** | **121** | **329** | |
+| timer (functions) | 3 | 3 | 0 | 0 | 0 | 3 | 360 (whole device) |
+| console (functions) | 2 | 2 | 0 | 0 | 0 | 2 | 3,658 (vectors) + 1,878 (commands) |
+| cia.resource | 4 | 4 | 0 | 0 | 0 | 4 | 256 |
+| disk.resource | 5 | 5 | 0 | 0 | 0 | 5 | 234 |
+| potgo.resource | 3 | 3 | 0 | 0 | 0 | 3 | 178 |
+| misc.resource | 2 | 2 | 0 | 0 | 0 | 2 | 68 |
+| **Total** | **390** | **242** | **46** | **58** | **44** | **386** | |
+
+The ranked list of the most valuable remaining gaps is in §7.
 
 ## 1. Method (reproducible)
 
@@ -84,38 +118,52 @@ Limits: indirect calls (via `A6`, internal jump tables) are not followed; the si
 **P2** = implemented without a spec and bulky (closure ≥ 300 b) or semi-private still called;
 **P3** = small, AutoDoc contract sufficient, obsolete or private; **—** = already specified (or out of scope).
 
+**Refresh of 2026-11-04.** Same levels and rules as above. Coverage: whole-word search of each name in the 64
+`docs/analysis/*.md` pages (this page excluded), then reading of the passages; for the private exec LVOs the
+public names of the `.fd` comments (`ExitIntr`, `Schedule`, `Reschedule`, `Switch`, `Dispatch`, `Exception`,
+`RawIOInit`, `RawMayGetChar`, `RawPutChar`) were searched as well. An occurrence of a common English word
+(`Allocate`, `Move`, `Request`…) is not counted unless it names the function. Implementation: vector tables
+read from the **committed** tree (`git show HEAD:<path>`, commit `c4bdddc`; uncommitted edits of another
+session were ignored), conditional assembly resolved for the default dev build (`DOSTRACE` off,
+`LOADSEG_LVO_UNWIRED` = 0); exec: entries patched by `build_jumptable` in `src/exec/library.s` over the
+`_unimpl` fill; devices: the command tables of each `BeginIO`. A routine of a few instructions that does the
+real work (e.g. `SetAPen`, `ClearMenuStrip`) counts as "yes"; "stub" is kept for a body that only returns a
+constant. Priorities: same P1/P2/P3 rules, with "absent or stub" read as "null vector, stub, or a command
+refused by us that 1.3 implements".
+
 ## 2. The 24 residents of the ROM
 
 ROM area = distance between the module's ROMTag and the next ROMTag in the ROM (code + data; for
 keymap/keyboard/gameport/input, whose ROMTags are grouped, the code lives in the area following the
-ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
+ROMTag of console.device: 14,196 shared bytes, split by closure indicated). Sizes unchanged from the first
+version.
 
 | # | Resident | ROM area (b) | Analysis coverage | Existing specs | On our side | Priority |
 |--:|---|--:|---|---|---|:-:|
-| 1 | exec.library 34.2 | 12,736 | partial: ExecBase ABI, jump table, boot order, memory/lists/exclusion at AutoDoc level | exec-spec, boot-sequence, test-vectors, module-map | `src/exec/*` (90/101 LVO) | P1 |
-| 2 | expansion.library 34.1 | 2,176 | **complete** | autoconfig-v34 | `src/exec/expansion.s` | — |
-| 3 | potgo.resource | 332 | none | — | `src/exec/potgo.s` | P2 |
-| 4 | keymap.resource | 74 (+ init and tables in the console area) | none (structure without LVO) | — | `src/exec/keymap.s` (exposes 2 vectors that do not exist in V34) | P2 |
-| 5 | cia.resource (ciaa/ciab) | 648 | partial: timer allocation, ICR | timer-v34 §1, §6 ; keyboard-handshake §1–§2 | `src/exec/cia.s` (SetICR = stub) | P2 |
-| 6 | disk.resource | 872 | partial: GetUnit/GiveUnit (as seen by SetPatch) | setpatch-disk-resource, setpatch-138 §1.7 | `src/exec/diskres.s` | P1 |
-| 7 | misc.resource | 268 | none | — | `src/exec/misc.s` | P2 |
+| 1 | exec.library 34.2 | 12,736 | **strong**: ExecBase ABI, boot order, scheduling and private LVOs, task context, exceptions, interrupt dispatch, softints, raw serial I/O, Debug, Procure/Vacate, SumKickData, Alert, warm-reset survival; lists, ports, messages, I/O, semaphores and memory sub-allocation only at AutoDoc level (cited) | exec-spec, exec-scheduling, coldstart-hardware, alert, custom-chips §3.3/§4.3, boot-sequence, test-vectors, module-map | `src/exec/*` (101/101 LVOs) | P3 |
+| 2 | expansion.library 34.1 | 2,176 | **complete** | autoconfig-v34, uae-hd-boot | `src/exec/expansion.s` | — |
+| 3 | potgo.resource | 332 | **complete** | resources §3, custom-chips §4.2 | `src/exec/potgo.s` | — |
+| 4 | keymap.resource | 74 (+ init and tables in the console area) | **complete** (structure without LVO, default keymap behaviour) | console-keymap §1.1, §5 ; setmap-13 | `src/exec/keymap.s` (no function vectors, as V34; hand-authored keymaps) | — |
+| 5 | cia.resource (ciaa/ciab) | 648 | **complete** | resources §1 ; timer-v34 §1, §6 ; keyboard-handshake §1–§2 | `src/exec/cia.s` | — |
+| 6 | disk.resource | 872 | **complete** | resources §2 ; setpatch-disk-resource ; setpatch-138 §1.7 | `src/exec/diskres.s` | — |
+| 7 | misc.resource | 268 | **complete** | resources §4 | `src/exec/misc.s` | — |
 | 8 | ramlib.library | 1,564 | none (cited at boot) | boot-sequence, dos-boot-sequence | `src/exec/ramlib.s` (without its own process) | P2 |
-| 9 | graphics.library 34.1 | 59,816 | **very weak**: contracts deduced from callers | fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (78/105, table too short) | P1 |
-| 10 | keyboard.device | common area (≈ 1.1 KB by closure) | partial: reception, reset | keyboard-handshake | `src/exec/kbddev.s`, `keyboard.s` | P1 (hardware) |
-| 11 | gameport.device | common area (≈ 1.2 KB) | **complete** (all 14 commands, VERTB server) | gameport-v34 | `src/exec/gameport.s` (BeginIO refuses everything) | P1 |
+| 9 | graphics.library 34.1 | 59,816 | **partial, strong on hardware paths**: blitter, display/copper/VBlank, fills/Flood/ellipses/pixels, sprites, colours; still missing: text and fonts, GELs and animation, regions (return value only), line drawing, SetRast | graphics-blitter, graphics-display, graphics-area, custom-chips §4.1, layers §1.1/§6/§7, fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (103/105, the 2 private ones null) | P2 |
+| 10 | keyboard.device | common area (≈ 1.1 KB by closure) | **complete** (14 commands, handshake, reset) | keyboard-input-devices §2, keyboard-handshake | `src/exec/kbddev.s`, `keyboard.s` | — |
+| 11 | gameport.device | common area (≈ 1.2 KB) | **complete** | gameport-v34, gameport-device-v34 | `src/exec/gameport.s` (14 commands) | — |
 | 12 | timer.device 34.1 | 2,040 | **complete** | timer-v34 | `src/exec/timer.s` | — |
-| 13 | audio.device 34.1 | 4,204 | none | — | `src/exec/audio.s` | P2 |
-| 14 | input.device | common area (≈ 0.8 KB) | partial: repeat, thresholds, handler chain | intuiticks-repeat, disk-change §3 | `src/exec/input.s` | P2 |
-| 15 | layers.library 34.1 | 13,312 | partial: InstallClipRegion, Begin/EndUpdate, locks | installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | P1 |
-| 16 | console.device | common area (≈ 5.5 KB) | **almost none** | handlers-v34 §2 (CON: side) | `src/exec/console.s` (READ/WRITE only) | P1 |
-| 17 | trackdisk.device 34.1 | 6,908 | partial: reading and timing, disk change, writing, raw I/O, change interrupts, control commands | trackdisk-official-timing, disk-change, trackdisk-write, trackdisk-raw-changeint | `src/exec/trackdisk.s` | P2 (writing: other agent) |
-| 18 | intuition.library 34.3 | 52,248 | partial: requesters, prefs, frame, GZZ, prop | intuition-* | `src/intuition/*` (58/74) | P1 |
-| 19 | alert.hook | 658 | none (cited) | boot-sequence, module-map | absent (Alert = serial message) | P1 |
+| 13 | audio.device 34.1 | 4,204 | **complete** | audio-device-v34 | `src/exec/audio.s` | — |
+| 14 | input.device | common area (≈ 0.8 KB) | **complete** | keyboard-input-devices §3, intuiticks-repeat, disk-change §3 | `src/exec/input.s` | — |
+| 15 | layers.library 34.1 | 13,312 | **complete** | layers-v34, installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | — |
+| 16 | console.device | common area (≈ 5.5 KB) | **complete** (CSI automaton, keymaps, CDInputHandler, RawKeyConvert, commands) | console-keymap-v34, setmap-13, handlers-v34 §2 | `src/exec/console.s` (READ, WRITE, the 4 keymap commands, both functions; CMD_RESET/CLEAR/STOP/START/FLUSH refused) | P1 |
+| 17 | trackdisk.device 34.1 | 6,908 | **complete** except TD_MOTOR (partial) | trackdisk-official-timing, trackdisk-write, trackdisk-raw-changeint, disk-change | `src/exec/trackdisk.s` (22 commands) | — |
+| 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; still missing: gadget lists (RefreshGList/AddGList/RemoveGList), string gadgets/ActivateGadget, CloseWindow, window operations, SetWindowTitles, rendering helpers | intuition-* (9 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P2 |
+| 19 | alert.hook | 658 | **complete** | alert-v34 §4, coldstart-hardware §8.4 | role played from the boot code (`alert_boothook` in `src/exec/execmisc.s`), not a separate resident | — |
 | 20 | mathffp.library | 1,324 | none | — | `src/exec/mathffp.s` | P3 |
 | 21 | workbench.task 34.1 | 35,302 | **strong** | workbench-task, wb-icon-clipping, disk-change §4, loadwb-13 | `src/dos/workbench.s` | — |
-| 22 | dos.library 34.3 | 49,542 | **strong** | dos-v34-spec, bcpl-runtime, handlers, fault, boot-clock, disk-full-write, dos-memory | `src/dos/*` | — |
+| 22 | dos.library 34.3 | 49,542 | **strong** (33/33 LVOs, ROM file system, CLI, handlers, memory) | dos-v34-spec, dos-lvo-partial, dos-exit-packets, dos-memory, dos-cli, rom-filesystem, bcpl-runtime, handlers, fault, boot-clock, disk-full-write | `src/dos/*` (31/33, GetPacket/QueuePacket null) | — |
 | 23 | romboot.library | 1,052 | partial | uae-hd-boot §2 | `src/exec/romboot.s` | P3 |
-| 24 | strap 34.4 | 2,444 | partial (DF0: attempt, RomBoot) | uae-hd-boot §3, boot-sequence | `src/exec/strap.s` | P3 (coldstart: other agent) |
+| 24 | strap 34.4 | 2,444 | partial (DF0: attempt, RomBoot) | uae-hd-boot §3, boot-sequence, coldstart-hardware | `src/exec/strap.s` | P3 |
 
 ## 3. Tables per module (public functions)
 
@@ -123,39 +171,39 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `Supervisor` | partial — setpatch-138 §1.5 | yes | 14 / 14 | P3 |
-| -36 | `execPrivate1` (= `ExitIntr`) *(private)* | no | no (null vector) | 124 / 162 | P2 |
-| -42 | `execPrivate2` (= `Schedule`) *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P2 |
-| -48 | `execPrivate3` (= `Reschedule`) *(private)* | no | no (null vector) | 48 / 48 | P2 |
-| -54 | `execPrivate4` (= `Switch`) *(private)* | no | no (null vector) | 204 / 312 | P2 |
-| -60 | `execPrivate5` (= `Dispatch`) *(private)* | no | no (null vector) | 18 / 18 | P2 |
-| -66 | `execPrivate6` (= `Exception`) *(private)* | no | no (null vector) | 108 / 108 | P2 |
+| -30 | `Supervisor` | partial — exec-scheduling §1 (privilege-violation mechanism) ; setpatch-138 §1.5 | yes | 14 / 14 | P3 |
+| -36 | `execPrivate1` (= `ExitIntr`) *(private)* | yes — exec-scheduling §2.6 | yes | 124 / 162 | — |
+| -42 | `execPrivate2` (= `Schedule`) *(private)* | yes — exec-scheduling §2.2 | yes | 4 / 4 (ROM stub) | — |
+| -48 | `execPrivate3` (= `Reschedule`) *(private)* | yes — exec-scheduling §2.1 | yes | 48 / 48 | — |
+| -54 | `execPrivate4` (= `Switch`) *(private)* | yes — exec-scheduling §2.4 | yes | 204 / 312 | — |
+| -60 | `execPrivate5` (= `Dispatch`) *(private)* | yes — exec-scheduling §2.5 | yes | 18 / 18 | — |
+| -66 | `execPrivate6` (= `Exception`) *(private)* | yes — exec-scheduling §5 | yes | 108 / 108 | — |
 | -72 | `InitCode` | yes — boot-sequence §Phase 4 | yes | 56 / 56 | — |
 | -78 | `InitStruct` | partial — module-map §Auto-init structures | yes | 74 / 74 | P3 |
 | -84 | `MakeLibrary` | partial — boot-sequence §Phase 4 ; module-map §Auto-init structures | yes | 138 / 192 | P3 |
 | -90 | `MakeFunctions` | partial — module-map §Auto-init structures (table format) | yes | 54 / 54 | P3 |
 | -96 | `FindResident` | partial — dos-boot-sequence §Phase A | yes | 48 / 48 | P3 |
-| -102 | `InitResident` | yes — boot-sequence §Phase 4 | yes | 88 / 88 | — |
-| -108 | `Alert` | partial — setpatch-138 §1.3 ; intuition-requesters §5.3 | yes | 1264 / 1846 | P1 |
-| -114 | `Debug` | no | no (null vector) | 10 / 10 | P3 |
-| -120 | `Disable` | yes — exec-spec §4 Mutual exclusion | yes | 14 / 14 | — |
-| -126 | `Enable` | yes — exec-spec §4 Mutual exclusion | yes | 16 / 16 | — |
-| -132 | `Forbid` | yes — exec-spec §4 Mutual exclusion | yes | 6 / 6 | — |
-| -138 | `Permit` | yes — exec-spec §4 Mutual exclusion | yes | 20 / 20 | — |
+| -102 | `InitResident` | yes — boot-sequence §Phase 4 ; uae-hd-boot §5 | yes | 88 / 88 | — |
+| -108 | `Alert` | yes — alert-v34 §1 ; coldstart-hardware §8 ; setpatch-138 §1.3 | yes | 1264 / 1846 | — |
+| -114 | `Debug` | yes — exec-scheduling §9 ; custom-chips §4.3 | yes | 10 / 10 | — |
+| -120 | `Disable` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 14 / 14 | — |
+| -126 | `Enable` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 16 / 16 | — |
+| -132 | `Forbid` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 6 / 6 | — |
+| -138 | `Permit` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 20 / 20 | — |
 | -144 | `SetSR` | no | yes | 12 / 12 | P3 |
 | -150 | `SuperState` | no | yes | 12 / 12 | P3 |
 | -156 | `UserState` | partial — setpatch-138 §1.5 | yes | 10 / 10 | P3 |
-| -162 | `SetIntVector` | cited — cracktros-exit §2 | yes | 70 / 70 | P2 |
-| -168 | `AddIntServer` | cited — monkey-startup §2 ; sysinfo-44 §S2 | yes | 64 / 102 | P2 |
-| -174 | `RemIntServer` | cited — sysinfo-44 §2.3 | yes | 72 / 86 | P2 |
-| -180 | `Cause` | cited — keyboard-handshake §5 | yes | 96 / 96 | P2 |
+| -162 | `SetIntVector` | yes — custom-chips §3.3 ; graphics-blitter §9.3 | yes | 70 / 70 | — |
+| -168 | `AddIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 64 / 102 | — |
+| -174 | `RemIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 72 / 86 | — |
+| -180 | `Cause` | yes — custom-chips §3.3 ; exec-scheduling §8 ; trackdisk-raw-changeint §5.4 | yes | 96 / 96 | — |
 | -186 | `Allocate` | no | yes | 82 / 82 | P3 |
 | -192 | `Deallocate` | no | yes | 236 / 318 | P2 |
-| -198 | `AllocMem` | yes — exec-spec §4 Memory management | yes | 236 / 318 | — |
-| -204 | `AllocAbs` | cited — setpatch-138 §1.1 | yes | 144 / 144 | P3 |
+| -198 | `AllocMem` | yes — exec-spec §4 ; dos-memory §1.1 | yes | 236 / 318 | — |
+| -204 | `AllocAbs` | cited — setpatch-138 §1.1 ; coldstart-hardware §5.3 ; exec-scheduling §7 | yes | 144 / 144 | P3 |
 | -210 | `FreeMem` | yes — exec-spec §4 Memory management | yes | 64 / 382 | — |
 | -216 | `AvailMem` | yes — exec-spec §4 Memory management | yes | 78 / 78 | — |
-| -222 | `AllocEntry` | partial — setpatch-138 §1.4 | yes | 142 / 142 | P3 |
+| -222 | `AllocEntry` | partial — setpatch-138 §1.4 ; dos-memory §2 | yes | 142 / 142 | P3 |
 | -228 | `FreeEntry` | partial — setpatch-138 §Requirements | yes | 62 / 62 | P3 |
 | -234 | `Insert` | cited — workbench-task §3.6 | yes | 60 / 60 | P3 |
 | -240 | `AddHead` | yes — exec-spec §4 Doubly linked lists | yes | 60 / 60 | — |
@@ -165,16 +213,16 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 | -264 | `RemTail` | cited — workbench-task §3.1 | yes | 22 / 22 | P3 |
 | -270 | `Enqueue` | yes — exec-spec §4 Doubly linked lists | yes | 38 / 38 | — |
 | -276 | `FindName` | yes — exec-spec §4 Doubly linked lists ; setpatch-138 §1.6 | yes | 40 / 40 | — |
-| -282 | `AddTask` | partial — workbench-task §1.3 (initial frame) | yes | 164 / 202 | P3 |
-| -288 | `RemTask` | partial — bcpl-runtime §8.4.2, §13.7 | yes | 122 / 136 | P3 |
+| -282 | `AddTask` | yes — exec-scheduling §2.7, §4.2 ; workbench-task §1.3 | yes | 164 / 202 | — |
+| -288 | `RemTask` | yes — exec-scheduling §2.7 ; bcpl-runtime §13.7 | yes | 122 / 136 | — |
 | -294 | `FindTask` | cited — loadwb-13 §1 | yes | 84 / 84 | P3 |
-| -300 | `SetTaskPri` | cited — workbench-task §2.2 | yes | 80 / 132 | P3 |
-| -306 | `SetSignal` | cited — handlers-v34 §3.6 | yes | 8 / 8 | P3 |
-| -312 | `SetExcept` | no | yes | 156 / 194 | P3 |
-| -318 | `Wait` | cited — exec-spec §3 | yes | 104 / 104 | P3 |
-| -324 | `Signal` | cited — handlers-v34 §3.6 | yes | 20 / 20 | P3 |
+| -300 | `SetTaskPri` | yes — exec-scheduling §2.7 | yes | 80 / 132 | — |
+| -306 | `SetSignal` | yes — exec-scheduling §2.7 | yes | 8 / 8 | — |
+| -312 | `SetExcept` | yes — exec-scheduling §2.7, §5 | yes | 156 / 194 | — |
+| -318 | `Wait` | yes — exec-scheduling §2.7 | yes | 104 / 104 | — |
+| -324 | `Signal` | yes — exec-scheduling §2.7 | yes | 20 / 20 | — |
 | -330 | `AllocSignal` | cited — workbench-task §3.1 | yes | 56 / 56 | P3 |
-| -336 | `FreeSignal` | no | yes | 16 / 16 | P3 |
+| -336 | `FreeSignal` | cited — intuition-misc §4 | yes | 16 / 16 | P3 |
 | -342 | `AllocTrap` | no | yes | 38 / 38 | P3 |
 | -348 | `FreeTrap` | no | yes | 16 / 16 | P3 |
 | -354 | `AddPort` | cited — preferences-13 §4 | yes | 24 / 24 | P3 |
@@ -202,25 +250,25 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 | -486 | `AddResource` | cited — uae-int2 §2.2 | yes | 8 / 8 | P3 |
 | -492 | `RemResource` | no | yes | 4 / 32 | P3 |
 | -498 | `OpenResource` | cited — setpatch-disk-resource §1 | yes | 18 / 58 | P3 |
-| -504 | `execPrivate7` (= `RawIOInit`) *(private)* | no | stub (constant return) | 10 / 10 | P3 |
-| -510 | `execPrivate8` (= `RawMayGetChar`) *(private)* | no | yes | 32 / 32 | P3 |
-| -516 | `execPrivate9` (= `RawPutChar`) *(private)* | no | yes | 70 / 120 | P3 |
+| -504 | `execPrivate7` (= `RawIOInit`) *(private)* | yes — custom-chips §4.3 ; exec-scheduling §9 | yes | 10 / 10 | — |
+| -510 | `execPrivate8` (= `RawMayGetChar`) *(private)* | yes — custom-chips §4.3 | yes | 32 / 32 | — |
+| -516 | `execPrivate9` (= `RawPutChar`) *(private)* | yes — custom-chips §4.3 | yes | 70 / 120 | — |
 | -522 | `RawDoFmt` | cited — workbench-task §3.4 | yes | 214 / 452 | P2 |
 | -528 | `GetCC` | no | yes | 8 / 8 | P3 |
-| -534 | `TypeOfMem` | no | yes | 38 / 38 | P3 |
-| -540 | `Procure` | no | no (null vector) | 22 / 22 | P3 |
-| -546 | `Vacate` | no | no (null vector) | 34 / 34 | P3 |
+| -534 | `TypeOfMem` | cited — softkick-real-ks13 §Conclusions | yes | 38 / 38 | P3 |
+| -540 | `Procure` | yes — exec-scheduling §6 | yes | 22 / 22 | — |
+| -546 | `Vacate` | yes — exec-scheduling §6 | yes | 34 / 34 | — |
 | -552 | `OpenLibrary` | cited — caesar-boot §1 ; dos-boot-sequence | yes | 46 / 86 | P3 |
 | -558 | `InitSemaphore` | cited — autoconfig-v34 §1 | yes | 32 / 32 | P3 |
 | -564 | `ObtainSemaphore` | cited — autoconfig-v34 §7 | yes | 80 / 104 | P3 |
 | -570 | `ReleaseSemaphore` | cited — autoconfig-v34 §7 | yes | 100 / 116 | P3 |
 | -576 | `AttemptSemaphore` | no | yes | 48 / 48 | P3 |
-| -582 | `ObtainSemaphoreList` | no | yes | 118 / 142 | P3 |
-| -588 | `ReleaseSemaphoreList` | no | yes | 22 / 22 | P3 |
+| -582 | `ObtainSemaphoreList` | cited — layers §7 | yes | 118 / 142 | P3 |
+| -588 | `ReleaseSemaphoreList` | cited — layers §7 | yes | 22 / 22 | P3 |
 | -594 | `FindSemaphore` | no | yes | 10 / 10 | P3 |
 | -600 | `AddSemaphore` | no | yes | 12 / 12 | P3 |
 | -606 | `RemSemaphore` | no | yes | 4 / 32 | P3 |
-| -612 | `SumKickData` | no | no (null vector) | 88 / 88 | P2 |
+| -612 | `SumKickData` | yes — exec-scheduling §7 ; coldstart-hardware §5.3 | yes | 88 / 88 | — |
 | -618 | `AddMemList` | partial — autoconfig-v34 §4 | yes | 84 / 134 | P3 |
 | -624 | `CopyMem` | cited — autoconfig-v34 §6 | yes | 38 / 112 | P3 |
 | -630 | `CopyMemQuick` | no | yes | 4 / 78 | P3 |
@@ -229,220 +277,220 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `BltBitMap` | cited — installclipregion §3.2 | yes | 406 / 1680 | P1 |
-| -36 | `BltTemplate` | partial — fastfonts-ff §2 (expected contract) | yes | 692 / 1864 | P2 |
+| -30 | `BltBitMap` | yes — graphics-blitter §1 | yes | 406 / 1680 | — |
+| -36 | `BltTemplate` | yes — graphics-blitter §6 ; fastfonts-ff §2 | yes | 692 / 1864 | — |
 | -42 | `ClearEOL` | no | yes | 56 / 120 | P3 |
 | -48 | `ClearScreen` | no | yes | 66 / 130 | P3 |
-| -54 | `TextLength` | cited — intuition-frame §3.2 | yes | 96 / 96 | P3 |
-| -60 | `Text` | partial — fastfonts-ff §1–§4 | yes | 1028 / 1288 | P2 |
-| -66 | `SetFont` | cited — fastfonts-ff §2 | yes | 28 / 28 | P3 |
-| -72 | `OpenFont` | cited — fastfonts-ff §Command-line options | yes | 170 / 170 | P3 |
-| -78 | `CloseFont` | cited — intuition-prefs §3.3 | yes | 30 / 30 | P3 |
+| -54 | `TextLength` | cited — intuition-frame §3.2 ; workbench-task §3.1 | yes | 96 / 96 | P3 |
+| -60 | `Text` | partial — fastfonts-ff §1–§4 ; caesar-boot §2.4 ; console-keymap §3.8 (slicing) | yes | 1028 / 1288 | P2 |
+| -66 | `SetFont` | partial — setpatch-138 §1.9 (NULL arguments, fixed by SetPatch) | yes | 28 / 28 | P3 |
+| -72 | `OpenFont` | cited — preferences-13 §4 ; fastfonts-ff ; intuition-screens §2.5 | yes | 170 / 170 | P3 |
+| -78 | `CloseFont` | cited — intuition-prefs §3.3 ; workbench-task §3.1 | yes | 30 / 30 | P3 |
 | -84 | `AskSoftStyle` | partial — setpatch-138 §1.9 | yes | 36 / 36 | P3 |
-| -90 | `SetSoftStyle` | partial — setpatch-138 §1.9 | yes | 50 / 50 | P3 |
+| -90 | `SetSoftStyle` | partial — setpatch-138 §1.9 ; console-keymap §3.7 | yes | 50 / 50 | P3 |
 | -96 | `AddBob` | cited — workbench-task §3.6 | yes | 14 / 116 | P3 |
 | -102 | `AddVSprite` | no | yes | 14 / 88 | P3 |
-| -108 | `DoCollision` | no | yes | 1330 / 1824 | P2 |
-| -114 | `DrawGList` | cited — workbench-task §3.6 | yes | 3098 / 6552 | P2 |
+| -108 | `DoCollision` | partial — custom-chips §4.1 (software only, blitter overlap test) | yes | 1330 / 1824 | P2 |
+| -114 | `DrawGList` | partial — custom-chips §4.1 (VSprite copper output; band allocation open) ; graphics-blitter §9.4 | yes | 3098 / 6552 | P2 |
 | -120 | `InitGels` | cited — workbench-task §3.1 | yes | 122 / 122 | P3 |
 | -126 | `InitMasks` | no | yes | 12 / 246 | P3 |
 | -132 | `RemIBob` | cited — workbench-task §3.6 | yes | 70 / 3166 | P2 |
 | -138 | `RemVSprite` | no | yes | 12 / 32 | P3 |
-| -144 | `SetCollision` | no | yes | 42 / 42 | P3 |
+| -144 | `SetCollision` | partial — custom-chips §4.1 (fills the GelsInfo table only) | yes | 42 / 42 | P3 |
 | -150 | `SortGList` | cited — workbench-task §3.6 | yes | 190 / 190 | P3 |
 | -156 | `AddAnimOb` | no | yes | 96 / 198 | P3 |
 | -162 | `Animate` | no | yes | 468 / 570 | P2 |
 | -168 | `GetGBuffers` | no | yes | 350 / 382 | P2 |
 | -174 | `InitGMasks` | no | yes | 70 / 304 | P2 |
-| -180 | `DrawEllipse` | no | no (null vector) | 22 / 672 | P2 |
-| -186 | `AreaEllipse` | no | no (null vector) | 188 / 188 | P2 |
-| -192 | `LoadRGB4` | cited — monkey-startup §3 ; octamed §2.2 | yes | 272 / 676 | P2 |
-| -198 | `InitRastPort` | cited — fastfonts-ff §3 | yes | 10 / 86 | P3 |
-| -204 | `InitVPort` | no | no (null vector) | 16 / 52 | P1 |
-| -210 | `MrgCop` | partial — caesar-boot §2.7 ; monkey-startup §3 | yes | 1354 / 1474 | P1 |
-| -216 | `MakeVPort` | partial — caesar-boot §1, §2.7 ; monkey-startup §3 | yes | 2554 / 3722 | P1 |
-| -222 | `LoadView` | partial — caesar-boot §2.7 | yes | 282 / 434 | P1 |
-| -228 | `WaitBlit` | cited — fastfonts-ff §2 | yes | 36 / 36 | P1 |
-| -234 | `SetRast` | cited — wb-icon-clipping §5 | yes | 646 / 1160 | P2 |
-| -240 | `Move` | cited — preferences-13 §5.3 | yes | 20 / 20 | P3 |
-| -246 | `Draw` | cited — preferences-13 §5.3 | yes | 2424 / 3494 | P2 |
-| -252 | `AreaMove` | no | no (null vector) | 148 / 148 | P1 |
-| -258 | `AreaDraw` | no | no (null vector) | 80 / 80 | P1 |
-| -264 | `AreaEnd` | no | no (null vector) | 1260 / 3056 | P1 |
-| -270 | `WaitTOF` | cited — sysinfo-44 §1.3 | yes | 120 / 236 | P3 |
-| -276 | `QBlit` | no | no (null vector) | 22 / 638 | P2 |
-| -282 | `InitArea` | no | no (null vector) | 30 / 30 | P1 |
-| -288 | `SetRGB4` | partial — intuition-prefs §3.3 (4-bit mask) | yes | 336 / 794 | P2 |
-| -294 | `QBSBlit` | cited — timer-v34 §6.2 | no (null vector) | 220 / 836 | P2 |
-| -300 | `BltClear` | cited — workbench-task §3.6 | yes | 224 / 684 | P2 |
-| -306 | `RectFill` | cited — intuition-frame §2 | yes | 180 / 234 | P3 |
-| -312 | `BltPattern` | no | no (null vector) | 3648 / 4654 | P2 |
-| -318 | `ReadPixel` | no | yes | 264 / 300 | P2 |
-| -324 | `WritePixel` | cited — octamed §2.3 | yes | 352 / 812 | P2 |
-| -330 | `Flood` | cited — workbench-task §3.6 | no (null vector) | 5634 / 8750 | P1 |
+| -180 | `DrawEllipse` | yes — graphics-area §6 | yes | 22 / 672 | — |
+| -186 | `AreaEllipse` | yes — graphics-area §3.3 | yes | 188 / 188 | — |
+| -192 | `LoadRGB4` | yes — graphics-display §3 | yes | 272 / 676 | — |
+| -198 | `InitRastPort` | partial — layers §2.4 (clears 78 bytes) | yes | 10 / 86 | P3 |
+| -204 | `InitVPort` | yes — graphics-display §1.2 | yes | 16 / 52 | — |
+| -210 | `MrgCop` | yes — graphics-display §5 ; setpatch-138 §1.9 | yes | 1354 / 1474 | — |
+| -216 | `MakeVPort` | yes — graphics-display §4 | yes | 2554 / 3722 | — |
+| -222 | `LoadView` | yes — graphics-display §7.1 ; caesar-boot §2.7 | yes | 282 / 434 | — |
+| -228 | `WaitBlit` | yes — graphics-blitter §2 | yes | 36 / 36 | — |
+| -234 | `SetRast` | cited — layers §5.1 ; wb-icon-clipping §5 | yes | 646 / 1160 | P2 |
+| -240 | `Move` | cited — graphics-area §4.6, §8 | yes | 20 / 20 | P3 |
+| -246 | `Draw` | cited — graphics-area §4.6, §8 | yes | 2424 / 3494 | P2 |
+| -252 | `AreaMove` | yes — graphics-area §3.1 | yes | 148 / 148 | — |
+| -258 | `AreaDraw` | yes — graphics-area §3.2 | yes | 80 / 80 | — |
+| -264 | `AreaEnd` | yes — graphics-area §4 | yes | 1260 / 3056 | — |
+| -270 | `WaitTOF` | yes — graphics-display §7.4 ; sysinfo-44 §1.3 | yes | 120 / 236 | — |
+| -276 | `QBlit` | yes — graphics-blitter §9.2 | yes | 22 / 638 | — |
+| -282 | `InitArea` | yes — graphics-area §2 | yes | 30 / 30 | — |
+| -288 | `SetRGB4` | yes — graphics-display §3 | yes | 336 / 794 | — |
+| -294 | `QBSBlit` | yes — graphics-blitter §9.4 ; timer-v34 §6.2 | yes | 220 / 836 | — |
+| -300 | `BltClear` | yes — graphics-blitter §4 | yes | 224 / 684 | — |
+| -306 | `RectFill` | partial — graphics-area §8 (outline mode) | yes | 180 / 234 | P3 |
+| -312 | `BltPattern` | yes — graphics-blitter §8 ; graphics-area §5 | yes | 3648 / 4654 | — |
+| -318 | `ReadPixel` | yes — graphics-area §9.2 | yes | 264 / 300 | — |
+| -324 | `WritePixel` | yes — graphics-area §9.1 | yes | 352 / 812 | — |
+| -330 | `Flood` | yes — graphics-area §7 | yes | 5634 / 8750 | — |
 | -336 | `PolyDraw` | cited — octamed §2.3 | yes | 32 / 32 | P3 |
-| -342 | `SetAPen` | cited — octamed §2.1 | yes | 6 / 78 | P3 |
-| -348 | `SetBPen` | cited — octamed §2.1 | yes | 6 / 78 | P3 |
-| -354 | `SetDrMd` | cited — preferences-13 §5.3 | yes | 4 / 4 (ROM stub) | P3 |
-| -360 | `InitView` | partial — intuition-prefs §1 (DxOffset/DyOffset) | no (null vector) | 22 / 58 | P1 |
-| -366 | `CBump` | cited — monkey-startup §3 | yes | 54 / 300 | P2 |
-| -372 | `CMove` | cited — monkey-startup §3 | yes | 76 / 366 | P2 |
-| -378 | `CWait` | cited — monkey-startup §3 | yes | 78 / 368 | P2 |
-| -384 | `VBeamPos` | cited — octamed §2.3 | yes | 16 / 16 | P3 |
+| -342 | `SetAPen` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 6 / 78 | P3 |
+| -348 | `SetBPen` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 6 / 78 | P3 |
+| -354 | `SetDrMd` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 4 / 4 (ROM stub) | P3 |
+| -360 | `InitView` | yes — graphics-display §1.1 ; intuition-prefs §1 | yes | 22 / 58 | — |
+| -366 | `CBump` | yes — graphics-display §6 | yes | 54 / 300 | — |
+| -372 | `CMove` | yes — graphics-display §6 | yes | 76 / 366 | — |
+| -378 | `CWait` | yes — graphics-display §6 | yes | 78 / 368 | — |
+| -384 | `VBeamPos` | yes — graphics-display §7.4 ; custom-chips §3.6 | yes | 16 / 16 | — |
 | -390 | `InitBitMap` | partial — fastfonts-ff §3 (BytesPerRow) | yes | 22 / 22 | P3 |
-| -396 | `ScrollRaster` | cited — wb-icon-clipping §0 | yes | 142 / 380 | P2 |
-| -402 | `WaitBOVP` | no | no (null vector) | 6 / 62 | P2 |
-| -408 | `GetSprite` | cited — octamed §2.3 | yes | 136 / 168 | P3 |
-| -414 | `FreeSprite` | cited — octamed §2.3 | yes | 68 / 132 | P3 |
-| -420 | `ChangeSprite` | cited — octamed §2.3 | yes | 68 / 772 | P2 |
-| -426 | `MoveSprite` | cited — octamed §2.3 | yes | 20 / 724 | P2 |
-| -432 | `LockLayerRom` | partial — fastfonts-ff §2 (A5, registers preserved) | yes | 22 / 22 | P3 |
-| -438 | `UnlockLayerRom` | partial — fastfonts-ff §2 | yes | 22 / 22 | P3 |
-| -444 | `SyncSBitMap` | no | no (null vector) | 12 / 2778 | P2 |
-| -450 | `CopySBitMap` | no | no (null vector) | 12 / 1014 | P2 |
-| -456 | `OwnBlitter` | cited — monkey-startup §2 | yes | 24 / 236 | P2 |
-| -462 | `DisownBlitter` | cited — monkey-startup §2 | yes | 104 / 234 | P2 |
-| -468 | `InitTmpRas` | cited — workbench-task §3.6 | no (null vector) | 12 / 12 | P1 |
+| -396 | `ScrollRaster` | partial — console-keymap §3.7 (BPen fill) | yes | 142 / 380 | P2 |
+| -402 | `WaitBOVP` | yes — graphics-display §7.4 | yes | 6 / 62 | — |
+| -408 | `GetSprite` | yes — custom-chips §4.1 | yes | 136 / 168 | — |
+| -414 | `FreeSprite` | yes — custom-chips §4.1 | yes | 68 / 132 | — |
+| -420 | `ChangeSprite` | yes — custom-chips §4.1 ; intuition-misc §3.3 | yes | 68 / 772 | — |
+| -426 | `MoveSprite` | yes — custom-chips §4.1 | yes | 20 / 724 | — |
+| -432 | `LockLayerRom` | yes — layers §7 ; fastfonts-ff §2 | yes | 22 / 22 | — |
+| -438 | `UnlockLayerRom` | yes — layers §7 | yes | 22 / 22 | — |
+| -444 | `SyncSBitMap` | yes — layers §6 | yes | 12 / 2778 | — |
+| -450 | `CopySBitMap` | yes — layers §6 | yes | 12 / 1014 | — |
+| -456 | `OwnBlitter` | yes — graphics-blitter §3 | yes | 24 / 236 | — |
+| -462 | `DisownBlitter` | yes — graphics-blitter §3 | yes | 104 / 234 | — |
+| -468 | `InitTmpRas` | yes — graphics-area §2 | yes | 12 / 12 | — |
 | -474 | `AskFont` | no | yes | 18 / 18 | P3 |
 | -480 | `AddFont` | no | yes | 58 / 58 | P3 |
 | -486 | `RemFont` | no | yes | 78 / 78 | P3 |
-| -492 | `AllocRaster` | cited — monkey-startup §2 | yes | 18 / 32 | P3 |
+| -492 | `AllocRaster` | cited — monkey-startup §2 ; intuition-input-menus §3.5 | yes | 18 / 32 | P3 |
 | -498 | `FreeRaster` | cited — caesar-boot §1 | yes | 20 / 34 | P3 |
-| -504 | `AndRectRegion` | cited — wb-icon-clipping §1 | yes | 16 / 1510 | P2 |
-| -510 | `OrRectRegion` | cited — wb-icon-clipping §1 | yes | 16 / 1278 | P2 |
-| -516 | `NewRegion` | cited — wb-icon-clipping §1 | yes | 20 / 42 | P3 |
-| -522 | `ClearRectRegion` | no | yes | 82 / 2582 | P2 |
-| -528 | `ClearRegion` | cited — installclipregion §4.1 | yes | 12 / 110 | P3 |
+| -504 | `AndRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1510 | P2 |
+| -510 | `OrRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1278 | P2 |
+| -516 | `NewRegion` | cited — layers §1 ; wb-icon-clipping §1 | yes | 20 / 42 | P3 |
+| -522 | `ClearRectRegion` | partial — layers §1.1 (return value) | yes | 82 / 2582 | P2 |
+| -528 | `ClearRegion` | cited — installclipregion §4.1 ; layers §5.2 | yes | 12 / 110 | P3 |
 | -534 | `DisposeRegion` | cited — wb-icon-clipping §2 | yes | 12 / 142 | P3 |
-| -540 | `FreeVPortCopLists` | no | yes | 128 / 214 | P2 |
-| -546 | `FreeCopList` | cited — octamed §2.3 | no (null vector) | 14 / 100 | P2 |
-| -552 | `ClipBlit` | cited — wb-icon-clipping §0 | no (null vector) | 370 / 3206 | P1 |
-| -558 | `XorRectRegion` | no | yes | 16 / 1814 | P2 |
-| -564 | `FreeCprList` | no | no (null vector) | 74 / 98 | P1 |
-| -570 | `GetColorMap` | no | no (null vector) | 88 / 88 | P1 |
-| -576 | `FreeColorMap` | no | no (null vector) | 36 / 36 | P1 |
-| -582 | `GetRGB4` | cited — octamed §2.2 | yes | 24 / 24 | P3 |
-| -588 | `ScrollVPort` | no | no (null vector) | 2362 / 3442 | P1 |
-| -594 | `UCopperListInit` | cited — monkey-startup §3 | yes | 16 / 306 | P2 |
+| -540 | `FreeVPortCopLists` | yes — graphics-display §6 | yes | 128 / 214 | — |
+| -546 | `FreeCopList` | yes — graphics-display §6 | yes | 14 / 100 | — |
+| -552 | `ClipBlit` | yes — graphics-blitter §5.3 | yes | 370 / 3206 | — |
+| -558 | `XorRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1814 | P2 |
+| -564 | `FreeCprList` | yes — graphics-display §6 | yes | 74 / 98 | — |
+| -570 | `GetColorMap` | yes — graphics-display §3 | yes | 88 / 88 | — |
+| -576 | `FreeColorMap` | yes — graphics-display §3 | yes | 36 / 36 | — |
+| -582 | `GetRGB4` | yes — graphics-display §3 | yes | 24 / 24 | — |
+| -588 | `ScrollVPort` | yes — graphics-display §7.3 | yes | 2362 / 3442 | — |
+| -594 | `UCopperListInit` | yes — graphics-display §6 | yes | 16 / 306 | — |
 | -600 | `FreeGBuffers` | no | yes | 254 / 264 | P3 |
-| -606 | `BltBitMapRastPort` | cited — intuition-requesters §2.3 ; wb-icon-clipping §3 | yes | 272 / 3108 | P2 |
-| -612 | `OrRegionRegion` | no | yes | 16 / 1370 | P2 |
-| -618 | `XorRegionRegion` | no | yes | 16 / 1906 | P2 |
-| -624 | `AndRegionRegion` | no | yes | 226 / 2326 | P2 |
-| -630 | `SetRGB4CM` | no | no (null vector) | 54 / 54 | P3 |
-| -636 | `BltMaskBitMapRastPort` | cited — wb-icon-clipping §3, §8 | no (null vector) | 470 / 3306 | P1 |
-| -642 | `graphicsPrivate1` *(private)* | no | absent (outside the table) | 4 / 4 (ROM stub) | P3 |
-| -648 | `graphicsPrivate2` *(private)* | no | absent (outside the table) | 4 / 4 (ROM stub) | P3 |
-| -654 | `AttemptLockLayerRom` | no | absent (outside the table) | 22 / 22 | P1 |
+| -606 | `BltBitMapRastPort` | yes — graphics-blitter §5.2 | yes | 272 / 3108 | — |
+| -612 | `OrRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1370 | P2 |
+| -618 | `XorRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1906 | P2 |
+| -624 | `AndRegionRegion` | partial — layers §1.1 (return value) | yes | 226 / 2326 | P2 |
+| -630 | `SetRGB4CM` | yes — graphics-display §3 | yes | 54 / 54 | — |
+| -636 | `BltMaskBitMapRastPort` | yes — graphics-blitter §5.4 | yes | 470 / 3306 | — |
+| -642 | `graphicsPrivate1` *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P3 |
+| -648 | `graphicsPrivate2` *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P3 |
+| -654 | `AttemptLockLayerRom` | partial — layers §1.1 (return value) | yes | 22 / 22 | P3 |
 
 ### intuition.library (74 LVOs, −30 to −468)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `OpenIntuition` | no | no (null vector) | 18 / 2530 | P3 |
-| -36 | `Intuition` | partial — intuiticks-repeat §3 ; intuition-requesters §3 ; intuition-gzz §3 | no (null vector) | 15324 / 28100 | P1 |
-| -42 | `AddGadget` | partial — intuition-gzz §6.2 | yes | 62 / 474 | P2 |
+| -30 | `OpenIntuition` | yes — intuition-misc §1 | yes (= library Open, as 1.3) | 18 / 2530 | — |
+| -36 | `Intuition` | yes — intuition-input-menus §1–§2 ; intuition-misc §2 | yes | 15324 / 28100 | — |
+| -42 | `AddGadget` | partial — intuition-gzz §6.2, §6.3 | yes | 62 / 474 | P2 |
 | -48 | `ClearDMRequest` | yes — intuition-requesters §4.4 | yes | 30 / 76 | — |
-| -54 | `ClearMenuStrip` | cited — workbench-task §4.1 | yes | 44 / 164 | P3 |
-| -60 | `ClearPointer` | cited — octamed §2.3 | no (null vector) | 66 / 922 | P1 |
-| -66 | `CloseScreen` | cited — sysinfo-44 §S1 | yes | 54 / 12322 | P2 |
-| -72 | `CloseWindow` | cited — intuition-requesters §5.1 | yes | 12 / 2550 | P2 |
-| -78 | `CloseWorkBench` | cited — monkey-startup §2 ; workbench-task §0 | no (null vector) | 84 / 12352 | P1 |
-| -84 | `CurrentTime` | no | no (null vector) | 38 / 38 | P2 |
-| -90 | `DisplayAlert` | partial — intuition-requesters §5.3 | no (null vector) | 18 / 2330 | P1 |
-| -96 | `DisplayBeep` | cited — workbench-task §6.2 | yes | 12 / 332 | P2 |
-| -102 | `DoubleClick` | partial — intuition-prefs §1, §3.3 | yes | 86 / 86 | P3 |
+| -54 | `ClearMenuStrip` | yes — intuition-input-menus §3.2 | yes | 44 / 164 | — |
+| -60 | `ClearPointer` | yes — intuition-misc §3 | yes | 66 / 922 | — |
+| -66 | `CloseScreen` | yes — intuition-screens §6.1 | yes | 54 / 12322 | — |
+| -72 | `CloseWindow` | partial — intuition-input-menus §1.10, §2.2 ; workbench-task §6.8 ; intuition-requesters §5.1 | yes | 12 / 2550 | P2 |
+| -78 | `CloseWorkBench` | yes — intuition-screens §6.2 ; workbench-task §4 | yes | 84 / 12352 | — |
+| -84 | `CurrentTime` | yes — intuition-misc §5 | yes | 38 / 38 | — |
+| -90 | `DisplayAlert` | yes — alert-v34 §2 | yes | 18 / 2330 | — |
+| -96 | `DisplayBeep` | yes — intuition-screens §9 ; intuition-input-menus §1.3 | yes | 12 / 332 | — |
+| -102 | `DoubleClick` | yes — intuition-input-menus §2.6 ; intuition-prefs §3.3 | yes | 86 / 86 | — |
 | -108 | `DrawBorder` | partial — intuition-gzz §6.1 | yes | 20 / 572 | P2 |
 | -114 | `DrawImage` | partial — intuition-gzz §6.1 ; intuition-prop §3.1 | yes | 20 / 700 | P2 |
 | -120 | `EndRequest` | yes — intuition-requesters §4 | yes | 14 / 668 | — |
 | -126 | `GetDefPrefs` | yes — intuition-prefs §4.2 | yes | 68 / 260 | — |
 | -132 | `GetPrefs` | yes — intuition-prefs §4.1 | yes | 50 / 154 | — |
 | -138 | `InitRequester` | yes — intuition-requesters §4.3 | yes | 12 / 26 | — |
-| -144 | `ItemAddress` | no | yes | 14 / 244 | P2 |
-| -150 | `ModifyIDCMP` | cited — octamed §2.5 | yes | 14 / 1014 | P2 |
+| -144 | `ItemAddress` | yes — intuition-input-menus §3.2 | yes | 14 / 244 | — |
+| -150 | `ModifyIDCMP` | yes — intuition-input-menus §2.6, §2.2 | yes | 14 / 1014 | — |
 | -156 | `ModifyProp` | yes — intuition-prop §5 | yes | 6 / 6 | — |
-| -162 | `MoveScreen` | cited — preferences-13 §4 | no (null vector) | 18 / 804 | P2 |
-| -168 | `MoveWindow` | partial — installclipregion §4.2 | yes | 74 / 288 | P3 |
-| -174 | `OffGadget` | no | yes | 42 / 7246 | P2 |
-| -180 | `OffMenu` | cited — workbench-task §3.6 | yes | 40 / 486 | P2 |
-| -186 | `OnGadget` | no | yes | 42 / 7246 | P2 |
-| -192 | `OnMenu` | cited — workbench-task §3.6 | yes | 42 / 488 | P2 |
-| -198 | `OpenScreen` | cited — monkey-startup §2 | yes | 12 / 10462 | P1 |
+| -162 | `MoveScreen` | yes — intuition-screens §8.2 | yes | 18 / 804 | — |
+| -168 | `MoveWindow` | partial — intuition-input-menus §1.10 (deferred) ; installclipregion §4.2 | yes | 74 / 288 | P3 |
+| -174 | `OffGadget` | yes — intuition-gzz §6.4 | yes | 42 / 7246 | — |
+| -180 | `OffMenu` | yes — intuition-input-menus §3.2 | yes | 40 / 486 | — |
+| -186 | `OnGadget` | yes — intuition-gzz §6.4 | yes | 42 / 7246 | — |
+| -192 | `OnMenu` | yes — intuition-input-menus §3.2 | yes | 42 / 488 | — |
+| -198 | `OpenScreen` | yes — intuition-screens §2 ; intuition-screenbehind | yes | 12 / 10462 | — |
 | -204 | `OpenWindow` | yes — intuition-frame §2 ; intuition-gzz §1–§2 | yes | 12 / 15640 | — |
-| -210 | `OpenWorkBench` | partial — intuition-prefs §3.3 | yes | 6 / 11734 | P2 |
+| -210 | `OpenWorkBench` | yes — intuition-screens §7.2 | yes | 6 / 11734 | — |
 | -216 | `PrintIText` | partial — intuition-gzz §6.1 ; intuition-requesters §2.3 | yes | 20 / 802 | P2 |
 | -222 | `RefreshGadgets` | yes — intuition-gzz §6.2 | yes | 16 / 7220 | — |
-| -228 | `RemoveGadget` | cited — intuition-gzz §6.3 | yes | 48 / 498 | P2 |
-| -234 | `ReportMouse` | cited — octamed §2.5 | yes | 66 / 94 | P3 |
+| -228 | `RemoveGadget` | cited — intuition-gzz §6.3 ; octamed §2.4 | yes | 48 / 498 | P2 |
+| -234 | `ReportMouse` | yes — intuition-input-menus §2.6 | yes | 66 / 94 | — |
 | -240 | `Request` | yes — intuition-requesters §2–§3 | yes | 14 / 8662 | — |
-| -246 | `ScreenToBack` | no | yes | 12 / 956 | P2 |
-| -252 | `ScreenToFront` | cited — intuition-requesters §5.1 | yes | 32 / 984 | P2 |
+| -246 | `ScreenToBack` | yes — intuition-screens §8.1 | yes | 12 / 956 | — |
+| -252 | `ScreenToFront` | yes — intuition-screens §8.1 ; intuition-screenbehind | yes | 32 / 984 | — |
 | -258 | `SetDMRequest` | yes — intuition-requesters §4.4 | yes | 36 / 82 | — |
-| -264 | `SetMenuStrip` | cited — workbench-task §3.2 | yes | 224 / 1446 | P2 |
-| -270 | `SetPointer` | cited — monkey-startup §2 ; octamed §2.3 | no (null vector) | 96 / 952 | P1 |
+| -264 | `SetMenuStrip` | yes — intuition-input-menus §3.2 | yes | 224 / 1446 | — |
+| -270 | `SetPointer` | yes — intuition-misc §3 | yes | 96 / 952 | — |
 | -276 | `SetWindowTitles` | partial — intuition-frame §3.2 ; workbench-task §6.6 | yes | 122 / 8486 | P2 |
-| -282 | `ShowTitle` | partial — monkey-startup §3 (d) | yes | 86 / 7914 | P2 |
-| -288 | `SizeWindow` | no | yes | 74 / 288 | P3 |
-| -294 | `ViewAddress` | cited — preferences-13 §4 | yes | 16 / 16 | P3 |
-| -300 | `ViewPortAddress` | cited — octamed §2.1 | yes | 28 / 28 | P3 |
-| -306 | `WindowToBack` | no | yes | 36 / 250 | P3 |
-| -312 | `WindowToFront` | cited — workbench-task §3.3 | yes | 36 / 250 | P3 |
+| -282 | `ShowTitle` | yes — intuition-screens §3.2 | yes | 86 / 7914 | — |
+| -288 | `SizeWindow` | partial — intuition-gzz §2.5 ; intuition-input-menus §1.10 | yes | 74 / 288 | P3 |
+| -294 | `ViewAddress` | yes — intuition-screens §9 | yes | 16 / 16 | — |
+| -300 | `ViewPortAddress` | yes — intuition-screens §9 | yes | 28 / 28 | — |
+| -306 | `WindowToBack` | partial — intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | P3 |
+| -312 | `WindowToFront` | partial — intuition-input-menus §1.10 (deferred) | yes | 36 / 250 | P3 |
 | -318 | `WindowLimits` | no | yes | 18 / 142 | P3 |
 | -324 | `SetPrefs` | yes — intuition-prefs §3 | yes | 98 / 2530 | — |
-| -330 | `IntuiTextLength` | no | yes | 12 / 672 | P2 |
-| -336 | `WBenchToBack` | no | no (null vector) | 6 / 1020 | P2 |
-| -342 | `WBenchToFront` | no | no (null vector) | 6 / 1030 | P2 |
+| -330 | `IntuiTextLength` | cited — intuition-input-menus §3.5 | yes | 12 / 672 | P2 |
+| -336 | `WBenchToBack` | yes — intuition-screens §7.3 | yes | 6 / 1020 | — |
+| -342 | `WBenchToFront` | yes — intuition-screens §7.3 | yes | 6 / 1030 | — |
 | -348 | `AutoRequest` | yes — intuition-requesters §5.1 | yes | 270 / 20666 | — |
-| -354 | `BeginRefresh` | cited — workbench-task §7.2 | yes | 12 / 168 | P3 |
+| -354 | `BeginRefresh` | partial — intuition-gzz §2.5 (test vectors) | yes | 12 / 168 | P3 |
 | -360 | `BuildSysRequest` | yes — intuition-requesters §5.2 | yes | 20 / 20004 | — |
-| -366 | `EndRefresh` | cited — workbench-task §7.2 | yes | 14 / 136 | P3 |
+| -366 | `EndRefresh` | partial — intuition-gzz §2.5 (test vectors) | yes | 14 / 136 | P3 |
 | -372 | `FreeSysRequest` | yes — intuition-requesters §5.4 | yes | 12 / 2964 | — |
-| -378 | `MakeScreen` | no | no (null vector) | 12 / 322 | P2 |
-| -384 | `RemakeDisplay` | partial — intuition-prefs §3.3 ; caesar-boot §1 | yes | 6 / 802 | P2 |
-| -390 | `RethinkDisplay` | cited — monkey-startup §3 | yes | 6 / 6 | P3 |
-| -396 | `AllocRemember` | cited — intuition-requesters §5.2 | yes | 18 / 164 | P3 |
-| -402 | `AlohaWorkbench` | partial — workbench-task §3.1 | no (null vector) | 24 / 24 | P2 |
+| -378 | `MakeScreen` | yes — intuition-screens §5.2 | yes | 12 / 322 | — |
+| -384 | `RemakeDisplay` | yes — intuition-screens §5.2 | yes | 6 / 802 | — |
+| -390 | `RethinkDisplay` | yes — intuition-screens §5.2 | yes | 6 / 6 | — |
+| -396 | `AllocRemember` | cited — intuition-screens §2.1 ; intuition-requesters §5.2 | yes | 18 / 164 | P3 |
+| -402 | `AlohaWorkbench` | yes — intuition-misc §4 | yes | 24 / 24 | — |
 | -408 | `FreeRemember` | cited — intuition-requesters §5.4 | yes | 14 / 102 | P3 |
-| -414 | `LockIBase` | no | no (null vector) | 60 / 120 | P2 |
-| -420 | `UnlockIBase` | no | no (null vector) | 54 / 114 | P2 |
-| -426 | `GetScreenData` | partial — workbench-task §3.2 | yes | 112 / 11840 | P2 |
-| -432 | `RefreshGList` | cited — octamed §2.4 (+ error intuition-gzz §6.2) | yes | 48 / 7222 | P2 |
+| -414 | `LockIBase` | yes — intuition-misc §6 ; intuition-screens §9 | yes | 60 / 120 | — |
+| -420 | `UnlockIBase` | yes — intuition-misc §6 | yes | 54 / 114 | — |
+| -426 | `GetScreenData` | yes — intuition-screens §7.5 | yes | 112 / 11840 | — |
+| -432 | `RefreshGList` | cited — octamed §2.4 | yes | 48 / 7222 | P2 |
 | -438 | `AddGList` | cited — octamed §2.4 | yes | 20 / 432 | P2 |
 | -444 | `RemoveGList` | cited — octamed §2.4 | yes | 18 / 468 | P2 |
-| -450 | `ActivateWindow` | yes — intuition-frame §4.1 | no (null vector) | 38 / 252 | — |
-| -456 | `RefreshWindowFrame` | yes — intuition-frame §2 | no (null vector) | 28 / 8686 | — |
-| -462 | `ActivateGadget` | cited — workbench-task §6.8 | yes | 236 / 1232 | P2 |
+| -450 | `ActivateWindow` | yes — intuition-frame §4.1 ; intuition-input-menus §1.11 | yes | 38 / 252 | — |
+| -456 | `RefreshWindowFrame` | yes — intuition-frame §2 | yes | 28 / 8686 | — |
+| -462 | `ActivateGadget` | cited — workbench-task §6.8 ; octamed §2.4 | yes | 236 / 1232 | P2 |
 | -468 | `NewModifyProp` | yes — intuition-prop §5 | yes | 82 / 7256 | — |
 
 ### layers.library (25 LVOs, −30 to −174)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `InitLayers` | no | yes | 10 / 120 | P3 |
-| -36 | `CreateUpfrontLayer` | partial — intuition-gzz §2 | yes | 118 / 10140 | P2 |
-| -42 | `CreateBehindLayer` | partial — intuition-requesters §2.2 | yes | 20 / 9850 | P2 |
-| -48 | `UpfrontLayer` | cited — installclipregion §4.2 | yes | 10 / 6284 | P1 |
-| -54 | `BehindLayer` | cited — installclipregion §4.2 | yes | 90 / 6296 | P1 |
-| -60 | `MoveLayer` | cited — installclipregion §4.2 | yes | 320 / 10916 | P1 |
-| -66 | `SizeLayer` | cited — installclipregion §4.2 | yes | 618 / 11232 | P1 |
-| -72 | `ScrollLayer` | cited — installclipregion §4.2 | stub (constant return) | 108 / 1136 | P2 |
-| -78 | `BeginUpdate` | yes — installclipregion §4.1 ; wb-icon-clipping §1 | yes | 56 / 2640 | — |
-| -84 | `EndUpdate` | yes — installclipregion §4.1 ; wb-icon-clipping §2 | yes | 76 / 2678 | — |
-| -90 | `DeleteLayer` | partial — setpatch-disk-resource §4 ; installclipregion §4.2 | yes | 10 / 7432 | P2 |
-| -96 | `LockLayer` | partial — installclipregion §4.3 | yes | 10 / 32 | P3 |
-| -102 | `UnlockLayer` | no | yes | 10 / 32 | P3 |
-| -108 | `LockLayers` | partial — installclipregion §4.2 | yes | 10 / 710 | P2 |
-| -114 | `UnlockLayers` | partial — installclipregion §4.2 | yes | 10 / 2392 | P2 |
-| -120 | `LockLayerInfo` | partial — installclipregion §4.3 | yes | 10 / 44 | P3 |
-| -126 | `SwapBitsRastPortClipRect` | no | yes | 12 / 320 | P2 |
-| -132 | `WhichLayer` | cited — workbench-task §3.6 | yes | 46 / 46 | P3 |
-| -138 | `UnlockLayerInfo` | no | yes | 10 / 44 | P3 |
-| -144 | `NewLayerInfo` | no | yes | 72 / 314 | P2 |
-| -150 | `DisposeLayerInfo` | no | yes | 40 / 116 | P3 |
-| -156 | `FattenLayerInfo` | no | stub (constant return) | 44 / 176 | P3 |
-| -162 | `ThinLayerInfo` | no | stub (constant return) | 34 / 110 | P3 |
-| -168 | `MoveLayerInFrontOf` | partial — intuition-gzz §2.2 ; installclipregion §4.2 | yes | 84 / 6230 | P2 |
-| -174 | `InstallClipRegion` | yes — installclipregion §1–§7 | yes | 78 / 2684 | — |
+| -30 | `InitLayers` | yes — layers §5.10 | yes | 10 / 120 | — |
+| -36 | `CreateUpfrontLayer` | yes — layers §5.2 ; intuition-gzz §2 | yes | 118 / 10140 | — |
+| -42 | `CreateBehindLayer` | yes — layers §5.1 | yes | 20 / 9850 | — |
+| -48 | `UpfrontLayer` | yes — layers §5.3 | yes | 10 / 6284 | — |
+| -54 | `BehindLayer` | yes — layers §5.3 | yes | 90 / 6296 | — |
+| -60 | `MoveLayer` | yes — layers §5.6 | yes | 320 / 10916 | — |
+| -66 | `SizeLayer` | yes — layers §5.7 | yes | 618 / 11232 | — |
+| -72 | `ScrollLayer` | yes — layers §5.8 | yes | 108 / 1136 | — |
+| -78 | `BeginUpdate` | yes — layers §5.5 ; installclipregion §4.1 | yes | 56 / 2640 | — |
+| -84 | `EndUpdate` | yes — layers §5.5 ; installclipregion §4.1 | yes | 76 / 2678 | — |
+| -90 | `DeleteLayer` | yes — layers §3.4, §5.4 ; setpatch-138 §1.8 | yes | 10 / 7432 | — |
+| -96 | `LockLayer` | yes — layers §7 | yes | 10 / 32 | — |
+| -102 | `UnlockLayer` | yes — layers §7 | yes | 10 / 32 | — |
+| -108 | `LockLayers` | yes — layers §7 ; installclipregion §4.2 | yes | 10 / 710 | — |
+| -114 | `UnlockLayers` | yes — layers §7 | yes | 10 / 2392 | — |
+| -120 | `LockLayerInfo` | yes — layers §7 | yes | 10 / 44 | — |
+| -126 | `SwapBitsRastPortClipRect` | yes — layers §5.12 | yes | 12 / 320 | — |
+| -132 | `WhichLayer` | yes — layers §5.9 | yes | 46 / 46 | — |
+| -138 | `UnlockLayerInfo` | yes — layers §7 | yes | 10 / 44 | — |
+| -144 | `NewLayerInfo` | yes — layers §5.10 | yes | 72 / 314 | — |
+| -150 | `DisposeLayerInfo` | yes — layers §5.10 | yes | 40 / 116 | — |
+| -156 | `FattenLayerInfo` | yes — layers §5.10 | yes | 44 / 176 | — |
+| -162 | `ThinLayerInfo` | yes — layers §5.10 | yes | 34 / 110 | — |
+| -168 | `MoveLayerInFrontOf` | yes — layers §5.3 | yes | 84 / 6230 | — |
+| -174 | `InstallClipRegion` | yes — installclipregion §1–§7 ; layers §7 | yes | 78 / 2684 | — |
 
 ### dos.library (33 LVOs, −30 to −222)
 
@@ -454,34 +502,34 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 | -36 | `Close` | yes — bcpl-runtime §5.1 ; dos-v34-spec §2b ; dos-memory §2.1 | yes | n/m | — |
 | -42 | `Read` | yes — dos-v34-spec §3 ; bcpl-runtime §5.1 | yes | n/m | — |
 | -48 | `Write` | yes — disk-full-write §3 ; bcpl-runtime §6.1 | yes | n/m | — |
-| -54 | `Input` | specified — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | P3 |
-| -60 | `Output` | specified — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | P3 |
-| -66 | `Seek` | specified — dos-lvo-partial-v34 §2.2 ; bcpl-runtime §8.3 ; disk-full-write §1 | yes | n/m | P3 |
-| -72 | `DeleteFile` | specified — dos-lvo-partial-v34 §2.3 ; bcpl-runtime §8.3 | yes | n/m | P3 |
-| -78 | `Rename` | specified — dos-lvo-partial-v34 §2.4 ; bcpl-runtime §8.4.2 | yes | n/m | P3 |
+| -54 | `Input` | yes — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | — |
+| -60 | `Output` | yes — dos-lvo-partial-v34 §2.1 ; bcpl-runtime §8.1 | yes | n/m | — |
+| -66 | `Seek` | yes — dos-lvo-partial-v34 §2.2 ; bcpl-runtime §8.3 ; disk-full-write §1 | yes | n/m | — |
+| -72 | `DeleteFile` | yes — dos-lvo-partial-v34 §2.3 ; bcpl-runtime §8.3 | yes | n/m | — |
+| -78 | `Rename` | yes — dos-lvo-partial-v34 §2.4 ; bcpl-runtime §8.4.2 | yes | n/m | — |
 | -84 | `Lock` | yes — dos-v34-spec §2b ; disk-change §2.4 ; dos-memory §2.2 | yes | n/m | — |
 | -90 | `UnLock` | yes — dos-v34-spec §2b ; dos-memory §2.2 | yes | n/m | — |
-| -96 | `DupLock` | specified — dos-lvo-partial-v34 §2.5 ; bcpl-runtime §8.2 | yes | n/m | P3 |
+| -96 | `DupLock` | yes — dos-lvo-partial-v34 §2.5 ; bcpl-runtime §8.2 | yes | n/m | — |
 | -102 | `Examine` | yes — dos-v34-spec §2b | yes | n/m | — |
 | -108 | `ExNext` | yes — dos-v34-spec §2b | yes | n/m | — |
-| -114 | `Info` | specified — dos-lvo-partial-v34 §2.6 ; bcpl-runtime §8.3 ; disk-change §2.3 | yes | n/m | P3 |
-| -120 | `CreateDir` | specified — dos-lvo-partial-v34 §2.7 ; bcpl-runtime §8.3 | yes | n/m | P3 |
-| -126 | `CurrentDir` | specified — dos-lvo-partial-v34 §2.8 ; bcpl-runtime §8.3 | yes | n/m | P3 |
-| -132 | `IoErr` | specified — dos-lvo-partial-v34 §2.9 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -114 | `Info` | yes — dos-lvo-partial-v34 §2.6 ; bcpl-runtime §8.3 ; disk-change §2.3 | yes | n/m | — |
+| -120 | `CreateDir` | yes — dos-lvo-partial-v34 §2.7 ; bcpl-runtime §8.3 | yes | n/m | — |
+| -126 | `CurrentDir` | yes — dos-lvo-partial-v34 §2.8 ; bcpl-runtime §8.3 | yes | n/m | — |
+| -132 | `IoErr` | yes — dos-lvo-partial-v34 §2.9 ; bcpl-runtime §8.3 | yes | n/m | — |
 | -138 | `CreateProc` | yes — dos-v34-spec §4 ; bcpl-runtime §8.1 ; workbench-task §1.3 ; dos-memory §2.4 | yes | n/m | — |
 | -144 | `Exit` | yes — dos-exit-packets §1 ; bcpl-runtime §4.3, §8.1 | yes | n/m | — |
 | -150 | `LoadSeg` | yes — dos-memory §3 (allocation, hunk memory bits, BSS, failures) ; bcpl-runtime §3 ; dos-boot-sequence §Phase E | yes | n/m | — |
-| -156 | `UnLoadSeg` | specified — dos-lvo-partial-v34 §2.10 ; bcpl-runtime §8.2 ; dos-memory §3.5 | yes | n/m | P3 |
-| -162 | `dosPrivate1` (= `GetPacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −20, `clearvec`) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | P3 |
-| -168 | `dosPrivate2` (= `QueuePacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −21, segment load by BSTR name) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | P3 |
+| -156 | `UnLoadSeg` | yes — dos-lvo-partial-v34 §2.10 ; bcpl-runtime §8.2 ; dos-memory §3.5 | yes | n/m | — |
+| -162 | `dosPrivate1` (= `GetPacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −20, `clearvec`) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | — |
+| -168 | `dosPrivate2` (= `QueuePacket`) *(private)* | yes — dos-exit-packets §3 (BCPL global −21, segment load by BSTR name) ; bcpl-runtime §1.4 | no (returns 0; no WB 1.3.3 caller) | n/m | — |
 | -174 | `DeviceProc` | yes — handlers-v34 §4.1 | yes | n/m | — |
-| -180 | `SetComment` | specified — dos-lvo-partial-v34 §2.11 ; bcpl-runtime §8.3 | yes | n/m | P3 |
-| -186 | `SetProtection` | specified — dos-lvo-partial-v34 §2.12 ; bcpl-runtime §8.3 | yes | n/m | P3 |
+| -180 | `SetComment` | yes — dos-lvo-partial-v34 §2.11 ; bcpl-runtime §8.3 | yes | n/m | — |
+| -186 | `SetProtection` | yes — dos-lvo-partial-v34 §2.12 ; bcpl-runtime §8.3 | yes | n/m | — |
 | -192 | `DateStamp` | yes — bcpl-runtime §8.4.2 ; boot-clock | yes | n/m | — |
-| -198 | `Delay` | specified — dos-lvo-partial-v34 §2.13 ; bcpl-runtime §8.1 | yes | n/m | P3 |
-| -204 | `WaitForChar` | yes — dos-exit-packets §2 ; bcpl-runtime §8.2 | yes (ACTION_WAIT_CHAR) | n/m | — |
-| -210 | `ParentDir` | specified — dos-lvo-partial-v34 §2.14 ; dos-v34-spec §2b ; bcpl-runtime §8.1 | yes | n/m | P3 |
-| -216 | `IsInteractive` | specified — dos-lvo-partial-v34 §2.15 ; bcpl-runtime §5.1 | yes | n/m | P3 |
+| -198 | `Delay` | yes — dos-lvo-partial-v34 §2.13 ; bcpl-runtime §8.1 | yes | n/m | — |
+| -204 | `WaitForChar` | yes — dos-exit-packets §2 ; bcpl-runtime §8.2 | yes | n/m | — |
+| -210 | `ParentDir` | yes — dos-lvo-partial-v34 §2.14 ; dos-v34-spec §2b ; bcpl-runtime §8.1 | yes | n/m | — |
+| -216 | `IsInteractive` | yes — dos-lvo-partial-v34 §2.15 ; bcpl-runtime §5.1 | yes | n/m | — |
 | -222 | `Execute` | yes — bcpl-runtime §0, §13 ; setpatch-138 §3.2 | yes | n/m | — |
 
 ### expansion.library (21 LVOs, −30 to −150)
@@ -524,8 +572,8 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 | -72 | `SPSub` | no | yes | 254 / 254 | P3 |
 | -78 | `SPMul` | no | yes | 154 / 154 | P3 |
 | -84 | `SPDiv` | no | yes | 166 / 166 | P3 |
-| -90 | `SPFloor` | no | yes | 86 / 366 | P3 |
-| -96 | `SPCeil` | no | yes | 10 / 376 | P3 |
+| -90 | `SPFloor` | no | yes | 86 / 366 | P2 |
+| -96 | `SPCeil` | no | yes | 10 / 376 | P2 |
 
 ### timer.device — functions (3 LVOs, −42 to −54)
 
@@ -539,360 +587,237 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -42 | `CDInputHandler` | no | no (null vector) | 706 / 1000 | P2 |
-| -48 | `RawKeyConvert` | partial — monkey-startup §6 | yes | 516 / 516 | P2 |
+| -42 | `CDInputHandler` | yes — console-keymap §6 | yes | 706 / 1000 | — |
+| -48 | `RawKeyConvert` | yes — console-keymap §5.2–§5.3 ; setmap-13 §5.2 | yes | 516 / 516 | — |
 
 ### cia.resource (ciaa/ciab, 4 LVOs, −6 to −24)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -6 | `AddICRVector` | partial — keyboard-handshake §1–§2 ; timer-v34 §1, §6 | yes | 58 / 184 | P3 |
-| -12 | `RemICRVector` | no | yes | 36 / 162 | P2 |
-| -18 | `AbleICR` | partial — timer-v34 §6.2 | yes | 98 / 98 | P3 |
-| -24 | `SetICR` | partial — timer-v34 §6.2 | stub (constant return) | 36 / 36 | P2 |
+| -6 | `AddICRVector` | yes — resources §1.4 ; keyboard-handshake §1–§2 | yes | 58 / 184 | — |
+| -12 | `RemICRVector` | yes — resources §1.5 | yes | 36 / 162 | — |
+| -18 | `AbleICR` | yes — resources §1.6 | yes | 98 / 98 | — |
+| -24 | `SetICR` | yes — resources §1.7 | yes | 36 / 36 | — |
 
 ### disk.resource (5 LVOs, −6 to −30)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -6 | `AllocUnit` | no | yes | 12 / 12 | P2 |
-| -12 | `FreeUnit` | no | yes | 6 / 6 | P2 |
-| -18 | `GetUnit` | partial — setpatch-138 §1.7 ; setpatch-disk-resource §3 | yes | 120 / 120 | P3 |
-| -24 | `GiveUnit` | partial — setpatch-138 §1.7 ; setpatch-disk-resource §3 | yes | 84 / 84 | P3 |
-| -30 | `GetUnitID` | no | yes | 12 / 12 | P1 |
+| -6 | `AllocUnit` | yes — resources §2.4 | yes | 12 / 12 | — |
+| -12 | `FreeUnit` | yes — resources §2.4 | yes | 6 / 6 | — |
+| -18 | `GetUnit` | yes — resources §2.4 ; setpatch-138 §1.7 | yes | 120 / 120 | — |
+| -24 | `GiveUnit` | yes — resources §2.4 ; setpatch-138 §1.7 | yes | 84 / 84 | — |
+| -30 | `GetUnitID` | yes — resources §2.4–§2.5 | yes | 12 / 12 | — |
 
 ### potgo.resource (3 LVOs, −6 to −18)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -6 | `AllocPotBits` | no | yes | 106 / 106 | P2 |
-| -12 | `FreePotBits` | no | yes | 22 / 22 | P2 |
-| -18 | `WritePotgo` | no | yes | 50 / 50 | P2 |
+| -6 | `AllocPotBits` | yes — resources §3.2 | yes | 106 / 106 | — |
+| -12 | `FreePotBits` | yes — resources §3.3 | yes | 22 / 22 | — |
+| -18 | `WritePotgo` | yes — resources §3.4 ; custom-chips §4.2 | yes | 50 / 50 | — |
 
 ### misc.resource (2 LVOs, −6 to −12)
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -6 | `AllocMiscResource` | no | yes | 56 / 56 | P2 |
-| -12 | `FreeMiscResource` | no | yes | 12 / 12 | P2 |
+| -6 | `AllocMiscResource` | yes — resources §4.2 | yes | 56 / 56 | — |
+| -12 | `FreeMiscResource` | yes — resources §4.2 | yes | 12 / 12 | — |
 
 ## 4. Device commands
 
 The standard vectors (Open, Close, Expunge, reserved, BeginIO, AbortIO) are not repeated; the
 commands are the real API. The CMD_INVALID…CMD_FLUSH routines of keyboard, gameport, input and console
-are partly **common** to the four devices in the ROM (same code for several entries).
+are partly **common** to the four devices in the ROM (same code for several entries). "IOERR_NOCMD, as 1.3"
+marks a command that both 1.3 and our ROM refuse.
 
 - **timer.device**: TR_ADDREQUEST (9), TR_GETSYSTIME (10), TR_SETSYSTIME (11) — **specified**
   (timer-v34 §2–§4), implemented; whole device ≈ 360 bytes reached from its 9 vectors.
 - **audio.device**: CMD_RESET, CMD_READ, CMD_WRITE, CMD_UPDATE, CMD_CLEAR, CMD_STOP, CMD_START,
   CMD_FLUSH, ADCMD_FREE, ADCMD_SETPREC, ADCMD_FINISH, ADCMD_PERVOL, ADCMD_LOCK, ADCMD_WAITCYCLE,
-  ADCMD_ALLOCATE — **none specified** (only cited: octamed §2.5); all present in
-  `src/exec/audio.s`. Size: 2,464 bytes reached from the 6 vectors (BeginIO alone ≈ 1.7 KB of
-  closure), ROM area 4,204 bytes. Command table not decoded (internal dispatch).
+  ADCMD_ALLOCATE — **all specified** (audio-device-v34 §4–§7: allocation, per-command behaviour, interrupt
+  automaton, AbortIO, ADCMD_WAITCYCLE bug); all present in the command table of `src/exec/audio.s`
+  (commands 1–14 by table, ADCMD_ALLOCATE separately). Size: 2,464 bytes reached from the 6 vectors (BeginIO
+  alone ≈ 1.7 KB of closure), ROM area 4,204 bytes.
 
 #### keyboard.device (14 commands, 0–13)
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | no | not verified | 8 / 134 | P3 |
-| 1 | `CMD_RESET` | no | not verified | 56 / 280 | P3 |
-| 2 | `CMD_READ` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 3 | `CMD_WRITE` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 4 | `CMD_UPDATE` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 5 | `CMD_CLEAR` | no | yes | 36 / 42 | P3 |
-| 6 | `CMD_STOP` | no | not verified | 16 / 142 | P3 |
-| 7 | `CMD_START` | no | not verified | 44 / 170 | P3 |
-| 8 | `CMD_FLUSH` | no | not verified | 32 / 164 | P3 |
-| 9 | `KBD_READEVENT` | partial — keyboard-handshake §3 | yes | 230 / 362 | P2 |
-| 10 | `KBD_READMATRIX` | no | yes | 42 / 42 | P2 |
-| 11 | `KBD_ADDRESETHANDLER` | partial — keyboard-handshake §5 | yes | 26 / 32 | P2 |
-| 12 | `KBD_REMRESETHANDLER` | no | yes | 22 / 28 | P3 |
-| 13 | `KBD_RESETHANDLERDONE` | partial — keyboard-handshake §5 | yes | 16 / 22 | P2 |
+| 0 | `CMD_INVALID` | yes — keyboard-input-devices §2.3 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | — |
+| 1 | `CMD_RESET` | yes — keyboard-input-devices §2.3 | yes | 56 / 280 | — |
+| 2 | `CMD_READ` | yes — keyboard-input-devices §2.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 3 | `CMD_WRITE` | yes — keyboard-input-devices §2.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 4 | `CMD_UPDATE` | yes — keyboard-input-devices §2.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 5 | `CMD_CLEAR` | yes — keyboard-input-devices §2.3 | yes | 36 / 42 | — |
+| 6 | `CMD_STOP` | yes — keyboard-input-devices §2.3 | yes | 16 / 142 | — |
+| 7 | `CMD_START` | yes — keyboard-input-devices §2.3 | yes | 44 / 170 | — |
+| 8 | `CMD_FLUSH` | yes — keyboard-input-devices §2.3 | yes | 32 / 164 | — |
+| 9 | `KBD_READEVENT` | yes — keyboard-input-devices §2.4 ; keyboard-handshake §3 | yes | 230 / 362 | — |
+| 10 | `KBD_READMATRIX` | yes — keyboard-input-devices §2.3 | yes | 42 / 42 | — |
+| 11 | `KBD_ADDRESETHANDLER` | yes — keyboard-input-devices §2.3 ; keyboard-handshake §5 | yes | 26 / 32 | — |
+| 12 | `KBD_REMRESETHANDLER` | yes — keyboard-input-devices §2.3 | yes | 22 / 28 | — |
+| 13 | `KBD_RESETHANDLERDONE` | yes — keyboard-input-devices §2.3 ; keyboard-handshake §5 | yes | 16 / 22 | — |
 
 #### gameport.device (14 commands, 0–13)
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | P3 |
-| 1 | `CMD_RESET` | yes — gameport-v34 | yes | 14 / 238 | P3 |
-| 2 | `CMD_READ` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 3 | `CMD_WRITE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 4 | `CMD_UPDATE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 5 | `CMD_CLEAR` | yes — gameport-v34 | yes | 38 / 38 | P2 |
-| 6 | `CMD_STOP` | yes — gameport-v34 | yes | 16 / 142 | P3 |
-| 7 | `CMD_START` | yes — gameport-v34 | yes | 44 / 170 | P3 |
-| 8 | `CMD_FLUSH` | yes — gameport-v34 | yes | 32 / 164 | P3 |
-| 9 | `GPD_READEVENT` | yes — gameport-v34 | yes | 268 / 394 | P1 |
-| 10 | `GPD_ASKCTYPE` | yes — gameport-v34 | yes | 42 / 42 | P1 |
-| 11 | `GPD_SETCTYPE` | yes — gameport-v34 | yes | 84 / 84 | P1 |
-| 12 | `GPD_ASKTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | P1 |
-| 13 | `GPD_SETTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | P1 |
+| 0 | `CMD_INVALID` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | — |
+| 1 | `CMD_RESET` | yes — gameport-v34 | yes | 14 / 238 | — |
+| 2 | `CMD_READ` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 3 | `CMD_WRITE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 4 | `CMD_UPDATE` | yes — gameport-v34 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 5 | `CMD_CLEAR` | yes — gameport-v34 | yes | 38 / 38 | — |
+| 6 | `CMD_STOP` | yes — gameport-v34 | yes | 16 / 142 | — |
+| 7 | `CMD_START` | yes — gameport-v34 | yes | 44 / 170 | — |
+| 8 | `CMD_FLUSH` | yes — gameport-v34 | yes | 32 / 164 | — |
+| 9 | `GPD_READEVENT` | yes — gameport-v34 | yes | 268 / 394 | — |
+| 10 | `GPD_ASKCTYPE` | yes — gameport-v34 | yes | 42 / 42 | — |
+| 11 | `GPD_SETCTYPE` | yes — gameport-v34 | yes | 84 / 84 | — |
+| 12 | `GPD_ASKTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | — |
+| 13 | `GPD_SETTRIGGER` | yes — gameport-v34 | yes | 48 / 48 | — |
 
 #### input.device (17 commands, 0–16)
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | no | not verified | 8 / 134 | P3 |
-| 1 | `CMD_RESET` | no | not verified | 14 / 242 | P3 |
-| 2 | `CMD_READ` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 3 | `CMD_WRITE` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 4 | `CMD_UPDATE` | no | not verified | 4 / 4 (shared routine ×3) (ROM stub) | P3 |
-| 5 | `CMD_CLEAR` | no | not verified | 2 / 2 (ROM stub) | P3 |
-| 6 | `CMD_STOP` | no | not verified | 16 / 142 | P3 |
-| 7 | `CMD_START` | no | not verified | 48 / 48 | P3 |
-| 8 | `CMD_FLUSH` | no | not verified | 32 / 164 | P3 |
-| 9 | `IND_ADDHANDLER` | partial — intuiticks-repeat §1.4 | yes | 8 / 8 (shared routine ×3) | P3 |
-| 10 | `IND_REMHANDLER` | partial — intuiticks-repeat §1.4 | yes | 8 / 8 (shared routine ×3) | P3 |
-| 11 | `IND_WRITEEVENT` | partial — disk-change §3 | yes | 8 / 8 (shared routine ×3) | P3 |
-| 12 | `IND_SETTHRESH` | yes — intuiticks-repeat §1.2, §2 | yes | 12 / 12 | — |
-| 13 | `IND_SETPERIOD` | yes — intuiticks-repeat §1.2, §2 | yes | 14 / 20 | — |
-| 14 | `IND_SETMPORT` | partial — intuiticks-repeat §1.1–§1.2 | no (IOERR_NOCMD) | 32 / 32 | P1 |
-| 15 | `IND_SETMTYPE` | partial — intuiticks-repeat §1.1–§1.2 | no (IOERR_NOCMD) | 26 / 26 | P1 |
-| 16 | `IND_SETMTRIG` | partial — intuiticks-repeat §1.2 | no (IOERR_NOCMD) | 46 / 46 | P1 |
+| 0 | `CMD_INVALID` | yes — keyboard-input-devices §3.3 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | — |
+| 1 | `CMD_RESET` | yes — keyboard-input-devices §3.3 | yes | 14 / 242 | — |
+| 2 | `CMD_READ` | yes — keyboard-input-devices §3.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 3 | `CMD_WRITE` | yes — keyboard-input-devices §3.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 4 | `CMD_UPDATE` | yes — keyboard-input-devices §3.3 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (shared routine ×3) (ROM stub) | — |
+| 5 | `CMD_CLEAR` | yes — keyboard-input-devices §3.3 (never replied on 1.3) | yes (replies 0, as the spec recommends) | 2 / 2 (ROM stub) | — |
+| 6 | `CMD_STOP` | yes — keyboard-input-devices §3.3 | yes | 16 / 142 | — |
+| 7 | `CMD_START` | yes — keyboard-input-devices §3.3 | yes | 48 / 48 | — |
+| 8 | `CMD_FLUSH` | yes — keyboard-input-devices §3.3 | yes | 32 / 164 | — |
+| 9 | `IND_ADDHANDLER` | yes — keyboard-input-devices §3.3 ; intuiticks-repeat §1.4 | yes | 8 / 8 (shared routine ×3) | — |
+| 10 | `IND_REMHANDLER` | yes — keyboard-input-devices §3.3 ; intuiticks-repeat §1.4 | yes | 8 / 8 (shared routine ×3) | — |
+| 11 | `IND_WRITEEVENT` | yes — keyboard-input-devices §3.3 ; disk-change §3 | yes | 8 / 8 (shared routine ×3) | — |
+| 12 | `IND_SETTHRESH` | yes — intuiticks-repeat §1.2, §2 ; keyboard-input-devices §3.3 | yes | 12 / 12 | — |
+| 13 | `IND_SETPERIOD` | yes — intuiticks-repeat §1.2, §2 ; keyboard-input-devices §3.3 | yes | 14 / 20 | — |
+| 14 | `IND_SETMPORT` | yes — keyboard-input-devices §3.4 | yes | 32 / 32 | — |
+| 15 | `IND_SETMTYPE` | yes — keyboard-input-devices §3.4 | yes | 26 / 26 | — |
+| 16 | `IND_SETMTRIG` | yes — keyboard-input-devices §3.4 | yes | 46 / 46 | — |
 
 #### console.device (13 commands, 0–12)
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | no | not verified | 8 / 134 | P3 |
-| 1 | `CMD_RESET` | no | not verified | 14 / 238 | P3 |
-| 2 | `CMD_READ` | cited — handlers-v34 §2 | yes (partial) | 142 / 318 | P1 |
-| 3 | `CMD_WRITE` | cited — handlers-v34 §2 (CSI sequences not specified) | yes (partial) | 1314 / 1632 | P1 |
-| 4 | `CMD_UPDATE` | no | not verified | 4 / 4 (ROM stub) | P3 |
-| 5 | `CMD_CLEAR` | no | no (IOERR_NOCMD) | 12 / 12 | P2 |
-| 6 | `CMD_STOP` | no | not verified | 16 / 142 | P3 |
-| 7 | `CMD_START` | no | not verified | 44 / 170 | P3 |
-| 8 | `CMD_FLUSH` | no | not verified | 32 / 164 | P3 |
-| 9 | `CD_ASKKEYMAP` | no | no (IOERR_NOCMD) | 16 / 72 | P1 |
-| 10 | `CD_SETKEYMAP` | no | no (IOERR_NOCMD) | 16 / 72 | P1 |
-| 11 | `CD_ASKDEFAULTKEYMAP` | no | no (IOERR_NOCMD) | 12 / 68 | P1 |
-| 12 | `CD_SETDEFAULTKEYMAP` | no | no (IOERR_NOCMD) | 10 / 10 | P1 |
+| 0 | `CMD_INVALID` | yes — console-keymap §2.4 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | — |
+| 1 | `CMD_RESET` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 14 / 238 | P1 |
+| 2 | `CMD_READ` | yes — console-keymap §6.3 | yes | 142 / 318 | — |
+| 3 | `CMD_WRITE` | yes — console-keymap §3 | yes | 1314 / 1632 | — |
+| 4 | `CMD_UPDATE` | yes — console-keymap §2.4 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (ROM stub) | — |
+| 5 | `CMD_CLEAR` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 12 / 12 | P1 |
+| 6 | `CMD_STOP` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 16 / 142 | P1 |
+| 7 | `CMD_START` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 44 / 170 | P1 |
+| 8 | `CMD_FLUSH` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 32 / 164 | P1 |
+| 9 | `CD_ASKKEYMAP` | yes — console-keymap §5.4 | yes | 16 / 72 | — |
+| 10 | `CD_SETKEYMAP` | yes — console-keymap §5.4 | yes | 16 / 72 | — |
+| 11 | `CD_ASKDEFAULTKEYMAP` | yes — console-keymap §5.4 | yes | 12 / 68 | — |
+| 12 | `CD_SETDEFAULTKEYMAP` | yes — console-keymap §5.4 ; setmap-13 | yes | 10 / 10 | — |
 
 #### trackdisk.device (22 commands, 0–21; bound tested by BeginIO = 22)
 
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| 0 | `CMD_INVALID` | yes — trackdisk-raw-changeint §8 | yes | 12 / 72 (shared routine ×5) | P3 |
-| 1 | `CMD_RESET` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
+| 0 | `CMD_INVALID` | yes — trackdisk-raw-changeint §8 | yes | 12 / 72 (shared routine ×5) | — |
+| 1 | `CMD_RESET` | yes — trackdisk-raw-changeint §8 | yes (IOERR_NOCMD, as 1.3) | 12 / 72 (shared routine ×5) | — |
 | 2 | `CMD_READ` | yes — trackdisk-official-timing §1–§3 | yes | 520 / 2880 (shared routine ×2) | — |
-| 3 | `CMD_WRITE` | out of scope (write agent) | yes | 520 / 2880 (shared routine ×2) | — |
-| 4 | `CMD_UPDATE` | out of scope (write agent) | yes | 50 / 1086 | — |
-| 5 | `CMD_CLEAR` | partial — disk-change §2.1 ; uae-hd-boot §3 | yes | 22 / 82 | P3 |
-| 6 | `CMD_STOP` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 7 | `CMD_START` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 8 | `CMD_FLUSH` | yes — trackdisk-raw-changeint §8 | no-op | 12 / 72 (shared routine ×5) | P3 |
-| 9 | `TD_MOTOR` | partial — intuition-requesters §7.1 ; trackdisk-official-timing §1 ; trackdisk-write §5.1 (return `$FF`/0) | yes | 22 / 342 | P3 |
-| 10 | `TD_SEEK` | yes — trackdisk-official-timing §2 ; trackdisk-raw-changeint §3 | no-op | 38 / 628 | P3 |
-| 11 | `TD_FORMAT` | out of scope (write agent) | yes | 374 / 1668 | — |
-| 12 | `TD_REMOVE` | yes — disk-change §2.1 ; trackdisk-raw-changeint §5.1 | no-op | 12 / 72 | P2 |
-| 13 | `TD_CHANGENUM` | partial — uae-hd-boot §3 ; disk-change §2.1 | yes | 12 / 72 | P3 |
-| 14 | `TD_CHANGESTATE` | partial — disk-change §2.1 | yes | 20 / 80 | P3 |
-| 15 | `TD_PROTSTATUS` | partial — disk-change §2.5 | yes | 90 / 410 | P3 |
-| 16 | `TD_RAWREAD` | yes — trackdisk-raw-changeint §4 | no (IOERR_NOCMD) | 120 / 756 (shared with 17) | P2 |
-| 17 | `TD_RAWWRITE` | yes — trackdisk-raw-changeint §4 ; trackdisk-write §3.2 | no (IOERR_NOCMD) | 4 / ≈ 756 (4-byte prologue into the routine shared with 16; *corrected 2026-11-02, see trackdisk-raw-changeint §0/§4: the former "4 / 4 (ROM stub)" was a measurement artefact, the command is fully implemented*) | P2 |
-| 18 | `TD_GETDRIVETYPE` | yes — trackdisk-raw-changeint §2.3 | no (IOERR_NOCMD) | 18 / 78 | P2 |
-| 19 | `TD_GETNUMTRACKS` | yes — trackdisk-raw-changeint §2.3 | yes | 18 / 78 | P3 |
-| 20 | `TD_ADDCHANGEINT` | yes — trackdisk-raw-changeint §5.2, §5.4 (exists and works in V34; *corrected 2026-11-02*) | no-op | 28 / 28 | P2 |
-| 21 | `TD_REMCHANGEINT` | yes — trackdisk-raw-changeint §5.3 | no-op | 22 / 82 | P2 |
+| 3 | `CMD_WRITE` | yes — trackdisk-write §5.2 | yes | 520 / 2880 (shared routine ×2) | — |
+| 4 | `CMD_UPDATE` | yes — trackdisk-write §5.3 | yes | 50 / 1086 | — |
+| 5 | `CMD_CLEAR` | yes — trackdisk-write §5.1 ; disk-change §2.1 | yes | 22 / 82 | — |
+| 6 | `CMD_STOP` | yes — trackdisk-raw-changeint §8 | yes (IOERR_NOCMD, as 1.3) | 12 / 72 (shared routine ×5) | — |
+| 7 | `CMD_START` | yes — trackdisk-raw-changeint §8 | yes (IOERR_NOCMD, as 1.3) | 12 / 72 (shared routine ×5) | — |
+| 8 | `CMD_FLUSH` | yes — trackdisk-raw-changeint §8 | yes (IOERR_NOCMD, as 1.3) | 12 / 72 (shared routine ×5) | — |
+| 9 | `TD_MOTOR` | partial — intuition-requesters §7.1 ; trackdisk-official-timing §1 ; trackdisk-write §5.1 (return `$FF`/0) | yes | 22 / 342 | P2 |
+| 10 | `TD_SEEK` | yes — trackdisk-official-timing §2 ; trackdisk-raw-changeint §3 | yes | 38 / 628 | — |
+| 11 | `TD_FORMAT` | yes — trackdisk-write §5.4 | yes | 374 / 1668 | — |
+| 12 | `TD_REMOVE` | yes — disk-change §2.1 ; trackdisk-raw-changeint §5.1 | yes | 12 / 72 | — |
+| 13 | `TD_CHANGENUM` | yes — trackdisk-raw-changeint §5.4, §6.1 ; uae-hd-boot §3 | yes | 12 / 72 | — |
+| 14 | `TD_CHANGESTATE` | yes — trackdisk-raw-changeint §6.1 ; disk-change §2.1 | yes | 20 / 80 | — |
+| 15 | `TD_PROTSTATUS` | yes — trackdisk-write §5.5 ; disk-change §2.5 | yes | 90 / 410 | — |
+| 16 | `TD_RAWREAD` | yes — trackdisk-raw-changeint §4 | yes | 120 / 756 (shared with 17) | — |
+| 17 | `TD_RAWWRITE` | yes — trackdisk-raw-changeint §4 ; trackdisk-write §3.2 | yes | 4 / ≈ 756 (4-byte prologue into the routine shared with 16; *corrected 2026-11-02, see trackdisk-raw-changeint §0/§4: the former "4 / 4 (ROM stub)" was a measurement artefact, the command is fully implemented*) | — |
+| 18 | `TD_GETDRIVETYPE` | yes — trackdisk-raw-changeint §2.3 | yes | 18 / 78 | — |
+| 19 | `TD_GETNUMTRACKS` | yes — trackdisk-raw-changeint §2.3 | yes | 18 / 78 | — |
+| 20 | `TD_ADDCHANGEINT` | yes — trackdisk-raw-changeint §5.2, §5.4 | yes | 28 / 28 | — |
+| 21 | `TD_REMCHANGEINT` | yes — trackdisk-raw-changeint §5.3 | yes | 22 / 82 | — |
 
 ## 5. Inconsistencies found in the existing analysis documentation (to be fixed by the analysis track)
 
-1. **`intuition-gzz-v34.md` §6.2** classifies `RefreshGList` as "V36+, absent in 1.3". This is wrong:
-   `RefreshGList` (−432), `AddGList` (−438), `RemoveGList` (−444), `ActivateWindow` (−450),
-   `RefreshWindowFrame` (−456), `ActivateGadget` (−462) and `NewModifyProp` (−468) are **V33**
-   functions (`.fd`), and the vector table of intuition 34.3 does have 78 entries (4 + 74).
-2. **`exec-spec.md` §3 ("Delta")** puts `AddMemList` (−618), `CopyMem` (−624) and `CopyMemQuick` (−630)
-   among the V36 additions. The ROM's exec table has **105 entries** and goes down to −630: these three
+Status re-checked on 2026-11-04 (`c4bdddc`).
+
+1. **Still open.** `intuition-gzz-v34.md` §6.2 (table row) classifies `RefreshGList` as "V36+, absent in 1.3".
+   This is wrong: `RefreshGList` (−432), `AddGList` (−438), `RemoveGList` (−444), `ActivateWindow` (−450),
+   `RefreshWindowFrame` (−456), `ActivateGadget` (−462) and `NewModifyProp` (−468) are **V33** functions
+   (`.fd`), and the vector table of intuition 34.3 does have 78 entries (4 + 74).
+2. **Still open.** `exec-spec.md` §3 ("Delta") puts `AddMemList` (−618), `CopyMem` (−624) and `CopyMemQuick`
+   (−630) among the V36 additions. The ROM's exec table has **105 entries** and goes down to −630: these three
    functions exist in V34 (already flagged in §5 of the same file, but §3 has not been corrected).
-3. **`disk-change-v34.md` §2.1** describes `TD_ADDCHANGEINT` as V36. The BeginIO of trackdisk 34.1
-   accepts commands **< 22**, and entries 20 (`TD_ADDCHANGEINT`) and 21 (`TD_REMCHANGEINT`) of its
-   table point to **dedicated** routines (≈ 28 and 22 bytes), distinct from the "invalid
-   command" routine. To be settled by a black-box probe (DoIO `TD_ADDCHANGEINT` on the real 1.3:
-   io_Error, and is the interrupt called on ejection?).
-   **Settled 2026-11-02** (ROM reading, see trackdisk-raw-changeint-v34.md §5): `TD_ADDCHANGEINT` and
-   `TD_REMCHANGEINT` exist and work in V34; the interrupt is `Cause()`d on ejection **and** on insertion; the
-   request is never replied while installed (so it must be sent with `SendIO`, not `DoIO`); `disk-change-v34.md`
-   has been corrected.
-4. **`module-map.md`** states that the number of LVOs of the non-AUTOINIT modules "cannot be measured without
-   tracing MakeLibrary". It can, by reading the tables: graphics 109, layers 29, exec 105, timer 9,
-   console 8, keyboard/gameport/input/audio/trackdisk 6, romboot 5, disk 5, cia 4, potgo 3, misc 2,
-   keymap 0 (cf. §1). Only the dos table has not been located.
+3. **Settled 2026-11-02.** `disk-change-v34.md` §2.1 described `TD_ADDCHANGEINT` as V36; trackdisk-raw-changeint-v34
+   §5 established that `TD_ADDCHANGEINT`/`TD_REMCHANGEINT` exist and work in V34 (the interrupt is `Cause()`d on
+   ejection **and** insertion; the request is never replied while installed, so it must be sent with `SendIO`),
+   and `disk-change-v34.md` has been corrected.
+4. **Settled.** `module-map.md` no longer states that the LVO counts of the non-AUTOINIT modules cannot be
+   measured. For the record (§1): graphics 109, layers 29, exec 105, timer 9, console 8,
+   keyboard/gameport/input/audio/trackdisk 6, romboot 5, disk 5, cia 4, potgo 3, misc 2, keymap 0; only the dos
+   table has not been located.
 
-## 6. Implementation gaps noticed in passing (reading of `src/`, for information)
+## 6. Implementation gaps noticed in passing (reading of `src/` at `c4bdddc`, for information)
 
-- **graphics**: our table stops at −636 (106 vectors) whereas V34 has **109**:
-  `graphicsPrivate1/2` (−642, −648) and **`AttemptLockLayerRom` (−654)** are **outside the table** — a call
-  to LVO −654 ends up outside our jump table. `BltMaskBitMapRastPort` (−636, used by the Workbench
-  for the icons, cf. wb-icon-clipping §3), `ScrollVPort`, `ClipBlit`, `Flood`, all the fill functions
-  (`AreaMove/Draw/End`, `InitArea`, `InitTmpRas`), `InitView`, `InitVPort`, `GetColorMap`,
-  `FreeColorMap`, `FreeCprList`, `QBlit`, `QBSBlit`, `BltPattern`, `WaitBOVP`, `SyncSBitMap`,
-  `CopySBitMap` are null vectors (24 in total).
-- **intuition**: null vectors for `SetPointer`, `ClearPointer`, `DisplayAlert`, `CloseWorkBench`,
-  `MoveScreen`, `CurrentTime`, `MakeScreen`, `WBenchToBack/Front`, `LockIBase/UnlockIBase`,
-  `AlohaWorkbench`, `ActivateWindow`, `RefreshWindowFrame` (these last two are nevertheless specified).
-- **exec**: `ExitIntr`, `Schedule`, `Reschedule`, `Switch`, `Dispatch`, `Exception`, `Debug`,
-  `Procure`, `Vacate`, `SumKickData` are null; `RawIOInit` is a stub; `Alert` displays nothing
-  (serial message), and the `alert.hook` resident does not exist.
-- **gameport.device**: BeginIO returns IOERR_NOCMD for **all** commands (the mouse goes through
-  an internal poller). **input.device**: `IND_SETMPORT/SETMTYPE/SETMTRIG` refused.
-- **console.device**: only CMD_READ/CMD_WRITE; the four keymap commands and `CDInputHandler`
-  are absent. **keymap.resource** exposes two vectors that do not exist in V34 (without known
-  consequence, but the base does not have the same shape).
-- **layers**: `ScrollLayer`, `FattenLayerInfo`, `ThinLayerInfo` are stubs.
-- **dos**: `GetPacket/QueuePacket` return 0 (1.3: `clearvec` / segment load, dos-exit-packets §3). `Exit` and
-  `WaitForChar` implemented (2026-11). Memory-management gaps against dos-memory-v34: see that page.
-  (Updated 2026-11-04.)
-- **cia.resource**: `SetICR` is a stub (returns 0).
-- **trackdisk**: `TD_SEEK`, `TD_REMOVE`, `TD_ADDCHANGEINT`, `TD_REMCHANGEINT` are no-ops;
-  `TD_RAWREAD`, `TD_RAWWRITE`, `TD_GETDRIVETYPE` are refused.
+- **Null vectors (4)**: graphics `graphicsPrivate1/2` (−642, −648; ROM stubs themselves, no known caller);
+  dos `GetPacket/QueuePacket` (−162, −168; return 0, whereas 1.3 maps them to BCPL globals, dos-exit-packets §3;
+  no Workbench 1.3.3 caller).
+- **console.device**: `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` return IOERR_NOCMD on both
+  the unit and the null-unit path; 1.3 implements them (console-keymap §2.4: CLEAR empties the input buffer and
+  is never replied, STOP/START hold and release the queued CMD_READs, FLUSH aborts them with −2, RESET = STOP +
+  FLUSH + START). `CMD_UPDATE` and `CMD_INVALID` are refused by both.
+- **input.device**: `CMD_CLEAR` replies 0, whereas 1.3 never replies it (deliberate, as keyboard-input-devices
+  §3.3 recommends).
+- **ramlib.library**: no process of its own (the caller must be a process).
+- **alert.hook**: not a separate resident; its role (Guru of a dead-end alert from before the reset) is played
+  from the boot code.
+- **Not checked here**: completeness of the routines behind the "yes" entries. Several specs carry their own
+  "implementation gaps" sections (custom-chips §7, dos-memory, rom-filesystem §11–§12 probes); they are the
+  reference for what each routine still lacks.
 
-## 7. The next 15 analysis specs to write (by priority)
+## 7. The most valuable remaining gaps (ranked, 2026-11-04)
 
-Out of scope, already entrusted to other agents: trackdisk writing (CMD_WRITE/UPDATE/FORMAT/RAWWRITE)
-and hardware coldstart (reset, memory/CPU detection, overlay). The "real A500" risks below are
-those that a tolerant emulator hides.
+Almost all of the former "next 15 analysis specs" (blitter, display, Alert/alert.hook, screens, input
+engine and menus, layers, fills, console/keymap, gameport/input/potgo, keyboard, exec scheduling, audio,
+sprites, resources, trackdisk raw/change, dos ROM file system and partial LVOs) have been written since the
+first version of this page. What is left is ranked below. Rank 1 is the only P1 left (a command 1.3 implements
+and we refuse). The others are functions **implemented on our side without a spec** (or with only a partial
+one) **while known software uses them**: there the implementation follows the AutoDocs and AROS and has never
+been checked against the V34 behaviour. "Used by" names programs analysed in `docs/analysis/`.
 
-1. **graphics — blitter and copies**: `BltBitMap`, `BltTemplate`, `BltClear`, `BltPattern`, `ClipBlit`,
-   `BltBitMapRastPort`, `BltMaskBitMapRastPort`, `OwnBlitter/DisownBlitter`, `WaitBlit`, `QBlit`,
-   `QBSBlit` (≈ 1.7–4.7 KB of closure each; 6 absent on our side). *Why*: all the drawing of the
-   Workbench (masked icons, drawers), PREDRAWN requesters, FastFonts, OctaMED (BltBitMapRastPort
-   640×200), "clean" games. *A500 risk*: high — on a real Agnus the BBUSY bit is not reliable
-   immediately after the write of BLTSIZE (documented defect, WaitBlit must take it into account), ascending/descending order
-   for overlaps, "nasty" mode that starves the 68000, data necessarily in chip RAM.
-2. **graphics — display construction and VBlank server**: `InitView`, `InitVPort`, `GetColorMap`,
-   `FreeColorMap`, `MakeVPort`, `MrgCop`, `LoadView`, `FreeVPortCopLists`, `FreeCprList`, `ScrollVPort`,
-   `VBeamPos`, `WaitTOF`, `WaitBOVP`, `gb_copinit`, LOF/SHF frames (MakeVPort ≈ 3.7 KB, MrgCop ≈ 1.5 KB,
-   ScrollVPort ≈ 3.4 KB). *Why*: every intuition screen; the games and demos that build their own
-   View (Caesar via RemakeDisplay, Monkey Island via UCopIns); hardware scrolling by ScrollVPort.
-   *A500 risk*: high — PAL or NTSC Agnus (DIWSTRT/DDFSTRT, 50/60 Hz), interlace (alternation of the
-   LOF/SHF lists at VBlank), OCS fetch limits, exact WAIT positions.
-3. **exec `Alert` + `alert.hook` + intuition `DisplayAlert`** (Alert ≈ 1.8 KB of closure, alert.hook
-   658 b, DisplayAlert ≈ 2.3 KB). *Why*: AutoRequest fallback (intuition-requesters §5.3),
-   Preferences and Monkey Island on allocation failure, alerts from the ROM itself (stack, memory),
-   SetPatch replaces Alert in 1.3. On our side: nothing is displayed. *A500 risk*: high — the alert
-   drives the hardware directly (its own copper list, wait for the buttons via CIA/POTGO, restart
-   on a dead-end alert); it is also the only visible diagnostic if the RAM of a real A500 is faulty.
-4. **intuition — screens and Workbench**: `OpenScreen`, `CloseScreen`, `MoveScreen`, `ScreenToBack/Front`,
-   `MakeScreen`, `RethinkDisplay`, `RemakeDisplay`, `CloseWorkBench`, `OpenWorkBench`, `WBenchToBack/Front`,
-   `ShowTitle`, `GetScreenData`, `LockIBase/UnlockIBase` (OpenScreen ≈ 10 KB, CloseWorkBench ≈ 12 KB of
-   closure; 6 absent on our side). *Why*: Monkey Island (CloseWorkBench), Preferences (MoveScreen),
-   SysInfo (custom screen, ScreenToFront), OctaMED, pulling of the screen bar by the user.
-   *A500 risk*: medium — interlaced display and dragged screens require correct copper lists.
-5. **intuition — input engine, menus and gadgets**: `Intuition()` (−36, ≈ 28 KB of closure: the heart
-   of intuition), `SetMenuStrip`, `ClearMenuStrip`, `ItemAddress`, `OnMenu/OffMenu`, `OnGadget/OffGadget`,
-   `ActivateGadget` (string gadgets: editing, UNDO, LONGINT), `ReportMouse`, `ModifyIDCMP`, exact contents
-   of the IDCMP messages of each class, `CurrentTime`, `BeginRefresh/EndRefresh`, `WindowLimits`,
-   `SizeWindow`, `MoveWindow`, `WindowToFront/Back`. *Why*: Workbench menus, Rename/Info
-   (string gadgets), OctaMED (ActivateGadget ×11, RefreshGList ×27), Preferences; the "no-effect"
-   clicks observed come from this engine. *A500 risk*: low in itself (logic), but it is the largest
-   unspecified area of the ROM.
-6. **layers — stack operations, refresh types, SuperBitMap**: `CreateUpfront/BehindLayer`,
-   `UpfrontLayer`, `BehindLayer`, `MoveLayer`, `SizeLayer`, `DeleteLayer`, `MoveLayerInFrontOf`,
-   `ScrollLayer`, `SwapBitsRastPortClipRect`, `NewLayerInfo/DisposeLayerInfo/InitLayers`,
-   `Fatten/ThinLayerInfo`, `WhichLayer`, plus graphics `SyncSBitMap/CopySBitMap` (CreateUpfrontLayer and
-   MoveLayer ≈ 10–11 KB of closure). *Why*: every window; SIMPLE vs SMART vs SUPER_BITMAP
-   (SuperBitMap windows of drawing and spreadsheet software), damage and BackFill. *A500 risk*:
-   medium — everything goes through the real blitter (cf. 1) and through the chip RAM of the saved ClipRects.
-7. **graphics — fills and ellipses**: `AreaMove`, `AreaDraw`, `AreaEnd`, `InitArea`, `InitTmpRas`,
-   `Flood`, `DrawEllipse`, `AreaEllipse`, `BltPattern` and the associated RastPort fields (AreaPtrn, AOlPen,
-   TmpRas) (AreaEnd ≈ 3 KB, Flood ≈ 8.7 KB of closure; **all absent on our side**). *Why*: the
-   Workbench 1.3 calls `Flood` (workbench-task §3.6), drawing tools, demos and games with filled
-   polygons. *A500 risk*: medium — the fill goes through the blitter in
-   "fill" mode and a TmpRas in chip RAM.
-8. **complete console.device + keymap.resource**: ESC/CSI sequences (cursor, clears, styles, SGR,
-   scrolling, position/size report), CMD_READ (RAWKEY → string translation, dead keys,
-   qualifiers), `CD_ASKKEYMAP/SETKEYMAP/ASKDEFAULTKEYMAP/SETDEFAULTKEYMAP`, `CDInputHandler`,
-   `RawKeyConvert`, contents of the KeyMapResource (≈ 5.5 KB of closure; nothing specified).
-   *Why*: CLI/Shell, Ed, More, NewCLI; the startup-sequence's **`SetMap`** for any non-US keyboard
-   (the user is on AZERTY) goes through CD_SETDEFAULTKEYMAP [D, according to the documented use of
-   SetMap, to be confirmed on WB 1.3.3]; Monkey Island expects RawKeyConvert(RETURN)
-   = `$0D`. *A500 risk*: medium — a real non-US keyboard produces rawkeys that only the keymap translates.
-9. **gameport.device + input.device mouse settings + potgo.resource**: `GPD_READEVENT`,
-   `GPD_ASK/SETCTYPE`, `GPD_ASK/SETTRIGGER`, `IND_SETMPORT/SETMTYPE/SETMTRIG`, `AllocPotBits`,
-   `FreePotBits`, `WritePotgo` (≈ 1.3 KB + 0.8 KB; gameport refuses everything on our side). *Why*: on the
-   real 1.3, input.device reads the mouse **via** gameport.device (intuiticks-repeat §1.1); programs
-   that read the joystick through gameport ("clean" games, controller tests); right/middle button through POTGO.
-   *A500 risk*: high — real quadrature counters (bounce, overflow), POTGO lines to be
-   driven as output/input for the right button, real mouse and joystick on ports 0/1.
-10. **complete keyboard.device**: `KBD_READEVENT` (queues, overflow), `KBD_READMATRIX`,
-    `KBD_ADD/REMRESETHANDLER`, `KBD_RESETHANDLERDONE`, special codes ($78 reset warning,
-    $F9–$FE), Caps Lock LED, **value** of the handshake pulse duration (keyboard-handshake §4 only
-    gives it as [D]). *Why*: the whole keyboard; Ctrl-Amiga-Amiga and the reset handlers
-    (RAM disks, resident programs). *A500 risk*: **high** — a real keyboard requires a KDAT
-    pulse of at least ~75–85 µs (Hardware Reference Manual) and otherwise resynchronises (lost keys), sends an initialisation sequence
-    at power-on and a warning followed by a delay before pulling reset.
-11. **exec — interrupts, private scheduling software, exceptions**: `ExitIntr`, `Schedule`,
-    `Reschedule`, `Switch`, `Dispatch`, `Exception` (null on our side), `Cause` (SoftInt priorities),
-    `SetIntVector`, `AddIntServer/RemIntServer` (semantics of the chain: Z return, is_Data, setting
-    of INTENA), `Supervisor`, `SetSR`, `SuperState/UserState`, `GetCC`, `SetExcept`, `AllocTrap/FreeTrap`,
-    `Debug`, `RawIOInit/RawMayGetChar/RawPutChar` (Switch ≈ 312 b, ExitIntr ≈ 160 b, Exception ≈ 108 b).
-    *Why*: old 1.x code that jumps into ExitIntr or Switch, debuggers (Wack/Debug), handling
-    of task exceptions (asynchronous CTRL-C), VBlank servers of games and demos. *A500 risk*: high
-    — real latency and IPL levels (keyboard, serial, disk), 68010 accelerator card (different exception
-    stack format; CPU detection itself = coldstart agent).
-12. **audio.device**: allocation (keys, priorities, channel stealing, ADCMD_ALLOCATE/FREE/SETPREC/LOCK),
-    CMD_WRITE (cycles, period, volume, ADIOF_PERVOL/SYNCCYCLE/WRITEMESSAGE), ADCMD_PERVOL/FINISH/WAITCYCLE,
-    CMD_READ, AUDx interrupts (≈ 2.5 KB). *Why*: OctaMED (allocation of the 4 channels), music
-    players, games, `Say`/narrator. *A500 risk*: medium — real minimum period (124), data in chip
-    RAM, level 4 interrupts, audio filter linked to the LED.
-13. **graphics — sprites and GELs**: `GetSprite`, `FreeSprite`, `ChangeSprite`, `MoveSprite`, SprIns;
-    `InitGels`, `AddBob/AddVSprite`, `RemIBob/RemVSprite`, `SortGList`, `DrawGList`, `DoCollision`,
-    `SetCollision`, `AddAnimOb`, `Animate`, `InitMasks/InitGMasks`, `GetGBuffers/FreeGBuffers`
-    (DrawGList ≈ 6.5 KB, DoCollision ≈ 1.8 KB). *Why*: icon dragging in the Workbench (Bobs),
-    OctaMED (6 hardware sprites), games. *A500 risk*: medium — sprites cut off by a plane fetch that is too
-    early (overscan), sprite DMA and vertical reuse.
-14. **exec — memory and reset survival**: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`,
-    `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `SumKickData` (null on our side),
-    `Procure/Vacate`, semaphores (`AttemptSemaphore`, `ObtainSemaphoreList`…), and the contract of
-    `KickMemPtr/KickTagPtr/KickCheckSum`, `ColdCapture/CoolCapture/WarmCapture` at warm reset.
-    *Why*: reset-resident programs (RAD:, virus killers that inspect KickTagPtr and the
-    capture vectors), SetPatch 1.38 (AllocEntry), ramlib. *A500 risk*: medium — on real hardware the
-    RAM survives Ctrl-Amiga-Amiga: ExecBase and the resident lists must be revalidated
-    (coordination needed with the coldstart agent).
-15. **hardware resources: disk.resource, misc.resource, cia.resource**: `AllocUnit`, `FreeUnit`,
-    `GetUnitID` (identification of DF1–DF3), `AllocMiscResource/FreeMiscResource` (serial port, serial bits,
-    parallel port, parallel bits), `RemICRVector`, `AbleICR`, `SetICR` (stub on our side) (≈ 70–250 b
-    each). *Why*: identification of the drives present [D: exact caller to be confirmed], `serial.device` and `parallel.device`
-    from DEVS: (terminal, printer), trackdisk and the keyboard for the ICR. *A500 risk*: **high** — a
-    real external drive is detected by shifting its identifier on the SEL lines, and a serial cable
-    plugged in for debugging conflicts with serial.device if the allocation is not respected.
-    **Update 2026-11-02**: [resources-v34.md](resources-v34.md) specifies all the LVOs of cia, disk, potgo and
-    misc.resource (the per-module counts of §0 and the "Specified?" columns of §3 predate it).
+| Rank | Module | Function(s) | Spec / our side | Why it matters (used by) | Prio |
+|--:|---|---|---|---|:-:|
+| 1 | console.device | `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` | specified (console-keymap §2.4) / **refused** (IOERR_NOCMD) | Any program that clears or holds the console input queue before a prompt; CLEAR never being replied on 1.3 (a SendIO + WaitIO caller hangs there) is a behaviour to keep in mind before deciding how far to copy it. Implementation gap only: no analysis needed | P1 |
+| 2 | intuition | `RefreshGList`, `AddGList`, `RemoveGList`, `RemoveGadget`, `AddGadget` (beyond §6.2–§6.3 of intuition-gzz) | cited / yes | OctaMED v4 (RefreshGList ×27, RemoveGadget ×22, AddGadget ×18, AddGList/RemoveGList ×10 each, octamed §2.4); SysInfo 4.4 (AddGList, RefreshGList, sysinfo-44 §1.0). Closure ≈ 7.2 KB for RefreshGList. Also needs §5 item 1 fixed | P2 |
+| 3 | intuition | `ActivateGadget` and the string-gadget engine (editing, UNDO, LONGINT; IDCMP of GADGETUP from a string gadget) | cited (out of scope in intuition-input-menus §6) / yes | OctaMED text fields (×11); Workbench Rename and Info (workbench-task §6.8); any requester with a text field. Closure ≈ 1.2 KB plus the input-engine part | P2 |
+| 4 | graphics | Text and fonts: `Text` (full contract: clipping, styles, JAM modes), `TextLength`, `OpenFont`, `CloseFont`, `SetFont`, `AskFont`, `AddFont`, `RemFont`, `AskSoftStyle`/`SetSoftStyle` (algorithmic styles), `ClearEOL`, `ClearScreen` | partial (fastfonts-ff, setpatch-138 §1.9) or none / yes | Every window title, menu and CLI line; OctaMED (Text ×55, OpenFont), Workbench (OpenFont failure = dead-end alert, workbench-task §3.1), console. Text ≈ 1.3 KB of closure | P2 |
+| 5 | graphics | `Draw` (line drawing) and `PolyDraw`, `Move` | cited / yes | Workbench drawers and frames, OctaMED (Draw ×16, PolyDraw, Move ×69), Preferences; graphics-area open point 4 asks whether AreaEnd's edges equal Draw's. Draw ≈ 3.5 KB of closure. *A500 risk*: blitter line mode (one-dot, octant, BLTAPT sign) | P2 |
+| 6 | graphics | GELs and animation: `DrawGList` (VSprite band allocation), `DoCollision`, `SortGList`, `AddBob`, `RemIBob`, `AddVSprite`, `RemVSprite`, `InitGels`, `InitMasks`, `InitGMasks`, `GetGBuffers`, `FreeGBuffers`, `AddAnimOb`, `Animate` | partial (custom-chips §4.1) or none / yes | Icon dragging on the Workbench (AddBob, DrawGList, RemIBob, SortGList, workbench-task §3.6); games using Bobs/VSprites. DrawGList ≈ 6.5 KB, RemIBob ≈ 3.2 KB, DoCollision ≈ 1.8 KB of closure | P2 |
+| 7 | graphics | Region functions: `AndRectRegion`, `OrRectRegion`, `XorRectRegion`, `ClearRectRegion`, `AndRegionRegion`, `OrRegionRegion`, `XorRegionRegion`, `NewRegion`, `ClearRegion`, `DisposeRegion` | return value only (layers §1.1) / yes | Workbench icon clipping (wb-icon-clipping §1), every InstallClipRegion user, layers damage lists. Closures 1.3–2.6 KB each; the rectangle splitting and the memory-failure paths are unspecified | P2 |
+| 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | partial (deferred-action queue in intuition-input-menus §1.10, GZZ layers in intuition-gzz §2.5) / yes | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | P2 |
+| 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | partial / yes | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | P2 |
+| 10 | graphics | `SetRast`, `ScrollRaster`, `RectFill` (full contract), `SetAPen`/`SetBPen`/`SetDrMd` | cited or partial / yes | Layers clear new layers with SetRast (layers §5.1), Workbench window repair (wb-icon-clipping §5), console scrolling (console-keymap §3.7–§3.8), OctaMED (RectFill ×27). SetRast ≈ 1.2 KB of closure | P2 |
+| 11 | exec | `RawDoFmt` | cited / yes | Workbench memory title (workbench-task §6.2–§6.4), SetMap (setmap-13), the Guru text (alert-v34 §3), LoadWB, CLI commands. Closure ≈ 450 b; format edge cases (`%ld` vs `%d`, `%b` BSTR, field width, PutChProc registers) unspecified | P2 |
+| 12 | exec | Messages and I/O: `PutMsg`, `GetMsg`, `ReplyMsg`, `WaitPort`, `DoIO`, `SendIO`, `WaitIO`, `CheckIO`, `AbortIO`, `OpenDevice`, `CloseDevice`, `OpenLibrary`, `OpenResource` | cited (CheckIO partial) / yes | Everything: dos packets (dos-v34-spec §2a), devices, Workbench. The device-side halves are specified per device; the exec-side details (PA_SIGNAL/PA_SOFTINT/PA_IGNORE, IOF_QUICK handling in DoIO/WaitIO, ReplyMsg to a NULL port, OpenLibrary version test and ramlib fallback) are not | P3 |
+| 13 | exec | Memory and semaphores: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`, `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `InitSemaphore`, `ObtainSemaphore`, `ReleaseSemaphore`, `AttemptSemaphore`, `ObtainSemaphoreList`, `ReleaseSemaphoreList`, `Add/Rem/FindSemaphore` | partial or cited / yes | SetPatch 1.38 (AllocEntry, setpatch-138 §1.4), KickMem survival (AllocAbs, coldstart-hardware §5.3), dos memory (dos-memory §2), layers (semaphore lists, layers §7), soft-kick (TypeOfMem). Deallocate ≈ 320 b of closure | P3 |
+| 14 | ramlib.library | loading of LIBS:/DEVS: by ramlib's own process, expunge on low memory | none / partial (no process) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device; a caller that is a plain task cannot load from disk on our side | P2 |
+| 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | none / yes | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | P3 |
 
-**Update 2026-11-02**: [custom-chips-v34.md](custom-chips-v34.md) covers the custom-chip side of #9 (potgo.resource,
-gameport VBlank reader, mouse path), #11 (autovector dispatch, server chains, softints, `SetIntVector`,
-`AddIntServer`/`RemIntServer`, raw serial I/O) and #13 (sprite functions, collisions); the VSprite band
-allocation of `DrawGList` and the `GPD_*` command semantics remain open.
-
-### Next ones (16+)
-
-16. graphics — text and fonts (`Text` ≈ 1.3 KB, `OpenFont`, `AddFont/RemFont/AskFont`, algorithmic
-    styles `SetSoftStyle`, `ClearEOL/ClearScreen`): partly covered by fastfonts-ff.
-17. ramlib.library: loading by a dedicated **process** (on our side the caller must be a process),
-    expunge in low memory.
-18. mathffp.library (12 functions, ≈ 1 KB): FFP format, edge cases, condition codes (programs
-    compiled with FFP floating point, AmigaBASIC).
-19. trackdisk: `TD_RAWREAD`, `TD_GETDRIVETYPE`, `TD_ADDCHANGEINT/REMCHANGEINT`, `TD_REMOVE` (to be
-    coordinated with the write agent). **Done 2026-11-02**: trackdisk-raw-changeint-v34.md.
-20. dos: `Exit`, `WaitForChar` (contracts already sketched in bcpl-runtime §4.3/§8.2: an implementation
-    gap more than an analysis one). **Done 2026-11**: dos-exit-packets-v34.md, both implemented.
-21. dos — **ROM file system (OFS handler)**, the largest unspecified part of the dos area: the full packet
-    set as answered by the ROM handler (`ACTION_EXAMINE_NEXT` order and FIB fields, `ACTION_SEEK` edge
-    cases, `ACTION_SET_PROTECT`, `ACTION_SET_COMMENT`, `ACTION_SET_DATE` presence, `ACTION_RENAME_OBJECT`
-    across directories, `ACTION_DELETE_OBJECT` on a non-empty directory, lock modes and conflicts), error
-    codes per packet, block allocation policy when writing (bitmap search start, extension blocks), buffer
-    cache and `ACTION_MORE_CACHE` (AddBuffers). **Done 2026-11**: rom-filesystem-v34 (packet set and codes,
-    locks, ExNext order and FIB, Seek, write-protect, block placement, flush timing). Left: its §11 probes
-    P1–P4 and §12 open points, including `ACTION_END` on an absent volume (Res1 0 there vs −1 in
-    disk-change-v34 §2.4, to be settled by probe P3).
-22. dos — the "partial" LVOs of the table above (`Seek`, `DeleteFile`, `Rename`, `CreateDir`, `Info`,
-    `CurrentDir`, `IoErr`, `SetComment`, `SetProtection`, `Delay`, `IsInteractive`, `ParentDir`, `DupLock`,
-    `Input/Output`, `UnLoadSeg(0)`). **Done 2026-11**: dos-lvo-partial-v34 (registers, Result2, retry
-    requester, NULL cases, test vectors T1–T21); its §4 lists the probes still wanted.
-23. dos — CON:/RAW: handler beyond start-up and WaitForChar (window spec parsing, `ACTION_SCREEN_MODE`,
-    line editing, close behaviour); goes with #8 (console.device).
-24. dos — open points of dos-memory-v34 §9 (roles of the file-system blocks, expunge on failure, the
-    lock-allocation crash, packets on the stack) and the 56-byte Workbench Shell leak of dos-cli-v34 §2.
+Below rank 15: `InitRastPort`/`InitBitMap` beyond the fields already listed; `AllocRaster`/`FreeRaster`;
+`AllocRemember`/`FreeRemember`; `BeginRefresh`/`EndRefresh` beyond the GZZ test vectors; `SetFunction` (return
+value only); `MakeLibrary`/`MakeFunctions`/`InitStruct` edge cases; exec `SetSR`/`SuperState`/`UserState`/`GetCC`,
+`AllocTrap`/`FreeTrap`, `AllocSignal`/`FreeSignal`; the two null dos vectors (no caller known); trackdisk
+`TD_MOTOR` (partial). Analysis open points that are not LVO gaps are listed in each spec's "Open points"
+section (e.g. rom-filesystem §11 probes P1–P4 and §12, dos-memory §9, graphics-area and graphics-display open
+points).
 
 ## Clean-room review
 
@@ -901,5 +826,7 @@ allocation of `DrawGList` and the `GPD_*` command semantics remain open.
   table entries and measured sizes in bytes.
 - The mentions of `src/` describe the state of OUR implementation (reading allowed for this
   inventory); no ROM information is reinjected into it in the form of code.
+- The 2026-11-04 refresh read only `docs/analysis/*.md` and the committed `src/` tree; the ROM was not opened
+  and no size was re-measured.
 - The hardware values cited as risks (keyboard pulse, minimum audio period, BBUSY) are
   public facts from the Amiga hardware documentation, not measurements of the ROM.
