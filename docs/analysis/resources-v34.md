@@ -271,7 +271,9 @@ loaded). [P]
   ever stops the server chain in practice (only ciaa/ciab are on PORTS/EXTER at boot, so no visible effect).
 - disk.resource ID read: not compared against a real 5.25" drive (only the code path and the empty-port value
   `$FFFFFFFF` were observed).
-- Who owns the potgo bits `$0F00` after boot (gameport.device or input path) was not traced; only the value.
+- Who owns the potgo bits `$0F00` after boot: gameport.device, allocated when input.device sets unit 0 to the mouse
+  type; the measured POTGO/POTGOR timeline from reset (first write, period, menus) is in
+  [gameport-v34.md](gameport-v34.md) §10.
 
 ## Clean-room review
 

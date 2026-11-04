@@ -406,6 +406,76 @@ Motion:
   22 × 10: expect 7 events (each with frames = 1) and the eighth onward produced later with a larger frame count.
 - **CMD_STOP probe**: stop the unit, queue a READEVENT, move the joystick: expect completion anyway.
 
+## 10. POTGO / POTGOR timeline from reset (measured, 2026-11-04)
+
+Measured on the real ROM in Amiberry (`--analysis` sessions, A500 preset, cycle-exact, 512 KB chip + 512 KB slow,
+PAL), with log-only watches on every CPU write to POTGO (`$DFF034`), every CPU read of POTGOR (`$DFF016`) and, as
+a frame marker, every CPU write of exactly `$0020` to INTREQ (the VERTB acknowledge, one per frame). Three runs from
+an emulated hard reset: no disk (insert-disk screen), Workbench 1.3.3 boot disk, Workbench 1.2 (33.56) boot disk;
+each logged for about 3 900 frames (80 s), boot to the desktop included, with no event lost (event sequence numbers
+contiguous). Frame numbers and beam positions come from gdb hardware watchpoints on the same registers. Tags as at
+the top of this page; **[M:d]** here means this experiment.
+
+### 10.1 Sequence
+
+| Phase (frame counted from the reset) | POTGO writes | POTGOR reads |
+|---|---|---|
+| Reset → frame 105 (~2.1 s: memory sizing, resident init) | **none** | none [M:d] |
+| Frames 106-107: first two VERTB acknowledges | none | none [M:d] |
+| Frames 108-109 | `$0000`, once per frame | none [M:d] |
+| Frame 110 | `$0F00`, once | none (unit 0 "skip next frame" after SETCTYPE, §7.1) [M:d] |
+| Frame 111 onwards, for ever | `$0F00`, exactly once per frame | exactly one per frame, just before the write [M:d] |
+
+- The figures (106 / 108 / 110) are identical with and without a disk in DF0: they belong to the ROM's own
+  initialisation, before any disk is read. They scale with the memory test, so another RAM size shifts them. [M:d]
+- Steady state: 3 871 consecutive frames out of 3 871 had exactly one POTGOR read then one POTGO write of `$0F00`
+  (49.95 writes/s, PAL). Nothing else in the system ever wrote POTGO or read POTGOR during the whole boot of either
+  Workbench (startup-sequence, SetPatch on 1.3.3, LoadWB, desktop) — only the two accesses of the gameport VERTB
+  server (§7.2), each always from the same single place. [M:d]
+- Values ever written: only `$0000` and `$0F00`. **START (bit 0) is never written.** Once `$0F00` has been written,
+  **OUTLY and OUTLX (bits 11 and 9) are never 0 again**: port 0 pins 5 and 9 stay outputs driven high for the rest
+  of the session. Port 1 bits (15-12) are always written 0 (inputs) since no unit-1 controller is set at boot.
+  [M:d] (agrees with §7.2/§7.3 [M:s])
+- Right button and menus (Workbench 1.3.3 and 1.2, identical): a right click, then the right button held for about
+  3.5 s with the Workbench menu strip open and the pointer moved over the items, then a left click. POTGO kept
+  receiving `$0F00` once per frame during the press, the hold, the menu and the release — **no extra write, no
+  missing frame, no other value**. Only the POTGOR value changes: `$0500` released, `$0100` while the right button
+  is held (DATLY, bit 10, low). The left button does not touch POTGO/POTGOR (it is read from CIA-A). Intuition does
+  not read POTGOR itself during menus (only its alert display does, custom-chips-v34.md §4.2); it learns about the
+  right button from the input.device event stream. [M:d]
+
+### 10.2 Timing within the frame and context
+
+- Both accesses run inside the level-3 interrupt (SR interrupt mask 3 at the access) as part of the VERTB server
+  chain: POTGOR read around line 2, POTGO write around lines 3-9 (line 5 in the steady state), i.e. in the vertical
+  blank, a few lines after the VERTB interrupt. The interrupted task is whichever was running (seen: input.device,
+  the DF0 "File System" process; during the first frames the boot-time initial task). No task ever writes POTGO
+  directly. [M:d]
+- The `$0000` frames and the switch to `$0F00` happen while the system is still in resident initialisation:
+  input.device sets unit 0 to GPCT_MOUSE (allocating `$0F00`, §3.2/§7.2) within two frames of gameport starting
+  its server. [M:d][D]
+
+### 10.3 Reset state and how long the pins float
+
+- POTGO is write-only; its content after reset cannot be read back. The HRM states that a reset clears POTGO, so
+  all four pot pins are inputs (OUT bits 0) and START is not set. [P]
+- On the real 1.3, port 0 pins 5 and 9 are therefore inputs from reset until the first `$0F00` write: about
+  **110 frames (~2.2 s PAL with 512 + 512 KB)**, including two frames where the ROM explicitly writes `$0000`
+  (inputs). During that time nothing reads POTGOR, so the floating level is never sampled by the ROM. From the
+  first `$0F00` onwards they are re-driven high every single frame, so even a transient that cleared them would
+  last at most one frame. [M:d][P]
+- What Amiberry returns for an undriven pin is not a guide to real hardware: with port 1 pins as inputs and
+  nothing connected, the emulator reads DATRY/DATRX as 0 (`$0500` overall), while port 0 reads 1 only because it is
+  driven. [M:d]
+
+### 10.4 Consequences for a reimplementation
+
+To match 1.3 bit for bit on the pins: write POTGO only from the vertical-blank path, once per frame, with
+`$0F00` from the moment the mouse type is set on unit 0 and never anything with OUTLY/OUTLX cleared afterwards; never
+set START; read POTGOR once per frame in the same server, before the write; and do not write POTGO from any other
+place (Intuition, input handler, menu code). A right press/release or a menu must not produce any POTGO access of its
+own. [D]
+
 ## Open points
 
 - §5.3 is static only (probe above). Real-hardware impact depends on what the program does next.
@@ -428,3 +498,5 @@ Review of 2026-11-02.
   public IECODE values and the HRM formula, plus the one deviating entry), not dumped.
 - [x] Tools and raw outputs (radare2 listings, gdb memory dumps) stayed outside the repository (scratch area and
   `build/amiberry/analysis/`).
+- [x] §10 (added 2026-11-04): black-box timeline only — register values, frame numbers, beam lines, task names;
+  no ROM address, no instruction, no code location (call sites are only said to be single and constant).
