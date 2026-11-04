@@ -113,7 +113,7 @@ ROMTag of console.device: 14,196 shared bytes, split by closure indicated).
 | 19 | alert.hook | 658 | none (cited) | boot-sequence, module-map | absent (Alert = serial message) | P1 |
 | 20 | mathffp.library | 1,324 | none | — | `src/exec/mathffp.s` | P3 |
 | 21 | workbench.task 34.1 | 35,302 | **strong** | workbench-task, wb-icon-clipping, disk-change §4, loadwb-13 | `src/dos/workbench.s` | — |
-| 22 | dos.library 34.3 | 49,542 | **strong** | dos-v34-spec, bcpl-runtime, handlers, fault, boot-clock, disk-full-write | `src/dos/*` | — |
+| 22 | dos.library 34.3 | 49,542 | **strong** | dos-v34-spec, bcpl-runtime, handlers, fault, boot-clock, disk-full-write, dos-memory | `src/dos/*` | — |
 | 23 | romboot.library | 1,052 | partial | uae-hd-boot §2 | `src/exec/romboot.s` | P3 |
 | 24 | strap 34.4 | 2,444 | partial (DF0: attempt, RomBoot) | uae-hd-boot §3, boot-sequence | `src/exec/strap.s` | P3 (coldstart: other agent) |
 
@@ -450,8 +450,8 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `Open` | yes — dos-v34-spec §2–§3 ; bcpl-runtime §5.1 | yes | n/m | — |
-| -36 | `Close` | yes — bcpl-runtime §5.1 ; dos-v34-spec §2b | yes | n/m | — |
+| -30 | `Open` | yes — dos-v34-spec §2–§3 ; bcpl-runtime §5.1 ; dos-memory §2.1 | yes | n/m | — |
+| -36 | `Close` | yes — bcpl-runtime §5.1 ; dos-v34-spec §2b ; dos-memory §2.1 | yes | n/m | — |
 | -42 | `Read` | yes — dos-v34-spec §3 ; bcpl-runtime §5.1 | yes | n/m | — |
 | -48 | `Write` | yes — disk-full-write §3 ; bcpl-runtime §6.1 | yes | n/m | — |
 | -54 | `Input` | partial — bcpl-runtime §8.1 | yes | n/m | P3 |
@@ -459,8 +459,8 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 | -66 | `Seek` | partial — bcpl-runtime §8.3 ; disk-full-write §1 | yes | n/m | P3 |
 | -72 | `DeleteFile` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
 | -78 | `Rename` | partial — bcpl-runtime §8.4.2 | yes | n/m | P3 |
-| -84 | `Lock` | yes — dos-v34-spec §2b ; disk-change §2.4 | yes | n/m | — |
-| -90 | `UnLock` | yes — dos-v34-spec §2b | yes | n/m | — |
+| -84 | `Lock` | yes — dos-v34-spec §2b ; disk-change §2.4 ; dos-memory §2.2 | yes | n/m | — |
+| -90 | `UnLock` | yes — dos-v34-spec §2b ; dos-memory §2.2 | yes | n/m | — |
 | -96 | `DupLock` | partial — bcpl-runtime §8.2 | yes | n/m | P3 |
 | -102 | `Examine` | yes — dos-v34-spec §2b | yes | n/m | — |
 | -108 | `ExNext` | yes — dos-v34-spec §2b | yes | n/m | — |
@@ -468,10 +468,10 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 | -120 | `CreateDir` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
 | -126 | `CurrentDir` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
 | -132 | `IoErr` | partial — bcpl-runtime §8.3 | yes | n/m | P3 |
-| -138 | `CreateProc` | yes — dos-v34-spec §4 ; bcpl-runtime §8.1 ; workbench-task §1.3 | yes | n/m | — |
+| -138 | `CreateProc` | yes — dos-v34-spec §4 ; bcpl-runtime §8.1 ; workbench-task §1.3 ; dos-memory §2.4 | yes | n/m | — |
 | -144 | `Exit` | yes — bcpl-runtime §4.3, §8.1 | no (null vector) | n/m | — |
-| -150 | `LoadSeg` | partial — bcpl-runtime §3 ; dos-boot-sequence §Phase E | yes | n/m | P3 |
-| -156 | `UnLoadSeg` | partial — bcpl-runtime §8.2 | yes | n/m | P3 |
+| -150 | `LoadSeg` | yes — dos-memory §3 (allocation, hunk memory bits, BSS, failures) ; bcpl-runtime §3 ; dos-boot-sequence §Phase E | yes | n/m | — |
+| -156 | `UnLoadSeg` | partial — bcpl-runtime §8.2 ; dos-memory §3.5 (NULL case not probed) | yes | n/m | P3 |
 | -162 | `dosPrivate1` (= `GetPacket`) *(private)* | yes — bcpl-runtime §1.4 (global anomaly −20) | no (null vector) | n/m | — |
 | -168 | `dosPrivate2` (= `QueuePacket`) *(private)* | yes — bcpl-runtime §1.4 (global −21) | no (null vector) | n/m | — |
 | -174 | `DeviceProc` | yes — handlers-v34 §4.1 | yes | n/m | — |

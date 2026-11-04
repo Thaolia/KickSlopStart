@@ -315,6 +315,8 @@ ACTION_FINDOUTPUT`, `MODE_READWRITE = 1004 = ACTION_FINDUPDATE`.
   the relocations, and **links the segments** BCPL-style: at `BADDR(seg)` one finds the BPTR of the next
   segment, the code starts at `BADDR(seg)+4`. Returns the **BPTR of the 1st segment** (0 = failure, `IoErr`
   set). `UnLoadSeg(seglist)` frees the chain. (Consistent with project milestone D2 "LoadSeg".)
+  Allocation sizes, order, memory bits, BSS clearing and failure cleanup measured on the real 1.3:
+  `dos-memory-v34.md` §3.
 
 ## 4a. `pr_StackSize`: who sets it, to what value, when it changes [O, real KS 1.3]
 
@@ -387,7 +389,8 @@ plays; no "Unable to load" message. The file is unusual in three ways, all accep
 - **95 hunks, 45 of them of size 0** (CODE, DATA and BSS of 0 longwords). Each still gets its
   **own segment in the chain**: the segment list read at entry has all 95 entries in file order,
   the zero-size ones included (two zero-size segments allocated back to back were 8 bytes apart,
-  so each takes only the segment header; inferred from the spacing).
+  so each takes only the segment header; confirmed 2026-11-04: a zero-size hunk is an 8-byte block,
+  `dos-memory-v34.md` §3.2).
 - **A doubled `HUNK_END`**: every one of the 25 `HUNK_BSS` blocks is followed by **two**
   consecutive `HUNK_END` longwords (120 `HUNK_END` for 95 hunks). The extra `HUNK_END` neither
   creates a segment nor ends the file early.
@@ -404,7 +407,9 @@ one `HUNK_END` per hunk, no symbols) also loads on the real 1.3.
 by one). On the real 1.3 all its loaded segments sit
 in chip RAM, although slow RAM is present and is otherwise used first (a file without memory bits,
 such as `LEMMINGS!!!` or `headbanger`, loads into slow RAM). Here both the header size and the hunk
-id carry the flag, so which of the two the loader reads was not isolated.
+id carry the flag. **Isolated 2026-11-04** (`dos-memory-v34.md` §3.3): the loader takes the memory type from
+the HUNK_HEADER size long only; the same bit on the hunk id alone is ignored (the hunk loads with
+MEMF_PUBLIC).
 
 **Detached program (Lattice-style "cback" startup), as run by `clue`:**
 - The CLI loads `clue` and runs hunk 0 (a 0x38C-byte stub). The stub calls
@@ -475,3 +480,5 @@ Review of 2026-10-29.
 - [x] Remaining: offsets of public NDK structures (`dosextens.i`, `filehandler.i`), LVOs
   (`dos_lib.fd`), `ACTION_*`/`MODE_*`/`DLT_*` constants, short BSTR templates (ABI names,
   inventoried in `docs/audit/specs-review.md`).
+- [x] 2026-11-04: §4 and §4b completed with black-box results of `dos-memory-v34.md` (allocation sizes, which
+  memory bits LoadSeg reads); no instruction, address or ROM data added.

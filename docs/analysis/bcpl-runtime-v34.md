@@ -382,6 +382,8 @@ FileHandle = `getvec` vector of **11 longs** (44 b) + getvec header, allocated c
   **fh_Func3** routine; endstream only calls it if it is non-zero, then always does the freevec
   of the FileHandle (case of Run's memory FileHandle, §13.6.4). [O ROM]
   ⇒ FileHandles must be **getvec** blocks (size header at −4). [O]
+  Measured sizes and lifetimes of the FileHandle, its buffer and the handler-side blocks, and of every other
+  dos allocation: `dos-memory-v34.md` §1–§2 (2026-11-04).
 
 ### 5.2 rdch / unrdch [O ROM]
 - **rdch()** (54) **always** operates **on `input()`**. If `fh_Pos < fh_End`: returns the byte
