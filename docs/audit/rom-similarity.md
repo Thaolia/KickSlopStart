@@ -1,7 +1,7 @@
 # Binary similarity audit: our ROM against the original Kickstart 1.3
 
 This document answers a precise question: **does our ROM contain code taken from the Commodore
-Kickstart**, for example through memorisation of the leaked Kickstart sources? The measurement compares
+Kickstart**, for example code that a tool used to write it could have memorised? The measurement compares
 the binary image we distribute with the real 1.3 ROM, then places the result relative to the "normal"
 level of coincidences between unrelated 68000 programs.
 
@@ -10,7 +10,7 @@ matches are located only in **our** ROM.
 
 ## Verdict
 
-*Re-measured on 2026-11-03 (commit `2c6b1c6`): same verdict, see "Re-run 2026-11-03" below.*
+*Last re-measured on 2026-11-04 (commit `aa656a8`): same verdict, see "Re-run 2026-11-04" below.*
 
 - **No code sequence of our ROM coincides with the original ROM beyond what unrelated
   programs already share with it.** The longest code match in our ROM
@@ -289,8 +289,8 @@ The `instr-souple` stream has twelve code matches of 8 to 13 instructions, inclu
 - the ROM footer: size, vectors `$0018`–`$001F`;
 - the RomTag structures (`$4AFC`, flags, version, type, priority);
 - the public names (`exec.library`, `timer.device`...) and the version strings;
-- the messages displayed on screen (Workbench, requesters), reproduced identically for
-  compatibility;
+- the messages displayed on screen (Workbench title, requester texts), whose wording programs and users
+  rely on;
 - the function vector tables;
 - the observable default values (palette, preferences).
 
@@ -406,13 +406,159 @@ longest code match is unchanged (13 instructions, 19 words, `exp_cpbinding`); th
 original baseline is an observable data table (`gfx_defcolors`, 32 words). The controls are reproduced exactly and
 the self-check finds 12 fragments out of 12.
 
+## Re-run 2026-11-04 (commit `aa656a8`)
+
+The measurement was repeated on `main` at `aa656a8` (`v0.2.18-13-gaa656a8`), 21 commits after `2c6b1c6`, 16 of them
+touching `src/` (warm reset with KickMem/KickTag/CoolCapture, trackdisk error codes, retries and ETD commands, WaitTOF
+on the beam and on `TOF_WaitQ`, system clock on the CIA-A TOD, screen fonts, the full console CSI set, HAM and
+dual-playfield ViewPorts, hardware sprites/VSprites, intuition IDCMP classes...). Same tool, same controls, same
+`--base tiers`, run by a separate analysis agent.
+
+### Inputs
+
+| role | file | size | sha1 |
+|---|---|---|---|
+| our ROM (production) | `build/kick13-prod.rom` (`make kick-prod`, `romtool info`: `is_kick ok`, `chk_sum ok`) | 262,144 bytes | `d06d50fc7a90d95337bfeab8b1ae460f61e43109` |
+| our ROM (dev) | `build/kick13.rom` (`make`, `is_kick ok`) | 262,144 bytes | `28000c860bac652147fe178855c9310c62b89995` |
+| reference | unchanged | 262,144 bytes | `891e9a547772fe0c6c19b610baf8bc4ea7fcb785` |
+
+- **Build.** The working tree was clean at `aa656a8`. A second build of the same commit from scratch, in a separate
+  worktree, gave byte-identical `kick.bin` files (dev and prod) and the same two ROM sha1s.
+- **Symbol tables.** The object list of the `Makefile` has not changed since the original audit: the `OBJS` list of
+  "Exact commands" is still exact (`loadscreen.o` is linked only with `LOADSCREEN_DEMO`, absent from both builds).
+  Relink into `build/audit/kick-prod.map` and `build/audit/kick-dev.map`; each relinked binary (222,708 bytes prod,
+  223,764 bytes dev) is byte-for-byte identical to the `kick.bin` of its build. Against the ROM it differs only in
+  the 33 bytes of the version string that `mkrom.py --id` writes into the ID field at `$1C`.
+- **Controls.** Same files as in the "Controls" table and the 2026-11-03 re-run, from the unpacked disks under
+  `build/audit/adf/`. **Reproducibility check:** the group sizes (21 hunks / 596,048 bytes, 390 hunks / 413,374 bytes,
+  50 hunks / 1,167,084 bytes) and the three rows "tiers / commodore / aros vs reference" are identical, figure for
+  figure, to the 2026-11-03 output in all three streams. The notable threshold is therefore unchanged:
+  **40 words, 19 instructions, 19 loose instructions**.
+
+### Commands
+
+The same as in the 2026-11-03 re-run:
+
+```sh
+make && make kick-prod && romtool info build/kick13-prod.rom          # is_kick ok
+# OBJS: list of "Exact commands"; d = build/prod (prod) or build (dev)
+vlink -b rawbin1 -T src/exec/kick.ld -Mbuild/audit/kick-prod.map -o build/audit/kick-prod.bin $L
+cmp build/audit/kick-prod.bin build/prod/kick.bin                      # identical
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom assets/kick34005.A500 \
+    --temoin tiers <tiers files> --temoin commodore <Workbench files> \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map build/audit/kick-prod.map --base tiers --selftest            # -> build/audit/audit-prod.txt
+# same for the dev ROM (-> audit-dev.txt); full list of matches >= 8 tokens:
+python3 -I tests/audit_rom_similarity.py build/kick13-prod.rom assets/kick34005.A500 \
+    --map build/audit/kick-prod.map --seuil 8                          # -> build/audit/all8-prod.txt
+```
+
+### Figures (production ROM vs reference)
+
+| stream | metric | 2026-11-03 (`2c6b1c6`) | 2026-11-04 (`aa656a8`) | threshold |
+|---|---|---|---|---|
+| mots | A tokens | 105,138 | 108,157 | |
+| mots | max (all) | 218 | 218 | |
+| mots | max code/table | 76 (keymap string tables) | 76 (keymap string tables) | 40 |
+| mots | max code, hand-qualified data excluded | **19** (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`) | |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 103 (1.06%) / 7 (0.24%) / 3 (0.18%) | 103 (1.02%) / 7 (0.24%) / 3 (0.17%) | |
+| mots | 4/8/16-gram | 2.7 / 0.9 / 0.4% | 2.7 / 0.9 / 0.4% | |
+| instr | A tokens | 66,783 | 68,678 | |
+| instr | max code/table | 17 (keymap string tables) | 16 (keymap string tables) | 19 |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) | |
+| instr | code ≥ 8 / ≥ 16 | 7 (0.12%) / 2 (0.05%) | 7 (0.12%) / 2 (0.05%) | |
+| instr-souple | max code/table | 17 (keymap string tables) | 16 (keymap string tables) | 19 |
+| instr-souple | code ≥ 8 / ≥ 16 | 16 (0.24%) / 2 (0.05%) | 16 (0.23%) / 2 (0.05%) | |
+| self-check | relocated fragments found | 12/12 | 12/12 | |
+
+- The keymap string tables are unchanged since `2c6b1c6`. Their `instr` length drops from 17 to 16 only because the
+  linear disassembly now enters the range two bytes later (`km_us_s42+$2`, `km_fr_s42+$2`): the bytes before it moved.
+- The rows "our ROM vs tiers / commodore / aros" keep their maxima (`mots`: 10, 11 and 12 words; `instr`: 6, 7 and 7;
+  `instr-souple`: 8, 7 and 10). Their counts move by one match at most.
+- The dev ROM gives 76 / 17 / 17 (its keymap tables are still entered at `+$0`), self-check 12/12, and the same
+  notable list as the production ROM, give or take address shifts.
+
+### Matches at or above the notable threshold
+
+- **instr / instr-souple (19):** no code/table match. The two low-entropy rows (`rf_outline+$44`, `draw.o`, 20 tokens;
+  `bcpl_rtdata+$8`, `bcpl.o`, 23 tokens) are unchanged.
+- **mots (40 words):** the two code/table matches are again `km_us_s42+$0` (`$0CC1C`) and `km_fr_s42+$0`
+  (`$0CF54`), `src/exec/keymapdata.s`, 76 words: the keymap string tables qualified in "Update 2026-10-30". The nine
+  classified data rows are the same as on 2026-11-03: five inittabs (`expansion`, `mathffp`, `graphics`, `layers`,
+  `intuition`), `topaz8_loc`, `dos_rtinit+$42`, `km_us_himap+$18` and `km_fr_himap+$18`, with unchanged lengths.
+
+### Matches longer than the previous longest code match (19 words / 13 instructions)
+
+| offset | address | words | instr. | symbol | source | nature |
+|---|---|---|---|---|---|---|
+| `$111F6` | `$FD11F6` | 32 | — | `gfx_defcolors+$0` | `src/graphics/graphics_lib.s` | default ColorMap colour table: unchanged since 2026-11-03, data observable through `GetColorMap`/`GetRGB4` |
+| `$291CA` | `$FE91CA` | 20 | — | `mn_chk_hi+$0` | `src/intuition/menus.s` | the two `struct Image` descriptors of the menu check marks (position, dimensions, depth, plane pick; image pointers masked). Same range and length as in the original table; the tool had filed it `texte` on 2026-11-03 and files it `code/table` again now that the masked pointers changed. Data, not code |
+
+No **code** match is longer than 13 instructions or 19 words: the longest is still `exp_cpbinding+$22`
+(`src/exec/expansion.s`, `$0DA9E`), unchanged.
+
+### New matches compared with the 2026-11-03 lists
+
+Rows are compared by object, symbol and length; a match that only slid by a few bytes inside the same routine
+(`it_intask`, `it_push`, `console_input_handler`, `coldstart+$224`, the keymap.library RomTag that follows `ct_rawbit`) is not new.
+
+- **New code matches ≥ 10 words:** none (`mn_chk_hi` above only changed class).
+- **New code matches of 8-9 words** (`mots` stream only; none in `instr` or `instr-souple`):
+
+| offset | words | symbol | source | nature |
+|---|---|---|---|---|
+| `$003E6` | 8 | `coldstart+$314` | `src/exec/boot.s` | power-LED bit of CIA-A PRA, then test of the public ExecBase `CoolCapture` field before calling it (warm-reset work, `coldstart-hardware-v34` §5) |
+| `$093F8` | 8 | `timer_todzero+$C` | `src/exec/timer.s` | clear of the three CIA-A TOD registers, high byte first: an order fixed by the 8520 (writing the low byte restarts the counter) |
+| `$241DC` | 8 | `gel_vsprites+$56` | `src/graphics/gels.s` | public, cleared memory allocation then test of the result (idiom already listed under `d3c_client`) |
+| `$3325E` | 8 | `feeder_main+$A4` | `src/dos/feeder.s` | the same allocation idiom (two other occurrences in `feeder_main` were already in the 2026-11-03 list) |
+
+- **New data matches:** `al_coplist+$84` (`$2BA48`, 8 words, class RomTag): the start of the dos.library RomTag,
+  which now follows the end of `alert.o` directly. `expansion_name+$0` (`instr`/`instr-souple`, 8 tokens, `texte`):
+  the public name `expansion.library`. In the `instr-souple` stream, `intuition_end+$90` and `intuition_end+$13E`
+  (8 tokens, low entropy) are the 2026-11-03 rows `intuition_end+$96`/`+$14A`, entered at a different place.
+- **Reclassified, same length:** the RomTag tails `timer_romtag+$C` (13), `graphics_romtag+$C` (15), `input_end+$C`
+  (15), `trackdisk_romtag+$C` (16), and `fnt_ta8+$0` (8, a public `TextAttr`) are now filed `texte` instead of
+  `code/table`; `km_us_lotypes+$2` (low entropy, 8 tokens) and `coldstart+$66` (9 words) fell below 8 tokens.
+
+### Verdict 2026-11-04
+
+**PASS.** No code match reaches the notable threshold (19 instructions / 40 words); the only code/table matches above
+it are the keymap string tables, unchanged and already qualified. The longest code match is still 13 instructions /
+19 words (`exp_cpbinding+$22`). The only matches longer than that are two data tables already known (`gfx_defcolors`,
+32 words; the `mn_chk_hi` Image descriptors, 20 words). The new code added since `2c6b1c6` brings only four 8-word
+matches, all hardware- or ABI-fixed idioms. The controls are reproduced exactly and the self-check finds 12 fragments
+out of 12.
+
+## Provenance of the data that matches
+
+Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
+listed above, is **data**. None was copied out of the ROM image: each value was either computed, written from public
+documentation, or taken from an analysis spec that describes a value any program can read back through a public
+function. This table states, for each one, where its values come from and how anyone can check them without the ROM.
+
+| symbol (our ROM) | longest match | what it holds | where the values come from | public check |
+|---|---|---|---|---|
+| `km_us_s42`, `km_fr_s42` (`src/exec/keymapdata.s`) | 76 words | the 16 key strings of a keymap (cursor keys, F1-F10, Help, Tab/Shift-Tab) | generated by `tests/mk_keymaps.py` from the CSI sequences documented for console.device, in the public `struct KeyMap` format | `RawKeyConvert`, or the bytes a console window receives for each key |
+| `km_us_himap`, `km_fr_himap` | 40 words | pointer arrays of our own keymap descriptors | our layout; after normalisation only the number of entries is left, fixed by `struct KeyMap` | — |
+| `*_inittab`, `dos_rtinit+$42` | up to 218 words | function vector tables | our own routines; after normalisation only the number of functions is left, fixed by the public `.fd` files | the `.fd` files |
+| `topaz8_loc` (`src/graphics/text.s`) | 194 words | character locations of the 8 × 8 ROM font | computed by a `REPT` loop: position = 8 × rank, width 8; the glyph bitmaps are our own and do not match | `TextFont.tf_CharLoc` |
+| `gfx_defcolors` (`src/graphics/graphics_lib.s`) | 32 words | the 32 default colours of a new ColorMap | spec `graphics-display-v34.md` §3, where the table is both read by the analysis agent and confirmed by a black-box probe (`tests/gdisp_probe.s`) | `GetColorMap(32)`, then `GetRGB4` on each entry |
+| `mn_chk_hi` (`src/intuition/menus.s`) | 20 words | the two `struct Image` descriptors of the menu check mark (position, 15 × 8 size, depth) | the size of the mark seen on screen; the image itself is our own design (a cat paw print) and does not match | the check mark of a `CHECKIT` menu item |
+| `pf_defaults` (`src/intuition/prefs.s`) | 14 words | default Preferences | layout of the public `preferences.h`; values from spec `intuition-prefs-v34.md` §4.3, read by the analysis agent and not yet confirmed by a probe; the colours and the pointer are the project's own | `GetDefPrefs` |
+| `sc_palette` (`src/intuition/screens.s`) | 13 words | default screen palette | colours 0-3 and the pointer colours are the project's own theme; colours 4-15 repeat the ColorMap defaults above | `GetRGB4` on the Workbench screen |
+| on-screen messages (Workbench title, requesters) | text | strings shown to the user | worded to match the text that 1.3 displays, which programs and users rely on | visible on screen |
+
+`pf_defaults` is the only table whose values rest on a reading of the ROM alone. A black-box probe comparing
+`GetDefPrefs` on both ROMs would close that point.
+
 ## Limits: what the measurement proves and does not prove
 
 - **It proves** the absence of binary reuse, even relocated or with renamed registers, of sequences
   of more than 13 instructions (or 20 words) of the **34.5** ROM in our ROM. It also places
   our coincidence level at the level of unrelated programs.
-- **A single reference version.** The leaked sources cover other versions (2.x, 3.x)
-  whose code differs. Reuse from those versions would only be detected here if the code concerned
+- **A single reference version.** Later Kickstart versions (2.x, 3.x) have different
+  code. Reuse from those versions would only be detected here if the code concerned
   has remained identical since 1.3. To close this point, the measurement would have to be redone against
   2.04 and 3.1 ROMs with the same tool.
 - **Binary measurement, not semantic.** A paraphrase leaves no binary trace beyond
@@ -439,7 +585,7 @@ This document was reviewed before publication to confirm:
 - that each match is described only by its location in **our** ROM (offset, symbol,
   source file), its length and a neutral nature;
 - that no instruction sequence is transcribed, neither from the original ROM nor from our matched
-  ranges (which are identical to it);
+  ranges;
 - that the only information about the original ROM is its size, its sha1 fingerprint (public,
   identifying revision 34.5) and aggregate statistics.
 

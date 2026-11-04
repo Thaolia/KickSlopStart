@@ -1,4 +1,4 @@
-# Audit clean-room — 2026-10-29, remesuré le 2026-11-03
+# Audit clean-room — 2026-10-29, remesuré le 2026-11-03 et le 2026-11-04 (ROM)
 
 *English version: [AUDIT.md](AUDIT.md).*
 
@@ -36,7 +36,7 @@ tous. La méthode est donc capable de détecter une copie.
 
 | Comparaison | Plus longue correspondance de code | Couverture des correspondances ≥ 8 mots |
 |---|---|---|
-| **notre ROM / ROM d'origine** (2026-11-03) | **19 mots / 13 instructions** | 1,06 % (≥ 16 mots : 0,24 % ; ≥ 32 mots : 0,18 %, les tables de chaînes des keymaps) |
+| **notre ROM / ROM d'origine** (2026-11-04) | **19 mots / 13 instructions** | 1,02 % (≥ 16 mots : 0,24 % ; ≥ 32 mots : 0,17 %, les tables de chaînes des keymaps) |
 | jeux sans rapport / ROM d'origine (référence) | 39 mots / 18 instructions | — |
 | code Commodore du Workbench / ROM d'origine (code apparenté) | 121 mots / 96 instructions | 3,8 % |
 | notre ROM / ROM AROS | 12 mots / 8 instructions | — |
@@ -148,4 +148,7 @@ contenu de la référence.
 
 Mesures faites sur les builds du commit `ec9f9ab` (2026-10-29), puis refaites sur le commit `2c6b1c6` (2026-11-03,
 v0.2.15) avec les mêmes contrôles : même verdict pour les deux comparaisons (détails dans les sections « Re-run
-2026-11-03 » de [rom-similarity.md](audit/rom-similarity.md) et [aros-similarity.md](audit/aros-similarity.md)).
+2026-11-03 » de [rom-similarity.md](audit/rom-similarity.md) et [aros-similarity.md](audit/aros-similarity.md)). La
+comparaison des ROM a été refaite sur le commit `aa656a8` (2026-11-04) : même verdict, plus longue correspondance de
+code inchangée (« Re-run 2026-11-04 » de [rom-similarity.md](audit/rom-similarity.md), qui indique aussi d'où vient
+chaque table de données qui correspond).
