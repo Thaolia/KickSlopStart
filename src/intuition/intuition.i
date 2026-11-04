@@ -272,6 +272,7 @@ WINDOWDEPTH     EQU $0004
 WINDOWCLOSE     EQU $0008
 SIZEBRIGHT      EQU $0010
 SIZEBBOTTOM     EQU $0020
+SIMPLE_REFRESH  EQU $0040           ; NewWindow: no backing store, the owner redraws on REFRESHWINDOW
 BACKDROP        EQU $0100
 BORDERLESS      EQU $0800
 GIMMEZEROZERO   EQU $0400           ; NewWindow: interior in its own layer, origin in the interior
