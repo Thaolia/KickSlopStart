@@ -995,7 +995,7 @@ CU_SIZE         EQU 372
 CU_NTABS        EQU 80
 CU_NPARS        EQU 24
 CU_PDEF         EQU -5               ; absent parameter
-CU_DEFFG        EQU 2                ; default text pen: dark grey on the grey-blue background (project theme; 1.3: 1)
+CU_DEFFG        EQU 2                ; default text pen: black on the purple background (project theme; 1.3: 1)
 CUM_LNM         EQU 4                ; bits of byte 2 of cu_Modes
 CUM_ASM         EQU 5
 CUM_AWM         EQU 6

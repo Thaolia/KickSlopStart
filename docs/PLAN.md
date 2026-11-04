@@ -1114,9 +1114,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   VSprites still go through our SprIns stream (1.3 builds SprIns/ClrIns CopLists). Buffers are cleared on
   allocation (1.3 leaves them as allocated).
   **CDE theme (2026-11-04, issue #24)**: the apple-green theme is replaced by the CDE colours proposed in the issue:
-  Workbench colour 0 grey-blue $AAB (`SC_BGCOLOR`), 1 cream $FFE, 2 dark grey $566 (text, DetailPen), 3 slate blue
-  $78A; ROM pointer fill mauve $A57 with cream highlight (`pf_defaults`, `sc_palette`). A deliberate difference
-  from 1.3, like the green before it.
+  Workbench colour 0 Sun/Solaris CDE purple $A9C (`SC_BGCOLOR`), 1 cream $FFE, 2 black $000 (text, DetailPen),
+  3 slate blue $78A; ROM pointer fill mauve $A57 with cream highlight (`pf_defaults`, `sc_palette`). The user then
+  swapped the issue's grey-blue $AAB background for the purple and its dark grey $566 text for black. A deliberate
+  difference from 1.3, like the green before it.
   **Screen drag (2026-11-04, issues #22/#25)**: dragging a screen in the upper half showed doubled title bars and
   icons (vAmigaWeb's DMA view: copper activity in the upper third). Two causes: MrgCop rewrote the running list in
   place, and LoadView strobed COPJMP1 mid-frame so the new list's past WAITs fired at once. Now RethinkDisplay builds

@@ -4726,10 +4726,10 @@ sc_wbnewscreen:
         dc.l    0                    ; Font
         dc.l    sc_wbtitle           ; DefaultTitle
         dc.l    0,0                  ; Gadgets, CustomBitMap
-; default palette: project theme, the CDE colours of issue #24 (grey-blue background instead of the blue of the 1.3
-; preferences, cream, dark grey, slate blue), then fill colors (16..19: pointer, mauve)
+; default palette: project theme, the CDE colours of issue #24 (Solaris purple background instead of the blue of the 1.3
+; preferences, cream, black, slate blue), then fill colors (16..19: pointer, mauve)
 sc_palette:
-        dc.w    SC_BGCOLOR,$FFE,$566,$78A,$00F,$F0F,$0FF,$FFF
+        dc.w    SC_BGCOLOR,$FFE,$000,$78A,$00F,$F0F,$0FF,$FFF
         dc.w    $620,$E50,$9F1,$EB0,$55F,$92F,$0F8,$CCC
         dc.w    $000,$A57,$000,$FFE,$444,$555,$666,$777
         dc.w    $888,$999,$AAA,$BBB,$CCC,$DDD,$EEE,$FFF

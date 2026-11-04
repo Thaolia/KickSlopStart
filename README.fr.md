@@ -45,7 +45,7 @@ Les manques connus et la feuille de route détaillée sont dans [`docs/PLAN.md`]
 Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de ne pas les signaler comme des bugs
 (voir l'[issue #5](https://github.com/Thaolia/KickSlopStart/issues/5)) :
 
-- **Couleurs** : l'écran du Workbench prend une palette à la CDE (fond gris-bleu, crème, texte gris foncé, bleu
+- **Couleurs** : l'écran du Workbench prend une palette à la CDE (fond violet Sun/Solaris, crème, texte noir, bleu
   ardoise) au lieu du bleu de la 1.3, comme proposé dans l'[issue #24](https://github.com/Thaolia/KickSlopStart/issues/24).
   Elle montre d'un coup d'œil quel Kickstart tourne.
 - **Écran de démarrage** : à la place de la main qui tient une disquette, un chaton tient une disquette

@@ -42,7 +42,7 @@ Known gaps and the detailed roadmap are in [`docs/PLAN.md`](docs/PLAN.md).
 A few things look different from the original Kickstart 1.3 on purpose. Please don't report them as bugs (see
 [issue #5](https://github.com/Thaolia/KickSlopStart/issues/5)):
 
-- **Colours**: the Workbench screen uses a CDE-like palette (grey-blue background, cream, dark grey text, slate
+- **Colours**: the Workbench screen uses a CDE-like palette (Sun/Solaris purple background, cream, black text, slate
   blue) instead of the 1.3 blue, as suggested in [issue #24](https://github.com/Thaolia/KickSlopStart/issues/24).
   It shows at a glance which Kickstart is running.
 - **Boot screen**: instead of the hand holding a floppy, a kitten holds a "KickSlopStart" disk, because I love cats.
