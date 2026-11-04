@@ -5,7 +5,7 @@
 ; RastPort's BitMap; hidden ClipRect with backup (cr_BitMap, origin in cr_p1) -> the backup; hidden without
 ; backup -> nothing. The layer lock is held during drawing (dr_ctx ... dr_end). Without a layer: a single
 ; pseudo-ClipRect = the whole BitMap. Text: the RastPort's font (any TextFont, topaz 8 by default),
-; drawn in JAM1/JAM2/COMPLEMENT/INVERSVID, algorithmic bold and underline. ScrollRaster: vertical scrolling only.
+; drawn in JAM1/JAM2/COMPLEMENT/INVERSVID, algorithmic bold and underline.
 ; Memory accessed BYTE by byte (a BitMap row can start at an odd address).
 ; Beyond the convention (d2-d7/a2-a6), all these functions leave a1 (the RastPort) intact: intuition and
 ; console.device chain their calls on the same RastPort without reloading it.
@@ -386,12 +386,14 @@ dr_span1:
         rts
 
 ; dr_rect(a5 = context, d0/d1 = top-left corner, d2/d3 = bottom-right corner (absolute, inclusive), d4.b = pen A,
-; d5.b = pen B, a0 = pattern (0: solid), d6.w = pattern row mask, high word of d6 = bytes per plane of a multicolour
-; pattern, ignored when solid since the callers that pass no pattern leave anything there): fills the rectangle in each
-; usable ClipRect, planes filtered by rp_Mask, according to rp_DrawMode. Solid: pen A (COMPLEMENT: inversion). Pattern:
-; 1 bits in pen A (COMPLEMENT: inversion), 0 bits in pen B in JAM2 only, left alone otherwise; word for row y =
-; pattern[(y - OY) & mask], bit 15 = pixel x such that (x - OX) ≡ 0 (mod 16). Clipping, masks and address computed once
-; per ClipRect and per plane: the per-pixel cost no longer depends on the number of ClipRects. Preserves everything.
+; d5.b = pen B, d7.b = draw mode, a0 = pattern (0: solid), d6.w = pattern row mask, high word of d6 = bytes per plane
+; of a multicolour pattern, ignored when solid since the callers that pass no pattern leave anything there): fills the
+; rectangle in each usable ClipRect, planes filtered by rp_Mask. Each plane applies the minterm of mt_tab for its pen
+; bits and the mode (A = the rectangle, B = the pattern bit, 1 when solid, C = the destination), so INVERSVID inverts
+; the pattern and COMPLEMENT|JAM2 inverts everything (spec graphics-raster-v34 §3.4). Word for row y =
+; pattern[(y - OY) & mask], bit 15 = pixel x such that (x - OX) = 0 (mod 16). Clipping, masks and address computed
+; once per ClipRect and per plane: the per-pixel cost no longer depends on the number of ClipRects. Preserves
+; everything.
 RC_X0           EQU 0                ; requested rectangle (absolute): X0 Y0 X1 Y1
 RC_Y0           EQU 2
 RC_X1           EQU 4
@@ -408,16 +410,18 @@ RC_BPR          EQU 22               ; bytes per row of the BitMap
 RC_ROFF         EQU 24               ; offset of the first byte within a plane
 RC_SHIFT        EQU 28               ; rotation of the pattern word (first pixel of the first byte -> bit 15)
 RC_PROW         EQU 30               ; pattern row of the first row
-RC_COMP         EQU 32               ; byte: COMPLEMENT
-RC_JAM2         EQU 33               ; byte: 0 bits of the pattern in pen B
-RC_F            EQU 34               ; byte: bit 0 = pen A of the current plane
-RC_G            EQU 35               ; byte: bit 0 = pen B of the current plane
-RC_PR           EQU 36               ; current pattern row
-RC_RCNT         EQU 38               ; remaining rows (pattern)
-RC_PW           EQU 40               ; rotated pattern word of the current row
-RC_PSTEP        EQU 42               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
-RC_INV          EQU 44               ; byte: INVERSVID, the pattern words are inverted
-RC_SIZE         EQU 46
+RC_MODE         EQU 32               ; word: (draw mode & 7) x 4, index of its row in mt_tab
+RC_K1           EQU 34               ; bytes $00/$FF of the current plane, for a pattern bit 1 then 0:
+RC_K0           EQU 35               ; K keeps the destination, S sets it, I inverts it: ((C & K) | S) ^ I
+RC_S1           EQU 36
+RC_S0           EQU 37
+RC_I1           EQU 38
+RC_I0           EQU 39
+RC_PR           EQU 40               ; current pattern row
+RC_RCNT         EQU 42               ; remaining rows (pattern)
+RC_PW           EQU 44               ; rotated pattern word of the current row
+RC_PSTEP        EQU 46               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
+RC_SIZE         EQU 48
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -RC_SIZE(sp),sp
@@ -432,16 +436,10 @@ dr_rect:
         move.w  d6,RC_PMASK(a4)
         swap    d6
         move.w  d6,RC_PSTEP(a4)
-        move.l  DC_RP(a5),a0
-        move.b  rp_DrawMode(a0),d4
-        moveq   #COMPLEMENT,d5
-        and.b   d4,d5
-        sne     RC_COMP(a4)
-        btst    #2,d4
-        sne     RC_INV(a4)
-        and.b   #JAM2|COMPLEMENT,d4
-        cmp.b   #JAM2,d4
-        seq     RC_JAM2(a4)
+        moveq   #7,d0
+        and.b   d7,d0
+        lsl.w   #2,d0
+        move.w  d0,RC_MODE(a4)
         move.l  DC_FIRST(a5),a3
 .rc_lp:
         cmpa.w  #0,a3
@@ -547,6 +545,15 @@ rc_one:
         btst    #0,d6
         beq.s   .o_pn
         adda.l  RC_ROFF(a4),a1
+        moveq   #1,d0                ; minterm of this plane: mt_tab[mode][pen A bit + 2 x pen B bit]
+        and.b   d5,d0
+        btst    #0,d4
+        beq.s   .o_m
+        addq.w  #2,d0
+.o_m:
+        add.w   RC_MODE(a4),d0
+        lea     mt_tab(pc),a0
+        move.b  0(a0,d0.w),d0
         bsr.s   rc_plane
 .o_pn:
         lsr.b   #1,d6
@@ -561,17 +568,18 @@ rc_one:
         move.l  (sp)+,RC_PAT(a4)
 .o_ret:
         rts
-; rc_plane(a1 = first byte of the first row, d5.b/d4.b bit 0 = pens A/B of this plane, a4): fills the
-; rectangle in one plane. Clobbers d0-d3/a0/a1/a6.
+; rc_plane(a1 = first byte of the first row, d0.b = minterm of this plane, a4): fills the rectangle in one plane.
+; Clobbers d0-d3/a0/a1/a6.
 rc_plane:
         movem.l d4-d7/a2,-(sp)
         move.w  RC_ROWS(a4),d7
         tst.l   RC_PAT(a4)
         bne     .pl_pat
-        tst.b   RC_COMP(a4)
-        bne.s   .pl_inv
-        btst    #0,d5
-        beq.s   .pl_clr
+        lsr.b   #6,d0                ; solid: B = 1, the operation is minterm bits 7-6
+        beq     .pl_clr              ; 00: clear
+        cmp.b   #2,d0
+        beq     .pl_ret              ; 10: destination kept
+        bcs     .pl_inv              ; 01: inversion
 .pl_set:
         move.l  a1,a0
         move.b  RC_FM(a4),d0
@@ -622,8 +630,27 @@ rc_plane:
 ; pattern: each byte becomes ((byte & K) | S) ^ X, K/S/X derived from the mask and the pattern bits (rc_kpx); the
 ; full bytes alternate the two bytes of the rotated word (even: high byte, odd: low byte).
 .pl_pat:
-        move.b  d5,RC_F(a4)
-        move.b  d4,RC_G(a4)
+        moveq   #7,d1                ; minterm bits 7-6 (pattern bit 1) then 5-4 (pattern bit 0)
+        lea     RC_K1(a4),a0
+.pk_lp:
+        btst    d1,d0
+        sne     d2                   ; d2 = g(B, 1)
+        subq.w  #1,d1
+        btst    d1,d0
+        sne     d3                   ; d3 = g(B, 0)
+        move.b  d2,d4
+        or.b    d3,d4
+        move.b  d4,(a0)              ; K = keep, set or invert
+        move.b  d2,d4
+        and.b   d3,d4
+        move.b  d4,2(a0)             ; S = set
+        not.b   d2
+        and.b   d3,d2
+        move.b  d2,4(a0)             ; X = invert
+        addq.l  #1,a0
+        subq.w  #1,d1
+        cmp.w   #3,d1
+        bhi.s   .pk_lp
         move.w  RC_PROW(a4),RC_PR(a4)
         move.w  d7,RC_RCNT(a4)
 .pp_row:
@@ -632,10 +659,6 @@ rc_plane:
         add.w   d0,d0
         move.l  RC_PAT(a4),a0
         move.w  0(a0,d0.w),d0
-        tst.b   RC_INV(a4)
-        beq.s   .pp_ninv
-        not.w   d0
-.pp_ninv:
         move.w  RC_SHIFT(a4),d1
         rol.w   d1,d0
         move.w  d0,RC_PW(a4)
@@ -719,36 +742,28 @@ rc_plane:
 .pl_ret:
         movem.l (sp)+,d4-d7/a2
         rts
-; rc_kpx(d0.b = mask, d1.b = pattern bits, a4) -> d2.b = K, d3.b = S, d4.b = X for ((byte & K) | S) ^ X.
-; Clobbers d0/d1.
+; rc_kpx(d0.b = mask, d1.b = pattern bits, a4) -> d2.b = K, d3.b = S, d4.b = X for ((byte & K) | S) ^ X: bits outside
+; the mask kept, the others per RC_K1..RC_I0 for their pattern bit. Clobbers d0/d1.
 rc_kpx:
         move.b  d1,d4
-        and.b   d0,d4                ; d4 = 1 bits in the mask
+        and.b   d0,d4                ; d4 = mask bits whose pattern bit is 1
         not.b   d1
-        and.b   d0,d1                ; d1 = 0 bits in the mask
-        tst.b   RC_COMP(a4)
-        beq.s   .kx_n
-        moveq   #-1,d2               ; COMPLEMENT: inversion of the 1 bits only
-        moveq   #0,d3
-        rts
-.kx_n:
-        tst.b   RC_JAM2(a4)
-        bne.s   .kx_j
-        moveq   #0,d1
-.kx_j:
+        and.b   d0,d1                ; d1 = mask bits whose pattern bit is 0
+        not.b   d0                   ; d0 = outside the mask
         move.b  d4,d2
-        or.b    d1,d2
-        not.b   d2
-        moveq   #0,d3
-        btst    #0,RC_F(a4)
-        beq.s   .kx_g
-        or.b    d4,d3
-.kx_g:
-        btst    #0,RC_G(a4)
-        beq.s   .kx_x
-        or.b    d1,d3
-.kx_x:
-        moveq   #0,d4
+        and.b   RC_K1(a4),d2
+        or.b    d2,d0
+        move.b  d1,d2
+        and.b   RC_K0(a4),d2
+        or.b    d0,d2                ; K
+        move.b  d4,d3
+        and.b   RC_S1(a4),d3
+        move.b  d1,d0
+        and.b   RC_S0(a4),d0
+        or.b    d0,d3                ; S
+        and.b   RC_I1(a4),d4
+        and.b   RC_I0(a4),d1
+        or.b    d1,d4                ; X
         rts
 ; rc_apply(a0, d2/d3/d4 = K/S/X): (a0)+ = (((a0) & K) | S) ^ X. Clobbers d0.
 rc_apply:
@@ -850,6 +865,7 @@ LN_FAST         EQU 90               ; byte: solid horizontal or vertical line, 
 LN_SIZE         EQU 92
 RP_LINPATCNT    EQU 30               ; linpatcnt: phase base of the clipped pieces
 RP_PATCNT       EQU 31               ; V34 pattern counter of the line engine (byte after linpatcnt)
+RP_MINT         EQU 40               ; minterms[8] (rastport.h)
 dr_line:
         movem.l d1-d7/a0-a4/a6,-(sp)
         lea     -LN_SIZE(sp),sp
@@ -1021,6 +1037,8 @@ ln_rect:
 .lr_y:
         move.l  DC_RP(a5),a0
         move.b  rp_FgPen(a0),d4
+        move.b  d4,d5
+        moveq   #JAM2,d7             ; pen A in every pixel
         suba.l  a0,a0
         bsr     dr_rect
         movem.l (sp)+,d0-d7/a0-a3
@@ -1292,16 +1310,41 @@ ln_inv:
         rts
 
 ; --- simple LVOs ---
-; SetAPen/SetBPen/SetDrMd(rp a1, d0) and Move(rp a1, x d0, y d1) also restart a line: FRST_DOT set and the line
-; pattern counter back to bit 15 (spec graphics-line-v34 §2).
+; SetAPen/SetBPen/SetDrMd(rp a1, d0): the low byte of d0 into FgPen / BgPen / DrawMode (the whole byte: other
+; functions test exact DrawMode values), then, every time, the eight minterms recomputed from FgPen, BgPen and
+; DrawMode & 7 (mt_set), FRST_DOT set and the line pattern counter back to bit 15 (spec graphics-raster-v34 §2,
+; graphics-line-v34 §2). All registers preserved (1.3 changes d0/d1; callers in this ROM rely on them).
+; Move(rp a1, x d0, y d1) also restarts a line.
 gfx_SetAPen:
         move.b  d0,rp_FgPen(a1)
-        bra.s   ln_restart
+        bra.s   mt_set
 gfx_SetBPen:
         move.b  d0,rp_BgPen(a1)
-        bra.s   ln_restart
+        bra.s   mt_set
 gfx_SetDrMd:
         move.b  d0,rp_DrawMode(a1)
+mt_set:
+        movem.l d0-d3/a0/a2,-(sp)
+        moveq   #7,d0
+        and.b   rp_DrawMode(a1),d0
+        lsl.w   #2,d0
+        lea     mt_tab(pc),a0
+        adda.w  d0,a0                ; a0 = the four minterms of this mode
+        move.b  rp_FgPen(a1),d1
+        move.b  rp_BgPen(a1),d2
+        lea     RP_MINT(a1),a2
+        moveq   #7,d3
+.ms_lp:
+        moveq   #1,d0                ; index = pen A bit + 2 x pen B bit of the plane
+        and.b   d1,d0
+        lsr.b   #1,d1
+        lsr.b   #1,d2
+        bcc.s   .ms_b
+        addq.w  #2,d0
+.ms_b:
+        move.b  0(a0,d0.w),(a2)+
+        dbra    d3,.ms_lp
+        movem.l (sp)+,d0-d3/a0/a2
         bra.s   ln_restart
 gfx_Move:
         move.w  d0,rp_cp_x(a1)
@@ -1310,6 +1353,18 @@ ln_restart:
         bset    #0,rp_Flags+1(a1)    ; FRST_DOT
         move.b  #15,RP_PATCNT(a1)
         rts
+; mt_tab: per DrawMode & 7, the minterm of a plane for (pen A bit, pen B bit) = (0,0), (1,0), (0,1), (1,1) (spec
+; graphics-raster-v34 §2.2). Read with A = area, B = pattern bit, C = destination: where A is 1, D = g(B, C) with
+; bit 4 + 2B + C of the minterm. RectFill, SetRast and the ScrollRaster fill derive their per-plane operation from it.
+mt_tab:
+        dc.b    $2A,$EA,$2A,$EA      ; JAM1
+        dc.b    $0A,$CA,$3A,$FA      ; JAM2
+        dc.b    $6A,$6A,$6A,$6A      ; COMPLEMENT
+        dc.b    $5A,$5A,$5A,$5A      ; COMPLEMENT|JAM2
+        dc.b    $8A,$BA,$8A,$BA      ; INVERSVID
+        dc.b    $0A,$3A,$CA,$FA      ; INVERSVID|JAM2
+        dc.b    $9A,$9A,$9A,$9A      ; INVERSVID|COMPLEMENT
+        dc.b    $5A,$5A,$5A,$5A      ; INVERSVID|COMPLEMENT|JAM2
 ; TextLength(rp a1, string a0, count d0) -> d0 = sum of kerning + spacing + rp_TxSpacing per character, 16 bits
 ; zero-extended; count = unsigned low word; styles ignored (spec graphics-text-v34 §6).
 gfx_TextLength:
@@ -1348,8 +1403,8 @@ gfx_SetFont:
 .sf_r:
         rts
 
-; InitRastPort(rp a1, a6 = GfxBase): RastPort zeroed, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, default
-; font (gb_DefaultFont).
+; InitRastPort(rp a1, a6 = GfxBase): RastPort zeroed, Mask/FgPen/AOlPen/LinePtrn = -1, DrawMode = JAM2, minterms
+; $CA, default font (gb_DefaultFont).
 gfx_InitRastPort:
         move.l  a1,a0
         moveq   #rp_SIZEOF/2-1,d0
@@ -1361,6 +1416,8 @@ gfx_InitRastPort:
         st      rp_AOlPen(a1)
         move.b  #JAM2,rp_DrawMode(a1)
         move.w  #-1,rp_LinePtrn(a1)
+        move.l  #$CACACACA,RP_MINT(a1)   ; minterms of FgPen $FF, BgPen 0, JAM2
+        move.l  #$CACACACA,RP_MINT+4(a1)
         move.l  gb_DefaultFont(a6),a0
         cmpa.w  #0,a0
         bne.s   gfx_SetFont
@@ -1398,13 +1455,17 @@ gfx_WritePixel:
         moveq   #0,d0
         rts
 
-; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3): rectangle in pen A (relative to the Layer), SetAfPt pattern
-; if there is one (dr_rect; AreaPtSz = -n: multicolour pattern, 2^n words per plane, consecutive planes). AREAOUTLINE:
-; interior (shrunk by one pixel on each side in COMPLEMENT, so as not to invert the edge twice), then outline
-; Move/Draw (LVO) in AOlPen and JAM1; cp stays at (xmin, ymin) (spec graphics-area-v34 §8).
+; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) (spec graphics-raster-v34 §3): inclusive bounds, pens, draw
+; mode, Mask and the SetAfPt pattern (AreaPtSz = -n: multicolour, 2^n words per plane, consecutive planes) through
+; dr_rect; pattern phase in RastPort coordinates. With a layer: clipped to it. Without: pixels addressed linearly as
+; on 1.3 (x past the right edge continues on the next row, x < 0 on the previous one, rf_wrap), but never outside
+; the planes (1.3 writes past them); reversed bounds draw nothing (1.3 draws garbage). No RastPort field changes.
+; AREAOUTLINE: interior (shrunk by one pixel on each side in COMPLEMENT, so as not to invert the edge twice), then
+; outline Move/Draw (LVO) in AOlPen and JAM1 with LinePtrn; FgPen, DrawMode and minterms restored directly, so cp =
+; (xmin, ymin), FRST_DOT clear and the pattern counter are those the Draws leave (§3.7).
 gfx_RectFill:
         btst    #3,rp_Flags+1(a1)    ; AREAOUTLINE
-        bne.s   rf_outline
+        bne     rf_outline
 rf_fill:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
@@ -1412,23 +1473,14 @@ rf_fill:
         movem.w d0-d3,-(sp)
         bsr     dr_ctx
         movem.w (sp)+,d0-d3
+        cmp.w   d2,d0
+        bgt.s   .rf_none             ; reversed bounds
+        cmp.w   d3,d1
+        bgt.s   .rf_none
         add.w   DC_OX(a5),d0
         add.w   DC_OX(a5),d2
         add.w   DC_OY(a5),d1
         add.w   DC_OY(a5),d3
-        move.b  rp_FgPen(a1),d4
-        move.b  rp_BgPen(a1),d5
-        move.l  rp_AreaPtrn(a1),a0
-        btst    #2,rp_DrawMode(a1)   ; INVERSVID without a pattern: the solid pattern inverted, i.e. all 0 bits
-        beq.s   .rf_pat
-        cmpa.w  #0,a0
-        bne.s   .rf_pat
-        move.b  rp_DrawMode(a1),d6
-        and.b   #JAM2|COMPLEMENT,d6
-        cmp.b   #JAM2,d6
-        bne.s   .rf_none             ; JAM1, COMPLEMENT: nothing
-        move.b  d5,d4                ; JAM2: pen B
-.rf_pat:
         moveq   #0,d6                ; d6 = step between planes (high word) | row mask
         move.b  rp_AreaPtSz(a1),d7
         bpl.s   .rf_mono
@@ -1440,11 +1492,112 @@ rf_fill:
         move.w  #1,d6
         lsl.w   d7,d6
         subq.w  #1,d6
+        move.b  rp_FgPen(a1),d4
+        move.b  rp_BgPen(a1),d5
+        move.b  rp_DrawMode(a1),d7
+        move.l  rp_AreaPtrn(a1),a0
+        tst.l   DC_LAYER(a5)
+        bne.s   .rf_draw
+        tst.w   d0
+        bmi.s   .rf_wrap
+        cmp.w   DC_MAXX(a5),d2
+        bgt.s   .rf_wrap
+.rf_draw:
         bsr     dr_rect
+        bra.s   .rf_none
+.rf_wrap:
+        bsr     rf_wrap
 .rf_none:
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+; rf_wrap(a5 = context without a layer, d0-d3 = rectangle (x0 <= x1, y0 <= y1), d4-d7/a0 = dr_rect's parameters):
+; each row is the run of linear pixel addresses y x W + x0 .. y x W + x1 (W = BytesPerRow x 8), clipped to
+; [0, W x Rows - 1] and drawn row piece by row piece; DC_OY makes each piece keep the pattern row of y (W is a
+; multiple of 16, so the pattern column follows). Preserves everything.
+RW_Y            EQU 0                ; current row
+RW_Y1           EQU 2
+RW_X0           EQU 4
+RW_X1           EQU 6
+RW_W            EQU 8                ; width in pixels
+RW_L0           EQU 10               ; current linear address (long)
+RW_L1           EQU 14               ; last linear address of the row (long)
+RW_END          EQU 18               ; last linear address of the plane (long)
+RW_SIZE         EQU 22
+rf_wrap:
+        movem.l d0-d3/a1,-(sp)
+        lea     -RW_SIZE(sp),sp
+        move.l  sp,a1
+        move.w  d0,RW_X0(a1)
+        move.w  d1,RW_Y(a1)
+        move.w  d2,RW_X1(a1)
+        move.w  d3,RW_Y1(a1)
+        move.w  DC_MAXX(a5),d0
+        addq.w  #1,d0
+        move.w  d0,RW_W(a1)
+        move.w  DC_MAXY(a5),d1
+        addq.w  #1,d1
+        mulu    d0,d1
+        subq.l  #1,d1
+        move.l  d1,RW_END(a1)
+.rw_row:
+        move.w  RW_Y(a1),d0
+        cmp.w   RW_Y1(a1),d0
+        bgt.s   .rw_ret
+        muls    RW_W(a1),d0
+        move.w  RW_X0(a1),d1
+        ext.l   d1
+        add.l   d0,d1                ; d1 = first linear address
+        move.w  RW_X1(a1),d2
+        ext.l   d2
+        add.l   d0,d2
+        tst.l   d1
+        bpl.s   .rw_c0
+        moveq   #0,d1
+.rw_c0:
+        cmp.l   RW_END(a1),d2
+        ble.s   .rw_c1
+        move.l  RW_END(a1),d2
+.rw_c1:
+        move.l  d2,RW_L1(a1)
+.rw_piece:
+        cmp.l   RW_L1(a1),d1
+        bgt.s   .rw_next
+        move.l  d1,RW_L0(a1)
+        divu    RW_W(a1),d1          ; d1 = column (high word) : row (low word)
+        move.w  d1,d3                ; d3 = row of the piece
+        swap    d1                   ; d1 = first column
+        move.l  RW_L1(a1),d2
+        sub.l   RW_L0(a1),d2         ; pixels left in the run - 1
+        moveq   #0,d0
+        move.w  RW_W(a1),d0
+        subq.w  #1,d0
+        sub.w   d1,d0                ; columns left in this BitMap row - 1
+        cmp.l   d0,d2
+        ble.s   .rw_last
+        move.l  d0,d2
+.rw_last:
+        add.w   d1,d2                ; d2 = last column
+        move.w  d3,d0
+        sub.w   RW_Y(a1),d0
+        move.w  d0,DC_OY(a5)         ; pattern row = piece row - DC_OY = y
+        move.w  d1,d0
+        move.w  d3,d1
+        bsr     dr_rect
+        clr.w   DC_OY(a5)
+        sub.w   d0,d2
+        addq.w  #1,d2
+        moveq   #0,d1
+        move.w  d2,d1
+        add.l   RW_L0(a1),d1
+        bra.s   .rw_piece
+.rw_next:
+        addq.w  #1,RW_Y(a1)
+        bra     .rw_row
+.rw_ret:
+        lea     RW_SIZE(sp),sp
+        movem.l (sp)+,d0-d3/a1
         rts
 rf_outline:
         movem.l d2-d5/a2,-(sp)
@@ -1464,6 +1617,8 @@ rf_outline:
         bsr     rf_fill
 .ro_edge:
         movem.w (sp)+,d2-d5          ; xmin ymin xmax ymax
+        move.l  RP_MINT+4(a2),-(sp)
+        move.l  RP_MINT(a2),-(sp)
         move.b  rp_FgPen(a2),-(sp)
         move.b  rp_DrawMode(a2),-(sp)
         move.l  a2,a1
@@ -1493,31 +1648,27 @@ rf_outline:
         move.l  d2,d0
         move.l  d3,d1
         jsr     LVO_DRAW(a6)
-        moveq   #0,d0
-        move.b  (sp)+,d0
-        move.l  a2,a1
-        jsr     LVO_SETDRMD(a6)
-        moveq   #0,d0
-        move.b  (sp)+,d0
-        move.l  a2,a1
-        jsr     LVO_SETAPEN(a6)
+        move.b  (sp)+,rp_DrawMode(a2)
+        move.b  (sp)+,rp_FgPen(a2)
+        move.l  (sp)+,RP_MINT(a2)
+        move.l  (sp)+,RP_MINT+4(a2)
         movem.l (sp)+,d2-d5/a2
         rts
 
-; SetRast(rp a1, pen d0): fills the whole RastPort area (Layer bounds, else the BitMap).
+; SetRast(rp a1, pen d0) (spec graphics-raster-v34 §4): every plane of rp_Mask below the depth set to its pen bit over
+; the whole BitMap (BytesPerRow x Rows) without a layer, over the whole layer (visible parts and SMART backing store)
+; with one; DrawMode, pens, minterms and AreaPtrn ignored, no damage, no RastPort field changes.
 gfx_SetRast:
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        move.b  d0,d3
+        move.b  d0,d4
         bsr     dr_ctx
-        move.b  rp_DrawMode(a1),-(sp)
-        clr.b   rp_DrawMode(a1)      ; solid fill, whatever the mode
-        move.b  d3,d4
+        move.b  d4,d5
+        moveq   #JAM2,d7
         movem.w DC_MINX(a5),d0-d3    ; MINX MINY MAXX MAXY
         suba.l  a0,a0
         bsr     dr_rect
-        move.b  (sp)+,rp_DrawMode(a1)
         bsr     dr_end
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
@@ -2805,127 +2956,407 @@ tl_under:
 .tu_r:
         rts
 
-; sr_horiz(rp a1, dx d0 (!= 0), xmin d2, ymin d3, xmax d4, ymax d5): horizontal pass of ScrollRaster. The kept part
-; is copied with ClipBlit within the RastPort (which follows the ClipRects, backups included); BltBitMapRastPort
-; copies forward, so a shift to the right goes by slices of |dx| columns from the right, none covering its own
-; source. Then the freed columns are filled with pen B. Deviation: a source hidden without backup (simple layer) is
-; not reported as damage, unlike the vertical pass. Preserves everything.
-sr_horiz:
-        movem.l d0-d7/a0-a2,-(sp)
-        move.l  a1,a2                ; a2 = RastPort
-        move.w  d0,d7                ; d7 = dx
-        move.w  d4,d6
-        sub.w   d2,d6
-        addq.w  #1,d6                ; d6 = width of the rectangle
-        move.w  d7,d1
-        bpl.s   .sh_abs
-        neg.w   d1                   ; d1 = |dx|
-.sh_abs:
-        sub.w   d1,d6                ; d6 = width that stays
-        ble.s   .sh_all
-        movem.w d1-d5,-(sp)          ; (sp) n, xmin, ymin, xmax, ymax
-        move.w  d5,d0
-        sub.w   d3,d0
-        addq.w  #1,d0
-        move.w  d0,d5                ; d5 = height
-        tst.w   d7
-        bmi.s   .sh_right
-        move.w  2(sp),d2             ; left: source xmin + n -> xmin, in one copy
-        move.w  d2,d0
-        add.w   (sp),d0
-        move.w  4(sp),d1
-        move.w  d1,d3
-        move.w  d6,d4
-        bsr.s   .sh_blit
-        movem.w (sp)+,d1-d5
-        move.w  d4,d0                ; freed columns [xmax - n + 1 .. xmax]
-        sub.w   d1,d0
-        addq.w  #1,d0
-        move.w  d4,d2
-        bra.s   .sh_fill
-.sh_right:                           ; right: slices of n columns from the right
-        move.w  d6,d7                ; d7 = width still to copy
-.sh_slice:
-        tst.w   d7
-        ble.s   .sh_rdone
-        move.w  (sp),d4              ; slice width = min(n, rest)
-        cmp.w   d7,d4
-        ble.s   .sh_sw
-        move.w  d7,d4
-.sh_sw:
-        sub.w   d4,d7
-        move.w  2(sp),d0
-        add.w   d7,d0                ; source xmin + rest
-        move.w  d0,d2
-        add.w   (sp),d2              ; destination = source + n
-        move.w  4(sp),d1
-        move.w  d1,d3
-        bsr.s   .sh_blit
-        bra.s   .sh_slice
-.sh_rdone:
-        movem.w (sp)+,d1-d5
-        move.w  d2,d0                ; freed columns [xmin .. xmin + n - 1]
-        add.w   d1,d2
-        subq.w  #1,d2
-        bra.s   .sh_fill
-.sh_all:                             ; everything goes out: the whole rectangle is filled
-        move.w  d2,d0
-        move.w  d4,d2
-.sh_fill:                            ; d0..d2 = x0..x1, rows d3..d5
-        move.w  d5,d4
-        move.w  d3,d1
-        move.w  d4,d3
-        move.l  a2,a1
-        bsr     sr_bgfill
-        movem.l (sp)+,d0-d7/a0-a2
-        rts
-.sh_blit:                            ; ClipBlit within the RastPort: d0/d1 source, d2/d3 destination, d4 x d5 (height)
-        movem.l d5-d7,-(sp)
-        move.l  a2,a0
-        move.l  a2,a1
-        move.w  #$C0,d6
-        bsr     gfx_ClipBlit
-        movem.l (sp)+,d5-d7
-        rts
-
-; sr_bgfill(rp a1, d0 = x0, d1 = y0, d2 = x1, d3 = y1, relative to the Layer, x0 <= x1): fills with pen B in the
-; RastPort's ClipRects (like the freed band of the vertical pass). Preserves everything.
-sr_bgfill:
-        movem.l d0-d7/a0-a1/a5,-(sp)
+; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5) (spec graphics-raster-v34 §5): inside the
+; rectangle new(x, y) = old(x + dx, y + dy) (positive dx/dy move the content left/up); the vacated strips (the
+; pixels whose source is outside the rectangle) are filled with pen B, solid, whatever DrawMode and AreaPtrn, planes
+; per rp_Mask; no RastPort field changes. The max corner is clamped to the BitMap (no layer) or to the layer (layer
+; coordinates). Without a layer a shift not smaller than the clamped rectangle (reversed rectangles included) does
+; nothing at all, then a negative min corner is clamped to 0 (1.3 writes before the BitMap there). With a layer the
+; min corner is not clamped: the strips are computed on the rectangle, may spill out of it and are clipped to the
+; layer, and destinations whose source lies outside the layer keep their content. SIMPLE layer: the existing damage
+; follows the content (-dx, -dy) and the new damage is exactly the visible destinations whose source is hidden
+; (sr_damage; 1.3 offsets it by (+dx, +dy) and records it one pixel too large). dx = 0: rows moved by sr_vert
+; (blitter fast path); otherwise the move is one ClipBlit per slice (sr_move). Preserves everything.
+SR_DX           EQU 0                ; arguments (RastPort coordinates, max corner clamped): dx dy x0 y0 x1 y1
+SR_DY           EQU 2
+SR_X0           EQU 4
+SR_Y0           EQU 6
+SR_X1           EQU 8
+SR_Y1           EQU 10
+SR_CX0          EQU 12               ; Rc: the rectangle in absolute coordinates, clipped to the area
+SR_CY0          EQU 14
+SR_CX1          EQU 16
+SR_CY1          EQU 18
+SR_MX0          EQU 20               ; moved destinations (absolute): those of Rc whose source is in Rc
+SR_MY0          EQU 22
+SR_MX1          EQU 24
+SR_MY1          EQU 26
+SR_SIZE         EQU 28
+gfx_ScrollRaster:
+        movem.l d0-d7/a0/a2-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
-        movem.w d0-d3,-(sp)
+        lea     -SR_SIZE(sp),sp
+        move.l  sp,a4
+        movem.w d0-d5,(a4)
         bsr     dr_ctx
-        movem.w (sp)+,d4-d7          ; d4..d7 = x0, y0, x1, y1
-        add.w   DC_OX(a5),d4
-        add.w   DC_OX(a5),d6
-        add.w   DC_OY(a5),d5
-        add.w   DC_OY(a5),d7
-        move.b  rp_DrawMode(a1),-(sp)
-        clr.b   rp_DrawMode(a1)
-        move.b  rp_BgPen(a1),d3
-.bf_lp:
-        cmp.w   d7,d5
-        bgt.s   .bf_done
-        move.w  d4,d0
-        move.w  d5,d1
-        move.w  d6,d2
-        bsr     dr_span
-        addq.w  #1,d5
-        bra.s   .bf_lp
-.bf_done:
-        move.b  (sp)+,rp_DrawMode(a1)
+        move.w  SR_DX(a4),d0
+        or.w    SR_DY(a4),d0
+        beq     .sr_ret
+        move.w  DC_MAXX(a5),d0       ; max corner clamped to the area (RastPort coordinates)
+        sub.w   DC_OX(a5),d0
+        cmp.w   SR_X1(a4),d0
+        bge.s   .sr_c1
+        move.w  d0,SR_X1(a4)
+.sr_c1:
+        move.w  DC_MAXY(a5),d0
+        sub.w   DC_OY(a5),d0
+        cmp.w   SR_Y1(a4),d0
+        bge.s   .sr_c2
+        move.w  d0,SR_Y1(a4)
+.sr_c2:
+        tst.l   DC_LAYER(a5)
+        bne.s   .sr_rc
+        move.w  SR_X1(a4),d0         ; no layer: |dx| >= width or |dy| >= height -> nothing
+        sub.w   SR_X0(a4),d0
+        addq.w  #1,d0
+        move.w  SR_DX(a4),d1
+        bpl.s   .sr_ax
+        neg.w   d1
+.sr_ax:
+        cmp.w   d0,d1
+        bge     .sr_ret
+        move.w  SR_Y1(a4),d0
+        sub.w   SR_Y0(a4),d0
+        addq.w  #1,d0
+        move.w  SR_DY(a4),d1
+        bpl.s   .sr_ay
+        neg.w   d1
+.sr_ay:
+        cmp.w   d0,d1
+        bge     .sr_ret
+        tst.w   SR_X0(a4)            ; then the min corner clamped to 0
+        bpl.s   .sr_m0
+        clr.w   SR_X0(a4)
+.sr_m0:
+        tst.w   SR_Y0(a4)
+        bpl.s   .sr_rc
+        clr.w   SR_Y0(a4)
+.sr_rc:
+        movem.w SR_X0(a4),d0-d3      ; Rc = rectangle (absolute) clipped to the area
+        add.w   DC_OX(a5),d0
+        add.w   DC_OY(a5),d1
+        add.w   DC_OX(a5),d2
+        add.w   DC_OY(a5),d3
+        cmp.w   DC_MINX(a5),d0
+        bge.s   .sr_k0
+        move.w  DC_MINX(a5),d0
+.sr_k0:
+        cmp.w   DC_MINY(a5),d1
+        bge.s   .sr_k1
+        move.w  DC_MINY(a5),d1
+.sr_k1:
+        movem.w d0-d3,SR_CX0(a4)
+        move.w  SR_DX(a4),d4         ; moved destinations: Rc shrunk by the shift on the side it comes from
+        bmi.s   .sr_mxn
+        sub.w   d4,d2
+        bra.s   .sr_my
+.sr_mxn:
+        sub.w   d4,d0
+.sr_my:
+        move.w  SR_DY(a4),d4
+        bmi.s   .sr_myn
+        sub.w   d4,d3
+        bra.s   .sr_mv
+.sr_myn:
+        sub.w   d4,d1
+.sr_mv:
+        movem.w d0-d3,SR_MX0(a4)
+        cmp.w   d2,d0
+        bgt.s   .sr_fill             ; nothing keeps its content: only the strips
+        cmp.w   d3,d1
+        bgt.s   .sr_fill
+        tst.w   SR_DX(a4)
+        bne.s   .sr_blit
+        move.w  SR_DY(a4),d1
+        movem.w SR_CX0(a4),d2-d5
+        bsr     sr_vert
+        bra.s   .sr_fill
+.sr_blit:
+        bsr     sr_move
+.sr_fill:
+        bsr     sr_strips
+        bsr     sr_damage
+.sr_ret:
         bsr     dr_end
-        lea     DC_SIZE(sp),sp
-        movem.l (sp)+,d0-d7/a0-a1/a5
+        lea     SR_SIZE+DC_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0/a2-a5
         rts
 
-; ScrollRaster(rp a1, dx d0, dy d1, xmin d2, ymin d3, xmax d4, ymax d5): shifts the contents of the rectangle by dx
-; columns LEFT (dx > 0) or right (dx < 0) and by dy rows UP (dy > 0) or down (dy < 0), and fills the freed bands with
-; pen B. The horizontal pass (sr_horiz) runs first, then the vertical one below. Coordinates relative to the Layer. Each destination row is copied ClipRect by
-; ClipRect from the ClipRects that contain the source row (screen or backups: same bit alignment
-; modulo 16, copy by masked bytes). A part whose source is hidden without backup (simple layer) marks
-; the whole rectangle "damaged" (DamageList + LAYERREFRESH).
+; sr_move(a1 = RastPort, a4 = SR_*, a5): copies the moved destinations from their sources with ClipBlit (which
+; follows the ClipRects: backing stores included, a source hidden without one leaves the destination intact). Each
+; copy is a slice of at most |dy| rows (dy != 0) or |dx| columns (dy = 0), so its source and destination are disjoint
+; whatever the order in which ClipBlit walks the ClipRects; the slices start on the side the content moves to (top
+; first for dy > 0, bottom first for dy < 0, left first for dx > 0, right first for dx < 0), so none overwrites a
+; source still to be read. Preserves everything.
+sr_move:
+        movem.l d0-d7,-(sp)
+        movem.w SR_MX0(a4),d0-d3     ; destination, RastPort coordinates
+        sub.w   DC_OX(a5),d0
+        sub.w   DC_OX(a5),d2
+        sub.w   DC_OY(a5),d1
+        sub.w   DC_OY(a5),d3
+        sub.w   d0,d2
+        addq.w  #1,d2
+        move.w  d2,d4                ; d4 = width
+        sub.w   d1,d3
+        addq.w  #1,d3
+        move.w  d3,d5                ; d5 = height
+        move.w  d0,d2                ; d2/d3 = destination corner of the slice
+        move.w  d1,d3
+        move.w  SR_DY(a4),d6
+        bmi.s   .mv_up
+        bne.s   .mv_down
+        move.w  SR_DX(a4),d6
+        bmi.s   .mv_right
+        move.w  d4,d7                ; dx > 0: slices of dx columns from the left; d7 = columns left
+.mv_ls:
+        tst.w   d7
+        ble.s   .mv_ret
+        move.w  d6,d4
+        cmp.w   d7,d4
+        ble.s   .mv_lw
+        move.w  d7,d4
+.mv_lw:
+        sub.w   d4,d7
+        bsr.s   .mv_blit
+        add.w   d4,d2
+        bra.s   .mv_ls
+.mv_right:                           ; dx < 0: slices of -dx columns from the right
+        neg.w   d6
+        move.w  d4,d7
+.mv_cs:
+        tst.w   d7
+        ble.s   .mv_ret
+        move.w  d6,d4
+        cmp.w   d7,d4
+        ble.s   .mv_cw
+        move.w  d7,d4
+.mv_cw:
+        sub.w   d4,d7
+        move.w  d0,d2
+        add.w   d7,d2
+        bsr.s   .mv_blit
+        bra.s   .mv_cs
+.mv_down:                            ; dy > 0: slices of dy rows from the top; d7 = rows left
+        move.w  d5,d7
+.mv_ts:
+        tst.w   d7
+        ble.s   .mv_ret
+        move.w  d6,d5
+        cmp.w   d7,d5
+        ble.s   .mv_th
+        move.w  d7,d5
+.mv_th:
+        sub.w   d5,d7
+        bsr.s   .mv_blit
+        add.w   d5,d3
+        bra.s   .mv_ts
+.mv_up:                              ; dy < 0: slices of -dy rows from the bottom
+        neg.w   d6
+        move.w  d5,d7
+.mv_rs:
+        tst.w   d7
+        ble.s   .mv_ret
+        move.w  d6,d5
+        cmp.w   d7,d5
+        ble.s   .mv_rh
+        move.w  d7,d5
+.mv_rh:
+        sub.w   d5,d7
+        move.w  d1,d3
+        add.w   d7,d3
+        bsr.s   .mv_blit
+        bra.s   .mv_rs
+.mv_ret:
+        movem.l (sp)+,d0-d7
+        rts
+; .mv_blit(d2/d3 = destination, d4 x d5): ClipBlit from (d2 + dx, d3 + dy) within the RastPort. Preserves d0-d7.
+.mv_blit:
+        movem.l d0-d7/a1,-(sp)
+        move.w  d2,d0
+        add.w   SR_DX(a4),d0
+        move.w  d3,d1
+        add.w   SR_DY(a4),d1
+        ext.l   d0
+        ext.l   d1
+        ext.l   d2
+        ext.l   d3
+        ext.l   d4
+        ext.l   d5
+        move.l  a1,a0
+        move.l  #$C0,d6
+        bsr     gfx_ClipBlit
+        movem.l (sp)+,d0-d7/a1
+        rts
+
+; sr_strips(a1, a4, a5): the vacated strips in pen B, solid (dr_rect in JAM2), clipped to the area: columns
+; x1 - dx + 1 .. x1 (dx > 0) or x0 .. x0 - dx - 1 (dx < 0) over rows y0 .. y1, and rows likewise over columns
+; x0 .. x1 (rectangle in RastPort coordinates, min corner not clamped in a layer). Preserves everything.
+sr_strips:
+        movem.l d0-d7/a0,-(sp)
+        move.b  rp_BgPen(a1),d4
+        move.b  d4,d5
+        moveq   #JAM2,d7
+        suba.l  a0,a0
+        move.w  SR_DX(a4),d6
+        beq.s   .st_v
+        movem.w SR_X0(a4),d0-d3
+        tst.w   d6
+        bmi.s   .st_hl
+        move.w  d2,d0                ; dx > 0: x1 - dx + 1 .. x1
+        sub.w   d6,d0
+        addq.w  #1,d0
+        bra.s   .st_h
+.st_hl:
+        move.w  d0,d2                ; dx < 0: x0 .. x0 - dx - 1
+        sub.w   d6,d2
+        subq.w  #1,d2
+.st_h:
+        bsr.s   .st_fill
+.st_v:
+        move.w  SR_DY(a4),d6
+        beq.s   .st_r
+        movem.w SR_X0(a4),d0-d3
+        tst.w   d6
+        bmi.s   .st_vu
+        move.w  d3,d1                ; dy > 0: y1 - dy + 1 .. y1
+        sub.w   d6,d1
+        addq.w  #1,d1
+        bra.s   .st_vf
+.st_vu:
+        move.w  d1,d3                ; dy < 0: y0 .. y0 - dy - 1
+        sub.w   d6,d3
+        subq.w  #1,d3
+.st_vf:
+        bsr.s   .st_fill
+.st_r:
+        movem.l (sp)+,d0-d7/a0
+        rts
+.st_fill:                            ; d0-d3 = strip in RastPort coordinates
+        add.w   DC_OX(a5),d0
+        add.w   DC_OX(a5),d2
+        add.w   DC_OY(a5),d1
+        add.w   DC_OY(a5),d3
+        bra     dr_rect
+
+; sr_damage(a4, a5): SIMPLE layer only. The DamageList (rectangles relative to its bounds) moves by (-dx, -dy) with
+; the content; then each visible ClipRect V and each ClipRect H hidden without backup give the damage
+; V x moved destinations x (H - (dx, dy)), added in layer coordinates (OrRectRegion; a failed allocation loses that
+; rectangle, as on 1.3) with LAYERREFRESH. Preserves everything.
+sr_damage:
+        movem.l d0-d5/a0-a3/a6,-(sp)
+        move.l  DC_LAYER(a5),d0
+        beq     .dm_r
+        move.l  d0,a3                ; a3 = layer
+        btst    #0,LY_FLAGS+1(a3)    ; LAYERSIMPLE
+        beq     .dm_r
+        move.l  LY_DAMAGE(a3),d0
+        beq     .dm_r
+        move.l  d0,a0
+        tst.l   8(a0)                ; region with rectangles: its bounds move
+        beq.s   .dm_new
+        move.w  SR_DX(a4),d0
+        move.w  SR_DY(a4),d1
+        sub.w   d0,(a0)
+        sub.w   d1,2(a0)
+        sub.w   d0,4(a0)
+        sub.w   d1,6(a0)
+.dm_new:
+        move.l  LY_CLIPRECT(a3),a2   ; a2 = visible ClipRect V
+.dm_v:
+        cmpa.w  #0,a2
+        beq     .dm_r
+        tst.l   CR_LOBS(a2)
+        bne     .dm_vn
+        movem.w CR_MINX(a2),d0-d3    ; V x moved destinations
+        cmp.w   SR_MX0(a4),d0
+        bge.s   .dm_1
+        move.w  SR_MX0(a4),d0
+.dm_1:
+        cmp.w   SR_MY0(a4),d1
+        bge.s   .dm_2
+        move.w  SR_MY0(a4),d1
+.dm_2:
+        cmp.w   SR_MX1(a4),d2
+        ble.s   .dm_3
+        move.w  SR_MX1(a4),d2
+.dm_3:
+        cmp.w   SR_MY1(a4),d3
+        ble.s   .dm_4
+        move.w  SR_MY1(a4),d3
+.dm_4:
+        cmp.w   d2,d0
+        bgt     .dm_vn
+        cmp.w   d3,d1
+        bgt     .dm_vn
+        move.l  LY_CLIPRECT(a3),a1   ; a1 = hidden ClipRect H without backup
+.dm_h:
+        cmpa.w  #0,a1
+        beq     .dm_vn
+        tst.l   CR_LOBS(a1)
+        beq     .dm_hn
+        tst.l   CR_BITMAP(a1)
+        bne     .dm_hn
+        movem.w d0-d3,-(sp)
+        move.w  CR_MINX(a1),d4       ; H - (dx, dy), intersected
+        sub.w   SR_DX(a4),d4
+        cmp.w   d4,d0
+        bge.s   .dm_5
+        move.w  d4,d0
+.dm_5:
+        move.w  CR_MINX+2(a1),d4
+        sub.w   SR_DY(a4),d4
+        cmp.w   d4,d1
+        bge.s   .dm_6
+        move.w  d4,d1
+.dm_6:
+        move.w  CR_MINX+4(a1),d4
+        sub.w   SR_DX(a4),d4
+        cmp.w   d4,d2
+        ble.s   .dm_7
+        move.w  d4,d2
+.dm_7:
+        move.w  CR_MINX+6(a1),d4
+        sub.w   SR_DY(a4),d4
+        cmp.w   d4,d3
+        ble.s   .dm_8
+        move.w  d4,d3
+.dm_8:
+        cmp.w   d2,d0
+        bgt.s   .dm_hx
+        cmp.w   d3,d1
+        bgt.s   .dm_hx
+        or.w    #LAYERREFRESH,LY_FLAGS(a3)
+        move.w  lr_MinX(a3),d4       ; to layer coordinates
+        sub.w   d4,d0
+        sub.w   d4,d2
+        move.w  lr_MinY(a3),d4
+        sub.w   d4,d1
+        sub.w   d4,d3
+        movem.w d0-d3,-(sp)
+        move.l  a1,-(sp)
+        lea     4(sp),a1
+        move.l  LY_DAMAGE(a3),a0
+        bsr     gfx_OrRectRegion
+        move.l  (sp)+,a1
+        addq.l  #8,sp
+.dm_hx:
+        movem.w (sp)+,d0-d3
+.dm_hn:
+        move.l  CR_NEXT(a1),a1
+        bra     .dm_h
+.dm_vn:
+        move.l  CR_NEXT(a2),a2
+        bra     .dm_v
+.dm_r:
+        movem.l (sp)+,d0-d5/a0-a3/a6
+        rts
+
+; sr_vert(a1 = RastPort, a5 = context, dy d1 (!= 0), Rc d2-d5 (absolute, |dy| smaller than its height)): the rows of
+; Rc whose source row is in Rc copied, ClipRect by ClipRect from the ClipRects that contain the source row (screen
+; or backups: same bit alignment modulo 16, copy by masked bytes); a destination whose source is hidden without
+; backup keeps its content (sr_damage records it). Fast path: Rc inside one visible ClipRect. Preserves everything.
 SC_XMIN         EQU 0                ; variables on the stack (a4)
 SC_XMAX         EQU 2
 SC_DY           EQU 4
@@ -2936,59 +3367,18 @@ SC_DMAXX        EQU 12
 SC_DBM          EQU 14
 SC_DBX          EQU 18
 SC_DBY          EQU 20
-SC_COVER        EQU 22               ; pixels of the destination row covered by a source
-SC_LOST         EQU 24               ; byte: a source was missing
-SC_YMIN         EQU 26
-SC_YMAX         EQU 28
-SC_SIZE         EQU 30
-gfx_ScrollRaster:
-        tst.w   d0
-        beq.s   sr_vert
-        bsr     sr_horiz
-        tst.w   d1
-        bne.s   sr_vert
-        rts
+SC_YMIN         EQU 22
+SC_YMAX         EQU 24
+SC_SIZE         EQU 26
 sr_vert:
-        movem.l d2-d7/a2-a5,-(sp)
-        lea     -DC_SIZE(sp),sp
-        move.l  sp,a5
+        movem.l d0-d7/a0-a4,-(sp)
         lea     -SC_SIZE(sp),sp
         move.l  sp,a4
-        movem.w d1-d5,-(sp)          ; (sp) dy, xmin, ymin, xmax, ymax
-        bsr     dr_ctx
-        movem.w (sp)+,d1-d5
-        add.w   DC_OX(a5),d2
-        add.w   DC_OX(a5),d4
-        add.w   DC_OY(a5),d3
-        add.w   DC_OY(a5),d5
-        cmp.w   DC_MINX(a5),d2       ; clipping to the RastPort area
-        bge.s   .sc_c0
-        move.w  DC_MINX(a5),d2
-.sc_c0:
-        cmp.w   DC_MAXX(a5),d4
-        ble.s   .sc_c1
-        move.w  DC_MAXX(a5),d4
-.sc_c1:
-        cmp.w   DC_MINY(a5),d3
-        bge.s   .sc_c2
-        move.w  DC_MINY(a5),d3
-.sc_c2:
-        cmp.w   DC_MAXY(a5),d5
-        ble.s   .sc_c3
-        move.w  DC_MAXY(a5),d5
-.sc_c3:
-        cmp.w   d4,d2
-        bgt     .sc_ret
-        cmp.w   d5,d3
-        bgt     .sc_ret
-        tst.w   d1
-        beq     .sc_ret
         move.w  d2,SC_XMIN(a4)
         move.w  d4,SC_XMAX(a4)
         move.w  d1,SC_DY(a4)
         move.w  d3,SC_YMIN(a4)
         move.w  d5,SC_YMAX(a4)
-        clr.b   SC_LOST(a4)
         bsr     .sc_whole
         bne     .sc_fast
         move.w  SC_DY(a4),d1
@@ -2998,54 +3388,29 @@ sr_vert:
         move.w  d6,d0
         add.w   d1,d0
         cmp.w   d5,d0
-        bgt.s   .sc_fillu
+        bgt.s   .sc_ret
         move.w  d6,SC_Y(a4)
         move.w  d0,SC_SY(a4)
         bsr     .sc_line
         move.w  SC_DY(a4),d1
         addq.w  #1,d6
         bra.s   .sc_up
-.sc_fillu:                           ; rows [d6 .. ymax] in pen B
-        move.w  SC_YMAX(a4),d4
-        bra.s   .sc_fill
 .sc_down:
         move.w  SC_YMAX(a4),d6       ; downwards: y <- y+dy (dy < 0), decreasing y
 .sc_dn:
         move.w  d6,d0
         add.w   d1,d0
         cmp.w   SC_YMIN(a4),d0
-        blt.s   .sc_filld
+        blt.s   .sc_ret
         move.w  d6,SC_Y(a4)
         move.w  d0,SC_SY(a4)
         bsr     .sc_line
         move.w  SC_DY(a4),d1
         subq.w  #1,d6
         bra.s   .sc_dn
-.sc_filld:                           ; rows [ymin .. d6]
-        move.w  d6,d4
-        move.w  SC_YMIN(a4),d6
-.sc_fill:
-        move.b  rp_DrawMode(a1),-(sp)
-        clr.b   rp_DrawMode(a1)
-        move.b  rp_BgPen(a1),d3
-.sc_flp:
-        cmp.w   d4,d6
-        bgt.s   .sc_fdone
-        move.w  SC_XMIN(a4),d0
-        move.w  d6,d1
-        move.w  SC_XMAX(a4),d2
-        bsr     dr_span
-        addq.w  #1,d6
-        bra.s   .sc_flp
-.sc_fdone:
-        move.b  (sp)+,rp_DrawMode(a1)
-        tst.b   SC_LOST(a4)
-        beq.s   .sc_ret
-        bsr     .sc_damage
 .sc_ret:
-        bsr     dr_end
-        lea     SC_SIZE+DC_SIZE(sp),sp
-        movem.l (sp)+,d2-d7/a2-a5
+        lea     SC_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4
         rts
 
 ; Fast path: a single visible ClipRect contains the whole rectangle (uncovered window) -> rectangle copied with the
@@ -3053,18 +3418,7 @@ sr_vert:
 .sc_fast:
         bsr     .sc_blit
         tst.l   d0
-        beq.s   .sf_cpu
-        move.w  SC_DY(a4),d1         ; exposed rows, as at the end of the row-by-row loops
-        bmi.s   .sf_bdn
-        move.w  SC_YMAX(a4),d6
-        sub.w   d1,d6
-        addq.w  #1,d6
-        bra     .sc_fillu
-.sf_bdn:
-        move.w  SC_YMIN(a4),d6
-        sub.w   d1,d6
-        subq.w  #1,d6
-        bra     .sc_filld
+        bne     .sc_ret
 .sf_cpu:
         tst.w   SC_DY(a4)
         bmi.s   .sf_down
@@ -3073,7 +3427,7 @@ sr_vert:
         move.w  d6,d0
         add.w   SC_DY(a4),d0
         cmp.w   SC_YMAX(a4),d0
-        bgt     .sc_fillu
+        bgt     .sc_ret
         move.w  d6,SC_Y(a4)
         move.w  d0,SC_SY(a4)
         move.w  SC_XMIN(a4),d2
@@ -3087,7 +3441,7 @@ sr_vert:
         move.w  d6,d0
         add.w   SC_DY(a4),d0
         cmp.w   SC_YMIN(a4),d0
-        blt     .sc_filld
+        blt     .sc_ret
         move.w  d6,SC_Y(a4)
         move.w  d0,SC_SY(a4)
         move.w  SC_XMIN(a4),d2
@@ -3309,11 +3663,10 @@ BLT_DMACONR     EQU $002
         move.w  d1,SC_DMAXX(a4)
         move.l  DC_CBM(a5),SC_DBM(a4)
         move.l  DC_BX(a5),SC_DBX(a4)   ; BX, BY
-        clr.w   SC_COVER(a4)
         move.l  DC_FIRST(a5),a3      ; a3 = source ClipRect
 .sl_src:
         cmpa.w  #0,a3
-        beq.s   .sl_check
+        beq.s   .sl_dnext
         move.l  a3,a0
         bsr     dr_crset
         beq.s   .sl_snext
@@ -3334,21 +3687,10 @@ BLT_DMACONR     EQU $002
 .sl_4:
         cmp.w   d4,d2
         bgt.s   .sl_snext
-        move.w  d4,d0
-        sub.w   d2,d0
-        addq.w  #1,d0
-        add.w   d0,SC_COVER(a4)
         bsr     .sc_copy
 .sl_snext:
         move.l  CR_NEXT(a3),a3
         bra.s   .sl_src
-.sl_check:
-        move.w  SC_DMAXX(a4),d0
-        sub.w   SC_DMINX(a4),d0
-        addq.w  #1,d0
-        cmp.w   SC_COVER(a4),d0
-        ble.s   .sl_dnext
-        st      SC_LOST(a4)          ; a part had no source
 .sl_dnext:
         move.l  CR_NEXT(a2),a2
         bra     .sl_dst
@@ -3462,33 +3804,6 @@ BLT_DMACONR     EQU $002
         not.b   d0
         and.b   d0,(a1)
         or.b    d1,(a1)+
-        rts
-
-; .sc_damage: scroll rectangle (relative to the layer) added to the layer's DamageList + LAYERREFRESH.
-.sc_damage:
-        move.l  DC_LAYER(a5),d0
-        beq.s   .sd_r
-        move.l  d0,a0
-        or.w    #LAYERREFRESH,LY_FLAGS(a0)
-        move.l  LY_DAMAGE(a0),d0
-        beq.s   .sd_r
-        movem.l a1/a6,-(sp)
-        move.w  SC_YMAX(a4),-(sp)
-        move.w  SC_XMAX(a4),-(sp)
-        move.w  SC_YMIN(a4),-(sp)
-        move.w  SC_XMIN(a4),-(sp)
-        move.w  16(a0),d1            ; layer bounds
-        sub.w   d1,(sp)
-        sub.w   d1,4(sp)
-        move.w  18(a0),d1
-        sub.w   d1,2(sp)
-        sub.w   d1,6(sp)
-        move.l  d0,a0
-        move.l  sp,a1
-        bsr     gfx_OrRectRegion
-        addq.l  #8,sp
-        movem.l (sp)+,a1/a6
-.sd_r:
         rts
 
 ; BltMaskBitMapRastPort(BitMap a0, srcX d0, srcY d1, RastPort a1, destX d2, destY d3, width d4, height d5,

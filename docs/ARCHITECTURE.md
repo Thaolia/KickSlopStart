@@ -972,6 +972,16 @@ differs.
     each crossed ClipRect gets a clipped piece whose phase comes from linpatcnt. `ln_draw` walks the line from its
     start and plots by CPU with a per-plane operation for 1 and 0 pattern bits; solid horizontal/vertical lines
     without COMPLEMENT go through dr_rect. gfx_Draw updates cp, FRST_DOT and the counter (once more with a layer).
+  - Raster functions (spec graphics-raster-v34, 2026-11-05): `mt_tab` holds the §2.2 minterm per draw mode and pen
+    bit pair; the setters fill rp minterms[] from it (`mt_set`). `dr_rect` takes pens and mode as parameters (d4, d5,
+    d7) and derives each plane's operation from its minterm: solid -> set, clear, invert or skip the plane; pattern ->
+    K/S/I bytes for pattern bits 1 and 0 combined per byte by `rc_kpx`. RectFill, SetRast (JAM2, pen A = pen B), the
+    solid line fast path and the ScrollRaster strips all use it. Without a layer, a RectFill crossing the left or
+    right edge goes through `rf_wrap` (linear addresses clipped to the plane, pattern row kept through DC_OY).
+    ScrollRaster computes the clamped rectangle, Rc (clipped to the area) and the moved destinations; dx = 0 keeps
+    `sr_vert` (blitter fast path, row copies through the ClipRects), otherwise `sr_move` copies by ClipBlit slices;
+    `sr_strips` fills the vacated strips and `sr_damage` (SIMPLE layers) moves the DamageList and adds the exact
+    visible destinations whose source ClipRect is hidden without backup. Probe: `tests/graster_probe.sh`.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

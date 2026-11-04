@@ -1201,6 +1201,40 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   potgo.resource, which wrote $0C01 (START) then $0000 to the hardware: it is now dev-only (`ifeq PROD`), so the
   production ROM's first POTGO write is gameport's $0F00, as on 1.3. Nothing found that would make the right button
   float on a real A500; the reseated-mouse retest and the same mouse on the real 1.3 remain the next steps.
+  **Raster functions (2026-11-05, coverage §7 rank 10)**: spec `graphics-raster-v34`. SetAPen/SetBPen/SetDrMd store
+  the low byte (DrawMode unmasked) and, every time, recompute the eight minterms (InitRastPort: `$CA`), set FRST_DOT
+  and +$1F = 15 (this closes the "rp minterms[] not computed" point of the Lines entry). RectFill takes each plane's
+  operation from the §2.2 minterm of its pen bits and the mode: INVERSVID inverts the pattern, COMPLEMENT|JAM2 and
+  mode 7 invert everything, solid JAM1|INVERSVID and COMPLEMENT|INVERSVID draw nothing, JAM2|INVERSVID paints BgPen;
+  pattern phase in RastPort (layer) coordinates, multicolour patterns per plane, Mask and depth; AREAOUTLINE restores
+  FgPen, DrawMode and the minterms directly, so cp = (xmin, ymin), FRST_DOT clear and +$1F are those the Draws leave.
+  Without a layer RectFill addresses pixels linearly as 1.3 does (x past the right edge continues on the next row).
+  SetRast ignores mode and pattern. ScrollRaster: max corner clamped (BitMap or layer), the no-layer "shift not
+  smaller than the rectangle -> nothing" rule, BgPen solid strips that may spill out of the rectangle in a layer,
+  destinations whose source is outside the layer kept, and one combined dx/dy move (ClipBlit slices of |dy| rows or
+  |dx| columns, so the ClipRect order cannot read an overwritten source; the old two-pass move lost pixels through a
+  hidden SIMPLE part). `tests/graster_probe.sh` (+ `tests/graster_check.py`, which models the expected results):
+  156/156 vectors pass on kick-prod and the dev ROM (131 failed before, mostly the minterms, the outline fields, the
+  INVERSVID/COMPLEMENT|JAM2 modes, the linear wrap and ScrollRaster's rules). Its output now goes to a memory buffer
+  read through gdb: the emulated serial link dropped about one character per KB under load. gline, garea, gregion
+  and irender probes unchanged (only the gline minterm fields differ, now the spec values). drawperf on kick-prod,
+  before -> after (video lines): screen H 1620 -> 1639, V 7944 -> 8021, R 6042 -> 6060, P 2398 -> 2379, text X1-X4
+  and BltTemplate within 60 lines of 33,000 / 4,500; window H 2130 -> 2202, R 4373 -> 4395, others equal: at most 3 %,
+  within the run-to-run noise. drawcheck: identical except screen T4 plane 1, which draws a pattern rectangle at
+  x = -20 without a layer: the new linear wrap puts its left columns at the end of the previous rows, as on 1.3.
+  Deliberate differences from 1.3 (V34 defects not reproduced): reversed RectFill bounds draw nothing (1.3: huge
+  blits); without a layer RectFill wraps only inside each plane (1.3 writes past the plane and the BitMap); no 64-word
+  or 1024-row truncation in the three functions; ScrollRaster without a layer clamps a negative min corner to 0 after
+  the no-op test (1.3 writes before the BitMap, Guru); SIMPLE-layer damage is exact and the existing DamageList moves
+  by (-dx, -dy) with the content (1.3: one pixel too large on the right and bottom, existing damage moved by
+  (+dx, +dy)); the six functions preserve every register (1.3 changes d0/d1, plus a0/a1 for the three drawing ones);
+  CPU rendering is synchronous (BBUSY clear on return, BlitLock untouched). Assumptions and open points: RectFill,
+  SetRast and the ScrollRaster fill compute the minterm from FgPen/BgPen/DrawMode at the call instead of reading
+  rp_minterms (the same whenever the setters are used; our intuition writes pens directly); wrapped row pieces keep
+  the pattern row of their rectangle row (not observed); the COMPLEMENT interior shrink of the outline applies to any
+  mode with the COMPLEMENT bit (spec open point 5); a layer with Scroll_X/Y or a SuperBitMap uses the RastPort area
+  for the clamp and the phase (open point 1); ClipBlit still walks the source ClipRects in list order for other
+  overlapping copies.
 
 ## Immediately actionable work (start of implementation, upon approval)
 
