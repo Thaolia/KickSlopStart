@@ -1113,6 +1113,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   an rp->Mask hole, collision pairs with the second GEL on the left, a one-member sequence added twice. Our
   VSprites still go through our SprIns stream (1.3 builds SprIns/ClrIns CopLists). Buffers are cleared on
   allocation (1.3 leaves them as allocated).
+  **CDE theme (2026-11-04, issue #24)**: the apple-green theme is replaced by the CDE colours proposed in the issue:
+  Workbench colour 0 grey-blue $AAB (`SC_BGCOLOR`), 1 cream $FFE, 2 dark grey $566 (text, DetailPen), 3 slate blue
+  $78A; ROM pointer fill mauve $A57 with cream highlight (`pf_defaults`, `sc_palette`). A deliberate difference
+  from 1.3, like the green before it.
   **ramlib (2026-11-04)**: spec `ramlib-v34`. OpenLibrary/OpenDevice try the base name of a path, then a ROM
   resident, then LoadSeg in the calling process (a plain task fails; 1.3 has no ramlib process either); the RomTag
   is searched in the first hunk only, a module without one runs its first hunk; loads of one base name are

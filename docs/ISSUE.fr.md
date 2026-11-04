@@ -10,7 +10,7 @@ les formulaires demandent tout ce qui suit.
 
 - Essayez la dernière version de la page [Releases](https://github.com/Thaolia/KickSlopStart/releases) (ou le
   lien vAmigaWeb du README, qui lance toujours la dernière).
-- Vérifiez les [différences voulues](../README.fr.md#différences-voulues-pas-des-bugs) : le Workbench vert,
+- Vérifiez les [différences voulues](../README.fr.md#différences-voulues-pas-des-bugs) : le Workbench aux couleurs CDE,
   l'écran de boot au chaton, les symboles de chat dans les menus, la fenêtre « AmigaSlopDOS » et le pointeur
   violet sont volontaires.
 - Consultez les manques connus dans [`docs/PLAN.md`](PLAN.md), et cherchez dans les issues existantes.

@@ -297,7 +297,7 @@ PF_VIEWINITY    EQU $7A
 PF_EXTSIZE      EQU $E7
 PF_SIZE         EQU 232
 PF_VIEWEND      EQU PF_VIEWINITY+2     ; minimum size for ViewInitX/Y to be copied
-SC_BGCOLOR      EQU $7C3               ; color 0: apple green (AmigaSlopDOS theme, Preferences default)
+SC_BGCOLOR      EQU $AAB               ; color 0: CDE grey-blue (project theme, issue #24; Preferences default)
 
 ; --- struct IntuiMessage (intuition/intuition.h) and IDCMP classes ---
 IM_CLASS        EQU 20               ; after the struct Message

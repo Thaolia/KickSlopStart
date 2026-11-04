@@ -23,5 +23,5 @@ Work in progress: large parts of exec, graphics, layers, intuition, dos and the 
 still fail. Bug reports are welcome as GitHub issues; the [reporting guide](https://github.com/Thaolia/KickSlopStart/blob/main/docs/ISSUE.md)
 lists what to include.
 
-Some differences are deliberate and are not bugs: the green Workbench colours, the kitten boot screen and the cat
+Some differences are deliberate and are not bugs: the CDE-like Workbench colours, the kitten boot screen and the cat
 symbols in menus. See "Deliberate differences" in the README.

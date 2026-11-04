@@ -42,8 +42,9 @@ Known gaps and the detailed roadmap are in [`docs/PLAN.md`](docs/PLAN.md).
 A few things look different from the original Kickstart 1.3 on purpose. Please don't report them as bugs (see
 [issue #5](https://github.com/Thaolia/KickSlopStart/issues/5)):
 
-- **Colours**: the Workbench screen is apple green with black text instead of blue. I like that colour, and it shows
-  at a glance which Kickstart is running.
+- **Colours**: the Workbench screen uses a CDE-like palette (grey-blue background, cream, dark grey text, slate
+  blue) instead of the 1.3 blue, as suggested in [issue #24](https://github.com/Thaolia/KickSlopStart/issues/24).
+  It shows at a glance which Kickstart is running.
 - **Boot screen**: instead of the hand holding a floppy, a kitten holds a "KickSlopStart" disk, because I love cats.
   This is the image as the ROM draws it (the photo at the top of this page is the original artwork):
 
@@ -51,7 +52,7 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 
 - **Menus**: the check mark is a cat's paw print, and the Amiga-key symbol of keyboard shortcuts is a small cat.
 - **Startup window**: the boot CLI window is called "AmigaSlopDOS".
-- **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in dark purple instead of
+- **Mouse pointer**: the ROM's own pointer is a different arrow from the original, filled in mauve instead of
   red. A Workbench disk still shows the pointer stored in its `devs:system-configuration`, as on the original 1.3.
 
 ## Try it in your browser

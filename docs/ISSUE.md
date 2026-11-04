@@ -10,7 +10,7 @@ below.
 
 - Try the latest release from the [Releases](https://github.com/Thaolia/KickSlopStart/releases) page (or the
   vAmigaWeb link of the README, which always runs the latest one).
-- Check the [deliberate differences](../README.md#deliberate-differences-not-bugs): the green Workbench, the kitten
+- Check the [deliberate differences](../README.md#deliberate-differences-not-bugs): the CDE-coloured Workbench, the kitten
   boot screen, the cat symbols in menus, the "AmigaSlopDOS" window and the purple pointer are on purpose.
 - Look at the known gaps in [`docs/PLAN.md`](PLAN.md), and search the existing issues.
 

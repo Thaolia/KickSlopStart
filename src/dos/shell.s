@@ -998,7 +998,7 @@ sh_intname:
 ; sh_sysconfig(a6 = DOSBase): like the 1.3 initial CLI, reads the 232 bytes of devs:system-configuration and passes
 ; them to SetPrefs(..., 232, TRUE). File missing or shorter: nothing. No "Please insert volume devs" requester on
 ; a disk without DEVS: (games): pr_WindowPtr is -1 for the duration of the Open. Intended difference: colours 0
-; to 3 keep those of the current Preferences (the project's apple-green theme); the extension (ext_size) is ignored,
+; to 3 keep those of the current Preferences (the project's CDE theme); the extension (ext_size) is ignored,
 ; intuition V34 clamping to 232 bytes anyway. Preserves everything except d0/d1/a0/a1.
 SH_PREFSIZE     EQU 232
 SH_PREFCOL      EQU $6E              ; Preferences: color0..3 (4 words)

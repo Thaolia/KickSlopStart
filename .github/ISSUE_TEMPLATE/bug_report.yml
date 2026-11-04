@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for the report! Please read the [reporting guide](https://github.com/Thaolia/KickSlopStart/blob/main/docs/ISSUE.md) first.
-        Some differences are deliberate (green Workbench, kitten boot screen, cat symbols): see
+        Some differences are deliberate (CDE-coloured Workbench, kitten boot screen, cat symbols): see
         [Deliberate differences](https://github.com/Thaolia/KickSlopStart/blob/main/README.md#deliberate-differences-not-bugs).
   - type: input
     id: rom

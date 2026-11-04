@@ -995,7 +995,7 @@ CU_SIZE         EQU 372
 CU_NTABS        EQU 80
 CU_NPARS        EQU 24
 CU_PDEF         EQU -5               ; absent parameter
-CU_DEFFG        EQU 2                ; default text pen: black on the green background (project theme; 1.3: 1)
+CU_DEFFG        EQU 2                ; default text pen: dark grey on the grey-blue background (project theme; 1.3: 1)
 CUM_LNM         EQU 4                ; bits of byte 2 of cu_Modes
 CUM_ASM         EQU 5
 CUM_AWM         EQU 6
@@ -1285,7 +1285,7 @@ cu_setpens:
         moveq   #0,d1
         move.b  CU_BGPEN(a5),d1
         move.l  d2,-(sp)             ; text and background merged by the BitMap's planes (screen reduced to 1 plane by a
-        move.l  rp_BitMap(a3),a0     ; program: theme black = background) -> text uses the colour next to the background
+        move.l  rp_BitMap(a3),a0     ; program: theme text pen = background) -> text uses the colour next to the background
         moveq   #0,d2
         move.b  bm_Depth(a0),d2
         moveq   #1,d0

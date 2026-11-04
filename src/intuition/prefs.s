@@ -297,9 +297,9 @@ pf_defaults:
         dc.l    1,500000                 ; DoubleClick
         dcb.w   36,0                     ; PointerMatrix (image filled in by GetDefPrefs)
         dc.b    0,0                      ; XOffset, YOffset
-        dc.w    $0517,$0000,$0EEC        ; color17..19 (pointer): dark purple fill, a deliberate difference
+        dc.w    $0A57,$0000,$0FFE        ; color17..19 (pointer): CDE mauve fill, a deliberate difference
         dc.w    2                        ; PointerTicks
-        dc.w    SC_BGCOLOR,$0FFF,$0000,$0F80 ; color0..3 (Workbench)
+        dc.w    SC_BGCOLOR,$0FFE,$0566,$078A ; color0..3 (Workbench): grey-blue, cream, dark grey, slate blue
         dc.b    0,0                      ; ViewXOffset, ViewYOffset
         dc.w    0,0                      ; ViewInitX, ViewInitY (replaced on copy)
         dc.w    0                        ; EnableCLI
