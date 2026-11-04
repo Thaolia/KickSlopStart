@@ -26,6 +26,12 @@
                 xdef    ofs_hash             ; OFS writing (ofswrite.s): hash index of a name
                 xdef    ofs_read_block       ; reading of a block (handler.s: hnd_bootclock)
                 xdef    ofs_namecmp          ; OFS writing: case-insensitive name comparison
+                xdef    ofs_geo              ; geometry of the caller's partition
+                xdef    ofs_blk_valid        ; key inside the partition
+
+; Device and geometry: in a file-handler process, the device, unit and partition of its context (ofs.i, HC_GEO);
+; elsewhere (boot probes) trackdisk unit 0 with the DD geometry. Requests go through DoIO, so devices that queue
+; them (a hard disk) work as well as trackdisk, which completes them at once.
 
 ; ofs_read_file(a6=SysBase, a0=NUL-terminated path, a1=dest, d0=max bytes) -> d0 = size read | 0.
 ; Resolves a PATH of '/'-separated components (e.g. "s/startup-sequence"): traverses the intermediate USERDIR
@@ -38,19 +44,17 @@ ofs_read_file:
                 move.l  a1,a5                        ; a5 = dest (advances with each data block)
                 move.l  d0,d7                        ; d7 = max bytes remaining (buffer guard)
                 moveq   #0,d6                        ; d6 = total read (return value)
-                lea     EB_DEVICELIST(a6),a0
-                lea     ofs_td_name(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
-                beq     .fail_nofree                 ; no trackdisk.device
-                move.l  d0,a2                        ; a2 = trackdisk base
+                bsr     ofs_dev
+                beq     .fail_nofree                 ; no device
+                move.l  d0,a2                        ; a2 = device base
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .fail_nofree
                 move.l  d0,a3                        ; a3 = ioreq; block buffer = a3 + IOREQ_SZ
-                move.l  #OFS_ROOTBLK,d4             ; d4 = current directory block (starts at the root)
+                bsr     ofs_geo
+                move.l  GEO_ROOT(a0),d4              ; d4 = current directory block (starts at the root)
 .nextcomp:
                 lea     LF_COMP(sp),a4             ; a4 = component buffer (NUL-terminated by ofs_split)
                 move.l  LF_PATHCUR(sp),a0          ; a0 = path cursor
@@ -76,7 +80,7 @@ ofs_read_file:
                 bne     .exit
                 ; --- read the data chain (the file header is already in the buffer) ---
                 move.l  OFSB_FIRSTDATA(a0),d2        ; first data block
-                move.w  #OFS_NBLK,d5                 ; data chain cap
+                move.w  #OFS_CHAINMAX,d5             ; data chain cap
 .dloop:
                 bsr     ofs_blk_valid
                 beq.s   .exit                        ; 0 / invalid -> end
@@ -146,10 +150,10 @@ ofs_dir_lookup:
                 lsl.l   #2,d1                        ; idx * 4 (bytes)
                 lea     OFSB_HASHTAB(a0),a0
                 move.l  0(a0,d1.l),d2                ; d2 = current header block (bucket)
-                move.w  #OFS_NBLK,d5                 ; anti-loop cap
+                move.w  #OFS_CHAINMAX,d5             ; anti-loop cap
 .dl_chain:
                 bsr     ofs_blk_valid
-                beq.s   .dl_fail                     ; block 0 / outside [2,1760) -> end of chain, not found
+                beq.s   .dl_fail                     ; block 0 / outside the partition -> end of chain, not found
                 move.l  d2,d0
                 bsr     ofs_read_block
                 tst.l   d0
@@ -208,32 +212,34 @@ ofs_split:
                 moveq   #1,d0                        ; last component (NUL-terminated)
                 rts
 
-; ofs_read_block(d0=block num, a2=trackdisk, a3=ioreq, a6=SysBase) -> d0 = 1 OK / 0 failed; fills a3+IOREQ_SZ.
-; Drive = the one of the calling file-handler (ofs.i), DF0 otherwise.
-; Only uses d0/d1/a0/a1 as scratch (BeginIO preserves d2-d7/a2-a5) -> the caller's loop state survives.
+; ofs_read_block(d0=block num, a2=device, a3=ioreq, a6=SysBase) -> d0 = 1 OK / 0 failed; fills a3+IOREQ_SZ.
+; In a file-handler: device, unit, reply port and partition offset of its context (a2 unused), write-back countdown
+; re-armed; elsewhere unit 0 of the device a2 (trackdisk: DF0). Only uses d0/d1/a0/a1 as scratch (DoIO preserves
+; d2-d7/a2-a5) -> the caller's loop state survives.
 ofs_read_block:
                 lsl.l   #8,d0
-                lsl.l   #1,d0                        ; offset = block * 512 (< 901120, no 32-bit overflow)
+                add.l   d0,d0                        ; byte offset in the partition = block * 512
+                move.l  a2,IO_DEVICE(a3)
+                clr.l   IO_UNIT(a3)
                 move.l  EB_THISTASK(a6),a0
                 move.l  TC_USERDATA(a0),d1
-                beq.s   .rb_unit                     ; not a file-handler: io_Unit 0 = DF0
+                beq.s   .rb_go                       ; not a file-handler: unit 0 = DF0
                 move.l  d1,a0
-                move.l  HC_TDIO+IO_UNIT(a0),d1
-.rb_unit:
-                move.l  d1,IO_UNIT(a3)
-                move.l  a2,IO_DEVICE(a3)
+                move.l  HC_TDIO+IO_DEVICE(a0),IO_DEVICE(a3)
+                move.l  HC_TDIO+IO_UNIT(a0),IO_UNIT(a3)
+                move.l  HC_GEO+GEO_PORT(a0),MN_REPLYPORT(a3)
+                add.l   HC_GEO+GEO_POFF(a0),d0
+                moveq   #3,d1
+                move.l  d1,HC_GEO+GEO_TICKS(a0)
+.rb_go:
                 move.w  #CMD_READ,IO_COMMAND(a3)
                 move.l  #OFS_BSIZE,IO_LENGTH(a3)
                 lea     IOREQ_SZ(a3),a0
                 move.l  a0,IO_DATA(a3)
                 move.l  d0,IO_OFFSET(a3)
-                move.b  #IOF_QUICK,IO_FLAGS(a3)
                 clr.l   IO_ACTUAL(a3)
-                move.l  a6,-(sp)                     ; BeginIO via vector -30 (a6=trackdisk, a1=ioreq)
-                move.l  a2,a6
                 move.l  a3,a1
-                jsr     -30(a6)
-                move.l  (sp)+,a6
+                jsr     LVO_DOIO(a6)
                 tst.b   IO_ERROR(a3)
                 bne.s   .rb_fail
                 cmp.l   #OFS_BSIZE,IO_ACTUAL(a3)
@@ -244,16 +250,44 @@ ofs_read_block:
                 moveq   #0,d0
                 rts
 
-; ofs_blk_valid(d2=block) -> Z=1 if INVALID (0 or outside [2,1760)). Clobbers d0 only (flags via moveq).
+; ofs_blk_valid(d2=block) -> Z=1 if INVALID (outside [reserved, blocks) of the partition). Clobbers d0/a0.
 ofs_blk_valid:
-                cmp.l   #2,d2
+                bsr.s   ofs_geo
+                cmp.l   GEO_RES(a0),d2
                 blo.s   .bv_inv
-                cmp.l   #OFS_NBLK,d2
+                cmp.l   GEO_NBLK(a0),d2
                 bhs.s   .bv_inv
                 moveq   #-1,d0                       ; valid -> Z=0
                 rts
 .bv_inv:
                 moveq   #0,d0                        ; invalid -> Z=1
+                rts
+
+; ofs_geo(a6) -> a0 = geometry of the calling file-handler's partition (HC_GEO), or the DD default. Preserves the rest.
+ofs_geo:
+                move.l  EB_THISTASK(a6),a0
+                move.l  TC_USERDATA(a0),a0
+                cmpa.w  #0,a0
+                beq.s   .ge_def
+                lea     HC_GEO(a0),a0
+                rts
+.ge_def:
+                lea     ofs_geodef(pc),a0
+                rts
+; ofs_dev(a6) -> d0 = device of the calling file-handler (0 if it could not open it), otherwise trackdisk.device;
+; Z = 1 if none. Clobbers d1/a0/a1.
+ofs_dev:
+                move.l  EB_THISTASK(a6),a0
+                move.l  TC_USERDATA(a0),d0
+                beq.s   .dv_td
+                move.l  d0,a0
+                move.l  HC_TDIO+IO_DEVICE(a0),d0
+                rts
+.dv_td:
+                lea     EB_DEVICELIST(a6),a0
+                lea     ofs_td_name(pc),a1
+                jsr     LVO_FINDNAME(a6)
+                tst.l   d0
                 rts
 
 ; ofs_hash(a4=NUL-terminated name, d3=ht_size) -> d1 = idx. Clobbers d0/d1/a0. h=len; h=(h*13+toupper(c))&$7FF;
@@ -408,7 +442,10 @@ ofs_name_to_block:
                 movem.l d2-d7/a2-a5,-(sp)
                 move.l  d0,d4                        ; d4 = current directory
                 bne.s   .n2b_start
-                move.l  #OFS_ROOTBLK,d4
+                move.l  a0,-(sp)
+                bsr     ofs_geo
+                move.l  GEO_ROOT(a0),d4
+                move.l  (sp)+,a0
 .n2b_start:
                 move.l  a0,a1                        ; a1 = scan for an "xxx:" prefix
 .n2b_colon:
@@ -416,8 +453,9 @@ ofs_name_to_block:
                 beq.s   .n2b_nocolon                 ; NUL -> no ':'
                 cmp.b   #':',d0
                 bne.s   .n2b_colon
+                bsr     ofs_geo
+                move.l  GEO_ROOT(a0),d4              ; "xxx:" -> root of the volume
                 move.l  a1,a0                         ; a0 = just after the ':'
-                move.l  #OFS_ROOTBLK,d4              ; "xxx:" -> root of the volume
 .n2b_nocolon:
                 tst.b   (a0)
                 bne.s   .n2b_resolve
@@ -428,11 +466,8 @@ ofs_name_to_block:
 .n2b_resolve:
                 lea     -OFS_FRAME(sp),sp            ; local frame (comp + path cursor + last flag)
                 move.l  a0,LF_PATHCUR(sp)
-                lea     EB_DEVICELIST(a6),a0
-                lea     ofs_td_name(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
-                beq     .n2b_fail                    ; no trackdisk (nothing allocated)
+                bsr     ofs_dev
+                beq     .n2b_fail                    ; no device (nothing allocated)
                 move.l  d0,a2
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -518,11 +553,8 @@ ofs_fill_fib:
                 moveq   #0,d7                         ; default result
                 move.l  d0,d4                         ; d4 = block
                 move.l  a1,a5                         ; a5 = fib
-                lea     EB_DEVICELIST(a6),a0
-                lea     ofs_td_name(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
-                beq.s   .fib_ret                     ; no trackdisk (nothing allocated)
+                bsr     ofs_dev
+                beq.s   .fib_ret                     ; no device (nothing allocated)
                 move.l  d0,a2
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
@@ -565,10 +597,7 @@ ofs_dir_next:
                 movem.l (sp)+,d3-d7/a2-a5
                 rts
                 endc
-                lea     EB_DEVICELIST(a6),a0
-                lea     ofs_td_name(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
+                bsr     ofs_dev
                 beq     .dn_noalloc
                 move.l  d0,a2
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
@@ -653,13 +682,10 @@ ofs_stream_open:
                 tst.l   d0
                 beq.s   .so_ret
                 move.l  d0,d4                         ; d4 = header block
-                lea     EB_DEVICELIST(a6),a0
-                lea     ofs_td_name(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
+                bsr     ofs_dev
                 beq.s   .so_fail
                 move.l  d0,SS_TRACKDISK(a5)
-                move.l  d0,a2                         ; a2 = trackdisk
+                move.l  d0,a2                         ; a2 = device
                 lea     SS_IOREQ(a5),a3               ; a3 = ioreq of the state (block buffer at +IOREQ_SZ)
                 move.l  d4,d0
                 bsr     ofs_read_block
@@ -707,7 +733,7 @@ ofs_stream_read:
                 move.l  #32768,d7
 .sr_capok:
                 endc
-                move.l  SS_TRACKDISK(a5),a2           ; a2 = trackdisk
+                move.l  SS_TRACKDISK(a5),a2           ; a2 = device
                 lea     SS_IOREQ(a5),a3               ; a3 = ioreq (buffer at +IOREQ_SZ)
 .sr_loop:
                 tst.l   d6
@@ -834,3 +860,5 @@ OFS_TABLE       EQU 72                        ; data block numbers per header / 
 ofs_td_name:
                 dc.b    "trackdisk.device",0
                 even
+ofs_geodef:                                   ; DD floppy: root, blocks, reserved, offset, no reply port
+                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0

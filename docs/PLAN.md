@@ -1020,6 +1020,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/fsgap_probe.sh`). Open from the `rom-filesystem-v34` comparison: stateless ExNext (fib_DiskKey and
   fib_FileName), the delayed flush (§8.4) and bm_flag cleared on the first modification, locks kept in dl_LockList
   of an absent volume, RENAME of a locked source (spec open point);
+  **ROM file system on any block device (2026-11-05)**: the OFS handler takes device, unit, flags and geometry from
+  its DeviceNode's FileSysStartupMsg (blocks = cylinders x surfaces x blocks per track, partition offset = LowCyl
+  cylinders, root = (blocks - 1 + reserved) / 2), goes through DoIO (devices that queue requests), and keeps the whole
+  bitmap (bm_pages, then bitmap extension blocks) in memory. A DeviceNode with neither seglist nor handler but a
+  FileSysStartupMsg (a UAE hardfile without RDB) gets a "File System" process on first use. Under Amiberry the
+  hardfile only mounted once three boot issues were fixed: expansion.library is in LibList before the ConfigChain
+  (the UAE DiagPoint opens it: ramlib had initialised a second, empty expansion), InitCode/FindResident follow the
+  bit-31 links a DiagPoint inserts into ResModules, and the DF0:/DF1: nodes no longer replace a DeviceNode added
+  before them. Proven by `tests/hdfs_probe.sh` (40 MiB, 21 bitmap blocks; 64 MiB with `FILL`, 33 bitmap blocks and an
+  extension block) and `tests/wbfs_probe.sh` (Workbench 1.3.3 floppy). Open: only 512-byte blocks; files over
+  65535 data blocks (32 MiB) are not followed (16-bit block index); the bitmap block does not move at each flush
+  (rom-filesystem §8.3); what 1.3 does with TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM on a device that rejects
+  them (ours: present, writable, count 0) is not specified.
   **dos LVO details (2026-11-04)**: D1 = D0 on packet LVOs, Info(0) to pr_FileSystemTask, ParentDir(0) Result2 0,
   IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
   `tests/fsnodisk_probe.sh`). 213 and 225 requesters done the same day from the analysis track's observation (`fsnodisk_probe.sh notdos|notval`).

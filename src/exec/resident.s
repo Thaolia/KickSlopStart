@@ -188,6 +188,11 @@ exec_FindResident:
 .fr_loop:
         move.l  (a3)+,d0             ; next Resident* (d0 kept = return value)
         beq.s   .fr_none             ; NUL terminator -> not found
+        bpl.s   .fr_res
+        bclr    #31,d0               ; bit 31: link to the rest of the array elsewhere (exec AutoDoc)
+        move.l  d0,a3
+        bra.s   .fr_loop
+.fr_res:
         move.l  d0,a0
         move.l  RT_NAME(a0),a0       ; name of the resident
         move.l  a2,a1                ; name searched for
@@ -268,7 +273,7 @@ exec_InitResident:
         moveq   #0,d0
         rts
 
-; InitCode(startClass d0, version d1): walks ResModules (already pri-sorted) and calls
+; InitCode(startClass d0, version d1): walks ResModules (already pri-sorted, links followed) and calls
 ; InitResident on each resident whose RT_FLAGS has a bit in common with startClass (RTF_COLDSTART...)
 ; and with RT_VERSION >= version. A resident without a class flag (workbench.task) stays in
 ; ResModules without being initialised. segList = 0 (our ROMTags have no seglist).
@@ -282,6 +287,11 @@ exec_InitCode:
 .ic_loop:
         move.l  (a2)+,d0             ; Resident*
         beq.s   .ic_done             ; NUL terminator
+        bpl.s   .ic_res
+        bclr    #31,d0               ; bit 31: link to the rest of the array elsewhere (a board's DiagPoint
+        move.l  d0,a2                ; inserts its residents that way, uae-hd-boot-v34 §5)
+        bra.s   .ic_loop
+.ic_res:
         move.l  d0,a1                ; a1 = resident (for InitResident)
         move.b  RT_FLAGS(a1),d2
         and.b   d4,d2

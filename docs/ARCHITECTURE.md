@@ -587,6 +587,29 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7ad) **ROM file system on any block device: hard-disk OFS partitions** (2026-11-05, specs `rom-filesystem-v34.md`,
+  `handlers-v34.md` §1.2-§1.3, `uae-hd-boot-v34.md` §4; public OFS layout). `handler.s` `hnd_open` opens fssm_Device /
+  fssm_Unit / fssm_Flags of the DeviceNode whose dn_Task is the handler's port and fills the geometry `HC_GEO`
+  (`ofs.i`: root, blocks, reserved, byte offset of the partition, I/O reply port `HC_IOPORT`) from the DosEnvec:
+  blocks = (HighCyl - LowCyl + 1) x Surfaces x BlocksPerTrack, offset = LowCyl cylinders, root = (blocks - 1 +
+  Reserved) / 2 (880 on DD); no FileSysStartupMsg = trackdisk unit 0, DD geometry; de_SizeBlock other than 128 or
+  more than one sector per block: the device is not opened (the partition answers "no disk"). Every request goes
+  through DoIO (`ofs_read_block`, `ow_io`, `hnd_tdcmd`), so a device that queues them (uaehf.device) works; disk
+  change and write-protect queries a device rejects read as present / writable. Keys are valid in [Reserved,
+  blocks) (`ofs_blk_valid`, `ow_keyok`). The write context keeps the whole bitmap (`OW_BMTAB`, one `BME_*` entry per
+  bitmap block: key, dirty flag, block): keys from the root's 25 bm_pages then from the bitmap extension blocks (root
+  long 104, 127 keys and a link each); `ow_scan` skips full longs and the search above the root starts at `OW_HINT`
+  (every block below it in use: a nearly full region is crossed once, not per block); `ow_sync` writes the dirty bitmap blocks; DiskInfo
+  counts the free bits over the partition (id_NumBlocks = blocks - reserved). dos (`bcpl_starthandler`): a DeviceNode
+  with no dn_SegList, no dn_Handler and a FileSysStartupMsg gets a "File System" process (pri 10, `dos_handler`),
+  dn_Task written under Forbid before it runs. Boot fixes found on the way (Amiberry's UAE board): `expansion.library`
+  is made and added to LibList by its own rt_Init before the ConfigChain (a DiagPoint that opened it used to make
+  ramlib initialise a second, empty expansion.library, so romboot found no board); InitCode and FindResident follow
+  the bit-31 links of ResModules (the UAE DiagPoint inserts uae.resource that way); the boot's DF0:/DF1: nodes go in
+  front of the DeviceNodes already listed (DH0 added by AddDosNode once dos.library exists) instead of replacing
+  them. Tests: `tests/hdfs_probe.sh` (Workbench 1.3.3 commands on DH0: under Amiberry, then `tests/ofs_check.py`
+  walks the hardfile and compares every bitmap block with the blocks in use), `tests/wbfs_probe.sh` (floppy
+  session), `tests/fsuae_run.sh` (FS-UAE run waiting for a serial marker).
   (7ac) **Fast RAM kept across the insert-disk reboot in vAmiga** (2026-11-04, user report: no fast RAM in SysInfo
   under vAmigaWeb, A500+ ECS, 2 MB chip + 2 MB fast). A floppy inserted on the insert-disk screen makes `disk_watch`
   reboot with the RESET instruction (1.3 boots the floppy without a reset). RESET puts Zorro boards back into autoconfig
