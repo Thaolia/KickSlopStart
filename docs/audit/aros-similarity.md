@@ -10,7 +10,8 @@ AROS is a public project (APL licence). Both sides are therefore quoted freely, 
 
 ## Verdict
 
-*Re-measured on 2026-11-03 (commit `2c6b1c6`, all of `src/`): same verdict, see "Re-run 2026-11-03" below.*
+*Re-measured on 2026-11-03 (commit `2c6b1c6`) and on 2026-11-04 (commit `ac2546a`), all of `src/`: same verdict, see
+the "Re-run" sections below.*
 
 - **No measurable reuse of AROS code beyond the background noise, with one exception, short and
   mandated by the ABI.** At the 20-token threshold, 132 tokens out of 221,721 (0.06%) coincide textually
@@ -504,6 +505,27 @@ Same maxima as before, except struct k = 12 (7.14% against 8.57%).
 - **Verdict: PASS.** No measurable reuse of AROS code beyond the background noise and the documented, ABI-imposed
   BCPL entry/return. The positive control (transliterated copy) was not re-run: the tool and its parameters are
   unchanged.
+
+## Re-run 2026-11-04 (commit `ac2546a`)
+
+Same tool, same AROS checkout (`build/audit/aros`, commit `4dbf650`), all of `src/` of a clean worktree at `ac2546a`
+(after the console commands, the gadget list and requester rules, the string gadgets, the DF0: locks and disk
+requesters, the packed boot image):
+
+```sh
+python3 -I tests/audit_aros_similarity.py <worktree>/src build/audit/aros -k 12 20 30 --limit 20 --json aros.json > aros.md
+```
+
+| comparison (k = 12, w = 8) | level | our tokens | longest run (tokens), 2026-11-03 → 2026-11-04 |
+|---|---|---|---|
+| src → AROS asm comparable | exact | 263,627 | 39 → 39 |
+| src → AROS asm comparable | norm / struct | 223,004 | 42 → 42 |
+| src → unrelated AROS asm (baseline) | norm / struct | 223,004 | 31 / 49 → 33 / 49 |
+| src → third-party Amiga asm (baseline) | norm / struct | 223,004 | 31 / 33 → 33 / 33 |
+
+Coverage against comparable AROS asm stays at 0.11 % (exact), 0.33 % (norm) and 1.36 % (struct), at or below the
+baselines. **Verdict unchanged**: the longest run against AROS is still the 42-token BCPL bridge entry imposed by the
+1.3 ABI, below the unrelated-code baseline.
 
 ## Limits
 

@@ -35,7 +35,7 @@ twelve. The method therefore detects real copying.
 
 | Comparison | Longest common code run | Coverage by runs ≥ 8 words |
 |---|---|---|
-| **our ROM vs original ROM** (2026-11-04) | **19 words / 13 instructions** | 1.02 % (≥ 16 words: 0.24 %, ≥ 32 words: 0.17 %, the keymap string tables) |
+| **our ROM vs original ROM** (2026-11-04, `ac2546a`) | **19 words / 13 instructions** | 1.11 % (≥ 16 words: 0.27 %, ≥ 32 words: 0.18 %, the keymap string tables) |
 | unrelated games vs original ROM (baseline) | 39 words / 18 instructions | — |
 | Commodore Workbench code vs original ROM (related code) | 121 words / 96 instructions | 3.8 % |
 | our ROM vs AROS ROM | 12 words / 8 instructions | — |
@@ -141,4 +141,6 @@ Measured on the builds of commit `ec9f9ab` (2026-10-29), then again on commit `2
 same controls: same verdict for both comparisons (details in the "Re-run 2026-11-03" sections of
 [rom-similarity.md](audit/rom-similarity.md) and [aros-similarity.md](audit/aros-similarity.md)). The ROM comparison was
 measured again on commit `aa656a8` (2026-11-04): same verdict, longest code match unchanged ("Re-run 2026-11-04" in
-[rom-similarity.md](audit/rom-similarity.md), which also states where each matching data table comes from).
+[rom-similarity.md](audit/rom-similarity.md), which also states where each matching data table comes from), and
+both comparisons again on commit `ac2546a` the same day, before tag v0.2.19: same verdicts, longest code match and AROS
+peak unchanged ("Re-run 2026-11-04 (commit `ac2546a`)" in both documents).

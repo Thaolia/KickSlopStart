@@ -36,7 +36,7 @@ tous. La méthode est donc capable de détecter une copie.
 
 | Comparaison | Plus longue correspondance de code | Couverture des correspondances ≥ 8 mots |
 |---|---|---|
-| **notre ROM / ROM d'origine** (2026-11-04) | **19 mots / 13 instructions** | 1,02 % (≥ 16 mots : 0,24 % ; ≥ 32 mots : 0,17 %, les tables de chaînes des keymaps) |
+| **notre ROM / ROM d'origine** (2026-11-04, `ac2546a`) | **19 mots / 13 instructions** | 1,11 % (≥ 16 mots : 0,27 % ; ≥ 32 mots : 0,18 %, les tables de chaînes des keymaps) |
 | jeux sans rapport / ROM d'origine (référence) | 39 mots / 18 instructions | — |
 | code Commodore du Workbench / ROM d'origine (code apparenté) | 121 mots / 96 instructions | 3,8 % |
 | notre ROM / ROM AROS | 12 mots / 8 instructions | — |
@@ -151,4 +151,6 @@ v0.2.15) avec les mêmes contrôles : même verdict pour les deux comparaisons (
 2026-11-03 » de [rom-similarity.md](audit/rom-similarity.md) et [aros-similarity.md](audit/aros-similarity.md)). La
 comparaison des ROM a été refaite sur le commit `aa656a8` (2026-11-04) : même verdict, plus longue correspondance de
 code inchangée (« Re-run 2026-11-04 » de [rom-similarity.md](audit/rom-similarity.md), qui indique aussi d'où vient
-chaque table de données qui correspond).
+chaque table de données qui correspond), puis les deux comparaisons ont été refaites sur le commit `ac2546a` le même
+jour, avant le tag v0.2.19 : mêmes verdicts, plus longue correspondance de code et pic AROS inchangés (« Re-run
+2026-11-04 (commit `ac2546a`) » dans les deux documents).

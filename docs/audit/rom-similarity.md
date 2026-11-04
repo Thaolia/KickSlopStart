@@ -10,7 +10,7 @@ matches are located only in **our** ROM.
 
 ## Verdict
 
-*Last re-measured on 2026-11-04 (commit `aa656a8`): same verdict, see "Re-run 2026-11-04" below.*
+*Last re-measured on 2026-11-04 (commit `ac2546a`): same verdict, see "Re-run 2026-11-04 (commit `ac2546a`)" below.*
 
 - **No code sequence of our ROM coincides with the original ROM beyond what unrelated
   programs already share with it.** The longest code match in our ROM
@@ -529,6 +529,143 @@ it are the keymap string tables, unchanged and already qualified. The longest co
 32 words; the `mn_chk_hi` Image descriptors, 20 words). The new code added since `2c6b1c6` brings only four 8-word
 matches, all hardware- or ABI-fixed idioms. The controls are reproduced exactly and the self-check finds 12 fragments
 out of 12.
+
+## Re-run 2026-11-04 (commit `ac2546a`)
+
+The measurement was repeated on `main` at `ac2546a` (`v0.2.18-26-gac2546a`), 13 commits after `aa656a8`, 9 of them
+touching `src/` (console `CMD_RESET`/`CLEAR`/`STOP`/`START`/`FLUSH`; DF0: locks and conflicts, `SET_DATE`,
+`RENAME_DISK`, write streams with a position, file system names, disk error requesters and their texts; intuition
+system gadgets in the window list, gadget list and requester rules, `ActivateGadget` and string gadgets with
+`LONGINT` conversion; feeder `NUMERICPAD`; the boot image redrawn in 16 colours and packed with ByteRun1). Same
+tool, same controls, same `--base tiers`, run by a separate analysis agent, before a push.
+
+### Inputs
+
+| role | file | size | sha1 |
+|---|---|---|---|
+| our ROM (production) | `build/kick13-prod.rom` (`make kick-prod`, `romtool info`: `is_kick ok`, `chk_sum ok`) | 262,144 bytes | `ac62d99a1f5895a5cfe080aff10f698502093d1a` |
+| our ROM (dev) | `build/kick13.rom` (`make`, `is_kick ok`, `chk_sum ok`) | 262,144 bytes | `dd34cce6c3ba9a5e90276fd4e72c1c6dd2449319` |
+| reference | unchanged | 262,144 bytes | `891e9a547772fe0c6c19b610baf8bc4ea7fcb785` |
+
+- **Build.** Both ROMs come from a clean worktree of `ac2546a` (no local change), built from scratch.
+- **Symbol tables.** The `Makefile` changed since `aa656a8` (header dependencies written by vasm, `c3812b4`), but its
+  object lists did not: the 65 objects of the `OBJS` list in "Exact commands" are still exact and in the same order
+  (`loadscreen.o` is still linked only with `LOADSCREEN_DEMO`, absent from both builds). Relink into
+  `build/audit/kick-prod.map` and `build/audit/kick-dev.map` of that worktree; each relinked binary (205,136 bytes
+  prod, 206,188 bytes dev) is byte-for-byte identical to the `kick.bin` of its build, and differs from the ROM only in
+  the 33 bytes of the version string at `$1C`. Both images are about 17.5 KB smaller than at `aa656a8`: the boot image
+  is now stored packed.
+- **Controls.** Same files as in the "Controls" table and the two previous re-runs, from the unpacked disks under
+  `build/audit/adf/`. **Reproducibility check:** the group sizes (21 hunks / 596,048 bytes, 390 hunks / 413,374 bytes,
+  50 hunks / 1,167,084 bytes) and the three rows "tiers / commodore / aros vs reference" are identical, figure for
+  figure, to the `aa656a8` output in all three streams (`diff` of the rows: empty). The notable threshold is therefore
+  unchanged: **40 words, 19 instructions, 19 loose instructions**.
+
+### Commands
+
+The same as in the `aa656a8` re-run, run inside the worktree for the relink and from the repository root for the
+measurement (the ROMs and maps are passed by path):
+
+```sh
+romtool info build/kick13-prod.rom; romtool info build/kick13.rom     # is_kick ok, chk_sum ok
+# OBJS: list of "Exact commands"; d = build/prod (prod) or build (dev)
+vlink -b rawbin1 -T src/exec/kick.ld -Mbuild/audit/kick-prod.map -o build/audit/kick-prod.bin $L
+cmp build/audit/kick-prod.bin build/prod/kick.bin                      # identical (dev: build/kick.bin, identical)
+python3 -I tests/audit_rom_similarity.py <worktree>/build/kick13-prod.rom assets/kick34005.A500 \
+    --temoin tiers <tiers files> --temoin commodore <Workbench files> \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <worktree>/build/audit/kick-prod.map --base tiers --selftest   # -> audit-prod.txt
+# same for the dev ROM (-> audit-dev.txt); full list of matches >= 8 tokens:
+python3 -I tests/audit_rom_similarity.py <worktree>/build/kick13-prod.rom assets/kick34005.A500 \
+    --map <worktree>/build/audit/kick-prod.map --seuil 8                 # -> all8-prod.txt
+```
+
+The new lists were compared with the `aa656a8` ones by stream, object, symbol, length and class.
+
+### Figures (production ROM vs reference)
+
+| stream | metric | 2026-11-04 (`aa656a8`) | 2026-11-04 (`ac2546a`) | threshold |
+|---|---|---|---|---|
+| mots | A tokens | 108,157 | 102,144 | |
+| mots | max (all) | 218 | 218 | |
+| mots | max code/table | 76 (keymap string tables) | 76 (keymap string tables) | 40 |
+| mots | max code, hand-qualified data excluded | **19** (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`) | |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 103 (1.02%) / 7 (0.24%) / 3 (0.17%) | 106 (1.11%) / 8 (0.27%) / 3 (0.18%) | |
+| mots | 4/8/16-gram | 2.7 / 0.9 / 0.4% | 2.8 / 0.9 / 0.4% | |
+| instr | A tokens | 68,678 | 63,846 | |
+| instr | max code/table | 16 (keymap string tables) | 17 (keymap string tables) | 19 |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) | |
+| instr | code ≥ 8 / ≥ 16 | 7 (0.12%) / 2 (0.05%) | 7 (0.13%) / 2 (0.05%) | |
+| instr-souple | max code/table | 16 (keymap string tables) | 17 (keymap string tables) | 19 |
+| instr-souple | code ≥ 8 / ≥ 16 | 16 (0.23%) / 2 (0.05%) | 16 (0.25%) / 2 (0.05%) | |
+| self-check | relocated fragments found | 12/12 | 12/12 | |
+
+- The A token counts drop because the boot image is now packed: its bitplanes no longer form long low-entropy runs.
+  The coverage percentages rise slightly for the same reason (same matches over a smaller ROM).
+- The keymap string tables are unchanged. Their `instr` length is back to 17 because the linear disassembly enters
+  the range at `+$0` again (`km_us_s42+$0`, `km_fr_s42+$0`), as on 2026-11-03.
+- The extra `mots` match ≥ 16 is `gameport_romtag+$C` (16 words, see "Reclassified" below), not new code.
+- The rows "our ROM vs tiers / commodore / aros" keep their `mots` maxima (10, 11 and 12 words). In `instr` the
+  maximum against `aros` goes from 7 to 8 instructions (one match), the others keep 6 and 7; in `instr-souple`, 8, 7
+  and 10. All are far below the threshold.
+- The dev ROM gives 76 / 17 / 17, self-check 12/12, and the same notable list as the production ROM (same objects,
+  symbols, lengths and classes), give or take address shifts.
+
+### Matches at or above the notable threshold
+
+- **instr / instr-souple (19):** no code/table match. The two low-entropy rows (`rf_outline+$44`, `draw.o`, 20 tokens;
+  `bcpl_rtdata+$8`, `bcpl.o`, 23 tokens) are unchanged.
+- **mots (40 words):** the two code/table matches are again `km_us_s42+$0` (`$0CD02`) and `km_fr_s42+$0`
+  (`$0D03A`), `src/exec/keymapdata.s`, 76 words: the keymap string tables qualified in "Update 2026-10-30". The nine
+  classified data rows are the same as at `aa656a8`: five inittabs (`expansion`, `mathffp`, `graphics`, `layers`,
+  `intuition`), `topaz8_loc`, `dos_rtinit+$42`, `km_us_himap+$18` and `km_fr_himap+$18`, with unchanged lengths
+  (longest data match: `graphics_inittab+$4`, 218 words, address table).
+
+### Matches longer than the longest code match (19 words / 13 instructions)
+
+Unchanged since `aa656a8`: `gfx_defcolors+$0` (`$11312`, 32 words, default ColorMap colours) and `mn_chk_hi+$0`
+(`$242F6`, 20 words, the check-mark `struct Image` descriptors), both data already qualified. No **code** match is
+longer than 13 instructions or 19 words: the longest is still `exp_cpbinding+$22` (`src/exec/expansion.s`, `$0DB84`).
+
+### New matches compared with the `aa656a8` lists
+
+Rows that only slid inside the same symbol, with the same length and class, are not new.
+
+- **New code matches ≥ 10 words:** none. **New code matches in `instr` or `instr-souple`:** none.
+- **New code match of 8-9 words** (`mots` stream only):
+
+| offset | words | symbol | source | nature |
+|---|---|---|---|---|
+| `$2C0B0` | 8 | `dos_handler+$1B2` | `src/dos/handler.s`, `.findinput` (`ACTION_FINDINPUT`) | public, cleared memory allocation (`MEMF_PUBLIC\|MEMF_CLEAR` then `AllocMem`), test of the result, then the start of the BSTR-to-C-string conversion of the packet's name argument (`BADDR` = shift left by 2, length byte first). The same allocation idiom already appears under `d3c_client`, `gel_vsprites` and `feeder_main`; the code is older than `aa656a8` and enters the list now because the allocation size before it changed (the stream state grew by one lock pointer) |
+
+- **New data match:** `vr_wprot+$1` (`$27DAA`, `mots`, 10 words, class `texte`, `src/dos/dos_lib.s`): the disk error
+  requester line `is write protected` with its terminator, running two bytes into the next string of our table. It
+  joins the requester texts already listed (`vr_itext+$28`, `vr_l1+$0`, `vr_r1+$1`, 10 words each, unchanged). The
+  other new requester strings (`Volume`, `is full`, `No disk present`, `in unit 0`, `Retry`, `Cancel`) give no match
+  of 8 tokens or more. These are on-screen messages worded to match what 1.3 displays (row "on-screen messages" of
+  "Provenance of the data that matches"), not code. Also new in `instr-souple` only: `graphics_name+$0` (8 tokens,
+  `texte`), the public name `graphics.library`.
+- **Reclassified, same range:** `gameport_romtag+$C` (16 words: the gameport.device RomTag tail, its public name and
+  the first long word of its init table) is now filed `code/table` instead of `texte`; `ow_create+$44`
+  (`src/dos/ofswrite.s`, a chain of three subroutine calls each followed by a test of D0, branch displacements
+  masked) is now filed `code/table` at 8 words instead of `texte` at 9. `km_fr_himap+$C` (9 tokens) is now entered as
+  `km_fr_himap+$10` (8 tokens); `km_us_lotypes+$2` (`instr-souple`, low entropy, 8 tokens) is back above 8 tokens, as
+  on 2026-11-03.
+- **Gone:** every match inside the boot image. At `aa656a8` the old bitplanes gave 7 low-entropy `mots` rows and
+  115 low-entropy `instr-souple` rows (8 to 18 tokens). The packed 16-colour image
+  gives no `mots` row and only two low-entropy `instr-souple` rows of 8 tokens (`bootscreen_planes+$1C0`,
+  `bootscreen_planes+$7CAE`), and no `code/table` row in any stream. Also gone: `al_coplist+$84` (the dos.library
+  RomTag no longer follows `alert.o` directly) and `expansion_name+$0` in `instr`/`instr-souple`.
+
+### Verdict 2026-11-04 (`ac2546a`)
+
+**PASS.** No code match reaches the notable threshold (19 instructions / 40 words); the only code/table matches above
+it are the keymap string tables, unchanged and already qualified. The longest code match is still 13 instructions /
+19 words (`exp_cpbinding+$22`); the longest data match is still `graphics_inittab` (218 words, address table). The
+code added since `aa656a8` brings a single new 8-word match, the public cleared allocation idiom in `dos_handler`.
+The new data are a requester text (`is write protected`, 10 words), mandated wording, and the new boot image, which
+matches nothing. The controls are reproduced exactly and the self-check finds 12 fragments out of 12.
 
 ## Provenance of the data that matches
 
