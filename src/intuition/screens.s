@@ -108,7 +108,8 @@ WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO: border layer (
 WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; application ClipRegion removed during an intuition drawing
 WDX_CLIPNEST    EQU WDX_CLIPSAVE+4   ; WORD: nesting of it_unclip
 WDX_XMSG        EQU WDX_CLIPNEST+2   ; messages allocated when the pool is all in use (IM_SPECIALLINK chain)
-WDX_SIZE        EQU WDX_XMSG+4
+WDX_SYSGAD      EQU WDX_XMSG+4       ; up to 5 system Gadgets (wn_mksysgads)
+WDX_SIZE        EQU WDX_SYSGAD+5*GG_SIZEOF
 WD_TBARH        EQU 10               ; height of a window's title bar (BorderTop)
 
 ; OpenScreen(newscreen a0) -> d0 = Screen | 0. Allocates the struct, the BitMap (cleared chip planes, except
@@ -1291,6 +1292,7 @@ intuition_OpenWindow:
         move.l  NW_IDCMPFLAGS(a2),WD_IDCMPFLAGS(a3)
         move.l  NW_FIRSTGADGET(a2),WD_FIRSTGADGET(a3)
         move.l  a4,WD_WSCREEN(a3)
+        bsr     wn_mksysgads
         move.l  NW_CHECKMARK(a2),d0  ; menu check mark: the application's, else the internal one (according to HIRES)
         bne.s   .ow_ck
         jsr     mn_defcheck
@@ -1903,6 +1905,54 @@ wn_patfill:
         addq.l  #8,sp
 .pf_ret:
         rts
+
+; wn_mksysgads(a3 = window, a4 = screen): the system gadgets asked for by the window's Flags, linked at the head of
+; WD_FIRSTGADGET in the 1.3 order front depth, back depth, sizing, close, drag, with the 1.3 boxes (spec
+; intuition-frame-v34 §5.1-§5.2): programs count them in AddGadget positions (intuition-gadgets-v34 §1.1). They carry
+; no imagery: wn_sysgads draws the pictograms and the frame code takes their clicks. Clobbers d0/a0/a1.
+wn_mksysgads:
+        movem.l d3/a2,-(sp)
+        lea     WDX_SYSGAD(a3),a1
+        lea     sg_tab(pc),a2
+        moveq   #5-1,d3
+.sg_lp:
+        move.w  (a2)+,d0
+        and.w   WD_FLAGS+2(a3),d0
+        beq.s   .sg_skip
+        move.l  WD_FIRSTGADGET(a3),GG_NEXTGADGET(a1)
+        move.l  a1,WD_FIRSTGADGET(a3)
+        move.w  (a2)+,d0
+        btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO
+        beq.s   .sg_type
+        or.w    #GZZGADGET,d0
+.sg_type:
+        move.w  d0,GG_GADGETTYPE(a1)
+        move.w  (a2)+,GG_FLAGS(a1)
+        move.l  a2,a0
+        tst.w   SC_VIEWPORT+vp_Modes(a4)
+        bmi.s   .sg_hires
+        addq.l  #8,a0
+.sg_hires:
+        move.l  (a0)+,GG_LEFTEDGE(a1)
+        move.l  (a0),GG_WIDTH(a1)
+        lea     GG_SIZEOF(a1),a1
+        lea     16(a2),a2
+        dbra    d3,.sg_lp
+        bra.s   .sg_ret
+.sg_skip:
+        lea     2+2+16(a2),a2
+        dbra    d3,.sg_lp
+.sg_ret:
+        movem.l (sp)+,d3/a2
+        rts
+; Built backwards (each one goes to the head): window flag, GadgetType, Flags, hires LeftEdge/TopEdge/Width/Height,
+; lores LeftEdge/TopEdge/Width/Height. GRELRIGHT/GRELBOTTOM edges count from Width-1/Height-1.
+sg_tab:
+        dc.w    WINDOWDRAG,$8020,GRELWIDTH|3,     0,0,0,10,       0,0,0,10    ; GADGHNONE
+        dc.w    WINDOWCLOSE,$8080,0,              4,0,24,10,      0,0,14,10
+        dc.w    WINDOWSIZING,$8010,GRELRIGHT|GRELBOTTOM, -15,-8,16,9, -10,-9,11,10
+        dc.w    WINDOWDEPTH,$8060,GRELRIGHT,      -52,0,24,10,    -33,0,17,10
+        dc.w    WINDOWDEPTH,$8040,GRELRIGHT,      -28,0,26,10,    -16,0,17,10
 
 ; wn_sysgads(a3 = window, a5): system gadget pictograms (spec §5): close at (0,0), size in the bottom-right
 ; corner, back then front depth on the right of the bar. Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.

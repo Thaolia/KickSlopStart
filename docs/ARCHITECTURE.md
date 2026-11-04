@@ -882,6 +882,13 @@ differs.
     IOERR_ABORTED, CMD_RESET = STOP + FLUSH + START. io_Error = 0 for all five (1.3 leaves the caller's D0 there), and
     CMD_CLEAR replies like the others (1.3 never returns it). Probe: `tests/concmd_probe.sh` (window unit, PA_IGNORE
     reply port, reports from CSI 6n).
+  - Gadget lists (spec intuition-gadgets-v34, 2026-11-04): OpenWindow links real system Gadgets at the head of
+    Window.FirstGadget (front depth, back depth, sizing, close, drag, 1.3 boxes from intuition-frame §5.2, in the
+    private window block `WDX_SYSGAD`), so AddGadget/AddGList positions count them as on 1.3. They have no imagery:
+    `wn_sysgads` still draws the pictograms, the frame code takes their clicks, and the gadget walkers skip
+    SYSGADGET entries. RemoveGadget/RemoveGList keep the NextGadget of the last removed gadget and return $0000FFFF
+    when not found; RefreshGList with a count <= 0 draws to the end and redraws the pictograms when the range holds
+    a system gadget. `tests/glist_probe.sh` gives the same output on our ROM and on 1.3.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

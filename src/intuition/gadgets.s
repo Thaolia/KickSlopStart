@@ -1989,8 +1989,9 @@ intuition_AddGList:
         movem.l (sp)+,d2/a2-a3/a6
         rts
 
-; RemoveGadget(window a0, gadget a1) -> d0 = position it occupied | -1. RemoveGList(window a0, gadget a1, count
-; d0 (-1 = up to the end)): the gadgets leave the list, the last one removed is terminated by NULL.
+; RemoveGadget(window a0, gadget a1) -> d0 = position it occupied | $FFFF. RemoveGList(window a0, gadget a1, count
+; d0 (<= 0 = up to the end)): the gadgets leave the list; as on 1.3 the last one removed keeps its NextGadget
+; (spec intuition-gadgets-v34 §4.1).
 intuition_RemoveGadget:
         moveq   #1,d0
 intuition_RemoveGList:
@@ -2022,7 +2023,6 @@ intuition_RemoveGList:
         bra.s   .rg_last
 .rg_cut:
         move.l  GG_NEXTGADGET(a2),(a0)
-        clr.l   GG_NEXTGADGET(a2)
         move.l  a1,a0
         move.l  (sp),a6              ; IntuitionBase
         bsr     gad_forget
@@ -2032,14 +2032,15 @@ intuition_RemoveGList:
         bra.s   .rg_ret
 .rg_none:
         jsr     LVO_PERMIT(a6)
-        moveq   #-1,d0
+        move.l  #$FFFF,d0            ; UWORD -1, zero-extended (spec §1.3)
 .rg_ret:
         addq.l  #4,sp
         movem.l (sp)+,d2/a2/a6
         rts
 
 ; RefreshGadgets(gadgets a0, window a1, requester a2): redraws from this gadget up to the end of the list.
-; RefreshGList(gadgets a0, window a1, requester a2, count d0): at most count gadgets (-1 = all).
+; RefreshGList(gadgets a0, window a1, requester a2, count d0): at most count gadgets (<= 0 = to the end, spec
+; intuition-gadgets-v34 §1.2).
 intuition_RefreshGadgets:
         moveq   #-1,d0
 intuition_RefreshGList:
@@ -2048,8 +2049,25 @@ intuition_RefreshGList:
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d2
-        cmp.l   WD_FIRSTGADGET(a3),a2    ; from the head of the list: the system gadgets (at the head in intuition 1.3)
-        seq     -(sp)                    ; are redrawn last, on top
+        bgt.s   .rf_count
+        moveq   #-1,d2
+.rf_count:
+        move.l  a2,a0                    ; a system gadget in the range: the pictograms are redrawn last, on top
+        move.l  d2,d1
+.rf_sys:
+        cmpa.w  #0,a0
+        beq.s   .rf_nosys
+        tst.w   GG_GADGETTYPE(a0)
+        bmi.s   .rf_hassys
+        move.l  GG_NEXTGADGET(a0),a0
+        subq.l  #1,d1
+        bne.s   .rf_sys
+.rf_nosys:
+        sf      -(sp)
+        bra.s   .rf_draw
+.rf_hassys:
+        st      -(sp)
+.rf_draw:
         bsr     gad_drawrev
         tst.b   (sp)+
         beq.s   .rf_ret

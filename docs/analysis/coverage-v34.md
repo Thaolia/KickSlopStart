@@ -389,7 +389,7 @@ version.
 |---:|---|---|---|---|:-:|
 | -30 | `OpenIntuition` | yes — intuition-misc §1 | yes (= library Open, as 1.3) | 18 / 2530 | — |
 | -36 | `Intuition` | yes — intuition-input-menus §1–§2 ; intuition-misc §2 | yes | 15324 / 28100 | — |
-| -42 | `AddGadget` | partial — intuition-gzz §6.2, §6.3 | yes | 62 / 474 | P2 |
+| -42 | `AddGadget` | yes — intuition-gadgets §2 | yes | 62 / 474 | — |
 | -48 | `ClearDMRequest` | yes — intuition-requesters §4.4 | yes | 30 / 76 | — |
 | -54 | `ClearMenuStrip` | yes — intuition-input-menus §3.2 | yes | 44 / 164 | — |
 | -60 | `ClearPointer` | yes — intuition-misc §3 | yes | 66 / 922 | — |
@@ -411,16 +411,16 @@ version.
 | -156 | `ModifyProp` | yes — intuition-prop §5 | yes | 6 / 6 | — |
 | -162 | `MoveScreen` | yes — intuition-screens §8.2 | yes | 18 / 804 | — |
 | -168 | `MoveWindow` | partial — intuition-input-menus §1.10 (deferred) ; installclipregion §4.2 | yes | 74 / 288 | P3 |
-| -174 | `OffGadget` | yes — intuition-gzz §6.4 | yes | 42 / 7246 | — |
+| -174 | `OffGadget` | yes — intuition-gadgets §6 ; intuition-gzz §6.4 | yes | 42 / 7246 | — |
 | -180 | `OffMenu` | yes — intuition-input-menus §3.2 | yes | 40 / 486 | — |
-| -186 | `OnGadget` | yes — intuition-gzz §6.4 | yes | 42 / 7246 | — |
+| -186 | `OnGadget` | yes — intuition-gadgets §6 ; intuition-gzz §6.4 | yes | 42 / 7246 | — |
 | -192 | `OnMenu` | yes — intuition-input-menus §3.2 | yes | 42 / 488 | — |
 | -198 | `OpenScreen` | yes — intuition-screens §2 ; intuition-screenbehind | yes | 12 / 10462 | — |
 | -204 | `OpenWindow` | yes — intuition-frame §2 ; intuition-gzz §1–§2 | yes | 12 / 15640 | — |
 | -210 | `OpenWorkBench` | yes — intuition-screens §7.2 | yes | 6 / 11734 | — |
 | -216 | `PrintIText` | partial — intuition-gzz §6.1 ; intuition-requesters §2.3 | yes | 20 / 802 | P2 |
-| -222 | `RefreshGadgets` | yes — intuition-gzz §6.2 | yes | 16 / 7220 | — |
-| -228 | `RemoveGadget` | cited — intuition-gzz §6.3 ; octamed §2.4 | yes | 48 / 498 | P2 |
+| -222 | `RefreshGadgets` | yes — intuition-gadgets §5 ; intuition-gzz §6.2 | yes | 16 / 7220 | — |
+| -228 | `RemoveGadget` | yes — intuition-gadgets §4 | yes | 48 / 498 | — |
 | -234 | `ReportMouse` | yes — intuition-input-menus §2.6 | yes | 66 / 94 | — |
 | -240 | `Request` | yes — intuition-requesters §2–§3 | yes | 14 / 8662 | — |
 | -246 | `ScreenToBack` | yes — intuition-screens §8.1 | yes | 12 / 956 | — |
@@ -454,9 +454,9 @@ version.
 | -414 | `LockIBase` | yes — intuition-misc §6 ; intuition-screens §9 | yes | 60 / 120 | — |
 | -420 | `UnlockIBase` | yes — intuition-misc §6 | yes | 54 / 114 | — |
 | -426 | `GetScreenData` | yes — intuition-screens §7.5 | yes | 112 / 11840 | — |
-| -432 | `RefreshGList` | cited — octamed §2.4 | yes | 48 / 7222 | P2 |
-| -438 | `AddGList` | cited — octamed §2.4 | yes | 20 / 432 | P2 |
-| -444 | `RemoveGList` | cited — octamed §2.4 | yes | 18 / 468 | P2 |
+| -432 | `RefreshGList` | yes — intuition-gadgets §5 | yes | 48 / 7222 | — |
+| -438 | `AddGList` | yes — intuition-gadgets §3 | yes | 20 / 432 | — |
+| -444 | `RemoveGList` | yes — intuition-gadgets §4 | yes | 18 / 468 | — |
 | -450 | `ActivateWindow` | yes — intuition-frame §4.1 ; intuition-input-menus §1.11 | yes | 38 / 252 | — |
 | -456 | `RefreshWindowFrame` | yes — intuition-frame §2 | yes | 28 / 8686 | — |
 | -462 | `ActivateGadget` | cited — workbench-task §6.8 ; octamed §2.4 | yes | 236 / 1232 | P2 |
@@ -749,8 +749,8 @@ marks a command that both 1.3 and our ROM refuse.
 
 Status re-checked on 2026-11-04 (`c4bdddc`).
 
-1. **Still open.** `intuition-gzz-v34.md` §6.2 (table row) classifies `RefreshGList` as "V36+, absent in 1.3".
-   This is wrong: `RefreshGList` (−432), `AddGList` (−438), `RemoveGList` (−444), `ActivateWindow` (−450),
+1. **Settled 2026-11-04.** `intuition-gzz-v34.md` §6.2 (table row) classified `RefreshGList` as "V36+, absent in 1.3"; the row is corrected and points to `intuition-gadgets-v34.md`.
+   That was wrong: `RefreshGList` (−432), `AddGList` (−438), `RemoveGList` (−444), `ActivateWindow` (−450),
    `RefreshWindowFrame` (−456), `ActivateGadget` (−462) and `NewModifyProp` (−468) are **V33** functions
    (`.fd`), and the vector table of intuition 34.3 does have 78 entries (4 + 74).
 2. **Still open.** `exec-spec.md` §3 ("Delta") puts `AddMemList` (−618), `CopyMem` (−624) and `CopyMemQuick`
@@ -796,7 +796,7 @@ been checked against the V34 behaviour. "Used by" names programs analysed in `do
 | Rank | Module | Function(s) | Spec / our side | Why it matters (used by) | Prio |
 |--:|---|---|---|---|:-:|
 | 1 | console.device | `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` | specified (console-keymap §2.4) / **refused** (IOERR_NOCMD) | Any program that clears or holds the console input queue before a prompt; CLEAR never being replied on 1.3 (a SendIO + WaitIO caller hangs there) is a behaviour to keep in mind before deciding how far to copy it. Implementation gap only: no analysis needed | P1 |
-| 2 | intuition | `RefreshGList`, `AddGList`, `RemoveGList`, `RemoveGadget`, `AddGadget` (beyond §6.2–§6.3 of intuition-gzz) | cited / yes | OctaMED v4 (RefreshGList ×27, RemoveGadget ×22, AddGadget ×18, AddGList/RemoveGList ×10 each, octamed §2.4); SysInfo 4.4 (AddGList, RefreshGList, sysinfo-44 §1.0). Closure ≈ 7.2 KB for RefreshGList. Also needs §5 item 1 fixed | P2 |
+| 2 | intuition | `RefreshGList`, `AddGList`, `RemoveGList`, `RemoveGadget`, `AddGadget` (beyond §6.2–§6.3 of intuition-gzz) | **specified 2026-11-04** (intuition-gadgets-v34, probe `tests/glist_probe.s`) / yes, with gaps (system gadgets not in FirstGadget, NextGadget cleared on removal, RefreshGList count 0) | OctaMED v4 (RefreshGList ×27, RemoveGadget ×22, AddGadget ×18, AddGList/RemoveGList ×10 each, octamed §2.4); SysInfo 4.4 (AddGList, RefreshGList, sysinfo-44 §1.0). Closure ≈ 7.2 KB for RefreshGList. Also needs §5 item 1 fixed | P2 |
 | 3 | intuition | `ActivateGadget` and the string-gadget engine (editing, UNDO, LONGINT; IDCMP of GADGETUP from a string gadget) | cited (out of scope in intuition-input-menus §6) / yes | OctaMED text fields (×11); Workbench Rename and Info (workbench-task §6.8); any requester with a text field. Closure ≈ 1.2 KB plus the input-engine part | P2 |
 | 4 | graphics | Text and fonts: `Text` (full contract: clipping, styles, JAM modes), `TextLength`, `OpenFont`, `CloseFont`, `SetFont`, `AskFont`, `AddFont`, `RemFont`, `AskSoftStyle`/`SetSoftStyle` (algorithmic styles), `ClearEOL`, `ClearScreen` | partial (fastfonts-ff, setpatch-138 §1.9) or none / yes | Every window title, menu and CLI line; OctaMED (Text ×55, OpenFont), Workbench (OpenFont failure = dead-end alert, workbench-task §3.1), console. Text ≈ 1.3 KB of closure | P2 |
 | 5 | graphics | `Draw` (line drawing) and `PolyDraw`, `Move` | cited / yes | Workbench drawers and frames, OctaMED (Draw ×16, PolyDraw, Move ×69), Preferences; graphics-area open point 4 asks whether AreaEnd's edges equal Draw's. Draw ≈ 3.5 KB of closure. *A500 risk*: blitter line mode (one-dot, octant, BLTAPT sign) | P2 |

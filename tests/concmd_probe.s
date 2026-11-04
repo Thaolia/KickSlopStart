@@ -62,6 +62,9 @@ boot:
 
 ; stage 2: a6 = ExecBase.
 stage2:
+        lea     neww+26(pc),a0          ; NewWindow.Title: the binary runs where stage 1 loaded it
+        lea     title(pc),a1
+        move.l  a1,(a0)
         lea     intname(pc),a1
         moveq   #0,d0
         jsr     _OpenLibrary(a6)
@@ -268,7 +271,7 @@ neww:   dc.w    20,20,400,100
         dc.b    0,1
         dc.l    0                       ; IDCMP
         dc.l    $100F                   ; ACTIVATE, WINDOWSIZING/DRAG/DEPTH
-        dc.l    0,0,title,0,0
+        dc.l    0,0,0,0,0               ; Title set at run time
         dc.w    100,50,640,200
         dc.w    1                       ; WBENCHSCREEN
 intname: dc.b   "intuition.library",0

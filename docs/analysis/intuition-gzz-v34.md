@@ -302,7 +302,8 @@ All the paths listed in §6.2 go through **the same routine**, which receives th
 a count `n`. It works in two passes.
 
 1. **Rendering pass, backwards.** It first advances to the **last** gadget of the range:
-   the n-th, or the end of the list if `n` is −1 or −2. It then draws **from that last one
+   the n-th, or the end of the list if `n` is 0 or negative (−1, −2, … — a count of 0 also draws to the end,
+   probed with RefreshGList in `intuition-gadgets-v34.md` §7). It then draws **from that last one
    up to the first**, walking back up the list (each time the gadget whose Next points to the
    current one). For each gadget, **in this order**:
    1. the rendering: PropGadget (container and knob), otherwise **DrawImage** of GadgetRender if
@@ -327,11 +328,11 @@ of drawing.
 | **OpenWindow** (initial drawing, after the frame) | `Window->FirstGadget`: system gadgets at the head, then the whole NewWindow list | −1 (whole list) |
 | **RefreshWindowFrame** (−456), and **frame repair** when the frame layer (GZZ) or the single layer has LAYERREFRESH (BeginUpdate of the frame layer, frame redrawn, all gadgets, EndUpdate) | `Window->FirstGadget` | −1 |
 | **RefreshGadgets**(gad, win, req) (−222) | `gad` | **−2** (up to the end of the list) |
-| RefreshGList (V36+, absent in 1.3) | — | — |
+| **RefreshGList**(gad, win, req, n) (−432, present in V34: a V33 LVO) | `gad` | **`n` as passed**: n > 0 draws n gadgets (fewer if the list ends), n ≤ 0 draws to the end of the list, n = −2 also gets the requester rule below; `req` ignored (`intuition-gadgets-v34.md` §5) |
 | Drawing of a requester | first gadget of the requester | −1 |
 | Screen title bar | screen gadgets | −1 |
 | One-off refresh (window activation or deactivation, frame gadgets) | one gadget | 1 |
-| **AddGadget**(win, gad, pos) (−42) | — | **draws nothing**: simple insertion at position `pos` (−1 = end), the gadget is only displayed at the next Refresh |
+| **AddGadget**(win, gad, pos) (−42), **AddGList** (−438), **RemoveGadget** (−228), **RemoveGList** (−444) | — | **draw nothing**: list update only (insertion at / removal from a position, system gadgets counted, `intuition-gadgets-v34.md` §2–§4); an added gadget is only displayed at the next refresh |
 | **OffGadget**(gad, win, req) (−174) / **OnGadget**(gad, win, req) (−186) | `gad` | **−2**: set / clear GADGDISABLED, then exactly the RefreshGadgets(gad, win) path (§6.4) |
 
 Requester gadgets (GTYP REQGADGET), for every caller of the routine [O, ROM reading, not probed]: the
@@ -471,6 +472,9 @@ layer at (0,0). No dot appears outside x 420..483 / y 176..185 of the ICACHE box
 - [x] §6: the drawing order is described as a rule (backwards, then highlighting
   forwards) with the table of callers. info.library's list is given by its order and
   its public calls (AddGadget −1, RefreshGadgets(FirstGadget)), without copied code.
+- [x] **Correction of 2026-11-04**: §6.2 no longer lists RefreshGList as V36+ (it is a V33 LVO present in
+  34.3); its row and the add/remove rows now point to `intuition-gadgets-v34.md`; §6.1 states that a count of 0
+  draws to the end of the list (black-box probe `tests/glist_probe.s`).
 - [x] **Correction of 2026-10-29**: removed the 13 ROM routine addresses from the header,
   replaced by the list of functions studied; body unchanged.
 - [x] §6.4 (2026-11-02): ghosting described as a rule (pattern words, pens, rectangle, alignment, callers);
