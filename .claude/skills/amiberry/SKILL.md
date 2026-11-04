@@ -175,6 +175,9 @@ Mouse moves and joystick use `MONITOR input event`, refused while gdb is attache
 ## Pitfalls already met
 
 - Unix socket paths are limited to 108 bytes: the IPC socket lives in a short `/tmp/ab<uid>-<i>` directory.
+- IPC sockets, ports and displays are shared by every checkout and worktree, so the slot registry lives in
+  `/tmp/ab<uid>-slots` (it was under each tree's `build/`: a worktree session took the same slot as a main-tree one
+  and its `stop` sent QUIT to the other). A worktree still running an older copy of the script does not see it.
 - Under WSLg, `Xvfb -displayfd` stalls on display `:0`; the script picks a free `/tmp/.X<n>-lock` under its lock.
 - SDL must use x11 (`SDL_VIDEO_DRIVER`): with its own `XDG_RUNTIME_DIR` Amiberry would otherwise try Wayland.
 - The GDB server is refused with `cpu_threaded=true`; the script forces it off.

@@ -8,7 +8,10 @@ set -u
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(cd "$SKILL_DIR/../../.." && pwd)"
 BASE="$ROOT/build/amiberry"
-LOCK="$BASE/.lock"
+# Slots are machine-wide: IPC sockets (/tmp/ab<uid>-<i>), ports and displays are shared by every checkout and
+# worktree of the project, so the registry that hands them out must be too.
+SLOTS="/tmp/ab$(id -u)-slots"
+LOCK="$SLOTS/.lock"
 PORT_BASE=24100                      # session i: serial PORT_BASE+2i, GDB PORT_BASE+2i+1
 MAX_SESSIONS=16
 COMMODORE_ROM="$ROOT/assets/kick34005.A500"
@@ -158,19 +161,23 @@ firewall), with --analysis; its findings go to docs/analysis/ as behaviour only.
   [ $((chip % 512)) = 0 ] && [ "$chip" -gt 0 ] || die "start: --chip must be a multiple of 512 KB"
   [ $((slow % 256)) = 0 ] || die "start: --slow must be a multiple of 256 KB"
 
-  mkdir -p "$BASE/sessions" "$BASE/analysis" "$BASE/slots"
+  mkdir -p "$BASE/sessions" "$BASE/analysis" "$SLOTS"
   local kind="sessions"; [ "$analysis" = 1 ] && kind="analysis"
   exec 9>"$LOCK"
   flock 9
-  # slot file = "<kind>/<name> <pid of the start command>": held while that start command runs (its session.env
-  # does not exist yet) or while the session's Amiberry runs; otherwise reclaimed
-  local i idx="" slotname starter spid held=" "
+  # slot file = "<session dir> <pid of the start command>": held while that start command runs (its session.env
+  # does not exist yet) or while the session's Amiberry runs; otherwise reclaimed. Session names only have to be
+  # unique inside one checkout.
+  local i idx="" slotdir starter spid held=" "
   for i in $(seq 0 $((MAX_SESSIONS - 1))); do
-    if [ -f "$BASE/slots/$i" ]; then
-      read -r slotname starter < "$BASE/slots/$i"
-      spid="$( (. "$BASE/$slotname/session.env" 2>/dev/null; printf '%s' "${AMI_PID-}") )"
-      if alive "$spid" || alive "$starter"; then held="$held${slotname#*/} "; continue; fi
-      rm -f "$BASE/slots/$i"
+    if [ -f "$SLOTS/$i" ]; then
+      read -r slotdir starter < "$SLOTS/$i"
+      spid="$( (. "$slotdir/session.env" 2>/dev/null; printf '%s' "${AMI_PID-}") )"
+      if alive "$spid" || alive "$starter"; then
+        [ "$(dirname "$(dirname "$slotdir")")" = "$BASE" ] && held="$held${slotdir##*/} "
+        continue
+      fi
+      rm -f "$SLOTS/$i"
     fi
     [ -n "$idx" ] && continue
     port_free $((PORT_BASE + 2 * i)) && port_free $((PORT_BASE + 2 * i + 1)) && idx="$i"
@@ -182,7 +189,7 @@ firewall), with --analysis; its findings go to docs/analysis/ as behaviour only.
   local dir="$BASE/$kind/$name"
   rm -rf "$BASE/sessions/$name" "$BASE/analysis/$name"
   mkdir -p "$dir/home/conf"
-  echo "$kind/$name $$" > "$BASE/slots/$idx"
+  echo "$dir $$" > "$SLOTS/$idx"
   local sport=$((PORT_BASE + 2 * idx)) gport=$((PORT_BASE + 2 * idx + 1))
   local xdg
   xdg="/tmp/ab$(id -u)-$idx"                # short: a Unix socket path is limited to 108 bytes
@@ -207,7 +214,7 @@ firewall), with --analysis; its findings go to docs/analysis/ as behaviour only.
       [ -n "$disp" ] && break
       kill "$xvfb_pid" 2>/dev/null; xvfb_pid=""
     done
-    [ -n "$disp" ] || { rm -f "$BASE/slots/$idx"; flock -u 9; die "could not start Xvfb"; }
+    [ -n "$disp" ] || { rm -f "$SLOTS/$idx"; flock -u 9; die "could not start Xvfb"; }
   fi
   flock -u 9
 
@@ -280,8 +287,8 @@ stop_one() {   # needs SDIR (session.env loaded or not)
   alive "${XVFB_PID:-}" && kill "$XVFB_PID" 2>/dev/null
   [ -n "${XDG:-}" ] && rm -rf "$XDG"
   local held_by=""
-  [ -n "${INDEX:-}" ] && [ -f "$BASE/slots/$INDEX" ] && read -r held_by _ < "$BASE/slots/$INDEX"
-  [ "$held_by" = "$KIND/$NAME" ] && rm -f "$BASE/slots/$INDEX"
+  [ -n "${INDEX:-}" ] && [ -f "$SLOTS/$INDEX" ] && read -r held_by _ < "$SLOTS/$INDEX"
+  [ "$held_by" = "$BASE/$KIND/$NAME" ] && rm -f "$SLOTS/$INDEX"
   echo "session $NAME stopped (logs kept in $SDIR)"
 }
 
