@@ -924,6 +924,9 @@ differs.
     qualifier (the feeder now sets IEQUALIFIER_NUMERICPAD on keypad keys, from keyboard.device's `kd_numpad`).
     Measurements use the screen's font; GADGHNONE draws no cursor. `tests/strg_probe.sh` (typed keys) matches 1.3
     except the 1.3 activation being deferred to the next input event (ours is immediate) and the font width.
+  - End of a BCPL process (issue #22, 2026-11-04): `rt_endproc`, reached by endtask (global 34) and by the return
+    of start(), freevecs the process's segarray (pr_SegList, always a getvec block for createproc processes) and then
+    RemTask(0) (bcpl-runtime §13.7.3). The GV is left alone: it is the parent's, dn_GlobalVec, or an AllocMem block.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

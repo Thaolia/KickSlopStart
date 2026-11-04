@@ -35,7 +35,7 @@ when a Shell is active the screen title `Workbench Screen` is shown instead. [O]
 | (g) new Shell opened again (prompt `3.SYS:> `) | 736 720 | −32 632 |
 
 - The first Shell costs ~40 KB, the second ~39 KB, the third and later ~32.6 KB. Opening then
-  closing a Shell leaves 56 bytes allocated. [O] Why the first two cost more is not established.
+  closing a Shell leaves 56 bytes allocated. [O] Why the first two cost more is not established; `newshell-memory-v34.md` §2.5 attributes the first-Shell extra to the NEWCON handler segment (7 504, kept loaded) and to IntuiMessages kept for the disk window.
 - The figure was stable while idle (same value on two screenshots ~30 s apart at step (a)). [O]
 - The prompt is `<n>.SYS:> ` (CLI number, a dot, the current directory name `SYS:`, `> `). [O]
 

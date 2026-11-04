@@ -1043,6 +1043,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   editor (ours is immediate); the 1.3 Workbench screen uses topaz 9 (10 px) when there is no system-configuration,
   our ROM has no topaz 9; the text clear does not write spaces past the NUL as 1.3 does; STRINGCENTER/STRINGRIGHT,
   GADGHBOX/GADGHIMAGE cursors and the ghost pattern of an edited disabled gadget are not done.
+  **Issue #22 (2026-11-04)**: endtask and the end of a BCPL process free the process's segarray (getvec block), as
+  1.3 does: a NewShell/EndCLI cycle lost 48 bytes (Shell and Newcon-Handler segarrays). The first cycle still keeps
+  `L:Newcon-Handler` loaded in the NEWCON DeviceNode (7504 bytes), as on 1.3 (`docs/analysis/newshell-memory-v34.md`).
+  Open: the GV of a handler whose dn_GlobalVec is 0 (makeglobvec) is not freed at its end.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
   has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars

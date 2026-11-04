@@ -545,11 +545,7 @@ bcpl_proc_entry:
         lea     bcpl_ret(pc),a6
         jsr     (a5)                 ; start(pkt); normal return or stop -> .pe_end
 .pe_end:
-        move.l  ($4).w,a6
-        sub.l   a1,a1
-        jsr     LVO_REMTASK(a6)      ; end of process (RemTask(0) does not return)
-.pe_hang:
-        bra.s   .pe_hang
+        bra     rt_endproc
 
 ; ===================================== internal primitives (68000 convention) ===================================
 
@@ -1442,11 +1438,27 @@ rt_createproc:
 
 ; 34 endtask(): end of the current process.
 g_endtask:
+        bra     rt_endproc
+
+; rt_endproc: end of a process created by createproc (endtask, spec §13.7.3): freevec of its segarray, then
+; RemTask(0). Every segarray handed to createproc is a getvec block; it is only read by globin at startup. The GV
+; is kept: ours are shared (parent's, dn_GlobalVec) or not getvec blocks. Does not return.
+rt_endproc:
         move.l  ($4).w,a6
+        move.l  EB_THISTASK(a6),a0
+        move.l  PR_SEGLIST(a0),d0
+        clr.l   PR_SEGLIST(a0)
+        lsl.l   #2,d0
+        beq.s   .ep_rem
+        move.l  d0,a1
+        subq.l  #4,a1
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.ep_rem:
         sub.l   a1,a1
         jsr     LVO_REMTASK(a6)
-.et_hang:
-        bra.s   .et_hang
+.ep_hang:
+        bra.s   .ep_hang
 
 ; 40 readbytes(adr, n) / 43 writebytes(adr, n): Read(input(), ...) / Write(output(), ...) on a byte address.
 g_readbytes:
