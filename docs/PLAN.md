@@ -1051,6 +1051,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   1.3 does: a NewShell/EndCLI cycle lost 48 bytes (Shell and Newcon-Handler segarrays). The first cycle still keeps
   `L:Newcon-Handler` loaded in the NEWCON DeviceNode (7504 bytes), as on 1.3 (`docs/analysis/newshell-memory-v34.md`).
   Open: the GV of a handler whose dn_GlobalVec is 0 (makeglobvec) is not freed at its end.
+  **Regions (2026-11-04)**: spec `graphics-regions-v34`. The ten Region functions keep the 1.3 node order (no merge,
+  no sort: Or cuts the new rectangle through a pending list, Xor puts the old nodes outside first, And keeps or cuts
+  nodes in place), the 1.3 bounds (union for Or, normalised minimum and shifted maximum otherwise, +15000 when
+  emptied), the return values and the AN_RegionMemory alert where 1.3 has it; ClearRect and the region-region
+  functions are the 1.3 compositions. `tests/gregion_probe.sh` matches every §11 vector. Open: AndRectRegion's
+  MaxX/MaxY follow the real rectangle (1.3: garbage from its own pointers).
   **Text and fonts (2026-11-04)**: spec `graphics-text-v34`. Two ROM fonts, topaz 9 (10x9, derived from our 8x8 glyphs)
   then topaz 8, codes $20-$FF (Latin-1 composed by `tests/mk_font8x8.py`); the Preferences font is the default font
   from intuition's start (topaz 9 without devs:system-configuration). OpenFont scoring, exact name; CloseFont/AddFont/

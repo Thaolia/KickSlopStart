@@ -927,6 +927,11 @@ differs.
   - End of a BCPL process (issue #22, 2026-11-04): `rt_endproc`, reached by endtask (global 34) and by the return
     of start(), freevecs the process's segarray (pr_SegList, always a getvec block for createproc processes) and then
     RemTask(0) (bcpl-runtime §13.7.3). The GV is left alone: it is the parent's, dn_GlobalVec, or an AllocMem block.
+  - Regions (spec graphics-regions-v34, 2026-11-04): the public functions of `regions.s` work on absolute nodes
+    (rg_toabs) and finish with rg_rel (relative to bounds.MinX/MinY, Prev rebuilt, first Prev = region + 8) or
+    rg_norm (1.3 normalisation). OrRectRegion/XorRectRegion cut through a pending list (rg_cut, rg_bands in the
+    order left, right, top, bottom); ClearRectRegion and AndRegionRegion are built from the other calls as 1.3 does.
+    The rl_* engine used by layers is separate and unchanged.
   - Horizontal display position (issue #23, 2026-11-04): MakeVPort computes x' = vp.DxOffset (halved in HIRES) +
     View.DxOffset - $81 and moves DIWSTRT/DIWSTOP by x', DDFSTRT/DDFSTOP by (x' >> 1) rounded to the fetch unit and
     BPLCON1 by the rest (`mv_hshift`); a fine scroll that wraps gives back the RasInfo scroll's extra word. With the

@@ -137,7 +137,9 @@ is a value left over in D0.
 
 No value looks like garbage (no pointer, no leftover sentinel). The only non-1 value is the void
 AndRectRegion, which returns 0 in this case; whether it is always 0 (for example when the result is empty
-or when allocation fails) was not probed. The FALSE paths (memory failure) were not provoked here; §5.3
+or when allocation fails) was not probed. Answered since in `graphics-regions-v34.md` §7: AndRectRegion leaves the caller's D0 on an empty
+region and otherwise returns the vertical shift of its final normalisation (0 here), and the FALSE and
+dead-end-alert paths of the region functions are listed in its §6. The FALSE paths (memory failure) were not provoked here; §5.3
 gives 0 for them.
 
 ---
