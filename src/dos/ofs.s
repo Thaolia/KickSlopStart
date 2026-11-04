@@ -219,18 +219,20 @@ ofs_split:
 ofs_read_block:
                 lsl.l   #8,d0
                 add.l   d0,d0                        ; byte offset in the partition = block * 512
-                move.l  a2,IO_DEVICE(a3)
-                clr.l   IO_UNIT(a3)
                 move.l  EB_THISTASK(a6),a0
                 move.l  TC_USERDATA(a0),d1
-                beq.s   .rb_go                       ; not a file-handler: unit 0 = DF0
-                move.l  d1,a0
+                beq.s   .rb_df0
+                move.l  d1,a0                        ; (a3 may be HC_TDIO itself: copied, never cleared first)
                 move.l  HC_TDIO+IO_DEVICE(a0),IO_DEVICE(a3)
                 move.l  HC_TDIO+IO_UNIT(a0),IO_UNIT(a3)
                 move.l  HC_GEO+GEO_PORT(a0),MN_REPLYPORT(a3)
                 add.l   HC_GEO+GEO_POFF(a0),d0
                 moveq   #3,d1
                 move.l  d1,HC_GEO+GEO_TICKS(a0)
+                bra.s   .rb_go
+.rb_df0:                                             ; not a file-handler: unit 0 = DF0
+                move.l  a2,IO_DEVICE(a3)
+                clr.l   IO_UNIT(a3)
 .rb_go:
                 move.w  #CMD_READ,IO_COMMAND(a3)
                 move.l  #OFS_BSIZE,IO_LENGTH(a3)
