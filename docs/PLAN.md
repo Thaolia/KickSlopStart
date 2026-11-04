@@ -1195,6 +1195,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   right-button toggles while moving: no freeze). Suspected cause: a badly seated mouse (pin 7 +5 V, pin 9 right
   button). To retest after reseating it; if it persists, try the same mouse on the real Kickstart 1.3, then have an
   analysis agent probe what 1.3 writes to POTGO.
+  **POTGO probe (2026-11-04, gameport-v34 §10)**: 1.3 writes only $0000 then $0F00, once per frame from the gameport
+  VBlank server after one POTGOR read, never START, never an OUT bit back to 0; Intuition never touches it, menus
+  included. Ours matched in steady state ($0F00 every frame). The only difference was the boot proof of
+  potgo.resource, which wrote $0C01 (START) then $0000 to the hardware: it is now dev-only (`ifeq PROD`), so the
+  production ROM's first POTGO write is gameport's $0F00, as on 1.3. Nothing found that would make the right button
+  float on a real A500; the reseated-mouse retest and the same mouse on the real 1.3 remain the next steps.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

@@ -882,6 +882,8 @@ drt_done:
         movem.l (sp)+,d4/a2-a4
         move.l  ($4).w,a6
 
+                ifeq    PROD            ; PROD: no potgo proof: it writes START to the hardware, which 1.3 never
+                                        ; does (gameport-v34 §10); the first POTGO write is gameport's $0F00
         ; --- potgo.resource: START / DATxx allocation rules + high byte kept by WritePotgo ---
         ; (expected: AutoDoc AllocPotBits; a caller can block itself, ownership is left to the
         ; callers). POTGO is reset to 0 (all pins as input, reset value) at the end.
@@ -935,6 +937,7 @@ pgt_fail:
 pgt_done:
         move.l  (sp)+,a2
         move.l  ($4).w,a6
+                endc                    ; end of the potgo proof (PROD=0)
 
         ; --- keyboard.device: matrix, KBD_READEVENT (buffer / pending request returned by the event),
         ; CMD_CLEAR, AbortIO, reset handler list. SYNTHETIC keycodes handed to kbd_devevent (the same
@@ -6571,12 +6574,14 @@ msg_kbddev_ok:
         dc.b    "KBDDEV OK (keyboard.device: READMATRIX, READEVENT buffered + pending replied by event, CMD_CLEAR, AbortIO, NUMERICPAD qualifier, ring overflow $7D, ADD/REMRESETHANDLER)",13,10,0
 msg_kbddev_fail:
         dc.b    "KBDDEV FAIL",13,10,0
+                ifeq    PROD
 potgo_test_name:
         dc.b    "potgo.resource",0
 msg_potgo_ok:
         dc.b    "POTGO OK (potgo.resource: AllocPotBits START/DATxx in/out rules, FreePotBits, WritePotgo keeps high byte not START)",13,10,0
 msg_potgo_fail:
         dc.b    "POTGO FAIL",13,10,0
+                endc
 diskres_test_name:
         dc.b    "disk.resource",0
 msg_diskres_ok:
