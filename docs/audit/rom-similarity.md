@@ -785,6 +785,82 @@ The only `code/table` matches at or above 40 words are data: the keymap string t
 computed CharLoc tables of `font8x8.o` (281 and 449 words), qualified above and in "Provenance of the data that
 matches".
 
+### Addendum 2026-11-04: commits `1d6c386` to `46cd744` (before a push)
+
+Delta audit of `b0b4eb7` (base, last pushed) against `46cd744` (head): `1d6c386` (graphics: Region functions,
+`src/graphics/regions.s`), `1e7e105` (intuition: rendering and window functions, `screens.s`, `menus.s`,
+`gadgets.s`), `9ec3a02` (exec: ramlib loading, serialisation and expunge, `src/exec/ramlib.s`, `library.s`, `io.s`,
+`memory.s`), `46cd744` (graphics: GELs and animation rewritten in `src/graphics/gels.s`, a self-test tweak in
+`src/exec/boot.s`). Same tool, same `tiers` and `commodore` file lists, same `--base tiers`, separate analysis agent,
+production ROMs only. The head ROM was built in a clean worktree at `46cd744`; each map was relinked and its binary is
+identical to the `build/prod/kick.bin` it belongs to (210,976 bytes base, 213,916 bytes head).
+
+| role | file | sha1 |
+|---|---|---|
+| base ROM (production, `b0b4eb7`) | `is_kick ok`, `chk_sum ok` | `60569828178e978b25836855148a5e6663bd3cac` |
+| head ROM (production, `46cd744`) | `is_kick ok`, `chk_sum ok` | `6a52f3700f71ec0343acd8c98f2a9134b33a2164` |
+
+```sh
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --temoin tiers ... --temoin commodore ... \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <map> --base tiers --selftest                                # each ROM, -> out-<rom>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8   # -> all8-<rom>.txt
+```
+
+- **Controls.** A first pass was run with the `aros` group taken from the *other* AROS disk of the folder (50 hunks /
+  1,171,944 bytes, see the 2026-11-03 re-run); its "aros vs reference" rows differ from the recorded ones, so it was
+  discarded and both ROMs were measured again with the recorded `aros2` files. With those, the group sizes
+  (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore / aros vs reference" row are
+  identical in the base and head runs, and the base output is byte-identical to the final-ROM output of the previous
+  addendum (same ROM). The notable threshold stays **40 words / 19 instructions**. Self-check: 12/12 in both runs.
+
+| stream | metric | base `b0b4eb7` | head `46cd744` |
+|---|---|---|---|
+| mots | A tokens | 104,798 | 106,265 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`, unchanged) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (`exp_cpbinding+$22`, `$0DDDA`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 115 / 10 / 5 | 114 / 10 / 5 |
+| instr | A tokens / max code/table | 65,234 / 16 (keymap, entered at `+$2`) | 66,277 / 17 (keymap, entered at `+$0`) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (`exp_cpbinding+$22`) |
+| instr | code ≥ 8 / ≥ 16 | 7 / 2 | 8 / 2 |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 16; 15 / 2 | 17; 17 / 2 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** Identical to the base in all three streams once the offsets are ignored (pure slides): the
+  keymap string tables `km_us_s42`/`km_fr_s42` (76 words), the computed CharLoc tables `topaz8_loc+$2` (281) and
+  `topaz9_loc+$2` (449), the classified init/address tables and `topaz8_loc+$236`, and the two low-entropy
+  `instr-souple` rows. No code match reaches 40 words or 19 instructions.
+- **Keymap row in `instr`.** `km_fr_s42` (`src/exec/keymapdata.s`, unchanged source) is now decoded from `+$0`
+  instead of `+$2` and gives 17 instead of 16 tokens in `instr`/`instr-souple`, as at `b7effa0` (17): the layout
+  shift changes where the instruction decoder enters this data table. Same qualified data, below 19.
+- **New code matches** (all below 13 instructions / 19 words, so none needs the baseline review):
+
+| offset | stream: tokens | symbol | source, commit | nature |
+|---|---|---|---|---|
+| `$140F4` | mots 17, instr 11, instr-souple 11 | `rg_overlap+$0` | `src/graphics/regions.s`, new in `1d6c386` | private helper: do two rectangles share a pixel. Four comparisons of the public `Rectangle` fields (MinX/MinY/MaxX/MaxY, edges included), each one leaving early on "no overlap", then a true result; the match covers the four tests and the true result, i.e. the whole helper but its false exit. The textbook closed-interval intersection test in the public field order |
+| `$080EA` | mots 8 | `rl_load+$2` | `src/exec/ramlib.s`, new in `9ec3a02` | first step of the module load (`ramlib-v34`): `FindResident` on the base name, test of the result, then `InitResident` of the found resident with an empty segment list; public LVOs and their `.fd` registers |
+| `$215A6` | instr-souple 10 (several overlapping runs over 62 bytes, mixed class) | `gfx_AddAnimOb+$3C` | `src/graphics/gels.s`, rewritten in `46cd744` | end of `AddAnimOb` (return 0, register restore) and the start of the private component-placement helper: the component's Bob, then its VSprite, the AnimOb position plus the component translation, rounded with the public `ANFRACSIZE` (6 fraction bits) and stored into the public VSprite `Y` field; registers and constants erased in this stream |
+
+- **Same matches, entered at a different offset** (code before them in the same symbol changed):
+  `exec_CloseLibrary+$1C` → `+$2A` (`$0777E`, mots 14, instr 9, instr-souple 9: the end of `CloseLibrary` running
+  into `Forbid`/`Permit`, already described in the 2026-11-03 re-run; `CloseLibrary` itself grew in `9ec3a02` and the
+  matched lines are unchanged); `gel_vsprites+$56` → `+$62` (`$21928`, mots 8: the public cleared `AllocMem` idiom
+  and its result test, the block's size stored in its first long word and the pointer in the public ViewPort
+  `SprIns` field); `intuition_end+$90`/`+$13E` → `+$96`/`+$144` (`instr-souple`, 8 tokens, low entropy).
+- **Reclassified, same length:** the RomTag tails `trackdisk_romtag+$C` (16, now `code/table+texte`),
+  `gameport_romtag+$C` (16, now `texte`), `potgo_end+$C` (`kbddev.o`, 16, now `texte`), `input_romtag+$2` (14, now
+  `table d'adresses+texte`, data) and `gfx_display_init+$12C` (10, now `texte+RomTag`): public RomTag fields, module
+  names and init-table pointers, as in the earlier runs. Back in `instr-souple` only: `graphics_name+$0` (8,
+  `texte`, the public name `graphics.library`, also listed at `ac2546a`).
+- **Gone:** `exec_CloseDevice+$6` (mots, 8 words; `io.s` changed in `9ec3a02`). No new match of 8 tokens or more in
+  the intuition files of `1e7e105` (`screens.s`, `menus.s`, `gadgets.s`) nor in `boot.s`, other than the slides above.
+
+**Verdict (head ROM, `46cd744`): PASS.** No code match reaches the notable threshold; the longest code match is still
+13 instructions / 19 words (`exp_cpbinding+$22`). The longest new code match is `rg_overlap+$0` (17 words /
+11 instructions), a rectangle intersection test on public fields, below the baseline. The only `code/table` matches at
+or above 40 words are the already-qualified data (keymap string tables and computed CharLoc tables), unchanged.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
