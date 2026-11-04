@@ -1548,7 +1548,9 @@ gfx_sprmoves:
         rts
 
 ; gfx_LoadView(view a1): a1 != 0 -> rewrites the sprite pointers of v_LOFCprList, installs it (COP2LC, behind the
-; COP1LC copinit) + enables Copper/bitplane/sprite DMA + sets gb_ActiView. a1 == 0 (NULL view), as on 1.3
+; COP1LC copinit) + enables Copper/bitplane/sprite DMA + sets gb_ActiView. A running copper is not restarted: the new
+; list takes over at the next frame, as on 1.3 (graphics-display-v34 §7.1); a mid-frame COPJMP1 would run the new
+; list's past WAITs at once and show one garbled frame (issues #22/#25). a1 == 0 (NULL view), as on 1.3
 ; (graphics-display-v34 §7.1, custom-chips-v34 §2): the DMA stays on, the copinit now jumps to an empty list
 ; (no system list overwrites the caller's hardware set-up any more) and the CPU resets the display registers to
 ; the system defaults. A program that only loads COP1LC afterwards finds the copper running.
@@ -1584,8 +1586,12 @@ gfx_LoadView:
         move.l  gb_LOFlist(a6),d0    ; no copinit (memory): master directly
 .lv_ci:
         move.l  d0,COP1LC
+        move.w  CUSTOM+$002,d1       ; DMACONR
         move.w  #GFX_DMA_ON,DMACON   ; master DMA + Copper + bitplane
-        move.w  #0,COPJMP1           ; strobe COP1
+        and.w   #DMAF_MASTER|DMAF_COPPER,d1
+        cmp.w   #DMAF_MASTER|DMAF_COPPER,d1
+        beq.s   .lv_ret              ; copper running: it takes COP1LC at the next frame (no mid-frame restart)
+        move.w  #0,COPJMP1           ; copper was off: start it on the new list now
 .lv_ret:
         rts
 .lv_null:

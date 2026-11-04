@@ -811,9 +811,10 @@ intuition_RemakeDisplay:
 ; intuition-screens §5.2 (lengths in interlaced lines, "le"): the front screen is whole; each following one ends 6 le
 ; (3 lines) above the top of the visible screen in front of it (DHeight cut, at most its Height), or is hidden
 ; (VP_HIDE) if it starts at that level or lower. DyOffset = TopEdge. The View is interlaced when a visible
-; screen is LACE (§5.1). MakeVPort of the visible ones, MrgCop, LoadView. Outside a screen drag, the pointer may
-; not go above the highest visible screen (IB_YMIN, §5.3). No screen: display off. Preserves everything but
-; d0/d1/a0/a1.
+; screen is LACE (§5.1). MakeVPort of the visible ones, then MrgCop into NEW lists, LoadView, WaitTOF and only then
+; FreeCprList of the old ones (§5.2): the list the copper is running is never rewritten while the beam is in the
+; display (issues #22 and #25: screen drag garbage). Outside a screen drag, the pointer may not go above the
+; highest visible screen (IB_YMIN, §5.3). No screen: display off. Preserves everything but d0/d1/a0/a1.
 it_remake:
         movem.l d2-d4/a2/a4/a6,-(sp)
         lea     IB_VIEWLORD(a5),a2
@@ -893,10 +894,35 @@ it_remake:
         lsr.w   #1,d4
         move.w  d4,IB_YMIN(a5)
 .rm_merge:
+        move.l  a6,d4
+        move.l  ($4).w,a6            ; Forbid: two tasks remaking at once must not take and free the same old lists
+        jsr     LVO_FORBID(a6)
+        move.l  d4,a6
+        movem.l v_LOFCprList(a2),d2-d3 ; d2/d3 = old long/short-frame lists
+        clr.l   v_LOFCprList(a2)
+        clr.l   v_SHFCprList(a2)
         move.l  a2,a1
         jsr     LVO_MRGCOP(a6)
+        tst.l   v_LOFCprList(a2)
+        bne.s   .rm_load
+        movem.l d2-d3,v_LOFCprList(a2) ; no memory: the old lists stay displayed
+        moveq   #0,d2
+        moveq   #0,d3
+        bra.s   .rm_permit
+.rm_load:
         move.l  a2,a1
         jsr     LVO_LOADVIEW(a6)
+.rm_permit:
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        move.l  d4,a6
+        tst.l   d2
+        beq.s   .rm_ret
+        jsr     LVO_WAITTOF(a6)      ; the copper has left the old lists at the VBlank
+        move.l  d2,a0
+        jsr     LVO_FREECPRLIST(a6)
+        move.l  d3,a0
+        jsr     LVO_FREECPRLIST(a6)
         bra.s   .rm_ret
 .rm_none:
         clr.l   v_ViewPort(a2)

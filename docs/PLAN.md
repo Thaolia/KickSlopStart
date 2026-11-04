@@ -1117,6 +1117,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Workbench colour 0 grey-blue $AAB (`SC_BGCOLOR`), 1 cream $FFE, 2 dark grey $566 (text, DetailPen), 3 slate blue
   $78A; ROM pointer fill mauve $A57 with cream highlight (`pf_defaults`, `sc_palette`). A deliberate difference
   from 1.3, like the green before it.
+  **Screen drag (2026-11-04, issues #22/#25)**: dragging a screen in the upper half showed doubled title bars and
+  icons (vAmigaWeb's DMA view: copper activity in the upper third). Two causes: MrgCop rewrote the running list in
+  place, and LoadView strobed COPJMP1 mid-frame so the new list's past WAITs fired at once. Now RethinkDisplay builds
+  new lists, LoadView, WaitTOF, FreeCprList of the old ones (intuition-screens §5.2), and LoadView leaves a running
+  copper alone (graphics-display §7.1; the "COPJMP1 strobe kept" note of custom-chips-v34 "Done 2" is superseded).
+  Drag test (90 shots per half, title bands counted): 12 garbled before, 0 after; free memory unchanged after the
+  drags. The other #22 report (memory not returned after the first NewShell) is the one-time load of
+  `L:Newcon-Handler` (7,504 bytes, kept in the DeviceNode as on 1.3), not a leak: later cycles return everything.
   **ramlib (2026-11-04)**: spec `ramlib-v34`. OpenLibrary/OpenDevice try the base name of a path, then a ROM
   resident, then LoadSeg in the calling process (a plain task fails; 1.3 has no ramlib process either); the RomTag
   is searched in the first hunk only, a module without one runs its first hunk; loads of one base name are

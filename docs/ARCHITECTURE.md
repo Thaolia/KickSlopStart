@@ -1340,6 +1340,10 @@ differs.
   - **graphics, 1.3 copper scheme**: COP1LC points to a copinit (wait for line 12, MOVE COPJMP2); LoadView
     and a VBlank server (pri 10) write COP2LC with the list of the displayed view. A program that writes COP2LC
     with interrupts off (Caesar's FLT intro) has its list displayed until it re-enables them.
+    Since 2026-11-04 (issues #22/#25) LoadView strobes COPJMP1 only when the copper was off: a running copper takes
+    the new list at the next frame (graphics-display §7.1), and intuition's `it_remake` merges into NEW lists
+    (old ones taken under Forbid), LoadView, WaitTOF, then FreeCprList of the old ones (intuition-screens §5.2).
+    The list the copper is running is never rewritten mid-frame, which garbled screen drags in the upper half.
   - **intuition RemakeDisplay / RethinkDisplay** (−384/−390): copper list rebuilt from the front screen.
     `caesar.boot` switches the active screen to 1 plane (Depth := 1, FreeRaster of plane 2) then calls RemakeDisplay; without
     it, the copper displayed the freed plane (stray pixels).
