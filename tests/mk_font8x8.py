@@ -162,8 +162,8 @@ S[0xAD] = None   # soft hyphen: same glyph as '-'
 # Accent marks: two rows above a lowercase letter (whose rows 0-1 are empty), one row above a capital.
 ACC2 = {'grave': [".##.....","..##...."], 'acute': ["...##...","..##...."], 'circ': ["..##....",".##.##.."],
         'tilde': [".##.#...","#.##...."], 'diaer': [".##.##..","........"], 'ring': ["..##....",".#..#..."]}
-ACC1 = {'grave': ".##.....", 'acute': "...##...", 'circ': ".####...", 'tilde': ".###.#..", 'diaer': "##..##..",
-        'ring': "..##...."}
+ACC1 = {'grave': ".##.....", 'acute': "....##..", 'circ': "..##....", 'tilde': ".###.#..", 'diaer': ".#..#...",
+        'ring': "..#....."}
 DOTLESS_I = ["........","........",".###....","..##....","..##....","..##....","######..","........"]
 # Capital: the accent on row 0, the letter on rows 1-6 without one of its rows (the one listed, default 1).
 DROP = {'A': 2, 'C': 2, 'O': 2, 'U': 1, 'Y': 3, 'N': 1, 'E': 1, 'I': 1}
@@ -189,6 +189,21 @@ ACCENTED = {
 0xD2: ('O','grave'), 0xD3: ('O','acute'), 0xD4: ('O','circ'), 0xD5: ('O','tilde'), 0xD6: ('O','diaer'),
 0xD9: ('U','grave'), 0xDA: ('U','acute'), 0xDB: ('U','circ'), 0xDC: ('U','diaer'), 0xDD: ('Y','acute'),
 }
+
+def check_accents():
+    """Every accented letter must differ from its base letter and from the other accents on it."""
+    for base in range(0xC0, 0x100):
+        if base in ACCENTED or (base >= 0xE0 and base - 0x20 in ACCENTED) or base == 0xFF:
+            g = latin1(base)
+            l = ACCENTED[base][0] if base in ACCENTED else (ACCENTED[base - 0x20][0].lower() if base != 0xFF else 'y')
+            if g == G[l]:
+                raise SystemExit("$%02X looks like '%s'" % (base, l))
+    seen = {}
+    for base in list(ACCENTED) + [c + 0x20 for c in ACCENTED] + [0xFF]:
+        g = tuple(latin1(base))
+        if g in seen:
+            raise SystemExit("$%02X looks like $%02X" % (base, seen[g]))
+        seen[g] = base
 
 def latin1(code):
     if code == 0xC7:
@@ -285,6 +300,7 @@ def emit():
     return "\n".join(out) + "\n"
 
 if __name__ == "__main__":
+    check_accents()
     if len(sys.argv) > 1 and sys.argv[1] == "--preview":
         for code in range(0x20, 0x100):
             for fn in (glyph8, glyph9):
