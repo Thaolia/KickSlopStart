@@ -179,11 +179,17 @@ ERROR_OBJECT_WRONG_TYPE EQU 212
 ERROR_DISK_NOT_VALIDATED EQU 213
 ERROR_DISK_WRITE_PROTECTED EQU 214
 ERROR_DIRECTORY_NOT_EMPTY EQU 216
+ERROR_INVALID_LOCK EQU 211
+ERROR_COMMENT_TOO_BIG EQU 220
+ERROR_DELETE_PROTECTED EQU 222
 ERROR_DISK_FULL EQU 221
 ERROR_NO_DISK   EQU 226           ; no floppy in the drive
 ERROR_NOT_A_DOS_DISK EQU 225
 ACTION_SET_PROTECT EQU 21          ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 mask)
 ACTION_SET_COMMENT EQU 28          ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 BSTR comment)
+ACTION_SET_DATE  EQU 34            ; (ARG1 -, ARG2 lock, ARG3 BSTR name, ARG4 APTR DateStamp)
+ACTION_RENAME_DISK EQU 9           ; (ARG1 BSTR new volume name)
+ACTION_FLUSH     EQU 27            ; no argument; the packet comes back as it was sent
 ACTION_DISK_INFO EQU 25            ; (ARG1 BPTR InfoData)
 ACTION_INFO      EQU 26            ; (ARG1 lock, ARG2 BPTR InfoData)
 
@@ -211,7 +217,7 @@ CLI_DEFAULTSTACK    EQU 52         ; LONG: default stack IN LONGS
 CLI_STANDARDOUTPUT  EQU 56         ; BPTR FileHandle
 CLI_MODULE          EQU 60         ; BPTR: seglist of the current command
 CLI_SIZEOF          EQU 64
-FL_LINK          EQU 0             ; BPTR: next lock (we keep 0: no chaining)
+FL_LINK          EQU 0             ; BPTR: next lock of the file system (list in the handler context)
 FL_KEY           EQU 4             ; LONG: header block of the locked object
 FL_ACCESS        EQU 8             ; LONG : SHARED_LOCK / EXCLUSIVE_LOCK
 FL_TASK          EQU 12            ; APTR: MsgPort of the handler (source of the port for UnLock/Examine/ExNext)

@@ -26,10 +26,12 @@
                 xdef    ws_seek
                 xdef    ws_close
                 xdef    ws_discard
+                xdef    ow_relabel
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
                 xref    dos_now              ; dos_lib.s: system time as a DateStamp
+                xref    hnd_busy             ; handler.s: lock conflict check (spec rom-filesystem §3.1)
 
 OFS_T_LIST      EQU 16               ; extension block
 OFSB_KEY        EQU 4                ; key (the block itself)
@@ -60,7 +62,6 @@ OW_SIZE         EQU OW_NAME+32
 ; last holds OFS_DMAX bytes, so block index = position / OFS_DMAX. Block tables: group 0 = the header's, group
 ; g >= 1 = the g-th extension block; only the last group grows.
 WS_MAGIC        EQU 0
-WS_HDR          EQU 4                ; header block
 WS_SIZE         EQU 8                ; file size (highest position written)
 WS_NBLK         EQU 12               ; data blocks
 WS_CUR          EQU 16               ; data block held in DBUF (0 = none)
@@ -74,7 +75,7 @@ WS_XGRP         EQU 48               ; group held in XBUF (0 = none)
 WS_DDIRTY       EQU 52               ; DBUF modified
 WS_XDIRTY       EQU 56               ; XBUF modified
 WS_MOD          EQU 60               ; file modified: header rewritten at close
-WS_HBUF         EQU 64
+WS_HBUF         EQU 68               ; (WS_LOCK at 64: ofs.i)
 WS_XBUF         EQU WS_HBUF+OFS_BSIZE
 WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE
@@ -610,11 +611,12 @@ ow_create:
         bsr     ow_lookup
         tst.l   d0
         beq.s   .cr_new
-        move.l  d0,d5                ; already exists: a file is replaced
-        cmp.l   #OFS_ST_FILE,d7
+        move.l  d0,d5                ; already exists: FINDOUTPUT replaces it under the rules of DELETE (a file or an
+        cmp.l   #OFS_ST_FILE,d7      ; empty directory); CREATE_DIR answers 203, which the spec allows (2.0 does)
         bne.s   .cr_exists
-        cmp.l   #OFS_ST_FILE,OW_B2+OFSB_SECTYPE(a5)
-        bne.s   .cr_exists
+        bsr     ow_canremove
+        tst.l   d0
+        beq     ow_fail
         bsr     ow_unlink
         tst.l   d0
         beq     ow_fail
@@ -675,15 +677,9 @@ ow_delete:
         tst.l   d0
         beq.s   .de_nf
         move.l  d0,d5
-        cmp.l   #OFS_ST_USERDIR,OW_B2+OFSB_SECTYPE(a5)
-        bne.s   .de_go
-        lea     OW_B2+OFSB_HASHTAB(a5),a0  ; directory not empty: refused
-        moveq   #OFS_TABN-1,d0
-.de_em:
-        tst.l   (a0)+
-        bne.s   .de_full
-        dbra    d0,.de_em
-.de_go:
+        bsr     ow_canremove
+        tst.l   d0
+        beq     ow_fail
         bsr     ow_unlink
         tst.l   d0
         beq     ow_fail
@@ -698,12 +694,39 @@ ow_delete:
         moveq   #-1,d0
         moveq   #0,d1
         bra.s   ow_ret
-.de_full:
-        move.l  #ERROR_DIRECTORY_NOT_EMPTY,OW_ERR(a5)
-        bra     ow_fail
 .de_nf:
         move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
         bra     ow_fail
+
+; ow_canremove(d5 = object, read into B2, a5) -> d0 = 1 / 0 with OW_ERR: 202 a lock is held on it (an open file
+; holds one), 222 delete bit set, 216 directory not empty. The rules of DELETE_OBJECT (spec rom-filesystem §6.1),
+; also applied when FINDOUTPUT replaces an object.
+ow_canremove:
+        move.l  d5,d0
+        moveq   #EXCLUSIVE_LOCK,d1
+        jsr     hnd_busy
+        tst.l   d0
+        bne.s   .cn_err
+        move.l  #ERROR_DELETE_PROTECTED,d0
+        btst    #0,OW_B2+OFSB_PROTECT+3(a5)
+        bne.s   .cn_err
+        cmp.l   #OFS_ST_USERDIR,OW_B2+OFSB_SECTYPE(a5)
+        bne.s   .cn_ok
+        lea     OW_B2+OFSB_HASHTAB(a5),a0
+        moveq   #OFS_TABN-1,d1
+.cn_em:
+        tst.l   (a0)+
+        bne.s   .cn_full
+        dbra    d1,.cn_em
+.cn_ok:
+        moveq   #1,d0
+        rts
+.cn_full:
+        move.l  #ERROR_DIRECTORY_NOT_EMPTY,d0
+.cn_err:
+        move.l  d0,OW_ERR(a5)
+        moveq   #0,d0
+        rts
 
 ; ow_rename(a0 = old path, d0 = its start, a1 = new path, d1 = its start, a6) -> d0 = -1 / 0, d1 = error.
 ; The object leaves its directory's chain, takes the new name and the new parent, enters the new chain.
@@ -798,8 +821,9 @@ ow_rename:
         addq.l  #8,sp
         bra     ow_fail0
 
-; ow_setfield(a0 = path, d0 = start, d1 = 0 protection (d2 = mask) / 1 comment (d2 = BPTR BSTR), a6) ->
-; d0 = -1 / 0, d1 = error.
+; ow_setfield(a0 = path, d0 = start, d1 = 0 protection (d2 = mask) / 1 comment (d2 = BPTR BSTR) / 2 date (d2 = APTR
+; DateStamp), a6) -> d0 = -1 / 0, d1 = error: 202 if a lock is held on the object (exclusive access, spec §6.4),
+; 220 for a comment longer than 80 characters.
 ow_setfield:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  d1,d7
@@ -817,28 +841,33 @@ ow_setfield:
         tst.l   d0
         beq.s   .sf_nf
         move.l  d0,d5
+        moveq   #EXCLUSIVE_LOCK,d1
+        jsr     hnd_busy
+        tst.l   d0
+        bne.s   .sf_err
         lea     OW_B2(a5),a0
         tst.l   d7
-        bne.s   .sf_com
+        beq.s   .sf_prot
+        subq.l  #1,d7
+        beq.s   .sf_com
+        move.l  (a3)+,OFSB_DAYS(a0)  ; date: the three longs of the DateStamp
+        move.l  (a3)+,OFSB_MINS(a0)
+        move.l  (a3),OFSB_TICKS(a0)
+        bra.s   .sf_w
+.sf_prot:
         move.l  a3,OFSB_PROTECT(a0)
         bra.s   .sf_w
 .sf_com:
-        move.l  a3,d0                ; BSTR comment, 79 characters at most
+        move.l  a3,d0                ; BSTR comment copied with its length byte
         lsl.l   #2,d0
         move.l  d0,a1
-        lea     OFSB_COMMENT(a0),a0
         moveq   #0,d0
         move.b  (a1),d0
-        cmp.w   #79,d0
-        bls.s   .sf_cl
-        moveq   #79,d0
-.sf_cl:
-        move.b  d0,(a0)+
-        addq.l  #1,a1
-        bra.s   .sf_cn
+        cmp.w   #80,d0
+        bhi.s   .sf_long
+        lea     OFSB_COMMENT(a0),a0
 .sf_cc:
         move.b  (a1)+,(a0)+
-.sf_cn:
         dbra    d0,.sf_cc
 .sf_w:
         move.l  d5,d0
@@ -855,6 +884,62 @@ ow_setfield:
 .sf_nf:
         move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
         bra     ow_fail
+.sf_long:
+        move.l  #ERROR_COMMENT_TOO_BIG,d0
+.sf_err:
+        move.l  d0,OW_ERR(a5)
+        bra     ow_fail
+
+; ow_relabel(a0 = BSTR new volume name, a6) -> d0 = -1 / 0, d1 = error (210: empty, longer than 30 characters, or
+; with ':' or '/'): the root block takes the new name (spec rom-filesystem §6.5); the handler renames the node.
+ow_relabel:
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a0,a2
+        bsr     ow_ctx
+        beq     ow_fail0
+        moveq   #0,d0
+        move.b  (a2),d0
+        beq.s   .rl_bad
+        cmp.w   #30,d0
+        bhi.s   .rl_bad
+        lea     1(a2),a0
+        subq.w  #1,d0
+.rl_chk:
+        move.b  (a0)+,d1
+        cmp.b   #':',d1
+        beq.s   .rl_bad
+        cmp.b   #'/',d1
+        beq.s   .rl_bad
+        dbra    d0,.rl_chk
+        bsr     ow_bmload            ; a validated disk is in the drive (213 otherwise)
+        beq     ow_fail
+        move.l  #OFS_ROOTBLK,d0
+        lea     OW_B1(a5),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq     ow_fail
+        lea     OW_B1+OFSB_NAME(a5),a0
+        move.l  a2,a1
+        moveq   #0,d0
+        move.b  (a1),d0
+.rl_cp:
+        move.b  (a1)+,(a0)+
+        dbra    d0,.rl_cp
+        move.l  #OFS_ROOTBLK,d0
+        lea     OW_B1(a5),a0
+        bsr     ow_wr
+        tst.l   d0
+        beq     ow_fail
+        bsr     ow_sync
+        tst.l   d0
+        beq     ow_fail
+        moveq   #-1,d0
+        moveq   #0,d1
+        bra     ow_ret
+.rl_bad:
+        move.l  #ERROR_INVALID_COMPONENT_NAME,d1
+        moveq   #0,d0
+        bra     ow_ret
 
 ; ow_diskinfo(a0 = InfoData, a1 = volume node (BPTR), a6) -> d0 = -1: disk state (validated), blocks, used blocks
 ; counted in the bitmap, 488 bytes per block, type DOS\0.

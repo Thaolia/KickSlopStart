@@ -587,6 +587,18 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7x) **DF0: locks and conflicts, SET_DATE, RENAME_DISK, FLUSH** (2026-11-04, spec `rom-filesystem-v34.md` §3,
+  §5.1, §6.1, §6.4, §6.5, §7.4). The handler keeps every FileLock it hands out in a list (`HC_LOCKS`, fl_Link chain,
+  all volumes); `hnd_busy` applies §3.1 per object of the mounted volume (one exclusive lock or any number of shared
+  ones, -1 = exclusive, any other mode shared) and answers 202. Open files hold a lock until END: FINDINPUT shared
+  (`SS_LOCK`), FINDOUTPUT/FINDUPDATE exclusive (`WS_LOCK`); LOCATE, COPY_DIR (the copy of an exclusive lock
+  conflicts), PARENT and CREATE_DIR go through `hnd_newlock`; FREE_LOCK of a lock not in the list gives 0/211.
+  DELETE and the replacement of an object by FINDOUTPUT follow `ow_canremove` (202 locked, 222 delete bit, 216 not
+  empty; an empty directory is replaced by the file); CREATE_DIR on an existing name keeps 203 (allowed by the spec).
+  SET_PROTECT/SET_COMMENT/SET_DATE need exclusive access (202); SET_DATE copies the DateStamp at Arg4 (an APTR);
+  a comment may have 80 characters, more gives 220. RENAME_DISK renames the root block and the volume node (210 for an
+  empty name, more than 30 characters, ':' or '/'). FLUSH comes back as sent, before Res2 is cleared. Checked with
+  `tests/fslock_probe.sh` (51 checks, volume name, comment and date read back from the disk image).
   (7w) **OFS write streams with a position, MODE_READWRITE, dos fixes** (2026-11-04, specs `rom-filesystem-v34.md`
   §5, `dos-lvo-partial-v34.md` §2.2/§2.6, `disk-full-write-v34.md` §3.1). A write state (`ofswrite.s`, `WS_*`) keeps a
   position in [0, size]: block index = position / 488 (every block but the last is full), tables in groups (0 = the

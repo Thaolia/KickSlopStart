@@ -79,8 +79,11 @@ SS_CURBLK       EQU 16            ; LONG: current data block (the one starting a
 SS_BLKBASE      EQU 20            ; LONG: absolute offset of the start of the data of SS_CURBLK
 SS_HEADER       EQU 24            ; LONG: header block of the file (block tables: direct seek)
 SS_VOL          EQU 28            ; BPTR: volume node of the disk on which the file was opened (handler)
-SS_IOREQ        EQU 32            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
+SS_LOCK         EQU 32            ; APTR: shared FileLock held while the file is open (handler)
+SS_IOREQ        EQU 36            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
+WS_HDR          EQU 4             ; LONG: header block of a write state (ofswrite.s)
 WS_VOL          EQU 36            ; BPTR: volume node of a write state (ofswrite.s), like SS_VOL
+WS_LOCK         EQU 64            ; APTR: exclusive FileLock held while a write state is open (handler)
 SS_ALLOC        EQU SS_IOREQ+IOREQ_SZ+OFS_BSIZE   ; total AllocMem size of the state
 
 ; STREAM_CAP32K=1 (RED streaming): ofs_stream_read re-caps the read at 32768 bytes (= the old whole-file cap)

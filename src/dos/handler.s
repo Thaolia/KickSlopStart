@@ -42,6 +42,8 @@
                 xref    ws_seek
                 xref    ws_close
                 xref    ws_discard
+                xref    ow_relabel
+                xdef    hnd_busy
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
                 xref    timer_now            ; system time (exec/timer.s)
                 xref    timer_setnow
@@ -64,7 +66,8 @@ HC_IEV          EQU HC_INIO+IOREQ_SZ ; InputEvent (IE_SIZE, rounded)
 HC_SIGS         EQU HC_IEV+24        ; signals waited for: packet port | timer
 HC_CHG          EQU HC_SIGS+4        ; TD_CHANGENUM at mount time
 HC_DTYPE        EQU HC_CHG+4         ; type of the mounted disk (id_DiskType), -1: none
-HC_MOUNTED      EQU HC_DTYPE+4       ; byte: a disk has been examined since the last ejection
+HC_LOCKS        EQU HC_DTYPE+4       ; BPTR: head of the lock list (fl_Link chain): locks and open files, all volumes
+HC_MOUNTED      EQU HC_LOCKS+4       ; byte: a disk has been examined since the last ejection
 HC_INHIB        EQU HC_MOUNTED+1     ; byte: ACTION_INHIBIT in progress
 HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
 HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
@@ -102,7 +105,9 @@ dos_handler:
                 beq.s   .hl
                 move.l  d0,a3                ; a3 = Message
                 move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention: msg->ln_Name)
-                clr.l   DP_RES2(a4)
+                cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4): every packet
+                beq     .reply                        ; is written before its reply, only the current block of a
+                clr.l   DP_RES2(a4)                   ; file open for writing waits for END
                 bsr     hnd_gate             ; lock or file of another volume, no disk: refused
                 tst.l   d0
                 bne     .refuse
@@ -145,6 +150,10 @@ dos_handler:
                 beq     .setprot
                 cmp.l   #ACTION_SET_COMMENT,d0
                 beq     .setcomment
+                cmp.l   #ACTION_SET_DATE,d0
+                beq     .setdate
+                cmp.l   #ACTION_RENAME_DISK,d0
+                beq     .relabel
                 cmp.l   #ACTION_DISK_INFO,d0
                 beq     .diskinfo
                 cmp.l   #ACTION_INFO,d0
@@ -164,7 +173,7 @@ dos_handler:
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq.s   .fi_fail
+                beq     .fi_fail
                 move.l  d0,d6                        ; d6 = state (preserved by ofs_stream_open)
                 ; convert the BSTR name (ARG3) into a C string on the stack for ofs_stream_open
                 lea     -112(sp),sp
@@ -190,6 +199,15 @@ dos_handler:
                 lea     112(sp),sp                    ; restore the stack (C string consumed)
                 tst.l   d0
                 beq.s   .fi_fail_state                ; not found / not a file
+                move.l  d6,a1
+                move.l  SS_HEADER(a1),d0
+                moveq   #SHARED_LOCK,d1
+                bsr     hnd_newlock                    ; kept until END (202 under an exclusive lock)
+                move.l  d1,DP_RES2(a4)
+                tst.l   d0
+                beq.s   .fi_free
+                move.l  d6,a1
+                move.l  d0,SS_LOCK(a1)
                 move.l  DP_ARG1(a4),d0                ; FileHandle = BADDR(ARG1)
                 lsl.l   #2,d0
                 move.l  d0,a1
@@ -201,6 +219,7 @@ dos_handler:
                 bra     .reply
 .fi_fail_state:
                 move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)  ; not found -> IoErr (d3f depends on it)
+.fi_free:
                 move.l  d6,a1
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)
@@ -299,22 +318,8 @@ dos_handler:
                 lea     112(sp),sp
                 tst.l   d0
                 beq.s   .lo_fail                       ; object not found
-                move.l  d0,d2                          ; d2 = block (preserved by AllocMem)
-                move.l  #FL_SIZEOF,d0
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq.s   .lo_fail                       ; no RAM
-                move.l  d0,a0                          ; a0 = FileLock
-                move.l  d2,FL_KEY(a0)                 ; locked block
-                move.l  DP_ARG3(a4),FL_ACCESS(a0)     ; mode (SHARED/EXCLUSIVE)
-                move.l  a2,FL_TASK(a0)                ; handler port (= our pr_MsgPort) -> source for UnLock/Examine
-                bsr     hnd_usevol
-                move.l  d0,FL_VOLUME(a0)               ; volume node of the mounted disk (counted)
-                move.l  a0,d1                          ; FL_LINK/cursor = 0 (MEMF_CLEAR)
-                lsr.l   #2,d1                          ; BPTR(lock)
-                move.l  d1,DP_RES1(a4)
-                bra     .reply
+                move.l  DP_ARG3(a4),d1                 ; mode: -1 exclusive, any other value shared
+                bra     .newlock
 .lo_fail:
                 move.l  #DOSFALSE,DP_RES1(a4)
                 move.l  #ERROR_OBJECT_NOT_FOUND,DP_RES2(a4)
@@ -324,11 +329,13 @@ dos_handler:
                 move.l  DP_ARG1(a4),d0
                 lsl.l   #2,d0
                 beq.s   .frl_ok                        ; lock 0 -> no-op
-                move.l  d0,a1
-                move.l  FL_VOLUME(a1),d0
-                bsr     hnd_unusevol
-                move.l  #FL_SIZEOF,d0
-                jsr     LVO_FREEMEM(a6)
+                move.l  d0,a0
+                bsr     hnd_droplock
+                tst.l   d0
+                bne.s   .frl_ok
+                clr.l   DP_RES1(a4)                    ; not one of ours: 211, nothing freed
+                move.l  #ERROR_INVALID_LOCK,DP_RES2(a4)
+                bra     .reply
 .frl_ok:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
@@ -397,18 +404,11 @@ dos_handler:
                 beq.s   .pa_root                       ; parent of the root: 0 without error
                 move.l  d0,d2
 .pa_alloc:                                             ; d2 = block -> new shared FileLock
-                move.l  #FL_SIZEOF,d0
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq.s   .pa_root
-                move.l  d0,a0
-                move.l  d2,FL_KEY(a0)
-                move.l  #SHARED_LOCK,FL_ACCESS(a0)
-                move.l  a2,FL_TASK(a0)
-                bsr     hnd_usevol
-                move.l  d0,FL_VOLUME(a0)
-                move.l  a0,d0
+                move.l  d2,d0
+                moveq   #SHARED_LOCK,d1
+.newlock:                                             ; d0 = block, d1 = mode -> RES1 = BPTR lock | 0 (202, 103)
+                bsr     hnd_newlock
+                move.l  d1,DP_RES2(a4)
                 lsr.l   #2,d0
                 move.l  d0,DP_RES1(a4)
                 bra     .reply
@@ -454,6 +454,10 @@ dos_handler:
                 beq.s   .end_w
                 move.l  SS_VOL(a1),d0
                 bsr     hnd_unusevol
+                move.l  a1,-(sp)
+                move.l  SS_LOCK(a1),a0
+                bsr     hnd_droplock
+                move.l  (sp)+,a1
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)               ; free the state (ioreq + block buffer included)
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -466,6 +470,10 @@ dos_handler:
 .end_w:
                 move.l  WS_VOL(a1),d0
                 bsr     hnd_unusevol
+                move.l  a1,-(sp)
+                move.l  WS_LOCK(a1),a0
+                bsr     hnd_droplock
+                move.l  (sp)+,a1
                 move.l  a1,-(sp)
                 bsr     hnd_ctx
                 move.l  (sp)+,a1
@@ -517,11 +525,26 @@ dos_handler:
 .fo_got:
                 tst.l   d0
                 beq     .w_fail
+                move.l  d0,d6                          ; d6 = write state
+                move.l  d0,a1
+                move.l  WS_HDR(a1),d0
+                moveq   #EXCLUSIVE_LOCK,d1
+                bsr     hnd_newlock                    ; kept until END (202 if the file is in use)
+                tst.l   d0
+                bne.s   .fo_lock
+                move.l  d1,-(sp)
+                move.l  d6,a1
+                jsr     ws_discard
+                move.l  (sp)+,d1
+                bra     .w_fail
+.fo_lock:
+                move.l  d6,a1
+                move.l  d0,WS_LOCK(a1)
                 move.l  DP_ARG1(a4),d1
                 lsl.l   #2,d1
                 move.l  d1,a1
-                move.l  d0,FH_ARG1(a1)
-                move.l  d0,a1
+                move.l  d6,FH_ARG1(a1)
+                move.l  d6,a1
                 bsr     hnd_usevol
                 move.l  d0,WS_VOL(a1)
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -582,6 +605,9 @@ dos_handler:
 .setprot:                                            ; (ARG2 lock, ARG3 BSTR name, ARG4 mask)
                 moveq   #0,d1
                 bra.s   .setfield
+.setdate:                                            ; (ARG2 lock, ARG3 BSTR name, ARG4 APTR DateStamp)
+                moveq   #2,d1
+                bra.s   .setfield
 .setcomment:                                         ; (ARG2 lock, ARG3 BSTR name, ARG4 BSTR comment)
                 moveq   #1,d1
 .setfield:
@@ -605,6 +631,36 @@ dos_handler:
 .w_fail:
                 move.l  #DOSFALSE,DP_RES1(a4)
                 move.l  d1,DP_RES2(a4)
+                bra     .reply
+.relabel:                                            ; (ARG1 BSTR new name): root block, then the volume node
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                move.l  d0,a0
+                jsr     ow_relabel
+                tst.l   d0
+                beq     .w_fail
+                bsr     hnd_ctx
+                beq.s   .rl_ok
+                move.l  d0,a0
+                move.l  HC_VOLUME(a0),d0
+                lsl.l   #2,d0
+                beq.s   .rl_ok
+                move.l  d0,a0
+                move.l  DN_NAME(a0),d0
+                lsl.l   #2,d0
+                move.l  d0,a1                          ; the name buffer allocated with the node (31 characters)
+                move.l  DP_ARG1(a4),d0
+                lsl.l   #2,d0
+                move.l  d0,a0
+                jsr     LVO_FORBID(a6)
+                moveq   #0,d0
+                move.b  (a0),d0
+.rl_cp:
+                move.b  (a0)+,(a1)+
+                dbra    d0,.rl_cp
+                jsr     LVO_PERMIT(a6)
+.rl_ok:
+                move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 .info:                                               ; (ARG1 lock, ARG2 BPTR InfoData)
                 move.l  DP_ARG2(a4),d0
@@ -1258,6 +1314,7 @@ hnd_gtab:
                 dc.w    ACTION_CREATE_DIR,DP_ARG1
                 dc.w    ACTION_SET_PROTECT,DP_ARG2
                 dc.w    ACTION_SET_COMMENT,DP_ARG2
+                dc.w    ACTION_SET_DATE,DP_ARG2
                 dc.w    ACTION_INFO,DP_ARG1
                 dc.w    ACTION_FINDINPUT,DP_ARG2
                 dc.w    ACTION_FINDOUTPUT,DP_ARG2
@@ -1266,6 +1323,109 @@ hnd_gtab:
                 dc.w    ACTION_WRITE,$80
                 dc.w    ACTION_SEEK,$80
                 dc.w    0
+
+; hnd_busy(d0 = header key, d1 = access wanted: -1 exclusive, any other value shared) -> d0 = 0 | 202
+; (ERROR_OBJECT_IN_USE): per object of the mounted volume, one exclusive lock or any number of shared ones (spec
+; rom-filesystem §3.1); open files hold a lock. Also called by ofswrite.s. Preserves everything except d0.
+hnd_busy:
+                movem.l d2-d3/a0-a1,-(sp)
+                move.l  d0,d2
+                bsr     hnd_ctx
+                beq.s   .bu_free
+                move.l  d0,a0
+                move.l  HC_VOLUME(a0),d3
+                move.l  HC_LOCKS(a0),d0
+.bu_lp:
+                lsl.l   #2,d0
+                beq.s   .bu_free
+                move.l  d0,a0
+                cmp.l   FL_KEY(a0),d2
+                bne.s   .bu_nx
+                cmp.l   FL_VOLUME(a0),d3
+                bne.s   .bu_nx
+                moveq   #EXCLUSIVE_LOCK,d0
+                cmp.l   d0,d1
+                beq.s   .bu_used
+                cmp.l   FL_ACCESS(a0),d0
+                beq.s   .bu_used
+.bu_nx:
+                move.l  FL_LINK(a0),d0
+                bra.s   .bu_lp
+.bu_free:
+                moveq   #0,d0
+                bra.s   .bu_ret
+.bu_used:
+                move.l  #ERROR_OBJECT_IN_USE,d0
+.bu_ret:
+                movem.l (sp)+,d2-d3/a0-a1
+                rts
+; hnd_newlock(d0 = key, d1 = access, a2 = handler port, a6) -> d0 = APTR FileLock | 0, d1 = 0 | error (202, 103):
+; checked against the other locks, counted on the volume, put at the head of the list. Preserves d2-d7/a2-a6.
+hnd_newlock:
+                movem.l d2-d3/a3,-(sp)
+                move.l  d0,d2
+                move.l  d1,d3
+                bsr.s   hnd_busy
+                move.l  d0,d1
+                bne.s   .nl_fail
+                move.l  #FL_SIZEOF,d0
+                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+                jsr     LVO_ALLOCMEM(a6)
+                move.l  #ERROR_NO_FREE_STORE,d1
+                tst.l   d0
+                beq.s   .nl_fail
+                move.l  d0,a3
+                move.l  d2,FL_KEY(a3)
+                move.l  d3,FL_ACCESS(a3)              ; stored as given
+                move.l  a2,FL_TASK(a3)
+                bsr     hnd_usevol
+                move.l  d0,FL_VOLUME(a3)
+                bsr     hnd_ctx
+                beq.s   .nl_ok
+                move.l  d0,a0
+                move.l  HC_LOCKS(a0),FL_LINK(a3)
+                move.l  a3,d0
+                lsr.l   #2,d0
+                move.l  d0,HC_LOCKS(a0)
+.nl_ok:
+                move.l  a3,d0
+                moveq   #0,d1
+.nl_ret:
+                movem.l (sp)+,d2-d3/a3
+                rts
+.nl_fail:
+                moveq   #0,d0
+                bra.s   .nl_ret
+; hnd_droplock(a0 = APTR FileLock | 0, a6) -> d0 = -1, or 0 if it is not in the list (nothing freed): unlinked,
+; uncounted on its volume, freed. Preserves d2-d7/a2-a6.
+hnd_droplock:
+                move.l  a0,-(sp)
+                bsr     hnd_ctx
+                move.l  (sp)+,a1               ; a1 = lock (movea: Z still from hnd_ctx)
+                beq.s   .dr_no
+                move.l  d0,a0
+                lea     HC_LOCKS(a0),a0         ; a0 = the link that may point to it (fl_Link is at offset 0)
+                move.l  a1,d1
+                lsr.l   #2,d1
+.dr_lp:
+                move.l  (a0),d0
+                beq.s   .dr_no
+                cmp.l   d1,d0
+                beq.s   .dr_hit
+                lsl.l   #2,d0
+                move.l  d0,a0
+                bra.s   .dr_lp
+.dr_hit:
+                move.l  FL_LINK(a1),(a0)
+                move.l  FL_VOLUME(a1),d0
+                bsr     hnd_unusevol
+                move.l  #FL_SIZEOF,d0
+                jsr     LVO_FREEMEM(a6)
+                moveq   #-1,d0
+                rts
+.dr_no:
+                moveq   #0,d0
+                rts
 
 ; hnd_usevol -> d0 = BPTR of the mounted volume (HC_VOLUME) | 0, its use count increased (lock or open file).
 ; hnd_unusevol(d0 = BPTR volume | 0): count decreased. Both preserve everything except d0.
