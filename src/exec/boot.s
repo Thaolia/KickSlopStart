@@ -6468,7 +6468,7 @@ ls_test_name:
 msg_m6r_ok:
         dc.b    "M6R STRAP OK (strap read DF0: bootblock and found NO bootable volume -> insert-disk; real 1.3 trigger: DOS-magic+additive-checksum invalid, or no disk)",13,10,0
 msg_m6s_ok:
-        dc.b    "M6S BOOTSCR OK (boot screen 320x256x5 = 32-color image displayed via graphics.library ABI; visual proof = RMSE vs reference)",13,10,0
+        dc.b    "M6S BOOTSCR OK (boot screen 352x272x4 = 16-color image, ByteRun1 in ROM, displayed via graphics.library ABI; visual proof = RMSE vs reference)",13,10,0
 msg_m6y_ok:
         dc.b    "M6Y STRAP BOOTED OK (strap read+validated+executed DF0: bootblock; CBOOT marker came from the bootblock itself; no insert-disk)",13,10,0
 msg_m5i_ok:

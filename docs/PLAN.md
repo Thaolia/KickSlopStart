@@ -294,7 +294,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     32 colours → 5 planar bitplanes, plane 0 = LSB, bit 7 = left pixel, RGB444 palette; rebuilds + asserts) →
     `bootscreen.raw` + `bootscreen_data.s` (OCS palette + incbin) + reference PNG. ABI: `gfx_MakeVPort` made
     GENERIC (N plane pointers + `cm_Count` colours + BPL2MOD); `gfx_display_init` evolves the M4b stripes
-    → the image (5 planes/32 colours copied ROM→chip), displayed via MakeVPort/MrgCop/LoadView at handoff. Overscan
+    → the image (5 planes/32 colours copied ROM→chip), displayed via MakeVPort/MrgCop/LoadView at handoff. (2026-11-04: 16 colours, 4 planes, ByteRun1 in the ROM: 39 KB instead of 60 KB, see ARCHITECTURE 7aa.) Overscan
     352×272 (DIW/DDF widened) to fill the screen edge to edge (user request: "it does not fill the whole screen"). Proof
     (advisor safeguards: validate the discriminant on real GREEN+RED values before the threshold; self-checking planariser;
     reference from the real ROM data): serial marker **M6S** = liveness; VISUAL discriminant = number of

@@ -136,3 +136,6 @@ clean:
 
 # Header and incbin dependencies written by vasm (VASMOBJ).
 -include $(wildcard $(BUILD)/*.d)
+# A header or binary removed or renamed must not stop the build through an old .d file (what gcc -MP does): empty
+# rules for them. Not for .s files, or any object would match the exec pattern rule.
+src/%.i src/%.raw src/%.br1: ;
