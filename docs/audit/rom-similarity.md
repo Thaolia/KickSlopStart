@@ -545,12 +545,14 @@ function. This table states, for each one, where its values come from and how an
 | `topaz8_loc` (`src/graphics/text.s`) | 194 words | character locations of the 8 × 8 ROM font | computed by a `REPT` loop: position = 8 × rank, width 8; the glyph bitmaps are our own and do not match | `TextFont.tf_CharLoc` |
 | `gfx_defcolors` (`src/graphics/graphics_lib.s`) | 32 words | the 32 default colours of a new ColorMap | spec `graphics-display-v34.md` §3, where the table is both read by the analysis agent and confirmed by a black-box probe (`tests/gdisp_probe.s`) | `GetColorMap(32)`, then `GetRGB4` on each entry |
 | `mn_chk_hi` (`src/intuition/menus.s`) | 20 words | the two `struct Image` descriptors of the menu check mark (position, 15 × 8 size, depth) | the size of the mark seen on screen; the image itself is our own design (a cat paw print) and does not match | the check mark of a `CHECKIT` menu item |
-| `pf_defaults` (`src/intuition/prefs.s`) | 14 words | default Preferences | layout of the public `preferences.h`; values from spec `intuition-prefs-v34.md` §4.3, read by the analysis agent and not yet confirmed by a probe; the colours and the pointer are the project's own | `GetDefPrefs` |
+| `pf_defaults` (`src/intuition/prefs.s`) | 14 words | default Preferences | layout of the public `preferences.h`; values from spec `intuition-prefs-v34.md` §4.3, read by the analysis agent and confirmed by a black-box probe (`tests/defprefs_probe.s`, 2026-11-04: every non-themed field is byte-identical on both ROMs); the colours and the pointer are the project's own | `GetDefPrefs` |
 | `sc_palette` (`src/intuition/screens.s`) | 13 words | default screen palette | colours 0-3 and the pointer colours are the project's own theme; colours 4-15 repeat the ColorMap defaults above | `GetRGB4` on the Workbench screen |
 | on-screen messages (Workbench title, requesters) | text | strings shown to the user | worded to match the text that 1.3 displays, which programs and users rely on | visible on screen |
 
-`pf_defaults` is the only table whose values rest on a reading of the ROM alone. A black-box probe comparing
-`GetDefPrefs` on both ROMs would close that point.
+Since 2026-11-04 no table rests on a reading of the ROM alone: the probe `tests/defprefs_probe.s` (run through
+`tests/defprefs_probe.sh`) dumps the 232 bytes returned by `GetDefPrefs` on both ROMs, and every field outside the
+project's theme (pointer image, pointer colours, colours 0-3, pointer offset) is byte-identical. The `pf_defaults`
+match is therefore public API output that compatible software can read back.
 
 ## Limits: what the measurement proves and does not prove
 

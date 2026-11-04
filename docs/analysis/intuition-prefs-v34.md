@@ -202,7 +202,25 @@ PointerTicks, FontHeight (computation of a height with fallback on FontHeight + 
 - Return D0 = `buf`. No side effect (nothing is applied).
 - Difference from GetPrefs: ROM source instead of the current copy, and forced pointer image.
 
-### 4.3 Table of default values (ROM) [O]
+### 4.3 Table of default values (ROM) [O, probed]
+
+**Black-box confirmation (2026-11-04).** The probe `tests/defprefs_probe.s` (a bootblock run on the
+real Kickstart 1.3 under Amiberry, cycle-exact A500, through `tests/defprefs_probe.sh`) calls
+GetDefPrefs(buf, 232) and GetPrefs(buf, 232) into buffers prefilled with $EE and prints them on the
+serial line. Results:
+
+- All 232 bytes are written by both calls (no $EE byte left), and GetDefPrefs returns `buf` in D0.
+- Every value of the table below was **confirmed** by the probe, including XOffset/YOffset,
+  color17-19 and color0-3; no value was refuted.
+- The PointerMatrix returned by GetDefPrefs matches the description in §4.2 (both control word pairs
+  zero, arrow within the top-left 11×11 pixels with its tip on (0,0), index 2 the most frequent,
+  then index 1, then index 3). The image itself is not reproduced here.
+- ViewInitX / ViewInitY came back as 129 / 44 ($81 / $2C): this is the IntuitionBase copy (§4.2),
+  not the table, so the table's own zero is not observable through the API.
+- At bootblock time (no `devs:system-configuration` read yet), GetPrefs returns exactly the same
+  232 bytes as GetDefPrefs. This confirms test vector 1 of §7 for the fields it names.
+- Not observable by this probe: the zero PointerMatrix inside the table itself (GetDefPrefs always
+  overwrites it, §4.2) and the bit-for-bit identity with the WB 1.3.3 file (not compared).
 
 | Off. | Field | Default |
 |---|---|---|
@@ -218,7 +236,7 @@ PointerTicks, FontHeight (computation of a height with fallback on FontHeight + 
 | $6C | PointerTicks | 2 |
 | $6E…$74 | color0..3 | $05A, $FFF, $002, $F80 |
 | $76 / $77 | ViewXOffset / ViewYOffset | 0 / 0 |
-| $78 / $7A | ViewInitX / ViewInitY | 0 / 0 (replaced by IB+$36C/$36E on copy) |
+| $78 / $7A | ViewInitX / ViewInitY | 0 / 0 (replaced by IB+$36C/$36E on copy; 129 / 44 observed at bootblock time) |
 | $7C | EnableCLI | 0 |
 | $7E | PrinterType | 7 |
 | $80 | PrinterFilename[30] | "generic" |
