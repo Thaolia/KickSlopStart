@@ -587,6 +587,19 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7w) **OFS write streams with a position, MODE_READWRITE, dos fixes** (2026-11-04, specs `rom-filesystem-v34.md`
+  §5, `dos-lvo-partial-v34.md` §2.2/§2.6, `disk-full-write-v34.md` §3.1). A write state (`ofswrite.s`, `WS_*`) keeps a
+  position in [0, size]: block index = position / 488 (every block but the last is full), tables in groups (0 = the
+  header's, g = the g-th extension, found by following the chain and kept in XBUF), one data block in DBUF written
+  when DBUF moves or at END. WRITE replaces bytes inside the file and appends at its end; READ and SEEK work on a write
+  handle (Res1 = old position, outside [0, size] -1/219, END keeps the highest size); a write that does not fit returns
+  -1/221 with position and size unchanged, its blocks stay in the file. FINDUPDATE opens an existing file in place
+  (header read back, nothing written unless modified) and no longer creates a missing one (205); a directory gives 212.
+  `ow_alloc` reloads the bitmap (a disk change or an inhibit forgets it) and `ow_sync` never writes a forgotten bitmap
+  (it went to block 0); END of a write handle whose volume is no longer in the drive frees it without writing (Res1
+  -1). dos: Info keeps the caller's D2, Seek on NIL: returns 0 without a packet, ERROR_SEEK_ERROR is 219 (was 303).
+  Checked with `tests/fsrw_probe.sh` (44 checks, disk read back with xdftool, bitmap matches the referenced blocks)
+  and `tests/diskfull.s` (vectors A-E of the spec, then the "is full" requester).
   (7v) **console.device window units: the full CSI set** (2026-11-04, spec `console-keymap-v34.md` §3, §4). The
   parser follows the §3.2 automaton: ESC and ESC intermediates, ESC Fe as its C1 byte, CSI with 24 parameters (absent
   = -5, `<=>?` = -1..-4 counted negatively, `:` ignored), intermediates, and abandon with the byte read again

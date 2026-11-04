@@ -1006,6 +1006,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   InitCode(RTF_COLDSTART) (`tests/kicktag_test.s`), on our ROM and on the soft-kick image. Open: CoolCapture runs in supervisor mode without tasks (user
   mode with multitasking on 1.3); the memory self-test still writes into the first heap blocks before the KickMem
   areas are reserved; the cold path does not clear the RAM; the LED toggle of §5.1 step 5 is not done.
+  **OFS write streams (2026-11-04)**: Seek/Read on write handles, MODE_READWRITE in place, failed writes keep the
+  position, bitmap reload before allocating, no write on END of an absent volume; dos Info D2, Seek NIL:, 219
+  (`tests/fsrw_probe.sh`). Open from the `rom-filesystem-v34` comparison: lock conflicts (202), delete bit (222),
+  SET_DATE/RENAME_DISK/FLUSH, name truncation at 30, 212 for a path through a file, ExNext order and root
+  fib_DirEntryType, early write-protect check; from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to
+  pr_FileSystemTask, disk-error requesters (213/214/225/226), UnLoadSeg of overlays, IsInteractive(0).
   **Console CSI (2026-11-04)**: the §3 automaton and sequences, tab stops, modes, full SGR, font-sized cells, DSR and
   raw-event reports (`tests/con_probe.s` on our ROM). Open: italic is not drawn by Text; MULTIBROADCAST raw events
   go to the active unit only; the RastPort copy in the ConUnit is not kept; IECLASS_SIZEWINDOW does not recompute

@@ -170,7 +170,7 @@ LS_BUFSZ         EQU 2048           ; LoadSeg read buffer
 ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i: action/function not supported
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i: "xxx:" prefix unknown to the DosList
 ERROR_RENAME_ACROSS_DEVICES EQU 215
-ERROR_SEEK_ERROR EQU 303           ; dos/dos.i: Seek out of bounds
+ERROR_SEEK_ERROR EQU 219           ; dos/dos.i: Seek out of bounds
 ERROR_NO_MORE_ENTRIES EQU 232      ; dos/dos.i: ExNext has exhausted the directory (normal end of enumeration)
 ERROR_OBJECT_IN_USE EQU 202
 ERROR_OBJECT_EXISTS EQU 203

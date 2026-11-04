@@ -559,7 +559,7 @@ dos_fn_seek:
         move.l  d4,a2                   ; a2 = BADDR(fh)
         move.l  FH_TYPE(a2),a3          ; handler port
         move.l  a3,d0
-        beq.s   .sk_err                 ; not routed
+        beq.s   .sk_ret                 ; NIL: 0, no packet, Result2 untouched (1.3)
         bsr     dos_flushfh
         move.l  FH_ARG1(a2),d4          ; key of the file
         move.l  ($4).w,a6               ; SysBase
@@ -1383,9 +1383,13 @@ dos_fn_duplock:
 .dl_zero:
         moveq   #0,d0
         rts
-dos_fn_info:
-        lsr.l   #2,d2
+dos_fn_info:                            ; D2 is the caller's: the BPTR is built on a saved copy
+        move.l  d2,-(sp)
+        lsr.l   #2,d2                   ; also drops the low bits of an unaligned buffer (1.3)
         moveq   #ACTION_INFO,d0
+        bsr.s   dos_lockpkt
+        move.l  (sp)+,d2
+        rts
 ; dos_lockpkt(d0 = action, d1 = lock (ARG1), d2 = ARG2) -> d0 = dp_Res1: packet to the lock's handler.
 dos_lockpkt:
         movem.l d2-d7/a2-a6,-(sp)

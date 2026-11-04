@@ -36,8 +36,12 @@
                 xref    ow_diskinfo
                 xref    ow_inhibit
                 xref    ws_open
+                xref    ws_openold
                 xref    ws_write
+                xref    ws_read
+                xref    ws_seek
                 xref    ws_close
+                xref    ws_discard
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
                 xref    timer_now            ; system time (exec/timer.s)
                 xref    timer_setnow
@@ -211,7 +215,7 @@ dos_handler:
                 endc
                 move.l  DP_ARG1(a4),a1
                 cmp.l   #WS_MAGICV,(a1)
-                beq     .rw_wrong                     ; file open for writing
+                beq     .read_w                       ; file open for writing (MODE_READWRITE, new file)
                 move.l  a2,-(sp)                       ; a2 = handler port: saved (ofs_stream_read takes dest in a2)
                 move.l  DP_ARG1(a4),a1                ; a1 = streaming state
                 move.l  DP_ARG2(a4),a2                ; a2 = dest
@@ -229,7 +233,7 @@ dos_handler:
                 endc
                 move.l  DP_ARG1(a4),a1                ; a1 = state
                 cmp.l   #WS_MAGICV,(a1)
-                beq     .sk_err                       ; no repositioning while writing
+                beq     .seek_w
                 move.l  SS_POS(a1),d3                 ; d3 = old position (return value)
                 move.l  DP_ARG2(a4),d1                ; position (signed)
                 move.l  DP_ARG3(a4),d2                ; mode (OFFSET_BEGINNING -1 / CURRENT 0 / END 1)
@@ -256,6 +260,20 @@ dos_handler:
 .sk_err:
                 move.l  #-1,DP_RES1(a4)
                 move.l  #ERROR_SEEK_ERROR,DP_RES2(a4)
+                bra     .reply
+.seek_w:                                              ; inside what has been written; END keeps the highest size
+                move.l  DP_ARG2(a4),d1
+                move.l  DP_ARG3(a4),d2
+                jsr     ws_seek
+                move.l  d0,DP_RES1(a4)
+                bmi.s   .sk_err
+                bra     .reply
+.read_w:
+                move.l  DP_ARG2(a4),a0
+                move.l  DP_ARG3(a4),d0
+                jsr     ws_read
+                move.l  d0,DP_RES1(a4)
+                move.l  d1,DP_RES2(a4)
                 bra     .reply
 
 .locate:                                              ; Lock: (ARG2 BSTR name, ARG3 mode) -> RES1 = BPTR FileLock
@@ -448,19 +466,31 @@ dos_handler:
 .end_w:
                 move.l  WS_VOL(a1),d0
                 bsr     hnd_unusevol
+                move.l  a1,-(sp)
+                bsr     hnd_ctx
+                move.l  (sp)+,a1
+                beq.s   .end_gone
+                move.l  d0,a0
+                move.l  HC_VOLUME(a0),d0
+                cmp.l   WS_VOL(a1),d0
+                bne.s   .end_gone
                 jsr     ws_close                       ; data, extension, header, bitmap written; state freed
                 move.l  d0,DP_RES1(a4)
                 bne.s   .reply
                 move.l  #ERROR_DISK_WRITE_PROTECTED,DP_RES2(a4)
                 bra.s   .reply
+.end_gone:                                            ; its volume is not in the drive: nothing written to
+                jsr     ws_discard                    ; the disk that is there (disk-change spec: Res1 -1)
+                move.l  #DOSTRUE,DP_RES1(a4)
+                bra     .reply
 .rw_wrong:
                 move.l  #-1,DP_RES1(a4)
                 move.l  #ERROR_OBJECT_WRONG_TYPE,DP_RES2(a4)
                 bra.s   .reply
 
 ; --- writing (ofswrite.s) ---
-.findupdate:                                         ; existing file -> read; otherwise created like FINDOUTPUT
-                lea     -HND_NAMEBUF(sp),sp
+.findupdate:                                         ; existing file opened in place; a missing one is
+                lea     -HND_NAMEBUF(sp),sp            ; not created (1.3: 205)
                 move.l  DP_ARG3(a4),d0
                 move.l  sp,a1
                 bsr     hnd_cstr
@@ -469,8 +499,11 @@ dos_handler:
                 move.l  sp,a0
                 jsr     ofs_name_to_block
                 lea     HND_NAMEBUF(sp),sp
+                move.l  #ERROR_OBJECT_NOT_FOUND,d1
                 tst.l   d0
-                bne     .findinput
+                beq     .w_fail
+                jsr     ws_openold                     ; d0 = state | 0, d1 = error
+                bra.s   .fo_got
 .findoutput:                                         ; (ARG1 fh, ARG2 lock, ARG3 BSTR name): file created or replaced
                 lea     -HND_NAMEBUF(sp),sp
                 move.l  DP_ARG3(a4),d0
@@ -481,6 +514,7 @@ dos_handler:
                 move.l  sp,a0
                 jsr     ws_open                        ; d0 = state | 0, d1 = error
                 lea     HND_NAMEBUF(sp),sp
+.fo_got:
                 tst.l   d0
                 beq     .w_fail
                 move.l  DP_ARG1(a4),d1

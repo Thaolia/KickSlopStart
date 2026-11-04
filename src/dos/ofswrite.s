@@ -20,8 +20,12 @@
                 xdef    ow_diskinfo
                 xdef    ow_inhibit
                 xdef    ws_open
+                xdef    ws_openold
                 xdef    ws_write
+                xdef    ws_read
+                xdef    ws_seek
                 xdef    ws_close
+                xdef    ws_discard
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
@@ -52,17 +56,25 @@ OW_PATHMAX      EQU 128
 OW_NAME         EQU OW_PATH+OW_PATHMAX   ; final name (32)
 OW_SIZE         EQU OW_NAME+32
 
-; write state of an open file (FINDOUTPUT)
+; write state of an open file (FINDOUTPUT, FINDUPDATE): a position anywhere in [0, size]. Every data block but the
+; last holds OFS_DMAX bytes, so block index = position / OFS_DMAX. Block tables: group 0 = the header's, group
+; g >= 1 = the g-th extension block; only the last group grows.
 WS_MAGIC        EQU 0
 WS_HDR          EQU 4                ; header block
-WS_SIZE         EQU 8                ; bytes written
+WS_SIZE         EQU 8                ; file size (highest position written)
 WS_NBLK         EQU 12               ; data blocks
-WS_CUR          EQU 16               ; current data block (0 = none)
-WS_CURLEN       EQU 20               ; bytes in the current block
-WS_EXT          EQU 24               ; current extension (0 = the header's table)
-WS_EXTN         EQU 28               ; entries in the current table
+WS_CUR          EQU 16               ; data block held in DBUF (0 = none)
+WS_CURIDX       EQU 20               ; its index in the file
+WS_EXT          EQU 24               ; extension block held in XBUF
+WS_EXTN         EQU 28               ; entries in the last group's table
 WS_FIRST        EQU 32               ; first data block
-WS_HBUF         EQU 40               ; (WS_VOL at 36: ofs.i)
+WS_POS          EQU 40               ; (WS_VOL at 36: ofs.i) current position
+WS_GRP          EQU 44               ; index of the last group
+WS_XGRP         EQU 48               ; group held in XBUF (0 = none)
+WS_DDIRTY       EQU 52               ; DBUF modified
+WS_XDIRTY       EQU 56               ; XBUF modified
+WS_MOD          EQU 60               ; file modified: header rewritten at close
+WS_HBUF         EQU 64
 WS_XBUF         EQU WS_HBUF+OFS_BSIZE
 WS_DBUF         EQU WS_XBUF+OFS_BSIZE
 WS_SIZEOF       EQU WS_DBUF+OFS_BSIZE
@@ -171,6 +183,8 @@ ow_sync:
         tst.l   OW_BMDIRTY(a5)
         beq.s   .sy_upd
         clr.l   OW_BMDIRTY(a5)
+        tst.l   OW_BMBLK(a5)         ; forgotten bitmap: never written (block 0 is the boot block)
+        beq.s   .sy_upd
         lea     OW_BM(a5),a0         ; bitmap checksum at long 0
         clr.l   (a0)
         moveq   #0,d0
@@ -246,8 +260,12 @@ ow_bmbit:
         and.w   #31,d1
         rts
 ; ow_alloc(a5) -> d0 = free block taken from the bitmap (search from the root, then from the start) | 0.
+; The bitmap is (re)loaded first: a disk change or an inhibit forgets it while a file may still be open for writing.
 ow_alloc:
         movem.l d2-d3,-(sp)
+        bsr     ow_bmload
+        tst.l   d0
+        beq.s   .al_ret
         move.l  #OFS_ROOTBLK+1,d2
         move.l  #OFS_NBLK,d3
 .al_lp:
@@ -884,25 +902,33 @@ ow_diskinfo:
         rts
 
 ; ------------------------------------------------------------------------------------------------------------------
+; ws_alloc(a6) -> a3 = cleared write state with its magic | Z = 1: no memory. Clobbers d0/d1/a0/a1.
+ws_alloc:
+        move.l  #WS_SIZEOF,d0
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,a3
+        tst.l   d0
+        beq     .wa_ret
+        move.l  #WS_MAGICV,WS_MAGIC(a3)
+.wa_ret:
+        rts
+
 ; ws_open(a0 = path, d0 = start, a6) -> d0 = write state | 0, d1 = error: creates (or replaces) the file.
 ws_open:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a0,a2
         move.l  d0,d6
-        move.l  #WS_SIZEOF,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq.s   .wo_mem
-        move.l  d0,a3                ; a3 = state
+        bsr     ws_alloc
+        beq     ws_omem
         move.l  a2,a0
         move.l  d6,d0
         moveq   #OFS_ST_FILE,d1
         bsr     ow_create
         tst.l   d0
-        beq.s   .wo_fail
-        move.l  #WS_MAGICV,WS_MAGIC(a3)
+        beq     ws_ofail
         move.l  d0,WS_HDR(a3)
+        st      WS_MOD(a3)
         bsr     ow_slot
         move.l  (a0),a5              ; header (written empty by ow_create) kept in the state
         lea     OW_B1(a5),a0
@@ -911,207 +937,511 @@ ws_open:
 .wo_cp:
         move.l  (a0)+,(a1)+
         dbra    d1,.wo_cp
+ws_ook:
         move.l  a3,d0
         moveq   #0,d1
-        bra.s   .wo_ret
-.wo_fail:
+        bra     ws_oret
+ws_ofail:
         move.l  d1,-(sp)
         move.l  a3,a1
-        move.l  #WS_SIZEOF,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     ws_discard
         move.l  (sp)+,d1
         moveq   #0,d0
-        bra.s   .wo_ret
-.wo_mem:
-        move.l  #ERROR_DISK_FULL,d1
+        bra     ws_oret
+ws_omem:
+        move.l  #ERROR_NO_FREE_STORE,d1
         moveq   #0,d0
-.wo_ret:
+ws_oret:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ws_write(a1 = state, a0 = data, d0 = length, a6) -> d0 = length | -1, d1 = error. Data blocks are filled
-; one by one; a full block is written when the next one is allocated (its link to it is then known).
+; ws_openold(d0 = header block of an existing object, a6) -> d0 = write state | 0, d1 = error: a file opened in place
+; (FINDUPDATE) at position 0; nothing is written unless it is modified. A directory gives 212.
+ws_openold:
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  d0,d6
+        bsr     ws_alloc
+        beq     ws_omem
+        bsr     ow_ctx
+        beq     .uo_mem
+        move.l  d6,d0
+        lea     WS_HBUF(a3),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq     .uo_io
+        lea     WS_HBUF(a3),a0
+        move.l  #ERROR_OBJECT_WRONG_TYPE,d1
+        cmp.l   #OFS_T_SHORT,OFSB_TYPE(a0)
+        bne     ws_ofail
+        cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)
+        bne     ws_ofail
+        move.l  OFSB_FILESIZE(a0),d0
+        cmp.l   #OFS_NBLK*OFS_DMAX,d0
+        bhi     ws_ofail             ; size larger than a disk: not a file header we can follow
+        move.l  d6,WS_HDR(a3)
+        move.l  OFSB_FIRSTDATA(a0),WS_FIRST(a3)
+        move.l  d0,WS_SIZE(a3)
+        add.l   #OFS_DMAX-1,d0
+        divu    #OFS_DMAX,d0
+        and.l   #$FFFF,d0
+        move.l  d0,WS_NBLK(a3)       ; full blocks but the last
+        moveq   #0,d1
+        tst.l   d0
+        beq     .uo_grp
+        subq.l  #1,d0
+        divu    #OFS_TABN,d0
+        and.l   #$FFFF,d0
+        move.l  d0,d1
+.uo_grp:
+        move.l  d1,WS_GRP(a3)
+        mulu    #OFS_TABN,d1
+        move.l  WS_NBLK(a3),d0
+        sub.l   d1,d0
+        move.l  d0,WS_EXTN(a3)
+        bra     ws_ook
+.uo_mem:
+        move.l  #ERROR_NO_FREE_STORE,d1
+        bra     ws_ofail
+.uo_io:
+        move.l  OW_ERR(a5),d1
+        bra     ws_ofail
+
+; ws_discard(a1 = state, a6): the state is freed and nothing is written (also END of a file whose volume is gone).
+ws_discard:
+        move.l  #WS_SIZEOF,d0
+        jmp     LVO_FREEMEM(a6)
+
+; ws_dflush(a3, a5) -> d0 = 1 ok / 0: DBUF written if modified. Clobbers d1/a0/a1.
+ws_dflush:
+        tst.b   WS_DDIRTY(a3)
+        beq     .df_ok
+        move.l  WS_CUR(a3),d0
+        lea     WS_DBUF(a3),a0
+        bsr     ow_wr
+        tst.l   d0
+        beq     .df_ret
+        sf      WS_DDIRTY(a3)
+.df_ok:
+        moveq   #1,d0
+.df_ret:
+        rts
+
+; ws_xflush(a3, a5) -> d0 = 1/0: XBUF written if modified, its high_seq = its number of entries. Clobbers d1/a0/a1.
+ws_xflush:
+        tst.b   WS_XDIRTY(a3)
+        beq     .xf_ok
+        lea     WS_XBUF(a3),a0
+        moveq   #OFS_TABN,d0
+        move.l  WS_XGRP(a3),d1
+        cmp.l   WS_GRP(a3),d1
+        bne     .xf_n
+        move.l  WS_EXTN(a3),d0
+.xf_n:
+        move.l  d0,OFSB_HIGHSEQ(a0)
+        move.l  WS_EXT(a3),d0
+        bsr     ow_wr
+        tst.l   d0
+        beq     .xf_ret
+        sf      WS_XDIRTY(a3)
+.xf_ok:
+        moveq   #1,d0
+.xf_ret:
+        rts
+
+; ws_tab(d0 = group, a3, a5) -> d0 = 1 and a0 = buffer holding that group's table | d0 = 0. An extension is found by
+; following the chain from the header. Clobbers d1/a1.
+ws_tab:
+        lea     WS_HBUF(a3),a0
+        tst.l   d0
+        beq     .tb_ok
+        cmp.l   WS_XGRP(a3),d0
+        beq     .tb_x
+        movem.l d2-d3,-(sp)
+        move.l  d0,d2                ; d2 = group wanted
+        bsr     ws_xflush
+        tst.l   d0
+        beq     .tb_fail
+        clr.l   WS_XGRP(a3)
+        move.l  WS_HBUF+OFSB_EXT(a3),d3
+.tb_lp:
+        move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
+        tst.l   d3
+        beq     .tb_fail             ; chain shorter than the size says
+        move.l  d3,d0
+        lea     WS_XBUF(a3),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq     .tb_fail
+        move.l  d3,WS_EXT(a3)
+        addq.l  #1,WS_XGRP(a3)
+        move.l  WS_XBUF+OFSB_EXT(a3),d3
+        cmp.l   WS_XGRP(a3),d2
+        bne     .tb_lp
+        movem.l (sp)+,d2-d3
+.tb_x:
+        lea     WS_XBUF(a3),a0
+.tb_ok:
+        moveq   #1,d0
+        rts
+.tb_fail:
+        clr.l   WS_XGRP(a3)
+        movem.l (sp)+,d2-d3
+        moveq   #0,d0
+        rts
+
+; ws_dload(d0 = block index, a3, a5) -> d0 = 1/0: DBUF holds that data block (the previous one written if modified).
+; Clobbers d1/a0/a1.
+ws_dload:
+        tst.l   WS_CUR(a3)
+        beq     .dl_get
+        cmp.l   WS_CURIDX(a3),d0
+        bne     .dl_get
+        moveq   #1,d0
+        rts
+.dl_get:
+        movem.l d2-d3,-(sp)
+        move.l  d0,d2
+        bsr     ws_dflush
+        tst.l   d0
+        beq     .dl_ret
+        clr.l   WS_CUR(a3)
+        move.l  d2,d0
+        divu    #OFS_TABN,d0         ; group, entry
+        move.l  d0,d3
+        and.l   #$FFFF,d0
+        bsr     ws_tab
+        tst.l   d0
+        beq     .dl_ret
+        clr.w   d3
+        swap    d3
+        lsl.l   #2,d3
+        neg.l   d3
+        lea     OFSB_TABEND(a0),a0
+        move.l  0(a0,d3.l),d3        ; d3 = data block
+        move.l  #ERROR_OBJECT_NOT_FOUND,OW_ERR(a5)
+        moveq   #0,d0
+        tst.l   d3
+        beq     .dl_ret              ; hole in the table
+        move.l  d3,d0
+        lea     WS_DBUF(a3),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq     .dl_ret
+        move.l  d3,WS_CUR(a3)
+        move.l  d2,WS_CURIDX(a3)
+        moveq   #1,d0
+.dl_ret:
+        movem.l (sp)+,d2-d3
+        rts
+
+; ws_tabadd(d0 = data block, a3, a5) -> d0 = 1/0: the block enters the last table (filled from the end); a full table
+; gets a new extension chained from it (an extension that fills up is written).
+ws_tabadd:
+        movem.l d2-d3,-(sp)
+        move.l  d0,d2
+        cmp.l   #OFS_TABN,WS_EXTN(a3)
+        blo     .ta_put
+        bsr     ow_alloc
+        move.l  d0,d3                ; d3 = new extension
+        beq     .ta_ret
+        move.l  WS_GRP(a3),d0
+        bsr     ws_tab
+        tst.l   d0
+        beq     .ta_undo
+        move.l  d3,OFSB_EXT(a0)
+        tst.l   WS_GRP(a3)
+        beq     .ta_hdr              ; the header's link is written at END
+        st      WS_XDIRTY(a3)
+.ta_hdr:
+        bsr     ws_xflush
+        tst.l   d0
+        beq     .ta_ret
+        lea     WS_XBUF(a3),a0
+        bsr     ow_clear
+        move.l  #OFS_T_LIST,OFSB_TYPE(a0)
+        move.l  d3,OFSB_KEY(a0)
+        move.l  WS_HDR(a3),OFSB_PARENT(a0)
+        move.l  #OFS_ST_FILE,OFSB_SECTYPE(a0)
+        move.l  d3,WS_EXT(a3)
+        addq.l  #1,WS_GRP(a3)
+        move.l  WS_GRP(a3),WS_XGRP(a3)
+        clr.l   WS_EXTN(a3)
+        st      WS_XDIRTY(a3)
+.ta_put:
+        move.l  WS_GRP(a3),d0
+        bsr     ws_tab
+        tst.l   d0
+        beq     .ta_ret
+        move.l  WS_EXTN(a3),d0
+        lsl.l   #2,d0
+        neg.l   d0
+        lea     OFSB_TABEND(a0),a1
+        move.l  d2,0(a1,d0.l)
+        addq.l  #1,WS_EXTN(a3)
+        tst.l   WS_GRP(a3)
+        beq     .ta_ok
+        st      WS_XDIRTY(a3)
+.ta_ok:
+        moveq   #1,d0
+.ta_ret:
+        movem.l (sp)+,d2-d3
+        rts
+.ta_undo:
+        move.l  d3,d0
+        bsr     ow_free
+        moveq   #0,d0
+        bra     .ta_ret
+
+; ws_append(a3, a5) -> d0 = 1/0: a new data block at index WS_NBLK (the position is at the end of a file whose
+; last block is full), linked from the previous last block, entered in the table; DBUF holds it, empty.
+ws_append:
+        move.l  d2,-(sp)
+        bsr     ow_alloc
+        move.l  d0,d2                ; d2 = new data block
+        beq     .ap_ret
+        move.l  WS_NBLK(a3),d0
+        beq     .ap_first
+        subq.l  #1,d0
+        bsr     ws_dload             ; previous last block, linked to the new one
+        tst.l   d0
+        beq     .ap_free
+        move.l  d2,d0
+        bsr     ws_tabadd
+        tst.l   d0
+        beq     .ap_free
+        move.l  d2,WS_DBUF+OFSB_NEXT(a3)
+        st      WS_DDIRTY(a3)
+        bsr     ws_dflush
+        tst.l   d0
+        beq     .ap_ret
+        bra     .ap_init
+.ap_first:
+        move.l  d2,d0
+        bsr     ws_tabadd
+        tst.l   d0
+        beq     .ap_free
+        move.l  d2,WS_FIRST(a3)
+.ap_init:
+        lea     WS_DBUF(a3),a0
+        bsr     ow_clear
+        move.l  #OFS_T_DATA,OFSB_TYPE(a0)
+        move.l  WS_HDR(a3),OFSB_KEY(a0)
+        move.l  WS_NBLK(a3),d0
+        move.l  d0,WS_CURIDX(a3)
+        addq.l  #1,d0
+        move.l  d0,OFSB_HIGHSEQ(a0)  ; sequence number
+        move.l  d0,WS_NBLK(a3)
+        move.l  d2,WS_CUR(a3)
+        st      WS_DDIRTY(a3)
+        moveq   #1,d0
+.ap_ret:
+        move.l  (sp)+,d2
+        rts
+.ap_free:
+        move.l  d2,d0
+        bsr     ow_free
+        moveq   #0,d0
+        bra     .ap_ret
+
+; ws_write(a1 = state, a0 = data, d0 = length, a6) -> d0 = length | -1, d1 = error. Writes at the current position:
+; inside the file the bytes are replaced, at its end blocks are added. A zero or negative length writes nothing.
+; A write that does not fit returns -1 with position and size unchanged; the blocks it allocated stay in the
+; file and are reused by the next writes (disk-full-write-v34 §3.1).
 ws_write:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d7                ; d7 = remaining
         move.l  d0,d6                ; d6 = requested
+        move.l  WS_POS(a3),d3        ; d3/a4 = position and size before the call
+        move.l  WS_SIZE(a3),a4
         bsr     ow_ctx
-        beq     .ww_err
-.ww_lp:
+        beq     .ww_fail
         tst.l   d7
-        beq     .ww_ok
-        tst.l   WS_CUR(a3)
-        beq.s   .ww_new
-        cmp.l   #OFS_DMAX,WS_CURLEN(a3)
-        blo.s   .ww_copy
-.ww_new:
-        bsr     ow_alloc
+        bgt     .ww_lp
+        moveq   #0,d6
+        bra     .ww_ok
+.ww_lp:
+        move.l  WS_POS(a3),d0
+        divu    #OFS_DMAX,d0
+        moveq   #0,d5
+        swap    d0
+        move.w  d0,d5                ; d5 = offset in the block
+        clr.w   d0
+        swap    d0                   ; d0 = block index
+        cmp.l   WS_NBLK(a3),d0
+        blo     .ww_have
+        bsr     ws_append
+        bra     .ww_chk
+.ww_have:
+        bsr     ws_dload
+.ww_chk:
         tst.l   d0
-        beq     .ww_err
-        move.l  d0,d5                ; d5 = new block
-        move.l  WS_CUR(a3),d0
-        beq.s   .ww_first
-        lea     WS_DBUF(a3),a0       ; previous block: complete, linked to the new one
-        move.l  #OFS_DMAX,OFSB_DSIZE(a0)
-        move.l  d5,OFSB_NEXT(a0)
-        bsr     ow_wr
-        tst.l   d0
-        beq     .ww_err
-        bra.s   .ww_init
-.ww_first:
-        move.l  d5,WS_FIRST(a3)
-.ww_init:
-        lea     WS_DBUF(a3),a0
-        bsr     ow_clear
-        move.l  #OFS_T_DATA,OFSB_TYPE(a0)
-        move.l  WS_HDR(a3),OFSB_KEY(a0)
-        addq.l  #1,WS_NBLK(a3)
-        move.l  WS_NBLK(a3),OFSB_HIGHSEQ(a0)
-        move.l  d5,WS_CUR(a3)
-        clr.l   WS_CURLEN(a3)
-        move.l  d5,d0
-        bsr     ws_tabadd
-        tst.l   d0
-        beq     .ww_err
-.ww_copy:
+        beq     .ww_fail
         move.l  #OFS_DMAX,d4         ; n = min(room, remaining)
-        sub.l   WS_CURLEN(a3),d4
+        sub.l   d5,d4
         cmp.l   d7,d4
-        bls.s   .ww_n
+        bls     .ww_n
         move.l  d7,d4
 .ww_n:
         lea     WS_DBUF+OFSB_DATA(a3),a1
-        add.l   WS_CURLEN(a3),a1
+        add.l   d5,a1
         move.l  d4,d0
-        bra.s   .ww_cn
+        bra     .ww_cn
 .ww_cp:
         move.b  (a2)+,(a1)+
 .ww_cn:
         dbra    d0,.ww_cp
-        add.l   d4,WS_CURLEN(a3)
-        add.l   d4,WS_SIZE(a3)
+        add.l   d4,d5                ; end of the bytes in this block
+        cmp.l   WS_DBUF+OFSB_DSIZE(a3),d5
+        bls     .ww_ds
+        move.l  d5,WS_DBUF+OFSB_DSIZE(a3)
+.ww_ds:
+        st      WS_DDIRTY(a3)
+        st      WS_MOD(a3)
+        add.l   d4,WS_POS(a3)
+        move.l  WS_POS(a3),d0
+        cmp.l   WS_SIZE(a3),d0
+        bls     .ww_sz
+        move.l  d0,WS_SIZE(a3)
+.ww_sz:
         sub.l   d4,d7
-        bra     .ww_lp
+        bne     .ww_lp
 .ww_ok:
         move.l  d6,d0
         moveq   #0,d1
-        bra.s   .ww_ret
-.ww_err:
+        bra     ws_rwret
+.ww_fail:
+        move.l  d3,WS_POS(a3)
+        move.l  a4,WS_SIZE(a3)
+ws_rwerr:
         moveq   #-1,d0
         move.l  #ERROR_DISK_FULL,d1
         bsr     ow_slot
-        beq.s   .ww_ret
+        beq     ws_rwret
         move.l  (a0),d2
-        beq.s   .ww_ret
+        beq     ws_rwret
         move.l  d2,a5
         move.l  OW_ERR(a5),d1
-.ww_ret:
+ws_rwret:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
-; ws_tabadd(d0 = data block, a3 = state, a5) -> d0 = 1/0: the block enters the current table (filled from the
-; end); a full table causes an extension to be allocated, chained from the header or the previous extension (written).
-ws_tabadd:
-        move.l  d2,-(sp)
-        move.l  d0,d2
-        cmp.l   #OFS_TABN,WS_EXTN(a3)
-        blo.s   .ta_put
-        bsr     ow_alloc             ; new extension
+; ws_read(a1 = state, a0 = dest, d0 = length, a6) -> d0 = bytes read (0 = end of file) | -1, d1 = error: reading at
+; the current position of a file open for writing (MODE_READWRITE, or after Seek on a new file).
+ws_read:
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a1,a3
+        move.l  a0,a2
+        moveq   #0,d6                ; d6 = bytes read
+        move.l  WS_SIZE(a3),d7
+        sub.l   WS_POS(a3),d7        ; d7 = min(length, size - position)
         tst.l   d0
-        beq.s   .ta_ret
-        move.l  d0,-(sp)
-        tst.l   WS_EXT(a3)
-        bne.s   .ta_prev
-        move.l  d0,WS_HBUF+OFSB_EXT(a3)
-        bra.s   .ta_newx
-.ta_prev:
-        lea     WS_XBUF(a3),a0       ; extension full: linked to the new one and written
-        move.l  d0,OFSB_EXT(a0)
-        move.l  #OFS_TABN,OFSB_HIGHSEQ(a0)
-        move.l  WS_EXT(a3),d0
-        bsr     ow_wr
+        bgt     .wr_len
+        moveq   #0,d7
+.wr_len:
+        cmp.l   d0,d7
+        bls     .wr_go
+        move.l  d0,d7
+.wr_go:
+        tst.l   d7
+        beq     .wr_ok
+        bsr     ow_ctx
+        beq     ws_rwerr
+.wr_lp:
+        move.l  WS_POS(a3),d0
+        divu    #OFS_DMAX,d0
+        moveq   #0,d5
+        swap    d0
+        move.w  d0,d5                ; d5 = offset in the block
+        clr.w   d0
+        swap    d0                   ; d0 = block index
+        bsr     ws_dload
         tst.l   d0
-        beq.s   .ta_fail
-.ta_newx:
-        lea     WS_XBUF(a3),a0
-        bsr     ow_clear
-        move.l  #OFS_T_LIST,OFSB_TYPE(a0)
-        move.l  (sp),OFSB_KEY(a0)
-        move.l  WS_HDR(a3),OFSB_PARENT(a0)
-        move.l  #OFS_ST_FILE,OFSB_SECTYPE(a0)
-        move.l  (sp)+,WS_EXT(a3)
-        clr.l   WS_EXTN(a3)
-.ta_put:
-        lea     WS_HBUF(a3),a0
-        tst.l   WS_EXT(a3)
-        beq.s   .ta_tab
-        lea     WS_XBUF(a3),a0
-.ta_tab:
-        move.l  WS_EXTN(a3),d0
-        lsl.l   #2,d0
-        neg.l   d0
-        lea     OFSB_TABEND(a0),a0
-        move.l  d2,0(a0,d0.l)
-        addq.l  #1,WS_EXTN(a3)
-        moveq   #1,d0
-.ta_ret:
-        move.l  (sp)+,d2
-        rts
-.ta_fail:
-        addq.l  #4,sp
-        moveq   #0,d0
-        bra.s   .ta_ret
+        beq     ws_rwerr
+        move.l  #OFS_DMAX,d4
+        sub.l   d5,d4
+        cmp.l   d7,d4
+        bls     .wr_n
+        move.l  d7,d4
+.wr_n:
+        lea     WS_DBUF+OFSB_DATA(a3),a0
+        add.l   d5,a0
+        move.l  d4,d0
+        bra     .wr_cn
+.wr_cp:
+        move.b  (a0)+,(a2)+
+.wr_cn:
+        dbra    d0,.wr_cp
+        add.l   d4,WS_POS(a3)
+        add.l   d4,d6
+        sub.l   d4,d7
+        bne     .wr_lp
+.wr_ok:
+        move.l  d6,d0
+        moveq   #0,d1
+        bra     ws_rwret
 
-; ws_close(a1 = state, a6) -> d0 = -1 / 0: last data block, current extension and header (size, number of
-; blocks in its table, first block) written, bitmap and cache flushed; the state is freed.
+; ws_seek(a1 = state, d1 = offset, d2 = mode: < 0 from the start, 0 from the current position, > 0 from the end)
+; -> d0 = old position | -1 (target outside [0, size]: position unchanged).
+ws_seek:
+        move.l  WS_POS(a1),d0
+        tst.l   d2
+        blt     .sk_chk
+        beq     .sk_cur
+        add.l   WS_SIZE(a1),d1
+        bra     .sk_chk
+.sk_cur:
+        add.l   d0,d1
+.sk_chk:
+        tst.l   d1
+        bmi     .sk_bad
+        cmp.l   WS_SIZE(a1),d1
+        bhi     .sk_bad
+        move.l  d1,WS_POS(a1)
+        rts
+.sk_bad:
+        moveq   #-1,d0
+        rts
+
+; ws_close(a1 = state, a6) -> d0 = -1 / 0: if the file was modified, DBUF, XBUF and the header (size, first block,
+; entries of its table, date) are written, then the bitmap and the cache; the state is freed.
 ws_close:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a3
-        moveq   #0,d7                ; d7 = result
+        moveq   #-1,d7               ; d7 = result
+        tst.b   WS_MOD(a3)
+        beq     .wc_free
+        moveq   #0,d7
         bsr     ow_ctx
-        beq.s   .wc_free
-        move.l  WS_CUR(a3),d0
-        beq.s   .wc_ext
-        lea     WS_DBUF(a3),a0
-        move.l  WS_CURLEN(a3),OFSB_DSIZE(a0)
-        clr.l   OFSB_NEXT(a0)
-        bsr     ow_wr
+        beq     .wc_free
+        bsr     ws_dflush
         tst.l   d0
-        beq.s   .wc_free
-.wc_ext:
-        move.l  WS_EXT(a3),d0
-        beq.s   .wc_hdr
-        lea     WS_XBUF(a3),a0
-        move.l  WS_EXTN(a3),OFSB_HIGHSEQ(a0)
-        bsr     ow_wr
+        beq     .wc_free
+        bsr     ws_xflush
         tst.l   d0
-        beq.s   .wc_free
-.wc_hdr:
+        beq     .wc_free
         lea     WS_HBUF(a3),a0
         move.l  WS_SIZE(a3),OFSB_FILESIZE(a0)
         move.l  WS_FIRST(a3),OFSB_FIRSTDATA(a0)
-        move.l  WS_NBLK(a3),d0
-        cmp.l   #OFS_TABN,d0
-        bls.s   .wc_hs
         moveq   #OFS_TABN,d0
+        tst.l   WS_GRP(a3)
+        bne     .wc_hs
+        move.l  WS_EXTN(a3),d0
 .wc_hs:
         move.l  d0,OFSB_HIGHSEQ(a0)
         bsr     ow_stamp
         move.l  WS_HDR(a3),d0
         bsr     ow_wr
         tst.l   d0
-        beq.s   .wc_free
+        beq     .wc_free
         bsr     ow_sync
         tst.l   d0
-        beq.s   .wc_free
+        beq     .wc_free
         moveq   #-1,d7
 .wc_free:
         move.l  a3,a1
-        move.l  #WS_SIZEOF,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr     ws_discard
         move.l  d7,d0
         movem.l (sp)+,d2-d7/a2-a5
         rts
-
