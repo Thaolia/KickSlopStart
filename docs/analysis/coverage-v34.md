@@ -45,8 +45,8 @@
   routine (which does not mean complete); **0** stubs; **4** null vectors (graphicsPrivate1/2, dos
   GetPacket/QueuePacket); nothing falls outside a table any more.
 - Device commands inventoried in addition: 80 (keyboard 14, gameport 14, input 17, console 13, trackdisk 22):
-  **79 specified, 1 partial** (TD_MOTOR). Implemented: 75; **5 refused** by us although 1.3 implements them
-  (console CMD_RESET, CMD_CLEAR, CMD_STOP, CMD_START, CMD_FLUSH). Timer (3) and audio (15) are described
+  **79 specified, 1 partial** (TD_MOTOR). Implemented: 80 (the 5 console commands CMD_RESET, CMD_CLEAR,
+  CMD_STOP, CMD_START, CMD_FLUSH, refused by us at `c4bdddc`, were added on 2026-11-04). Timer (3) and audio (15) are described
   globally in §4: both fully specified and implemented.
 - What remains unspecified is concentrated in: **graphics** (≈ 11.8 KB of "own" ROM code in 53 unspecified or
   partial LVOs: text and fonts, GELs/animation, regions, line drawing, SetRast), **intuition** gadget lists,
@@ -311,7 +311,7 @@ version.
 | -216 | `MakeVPort` | yes — graphics-display §4 | yes | 2554 / 3722 | — |
 | -222 | `LoadView` | yes — graphics-display §7.1 ; caesar-boot §2.7 | yes | 282 / 434 | — |
 | -228 | `WaitBlit` | yes — graphics-blitter §2 | yes | 36 / 36 | — |
-| -234 | `SetRast` | cited — layers §5.1 ; wb-icon-clipping §5 | yes | 646 / 1160 | P2 |
+| -234 | `SetRast` | yes — graphics-raster §4 ; layers §5.1 | yes | 646 / 1160 | — |
 | -240 | `Move` | yes — graphics-line §3 | yes | 20 / 20 | — |
 | -246 | `Draw` | yes — graphics-line §4–§8 | yes | 2424 / 3494 | — |
 | -252 | `AreaMove` | yes — graphics-area §3.1 | yes | 148 / 148 | — |
@@ -323,22 +323,22 @@ version.
 | -288 | `SetRGB4` | yes — graphics-display §3 | yes | 336 / 794 | — |
 | -294 | `QBSBlit` | yes — graphics-blitter §9.4 ; timer-v34 §6.2 | yes | 220 / 836 | — |
 | -300 | `BltClear` | yes — graphics-blitter §4 | yes | 224 / 684 | — |
-| -306 | `RectFill` | partial — graphics-area §8 (outline mode) | yes | 180 / 234 | P3 |
+| -306 | `RectFill` | yes — graphics-raster §3 ; graphics-area §5, §8 | yes | 180 / 234 | — |
 | -312 | `BltPattern` | yes — graphics-blitter §8 ; graphics-area §5 | yes | 3648 / 4654 | — |
 | -318 | `ReadPixel` | yes — graphics-area §9.2 | yes | 264 / 300 | — |
 | -324 | `WritePixel` | yes — graphics-area §9.1 | yes | 352 / 812 | — |
 | -330 | `Flood` | yes — graphics-area §7 | yes | 5634 / 8750 | — |
 | -336 | `PolyDraw` | yes — graphics-line §9.1 | yes | 32 / 32 | — |
-| -342 | `SetAPen` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 6 / 78 | P3 |
-| -348 | `SetBPen` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 6 / 78 | P3 |
-| -354 | `SetDrMd` | partial — graphics-blitter §6 (rp_minterms precomputed) | yes | 4 / 4 (ROM stub) | P3 |
+| -342 | `SetAPen` | yes — graphics-raster §2 ; graphics-line §2 | yes | 6 / 78 | — |
+| -348 | `SetBPen` | yes — graphics-raster §2 ; graphics-line §2 | yes | 6 / 78 | — |
+| -354 | `SetDrMd` | yes — graphics-raster §2 ; graphics-line §2 | yes | 4 / 4 (ROM stub) | — |
 | -360 | `InitView` | yes — graphics-display §1.1 ; intuition-prefs §1 | yes | 22 / 58 | — |
 | -366 | `CBump` | yes — graphics-display §6 | yes | 54 / 300 | — |
 | -372 | `CMove` | yes — graphics-display §6 | yes | 76 / 366 | — |
 | -378 | `CWait` | yes — graphics-display §6 | yes | 78 / 368 | — |
 | -384 | `VBeamPos` | yes — graphics-display §7.4 ; custom-chips §3.6 | yes | 16 / 16 | — |
 | -390 | `InitBitMap` | partial — fastfonts-ff §3 (BytesPerRow) | yes | 22 / 22 | P3 |
-| -396 | `ScrollRaster` | partial — console-keymap §3.7 (BPen fill) | yes | 142 / 380 | P2 |
+| -396 | `ScrollRaster` | yes — graphics-raster §5 ; console-keymap §3.7 | yes | 142 / 380 | — |
 | -402 | `WaitBOVP` | yes — graphics-display §7.4 | yes | 6 / 62 | — |
 | -408 | `GetSprite` | yes — custom-chips §4.1 | yes | 136 / 168 | — |
 | -414 | `FreeSprite` | yes — custom-chips §4.1 | yes | 68 / 132 | — |
@@ -705,14 +705,14 @@ marks a command that both 1.3 and our ROM refuse.
 | No. | Command | Specified? | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
 | 0 | `CMD_INVALID` | yes — console-keymap §2.4 | yes (IOERR_NOCMD, as 1.3) | 8 / 134 | — |
-| 1 | `CMD_RESET` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 14 / 238 | P1 |
+| 1 | `CMD_RESET` | yes — console-keymap §2.4 | yes (2026-11-04, a19c7ef) | 14 / 238 | — |
 | 2 | `CMD_READ` | yes — console-keymap §6.3 | yes | 142 / 318 | — |
 | 3 | `CMD_WRITE` | yes — console-keymap §3 | yes | 1314 / 1632 | — |
 | 4 | `CMD_UPDATE` | yes — console-keymap §2.4 | yes (IOERR_NOCMD, as 1.3) | 4 / 4 (ROM stub) | — |
-| 5 | `CMD_CLEAR` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 12 / 12 | P1 |
-| 6 | `CMD_STOP` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 16 / 142 | P1 |
-| 7 | `CMD_START` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 44 / 170 | P1 |
-| 8 | `CMD_FLUSH` | yes — console-keymap §2.4 | no (IOERR_NOCMD) | 32 / 164 | P1 |
+| 5 | `CMD_CLEAR` | yes — console-keymap §2.4 | yes (2026-11-04, a19c7ef) | 12 / 12 | — |
+| 6 | `CMD_STOP` | yes — console-keymap §2.4 | yes (2026-11-04, a19c7ef) | 16 / 142 | — |
+| 7 | `CMD_START` | yes — console-keymap §2.4 | yes (2026-11-04, a19c7ef) | 44 / 170 | — |
+| 8 | `CMD_FLUSH` | yes — console-keymap §2.4 | yes (2026-11-04, a19c7ef) | 32 / 164 | — |
 | 9 | `CD_ASKKEYMAP` | yes — console-keymap §5.4 | yes | 16 / 72 | — |
 | 10 | `CD_SETKEYMAP` | yes — console-keymap §5.4 | yes | 16 / 72 | — |
 | 11 | `CD_ASKDEFAULTKEYMAP` | yes — console-keymap §5.4 | yes | 12 / 68 | — |
@@ -790,27 +790,31 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
 Almost all of the former "next 15 analysis specs" (blitter, display, Alert/alert.hook, screens, input
 engine and menus, layers, fills, console/keymap, gameport/input/potgo, keyboard, exec scheduling, audio,
 sprites, resources, trackdisk raw/change, dos ROM file system and partial LVOs) have been written since the
-first version of this page. What is left is ranked below. Rank 1 is the only P1 left (a command 1.3 implements
-and we refuse). The others are functions **implemented on our side without a spec** (or with only a partial
-one) **while known software uses them**: there the implementation follows the AutoDocs and AROS and has never
-been checked against the V34 behaviour. "Used by" names programs analysed in `docs/analysis/`.
+first version of this page. The ranking below was made when rank 1 was the only P1 (a command 1.3 implements
+and we refused) and the others were functions **implemented on our side without a spec** (or with only a
+partial one) **while known software uses them**. "Used by" names programs analysed in `docs/analysis/`.
+
+**State on 2026-11-04 (evening)**: ranks 1–9 and 14 are specified **and** implemented and checked against
+their spec on our side (commits of 2026-11-04, `docs/PLAN.md` entries of that date); their rows are kept for
+the record, with the gaps each implementation still lists. Rank 10 is specified (`graphics-raster-v34.md`) and
+waits for its check on our side. Ranks 11–13 and 15 are still open.
 
 | Rank | Module | Function(s) | Spec / our side | Why it matters (used by) | Prio |
 |--:|---|---|---|---|:-:|
-| 1 | console.device | `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` | specified (console-keymap §2.4) / **refused** (IOERR_NOCMD) | Any program that clears or holds the console input queue before a prompt; CLEAR never being replied on 1.3 (a SendIO + WaitIO caller hangs there) is a behaviour to keep in mind before deciding how far to copy it. Implementation gap only: no analysis needed | P1 |
-| 2 | intuition | `RefreshGList`, `AddGList`, `RemoveGList`, `RemoveGadget`, `AddGadget` (beyond §6.2–§6.3 of intuition-gzz) | **specified 2026-11-04** (intuition-gadgets-v34, probe `tests/glist_probe.s`) / yes, with gaps (system gadgets not in FirstGadget, NextGadget cleared on removal, RefreshGList count 0) | OctaMED v4 (RefreshGList ×27, RemoveGadget ×22, AddGadget ×18, AddGList/RemoveGList ×10 each, octamed §2.4); SysInfo 4.4 (AddGList, RefreshGList, sysinfo-44 §1.0). Closure ≈ 7.2 KB for RefreshGList. Also needs §5 item 1 fixed | P2 |
-| 3 | intuition | `ActivateGadget` and the string-gadget engine (editing, UNDO, LONGINT; IDCMP of GADGETUP from a string gadget) | **specified 2026-11-04** (intuition-strgad-v34, probe `tests/strg_probe.s`) / yes, with gaps (LONGINT accepts a sign anywhere, GADGETUP Qualifier 0, disabled gadget refused) | OctaMED text fields (×11); Workbench Rename and Info (workbench-task §6.8); any requester with a text field. Closure ≈ 1.2 KB plus the input-engine part | P2 |
-| 4 | graphics | Text and fonts: `Text` (full contract: clipping, styles, JAM modes), `TextLength`, `OpenFont`, `CloseFont`, `SetFont`, `AskFont`, `AddFont`, `RemFont`, `AskSoftStyle`/`SetSoftStyle` (algorithmic styles), `ClearEOL`, `ClearScreen` | **specified 2026-11-04** (graphics-text-v34; probe to write: `tests/gtext_probe.s`, §11 of that page) / yes, not yet checked against the spec (the ROM has no topaz 9) | Every window title, menu and CLI line; OctaMED (Text ×55, OpenFont), Workbench (OpenFont failure = dead-end alert, workbench-task §3.1), console. Text ≈ 1.3 KB of closure | P2 |
-| 5 | graphics | `Draw` (line drawing) and `PolyDraw`, `Move` | **specified 2026-11-04** (graphics-line-v34, debugger-injected calls on the real ROM; probe to write: §11) / yes | Workbench drawers and frames, OctaMED (Draw ×16, PolyDraw, Move ×69), Preferences; graphics-area open point 4 answered (AreaEnd's edges are Draw's pixels, graphics-line §9.2). Draw ≈ 3.5 KB of closure. *A500 risk*: blitter line mode (one-dot, octant, BLTAPT sign) | P2 |
-| 6 | graphics | GELs and animation: `DrawGList` (VSprite band allocation), `DoCollision`, `SortGList`, `AddBob`, `RemIBob`, `AddVSprite`, `RemVSprite`, `InitGels`, `InitMasks`, `InitGMasks`, `GetGBuffers`, `FreeGBuffers`, `AddAnimOb`, `Animate` | **specified 2026-11-04** (graphics-gels-v34, debugger-injected calls on the real ROM) / **yes** (2026-11-04: `tests/gels_probe.sh` matches §11 except the V34 defects not reproduced, see PLAN) | Icon dragging on the Workbench (AddBob, DrawGList, RemIBob, SortGList, workbench-task §3.6); games using Bobs/VSprites. DrawGList ≈ 6.5 KB, RemIBob ≈ 3.2 KB, DoCollision ≈ 1.8 KB of closure. V34 defects to decide on: non-OVERLAY PlaneOnOff shape, DoCollision pairs with the second GEL on the left, TOPHIT counting two rows inside the bound, sticky VSOVERFLOW | P2 |
-| 7 | graphics | Region functions: `AndRectRegion`, `OrRectRegion`, `XorRectRegion`, `ClearRectRegion`, `AndRegionRegion`, `OrRegionRegion`, `XorRegionRegion`, `NewRegion`, `ClearRegion`, `DisposeRegion` | **specified 2026-11-04** (graphics-regions-v34, debugger-injected calls on the real ROM; probe to write: `tests/gregion_probe.s`, §12) / yes, not yet checked against the spec | Workbench icon clipping (wb-icon-clipping §1), every InstallClipRegion user, layers damage lists. Closures 1.3–2.6 KB each. Rectangle splitting and order, normalisation of the bounds, the AndRectRegion bounds defect and the memory-failure paths (FALSE vs dead-end alert `$8201000B`) are now specified | P2 |
-| 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | **specified 2026-11-04** (intuition-windows-v34, debugger-injected calls on the real ROM; probe to write: `tests/iwin_probe.s`, §9) / yes, not yet checked against the spec | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | P2 |
-| 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | **specified 2026-11-04** (intuition-render-v34, debugger-injected calls on the real ROM; probe to write: `tests/irender_probe.s`, §8) / yes, not yet checked against the spec | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | P2 |
-| 10 | graphics | `SetRast`, `ScrollRaster`, `RectFill` (full contract), `SetAPen`/`SetBPen`/`SetDrMd` | cited or partial / yes | Layers clear new layers with SetRast (layers §5.1), Workbench window repair (wb-icon-clipping §5), console scrolling (console-keymap §3.7–§3.8), OctaMED (RectFill ×27). SetRast ≈ 1.2 KB of closure | P2 |
+| 1 | console.device | `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` | specified (console-keymap §2.4) / **yes** (2026-11-04, `tests/concmd_probe.sh`; open: one 16-byte input ring shared by all units where 1.3 has 255 bytes per unit, CMD_READ with io_Length 0 waits instead of replying −4) | Any program that clears or holds the console input queue before a prompt; CLEAR never being replied on 1.3 (a SendIO + WaitIO caller hangs there) is a behaviour to keep in mind before deciding how far to copy it | done |
+| 2 | intuition | `RefreshGList`, `AddGList`, `RemoveGList`, `RemoveGadget`, `AddGadget` (beyond §6.2–§6.3 of intuition-gzz) | **specified 2026-11-04** (intuition-gadgets-v34) / **yes** (2026-11-04: `tests/glist_probe.sh` and `tests/reqg_probe.sh` identical to 1.3; system gadgets in FirstGadget, NextGadget kept on removal, count 0 = to the end, requester gadgets; open: AddGadget on a REQGADGET, highlight in a PREDRAWN requester) | OctaMED v4 (RefreshGList ×27, RemoveGadget ×22, AddGadget ×18, AddGList/RemoveGList ×10 each, octamed §2.4); SysInfo 4.4 (AddGList, RefreshGList, sysinfo-44 §1.0). Closure ≈ 7.2 KB for RefreshGList | done |
+| 3 | intuition | `ActivateGadget` and the string-gadget engine (editing, UNDO, LONGINT; IDCMP of GADGETUP from a string gadget) | **specified 2026-11-04** (intuition-strgad-v34) / **yes** (2026-11-04: `tests/strg_probe.sh`; open: 1.3 defers the activation to the next input event, the text clear past the NUL, STRINGCENTER/STRINGRIGHT, GADGHBOX/GADGHIMAGE cursors, ghost pattern of an edited disabled gadget) | OctaMED text fields (×11); Workbench Rename and Info (workbench-task §6.8); any requester with a text field. Closure ≈ 1.2 KB plus the input-engine part | done |
+| 4 | graphics | Text and fonts: `Text` (full contract: clipping, styles, JAM modes), `TextLength`, `OpenFont`, `CloseFont`, `SetFont`, `AskFont`, `AddFont`, `RemFont`, `AskSoftStyle`/`SetSoftStyle` (algorithmic styles), `ClearEOL`, `ClearScreen` | **specified 2026-11-04** (graphics-text-v34) / **yes** (2026-11-04: `tests/gtext_probe.sh` matches every §10 vector; topaz 9 + topaz 8 of our own; open: NT_REPLYMSG for a removed font replied without a port, TmpRas not used as the line buffer) | Every window title, menu and CLI line; OctaMED (Text ×55, OpenFont), Workbench (OpenFont failure = dead-end alert, workbench-task §3.1), console. Text ≈ 1.3 KB of closure | done |
+| 5 | graphics | `Draw` (line drawing) and `PolyDraw`, `Move` | **specified 2026-11-04** (graphics-line-v34) / **yes** (2026-11-04: `tests/gline_probe.sh` matches §10 except by design: clipped to the BitMap without a layer, synchronous CPU Draw; open: `rp_minterms[]` not computed, GfxBase BlitLock not kept) | Workbench drawers and frames, OctaMED (Draw ×16, PolyDraw, Move ×69), Preferences; AreaEnd's edges are Draw's pixels (graphics-line §9.2). Draw ≈ 3.5 KB of closure | done |
+| 6 | graphics | GELs and animation: `DrawGList` (VSprite band allocation), `DoCollision`, `SortGList`, `AddBob`, `RemIBob`, `AddVSprite`, `RemVSprite`, `InitGels`, `InitMasks`, `InitGMasks`, `GetGBuffers`, `FreeGBuffers`, `AddAnimOb`, `Animate` | **specified 2026-11-04** (graphics-gels-v34) / **yes** (2026-11-04: `tests/gels_probe.sh` matches §11 except the V34 defects not reproduced: non-OVERLAY PlaneOnOff shape, save slot shifted by an rp->Mask hole, DoCollision pairs with the second GEL on the left, a one-member sequence added twice) | Icon dragging on the Workbench (AddBob, DrawGList, RemIBob, SortGList, workbench-task §3.6); games using Bobs/VSprites. DrawGList ≈ 6.5 KB, RemIBob ≈ 3.2 KB, DoCollision ≈ 1.8 KB of closure | done |
+| 7 | graphics | Region functions: `AndRectRegion`, `OrRectRegion`, `XorRectRegion`, `ClearRectRegion`, `AndRegionRegion`, `OrRegionRegion`, `XorRegionRegion`, `NewRegion`, `ClearRegion`, `DisposeRegion` | **specified 2026-11-04** (graphics-regions-v34) / **yes** (2026-11-04: `tests/gregion_probe.sh` matches every §11 vector; open: AndRectRegion's MaxX/MaxY follow the real rectangle where 1.3 leaves garbage) | Workbench icon clipping (wb-icon-clipping §1), every InstallClipRegion user, layers damage lists. Closures 1.3–2.6 KB each | done |
+| 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | **specified 2026-11-04** (intuition-windows-v34) / **yes** (2026-11-04: `tests/iwin_probe.sh` matches §8 except deliberate differences: Move/Size/ToFront/ToBack and the close-time activation run at once where 1.3 defers them, windows kept on the screen, CloseWindow ends the window's requesters; open: IDCMP ports not in the public port list, one REFRESHWINDOW at a time) | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | done |
+| 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | **specified 2026-11-04** (intuition-render-v34) / **yes** (2026-11-04: `tests/irender_probe.sh` matches every §7 vector, text ink aside; BorderTop 11 as on 1.3 since the drawer-layout fix) | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | done |
+| 10 | graphics | `SetRast`, `ScrollRaster`, `RectFill` (full contract), `SetAPen`/`SetBPen`/`SetDrMd` | **specified 2026-11-04** (graphics-raster-v34, debugger-injected calls on the real ROM; probe to write: `tests/graster_probe.s`, §9) / yes, not yet checked against the spec (known in advance: `rp_minterms[]` not computed, see rank 5) | Layers clear new layers with SetRast (layers §5.1), Workbench window repair (wb-icon-clipping §5), console scrolling (console-keymap §3.7–§3.8), OctaMED (RectFill ×27). SetRast ≈ 1.2 KB of closure. To decide on our side: the SIMPLE-layer damage defects of ScrollRaster (graphics-raster §5.4), INVERSVID pattern inversion, pattern phase in layer coordinates, Set*Pen side effects on FRST_DOT/+$1F | P2 |
 | 11 | exec | `RawDoFmt` | cited / yes | Workbench memory title (workbench-task §6.2–§6.4), SetMap (setmap-13), the Guru text (alert-v34 §3), LoadWB, CLI commands. Closure ≈ 450 b; format edge cases (`%ld` vs `%d`, `%b` BSTR, field width, PutChProc registers) unspecified | P2 |
 | 12 | exec | Messages and I/O: `PutMsg`, `GetMsg`, `ReplyMsg`, `WaitPort`, `DoIO`, `SendIO`, `WaitIO`, `CheckIO`, `AbortIO`, `OpenDevice`, `CloseDevice`, `OpenLibrary`, `OpenResource` | cited (CheckIO partial) / yes | Everything: dos packets (dos-v34-spec §2a), devices, Workbench. The device-side halves are specified per device; the exec-side details (PA_SIGNAL/PA_SOFTINT/PA_IGNORE, IOF_QUICK handling in DoIO/WaitIO, ReplyMsg to a NULL port, OpenLibrary version test and ramlib fallback) are not | P3 |
 | 13 | exec | Memory and semaphores: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`, `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `InitSemaphore`, `ObtainSemaphore`, `ReleaseSemaphore`, `AttemptSemaphore`, `ObtainSemaphoreList`, `ReleaseSemaphoreList`, `Add/Rem/FindSemaphore` | partial or cited / yes | SetPatch 1.38 (AllocEntry, setpatch-138 §1.4), KickMem survival (AllocAbs, coldstart-hardware §5.3), dos memory (dos-memory §2), layers (semaphore lists, layers §7), soft-kick (TypeOfMem). Deallocate ≈ 320 b of closure | P3 |
-| 14 | ramlib.library | loading of LIBS:/DEVS: (in the caller's context: 1.3 has no ramlib process), exec patches, expunge on low memory | **specified 2026-11-04** (ramlib-v34) / **yes** (2026-11-04: `tests/ramlib_probe.sh` matches §8; LoadSeg name and ROM-library expunge differ, see PLAN) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device. A plain task cannot load from disk on 1.3 either (it crashes there) | P2 |
+| 14 | ramlib.library | loading of LIBS:/DEVS: (in the caller's context: 1.3 has no ramlib process), exec patches, expunge on low memory | **specified 2026-11-04** (ramlib-v34) / **yes** (2026-11-04: `tests/ramlib_probe.sh` matches §8; LoadSeg name and ROM-library expunge differ, see PLAN) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device. A plain task cannot load from disk on 1.3 either (it crashes there) | done |
 | 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | none / yes | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | P3 |
 
 Below rank 15: `InitRastPort`/`InitBitMap` beyond the fields already listed; `AllocRaster`/`FreeRaster`;
@@ -832,3 +836,9 @@ points).
   and no size was re-measured.
 - The hardware values cited as risks (keyboard pulse, minimum audio period, BBUSY) are
   public facts from the Amiga hardware documentation, not measurements of the ROM.
+- The 2026-11-04 (evening) refresh of §7, of the console command rows of §4 and of the six graphics rows (SetRast, RectFill, SetAPen, SetBPen,
+  SetDrMd, ScrollRaster) read only `docs/PLAN.md`, `git log` and the new page `graphics-raster-v34.md`. That page
+  was reviewed before being referenced: it was written from black-box calls only (the ROM code was not read), it
+  contains no instruction sequence, no pseudo-code of a routine and no ROM address; its numbers are LVOs, public
+  structure offsets, register effects, minterm bytes found in RastPorts after public calls, and pixel/region
+  results on our own test BitMaps and layers.

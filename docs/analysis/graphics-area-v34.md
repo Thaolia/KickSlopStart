@@ -302,7 +302,9 @@ Rendered by BltPattern, hence common to AreaEnd, RectFill and Flood.
   plane receives **its** pattern combined with that plane's minterm (plane bit in APen/BPen, DrawMode).
   T14, patterns plane 0 `$FF00,$FF00`, plane 1 `$F0F0,$0F0F`: in **APen = 3, BPen = 0, JAM2** the pattern's
   colours are reproduced as is (odd line: x 0..3 → 1, 4..7 → 3, 8..11 → 0, 12..15 → 2);
-  in APen = 1, JAM1, only plane 0 is written (colour 1 on x 0..7 of each group of 16).
+  in APen = 1, JAM1, only plane 0 is set (colour 1 on x 0..7 of each group of 16). **Refined 2026-11-04**
+  (`graphics-raster-v34.md` §3.5): plane 1 is not left alone, JAM1 with pen bit 0 **clears** plane 1 where
+  plane 1's pattern bit is 1; on the colour-0 background of T14 this is invisible.
 - **SetAfPt(rp, ptrn, n)** = macro that assigns AreaPtrn and AreaPtSz. [D, public headers]
 
 ## 6. DrawEllipse (−180) — `(rp A1, cx D0, cy D1, a D2, b D3)` [D][O]
@@ -428,6 +430,8 @@ the T19/T20 scene. [O]
 
 ## 8. RectFill (−306) with outline [D][O]
 
+Full RectFill contract (modes, pattern phase, clipping, degenerate bounds): `graphics-raster-v34.md` §3.
+
 - Without `AREAOUTLINE`: `BltPattern(rp, NULL, xmin, ymin, xmax, ymax, 0)` (inclusive bounds, pattern and
   pens of BltPattern). [D]
 - With `AREAOUTLINE`: interior filled first — in **COMPLEMENT**, the rectangle is **shrunk by one pixel
@@ -490,7 +494,8 @@ buffer (§4.7) and are not reference vectors for a clone.
 
 1. **Paths with a layer** (AreaEnd/Flood/WritePixel/ReadPixel in a window, hidden ClipRects,
    SuperBitMap): **deduced only**; the probe only uses a RastPort without a layer. In particular
-   the origin of the pattern (layer or screen coordinates) within a layer is not observed.
+   the origin of the pattern (layer or screen coordinates) within a layer is not observed. **Answered for
+   RectFill 2026-11-04** (`graphics-raster-v34.md` §3.5): layer coordinates (origin = layer bounds).
 2. **Negative coordinates / outside the BitMap in AreaEnd** (x0 rounded negative, rendering without a layer not
    clipped): deduced, not probed (write outside the buffer).
 3. **TmpRas too small for Flood** (allocation of `Size` bytes then copy of a whole plane) and
