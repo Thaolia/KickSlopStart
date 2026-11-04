@@ -163,17 +163,22 @@ rq_origin:
 .og_ret:
         rts
 
-; gad_nolayer(a3 = window, a2 = gadget) -> Z = 0 if it is a requester gadget without a layer (requester clipped to
-; nothing): nothing to draw. Preserves everything else.
+; gad_nolayer(a3 = window, a2 = gadget) -> Z = 0 if it is a requester gadget whose requester is not up in the window or
+; has no layer (requester clipped to nothing): nothing to draw. Preserves everything else.
 gad_nolayer:
         movem.l d0/a0,-(sp)
+        btst    #4,GG_GADGETTYPE(a2) ; REQGADGET
+        beq.s   .nl_ret              ; Z = 1: a window gadget
         move.l  a2,a0
         bsr.s   gad_reqof
-        beq.s   .nl_ret              ; Z = 1: not a requester gadget
+        beq.s   .nl_skip             ; its requester is not up: nothing to draw (spec intuition-gzz §6.2)
         move.l  d0,a0
         tst.l   RQ_REQLAYER(a0)
         seq     d0                   ; d0 = $FF if no layer
         tst.b   d0
+        bra.s   .nl_ret
+.nl_skip:
+        moveq   #1,d0                ; Z = 0
 .nl_ret:
         movem.l (sp)+,d0/a0          ; (movem does not touch the flags)
         rts
@@ -1950,12 +1955,18 @@ intuition_ActivateGadget:
 
 ; ------------------------------------------------------------------------------------------------------------------
 ; AddGadget(window a0, gadget a1, position d0) -> d0 = effective position. AddGList(window a0, gadget a1, position
-; d0, count d1 (-1 = the whole chain), requester a2): the gadget chain is inserted at the position (-1 = at the
-; end) in wd_FirstGadget. Nothing is redrawn (RefreshGadgets / RefreshGList).
+; d0, count d1 (<= 0 = the whole chain), requester a2): the gadget chain is inserted at the position (negative or past
+; the end = at the end) in wd_FirstGadget, or in the requester's list when the first gadget is a REQGADGET (spec
+; intuition-gadgets-v34 §3.1; the requester need not be up). Nothing is redrawn (RefreshGadgets / RefreshGList).
 intuition_AddGadget:
+        movem.l d2-d3/a2-a3/a6,-(sp)
         moveq   #1,d1
+        moveq   #0,d3                ; no requester (1.3 takes whatever D2 holds: undefined, spec §2)
+        bra.s   ag_common
 intuition_AddGList:
-        movem.l d2/a2-a3/a6,-(sp)
+        movem.l d2-d3/a2-a3/a6,-(sp)
+        move.l  a2,d3                ; d3 = requester
+ag_common:
         move.l  a0,a3                ; a3 = window
         move.l  a1,a2                ; a2 = last gadget of the chain to insert
 .ag_last:
@@ -1971,6 +1982,13 @@ intuition_AddGList:
         jsr     LVO_FORBID(a6)
         movem.l (sp)+,d0/a0-a1
         lea     WD_FIRSTGADGET(a0),a0    ; previous link (the link is at the start of a gadget)
+        btst    #4,GG_GADGETTYPE(a1)     ; REQGADGET: into the requester's list
+        beq.s   .ag_list
+        tst.l   d3
+        beq.s   .ag_list
+        move.l  d3,a0
+        lea     RQ_REQGADGET(a0),a0
+.ag_list:
         moveq   #0,d2
 .ag_pos:
         cmp.l   d0,d2
@@ -1985,8 +2003,15 @@ intuition_AddGList:
         move.l  a1,(a0)
         jsr     LVO_PERMIT(a6)
         bsr     gad_propinit         ; borders of the proportional gadgets that entered the window
+        btst    #4,GG_GADGETTYPE(a1)
+        beq.s   .ag_ret
+        tst.l   d3
+        beq.s   .ag_ret
+        move.l  a1,a2                ; ... or the requester
+        bsr     gad_propinitl
+.ag_ret:
         move.l  d2,d0
-        movem.l (sp)+,d2/a2-a3/a6
+        movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 
 ; RemoveGadget(window a0, gadget a1) -> d0 = position it occupied | $FFFF. RemoveGList(window a0, gadget a1, count
@@ -1995,14 +2020,25 @@ intuition_AddGList:
 intuition_RemoveGadget:
         moveq   #1,d0
 intuition_RemoveGList:
-        movem.l d2/a2/a6,-(sp)
+        movem.l d2/a2-a3/a6,-(sp)
         move.l  a6,-(sp)
         move.l  d0,d1                ; d1 = count
+        move.l  a0,a3                ; a3 = window
         move.l  ($4).w,a6
         movem.l d1/a0-a1,-(sp)
         jsr     LVO_FORBID(a6)
         movem.l (sp)+,d1/a0-a1
         lea     WD_FIRSTGADGET(a0),a0
+        move.l  a1,d0
+        beq.s   .rg_none
+        btst    #4,GG_GADGETTYPE(a1) ; REQGADGET: the list of the window's requester that holds it; none up = not
+        beq.s   .rg_list             ; found (spec intuition-gadgets-v34 §4.2)
+        move.l  a1,a0
+        bsr     gad_reqof
+        beq.s   .rg_none
+        move.l  d0,a0
+        lea     RQ_REQGADGET(a0),a0
+.rg_list:
         moveq   #0,d2
 .rg_find:
         move.l  (a0),d0
@@ -2035,23 +2071,38 @@ intuition_RemoveGList:
         move.l  #$FFFF,d0            ; UWORD -1, zero-extended (spec §1.3)
 .rg_ret:
         addq.l  #4,sp
-        movem.l (sp)+,d2/a2/a6
+        movem.l (sp)+,d2/a2-a3/a6
         rts
 
 ; RefreshGadgets(gadgets a0, window a1, requester a2): redraws from this gadget up to the end of the list.
 ; RefreshGList(gadgets a0, window a1, requester a2, count d0): at most count gadgets (<= 0 = to the end, spec
-; intuition-gadgets-v34 §1.2).
+; intuition-gadgets-v34 §1.2). The requester argument is ignored: a requester gadget is drawn only while its requester
+; is up in the window and not PREDRAWN, and a count of -2 (RefreshGadgets, OnGadget, OffGadget) restarts at the
+; requester's first gadget (spec intuition-gzz §6.2).
 intuition_RefreshGadgets:
-        moveq   #-1,d0
+        moveq   #-2,d0
 intuition_RefreshGList:
         movem.l d2/a2-a3/a5,-(sp)
         move.l  a6,a5
         move.l  a1,a3
         move.l  a0,a2
         move.l  d0,d2
-        bgt.s   .rf_count
-        moveq   #-1,d2
+        move.l  a2,d0
+        beq.s   .rf_count
+        move.l  a2,a0
+        bsr     gad_reqof
+        beq.s   .rf_count
+        move.l  d0,a0
+        btst    #1,RQ_FLAGS+1(a0)        ; PREDRAWN
+        bne.s   .rf_ret
+        cmp.l   #-2,d2
+        bne.s   .rf_count
+        move.l  RQ_REQGADGET(a0),a2
 .rf_count:
+        tst.l   d2
+        bgt.s   .rf_n
+        moveq   #-1,d2
+.rf_n:
         move.l  a2,a0                    ; a system gadget in the range: the pictograms are redrawn last, on top
         move.l  d2,d1
 .rf_sys:
@@ -2090,8 +2141,8 @@ intuition_OffGadget:
         bsr     gad_forget
         move.l  (sp)+,a0
 gad_onoff:
-        moveq   #-1,d0
-        bra.s   intuition_RefreshGList
+        moveq   #-2,d0
+        bra     intuition_RefreshGList
 
 ; DrawBorder(rp a0, border a1, x d0, y d1): each Border of the chain, polyline of Count points (XY pairs)
 ; offset by (x + LeftEdge, y + TopEdge), in pen FrontPen in mode DrawMode. RastPort pens and mode left

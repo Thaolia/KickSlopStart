@@ -1967,29 +1967,67 @@ wn_sysgads_nc:
         move.l  a1,a4                ; a4 = border RastPort
         bsr     wn_geo
         move.l  a0,a2                ; a2 = geometry
-        move.l  WD_FLAGS(a3),d2
-        btst    #3,d2                ; WINDOWCLOSE
+        move.w  #$80,d0              ; only the system gadgets still in the window's list (a program may remove them)
+        bsr     wn_sysin
         beq.s   .sg_size
         move.l  GEO_PCLOSE(a2),a0
         moveq   #0,d0
         moveq   #0,d1
-        bsr.s   wn_picto
+        bsr     wn_picto
 .sg_size:
-        btst    #0,d2                ; WINDOWSIZING
-        beq.s   .sg_depth
+        move.w  #$10,d0
+        bsr     wn_sysin
+        beq.s   .sg_back
         move.l  GEO_PSIZE(a2),a0
         move.w  WD_WIDTH(a3),d0
         sub.w   GEO_SW(a2),d0
         move.w  WD_HEIGHT(a3),d1
         sub.w   GEO_SH(a2),d1
-        bsr.s   wn_picto
-.sg_depth:
-        btst    #2,d2                ; WINDOWDEPTH
-        beq.s   .sg_ret
+        bsr     wn_picto
+.sg_back:
+        move.w  #$60,d0
+        bsr     wn_sysin
+        beq.s   .sg_front
+        move.l  GEO_PBACK(a2),a0
         move.w  WD_WIDTH(a3),d0
-        bsr.s   wn_depthpics
+        sub.w   GEO_BACK(a2),d0
+        moveq   #0,d1
+        bsr     wn_picto
+.sg_front:
+        move.w  #$40,d0
+        bsr     wn_sysin
+        beq.s   .sg_ret
+        move.l  GEO_PFRONT(a2),a0
+        move.w  WD_WIDTH(a3),d0
+        sub.w   GEO_FRONT(a2),d0
+        moveq   #0,d1
+        bsr     wn_picto
 .sg_ret:
         movem.l (sp)+,d2/a2/a4
+        rts
+
+; wn_sysin(a3 = window, d0.b = system gadget type: $10 sizing, $20 drag, $40 front, $60 back, $80 close) -> Z = 0 if
+; such a SYSGADGET is in Window.FirstGadget. Preserves everything.
+wn_sysin:
+        move.l  a0,-(sp)
+        move.l  WD_FIRSTGADGET(a3),a0
+.si_lp:
+        cmpa.w  #0,a0
+        beq.s   .si_no
+        tst.w   GG_GADGETTYPE(a0)
+        bpl.s   .si_nx
+        cmp.b   GG_GADGETTYPE+1(a0),d0
+        beq.s   .si_yes
+.si_nx:
+        move.l  GG_NEXTGADGET(a0),a0
+        bra.s   .si_lp
+.si_yes:
+        move.l  (sp)+,a0             ; (movea leaves the flags)
+        tst.b   d0                   ; Z = 0
+        rts
+.si_no:
+        move.l  (sp)+,a0
+        cmp.b   d0,d0                ; Z = 1
         rts
 
 ; wn_depthpics(a2 = geometry, a4 = RastPort, d0.w = width of the window or screen, a6): back and front depth
@@ -2046,7 +2084,8 @@ wn_picto:
 ; IT_SYSFRONT if the point is in that gadget's box (spec intuition-frame-v34 §5.2), Z = 1 otherwise. Clobbers d1/a0.
 wn_sysat:
         bsr     wn_geo
-        btst    #3,WD_FLAGS+3(a3)    ; WINDOWCLOSE
+        move.w  #$80,d0              ; a removed system gadget takes no click (the drag bar may get it)
+        bsr     wn_sysin
         beq.s   .sa_depth
         moveq   #IT_SYSCLOSE,d0
         cmp.w   GEO_CX0(a0),d2
@@ -2064,12 +2103,20 @@ wn_sysat:
         sub.w   GEO_BACK(a0),d1
         cmp.w   d1,d2
         blt.s   .sa_none
-        moveq   #IT_SYSBACK,d0
         move.w  WD_WIDTH(a3),d1
         sub.w   GEO_FRONT(a0),d1
         cmp.w   d1,d2
-        blt.s   .sa_hit
+        blt.s   .sa_back
+        move.w  #$40,d0
+        bsr     wn_sysin
+        beq.s   .sa_none
         moveq   #IT_SYSFRONT,d0
+        bra.s   .sa_hit
+.sa_back:
+        move.w  #$60,d0
+        bsr     wn_sysin
+        beq.s   .sa_none
+        moveq   #IT_SYSBACK,d0
 .sa_hit:
         tst.w   d0                   ; Z = 0
         rts
@@ -3861,12 +3908,14 @@ it_dobutton:
         move.l  a3,IB_SYSWIN(a5)
         bra     wn_sysinv
 .db_ndepth:
-        btst    #1,WD_FLAGS+3(a3)    ; WINDOWDRAG
+        move.w  #$20,d0              ; drag gadget still in the list
+        bsr     wn_sysin
         beq.s   .db_mb
         moveq   #IT_DRAGMOVE,d0
         bra     it_dragstart
 .db_size:
-        btst    #0,WD_FLAGS+3(a3)    ; WINDOWSIZING: gadget in the bottom-right corner
+        move.w  #$10,d0              ; sizing gadget (bottom-right corner) still in the list
+        bsr     wn_sysin
         beq.s   .db_mb
         bsr     wn_geo
         move.w  WD_WIDTH(a3),d0

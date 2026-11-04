@@ -1,7 +1,8 @@
 # intuition-gadgets-v34.md — gadget list functions (intuition 34.3)
 
-> ANALYSIS track ("dirty"). Sources: black-box probe `tests/glist_probe.s` (harness `tests/glist_probe.sh`,
-> Amiberry A500, real ROM `assets/kick34005.A500`, run on 2026-11-04), ROM reading of the eight LVO entries and
+> ANALYSIS track ("dirty"). Sources: black-box probes `tests/glist_probe.s` (harness `tests/glist_probe.sh`) and
+> `tests/reqg_probe.s` (harness `tests/reqg_probe.sh`: requester gadgets, removed system gadget), both on Amiberry
+> A500 with the real ROM `assets/kick34005.A500`, run on 2026-11-04; ROM reading of the eight LVO entries and
 > of the list helpers they share (behaviour only), the 1.3 `.fd` and the AutoDocs.
 > Functions: AddGadget (−42), RemoveGadget (−228), RefreshGadgets (−222), OffGadget (−174), OnGadget (−186),
 > RefreshGList (−432), AddGList (−438), RemoveGList (−444). All eight exist in V34 (V33 for the last three).
@@ -32,7 +33,8 @@ Public structure fields used: `Window.FirstGadget` +$3E, `Window.FirstRequest` +
   at position 2 in the list `F s40 s60 s80 s20 E` puts the gadget **between the two depth gadgets**; nothing
   protects the system gadgets from an insertion or a removal [O probe, steps 3 and 5].
 - A requester list starts at `Requester.ReqGadget` and is counted the same way, from its own first gadget
-  [O ROM].
+  [O probe, reqg steps 1, 2 and 7: AddGList at 0 returns 0, RemoveGList of the second requester gadget returns 1,
+  AddGList at −1 on a list of 2 returns 2; the window list is untouched in all three].
 - A position that is **negative** (any negative value, not only −1) or **not smaller than the length** of the list
   means "at the end" [O probe for −1 and 100; O ROM for other negative values].
 
@@ -55,8 +57,9 @@ Public structure fields used: `Window.FirstGadget` +$3E, `Window.FirstRequest` +
 
 - The functions that return a position return it as an **unsigned 16-bit value, zero-extended to 32 bits in D0**.
   "Not found / nothing done" is therefore **D0 = $0000FFFF**, not $FFFFFFFF: a caller testing the sign of the
-  long word does not see the failure; one testing the low word (or comparing with (UWORD)−1) does [O ROM; the
-  probe prints the low word only and shows $FFFF].
+  long word does not see the failure; one testing the low word (or comparing with (UWORD)−1) does [O probe, reqg
+  steps 8 and Z: the full 32-bit D0 of a failed RemoveGList and of RemoveGadget on a gadget in no list is
+  $0000FFFF].
 - AddGadget, AddGList, RemoveGadget and RemoveGList return a position; RefreshGadgets, RefreshGList, OnGadget and
   OffGadget return nothing defined [O ROM, AutoDoc].
 
@@ -104,7 +107,9 @@ screen until the application clears it.
 
 - **Target list**: if the **first** gadget passed (`Gadget`) has REQGADGET in GadgetType, the list of the
   `Requester` argument (its ReqGadget chain); otherwise the window's FirstGadget list. Only the first gadget's
-  type is tested [O ROM]. The requester does not have to be displayed and is not looked up in the window [O ROM].
+  type is tested [O ROM; O probe reqg steps 1 and 7: REQGADGET gadgets with the Requester argument land in the
+  requester's list, the window list is unchanged]. The requester does not have to be displayed and is not looked
+  up in the window [O ROM, not probed: the probe's requester was up].
 - **Insertion point**: position `Position` of the target list, counted as in §1.1 (system gadgets count; negative
   or too large = end) [O probe].
 - **Range inserted**: `Gadget` and the gadgets that follow it through their NextGadget links, `Numgad` of them,
@@ -117,7 +122,7 @@ screen until the application clears it.
   gadget no longer points to it) [O probe step 7: AddGList(A→B→C→D, at 1, 2) gives `F A B s40 …`,
   B.Next = the old gadget at position 1 (a system gadget), C.Next still D].
 - **Return**: the position of the first inserted gadget (clamped as in §1.1) [O probe: 1, 7, 0 in steps 7, 9,
-  S].
+  S; reqg 0 and 2 in steps 1 and 7].
 - Inserting at 0 puts the range before the system gadgets: the last inserted gadget then points to the old head
   [O probe step S: `A B C D F s40 …`, D.Next = F].
 - Draws nothing (§1.5). Lock 2 held (§1.4).
@@ -159,9 +164,32 @@ put there are overwritten. Nothing else is set up (no GadgetType/Flags change, n
 
 If `Gadget` has REQGADGET, the function looks for the requester **in the window's requester list**
 (`Window.FirstRequest` chain, i.e. the requesters currently displayed in that window) whose ReqGadget list
-contains `Gadget`, under Forbid. If none is found, nothing is removed and $FFFF is returned. Otherwise the removal
-and the position work on that requester's list [O ROM, not probed]. Consequence: a requester gadget cannot be
-removed while its requester is not up.
+contains `Gadget`, under Forbid. If none is found, nothing is removed and $0000FFFF is returned. Otherwise the
+removal and the position work on that requester's list [O ROM; O probe reqg step 2: with the requester up,
+RemoveGList(L, 1) on the list `K L J` returns 1 and leaves `K J`]. Consequence: a requester gadget cannot be
+removed while its requester is not up [O probe reqg step 8: after EndRequest, RemoveGList(K, 1) returns
+$0000FFFF and the requester's list `K J L` is unchanged].
+
+### 4.3 System gadgets
+
+- System gadgets are ordinary members of the window list for the list functions: RemoveGList(Window.FirstGadget,
+  1) on a fresh window removes the front depth gadget and returns 0 [O probe, reqg GS step 1]. No check protects
+  them (§1.1).
+- A removed system gadget is **no longer drawn** by a refresh of the list: after RemoveGList of the front depth
+  gadget and RefreshGadgets(new Window.FirstGadget), its box stays at pen 0 while the back depth gadget, now at
+  the head, is redrawn [O probe, reqg GS step 2: 0 vs 20 non-zero pixels on line 4 of the two boxes]. Its old
+  imagery is not erased by the removal either (§1.5); the probe cleared it itself.
+- **Input**: the gadget under the pointer is found **only by walking a list** [O ROM]: on a button press in the
+  active window, the first requester's ReqGadget list if the pointer is inside that requester's layer, otherwise
+  `Window.FirstGadget`, in forward order, the first gadget whose box contains the point wins (a GADGDISABLED one
+  stops the search with no gadget, `intuition-gzz-v34.md` §6.4; with a requester up only REQGADGET or SYSGADGET
+  gadgets are accepted, `intuition-requesters-v34.md` §3.1). The action is then chosen from the **GadgetType of
+  the gadget found** (SYSGADGET types: drag, depth, sizing, close). The window keeps no other reference to its
+  system gadgets for input. Consequence: once a system gadget is removed from the list, a click on its old box
+  **does nothing of its own** (no CLOSEWINDOW, no depth change): it goes to the next gadget of the list whose box
+  contains the point — for the front or back depth box or the close box, the **drag gadget**, whose box spans
+  the whole title bar width (`intuition-frame-v34.md` §5.2), so the click starts a window drag; if no gadget of
+  the list covers it, the click is an ordinary click in the window [O ROM, not probed].
 
 ## 5. RefreshGadgets (−222) and RefreshGList (−432)
 
@@ -170,9 +198,22 @@ removed while its requester is not up.
 
 - Both call the shared rendering routine of `intuition-gzz-v34.md` §6.1 with the window, the first gadget and a
   count: **−2** for RefreshGadgets, **`NumGad` unchanged** for RefreshGList [O ROM].
-- **The `Requester` argument is ignored by both** [O ROM]. For a REQGADGET gadget the requester is found from the
-  window's requester list (`intuition-gzz-v34.md` §6.2: nothing drawn if the requester is not displayed or has
-  Flags bit $0002; with count −2 the range restarts at the requester's first gadget).
+- **The `Requester` argument is ignored by both** [O ROM; the probe passes NULL and the requester gadgets are
+  still drawn in the requester layer]. For a REQGADGET gadget the requester is found from the window's requester
+  list (`intuition-gzz-v34.md` §6.2: nothing drawn if the requester is not displayed or has Flags bit $0002; with
+  count −2 the range restarts at the requester's first gadget).
+  - RefreshGList(K, 1), K being the **first** requester gadget, draws K only [O probe, reqg step 3].
+  - RefreshGadgets(J), J being the **second** gadget of the requester list `K J`, draws **K and J**: the range
+    restarted at ReqGadget [O probe, reqg step 4]. RefreshGList(J, −2) does the same [O probe, reqg step 5].
+  - With the requester down (after EndRequest), RefreshGList(K, 1) returns without drawing or crashing [O probe,
+    reqg step 9: the program went on; nothing can be read, the layer is gone].
+- **PREDRAWN requesters** (Flags $0002): their gadgets are **never drawn by intuition** [O ROM, not probed].
+  Request() (and the redraw of a damaged requester layer, which goes through the same display step) only copies
+  `ImageBMap` into the layer (`intuition-requesters-v34.md` §2.3); the gadget list is not rendered there, and the
+  rendering routine itself draws nothing for a gadget of a PREDRAWN requester, so RefreshGadgets, RefreshGList,
+  OnGadget and OffGadget on such a gadget draw nothing either. The gadget imagery must be part of the ImageBMap.
+  The prop-gadget set-up of §3.2 is still applied to the requester's gadgets at Request() time [O ROM]. Whether
+  the highlight of a clicked gadget (e.g. GADGHCOMP) is still drawn in a PREDRAWN requester was not read.
 - `Gadgets` = NULL: nothing is drawn [O ROM].
 - **Range**: from `Gadgets`; RefreshGadgets to the end of the list; RefreshGList `NumGad` gadgets, or to the end if
   `NumGad` ≤ 0 (§1.2) [O probe steps b, c, d, g].
@@ -193,7 +234,8 @@ removed while its requester is not up.
   [O probe: B's Flags $0100 after OffGadget, $0000 after OnGadget].
 - Then exactly `RefreshGadgets(Gadget, Window)`: **from `Gadget` to the end of the list**, not only the gadget
   [O probe steps e and f: A (before B) is not drawn, B, C and D are]. `Requester` is ignored (§5); a requester
-  gadget redraws its whole requester list (count −2 rule).
+  gadget redraws its whole requester list (count −2 rule) [O probe, reqg step 6: OffGadget(J), J second in `K J`,
+  draws K and J].
 - **Ghosting** after OffGadget: the dot grid of gzz §6.4 (one pixel in four on every line, pattern
   $4444/$1111 aligned on the rendering layer, APen = BlockPen, JAM1) over the gadget's box [O probe step e: on
   window line 45 (pattern line 1) of gadget B, window x 78..85 read `.x...x..` = dots at x mod 4 = 3, as the
@@ -206,6 +248,8 @@ removed while its requester is not up.
 - No lock; no IDCMP; no check that the gadget is in the window [O ROM].
 
 ## 7. Test vectors (real ROM, probe output)
+
+### 7.1 Gadget list functions (`tests/glist_probe.s`)
 
 Probe set-up (`tests/glist_probe.s`): Workbench screen, window 400×100 at (20,20), Flags $100E (ACTIVATE,
 WINDOWDRAG, WINDOWDEPTH, WINDOWCLOSE), no IDCMP. Our boolean gadgets 'A'..'H' (GADGHCOMP, RELVERIFY, 30×10):
@@ -252,24 +296,61 @@ GP END
 The screenshot taken at the end shows only gadget A, as a pen-3 box with a pen-2 frame (complemented), and the
 window's four system gadgets intact.
 
+### 7.2 Requester gadgets and a removed system gadget (`tests/reqg_probe.s`)
+
+Set-up: Workbench screen, window 400×100 at (20,20) with sizing, drag, depth and close gadgets (system list
+`s40 s60 s10 s80 s20`: front depth, back depth, sizing, close, drag, as `intuition-frame-v34.md` §5.1). Requester R
+at (10,15), 200×40, ReqGadget = J; our REQGADGET boolean gadgets J, K, L with a pen-1 Border (30×10 at (10,10),
+(60,10), (110,10) in R); initial chains J alone, K→L. `GQ <step> <D0, 32 bits> | <R list> / <window list>`;
+`GQ P` = pen read in R's layer at the middle of the top border of J, K, L, after clearing the layer to pen 0
+(`Requester` argument NULL in every refresh call). `GS P` = number of non-zero pixels on line 4 of the front /
+back depth boxes after clearing the right end of the title bar and RefreshGadgets(Window.FirstGadget). Steps 9,
+GS 0 print a constant 0, not a return value.
+
+```
+GQ 0 00000001 | J / s40 s60 s10 s80 s20          Request(R): TRUE
+GQ 1 00000000 | K L J / s40 s60 s10 s80 s20      AddGList(K->L, 0, 2, R)
+GQ 2 00000001 | K J / s40 s60 s10 s80 s20        RemoveGList(L, 1), R up
+GQ P 3 00 01 00                                  RefreshGList(K, 1)
+GQ P 4 01 01 00                                  RefreshGadgets(J)
+GQ P 5 01 01 00                                  RefreshGList(J, -2)
+GQ P 6 01 01 00                                  OffGadget(J)
+GQ 7 00000002 | K J L / s40 s60 s10 s80 s20      AddGList(L, -1, 1, R)
+GQ 8 0000FFFF | K J L / s40 s60 s10 s80 s20      EndRequest(R), RemoveGList(K, 1)
+GQ 9 00000000 | K J L / s40 s60 s10 s80 s20      RefreshGList(K, 1), R down: no crash
+GQ Z 0000FFFF | K J L / s40 s60 s10 s80 s20      RemoveGadget(Z), Z in no list
+GS 0 00000000 | s40 s60 s10 s80 s20              fresh list
+GS 1 00000000 | s60 s10 s80 s20                  RemoveGList(Window.FirstGadget, 1)
+GS P 2 00 14                                     front box not redrawn, back box redrawn
+GQ END
+```
+
+Our ROM gave the same 15 lines on 2026-11-04.
+
 ## 8. Not covered by the probe — suggested additional probes
 
-1. **Full D0 on failure**: print the 32-bit D0 of RemoveGadget on an absent gadget and of RemoveGList(win, NULL,
-   1). Expected $0000FFFF (§1.3).
+1. **Full D0 on failure**: done for RemoveGadget on an absent gadget and for RemoveGList on a requester gadget
+   whose requester is down (reqg steps Z and 8: $0000FFFF). Still open: RemoveGList(win, NULL, 1), expected the
+   same (§4.1).
 2. **Counts of 0**: AddGList(chain of 3, pos, 0) — expected: all three inserted, return = position; with a
    PROPGADGET in the chain whose LeftBorder/TopBorder are preset to $55, expected: left unchanged with 0, set to
    WBorLeft/WBorTop with 1 or −1. RemoveGList(gad, 0) and RemoveGList(gad, −1) on a gadget followed by others —
    expected: everything up to the end of the window list removed, system gadgets included.
-3. **Requesters**: Request() a requester with two REQGADGET gadgets; AddGList(win, g, 1, 1, req) on a third —
-   expected position counted in ReqGadget; RemoveGList on a requester gadget while the requester is up (position
-   in its list) and after EndRequest (expected $FFFF, nothing removed); RefreshGList(second requester gadget, 1)
-   vs RefreshGadgets(same) — expected one gadget vs the whole requester list.
+3. **Requesters**: done (§7.2). Still open: AddGList with the REQGADGET range into a requester that is **not**
+   up (expected: inserted in its ReqGadget list all the same, §3.1); AddGadget of a REQGADGET gadget (§2,
+   undefined); a PREDRAWN requester with bordered gadgets and an ImageBMap that does not contain them (expected
+   §5: only the bitmap appears, RefreshGadgets on one of its gadgets draws nothing); a GADGHCOMP gadget of a
+   PREDRAWN requester clicked (highlight not read).
 4. **OnGadget without clearing**: OffGadget(B), then OnGadget(B) with no RectFill in between; read the ghost byte
    again. Expected (gzz §6.4 [D]): dots still there for a Border gadget; the same with a full-box Image gadget —
    expected: dots gone where the image covers them.
-5. **System gadgets in a refresh**: clear the close gadget's box, call RefreshGadgets(Window.FirstGadget) and read
-   a pixel of the close image (expected redrawn); RefreshGList(Window.FirstGadget, 1) should redraw only the front
-   depth gadget.
+5. **System gadgets in a refresh**: partly done (§7.2 GS 2: a refresh from the head redraws the back depth
+   gadget, a removed front depth gadget is not drawn). Still open: RefreshGList(Window.FirstGadget, 1) should
+   redraw only the head gadget; a pixel of the close image after RefreshGadgets(Window.FirstGadget).
+7. **Click on a removed system gadget's box** (§4.3): remove the close gadget (or the front depth gadget) with
+   RemoveGList, then click its old box with the window's IDCMP set to CLOSEWINDOW | GADGETDOWN | MOUSEBUTTONS.
+   Expected: no CLOSEWINDOW and no depth change; the drag gadget takes the click (moving the mouse with the button
+   held moves the window). Then also remove the drag gadget: expected an ordinary SELECTDOWN in the window.
 6. **Pattern origin**: repeat step e with the window at an x position that is not a multiple of 4 (e.g. 22,21)
    to separate layer-aligned from screen-aligned ghosting (gzz §6.4 says layer-aligned, ROM reading only).
 
@@ -282,3 +363,5 @@ window's four system gadgets intact.
 - [x] The probe lines quoted in §7 are API output of our own test program (positions, letters, pens), not ROM
   data.
 - [x] Facts read in the ROM are marked [O ROM] and listed in §8 as candidates for a black-box confirmation.
+- [x] The §7.2 lines are API output of our own test program (return values, list letters, pen numbers, pixel
+  counts), not ROM data. §4.3 (hit test) and the PREDRAWN rule in §5 are behaviour descriptions only.

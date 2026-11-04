@@ -1024,9 +1024,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/concmd_probe.sh`); the last P1 gap of `docs/analysis/coverage-v34.md`. Open: the input ring is 16 bytes
   shared by all units (1.3: 255 bytes per unit), and CMD_READ with io_Length 0 still waits instead of replying -4.
   **Gadget lists (2026-11-04)**: system gadgets in Window.FirstGadget, RemoveGList keeps NextGadget, RefreshGList
-  count 0 = to the end (`tests/glist_probe.sh`, identical to 1.3). Open: a program that removes system gadgets
-  from the list still gets our frame pictograms and clicks; requester-gadget paths of AddGList/RemoveGList (spec §3,
-  §4.2) and the 1.3 "D2 as requester" quirk of AddGadget are not probed.
+  count 0 = to the end (`tests/glist_probe.sh`, identical to 1.3). Then removed system gadgets (no pictogram, no
+  click) and requester gadgets (AddGList/RemoveGList/refresh rules, PREDRAWN = image only), `tests/reqg_probe.sh`
+  identical to 1.3. Open: AddGadget on a REQGADGET goes to the window list (1.3 uses whatever D2 holds); the
+  highlight of a clicked gadget in a PREDRAWN requester is not specified.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: the ROM
   has no topaz 9 (OpenFont gives topaz 8: a topaz 9 screen has an 11-line bar with 8-line text); window title bars

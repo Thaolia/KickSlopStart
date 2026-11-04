@@ -889,6 +889,12 @@ differs.
     SYSGADGET entries. RemoveGadget/RemoveGList keep the NextGadget of the last removed gadget and return $0000FFFF
     when not found; RefreshGList with a count <= 0 draws to the end and redraws the pictograms when the range holds
     a system gadget. `tests/glist_probe.sh` gives the same output on our ROM and on 1.3.
+    The frame only draws and answers the system gadgets still in the list (`wn_sysin`): a click on a removed one
+    falls to the drag bar, as on 1.3. Requester gadgets: AddGList inserts a REQGADGET chain into the Requester
+    argument's list; RemoveGList finds the displayed requester that holds the gadget ($0000FFFF once it is down);
+    a refresh draws a requester gadget only while its requester is up and not PREDRAWN, and a count of -2
+    (RefreshGadgets, OnGadget, OffGadget) redraws the whole requester list. A PREDRAWN requester shows its ImageBMap
+    only. `tests/reqg_probe.sh` gives the same output on our ROM and on 1.3.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.

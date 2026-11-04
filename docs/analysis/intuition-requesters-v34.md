@@ -103,8 +103,9 @@ visible result (§5.4).
 - No layer ⇒ nothing is drawn.
 - **PREDRAWN**: **BltBitMapRastPort** (graphics −606) from `ImageBMap` to the layer's
   RastPort, at (0,0), over Width × Height, minterm $C0.
-  Neither border, nor text, nor background is drawn; **only the gadgets are** [O: the PREDRAWN
-  branch only does the copy; the gadgets are D, see the remark].
+  Neither border, nor text, nor background is drawn, **nor the gadgets** [O ROM: the PREDRAWN branch only
+  does the copy, and the common gadget rendering routine draws nothing for a gadget of a PREDRAWN requester,
+  `intuition-gzz-v34.md` §6.2]. The gadget imagery must be part of the ImageBMap.
 - **Otherwise**, in a RastPort cloned onto the layer (screen font):
   1. **RectFill of the background** (0,0)–(Width−1, Height−1) with the **BackFill** pen, in JAM1;
   2. **DrawBorder(ReqBorder, 0, 0)**;
@@ -112,8 +113,10 @@ visible result (§5.4).
   4. **rendering of the ReqGadget list** (common routine, in reverse: the first in the list is
      drawn last, see `intuition-gzz-v34.md` §6).
 
-Remark: in the PREDRAWN branch, gadget rendering does not appear in the same routine.
-It happens through the layer refresh [S].
+Remark (corrected 2026-11-04): an earlier version assumed [S] that the gadgets of a PREDRAWN requester are drawn
+by the layer refresh. ROM reading refutes it: the redraw of a damaged requester layer goes through this same
+display step (copy only), and RefreshGadgets/RefreshGList/OnGadget/OffGadget draw nothing for such gadgets
+(`intuition-gadgets-v34.md` §5). Not probed.
 
 ### 2.4 Domain of requester gadgets [O]
 

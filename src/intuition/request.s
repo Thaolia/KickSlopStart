@@ -169,8 +169,8 @@ rq_mklayer:
         rts
 
 ; rq_render(a2 = requester, a3 = window, a5 = IntuitionBase): REQACTIVE; PropInfo of its gadgets; in its layer,
-; ImageBMap copied (PREDRAWN) or BackFill background + ReqBorder + ReqText; then its gadgets (in reverse order, like a
-; window). Without a layer: nothing is drawn. Clobbers d0-d7/a0/a1/a4/a6.
+; ImageBMap copied (PREDRAWN, nothing else) or BackFill background + ReqBorder + ReqText then its gadgets (in reverse
+; order, like a window). Without a layer: nothing is drawn. Clobbers d0-d7/a0/a1/a4/a6.
 rq_render:
         or.w    #REQACTIVE,RQ_FLAGS(a2)
         move.l  RQ_REQLAYER(a2),d0
@@ -184,8 +184,8 @@ rq_render:
         move.l  IB_GFXBASE(a5),a6
         btst    #1,RQ_FLAGS+1(a2)    ; PREDRAWN
         beq.s   .rr_draw
-        move.l  RQ_IMAGEBMAP(a2),d0
-        beq.s   .rr_gads
+        move.l  RQ_IMAGEBMAP(a2),d0  ; PREDRAWN: the image only, its gadgets are not drawn (they are in the image,
+        beq     .rr_ret              ; spec intuition-requesters-v34 §2.3)
         move.l  d0,a0
         moveq   #0,d0
         moveq   #0,d1
@@ -198,7 +198,7 @@ rq_render:
         move.w  RQ_HEIGHT(a2),d5
         move.l  #$C0,d6
         jsr     LVO_BLTBITMAPRASTPORT(a6)
-        bra.s   .rr_gads
+        bra.s   .rr_ret
 .rr_draw:
         move.l  a4,a1
         moveq   #0,d0
