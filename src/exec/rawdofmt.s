@@ -1,73 +1,94 @@
 ; src/exec/rawdofmt.s — exec RawDoFmt (LVO -522): "printf-like" formatting used by programs (printf of the C
-; startups, SetPatch messages...). Without it, these programs format into a buffer that is never filled.
-; IMPLEMENTATION track ("clean"): AutoDoc exec.library/RawDoFmt (public). NO ROM reading.
+; startups, SetPatch messages, the Workbench memory title, the Guru text...).
+; IMPLEMENTATION track ("clean"): AutoDoc exec.library/RawDoFmt (public) and the behavioural spec
+; docs/analysis/exec-rawdofmt-v34.md. NO ROM reading.
 ;
-; RawDoFmt(FormatString a0, DataStream a1, PutChProc a2, PutChData a3) -> d0 = DataStream after consumption.
-; Specification %[-][0][width][.limit][l]type; types d (signed), u (unsigned), x (hex), s (C-string), b (BSTR
-; via BPTR), c (character). The data are WORDS (16 bits) except with "l" (32 bits); %s and %b always take
-; a 32-bit pointer. Each character produced, final NUL included, is passed to PutChProc (d0 = character,
-; a3 = PutChData); a3 may be modified by PutChProc and is passed as is to the next call, but it is
-; RESTORED for the caller on return (SetPatch then measures its buffer from a3).
+; RawDoFmt(FormatString a0, DataStream a1, PutChProc a2, PutChData a3)
+; Conversion: %[-][0][width][.limit][l]type, in this order and nothing else. Types d (signed), x (hex, upper case),
+; s (C string), c (character); any other type character is sent as is, without padding and without reading data
+; (%% is this rule, and so is %b, whose BPTR stays unread). d/x/c read a word (sign-extended for d only) or, with l,
+; a long; s always reads a long pointer. Items are packed, no alignment. The limit (0 = none) keeps the first n
+; characters of every type, sign included; width and limit are 16-bit, the padding count (width - length) is a
+; signed 16-bit value and only a positive one pads. The pad character ('0' with the 0 flag, else a space) goes on the
+; padding side only: before the text, or after it with '-' (so zeros never move the sign). %c of a zero byte is an
+; empty text. Every character, final NUL included, goes to PutChProc (jsr (a2), d0.b = character, a3 = PutChData
+; as left by the previous call).
+; Exit: a1 = d0 = just past the last data item read, a3 restored, d2-d7/a2/a4-a6 preserved.
+; Deliberate differences from 1.3 (docs/PLAN.md, rank 11): a format that ends inside a conversion ("abc%", "abc%5")
+; ends the call at its terminator (1.3 sends that NUL as a character and keeps scanning past the end); d0 returns
+; the next data pointer; PutChProc gets d0 with its upper 24 bits clear and the caller's a6; a1 on exit is the data
+; cursor even if PutChProc changed a1.
+;
+; Registers kept across PutChProc calls (the ones a 1.3 PutChProc must preserve): a4 = format, d2 = data cursor,
+; a5 = field text, d3 = characters of text left, d5 = pad character (bit 31 = left-justify), d6 = pad count.
+; d0/d1/d4/d7/a0/a1 are scratch: PutChProc may change them.
 
                 include "exec.i"
 
                 xdef    exec_RawDoFmt
 
-RDF_BUF         EQU 12               ; numeric conversion buffer (32-bit decimal = 11 characters with sign)
+RDF_BUF         EQU 12               ; digit buffer: "-2147483648" is 11 characters
 
-; registers: a4 = format, a5 = data stream, a2 = PutChProc, a3 = PutChData
-; d3 = long flag, d4 = left justification, d5 = fill character, d6 = width, d7 = limit (-1 = none)
 exec_RawDoFmt:
-        movem.l d2-d7/a2-a5,-(sp)            ; a2/a3 restored for the caller (a3 only changes between PutChProc calls)
+        movem.l d2-d7/a2-a6,-(sp)
         lea     -RDF_BUF(sp),sp
         move.l  a0,a4
-        move.l  a1,a5
+        move.l  a1,d2
 .rf_next:
+        moveq   #0,d0
         move.b  (a4)+,d0
         beq.s   .rf_end
         cmp.b   #'%',d0
         beq.s   .rf_spec
-        bsr     .rf_put
+.rf_echo:
+        move.l  d2,a1
+        jsr     (a2)
         bra.s   .rf_next
 .rf_end:
-        moveq   #0,d0                ; final NUL passed to PutChProc
-        bsr     .rf_put
-        move.l  a5,d0
+        moveq   #0,d0                ; the terminating NUL, then exit
+        move.l  d2,a1
+        jsr     (a2)
+        move.l  d2,d0
+        move.l  d2,a1
         lea     RDF_BUF(sp),sp
-        movem.l (sp)+,d2-d7/a2-a5
+        movem.l (sp)+,d2-d7/a2-a6
         rts
 
 .rf_spec:
-        moveq   #0,d3
-        moveq   #0,d4
         moveq   #' ',d5
-        moveq   #0,d6
-        moveq   #-1,d7
+        moveq   #0,d6                ; width (low word)
+        moveq   #0,d7                ; limit (low word)
+        moveq   #0,d4                ; long flag
         move.b  (a4)+,d0
         cmp.b   #'-',d0
         bne.s   .rf_zero
-        moveq   #1,d4
+        bset    #31,d5
         move.b  (a4)+,d0
 .rf_zero:
         cmp.b   #'0',d0
         bne.s   .rf_width
-        moveq   #'0',d5
+        move.b  #'0',d5
         move.b  (a4)+,d0
 .rf_width:
-        bsr     .rf_digit
-        bcs.s   .rf_dot
-        mulu.w  #10,d6
+        moveq   #0,d1
+        move.b  d0,d1
+        sub.w   #'0',d1
+        cmp.w   #9,d1
+        bhi.s   .rf_dot
+        mulu.w  #10,d6               ; modulo 65536: only the low word counts
         add.w   d1,d6
         move.b  (a4)+,d0
         bra.s   .rf_width
 .rf_dot:
         cmp.b   #'.',d0
         bne.s   .rf_long
-        moveq   #0,d7
         move.b  (a4)+,d0
 .rf_limit:
-        bsr     .rf_digit
-        bcs.s   .rf_long
+        moveq   #0,d1
+        move.b  d0,d1
+        sub.w   #'0',d1
+        cmp.w   #9,d1
+        bhi.s   .rf_long
         mulu.w  #10,d7
         add.w   d1,d7
         move.b  (a4)+,d0
@@ -75,72 +96,71 @@ exec_RawDoFmt:
 .rf_long:
         cmp.b   #'l',d0
         bne.s   .rf_type
-        moveq   #1,d3
+        moveq   #1,d4
         move.b  (a4)+,d0
 .rf_type:
         tst.b   d0
-        beq.s   .rf_end              ; format truncated after '%'
+        beq.s   .rf_end              ; format ends inside a conversion: stop at its terminator
+        and.l   #$FFFF,d7            ; d7 = maximum text length, $FFFFFFFF when there is no limit
+        bne.s   .rf_lim
+        moveq   #-1,d7
+.rf_lim:
         cmp.b   #'d',d0
         beq.s   .rf_dec
-        cmp.b   #'u',d0
-        beq.s   .rf_udec
         cmp.b   #'x',d0
-        beq     .rf_hex
+        beq.s   .rf_hex
         cmp.b   #'s',d0
         beq     .rf_str
-        cmp.b   #'b',d0
-        beq     .rf_bstr
         cmp.b   #'c',d0
         beq     .rf_char
-        bsr     .rf_put              ; "%%" or unknown type: the character as is
-        bra     .rf_next
+        bra     .rf_echo             ; unknown type, "%%" included: the character itself, nothing else
 
-.rf_dec:                             ; signed decimal
-        bsr     .rf_fetch_signed
-        moveq   #0,d2                ; d2 = 1 if negative
+.rf_dec:
+        bsr     .rf_fetch
+        tst.w   d4
+        bne.s   .rf_dsign
+        ext.l   d0
+.rf_dsign:
+        moveq   #0,d4                ; d4 = 1 if negative
         tst.l   d0
-        bpl.s   .rf_decabs
-        neg.l   d0
-        moveq   #1,d2
-        bra.s   .rf_decabs
-.rf_udec:                            ; unsigned decimal
-        bsr     .rf_fetch_unsigned
-        moveq   #0,d2
-.rf_decabs:
-        lea     RDF_BUF(sp),a0       ; a0 = end of buffer (digits written right to left)
+        bpl.s   .rf_dabs
+        neg.l   d0                   ; $80000000 stays itself, read as unsigned below
+        moveq   #1,d4
+.rf_dabs:
+        lea     RDF_BUF(sp),a0       ; digits written right to left
         move.l  d0,d1
-.rf_dloop:                           ; d1 /= 10 in two 16-bit divu (68000), digit = remainder
+.rf_dloop:                           ; d1 /= 10 in two 16-bit divu, the remainder is the digit
         moveq   #0,d0
         swap    d1
-        move.w  d1,d0                ; d0 = high word
-        divu.w  #10,d0               ; d0 = [remainder:high quotient]
+        move.w  d1,d0
+        divu.w  #10,d0               ; [remainder:high quotient]
         move.w  d0,d1
-        swap    d1                   ; d1 = [high quotient:low word]
-        move.w  d1,d0                ; d0 = [remainder:low word]
-        divu.w  #10,d0               ; d0 = [digit:low quotient]
-        move.w  d0,d1                ; d1 = complete quotient
+        swap    d1                   ; [high quotient:low word]
+        move.w  d1,d0                ; [remainder:low word]
+        divu.w  #10,d0               ; [digit:low quotient]
+        move.w  d0,d1
         swap    d0
         add.b   #'0',d0
         move.b  d0,-(a0)
         tst.l   d1
         bne.s   .rf_dloop
-        tst.w   d2
-        beq.s   .rf_numout
+        tst.w   d4
+        beq.s   .rf_numtext
         move.b  #'-',-(a0)
-.rf_numout:
-        lea     RDF_BUF(sp),a1
-        move.l  a1,d2
-        sub.l   a0,d2                ; d2 = length
-        moveq   #-1,d7               ; no limit on a number
-        bra     .rf_emit
+.rf_numtext:
+        move.l  a0,a5
+        lea     RDF_BUF(sp),a0
+        move.l  a0,d3
+        sub.l   a5,d3
+        bra.s   .rf_emit
 
 .rf_hex:
-        bsr     .rf_fetch_unsigned
+        bsr     .rf_fetch
         lea     RDF_BUF(sp),a0
         move.l  d0,d1
 .rf_xloop:
-        move.b  d1,d0
-        and.b   #$0F,d0
+        moveq   #$0F,d0
+        and.b   d1,d0
         add.b   #'0',d0
         cmp.b   #'9',d0
         bls.s   .rf_xdig
@@ -149,124 +169,82 @@ exec_RawDoFmt:
         move.b  d0,-(a0)
         lsr.l   #4,d1
         bne.s   .rf_xloop
-        bra.s   .rf_numout
-
-.rf_str:
-        move.l  (a5)+,a0
-        move.l  a0,d0
-        beq.s   .rf_empty
-        move.l  a0,a1
-        moveq   #-1,d2
-.rf_slen:
-        addq.l  #1,d2
-        tst.b   (a1)+
-        bne.s   .rf_slen
-        bra.s   .rf_emit
-.rf_empty:
-        moveq   #0,d2
-        bra.s   .rf_emit
-
-.rf_bstr:                            ; BPTR to BSTR (length byte + characters)
-        move.l  (a5)+,d0
-        lsl.l   #2,d0
-        beq.s   .rf_empty
-        move.l  d0,a0
-        moveq   #0,d2
-        move.b  (a0)+,d2
-        bra.s   .rf_emit
+        bra.s   .rf_numtext
 
 .rf_char:
-        bsr     .rf_fetch_unsigned
-        lea     RDF_BUF(sp),a0
-        move.b  d0,-(a0)
-        moveq   #1,d2
+        bsr.s   .rf_fetch
+        lea     RDF_BUF(sp),a5
+        moveq   #0,d3
+        tst.b   d0                   ; a zero byte is an empty text
+        beq.s   .rf_emit
+        move.b  d0,-(a5)
+        moveq   #1,d3
+        bra.s   .rf_emit
 
-; .rf_emit: a0 = text, d2 = length; applies the limit (d7), the width (d6), the justification (d4) and the
-; fill (d5; with '0', a leading '-' sign goes before the zeros).
+.rf_str:
+        move.l  d2,a0
+        move.l  (a0)+,a5
+        move.l  a0,d2
+        move.l  a5,a0                ; length, counted no further than the limit
+        moveq   #0,d3
+.rf_slen:
+        cmp.l   d7,d3
+        beq.s   .rf_emit
+        tst.b   (a0)+
+        beq.s   .rf_emit
+        addq.l  #1,d3
+        bra.s   .rf_slen
+
+; .rf_emit: a5 = text, d3 = length; limit (d7), padding (d6 = width), justification and pad character (d5)
 .rf_emit:
-        tst.l   d7
-        bmi.s   .rf_nolimit
-        cmp.l   d7,d2
-        bls.s   .rf_nolimit
-        move.l  d7,d2
-.rf_nolimit:
-        sub.l   d2,d6                ; d6 = fill needed
-        tst.w   d4
-        bne.s   .rf_text             ; left-justified: fill after the text
-        cmp.b   #'0',d5
-        bne.s   .rf_lpad
-        tst.l   d2
-        beq.s   .rf_lpad
-        cmp.b   #'-',(a0)
-        bne.s   .rf_lpad
-        move.b  (a0)+,d0
-        subq.l  #1,d2
-        bsr.s   .rf_put
-.rf_lpad:
+        cmp.l   d7,d3
+        bls.s   .rf_trunc
+        move.l  d7,d3
+.rf_trunc:
+        sub.w   d3,d6                ; pad count, signed 16-bit: only a positive value pads
+        tst.w   d6                   ; (the sign of the result, not of the true difference)
+        bgt.s   .rf_padn
+        moveq   #0,d6
+.rf_padn:
+        tst.l   d5
+        bmi.s   .rf_text
         bsr.s   .rf_pad
 .rf_text:
-        tst.l   d2
+        tst.l   d3
         beq.s   .rf_tdone
 .rf_tloop:
-        move.b  (a0)+,d0
-        bsr.s   .rf_put
-        subq.l  #1,d2
+        moveq   #0,d0
+        move.b  (a5)+,d0
+        move.l  d2,a1
+        jsr     (a2)
+        subq.l  #1,d3
         bne.s   .rf_tloop
 .rf_tdone:
-        tst.w   d4
-        beq     .rf_next
-        moveq   #' ',d5
-        bsr.s   .rf_pad
+        bsr.s   .rf_pad              ; right-justified: d6 is already spent
         bra     .rf_next
 
-; .rf_pad: emits d5 d6 times if d6 > 0; d6 = 0 on exit.
+; .rf_pad: sends the pad character d6.w times; d6.w = -1 on exit
 .rf_pad:
-        tst.l   d6
-        ble.s   .rf_padz
+        subq.w  #1,d6
+        bmi.s   .rf_padx
+        moveq   #0,d0
         move.b  d5,d0
-        bsr.s   .rf_put
-        subq.l  #1,d6
-        bra.s   .rf_pad
-.rf_padz:
-        moveq   #0,d6
-        rts
-
-; .rf_put: d0.b -> PutChProc(d0, a3). PutChProc may clobber d0/d1/a0/a1: a0 (current text) is preserved.
-.rf_put:
-        movem.l d1/a0-a1,-(sp)
-        and.l   #$FF,d0
+        move.l  d2,a1
         jsr     (a2)
-        movem.l (sp)+,d1/a0-a1
+        bra.s   .rf_pad
+.rf_padx:
         rts
 
-; .rf_digit: d0.b decimal digit? -> C = 0 and d1.w = value; otherwise C = 1.
-.rf_digit:
-        cmp.b   #'0',d0
-        blo.s   .rf_nodig
-        cmp.b   #'9',d0
-        bhi.s   .rf_nodig
-        moveq   #0,d1
-        move.b  d0,d1
-        sub.b   #'0',d1
-        and.b   #$FE,ccr             ; C = 0
-        rts
-.rf_nodig:
-        or.b    #$01,ccr             ; C = 1
-        rts
-
-; .rf_fetch_signed / .rf_fetch_unsigned: d0 = word (sign/zero-extended) or long (if d3) from stream a5.
-.rf_fetch_signed:
-        tst.w   d3
-        bne.s   .rf_flong
-        move.w  (a5)+,d0
-        ext.l   d0
-        rts
-.rf_fetch_unsigned:
-        tst.w   d3
+; .rf_fetch: d0 = next word (zero-extended) or, with d4 set, next long of the data stream at d2
+.rf_fetch:
+        move.l  d2,a0
+        tst.w   d4
         bne.s   .rf_flong
         moveq   #0,d0
-        move.w  (a5)+,d0
+        move.w  (a0)+,d0
+        move.l  a0,d2
         rts
 .rf_flong:
-        move.l  (a5)+,d0
+        move.l  (a0)+,d0
+        move.l  a0,d2
         rts

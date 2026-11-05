@@ -6660,7 +6660,7 @@ msg_memslow:
 
 ; rdf_selftest: RawDoFmt via the jump table (LVO -522) into a stack buffer, compared byte by byte (NUL included) with
 ; rdf_expect -> "RAWDOFMT OK" or "RAWDOFMT FAILED". Covers signed d/ld, width, left justification, '0' fill
-; with sign, x, s, c, and the restoring of a3. a6 = SysBase. Preserves everything.
+; of a negative number, x, s, c, and the restoring of a3. a6 = SysBase. Preserves everything.
 rdf_selftest:
         movem.l d0-d1/a0-a3,-(sp)
         lea     -64(sp),sp
@@ -6694,7 +6694,7 @@ rdf_putch:
 rdf_fmt:
         dc.b    "%d|%5ld|%-3x|%s|%04x|%c|%05ld",0
 rdf_expect:
-        dc.b    "-42| 1234|AB |hi|001F|Z|-0007",0
+        dc.b    "-42| 1234|AB |hi|001F|Z|000-7",0 ; 1.3: the zeros of %05ld pad before the sign
 rdf_hi:
         dc.b    "hi",0
         EVEN
@@ -6707,7 +6707,7 @@ rdf_data:
         dc.w    'Z'
         dc.l    -7
 msg_rdf_ok:
-        dc.b    "RAWDOFMT OK (exec RawDoFmt -522: d/ld, width, left-justify, zero-pad with sign, x, s, c)",13,10,0
+        dc.b    "RAWDOFMT OK (exec RawDoFmt -522: d/ld, width, left-justify, zero-pad, x, s, c)",13,10,0
 msg_rdf_bad:
         dc.b    "RAWDOFMT FAILED",13,10,0
         EVEN

@@ -1276,6 +1276,33 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   §9 open point 2), and the size seen is the one at the write, not the smallest one in between. Seen while testing,
   not from this change: after a window grows, intuition leaves one pixel of the old right border on line
   BorderTop - 1.
+  **RawDoFmt (2026-11-05, coverage §7 rank 11)**: spec `exec-rawdofmt-v34`. `rawdofmt.s` rewritten to the 1.3
+  grammar: `%[-][0][width][.limit][l]type` in that order only; d/x/s/c are the only conversions (x upper case, %d
+  sign-extends a word, %x does not); %u, %X, %b and every other type character are echoed with no padding and no
+  data read (%b leaves its BPTR in the stream); the limit truncates every type, sign included; width, limit and the
+  pad count are 16-bit, a pad count that is negative as a 16-bit value pads nothing; zeros pad on the padding side
+  only (`%05d` of -42 -> `00-42`, `%-05d` of 42 -> `42000`); `%c` of a zero byte is an empty field; packed data
+  without alignment; the final NUL is sent; PutChProc is called through A2 with A3 carried from call to call, A3 is
+  restored and A1 = just past the last item read on exit, D2-D7/A2/A4-A6 preserved. The dev self-test now expects
+  `000-7` for `%05ld` of -7 (it expected the C-style `-0007`). `tests/rawdofmt_probe.sh` (+ `tests/rawdofmt_check.py`,
+  case table and model; output through a gdb-read memory buffer, as graster): 205 vectors, 155 failed before (41 on
+  the output bytes: no limit on numbers, C-style zero padding, %u/%b known, 32-bit widths that padded 65534 spaces
+  for `%65535d`; the rest A1 on exit, D0 and stack depth), 0 after on kick-prod. Workbench 1.3.3 on kick-prod: the
+  memory title ("Workbench release. ... 836152 free memory", touched up by LoadWB) and `avail`/`info` in a Shell are
+  pixel-identical to the previous ROM. Deliberate differences from 1.3: a format that ends inside a conversion
+  (`"abc%"`, `"abc%5"`) ends the call at its terminator (1.3 sends that NUL as a character and keeps formatting the
+  bytes after the string, §2.6), probe vectors Z1-Z7/T1-T8; D0 on exit = next data pointer, as V36+ documents (1.3:
+  garbage, so no 1.3 caller can depend on it); PutChProc gets D0 with the upper 24 bits clear and the caller's A6,
+  usually ExecBase (1.3: garbage upper bits and a pointer into its frame: a PutChProc using A6 as SysBase works here,
+  and A6 is still restored on exit if PutChProc changes it); A1 on exit is the data cursor even when PutChProc
+  changed A1 (1.3: that A1); stack 64 bytes below the caller's SP at PutChProc, 68 while padding (1.3: 68/72). Kept
+  from 1.3 on purpose: a NULL `%s` prints the bytes at address 0 (empty on a running system), and RawDoFmt relies on
+  PutChProc preserving D2, D3, D5, D6, A2, A4, A5 (it tolerates D0, D1, D4, D7, A0, A1, A6). One safe addition with
+  identical output: `%.<n>s` stops counting the string at n characters, so an unterminated buffer is not read past
+  the limit. Open points: limits 32768-65535 act as large limits here (indistinguishable on 1.3 for strings shorter
+  than 32 KB); an odd DataStream still raises an address error, as expected on 1.3. Seen while testing, not from this
+  change: a `NewShell` added after `LoadWB` in the Workbench 1.3.3 startup-sequence leaves the desktop without its
+  title bar and icons (same on the previous ROM).
 
 ## Immediately actionable work (start of implementation, upon approval)
 
