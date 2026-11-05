@@ -1287,6 +1287,22 @@ class only. The rewritten RawDoFmt matches the reference on at most 4 code/table
 tokens), the console resize code on at most 5 low-entropy tokens, and the feeder change adds nothing. Any later
 source change needs a new run.
 
+## Re-run 2026-11-05 (merge of PR #27, `6d85d6b..f9ca145`)
+
+The merge commit's tree is identical to the PR head `f9ca145` (`git diff --quiet f9ca145 <merge>`). The binary
+audit of that head against `6d85d6b` was run by a separate analysis agent with this page's controls, `--base tiers`
+and `--seuil 8`, on production ROMs and their maps. Its full figures are in `docs/audit/pr-27.md`, section 6.1.
+
+**Verdict: PASS.**
+- No code/table match reaches 40 words, 19 instructions or 19 loose instructions.
+- The longest code match, data excluded, stays 19 words / 13 instructions (`exp_cpbinding+$22`), and no new code
+  match exceeds it.
+- `--seuil 8` rows go from 264 / 44 / 86 to 266 / 44 / 91 (words / instr / instr-souple).
+- The new rows are seven bound-test or call runs of at most 10 tokens in PR-added code (`dr_directdraw`,
+  `ln_boxhits`, `ln_blit`, `ae_update_visible`, `gfx_AreaEnd`).
+- One class flip: `topaz9_font+$20`, 10 words, `texte` → `code/table`.
+- Self-check: 12/12.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
