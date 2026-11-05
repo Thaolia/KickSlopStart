@@ -13,6 +13,10 @@ mapping correction. The earlier
 [graphics audit](graphics-2026-11-05.md) remains historical and was not
 automatically applied to these changed binaries.
 
+The later review fixes and rebase onto `6d85d6b` are measured separately in
+the [PR #27 review follow-up](pr-27-review-followup.md); the frozen inputs
+below remain the inputs of this historical run.
+
 ## Frozen inputs
 
 | Role | Revision | Production ROM SHA-256 | Linked bytes |
@@ -97,11 +101,21 @@ and classified function/address tables. The 32-word `gfx_defcolors` values
 and 20-word `mn_chk_hi` descriptors are existing data below that word gate.
 Their provenance is recorded in [rom-similarity.md](rom-similarity.md).
 
-Two loose matches above 19 are unchanged low-entropy exceptions:
-`rf_outline+0x46`, 20 tokens of repeated drawing-call shape, and
-`bcpl_rtdata+0x8`, 23 tokens of runtime data. Qualified code peaks exclude
-these explicitly classified repetitive/data ranges. No new unqualified
-instruction match reaches 19.
+The only loose match at or above 19 in the paired `--seuil 19` outputs is
+`bcpl_rtdata+0x8`, 23 tokens of runtime data, classified low entropy in both
+builds. Qualified code peaks exclude that data range. Neither these outputs
+nor the paired threshold-8 lists contain an `rf_outline` row. No new
+unqualified instruction match reaches 19.
+
+Documentation correction after PR #27 review: the previous wording also
+listed `rf_outline+0x46` at 20 loose tokens. That row belongs to the earlier
+[graphics audit](graphics-2026-11-05.md), where it is present in both saved
+`--seuil 19` outputs. Carrying that qualification into this record was an
+error: upstream `4965827`, included in this base, removed the overlap. The
+correction follows this run's saved base/candidate binary and threshold-8
+rows; its original inputs, measurements, and verdict are unchanged. The
+threshold-8 lists locate the same 23-token runtime-data overlap at
+`bcpl_rtdata+0x4`; the different threshold merges/selects its starting point.
 
 The threshold-8 lists contain 264 / 43 / 85 rows for the new base and
 267 / 44 / 91 for the candidate, for words / exact / loose streams. Comparing
