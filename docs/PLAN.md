@@ -1039,6 +1039,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (`tests/writeback_probe.sh`, production ROM). Open: the bitmap block does not move at each write-back (§8.3); an
   ejection with a pending write-back loses it silently (1.3 shows a requester through dos's errorreq and keeps the
   volume, disk-change §2.2.1 point 2); ACTION_FLUSH holding was not run against a packet probe.
+  **File system answers from 1.3 (2026-11-05)** (rom-filesystem §1.4, §2.5, §8.4, §8.6; maintainer decisions):
+  rejected device commands, write-back on the third tick and the validator requester frames already behave as on
+  1.3. Deliberate differences kept: (1) a bitmap block with a bad checksum under a valid root flag is rebuilt by the
+  validator (1.3: "Key n checksum error", "Disk structure corrupt", volume not validated); (2) the reason line for a
+  block met twice stays "Key n already used" (1.3: "already set"; its "- bad block type" comes from
+  L:Disk-Validator); (3) bitmap extension blocks are followed, so partitions above about 50 MB work (1.3 handles
+  at most the 25 root pointers and damages larger partitions).
   **Disk validator rebuilds the bitmap (2026-11-05)**: a volume whose root says "bitmap not valid" is validated at
   mount in the handler (`dv_rebuild`: tree walk from the root, headers, extension blocks, data block tables), written
   back with the flag valid, or kept in memory on a write-protected disk (214 instead of 213); a broken chain shows
