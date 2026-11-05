@@ -356,80 +356,113 @@ exec_Expunge:
         moveq   #0,d0                ; exec never expunges itself
         rts
 
-; OpenLibrary(libName a1, version d0) -> d0 = base (or 0). Forbid-guarded: FindName(LibList) of the name as given, else
-; of its base name (after the last '/' or ':'), else ram_loadmodule (ROM resident or LIBS:, ramlib-v34 §3); then the
-; version gate (lib_Version >= requested version, otherwise 0: a module just loaded stays in the list) and the lib's
-; Open vector (-6) (OpenCnt++). Preserves d2/a2.
+; OpenLibrary(libName a1, version d0) -> d0 = what the library's Open vector returned, or 0
+; (exec-messages-io-v34 §4.1). Under Forbid, LibList is walked for nodes of that name: the first one whose lib_Version,
+; as a signed word, is >= the low word of d0 (signed) is opened; a too-old node does not stop the walk. The Open
+; vector gets a6 = a0 = d0 = base, a1 = d1 = the name; its d0 is the result as is, 0 included (later nodes are not
+; tried). exec never touches lib_OpenCnt. The ramlib layer (ramlib-v34 §3): a name with no node at all is tried
+; again with its base name (after the last '/' or ':'), then loaded (ram_loadmodule: ROM resident or LIBS:) and the
+; walk is made once more; a name that is present but too old fails without loading. Preserves d2-d7/a2-a6.
 exec_OpenLibrary:
-        movem.l d2/a2,-(sp)
-        move.w  d0,d2                ; d2 = requested version (UWORD)
-        move.l  a1,a2                ; a2 = name (preserved across Forbid/FindName)
+        movem.l d2/a2-a3,-(sp)
+        move.w  d0,d2                ; d2 = requested version (signed word)
+        move.l  a1,a2                ; a2 = name as given
         jsr     LVO_FORBID(a6)
-        lea     EB_LIBLIST(a6),a0
-        move.l  a2,a1
-        jsr     LVO_FINDNAME(a6)     ; d0 = lib node (or 0)
+        move.l  a2,a3
+        bsr     ol_walk
         tst.l   d0
-        bne.s   .ol_found
+        bne.s   .ol_open
+        tst.l   d1
+        bne.s   .ol_fail             ; present but too old: no load
         move.l  a2,a1                ; the base name of a path ("LIBS:x.library" opens a loaded x.library)
         jsr     ram_basename
         cmpa.l  a2,a0
         beq.s   .ol_load
-        move.l  a0,a1
-        lea     EB_LIBLIST(a6),a0
-        jsr     LVO_FINDNAME(a6)
+        move.l  a0,a3
+        bsr     ol_walk
         tst.l   d0
-        bne.s   .ol_found
+        bne.s   .ol_open
+        tst.l   d1
+        bne.s   .ol_fail
 .ol_load:
         jsr     LVO_PERMIT(a6)       ; missing: ramlib, outside Forbid
-        move.l  a3,-(sp)
         lea     ol_libsdir(pc),a0
         move.l  a2,a1
-        lea     EB_LIBLIST(a6),a3
-        exg     a2,a3
+        move.l  a2,-(sp)
+        lea     EB_LIBLIST(a6),a2
         jsr     ram_loadmodule       ; d0 = node of the base name | 0
-        exg     a2,a3
-        move.l  (sp)+,a3
+        move.l  (sp)+,a2
         jsr     LVO_FORBID(a6)
         tst.l   d0
         beq.s   .ol_fail
-.ol_found:
-        move.l  d0,a2                ; a2 = lib base
-                ifeq    OPENLIB_NO_VERCHECK
-        cmp.w   LIB_VERSION(a2),d2   ; requested (d2) > available (lib_Version)?
-        bhi.s   .ol_fail             ; too recent a version requested -> failure
-                endc
-        move.l  a6,-(sp)             ; call of the lib's Open vector (a6 = lib)
-        move.l  a2,a6
-        jsr     LVO_OPEN(a6)         ; -6: OpenCnt++, d0 = base
+        move.l  a2,a1
+        jsr     ram_basename
+        move.l  a0,a3
+        bsr     ol_walk              ; the version test of the final attempt
+        tst.l   d0
+        beq.s   .ol_fail
+.ol_open:
+        move.l  d0,a0
+        move.l  a3,a1
+        move.l  a3,d1
+        move.l  a6,-(sp)
+        move.l  a0,a6
+        jsr     LVO_OPEN(a6)         ; -6: d0 = result
         move.l  (sp)+,a6
         bra.s   .ol_done
 .ol_fail:
         moveq   #0,d0
 .ol_done:
-        move.l  d0,-(sp)             ; preserve the result across Permit (which may yield)
+        movem.l d0/a0,-(sp)          ; Permit may yield (a0 = the Open vector's a0 for the caller)
         jsr     LVO_PERMIT(a6)
-        move.l  (sp)+,d0
-        movem.l (sp)+,d2/a2
+        movem.l (sp)+,d0/a0
+        movem.l (sp)+,d2/a2-a3
+        rts
+
+; ol_walk(a3 = name, d2.w = version) -> d0 = the first LibList node of that name whose lib_Version >= d2 (signed
+; words), or 0; d1 = 0 when no node has that name at all. Uses a0/a1.
+ol_walk:
+        lea     EB_LIBLIST(a6),a0
+        clr.l   -(sp)
+.ow_next:
+        move.l  a3,a1
+        jsr     LVO_FINDNAME(a6)     ; continues after a0 (list header or the previous match)
+        tst.l   d0
+        beq.s   .ow_end
+        move.l  d0,(sp)
+        move.l  d0,a0
+                ifeq    OPENLIB_NO_VERCHECK
+        cmp.w   LIB_VERSION(a0),d2
+        bgt.s   .ow_next             ; too old: keep walking
+                endc
+.ow_end:
+        move.l  (sp)+,d1
         rts
 
 ol_libsdir:
         dc.b    "LIBS:",0
         even
 
-; OldOpenLibrary(libName a1) -> d0 = base (or 0): OpenLibrary without version gate (pre-V33 form).
+; OldOpenLibrary(libName a1) -> d0: OpenLibrary with version 0 (d0 ignored).
 exec_OldOpenLibrary:
-        moveq   #0,d0                ; version 0 -> the gate always passes
+        moveq   #0,d0
         bra     exec_OpenLibrary
 
-; CloseLibrary(library a1): Forbid-guarded, call of the lib's Close vector (-12) (OpenCnt--). d0 = 0.
+; CloseLibrary(library a1) -> d0 = what the Close vector returned (a seglist is freed, ramlib-v34 §2.2). Under
+; Forbid; the vector gets a6 = a1 = base and the caller's d0/d1/a0. CloseLibrary(NULL) returns 0 (1.3 crashes).
 exec_CloseLibrary:
+        cmpa.w  #0,a1
+        bne.s   .cl_lib
+        moveq   #0,d0
+        rts
+.cl_lib:
         movem.l a2,-(sp)
         move.l  a1,a2                ; a2 = lib
         jsr     LVO_FORBID(a6)
         move.l  LVO_CLOSE+2(a2),-(sp) ; where the Close vector jumps (the base may be gone after the call)
         move.l  a6,-(sp)
         move.l  a2,a6
-        jsr     LVO_CLOSE(a6)        ; -12: OpenCnt--, d0 = seglist of a delayed expunge | 0
+        jsr     LVO_CLOSE(a6)        ; -12: d0 = seglist of a delayed expunge | 0
         move.l  (sp)+,a6
         move.l  (sp)+,a0
         jsr     ram_freeseg

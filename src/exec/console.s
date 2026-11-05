@@ -389,6 +389,7 @@ console_beginio:
         tst.l   d0
         bne.s   .bu_rgot
 .bu_queue:
+        move.b  #NT_MESSAGE,LN_TYPE(a3)  ; pending: exec's DoIO/SendIO leave ln_Type to the device
         bclr    #0,IO_FLAGS(a3)      ; nothing to read: on hold (reply by the input handler)
         clr.l   (a3)                 ; LN_SUCC = end of queue
         lea     CONB_RQ(a2),a0

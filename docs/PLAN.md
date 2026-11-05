@@ -1337,6 +1337,42 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   than 32 KB); an odd DataStream still raises an address error, as expected on 1.3. Seen while testing, not from this
   change: a `NewShell` added after `LoadWB` in the Workbench 1.3.3 startup-sequence leaves the desktop without its
   title bar and icons (same on the previous ROM).
+  **exec messages, ports, I/O, libraries and devices (2026-11-05, coverage §7 rank 12)**: spec
+  `exec-messages-io-v34`. `ports.s`: PutMsg runs the action `mp_Flags AND 3` (bits 2-7 ignored) only when
+  `mp_SigTask` is not NULL: Signal with the bit number modulo 32 (a bit >= 32 used to signal nothing), Cause for
+  PA_SOFTINT (it was ignored; the softint now runs before PutMsg returns), nothing for PA_IGNORE, and action 3 calls the
+  routine held in `mp_SigTask` (A0 = routine, A1 = port, D0 = flags, its D0/D1/A0/A1 returned); ReplyMsg without a
+  reply port marks the message NT_FREEMSG and returns 0 (it was NT_REPLYMSG); AddPort no longer sets NT_MSGPORT and
+  empties `mp_MsgList` under Forbid; RemPort/RemResource keep D0/D1; WaitPort returns the message in A1 too and keeps
+  D1/A0 when the port is not empty. `io.s`: DoIO/SendIO no longer write `ln_Type` (exec used to mark every request
+  NT_MESSAGE), so audio.device, console.device (held CMD_READ) and gameport.device now mark a request they keep
+  pending NT_MESSAGE themselves (gameport at BeginIO entry: its reply routine skips a request still typed
+  NT_REPLYMSG); OpenDevice clears `io_Unit` before the device's Open, passes A0 = device, returns A0 = device / 0 and
+  reads `io_Error` with its own saved request pointer; RemLibrary/RemDevice give Expunge D0 = base; AddLibrary/
+  AddDevice run the SumLibrary step. `library.s`: OpenLibrary compares versions as signed words and walks past a
+  too-old node of the same name (OL13), the Open vector gets A0 = D0 = base and A1 = D1 = name. `execmisc.s`:
+  SumLibrary only with LIBF_SUMUSED, word sum in the upper half of `lib_Sum` (it wrote a long, low word), CHANGED
+  -> stored, otherwise verified and a mismatch is the dead-end alert `$81000003`. `resident.s`: AddResource no
+  longer sets NT_RESOURCE (every resource of ours sets it itself), OpenResource under Forbid. Dev self-tests KBDDEV,
+  AUDIO ALLOC and DISKRES now expect NT_FREEMSG for their reply-port-less requests. `tests/exec_msgio_probe.sh` (+
+  `tests/exec_msgio_check.py`; output through a gdb-read buffer; argument N runs N1, `MLP_ALERT=1` boots a second
+  time for AL4): 131 vectors, 40 failed on the previous kick-prod (39 values + N1 not run there: PA_SOFTINT and
+  action 3, bit modulo 32, ReplyMsg without port, WaitPort A1, AddPort type, DoIO type, OpenDevice io_Unit/A0,
+  Expunge D0, signed and walking OpenLibrary, the whole checksum table, AddResource type, RemPort/RemResource D0); 0 of
+  132 after (AL4 included) on kick-prod. Dev ROM: every value passes, but the startup-sequence CLI runs there with
+  TDNestCnt 0 (so `ne=FF00`), the same on the previous dev ROM: a Forbid left by the dev runtime harness, not by this
+  change. prepush FAIL=0 (Lemmings menu looked at), Workbench 1.3.3 on kick-prod: desktop (836152 free memory, as
+  before), disk drawer and a Shell with `info`/`dir`; rawdofmt (205) and graster (156) probes 0 FAIL. Deliberate
+  differences from 1.3: CloseLibrary(NULL) returns 0 (1.3: illegal-instruction Guru), probe N1; OpenDevice reads
+  `io_Error` and returns A0 through its own saved registers, so a device Open that changes A2/A3 does not disturb it;
+  PutMsg action 3 restores A6 after the routine; the message type is written inside PutMsg's Disable (same values).
+  Open points: the PA_SOFTINT softint runs at SR $2100 here (level-1 dispatch), $2000 on 1.3
+  (`exec-scheduling-v34` §8, not this page; probe P4 tagged "ours"); InitResident's AUTOINIT path still Enqueues
+  instead of calling AddLibrary/AddDevice/AddResource, so a ROM-tag library with LIBF_SUMUSED keeps its flags until a
+  SetFunction (1.3: summed at init, flags 4); exec's OpenLibrary/OpenDevice/CloseLibrary/RemLibrary still carry the
+  ramlib layer (loading, seglist freeing) from coldstart, where 1.3 adds it when dos starts; WaitIO without a Wait
+  keeps the caller's D1 (1.3 replaces its low byte with `mp_SigBit`, a scratch register); the probe has not been run
+  on the real ROM (an analysis agent can, `MLP_ANALYSIS=1 MLP_ARGS=`).
 
 ## Immediately actionable work (start of implementation, upon approval)
 

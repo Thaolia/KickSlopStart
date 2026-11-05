@@ -2,8 +2,8 @@
 ; and memory copies (CopyMem, CopyMemQuick: L:Ram-Handler copies all its data with CopyMem).
 ; Required by the BCPL disk handlers (L:Newcon-Handler, L:Aux-Handler, L:Port-Handler: globals opendevice,
 ; doio, sendio) and by any program that opens a device.
-; IMPLEMENTATION track ("clean"): AutoDocs exec (OpenDevice/DoIO/SendIO/CheckIO/WaitIO/AbortIO) + exec/io.i.
-; NO ROM reading.
+; IMPLEMENTATION track ("clean"): AutoDocs exec (OpenDevice/DoIO/SendIO/CheckIO/WaitIO/AbortIO) + exec/io.i +
+; docs/analysis/exec-messages-io-v34.md §2-§4. NO ROM reading.
 
                 include "exec.i"
 
@@ -23,15 +23,18 @@
                 xref    ram_loadmodule   ; ramlib.s
                 xref    ram_basename
                 xref    ram_freeseg
+                xref    exec_SumLibrary  ; execmisc.s
 
 DEV_OPEN        EQU -6
 DEV_CLOSE       EQU -12
 DEV_BEGINIO     EQU -30
 DEV_ABORTIO     EQU -36
 
-; OpenDevice(name a0, unit d0, iorequest a1, flags d1) -> d0 = io_Error (0 = success). Under Forbid: FindName in the
-; DeviceList, io_Device := device, io_Error := 0, then the device's Open vector (a6 = device, a1/d0/d1 passed on).
-; Device missing: loaded from DEVS: (ram_loadmodule, process caller); otherwise io_Error = IOERR_OPENFAIL.
+; OpenDevice(name a0, unit d0, iorequest a1, flags d1) -> d0 = io_Error sign-extended (0 = success), a0 = device |
+; 0. Under Forbid: FindName in the DeviceList (first node of that name only), io_Device := device, io_Unit := 0,
+; io_Error := 0, then the device's Open vector (a6 = a0 = device, a1 = request, d0 = unit, d1 = flags); the
+; device's own d0 is ignored and io_Device stays set when its Open fails. Device missing: loaded from DEVS:
+; (ram_loadmodule, process caller); otherwise io_Device := 0, io_Error := IOERR_OPENFAIL.
 exec_OpenDevice:
         movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a1,a2                ; a2 = iorequest
@@ -67,19 +70,24 @@ exec_OpenDevice:
 .od_nodev:
         clr.l   IO_DEVICE(a2)        ; failure: io_Device 0, io_Error -1 (ramlib-v34 §3)
         move.b  #IOERR_OPENFAIL,IO_ERROR(a2)
+        sub.l   a3,a3                ; a3 = device for the caller's a0
         bra.s   .od_done
 .od_found:
+        move.l  d0,a3                ; a3 = device
         move.l  d0,IO_DEVICE(a2)
+        clr.l   IO_UNIT(a2)
         clr.b   IO_ERROR(a2)
-        move.l  a6,-(sp)
-        move.l  d0,a6
+        movem.l a2-a3/a6,-(sp)       ; kept even for a device that does not preserve them
+        move.l  a3,a6
+        move.l  a3,a0
         move.l  a2,a1
         move.l  d2,d0
         move.l  d3,d1
         jsr     DEV_OPEN(a6)
-        move.l  (sp)+,a6
+        movem.l (sp)+,a2-a3/a6
 .od_done:
         jsr     LVO_PERMIT(a6)
+        move.l  a3,a0
         move.b  IO_ERROR(a2),d0
         ext.w   d0
         ext.l   d0
@@ -90,7 +98,8 @@ od_devsdir:
         dc.b    "DEVS:",0
         even
 
-; CloseDevice(iorequest a1): Close vector of the request's device.
+; CloseDevice(iorequest a1) -> d0 = what the Close vector returned (a seglist is freed, ramlib-v34 §2.2).
+; Under Forbid; io_Device/io_Unit are not cleared.
 exec_CloseDevice:
         move.l  a6,-(sp)
         jsr     LVO_FORBID(a6)
@@ -107,8 +116,9 @@ exec_CloseDevice:
         move.l  (sp)+,a6
         rts
 
-; DoIO(iorequest a1) -> d0 = io_Error: BeginIO in quick mode (IOF_QUICK), then WaitIO if the device has queued
-; the request.
+; DoIO(iorequest a1) -> d0 = io_Error: io_Flags := IOF_QUICK (whole byte), BeginIO, then WaitIO if the device
+; cleared IOF_QUICK. ln_Type is left alone (a device that queues a request marks it NT_MESSAGE itself). A1 and A6
+; restored; the other registers are what BeginIO left.
 exec_DoIO:
         move.l  a1,-(sp)
         move.b  #IOF_QUICK,IO_FLAGS(a1)
@@ -116,11 +126,11 @@ exec_DoIO:
         move.l  (sp)+,a1
         bra     exec_WaitIO
 
-; SendIO(iorequest a1): asynchronous BeginIO (the reply will arrive on mn_ReplyPort).
+; SendIO(iorequest a1): io_Flags := 0 (whole byte), BeginIO (the reply will arrive on mn_ReplyPort). No result.
+; BeginIO runs in the caller's context with no Forbid/Disable (a6 = io_Device, a1 = request).
 exec_SendIO:
         clr.b   IO_FLAGS(a1)
 io_beginio:
-        move.b  #NT_MESSAGE,LN_TYPE(a1)
         move.l  a6,-(sp)
         move.l  IO_DEVICE(a1),a6
         jsr     DEV_BEGINIO(a6)
@@ -139,8 +149,9 @@ exec_CheckIO:
 .ci_ret:
         rts
 
-; WaitIO(iorequest a1) -> d0 = io_Error: waits for the reply (Wait on the reply port's bit) then removes the request
-; from the port (under Disable: the reply may come from an interrupt).
+; WaitIO(iorequest a1) -> d0 = io_Error sign-extended. IOF_QUICK set: nothing else is done. Otherwise waits until
+; ln_Type = NT_REPLYMSG (Wait on the reply port's bit; no Wait when already replied, the bit is then left as it
+; is), then removes the request with its own links under Disable (the reply may come from an interrupt).
 exec_WaitIO:
         move.l  a2,-(sp)
         move.l  a1,a2
@@ -168,7 +179,7 @@ exec_WaitIO:
         move.l  (sp)+,a2
         rts
 
-; AbortIO(iorequest a1): AbortIO vector of the device.
+; AbortIO(iorequest a1) -> d0 = what the device's AbortIO vector returned (a6 = io_Device, a1 = request).
 exec_AbortIO:
         move.l  a6,-(sp)
         move.l  IO_DEVICE(a1),a6
@@ -211,18 +222,23 @@ cm_bnext:
 cm_ret:
         rts
 
-; AddLibrary(library a1) / AddDevice(device a1): Enqueue into LibList / DeviceList under Forbid (a module loaded
-; from disk that does its own MakeLibrary registers itself this way). RemLibrary / RemDevice(a1): call of the
-; module's Expunge vector (a6 = module) -> d0 = seglist returned by Expunge (0 if the module refuses).
+; AddLibrary(library a1) / AddDevice(device a1): under Forbid, the SumLibrary step when LIBF_SUMUSED is set (sum
+; recomputed with LIBF_CHANGED, otherwise verified: a wrong sum is the dead-end alert), then Enqueue into LibList /
+; DeviceList. ln_Type is not set. RemLibrary / RemDevice(a1): the module's Expunge vector (a6 = a1 = d0 = module)
+; -> d0 = what Expunge returned (a seglist is freed); exec does not unlink the node, Expunge does.
 exec_AddLibrary:
         lea     EB_LIBLIST(a6),a0
         bra.s   io_addnode
 exec_AddDevice:
         lea     EB_DEVICELIST(a6),a0
 io_addnode:
-        movem.l a0-a1,-(sp)
         jsr     LVO_FORBID(a6)
-        movem.l (sp)+,a0-a1
+        btst    #LIBB_SUMUSED,LIB_FLAGS(a1)
+        beq.s   .an_add
+        move.l  a0,-(sp)
+        jsr     exec_SumLibrary
+        move.l  (sp)+,a0
+.an_add:
         jsr     LVO_ENQUEUE(a6)
         jmp     LVO_PERMIT(a6)
 exec_RemLibrary:
@@ -231,6 +247,7 @@ exec_RemDevice:
         jsr     LVO_FORBID(a6)
         move.l  a6,-(sp)
         move.l  a1,a6
+        move.l  a1,d0
         move.l  -16(a6),-(sp)        ; where the Expunge vector jumps
         jsr     -18(a6)              ; Expunge
         move.l  (sp)+,a0

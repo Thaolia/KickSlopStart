@@ -706,6 +706,7 @@ SYS_SIGALLOC  EQU $FFFF        ; signals 0-15 pre-allocated (reserved for the sy
 ; struct MsgPort (exec/ports.i) — base at LN_SIZE=14
 NT_MSGPORT    EQU 4
 NT_MESSAGE    EQU 5
+NT_FREEMSG    EQU 6
 NT_REPLYMSG   EQU 7
 MP_FLAGS      EQU 14
 MP_SIGBIT     EQU 15
@@ -714,6 +715,7 @@ MP_MSGLIST    EQU 20          ; struct List
 MP_SIZE       EQU 34
 PF_ACTION     EQU 3           ; mask of the action bits
 PA_SIGNAL     EQU 0
+PA_SOFTINT    EQU 1
 PA_IGNORE     EQU 2
 ; struct Message (exec/ports.i)
 MN_REPLYPORT  EQU 14
@@ -800,6 +802,7 @@ LVO_SETTASKPRI EQU -300
 LVO_SETSIGNAL  EQU -306
 LVO_WAIT       EQU -318
 LVO_SIGNAL     EQU -324
+LVO_CAUSE      EQU -180
 LVO_ALLOCSIGNAL EQU -330
 LVO_FREESIGNAL EQU -336
 LVO_ADDPORT    EQU -354

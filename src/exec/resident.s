@@ -307,18 +307,18 @@ exec_InitCode:
         movem.l (sp)+,d2-d4/a2
         rts
 
-; AddResource(resource a1): type NT_RESOURCE then Enqueue into ResourceList (Forbid-wrapped,
-; like AddPort: shared list). OpenResource uses it to find the resource by name.
+; AddResource(resource a1): Enqueue into ResourceList under Forbid. ln_Type is not set (the resource's own init
+; marks it NT_RESOURCE), no checksum step (exec-messages-io-v34 §4.5).
 exec_AddResource:
-        move.b  #NT_RESOURCE,LN_TYPE(a1)
         jsr     LVO_FORBID(a6)
         lea     EB_RESOURCELIST(a6),a0
         jsr     LVO_ENQUEUE(a6)
-        jsr     LVO_PERMIT(a6)
-        rts
+        jmp     LVO_PERMIT(a6)
 
-; OpenResource(name a1) -> d0 = resource | 0 (search in ResourceList; no CloseResource).
+; OpenResource(name a1) -> d0 = resource | 0: FindName in ResourceList under Forbid. d0 on entry (a version) is
+; ignored: no version test, no open count, no vector called. A1 kept.
 exec_OpenResource:
+        jsr     LVO_FORBID(a6)
         lea     EB_RESOURCELIST(a6),a0
         jsr     LVO_FINDNAME(a6)
-        rts
+        jmp     LVO_PERMIT(a6)
