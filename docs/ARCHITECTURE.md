@@ -1987,6 +1987,12 @@ differs.
     pr_GlobVec, so the Workbench and the processes created from the initial CLI run on it. The console handler
     process has a 2,048-byte stack (`CON_STK`, boot.s); it stays alive at idle because processes hold its port as
     pr_ConsoleTask ("*") and DOS_CONPORT.
+  - Boot console line editing (2026-11-05): the READ of `conhandler.s` edits the pending line as the CON: handler
+    (`conwin.s`) does: Backspace/Ctrl-H drops the last byte (echo BS, space, BS) and never goes past the start of the
+    READ, Ctrl-X drops the whole pending line (one rubout per byte), Ctrl-\ ends the READ with 0 bytes (end of file;
+    the pending bytes are dropped), CSI sequences (cursor, function, Help keys) are skipped up to their final byte,
+    other control bytes are ignored. The READ returns as soon as its buffer is full (a key typed past it was echoed
+    and lost before). Echo goes through `con_echo` (serial mirror, window, screen). `conwin.s` gained Ctrl-X too.
   - Stacked ViewPorts (issue #19, graphics-display §4.3/§5): a fragment holds MOVEs and 3-entry pseudo-WAITs
     relative to the top of its ViewPort (lead-in L0 with planes off, top + BPLCON0 on, user instructions, bottom +
     BPLCON0 off; DIW open from line 5 to $140) plus a header where MrgCop records where it landed. MrgCop sorts

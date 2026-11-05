@@ -7,8 +7,10 @@
 ;   FINDINPUT / FINDOUTPUT (open "CON:")     -> RES1 = non-null key (global console, no per-handle state). A name
 ;                                               "CON:x/y/w/h/title" additionally opens the console window (con_openwin).
 ;   WRITE (ARG1=key, ARG2=src, ARG3=len)     -> emits len bytes on serial (TX, bounded TBE poll). RES1 = len.
-;   READ  (ARG1=key, ARG2=dest, ARG3=len)    -> reads ONE LINE up to Return, with echo; the line ends with LF
-;                                               (Return delivered as LF, typed LF ignored). RES1 = bytes. Input
+;   READ  (ARG1=key, ARG2=dest, ARG3=len)    -> reads ONE LINE up to Return, with echo and the CON: line editing
+;                                               (Backspace/Ctrl-H, Ctrl-X, Ctrl-\ = end of file, CSI sequences and
+;                                               other control bytes skipped); the line ends with LF (Return delivered
+;                                               as LF, typed LF ignored). RES1 = bytes. Input
 ;                                               sources: the LIVE keyboard ring (F2b, con_ring_get) THEN the serial RBF.
 ;   END (close)                              -> RES1 = DOSTRUE.
 ;
@@ -51,6 +53,7 @@ CS_WIN          EQU 84               ; APTR Window | 0
 CS_OPENS        EQU 88               ; LONG named streams open
 CS_NOKBD        EQU 92               ; BYTE window closed (endcli): READ no longer reads the keyboard, only serial
 CS_WECHO        EQU 93               ; BYTE 1-byte echo buffer (window)
+CS_CSI          EQU 94               ; BYTE inside a CSI sequence typed during a READ (skipped up to its final byte)
 CS_WIO          EQU 96               ; IOStdReq (48) console.device on the window
 CS_NW           EQU 144              ; NewWindow (48)
 CS_TITLE        EQU 192              ; title (C string, CS_TITLEMAX bytes)
@@ -189,8 +192,9 @@ con_handler:
                 beq     .rd_eof              ; no timer -> EOF
                 move.l  d0,a0
                 move.l  DP_ARG2(a4),CS_DEST(a0)
-                move.l  DP_ARG3(a4),CS_MAX(a0)
                 clr.l   CS_CNT(a0)
+                move.l  DP_ARG3(a4),CS_MAX(a0)
+                ble     .rd_eof              ; nothing to fill
 .rd_tick:
                 bsr     con_side             ; other packets meanwhile: WRITEs served, the rest kept for later
                 bsr     con_poll_wait        ; ~20 ms (preserves a2/a3/a4/a6)
@@ -214,39 +218,69 @@ con_handler:
                 move.w  #INTF_RBF,INTREQ     ; acknowledge RBF
                 endc
 .rd_got:
-                move.l  d0,d4                ; d4 = byte (survives con_putc)
-                cmp.b   #10,d4               ; LF typed (Ctrl-J, or the LF of a serial CR LF): ignored, as CON: does
-                beq.s   .rd_drain
-                bsr     con_putc             ; serial echo (mirror)
-                move.b  d4,d0
-                bsr     con_win_emit         ; window echo
-                ifne    SHELL_ON_SCREEN
-                move.b  d4,d0
-                bsr     con_scr_emit         ; screen echo
-                endc
+                move.l  d0,d4                ; d4 = byte (survives the echo)
+                move.l  CON_STATE,a0
+                tst.b   CS_CSI(a0)           ; CSI sequence (cursor, function, Help keys): skipped up to its final
+                beq.s   .rd_ncsi             ; byte, as CON: does in line mode
+                cmp.b   #$40,d4
+                blo     .rd_drain
+                cmp.b   #$7E,d4
+                bhi     .rd_drain
+                clr.b   CS_CSI(a0)
+                bra     .rd_drain
+.rd_ncsi:
+                cmp.b   #$9B,d4
+                bne.s   .rd_nbs
+                st      CS_CSI(a0)
+                bra     .rd_drain
+.rd_nbs:
+                cmp.b   #8,d4                ; Backspace / Ctrl-H: drops the last byte of the pending line, never
+                bne.s   .rd_nkill            ; past its start
+                tst.l   CS_CNT(a0)
+                beq     .rd_drain
+                subq.l  #1,CS_CNT(a0)
+                bsr     con_rubout
+                bra     .rd_drain
+.rd_nkill:
+                cmp.b   #24,d4               ; Ctrl-X: drops the whole pending line
+                bne.s   .rd_neof
+.rd_kill:
+                move.l  CON_STATE,a0
+                tst.l   CS_CNT(a0)
+                beq     .rd_drain
+                subq.l  #1,CS_CNT(a0)
+                bsr     con_rubout
+                bra.s   .rd_kill
+.rd_neof:
+                cmp.b   #28,d4               ; Ctrl-\: end of file, this READ returns 0 (pending line dropped)
+                bne.s   .rd_ncr
+                clr.l   CS_CNT(a0)
+                bra.s   .rd_done
+.rd_ncr:
                 cmp.b   #13,d4
-                bne.s   .rd_store
-                moveq   #10,d0               ; CR -> also LF for display
-                bsr     con_putc
+                bne.s   .rd_nctl
+                moveq   #13,d0               ; Return: echo CR LF
+                bsr     con_echo
                 moveq   #10,d0
-                bsr     con_win_emit
-                ifne    SHELL_ON_SCREEN
-                moveq   #10,d0
-                bsr     con_scr_emit         ; CR -> LF on screen too
-                endc
+                bsr     con_echo
                 moveq   #10,d4               ; the line is delivered ending with LF, as CON: does: BCPL readers (c:Ask)
-                                             ; read up to '*N' and would wait for ever on a CR
+                bra.s   .rd_store            ; read up to '*N' and would wait for ever on a CR
+.rd_nctl:
+                cmp.b   #' ',d4              ; other control bytes (a typed LF included) are ignored, as CON: does
+                blo     .rd_drain
+                move.b  d4,d0
+                bsr     con_echo
 .rd_store:
                 move.l  CON_STATE,a0
                 move.l  CS_CNT(a0),d1
-                cmp.l   CS_MAX(a0),d1
-                bge.s   .rd_done             ; buffer full
                 move.l  CS_DEST(a0),a1
                 move.b  d4,(0,a1,d1.l)       ; dest[cnt] = byte
-                addq.l  #1,CS_CNT(a0)
+                addq.l  #1,d1
+                move.l  d1,CS_CNT(a0)
                 cmp.b   #10,d4               ; end of line?
                 beq.s   .rd_done
-                bra.s   .rd_drain            ; drain other bytes available this tick
+                cmp.l   CS_MAX(a0),d1
+                blt     .rd_drain            ; room left: drain other bytes available this tick
 .rd_done:
                 bsr     con_sideback
                 move.l  CON_STATE,a0
@@ -383,6 +417,30 @@ con_sideback:
 .sb_ret:
                 movem.l (sp)+,d0-d2/a0-a1
                 rts
+
+; con_echo(d0.b): echo of a typed byte on serial (mirror), the console window and, with SHELL_ON_SCREEN, the
+; screen. a6 = SysBase. Preserves d2-d7/a2-a6.
+con_echo:
+                movem.l d2-d3,-(sp)
+                move.b  d0,d3
+                bsr     con_putc
+                move.b  d3,d0
+                bsr     con_win_emit
+                ifne    SHELL_ON_SCREEN
+                move.b  d3,d0
+                bsr     con_scr_emit
+                endc
+                movem.l (sp)+,d2-d3
+                rts
+
+; con_rubout: erases the last echoed byte (BS, space, BS). Preserves d2-d7/a2-a6.
+con_rubout:
+                moveq   #8,d0
+                bsr.s   con_echo
+                moveq   #' ',d0
+                bsr.s   con_echo
+                moveq   #8,d0
+                bra.s   con_echo
 
 ; con_putc: emits d0.b on serial (bounded TBE poll). Clobbers d0/d1/d2; preserves the rest.
 con_putc:
