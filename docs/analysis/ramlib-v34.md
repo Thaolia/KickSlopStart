@@ -166,7 +166,9 @@ device — the original OpenDevice sets `io_Error`).
      whose node name differs from the file's base name, even if it did add a node under another name
      (dangerous; see Open points).
 10. **Final attempt with the base name** — this is where the **version test** happens (the original exec
-    OpenLibrary compares `lib_Version >= version`). A version failure leaves the library loaded, in the list,
+    OpenLibrary opens iff `(signed 16-bit) lib_Version >= (signed 16-bit) low word of D0`, and itself walks
+    past same-name libraries whose version is too low to a later one that qualifies; `exec-messages-io-v34.md`
+    §4.1, OL1–OL13). A version failure leaves the library loaded, in the list,
     with open count 0; it is not reloaded by later opens (step 2) and goes away at the next low-memory expunge.
     [S T4, T6]
 11. `CurrentDir(previous)` and `UnLock(lock)` if a lock was taken.

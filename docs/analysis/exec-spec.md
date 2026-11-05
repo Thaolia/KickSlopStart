@@ -35,8 +35,13 @@ by a `struct Node` (14 bytes). Offsets (decimal in parentheses):
 | 0x14 | UWORD | `lib_Version` | **= 34** [ROM, cf. header] |
 | 0x16 | UWORD | `lib_Revision` | = 2 (exec 34.2) |
 | 0x18 | APTR | `lib_IdString` | → `"exec 34.2 (28 Oct 1987)"` [ROM, image header] |
-| 0x1C | ULONG | `lib_Sum` | checksum of the jump table |
+| 0x1C | ULONG | `lib_Sum` | checksum of the jump table: 16-bit word sum of the `lib_NegSize` bytes, in the **upper word** (lower word not written); see below |
 | 0x20 | UWORD | `lib_OpenCnt` | |
+
+`lib_Sum` (V34, observed 2026-11-05): with `LIBF_SUMUSED` set, SumLibrary/AddLibrary/AddDevice recompute the sum
+and clear `LIBF_CHANGED` when CHANGED is set; with SUMUSED alone a mismatch is the dead-end `Alert($81000003)`.
+Messages, ports, I/O, libraries, devices and resources (including this checksum step): `exec-messages-io-v34.md`
+(§4.4 for the sum).
 
 ### 2b. ExecBase-specific fields
 | Off (dec) | Size | Field | Role |
@@ -130,12 +135,12 @@ then a **sparse tail** LVO 101..106 (-606 to -636, 1 to 3 sites each). The deepe
 observed **in the whole ROM** is **-636** (LVO 106).
 
 Interpretation:
-- The V34 exec jump table has on the order of **~102 entries** (LVO -6..-612, `lib_NegSize`
-  ≈ 612), ending on the ABI side with the signal-semaphore block + `SumKickData`.
-- The tail -618..-636 observed in the ROM is **not** exec: in particular -636 would correspond to
-  `CacheClearU`, **impossible for exec on a 68000 without cache** → these calls target the base
-  of ANOTHER library (A6 ≠ SysBase at those sites). They therefore do not prove the presence of
-  `AddMemList`/`CopyMem`/`CopyMemQuick` in the V34 exec.
+- The V34 exec jump table has **105 entries** (LVO -6..-630, `lib_NegSize` = 630, read in ExecBase on the
+  running ROM 2026-11-05), ending with `SumKickData`, `AddMemList`, `CopyMem`, `CopyMemQuick` (§5).
+- The call at -636 observed in the ROM is **not** exec (`CacheClearU` is impossible for exec on a 68000
+  without cache): it targets another library base. *Corrected 2026-11-05*: the -618..-630 entries **are** exec
+  (`AddMemList`, `CopyMem`, `CopyMemQuick`, present in V34; see §5 and `exec-memory-semaphores-v34.md` §2.11, §3,
+  where all three were called through the V34 vector table).
 - Residual uncertainty: the exact boundary of the table (end at -606 `RemSemaphore` vs -612
   `SumKickData`) is within ±1 entry; the firm anchors above (up to `OpenLibrary` -552,
   and the requested primitives) are certain.
@@ -143,12 +148,13 @@ Interpretation:
 ### Delta V34 → 2.0/3.x (functions ABSENT from the V34 jump table)
 The V34 exec jump table is **noticeably shorter** than that of the 2.0/3.x ROMs. The following
 functions are later additions — do **not** expose them for a 1.3 target:
-`AddMemList` (-618, V36), `CopyMem` (-624, V36), `CopyMemQuick` (-630, V36),
 `CacheClearU`/`CacheClearE`/`CacheControl` (-636/-642/-648, V37, irrelevant on 68000),
 `CreateIORequest`/`CreateMsgPort` (… actually amiga.lib), `CachePreDMA`/`CachePostDMA`,
 `CreatePool`/`DeletePool`/`AllocPooled`/`FreePooled` (-654.., V39), `AddMemHandler`/`RemMemHandler`
 (V39), `ObtainQuickVector`, `StackSwap`, `ColdReboot` (-726), `TaggedOpenLibrary` (private negative
 offset V36). The implementation track must refuse/ignore these LVOs to stay faithful to V34.
+`AddMemList` (-618), `CopyMem` (-624) and `CopyMemQuick` (-630) are **not** in this list: they are V33 functions,
+present in V34 (*corrected 2026-11-05*, `coverage-v34.md` §5 item 2).
 
 ## 4. Observable behaviour of the primitives  **[ABI exec V34 AutoDocs]**
 
@@ -159,7 +165,10 @@ offset V36). The implementation track must refuse/ignore these LVOs to stay fait
   `MEMF_PUBLIC` 0x1, `MEMF_CHIP` 0x2, `MEMF_FAST` 0x4, `MEMF_CLEAR` 0x10000 (block zeroed),
   `MEMF_LARGEST` 0x20000. **Delta**: `MEMF_LOCAL` 0x100, `MEMF_24BITDMA` 0x200, `MEMF_REVERSE`
   0x40000, `MEMF_TOTAL` 0x80000 are **V36** additions; `MEMF_KICK` 0x400 is **V39** — none
-  exists in V34. The selection walks the `MemHeader`s by decreasing node priority;
+  exists in V34. Observed (2026-11-05): `$80000` (`MEMF_TOTAL`) is **ignored** by AllocMem and AvailMem
+  (`AvailMem($80000)` = `AvailMem(0)`, the free sum), and `MEMF_CLEAR` clears the **rounded** size (13 bytes
+  asked → 16 cleared). Details, rounding and the other memory/semaphore functions:
+  `exec-memory-semaphores-v34.md` (§0, §2.4, §2.6). The selection walks the `MemHeader`s by decreasing node priority;
   for a block satisfying several attributes, the first compatible `MemHeader` wins.
 - `FreeMem(addr A1, size D0)`: returns the exact block (address+size) to its `MemHeader`, merges
   with the adjacent free regions. **The size passed must be identical** to that of the
@@ -212,6 +221,7 @@ Review of 2026-10-29.
 - [x] **Fixed**: removed the ROM address of exec's `rt_IdString` string.
 - [x] Remaining: public `exec/execbase.i` offsets, `exec_lib.fd` LVOs, `MEMF_*` constants, call-site
   counts (statistical, without address).
-- [ ] Substantive remark (not fixed, outside the clean-room scope): the "Delta V34 → 2.0/3.x" list
-  in §3 still classifies `AddMemList`/`CopyMem`/`CopyMemQuick` as V36, whereas §5 (resolved by
-  `exec_lib.fd`) gives them as present in V34; §5 is authoritative.
+- [x] Substantive remark fixed 2026-11-05: the "Delta V34 → 2.0/3.x" list in §3 no longer classifies
+  `AddMemList`/`CopyMem`/`CopyMemQuick` as V36 (they were called through the V34 vectors,
+  `exec-memory-semaphores-v34.md`). Behavioural details of the memory and semaphore functions are in that page;
+  §4 here stays a summary (note: `MEMF_CLEAR` clears the rounded size, AvailMem ignores `$80000`).

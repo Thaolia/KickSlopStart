@@ -287,7 +287,11 @@ Edge cases [D]:
 
 ---
 
-## 6. `Procure` (−540) / `Vacate` (−546): V34 message semaphore [S]
+## 6. `Procure` (−540) / `Vacate` (−546): V34 message semaphore [S] → [O]
+
+*Confirmed 2026-11-05*: the description and test vectors below were run on the real ROM and hold
+(`exec-memory-semaphores-v34.md` §4.8, P1–P4). Registers observed there: Procure changes D0 only; Vacate changes
+D0, D1, A0, A1.
 
 V34 structure (`exec/semaphores.i`, old form): `struct Semaphore` = `MsgPort` (34 bytes) + `sm_Bids` (WORD at
 `$22`); `sm_LockMsg` is the port's `mp_SigTask` field (`$10`).
@@ -309,7 +313,7 @@ initialised, and `mp_Flags` = `PA_IGNORE` — with `PA_SIGNAL`, `PutMsg` would s
 `mp_SigTask`, which here is the lock message. This has nothing in common with the 2.0+ `Procure` (which takes a
 `SignalSemaphore` and a `SemaphoreMessage`).
 
-Test vectors [D]: fresh semaphore (`sm_Bids` −1): Procure(m1) → 1, `sm_LockMsg` = m1, `sm_Bids` 0.
+Test vectors [O] (were [D]; run as P1–P4 of `exec-memory-semaphores-v34.md`): fresh semaphore (`sm_Bids` −1): Procure(m1) → 1, `sm_LockMsg` = m1, `sm_Bids` 0.
 Procure(m2) → 0, `sm_Bids` 1, m2 queued. Vacate → m2 replied, `sm_LockMsg` = m2, `sm_Bids` 0. Vacate →
 `sm_LockMsg` 0, `sm_Bids` −1.
 
@@ -426,7 +430,8 @@ bug). Additional contract details [S]:
    `tc_ExceptData`, SR = 0, USP = `tc_SPReg` − 8, the returned mask re-armed in `tc_SigExcept`.
 4. **Server Z-flag rule**: a VERTB server at high priority returning D0 = 0 with the Z flag clear; prediction: the
    lower-priority VERTB servers (graphics, timer) stop running.
-5. **Procure/Vacate** test vectors of §6 on a hand-built V34 semaphore.
+5. **Procure/Vacate** test vectors of §6 on a hand-built V34 semaphore — **done 2026-11-05**, they hold
+   (`exec-memory-semaphores-v34.md` §4.8).
 
 ## Open points
 

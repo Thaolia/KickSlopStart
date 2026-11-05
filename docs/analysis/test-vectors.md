@@ -123,8 +123,12 @@ Two distinct sequences not to be confused: (a) `ResModules` = ALL valid resident
 - **[D] G3**: the exec V34 jump table has ~**102** entries (`lib_NegSize` ≈ 612), i.e. far
   fewer than 2.0/3.x. LVOs ≥ -618 (AddMemList/CopyMem/CopyMemQuick/Cache*/pools…) **must not
   exist** in a V34 reimplementation.
-- **[D] G4**: each jump table entry = 6 bytes (`JMP abs.l` `0x4EF9` + 32-bit address);
-  `lib_Sum`/`SumLibrary` recomputes a consistent checksum of the table.
+- **[D] G4**: each jump table entry = 6 bytes (`JMP abs.l` `0x4EF9` + 32-bit address).
+  **[O] (corrected 2026-11-05)** `lib_Sum` holds the 16-bit wrap-around sum of the words of the `lib_NegSize`
+  bytes of the jump table, stored in the **upper word** of `lib_Sum` (lower word not written). With
+  `LIBF_SUMUSED` alone, a mismatch (SumLibrary, AddLibrary, AddDevice) is the dead-end `Alert($81000003)`; with
+  `LIBF_CHANGED` also set, the sum is recomputed and CHANGED cleared. Vectors: `exec-messages-io-v34.md` §4.4
+  (AL2, AL4, ADV2).
 
 ## H. Limits / areas to be confirmed by the implementation track
 - Section E (runtime ExecBase) and F (memory list) are **[D]**: not readable in the static

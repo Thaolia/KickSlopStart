@@ -14,6 +14,13 @@
 > row of the exec table and the graphics.library row of §2 only. The figures of §0 and the other rows of §3 were
 > **not** recounted: several graphics rows (text and fonts, regions) still show the status they had before
 > `graphics-text-v34` and `graphics-regions-v34` were written (see §7 ranks 4 and 7 for their real state).
+>
+> **Partial refresh 2026-11-05 (second pass)**, after `exec-messages-io-v34` (rank 12), `exec-memory-semaphores-v34`
+> (rank 13) and `mathffp-v34` (rank 15) were written: the exec and mathffp rows of §2 and the **exec.library** and **mathffp.library** tables of §3 were
+> rechecked row by row against those pages and `docs/exec-lvo-table.md` (`.fd` V34), §5 item 2 was closed, §7
+> (ranks 11, 12, 13, 15 and the state paragraph) was updated. Recounted from the tables: exec 83 specified /
+> 7 partial / 6 cited / 5 absent, mathffp 12 / 0 / 0 / 0. **§0 was not recounted** (the graphics table is known to
+> be stale, see above), so its figures and its exec/mathffp rows still show the 2026-11-04 state.
 
 **File-system addendum 2026-11-05** (no count recomputed): `rom-filesystem-v34` gained §1.4 (device commands,
 rejected TD_* replies), §2.5 (validation failures, requesters, Retry/Cancel), §8.4 (write-back on the third
@@ -152,7 +159,7 @@ version.
 
 | # | Resident | ROM area (b) | Analysis coverage | Existing specs | On our side | Priority |
 |--:|---|--:|---|---|---|:-:|
-| 1 | exec.library 34.2 | 12,736 | **strong**: ExecBase ABI, boot order, scheduling and private LVOs, task context, exceptions, interrupt dispatch, softints, raw serial I/O, Debug, Procure/Vacate, SumKickData, Alert, warm-reset survival; lists, ports, messages, I/O, semaphores and memory sub-allocation only at AutoDoc level (cited) | exec-spec, exec-scheduling, coldstart-hardware, alert, custom-chips §3.3/§4.3, boot-sequence, test-vectors, module-map | `src/exec/*` (101/101 LVOs) | P3 |
+| 1 | exec.library 34.2 | 12,736 | **strong**: ExecBase ABI, boot order, scheduling and private LVOs, task context, exceptions, interrupt dispatch, softints, raw serial I/O, Debug, Procure/Vacate, SumKickData, Alert, warm-reset survival; RawDoFmt (exec-rawdofmt); ports, messages, I/O, library/device/resource calls (exec-messages-io, 2026-11-05); memory and signal semaphores (exec-memory-semaphores, 2026-11-05); left: SetFunction, a few list/signal/trap calls, SetSR/SuperState/UserState/GetCC, MakeLibrary/MakeFunctions/InitStruct details | exec-spec, exec-scheduling, exec-rawdofmt, exec-messages-io, exec-memory-semaphores, coldstart-hardware, alert, custom-chips §3.3/§4.3, boot-sequence, test-vectors, module-map | `src/exec/*` (101/101 LVOs) | P3 |
 | 2 | expansion.library 34.1 | 2,176 | **complete** | autoconfig-v34, uae-hd-boot | `src/exec/expansion.s` | — |
 | 3 | potgo.resource | 332 | **complete** | resources §3, custom-chips §4.2 | `src/exec/potgo.s` | — |
 | 4 | keymap.resource | 74 (+ init and tables in the console area) | **complete** (structure without LVO, default keymap behaviour) | console-keymap §1.1, §5 ; setmap-13 | `src/exec/keymap.s` (no function vectors, as V34; hand-authored keymaps) | — |
@@ -171,7 +178,7 @@ version.
 | 17 | trackdisk.device 34.1 | 6,908 | **complete** except TD_MOTOR (partial) | trackdisk-official-timing, trackdisk-write, trackdisk-raw-changeint, disk-change | `src/exec/trackdisk.s` (22 commands) | — |
 | 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); SetWindowTitles and the rendering helpers (intuition-render); CloseWindow and the window operations (intuition-windows) | intuition-* (13 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P2 |
 | 19 | alert.hook | 658 | **complete** | alert-v34 §4, coldstart-hardware §8.4 | role played from the boot code (`alert_boothook` in `src/exec/execmisc.s`), not a separate resident | — |
-| 20 | mathffp.library | 1,324 | none | — | `src/exec/mathffp.s` | P3 |
+| 20 | mathffp.library | 1,324 | **complete** (2026-11-05: 12 SP* functions, FFP format, condition codes, library vectors) | mathffp-v34 | `src/exec/mathffp.s` (not yet checked against the spec) | P3 |
 | 21 | workbench.task 34.1 | 35,302 | **strong** | workbench-task, wb-icon-clipping, disk-change §4, loadwb-13 | `src/dos/workbench.s` | — |
 | 22 | dos.library 34.3 | 49,542 | **strong** (33/33 LVOs, ROM file system, CLI, handlers, memory) | dos-v34-spec, dos-lvo-partial, dos-exit-packets, dos-memory, dos-cli, rom-filesystem, bcpl-runtime, handlers, fault, boot-clock, disk-full-write | `src/dos/*` (31/33, GetPacket/QueuePacket null) | — |
 | 23 | romboot.library | 1,052 | partial | uae-hd-boot §2 | `src/exec/romboot.s` | P3 |
@@ -209,14 +216,14 @@ version.
 | -168 | `AddIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 64 / 102 | — |
 | -174 | `RemIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 72 / 86 | — |
 | -180 | `Cause` | yes — custom-chips §3.3 ; exec-scheduling §8 ; trackdisk-raw-changeint §5.4 | yes | 96 / 96 | — |
-| -186 | `Allocate` | no | yes | 82 / 82 | P3 |
-| -192 | `Deallocate` | no | yes | 236 / 318 | P2 |
-| -198 | `AllocMem` | yes — exec-spec §4 ; dos-memory §1.1 | yes | 236 / 318 | — |
-| -204 | `AllocAbs` | cited — setpatch-138 §1.1 ; coldstart-hardware §5.3 ; exec-scheduling §7 | yes | 144 / 144 | P3 |
-| -210 | `FreeMem` | yes — exec-spec §4 Memory management | yes | 64 / 382 | — |
-| -216 | `AvailMem` | yes — exec-spec §4 Memory management | yes | 78 / 78 | — |
-| -222 | `AllocEntry` | partial — setpatch-138 §1.4 ; dos-memory §2 | yes | 142 / 142 | P3 |
-| -228 | `FreeEntry` | partial — setpatch-138 §Requirements | yes | 62 / 62 | P3 |
+| -186 | `Allocate` | yes — exec-memory-semaphores §2.2 (2026-11-05) | yes (not yet checked against the new spec) | 82 / 82 | — |
+| -192 | `Deallocate` | yes — exec-memory-semaphores §2.3 (2026-11-05) | yes (not yet checked against the new spec) | 236 / 318 | — |
+| -198 | `AllocMem` | yes — exec-memory-semaphores §2.4 (2026-11-05) ; exec-spec §4 ; dos-memory §1.1 | yes (not yet checked against the new spec) | 236 / 318 | — |
+| -204 | `AllocAbs` | yes — exec-memory-semaphores §2.7 (2026-11-05) ; setpatch-138 §1.1 ; coldstart-hardware §5.3 ; exec-scheduling §7 | yes (not yet checked against the new spec) | 144 / 144 | — |
+| -210 | `FreeMem` | yes — exec-memory-semaphores §2.5 (2026-11-05) ; exec-spec §4 Memory management | yes (not yet checked against the new spec) | 64 / 382 | — |
+| -216 | `AvailMem` | yes — exec-memory-semaphores §2.6 (2026-11-05) ; exec-spec §4 Memory management | yes (not yet checked against the new spec) | 78 / 78 | — |
+| -222 | `AllocEntry` | yes — exec-memory-semaphores §2.8 (2026-11-05) ; setpatch-138 §1.4 ; dos-memory §2 | yes (not yet checked against the new spec) | 142 / 142 | — |
+| -228 | `FreeEntry` | yes — exec-memory-semaphores §2.9 (2026-11-05) ; setpatch-138 §Requirements | yes (not yet checked against the new spec) | 62 / 62 | — |
 | -234 | `Insert` | cited — workbench-task §3.6 | yes | 60 / 60 | P3 |
 | -240 | `AddHead` | yes — exec-spec §4 Doubly linked lists | yes | 60 / 60 | — |
 | -246 | `AddTail` | yes — exec-spec §4 Doubly linked lists | yes | 24 / 24 | — |
@@ -237,53 +244,53 @@ version.
 | -336 | `FreeSignal` | cited — intuition-misc §4 | yes | 16 / 16 | P3 |
 | -342 | `AllocTrap` | no | yes | 38 / 38 | P3 |
 | -348 | `FreeTrap` | no | yes | 16 / 16 | P3 |
-| -354 | `AddPort` | cited — preferences-13 §4 | yes | 24 / 24 | P3 |
-| -360 | `RemPort` | cited — fastfonts-ff §2 | yes | 4 / 32 | P3 |
-| -366 | `PutMsg` | cited — dos-v34-spec §2a | yes | 6 / 122 | P3 |
-| -372 | `GetMsg` | cited — dos-v34-spec §2a | yes | 46 / 46 | P3 |
-| -378 | `ReplyMsg` | cited — dos-v34-spec §2a | yes | 26 / 142 | P3 |
-| -384 | `WaitPort` | cited — dos-v34-spec §2a | yes | 40 / 40 | P3 |
-| -390 | `FindPort` | cited — preferences-13 §4 | yes | 10 / 10 | P3 |
-| -396 | `AddLibrary` | no | yes | 14 / 148 | P3 |
-| -402 | `RemLibrary` | no | yes | 26 / 26 | P3 |
-| -408 | `OldOpenLibrary` | cited — fastfonts-ff §Provenance | yes | 8 / 8 | P3 |
-| -414 | `CloseLibrary` | cited — caesar-boot §1 | yes | 20 / 20 | P3 |
+| -354 | `AddPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes (not yet checked against the new spec) | 24 / 24 | — |
+| -360 | `RemPort` | yes — exec-messages-io §1.5 (2026-11-05) ; fastfonts-ff §2 | yes (not yet checked against the new spec) | 4 / 32 | — |
+| -366 | `PutMsg` | yes — exec-messages-io §1.1 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 6 / 122 | — |
+| -372 | `GetMsg` | yes — exec-messages-io §1.2 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 46 / 46 | — |
+| -378 | `ReplyMsg` | yes — exec-messages-io §1.3 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 26 / 142 | — |
+| -384 | `WaitPort` | yes — exec-messages-io §1.4 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 40 / 40 | — |
+| -390 | `FindPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes (not yet checked against the new spec) | 10 / 10 | — |
+| -396 | `AddLibrary` | yes — exec-messages-io §4.3, §4.4 (2026-11-05) | yes (not yet checked against the new spec) | 14 / 148 | — |
+| -402 | `RemLibrary` | yes — exec-messages-io §4.2 (2026-11-05) | yes (not yet checked against the new spec) | 26 / 26 | — |
+| -408 | `OldOpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; fastfonts-ff §Provenance | yes (not yet checked against the new spec) | 8 / 8 | — |
+| -414 | `CloseLibrary` | yes — exec-messages-io §4.2 (2026-11-05) ; caesar-boot §1 | yes (not yet checked against the new spec) | 20 / 20 | — |
 | -420 | `SetFunction` | partial — fastfonts-ff §1, §3 (returned value) | yes | 30 / 114 | P3 |
-| -426 | `SumLibrary` | partial — test-vectors §G | yes | 84 / 84 | P3 |
-| -432 | `AddDevice` | cited — timer-v34 §1.1 | yes | 14 / 64 | P3 |
-| -438 | `RemDevice` | no | yes | 26 / 26 | P3 |
-| -444 | `OpenDevice` | cited — dos-boot-sequence §Phase D | yes | 78 / 118 | P3 |
-| -450 | `CloseDevice` | cited — handlers-v34 §3.6 | yes | 22 / 22 | P3 |
-| -456 | `DoIO` | cited — bcpl-runtime §8.4.2 | yes | 114 / 114 | P3 |
-| -462 | `SendIO` | cited — handlers-v34 §3.6 | yes | 18 / 18 | P3 |
-| -468 | `CheckIO` | partial — intuition-requesters §7.1 | yes | 28 / 28 | P3 |
-| -474 | `WaitIO` | cited — intuition-requesters §7.1 | yes | 114 / 114 | P3 |
-| -480 | `AbortIO` | cited — intuiticks-repeat §2.1 | yes | 14 / 14 | P3 |
-| -486 | `AddResource` | cited — uae-int2 §2.2 | yes | 8 / 8 | P3 |
-| -492 | `RemResource` | no | yes | 4 / 32 | P3 |
-| -498 | `OpenResource` | cited — setpatch-disk-resource §1 | yes | 18 / 58 | P3 |
+| -426 | `SumLibrary` | yes — exec-messages-io §4.4 (2026-11-05) ; test-vectors §G | yes (not yet checked against the new spec) | 84 / 84 | — |
+| -432 | `AddDevice` | yes — exec-messages-io §3.3, §4.4 (2026-11-05) ; timer-v34 §1.1 | yes (not yet checked against the new spec) | 14 / 64 | — |
+| -438 | `RemDevice` | yes — exec-messages-io §3.3 (2026-11-05) | yes (not yet checked against the new spec) | 26 / 26 | — |
+| -444 | `OpenDevice` | yes — exec-messages-io §3.1 (2026-11-05) ; dos-boot-sequence §Phase D | yes (not yet checked against the new spec) | 78 / 118 | — |
+| -450 | `CloseDevice` | yes — exec-messages-io §3.2 (2026-11-05) ; handlers-v34 §3.6 | yes (not yet checked against the new spec) | 22 / 22 | — |
+| -456 | `DoIO` | yes — exec-messages-io §2.1 (2026-11-05) ; bcpl-runtime §8.4.2 | yes (not yet checked against the new spec) | 114 / 114 | — |
+| -462 | `SendIO` | yes — exec-messages-io §2.2 (2026-11-05) ; handlers-v34 §3.6 | yes (not yet checked against the new spec) | 18 / 18 | — |
+| -468 | `CheckIO` | yes — exec-messages-io §2.4 (2026-11-05) ; intuition-requesters §7.1 | yes (not yet checked against the new spec) | 28 / 28 | — |
+| -474 | `WaitIO` | yes — exec-messages-io §2.3 (2026-11-05) ; intuition-requesters §7.1 | yes (not yet checked against the new spec) | 114 / 114 | — |
+| -480 | `AbortIO` | yes — exec-messages-io §2.5 (2026-11-05) ; intuiticks-repeat §2.1 | yes (not yet checked against the new spec) | 14 / 14 | — |
+| -486 | `AddResource` | yes — exec-messages-io §4.5 (2026-11-05) ; uae-int2 §2.2 | yes (not yet checked against the new spec) | 8 / 8 | — |
+| -492 | `RemResource` | yes — exec-messages-io §4.5 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 32 | — |
+| -498 | `OpenResource` | yes — exec-messages-io §4.5 (2026-11-05) ; setpatch-disk-resource §1 | yes (not yet checked against the new spec) | 18 / 58 | — |
 | -504 | `execPrivate7` (= `RawIOInit`) *(private)* | yes — custom-chips §4.3 ; exec-scheduling §9 | yes | 10 / 10 | — |
 | -510 | `execPrivate8` (= `RawMayGetChar`) *(private)* | yes — custom-chips §4.3 | yes | 32 / 32 | — |
 | -516 | `execPrivate9` (= `RawPutChar`) *(private)* | yes — custom-chips §4.3 | yes | 70 / 120 | — |
-| -522 | `RawDoFmt` | yes — exec-rawdofmt (2026-11-05) ; alert §3 ; workbench-task §3.4, §6.4 | yes (not yet checked against the spec) | 214 / 452 | P2 |
+| -522 | `RawDoFmt` | yes — exec-rawdofmt (2026-11-05) ; alert §3 ; workbench-task §3.4, §6.4 | yes — checked against the spec (commit `1309b24`, `tests/rawdofmt_probe.sh`) | 214 / 452 | — |
 | -528 | `GetCC` | no | yes | 8 / 8 | P3 |
-| -534 | `TypeOfMem` | cited — softkick-real-ks13 §Conclusions | yes | 38 / 38 | P3 |
-| -540 | `Procure` | yes — exec-scheduling §6 | yes | 22 / 22 | — |
-| -546 | `Vacate` | yes — exec-scheduling §6 | yes | 34 / 34 | — |
-| -552 | `OpenLibrary` | cited — caesar-boot §1 ; dos-boot-sequence | yes | 46 / 86 | P3 |
-| -558 | `InitSemaphore` | cited — autoconfig-v34 §1 | yes | 32 / 32 | P3 |
-| -564 | `ObtainSemaphore` | cited — autoconfig-v34 §7 | yes | 80 / 104 | P3 |
-| -570 | `ReleaseSemaphore` | cited — autoconfig-v34 §7 | yes | 100 / 116 | P3 |
-| -576 | `AttemptSemaphore` | no | yes | 48 / 48 | P3 |
-| -582 | `ObtainSemaphoreList` | cited — layers §7 | yes | 118 / 142 | P3 |
-| -588 | `ReleaseSemaphoreList` | cited — layers §7 | yes | 22 / 22 | P3 |
-| -594 | `FindSemaphore` | no | yes | 10 / 10 | P3 |
-| -600 | `AddSemaphore` | no | yes | 12 / 12 | P3 |
-| -606 | `RemSemaphore` | no | yes | 4 / 32 | P3 |
+| -534 | `TypeOfMem` | yes — exec-memory-semaphores §2.10 (2026-11-05) ; softkick-real-ks13 §Conclusions | yes (not yet checked against the new spec) | 38 / 38 | — |
+| -540 | `Procure` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 22 / 22 | — |
+| -546 | `Vacate` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 34 / 34 | — |
+| -552 | `OpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; caesar-boot §1 ; dos-boot-sequence | yes (not yet checked against the new spec) | 46 / 86 | — |
+| -558 | `InitSemaphore` | yes — exec-memory-semaphores §4.1 (2026-11-05) ; autoconfig-v34 §1 | yes (not yet checked against the new spec) | 32 / 32 | — |
+| -564 | `ObtainSemaphore` | yes — exec-memory-semaphores §4.2 (2026-11-05) ; autoconfig-v34 §7 | yes (not yet checked against the new spec) | 80 / 104 | — |
+| -570 | `ReleaseSemaphore` | yes — exec-memory-semaphores §4.4 (2026-11-05) ; autoconfig-v34 §7 | yes (not yet checked against the new spec) | 100 / 116 | — |
+| -576 | `AttemptSemaphore` | yes — exec-memory-semaphores §4.3 (2026-11-05) | yes (not yet checked against the new spec) | 48 / 48 | — |
+| -582 | `ObtainSemaphoreList` | yes — exec-memory-semaphores §4.5 (2026-11-05) ; layers §7 | yes (not yet checked against the new spec) | 118 / 142 | — |
+| -588 | `ReleaseSemaphoreList` | yes — exec-memory-semaphores §4.6 (2026-11-05) ; layers §7 | yes (not yet checked against the new spec) | 22 / 22 | — |
+| -594 | `FindSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 10 | — |
+| -600 | `AddSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 12 / 12 | — |
+| -606 | `RemSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 32 | — |
 | -612 | `SumKickData` | yes — exec-scheduling §7 ; coldstart-hardware §5.3 | yes | 88 / 88 | — |
-| -618 | `AddMemList` | partial — autoconfig-v34 §4 | yes | 84 / 134 | P3 |
-| -624 | `CopyMem` | cited — autoconfig-v34 §6 | yes | 38 / 112 | P3 |
-| -630 | `CopyMemQuick` | no | yes | 4 / 78 | P3 |
+| -618 | `AddMemList` | yes — exec-memory-semaphores §2.11 (2026-11-05) ; autoconfig-v34 §4 | yes (not yet checked against the new spec) | 84 / 134 | — |
+| -624 | `CopyMem` | yes — exec-memory-semaphores §3 (2026-11-05) ; autoconfig-v34 §6 | yes (not yet checked against the new spec) | 38 / 112 | — |
+| -630 | `CopyMemQuick` | yes — exec-memory-semaphores §3 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 78 | — |
 
 ### graphics.library (105 LVOs, −30 to −654)
 
@@ -574,18 +581,18 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `SPFix` | no | yes | 82 / 82 | P3 |
-| -36 | `SPFlt` | no | yes | 56 / 56 | P3 |
-| -42 | `SPCmp` | no | yes | 60 / 60 | P3 |
-| -48 | `SPTst` | no | yes | 40 / 40 | P3 |
-| -54 | `SPAbs` | no | yes | 6 / 6 | P3 |
-| -60 | `SPNeg` | no | yes | 10 / 10 | P3 |
-| -66 | `SPAdd` | no | yes | 16 / 16 | P3 |
-| -72 | `SPSub` | no | yes | 254 / 254 | P3 |
-| -78 | `SPMul` | no | yes | 154 / 154 | P3 |
-| -84 | `SPDiv` | no | yes | 166 / 166 | P3 |
-| -90 | `SPFloor` | no | yes | 86 / 366 | P2 |
-| -96 | `SPCeil` | no | yes | 10 / 376 | P2 |
+| -30 | `SPFix` | yes — mathffp-v34 §4.1 (2026-11-05) | yes (not yet checked against the new spec) | 82 / 82 | — |
+| -36 | `SPFlt` | yes — mathffp-v34 §4.2 (2026-11-05) | yes (not yet checked against the new spec) | 56 / 56 | — |
+| -42 | `SPCmp` | yes — mathffp-v34 §4.3 (2026-11-05) | yes (not yet checked against the new spec) | 60 / 60 | — |
+| -48 | `SPTst` | yes — mathffp-v34 §4.4 (2026-11-05) | yes (not yet checked against the new spec) | 40 / 40 | — |
+| -54 | `SPAbs` | yes — mathffp-v34 §4.5 (2026-11-05) | yes (not yet checked against the new spec) | 6 / 6 | — |
+| -60 | `SPNeg` | yes — mathffp-v34 §4.6 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 10 | — |
+| -66 | `SPAdd` | yes — mathffp-v34 §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 16 / 16 | — |
+| -72 | `SPSub` | yes — mathffp-v34 §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 254 / 254 | — |
+| -78 | `SPMul` | yes — mathffp-v34 §4.8 (2026-11-05) | yes (not yet checked against the new spec) | 154 / 154 | — |
+| -84 | `SPDiv` | yes — mathffp-v34 §4.9 (2026-11-05) | yes (not yet checked against the new spec) | 166 / 166 | — |
+| -90 | `SPFloor` | yes — mathffp-v34 §4.10 (2026-11-05) | yes (not yet checked against the new spec) | 86 / 366 | — |
+| -96 | `SPCeil` | yes — mathffp-v34 §4.10 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 376 | — |
 
 ### timer.device — functions (3 LVOs, −42 to −54)
 
@@ -765,9 +772,10 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
    That was wrong: `RefreshGList` (−432), `AddGList` (−438), `RemoveGList` (−444), `ActivateWindow` (−450),
    `RefreshWindowFrame` (−456), `ActivateGadget` (−462) and `NewModifyProp` (−468) are **V33** functions
    (`.fd`), and the vector table of intuition 34.3 does have 78 entries (4 + 74).
-2. **Still open.** `exec-spec.md` §3 ("Delta") puts `AddMemList` (−618), `CopyMem` (−624) and `CopyMemQuick`
+2. **Settled 2026-11-05.** `exec-spec.md` §3 ("Delta") put `AddMemList` (−618), `CopyMem` (−624) and `CopyMemQuick`
    (−630) among the V36 additions. The ROM's exec table has **105 entries** and goes down to −630: these three
-   functions exist in V34 (already flagged in §5 of the same file, but §3 has not been corrected).
+   functions exist in V34. §3 is corrected (`lib_NegSize` = 630 read on the running ROM), and all three were called
+   through the V34 vectors in `exec-memory-semaphores-v34.md` §2.11 and §3.
 3. **Settled 2026-11-02.** `disk-change-v34.md` §2.1 described `TD_ADDCHANGEINT` as V36; trackdisk-raw-changeint-v34
    §5 established that `TD_ADDCHANGEINT`/`TD_REMCHANGEINT` exist and work in V34 (the interrupt is `Cause()`d on
    ejection **and** insertion; the request is never replied while installed, so it must be sent with `SendIO`),
@@ -797,7 +805,7 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
   "implementation gaps" sections (custom-chips §7, dos-memory, rom-filesystem §11–§12 probes); they are the
   reference for what each routine still lacks.
 
-## 7. The most valuable remaining gaps (ranked, 2026-11-04)
+## 7. The most valuable remaining gaps (ranked 2026-11-04, state updated 2026-11-05)
 
 Almost all of the former "next 15 analysis specs" (blitter, display, Alert/alert.hook, screens, input
 engine and menus, layers, fills, console/keymap, gameport/input/potgo, keyboard, exec scheduling, audio,
@@ -809,8 +817,10 @@ partial one) **while known software uses them**. "Used by" names programs analys
 **State on 2026-11-05**: ranks 1–10 and 14 are specified **and** implemented and checked against their spec on
 our side (ranks 1–9 and 14: commits of 2026-11-04; rank 10: commits `d6e091d` and `4965827` of 2026-11-05;
 `docs/PLAN.md` entries of those dates); their rows are kept for the record, with the gaps each implementation still
-lists. Rank 11 is specified (`exec-rawdofmt-v34.md`, 2026-11-05) and waits for its check on our side. Ranks 12, 13
-and 15 are still open.
+lists. Rank 11 is specified (`exec-rawdofmt-v34.md`, 2026-11-05) and now implemented and checked on our side
+(commit `1309b24`, `tests/rawdofmt_probe.sh`). Ranks 12, 13 and 15 are specified on 2026-11-05
+(`exec-messages-io-v34.md`, `exec-memory-semaphores-v34.md`, `mathffp-v34.md`, black-box calls on the real ROM);
+implementation on our side: not yet checked against the new specs.
 
 | Rank | Module | Function(s) | Spec / our side | Why it matters (used by) | Prio |
 |--:|---|---|---|---|:-:|
@@ -824,11 +834,11 @@ and 15 are still open.
 | 8 | intuition | `CloseWindow` (full order: IDCMP drain, menus, requesters, active window successor, memory), `MoveWindow`, `SizeWindow`, `WindowToFront`, `WindowToBack`, `WindowLimits` | **specified 2026-11-04** (intuition-windows-v34) / **yes** (2026-11-04: `tests/iwin_probe.sh` matches §8 except deliberate differences: Move/Size/ToFront/ToBack and the close-time activation run at once where 1.3 defers them, windows kept on the screen, CloseWindow ends the window's requesters; open: IDCMP ports not in the public port list, one REFRESHWINDOW at a time) | Every program closes windows; Workbench drawers (workbench-task §4.1, §6.8), SysInfo (sysinfo-44 §S1). CloseWindow ≈ 2.5 KB of closure | done |
 | 9 | intuition | `SetWindowTitles`, `DrawBorder`, `DrawImage`, `PrintIText`, `IntuiTextLength` | **specified 2026-11-04** (intuition-render-v34) / **yes** (2026-11-04: `tests/irender_probe.sh` matches every §7 vector, text ink aside; BorderTop 11 as on 1.3 since the drawer-layout fix) | Workbench memory title through SetWindowTitles (hooked by LoadWB 1.3.3, workbench-task §6.2–§6.6), OctaMED (`SetWindowTitles(w, -1, title)`), every gadget and requester rendering. SetWindowTitles ≈ 8.5 KB of closure (title bar redraw) | done |
 | 10 | graphics | `SetRast`, `ScrollRaster`, `RectFill` (full contract), `SetAPen`/`SetBPen`/`SetDrMd` | **specified 2026-11-04** (graphics-raster-v34) / **yes** (2026-11-05, `d6e091d` + `4965827`: `tests/graster_probe.sh` 156/156 vectors; deliberate differences in `docs/PLAN.md` "Raster functions (2026-11-05)": reversed bounds draw nothing, nothing written outside the planes, no 64-word/1024-row truncation, negative ScrollRaster corners clamped without a layer, exact SIMPLE damage moved with the content, SetRast/RectFill change only d0/d1/a0; open: minterm computed from the pens at call time instead of read from `rp_minterms`, pattern row of a wrapped row piece, COMPLEMENT outline shrink, Scroll_X/SuperBitMap area) | Layers clear new layers with SetRast (layers §5.1), Workbench window repair (wb-icon-clipping §5), console scrolling (console-keymap §3.7–§3.8), OctaMED (RectFill ×27). SetRast ≈ 1.2 KB of closure | done |
-| 11 | exec | `RawDoFmt` | **specified 2026-11-05** (exec-rawdofmt-v34, debugger-injected calls on the real ROM; 162 table vectors + 23 edge/count/NULL vectors + register tests; probe to write: `tests/rawdofmt_probe.s`, §8) / yes, not yet checked against the spec | Workbench memory title (workbench-task §6.2–§6.4), SetMap (setmap-13), the Guru text (alert-v34 §3), LoadWB, CLI commands. Closure ≈ 450 b. To decide on our side: the V34 defects (lone `%` at the end reads past the format, `%b` echoed without consuming its BPTR, zero fill before the sign / on the right with `-`, 16-bit width and limit), and how far to copy the PutChProc register contract (A6 not ExecBase inside PutChProc, A3 kept between calls and restored on exit, A1 = next data item on exit) | P2 |
-| 12 | exec | Messages and I/O: `PutMsg`, `GetMsg`, `ReplyMsg`, `WaitPort`, `DoIO`, `SendIO`, `WaitIO`, `CheckIO`, `AbortIO`, `OpenDevice`, `CloseDevice`, `OpenLibrary`, `OpenResource` | cited (CheckIO partial) / yes | Everything: dos packets (dos-v34-spec §2a), devices, Workbench. The device-side halves are specified per device; the exec-side details (PA_SIGNAL/PA_SOFTINT/PA_IGNORE, IOF_QUICK handling in DoIO/WaitIO, ReplyMsg to a NULL port, OpenLibrary version test and ramlib fallback) are not | P3 |
-| 13 | exec | Memory and semaphores: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`, `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `InitSemaphore`, `ObtainSemaphore`, `ReleaseSemaphore`, `AttemptSemaphore`, `ObtainSemaphoreList`, `ReleaseSemaphoreList`, `Add/Rem/FindSemaphore` | partial or cited / yes | SetPatch 1.38 (AllocEntry, setpatch-138 §1.4), KickMem survival (AllocAbs, coldstart-hardware §5.3), dos memory (dos-memory §2), layers (semaphore lists, layers §7), soft-kick (TypeOfMem). Deallocate ≈ 320 b of closure | P3 |
+| 11 | exec | `RawDoFmt` | **specified 2026-11-05** (exec-rawdofmt-v34, debugger-injected calls on the real ROM; 162 table vectors + 23 edge/count/NULL vectors + register tests; probe to write: `tests/rawdofmt_probe.s`, §8) / **yes** (2026-11-05, commit `1309b24`, checked with `tests/rawdofmt_probe.sh`) | Workbench memory title (workbench-task §6.2–§6.4), SetMap (setmap-13), the Guru text (alert-v34 §3), LoadWB, CLI commands. Closure ≈ 450 b. To decide on our side: the V34 defects (lone `%` at the end reads past the format, `%b` echoed without consuming its BPTR, zero fill before the sign / on the right with `-`, 16-bit width and limit), and how far to copy the PutChProc register contract (A6 not ExecBase inside PutChProc, A3 kept between calls and restored on exit, A1 = next data item on exit) | done |
+| 12 | exec | Messages and I/O: `PutMsg`, `GetMsg`, `ReplyMsg`, `WaitPort`, `DoIO`, `SendIO`, `WaitIO`, `CheckIO`, `AbortIO`, `OpenDevice`, `CloseDevice`, `OpenLibrary`, `OpenResource` | **specified 2026-11-05** (exec-messages-io-v34: also ports, Add/Rem Library/Device/Resource, SumLibrary, OldOpenLibrary, CloseLibrary) / yes, not yet checked against the new spec | Everything: dos packets (dos-v34-spec §2a), devices, Workbench. The device-side halves are specified per device; the exec-side details (PA_SIGNAL/PA_SOFTINT/PA_IGNORE, IOF_QUICK handling in DoIO/WaitIO, ReplyMsg to a NULL port, OpenLibrary version test and ramlib fallback) were not until exec-messages-io-v34 | P3 |
+| 13 | exec | Memory and semaphores: `Allocate`, `Deallocate`, `AllocAbs`, `AllocEntry`, `FreeEntry`, `TypeOfMem`, `AddMemList`, `CopyMem`, `CopyMemQuick`, `InitSemaphore`, `ObtainSemaphore`, `ReleaseSemaphore`, `AttemptSemaphore`, `ObtainSemaphoreList`, `ReleaseSemaphoreList`, `Add/Rem/FindSemaphore` | **specified 2026-11-05** (exec-memory-semaphores-v34: also AllocMem, FreeMem, AvailMem, and Procure/Vacate confirmed) / yes, not yet checked against the new spec | SetPatch 1.38 (AllocEntry, setpatch-138 §1.4), KickMem survival (AllocAbs, coldstart-hardware §5.3), dos memory (dos-memory §2), layers (semaphore lists, layers §7), soft-kick (TypeOfMem). Deallocate ≈ 320 b of closure | P3 |
 | 14 | ramlib.library | loading of LIBS:/DEVS: (in the caller's context: 1.3 has no ramlib process), exec patches, expunge on low memory | **specified 2026-11-04** (ramlib-v34) / **yes** (2026-11-04: `tests/ramlib_probe.sh` matches §8; LoadSeg name and ROM-library expunge differ, see PLAN) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device. A plain task cannot load from disk on 1.3 either (it crashes there) | done |
-| 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | none / yes | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | P3 |
+| 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | **specified 2026-11-05** (mathffp-v34) / yes, not yet checked against the new spec | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | P3 |
 
 Below rank 15: `InitRastPort`/`InitBitMap` beyond the fields already listed; `AllocRaster`/`FreeRaster`;
 `AllocRemember`/`FreeRemember`; `BeginRefresh`/`EndRefresh` beyond the GZZ test vectors; `SetFunction` (return

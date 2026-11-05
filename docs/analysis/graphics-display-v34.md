@@ -147,6 +147,10 @@ Next $00, FirstCopList $04, CopList $08 (current block). [O][S]
 Side effect to reproduce: the graphics init writes **ExecBase→VBlankFrequency (+$212) := 50 (PAL) or
 60 (NTSC)** according to the detection (§8.1). [O][S]
 
+Library header: graphics.library 34 **does not count its opens**. `lib_OpenCnt` stayed at 1 across
+OpenLibrary(34) (base) / OpenLibrary(35) (0) / CloseLibrary on the running system; exec itself never touches the count, so this
+is graphics' own Open/Close (`exec-messages-io-v34.md` §4.1, vector OL17; added 2026-11-05). [O]
+
 ---
 
 ## 2. copinit [O][S]
