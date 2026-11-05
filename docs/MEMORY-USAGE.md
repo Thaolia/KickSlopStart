@@ -10,6 +10,13 @@ page measures KickSlopStart in the same configuration and explains the differenc
 | A/2: 512 KB chip + 512 KB slow, DF0 + empty DF1 (Amiberry A500 preset, the skill's default) | **836,152** | 861,048 (staged run) / 860,992 (unmodified disk) | **24,896** / 24,840 |
 | A/1: same, DF0 only (`-- -s floppy1type=-1`) | **841,672** | 884,424 | **42,752** |
 
+**Update (2026-11-05, after the console handler changes):** A/2 idle is now **839,024** (gap 22,024 / 21,968), 2,872 bytes
+more: 824 from closing the initial CLI's console FileHandle at EndCLI (FileHandle 312 + write buffer 512) and 2,048
+from the console handler's smaller stack (4,096 -> 2,048). Production ROM, unmodified disk, 150 s after the
+"Incorrect Revision" line, MemList walked through gdb (chip 465,360, slow 373,664, largest slow 336,800); the
+Workbench title shows the same figure. A/1 was not remeasured (expected 844,544). The tables below are those of
+`17da6ee` unless a line says otherwise.
+
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
 RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 465,360 bytes free at idle against
@@ -34,8 +41,8 @@ also more fragmented: largest free block 334,752 against 399,464.
   RAM was dumped (`dump binary memory` through `amiberry-session gdb`, CPU stopped) 3 s after `MBn` appeared on the
   serial log. The idle dump is taken 152 s after the last step (stage 9) or 150 s after the "Incorrect Revision"
   line (unmodified disk); both gave 836,152.
-- Why not `ask` as on 1.3: on our ROM, `ask` as the first startup-sequence line never returned (the console echoed
-  Return, Ask did not finish; not investigated further, possibly a real difference to look at).
+- Why not `ask` as on 1.3: on our ROM, `ask` as the first startup-sequence line never returned. Cause found and
+  fixed on 2026-11-05: the boot console handler ended its lines with CR and Ask reads up to LF (docs/PLAN.md).
 - Walks done offline on the dump (scripts kept out of the tree): exec MemList (free, largest chunk), LibList /
   DeviceList / ResourceList, ThisTask + TaskReady + TaskWait with `tc_MemEntry`, PortList, IntuitionBase
   FirstScreen with its BitMap and windows, and the MEMTRACK table resolved against the map; stage-to-stage
@@ -76,7 +83,7 @@ Chip is never fragmented on our side (largest = free).
 | StartupII | +28,736 | +24,584 | +4,152: the RAM handler process. 1.3: 1,388 (stack 1,200). Ours: TCB 240 + stack 5,296 (`pr_StackSize` 1,200 + `CP_STKEXTRA` 4,096, `src/dos/bcpl.s`) + MemList 32 |
 | path, MountMF | +776 | +3,776 | −3,000: on our ROM MountMF prints "Incorrect Revision" (TDPatch13 refuses our trackdisk) and installs no patch |
 | LoadWB delay | +16,976 | +11,664 | +5,312: Workbench process 5,272 (1.3 5,204); our ROM Workbench allocates a 9,126-byte state block (`WBS_SIZE`: 8 volume records and 6 drawer records of 1,084 bytes, all reserved up front) + CLI structure, two ports and a 128-byte chip image (272); window, layers, DiskObjects, locks 2,304; chip only 768 (1.3: 3,432) |
-| endcli | −18,672 | −13,280 | −5,392: we free a larger initial shell (8,192 stack + 240 TCB + `sh_make_cli` 1,344 + its window). We do **not** free its console FileHandle (312), that FileHandle's 512-byte write buffer and its BCPL global vector (808): 1,632 bytes left behind |
+| endcli | −18,672 | −13,280 | −5,392: we free a larger initial shell (8,192 stack + 240 TCB + `sh_make_cli` 1,344 + its window). We did **not** free its console FileHandle (312), that FileHandle's 512-byte write buffer and its BCPL global vector (808): 1,632 bytes left behind. Since 2026-11-05 the FileHandle and its buffer are freed (−19,496); the GV stays, it is shared (section 5, item 8) |
 
 Running sum of the differences: 25,312 at stage 0, then +3,952, 0, −5,440, 0, 0, +4,152, −3,000, +5,312, −5,392 =
 24,896 at idle.
@@ -86,7 +93,7 @@ Running sum of the differences: 25,312 at stage 0, then +3,952, 0, −5,440, 0, 
 At the insert-disk screen, 1.3 has, besides the module bases, only its boot task, the insert-disk display and the
 DF0 MFM buffer. Our DOS is already running: two file
 system processes (DF0, DF1), the console handler, the keyboard feeder and the "DF0 watch" process (5 × 240-byte TCB
-+ 4 × 4,096 + 1 × 1,024 of stack + MemLists), the intuition input task (4,192) and the insert-disk picture (47,872 +
++ 4 × 4,096 + 1 × 1,024 of stack + MemLists; the console handler's stack is 2,048 since 2026-11-05), the intuition input task (4,192) and the insert-disk picture (47,872 +
 152 chip, against about 29,900 on 1.3). Total used 83,432 against 64,464, plus the 6,344 bytes of section 3.
 
 ## 3. Memory outside the MemHeaders (never counted by AvailMem)
@@ -118,8 +125,8 @@ memory.
 | Module bases (libraries, devices, resources) | 7,744 | ≈ 7,840 | ≈ −96 | `exec_MakeLibrary` 7,016 (incl. icon.library), `init_ints` 224, `build_reslist` 136, `dos_initfunc` 184, `gfx_fontinit` 104, `km_init` 80 |
 | Input handling tasks | 8,824 | ≈ 4,192 (input.device task inside its base) | **+4,632** | intuition input task 4,192 (`it_startinput`); keyboard feeder process 4,632 (TCB 240 + stack 4,096 + MemList 32 + `feeder_main` 264) |
 | Loaded code: resident Shell-Seg, List, Execute, Resident, CD; SetPatch; icon.library; L:Ram-Handler | 42,216 | 42,216 | 0 | `ls_load_stream` (the same hunks: same files) |
-| Other process TCBs + stacks + MemLists | 19,576 | 8,672 | **+10,904** | DF0 file system 4,368 (stack 4,096; 1.3: 1,028 with 840 of stack), console handler 4,368 (stack 4,096; 1.3 has none at idle), RAM handler 5,568 (stack 5,296; 1.3: 1,388), Workbench 5,272 (1.3: 5,204); 1.3's figure also holds the trackdisk unit task (924) that we do not have |
-| Rest (slow) | 23,328 | 18,168 | +5,160 | Workbench state 9,272 (`wb_entry` 9,126 block + CLI 64 + ports); file system data 4,544 (`hnd_init` 848, OFS write context `ow_ctx` 1,776 + bitmap `ow_bmalloc` 520, locks 384, DevInfo nodes 848, volume 80, `fl_node` 64, boot node 24); BCPL getvec and resident nodes of disk programs 2,632; disk programs' own blocks 3,064 (FastFonts, SetPatch, icon.library); screen, window and layer structures 1,872; initial CLI leftovers 1,632; console handler data 312 |
+| Other process TCBs + stacks + MemLists | 19,576 | 8,672 | **+10,904** | DF0 file system 4,368 (stack 4,096; 1.3: 1,028 with 840 of stack), console handler 4,368 (stack 4,096, 2,048 since 2026-11-05; 1.3 has none at idle), RAM handler 5,568 (stack 5,296; 1.3: 1,388), Workbench 5,272 (1.3: 5,204); 1.3's figure also holds the trackdisk unit task (924) that we do not have |
+| Rest (slow) | 23,328 | 18,168 | +5,160 | Workbench state 9,272 (`wb_entry` 9,126 block + CLI 64 + ports); file system data 4,544 (`hnd_init` 848, OFS write context `ow_ctx` 1,776 + bitmap `ow_bmalloc` 520, locks 384, DevInfo nodes 848, volume 80, `fl_node` 64, boot node 24); BCPL getvec and resident nodes of disk programs 2,632; disk programs' own blocks 3,064 (FastFonts, SetPatch, icon.library); screen, window and layer structures 1,872; initial CLI leftovers 1,632 (808 since 2026-11-05: the shared GV); console handler data 312 |
 | **Total** | **192,104** | **155,696** | **+36,408** | |
 
 Plus section 3 (+6,344): 42,752 in all. In A/2 the empty DF1 adds 5,520 on our side (a second file system process
@@ -141,9 +148,9 @@ Item 2 overlaps items 5, 6 and 7 (the DF1 file system, console handler and feede
 | 3 | Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
 | 4 | Workbench state: the 9,126-byte block reserves 6 drawer records (6 × 1,084 = 6,504) and 8 volume records at start; allocate a drawer record when its window opens | ≈ 6,500 | Low to medium (workbench.s only; drawer open/close and Close-on-error paths to re-test) |
 | 5 | Empty DF1: start its file system process on first use only | 5,520 (A/2 only) | Medium (DOS mount order, disk-change handling). Already far below 1.3's 23,432 |
-| 6 | Console handler process kept at idle with no window: exit it when its last window closes, or shrink its stack | 4,648 (or 1,296) | Medium: CON handler lifetime, NEWCON:, `*` resolution |
+| 6 | Console handler process kept at idle with no window: exit it when its last window closes, or shrink its stack | 4,648 (or 1,296) | **Done 2026-11-05: stack 4,096 -> 2,048, 2,048 saved.** Deepest use 982 bytes, measured with a pattern-filled stack (section 6.5). Exiting was not chosen: processes hold its port in pr_ConsoleTask |
 | 7 | Keyboard feeder process: merge it into the intuition input task or into input.device as on 1.3 (one input task) | ≈ 4,600 | Medium to high: input timing (key repeat, INTUITICKS) and the reason the intuition task exists (section 6.3) |
-| 8 | Initial CLI leftovers after `endcli`: console FileHandle 312, its 512-byte write buffer, BCPL global vector 808 | 1,632 | Low (a leak: free them when the initial CLI ends) |
+| 8 | Initial CLI leftovers after `endcli`: console FileHandle 312, its 512-byte write buffer, BCPL global vector 808 | 1,632 | **Done 2026-11-05 for the FileHandle and its buffer, 824 saved.** The GV is not a leak: CreateProc copies the creator's pr_GlobVec, and the idle Workbench process points at this GV |
 | 9 | Command stack: every command gets its own 4,008-byte stack (`sh_exec_cmd`) while 1.3 runs it on the CLI process stack; transient only, but the initial shell also has an 8,192-byte stack (1.3: 1,600) during the whole startup-sequence | ≈ 6,600 during startup, 0 at idle | Medium (programs that need large stacks, see `SH_STK`) |
 
 Not candidates: loaded code and SetPatch / FF / resident steps are byte-identical to 1.3; screen bitplanes identical;
@@ -216,6 +223,22 @@ When one entry of an `AllocEntry` cannot be allocated, the entries already obtai
 (16 + 8 bytes per entry, rounded to 8) stays allocated, exactly as on 1.3 (exec-memory-semaphores-v34 §2.8; dos
 `CreateProc` failures lose 24 bytes each this way). Programs can observe the 1.3 return codes and free memory, so
 this is reproduced on purpose; it only happens when memory has already run out.
+
+### 6.5 Console handler stack — 2,048 bytes (measured 2026-11-05)
+
+The boot console handler (`src/dos/conhandler.s`, created in `src/exec/boot.s` with `CON_STK`) serves the initial
+CLI's AmigaSlopDOS window and, after `endcli`, every "*" opened by a process whose pr_ConsoleTask is its port.
+
+**Measurement.** Production ROM, Amiberry A500 preset. A gdb hardware breakpoint on `shell_main` (vlink map of the
+same build) stops the CPU before the initial CLI opens its console; the console handler's stack, from `tc_SPLower`
+to 16 bytes below its saved SP, is filled with `$A5`; at the end of the session the stack is scanned from the bottom
+for the first byte that is not `$A5`. Sessions: a copy of the Workbench 1.3.3 disk whose startup-sequence runs
+SetPatch, FastMemFirst, BindDrivers, SetClock, FastFonts, resident/mount, StartupII, MountMF, `dir sys: all`,
+`list c:`, `type`, `info`, `avail`, `ask`, LoadWB, then at the prompt `dir c:`, a 110-character `echo` (wrapped),
+`list s:`, the window shrunk and grown again with the mouse, `info`, and `endcli`. Deepest use: **982 bytes** in
+every run (also 981 with the zero method on the MEMF_CLEAR stack, dev and production ROMs, unmodified disk).
+With 2,048 bytes, 1,062 bytes stay untouched. `tests/con_probe.sh` (CON_ROM = production ROM) gives the same
+output as the previous ROM except three addresses moved down by 2,048.
 
 ## 7. Rerunning the measurement
 

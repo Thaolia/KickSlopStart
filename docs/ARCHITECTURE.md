@@ -1929,6 +1929,14 @@ differs.
     CreateProc uses (`PRX_*` in dospkt.i), so RemTask frees both. One Shell open + EndCLI cycle now leaves 48 bytes
     (1.3: 56); the first one also caches L:Newcon-Handler (7.5 KB, dn_SegList). Open: a Shell costs ~52 KB here
     against 33-40 KB on 1.3 (4 KB stack margin per BCPL process, smart-refresh backdrop and drawer windows).
+  - Boot console handler and initial CLI (2026-11-05): `conhandler.s` delivers a READ line ending with LF (Return is
+    stored as LF, a typed LF is ignored, the echo is still CR LF), like the CON: handler; BCPL readers such as c:Ask
+    read up to LF. When the initial CLI ends (EndCLI in the startup-sequence or typed at its prompt), `shell.s`
+    closes its console FileHandle through dos Close (pending output written, write buffer, read buffer and
+    FileHandle freed, END sent: the window closes). Its BCPL global vector is kept: CreateProc copies the creator's
+    pr_GlobVec, so the Workbench and the processes created from the initial CLI run on it. The console handler
+    process has a 2,048-byte stack (`CON_STK`, boot.s); it stays alive at idle because processes hold its port as
+    pr_ConsoleTask ("*") and DOS_CONPORT.
   - Stacked ViewPorts (issue #19, graphics-display §4.3/§5): a fragment holds MOVEs and 3-entry pseudo-WAITs
     relative to the top of its ViewPort (lead-in L0 with planes off, top + BPLCON0 on, user instructions, bottom +
     BPLCON0 off; DIW open from line 5 to $140) plus a header where MrgCop records where it landed. MrgCop sorts
