@@ -19,6 +19,7 @@
                 xdef    td_read_track
                 xdef    td_decode_track
                 xdef    td_disk_present
+                xdef    td_lowmem
 
 ; --- trackdisk constants (devices/trackdisk.i) + exec io errors (io.i) ---
 NUMUNITS       EQU 4                 ; DF0..DF3
@@ -58,6 +59,7 @@ TDU_DRU        EQU 36                ; struct DiscResourceUnit: disk.resource ow
 TDU_UNITSZ     EQU TDU_DRU+DRU_SIZE
 TDU_UNIT0      EQU LIB_SIZE          ; 34: unit 0 (the M6T proof checks io_Unit = base + 34)
 TDB_SEM        EQU TDU_UNIT0+NUMUNITS*TDU_UNITSZ   ; SignalSemaphore: one drive access at a time
+TD_SSQUEUE     EQU 44                              ; struct SignalSemaphore: ss_QueueCount (-1 = free)
 TDB_DRES       EQU TDB_SEM+TD_SEMSIZE              ; disk.resource | 0
 TDB_CIAB       EQU TDB_DRES+4                      ; ciab.resource | 0 (FLG index interrupt of INDEXSYNC)
 TDB_IDXLEN     EQU TDB_CIAB+4                      ; word: DSKLEN value the index interrupt writes
@@ -1498,6 +1500,39 @@ td_cachebuf:
 .cb_ok:
         moveq   #1,d0                ; Z = 0
 .cb_ret:
+        rts
+
+; td_lowmem(a6 = SysBase, under Forbid): called by AllocMem after a failure, before its retry. Gives the multi-slot
+; cache back (the next access allocates it again, or a single slot if memory stays short). Only when no drive access
+; is under way (the device semaphore is free: the caller may be trackdisk itself, in td_cachebuf) and no slot waits
+; for CMD_UPDATE. Preserves everything.
+td_lowmem:
+        movem.l d0-d1/a0-a1,-(sp)
+        move.l  TD_CACHEBUF,d0
+        beq.s   .lm_ret
+        cmp.w   #1,TD_CNSLOTS
+        bls.s   .lm_ret              ; a single slot is the 1.3 track buffer: kept
+        lea     TD_CDIRTY,a0
+        moveq   #TD_NCACHE-1,d1
+.lm_dirty:
+        tst.b   (a0)+
+        bne.s   .lm_ret
+        dbra    d1,.lm_dirty
+        lea     EB_DEVICELIST(a6),a0
+        lea     trackdisk_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .lm_ret
+        move.l  d0,a0
+        cmp.w   #-1,TDB_SEM+TD_SSQUEUE(a0)
+        bne.s   .lm_ret
+        move.l  TD_CACHEBUF,a1
+        clr.l   TD_CACHEBUF
+        bsr     td_cache_flush
+        move.l  #MFM_SECBUF*TD_NCACHE,d0
+        jsr     LVO_FREEMEM(a6)
+.lm_ret:
+        movem.l (sp)+,d0-d1/a0-a1
         rts
 
 ; td_fill(d0.w = cache key of a track of the current unit, d1.w = slot, a3 = its buffer, a6): the slot (written

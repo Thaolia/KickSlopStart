@@ -1337,6 +1337,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   than 32 KB); an odd DataStream still raises an address error, as expected on 1.3. Seen while testing, not from this
   change: a `NewShell` added after `LoadWB` in the Workbench 1.3.3 startup-sequence leaves the desktop without its
   title bar and icons (same on the previous ROM).
+  **Track cache under memory pressure (2026-11-05)**: AllocMem's failure path calls `td_lowmem` (trackdisk.s)
+  before `ram_expungeall` and its retry: the 8-slot cache (45,056 bytes) is freed when the device semaphore is free
+  and no slot is dirty, and is allocated again at the next access. `tests/lowmem_probe.s`: 45,192 bytes of fast
+  memory come back after a failing AllocMem (136 before). Not in 1.3, which has no cache (memory-budget-v34).
   **MakeLibrary sizes (2026-11-05)**: MakeLibrary set LIB_NEGSIZE/LIB_POSSIZE, then called InitStruct with the
   data size, which clears that size first and wiped both fields: every AUTOINIT library and device built at boot
   had NegSize = PosSize = 0 (seen with a gdb walk of LibList/DeviceList on the Workbench), so SumLibrary summed

@@ -956,7 +956,8 @@ differs.
   (7i) **Memory usage and race fixes** (2026-10-30).
   - Memory: an idle English Workbench leaves ~60 KB less free than on 1.3. Breakdown by caller in
     `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
-    12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate. The console
+    12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate; the cache is given back
+    when an `AllocMem` fails (`td_lowmem`, called before the expunge and the retry, 2026-11-05). The console
     self-test #3a in `boot.s` left a 10 KB chip bitmap allocated; it now frees `CONB_BITMAP` and resets the
     cursor.
   - Flood (`area.s`) holds the layer lock for the whole fill. Before, it read the layer bounds without the lock,

@@ -52,8 +52,14 @@ memory.
 87 s to 83 s, for another 45 KB.
 
 **Trade-off.** The original 1.3 trackdisk keeps one track buffer per unit and relies on the file system's own
-buffers instead. Lowering `TD_NCACHE` gives memory back at the cost of disk speed. The cache is not freed while
-the device is open.
+buffers instead. Lowering `TD_NCACHE` gives memory back at the cost of disk speed.
+
+**Released under memory pressure (2026-11-05).** When an `AllocMem` fails, exec calls `td_lowmem` before it
+expunges unused modules and retries: the multi-track cache is freed if no drive access is under way and no
+slot waits for `CMD_UPDATE` (a single-slot cache is kept). The next disk access allocates it again, with 8 slots
+if 45 KB of fast memory is free, otherwise one. `tests/lowmem_probe.s` (AvailMem(MEMF_FAST) around an
+AllocMem that cannot succeed) on the Workbench 1.3.3 disk: 136 bytes released before (mathffp only), 45,192
+after (cache + mathffp); after a `dir` the cache is back and a second failure releases it again.
 
 ## 2. Fixed: console bitmap left by the boot self-test — 10,240 bytes of chip RAM
 

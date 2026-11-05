@@ -12,6 +12,7 @@
 
                 xdef    exec_AllocMem
                 xref    ram_expungeall   ; ramlib.s
+                xref    td_lowmem        ; trackdisk.s
                 xdef    exec_FreeMem
                 xdef    exec_AvailMem
                 xdef    exec_TypeOfMem
@@ -121,6 +122,7 @@ exec_AllocMem:
         bne.s   .am_nomem
         moveq   #1,d3
         st      RAM_LOWMEM
+        jsr     td_lowmem            ; the trackdisk multi-track cache goes back first
         jsr     ram_expungeall
         sf      RAM_LOWMEM
         bra.s   .am_first
