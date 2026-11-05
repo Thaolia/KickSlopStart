@@ -1303,6 +1303,72 @@ and `--seuil 8`, on production ROMs and their maps. Its full figures are in `doc
 - One class flip: `topaz9_font+$20`, 10 words, `texte` → `code/table`.
 - Self-check: 12/12.
 
+## Re-run 2026-11-05 (`a525205..f907844`, before the push)
+
+Delta: one source change, `src/intuition/screens.s`, routine `wn_scrtitle` (two instructions added: compare the new
+title pointer with `Screen.Title`, return early when equal); the other commit of the range only touches
+`docs/analysis/`. Run by a separate analysis agent on production ROMs (`make kick-prod`, `romtool info`:
+`is_kick ok`, checksum ok) built in two worktrees, each with the vlink map of the same build.
+
+Commands (repo root; `run.sh` is the full command of "Commands" above, same `tiers` / `commodore` / `aros`
+controls, `--base tiers --selftest`):
+
+```
+bash run.sh <base|head>.rom <base|head>.map > out-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8 > all8-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 4 > all4-<base|head>.txt
+```
+
+The `--seuil 8` and `--seuil 4` lists were compared by (stream, class, object, symbol+offset, length), absolute
+offsets ignored.
+
+- **Layout.** Only `screens.o` changes size (+6 bytes); every later object shifts by 6 bytes, then by 8 from
+  `dos_lib.o` on (one extra alignment word). The ROM ID string grows by 12 bytes (`git describe` of a non-tagged
+  commit), which with the 3 words of the added instructions accounts for the +9 word tokens.
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Against the controls, our head
+  ROM's longest code match is unchanged: `mots` 10 / 11 / 449 (tiers / commodore / aros, the last being the computed
+  CharLoc table), `instr` 6 / 7 / 7, `instr-souple` 8 / 7 / 11.
+
+| stream | metric | base `a525205` | head `f907844` |
+|---|---|---|---|
+| mots | A tokens | 109,956 | 109,965 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DD80`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 111 / 9 / 5 | 111 / 9 / 5 |
+| instr | A tokens / max (all) / max code/table | 68,714 / 17 / 17 (`km_fr_s42+$0`, `km_us_s42+$0`) | 68,721 / 17 / 17 (same) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2F140`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 21 / 2 | 17 (keymap); 21 / 2 |
+| instr-souple | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 266 / 44 / 91 | 267 / 44 / 91 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** `mots` (40): the same 13 rows as in the base (4 `code/table`: the two keymap string tables
+  and the two computed CharLoc tables; 9 classified data), offsets shifted by the layout. `instr` (19): no row.
+  `instr-souple` (19): only the classified low-entropy `bcpl_rtdata+$8` (23 tokens), as in the base.
+- **`--seuil 8` differences.** One row only, new in the head: `mots`, class `RomTag`, `al_coplist+$84` (`$2A3F0`,
+  8 words). It is the base's 7-word `RomTag` row at the same symbol offset (in the base's `--seuil 4` list only),
+  one word longer: the new alignment
+  word before `dos_lib.o` now sits between the last word of `al_coplist` and the mandated `dos_romtag` header
+  (match word and normalised self/end pointers). Classified data, below the baseline. No row disappears.
+- **Changed routine (`wn_scrtitle`).** No row of 8 tokens or more in or next to it in any stream. In the
+  `--seuil 4` lists the only row in the routine is the base's `instr-souple` 4-token row at `wn_scrtitle+$8`
+  (`$244D2`, 12 bytes): same start, same length, its class flips from `texte` to `code/table` because the added
+  compare replaces a store in the covered bytes. The neighbouring rows (`sc_drawbar+$40`, `+$6E`, 4 loose
+  instructions, low entropy) are unchanged.
+- **Other `--seuil 4` changes** (all below 8 tokens, data, caused by the shift): the ROM footer rows
+  (`en-tete/pied ROM`) re-anchored, two `workbench.o` low-entropy rows (`wbm_i04+$E` 4 → 5, `wbm_i23t+$E` 4),
+  and the `al_coplist+$84` `RomTag` row above.
+
+**Verdict (head ROM, `f907844`): PASS.** No code/table match reaches 40 words, 19 instructions or 19 loose
+instructions in any stream. The longest code match, data excluded, is still 19 words / 13 instructions
+(`exp_cpbinding+$22`), and no new code match exceeds it; the only new `--seuil 8` row is an 8-word RomTag data row
+lengthened by an alignment word. The changed `wn_scrtitle` matches the reference on at most 4 loose instructions,
+as before the change. Any later source change needs a new run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
