@@ -1,7 +1,7 @@
 ; src/dos/conwin.s - ROM console handler of the CON: and RAW: nodes (BCPL segment of dn_SegList, shared GV). Each Open
 ; of "CON:x/y/w/h/title" starts a process (starthandler) that opens its window on the Workbench screen, attaches
 ; console.device to it and serves packets until the last END. dn_Startup (Arg2 of the startup packet): 0 = CON (line
-; edited with echo: backspace, Ctrl-\ = end of file), 1 = RAW (raw characters, no echo).
+; edited with echo: backspace, Ctrl-X, Ctrl-\ = end of file), 1 = RAW (raw characters, no echo).
 ; Packets: FINDINPUT/FINDOUTPUT/FINDUPDATE (interactive stream), READ, WRITE, END, WAIT_CHAR, SCREEN_MODE, DISK_INFO.
 ; Keys arrive through a console.device read that is always pending, in parallel with the packets.
 ; IMPLEMENTATION track ("clean"): spec docs/analysis/handlers-v34.md §2-3 + AutoDocs (console.device, intuition,
@@ -448,7 +448,7 @@ cw_wcdone:
                 move.l  (sp)+,d2
                 rts
 
-; cw_key(d0.b = character, a5): RAW -> deliverable as is; CON -> line editing with echo (backspace,
+; cw_key(d0.b = character, a5): RAW -> deliverable as is; CON -> line editing with echo (backspace, Ctrl-X,
 ; Return ends the line, Ctrl-\ = end of file).
 cw_key:
                 movem.l d2/a2,-(sp)
@@ -481,6 +481,19 @@ cw_key:
                 bsr     cw_out
                 bra.s   .ky_ret
 .ky_ncr:
+                cmp.b   #24,d2               ; Ctrl-X: the whole line not yet deliverable
+                bne.s   .ky_neof
+.ky_kill:
+                move.l  CW_LLEN(a5),d0
+                cmp.l   CW_DLV(a5),d0
+                bls     .ky_ret
+                subq.l  #1,CW_LLEN(a5)
+                lea     cw_bs(pc),a0
+                move.l  a0,d0
+                moveq   #3,d1
+                bsr     cw_out
+                bra.s   .ky_kill
+.ky_neof:
                 cmp.b   #28,d2               ; Ctrl-\: end of file
                 bne.s   .ky_cr
                 st      CW_EOF(a5)

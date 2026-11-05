@@ -1350,6 +1350,20 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   initial shell's builtin match accepts LF. Copy of the Workbench 1.3.3 disk with `ask` first, again after SetPatch
   and `if warn`: "ASK1 YES" / "ASK2 NO", dev and production ROMs; `ask` at the initial prompt and in a Workbench
   Shell also return.
+  **Boot console line editing (2026-11-06)**: the boot console handler (`conhandler.s`, initial AmigaSlopDOS CLI and
+  startup-sequence) stored Backspace as a character ("abcdef", 6 Backspaces, `ask` ran "abcdefask"). Its READ now
+  edits the pending line like the CON: handler (`conwin.s`): Backspace/Ctrl-H rubs out the last byte (echo BS,
+  space, BS), never past the start of the READ; Ctrl-X rubs out the whole pending line (also added to `conwin.s`;
+  AmigaDOS manual line editing); Ctrl-\ ends the READ with 0 bytes; CSI sequences (cursor, function, Help keys)
+  are skipped up to their final byte; other control bytes are ignored; Return still delivers LF with a CR LF echo.
+  A READ now returns as soon as its buffer is full (the next key used to be echoed, then dropped). Copy of the
+  Workbench 1.3.3 disk with `ask "Q?"` first: "abc" + 3 Backspaces + "y" + Return -> echo "y", `if warn` true, dev
+  and production ROMs; at the initial prompt "dirx" + Backspace + Return runs `dir`; "garbage" + Ctrl-X then
+  `echo "X1=KILLED"` prints X1=KILLED; cursor left/up and F1 inside a word are skipped; Backspace on an empty line
+  does nothing; Ctrl-X in a NewCLI CON: window erases the line on screen. prepush-check FAIL=0 (first run lost one
+  serial byte of "AUDIO ALLOC OK" under load, rerun clean), concmd_probe as expected. Open point: the initial
+  shell (`shell.s`) does not treat a 0-byte READ as end of file, so Ctrl-\ at its prompt parses the stale buffer
+  ("Unknown command") instead of ending the CLI as 1.3 does.
   **Initial CLI leftovers (2026-11-05)**: at EndCLI the initial CLI sent END on its console key and kept the
   FileHandle (312) and its 512-byte write buffer. It now closes the FileHandle through dos Close; a breakpoint on
   dos Close for that FileHandle hits once, from the shell process at its end (Run's background CLI never closes
