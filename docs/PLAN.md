@@ -1519,6 +1519,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   INTUITICKS 301 in 30.00 s (10/s, every gap 100 ms) on both; held `a` and cursor up: first repeat 0.400 s, period
   0.040 s (the disk's Preferences), no repeat after the release, on both. `tests/menucat.s`: right Amiga + O ->
   MENUPICK F800 qual 0080, right Amiga + T -> 0080 (Export/Texte sub-item).
+  **Initial CLI end of file and low RAM clear (2026-11-06)**: a READ of 0 bytes (Ctrl-\ in the boot console since
+  cf47ed1) now ends the initial CLI as EndCLI does, as on 1.3 (`shell.s` main loop sets cli_Background and takes the
+  EndCLI path); before, it parsed the stale buffer ("Unknown command"). Checked on kick-prod: the AmigaSlopDOS window
+  closes and the Workbench screen shows. Coldstart now zeroes `$500` up to `LOWHEAP_LO` (`$1000`) instead of `$800`:
+  the `$800`-`$1000` cushion is never allocated, and L:Shell-Seg reads `$9D8` as an alias name at each NewShell (it
+  would free a bogus node if a word `$0009` or a matching name were there on a real machine whose RAM is not zero at
+  power-up); read back as 0 at `$800` and `$9D0` after boot.
   **Memory, merged result (2026-11-05)**: one input task (+4,384), console handler and initial CLI (+2,872) and
   low chip (+5,376) together: Workbench 1.3.3 idle on kick-prod, default harness (512+512, DF1 empty), title
   **848,784** free against 836,152 before and 861,048 on 1.3 (gap 24,896 -> 12,264). Prepush FAIL=0, probes of

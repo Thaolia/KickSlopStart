@@ -129,6 +129,13 @@ shell_main:
                 move.l  #sh_prompt_len,d4
                 bsr     sh_write
                 bsr     sh_readline          ; -> d6 = bytes, line in (a3)
+                tst.l   d6
+                bgt.s   .gotline
+                bsr     sh_cli_ptr           ; end of file (Ctrl-\): the CLI ends as with EndCLI, as on 1.3
+                beq.s   .loop
+                move.l  #DOSTRUE,CLI_BACKGROUND(a1)
+                bra     .chkend
+.gotline:
                 bsr     sh_dispatch_line     ; parse the 1st word -> builtin / external command
                 moveq   #-1,d1               ; interactive: possible message, never aborts
                 bsr     sh_report

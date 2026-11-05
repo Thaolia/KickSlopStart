@@ -237,9 +237,10 @@ coldstart:                        ; $FC00D2
 .cc_done:
         move.l  #STACKTOP,sp
         move.l  d6,-(sp)             ; popped in phase 3
-        lea     LOWVARS_LO,a0        ; low-RAM variables zeroed: RAM is not null at power-on on a
-        move.w  #(LOWVARS_HI-LOWVARS_LO)/4-1,d0 ; real machine nor under WinUAE (an odd keyboard buffer index there
-.lv_clr:                             ; caused an address error at the 1st key press; FS-UAE clears RAM)
+        lea     LOWVARS_LO,a0        ; low-RAM variables and the cushion up to LOWHEAP_LO zeroed: RAM is not null at
+        move.w  #(LOWHEAP_LO-LOWVARS_LO)/4-1,d0 ; power-on on a real machine nor under WinUAE (an odd keyboard buffer
+.lv_clr:                             ; index caused an address error at the 1st key press; L:Shell-Seg reads $9D8 as a
+                                     ; name and frees a bogus node if it matches); FS-UAE clears RAM
         clr.l   (a0)+
         dbra    d0,.lv_clr
         move.w  #C_BLUE,COLOR00
