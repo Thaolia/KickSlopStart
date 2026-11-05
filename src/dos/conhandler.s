@@ -7,7 +7,8 @@
 ;   FINDINPUT / FINDOUTPUT (open "CON:")     -> RES1 = non-null key (global console, no per-handle state). A name
 ;                                               "CON:x/y/w/h/title" additionally opens the console window (con_openwin).
 ;   WRITE (ARG1=key, ARG2=src, ARG3=len)     -> emits len bytes on serial (TX, bounded TBE poll). RES1 = len.
-;   READ  (ARG1=key, ARG2=dest, ARG3=len)    -> reads ONE LINE up to CR, with echo. RES1 = bytes. Input
+;   READ  (ARG1=key, ARG2=dest, ARG3=len)    -> reads ONE LINE up to Return, with echo; the line ends with LF
+;                                               (Return delivered as LF, typed LF ignored). RES1 = bytes. Input
 ;                                               sources: the LIVE keyboard ring (F2b, con_ring_get) THEN the serial RBF.
 ;   END (close)                              -> RES1 = DOSTRUE.
 ;
@@ -214,6 +215,8 @@ con_handler:
                 endc
 .rd_got:
                 move.l  d0,d4                ; d4 = byte (survives con_putc)
+                cmp.b   #10,d4               ; LF typed (Ctrl-J, or the LF of a serial CR LF): ignored, as CON: does
+                beq.s   .rd_drain
                 bsr     con_putc             ; serial echo (mirror)
                 move.b  d4,d0
                 bsr     con_win_emit         ; window echo
@@ -231,6 +234,8 @@ con_handler:
                 moveq   #10,d0
                 bsr     con_scr_emit         ; CR -> LF on screen too
                 endc
+                moveq   #10,d4               ; the line is delivered ending with LF, as CON: does: BCPL readers (c:Ask)
+                                             ; read up to '*N' and would wait for ever on a CR
 .rd_store:
                 move.l  CON_STATE,a0
                 move.l  CS_CNT(a0),d1
@@ -239,7 +244,7 @@ con_handler:
                 move.l  CS_DEST(a0),a1
                 move.b  d4,(0,a1,d1.l)       ; dest[cnt] = byte
                 addq.l  #1,CS_CNT(a0)
-                cmp.b   #13,d4               ; end of line?
+                cmp.b   #10,d4               ; end of line?
                 beq.s   .rd_done
                 bra.s   .rd_drain            ; drain other bytes available this tick
 .rd_done:

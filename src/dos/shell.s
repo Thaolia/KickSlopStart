@@ -306,7 +306,7 @@ sh_write:
                 movem.l (sp)+,d0-d3/a0-a1
                 rts
 
-; sh_readline() -> d6 = bytes read, line in (a3). READ via the console handler (blocks until CR).
+; sh_readline() -> d6 = bytes read, line in (a3). READ via the console handler (blocks until Return; the line ends with LF).
 sh_readline:
                 movem.l d0-d3/a0-a1,-(sp)
                 move.l  DOS_CONPORT,a1
@@ -336,6 +336,8 @@ sh_match:
                 cmp.b   #9,d1
                 beq.s   .m_yes
                 cmp.b   #13,d1               ; CR (end of line)
+                beq.s   .m_yes
+                cmp.b   #10,d1               ; LF (end of a console line)
                 beq.s   .m_yes
                 tst.b   d1
                 beq.s   .m_yes               ; end of string
