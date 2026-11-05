@@ -491,8 +491,8 @@ slow_probe:
         movem.l (sp)+,d2-d4
         rts
 
-; add_slow_memory: adds the slow RAM found by slow_probe (ExecBase MaxExtMem) AT THE HEAD of the MemList
-; (MEMF_FAST|MEMF_PUBLIC) -> allocations without MEMF_CHIP go there first; chip stays for DMA. A game that
+; add_slow_memory: adds the slow RAM found by slow_probe (ExecBase MaxExtMem) before chip, below true fast RAM
+; (MEMF_FAST|MEMF_PUBLIC, priority -5) -> chip stays for DMA; later priority-0 Zorro RAM is preferred. A game that
 ; requests ~400 KB of CHIP (Lemmings) only fits under this condition on a 512K chip + 512K slow config.
 ; ExecBase sits at the bottom of that RAM, so the MemHeader starts right after its positive part. a6 = SysBase.
 ; Called after the memory selftest (which assumes chip at the head of the list). Returns d0 = bytes of slow RAM
@@ -511,6 +511,7 @@ add_slow_memory:
         clr.l   (a1)+
         dbf     d1,.as_z
         move.b  #NT_MEMORY,LN_TYPE(a0)
+        move.b  #-5,LN_PRI(a0)
         move.l  #slow_name,LN_NAME(a0)
         move.w  #(MEMF_FAST|MEMF_PUBLIC),MH_ATTRIBUTES(a0)
         lea     MH_SIZE(a0),a1       ; a1 = 1st chunk

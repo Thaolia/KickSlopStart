@@ -52,7 +52,8 @@ mask bounds, so they retain the original bounds-checked crossing walk and CPU pr
 regions can reject wholly invisible areas before building a scratch mask, while retaining outline/cursor state.
 
 The native suite covers small strokes, all octants and modes, shifted templates, mask alignment, clipping,
-borrowed blitter ownership and Forbid nesting.
+borrowed blitter ownership and Forbid nesting. A separate exec test verifies that public allocations prefer
+priority-0 Zorro fast RAM over priority-minus-5 slow RAM, while CHIP requests still select CHIP.
 
 The unchanged Workbench Clock was measured from program entry and through a resize refresh. Rendering improved
 substantially, but exact original-ROM speed parity has **not** been reached. The reference's logical display is

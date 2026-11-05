@@ -15,8 +15,8 @@
 - Remaining: patterned and clipped-piece line acceleration, patterned fills, and general asynchronous blit API behavior.
 - Clock follow-up (2026-11-05): direct short-stroke setup, pure-polygon mask DMA, masked template composition,
   update-region rejection and safe CPU consumers of asynchronous Draw results. Added short-line and polygon
-  speed gates plus ownership, alignment, mode and mixed ellipse/line correctness cases.
-  **Original Clock speed parity remains open**; measurements must
+  speed gates plus ownership, alignment, mode and mixed ellipse/line correctness cases. Native fast-memory
+  preference has an exec-group regression. **Original Clock speed parity remains open**; measurements must
   match logical screen height/aspect as well as machine and Window dimensions.
 - Window-close follow-up: source-independent `BltBitMap` minterms now share the rectangle engine, avoiding
   row buffers and CPU truth-table evaluation when layers clear exposed areas. Independent pixel fingerprints

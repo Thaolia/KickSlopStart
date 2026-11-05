@@ -71,6 +71,10 @@ inputs to the reference still measured about **0.518 s**. **This is an improveme
 parity.** No CPU overclock or production display-mode change was used. Pending setup and clipping overhead
 remain visible in the application measurements.
 
+The normal and quick exec test groups run `mempriority.s` with actual Zorro fast RAM present. Its public
+allocation must land there rather than in slow RAM; an explicit CHIP allocation must remain in CHIP. The
+pre-fix ROM fails that test, while the updated ROM passes. `drawblit_test.py` provides the shared native runner.
+
 ## boot_test.sh - headless boot of a ROM under FS-UAE
 
 Starts FS-UAE in an Xvfb virtual display, lets the ROM boot, captures the emulated screen and reports the
