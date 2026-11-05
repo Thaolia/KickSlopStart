@@ -21,18 +21,20 @@ Not packaged: built from source, installed in `~/.local/bin`.
 
 ```sh
 mkdir -p ~/.cache/amiga-tc && cd ~/.cache/amiga-tc
-curl -fsSLO http://sun.hasenbraten.de/vasm/release/vasm.tar.gz
-curl -fsSLO http://sun.hasenbraten.de/vlink/release/vlink.tar.gz
-tar xzf vasm.tar.gz && tar xzf vlink.tar.gz
+curl -fsSLO http://phoenix.owl.de/tags/vasm2_0f.tar.gz
+curl -fsSLO http://phoenix.owl.de/tags/vlink0_18a.tar.gz
+tar xzf vasm2_0f.tar.gz && tar xzf vlink0_18a.tar.gz
 make -C vasm CPU=m68k SYNTAX=mot      # -> vasmm68k_mot
 make -C vlink                          # -> vlink
 cp vasm/vasmm68k_mot vlink/vlink ~/.local/bin/
 ```
-Validated versions: vasm **2.0f**, vlink **V0.18a**. Useful vlink option from M2 on: `-kick1` (Kickstart 1.x
+Validated versions: vasm **2.0f**, vlink **V0.18a** (the `sun.hasenbraten.de/*/release/` URLs answered 404 on
+2026-11-05; `phoenix.owl.de/tags/` serves the versioned tarballs). Useful vlink option from M2 on: `-kick1` (Kickstart 1.x
 loader compat) and `rawbin`/`ados` outputs. C alternative (modules in C later): gcc
 **bebbo** `m68k-amigaos-gcc` (KS1.3 runtime: `-mcrt=nix13`).
 
-### amitools (already installed, pipx)
+### amitools (pipx)
+`pipx install amitools`.
 `romtool` (ROM info/build/split/copy, checksum), `fdtool` (LVOs from `.fd`), `xdftool` (ADF),
 `vamos` (runs AmigaOS binaries on the host — can NOT host our own exec).
 
@@ -49,6 +51,19 @@ Serial: **`unix.serial_port=TCP://127.0.0.1:<port>`** (the `serial_port` key of 
 port), read by `socat -u TCP:127.0.0.1:<port> -`; the coldstart arrives from the very first line. Keyboard injected by
 xdotool: `SDL_VIDEO_X11_XINPUT2=0 QT_XCB_NO_XI2=1` and focus on the window under the mouse; the mouse is only captured
 after a first click. ADF suite: `tests/adf_suite_winuae.sh [rom] [seconds]`.
+
+### Amiberry (`/amiberry` skill, `prepush-check`)
+**Amiberry v8.4.2**, built from source where `.claude/skills/amiberry/config.env` expects it. It needs SDL3, not SDL2.
+```sh
+sudo apt install ninja-build libsdl3-dev libsdl3-image-dev libflac-dev libmpg123-dev libmpeg2-4-dev libpng-dev \
+  libjpeg-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev libwebp-dev \
+  libserialport-dev libportmidi-dev libenet-dev libpcap-dev libzstd-dev zlib1g-dev libcurl4-openssl-dev \
+  nlohmann-json3-dev libgl-dev
+git clone https://github.com/BlitterStudio/amiberry ~/dev/tools/amiberry && cd ~/dev/tools/amiberry
+git checkout v8.4.2 && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+```
+Other host packages used by the harnesses: `fs-uae gdb-multiarch socat pipx python3-unicorn` (plus `Xvfb`, `xdotool`,
+`x11-apps` for `xwd`, ImageMagick). Copperline (`make test-graphics`) is not packaged and not covered here.
 
 ### Analysis (dirty track)
 **radare2 6.1.3** (`r2 -a m68k -e cfg.bigendian=true`, base `$FC0000`). Ghidra headless optional for
