@@ -1184,6 +1184,109 @@ path matches the reference on at most 5 tokens. While this run was in progress t
 of that commit differs from the audited ROM only by the embedded ROM ID string (`git describe --dirty`). Any later
 source change needs a new run.
 
+### Addendum 2026-11-05: c4a3519..bad9952 (before a push)
+
+Delta audit of the local commits about to be pushed: base `c4a3519` (`origin/main`, audited as the base of PR #27 in
+`docs/audit/pr-27.md`), head `bad9952`. Source changes (`git diff c4a3519 bad9952 -- src/`): `b1e4503` (console
+geometry recomputed after a window resize, issue #26: new `cu_resize` and `cu_edges` in `src/exec/console.s`, one
+line in `cu_geom`, a width test at the top of `cu_write`), `1309b24` (`src/exec/rawdofmt.s` rewritten to
+`docs/analysis/exec-rawdofmt-v34.md`, rank 11, and the expected string of the RawDoFmt self-test in
+`src/exec/boot.s`), `3e62aa5` (`src/dos/feeder.s`: the keyboard ring is drained before the timer/repeat step); the
+other commits are docs, the analysis page and a test probe. Same tool, same `tiers`, `commodore` and `aros2` file
+lists, same `--base tiers`, separate analysis agent, production ROMs (`make kick-prod`) only, each with the vlink map
+of the same build.
+
+| role | linked bytes | `romtool info` | sha1 |
+|---|---|---|---|
+| base ROM (production, `c4a3519`) | 216,844 | `is_kick ok`, `chk_sum ok` | `269c924f16d3c1811d4390ebdc78898c49a60d54` |
+| head ROM (production, `bad9952`) | 217,024 (+180) | `is_kick ok`, `chk_sum ok` | `5ebd05825adb32c3dfa7df363cb340c39060ffb9` |
+
+The base ROM file is the one audited for PR #27 (same md5, same map), so its `--selftest` run and its `--seuil 8`
+list from that audit were reused; only the head was run anew. `rawdofmt.o` shrinks from 506 to 426 bytes.
+
+```sh
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --temoin tiers ... --temoin commodore ... \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <map> --base tiers --selftest                                # head ROM, -> out-head.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8   # -> all8-head.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 4   # base and head, -> all4-*.txt
+```
+
+The `--seuil 8` and `--seuil 4` lists were compared by (stream, class, object, symbol + offset, length), absolute
+offsets ignored. Rows touching the changed code were found by overlapping each row's range with the extents of the
+changed routines in our own maps (`rawdofmt.o`; `cu_geom` to the start of `cu_write`'s loop; `feeder_main`;
+`rdf_selftest` and its strings).
+
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Self-check: 12/12 in both runs.
+  Against the controls, our head ROM's longest code match is unchanged: `mots` 10 / 11 / 449 (tiers / commodore /
+  aros, the last being the computed CharLoc table), `instr` 6 / 7 / 7, `instr-souple` 8 / 7 / 11.
+
+| stream | metric | base `c4a3519` | head `bad9952` |
+|---|---|---|---|
+| mots | A tokens | 107,716 | 107,811 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DD7A`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 112 / 9 / 5 | 109 / 9 / 5 |
+| instr | A tokens / max (all) / max code/table | 67,281 / 17 / 17 (`km_fr_s42+$0`) | 67,319 / 17 / 17 (`km_fr_s42+$0`, `km_us_s42+$0`) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2E06C`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 20 / 2 | 17 (keymap); 20 / 2 |
+| instr-souple | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 264 / 43 / 85 | 264 / 44 / 86 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** `mots` (40): the same 13 rows as in the base, offsets shifted by the layout (4 `code/table`: the
+  two keymap string tables and the two computed CharLoc tables; 9 classified data). `instr` (19): no row.
+  `instr-souple` (19): no `code/table` row; the only row is the classified low-entropy `bcpl_rtdata+$8` (23 tokens),
+  as in the base.
+- **New matches above the baseline (13 instructions / 19 words).** None from new code. The only `--seuil 8` rows
+  new to the head are class or range flips of unchanged data, already seen in earlier runs: `mn_chk_hi+$0`
+  (`$268EC`, mots 20, `src/intuition/menus.s`, not changed) flips from `texte` back to `code/table` (the qualified
+  menu check-mark `struct Image` descriptors, see "Provenance" below); `gameport_romtag+$C` (16) and
+  `input_romtag+$2` (14) become `code/table` while `potgo_end+$C` (16), `trackdisk_romtag+$C` (16), `input_end+$C`
+  (15), `timer_romtag+$C` (13) and `topaz9_font+$20` (10) become `texte` (RomTag tails and resident names, all
+  below the baseline; this is why mots code ≥ 8 falls from 112 to 109); `romboot_romtag+$C` (18) changes its mixed
+  class; the keymap string table `km_us_s42` (instr / instr-souple) is back to its `+$0` start at 17 tokens (from
+  `+$2`, 16), qualified data; the resident-name rows `trackdisk_name` (9) and `intuition_name` (8) are re-segmented
+  `texte` rows in the instruction streams.
+- **Rewritten `exec_RawDoFmt` (`rawdofmt.o`, entirely changed by `1309b24`).** No row of 8 tokens or more in any
+  stream, before or after. Longest matches from the `--seuil 4` lists:
+
+| stream | base `c4a3519` (old RawDoFmt) | head `bad9952` (rewrite) |
+|---|---|---|
+| mots | 7 (`exec_RawDoFmt+$AC`, low entropy); code/table 5 (`+$14`) | 4 (`exec_RawDoFmt+$BE`, low entropy); no code/table row of 4 |
+| instr | 4 (`+$14`, code/table) | none of 4 or more |
+| instr-souple | 6 (`+$22`, code/table + low entropy); code/table alone 4 | 5 (`+$30`, low entropy); code/table 4 (`+$16`, `+$FA`) |
+
+  The formatter, a classic place for convergent code, shares at most 4 code/table tokens with the reference in any
+  stream after the rewrite (shorter than before). The self-test change in `src/exec/boot.s` only edits two strings
+  (`rdf_expect`, `msg_rdf_ok`); neither has a row, and the rows inside `rdf_selftest` (unchanged code) are at most
+  6 words.
+- **Console resize (`cu_resize`, `cu_edges`, `cu_geom`, `cu_write`, `b1e4503`).** No row of 8 tokens or more. From
+  the `--seuil 4` list, the longest rows in or next to the changed code are `mots` 5 (`cu_write+$22`, low entropy,
+  the base's 4-word low-entropy row at `cu_write+$12` re-segmented by the inserted width test) and 4 (`cu_resize+$32`,
+  low entropy), no `instr` row, and `instr-souple` 5 (`cu_resize+$5C`, low entropy) and 4 (`code/table` at
+  `cu_resize+$AC` and `cu_edges+$1C`; `texte`-classified rows of 4 at `cu_resize+$84`, `+$98`).
+- **Feeder loop (`feeder_main`, `3e62aa5`).** The `code/table` rows of `feeder_main` in the `--seuil 4` lists keep
+  the base's symbol offsets and lengths (longest: mots 8 at `+$8`, `+$64`, `+$A4`; instr-souple 6 at `+$9A`), except
+  one 4-word row whose start moves from `+$166` to `+$168` after the reordered branch; two low-entropy rows of 4-5
+  words move inside the routine (`+$F2`, `+$14E` → `+$14A`, `+$15A`). Nothing new of 6 tokens or more.
+- **Other `--seuil 4` changes** (all below 8 tokens, outside the changed files except the layout): re-segmented
+  resident-name and RomTag `texte` rows, `pointer_input_handler+$14`/`+$40` (mots 6) and `misc_init+$8`
+  (instr-souple 6) in files not changed by these commits, appearing as the 180-byte shift moves word boundaries.
+
+**Verdict (head ROM, `bad9952`): PASS.** No code/table match reaches 40 words, 19 instructions or 19 loose
+instructions in any stream. The longest code match, data excluded, is still 19 words / 13 instructions
+(`exp_cpbinding+$22`), the base's baseline, and no new code match exceeds it. The only new row above the baseline
+is the 20-word `mn_chk_hi+$0`, qualified `struct Image` data in a file these commits do not touch, which changed
+class only. The rewritten RawDoFmt matches the reference on at most 4 code/table tokens (5 low-entropy loose
+tokens), the console resize code on at most 5 low-entropy tokens, and the feeder change adds nothing. Any later
+source change needs a new run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
