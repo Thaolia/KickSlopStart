@@ -799,7 +799,7 @@ mft_done:
 
         ; --- disk.resource: AllocUnit/FreeUnit, GetUnitID, then GetUnit/GiveUnit with a wait queue ---
         ; dru1 takes the controller (GetUnit returns the "last driver", non-null and != dru1); dru2 is put on hold
-        ; (GetUnit = 0); GiveUnit ReplyMsgs it (without port: LN_TYPE -> NT_REPLYMSG); dru2 retries and gets
+        ; (GetUnit = 0); GiveUnit ReplyMsgs it (without port: LN_TYPE -> NT_FREEMSG); dru2 retries and gets
         ; dru1 as last driver. The DRUs live on the stack: DR_CURRENT then remains a mere witness (never
         ; dereferenced outside controller ownership). The DF1 identifier read at startup is displayed.
         movem.l d4/a2-a4,-(sp)
@@ -856,7 +856,7 @@ drt_clr:
         tst.l   d0
         bne     drt_fail
         jsr     -24(a6)              ; GiveUnit -> ReplyMsg(dru2)
-        cmp.b   #NT_REPLYMSG,LN_TYPE(a4)
+        cmp.b   #NT_FREEMSG,LN_TYPE(a4)
         bne     drt_fail
         move.l  a4,a1
         jsr     -18(a6)              ; dru2 retries: last driver = dru1
@@ -988,7 +988,7 @@ kdt_clr:
         bne     kdt_fail
         moveq   #$45,d0              ; Escape pressed -> returns the pending request
         jsr     kbd_devevent
-        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        cmp.b   #NT_FREEMSG,LN_TYPE(a3)
         bne     kdt_fail
         cmp.w   #$45,48+IE_CODE(a3)
         bne     kdt_fail
@@ -1006,7 +1006,7 @@ kdt_clr:
         move.l  ($4).w,a6
         cmp.b   #IOERR_ABORTED,IO_ERROR(a3)
         bne     kdt_fail
-        cmp.b   #NT_REPLYMSG,LN_TYPE(a3)
+        cmp.b   #NT_FREEMSG,LN_TYPE(a3)
         bne     kdt_fail
         moveq   #$60,d0              ; left Shift then keypad 7: qualifier $0001, then $0101 (NUMERICPAD)
         jsr     kbd_devevent
@@ -1190,7 +1190,7 @@ aut_clr:
         lea     aut_ch0(pc),a0
         moveq   #20,d0
         bsr     aut_alloc
-        cmp.b   #NT_REPLYMSG,LN_TYPE+144(a3)
+        cmp.b   #NT_FREEMSG,LN_TYPE+144(a3)
         bne     aut_fail
         cmp.b   #-12,IO_ERROR+144(a3)
         bne     aut_fail
@@ -1201,7 +1201,7 @@ aut_clr:
         moveq   #9,d0
         bsr     aut_cmd
         bne     aut_fail
-        cmp.b   #NT_REPLYMSG,LN_TYPE+72(a3)
+        cmp.b   #NT_FREEMSG,LN_TYPE+72(a3)
         bne     aut_fail
         tst.b   IO_ERROR+72(a3)
         bne     aut_fail

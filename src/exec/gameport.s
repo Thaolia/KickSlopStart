@@ -191,6 +191,7 @@ gp_reply:
 ; queued, the others run at once.
 gameport_beginio:
         movem.l d2-d3/a2-a3,-(sp)
+        move.b  #NT_MESSAGE,LN_TYPE(a1)  ; in flight (exec's DoIO/SendIO leave ln_Type): gp_reply then replies it
         and.b   #$0F,IO_FLAGS(a1)
         clr.b   IO_ERROR(a1)
         move.l  IO_UNIT(a1),a3       ; a3 = unit

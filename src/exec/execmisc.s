@@ -66,24 +66,37 @@ exec_SetFunction:
         move.l  (sp)+,d0
         rts
 
-; SumLibrary(library a1): sum of the words of the vector table. Table changed (LIBF_CHANGED) or sum not
-; verified: the sum is stored and LIBF_CHANGED cleared. (No alert on mismatch: no table is
-; protected here.) Clobbers d0/d1/a0.
+; SumLibrary(library a1) (exec-messages-io-v34 §4.4): only with LIBF_SUMUSED. The sum is the 16-bit sum of the
+; words of the lib_NegSize bytes below the base, kept in the UPPER word of lib_Sum (the lower word is not written).
+; LIBF_CHANGED set: the sum is stored and CHANGED cleared (d0 kept). Otherwise it is verified: d0 low word = the sum;
+; a mismatch is the dead-end Alert AN_LibChkSum ($81000003). d1 = the sum, a0 changed; without SUMUSED nothing
+; changes. Preserves a1.
 exec_SumLibrary:
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  LIB_NEGSIZE(a1),d1
-        lsr.w   #1,d1
+        btst    #LIBB_SUMUSED,LIB_FLAGS(a1)
+        beq.s   .sl_ret
+        move.l  d2,-(sp)
         move.l  a1,a0
-        sub.l   d1,a0
-        sub.l   d1,a0                ; a0 = start of the table
+        moveq   #0,d2
+        move.w  LIB_NEGSIZE(a1),d2
+        sub.l   d2,a0                ; a0 = start of the table
+        lsr.w   #1,d2
+        moveq   #0,d1
         bra.s   .sl_nx
 .sl_lp:
-        add.w   (a0)+,d0
+        add.w   (a0)+,d1
 .sl_nx:
-        dbra    d1,.sl_lp
-        move.l  d0,LIB_SUM(a1)
+        dbra    d2,.sl_lp
+        move.l  (sp)+,d2
         bclr    #LIBB_CHANGED,LIB_FLAGS(a1)
+        bne.s   .sl_store
+        move.w  d1,d0
+        cmp.w   LIB_SUM(a1),d1
+        beq.s   .sl_ret
+        move.l  #$81000003,d7        ; AN_LibChkSum, dead end: does not return
+        jsr     LVO_ALERT(a6)
+.sl_store:
+        move.w  d1,LIB_SUM(a1)
+.sl_ret:
         rts
 
 ; Cause(interrupt a1): the software interrupt is queued (only once while it is pending) then
@@ -837,10 +850,13 @@ exec_FreeTrap:
         move.w  d1,TC_TRAPALLOC(a0)
         rts
 
-; RemResource(resource a1): removal from the resource list, under Forbid.
+; RemResource(resource a1): unlinked under Forbid. D0/D1 kept; A0 = old successor, A1 = old predecessor.
 exec_RemResource:
         jsr     LVO_FORBID(a6)
-        jsr     LVO_REMOVE(a6)
+        move.l  (a1),a0
+        move.l  LN_PRED(a1),a1
+        move.l  a0,(a1)
+        move.l  a1,LN_PRED(a0)
         jmp     LVO_PERMIT(a6)
 
 ; ObtainSemaphoreList(list a0) / ReleaseSemaphoreList(list a0): each SignalSemaphore of the list, in order.

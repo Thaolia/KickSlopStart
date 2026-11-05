@@ -221,6 +221,7 @@ ad_beginio:
 .ab_end:
         tst.l   d0
         beq.s   .ab_sync
+        move.b  #NT_MESSAGE,LN_TYPE(a3)  ; pending: exec's DoIO/SendIO leave ln_Type to the device
         bclr    #0,IO_FLAGS(a3)
         bra.s   .ab_out
 .ab_sync:

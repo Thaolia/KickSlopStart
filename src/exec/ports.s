@@ -1,14 +1,11 @@
-; src/exec/ports.s — exec.library: message ports, NON-BLOCKING PART (M2.4c).
+; src/exec/ports.s — exec.library: message ports.
 ;   AddPort/RemPort/FindPort: public ports in ExecBase.PortList.
-;   PutMsg   : AddTail of the message + Signal of the target task (if PA_SIGNAL).
+;   PutMsg   : AddTail of the message, then the port action (mp_Flags AND 3).
 ;   GetMsg   : RemHead of the 1st message (FIFO) or NULL.
-;   ReplyMsg: sends the message back to its MN_REPLYPORT, type NT_REPLYMSG.
-;   WaitPort: M3d — BLOCKS until a message is present; returns the 1st one (without
-;              removing it: GetMsg is what removes it).
+;   ReplyMsg : PutMsg to mn_ReplyPort with type NT_REPLYMSG, or NT_FREEMSG when there is no reply port.
+;   WaitPort : blocks until a message is present; returns the 1st one without removing it.
 ; Amiga convention: scratch = d0/d1/a0/a1; a6 = library base.
-; IMPLEMENTATION track ("clean"): NDK includes exec/ports.i (public ABI).
-; The caller initialises MP_MSGLIST (NEWLIST) and MP_FLAGS/MP_SIGBIT/MP_SIGTASK
-; before AddPort (V34 contract; CreateMsgPort only exists in V36+).
+; IMPLEMENTATION track ("clean"): docs/analysis/exec-messages-io-v34.md §1, NDK exec/ports.i (public ABI).
 
                 include "exec.i"
 
@@ -20,116 +17,127 @@
                 xdef    exec_ReplyMsg
                 xdef    exec_WaitPort
 
-                xref    raw_enable       ; library.s (M7d: interrupt-safe ports = BARE Disable + raw_enable)
+                xref    raw_enable       ; library.s (interrupt-safe ports = BARE Disable + raw_enable)
 
-; M3c: AddPort/RemPort wrapped in Forbid/Permit (PortList = task-vs-task exclusion;
-; no interrupt touches it). M7d: PutMsg/GetMsg/ReplyMsg manipulate MP_MSGLIST, which CAN
-; be touched from an INTERRUPT (an IRQ-driven device that does PutMsg/ReplyMsg) -> they are
-; now INTERRUPT-SAFE: BARE critical section (Disable INTENA + raw_enable, without reschedule
-; tail -> no scheduler re-entry from the IRQ), instead of Forbid (which does NOT mask
-; interrupts). Forbid protected task-vs-task; Disable ALSO protects vs interrupts.
-; FindPort/FindName remain arbitrated by the CALLER (exec V34 contract).
+; PutMsg/GetMsg/ReplyMsg work on MP_MSGLIST, which an interrupt (a device replying from its handler) also touches:
+; they run under a BARE Disable (INTENA + raw_enable, no reschedule tail, so no scheduler re-entry when called
+; from an interrupt). AddPort/RemPort only exclude other tasks (Forbid). FindPort leaves the exclusion to its
+; caller (V34 contract).
 
-; AddPort(port a1): type NT_MSGPORT then Enqueue into PortList (priority order).
+; AddPort(port a1): under Forbid, mp_MsgList emptied (NewList) and the port Enqueued on PortList by priority.
+; ln_Type is not set (1.3: the caller marks its port NT_MSGPORT itself).
 exec_AddPort:
-        move.b  #NT_MSGPORT,LN_TYPE(a1)
-        lea     MP_MSGLIST(a1),a0    ; AutoDoc: AddPort also initialises the message list (NEWLIST)
+        jsr     LVO_FORBID(a6)
+        lea     MP_MSGLIST(a1),a0
         move.l  a0,8(a0)             ; lh_TailPred = &lh_Head
         clr.l   4(a0)                ; lh_Tail = 0
         move.l  a0,(a0)
         addq.l  #4,(a0)              ; lh_Head = &lh_Tail
-        jsr     LVO_FORBID(a6)
         lea     EB_PORTLIST(a6),a0
         jsr     LVO_ENQUEUE(a6)
-        jsr     LVO_PERMIT(a6)
-        rts
+        jmp     LVO_PERMIT(a6)
 
-; RemPort(port a1): removes from PortList.
+; RemPort(port a1): unlinked under Forbid. D0/D1 kept; A0 = old successor, A1 = old predecessor.
 exec_RemPort:
         jsr     LVO_FORBID(a6)
-        jsr     LVO_REMOVE(a6)
-        jsr     LVO_PERMIT(a6)
-        rts
+        move.l  (a1),a0
+        move.l  LN_PRED(a1),a1
+        move.l  a0,(a1)
+        move.l  a1,LN_PRED(a0)
+        jmp     LVO_PERMIT(a6)
 
 ; FindPort(name a1) -> d0 = port | 0 (search in PortList).
 exec_FindPort:
         lea     EB_PORTLIST(a6),a0
-        jsr     LVO_FINDNAME(a6)
-        rts
+        jmp     LVO_FINDNAME(a6)
 
-; PutMsg(port a0, message a1): links the message then signals the task (PA_SIGNAL).
+; PutMsg(port a0, message a1): under Disable, ln_Type := NT_MESSAGE, AddTail, then the action of mp_Flags AND 3
+; when mp_SigTask is not NULL: 0 Signal(mp_SigTask, 1 << (mp_SigBit AND 31)), 1 Cause(mp_SigTask), 2 nothing,
+; 3 JSR mp_SigTask (A0 = that address, A1 = port, D0 = mp_Flags; its D0/D1/A0/A1 are what PutMsg returns).
+; D2-D7/A2-A6 preserved.
 exec_PutMsg:
-        move.l  a2,-(sp)
-        move.l  a0,a2                ; a2 = port
-        addq.b  #1,EB_IDNEST(a6)     ; M7d: BARE Disable -> {linking + signal} atomic vs task AND interrupt
-        move.w  #INTF_INTEN,INTENA   ; INTEN off (bit14)
-        move.b  #NT_MESSAGE,LN_TYPE(a1)
-        lea     MP_MSGLIST(a2),a0    ; AddTail(&port->MsgList, msg)
+        moveq   #NT_MESSAGE,d0
+; pm_queue(port a0, message a1, type d0.b): PutMsg with the given message type (ReplyMsg: NT_REPLYMSG). The type is
+; set inside the Disable: no task sees a "replied" message before it is in the port.
+pm_queue:
+        addq.b  #1,EB_IDNEST(a6)     ; BARE Disable
+        move.w  #INTF_INTEN,INTENA
+        move.b  d0,LN_TYPE(a1)
+        move.l  a0,-(sp)
+        lea     MP_MSGLIST(a0),a0
         jsr     LVO_ADDTAIL(a6)
+        move.l  (sp)+,a1             ; a1 = port
+        move.l  MP_SIGTASK(a1),d0
+        beq.s   .pm_done             ; no target: queue only, whatever the action
+        moveq   #PF_ACTION,d1
+        and.b   MP_FLAGS(a1),d1
+        beq.s   .pm_signal
+        subq.b  #PA_IGNORE,d1
+        beq.s   .pm_done
+        bmi.s   .pm_cause
+        move.l  d0,a0                ; action 3: call the routine held in mp_SigTask
         moveq   #0,d0
-        move.b  MP_FLAGS(a2),d0
-        and.b   #PF_ACTION,d0
-        bne.s   .pm_done             ; action != PA_SIGNAL -> no signal
-        move.l  MP_SIGTASK(a2),d0
-        beq.s   .pm_done             ; no target task
-        move.l  d0,a1                ; a1 = task to signal
+        move.b  MP_FLAGS(a1),d0
+        move.l  a6,-(sp)
+        jsr     (a0)
+        move.l  (sp)+,a6
+        bra.s   .pm_done
+.pm_cause:
+        move.l  d0,a1                ; PA_SOFTINT: the softint runs when the Disable ends
+        jsr     LVO_CAUSE(a6)
+        bra.s   .pm_done
+.pm_signal:
+        move.b  MP_SIGBIT(a1),d1     ; bset on a register takes the bit number modulo 32
+        move.l  d0,a1
         moveq   #0,d0
-        move.b  MP_SIGBIT(a2),d0
-        moveq   #1,d1
-        lsl.l   d0,d1                ; 1 << MP_SIGBIT
-        move.l  d1,d0
-        jsr     LVO_SIGNAL(a6)       ; Signal(task a1, sigmask d0)
+        bset    d1,d0
+        jsr     LVO_SIGNAL(a6)
 .pm_done:
-        bsr     raw_enable           ; BARE exit (INTEN on if IDNest<0; no reschedule tail)
-        move.l  (sp)+,a2
-        rts
+        jmp     raw_enable           ; INTEN back on at the outermost level; registers kept
 
-; GetMsg(port a0) -> d0 = message | 0 (RemHead of the queue, FIFO).
+; GetMsg(port a0) -> d0 = message | 0 (RemHead of the queue, FIFO). A0 = &mp_MsgList, A1 = the new first node.
 exec_GetMsg:
-        addq.b  #1,EB_IDNEST(a6)     ; M7d: BARE Disable -> RemHead atomic vs an interrupt doing PutMsg
+        addq.b  #1,EB_IDNEST(a6)     ; BARE Disable -> RemHead atomic vs an interrupt doing PutMsg
         move.w  #INTF_INTEN,INTENA
         lea     MP_MSGLIST(a0),a0
-        jsr     LVO_REMHEAD(a6)      ; d0 = message | 0
-        bsr     raw_enable           ; preserves d0 (raw_enable only touches EB_IDNEST/INTENA)
-        rts
+        jsr     LVO_REMHEAD(a6)
+        jmp     raw_enable
 
-; ReplyMsg(message a1): sends back to MN_REPLYPORT (if present), type NT_REPLYMSG.
+; ReplyMsg(message a1): mn_ReplyPort set -> PutMsg to it with type NT_REPLYMSG; no reply port -> ln_Type :=
+; NT_FREEMSG, d0 = 0, nothing else touched. The previous type is not checked.
 exec_ReplyMsg:
-        move.l  a2,-(sp)
-        move.l  a1,a2                ; a2 = message (PutMsg clobbers scratch a1)
-        addq.b  #1,EB_IDNEST(a6)     ; M7d: BARE Disable -> {send back + marking} atomic vs task AND interrupt
-        move.w  #INTF_INTEN,INTENA   ; (the owner must not GetMsg before the NT_REPLYMSG type)
         move.l  MN_REPLYPORT(a1),d0
-        beq.s   .rm_mark             ; no reply port -> just mark
-        move.l  d0,a0                ; a0 = reply port
-        jsr     LVO_PUTMSG(a6)       ; AddTail + signal (PutMsg nests its own Disable -> nesting OK)
-.rm_mark:
-        move.b  #NT_REPLYMSG,LN_TYPE(a2)   ; overwrite -> "replied" type
-        bsr     raw_enable           ; only the outermost raw_enable turns INTEN back on
-        move.l  (sp)+,a2
+        beq.s   .rm_free
+        move.l  d0,a0
+        moveq   #NT_REPLYMSG,d0
+        bra     pm_queue
+.rm_free:
+        move.b  #NT_FREEMSG,LN_TYPE(a1)
         rts
 
-; WaitPort(port a0) -> d0 = 1st message (lh_Head), WITHOUT removing it. Blocks while the
-; queue is empty, via Wait(1<<MP_SIGBIT). No lost wakeup: PutMsg does AddTail BEFORE
-; Signal, and Wait's SIGRECVD recheck is atomic (IPL 7) -> a message arriving just
-; before/during the Wait is seen either by the queue test or by the already-set bit (Wait
-; returns immediately), then the loop rereads the queue. a2 preserved across Wait (saved/
-; restored in the blocking frame, untouched on the fast path).
+; WaitPort(port a0) -> d0 = a1 = 1st message, not removed. A non-empty port returns at once (signal bit untouched,
+; D1/A0 kept). Otherwise Wait(1 << mp_SigBit) until the list is not empty; D1 = that mask on return. No lost wakeup:
+; PutMsg links the message before it signals.
 exec_WaitPort:
-        move.l  a2,-(sp)
-        move.l  a0,a2                ; a2 = port (survives Wait)
+        move.l  MP_MSGLIST(a0),a1
+        tst.l   (a1)
+        beq.s   .wp_wait
+        move.l  a1,d0
+        rts
+.wp_wait:
+        move.l  a0,-(sp)
 .wp_loop:
-        move.l  MP_MSGLIST(a2),a0    ; lh_Head of the port's queue
-        tst.l   (a0)                 ; (lh_Head)==0 <=> empty queue
-        bne.s   .wp_has              ; not empty -> at least one message
-        moveq   #0,d0                ; empty queue -> Wait on the port's bit
-        move.b  MP_SIGBIT(a2),d0
-        moveq   #1,d1
-        lsl.l   d0,d1                ; 1 << MP_SIGBIT
-        move.l  d1,d0
+        moveq   #0,d1
+        move.b  MP_SIGBIT(a0),d1
+        moveq   #0,d0
+        bset    d1,d0
+        move.l  d0,-(sp)
         jsr     LVO_WAIT(a6)
-        bra.s   .wp_loop
-.wp_has:
-        move.l  MP_MSGLIST(a2),d0    ; d0 = lh_Head = 1st message (not removed)
-        move.l  (sp)+,a2
+        move.l  (sp)+,d1
+        move.l  (sp),a0
+        move.l  MP_MSGLIST(a0),a1
+        tst.l   (a1)
+        beq.s   .wp_loop
+        addq.l  #4,sp
+        move.l  a1,d0
         rts
