@@ -573,14 +573,17 @@ sc_gadinv:
         rts
 
 ; wn_scrtitle(a3 = window that became active, a5 = IntuitionBase): its screen's bar shows wd_ScreenTitle (OpenWindow
-; sets it to the screen's DefaultTitle; NULL = no text); always redrawn (the same buffer may have changed contents).
-; Preserves everything.
+; sets it to the screen's DefaultTitle; NULL = no text). Redrawn only when the pointer differs from Screen.Title
+; (intuition-screens §3.3, input-menus §1.11 step 4): games that draw straight into the screen's BitMap over the bar
+; (Monkey Island: BACKDROP window, bar never hidden) must not get it back on every click. Preserves everything.
 wn_scrtitle:
         movem.l d0-d3/a0-a1/a3/a6,-(sp)
         move.l  WD_SCREENTITLE(a3),d1
         move.l  WD_WSCREEN(a3),d0
         beq.s   .st_ret
         move.l  d0,a3
+        cmp.l   SC_TITLE(a3),d1
+        beq.s   .st_ret
         move.l  d1,SC_TITLE(a3)
         bsr     sc_drawbar
 .st_ret:

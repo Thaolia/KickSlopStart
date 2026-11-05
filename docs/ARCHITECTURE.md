@@ -1300,7 +1300,9 @@ differs.
   - **Rename** locks the title and displays the prompt "Enter the new name.  Press return when done.".
   - **Intuition**:
     - **SetWindowTitles** (−276) and `wd_ScreenTitle`: the screen bar shows the screen title of the active
-      window, otherwise that of the screen.
+      window, otherwise that of the screen. Activation (`wn_scrtitle`) redraws the bar only when the window's
+      ScreenTitle pointer differs from Screen.Title (intuition-screens §3.3): a click in Monkey Island (BACKDROP
+      BORDERLESS window, both titles NULL, game drawing straight over the bar) no longer brings the bar back.
     - **DisplayBeep** (−96): colour 0 is complemented for 6 frames.
     - **Activation, intuition 34.3 rule**: OpenWindow only activates if ACTIVATE is requested, and places the window
       after the active one in the Parent/Descendant chain. CloseWindow of the active window activates its Parent, otherwise the

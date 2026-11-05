@@ -1304,6 +1304,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   stays at pri 4 where 1.3's input.device task runs at 20 (intuiticks-repeat §1), so keyboard events are still late
   during disk loads. The other report from the same review, a Workbench "without title or icons" after a NewShell in
   the startup-sequence, is not a bug: the 640x100 Shell window at 0/0 covers the screen title and the icon column.
+  **Screen bar in Monkey Island (2026-11-05)**: a blue screen title bar with its depth gadgets flickered over the
+  game. The game opens a custom screen with SHOWTITLE set and covers it with a BACKDROP BORDERLESS window, then
+  draws straight into the screen BitMap over the bar. Each left click went through `wn_scrtitle`, which always
+  redrew the bar. It is now redrawn on activation only when Window.ScreenTitle differs from Screen.Title
+  (intuition-screens §3.3). SetWindowTitles keeps its own redraw, so the Workbench memory title still updates.
+  Checked on Monkey Island (no bar over 40 bursts of in-game clicks) and Workbench 1.3.3; prepush FAIL=0.
   **RawDoFmt (2026-11-05, coverage §7 rank 11)**: spec `exec-rawdofmt-v34`. `rawdofmt.s` rewritten to the 1.3
   grammar: `%[-][0][width][.limit][l]type` in that order only; d/x/s/c are the only conversions (x upper case, %d
   sign-extends a word, %x does not); %u, %X, %b and every other type character are echoed with no padding and no
