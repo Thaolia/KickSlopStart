@@ -1302,7 +1302,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   is now drained first, so a released key never repeats. Checked on a Workbench 1.3.3 NewCLI window: `echo`, `info`,
   `echo` each give one prompt (before: two of three commands doubled, in two runs); prepush FAIL=0. Open: the feeder
   stays at pri 4 where 1.3's input.device task runs at 20 (intuiticks-repeat §1), so keyboard events are still late
-  during disk loads. The other report from the same review, a Workbench "without title or icons" after a NewShell in
+  during disk loads (since the same day the feeder runs at priority 20: "One input task" below).
+  The other report from the same review, a Workbench "without title or icons" after a NewShell in
   the startup-sequence, is not a bug: the 640x100 Shell window at 0/0 covers the screen title and the icon column.
   **Screen bar in Monkey Island (2026-11-05)**: a blue screen title bar with its depth gadgets flickered over the
   game. The game opens a custom screen with SHOWTITLE set and covers it with a BACKDROP BORDERLESS window, then
@@ -1460,6 +1461,28 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   less chip for the display (−4,696). Ranked reduction candidates are in that page (not implemented). Also seen:
   `ask` as the first startup-sequence line does not return on our ROM; icon.library is loaded by BindDrivers
   (stage 4) on our ROM, and very likely on 1.3 too (the step is byte-identical), where the 1.3 page says LoadWB.
+  **One input task (2026-11-05)**: the keyboard feeder process (priority 4, 4 KB stack) is gone; its work (raw
+  keys into input.device, IECLASS_TIMER tick, key repeat) runs in the intuition input task at priority 20, as on 1.3
+  where Intuition runs inside the input.device task. `src/dos/feeder.s` now exports `fd_init` (one 248-byte block:
+  state, timer reply port, two timerequests), `fd_arm` (before each Wait: timer request for the next deadline,
+  returns the feeder's signal, shared by the keyboard interrupt and the timer reply) and `fd_service` (at each turn
+  of the input task's loop, before the next ring item: timer reply, every key of the raw ring, then the due tick and
+  repeat; the ring-drain-before-repeat rule of 3e62aa5 is kept). The input handlers run at the top of that loop,
+  never inside an action. Starvation and deadlock: menus held open, drags, sizing and requesters are handled event
+  by event, so the keyboard is serviced between events; only an action that waits (a verification waiting for the
+  application's reply, a layer lock held by another task, WaitTOF) delays it, the keys waiting in the 16-entry raw
+  ring; a verification freezes the whole input system on 1.3 too (intuition-input-menus §1 point 4). None of our
+  own windows asks for a verification. Stack: one 4 KB stack for both jobs, high-water mark 916 bytes (pattern fill
+  through gdb once the desktop was idle, 324 bytes used by then; then the session below), 3,180 bytes never touched.
+  Validation: `make` and `make kick-prod` is_kick ok; prepush (dev) FAIL=0, missing=[], Lemmings menu looked at;
+  boot_c dev shell: `ver` typed -> E2 SHELL ver OK and FEEDER OK=v. Workbench 1.3.3 on kick-prod: title 840,536
+  free (836,152 before, +4,384 = TCB 240 + stack 4,096 + MemList 32 + 16 from merging the feeder's blocks); disk
+  window, drag and resize, right-button menus, Utilities and Prefs drawers, Shell `echo`/`info`/`dir` one prompt
+  each, a held `a` repeats, Shift+b, Preferences opened and cancelled, Rename with a held Backspace in the string
+  gadget, Info. `tests/ticks.s` from the Shell (log copied to AUX:), new ROM against the previous one, same disk:
+  INTUITICKS 301 in 30.00 s (10/s, every gap 100 ms) on both; held `a` and cursor up: first repeat 0.400 s, period
+  0.040 s (the disk's Preferences), no repeat after the release, on both. `tests/menucat.s`: right Amiga + O ->
+  MENUPICK F800 qual 0080, right Amiga + T -> 0080 (Export/Texte sub-item).
 
 ## Immediately actionable work (start of implementation, upon approval)
 

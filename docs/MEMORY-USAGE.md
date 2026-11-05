@@ -16,6 +16,12 @@ RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 46
 429,512 on 1.3 (+35,848), because our track cache is in slow RAM and we have no file system buffers. The slow RAM is
 also more fragmented: largest free block 334,752 against 399,464.
 
+**Update (2026-11-05, `4f456b7`): one input task.** The keyboard feeder process is gone: its work runs in the
+intuition input task (section 6.3). A/2 idle title: **840,536** (836,152 before, same harness), so the A/2 gap is
+now 20,512. The 4,384 bytes are the feeder's TCB (240), stack (4,096) and MemList (32), plus 16 bytes from merging
+its state, port and timer request into one 248-byte block. The tables below are those of the `17da6ee`
+measurement, except the "Input handling tasks" row.
+
 ## How this was measured
 
 - ROMs: production `make kick-prod` (`build/kick13-prod.rom`, md5 `bd5c11a3…`) for the free figures, and the
@@ -116,7 +122,7 @@ memory.
 | File system buffers | 0 | 8,160 chip | −8,160 | none (no block cache in our handler) |
 | Other chip (copper lists, gadget images, pointer, chip icon images, boot leftovers) | 4,400 | 9,096 | −4,696 | `gfx_MrgCop` 1,112, `gfx_MakeVPort` 1,032, `sc_mkimage` 208, `wb_desktop` 128, `d2_done` 128, `init_task` 96, `it_ptrinit` 72, `graphics_initfunc` 24, disk programs 1,600 |
 | Module bases (libraries, devices, resources) | 7,744 | ≈ 7,840 | ≈ −96 | `exec_MakeLibrary` 7,016 (incl. icon.library), `init_ints` 224, `build_reslist` 136, `dos_initfunc` 184, `gfx_fontinit` 104, `km_init` 80 |
-| Input handling tasks | 8,824 | ≈ 4,192 (input.device task inside its base) | **+4,632** | intuition input task 4,192 (`it_startinput`); keyboard feeder process 4,632 (TCB 240 + stack 4,096 + MemList 32 + `feeder_main` 264) |
+| Input handling tasks (since `4f456b7`) | 4,440 | ≈ 4,192 (input.device task inside its base) | **+248** | intuition input task 4,192 (`it_startinput`), which also runs the keyboard feeder; feeder state 248 (`fd_init`). At `17da6ee`: 8,824 (+4,632), with a separate feeder process (TCB 240 + stack 4,096 + MemList 32 + `feeder_main` 264) |
 | Loaded code: resident Shell-Seg, List, Execute, Resident, CD; SetPatch; icon.library; L:Ram-Handler | 42,216 | 42,216 | 0 | `ls_load_stream` (the same hunks: same files) |
 | Other process TCBs + stacks + MemLists | 19,576 | 8,672 | **+10,904** | DF0 file system 4,368 (stack 4,096; 1.3: 1,028 with 840 of stack), console handler 4,368 (stack 4,096; 1.3 has none at idle), RAM handler 5,568 (stack 5,296; 1.3: 1,388), Workbench 5,272 (1.3: 5,204); 1.3's figure also holds the trackdisk unit task (924) that we do not have |
 | Rest (slow) | 23,328 | 18,168 | +5,160 | Workbench state 9,272 (`wb_entry` 9,126 block + CLI 64 + ports); file system data 4,544 (`hnd_init` 848, OFS write context `ow_ctx` 1,776 + bitmap `ow_bmalloc` 520, locks 384, DevInfo nodes 848, volume 80, `fl_node` 64, boot node 24); BCPL getvec and resident nodes of disk programs 2,632; disk programs' own blocks 3,064 (FastFonts, SetPatch, icon.library); screen, window and layer structures 1,872; initial CLI leftovers 1,632; console handler data 312 |
@@ -132,17 +138,17 @@ is not Library-shaped and was not counted).
 
 ## 5. Reduction candidates, ranked by size (idle, A/2 unless stated)
 
-Item 2 overlaps items 5, 6 and 7 (the DF1 file system, console handler and feeder stacks are counted in both).
+Item 2 overlaps items 5 and 6 (the DF1 file system and console handler stacks are counted in both).
 
 | # | Candidate | Saving | Risk |
 |---|-----------|-------:|------|
 | 1 | Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
-| 2 | Process stacks larger than 1.3's: file system handler 4,096 per drive (1.3: 840), console handler 4,096 (1.3: 2,800, and only while a CON window is open), RAM handler +4,096 `CP_STKEXTRA` over its 1,200 (1.3: none), keyboard feeder 4,096 | up to ≈ 3,250 per drive + 1,296 + 4,096 | High unless the stack high-water mark of each process is measured first (fill pattern, then a long Workbench session, copy, DiskCopy): an overflow corrupts the neighbouring block silently |
+| 2 | Process stacks larger than 1.3's: file system handler 4,096 per drive (1.3: 840), console handler 4,096 (1.3: 2,800, and only while a CON window is open), RAM handler +4,096 `CP_STKEXTRA` over its 1,200 (1.3: none) | up to ≈ 3,250 per drive + 1,296 + 4,096 | High unless the stack high-water mark of each process is measured first (fill pattern, then a long Workbench session, copy, DiskCopy): an overflow corrupts the neighbouring block silently |
 | 3 | Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
 | 4 | Workbench state: the 9,126-byte block reserves 6 drawer records (6 × 1,084 = 6,504) and 8 volume records at start; allocate a drawer record when its window opens | ≈ 6,500 | Low to medium (workbench.s only; drawer open/close and Close-on-error paths to re-test) |
 | 5 | Empty DF1: start its file system process on first use only | 5,520 (A/2 only) | Medium (DOS mount order, disk-change handling). Already far below 1.3's 23,432 |
 | 6 | Console handler process kept at idle with no window: exit it when its last window closes, or shrink its stack | 4,648 (or 1,296) | Medium: CON handler lifetime, NEWCON:, `*` resolution |
-| 7 | Keyboard feeder process: merge it into the intuition input task or into input.device as on 1.3 (one input task) | ≈ 4,600 | Medium to high: input timing (key repeat, INTUITICKS) and the reason the intuition task exists (section 6.3) |
+| 7 | **Done (2026-11-05, `4f456b7`).** Keyboard feeder process merged into the intuition input task (one input task, as on 1.3) | 4,384 measured | Section 6.3 |
 | 8 | Initial CLI leftovers after `endcli`: console FileHandle 312, its 512-byte write buffer, BCPL global vector 808 | 1,632 | Low (a leak: free them when the initial CLI ends) |
 | 9 | Command stack: every command gets its own 4,008-byte stack (`sh_exec_cmd`) while 1.3 runs it on the CLI process stack; transient only, but the initial shell also has an 8,192-byte stack (1.3: 1,600) during the whole startup-sequence | ≈ 6,600 during startup, 0 at idle | Medium (programs that need large stacks, see `SH_STK`) |
 
@@ -198,17 +204,31 @@ unit but never freed the bitmap.
 The test now frees `CONB_BITMAP` (`CON_BMSIZE` bytes) and resets the cursor when it finishes. After the fix,
 `MEMTRACK` shows no live `con_putglyph` block once the Workbench is idle.
 
-### 6.3 Intuition input task — 4,192 bytes (architecture choice)
+### 6.3 Intuition input task — 4,192 bytes, also the keyboard feeder's task
 
 `it_startinput` (`src/intuition/screens.s`) creates a dedicated task at priority 20, like input.device's, with a
-4,096-byte stack plus its TCB. It handles mouse buttons, gadgets, menus, window dragging and sizing.
+4,096-byte stack plus its TCB. It handles mouse buttons, gadgets, menus, window dragging and sizing, and since
+2026-11-05 it also does the work of the keyboard feeder (`src/dos/feeder.s`): injecting the raw keys into
+input.device, the IECLASS_TIMER tick and the key repeat. The separate feeder process (priority 4, 4,096-byte
+stack) is gone.
 
 **Why a task.** These actions draw and take layer locks, so they can block. They cannot run in the VBlank
 interrupt or inside the input handler chain. A task of its own gives them a context that is allowed to wait.
 
-**Trade-off.** In the original 1.3, this work runs inside input.device's own task, so it costs no extra stack.
-Folding it into our input.device task would save these 4 KB, but every input handler would then share that task
-and could be blocked by intuition's drawing.
+**How the two jobs share it.** The task waits for its event signal and for the feeder's signal (keyboard
+interrupt and timer deadline share one). At each turn, before it takes the next item of its ring, it calls
+`fd_service`: keys first, then the due tick and repeat. The input handlers (console.device, intuition's own) run
+then, at the top of the loop, never inside an action. A long action (a verification waiting for its reply, a layer
+lock held by another task) only delays the keyboard: the keys wait in the 16-entry raw keyboard ring, and a release
+already there still stops the repeat before it fires. On 1.3 a verification freezes the whole input system the
+same way (`intuition-input-menus-v34.md`, §1 point 4). Menus held open, window drags and requesters are handled
+event by event, so they do not hold the loop.
+
+**Stack.** One 4,096-byte stack serves both. High-water mark measured on `kick-prod`, Workbench 1.3.3, the stack
+filled with a pattern through the debugger once the desktop was idle (324 bytes used during boot): 916 bytes after
+opening the disk window, a drag and a resize, right-button menus, opening the Utilities and Prefs drawers, a Shell
+with `info`, `dir`, `echo` and a held key, Preferences, Rename with a held Backspace and Info. 3,180 bytes were
+never touched.
 
 ### 6.4 AllocEntry failures leak their MemList (as on 1.3)
 

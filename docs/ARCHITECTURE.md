@@ -126,7 +126,8 @@ differs.
    (VERTB tail server `vbl_tail`, COPER source), M7d port stress (neutralised via `ifne PROD`).
    **Kept**: the whole real OS — `build_reslist`+`InitCode` mounts ALL the real modules (the "M4 scan"
    covers the whole ROM, not only demo residents), CIA-B/MICROHZ timer, live gameport, DF0: mounting
-   (OFS handler + DeviceNode), con_handler, feeder, strap (floppy boot OR insert-disk screen), Initial CLI.
+   (OFS handler + DeviceNode), con_handler, the keyboard feeder (run by the intuition input task), strap (floppy
+   boot OR insert-disk screen), Initial CLI.
    The final hand-off (`RemHead(TASKREADY)`+`dispatch_in`) is generic; in prod the system idles via
    `.d_idle` instead of spinners. `kick-prod` **removes the harness, adds no OS capability**: booting
    a complete game remains a separate milestone (identical dev/prod — see the Lemmings smoke test in the ledger).
@@ -956,7 +957,8 @@ differs.
   (7i) **Memory usage and race fixes** (2026-10-30).
   - Memory: an idle English Workbench 1.3.3 leaves 24,896 bytes less free than 1.3 on an A500 with 512 KB chip +
     512 KB slow and an empty DF1 (836,152 against 861,048), 42,752 with DF0 only (measured 2026-11-05 against
-    `docs/analysis/memory-budget-v34.md`, same Amiberry configuration). Stage, category and caller breakdown, and
+    `docs/analysis/memory-budget-v34.md`, same Amiberry configuration; 840,536 since the keyboard feeder runs in the
+    intuition input task, see (28)). Stage, category and caller breakdown, and
     the ranked reduction candidates, in `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
     12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate; the cache is given back
     when an `AllocMem` fails (`td_lowmem`, called before the expunge and the retry, 2026-11-05). The console
@@ -976,7 +978,8 @@ differs.
       BeginIO call on input inside the ROM now sets IOF_QUICK: feeder, gameport VBlank, console, Preferences and
       the boot self-tests.
     - Intuition event ring (`it_push`): the head is read, the slot written and the head published with
-      interrupts off. Its producers are the feeder, the DF0: handler and the VBlank mouse path.
+      interrupts off. Its producers are the feeder (now run by the input task itself), the DF0: handler and the
+      VBlank mouse path.
     - DosList: `dos_resolve` and `dos_fullreq` walk it under Forbid. The DF0: handler frees an ejected volume's
       node, and FreeMem overwrites DN_NEXT.
     - console input handler: the active unit's KeyMap is copied with interrupts off before conversion. A CON:
@@ -1663,6 +1666,17 @@ differs.
   **ModifyIDCMP** (-150) implemented. Workbench: scroll arrow held without Shift -> INTUITICKS added to the IDCMP,
   one step per INTUITICKS or MOUSEMOVE as long as the arrow is SELECTED, removed at GADGETUP. Proven: "a" held 2 s
   -> ~50 "a", Shift+b -> "BBB…"; a drawer's left arrow held 3 s -> continuous scrolling, stops on release.
+  **One input task (2026-11-05).** The feeder no longer has a process (it was priority 4, with its own 4 KB stack):
+  `src/dos/feeder.s` exports `fd_init`, `fd_arm` and `fd_service`, called by the intuition input task
+  (`it_intask`, priority 20, as the 1.3 input.device task that also runs Intuition). `fd_init` allocates one
+  248-byte block (state, timer reply port, two timerequests) and publishes the task in FEED_KTASK/FEED_KMASK;
+  `fd_arm`, before each Wait, sends the UNIT_VBLANK request for the next deadline and returns the feeder's signal
+  (keyboard interrupt and timer reply share it); `fd_service`, at each turn of the loop before the next ring item,
+  collects the timer reply, injects every key waiting in the raw ring, then the due tick and repeat (keys first: a
+  release already in the ring stops the repeat). The input handlers therefore run in the input task, at the top of
+  its loop, never inside an action; an action that waits (verification, a layer lock held elsewhere) delays the
+  keyboard, which stays in the 16-entry raw ring, as a verification freezes input on 1.3. Saves 4,384 bytes;
+  stack high-water mark of the shared 4 KB stack 916 bytes over a Workbench session (`docs/MEMORY-USAGE.md` §6.3).
   (29) **InstallClipRegion and clipping of WB icons** (specs `docs/analysis/installclipregion-v34.md` and
   `wb-icon-clipping-v34.md`, analysis agents, reviewed; probe `tests/clipreg.s`). layers.library: **InstallClipRegion**
   (-174, `ly_ClipRegion` +$7E); `lr_clip` replaces the normal list (kept in `_cliprects`) by its ClipRects ∩ C,
