@@ -1337,6 +1337,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   than 32 KB); an odd DataStream still raises an address error, as expected on 1.3. Seen while testing, not from this
   change: a `NewShell` added after `LoadWB` in the Workbench 1.3.3 startup-sequence leaves the desktop without its
   title bar and icons (same on the previous ROM).
+  **MakeLibrary sizes (2026-11-05)**: MakeLibrary set LIB_NEGSIZE/LIB_POSSIZE, then called InitStruct with the
+  data size, which clears that size first and wiped both fields: every AUTOINIT library and device built at boot
+  had NegSize = PosSize = 0 (seen with a gdb walk of LibList/DeviceList on the Workbench), so SumLibrary summed
+  nothing and an Expunge freed the wrong size. The block is already MEMF_CLEAR, so InitStruct now gets size 0;
+  the walk shows the real sizes (graphics 654/362, intuition 468/1288, dos 222/82...).
   **exec messages, ports, I/O, libraries and devices (2026-11-05, coverage §7 rank 12)**: spec
   `exec-messages-io-v34`. `ports.s`: PutMsg runs the action `mp_Flags AND 3` (bits 2-7 ignored) only when
   `mp_SigTask` is not NULL: Signal with the bit number modulo 32 (a bit >= 32 used to signal nothing), Cause for

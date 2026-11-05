@@ -86,9 +86,9 @@ exec_MakeLibrary:
                 move.w  d2,LIB_POSSIZE(a2)
                 move.l  a4,d0               ; data table present?
                 beq.s   .ml_noinitstruct
-                move.l  a4,a1               ; InitStruct(initTable=structure, memory=base, size=dataSize)
+                move.l  a4,a1               ; InitStruct(initTable=structure, memory=base, size=0)
                 move.l  d5,a2
-                move.l  d2,d0
+                moveq   #0,d0               ; the block is already MEMF_CLEAR: clearing again would wipe NEGSIZE/POSSIZE
                 jsr     LVO_INITSTRUCT(a6)
 .ml_noinitstruct:
                 move.l  a5,d0               ; init function present?
