@@ -24,6 +24,7 @@
                 xdef    exec_FreeEntry
                 xdef    init_memory
                 xdef    add_slow_memory
+                xdef    add_low_chip
                 xdef    slow_probe
 
 ; Behaviour and register contracts: docs/analysis/exec-memory-semaphores-v34.md (§2, §5). Every allocator works in
@@ -623,13 +624,15 @@ slow_probe:
 ; add_slow_memory: adds the slow RAM found by slow_probe (ExecBase MaxExtMem) before chip, below true fast RAM
 ; (MEMF_FAST|MEMF_PUBLIC, priority -5) -> chip stays for DMA; later priority-0 Zorro RAM is preferred. A game that
 ; requests ~400 KB of CHIP (Lemmings) only fits under this condition on a 512K chip + 512K slow config.
-; ExecBase sits at the bottom of that RAM, so the MemHeader starts right after its positive part. a6 = SysBase.
+; ExecBase sits at the bottom of that RAM, so the MemHeader starts right after its positive part, and the supervisor
+; stack at its top, so the MemHeader ends at SysStkLower. a6 = SysBase.
 ; Called after the memory selftest (which assumes chip at the head of the list). Returns d0 = bytes of slow RAM
 ; (0 = none).
 add_slow_memory:
         move.l  EB_MAXEXTMEM(a6),d0
         beq.s   .as_ret
         move.l  d0,-(sp)
+        move.l  EB_SYSSTKLOWER(a6),d0
         lea     EXEC_POSSIZE+7(a6),a0
         move.l  a0,d1
         and.w   #$FFF8,d1
@@ -657,6 +660,24 @@ add_slow_memory:
         move.l  (sp)+,d0
         sub.l   #SLOW_BASE,d0
 .as_ret:
+        rts
+
+; add_low_chip: with slow RAM, ExecBase, its jump table and the supervisor stack live there, so the low chip below
+; HEAP_LOWER is unused once the selftest is done with FTEST_LO..FTEST_HI: LOWHEAP_LO..HEAP_LOWER joins the main chip
+; MemHeader (one header, as on 1.3: programs take the last MemList node for the chip header; a second chip header
+; there made Sanity-Arte crash). LOWVARS_HI..LOWHEAP_LO stays out as a cushion above the low-RAM variables: Bubble
+; Bobble allocates a 512-byte chip block and loads SP with its START, so its stack runs below the block, over the
+; low-RAM variables when the block was the first one above them. Without slow RAM the range holds ExecBase, the
+; margin and the stack: nothing is added. a6 = SysBase.
+add_low_chip:
+        tst.l   EB_MAXEXTMEM(a6)
+        beq.s   .al_ret
+        lea     MH_CHIP,a0
+        move.l  #LOWHEAP_LO,a1
+        move.l  a1,MH_LOWER(a0)
+        move.l  #HEAP_LOWER-LOWHEAP_LO,d0
+        bra     exec_Deallocate
+.al_ret:
         rts
 
 slow_name:

@@ -1505,6 +1505,22 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   INTUITICKS 301 in 30.00 s (10/s, every gap 100 ms) on both; held `a` and cursor up: first repeat 0.400 s, period
   0.040 s (the disk's Preferences), no repeat after the release, on both. `tests/menucat.s`: right Amiga + O ->
   MENUPICK F800 qual 0080, right Amiga + T -> 0080 (Export/Texte sub-item).
+  **Low chip made allocatable (2026-11-05, MEMORY-USAGE candidate 3)**: with slow RAM the supervisor stack moves to
+  the top 4,096 bytes of slow RAM, as on 1.3 (ExecBase `SysStkLower`/`SysStkUpper` now set; coldstart switches SP
+  there as soon as `slow_probe` answers), and `add_low_chip` lowers the chip MemHeader to `$1000` (`LOWHEAP_LO`)
+  after the memory self-test. `$800`-`$1000` stays out as a cushion. Without slow RAM nothing changes (ExecBase, the
+  `$1500`-`$2500` margin, which only protects ExecBase from a supervisor stack overflow, and the stack stay).
+  Workbench 1.3.3 idle on kick-prod, 512+512: 836,152 → **841,528** free (+9,472 chip, −4,096 slow). Before the
+  change, a log-only IPC watch over `$800`-`$2500` (CPU and DMA) through a whole Workbench session with a Shell saw no
+  write; only L:Shell-Seg reads `$9D8` at each NewShell (it hands ExecBase `$C00276` to a BCPL string routine as a
+  BSTR; `<< 2` wraps to `$9D8`; where that value comes from is an open point for the DOS side). Deepest supervisor
+  stack seen: 896 bytes. Two designs failed on real programs first: heap down to `$800` (Bubble Bobble loads SP with
+  the start of a 512-byte chip block it allocates; the block landed at `$8E0` and the stack ran over the low-RAM
+  variables), then a separate low-chip MemHeader (Sanity-Arte crashed; not traced, most likely it expects 1.3's
+  single chip header in the MemList).
+  Validation of the final ROM: prepush FAIL=0 (Lemmings menu looked at); Holiday Lemmings/FLT intro, Bubble Bobble,
+  Sanity-Arte, Spaceballs, Desert Dream, Monkey Island 1, SimCity on 512+512 and chip only against the previous ROM
+  (same screens, demos at other frames); soft-kick ADF hosted by our ROM.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

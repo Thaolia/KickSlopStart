@@ -43,11 +43,15 @@ EXEC_BLOCK   EQU $00001000     ; bottom of exec's jump table without slow RAM
 EXEC_NEGSIZE EQU $276          ; 105 V34 vectors (cf docs/exec-lvo-table.md)
 EXECBASE     EQU EXEC_BLOCK+EXEC_NEGSIZE ; SysBase without slow RAM (complete V34 table below)
 EXEC_POSSIZE EQU $234          ; V34 fields end at KickCheckSum ($22E); +$230 = our EB_INTSVL
-FTEST_LO     EQU $00001500     ; region DISJOINT from the heap for the multi-header test (M2.4a selftest); then free,
-FTEST_HI     EQU $00002500     ; it serves as a margin below the supervisor stack (an overflow does not reach ExecBase)
-SSP_LOWER    EQU $00002500     ; shared supervisor stack [SSP_LOWER, STACKTOP)
+FTEST_LO     EQU $00001500     ; region DISJOINT from the heap for the multi-header test (M2.4a selftest); then free.
+FTEST_HI     EQU $00002500     ; Without slow RAM it stays a margin below the supervisor stack (an overflow does not
+                               ; reach ExecBase); with slow RAM add_low_chip puts it in the chip heap
+SSP_LOWER    EQU $00002500     ; boot stack, and shared supervisor stack without slow RAM: [SSP_LOWER, STACKTOP)
 STACKTOP     EQU $00003500
-HEAP_LOWER   EQU $00003500     ; managed heap (chip)
+SSP_SIZE     EQU STACKTOP-SSP_LOWER ; with slow RAM the shared supervisor stack is the top SSP_SIZE bytes of it, as on
+                               ; 1.3 (memory-budget-v34): ExecBase SysStkLower/SysStkUpper hold the bounds in use
+HEAP_LOWER   EQU $00003500     ; chip heap at init_memory; with slow RAM add_low_chip extends it down to LOWHEAP_LO
+LOWHEAP_LO   EQU $00001000     ; bottom of that extension: LOWVARS_HI..LOWHEAP_LO is a cushion (memory.s add_low_chip)
 
 ; --- Phases (12-bit RGB) ---
 C_RED    EQU $0F00
@@ -609,6 +613,8 @@ EB_COLDCAPTURE EQU $2A
 EB_COOLCAPTURE EQU $2E        ; called before InitCode(RTF_COLDSTART) on every boot that keeps it
 EB_WARMCAPTURE EQU $32        ; kept across a warm reset; 1.3 never reaches the point that calls it
 EB_CHKSUM     EQU $52         ; complement of the word sum of +$22..+$4E (checked over +$22..+$52 = $FFFF)
+EB_SYSSTKUPPER EQU $36        ; top of the shared supervisor stack (the SSP every reset of it reloads)
+EB_SYSSTKLOWER EQU $3A        ; its bottom
 EB_MAXLOCMEM  EQU $3E
 EB_MAXEXTMEM  EQU $4E         ; end of the slow RAM, 0 without
 EB_DEBUGENTRY EQU $42          ; APTR: entry of the debugger (Debug)

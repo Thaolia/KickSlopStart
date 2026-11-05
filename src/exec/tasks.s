@@ -44,8 +44,8 @@ init_task:
         move.b  #-1,TC_IDNESTCNT(a0) ; per-task copies (save/restore at the M3 switch)
         move.b  #-1,TC_TDNESTCNT(a0)
         move.l  #SYS_SIGALLOC,TC_SIGALLOC(a0)
-        move.l  #SSP_LOWER,TC_SPLOWER(a0)  ; supervisor stack bounds (informative)
-        move.l  #STACKTOP,TC_SPUPPER(a0)
+        move.l  EB_SYSSTKLOWER(a6),TC_SPLOWER(a0) ; supervisor stack bounds (informative)
+        move.l  EB_SYSSTKUPPER(a6),TC_SPUPPER(a0)
         move.l  a0,EB_THISTASK(a6)
         rts
 
