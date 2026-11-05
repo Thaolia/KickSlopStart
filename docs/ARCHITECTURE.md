@@ -1,5 +1,65 @@
 # Architecture
 
+## Blitter drawing acceleration (2026-11-04)
+
+`src/graphics/draw.s` accelerates eligible contained solid Draw segments with Agnus line mode in all
+eight octants, preserving direction-dependent Bresenham ties and the RastPort updates. Solid rectangle fills
+(also SetRast and eligible horizontal/vertical Draw calls) use constant A, masked first/last words, and C/D
+read/modify/write. Rectangles need at least 64 word-rows and must fit OCS's 64-word by 1024-row limits; zero
+width/height encodings represent those maxima. Common solid Draw calls return before the last plane completes;
+CPU raster consumers wait before accessing the result. Rectangle and mask operations remain synchronous.
+
+Every enabled plane must be word-aligned CHIP memory, with an even row stride. Disabled planes are ignored.
+The shared blitter semaphore is attempted while the layer lock is held; contention falls back to CPU rendering
+without waiting or releasing another task's ownership. Each blit uses the A1000 dummy BBUSY read and waits before
+reprogramming the registers. Synchronous engines wait before DisownBlitter; the common Draw path can leave its
+last plane in progress. Neither path sets BLTPRI.
+Patterned/ONE_DOT/COMPLEMENT-continuation lines and lines crossing clipping bounds retain the CPU engine;
+patterned fills, small rectangles and unsupported memory/geometries retain their existing CPU paths. Layer
+translation and ClipRect selection precede acceleration, including SMART backup BitMaps.
+
+`BltBitMap` also recognises source-independent minterms (clear, set, invert and preserve; low nibble ignored
+as in the CPU engine). After clipping to both BitMaps, it computes the valid common-depth plane mask and
+return count, then sends modifying operations through the rectangle engine with a temporary layerless
+RastPort. This avoids source-row snapshots, temporary allocation and per-byte Boolean evaluation for layers'
+clear-on-exposure operation. It also accelerates non-DMA destinations through the rectangle engine's CPU
+fallback. Other minterms retain the existing bitmap engine and overlap handling.
+Solid rectangle DMA derives clear/invert/preserve/set from the same per-plane minterm table as the CPU engine,
+including both pen bits and INVERSVID, so upstream raster-mode corrections apply to both paths.
+
+`make test-graphics` and `make test-graphics-quick` run `tests/drawblit.s` on the production ROM. Full buffer and
+RastPort comparisons cover the hardware paths and fallbacks; five native benchmarks enforce a 1.25x speed gate.
+See `tests/README.md` for reproduction and measurements. Register programming follows the public Commodore
+[Amiga Hardware Reference Manual, chapter 6](https://www.ikod.se/wp-content/uploads/2020/08/Amiga_Hardware_Reference_Manual_3rd_Edition.pdf),
+especially line-mode setup and OCS size encodings; no proprietary ROM was read or run for this implementation.
+
+## Clock rendering update (2026-11-05)
+
+Clock's short solid strokes use a direct checked drawing path instead of constructing the generic drawing and
+pattern frames for every call. It preserves the V34 cursor, first-dot and layer pattern-counter rules, including
+draws completely outside a damaged region. Disjoint ClipRects are rejected before a CPU pixel walk. Existing
+caller-owned layer locks are reused. For an idle blitter and a stroke of at most 64 pixels, one brief Forbid
+span protects the ownership/setup sequence; interrupts remain enabled. A pending earlier blit selects the
+normal ownership path, so a long preceding DMA cannot extend that scheduler guard. Existing caller blitter
+leases and other tasks' ownership are preserved.
+
+AreaEnd can generate pure polygon crossing masks, fill them and complete their edges with the blitter. Crossing
+errors retain the CPU's rounding convention; descending exclusive fill of crossings shifted left one pixel
+implements its left-inclusive/right-exclusive spans. Unpatterned masks are composited in one BltTemplate.
+Large CHIP masks are cleared by DMA. Non-DMA or odd masks retain word/byte CPU paths; patterned fills retain
+their original semantics. Mixed ellipse/line lists can start edges at an implicit origin outside the computed
+mask bounds, so they retain the original bounds-checked crossing walk and CPU prefix fill. Caller-owned update
+regions can reject wholly invisible areas before building a scratch mask, while retaining outline/cursor state.
+
+The native suite covers small strokes, all octants and modes, shifted templates, mask alignment, clipping,
+borrowed blitter ownership and Forbid nesting.
+
+The unchanged Workbench Clock was measured from program entry and through a resize refresh. Rendering improved
+substantially, but exact original-ROM speed parity has **not** been reached. The reference's logical display is
+200 lines while this ROM's PAL default is 256, despite both emulators using a PAL beam. Input-matched checks and
+the remaining gap are recorded in `tests/README.md`; original-ROM observations are isolated in
+`docs/analysis/clock-performance-v34.md`.
+
 ## ROM model (Kickstart 1.3, 256K)
 
 - Image of **262,144 bytes**, loaded at **`$FC0000`** (also mapped at `$0` on reset via the OVL overlay).

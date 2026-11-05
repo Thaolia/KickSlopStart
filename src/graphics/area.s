@@ -9,7 +9,7 @@
 ; DrawEllipse: Kennedy's algorithm in two sets (pixels identical to the spec's vectors), zero radii
 ; drawn as a segment, points plotted by the WritePixel LVO. Flood: 4-connected line-by-line fill (seeds
 ; on a stack, ReadPixel via LVO), mask then rendered by RectFill.
-; Deviations: CPU rendering (no blitter or BltPattern), vertex table not translated, AreaEnd without TmpRas
+; Deviations: vertex table not translated, AreaEnd without TmpRas
 ; allocates its mask instead of writing to low memory, exactly Count entries read after an ellipse.
 ; IMPLEMENTATION track ("clean"): graphics AutoDocs + public structures + spec. NO ROM reading.
 
@@ -25,6 +25,10 @@
                 xdef    gfx_DrawEllipse
                 xdef    gfx_Flood
                 xdef    gfx_BltPattern
+                xref    gfx_tryblitter
+                xref    gfx_waitidle
+                xref    gfx_solidline_dma
+                xref    gfx_DisownBlitter
 
 AREAOUTLINE     EQU $0008
 ai_VctrTbl      EQU 0
@@ -42,6 +46,7 @@ LY_LOCK         EQU 72               ; Layer.Lock (SignalSemaphore)
 LVO_READPIXEL   EQU -318
 LVO_WRITEPIXEL  EQU -324
 LVO_AREADRAW    EQU -258
+LVO_BLTTEMPLATE EQU -36
 AF_DRAWN        EQU 1                ; bits of the entry flags
 AF_OUTLINE      EQU 2
 AF_ELLIPSE      EQU 7
@@ -426,7 +431,9 @@ MK_CY           EQU 24
 MK_TBL          EQU 26               ; long: table of an ellipse's half-widths
 MK_FLAGS        EQU 30               ; word: saved rp_Flags
 MK_COLS         EQU 32               ; word: columns rendered by mk_render
-MK_SIZE         EQU 34
+MK_BLITOWN      EQU 34               ; mask DMA ownership, only during the private edge/fill passes
+MK_CHECKED      EQU 36               ; legacy/overflowing edge lists need per-pixel mask bounds checks
+MK_SIZE         EQU 38
 
 ; mk_bit(d0 = x, d1 = y absolute, a5): applies MK_OP to the point (outside the mask: nothing). Clobbers d0/d1/a0.
 mk_bit:
@@ -469,6 +476,10 @@ mk_bit:
 ; start to the end by Draw's unified Bresenham (same pixels as the 1.3 edges, direction included).
 ; Preserves d2-d7/a1-a6.
 mk_line:
+        tst.w   MK_BLITOWN(a5)
+        bne     .ml_dma
+        bsr     mk_fastline
+        bne     .ml_done
         movem.l d2-d7,-(sp)
         move.w  d2,d4
         sub.w   d0,d4                ; d4 = |dx|, d6 = x step
@@ -513,11 +524,147 @@ mk_line:
 .ml_end:
         addq.l  #6,sp
         movem.l (sp)+,d2-d7
+.ml_done:
+        rts
+.ml_dma:
+        movem.l d0-d7/a0-a3,-(sp)
+        sub.w   MK_X0(a5),d0
+        sub.w   MK_X0(a5),d2
+        sub.w   MK_Y0(a5),d1
+        sub.w   MK_Y0(a5),d3
+        moveq   #0,d4
+        move.w  MK_L(a5),d4
+        moveq   #1,d5
+        sub.w   MK_OP(a5),d5
+        moveq   #1,d6
+        move.l  MK_BUF(a5),a0
+        suba.l  a1,a1
+        jsr     gfx_solidline_dma
+        movem.l (sp)+,d0-d7/a0-a3
+        rts
+
+; Contained mask edges need one address calculation, then byte/row steps, rather than mk_bit per pixel.
+; Keep the same start-directed Bresenham decisions; unusual out-of-mask edges retain the checked walk.
+mk_fastline:
+        movem.l d0-d7/a0-a1,-(sp)
+        sub.w   MK_X0(a5),d0
+        sub.w   MK_X0(a5),d2
+        sub.w   MK_Y0(a5),d1
+        sub.w   MK_Y0(a5),d3
+        tst.w   d0
+        bmi     .mf_no
+        tst.w   d2
+        bmi     .mf_no
+        tst.w   d1
+        bmi     .mf_no
+        tst.w   d3
+        bmi     .mf_no
+        cmp.w   MK_COLS(a5),d0
+        bge     .mf_no
+        cmp.w   MK_COLS(a5),d2
+        bge     .mf_no
+        cmp.w   MK_H(a5),d1
+        bge     .mf_no
+        cmp.w   MK_H(a5),d3
+        bge     .mf_no
+        subq.l  #8,sp              ; end x/y, x/y increments
+        move.w  d2,(sp)
+        move.w  d3,2(sp)
+        move.w  #1,4(sp)
+        move.w  #1,6(sp)
+        move.w  d2,d4
+        sub.w   d0,d4
+        bpl.s   .mf_dx
+        neg.w   d4
+        neg.w   4(sp)
+.mf_dx:
+        move.w  d3,d5
+        sub.w   d1,d5
+        bpl.s   .mf_dy
+        neg.w   d5
+        neg.w   6(sp)
+.mf_dy:
+        neg.w   d5
+        move.w  d4,d6
+        add.w   d5,d6
+        moveq   #0,d3
+        move.w  MK_L(a5),d3
+        move.l  d3,a1
+        mulu    d1,d3
+        add.l   MK_BUF(a5),d3
+        move.l  d3,a0
+        move.w  d0,d3
+        lsr.w   #3,d3
+        adda.w  d3,a0
+        tst.w   6(sp)
+        bpl.s   .mf_rowstep
+        move.l  a1,d3
+        neg.l   d3
+        move.l  d3,a1
+.mf_rowstep:
+        moveq   #7,d7
+        move.w  d0,d3
+        and.w   #7,d3
+        sub.w   d3,d7
+.mf_point:
+        move.w  MK_OP(a5),d3
+        beq.s   .mf_set
+        subq.w  #1,d3
+        beq.s   .mf_clear
+        bchg    d7,(a0)
+        bra.s   .mf_step
+.mf_set:
+        bset    d7,(a0)
+        bra.s   .mf_step
+.mf_clear:
+        bclr    d7,(a0)
+.mf_step:
+        cmp.w   (sp),d0
+        bne.s   .mf_more
+        cmp.w   2(sp),d1
+        beq.s   .mf_finished
+.mf_more:
+        move.w  d6,d3
+        add.w   d3,d3
+        cmp.w   d5,d3
+        blt.s   .mf_y
+        add.w   d5,d6
+        add.w   4(sp),d0
+        tst.w   4(sp)
+        bmi.s   .mf_left
+        subq.w  #1,d7
+        bpl.s   .mf_y
+        moveq   #7,d7
+        addq.l  #1,a0
+        bra.s   .mf_y
+.mf_left:
+        addq.w  #1,d7
+        cmp.w   #8,d7
+        blo.s   .mf_y
+        moveq   #0,d7
+        subq.l  #1,a0
+.mf_y:
+        cmp.w   d4,d3
+        bgt     .mf_point
+        add.w   d4,d6
+        add.w   6(sp),d1
+        adda.l  a1,a0
+        bra     .mf_point
+.mf_finished:
+        addq.l  #8,sp
+        moveq   #1,d0
+        bra.s   .mf_ret
+.mf_no:
+        moveq   #0,d0
+.mf_ret:
+        movem.l (sp)+,d0-d7/a0-a1
         rts
 
 ; mk_alloc(d0.w = width in pixels from MK_X0, d1.w = height, a1 = RastPort, a5) -> Z = 0 if a cleared mask
 ; is ready (caller's TmpRas if it exists and is large enough, otherwise allocated memory). Clobbers d0/d1/a0.
 mk_alloc:
+        jsr     gfx_waitidle        ; a caller's scratch raster may alias an earlier Draw destination
+        clr.l   MK_BLITOWN(a5)
         add.w   #15,d0
         lsr.w   #4,d0
         add.w   d0,d0
@@ -543,22 +690,40 @@ mk_alloc:
 .ma_new:
         movem.l d1/a1/a6,-(sp)
         move.l  d1,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  #MEMF_PUBLIC,d1
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
         movem.l (sp)+,d1/a1/a6
         move.l  d0,MK_BUF(a5)
         beq.s   .ma_r
         move.l  d1,MK_ALLOC(a5)
-        moveq   #1,d0
-        rts
+        move.l  d0,a0
+        move.l  d1,d0
 .ma_clr:
+        bsr     area_clear
+        bne     .ma_ok
+        move.l  a0,d1
+        btst    #0,d1
+        beq.s   .ma_longs
+        tst.l   d0
+        beq.s   .ma_ok
+        clr.b   (a0)+
         subq.l  #1,d0
+.ma_longs:
+        move.l  d0,d1
+        lsr.l   #2,d1
+        and.l   #3,d0
+        bra.s   .ma_ltest
+.ma_long:
+        clr.l   (a0)+
+.ma_ltest:
+        subq.l  #1,d1
+        bpl.s   .ma_long
+        subq.w  #1,d0
         bmi.s   .ma_ok
 .ma_cl:
         clr.b   (a0)+
-        subq.l  #1,d0
-        bpl.s   .ma_cl
+        dbra    d0,.ma_cl
 .ma_ok:
         moveq   #1,d0
 .ma_r:
@@ -576,13 +741,34 @@ mk_free:
 .mf_r:
         rts
 
-; mk_render(a5, a6 = GfxBase): each run of 1 bits in a mask row becomes a RectFill on the caller's
-; RastPort (AREAOUTLINE masked during rendering). Preserves d2-d7/a2-a6.
+; mk_render(a5, a6 = GfxBase): composite an unpatterned mask in one BltTemplate; patterned runs retain
+; RectFill semantics. AREAOUTLINE is masked during rendering. Preserves d2-d7/a2-a6.
 mk_render:
         movem.l d2-d7/a2,-(sp)
         move.l  MK_RP(a5),a1
         move.w  rp_Flags(a1),MK_FLAGS(a5)
         and.w   #~AREAOUTLINE,rp_Flags(a1)
+        tst.l   rp_AreaPtrn(a1)
+        bne.s   .mr_pattern
+        move.b  rp_DrawMode(a1),-(sp)
+        and.b   #COMPLEMENT,rp_DrawMode(a1) ; mask zeros stay untouched, solid fills ignore INVERSVID
+        move.l  MK_BUF(a5),a0
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  MK_L(a5),d1
+        move.w  MK_X0(a5),d2
+        ext.l   d2
+        move.w  MK_Y0(a5),d3
+        ext.l   d3
+        moveq   #0,d4
+        move.w  MK_COLS(a5),d4
+        moveq   #0,d5
+        move.w  MK_H(a5),d5
+        jsr     LVO_BLTTEMPLATE(a6)
+        move.l  MK_RP(a5),a1
+        move.b  (sp)+,rp_DrawMode(a1)
+        bra     .mr_end
+.mr_pattern:
         move.l  MK_BUF(a5),a2
         moveq   #0,d7                ; d7 = row
 .mr_row:
@@ -653,6 +839,9 @@ mk_render:
 ; rectangle; otherwise only the pixels whose mask bit is set (bit 7 of the first byte of a row = column xl, rows
 ; bytecnt bytes apart). CPU rendering like the rest of this file.
 gfx_BltPattern:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle
+        move.l  (sp)+,a0
         movem.l d2-d4/a5,-(sp)
         lea     -MK_SIZE(sp),sp
         move.l  sp,a5
@@ -754,6 +943,8 @@ gfx_AreaEnd:
         move.w  d1,d5
 .ae_b4:
         dbra    d7,.ae_bb
+        bsr     ae_update_visible
+        beq     .ae_outside
         and.w   #$FFF0,d2
         move.w  d2,MK_X0(a5)
         move.w  d3,MK_Y0(a5)
@@ -767,8 +958,10 @@ gfx_AreaEnd:
         beq     .ae_nomem
         ; pass 1: crossing points (inversion), pass 2: line filling
         move.w  #2,MK_OP(a5)
+        bsr     ae_edge_enter
         moveq   #1,d6                ; pass 1
         bsr     ae_walk
+        bsr     ae_edge_leave
         bsr     ae_rows
         ; pass 3: complete edges (set to 1, or to 0 if DrawMode = JAM1 and AreaPtSz = 2)
         clr.w   MK_OP(a5)
@@ -780,8 +973,10 @@ gfx_AreaEnd:
         bne.s   .ae_p3
         move.w  #1,MK_OP(a5)
 .ae_p3:
+        bsr     ae_edge_enter
         moveq   #3,d6
         bsr     ae_walk
+        bsr     ae_edge_leave
         bsr     mk_render            ; pass 4: rendering
         bsr     ae_outline
         bsr     mk_free
@@ -789,6 +984,12 @@ gfx_AreaEnd:
         bra.s   .ae_reset2
 .ae_nomem:
         moveq   #-1,d7
+        bra.s   .ae_reset2
+.ae_outside:
+        move.l  MK_RP(a5),a1
+        move.w  rp_Flags(a1),MK_FLAGS(a5)
+        bsr     ae_outline          ; retain cursor/pen state effects even when every pixel is clipped out
+        moveq   #0,d7
         bra.s   .ae_reset2
 .ae_reset:
         moveq   #0,d7
@@ -801,35 +1002,268 @@ gfx_AreaEnd:
         movem.l (sp)+,d2-d7/a2-a5
         rts
 
+; During a caller-owned BeginUpdate, clip rectangles already describe the damaged drawing surface.
+; A disjoint area needs no temporary mask. TmpRas contents are scratch, while AreaInfo/outline state is retained.
+ae_update_visible:
+        movem.l d0-d7/a0-a2,-(sp)
+        move.l  MK_RP(a5),a0
+        move.l  rp_Layer(a0),d0
+        beq     .av_yes
+        move.l  d0,a0
+        move.l  LY_LOCK+40(a0),d0
+        beq     .av_yes
+        move.l  4.w,a1
+        cmp.l   EB_THISTASK(a1),d0
+        bne     .av_yes
+        btst    #4,31(a0)          ; LAYERUPDATING
+        beq     .av_yes
+        tst.l   32(a0)             ; SuperBitMap has a separate clip list
+        bne     .av_yes
+        move.w  16(a0),d6
+        sub.w   44(a0),d6
+        move.w  18(a0),d7
+        sub.w   46(a0),d7
+        add.w   d6,d2
+        bvs.s   .av_yes
+        add.w   d6,d4
+        bvs.s   .av_yes
+        add.w   d7,d3
+        bvs.s   .av_yes
+        add.w   d7,d5
+        bvs.s   .av_yes
+        move.l  8(a0),a0
+.av_clip:
+        move.l  a0,d0
+        beq.s   .av_no
+        tst.l   8(a0)
+        beq.s   .av_bounds
+        tst.l   12(a0)             ; hidden SIMPLE pieces have no drawable pixels
+        beq.s   .av_next
+.av_bounds:
+        cmp.w   16(a0),d4
+        blt.s   .av_next
+        cmp.w   20(a0),d2
+        bgt.s   .av_next
+        cmp.w   18(a0),d5
+        blt.s   .av_next
+        cmp.w   22(a0),d3
+        ble.s   .av_yes
+.av_next:
+        move.l  (a0),a0
+        bra.s   .av_clip
+.av_yes:
+        moveq   #1,d0
+        bra.s   .av_ret
+.av_no:
+        moveq   #0,d0
+.av_ret:
+        movem.l (sp)+,d0-d7/a0-a2
+        rts
+
 ; ae_rows(a5): each mask row is filled from left to right between the crossing points (one point
 ; opens the run, the next closes it without being filled; the pass 3 edges complete it). Preserves d2-d7/a2-a6.
 ae_rows:
         movem.l d2-d5/a2,-(sp)
+        bsr     ae_bltfill
+        bne     .ar_return
         move.l  MK_BUF(a5),a2
         move.w  MK_H(a5),d4
         subq.w  #1,d4
 .ar_row:
         moveq   #0,d2                ; state (0 / $FF)
+        move.l  a2,d0
+        btst    #0,d0
+        bne.s   .ar_bytes
+        move.w  MK_L(a5),d5
+        lsr.w   #1,d5
+        subq.w  #1,d5
+.ar_word:
+        move.w  (a2),d0
+        move.w  d0,d1
+        lsr.w   #1,d1
+        eor.w   d1,d0
+        move.w  d0,d1
+        lsr.w   #2,d1
+        eor.w   d1,d0
+        move.w  d0,d1
+        lsr.w   #4,d1
+        eor.w   d1,d0
+        move.w  d0,d1
+        lsr.w   #8,d1
+        eor.w   d1,d0
+        eor.w   d2,d0
+        move.w  d0,(a2)+
+        lsr.w   #1,d0
+        subx.w  d2,d2
+        dbra    d5,.ar_word
+        bra.s   .ar_nextrow
+.ar_bytes:
         move.w  MK_L(a5),d5
         subq.w  #1,d5
 .ar_byte:
         move.b  (a2),d0
-        moveq   #0,d1                ; result byte
-        moveq   #7,d3
-.ar_bit:
-        btst    d3,d0
-        beq.s   .ar_b0
-        not.b   d2
-.ar_b0:
-        tst.b   d2
-        beq.s   .ar_b1
-        bset    d3,d1
-.ar_b1:
-        dbra    d3,.ar_bit
-        move.b  d1,(a2)+
+        move.b  d0,d1               ; parallel prefix XOR, from the leftmost crossing to each pixel
+        lsr.b   #1,d1
+        eor.b   d1,d0
+        move.b  d0,d1
+        lsr.b   #2,d1
+        eor.b   d1,d0
+        move.b  d0,d1
+        lsr.b   #4,d1
+        eor.b   d1,d0
+        eor.b   d2,d0               ; carry the inside/outside state from the preceding byte
+        move.b  d0,(a2)+
+        lsr.b   #1,d0
+        subx.b  d2,d2               ; last output bit -> $00 / $FF for the next byte
         dbra    d5,.ar_byte
+.ar_nextrow:
         dbra    d4,.ar_row
+.ar_return:
         movem.l (sp)+,d2-d5/a2
+        rts
+
+; Pure polygon crossing masks have even row parity. DESC exclusive fill of the crossings shifted left one
+; yields the CPU's left-inclusive/right-exclusive prefix. Masking the leftmost source bit also prevents
+; the A shifter from carrying that discarded bit into the next row's right edge.
+ae_bltfill:
+        movem.l d0-d3/a0-a1,-(sp)
+        tst.w   MK_CHECKED(a5)
+        bne     .ab_no
+        move.l  ai_FlagTbl(a2),a0
+        move.w  ai_Count(a2),d0
+        subq.w  #1,d0
+.ab_scan:
+        btst    #AF_ELLIPSE,(a0)+  ; legacy ellipse/line sequences can have odd-parity rows
+        bne     .ab_no
+        dbra    d0,.ab_scan
+        bsr     area_dma_enter
+        beq.s   .ab_no
+        jsr     gfx_waitidle
+        moveq   #0,d0
+        move.w  MK_L(a5),d0
+        mulu    MK_H(a5),d0
+        add.l   MK_BUF(a5),d0
+        subq.l  #2,d0
+        move.l  d0,a1
+        move.w  MK_L(a5),d2
+        lsr.w   #1,d2
+        and.w   #63,d2
+        move.w  MK_H(a5),d3
+        lsl.w   #6,d3
+        or.w    d3,d2
+        move.w  #$19f0,BLT_CON0(a0) ; A/D, A shift 1, copy A
+        move.w  #$0012,BLT_CON1(a0) ; descending, exclusive fill, carry-in zero on each row
+        move.w  #$ffff,BLT_AFWM(a0)
+        move.w  #$7fff,BLT_ALWM(a0)
+        clr.w   BLT_ADAT(a0)
+        clr.w   BLT_AMOD(a0)
+        clr.w   BLT_DMOD(a0)
+        move.l  a1,BLT_APT(a0)
+        move.l  a1,BLT_DPT(a0)
+        move.w  d2,BLT_SIZE(a0)
+        bsr     ae_edge_leave
+        moveq   #1,d0
+        bra.s   .ab_ret
+.ab_no:
+        moveq   #0,d0
+.ab_ret:
+        movem.l (sp)+,d0-d3/a0-a1
+        rts
+
+; A private mask is DMA-accessible only when all its rows fit OCS and both endpoints are CHIP RAM.
+area_dma_enter:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        clr.w   MK_BLITOWN(a5)
+        move.w  MK_L(a5),d0
+        beq.s   .ad_no
+        cmp.w   #128,d0
+        bhi.s   .ad_no
+        move.w  MK_H(a5),d1
+        beq.s   .ad_no
+        cmp.w   #1024,d1
+        bhi.s   .ad_no
+        move.l  MK_BUF(a5),d0
+        beq.s   .ad_no
+        btst    #0,d0
+        bne.s   .ad_no
+        move.l  4.w,a6
+        cmp.l   EB_MAXLOCMEM(a6),d0
+        bhs.s   .ad_no
+        moveq   #0,d0
+        move.w  MK_L(a5),d0
+        mulu    MK_H(a5),d0
+        add.l   MK_BUF(a5),d0
+        subq.l  #1,d0
+        cmp.l   EB_MAXLOCMEM(a6),d0
+        bhs.s   .ad_no
+        move.l  16(sp),a6          ; saved GfxBase
+        jsr     gfx_tryblitter
+        beq.s   .ad_no
+        move.w  #1,MK_BLITOWN(a5)
+        moveq   #1,d0
+        bra.s   .ad_ret
+.ad_no:
+        moveq   #0,d0
+.ad_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+area_clear:
+        movem.l d0-d2/a0-a1,-(sp)
+        cmp.l   #256,d0
+        blo.s   .az_no
+        bsr     area_dma_enter
+        beq.s   .az_no
+        jsr     gfx_waitidle
+        move.w  MK_L(a5),d1
+        lsr.w   #1,d1
+        and.w   #63,d1
+        move.w  MK_H(a5),d2
+        lsl.w   #6,d2
+        or.w    d2,d1
+        move.w  #$0100,BLT_CON0(a0) ; D only, constant zero
+        clr.w   BLT_CON1(a0)
+        clr.w   BLT_DMOD(a0)
+        move.l  MK_BUF(a5),BLT_DPT(a0)
+        move.w  d1,BLT_SIZE(a0)
+        bsr     ae_edge_leave
+        moveq   #1,d0
+        bra.s   .az_ret
+.az_no:
+        moveq   #0,d0
+.az_ret:
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+ae_edge_enter:
+        movem.l d0/a0,-(sp)
+        tst.w   MK_COLS(a5)
+        ble.s   .ee_checked
+        tst.w   MK_H(a5)
+        ble.s   .ee_checked
+        move.l  ai_FlagTbl(a2),a0
+        btst    #AF_DRAWN,(a0)      ; a missing initial Move can leave the implicit origin outside the mask
+        bne.s   .ee_checked
+        move.w  ai_Count(a2),d0
+        subq.w  #1,d0
+.ee_scan:
+        btst    #AF_ELLIPSE,(a0)+  ; ellipse/line continuation has the same legacy implicit-origin behavior
+        bne.s   .ee_checked
+        dbra    d0,.ee_scan
+        bsr     area_dma_enter
+        bra.s   .ee_done
+.ee_checked:
+        move.w  #1,MK_CHECKED(a5)
+.ee_done:
+        movem.l (sp)+,d0/a0
+        rts
+ae_edge_leave:
+        tst.w   MK_BLITOWN(a5)
+        beq.s   .el_done
+        movem.l d0-d1/a0-a1,-(sp)
+        jsr     gfx_waitidle
+        jsr     gfx_DisownBlitter
+        clr.w   MK_BLITOWN(a5)
+        movem.l (sp)+,d0-d1/a0-a1
+.el_done:
         rts
 
 ; ae_walk(d6 = pass 1 | 3, a2 = AreaInfo, a5): walks the Count entries. Pass 1: non-horizontal edges ->
@@ -895,6 +1329,87 @@ ae_walk:
 ; ae_cross(d4/d5 = start, d2/d3 = end, a5): for each line y in [min y, max y[ of the edge, inversion of the point
 ; x = x(top) + round((y - y(top)) × dx / dy). Preserves d2-d7/a2-a6.
 ae_cross:
+        tst.w   MK_CHECKED(a5)
+        bne     ae_cross_checked
+        tst.w   MK_BLITOWN(a5)
+        bne     .ac_dma
+        movem.l d2-d7/a1,-(sp)
+        cmp.w   d3,d5
+        ble.s   .ac_order
+        exg     d2,d4
+        exg     d3,d5
+.ac_order:
+        move.w  d3,d7
+        sub.w   d5,d7               ; dy > 0, bottom row is excluded
+        move.w  d2,d6
+        sub.w   d4,d6
+        ext.l   d6
+        divs    d7,d6               ; one floor(dx/dy) and nonnegative remainder for the whole edge
+        move.l  d6,d0
+        swap    d0
+        tst.w   d0
+        bpl.s   .ac_fraction
+        subq.w  #1,d6
+        add.w   d7,d0
+.ac_fraction:
+        move.w  d7,d2
+        subq.w  #1,d2
+        move.w  d5,d1
+        sub.w   MK_Y0(a5),d1
+        mulu    MK_L(a5),d1
+        add.l   MK_BUF(a5),d1
+        move.l  d1,a0
+        sub.w   MK_X0(a5),d4
+        moveq   #0,d5
+        move.w  d7,d5               ; error starts halfway through the denominator: ties round upwards
+        move.l  d5,d3
+        add.l   d3,d3
+        moveq   #0,d7
+        move.w  d0,d7
+        add.l   d7,d7
+.ac_row:
+        move.w  d4,d0
+        lsr.w   #3,d0
+        lea     0(a0,d0.w),a1
+        move.w  d4,d1
+        not.w   d1
+        bchg    d1,(a1)
+        adda.w  MK_L(a5),a0
+        add.w   d6,d4
+        add.l   d7,d5
+        cmp.l   d3,d5
+        blo.s   .ac_next
+        sub.l   d3,d5
+        addq.w  #1,d4
+.ac_next:
+        dbra    d2,.ac_row
+        movem.l (sp)+,d2-d7/a1
+        rts
+.ac_dma:
+        movem.l d0-d7/a0-a3,-(sp)
+        move.w  d4,d0
+        move.w  d5,d1
+        cmp.w   d3,d1
+        ble.s   .ac_dma_order
+        exg     d0,d2
+        exg     d1,d3
+.ac_dma_order:
+        sub.w   MK_X0(a5),d0
+        sub.w   MK_X0(a5),d2
+        sub.w   MK_Y0(a5),d1
+        sub.w   MK_Y0(a5),d3
+        moveq   #0,d4
+        move.w  MK_L(a5),d4
+        moveq   #0,d5
+        move.w  #$101,d6
+        move.l  MK_BUF(a5),a0
+        suba.l  a1,a1
+        jsr     gfx_solidline_dma
+        movem.l (sp)+,d0-d7/a0-a3
+        rts
+
+; Legacy implicit origins may be outside the computed bounds; mk_bit must clip every crossing.
+ae_cross_checked:
         movem.l d2-d7,-(sp)
         cmp.w   d3,d5                ; (d4, d5) = top, (d2, d3) = bottom
         ble.s   .ac_o

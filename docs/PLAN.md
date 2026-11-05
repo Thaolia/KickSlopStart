@@ -1,5 +1,27 @@
 # Plan — Open-source clean-room reimplementation of a Kickstart 1.3 (Amiga 500)
 
+## Drawing acceleration update — 2026-11-04
+
+- Done: hardware line mode for contained solid lines in all octants and area-mode blits for sufficiently large
+  solid rectangles, with plane masks, clipping and SMART backing stores. Memory alignment, OCS dimensions,
+  patterns, ONE_DOT, first-dot continuation and blitter contention select the existing CPU paths when needed.
+- Upstream raster integration: retained corrected mode/minterm and scrolling behavior; solid rectangle DMA
+  uses the CPU engine's minterm table, covered by 32 added mode/pen-pair cases.
+- Native regression: `make test-graphics` / `make test-graphics-quick`, beneath the global normal/quick test
+  groups. CHIP output and RastPort state must match the non-DMA CPU reference, including buffer guards.
+- Performance gate reproduced before and after on production ROMs: the old paths pass correctness but fail the
+  1.25x speed requirement; the accelerated paths pass (17.59x diagonal lines, 2.08x solid fills in Copperline 1.0.1
+  on A500/OCS). Reproduction and limits: `tests/README.md`.
+- Remaining: patterned and clipped-piece line acceleration, patterned fills, and general asynchronous blit API behavior.
+- Clock follow-up (2026-11-05): direct short-stroke setup, pure-polygon mask DMA, masked template composition,
+  update-region rejection and safe CPU consumers of asynchronous Draw results. Added short-line and polygon
+  speed gates plus ownership, alignment, mode and mixed ellipse/line correctness cases.
+  **Original Clock speed parity remains open**; measurements must
+  match logical screen height/aspect as well as machine and Window dimensions.
+- Window-close follow-up: source-independent `BltBitMap` minterms now share the rectangle engine, avoiding
+  row buffers and CPU truth-table evaluation when layers clear exposed areas. Independent pixel fingerprints
+  and a third speed gate cover this path; the pre-fix clear workload fails the speed gate, the fixed ROM passes.
+
 ## Context
 
 Goal: produce an **open-source, strictly 1.3-compatible Kickstart** — a ROM image of **256 KiB
@@ -1121,7 +1143,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   pixels, and the three V34 layer defects (double counter decrease, clipped-piece phase from linpatcnt, no first dot
   in clipped pieces); Move and Set*Pen restart the pattern; PolyDraw calls Draw through its vector.
   `tests/gline_probe.sh` matches §10 except by design: no write outside the BitMap without a layer (clipped), a
-  synchronous CPU Draw (blitter idle on return). Open: rp minterms[] not computed, GfxBase BlitLock (+$AA) not
+  asynchronous completion for eligible common solid Draw calls (CPU consumers wait before access). Open: rp minterms[] not computed, GfxBase BlitLock (+$AA) not
   kept, a y-major clipped piece in a hidden buffer uses y - MinY (spec §7.4 deduces + (MinY & 15), not observed).
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: window

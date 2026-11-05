@@ -30,6 +30,24 @@ DMAF_RASTER EQU $0100         ; bitplane DMA channel (fetches pixel data from ch
 DMAF_MASTER EQU $0200         ; master DMA (required for ANY DMA channel to work)
 DMAF_BLITTER EQU $0040        ; blitter DMA channel
 
+; --- blitter register offsets ---
+BLT_CON0        EQU $040
+BLT_CON1        EQU $042
+BLT_AFWM        EQU $044
+BLT_ALWM        EQU $046
+BLT_CPT         EQU $048
+BLT_BPT         EQU $04C
+BLT_APT         EQU $050
+BLT_DPT         EQU $054
+BLT_SIZE        EQU $058
+BLT_CMOD        EQU $060
+BLT_BMOD        EQU $062
+BLT_AMOD        EQU $064
+BLT_DMOD        EQU $066
+BLT_ADAT        EQU $074
+BLT_BDAT        EQU $072
+BLT_DMACONR     EQU $002
+
 ; --- display init values (HRM): PAL lores OVERSCAN 352x272 (fills the screen edge to edge for the boot screen) ---
 ; hstart=$71 (113), hstop=113+352=465=$1D1 (H8 forced to 1); vstart=$24 (36), vstop=36+272=308=$134 (V8=~V7).
 GFX_DIWSTRT  EQU $2471        ; vstart=$24 (36), hstart=$71 (113)
