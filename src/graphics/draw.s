@@ -1600,7 +1600,7 @@ rf_wrap:
         movem.l (sp)+,d0-d3/a1
         rts
 rf_outline:
-        movem.l d2-d5/a2,-(sp)
+        movem.l d2-d5/a2-a3,-(sp)
         move.l  a1,a2
         movem.w d0-d3,-(sp)
         btst    #1,rp_DrawMode(a2)   ; COMPLEMENT
@@ -1628,32 +1628,34 @@ rf_outline:
         move.l  a2,a1
         moveq   #JAM1,d0
         jsr     LVO_SETDRMD(a6)
+        movem.w d2-d5,-(sp)          ; corners, indexed by ro_path
+        lea     ro_path(pc),a3
+        move.w  #LVO_MOVE,d3
+        moveq   #4,d2
+.ro_pt:
+        moveq   #0,d0
+        move.b  (a3)+,d0
+        move.w  0(sp,d0.w),d0
+        ext.l   d0
+        moveq   #0,d1
+        move.b  (a3)+,d1
+        move.w  0(sp,d1.w),d1
+        ext.l   d1
         move.l  a2,a1
-        move.l  d2,d0
-        move.l  d3,d1
-        jsr     LVO_MOVE(a6)
-        move.l  a2,a1
-        move.l  d2,d0
-        move.l  d5,d1
-        jsr     LVO_DRAW(a6)
-        move.l  a2,a1
-        move.l  d4,d0
-        move.l  d5,d1
-        jsr     LVO_DRAW(a6)
-        move.l  a2,a1
-        move.l  d4,d0
-        move.l  d3,d1
-        jsr     LVO_DRAW(a6)
-        move.l  a2,a1
-        move.l  d2,d0
-        move.l  d3,d1
-        jsr     LVO_DRAW(a6)
+        jsr     0(a6,d3.w)
+        move.w  #LVO_DRAW,d3
+        dbra    d2,.ro_pt
+        addq.l  #8,sp
         move.b  (sp)+,rp_DrawMode(a2)
         move.b  (sp)+,rp_FgPen(a2)
         move.l  (sp)+,RP_MINT(a2)
         move.l  (sp)+,RP_MINT+4(a2)
-        movem.l (sp)+,d2-d5/a2
+        movem.l (sp)+,d2-d5/a2-a3
         rts
+; outline path (spec §3.7): byte offsets of x and y among the stacked corners xmin, ymin, xmax, ymax
+ro_path:
+        dc.b    0,2, 0,6, 4,6, 4,2, 0,2
+        even
 
 ; SetRast(rp a1, pen d0) (spec graphics-raster-v34 §4): every plane of rp_Mask below the depth set to its pen bit over
 ; the whole BitMap (BytesPerRow x Rows) without a layer, over the whole layer (visible parts and SMART backing store)
