@@ -263,6 +263,8 @@ gb_SprNull   EQU GB_PUBLIC    ; APTR: empty sprite (chip, POS/CTL = 0) for chann
 gb_SprCop    EQU GB_PUBLIC+4  ; APTR: value word of SPR0PTH in the loaded copper list (0 = none)
 gb_SprData   EQU GB_PUBLIC+8  ; 8 x APTR: data (POS/CTL + image) of each channel, 0 = empty sprite
 gb_BlitSem   EQU GB_PUBLIC+42 ; SignalSemaphore (46 bytes): blitter ownership (OwnBlitter / DisownBlitter)
+GB_SS_NESTCOUNT EQU 14        ; struct SignalSemaphore : ss_NestCount
+GB_SS_QUEUECOUNT EQU 44       ; struct SignalSemaphore : ss_QueueCount
 GB_SS_OWNER  EQU 40           ; struct SignalSemaphore : ss_Owner
 gb_SprSS     EQU GB_PUBLIC+42+46 ; 8 x APTR: the table GfxBase->SimpleSprites points to
 GFXBASE_SIZE EQU GB_PUBLIC+42+46+32

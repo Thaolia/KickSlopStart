@@ -3,11 +3,15 @@
 ## Blitter drawing acceleration (2026-11-04)
 
 `src/graphics/draw.s` accelerates eligible contained solid Draw segments with Agnus line mode in all
-eight octants, preserving direction-dependent Bresenham ties and the RastPort updates. Solid rectangle fills
+eight octants, preserving direction-dependent Bresenham ties and the RastPort updates. Horizontal solid lines
+bypass the direct line-mode path and keep the less expensive generic row fill (or eligible rectangle DMA).
+One-row spans below the DMA size threshold are rejected before saving the blitter setup frame. Solid rectangle fills
 (also SetRast and eligible horizontal/vertical Draw calls) use constant A, masked first/last words, and C/D
 read/modify/write. Rectangles need at least 64 word-rows and must fit OCS's 64-word by 1024-row limits; zero
 width/height encodings represent those maxima. Common solid Draw calls return before the last plane completes;
-CPU raster consumers wait before accessing the result. Rectangle and mask operations remain synchronous.
+CPU raster consumers wait before accessing the result. FreeRaster, screen-plane release, owned layer bitmap
+release and GEL-buffer release also wait before handing memory to the allocator. Rectangle and mask operations
+remain synchronous.
 
 Every enabled plane must be word-aligned CHIP memory, with an even row stride. Disabled planes are ignored.
 The shared blitter semaphore is attempted while the layer lock is held; contention falls back to CPU rendering
@@ -41,7 +45,8 @@ draws completely outside a damaged region. Disjoint ClipRects are rejected befor
 caller-owned layer locks are reused. For an idle blitter and a stroke of at most 64 pixels, one brief Forbid
 span protects the ownership/setup sequence; interrupts remain enabled. A pending earlier blit selects the
 normal ownership path, so a long preceding DMA cannot extend that scheduler guard. Existing caller blitter
-leases and other tasks' ownership are preserved.
+leases and other tasks' ownership are preserved. Semaphore ownership, nesting and queue fields use named
+SignalSemaphore layout constants from `graphics.i`.
 
 AreaEnd can generate pure polygon crossing masks, fill them and complete their edges with the blitter. Crossing
 errors retain the CPU's rounding convention; descending exclusive fill of crossings shifted left one pixel

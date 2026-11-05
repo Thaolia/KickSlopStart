@@ -110,6 +110,9 @@ _start:
         cmp.w   #3,d7
         beq.s   .label
         lea     areamsg(pc),a0
+        cmp.w   #4,d7
+        beq.s   .label
+        lea     horizmsg(pc),a0
 .label:
         bsr     puts
         move.l  d6,d0
@@ -121,7 +124,7 @@ _start:
         moveq   #10,d0
         bsr     putc
         addq.w  #1,d7
-        cmp.w   #5,d7
+        cmp.w   #6,d7
         bne.s   .bench
         lea     endmsg(pc),a0
         bsr     puts
@@ -466,6 +469,8 @@ bitmap_checks:
         rts
 
 measure:
+        cmp.w   #5,d7
+        beq     horizontal_measure
         cmp.w   #3,d7
         bhs     clock_measure
         move.l  gfxbase(pc),a6
@@ -984,6 +989,33 @@ clock_polygon:
         bne     fail
         movem.l (sp)+,d2-d7/a3
         rts
+; Horizontal solid lines must retain the inexpensive row-fill path, on CHIP as well as non-DMA memory.
+horizontal_measure:
+        movem.l d2-d7/a3,-(sp)
+        bsr     clock_port
+        move.l  a2,a1
+        moveq   #0,d0
+        jsr     -354(a6)
+        moveq   #1,d0
+        jsr     -342(a6)
+        move.b  #3,rp_Mask(a2)
+        bsr     now
+        move.l  d0,d4
+        moveq   #99,d3
+.loop:
+        moveq   #10,d0
+        moveq   #120,d1
+        jsr     -240(a6)
+        move.w  #630,d0
+        moveq   #120,d1
+        jsr     -246(a6)
+        dbra    d3,.loop
+        jsr     -228(a6)
+        bsr     now
+        sub.l   d4,d0
+        movem.l (sp)+,d2-d7/a3
+        rts
+
 clock_measure:
         movem.l d2-d7/a3,-(sp)
         bsr     clock_port
@@ -1092,6 +1124,7 @@ fillmsg: dc.b   "DRAWBLIT FILL ",0
 clearmsg: dc.b  "DRAWBLIT CLEAR ",0
 shortmsg: dc.b  "DRAWBLIT SHORT ",0
 areamsg: dc.b   "DRAWBLIT AREA ",0
+horizmsg: dc.b  "DRAWBLIT HORIZ ",0
 endmsg: dc.b    "DRAWBLIT END",10,0
 failmsg: dc.b   "DRAWBLIT FAIL",10,0
         even

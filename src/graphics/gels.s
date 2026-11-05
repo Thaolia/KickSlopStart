@@ -1650,6 +1650,9 @@ fb_one:
         rts
 ; fb_free(a0 = address of the pointer, d0 = size): FreeMem if non-zero, pointer reset to 0.
 fb_free:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle        ; the owned bitmap/buffer can be an asynchronous Draw destination
+        move.l  (sp)+,a0
         move.l  (a0),d1
         beq.s   .ff_r
         clr.l   (a0)

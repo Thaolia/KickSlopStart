@@ -17,11 +17,11 @@ def main():
     parser.add_argument("--copperline", default=os.environ.get("COPPERLINE", "copperline"))
     parser.add_argument("--ctl", default=os.environ.get("COPPERLINE_CTL", "copperline-ctl"))
     parser.add_argument("--allow-slow", action="store_true", help="collect the CPU baseline")
-    parser.add_argument("--seconds", type=int, default=240)
+    parser.add_argument("--seconds", type=int, default=360)
     parser.add_argument("--fast", default="0", help="Amiga fast RAM size")
     parser.add_argument("--tag", default="DRAWBLIT")
     parser.add_argument("--pass-marker")
-    parser.add_argument("--workloads", nargs="*", default=["LINE", "FILL", "CLEAR", "SHORT", "AREA"])
+    parser.add_argument("--workloads", nargs="*", default=["LINE", "FILL", "CLEAR", "SHORT", "AREA", "HORIZ"])
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -78,8 +78,9 @@ floppy_sounds = false
         print(f"{name}: CHIP {chip}, CPU {cpu} scanlines, {cpu / chip:.2f}x")
     (out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     print("Pixels, guards and RastPort state match the CPU fallback." if args.workloads else marker)
-    if not args.allow_slow and any(result["speedup"] < 1.25 for result in results.values()):
-        raise SystemExit("Expected at least 1.25x acceleration for every workload")
+    if not args.allow_slow and any(result["speedup"] < (1 / 1.10 if name == "horiz" else 1.25)
+                                   for name, result in results.items()):
+        raise SystemExit("Expected 1.25x acceleration, with at most 10% horizontal slowdown")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@
                 xdef    gfx_AskSoftStyle
                 xdef    gfx_SetSoftStyle
                 xdef    gfx_AllocRaster
+                xref    gfx_waitidle
                 xdef    gfx_FreeRaster
                 xref    topaz8_strike
                 xref    topaz8_loc
@@ -304,6 +305,7 @@ gfx_FreeRaster:
         move.l  a0,a1
         cmpa.w  #0,a1
         beq.s   .fr_r
+        jsr     gfx_waitidle        ; Draw may still be writing the plane returned to the allocator
         bsr.s   tx_rassize
         move.l  a6,-(sp)
         move.l  ($4).w,a6

@@ -17,6 +17,8 @@
                 include "intuition.i"
                 include "graphics.i"
 
+LVO_WAITBLIT    EQU -228             ; graphics.library public vector
+
                 xdef    intuition_OpenScreen
                 xdef    intuition_CloseScreen
                 xdef    intuition_OpenWorkBench
@@ -310,6 +312,7 @@ intuition_OpenScreen:
 sc_free:
         lea     SC_VIEWPORT(a3),a0
         move.l  IB_GFXBASE(a5),a6
+        jsr     LVO_WAITBLIT(a6)    ; finish pending raster DMA before freeing screen planes
         jsr     LVO_FREEVPORTCOPLISTS(a6)
         move.l  ($4).w,a6
         move.l  SCX_PLANESIZE(a3),d0

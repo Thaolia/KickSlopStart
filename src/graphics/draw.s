@@ -514,8 +514,16 @@ rc_one:
         moveq   #0,d4
         move.w  bm_BytesPerRow(a0),d4
         move.w  d4,RC_BPR(a4)
+        tst.w   d3
+        bne.s   .o_blit
+        move.w  d2,d5
+        sub.w   d0,d5
+        cmp.w   #992,d5            ; even an unaligned single row cannot reach the 64-word DMA threshold
+        bls.s   .o_cpu
+.o_blit:
         bsr     rc_blit
         bne     .o_ret
+.o_cpu:
         mulu    d1,d4
         moveq   #0,d5
         move.w  d0,d5
@@ -2239,6 +2247,8 @@ cl_go:
 ; graphics-line-v34). Pattern counter: decreased by the major length M by the unclipped engine (which also clears
 ; FRST_DOT), and once more with a layer, as 1.3 does (§7.3).
 gfx_Draw:
+        cmp.w   rp_cp_y(a1),d1     ; solid horizontal spans use the cheaper row-fill engine
+        beq.s   .dw_generic
         bsr     dr_directdraw
         beq.s   .dw_generic
         rts
@@ -2506,11 +2516,11 @@ dr_directdraw:
         beq.s   .dd_shortowned
         bra.s   .dd_shortbusy
 .dd_freeblitter:
-        cmp.w   #-1,44(a3)
+        cmp.w   #-1,GB_SS_QUEUECOUNT(a3)
         bne.s   .dd_shortbusy
         move.l  d7,GB_SS_OWNER(a3)
-        move.w  #1,14(a3)
-        clr.w   44(a3)
+        move.w  #1,GB_SS_NESTCOUNT(a3)
+        clr.w   GB_SS_QUEUECOUNT(a3)
         st      DD_BLTAUTO(a4)
 .dd_shortowned:
         st      DD_BLTFAST(a4)
@@ -2541,8 +2551,8 @@ dr_directdraw:
         beq.s   .dd_permit
         lea     gb_BlitSem(a6),a3
         clr.l   GB_SS_OWNER(a3)
-        clr.w   14(a3)
-        move.w  #-1,44(a3)
+        clr.w   GB_SS_NESTCOUNT(a3)
+        move.w  #-1,GB_SS_QUEUECOUNT(a3)
 .dd_permit:
         move.l  a6,-(sp)
         move.l  4.w,a6

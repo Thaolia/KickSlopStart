@@ -17,7 +17,7 @@ CPU fallbacks. Masked non-CHIP planes must not prevent eligible CHIP planes from
 The benchmark measures 32 diagonal lines, 32 unaligned solid rectangle fills and 32 source=destination
 `BltBitMap` clears over three planes, with a
 WaitBlit before stopping the timer. Elapsed time uses a VBlank counter plus the beam position (PAL scanline
-units), not host execution time. Each workload must be at least **1.25x faster** in CHIP memory than the CPU
+units), not host execution time. Each acceleration workload must be at least **1.25x faster** in CHIP memory than the CPU
 reference. Outputs, screenshot and session PID/command ledger are in `build/drawblit-results/`.
 Upstream integration also checks 32 solid-rectangle cases covering all draw modes and every foreground/background
 plane-bit pair, including preserve and INVERSVID operations, against the updated CPU engine. A separate
@@ -59,6 +59,23 @@ The actual Workbench 1.3 disk drawer was opened and closed on both ROMs with the
 (512 KiB CHIP, 512 KiB slow, 1 MiB fast). `CloseWindow` entry-to-caller-return timing fell from **0.815 s**
 to **0.051 s** (about **16x**); the return PC and stack position were verified, and the opened and repaired
 desktop captures were inspected. These are emulated times, including scheduling and interrupts.
+
+## PR review regressions (2026-11-05)
+
+`HORIZ` times 100 horizontal two-plane Draw calls. Its CHIP time must be no more than 10% above the
+non-DMA CPU row-fill reference; the five acceleration workloads retain their 1.25x minimum speed gate.
+Horizontal Draw bypasses the common line-mode setup, retaining row fills and eligible rectangle blits.
+The full native suite uses a bounded 360-second emulated capture to include this additional workload.
+The repository's `drawperf.s` workload was also run against upstream and the corrected production ROM, with
+only its output redirected to serial in an ignored local adapter. Screen and covered-window horizontal times
+were both within 5% of upstream, using the same A500/OCS setup and emulated beam timestamps.
+
+`make test-graphics-lifetime`, included beneath both normal and quick graphics groups, runs `rasterfree.s`.
+It starts real OCS DMA into an AllocRaster allocation and an OpenScreen plane, then observes public FreeMem
+handoff during FreeRaster and CloseScreen. BBUSY must already be clear at handoff. The test drains DMA inside
+its observer on a failing ROM to prevent allocator corruption. It fails on the pre-fix ROM and passes once
+raster releases synchronize. Owned layer bitmap and GEL-buffer release paths also wait before freeing memory.
+Paula audio is left available; generated emulator configurations disable floppy-drive effects.
 
 ## Clock application measurements (2026-11-05)
 

@@ -1343,6 +1343,9 @@ lr_bmsize:
         rts
 ; lr_freebm(a0 = backup BitMap, a6 = SysBase).
 lr_freebm:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle        ; the owned bitmap/buffer can be an asynchronous Draw destination
+        move.l  (sp)+,a0
         bsr     lr_bmsize
         move.l  a0,a1
         jmp     LVO_FREEMEM(a6)
