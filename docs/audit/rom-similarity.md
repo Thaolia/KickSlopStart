@@ -1019,6 +1019,171 @@ code match of 8 tokens or more. The only `code/table` matches at or above 40 wor
 (keymap string tables and computed CharLoc tables), unchanged; the longest data rows below that (`gfx_defcolors`,
 32 words; `mn_chk_hi`, 20 words) keep their range and length.
 
+### Addendum 2026-11-05: d153179..532cc3a, then 532cc3a + rf_outline rewrite (before a push)
+
+Two runs. Run 1 audits `532cc3a` and fails in the `instr-souple` stream; the implementation track then rewrote the
+outline path of `rf_outline`, and run 2 audits that tree. The final verdict is at the end of run 2.
+
+#### Run 1: head `532cc3a` (history)
+
+Delta audit of the local commits about to be pushed: base `d153179` (`origin/main`, docs only on top of `81c5105`,
+audited above), head `532cc3a`. Source changes: `1c0faca` (BorderTop 11 and icon names, `src/dos/workbench.s`,
+`src/intuition/screens.s`), `fc546be` (potgo.resource boot proof dev-only, `src/exec/boot.s`), `c3405b0` and
+`a2769b9` (ROM file system on any block device: `src/dos/handler.s`, `ofs.s`, `ofswrite.s`, `ofs.i`, `bcpl.s`,
+`dos_lib.s`; expansion.library cold init, `src/exec/expansion.s`, `resident.s`, `boot.s`), `d6e091d` (SetRast,
+RectFill, ScrollRaster, pen/mode setters and minterm table, `src/graphics/draw.s`), `c4e40ac` (disk validator bitmap
+rebuild, `src/dos/diskvalidator.s`), `5f7964e` (write-back, `src/dos/ofswrite.s`, `handler.s`); the other commits
+are docs or the amiberry skill. Same tool, same `tiers`, `commodore` and `aros2` file lists, same `--base tiers`,
+separate analysis agent, production ROMs (`make kick-prod`) only, each with the vlink map of the same build.
+
+Binary sizes: `d153179` 214,404 bytes, `532cc3a` 216,836 bytes (+2,432).
+
+| role | file | sha1 |
+|---|---|---|
+| base ROM (production, `d153179`) | `is_kick ok`, `chk_sum ok` | `cfdf2dcc8063fb5e7e73eb1c0be229fa1019c364` |
+| head ROM (production, `532cc3a`) | `is_kick ok`, `chk_sum ok` | `388392aaff730e70f4bdc3e5bb708ba8c87eb435` |
+
+```sh
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --temoin tiers ... --temoin commodore ... \
+    --temoin aros build/audit/adf/aros2/boot/amiga/aros.rom.gz build/audit/adf/aros2/boot/amiga/AROSBootstrap \
+                  build/audit/adf/aros2/C build/audit/adf/aros2/Libs \
+    --map <map> --base tiers --selftest                                # each ROM, -> out-<rom>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8   # -> all8-<rom>.txt
+```
+
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Self-check: 12/12 in both runs.
+
+| stream | metric | base `d153179` | head `532cc3a` |
+|---|---|---|---|
+| mots | A tokens | 106,504 | 107,718 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`, `$0DDE6`) | **19** (same, `$0DCC8`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 113 / 10 / 5 | 114 / 9 / 5 |
+| instr | A tokens / max code/table | 66,407 / 16 (keymap) | 67,281 / 17 (keymap, `km_fr_s42+$0`) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 8 / 2 | 8 / 2 |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 16; 19 / 2 | **26** (`rf_outline+$4E`); 21 / 3 |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 265 / 44 / 81 | 267 / 45 / 86 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+Against the controls, our head ROM's longest `instr-souple` code match is 8 tokens (`tiers`), 7 (`commodore`) and
+11 (`aros`), as in the base.
+
+- **Notable lists, `mots` (40) and `instr` (19).** Unchanged once offsets are ignored, except one row: the
+  `expansion_inittab+$4` address table (58 words) becomes `expansion_vectors+$0` (`$0DBFC`, 52 words, `table
+  d'adresses`), because `c3405b0` removed the AUTOINIT init table in front of the vector table (the resident now
+  calls MakeLibrary itself); the vector table, whose normalised form only gives the number of LVOs, is unchanged.
+  The other rows are the qualified data already listed (keymap string tables, computed CharLoc tables, classified
+  init/address tables, `topaz8_loc+$236`). No `instr` row.
+- **Notable list, `instr-souple` (19): one code/table row.**
+
+| offset | address | bytes | loose tokens | symbol | source | changed by these commits |
+|---|---|---|---|---|---|---|
+| `$1268C` | `$FD268C` | 72 | **26** | `rf_outline+$4E` to the end of `rf_outline` (`gfx_SetRast` follows at `$126D4`) | `src/graphics/draw.s` | partly: last 6 of the 26 tokens (`d6e091d`) |
+
+`rf_outline` is RectFill's AREAOUTLINE path. The range covers the outline drawing (one Move and four Draw calls
+through the graphics LVOs, each preceded by the RastPort and the two coordinates loaded into the argument
+registers) and the routine's epilogue (the saved DrawMode, FgPen and the two minterm longwords popped back into
+the RastPort, register restore, return). The order and arguments of the five calls follow
+`docs/analysis/graphics-raster-v34.md` §3.7 step 2, and the restored fields follow §3.7 step 3. The first
+20 tokens (the five calls) are the low-entropy row recorded since the original audit (`rf_outline+$44`/`+$46`,
+20 tokens, `faible entropie`); in the base it is `rf_outline+$42`, 20 tokens, still low entropy. `d6e091d`
+replaced the old epilogue (SetDrMd and SetAPen calls) with direct stores of the saved fields, after pushing the two
+minterm longwords as well. With that epilogue the loose match runs 6 tokens further, to the `rts`. Because the
+range now holds more than three distinct tokens, it is classified `code/table`, no longer low entropy. In the exact
+streams the same range matches only in short pieces: `instr` 8 instructions (`rf_outline+$58` and `+$6C`, two
+Draw calls each), `mots` 10 words (same two places). The 26-token run therefore exists only once registers and
+constants (field offsets, LVOs) are erased.
+- **New matches above the baseline (13 instructions / 19 words).** Only the row above. In `mots` and `instr`, no new
+  code match exceeds the baseline. `km_fr_s42+$0` (`instr` 17) is the qualified French keymap string table, back
+  to its `b573796` start and length after a layout shift.
+- **Other changes in the `--seuil 8` lists** (keyed by stream, class, object, symbol and length, offsets ignored).
+  All are below the baseline:
+  - New code in these commits: `expansion_coldinit+$6` (`$0E296`, mots 8, instr-souple 8), the MakeLibrary
+    call of the new cold init (arguments in the registers the `.fd` fixes) and its result test.
+  - Same symbol and length, start shifted inside routines edited or moved by these commits: `expansion_initfunc+$E`
+    → `+$C` (mots 8), `ofs_dir_next`, `ofs_name_to_block`, `ofs_read_file`, `ow_create` (mots 8 each),
+    `dr_rect+$5A` → `+$40` (instr-souple 9), `rf_outline+$50`/`+$64` → `+$58`/`+$6C` (mots 10, instr 8),
+    `bcpl_rtdata+$48` → `+$3C` (low entropy 10), `sr_vert+$316` → `+$25C` (`texte` 10).
+  - Class or range flips from the layout shift, already seen in earlier runs: `potgo_end+$C` (16, RomTag end and
+    public name) now `code/table`, `mn_chk_hi+$0` (20) now `texte`, `fnt_ta8+$0` (10) now `code/table+texte`,
+    `gameport_end+$2` (17) → `+$C` (15, followed by the expansion RomTag whose flags byte changed).
+  - New data: the disk validator requester texts `dv_err1+$1` and `dv_corrupt+$1` (mots 10 and 11, `texte`). There
+    are also low-entropy rows in `bcpl_rtdata` (8) and the resident-name text rows (`trackdisk_name`,
+    `gameport_dev_name`, `console_name`, 8) that the instruction streams re-segment.
+  - Gone: `hnd_init+$12` (mots 8), `rf_outline+$42` (merged into the row above).
+
+**Run 1 verdict (head ROM, `532cc3a`): FAIL under the mechanical rule, in the `instr-souple` stream only.** One
+`code/table` match, `rf_outline+$4E` (26 loose instructions, `src/graphics/draw.s`), reaches the 19-token loose
+threshold. Its last 6 tokens come from the epilogue that `d6e091d` rewrote. The `mots` and `instr` streams pass: the
+longest code match is still 19 words / 13 instructions (`exp_cpbinding+$22`), and the only matches at or above
+40 words are the already-qualified data. The base (`d153179`) passes: its row in the same routine is 20 tokens,
+classified low entropy. The match is a loose-only coincidence of the five spec-ordered outline calls and the restore
+of the spec-listed fields; the exact streams share at most 8 instructions there. The rule still calls for review on
+the implementation side before the push. The loose row would most likely fall back to the base's low-entropy
+20 tokens if the restore of the saved fields were again written in a way that leaves the five-call run without the
+same epilogue, for example through the setter calls as before `d6e091d`. That is a design choice for the
+implementation track, which should rerun this audit afterwards.
+
+#### Run 2: head `532cc3a` + rf_outline rewrite (working tree, since committed as `4965827`)
+
+The implementation track rewrote the outline path of `rf_outline` (`src/graphics/draw.s`, the only source file
+changed on top of `532cc3a`): the Move and the four Draws now run in a loop over a small table of corner selectors,
+the new local symbol `ro_path` (10 bytes, between `rf_outline` and `gfx_SetRast`). The order and arguments of the
+five calls are unchanged (spec §3.7 step 2). Same tool, same control lists, same `--base tiers`, separate analysis
+agent, production ROM (`make kick-prod`); the map comes from a vlink relink of the same `build/prod` objects with
+`-M`, whose output is byte-identical to `build/prod/kick.bin`.
+
+| role | file | sha1 |
+|---|---|---|
+| head ROM (production, `532cc3a` + rewrite) | `is_kick ok`, `chk_sum ok` | `e0cf99e85c43a4b0a9c2eb8dde69c3e8c75ed4be` |
+
+Binary size 216,844 bytes (+8 against `532cc3a`). `rf_outline` keeps its start and its 150-byte extent; every
+symbol after it moves by 10 bytes.
+
+- **Controls.** Group sizes, every "tiers / commodore / aros vs reference" row and the notable threshold (40 words /
+  19 instructions / 19 loose instructions) are identical to run 1. Self-check: 12/12. Against the controls, our
+  ROM's longest `instr-souple` code match is still 8 (`tiers`), 7 (`commodore`) and 11 (`aros`).
+
+| stream | metric | base `d153179` | run 1 `532cc3a` | run 2 `532cc3a` + rewrite |
+|---|---|---|---|---|
+| mots | A tokens | 106,504 | 107,718 | 107,725 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same) | **19** (same, `$0DCC8`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 113 / 10 / 5 | 114 / 9 / 5 | 112 / 9 / 5 |
+| instr | A tokens / max code/table | 66,407 / 16 (keymap) | 67,281 / 17 (keymap) | 67,287 / 17 (keymap, `km_fr_s42+$0`) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 8 / 2 | 8 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 26 | 23 (same row) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 16; 19 / 2 | **26** (`rf_outline+$4E`); 21 / 3 | **17** (keymap, `km_fr_s42+$0`); 20 / 2 |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 265 / 44 / 81 | 267 / 45 / 86 | 264 / 43 / 85 |
+| self-check | relocated fragments found | 12/12 | 12/12 | 12/12 |
+
+- **Notable lists.** `mots` (40): the same 13 rows as in run 1 (4 `code/table`: the two keymap string tables and the
+  two CharLoc tables; 9 classified data), offsets shifted by 10 after `rf_outline`. `instr` (19): no row.
+  `instr-souple` (19): **no `code/table` row**; the only row is the classified low-entropy `bcpl_rtdata+$8`
+  (23 tokens, `$2DFB8`), present in the base and in run 1.
+- **`rf_outline` and `ro_path`.** Neither has any row of 8 tokens or more in any stream. A `--seuil 5` listing
+  shows that the longest match left inside `rf_outline` is 5 tokens (`mots` at `rf_outline+$80`, and a
+  low-entropy `instr-souple` row at `rf_outline+$12`); `ro_path` has none.
+- **`--seuil 8` lists against run 1** (keyed by stream, class, object, symbol and length, offsets ignored): nothing
+  new. Gone: the five `rf_outline` rows (`instr-souple` 26 at `+$4A`; `instr` 8 and `mots` 10 at `+$58` and
+  `+$6C`), and `al_coplist+$84` (`mots` 8, a `RomTag`-classified data row that the 10-byte shift re-segments).
+  Against the base, the differences are those listed for run 1, minus the `rf_outline` rows and plus the loss of
+  `al_coplist+$84` above.
+- **New matches above the baseline (13 instructions / 19 words).** None. The only code matches above 13 in the
+  instruction streams are the keymap string tables (`km_us_s42`, `km_fr_s42`, 16-17), qualified data.
+
+**Final verdict (head ROM, `532cc3a` + rf_outline rewrite): PASS.** No code/table match reaches 40 words,
+19 instructions or 19 loose instructions in any stream; the longest code match, data excluded, is 19 words /
+13 instructions (`exp_cpbinding+$22`), the base's baseline; the run 1 FAIL row is gone and the rewritten outline
+path matches the reference on at most 5 tokens. While this run was in progress the audited source was committed as
+`4965827` (its `src/` and `Makefile` are identical to the audited tree, and `draw.o` predates the commit); a rebuild
+of that commit differs from the audited ROM only by the embedded ROM ID string (`git describe --dirty`). Any later
+source change needs a new run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
