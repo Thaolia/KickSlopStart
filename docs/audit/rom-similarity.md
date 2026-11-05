@@ -1468,6 +1468,99 @@ code. One classified data row reaches the notable list, `rb_romboot+$6E` (41 wor
 string and init-table head of `mathffp.library`); its ID string comes from `docs/analysis/mathffp-v34.md` §1 and
 should be added to "Provenance of the data that matches". Any later source change needs a new run.
 
+## Re-run 2026-11-05 (`0340006..4db512c`, before the push)
+
+Delta (`src/` only): the keyboard feeder runs inside the intuition input task (`src/dos/feeder.s` reworked,
+`src/intuition/screens.s` `it_intask`, `intuition.i`, `src/exec/input.s`, `boot.s`); the boot console handler ends
+lines with LF, the initial CLI closes its FileHandle, console handler stack 2,048 bytes (`conhandler.s`, `shell.s`,
+`boot.s`); low chip RAM `$1000`-`$3500` joins the chip heap and the supervisor stack moves to the top of slow RAM
+(`boot.s`, `exec.i`, `interrupts.s`, `memory.s` `add_low_chip`, `tasks.s`). Run by a separate analysis agent on
+production ROMs (`make kick-prod`, `romtool info`: `is_kick ok`, checksum ok) built in two worktrees (`0340006`,
+`4db512c`), each with the vlink map of the same build.
+
+Commands (repo root; `run.sh` is the full command of "Commands" above, same `tiers` / `commodore` / `aros`
+controls, `--base tiers --selftest`):
+
+```
+bash run.sh <base|head>.rom <base|head>.map > out-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8 > all8-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 4 > all4-<base|head>.txt
+```
+
+The `--seuil 8` and `--seuil 4` lists were compared by (stream, class, object, symbol+offset, length), absolute
+offsets ignored.
+
+- **Layout.** Object size changes: `boot.o` +4, `memory.o` +34, `tasks.o` −4, `screens.o` +46, `conhandler.o` +8,
+  `shell.o` +60, `feeder.o` −46 bytes (`interrupts.o` and `input.o` keep their size). The shift grows from +$4
+  (`lists.o`) to +$26/+$22/+$24 through exec, +$52 from `menus.o`, +$54 from `dos_lib.o` (the alignment word before
+  `dos_lib.o` is back), +$5C, +$98 after `shell.o`, and ends at +$6C after `feeder.o`.
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Against the controls, our head
+  ROM's longest code match is unchanged: `mots` 10 / 11 / 449 (tiers / commodore / aros, the last being the computed
+  CharLoc table), `instr` 6 / 7 / 7, `instr-souple` 8 / 7 / 11.
+
+| stream | metric | base `0340006` | head `4db512c` |
+|---|---|---|---|
+| mots | A tokens | 110,314 | 110,374 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DF64`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 113 / 10 / 5 | 111 / 10 / 5 |
+| instr | A tokens / max (all) / max code/table | 68,983 / 17 / 17 (`km_us_s42+$0`, `km_fr_s42+$0`) | 68,999 / 17 / 17 (`km_us_s42+$0`) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2F458`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 21 / 2 | 17 (keymap); 21 / 2 |
+| instr-souple | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 264 / 44 / 92 | 263 / 43 / 91 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** `mots` (40): the same 13 rows as in the base (4 `code/table`: the two keymap string tables and
+  the two computed CharLoc tables; 9 classified data, among them `rb_romboot+$6E`, 41 words, unchanged), offsets
+  shifted by the layout. `instr` (19): no row. `instr-souple` (19): only the classified low-entropy
+  `bcpl_rtdata+$8` (23 tokens), as in the base. No new data row reaches 40 words, so no provenance row is needed.
+- **`--seuil 8` differences, code rows.**
+  - `feeder.o`: the base's three 8-word rows `feeder_main+$8`, `+$64`, `+$A4` are gone; one 8-word row
+    `fd_init+$8` (`$32F8E`) is new. All four are the same 16 bytes of our code: an exec AllocMem call with
+    MEMF_PUBLIC|MEMF_CLEAR followed by the NULL test and its branch (only the branch displacement differs). The
+    reworked feeder allocates once instead of three times. Longest `feeder.o` code row: 8 words / 4 instructions /
+    5 loose (base 8 / 4 / 6).
+  - `screens.o` `it_intask+$B2` → `+$DC` (12 words, 8 instructions and 8 loose, `faible entropie`): the input task's
+    dispatch run of short branches and subroutine calls, now followed by the added call into the feeder; the word
+    run stays 12 words, its merged span grows from 26 to 38 bytes and its class becomes `code/table+table
+    d'adresses`.
+  - `boot.o` `coldstart+$314` → `+$338` (8 words): the same 16 bytes, moved by the code added to `coldstart`.
+- **`--seuil 8` differences, data rows.** `boot.o` `coldstart+$224` → `+$242` (12 words, `table d'adresses`, values
+  relocated); `al_coplist+$84` (8 words, `RomTag`) is back with the alignment word before `dos_lib.o`;
+  `ct_rawbit+$1A` (23 words) flips `texte` → `RomTag`; `km_fr_s42+$0` 17 → `km_fr_s42+$2` 16 (instr, loose: keymap
+  table, mots row unchanged at 76); `km_us_himap+$C` 9 → `+$10` 8 (instr, loose); `trackdisk_name+$2` 8 →
+  `+$0` 9 (instr, loose, `texte`); `gameport_dev_name+$0` (8, instr and loose, `texte`) drops below 8. These are
+  2-mod-4 alignment flips of unchanged data.
+- **Changed objects, longest rows of the `--seuil 4` lists** (code = class `code/table`; base → head):
+
+| object | mots: longest code row | instr: longest code row | instr-souple: longest code row | longest row, any class |
+|---|---|---|---|---|
+| `boot.o` | 11 → 11 (`d3c_client+$16`) | 5 → 5 (`coldstart+$68`) | 9 → 9 (`rgt_hl+$4`) | 26 words → 26 (`df0_environ+$0`, `texte`) |
+| `feeder.o` | 8 → 8 (`fd_init+$8`) | 4 → 4 | 6 → 5 (`fd_timed+$5A`) | 13 words → 13 (`fd_conname+$1`, `texte`) |
+| `screens.o` | 13 → 13 (`sc_palette+$8`) | 5 → 5 | 8 → 8 | 13 words (code) |
+| `conhandler.o` | 7 → 7 (`con_closewin+$14`) | 5 → 5 | 7 → 7 | 10 words → 10 (`con_win_emit+$14`, `texte`) |
+| `shell.o` | 8 → 8 (`sh_exec_cmd+$3C`) | 5 → 5 | 6 → 6 | 10 words → 10 (`sh_conname+$2`, `texte`) |
+| `memory.o` | 9 → 9 (`mem_owner+$0`) | 7 → 7 | 9 → 9 (`exec_AvailMem+$12`) | as code |
+| `tasks.o` | 10 → 10 (`exec_SetTaskPri+$12`) | 5 → 5 | 6 → 6 | 12 words → 12 (`exec_AddTask+$2E`, `texte`) |
+| `interrupts.o` | 11 → 11 (`schedule_body+$4`) | 5 → 5 | 5 → 5 | 16 → 16 (`exc_table+$0`, low entropy) |
+
+  New `--seuil 4` rows of 6 tokens or more in these objects are shifted or merged data rows of `coldstart`
+  (6-7 words, address tables and low entropy), `coldstart+$2CE` (6 words, code: the base's `coldstart+$2AA` row
+  moved), `fd_timed+$8C` (7 instructions, `texte`), `fd_service+$6A` (6 words, low entropy),
+  `shell_main+$104` (6 words, data) and `it_intask+$136` (6 words, low entropy + code).
+
+**Verdict (head ROM, `4db512c`): PASS.** No `code/table` match reaches 40 words, 19 instructions or 19 loose
+instructions in any stream. The longest code match, data excluded, is still 19 words / 13 instructions
+(`exp_cpbinding+$22`), and no new code match exceeds it: the new or moved code rows are at most 12 words /
+8 instructions (`it_intask`, low entropy) and 8 words (`fd_init+$8`, `coldstart+$338`). The changed `feeder.o`,
+`screens.o`, `boot.o`, `conhandler.o`, `shell.o`, `memory.o`, `tasks.o` and `interrupts.o` keep their longest code
+rows. No new data row reaches the notable list. Any later source change needs a new run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
