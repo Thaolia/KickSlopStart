@@ -587,6 +587,61 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7af) **Write-back as on 1.3** (2026-11-05, spec `rom-filesystem-v34.md` §7.4, §8.4, `boot-clock-v34.md` §5).
+  `ofswrite.s`: the first change of a clean volume (`ow_wr` -> `ow_dirty`) reads the root into `OW_RB` and writes it
+  with its bitmap flag at 0 and the disk date (longs 118-120) set, before anything else; `OW_DIRTY` is then set and a
+  root written while it is set keeps flag 0 and that date. Headers and data blocks go to the device when written;
+  the bitmap no longer does after each operation (no `ow_sync`). Every transfer sets `GEO_TICKS` to 3; the handler's
+  1 s tick (`hnd_tick`) counts it down while the volume is modified and at 0 calls `ow_flush`: the dirty bitmap
+  blocks, the root re-read and written with flag -1 and the disk date, CMD_UPDATE, TD_MOTOR off (io_Length 0) - 2-3 s
+  after the last disk access. ACTION_FLUSH on a modified volume is held (`HC_FLUSHMSG`, one at a time) and returned
+  as received after the write-back (`hnd_flushed`); otherwise at once. INHIBIT writes back first; an ejection drops a
+  pending write-back (the disk is revalidated at its next mount, flag 0) and returns the held FLUSH. Root directory
+  changes no longer touch the disk date (only the flag toggles do). Measured with `tests/writeback_probe.sh` on the
+  production ROM (Workbench 1.3.3 C: from RAM: to a blank floppy / to a 10 MiB hardfile): 159.0 s -> 43.7 s and
+  15.3 s -> 14.1 s; both images consistent afterwards (flag -1, bitmap = blocks in use, 66 files identical), the
+  hardfile's root flag 0 in the middle of the copy. `tests/hdfs_probe.sh` (40 MiB) went from about 10 minutes to
+  158 s.
+  (7ae) **Disk validator: bitmap rebuilt at mount** (2026-11-05, specs `rom-filesystem-v34.md` §2.3, §8.4,
+  `dos-lvo-partial-v34.md` §1.4, `disk-change-v34.md` §2.5; public OFS layout). On every mount of a DOS disk the
+  handler reads TD_PROTSTATUS (also into `GEO_WPROT`), then `ow_mount` forgets the previous bitmap and loads this
+  one (`ow_bmload`) before DISKINSERTED. A root whose bitmap flag is not -1, or a bitmap block with a bad checksum,
+  goes to `dv_rebuild` (`diskvalidator.s`): every bit free, then the root, the bitmap blocks and their extension
+  blocks, and every object reachable from the root: its header (checksum, type, own key, parent), for a file the data
+  blocks its header and extension blocks list (OFS data blocks are not read) and the extension blocks. The walk keeps
+  no stack (back up through the parent key, position in the parent from the hash of the name). A key outside the
+  partition, a bad header or a key met twice shows "Error validating disk" / volume / "Key <n> out of range" (or
+  "checksum error", "already used"), then "Disk structure corrupt" / "Use DISKDOCTOR to correct it" (`vr_req`,
+  Retry / Cancel; Retry walks again): the volume stays not validated (writes 213, DiskInfo "validating" with no
+  used/free figures). Rebuilt on a writable disk: the bitmap blocks then the root (flag -1, disk date longs 118-120)
+  are written (`ow_writeback`) and CMD_UPDATE; on a write-protected disk the bitmap stays in memory and writes give
+  214, not 213. Unlike 1.3 (a separate Validator process, `L:Disk-Validator` for the rebuild), the handler validates
+  itself, so it answers no packet while a requester is up; the change count is read after the validation, so changes
+  trackdisk saw while a requester was up do not validate the same disk again. Test: `tests/validate_probe.sh` (valid / wprot /
+  corrupt).
+  (7ad) **ROM file system on any block device: hard-disk OFS partitions** (2026-11-05, specs `rom-filesystem-v34.md`,
+  `handlers-v34.md` §1.2-§1.3, `uae-hd-boot-v34.md` §4; public OFS layout). `handler.s` `hnd_open` opens fssm_Device /
+  fssm_Unit / fssm_Flags of the DeviceNode whose dn_Task is the handler's port and fills the geometry `HC_GEO`
+  (`ofs.i`: root, blocks, reserved, byte offset of the partition, I/O reply port `HC_IOPORT`) from the DosEnvec:
+  blocks = (HighCyl - LowCyl + 1) x Surfaces x BlocksPerTrack, offset = LowCyl cylinders, root = (blocks - 1 +
+  Reserved) / 2 (880 on DD); no FileSysStartupMsg = trackdisk unit 0, DD geometry; de_SizeBlock other than 128 or
+  more than one sector per block: the device is not opened (the partition answers "no disk"). Every request goes
+  through DoIO (`ofs_read_block`, `ow_io`, `hnd_tdcmd`), so a device that queues them (uaehf.device) works; disk
+  change and write-protect queries a device rejects read as present / writable. Keys are valid in [Reserved,
+  blocks) (`ofs_blk_valid`, `ow_keyok`). The write context keeps the whole bitmap (`OW_BMTAB`, one `BME_*` entry per
+  bitmap block: key, dirty flag, block): keys from the root's 25 bm_pages then from the bitmap extension blocks (root
+  long 104, 127 keys and a link each); `ow_scan` skips full longs and the search above the root starts at `OW_HINT`
+  (every block below it in use: a nearly full region is crossed once, not per block); `ow_sync` writes the dirty bitmap blocks; DiskInfo
+  counts the free bits over the partition (id_NumBlocks = blocks - reserved). dos (`bcpl_starthandler`): a DeviceNode
+  with no dn_SegList, no dn_Handler and a FileSysStartupMsg gets a "File System" process (pri 10, `dos_handler`),
+  dn_Task written under Forbid before it runs. Boot fixes found on the way (Amiberry's UAE board): `expansion.library`
+  is made and added to LibList by its own rt_Init before the ConfigChain (a DiagPoint that opened it used to make
+  ramlib initialise a second, empty expansion.library, so romboot found no board); InitCode and FindResident follow
+  the bit-31 links of ResModules (the UAE DiagPoint inserts uae.resource that way); the boot's DF0:/DF1: nodes go in
+  front of the DeviceNodes already listed (DH0 added by AddDosNode once dos.library exists) instead of replacing
+  them. Tests: `tests/hdfs_probe.sh` (Workbench 1.3.3 commands on DH0: under Amiberry, then `tests/ofs_check.py`
+  walks the hardfile and compares every bitmap block with the blocks in use), `tests/wbfs_probe.sh` (floppy
+  session), `tests/fsuae_run.sh` (FS-UAE run waiting for a serial marker).
   (7ac) **Fast RAM kept across the insert-disk reboot in vAmiga** (2026-11-04, user report: no fast RAM in SysInfo
   under vAmigaWeb, A500+ ECS, 2 MB chip + 2 MB fast). A floppy inserted on the insert-disk screen makes `disk_watch`
   reboot with the RESET instruction (1.3 boots the floppy without a reset). RESET puts Zorro boards back into autoconfig

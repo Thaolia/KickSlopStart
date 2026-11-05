@@ -1018,14 +1018,39 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (2026-11-04)**: names truncated at 30, 212, root 205/212, root fib_DirEntryType 2, ExNext in creation order,
   rename into itself 202, 213/214 before the name, id_DiskState 80, -1/218 on an absent volume
   (`tests/fsgap_probe.sh`). Open from the `rom-filesystem-v34` comparison: stateless ExNext (fib_DiskKey and
-  fib_FileName), the delayed flush (§8.4) and bm_flag cleared on the first modification, locks kept in dl_LockList
+  fib_FileName), locks kept in dl_LockList
   of an absent volume, RENAME of a locked source (spec open point);
+  **ROM file system on any block device (2026-11-05)**: the OFS handler takes device, unit, flags and geometry from
+  its DeviceNode's FileSysStartupMsg (blocks = cylinders x surfaces x blocks per track, partition offset = LowCyl
+  cylinders, root = (blocks - 1 + reserved) / 2), goes through DoIO (devices that queue requests), and keeps the whole
+  bitmap (bm_pages, then bitmap extension blocks) in memory. A DeviceNode with neither seglist nor handler but a
+  FileSysStartupMsg (a UAE hardfile without RDB) gets a "File System" process on first use. Under Amiberry the
+  hardfile only mounted once three boot issues were fixed: expansion.library is in LibList before the ConfigChain
+  (the UAE DiagPoint opens it: ramlib had initialised a second, empty expansion), InitCode/FindResident follow the
+  bit-31 links a DiagPoint inserts into ResModules, and the DF0:/DF1: nodes no longer replace a DeviceNode added
+  before them. Proven by `tests/hdfs_probe.sh` (40 MiB, 21 bitmap blocks; 64 MiB with `FILL`, 33 bitmap blocks and an
+  extension block) and `tests/wbfs_probe.sh` (Workbench 1.3.3 floppy). Open: only 512-byte blocks; files over
+  65535 data blocks (32 MiB) are not followed (16-bit block index); the bitmap block does not move at each flush
+  (rom-filesystem §8.3); what 1.3 does with TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM on a device that rejects
+  them (ours: present, writable, count 0) is not specified.
+  **Write-back as on 1.3 (2026-11-05)**: root bitmap flag cleared (and disk date set) on the first change, bitmap
+  and root (flag valid) written 2-3 s after the last disk access with CMD_UPDATE and motor off, ACTION_FLUSH held
+  until then and returned unchanged, INHIBIT writes back first. Copy of C: to a floppy 159.0 s -> 43.7 s
+  (`tests/writeback_probe.sh`, production ROM). Open: the bitmap block does not move at each write-back (§8.3); an
+  ejection with a pending write-back loses it silently (1.3 shows a requester through dos's errorreq and keeps the
+  volume, disk-change §2.2.1 point 2); ACTION_FLUSH holding was not run against a packet probe.
+  **Disk validator rebuilds the bitmap (2026-11-05)**: a volume whose root says "bitmap not valid" is validated at
+  mount in the handler (`dv_rebuild`: tree walk from the root, headers, extension blocks, data block tables), written
+  back with the flag valid, or kept in memory on a write-protected disk (214 instead of 213); a broken chain shows
+  "Error validating disk" / "Key n out of range" then "Disk structure corrupt" and leaves the volume not validated
+  (213). Proven by `tests/validate_probe.sh` (rebuilt bitmap identical to xdftool's). Open: 1.3 validates in a
+  separate process and its rebuild lives in `L:Disk-Validator` (ours is in ROM and blocks the handler while a
+  requester is up); the text of the "key met twice" requester and the Retry behaviour of "Disk structure corrupt" are
+  not specified; 1.3's handling of a bad bitmap checksum under a valid flag is not specified (ours rebuilds).
   **dos LVO details (2026-11-04)**: D1 = D0 on packet LVOs, Info(0) to pr_FileSystemTask, ParentDir(0) Result2 0,
   IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
   `tests/fsnodisk_probe.sh`). 213 and 225 requesters done the same day from the analysis track's observation (`fsnodisk_probe.sh notdos|notval`).
-  Open: the validator's own requesters when validation fails ("Error validating disk", "Disk structure corrupt",
-  seen on 1.3; ours fails silently) and the in-memory validation of a read-only disk (1.3 then answers 214, ours
-  213); left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
+  Open: left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
   files (refused today) and then UnLoadSeg's overlay case, Retry restarting the whole call (name resolution
   included) instead of resending the packet; the mouse does not move the pointer while a dos requester is open on
   a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to

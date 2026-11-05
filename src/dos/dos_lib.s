@@ -37,6 +37,7 @@
                 xdef    dos_boot_assigns ; called by the initial CLI (shell.s) once the boot disk is readable
                 xdef    dos_resolve      ; BCPL runtime (deviceproc)
                 xdef    dos_mountlist    ; exec/boot.s: mount list, boot device
+                xdef    vr_req           ; diskvalidator.s: validation requesters
                 xdef    dos_df0bootnode  ; exec/boot.s: DF0: BootNode after a bootblock
                 xref    boot_dos_start   ; exec/boot.s: rest of the startup (Initial CLI), does not return
 

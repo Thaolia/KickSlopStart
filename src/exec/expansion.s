@@ -23,10 +23,10 @@ expansion_romtag:
         dc.w    RTC_MATCHWORD
         dc.l    expansion_romtag         ; RT_MATCHTAG = self
         dc.l    expansion_end            ; RT_ENDSKIP
-        dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,110  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
+        dc.b    RTF_COLDSTART,34,NT_LIBRARY,110  ; RT_FLAGS, RT_VERSION, RT_TYPE, RT_PRI
         dc.l    expansion_name           ; RT_NAME
         dc.l    expansion_name           ; RT_IDSTRING
-        dc.l    expansion_inittab        ; RT_INIT -> AUTOINIT table
+        dc.l    expansion_coldinit       ; RT_INIT: library made and added, then the boards configured
 expansion_name:
         dc.b    "expansion.library",0
 exp_ramname:
@@ -34,11 +34,6 @@ exp_ramname:
 exp_dosname:
         dc.b    "dos.library",0
         EVEN
-expansion_inittab:
-        dc.l    EXPANSIONBASE_SIZE       ; dataSize
-        dc.l    expansion_vectors        ; funcTable
-        dc.l    expansion_datatab        ; dataTable (InitStruct)
-        dc.l    expansion_initfunc       ; initFunc
 ; ABSOLUTE table terminated by -1. Vector N -> LVO -6*N.
 expansion_vectors:
         dc.l    exp_open                 ; 1:  LVO -6
@@ -770,17 +765,25 @@ exp_adddosnode:
         movem.l (sp)+,d2-d3/a2-a3/a6
         rts
 
-; initFunc (d0 = base, a0 = segList, a6 = ExecBase) -> d0 = base: frees the Zorro II memory space (slots $20-$9F)
-; and the I/O space (slots $E9-$EF; $E8 = configuration address, never free), then configures the chain at $E80000.
-expansion_initfunc:
+; expansion_coldinit(d0 = 0, a0 = segList, a6 = ExecBase) -> d0 = base | 0: the library is made (MakeLibrary with
+; expansion_initfunc) and added to LibList BEFORE the boards are configured: a board's DiagPoint, called from the
+; ConfigChain with A5 = this base, may OpenLibrary("expansion.library") (Amiberry's UAE board does); were the library
+; not listed yet, that open would make the resident initialise a second, empty library. Then the memory space is
+; freed for the Zorro II slots (slots $20-$9F) and the I/O space (slots $E9-$EF; $E8 = configuration address, never
+; free), and the chain at $E80000 is configured.
+expansion_coldinit:
         movem.l d2/a2/a6,-(sp)
+        move.l  a0,d1                ; segList
+        lea     expansion_vectors(pc),a0
+        lea     expansion_datatab(pc),a1
+        lea     expansion_initfunc(pc),a2
+        move.l  #EXPANSIONBASE_SIZE,d0
+        jsr     LVO_MAKELIBRARY(a6)
+        tst.l   d0
+        beq.s   .ci_ret
         move.l  d0,a2
-        lea     expansion_name(pc),a1
-        move.l  a1,LN_NAME(a2)
-        move.l  a6,EB_EXECBASE(a2)
-        move.l  a0,EB_SEGLIST(a2)
-        lea     EB_BINDSEM(a2),a0
-        jsr     LVO_INITSEMAPHORE(a6)
+        move.l  d0,a1
+        jsr     LVO_ADDLIBRARY(a6)
         move.l  a2,a6
         moveq   #$20,d0
         move.l  #$80,d1
@@ -788,15 +791,30 @@ expansion_initfunc:
         move.l  #E_IOSLOT_LO+1,d0
         moveq   #E_IOSLOT_HI-E_IOSLOT_LO-1,d1
         bsr     exp_freeexpmem
-        lea     EB_BOARDLIST(a6),a1
-        jsr     newlist
-        lea     EB_MOUNTLIST(a6),a1
-        jsr     newlist
         lea     $E80000,a0
         bsr     exp_configchain
         bsr     exp_memoload
         move.l  a6,d0
+.ci_ret:
         movem.l (sp)+,d2/a2/a6
+        rts
+; expansion_initfunc(d0 = base, a0 = segList, a6 = ExecBase) -> d0 = base: name, ExecBase, segList, binding semaphore,
+; empty board and mount lists.
+expansion_initfunc:
+        move.l  a2,-(sp)
+        move.l  d0,a2
+        lea     expansion_name(pc),a1
+        move.l  a1,LN_NAME(a2)
+        move.l  a6,EB_EXECBASE(a2)
+        move.l  a0,EB_SEGLIST(a2)
+        lea     EB_BINDSEM(a2),a0
+        jsr     LVO_INITSEMAPHORE(a6)
+        lea     EB_BOARDLIST(a2),a1
+        jsr     newlist
+        lea     EB_MOUNTLIST(a2),a1
+        jsr     newlist
+        move.l  a2,d0
+        move.l  (sp)+,a2
         rts
 
 ; --- Reset memo (KickSlopStart design, not 1.3) ---

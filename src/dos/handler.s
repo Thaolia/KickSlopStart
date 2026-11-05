@@ -1,4 +1,5 @@
-; src/dos/handler.s - floppy file-handler process (D3b), one per drive (DF0:, DF1:). Body of a Process (created
+; src/dos/handler.s - ROM file-handler process (D3b), one per floppy drive (DF0:, DF1:) or per OFS partition of a
+; block device (a DeviceNode with no handler of its own, started by dos on first use). Body of a Process (created
 ; by proc_create) that loops
 ; WaitPort/GetMsg on its pr_MsgPort and serves DOS packets: ACTION_FINDINPUT/READ/SEEK/END + LOCATE_OBJECT/
 ; FREE_LOCK/EXAMINE_OBJECT/EXAMINE_NEXT, relying on the OFS machinery (ofs_stream_* / ofs_name_to_block /
@@ -12,8 +13,9 @@
 ; advances in the state; RES1=bytes, 0=EOF). SEEK repositions via ofs_stream_seek (returns the old position). END
 ; frees the state.
 ; REAL STREAMING: no more whole-file buffer -> no file size cap (O(1) footprint = 512 bytes per handle).
-; Drive: the unit of the FileSysStartupMsg of the DeviceNode whose dn_Task is this process's port. Per-drive state
-; (mounted volume, disk change, write context) lives in the handler context, published in tc_UserData (ofs.i).
+; Drive: the device, unit, flags and geometry of the FileSysStartupMsg of the DeviceNode whose dn_Task is this
+; process's port (hnd_open). Per-drive state (geometry, mounted volume, disk change, write context) lives in the
+; handler context, published in tc_UserData (ofs.i).
 ; IMPLEMENTATION track ("clean"): analysis spec + exec AutoDocs. NO ROM reading.
 
                 include "exec.i"
@@ -44,6 +46,7 @@
                 xref    ws_discard
                 xref    ow_relabel
                 xref    ow_ready
+                xref    ow_mount
                 xdef    hnd_busy
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
                 xref    timer_now            ; system time (exec/timer.s)
@@ -52,6 +55,7 @@
 ACTION_MORE_CACHE EQU 18             ; AddBuffers: adds buffers to the filesystem
 ID_VALIDATING   EQU 81               ; InfoData.id_DiskState: no bitmap (no disk, or non-DOS disk)
 ID_WRITE_PROTECTED EQU 80            ; InfoData.id_DiskState: the disk was write-protected when mounted
+ID_VALIDATED    EQU 82               ; InfoData.id_DiskState: bitmap in memory
 IND_WRITEEVENT_C EQU 11              ; input.device
 IE_SIZE         EQU 22               ; struct InputEvent
 DT_DOS          EQU $444F5300        ; "DOS\0"
@@ -59,7 +63,7 @@ DT_NDOS         EQU $4E444F53        ; "NDOS": DOS boot block but invalid root b
 DT_BAD          EQU $42414400        ; "BAD\0": block 0 unreadable
 
 ; handler context (allocated at its startup, pointer in tc_UserData; HC_TDIO and HC_OWCTX: ofs.i)
-HC_VOLUME       EQU HC_OWCTX+4       ; BPTR: volume node of the floppy mounted in this drive | 0
+HC_VOLUME       EQU HC_GEO+GEO_SIZE  ; BPTR: volume node of the disk mounted in this drive or partition | 0
 HC_TMPORT       EQU HC_VOLUME+4      ; timer reply port (MP_SIZE, rounded)
 HC_TMREQ        EQU HC_TMPORT+36     ; timerequest (40)
 HC_INPORT       EQU HC_TMREQ+40      ; input.device reply port
@@ -74,7 +78,9 @@ HC_INHIB        EQU HC_MOUNTED+1     ; byte: ACTION_INHIBIT in progress
 HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
 HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
 HC_WPROT        EQU HC_INOK+1        ; byte: the disk was write-protected when it was mounted (TD_PROTSTATUS)
-HC_SIZE         EQU HC_WPROT+1
+HC_IOPORT       EQU HC_WPROT+1+1     ; reply port of the device requests (MP_SIZE, even)
+HC_FLUSHMSG     EQU HC_IOPORT+36     ; APTR: Message of an ACTION_FLUSH held until the write-back | 0
+HC_SIZE         EQU HC_FLUSHMSG+4
 ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
 WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
 HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
@@ -108,9 +114,9 @@ dos_handler:
                 beq.s   .hl
                 move.l  d0,a3                ; a3 = Message
                 move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention: msg->ln_Name)
-                cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4): every packet
-                beq     .reply                        ; is written before its reply, only the current block of a
-                clr.l   DP_RES2(a4)                   ; file open for writing waits for END
+                cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4), at once, or
+                beq     .flush                        ; when the pending write-back is done
+                clr.l   DP_RES2(a4)
                 bsr     hnd_gate             ; lock or file of another volume, no disk: refused
                 tst.l   d0
                 bne     .refuse
@@ -408,7 +414,9 @@ dos_handler:
                 bsr     hnd_lockkey
                 tst.l   d0
                 bne.s   .cd_key
-                move.l  #OFS_ROOTBLK,d0                ; lock 0 = root
+                bsr     hnd_ctx
+                move.l  d0,a0
+                move.l  HC_GEO+GEO_ROOT(a0),d0         ; lock 0 = root
 .cd_key:
                 move.l  d0,d2
                 bra.s   .pa_alloc
@@ -435,7 +443,8 @@ dos_handler:
 
 .inhibit:                                            ; (ARG1: DOSTRUE = inhibit, 0 = release)
                 move.l  DP_ARG1(a4),d0
-                jsr     ow_inhibit                     ; bitmap written / forgotten
+                jsr     ow_inhibit                     ; write-back done / bitmap forgotten
+                bsr     hnd_flushed
                 bsr     hnd_ctx
                 beq.s   .ih_ok
                 move.l  d0,a0
@@ -461,6 +470,19 @@ dos_handler:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 
+.flush:                                              ; held while the volume waits for its write-back, one at a time
+                bsr     hnd_ctx
+                beq     .reply
+                move.l  d0,a0
+                tst.l   HC_FLUSHMSG(a0)
+                bne     .reply
+                move.l  HC_OWCTX(a0),d0
+                beq     .reply
+                move.l  d0,a1
+                tst.l   OW_DIRTY(a1)
+                beq     .reply
+                move.l  a3,HC_FLUSHMSG(a0)
+                bra     .hl_msg
 .morecache:                                          ; AddBuffers: no FS block cache (trackdisk keeps the track)
                 move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepted without effect
                 bra     .reply
@@ -718,6 +740,8 @@ dos_handler:
                 move.l  d0,a1
                 tst.b   HC_WPROT(a1)
                 beq.s   .di_rw
+                cmp.l   #ID_VALIDATED,8(a0)
+                bne.s   .di_rw                        ; not validated: stays "validating"
                 move.l  #ID_WRITE_PROTECTED,8(a0)     ; id_DiskState
 .di_rw:
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -742,25 +766,21 @@ dos_handler:
 ; hnd_bootclock(a6 = SysBase): time setting at mount time (spec boot-clock-v34): the system time takes the more
 ; recent of the two dates of the root block (root directory, longs 105-107; disk, longs 118-120) if it is still
 ; on the first day (clock never set) and earlier than that date; never moved backwards. Called on every mount of a
-; DOS disk. Preserves everything.
+; DOS disk, from the handler. Preserves everything.
 HND_ROOTDATE    EQU 420              ; modification DateStamp of the root directory
 HND_DISKDATE    EQU 472              ; modification DateStamp of the disk
 hnd_bootclock:
                 movem.l d0-d7/a0-a3,-(sp)
-                lea     EB_DEVICELIST(a6),a0
-                lea     hnd_tdname(pc),a1
-                jsr     LVO_FINDNAME(a6)
-                tst.l   d0
-                beq     .bc_ret
-                move.l  d0,a2
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
                 beq     .bc_ret
                 move.l  d0,a3
-                move.l  #OFS_ROOTBLK,d0
-                jsr     ofs_read_block
+                bsr     hnd_ctx
+                move.l  d0,a0
+                move.l  HC_GEO+GEO_ROOT(a0),d0
+                jsr     ofs_read_block       ; the handler's device and partition (a2 unused)
                 tst.l   d0
                 beq.s   .bc_free             ; no disk
                 lea     IOREQ_SZ(a3),a0
@@ -834,7 +854,7 @@ hnd_inname:
                 even
 
 
-; hnd_init(a2 = pr_MsgPort, a6): context (tc_UserData), trackdisk opened on the drive of the handler, timer port
+; hnd_init(a2 = pr_MsgPort, a6): context (tc_UserData), the device of the drive or partition opened, timer port
 ; and request (UNIT_VBLANK, 1 s), input.device, then first mount. Without memory: the handler runs anyway, without
 ; a disk (no volume is ever mounted). Preserves d2-d7/a2-a6.
 hnd_init:
@@ -852,11 +872,7 @@ hnd_init:
                 move.l  a3,TC_USERDATA(a0)
                 move.l  d2,HC_SIGS(a3)
                 move.l  #-1,HC_DTYPE(a3)
-                bsr     hnd_unit                      ; d0 = unit
-                lea     HC_TDIO(a3),a1
-                lea     hnd_tdname(pc),a0
-                moveq   #0,d1
-                jsr     LVO_OPENDEVICE(a6)            ; failure: io_Device = 0, the drive is never examined
+                bsr     hnd_open                      ; device, unit and geometry of the DeviceNode
                 lea     HC_TMPORT(a3),a0
                 bsr     hnd_port
                 beq.s   .in_input
@@ -891,26 +907,150 @@ hnd_init:
 .in_ret:
                 movem.l (sp)+,d2/a3
                 rts
-; hnd_unit(a2 = port, a6) -> d0 = trackdisk unit of the DeviceNode served by this handler (dn_Task = port), from
-; its FileSysStartupMsg; 0 if none is found. Clobbers a0.
+; hnd_unit(a2 = port, a6) -> d0 = unit of the DeviceNode served by this handler (fssm_Unit); 0 if it has no
+; FileSysStartupMsg. Clobbers a0.
 hnd_unit:
-                bsr     hnd_devinfo
-                move.l  (a0),d0
-.un_lp:
-                lsl.l   #2,d0
-                beq.s   .un_ret
-                move.l  d0,a0
-                move.l  DN_NEXT(a0),d0
-                tst.l   DN_TYPE(a0)                   ; DLT_DEVICE
-                bne.s   .un_lp
-                cmp.l   DN_TASK(a0),a2
-                bne.s   .un_lp
-                move.l  DN_STARTUP(a0),d0
-                lsl.l   #2,d0
+                bsr.s   hnd_fssm
                 beq.s   .un_ret
                 move.l  d0,a0
                 move.l  FSSM_UNIT(a0),d0
 .un_ret:
+                rts
+; hnd_fssm(a2 = port, a6) -> d0 = APTR of the FileSysStartupMsg of the DeviceNode served by this handler (dn_Task =
+; port) | 0 (Z = 1). Clobbers a0.
+hnd_fssm:
+                bsr     hnd_devinfo
+                move.l  (a0),d0
+.fs_lp:
+                lsl.l   #2,d0
+                beq.s   .fs_ret
+                move.l  d0,a0
+                move.l  DN_NEXT(a0),d0
+                tst.l   DN_TYPE(a0)                   ; DLT_DEVICE
+                bne.s   .fs_lp
+                cmp.l   DN_TASK(a0),a2
+                bne.s   .fs_lp
+                move.l  DN_STARTUP(a0),d0
+                lsl.l   #2,d0
+.fs_ret:
+                rts
+
+; hnd_open(a2 = port, a3 = context, a6): opens the device of the partition served (handlers-v34 §1.2): fssm_Device,
+; fssm_Unit and fssm_Flags of the DeviceNode's FileSysStartupMsg; geometry from its environment (DosEnvec): blocks
+; = (de_HighCyl - de_LowCyl + 1) * de_Surfaces * de_BlocksPerTrack, partition offset = de_LowCyl cylinders, first
+; key = de_Reserved, root = (blocks - 1 + reserved) / 2 (DD: 880). No FileSysStartupMsg: trackdisk unit 0, DD
+; geometry. Only 512-byte blocks are served (de_SizeBlock 128 longs, one sector per block): otherwise the device is
+; not opened and the partition is never examined (no disk). Requests that the device queues are waited for on
+; HC_IOPORT. Preserves d2-d7/a2-a6.
+DE_TABLESIZE    EQU 0                ; struct DosEnvec (dos/filehandler.h)
+DE_SIZEBLOCK    EQU 4
+DE_SURFACES     EQU 12
+DE_SECPERBLK    EQU 16
+DE_BPT          EQU 20
+DE_RESERVED     EQU 24
+DE_LOWCYL       EQU 36
+DE_HIGHCYL      EQU 40
+HND_DEVNAME     EQU 64               ; C copy of the device name (stack)
+hnd_open:
+                movem.l d2-d5/a4,-(sp)
+                lea     -HND_DEVNAME(sp),sp
+                lea     HC_GEO(a3),a1                 ; DD geometry until the environment says otherwise
+                move.l  #OFS_ROOTBLK,(a1)+
+                move.l  #OFS_NBLK,(a1)+
+                move.l  #2,(a1)+
+                clr.l   (a1)
+                lea     HC_IOPORT(a3),a0
+                bsr     hnd_port
+                beq     .op_ret                       ; no signal to wait on: no device
+                lea     HC_IOPORT(a3),a0
+                move.l  a0,HC_GEO+GEO_PORT(a3)
+                move.l  a0,HC_TDIO+MN_REPLYPORT(a3)
+                lea     hnd_tdname(pc),a0
+                moveq   #0,d2                         ; d2 = unit, d3 = flags
+                moveq   #0,d3
+                bsr.s   hnd_fssm
+                beq     .op_name
+                move.l  d0,a4
+                move.l  FSSM_UNIT(a4),d2
+                move.l  FSSM_FLAGS(a4),d3
+                move.l  FSSM_DEVICE(a4),d0
+                lsl.l   #2,d0
+                beq     .op_ret
+                move.l  d0,a0                         ; BSTR: copied as a C string
+                moveq   #0,d1
+                move.b  (a0)+,d1
+                cmp.w   #HND_DEVNAME-1,d1
+                bhi     .op_ret
+                move.l  sp,a1
+                bra.s   .op_bn
+.op_bc:
+                move.b  (a0)+,(a1)+
+.op_bn:
+                dbra    d1,.op_bc
+                clr.b   (a1)
+                move.l  FSSM_ENVIRON(a4),d0
+                lsl.l   #2,d0
+                beq.s   .op_open
+                move.l  d0,a4                         ; a4 = DosEnvec
+                cmp.l   #DE_HIGHCYL/4,DE_TABLESIZE(a4)
+                blo.s   .op_open                      ; no geometry in it: DD
+                cmp.l   #OFS_BSIZE/4,DE_SIZEBLOCK(a4)
+                bne     .op_ret                       ; blocks other than 512 bytes: refused
+                cmp.l   #1,DE_SECPERBLK(a4)
+                bne     .op_ret
+                move.l  DE_SURFACES(a4),d0
+                mulu    DE_BPT+2(a4),d0
+                move.l  d0,d4                         ; d4 = blocks per cylinder
+                move.l  DE_HIGHCYL(a4),d0
+                sub.l   DE_LOWCYL(a4),d0
+                addq.l  #1,d0
+                move.l  d4,d1
+                bsr     hnd_mul
+                move.l  d0,d5                         ; d5 = blocks
+                move.l  DE_RESERVED(a4),d1
+                beq     .op_ret                       ; key 0 means "none" in OFS: block 0 is never a key
+                addq.l  #1,d1
+                cmp.l   d5,d1
+                bhs     .op_ret                       ; no room for a root block
+                move.l  d5,HC_GEO+GEO_NBLK(a3)
+                subq.l  #1,d1
+                move.l  d1,HC_GEO+GEO_RES(a3)
+                add.l   d5,d1
+                subq.l  #1,d1
+                lsr.l   #1,d1
+                move.l  d1,HC_GEO+GEO_ROOT(a3)
+                move.l  DE_LOWCYL(a4),d0
+                move.l  d4,d1
+                bsr     hnd_mul
+                moveq   #9,d1
+                lsl.l   d1,d0                         ; x 512
+                move.l  d0,HC_GEO+GEO_POFF(a3)
+.op_open:
+                move.l  sp,a0
+.op_name:
+                lea     HC_TDIO(a3),a1
+                move.l  d2,d0
+                move.l  d3,d1
+                jsr     LVO_OPENDEVICE(a6)            ; failure: io_Device = 0, the partition is never examined
+.op_ret:
+                lea     HND_DEVNAME(sp),sp
+                movem.l (sp)+,d2-d5/a4
+                rts
+; hnd_mul(d0, d1) -> d0 = d0 * d1 (low 32 bits, unsigned). Clobbers d1.
+hnd_mul:
+                movem.l d2-d3,-(sp)
+                move.l  d0,d2
+                swap    d2
+                mulu    d1,d2                         ; high(d0) * low(d1)
+                move.l  d1,d3
+                swap    d3
+                mulu    d0,d3                         ; low(d0) * high(d1)
+                add.l   d3,d2
+                swap    d2
+                clr.w   d2
+                mulu    d1,d0                         ; low(d0) * low(d1)
+                add.l   d2,d0
+                movem.l (sp)+,d2-d3
                 rts
 ; hnd_ctx(a6) -> d0 = context of this handler | 0 (Z = 1). Clobbers a1.
 hnd_ctx:
@@ -948,7 +1088,9 @@ hnd_arm:
                 move.l  #1,TV_SECS(a1)
                 clr.l   TV_SECS+4(a1)
                 jmp     LVO_SENDIO(a6)
-; hnd_tick(a6): timer reply received -> request re-armed. Preserves d2-d7/a2-a6.
+; hnd_tick(a2 = handler port, a6): timer reply received -> request re-armed; a modified volume counts down the
+; ticks since its last disk access (set to 3 by every transfer): at 0 the write-back is done (rom-filesystem §8.4:
+; 2-3 s after the last access) and a held ACTION_FLUSH is returned. Preserves d2-d7/a2-a6.
 hnd_tick:
                 move.l  a3,-(sp)
                 bsr     hnd_ctx
@@ -961,20 +1103,45 @@ hnd_tick:
                 tst.l   d0
                 beq.s   .tk_ret
                 bsr.s   hnd_arm
+                move.l  HC_OWCTX(a3),d0
+                beq.s   .tk_ret
+                move.l  d0,a0
+                tst.l   OW_DIRTY(a0)
+                beq.s   .tk_ret
+                subq.l  #1,HC_GEO+GEO_TICKS(a3)
+                bgt.s   .tk_ret
+                jsr     ow_flush
+                bsr     hnd_flushed
 .tk_ret:
                 move.l  (sp)+,a3
                 rts
 
-; hnd_tdcmd(d0.w = command, a3 = context, a6) -> d0 = io_Actual. Clobbers d1/a0/a1.
+; hnd_flushed(a2 = handler port, a6): the ACTION_FLUSH held while the volume waited for its write-back goes back as
+; it came (Res1/Res2 untouched, spec §7.4). Preserves d2-d7/a2-a6.
+hnd_flushed:
+                bsr     hnd_ctx
+                beq.s   .fd_ret
+                move.l  d0,a0
+                move.l  HC_FLUSHMSG(a0),d0
+                beq.s   .fd_ret
+                clr.l   HC_FLUSHMSG(a0)
+                move.l  d0,a1                         ; returnpkt: to dp_Port, which gets the handler's port
+                move.l  LN_NAME(a1),a0
+                move.l  DP_PORT(a0),d0
+                move.l  a2,DP_PORT(a0)
+                move.l  d0,a0
+                jmp     LVO_PUTMSG(a6)
+.fd_ret:
+                rts
+; hnd_tdcmd(d0.w = command, a3 = context, a6) -> d0 = io_Actual (io_Length 0), through DoIO. A device that does
+; not know the command (a hard disk without TD_CHANGESTATE...) answers with an error and io_Actual 0: disk present,
+; not write-protected, change count 0. Clobbers d1/a0/a1.
 hnd_tdcmd:
                 lea     HC_TDIO(a3),a1
                 move.w  d0,IO_COMMAND(a1)
-                move.b  #IOF_QUICK,IO_FLAGS(a1)
+                clr.l   IO_LENGTH(a1)
                 clr.l   IO_ACTUAL(a1)
-                move.l  a6,-(sp)
-                move.l  IO_DEVICE(a1),a6
-                jsr     -30(a6)              ; BeginIO
-                move.l  (sp)+,a6
+                jsr     LVO_DOIO(a6)
                 move.l  HC_TDIO+IO_ACTUAL(a3),d0
                 rts
 
@@ -1034,7 +1201,7 @@ hnd_mount:
                 cmp.l   #DT_DOS,d2
                 bne     .mo_type
                 move.l  #DT_NDOS,d2
-                move.l  #OFS_ROOTBLK,d0
+                move.l  HC_GEO+GEO_ROOT(a3),d0
                 move.l  a3,-(sp)
                 lea     HC_TDIO(a3),a3
                 jsr     ofs_read_block
@@ -1066,17 +1233,19 @@ hnd_mount:
                 move.l  #DT_DOS,d2
                 bsr     hnd_findvol                   ; d0 = BPTR of the node (reactivated or created) | 0
                 move.l  d0,HC_VOLUME(a3)
-                moveq   #0,d0
-                jsr     ow_inhibit                    ; bitmap of the old disk forgotten
                 bsr     hnd_bootclock
 .mo_type:
                 move.l  d2,HC_DTYPE(a3)
                 moveq   #TD_PROTSTATUS,d0               ; read once per disk (spec rom-filesystem §2.3)
                 bsr     hnd_tdcmd
-                tst.l   d0
+                move.l  d0,HC_GEO+GEO_WPROT(a3)
                 sne     HC_WPROT(a3)
-                moveq   #TD_CHANGENUM,d0
-                bsr     hnd_tdcmd
+                cmp.l   #DT_DOS,d2
+                bne.s   .mo_chg
+                jsr     ow_mount                      ; bitmap of the old disk forgotten, this one's loaded or rebuilt
+.mo_chg:                                              ; (validation, requesters on failure) before DISKINSERTED;
+                moveq   #TD_CHANGENUM,d0              ; the change count after it: changes seen by trackdisk while
+                bsr     hnd_tdcmd                     ; a requester was up do not validate the same disk again
                 move.l  d0,HC_CHG(a3)
                 moveq   #IECLASS_DISKINSERTED,d0
                 bsr     hnd_event
@@ -1203,7 +1372,8 @@ hnd_eject:
                 movem.l d2/a2,-(sp)
                 move.l  d0,d2
                 moveq   #0,d0
-                jsr     ow_inhibit
+                jsr     ow_inhibit                    ; a pending write-back is lost with the disk
+                bsr     hnd_flushed
                 sf      HC_MOUNTED(a3)
                 move.l  #-1,HC_DTYPE(a3)
                 move.l  HC_VOLUME(a3),d0

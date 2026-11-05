@@ -3,15 +3,28 @@
 ; 512-byte block = 128 longs; "end of block" offsets = (128 - k) longs.
 
 OFS_BSIZE       EQU 512
-OFS_ROOTBLK     EQU 880           ; root block of a DD disk (1760 logical blocks, 0..1759)
-OFS_NBLK        EQU 1760          ; total number of blocks -> valid block in [2,1760) (0/1 = bootblock)
+OFS_ROOTBLK     EQU 880           ; root block of a DD disk (1760 logical blocks, 0..1759): default geometry
+OFS_NBLK        EQU 1760          ; total number of blocks of a DD disk -> valid block in [2,1760) (0/1 = bootblock)
+OFS_CHAINMAX    EQU 1760          ; bound on a hash chain or a data chain walk (a corrupted chain that loops)
+OFS_BMBITS_N    EQU 127*32        ; blocks covered by one bitmap block (127 longs after its checksum)
 IOREQ_SZ        EQU 48            ; IOStdReq (the block buffer follows at +IOREQ_SZ)
 
-; File-handler context (handler.s), one per drive, in tc_UserData of its process: the OFS layer (ofs.s, ofswrite.s)
-; runs in that process and takes from it the drive to read (io_Unit of HC_TDIO, opened on the handler's unit) and
-; the write context. Other callers (boot probes, tc_UserData = 0) read DF0.
-HC_TDIO         EQU 0             ; trackdisk IOStdReq (disk change queries), then a 512-byte block
+; File-handler context (handler.s), one per drive or partition, in tc_UserData of its process: the OFS layer (ofs.s,
+; ofswrite.s) runs in that process and takes from it the device and unit to read (HC_TDIO, opened from the
+; FileSysStartupMsg of its DeviceNode), the partition geometry (HC_GEO) and the write context. Other callers (boot
+; probes, tc_UserData = 0) read DF0 with the DD geometry (ofs_geodef).
+HC_TDIO         EQU 0             ; device IOStdReq (disk change queries), then a 512-byte block buffer
 HC_OWCTX        EQU HC_TDIO+IOREQ_SZ+OFS_BSIZE   ; APTR: write context (ofswrite.s), allocated on first need | 0
+HC_GEO          EQU HC_OWCTX+4    ; partition geometry (GEO_*)
+; geometry (blocks are numbered from the start of the partition; the device sees (GEO_POFF + 512 * block))
+GEO_ROOT        EQU 0             ; LONG: root block = (GEO_NBLK - 1 + GEO_RES) / 2
+GEO_NBLK        EQU 4             ; LONG: blocks in the partition; a valid key is in [GEO_RES, GEO_NBLK)
+GEO_RES         EQU 8             ; LONG: reserved blocks at the start (de_Reserved: boot blocks)
+GEO_POFF        EQU 12            ; LONG: byte offset of the partition on the device (de_LowCyl * cylinder size)
+GEO_PORT        EQU 16            ; APTR: reply port of the handler's I/O requests (devices that queue them) | 0
+GEO_TICKS       EQU 20            ; LONG: write-back countdown, set to 3 on every transfer (rom-filesystem §8.4)
+GEO_WPROT       EQU 24            ; LONG: the disk was write-protected when mounted (TD_PROTSTATUS) | 0
+GEO_SIZE        EQU 28
 
 ; LONG offsets (in bytes from the start of the block)
 OFSB_TYPE       EQU 0             ; long[0]: primary type (T_SHORT=2 / T_DATA=8)
@@ -38,6 +51,30 @@ OFSB_SECTYPE    EQU 508           ; long[127] (= (128-1)): secondary type (ST_FI
 OFSB_BMFLAG     EQU 312           ; long[78] (= BSIZE-200): bm_flag ($FFFFFFFF = bitmap valid; 0 = needs revalidation)
 OFSB_BMPAGES    EQU 316           ; long[79] (= BSIZE-196): bm_pages[0] = number of the 1st bitmap block
 OFSB_BMBITS     EQU 4             ; bitmap block: long[0] = checksum; the bits start at long[1] (@4)
+OFSB_BMEXT      EQU 416           ; long[104]: first bitmap extension block (127 keys, then the next extension) | 0
+OFSB_CKSUM      EQU 20            ; long[5]: checksum of a header / data / extension block (sum of the longs = 0)
+
+; write context of a file-handler (ofswrite.s, allocated on first need; pointer in HC_OWCTX)
+OW_TD           EQU 0             ; APTR: device
+OW_IO           EQU 4             ; IOStdReq
+OW_BMST         EQU OW_IO+IOREQ_SZ ; LONG: bitmap in memory: 0 not read, 1 loaded, -1 validation failed (213)
+OW_BMN          EQU OW_BMST+4     ; LONG: bitmap blocks of the partition
+OW_BMTAB        EQU OW_BMN+4      ; APTR: OW_BMN entries (BME_*) | 0
+OW_DIRTY        EQU OW_BMTAB+4    ; LONG: volume modified since the last write-back (root flag 0 on the disk)
+OW_HINT         EQU OW_DIRTY+4    ; LONG: every block in [root + 1, OW_HINT) is in use (allocation starts there)
+OW_ERR          EQU OW_HINT+4     ; LONG: last error (dos code)
+OW_B1           EQU OW_ERR+4      ; two block buffers
+OW_B2           EQU OW_B1+OFS_BSIZE
+OW_PATH         EQU OW_B2+OFS_BSIZE  ; path copy (OW_PATHMAX)
+OW_PATHMAX      EQU 128
+OW_NAME         EQU OW_PATH+OW_PATHMAX   ; final name (32)
+OW_RB           EQU OW_NAME+32    ; the root block, for the bitmap flag (first change, write-back)
+OW_SIZE         EQU OW_RB+OFS_BSIZE
+; one bitmap block in memory
+BME_KEY         EQU 0             ; LONG: its block
+BME_DIRTY       EQU 4             ; BYTE: modified since written
+BME_DATA        EQU 8             ; the 512-byte block (checksum at long 0)
+BME_SIZE        EQU BME_DATA+OFS_BSIZE
 
 OFS_T_SHORT     EQU 2             ; primary type root/header
 OFS_T_DATA      EQU 8             ; primary type OFS data block

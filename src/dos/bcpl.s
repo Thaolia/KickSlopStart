@@ -32,6 +32,7 @@
                 xref    dos_pktretry         ; dos_lib.s: "Please replace volume" requester
                 xref    dos_setnow           ; dos_lib.s: sets the system time (setdatstamp)
                 xref    proc_create          ; process.s: Process + stack + pr_MsgPort + AddTask
+                xref    dos_handler          ; handler.s: the ROM file system (OFS) process body
                 xref    ser_puts
                 xref    ser_puthex
                 xref    dos_resolve          ; dos_lib.s: name -> handler port + lock (deviceproc)
@@ -258,13 +259,20 @@ rt_makeglobvec:
 ; dn_GlobalVec (shared) or makeglobvec, createproc (stack in LONGS, pri dn_Priority, name dn_Name). Then a synchronous
 ; startup packet: Arg1 = BSTR of the full name, Arg2 = dn_Startup, Arg3 = BPTR of the node, Res2 = GV (BCPL);
 ; success if the handler replies Res1 != 0. dn_Task is not written here (that is the handler's job). The caller must
-; be a process (the reply arrives on its pr_MsgPort). Preserves d1-d7/a0-a6.
+; be a process (the reply arrives on its pr_MsgPort). A node with neither dn_SegList nor dn_Handler but a
+; FileSysStartupMsg (a hard-disk partition mounted by its driver, uae-hd-boot-v34 §4) gets the ROM file system:
+; a native process on dos_handler with dn_Task written before it runs, no startup packet. Preserves d1-d7/a0-a6.
 bcpl_starthandler:
         movem.l d1-d7/a0-a6,-(sp)
         move.l  a0,a5                ; a5 = full name
         move.l  ($4).w,a6
         move.l  DN_SEGLIST(a2),d0
         bne.s   .sh_seg
+        tst.l   DN_HANDLER(a2)
+        bne.s   .sh_load
+        tst.l   DN_STARTUP(a2)
+        bne     .sh_romfs            ; no handler of its own, a FileSysStartupMsg: the ROM file system
+.sh_load:
         lea     -256(sp),sp
         move.l  DN_HANDLER(a2),d1
         move.l  sp,a0
@@ -422,6 +430,21 @@ bcpl_starthandler:
         bsr     rt_setr2
         moveq   #0,d0
         bra.s   .sh_ret
+.sh_romfs:                           ; process "File System", pri 10 (handlers-v34 §1.3), dn_Task written before it
+        lea     sh_fsname(pc),a0     ; runs: the handler finds its DeviceNode (and FileSysStartupMsg) by dn_Task
+        move.l  #dos_handler,a1
+        moveq   #10,d0
+        move.l  #SH_FSSTACK,d1
+        jsr     LVO_FORBID(a6)
+        jsr     proc_create
+        move.l  d0,DN_TASK(a2)
+        jsr     LVO_PERMIT(a6)
+        move.l  DN_TASK(a2),d0
+        beq.s   .sh_nomem
+        move.l  DN_LOCK(a2),d0
+        bsr     rt_setr2
+        move.l  DN_TASK(a2),d0
+        bra.s   .sh_ret
 .sh_nomem:
         moveq   #103,d0
         bsr     rt_setr2
@@ -451,6 +474,10 @@ bcpl_starthandler:
         jsr     LVO_FREEMEM(a6)
 .sh_fr:
         rts
+SH_FSSTACK      EQU 4096             ; stack of a ROM file-system process (bytes)
+sh_fsname:
+        dc.b    "File System",0
+        even
 
 ; bcpl_cli_register(a0 = Process): takes the first free slot of rn_TaskArray for this CLI (taskid = MsgPort) and
 ; sets pr_TaskNum. Preserves everything.

@@ -4198,10 +4198,20 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         move.l  RN_INFO(a0),d0       ; BPTR DosInfo
         lsl.l   #2,d0
         move.l  d0,a0                ; DosInfo
+        move.l  DI_DEVINFO(a0),-(sp) ; nodes added before (AddDosNode of a board driver: DH0) stay behind DF0:/DF1:
         move.l  a3,d0
         lsr.l   #2,d0                ; BPTR(DeviceNode)
         move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open resolves DF0: through this node
         bsr     mount_df1
+        move.l  a3,a0
+.d3c_tail:
+        move.l  DN_NEXT(a0),d0
+        beq.s   .d3c_link
+        lsl.l   #2,d0
+        move.l  d0,a0
+        bra.s   .d3c_tail
+.d3c_link:
+        move.l  (sp)+,DN_NEXT(a0)
                 ifeq    PROD            ; PROD: D3 test clients (d3c..d3j read kickslop/D3DTest/bigseg/BigData,
                                         ; absent from a real Workbench disk) -> out of prod; the DF0: MOUNT above stays
         lea     d3c_cname(pc),a0
