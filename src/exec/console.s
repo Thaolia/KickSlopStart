@@ -991,7 +991,8 @@ CU_FIXCOL       EQU 364              ; private: line length fixed by CSI u (0 = 
 CU_FIXROW       EQU 366              ; private: page length fixed by CSI t (0 = from the window)
 CU_FIXXO        EQU 368              ; private: XROrigin fixed by CSI x (-1 = from the window)
 CU_FIXYO        EQU 370              ; private: YROrigin fixed by CSI y (-1 = from the window)
-CU_SIZE         EQU 372
+CU_WINW         EQU 372              ; private: window Width and Height (long) when the geometry was last computed
+CU_SIZE         EQU 376
 CU_NTABS        EQU 80
 CU_NPARS        EQU 24
 CU_PDEF         EQU -5               ; absent parameter
@@ -1135,7 +1136,102 @@ cu_geom:
         add.w   CU_YRORIGIN(a5),d0
         subq.w  #1,d0
         move.w  d0,CU_YREXTANT(a5)
+        move.l  WD_WIDTH(a1),CU_WINW(a5)
         movem.l (sp)+,d2/a0-a1
+        rts
+
+; cu_resize(a5, a3, a6): the window size changed since the last geometry (§3.9). 1.3 learns it from
+; IECLASS_SIZEWINDOW for the active unit and applies it at the start of its next write; here every unit checks its
+; own window at the start of each write. New geometry; in a SMART_REFRESH window that grew, the band right of the
+; old whole columns and the band below the old whole lines are cleared (half characters brought back); the cursor
+; is erased only if its cell is still in the text area; then (except SUPER_BITMAP) XCP > XMax -> column 0 of the
+; next line, YCP > YMax -> last line, column 0 and a one-line scroll. Clobbers d0-d3/a0/a1.
+cu_resize:
+        movem.l d4-d5,-(sp)
+        move.w  CU_XMAX(a5),d4
+        move.w  CU_YMAX(a5),d5
+        bsr     cu_geom
+        move.l  CU_WINDOW(a5),a0
+        moveq   #$C0-256,d0
+        and.b   WD_FLAGS+3(a0),d0    ; SIMPLE_REFRESH $40 | SUPER_BITMAP $80: 0 = SMART_REFRESH
+        bne.s   .rs_cur
+        cmp.w   CU_XMAX(a5),d4
+        bge.s   .rs_y
+        move.w  d4,d0                ; columns d4+1.. up to the right edge of the text area
+        addq.w  #1,d0
+        mulu    CU_XRSIZE(a5),d0
+        add.w   CU_XRORIGIN(a5),d0
+        move.w  CU_YRORIGIN(a5),d1
+        bsr     cu_edges
+        bsr     cu_fill
+.rs_y:
+        cmp.w   CU_YMAX(a5),d5
+        bge.s   .rs_cur
+        move.w  d5,d1                ; lines d5+1.. down to the bottom edge
+        addq.w  #1,d1
+        mulu    CU_YRSIZE(a5),d1
+        add.w   CU_YRORIGIN(a5),d1
+        move.w  CU_XRORIGIN(a5),d0
+        bsr     cu_edges
+        bsr     cu_fill
+.rs_cur:
+        tst.b   CU_CURVIS(a5)
+        beq.s   .rs_pos
+        move.w  CU_XCCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        bgt.s   .rs_gone
+        move.w  CU_YCCP(a5),d0
+        cmp.w   CU_YMAX(a5),d0
+        bgt.s   .rs_gone
+        bsr     cu_curoff
+        bra.s   .rs_pos
+.rs_gone:
+        clr.b   CU_CURVIS(a5)
+.rs_pos:
+        move.l  CU_WINDOW(a5),a0
+        btst    #7,WD_FLAGS+3(a0)    ; SUPER_BITMAP: the cursor stays where it is
+        bne.s   .rs_ret
+        move.w  CU_XCP(a5),d0
+        cmp.w   CU_XMAX(a5),d0
+        ble.s   .rs_ycp
+        clr.w   CU_XCP(a5)
+        addq.w  #1,CU_YCP(a5)
+.rs_ycp:
+        move.w  CU_YCP(a5),d0
+        cmp.w   CU_YMAX(a5),d0
+        ble.s   .rs_ret
+        move.w  CU_YMAX(a5),CU_YCP(a5)
+        clr.w   CU_XCP(a5)
+        moveq   #1,d1
+        bsr     cu_vscroll
+.rs_ret:
+        movem.l (sp)+,d4-d5
+        rts
+
+; cu_edges(a5; d0/d1 = top-left corner) -> d2/d3 = right and bottom edges of the window's useful area (inside the
+; borders, in RastPort coordinates). Clobbers a0/a1.
+cu_edges:
+        move.l  CU_WINDOW(a5),a0
+        moveq   #0,d2
+        move.b  WD_BORDERRIGHT(a0),d2
+        neg.w   d2
+        add.w   WD_WIDTH(a0),d2
+        moveq   #0,d3
+        move.b  WD_BORDERBOTTOM(a0),d3
+        neg.w   d3
+        add.w   WD_HEIGHT(a0),d3
+        btst    #2,WD_FLAGS+2(a0)    ; GIMMEZEROZERO: the RastPort starts inside the left and top borders
+        beq.s   .ed_1
+        move.l  d4,-(sp)
+        moveq   #0,d4
+        move.b  WD_BORDERLEFT(a0),d4
+        sub.w   d4,d2
+        move.b  WD_BORDERTOP(a0),d4
+        sub.w   d4,d3
+        move.l  (sp)+,d4
+.ed_1:
+        subq.w  #1,d2
+        subq.w  #1,d3
         rts
 
 ; cu_write(a0 = ConUnit, a4 = data, d4 = length, a2 = console base): interprets the stream in the window.
@@ -1147,6 +1243,12 @@ cu_write:
         move.l  CU_WINDOW(a5),a0
         move.l  WD_RPORT(a0),a3      ; a3 = RastPort
         bsr     cu_setpens
+        move.l  CU_WINDOW(a5),a0
+        move.l  WD_WIDTH(a0),d0
+        cmp.l   CU_WINW(a5),d0
+        beq.s   .cw_same
+        bsr     cu_resize
+.cw_same:
         bsr     cu_curoff
 .cw_lp:
         tst.l   d4

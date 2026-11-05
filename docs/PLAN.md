@@ -1261,6 +1261,21 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   mode with the COMPLEMENT bit (spec open point 5); a layer with Scroll_X/Y or a SuperBitMap uses the RastPort area
   for the clamp and the phase (open point 1); ClipBlit still walks the source ClipRects in list order for other
   overlapping copies.
+  **Console resize (2026-11-05, issue #26)**: a console window made narrower kept its old line length, so `info`
+  in a shrunk CLI wrote over the right border and was cut off instead of wrapping. Each window unit now remembers the
+  window size of its last geometry (cu_geom); a CMD_WRITE that finds another size first runs `cu_resize`
+  (console-keymap §3.9): new XMax/YMax/extents; in a SMART_REFRESH window that grew, the band right of the old whole
+  columns and the band below the old whole lines are cleared; the cursor is erased only if its cell is still in the
+  text area; then (not SUPER_BITMAP) XCP > XMax -> column 0 of the next line, YCP > YMax -> last line, column 0 and a
+  one-line scroll. `tests/con_probe.sh` (CON_ROM = our production ROM), §8.5 vectors: after SizeWindow(-200, -64)
+  the empty write gives XMax 40, YMax 12, XRExtant 413 and the report `CSI 1;1;13;41 r` as on 1.3 (before: 60, 19,
+  `CSI 1;1;20;61 r`); after (+200, +64), XMax 60, YMax 19; the rest of the probe output is unchanged. Workbench
+  1.3.3 NewCLI window shrunk with the mouse, then `info`: lines wrap as on the issue's 1.3 screenshot; grown again,
+  `info` uses the whole width. Deliberate difference: 1.3 learns the resize from IECLASS_SIZEWINDOW for the active
+  unit only; here every unit checks its own window at its next write (the inactive case was never probed on 1.3,
+  §9 open point 2), and the size seen is the one at the write, not the smallest one in between. Seen while testing,
+  not from this change: after a window grows, intuition leaves one pixel of the old right border on line
+  BorderTop - 1.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

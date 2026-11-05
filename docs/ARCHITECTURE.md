@@ -1037,6 +1037,9 @@ differs.
     `sr_vert` (blitter fast path, row copies through the ClipRects), otherwise `sr_move` copies by ClipBlit slices;
     `sr_strips` fills the vacated strips and `sr_damage` (SIMPLE layers) moves the DamageList and adds the exact
     visible destinations whose source ClipRect is hidden without backup. Probe: `tests/graster_probe.sh`.
+  - Console window units (issue #26, 2026-11-05): `cu_geom` records the window Width/Height in the private CU_WINW;
+    `cu_write` compares it with the window first and calls `cu_resize` on a change (new geometry, SMART_REFRESH
+    band clearing through `cu_edges` + `cu_fill`, cursor and position rules of console-keymap §3.9).
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.
