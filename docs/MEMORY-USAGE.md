@@ -76,6 +76,13 @@ interrupt or inside the input handler chain. A task of its own gives them a cont
 Folding it into our input.device task would save these 4 KB, but every input handler would then share that task
 and could be blocked by intuition's drawing.
 
+## AllocEntry failures leak their MemList (as on 1.3)
+
+When one entry of an `AllocEntry` cannot be allocated, the entries already obtained are freed but the new MemList
+(16 + 8 bytes per entry, rounded to 8) stays allocated, exactly as on 1.3 (exec-memory-semaphores-v34 §2.8; dos
+`CreateProc` failures lose 24 bytes each this way). Programs can observe the 1.3 return codes and free memory, so
+this is reproduced on purpose; it only happens when memory has already run out.
+
 ## What else differs
 
 The rest of the gap is not broken down further. The other callers in the table are expected allocations,

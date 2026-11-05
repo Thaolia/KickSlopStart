@@ -1,13 +1,7 @@
-; src/exec/memory.s — exec.library: multi-MemHeader memory allocator.
-;   AllocMem: walks the MemList, selects the 1st header satisfying the
-;              requested TYPE bits, then first-fit + split on that header.
-;   FreeMem  : finds the owning header (by address range) then
-;              two-sided coalescing (body IDENTICAL to M2.2, verified).
-;   AvailMem: sums the free memory of compatible headers (or largest block).
-;   TypeOfMem: attributes of the header containing an address (0 if none).
-;   init_memory: single chip MemHeader @ MH_CHIP.
+; src/exec/memory.s — exec.library memory: Allocate/Deallocate, AllocMem/FreeMem/AvailMem/AllocAbs/TypeOfMem,
+; AddMemList, AllocEntry/FreeEntry; init_memory (chip MemHeader @ MH_CHIP) and the slow RAM header.
 ; Amiga convention: scratch = d0/d1/a0/a1; a6 = library base.
-; IMPLEMENTATION track ("clean"): docs/analysis/exec-spec.md + public ABI.
+; IMPLEMENTATION track ("clean"): docs/analysis/exec-spec.md, exec-memory-semaphores-v34.md + public ABI.
 
                 include "exec.i"
                 include "dospkt.i"
@@ -25,45 +19,51 @@
                 xdef    exec_Deallocate
                 xdef    exec_AllocAbs
                 xdef    exec_AddMemList
+                xdef    exec_AllocEntry
+                xdef    exec_FreeEntry
                 xdef    init_memory
                 xdef    add_slow_memory
                 xdef    slow_probe
 
-; Allocate(memHeader a0, byteSize d0) -> d0 = block | 0: first-fit + split within the chunks of ONE MemHeader, size
-; rounded to 8 bytes (AutoDoc: the caller protects the header, Forbid or semaphore). Clobbers d1/a0/a1.
+; Behaviour and register contracts: docs/analysis/exec-memory-semaphores-v34.md (§2, §5). Every allocator works in
+; 8-byte units: sizes round up; a freed or AllocAbs'd range has its start rounded down and its end rounded up. A
+; header matches a request when its attributes hold every bit of the request's low word (upper-word bits such as
+; MEMF_CLEAR or MEMF_LARGEST never take part). A size that rounds to 0 fails (1.3 returned a block without consuming
+; it for $FFFFFFF9-$FFFFFFFF: deliberately not reproduced).
+
+; Allocate(memHeader a0, byteSize d0) -> d0 = block | 0: first chunk (lowest address) large enough, carved from its
+; start. No Forbid (the caller protects the header). Changes d0 and a1 (the block on success) only.
 exec_Allocate:
         movem.l d2-d3/a2-a3,-(sp)
         addq.l  #7,d0
         and.l   #-8,d0
-        move.l  d0,d2                ; d2 = size
+        move.l  d0,d2                ; d2 = rounded size
         beq.s   .al_fail
         cmp.l   MH_FREE(a0),d2
         bhi.s   .al_fail
-        move.l  a0,a2                ; a2 = header
-        lea     MH_FIRST(a2),a3      ; a3 = previous link
+        lea     MH_FIRST(a0),a3      ; a3 = previous link
 .al_scan:
-        move.l  (a3),a0              ; chunk = *prev
-        move.l  a0,d0
-        beq.s   .al_fail             ; header exhausted
-        move.l  MC_BYTES(a0),d3
+        move.l  (a3),a1              ; a1 = chunk
+        move.l  a1,d0
+        beq.s   .al_fail
+        move.l  MC_BYTES(a1),d3
         cmp.l   d2,d3
-        bcs.s   .al_next             ; mc_Bytes < size
+        bcs.s   .al_next
         beq.s   .al_whole
-        move.l  a0,a1                ; split: new chunk = chunk + size
-        add.l   d2,a1
-        move.l  (a0),(a1)
+        lea     0(a1,d2.l),a2        ; split: the remainder starts after the block
+        move.l  (a1),(a2)
         sub.l   d2,d3
-        move.l  d3,MC_BYTES(a1)
-        move.l  a1,(a3)
+        move.l  d3,MC_BYTES(a2)
+        move.l  a2,(a3)
         bra.s   .al_got
 .al_whole:
-        move.l  (a0),(a3)            ; whole chunk removed
+        move.l  (a1),(a3)
 .al_got:
-        sub.l   d2,MH_FREE(a2)
-        move.l  a0,d0
+        sub.l   d2,MH_FREE(a0)
+        move.l  a1,d0
         bra.s   .al_ret
 .al_next:
-        move.l  a0,a3
+        move.l  a1,a3
         bra.s   .al_scan
 .al_fail:
         moveq   #0,d0
@@ -71,26 +71,28 @@ exec_Allocate:
         movem.l (sp)+,d2-d3/a2-a3
         rts
 
-; AllocMem(size d0, flags d1) -> d0 = block | 0: first MemHeader whose attributes cover the requested TYPE bits
-; and that can serve the size (Allocate); MEMF_CLEAR zeroes the block. Under Forbid (shared MemList),
-; single exit for a single Permit.
+; AllocMem(size d0, requirements d1) -> d0 = block | 0: headers in MemList order, the first matching one with a
+; fitting chunk (Allocate); MEMF_CLEAR zeroes the rounded size. Under Forbid, single exit for a single Permit.
+; Changes d0, a0 (the header used) and a1 (the block); d1 is preserved.
 exec_AllocMem:
-        movem.l d2-d5/a2-a4,-(sp)
+        movem.l d1-d5/a2-a4,-(sp)
         jsr     LVO_FORBID(a6)
         moveq   #0,d3                ; d3 = second attempt done
-        move.l  d1,d4                ; flags (for MEMF_CLEAR)
-        move.l  d1,d5
-        and.w   #MEMF_TYPEMASK,d5    ; reqType = requested TYPE bits (V34)
-        move.l  d0,d2                ; requested size
+        move.l  d1,d4                ; d4 = requirements
+        move.l  d0,d2                ; d2 = requested size
+        addq.l  #7,d0
+        and.l   #-8,d0
+        beq.s   .am_nomem            ; rounds to 0: no header is tried, nothing to expunge
+.am_first:
         lea     EB_MEMLIST(a6),a4
         move.l  (a4),a4              ; a4 = first header
 .am_hdr:
         move.l  (a4),d0              ; Succ
-        beq.s   .am_fail             ; sentinel: no satisfying header
+        beq.s   .am_fail             ; end of the list
         move.w  MH_ATTRIBUTES(a4),d0
-        and.w   d5,d0
-        cmp.w   d5,d0
-        bne.s   .am_nexth            ; (MH_ATTR & reqType) != reqType
+        and.w   d4,d0
+        cmp.w   d4,d0
+        bne.s   .am_nexth            ; a requested low-word bit is missing
         move.l  a4,a0
         move.l  d2,d0
         bsr     exec_Allocate
@@ -102,13 +104,13 @@ exec_AllocMem:
 .am_got:
         btst    #16,d4               ; MEMF_CLEAR?
         beq.s   .am_exit
-        move.l  d0,a1
+        move.l  d0,a2
         move.l  d2,d1
         addq.l  #7,d1
-        lsr.l   #3,d1                ; size rounded / 8
+        lsr.l   #3,d1                ; rounded size / 8
 .am_clr:
-        clr.l   (a1)+
-        clr.l   (a1)+
+        clr.l   (a2)+
+        clr.l   (a2)+
         subq.l  #1,d1
         bne.s   .am_clr
         bra.s   .am_exit
@@ -121,9 +123,7 @@ exec_AllocMem:
         st      RAM_LOWMEM
         jsr     ram_expungeall
         sf      RAM_LOWMEM
-        lea     EB_MEMLIST(a6),a4
-        move.l  (a4),a4
-        bra     .am_hdr
+        bra.s   .am_first
 .am_nomem:
         move.l  EB_THISTASK(a6),d0   ; a process gets ERROR_NO_FREE_STORE
         beq.s   .am_none
@@ -136,78 +136,109 @@ exec_AllocMem:
         moveq   #0,d0
 .am_exit:
                 ifd     MEMTRACK
-        move.l  28(sp),d4            ; caller of AllocMem (above the saved d2-d5/a2-a4)
+        move.l  32(sp),d4            ; caller of AllocMem (above the saved d1-d5/a2-a4)
         bsr     mt_allocc            ; d0 = block | 0, d2 = size, d4 = caller
                 endc
-        jsr     LVO_PERMIT(a6)       ; Permit does not touch d0
-        movem.l (sp)+,d2-d5/a2-a4
+        move.l  a4,a0                ; header used (or where the walk ended)
+        move.l  d0,a1
+        jsr     LVO_PERMIT(a6)       ; Permit preserves the registers
+        movem.l (sp)+,d1-d5/a2-a4
         rts
 
-; Deallocate(memHeader a0, memoryBlock a1, byteSize d0): returns the block to the header's sorted chunk list, with
-; merging with the next and the previous chunk if they are contiguous. Size rounded to 8. Clobbers d0/d1/a0/a1.
+; Deallocate(memHeader a0, memoryBlock a1, byteSize d0): the rounded range goes back into the header's chunk list
+; (address order), merged with the chunk that ends at its start and the one that starts at its end. A range that
+; overlaps a free chunk is the dead-end Alert(AN_FreeTwice), raised before any change (1.3 links some of them
+; first). No range check against the header, no Forbid. Changes d0 (rounded size), d1 and a1 (rounded start).
 exec_Deallocate:
-        move.l  a1,d1
-        beq.s   .de_ret
-        addq.l  #7,d0
-        and.l   #-8,d0
+        tst.l   d0
         beq.s   .de_ret
         movem.l d2-d3/a2-a3,-(sp)
-        move.l  a0,a2                ; a2 = header
-        add.l   d0,MH_FREE(a2)
-        lea     MH_FIRST(a2),a3      ; a3 = previous link
+        move.l  a1,d1
+        add.l   d1,d0
+        addq.l  #7,d0
+        and.l   #-8,d0               ; end rounded up
+        and.w   #$FFF8,d1            ; start rounded down
+        move.l  d1,a1
+        sub.l   d1,d0                ; d0 = rounded size
+        beq.s   .de_done
+        lea     MH_FIRST(a0),a3      ; a3 = previous link (mh_First acts as a chunk whose next field is at +0)
 .de_find:
-        move.l  (a3),a0              ; a0 = current chunk
-        move.l  a0,d2
-        beq.s   .de_ins              ; end of list
-        cmp.l   a1,a0
-        bhi.s   .de_ins              ; chunk > block -> insert before
-        move.l  a0,a3
+        move.l  (a3),a2              ; a2 = chunk
+        move.l  a2,d2
+        beq.s   .de_ins
+        cmp.l   a1,a2
+        bhi.s   .de_ins              ; first chunk above the start
+        add.l   MC_BYTES(a2),d2
+        cmp.l   a1,d2
+        bhi.s   .de_twice            ; a chunk below the start runs past it
+        move.l  a2,a3
         bra.s   .de_find
 .de_ins:
-        move.l  a0,(a1)              ; block->Next = current chunk
-        move.l  d0,MC_BYTES(a1)
-        move.l  a1,(a3)
-        move.l  a1,d2                ; merge with the NEXT one: block + size == current?
-        add.l   d0,d2
-        cmp.l   a0,d2
+        move.l  a1,d3
+        add.l   d0,d3                ; d3 = end
+        move.l  a2,d2
+        beq.s   .de_link
+        cmp.l   a2,d3
+        bhi.s   .de_twice            ; the range runs into the next chunk
+.de_link:
+        add.l   d0,MH_FREE(a0)
+        cmp.l   a2,d3
         bne.s   .de_nonext
-        move.l  (a0),(a1)
-        move.l  MC_BYTES(a0),d3
-        add.l   d3,MC_BYTES(a1)
+        move.l  (a2),(a1)            ; merged with the next chunk
+        add.l   MC_BYTES(a2),d0
+        bra.s   .de_size
 .de_nonext:
-        lea     MH_FIRST(a2),a0      ; merge with the PREVIOUS one (if it exists)
-        cmp.l   a0,a3
-        beq.s   .de_done
+        move.l  a2,(a1)
+.de_size:
+        move.l  d0,MC_BYTES(a1)
+        lea     MH_FIRST(a0),a2
+        cmp.l   a2,a3
+        beq.s   .de_noprev
         move.l  a3,d2
         add.l   MC_BYTES(a3),d2
         cmp.l   a1,d2
-        bne.s   .de_done
-        move.l  (a1),(a3)
-        move.l  MC_BYTES(a1),d3
-        add.l   d3,MC_BYTES(a3)
+        bne.s   .de_noprev
+        move.l  (a1),(a3)            ; merged into the previous chunk
+        add.l   d0,MC_BYTES(a3)
+        bra.s   .de_done
+.de_noprev:
+        move.l  a1,(a3)
 .de_done:
         movem.l (sp)+,d2-d3/a2-a3
 .de_ret:
         rts
+.de_twice:
+        move.l  d7,-(sp)
+        move.l  #AN_FREETWICE,d7
+        jsr     LVO_ALERT(a6)        ; dead end
+        move.l  (sp)+,d7
+        bra.s   .de_done
 
-; FreeMem(ptr a1, size d0): owning header (MH_LOWER <= ptr < MH_UPPER) then Deallocate, under Forbid. The
-; NULL / size 0 guards exit before the Forbid.
+; FreeMem(memoryBlock a1, byteSize d0): size 0 returns at once (any a1); otherwise, under Forbid, Deallocate in the
+; header with mh_Lower <= a1 < mh_Upper; no such header is the dead-end Alert(AN_MemCorrupt). Changes d0, d1, a0;
+; a1 is preserved.
 exec_FreeMem:
-        move.l  a1,d1
-        beq.s   .fm_ret
         tst.l   d0
         beq.s   .fm_ret
         jsr     LVO_FORBID(a6)
                 ifd     MEMTRACK
         bsr     mt_free              ; check (a1, d0) against the table; (sp) = caller of FreeMem
                 endc
+        move.l  a1,-(sp)
         bsr.s   mem_owner            ; a0 = header | 0
-        beq.s   .fm_done             ; no owning header -> ignored
+        beq.s   .fm_bad
         bsr     exec_Deallocate
 .fm_done:
+        move.l  (sp)+,a1
         jsr     LVO_PERMIT(a6)
 .fm_ret:
         rts
+.fm_bad:
+        move.l  d7,-(sp)
+        move.l  #AN_MEMCORRUPT,d7
+        jsr     LVO_ALERT(a6)        ; dead end
+        move.l  (sp)+,d7
+        bra.s   .fm_done
 
 ; mem_owner(a1 = address, a6) -> a0 = MemHeader containing it | 0 (Z = 1 if none). Preserves d0/a1.
 mem_owner:
@@ -229,19 +260,20 @@ mem_owner:
         cmp.w   #0,a0                ; Z according to a0 (cmpa.w extends the word: a0 = 0 <=> Z)
         rts
 
-; AllocAbs(byteSize d0, location a1) -> d0 = block (location rounded down to 8) | 0 if the area is not
-; entirely free within one chunk. Under Forbid.
+; AllocAbs(byteSize d0, location a1) -> d0 = rounded-down location | 0 when the rounded range is not entirely inside
+; one free chunk of the header holding its start. Size 0 inside a chunk succeeds and splits it in two adjacent
+; chunks (as 1.3). Under Forbid. Changes d0, a0, a1; d1 is preserved.
 exec_AllocAbs:
-        movem.l d2-d4/a2-a3,-(sp)
+        movem.l d1-d4/a2-a3,-(sp)
         jsr     LVO_FORBID(a6)
         move.l  a1,d2
-        and.l   #-8,d2               ; d2 = start
+        and.w   #$FFF8,d2            ; d2 = start
         add.l   a1,d0
-        sub.l   d2,d0
         addq.l  #7,d0
         and.l   #-8,d0
-        move.l  d0,d3                ; d3 = size
-        beq.s   .aa_fail
+        move.l  d0,d4                ; d4 = end
+        move.l  d4,d3
+        sub.l   d2,d3                ; d3 = size
         move.l  d2,a1
         bsr.s   mem_owner
         beq.s   .aa_fail
@@ -254,14 +286,19 @@ exec_AllocAbs:
         cmp.l   d2,d0
         bhi.s   .aa_fail             ; sorted chunks: the start is in no free chunk
         add.l   MC_BYTES(a0),d0      ; d0 = end of the chunk
-        move.l  d2,d4
-        add.l   d3,d4                ; d4 = requested end
-        cmp.l   d4,d0
-        bcc.s   .aa_found
+        cmp.l   d2,d0
+        bhi.s   .aa_in               ; the start is inside this chunk
         move.l  a0,a3
         bra.s   .aa_scan
-.aa_found:
-        sub.l   d4,d0                ; d0 = remainder after the area
+.aa_in:
+        cmp.l   d4,d0
+        bcs.s   .aa_fail             ; the range runs past the chunk
+        cmp.l   a0,d2
+        bne.s   .aa_split
+        tst.l   d3
+        beq.s   .aa_got              ; size 0 at the start of a chunk: nothing to carve
+.aa_split:
+        sub.l   d4,d0                ; d0 = remainder after the range
         beq.s   .aa_nosuf
         move.l  d4,a1                ; tail chunk
         move.l  (a0),(a1)
@@ -269,12 +306,12 @@ exec_AllocAbs:
         move.l  a1,(a0)              ; linked after the current chunk
 .aa_nosuf:
         move.l  d2,d0
-        sub.l   a0,d0                ; d0 = part before the area
+        sub.l   a0,d0                ; d0 = part before the range
         beq.s   .aa_noprefix
         move.l  d0,MC_BYTES(a0)
         bra.s   .aa_got
 .aa_noprefix:
-        move.l  (a0),(a3)            ; current chunk removed (its possible tail takes its place)
+        move.l  (a0),(a3)            ; current chunk removed (its tail, if any, takes its place)
 .aa_got:
         sub.l   d3,MH_FREE(a2)
         move.l  d2,d0
@@ -288,11 +325,11 @@ exec_AllocAbs:
         moveq   #0,d0
 .aa_exit:
         jsr     LVO_PERMIT(a6)
-        movem.l (sp)+,d2-d4/a2-a3
+        movem.l (sp)+,d1-d4/a2-a3
         rts
 
-; AddMemList(size d0, attributes d1, pri d2, base a0, name a1): the area becomes a MemHeader (at the start of the
-; area) inserted into the MemList by priority; a single free chunk covers it after the header.
+; AddMemList(size d0, attributes d1, pri d2, base a0, name a1): the area becomes a MemHeader (at its start) Enqueued
+; into the MemList by priority; mh_Lower = base+32 rounded up, mh_Upper = base+size rounded down, one free chunk.
 exec_AddMemList:
         movem.l d2-d3/a2,-(sp)
         move.l  a0,a2
@@ -302,15 +339,15 @@ exec_AddMemList:
         move.w  d1,MH_ATTRIBUTES(a2)
         move.l  a2,d2
         add.l   d0,d2
+        and.w   #$FFF8,d2
         move.l  d2,MH_UPPER(a2)
         lea     MH_SIZE+7(a2),a1
         move.l  a1,d3
-        and.l   #-8,d3
+        and.w   #$FFF8,d3
         move.l  d3,a1                ; a1 = first chunk
         move.l  a1,MH_LOWER(a2)
         move.l  a1,MH_FIRST(a2)
         sub.l   d3,d2
-        and.l   #-8,d2
         move.l  d2,MH_FREE(a2)
         clr.l   MC_NEXT(a1)
         move.l  d2,MC_BYTES(a1)
@@ -322,13 +359,11 @@ exec_AddMemList:
         movem.l (sp)+,d2-d3/a2
         rts
 
-; AvailMem(requirements d1) -> d0 = compatible free bytes (or largest block)
+; AvailMem(requirements d1) -> d0 = free bytes of the matching headers, or their largest chunk with MEMF_LARGEST.
+; No MEMF_TOTAL in V34 (bit 19 is ignored like the other upper-word bits). d1 is preserved.
 exec_AvailMem:
         movem.l d2-d4,-(sp)
-        jsr     LVO_FORBID(a6)       ; M3c: consistent read of the shared chunks
-        move.l  d1,d2                ; requirements
-        move.l  d1,d3
-        and.w   #MEMF_TYPEMASK,d3    ; reqType
+        jsr     LVO_FORBID(a6)       ; consistent read of the shared chunks
         moveq   #0,d4                ; accumulator
         lea     EB_MEMLIST(a6),a0
         move.l  (a0),a0              ; first node
@@ -336,10 +371,10 @@ exec_AvailMem:
         move.l  (a0),d0              ; Succ
         beq.s   .av_done
         move.w  MH_ATTRIBUTES(a0),d0
-        and.w   d3,d0
-        cmp.w   d3,d0
-        bne.s   .av_nexth            ; incompatible header
-        btst    #17,d2               ; MEMF_LARGEST ($20000)?
+        and.w   d1,d0
+        cmp.w   d1,d0
+        bne.s   .av_nexth            ; a requested low-word bit is missing
+        btst    #17,d1               ; MEMF_LARGEST ($20000)?
         bne.s   .av_largest
         add.l   MH_FREE(a0),d4       ; sum of the free memory
         bra.s   .av_nexth
@@ -387,6 +422,98 @@ exec_TypeOfMem:
         moveq   #0,d0
 .tom_done:
         jsr     LVO_PERMIT(a6)       ; preserves d0
+        rts
+
+; AllocEntry(memList a0) -> d0 = new MemList | failure code. The copy is AllocMem(16 + 8n, MEMF_CLEAR) (node fields
+; zero, ml_NumEntries copied); each entry in order: me_Length copied unchanged, then me_Addr = AllocMem(me_Length,
+; me_Reqs) through the vector, or 0 without a call for a zero length (exec-memory-semaphores-v34 §2.8).
+; Failure of an entry: the entries already obtained are freed (FreeMem vector, in order) and d0 = me_Reqs of the
+; failing entry | $80000000; the new MemList is NOT freed (1.3 leaks it; callers test bit 31 only). Failure of the
+; MemList itself: d0 = $80010000. ml_NumEntries = 0 gives an empty list (1.3 processes one entry past its block).
+; The source list is never written. Changes d0, d1, a0, a1.
+exec_AllocEntry:
+        movem.l d2-d3/a2-a3,-(sp)
+        move.l  a0,a2                ; a2 = template
+        moveq   #0,d2
+        move.w  ML_NUMENTRIES(a2),d2
+        move.l  d2,d0
+        lsl.l   #3,d0
+        add.l   #ML_ME,d0
+        move.l  #MEMF_CLEAR,d1
+        jsr     LVO_ALLOCMEM(a6)
+        tst.l   d0
+        beq.s   .ae_nolist
+        move.l  d0,a3                ; a3 = copy
+        move.w  d2,ML_NUMENTRIES(a3)
+        moveq   #0,d3                ; d3 = entries done
+.ae_lp:
+        cmp.l   d2,d3
+        beq.s   .ae_ok
+        move.l  d3,d0
+        lsl.l   #3,d0
+        lea     ML_ME(a2,d0.l),a0
+        lea     ML_ME(a3,d0.l),a1
+        move.l  4(a0),d0             ; me_Length
+        move.l  d0,4(a1)
+        beq.s   .ae_next             ; me_Addr stays 0
+        move.l  (a0),d1              ; me_Reqs
+        move.l  a1,-(sp)
+        jsr     LVO_ALLOCMEM(a6)     ; preserves d1
+        move.l  (sp)+,a1
+        move.l  d0,(a1)
+        beq.s   .ae_fail
+.ae_next:
+        addq.l  #1,d3
+        bra.s   .ae_lp
+.ae_ok:
+        move.l  a3,d0
+        bra.s   .ae_ret
+.ae_fail:
+        move.l  d1,d2                ; failing requirements
+        lea     ML_ME(a3),a2
+        bra.s   .ae_fnext
+.ae_free:
+        move.l  (a2)+,a1
+        move.l  (a2)+,d0             ; zero length: FreeMem returns at once
+        jsr     LVO_FREEMEM(a6)
+.ae_fnext:
+        subq.l  #1,d3
+        bcc.s   .ae_free
+        move.l  d2,d0
+        bset    #31,d0
+        bra.s   .ae_ret
+.ae_nolist:
+        move.l  #$80000000|MEMF_CLEAR,d0
+.ae_ret:
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+
+; FreeEntry(memList a0): FreeMem (vector) of every entry with a non-zero length, in order, then
+; FreeMem(list, 16 + 8 x ml_NumEntries). a0 as in exec_lib.fd (icon.library chains RemHead -> FreeEntry with the
+; MemList in a0). Changes d0, d1, a0, a1.
+exec_FreeEntry:
+        movem.l d2/a2,-(sp)
+        move.l  a0,a2
+        moveq   #0,d2
+        move.w  ML_NUMENTRIES(a2),d2
+        lea     ML_ME(a2),a0
+        bra.s   .fe_nx
+.fe_lp:
+        move.l  (a0)+,a1
+        move.l  (a0)+,d0
+        beq.s   .fe_nx
+        move.l  a0,-(sp)
+        jsr     LVO_FREEMEM(a6)
+        move.l  (sp)+,a0
+.fe_nx:
+        dbra    d2,.fe_lp
+        moveq   #0,d0
+        move.w  ML_NUMENTRIES(a2),d0
+        lsl.l   #3,d0
+        add.l   #ML_ME,d0
+        move.l  a2,a1
+        jsr     LVO_FREEMEM(a6)
+        movem.l (sp)+,d2/a2
         rts
 
 ; init_memory: sizes the chip RAM, then chip MemHeader @ MH_CHIP + initial chunk covering the heap.

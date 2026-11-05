@@ -651,7 +651,6 @@ NT_MEMORY     EQU 10
 MEMF_PUBLIC   EQU $1
 MEMF_CHIP     EQU $2
 MEMF_FAST     EQU $4
-MEMF_TYPEMASK EQU $7           ; memory TYPE bits in V34 (PUBLIC|CHIP|FAST)
 MEMF_CLEAR    EQU $10000
 MEMF_LARGEST  EQU $20000       ; AvailMem: largest contiguous block (not the sum)
 MH_ATTRIBUTES EQU 14
@@ -828,6 +827,9 @@ LVO_COPYMEMQUICK EQU -630
 LVO_ALERT        EQU -108       ; Alert(alertNum d7)
 AN_TIMERCIARSRC  EQU $15058020  ; Alert: timer.device without ciaa.resource (AN_TimerDev|AG_OpenRes|AO_CIARsrc)
 AN_TIMERNOTOD    EQU $15000002  ; Alert (recoverable): no CIA-A TOD tick during the mains calibration (timer-v34 §1.3)
+AN_MEMCORRUPT    EQU $81000005  ; dead end: FreeMem of an address in no MemHeader (exec/alerts.i)
+AN_SEMCORRUPT    EQU $81000008  ; dead end: ReleaseSemaphore of a free semaphore
+AN_FREETWICE     EQU $81000009  ; dead end: FreeMem/Deallocate of a range overlapping a free chunk
 LVO_ADDMEMLIST   EQU -618       ; AddMemList(size d0, attributes d1, pri d2, base a0, name a1)
 LVO_ADDRESOURCE  EQU -486
 LVO_OPENRESOURCE EQU -498
