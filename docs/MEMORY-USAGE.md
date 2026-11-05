@@ -129,10 +129,13 @@ Proof before the change (dev ROM, Workbench 1.3.3 A/2, an IPC log-only watch ove
 window, a Shell with `dir`, `info`, `avail`, `list`, `copy`, `newshell`, `endcli` and one idle minute, plus a pattern
 compare of `$800`-`$3500`): no write, no DMA; the only accesses were 4 word reads of `$9D8` by L:Shell-Seg at each
 NewShell. Shell-Seg passes ExecBase (`$C00276`) as the second string (a BSTR BPTR) of a BCPL routine that compares
-two strings' lengths, so it reads `($C00276 << 2) & $FFFFFF = $9D8`. Where that ExecBase value comes from is not
-known (an open point for the DOS side). On 1.3, whose ExecBase is also at `$C00276` with slow RAM and whose chip
-heap starts at `$420`, that address holds whatever was allocated there, so even if 1.3 makes the same call the
-program cannot depend on its value; a read only, and it now sees heap data instead of the power-up fill. The
+two strings' lengths, so it reads `($C00276 << 2) & $FFFFFF = $9D8`. The value is not from a DOS field (traced
+2026-11-06, `docs/PLAN.md`): Shell-Seg's alias insertion compares the new name with the name field of the nil node
+at the end of its list, the longword at address 4 (AbsExecBase); the first `alias` of `S:Shell-Startup` does it at
+each NewShell. On 1.3, whose ExecBase is also at `$C00276` with slow RAM and whose chip
+heap starts at `$420`, the same code reads the same address, which holds whatever was allocated there, so the
+program cannot depend on its value. With our heap starting at `$1000`, `$9D8` stays in the cushion and reads 0,
+which makes the compare answer "different" (a word `$0009` there would make Shell-Seg free the nil node). The
 deepest supervisor stack use over that session was 896 bytes (lowest touched address `$3180`).
 
 ## 4. Idle state by category (A/1, one drive)

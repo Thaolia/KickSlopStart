@@ -98,6 +98,13 @@ Two constraints from real programs shaped this, both found while validating it:
   its stack overwrote the low-RAM variables (black screen); with the heap starting at `$1000` the block lands at
   `$10xx` and the stack stays inside `$800`-`$1000`. 1.3's heap starts at `$420`, so no program can rely on low chip
   staying free, but this one relies on something harmless sitting below its first chip block.
+- **The `$9D8` read by L:Shell-Seg is the program's own, not a DOS field (2026-11-06).** When the 1.3 Shell adds an
+  alias at the end of its alias list (the first `alias` of `S:Shell-Startup` at each NewShell: the list is a local
+  of Shell-Seg, empty at start), it compares the new name with the name field of the nil node, i.e. the longword at
+  absolute address 4 (`AbsExecBase`), used as a BSTR: `$C00276 << 2` wraps to `$9D8`. The same happens on 1.3 with
+  slow RAM (same ExecBase). A length byte of 0 there (our cushion, never allocated) makes the compare say "not equal"
+  and the alias is inserted normally; a 0 compare would make Shell-Seg free the nil node, so `$9D8` must not hold a
+  word `$0009` or a string matching the alias name.
 
 Without slow RAM nothing is added: ExecBase stays in low chip (the top of chip belongs to the intros), the
 `$1500`-`$2500` margin keeps a supervisor stack overflow away from it, and the free `$800`-`$1000` would put the
