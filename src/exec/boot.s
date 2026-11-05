@@ -6508,7 +6508,7 @@ msg_expansion_ok:
 mathffp_test_name:
         dc.b    "mathffp.library",0
 msg_mathffp_ok:
-        dc.b    "MATHFFP OK (mathffp.library: SPFlt/SPFix/SPAdd/SPSub/SPMul/SPDiv/SPCmp/SPTst/SPNeg/SPFloor/SPCeil + div0 overflow)",13,10,0
+        dc.b    "MATHFFP OK (mathffp.library: SPFlt/SPFix/SPAdd/SPSub/SPMul/SPDiv/SPCmp/SPTst/SPNeg/SPFloor/SPCeil + overflow)",13,10,0
 msg_mathffp_fail:
         dc.b    "MATHFFP FAIL LVO ",0
 msg_crlf_mft:
@@ -6527,6 +6527,7 @@ msg_fonts_ok:
         dc.b    "FONTS OK (graphics: OpenFont topaz 8/9/unknown + accessors, InitRastPort default font, TextLength + TxSpacing, soft styles, bold Text readback)",13,10,0
 msg_fonts_fail:
         dc.b    "FONTS FAIL",13,10,0
+        EVEN
 fnt_ta8:
         dc.l    fnt_topaz
         dc.w    8
@@ -6618,9 +6619,9 @@ mft_table:
         dc.w    -72
         dc.l    $C0000042,$A00000C4,$D0000044    ; SPSub: 3 - (-10) = 13
         dc.w    -42
-        dc.l    $C0000042,$A00000C4,1            ; SPCmp(3,-10) -> +1
+        dc.l    $C0000042,$A00000C4,-1           ; SPCmp(d1=-10, d0=3) -> -1 (d1 < d0)
         dc.w    -42
-        dc.l    $A00000C4,$C0000042,-1           ; SPCmp(-10,3) -> -1
+        dc.l    $A00000C4,$C0000042,1            ; SPCmp(d1=3, d0=-10) -> +1 (d1 > d0)
         dc.w    -48
         dc.l    0,$A00000C4,-1                   ; SPTst(-10) in d1 -> -1
         dc.w    -60
@@ -6636,7 +6637,7 @@ mft_table:
         dc.w    -30
         dc.l    $F1200051,0,123456               ; SPFix -> exact round trip
         dc.w    -84
-        dc.l    $C0000042,0,$FFFFFF7F            ; SPDiv(3/0) -> largest positive
+        dc.l    $C0000042,$00000080,$FFFFFFFF    ; SPDiv(3 / "-0") -> -MAX (a divisor with low byte 0 traps)
 mft_table_end:
 ciaa_test_name:
         dc.b    "ciaa.resource",0

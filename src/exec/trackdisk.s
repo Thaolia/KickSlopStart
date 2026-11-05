@@ -1475,12 +1475,17 @@ td_require:
 td_cachebuf:
         tst.l   TD_CACHEBUF
         bne.s   .cb_ok
+        move.l  #MEMF_FAST|MEMF_LARGEST,d1   ; asked first: a failing AllocMem expunges every unused library
+        jsr     LVO_AVAILMEM(a6)               ; (mathffp among them, which the Workbench needs later)
+        cmp.l   #MFM_SECBUF*TD_NCACHE,d0
+        bcs.s   .cb_one
         move.l  #MFM_SECBUF*TD_NCACHE,d0
         moveq   #MEMF_FAST,d1
         jsr     LVO_ALLOCMEM(a6)
         move.w  #TD_NCACHE,TD_CNSLOTS
         tst.l   d0
         bne.s   .cb_got
+.cb_one:
         move.l  #MFM_SECBUF,d0
         moveq   #MEMF_PUBLIC,d1
         jsr     LVO_ALLOCMEM(a6)

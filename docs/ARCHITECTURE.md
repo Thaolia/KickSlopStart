@@ -1117,6 +1117,17 @@ differs.
     text, d3/d5/d6 counts and pad); PutChProc is entered through jsr (a2) with d0 zero-extended, a1 = data cursor and
     the caller's a6, 64 bytes below the caller's SP (68 while padding). A format ending inside a conversion stops at
     its terminator. Exit: d0 = a1 = next data item, a3 restored. Probe: `tests/rawdofmt_probe.sh`.
+  - mathffp.library 34.1 (spec mathffp-v34, 2026-11-05): `src/exec/mathffp.s`, base without private data (no data
+    table: the init function names it and sets version 34.1, the ID string and LIBF_SUMUSED). Add/Sub/Mul/Div save
+    d2-d6 and share `ffp_pack` (mantissa in bits 31-8 of d2, exponent in d3.w, sign in d4.b; exponent < 0 -> 0,
+    exponent 0 kept only when negative, > 127 -> `ffp_sat`, +-$FFFFFF7F with V). SPAdd keeps 8 guard bits and a
+    33rd carry bit, rounds half up then normalises; SPMul forms the top 32 bits of the 48-bit product with four
+    mulu; SPDiv runs a restoring division for 24 or 25 quotient bits plus a rounding bit (a normalised divisor gives
+    the integer part with one compare, an unnormalised one sends the 24 dividend bits through the loop too). A zero
+    divisor executes a real `divu` by zero, so the task's tc_TrapCode sees vector 5. SPCmp compares signed keys
+    (exponent:mantissa with the mantissa's top bit inverted, complemented when negative). Expunge removes and frees
+    the base when its open count is 0 (ramlib's low-memory expunge then really drops it, as on 1.3): trackdisk
+    checks AvailMem before its fast-memory cache for that reason. Probe: `tests/mathffp_probe.sh`.
   - CON: handlers: the boot console handler (`conhandler.s`) now replies through dp_Port (returnpkt) instead of
     ReplyMsg, and both handlers answer ACTION_DISK_INFO with id_InUse = their console IOStdReq (SetMap sends
     CD_SETKEYMAP to its unit). In line mode, CSI sequences (cursor and function keys) are skipped.
