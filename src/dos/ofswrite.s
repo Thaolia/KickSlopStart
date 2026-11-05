@@ -33,6 +33,11 @@
                 xref    ofs_hash
                 xref    ofs_namecmp
                 xref    ofs_geo              ; ofs.s: geometry of the handler's partition
+                xref    dv_rebuild           ; diskvalidator.s: bitmap rebuilt from the directory tree
+                xdef    ow_mount
+                xdef    ow_rd                ; for the validator
+                xdef    ow_keyok
+                xdef    ow_bmbit
                 xref    dos_now              ; dos_lib.s: system time as a DateStamp
                 xref    hnd_busy             ; handler.s: lock conflict check (spec rom-filesystem §3.1)
 
@@ -44,6 +49,7 @@ OFS_TABN        EQU 72               ; table entries of a header / of an extensi
 OFSB_TABEND     EQU OFSB_HASHTAB+(OFS_TABN-1)*4  ; last entry = first data block
 WS_MAGICV       EQU $57524954        ; "WRIT": write state (the read state starts with the trackdisk base)
 ID_VALIDATED    EQU 82
+ID_VALIDATING   EQU 81
 OFSB_VDAYS      EQU 472              ; root: date of the last modification of the disk
 
 ; write context (one per file-handler, allocated on first need; pointer in HC_OWCTX of its context): OW_* in ofs.i.
@@ -152,6 +158,18 @@ ow_wr:
         move.l  (sp)+,d0
         moveq   #CMD_WRITE,d1
         bra.s   ow_io
+; ow_mount(a6) -> d0 = 1 validated / 0: a DOS disk was mounted: the bitmap of the previous one is forgotten and
+; this one's is loaded, or rebuilt when its root says it is not valid (ow_bmload). Preserves d2-d7/a2-a6.
+ow_mount:
+        movem.l d2-d7/a2-a5,-(sp)
+        moveq   #0,d0
+        bsr     ow_ctx
+        beq.s   .mt_ret
+        bsr     ow_bmfree
+        bsr     ow_bmload
+.mt_ret:
+        movem.l (sp)+,d2-d7/a2-a5
+        rts
 ; ow_inhibit(d0 = Arg1 of ACTION_INHIBIT, a6): inhibit -> modified bitmap written (the disk is about to be rewritten by
 ; someone else, DiskCopy); release -> bitmap forgotten, re-read on next access (the disk may have changed).
 ; Preserves d2-d7/a2-a6.
@@ -173,9 +191,21 @@ ow_inhibit:
 
 ; ow_sync(a5) -> d0 = 1 ok / 0: the modified bitmap blocks written, then CMD_UPDATE (cached tracks to the disk).
 ow_sync:
+        bsr.s   ow_bmwrite
+        tst.l   d0
+        beq.s   .sy_ret
+        moveq   #0,d0
+        lea     OW_B2(a5),a0
+        moveq   #CMD_UPDATE,d1
+        bra     ow_io
+.sy_ret:
+        rts
+; ow_bmwrite(a5) -> d0 = 1 ok / 0: the bitmap blocks modified since written (checksum at long 0).
+ow_bmwrite:
         movem.l d2/a2,-(sp)
+        moveq   #1,d0
         tst.l   OW_BMST(a5)
-        ble.s   .sy_upd              ; no bitmap in memory: nothing of it to write
+        ble.s   .sy_ret              ; no bitmap in memory: nothing of it to write
         move.l  OW_BMTAB(a5),a2
         move.l  OW_BMN(a5),d2
         bra.s   .sy_nx
@@ -202,11 +232,7 @@ ow_sync:
         lea     BME_SIZE(a2),a2
 .sy_nx:
         dbra    d2,.sy_lp
-.sy_upd:
-        moveq   #0,d0
-        lea     OW_B2(a5),a0
-        moveq   #CMD_UPDATE,d1
-        bsr     ow_io
+        moveq   #1,d0
 .sy_ret:
         movem.l (sp)+,d2/a2
         rts
@@ -239,7 +265,10 @@ ow_bmfree:
 
 ; ow_bmload(a5) -> d0 = 1 ok / 0 (OW_ERR): the bitmap of the volume is read once and kept: one bitmap block per
 ; OFS_BMBITS_N blocks of the partition, designated by bm_pages (25 in the root block) then by bitmap extension
-; blocks (root long 104: 127 keys, the next extension in the last long). A root flagged "bitmap not valid" -> 213.
+; blocks (root long 104: 127 keys, the next extension in the last long). A root flagged "bitmap not valid" (or a
+; bitmap block with a bad checksum) is validated: the bitmap is rebuilt from the directory tree (dv_rebuild) and,
+; unless the disk is write-protected (then it stays in memory, as on 1.3: writes get 214, not 213), written back
+; with the root flagged valid. A failed validation leaves the volume not validated: 213 until the next mount.
 ow_bmload:
         tst.l   OW_BMST(a5)
         bgt     .bl_ok
@@ -251,12 +280,12 @@ ow_bmload:
         bsr     ow_rd
         tst.l   d0
         beq     .bl_ret
-        moveq   #-1,d0               ; bitmap not validated: no writing
-        cmp.l   OW_B1+OFSB_BMFLAG(a5),d0
-        bne     .bl_nv0
         bsr     ow_bmalloc           ; d0 = 1 / 0: table, keys from the root and its extensions
         tst.l   d0
-        beq     .bl_ret
+        beq     .bl_bmerr
+        moveq   #-1,d0
+        cmp.l   OW_B1+OFSB_BMFLAG(a5),d0
+        bne.s   .bl_rebuild          ; bitmap not validated
         move.l  OW_BMTAB(a5),a2
         move.l  OW_BMN(a5),d2
         bra.s   .bl_rnx
@@ -265,7 +294,7 @@ ow_bmload:
         lea     BME_DATA(a2),a0
         bsr     ow_rd
         tst.l   d0
-        beq.s   .bl_bad
+        beq.s   .bl_rebuild
         lea     BME_DATA(a2),a0
         moveq   #0,d0
         moveq   #127,d1
@@ -273,29 +302,65 @@ ow_bmload:
         add.l   (a0)+,d0
         dbra    d1,.bl_sum
         tst.l   d0
-        bne.s   .bl_badck            ; bitmap block checksum
+        bne.s   .bl_rebuild          ; bitmap block checksum
         lea     BME_SIZE(a2),a2
 .bl_rnx:
         dbra    d2,.bl_rlp
+        bra.s   .bl_valid
+.bl_rebuild:
+        jsr     dv_rebuild
+        tst.l   d0
+        beq.s   .bl_failed
+        bsr     ofs_geo
+        tst.l   GEO_WPROT(a0)
+        bne.s   .bl_valid            ; read-only disk: validated in memory only
+        bsr     ow_writeback
+        tst.l   d0
+        beq.s   .bl_failed
+.bl_valid:
         move.l  #1,OW_BMST(a5)
         moveq   #1,d0
 .bl_ret:
         movem.l (sp)+,d2-d4/a2-a3
         rts
-.bl_badck:
-        move.l  #ERROR_DISK_NOT_VALIDATED,OW_ERR(a5)
-.bl_bad:
+.bl_bmerr:                           ; no memory: tried again later; a bad bitmap key: not validated
+        cmp.l   #ERROR_NO_FREE_STORE,OW_ERR(a5)
+        beq.s   .bl_ret
+.bl_failed:
         bsr     ow_bmfree
+        move.l  #-1,OW_BMST(a5)
+        move.l  #ERROR_DISK_NOT_VALIDATED,OW_ERR(a5)
         moveq   #0,d0
         bra.s   .bl_ret
-.bl_nv0:
-        movem.l (sp)+,d2-d4/a2-a3
 .bl_nv:
         move.l  #ERROR_DISK_NOT_VALIDATED,OW_ERR(a5)
         moveq   #0,d0
         rts
 .bl_ok:
         moveq   #1,d0
+        rts
+
+; ow_writeback(a5, root block in OW_B1, a6) -> d0 = 1 / 0: the modified bitmap blocks, then the root block with its
+; bitmap flagged valid and the disk's modification date (longs 118-120, boot-clock-v34 §5) set to now, then
+; CMD_UPDATE (cached tracks to the disk).
+ow_writeback:
+        bsr     ow_bmwrite
+        tst.l   d0
+        beq.s   .wb_ret
+        move.l  #-1,OW_B1+OFSB_BMFLAG(a5)
+        lea     OW_B1+OFSB_VDAYS(a5),a0
+        jsr     dos_now
+        bsr     ofs_geo
+        move.l  GEO_ROOT(a0),d0
+        lea     OW_B1(a5),a0
+        bsr     ow_wr
+        tst.l   d0
+        beq.s   .wb_ret
+        moveq   #0,d0
+        lea     OW_B2(a5),a0
+        moveq   #CMD_UPDATE,d1
+        bsr     ow_io
+.wb_ret:
         rts
 
 ; ow_bmalloc(a5, root block in B1) -> d0 = 1 / 0 (OW_ERR: 103 no memory, 213 a key outside the partition): the
@@ -1179,7 +1244,7 @@ ow_diskinfo:
         bsr     ofs_geo
         move.l  GEO_NBLK(a0),d7
         sub.l   GEO_RES(a0),d7       ; d7 = blocks the bitmap covers
-        move.l  #ID_VALIDATED,8(a2)  ; id_DiskState
+        move.l  #ID_VALIDATING,8(a2) ; id_DiskState: validated once the bitmap is in memory
         move.l  d7,12(a2)            ; id_NumBlocks
         move.l  #OFS_DMAX,20(a2)     ; id_BytesPerBlock
         move.l  #$444F5300,24(a2)    ; id_DiskType "DOS\0"
@@ -1187,7 +1252,8 @@ ow_diskinfo:
         bsr     ow_ctx
         beq.s   .di_ret
         bsr     ow_bmload
-        beq.s   .di_ret
+        beq.s   .di_ret              ; not validated: no used/free figures (dos-lvo-partial §1.4)
+        move.l  #ID_VALIDATED,8(a2)
         moveq   #0,d2                ; d2 = free blocks: set bits of the bitmap
         move.l  d7,d3                ; d3 = bits left to count
         move.l  OW_BMTAB(a5),a3

@@ -46,6 +46,7 @@
                 xref    ws_discard
                 xref    ow_relabel
                 xref    ow_ready
+                xref    ow_mount
                 xdef    hnd_busy
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
                 xref    timer_now            ; system time (exec/timer.s)
@@ -54,6 +55,7 @@
 ACTION_MORE_CACHE EQU 18             ; AddBuffers: adds buffers to the filesystem
 ID_VALIDATING   EQU 81               ; InfoData.id_DiskState: no bitmap (no disk, or non-DOS disk)
 ID_WRITE_PROTECTED EQU 80            ; InfoData.id_DiskState: the disk was write-protected when mounted
+ID_VALIDATED    EQU 82               ; InfoData.id_DiskState: bitmap in memory
 IND_WRITEEVENT_C EQU 11              ; input.device
 IE_SIZE         EQU 22               ; struct InputEvent
 DT_DOS          EQU $444F5300        ; "DOS\0"
@@ -723,6 +725,8 @@ dos_handler:
                 move.l  d0,a1
                 tst.b   HC_WPROT(a1)
                 beq.s   .di_rw
+                cmp.l   #ID_VALIDATED,8(a0)
+                bne.s   .di_rw                        ; not validated: stays "validating"
                 move.l  #ID_WRITE_PROTECTED,8(a0)     ; id_DiskState
 .di_rw:
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -1186,17 +1190,19 @@ hnd_mount:
                 move.l  #DT_DOS,d2
                 bsr     hnd_findvol                   ; d0 = BPTR of the node (reactivated or created) | 0
                 move.l  d0,HC_VOLUME(a3)
-                moveq   #0,d0
-                jsr     ow_inhibit                    ; bitmap of the old disk forgotten
                 bsr     hnd_bootclock
 .mo_type:
                 move.l  d2,HC_DTYPE(a3)
                 moveq   #TD_PROTSTATUS,d0               ; read once per disk (spec rom-filesystem §2.3)
                 bsr     hnd_tdcmd
-                tst.l   d0
+                move.l  d0,HC_GEO+GEO_WPROT(a3)
                 sne     HC_WPROT(a3)
-                moveq   #TD_CHANGENUM,d0
-                bsr     hnd_tdcmd
+                cmp.l   #DT_DOS,d2
+                bne.s   .mo_chg
+                jsr     ow_mount                      ; bitmap of the old disk forgotten, this one's loaded or rebuilt
+.mo_chg:                                              ; (validation, requesters on failure) before DISKINSERTED;
+                moveq   #TD_CHANGENUM,d0              ; the change count after it: changes seen by trackdisk while
+                bsr     hnd_tdcmd                     ; a requester was up do not validate the same disk again
                 move.l  d0,HC_CHG(a3)
                 moveq   #IECLASS_DISKINSERTED,d0
                 bsr     hnd_event

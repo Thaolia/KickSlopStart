@@ -1033,12 +1033,18 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   65535 data blocks (32 MiB) are not followed (16-bit block index); the bitmap block does not move at each flush
   (rom-filesystem §8.3); what 1.3 does with TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM on a device that rejects
   them (ours: present, writable, count 0) is not specified.
+  **Disk validator rebuilds the bitmap (2026-11-05)**: a volume whose root says "bitmap not valid" is validated at
+  mount in the handler (`dv_rebuild`: tree walk from the root, headers, extension blocks, data block tables), written
+  back with the flag valid, or kept in memory on a write-protected disk (214 instead of 213); a broken chain shows
+  "Error validating disk" / "Key n out of range" then "Disk structure corrupt" and leaves the volume not validated
+  (213). Proven by `tests/validate_probe.sh` (rebuilt bitmap identical to xdftool's). Open: 1.3 validates in a
+  separate process and its rebuild lives in `L:Disk-Validator` (ours is in ROM and blocks the handler while a
+  requester is up); the text of the "key met twice" requester and the Retry behaviour of "Disk structure corrupt" are
+  not specified; 1.3's handling of a bad bitmap checksum under a valid flag is not specified (ours rebuilds).
   **dos LVO details (2026-11-04)**: D1 = D0 on packet LVOs, Info(0) to pr_FileSystemTask, ParentDir(0) Result2 0,
   IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
   `tests/fsnodisk_probe.sh`). 213 and 225 requesters done the same day from the analysis track's observation (`fsnodisk_probe.sh notdos|notval`).
-  Open: the validator's own requesters when validation fails ("Error validating disk", "Disk structure corrupt",
-  seen on 1.3; ours fails silently) and the in-memory validation of a read-only disk (1.3 then answers 214, ours
-  213); left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
+  Open: left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
   files (refused today) and then UnLoadSeg's overlay case, Retry restarting the whole call (name resolution
   included) instead of resending the packet; the mouse does not move the pointer while a dos requester is open on
   a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to

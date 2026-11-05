@@ -23,7 +23,8 @@ GEO_RES         EQU 8             ; LONG: reserved blocks at the start (de_Reser
 GEO_POFF        EQU 12            ; LONG: byte offset of the partition on the device (de_LowCyl * cylinder size)
 GEO_PORT        EQU 16            ; APTR: reply port of the handler's I/O requests (devices that queue them) | 0
 GEO_TICKS       EQU 20            ; LONG: write-back countdown, set to 3 on every transfer (rom-filesystem §8.4)
-GEO_SIZE        EQU 24
+GEO_WPROT       EQU 24            ; LONG: the disk was write-protected when mounted (TD_PROTSTATUS) | 0
+GEO_SIZE        EQU 28
 
 ; LONG offsets (in bytes from the start of the block)
 OFSB_TYPE       EQU 0             ; long[0]: primary type (T_SHORT=2 / T_DATA=8)

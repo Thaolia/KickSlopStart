@@ -587,6 +587,23 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7ae) **Disk validator: bitmap rebuilt at mount** (2026-11-05, specs `rom-filesystem-v34.md` §2.3, §8.4,
+  `dos-lvo-partial-v34.md` §1.4, `disk-change-v34.md` §2.5; public OFS layout). On every mount of a DOS disk the
+  handler reads TD_PROTSTATUS (also into `GEO_WPROT`), then `ow_mount` forgets the previous bitmap and loads this
+  one (`ow_bmload`) before DISKINSERTED. A root whose bitmap flag is not -1, or a bitmap block with a bad checksum,
+  goes to `dv_rebuild` (`diskvalidator.s`): every bit free, then the root, the bitmap blocks and their extension
+  blocks, and every object reachable from the root: its header (checksum, type, own key, parent), for a file the data
+  blocks its header and extension blocks list (OFS data blocks are not read) and the extension blocks. The walk keeps
+  no stack (back up through the parent key, position in the parent from the hash of the name). A key outside the
+  partition, a bad header or a key met twice shows "Error validating disk" / volume / "Key <n> out of range" (or
+  "checksum error", "already used"), then "Disk structure corrupt" / "Use DISKDOCTOR to correct it" (`vr_req`,
+  Retry / Cancel; Retry walks again): the volume stays not validated (writes 213, DiskInfo "validating" with no
+  used/free figures). Rebuilt on a writable disk: the bitmap blocks then the root (flag -1, disk date longs 118-120)
+  are written (`ow_writeback`) and CMD_UPDATE; on a write-protected disk the bitmap stays in memory and writes give
+  214, not 213. Unlike 1.3 (a separate Validator process, `L:Disk-Validator` for the rebuild), the handler validates
+  itself, so it answers no packet while a requester is up; the change count is read after the validation, so changes
+  trackdisk saw while a requester was up do not validate the same disk again. Test: `tests/validate_probe.sh` (valid / wprot /
+  corrupt).
   (7ad) **ROM file system on any block device: hard-disk OFS partitions** (2026-11-05, specs `rom-filesystem-v34.md`,
   `handlers-v34.md` §1.2-§1.3, `uae-hd-boot-v34.md` §4; public OFS layout). `handler.s` `hnd_open` opens fssm_Device /
   fssm_Unit / fssm_Flags of the DeviceNode whose dn_Task is the handler's port and fills the geometry `HC_GEO`

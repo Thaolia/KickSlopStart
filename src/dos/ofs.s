@@ -863,4 +863,4 @@ ofs_td_name:
                 dc.b    "trackdisk.device",0
                 even
 ofs_geodef:                                   ; DD floppy: root, blocks, reserved, offset, no reply port
-                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0
+                dc.l    OFS_ROOTBLK,OFS_NBLK,2,0,0,0,0
