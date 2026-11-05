@@ -20,6 +20,7 @@
                 xref    build_jumptable  ; library.s
                 xref    init_memory      ; memory.s
                 xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
+                xref    add_low_chip     ; memory.s (with slow RAM, low chip below HEAP_LOWER into the chip heap)
                 xref    slow_probe       ; memory.s (end of the slow RAM, before ExecBase is built)
                 xref    exp_memosave     ; expansion.s (reset memo of the RAM boards)
                 xref    init_task        ; tasks.s
@@ -308,6 +309,18 @@ coldstart:                        ; $FC00D2
         move.l  (sp)+,EB_KICKTAGPTR(a6)
         move.l  (sp)+,EB_KICKMEMPTR(a6)
         move.l  d0,EB_MAXEXTMEM(a6)
+        ; Supervisor stack: the top SSP_SIZE bytes of the slow RAM when there is some, as on 1.3 (memory-budget-v34),
+        ; so that the low chip below the heap can join it (add_low_chip); low chip
+        ; otherwise. The boot stack is empty here, so it moves at once.
+        move.l  #STACKTOP,d1
+        tst.l   d0
+        beq.s   .ssp_at
+        move.l  d0,d1
+.ssp_at:
+        move.l  d1,EB_SYSSTKUPPER(a6)
+        sub.l   #SSP_SIZE,d1
+        move.l  d1,EB_SYSSTKLOWER(a6)
+        move.l  EB_SYSSTKUPPER(a6),sp
 
         move.b  #NT_LIBRARY,LN_TYPE(a6)
         move.l  #exec_name,LN_NAME(a6)
@@ -371,6 +384,7 @@ coldstart:                        ; $FC00D2
         bsr     selftest             ; d0 = 0 (OK) / !=0 (failure)
         tst.l   d0
         bne     eb_fail
+        jsr     add_low_chip         ; low chip below the heap, once the selftest is done with FTEST_LO..FTEST_HI
         jsr     add_slow_memory      ; after the memory selftest (which assumes chip at the head of the list)
         lsr.l   #8,d0                ; bytes -> KB (512 KB = $0200)
         lsr.l   #2,d0
@@ -3474,11 +3488,11 @@ boot_strap_done:
         move.b  #1,SCHED_ON          ; ARMS periodic preemption (default)
                 endc                 ; M7E_COOP=1: SCHED_ON stays 0 -> yield-only non-regression
         ; --- M7c: LAUNCH of the 1st task = SUPERVISOR -> USER mode transition ---
-        ; The boot stack (STACKTOP) becomes the SHARED SSP of the interrupts; each task has its own
-        ; user stack (AllocMem'd). We reset the SSP to STACKTOP (abandon the boot context), reserve
+        ; The boot stack (SysStkUpper) becomes the SHARED SSP of the interrupts; each task has its own
+        ; user stack (AllocMem'd). We reset the SSP to SysStkUpper (abandon the boot context), reserve
         ; a frame slot, and dispatch_in relocates task_H's user frame -> SSP then rte's in USER mode.
-        move.l  #STACKTOP,sp         ; clean shared SSP (the boot context never resumes)
-        lea     -FRAME_SIZE(sp),sp   ; 66-byte slot for dispatch_in (movem+rte bring sp back to STACKTOP)
+        move.l  EB_SYSSTKUPPER(a6),sp ; clean shared SSP (the boot context never resumes)
+        lea     -FRAME_SIZE(sp),sp   ; 66-byte slot for dispatch_in (movem+rte bring sp back to SysStkUpper)
         lea     EB_TASKREADY(a6),a0  ; explicit initial dispatch
         jsr     LVO_REMHEAD(a6)      ; head = task_H (pri 10) -> it Waits first
         move.l  d0,a1

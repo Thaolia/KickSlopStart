@@ -566,7 +566,7 @@ trap2_handler:
                 ifeq    M7J_NOFREE
         jsr     task_freemem        ; tc_MemEntry (TCB and stack included if they are in it) — safe: we run on the SSP
                 endc
-        move.l  #STACKTOP,sp        ; clean SSP (like boot.s)
+        move.l  EB_SYSSTKUPPER(a6),sp ; clean SSP (like boot.s)
         jmp     LVO_DISPATCH(a6)
 
 ; ============================ by-number dispatcher (M7b) ==========

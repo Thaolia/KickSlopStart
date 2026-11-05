@@ -69,6 +69,40 @@ substantially, but exact original-ROM speed parity has **not** been reached. The
 the remaining gap are recorded in `tests/README.md`; original-ROM observations are isolated in
 `docs/analysis/clock-performance-v34.md`.
 
+## Low chip memory map (2026-11-05)
+
+| Region | With slow RAM | Chip RAM only |
+|--------|---------------|---------------|
+| `$0`-`$400` | CPU vectors | CPU vectors |
+| `$400`-`$800` | chip MemHeader (`$400`), self-test scratch, expansion reset memo (`$480`), low-RAM variables (`$500`-`$800`, zeroed at coldstart) | same |
+| `$800`-`$1000` | cushion, in no MemHeader | unused, in no MemHeader |
+| `$1000`-`$14AA` | **chip heap** (`LOWHEAP_LO`) | exec jump table + ExecBase (`$1276`) |
+| `$1500`-`$2500` | chip heap (the multi-header self-test region `FTEST_LO`/`FTEST_HI` until the self-test ends) | self-test region, then a margin below the supervisor stack |
+| `$2500`-`$3500` | chip heap (boot stack only until phase 3 of coldstart) | supervisor stack |
+| `$3500`-end of chip | chip heap | chip heap |
+| bottom of slow RAM | jump table + ExecBase (`$C00276`, or `$C40276` for the soft-kick image) + slow MemHeader | - |
+| top 4,096 bytes of slow RAM | supervisor stack (ExecBase `SysStkLower`/`SysStkUpper`) | - |
+
+With slow RAM the supervisor stack sits at the top of slow RAM as on 1.3 (memory-budget-v34; 1.3 uses 6,144 bytes
+there, we keep our 4,096: the deepest supervisor stack seen over a whole Workbench 1.3.3 session with a Shell was
+under 1 KB). Coldstart sets `SysStkLower`/`SysStkUpper` and moves SP there as soon as `slow_probe` has answered (the
+boot stack is empty at that point); the scheduler launch and RemTask(self) reload SP from `SysStkUpper`. After the
+memory self-test and before `kick_reserve`, `add_low_chip` (`memory.s`) lowers the chip MemHeader's `mh_Lower` to
+`$1000` and `Deallocate`s `$1000`-`$3500` into it.
+
+Two constraints from real programs shaped this, both found while validating it:
+- **One chip MemHeader.** A separate low-chip header (pri −11, after the main one) made Sanity-Arte crash (not
+  traced; most likely it walks the MemList expecting 1.3's single chip header, which would be the last node).
+- **A cushion above the low-RAM variables.** Bubble Bobble allocates a 512-byte chip block and loads SP with its
+  *start*, so its stack runs below the block. With the heap extended down to `$800` the block landed at `$8E0` and
+  its stack overwrote the low-RAM variables (black screen); with the heap starting at `$1000` the block lands at
+  `$10xx` and the stack stays inside `$800`-`$1000`. 1.3's heap starts at `$420`, so no program can rely on low chip
+  staying free, but this one relies on something harmless sitting below its first chip block.
+
+Without slow RAM nothing is added: ExecBase stays in low chip (the top of chip belongs to the intros), the
+`$1500`-`$2500` margin keeps a supervisor stack overflow away from it, and the free `$800`-`$1000` would put the
+first chip block right above the low-RAM variables again.
+
 ## ROM model (Kickstart 1.3, 256K)
 
 - Image of **262,144 bytes**, loaded at **`$FC0000`** (also mapped at `$0` on reset via the OVL overlay).
@@ -1558,12 +1592,14 @@ differs.
     server lists stay in a private block (EB_INTSVL). graphics installs `bltsrv` (GfxBase+$76) through
     SetIntVector(INTB_BLIT) with is_Data = GfxBase and its VBlank server in `vbsrv` (+$4A): some intros read
     `IntVects[INTB_BLIT].iv_Data` to find GfxBase.
-  - **ExecBase, jump table and supervisor stack in low chip**: table $1000-$1276, ExecBase $1276, region of the
+  - **ExecBase, jump table and supervisor stack in low chip** (without slow RAM; current map: "Low chip memory map"
+    above): table $1000-$1276, ExecBase $1276, region of the
     multi-header test $1500-$2500 (margin below the stack afterwards), supervisor stack $2500-$3500, heap $3500-$80000. The top of
     chip stays free as on the real 1.3 (intros: routine at $7F000, stack at $7FFFE, planes at $70000+).
     **With slow RAM** (coldstart-hardware-v34 §4.1), the jump table and ExecBase go to the bottom of it instead:
     ExecBase $C00276 (ROM) or $C40276 (soft-kick image, which fills $C00000-$C3FFFF), and the "Fast Memory"
-    MemHeader starts right after ExecBase's positive part. `slow_probe` (`memory.s`) runs before ExecBase is built
+    MemHeader starts right after ExecBase's positive part (since 2026-11-05 the supervisor stack moves to the top of
+    slow RAM too and the chip heap starts at $1000; see "Low chip memory map"). `slow_probe` (`memory.s`) runs before ExecBase is built
     and gives `MaxExtMem` (+$4E, end of the slow RAM, 0 without), which `add_slow_memory` then uses. Zool loads over
     low chip, then reads MaxLocMem/MaxExtMem to choose where to copy its code ($C10000 with 512 KB slow); with
     ExecBase in chip or MaxExtMem at 0 it overwrote its own VBlank routine and never read fire. The exec code jumps

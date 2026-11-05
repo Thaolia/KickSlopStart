@@ -10,6 +10,10 @@ page measures KickSlopStart in the same configuration and explains the differenc
 | A/2: 512 KB chip + 512 KB slow, DF0 + empty DF1 (Amiberry A500 preset, the skill's default) | **836,152** | 861,048 (staged run) / 860,992 (unmodified disk) | **24,896** / 24,840 |
 | A/1: same, DF0 only (`-- -s floppy1type=-1`) | **841,672** | 884,424 | **42,752** |
 
+**Update (2026-11-05, low chip made allocatable, section 3):** A/2 idle is now **841,528** free (+5,376; gap to
+1.3 19,520 / 19,464); chip-only unchanged (352,544 at Workbench 1.3.3 idle). The tables below are the
+`17da6ee` measurement and were not redone; only section 3 changes.
+
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
 RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 465,360 bytes free at idle against
@@ -91,17 +95,37 @@ system processes (DF0, DF1), the console handler, the keyboard feeder and the "D
 
 ## 3. Memory outside the MemHeaders (never counted by AvailMem)
 
-| Region | Ours | 1.3 |
-|--------|-----:|----:|
-| Chip below `mh_Lower` | 13,568 (`$0`-`$3500`) | 1,056 (`$0`-`$420`) |
-| Slow below `mh_Lower` (ExecBase + slow MemHeader) | 1,232 | 1,256 |
-| Supervisor stack | inside the chip area above (4,096 at `$2500`) | 6,144 at the top of slow RAM |
-| **Total** | **14,800** | **8,456** |
+| Region | Ours (before 2026-11-05) | Ours (now) | 1.3 |
+|--------|-----:|-----:|----:|
+| Chip below `mh_Lower` | 13,568 (`$0`-`$3500`) | 4,096 (`$0`-`$1000`) | 1,056 (`$0`-`$420`) |
+| Slow below `mh_Lower` (ExecBase + slow MemHeader) | 1,232 | 1,232 | 1,256 |
+| Supervisor stack | inside the chip area above (4,096 at `$2500`) | 4,096 at the top of slow RAM | 6,144 at the top of slow RAM |
+| **Total** | **14,800** | **9,424** | **8,456** |
 
-Of our 13,568 low chip bytes: vectors and low-RAM variables up to `$800`; `$800`-`$2500` (7,424 bytes) holds
-nothing once slow RAM exists (ExecBase and its jump table then live in slow RAM; the dump shows the untouched
-power-up `$FF` fill up to `$1500` and, from `$1500` to `$2500`, the multi-header self-test region `FTEST_LO`/
-`FTEST_HI`, identical from the insert-disk screen to idle); `$2500`-`$3500` is the supervisor stack.
+Before 2026-11-05, of our 13,568 low chip bytes: vectors and low-RAM variables up to `$800`; `$800`-`$2500`
+(7,424 bytes) held nothing once slow RAM exists (ExecBase and its jump table then live in slow RAM; the dump shows
+the untouched power-up fill up to `$1500` and, from `$1500` to `$2500`, the multi-header self-test region `FTEST_LO`/
+`FTEST_HI`, identical from the insert-disk screen to idle); `$2500`-`$3500` was the supervisor stack.
+
+**Now (candidate 3 done, with slow RAM):** the supervisor stack is the top 4,096 bytes of slow RAM (as on 1.3) and
+the chip MemHeader starts at `$1000`: 9,472 more chip bytes, 4,096 fewer slow bytes, +5,376 in all, one contiguous
+chip heap. `$800`-`$1000` stays out on purpose, as a cushion: Bubble Bobble allocates a 512-byte chip block and loads
+SP with its **start** (its stack runs below the block); with the heap extended down to `$800` the block landed at
+`$8E0`, its stack overwrote the low-RAM variables and the game stayed on a black screen (A/B builds: the stack move
+alone was fine). A separate low-chip MemHeader (pri −11, used only when the main one is full) fixed Bubble Bobble
+but made Sanity-Arte crash (not traced; most likely it walks the MemList expecting 1.3's single chip header). Without
+slow RAM nothing changes: `$1000`-`$3500` holds ExecBase, the margin and the stack, and `$800`-`$1000` alone would
+put the first chip block right above the low-RAM variables again.
+
+Proof before the change (dev ROM, Workbench 1.3.3 A/2, an IPC log-only watch over `$800`-`$2500` for CPU and DMA accesses from the end of the self-test, through the desktop, the disk
+window, a Shell with `dir`, `info`, `avail`, `list`, `copy`, `newshell`, `endcli` and one idle minute, plus a pattern
+compare of `$800`-`$3500`): no write, no DMA; the only accesses were 4 word reads of `$9D8` by L:Shell-Seg at each
+NewShell. Shell-Seg passes ExecBase (`$C00276`) as the second string (a BSTR BPTR) of a BCPL routine that compares
+two strings' lengths, so it reads `($C00276 << 2) & $FFFFFF = $9D8`. Where that ExecBase value comes from is not
+known (an open point for the DOS side). On 1.3, whose ExecBase is also at `$C00276` with slow RAM and whose chip
+heap starts at `$420`, that address holds whatever was allocated there, so even if 1.3 makes the same call the
+program cannot depend on its value; a read only, and it now sees heap data instead of the power-up fill. The
+deepest supervisor stack use over that session was 896 bytes (lowest touched address `$3180`).
 
 ## 4. Idle state by category (A/1, one drive)
 
@@ -138,7 +162,7 @@ Item 2 overlaps items 5, 6 and 7 (the DF1 file system, console handler and feede
 |---|-----------|-------:|------|
 | 1 | Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
 | 2 | Process stacks larger than 1.3's: file system handler 4,096 per drive (1.3: 840), console handler 4,096 (1.3: 2,800, and only while a CON window is open), RAM handler +4,096 `CP_STKEXTRA` over its 1,200 (1.3: none), keyboard feeder 4,096 | up to ≈ 3,250 per drive + 1,296 + 4,096 | High unless the stack high-water mark of each process is measured first (fill pattern, then a long Workbench session, copy, DiskCopy): an overflow corrupts the neighbouring block silently |
-| 3 | Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
+| 3 | **Done 2026-11-05 (section 3).** Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
 | 4 | Workbench state: the 9,126-byte block reserves 6 drawer records (6 × 1,084 = 6,504) and 8 volume records at start; allocate a drawer record when its window opens | ≈ 6,500 | Low to medium (workbench.s only; drawer open/close and Close-on-error paths to re-test) |
 | 5 | Empty DF1: start its file system process on first use only | 5,520 (A/2 only) | Medium (DOS mount order, disk-change handling). Already far below 1.3's 23,432 |
 | 6 | Console handler process kept at idle with no window: exit it when its last window closes, or shrink its stack | 4,648 (or 1,296) | Medium: CON handler lifetime, NEWCON:, `*` resolution |
