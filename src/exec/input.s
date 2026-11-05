@@ -10,8 +10,9 @@
 ;     a5 = is_Code, and RETURNS in d0 the (possibly modified) list passed to the next handler.
 ;   IND_SETMPORT / SETMTYPE / SETMTRIG: mouse port, controller type and trigger, applied to gameport.device.
 ;   CMD_STOP / START / RESET: the mouse stops / resumes feeding the chain. CMD_CLEAR / FLUSH: nothing to do.
-; Deviation: no input.device task. The keyboard feeder (dos/feeder.s) and the gameport VBlank server inject their
-; events through IND_WRITEEVENT, the chain runs in the context of the caller, so every command completes at once
+; Deviation: no input.device task. The keyboard feeder (dos/feeder.s, run by the intuition input task at priority 20)
+; and the gameport VBlank server inject their events through IND_WRITEEVENT, the chain runs in the context of the
+; caller, so every command completes at once
 ; (replied unless IOF_QUICK) and CMD_STOP does not hold back the keyboard feeder nor its timer ticks.
 ; IMPLEMENTATION track ("clean"): AutoDocs input.device + public NDK includes + docs/analysis. NO ROM reading.
 

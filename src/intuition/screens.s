@@ -86,6 +86,9 @@ LVO_WAITBLIT    EQU -228             ; graphics.library public vector
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
                 xref    mn_defcheck          ; menus.s: internal menu check mark
+                xref    fd_init              ; dos/feeder.s: keyboard feeder run by the input task
+                xref    fd_service
+                xref    fd_arm
                 xdef    it_startinput
                 xdef    intuition_ReportMouse
                 xdef    intuition_SizeWindow
@@ -3016,8 +3019,9 @@ it_event:
 
 ; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word), d2 = extra long, kept for keys: the
 ; dead-key history): slot dropped into the input task's ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
-; Three producers (the feeder task, the DF0: handler, the VBlank interrupt for the mouse): the head is read, the slot
-; written and the head published with interrupts off (bare Disable, as in PutMsg), or two of them fill the same slot.
+; Three producers (the input task itself through the keyboard feeder, the DF0: handler, the VBlank interrupt for the
+; mouse): the head is read, the slot written and the head published with interrupts off (bare Disable, as in PutMsg),
+; or two of them fill the same slot.
 it_push:
         move.l  d2,-(sp)
         move.l  ($4).w,a6
@@ -3300,8 +3304,9 @@ wn_pending:
         cmp.l   d0,d0                ; Z = 1
         rts
 
-; it_startinput(a2 = IntuitionBase, a6 = SysBase): creates the input task (pri 20, like that of input.device).
-; Without memory: no task, the buttons are ignored. Preserves d2-d7/a2-a6.
+; it_startinput(a2 = IntuitionBase, a6 = SysBase): creates the input task (pri 20, like that of input.device). It is
+; also the keyboard feeder's task (dos/feeder.s), so one 4 KB stack serves both, as input.device's does on 1.3.
+; Without memory: no task, the buttons and the keyboard are ignored. Preserves d2-d7/a2-a6.
 IT_STACK        EQU 4096
 it_startinput:
         movem.l a2-a4,-(sp)
@@ -3339,8 +3344,9 @@ it_inname:
         dc.b    "intuition input",0
         even
 
-; it_intask: body of the input task. Allocates its signal and publishes itself, then processes in order the buttons of
-; the ring and, when it is tracking the pointer, its last movement.
+; it_intask: body of the input task. Allocates its signal and publishes itself, sets up the keyboard feeder, then at
+; each turn injects the keys, tick and repeat that are due (fd_service: the input handlers run in this task), then
+; processes the next item of the ring and, when the ring is empty and it is tracking the pointer, its last movement.
 it_intask:
         move.l  ($4).w,a6
         move.l  INT_IBASE,a5
@@ -3359,11 +3365,24 @@ it_intask:
         move.w  PTR_Y,IB_LASTPY(a5)
         move.l  EB_THISTASK(a6),IB_INTASK(a5)
         move.l  d1,IB_INSIG(a5)
+        jsr     fd_init              ; the keyboard feeder's work runs here too (one input task, as on 1.3)
+        move.l  d0,IB_FEEDER(a5)
 .in_wait:
-        move.l  IB_INSIG(a5),d0
         move.l  ($4).w,a6
+        move.l  IB_FEEDER(a5),d0
+        beq.s   .in_nofd
+        move.l  d0,a0
+        jsr     fd_arm               ; d0 = its signal (keyboard interrupt, timer deadline)
+.in_nofd:
+        or.l    IB_INSIG(a5),d0
         jsr     LVO_WAIT(a6)
 .in_next:
+        move.l  IB_FEEDER(a5),d0     ; keys, tick and repeat at each turn, before the next item: an action that waits
+        beq.s   .in_ring             ; (verification, layer lock) only delays them, the raw ring keeps the keys
+        move.l  d0,a0
+        move.l  ($4).w,a6
+        jsr     fd_service
+.in_ring:
         move.w  IB_EVTAIL(a5),d1
         cmp.w   IB_EVHEAD(a5),d1
         beq.s   .in_move
@@ -3407,7 +3426,7 @@ it_intask:
         bra.s   .in_next
 .in_disk:
         bsr     it_diskbc
-        bra.s   .in_next
+        bra     .in_next
 .in_mkey:
         jsr     mn_keypick           ; d4 = menu code, d5 = qualifier
         bra     .in_next

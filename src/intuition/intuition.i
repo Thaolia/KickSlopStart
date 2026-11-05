@@ -24,7 +24,7 @@ IB_INSIG         EQU IB_INTASK+4       ; event signal mask
 IB_EVHEAD        EQU IB_INSIG+4        ; UWORD: next slot written (interrupt)
 IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD: next slot read (task)
 IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN slots of IB_EVSZ bytes: code, x, y (screen)
-IB_EVN           EQU 32                ; (keys wait here while a verification blocks the input task)
+IB_EVN           EQU 32                ; (at most the 16 keys of the raw keyboard ring injected in one turn)
 IB_EVSZ          EQU 10                ; code, x, y, then a long (keys: dead-key history)
 IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE: the task also wants the movements (drag, menus)
 IB_MOVED         EQU IB_TRACK+1        ; BYTE: movement to process
@@ -102,7 +102,8 @@ IB_VPY           EQU IB_VPX+2
 IB_LOCKS         EQU IB_VPY+2          ; 7 SignalSemaphores of LockIBase / UnlockIBase
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
-INTUITIONBASE_SIZE EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE
+IB_FEEDER        EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE ; keyboard feeder state (dos/feeder.s) run by the input task | 0
+INTUITIONBASE_SIZE EQU IB_FEEDER+4
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

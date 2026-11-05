@@ -60,7 +60,6 @@
                 xref    con_handler      ; dos/conhandler.s (E1: serial console handler process)
                 xref    exec_AddTail     ; exec/lists.s (ExecBase in LibList at coldstart)
                 xref    shell_main       ; dos/shell.s (E2: minimal interactive shell)
-                xref    feeder_main      ; dos/feeder.s (integration F: keyboard feeder -> input.device)
                 ifne    LOADSCREEN_DEMO
                 xref    loadscreen_demo  ; graphics/loadscreen.s (loading screen, gated by LOADSCREEN_DEMO)
                 endc
@@ -4281,13 +4280,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         move.l  #D3_STK,d1
         jsr     proc_create
         move.l  d0,DOS_CONPORT       ; publish the console handler's port
-        ; --- keyboard feeder -> input.device (integration F, item 1): INFRASTRUCTURE, created unconditionally.
-        ; Drains the raw keyboard ring (KBD_FEEDRING) and injects the RAWKEYs into input.device (IND_WRITEEVENT).
-        lea     fd_cname(pc),a0
-        move.l  #feeder_main,a1      ; absolute: feeder.o linked out of 16-bit lea(pc) range
-        moveq   #4,d0                ; pri 4 (below the console handler)
-        move.l  #D3_STK,d1
-        jsr     proc_create
+        ; The keyboard feeder -> input.device (integration F, item 1) has no process: the intuition input task runs it.
 .d3c_noclient:
                 ifne    M7J_DEMO
         ; M7j: capture AvailMem BEFORE creating task_rm (baseline); after its self-removal, AvailMem
@@ -6468,8 +6461,6 @@ e1_hname:
         dc.b    "con.handler",0
 sh_cname:
         dc.b    "shell",0
-fd_cname:
-        dc.b    "feeder",0
         even
 d3a_hname:
         dc.b    "dos.handler.echo",0

@@ -1,22 +1,27 @@
 ; src/dos/feeder.s - keyboard feeder -> input.device (integration F, item 1).
 ;
-; Process (proc_create) that DRAINS the RAW keyboard ring (KBD_FEEDRING, filled by kbd_interrupt at the same point
-; as the cooked push) and injects each keystroke as a RAWKEY InputEvent into input.device via IND_WRITEEVENT ->
-; input.device becomes the SINGLE keyboard SOURCE; its handlers (console.device) do the cooking. The task wakes on a
-; keystroke (the keyboard interrupt signals it) or a deadline (timer.device VBLANK: the next IECLASS_TIMER or key
-; repeat), never on every frame: a frame-rate wake-up delayed every WaitTOF caller of lower priority. Role of the 1.3
-; input.device task (spec docs/analysis/intuiticks-repeat-v34.md): an IECLASS_TIMER event every 5 frames (10 per second) and the
-; auto-repeat of the last key pressed (input.device delay and period, IND_SETTHRESH/SETPERIOD).
+; The work of the 1.3 input.device task that is not Intuition's (spec docs/analysis/intuiticks-repeat-v34.md): it
+; DRAINS the RAW keyboard ring (KBD_FEEDRING, filled by kbd_interrupt at the same point as the cooked push) and injects
+; each keystroke as a RAWKEY InputEvent into input.device via IND_WRITEEVENT -> input.device becomes the SINGLE keyboard
+; SOURCE; its handlers (console.device) do the cooking. It also sends an IECLASS_TIMER event every 5 frames (10 per
+; second) and repeats the last key pressed (input.device delay and period, IND_SETTHRESH/SETPERIOD).
+; It has no task of its own: the intuition input task (it_intask, src/intuition/screens.s, priority 20 like the 1.3
+; input.device task) calls fd_init once, then fd_service at each turn of its loop and fd_arm before each Wait. The
+; keyboard interrupt signals that task (FEED_KTASK/FEED_KMASK) and the timer request (timer.device UNIT_VBLANK, for the
+; next IECLASS_TIMER or key repeat) replies on the same signal: nothing wakes the task on every frame, which would delay
+; every WaitTOF caller of lower priority.
 ;
-; SELF-TEST (ifeq SHELL_ON_SCREEN, item 1): after injecting the 1st keystroke, reads console.device CMD_READ (which
-; its handler has cooked) and emits "FEEDER OK=<char>" on serial (proves keyboard -> feeder -> input.device -> console).
-; When SHELL_ON_SCREEN=1 (item 2), no self-test: the shell (via the screen handler) consumes console.device.
+; SELF-TEST (ifeq SHELL_ON_SCREEN|PROD, item 1): after injecting the 1st keystroke, reads console.device CMD_READ
+; (which its handler has cooked) and emits "FEEDER OK=<char>" on serial (proves keyboard -> feeder -> input.device ->
+; console). When SHELL_ON_SCREEN=1 (item 2), no self-test: the shell (via the screen handler) consumes console.device.
 ; IMPLEMENTATION track ("clean"): input.device/timer.device + exec AutoDocs. NO ROM reading.
 
                 include "exec.i"
                 include "dospkt.i"
 
-                xdef    feeder_main
+                xdef    fd_init
+                xdef    fd_service
+                xdef    fd_arm
                 xref    ser_lock             ; exec/boot.s (atomic serial output)
                 xref    ser_unlock
                 xref    kbd_pushcooked       ; exec/keyboard.s (cooked character to the CLI ring)
@@ -30,63 +35,59 @@ FD_NOREPEAT  EQU $FFFF            ; FD_RPTCODE: no repeat
 TICK_FRAMES  EQU 5                ; IECLASS_TIMER every 5 frames (100 ms in PAL)
 KEY_NOREPEAT EQU $60              ; codes >= $60 (qualifiers): never repeated, they stop the repeat
 
-; state block (AllocMem)
+; state block (one AllocMem, kept by the caller)
 FD_INPUT   EQU 0                  ; APTR base input.device
 FD_CON     EQU 4                  ; APTR console.device base (self-test)
 FD_TBASE   EQU 8                  ; APTR base timer.device
-FD_RPORT   EQU 12                 ; APTR reply MsgPort
-FD_TREQ    EQU 16                 ; APTR timerequest
-FD_SIGMASK EQU 20                 ; LONG signal mask of the reply port
-FD_DONE    EQU 24                 ; BYTE self-test emitted
-FD_TPEND   EQU 25                 ; BYTE timer request in flight
-FD_IOREQ   EQU 28                 ; IOStdReq (48) for input BeginIO
-FD_EVENT   EQU 76                 ; InputEvent (22)
-FD_RDBUF   EQU 100                ; 4 bytes: console read buffer (self-test)
-FD_REVENT  EQU 104                ; InputEvent (22): repeating key (qualifier | IEQUALIFIER_REPEAT)
-FD_RPTCODE EQU 126                ; WORD: code of the repeating key ($FFFF: none)
-FD_RPTDUE  EQU 128                ; LONG: frame (VBL_COUNT) of the next repeat
-FD_TICKDUE EQU 132                ; LONG: frame of the next IECLASS_TIMER
-FD_GSTREQ  EQU 136                ; timerequest (40): TR_GETSYSTIME for the timestamp
-FD_PREV    EQU 176                ; 4 bytes: Prev1DownCode/Qual, Prev2DownCode/Qual (dead keys)
-FD_SIZE    EQU 180
+FD_SIGMASK EQU 12                 ; LONG signal mask: keyboard interrupt and timer reply port
+FD_DONE    EQU 16                 ; BYTE self-test emitted
+FD_TPEND   EQU 17                 ; BYTE timer request in flight
+FD_RPTCODE EQU 18                 ; WORD: code of the repeating key ($FFFF: none)
+FD_RPTDUE  EQU 20                 ; LONG: frame (VBL_COUNT) of the next repeat
+FD_TICKDUE EQU 24                 ; LONG: frame of the next IECLASS_TIMER
+FD_PREV    EQU 28                 ; 4 bytes: Prev1DownCode/Qual, Prev2DownCode/Qual (dead keys)
+FD_RDBUF   EQU 32                 ; 4 bytes: console read buffer (self-test)
+FD_IOREQ   EQU 36                 ; IOStdReq (48) for input BeginIO
+FD_EVENT   EQU 84                 ; InputEvent (22)
+FD_REVENT  EQU 106                ; InputEvent (22): repeating key (qualifier | IEQUALIFIER_REPEAT)
+FD_RPORT   EQU 128                ; MsgPort (34): timer reply port
+FD_TREQ    EQU 164                ; timerequest (40): UNIT_VBLANK deadline
+FD_GSTREQ  EQU 204                ; timerequest (40): TR_GETSYSTIME for the timestamp
+FD_SIZE    EQU 244
 
-feeder_main:
-                move.l  ($4).w,a6
+; fd_init(a6 = SysBase) -> d0 = state block | 0 (no memory, no free signal or device missing: no keyboard
+; injection). The calling task becomes the one the keyboard interrupt signals. Preserves d2-d7/a2-a6.
+fd_init:
+                movem.l d3/a2-a3/a5,-(sp)
                 move.l  #FD_SIZE,d0
                 move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
                 jsr     LVO_ALLOCMEM(a6)
                 tst.l   d0
-                beq     .fm_idle             ; no RAM -> idle
-                move.l  d0,a5                ; a5 = state (persistent)
-                lea     EB_DEVICELIST(a6),a0 ; input.device
+                beq     .fi_ret
+                move.l  d0,a5
+                lea     EB_DEVICELIST(a6),a2
+                move.l  a2,a0
                 lea     fd_inputname(pc),a1
                 jsr     LVO_FINDNAME(a6)
                 move.l  d0,FD_INPUT(a5)
-                beq     .fm_idle
-                lea     EB_DEVICELIST(a6),a0 ; console.device
+                beq     .fi_fail
+                move.l  a2,a0
                 lea     fd_conname(pc),a1
                 jsr     LVO_FINDNAME(a6)
                 move.l  d0,FD_CON(a5)
-                ; --- set up timer.device MICROHZ (COOP poll) ---
-                lea     EB_DEVICELIST(a6),a0
+                move.l  a2,a0
                 lea     fd_timername(pc),a1
                 jsr     LVO_FINDNAME(a6)
-                tst.l   d0
-                beq     .fm_idle
                 move.l  d0,FD_TBASE(a5)
-                moveq   #-1,d0               ; AllocSignal
+                beq     .fi_fail
+                moveq   #-1,d0
                 jsr     LVO_ALLOCSIGNAL(a6)
+                move.l  d0,d3                ; d3 = bit number
+                bmi     .fi_fail
                 moveq   #1,d1
                 lsl.l   d0,d1
                 move.l  d1,FD_SIGMASK(a5)
-                move.l  d0,d3                ; d3 = bit number
-                move.l  #MP_SIZE,d0          ; reply port
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq     .fm_idle
-                move.l  d0,FD_RPORT(a5)
-                move.l  d0,a3
+                lea     FD_RPORT(a5),a3
                 move.b  #NT_MSGPORT,LN_TYPE(a3)
                 move.b  #PA_SIGNAL,MP_FLAGS(a3)
                 move.b  d3,MP_SIGBIT(a3)
@@ -97,31 +98,42 @@ feeder_main:
                 move.l  d0,(a1)
                 clr.l   4(a1)
                 move.l  a1,8(a1)
-                move.l  #TR_SIZE,d0          ; timerequest
-                move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-                jsr     LVO_ALLOCMEM(a6)
-                tst.l   d0
-                beq     .fm_idle
-                move.l  d0,FD_TREQ(a5)
-                move.l  d0,a1
-                move.l  FD_RPORT(a5),MN_REPLYPORT(a1)
+                lea     FD_TREQ(a5),a1
+                move.l  a3,MN_REPLYPORT(a1)
                 move.l  FD_TBASE(a5),IO_DEVICE(a1)
                 move.l  #UNIT_VBLANK,IO_UNIT(a1)
                 lea     FD_GSTREQ(a5),a1
                 move.l  FD_TBASE(a5),IO_DEVICE(a1)
                 move.w  #FD_NOREPEAT,FD_RPTCODE(a5)
-                moveq   #-1,d0               ; keyboard signal, published for the keyboard interrupt (mask first)
-                jsr     LVO_ALLOCSIGNAL(a6)
-                moveq   #1,d1
-                lsl.l   d0,d1
-                move.l  d1,FEED_KMASK
+                move.l  FD_SIGMASK(a5),FEED_KMASK    ; published for the keyboard interrupt (mask first)
                 move.l  EB_THISTASK(a6),FEED_KTASK
-.fm_loop:
-                bsr     fd_poll_wait         ; keystroke or deadline
-.fm_drain:                                   ; keystrokes first: a release already in the ring must stop the repeat
-                move.w  KBD_FHEAD,d2         ; before a late wake-up (feeder starved during a disk load) fires it
+                move.l  a5,d0
+                bra.s   .fi_ret
+.fi_fail:
+                move.l  a5,a1
+                move.l  #FD_SIZE,d0
+                jsr     LVO_FREEMEM(a6)
+                moveq   #0,d0
+.fi_ret:
+                movem.l (sp)+,d3/a2-a3/a5
+                rts
+
+; fd_service(a0 = state, a6 = SysBase): collects the timer reply, then injects every keystroke waiting in the raw
+; ring, then the IECLASS_TIMER tick and the key repeat that are due. Keystrokes come first: a release already in the
+; ring must stop the repeat before a late wake-up (input task busy, e.g. during a disk load) fires it. The input
+; handlers run here, in the caller's task. Preserves d2-d7/a2-a6.
+fd_service:
+                movem.l d2-d7/a2-a6,-(sp)
+                move.l  a0,a5
+                lea     FD_RPORT(a5),a0
+                jsr     LVO_GETMSG(a6)
+                tst.l   d0
+                beq.s   .fs_drain
+                sf      FD_TPEND(a5)
+.fs_drain:
+                move.w  KBD_FHEAD,d2
                 cmp.w   KBD_FTAIL,d2
-                beq.s   .fm_timed
+                beq.s   .fs_timed
                 lea     KBD_FEEDRING,a0
                 move.w  0(a0,d2.w),d4        ; d4 = (qual<<8)|keycode
                 addq.w  #2,d2
@@ -143,9 +155,9 @@ feeder_main:
                 lsr.w   #3,d0
                 lea     kd_numpad,a0
                 btst    d1,0(a0,d0.w)
-                beq.s   .fm_nopad
+                beq.s   .fs_nopad
                 or.w    #$0100,IE_QUALIFIER(a1)
-.fm_nopad:
+.fs_nopad:
                 bsr     fd_stamp
                 bsr     fd_history
                 bsr     fd_repeat_key        ; arm / stop the repeat according to this keystroke
@@ -154,16 +166,50 @@ feeder_main:
                 ifeq    SHELL_ON_SCREEN|PROD     ; the self-test steals a byte of the first key typed: dev ROM only
                 bsr     fd_selftest          ; item 1: emit "FEEDER OK=<char>" once (reads console.device)
                 endc
-                bra.s   .fm_drain
-.fm_timed:
+                bra.s   .fs_drain
+.fs_timed:
                 bsr     fd_timed             ; IECLASS_TIMER tick and due repeat
-                bra     .fm_loop
-.fm_idle:
-                move.l  ($4).w,a6            ; setup failed: sleep on a signal that never arrives (COOP, does not spin)
-.fm_idle_lp:
+                movem.l (sp)+,d2-d7/a2-a6
+                rts
+
+; fd_arm(a0 = state, a6 = SysBase) -> d0 = signal mask to wait for. Without a timer request in flight, sends one for
+; the frames left to the next deadline: IECLASS_TIMER, or the key repeat if it comes first. A keystroke leaves the
+; request running. Preserves d2-d7/a2-a6.
+fd_arm:
+                movem.l d2/a5-a6,-(sp)
+                move.l  a0,a5
+                tst.b   FD_TPEND(a5)
+                bne.s   .fa_ret
+                move.l  FD_TICKDUE(a5),d0
+                cmp.w   #FD_NOREPEAT,FD_RPTCODE(a5)
+                beq.s   .fa_due
+                move.l  FD_RPTDUE(a5),d1
+                cmp.l   d0,d1
+                bge.s   .fa_due
+                move.l  d1,d0
+.fa_due:
+                sub.l   VBL_COUNT,d0         ; d0 = frames left (at least one)
+                bgt.s   .fa_n
+                moveq   #1,d0
+.fa_n:
+                move.l  d0,d2
+                bsr     fd_rate              ; frames -> seconds and microseconds at the VBlank rate
+                lea     FD_TREQ(a5),a1
+                divu    d0,d2
                 moveq   #0,d0
-                jsr     LVO_WAIT(a6)
-                bra.s   .fm_idle_lp
+                move.w  d2,d0
+                move.l  d0,TV_SECS(a1)
+                swap    d2
+                mulu    d1,d2
+                move.l  d2,TV_MICRO(a1)
+                move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
+                move.l  FD_TBASE(a5),a6
+                jsr     TD_BEGINIO(a6)
+                st      FD_TPEND(a5)
+.fa_ret:
+                move.l  FD_SIGMASK(a5),d0
+                movem.l (sp)+,d2/a5-a6
+                rts
 
 ; fd_write(a0 = InputEvent): IND_WRITEEVENT to input.device. a5 = state, a6 = SysBase. Preserves a5/a6.
 fd_write:
@@ -233,10 +279,6 @@ fd_frames:
                 move.l  (sp)+,d2
                 rts
 
-; fd_repeat_key(a1 = RAWKEY event of the keystroke): press of a key < $60 -> it becomes the repeating
-; key (copy with IEQUALIFIER_REPEAT, 1st repeat after the delay); press of a qualifier (>= $60) ->
-; stop; release of the repeating key, or different qualifier (masks $05FF / $07FF) -> stop.
-; a5 = state. Preserves a1/a5/a6.
 ; fd_history(a1 = RAWKEY event, a5): dead-key history (intuiticks-repeat §2.1): a press of a code below $60 carries
 ; in ie_X/ie_Y the two previous such presses (code, low byte of the qualifier) and becomes the newest of them; other
 ; events carry 0. Clobbers d0/d1.
@@ -254,6 +296,10 @@ fd_history:
 .hi_ret:
                 rts
 
+; fd_repeat_key(a1 = RAWKEY event of the keystroke): press of a key < $60 -> it becomes the repeating
+; key (copy with IEQUALIFIER_REPEAT, 1st repeat after the delay); press of a qualifier (>= $60) ->
+; stop; release of the repeating key, or different qualifier (masks $05FF / $07FF) -> stop.
+; a5 = state. Preserves a1/a5/a6.
 fd_repeat_key:
                 move.w  IE_CODE(a1),d0
                 bclr    #7,d0
@@ -289,8 +335,8 @@ fd_repeat_key:
 .rk_ret:
                 rts
 
-; fd_timed: on every frame, IECLASS_TIMER if its deadline is reached (every TICK_FRAMES frames), then
-; repeat of the held key if its deadline is reached (re-armed with the period). a5 = state, a6 = SysBase.
+; fd_timed: IECLASS_TIMER if its deadline is reached (every TICK_FRAMES frames), then repeat of the held key if its
+; deadline is reached (re-armed with the period). a5 = state, a6 = SysBase.
 fd_timed:
                 move.l  VBL_COUNT,d0
                 sub.l   FD_TICKDUE(a5),d0
@@ -334,53 +380,6 @@ fd_timed:
                 jsr     kbd_pushcooked
                 jsr     LVO_ENABLE(a6)
 .td_ret:
-                rts
-
-; fd_poll_wait: sleeps until a keystroke (FEED_KMASK) or the timer request (UNIT_VBLANK) ends. Without one in flight,
-; a request is sent for the frames left to the next deadline: IECLASS_TIMER, or the key repeat if it comes first.
-; A keystroke leaves the request running. a5 = state, a6 = SysBase. Preserves a5.
-fd_poll_wait:
-                movem.l d2-d4/a0-a4,-(sp)
-                tst.b   FD_TPEND(a5)
-                bne.s   .pw_wait
-                move.l  FD_TICKDUE(a5),d0
-                cmp.w   #FD_NOREPEAT,FD_RPTCODE(a5)
-                beq.s   .pw_due
-                move.l  FD_RPTDUE(a5),d1
-                cmp.l   d0,d1
-                bge.s   .pw_due
-                move.l  d1,d0
-.pw_due:
-                sub.l   VBL_COUNT,d0         ; d0 = frames left (at least one)
-                bgt.s   .pw_n
-                moveq   #1,d0
-.pw_n:
-                move.l  d0,d2
-                bsr     fd_rate              ; frames -> seconds and microseconds at the VBlank rate
-                move.l  FD_TREQ(a5),a1
-                divu    d0,d2
-                moveq   #0,d0
-                move.w  d2,d0
-                move.l  d0,TV_SECS(a1)
-                swap    d2
-                mulu    d1,d2
-                move.l  d2,TV_MICRO(a1)
-                move.w  #TR_ADDREQUEST,IO_COMMAND(a1)
-                move.l  FD_TBASE(a5),a6
-                jsr     TD_BEGINIO(a6)
-                move.l  ($4).w,a6
-                st      FD_TPEND(a5)
-.pw_wait:
-                move.l  FD_SIGMASK(a5),d0
-                or.l    FEED_KMASK,d0
-                jsr     LVO_WAIT(a6)
-                move.l  FD_RPORT(a5),a0
-                jsr     LVO_GETMSG(a6)
-                tst.l   d0
-                beq.s   .pw_ret
-                sf      FD_TPEND(a5)
-.pw_ret:
-                movem.l (sp)+,d2-d4/a0-a4
                 rts
 
                 ifeq    SHELL_ON_SCREEN|PROD
