@@ -225,6 +225,13 @@ Condition: board configured successfully, **without** `ERTF_MEMLIST`, with `ERTF
    copy), A3 = ConfigDev, A6 = ExecBase**, and (undocumented) **A5 = ExpansionBase**. D0 return:
    ≠ 0 = success (everything is kept); **0 = failure** → `FreeMem(buffer, da_Size)` and `er_Reserved0c = 0`.
    If `da_DiagPoint == 0`, the buffer is kept without a call.
+   **expansion.library is not yet public at that point** [O 2026-11-05, Amiberry, uaehf board, stop on the
+   first instruction fetch of the DiagPoint in the copy]: exec's LibList held **only exec.library**, and the
+   ExpansionBase passed in A5 was not linked in any list (`ln_Succ` = `ln_Pred` = 0, `lib_OpenCnt` 0). It is
+   added to LibList only when the resident's init returns (AUTOINIT `InitResident`: MakeLibrary runs the init,
+   which runs ConfigChain, then the library is added), so an `OpenLibrary("expansion.library")` from a
+   DiagPoint finds nothing and returns 0 [D from the list contents]. A5 is the only way to reach the base there;
+   the base romboot and dos open later is that same structure (same address after boot).
 8. `da_BootPoint` is not called here (that is the business of strap/romboot via `er_Reserved0c` and
    `eb_MountList`, outside this spec).
 
@@ -392,3 +399,5 @@ Review of 2026-10-29.
 - [x] No ROM data beyond the ABI: `ExpansionBase`/`ConfigDev`/`ExpansionRom` layout, error
   codes, Zorro II size tables (public), MemHeader name `"expansion ram"`, `dn_StackSize`/`dn_Priority`
   values of MakeDosNode.
+- [x] 2026-11-05 (§6 point 7, LibList at DiagPoint time): list contents read with the emulator stopped by a
+  fetch watch on the DiagArea copy (emulator RAM address, not a ROM address).

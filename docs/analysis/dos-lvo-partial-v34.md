@@ -189,14 +189,20 @@ error in Result2:
     the disk was −1 afterwards; MakeDir worked.
   - Same disk read-only: validated in memory (Info "Read Only", with used/free figures); writes gave **214**
     ("Volume / NoValF / is write protected"), not 213.
-  - `L:Disk-Validator` deleted from the boot disk: no message at all; Info stays "Validating"; writes give the
-    213 requester.
+  - `L:Disk-Validator` deleted from the boot disk: for a disk already in the drive at power-on, no message at
+    all; Info stays "Validating"; writes give the 213 requester. The same disk **inserted after boot** shows
+    "Error validating disk" / volume name / "Unable to load disk validator" (Retry / Cancel), then the
+    "Disk structure corrupt" requester after Cancel (2026-11-05). A disk whose flag is −1 needs no
+    `L:Disk-Validator`: the ROM loads its bitmap (`rom-filesystem-v34.md` §2.5).
   - Validation failing (the xdftool test image had the disk type "DOS" + 0 in the hash-chain field of its root
     block; 1146049280 is that value read as a number): two requesters shown while validating, "Error validating
     disk" / volume name / "Key 1146049280 out of range", then "Disk structure corrupt" / "Use DISKDOCTOR to
     correct it" (Retry / Cancel each); afterwards Info stays "Validating" and writes give the 213 requester,
-    **also on a read-only image** (213 is checked before 214). Whether these two validator texts belong to
-    `L:Disk-Validator` or to the ROM was not established. [?]
+    **also on a read-only image** (213 is checked before 214). **Settled 2026-11-05**: these texts, and "Key n
+    already set" / "Key n checksum error" / "Unable to load disk validator", are in the ROM; "Key n - bad block
+    type" uses a text of `L:Disk-Validator`. Every xdftool-formatted disk that needs a full validation (flag not −1)
+    fails this way on 1.3 (xdftool puts `'DOS\0'` in that field). The full table of causes and what Retry and Cancel do on each requester:
+    `rom-filesystem-v34.md` §2.5. [O]
   - A write during the validation itself (the window between mount and the end of validation) was not caught. [?]
 - Which LVOs go through it: name-based ones (DeleteFile, CreateDir, Rename, SetComment, SetProtection, Lock),
   lock-based ones (Info, ParentDir, Examine, ExNext) and handle-based ones (Read, Write, Seek). **DupLock does
@@ -461,7 +467,7 @@ string. Packet arguments are `dp_Arg1…`; "port" is the handler MsgPort the pac
 
 ## Clean-room review
 
-Review of 2026-11-04.
+Review of 2026-11-04; the two validator bullets of §1.4 updated 2026-11-05 (texts seen on screen only).
 
 - [x] No instruction sequence transcribed or paraphrased; routines are described as inputs, outputs, packets
   and ordered observable effects. No pseudo-code of a ROM routine.

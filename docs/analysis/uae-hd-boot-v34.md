@@ -263,8 +263,33 @@ ConfigDev `$F00000` present).
 
 ---
 
+## 9. Amiberry runs (2026-11-05) [O, O-inj]
+
+Real ROM under Amiberry (cycle-exact A500, `hardfile2=rw,DH0:<file>,32,1,2,512,-128,,uae0`), debugger
+breakpoints on `uaehf.device` BeginIO and exec ReplyMsg, IPC watch on the DiagPoint.
+
+- **DiagPoint and LibList**: when the board's DiagPoint gets control, exec's LibList contains only
+  exec.library; the ExpansionBase given in A5 is not linked yet (`autoconfig-v34.md` §6 point 7). A DiagPoint
+  cannot OpenLibrary expansion.library; the base in A5 is the one romboot and dos use later.
+- Amiberry's `uaehf` differs from FS-UAE 3.2.35 here: **only the `$E90000` board ConfigDev** is in
+  `eb_BoardList` after boot (no extra ConfigDev at `$F00000`). The DiagArea copy is in slow RAM as in §5
+  (DiagPoint at copy + `$1E0`, BootPoint at copy + `$1F0`).
+- The DH0: DeviceNode created by uaehf (no RDB) carries a 16-long environment: 128-long blocks, 1 surface,
+  32 blocks per track, 2 reserved, LowCyl 0, HighCyl = size − 1 cylinders, 50 buffers, BufMemType 1, MaxTransfer
+  `$7FFFFFFF`, Mask `$FFFFFFFF`, BootPri −128, DosType `'DOS\0'`; `dn_SegList` 0, so dos starts the ROM file
+  system for it. With the Workbench floppy booting, the DH0: file system was already running (volume mounted)
+  when the startup-sequence began.
+- What the ROM file system sends to `uaehf` (TD_REMOVE, TD_CHANGESTATE, TD_PROTSTATUS, CMD_CLEAR, CMD_UPDATE,
+  TD_MOTOR, single-block CMD_READ/CMD_WRITE; never TD_CHANGENUM) and how it reads rejected commands:
+  `rom-filesystem-v34.md` §1.4. Partitions above 25 bitmap blocks (> 101,602 blocks of 512 bytes) do not work
+  on 1.3: `rom-filesystem-v34.md` §8.6.
+- Test-harness trap: Amiberry caches hardfile writes on the host; a hardfile read while the emulator runs can
+  lag far behind what the Amiga wrote. Read images after stopping the session.
+
 ## Clean-room review
 
 - [x] No instruction sequence transcribed or paraphrased; no ROM routine address (only
   offsets of public/private structures, ABI constants and hardware ranges).
 - [x] The probes cited are author code (`tests/`, header "ASSET DE TEST, PAS du code ROM").
+- [x] §9 (2026-11-05): debugger observations of list contents and device calls; breakpoint addresses not
+  given; emulator RAM addresses only.

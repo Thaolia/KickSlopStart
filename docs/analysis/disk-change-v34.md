@@ -108,6 +108,11 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
   **TD_CHANGESTATE (14)** (io_Actual: 0 = disk present):
   - **present** ⇒ start of the validator (§2.5);
   - **absent** ⇒ ejection (§2.2.1).
+- Other block devices (hard-disk drivers) [O-inj 2026-11-05, `rom-filesystem-v34.md` §1.4]: the FS reads only
+  `io_Actual` of TD_CHANGESTATE and TD_PROTSTATUS and ignores `io_Error` (also for TD_REMOVE); it never sends
+  TD_CHANGENUM. A driver that rejects TD_CHANGESTATE with `io_Actual` 0 is "disk present"; with a nonzero
+  `io_Actual` the unit shows "No disk present". A driver that never calls the TD_REMOVE interrupt is checked
+  once per mount (start, INHIBIT off), never again.
 - Consequence: the FS latency = detection by trackdisk (its own polling of the /CHNG
   line: every ~0.5 s with a disk present, ~2.5 s with the drive empty, plus before/after each queued
   command — trackdisk-raw-changeint-v34.md §6.2, ROM reading; not measured here) + at most ~1 s. Measured (emulated time, from the increment of
@@ -133,6 +138,10 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
      `+$1C` 0 → BPTR of the lock chain (= the old `id_InUse`); `OctaMEDv4` with its WB
      window open: same.
 4. **IECLASS_DISKREMOVED** event (§3), then the FS answers the following packets.
+5. The same "absent" branch is taken at the **start** of the FS when the unit's first TD_CHANGESTATE answers
+   a nonzero `io_Actual`, whatever `io_Error` says: no volume is mounted, Info "<unit>: No disk present", and
+   a write (`Echo >DH0:z`) gave dos's "No disk present / in unit  0" requester. Observed on a hard-disk unit with the reply
+   rewritten in flight (`rom-filesystem-v34.md` §1.4). [O-inj 2026-11-05]
 
 #### 2.2.2 Insertion of a DOS disk [O ROM (validator, `boot-clock-v34.md` §4.2) + O probe]
 
@@ -215,6 +224,11 @@ DISKINSERTED seen at boot after `LoadWB delay` / MountMF.) [O probe for the boot
 - Unreadable root block or wrong checksum: validator requester **"Error validating disk" /
   "Key 880 checksum error"**, Retry / Cancel; as long as it is displayed, neither DISKINSERTED nor icon;
   ejection makes it disappear. [O probe]
+- Failures found later in the validation (bitmap checksum on a disk flagged valid, a key out of range or used
+  twice, a bad header in the full scan): same requester family, then "Disk structure corrupt" / "Use
+  DISKDOCTOR to correct it"; the full list, Retry/Cancel effects and the ROM / `L:Disk-Validator` split are in
+  `rom-filesystem-v34.md` §2.5. For a "Key n out of range" requester, **ejecting the disk did not remove it**
+  (> 10 s; a Retry then showed it again with an empty volume line); only Cancel ended it. [O 2026-11-05]
 
 ---
 
@@ -389,3 +403,5 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
 - [x] No ROM routine address (appendix §7 expurgated at the review).
 - [x] The "probe" facts come from screen captures and a DosList log (public
   structures), without disassembly of the disks' code.
+- [x] 2026-11-05 additions (§2.1 other block devices, §2.2.1 point 5, §2.5 later failures): device replies
+  rewritten in flight with the debugger and requesters read on screen; no breakpoint address given.

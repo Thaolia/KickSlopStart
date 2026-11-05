@@ -15,6 +15,13 @@
 > **not** recounted: several graphics rows (text and fonts, regions) still show the status they had before
 > `graphics-text-v34` and `graphics-regions-v34` were written (see §7 ranks 4 and 7 for their real state).
 
+**File-system addendum 2026-11-05** (no count recomputed): `rom-filesystem-v34` gained §1.4 (device commands,
+rejected TD_* replies), §2.5 (validation failures, requesters, Retry/Cancel), §8.4 (write-back on the third
+tick, measured) and §8.6 (no bitmap extension, 25 bitmap blocks at most); `dos-lvo-partial-v34` §1.4,
+`disk-change-v34` §2.1/§2.2.1/§2.5, `autoconfig-v34` §6 (expansion.library not public during DiagPoints) and
+`uae-hd-boot-v34` §9 were updated with them. Open points left: rom-filesystem §12 (bitmap entries 26+,
+validator requesters at boot, rejected CMD_UPDATE/TD_MOTOR).
+
 **Changes since the previous version** (2026-10-27, `15b9e8f`):
 
 - New specs counted: `graphics-area-v34`, `graphics-blitter-v34`, `graphics-display-v34`, `layers-v34`,

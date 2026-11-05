@@ -11,7 +11,7 @@
 > packet tracer on the file system's reply path, and the resulting ADF images). **[O-inj]** observed after
 > changing a packet in flight with the debugger (type or arguments rewritten just before the file system
 > dispatches it; §0.2). **[D]** deduced from reading the ROM (static) or from converging observations, not run.
-> **[?]** not established. "Res2 noise" = the value is whatever was left in the register/slot, not an error code.
+> **[U]** emulator source code (Amiberry), not the ROM. **[?]** not established. "Res2 noise" = the value is whatever was left in the register/slot, not an error code.
 >
 > **Related pages (not repeated here).** `dos-v34-spec.md` §2 (packet life cycle, read-path argument table),
 > `handlers-v34.md` §1.2–§1.3 (DosList node, FileSysStartupMsg, environment table, start-up of the process),
@@ -55,10 +55,24 @@
     data block of a file sits just after its header; later data blocks fill whole tracks going **down** from
     the root track. **The bitmap block moves on every flush** (written to a newly allocated block, the old one
     freed). [O] §8
-11. The file system writes back ~**2–3 s after its last disk access** (1 s timer, counter of 3): bitmap and root
-    (valid flag), then CMD_UPDATE and motor off. ACTION_FLUSH waits for that point. [O]/[D] §8.4
+11. The file system writes back on the **third 1 s timer tick after its last device transfer**: measured
+    **2.1–3.0 s** (105–149 PAL frames, 13 samples) after the last read or write. Every transfer, **reads
+    included**, re-arms it; packets served without a transfer do not. Write-back = the changed bitmap block(s)
+    (each to a new block), the root (valid flag), then CMD_UPDATE and TD_MOTOR off; after reads only, just
+    CMD_UPDATE and TD_MOTOR. ACTION_FLUSH waits for that point. [O] §8.4
 12. ACTION_MORE_CACHE(n) adds n buffers of 540 bytes for good (never removed; n ≤ 0 adds none) and returns
     **−1 (DOSTRUE)**, 0 if an allocation failed — not the buffer count. [O]/[D] §7.3
+13. Device commands: the file system sends TD_REMOVE, TD_CHANGESTATE, TD_PROTSTATUS, CMD_CLEAR, CMD_UPDATE,
+    TD_MOTOR, CMD_READ and CMD_WRITE, **never TD_CHANGENUM**, and **ignores `io_Error`** of every one of them: a
+    device that rejects TD_CHANGESTATE/TD_PROTSTATUS is read through `io_Actual` alone (0 → disk present,
+    writable). [O-inj] §1.4
+14. The bitmap is limited to the **25 pointers of the root block**: 1.3 does **not** follow the bitmap
+    extension (`bm_ext`). A volume that needs more than 25 bitmap blocks (more than 101,600 blocks after the
+    reserved ones, about 49.6 MB with 512-byte blocks) cannot be mounted valid and is damaged by validation,
+    even when 1.3's own Format made it. [O] §8.6
+15. Validation failures (mount): "Error validating disk" / volume / "Key n …" then "Disk structure corrupt" /
+    "Use DISKDOCTOR to correct it"; a bad bitmap checksum on a disk flagged valid ends the same way (no rebuild,
+    no read-only fallback). Texts, Retry/Cancel and who prints what: §2.5. [O]
 
 ### 0.2 Method
 
@@ -145,6 +159,47 @@ issued it. [D]
 Any other value, in particular 0 (NIL), 5 (DIE), 20 (WAIT_CHAR), 33 (DISK_CHANGE), 35 and above, gives
 **Res1 = 0, Res2 = 209** immediately. [D]; types 33 and 99 checked: 0 / 209. [O-inj]
 
+### 1.4 Device commands sent, and how their results are read [O, O-inj]
+
+Observed on a hard-disk partition (Amiberry `uaehf.device`, 10 MiB OFS hardfile, DH0:) with a debugger
+breakpoint on the device's BeginIO (command, flags, length, offset, `io_Actual` before the call) and on exec
+ReplyMsg (`io_Error`, `io_Actual` of the reply), from reset to several writes, flushes and a `DiskChange DH0:`.
+The file system uses **two IORequests**: one for block transfers (CMD_READ 2, CMD_WRITE 3; sent without
+IOF_QUICK and waited for on the process port), one for control commands (sent with IOF_QUICK, DoIO style). The
+validator process opens the unit with a third request of its own and only reads (CMD_READ).
+
+| When | Commands, in order |
+|---|---|
+| Process start (first use of the unit) | TD_REMOVE (12, `io_Data` = the file system's Interrupt), TD_CHANGESTATE (14), then the validator's reads, TD_PROTSTATUS (15) once the validator has answered (stage 1 of `disk-change-v34.md` §2.5), then CMD_UPDATE (4) + TD_MOTOR (9, length 0) at the first write-back point |
+| Remount (`DiskChange`, i.e. INHIBIT on/off) | CMD_UPDATE, TD_MOTOR off, **CMD_CLEAR (5)**, TD_CHANGESTATE, validator reads, TD_PROTSTATUS, … |
+| Work | CMD_READ / CMD_WRITE, 512 bytes each (one block per request, even for consecutive blocks) |
+| Write-back point (§8.4) | CMD_WRITE of the changed bitmap block(s) and of the root, then CMD_UPDATE, TD_MOTOR off; only CMD_UPDATE + TD_MOTOR off when nothing was modified |
+
+**TD_CHANGENUM (13) is never sent** by the file system (nor by its validator) in any of these runs. TD_CHANGESTATE
+is sent only when the "disk changed" flag is set (start, INHIBIT off, the TD_REMOVE interrupt), never per tick
+or per packet, so a device that never calls the TD_REMOVE interrupt is checked once per mount.
+
+**`io_Error` is ignored; only `io_Actual` counts.** Results were rewritten in flight with the debugger just
+after the device returned, before the file system looked at them [O-inj]:
+
+| Rewritten reply | File system's view (Info, then `Echo >DH0:z`) |
+|---|---|
+| TD_REMOVE `io_Error` −3; TD_CHANGESTATE and TD_PROTSTATUS `io_Error` −3 (IOERR_NOCMD), `io_Actual` 0 | mounted normally, Info "Read/Write", the write works. A rejected TD_REMOVE is not noticed (no polling replaces it). |
+| TD_CHANGESTATE `io_Error` −3, `io_Actual` 1 | Info "DH0: No disk present"; the write shows dos's requester "No disk present / in unit  0" |
+| TD_CHANGESTATE `io_Error` 0, `io_Actual` 1 (control) | identical: "No disk present" |
+| TD_PROTSTATUS `io_Error` −3, `io_Actual` −1 | Info "Read Only"; the write shows "Volume / Work / is write protected" (214) |
+
+So a block device that answers these commands with an error is treated as **present / writable** only if it
+leaves `io_Actual` at 0. A driver that leaves `io_Actual` untouched exposes whatever the field held: the
+control request's `io_Actual` held an uncleared value before the first command (the emulator's memory fill
+pattern was seen there), and afterwards the value left by the previous control command (0 after TD_REMOVE /
+CMD_CLEAR / CMD_UPDATE on uaehf). A nonzero value turns into "no disk" (TD_CHANGESTATE) or "write protected"
+(TD_PROTSTATUS). Rejected CMD_UPDATE or TD_MOTOR were not tried [?].
+
+Emulator side [U, Amiberry `hardfile.cpp`]: `uaehf.device` itself accepts all four commands (TD_CHANGESTATE 0
+unless the drive is empty, TD_PROTSTATUS −1 for a read-only hardfile, TD_CHANGENUM a counter, TD_REMOVE stores
+the interrupt), so a normal UAE hard disk never takes the rejected paths.
+
 ---
 
 ## 2. Rules common to all packets
@@ -214,6 +269,59 @@ DELETE 110, RENAME 160, CREATE_DIR 150, SET_* 100, RENAME_DISK 100, FIND* 150; a
 the transient blocks of `dos-memory-v34.md` §2.2: 448 for a LOCATE, 408 for an EXAMINE_NEXT, 608 kept for an
 open file. FREE_LOCK, COPY_DIR,
 INFO, DISK_INFO, CURRENT_VOLUME, MORE_CACHE and FLUSH are answered at once by the main loop.
+
+### 2.5 Validation at mount: failures, requesters, Retry/Cancel [O, 2026-11-05]
+
+Setup: Workbench 1.3.3 copy in DF0: (boot CLI left open, `pr_WindowPtr` 0), test floppies made with xdftool and
+patched (root bitmap flag set to 0 unless stated, checksums recomputed), inserted into DF1: after boot; the
+requesters were read on screen and answered with mouse clicks; images compared byte for byte afterwards.
+
+**Who does what.** Mounting is done by the ROM's "Validator" process (`boot-clock-v34.md` §1): it reads block 0
+and the root, and **when the root's bitmap flag is −1 it loads the bitmap itself** (no file needed). When the
+flag is not −1 it loads `L:Disk-Validator` from the boot disk and runs the full scan with it. The requester
+frame and the texts "Error validating disk", "Key n out of range", "Key n already set", "Key n checksum error",
+"Disk structure corrupt", "Use DISKDOCTOR to correct it" and "Unable to load disk validator" are in the ROM;
+"- bad block type" (shown as "Key n - bad block type") is text of the Workbench 1.3.3 `L:Disk-Validator`
+file, which also holds other texts not produced in these runs ("- bad header", "- bad extension", "- bad
+directory", "- not directory or file", "- unexpected data block", "- second root block", "bitmap checksum
+error", "is out of range", "is invalid"). [O for the split ROM / file: the bitmap case below fails the same way
+with `L:Disk-Validator` deleted; texts located by searching both images for the strings seen on screen]
+
+**Requesters** ("System Request" window, Retry left / Cancel right). The first one has three lines:
+"Error validating disk" / the volume name / the reason; then, after Cancel, a two-line one.
+
+| Corruption (test disk) | First requester, third line |
+|---|---|
+| a data block pointer of file B equal to one of file A's data blocks (block used twice) | **Key 868 already set** (868 = the shared block) |
+| a file header whose type long is 33 instead of 2 | **Key 910 - bad block type** (910 = the header) |
+| a file header with a wrong checksum | **Key 910 checksum error** |
+| a data block pointer of 5000 on a 1760-block floppy | **Key 5000 out of range** |
+| a directory hash slot holding 3000 | **Key 3000 out of range** |
+| the root's hash-chain long (byte offset 496 of a 512-byte root, i.e. block size − 16) nonzero: xdftool writes `'DOS\0'` there | **Key 1146049280 out of range** (= `$444F5300`) — any disk formatted by xdftool fails 1.3 validation this way |
+| flag **−1** but the bitmap block's checksum wrong (Q5 case) | **Key 881 checksum error** (881 = the bitmap block); same with `L:Disk-Validator` deleted |
+| flag not −1, `L:Disk-Validator` missing from the boot disk, disk inserted after boot | **Unable to load disk validator** |
+| a **data** block with a wrong checksum (structure otherwise sound) | none: validated, Info "Read/Write", 71 blocks used — data blocks are not checked |
+
+After **Cancel** on any of them: "**Disk structure corrupt**" / "**Use DISKDOCTOR to correct it**" (Retry /
+Cancel).
+
+| Button | Effect |
+|---|---|
+| Retry on the first requester | the same requester again at once (same key; with the disk ejected meanwhile it came back with an **empty volume line**) — the check is repeated, the validation does not move on |
+| Cancel on the first requester | the "Disk structure corrupt" requester |
+| Retry on "Disk structure corrupt" | **the validation starts again from the beginning** (the first requester returns, the disk being unchanged) |
+| Cancel on "Disk structure corrupt" | validation abandoned: Info status "Validating" with empty Used/Free/Full; reads, List, CD work; every write gives 213 and dos's "Volume / <name> / is not validated" requester (§2.3); **nothing is written to the disk** (image byte-identical) |
+| ejecting the disk while the first requester is shown | the requester **stays** (observed > 10 s with "out of range"; unlike dos's own requesters, which a disk insertion answers) |
+
+- **Bad bitmap on a disk flagged valid (Q5)**: no rebuild, no fallback to `L:Disk-Validator`, no read-only
+  mount — the volume ends "not validated" exactly as above after the two Cancels; the flag and the bitmap stay as
+  they were on the disk.
+- **During the boot** the requesters were not seen: the same "no validator" disk present in DF1: at power-on, or
+  a 64 MiB partition failing its bitmap load at boot (§8.6), ended silently in the "Validating" state, while the
+  same failure after boot (insertion, `DiskChange`) showed its requester. Whether a requester is pending
+  invisibly or skipped is not established [?].
+- A disk that validates successfully on a writable drive gets its rebuilt bitmap and the flag −1 written back
+  (`dos-lvo-partial-v34.md` §1.4).
 
 ---
 
@@ -603,13 +711,35 @@ block is freed. One bitmap block covers a DD floppy (only the first pointer of t
 An implementation that keeps the bitmap at a fixed block produces valid disks; the move matters only for
 block-exact image comparisons.
 
+On a volume with several bitmap blocks (10 MiB and 49 MiB hardfiles, 6 and 25 bitmap blocks) **only the bitmap
+blocks whose contents changed are written** at the write-back, each to a newly allocated block, and the root's
+table is updated for those entries only: a one-file write moved one table entry (e.g. entry 13 of 25 from the
+block just above the root's table area to a block after the last header). [O, BIO trace and images read after
+the emulator was stopped]
+
 ### 8.4 When things reach the disk [O timeline, D mechanism]
 
-- The file system arms a countdown of **3** at every disk transfer it issues; the 1 s timer tick (ACTION_TIMER)
-  decrements it; when it reaches 1 the file system **flushes**: writes the bitmap (new block) and the root
-  (bitmap valid flag −1, new bitmap pointer), sends **CMD_UPDATE** then **TD_MOTOR off** to trackdisk, and
-  returns any waiting FLUSH packet. So the write-back happens **2–3 s after the last disk access**. [D; timing
-  O: in the image timeline the root with valid flag appeared 2–3 s after the last data track]
+- **Timing [O, 2026-11-05].** The write-back happens on the **third** 1 s timer tick (ACTION_TIMER, §1.2) that
+  follows the last device transfer. Measured in emulated time (frame counter read at each device call, PAL
+  50 Hz, DH0: hardfile, breakpoint on the device's BeginIO), from the last transfer to the first write of the
+  write-back: 136, 118, 143, 105, 122, 126, 121, 116, 149, 122 frames after ten one-line `Echo >DH0:wN` writes,
+  128 and 148 frames after read-only activity (`Copy DH0:big NIL:`, `Dir`), 145 frames in the run of the next
+  point: **105–149 frames = 2.1–3.0 s**, never less than 2 s. The spread (< 50 frames) is the phase of the
+  free-running 1 s tick; a 2-tick countdown would give 1–2 s. (The earlier "countdown of 3, flush when it
+  reaches 1" reading, i.e. 1–2 s, is wrong.)
+- **What re-arms it**: every CMD_READ / CMD_WRITE the file system issues. A write followed at once by two
+  `Copy DH0:big NIL:` (600,000-byte file, block reads every frame or two) got **no write-back during 13 s of
+  reads**, nor in a 113-frame (2.3 s) pause between the two copies (a 2-tick countdown would have fired there);
+  it came only after the reads stopped. Six
+  `Info DH0:` commands sent during the countdown (packets answered without a transfer) did not delay it
+  (write-back 145 frames after the last transfer). [O]
+- **What it does**: CMD_WRITE of each changed bitmap block (to its new block, §8.3), CMD_WRITE of the root
+  (flag −1, new pointers), **CMD_UPDATE**, **TD_MOTOR** off, and the waiting FLUSH packet is returned. When
+  nothing was modified since the last write-back (reads only) it still sends CMD_UPDATE and TD_MOTOR off at the
+  same point, with no write. [O, §1.4]
+- Measuring on images: Amiberry keeps hardfile writes in a host-side cache, so a hardfile read on the host
+  **while the emulator runs** can show an older root (flag 0, stale table) for a long time after the write-back
+  really happened; read images only after `amiberry-session stop`, or time the device calls instead. [O]
 - First modification of a clean disk: the root block is written at once with the bitmap flag 0
   (`boot-clock-v34.md` §5). [O]
 - New headers are written when created (size 0); the final header at END; data blocks as they are filled. The
@@ -624,6 +754,35 @@ block-exact image comparisons.
 
 - 5 buffers of 540 bytes at start (each = a 512-byte block plus the file system's bookkeeping), more with
   MORE_CACHE (§7.3). Used as a cache of recently read blocks (headers, directory blocks, bitmap) [D].
+
+### 8.6 Large partitions: no bitmap extension in 1.3 [O, 2026-11-05]
+
+One bitmap block maps 127 × 32 = 4,064 blocks; the root block holds 25 bitmap pointers, so 1.3 can describe
+**101,600 blocks after the reserved ones** (101,602 in all with 2 reserved blocks, ≈ 49.6 MB with 512-byte
+blocks). Larger volumes need the bitmap extension chain introduced with the 2.0-era formats (root long `bm_ext`,
+the long right after the 25 pointers, byte offset block size − 96; extension blocks of 127 pointers +
+next, no checksum). Runs on Amiberry `uaehf` hardfiles (32 sectors × 1 head, 2 reserved, 512-byte blocks,
+images read after the emulator was stopped):
+
+| Volume | Result on 1.3 |
+|---|---|
+| 49 MiB (100,352 blocks, 25 bitmap blocks), flag −1 | normal: Info "Read/Write" (26 used), a 19,564-byte copy works, the bitmap written back matches the files, flag −1 |
+| 50 MiB (102,400 blocks, 26 bitmap blocks, xdftool layout with one extension block), flag −1 | at `DiskChange`: "Error validating disk" / "B50" / "**Key 51201 checksum error**" (51201 = the extension block); at boot: silent, Info "Validating" |
+| 64 MiB (131,072 blocks, 33 bitmap blocks, xdftool layout: 25 pointers + `bm_ext` → one extension block), flag −1 | at `DiskChange`: "Error validating disk" / "Big" / "**Key 65537 checksum error**" — 65537 is the **extension block**, checked as if it were a bitmap block (it has no checksum); then "Disk structure corrupt"; volume not validated. At boot: no requester, Info "Validating". |
+| same, extension block rewritten as [checksum, then the 8 pointers] | still refused: "Key 1843396860 out of range" (a value found in none of the pointers), and the requester's volume-name line came out as garbage characters |
+| same 64 MiB, flag 0 (`L:Disk-Validator` runs) | Info right after the scan looks correct (Used 35 / Free 131,035; with 1,290 blocks of files placed beyond block 101,602: Used 1,325, both files listed), and the volume is writable. But the bitmap written back is wrong: the root's long at the `bm_ext` place now holds the key of a **26th bitmap block** (the old extension block was overwritten with bitmap contents), bitmap blocks 27–33 are allocated but their keys are lost (the root's date and name fields follow the 25-entry table and keep their own values), and the 26th block's contents disagree with the files (256 blocks of a file marked free, free blocks marked used). |
+| blank 64 MiB partition formatted with 1.3's `System/Format DRIVE DH0:` | Format writes the root with flag 0 and **no** bitmap pointers; the validator then builds the bitmap as in the previous row (33 blocks allocated, 26 keys kept, the 26th in the `bm_ext` place). After one file write and a clean stop the flag was −1; at the next mount: "Error validating disk" / "Fmt13" / "**Key 1729369281 out of range**" (a value taken from the contents of that 26th block), then "Disk structure corrupt". |
+
+Reading of the table: 1.3 treats the root's bitmap table as a plain run of longs starting at the first pointer
+and goes on past the 25th entry into the `bm_ext` long (and beyond); it has no notion of an extension chain.
+The exact way the bitmap loader consumes entries 26+ is not established (the two out-of-range values come
+from block contents, not from root fields), and a memory overrun is suspected from the garbled volume name [?].
+Consequences for a compatible implementation:
+- no 1.3 program can rely on a working volume above 101,602 blocks (of 512 bytes); a reimplementation that
+  follows `bm_ext` properly (2.0 behaviour) only fixes volumes that 1.3 corrupts;
+- up to 25 bitmap blocks the behaviour is the ordinary one of this page;
+- files placed beyond the 25th bitmap block by another system are still listed by 1.3 after a validation;
+  reading them should work since header and data keys are only range-checked against the volume size [D].
 
 ---
 
@@ -748,12 +907,17 @@ Each line: the command typed, the packet that was rewritten, and the reply.
 - Exact start sector of the data search for the first file on a fresh disk (§8.1, w1) [?].
 - READ/SEEK error code for a broken data chain (219 for SEEK; READ not established) [?].
 - SET_COMMENT on a write-protected disk not run (214 expected, same path as SET_PROTECT).
+- How the bitmap loader consumes table entries 26 and up on a volume larger than 25 bitmap blocks, and whether
+  it overruns memory (§8.6) [?].
+- Validator requesters during the boot: pending invisibly or skipped (§2.5) [?].
+- Rejected CMD_UPDATE / TD_MOTOR on a hard-disk driver (§1.4) [?].
 
 ---
 
 ## Clean-room review
 
-Review of 2026-11-04.
+Review of 2026-11-04; §0.1 items 11 and 13–15, §1.4, §2.5, §8.3 (last paragraph), §8.4 and §8.6 reviewed
+2026-11-05.
 
 - [x] No instruction listing, no pseudo-code of a ROM routine: the page gives packet arguments and results,
   conditions and their order, error codes, FIB/lock field contents, and block numbers measured in disk images.
@@ -769,3 +933,7 @@ Review of 2026-11-04.
   breakpoint locations used for this are not given.
 - [x] Test disks were made with xdftool and C: commands (2026-11-04: plus a patch of the root bitmap flag and an
   all-zero image); their contents are described, not copied from the ROM.
+- [x] 2026-11-05: device results were rewritten in flight with the debugger (breakpoints on the device's
+  BeginIO and on exec ReplyMsg; their addresses are not given). Validator texts are quoted as seen on screen;
+  the ones not seen are texts of the Workbench `L:Disk-Validator` file, not of the ROM. Timings are frame
+  counts of the emulator, block numbers are those of the test images.
