@@ -1,7 +1,7 @@
 ; src/dos/shell.s - minimal interactive shell (E2). Body of a Process: opens the console "CON:0/0/640/200/
 ; AmigaSlopDOS" (E1 handler via DOS packets to DOS_CONPORT: window on the Workbench screen + serial mirror), emits a
 ; test banner on serial, runs the startup-sequence (window closed and process ended if EndCLI has moved the CLI to
-; the background),
+; the background, there or after a typed command),
 ; then loops: writes the prompt, reads ONE LINE, parses the 1st word, dispatches to a builtin. Builtins: "ver"
 ; (version banner) and "echo <args>" (like c:Echo: without enclosing quotes, then a newline);
 ; everything else -> "?". NO BCPL CLI (pr_CLI/CommandLineInterface/Execute = real Bootstrap F).
@@ -90,10 +90,30 @@ shell_main:
                 ifeq    F1_NO_STARTUP
                 bsr     sh_run_startup       ; F1: run s/startup-sequence (OFS subdir) BEFORE the interactive loop
                 endc                         ; RED F1_NO_STARTUP: skips the script -> straight to interactive
+.chkend:                                     ; after the script and after each typed command
                 bsr     sh_cli_ptr           ; EndCLI has moved the CLI to the background: its window closes (END)
                 beq.s   .loop                ; and the process ends
                 tst.l   CLI_BACKGROUND(a1)
                 beq.s   .loop
+                ; the console stream is closed through its FileHandle: pending output written, write and read
+                ; buffers and the FileHandle freed, END sent (last named stream: the window closes). Nothing else
+                ; holds it: processes created from this CLI get their own streams (Run opens "*"), never pr_CIS/COS.
+                move.l  CLI_STANDARDOUTPUT(a1),d4
+                clr.l   CLI_STANDARDINPUT(a1)
+                clr.l   CLI_CURRENTINPUT(a1)
+                clr.l   CLI_STANDARDOUTPUT(a1)
+                clr.l   CLI_CURRENTOUTPUT(a1)
+                move.l  ($4).w,a6
+                move.l  EB_THISTASK(a6),a0
+                clr.l   PR_CIS(a0)
+                clr.l   PR_COS(a0)
+                move.l  d4,d1
+                beq.s   .endkey
+                move.l  DOS_DOSBASE,a6
+                jsr     DOS_LVO_CLOSE(a6)
+                move.l  ($4).w,a6
+                bra.s   .endfree
+.endkey:                                     ; no FileHandle (AllocMem failed at start): END on the key
                 move.l  DOS_CONPORT,a1
                 move.l  a2,a0
                 move.l  #ACTION_END,d0
@@ -101,6 +121,7 @@ shell_main:
                 moveq   #0,d2
                 moveq   #0,d3
                 jsr     dos_sendpkt
+.endfree:
                 bsr     rcli_free            ; then the CLI ends as on 1.3: number 1 free for the next Shell
                 bra     rcli_exit
 .loop:
@@ -112,7 +133,7 @@ shell_main:
                 moveq   #-1,d1               ; interactive: possible message, never aborts
                 bsr     sh_report
                 bsr     sh_runscript
-                bra.s   .loop
+                bra     .chkend
 
 ; sh_dispatch_line(a3 = line, d6 = length): builtins ver/echo, otherwise external command (sh_extern). Called by the
 ; interactive loop AND by sh_runscript (Execute scripts, startup-sequence). -> d0/a0 as sh_extern (builtin: d0 = -1).
@@ -306,7 +327,7 @@ sh_write:
                 movem.l (sp)+,d0-d3/a0-a1
                 rts
 
-; sh_readline() -> d6 = bytes read, line in (a3). READ via the console handler (blocks until CR).
+; sh_readline() -> d6 = bytes read, line in (a3). READ via the console handler (blocks until Return; the line ends with LF).
 sh_readline:
                 movem.l d0-d3/a0-a1,-(sp)
                 move.l  DOS_CONPORT,a1
@@ -336,6 +357,8 @@ sh_match:
                 cmp.b   #9,d1
                 beq.s   .m_yes
                 cmp.b   #13,d1               ; CR (end of line)
+                beq.s   .m_yes
+                cmp.b   #10,d1               ; LF (end of a console line)
                 beq.s   .m_yes
                 tst.b   d1
                 beq.s   .m_yes               ; end of string

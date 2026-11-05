@@ -1342,6 +1342,28 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   before `ram_expungeall` and its retry: the 8-slot cache (45,056 bytes) is freed when the device semaphore is free
   and no slot is dirty, and is allocated again at the next access. `tests/lowmem_probe.s`: 45,192 bytes of fast
   memory come back after a failing AllocMem (136 before). Not in 1.3, which has no cache (memory-budget-v34).
+  **Ask in the startup-sequence (2026-11-05)**: `ask` as the first line of a startup-sequence never returned: the
+  boot console handler (`conhandler.s`) ended a READ line with CR, and c:Ask (BCPL) reads up to LF, so it asked the
+  handler for more and waited for ever. Shown live: after "y" + Return the handler state held a second READ of 200
+  bytes; Ctrl-J put one LF into it but the READ still waited for a CR; one more Return delivered "LF CR" and Ask
+  printed its prompt again. Return is now delivered as LF (echo unchanged), a typed LF is ignored as on CON:, and the
+  initial shell's builtin match accepts LF. Copy of the Workbench 1.3.3 disk with `ask` first, again after SetPatch
+  and `if warn`: "ASK1 YES" / "ASK2 NO", dev and production ROMs; `ask` at the initial prompt and in a Workbench
+  Shell also return.
+  **Initial CLI leftovers (2026-11-05)**: at EndCLI the initial CLI sent END on its console key and kept the
+  FileHandle (312) and its 512-byte write buffer. It now closes the FileHandle through dos Close; a breakpoint on
+  dos Close for that FileHandle hits once, from the shell process at its end (Run's background CLI never closes
+  it). A typed `endcli` now ends the initial CLI as well (it printed a new prompt and stayed). The 808-byte BCPL
+  global vector is not freed: the idle Workbench process has the same pr_GlobVec (CreateProc copies the
+  creator's), so it is the shared GV of everything started from the initial CLI. Saving: 824 bytes.
+  **Console handler stack (2026-11-05)**: 4,096 -> 2,048 bytes (`CON_STK`, boot.s). Deepest use measured with a
+  pattern-filled stack (filled through gdb at the shell's entry, read back at the end) on the production ROM: 982
+  bytes over a Workbench 1.3.3 startup with FastFonts, `dir sys: all`, `list`, `type`, `info`, `avail`, `ask`, a
+  wrapped 110-character line, the AmigaSlopDOS window shrunk and grown with the mouse, and a typed `endcli`. Letting
+  the process exit at idle was not chosen: processes keep its port in pr_ConsoleTask (copied by CreateProc) and
+  dos keeps it in DOS_CONPORT, so a restarted handler would leave them with a dangling port. Saving: 2,048 bytes.
+  Workbench 1.3.3 idle (production ROM, A500 preset, empty DF1, 150 s): 839,024 bytes free (836,152 before).
+  Open: the initial console READ has no line editing (Backspace is stored as a character), unlike CON:.
   **MakeLibrary sizes (2026-11-05)**: MakeLibrary set LIB_NEGSIZE/LIB_POSSIZE, then called InitStruct with the
   data size, which clears that size first and wiped both fields: every AUTOINIT library and device built at boot
   had NegSize = PosSize = 0 (seen with a gdb walk of LibList/DeviceList on the Workbench), so SumLibrary summed

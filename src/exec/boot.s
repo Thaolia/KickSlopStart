@@ -76,6 +76,8 @@
 
 DEMO_STK     EQU 2048         ; stack of the demo tasks (switch frames)
 D3_STK       EQU 4096         ; stack of the D3 processes (driver/handler: ser_puts + ofs/loadseg later)
+CON_STK      EQU 2048         ; console handler: deepest use measured 982 bytes (window open/close, console output,
+                              ; FastFonts, docs/MEMORY-USAGE.md); the rest is margin
 LYT_PIX      macro                    ; pixel (\1, \2) of the layers probe BitMap == \3, otherwise failure
         moveq   #\1,d0
         moveq   #\2,d1
@@ -4277,7 +4279,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         lea     e1_hname(pc),a0
         move.l  #con_handler,a1      ; absolute: conhandler.o linked out of 16-bit lea(pc) range
         moveq   #6,d0
-        move.l  #D3_STK,d1
+        move.l  #CON_STK,d1
         jsr     proc_create
         move.l  d0,DOS_CONPORT       ; publish the console handler's port
         ; The keyboard feeder -> input.device (integration F, item 1) has no process: the intuition input task runs it.
