@@ -1276,6 +1276,15 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   §9 open point 2), and the size seen is the one at the write, not the smallest one in between. Seen while testing,
   not from this change: after a window grows, intuition leaves one pixel of the old right border on line
   BorderTop - 1.
+  **Shell double prompt (2026-11-05)**: after a command loaded from the floppy, the Shell printed an empty line
+  before the output and a second prompt after it ("2> 2>"). Cause: the keyboard feeder (`src/dos/feeder.s`, pri 4)
+  ran its due key repeat before draining the keyboard ring; while it was starved during the disk load, Return's
+  release already waited in the ring but the 0.8 s repeat fired first, so the CLI read a second empty line. The ring
+  is now drained first, so a released key never repeats. Checked on a Workbench 1.3.3 NewCLI window: `echo`, `info`,
+  `echo` each give one prompt (before: two of three commands doubled, in two runs); prepush FAIL=0. Open: the feeder
+  stays at pri 4 where 1.3's input.device task runs at 20 (intuiticks-repeat §1), so keyboard events are still late
+  during disk loads. The other report from the same review, a Workbench "without title or icons" after a NewShell in
+  the startup-sequence, is not a bug: the 640x100 Shell window at 0/0 covers the screen title and the icon column.
   **RawDoFmt (2026-11-05, coverage §7 rank 11)**: spec `exec-rawdofmt-v34`. `rawdofmt.s` rewritten to the 1.3
   grammar: `%[-][0][width][.limit][l]type` in that order only; d/x/s/c are the only conversions (x upper case, %d
   sign-extends a word, %x does not); %u, %X, %b and every other type character are echoed with no padding and no

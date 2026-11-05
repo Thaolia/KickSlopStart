@@ -118,11 +118,10 @@ feeder_main:
                 move.l  EB_THISTASK(a6),FEED_KTASK
 .fm_loop:
                 bsr     fd_poll_wait         ; keystroke or deadline
-                bsr     fd_timed             ; IECLASS_TIMER tick and due repeat
-.fm_drain:
-                move.w  KBD_FHEAD,d2
+.fm_drain:                                   ; keystrokes first: a release already in the ring must stop the repeat
+                move.w  KBD_FHEAD,d2         ; before a late wake-up (feeder starved during a disk load) fires it
                 cmp.w   KBD_FTAIL,d2
-                beq.s   .fm_loop             ; ring empty -> next frame
+                beq.s   .fm_timed
                 lea     KBD_FEEDRING,a0
                 move.w  0(a0,d2.w),d4        ; d4 = (qual<<8)|keycode
                 addq.w  #2,d2
@@ -156,6 +155,9 @@ feeder_main:
                 bsr     fd_selftest          ; item 1: emit "FEEDER OK=<char>" once (reads console.device)
                 endc
                 bra.s   .fm_drain
+.fm_timed:
+                bsr     fd_timed             ; IECLASS_TIMER tick and due repeat
+                bra     .fm_loop
 .fm_idle:
                 move.l  ($4).w,a6            ; setup failed: sleep on a signal that never arrives (COOP, does not spin)
 .fm_idle_lp:
