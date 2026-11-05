@@ -1450,6 +1450,16 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   result with final exponent 0 follows SPMul (kept when negative, 0 when positive; open point 2); Open does not
   clear LIBF_DELEXP (open point 3); SPAdd/SPSub of unnormalised operands whose aligned mantissas cancel past zero
   wrap in 32 bits (unspecified).
+  **Memory budget against 1.3, same configuration (2026-11-05)**: measured stage by stage and caller by caller
+  against the black-box 1.3 budget (`docs/analysis/memory-budget-v34.md`), Amiberry A500, 512 KB chip + 512 KB
+  slow, Workbench 1.3.3 (`docs/MEMORY-USAGE.md`). Idle gap 24,896 bytes with an empty DF1, 42,752 with DF0 only;
+  free chip is 35,848 bytes better than 1.3. SetPatch, FF/BindDrivers, resident and loaded-code steps are
+  byte-identical to 1.3. The gap is the track cache (+28,664 against one 1.3 MFM buffer), process stacks (+10,904),
+  the keyboard feeder process (+4,632), the Workbench state block, 6,344 bytes of low chip outside the chip
+  MemHeader, and 1,632 bytes the initial CLI leaves after `endcli`; offset by no file system buffers (−8,160) and
+  less chip for the display (−4,696). Ranked reduction candidates are in that page (not implemented). Also seen:
+  `ask` as the first startup-sequence line does not return on our ROM; icon.library is loaded by BindDrivers
+  (stage 4) on our ROM, and very likely on 1.3 too (the step is byte-identical), where the 1.3 page says LoadWB.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

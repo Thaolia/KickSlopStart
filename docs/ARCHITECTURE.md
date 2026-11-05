@@ -954,8 +954,10 @@ differs.
     (frozen for ~16 s there too, then bursts every few seconds). A non-GZZ SUPER_BITMAP window's frame is not put
     into the SuperBitMap as the 1.3 ROM does (probe Q6). The Workbench 1.2 disk did not reach its desktop: see (7k).
   (7i) **Memory usage and race fixes** (2026-10-30).
-  - Memory: an idle English Workbench leaves ~60 KB less free than on 1.3. Breakdown by caller in
-    `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
+  - Memory: an idle English Workbench 1.3.3 leaves 24,896 bytes less free than 1.3 on an A500 with 512 KB chip +
+    512 KB slow and an empty DF1 (836,152 against 861,048), 42,752 with DF0 only (measured 2026-11-05 against
+    `docs/analysis/memory-budget-v34.md`, same Amiberry configuration). Stage, category and caller breakdown, and
+    the ranked reduction candidates, in `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
     12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate; the cache is given back
     when an `AllocMem` fails (`td_lowmem`, called before the expunge and the retry, 2026-11-05). The console
     self-test #3a in `boot.s` left a 10 KB chip bitmap allocated; it now frees `CONB_BITMAP` and resets the
