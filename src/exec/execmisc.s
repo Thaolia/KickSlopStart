@@ -1,6 +1,6 @@
 ; src/exec/execmisc.s — exec.library: documented V34 functions that were missing from the vector table (SetFunction,
 ; SumLibrary, Cause and the software interrupt queue, Alert, SetSR, SuperState/UserState, GetCC,
-; RemIntServer, AllocEntry/FreeEntry, SetExcept, AllocTrap/FreeTrap, RemResource, Raw*, Obtain/ReleaseSemaphoreList).
+; RemIntServer, SetExcept, AllocTrap/FreeTrap, RemResource, Raw*).
 ; IMPLEMENTATION track ("clean"): AutoDocs exec + public includes (exec/libraries.i, exec/tasks.i, exec/memory.i).
 ; NO ROM reading.
 
@@ -20,8 +20,6 @@
                 xdef    exec_UserState
                 xdef    exec_GetCC
                 xdef    exec_RemIntServer
-                xdef    exec_AllocEntry
-                xdef    exec_FreeEntry
                 xdef    exec_SetExcept
                 xdef    exec_AllocTrap
                 xdef    exec_FreeTrap
@@ -29,8 +27,6 @@
                 xdef    exec_RawIOInit
                 xdef    exec_RawMayGetChar
                 xdef    exec_RawPutChar
-                xdef    exec_ObtainSemaphoreList
-                xdef    exec_ReleaseSemaphoreList
                 xdef    exec_Debug
                 xdef    debug_entry          ; library.s: ExecBase DebugEntry
                 xdef    exec_SumKickData
@@ -722,84 +718,6 @@ exec_RemIntServer:
 .ri_ret:
         rts
 
-; AllocEntry(memList a0) -> d0 = new MemList (addresses filled in) | requirements of the failing entry with bit 31
-; set (nothing remains allocated). FreeEntry(memList a0) frees the entries then the MemList (a0 like AllocEntry:
-; exec_lib.fd; icon.library chains RemHead -> FreeEntry with the MemList in a0 and the list still in a1).
-exec_AllocEntry:
-        movem.l d2-d3/a2-a3,-(sp)
-        move.l  a0,a2                ; a2 = template
-        moveq   #0,d2
-        move.w  ML_NUMENTRIES(a2),d2
-        move.l  d2,d0
-        lsl.l   #3,d0
-        add.l   #ML_ME,d0
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
-        beq.s   .ae_nolist
-        move.l  d0,a3                ; a3 = copy
-        move.w  d2,ML_NUMENTRIES(a3)
-        moveq   #0,d3                ; d3 = allocated entries
-.ae_lp:
-        cmp.w   d2,d3
-        beq.s   .ae_ok
-        move.l  d3,d0
-        lsl.l   #3,d0
-        lea     ML_ME(a2,d0.l),a0
-        lea     ML_ME(a3,d0.l),a1
-        move.l  4(a0),4(a1)          ; me_Length
-        move.l  (a0),-(sp)           ; me_Reqs
-        move.l  4(a0),d0
-        move.l  (sp),d1
-        move.l  a1,-(sp)
-        jsr     LVO_ALLOCMEM(a6)
-        move.l  (sp)+,a1
-        move.l  (sp)+,d1
-        tst.l   d0
-        beq.s   .ae_fail
-        move.l  d0,(a1)              ; me_Addr
-        addq.w  #1,d3
-        bra.s   .ae_lp
-.ae_ok:
-        move.l  a3,d0
-        bra.s   .ae_ret
-.ae_fail:
-        move.l  d1,-(sp)             ; failing requirements
-        move.w  d3,ML_NUMENTRIES(a3) ; only the obtained entries are returned
-        move.l  a3,a0
-        bsr.s   exec_FreeEntry
-        move.l  (sp)+,d0
-        bset    #31,d0
-        bra.s   .ae_ret
-.ae_nolist:
-        moveq   #-1,d0               ; the MemList itself could not be allocated
-.ae_ret:
-        movem.l (sp)+,d2-d3/a2-a3
-        rts
-exec_FreeEntry:
-        movem.l d2/a2,-(sp)
-        move.l  a0,a2
-        moveq   #0,d2
-        move.w  ML_NUMENTRIES(a2),d2
-        lea     ML_ME(a2),a0
-        bra.s   .fe_nx
-.fe_lp:
-        move.l  (a0)+,a1
-        move.l  (a0)+,d0
-        move.l  a0,-(sp)
-        jsr     LVO_FREEMEM(a6)
-        move.l  (sp)+,a0
-.fe_nx:
-        dbra    d2,.fe_lp
-        moveq   #0,d0
-        move.w  ML_NUMENTRIES(a2),d0
-        lsl.l   #3,d0
-        add.l   #ML_ME,d0
-        move.l  a2,a1
-        jsr     LVO_FREEMEM(a6)
-        movem.l (sp)+,d2/a2
-        rts
-
 ; SetExcept(newSignals d0, signalMask d1) -> d0 = old tc_SigExcept (bits of mask replaced), under a bare Disable.
 ; A signal already received that is now an exception signal: TB_EXCEPT + Reschedule (exec-scheduling-v34 §2.7).
 exec_SetExcept:
@@ -858,27 +776,6 @@ exec_RemResource:
         move.l  a0,(a1)
         move.l  a1,LN_PRED(a0)
         jmp     LVO_PERMIT(a6)
-
-; ObtainSemaphoreList(list a0) / ReleaseSemaphoreList(list a0): each SignalSemaphore of the list, in order.
-exec_ObtainSemaphoreList:
-        move.l  #LVO_OBTAINSEMAPHORE,d0
-        bra.s   sem_walk
-exec_ReleaseSemaphoreList:
-        move.l  #LVO_RELEASESEMAPHORE,d0
-sem_walk:
-        movem.l d2/a2,-(sp)
-        move.l  d0,d2
-        move.l  (a0),a2
-.sw_lp:
-        tst.l   (a2)
-        beq.s   .sw_ret
-        move.l  a2,a0
-        jsr     0(a6,d2.l)
-        move.l  (a2),a2
-        bra.s   .sw_lp
-.sw_ret:
-        movem.l (sp)+,d2/a2
-        rts
 
 softint_is:
         dcb.b   IS_DATA,0

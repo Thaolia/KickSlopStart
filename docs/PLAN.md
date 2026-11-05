@@ -1373,6 +1373,47 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   ramlib layer (loading, seglist freeing) from coldstart, where 1.3 adds it when dos starts; WaitIO without a Wait
   keeps the caller's D1 (1.3 replaces its low byte with `mp_SigBit`, a scratch register); the probe has not been run
   on the real ROM (an analysis agent can, `MLP_ANALYSIS=1 MLP_ARGS=`).
+  **exec memory and signal semaphores (2026-11-05, coverage §7 rank 13)**: spec `exec-memory-semaphores-v34`.
+  `memory.s`: 8-byte units everywhere (Deallocate/FreeMem/AllocAbs now round the start down and the end up; before,
+  a free at an odd address wrote an unaligned chunk header and crashed), a header matches when it holds every
+  low-word bit of the request (bits 3-15 were ignored: AllocMem(16, 8) succeeded), first fit, MEMF_CLEAR of the
+  rounded size, AllocAbs of size 0 splits the chunk, AddMemList rounds mh_Upper down, MEMF_TOTAL ignored. Dead-end
+  alerts as on 1.3: FreeMem of an address in no MemHeader (NULL included) $81000005, a range overlapping a free
+  chunk $81000009 (FreeMem or Deallocate), ReleaseSemaphore of a free semaphore $81000008 (before: all ignored).
+  AllocEntry/FreeEntry (moved from `execmisc.s`): list copy with MEMF_CLEAR only, zero lengths not allocated (before:
+  AllocMem(0) made the whole call fail), results me_Reqs|$80000000 or $80010000 (before: -1), the copy leaked on an
+  entry failure as on 1.3 (docs/MEMORY-USAGE.md). Semaphores: InitSemaphore writes only its four fields (it set
+  ln_Type and cleared ss_MultipleLink), hand-off with ss_NestCount left at 0 and counted by the woken task (before:
+  set to 1 by the releaser), Release takes Forbid only on the last level, ObtainSemaphoreList in two passes with
+  ss_MultipleLink (before: a plain Obtain per member, which blocked on the first busy one with the later ones still
+  free), CopyMemQuick copies size & ~3. Register contracts of spec §5 (Allocate/Deallocate keep A0, AllocMem keeps
+  D1, FreeMem keeps A1, Obtain/Release keep everything, RemSemaphore/Procure keep D0...). Every internal caller
+  checked: none relied on the old clobbers, on FreeMem(NULL), on AllocEntry's -1 (they test bit 31) or on CopyMem
+  overlap (expansion's two copies are disjoint). `tests/exec_memsem_probe.sh` (+ `tests/exec_memsem_check.py`;
+  private MemHeaders at the head of the MemList so that the figures do not depend on the system lists, two helper
+  tasks for contention, nested AllocMem/FreeMem logged through SetFunction; `MSP_ALERTS=1` runs the ten dead-end
+  vectors, one boot each, alert number read from $100): 188 vectors, 65 failed before (and D9c-D9f crashed the old
+  ROM), 0 after on kick-prod and on the dev ROM, 10/10 alerts. The dev ROM's shell runs commands under Forbid
+  (`ser_lock`, shell.s), which starves the helper tasks: the probe drops that level first, prints
+  TDNestCnt/IDNestCnt between its sections (Z lines, expected FF) and runs at priority 20 (helpers 22/21, 15 when
+  one must wait for the probe) above the dev ROM's always-ready demo tasks. Workbench 1.3.3 on kick-prod: desktop and memory
+  title "836152 free memory" as before; the disk window opens. Deliberate differences from 1.3: (1) sizes that round
+  to 0 ($FFFFFFF9-$FFFFFFFF) fail in Allocate/AllocMem (1.3 returns the first chunk without consuming it; A11,
+  M10); (2) AllocEntry with ml_NumEntries = 0 returns an empty list (1.3 processes one entry past its block; E8);
+  (3) AddSemaphore initialises and links the semaphore in A1 and sets ln_Type (1.3 uses A0 and links A0+16); (4)
+  ObtainSemaphore checks the owner after each wake-up, so a stray SIGF_SEMAPHORE does not break in (1.3 returns after
+  its single Wait with the other task still owner; C2); (5) an overlapping free alerts before any change (1.3 links
+  some straddling ranges first; not observable, the alert is a dead end); (6) exact scratch-register values are not
+  reproduced (A1 after a failed Allocate, D1 after FreeMem...), only which registers change. Kept from our previous
+  allocator: the expunge-and-retry of a failed AllocMem and pr_Result2 = 103 for a process (ramlib-v34 §6), now
+  skipped for sizes that round to 0. Choices where the spec is silent: AllocEntry frees the obtained entries in
+  allocation order after a failure (open point 3); "free semaphore" for the alert = ss_QueueCount < 0; AllocAbs of
+  size 0 at the very start of a chunk succeeds without changing anything; ObtainSemaphoreList's second pass counts a
+  level for a member it owns with ss_NestCount 0 (a hand-off). Open points: from a task, Signal() of a
+  higher-priority waiter only sets SAR and AddTask() of a higher-priority task does not reschedule, so the other task
+  runs at the next Permit, Wait or interrupt exit, where exec-scheduling-v34 §1 and §2.7 have both call Reschedule
+  (the probe waits for its helpers and follows each Signal with Forbid/Permit; scheduling code, not changed here);
+  ss_NestCount values for a release in the handed-off-but-not-yet-woken state are not specified.
 
 ## Immediately actionable work (start of implementation, upon approval)
 

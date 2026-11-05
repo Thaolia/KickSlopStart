@@ -187,8 +187,9 @@ exec_AbortIO:
         move.l  (sp)+,a6
         rts
 
-; CopyMem(source a0, destination a1, size d0): byte copy with no alignment required (AutoDoc: disjoint areas).
-; By longs when source and destination have the same parity, otherwise byte by byte. Only touches d0/d1/a0/a1.
+; CopyMem(source a0, destination a1, size d0): any size and alignment, ascending copy (exec-memory-semaphores-v34
+; §3: overlap works only with the destination below the source). By longs when source and destination have the
+; same parity, otherwise byte by byte. Only touches d0/d1/a0/a1.
 exec_CopyMem:
         move.l  a0,d1
         add.l   a1,d1                ; bit 0 of the sum = different parities
@@ -196,21 +197,20 @@ exec_CopyMem:
         bne.s   cm_bytes            ; different parities: bytes
         move.l  a0,d1
         btst    #0,d1
-        beq.s   exec_CopyMemQuick
+        beq.s   .cm_even
         tst.l   d0
         beq.s   cm_ret
         move.b  (a0)+,(a1)+          ; align on an even word
         subq.l  #1,d0
-; CopyMemQuick(source a0, destination a1, size d0): source/destination aligned; longs then remainder in bytes.
-exec_CopyMemQuick:
+.cm_even:
         move.l  d0,d1
         lsr.l   #2,d1                ; number of longs
-        bra.s   .cq_lnext
-.cq_long:
+        bra.s   .cm_lnext
+.cm_long:
         move.l  (a0)+,(a1)+
-.cq_lnext:
+.cm_lnext:
         subq.l  #1,d1
-        bcc.s   .cq_long
+        bcc.s   .cm_long
         and.l   #3,d0
 cm_bytes:
         bra.s   cm_bnext
@@ -220,6 +220,17 @@ cm_bnext:
         subq.l  #1,d0
         bcc.s   cm_byte
 cm_ret:
+        rts
+; CopyMemQuick(source a0, destination a1, size d0): even pointers; copies size & ~3 bytes (the low two bits of the
+; size are ignored, as in 1.3).
+exec_CopyMemQuick:
+        lsr.l   #2,d0                ; number of longs
+        bra.s   .cq_lnext
+.cq_long:
+        move.l  (a0)+,(a1)+
+.cq_lnext:
+        subq.l  #1,d0
+        bcc.s   .cq_long
         rts
 
 ; AddLibrary(library a1) / AddDevice(device a1): under Forbid, the SumLibrary step when LIBF_SUMUSED is set (sum
