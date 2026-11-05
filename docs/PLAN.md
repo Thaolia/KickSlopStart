@@ -1018,7 +1018,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (2026-11-04)**: names truncated at 30, 212, root 205/212, root fib_DirEntryType 2, ExNext in creation order,
   rename into itself 202, 213/214 before the name, id_DiskState 80, -1/218 on an absent volume
   (`tests/fsgap_probe.sh`). Open from the `rom-filesystem-v34` comparison: stateless ExNext (fib_DiskKey and
-  fib_FileName), the delayed flush (§8.4) and bm_flag cleared on the first modification, locks kept in dl_LockList
+  fib_FileName), locks kept in dl_LockList
   of an absent volume, RENAME of a locked source (spec open point);
   **ROM file system on any block device (2026-11-05)**: the OFS handler takes device, unit, flags and geometry from
   its DeviceNode's FileSysStartupMsg (blocks = cylinders x surfaces x blocks per track, partition offset = LowCyl
@@ -1033,6 +1033,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   65535 data blocks (32 MiB) are not followed (16-bit block index); the bitmap block does not move at each flush
   (rom-filesystem §8.3); what 1.3 does with TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM on a device that rejects
   them (ours: present, writable, count 0) is not specified.
+  **Write-back as on 1.3 (2026-11-05)**: root bitmap flag cleared (and disk date set) on the first change, bitmap
+  and root (flag valid) written 2-3 s after the last disk access with CMD_UPDATE and motor off, ACTION_FLUSH held
+  until then and returned unchanged, INHIBIT writes back first. Copy of C: to a floppy 159.0 s -> 43.7 s
+  (`tests/writeback_probe.sh`, production ROM). Open: the bitmap block does not move at each write-back (§8.3); an
+  ejection with a pending write-back loses it silently (1.3 shows a requester through dos's errorreq and keeps the
+  volume, disk-change §2.2.1 point 2); ACTION_FLUSH holding was not run against a packet probe.
   **Disk validator rebuilds the bitmap (2026-11-05)**: a volume whose root says "bitmap not valid" is validated at
   mount in the handler (`dv_rebuild`: tree walk from the root, headers, extension blocks, data block tables), written
   back with the flag valid, or kept in memory on a write-protected disk (214 instead of 213); a broken chain shows

@@ -587,6 +587,21 @@ differs.
   Known differences: no "DF0:NDOS" icon, a volume whose window is open still loses its icon on
   ejection if it has no lock; a Lock by the name of a known but absent volume gives "Please insert volume"
   (insert/replace split not settled by the spec).
+  (7af) **Write-back as on 1.3** (2026-11-05, spec `rom-filesystem-v34.md` §7.4, §8.4, `boot-clock-v34.md` §5).
+  `ofswrite.s`: the first change of a clean volume (`ow_wr` -> `ow_dirty`) reads the root into `OW_RB` and writes it
+  with its bitmap flag at 0 and the disk date (longs 118-120) set, before anything else; `OW_DIRTY` is then set and a
+  root written while it is set keeps flag 0 and that date. Headers and data blocks go to the device when written;
+  the bitmap no longer does after each operation (no `ow_sync`). Every transfer sets `GEO_TICKS` to 3; the handler's
+  1 s tick (`hnd_tick`) counts it down while the volume is modified and at 0 calls `ow_flush`: the dirty bitmap
+  blocks, the root re-read and written with flag -1 and the disk date, CMD_UPDATE, TD_MOTOR off (io_Length 0) - 2-3 s
+  after the last disk access. ACTION_FLUSH on a modified volume is held (`HC_FLUSHMSG`, one at a time) and returned
+  as received after the write-back (`hnd_flushed`); otherwise at once. INHIBIT writes back first; an ejection drops a
+  pending write-back (the disk is revalidated at its next mount, flag 0) and returns the held FLUSH. Root directory
+  changes no longer touch the disk date (only the flag toggles do). Measured with `tests/writeback_probe.sh` on the
+  production ROM (Workbench 1.3.3 C: from RAM: to a blank floppy / to a 10 MiB hardfile): 159.0 s -> 43.7 s and
+  15.3 s -> 14.1 s; both images consistent afterwards (flag -1, bitmap = blocks in use, 66 files identical), the
+  hardfile's root flag 0 in the middle of the copy. `tests/hdfs_probe.sh` (40 MiB) went from about 10 minutes to
+  158 s.
   (7ae) **Disk validator: bitmap rebuilt at mount** (2026-11-05, specs `rom-filesystem-v34.md` §2.3, §8.4,
   `dos-lvo-partial-v34.md` §1.4, `disk-change-v34.md` §2.5; public OFS layout). On every mount of a DOS disk the
   handler reads TD_PROTSTATUS (also into `GEO_WPROT`), then `ow_mount` forgets the previous bitmap and loads this

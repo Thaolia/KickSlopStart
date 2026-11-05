@@ -79,7 +79,8 @@ HC_TMOK         EQU HC_INHIB+1       ; byte: timer open, request pending
 HC_INOK         EQU HC_TMOK+1        ; byte: input.device open
 HC_WPROT        EQU HC_INOK+1        ; byte: the disk was write-protected when it was mounted (TD_PROTSTATUS)
 HC_IOPORT       EQU HC_WPROT+1+1     ; reply port of the device requests (MP_SIZE, even)
-HC_SIZE         EQU HC_IOPORT+36
+HC_FLUSHMSG     EQU HC_IOPORT+36     ; APTR: Message of an ACTION_FLUSH held until the write-back | 0
+HC_SIZE         EQU HC_FLUSHMSG+4
 ACTION_INHIBIT  EQU 31               ; Arg1 = DOSTRUE: the disk is no longer accessed (DiskCopy, Format)
 WS_MAGICV       EQU $57524954        ; head of a write state (ofswrite.s); a read state starts with an APTR
 HND_NAMEBUF     EQU 112              ; C string of a name received as a BSTR (stack)
@@ -113,9 +114,9 @@ dos_handler:
                 beq.s   .hl
                 move.l  d0,a3                ; a3 = Message
                 move.l  LN_NAME(a3),a4       ; a4 = DosPacket (convention: msg->ln_Name)
-                cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4): every packet
-                beq     .reply                        ; is written before its reply, only the current block of a
-                clr.l   DP_RES2(a4)                   ; file open for writing waits for END
+                cmp.l   #ACTION_FLUSH,DP_TYPE(a4)     ; FLUSH comes back as it was sent (spec §7.4), at once, or
+                beq     .flush                        ; when the pending write-back is done
+                clr.l   DP_RES2(a4)
                 bsr     hnd_gate             ; lock or file of another volume, no disk: refused
                 tst.l   d0
                 bne     .refuse
@@ -442,7 +443,8 @@ dos_handler:
 
 .inhibit:                                            ; (ARG1: DOSTRUE = inhibit, 0 = release)
                 move.l  DP_ARG1(a4),d0
-                jsr     ow_inhibit                     ; bitmap written / forgotten
+                jsr     ow_inhibit                     ; write-back done / bitmap forgotten
+                bsr     hnd_flushed
                 bsr     hnd_ctx
                 beq.s   .ih_ok
                 move.l  d0,a0
@@ -468,6 +470,19 @@ dos_handler:
                 move.l  #DOSTRUE,DP_RES1(a4)
                 bra     .reply
 
+.flush:                                              ; held while the volume waits for its write-back, one at a time
+                bsr     hnd_ctx
+                beq     .reply
+                move.l  d0,a0
+                tst.l   HC_FLUSHMSG(a0)
+                bne     .reply
+                move.l  HC_OWCTX(a0),d0
+                beq     .reply
+                move.l  d0,a1
+                tst.l   OW_DIRTY(a1)
+                beq     .reply
+                move.l  a3,HC_FLUSHMSG(a0)
+                bra     .hl_msg
 .morecache:                                          ; AddBuffers: no FS block cache (trackdisk keeps the track)
                 move.l  #DOSTRUE,DP_RES1(a4)          ; -> accepted without effect
                 bra     .reply
@@ -1073,7 +1088,9 @@ hnd_arm:
                 move.l  #1,TV_SECS(a1)
                 clr.l   TV_SECS+4(a1)
                 jmp     LVO_SENDIO(a6)
-; hnd_tick(a6): timer reply received -> request re-armed. Preserves d2-d7/a2-a6.
+; hnd_tick(a2 = handler port, a6): timer reply received -> request re-armed; a modified volume counts down the
+; ticks since its last disk access (set to 3 by every transfer): at 0 the write-back is done (rom-filesystem §8.4:
+; 2-3 s after the last access) and a held ACTION_FLUSH is returned. Preserves d2-d7/a2-a6.
 hnd_tick:
                 move.l  a3,-(sp)
                 bsr     hnd_ctx
@@ -1086,10 +1103,36 @@ hnd_tick:
                 tst.l   d0
                 beq.s   .tk_ret
                 bsr.s   hnd_arm
+                move.l  HC_OWCTX(a3),d0
+                beq.s   .tk_ret
+                move.l  d0,a0
+                tst.l   OW_DIRTY(a0)
+                beq.s   .tk_ret
+                subq.l  #1,HC_GEO+GEO_TICKS(a3)
+                bgt.s   .tk_ret
+                jsr     ow_flush
+                bsr     hnd_flushed
 .tk_ret:
                 move.l  (sp)+,a3
                 rts
 
+; hnd_flushed(a2 = handler port, a6): the ACTION_FLUSH held while the volume waited for its write-back goes back as
+; it came (Res1/Res2 untouched, spec §7.4). Preserves d2-d7/a2-a6.
+hnd_flushed:
+                bsr     hnd_ctx
+                beq.s   .fd_ret
+                move.l  d0,a0
+                move.l  HC_FLUSHMSG(a0),d0
+                beq.s   .fd_ret
+                clr.l   HC_FLUSHMSG(a0)
+                move.l  d0,a1                         ; returnpkt: to dp_Port, which gets the handler's port
+                move.l  LN_NAME(a1),a0
+                move.l  DP_PORT(a0),d0
+                move.l  a2,DP_PORT(a0)
+                move.l  d0,a0
+                jmp     LVO_PUTMSG(a6)
+.fd_ret:
+                rts
 ; hnd_tdcmd(d0.w = command, a3 = context, a6) -> d0 = io_Actual (io_Length 0), through DoIO. A device that does
 ; not know the command (a hard disk without TD_CHANGESTATE...) answers with an error and io_Actual 0: disk present,
 ; not write-protected, change count 0. Clobbers d1/a0/a1.
@@ -1329,7 +1372,8 @@ hnd_eject:
                 movem.l d2/a2,-(sp)
                 move.l  d0,d2
                 moveq   #0,d0
-                jsr     ow_inhibit
+                jsr     ow_inhibit                    ; a pending write-back is lost with the disk
+                bsr     hnd_flushed
                 sf      HC_MOUNTED(a3)
                 move.l  #-1,HC_DTYPE(a3)
                 move.l  HC_VOLUME(a3),d0

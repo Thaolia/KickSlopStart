@@ -1,7 +1,9 @@
 ; src/dos/ofswrite.s - OFS writing for the floppy handlers: creation of files and directories, write streams,
 ; deletion, renaming/moving, protection, comment, disk information. Blocks go through
-; the device of the handler's partition (trackdisk: CMD_WRITE into its track cache; CMD_UPDATE at the end of each
-; operation). The bitmap may span several blocks (bm_pages, then bitmap extension blocks) on a hard-disk partition.
+; the device of the handler's partition (trackdisk: CMD_WRITE into its track cache). Write-back as on 1.3
+; (rom-filesystem-v34 §8.4): the first change of a clean volume writes the root with its bitmap flag at 0; headers
+; and data blocks go to the device when written; the bitmap, the root (flag valid) and CMD_UPDATE / motor off come
+; with ow_flush, which the handler calls 2-3 s after the last disk access (or on INHIBIT, or for ACTION_FLUSH). The bitmap may span several blocks (bm_pages, then bitmap extension blocks) on a hard-disk partition.
 ; Public OFS format (ADF-FAQ / AmigaDOS Technical Reference): header (type 2, key = its own block, high_seq, first_data,
 ; data block table filled from the end, size, name, hash chain, parent, extension, secondary
 ; type), data block (type 8, header key, sequence number, size, next, 488 bytes), extension block
@@ -35,6 +37,7 @@
                 xref    ofs_geo              ; ofs.s: geometry of the handler's partition
                 xref    dv_rebuild           ; diskvalidator.s: bitmap rebuilt from the directory tree
                 xdef    ow_mount
+                xdef    ow_flush
                 xdef    ow_rd                ; for the validator
                 xdef    ow_keyok
                 xdef    ow_bmbit
@@ -151,13 +154,59 @@ ow_io:
 ow_rd:
         moveq   #CMD_READ,d1
         bra.s   ow_io
-; ow_wr(d0 = block, a0 = buffer): checksum set (long 5), then written to the device.
+; ow_wr(d0 = block, a0 = buffer) -> d0 = 1 / 0: a change of the volume. The first one after a write-back marks the
+; volume modified (ow_dirty: root written with its bitmap flag at 0); the root itself, written while the volume is
+; modified, keeps flag 0 and the disk date of OW_RB. Then checksum (long 5) and write.
 ow_wr:
+        movem.l d0/a0,-(sp)
+        bsr.s   ow_dirty
+        tst.l   d0
+        movem.l (sp)+,d0/a0
+        beq.s   ow_wrfail
+        move.l  a0,-(sp)
+        bsr     ofs_geo
+        cmp.l   GEO_ROOT(a0),d0
+        move.l  (sp)+,a0
+        bne.s   ow_wrraw
+        clr.l   OFSB_BMFLAG(a0)
+        move.l  OW_RB+OFSB_VDAYS(a5),OFSB_VDAYS(a0)
+        move.l  OW_RB+OFSB_VDAYS+4(a5),OFSB_VDAYS+4(a0)
+        move.l  OW_RB+OFSB_VDAYS+8(a5),OFSB_VDAYS+8(a0)
+; ow_wrraw(d0 = block, a0 = buffer) -> d0 = 1 / 0: checksum (long 5) and write, nothing else.
+ow_wrraw:
         move.l  d0,-(sp)
         bsr     ow_cksum
         move.l  (sp)+,d0
         moveq   #CMD_WRITE,d1
-        bra.s   ow_io
+        bra     ow_io
+ow_wrfail:
+        moveq   #0,d0
+        rts
+; ow_dirty(a5, a6) -> d0 = 1 / 0: first change since the last write-back: the root block is read into OW_RB and
+; written with its bitmap flag at 0 and the disk date (longs 118-120) set to now (boot-clock-v34 §5), before
+; anything else. A disk removed before the write-back is then revalidated at its next mount (§8.4).
+ow_dirty:
+        moveq   #1,d0
+        tst.l   OW_DIRTY(a5)
+        bne.s   .dy_ret
+        bsr     ofs_geo
+        move.l  GEO_ROOT(a0),d0
+        lea     OW_RB(a5),a0
+        bsr     ow_rd
+        tst.l   d0
+        beq.s   .dy_ret
+        clr.l   OW_RB+OFSB_BMFLAG(a5)
+        lea     OW_RB+OFSB_VDAYS(a5),a0
+        jsr     dos_now
+        bsr     ofs_geo
+        move.l  GEO_ROOT(a0),d0
+        lea     OW_RB(a5),a0
+        bsr.s   ow_wrraw
+        tst.l   d0
+        beq.s   .dy_ret
+        move.l  #1,OW_DIRTY(a5)
+.dy_ret:
+        rts
 ; ow_mount(a6) -> d0 = 1 validated / 0: a DOS disk was mounted: the bitmap of the previous one is forgotten and
 ; this one's is loaded, or rebuilt when its root says it is not valid (ow_bmload). Preserves d2-d7/a2-a6.
 ow_mount:
@@ -170,8 +219,8 @@ ow_mount:
 .mt_ret:
         movem.l (sp)+,d2-d7/a2-a5
         rts
-; ow_inhibit(d0 = Arg1 of ACTION_INHIBIT, a6): inhibit -> modified bitmap written (the disk is about to be rewritten by
-; someone else, DiskCopy); release -> bitmap forgotten, re-read on next access (the disk may have changed).
+; ow_inhibit(d0 = Arg1 of ACTION_INHIBIT, a6): inhibit -> pending write-back done now (the disk is about to be
+; rewritten by someone else, DiskCopy); release -> bitmap forgotten, re-read on next access (the disk may have changed).
 ; Preserves d2-d7/a2-a6.
 ow_inhibit:
         move.l  a5,-(sp)
@@ -180,7 +229,7 @@ ow_inhibit:
         beq.s   .ih_ret
         tst.l   (sp)
         beq.s   .ih_off
-        bsr.s   ow_sync
+        bsr.s   ow_flushctx
         bra.s   .ih_ret
 .ih_off:
         bsr     ow_bmfree
@@ -189,16 +238,39 @@ ow_inhibit:
         move.l  (sp)+,a5
         rts
 
-; ow_sync(a5) -> d0 = 1 ok / 0: the modified bitmap blocks written, then CMD_UPDATE (cached tracks to the disk).
-ow_sync:
-        bsr.s   ow_bmwrite
+; ow_flush(a6) -> d0 = 1 / 0: the write-back of a modified volume (rom-filesystem §8.4): the bitmap blocks, the root
+; (re-read: the latest one on the disk) with its flag valid and the disk date, CMD_UPDATE, then TD_MOTOR off. Nothing
+; when the volume was not modified. Preserves d2-d7/a2-a6.
+ow_flush:
+        move.l  a5,-(sp)
+        moveq   #1,d0
+        bsr     ow_ctx
+        beq.s   .fl_ret
+        bsr.s   ow_flushctx
+.fl_ret:
+        move.l  (sp)+,a5
+        rts
+ow_flushctx:
+        moveq   #1,d0
+        tst.l   OW_DIRTY(a5)
+        beq.s   .fc_ret
+        bsr     ofs_geo
+        move.l  GEO_ROOT(a0),d0
+        lea     OW_RB(a5),a0
+        bsr     ow_rd
         tst.l   d0
-        beq.s   .sy_ret
-        moveq   #0,d0
-        lea     OW_B2(a5),a0
-        moveq   #CMD_UPDATE,d1
-        bra     ow_io
-.sy_ret:
+        beq.s   .fc_ret
+        lea     OW_RB(a5),a0
+        bsr     ow_writeback
+        tst.l   d0
+        beq.s   .fc_ret
+        clr.l   OW_DIRTY(a5)
+        lea     OW_IO(a5),a1         ; TD_MOTOR, io_Length 0: off (an error from a device without a motor is ignored)
+        move.w  #TD_MOTOR,IO_COMMAND(a1)
+        clr.l   IO_LENGTH(a1)
+        jsr     LVO_DOIO(a6)
+        moveq   #1,d0
+.fc_ret:
         rts
 ; ow_bmwrite(a5) -> d0 = 1 ok / 0: the bitmap blocks modified since written (checksum at long 0).
 ow_bmwrite:
@@ -261,6 +333,7 @@ ow_bmfree:
 .bf_st:
         clr.l   OW_BMST(a5)
         clr.l   OW_HINT(a5)
+        clr.l   OW_DIRTY(a5)         ; a forgotten volume (ejected, inhibited) has nothing left to write back
         rts
 
 ; ow_bmload(a5) -> d0 = 1 ok / 0 (OW_ERR): the bitmap of the volume is read once and kept: one bitmap block per
@@ -314,6 +387,7 @@ ow_bmload:
         bsr     ofs_geo
         tst.l   GEO_WPROT(a0)
         bne.s   .bl_valid            ; read-only disk: validated in memory only
+        lea     OW_B1(a5),a0
         bsr     ow_writeback
         tst.l   d0
         beq.s   .bl_failed
@@ -340,20 +414,22 @@ ow_bmload:
         moveq   #1,d0
         rts
 
-; ow_writeback(a5, root block in OW_B1, a6) -> d0 = 1 / 0: the modified bitmap blocks, then the root block with its
+; ow_writeback(a0 = the root block as on the disk, a5, a6) -> d0 = 1 / 0: the modified bitmap blocks, then the root block with its
 ; bitmap flagged valid and the disk's modification date (longs 118-120, boot-clock-v34 §5) set to now, then
 ; CMD_UPDATE (cached tracks to the disk).
 ow_writeback:
+        move.l  a2,-(sp)
+        move.l  a0,a2                ; a2 = the root block
         bsr     ow_bmwrite
         tst.l   d0
         beq.s   .wb_ret
-        move.l  #-1,OW_B1+OFSB_BMFLAG(a5)
-        lea     OW_B1+OFSB_VDAYS(a5),a0
+        move.l  #-1,OFSB_BMFLAG(a2)
+        lea     OFSB_VDAYS(a2),a0
         jsr     dos_now
         bsr     ofs_geo
         move.l  GEO_ROOT(a0),d0
-        lea     OW_B1(a5),a0
-        bsr     ow_wr
+        move.l  a2,a0
+        bsr     ow_wrraw
         tst.l   d0
         beq.s   .wb_ret
         moveq   #0,d0
@@ -361,6 +437,7 @@ ow_writeback:
         moveq   #CMD_UPDATE,d1
         bsr     ow_io
 .wb_ret:
+        move.l  (sp)+,a2
         rts
 
 ; ow_bmalloc(a5, root block in B1) -> d0 = 1 / 0 (OW_ERR: 103 no memory, 213 a key outside the partition): the
@@ -780,20 +857,13 @@ ow_clear:
         dbra    d0,.cl_lp
         rts
 
-; ow_stamp(a0 = header block): modification date (+420) = now; for the root, also the disk's date
-; (+472). Preserves everything except d0.
+; ow_stamp(a0 = header block): modification date (+420) = now. The disk's date (+472) changes only with the bitmap
+; flag (ow_dirty, ow_writeback; boot-clock-v34 §5). Preserves everything except d0.
 ow_stamp:
         move.l  a0,-(sp)
         lea     OFSB_DAYS(a0),a0
         jsr     dos_now
         move.l  (sp)+,a0
-        cmp.l   #OFS_ST_ROOT,OFSB_SECTYPE(a0)
-        bne.s   .st_ret
-        move.l  a0,-(sp)
-        lea     OFSB_VDAYS(a0),a0
-        jsr     dos_now
-        move.l  (sp)+,a0
-.st_ret:
         rts
 
 ; ow_touch(d0 = directory, a5) -> d0 = 1/0: the directory (read into B1) gets today's date and is rewritten.
@@ -899,9 +969,6 @@ ow_create:
         bsr     ow_link
         tst.l   d0
         beq     ow_fail
-        bsr     ow_sync
-        tst.l   d0
-        beq     ow_fail
         move.l  d5,d0
         moveq   #0,d1
         bra     ow_ret
@@ -946,9 +1013,6 @@ ow_delete:
         bsr     ow_freeobj
         move.l  d4,d0
         bsr     ow_touch
-        tst.l   d0
-        beq     ow_fail
-        bsr     ow_sync
         tst.l   d0
         beq     ow_fail
         moveq   #-1,d0
@@ -1061,9 +1125,6 @@ ow_rename:
         bsr     ow_link
         tst.l   d0
         beq.s   .rn_f
-        bsr     ow_sync
-        tst.l   d0
-        beq.s   .rn_f
         addq.l  #8,sp
         moveq   #-1,d0
         moveq   #0,d1
@@ -1091,7 +1152,6 @@ ow_rename:
         move.l  OW_B1+OFSB_PARENT(a5),d4
         lea     OW_PATH(a5),a1
         bsr     ow_link
-        bsr     ow_sync
         move.l  (sp)+,OW_ERR(a5)
         bra.s   .rn_f
 .rn_nf:
@@ -1162,9 +1222,6 @@ ow_setfield:
         bsr     ow_wr
         tst.l   d0
         beq     ow_fail
-        bsr     ow_sync
-        tst.l   d0
-        beq     ow_fail
         moveq   #-1,d0
         moveq   #0,d1
         bra     ow_ret
@@ -1217,9 +1274,6 @@ ow_relabel:
         move.l  GEO_ROOT(a0),d0
         lea     OW_B1(a5),a0
         bsr     ow_wr
-        tst.l   d0
-        beq     ow_fail
-        bsr     ow_sync
         tst.l   d0
         beq     ow_fail
         moveq   #-1,d0
@@ -1802,7 +1856,7 @@ ws_seek:
         rts
 
 ; ws_close(a1 = state, a6) -> d0 = -1 / 0: if the file was modified, DBUF, XBUF and the header (size, first block,
-; entries of its table, date) are written, then the bitmap and the cache; the state is freed.
+; entries of its table, date) are written (the bitmap waits for the write-back); the state is freed.
 ws_close:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a1,a3
@@ -1830,9 +1884,6 @@ ws_close:
         bsr     ow_stamp
         move.l  WS_HDR(a3),d0
         bsr     ow_wr
-        tst.l   d0
-        beq     .wc_free
-        bsr     ow_sync
         tst.l   d0
         beq     .wc_free
         moveq   #-1,d7

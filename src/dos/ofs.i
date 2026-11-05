@@ -60,7 +60,7 @@ OW_IO           EQU 4             ; IOStdReq
 OW_BMST         EQU OW_IO+IOREQ_SZ ; LONG: bitmap in memory: 0 not read, 1 loaded, -1 validation failed (213)
 OW_BMN          EQU OW_BMST+4     ; LONG: bitmap blocks of the partition
 OW_BMTAB        EQU OW_BMN+4      ; APTR: OW_BMN entries (BME_*) | 0
-OW_DIRTY        EQU OW_BMTAB+4    ; LONG: volume modified since the last write-back
+OW_DIRTY        EQU OW_BMTAB+4    ; LONG: volume modified since the last write-back (root flag 0 on the disk)
 OW_HINT         EQU OW_DIRTY+4    ; LONG: every block in [root + 1, OW_HINT) is in use (allocation starts there)
 OW_ERR          EQU OW_HINT+4     ; LONG: last error (dos code)
 OW_B1           EQU OW_ERR+4      ; two block buffers
@@ -68,7 +68,8 @@ OW_B2           EQU OW_B1+OFS_BSIZE
 OW_PATH         EQU OW_B2+OFS_BSIZE  ; path copy (OW_PATHMAX)
 OW_PATHMAX      EQU 128
 OW_NAME         EQU OW_PATH+OW_PATHMAX   ; final name (32)
-OW_SIZE         EQU OW_NAME+32
+OW_RB           EQU OW_NAME+32    ; the root block, for the bitmap flag (first change, write-back)
+OW_SIZE         EQU OW_RB+OFS_BSIZE
 ; one bitmap block in memory
 BME_KEY         EQU 0             ; LONG: its block
 BME_DIRTY       EQU 4             ; BYTE: modified since written
