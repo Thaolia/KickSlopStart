@@ -1561,6 +1561,83 @@ instructions in any stream. The longest code match, data excluded, is still 19 w
 `screens.o`, `boot.o`, `conhandler.o`, `shell.o`, `memory.o`, `tasks.o` and `interrupts.o` keep their longest code
 rows. No new data row reaches the notable list. Any later source change needs a new run.
 
+## Re-run 2026-11-06 (`8582d3e..b55d177`, before the push)
+
+Delta (`src/` only): line editing in the boot console READ (Backspace, Ctrl-X, Ctrl-\, CSI sequences skipped, a
+`con_echo` helper) in `src/dos/conhandler.s` and `conwin.s`; end of file ends the initial CLI (`src/dos/shell.s`);
+coldstart clears low RAM up to `$1000` instead of `$800` (`src/exec/boot.s`). Run by a separate analysis agent on
+production ROMs (`make kick-prod`, `romtool info`: `is_kick ok`, checksum ok) built in two worktrees (`8582d3e`,
+`b55d177`), each with the vlink map of the same build.
+
+Commands (repo root; `run.sh` is the full command of "Commands" above, same `tiers` / `commodore` / `aros`
+controls, `--base tiers --selftest`):
+
+```
+bash run.sh <base|head>.rom <base|head>.map > out-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8 > all8-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 4 > all4-<base|head>.txt
+```
+
+The `--seuil 8` and `--seuil 4` lists were compared by (stream, class, object, symbol+offset, length), absolute
+offsets ignored.
+
+- **Layout.** Object size changes: `conhandler.o` +138, `conwin.o` +40, `shell.o` +24 bytes. `boot.o` keeps its
+  size (the clear bound is a constant). Everything up to and including `conhandler.o` keeps its address; the shift
+  is +$8C at `conwin.o`, +$B4 at `shell.o` and +$CC from `diskvalidator.o` to the end of the image.
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Against the controls, our head
+  ROM's longest code match is unchanged: `mots` 10 / 11 / 449 (tiers / commodore / aros, the last being the computed
+  CharLoc table), `instr` 6 / 7 / 7, `instr-souple` 8 / 7 / 11.
+
+| stream | metric | base `8582d3e` | head `b55d177` |
+|---|---|---|---|
+| mots | A tokens | 110,368 | 110,475 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DF64`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 111 / 10 / 5 | 111 / 10 / 5 |
+| instr | A tokens / max (all) / max code/table | 68,997 / 17 / 17 (`km_us_s42+$0`) | 69,062 / 17 / 17 (same) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2F458`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 21 / 2 | 17 (keymap); 21 / 2 |
+| instr-souple | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 263 / 43 / 91 | 263 / 43 / 91 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** Identical to the base, offsets included (all notable rows sit before `conhandler.o`). `mots`
+  (40): 13 rows (4 `code/table`: the two keymap string tables and the two computed CharLoc tables; 9 classified
+  data, among them `rb_romboot+$6E`, 41 words). `instr` (19): no row. `instr-souple` (19): only the classified
+  low-entropy `bcpl_rtdata+$8` (23 tokens). No new data row reaches 40 words, so no provenance row is needed.
+- **`--seuil 8` differences.** None: the two lists contain the same rows by (stream, class, object, symbol+offset,
+  length). The only differences are the absolute offsets of the rows in `conwin.o`, `shell.o`, `feeder.o`,
+  `diskvalidator.o` and `workbench.o`, moved by the layout shift above. No row of the new `conhandler.o` /
+  `conwin.o` / `shell.o` code reaches 8 tokens.
+- **Changed objects, longest rows of the `--seuil 4` lists** (code = class `code/table`; base → head):
+
+| object | mots: longest code row | instr: longest code row | instr-souple: longest code row | longest row, any class |
+|---|---|---|---|---|
+| `boot.o` | 11 → 11 (`d3c_client+$16`) | 5 → 5 (`coldstart+$68`) | 9 → 9 (`rgt_hl+$4`) | 26 words → 26 (`df0_environ+$0`, `texte`) |
+| `conhandler.o` | 7 → 7 (`con_openwin+$C2`) | 5 → 5 (`con_openwin+$C2`) | 7 → 7 (`con_closewin+$10`) | 10 words → 10 (`con_win_emit+$14`, `texte`) |
+| `conwin.o` | 10 → 10 (`cw_parse+$94`) | 9 → 9 (`cw_parse+$94`) | 9 → 9 (`cw_parse+$94`) | as code (`code/table+texte`) |
+| `shell.o` | 8 → 8 (`sh_exec_cmd+$20`) | 5 → 5 (`shell_main+$E`) | 6 → 6 (`shell_main+$E`) | 10 words → 10 (`sh_conname+$2`, `texte`) |
+
+  New `--seuil 4` rows in these objects are at most 6 tokens: code rows `cw_start+$32` (6 words, the base's row,
+  class `texte+code/table` → `code/table`), `con_handler+$1B0` (4 words, the base's `+$1AC` moved), `cw_key+$CA`
+  (4 words, the base's `+$A2` moved), and two new 4-token loose rows `cw_key+$3E` and `con_echo+$A` (the new
+  editing code; `con_echo+$A` also appears as a 5-word `texte` row); data rows `shell_main+$13C` (6 words, low
+  entropy, the base's 5-word `shell_main+$126` code row moved and reclassified), `con_handler+$198` (5 words,
+  address table, was `+$194`), `con_cdevname+$E` and `cw_start+$AC` (reclassified text), plus a few 4-5 token
+  low-entropy rows in `con_handler`, `shell_main` and the unchanged `workbench.o` icon data (`wbm_i*`), and the ROM
+  footer row, whose `wb_end+…` label offset moves with the layout.
+
+**Verdict (head ROM, `b55d177`): PASS.** No `code/table` match reaches 40 words, 19 instructions or 19 loose
+instructions in any stream. The longest code match, data excluded, is still 19 words / 13 instructions
+(`exp_cpbinding+$22`), and no new code match exceeds it: the `--seuil 8` list is unchanged, and the new code rows
+of the changed objects are at most 6 words / 4 loose instructions. `conhandler.o`, `conwin.o`, `shell.o` and
+`boot.o` keep their longest code rows. No new data row reaches the notable list. Any later source change needs a new
+run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
