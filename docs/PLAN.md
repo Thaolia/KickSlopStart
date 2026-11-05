@@ -1192,8 +1192,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   serialised (waiters on SIGF_SINGLE, a failed load retried by each waiter); Close/Expunge seglists are freed and
   returned; a failed AllocMem expunges every unused library and device once, then retries; IoErr 103 on failure.
   `tests/ramlib_probe.sh` matches §8 (T1-T10, CONC). Differences: LoadSeg gets "LIBS:"/"DEVS:" + name (1.3:
-  CurrentDir(LIBS:) + the name as given), our ROM libraries never expunge (mathffp stays), a seglist is only freed
-  for a module whose vector points into RAM, no ramlib.library node or exec SetFunction patches.
+  CurrentDir(LIBS:) + the name as given), our ROM libraries never expunge (except mathffp since rank 15, as on
+  1.3), a seglist is only freed for a module whose vector points into RAM, no ramlib.library node or exec SetFunction patches.
   **WaitTOF (2026-11-04)**: signal-based on TOF_WaitQ, VBlank server per spec (gb_VBlank, CIA-B TOD = line),
   input.device task woken by keystrokes and deadlines instead of every frame (`tests/waittof_probe.s`). Open: the
   VERTB chain costs ~19 lines (1.3 returns from WaitTOF at line $0C); QBSBlit is still QBlit.
@@ -1414,6 +1414,33 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   runs at the next Permit, Wait or interrupt exit, where exec-scheduling-v34 §1 and §2.7 have both call Reschedule
   (the probe waits for its helpers and follows each Signal with Forbid/Permit; scheduling code, not changed here);
   ss_NestCount values for a release in the handed-off-but-not-yet-woken state are not specified.
+  **mathffp.library 34.1 (2026-11-05, coverage §7 rank 15)**: spec `mathffp-v34`. `src/exec/mathffp.s` rewritten
+  from the arithmetic rules of §4: a value with low byte 0 is zero (`$00000080` is not); SPTst reads D1; SPCmp
+  returns +1 when D1 > D0 with the codes of "D0 compared with D1" (sign, exponent, then the mantissa as a signed
+  24-bit number); SPFlt/SPMul round to nearest with ties away from zero, SPDiv to nearest, SPFix truncates and
+  saturates ($7FFFFFFF V, $80000000 Z+V, low byte 0 returned unchanged); SPAdd/SPSub align with 8 guard bits, round
+  half up before normalising, truncate a carry-out and ignore an operand 24 or more exponents below; SPMul
+  saturates as soon as the exponent sum reaches 192; SPDiv selects its exponent step by a signed compare of the
+  mantissas, saturates with the divisor's sign when the step reaches exponent 128, and a divisor with low byte 0 (or
+  a zero mantissa reached by the division) takes the 68000 zero-divide exception; exponent-0 results are kept when
+  negative and flushed when positive; SPFloor/SPCeil exact, Ceil = Neg(Floor(Neg)). Registers: D1 preserved by
+  Abs/Neg/Add/Sub/Mul/Div, D2-D7/A0-A6 by all, A6 unused, at most 28 bytes of stack (return address included). Base:
+  version 34.1, ID string `mathffp 34.1 (18 Aug 1987)` CR LF, lib_Flags LIBF_SUMUSED, NegSize 96 / PosSize 34 (no
+  data table any more: our MakeLibrary's InitStruct clears the whole base and so zeroed both sizes), Null returns D0
+  unchanged, Close never expunges, Expunge sets LIBF_DELEXP while open and otherwise removes the base and frees its
+  130 bytes. The dev self-test expected the old SPCmp order and an overflow for 3/0; it now checks SPCmp the 1.3 way
+  and a "-0" divisor. Because a failing AllocMem now really removes mathffp (count 0), `td_cachebuf` asks
+  AvailMem(MEMF_FAST|MEMF_LARGEST) before trying its 8-track cache, so a chip-only A500 does not lose mathffp at the
+  first floppy read (the Workbench needs it). `tests/mathffp_probe.sh` (+ `tests/mathffp_check.py`: the 202 vectors
+  of §7, A6 = 0, entry CCR $1F, stack, trap and library checks, 264 in all, plus an arithmetic model of §4): 94 of
+  the 202 vectors failed before (62 only because D1 was clobbered; the others: SPCmp reversed, no trap on division
+  by zero, saturation flags, exponent-0 and low-byte-0 cases, Add/Sub rounding), 0 of 264 checks fail after on
+  kick-prod and dev. Workbench 1.3.3: the disk window and its scroll bars are pixel-identical to the previous ROM.
+  Deliberate differences from 1.3: none in the results; stack depths are smaller (Fix/Flt/Tst/Abs/Neg 4, Cmp and
+  Floor 8, Ceil 12, Add/Sub/Mul/Div 28; 1.3: 4/12/4..28/8..32/16). Choices where the spec is open: SPAdd/SPSub
+  result with final exponent 0 follows SPMul (kept when negative, 0 when positive; open point 2); Open does not
+  clear LIBF_DELEXP (open point 3); SPAdd/SPSub of unnormalised operands whose aligned mantissas cancel past zero
+  wrap in 32 bits (unspecified).
 
 ## Immediately actionable work (start of implementation, upon approval)
 

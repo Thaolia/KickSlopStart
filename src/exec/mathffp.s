@@ -1,15 +1,24 @@
-; src/exec/mathffp.s — mathffp.library (Motorola FFP fast floating point), resident pri 0, V34.
+; src/exec/mathffp.s — mathffp.library 34.1 (Motorola fast floating point), ROM resident pri 0.
 ;
-; FFP format (32 bits): 24-bit mantissa normalised in bits 31-8 (bit 31 = 1 except for zero), sign in
-; bit 7, excess-64 exponent in bits 6-0. Value = (mantissa / 2^24) * 2^(exponent - 64); zero = 0.
-; Internally a mantissa lives on 32 bits (bits 7-0 = guard) and rounding is to nearest on the guard.
-; Exit: Z/N condition codes according to the result; overflow -> largest signed value + V.
-; Registers: d0/d1/a0/a1 destroyed, d2-d7 preserved (library convention).
-; IMPLEMENTATION track ("clean"): AutoDocs mathffp.library + mathffp_lib.fd. NO ROM reading.
+; FFP format (32 bits): 24-bit mantissa in bits 31-8 (normalised: bit 31 set), sign in bit 7, excess-64 exponent
+; in bits 6-0. Value = (mantissa / 2^24) * 2^(exponent - 64); zero = $00000000.
+; Behaviour, rounding and condition codes: docs/analysis/mathffp-v34.md (black-box spec of 1.3), checked by
+; tests/mathffp_probe.sh. The points every caller can see:
+; - a value whose low byte is 0 is zero for SPTst/SPFix/SPAbs/SPNeg/SPAdd/SPSub/SPMul and SPDiv's divisor;
+;   $00000080 ("-0") is a number, not zero;
+; - SPAdd/SPSub align with 8 guard bits, round half up before normalising and truncate a carry-out; SPFlt/SPMul
+;   round to nearest, ties away from zero; SPDiv rounds to nearest; SPFix truncates toward zero;
+; - overflow: +-$FFFFFF7F with V (SPMul as soon as the exponent sum reaches 192); underflow: 0; a zero divisor
+;   takes the 68000 zero-divide exception (the task's trap handler);
+; - registers: D0 = result; SPFix/SPFlt/SPCmp/SPTst/SPFloor/SPCeil may change D1; everything else (D1 included for
+;   the others) is preserved; A6 is not used; at most 32 bytes of stack, return address included.
+; IMPLEMENTATION track ("clean"): AutoDocs, mathffp_lib.fd and the analysis spec. NO ROM reading.
 
                 include "exec.i"
 
+LIBB_DELEXP     EQU 3                ; exec/libraries.i: LIBF_DELEXP
 FFP_M1          EQU $800000C1        ; -1.0
+FFP_MAX         EQU $FFFFFF7F        ; largest positive value
 
 ; --- mathffp.library ROMTag (scanned by build_reslist) ---
                 EVEN
@@ -19,28 +28,30 @@ mathffp_romtag:
         dc.l    mathffp_end
         dc.b    RTF_AUTOINIT|RTF_COLDSTART,34,NT_LIBRARY,0
         dc.l    mathffp_name
-        dc.l    mathffp_name
+        dc.l    mathffp_id
         dc.l    mathffp_inittab
 mathffp_name:
         dc.b    "mathffp.library",0
+mathffp_id:
+        dc.b    "mathffp 34.1 (18 Aug 1987)",13,10,0
         EVEN
 mathffp_inittab:
         dc.l    LIB_SIZE
         dc.l    mathffp_vectors
-        dc.l    mathffp_datatab
+        dc.l    0
         dc.l    mathffp_initfunc
 ; Vector N -> LVO -6*N; ##bias 30: SPFix = slot 5.
 mathffp_vectors:
         dc.l    mf_open              ; -6
         dc.l    mf_close             ; -12
         dc.l    mf_expunge           ; -18
-        dc.l    mf_expunge           ; -24 (reserved)
+        dc.l    mf_null              ; -24 (reserved)
         dc.l    mf_fix               ; -30 SPFix(d0)
         dc.l    mf_flt               ; -36 SPFlt(d0)
-        dc.l    mf_cmp               ; -42 SPCmp(d0,d1)
+        dc.l    mf_cmp               ; -42 SPCmp(d1,d0)
         dc.l    mf_tst               ; -48 SPTst(d1)
         dc.l    mf_abs               ; -54 SPAbs(d0)
-        dc.l    ffp_neg              ; -60 SPNeg(d0)
+        dc.l    mf_neg               ; -60 SPNeg(d0)
         dc.l    mf_add               ; -66 SPAdd(d1,d0)
         dc.l    mf_sub               ; -72 SPSub(d1,d0) = d0 - d1
         dc.l    mf_mul               ; -78 SPMul(d1,d0)
@@ -48,401 +59,535 @@ mathffp_vectors:
         dc.l    mf_floor             ; -90 SPFloor(d0)
         dc.l    mf_ceil              ; -96 SPCeil(d0)
         dc.l    -1
-mathffp_datatab:
-        dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)
-        dc.w    $D000,LIB_VERSION,34
-        dc.b    0
-        EVEN
 
 ; initFunc (d0 = base): V34 InitResident does not name the node, the module does it.
 mathffp_initfunc:
         move.l  d0,a1
         lea     mathffp_name(pc),a0
         move.l  a0,LN_NAME(a1)
+        move.b  #NT_LIBRARY,LN_TYPE(a1)
+        move.b  #1<<LIBB_SUMUSED,LIB_FLAGS(a1)
+        move.l  #(34<<16)|1,LIB_VERSION(a1)
+        lea     mathffp_id(pc),a0
+        move.l  a0,LIB_IDSTRING(a1)
         rts
 
+; Close never expunges, even with LIBF_DELEXP set (1.3 behaviour).
 mf_open:
         addq.w  #1,LIB_OPENCNT(a6)
         move.l  a6,d0
         rts
 mf_close:
         subq.w  #1,LIB_OPENCNT(a6)
+        moveq   #0,d0
+        rts
+; Expunge: still open -> LIBF_DELEXP only; otherwise the base leaves the library list and its block is freed.
+; No segment list -> D0 = 0 either way.
 mf_expunge:
+        tst.w   LIB_OPENCNT(a6)
+        beq.s   .ex_rm
+        bset    #LIBB_DELEXP,LIB_FLAGS(a6)
+        moveq   #0,d0
+        rts
+.ex_rm:
+        move.l  a6,-(sp)
+        move.l  a6,a1
+        move.l  ($4).w,a6
+        jsr     LVO_REMOVE(a6)
+        move.l  (sp),a0
+        moveq   #0,d0
+        move.w  LIB_NEGSIZE(a0),d0
+        move.l  a0,a1
+        sub.l   d0,a1
+        add.w   LIB_POSSIZE(a0),d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  (sp)+,a6
+        moveq   #0,d0
+mf_null:
+        rts
+
+; SPFix(d0) -> d0 = integer truncated toward zero. Low byte 0: returned unchanged with Z. Out of range:
+; $7FFFFFFF with V, or $80000000 with Z and V. Changes d1.
+mf_fix:
+        tst.b   d0
+        bne.s   .fx_nz
+        move.w  #4,ccr
+        rts
+.fx_nz:
+        moveq   #$7F,d1
+        and.b   d0,d1
+        sub.w   #64,d1               ; d1 = number of integer bits
+        ble.s   .fx_zero
+        tst.b   d0
+        bmi.s   .fx_neg
+        sub.w   #32,d1
+        bge.s   .fx_psat
+        neg.w   d1
+        clr.b   d0
+        lsr.l   d1,d0
+        rts
+.fx_zero:
+        moveq   #0,d0
+        rts
+.fx_psat:
+        move.l  #$7FFFFFFF,d0
+        move.w  #2,ccr
+        rts
+.fx_neg:
+        sub.w   #32,d1
+        bgt.s   .fx_nsat
+        clr.b   d0
+        neg.w   d1
+        lsr.l   d1,d0                ; magnitude
+        tst.w   d1
+        bne.s   .fx_n
+        tst.l   d0                   ; 32 integer bits: only 1..2^31 fit
+        beq.s   .fx_nsat
+        cmp.l   #$80000000,d0
+        bhi.s   .fx_nsat
+.fx_n:
+        neg.l   d0
+        tst.l   d0                   ; -2^31: N only
+        rts
+.fx_nsat:
+        move.l  #$80000000,d0
+        move.w  #6,ccr
+        rts
+
+; SPFlt(d0 signed integer) -> FFP, rounded to nearest, ties away from zero. Changes d1.
+mf_flt:
+        tst.l   d0
+        beq.s   .fl_r
+        moveq   #$60,d1              ; low byte = sign + exponent of the 32-bit magnitude
+        tst.l   d0
+        bpl.s   .fl_p
+        neg.l   d0                   ; $80000000 stays: unsigned 2^31
+        moveq   #-$20,d1             ; $E0
+.fl_p:
+        cmp.l   #$10000,d0
+        bcc.s   .fl_n
+        swap    d0
+        sub.b   #16,d1
+.fl_n:
+        tst.l   d0
+        bmi.s   .fl_rnd
+.fl_l:
+        subq.b  #1,d1
+        add.l   d0,d0
+        bpl.s   .fl_l
+.fl_rnd:
+        add.l   #$80,d0
+        bcc.s   .fl_pk
+        roxr.l  #1,d0                ; rounded up to 2^32: mantissa $800000, exponent + 1
+        addq.b  #1,d1
+.fl_pk:
+        clr.b   d0
+        or.b    d1,d0
+.fl_r:
+        rts
+
+; SPCmp(fnum1 d1, fnum2 d0) -> d0 = +1 if d1 > d0, -1 if d1 < d0, 0 if equal; the codes are those of "d0
+; compared with d1" (signed branches). Order: sign, then the exponent, then the mantissa as a signed 24-bit
+; number; reversed for two negative values. Key = exponent:mantissa with the mantissa's top bit inverted,
+; complemented when negative. Changes d1.
+mf_cmp:
+        move.l  d2,-(sp)
+        move.l  d0,d2
+        ror.l   #8,d2
+        bchg    #23,d2
+        bclr    #31,d2
+        beq.s   .cm_k0
+        not.l   d2
+.cm_k0:
+        ror.l   #8,d1
+        bchg    #23,d1
+        bclr    #31,d1
+        beq.s   .cm_k1
+        not.l   d1
+.cm_k1:
+        moveq   #0,d0
+        cmp.l   d1,d2
+        beq.s   .cm_cc
+        blt.s   .cm_gt
+        moveq   #-1,d0
+        bra.s   .cm_cc
+.cm_gt:
+        moveq   #1,d0
+.cm_cc:
+        cmp.l   d1,d2
+        movem.l (sp)+,d2             ; movem to a register: CCR intact
+        rts
+
+; SPTst(d1) -> d0 = -1 (bit 7 set), 0 (low byte 0), +1 otherwise.
+mf_tst:
+        moveq   #1,d0
+        tst.b   d1
+        bgt.s   .ts_r
+        beq.s   .ts_z
+        moveq   #-1,d0
+.ts_r:
+        rts
+.ts_z:
         moveq   #0,d0
         rts
 
-; ffp_cc: condition codes of float d0 (Z if zero, N from the sign bit, V/C at 0).
-ffp_cc:
-        tst.l   d0
-        beq.s   .z
+; SPAbs(d0): bit 7 cleared. SPNeg(d0): bit 7 inverted unless the low byte is 0.
+mf_abs:
+        bclr    #7,d0
         tst.b   d0
-        bmi.s   .n
-        move.w  #0,ccr
-.z:
         rts
-.n:
-        move.w  #8,ccr
+mf_neg:
+        tst.b   d0
+        beq.s   .ng_r
+        eori.b  #$80,d0
+.ng_r:
         rts
 
-; ffp_pack: d2 = normalised 32-bit mantissa (bit 31 = 1), d3.w = signed exponent, d4.b = sign ($80/0)
-; -> d0 = rounded float + condition codes. Exponent <= 0 -> 0; > 127 -> largest value + V.
+; ffp_pack: d2 = mantissa in bits 31-8 (low byte 0), d3.w = exponent, d4.b = sign ($80/0) -> d0 + codes.
+; Exponent < 0: 0. Exponent 0: kept when negative, 0 when positive. Exponent > 127: saturation.
 ffp_pack:
-        add.l   #$80,d2
-        bcc.s   .nc
-        move.l  #$80000000,d2        ; the rounded mantissa reaches 2^32: renormalise
-        addq.w  #1,d3
-.nc:
-        clr.b   d2
         tst.w   d3
-        ble.s   .uf
+        bgt.s   .pk_e
+        bmi.s   .pk_z
+        tst.b   d4
+        beq.s   .pk_z
+.pk_e:
         cmp.w   #127,d3
-        bgt.s   .ov
+        bgt.s   ffp_sat
         move.l  d2,d0
         or.b    d3,d0
         or.b    d4,d0
-        bra.s   ffp_cc
-.uf:
+        rts
+.pk_z:
         moveq   #0,d0
         rts
-.ov:
-        moveq   #-1,d0
-        move.b  #$7F,d0
+; ffp_sat: d4.b = sign -> d0 = +-largest value, V set.
+ffp_sat:
+        move.l  #FFP_MAX,d0
         or.b    d4,d0
-        bsr.s   ffp_cc
         ori.b   #2,ccr
         rts
 
-; SPAbs / SPNeg (d0 only).
-mf_abs:
-        and.b   #$7F,d0
-        bra.s   ffp_cc
-ffp_neg:
-        tst.l   d0
-        beq.s   .r
-        eor.b   #$80,d0
-        bra.s   ffp_cc
-.r:
-        rts
-
-; SPTst(d1) -> d0 = +1 / -1 / 0.
-mf_tst:
-        moveq   #0,d0
-        tst.l   d1
-        beq.s   .r
+; SPSub(d1,d0) = d0 - d1 = SPAdd(d1 with its sign inverted, d0); a zero d1 gives d0 unchanged.
+mf_sub:
         tst.b   d1
-        bmi.s   .n
-        moveq   #1,d0
+        bne.s   .sb_go
+        tst.b   d0
         rts
-.n:
-        moveq   #-1,d0
-.r:
-        rts
-
-; SPCmp(fnum1 d0, fnum2 d1) -> d0 = +1 if fnum1 > fnum2, -1 if fnum1 < fnum2, 0 otherwise; the condition
-; codes describe fnum2 against fnum1 (GT <=> fnum2 > fnum1), as the AutoDoc specifies.
-; Signed integer key ordered like the float: (exponent << 24 | 24-bit mantissa), negated if negative.
-mf_cmp:
-        movem.l d2-d3,-(sp)
-        move.l  d0,d2
+.sb_go:
+        movem.l d2-d6,-(sp)
+        move.l  d1,d3
+        eori.b  #$80,d3
+        bra.s   ffp_add
+; SPAdd(d1,d0) = d0 + d1.
+mf_add:
+        movem.l d2-d6,-(sp)
+        move.l  d1,d3
+; ffp_add: d0 + d3 -> d0 + codes; d2-d6 saved by the caller (popped here).
+ffp_add:
+        tst.b   d3
+        beq     .ad_d0               ; second operand zero: d0 unchanged
+        tst.b   d0
+        bne.s   .ad_both
+        move.l  d3,d0                ; d0 zero: the other operand
+        bra.s   .ad_d0
+.ad_both:
+        move.l  d0,d2                ; keys exponent:mantissa, sign removed
         ror.l   #8,d2
         bclr    #31,d2
-        beq.s   .k1
-        neg.l   d2
-.k1:
-        move.l  d1,d3
-        ror.l   #8,d3
-        bclr    #31,d3
-        beq.s   .k2
-        neg.l   d3
-.k2:
-        moveq   #0,d0
-        cmp.l   d3,d2
-        beq.s   .cc
-        bgt.s   .gt
-        moveq   #-1,d0
-        bra.s   .cc
-.gt:
-        moveq   #1,d0
-.cc:
-        cmp.l   d2,d3
-        movem.l (sp)+,d2-d3          ; movem to registers: CCR intact
-        rts
-
-; SPFix(d0) -> integer truncated towards zero, saturated at $7FFFFFFF / $80000000.
-mf_fix:
-        move.l  d2,-(sp)
-        moveq   #$7F,d1
-        and.l   d0,d1
-        sub.w   #64,d1               ; d1 = number of integer bits
-        ble.s   .zero
-        cmp.w   #32,d1
-        bge.s   .sat
-        move.l  d0,d2
-        clr.b   d2
-        neg.w   d1
-        add.w   #32,d1
-        lsr.l   d1,d2
-        tst.b   d0
-        bpl.s   .p
-        neg.l   d2
-.p:
-        move.l  d2,d0
-        move.l  (sp)+,d2
-        tst.l   d0
-        rts
-.zero:
-        moveq   #0,d0
-        move.l  (sp)+,d2
-        tst.l   d0
-        rts
-.sat:
-        tst.b   d0
-        bmi.s   .sn
-        move.l  #$7FFFFFFF,d0
-        bra.s   .sr
-.sn:
-        move.l  #$80000000,d0
-.sr:
-        move.l  (sp)+,d2
-        tst.l   d0
-        rts
-
-; SPFlt(d0 signed integer) -> float.
-mf_flt:
-        movem.l d2-d4,-(sp)
-        tst.l   d0
-        beq.s   .ret
-        moveq   #0,d4
-        move.l  d0,d2
-        bpl.s   .p
-        neg.l   d2                   ; $80000000 stays $80000000 = unsigned 2^31
-        move.b  #$80,d4
-.p:
-        moveq   #96,d3               ; mantissa = 32-bit integer: 2^32 * 2^(96-64-32)
-        cmp.l   #$10000,d2
-        bcc.s   .nt
-        swap    d2
-        sub.w   #16,d3
-.nt:
-        tst.l   d2
-        bmi.s   .pk
-.nl:
-        subq.w  #1,d3
-        add.l   d2,d2
-        bpl.s   .nl
-.pk:
-        bsr     ffp_pack
-.ret:
-        movem.l (sp)+,d2-d4
-        rts
-
-; SPSub(d1,d0) = d0 - d1; SPAdd(d1,d0) = d0 + d1.
-mf_sub:
-        tst.l   d1
-        beq     ffp_cc
-        eor.b   #$80,d1
-mf_add:
-        movem.l d2-d7,-(sp)
-        bsr.s   ffp_add
-        movem.l (sp)+,d2-d7
-        rts
-
-; ffp_add: d0 + d1 -> d0 + condition codes (uses d1-d7).
-ffp_add:
-        tst.l   d0
-        bne.s   .a1
-        move.l  d1,d0
-        bra     ffp_cc
-.a1:
-        tst.l   d1
-        beq     ffp_cc
-        move.l  d0,d2                ; d2/d3/d4 = mantissa/exponent/sign of d0
-        clr.b   d2
-        moveq   #$7F,d3
-        and.l   d0,d3
-        move.b  d0,d4
-        and.b   #$80,d4
-        move.l  d1,d5                ; d5/d6/d7 = same for d1
-        clr.b   d5
+        move.l  d3,d4
+        ror.l   #8,d4
+        bclr    #31,d4
+        cmp.l   d4,d2
+        bcc.s   .ad_ord
+        exg     d0,d3                ; d0 = A (larger exponent, then larger mantissa), d3 = B
+.ad_ord:
+        moveq   #$7F,d5
+        and.b   d0,d5                ; d5 = exponent of A
         moveq   #$7F,d6
-        and.l   d1,d6
-        move.b  d1,d7
-        and.b   #$80,d7
-        cmp.w   d6,d3
-        bcc.s   .ord
-        exg     d2,d5                ; operand with the larger exponent in d2/d3/d4
-        exg     d3,d6
-        exg     d4,d7
-.ord:
-        move.w  d3,d1
-        sub.w   d6,d1
-        cmp.w   #32,d1
-        bcc     ffp_pack             ; gap >= 32: the small operand is absorbed
-        lsr.l   d1,d5
-        cmp.b   d4,d7
-        bne.s   .diff
-        add.l   d5,d2
-        bcc     ffp_pack
-        roxr.l  #1,d2                ; carry fed back into bit 31
-        addq.w  #1,d3
-        bra     ffp_pack
-.diff:
-        sub.l   d5,d2
-        beq.s   .zero
-        bcc.s   .norm
-        neg.l   d2                   ; |d1| > |d0|: the sign of the result is that of d1
-        move.b  d7,d4
-.norm:
-        tst.l   d2
-        bmi     ffp_pack
-.nl:
-        subq.w  #1,d3
-        add.l   d2,d2
-        bpl.s   .nl
-        bra     ffp_pack
-.zero:
-        moveq   #0,d0
-        rts
-
-; SPMul(d1,d0) -> d0 * d1. 24x24-bit product by four 16x16 mulu; we keep the 32 most significant bits.
-mf_mul:
-        movem.l d2-d7,-(sp)
-        tst.l   d0
-        beq.s   .zero
-        tst.l   d1
-        beq.s   .zero
-        move.b  d0,d4
-        eor.b   d1,d4
-        and.b   #$80,d4
-        moveq   #$7F,d3
-        and.l   d0,d3
-        moveq   #$7F,d2
-        and.l   d1,d2
-        add.w   d2,d3
-        sub.w   #64,d3
-        lsr.l   #8,d0                ; 24-bit mantissas: d0 = a1:a0, d1 = b1:b0
-        lsr.l   #8,d1
+        and.b   d3,d6
+        sub.w   d5,d6
+        neg.w   d6                   ; d6 = exponent difference
+        cmp.w   #24,d6
+        bge.s   .ad_d0               ; B is ignored: A bit for bit
+        move.l  d3,d4
+        clr.b   d4
+        lsr.l   d6,d4                ; B aligned, 8 bits below A's last mantissa bit
+        eor.b   d0,d3                ; bit 7: signs differ
         move.l  d0,d2
-        swap    d2                   ; d2.w = a1
-        move.l  d1,d5
-        swap    d5                   ; d5.w = b1
-        move.w  d0,d6
-        mulu.w  d1,d6                ; d6 = a0*b0
-        move.w  d2,d7
-        mulu.w  d1,d7                ; d7 = a1*b0
-        move.w  d5,d1
-        mulu.w  d0,d1                ; d1 = a0*b1
-        mulu.w  d5,d2                ; d2 = a1*b1
-        swap    d2
-        clr.w   d2
-        add.l   d7,d2
-        add.l   d1,d2
-        move.l  d6,d1
-        clr.w   d1
-        swap    d1
-        add.l   d1,d2                ; d2 = 48-bit product >> 16
-        bmi.s   .pk
-        add.w   d6,d6                ; next bit (bit 15 of the product) -> X
-        addx.l  d2,d2
-        subq.w  #1,d3
-.pk:
+        clr.b   d2                   ; A's mantissa
+        moveq   #0,d6
+        tst.b   d3
+        bmi.s   .ad_dif
+        add.l   d4,d2
+        addx.l  d6,d6                ; d6 = carry out of the sum
+        add.l   #$80,d2              ; half up, on A's last mantissa bit
+        moveq   #0,d4
+        addx.l  d4,d6
+        lsr.l   #1,d6
+        bcc.s   .ad_nm
+        roxr.l  #1,d2                ; carry-out: halved, the bit shifted out is dropped
+        addq.w  #1,d5
+        bra.s   .ad_nm
+.ad_dif:
+        sub.l   d4,d2
+        beq.s   .ad_z
+        add.l   #$80,d2
+.ad_nm:
+        clr.b   d2
+        tst.l   d2
+        bmi.s   .ad_pk
+.ad_nl:
+        subq.w  #1,d5
+        bmi.s   .ad_z
+        add.l   d2,d2
+        bpl.s   .ad_nl
+.ad_pk:
+        move.w  d5,d3
+        move.b  d0,d4
+        and.b   #$80,d4              ; sign of A
         bsr     ffp_pack
-        movem.l (sp)+,d2-d7
-        rts
-.zero:
+        bra.s   .ad_out
+.ad_z:
         moveq   #0,d0
-        movem.l (sp)+,d2-d7
+        bra.s   .ad_out
+.ad_d0:
+        tst.b   d0
+.ad_out:
+        movem.l (sp)+,d2-d6
         rts
 
-; SPDiv(d1,d0) -> d0 / d1. Restoring division over 32 quotient bits; zero divisor -> overflow.
-mf_div:
-        movem.l d2-d7,-(sp)
+; SPMul(d1,d0) -> d0 * d1. Low byte of d0 0: d0 unchanged; low byte of d1 0: 0. Exponent sum >= 192: saturation,
+; whatever the mantissas. 24x24-bit product by four mulu; rounded to nearest, ties away from zero.
+mf_mul:
+        tst.b   d0
+        beq.s   .mu_r
+        tst.b   d1
+        bne.s   .mu_go
+        moveq   #0,d0
+.mu_r:
+        rts
+.mu_go:
+        movem.l d2-d6,-(sp)
+        moveq   #$7F,d3
+        and.b   d0,d3
+        moveq   #$7F,d2
+        and.b   d1,d2
+        add.w   d2,d3                ; d3 = exponent sum
+        cmp.w   #192,d3
+        bge.s   .mu_sat
+        move.l  d0,d2
+        clr.b   d2                   ; a = ah:al
+        move.l  d1,d4
+        clr.b   d4                   ; b = bh:bl
+        move.w  d2,d5
+        mulu    d4,d5                ; al*bl
+        clr.w   d5
+        swap    d5
+        move.l  d2,d6
+        swap    d6
+        mulu    d4,d6                ; ah*bl
+        add.l   d6,d5
+        swap    d4
+        move.w  d4,d6
+        mulu    d2,d6                ; al*bh
+        add.l   d6,d5
+        moveq   #0,d6
+        addx.w  d6,d6                ; carry of the middle sum
+        swap    d2
+        mulu    d4,d2                ; ah*bh
+        swap    d6
+        clr.w   d5
+        swap    d5
+        add.l   d6,d5
+        add.l   d5,d2                ; d2 = high 32 bits of a*b
+        tst.l   d2
+        bmi.s   .mu_hi
+        add.l   #$40,d2
+        bmi.s   .mu_up               ; rounded up to the next power of 2
+        add.l   d2,d2
+        subq.w  #1,d3
+        bra.s   .mu_up
+.mu_hi:
+        add.l   #$80,d2
+.mu_up:
+        sub.w   #64,d3
+        clr.b   d2
+        bsr.s   .mu_sgn
+        bsr     ffp_pack
+        bra.s   .mu_out
+.mu_sat:
+        bsr.s   .mu_sgn
+        bsr     ffp_sat
+.mu_out:
+        movem.l (sp)+,d2-d6
+        rts
+.mu_sgn:
         move.b  d0,d4
         eor.b   d1,d4
         and.b   #$80,d4
-        tst.l   d1
-        beq.s   .dz
+        rts
+
+; SPDiv(d1,d0) -> d0 / d1. Divisor with low byte 0, or a zero divisor mantissa reached by the division: 68000
+; zero-divide exception. Dividend $00000000: 0. Q = exponent difference + 64: >= 128 saturation with the
+; quotient's sign, < 0 zero. Dividend mantissa >= divisor mantissa (compared as signed longs): exponent Q + 1 and
+; 24 quotient bits, else Q and 25; one more bit for rounding to nearest. Exponent 128 reached through the mantissa
+; step: saturation with the divisor's sign.
+mf_div:
+        tst.b   d1
+        bne.s   .dv_nz
+.dv_trap:
+        divu    ffp_zero(pc),d0
+        rts
+.dv_nz:
         tst.l   d0
-        beq.s   .zero
+        beq     .dv_r
+        movem.l d2-d6,-(sp)
         moveq   #$7F,d3
-        and.l   d0,d3
+        and.b   d0,d3
         moveq   #$7F,d2
-        and.l   d1,d2
+        and.b   d1,d2
         sub.w   d2,d3
-        add.w   #65,d3
-        lsr.l   #8,d0                ; d0 = remainder (mantissa of the dividend), d1 = divisor
-        lsr.l   #8,d1
-        cmp.l   d1,d0
-        bcc.s   .go
-        add.l   d0,d0                ; dividend < divisor: the first quotient bit will be 1
-        subq.w  #1,d3
-.go:
-        moveq   #0,d2
-        moveq   #31,d5
-.lp:
-        add.l   d2,d2
-        cmp.l   d1,d0
-        bcs.s   .nb
-        sub.l   d1,d0
-        addq.l  #1,d2
-.nb:
-        add.l   d0,d0
-        dbra    d5,.lp
-        bra.s   .pk
-.dz:
-        move.w  #200,d3              ; forces the overflow branch of ffp_pack
-.pk:
+        add.w   #64,d3               ; d3 = Q
+        bmi     .dv_z
+        cmp.w   #128,d3
+        bge.s   .dv_sat
+        move.l  d1,d2
+        lsr.l   #8,d2                ; d2 = divisor mantissa
+        bne.s   .dv_go
+        divu    ffp_zero(pc),d0
+        bra.s   .dv_out
+.dv_go:
+        move.l  d0,d5
+        clr.b   d5                   ; dividend mantissa << 8
+        move.l  d1,d4
+        clr.b   d4
+        moveq   #25,d6               ; quotient bits after the integer part (rounding bit included)
+        cmp.l   d4,d5
+        blt.s   .dv_b
+        addq.w  #1,d3
+        subq.w  #1,d6
+.dv_b:
+        swap    d6
+        move.w  d3,d6
+        swap    d6                   ; d6 = exponent : bit count
+        moveq   #0,d4                ; quotient
+        tst.l   d1
+        bpl.s   .dv_slow
+        lsr.l   #8,d5                ; normalised divisor: integer part 0 or 1
+        move.l  d5,d3
+        moveq   #0,d5
+        cmp.l   d2,d3
+        bcs.s   .dv_lp0
+        sub.l   d2,d3
+        moveq   #1,d4
+        bra.s   .dv_lp0
+.dv_slow:
+        moveq   #0,d3                ; unnormalised divisor: the dividend's 24 bits go through the loop too
+        add.w   #24,d6
+.dv_lp0:
+        subq.w  #1,d6
+.dv_lp:
+        add.l   d5,d5
+        addx.l  d3,d3                ; remainder * 2 + next dividend bit
+        add.l   d4,d4
+        cmp.l   d2,d3
+        bcs.s   .dv_nb
+        sub.l   d2,d3
+        addq.l  #1,d4
+.dv_nb:
+        dbra    d6,.dv_lp
+        addq.l  #1,d4
+        lsr.l   #1,d4                ; rounded
+        lsl.l   #8,d4
+        move.l  d4,d2
+        swap    d6
+        move.w  d6,d3
+        move.b  d0,d4
+        eor.b   d1,d4
+        cmp.w   #128,d3
+        bne.s   .dv_pk
+        move.b  d1,d4
+.dv_pk:
+        and.b   #$80,d4
         bsr     ffp_pack
-        movem.l (sp)+,d2-d7
-        rts
-.zero:
+        bra.s   .dv_out
+.dv_sat:
+        move.b  d0,d4
+        eor.b   d1,d4
+        and.b   #$80,d4
+        bsr     ffp_sat
+        bra.s   .dv_out
+.dv_z:
         moveq   #0,d0
-        movem.l (sp)+,d2-d7
+.dv_out:
+        movem.l (sp)+,d2-d6
+.dv_r:
         rts
 
-; SPFloor(d0) / SPCeil(d0) = -Floor(-d0).
-mf_floor:
-        movem.l d2-d7,-(sp)
-        bsr.s   ffp_floor
-        movem.l (sp)+,d2-d7
-        rts
+; SPCeil(d0) = SPNeg(SPFloor(SPNeg(d0))). Changes d1.
 mf_ceil:
-        movem.l d2-d7,-(sp)
-        bsr     ffp_neg
-        bsr.s   ffp_floor
-        bsr     ffp_neg
-        movem.l (sp)+,d2-d7
+        tst.b   d0
+        beq.s   .ce_f
+        eori.b  #$80,d0
+.ce_f:
+        bsr.s   mf_floor
+        tst.b   d0
+        beq.s   .ce_r
+        eori.b  #$80,d0
+.ce_r:
         rts
 
-; ffp_floor: largest integer <= d0 -> d0 + condition codes (uses d1-d7).
-ffp_floor:
-        tst.l   d0
-        beq     ffp_cc
+; SPFloor(d0) -> largest integer <= d0. Exponent 0: the sign is cleared. |d0| < 1: 0 or -1. Positive: fraction
+; bits cleared (exponent kept); negative with a fraction: one unit added at the integer position. Changes d1.
+mf_floor:
         moveq   #$7F,d1
-        and.l   d0,d1
+        and.b   d0,d1
+        bne.s   .fo_e
+        bclr    #7,d0
+        tst.b   d0
+        rts
+.fo_e:
         sub.w   #64,d1               ; d1 = number of integer bits
-        bgt.s   .big
-        tst.b   d0                   ; |x| < 1: 0 if positive, -1 if negative
-        bmi.s   .m1
+        bgt.s   .fo_big
+        tst.b   d0
+        bmi.s   .fo_m1
         moveq   #0,d0
         rts
-.m1:
+.fo_m1:
         move.l  #FFP_M1,d0
-        bra     ffp_cc
-.big:
+        rts
+.fo_big:
         cmp.w   #24,d1
-        bge     ffp_cc               ; no fractional bit
+        bge.s   .fo_tst
+        move.l  d2,-(sp)
         moveq   #-1,d2
         lsr.l   d1,d2
-        clr.b   d2                   ; d2 = mask of the fractional bits of the mantissa
-        move.l  d0,d3
-        and.l   d2,d3
-        beq     ffp_cc
+        clr.b   d2                   ; d2 = fraction bits of the mantissa
+        move.l  d2,d1
+        and.l   d0,d1
+        beq.s   .fo_end
         not.l   d2
-        and.l   d2,d0                ; truncation towards zero
+        and.l   d2,d0                ; truncated toward zero
         tst.b   d0
-        bpl     ffp_cc
-        move.l  #FFP_M1,d1           ; non-integer negative: truncated - 1
-        bra     ffp_add
+        bpl.s   .fo_end
+        not.l   d2
+        add.l   #$100,d2             ; one unit at the integer position
+        add.l   d2,d0
+        bcc.s   .fo_end
+        move.b  d0,d1                ; mantissa overflow: $800000, exponent + 1
+        addq.b  #1,d1
+        move.l  #$80000000,d0
+        move.b  d1,d0
+.fo_end:
+        tst.b   d0
+        movem.l (sp)+,d2             ; movem to a register: CCR intact
+        rts
+.fo_tst:
+        tst.b   d0
+        rts
+
+ffp_zero:
+        dc.w    0                    ; divisor of the deliberate zero-divide exception
 
 mathffp_end:
