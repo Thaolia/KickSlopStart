@@ -1505,6 +1505,10 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   INTUITICKS 301 in 30.00 s (10/s, every gap 100 ms) on both; held `a` and cursor up: first repeat 0.400 s, period
   0.040 s (the disk's Preferences), no repeat after the release, on both. `tests/menucat.s`: right Amiga + O ->
   MENUPICK F800 qual 0080, right Amiga + T -> 0080 (Export/Texte sub-item).
+  **Memory, merged result (2026-11-05)**: one input task (+4,384), console handler and initial CLI (+2,872) and
+  low chip (+5,376) together: Workbench 1.3.3 idle on kick-prod, default harness (512+512, DF1 empty), title
+  **848,784** free against 836,152 before and 861,048 on 1.3 (gap 24,896 -> 12,264). Prepush FAIL=0, probes of
+  ranks 12/13/15 all pass, Bubble Bobble credits and Sanity-Arte run on the merged ROM.
   **Low chip made allocatable (2026-11-05, MEMORY-USAGE candidate 3)**: with slow RAM the supervisor stack moves to
   the top 4,096 bytes of slow RAM, as on 1.3 (ExecBase `SysStkLower`/`SysStkUpper` now set; coldstart switches SP
   there as soon as `slow_probe` answers), and `add_low_chip` lowers the chip MemHeader to `$1000` (`LOWHEAP_LO`)

@@ -12,8 +12,9 @@ page measures KickSlopStart in the same configuration and explains the differenc
 
 **Update (2026-11-05, after the console handler, one-input-task and low-chip changes):** the three changes
 were measured separately on top of `d1ccea8` (A/2 idle, production ROM): one input task +4,384 (840,536), console
-handler and initial CLI +2,872 (839,024), low chip +5,376 (841,528; chip-only unchanged). The merged figure is
-given in the PLAN entry of the merge. The tables below are those of `17da6ee` unless a line says otherwise.
+handler and initial CLI +2,872 (839,024), low chip +5,376 (841,528; chip-only unchanged). Merged (`4db512c`,
+production ROM, Workbench title after 150 s idle): **848,784** free, exactly the sum of the three, so the gap to
+1.3 (861,048) is now **12,264**. The tables below are those of `17da6ee` unless a line says otherwise.
 
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
