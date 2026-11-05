@@ -1531,7 +1531,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Workbench 1.3.3 idle on kick-prod, 512+512: 836,152 → **841,528** free (+9,472 chip, −4,096 slow). Before the
   change, a log-only IPC watch over `$800`-`$2500` (CPU and DMA) through a whole Workbench session with a Shell saw no
   write; only L:Shell-Seg reads `$9D8` at each NewShell (it hands ExecBase `$C00276` to a BCPL string routine as a
-  BSTR; `<< 2` wraps to `$9D8`; where that value comes from is an open point for the DOS side). Deepest supervisor
+  BSTR; `<< 2` wraps to `$9D8`; explained on 2026-11-06, see below: not a DOS field). Deepest supervisor
   stack seen: 896 bytes. Two designs failed on real programs first: heap down to `$800` (Bubble Bobble loads SP with
   the start of a 512-byte chip block it allocates; the block landed at `$8E0` and the stack ran over the low-RAM
   variables), then a separate low-chip MemHeader (Sanity-Arte crashed; not traced, most likely it expects 1.3's
@@ -1539,6 +1539,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Validation of the final ROM: prepush FAIL=0 (Lemmings menu looked at); Holiday Lemmings/FLT intro, Bubble Bobble,
   Sanity-Arte, Spaceballs, Desert Dream, Monkey Island 1, SimCity on 512+512 and chip only against the previous ROM
   (same screens, demos at other frames); soft-kick ADF hosted by our ROM.
+  **Shell-Seg `$9D8` read explained (2026-11-06)**: no DOS/CLI/process field of ours holds ExecBase. Caught with a
+  log-only IPC read watch on `$9D8`, then a gdb break on Shell-Seg's string-compare routine when its second argument
+  was `$C00276`, following the BCPL frames back (Shell-Seg disassembled, behaviour only): the caller is the Shell's
+  alias insertion (sorted singly linked list of `[next, BSTR "name<TAB>value"]` nodes). When the walk reaches the
+  end of the list it still compares the new name with the name field of the nil node, `!(0+1)`, which is the
+  longword at absolute address 4, AbsExecBase. The list head is a local of Shell-Seg's main routine, cleared by
+  Shell-Seg itself, so the first `alias` line of `S:Shell-Startup` hits it at each NewShell (the later ones sort
+  before `xcopy`). A/B on kick-prod, Workbench 1.3.3: with a `S:Shell-Startup` holding only `Prompt`, opening the
+  Shell icon and a NewShell gives no `$9D8` access; `alias foo dir` typed then gives exactly the 4 reads, `alias bar
+  dir` none, and `alias` lists both. 1.3 does the same with slow RAM (ExecBase `$C00276`, coldstart-hardware-v34),
+  where `$9D8` is chip heap. Our `$9D8` sits in the never-allocated `$800`-`$1000` cushion and reads 0, so the compare
+  answers "different" and the insertion is normal; nothing to change in the ROM. Constraint kept in
+  ARCHITECTURE.md ("Low chip memory map"): a word `$0009` at `$9D8` would make Shell-Seg free the nil node.
 
 ## Immediately actionable work (start of implementation, upon approval)
 
