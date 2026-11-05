@@ -6,7 +6,8 @@
   solid rectangles, with plane masks, clipping and SMART backing stores. Memory alignment, OCS dimensions,
   patterns, ONE_DOT, first-dot continuation and blitter contention select the existing CPU paths when needed.
 - Upstream raster integration: retained corrected mode/minterm and scrolling behavior; solid rectangle DMA
-  uses the CPU engine's minterm table, covered by 32 added mode/pen-pair cases.
+  uses the CPU engine's minterm table, covered by 32 added mode/pen-pair cases. A separate eight-mode
+  AreaEnd-versus-RectFill regression covers unpatterned mask composition and its INVERSVID/background-pen rules.
 - Native regression: `make test-graphics` / `make test-graphics-quick`, beneath the global normal/quick test
   groups. CHIP output and RastPort state must match the non-DMA CPU reference, including buffer guards.
 - Performance gate reproduced before and after on production ROMs: the old paths pass correctness but fail the

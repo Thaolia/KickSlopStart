@@ -751,7 +751,18 @@ mk_render:
         tst.l   rp_AreaPtrn(a1)
         bne.s   .mr_pattern
         move.b  rp_DrawMode(a1),-(sp)
-        and.b   #COMPLEMENT,rp_DrawMode(a1) ; mask zeros stay untouched, solid fills ignore INVERSVID
+        move.b  rp_FgPen(a1),-(sp)
+        moveq   #7,d0
+        and.b   rp_DrawMode(a1),d0
+        cmp.b   #INVERSVID,d0
+        beq.s   .mr_restore        ; solid B=1 preserves the destination in INVERSVID JAM1
+        cmp.b   #INVERSVID|COMPLEMENT,d0
+        beq.s   .mr_restore
+        cmp.b   #INVERSVID|JAM2,d0
+        bne.s   .mr_solid
+        move.b  rp_BgPen(a1),rp_FgPen(a1)
+.mr_solid:
+        and.b   #COMPLEMENT,rp_DrawMode(a1) ; translate RectFill's solid-B operation; mask zeros stay untouched
         move.l  MK_BUF(a5),a0
         moveq   #0,d0
         moveq   #0,d1
@@ -766,6 +777,8 @@ mk_render:
         move.w  MK_H(a5),d5
         jsr     LVO_BLTTEMPLATE(a6)
         move.l  MK_RP(a5),a1
+.mr_restore:
+        move.b  (sp)+,rp_FgPen(a1)
         move.b  (sp)+,rp_DrawMode(a1)
         bra     .mr_end
 .mr_pattern:

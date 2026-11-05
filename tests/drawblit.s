@@ -35,6 +35,7 @@ _start:
         jsr     LVO_ADDINTSERVER(a6)
         lea     startmsg(pc),a0
         bsr     puts
+        bsr     area_modes
         clr.w   variant
 .variant:
         bsr     reset
@@ -521,6 +522,77 @@ measure:
         rts
 
 ; Differential coverage for the small two-plane strokes and masks used by analog instruments.
+; A solid rectangular AreaEnd must render like RectFill, including INVERSVID and both pens.
+; This compares two public operations, rather than two paths through the new mask compositor.
+area_modes:
+        clr.w   variant
+        move.l  chip(pc),a0
+        lea     bmchip(pc),a2
+        lea     rpchip(pc),a3
+        bsr     setup
+        move.l  soft(pc),a0
+        lea     bmsoft(pc),a2
+        lea     rpsoft(pc),a3
+        bsr     setup
+        moveq   #0,d7
+.mode:
+        bsr     reset
+        lea     rpchip(pc),a2
+        bsr.s   .pens
+        bsr     clock_initarea
+        moveq   #20,d0
+        moveq   #20,d1
+        jsr     -252(a6)
+        moveq   #83,d0
+        moveq   #20,d1
+        jsr     -258(a6)
+        moveq   #83,d0
+        moveq   #59,d1
+        jsr     -258(a6)
+        moveq   #20,d0
+        moveq   #59,d1
+        jsr     -258(a6)
+        jsr     -264(a6)
+        tst.l   d0
+        bne     fail
+        lea     rpsoft(pc),a2
+        bsr.s   .pens
+        moveq   #20,d0
+        moveq   #20,d1
+        moveq   #83,d2
+        moveq   #59,d3
+        jsr     -306(a6)
+        bsr.s   .scratch
+        bsr     compare
+        addq.w  #1,d7
+        cmp.w   #8,d7
+        bne.s   .mode
+        rts
+.pens:
+        bsr     clock_port
+        move.l  a2,a1
+        move.w  d7,d0
+        jsr     -354(a6)
+        moveq   #1,d0
+        jsr     -342(a6)
+        moveq   #2,d0
+        jsr     -348(a6)
+        move.b  #3,rp_Mask(a2)
+        rts
+
+; TmpRas contents are unspecified after AreaEnd; compare the rendered planes and guards, not scratch data.
+.scratch:
+        move.l  chip(pc),a0
+        move.l  soft(pc),a1
+        adda.l  #42008,a0
+        adda.l  #42008,a1
+        move.w  #20000/4-1,d0
+.clear:
+        move.l  #$a55aa55a,(a0)+
+        move.l  #$a55aa55a,(a1)+
+        dbra    d0,.clear
+        rts
+
 ; Upstream's solid-rectangle minterms include INVERSVID and both pens. Cover all four plane-bit pairs
 ; in every mode on a rectangle large enough for DMA, comparing full buffers and state with the CPU engine.
 rectangle_modes:

@@ -46,6 +46,9 @@ leases and other tasks' ownership are preserved.
 AreaEnd can generate pure polygon crossing masks, fill them and complete their edges with the blitter. Crossing
 errors retain the CPU's rounding convention; descending exclusive fill of crossings shifted left one pixel
 implements its left-inclusive/right-exclusive spans. Unpatterned masks are composited in one BltTemplate.
+The unpatterned compositor preserves the solid-rectangle mode operation: INVERSVID JAM1 and INVERSVID
+COMPLEMENT keep the destination; INVERSVID JAM2 uses the background pen; the other modes select normal
+pen output or mask inversion. Saved pens, mode and flags are restored.
 Large CHIP masks are cleared by DMA. Non-DMA or odd masks retain word/byte CPU paths; patterned fills retain
 their original semantics. Mixed ellipse/line lists can start edges at an implicit origin outside the computed
 mask bounds, so they retain the original bounds-checked crossing walk and CPU prefix fill. Caller-owned update

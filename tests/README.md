@@ -20,7 +20,10 @@ WaitBlit before stopping the timer. Elapsed time uses a VBlank counter plus the 
 units), not host execution time. Each workload must be at least **1.25x faster** in CHIP memory than the CPU
 reference. Outputs, screenshot and session PID/command ledger are in `build/drawblit-results/`.
 Upstream integration also checks 32 solid-rectangle cases covering all draw modes and every foreground/background
-plane-bit pair, including preserve and INVERSVID operations, against the updated CPU engine.
+plane-bit pair, including preserve and INVERSVID operations, against the updated CPU engine. A separate
+eight-mode check compares a rectangular AreaEnd directly with RectFill, including guards and RastPort state.
+Caller-owned TmpRas contents are scratch and are excluded from that public-operation comparison. This test
+fails before the area compositor is adapted to upstream's corrected INVERSVID/background-pen rules.
 Four independent whole-buffer fingerprints also verify the source-independent clear/set/invert/preserve
 minterms, their ignored low nibble, selected plane counts, edge masks and unchanged guard bytes.
 The suite also compares short one/two-plane strokes, all octants and drawing modes, template shifts, odd
