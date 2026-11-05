@@ -1369,6 +1369,105 @@ instructions in any stream. The longest code match, data excluded, is still 19 w
 lengthened by an alignment word. The changed `wn_scrtitle` matches the reference on at most 4 loose instructions,
 as before the change. Any later source change needs a new run.
 
+## Re-run 2026-11-05 (`d22c5d2..17da6ee`, before the push)
+
+Delta (`src/` only): rank 12 (`src/exec/ports.s` rewritten; `io.s`, `library.s`, `execmisc.s`, `resident.s`, the
+`ln_Type` store moved from exec's SendIO/DoIO into the `BeginIO` of `audio.s`, `console.s`, `gameport.s`;
+`boot.s`), rank 13 (`memory.s`, `semaphores.s`, CopyMem/CopyMemQuick in `io.s`, removals in `execmisc.s`), rank 15
+(`src/exec/mathffp.s` rewritten from the arithmetic rules of `docs/analysis/mathffp-v34.md`, with an ID string;
+`trackdisk.s` `td_cachebuf`; `boot.s`), `libinit.s` (MakeLibrary: one line) and `trackdisk.s` `td_lowmem` with
+its call from `memory.s`. Run by a separate analysis agent on production ROMs (`make kick-prod`, `romtool info`:
+`is_kick ok`, checksum ok) built in two worktrees (`d22c5d2`, `17da6ee`), each with the vlink map of the same build.
+
+Commands (repo root; `run.sh` is the full command of "Commands" above, same `tiers` / `commodore` / `aros`
+controls, `--base tiers --selftest`):
+
+```
+bash run.sh <base|head>.rom <base|head>.map > out-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 8 > all8-<base|head>.txt
+python3 -I tests/audit_rom_similarity.py <rom> assets/kick34005.A500 --map <map> --seuil 4 > all4-<base|head>.txt
+```
+
+The `--seuil 8` and `--seuil 4` lists were compared by (stream, class, object, symbol+offset, length), absolute
+offsets ignored. The one new row of 40 tokens or more was bracketed with `--seuil 30` to `41` on the head ROM.
+
+- **Layout.** Object size changes: `boot.o` −4, `memory.o` +250, `library.o` +50, `ports.o` +6, `io.o` +34,
+  `resident.o` −2, `trackdisk.o` +104, `console.o` +6, `gameport.o` +6, `mathffp.o` +272, `audio.o` +6,
+  `semaphores.o` +168, `execmisc.o` −186 bytes. Everything from `gfx.o` on moves by +$2C6, then by +$2C4 from
+  `dos_lib.o` on (the alignment word before `dos_lib.o` is gone). Several unchanged name strings now sit at an
+  address that is 2 mod 4 instead of 0 mod 4, which flips their class (below).
+- **Controls.** Group sizes (21 hunks / 596,048 bytes, 390 / 413,374, 50 / 1,167,084) and every "tiers / commodore /
+  aros vs reference" row are identical in the base and head runs. The notable threshold stays **40 words /
+  19 instructions / 19 loose instructions** (`tiers` maxima 39 / 18 / 18, plus one). Against the controls, our head
+  ROM's longest code match is unchanged: `mots` 10 / 11 / 449 (tiers / commodore / aros, the last being the computed
+  CharLoc table), `instr` 6 / 7 / 7, `instr-souple` 8 / 7 / 11.
+
+| stream | metric | base `d22c5d2` | head `17da6ee` |
+|---|---|---|---|
+| mots | A tokens | 109,965 | 110,320 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc`) | 449 / 449 (`topaz9_loc`) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DF42`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 111 / 9 / 5 | 113 / 10 / 5 |
+| instr | A tokens / max (all) / max code/table | 68,720 / 17 / 17 (`km_fr_s42+$0`, `km_us_s42+$0`) | 68,987 / 17 / 17 (same) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2F404`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 21 / 2 | 17 (keymap); 21 / 2 |
+| instr-souple | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 267 / 44 / 91 | 264 / 44 / 92 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** `mots` (40): 13 rows in both ROMs, 4 `code/table` (the two keymap string tables and the two
+  computed CharLoc tables, unchanged) and 9 classified data. One classified row is replaced: the base's
+  `mathffp_inittab` vector-table row (40 words, `table d'adresses`) gives way to `rb_romboot+$6E` (`$0E8B6`,
+  **41 words**, 82 bytes, class `texte` when isolated with `--seuil 39`; `texte+table d'adresses` once merged with
+  its neighbours). That run covers the last word of `romboot.o`, the whole `mathffp_romtag` (match word, normalised
+  self/end pointers, flags, version, type, name/ID/init pointers), `mathffp_name`, the new `mathffp_id` string and
+  the first two longwords of `mathffp_inittab` (1 + 13 + 8 + 15 + 4 words). In the base the same RomTag + name run
+  stopped at 22 words because no ID string followed the name. The ID string is the `lib_IdString` value of
+  `docs/analysis/mathffp-v34.md` §1 (a value any program reads from the library base). The vector-table run that
+  follows is now 38 words (base 40): the head's init table has no data-table pointer. `instr` (19): no row.
+  `instr-souple` (19): only the classified low-entropy `bcpl_rtdata+$8` (23 tokens), as in the base.
+- **`--seuil 8` differences, code rows.**
+  - `exec_SendIO+$0` (`$07ED2`, 9 words / 6 instructions / 6 loose), new: the whole 6-instruction SendIO (clear
+    `io_Flags`, then call the device's `BeginIO` vector with A6 saved), the sequence the AutoDocs define. In the
+    base an extra `ln_Type` store split it (`io_beginio+$6`, 7 words / 5 instructions, `--seuil 4` only); rank 12
+    moved that store into the devices.
+  - `exec_CloseLibrary+$2A` → `+$34` (14 words / 9 / 9): the same run, 10 bytes later because of the NULL-base
+    guard added at the routine's entry.
+  - `exec_AvailMem+$1A` → `+$12` (9 loose) and new `exec_AllocMem+$20` (8 loose): the walk of the exec memory
+    header list with the `mh_Attributes` subset test, the same idiom in both routines.
+  - Gone: `exec_ObtainSemaphore+$28` (9 words) and `+$22` (8 loose), `exec_Procure+$0` (10 words, `texte`).
+- **`--seuil 8` differences, data rows** (same symbol and length unless stated): class flips from the 2-mod-4 shift
+  of unchanged strings, `timer_romtag+$C` (13, `texte` → `code/table`), `graphics_romtag+$C` (15) and
+  `trackdisk_romtag+$C` (16, `texte` → `code/table+texte`; the extra `code ≥ 16` count), `ct_rawbit+$1A` (23,
+  `RomTag` → `texte`), `gameport_end+$C` (15, → `texte`); `trackdisk_name+$0` 9 → `+$2` 8 (instr, loose);
+  `graphics_name+$0` (8 loose, `texte`) new; the `mathffp.o` tail row before the `diskres` RomTag (`ffp_floor+$48`
+  23 → `mf_floor+$62` 21, `RomTag+texte`); `mathffp_initfunc+$A` → `+$26` (9 words, `texte`: the last `rts` of the
+  init function and the minimal Open/Close entries); `al_coplist+$84` (8, `RomTag`) gone with the alignment word.
+- **Rewritten routines, longest rows of the `--seuil 4` lists** (base → head; code = class `code/table`):
+
+| object | mots: longest code row | instr: longest code row | instr-souple: longest code row | longest row, any class |
+|---|---|---|---|---|
+| `mathffp.o` | 4 → 5 (`mf_expunge+$6`) | none → none | 5 → 6 (`mf_mul+$2E`) | 23 → 21 words (`mf_floor+$62`, tail + `diskres` RomTag); 7 instr `texte` (name, ID, Open/Close) |
+| `ports.o` | 6 (`exec_RemPort+$C`) → 4 (`pm_queue+$4`, `exec_GetMsg+$4`, `exec_ReplyMsg+$E`) | none → none | 4 → 5 (`pm_queue+$46`) | 6 words → 6 words (`exec_RemPort+$4`, `texte`) |
+| `memory.o` | 9 → 9 (`mem_owner+$0`) | 7 → 7 (`mem_owner+$0`) | 9 → 9 (`exec_AvailMem+$12`) | as code |
+| `semaphores.o` | 10 → 10 (`exec_Vacate+$A`) | 7 → 7 (`exec_Vacate+$A`) | 8 (`exec_ObtainSemaphore+$22`) → 7 (`exec_Vacate+$A`) | 10 words `exec_Procure+$0` → 7 (`texte`) |
+| `io.o` | 8 → 9 (`exec_SendIO+$0`) | 6 → 6 | 7 → 7 (`exec_WaitIO+$3E`, `texte+code/table`) | as code |
+| `library.o` | 14 → 14 (`exec_CloseLibrary`) | 9 → 9 | 9 → 9 | as code |
+
+  `resident.o`, `libinit.o`, `execmisc.o` and `trackdisk.o` keep their longest rows (`execmisc.o`: 15 words,
+  `exec_ExitIntr+$0`, `texte`; `libinit.o`: 20 words, `exec_InitStruct+$AC`, `RomTag`).
+
+**Verdict (head ROM, `17da6ee`): PASS.** No `code/table` match reaches 40 words, 19 instructions or 19 loose
+instructions in any stream. The longest code match, data excluded, is still 19 words / 13 instructions
+(`exp_cpbinding+$22`), and no new code match exceeds it: the new or moved code rows are at most 14 words /
+9 instructions (`exec_CloseLibrary`, unchanged) and 9 words (`exec_SendIO`). The rewritten `mathffp.o`, `ports.o`,
+`memory.o` and `semaphores.o` match the reference on at most 10 words / 7 instructions / 9 loose instructions of
+code. One classified data row reaches the notable list, `rb_romboot+$6E` (41 words: RomTag, library name, ID
+string and init-table head of `mathffp.library`); its ID string comes from `docs/analysis/mathffp-v34.md` §1 and
+should be added to "Provenance of the data that matches". Any later source change needs a new run.
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
@@ -1386,6 +1485,7 @@ function. This table states, for each one, where its values come from and how an
 | `mn_chk_hi` (`src/intuition/menus.s`) | 20 words | the two `struct Image` descriptors of the menu check mark (position, 15 × 8 size, depth) | the size of the mark seen on screen; the image itself is our own design (a cat paw print) and does not match | the check mark of a `CHECKIT` menu item |
 | `pf_defaults` (`src/intuition/prefs.s`) | 14 words | default Preferences | layout of the public `preferences.h`; values from spec `intuition-prefs-v34.md` §4.3, read by the analysis agent and confirmed by a black-box probe (`tests/defprefs_probe.s`, 2026-11-04: every non-themed field is byte-identical on both ROMs); the colours and the pointer are the project's own | `GetDefPrefs` |
 | `sc_palette` (`src/intuition/screens.s`) | 13 words | default screen palette | colours 0-3 and the pointer colours are the project's own theme; colours 4-15 repeat the ColorMap defaults above | `GetRGB4` on the Workbench screen |
+| `mathffp_romtag`, `mathffp_name`, `mathffp_id` (`src/exec/mathffp.s`, since the rank 15 merge) | 41 words (`rb_romboot+$6E`, class texte) | the RomTag fields, the library name and the ID string "mathffp 34.1 (18 Aug 1987)" | RomTag layout from the public `exec/resident.h`; name and ID string from spec `mathffp-v34.md` §1, the `lib_IdString`/`rt_IdString` that any program reads from the library base | `OpenLibrary("mathffp.library", 0)`, then the base's `lib_IdString` |
 | on-screen messages (Workbench title, requesters) | text | strings shown to the user | worded to match the text that 1.3 displays, which programs and users rely on | visible on screen |
 
 Since 2026-11-04 no table rests on a reading of the ROM alone: the probe `tests/defprefs_probe.s` (run through
