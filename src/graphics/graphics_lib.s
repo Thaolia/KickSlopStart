@@ -262,8 +262,7 @@ graphics_initfunc:
         jsr     LVO_INITSEMAPHORE(a6)
         move.w  #(DMAF_SETCLR|DMAF_MASTER|DMAF_BLITTER),DMACON ; blitter permanently enabled, like 1.3: a
                                      ; program that saves then restores DMACON must find it again
-        move.l  #-1,CUSTOM+$044      ; BLTAFWM/BLTALWM = $FFFF, as the 1.3 blits leave them: our drawing uses the
-                                     ; CPU, and demos that draw lines with the blitter rely on the masks (Kefrens)
+        move.l  #-1,CUSTOM+$044      ; known masks at startup: direct blitter users can inherit this state
         jsr     gfx_fontinit
         moveq   #GFX_COPINIT_SIZE,d0 ; copinit (COP1LC): wait for line 12 then jump to COP2LC
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
@@ -353,7 +352,7 @@ gfx_intinit:
         move.l  a2,IS_DATA(a1)
         rts
 
-; gfx_bltint(a0 = $DFF000): end of blitter operation; our blits are synchronous (WaitBlit): acknowledge only.
+; gfx_bltint(a0 = $DFF000): task-side engines serialize register programming; this vector acknowledges completion.
 gfx_bltint:
         move.w  #INTF_BLIT,INTREQ-CUSTOM(a0)
         rts
@@ -1929,6 +1928,7 @@ gfx_defcolors:
 ; BltClear(memory a1, size d0, flags d1): zeroes the area. Flag bit 1: d0 = rows (high word) x bytes per
 ; row (low word), otherwise a byte count. The CPU does it: waiting for completion (bit 0) is therefore implied.
 gfx_BltClear:
+        bsr     gfx_WaitBlit
         btst    #1,d1
         beq.s   .bc_n
         move.l  d0,d1

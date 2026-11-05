@@ -1,4 +1,4 @@
-; src/graphics/draw.s — graphics.library drawing primitives into a RastPort (planar BitMap, CPU rendering).
+; src/graphics/draw.s — graphics.library drawing primitives (blitter with CPU fallbacks).
 ; SetAPen/SetBPen/SetDrMd/Move/Draw/WritePixel/RectFill/SetRast/ClearEOL/ClearScreen/ScrollRaster/Text/TextLength/SetFont/
 ; InitRastPort/InitBitMap/ReadPixel/BltBitMap. If rp_Layer is set, its bounds give the offset (coordinates
 ; relative to the layer) and drawing goes through its ClipRects (layers.library): visible ClipRect -> the
@@ -6,7 +6,7 @@
 ; backup -> nothing. The layer lock is held during drawing (dr_ctx ... dr_end). Without a layer: a single
 ; pseudo-ClipRect = the whole BitMap. Text: the RastPort's font (any TextFont, topaz 8 by default),
 ; drawn in JAM1/JAM2/COMPLEMENT/INVERSVID, algorithmic bold and underline.
-; Memory accessed BYTE by byte (a BitMap row can start at an odd address).
+; CPU fallbacks support byte addressing (a BitMap row can start at an odd address).
 ; Beyond the convention (d2-d7/a2-a6), all these functions leave a1 (the RastPort) intact: intuition and
 ; console.device chain their calls on the same RastPort without reloading it.
 ; IMPLEMENTATION track ("clean"): graphics.library AutoDocs + public NDK includes. NO ROM reading.
@@ -40,6 +40,9 @@
                 xdef    gfx_UnlockLayerRom
                 xdef    gfx_AttemptLockLayerRom
                 xdef    gfx_putrow
+                xdef    gfx_tryblitter
+                xdef    gfx_waitidle
+                xdef    gfx_solidline_dma
                 xref    topaz8_font
                 xref    gfx_DisownBlitter
                 xref    gfx_OrRectRegion
@@ -54,6 +57,7 @@ DC_MAXY         EQU 10
 DC_BM           EQU 12               ; BitMap
 DC_RP           EQU 16               ; RastPort
 DC_MINTERM      EQU 20               ; byte: minterm of the bit copies (dr_bits)
+DC_LOCKED       EQU 21               ; byte: this context acquired an additional layer hold
 DC_LAYER        EQU 22               ; layer of the RastPort (0 = none)
 DC_FIRST        EQU 26               ; first ClipRect to walk (those of the layer, or DC_PSEUDO)
 DC_CMINX        EQU 30               ; current ClipRect: absolute clipping rectangle
@@ -88,8 +92,14 @@ LAYERREFRESH    EQU $80
 ; rebuild in another task (window opened, moved, resized) frees the old ClipRect list and changes the bounds while
 ; it holds the lock, so both must be read once we own it. Clobbers d0/d1/a0.
 dr_ctx:
+        clr.b   DC_LOCKED(a5)
         move.l  rp_Layer(a1),d0
         move.l  d0,DC_LAYER(a5)
+        beq.s   .cx_nolock
+        move.l  d0,a0
+        move.l  LY_LOCK+GB_SS_OWNER(a0),d1
+        move.l  4.w,a0
+        cmp.l   EB_THISTASK(a0),d1  ; an outer BeginRefresh/LockLayer already protects the whole draw
         beq.s   .cx_nolock
         movem.l a1/a6,-(sp)
         move.l  d0,a0
@@ -97,6 +107,7 @@ dr_ctx:
         move.l  ($4).w,a6
         jsr     LVO_OBTAINSEMAPHORE(a6)
         movem.l (sp)+,a1/a6
+        st      DC_LOCKED(a5)
 .cx_nolock:
         bsr     dr_ctx0
         move.l  DC_LAYER(a5),d0
@@ -115,7 +126,7 @@ dr_ctx:
         rts
 ; dr_end(a5): releases the layer lock. Preserves all registers.
 dr_end:
-        tst.l   DC_LAYER(a5)
+        tst.b   DC_LOCKED(a5)
         beq.s   .de_r
         movem.l d0-d1/a0-a1/a6,-(sp)
         move.l  DC_LAYER(a5),a0
@@ -421,11 +432,13 @@ RC_PR           EQU 40               ; current pattern row
 RC_RCNT         EQU 42               ; remaining rows (pattern)
 RC_PW           EQU 44               ; rotated pattern word of the current row
 RC_PSTEP        EQU 46               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
-RC_SIZE         EQU 48
+RC_GFX          EQU 48               ; GfxBase, retained across CPU ClipRect rendering
+RC_SIZE         EQU 52
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -RC_SIZE(sp),sp
         move.l  sp,a4
+        move.l  a6,RC_GFX(a4)
         movem.w d0-d3,RC_X0(a4)
         move.b  d4,RC_FG(a4)
         move.b  d5,RC_BG(a4)
@@ -501,6 +514,16 @@ rc_one:
         moveq   #0,d4
         move.w  bm_BytesPerRow(a0),d4
         move.w  d4,RC_BPR(a4)
+        tst.w   d3
+        bne.s   .o_blit
+        move.w  d2,d5
+        sub.w   d0,d5
+        cmp.w   #992,d5            ; even an unaligned single row cannot reach the 64-word DMA threshold
+        bls.s   .o_cpu
+.o_blit:
+        bsr     rc_blit
+        bne     .o_ret
+.o_cpu:
         mulu    d1,d4
         moveq   #0,d5
         move.w  d0,d5
@@ -826,6 +849,314 @@ rc_finv:
 .fi_r:
         rts
 
+; db_enter(a2 = BitMap, a5 = context, a6 = GfxBase): Z clear if acquired. Never block while holding a layer lock.
+; Validate every enabled plane before any DMA. Odd addresses/strides remain supported by the CPU paths.
+db_enter:
+        movem.l d0-d3/a0-a3/a6,-(sp)
+        move.l  a6,a3
+        move.l  4.w,a6
+        btst    #0,bm_BytesPerRow+1(a2)
+        bne.s   .db_no
+        cmp.b   #8,bm_Depth(a2)
+        bhi.s   .db_no
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d2
+        moveq   #0,d3
+.db_plane:
+        cmp.b   bm_Depth(a2),d3
+        bhs.s   .db_own
+        btst    d3,d2
+        beq.s   .db_next
+        move.w  d3,d0
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),d0
+        btst    #0,d0
+        bne.s   .db_no
+        move.l  d0,a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq.s   .db_no
+.db_next:
+        addq.w  #1,d3
+        bra.s   .db_plane
+.db_own:
+        move.l  a3,a6
+        bsr     gfx_tryblitter
+        bra.s   .db_ret
+.db_no:
+        moveq   #0,d0
+.db_ret:
+        movem.l (sp)+,d0-d3/a0-a3/a6
+        rts
+; Private shared acquisition for prevalidated mask engines. Z clear on success; preserves all registers.
+gfx_tryblitter:
+        movem.l d0-d1/a0-a1/a6,-(sp)
+        lea     gb_BlitSem(a6),a0
+        move.l  4.w,a6
+        jsr     LVO_ATTEMPTSEMAPHORE(a6)
+        tst.l   d0
+        beq.s   .gt_ret
+        move.w  #$8240,DMACON
+        bsr.s   db_wait
+        moveq   #1,d0
+.gt_ret:
+        movem.l (sp)+,d0-d1/a0-a1/a6
+        rts
+gfx_waitidle:
+db_wait:
+        lea     CUSTOM,a0
+        btst    #6,BLT_DMACONR(a0)  ; A1000 requires a dummy read before testing BBUSY
+.db_busy:
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .db_busy
+        rts
+db_leave:
+        bsr.s   db_wait              ; CPU consumers (AreaEnd, Text, ReadPixel) may immediately touch the result
+        jmp     gfx_DisownBlitter
+
+; Private line engine: caller owns the blitter and validates CHIP planes, bounds and <=1024 pixels.
+; d0/d1 start, d2/d3 end, d4 stride, d5 pen bits, d6 depth 1/2, a0/a1 plane bases. Clobbers d0-d7/a0-a3.
+; d6 bit 8 selects a top-to-bottom crossing edge: XOR one rounded x per row, excluding its bottom row.
+; Used by the common Draw path and by AreaEnd's one-plane mask edges, without their generic per-pixel work.
+gfx_solidline_dma:
+        lea     -10(sp),sp         ; CON0 base, CON1, error, BLTSIZE, crossing mode
+        move.w  d6,d7
+        and.w   #$100,d7
+        move.w  d7,8(sp)
+        and.w   #$ff,d6
+        sub.w   d0,d2
+        sub.w   d1,d3
+        mulu    d4,d1
+        moveq   #0,d7
+        move.w  d0,d7
+        lsr.w   #4,d7
+        add.w   d7,d7
+        add.l   d7,d1
+        move.l  a0,a3
+        move.l  a1,a2
+        adda.l  d1,a3
+        adda.l  d1,a2
+        and.w   #15,d0
+        ror.w   #4,d0
+        or.w    #$0b00,d0
+        move.w  d0,(sp)
+        bsr     db_wait
+        move.w  d4,BLT_CMOD(a0)
+        move.w  d4,BLT_DMOD(a0)
+        move.l  #$ffffffff,BLT_AFWM(a0)
+        move.w  #$8000,BLT_ADAT(a0)
+        move.w  #$ffff,BLT_BDAT(a0)
+        moveq   #0,d7
+        tst.w   d2
+        bpl.s   .sl_dx
+        neg.w   d2
+        addq.w  #1,d7
+.sl_dx:
+        tst.w   d3
+        bpl.s   .sl_dy
+        neg.w   d3
+        or.w    #2,d7
+.sl_dy:
+        moveq   #1,d4
+        cmp.w   d3,d2
+        ble.s   .sl_ymajor
+        or.w    #$10,d4
+        btst    #0,d7
+        beq.s   .sl_xsy
+        or.w    #4,d4
+.sl_xsy:
+        btst    #1,d7
+        beq.s   .sl_error
+        or.w    #8,d4
+        bra.s   .sl_error
+.sl_ymajor:
+        exg     d2,d3
+        btst    #0,d7
+        beq.s   .sl_ysy
+        or.w    #8,d4
+.sl_ysy:
+        btst    #1,d7
+        beq.s   .sl_error
+        or.w    #4,d4
+.sl_error:
+        move.w  d3,d0
+        lsl.w   #2,d0
+        move.w  d0,BLT_BMOD(a0)
+        move.w  d2,d1
+        lsl.w   #2,d1
+        sub.w   d1,d0
+        move.w  d0,BLT_AMOD(a0)
+        lsr.w   #1,d1
+        move.w  d3,d0
+        lsl.w   #2,d0
+        sub.w   d1,d0
+        btst    #0,8(sp)
+        beq.s   .sl_store_error
+        or.w    #2,d4              ; one dot per row
+        btst    #4,d4
+        beq.s   .sl_cross_y
+        add.w   d3,d0
+        add.w   d3,d0
+        sub.w   d1,d0              ; 6m - 4M
+        btst    #0,d7
+        bne.s   .sl_store_error
+        subq.w  #2,d0              ; positive x: half ties round toward larger x
+        bra.s   .sl_store_error
+.sl_cross_y:
+        btst    #0,d7
+        beq.s   .sl_store_error
+        subq.w  #2,d0              ; negative x: half ties still round toward larger x
+.sl_store_error:
+        move.w  d0,4(sp)
+        bpl.s   .sl_sign
+        or.w    #$40,d4
+.sl_sign:
+        move.w  d4,2(sp)
+        btst    #0,8(sp)
+        bne.s   .sl_length
+        addq.w  #1,d2
+.sl_length:
+        lsl.w   #6,d2
+        or.w    #2,d2
+        move.w  d2,6(sp)
+.sl_plane:
+        move.w  (sp),d0
+        btst    #0,8(sp)
+        beq.s   .sl_solid
+        or.w    #$5a,d0
+        bra.s   .sl_pen
+.sl_solid:
+        or.w    #$fa,d0
+        btst    #0,d5
+        bne.s   .sl_pen
+        eor.w   #$f0,d0
+.sl_pen:
+        move.w  d0,BLT_CON0(a0)
+        move.w  2(sp),BLT_CON1(a0)
+        move.w  4(sp),d0
+        ext.l   d0
+        move.l  d0,BLT_APT(a0)
+        move.l  a3,BLT_CPT(a0)
+        move.l  a3,BLT_DPT(a0)
+        move.w  6(sp),BLT_SIZE(a0)
+        move.l  a2,a3
+        lsr.b   #1,d5
+        subq.w  #1,d6
+        beq.s   .sl_done
+        bsr     db_wait
+        bra.s   .sl_plane
+.sl_done:
+        lea     10(sp),sp
+        rts
+
+; rc_blit(d0=x0, d1=y0, d2=x1, RC_ROWS=height-1): solid rectangle, Z clear on success. Preserves all registers.
+; A is constant $FFFF with word-edge masks, C/D are the plane. 64 words and 1024 rows encode as zero.
+rc_blit:
+        movem.l d0-d7/a0-a3/a6,-(sp)
+        tst.l   RC_PAT(a4)
+        bne     .rb_no
+        move.w  RC_ROWS(a4),d7
+        addq.w  #1,d7
+        cmp.w   #1024,d7
+        bhi     .rb_no
+        move.w  d0,d4
+        lsr.w   #4,d4
+        move.w  d2,d5
+        lsr.w   #4,d5
+        sub.w   d4,d5
+        addq.w  #1,d5
+        cmp.w   #64,d5
+        bhi     .rb_no
+        move.w  d5,d3
+        mulu    d7,d3
+        cmp.l   #64,d3              ; retain the cheaper CPU path for small rectangles
+        blo     .rb_no
+        moveq   #-1,d3
+        and.w   #15,d0
+        lsr.w   d0,d3               ; left mask
+        and.w   #15,d2
+        moveq   #15,d0
+        sub.w   d2,d0
+        moveq   #-1,d2
+        lsl.w   d0,d2               ; right mask
+        mulu    RC_BPR(a4),d1
+        add.w   d4,d4
+        add.l   d4,d1               ; first word offset
+        move.w  RC_BPR(a4),d4
+        sub.w   d5,d4
+        sub.w   d5,d4               ; modulo
+        and.w   #63,d5
+        lsl.w   #6,d7
+        or.w    d5,d7
+        move.l  DC_CBM(a5),a2
+        move.l  RC_GFX(a4),a6
+        bsr     db_enter
+        beq     .rb_no
+        move.l  DC_RP(a5),a1
+        move.b  rp_Mask(a1),d6
+        move.b  RC_FG(a4),d5
+        moveq   #0,d0
+        move.b  RC_BG(a4),d0
+        move.w  d0,-(sp)
+        move.b  bm_Depth(a2),d0
+        move.w  d0,-(sp)
+        lea     bm_Planes(a2),a2
+.rb_plane:
+        subq.w  #1,(sp)
+        bmi.s   .rb_done
+        move.l  (a2)+,a1
+        btst    #0,d6
+        beq.s   .rb_next
+        bsr     db_wait
+        moveq   #1,d0
+        and.b   d5,d0
+        btst    #0,3(sp)           ; this plane's background pen bit
+        beq.s   .rb_mode
+        addq.w  #2,d0
+.rb_mode:
+        add.w   RC_MODE(a4),d0
+        lea     mt_tab(pc),a3
+        move.b  0(a3,d0.w),d0
+        lsr.b   #6,d0              ; solid B=1: same clear/invert/preserve/set operation as the CPU path
+        beq.s   .rb_clear
+        cmp.b   #2,d0
+        beq.s   .rb_next
+        bcs.s   .rb_invert
+        move.w  #$03fa,d0           ; D = A | C
+        bra.s   .rb_regs
+.rb_invert:
+        move.w  #$035a,d0           ; D = A xor C
+        bra.s   .rb_regs
+.rb_clear:
+        move.w  #$030a,d0           ; D = ~A & C
+.rb_regs:
+        move.w  d0,BLT_CON0(a0)
+        clr.w   BLT_CON1(a0)
+        move.w  d3,BLT_AFWM(a0)
+        move.w  d2,BLT_ALWM(a0)
+        move.w  #$ffff,BLT_ADAT(a0)
+        move.w  d4,BLT_CMOD(a0)
+        move.w  d4,BLT_DMOD(a0)
+        adda.l  d1,a1
+        move.l  a1,BLT_CPT(a0)
+        move.l  a1,BLT_DPT(a0)
+        move.w  d7,BLT_SIZE(a0)
+.rb_next:
+        lsr.w   2(sp)
+        lsr.b   #1,d6
+        lsr.b   #1,d5
+        bra.s   .rb_plane
+.rb_done:
+        addq.l  #4,sp
+        bsr     db_leave
+        moveq   #1,d0
+        bra.s   .rb_ret
+.rb_no:
+        moveq   #0,d0
+.rb_ret:
+        movem.l (sp)+,d0-d7/a0-a3/a6
+        rts
+
 ; dr_line(a5 = context, d4/d5 = start, d6/d7 = end (absolute)) -> d0 = 1 if the unclipped engine drew the line (no
 ; layer, or both ends in one usable ClipRect of the layer), 0 otherwise (spec graphics-line-v34 §4-§7).
 ; Pixels: M + 1 points from the start along the major axis (y when |dx| = |dy|), error 2m - M, a tie steps the minor
@@ -835,7 +1166,7 @@ rc_finv:
 ; start pixel is inverted first so a shared vertex is inverted once. Clipped pieces (the line crosses the layer's
 ; ClipRects): phase = linpatcnt - (major coordinate of the piece's first pixel in its BitMap - major coordinate of cp),
 ; no ONE_DOT, no first-dot handling. Without a layer the line is clipped to the BitMap (1.3 writes outside the plane).
-; Rightward/downward solid lines without COMPLEMENT or ONE_DOT go through dr_rect. Preserves everything else.
+; Solid horizontal/vertical lines without COMPLEMENT or ONE_DOT go through dr_rect. Preserves everything else.
 LN_X0           EQU 0                ; absolute start and end: X0 Y0 X1 Y1
 LN_Y0           EQU 2
 LN_X1           EQU 4
@@ -971,14 +1302,14 @@ dr_line:
         move.l  a3,a0
         bsr     dr_crset
         beq.s   .ln_none             ; hidden without backup: nothing drawn, the engine did not run
-        bsr.s   ln_any
+        bsr     ln_any
         moveq   #1,d0
         bra.s   .ln_ret
 .ln_engine:                          ; no layer: the engine, clipped to the BitMap
         move.l  DC_FIRST(a5),a0
         bsr     dr_crset
         beq.s   .ln_eng1
-        bsr.s   ln_any
+        bsr     ln_any
 .ln_eng1:
         moveq   #1,d0
         bra.s   .ln_ret
@@ -1007,6 +1338,8 @@ dr_line:
         move.l  a3,a0
         bsr     dr_crset
         beq.s   .ln_cn
+        bsr     ln_boxhits
+        beq.s   .ln_cn
         bsr     ln_draw
 .ln_cn:
         move.l  a3,a0
@@ -1019,10 +1352,48 @@ dr_line:
         lea     LN_SIZE(sp),sp
         movem.l (sp)+,d1-d7/a0-a4/a6
         rts
-; ln_any: the line in the current ClipRect, by dr_rect when it is solid (LN_FAST), else by the walk.
+; Reject disjoint update pieces before walking every pixel of a clipped line. Overflowing signed deltas
+; retain the old walk, including its word-coordinate wrap behavior.
+ln_boxhits:
+        movem.l d0-d4,-(sp)
+        movem.w LN_X0(a4),d0-d3
+        move.w  d2,d4
+        sub.w   d0,d4
+        bvs.s   .bh_yes
+        move.w  d3,d4
+        sub.w   d1,d4
+        bvs.s   .bh_yes
+        cmp.w   d2,d0
+        ble.s   .bh_x
+        exg     d0,d2
+.bh_x:
+        cmp.w   d3,d1
+        ble.s   .bh_y
+        exg     d1,d3
+.bh_y:
+        cmp.w   DC_CMINX(a5),d2
+        blt.s   .bh_no
+        cmp.w   DC_CMAXX(a5),d0
+        bgt.s   .bh_no
+        cmp.w   DC_CMINY(a5),d3
+        blt.s   .bh_no
+        cmp.w   DC_CMAXY(a5),d1
+        bgt.s   .bh_no
+.bh_yes:
+        moveq   #1,d0
+        bra.s   .bh_ret
+.bh_no:
+        moveq   #0,d0
+.bh_ret:
+        movem.l (sp)+,d0-d4
+        rts
+; ln_any: the line in the current ClipRect, by dr_rect for solid axis lines, line-mode blits, or the CPU walk.
 ln_any:
         tst.b   LN_FAST(a4)
+        bne.s   ln_rect
+        bsr     ln_blit
         beq     ln_draw
+        rts
 ; ln_rect(a4, a5): the solid horizontal or vertical line by dr_rect in pen A, over every ClipRect. Preserves all.
 ln_rect:
         movem.l d0-d7/a0-a3,-(sp)
@@ -1042,6 +1413,144 @@ ln_rect:
         suba.l  a0,a0
         bsr     dr_rect
         movem.l (sp)+,d0-d7/a0-a3
+        rts
+; ln_blit: solid, contained segments in any octant. Pattern/ONE_DOT/first-dot continuations use the CPU engine.
+; Agnus' error is twice the CPU error; a zero tie takes the minor step in both. Z clear on success.
+ln_blit:
+        movem.l d0-d7/a0-a3/a6,-(sp)
+        tst.b   LN_ONE(a4)
+        bne     .lb_no
+        tst.b   LN_PRE(a4)
+        bne     .lb_no
+        cmp.w   #$ffff,LN_PAT(a4)
+        bne     .lb_no
+        cmp.w   #4,LN_M(a4)
+        blo     .lb_no
+        cmp.w   #1023,LN_M(a4)
+        bhi     .lb_no
+        movem.w LN_X0(a4),d0-d3
+        cmp.w   DC_CMINX(a5),d0
+        blt     .lb_no
+        cmp.w   DC_CMAXX(a5),d0
+        bgt     .lb_no
+        cmp.w   DC_CMINX(a5),d2
+        blt     .lb_no
+        cmp.w   DC_CMAXX(a5),d2
+        bgt     .lb_no
+        cmp.w   DC_CMINY(a5),d1
+        blt     .lb_no
+        cmp.w   DC_CMAXY(a5),d1
+        bgt     .lb_no
+        cmp.w   DC_CMINY(a5),d3
+        blt     .lb_no
+        cmp.w   DC_CMAXY(a5),d3
+        bgt     .lb_no
+        sub.w   DC_BX(a5),d0
+        sub.w   DC_BY(a5),d1
+        move.l  DC_CBM(a5),a2
+        mulu    bm_BytesPerRow(a2),d1
+        move.w  d0,d2
+        lsr.w   #4,d2
+        add.w   d2,d2
+        and.l   #$ffff,d2
+        add.l   d2,d1               ; word offset
+        and.w   #15,d0
+        ror.w   #4,d0               ; A shift in BLTCON0
+        or.w    #$0b00,d0           ; A, C, D; B is constant
+        move.w  d0,d7
+        moveq   #1,d6               ; LINEMODE
+        tst.b   LN_XMAJ(a4)
+        beq.s   .lb_ymaj
+        or.w    #$10,d6
+        tst.w   LN_SX(a4)
+        bpl.s   .lb_xdown
+        or.w    #4,d6
+.lb_xdown:
+        tst.w   LN_SY(a4)
+        bpl.s   .lb_error
+        or.w    #8,d6
+        bra.s   .lb_error
+.lb_ymaj:
+        tst.w   LN_SX(a4)
+        bpl.s   .lb_ydown
+        or.w    #8,d6
+.lb_ydown:
+        tst.w   LN_SY(a4)
+        bpl.s   .lb_error
+        or.w    #4,d6
+.lb_error:
+        move.w  LN_M2(a4),d2
+        sub.w   LN_M(a4),d2
+        add.w   d2,d2               ; 4m - 2M
+        bpl.s   .lb_enter
+        or.w    #$40,d6             ; SIGN
+.lb_enter:
+        bsr     db_enter
+        beq     .lb_no
+        move.l  DC_RP(a5),a1
+        move.b  rp_Mask(a1),d4
+        move.b  rp_FgPen(a1),d5
+        moveq   #0,d3
+        move.b  bm_Depth(a2),d3
+        move.w  d3,-(sp)
+        move.w  bm_BytesPerRow(a2),d3
+        bsr     db_wait
+        move.l  #$ffffffff,BLT_AFWM(a0)
+        move.w  #$8000,BLT_ADAT(a0)
+        move.w  #$ffff,BLT_BDAT(a0)
+        move.w  d3,BLT_CMOD(a0)
+        move.w  d3,BLT_DMOD(a0)
+        move.w  LN_MM2(a4),d0
+        add.w   d0,d0
+        move.w  d0,BLT_AMOD(a0)
+        move.w  LN_M2(a4),d0
+        add.w   d0,d0
+        move.w  d0,BLT_BMOD(a0)
+        lea     bm_Planes(a2),a2
+.lb_plane:
+        subq.w  #1,(sp)
+        bmi     .lb_done
+        move.l  (a2)+,a1
+        btst    #0,d4
+        beq.s   .lb_next
+        bsr     db_wait
+        move.w  d7,d0
+        or.w    #$fa,d0
+        move.l  DC_RP(a5),a3
+        btst    #1,rp_DrawMode(a3)
+        beq.s   .lb_pen
+        eor.w   #$a0,d0             ; minterm $5a, invert A pixels
+        bra.s   .lb_regs
+.lb_pen:
+        btst    #0,d5
+        bne.s   .lb_regs
+        eor.w   #$f0,d0             ; minterm $0a, clear A pixels
+.lb_regs:
+        move.w  d0,BLT_CON0(a0)
+        move.w  d6,BLT_CON1(a0)
+        move.w  d2,d0
+        ext.l   d0
+        move.l  d0,BLT_APT(a0)
+        adda.l  d1,a1
+        move.l  a1,BLT_CPT(a0)
+        move.l  a1,BLT_DPT(a0)
+        move.w  LN_NPIX(a4),d0
+        lsl.w   #6,d0
+        or.w    #2,d0
+        move.w  d0,BLT_SIZE(a0)
+.lb_next:
+        lsr.b   #1,d4
+        lsr.b   #1,d5
+        bra     .lb_plane
+.lb_done:
+        addq.l  #2,sp
+        bsr     db_leave
+        moveq   #1,d0
+        bra.s   .lb_ret
+.lb_no:
+        moveq   #0,d0
+.lb_ret:
+        movem.l (sp)+,d0-d7/a0-a3/a6
         rts
 ; ln_inx / ln_iny(d0 = absolute coordinate, a3 = ClipRect): Z = 1 if within its x / y bounds. Preserves the rest.
 ln_inx:
@@ -1438,6 +1947,7 @@ gfx_InitBitMap:
 
 ; WritePixel(rp a1, x d0, y d1) -> 0: one pixel in pen A.
 gfx_WritePixel:
+        bsr     db_wait
         movem.l d2-d3/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -1464,6 +1974,7 @@ gfx_WritePixel:
 ; outline Move/Draw (LVO) in AOlPen and JAM1 with LinePtrn; FgPen, DrawMode and minterms restored directly, so cp =
 ; (xmin, ymin), FRST_DOT clear and the pattern counter are those the Draws leave (§3.7).
 gfx_RectFill:
+        bsr     db_wait
         btst    #3,rp_Flags+1(a1)    ; AREAOUTLINE
         bne     rf_outline
 rf_fill:
@@ -1661,6 +2172,7 @@ ro_path:
 ; the whole BitMap (BytesPerRow x Rows) without a layer, over the whole layer (visible parts and SMART backing store)
 ; with one; DrawMode, pens, minterms and AreaPtrn ignored, no damage, no RastPort field changes.
 gfx_SetRast:
+        bsr     db_wait
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -1735,6 +2247,13 @@ cl_go:
 ; graphics-line-v34). Pattern counter: decreased by the major length M by the unclipped engine (which also clears
 ; FRST_DOT), and once more with a layer, as 1.3 does (§7.3).
 gfx_Draw:
+        cmp.w   rp_cp_y(a1),d1     ; solid horizontal spans use the cheaper row-fill engine
+        beq.s   .dw_generic
+        bsr     dr_directdraw
+        beq.s   .dw_generic
+        rts
+.dw_generic:
+        bsr     db_wait
         movem.l d2-d7/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -1778,6 +2297,297 @@ gfx_Draw:
 .dw_ret:
         lea     DC_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a5
+        rts
+
+; Common solid window lines need neither a generic ClipRect context nor a pattern/CPU line frame.
+; Physical CHIP RAM is contiguous below ExecBase.MaxLocMem on this native Amiga target. Other memory,
+; multiple clips and special modes retain the checked generic paths.
+DD_LAYER        EQU 0
+DD_LOCKED       EQU 4
+DD_HANDLED      EQU 6
+DD_ENDX         EQU 8
+DD_ENDY         EQU 10
+DD_M            EQU 12
+DD_BMINX        EQU 14
+DD_BMINY        EQU 16
+DD_BMAXX        EQU 18
+DD_BMAXY        EQU 20
+DD_BLTFAST      EQU 22
+DD_BLTAUTO      EQU 23
+DD_SIZE         EQU 24
+DD_TOUCH        EQU 5
+DD_NOENGINE     EQU 7
+dr_directdraw:
+        movem.l d0-d7/a0-a6,-(sp)
+        lea     -DD_SIZE(sp),sp
+        move.l  sp,a4
+        clr.l   DD_LAYER(a4)
+        clr.l   DD_LOCKED(a4)
+        clr.w   DD_BLTFAST(a4)
+        move.l  a1,a5
+        move.w  d0,DD_ENDX(a4)
+        move.w  d1,DD_ENDY(a4)
+        cmp.b   #JAM2,rp_DrawMode(a5)
+        bhi     .dd_exit
+        btst    #1,rp_Flags+1(a5)
+        bne     .dd_exit
+        cmp.w   #$ffff,rp_LinePtrn(a5)
+        bne     .dd_exit
+        move.w  d0,d4
+        sub.w   rp_cp_x(a5),d4
+        bvs     .dd_exit
+        bpl.s   .dd_dx
+        neg.w   d4
+.dd_dx:
+        move.w  d1,d5
+        sub.w   rp_cp_y(a5),d5
+        bvs     .dd_exit
+        bpl.s   .dd_dy
+        neg.w   d5
+.dd_dy:
+        cmp.w   d5,d4
+        bhs.s   .dd_major
+        move.w  d5,d4
+.dd_major:
+        cmp.w   #1023,d4
+        bhi     .dd_exit
+        move.w  d4,DD_M(a4)
+        move.l  rp_Layer(a5),d0
+        move.l  d0,DD_LAYER(a4)
+        beq.s   .dd_coords
+        move.l  d0,a3
+        move.l  LY_LOCK+GB_SS_OWNER(a3),d1
+        beq.s   .dd_lock
+        move.l  4.w,a0
+        cmp.l   EB_THISTASK(a0),d1
+        beq.s   .dd_layer
+.dd_lock:
+        move.l  a6,-(sp)
+        lea     LY_LOCK(a3),a0
+        move.l  4.w,a6
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        move.l  (sp)+,a6
+        st      DD_LOCKED(a4)
+.dd_layer:
+        tst.l   LY_SUPERBM(a3)
+        bne     .dd_exit
+        move.l  LY_CLIPRECT(a3),a0
+        move.l  a0,d0
+        beq     .dd_exit
+.dd_coords:
+        move.w  rp_cp_x(a5),d0
+        move.w  rp_cp_y(a5),d1
+        move.w  DD_ENDX(a4),d2
+        move.w  DD_ENDY(a4),d3
+        tst.l   DD_LAYER(a4)
+        beq     .dd_bitmap
+        move.w  lr_MinX(a3),d6
+        sub.w   LY_SCROLLX(a3),d6
+        move.w  lr_MinX+2(a3),d7
+        sub.w   LY_SCROLLY(a3),d7
+        add.w   d6,d0
+        bvs     .dd_exit
+        add.w   d6,d2
+        bvs     .dd_exit
+        add.w   d7,d1
+        bvs     .dd_exit
+        add.w   d7,d3
+        bvs     .dd_exit
+        move.w  d0,d4
+        move.w  d2,d5
+        cmp.w   d5,d4
+        ble.s   .dd_boxx
+        exg     d4,d5
+.dd_boxx:
+        move.w  d4,DD_BMINX(a4)
+        move.w  d5,DD_BMAXX(a4)
+        move.w  d1,d4
+        move.w  d3,d5
+        cmp.w   d5,d4
+        ble.s   .dd_boxy
+        exg     d4,d5
+.dd_boxy:
+        move.w  d4,DD_BMINY(a4)
+        move.w  d5,DD_BMAXY(a4)
+.dd_findclip:
+        move.w  DD_BMAXX(a4),d4
+        cmp.w   CR_MINX(a0),d4
+        blt.s   .dd_nextclip
+        move.w  DD_BMINX(a4),d4
+        cmp.w   CR_MINX+4(a0),d4
+        bgt.s   .dd_nextclip
+        move.w  DD_BMAXY(a4),d4
+        cmp.w   CR_MINX+2(a0),d4
+        blt.s   .dd_nextclip
+        move.w  DD_BMINY(a4),d4
+        cmp.w   CR_MINX+6(a0),d4
+        bgt.s   .dd_nextclip
+        st      DD_TOUCH(a4)
+        tst.l   CR_LOBS(a0)
+        bne.s   .dd_nextclip
+        cmp.w   CR_MINX(a0),d0
+        blt.s   .dd_nextclip
+        cmp.w   CR_MINX+4(a0),d0
+        bgt.s   .dd_nextclip
+        cmp.w   CR_MINX(a0),d2
+        blt.s   .dd_nextclip
+        cmp.w   CR_MINX+4(a0),d2
+        bgt.s   .dd_nextclip
+        cmp.w   CR_MINX+2(a0),d1
+        blt.s   .dd_nextclip
+        cmp.w   CR_MINX+6(a0),d1
+        bgt.s   .dd_nextclip
+        cmp.w   CR_MINX+2(a0),d3
+        blt.s   .dd_nextclip
+        cmp.w   CR_MINX+6(a0),d3
+        ble.s   .dd_bitmap
+.dd_nextclip:
+        move.l  CR_NEXT(a0),a0
+        move.l  a0,d4
+        bne.s   .dd_findclip
+        tst.b   DD_TOUCH(a4)
+        bne     .dd_exit
+        st      DD_NOENGINE(a4)
+        bra     .dd_commit
+.dd_bitmap:
+        move.l  rp_BitMap(a5),a2
+        moveq   #0,d6
+        move.b  bm_Depth(a2),d6
+        beq     .dd_exit
+        cmp.w   #2,d6
+        bhi     .dd_exit
+        moveq   #1,d4
+        lsl.w   d6,d4
+        subq.w  #1,d4
+        move.b  rp_Mask(a5),d5
+        and.b   d4,d5
+        cmp.b   d4,d5
+        bne     .dd_exit
+        btst    #0,bm_BytesPerRow+1(a2)
+        bne     .dd_exit
+        move.w  d0,d4
+        or.w    d1,d4
+        or.w    d2,d4
+        or.w    d3,d4
+        bmi     .dd_exit
+        move.w  bm_BytesPerRow(a2),d4
+        lsl.w   #3,d4
+        cmp.w   d4,d0
+        bhs     .dd_exit
+        cmp.w   d4,d2
+        bhs     .dd_exit
+        cmp.w   bm_Rows(a2),d1
+        bhs     .dd_exit
+        cmp.w   bm_Rows(a2),d3
+        bhs     .dd_exit
+        move.l  4.w,a0
+        move.l  EB_MAXLOCMEM(a0),d4
+        move.l  bm_Planes(a2),d5
+        beq     .dd_exit
+        cmp.l   d4,d5
+        bhs     .dd_exit
+        btst    #0,d5
+        bne     .dd_exit
+        cmp.w   #1,d6
+        beq.s   .dd_acquire
+        move.l  bm_Planes+4(a2),d5
+        beq     .dd_exit
+        cmp.l   d4,d5
+        bhs     .dd_exit
+        btst    #0,d5
+        bne     .dd_exit
+.dd_acquire:
+        cmp.w   #63,DD_M(a4)
+        bhi.s   .dd_semaphore
+        ; Short lines never sleep. A single Forbid span protects an uncontended blitter hold through setup,
+        ; avoiding a separate scheduling/ownership round trip for each tiny stroke. Interrupts remain enabled.
+        lea     gb_BlitSem(a6),a3
+        move.l  a6,-(sp)
+        move.l  4.w,a6
+        jsr     LVO_FORBID(a6)
+        lea     CUSTOM,a0
+        btst    #6,BLT_DMACONR(a0)
+        btst    #6,BLT_DMACONR(a0)
+        bne.s   .dd_shortdefer     ; never hold the scheduler guard while waiting for an earlier long blit
+        move.l  EB_THISTASK(a6),d7
+        move.l  GB_SS_OWNER(a3),d4
+        beq.s   .dd_freeblitter
+        cmp.l   d7,d4
+        beq.s   .dd_shortowned
+        bra.s   .dd_shortbusy
+.dd_freeblitter:
+        cmp.w   #-1,GB_SS_QUEUECOUNT(a3)
+        bne.s   .dd_shortbusy
+        move.l  d7,GB_SS_OWNER(a3)
+        move.w  #1,GB_SS_NESTCOUNT(a3)
+        clr.w   GB_SS_QUEUECOUNT(a3)
+        st      DD_BLTAUTO(a4)
+.dd_shortowned:
+        st      DD_BLTFAST(a4)
+        move.l  (sp)+,a6
+        move.w  #$8240,DMACON
+        bra.s   .dd_render
+.dd_shortbusy:
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
+        bra     .dd_exit
+.dd_shortdefer:
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
+        bra.s   .dd_semaphore
+.dd_semaphore:
+        bsr     gfx_tryblitter
+        beq     .dd_exit
+.dd_render:
+        moveq   #0,d4
+        move.w  bm_BytesPerRow(a2),d4
+        move.b  rp_FgPen(a5),d5
+        move.l  bm_Planes(a2),a0
+        move.l  bm_Planes+4(a2),a1
+        bsr     gfx_solidline_dma
+        tst.b   DD_BLTFAST(a4)
+        beq.s   .dd_disown
+        tst.b   DD_BLTAUTO(a4)
+        beq.s   .dd_permit
+        lea     gb_BlitSem(a6),a3
+        clr.l   GB_SS_OWNER(a3)
+        clr.w   GB_SS_NESTCOUNT(a3)
+        move.w  #-1,GB_SS_QUEUECOUNT(a3)
+.dd_permit:
+        move.l  a6,-(sp)
+        move.l  4.w,a6
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a6
+        bra.s   .dd_commit
+.dd_disown:
+        jsr     gfx_DisownBlitter   ; V34 Draw returns while the last plane is still being written
+.dd_commit:
+        move.w  DD_ENDX(a4),rp_cp_x(a5)
+        move.w  DD_ENDY(a4),rp_cp_y(a5)
+        move.w  DD_M(a4),d0
+        tst.b   DD_NOENGINE(a4)
+        bne.s   .dd_layerphase
+        bclr    #0,rp_Flags+1(a5)
+        sub.b   d0,RP_PATCNT(a5)
+.dd_layerphase:
+        tst.l   DD_LAYER(a4)
+        beq.s   .dd_done
+        sub.b   d0,RP_PATCNT(a5)
+.dd_done:
+        st      DD_HANDLED(a4)
+.dd_exit:
+        tst.b   DD_LOCKED(a4)
+        beq.s   .dd_return
+        move.l  a6,-(sp)
+        move.l  DD_LAYER(a4),a0
+        lea     LY_LOCK(a0),a0
+        move.l  4.w,a6
+        jsr     LVO_RELEASESEMAPHORE(a6)
+        move.l  (sp)+,a6
+.dd_return:
+        tst.b   DD_HANDLED(a4)
+        lea     DD_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a6
         rts
 
 ; --- Text variables, after the drawing context (a5) ---
@@ -1895,7 +2705,8 @@ BT_BGS          EQU DC_SIZE+35       ; byte: pen B
 BT_MSK          EQU DC_SIZE+36       ; byte: rp_Mask
 BT_INV          EQU DC_SIZE+37       ; byte: $FF in INVERSVID
 BT_BPR          EQU DC_SIZE+38       ; WORD: bytes per row of the BitMap
-BT_FRAME        EQU DC_SIZE+40
+BT_GFX          EQU DC_SIZE+40
+BT_FRAME        EQU DC_SIZE+44
 BTO_OR          EQU 0                ; operations (index x 4 in the tables)
 BTO_ANDN        EQU 4
 BTO_XOR         EQU 8
@@ -1906,11 +2717,13 @@ gfx_BltTemplate:
         movem.l d2-d7/a2-a6,-(sp)
         lea     -BT_FRAME(sp),sp
         move.l  sp,a5
+        move.l  a6,BT_GFX(a5)
         move.l  a0,BT_SRC(a5)
         move.w  d1,BT_MOD(a5)
         move.w  d0,BT_XS(a5)
         move.w  d4,BT_W(a5)
         move.w  d5,BT_H(a5)
+        bsr     db_wait
         movem.w d2-d3,-(sp)
         bsr     dr_ctx               ; clobbers d0/d1/a0
         movem.w (sp)+,d2-d3
@@ -1984,6 +2797,8 @@ bt_one:
 .bo_4:
         cmp.w   d3,d1
         bgt     .bo_ret
+        bsr     bt_blit
+        bne     .bo_ret
         sub.w   d1,d3
         move.w  d3,BT_ROWS(a5)
         move.w  d1,d4                ; first template row read: (kept y - BT_Y) × srcMod
@@ -2051,7 +2866,7 @@ bt_one:
         beq.s   .bo_pn
         adda.l  BT_ROFF(a5),a0
         movem.l d7/a1-a3,-(sp)
-        bsr.s   bt_plane
+        bsr     bt_plane
         movem.l (sp)+,d7/a1-a3
 .bo_pn:
         move.b  BT_FGS(a5),d0
@@ -2066,6 +2881,159 @@ bt_one:
 .bo_pe:
         dbra    d7,.bo_pl
 .bo_ret:
+        rts
+
+; A word-aligned CHIP template beginning at bit zero can be shifted into the destination by B DMA.
+; A supplies the destination edge masks; C/D preserve pixels outside the template. Other cases use the CPU.
+TB_SRC          EQU 0
+TB_DOFF         EQU 4
+TB_FWM          EQU 8
+TB_LWM          EQU 10
+TB_BLTSIZE      EQU 12
+TB_SMOD         EQU 14
+TB_DMOD         EQU 16
+TB_SHIFT        EQU 18
+TB_SIZE         EQU 20
+bt_blit:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        lea     -TB_SIZE(sp),sp
+        move.l  sp,a4
+        tst.w   BT_XS(a5)
+        bne     .tb_no
+        cmp.w   BT_X(a5),d0         ; left-clipped masks need a different source alignment
+        bne     .tb_no
+        move.l  DC_RP(a5),a1
+        move.b  rp_DrawMode(a1),d4
+        and.b   #JAM2|INVERSVID,d4
+        bne     .tb_no
+        tst.w   BT_MOD(a5)
+        ble     .tb_no
+        btst    #0,BT_MOD+1(a5)
+        bne     .tb_no
+        sub.w   d1,d3
+        addq.w  #1,d3
+        cmp.w   #1024,d3
+        bhi     .tb_no
+        move.w  d3,d7
+        move.w  d1,d4
+        sub.w   BT_Y(a5),d4
+        mulu    BT_MOD(a5),d4
+        add.l   BT_SRC(a5),d4
+        btst    #0,d4
+        bne     .tb_no
+        move.l  d4,TB_SRC(a4)
+        sub.w   DC_BX(a5),d0
+        sub.w   DC_BX(a5),d2
+        sub.w   DC_BY(a5),d1
+        move.l  DC_CBM(a5),a2
+        mulu    bm_BytesPerRow(a2),d1
+        moveq   #0,d4
+        move.w  d0,d4
+        lsr.w   #4,d4
+        move.w  d2,d5
+        lsr.w   #4,d5
+        sub.w   d4,d5
+        addq.w  #1,d5
+        cmp.w   #64,d5
+        bhi     .tb_no
+        add.w   d4,d4
+        add.l   d4,d1
+        move.l  d1,TB_DOFF(a4)
+        move.w  d5,d4
+        mulu    d7,d4
+        cmp.l   #32,d4
+        blo     .tb_no
+        and.w   #15,d0
+        moveq   #-1,d4
+        lsr.w   d0,d4
+        move.w  d4,TB_FWM(a4)
+        ror.w   #4,d0
+        move.w  d0,TB_SHIFT(a4)
+        and.w   #15,d2
+        moveq   #15,d0
+        sub.w   d2,d0
+        moveq   #-1,d4
+        lsl.w   d0,d4
+        move.w  d4,TB_LWM(a4)
+        move.w  d5,d4
+        and.w   #63,d4
+        lsl.w   #6,d3
+        or.w    d4,d3
+        move.w  d3,TB_BLTSIZE(a4)
+        add.w   d5,d5
+        and.l   #$ffff,d5
+        move.w  BT_MOD(a5),d4
+        sub.w   d5,d4
+        move.w  d4,TB_SMOD(a4)
+        move.w  bm_BytesPerRow(a2),d4
+        sub.w   d5,d4
+        move.w  d4,TB_DMOD(a4)
+        move.l  4.w,a6
+        move.l  TB_SRC(a4),a1
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .tb_no
+        subq.w  #1,d7
+        mulu    BT_MOD(a5),d7
+        add.l   TB_SRC(a4),d7
+        add.l   d5,d7
+        subq.l  #1,d7
+        move.l  d7,a1              ; final B fetch may be a masked extra word; it must still be CHIP RAM
+        jsr     LVO_TYPEOFMEM(a6)
+        btst    #1,d0
+        beq     .tb_no
+        move.l  BT_GFX(a5),a6
+        bsr     db_enter
+        beq     .tb_no
+        move.l  DC_RP(a5),a3
+        move.b  rp_Mask(a3),d6
+        move.b  rp_FgPen(a3),d5
+        moveq   #0,d7
+        move.b  bm_Depth(a2),d7
+        lea     bm_Planes(a2),a2
+        bra.s   .tb_test
+.tb_plane:
+        move.l  (a2)+,a1
+        btst    #0,d6
+        beq.s   .tb_next
+        bsr     db_wait
+        move.w  #$07ea,d0          ; A=edge mask, B=template: set where AB
+        btst    #1,rp_DrawMode(a3)
+        beq.s   .tb_pen
+        move.w  #$076a,d0          ; invert where AB
+        bra.s   .tb_regs
+.tb_pen:
+        btst    #0,d5
+        bne.s   .tb_regs
+        move.w  #$072a,d0          ; clear where AB
+.tb_regs:
+        move.w  d0,BLT_CON0(a0)
+        move.w  TB_SHIFT(a4),BLT_CON1(a0)
+        clr.w   BLT_BDAT(a0)
+        move.w  #$ffff,BLT_ADAT(a0)
+        move.w  TB_FWM(a4),BLT_AFWM(a0)
+        move.w  TB_LWM(a4),BLT_ALWM(a0)
+        move.w  TB_SMOD(a4),BLT_BMOD(a0)
+        move.w  TB_DMOD(a4),BLT_CMOD(a0)
+        move.w  TB_DMOD(a4),BLT_DMOD(a0)
+        move.l  TB_SRC(a4),BLT_BPT(a0)
+        adda.l  TB_DOFF(a4),a1
+        move.l  a1,BLT_CPT(a0)
+        move.l  a1,BLT_DPT(a0)
+        move.w  TB_BLTSIZE(a4),BLT_SIZE(a0)
+.tb_next:
+        lsr.b   #1,d6
+        lsr.b   #1,d5
+.tb_test:
+        dbra    d7,.tb_plane
+        bsr     db_leave
+        moveq   #1,d0
+        bra.s   .tb_ret
+.tb_no:
+        moveq   #0,d0
+.tb_ret:
+        lea     TB_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 ; bt_plane(a0 = first byte of the first row, a1 = rp, a5): the plane's operation, then row by row: first
 ; byte masked, full bytes, last byte masked. Template stream: d3.w = previous (high) and current byte,
@@ -2229,6 +3197,9 @@ bt_mops:
 ; one-plane buffer, styled, drawn by one BltTemplate). Characters past the width of 1.3's line buffer (destination
 ; row + 4 bytes) are dropped and not counted in cp_x.
 gfx_Text:
+        move.l  a0,-(sp)
+        bsr     db_wait
+        move.l  (sp)+,a0
         movem.l d2-d7/a2-a5,-(sp)
         lea     -TX_FRAME(sp),sp
         move.l  sp,a5
@@ -2985,6 +3956,7 @@ SR_MX1          EQU 24
 SR_MY1          EQU 26
 SR_SIZE         EQU 28
 gfx_ScrollRaster:
+        bsr     db_wait
         movem.l d0-d7/a0/a2-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -3457,19 +4429,6 @@ sr_vert:
 ; too wide or too tall for a blit, or entirely exposed: nothing done). One blit per plane: A = constant $FFFF masked
 ; (first/last word), B = source, C = destination, D = AB + ~AC; downwards: descending mode (end addresses,
 ; masks swapped). Blitter taken only if free (AttemptSemaphore on gb_BlitSem), otherwise 0. Preserves d2-d7/a1-a6.
-BLT_CON0        EQU $040
-BLT_CON1        EQU $042
-BLT_AFWM        EQU $044
-BLT_ALWM        EQU $046
-BLT_CPT         EQU $048
-BLT_BPT         EQU $04C
-BLT_DPT         EQU $054
-BLT_SIZE        EQU $058
-BLT_CMOD        EQU $060
-BLT_BMOD        EQU $062
-BLT_DMOD        EQU $066
-BLT_ADAT        EQU $074
-BLT_DMACONR     EQU $002
 .sc_blit:
         movem.l d2-d7/a1-a3/a6,-(sp)
         move.l  SC_DBM(a4),a2        ; a2 = BitMap
@@ -4020,6 +4979,9 @@ cb_unlock2:
 ; rp_Mask. Minterm applied (B = source, C = destination). NULL source plane = all 0,
 ; -1 = all 1 (planes beyond the source depth are 0). CPU rendering byte by byte, edges masked.
 gfx_BltBitMapRastPort:
+        move.l  a0,-(sp)
+        bsr     db_wait
+        move.l  (sp)+,a0
         movem.l d2-d7/a1-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -4333,6 +5295,7 @@ gfx_BltBitMap:
         move.b  d7,BB_MASK(a5)
         move.l  a0,a4                ; a4 = source, a3 = destination
         move.l  a1,a3
+        bsr     db_wait
         clr.w   BB_COUNT(a5)
         tst.w   d0                   ; clipping to both BitMaps: left / top edges
         bpl.s   .bm_1
@@ -4390,6 +5353,8 @@ gfx_BltBitMap:
         ble     .bm_ret
         movem.w d0-d5,BB_SX(a5)
         clr.l   BB_BUF(a5)
+        bsr     bb_solid
+        bne     .bm_ret
         cmp.l   a3,a4
         bne.s   .bm_go
         moveq   #0,d0                ; same BitMap: row buffer (+1 byte of margin on each side)
@@ -4496,9 +5461,93 @@ gfx_BltBitMap:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
+; Source-independent minterms need neither a source-row snapshot nor the per-byte truth-table engine.
+; Use the rectangle engine for clear/set/invert, including its CHIP blits and byte-addressable CPU fallback.
+; a3/a4 = destination/source BitMaps, a5 = BB frame, a6 = GfxBase. Z clear when handled; preserves registers.
+bb_solid:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        move.b  DC_MINTERM(a5),d0
+        and.b   #$f0,d0
+        beq.s   .bs_go
+        cmp.b   #$f0,d0
+        beq.s   .bs_go
+        cmp.b   #$50,d0
+        beq.s   .bs_go
+        cmp.b   #$a0,d0
+        bne     .bs_no
+.bs_go:
+        lea     -rp_SIZEOF(sp),sp
+        move.l  sp,a1
+        move.l  a1,a0
+        moveq   #rp_SIZEOF/4-1,d1
+.bs_zero:
+        clr.l   (a0)+
+        dbra    d1,.bs_zero
+        move.l  a3,rp_BitMap(a1)
+        cmp.b   #$f0,d0
+        bne.s   .bs_mode
+        st      rp_FgPen(a1)
+.bs_mode:
+        cmp.b   #$50,d0
+        bne.s   .bs_planes
+        move.b  #COMPLEMENT,rp_DrawMode(a1)
+.bs_planes:
+        moveq   #0,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        move.b  bm_Depth(a3),d4
+        cmp.b   bm_Depth(a4),d4
+        bls.s   .bs_depth
+        move.b  bm_Depth(a4),d4
+.bs_depth:
+        cmp.w   #8,d4
+        bls.s   .bs_test
+        moveq   #8,d4
+.bs_test:
+        cmp.w   d4,d2
+        bhs.s   .bs_draw
+        move.b  BB_MASK(a5),d1
+        btst    d2,d1
+        beq.s   .bs_next
+        move.w  d2,d1
+        lsl.w   #2,d1
+        move.l  bm_Planes(a3,d1.w),d1
+        beq.s   .bs_next
+        cmp.l   #-1,d1
+        beq.s   .bs_next
+        bset    d2,d3
+        addq.w  #1,BB_COUNT(a5)
+.bs_next:
+        addq.w  #1,d2
+        bra.s   .bs_test
+.bs_draw:
+        move.b  d3,rp_Mask(a1)
+        beq.s   .bs_done
+        cmp.b   #$a0,d0             ; preserve destination, but still return the selected plane count
+        beq.s   .bs_done
+        move.w  BB_DX(a5),d0
+        move.w  BB_DY(a5),d1
+        move.w  d0,d2
+        move.w  d1,d3
+        add.w   BB_W(a5),d2
+        add.w   BB_H(a5),d3
+        subq.w  #1,d2
+        subq.w  #1,d3
+        bsr     gfx_RectFill
+.bs_done:
+        lea     rp_SIZEOF(sp),sp
+        moveq   #1,d0
+        bra.s   .bs_ret
+.bs_no:
+        moveq   #0,d0
+.bs_ret:
+        movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+
 ; ReadPixel(rp a1, x d0, y d1) -> d0 = colour number of the pixel (relative to the layer), -1 if it is in no
 ; readable ClipRect (outside the area, or hidden without backup).
 gfx_ReadPixel:
+        bsr     db_wait
         movem.l d2-d4/a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
@@ -4566,6 +5615,9 @@ gfx_ReadPixel:
 ; 255 = transparent) at (x, y) relative to the RastPort, by runs of the same colour, through its ClipRects, in JAM2
 ; whatever rp_DrawMode (rp_Mask respected). Used for drawing GELs. Preserves d2-d7/a1-a6.
 gfx_putrow:
+        move.l  a0,-(sp)
+        bsr     db_wait
+        move.l  (sp)+,a0
         movem.l d2-d7/a2-a5,-(sp)
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5

@@ -12,6 +12,7 @@
 
                 include "exec.i"
                 include "graphics.i"
+                xref    gfx_waitidle
 
                 xdef    gfx_AddBob
                 xdef    gfx_AddVSprite
@@ -279,6 +280,9 @@ gfx_SortGList:
 ; BOBUPDATE becomes BACKSAVED, BWAITING/BDRAWN cleared, old position and ClearPath taken (or swapped with the
 ; DBufPacket). Then the VSprites get hardware sprites (gel_vsprites).
 gfx_DrawGList:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle
+        move.l  (sp)+,a0
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a0,d6                ; d6 = vp
         move.l  rp_GelsInfo(a1),d0
@@ -1646,6 +1650,9 @@ fb_one:
         rts
 ; fb_free(a0 = address of the pointer, d0 = size): FreeMem if non-zero, pointer reset to 0.
 fb_free:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle        ; the owned bitmap/buffer can be an asynchronous Draw destination
+        move.l  (sp)+,a0
         move.l  (a0),d1
         beq.s   .ff_r
         clr.l   (a0)

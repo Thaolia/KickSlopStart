@@ -32,6 +32,7 @@
 
                 include "exec.i"
                 include "graphics.i"
+                xref    gfx_waitidle
 
                 xdef    gfx_SyncSBitMap
                 xdef    gfx_CopySBitMap
@@ -1198,6 +1199,9 @@ ly_EndUpdate:
 ; SwapBitsRastPortClipRect(rp a0, cr a1): exchanges the pixels the RastPort's BitMap holds under the ClipRect's
 ; bounds with the ClipRect's own BitMap (same bit alignment: byte-by-byte swap, edges masked).
 ly_SwapBitsRastPortClipRect:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle
+        move.l  (sp)+,a0
         movem.l d2-d7/a2-a6,-(sp)
         move.l  CR_BITMAP(a1),d0
         beq     .sw_r
@@ -1339,6 +1343,9 @@ lr_bmsize:
         rts
 ; lr_freebm(a0 = backup BitMap, a6 = SysBase).
 lr_freebm:
+        move.l  a0,-(sp)
+        jsr     gfx_waitidle        ; the owned bitmap/buffer can be an asynchronous Draw destination
+        move.l  (sp)+,a0
         bsr     lr_bmsize
         move.l  a0,a1
         jmp     LVO_FREEMEM(a6)

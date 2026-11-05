@@ -1,5 +1,100 @@
 # Tests & test bench
 
+## Native blitter drawing regression and speed gate
+
+`make test-graphics` (also `test-graphics-quick`, through `test` / `test-quick`) builds the production ROM and
+`tests/drawblit.s`, then boots a generated OFS disk in Copperline. Requires `vasmm68k_mot`, `vlink`, `romtool`,
+Python 3, `copperline` and `copperline-ctl` in PATH. Override `VASM`, `VLINK`, `COPPERLINE` and `COPPERLINE_CTL`
+for local installations. The test is native Amiga 68000/OCS code; no host rendering model substitutes for Agnus.
+
+The same public graphics calls render into CHIP and non-DMA RAM. The entire buffers, including guard bytes,
+and the pens, flags, phase and current point must match. Coverage includes all eight line octants, ties and
+reverse directions, shared COMPLEMENT vertices, all eight drawing modes, patterns and ONE_DOT, plane masks,
+odd plane addresses and row strides, layer offsets, multiple visible ClipRects, hidden SMART backing stores,
+and blitter ownership by another task. Limit cases cover 64-word and 1024-row encodings and the wider/taller
+CPU fallbacks. Masked non-CHIP planes must not prevent eligible CHIP planes from using DMA.
+
+The benchmark measures 32 diagonal lines, 32 unaligned solid rectangle fills and 32 source=destination
+`BltBitMap` clears over three planes, with a
+WaitBlit before stopping the timer. Elapsed time uses a VBlank counter plus the beam position (PAL scanline
+units), not host execution time. Each acceleration workload must be at least **1.25x faster** in CHIP memory than the CPU
+reference. Outputs, screenshot and session PID/command ledger are in `build/drawblit-results/`.
+Upstream integration also checks 32 solid-rectangle cases covering all draw modes and every foreground/background
+plane-bit pair, including preserve and INVERSVID operations, against the updated CPU engine. A separate
+eight-mode check compares a rectangular AreaEnd directly with RectFill, including guards and RastPort state.
+Caller-owned TmpRas contents are scratch and are excluded from that public-operation comparison. This test
+fails before the area compositor is adapted to upstream's corrected INVERSVID/background-pen rules.
+Four independent whole-buffer fingerprints also verify the source-independent clear/set/invert/preserve
+minterms, their ignored low nibble, selected plane counts, edge masks and unchanged guard bytes.
+The suite also compares short one/two-plane strokes, all octants and drawing modes, template shifts, odd
+scratch rasters, polygon slopes and mixed ellipse/line recording against the non-DMA CPU paths. It checks a
+client-owned blitter lease, busy ownership, caller-owned update clipping and balanced Forbid nesting. `SHORT`
+times 228 authored small two-plane strokes; `AREA` times thirteen authored eighteen-vertex two-plane polygon fills. Each must
+also satisfy the 1.25x gate. These fixtures contain no Workbench executable or ROM-derived geometry.
+
+For an older CPU ROM, collect the expected failing performance gate with the same executable:
+
+```sh
+python3 -I tests/drawblit_test.py --rom build/kick13-baseline.rom --exe build/drawblit --out build/drawblit-before
+# --allow-slow records a baseline without enforcing the speed gate.
+```
+
+On 2026-11-04, Copperline 1.0.1, A500/68000/OCS, 512 KiB CHIP + 512 KiB slow, the pre-change production ROM
+passed pixel checks but failed the speed gate (both workloads approximately 1.00x). The accelerated ROM passed:
+diagonal lines **2273 vs 39985** scanlines (**17.59x**), fills **16671 vs 34667** (**2.08x**). Results describe these
+workloads and this emulator, not all drawing calls or a measurement on physical hardware.
+
+Additional before/after checks: `garea_probe.s` output matched exactly; `gline_probe.s` matched except for
+DMACONR's BLTZERO status after the newly hardware-drawn line. All 22 `drawcheck.s` screen/window fingerprint
+lines matched, including restoration of the covered SMART window. Its output was sent to serial with a
+temporary output-only adapter, since Copperline's floppy image was write-protected.
+
+The window-close follow-up (2026-11-04) reproduced layers' `BltBitMap` clear going through source-row snapshots
+and the CPU truth-table loop. That operation now shares the rectangle engine. The same 32-clear workload went
+from **1892063** scanlines before the fix to **16890** afterward in CHIP RAM (about **112x**). The previous ROM
+passes correctness and the line/fill gates but fails the new clear speed gate. Capturing that slow baseline
+requires `--seconds 600`; the fixed ROM completes within the normal 240-second capture. Existing blitter and
+area probe output and screen/window fingerprints also match across this fix.
+The actual Workbench 1.3 disk drawer was opened and closed on both ROMs with the same A500/OCS setup
+(512 KiB CHIP, 512 KiB slow, 1 MiB fast). `CloseWindow` entry-to-caller-return timing fell from **0.815 s**
+to **0.051 s** (about **16x**); the return PC and stack position were verified, and the opened and repaired
+desktop captures were inspected. These are emulated times, including scheduling and interrupts.
+
+## PR review regressions (2026-11-05)
+
+`HORIZ` times 100 horizontal two-plane Draw calls. Its CHIP time must be no more than 10% above the
+non-DMA CPU row-fill reference; the five acceleration workloads retain their 1.25x minimum speed gate.
+Horizontal Draw bypasses the common line-mode setup, retaining row fills and eligible rectangle blits.
+The full native suite uses a bounded 360-second emulated capture to include this additional workload.
+The repository's `drawperf.s` workload was also run against upstream and the corrected production ROM, with
+only its output redirected to serial in an ignored local adapter. Screen and covered-window horizontal times
+were both within 5% of upstream, using the same A500/OCS setup and emulated beam timestamps.
+
+`make test-graphics-lifetime`, included beneath both normal and quick graphics groups, runs `rasterfree.s`.
+It starts real OCS DMA into an AllocRaster allocation and an OpenScreen plane, then observes public FreeMem
+handoff during FreeRaster and CloseScreen. BBUSY must already be clear at handoff. The test drains DMA inside
+its observer on a failing ROM to prevent allocator corruption. It fails on the pre-fix ROM and passes once
+raster releases synchronize. Owned layer bitmap and GEL-buffer release paths also wait before freeing memory.
+Paula audio is left available; generated emulator configurations disable floppy-drive effects.
+
+## Clock application measurements (2026-11-05)
+
+The unchanged `Utilities/Clock` executable was extracted locally from the user's Workbench 1.3 ADF into an
+ignored test disk. Its first-hunk entry and Clock-task Wait/BeginRefresh boundaries were measured in
+Copperline 1.0.1 on a PAL A500/68000/OCS, 512 KiB CHIP, 512 KiB slow and 1 MiB fast RAM. The original ROM was
+measured separately by the clean-room analysis track; see `docs/analysis/clock-performance-v34.md`.
+
+Initial face painting fell from about **1.449 s** before this update to about **0.52 s**. The original reference
+is **0.397 s**. Their logical display defaults differ (ours PAL/256 lines and 170x105 Clock; original NTSC/200
+lines and 170x90 Clock, although both physical beams are PAL). A separate test matching our public display
+inputs to the reference still measured about **0.518 s**. **This is an improvement, not a claim of exact speed
+parity.** No CPU overclock or production display-mode change was used. Pending setup and clipping overhead
+remain visible in the application measurements.
+
+The normal and quick exec test groups run `mempriority.s` with actual Zorro fast RAM present. Its public
+allocation must land there rather than in slow RAM; an explicit CHIP allocation must remain in CHIP. The
+pre-fix ROM fails that test, while the updated ROM passes. `drawblit_test.py` provides the shared native runner.
+
 ## boot_test.sh - headless boot of a ROM under FS-UAE
 
 Starts FS-UAE in an Xvfb virtual display, lets the ROM boot, captures the emulated screen and reports the

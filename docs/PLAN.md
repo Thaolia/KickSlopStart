@@ -1120,9 +1120,21 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   axis), LinePtrn with the +$1F counter, FRST_DOT and the exact-COMPLEMENT first dot, ONE_DOT, (M+1) mod 1024
   pixels, and the three V34 layer defects (double counter decrease, clipped-piece phase from linpatcnt, no first dot
   in clipped pieces); Move and Set*Pen restart the pattern; PolyDraw calls Draw through its vector.
-  `tests/gline_probe.sh` matches §10 except by design: no write outside the BitMap without a layer (clipped), a
-  synchronous CPU Draw (blitter idle on return). Open: rp minterms[] not computed, GfxBase BlitLock (+$AA) not
+  `tests/gline_probe.sh` matches §10 except by design: no write outside the BitMap without a layer (clipped);
+  asynchronous completion for eligible common solid Draw calls (CPU consumers wait before access). Open: GfxBase BlitLock (+$AA) not
   kept, a y-major clipped piece in a hidden buffer uses y - MinY (spec §7.4 deduces + (MinY & 15), not observed).
+  **Drawing acceleration (2026-11-05)**: contained solid non-horizontal lines use OCS line DMA; large solid
+  rectangles and source-independent BltBitMap clear/set/invert operations use masked area blits. Horizontal
+  lines keep the inexpensive CPU row-fill path (large spans may use rectangle DMA). Eligibility checks preserve
+  plane masks, layer clipping, SMART backups, patterns, ONE_DOT and ownership fallbacks. Common solid Draw
+  completes asynchronously; CPU consumers and owned-raster release paths wait before using or freeing memory.
+  Short strokes use a bounded scheduling guard; polygon masks and shifted templates use DMA with checked CPU
+  fallbacks. Mode/pen-pair and AreaEnd-versus-RectFill checks retain upstream raster semantics. Normal and quick
+  graphics groups check pixels, guards, state, ownership and memory lifetime; five speed gates plus a horizontal
+  non-regression gate cover performance. Exec groups check true-fast-memory allocation preference.
+  Workbench window closing and Clock rendering improved; **original Clock speed parity remains open**.
+  Reproduction, dated measurements and geometry limitations: `tests/README.md`. Remaining: patterned/clipped-piece
+  line acceleration, patterned fills, and broader asynchronous blit API behavior.
   **Screen fonts (2026-11-04)**: NewScreen.Font opened and set, Screen.Font, BarHeight from the font, IntuiTextLength
   in the text's font, Preferences read before the Workbench screen opens (`tests/scrfont_probe.s`). Open: window
   title bars stay 10 lines whatever the font (measured on 1.3 with topaz 8); menu texts still assume 8-pixel

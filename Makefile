@@ -134,6 +134,34 @@ verify: $(KICK_ROM)
 clean:
 	rm -rf $(BUILD)
 
+# Native Amiga graphics tests live beneath their component group.
+COPPERLINE ?= copperline
+COPPERLINE_CTL ?= copperline-ctl
+.PHONY: test test-quick test-graphics test-graphics-quick test-graphics-blitter test-graphics-lifetime test-exec test-exec-quick test-exec-memory-priority
+test: test-graphics test-exec
+test-quick: test-graphics-quick test-exec-quick
+test-graphics: test-graphics-blitter test-graphics-lifetime
+test-graphics-quick: test-graphics-blitter test-graphics-lifetime
+test-graphics-blitter: kick-prod $(BUILD)/drawblit
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/drawblit \
+	  --out $(BUILD)/drawblit-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)"
+$(BUILD)/drawblit: tests/drawblit.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
+test-graphics-lifetime: kick-prod $(BUILD)/rasterfree
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/rasterfree \
+	  --out $(BUILD)/rasterfree-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag RASTERFREE --pass-marker "RASTERFREE OK" --workloads
+$(BUILD)/rasterfree: tests/rasterfree.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-exec: test-exec-memory-priority
+test-exec-quick: test-exec-memory-priority
+test-exec-memory-priority: kick-prod $(BUILD)/mempriority
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/mempriority \
+	  --out $(BUILD)/mempriority-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --fast 1M --seconds 30 --tag MEMPRIO --pass-marker "MEMPRIO OK" --workloads
+$(BUILD)/mempriority: tests/mempriority.s $(EXEC_DIR)/exec.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -o $@ $<
+
 # Header and incbin dependencies written by vasm (VASMOBJ).
 -include $(wildcard $(BUILD)/*.d)
 # A header or binary removed or renamed must not stop the build through an old .d file (what gcc -MP does): empty
