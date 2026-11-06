@@ -1472,7 +1472,7 @@ td_require:
 
 ; td_cachebuf(a6): allocates the track cache at first access. TD_NCACHE slots only in fast memory (slow RAM at
 ; $C00000 included); otherwise a single slot, the footprint of the 1.3 track buffer: on a 512 KB chip-only A500 the
-; 44 KB cache would be taken from the chip RAM that games need (Bubble Bobble then fails to start).
+; multi-track cache would be taken from the chip RAM that games need (Bubble Bobble then fails to start).
 ; Z = 1 if impossible. Clobbers d0/d1/a0/a1.
 td_cachebuf:
         tst.l   TD_CACHEBUF

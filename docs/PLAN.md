@@ -1342,6 +1342,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   before `ram_expungeall` and its retry: the 8-slot cache (45,056 bytes) is freed when the device semaphore is free
   and no slot is dirty, and is allocated again at the next access. `tests/lowmem_probe.s`: 45,192 bytes of fast
   memory come back after a failing AllocMem (136 before). Not in 1.3, which has no cache (memory-budget-v34).
+  **Track cache 8 -> 4 slots (2026-11-06)**: `TD_NCACHE` = 4 (`exec.i`), 22,528 bytes of slow RAM back at idle.
+  Workbench 1.3.3, A/2, production ROM: 871,312 free (848,784 with 8 slots), 10,264 more than 1.3; boot to the end
+  of the startup-sequence 63.1-63.9 s instead of 54.2-54.4 s (two runs each). `docs/MEMORY-USAGE.md` section 6.1.
   **Ask in the startup-sequence (2026-11-05)**: `ask` as the first line of a startup-sequence never returned: the
   boot console handler (`conhandler.s`) ended a READ line with CR, and c:Ask (BCPL) reads up to LF, so it asked the
   handler for more and waited for ever. Shown live: after "y" + Return the handler state held a second READ of 200

@@ -1001,7 +1001,7 @@ differs.
     `docs/analysis/memory-budget-v34.md`, same Amiberry configuration; 840,536 since the keyboard feeder runs in the
     intuition input task, see (28)). Stage, category and caller breakdown, and
     the ranked reduction candidates, in `docs/MEMORY-USAGE.md`, measured with `MEMTRACK`. Each entry now records the `AllocMem` caller, so an entry is
-    12 bytes. The 45 KB trackdisk track cache and the 4 KB intuition input task are deliberate; the cache is given back
+    12 bytes. The trackdisk track cache (45 KB, 22 KB since the 4-slot change of 2026-11-06) and the 4 KB intuition input task are deliberate; the cache is given back
     when an `AllocMem` fails (`td_lowmem`, called before the expunge and the retry, 2026-11-05). The console
     self-test #3a in `boot.s` left a 10 KB chip bitmap allocated; it now frees `CONB_BITMAP` and resets the
     cursor.
@@ -2125,7 +2125,7 @@ differs.
     (1.3 runs such code at IPL 3, never 7: oracle probe). Tintin on the Moon (custom bootblock, non-DOS disk)
     started AmigaDOS instead of its game; Spaceballs "State of the Art" and Tintin waited forever at IPL 7 on a
     counter or the blitter. `tests/bootblock_c.s` now returns the dos rt_Init like a standard bootblock.
-  - trackdisk track cache: the 8 slots only in fast memory (slow RAM included), otherwise 1 slot, so that a 512 KB
+  - trackdisk track cache: the multi-slot cache (8 slots then, 4 since 2026-11-06) only in fast memory (slow RAM included), otherwise 1 slot, so that a 512 KB
     chip-only A500 keeps its chip RAM for games (Bubble Bobble starts again; `docs/MEMORY-USAGE.md`).
     Debugging tool `tests/allocsnoop.s`: SetFunction spy of AllocMem on the serial port.
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,

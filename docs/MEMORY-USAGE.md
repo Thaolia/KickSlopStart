@@ -16,6 +16,12 @@ handler and initial CLI +2,872 (839,024), low chip +5,376 (841,528; chip-only un
 production ROM, Workbench title after 150 s idle): **848,784** free, exactly the sum of the three, so the gap to
 1.3 (861,048) is now **12,264**. The tables below are those of `17da6ee` unless a line says otherwise.
 
+**Update (2026-11-06): track cache 8 -> 4 slots.** `TD_NCACHE` = 4 (section 6.1). A/2 idle, production ROM,
+Workbench title 20 s after the end of the startup-sequence: **871,312** free against 848,784 with 8 slots on the
+same harness (+22,528, the four slots exactly), so we are now **10,264 above** 1.3 (861,048). Cost: the Workbench
+1.3.3 boot to the end of its startup-sequence takes 63.1-63.9 s instead of 54.2-54.4 s (two runs each, Amiberry,
+both ROMs side by side).
+
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
 RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 465,360 bytes free at idle against
@@ -147,7 +153,7 @@ memory.
 | Category | Ours | 1.3 | Difference | Ours: callers |
 |----------|-----:|----:|-----------:|---------------|
 | Screen bitplanes 640 × 256 × 2 | 40,960 chip | 40,960 chip | 0 | OpenScreen (`intuition_end` in the map) |
-| Track buffer / cache | 45,056 slow | 16,392 chip | **+28,664** | `td_cachebuf` (8 × 5,632); our raw MFM buffer is chip, allocated per read and freed |
+| Track buffer / cache | 45,056 slow (22,528 since 2026-11-06) | 16,392 chip | **+28,664** (+6,136) | `td_cachebuf` (8 × 5,632, now 4 × 5,632); our raw MFM buffer is chip, allocated per read and freed |
 | File system buffers | 0 | 8,160 chip | −8,160 | none (no block cache in our handler) |
 | Other chip (copper lists, gadget images, pointer, chip icon images, boot leftovers) | 4,400 | 9,096 | −4,696 | `gfx_MrgCop` 1,112, `gfx_MakeVPort` 1,032, `sc_mkimage` 208, `wb_desktop` 128, `d2_done` 128, `init_task` 96, `it_ptrinit` 72, `graphics_initfunc` 24, disk programs 1,600 |
 | Module bases (libraries, devices, resources) | 7,744 | ≈ 7,840 | ≈ −96 | `exec_MakeLibrary` 7,016 (incl. icon.library), `init_ints` 224, `build_reslist` 136, `dos_initfunc` 184, `gfx_fontinit` 104, `km_init` 80 |
@@ -171,7 +177,7 @@ Item 2 overlaps items 5 and 6 (the DF1 file system and console handler stacks ar
 
 | # | Candidate | Saving | Risk |
 |---|-----------|-------:|------|
-| 1 | Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
+| 1 | **Done 2026-11-06 (4 slots, +22,528 measured, section 6.1).** Track cache: `TD_NCACHE` 8 → 4 (or 2) slots | 22,528 (33,792) slow | Low for correctness, medium for speed: the cache is a performance feature (the Workbench boot was 87 s with 8 slots; re-measure). It is already given back when an `AllocMem` fails (`td_lowmem`, ef259e5), but it stays allocated at idle, so `AvailMem` and the largest slow block show it. In A/2, 1.3 spends 32,784 chip on two MFM buffers, so 8 slots cost us only 12,272 more there; in A/1 28,664 more |
 | 2 | Process stacks larger than 1.3's: file system handler 4,096 per drive (1.3: 840), console handler 4,096 (1.3: 2,800, and only while a CON window is open), RAM handler +4,096 `CP_STKEXTRA` over its 1,200 (1.3: none) | up to ≈ 3,250 per drive + 1,296 + 4,096 | High unless the stack high-water mark of each process is measured first (fill pattern, then a long Workbench session, copy, DiskCopy): an overflow corrupts the neighbouring block silently |
 | 3 | **Done 2026-11-05 (section 3).** Low chip `$800`-`$2500` (7,424 bytes) unused when slow RAM exists: add it to the chip MemHeader (and optionally move the supervisor stack to the top of slow RAM like 1.3, freeing `$2500`-`$3500` too, 4,096 chip for 6,144 slow) | 7,424 chip | Low to medium: check that nothing addresses `$800`-`$2500` after boot (a watchpoint over a full Workbench session), and that games which load over low chip still work (1.3's heap starts at `$420`, so they cannot rely on that area) |
 | 4 | Workbench state: the 9,126-byte block reserves 6 drawer records (6 × 1,084 = 6,504) and 8 volume records at start; allocate a drawer record when its window opens | ≈ 6,500 | Low to medium (workbench.s only; drawer open/close and Close-on-error paths to re-test) |
@@ -186,10 +192,10 @@ bases, other chip and file system buffers are already below 1.3.
 
 ## 6. Notes on single items
 
-### 6.1 trackdisk track cache — 45,056 bytes (kept on purpose)
+### 6.1 trackdisk track cache — 22,528 bytes (45,056 until 2026-11-06)
 
-`trackdisk.device` keeps the last `TD_NCACHE` = 8 decoded tracks in an LRU cache (`TD_CACHEBUF`, 8 × 5,632
-bytes). See `src/exec/trackdisk.s` and `TD_NCACHE` in `src/exec/exec.i`.
+`trackdisk.device` keeps the last `TD_NCACHE` = 4 decoded tracks in an LRU cache (`TD_CACHEBUF`, 4 × 5,632
+bytes; 8 until 2026-11-06). See `src/exec/trackdisk.s` and `TD_NCACHE` in `src/exec/exec.i`.
 
 **Why it exists.** The OFS file system reads 512-byte blocks and keeps switching between the directory track and
 the data tracks. Without a cache, every block costs a full track read: motor spin-up, seek, a DMA of the whole
@@ -199,8 +205,8 @@ memory.
 
 **How it behaves.**
 - It is allocated at the first `CMD_READ`, not at boot.
-- The 8 slots are taken only from fast memory (`MEMF_FAST`, which includes the A501 slow RAM at `$C00000`).
-  Without fast memory, or if 45 KB of it is not available, it falls back to a single slot of 5,632 bytes (1.3
+- The 4 slots are taken only from fast memory (`MEMF_FAST`, which includes the A501 slow RAM at `$C00000`).
+  Without fast memory, or if 22 KB of it is not available, it falls back to a single slot of 5,632 bytes (1.3
   instead keeps a 16,388-byte raw MFM buffer per drive in chip RAM; our raw buffer is allocated in chip for each
   track read and freed right after). On a 512 KB chip-only A500 the 45 KB cache came out of the chip RAM that games
   need: Bubble Bobble could not start (its last chip requests failed). With one slot, the free chip RAM at the
@@ -211,18 +217,20 @@ memory.
 - Writes (`CMD_WRITE`) update cached tracks and mark them dirty. Only `CMD_UPDATE` writes them back;
   turning the motor off keeps them in the cache.
 
-**Size choice.** 8 slots is the knee of the curve. Going to 16 slots only took the measured Workbench boot from
-87 s to 83 s, for another 45 KB.
+**Size choice.** 8 slots was the knee of the curve: 16 slots only took the measured Workbench boot from 87 s to
+83 s (FS-UAE, 2026-10), for another 45 KB. On 2026-11-06 the cache went down to 4 slots to give 22,528 bytes back
+at idle: the Workbench 1.3.3 boot to the end of its startup-sequence went from 54.2-54.4 s to 63.1-63.9 s
+(Amiberry, production ROM, two runs each).
 
 **Trade-off.** The original 1.3 trackdisk keeps one track buffer per unit and relies on the file system's own
 buffers instead. Lowering `TD_NCACHE` gives memory back at the cost of disk speed.
 
 **Released under memory pressure (2026-11-05).** When an `AllocMem` fails, exec calls `td_lowmem` before it
 expunges unused modules and retries: the multi-track cache is freed if no drive access is under way and no
-slot waits for `CMD_UPDATE` (a single-slot cache is kept). The next disk access allocates it again, with 8 slots
-if 45 KB of fast memory is free, otherwise one. `tests/lowmem_probe.s` (AvailMem(MEMF_FAST) around an
+slot waits for `CMD_UPDATE` (a single-slot cache is kept). The next disk access allocates it again, with all its slots
+if enough fast memory is free, otherwise one. `tests/lowmem_probe.s` (AvailMem(MEMF_FAST) around an
 AllocMem that cannot succeed) on the Workbench 1.3.3 disk: 136 bytes released before (mathffp only), 45,192
-after (cache + mathffp); after a `dir` the cache is back and a second failure releases it again.
+after (8-slot cache + mathffp); after a `dir` the cache is back and a second failure releases it again.
 
 ### 6.2 Fixed: console bitmap left by the boot self-test — 10,240 bytes of chip RAM
 

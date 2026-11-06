@@ -504,7 +504,7 @@ TD_MOTORIDLE EQU 100       ; 2 s of inactivity (50 Hz) before turn-off, like the
 TD_CTICK     EQU $0000071A ; trackdisk: word — LRU clock of the track cache
 TD_CTRK      EQU $00000720 ; trackdisk: TD_NCACHE words — track of each slot ($FFFF = empty)
 TD_CAGE      EQU $00000730 ; trackdisk: TD_NCACHE words — last access (TD_CTICK) of each slot
-TD_NCACHE    EQU 8         ; tracks kept in cache (8 x 5632 = 44 KB; 16: marginal gain measured, 87 s -> 83 s)
+TD_NCACHE    EQU 4         ; tracks kept in cache (4 x 5632 = 22 KB; WB boot 54 s -> 63 s against 8, 2026-11-06)
 DOS_DOSBASE  EQU $000006F0 ; long: DosBase (set by dos initFunc) — the BCPL runtime does not have a6 = DosBase
 ; GP_NO_WRAP=1 (RED): gp_delta8 subtracts the 0..255 counters as WORDS (without byte sign-extend) -> when crossing
 ; $FF/$00 the delta is wrong ($FE->$01 gives -253 instead of +3) -> "GAMEPORT OK" absent (the wrap vector of the
