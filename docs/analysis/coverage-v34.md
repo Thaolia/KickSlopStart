@@ -10,17 +10,17 @@
 > columns are unchanged from the first version (the ROM does not change; radare2 was not re-run). The
 > "Specified?" and "Implemented on our side" columns and the priorities were recomputed (§1).
 >
-> **Partial refresh 2026-11-05** (after `c4a3519`): §7 (ranks 5, 10, 11 and the state paragraph), the `RawDoFmt`
-> row of the exec table and the graphics.library row of §2 only. The figures of §0 and the other rows of §3 were
-> **not** recounted: several graphics rows (text and fonts, regions) still show the status they had before
-> `graphics-text-v34` and `graphics-regions-v34` were written (see §7 ranks 4 and 7 for their real state).
->
-> **Partial refresh 2026-11-05 (second pass)**, after `exec-messages-io-v34` (rank 12), `exec-memory-semaphores-v34`
-> (rank 13) and `mathffp-v34` (rank 15) were written: the exec and mathffp rows of §2 and the **exec.library** and **mathffp.library** tables of §3 were
-> rechecked row by row against those pages and `docs/exec-lvo-table.md` (`.fd` V34), §5 item 2 was closed, §7
-> (ranks 11, 12, 13, 15 and the state paragraph) was updated. Recounted from the tables: exec 83 specified /
-> 7 partial / 6 cited / 5 absent, mathffp 12 / 0 / 0 / 0. **§0 was not recounted** (the graphics table is known to
-> be stale, see above), so its figures and its exec/mathffp rows still show the 2026-11-04 state.
+> **Full recount 2026-11-06** (at `f913aa6`). Every row of the §3 tables (390 LVOs) was rechecked against the 81
+> pages now in `docs/analysis/` (same rules as §1): the graphics text/font and region rows and `InitRastPort` move
+> to "yes" (`graphics-text-v34`, `graphics-regions-v34`, `graphics-line-v34` §2), the exec, intuition, layers, dos,
+> expansion, mathffp, timer, console and resource rows keep their level (references added to `SetFunction`,
+> `BeginRefresh`, `EndRefresh`). The "Implemented on our side" column was re-read from the vector tables of `src/`
+> at `f913aa6` (exec `build_jumptable`, graphics, intuition, layers, dos, expansion, mathffp, timer, console, cia,
+> disk, potgo, misc): unchanged counts; the exec and mathffp rows that said "not yet checked against the new spec"
+> now name the probe that checked them (ranks 12, 13, 15, `docs/PLAN.md` entries of 2026-11-05). §0 and the exec,
+> graphics, intuition and mathffp rows of §2 were recomputed from the tables. **Not** recounted: the ROM size
+> columns (unchanged since 2026-10-27, radare2 not re-run), the device-command tables of §4 (no new page touches
+> them), §5 and §6. §7 (ranks 12, 13, 15 and its state paragraph) was updated separately the same day: all 15 ranks done.
 
 **File-system addendum 2026-11-05** (no count recomputed): `rom-filesystem-v34` gained §1.4 (device commands,
 rejected TD_* replies), §2.5 (validation failures, requesters, Retry/Cancel), §8.4 (write-back on the third
@@ -57,38 +57,44 @@ validator requesters at boot, rejected CMD_UPDATE/TD_MOTOR).
 
 - **390 V34 LVOs** inventoried across the 13 modules that expose functions (of which **14 private** in the
   sense of the `.fd`s: 9 exec, 2 graphics, 2 dos, 1 expansion); **376 public**.
-- Coverage by the analysis documentation: **242 specified** (62.1 %), **46 partial** (11.8 %), **58 only
-  cited** as calls made by an analysed piece of software (14.9 %), **44 absent** from any spec (11.3 %).
-  Useful coverage (specified + partial): **288 / 390 = 73.8 %**.
-- Implementation on our side (vector tables of `src/` at `c4bdddc`): **386 / 390 = 99.0 %** have a dedicated
+- Coverage by the analysis documentation (recount 2026-11-06): **362 specified** (92.8 %), **11 partial**
+  (2.8 %), **10 only cited** as calls made by an analysed piece of software (2.6 %), **7 absent** from any spec
+  (1.8 %). Useful coverage (specified + partial): **373 / 390 = 95.6 %** (2026-11-04: 242 / 46 / 58 / 44,
+  73.8 %). Counting: one count per row of the §3 tables, by the first word of the "Specified?" column (yes /
+  partial / cited / no) and of the "Implemented on our side" column (yes / stub / no); the table below sums them
+  per module.
+- Implementation on our side (vector tables of `src/` at `f913aa6`): **386 / 390 = 99.0 %** have a dedicated
   routine (which does not mean complete); **0** stubs; **4** null vectors (graphicsPrivate1/2, dos
-  GetPacket/QueuePacket); nothing falls outside a table any more.
+  GetPacket/QueuePacket); nothing falls outside a table any more. The 58 exec and mathffp rows specified on
+  2026-11-05 are now also checked against their spec by a probe (§3).
 - Device commands inventoried in addition: 80 (keyboard 14, gameport 14, input 17, console 13, trackdisk 22):
   **79 specified, 1 partial** (TD_MOTOR). Implemented: 80 (the 5 console commands CMD_RESET, CMD_CLEAR,
   CMD_STOP, CMD_START, CMD_FLUSH, refused by us at `c4bdddc`, were added on 2026-11-04). Timer (3) and audio (15) are described
   globally in §4: both fully specified and implemented.
-- What remains unspecified is concentrated in: **graphics** (≈ 11.8 KB of "own" ROM code in 53 unspecified or
-  partial LVOs: text and fonts, GELs/animation, regions, line drawing, SetRast), **intuition** gadget lists,
-  string gadgets and window operations (small own code but large closures: RefreshGList ≈ 7.2 KB,
-  SetWindowTitles ≈ 8.5 KB, CloseWindow ≈ 2.5 KB), **exec** messages/IO/semaphores/memory at AutoDoc level
-  (≈ 3 KB, mostly "cited"), and **mathffp** (12 LVOs, nothing specified).
+- What is not fully specified (28 LVOs: 11 partial, 10 cited, 7 absent; ≈ 0.9 KB of "own" ROM code in all) is
+  small and scattered: **exec** 18 (≈ 0.7 KB own: `SetSR`/`SuperState`/`UserState`/`GetCC`,
+  `AllocTrap`/`FreeTrap`, `AllocSignal`/`FreeSignal`, `FindTask`, `Insert`/`RemHead`/`RemTail`, `SetFunction`,
+  `Supervisor`, and the `InitStruct`/`MakeLibrary`/`MakeFunctions`/`FindResident` details); **graphics** 6
+  (≈ 90 b own: `InitBitMap`, `AllocRaster`/`FreeRaster`, `AttemptLockLayerRom`, the two private ROM stubs);
+  **intuition** 4 (`BeginRefresh`/`EndRefresh` beyond the GZZ vectors, `AllocRemember`/`FreeRemember`; closures
+  ≈ 100–170 b each).
 
 | Module | V34 LVOs | Specified | Partial | Cited | Absent | Implemented (dedicated routine) | ROM bytes reached from the vectors |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| exec | 101 | 39 | 12 | 34 | 16 | 101 | 6,778 |
-| graphics | 105 | 52 | 22 | 16 | 15 | 103 | 48,346 |
-| intuition | 74 | 53 | 12 | 8 | 1 | 74 | 42,590 |
+| exec | 101 | 83 | 7 | 6 | 5 | 101 | 6,778 |
+| graphics | 105 | 99 | 2 | 2 | 2 | 103 | 48,346 |
+| intuition | 74 | 70 | 2 | 2 | 0 | 74 | 42,590 |
 | layers | 25 | 25 | 0 | 0 | 0 | 25 | 12,776 |
 | dos | 33 | 33 | 0 | 0 | 0 | 31 | n/m (BCPL) |
 | expansion | 21 | 21 | 0 | 0 | 0 | 21 | 1,710 |
-| mathffp | 12 | 0 | 0 | 0 | 12 | 12 | 1,042 |
+| mathffp | 12 | 12 | 0 | 0 | 0 | 12 | 1,042 |
 | timer (functions) | 3 | 3 | 0 | 0 | 0 | 3 | 360 (whole device) |
 | console (functions) | 2 | 2 | 0 | 0 | 0 | 2 | 3,658 (vectors) + 1,878 (commands) |
 | cia.resource | 4 | 4 | 0 | 0 | 0 | 4 | 256 |
 | disk.resource | 5 | 5 | 0 | 0 | 0 | 5 | 234 |
 | potgo.resource | 3 | 3 | 0 | 0 | 0 | 3 | 178 |
 | misc.resource | 2 | 2 | 0 | 0 | 0 | 2 | 68 |
-| **Total** | **390** | **242** | **46** | **58** | **44** | **386** | |
+| **Total** | **390** | **362** | **11** | **10** | **7** | **386** | |
 
 The ranked list of the most valuable remaining gaps is in §7.
 
@@ -150,6 +156,11 @@ real work (e.g. `SetAPen`, `ClearMenuStrip`) counts as "yes"; "stub" is kept for
 constant. Priorities: same P1/P2/P3 rules, with "absent or stub" read as "null vector, stub, or a command
 refused by us that 1.3 implements".
 
+**Recount of 2026-11-06.** Same levels and rules, over the 81 pages of `docs/analysis/` (this page excluded) and
+the committed tree at `f913aa6`. Every row whose level was not "yes" was searched again (whole word) and the new
+passages read; the "yes" rows were kept unless a newer page contradicted them (none did). The §0 table is the
+per-module sum of the first word of the "Specified?" and "Implemented on our side" columns of §3.
+
 ## 2. The 24 residents of the ROM
 
 ROM area = distance between the module's ROMTag and the next ROMTag in the ROM (code + data; for
@@ -159,7 +170,7 @@ version.
 
 | # | Resident | ROM area (b) | Analysis coverage | Existing specs | On our side | Priority |
 |--:|---|--:|---|---|---|:-:|
-| 1 | exec.library 34.2 | 12,736 | **strong**: ExecBase ABI, boot order, scheduling and private LVOs, task context, exceptions, interrupt dispatch, softints, raw serial I/O, Debug, Procure/Vacate, SumKickData, Alert, warm-reset survival; RawDoFmt (exec-rawdofmt); ports, messages, I/O, library/device/resource calls (exec-messages-io, 2026-11-05); memory and signal semaphores (exec-memory-semaphores, 2026-11-05); left: SetFunction, a few list/signal/trap calls, SetSR/SuperState/UserState/GetCC, MakeLibrary/MakeFunctions/InitStruct details | exec-spec, exec-scheduling, exec-rawdofmt, exec-messages-io, exec-memory-semaphores, coldstart-hardware, alert, custom-chips §3.3/§4.3, boot-sequence, test-vectors, module-map | `src/exec/*` (101/101 LVOs) | P3 |
+| 1 | exec.library 34.2 | 12,736 | **strong**: ExecBase ABI, boot order, scheduling and private LVOs, task context, exceptions, interrupt dispatch, softints, raw serial I/O, Debug, Procure/Vacate, SumKickData, Alert, warm-reset survival; RawDoFmt (exec-rawdofmt); ports, messages, I/O, library/device/resource calls (exec-messages-io, 2026-11-05); memory and signal semaphores (exec-memory-semaphores, 2026-11-05); 83 specified / 7 partial / 6 cited / 5 absent (recount 2026-11-06); left: SetFunction, a few list/signal/trap calls, SetSR/SuperState/UserState/GetCC, MakeLibrary/MakeFunctions/InitStruct details | exec-spec, exec-scheduling, exec-rawdofmt, exec-messages-io, exec-memory-semaphores, coldstart-hardware, alert, custom-chips §3.3/§4.3, boot-sequence, test-vectors, module-map | `src/exec/*` (101/101 LVOs; ranks 11–13 checked against their specs by probes) | P3 |
 | 2 | expansion.library 34.1 | 2,176 | **complete** | autoconfig-v34, uae-hd-boot | `src/exec/expansion.s` | — |
 | 3 | potgo.resource | 332 | **complete** | resources §3, custom-chips §4.2 | `src/exec/potgo.s` | — |
 | 4 | keymap.resource | 74 (+ init and tables in the console area) | **complete** (structure without LVO, default keymap behaviour) | console-keymap §1.1, §5 ; setmap-13 | `src/exec/keymap.s` (no function vectors, as V34; hand-authored keymaps) | — |
@@ -167,7 +178,7 @@ version.
 | 6 | disk.resource | 872 | **complete** | resources §2 ; setpatch-disk-resource ; setpatch-138 §1.7 | `src/exec/diskres.s` | — |
 | 7 | misc.resource | 268 | **complete** | resources §4 | `src/exec/misc.s` | — |
 | 8 | ramlib.library | 1,564 | **complete** (2026-11-04: exec patches, load procedure, concurrency, low-memory expunge; no process in 1.3) | ramlib-v34, boot-sequence, dos-boot-sequence, dos-memory §1.2 | `src/exec/ramlib.s` (without its own process, as 1.3) | P2 |
-| 9 | graphics.library 34.1 | 59,816 | **partial, strong on hardware paths**: blitter, display/copper/VBlank, fills/Flood/ellipses/pixels, sprites, colours; SetRast/RectFill/ScrollRaster and the pen/mode setters (graphics-raster, 2026-11-04); text and fonts, regions, line drawing: see §7 ranks 4, 5, 7 | graphics-blitter, graphics-display, graphics-area, graphics-raster, custom-chips §4.1, graphics-gels, layers §1.1/§6/§7, fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (103/105, the 2 private ones null) | P2 |
+| 9 | graphics.library 34.1 | 59,816 | **strong** (99/105 specified, recount 2026-11-06): blitter, display/copper/VBlank, fills/Flood/ellipses/pixels, sprites, colours, raster (graphics-raster), line drawing (graphics-line), GELs (graphics-gels), text and fonts (graphics-text), regions (graphics-regions); left: InitBitMap and AttemptLockLayerRom (partial), AllocRaster/FreeRaster (cited), the two private ROM stubs | graphics-blitter, graphics-display, graphics-area, graphics-raster, graphics-line, graphics-gels, graphics-text, graphics-regions, custom-chips §4.1, layers §1.1/§6/§7, fastfonts-ff, caesar-boot, monkey-startup, octamed | `src/graphics/*` (103/105, the 2 private ones null) | P3 |
 | 10 | keyboard.device | common area (≈ 1.1 KB by closure) | **complete** (14 commands, handshake, reset) | keyboard-input-devices §2, keyboard-handshake | `src/exec/kbddev.s`, `keyboard.s` | — |
 | 11 | gameport.device | common area (≈ 1.2 KB) | **complete** | gameport-v34, gameport-device-v34 | `src/exec/gameport.s` (14 commands) | — |
 | 12 | timer.device 34.1 | 2,040 | **complete** | timer-v34 | `src/exec/timer.s` | — |
@@ -176,9 +187,9 @@ version.
 | 15 | layers.library 34.1 | 13,312 | **complete** | layers-v34, installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | — |
 | 16 | console.device | common area (≈ 5.5 KB) | **complete** (CSI automaton, keymaps, CDInputHandler, RawKeyConvert, commands) | console-keymap-v34, setmap-13, handlers-v34 §2 | `src/exec/console.s` (READ, WRITE, the 4 keymap commands, both functions; CMD_RESET/CLEAR/STOP/START/FLUSH refused) | P1 |
 | 17 | trackdisk.device 34.1 | 6,908 | **complete** except TD_MOTOR (partial) | trackdisk-official-timing, trackdisk-write, trackdisk-raw-changeint, disk-change | `src/exec/trackdisk.s` (22 commands) | — |
-| 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); SetWindowTitles and the rendering helpers (intuition-render); CloseWindow and the window operations (intuition-windows) | intuition-* (13 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P2 |
+| 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); SetWindowTitles and the rendering helpers (intuition-render); CloseWindow and the window operations (intuition-windows); 70/74 specified (recount 2026-11-06), left: BeginRefresh/EndRefresh (partial), AllocRemember/FreeRemember (cited) | intuition-* (13 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P3 |
 | 19 | alert.hook | 658 | **complete** | alert-v34 §4, coldstart-hardware §8.4 | role played from the boot code (`alert_boothook` in `src/exec/execmisc.s`), not a separate resident | — |
-| 20 | mathffp.library | 1,324 | **complete** (2026-11-05: 12 SP* functions, FFP format, condition codes, library vectors) | mathffp-v34 | `src/exec/mathffp.s` (not yet checked against the spec) | P3 |
+| 20 | mathffp.library | 1,324 | **complete** (2026-11-05: 12 SP* functions, FFP format, condition codes, library vectors) | mathffp-v34 | `src/exec/mathffp.s` (checked against the spec, `tests/mathffp_probe.sh`, 2026-11-05) | — |
 | 21 | workbench.task 34.1 | 35,302 | **strong** | workbench-task, wb-icon-clipping, disk-change §4, loadwb-13 | `src/dos/workbench.s` | — |
 | 22 | dos.library 34.3 | 49,542 | **strong** (33/33 LVOs, ROM file system, CLI, handlers, memory) | dos-v34-spec, dos-lvo-partial, dos-exit-packets, dos-memory, dos-cli, rom-filesystem, bcpl-runtime, handlers, fault, boot-clock, disk-full-write | `src/dos/*` (31/33, GetPacket/QueuePacket null) | — |
 | 23 | romboot.library | 1,052 | partial | uae-hd-boot §2 | `src/exec/romboot.s` | P3 |
@@ -216,14 +227,14 @@ version.
 | -168 | `AddIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 64 / 102 | — |
 | -174 | `RemIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 72 / 86 | — |
 | -180 | `Cause` | yes — custom-chips §3.3 ; exec-scheduling §8 ; trackdisk-raw-changeint §5.4 | yes | 96 / 96 | — |
-| -186 | `Allocate` | yes — exec-memory-semaphores §2.2 (2026-11-05) | yes (not yet checked against the new spec) | 82 / 82 | — |
-| -192 | `Deallocate` | yes — exec-memory-semaphores §2.3 (2026-11-05) | yes (not yet checked against the new spec) | 236 / 318 | — |
-| -198 | `AllocMem` | yes — exec-memory-semaphores §2.4 (2026-11-05) ; exec-spec §4 ; dos-memory §1.1 | yes (not yet checked against the new spec) | 236 / 318 | — |
-| -204 | `AllocAbs` | yes — exec-memory-semaphores §2.7 (2026-11-05) ; setpatch-138 §1.1 ; coldstart-hardware §5.3 ; exec-scheduling §7 | yes (not yet checked against the new spec) | 144 / 144 | — |
-| -210 | `FreeMem` | yes — exec-memory-semaphores §2.5 (2026-11-05) ; exec-spec §4 Memory management | yes (not yet checked against the new spec) | 64 / 382 | — |
-| -216 | `AvailMem` | yes — exec-memory-semaphores §2.6 (2026-11-05) ; exec-spec §4 Memory management | yes (not yet checked against the new spec) | 78 / 78 | — |
-| -222 | `AllocEntry` | yes — exec-memory-semaphores §2.8 (2026-11-05) ; setpatch-138 §1.4 ; dos-memory §2 | yes (not yet checked against the new spec) | 142 / 142 | — |
-| -228 | `FreeEntry` | yes — exec-memory-semaphores §2.9 (2026-11-05) ; setpatch-138 §Requirements | yes (not yet checked against the new spec) | 62 / 62 | — |
+| -186 | `Allocate` | yes — exec-memory-semaphores §2.2 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 82 / 82 | — |
+| -192 | `Deallocate` | yes — exec-memory-semaphores §2.3 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 236 / 318 | — |
+| -198 | `AllocMem` | yes — exec-memory-semaphores §2.4 (2026-11-05) ; exec-spec §4 ; dos-memory §1.1 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 236 / 318 | — |
+| -204 | `AllocAbs` | yes — exec-memory-semaphores §2.7 (2026-11-05) ; setpatch-138 §1.1 ; coldstart-hardware §5.3 ; exec-scheduling §7 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 144 / 144 | — |
+| -210 | `FreeMem` | yes — exec-memory-semaphores §2.5 (2026-11-05) ; exec-spec §4 Memory management | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 64 / 382 | — |
+| -216 | `AvailMem` | yes — exec-memory-semaphores §2.6 (2026-11-05) ; exec-spec §4 Memory management | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 78 / 78 | — |
+| -222 | `AllocEntry` | yes — exec-memory-semaphores §2.8 (2026-11-05) ; setpatch-138 §1.4 ; dos-memory §2 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 142 / 142 | — |
+| -228 | `FreeEntry` | yes — exec-memory-semaphores §2.9 (2026-11-05) ; setpatch-138 §Requirements | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 62 / 62 | — |
 | -234 | `Insert` | cited — workbench-task §3.6 | yes | 60 / 60 | P3 |
 | -240 | `AddHead` | yes — exec-spec §4 Doubly linked lists | yes | 60 / 60 | — |
 | -246 | `AddTail` | yes — exec-spec §4 Doubly linked lists | yes | 24 / 24 | — |
@@ -244,53 +255,53 @@ version.
 | -336 | `FreeSignal` | cited — intuition-misc §4 | yes | 16 / 16 | P3 |
 | -342 | `AllocTrap` | no | yes | 38 / 38 | P3 |
 | -348 | `FreeTrap` | no | yes | 16 / 16 | P3 |
-| -354 | `AddPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes (not yet checked against the new spec) | 24 / 24 | — |
-| -360 | `RemPort` | yes — exec-messages-io §1.5 (2026-11-05) ; fastfonts-ff §2 | yes (not yet checked against the new spec) | 4 / 32 | — |
-| -366 | `PutMsg` | yes — exec-messages-io §1.1 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 6 / 122 | — |
-| -372 | `GetMsg` | yes — exec-messages-io §1.2 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 46 / 46 | — |
-| -378 | `ReplyMsg` | yes — exec-messages-io §1.3 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 26 / 142 | — |
-| -384 | `WaitPort` | yes — exec-messages-io §1.4 (2026-11-05) ; dos-v34-spec §2a | yes (not yet checked against the new spec) | 40 / 40 | — |
-| -390 | `FindPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes (not yet checked against the new spec) | 10 / 10 | — |
-| -396 | `AddLibrary` | yes — exec-messages-io §4.3, §4.4 (2026-11-05) | yes (not yet checked against the new spec) | 14 / 148 | — |
-| -402 | `RemLibrary` | yes — exec-messages-io §4.2 (2026-11-05) | yes (not yet checked against the new spec) | 26 / 26 | — |
-| -408 | `OldOpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; fastfonts-ff §Provenance | yes (not yet checked against the new spec) | 8 / 8 | — |
-| -414 | `CloseLibrary` | yes — exec-messages-io §4.2 (2026-11-05) ; caesar-boot §1 | yes (not yet checked against the new spec) | 20 / 20 | — |
-| -420 | `SetFunction` | partial — fastfonts-ff §1, §3 (returned value) | yes | 30 / 114 | P3 |
-| -426 | `SumLibrary` | yes — exec-messages-io §4.4 (2026-11-05) ; test-vectors §G | yes (not yet checked against the new spec) | 84 / 84 | — |
-| -432 | `AddDevice` | yes — exec-messages-io §3.3, §4.4 (2026-11-05) ; timer-v34 §1.1 | yes (not yet checked against the new spec) | 14 / 64 | — |
-| -438 | `RemDevice` | yes — exec-messages-io §3.3 (2026-11-05) | yes (not yet checked against the new spec) | 26 / 26 | — |
-| -444 | `OpenDevice` | yes — exec-messages-io §3.1 (2026-11-05) ; dos-boot-sequence §Phase D | yes (not yet checked against the new spec) | 78 / 118 | — |
-| -450 | `CloseDevice` | yes — exec-messages-io §3.2 (2026-11-05) ; handlers-v34 §3.6 | yes (not yet checked against the new spec) | 22 / 22 | — |
-| -456 | `DoIO` | yes — exec-messages-io §2.1 (2026-11-05) ; bcpl-runtime §8.4.2 | yes (not yet checked against the new spec) | 114 / 114 | — |
-| -462 | `SendIO` | yes — exec-messages-io §2.2 (2026-11-05) ; handlers-v34 §3.6 | yes (not yet checked against the new spec) | 18 / 18 | — |
-| -468 | `CheckIO` | yes — exec-messages-io §2.4 (2026-11-05) ; intuition-requesters §7.1 | yes (not yet checked against the new spec) | 28 / 28 | — |
-| -474 | `WaitIO` | yes — exec-messages-io §2.3 (2026-11-05) ; intuition-requesters §7.1 | yes (not yet checked against the new spec) | 114 / 114 | — |
-| -480 | `AbortIO` | yes — exec-messages-io §2.5 (2026-11-05) ; intuiticks-repeat §2.1 | yes (not yet checked against the new spec) | 14 / 14 | — |
-| -486 | `AddResource` | yes — exec-messages-io §4.5 (2026-11-05) ; uae-int2 §2.2 | yes (not yet checked against the new spec) | 8 / 8 | — |
-| -492 | `RemResource` | yes — exec-messages-io §4.5 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 32 | — |
-| -498 | `OpenResource` | yes — exec-messages-io §4.5 (2026-11-05) ; setpatch-disk-resource §1 | yes (not yet checked against the new spec) | 18 / 58 | — |
+| -354 | `AddPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 24 / 24 | — |
+| -360 | `RemPort` | yes — exec-messages-io §1.5 (2026-11-05) ; fastfonts-ff §2 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 4 / 32 | — |
+| -366 | `PutMsg` | yes — exec-messages-io §1.1 (2026-11-05) ; dos-v34-spec §2a | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 6 / 122 | — |
+| -372 | `GetMsg` | yes — exec-messages-io §1.2 (2026-11-05) ; dos-v34-spec §2a | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 46 / 46 | — |
+| -378 | `ReplyMsg` | yes — exec-messages-io §1.3 (2026-11-05) ; dos-v34-spec §2a | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 26 / 142 | — |
+| -384 | `WaitPort` | yes — exec-messages-io §1.4 (2026-11-05) ; dos-v34-spec §2a | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 40 / 40 | — |
+| -390 | `FindPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 10 / 10 | — |
+| -396 | `AddLibrary` | yes — exec-messages-io §4.3, §4.4 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 14 / 148 | — |
+| -402 | `RemLibrary` | yes — exec-messages-io §4.2 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 26 / 26 | — |
+| -408 | `OldOpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; fastfonts-ff §Provenance | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 8 / 8 | — |
+| -414 | `CloseLibrary` | yes — exec-messages-io §4.2 (2026-11-05) ; caesar-boot §1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 20 / 20 | — |
+| -420 | `SetFunction` | partial — fastfonts-ff §1, §3 (returned value) ; ramlib §2.1 (chaining; exec marked changed and re-summed) | yes | 30 / 114 | P3 |
+| -426 | `SumLibrary` | yes — exec-messages-io §4.4 (2026-11-05) ; test-vectors §G | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 84 / 84 | — |
+| -432 | `AddDevice` | yes — exec-messages-io §3.3, §4.4 (2026-11-05) ; timer-v34 §1.1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 14 / 64 | — |
+| -438 | `RemDevice` | yes — exec-messages-io §3.3 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 26 / 26 | — |
+| -444 | `OpenDevice` | yes — exec-messages-io §3.1 (2026-11-05) ; dos-boot-sequence §Phase D | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 78 / 118 | — |
+| -450 | `CloseDevice` | yes — exec-messages-io §3.2 (2026-11-05) ; handlers-v34 §3.6 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 22 / 22 | — |
+| -456 | `DoIO` | yes — exec-messages-io §2.1 (2026-11-05) ; bcpl-runtime §8.4.2 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 114 / 114 | — |
+| -462 | `SendIO` | yes — exec-messages-io §2.2 (2026-11-05) ; handlers-v34 §3.6 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 18 / 18 | — |
+| -468 | `CheckIO` | yes — exec-messages-io §2.4 (2026-11-05) ; intuition-requesters §7.1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 28 / 28 | — |
+| -474 | `WaitIO` | yes — exec-messages-io §2.3 (2026-11-05) ; intuition-requesters §7.1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 114 / 114 | — |
+| -480 | `AbortIO` | yes — exec-messages-io §2.5 (2026-11-05) ; intuiticks-repeat §2.1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 14 / 14 | — |
+| -486 | `AddResource` | yes — exec-messages-io §4.5 (2026-11-05) ; uae-int2 §2.2 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 8 / 8 | — |
+| -492 | `RemResource` | yes — exec-messages-io §4.5 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 4 / 32 | — |
+| -498 | `OpenResource` | yes — exec-messages-io §4.5 (2026-11-05) ; setpatch-disk-resource §1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 18 / 58 | — |
 | -504 | `execPrivate7` (= `RawIOInit`) *(private)* | yes — custom-chips §4.3 ; exec-scheduling §9 | yes | 10 / 10 | — |
 | -510 | `execPrivate8` (= `RawMayGetChar`) *(private)* | yes — custom-chips §4.3 | yes | 32 / 32 | — |
 | -516 | `execPrivate9` (= `RawPutChar`) *(private)* | yes — custom-chips §4.3 | yes | 70 / 120 | — |
 | -522 | `RawDoFmt` | yes — exec-rawdofmt (2026-11-05) ; alert §3 ; workbench-task §3.4, §6.4 | yes — checked against the spec (commit `1309b24`, `tests/rawdofmt_probe.sh`) | 214 / 452 | — |
 | -528 | `GetCC` | no | yes | 8 / 8 | P3 |
-| -534 | `TypeOfMem` | yes — exec-memory-semaphores §2.10 (2026-11-05) ; softkick-real-ks13 §Conclusions | yes (not yet checked against the new spec) | 38 / 38 | — |
+| -534 | `TypeOfMem` | yes — exec-memory-semaphores §2.10 (2026-11-05) ; softkick-real-ks13 §Conclusions | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 38 / 38 | — |
 | -540 | `Procure` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 22 / 22 | — |
 | -546 | `Vacate` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 34 / 34 | — |
-| -552 | `OpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; caesar-boot §1 ; dos-boot-sequence | yes (not yet checked against the new spec) | 46 / 86 | — |
-| -558 | `InitSemaphore` | yes — exec-memory-semaphores §4.1 (2026-11-05) ; autoconfig-v34 §1 | yes (not yet checked against the new spec) | 32 / 32 | — |
-| -564 | `ObtainSemaphore` | yes — exec-memory-semaphores §4.2 (2026-11-05) ; autoconfig-v34 §7 | yes (not yet checked against the new spec) | 80 / 104 | — |
-| -570 | `ReleaseSemaphore` | yes — exec-memory-semaphores §4.4 (2026-11-05) ; autoconfig-v34 §7 | yes (not yet checked against the new spec) | 100 / 116 | — |
-| -576 | `AttemptSemaphore` | yes — exec-memory-semaphores §4.3 (2026-11-05) | yes (not yet checked against the new spec) | 48 / 48 | — |
-| -582 | `ObtainSemaphoreList` | yes — exec-memory-semaphores §4.5 (2026-11-05) ; layers §7 | yes (not yet checked against the new spec) | 118 / 142 | — |
-| -588 | `ReleaseSemaphoreList` | yes — exec-memory-semaphores §4.6 (2026-11-05) ; layers §7 | yes (not yet checked against the new spec) | 22 / 22 | — |
-| -594 | `FindSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 10 | — |
-| -600 | `AddSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 12 / 12 | — |
-| -606 | `RemSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 32 | — |
+| -552 | `OpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; caesar-boot §1 ; dos-boot-sequence | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 46 / 86 | — |
+| -558 | `InitSemaphore` | yes — exec-memory-semaphores §4.1 (2026-11-05) ; autoconfig-v34 §1 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 32 / 32 | — |
+| -564 | `ObtainSemaphore` | yes — exec-memory-semaphores §4.2 (2026-11-05) ; autoconfig-v34 §7 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 80 / 104 | — |
+| -570 | `ReleaseSemaphore` | yes — exec-memory-semaphores §4.4 (2026-11-05) ; autoconfig-v34 §7 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 100 / 116 | — |
+| -576 | `AttemptSemaphore` | yes — exec-memory-semaphores §4.3 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 48 / 48 | — |
+| -582 | `ObtainSemaphoreList` | yes — exec-memory-semaphores §4.5 (2026-11-05) ; layers §7 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 118 / 142 | — |
+| -588 | `ReleaseSemaphoreList` | yes — exec-memory-semaphores §4.6 (2026-11-05) ; layers §7 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 22 / 22 | — |
+| -594 | `FindSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 10 / 10 | — |
+| -600 | `AddSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 12 / 12 | — |
+| -606 | `RemSemaphore` | yes — exec-memory-semaphores §4.7 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 4 / 32 | — |
 | -612 | `SumKickData` | yes — exec-scheduling §7 ; coldstart-hardware §5.3 | yes | 88 / 88 | — |
-| -618 | `AddMemList` | yes — exec-memory-semaphores §2.11 (2026-11-05) ; autoconfig-v34 §4 | yes (not yet checked against the new spec) | 84 / 134 | — |
-| -624 | `CopyMem` | yes — exec-memory-semaphores §3 (2026-11-05) ; autoconfig-v34 §6 | yes (not yet checked against the new spec) | 38 / 112 | — |
-| -630 | `CopyMemQuick` | yes — exec-memory-semaphores §3 (2026-11-05) | yes (not yet checked against the new spec) | 4 / 78 | — |
+| -618 | `AddMemList` | yes — exec-memory-semaphores §2.11 (2026-11-05) ; autoconfig-v34 §4 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 84 / 134 | — |
+| -624 | `CopyMem` | yes — exec-memory-semaphores §3 (2026-11-05) ; autoconfig-v34 §6 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 38 / 112 | — |
+| -630 | `CopyMemQuick` | yes — exec-memory-semaphores §3 (2026-11-05) | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 4 / 78 | — |
 
 ### graphics.library (105 LVOs, −30 to −654)
 
@@ -298,15 +309,15 @@ version.
 |---:|---|---|---|---|:-:|
 | -30 | `BltBitMap` | yes — graphics-blitter §1 | yes | 406 / 1680 | — |
 | -36 | `BltTemplate` | yes — graphics-blitter §6 ; fastfonts-ff §2 | yes | 692 / 1864 | — |
-| -42 | `ClearEOL` | no | yes | 56 / 120 | P3 |
-| -48 | `ClearScreen` | no | yes | 66 / 130 | P3 |
-| -54 | `TextLength` | cited — intuition-frame §3.2 ; workbench-task §3.1 | yes | 96 / 96 | P3 |
-| -60 | `Text` | partial — fastfonts-ff §1–§4 ; caesar-boot §2.4 ; console-keymap §3.8 (slicing) | yes | 1028 / 1288 | P2 |
-| -66 | `SetFont` | partial — setpatch-138 §1.9 (NULL arguments, fixed by SetPatch) | yes | 28 / 28 | P3 |
-| -72 | `OpenFont` | cited — preferences-13 §4 ; fastfonts-ff ; intuition-screens §2.5 | yes | 170 / 170 | P3 |
-| -78 | `CloseFont` | cited — intuition-prefs §3.3 ; workbench-task §3.1 | yes | 30 / 30 | P3 |
-| -84 | `AskSoftStyle` | partial — setpatch-138 §1.9 | yes | 36 / 36 | P3 |
-| -90 | `SetSoftStyle` | partial — setpatch-138 §1.9 ; console-keymap §3.7 | yes | 50 / 50 | P3 |
+| -42 | `ClearEOL` | yes — graphics-text §8 | yes | 56 / 120 | — |
+| -48 | `ClearScreen` | yes — graphics-text §8 | yes | 66 / 130 | — |
+| -54 | `TextLength` | yes — graphics-text §6 ; intuition-render §6 | yes | 96 / 96 | — |
+| -60 | `Text` | yes — graphics-text §7 ; fastfonts-ff §1–§4 ; console-keymap §3.8 (slicing) | yes | 1028 / 1288 | — |
+| -66 | `SetFont` | yes — graphics-text §4 ; setpatch-138 §1.9 (NULL arguments, fixed by SetPatch) | yes | 28 / 28 | — |
+| -72 | `OpenFont` | yes — graphics-text §3 ; intuition-screens §2.5 | yes | 170 / 170 | — |
+| -78 | `CloseFont` | yes — graphics-text §4 | yes | 30 / 30 | — |
+| -84 | `AskSoftStyle` | yes — graphics-text §5 ; setpatch-138 §1.9 | yes | 36 / 36 | — |
+| -90 | `SetSoftStyle` | yes — graphics-text §5 ; setpatch-138 §1.9 ; console-keymap §3.7 | yes | 50 / 50 | — |
 | -96 | `AddBob` | yes — graphics-gels §3.2 | yes | 14 / 116 | — |
 | -102 | `AddVSprite` | yes — graphics-gels §3.2 | yes | 14 / 88 | — |
 | -108 | `DoCollision` | yes — graphics-gels §7 ; custom-chips §4.1 | yes | 1330 / 1824 | — |
@@ -324,7 +335,7 @@ version.
 | -180 | `DrawEllipse` | yes — graphics-area §6 | yes | 22 / 672 | — |
 | -186 | `AreaEllipse` | yes — graphics-area §3.3 | yes | 188 / 188 | — |
 | -192 | `LoadRGB4` | yes — graphics-display §3 | yes | 272 / 676 | — |
-| -198 | `InitRastPort` | partial — layers §2.4 (clears 78 bytes) | yes | 10 / 86 | P3 |
+| -198 | `InitRastPort` | yes — graphics-line §2 (every field after the call) ; layers §2.4 (clears 78 bytes) ; graphics-text §2 (DefaultFont) | yes | 10 / 86 | — |
 | -204 | `InitVPort` | yes — graphics-display §1.2 | yes | 16 / 52 | — |
 | -210 | `MrgCop` | yes — graphics-display §5 ; setpatch-138 §1.9 | yes | 1354 / 1474 | — |
 | -216 | `MakeVPort` | yes — graphics-display §4 | yes | 2554 / 3722 | — |
@@ -370,21 +381,21 @@ version.
 | -456 | `OwnBlitter` | yes — graphics-blitter §3 | yes | 24 / 236 | — |
 | -462 | `DisownBlitter` | yes — graphics-blitter §3 | yes | 104 / 234 | — |
 | -468 | `InitTmpRas` | yes — graphics-area §2 | yes | 12 / 12 | — |
-| -474 | `AskFont` | no | yes | 18 / 18 | P3 |
-| -480 | `AddFont` | no | yes | 58 / 58 | P3 |
-| -486 | `RemFont` | no | yes | 78 / 78 | P3 |
+| -474 | `AskFont` | yes — graphics-text §4 | yes | 18 / 18 | — |
+| -480 | `AddFont` | yes — graphics-text §4 | yes | 58 / 58 | — |
+| -486 | `RemFont` | yes — graphics-text §4 | yes | 78 / 78 | — |
 | -492 | `AllocRaster` | cited — monkey-startup §2 ; intuition-input-menus §3.5 | yes | 18 / 32 | P3 |
 | -498 | `FreeRaster` | cited — caesar-boot §1 | yes | 20 / 34 | P3 |
-| -504 | `AndRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1510 | P2 |
-| -510 | `OrRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1278 | P2 |
-| -516 | `NewRegion` | cited — layers §1 ; wb-icon-clipping §1 | yes | 20 / 42 | P3 |
-| -522 | `ClearRectRegion` | partial — layers §1.1 (return value) | yes | 82 / 2582 | P2 |
-| -528 | `ClearRegion` | cited — installclipregion §4.1 ; layers §5.2 | yes | 12 / 110 | P3 |
-| -534 | `DisposeRegion` | cited — wb-icon-clipping §2 | yes | 12 / 142 | P3 |
+| -504 | `AndRectRegion` | yes — graphics-regions §4.6 ; layers §1.1 (return value) | yes | 16 / 1510 | — |
+| -510 | `OrRectRegion` | yes — graphics-regions §4.5 ; layers §1.1 (return value) | yes | 16 / 1278 | — |
+| -516 | `NewRegion` | yes — graphics-regions §4.1 | yes | 20 / 42 | — |
+| -522 | `ClearRectRegion` | yes — graphics-regions §4.8 ; layers §1.1 (return value) | yes | 82 / 2582 | — |
+| -528 | `ClearRegion` | yes — graphics-regions §4.2 ; installclipregion §4.1 | yes | 12 / 110 | — |
+| -534 | `DisposeRegion` | yes — graphics-regions §4.3 | yes | 12 / 142 | — |
 | -540 | `FreeVPortCopLists` | yes — graphics-display §6 | yes | 128 / 214 | — |
 | -546 | `FreeCopList` | yes — graphics-display §6 | yes | 14 / 100 | — |
 | -552 | `ClipBlit` | yes — graphics-blitter §5.3 | yes | 370 / 3206 | — |
-| -558 | `XorRectRegion` | partial — layers §1.1 (return value) | yes | 16 / 1814 | P2 |
+| -558 | `XorRectRegion` | yes — graphics-regions §4.7 ; layers §1.1 (return value) | yes | 16 / 1814 | — |
 | -564 | `FreeCprList` | yes — graphics-display §6 | yes | 74 / 98 | — |
 | -570 | `GetColorMap` | yes — graphics-display §3 | yes | 88 / 88 | — |
 | -576 | `FreeColorMap` | yes — graphics-display §3 | yes | 36 / 36 | — |
@@ -393,9 +404,9 @@ version.
 | -594 | `UCopperListInit` | yes — graphics-display §6 | yes | 16 / 306 | — |
 | -600 | `FreeGBuffers` | yes — graphics-gels §9 | yes | 254 / 264 | — |
 | -606 | `BltBitMapRastPort` | yes — graphics-blitter §5.2 | yes | 272 / 3108 | — |
-| -612 | `OrRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1370 | P2 |
-| -618 | `XorRegionRegion` | partial — layers §1.1 (return value) | yes | 16 / 1906 | P2 |
-| -624 | `AndRegionRegion` | partial — layers §1.1 (return value) | yes | 226 / 2326 | P2 |
+| -612 | `OrRegionRegion` | yes — graphics-regions §4.9 ; layers §1.1 (return value) | yes | 16 / 1370 | — |
+| -618 | `XorRegionRegion` | yes — graphics-regions §4.10 ; layers §1.1 (return value) | yes | 16 / 1906 | — |
+| -624 | `AndRegionRegion` | yes — graphics-regions §4.11 ; layers §1.1 (return value) | yes | 226 / 2326 | — |
 | -630 | `SetRGB4CM` | yes — graphics-display §3 | yes | 54 / 54 | — |
 | -636 | `BltMaskBitMapRastPort` | yes — graphics-blitter §5.4 | yes | 470 / 3306 | — |
 | -642 | `graphicsPrivate1` *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P3 |
@@ -460,9 +471,9 @@ version.
 | -336 | `WBenchToBack` | yes — intuition-screens §7.3 | yes | 6 / 1020 | — |
 | -342 | `WBenchToFront` | yes — intuition-screens §7.3 | yes | 6 / 1030 | — |
 | -348 | `AutoRequest` | yes — intuition-requesters §5.1 | yes | 270 / 20666 | — |
-| -354 | `BeginRefresh` | partial — intuition-gzz §2.5 (test vectors) | yes | 12 / 168 | P3 |
+| -354 | `BeginRefresh` | partial — intuition-gzz §2.5 (test vectors) ; intuition-windows §2.2 (LAYERREFRESH cleared only by Begin/EndRefresh) | yes | 12 / 168 | P3 |
 | -360 | `BuildSysRequest` | yes — intuition-requesters §5.2 | yes | 20 / 20004 | — |
-| -366 | `EndRefresh` | partial — intuition-gzz §2.5 (test vectors) | yes | 14 / 136 | P3 |
+| -366 | `EndRefresh` | partial — intuition-gzz §2.5 (test vectors) ; intuition-windows §2.2 (LAYERREFRESH cleared only by Begin/EndRefresh) | yes | 14 / 136 | P3 |
 | -372 | `FreeSysRequest` | yes — intuition-requesters §5.4 | yes | 12 / 2964 | — |
 | -378 | `MakeScreen` | yes — intuition-screens §5.2 | yes | 12 / 322 | — |
 | -384 | `RemakeDisplay` | yes — intuition-screens §5.2 | yes | 6 / 802 | — |
@@ -581,18 +592,18 @@ Sizes: each dos LVO is a thin bridge to a BCPL global (bcpl-runtime §1.4); the 
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `SPFix` | yes — mathffp-v34 §4.1 (2026-11-05) | yes (not yet checked against the new spec) | 82 / 82 | — |
-| -36 | `SPFlt` | yes — mathffp-v34 §4.2 (2026-11-05) | yes (not yet checked against the new spec) | 56 / 56 | — |
-| -42 | `SPCmp` | yes — mathffp-v34 §4.3 (2026-11-05) | yes (not yet checked against the new spec) | 60 / 60 | — |
-| -48 | `SPTst` | yes — mathffp-v34 §4.4 (2026-11-05) | yes (not yet checked against the new spec) | 40 / 40 | — |
-| -54 | `SPAbs` | yes — mathffp-v34 §4.5 (2026-11-05) | yes (not yet checked against the new spec) | 6 / 6 | — |
-| -60 | `SPNeg` | yes — mathffp-v34 §4.6 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 10 | — |
-| -66 | `SPAdd` | yes — mathffp-v34 §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 16 / 16 | — |
-| -72 | `SPSub` | yes — mathffp-v34 §4.7 (2026-11-05) | yes (not yet checked against the new spec) | 254 / 254 | — |
-| -78 | `SPMul` | yes — mathffp-v34 §4.8 (2026-11-05) | yes (not yet checked against the new spec) | 154 / 154 | — |
-| -84 | `SPDiv` | yes — mathffp-v34 §4.9 (2026-11-05) | yes (not yet checked against the new spec) | 166 / 166 | — |
-| -90 | `SPFloor` | yes — mathffp-v34 §4.10 (2026-11-05) | yes (not yet checked against the new spec) | 86 / 366 | — |
-| -96 | `SPCeil` | yes — mathffp-v34 §4.10 (2026-11-05) | yes (not yet checked against the new spec) | 10 / 376 | — |
+| -30 | `SPFix` | yes — mathffp-v34 §4.1 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 82 / 82 | — |
+| -36 | `SPFlt` | yes — mathffp-v34 §4.2 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 56 / 56 | — |
+| -42 | `SPCmp` | yes — mathffp-v34 §4.3 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 60 / 60 | — |
+| -48 | `SPTst` | yes — mathffp-v34 §4.4 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 40 / 40 | — |
+| -54 | `SPAbs` | yes — mathffp-v34 §4.5 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 6 / 6 | — |
+| -60 | `SPNeg` | yes — mathffp-v34 §4.6 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 10 / 10 | — |
+| -66 | `SPAdd` | yes — mathffp-v34 §4.7 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 16 / 16 | — |
+| -72 | `SPSub` | yes — mathffp-v34 §4.7 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 254 / 254 | — |
+| -78 | `SPMul` | yes — mathffp-v34 §4.8 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 154 / 154 | — |
+| -84 | `SPDiv` | yes — mathffp-v34 §4.9 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 166 / 166 | — |
+| -90 | `SPFloor` | yes — mathffp-v34 §4.10 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 86 / 366 | — |
+| -96 | `SPCeil` | yes — mathffp-v34 §4.10 (2026-11-05) | yes — checked against the spec (rank 15, `tests/mathffp_probe.sh`) | 10 / 376 | — |
 
 ### timer.device — functions (3 LVOs, −42 to −54)
 
@@ -876,3 +887,9 @@ points).
 - The 2026-11-06 refresh (§7 ranks 12, 13, 15 and the state paragraph) read only `docs/PLAN.md` (the three
   "coverage §7 rank" entries of 2026-11-05) and `git log` (merges `9da873d`, `773e0cb`, `6eebda9`); the ROM was not
   opened.
+- The full recount of 2026-11-06 (header note, §0, §1 last paragraph, the exec/graphics/intuition/mathffp rows of
+  §2 and the rows of §3) read only `docs/analysis/*.md`, `docs/PLAN.md` (the 2026-11-05 entries of ranks 12, 13
+  and 15), `docs/exec-lvo-table.md`, `git log`, and the committed `src/` vector tables at `f913aa6`. The ROM was
+  not opened, nothing was run against it, `build/amiberry/analysis/` was not read, and no size was re-measured.
+  The pages newly referenced in §3 (`graphics-text-v34`, `graphics-regions-v34`) were checked first: no ROM
+  address, no instruction sequence, no transcription of a routine.
