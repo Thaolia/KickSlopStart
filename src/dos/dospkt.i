@@ -165,7 +165,10 @@ LR_FH            EQU 12             ; BPTR FileHandle | 0
 LR_DOS           EQU 16             ; DOSBase (Read)
 LR_CAP           EQU 20             ; buffer size
 LR_EOF           EQU 24             ; WORD: end of data reached
-LR_SIZE          EQU 26
+LR_HTAB          EQU 26             ; BPTR hunk table of an overlay program (node load) | 0 (whole program)
+LR_HFIRST        EQU 30             ; first hunk of the HUNK_HEADER being loaded
+LR_HEND          EQU 34             ; last hunk + 1
+LR_SIZE          EQU 38
 LS_BUFSZ         EQU 2048           ; LoadSeg read buffer
 ERROR_ACTION_NOT_KNOWN EQU 209     ; dos/dos.i: action/function not supported
 ERROR_DEVICE_NOT_MOUNTED EQU 218   ; dos/dos.i: "xxx:" prefix unknown to the DosList
