@@ -1638,6 +1638,57 @@ of the changed objects are at most 6 words / 4 loose instructions. `conhandler.o
 `boot.o` keep their longest code rows. No new data row reaches the notable list. Any later source change needs a new
 run.
 
+## Re-run 2026-11-06 (`f913aa6..b9edabd`, before the push)
+
+Delta (`src/` only): overlay executables in `src/dos/loadseg.s` (`ls_load_stream` rewritten around a BPTR hunk
+table, `HUNK_OVERLAY` / `HUNK_BREAK`, new `ls_hunkaddr`, `ls_freetab`, `ls_freechain`, overlay-aware
+`dos_unloadseg`), `src/dos/dos_lib.s` (`dos_fn_loadseg`: the `LoadSeg(0, table, fh)` form, file left open, result
+copied to D1) and `src/dos/dospkt.i` (reader fields). Run by a separate analysis agent on production ROMs
+(`make kick-prod`, `romtool info`: `is_kick ok`, checksum ok) built in two worktrees, each with the vlink map of the
+same build (relink of the build objects; only the build-ID bytes from `$1C` differ from the ROM).
+
+Differences from the previous runs: the reference was supplied as a 524,288-byte file whose two halves are
+identical; its first 256 KB half was used. The control corpora (`tiers`, `commodore`, `aros`) were not available on
+the machine, so `--base tiers` was not recomputed and the fixed thresholds of CLAUDE.md were applied
+(**40 words / 19 instructions / 19 loose instructions**). Capstone 5.0.7 in a venv: all three streams measured.
+
+```
+<venv>/bin/python3 -I tests/audit_rom_similarity.py <base|head>.rom <ref256>.rom --map <base|head>.map --selftest
+<venv>/bin/python3 -I tests/audit_rom_similarity.py <base|head>.rom <ref256>.rom --map <base|head>.map --seuil 8
+```
+
+| role | sha1 |
+|---|---|
+| reference (524,288 bytes, doubled) | `90933936cce43ca9bc6bf375662c076b27e3c458` |
+| reference, first 256 KB half | `891e9a547772fe0c6c19b610baf8bc4ea7fcb785` |
+| base ROM (production, `f913aa6`) | `accd38a51414fc28a5aa0b71d7e05a4665df3b2a` |
+| head ROM (production, `b9edabd`) | `83875e993afeb8fd26762e08da2db07290dde336` |
+
+- **Layout.** Binary 222,352 → 222,796 bytes (+444): `loadseg.o` 866 → 1,272, `dos_lib.o` 5,660 → 5,700.
+
+| stream | metric | base `f913aa6` | head `b9edabd` |
+|---|---|---|---|
+| mots | A tokens | 110,470 | 110,697 |
+| mots | max (all) / max code/table | 449 / 449 (`topaz9_loc+$2`) | 449 / 449 (same) |
+| mots | max code, data excluded | **19** (`exp_cpbinding+$22`) | **19** (same, `$0DF64`) |
+| mots | code ≥ 8 / ≥ 16 / ≥ 32 | 111 / 10 / 5 | 111 / 10 / 5 |
+| instr | A tokens / max (all) / max code/table | 69,060 / 17 / 17 (`km_us_s42+$0`) | 69,211 / 17 / 17 (same) |
+| instr | max code, data excluded | **13** (`exp_cpbinding+$22`) | **13** (same) |
+| instr | code ≥ 8 / ≥ 16 | 6 / 2 | 6 / 2 |
+| instr-souple | max (all) | 23 (`bcpl_rtdata+$8`, low entropy) | 23 (same row, `$2F614`) |
+| instr-souple | max code/table; code ≥ 8 / ≥ 16 | 17 (keymap); 21 / 2 | 17 (keymap); 21 / 2 |
+| `--seuil 8` list | rows (mots / instr / instr-souple) | 263 / 43 / 91 | 263 / 43 / 91 |
+| self-check | relocated fragments found | 12/12 | 12/12 |
+
+- **Notable lists.** Identical row for row: the keymap string tables `km_us_s42` / `km_fr_s42` (76 words) and the
+  CharLoc tables `topaz8_loc+$2` (281) / `topaz9_loc+$2` (449), already qualified as data. No code match reaches
+  40 words or 19 instructions.
+- **Delta.** One `--seuil 8` row changed: `mots`, code/table, `loadseg.o`, `ls_load_stream+$5E` → `ls_load_stream+$90`
+  (`$FED712`), 8 words, inside the rewritten function, 11 words below the code baseline. No row in
+  `dos_fn_loadseg`, `dos_fn_unloadseg`, `ls_hunkaddr`, `ls_freetab` or `ls_freechain`.
+
+**Verdict: PASS.** The longest code match stays 19 words / 13 instructions (`exp_cpbinding+$22`, untouched).
+
 ## Provenance of the data that matches
 
 Every match longer than the longest code match (19 words / 13 instructions), and the smaller default-value tables
