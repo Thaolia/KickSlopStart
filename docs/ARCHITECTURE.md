@@ -1940,6 +1940,10 @@ differs.
   (the ROM Interrupt cannot hold it), timer.device keeps its own copy (`TIMER_CIAA`) for the lost-interrupt
   recovery. Andromeda "D.O.S." overwrites low chip RAM; with the dev ROM's CIA-B timer still running, the next INT6
   jumped through the overwritten pointer (SOFTWARE FAILURE, address error).
+  **Keys of a non-console active window are dropped (2026-11-08)**: `console_input_handler` (`src/exec/console.s`)
+  no longer converts a RAWKEY into the shared read buffer when intuition's active window is not a console unit
+  (console-keymap-v34 §6.4); before, they waited there for the next console opened (a later AmigaShell showed them).
+  With no active window at all the key still goes to the buffer for the window-less readers.
   Then the gameport VBlank server rewrites POTGO `$0F00` every frame through `WritePotgo` (inline DISABLE/ENABLE,
   callable from interrupts) and reports the middle button (`$6A`); `OpenScreen` Height ≤ 0 and the Workbench screen
   follow NormalDisplayRows (200 lines on NTSC), and the pointer is bounded by `PTR_YLIM` (`src/exec/gameport.s`,

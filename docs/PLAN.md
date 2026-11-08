@@ -1349,9 +1349,14 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   forced at graphics init (LOF stayed 0, the demo waits for line 312); fixed with `gfx_longframe` at init and
   `LoadView(NULL)`. The dev ROM then crashed in the CIA-B server through the overwritten low-RAM pointer `$530`; the
   CIA servers now take their resource from IS_DATA. Demo runs on dev and prod ROMs (screenshots at 60 and 120 s),
-  prepush-check FAIL=0, Workbench 1.3.3 boots and the Shell takes keys. Open: the demo keeps our CLI window frame in
-  one playfield (it reuses chip RAM at fixed addresses without clearing it); whether 1.3 shows a clean background
-  there needs a black-box probe.
+  prepush-check FAIL=0, Workbench 1.3.3 boots and the Shell takes keys. The "AmigaDOS" window frame seen during the
+  demo is its own artwork: 1.3 shows it too (graphics-display-v34 §8.5, probe of the same day).
+  **Keys typed with no console window (2026-11-08)**: on the Workbench desktop after `endcli`, "echo keyboard ok"
+  typed with only the backdrop window active came back as "echo keyboard o" in the next AmigaShell (same on the
+  previous ROM). console.device's input handler converted every RAWKEY into its shared 16-byte read buffer even when
+  the active window was not a console unit. 1.3 gives such a key to the active window only (console-keymap-v34
+  §6.4): the handler now drops it; with no active window at all the window-less readers still get it. Same test: the
+  Shell opens on an empty `1.SYS:>` line and takes "echo second"; prepush-check FAIL=0.
   **Ask in the startup-sequence (2026-11-05)**: `ask` as the first line of a startup-sequence never returned: the
   boot console handler (`conhandler.s`) ended a READ line with CR, and c:Ask (BCPL) reads up to LF, so it asked the
   handler for more and waited for ever. Shown live: after "y" + Return the handler state held a second READ of 200

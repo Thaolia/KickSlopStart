@@ -661,9 +661,18 @@ console_input_handler:
         ; interrupts off (bare Disable: the input chain also runs from the VBlank interrupt).
         addq.b  #1,EB_IDNEST(a6)
         move.w  #INTF_INTEN,INTENA
+        ; A key whose active window is not a console belongs to that window only (d4 != 0): 1.3 never keeps it for
+        ; a console opened later (console-keymap-v34 §6.4). With no active window, the window-less readers get it.
+        moveq   #0,d4
         bsr     con_target           ; keymap of the active console unit, else the default one
         lea     CONB_DEFKM(a2),a0
+        bne.s   .cih_unit
+        move.l  CONB_IBASE(a2),d0
         beq.s   .cih_km
+        move.l  d0,a1
+        move.l  52(a1),d4            ; ib_ActiveWindow
+        bra.s   .cih_km
+.cih_unit:
         move.l  d0,a0
         lea     CU_KEYMAP(a0),a0
 .cih_km:
@@ -676,6 +685,8 @@ console_input_handler:
         bge.s   .cih_conv
         move.w  #$C000,INTENA        ; SETCLR + INTEN
 .cih_conv:
+        tst.l   d4
+        bne.s   .cih_next
         move.l  a2,-(sp)
         lea     4+CIH_KEYMAP(sp),a2
         move.l  a3,a0
