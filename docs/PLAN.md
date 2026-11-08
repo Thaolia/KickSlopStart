@@ -1063,9 +1063,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to
   pr_FileSystemTask, disk-error requesters (213/214/225/226), UnLoadSeg of overlays, IsInteractive(0).
   **Console CSI (2026-11-04)**: the §3 automaton and sequences, tab stops, modes, full SGR, font-sized cells, DSR and
-  raw-event reports (`tests/con_probe.s` on our ROM). Open: italic is not drawn by Text; MULTIBROADCAST raw events
-  go to the active unit only; the RastPort copy in the ConUnit is not kept; IECLASS_SIZEWINDOW does not recompute
-  the geometry yet.
+  raw-event reports (`tests/con_probe.s` on our ROM). Open: MULTIBROADCAST raw events go to the active unit only;
+  the RastPort copy in the ConUnit is not kept. Done since: italic drawn by Text (graphics-text work), and each unit
+  recomputes its geometry after IECLASS_SIZEWINDOW at its next write.
   **Console commands (2026-11-04)**: CMD_RESET, CMD_CLEAR, CMD_STOP, CMD_START and CMD_FLUSH on open units
   (`tests/concmd_probe.sh`); the last P1 gap of `docs/analysis/coverage-v34.md`. Open: the input ring is 16 bytes
   shared by all units (1.3: 255 bytes per unit), and CMD_READ with io_Length 0 still waits instead of replying -4.
@@ -1089,9 +1089,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   DrawImage ignores Image.Depth; window titles are drawn and measured in the screen font, the drag pattern starts
   at x0 without a title; SetWindowTitles shows a screen title only for the active window (NULL = no text);
   ActivateWindow updates the screen title; OpenWindow sets ScreenTitle to DefaultTitle; SHOWTITLE is kept in
-  Screen.Flags. `tests/irender_probe.sh` matches every §7 vector (text ink differs with our own glyphs). Open:
-  BorderTop stays 10 (frame spec: WBorTop + font height + 1, which gives 11 on a WBorTop-2 screen with topaz 8,
-  while 10 was measured on 1.3 Workbench windows: the Workbench screen's WBorTop is to be measured).
+  Screen.Flags. `tests/irender_probe.sh` matches every §7 vector (text ink differs with our own glyphs). BorderTop
+  is 11 since the drawer-layout fix, as measured on 1.3 on 2026-11-04 (the earlier "10" reading was wrong).
   **Windows (2026-11-04)**: spec `intuition-windows-v34`. WindowLimits checks each value as 1.3 (signed 32-bit
   minima, unsigned 16-bit maxima, a refused value not stored, result 0); SizeWindow posts NEWSIZE to the active
   window, also for (0,0); the successor of a closed active window gets INACTIVEWINDOW then ACTIVEWINDOW;

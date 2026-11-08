@@ -166,7 +166,7 @@ Plain links, no `@`: these files are long and are read when the question comes u
 
 | Question | Document |
 |----------|----------|
-| What is next, what is done | `docs/PLAN.md` |
+| What is next, what is done | `docs/PLAN.md` · `docs/REMAINING-WORK.md` (gaps to 1.3 parity) |
 | Module layout, memory map, boot flow | `docs/ARCHITECTURE.md` · `docs/analysis/module-map.md` |
 | Clean-room method, what a spec may contain | `docs/CLEANROOM.md` · `docs/AUDIT.md` (`docs/AUDIT.fr.md`) |
 | Similarity audits, PR records | `docs/audit/rom-similarity.md` · `docs/audit/aros-similarity.md` · `docs/audit/pr-*.md` |

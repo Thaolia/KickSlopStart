@@ -19,7 +19,7 @@
 ; its sub-items; a hit sub-item is highlighted (the parent item lit again); outside the sub-items,
 ; the box stays; a title removes it. MENUPICK code with the sub-item number; item with sub-items without a
 ; chosen sub-item -> MENUNULL.
-; Scope: no multi-selection, no MENUVERIFY, no MutualExclude, no separate HIGHBOX/HIGHIMAGE.
+; Scope: no multi-selection, no MutualExclude, no separate HIGHBOX/HIGHIMAGE.
 ; IMPLEMENTATION track ("clean"): AutoDocs intuition.library + intuition/intuition.h. NO ROM reading.
 
                 include "exec.i"

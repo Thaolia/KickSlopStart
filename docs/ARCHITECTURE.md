@@ -989,8 +989,8 @@ differs.
   - Proven under FS-UAE with the Workbench 1.2 disk, programs started from the shell: Lines shrunk to its minimum
     and enlarged without Guru, contents back from the SuperBitMap; Clock enlarged three times then shrunk, no old
     dial left after enlarging.
-  - Still open: the real ROM sends no NEWSIZE for a SizeWindow() call (probe Q4; untested for a drag of the
-    size gadget, which is what Lines and Clock rely on); we send it for both. After a shrink, Clock may leave a
+  - Corrected since: 1.3 does end every SizeWindow() with a NEWSIZE, sent to the active window
+    (intuition-windows-v34 §0 point 7, §5 and §10 point 8; the earlier probe Q4 reading was wrong); we send it too. Still open: after a shrink, Clock may leave a
     sliver drawn with its old size before it handles NEWSIZE. Lines draws about 37 lines/s with our CPU line
     drawing into its 1008 x 512 SuperBitMap, so its small window changes much less often than on the 1.3 ROM
     (frozen for ~16 s there too, then bursts every few seconds). A non-GZZ SUPER_BITMAP window's frame is not put
@@ -1572,8 +1572,8 @@ differs.
   - Default values from the spec, except colours (theme), pointer colours and offset (our image).
   - Preferences' centring frame (PROPGADGET without AUTOKNOB, background in the window's DetailPen, inherited from the screen)
     is black on our side instead of colour 0: consequence of the theme (DetailPen 2 on the WB screen), not a rendering bug.
-  - **Not done**: RemakeDisplay (the view offset has no visible effect), rows/columns adjustment,
-    passing of KeyRptDelay/Speed to input.device (no key repeat on our side).
+  - **Not done**: rows/columns adjustment (RowSizeChange/ColumnSizeChange stay 0). Done since: RemakeDisplay, and
+    KeyRptDelay/Speed passed to input.device (key repeat).
   (20) **Caesar loads from the floppy** (spec caesar-boot, clean-room reviewed; path identical to the real
   1.3: FAIRLIGHT intro, click, `play caesar`, language choice, title screen, game menu).
   - **graphics, 1.3 copper scheme**: COP1LC points to a copinit (wait for line 12, MOVE COPJMP2); LoadView
