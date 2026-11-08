@@ -22,6 +22,11 @@ same harness (+22,528, the four slots exactly), so we are now **10,264 above** 1
 1.3.3 boot to the end of its startup-sequence takes 63.1-63.9 s instead of 54.2-54.4 s (two runs each, Amiberry,
 both ROMs side by side).
 
+**Update (2026-11-09): process stack margin 4096 -> 2048.** A/2 idle, production ROM, sum of the MemHeaders read
+with gdb: **873,352** free (871,304 before; the RAM handler's stack), **12,360 above** 1.3 (860,992). Opening a Shell
+from the Workbench now takes 43,056 bytes (47,152 before; 1.3: 33,480, newshell-memory-v34 §2). docs/PLAN.md
+"Shell stack margin (2026-11-09)".
+
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of
 RAM that never enters a MemHeader (section 3). In **chip** RAM we are better: 465,360 bytes free at idle against

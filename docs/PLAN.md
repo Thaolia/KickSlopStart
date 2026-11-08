@@ -1341,6 +1341,20 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   before `ram_expungeall` and its retry: the 8-slot cache (45,056 bytes) is freed when the device semaphore is free
   and no slot is dirty, and is allocated again at the next access. `tests/lowmem_probe.s`: 45,192 bytes of fast
   memory come back after a failing AllocMem (136 before). Not in 1.3, which has no cache (memory-budget-v34).
+  **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
+  title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
+  (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of
+  them the two data blocks of `s/Startup-Sequence`: the CLI reads the script in small pieces and `ofs_stream_read`
+  fetched the current block from trackdisk at every READ (a cache hit, but a full DOS packet + IORequest round trip).
+  The state now remembers the block in its buffer (`SS_BUFBLK`); a seek through the block tables clears it. Safe
+  because a file open for reading holds a shared lock, so no writer can change its blocks. Simulated replacement
+  policies on the trace (LRU-2, LFU with or without ageing, pinned tracks) all did worse than plain LRU, so the
+  4-slot LRU stays. prepush-check FAIL=0; DPaint III (Seek + Read overlay loads) reaches its paint screen.
+  **Shell stack margin (2026-11-09)**: `CP_STKEXTRA` 4096 -> 2048 for processes and handlers; commands keep 4096
+  (`RC_STKEXTRA`, transient). The 68000 part of our runtime used at most 868 bytes at the top of a process stack
+  (pattern left untouched by `bcpl_proc_entry`'s fill: Shell 628, Background CLI 868, RAM handler 260, under dir,
+  list, copy, type, execute). Opening a Shell: 47,152 -> 43,056 bytes (1.3: 33,480); idle desktop 871,304 ->
+  873,352 (1.3: 860,992). prepush-check FAIL=0.
   **Track cache 8 -> 4 slots (2026-11-06)**: `TD_NCACHE` = 4 (`exec.i`), 22,528 bytes of slow RAM back at idle.
   Workbench 1.3.3, A/2, production ROM: 871,312 free (848,784 with 8 slots), 10,264 more than 1.3; boot to the end
   of the startup-sequence 63.1-63.9 s instead of 54.2-54.4 s (two runs each). `docs/MEMORY-USAGE.md` section 6.1.

@@ -705,6 +705,7 @@ ofs_stream_open:
                 move.l  d0,SS_CURBLK(a5)
                 clr.l   SS_POS(a5)
                 clr.l   SS_BLKBASE(a5)
+                clr.l   SS_BUFBLK(a5)                 ; the buffer holds the header
                 moveq   #1,d0
                 bra.s   .so_ret
 .so_dir:
@@ -720,7 +721,9 @@ ofs_stream_open:
 
 ; ofs_stream_read(a1=state, a2=dest, d0=len, a6=SysBase) -> d0 = bytes copied (0 = EOF). Incremental loop: loads
 ; the current data block (512 bytes), advances block by block via next_data when the block is exhausted, copies
-; min(rest of block, rest requested, rest up to EOF). Keeps the cursor (POS/CURBLK/BLKBASE) in the state between calls.
+; min(rest of block, rest requested, rest up to EOF). Keeps the cursor (POS/CURBLK/BLKBASE) in the state between calls;
+; the block already in the buffer (SS_BUFBLK) is not fetched again: the file is held by a shared lock, so no writer
+; can change it while it is open.
 ; Preserves d2-d7/a2-a5 (dest reassigned to a4); a single 512-byte buffer, NEVER a whole-file buffer.
 ofs_stream_read:
                 movem.l d2-d7/a2-a5,-(sp)
@@ -747,9 +750,14 @@ ofs_stream_read:
                 bsr     ofs_blk_valid
                 beq     .sr_done                      ; invalid block (0 / out of bounds) -> end
                 move.l  SS_CURBLK(a5),d0
+                cmp.l   SS_BUFBLK(a5),d0
+                beq.s   .sr_inbuf                     ; small reads (a script read line by line) reuse the block
+                clr.l   SS_BUFBLK(a5)
                 bsr     ofs_read_block
                 tst.l   d0
                 beq     .sr_done
+                move.l  SS_CURBLK(a5),SS_BUFBLK(a5)
+.sr_inbuf:
                 lea     IOREQ_SZ(a3),a0
                 cmp.l   #OFS_T_DATA,OFSB_TYPE(a0)
                 bne     .sr_done                      ; not an OFS data block -> end
@@ -826,6 +834,7 @@ ofs_stream_seek:
                 move.l  SS_TRACKDISK(a5),a2
                 lea     SS_IOREQ(a5),a3
                 move.l  SS_HEADER(a5),d3
+                clr.l   SS_BUFBLK(a5)                 ; the buffer is about to hold header / extension blocks
 .sk_ext:
                 move.l  d3,d0
                 bsr     ofs_read_block

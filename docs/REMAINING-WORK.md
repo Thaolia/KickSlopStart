@@ -48,20 +48,23 @@ specified yet (D1).
 
 The 1.3 rule still has to be probed (D1).
 
-### A5. Boot time and Clock speed — [doc], M
+### A5. Boot time — done 2026-11-09; Clock speed — [doc], S
 
-- With 4 track-cache slots, Workbench 1.3.3 reaches the end of its startup-sequence in 63–64 s. It took 54 s with
-  8 slots. Source: PLAN "Track cache 8 -> 4 slots".
-- The desktop appears after 72–73 s with both the `2c613e7` and `2a86dda` production ROMs (measured 2026-11-08). The
-  forced long frame is therefore not the cause.
+- **Boot:** the Workbench title bar of Workbench 1.3.3 now appears after 61.7 s (two runs), against 68.5–69.0 s on
+  the real 1.3 and 71.0–71.3 s before. Cause: the file system fetched the current data block again from trackdisk at
+  every READ, and the CLI reads `s/Startup-Sequence` in small pieces (818 of the boot's 1,460 block reads were its two
+  data blocks). Each READ now reuses the block already in the handle's buffer (`SS_BUFBLK`, `src/dos/ofs.s`).
+  PLAN "Boot time (2026-11-09)".
 - Clock's speed parity with 1.3 is still open (PLAN "Drawing acceleration").
-- Next step: measure 6 and 4 slots, and the console/text path, on `make kick-prod`.
 
 ### A6. Memory — [src], M
 
-- **Shell cost:** a Shell costs about 52 KB here, against 33–40 KB on 1.3, because of `CP_STKEXTRA` = 4096 in
-  `bcpl.s`.
-- **Idle desktop:** it has 12,264 bytes less free memory than on 1.3.
+- **Shell cost:** opening a Shell takes 43,056 bytes here (47,152 before 2026-11-09), against 33,480 on 1.3
+  (newshell-memory-v34 §2). The process stack margin `CP_STKEXTRA` went from 4096 to 2048 bytes (measured use: 868 at
+  most). The rest of the gap (≈ 9.6 KB) is not broken down yet: BCPL getvec blocks (≈ 10.4 KB in all) and the stacks
+  of the two processes a Shell starts are the candidates.
+- **Idle desktop:** 873,352 bytes free, **12,360 above** 1.3 (860,992) since the 4-slot track cache and the
+  smaller stack margin.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
 ### A7. Workbench 1.2 Lines and Clock — [doc], S–M
@@ -347,7 +350,7 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
    pieces exist.
 2. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
 3. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
-4. **A5 and A6, boot time and Shell memory.** Both are visible in daily use.
+4. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
 5. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
 6. **A2, A3 and A4 after D1/D3.** They finish the Workbench menus and selection.
 7. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.

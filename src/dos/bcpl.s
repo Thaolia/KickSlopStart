@@ -48,7 +48,10 @@ ERR_GLOBIN      EQU 111              ; Result2 of globin when a global exceeds G
 ERR_BADTEMPLATE EQU 120              ; Result2 of rdargs on error
 ACTION_MORE_CACHE EQU 18
 WF_BUFSZ        EQU 128              ; local output buffer of writef & co (flushed when full and at the end)
-CP_STKEXTRA     EQU 4096             ; 68000 stack margin of processes created by createproc
+CP_STKEXTRA     EQU 2048             ; 68000 stack margin of processes created by createproc and of handlers: our
+                                     ; runtime used at most 868 bytes at the top of a process stack (Shell, Background
+                                     ; CLI and RAM handler under dir/list/copy/execute, 2026-11-09)
+RC_STKEXTRA     EQU 4096             ; same margin for the stack of a command (runcommand): transient
 
 ; --- call / return (A5 / A6) - multiply MUST be at bcpl_call+$10, divide at +$12 ("jsr $10(a5)" calls) ---
 ; The ABI fixes this entry at 16 bytes (frame -12/-8/-4, jumps at +$10/+$12): the sequence is therefore identical to
@@ -1559,7 +1562,7 @@ g_qpkt:
         BLEAVE
 
 ; 121 runcommand(seg, stack, args, len): runs the first hunk of seg on a new stack of "stack" longs (spec §4.3),
-; plus the CP_STKEXTRA margin (our runtime takes its buffers and packets on the command's 68000 stack):
+; plus the RC_STKEXTRA margin (our runtime takes its buffers and packets on the command's 68000 stack):
 ; a0 = BADDR(args), d0 = len, 4(sp) = size, pr_ReturnAddr -> this long, A1 = calling frame, A2 = current GV, A3 =
 ; segment, A5/A6 = BCPL call/return. -> return code (d0 of the command); -1 if stack impossible. Result2 intact.
 g_runcommand:
@@ -1569,7 +1572,7 @@ g_runcommand:
         move.l  d3,d7                ; args (BPTR)
         move.l  a4,d3                ; d3 = calling frame (a1 is clobbered by AllocMem)
         move.l  ($4).w,a6
-        add.l   #CP_STKEXTRA/4,d6    ; margin: our runtime uses the command's 68000 stack (buffers, packets)
+        add.l   #RC_STKEXTRA/4,d6    ; margin: our runtime uses the command's 68000 stack (buffers, packets)
         move.l  d6,d1
         bsr     rt_getvec_raw
         tst.l   d0

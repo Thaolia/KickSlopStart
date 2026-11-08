@@ -117,7 +117,8 @@ SS_BLKBASE      EQU 20            ; LONG: absolute offset of the start of the da
 SS_HEADER       EQU 24            ; LONG: header block of the file (block tables: direct seek)
 SS_VOL          EQU 28            ; BPTR: volume node of the disk on which the file was opened (handler)
 SS_LOCK         EQU 32            ; APTR: shared FileLock held while the file is open (handler)
-SS_IOREQ        EQU 36            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
+SS_BUFBLK       EQU 36            ; LONG: data block held in the block buffer (0 = none): READ does not fetch it again
+SS_IOREQ        EQU 40            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
 WS_HDR          EQU 4             ; LONG: header block of a write state (ofswrite.s)
 WS_VOL          EQU 36            ; BPTR: volume node of a write state (ofswrite.s), like SS_VOL
 WS_LOCK         EQU 64            ; APTR: exclusive FileLock held while a write state is open (handler)

@@ -1940,6 +1940,11 @@ differs.
   (the ROM Interrupt cannot hold it), timer.device keeps its own copy (`TIMER_CIAA`) for the lost-interrupt
   recovery. Andromeda "D.O.S." overwrites low chip RAM; with the dev ROM's CIA-B timer still running, the next INT6
   jumped through the overwritten pointer (SOFTWARE FAILURE, address error).
+  **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
+  the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
+  block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).
+  **Stack margins (2026-11-09)**: processes and handlers created by the BCPL runtime get `CP_STKEXTRA` = 2048 bytes
+  over their BCPL stack (measured use of our 68000 runtime: 868 at most); a command's stack gets `RC_STKEXTRA` = 4096.
   **Keys of a non-console active window are dropped (2026-11-08)**: `console_input_handler` (`src/exec/console.s`)
   no longer converts a RAWKEY into the shared read buffer when intuition's active window is not a console unit
   (console-keymap-v34 §6.4); before, they waited there for the next console opened (a later AmigaShell showed them).
