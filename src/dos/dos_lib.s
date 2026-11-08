@@ -851,16 +851,30 @@ dos_fn_currentdir:
 
 ; LoadSeg(name d1 [C string]) -> d0 = BPTR seglist | 0. Opens the file via dos Open (-30, MODE_OLDFILE) and
 ; loads it as it is read (ls_load_stream: buffer of LS_BUFSZ bytes refilled by Read, large hunks read
-; directly into place; CODE/DATA/BSS hunks + RELOC32 relocations -> BPTR seglist), then closes it (-36). Failure:
-; IoErr = 103 (memory) or 121 (not an executable). No buffer for the whole file: a large packed executable
-; (Caesar, 126 KB for 657 KB of hunks) fits in 1 MB.
+; directly into place; CODE/DATA/BSS hunks + RELOC32 relocations -> BPTR seglist), then closes it (-36), except for
+; an overlay program, whose file stays open for its overlay manager (closed by UnLoadSeg). Failure: IoErr = 103
+; (memory) or 121 (not an executable). No buffer for the whole file: a large packed executable (Caesar, 126 KB for
+; 657 KB of hunks) fits in 1 MB.
+; LoadSeg(0 d1, hunk table d2 [BPTR], fh d3 [BPTR]): the overlay manager's call, loads the node at the current
+; position of fh into the table, up to HUNK_BREAK; fh stays open.
+; The result is also in D1: DPaint III's overlay manager tests D1.
 dos_fn_loadseg:
         movem.l d2-d7/a2-a6,-(sp)
         move.l  a6,a4                  ; a4 = DosBase (survives all calls)
+        moveq   #0,d4                  ; d4 = hunk table of an overlay node load | 0
+        tst.l   d1
+        bne.s   .ls_open
+        move.l  d2,d4
+        beq     .ls_fail0
+        move.l  d3,d7                  ; d7 = BPTR fh, positioned by the overlay manager
+        beq     .ls_fail0
+        bra.s   .ls_load
+.ls_open:
         move.l  #MODE_OLDFILE,d2       ; Open(name d1 [already set], mode d2 = ACTION_FINDINPUT)
         bsr     dos_fn_open            ; d0 = BPTR fh | 0; a6 restored = DosBase
         move.l  d0,d7                  ; d7 = BPTR fh
         beq.s   .ls_fail0
+.ls_load:
         move.l  ($4).w,a6
         move.l  #LS_BUFSZ,d0
         move.l  #MEMF_PUBLIC,d1
@@ -877,8 +891,9 @@ dos_fn_loadseg:
         move.l  d7,LR_FH(sp)
         move.l  a4,LR_DOS(sp)
         move.l  #LS_BUFSZ,LR_CAP(sp)
+        move.l  d4,LR_HTAB(sp)
         move.l  sp,a0
-        jsr     ls_load_stream         ; d0 = seglist | 0, d1 = error code (loadseg.o far away -> jsr)
+        jsr     ls_load_stream         ; d0 = seglist | 0, d1 = keep-open flag | error code (loadseg.o far -> jsr)
         lea     LR_SIZE(sp),sp
         move.l  d0,d5
         move.l  d1,d6
@@ -886,9 +901,17 @@ dos_fn_loadseg:
         move.l  #LS_BUFSZ,d0
         jsr     LVO_FREEMEM(a6)
 .ls_close:
+        tst.l   d4
+        bne.s   .ls_result             ; the overlay manager owns fh
+        tst.l   d5
+        beq.s   .ls_doclose
+        tst.l   d6
+        bne.s   .ls_result             ; overlay program: fh stays open
+.ls_doclose:
         move.l  a4,a6
         move.l  d7,d1
         bsr     dos_fn_close
+.ls_result:
         move.l  d5,d0
         bne.s   .ls_ret
         move.l  ($4).w,a0              ; IoErr set AFTER the Close (whose reply resets pr_Result2 to 0)
@@ -897,6 +920,7 @@ dos_fn_loadseg:
 .ls_fail0:
         moveq   #0,d0
 .ls_ret:
+        move.l  d0,d1
         movem.l (sp)+,d2-d7/a2-a6
         rts
 

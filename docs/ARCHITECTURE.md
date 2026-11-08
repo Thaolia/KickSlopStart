@@ -1590,6 +1590,18 @@ differs.
     directly in place, IoErr 103 (memory) or 121 (format). The shell loads its commands with LoadSeg instead
     of reading the whole file. `csr.exe` (126 KB packed, 657 KB of hunks) did not fit with a whole-file
     buffer and exited with "Error code 121".
+  - **Overlay executables (2026-11-06, DPaint III)**: `ls_load_stream` keeps a hunk table of `table_size` BPTRs
+    (0 = hunk not loaded) instead of content addresses. A whole-program load stops at `HUNK_OVERLAY` ($3F5): it reads
+    the N+1 longwords of overlay table that follow N, requires the overlay manager header at the start of the root
+    code (`$0000ABCD` at +4) and fills +8 = BPTR FileHandle (left open), +12 = APTR overlay table, +16 = BPTR hunk
+    table (+20, the global vector, untouched). Both tables are AllocMem blocks with their size in the longword before
+    them. The manager then calls `LoadSeg(0, table d2, fh d3)` after a `Seek` to the node's file offset; that form
+    loads one node (`HUNK_HEADER` whose table_size equals its first hunk, `first = last` = node hunk, contents,
+    `HUNK_END`, `HUNK_BREAK` $3F6) into the caller's table, bounded by that table's size, and leaves fh open.
+    `dos_unloadseg` recognises an overlay root (marker, and `table[0]` = the seglist being freed), closes the file
+    and frees both tables before the chain. `LoadSeg` returns its result in D1 as well: DPaint III's manager tests
+    D1 after `Seek` and `LoadSeg` and retries forever when it reads a failure there. Contract read from DPaint III's
+    own overlay manager and file layout (third-party program).
   - After `caesar.boot`, the WB screen has only one plane: the theme's pen 2 merged with the background (invisible text,
     "blind" typing). The console now takes the colour next to the background when text and background fall on the
     same colour once reduced to the planes of the BitMap (white on green).

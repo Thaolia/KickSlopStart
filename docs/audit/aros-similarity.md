@@ -527,6 +527,31 @@ Coverage against comparable AROS asm stays at 0.11 % (exact), 0.33 % (norm) and 
 baselines. **Verdict unchanged**: the longest run against AROS is still the 42-token BCPL bridge entry imposed by the
 1.3 ABI, below the unrelated-code baseline.
 
+## Re-run 2026-11-06 (`f913aa6..b9edabd`, overlay executables)
+
+Same tool, on the `src/` of two worktrees (base `f913aa6`, head `b9edabd`), against a **full** AROS checkout
+(commit `411503cabc`, reached through the `third_party/aros` link) instead of the sparse clone: 158 comparable asm
+files / 46,102 tokens (reference: 65 / 22,757), 15,665 comparable C files, ABI whitelist of 3,492 files.
+
+```sh
+python3 -I tests/audit_aros_similarity.py <worktree>/src third_party/aros -k 12 20 30 --limit 20 --json aros.json > aros.md
+```
+
+| comparison | level | base `f913aa6` | head `b9edabd` |
+|---|---|---|---|
+| our asm tokens | exact | 294,156 | 294,837 |
+| src → AROS asm comparable, k = 20 | exact | 0.045 % (132 tokens) | 0.045 % (132 tokens) |
+| src → AROS asm comparable, k = 30 | exact | 0.023 % (69 tokens) | 0.023 % (69 tokens) |
+| max file-pair overlap, k = 20 / 30 | exact | 0.24 % / 0.08 % (`dos/bcpl.s` ↔ `bcpl.S`) | same |
+
+The larger corpus raises k = 12 coverage (short idioms) but leaves k ≥ 20 unchanged. Changed files:
+`src/dos/loadseg.s` and `src/dos/dospkt.i` give **no passage** at any k or level. The `src/dos/dos_lib.s` passages are
+the pre-existing register save/restore and structure-copy idioms, at the same lines or shifted by +24 lines by the
+new LoadSeg code; none is new. Comments: only generic English 5-grams in `loadseg.s`. Constants: `$0000ABCD` (the
+public overlay manager marker) matches an unrelated AROS file; hunk ids `$3F5` / `$3F6` are public.
+
+**Verdict: nothing above the baseline.**
+
 ## Limits
 
 - **Scope of the compared code.** AROS is almost entirely in C; the comparable asm is only 22,757

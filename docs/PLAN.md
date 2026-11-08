@@ -427,7 +427,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
     relocation), HUNK_END. Seglist (AmigaDOS convention, checked against AROS InternalLoadSeg): block `[LONG size][BPTR
     next][contents]`; the BPTR points to the next field (block+4) -> contents at `(BPTR<<2)+4` = block+8. Deliberate D2
     deviations: chip/fast flags ignored (MEMF_PUBLIC); first!=0 / SYMBOL / resident libs / $3FC / overlays not
-    supported (clean failure). Serial proof **D2LOADSEG**: test executable `D2Test` (CODE + DATA section + 1
+    supported (clean failure) [since lifted: memory flags honoured, SYMBOL skipped, overlays loaded (2026-11-06)]. Serial proof **D2LOADSEG**: test executable `D2Test` (CODE + DATA section + 1
     32-bit CODE->DATA relocation) loaded + relocated + EXECUTED -> the code ITSELF emits "D2LOADSEG OK" from
     RAM (same logic as CBOOT in C: the marker comes from the loaded code = proof that it runs WITH relocation). RED
     `D2_NO_RELOC`: load OK but relocation NOT applied -> the absolute pointer stays the link-time offset (0) -> the
@@ -1058,7 +1058,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   IsInteractive(0), requesters for 214 and 226 with ACTION_CURRENT_VOLUME (`tests/fsgap_probe.sh`,
   `tests/fsnodisk_probe.sh`). 213 and 225 requesters done the same day from the analysis track's observation (`fsnodisk_probe.sh notdos|notval`).
   Open: left Amiga + B closes our requester but did not close 1.3's in the analysis runs; LoadSeg of HUNK_OVERLAY
-  files (refused today) and then UnLoadSeg's overlay case, Retry restarting the whole call (name resolution
+  files and UnLoadSeg's overlay case are done (2026-11-06, see "Overlay executables" in ARCHITECTURE.md), Retry restarting the whole call (name resolution
   included) instead of resending the packet; the mouse does not move the pointer while a dos requester is open on
   a CLI-only boot (Amiga-B answers it); from `dos-lvo-partial-v34`: D1 = result on packet LVOs, Info(0) to
   pr_FileSystemTask, disk-error requesters (213/214/225/226), UnLoadSeg of overlays, IsInteractive(0).
