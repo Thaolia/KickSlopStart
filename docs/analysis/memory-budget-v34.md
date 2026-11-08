@@ -226,3 +226,47 @@ Notes:
   chip; DF1 → 2,720 chip beyond its track buffer), not from walking the buffer list.
 - Measurements are from one emulator (Amiberry, cycle-exact A500 preset, PAL). The idle figures were stable
   between 60 s and 170 s of idling.
+
+## 8. Boot time to the Workbench (wall clock)
+
+Measured 2026-11-08 on the real Kickstart 1.3 (34.5) under Amiberry: `amiberry-session start --analysis`, which runs
+`--model A500` (OCS, PAL, 68000) and additionally forces `cpu_compatible`, `cpu_cycle_exact` and `cycle_exact`
+(the emulator log reports "prefetch and cycle-exact 24-bit"). The A500 preset alone is already fully cycle-exact
+(amiberry skill, checked 2026-11-04), so the figures are comparable with a ROM started with the plain preset.
+Memory 512 KB chip + 512 KB slow, DF0 = a fresh copy of the unmodified
+`Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf` for each run, DF1 enabled and empty (preset default),
+one emulator running at a time.
+
+Method: t = 0 when `start` returns; every 2 s (on a fixed schedule from t = 0) `amiberry-session shot <name> x.png
+--via ipc`; crop `230x16+78+38` of each picture; `compare -metric AE` against a crop of the idle desktop title bar
+taken from the end of run 1 (about 130 s). The crop covers "Workbench release." and the first digits of the free
+memory figure. A fourth run polled every 0.5 s to narrow the edges.
+
+| Run | Poll | CLI window ("AmigaDOS") first seen | Title bar first seen | Crop identical to idle reference (AE = 0) |
+|-----|------|------------------------------------|----------------------|-------------------------------------------|
+| 1 | 2 s | 12.0 s | 70.0 s (prev. shot 68.0 s: CLI still open) | 72.0 s |
+| 2 | 2 s | 12.0 s | 70.0 s (68.0 s: CLI) | 72.0 s |
+| 3 | 2 s | 12.0 s | 70.0 s (68.0 s: CLI) | 72.0 s |
+| 4 | 0.5 s | 11.5 s (11.0 s: not yet) | 69.0 s (68.5 s: CLI) | 71.0 s (70.5 s: not yet) |
+
+Result: the Workbench title bar appears between **68.5 s and 69.0 s** after `start` returns; the three 2 s runs
+are identical shot for shot (cycle-exact emulation is deterministic here, the spread is the poll period).
+
+What the screen shows over time:
+
+- About the first 2 s: blank (black at t = 0), then from 2.0-2.5 s a plain white screen (no insert-disk picture: the disk is already in DF0) until the CLI
+  window opens at 11.0-11.5 s.
+- The startup-sequence then runs in the "AmigaDOS" CLI window (version banner, CrossDOS banner, TDPatch13 lines,
+  DI0:/DI1: mounted).
+- **End of the startup-sequence**: the CLI window disappears in the same 0.5 s interval as the Workbench title bar
+  appears (the title bar is the screen's own title, uncovered when the window closes); the RAM DISK and
+  Workbench1.3 icons are already drawn in that first frame. So "title bar visible" and "startup-sequence window
+  closed" are the same event at this resolution: 68.5-69.0 s.
+- The first title bar reads 842,400 free memory; about 2 s later (70.5-71.0 s) it is redrawn with 860,992, the
+  idle value (the memory released by the ending CLI). A comparison that requires AE = 0 against an idle reference
+  therefore triggers about 2 s after the title bar first appears; one that only looks for the change away from the
+  CLI window triggers at the first appearance.
+- The serial port stays silent for the whole boot (0 bytes).
+
+Uncertain: wall-clock figures assume Amiberry runs at real-time speed (no warp); the host was otherwise idle of
+emulators but not of other processes.
