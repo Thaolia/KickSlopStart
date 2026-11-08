@@ -555,7 +555,11 @@ re-probed the same day under Amiberry (default A500 model, 512K chip + 512K slow
   until the next VPOSW write. Software that waits for line 312 (PAL) therefore depends on that forced long frame.
 
 Still open: the rest of §7.2 (item 5) and the boot serial markers of item 7; the boot picture (352 × 272 PAL
-overscan art) loses its bottom rows on NTSC; `gb_VBlank` holds the frame rate instead of being a per-frame flag.
+overscan art) loses its bottom rows on NTSC.
+
+Done since: `gb_VBlank` is a per-frame BYTE flag, no longer the frame rate (`src/graphics/graphics.i`): the
+VBlank server clears it every frame (`gfx_vblank`, `src/graphics/graphics_lib.s`), the GELs code sets it to 1
+(`src/graphics/gels.s`); the frame rate lives in ExecBase VBlankFrequency only (Done 4).
 
 ### 7.1 High (done)
 
@@ -592,7 +596,8 @@ Original findings:
    disk.resource sets DSKEN once at init and it stays on forever (§3.1); disk DMA is armed by DSKLEN only.
    Programs that save/restore DMACON around their own disk code may restore a state our trackdisk does not
    expect. Low cost to align: DSKEN once in `src/exec/diskres.s`, DSKLEN-only arming in trackdisk.
-4. **PAL is hard-coded** (`src/graphics/graphics_lib.s`: `gb_VBlank` 50, `DISPF_PAL`, `MaxDisplayRow` 312):
+4. **PAL is hard-coded** — *fixed 2026-11-02, see Done 4 (`gfx_detect_std`)* (`src/graphics/graphics_lib.s`:
+   `gb_VBlank` 50, `DISPF_PAL`, `MaxDisplayRow` 312):
    §3.5 decides PAL/NTSC by watching the beam in graphics init (VBeamPos above 270). On an NTSC A500 our
    display, VBlankFrequency and UNIT_VBLANK timing are wrong. Fix: beam test at graphics init, never the Agnus
    ID bits.

@@ -185,7 +185,7 @@ version.
 | 13 | audio.device 34.1 | 4,204 | **complete** | audio-device-v34 | `src/exec/audio.s` | — |
 | 14 | input.device | common area (≈ 0.8 KB) | **complete** | keyboard-input-devices §3, intuiticks-repeat, disk-change §3 | `src/exec/input.s` | — |
 | 15 | layers.library 34.1 | 13,312 | **complete** | layers-v34, installclipregion, wb-icon-clipping, intuition-gzz | `src/graphics/layers.s` | — |
-| 16 | console.device | common area (≈ 5.5 KB) | **complete** (CSI automaton, keymaps, CDInputHandler, RawKeyConvert, commands) | console-keymap-v34, setmap-13, handlers-v34 §2 | `src/exec/console.s` (READ, WRITE, the 4 keymap commands, both functions; CMD_RESET/CLEAR/STOP/START/FLUSH refused) | P1 |
+| 16 | console.device | common area (≈ 5.5 KB) | **complete** (CSI automaton, keymaps, CDInputHandler, RawKeyConvert, commands) | console-keymap-v34, setmap-13, handlers-v34 §2 | `src/exec/console.s` (READ, WRITE, the 4 keymap commands, both functions; CMD_RESET/CLEAR/STOP/START/FLUSH since 2026-11-04, `tests/concmd_probe.sh`) | P1 |
 | 17 | trackdisk.device 34.1 | 6,908 | **complete** except TD_MOTOR (partial) | trackdisk-official-timing, trackdisk-write, trackdisk-raw-changeint, disk-change | `src/exec/trackdisk.s` (22 commands) | — |
 | 18 | intuition.library 34.3 | 52,248 | **strong**: screens, input engine/IDCMP, menus, requesters, prefs, frame, GZZ, prop gadgets, pointer, IBase locks; string gadgets/ActivateGadget (intuition-strgad); SetWindowTitles and the rendering helpers (intuition-render); CloseWindow and the window operations (intuition-windows); 70/74 specified (recount 2026-11-06), left: BeginRefresh/EndRefresh (partial), AllocRemember/FreeRemember (cited) | intuition-* (13 pages), alert-v34 §2 | `src/intuition/*` (74/74) | P3 |
 | 19 | alert.hook | 658 | **complete** | alert-v34 §4, coldstart-hardware §8.4 | role played from the boot code (`alert_boothook` in `src/exec/execmisc.s`), not a separate resident | — |
@@ -801,8 +801,9 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
 - **Null vectors (4)**: graphics `graphicsPrivate1/2` (−642, −648; ROM stubs themselves, no known caller);
   dos `GetPacket/QueuePacket` (−162, −168; return 0, whereas 1.3 maps them to BCPL globals, dos-exit-packets §3;
   no Workbench 1.3.3 caller).
-- **console.device**: `CMD_RESET`, `CMD_CLEAR`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` return IOERR_NOCMD on both
-  the unit and the null-unit path; 1.3 implements them (console-keymap §2.4: CLEAR empties the input buffer and
+- **console.device** — *done 2026-11-04* (`tests/concmd_probe.sh`, §7 rank 1): `CMD_RESET`, `CMD_CLEAR`,
+  `CMD_STOP`, `CMD_START`, `CMD_FLUSH` used to return IOERR_NOCMD on both the unit and the null-unit path; 1.3
+  implements them (console-keymap §2.4: CLEAR empties the input buffer and
   is never replied, STOP/START hold and release the queued CMD_READs, FLUSH aborts them with −2, RESET = STOP +
   FLUSH + START). `CMD_UPDATE` and `CMD_INVALID` are refused by both.
 - **input.device**: `CMD_CLEAR` replies 0, whereas 1.3 never replies it (deliberate, as keyboard-input-devices
@@ -814,7 +815,8 @@ Status re-checked on 2026-11-04 (`c4bdddc`).
   from the boot code.
 - **Not checked here**: completeness of the routines behind the "yes" entries. Several specs carry their own
   "implementation gaps" sections (custom-chips §7, dos-memory, rom-filesystem §11–§12 probes); they are the
-  reference for what each routine still lacks.
+  reference for what each routine still lacks. The implementation-side inventory of remaining gaps (at `e6d7bcb`)
+  is `docs/REMAINING-WORK.md`.
 
 ## 7. The most valuable remaining gaps (ranked 2026-11-04, state updated 2026-11-06)
 
