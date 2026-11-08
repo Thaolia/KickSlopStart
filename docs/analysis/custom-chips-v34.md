@@ -102,7 +102,7 @@ Columns: register (HRM name, public offset), access, who (module — public func
 | DIWSTRT/DIWSTOP/DDFSTRT/DDFSTOP `$08E-$094` | W | graphics init, `LoadView(NULL)` | `$2C81`/`$F4C1`/`$38`/`$D0` by the CPU; otherwise copper MOVEs built by MakeVPort/MrgCop. [M:sd] | graphics-display §2, §4 |
 | VPOSR `$004` | R | graphics — `VBeamPos`, init (PAL and genlock detection), `LoadView` (LOF bit, short-frame wait), VBlank server (LOF in interlace), `QBSBlit` (beam position vs blit line) | Only the vertical position and bit 15 (LOF) are used; the Agnus ID bits (8-14) are never tested. [M:sd] | graphics-display §7.4, §8 |
 | VHPOSR `$006` | R | graphics — init, `LoadView`, VBlank server | Beam line (read together with VPOSR as one long by VBeamPos). [M:sd] | graphics-display §7 |
-| VPOSW `$02A` | W | graphics init, `LoadView(NULL)` | VPOSR \| `$8000` (forces a long frame; V8 is written back as read — observed `$8001`). [M:sd] | graphics-display §2 |
+| VPOSW `$02A` | W | graphics init, `LoadView(NULL)` | VPOSR \| `$8000` (forces a long frame; V8 is written back as read — observed `$8001`). Two writes in a cold boot to the insert-disk screen, none elsewhere; VPOSR then reads LOF = 1 on the insert-disk screen and the Workbench (§7.0). [M:sd] | graphics-display §2 |
 | DSKPT `$020` (long) | W | trackdisk | Per transfer. [M:s] | trackdisk-timing §3 |
 | DSKLEN `$024` | W | disk.resource init; trackdisk | `$4000` (disarmed) at disk.resource init; trackdisk: disarm `$4000`, arm by **double write** (`$8000`\|words, observed `$9CBE` for a read), disarm. [M:sd] | trackdisk-timing §3 |
 | SPRxPT `$120-$13E` | — | — | Never written by the CPU: copinit's copper MOVEs (installed by GetSprite/ChangeSprite) and VSprite copper lists. [M:sd] | §4.1 |
@@ -540,9 +540,22 @@ Done too (2026-11-02, third pass): gameport units 0/1 with every GPD_* command (
 serial I/O of item 7 (RawIOInit sets SERPER 372 and the coldstart calls it, RawMayGetChar 7 bits, RawPutChar waits
 for TBE then honours Ctrl-S and calls Debug on DEL; Debug itself is still an empty LVO, no ROM-Wack).
 
-Still open: the rest of §7.2 (item 5) and the boot serial markers of item 7; the boot picture (352 × 272 PAL overscan art) loses its bottom rows on
-NTSC; `LoadView(NULL)` does not force a long frame through VPOSW; `gb_VBlank` holds the frame rate instead of being
-a per-frame flag.
+Done too (2026-11-08, commit 2a86dda): graphics init and `LoadView(NULL)` force a long frame (`gfx_longframe`:
+VPOSW := VPOSR | `$8000`, written outside lines `$xFF`), as graphics-display-v34 §2 describes. The real ROM was
+re-probed the same day under Amiberry (default A500 model, 512K chip + 512K slow, cycle-exact) [M:d]:
+- VPOSR read `$8000` at every sample (IPC memory reads while running, and gdb reads with the CPU stopped, which
+  always lands at line 4 of a frame): 6 samples on the insert-disk screen, 4 on the Workbench 1.3.3 desktop after
+  the startup-sequence, 2 more with an AmigaShell window open. LOF = 1 throughout; V8 = 0 in these samples only
+  because of where they were taken.
+- A logging watch on VPOSW across a hard reset (cold boot to the insert-disk screen) recorded exactly **two** CPU
+  writes, both of `$8001` (LOF set, V8 copied from VPOSR), both issued from the same graphics routine (the
+  display-register reset that §2.1 attributes to init and `LoadView(NULL)`). No other module writes VPOSW.
+- Clearing LOF by hand (IPC write of 0 to VPOSW) on the running insert-disk screen leaves VPOSR at `$0000` for
+  every later sample: a non-interlaced Agnus (as emulated) never sets LOF by itself, so every frame stays short
+  until the next VPOSW write. Software that waits for line 312 (PAL) therefore depends on that forced long frame.
+
+Still open: the rest of §7.2 (item 5) and the boot serial markers of item 7; the boot picture (352 × 272 PAL
+overscan art) loses its bottom rows on NTSC; `gb_VBlank` holds the frame rate instead of being a per-frame flag.
 
 ### 7.1 High (done)
 

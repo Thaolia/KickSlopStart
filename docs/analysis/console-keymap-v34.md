@@ -695,6 +695,25 @@ The handler **returns NULL**: it consumes the whole chain (last standard handler
 - io_Length = −1: treated as "1 byte at most". [O ROM]
 - No echo, no editing, no CR → LF conversion: that is the console-handler's (CON:) job.
 
+### 6.4 Keys typed while no console window is active (Workbench 1.3.3, 2026-11-08) [O probe]
+
+Real ROM under Amiberry (A500, 512K chip + 512K slow), copy of the Workbench 1.3.3 boot disk, black box:
+1. After the startup-sequence, the initial CLI has ended (`endcli`): the exec task list holds input.device,
+   trackdisk.device ×2, File System ×2, RAM and Workbench, and no CLI process. The only window is the Workbench task's
+   backdrop window (title "Workbench", BACKDROP flag set), and it is intuition's **ActiveWindow** (read from
+   IntuitionBase with gdb).
+2. "echo keyboard ok" + Return typed through IPC raw keycodes. Nothing changes on screen.
+3. The Workbench1.3 disk is opened, then the Shell icon. The new AmigaShell shows `1.SYS:> ` with an **empty**
+   input line and the cursor right after the prompt: none of the keys typed in step 2 appear.
+4. Return in that Shell gives an empty command and a second `1.SYS:> ` prompt: nothing was buffered invisibly
+   either.
+
+So on 1.3 keystrokes go to the active window only (here the Workbench backdrop, which does not keep them); no
+console unit stores them for a window opened later. A console.device unit only receives the RAWKEYs that intuition
+routes to its own window (§6.2), and a new unit starts with an empty input buffer [D]. An implementation that shows
+earlier keystrokes in a newly opened Shell is buffering them outside this path (for instance in a boot console
+handler or in a unit that outlived its window).
+
 ---
 
 ## 7. What differs on a real A500

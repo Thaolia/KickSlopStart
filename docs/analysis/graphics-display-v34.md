@@ -519,6 +519,44 @@ bottom $12C) has its bottom WAIT capped at MaxDisplayRow − 1 = $104 → `… F
   the init forces a long frame (VPOSW bit 15). The two mechanisms (VBlank choosing from LOF, and
   crossed MOVE COP2LC at the end of the list) give the same result as long as they are consistent.
 
+### 8.4 Long frame after boot, probed under Amiberry (2026-11-08) [S]
+
+Real ROM under Amiberry (default A500 model, 512K chip + 512K slow, cycle-exact), black box:
+- VPOSR reads `$8000` (LOF = 1) on the insert-disk screen, on the Workbench 1.3.3 desktop after the
+  startup-sequence and with an AmigaShell open (12 samples, IPC reads while running and gdb reads with the CPU
+  stopped).
+- A logging watch on VPOSW over a cold boot to the insert-disk screen sees two CPU writes, both `$8001`, from the
+  display-register reset of §2 (init / `LoadView(NULL)`); nothing else writes VPOSW.
+- With LOF cleared by hand (VPOSW := 0), VPOSR stays `$0000`: in non-interlace the emulated Agnus never sets LOF
+  again, so frames stay short (last PAL line 311) until the next forced long frame. The forced write of §2 is what
+  makes PAL frames reach line 312 under emulators whose reset state is LOF = 0.
+
+### 8.5 A takeover that draws its own "CLI window": Andromeda "D.O.S." (2026-11-08) [S]
+
+Probed on the real ROM under Amiberry with a copy of `assets/test_adf/Andromeda-DOS.adf` (its startup-sequence only
+runs `D.O.S.exe`), screenshots looked at after about 8, 14, 20, 30, 45, 60 and 120 s:
+- The demo runs on 1.3. From about 14 s to the end of the run (120 s and beyond) the screen shows, on a dark navy
+  background (COLOR00 `$025`), a **white-framed 640 × 200 window with an "AmigaDOS" title bar, depth gadgets,
+  a sizing gadget and an orange cursor block**, exactly where the initial CLI window sits. The demo parts
+  (logo with the eye, triangle, rotating letters, checkerboard road with balls) play inside and partly outside that
+  frame; the title bar text changes to a scroller ("calle…", "self! ]"). Outside the frame the background is clean.
+- That frame is **the demo's own artwork, not the OS window**: the demo runs its own display (COP1LC points to a
+  short copper list in low chip RAM that sets the sprite pointers then strobes COPJMP2; COP2LC alternates between
+  the demo's own lists in chip RAM). Those lists use a 2-plane hires band for the top 11 lines (the fake title bar,
+  whose planes sit at fixed addresses in the first ~20 KB of chip RAM and contain the scroller text), a single
+  lores line repeated with a negative modulo for the side borders, and the demo's planes for the effects. None of
+  the bitplane pointers in these lists points into the Workbench screen's BitMap.
+- Proof by elimination: writing zeros over the whole Workbench screen BitMap (both planes, 40 KB) while the demo
+  ran changed nothing on screen — the frame and the title bar stayed.
+- Memory layout of the probed run (512K chip + 512K slow, RAM addresses of this run, given as examples): the
+  Workbench screen opened for the initial CLI is 640 × 256 × 2, BytesPerRow 80; its two planes are 20,480 bytes
+  each, allocated back to back from about 43 KB into chip RAM (`$AB70`-`$14B6F` here), i.e. **above** the low chip
+  area the demo uses at fixed addresses (its first copper list around 10 KB, sprite data just above it, title-bar
+  planes around 13 KB and 18 KB). The initial "AmigaDOS" window (640 × 200 at 0,0) still exists in intuition's
+  window list during the demo, but nothing of it is displayed.
+- Consequence for an implementation: seeing a CLI-like frame during this demo is expected; a clean background
+  would be wrong. What must match is that the OS screen bitmap is not shown at all (only the demo's lists run).
+
 ---
 
 ## 9. Open points
