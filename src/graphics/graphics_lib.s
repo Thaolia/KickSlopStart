@@ -256,6 +256,7 @@ graphics_initfunc:
         move.l  a0,gb_SimpleSprites(a2)
         move.w  #GFX_COLOR_BIT,gb_system_bplcon0(a2)
         bsr     gfx_detect_std       ; PAL or NTSC: public GfxBase values + ExecBase VBlankFrequency
+        bsr     gfx_longframe
         lea     gb_TOFWaitQ(a2),a1
         jsr     newlist
         lea     gb_BlitSem(a2),a0
@@ -1614,6 +1615,20 @@ gfx_LoadView:
         move.w  #$F4C1,DIWSTOP
         move.w  #$0038,DDFSTRT
         move.w  #$00D0,DDFSTOP
+        bra     gfx_longframe
+
+; gfx_longframe: forces a long frame, as 1.3's init and LoadView(NULL) do (graphics-display-v34 §7.2): out of power-on
+; LOF may stay 0 for good (non-interlaced Agnus never toggles it), and programs wait for line 312, which only a long
+; PAL frame has (Andromeda "D.O.S."). VPOSW also rewrites line bit 8, so it is written back as read, outside lines
+; $xFF where that bit is about to change. The wait is bounded in case the beam does not move. Clobbers d0.
+gfx_longframe:
+        move.w  #2000,d0
+.lf_wait:
+        cmp.b   #$FF,VHPOSR
+        dbne    d0,.lf_wait
+        move.w  VPOSR,d0
+        or.w    #$8000,d0
+        move.w  d0,VPOSW
         rts
 
 ; gfx_WaitBlit(): waits until the blitter is idle (poll DMACONR, bit 14 = BBUSY). Double read (A1000 quirk).

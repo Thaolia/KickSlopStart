@@ -194,8 +194,8 @@ RES_LASTPRI  EQU $0000051C    ; M4 demo: last RT_PRI initialised (descending ord
 RES_COUNT    EQU $00000520    ; M4 demo: number of demo residents initialised
 ; $00000524: ex-VBL_SVC (M6a VBlank hook) — REMOVED in M7f (timer_vblank is a VERTB chain server)
 VBL_SVCDATA  EQU $00000528    ; M6a: timer.device base (passed in a1 to the server; read by timer_micro_service)
-CIAA_PTR     EQU $0000052C    ; M6b: ciaa.resource base (0 until created)
-CIAB_PTR     EQU $00000530    ; M6b: ciab.resource base
+; $0000052C/$00000530: ex-CIAA_PTR/CIAB_PTR — REMOVED: the CIA servers take their resource from IS_DATA (programs
+; that take over low chip RAM overwrote them, and the next CIA interrupt jumped through garbage)
 CIA_FIRED    EQU $00000534    ; M6b: counter — an ICR vector was served (proof)
 WP_TCONS     EQU $00000538    ; M7a demo: wake-ups of task_timer (blocks on the MICROHZ unit)
 VBL_INSURG   EQU $0000053C    ; M7a: UBYTE — scheduler list surgery IN PROGRESS (vbl_handler).
@@ -604,7 +604,8 @@ TIMER_TODUS  EQU LIB_SIZE+46   ; word: microseconds per TOD tick (20000 or 16667
 CIA_TODLO    EQU $800          ; TOD (event counter): low, middle, high byte; reading the high byte latches the
 CIA_TODMID   EQU $900          ; three until the low one is read, writing the low one restarts counting
 CIA_TODHI    EQU $A00
-TD_SIZE      EQU LIB_SIZE+48   ; size of the timer.device base (Library + 2 unit lists + system time + arming)
+TIMER_CIAA   EQU LIB_SIZE+48   ; long: ciaa.resource base (0 = none), for the lost-interrupt recovery
+TD_SIZE      EQU LIB_SIZE+52   ; size of the timer.device base (Library + 2 unit lists + system time + arming)
 UNIT_MICROHZ EQU 0             ; unit selector in IO_UNIT (= real timer.device numbering)
 UNIT_VBLANK  EQU 1             ; (OpenDevice would set a struct Unit*; our minimal impl = the index)
 EB_SOFTVER    EQU $22

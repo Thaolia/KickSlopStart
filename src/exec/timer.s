@@ -28,7 +28,7 @@
                 xdef    timer_setnow      ; setting of the system time (BCPL global setdatstamp)
 
                 xref    newlist           ; lists.s (NEWLIST of the unit queue)
-                xref    ciaa_server       ; cia.s (distribution of the CIA-A ICR vectors)
+                xref    cia_server        ; cia.s (distribution of the CIA-A ICR vectors)
 
 ; --- timer.device ROMTag (scanned by build_reslist) ---
         EVEN
@@ -578,6 +578,8 @@ timer_initfunc:
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
         beq.s   .ti_nocia
+        move.l  (sp),a0
+        move.l  d0,TIMER_CIAA(a0)
         move.l  a6,-(sp)
         move.l  d0,a6
         moveq   #1,d0
@@ -608,7 +610,8 @@ timer_vblank_service:
         beq.s   .svc_vbl             ; under FS-UAE). Otherwise CIA-A would keep its IR bit set and never request
         btst    #0,CIAA_HW+CIA_CRB   ; an interrupt again (keyboard included): we read the ICR and dispatch here.
         bne.s   .svc_vbl
-        jsr     ciaa_server
+        move.l  TIMER_CIAA(a2),a1
+        jsr     cia_server
 .svc_vbl:
         lea     CIAA_HW,a0           ; clock fold-over (timer-v34 §4): once the TOD reaches 65536 ticks, the base takes
         tst.b   CIA_TODHI(a0)        ; the current time and TOD and counter restart from 0 (reading the high byte

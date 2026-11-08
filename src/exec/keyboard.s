@@ -12,7 +12,7 @@
 ; at reset). Standalone (no SysBase). Clobbers d0-d4/a0-a1. IMPLEMENTATION track: HRM (CIA/keyboard). NO ROM reading.
 ;
 ; F2b = LIVE interrupt-driven driver: kbd_install registers kbd_interrupt on ICR bit 3 (SP) via
-; AddICRVector (cia.resource) + re-enables PORTS/INT2; on each received scancode, cia_dispatch (via ciaa_server,
+; AddICRVector (cia.resource) + re-enables PORTS/INT2; on each received scancode, cia_dispatch (via cia_server,
 ; PORTS chain) calls kbd_interrupt which decodes, handshakes, ignores key-ups, maps keycode -> ASCII (minimal US
 ; keymap) and pushes into an SPSC ring (producer). con_handler (READ) drains this ring (consumer) IN ADDITION
 ; to the serial RBF -> the CLI can be driven from the real keyboard. Keycodes measured under FS-UAE: v=$34 e=$12
@@ -86,7 +86,7 @@ kbd_selftest:
 
 ; kbd_install() [a6=SysBase] -> d0 = 0 (ok) | !=0 (OpenResource failure). Installs the LIVE driver:
 ; empties the ring, SP as INPUT, AddICRVector(bit 3 = SP) -> kbd_interrupt, re-enables PORTS/INT2 (turned off after
-; the M7B demo). ciaa_server (left on the PORTS chain) acknowledges the ICR and routes bit 3 to kbd_interrupt.
+; the M7B demo). cia_server (left on the PORTS chain) acknowledges the ICR and routes bit 3 to kbd_interrupt.
 ; Clobbers d0/d1/a0/a1 (a2/a6 preserved).
 kbd_install:
                 movem.l a2/a6,-(sp)

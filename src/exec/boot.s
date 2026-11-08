@@ -29,8 +29,7 @@
                 xref    build_reslist    ; resident.s (scan of the ROMTags)
                 xref    kick_reserve     ; resident.s (KickMem/KickTag check of a warm reset)
                 xref    task_alloc
-                xref    ciaa_server      ; cia.s (PORTS/INT2 server)
-                xref    ciab_server      ; cia.s (EXTER/INT6 server, exclusive vector)
+                xref    cia_server       ; cia.s (PORTS/INT2 server and EXTER/INT6 exclusive vector)
                 xref    gfx_display_init ; graphics/gfx.s (M4a: first Copper-driven display)
                 xref    exec_RawIOInit   ; exec/execmisc.s (coldstart: SERPER as in 1.3)
                 xref    strap_boot       ; exec/strap.s (M6r: boot decision -> insert-disk if not bootable)
@@ -2671,7 +2670,7 @@ d2_done:
 
         ; --- M7b: by-number dispatcher — PORTS chain (INT2) via AddIntServer ---
         ; SCHED_ON still 0 (no scheduler/gate interaction; INT2 level 2 < 3 anyway).
-        ; Registers TWO servers on PORTS: ciaa_server (pri 10, reads+acknowledges the ciaa ICR ->
+        ; Registers TWO servers on PORTS: cia_server (pri 10, reads+acknowledges the ciaa ICR ->
         ; cia_test_vec increments CIA_FIRED) and int2_srv2 (pri 0, increments INT2_SRV2). The chain
         ; calls them IN PRIORITY ORDER (cia before srv2) -> proves AddIntServer + walker + order.
         ; Server structs in RAM (Enqueue links them). A CIA-A Timer A one-shot triggers INT2.
@@ -2690,8 +2689,9 @@ d2_done:
         tst.l   d0
         beq     m7b_fail
         move.l  d0,a3                ; a3 = server block: srvA=+0, srvB=+IS_STRIDE (aligned)
-        move.b  #10,LN_PRI(a3)       ; srvA = ciaa_server, pri 10 (called 1st)
-        move.l  #ciaa_server,IS_CODE(a3)
+        move.b  #10,LN_PRI(a3)       ; srvA = cia_server, pri 10 (called 1st)
+        move.l  #cia_server,IS_CODE(a3)
+        move.l  a2,IS_DATA(a3)       ; its resource base
         move.b  #0,IS_STRIDE+LN_PRI(a3) ; srvB = int2_srv2, pri 0 (called 2nd)
         move.l  #int2_srv2,IS_STRIDE+IS_CODE(a3)
         moveq   #INTB_PORTS,d0       ; AddIntServer(PORTS, srvA)
@@ -2733,7 +2733,7 @@ d2_done:
         move.w  #INTF_PORTS,INTENA   ; disables Paula PORTS -> no INT2 during the demo
         tst.l   INT2_ORDER_SNAP      ; order: did ciaa (pri 10) run BEFORE srv2 (pri 0)?
         beq     m7b_fail
-        moveq   #INTB_PORTS,d0       ; the test server leaves the chain (ciaa_server, the real one, stays)
+        moveq   #INTB_PORTS,d0       ; the test server leaves the chain (cia_server, the real one, stays)
         lea     IS_STRIDE(a3),a1
         jsr     LVO_REMINTSERVER(a6)
         lea     msg_m7b_ok(pc),a0
@@ -3408,9 +3408,12 @@ d2_done:
         tst.l   d0
         beq     m7a_fail
         move.l  d0,a2                ; a2 = ciab base
+        jsr     LVO_DISABLE(a6)      ; no INT6 between the vector and its data (a1 = 0 would leave the ICR unread)
         moveq   #INTB_EXTER,d0       ; SetIntVector(EXTER, &ciab_server_int): EXCLUSIVE vector ->
-        lea     ciab_server_int(pc),a1  ; INT6 goes through the by-number dispatcher (ciab_server/cia_dispatch)
+        lea     ciab_server_int(pc),a1  ; INT6 goes through the by-number dispatcher (cia_server/cia_dispatch)
         jsr     LVO_SETINTVECTOR(a6)
+        move.l  a2,EB_INTVECTS+INTB_EXTER*IV_SIZE+IV_DATA(a6) ; the ROM Interrupt cannot hold the ciab base
+        jsr     LVO_ENABLE(a6)
                 ifeq    PROD            ; dev ROM: level 6 source of the M7d/M7e proofs (the production ROM
         move.l  a6,-(sp)             ; programs no CIA-B timer, like 1.3: games take them)
         move.l  a2,a6                ; AddICRVector(ciab, bit0 = timer A, &m7_int6_int)
@@ -5885,14 +5888,14 @@ cia_test_vec:                        ; ICR server (a1=data, a5=code, a6=SysBase)
 cia_dummy_int:                       ; fake struct Interrupt (AddICRVector only stores the ptr)
         dc.l    0,0,0,0,0
 
-; int2_srv2 (M7b): 2nd server of the PORTS chain (pri 0, after ciaa_server pri 10). Increments
-; INT2_SRV2 and captures the order (CIA_FIRED > 0 at the 1st call => ciaa_server ran before = pri OK).
+; int2_srv2 (M7b): 2nd server of the PORTS chain (pri 0, after cia_server pri 10). Increments
+; INT2_SRV2 and captures the order (CIA_FIRED > 0 at the 1st call => cia_server ran before = pri OK).
 ; a1=IS_DATA (unused), a6=SysBase. Preserves d2-d7/a2-a4 (only touches d0 + memory). Z SET (continue).
 int2_srv2:
         addq.l  #1,INT2_SRV2
         tst.l   INT2_ORDER_SNAP      ; already captured?
         bne.s   .s2_z
-        move.l  CIA_FIRED,d0         ; has ciaa_server (pri 10) already run in THIS INT2?
+        move.l  CIA_FIRED,d0         ; has cia_server (pri 10) already run in THIS INT2?
         beq.s   .s2_z                ; not yet -> we will capture at a later INT2
         move.l  d0,INT2_ORDER_SNAP   ; > 0 -> priority order confirmed (ciaa before srv2)
 .s2_z:
@@ -6168,8 +6171,8 @@ m7_int6_int:
         dc.l    m7_int6_probe       ; IS_CODE
                 endc
 
-; ciab_server_int (M7b): EXCLUSIVE EXTER vector installed by SetIntVector -> ciab_server. Not linked
-; (SetIntVector copies IS_DATA/IS_CODE) -> can stay in ROM. IS_DATA unused (ciab_server reads CIAB_PTR).
+; ciab_server_int (M7b): EXCLUSIVE EXTER vector installed by SetIntVector -> cia_server. Not linked
+; (SetIntVector copies IS_DATA/IS_CODE) -> can stay in ROM; the ciab base is stored into the vector's iv_Data after.
         EVEN
 ciab_server_int:
         dc.l    0                    ; LN_SUCC
@@ -6178,7 +6181,7 @@ ciab_server_int:
         dc.b    0                    ; LN_PRI (unused: exclusive vector)
         dc.l    srv_ciab_name        ; LN_NAME
         dc.l    0                    ; IS_DATA
-        dc.l    ciab_server          ; IS_CODE
+        dc.l    cia_server           ; IS_CODE
 srv_ciab_name:
         dc.b    "ciab.exter",0
         EVEN

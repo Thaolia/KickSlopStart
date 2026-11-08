@@ -6,6 +6,7 @@
 COP1LC   EQU CUSTOM+$080      ; Copper list 1 pointer (longword; reloaded by the hardware at every VBlank)
 VPOSR    EQU CUSTOM+$004      ; beam position high bits; bit 15 = LOF (long frame)
 VHPOSR   EQU CUSTOM+$006      ; beam position: high byte = line (low 8 bits)
+VPOSW    EQU CUSTOM+$02A      ; beam position write: bit 15 = LOF, bit 0 = line 8
 COPJMP1  EQU CUSTOM+$088      ; strobe: (re)starts the Copper on COP1LC (write strobe, value ignored)
 COP2LC   EQU CUSTOM+$084      ; Copper list 2 pointer (copinit jumps to it through a MOVE COPJMP2)
 COPJMP2  EQU CUSTOM+$08A

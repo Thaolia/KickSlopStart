@@ -1345,6 +1345,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Track cache 8 -> 4 slots (2026-11-06)**: `TD_NCACHE` = 4 (`exec.i`), 22,528 bytes of slow RAM back at idle.
   Workbench 1.3.3, A/2, production ROM: 871,312 free (848,784 with 8 slots), 10,264 more than 1.3; boot to the end
   of the startup-sequence 63.1-63.9 s instead of 54.2-54.4 s (two runs each). `docs/MEMORY-USAGE.md` section 6.1.
+  **Andromeda "D.O.S." (2026-11-08)**: hung on our ROM under Amiberry/WinUAE, ran under vAmiga. Cause: no long frame
+  forced at graphics init (LOF stayed 0, the demo waits for line 312); fixed with `gfx_longframe` at init and
+  `LoadView(NULL)`. The dev ROM then crashed in the CIA-B server through the overwritten low-RAM pointer `$530`; the
+  CIA servers now take their resource from IS_DATA. Demo runs on dev and prod ROMs (screenshots at 60 and 120 s),
+  prepush-check FAIL=0, Workbench 1.3.3 boots and the Shell takes keys. Open: the demo keeps our CLI window frame in
+  one playfield (it reuses chip RAM at fixed addresses without clearing it); whether 1.3 shows a clean background
+  there needs a black-box probe.
   **Ask in the startup-sequence (2026-11-05)**: `ask` as the first line of a startup-sequence never returned: the
   boot console handler (`conhandler.s`) ended a READ line with CR, and c:Ask (BCPL) reads up to LF, so it asked the
   handler for more and waited for ever. Shown live: after "y" + Return the handler state held a second READ of 200

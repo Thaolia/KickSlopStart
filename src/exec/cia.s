@@ -18,8 +18,7 @@
                 include "exec.i"
 
                 xdef    cia_init
-                xdef    ciaa_server       ; M7b: PORTS server (ciaa) — IS_CODE of a registered server
-                xdef    ciab_server       ; M7b: EXTER server (ciab)
+                xdef    cia_server        ; PORTS (ciaa) / EXTER (ciab) server, IS_DATA = resource base
 
 ; --- cia.resource ROMTag (scanned by build_reslist) ---
         EVEN
@@ -97,13 +96,7 @@ cia_make:
         or.b    #$C0,CIAB_HW         ; CIA-B /DTR and /RTS high (inactive),
         or.b    #$C0,CIAB_HW+$200    ; then outputs (DDRA)
 .cm_add:
-        jsr     LVO_ADDRESOURCE(a6)  ; AddResource(a1=base) (preserves a1 and d2)
-        cmp.l   #CIAA_HW,d2          ; publish the base pointer for the interrupt handler
-        bne.s   .cm_notA
-        move.l  a1,CIAA_PTR
-        bra.s   .cm_ret
-.cm_notA:
-        move.l  a1,CIAB_PTR
+        jsr     LVO_ADDRESOURCE(a6)  ; AddResource(a1=base)
 .cm_ret:
         rts
 
@@ -224,18 +217,12 @@ cia_SetICR:
         bra     cia_ena
 
 ; --- CIA interrupt server (M6b -> M7b) ---
-; ciaa_server / ciab_server: PORTS / EXTER servers called by the generic by-number dispatcher
-; (interrupts.s). The resource base is NOT taken from IS_DATA (a chained struct Interrupt lives in RAM,
-; but the exclusive EXTER vector lives in ROM -> impossible to freeze a runtime pointer there): each
-; wrapper reads CIAA_PTR / CIAB_PTR (published by cia_make). Reads+acknowledges the chip's ICR via cia_dispatch.
-; Server convention: preserves d2-d7/a2-a4; cia_dispatch clobbers d2/d3/a2 -> we save them. Returns
-; Z SET (d0=0) = "continue the chain" (VERTB server type: lets the other servers run too).
-ciaa_server:
-        move.l  CIAA_PTR,a1          ; ciaa base (0 if not created -> cia_dispatch no-op)
-        bra.s   cia_server_common
-ciab_server:
-        move.l  CIAB_PTR,a1          ; ciab base
-cia_server_common:
+; cia_server(a1 = IS_DATA = resource base): PORTS server (ciaa) / EXTER vector (ciab), called by the by-number
+; dispatcher (interrupts.s). The base comes from IS_DATA, never from a low-RAM global: demos that take over low chip
+; RAM overwrote such a pointer, and the next CIA interrupt jumped through garbage. Reads+acknowledges the chip's ICR
+; via cia_dispatch. Server convention: preserves d2-d7/a2-a4; cia_dispatch clobbers d2/d3/a2 -> we save them.
+; Returns Z SET (d0=0) = "continue the chain" (VERTB server type: lets the other servers run too).
+cia_server:
         movem.l d2/d3/a2,-(sp)
         move.l  a1,a2                ; a2 = resource base
         bsr.s   cia_dispatch

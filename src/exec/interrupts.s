@@ -78,8 +78,6 @@ init_ints:
         lea     VBL_COUNT,a0
         clr.l   (a0)                              ; counter to zero
         clr.b   SCHED_ON                          ; scheduler disarmed (count-only)
-        clr.l   CIAA_PTR                          ; M6b: CIA handlers no-op as long as cia not created
-        clr.l   CIAB_PTR
         clr.l   CIA_FIRED
         clr.b   VBL_INSURG                        ; M7a: no surgery in progress at start
         clr.l   VBL_CLASH                         ; M7a: re-entry clash counter
