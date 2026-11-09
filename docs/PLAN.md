@@ -966,7 +966,7 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   icon is selected (our workbench task; 1.3 behaviour to probe), trackdisk allocates its 12.8 KB chip DMA buffer
   at each read (1.3 shows no such per-read allocation: a chip-full game could lose its disk reads), Bubble Bobble
   makes two allocations on 1.3 (9,876 and 177,152 bytes) that it does not make on ours (other code path, cause
-  unknown). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 [m2] disk window is in the disk's data: the
+  unknown). (The "Empty"/"Diverse" overlap in the Workbench 1.3.3 boot disk window is in the disk's data: the
   "Diverse.info" added in 1997 is positioned at 329,15, over "Empty" at 299,0.)
   **Blitter masks, issue #15 (2026-11-02)**: BLTAFWM/BLTALWM = $FFFF at graphics init; the Kefrens Desert Dream
   spaceship is drawn again. Other blitter registers 1.3 leaves behind are not known (oracle probe if a program needs

@@ -52,7 +52,7 @@ measurement, except the "Input handling tasks" row.
   production ROM exactly. The sum of the live MEMTRACK entries equals the used part of the MemHeaders to the byte.
 - Emulator: `amiberry` skill, `--model A500` preset (cycle-exact OCS PAL), 512 KB chip + 512 KB slow at
   `$C00000`; DF1 is present and empty by default (as in the 1.3 page); A/1 adds `-- -s floppy1type=-1`.
-- Disk: a copy of `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`. For the staged run, its
+- Disk: a copy of the Workbench 1.3.3 boot disk (`assets/wb133.adf`). For the staged run, its
   startup-sequence was rewritten with xdftool, with `echo "MBn …"` + `wait 25` after each step of the 1.3 page; the
   RAM was dumped (`dump binary memory` through `amiberry-session gdb`, CPU stopped) 3 s after `MBn` appeared on the
   serial log. The idle dump is taken 152 s after the last step (stage 9) or 150 s after the "Incorrect Revision"

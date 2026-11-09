@@ -13,7 +13,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROM="${1:?rom}"; OUT="${2:?out_dir}"; TMO="${3:-240}"
 A="$ROOT/.claude/skills/amiberry/scripts/amiberry-session"
-WB="$ROOT/assets/test_adf/Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf"
+WB="$ROOT/assets/wb133.adf"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 vasmm68k_mot -Fhunkexe -kick1hunks -nosym -m68000 -quiet -o "$OUT/ramlib_probe" "$ROOT/tests/ramlib_probe.s" \

@@ -20,6 +20,8 @@ Where to look for what → "File References" below. Scoped rules: `.claude/rules
 - Never extract data embedded in the ROM (fonts, keymaps, images, strings): author it by hand or with a generator
   script under `tests/mk_*.py`, and state its provenance.
 - The proprietary ROM is NEVER committed (gitignore) nor modified (it is `chmod 444`).
+- The repository is public: no disk image file names, dump or crack tags, or personal paths in any committed file or
+  message (`.claude/rules/public-repo.md`, with its pre-commit check).
 
 ### Official Kickstart: reverse engineering only in a dedicated documentation agent — ABSOLUTE RULE
 
