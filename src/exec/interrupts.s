@@ -466,12 +466,16 @@ exec_Wait:
         rts
 
 ; reschedule: yield of Permit/Enable (permitted & enabled, SAR set): Schedule through its vector when a task is
-; ready (from supervisor mode svc_schedule returns at once). Clobbers a0.
+; ready (from supervisor mode svc_schedule returns at once). Preserves every register: Forbid/Permit and
+; Disable/Enable preserve all registers (exec AutoDocs), and callers keep a pointer in a0 across a Permit (an
+; IntuiMessage's IAddress in intuition's wn_post was the first task of TaskReady after a deferred yield).
 reschedule:
         btst    #SFB_SAR,EB_SYSFLAGS(a6)
         beq.s   .rs_none
+        move.l  a0,-(sp)
         move.l  EB_TASKREADY(a6),a0
         tst.l   (a0)                ; a ready task available?
+        movem.l (sp)+,a0            ; (movem keeps the flags)
         beq.s   .rs_clr
         EXEC_SVC svc_schedule
 .rs_none:

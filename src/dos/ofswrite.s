@@ -284,7 +284,6 @@ ow_bmwrite:
 .sy_lp:
         tst.b   BME_DIRTY(a2)
         beq.s   .sy_next
-        sf      BME_DIRTY(a2)
         lea     BME_DATA(a2),a0      ; checksum at long 0
         clr.l   (a0)
         moveq   #0,d0
@@ -299,7 +298,8 @@ ow_bmwrite:
         moveq   #CMD_WRITE,d1
         bsr     ow_io
         tst.l   d0
-        beq.s   .sy_ret
+        beq.s   .sy_ret              ; not written (no floppy): still to write at the next write-back
+        sf      BME_DIRTY(a2)
 .sy_next:
         lea     BME_SIZE(a2),a2
 .sy_nx:
@@ -384,6 +384,7 @@ ow_bmload:
         jsr     dv_rebuild
         tst.l   d0
         beq.s   .bl_failed
+        move.l  #1,OW_BMST(a5)       ; the rebuilt bitmap is the volume's: ow_bmwrite writes it with the root
         bsr     ofs_geo
         tst.l   GEO_WPROT(a0)
         bne.s   .bl_valid            ; read-only disk: validated in memory only

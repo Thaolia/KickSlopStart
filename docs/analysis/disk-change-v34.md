@@ -35,7 +35,9 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
    if it has **no lock** open ⇒ the volume node is **removed from the DosList and freed**; otherwise its
    locks are hooked onto `dl_LockList` and **`dl_Task := 0`** (the node stays in place). Then
    **IECLASS_DISKREMOVED** event. Observed delay: 0.1–0.3 s after the increment of
-   TD_CHANGENUM. [O]
+   TD_CHANGENUM. [O] A pending write-back is then lost silently; only an ejection **during** a transfer gives
+   the "You MUST replace volume" requester instead, which blocks the operation until Retry with the disk back
+   or Cancel (§2.2.1 point 2). [O]
 3. **Insertion**: the FS launches the **"Validator"** process; it reads the boot block and the
    root block, **finds the volume node with the same name AND the same creation date** (reused:
    `dl_Task := FS port`, locks re-adopted, `dl_LockList := 0`) or **creates one at the head of the list**
@@ -80,6 +82,14 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
   (`OctaMEDv4`, creation date [$188F,$406,$8F7], `Disk.info` 112×67 at (264, 2)), entirely
   null ADF, `TestVol` (new OFS, OctaMED's `Disk.info` moved to (560, 10)), `BadRoot` (root block of
   type 7, correct then incorrect checksum).
+- Ejection during disk activity (§2.2.1 point 2, 2026-11-09): real ROM in headless Amiberry sessions
+  (`amiberry-session start --analysis`, cycle-exact A500), a copy of the Workbench 1.3.3 boot disk whose
+  startup-sequence only runs SetPatch and leaves the boot CLI open, in DF0; blank OFS disks made with
+  `xdftool` in DF1 (fresh copy and name per run). Ejection and insertion through the Amiberry IPC commands
+  `EJECT_FLOPPY 1` / `INSERTFLOPPY <adf> 1`, commands typed with IPC keys, timing from the moment the CLI
+  prompt came back (cursor position on IPC screenshots), screens read on IPC screenshots, disk contents
+  read with `xdftool` on the image after the ejection. Times are wall-clock with the emulator at normal
+  speed (±0.3 s, the screenshot period).
 
 ---
 
@@ -123,10 +133,58 @@ Related specs (not repeated here): `workbench-task-v34.md` §3.3 (disk scan), §
 #### 2.2.1 Ejection [O ROM + O probe]
 
 1. FS `DiskType` := **−1** (DISK_INFO replies, §2.3).
-2. If either of two internal states of the FS is non-zero (semantics [S]: activity/writes in progress),
-   the FS calls dos's error requester (**errorreq, code 3, node of the current volume**) and
-   **does not abandon** the volume: it resumes its loop without detaching [O for the call and the
-   non-detachment; text and exact condition not recorded by probe].
+2. If either of two internal states of the FS is non-zero, the FS calls dos's error requester
+   (**errorreq, code 3, node of the current volume**) and **does not abandon** the volume: it resumes its
+   loop without detaching [O ROM for the call and the non-detachment]. Black-box probe (2026-11-09, real
+   ROM under Amiberry, method in §1) [O]:
+   - **Condition**: the requester appears only when the disk is removed **while an operation is doing disk
+     I/O**: in the middle of `Copy C: DF1:` (writing), of `Echo >DF1:x hello` before its prompt came back,
+     and of `Copy DF1:big NIL:` (**reading** a 300,000-byte file). It does **not** appear for a disk removed
+     with only a **pending write-back** (`Copy C:Dir DF1:` or `Echo >DF1:e hello` finished, ejection
+     0.06 s and 1.3 s after the prompt, i.e. before the 2–3 s write-back of `rom-filesystem-v34.md` §8.4),
+     nor with a **file open for writing but idle** (`Copy * DF1:w` waiting for console input, ejection 2.5 s
+     after its start or after > 5 s), nor after > 5 s of inactivity. The two states therefore mean "an
+     operation with device I/O outstanding", not "bitmap/root not yet written back" [D].
+   - **Text**: window title **"System Request"**, three lines **`You MUST replace volume`** / **volume
+     name** (e.g. `Data`) / **`in unit  1 !!!`** (two spaces between "unit" and the unit number, one space
+     before "!!!"; unit = `fssm_Unit` of the drive), buttons **Retry** (left) and **Cancel** (right). The
+     window is 320 × 72 at (0, 0) of the Workbench screen (measured on a capture, ±1 line), the same frame as
+     the "Please replace volume" requester. It appears **at the ejection**, without any further access, about
+     0.5 s after the disk left the drive (wall-clock time, Amiberry at normal speed). The operation that was
+     running stays blocked behind it.
+   - **Reinserting the same disk** does **not** close it (still up 25 s after the reinsertion): unlike the
+     "Please replace volume" requester (§2.4), it waits for a click. **Retry** with the disk back: the
+     operation resumes where it stopped and completes; the file was complete afterwards (`hello`, header
+     and data present) and, after the next write-back, the root's bitmap flag was valid (−1). Retry or
+     Cancel **without** a disk: the requester comes back at once.
+   - **Cancel** with the disk back (read case): the requester closes and the interrupted read fails
+     (`Copy` prints "Error while Reading"). Cancel without a disk, read case: the read fails, then the next
+     read on the same FileHandle gives the ordinary "Please replace volume / Data7 / in unit  1"
+     requester (§2.4), i.e. the volume is then detached as in point 3. Cancel without a disk, write case:
+     the requester comes back for each further write; `Copy` went on, printed "..copied" for a file whose
+     data never reached the disk, then "Destination is a directory" and "Error while Writing"; after five
+     Cancels the command ended and `Info` showed "No disk present". The disk kept the root written at the
+     first modification (**bitmap flag 0**, so the next mount revalidates) and the interrupted file with a
+     header of size 0.
+   - **Retry with a different disk** in the drive: the FS does **not** check the disk. It carries on with
+     the old volume's state and writes onto the new disk: the remaining files, the old volume's **root
+     block (its name and creation date)** and its bitmap. The other disk became a corrupt copy of the old
+     volume (its own name lost; entries for files written before the swap point to blocks that exist only
+     on the first disk). Observed twice, the second time in a fresh session (`VolD2` → root named `VolD1`).
+     This is what "You MUST replace" guards against. Inserting the other disk alone (without a click) did
+     not write to it.
+   - **Without the requester**, the pending write-back is **lost silently**: the FS detaches as in point 3
+     (`CMD_CLEAR` drops the track that trackdisk was still holding [D]), so the image showed **nothing** of the last
+     command (not even the first-modification root write, which sits on the same track), or, when the
+     command had crossed tracks, the root with bitmap flag 0 and a header of size 0. On reinsertion the
+     validator rebuilds the bitmap (full validation) without any requester: `List` shows the file as
+     "empty"; after the next write-back the disk is valid again (flag −1, orphan data blocks freed).
+     No requester at the ejection, at the next access ("No disk present" from `Info`) or at the
+     reinsertion.
+   - Probe caveat: a disk formatted by `xdftool` has `'DOS\0'` in the root block's last-but-three long (the
+     hash-chain field, 0 on the Workbench 1.3.3 disk). The 1.3 validator follows it as a key: a full
+     validation of such a disk stops at "Error validating disk / <name> / Key 1146049280 out of range". Clear
+     that long (and fix the checksum) on probe disks that will be revalidated.
 3. Otherwise: emptying of the buffer lists, **CMD_CLEAR (5)** on trackdisk, then **detachment of the
    current volume**:
    - **no lock open** on the volume (internal lock list empty) ⇒ the node is **removed from the
@@ -208,7 +266,17 @@ DISKINSERTED seen at boot after `LoadWB delay` / MountMF.) [O probe for the boot
   [S: "replace" when the volume is known (node present, `dl_Task = 0`), "insert" when it is
   not].
 - On reinsertion, locks and FileHandles become valid again (same node, locks re-adopted §2.2.2). [O
-  for the locks, D for the FileHandles]
+  for the locks; FileHandles: see the next point]
+- FileHandle open for writing on DF1, disk removed while idle, then a write/close by the program
+  (`Copy * DF1:z`, a line typed, ejection, then Ctrl-\) [O probe 2026-11-09, Amiberry]: requester
+  **"Please replace volume / Data3 / in unit  1"** (here the third line names the **unit**, two spaces
+  before the number, no "!!!"; not "in any drive" as for the `Examine` above), Retry / Cancel, same 320 × 72
+  frame at (0, 0). Reinserting the same disk closed it on its own (a few seconds, the time of the
+  revalidation) and `Copy` completed: file `z` = "line one", bitmap flag valid after the write-back.
+  **Exception**: when the disk was removed **before the write-back** that would have written the new file's
+  header (ejection 2.5 s after `Copy * DF1:w` started), the requester also closed on reinsertion, but
+  `Copy` **never returned** (still waiting for its packet reply 65 s later; the file systems and the CLI all
+  waiting, no CPU activity). Reproduced in a fresh session. [O; cause not analysed]
 
 ### 2.5 Revalidation on insertion (A5) [O ROM + O probe]
 
@@ -378,6 +446,12 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
 | V14 | ACTION_DISK_INFO during INHIBIT(1) | DiskType `'BUSY'`; after INHIBIT(0): remount, DISKINSERTED [O ROM, not probed at packet level] |
 | V15 | `Workbench1.3` (DF0) dragged on `Data` (DF1), DiskCopy requester up | `Data` → `DF1:BUSY` in the same slot; `Workbench1.3` stays; `DF0:BUSY` added below it; Cancel ⇒ back to the start within ≈ 4 s [O probe, `workbench-task-v34.md` §10.6] |
 | V16 | All-zero disk in DF1 at boot | `DF1:` icon at the top of the column, above `RAM DISK` [O probe] |
+| V17 | `Copy C: DF1:` (or `Copy DF1:big NIL:`), eject DF1 mid-transfer | ≈ 0.5 s later, without further access: "System Request" 320 × 72 at (0, 0), `You MUST replace volume` / `<name>` / `in unit  1 !!!`, Retry / Cancel; the command stays blocked [O probe, §2.2.1 point 2] |
+| V18 | V17, then reinsert the same disk | requester **stays**; Retry ⇒ the command completes, file complete, bitmap valid after the write-back [O probe] |
+| V19 | V17, then Retry or Cancel with the drive empty | write: requester shown again at each further write, the command eventually fails ("Error while Writing"), disk left with bitmap flag 0; read: the read fails, next access ⇒ "Please replace volume / `<name>` / in unit  1" [O probe] |
+| V20 | V17, then insert another disk and Retry | the old volume's data **and root block (name, date)** are written onto the other disk [O probe]; a conforming ROM must at least never write before Retry |
+| V21 | `Echo >DF1:e hello`, eject < 1.5 s after the prompt (write-back pending) | **no requester**; the write is lost (nothing or a size-0 header on the disk, bitmap flag 0 if the root went out); reinsertion ⇒ silent revalidation, `List` shows the file "empty" or absent [O probe] |
+| V22 | `Copy * DF1:z` waiting for input, eject after > 5 s, then Ctrl-\ | "Please replace volume / `<name>` / in unit  1"; reinsertion ⇒ closed on its own, file written [O probe, §2.4] |
 
 ---
 
@@ -387,8 +461,12 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
   (FS-UAE menu paused); only the FS delay (≤ ~1 s after the TD_REMOVE interrupt) is established. The poll
   period is now known from the ROM (~0.5 s disk present, ~2.5 s empty: trackdisk-raw-changeint-v34.md §6.2,
   added 2026-11-02); the measurement remains open.
-- Semantics of the two internal states that prevent detachment on ejection (§2.2.1 point 2),
-  text of the corresponding requester (ROM path seen, not probed); split "replace" / "insert" between dos and FS (§2.4).
+- Text, timing and button effects of the §2.2.1 point 2 requester: settled by probe (2026-11-09). Still
+  open: which exact operations set the two internal states (a short operation with no I/O in flight, e.g.
+  an `Info`, was not tried), and whether the requester comes from the ejection branch or from a failed
+  device request inside the operation (indistinguishable from outside). Split "replace" / "insert" and
+  "in any drive" / "in unit  n" between dos and the FS (§2.4). The `Copy` hang of §2.4 (header never
+  written back) is not explained.
 - What happens to the node when the **last lock of an absent volume** is freed (ACTION_FREE_LOCK
   on a lock of `dl_LockList`): is the node then removed? [not analysed]
 - Exact vertical step between stacked icons: rule h + tf_YSize + 3 (code) versus ≈ 28 lines measured
@@ -421,3 +499,6 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
   structures), without disassembly of the disks' code.
 - [x] 2026-11-05 additions (§2.1 other block devices, §2.2.1 point 5, §2.5 later failures): device replies
   rewritten in flight with the debugger and requesters read on screen; no breakpoint address given.
+- [x] 2026-11-09 additions (§1 last point, §2.2.1 point 2, §2.4 FileHandles, V17–V22): pure black box
+  (IPC eject/insert, screenshots, exec task list, disk images read with `xdftool`); no ROM code read, no
+  address.

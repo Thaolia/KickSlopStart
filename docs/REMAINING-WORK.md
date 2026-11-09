@@ -138,14 +138,20 @@ These are not work unless a doc says they should change.
 
 ## C. Missing or partial features with no known victim (most impactful first)
 
-### C1. Floppy write-back lost on ejection — [doc], M, data loss
+### C1. Ejection with unwritten tracks — done 2026-11-09
 
-1.3 shows a requester and keeps the volume. Source: PLAN "Write-back as on 1.3"; disk-change §2.2.1.
+Probed on 1.3 (disk-change §2.2.1 point 2): a disk ejected with only a pending write-back is lost silently, and the
+"You MUST replace volume / <name> / in unit  n !!!" requester (Retry / Cancel) appears only for an ejection during a
+transfer. Ours shows it whenever the volume was modified since its last write-back, because our data tracks wait in
+trackdisk's cache for the same 2-3 s (maintainer decision): Retry with the disk back writes everything, Cancel drops
+it and the next mount revalidates the disk. trackdisk keeps modified tracks across a disk change until the file
+system writes them or sends CMD_CLEAR.
 
-### C2. trackdisk allocates a 12.8 KB chip buffer on every read — [src], S–M
+### C2. trackdisk DMA buffer — done 2026-11-09
 
-`td_read_track` calls AllocMem on each read. A game that fills chip RAM can lose its disk reads. A persistent buffer
-would remove this failure mode.
+The MFM buffer of the disk DMA (13,630 bytes of chip, the size of an encoded track) is allocated once when
+trackdisk initialises and kept, for reads and for track writes, so a game that fills chip RAM keeps its disk access.
+1.3 keeps one 16,388-byte buffer per opened drive; ours is shared by all drives (one access at a time).
 
 ### C3. Menus — [src], M
 
@@ -353,12 +359,10 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
-2. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
-3. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
-4. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-5. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
-6. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
-7. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
-8. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
-9. **C8, per-unit console input buffers of 255 bytes.**
+1. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
+2. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
+3. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
+4. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
+5. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
+6. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
+7. **C8, per-unit console input buffers of 255 bytes.**

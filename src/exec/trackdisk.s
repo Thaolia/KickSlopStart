@@ -355,6 +355,8 @@ trackdisk_initfunc:
         sf      TD_BUSY
         movem.l d0/d2/a1-a3,-(sp)
         move.l  d0,a2                ; a2 = base
+        clr.l   TD_DMABUF
+        bsr     td_dmabuf            ; taken now, while CHIP memory is free: a game that fills it keeps its reads
         move.l  a2,TD_BASEP
         lea     TDU_UNIT0(a2),a0
         move.l  a0,TD_CUNIT
@@ -462,9 +464,30 @@ td_cache_flush:
         movem.l (sp)+,d0/a0-a1
         rts
 
+; td_pinned(d1.w = slot) -> Z = 0 if it holds a modified track of a drive with no floppy: it waits for the file
+; system's decision and cannot be reused. Preserves everything else.
+td_pinned:
+        movem.l d0/a0,-(sp)
+        lea     TD_CDIRTY,a0
+        tst.b   0(a0,d1.w)
+        beq.s   .pn_ret
+        move.w  d1,d0
+        add.w   d0,d0
+        lea     TD_CTRK,a0
+        move.w  0(a0,d0.w),d0
+        lsr.w   #8,d0                ; unit of the key
+        mulu    #TDU_UNITSZ,d0
+        move.l  TD_BASEP,a0
+        lea     TDU_UNIT0(a0,d0.w),a0
+        tst.b   TDU_ABSENT(a0)
+.pn_ret:
+        movem.l (sp)+,d0/a0          ; (movem keeps the flags)
+        rts
+
 ; td_cache_slot(d0.w = track) -> d1.w = slot number, a3 = its buffer (TD_CACHEBUF + n*5632), Z = 1 if the track is
-; there (hit); otherwise slot to fill: an empty one, failing that the least recently used. Marks the access (LRU:
-; TD_CAGE follows TD_CTRK). Clock overflow: ages reset to 0. Preserves d0/d2-d7/a0-a2/a4-a6.
+; there (hit); otherwise slot to fill: an empty one, failing that the least recently used that is not a modified
+; track of an empty drive (td_pinned). Marks the access (LRU: TD_CAGE follows TD_CTRK). Clock overflow: ages reset
+; to 0. Preserves d0/d2-d7/a0-a2/a4-a6.
 td_cache_slot:
         movem.l d2-d5/a0,-(sp)
         addq.w  #1,TD_CTICK
@@ -492,6 +515,8 @@ td_cache_slot:
 .cs_vict:
         cmp.w   #$FFFF,(a0)
         beq.s   .cs_miss             ; empty: d1
+        bsr     td_pinned
+        bne.s   .cs_vnext
         move.w  TD_CAGE-TD_CTRK(a0),d5
         cmp.w   d4,d5
         bhs.s   .cs_vnext
@@ -522,10 +547,18 @@ td_cache_slot:
         movem.l (sp)+,d2-d5/a0       ; movem does not touch the CCR
         rts
 
-; td_cache_drop(): empties the cache slots of the current unit, modified tracks included (disk changed,
-; CMD_CLEAR). Preserves everything.
+; td_cache_drop(): empties the cache slots of the current unit, modified tracks included (CMD_CLEAR).
+; td_cache_forget(): the same for the unmodified tracks only (disk changed): a modified track waits for the file
+; system, which writes it once the disk is back (Retry of its "You MUST replace volume" requester) or drops it with
+; CMD_CLEAR. Preserve everything.
+td_cache_forget:
+        movem.l d0-d2/a0-a1,-(sp)
+        moveq   #0,d2                ; d2 = 0: the modified tracks stay
+        bra.s   td_cache_unit
 td_cache_drop:
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
+        moveq   #-1,d2
+td_cache_unit:
         move.l  TD_CUNIT,a0
         move.b  TDU_KEY(a0),d1       ; high byte of the keys = unit
         lea     TD_CTRK,a0
@@ -534,13 +567,18 @@ td_cache_drop:
 .cd_lp:
         cmp.b   (a0),d1
         bne.s   .cd_nx
+        tst.b   (a1)
+        beq.s   .cd_drop
+        tst.l   d2
+        beq.s   .cd_nx
+.cd_drop:
         move.w  #$FFFF,(a0)
         sf      (a1)
 .cd_nx:
         addq.l  #2,a0
         addq.l  #1,a1
         dbra    d0,.cd_lp
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rts
 
 ; td_motor_server (VERTB server, a1 = device base): turns off each motor after TD_MOTORIDLE ticks without access (the
@@ -617,7 +655,7 @@ td_check_change:
         sf      TD_BUSY
         tst.b   d1
         bne.s   .cc_high
-        bsr     td_cache_drop
+        bsr     td_cache_forget
         sf      TDU_CYLOK(a0)
         tst.b   TDU_ABSENT(a0)
         bne.s   .cc_ret              ; still no disk
@@ -626,7 +664,7 @@ td_check_change:
 .cc_high:
         tst.b   TDU_ABSENT(a0)
         beq.s   .cc_ret
-        sf      TDU_ABSENT(a0)       ; insertion (the cache was dropped when /CHNG was seen low)
+        sf      TDU_ABSENT(a0)       ; insertion (unmodified tracks were dropped when /CHNG was seen low)
 .cc_event:
         addq.l  #1,TDU_CHG(a0)
         bsr.s   td_signal_change
@@ -659,7 +697,22 @@ td_signal_change:
         movem.l (sp)+,d0-d1/a0-a2
         rts
 
-; td_read_track0(a6=SysBase) -> d0 = chip buffer (raw MFM track) | 0 (timeout / no disk), on the current unit
+; td_dmabuf(a6 = SysBase) -> d0 = the CHIP buffer of the disk DMA (TD_DMASIZE bytes), allocated once and kept (1.3
+; keeps its track buffer too); Z = 1 if there is no CHIP memory for it. Preserves d1-d7/a0-a6.
+td_dmabuf:
+        move.l  TD_DMABUF,d0
+        bne.s   .db_ret
+        movem.l d1/a0-a1,-(sp)
+        move.l  #TD_DMASIZE,d0
+        moveq   #MEMF_CHIP,d1
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  d0,TD_DMABUF
+        movem.l (sp)+,d1/a0-a1
+.db_ret:
+        tst.l   d0
+        rts
+
+; td_read_track0(a6=SysBase) -> d0 = TD_DMABUF holding the raw MFM track | 0 (timeout / no disk), on the current unit
 ; (TD_CUNIT; DF0 for the boot probes, which run before multitasking). MINIMAL B2:
 ; DDRB=$FF (suspect no. 1: without it PRB drives nothing); motor-on + select the drive (motor latch via SELx edge);
 ; spin-up (busy-loop + DSKRDY poll with timeout, continues); seek (recalibration cyl 0 + step-in + side);
@@ -673,10 +726,7 @@ td_read_track0:
 td_read_track:
         movem.l d2/d3/d6/a2,-(sp)
         move.l  d0,d6                 ; d6 = target track
-        move.l  #TD_RAWBYTES,d0       ; raw track buffer in chip RAM (DMA reads ONLY chip)
-        move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
+        bsr     td_dmabuf             ; raw track buffer in chip RAM (DMA reads ONLY chip)
         beq     .rd_ret               ; no chip -> 0
         move.l  d0,a2                 ; a2 = buffer
         bsr     td_position           ; motor, selection, seek, side (IRQs restored)
@@ -700,10 +750,7 @@ td_read_track:
                 endc                 ; RED TD_NO_DMA: DMA not armed -> buffer stays at 0 -> no sync
         bsr     td_dmawait           ; end of DMA, or delay exceeded (no disk)
         bne.s   .rd_done
-        bsr.s   .rd_stop             ; timeout -> free the buffer, return 0
-        move.l  a2,a1
-        move.l  #TD_RAWBYTES,d0
-        jsr     LVO_FREEMEM(a6)
+        bsr.s   .rd_stop             ; timeout -> 0
         moveq   #0,d0
         bra.s   .rd_ret
 .rd_done:
@@ -1398,7 +1445,10 @@ td_wr:
         move.w  d0,-(sp)
         move.w  d1,d0                ; the reused slot is written first if it was modified
         bsr     td_flush_slot
+        move.l  d0,a1
         move.w  (sp)+,d0
+        cmp.w   #0,a1
+        bne     .wr_err              ; it could not be: the request fails, the slot keeps its track
         lea     TD_CTRK,a0
         move.w  d1,d4
         add.w   d4,d4
@@ -1548,6 +1598,8 @@ td_fill:
         move.w  d1,d5                ; d5 = slot
         move.w  d5,d0
         bsr     td_flush_slot
+        tst.l   d0
+        bne     .fi_kept             ; a modified track that cannot be written keeps its slot
         lea     TD_CTRK,a0
         move.w  d5,d4
         add.w   d4,d4                ; d4 = offset of the slot
@@ -1569,7 +1621,6 @@ td_fill:
         move.w  #TDERR_NoSecHdr,a4   ; a4 = read code (no buffer: nothing could be read)
         tst.l   d0
         beq.s   .fi_end
-        move.l  d0,d7
         move.l  d0,a0
         move.l  a3,a1
         bsr     td_decode_track      ; a0 = mask, d1 = track of the last valid sector, a1 = read code
@@ -1587,9 +1638,6 @@ td_fill:
         move.l  a0,d0
         or.l    d0,d3
 .fi_free:
-        move.l  d7,a1
-        move.l  #TD_RAWBYTES,d0
-        jsr     LVO_FREEMEM(a6)
         cmp.l   #TD_ALLSECT,d3
         beq.s   .fi_full
         dbra    d2,.fi_try
@@ -1605,6 +1653,10 @@ td_fill:
         lea     TD_CTRK,a0
         move.w  d6,0(a0,d4.w)
         moveq   #0,d0
+        bra.s   .fi_ret
+.fi_kept:
+        move.l  d0,a1
+        moveq   #-1,d0
 .fi_ret:
         movem.l (sp)+,d1-d7/a2-a5
         rts
@@ -1640,7 +1692,8 @@ td_flush_all:
         rts
 
 ; td_flush_slot(d0.w = slot, a6) -> d0 = 0 | error: if the slot is modified, its track is MFM-encoded and
-; written on the drive the slot belongs to (an evicted slot may be another unit's), then declared clean.
+; written on the drive the slot belongs to (an evicted slot may be another unit's), then declared clean. No floppy
+; in that drive: TDERR_DiskChanged, the slot stays modified.
 ; Preserves d1-d7/a0-a6.
 td_flush_slot:
         movem.l d1-d7/a0-a5,-(sp)
@@ -1662,16 +1715,15 @@ td_flush_slot:
         move.l  TD_BASEP,a0
         lea     TDU_UNIT0(a0,d0.w),a0
         move.l  a0,TD_CUNIT
-        bsr     td_check_change      ; disk changed in that drive: the slot is dropped, nothing written
+        bsr     td_check_change
+        bsr     td_require
+        beq.s   .fs_absent           ; no floppy: the track stays modified, for the file system to decide
         lea     TD_CDIRTY,a0
         tst.b   0(a0,d5.w)
         beq.s   .fs_ok
         sf      0(a0,d5.w)
         and.w   #$FF,d6              ; d6 = track
-        move.l  #TD_WRBYTES,d0       ; MFM track in chip memory (the DMA only sees chip)
-        move.l  #MEMF_CHIP,d1
-        jsr     LVO_ALLOCMEM(a6)
-        tst.l   d0
+        bsr     td_dmabuf            ; MFM track in chip memory (the DMA only sees chip)
         beq.s   .fs_nomem
         move.l  d0,a4
         moveq   #0,d0
@@ -1686,16 +1738,14 @@ td_flush_slot:
         move.w  d6,d0
         move.l  a4,a0
         bsr     td_write_track       ; d0 = 0 | error
-        move.l  d0,d7
-        move.l  a4,a1
-        move.l  #TD_WRBYTES,d0
-        jsr     LVO_FREEMEM(a6)
-        move.l  d7,d0
         bra.s   .fs_ret
 .fs_nomem:
         lea     TD_CDIRTY,a0         ; nothing written: the track remains to be written
         st      0(a0,d5.w)
         moveq   #TDERR_NotSpec,d0
+        bra.s   .fs_ret
+.fs_absent:
+        moveq   #TDERR_DiskChanged,d0
         bra.s   .fs_ret
 .fs_ok:
         moveq   #0,d0

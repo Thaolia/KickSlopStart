@@ -1036,9 +1036,9 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   **Write-back as on 1.3 (2026-11-05)**: root bitmap flag cleared (and disk date set) on the first change, bitmap
   and root (flag valid) written 2-3 s after the last disk access with CMD_UPDATE and motor off, ACTION_FLUSH held
   until then and returned unchanged, INHIBIT writes back first. Copy of C: to a floppy 159.0 s -> 43.7 s
-  (`tests/writeback_probe.sh`, production ROM). Open: the bitmap block does not move at each write-back (§8.3); an
-  ejection with a pending write-back loses it silently (1.3 shows a requester through dos's errorreq and keeps the
-  volume, disk-change §2.2.1 point 2); ACTION_FLUSH holding was not run against a packet probe.
+  (`tests/writeback_probe.sh`, production ROM). Open: the bitmap block does not move at each write-back (§8.3);
+  ACTION_FLUSH holding was not run against a packet probe. (An ejection with a pending write-back: see "Ejection with
+  unwritten tracks", 2026-11-09; 1.3 itself loses the write-back silently, disk-change §2.2.1 point 2.)
   **File system answers from 1.3 (2026-11-05)** (rom-filesystem §1.4, §2.5, §8.4, §8.6; maintainer decisions):
   rejected device commands, write-back on the third tick and the validator requester frames already behave as on
   1.3. Deliberate differences kept: (1) a bitmap block with a bad checksum under a valid root flag is rebuilt by the
@@ -1410,6 +1410,28 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Amiberry (production ROM, screenshots looked at): Workbench1.3 dropped on Data -> column RAM DISK, DF1:BUSY (in
   Data's slot), Workbench1.3 (still selected), DF0:BUSY, as on 1.3; Cancel -> back to RAM DISK, Data, Workbench1.3;
   an all-zero disk in DF1 at boot -> DF1:, RAM DISK, Workbench1.3, as on 1.3. prepush-check FAIL=0 (Lemmings menu captured).
+  **Ejection with unwritten tracks, trackdisk DMA buffer (2026-11-09)**: disk-change-v34 §2.2.1 point 2 re-probed on
+  1.3 by an analysis agent: a pending write-back is lost silently; "You MUST replace volume / <name> / in unit  n !!!"
+  (Retry / Cancel, not closed by reinserting the disk) appears for an ejection during a transfer. Ours
+  (`hnd_unwritten`, called by `hnd_check` before detaching) shows it whenever the volume was modified since its last
+  write-back (`OW_DIRTY`), since our data tracks wait in trackdisk's cache for those 2-3 s (maintainer decision):
+  Retry with a floppy in the drive does the write-back and keeps the volume mounted, Cancel detaches it. trackdisk
+  keeps modified tracks across a disk change (`td_cache_forget` drops only clean ones), refuses to write one into an
+  empty drive (TDERR_DiskChanged, `td_pinned` slots are not reused), and the handler sends CMD_CLEAR when it detaches
+  a volume and before mounting one. Three bugs found on the way: `ow_bmwrite` cleared a bitmap block's dirty flag
+  before writing it, so a write-back tried while the disk was out lost the bitmap; `ow_bmload` wrote a rebuilt
+  bitmap's root without the bitmap (`OW_BMST` was still 0, so `ow_bmwrite` skipped it: root flagged valid over a
+  stale bitmap); exec's `reschedule` (deferred yield of Permit/Enable) clobbered a0, which intuition's `wn_post` kept
+  across a Permit: a GADGETUP posted while a yield was pending carried the first ready task as its gadget, so a click
+  on a requester's left gadget read as Cancel. trackdisk's MFM DMA buffer (13,630 bytes of chip, `td_dmabuf`) is now
+  allocated at init and kept. Checked under Amiberry (production ROM, screenshots looked at, images read back with
+  `tests/ofs_check.py`): `copy C:Dir DF1:` then DF1 ejected at once: requester; disk reinserted (requester stays),
+  Retry -> file and bitmap valid; Cancel -> remount revalidates, image valid; ejection after the write-back -> no
+  requester, valid. `tests/validate_probe.sh valid` and `tests/writeback_probe.sh` (66 files identical on DF1 and DH0)
+  pass; copy times unchanged (DF1: 46.7 s vs 47.8 s at HEAD, DH0: 14.6 s vs 14.4 s, production ROM, quiet machine).
+  prepush-check FAIL=0, Lemmings menu shown. WinUAE ADF suite (dev ROM, 120 s per floppy, 30 floppies, captures
+  looked at): same screens as before; the AROS boot floppies still stop on "Error code 121" and Cluedo on its intro
+  screen, as at HEAD; Bubble Bobble (first release) runs (HEAD's run of it ended in a guru this time).
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

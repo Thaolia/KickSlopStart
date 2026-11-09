@@ -748,7 +748,9 @@ the emulator was stopped]
   CMD_UPDATE (`trackdisk-write-v34.md` §1). Hence in the image the blocks of the root track (root, header,
   bitmap) often appear only at the flush. [O]
 - A disk removed before the flush may lack the last header update and the bitmap; the root then says "bitmap
-  invalid" and the next mount revalidates. [D]
+  invalid" and the next mount revalidates. Confirmed on floppies (2026-11-09): the loss is **silent** (no
+  requester), and when the command stayed on the root track nothing at all reached the disk; only an ejection
+  **during** a transfer gives the "You MUST replace volume" requester (`disk-change-v34.md` §2.2.1 point 2). [O]
 
 ### 8.5 Buffers
 

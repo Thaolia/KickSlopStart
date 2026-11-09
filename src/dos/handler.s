@@ -49,6 +49,8 @@
                 xref    ow_mount
                 xdef    hnd_busy
                 xref    ofs_read_block       ; hnd_bootclock: reading of the root block
+                xref    vr_req               ; dos_lib.s: three-line system requester (Retry / Cancel)
+                xref    ow_flush
                 xref    timer_now            ; system time (exec/timer.s)
                 xref    timer_setnow
 
@@ -1169,6 +1171,8 @@ hnd_check:
                 cmp.l   HC_CHG(a3),d0
                 beq.s   .ck_ret
 .ck_out:
+                bsr     hnd_unwritten
+                beq.s   .ck_ret                       ; the disk came back and everything was written
                 moveq   #1,d0
                 bsr     hnd_eject
                 tst.l   d2
@@ -1187,6 +1191,8 @@ hnd_check:
 hnd_mount:
                 movem.l d2/a2-a4,-(sp)
                 move.l  a2,a4                         ; a4 = handler port
+                moveq   #CMD_CLEAR,d0                 ; tracks someone else left modified (a DiskCopy cut short)
+                bsr     hnd_tdcmd                     ; are not the new disk's
                 st      HC_MOUNTED(a3)
                 move.l  HC_TDIO+IO_DEVICE(a3),a2
                 moveq   #0,d0
@@ -1365,15 +1371,93 @@ hnd_bstreq:
 .bu_r:
                 rts
 
-; hnd_eject(d0 = 1: emit DISKREMOVED, a3 = context, a6): current volume detached (spec §2.2.1): with no lock or
-; open file, its node leaves the DosList and is freed; otherwise dl_Task := 0 (the node stays). Bitmap forgotten.
+; hnd_unwritten(a2 = port, a3 = context, a6) -> Z = 1 if the ejection is cancelled: the volume was modified since
+; its last write-back, so trackdisk still holds tracks that never reached the disk. "You MUST replace volume /
+; <name> / in unit  n !!!" (spec disk-change-v34 §2.2.1 point 2), Retry / Cancel; reinserting the disk does not
+; close it. Retry with a floppy in the drive: the write-back is done now (onto whatever disk is there, as on 1.3)
+; and the volume stays mounted; without one, the requester comes back. Cancel: Z = 0, the caller detaches the volume
+; and the tracks are lost. 1.3 asks only while a transfer is under way; we also ask during the 2-3 s before the
+; write-back, when our data tracks are still in trackdisk's cache (maintainer decision, 2026-11-09).
 ; Preserves d2-d7/a2-a6.
+hnd_unwritten:
+                movem.l d2-d3/a4,-(sp)
+                lea     -48(sp),sp                    ; volume name (32), then "in unit  n !!!" (16)
+                move.l  HC_OWCTX(a3),d0
+                beq     .uw_eject
+                move.l  d0,a0
+                tst.l   OW_DIRTY(a0)
+                beq     .uw_eject
+                moveq   #0,d3                         ; the name, read once (the node may go with the volume)
+                move.l  HC_VOLUME(a3),d0
+                lsl.l   #2,d0
+                beq.s   .uw_unit
+                move.l  d0,a0
+                move.l  DN_NAME(a0),d0
+                lsl.l   #2,d0
+                beq.s   .uw_unit
+                move.l  d0,a0
+                move.b  (a0)+,d3
+                cmp.w   #30,d3
+                bls.s   .uw_nl
+                moveq   #30,d3
+.uw_nl:
+                move.l  sp,a1
+                move.w  d3,d0
+                bra.s   .uw_ne
+.uw_nc:
+                move.b  (a0)+,(a1)+
+.uw_ne:
+                dbra    d0,.uw_nc
+.uw_unit:
+                lea     32(sp),a1
+                lea     hnd_unitmsg(pc),a0
+.uw_uc:
+                move.b  (a0)+,(a1)+
+                bne.s   .uw_uc
+                bsr     hnd_unit
+                add.b   #'0',d0
+                move.b  d0,32+9(sp)                   ; the digit after "in unit  "
+.uw_req:
+                move.l  sp,a4
+                lea     hnd_mustmsg(pc),a0
+                lea     32(sp),a1
+                moveq   #0,d0                         ; no IDCMP class answers for the user
+                jsr     vr_req
+                tst.l   d0
+                beq.s   .uw_eject                     ; Cancel
+                moveq   #TD_CHANGESTATE,d0
+                bsr     hnd_tdcmd
+                tst.l   d0
+                bne.s   .uw_req                       ; still no floppy
+                jsr     ow_flush
+                tst.l   d0
+                beq.s   .uw_req
+                moveq   #TD_CHANGENUM,d0
+                bsr     hnd_tdcmd
+                move.l  d0,HC_CHG(a3)
+                moveq   #0,d0                         ; Z = 1: stays mounted
+                bra.s   .uw_ret
+.uw_eject:
+                moveq   #1,d0                         ; Z = 0
+.uw_ret:
+                lea     48(sp),sp
+                movem.l (sp)+,d2-d3/a4                ; (movem keeps the flags)
+                rts
+hnd_mustmsg:    dc.b    "You MUST replace volume",0
+hnd_unitmsg:    dc.b    "in unit  0 !!!",0
+                even
+
+; hnd_eject(d0 = 1: emit DISKREMOVED, a3 = context, a6): current volume detached (spec §2.2.1): with no lock or
+; open file, its node leaves the DosList and is freed; otherwise dl_Task := 0 (the node stays). Bitmap forgotten,
+; trackdisk's tracks of the unit dropped (CMD_CLEAR). Preserves d2-d7/a2-a6.
 hnd_eject:
                 movem.l d2/a2,-(sp)
                 move.l  d0,d2
                 moveq   #0,d0
                 jsr     ow_inhibit                    ; a pending write-back is lost with the disk
                 bsr     hnd_flushed
+                moveq   #CMD_CLEAR,d0                 ; and so are the tracks trackdisk still holds (spec §2.2.1
+                bsr     hnd_tdcmd                     ; point 3)
                 sf      HC_MOUNTED(a3)
                 move.l  #-1,HC_DTYPE(a3)
                 move.l  HC_VOLUME(a3),d0

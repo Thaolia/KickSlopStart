@@ -1966,6 +1966,16 @@ differs.
   device node, `VE_DATE` = DiskType). `wb_vscan` collects the filesystem devices under Forbid (`wb_isfsdev`), then
   asks each its DiskType with its own packet (`wb_diskinfo`), adds a `wb_vdev` record for a non-DOS, inhibited or
   unreadable disk, and drops it when the type changes.
+  **trackdisk DMA buffer kept (2026-11-09)**: `td_dmabuf` allocates the chip buffer of the disk DMA once
+  (`TD_DMABUF` at $754, `TD_DMASIZE` = an encoded track, 13,630 bytes, which also holds a raw read) in
+  `trackdisk_initfunc`, and every raw read (`td_read_track`) and track write (`td_flush_slot`) uses it; nothing frees
+  it. Accesses are serialised by the device semaphore, so one buffer serves every drive.
+  **Ejection with unwritten tracks (2026-11-09)**: on a disk change trackdisk drops the unit's clean tracks only
+  (`td_cache_forget`); a modified track stays until written (the drive has a floppy again) or dropped by CMD_CLEAR
+  (`td_cache_drop`); `td_flush_slot` answers TDERR_DiskChanged for an empty drive and `td_pinned` keeps such slots
+  out of the LRU choice. The DOS handler (`hnd_unwritten`) puts up "You MUST replace volume" when the volume it
+  detaches still has a write-back to do, and sends CMD_CLEAR on detaching and before mounting. exec's `reschedule`
+  preserves every register (Permit/Enable must).
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).

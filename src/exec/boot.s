@@ -2372,10 +2372,7 @@ m6t_done:
         move.l  a3,a1                ; free sectorbuf
         move.l  #512*11,d0
         jsr     LVO_FREEMEM(a6)
-.m6uv_freeraw:
-        move.l  a4,a1                ; free rawbuf (TD_RAWBYTES = $1900*2)
-        move.l  #$1900*2,d0
-        jsr     LVO_FREEMEM(a6)
+.m6uv_freeraw:                       ; (rawbuf = trackdisk's kept DMA buffer: not freed)
 m6uv_done:
 
         ; --- M6w: trackdisk CMD_READ (B4) — ONLY if disk present (d4=1; avoids a 2nd timeout without a disk) ---
@@ -2461,9 +2458,6 @@ m6w_done:
         move.l  #512*11,d0
         jsr     LVO_FREEMEM(a6)
 .m6x_freeraw:
-        move.l  a4,a1
-        move.l  #$1900*2,d0
-        jsr     LVO_FREEMEM(a6)
 m6x_done:
 
         ; --- M6z: MULTI-TRACK CMD_READ (prerequisite for D) — ONLY if disk present (d4=1) ---

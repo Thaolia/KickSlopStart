@@ -158,7 +158,7 @@ memory.
 | Category | Ours | 1.3 | Difference | Ours: callers |
 |----------|-----:|----:|-----------:|---------------|
 | Screen bitplanes 640 × 256 × 2 | 40,960 chip | 40,960 chip | 0 | OpenScreen (`intuition_end` in the map) |
-| Track buffer / cache | 45,056 slow (22,528 since 2026-11-06) | 16,392 chip | **+28,664** (+6,136) | `td_cachebuf` (8 × 5,632, now 4 × 5,632); our raw MFM buffer is chip, allocated per read and freed |
+| Track buffer / cache | 45,056 slow (22,528 since 2026-11-06) + 13,632 chip since 2026-11-09 | 16,392 chip | **+28,664** (+6,136; chip −2,760 since 2026-11-09) | `td_cachebuf` (8 × 5,632, now 4 × 5,632); the MFM DMA buffer (`td_dmabuf`, 13,630 bytes) is chip, allocated at trackdisk init and kept, one for all drives (1.3: 16,388 per opened drive); it was allocated per read and freed before 2026-11-09 |
 | File system buffers | 0 | 8,160 chip | −8,160 | none (no block cache in our handler) |
 | Other chip (copper lists, gadget images, pointer, chip icon images, boot leftovers) | 4,400 | 9,096 | −4,696 | `gfx_MrgCop` 1,112, `gfx_MakeVPort` 1,032, `sc_mkimage` 208, `wb_desktop` 128, `d2_done` 128, `init_task` 96, `it_ptrinit` 72, `graphics_initfunc` 24, disk programs 1,600 |
 | Module bases (libraries, devices, resources) | 7,744 | ≈ 7,840 | ≈ −96 | `exec_MakeLibrary` 7,016 (incl. icon.library), `init_ints` 224, `build_reslist` 136, `dos_initfunc` 184, `gfx_fontinit` 104, `km_init` 80 |

@@ -119,6 +119,10 @@ TD_SECRAW     EQU 1088
 TD_WRTAIL     EQU $AAA8          ; tail word after the last sector
 TD_WRBYTES    EQU TD_WRGAP+MFM_NSECT*TD_SECRAW+2
 TD_WRWORDS    EQU TD_WRBYTES/2
+TD_DMASIZE    EQU TD_WRBYTES       ; the one CHIP buffer of the disk DMA: a raw read or an encoded track
+        ifgt    TD_RAWBYTES-TD_DMASIZE
+        fail    "TD_DMASIZE smaller than a raw track read"
+        endc
 ; TD_READ_NOCMD=1 (RED B4): BeginIO does NOT recognise CMD_READ (falls back to IOERR_NOCMD) -> io_Data stays at 0 ->
 ; sector read != "DOS\0" -> "M6W TRACKDISK CMD_READ OK" absent. Isolates the command handler. Default 0.
 TD_READ_NOCMD EQU 0

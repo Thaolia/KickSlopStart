@@ -460,6 +460,7 @@ PTR_Y        EQU $00000686 ; word: absolute pointer Y
 INT_IBASE    EQU $00000740 ; long: IntuitionBase (set at its init) — the pointer handler moves the sprite with it
 KBD_DEVBASE  EQU $00000744 ; long: keyboard.device base (set at its init) — kbd_interrupt hands each keycode to it
 TD_CDIRTY    EQU $00000748 ; trackdisk: TD_NCACHE bytes — slot modified by CMD_WRITE, not yet written to disk
+TD_DMABUF    EQU $00000754 ; trackdisk: long — CHIP buffer of the disk DMA (TD_DMASIZE bytes, kept; 0 = not allocated)
 TD_BASEP     EQU $00000750 ; trackdisk: long — device base (semaphore and units for td_disk_present / slot flushes)
 EXEC_SOFTLIST EQU $00000758 ; exec: struct List (14 bytes) of the pending software interrupts (Cause)
 EXEC_ALERTSTUB EQU $00000766 ; exec: 6 bytes — JMP exec_Alert in RAM: Alert vector points here (not ROM, cf. setpatch-138.md)
