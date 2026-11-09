@@ -134,14 +134,54 @@ verify: $(KICK_ROM)
 clean:
 	rm -rf $(BUILD)
 
-# Native Amiga graphics tests live beneath their component group.
+# Native Amiga tests live beneath their component groups.
 COPPERLINE ?= copperline
 COPPERLINE_CTL ?= copperline-ctl
-.PHONY: test test-quick test-graphics test-graphics-quick test-graphics-blitter test-graphics-lifetime test-exec test-exec-quick test-exec-memory-priority
-test: test-graphics test-exec
-test-quick: test-graphics-quick test-exec-quick
-test-graphics: test-graphics-blitter test-graphics-lifetime
-test-graphics-quick: test-graphics-blitter test-graphics-lifetime
+.PHONY: test test-quick test-graphics test-graphics-quick test-graphics-blitter test-graphics-lifetime test-exec test-exec-quick test-exec-memory-priority test-intuition test-intuition-quick test-intuition-smallwindow
+test: test-graphics test-exec test-intuition
+test-quick: test-graphics-quick test-exec-quick test-intuition-quick
+.PHONY: test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
+test-intuition: test-intuition-smallwindow test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
+test-intuition-quick: test-intuition-smallwindow test-intuition-windowfont test-intuition-stringbounds test-intuition-propstate test-intuition-menufont
+test-intuition-menufont: kick-prod $(BUILD)/menufont
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/menufont \
+	  --out $(BUILD)/menufont-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 50 --tag MENUFONT --pass-marker "MENUFONT OK" --workloads
+$(BUILD)/menufont: tests/menufont.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-intuition-propstate: kick-prod $(BUILD)/propstate
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/propstate \
+	  --out $(BUILD)/propstate-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 40 --tag PROPSTATE --pass-marker "PROPSTATE OK" --workloads
+$(BUILD)/propstate: tests/propstate.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-intuition-stringbounds: kick-prod $(BUILD)/stringbounds
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/stringbounds \
+	  --out $(BUILD)/stringbounds-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag STRBOUNDS --pass-marker "STRBOUNDS OK" --workloads
+$(BUILD)/stringbounds: tests/stringbounds.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-intuition-windowfont: kick-prod $(BUILD)/windowfont
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/windowfont \
+	  --out $(BUILD)/windowfont-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag WINFONT --pass-marker "WINFONT OK" --workloads
+$(BUILD)/windowfont: tests/windowfont.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+test-intuition-smallwindow: kick-prod $(BUILD)/smallwindow
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/smallwindow \
+	  --out $(BUILD)/smallwindow-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag SMALLWIN --pass-marker "SMALLWIN OK" --workloads
+$(BUILD)/smallwindow: tests/smallwindow.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
+.PHONY: test-graphics-longframe
+test-graphics: test-graphics-blitter test-graphics-lifetime test-graphics-longframe
+test-graphics-quick: test-graphics-blitter test-graphics-lifetime test-graphics-longframe
+test-graphics-longframe: kick-prod $(BUILD)/longframe
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/longframe \
+	  --out $(BUILD)/longframe-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 30 --tag LONGFRAME --pass-marker "LONGFRAME OK" --workloads
+$(BUILD)/longframe: tests/longframe.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 test-graphics-blitter: kick-prod $(BUILD)/drawblit
 	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/drawblit \
 	  --out $(BUILD)/drawblit-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)"

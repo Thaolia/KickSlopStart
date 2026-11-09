@@ -491,6 +491,8 @@ mn_drawbar:
         move.l  IL_RP(a2),a2         ; a2 = RastPort of the bar
         move.l  IB_GFXBASE(a5),a6
         move.l  a2,a1
+        bsr     mn_screenfont
+        move.l  a2,a1
         moveq   #0,d0
         move.b  SC_BLOCKPEN(a4),d0
         jsr     LVO_SETAPEN(a6)
@@ -537,6 +539,15 @@ mn_drawbar:
         bra.s   .db_lp
 .db_ret:
         movem.l (sp)+,d2-d7/a2
+        rts
+
+; Fresh menu layers otherwise retain the graphics global default instead of this screen's font and style.
+mn_screenfont:
+        move.l  a1,-(sp)
+        move.l  SC_RASTPORT+rp_Font(a4),a0
+        jsr     LVO_SETFONT(a6)
+        move.l  (sp)+,a1
+        move.b  SC_RASTPORT+rp_AlgoStyle(a4),rp_AlgoStyle(a1)
         rts
 
 ; mn_ghost(a1 = RastPort, d0..d3 = x0,y0,x1,y1, a4 = screen, a5): ghosting (spec intuition-input-menus-v34 §3.5):
@@ -1381,6 +1392,8 @@ mn_cat_lo_data:                      ; the same in low resolution (14 x 8)
 ; border DetailPen. Clobbers d0-d3/a0/a1/a6.
 mn_paintbox:
         move.l  IB_GFXBASE(a5),a6
+        move.l  a3,a1
+        bsr     mn_screenfont
         move.l  a3,a1
         moveq   #JAM2,d0
         jsr     LVO_SETDRMD(a6)

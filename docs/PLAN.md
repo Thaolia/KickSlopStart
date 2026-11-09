@@ -1100,6 +1100,28 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   (1.3 does not bound them and draws past the BitMap), CloseWindow ends the window's requesters (1.3 leaves them
   orphaned) and gives an empty screen its DefaultTitle. Open: IDCMP ports are not in the public port list; a
   window holds one REFRESHWINDOW at a time (1.3 sends one per repair while LAYERREFRESH is pending, deduced).
+  **Short helper windows (2026-11-09)**: OpenWindow preserves positive heights below 16 pixels. DiskMaster's
+  27×10 close-only helper must not become 27×16 and cover six extra rows of its main window. The native
+  `test-intuition-smallwindow` checks returned dimensions, layer bounds and untouched pixels below short windows;
+  it is registered beneath both normal and quick Intuition test groups.
+  **Window font inheritance (2026-11-09)**: OpenWindow applies the screen font to its RastPort and `IFont`, and
+  to the border RastPort of GIMMEZEROZERO windows; the GZZ inner port keeps its global default as on 1.3.
+  Layers initially use the global graphics default, which can
+  differ from the screen font: DiskMaster's eight-pixel screen previously got ten-pixel window text, overflowing
+  its buttons. `test-intuition-windowfont` checks normal, borderless and GIMMEZEROZERO windows, text advance and
+  intact pixel guards beside and below the text through both normal and quick Intuition groups.
+  **String gadget bounds (2026-11-09)**: background clearing touches only complete visible text cells, capped by
+  the buffer's padding capacity, and does not clear rows below the font. This preserves DiskMaster's lower path
+  border inside its nine-row gadget when the font is eight rows high. `test-intuition-stringbounds` covers empty
+  and nonempty buffers, fractional-cell widths, extra rows, small buffers and clearing shortened text.
+  **Proportional-knob state (2026-11-09)**: the initial held-knob draw uses the same RastPort state preservation
+  as later scrollbar updates. It previously left JAM1 on the client port, making DiskMaster's BltTemplate row
+  redraws accumulate old glyphs. Pens, mode and their per-plane minterms are restored coherently.
+  `test-intuition-propstate` injects a press/drag/release, checks both button messages and verifies replacement pixels.
+  **Menu fonts (2026-11-09)**: menu-bar, item and submenu drawing ports use the screen font and style rather than
+  the global font installed by layer initialization. `test-intuition-menufont` opens all three menu stages through
+  raw right-button input and verifies authored six-pixel glyph widths on a screen whose font differs from the global
+  default. This prevents text overflowing menu items sized for the screen font.
   **Regions (2026-11-04)**: spec `graphics-regions-v34`. The ten Region functions keep the 1.3 node order (no merge,
   no sort: Or cuts the new rectangle through a pending list, Xor puts the old nodes outside first, And keeps or cuts
   nodes in place), the 1.3 bounds (union for Or, normalised minimum and shifted maximum otherwise, +15000 when

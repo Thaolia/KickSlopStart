@@ -2227,4 +2227,26 @@ differs.
   - Tests (`tests/garea_probe.sh`): `execsched_test.s` (Debug waits for `r`/`g` on serial), `tdraw_test.s`,
     `kbdinp_test.s`, `res_test.s`; `dosexit_test.s` runs with `tests/dosexit_probe.sh`.
 
+Menu-bar, item-box and submenu layers initialize their font and algorithmic style from the screen. A freshly
+created layer's global graphics default can otherwise overflow menu items sized for a narrower screen font.
+`tests/menufont.s` drives real right-button input and checks rendered widths using authored solid glyphs.
+
+All proportional-gadget drawing, including the initial held-knob press, preserves the client RastPort's pens and
+drawing mode. Restoration uses the public graphics setters so its per-plane minterms agree with those fields.
+`tests/propstate.s` drives the real input path and verifies state and template replacement after a drag.
+
+String-gadget background clearing is limited to complete visible text cells, the font height and the buffer's
+padding capacity. Extra rows or partial columns in the declared gadget box are preserved: an application may
+draw its border there. `tests/stringbounds.s` verifies these guards and clearing after text is shortened.
+
+New ordinary window RastPorts inherit the screen's font rather than the graphics global default. `Window.IFont`
+and the border RastPort of a GIMMEZEROZERO window use that screen font too; the GZZ inner RastPort keeps its newly
+initialized global default, matching 1.3. `tests/windowfont.s` checks these distinct font states, and ordinary
+window text advance and pixel guards around authored text.
+
+Short Intuition windows retain their requested positive height, including a close-only 27×10 helper. A title
+border or gadget taller than the window is clipped by its layer; it must not enlarge the window into the one
+below. `tests/smallwindow.s` checks returned heights, layer bounds and sentinel pixels below the requested edge,
+through the normal and quick Intuition test groups.
+
 See `docs/PLAN.md` for what comes next and `docs/CLEANROOM.md` for the wall.
