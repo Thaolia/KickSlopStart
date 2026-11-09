@@ -69,6 +69,13 @@ git checkout v8.4.2 && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cma
 Other host packages used by the harnesses: `fs-uae gdb-multiarch socat pipx python3-unicorn` (plus `Xvfb`, `xdotool`,
 `x11-apps` for `xwd`, ImageMagick). Copperline (`make test-graphics`) is not packaged and not covered here.
 
+### vAmigaWeb (`/vamigaweb` skill)
+The live site `https://vamigaweb.github.io/` (vAmiga core 4.3.6 on 2026-11-09), driven in headless Chromium by
+**Playwright 1.62.1** (pinned in `.claude/skills/vamigaweb/package-lock.json`). Needs **Node.js** (v24 used) and
+network access; `.claude/skills/vamigaweb/scripts/vamigaweb-session setup` runs `npm ci` and installs Playwright's
+Chromium. The ROM and ADFs are handed to the page locally, never uploaded. Debugging goes through vAmiga's
+RetroShell (no gdb in a browser).
+
 ### Analysis (dirty track)
 **radare2 6.1.3** (`r2 -a m68k -e cfg.bigendian=true`, base `$FC0000`). Ghidra headless optional for
 the decompiler (see the ghidra-mcp rule: one dedicated instance per binary).

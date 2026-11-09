@@ -109,6 +109,11 @@ track and the oracle bench.
 - **Emulator**: **FS-UAE** native Linux + **Xvfb** (primary for CI, driven by config file,
   `kickstart_file = <chemin>`); **`WinUAE.exe`** via WSL2 Windows interop (`-f cfg.uae -s use_gui=no`,
   `kickstart_rom_file=`) as secondary (64-bit Wine broken → do not use it).
+- **vAmigaWeb harness (2026-11-09)**: the `/vamigaweb` skill boots our ROM in the live vAmigaWeb site (the README
+  link's emulator) in headless Chromium through Playwright: serial log, RetroShell breakpoints/watchpoints/
+  catchpoints, peek/poke, frame stepping, snapshots, screenshots, the amiberry input-script language. Replaces the
+  hand-built VAHeadless for vAmiga-only bugs. Checked: `boot_c.adf` reaches `E3 CMD RAN OK`, `ver` typed at the
+  shell, a breakpoint on AllocMem, 2 MB chip + 2 MB fast seen in the exec MemList, NTSC, disk change.
 
 **amitools role**:
 - `romtool build -t kick -s 256 -a fc0000 -o build/kick13.rom <modules>` then `romtool copy -c`

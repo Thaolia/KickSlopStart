@@ -1,0 +1,844 @@
+#!/usr/bin/env node
+// vAmigaWeb sessions for this project: one background daemon per session drives the live vAmigaWeb site in
+// headless Chromium (Playwright) and answers commands on a Unix socket. See ../SKILL.md.
+import fs from 'node:fs';
+import path from 'node:path';
+import net from 'node:net';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const SELF = fileURLToPath(import.meta.url);
+const SKILL = path.resolve(path.dirname(SELF), '..');
+const ROOT = path.resolve(SKILL, '../../..');
+const BASE = path.join(ROOT, 'build/vamigaweb');
+const COMMODORE_ROM = path.join(ROOT, 'assets/kick34005.A500');
+const SOCK_DIR = path.join(os.tmpdir(), `vw${process.getuid()}`);
+const DEFAULT_URL = 'https://vamigaweb.github.io/';
+
+const MODELS = {
+  'A500': { agnus: 'OCS', denise: 'OCS', chip: 512, slow: 512, fast: 0 },
+  'A500+': { agnus: 'ECS_2MB', denise: 'ECS', chip: 1024, slow: 0, fast: 0 },
+};
+
+// ------------------------------------------------------------------ helpers
+
+function die(msg, code = 2) {
+  process.stderr.write(`vamigaweb-session: ${msg}\n`);
+  process.exit(code);
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function usage() {
+  process.stdout.write(`usage: vamigaweb-session COMMAND ...   (run from anywhere; paths are relative to the cwd)
+  setup                                   install the pinned Playwright (npm ci) and its Chromium
+  config                                  resolved configuration and tool check
+  start [--name N] [--rom ROM] [--adf ADF]... [--model A500|A500+] [--chip KB] [--slow KB] [--fast KB]
+        [--agnus OCS|ECS_1MB|ECS_2MB] [--ntsc] [--warp auto|never|always] [--url URL] [--visible]
+        [--analysis] [--timeout S]
+  stop NAME... | list | status NAME
+  serial NAME [--follow]                  serial output (printable characters)
+  wait-serial NAME [--new] TEXT [S]       wait for TEXT on the serial line (default 60 s); exit 1 on timeout
+  wait-msg NAME [--new] MSG [S]           wait for a core message (MSG_BREAKPOINT_REACHED...) in messages.log
+  shell NAME LINE...                      type lines into RetroShell, print the new console text
+  peek NAME ADDR [b|w|l] [COUNT]          read memory (side-effect free); ADDR hex
+  poke NAME ADDR VALUE [b|w|l]            write memory; ADDR and VALUE hex
+  pause NAME | run NAME | reset NAME | frames NAME K   (frames: pause, run K frames, stay paused)
+  shot NAME FILE.png [--via heap|canvas|page]
+  input NAME SCRIPT|-                     keyboard/mouse/joystick script (SKILL.md)
+  ser-in NAME TEXT                        send TEXT to the Amiga's serial input
+  insert NAME ADF DRIVE | eject NAME DRIVE
+  snapshot NAME save|load FILE
+  js NAME EXPRESSION                      evaluate a JavaScript expression in the page (debugging escape hatch)
+`);
+  process.exit(2);
+}
+
+function loadConfig() {
+  const cfg = { VAMIGAWEB_URL: DEFAULT_URL, PLAYWRIGHT_BROWSERS_PATH: '' };
+  const file = path.join(SKILL, 'config.env');
+  if (fs.existsSync(file)) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Z_]+)=(?:"([^"]*)"|(\S*))\s*$/);
+      if (m && m[1] in cfg) cfg[m[1]] = (m[2] ?? m[3]).replace(/\$HOME|\$\{HOME\}/g, os.homedir());
+    }
+  }
+  for (const k of Object.keys(cfg)) if (process.env[k]) cfg[k] = process.env[k];
+  return cfg;
+}
+
+const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+
+function isCommodoreRom(rom) {
+  const b = path.basename(rom);
+  if (/kick34005/.test(b) || /[Kk]ickstart.*1\.3/.test(b)) return true;
+  return fs.existsSync(COMMODORE_ROM) && sha256(rom) === sha256(COMMODORE_ROM);
+}
+
+function alive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function sessionDir(name, analysis) {
+  return path.join(BASE, analysis ? 'analysis' : 'sessions', name);
+}
+
+function findSession(name) {
+  for (const kind of ['sessions', 'analysis']) {
+    const d = path.join(BASE, kind, name);
+    if (fs.existsSync(path.join(d, 'session.json'))) return d;
+  }
+  die(`no session named ${name}`);
+}
+
+const readSession = (sdir) => JSON.parse(fs.readFileSync(path.join(sdir, 'session.json'), 'utf8'));
+
+function writeSession(sdir, patch) {
+  const file = path.join(sdir, 'session.json');
+  const cur = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  const next = { ...cur, ...patch };
+  fs.writeFileSync(file + '.tmp', JSON.stringify(next, null, 2) + '\n');
+  fs.renameSync(file + '.tmp', file);
+  return next;
+}
+
+// Socket paths are limited to 108 bytes: name them after a hash of the session directory, which also keeps two
+// checkouts using the same session name apart.
+function sockPath(sdir) {
+  const h = crypto.createHash('sha1').update(path.resolve(sdir)).digest('hex').slice(0, 16);
+  return path.join(SOCK_DIR, `${h}.sock`);
+}
+
+function parseHex(s, what) {
+  const v = Number.parseInt(String(s).replace(/^\$|^0x/i, ''), 16);
+  if (!Number.isFinite(v) || !/^(\$|0x)?[0-9a-f]+$/i.test(String(s))) die(`${what}: not a hex number: ${s}`);
+  return v;
+}
+
+// ------------------------------------------------------------------ client side
+
+function request(sdir, msg, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection(sockPath(sdir));
+    let buf = '';
+    const timer = setTimeout(() => { sock.destroy(); reject(new Error(`no reply within ${timeoutMs / 1000} s`)); }, timeoutMs);
+    sock.on('connect', () => sock.write(JSON.stringify(msg) + '\n'));
+    sock.on('data', (d) => {
+      buf += d;
+      const nl = buf.indexOf('\n');
+      if (nl >= 0) { clearTimeout(timer); sock.end(); resolve(JSON.parse(buf.slice(0, nl))); }
+    });
+    sock.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
+async function call(sdir, msg, timeoutMs) {
+  let r;
+  try { r = await request(sdir, msg, timeoutMs); } catch (e) { die(`${readSession(sdir).name}: ${e.message}`, 1); }
+  if (!r.ok) die(r.error, 1);
+  return r.result;
+}
+
+function requireRunning(sdir) {
+  const s = readSession(sdir);
+  if (s.state !== 'ready' || !alive(s.pid)) die(`session ${s.name} is not running (state ${s.state})`, 1);
+  return s;
+}
+
+function parseOpts(args, spec) {
+  const o = { _: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a in spec) {
+      if (spec[a] === 'flag') o[a] = true;
+      else if (spec[a] === 'list') (o[a] ??= []).push(args[++i] ?? die(`${a} needs a value`));
+      else o[a] = args[++i] ?? die(`${a} needs a value`);
+    } else if (a.startsWith('--')) die(`unknown option ${a}`);
+    else o._.push(a);
+  }
+  return o;
+}
+
+async function cmdSetup() {
+  const r = await new Promise((res) => spawn('npm', ['ci', '--no-audit', '--no-fund'], { cwd: SKILL, stdio: 'inherit' }).on('exit', res));
+  if (r !== 0) die('npm ci failed');
+  const cfg = loadConfig();
+  const env = { ...process.env, ...(cfg.PLAYWRIGHT_BROWSERS_PATH ? { PLAYWRIGHT_BROWSERS_PATH: cfg.PLAYWRIGHT_BROWSERS_PATH } : {}) };
+  const r2 = await new Promise((res) => spawn(path.join(SKILL, 'node_modules/.bin/playwright'), ['install', 'chromium'], { cwd: SKILL, stdio: 'inherit', env }).on('exit', res));
+  if (r2 !== 0) die('playwright install chromium failed');
+  console.log('setup ok');
+}
+
+async function cmdConfig() {
+  const cfg = loadConfig();
+  console.log(`VAMIGAWEB_URL=${cfg.VAMIGAWEB_URL}`);
+  console.log(`PLAYWRIGHT_BROWSERS_PATH=${cfg.PLAYWRIGHT_BROWSERS_PATH || '(default)'}`);
+  console.log(`sessions: ${BASE}`);
+  try {
+    if (cfg.PLAYWRIGHT_BROWSERS_PATH) process.env.PLAYWRIGHT_BROWSERS_PATH = cfg.PLAYWRIGHT_BROWSERS_PATH;
+    const { chromium } = await import('playwright');
+    const exe = chromium.executablePath();
+    console.log(`chromium: ${exe} ${fs.existsSync(exe) ? 'ok' : 'MISSING (run setup)'}`);
+  } catch {
+    console.log('playwright: MISSING (run: vamigaweb-session setup)');
+  }
+}
+
+async function cmdStart(args) {
+  const o = parseOpts(args, {
+    '--name': 'v', '--rom': 'v', '--adf': 'list', '--model': 'v', '--chip': 'v', '--slow': 'v', '--fast': 'v',
+    '--agnus': 'v', '--ntsc': 'flag', '--warp': 'v', '--url': 'v', '--visible': 'flag', '--analysis': 'flag',
+    '--timeout': 'v',
+  });
+  if (o._.length) die(`start: unexpected argument ${o._[0]}`);
+  const analysis = !!o['--analysis'];
+  const rom = path.resolve(o['--rom'] ?? path.join(ROOT, 'build/kick13.rom'));
+  if (!fs.existsSync(rom)) die(`ROM not found: ${rom}`);
+  if (isCommodoreRom(rom) && !analysis) {
+    die(`refused: ${rom} is the Commodore ROM. Only a separate analysis agent may run it (CLAUDE.md, clean-room
+firewall), with --analysis; its findings go to docs/analysis/ as behaviour only. See SKILL.md.`);
+  }
+  const adfs = (o['--adf'] ?? []).map((a) => path.resolve(a));
+  if (adfs.length > 4) die('start: at most 4 floppies (DF0-DF3)');
+  for (const a of adfs) if (!fs.existsSync(a)) die(`ADF not found: ${a}`);
+  const model = o['--model'] ?? 'A500';
+  if (!(model in MODELS)) die(`start: --model is one of ${Object.keys(MODELS).join(', ')}`);
+  const m = { ...MODELS[model] };
+  for (const k of ['chip', 'slow', 'fast']) {
+    if (o[`--${k}`] !== undefined) {
+      if (!/^\d+$/.test(o[`--${k}`])) die(`start: --${k} takes a number of KB`);
+      m[k] = Number(o[`--${k}`]);
+    }
+  }
+  if (o['--agnus']) {
+    if (!['OCS_OLD', 'OCS', 'ECS_1MB', 'ECS_2MB'].includes(o['--agnus'])) die('start: --agnus is OCS_OLD, OCS, ECS_1MB or ECS_2MB');
+    m.agnus = o['--agnus'];
+  }
+  const warp = o['--warp'];
+  if (warp && !['auto', 'never', 'always'].includes(warp)) die('start: --warp is auto, never or always');
+  const timeout = Number(o['--timeout'] ?? 120);
+
+  let name = o['--name'];
+  if (!name) {
+    for (let i = 1; ; i++) {
+      const d = sessionDir(`v${i}`, analysis);
+      if (!fs.existsSync(path.join(d, 'session.json')) || !alive(readSession(d).pid)) { name = `v${i}`; break; }
+    }
+  }
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) die('start: --name takes letters, digits, ".", "_" and "-"');
+  const sdir = sessionDir(name, analysis);
+  if (fs.existsSync(path.join(sdir, 'session.json')) && alive(readSession(sdir).pid)) die(`session ${name} is already running`);
+  fs.rmSync(sdir, { recursive: true, force: true });
+  fs.mkdirSync(sdir, { recursive: true });
+  fs.mkdirSync(SOCK_DIR, { recursive: true, mode: 0o700 });
+  const copies = adfs.map((a, i) => {
+    const dst = path.join(sdir, `df${i}-${path.basename(a)}`);
+    fs.copyFileSync(a, dst);
+    fs.chmodSync(dst, 0o644);
+    return dst;
+  });
+  for (const f of ['serial.log', 'messages.log', 'shell.log', 'console.log']) fs.writeFileSync(path.join(sdir, f), '');
+  const cfg = loadConfig();
+  writeSession(sdir, {
+    name, analysis, state: 'starting', rom, romSha256: sha256(rom), adfs: copies, model, machine: m,
+    ntsc: !!o['--ntsc'], warp: warp ?? null, url: o['--url'] ?? cfg.VAMIGAWEB_URL, visible: !!o['--visible'],
+    browsersPath: cfg.PLAYWRIGHT_BROWSERS_PATH, sock: sockPath(sdir), started: new Date().toISOString(),
+  });
+  const log = fs.openSync(path.join(sdir, 'daemon.log'), 'a');
+  const child = spawn(process.execPath, [SELF, '__daemon', sdir], { detached: true, stdio: ['ignore', log, log] });
+  child.unref();
+  writeSession(sdir, { pid: child.pid });
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout * 1000) {
+    const s = readSession(sdir);
+    if (s.state === 'ready') {
+      console.log(`session ${name} ready: ${s.coreVersion ? `vAmiga core ${s.coreVersion}, ` : ''}${m.chip} KB chip, ${m.slow} KB slow, ${m.fast} KB fast, Agnus ${m.agnus}`);
+      console.log(`directory: ${path.relative(process.cwd(), sdir) || '.'}`);
+      return;
+    }
+    if (s.state === 'failed' || !alive(s.pid)) {
+      die(`session ${name} failed to start: ${s.error ?? 'daemon exited'} (see ${path.join(sdir, 'daemon.log')})`, 1);
+    }
+    await sleep(250);
+  }
+  await stopOne(sdir);
+  die(`session ${name}: not ready after ${timeout} s (see ${path.join(sdir, 'daemon.log')})`, 1);
+}
+
+async function stopOne(sdir) {
+  const s = readSession(sdir);
+  if (alive(s.pid)) {
+    try { await request(sdir, { cmd: 'quit' }, 10000); } catch { /* killed below */ }
+    for (let i = 0; i < 40 && alive(s.pid); i++) await sleep(250);
+    // the daemon leads its own process group (detached spawn): Chromium goes with it
+    if (alive(s.pid)) { try { process.kill(-s.pid, 'SIGKILL'); } catch { /* already gone */ } }
+  }
+  try { fs.unlinkSync(sockPath(sdir)); } catch { /* not there */ }
+  if (s.state !== 'failed') writeSession(sdir, { state: 'stopped' });
+  console.log(`stopped ${s.name}`);
+}
+
+async function cmdStop(args) {
+  if (!args.length) usage();
+  for (const n of args) await stopOne(findSession(n));
+}
+
+function cmdList() {
+  for (const kind of ['sessions', 'analysis']) {
+    const d = path.join(BASE, kind);
+    if (!fs.existsSync(d)) continue;
+    for (const n of fs.readdirSync(d).sort()) {
+      const f = path.join(d, n, 'session.json');
+      if (!fs.existsSync(f)) continue;
+      const s = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const st = alive(s.pid) ? s.state : (s.state === 'failed' ? 'failed' : 'stopped');
+      console.log(`${n.padEnd(12)} ${kind === 'analysis' ? 'analysis ' : ''}${st}`);
+    }
+  }
+}
+
+async function cmdStatus(args) {
+  if (args.length !== 1) usage();
+  const sdir = findSession(args[0]);
+  const s = readSession(sdir);
+  console.log(`session ${s.name}: ${alive(s.pid) ? s.state : 'not running'} (pid ${s.pid ?? '-'})`);
+  if (s.state === 'ready' && alive(s.pid)) {
+    const r = await call(sdir, { cmd: 'status' }, 15000);
+    for (const [k, v] of Object.entries(r)) console.log(`  ${k}: ${v}`);
+  }
+}
+
+const printable = (buf) => buf.toString('latin1').replace(/[^\t\n\x20-\x7e]/g, '');
+
+async function cmdSerial(args) {
+  if (args.length < 1) usage();
+  const file = path.join(findSession(args[0]), 'serial.log');
+  if (args[1] !== '--follow') { process.stdout.write(printable(fs.readFileSync(file))); return; }
+  let pos = 0;
+  for (;;) {
+    const size = fs.statSync(file).size;
+    if (size > pos) {
+      const fd = fs.openSync(file, 'r');
+      const b = Buffer.alloc(size - pos);
+      fs.readSync(fd, b, 0, b.length, pos);
+      fs.closeSync(fd);
+      process.stdout.write(printable(b));
+      pos = size;
+    }
+    await sleep(200);
+  }
+}
+
+// Waits for TEXT in FILE after byte offset FROM. Returns the file size once found, or -1.
+async function waitInFile(sdir, file, text, secs, from) {
+  const s = readSession(sdir);
+  const needle = Buffer.from(text, 'latin1');
+  const t0 = Date.now();
+  for (;;) {
+    const b = fs.readFileSync(file);
+    if (b.subarray(from).indexOf(needle) >= 0) return b.length;
+    if (!alive(s.pid)) { process.stderr.write(`vamigaweb-session: session ${s.name} is not running\n`); return -1; }
+    if (Date.now() - t0 >= secs * 1000) {
+      process.stderr.write(`vamigaweb-session: timeout (${secs} s) waiting for: ${text}\n`);
+      return -1;
+    }
+    await sleep(200);
+  }
+}
+
+async function cmdWaitIn(args, fileName) {
+  if (args.length < 2) usage();
+  const sdir = findSession(args[0]);
+  const file = path.join(sdir, fileName);
+  let rest = args.slice(1);
+  let from = 0;
+  if (rest[0] === '--new') { from = fs.statSync(file).size; rest = rest.slice(1); }
+  if (!rest.length) usage();
+  const secs = Number(rest[1] ?? 60);
+  if (await waitInFile(sdir, file, rest[0], secs, from) < 0) process.exit(1);
+  console.log(`found: ${rest[0]}`);
+}
+
+async function cmdShell(args) {
+  if (args.length < 2) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  process.stdout.write(await call(sdir, { cmd: 'shell', lines: args.slice(1) }));
+}
+
+const SIZES = { b: 1, w: 2, l: 4 };
+
+async function cmdPeek(args) {
+  if (args.length < 2) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const addr = parseHex(args[1], 'peek');
+  const size = SIZES[args[2] ?? 'l'] ?? die('peek: size is b, w or l');
+  const count = Number(args[3] ?? 1);
+  if (size > 1 && addr % 2) die('peek: word and long reads need an even address');
+  const vals = await call(sdir, { cmd: 'peek', addr, size, count });
+  const per = 16 / size;
+  for (let i = 0; i < vals.length; i += per) {
+    const row = vals.slice(i, i + per).map((v) => v.toString(16).padStart(size * 2, '0'));
+    console.log(`${(addr + i * size).toString(16).padStart(6, '0')}: ${row.join(' ')}`);
+  }
+}
+
+async function cmdPoke(args) {
+  if (args.length < 3) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const size = SIZES[args[3] ?? 'b'] ?? die('poke: size is b, w or l');
+  await call(sdir, { cmd: 'poke', addr: parseHex(args[1], 'poke'), value: parseHex(args[2], 'poke'), size });
+}
+
+async function cmdSimple(cmd, args, extra = {}) {
+  if (args.length < 1) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const r = await call(sdir, { cmd, ...extra });
+  if (r !== undefined && r !== null) console.log(typeof r === 'string' ? r : JSON.stringify(r));
+}
+
+function shotTarget(sdir, file) {
+  return path.isAbsolute(file) ? file : path.join(sdir, file);
+}
+
+async function cmdShot(args) {
+  const o = parseOpts(args, { '--via': 'v' });
+  if (o._.length !== 2) usage();
+  const sdir = findSession(o._[0]);
+  requireRunning(sdir);
+  const via = o['--via'] ?? 'heap';
+  if (!['heap', 'canvas', 'page'].includes(via)) die('shot: --via is heap, canvas or page');
+  const file = shotTarget(sdir, o._[1]);
+  await call(sdir, { cmd: 'shot', file, via });
+  console.log(file);
+}
+
+// US layout: character -> [raw keycode, shift]
+const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+const LETTER_CODES = [0x20, 0x35, 0x33, 0x22, 0x12, 0x23, 0x24, 0x25, 0x17, 0x26, 0x27, 0x28, 0x37, 0x36, 0x18, 0x19,
+  0x10, 0x13, 0x21, 0x14, 0x16, 0x34, 0x11, 0x32, 0x15, 0x31];
+const SYMBOLS = {
+  '1': [0x01, 0], '2': [0x02, 0], '3': [0x03, 0], '4': [0x04, 0], '5': [0x05, 0], '6': [0x06, 0], '7': [0x07, 0],
+  '8': [0x08, 0], '9': [0x09, 0], '0': [0x0a, 0], '!': [0x01, 1], '@': [0x02, 1], '#': [0x03, 1], '$': [0x04, 1],
+  '%': [0x05, 1], '^': [0x06, 1], '&': [0x07, 1], '*': [0x08, 1], '(': [0x09, 1], ')': [0x0a, 1], ' ': [0x40, 0],
+  '-': [0x0b, 0], '_': [0x0b, 1], '=': [0x0c, 0], '+': [0x0c, 1], '[': [0x1a, 0], '{': [0x1a, 1], ']': [0x1b, 0],
+  '}': [0x1b, 1], ';': [0x29, 0], ':': [0x29, 1], "'": [0x2a, 0], '"': [0x2a, 1], ',': [0x38, 0], '<': [0x38, 1],
+  '.': [0x39, 0], '>': [0x39, 1], '/': [0x3a, 0], '?': [0x3a, 1], '\\': [0x0d, 0], '|': [0x0d, 1], '`': [0x00, 0],
+  '~': [0x00, 1],
+};
+
+function charKey(c) {
+  const i = LOWER.indexOf(c.toLowerCase());
+  if (i >= 0 && /[a-z]/i.test(c)) return [LETTER_CODES[i], c !== c.toLowerCase() ? 1 : 0];
+  return SYMBOLS[c];
+}
+
+// The Amiga reads 8-bit mouse counters once per frame: keep each step small and a frame apart, or it wraps.
+const MOUSE_STEP = 32;
+const JOY_DIRS = { left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN' };
+
+async function runAction(sdir, tok, ctx) {
+  const arg = tok.includes(':') ? tok.slice(tok.indexOf(':') + 1) : '';
+  const send = (msg) => call(sdir, msg);
+  const keyTap = async (code, shift) => {
+    if (shift) await send({ cmd: 'key', code: 0x60, down: 1 });
+    await send({ cmd: 'key', code, down: 1 });
+    await sleep(80);
+    await send({ cmd: 'key', code, down: 0 });
+    await sleep(40);
+    if (shift) await send({ cmd: 'key', code: 0x60, down: 0 });
+  };
+  const button = (b, down) => send({ cmd: 'button', button: b, down });
+  console.log(`> ${tok}`);
+  const head = tok.includes(':') ? tok.slice(0, tok.indexOf(':') + 1) : tok;
+  switch (head) {
+    case 'key:': return keyTap(parseHex(arg, 'key'), 0);
+    case 'down:': return send({ cmd: 'key', code: parseHex(arg, 'down'), down: 1 });
+    case 'up:': return send({ cmd: 'key', code: parseHex(arg, 'up'), down: 0 });
+    case 'text:':
+      for (const c of arg) {
+        const k = charKey(c);
+        if (!k) die(`input: no key for '${c}'`, 1);
+        await keyTap(k[0], k[1]);
+      }
+      return;
+    case 'mouse:': {
+      let [dx, dy] = arg.split(',').map(Number);
+      if (!Number.isInteger(dx) || !Number.isInteger(dy)) die(`input: bad mouse move ${tok}`, 1);
+      while (dx || dy) {
+        const sx = Math.max(-MOUSE_STEP, Math.min(MOUSE_STEP, dx));
+        const sy = Math.max(-MOUSE_STEP, Math.min(MOUSE_STEP, dy));
+        await send({ cmd: 'mouse', dx: sx, dy: sy });
+        dx -= sx; dy -= sy;
+        await sleep(40);
+      }
+      return;
+    }
+    case 'click': await button(1, 1); await sleep(200); return button(1, 0);
+    case 'rclick': await button(3, 1); await sleep(200); return button(3, 0);
+    case 'dclick':
+      await button(1, 1); await sleep(100); await button(1, 0); await sleep(150);
+      await button(1, 1); await sleep(100); return button(1, 0);
+    case 'ldown': return button(1, 1);
+    case 'lup': return button(1, 0);
+    case 'rdown': return button(3, 1);
+    case 'rup': return button(3, 0);
+    case 'joy:': {
+      const [port, dir, st = '1'] = arg.split(',');
+      const press = st === '1';
+      let ev;
+      if (dir === 'fire') ev = press ? 'PRESS_FIRE' : 'RELEASE_FIRE';
+      else if (dir in JOY_DIRS) ev = press ? `PULL_${JOY_DIRS[dir]}` : (dir === 'left' || dir === 'right' ? 'RELEASE_X' : 'RELEASE_Y');
+      else die(`input: joystick direction is left, right, up, down or fire: ${tok}`, 1);
+      return send({ cmd: 'joy', event: `${port}${ev}` });
+    }
+    case 'wait:': return sleep(Number(arg));
+    case 'frames:': return send({ cmd: 'frames', count: Number(arg), resume: true });
+    case 'shot:': return send({ cmd: 'shot', file: shotTarget(sdir, arg), via: 'heap' });
+    case 'wait-serial:': {
+      const comma = arg.lastIndexOf(',');
+      const hasSecs = comma >= 0 && /^\d+$/.test(arg.slice(comma + 1));
+      const text = hasSecs ? arg.slice(0, comma) : arg;
+      const secs = hasSecs ? Number(arg.slice(comma + 1)) : 60;
+      const end = await waitInFile(sdir, path.join(sdir, 'serial.log'), text, secs, ctx.serialFrom);
+      if (end < 0) process.exit(1);
+      ctx.serialFrom = end;
+      return;
+    }
+    default: die(`input: unknown action: ${tok}`, 1);
+  }
+}
+
+async function cmdInput(args) {
+  if (args.length !== 2) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const src = args[1] === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(args[1], 'utf8');
+  const ctx = { serialFrom: fs.statSync(path.join(sdir, 'serial.log')).size };
+  for (let line of src.split('\n')) {
+    line = line.replace(/#.*/, '');
+    for (;;) {
+      line = line.replace(/^\s+/, '');
+      if (!line) break;
+      if (line.startsWith('text:') || line.startsWith('wait-serial:')) {
+        await runAction(sdir, line.replace(/\s+$/, ''), ctx);
+        break;
+      }
+      const tok = line.match(/^\S+/)[0];
+      line = line.slice(tok.length);
+      await runAction(sdir, tok, ctx);
+    }
+  }
+}
+
+async function cmdInsert(args) {
+  if (args.length !== 3) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const src = path.resolve(args[1]);
+  if (!fs.existsSync(src)) die(`ADF not found: ${src}`);
+  const drive = Number(args[2]);
+  if (![0, 1, 2, 3].includes(drive)) die('insert: DRIVE is 0-3');
+  const dst = path.join(sdir, `df${drive}-${Date.now()}-${path.basename(src)}`);
+  fs.copyFileSync(src, dst);
+  console.log(await call(sdir, { cmd: 'insert', file: dst, drive }) || `inserted into df${drive}`);
+}
+
+async function cmdSnapshot(args) {
+  if (args.length !== 3 || !['save', 'load'].includes(args[1])) usage();
+  const sdir = findSession(args[0]);
+  requireRunning(sdir);
+  const file = shotTarget(sdir, args[2]);
+  if (args[1] === 'load' && !fs.existsSync(file)) die(`snapshot not found: ${file}`);
+  await call(sdir, { cmd: `snapshot-${args[1]}`, file });
+  console.log(file);
+}
+
+// ------------------------------------------------------------------ daemon (page side)
+
+// Installed before any page script: wraps message_handler and the serial handler as soon as vAmiga_ui.js defines
+// them (long before the 8.5 MB wasm has compiled, so no message is missed) and buffers what they see.
+const INIT_HOOK = `(() => {
+  const vw = window.__vw = { ser: [], msgs: [], ready: false, romMissing: false };
+  const t = setInterval(() => {
+    if (typeof window.message_handler !== 'function' || typeof window.set_serial_port_out_handler !== 'function') return;
+    clearInterval(t);
+    const orig = window.message_handler;
+    window.message_handler = function (msg, d1, d2) {
+      if (msg !== 'MSG_SER_OUT') vw.msgs.push([Date.now(), msg, d1, d2]);
+      if (msg === 'MSG_ROM_MISSING') vw.romMissing = true;
+      return orig.apply(this, arguments);
+    };
+    window.set_serial_port_out_handler((data) => { vw.ser.push(data & 0xff); });
+    vw.ready = true;
+  }, 5);
+})();`;
+
+async function daemon(sdir) {
+  const s = readSession(sdir);
+  const logf = (f) => path.join(sdir, f);
+  const append = (f, text) => fs.appendFileSync(logf(f), text);
+  const ts = () => new Date().toISOString().slice(11, 23);
+  const fail = (e) => {
+    writeSession(sdir, { state: 'failed', error: String(e?.message ?? e).split('\n')[0] });
+    console.error(e);
+    process.exit(1);
+  };
+  if (s.browsersPath) process.env.PLAYWRIGHT_BROWSERS_PATH = s.browsersPath;
+  const { chromium } = await import('playwright');
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: !s.visible,
+      args: ['--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
+    });
+  } catch (e) { fail(e); }
+  const shutdown = async (code) => {
+    try { await browser.close(); } catch { /* already gone */ }
+    try { fs.unlinkSync(s.sock); } catch { /* not there */ }
+    process.exit(code);
+  };
+  process.on('SIGTERM', () => shutdown(0));
+  process.on('uncaughtException', (e) => { console.error(e); writeSession(sdir, { state: 'failed', error: `daemon: ${e.message}` }); shutdown(1); });
+  browser.on('disconnected', () => { writeSession(sdir, { state: 'failed', error: 'browser exited' }); process.exit(1); });
+
+  const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 960 } });
+  await context.addInitScript(INIT_HOOK);
+  const page = await context.newPage();
+  page.on('console', (m) => append('console.log', `${ts()} ${m.type()}: ${m.text()}\n`));
+  page.on('pageerror', (e) => append('console.log', `${ts()} pageerror: ${e.message}\n`));
+  page.on('dialog', async (d) => {
+    append('messages.log', `${ts()} DIALOG ${d.type()}: ${d.message().replace(/\n/g, ' ')}\n`);
+    try { await d.accept(); } catch { /* closed already */ }
+  });
+
+  const hash = { navbar: false, dialog_on_missing_roms: false, dialog_on_disk: false, wait_for_kickstart_injection: true, mouse: true };
+  try {
+    await page.goto(`${s.url}#${encodeURIComponent(JSON.stringify(hash))}`, { waitUntil: 'load', timeout: 90000 });
+    if (page.url().includes('/legacy/')) throw new Error('vAmigaWeb redirected to /legacy/: this Chromium lacks a WebAssembly feature');
+    await page.waitForFunction(() => window.__vw?.ready && window.__vw.romMissing && typeof window.wasm_loadfile === 'function', null, { timeout: 90000 });
+  } catch (e) { fail(e); }
+
+  const b64 = (f) => fs.readFileSync(f).toString('base64');
+  try {
+    const m = s.machine;
+    const conf = [`AGNUS_REVISION=${m.agnus}`, `DENISE_REVISION=${m.denise}`, `CHIP_RAM=${m.chip}`, `SLOW_RAM=${m.slow}`,
+      `FAST_RAM=${m.fast}`, 'CPU_REVISION=0'].join('\n');
+    const err = await page.evaluate((c) => wasm_configure_multi(c), conf);
+    if (err) throw new Error(`wasm_configure_multi: ${err}`);
+    if (s.adfs.length > 1) await page.evaluate((n) => wasm_configure('floppy_drive_count', String(n)), s.adfs.length);
+    if (s.warp) await page.evaluate((w) => wasm_configure('WARP_MODE', w), s.warp.toUpperCase());
+    for (const [i, f] of s.adfs.entries()) {
+      await page.evaluate(([name, data, drive]) => wasm_loadfile(name, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)), drive),
+        [path.basename(f).replace(/^df\d-/, ''), b64(f), i]);
+    }
+    await page.evaluate((data) => { wasm_loadfile('kick.rom_file', Uint8Array.from(atob(data), (c) => c.charCodeAt(0))); }, b64(s.rom));
+    if (s.ntsc) {
+      const out = await shell(page, ['amiga set VIDEO_FORMAT NTSC']);
+      if (/error|unknown|invalid/i.test(out)) throw new Error(`NTSC: ${out.trim()}`);
+    }
+    await page.evaluate(() => { wasm_reset(); });
+    // MSG_READY_TO_RUN makes the page start the emulation on its own; start it if it did not
+    const t0 = Date.now();
+    while (!(await page.evaluate(() => window.__vw.msgs.some((x) => x[1] === 'MSG_RUN'))) && Date.now() - t0 < 5000) await sleep(100);
+    if (!(await page.evaluate(() => window.__vw.msgs.some((x) => x[1] === 'MSG_RUN')))) await page.evaluate(() => wasm_run());
+  } catch (e) { fail(e); }
+
+  // drain the page buffers into the session logs
+  let draining = false;
+  const drain = async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      const r = await page.evaluate(() => { const v = window.__vw; const o = { ser: v.ser, msgs: v.msgs }; v.ser = []; v.msgs = []; return o; });
+      if (r.ser.length) fs.appendFileSync(logf('serial.log'), Buffer.from(r.ser));
+      for (const [t, msg, d1, d2] of r.msgs) {
+        append('messages.log', `${new Date(t).toISOString().slice(11, 23)} ${msg}${d1 !== undefined ? ` ${d1}` : ''}${d2 !== undefined ? ` ${d2}` : ''}\n`);
+      }
+    } catch { /* page busy or closing: next tick */ }
+    draining = false;
+  };
+  setInterval(drain, 40);
+
+  const handlers = {
+    status: () => page.evaluate(() => ({
+      running: Boolean(window.emulator_currently_runs) && !window.stop_request_animation_frame,
+      frame: Module._wasm_frame_info() >>> 2,
+      warping: Boolean(Module._wasm_is_warping()),
+      cpu_cycles: String(wasm_get_cpu_cycles()),
+      core: wasm_get_core_version(),
+      chip_kb: wasm_get_config_item('CHIP_RAM'),
+      slow_kb: wasm_get_config_item('SLOW_RAM'),
+      fast_kb: wasm_get_config_item('FAST_RAM'),
+      url: location.origin + location.pathname,
+    })),
+    shell: async (q) => {
+      const out = await shell(page, q.lines);
+      append('shell.log', q.lines.map((l) => `> ${l}\n`).join('') + out);
+      return out;
+    },
+    peek: (q) => page.evaluate(({ addr, size, count }) => {
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        const a = addr + i * size;
+        if (size === 1) out.push(wasm_peek(a));
+        else if (size === 2) out.push(wasm_peek16(a));
+        else out.push(((wasm_peek16(a) << 16) | wasm_peek16(a + 2)) >>> 0);
+      }
+      return out;
+    }, q),
+    poke: (q) => page.evaluate(({ addr, value, size }) => {
+      for (let i = 0; i < size; i++) wasm_poke(addr + i, (value >>> (8 * (size - 1 - i))) & 0xff);
+    }, q),
+    pause: () => page.evaluate(() => { wasm_halt(); }),
+    run: () => page.evaluate(() => { wasm_run(); }),
+    reset: () => page.evaluate(() => { wasm_reset(); }),
+    frames: (q) => page.evaluate(({ count, resume }) => {
+      wasm_halt();
+      let trapped = false;
+      let done = 0;
+      while (done < count && !trapped) { trapped = Boolean(Module._wasm_execute_one_frame()); done++; }
+      if (resume && !trapped) wasm_run();
+      return `${done} frame(s)${trapped ? ', stopped by a trap' : ''}, frame ${Module._wasm_frame_info() >>> 2}${resume && !trapped ? '' : ', paused'}`;
+    }, q),
+    key: (q) => page.evaluate(({ code, down }) => { wasm_key(code, down); }, q),
+    mouse: (q) => page.evaluate(({ dx, dy }) => { wasm_mouse(1, dx, dy); }, q),
+    button: (q) => page.evaluate(({ button, down }) => { wasm_mouse_button(1, button, down); }, q),
+    joy: (q) => page.evaluate((ev) => { wasm_joystick(ev); }, q.event),
+    'ser-in': (q) => page.evaluate((t) => { wasm_write_string_to_ser(t); }, q.text),
+    insert: (q) => page.evaluate(([name, data, drive]) => wasm_loadfile(name, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)), drive),
+      [path.basename(q.file).replace(/^df\d-\d+-/, ''), b64(q.file), q.drive]),
+    eject: (q) => page.evaluate((d) => { wasm_eject_disk(`df${d}`); }, q.drive),
+    shot: async (q) => {
+      if (q.via === 'page') { await page.screenshot({ path: q.file }); return; }
+      if (q.via === 'canvas') { await page.locator('canvas#canvas').screenshot({ path: q.file }); return; }
+      // the emulator texture: 1824 x 313 RGBA (super-hires columns, one row per line), shown at 912 x 626
+      const data = await page.evaluate(() => {
+        const W = 1824;
+        const H = 313;
+        const ptr = Module._wasm_pixel_buffer();
+        const px = new Uint8ClampedArray(Module.HEAPU8.buffer, ptr, W * H * 4).slice();
+        for (let i = 3; i < px.length; i += 4) px[i] = 255;
+        const src = document.createElement('canvas');
+        src.width = W; src.height = H;
+        src.getContext('2d').putImageData(new ImageData(px, W, H), 0, 0);
+        const dst = document.createElement('canvas');
+        dst.width = W / 2; dst.height = H * 2;
+        const g = dst.getContext('2d');
+        g.imageSmoothingEnabled = false;
+        g.drawImage(src, 0, 0, W / 2, H * 2);
+        return dst.toDataURL('image/png').split(',')[1];
+      });
+      fs.writeFileSync(q.file, Buffer.from(data, 'base64'));
+    },
+    'snapshot-save': async (q) => {
+      const data = await page.evaluate(() => {
+        const info = JSON.parse(wasm_take_user_snapshot());
+        const bytes = Module.HEAPU8.slice(info.address, info.address + info.size);
+        wasm_delete_user_snapshot();
+        let s = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return btoa(s);
+      });
+      fs.writeFileSync(q.file, Buffer.from(data, 'base64'));
+    },
+    'snapshot-load': (q) => page.evaluate((data) => wasm_loadfile('state.vAmiga', Uint8Array.from(atob(data), (c) => c.charCodeAt(0))), b64(q.file)),
+    js: async (q) => {
+      const v = await page.evaluate((expr) => {
+        // eslint-disable-next-line no-eval
+        const r = (0, eval)(expr);
+        return Promise.resolve(r).then((x) => (x === undefined ? 'undefined' : JSON.stringify(x)));
+      }, q.expr);
+      return v;
+    },
+    quit: async () => { setTimeout(() => shutdown(0), 50); return 'bye'; },
+  };
+
+  const server = net.createServer((sock) => {
+    let buf = '';
+    sock.on('data', async (d) => {
+      buf += d;
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      let reply;
+      try {
+        const q = JSON.parse(buf.slice(0, nl));
+        const h = handlers[q.cmd];
+        if (!h) throw new Error(`unknown command ${q.cmd}`);
+        reply = { ok: true, result: await h(q) };
+      } catch (e) {
+        reply = { ok: false, error: String(e?.message ?? e).split('\n')[0] };
+      }
+      sock.end(JSON.stringify(reply, (k, v) => (typeof v === 'bigint' ? String(v) : v)) + '\n');
+    });
+    sock.on('error', () => {});
+  });
+  try { fs.unlinkSync(s.sock); } catch { /* not there */ }
+  server.listen(s.sock, () => {
+    let coreVersion = '';
+    page.evaluate(() => wasm_get_core_version()).then((v) => { coreVersion = v; }).catch(() => {})
+      .finally(() => writeSession(sdir, { state: 'ready', coreVersion }));
+  });
+}
+
+// Types LINES into RetroShell key by key (press_key runs the core's command queue at once, even while paused), then
+// returns the console text that appeared, once it has stopped changing.
+async function shell(page, lines) {
+  const before = await page.evaluate(() => wasm_retro_shell_get_text());
+  await page.evaluate((ls) => {
+    for (const l of ls) {
+      for (const c of l) wasm_retro_shell_press_key(c.charCodeAt(0));
+      wasm_retro_shell_press_key(10);
+    }
+  }, lines);
+  let text = before;
+  for (let stable = 0, i = 0; stable < 3 && i < 40; i++) {
+    await sleep(50);
+    const t = await page.evaluate(() => wasm_retro_shell_get_text());
+    stable = t === text ? stable + 1 : 0;
+    text = t;
+  }
+  if (text.startsWith(before)) return text.slice(before.length).replace(/^\n/, '') + '\n';
+  // the console scrolled: return the end of the text from the first typed line on
+  const at = text.lastIndexOf(lines[0]);
+  return (at >= 0 ? text.slice(at) : text) + '\n';
+}
+
+// ------------------------------------------------------------------ main
+
+const [cmd, ...args] = process.argv.slice(2);
+const commands = {
+  setup: () => cmdSetup(),
+  config: () => cmdConfig(),
+  start: () => cmdStart(args),
+  stop: () => cmdStop(args),
+  list: () => cmdList(),
+  status: () => cmdStatus(args),
+  serial: () => cmdSerial(args),
+  'wait-serial': () => cmdWaitIn(args, 'serial.log'),
+  'wait-msg': () => cmdWaitIn(args, 'messages.log'),
+  shell: () => cmdShell(args),
+  peek: () => cmdPeek(args),
+  poke: () => cmdPoke(args),
+  pause: () => cmdSimple('pause', args),
+  run: () => cmdSimple('run', args),
+  reset: () => cmdSimple('reset', args),
+  frames: () => (args.length === 2 ? cmdSimple('frames', args, { count: Number(args[1]), resume: false }) : usage()),
+  shot: () => cmdShot(args),
+  input: () => cmdInput(args),
+  'ser-in': () => (args.length === 2 ? cmdSimple('ser-in', args, { text: args[1] }) : usage()),
+  insert: () => cmdInsert(args),
+  eject: () => (args.length === 2 ? cmdSimple('eject', args, { drive: Number(args[1]) }) : usage()),
+  snapshot: () => cmdSnapshot(args),
+  js: () => (args.length === 2 ? cmdSimple('js', args, { expr: args[1] }) : usage()),
+  __daemon: () => daemon(args[0]),
+};
+if (!cmd || !(cmd in commands)) usage();
+await commands[cmd]();

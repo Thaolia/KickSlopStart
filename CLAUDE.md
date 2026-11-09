@@ -33,9 +33,9 @@ Where to look for what → "File References" below. Scoped rules: `.claude/rules
   ABI, with no ROM address and no transcribed instruction. If a probe program would help, the agent describes it in
   its report; it is written outside the agent, from that description only.
 - To run the ROM, the agent uses the `/amiberry` skill when it is available (`amiberry-session start --analysis`:
-  sessions in `build/amiberry/analysis/`). The main context never reads those sessions, nor any raw output of the
-  agent (disassembly, dumps, logs): only its final report and the `docs/analysis/` pages, after the
-  "no transcribed code" check above.
+  sessions in `build/amiberry/analysis/`), or `/vamigaweb` for vAmiga behaviour (`build/vamigaweb/analysis/`). The
+  main context never reads those sessions, nor any raw output of the agent (disassembly, dumps, logs): only its final
+  report and the `docs/analysis/` pages, after the "no transcribed code" check above.
 
 ## Routing & Delegation
 
@@ -147,6 +147,7 @@ Outside contributors are not bound by our firewall. A PR is merged only after th
   `make hello` → smoke ROM · `make verify` (size, `is_kick`, checksum).
 - Pre-push regression: `.claude/skills/amiberry/scripts/prepush-check [rom]` (3 parallel Amiberry sessions).
 - Targeted runs: `/amiberry` skill (headless sessions, serial log, gdb, screenshots, scripted input);
+  `/vamigaweb` skill for what vAmigaWeb users see (live site in headless Chromium, RetroShell debugger);
   `tests/boot_test.sh` (FS-UAE boot) for the older harnesses.
 - Toolchain required in PATH: `vasmm68k_mot`, `vlink`, `romtool` (amitools), `python3`, `fs-uae`, `Xvfb`.
 - Asm syntax check = the `vasm` build itself (no `py_compile`). Python reading data: `python3 -I`.
@@ -175,7 +176,7 @@ Plain links, no `@`: these files are long and are read when the question comes u
 | Behaviour of a 1.3 subsystem | `docs/analysis/<subsystem>-v34.md` · `docs/analysis/coverage-v34.md` |
 | Emulators, toolchain versions, hardware | `docs/HARDWARE.md` |
 | exec LVO table, DOS design, memory budget | `docs/exec-lvo-table.md` · `docs/D3-dos-design.md` · `docs/MEMORY-USAGE.md` |
-| Running and debugging a ROM live | `.claude/skills/amiberry/SKILL.md` · `.claude/skills/amiberry/reference.md` |
+| Running and debugging a ROM live | `.claude/skills/amiberry/SKILL.md` · `.claude/skills/amiberry/reference.md` · `.claude/skills/vamigaweb/SKILL.md` |
 
 ## Self-Improvement
 

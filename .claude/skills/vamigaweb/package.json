@@ -1,0 +1,9 @@
+{
+  "name": "vamigaweb-skill",
+  "private": true,
+  "description": "Drives vAmigaWeb in headless Chromium for the vamigaweb skill",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}
