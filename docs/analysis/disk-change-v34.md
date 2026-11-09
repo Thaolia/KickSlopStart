@@ -315,15 +315,29 @@ Window coordinates (borderless backdrop).
 | disk window **open** (OctaMED) | **stays** (selected if it was) | **stays open** with its icons |
 | reinsertion of the same disk | nothing changes visually (same node, same entry) | same |
 | non-DOS disk ejected | `DF0:…` icon **disappears** | — |
+| drive **inhibited** (DiskCopy waiting at its requester), volume **without** lock (`Data` in DF1) | **disappears**, replaced **in the same slot** by `DF1:BUSY` (§4.5) | — |
+| drive inhibited, volume **with** locks (`Workbench1.3` in DF0) | **stays** (same image, same place, selection kept); `DF0:BUSY` is **added** at the next free slot | **stays open** with its icons |
+| end of the inhibition (DiskCopy Cancel) | `DFn:BUSY` removed, then the volume icon comes back in its slot; settled ≈ 4 s after the click | unchanged |
+
+Inhibition rows: [O probe, 2026-11-09, Amiberry, real ROM]; details and timings in
+`workbench-task-v34.md` §10.6.
 
 ### 4.5 Non-DOS disk [O ROM + O probe]
 
 "Device" icon (object type 7) with the **default disk object** (§4.2), label =
 **device name + `:` + the 4 bytes of `id_DiskType`** copied as is, the string stopping at the
 first null byte: `DF0:NDOS` (invalid root, observed), `DF0:` (null disk, type 0, observed),
-`DF0:BAD` (`'BAD\0'`), `DF0:BUSY` during an INHIBIT [D]. If the type changes, the icon is recreated
-with the new name. Nothing for `'DOS\0'` nor for −1 (empty drive). Placement: §4.3 (observed below
-Workbench1.3).
+`DF0:BAD` (`'BAD\0'`) [D], **`DF0:BUSY` / `DF1:BUSY` during an INHIBIT** [O probe 2026-11-09:
+DiskCopy at its requester, both drives inhibited; default disk image, pixel-identical to the
+`RAM DISK` image]. If the type changes, the icon is recreated with the new name. Nothing for
+`'DOS\0'` nor for −1 (empty drive). Placement: §4.3. Observed: a non-DOS disk inserted after boot
+lands below Workbench1.3; a **BUSY icon replacing a volume without locks takes that volume's freed
+slot**, while `DF0:BUSY` next to a volume that stays lands in the next free slot below it.
+**At boot**, an all-zero disk in DF1 gave a `DF1:` icon (default image) at the **top** of the
+right-hand column, **above `RAM DISK`** (column: `DF1:`, `RAM DISK`, `Workbench1.3`) [O probe
+2026-11-09, Amiberry]: the first Workbench scan adds it before the volumes; why it comes first is
+not established [S: the non-DOS device entries are reached before the volume entries in that
+scan].
 
 ### 4.6 Delays [O probe, D]
 
@@ -361,7 +375,9 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
 | V11 | Lock kept on `DF0:c`, eject, `Examine(lock)` | requester "Please replace volume / Workbench1.3 / in any drive"; reinsertion ⇒ requester closed on its own, Examine = −1 |
 | V12 | `Disk.info` whose position overlaps RAM DISK | icon moved into the right-hand column at the first gap (below Workbench1.3), X = W−96+(96−w)/2 |
 | V13 | Window with IDCMP DISKINSERTED\|DISKREMOVED, never active | receives both classes; `im_Seconds` ≠ 0 (current time) |
-| V14 | ACTION_DISK_INFO during INHIBIT(1) | DiskType `'BUSY'`; after INHIBIT(0): remount, DISKINSERTED [O ROM, not probed] |
+| V14 | ACTION_DISK_INFO during INHIBIT(1) | DiskType `'BUSY'`; after INHIBIT(0): remount, DISKINSERTED [O ROM, not probed at packet level] |
+| V15 | `Workbench1.3` (DF0) dragged on `Data` (DF1), DiskCopy requester up | `Data` → `DF1:BUSY` in the same slot; `Workbench1.3` stays; `DF0:BUSY` added below it; Cancel ⇒ back to the start within ≈ 4 s [O probe, `workbench-task-v34.md` §10.6] |
+| V16 | All-zero disk in DF1 at boot | `DF1:` icon at the top of the column, above `RAM DISK` [O probe] |
 
 ---
 

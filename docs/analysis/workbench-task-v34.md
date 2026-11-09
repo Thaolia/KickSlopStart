@@ -1742,8 +1742,54 @@ reference and re-probe before relying on the grid.
   showed: `Put Workbench1.3 ( FROM disk ) in drive DF0:` / `Put DESTINATION disk ( TO disk ) in drive
   DF1:` with Continue/Cancel. So **WBArg 1 = the dragged disk = source**, **WBArg 2 = the disk under
   the pointer = destination** (§7.9.1: tool, source, destination). [shot]
-- While DiskCopy runs, both disk icons are replaced by `DF0:BUSY` / `DF1:BUSY` (the drives are
-  inhibited by DiskCopy); Cancel restores them. [shot]
+- **Desktop while the requester is up** (re-probed 2026-11-09, three runs, see the method below).
+  An earlier version of this section said "both disk icons are replaced by `DF0:BUSY` /
+  `DF1:BUSY`": that is **wrong for the source disk**. What the desktop shows: [shot]
+
+  | Icon before | During DiskCopy (requester up) | Why [D] |
+  |---|---|---|
+  | `RAM DISK` (top of the right-hand column) | unchanged | not involved |
+  | `Data` (DF1, no locks on it, window closed) | **disappears**; a **`DF1:BUSY`** icon takes **exactly its slot** (same X, same Y) | the inhibited volume behaves like an ejected volume without locks (`disk-change-v34.md` §4.4); the BUSY icon is then placed by the gap rule (§4.3 there), whose first gap is the slot just freed |
+  | `Workbench1.3` (DF0, the boot volume: assigns, CLI and Workbench locks on it) | **stays**, same image, same place, **still selected** (drawn in its highlighted state since the drag) | a volume with locks stays on the desktop when its disk goes (§4.4 there) |
+  | — | a **`DF0:BUSY`** icon is **added** at the **next free slot of the right-hand column**, below `Workbench1.3` | gap rule; the slots above are all taken |
+
+  - **Image** of both BUSY icons: the **default disk image** used for disks without a `Disk.info`
+    (white floppy with an orange shutter), **pixel-identical** to the `RAM DISK` and `Data` images
+    (compared on the screenshots), drawn unselected. [shot]
+  - **Labels**: `DF0:BUSY` and `DF1:BUSY` (device name, `:`, then the disk type `'BUSY'` as text),
+    centred under the image like any disk label. [shot]
+  - **Placement measured**: all four icons in the same right-hand column, images at the same X;
+    vertical step between consecutive slots **27 lines** (RAM DISK, DF1:BUSY, Workbench1.3,
+    DF0:BUSY from top to bottom). [shot]
+  - **Timing** (wall-clock, emulated A500 at cycle-exact speed, release of the mouse button = 0):
+    the DiskCopy window and requester are up between +3 s and +5 s; the desktop still shows `Data`
+    at +5 to +8 s; the BUSY change is complete at +9 to +10 s. So the BUSY icons appear **about 4 s
+    after the requester**, not with it, consistent with the Workbench's periodic disk rescan
+    (`disk-change-v34.md` §4.6) rather than an immediate reaction [D]. [shot]
+  - **With the `Workbench1.3` disk window open** before the drag: the window **stays open**, all its
+    icons stay drawn (DiskCopy's window opens on top of its title bar); the desktop column changes
+    exactly as in the table. [shot]
+
+- **Cancel** (click on `Cancel` in the requester): [shot]
+  1. within a fraction of a second: the requester is removed from the DiskCopy window;
+  2. +1 s: the DiskCopy window shows `DiskCopy abandoned`; the BUSY icons are still there;
+  3. +2 to +4 s: the BUSY icons disappear and `Data` comes back **in its original slot** (same
+     place, same image, unselected). Order seen: run A: `DF1:BUSY` gone at +2 s, `Data` back at
+     +3 s while `DF0:BUSY` was still shown, `DF0:BUSY` gone at +4 s; run B: both BUSY icons gone at
+     +3 s, `Data` back at +4 s. A `DFn:BUSY` icon is removed before the volume of the same drive
+     reappears; the two drives are handled independently [D];
+  4. +4 s: the DiskCopy window has closed; the desktop is identical to the one before the drag
+     except that `Workbench1.3` is **still selected**; the free-memory title is back.
+  Settled about **4 s** after the click; the open `Workbench1.3` window (run with it open) stays open
+  with its icons throughout. Nothing moved: the source volume icon never left its slot.
+
+- **Method**: real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, A500 cycle-exact),
+  DF0 = a session copy of the Workbench 1.3.3 boot disk, DF1 = a blank OFS disk `Data` made with
+  `xdftool <file> create + format Data` (no `Disk.info`), fresh file names per run. Drag: press on
+  the middle of the `Workbench1.3` image, move 54 picture pixels (27 lines) up onto the `Data`
+  image, release; IPC screenshots at fixed delays after the release and after the Cancel click,
+  compared pixel by pixel (`compare -metric AE`) to date each change. Nothing else opened, except
+  the disk window for the "window open" run.
 
 ### 10.7 Selection [O unless stated]
 
@@ -1847,6 +1893,8 @@ included). It is not an icon. Layout seen in every instance [disk]:
 | drop on a Shell window | `"Icons cannot be moved into this window"` |
 | drop a disk or trashcan outside its window | `"'<name>' cannot be moved out of its window"` |
 | disk icon A dropped on disk icon B | DiskCopy, FROM = A, TO = B |
+| `Workbench1.3` (DF0) dropped on `Data` (DF1), requester up | `Data` replaced in its slot by `DF1:BUSY`; `Workbench1.3` stays, selected; `DF0:BUSY` added at the next free slot below; both BUSY icons use the default disk image |
+| Cancel in that requester | BUSY icons gone and `Data` back in its slot within about 4 s; `Workbench1.3` still selected |
 | Shift held while pressing one of two selected icons, delta (dx,dy) | both moved, each by (dx,dy) |
 | nothing selected | only Redraw and Version enabled (Last Error once a message was shown) |
 | Empty Trash on an empty trashcan | enabled; nothing happens visibly |

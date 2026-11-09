@@ -8,10 +8,11 @@
 ;     runs at priority 1.
 ; Desktop: Workbench screen, backdrop window (BACKDROP) with one icon per mounted volume of the DosList (spec
 ; disk-change-v34 §4): "<volume>:Disk.info", otherwise default disk icon; scanned at startup, on the 5 s tick and
-; on DISKINSERTED / DISKREMOVED; a volume gone from the DosList loses its icon. Drawer windows (WB_MAXDRAWERS): the
+; on DISKINSERTED / DISKREMOVED; a volume gone from the DosList loses its icon. Each filesystem device is asked its
+; DiskType (ACTION_DISK_INFO) at every scan: neither DOS nor empty -> a device icon "DF0:NDOS", "DF1:BUSY" (DiskCopy,
+; Format: inhibited drive), "DF1:" (§4.5), which cannot be opened. Drawer windows (WB_MAXDRAWERS): the
 ; root (double-click on the disk) and any nested drawer (double-click on a drawer icon), icons read through
-; Examine/ExNext + GetDiskObject, redrawn on REFRESHWINDOW (BeginRefresh/EndRefresh). Only one icon selected at a
-; time (inverted rectangle). Double-click on a tool: launched by CreateProc with a WBStartup message (argument 0 =
+; Examine/ExNext + GetDiskObject, redrawn on REFRESHWINDOW (BeginRefresh/EndRefresh). Double-click on a tool: launched by CreateProc with a WBStartup message (argument 0 =
 ; the tool); on a project: its default tool, the project as argument 1. The message comes back on the "Workbench"
 ; port when the tool ends: segment unloaded, locks returned. Workbench / Disk / Special menus, items enabled or ghosted
 ; from the selection (spec §10.8); Disk/Empty Trash empties the selected trashcan, Disk/Initialize starts
@@ -62,6 +63,9 @@ WB_LVO_MODIFYIDCMP EQU -150         ; intuition ModifyIDCMP(window a0, classes d
 DOS_LVO_INFO    EQU -114             ; Info(lock d1, InfoData d2)
 ID_NUMBLOCKS    EQU 12               ; struct InfoData
 ID_NUMBLOCKSUSED EQU 16
+ID_DISKTYPE     EQU 24
+ID_SIZE         EQU 36
+DT_DOS          EQU $444F5300        ; id_DiskType "DOS\0"
 ICON_LVO_BUMPREVISION EQU -108
 WBO_CURX        EQU $54              ; WBObject: position of the icon (LONG)
 WBO_CURY        EQU $58
@@ -89,6 +93,7 @@ WBDRAWER        EQU 2
 WBTOOL          EQU 3
 WBPROJECT       EQU 4
 WBGARBAGE       EQU 5
+WBKICK          EQU 7                ; a device icon: non-DOS, unreadable or inhibited disk (spec disk-change-v34 §4.5)
 SM_PROCESS      EQU 20               ; struct WBStartup (workbench/startup.h)
 SM_SEGMENT      EQU 24
 SM_NUMARGS      EQU 28
@@ -276,6 +281,7 @@ WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copy of the menus (intui
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
 WB_MAXDRAWERS   EQU 6
 WB_MAXVOLS      EQU 8
+WB_MAXDEVS      EQU 4                ; filesystem devices asked for their DiskType at each scan
 WB_MAXLEFT      EQU 8                ; icons left out on the backdrop (spec §10.2): desktop icons WB_LEFT0..WB_LEFT0+7
 WB_LEFT0        EQU WB_MAXVOLS
 LO_DOBJ         EQU 0                ; DiskObject (our own GetDiskObject) | 0 (free record)
@@ -294,6 +300,7 @@ VE_X            EQU 10               ; WORD: position of the icon in the backdro
 VE_Y            EQU 12
 VE_DATE         EQU 14               ; creation date of the volume (dl_VolumeDate)
 VE_SEL          EQU 26               ; BYTE: icon selected
+VE_DEV          EQU 27               ; BYTE: a device icon "DFn:<type>" (VE_NODE = device node, VE_DATE = its DiskType)
 VE_NAME         EQU 28               ; name of the volume (C string)
 VE_PATH         EQU VE_NAME+WBS_NAMEMAX ; "<name>:"
 VE_DEFO         EQU VE_PATH+36       ; default DiskObject (78 bytes)
@@ -463,7 +470,9 @@ wb_vscan:
 .vs_ue:
         dbra    d0,.vs_un
         lea     -4*WB_MAXVOLS(sp),sp ; nodes of the new volumes
-        moveq   #0,d6                ; d6 = their number
+        lea     -8*WB_MAXDEVS(sp),sp ; filesystem devices: node, handler port
+        moveq   #0,d6                ; d6 = new volumes
+        moveq   #0,d7                ; d7 = devices
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)
         bsr     wb_devinfo
@@ -473,6 +482,19 @@ wb_vscan:
         beq.s   .vs_end
         move.l  d2,a3
         lsr.l   #2,d2                ; d2 = BPTR of the node
+        cmp.l   #DLT_DEVICE,DN_TYPE(a3)
+        bne.s   .vs_vol
+        cmp.w   #WB_MAXDEVS,d7
+        bhs.s   .vs_nx
+        bsr     wb_isfsdev
+        beq.s   .vs_nx
+        move.w  d7,d0
+        lsl.w   #3,d0
+        move.l  d2,0(sp,d0.w)
+        move.l  DN_TASK(a3),4(sp,d0.w)
+        addq.w  #1,d7
+        bra.s   .vs_nx
+.vs_vol:
         cmp.l   #DLT_VOLUME,DN_TYPE(a3)
         bne.s   .vs_nx
         lea     WBS_VOLS(a5),a2
@@ -490,7 +512,7 @@ wb_vscan:
         bhs.s   .vs_nx
         move.w  d6,d0
         lsl.w   #2,d0
-        move.l  d2,0(sp,d0.w)
+        move.l  d2,8*WB_MAXDEVS(sp,d0.w)
         addq.w  #1,d6
         bra.s   .vs_nx
 .vs_seen:
@@ -500,6 +522,50 @@ wb_vscan:
         bra.s   .vs_lp
 .vs_end:
         jsr     LVO_PERMIT(a6)
+        moveq   #0,d4                ; each device: DiskType; a known device icon of the same type stays, a new
+.vs_dev:                             ; one is queued in place of its port (node, type), the others go
+        cmp.w   d7,d4
+        bhs.s   .vs_rmst
+        move.w  d4,d0
+        lsl.w   #3,d0
+        move.l  4(sp,d0.w),a0
+        bsr     wb_diskinfo
+        move.w  d4,d1
+        lsl.w   #3,d1
+        move.l  d0,4(sp,d1.w)
+        clr.l   d3                   ; d3 = 0: no icon for this one
+        cmp.l   #DT_DOS,d0
+        beq.s   .vs_dnone
+        cmp.l   #-1,d0
+        beq.s   .vs_dnone
+        moveq   #1,d3
+        move.l  0(sp,d1.w),d1        ; its icon, if it already has one of this type
+        lea     WBS_VOLS(a5),a2
+        move.w  WBS_NVOL(a5),d2
+        bra.s   .vs_dfe
+.vs_dfind:
+        tst.b   VE_DEV(a2)
+        beq.s   .vs_dnx
+        cmp.l   VE_NODE(a2),d1
+        bne.s   .vs_dnx
+        cmp.l   VE_DATE(a2),d0
+        bne.s   .vs_dnx
+        st      VE_SEEN(a2)
+        moveq   #0,d3                ; known: nothing to add
+.vs_dnx:
+        lea     VE_SIZE(a2),a2
+.vs_dfe:
+        dbra    d2,.vs_dfind
+.vs_dnone:
+        tst.l   d3
+        bne.s   .vs_dn
+        move.w  d4,d0
+        lsl.w   #3,d0
+        clr.l   0(sp,d0.w)           ; nothing to add for this device
+.vs_dn:
+        addq.w  #1,d4
+        bra.s   .vs_dev
+.vs_rmst:
         move.w  WBS_NVOL(a5),d4      ; vanished records, from the last to the first
 .vs_rm:
         subq.w  #1,d4
@@ -512,14 +578,30 @@ wb_vscan:
         bsr     wb_vremove
         moveq   #1,d5
         bra.s   .vs_rm
+; New device icons first, the last device met first (spec disk-change-v34 §4.5, V15/V16: DF1:BUSY takes the slot of
+; the volume it replaces before DF0:BUSY; a device icon at boot lands above the volumes); then the new volumes.
 .vs_add:
+        move.w  d7,d4
+.vs_dal:
+        subq.w  #1,d4
+        bmi.s   .vs_vadd
+        move.w  d4,d0
+        lsl.w   #3,d0
+        move.l  4(sp,d0.w),d1
+        move.l  0(sp,d0.w),d0
+        beq.s   .vs_dal
+        bsr     wb_vdev
+        beq.s   .vs_dal
+        moveq   #1,d5
+        bra.s   .vs_dal
+.vs_vadd:
         moveq   #0,d4
 .vs_al:
         cmp.w   d6,d4
         bhs.s   .vs_draw
         move.w  d4,d0
         lsl.w   #2,d0
-        move.l  0(sp,d0.w),d0
+        move.l  8*WB_MAXDEVS(sp,d0.w),d0
         bsr     wb_vadd
         beq.s   .vs_an
         moveq   #1,d5
@@ -527,7 +609,7 @@ wb_vscan:
         addq.w  #1,d4
         bra.s   .vs_al
 .vs_draw:
-        lea     4*WB_MAXVOLS(sp),sp
+        lea     4*WB_MAXVOLS+8*WB_MAXDEVS(sp),sp
         tst.l   d5
         beq.s   .vs_ret
         moveq   #0,d7
@@ -545,20 +627,177 @@ wb_devinfo:
         lea     DI_DEVINFO(a0),a0
         rts
 
+; wb_isfsdev(a3 = device node, under Forbid, a5) -> Z = 0 if it is a started filesystem on an exec device (handler
+; port, FileSysStartupMsg whose device is in the DeviceList): the devices asked for their DiskType (spec
+; workbench-task-v34 §3.3). Preserves d1-d7/a2-a6.
+wb_isfsdev:
+        movem.l d1/a2/a6,-(sp)
+        lea     -32(sp),sp
+        tst.l   DN_TASK(a3)
+        beq.s   .fd_no
+        move.l  DN_STARTUP(a3),d0
+        cmp.l   #$100,d0             ; (a BPTR into RAM, not a small value)
+        blo.s   .fd_no
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  FSSM_DEVICE(a0),d0
+        beq.s   .fd_no
+        lsl.l   #2,d0
+        move.l  d0,a0
+        moveq   #0,d0
+        move.b  (a0)+,d0             ; BSTR -> C string
+        cmp.w   #30,d0
+        bhi.s   .fd_no
+        move.l  sp,a1
+        bra.s   .fd_ce
+.fd_cp:
+        move.b  (a0)+,(a1)+
+.fd_ce:
+        dbra    d0,.fd_cp
+        clr.b   (a1)
+        move.l  ($4).w,a6
+        lea     EB_DEVICELIST(a6),a0
+        move.l  sp,a1
+        jsr     LVO_FINDNAME(a6)
+        bra.s   .fd_ret
+.fd_no:
+        moveq   #0,d0
+.fd_ret:
+        lea     32(sp),sp
+        movem.l (sp)+,d1/a2/a6
+        tst.l   d0
+        rts
+
+; wb_diskinfo(a0 = handler port, a5) -> d0.l = id_DiskType from an ACTION_DISK_INFO packet sent by the Workbench
+; itself and awaited on its pr_MsgPort (spec workbench-task-v34 §3.3), -1 if the handler refuses it. Preserves
+; d1-d7/a2-a6.
+DI_INFO         EQU SP_SIZEOF        ; after the StandardPacket: the InfoData (+ 2 bytes to align it on a longword)
+DI_SIZE         EQU DI_INFO+ID_SIZE+2
+wb_diskinfo:
+        movem.l d1-d2/a1-a3/a6,-(sp)
+        lea     -DI_SIZE(sp),sp
+        move.l  a0,a3
+        move.l  sp,a0
+        moveq   #DI_SIZE/2-1,d0
+.di_clr:
+        clr.w   (a0)+
+        dbra    d0,.di_clr
+        move.l  ($4).w,a6
+        sub.l   a1,a1
+        jsr     LVO_FINDTASK(a6)
+        move.l  d0,a2
+        lea     PR_MSGPORT(a2),a2    ; a2 = reply port
+        lea     DI_INFO+2(sp),a0     ; InfoData on a longword (BPTR)
+        move.l  a0,d2
+        and.b   #$FC,d2
+        lea     SP_PKT(sp),a0
+        move.l  a0,LN_NAME(sp)
+        move.b  #NT_MESSAGE,LN_TYPE(sp)
+        move.l  a2,MN_REPLYPORT(sp)
+        move.w  #SP_SIZEOF,MN_LENGTH(sp)
+        move.l  sp,DP_LINK(a0)
+        move.l  a2,DP_PORT(a0)
+        move.l  #ACTION_DISK_INFO,DP_TYPE(a0)
+        move.l  d2,d0
+        lsr.l   #2,d0
+        move.l  d0,DP_ARG1(a0)
+        move.l  a3,a0
+        move.l  sp,a1
+        jsr     LVO_PUTMSG(a6)
+.di_wait:
+        move.l  a2,a0
+        jsr     LVO_WAITPORT(a6)
+        move.l  a2,a0
+        jsr     LVO_GETMSG(a6)
+        cmp.l   sp,d0
+        bne.s   .di_wait
+        moveq   #-1,d0
+        tst.l   SP_PKT+DP_RES1(sp)
+        beq.s   .di_ret
+        move.l  d2,a0
+        move.l  ID_DISKTYPE(a0),d0
+.di_ret:
+        lea     DI_SIZE(sp),sp
+        movem.l (sp)+,d1-d2/a1-a3/a6
+        rts
+
+; wb_vdev(d0 = BPTR of the device node, d1 = its DiskType, a5) -> Z = 0 if an icon was added: the default disk object
+; as a device icon (type WBKICK), named "<device>:" + the DiskType's characters up to the first null byte (spec
+; disk-change-v34 §4.5), placed by wb_vplace. Preserves d2-d7/a2-a6.
+wb_vdev:
+        movem.l d2-d3/a2-a3,-(sp)
+        cmp.w   #WB_MAXVOLS,WBS_NVOL(a5)
+        bhs.s   .vd_no
+        move.l  d1,d3
+        move.l  d0,d2
+        move.w  WBS_NVOL(a5),d1
+        bsr     wb_volent
+        move.l  a0,a2
+        move.w  #VE_SIZE/2-1,d0
+.vd_clr:
+        clr.w   (a0)+
+        dbra    d0,.vd_clr
+        st      VE_DEV(a2)
+        move.l  d2,VE_NODE(a2)
+        move.l  d3,VE_DATE(a2)
+        lsl.l   #2,d2
+        move.l  d2,a3
+        move.l  DN_NAME(a3),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        cmp.w   #WBS_NAMEMAX-7,d0
+        bls.s   .vd_nl
+        moveq   #WBS_NAMEMAX-7,d0
+.vd_nl:
+        lea     VE_NAME(a2),a1
+        lea     VE_PATH(a2),a3
+        bra.s   .vd_ne
+.vd_nc:
+        move.b  (a0),(a1)+
+        move.b  (a0)+,(a3)+
+.vd_ne:
+        dbra    d0,.vd_nc
+        move.b  #':',(a1)+
+        move.b  #':',(a3)+
+        moveq   #3,d0                ; the DiskType's characters
+.vd_tc:
+        rol.l   #8,d3
+        tst.b   d3
+        beq.s   .vd_obj
+        move.b  d3,(a1)+
+        dbra    d0,.vd_tc
+.vd_obj:
+        bsr     wb_vdefault
+        move.b  #WBKICK,VE_DEFO+DO_TYPE(a2)
+        bsr     wb_vplace
+        st      VE_SEEN(a2)
+        addq.w  #1,WBS_NVOL(a5)
+        moveq   #1,d0                ; Z = 0
+        bra.s   .vd_ret
+.vd_no:
+        moveq   #0,d0
+.vd_ret:
+        movem.l (sp)+,d2-d3/a2-a3
+        rts
+
 ; wb_vremove(d1.w = volume number, a5): its icon leaves the desktop (DiskObject returned, except the default icon);
-; the following records move down one rank. The selected disks are deselected. Preserves d2-d7/a2-a6.
+; the following records move down one rank (with their selection: WBS_SELI follows). Preserves d2-d7/a2-a6.
 wb_vremove:
         movem.l d2/a2/a6,-(sp)
-        moveq   #WB_MAXVOLS-1,d0     ; (the desktop is redrawn afterwards)
-        lea     WBS_VOLS+VE_SEL(a5),a0
-.vr_clr:
-        clr.b   (a0)
-        lea     VE_SIZE(a0),a0
-        dbra    d0,.vr_clr
-        bsr     wb_selfix
         move.w  d1,d2
         bsr     wb_volent
         move.l  a0,a2
+        clr.b   VE_SEL(a2)           ; (the desktop is redrawn afterwards)
+        tst.w   WBS_SELW(a5)
+        bne.s   .vr_fix
+        cmp.w   WBS_SELI(a5),d2
+        bhs.s   .vr_fix
+        cmp.w   #WB_LEFT0,WBS_SELI(a5)
+        bhs.s   .vr_fix
+        subq.w  #1,WBS_SELI(a5)      ; a disk further down the list keeps its selection
+.vr_fix:
         tst.b   VE_DEF(a2)
         bne.s   .vr_shift
         move.l  VE_DOBJ(a2),a0
@@ -580,6 +819,8 @@ wb_vremove:
         addq.w  #1,d2
         bra.s   .vr_lp
 .vr_ret:
+        clr.b   VE_SEL(a2)           ; the record left free
+        bsr     wb_selfix
         movem.l (sp)+,d2/a2/a6
         rts
 ; wb_vfix(a2 = record): default icon: pointers to its own copy (the record may have been moved). Clobbers a0.
@@ -2976,8 +3217,12 @@ dp_objinfo:
         cmp.w   #WB_LEFT0,d1
         bhs.s   .oi_lo
         bsr     wb_volent
-        lea     VE_NAME(a0),a0
         moveq   #WBDISK,d6
+        tst.b   VE_DEV(a0)
+        beq.s   .oi_vol
+        moveq   #WBKICK,d6
+.oi_vol:
+        lea     VE_NAME(a0),a0
         bra.s   .oi_ok
 .oi_lo:
         bsr     wb_loent
@@ -2997,9 +3242,12 @@ dp_objinfo:
         moveq   #1,d1                ; Z = 0
 .oi_ret:
         rts
-; dp_stays(d6.b = icon type) -> Z = 1 for a disk or a trashcan, which never leave their window. Clobbers nothing.
+; dp_stays(d6.b = icon type) -> Z = 1 for a disk, a device or a trashcan, which never leave their window. Clobbers
+; nothing.
 dp_stays:
         cmp.b   #WBDISK,d6
+        beq.s   .ds_ret
+        cmp.b   #WBKICK,d6
         beq.s   .ds_ret
         cmp.b   #WBGARBAGE,d6
 .ds_ret:
@@ -3230,6 +3478,8 @@ wb_openicon:
         cmp.w   #WB_LEFT0,d1
         bhs.s   .oi_lo
         bsr     wb_volent            ; disk: its root "<volume>:", title = name of the volume
+        tst.b   VE_DEV(a0)
+        bne     .oi_ret              ; a device icon: nothing to open
         move.l  VE_DOBJ(a0),a2
         lea     VE_NAME(a0),a1
         lea     VE_PATH(a0),a0
@@ -3881,10 +4131,15 @@ wb_menustate:
 .ms_one:
         tst.w   d7
         bne.s   .ms_base
-        cmp.w   #WB_LEFT0,WBS_SELI(a5)
-        blo.s   .ms_base
+        move.w  WBS_SELI(a5),d1
+        cmp.w   #WB_LEFT0,d1
+        blo.s   .ms_vol
         or.w    #WBMM_OPEN,d6        ; an icon left out on the backdrop
         bra     .ms_apply
+.ms_vol:
+        bsr     wb_volent
+        tst.b   VE_DEV(a0)
+        bne     .ms_apply            ; a device icon: nothing to open, copy or name
 .ms_base:
         or.w    #WBMM_OPEN|WBMM_RENAME|WBMM_INFO|WBMM_SNAPSHOT,d6
         move.w  WBS_SELI(a5),d1
@@ -4494,6 +4749,8 @@ wb_snapshot:
         move.w  WBS_SELI(a5),d1
         bsr     wb_iconrect          ; a2 = DiskObject, d0/d1 = corner in the window
         beq     .ss_ret
+        cmp.b   #WBKICK,DO_TYPE(a2)
+        beq     .ss_ret              ; a device icon has no .info
         tst.w   d7
         bne.s   .ss_dr
         movem.w d0-d1,-(sp)          ; disk: "<volume>:Disk", its window is the root "<volume>:"

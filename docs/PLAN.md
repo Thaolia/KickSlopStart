@@ -1399,6 +1399,17 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   disk -> both copied; Expansion + More dropped from the Data window onto the Workbench1.3 disk -> 451, 0 and 279, 29,
   two distinct free cells. prepush-check FAIL=0 (Lemmings menu captured). Not checked live: Discard across windows.
   Open: "DFn:BUSY" icons during DiskCopy.
+  **Workbench device icons, DFn:BUSY (2026-11-09)**: spec disk-change-v34 §4.4/§4.5 (re-probed on the real 1.3 the
+  same day by an analysis agent: V15, V16) and workbench-task-v34 §10.6. At each scan `wb_vscan` lists the started
+  filesystem devices (`wb_isfsdev`: handler port, FileSysStartupMsg device in the DeviceList) and asks each one its
+  DiskType with an ACTION_DISK_INFO packet sent by the Workbench itself (`wb_diskinfo`, reply on its pr_MsgPort).
+  Neither 'DOS\0' nor -1 -> a device icon (`wb_vdev`: default disk object, type WBKICK, label "<device>:" + the
+  type's characters), kept while the type stays the same; device icons are added before the volumes, the last
+  device met first. Device icons cannot be opened, snapshotted, moved out or named (menus ghosted). `wb_vremove` now
+  keeps the selection of the other disks (the record index of the selected one follows the shift). Checked under
+  Amiberry (production ROM, screenshots looked at): Workbench1.3 dropped on Data -> column RAM DISK, DF1:BUSY (in
+  Data's slot), Workbench1.3 (still selected), DF0:BUSY, as on 1.3; Cancel -> back to RAM DISK, Data, Workbench1.3;
+  an all-zero disk in DF1 at boot -> DF1:, RAM DISK, Workbench1.3, as on 1.3. prepush-check FAIL=0 (Lemmings menu captured).
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

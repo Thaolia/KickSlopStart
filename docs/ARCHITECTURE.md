@@ -1962,6 +1962,10 @@ differs.
   object in `DP_MOVED` (one bit each) and re-reads them; mode 3 (`.ob_slot`) picks a free grid cell of the target
   directory's open window. `wb_busy` sets the hourglass (CHIP copy in `WBS_BUSYD`) on every Workbench window and
   clears it afterwards.
+  **Workbench device icons (2026-11-09)**: the desktop records (`VE_*`) also hold device icons (`VE_DEV`, `VE_NODE` =
+  device node, `VE_DATE` = DiskType). `wb_vscan` collects the filesystem devices under Forbid (`wb_isfsdev`), then
+  asks each its DiskType with its own packet (`wb_diskinfo`), adds a `wb_vdev` record for a non-DOS, inhibited or
+  unreadable disk, and drops it when the type changes.
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).

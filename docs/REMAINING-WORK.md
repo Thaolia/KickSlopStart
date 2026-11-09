@@ -35,7 +35,8 @@ memory only, as in 1.3: not written to disk) and can be launched from there or d
 dropped on another disk starts DiskCopy with FROM = the dragged disk and TO = the target (§10.6). A drop on a disk or
 drawer icon whose window is open places the icon in a free slot of that window (§10.5's grid, checked against its
 test vectors; the rule itself is still marked [S] in the spec), and the busy pointer (an hourglass drawn for this
-project) is shown during a drop and Empty Trash. Still missing: the "DFn:BUSY" icons while DiskCopy runs.
+project) is shown during a drop and Empty Trash. While DiskCopy runs, the inhibited drives show "DF0:BUSY" /
+"DF1:BUSY" device icons (any non-DOS disk gets its "DFn:<type>" icon), placed as probed on 1.3 (V15/V16).
 
 ### A2. Workbench 1.3.3: Disk menu — done 2026-11-09
 
@@ -352,13 +353,12 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **A1 leftover**: the "DFn:BUSY" icons while DiskCopy runs.
-2. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
-3. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
-4. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
-5. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-6. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
-7. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
-8. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
-9. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
-10. **C8, per-unit console input buffers of 255 bytes.**
+1. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
+2. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
+3. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
+4. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
+5. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
+6. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
+7. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
+8. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
+9. **C8, per-unit console input buffers of 255 bytes.**
