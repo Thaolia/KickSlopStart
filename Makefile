@@ -137,6 +137,26 @@ clean:
 # Native Amiga tests live beneath their component groups.
 COPPERLINE ?= copperline
 COPPERLINE_CTL ?= copperline-ctl
+.PHONY: test-graphics-linepens
+test-graphics: test-graphics-linepens
+test-graphics-quick: test-graphics-linepens
+test-graphics-linepens: kick-prod $(BUILD)/linepens
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/linepens \
+	  --out $(BUILD)/linepens-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 60 --tag LINEPENS --pass-marker "LINEPENS OK" --workloads
+$(BUILD)/linepens_cases.i: tests/mk_linepens_cases.py | $(BUILD)
+	$(PYTHON) -I $< > $@
+$(BUILD)/linepens: tests/linepens.s $(BUILD)/linepens_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(BUILD) -o $@ $<
+.PHONY: test-intuition-mousepoll
+test-intuition: test-intuition-mousepoll
+test-intuition-quick: test-intuition-mousepoll
+test-intuition-mousepoll: kick-prod $(BUILD)/mousepoll
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/mousepoll \
+	  --out $(BUILD)/mousepoll-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 40 --tag MOUSEPOLL --pass-marker "MOUSEPOLL OK" --workloads
+$(BUILD)/mousepoll: tests/mousepoll.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i $(INT_DIR)/intuition.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(INT_DIR) -o $@ $<
 .PHONY: test test-quick test-graphics test-graphics-quick test-graphics-blitter test-graphics-lifetime test-exec test-exec-quick test-exec-memory-priority test-intuition test-intuition-quick test-intuition-smallwindow
 test: test-graphics test-exec test-intuition
 test-quick: test-graphics-quick test-exec-quick test-intuition-quick

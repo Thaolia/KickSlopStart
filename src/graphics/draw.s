@@ -1160,8 +1160,8 @@ rc_blit:
 ; dr_line(a5 = context, d4/d5 = start, d6/d7 = end (absolute)) -> d0 = 1 if the unclipped engine drew the line (no
 ; layer, or both ends in one usable ClipRect of the layer), 0 otherwise (spec graphics-line-v34 §4-§7).
 ; Pixels: M + 1 points from the start along the major axis (y when |dx| = |dy|), error 2m - M, a tie steps the minor
-; axis. Pattern: pixel k uses bit (phase - k) & 15 of LinePtrn (inverted in INVERSVID); a 1 bit gets pen A (COMPLEMENT:
-; inversion), a 0 bit pen B in JAM2 and nothing otherwise. Unclipped engine: phase = byte RP_PATCNT, ONE_DOT (first
+; axis. Pattern: pixel k uses bit (phase - k) & 15 of LinePtrn; its per-plane operation comes from the stored
+; minterm, including INVERSVID and client overrides. Unclipped engine: phase = byte RP_PATCNT, ONE_DOT (first
 ; pixel of each row), (M + 1) mod 1024 pixels, and in exact COMPLEMENT after a Draw without Move (FRST_DOT clear) the
 ; start pixel is inverted first so a shared vertex is inverted once. Clipped pieces (the line crosses the layer's
 ; ClipRects): phase = linpatcnt - (major coordinate of the piece's first pixel in its BitMap - major coordinate of cp),
@@ -1178,7 +1178,7 @@ LN_SX           EQU 14               ; x step (±1)
 LN_SY           EQU 16               ; y step (±1)
 LN_NPIX         EQU 18               ; pixels drawn
 LN_PH           EQU 20               ; phase: pixel k uses bit (LN_PH - k) & 15
-LN_PAT          EQU 22               ; LinePtrn, inverted in INVERSVID
+LN_PAT          EQU 22               ; raw LinePtrn; inversion is encoded in the minterms
 LN_MINX         EQU 24               ; current ClipRect within its BitMap: MINX MINY MAXX MAXY
 LN_MINY         EQU 26
 LN_MAXX         EQU 28
@@ -1233,11 +1233,7 @@ dr_line:
         sub.w   d0,d2
         move.w  d2,LN_MM2(a4)
         move.w  rp_LinePtrn(a1),d0
-        btst    #2,rp_DrawMode(a1)   ; INVERSVID
-        beq.s   .ln_pat
-        not.w   d0
-.ln_pat:
-        move.w  d0,LN_PAT(a4)
+        move.w  d0,LN_PAT(a4)       ; stored minterms already encode INVERSVID
         clr.b   LN_CLIP(a4)
         moveq   #0,d0
         move.b  RP_PATCNT(a1),d0
@@ -1266,6 +1262,8 @@ dr_line:
         bne.s   .ln_gen
         cmp.w   #1023,LN_M(a4)
         bhs.s   .ln_gen
+        bsr     ln_penmatch
+        bne.s   .ln_gen
         move.w  LN_X0(a4),d0
         cmp.w   LN_X1(a4),d0
         beq.s   .ln_fast
@@ -1394,7 +1392,48 @@ ln_any:
         bsr     ln_blit
         beq     ln_draw
         rts
-; ln_rect(a4, a5): the solid horizontal or vertical line by dr_rect in pen A, over every ClipRect. Preserves all.
+; The axis shortcut paints FgPen. Use it only when that agrees with every enabled plane's B=1 minterm.
+; Z set on agreement. Preserves all registers.
+ln_penmatch:
+        movem.l d0-d3/a0,-(sp)
+        move.l  rp_BitMap(a1),a0
+        moveq   #0,d3
+        move.b  bm_Depth(a0),d3
+        cmp.w   #8,d3
+        bls.s   .pm_depth
+        moveq   #8,d3
+.pm_depth:
+        move.b  rp_Mask(a1),d2
+        move.b  rp_FgPen(a1),d1
+        lea     RP_MINT(a1),a0
+        bra.s   .pm_test
+.pm_plane:
+        btst    #0,d2
+        beq.s   .pm_next
+        move.b  (a0),d0
+        and.b   #$c0,d0
+        btst    #0,d1
+        beq.s   .pm_clear
+        cmp.b   #$c0,d0
+        bne.s   .pm_no
+        bra.s   .pm_next
+.pm_clear:
+        tst.b   d0
+        bne.s   .pm_no
+.pm_next:
+        addq.l  #1,a0
+        lsr.b   #1,d2
+        lsr.b   #1,d1
+.pm_test:
+        dbra    d3,.pm_plane
+        moveq   #0,d0
+        bra.s   .pm_ret
+.pm_no:
+        moveq   #1,d0
+.pm_ret:
+        movem.l (sp)+,d0-d3/a0
+        rts
+; ln_rect(a4, a5): a pen-compatible solid axis line, over every ClipRect. Preserves all.
 ln_rect:
         movem.l d0-d7/a0-a3,-(sp)
         movem.w LN_X0(a4),d0-d3
@@ -1409,7 +1448,7 @@ ln_rect:
         move.l  DC_RP(a5),a0
         move.b  rp_FgPen(a0),d4
         move.b  d4,d5
-        moveq   #JAM2,d7             ; pen A in every pixel
+        moveq   #JAM2,d7
         suba.l  a0,a0
         bsr     dr_rect
         movem.l (sp)+,d0-d7/a0-a3
@@ -1489,7 +1528,7 @@ ln_blit:
         beq     .lb_no
         move.l  DC_RP(a5),a1
         move.b  rp_Mask(a1),d4
-        move.b  rp_FgPen(a1),d5
+        moveq   #0,d5                ; minterm index
         moveq   #0,d3
         move.b  bm_Depth(a2),d3
         move.w  d3,-(sp)
@@ -1515,17 +1554,8 @@ ln_blit:
         beq.s   .lb_next
         bsr     db_wait
         move.w  d7,d0
-        or.w    #$fa,d0
         move.l  DC_RP(a5),a3
-        btst    #1,rp_DrawMode(a3)
-        beq.s   .lb_pen
-        eor.w   #$a0,d0             ; minterm $5a, invert A pixels
-        bra.s   .lb_regs
-.lb_pen:
-        btst    #0,d5
-        bne.s   .lb_regs
-        eor.w   #$f0,d0             ; minterm $0a, clear A pixels
-.lb_regs:
+        move.b  RP_MINT(a3,d5.w),d0
         move.w  d0,BLT_CON0(a0)
         move.w  d6,BLT_CON1(a0)
         move.w  d2,d0
@@ -1540,7 +1570,7 @@ ln_blit:
         move.w  d0,BLT_SIZE(a0)
 .lb_next:
         lsr.b   #1,d4
-        lsr.b   #1,d5
+        addq.w  #1,d5
         bra     .lb_plane
 .lb_done:
         addq.l  #2,sp
@@ -1606,8 +1636,7 @@ ln_draw:
         lea     LN_PL(a4),a0
         lea     LN_OPS(a4),a3
         move.b  rp_Mask(a1),d4
-        move.b  rp_FgPen(a1),d5
-        move.b  rp_BgPen(a1),d6
+        moveq   #0,d5                ; minterm index
         bra.s   .ld_pe
 .ld_pl:
         move.l  (a2)+,(a0)+
@@ -1615,28 +1644,18 @@ ln_draw:
         moveq   #0,d1
         btst    #0,d4
         beq.s   .ld_put
-        btst    #1,rp_DrawMode(a1)   ; COMPLEMENT
-        beq.s   .ld_j
-        moveq   #3,d0
-        bra.s   .ld_put
-.ld_j:
-        moveq   #2,d0
-        btst    #0,d5
-        beq.s   .ld_j2
-        moveq   #1,d0
-.ld_j2:
-        btst    #0,rp_DrawMode(a1)   ; JAM2: pen B for the 0 bits
-        beq.s   .ld_put
-        moveq   #2,d1
-        btst    #0,d6
-        beq.s   .ld_put
-        moveq   #1,d1
+        move.b  RP_MINT(a1,d5.w),d0
+        move.b  d0,d1
+        lsr.b   #6,d0                ; B=1 truth pair: clear/invert/preserve/set -> op 2/3/0/1
+        lsr.b   #4,d1
+        and.b   #3,d1               ; B=0 truth pair
+        eor.b   #2,d0
+        eor.b   #2,d1
 .ld_put:
         move.b  d0,(a3)+
         move.b  d1,(a3)+
         lsr.b   #1,d4
-        lsr.b   #1,d5
-        lsr.b   #1,d6
+        addq.w  #1,d5
 .ld_pe:
         dbra    d7,.ld_pl
         move.w  LN_X0(a4),d0         ; walk: d0/d1 = point in this BitMap, d2 = error, d3 = k, d6 = minor step taken
@@ -2489,12 +2508,31 @@ dr_directdraw:
         btst    #0,d5
         bne     .dd_exit
         cmp.w   #1,d6
-        beq.s   .dd_acquire
+        beq.s   .dd_minterms
         move.l  bm_Planes+4(a2),d5
         beq     .dd_exit
         cmp.l   d4,d5
         bhs     .dd_exit
         btst    #0,d5
+        bne     .dd_exit
+.dd_minterms:
+        ; This private engine paints FgPen only. Custom XOR/preserve operations need the general line engines.
+        move.b  rp_FgPen(a5),d5
+        lsr.b   #1,d5
+        scs     d7
+        and.b   #$c0,d7
+        move.b  RP_MINT(a5),d4
+        and.b   #$c0,d4
+        cmp.b   d4,d7
+        bne     .dd_exit
+        cmp.w   #1,d6
+        beq.s   .dd_acquire
+        lsr.b   #1,d5
+        scs     d7
+        and.b   #$c0,d7
+        move.b  RP_MINT+1(a5),d4
+        and.b   #$c0,d4
+        cmp.b   d4,d7
         bne     .dd_exit
 .dd_acquire:
         cmp.w   #63,DD_M(a4)

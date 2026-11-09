@@ -1,5 +1,27 @@
 # Tests & test bench
 
+## Native line-pen and cursor-erasure regression
+
+`make test-graphics-linepens` (also included through the normal and quick Graphics groups) supplies custom
+per-plane Draw minterms independently of FgPen/BgPen/DrawMode. Authored lines exercise both axis directions,
+all eight octants and single points; the per-pixel oracle in `mk_linepens_cases.py` generates whole-buffer
+fingerprints including allocation guards. Thirty-three cases run in CHIP and non-DMA memory, with two/five
+planes, odd plane addresses, translated layers, partial plane masks, line patterns and all eight drawing modes.
+RastPort state is checked independently of its documented cursor/phase updates. A final case draws the full
+XOR line set twice and requires the allocation to return to its original contents. This catches DPaint III's
+rectangle-tool hover trails in the CPU, rectangle and line-mode paths. The pre-fix ROM fails; success requires
+`LINEPENS OK` and `LINEPENS END`. Logs/screenshots are in `build/linepens-results/`.
+
+## Native polled-mouse regression
+
+`make test-intuition-mousepoll` (also included through the normal and quick Intuition groups) opens a screen
+with active and inactive windows, holds the left button and injects a rectangle of raw mouse movements through
+input.device. Screen/Window coordinates must follow every point regardless of REPORTMOUSE or IDCMP MOUSEMOVE.
+All four combinations are tested, with exactly one down/up notification per gesture and move notifications
+only when both subscriptions are enabled. This catches the frozen polled coordinates that prevented DPaint III
+from drawing continuous strokes. The pre-fix ROM fails the probe; success requires `MOUSEPOLL OK` and
+`MOUSEPOLL END`. Logs and screenshots are in `build/mousepoll-results/`.
+
 ## Native menu-font regression
 
 `make test-intuition-menufont` (also included through the normal and quick Intuition groups) registers an authored
