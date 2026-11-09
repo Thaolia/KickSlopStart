@@ -970,7 +970,8 @@ prop_render:
 ; prop_keep(a1 = drawing routine of a proportional gadget, a2/a3/a5, d4-d7 passed on): the routine is called,
 ; then the pens and mode of the gadget's RastPort are restored: it is often the window's, where
 ; the application draws without setting them again (OctaMED's file list, redrawn after RefreshGList of its
-; scroller, became invisible). Clobbers d0/d1/a0/a1/a6.
+; scroller, became invisible). The public setters also restore coherent per-plane minterms.
+; Clobbers d0/d1/a0/a1/a6.
 prop_keep:
         move.l  a1,-(sp)
         bsr     gad_rpof
@@ -980,11 +981,20 @@ prop_keep:
         move.b  rp_BgPen(a0),-(sp)
         move.b  rp_DrawMode(a0),-(sp)
         jsr     (a1)
-        move.l  6(sp),a0
-        move.b  (sp)+,rp_DrawMode(a0)
-        move.b  (sp)+,rp_BgPen(a0)
-        move.b  (sp)+,rp_FgPen(a0)
-        addq.l  #4,sp
+        move.l  IB_GFXBASE(a5),a6
+        move.l  6(sp),a1
+        moveq   #0,d0
+        move.b  4(sp),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  6(sp),a1
+        moveq   #0,d0
+        move.b  2(sp),d0
+        jsr     LVO_SETBPEN(a6)
+        move.l  6(sp),a1
+        moveq   #0,d0
+        move.b  (sp),d0
+        jsr     LVO_SETDRMD(a6)
+        lea     10(sp),sp
         rts
 
 prop_rend:
@@ -1249,6 +1259,9 @@ prop_upd:
 ; (SELECTED). Click in the knob widened by the borders: KNOBHIT, drag tracked (IB_TRACK); elsewhere: jump of one
 ; page on each free axis, towards the click (spec §4). Preserves d2-d7/a2-a5; clobbers d0/d1/a0/a1/a6.
 prop_down:
+        lea     prop_down_nc(pc),a1
+        bra     prop_keep          ; the initial held-knob draw must preserve state just like subsequent updates
+prop_down_nc:
         movem.l d2-d7/a4,-(sp)
         move.l  a2,IB_GADACT(a5)
         move.l  a3,IB_GADWIN(a5)
@@ -1515,7 +1528,7 @@ str_len:
         move.l  (sp)+,a1
         rts
 
-; str_text(a3 = window, a2 = gadget, a5 = IntuitionBase): text area of the gadget (its rectangle) cleared then
+; str_text(a3 = window, a2 = gadget, a5 = IntuitionBase): complete text cells cleared then
 ; filled with the visible characters from si_DispPos, cursor inverted if it is active; the display position
 ; follows the cursor. RastPort pens and mode restored. Preserves d2-d7/a2-a6.
 str_text:
@@ -1581,13 +1594,34 @@ str_text_nc:
         move.l  a3,a1
         moveq   #JAM1,d0
         jsr     LVO_SETDRMD(a6)
-        movem.w 6(sp),d0-d3          ; x0 y0 x1 y1 (under the 3 saved values, 6 bytes)
+        move.w  SI_MAXCHARS(a4),d1
+        subq.w  #1,d1
+        sub.w   SI_DISPPOS(a4),d1   ; padding cannot reach the buffer's final reserved byte
+        ble.s   .st_cleared
+        move.w  SI_DISPCOUNT(a4),d0
+        cmp.w   d1,d0
+        bls.s   .st_cells
+        move.w  d1,d0
+.st_cells:
+        tst.w   d0
+        beq.s   .st_cleared
+        mulu    d6,d0
+        move.w  6(sp),d2           ; partial columns and rows below the font may belong to its border
+        add.w   d0,d2
+        subq.w  #1,d2
+        move.w  rp_TxHeight(a3),d3
+        ble.s   .st_cleared
+        add.w   8(sp),d3
+        subq.w  #1,d3
+        move.w  6(sp),d0
+        move.w  8(sp),d1
         ext.l   d0
         ext.l   d1
         ext.l   d2
         ext.l   d3
         move.l  a3,a1
         jsr     LVO_RECTFILL(a6)
+.st_cleared:
         move.l  a3,a1
         moveq   #1,d0
         jsr     LVO_SETAPEN(a6)

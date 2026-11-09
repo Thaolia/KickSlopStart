@@ -1313,9 +1313,9 @@ intuition_OpenWindow:
         ble.s   .ow_h1
         move.w  d0,d7
 .ow_h1:
-        cmp.w   #16,d7
+        cmp.w   #1,d7               ; close-only helper windows can be shorter than the title border
         bge.s   .ow_h2
-        moveq   #16,d7
+        moveq   #1,d7
 .ow_h2:
         move.w  d4,WD_LEFTEDGE(a3)
         move.w  d5,WD_TOPEDGE(a3)
@@ -1457,8 +1457,14 @@ intuition_OpenWindow:
         move.l  a0,WD_WLAYER(a3)
         move.l  a3,IL_WINDOW(a0)
         move.l  IL_RP(a0),WD_RPORT(a3)
-        move.l  IL_RP(a0),a1
-        move.l  rp_Font(a1),WD_IFONT(a3) ; C:border (Cluedo disk) divides by IFont->tf_XSize
+        move.l  a6,-(sp)
+        move.l  IB_GFXBASE(a5),a6
+        move.l  SC_RASTPORT+rp_Font(a4),a0
+        move.l  WD_RPORT(a3),a1
+        jsr     LVO_SETFONT(a6)     ; the outer port inherits the screen font, not the layer's global default
+        move.l  WD_RPORT(a3),a1
+        move.l  rp_Font(a1),WD_IFONT(a3)
+        move.l  (sp)+,a6
         btst    #2,WD_FLAGS+2(a3)    ; GIMMEZEROZERO (except BACKDROP): interior in a second layer, in front
         beq.s   .ow_one
         btst    #0,WD_FLAGS+2(a3)

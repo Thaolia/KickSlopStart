@@ -1,5 +1,55 @@
 # Tests & test bench
 
+## Native menu-font regression
+
+`make test-intuition-menufont` (also included through the normal and quick Intuition groups) registers an authored
+six-pixel font, opens a screen using it while the global font differs, and drives real right-button input to show
+the menu bar, item box and submenu. Solid test glyphs give observable text widths without depending on proprietary
+font pixels or exact frame placement. Logs and screenshots are in `build/menufont-results/`; success requires
+`MENUFONT OK` and `MENUFONT END` after all three drawing stages.
+
+## Native proportional-knob drawing state
+
+`make test-intuition-propstate` (also included through the normal and quick Intuition groups) injects actual raw
+mouse events through `input.device` to press, drag and release an AUTOKNOB gadget. The probe requires both IDCMP
+button messages, verifies that the client's pens, drawing mode and per-plane minterms survive the interaction,
+then redraws an opposite template pattern to check that old pixels are replaced rather than accumulated.
+Logs and screenshots are in `build/propstate-results/`; success requires `PROPSTATE OK` and `PROPSTATE END`.
+
+## Native string-gadget drawing bounds
+
+`make test-intuition-stringbounds` (also included through the normal and quick Intuition groups) refreshes
+empty and nonempty string gadgets whose declared boxes exceed complete font cells. Authored guards verify that
+extra bottom rows, partial right columns and cells beyond the buffer's padding capacity remain untouched.
+A second refresh checks that shortening the text clears old characters within the permitted cells. Logs and
+screenshots are in `build/stringbounds-results/`; success requires `STRBOUNDS OK` and `STRBOUNDS END`.
+
+## Native window-font regression
+
+`make test-intuition-windowfont` (also included through `test-intuition` and `test-intuition-quick`) opens
+borderless, decorated and GIMMEZEROZERO windows on an eight-pixel-font screen while the global default font
+is different. It checks ordinary and border RastPort fonts, `IFont`, and the GZZ inner port's separate global
+default. For ordinary windows it checks text metrics and advance, then verifies
+that `Text` leaves authored guard lines beside and below its expected drawing area intact. This catches labels
+overflowing their buttons and text erasing nearby borders because a new window retained the global font.
+Logs and screenshots are in `build/windowfont-results/`; success requires `WINFONT OK` and `WINFONT END`.
+
+## Native short-window regression
+
+`make test-intuition-smallwindow` (also included through `test-intuition` and `test-intuition-quick`) opens
+close-only windows with requested heights 10, 1, 8, 15 and 16. It checks the returned height, the layer's inclusive
+bounds, and sentinel pixels below the requested bottom edge. This catches an unwanted minimum height expanding
+a helper window over the application beneath it. Logs and screenshots are in `build/smallwindow-results/`;
+success requires `SMALLWIN OK` and `SMALLWIN END`.
+
+## Native PAL long-frame regression
+
+`make test-graphics-longframe` (also included in `test-graphics` and `test-graphics-quick`) checks that graphics
+initialization selects a long PAL frame. It then forces a short frame, calls the public `LoadView(NULL)` vector,
+and verifies that the beam actually reaches scanline 312 within a bounded polling interval. This catches the
+display-takeover stall when a program waits for a scanline absent from short PAL frames. The native 68000/OCS
+probe reports `LONGFRAME OK` and `LONGFRAME END`; logs and screenshots are in `build/longframe-results/`.
+
 ## Native blitter drawing regression and speed gate
 
 `make test-graphics` (also `test-graphics-quick`, through `test` / `test-quick`) builds the production ROM and
