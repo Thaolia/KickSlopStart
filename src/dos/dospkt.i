@@ -64,9 +64,11 @@ FH_ARG1          EQU 36            ; LONG = private key of the file on the handl
 FH_ARG2          EQU 40
 FH_SIZEOF        EQU 44
 DOS_NAMEMAX      EQU 255           ; max length of a BSTR name (length byte)
-FH_WBUF          EQU FH_SIZEOF+DOS_NAMEMAX+1 ; private (FileHandles opened by dos): deferred write buffer | 0
+FH_WBUF          EQU FH_SIZEOF         ; private (FileHandles opened by dos): deferred write buffer | 0
 FH_WCNT          EQU FH_WBUF+4         ; private: bytes pending in that buffer
-DOS_FH_ALLOC     EQU FH_WCNT+4         ; FileHandle + BSTR name buffer (at FH_SIZEOF) + private fields, in 1 AllocMem
+FH_OWNER         EQU FH_WCNT+4         ; private: DOS_FH_MAGIC (with the block size, tells these FileHandles apart)
+DOS_FH_ALLOC     EQU FH_OWNER+4        ; FileHandle + private fields, in 1 AllocMem
+DOS_FH_MAGIC     EQU $64464821         ; "dFH!"
 RT_FHBUFLONGS    EQU 49            ; buffer of a BCPL runtime FileHandle: getvec(49) = 200 bytes (rdch; freed by Close)
 
 ; --- DeviceNode (44 bytes; chained in DosInfo.di_DevInfo) ---

@@ -1432,6 +1432,39 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   prepush-check FAIL=0, Lemmings menu shown. WinUAE ADF suite (dev ROM, 120 s per floppy, 30 floppies, captures
   looked at): same screens as before; the AROS boot floppies still stop on "Error code 121" and Cluedo on its intro
   screen, as at HEAD; Bubble Bobble (first release) runs (HEAD's run of it ended in a guru this time).
+  **Shell memory (2026-11-09)**: opening a Shell from the Workbench (Workbench1.3 window open, Shell icon
+  double-clicked, free memory read from the MemHeaders through gdb, production ROM): 43,096 -> 40,304 bytes (1.3:
+  33,480). MEMTRACK diff of the open (diagnostic ROM, `-DMEMTRACK=1 -DPROD=1`): System/CLI waits in Execute while
+  the Shell runs, as on 1.3 (Execute returns at the end of its input), Run runs under it, Run's Background CLI is
+  the Shell and Newcon-Handler serves its window; the blocks these disk programs allocate (getvec, LoadSeg hunks,
+  locks, the 7,504-byte Newcon-Handler segment kept as on 1.3) match the 1.3 sizes. Ours on top: (1) a 256-byte
+  name buffer in every FileHandle, now a BSTR on the stack during the open packet only (FileHandle 316 -> 60 bytes;
+  `dos_ownfh` checks size and an `FH_OWNER` mark before touching the private fields); (2) `RC_STKEXTRA` 4096 ->
+  2048: a pattern-filled command stack (trace build, never committed) kept at least 5,088 untouched bytes over 38
+  commands (startup-sequence, dir all, list, info, avail, type, copy, delete, makedir, execute, date, version, ed),
+  so 2048 still leaves about 3,000. Left (6.8 KB): the 68000 margin of the Background CLI and of the NEWCON handler
+  (2 x 2,048) and Run's separate command stack (4,456; 1.3 runs it on the tool's process stack). writeback_probe and
+  `validate_probe.sh valid` pass (66 files identical on DF1 and DH0, OFS CHECK OK).
+  **Menus: NextSelect, MutualExclude, HIGHBOX/HIGHIMAGE (2026-11-09)**: intuition-input-menus §3.6-§3.9 in
+  `src/intuition/menus.s` (`mn_pick`, `mn_lbutton`, `mn_repaint`, `mn_hlrect`). `tests/menucat.s` now shows the
+  NextSelect chain and the check states in its title and has Excl A/Excl B (MutualExclude each other), a HIGHBOX
+  item and a HIGHIMAGE item. Checked under Amiberry (production ROM, Workbench 1.3.3 copy that runs it after
+  LoadWB, screenshots looked at): HIGHCOMP, HIGHBOX (frame clipped at the box edge, where 1.3's frame meets the box
+  border too), HIGHIMAGE on (SelectFill) and off (ItemFill), sub-menu unchanged; left clicks on Ouvrir then Sauver,
+  release outside -> MENUPICK F800, chain F800 F820 (§5 step 3); Ouvrir, Sauver, Ouvrir -> F800 alone (step 4);
+  Bascule twice then Excl A -> Bascule checked then unchecked, Excl A checked and Excl B unchecked with the box
+  redrawn, chain F801 F841 (step 5); right Amiga + B -> F801, qualifier $0080. `tests/imenu_probe.sh` cannot drive
+  our ROM: its IND_WRITEEVENT pointer events do not reach intuition (REMAINING-WORK C9).
+  **exec: Signal/AddTask reschedule, AUTOINIT through Add*, WaitIO D1 (2026-11-09)**: exec-scheduling-v34 §2.7: a
+  task that Signal wakes or AddTask adds and that becomes the head of TaskReady gets Reschedule (before: SAR only,
+  and only for a higher priority); AddTask returns the head of TaskReady. InitResident adds AUTOINIT bases with
+  AddLibrary / AddDevice / AddResource (exec-messages-io §4.3-§4.4); mathffp now initialises its flags to
+  SUMUSED|CHANGED, so AddLibrary sums it (flags $04 at rest as on 1.3; with SUMUSED alone and lib_Sum 0 the new path
+  would have raised AN_LibChkSum). WaitIO leaves the port's signal bit in D1 (WI2). prepush-check (dev) FAIL=0,
+  Lemmings menu looked at; Workbench 1.3.3 + Shell (dir, echo, type, list) on the production ROM; SysInfo, OctaMED,
+  DPaint III, Shanghai, Directory Opus, Bubble Bobble, Caesar and the Lemmings demo reach their usual screens.
+  writeback_probe on a quiet machine, alternated with the ROM before this change: DF1 46.8 / 47.5 s against 46.6 /
+  46.7 s, DH0 14.6 / 14.0 s against 14.4 / 13.9 s (no slowdown); files identical, OFS CHECK OK.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

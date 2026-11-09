@@ -51,7 +51,9 @@ WF_BUFSZ        EQU 128              ; local output buffer of writef & co (flush
 CP_STKEXTRA     EQU 2048             ; 68000 stack margin of processes created by createproc and of handlers: our
                                      ; runtime used at most 868 bytes at the top of a process stack (Shell, Background
                                      ; CLI and RAM handler under dir/list/copy/execute, 2026-11-09)
-RC_STKEXTRA     EQU 4096             ; same margin for the stack of a command (runcommand): transient
+RC_STKEXTRA     EQU 2048             ; same margin for the stack of a command (runcommand): with 4096, at least
+                                     ; 5,088 bytes of it were never touched over 38 commands (startup-sequence, dir
+                                     ; all, list, copy, execute, ed..., 2026-11-09)
 
 ; --- call / return (A5 / A6) - multiply MUST be at bcpl_call+$10, divide at +$12 ("jsr $10(a5)" calls) ---
 ; The ABI fixes this entry at 16 bytes (frame -12/-8/-4, jumps at +$10/+$12): the sequence is therefore identical to

@@ -19,7 +19,11 @@
 ; its sub-items; a hit sub-item is highlighted (the parent item lit again); outside the sub-items,
 ; the box stays; a title removes it. MENUPICK code with the sub-item number; item with sub-items without a
 ; chosen sub-item -> MENUNULL.
-; Scope: no multi-selection, no MutualExclude, no separate HIGHBOX/HIGHIMAGE.
+; Selection (§3.8): each chosen code is appended to the NextSelect chain of the menu session (head in IB_PICK, sent
+; with MENUPICK); MENUTOGGLED stops a CHECKIT item toggling twice before the next click; MutualExclude unchecks the
+; CHECKIT siblings named by its bits; a changed check mark redraws the box. Left button held during a menu:
+; drag-selection of each item passed over (§3.9). Highlighting (§3.6): HIGHCOMP, HIGHBOX (complemented frame around
+; the item), HIGHIMAGE (SelectFill / ItemFill), HIGHNONE; HIGHITEM follows the state.
 ; IMPLEMENTATION track ("clean"): AutoDocs intuition.library + intuition/intuition.h. NO ROM reading.
 
                 include "exec.i"
@@ -37,6 +41,7 @@
                 xdef    intuition_IntuiTextLength
                 xdef    it_menubutton
                 xdef    it_menumove
+                xdef    mn_lbutton
                 xdef    mn_keyshort
                 xdef    mn_keypick
                 xdef    mn_defcheck
@@ -55,6 +60,13 @@
 
 MB_MARGIN       EQU 2                ; inner margin of the pulled-down menu (border included)
 MI_COMMAND      EQU 26               ; MenuItem: shortcut character (COMMSEQ)
+MI_MUTUALEXCLUDE EQU 14              ; MenuItem: siblings unchecked when it is chosen (bit n = n-th of its list)
+HIGHCOMP        EQU $0040
+HIGHBOX         EQU $0080
+MIDRAWN         EQU $0100            ; Menu flag
+ISDRAWN         EQU $1000            ; MenuItem working flags
+HIGHITEM        EQU $2000
+MENUTOGGLED     EQU $4000
 COMMSEQ         EQU $0004
 
 ; SetMenuStrip(window a0, menu a1) -> d0 = TRUE. ClearMenuStrip(window a0).
@@ -363,6 +375,13 @@ it_menubutton:
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne     .mb_ret
 .mb_bar:
+        move.l  WD_MENUSTRIP(a3),a0  ; working flags of the whole bar reset, chain empty (§3.8)
+        move.w  #MENUTOGGLED|HIGHITEM|ISDRAWN,d0
+        move.w  #MENUTOGGLED|HIGHITEM,d1
+        move.w  #MIDRAWN,d2
+        bsr     mn_clrflags
+        move.w  #MENUNULL,IB_PICK(a5)
+        clr.b   IB_MNDRAG(a5)
         clr.l   IB_MENUBOX(a5)
         clr.l   IB_MENUCUR(a5)
         clr.l   IB_ITEMCUR(a5)
@@ -572,6 +591,13 @@ mn_ghost:
 ; it_menumove(a5, d4/d5 = pointer): pointer in the bar -> the targeted menu is pulled down (no item selected);
 ; in the pulled-down menu -> the targeted item is highlighted; elsewhere -> no item.
 it_menumove:
+        bsr.s   mn_track
+        tst.b   IB_MNDRAG(a5)        ; left button held: the code under the pointer is chosen too
+        beq.s   .mv_ret
+        bra     mn_pickcur
+.mv_ret:
+        rts
+mn_track:
         tst.l   IB_MENUWIN(a5)
         beq     .mm_ret
         cmp.w   #1,IB_DMRSTATE(a5)   ; DMRequest bar: still near the press and in time -> no menu yet
@@ -686,6 +712,7 @@ mn_setitem:
 mn_unlight:
         tst.l   IB_ITEMCUR(a5)
         beq.s   .ul_ret
+        moveq   #0,d3
         bsr.s   mn_hilite
         clr.l   IB_ITEMCUR(a5)
 .ul_ret:
@@ -698,13 +725,16 @@ mn_light:
         beq.s   .li_ret
         move.l  a2,IB_ITEMCUR(a5)
         move.w  d6,IB_ITEMNUM(a5)
+        moveq   #1,d3
         bra.s   mn_hilite
 .li_ret:
         rts
 
-; mn_hilite(a5): inverts the rectangle of the current item in the item box; mn_hlsub(a5): that of the
-; current sub-item in the sub-item box. mn_hlrect(a0 = item, a1 = layer, d0/d1 = origin of the
-; items in the layer): HIGHNONE -> nothing. All clobber d0-d3/a0/a1/a6.
+; mn_hilite(d3.b = 1 on | 0 off, a5): highlight of the current item in the item box; mn_hlsub(d3, a5): of the
+; current sub-item in the sub-item box. mn_hlrect(a0 = item, a1 = layer, d0/d1 = origin of the items in the layer,
+; d3) (§3.6): HIGHCOMP = complemented rectangle; HIGHBOX = complemented frame outside the item (4 pixels left and
+; right, 2 lines above and below); HIGHIMAGE = SelectFill drawn (ItemFill to turn off); HIGHNONE = nothing. HIGHITEM
+; follows the state. All clobber d0-d3/a0/a1/a6.
 mn_hilite:
         move.l  IB_ITEMCUR(a5),a0
         move.l  IB_MENUBOX(a5),a1
@@ -717,33 +747,118 @@ mn_hlsub:
         move.w  IB_SUBOX(a5),d0
         move.w  IB_SUBOY(a5),d1
 mn_hlrect:
+        bclr    #5,MI_FLAGS(a0)      ; HIGHITEM ($2000)
+        tst.b   d3
+        beq.s   .hl_st
+        bset    #5,MI_FLAGS(a0)
+.hl_st:
         move.w  MI_FLAGS(a0),d2
         and.w   #HIGHFLAGS,d2
         cmp.w   #HIGHNONE,d2
-        beq.s   .hl_ret
-        movem.l d4-d5/a2,-(sp)
+        beq     .hl_ret
+        movem.l d4-d7/a2-a3,-(sp)
         move.l  a0,a2
-        move.w  d0,d4
+        move.l  IL_RP(a1),a3
+        move.w  d0,d4                ; d4/d5 = top-left corner of the item in the layer
+        add.w   MI_LEFTEDGE(a2),d4
         move.w  d1,d5
+        add.w   MI_TOPEDGE(a2),d5
+        tst.w   d2
+        beq.s   .hl_image
+        move.w  d2,-(sp)
         move.l  IB_GFXBASE(a5),a6
-        move.l  IL_RP(a1),a1
-        move.l  a1,-(sp)
+        move.l  a3,a1
         moveq   #COMPLEMENT,d0
         jsr     LVO_SETDRMD(a6)
-        move.l  (sp)+,a1
-        move.w  d4,d0
-        add.w   MI_LEFTEDGE(a2),d0
+        move.w  d4,d6                ; d6/d7 = bottom-right corner
+        add.w   MI_WIDTH(a2),d6
+        subq.w  #1,d6
+        move.w  d5,d7
+        add.w   MI_HEIGHT(a2),d7
+        subq.w  #1,d7
+        cmp.w   #HIGHBOX,(sp)+
+        beq.s   .hl_box
+        move.w  d4,d0                ; HIGHCOMP: the item rectangle
         move.w  d5,d1
-        add.w   MI_TOPEDGE(a2),d1
-        move.w  d0,d2
-        add.w   MI_WIDTH(a2),d2
-        subq.w  #1,d2
-        move.w  d1,d3
-        add.w   MI_HEIGHT(a2),d3
+        move.w  d6,d2
+        move.w  d7,d3
+        bsr.s   .hl_fill
+        bra.s   .hl_done
+.hl_box:
+        move.w  d4,d0                ; above: 2 lines
+        subq.w  #4,d0
+        move.w  d5,d1
+        subq.w  #2,d1
+        move.w  d6,d2
+        addq.w  #4,d2
+        move.w  d5,d3
         subq.w  #1,d3
-        jsr     LVO_RECTFILL(a6)
-        movem.l (sp)+,d4-d5/a2
+        bsr.s   .hl_fill
+        move.w  d4,d0                ; below
+        subq.w  #4,d0
+        move.w  d7,d1
+        addq.w  #1,d1
+        move.w  d6,d2
+        addq.w  #4,d2
+        move.w  d7,d3
+        addq.w  #2,d3
+        bsr.s   .hl_fill
+        move.w  d4,d0                ; left: 4 pixels
+        subq.w  #4,d0
+        move.w  d5,d1
+        move.w  d4,d2
+        subq.w  #1,d2
+        move.w  d7,d3
+        bsr.s   .hl_fill
+        move.w  d6,d0                ; right
+        addq.w  #1,d0
+        move.w  d5,d1
+        move.w  d6,d2
+        addq.w  #4,d2
+        move.w  d7,d3
+        bsr.s   .hl_fill
+        bra.s   .hl_done
+.hl_image:
+        move.l  MI_ITEMFILL(a2),d0
+        tst.b   d3
+        beq.s   .hl_draw
+        move.l  MI_SELECTFILL(a2),d0
+.hl_draw:
+        tst.l   d0
+        beq.s   .hl_done
+        move.l  d0,a1
+        move.w  d4,d0
+        move.w  d5,d1
+        move.l  a3,a0
+        move.l  a5,a6
+        btst    #1,MI_FLAGS+1(a2)    ; ITEMTEXT
+        beq.s   .hl_img
+        bsr     intuition_PrintIText
+        bra.s   .hl_done
+.hl_img:
+        jsr     intuition_DrawImage
+.hl_done:
+        movem.l (sp)+,d4-d7/a2-a3
 .hl_ret:
+        rts
+.hl_fill:                            ; RectFill (d0..d3) in a3, the part left of or above the layer cut off
+        ext.l   d0
+        bpl.s   .hf_x
+        moveq   #0,d0
+.hf_x:
+        ext.l   d1
+        bpl.s   .hf_y
+        moveq   #0,d1
+.hf_y:
+        cmp.w   d0,d2
+        blt.s   .hf_ret
+        cmp.w   d1,d3
+        blt.s   .hf_ret
+        ext.l   d2
+        ext.l   d3
+        move.l  a3,a1
+        jmp     LVO_RECTFILL(a6)
+.hf_ret:
         rts
 
 ; mn_subhit(d4/d5 = pointer, a5) -> a2 = first sub-item of IB_SUBITEM that contains the point | 0, d6.w = its
@@ -786,6 +901,7 @@ mn_setsub:
         beq.s   .ss_ret
         tst.l   IB_SUBCUR(a5)
         beq.s   .ss_new
+        moveq   #0,d3
         bsr     mn_hlsub
         clr.l   IB_SUBCUR(a5)
 .ss_new:
@@ -807,6 +923,7 @@ mn_setsub:
         beq.s   .ss_ret
         move.l  a2,IB_SUBCUR(a5)
         move.w  d6,IB_SUBNUM(a5)
+        moveq   #1,d3
         bra     mn_hlsub
 .ss_ret:
         rts
@@ -876,30 +993,8 @@ mn_openbox:
         beq     .ob_ret
         move.l  d0,a3
         move.l  IL_RP(a3),a3         ; a3 = RastPort of the menu
-        move.l  IB_GFXBASE(a5),a6
-        move.l  a3,a1
-        moveq   #JAM2,d0
-        jsr     LVO_SETDRMD(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_BLOCKPEN(a4),d0
-        jsr     LVO_SETAPEN(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  d6,d2
-        move.w  d7,d3
-        jsr     LVO_RECTFILL(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_DETAILPEN(a4),d0
-        jsr     LVO_SETAPEN(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  d6,d2
-        move.w  d7,d3
-        jsr     it_box
+        movem.w d6-d7,IB_BOXW(a5)
+        bsr     mn_paintbox
         move.w  #MB_MARGIN,IB_DOX(a5)
         move.w  #MB_MARGIN,IB_DOY(a5)
         btst    #0,MU_FLAGS+1(a2)    ; disabled menu: all its items ghosted
@@ -1095,30 +1190,8 @@ mn_opensub:
         clr.l   IB_SUBCUR(a5)
         move.l  d0,a3
         move.l  IL_RP(a3),a3         ; a3 = RastPort of the box
-        move.l  IB_GFXBASE(a5),a6
-        move.l  a3,a1
-        moveq   #JAM2,d0
-        jsr     LVO_SETDRMD(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_BLOCKPEN(a4),d0
-        jsr     LVO_SETAPEN(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  d6,d2
-        move.w  d7,d3
-        jsr     LVO_RECTFILL(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        move.b  SC_DETAILPEN(a4),d0
-        jsr     LVO_SETAPEN(a6)
-        move.l  a3,a1
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  d6,d2
-        move.w  d7,d3
-        jsr     it_box
+        movem.w d6-d7,IB_SUBW(a5)
+        bsr     mn_paintbox
         move.w  IB_SUBOX(a5),IB_DOX(a5)
         move.w  IB_SUBOY(a5),IB_DOY(a5)
         move.l  IB_MENUCUR(a5),a0
@@ -1304,6 +1377,297 @@ mn_cat_lo_data:                      ; the same in low resolution (14 x 8)
         dc.w    $9027
         dc.w    $F87F
 
+; mn_paintbox(a3 = RastPort of a box, d6/d7 = width - 1 / height - 1, a4 = screen, a5): background BlockPen,
+; border DetailPen. Clobbers d0-d3/a0/a1/a6.
+mn_paintbox:
+        move.l  IB_GFXBASE(a5),a6
+        move.l  a3,a1
+        moveq   #JAM2,d0
+        jsr     LVO_SETDRMD(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  SC_BLOCKPEN(a4),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        jsr     LVO_RECTFILL(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        move.b  SC_DETAILPEN(a4),d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  a3,a1
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  d6,d2
+        move.w  d7,d3
+        jmp     it_box
+
+; mn_clrflags(a0 = first Menu, d0.w = flags cleared in the items, d1.w = in the sub-items, d2.w = in the menus).
+; Preserves all registers.
+mn_clrflags:
+        movem.l d0-d3/a0-a2,-(sp)
+        not.w   d0
+        not.w   d1
+        not.w   d2
+.cf_menu:
+        move.l  a0,d3
+        beq.s   .cf_ret
+        and.w   d2,MU_FLAGS(a0)
+        move.l  MU_FIRSTITEM(a0),a1
+.cf_item:
+        move.l  a1,d3
+        beq.s   .cf_nmenu
+        and.w   d0,MI_FLAGS(a1)
+        move.l  MI_SUBITEM(a1),a2
+.cf_sub:
+        move.l  a2,d3
+        beq.s   .cf_nitem
+        and.w   d1,MI_FLAGS(a2)
+        move.l  MI_NEXTITEM(a2),a2
+        bra.s   .cf_sub
+.cf_nitem:
+        move.l  MI_NEXTITEM(a1),a1
+        bra.s   .cf_item
+.cf_nmenu:
+        move.l  MU_NEXTMENU(a0),a0
+        bra.s   .cf_menu
+.cf_ret:
+        movem.l (sp)+,d0-d3/a0-a2
+        rts
+
+; mn_walk(a0 = first link, d1.w = rank) -> a0 = that link | 0, Z = 1 if none (NextMenu / NextItem at offset 0).
+; Preserves d0-d7/a1-a6.
+mn_walk:
+        movem.l d0-d1,-(sp)
+.wk_lp:
+        move.l  a0,d0
+        beq.s   .wk_ret
+        subq.w  #1,d1
+        bmi.s   .wk_ret
+        move.l  (a0),a0
+        bra.s   .wk_lp
+.wk_ret:
+        movem.l (sp)+,d0-d1
+        rts
+
+; mn_pick(d0.w = menu code, a3 = window, a5) -> d0.l = 0 refused, bit 0 = chosen, bit 1 = a check mark changed.
+; "Select the current code" of spec intuition-input-menus §3.8: refused if the code is MENUNULL, names no item, or its
+; menu, item or sub-item is disabled, or it is an item with sub-items and no sub-item; CHECKIT: stop if MENUTOGGLED
+; is already set, else CHECKED set (toggled with MENUTOGGLE) and MENUTOGGLED set; NextSelect := MENUNULL and the
+; code appended to the chain headed by IB_PICK (a link to this code is cut first; a code that is the head leaves
+; the head alone); MutualExclude: the CHECKIT and CHECKED siblings it names lose CHECKED. Preserves d1-d7/a0-a6.
+mn_pick:
+        movem.l d1-d7/a0-a2,-(sp)
+        move.w  d0,d7                ; d7 = code
+        moveq   #0,d6                ; d6 = result
+        cmp.w   #MENUNULL,d7
+        beq     .pk_ret
+        move.l  WD_MENUSTRIP(a3),a0
+        move.w  d7,d1
+        and.w   #$1F,d1
+        bsr     mn_walk
+        beq     .pk_ret
+        btst    #0,MU_FLAGS+1(a0)    ; MENUENABLED
+        beq     .pk_ret
+        move.l  MU_FIRSTITEM(a0),a0
+        move.l  a0,a2                ; a2 = first of the chosen item's list
+        move.w  d7,d1
+        lsr.w   #5,d1
+        and.w   #$3F,d1
+        cmp.w   #$3F,d1              ; NOITEM
+        beq     .pk_ret
+        bsr     mn_walk
+        beq     .pk_ret
+        btst    #4,MI_FLAGS+1(a0)    ; ITEMENABLED
+        beq     .pk_ret
+        move.w  d7,d1
+        moveq   #11,d0
+        lsr.w   d0,d1
+        cmp.w   #$1F,d1              ; NOSUB
+        bne.s   .pk_sub
+        tst.l   MI_SUBITEM(a0)       ; item with sub-items, none chosen
+        bne     .pk_ret
+        bra.s   .pk_chk
+.pk_sub:
+        move.l  MI_SUBITEM(a0),a0
+        move.l  a0,a2
+        bsr     mn_walk
+        beq     .pk_ret
+        btst    #4,MI_FLAGS+1(a0)
+        beq     .pk_ret
+.pk_chk:
+        btst    #0,MI_FLAGS+1(a0)    ; CHECKIT
+        beq.s   .pk_chain
+        btst    #6,MI_FLAGS(a0)      ; MENUTOGGLED ($4000): already toggled since the last click
+        bne     .pk_ret
+        bset    #6,MI_FLAGS(a0)
+        moveq   #2,d6
+        bset    #0,MI_FLAGS(a0)      ; CHECKED ($100)
+        beq.s   .pk_chain
+        btst    #3,MI_FLAGS+1(a0)    ; MENUTOGGLE: a checked item is unchecked
+        bne.s   .pk_uncheck
+        moveq   #0,d6                ; already checked: no change
+        bra.s   .pk_chain
+.pk_uncheck:
+        bclr    #0,MI_FLAGS(a0)
+.pk_chain:
+        addq.l  #1,d6
+        move.w  #MENUNULL,MI_NEXTSELECT(a0)
+        move.w  IB_PICK(a5),d3
+        cmp.w   #MENUNULL,d3
+        bne.s   .pk_walk
+        move.w  d7,IB_PICK(a5)
+        bra.s   .pk_mx
+.pk_walk:
+        cmp.w   d7,d3
+        beq.s   .pk_mx               ; the head itself: the chain is reduced to it
+        move.l  a0,-(sp)
+        move.w  #1023,d4             ; bound on a looping chain
+.pk_wl:
+        move.l  WD_MENUSTRIP(a3),a0
+        move.w  d3,d0
+        bsr     mn_find
+        move.l  a0,d0
+        beq.s   .pk_wend
+        move.w  MI_NEXTSELECT(a0),d3
+        cmp.w   d7,d3
+        bne.s   .pk_wn
+        move.w  #MENUNULL,d3         ; link to the chosen code: cut here
+        move.w  d3,MI_NEXTSELECT(a0)
+.pk_wn:
+        cmp.w   #MENUNULL,d3
+        beq.s   .pk_tail
+        dbra    d4,.pk_wl
+        bra.s   .pk_wend
+.pk_tail:
+        move.w  d7,MI_NEXTSELECT(a0) ; appended at the tail
+.pk_wend:
+        move.l  (sp)+,a0
+.pk_mx:
+        move.l  MI_MUTUALEXCLUDE(a0),d2
+        beq.s   .pk_ret
+        moveq   #0,d1                ; d1 = rank of the sibling
+.pk_ml:
+        move.l  a2,d0
+        beq.s   .pk_ret
+        btst    d1,d2
+        beq.s   .pk_mn
+        cmp.l   a0,a2                ; its own bit does not uncheck it
+        beq.s   .pk_mn
+        move.w  MI_FLAGS(a2),d0
+        and.w   #CHECKIT|CHECKED,d0
+        cmp.w   #CHECKIT|CHECKED,d0
+        bne.s   .pk_mn
+        bclr    #0,MI_FLAGS(a2)
+        or.w    #2,d6
+.pk_mn:
+        move.l  MI_NEXTITEM(a2),a2
+        addq.w  #1,d1
+        cmp.w   #32,d1
+        blo.s   .pk_ml
+.pk_ret:
+        move.l  d6,d0
+        movem.l (sp)+,d1-d7/a0-a2
+        rts
+
+; mn_curcode(a5) -> d0.w = code of the highlighted sub-item, else of the highlighted item (NOSUB), else MENUNULL.
+mn_curcode:
+        tst.l   IB_SUBCUR(a5)
+        beq.s   .cc_item
+        move.w  IB_SUBNUM(a5),d0     ; sub-item << 11 | item << 5 | menu
+        lsl.w   #6,d0
+        or.w    IB_SUBPNUM(a5),d0
+        lsl.w   #5,d0
+        or.w    IB_MENUNUM(a5),d0
+        rts
+.cc_item:
+        tst.l   IB_ITEMCUR(a5)
+        beq.s   .cc_null
+        move.w  IB_ITEMNUM(a5),d0
+        lsl.w   #5,d0
+        or.w    IB_MENUNUM(a5),d0
+        or.w    #$1F<<11,d0          ; NOSUB
+        rts
+.cc_null:
+        move.w  #MENUNULL,d0
+        rts
+
+; mn_pickcur(a5): menus displayed, left button held: the current code is chosen; a changed check mark redraws its
+; box. Preserves all registers.
+mn_pickcur:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        move.l  IB_MENUWIN(a5),d0
+        beq.s   .pc_ret
+        move.l  d0,a3
+        move.l  WD_WSCREEN(a3),a4
+        bsr.s   mn_curcode
+        bsr     mn_pick
+        btst    #1,d0
+        beq.s   .pc_ret
+        bsr.s   mn_repaint
+.pc_ret:
+        movem.l (sp)+,d0-d7/a0-a4/a6
+        rts
+
+; mn_repaint(a4 = screen, a5): the box of the current code is drawn again (check marks changed), then its
+; highlight put back (§3.8 point 5). The code was accepted, so its menu and item are enabled.
+mn_repaint:
+        tst.l   IB_SUBCUR(a5)
+        bne.s   .rp_sub
+        move.l  IB_MENUBOX(a5),d0
+        beq.s   .rp_ret
+        move.l  d0,a0
+        move.l  IL_RP(a0),a3
+        movem.w IB_BOXW(a5),d6-d7
+        bsr     mn_paintbox
+        move.w  #MB_MARGIN,IB_DOX(a5)
+        move.w  #MB_MARGIN,IB_DOY(a5)
+        sf      IB_DGHOST(a5)
+        move.l  IB_MENUCUR(a5),a2
+        move.l  MU_FIRSTITEM(a2),a2
+        bsr     mn_drawitems
+        moveq   #1,d3
+        bra     mn_hilite
+.rp_sub:
+        move.l  IB_SUBBOX(a5),a0
+        move.l  IL_RP(a0),a3
+        movem.w IB_SUBW(a5),d6-d7
+        bsr     mn_paintbox
+        move.w  IB_SUBOX(a5),IB_DOX(a5)
+        move.w  IB_SUBOY(a5),IB_DOY(a5)
+        sf      IB_DGHOST(a5)
+        move.l  IB_SUBITEM(a5),a2
+        move.l  MI_SUBITEM(a2),a2
+        bsr     mn_drawitems
+        moveq   #1,d3
+        bra     mn_hlsub
+.rp_ret:
+        rts
+
+; mn_lbutton(d7.w = button code, a5): left button while menus are displayed (§3.9): press = MENUTOGGLED cleared in
+; the whole bar, the current code chosen, then each pointer move chooses the code under it until the release. No
+; message to the window.
+mn_lbutton:
+        cmp.w   #IECODE_LBUTTON,d7
+        beq.s   .lb_down
+        cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
+        bne.s   .lb_ret
+        clr.b   IB_MNDRAG(a5)
+.lb_ret:
+        rts
+.lb_down:
+        st      IB_MNDRAG(a5)
+        move.l  IB_MENUWIN(a5),a0
+        move.l  WD_MENUSTRIP(a0),a0
+        move.w  #MENUTOGGLED,d0
+        move.w  d0,d1
+        moveq   #0,d2
+        bsr     mn_clrflags
+        bra     mn_pickcur
+
 ; mn_closebox(a4, a5): deletes the pulled-down menu (if it exists) and repairs the screen. Preserves d2-d7/a2-a4.
 mn_closebox:
         bsr     mn_closesub
@@ -1320,21 +1684,6 @@ mn_closebox:
         bsr     it_refresh
         move.l  (sp)+,a2
 .cb_ret:
-        rts
-
-; mn_select(a0 = chosen item or sub-item): NextSelect := MENUNULL; CHECKIT: CHECKED set, or toggled with
-; MENUTOGGLE. Preserves everything.
-mn_select:
-        move.w  #MENUNULL,MI_NEXTSELECT(a0)
-        btst    #0,MI_FLAGS+1(a0)    ; CHECKIT
-        beq.s   .sl_ret
-        btst    #3,MI_FLAGS+1(a0)    ; MENUTOGGLE
-        beq.s   .sl_set
-        bchg    #0,MI_FLAGS(a0)      ; CHECKED ($100)
-        rts
-.sl_set:
-        bset    #0,MI_FLAGS(a0)
-.sl_ret:
         rts
 
 ; mn_keyshort(a0 = active window, a1 = IntuitionBase, a3 = InputEvent, d0.w = raw code of a key pressed with
@@ -1417,7 +1766,7 @@ mn_keyfind:
         rts
 
 ; mn_keypick(a5, d4.w = menu code, d5.w = qualifier): input task - right Amiga shortcut. Menu, item
-; and sub-item enabled: mn_select, then MENUPICK with the code to the active window; otherwise MENUPICK MENUNULL.
+; and sub-item enabled: mn_pick, then MENUPICK with the code to the active window; otherwise MENUPICK MENUNULL.
 ; Nothing if the window has lost its menu strip or if a menu is open. Preserves d2-d7/a2-a5.
 mn_keypick:
         move.l  IB_ACTIVEWINDOW(a5),d0
@@ -1433,38 +1782,15 @@ mn_keypick:
         beq     .kp_null
         move.l  WD_MENUSTRIP(a3),d0
         beq.s   .kp_out
-        move.l  d0,a0
-        move.w  d4,d1                ; menu
-        and.w   #$1F,d1
-        bsr.s   .kp_walk
-        beq.s   .kp_null
-        btst    #0,MU_FLAGS+1(a0)    ; MENUENABLED
-        beq.s   .kp_null
-        move.l  MU_FIRSTITEM(a0),d0
-        beq.s   .kp_null
-        move.l  d0,a0
-        move.w  d4,d1                ; item
-        lsr.w   #5,d1
-        and.w   #$3F,d1
-        bsr.s   .kp_walk
-        beq.s   .kp_null
-        btst    #4,MI_FLAGS+1(a0)    ; ITEMENABLED
-        beq.s   .kp_null
-        move.w  d4,d1                ; sub-item
-        moveq   #11,d0
-        lsr.w   d0,d1
-        cmp.w   #$1F,d1
-        beq.s   .kp_ok
-        move.l  MI_SUBITEM(a0),d0
-        beq.s   .kp_null
-        move.l  d0,a0
-        bsr.s   .kp_walk
-        beq.s   .kp_null
-        btst    #4,MI_FLAGS+1(a0)
-        beq.s   .kp_null
-.kp_ok:
-        bsr     mn_select
-        move.w  d4,d1
+        move.l  d0,a0                ; working flags reset as for an opening, then the code chosen (§3.11)
+        move.w  #MENUTOGGLED|HIGHITEM|ISDRAWN,d0
+        move.w  #MENUTOGGLED|HIGHITEM,d1
+        move.w  #MIDRAWN,d2
+        bsr     mn_clrflags
+        move.w  #MENUNULL,IB_PICK(a5)
+        move.w  d4,d0
+        bsr     mn_pick
+        move.w  IB_PICK(a5),d1       ; the code, or MENUNULL if it was refused
         bra.s   .kp_send
 .kp_null:
         move.w  #MENUNULL,d1
@@ -1478,20 +1804,9 @@ mn_keypick:
         movem.l (sp)+,d2-d4/a3
 .kp_ret:
         rts
-.kp_walk:                            ; a0 = first link, d1 = rank -> a0 = link (Z = 1: list too short)
-        bra.s   .kw_e
-.kw_l:
-        move.l  (a0),d0              ; NextMenu / NextItem (offset 0)
-        beq.s   .kw_r
-        move.l  d0,a0
-.kw_e:
-        dbra    d1,.kw_l
-        moveq   #1,d0                ; Z = 0
-.kw_r:
-        rts
 
-; mn_end(a4, a5): right button released. Selection code (enabled highlighted item, otherwise MENUNULL); a
-; CHECKIT item is checked (MENUTOGGLE: toggled). Layers deleted, screen repaired, then MENUPICK to the window.
+; mn_end(a4, a5): right button released. The current code is chosen (mn_pick); layers deleted, screen repaired,
+; MOUSEBUTTONS MENUUP, then MENUPICK to the window with the head of the NextSelect chain (MENUNULL if empty).
 mn_end:
         move.l  IB_MENUWIN(a5),d0
         beq     .me_ret
@@ -1504,27 +1819,10 @@ mn_end:
         clr.l   IB_MENUWIN(a5)
         rts
 .me_sel:
-        move.l  IB_SUBCUR(a5),d0
-        beq.s   .me_item
-        move.l  d0,a0
-        bsr     mn_select
-        move.w  IB_SUBNUM(a5),d7     ; sub-item << 11 | item << 5 | menu
-        lsl.w   #6,d7
-        or.w    IB_SUBPNUM(a5),d7
-        lsl.w   #5,d7
-        or.w    IB_MENUNUM(a5),d7
-        bra.s   .me_close
-.me_item:
-        move.l  IB_ITEMCUR(a5),d0
-        beq.s   .me_close
-        move.l  d0,a0
-        tst.l   MI_SUBITEM(a0)       ; item with sub-items, none chosen: MENUNULL
-        bne.s   .me_close
-        bsr     mn_select
-        move.w  IB_ITEMNUM(a5),d7
-        lsl.w   #5,d7
-        or.w    IB_MENUNUM(a5),d7
-        or.w    #$1F<<11,d7          ; NOSUB
+        bsr     mn_curcode           ; current code chosen, then MENUPICK with the head of the chain (§3.9)
+        bsr     mn_pick
+        move.w  IB_PICK(a5),d7
+        clr.b   IB_MNDRAG(a5)
 .me_close:
         bsr     mn_rmbar
         bsr     mn_menuup

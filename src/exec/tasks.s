@@ -55,6 +55,7 @@ init_task:
 ; tc_TrapCode / tc_ExceptCode defaulted from ExecBase when 0, finalPC 0 -> ExecBase TaskExitCode. Context in the
 ; §4.1 layout, all registers 0: [PC=initialPC][SR=$0000][d0-d7/a0-a6 = 0][finalPC]; TC_SPREG -> the PC; USP at 1st entry = TC_SPREG+FRAME_SIZE
 ; -> points to finalPC (return if the task does RTS). Built from TC_SPUPPER (our callers set SPLOWER/UPPER only).
+; A task that becomes the head of TaskReady gets a Reschedule: from a task outside Forbid it runs at once.
 exec_AddTask:
         tst.b   LN_TYPE(a1)          ; ln_Type is set by the caller (CreateProc -> NT_PROCESS): do NOT overwrite it
         bne.s   .at_typed            ; (programs test NT_PROCESS to know whether they may call dos)
@@ -92,7 +93,14 @@ exec_AddTask:
         move.w  #INTF_INTEN,INTENA
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)      ; Enqueue(TaskReady, task)
-        bra     raw_enable
+        bsr     raw_enable
+        move.l  EB_TASKREADY(a6),-(sp)   ; D0 on return = head of TaskReady (exec-scheduling-v34 §2.7)
+        cmp.l   (sp),a1
+        bne.s   .at_ret
+        jsr     LVO_RESCHEDULE(a6)   ; the new task is the head: it runs now if its priority is >= ours
+.at_ret:
+        move.l  (sp)+,d0
+        rts
 
 ; RemTask(task a1): removes a task and frees the MemLists of its tc_MemEntry (FreeEntry), and NOTHING else: the
 ; memory of the structure and of the stack belongs to whoever created the task, who describes it in tc_MemEntry
@@ -286,12 +294,11 @@ task_excpending:
 
 ; Signal(task a1, signalSet d0): sets the bits in the task's TC_SIGRECVD; if it is blocked
 ; (TS_WAIT) on one of these bits, wakes it up (TaskWait -> TaskReady).
-; M7c: called from a USER-MODE task OR from an interrupt (timer service). Atomicity
-; vs the scheduler goes through a BARE CRITICAL SECTION: bare Disable on entry (INTENA, user-safe),
-; raw_enable on exit — NOT exec_Enable, whose tail would trigger reschedule->trap in IRQ
-; context (scheduler re-entry, cf. ledger M7c). Signal does not switch itself: it SETS SAR (if
-; the woken task has priority), consumed by the next Permit/Enable (yield) or VBlank tick.
-; Remove/Enqueue preserve a1. The woken task goes into TaskReady ("defer" model).
+; Called from a task OR from an interrupt. Atomicity vs the scheduler goes through a BARE critical section (INTENA,
+; user-safe; raw_enable on exit, not exec_Enable). A woken task that becomes the head of TaskReady gets a
+; Reschedule (exec-scheduling-v34 §2.7): from a task outside Forbid it runs at once if its priority is >= the
+; caller's; under Forbid, Disable or from an interrupt, Reschedule only leaves SAR (or the softint) for later.
+; Remove/Enqueue preserve a1.
 ; Exception signal (d0 & tc_SigExcept, exec-scheduling-v34 §2.7): TB_EXCEPT set, a waiting task is woken whatever
 ; its wait mask, then Reschedule (which only sets SAR when called from an interrupt).
 exec_Signal:
@@ -309,12 +316,8 @@ exec_Signal:
         jsr     LVO_REMOVE(a6)       ; remove the target (a1) from TaskWait
         lea     EB_TASKREADY(a6),a0
         jsr     LVO_ENQUEUE(a6)      ; insert the target (a1) into TaskReady (by priority)
-        ; M3e: if the woken task has HIGHER priority than the current one, request a deferred reschedule.
-        move.l  EB_THISTASK(a6),a0
-        move.b  LN_PRI(a1),d0        ; priority of the woken task (signed byte)
-        cmp.b   LN_PRI(a0),d0        ; woken - current
-        ble.s   .sig_done            ; woken <= current -> no preemption
-        bset    #SFB_SAR,EB_SYSFLAGS(a6)
+        cmp.l   EB_TASKREADY(a6),a1
+        beq.s   .sig_resched         ; it is the head: Enable, then Reschedule
 .sig_done:
         bra     raw_enable           ; BARE exit (INTEN on if IDNest<0; no reschedule tail)
 .sig_exc:

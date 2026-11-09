@@ -298,30 +298,28 @@ dos_fn_open:
         beq     .op_fail_early          ; unknown device / handler not started
 .op_port:
         move.l  ($4).w,a6               ; -> SysBase for exec calls
-        move.l  #DOS_FH_ALLOC+4,d0      ; FileHandle in getvec format: [size][FileHandle + name]
+        move.l  #DOS_FH_ALLOC+4,d0      ; FileHandle in getvec format: [size][FileHandle + private fields]
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq.s   .op_fail_early
+        beq     .op_fail_early
         move.l  d0,a2
         move.l  #DOS_FH_ALLOC+4,(a2)+   ; a2 = FileHandle (long-aligned: BPTR)
-        lea     FH_SIZEOF(a2),a5        ; a5 = BSTR buffer of the name (long-aligned)
-        lea     1(a5),a1                ; a1 -> characters
-        moveq   #0,d3                   ; d3 = length
-.op_ncpy:
-        move.b  (a4)+,d0
-        beq.s   .op_ndone
-        move.b  d0,(a1)+
-        addq.l  #1,d3
-        cmp.l   #DOS_NAMEMAX,d3         ; bound of the buffer (BSTR)
-        bcs.s   .op_ncpy
-.op_ndone:
-        move.b  d3,(a5)                 ; BCPL length byte
+        move.l  #DOS_FH_MAGIC,FH_OWNER(a2)
         move.l  a3,d0
         beq.s   .op_ok                  ; NIL: no handler
                 ifeq    D3C_NO_FHTYPE
         move.l  a3,FH_TYPE(a2)          ; fh_Type = handler port (route of subsequent Read/Close)
                 endc                    ; RED D3C_NO_FHTYPE: fh_Type stays 0 -> Read does not route
+        lea     -(DOS_NAMEMAX+5)(sp),sp ; BSTR of the name on the stack: only the open packet uses it
+        move.l  sp,d0
+        addq.l  #3,d0
+        and.l   #-4,d0
+        move.l  d0,a0
+        move.l  a4,a1
+        bsr     dos_c2bstr
+        move.l  a0,d3
+        lsr.l   #2,d3                   ; ARG3 = BPTR(BSTR name)
         lea     -SP_SIZEOF(sp),sp       ; StandardPacket on the process stack
         move.l  sp,a0
         move.l  a3,a1                   ; handler port
@@ -329,10 +327,8 @@ dos_fn_open:
         move.l  a2,d1
         lsr.l   #2,d1                   ; ARG1 = BPTR(FileHandle) (the handler sets fh_Arg1 in it)
         move.l  d6,d2                   ; ARG2 = lock of the starting directory
-        move.l  a5,d3
-        lsr.l   #2,d3                   ; ARG3 = BPTR(BSTR name)
         jsr     dos_sendpkt             ; d0 = dp_Res1
-        lea     SP_SIZEOF(sp),sp
+        lea     SP_SIZEOF+DOS_NAMEMAX+5(sp),sp
         tst.l   d0
         beq.s   .op_fail_free
 .op_ok:
@@ -489,7 +485,7 @@ dos_fn_close:
         beq     .cl_null                ; null fh -> nothing to close
         move.l  d4,a2                   ; a2 = BADDR(fh)
         bsr     dos_flushfh             ; deferred bytes written, then buffer freed
-        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bsr     dos_ownfh
         bne.s   .cl_nowbuf
         move.l  FH_WBUF(a2),d0
         beq.s   .cl_nowbuf
@@ -729,7 +725,7 @@ dos_bufwrite:
         move.l  d4,a2
         tst.l   FH_TYPE(a2)
         beq     .bw_direct
-        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bsr     dos_ownfh
         bne     .bw_direct              ; not a FileHandle of this dos
         cmp.l   #DOS_WBUF,d6
         bhs     .bw_direct
@@ -747,7 +743,7 @@ dos_bufwrite:
         add.l   d6,d0
         cmp.l   #DOS_WBUF,d0
         bls.s   .bw_copy
-        bsr.s   dos_flushfh
+        bsr     dos_flushfh
         beq.s   .bw_fail                ; full buffer not written (volume full...): the caller will find out
 .bw_copy:
         move.l  FH_WBUF(a2),a1
@@ -805,10 +801,19 @@ dos_flushout:
         movem.l (sp)+,d1/a2
         rts
 
+; dos_ownfh(a2 = FileHandle) -> Z = 1 if this dos allocated it (getvec size and FH_OWNER mark), so that its
+; private fields exist: a FileHandle built by a program (getvec) has neither. Preserves all registers.
+dos_ownfh:
+        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bne.s   .of_ret
+        cmp.l   #DOS_FH_MAGIC,FH_OWNER(a2)
+.of_ret:
+        rts
+
 ; dos_flushfh(a2 = FileHandle) -> Z = 1 if writing the deferred bytes failed (Result2 set, bytes lost),
 ; Z = 0 otherwise (or nothing to write). Preserves everything else.
 dos_flushfh:
-        cmp.l   #DOS_FH_ALLOC+4,-4(a2)
+        bsr.s   dos_ownfh
         bne.s   .fl_ok
         tst.l   FH_WCNT(a2)
         beq.s   .fl_ok

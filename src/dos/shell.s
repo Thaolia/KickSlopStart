@@ -70,6 +70,7 @@ shell_main:
                 beq.s   .nofh
                 move.l  d0,a0
                 move.l  #DOS_FH_ALLOC+4,(a0)+
+                move.l  #DOS_FH_MAGIC,FH_OWNER(a0)
                 move.l  a0,d0
                 move.l  DOS_CONPORT,FH_TYPE(a0)
                 move.l  d7,FH_ARG1(a0)

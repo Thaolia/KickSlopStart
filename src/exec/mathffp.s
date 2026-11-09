@@ -66,7 +66,7 @@ mathffp_initfunc:
         lea     mathffp_name(pc),a0
         move.l  a0,LN_NAME(a1)
         move.b  #NT_LIBRARY,LN_TYPE(a1)
-        move.b  #1<<LIBB_SUMUSED,LIB_FLAGS(a1)
+        move.b  #(1<<LIBB_SUMUSED)|(1<<LIBB_CHANGED),LIB_FLAGS(a1) ; AddLibrary sums it, flags become $04 (1.3 at rest)
         move.l  #(34<<16)|1,LIB_VERSION(a1)
         lea     mathffp_id(pc),a0
         move.l  a0,LIB_IDSTRING(a1)

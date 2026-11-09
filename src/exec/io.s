@@ -172,6 +172,9 @@ exec_WaitIO:
         move.l  a2,a1
         jsr     LVO_REMOVE(a6)
         jsr     LVO_ENABLE(a6)
+        move.l  MN_REPLYPORT(a2),a0  ; D1 = the reply port's signal bit, as 1.3 leaves it (exec-messages-io WI2)
+        moveq   #0,d1
+        move.b  MP_SIGBIT(a0),d1
 .wi_err:
         move.b  IO_ERROR(a2),d0
         ext.w   d0

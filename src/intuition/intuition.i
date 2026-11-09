@@ -41,7 +41,7 @@ IB_MENUCUR       EQU IB_MENUBOX+4      ; pulled-down Menu | 0
 IB_ITEMCUR       EQU IB_MENUCUR+4      ; highlighted MenuItem | 0
 IB_MENUNUM       EQU IB_ITEMCUR+4      ; UWORD: number of the pulled-down menu
 IB_ITEMNUM       EQU IB_MENUNUM+2      ; UWORD: number of the highlighted item
-IB_PICK          EQU IB_ITEMNUM+2      ; UWORD: MENUPICK code being built
+IB_PICK          EQU IB_ITEMNUM+2      ; UWORD: head of the NextSelect chain of the menu session (MENUNULL: empty)
 IB_GADACT        EQU IB_PICK+2         ; pressed application gadget (left button held) | 0
 IB_GADWIN        EQU IB_GADACT+4       ; its window
 IB_STRGAD        EQU IB_GADWIN+4       ; active text gadget (receives the keyboard) | 0
@@ -104,7 +104,12 @@ IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 IB_FEEDER        EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE ; keyboard feeder state (dos/feeder.s) run by the input task | 0
 IB_QUAL          EQU IB_FEEDER+4       ; WORD: qualifier of the input event being handled (IntuiMessage Qualifier)
-INTUITIONBASE_SIZE EQU IB_QUAL+2
+IB_MNDRAG        EQU IB_QUAL+2         ; BYTE: left button held during a menu (drag-selection, §3.9)
+IB_BOXW          EQU IB_MNDRAG+2       ; WORD: item box width - 1 / height - 1 (as drawn, before screen clipping)
+IB_BOXH          EQU IB_BOXW+2
+IB_SUBW          EQU IB_BOXH+2         ; WORD: same for the sub-item box
+IB_SUBH          EQU IB_SUBW+2
+INTUITIONBASE_SIZE EQU IB_SUBH+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

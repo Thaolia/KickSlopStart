@@ -83,6 +83,7 @@ LVO_WAITBLIT    EQU -228             ; graphics.library public vector
                 xdef    it_dmrnear
                 xdef    it_dmrtick
                 xref    it_menumove
+                xref    mn_lbutton
                 xref    mn_keyshort          ; menus.s: right Amiga shortcut (handler)
                 xref    mn_keypick           ; menus.s: right Amiga shortcut (input task)
                 xref    mn_defcheck          ; menus.s: internal menu check mark
@@ -3937,7 +3938,7 @@ it_dobutton:
         cmp.w   #IECODE_RBUTTON,d0
         beq     it_rbutton
         tst.l   IB_MENUWIN(a5)
-        bne     .db_ret              ; menus displayed: the left button is ignored
+        bne     mn_lbutton           ; menus displayed: drag-selection, no message
         cmp.w   #IECODE_LBUTTON|IECODE_UP_PREFIX,d7
         bne.s   .db_down
         tst.w   IB_SYSACT(a5)

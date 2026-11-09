@@ -67,10 +67,14 @@ held" qualifier bits of mouse events are not set yet.
 
 ### A6. Memory — [src], M
 
-- **Shell cost:** opening a Shell takes 43,056 bytes here (47,152 before 2026-11-09), against 33,480 on 1.3
-  (newshell-memory-v34 §2). The process stack margin `CP_STKEXTRA` went from 4096 to 2048 bytes (measured use: 868 at
-  most). The rest of the gap (≈ 9.6 KB) is not broken down yet: BCPL getvec blocks (≈ 10.4 KB in all) and the stacks
-  of the two processes a Shell starts are the candidates.
+- **Shell cost:** opening a Shell from the Workbench takes 40,304 bytes here (43,096 before, 47,152 at the start of
+  2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2). Broken down with MEMTRACK (PLAN "Shell memory
+  (2026-11-09)"): the disk programs (System/CLI, Run, Shell-Seg, Newcon-Handler) allocate the same blocks as on 1.3.
+  What is left of the 6.8 KB gap is our runtime:
+  - the 68000 margin of the two BCPL processes, the Background CLI and the NEWCON handler: 2 × 2,048;
+  - Run's command stack under Execute: 4,456 bytes, while 1.3 runs it on the System/CLI tool's process stack.
+  Both come from the BCPL runtime keeping its 68000 stack apart from the BCPL stack. Closing them means running
+  commands on the caller's stack.
 - **Idle desktop:** 873,352 bytes free, **12,360 above** 1.3 (860,992) since the 4-slot track cache and the
   smaller stack margin.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
@@ -153,12 +157,11 @@ The MFM buffer of the disk DMA (13,630 bytes of chip, the size of an encoded tra
 trackdisk initialises and kept, for reads and for track writes, so a game that fills chip RAM keeps its disk access.
 1.3 keeps one 16,388-byte buffer per opened drive; ours is shared by all drives (one access at a time).
 
-### C3. Menus — [src], M
+### C3. Menus — done 2026-11-09
 
-- No MutualExclude.
-- No NextSelect multi-selection.
-- HIGHBOX/HIGHIMAGE are drawn as COMPLEMENT.
-- Specified in intuition-input-menus §3.7–3.8.
+NextSelect chain, MENUTOGGLED, MutualExclude, drag-selection with the left button, HIGHBOX and HIGHIMAGE
+(intuition-input-menus §3.6-§3.9), checked with `tests/menucat.s` against the §5 vectors (steps 3-5). Left: the
+working flags are not reset when a window is activated (only when a menu opens).
 
 ### C4. Display — [doc], M–L
 
@@ -171,12 +174,12 @@ trackdisk initialises and kept, for reads and for track writes, so a game that f
 
 ### C5. exec scheduling — [src] partly, S–M
 
-- From a task, Signal() and AddTask() only set SAR; they do not reschedule at once.
+Done 2026-11-09: Signal and AddTask reschedule when the task becomes the head of TaskReady, AUTOINIT goes through
+AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
 - The quantum is counted by our own VBlank server, not by timer.device's.
-- The PA_SOFTINT softint runs at SR $2100 instead of $2000.
-- InitResident's AUTOINIT path does an Enqueue instead of AddLibrary/AddDevice, so LIBF_SUMUSED libraries are not
-  summed at init.
-- WaitIO keeps D1.
+- Software interrupts run at SR $2100 instead of $2000 (lowering the IPL there makes level 1 re-entrant, DSKBLK
+  included).
+- Signal returns nothing in D0 (1.3: the previous tc_SigRecvd, undocumented).
 
 ### C6. strap (partial) — [src], S–M
 
@@ -213,6 +216,8 @@ trackdisk initialises and kept, for reads and for track writes, so a game that f
   - no spaces written past the NUL.
 - AddGadget on a REQGADGET goes to the window list.
 - IDCMP ports are not in the public port list.
+- Pointer events written with input.device IND_WRITEEVENT (IECLASS_POINTERPOS, buttons) do not reach intuition:
+  `tests/imenu_probe.s`, which drives the 1.3 menus that way, sees no message on our ROM.
 - A window holds only one REFRESHWINDOW at a time.
 - Each drawer has its own IDCMP port.
 - it_scrxy ignores the screen's TopEdge.
@@ -359,10 +364,9 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
-2. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-3. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
-4. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
-5. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
-6. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
-7. **C8, per-unit console input buffers of 255 bytes.**
+1. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
+2. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
+3. **C8, per-unit console input buffers of 255 bytes.**
+4. **C9, IND_WRITEEVENT pointer events.** It would let `tests/imenu_probe.s` check our menus against 1.3 directly.
+5. **A6, commands on the caller's stack** (the last 6.8 KB of the Shell gap). Large: the BCPL runtime's stack layout.
+A5, A6 (first part), C1, C2, C3 and C5 (main part) are done; D1/D3 are specified.

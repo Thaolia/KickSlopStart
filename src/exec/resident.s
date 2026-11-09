@@ -216,8 +216,8 @@ exec_FindResident:
 ; the resident pointer is NOT passed (the init routine knows itself statically). Its
 ; return value (d0) is returned. For a ROM module, segList = NULL.
 ; AUTOINIT (RTF_AUTOINIT): RT_INIT -> 4 longs {dataSize, funcTable, dataTable, initFunc}
-; passed to MakeLibrary; the returned base is Enqueue'd into the system list according to RT_TYPE
-; (NT_LIBRARY->LibList, NT_DEVICE->DeviceList, NT_RESOURCE->ResourceList). V34: the
+; passed to MakeLibrary; the returned base is added according to RT_TYPE through AddLibrary / AddDevice /
+; AddResource (their vectors: LIBF_SUMUSED bases are summed as on 1.3). V34: the
 ; name/type/version fields of the node are NOT filled from the ROMTag (the module does it).
 exec_InitResident:
         cmp.w   #RTC_MATCHWORD,(a1)
@@ -247,22 +247,22 @@ exec_InitResident:
         beq.s   .ira_fail
         ; V34: do NOT fill name/type/version of the node from the ROMTag (the module did it).
         ; Add to the system list according to RT_TYPE.
-        move.l  d0,a1                ; a1 = base (node)
+        move.l  d0,d2                ; d2 = base (return value)
+        move.l  d0,a1
         move.b  RT_TYPE(a3),d1
         cmp.b   #NT_DEVICE,d1
         beq.s   .ira_dev
         cmp.b   #NT_RESOURCE,d1
         beq.s   .ira_res
-        lea     EB_LIBLIST(a6),a0    ; NT_LIBRARY (default)
+        jsr     LVO_ADDLIBRARY(a6)   ; NT_LIBRARY (default); the Add* functions sum a LIBF_SUMUSED base
         bra.s   .ira_add
 .ira_dev:
-        lea     EB_DEVICELIST(a6),a0
+        jsr     LVO_ADDDEVICE(a6)
         bra.s   .ira_add
 .ira_res:
-        lea     EB_RESOURCELIST(a6),a0
+        jsr     LVO_ADDRESOURCE(a6)
 .ira_add:
-        jsr     LVO_ENQUEUE(a6)      ; Enqueue(list a0, node a1=base); a1 preserved
-        move.l  a1,d0                ; d0 = base (return value)
+        move.l  d2,d0
 .ira_done:
         movem.l (sp)+,d2-d3/a2-a3
         rts

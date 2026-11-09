@@ -1980,7 +1980,25 @@ differs.
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).
   **Stack margins (2026-11-09)**: processes and handlers created by the BCPL runtime get `CP_STKEXTRA` = 2048 bytes
-  over their BCPL stack (measured use of our 68000 runtime: 868 at most); a command's stack gets `RC_STKEXTRA` = 4096.
+  over their BCPL stack (measured use of our 68000 runtime: 868 at most); a command's stack gets `RC_STKEXTRA` = 2048
+  (with 4096, at least 5,088 bytes of every command stack stayed untouched over 38 commands).
+  **FileHandles without a name buffer (2026-11-09)**: `dos_fn_open` builds the BSTR of the name on the caller's stack
+  for the open packet only; a FileHandle of this dos is 44 bytes + its private fields (`FH_WBUF`, `FH_WCNT`,
+  `FH_OWNER` = `DOS_FH_MAGIC`), 60 bytes with the getvec header instead of 316. `dos_ownfh` recognises them by size and
+  mark before touching the private fields (a FileHandle built by a program has neither).
+  **Menu selection (2026-11-09)**: `mn_pick` (`src/intuition/menus.s`) is intuition-input-menus §3.8: the menu
+  session's NextSelect chain has its head in `IB_PICK` (MENUPICK carries it), MENUTOGGLED stops a second toggle until
+  the next click, MutualExclude unchecks the named CHECKIT siblings and a changed check mark redraws the box
+  (`mn_repaint`, sizes in `IB_BOXW/H`, `IB_SUBW/H`). The left button during a menu (`mn_lbutton`, `IB_MNDRAG`) selects
+  each code passed over. `mn_hlrect` draws HIGHCOMP, HIGHBOX (complemented frame, clipped by the box) and HIGHIMAGE
+  (SelectFill / ItemFill) and keeps HIGHITEM. The working flags of the bar are reset when a menu opens and before a
+  keyboard shortcut (`mn_clrflags`).
+  **exec: Signal and AddTask reschedule (2026-11-09)**: a task they put at the head of TaskReady gets `Reschedule`
+  (exec-scheduling-v34 §2.7): from a task outside Forbid/Disable it runs at once when its priority is >= the caller's
+  (Schedule's >= rule); from an interrupt or under Forbid only SAR is left. AddTask returns the head of TaskReady.
+  InitResident adds an AUTOINIT base through AddLibrary / AddDevice / AddResource (LIBF_SUMUSED bases are summed:
+  mathffp initialises its flags to SUMUSED|CHANGED, $04 at rest as on 1.3). WaitIO leaves the reply port's signal
+  bit in D1.
   **Keys of a non-console active window are dropped (2026-11-08)**: `console_input_handler` (`src/exec/console.s`)
   no longer converts a RAWKEY into the shared read buffer when intuition's active window is not a console unit
   (console-keymap-v34 §6.4); before, they waited there for the next console opened (a later AmigaShell showed them).
