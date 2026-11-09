@@ -2,6 +2,11 @@
 
 ## Context
 
+Graphics performance update (2026-11-09): shifted `$C0` bitmap copies stream complete middle bytes instead of
+repeating source alignment and mask dispatch for every output byte. This addresses DSS's module-channel
+refresh bottleneck. Native `test-graphics-copyshift`, in normal and quick Graphics groups, checks independent
+pixel fingerprints, edge guards, plane masks, odd addresses/strides, aliasing and an emulated-time speed gate.
+
 Goal: produce an **open-source, strictly 1.3-compatible Kickstart** — a ROM image of **256 KiB
 loaded at `$FC0000`**, 68000 big-endian, drop-in for the real `kick34005.A500`, booting **first in an
 emulator (FS-UAE/WinUAE), then on a real Amiga 500** (EPROM/adapter).

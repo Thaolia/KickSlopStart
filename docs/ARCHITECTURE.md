@@ -1,5 +1,19 @@
 # Architecture
 
+## Shifted bitmap-copy streaming (2026-11-09)
+
+The row-copy engine shared by BltBitMapRastPort, ClipBlit and BltBitMap specializes source-copy minterm `$C0`
+when source and destination bits have different byte phases. Disjoint rows use one fixed source shift, masked
+first/last bytes and unmasked middle bytes. Equal address parity permits two output bytes per longword source
+fetch; mixed parity retains byte accesses, including odd addresses and strides. The final edge fetch bounds
+the lookahead. Aliasing row ranges retain the original forward-copy behavior; other minterms and constant
+planes retain their existing paths. No RastPort state or blitter ownership changes are introduced.
+
+DSS's module display copies a large panel from a narrow backing bitmap to a destination at a different bit
+phase. Its old per-byte setup dominated playback CPU time. The native `test-graphics-copyshift` fixture uses
+authored pixels and independent complete-buffer fingerprints, then checks that the panel copy fits comfortably
+within a playback update interval. Both CHIP and non-DMA memory are covered.
+
 ## Blitter drawing acceleration (2026-11-04)
 
 `src/graphics/draw.s` accelerates eligible contained solid Draw segments with Agnus line mode in all
