@@ -1341,6 +1341,25 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   before `ram_expungeall` and its retry: the 8-slot cache (45,056 bytes) is freed when the device semaphore is free
   and no slot is dirty, and is allocated again at the next access. `tests/lowmem_probe.s`: 45,192 bytes of fast
   memory come back after a failing AllocMem (136 before). Not in 1.3, which has no cache (memory-budget-v34).
+  **Workbench drag and drop, Disk menu, menu ghosting (2026-11-09)**: spec workbench-task-v34 §10 (probed on the
+  real 1.3 the same day). `wb_drop` (called by `wb_dragend`): the target is the window under the pointer hot spot
+  (layers WhichLayer, matched against our window layers) and the icon under it (`wb_hit`, factored out of `wb_click`).
+  Drawer/trashcan/disk icon -> into its directory with NO_ICON_POSITION; another drawer window -> its directory at the
+  drop point (inverse of `wb_origin`); same volume (fl_Volume of two locks) -> Rename of the object and its .info,
+  other volume -> `wb_cptree` under the same name; then PutDiskObject of the .info with the new position, the source
+  drawer and every open drawer showing the target re-read. Disk and trashcan stay in their window ("'<name>' cannot
+  be moved out of its window"), another program's window refuses ("Icons cannot be moved into this window"). Disk
+  menu: Empty Trash (`wb_emptytrash`, the ".info" icon-list file kept), Initialize (`wb_initialize`: SYS:System/Format
+  with the disk as WBArg 2). `wb_menustate` (after each round of messages) enables/ghosts the 13 items from the
+  selection, OnMenu/OffMenu only for the items that change; the template starts with only Redraw and Version.
+  Checked under Amiberry (production ROM, screenshots looked at, disks read back with xdftool): Prefs dropped on the
+  closed System drawer -> System/Prefs, .info at NO_ICON_POSITION, directory date kept; Shell copied to the Data disk
+  (window drop and disk-icon drop); System dropped into the open Utilities window at the drop point; a second Shell
+  moved into Utilities -> "Error while moving Shell: 203"; the disk dragged into a drawer window -> refused with the
+  1.3 title; a drop on the backdrop -> the icon goes back; menus for nothing / disk (window closed and open) /
+  trashcan / drawer as in §10.8; Empty Trash deleted Trashcan/Junk at once; Initialize brought up Format's
+  "Ok to Initialize volume Workbench1.3" requester (cancelled). Open: backdrop left-out icons, DiskCopy by disk-on-disk
+  drop, free-slot placement (§10.5), busy pointer, Shift extended selection and group drag (§10.7).
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

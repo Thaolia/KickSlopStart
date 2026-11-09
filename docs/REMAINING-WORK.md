@@ -24,29 +24,30 @@ State at `e6d7bcb` (2026-11-08). This page lists what our ROM still lacks **beyo
 
 ## A. Gaps that break or visibly change a known program
 
-### A1. Workbench 1.3.3: dropping an icon into another window does nothing — [src], L
+### A1. Workbench 1.3.3: dropping an icon into another window — done 2026-11-09, except two cases — [src], M
 
-`wb_dragend` only handles a release inside the window the drag started in. As a result, none of these works:
-- moving an icon to another drawer;
-- copying it to another disk;
-- dropping it on the trashcan;
-- dropping a disk onto a disk to start DiskCopy.
+Done (workbench-task-v34 §10.2-§10.4): the target comes from the pointer hot spot; drawer, trashcan or disk icon ->
+into that directory (position NO_ICON_POSITION); background of another drawer window -> there, at the drop point;
+same volume = rename of the object and its .info, other volume = copy under the same name; the .info is rewritten at
+the drop; "Error while moving <name>: 203" when the name exists on the same volume; a disk or trashcan never leaves
+its window; a window that is not ours refuses the drop. Still missing: icons **left out on the backdrop** (the drop
+does nothing there), **DiskCopy by dropping a disk on a disk** (the disk is only repositioned), the free-slot
+placement of a drop on an open disk window (§10.5, rule still unresolved: our icon gets NO_ICON_POSITION) and the busy
+pointer during the operation.
 
-This is specified in workbench-task-v34 ("Dragging an icon into another window", and DiskCopy with 3 WBArgs). Most of
-it can reuse existing pieces: the Rename packet, the Duplicate copy and the DiskCopy launch.
+### A2. Workbench 1.3.3: Disk menu — done 2026-11-09
 
-### A2. Workbench 1.3.3: Special → Empty Trash and Initialize are ghosted (`WBM_OFF`) — [src], M
+Empty Trash empties the selected trashcan (the ".info" icon-list file stays) and Initialize starts SYS:System/Format
+on the selected disk with the 1.3 WBArgs (§10.9). The menu items are enabled or ghosted from the selection (§10.8).
 
-They need an analysis pass first (D3).
+### A3. Workbench 1.3.3: no extended selection — [src], M–L
 
-### A3. Workbench 1.3.3: no extended selection — [src], M
+Specified now (workbench-task-v34 §10.7): Shift+click adds an icon, a press with Shift held drags the whole
+selection by the same delta, a double-click opens every selected icon, and the menus follow the "several drawers" row
+of §10.8. Our Workbench keeps a single selection (`WBS_SELW`/`WBS_SELI`), used by every menu action, the
+highlighting and the drag: the change touches most of `workbench.s`.
 
-There is no Shift-click multi-selection and no group drag (`workbench.s` header: "a single selected icon"). Not
-specified yet (D1).
-
-### A4. Workbench 1.3.3: Open, Info and Discard stay enabled with nothing selected — [doc], S
-
-The 1.3 rule still has to be probed (D1).
+### A4. Workbench 1.3.3: menu ghosting — done 2026-11-09 (single selection)
 
 ### A5. Boot time — done 2026-11-09; Clock speed — [doc], S
 
@@ -346,13 +347,12 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **A1, Workbench drag into another window.** It is the most visible gap, it is already specified, and most of the
-   pieces exist.
+1. **A1 leftovers and A3**: backdrop left-out icons, DiskCopy by disk-on-disk drop, then extended selection.
 2. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
 3. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
 4. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
 5. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-6. **A2, A3 and A4 after D1/D3.** They finish the Workbench menus and selection.
+6. **D1/D3 are done** (workbench-task-v34 §10): the Workbench rules are specified.
 7. **C3, menu MutualExclude, multi-selection and HIGHBOX/HIGHIMAGE.** Already specified.
 8. **C5, exec reschedule from a task, and AUTOINIT through AddLibrary.** Low cost.
 9. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.

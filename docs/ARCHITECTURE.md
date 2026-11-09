@@ -1940,6 +1940,11 @@ differs.
   (the ROM Interrupt cannot hold it), timer.device keeps its own copy (`TIMER_CIAA`) for the lost-interrupt
   recovery. Andromeda "D.O.S." overwrites low chip RAM; with the dev ROM's CIA-B timer still running, the next INT6
   jumped through the overwritten pointer (SOFTWARE FAILURE, address error).
+  **Workbench drop, Disk menu, ghosting (2026-11-09)**: `wb_drop` resolves a released icon against the window under
+  the pointer (layers.library WhichLayer, base in `WBS_LAYBASE`) and the icon under it (`wb_hit`); moves by Rename on
+  the same volume (`wb_samevol`: fl_Volume of two locks), copies with `wb_cptree` otherwise, then writes the .info with
+  the new position. `wb_menustate` keeps the 13 menu items in step with the selection (`WBS_MENUMASK`, OnMenu/OffMenu
+  of the shared strip on the backdrop window). `wb_emptytrash`, `wb_initialize` for the Disk menu.
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).
