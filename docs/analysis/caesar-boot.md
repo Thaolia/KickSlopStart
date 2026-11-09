@@ -1,4 +1,4 @@
-# caesar-boot.md — Caesar (Impressions) [cr FLT]: `caesar.boot` and `flt.exe`
+# caesar-boot.md — Caesar (Impressions): `caesar.boot` and `flt.exe`
 
 > ANALYSIS track ("dirty"). Source: a Caesar (Impressions) game disk,
 > files extracted by a tolerant OFS reader (file header blocks 899 and 966). Disassembled

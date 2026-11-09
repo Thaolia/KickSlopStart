@@ -28,7 +28,7 @@
 
 ---
 
-## 1. Scooby-Doo [cr QTX]: `NOMAD` (5,872 b) then `QUARTEX` (58,740 b)
+## 1. Scooby-Doo: `NOMAD` (5,872 b) then `QUARTEX` (58,740 b)
 
 ### 1.1 NOMAD = the displayed intro (click → return to the CLI)
 
@@ -112,7 +112,7 @@ VBlank, once INTEN is re-enabled, that puts gb_LOFlist back into COP2LC (cf. `ca
 
 ---
 
-## 2. Monkey Island [cr Defjam]: `defjam` (5,080 b)
+## 2. Monkey Island: `defjam` (5,080 b)
 
 **Startup**:
 - unpacking to **$50000–$53000**;
@@ -175,7 +175,7 @@ by AddIntServer(5, &GfxBase+$4A) (−168).
 
 ---
 
-## 3. SimCity [cr RZR]: `S/RAZOR.EXE` (22,196 b)
+## 3. SimCity: `S/RAZOR.EXE` (22,196 b)
 
 **Startup**:
 - INTENA := $4000 (INTEN off), DMACON := $0200 (DMAEN off);

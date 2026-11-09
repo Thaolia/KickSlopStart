@@ -1,7 +1,7 @@
 # loadwb-13.md — `c/loadwb` (Monkey Island, 2,784 bytes) vs `C:LoadWB` 1.3.3 (2,780 bytes), and `EndCLI`
 
 > ANALYSIS track ("dirty"). Sources:
-> - Monkey Island disk, disk 1/4 [cr Defjam]: `c/loadwb` (header block 891), `c/endcli` (block
+> - Monkey Island disk, disk 1/4: `c/loadwb` (header block 891), `c/endcli` (block
 >   903), `s/startup-sequence` (block 997);
 > - Workbench 1.3.3 boot disk: `C:LoadWB` (block 1039), `C:EndCLI` (block 979);
 > - ROM `kick34005.A500`: CLI loop in the BCPL section of dos, workbench.task.

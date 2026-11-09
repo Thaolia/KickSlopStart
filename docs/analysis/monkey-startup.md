@@ -1,4 +1,4 @@
-# monkey-startup.md — `monkey_island` (Monkey Island FR [cr Defjam]): startup up to "Appuyez sur ENTER"
+# monkey-startup.md — `monkey_island` (Monkey Island FR): startup up to "Appuyez sur ENTER"
 
 > ANALYSIS track ("dirty"). Source: disk 1/4, root file `monkey_island` (108,408 bytes, header
 > block 881), extracted by the tolerant OFS reader and relocated flat at $100000.

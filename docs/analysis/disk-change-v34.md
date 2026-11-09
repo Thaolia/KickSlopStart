@@ -2,7 +2,7 @@
 
 > ANALYSIS track ("dirty"). Sources: the ROM `assets/kick34005.A500` (file system = dos segarray
 > entry 6, validator = entry 7, module `wb 34.1`), and **black-box probes** on the real ROM
-> (FS-UAE, Workbench 1.3.3 `[m2]` + `OctaMED Professional v4.00` + home-made disks) with the probe
+> (FS-UAE, the Workbench 1.3.3 boot disk + `OctaMED Professional v4.00` + home-made disks) with the probe
 > `tests/dskchg.s` and the harness `tests/dskchg_run.sh`.
 > Same conventions as `handlers-v34.md`, `boot-clock-v34.md` and `workbench-task-v34.md`: **BPTR**
 > = address/4; DosList node seen in longs `!0..!10`; for a **volume** (dn_Type 2):

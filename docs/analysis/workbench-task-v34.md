@@ -1385,8 +1385,8 @@ x = BL + 9**. The contents start at BL + 14.
 ### 8.5 Icon placement in a drawer window (measured)
 
 > Black-box run of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, A500
-> cycle-exact, 512 KB chip + 512 KB slow), 2026-11-04, on a session copy of `Workbench 1.3.3 (34.34) -
-> Boot (Commodore) (1991) [m2].adf`; the `Workbench1.3` disk window opened by double-click at its
+> cycle-exact, 512 KB chip + 512 KB slow), 2026-11-04, on a session copy of the Workbench
+> 1.3.3 boot disk (local alias `assets/wb133.adf`); the `Workbench1.3` disk window opened by double-click at its
 > `.info` size (428×94 at 3,70). Tags: **[shot]** = measured on an IPC screenshot (lines doubled, one
 > Amiga line = two picture rows, one hires pixel = one picture column), with the icon images decoded
 > from the disk's `.info` files and matched pixel for pixel; **[mem]** = read from the public
@@ -1441,7 +1441,7 @@ x = BL + 9**. The contents start at BL + 14.
 
 > Black-box runs of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, cycle-exact
 > A500, 512 KB chip + 512 KB slow RAM, no fast RAM), 2026-11-04, four fresh boots (A–D) of session
-> copies of `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`. Window opened: the boot
+> copies of the Workbench 1.3.3 boot disk (local alias `assets/wb133.adf`). Window opened: the boot
 > disk's (`Workbench1.3`), by double-clicking its icon. Boot A: untraced first open, then traced
 > and untraced reopens; boot B: failed trace attempts (discarded); boot C: first open traced from
 > OpenWindow, then a keyboard reopen; boot D: first open fully traced (keyboard double-click).
@@ -1601,6 +1601,259 @@ opens 2–4). This is a per-Workbench (not per-window) cost.
 
 ---
 
+## 10. Drag and drop, selection, menu ghosting
+
+> Black-box runs of the real Kickstart 1.3 under Amiberry (`amiberry-session --analysis`, A500
+> cycle-exact), 2026-11-09, two sessions. DF0: a session copy of the Workbench 1.3.3 boot disk (local
+> alias `assets/wb133.adf`) with a `Trashcan` drawer added; DF1: a blank OFS disk named `Data`
+> (formatted with `xdftool`) with the same `Trashcan` drawer. The `Trashcan.info` added to both was
+> taken from the Workbench 1.2 boot disk (type 5, CurrentX/Y 220,36). Tags: **[shot]** = seen on an
+> IPC screenshot; **[disk]** = read from the session's ADF copy with `xdftool` after the session
+> was stopped (file dates, `.info` contents decoded with the public DiskObject layout: CurrentX/Y at
+> `.info` offset +$3A/+$3E); **[mem]** = read from public structures (exec task list, WBStartup,
+> WBArg, FileLock) through the gdb monitor; **[D]** deduced; **[S]** assumed. Screen coordinates
+> are hires pixels / Amiga lines; "pointer delta" is the pointer's movement between the press and
+> the release.
+
+### 10.1 What is dragged, and where it lands on screen
+
+- **Press on an icon image** selects it (it is redrawn in its selected state) and starts a drag
+  once the pointer moves. While the button is held, a **copy of the icon image only** (no label)
+  follows the pointer; the original stays drawn in place, selected. [shot]
+- The drag keeps the **grab offset**: the image's top-left = pointer − (pointer − image top-left at
+  the press). On release the icon's new **image top-left on screen = old image top-left + pointer
+  delta**. Example: Shell grabbed 27 pixels right of and 11 lines below its image's top-left, released
+  204 pixels / 84 lines further: the icon is drawn exactly where the dragged image was. [shot]
+- **No drop-target feedback**: a drawer or disk icon under the pointer is not highlighted during the
+  drag. [shot]
+- The pointer is the **busy pointer** (the "zz" sleeping cloud) while the Workbench processes the
+  drop (move, copy, Empty Trash). [shot]
+
+### 10.2 Drop target resolution [O unless stated]
+
+The target is chosen from the **pointer hot spot** at release, **not** from the dragged image:
+
+- Pointer on the left edge of the `Expansion` drawer icon, dragged image (`Say`) almost entirely to
+  the left of it, over the window background: `Say` went **into** `Expansion`. [shot + disk]
+- Pointer on the window background just left of the `System` drawer, dragged image (`More`) covering
+  the left third of `System`: `More` was **repositioned in the window** (drawn overlapping `System`),
+  not moved into `System`. [shot + disk]
+
+Order of tests (each was observed once; the order between (2) and (3) is [D], since the icon test
+must come first for a drawer icon inside a window to win over that window's background):
+
+| Pointer at release on… | Result | Notes |
+|---|---|---|
+| (1) a window that is not a Workbench window (e.g. a Shell console) | title `"Icons cannot be moved into this window"`, icon goes back to its place, stays selected | [shot] |
+| (2) a **drawer** icon (type 2), in any window | **move/copy INTO that drawer's directory** (§10.3/§10.4) | [shot + disk] |
+| (2) the **Trashcan** icon (type 5) | same as a drawer: move into the trashcan's directory | [shot + disk] |
+| (2) a **disk** icon (type 1) on the backdrop | move/copy into the **root directory** of that volume | [shot + disk] |
+| (2) a disk icon, dragged object is **also a disk** | DiskCopy, §10.6 | [shot + mem] |
+| (3) the **background of another drawer/disk window** | move/copy into that window's directory, icon placed at the drop point (§10.3) | [shot + disk] |
+| (3) the background of the **open trashcan window** | ordinary move into the trashcan directory | [shot] |
+| (4) the **backdrop** (empty desktop) | tool, project or drawer: icon **left out on the backdrop**; the file is not moved and its `.info` is not written | [shot + disk] |
+| (5) the **same window** background | repositioning (already implemented on our side) | not re-measured |
+
+- **Disk (type 1) and trashcan (type 5)** can never leave their window: dropping one anywhere outside
+  it (another window, the backdrop for the trashcan) gives the title
+  `"'<name>' cannot be moved out of its window"` (`'Data' cannot …`, `'Trashcan' cannot …`), as listed
+  in §6.9 point 4. The icon returns to its place. [shot]
+- **Backdrop drop** of a tool (`Shell` from the `Data` window): the icon is drawn on the backdrop at
+  the drop point; `Data:Shell` and `Data:Shell.info` stay in place with an unchanged date; after a
+  reboot the icon is back in the `Data` window at its old CurrentX/Y. So the backdrop position is
+  kept **in memory only** (bit 4 of `+$3C` and own lock `+$A4`, §8 review note). [shot + disk]
+- A left-out tool on the backdrop can be double-clicked: it launched normally (`Shell` opened an
+  AmigaShell). [shot]
+- `"Icons cannot be moved into this window"` and the "cannot be moved out" titles are ShowTitle
+  messages (§6.2): they enable Special/Last Error (§10.8). [shot]
+
+### 10.3 Move within the same volume [O unless stated]
+
+- The **file and its `.info` move** (rename, §6.9 point 4): the file keeps its original date
+  (it is renamed, not rewritten) [disk].
+- The **`.info` is rewritten at the moment of the drop** (new file date = time of the drop), with
+  the new position: **not** deferred to Snapshot. [disk]
+- **Position written**, by destination:
+  - **window background** (destination window open): the drop point, converted with the inverse of
+    the drawing formula of §8.5:
+    `CurrentX = image left (window-relative) − BL (− 14 more in a disk window) + scrollX`,
+    `CurrentY = image top (window-relative) − BT + scrollY`.
+    Test vector: `Shell` dropped in `Utilities` (a drawer window, BL 4, BT 11, drawer scroll X = −12
+    from its `.info` DrawerData) with its image top-left at window (247, 46) ⇒ `Utilities/Shell.info`
+    CurrentX/Y = **231, 35** [shot + disk];
+  - **onto a drawer or trashcan icon whose window is closed**: CurrentX = CurrentY =
+    **NO_ICON_POSITION ($80000000)** in the written `.info` (`Expansion/Say.info`,
+    `Trashcan/More.info`) [disk];
+  - **onto a disk icon whose window is open** (`Diverse` dropped on the boot disk icon): a **free
+    slot** of that window is chosen and written (`Diverse.info` = **107, 29**) [disk]; see §10.5 for
+    the slot rule.
+- Negative positions are allowed and written as such (§10.7 group test: `Prefs.info` CurrentX = −118):
+  there is no clamping. [disk]
+- **Source window**: the icon is erased from it at once (background repainted, the icons it covered
+  redrawn). [shot]
+- **Destination window**: the icon is drawn at its new place, **still selected**; the scroll gadgets are
+  recomputed (the `Utilities` horizontal knob shrank after an icon landed at a negative X). [shot]
+- **Name already present** in the destination: the move **fails**; it does not overwrite. Title
+  `"Error while moving Shell: 203"` (ERROR_OBJECT_EXISTS), no requester for this code, the icon stays
+  where it was. [shot]
+
+### 10.4 Copy to another volume [O unless stated]
+
+- Triggered by the same drops as §10.3 when the target directory is on another volume (window
+  background or disk/drawer icon). The source is **not** deleted. [shot + disk]
+- **Name**: the **same name** (no `"copy of"`; BumpRevision is only for Duplicate, §7.9.2). [disk]
+- **Contents**: the file, or the drawer **recursively** (all entries, `.info` files included), then the
+  object's `.info`. Copied files get the **current date** (attributes not copied, as in §7.9.4).
+  Test vector: `Prefs` drawer (58 KB, 8 entries) from DF0 to `Data` [disk].
+- **Order**: the data first, the object's `.info` **last** (file dates: `Prefs/` entries 00:46:17
+  to 00:46:51, `Prefs.info` 00:46:58; `Shell` then `Shell.info`). The new icon appears in the
+  destination window **only at the end** (about 45 s for `Prefs` on a cycle-exact A500). This differs
+  from Duplicate, which writes the `.info` first (§7.9.2). [disk + shot]
+- **Position**: dropped on a window background ⇒ the drop point (formula §10.3; test vector: `Shell`
+  dropped on the `Data` disk window with its image top-left at window (97, 49) ⇒ `Data:Shell.info`
+  = **79, 38**); dropped on a disk icon whose window is open ⇒ a free slot (§10.5). [shot + disk]
+- **Name already present**: **silently overwritten**: no requester, no message; the old icon is removed
+  from the destination window and the new one drawn at the new position (second `Shell` copy to
+  `Data`). [shot + disk]
+- **Feedback**: busy pointer only. The screen title is not changed (the free-memory title is not
+  even refreshed during the copy, the Workbench being busy); there is no requester and no progress
+  display. The disk window's gauge (§8.4) is updated when the icon appears. [shot]
+- The original stays selected; the copy is drawn unselected at the end (window drop) [shot].
+
+### 10.5 Free-slot placement (drop on a disk icon) [O for the values, S for the rule]
+
+Observed slots (all three with the destination disk window open):
+
+| Destination window, icons present | Object | CurrentX/Y written |
+|---|---|---|
+| `Data` root: Trashcan (220,36) | `Shell` (gadget 53×18) | **21, 0** (measured on screen; the `.info` was later overwritten) |
+| Boot disk root: Utilities (11,0), System (107,0), Empty (299,0), Trashcan (220,36), MountMF (66,74) | `Shell` | **21, 29** |
+| same, plus that Shell | `Diverse` (74×18) | **107, 29** |
+
+All three fit a **column-major scan of a grid with X = 21 + 86·i and Y = 29·j**, taking the first cell
+whose rectangle does not overlap an existing icon and that fits in the window height [S]. This does
+not match the "steps of 96 px" of §7.9.2 point 7; which of the two is right (or whether they are
+different routines) is **unresolved**: an implementation should treat these three vectors as the
+reference and re-probe before relying on the grid.
+
+### 10.6 Disk onto disk: DiskCopy [O]
+
+- Dragging the `Workbench1.3` disk icon onto the `Data` disk icon launched **DiskCopy 1.4**, which
+  showed: `Put Workbench1.3 ( FROM disk ) in drive DF0:` / `Put DESTINATION disk ( TO disk ) in drive
+  DF1:` with Continue/Cancel. So **WBArg 1 = the dragged disk = source**, **WBArg 2 = the disk under
+  the pointer = destination** (§7.9.1: tool, source, destination). [shot]
+- While DiskCopy runs, both disk icons are replaced by `DF0:BUSY` / `DF1:BUSY` (the drives are
+  inhibited by DiskCopy); Cancel restores them. [shot]
+
+### 10.7 Selection [O unless stated]
+
+- **Click** on an icon: selects it and **deselects every other icon in every window** (a selected
+  `Shell` in the `Utilities` window was deselected by a click on `System` in the disk window). [shot]
+- **Click on a window background**: deselects all. [shot]
+- **Shift held + click** on an unselected icon: adds it to the selection (extended selection works
+  across icons of the same window; across windows not tested). **Shift + click on an already
+  selected icon leaves it selected** (no toggle). [shot]
+- **Plain press (no Shift) on one icon of a multiple selection**: the others are **deselected**, only
+  that icon is dragged. [shot]
+- **Group drag = press with Shift still held** on one of the selected icons: only the pressed icon's
+  image follows the pointer, but on release **every selected icon is moved** to the same target,
+  each by the **same pointer delta** (relative layout preserved). Test vector: `Diverse` (pressed) and
+  `Prefs` (selected) dragged by (−230, +125 lines) into `Utilities`: `Prefs.info` written with
+  **−118, 79**, i.e. its old screen position + the delta, converted with §10.3's formula; that icon
+  was outside the visible area and the scroll bars grew to include it. [shot + disk]
+- **Double-click with several icons selected** opens **all** of them (a click on `Empty`, a Shift-click
+  on `Diverse` and a quick press opened both drawer windows). [shot]
+
+### 10.8 Menu layout and ghosting [O]
+
+The menu strip is **Workbench** (Open, Close, Duplicate, Rename, Info, Discard), **Disk** (Empty Trash,
+Initialize), **Special** (Clean Up, Last Error, Redraw, Snapshot, Version). So Empty Trash and Initialize
+are menu 1, not Special; Version is menu 2 item 4 as in §6.3. Ghosted items are drawn with the
+usual dot pattern. "On" = enabled, "—" = ghosted. [shot]
+
+| Selection | Open | Close | Dupl. | Rename | Info | Discard | Empty Trash | Initialize | Clean Up | Last Error | Redraw | Snapshot | Version |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| nothing (with or without an open drawer window) | — | — | — | — | — | — | — | — | — | — (1) | On | — | On |
+| one disk, window closed | On | — | On | On | On | — | — | **On** | — | — (1) | On | On | On |
+| one disk, its window open | On | **On** | On | On | On | — | — | On | **On** | — (1) | On | On | On |
+| one drawer, window closed | On | — | On | On | On | On | — | — | — | — (1) | On | On | On |
+| one drawer, its window open | On | **On** | On | On | On | On | — | — | **On** | — (1) | On | On | On |
+| one tool/project | On | — | On | On | On | On | — | — | — | — (1) | On | On | On |
+| one trashcan (full or **empty**) | On | — | — | On | On | — | **On** | — | — | (1) | On | On | On |
+| several drawers | On | — | — | — | — | On | — | — | — | — (1) | On | On | On |
+
+(1) Last Error is ghosted until a title message has been shown, then enabled whatever the selection
+(seen after `"'Data' cannot be moved out of its window"`); it redisplays that message.
+
+Deductions [D]: Close and Clean Up follow the **selected** icon (enabled only when it is a disk or
+drawer whose window is open), not the active window; Duplicate, Rename and Info need exactly one
+selected icon; Empty Trash needs a selected trashcan and does not test whether it is empty;
+Initialize needs a selected disk. Not tested: a mixed selection (disk + drawer), several disks,
+several trashcans.
+
+### 10.9 Empty Trash and Initialize [O unless stated]
+
+- **Empty Trash** (Disk menu, with a trashcan icon selected): **no requester, no title message**,
+  busy pointer for a moment. Every entry of the selected trashcan's directory is deleted: `More` and
+  `More.info` on the boot disk, `Shell` and `Shell.info` on `Data`. If the trashcan window is open,
+  its icons disappear at once. The trashcan stays selected. Its icon image does not change (1.3 has
+  no "full" trashcan image). Recursive deletion of a sub-drawer was not tested [S: same walk as
+  Discard, §6.9 point 5]. [shot + disk]
+- **Initialize** (Disk menu, with a disk icon selected): the Workbench launches a process named
+  **`SYS:System/Format`**, stack 4096, with a WBStartup of **2 WBArgs** [mem]:
+  1. wa_Lock = 0, wa_Name = `"SYS:System/Format"`;
+  2. wa_Lock = a **shared lock on the root block** (fl_Key 880, fl_Access −2) of the selected
+     volume, owned by that volume's handler; wa_Name = `""`.
+  `sm_NumArgs` = 2, `sm_ToolWindow` = 0. Same WBArg shape as §7.9.1 (tool by absolute name, disk by
+  root lock and empty name), but the tool name is fixed instead of the disk icon's default tool [D].
+  Format then shows a `System Request` window: `Ok to Initialize volume` / `Data` /
+  `(all data will be erased) ?`, Continue / Cancel; Cancel ends it with no change [shot]. The
+  requester belongs to Format, not to the Workbench [D: the Workbench is back in its loop and Format
+  is the waiting process].
+
+### 10.10 The per-directory `.info` cache file [O on disk, D/S for its use]
+
+The 1.3 Workbench reads and writes a file named exactly **`.info`** inside directories (the root
+included). It is not an icon. Layout seen in every instance [disk]:
+
+| Offset | Size | Value |
+|---|---|---|
+| 0 | word | `$F34C` (magic) |
+| 2 | word | `$0012` |
+| 4 | 3 longs | a DateStamp (days, minutes, ticks) |
+| 16 | text | the **names of the objects that have an icon** in that directory, each followed by `\n` |
+
+- On the original disk, the DateStamp equals the directory's own date (`Utilities`: 12-Mar-1997
+  16:48:56.48 in both), and the list is that directory's icons (`Say`, `More`). [disk]
+- A new one was written **when a drawer window was opened** and the file was missing (the `Data`
+  root, on its first opening) or its DateStamp no longer matched the directory (`Utilities` after
+  icons were moved in and out; the boot disk root). Moves into a directory whose window is open do
+  not rewrite it. [disk]
+- Deduction [D]: it is a cache of the icon list, valid while the directory's date equals the
+  stamp, to avoid a full ExNext scan. An implementation may ignore it, but must **not show it as an
+  icon** (its `.info` suffix leaves an empty name) and must not delete it as part of an object
+  (Discard and Empty Trash delete named objects only).
+
+### 10.11 Test vectors (summary)
+
+| Action | Expected |
+|---|---|
+| drag `Say` with the pointer on `Expansion`'s icon, image off it | `Expansion/Say` + `Say.info`, CurrentX/Y = $80000000 |
+| drag `More` with the image over `System` but the pointer on the background | `More` repositioned in the window |
+| drop `Shell` in `Utilities` at window (247,46), scrollX −12 | `Utilities/Shell.info` = 231,35, `.info` dated at the drop, `Shell` date unchanged |
+| drop a tool on a disk icon of another volume, window open, slot free | copy, same name, `.info` = first free slot (21,0 on an almost empty disk) |
+| copy a name that exists on another volume | silent overwrite |
+| move a name that exists on the same volume | `"Error while moving <name>: 203"`, nothing moved |
+| drop on a Shell window | `"Icons cannot be moved into this window"` |
+| drop a disk or trashcan outside its window | `"'<name>' cannot be moved out of its window"` |
+| disk icon A dropped on disk icon B | DiskCopy, FROM = A, TO = B |
+| Shift held while pressing one of two selected icons, delta (dx,dy) | both moved, each by (dx,dy) |
+| nothing selected | only Redraw and Version enabled (Last Error once a message was shown) |
+| Empty Trash on an empty trashcan | enabled; nothing happens visibly |
+| Initialize on `Data` | process `SYS:System/Format`, WBArgs (0,"SYS:System/Format"), (root lock,"") |
+
+---
+
 ## Clean-room review
 
 - [x] No listing, no instruction sequence transcribed or paraphrased line by line: only
@@ -1661,3 +1914,7 @@ opens 2–4). This is a per-Workbench (not per-window) cost.
   No instruction sequence copied. Complement to §7.9.3 [O]: bit 4 of `+$3C` is set
   when an icon is dropped on the root window (backdrop), with a DupLock of the original
   directory in `+$A4`; it is cleared when it is put back into a drawer.
+- [x] §10 (2026-11-09): black-box only: screenshots of the emulated screen, disk contents read
+  with `xdftool` after the runs, and public structures (exec task list, WBStartup/WBArg, FileLock)
+  read through the gdb monitor. No ROM address, ROM data or instruction is given; disks are named by
+  title or local alias only.

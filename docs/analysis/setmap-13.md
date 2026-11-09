@@ -14,7 +14,7 @@
 > §5.2 key translation, §5.4 keymap commands); `handlers-v34.md` §2 (CON: handler); `loadseg-v34`-style
 > hunk loading is assumed known (HUNK_HEADER / CODE / RELOC32 / END).
 >
-> The English Workbench 1.3.3 image in `assets/test_adf/` (`[m2]`) has **no** `System/SetMap` and only
+> The English Workbench 1.3.3 image in `assets/test_adf/` has **no** `System/SetMap` and only
 > `devs/keymaps/usa1`; the comparison of two SetMap binaries could therefore not be made. `usa1` has the same
 > file layout as `d` (§3) [O].
 

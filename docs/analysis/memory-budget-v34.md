@@ -33,7 +33,7 @@ Configurations (Amiberry `--model A500`, OCS, PAL):
 | **C/2** | 512 KB chip only | DF0 + empty DF1 |
 | **C/1** | 512 KB chip only | DF0 only |
 
-Disk: a copy of `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf`. For the staged runs the
+Disk: a copy of the Workbench 1.3.3 boot disk (local alias `assets/wb133.adf`). For the staged runs the
 `startup-sequence` of the copy was rewritten (xdftool) with an `ask "MBn ..."` line between steps; the run paused
 on each `ask`, the dump was taken, then `y` + Return was typed. The measured state therefore includes the loaded
 `Ask` command (about 600 bytes, `cli_Module` = 324 + 288 bytes) at stages 1 to 8. The idle state was also measured
@@ -234,7 +234,7 @@ Measured 2026-11-08 on the real Kickstart 1.3 (34.5) under Amiberry: `amiberry-s
 (the emulator log reports "prefetch and cycle-exact 24-bit"). The A500 preset alone is already fully cycle-exact
 (amiberry skill, checked 2026-11-04), so the figures are comparable with a ROM started with the plain preset.
 Memory 512 KB chip + 512 KB slow, DF0 = a fresh copy of the unmodified
-`Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf` for each run, DF1 enabled and empty (preset default),
+Workbench 1.3.3 boot disk (`assets/wb133.adf`) for each run, DF1 enabled and empty (preset default),
 one emulator running at a time.
 
 Method: t = 0 when `start` returns; every 2 s (on a fixed schedule from t = 0) `amiberry-session shot <name> x.png

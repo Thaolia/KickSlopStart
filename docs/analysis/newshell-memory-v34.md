@@ -2,7 +2,7 @@
 
 > ANALYSIS track ("dirty"). Written for GitHub issue #22. Source: black-box runs of the real Kickstart 1.3
 > (`kick34005.A500`) under Amiberry (`amiberry-session --analysis`, cycle-exact A500), 2026-11-04.
-> Disk: session copies of `Workbench 1.3.3 (34.34) - Boot (Commodore) (1991) [m2].adf` (a modified
+> Disk: session copies of the Workbench 1.3.3 boot disk (local alias `assets/wb133.adf`) (a modified
 > 1.3.3 disk: its startup-sequence also runs CrossDOS, TDPatch13 and mounts DI0:/DI1:; the boot CLI
 > window is titled `AmigaDOS`). 512 KB chip + 512 KB slow RAM at `$C00000`, no fast RAM.
 >
