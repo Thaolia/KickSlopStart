@@ -1,5 +1,17 @@
 # Tests & test bench
 
+## Native rectangle-pen regression
+
+`make test-graphics-rectpens` (also included through the normal and quick Graphics groups) supplies per-plane
+minterms independently of the RastPort pens and drawing mode. An authored selective XOR reproduces DPaint III's
+chooser highlight; other cases check clear, invert, preserve, set, patterned and multicolour operations, partial
+plane masks, untouched edge pixels, allocation guards and unchanged RastPort state. Small and large rectangles
+exercise the CPU and eligible blitter paths in CHIP memory, and repeat in non-DMA RAM. Expected pixel values
+are checked independently rather than accepting agreement between the two engines. Text-clear cases also check
+that SetRast ignores cached minterms and ClearEOL/ClearScreen select the background pen and restore coherent
+pen state. Logs and screenshots are in `build/rectpens-results/`; success requires `RECTPENS OK` and `RECTPENS END`.
+The selective-XOR test fails on the pre-fix ROM.
+
 ## Native menu-font regression
 
 `make test-intuition-menufont` (also included through the normal and quick Intuition groups) registers an authored
@@ -7,6 +19,9 @@ six-pixel font, opens a screen using it while the global font differs, and drive
 the menu bar, item box and submenu. Solid test glyphs give observable text widths without depending on proprietary
 font pixels or exact frame placement. Logs and screenshots are in `build/menufont-results/`; success requires
 `MENUFONT OK` and `MENUFONT END` after all three drawing stages.
+It also checks disabled-gadget stipple pixels and preserved pens/minterms, then disables the menu and verifies
+that the title loses exactly one quarter of its solid authored glyph pixels. This catches stale pen minterms
+in internal ghost drawing after RectFill starts honoring the stored per-plane operations.
 
 ## Native proportional-knob drawing state
 

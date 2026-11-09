@@ -18,6 +18,7 @@
                 xdef    gfx_SetAPen
                 xdef    gfx_SetBPen
                 xdef    gfx_SetDrMd
+                xdef    gfx_minterms
                 xdef    gfx_Move
                 xdef    gfx_Draw
                 xdef    gfx_WritePixel
@@ -404,55 +405,78 @@ dr_span1:
 ; the pattern and COMPLEMENT|JAM2 inverts everything (spec graphics-raster-v34 §3.4). Word for row y =
 ; pattern[(y - OY) & mask], bit 15 = pixel x such that (x - OX) = 0 (mod 16). Clipping, masks and address computed
 ; once per ClipRect and per plane: the per-pixel cost no longer depends on the number of ClipRects. Preserves
-; everything.
+; everything. dr_rect_rp instead uses the RastPort's stored minterms: clients can customize individual planes
+; independently of the pens and DrawMode (DPaint's chooser uses XOR on one plane and preserves another).
 RC_X0           EQU 0                ; requested rectangle (absolute): X0 Y0 X1 Y1
 RC_Y0           EQU 2
 RC_X1           EQU 4
 RC_Y1           EQU 6
-RC_FG           EQU 8                ; byte: pen A
-RC_BG           EQU 9                ; byte: pen B
-RC_PAT          EQU 10               ; pattern (0: solid)
-RC_PMASK        EQU 14               ; pattern row mask
-RC_NB           EQU 16               ; bytes of the row after the first one
-RC_FM           EQU 18               ; byte: mask of the first byte
-RC_LM           EQU 19               ; byte: mask of the last byte
-RC_ROWS         EQU 20               ; rows - 1
-RC_BPR          EQU 22               ; bytes per row of the BitMap
-RC_ROFF         EQU 24               ; offset of the first byte within a plane
-RC_SHIFT        EQU 28               ; rotation of the pattern word (first pixel of the first byte -> bit 15)
-RC_PROW         EQU 30               ; pattern row of the first row
-RC_MODE         EQU 32               ; word: (draw mode & 7) x 4, index of its row in mt_tab
-RC_K1           EQU 34               ; bytes $00/$FF of the current plane, for a pattern bit 1 then 0:
-RC_K0           EQU 35               ; K keeps the destination, S sets it, I inverts it: ((C & K) | S) ^ I
-RC_S1           EQU 36
-RC_S0           EQU 37
-RC_I1           EQU 38
-RC_I0           EQU 39
-RC_PR           EQU 40               ; current pattern row
-RC_RCNT         EQU 42               ; remaining rows (pattern)
-RC_PW           EQU 44               ; rotated pattern word of the current row
-RC_PSTEP        EQU 46               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
-RC_GFX          EQU 48               ; GfxBase, retained across CPU ClipRect rendering
-RC_SIZE         EQU 52
+RC_MINT         EQU 8                ; eight per-plane minterms
+RC_PAT          EQU 16               ; pattern (0: solid)
+RC_PMASK        EQU 20               ; pattern row mask
+RC_NB           EQU 22               ; bytes of the row after the first one
+RC_FM           EQU 24               ; byte: mask of the first byte
+RC_LM           EQU 25               ; byte: mask of the last byte
+RC_ROWS         EQU 26               ; rows - 1
+RC_BPR          EQU 28               ; bytes per row of the BitMap
+RC_ROFF         EQU 30               ; offset of the first byte within a plane
+RC_SHIFT        EQU 34               ; rotation of the pattern word (first pixel of the first byte -> bit 15)
+RC_PROW         EQU 36               ; pattern row of the first row
+RC_K1           EQU 38               ; bytes $00/$FF of the current plane, for a pattern bit 1 then 0:
+RC_K0           EQU 39               ; K keeps the destination, S sets it, I inverts it: ((C & K) | S) ^ I
+RC_S1           EQU 40
+RC_S0           EQU 41
+RC_I1           EQU 42
+RC_I0           EQU 43
+RC_PR           EQU 44               ; current pattern row
+RC_RCNT         EQU 46               ; remaining rows (pattern)
+RC_PW           EQU 48               ; rotated pattern word of the current row
+RC_PSTEP        EQU 50               ; bytes of the pattern for one plane (multicolour pattern), 0 otherwise
+RC_GFX          EQU 52               ; GfxBase, retained across CPU ClipRect rendering
+RC_SIZE         EQU 56
 dr_rect:
         movem.l d0-d7/a0-a4/a6,-(sp)
         lea     -RC_SIZE(sp),sp
         move.l  sp,a4
         move.l  a6,RC_GFX(a4)
         movem.w d0-d3,RC_X0(a4)
-        move.b  d4,RC_FG(a4)
-        move.b  d5,RC_BG(a4)
         move.l  a0,RC_PAT(a4)
+        moveq   #7,d0
+        and.b   d7,d0
+        lsl.w   #2,d0
+        lea     mt_tab(pc),a0
+        adda.w  d0,a0
+        lea     RC_MINT(a4),a1
+        moveq   #7,d3
+.rc_mint:
+        moveq   #1,d0
+        and.b   d4,d0
+        lsr.b   #1,d4
+        lsr.b   #1,d5
+        bcc.s   .rc_bg
+        addq.w  #2,d0
+.rc_bg:
+        move.b  0(a0,d0.w),(a1)+
+        dbra    d3,.rc_mint
+        bra.s   rc_start
+dr_rect_rp:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        lea     -RC_SIZE(sp),sp
+        move.l  sp,a4
+        move.l  a6,RC_GFX(a4)
+        movem.w d0-d3,RC_X0(a4)
+        move.l  a0,RC_PAT(a4)
+        move.l  DC_RP(a5),a1
+        move.l  RP_MINT(a1),RC_MINT(a4)
+        move.l  RP_MINT+4(a1),RC_MINT+4(a4)
+rc_start:
+        tst.l   RC_PAT(a4)
         bne.s   .rc_pat
         moveq   #0,d6
 .rc_pat:
         move.w  d6,RC_PMASK(a4)
         swap    d6
         move.w  d6,RC_PSTEP(a4)
-        moveq   #7,d0
-        and.b   d7,d0
-        lsl.w   #2,d0
-        move.w  d0,RC_MODE(a4)
         move.l  DC_FIRST(a5),a3
 .rc_lp:
         cmpa.w  #0,a3
@@ -556,8 +580,7 @@ rc_one:
         move.w  d5,RC_SHIFT(a4)
         move.l  DC_RP(a5),a1
         move.b  rp_Mask(a1),d6       ; d6 = allowed planes
-        move.b  RC_FG(a4),d5         ; d5/d4: bit 0 = pen A/B of the current plane
-        move.b  RC_BG(a4),d4
+        moveq   #0,d5                ; current plane's minterm index
         moveq   #0,d7
         move.b  bm_Depth(a0),d7
         lea     bm_Planes(a0),a2
@@ -568,20 +591,11 @@ rc_one:
         btst    #0,d6
         beq.s   .o_pn
         adda.l  RC_ROFF(a4),a1
-        moveq   #1,d0                ; minterm of this plane: mt_tab[mode][pen A bit + 2 x pen B bit]
-        and.b   d5,d0
-        btst    #0,d4
-        beq.s   .o_m
-        addq.w  #2,d0
-.o_m:
-        add.w   RC_MODE(a4),d0
-        lea     mt_tab(pc),a0
-        move.b  0(a0,d0.w),d0
+        move.b  RC_MINT(a4,d5.w),d0
         bsr.s   rc_plane
 .o_pn:
         lsr.b   #1,d6
-        lsr.b   #1,d5
-        lsr.b   #1,d4
+        addq.w  #1,d5
         move.w  RC_PSTEP(a4),d0      ; multicolour pattern: block of the next plane
         add.w   d0,RC_PAT+2(a4)
         bcc.s   .o_pe
@@ -1094,10 +1108,8 @@ rc_blit:
         beq     .rb_no
         move.l  DC_RP(a5),a1
         move.b  rp_Mask(a1),d6
-        move.b  RC_FG(a4),d5
+        moveq   #0,d5                ; current plane's minterm index
         moveq   #0,d0
-        move.b  RC_BG(a4),d0
-        move.w  d0,-(sp)
         move.b  bm_Depth(a2),d0
         move.w  d0,-(sp)
         lea     bm_Planes(a2),a2
@@ -1108,15 +1120,7 @@ rc_blit:
         btst    #0,d6
         beq.s   .rb_next
         bsr     db_wait
-        moveq   #1,d0
-        and.b   d5,d0
-        btst    #0,3(sp)           ; this plane's background pen bit
-        beq.s   .rb_mode
-        addq.w  #2,d0
-.rb_mode:
-        add.w   RC_MODE(a4),d0
-        lea     mt_tab(pc),a3
-        move.b  0(a3,d0.w),d0
+        move.b  RC_MINT(a4,d5.w),d0
         lsr.b   #6,d0              ; solid B=1: same clear/invert/preserve/set operation as the CPU path
         beq.s   .rb_clear
         cmp.b   #2,d0
@@ -1142,12 +1146,11 @@ rc_blit:
         move.l  a1,BLT_DPT(a0)
         move.w  d7,BLT_SIZE(a0)
 .rb_next:
-        lsr.w   2(sp)
         lsr.b   #1,d6
-        lsr.b   #1,d5
+        addq.w  #1,d5
         bra.s   .rb_plane
 .rb_done:
-        addq.l  #4,sp
+        addq.l  #2,sp
         bsr     db_leave
         moveq   #1,d0
         bra.s   .rb_ret
@@ -1196,7 +1199,7 @@ LN_FAST         EQU 90               ; byte: solid horizontal or vertical line, 
 LN_SIZE         EQU 92
 RP_LINPATCNT    EQU 30               ; linpatcnt: phase base of the clipped pieces
 RP_PATCNT       EQU 31               ; V34 pattern counter of the line engine (byte after linpatcnt)
-RP_MINT         EQU 40               ; minterms[8] (rastport.h)
+RP_MINT         EQU rp_minterms
 dr_line:
         movem.l d1-d7/a0-a4/a6,-(sp)
         lea     -LN_SIZE(sp),sp
@@ -1833,6 +1836,10 @@ gfx_SetBPen:
 gfx_SetDrMd:
         move.b  d0,rp_DrawMode(a1)
 mt_set:
+        bsr.s   gfx_minterms
+        bra.s   ln_restart
+; Private pen-state synchronization without resetting line flags or pattern phase.
+gfx_minterms:
         movem.l d0-d3/a0/a2,-(sp)
         moveq   #7,d0
         and.b   rp_DrawMode(a1),d0
@@ -1854,7 +1861,7 @@ mt_set:
         move.b  0(a0,d0.w),(a2)+
         dbra    d3,.ms_lp
         movem.l (sp)+,d0-d3/a0/a2
-        bra.s   ln_restart
+        rts
 gfx_Move:
         move.w  d0,rp_cp_x(a1)
         move.w  d1,rp_cp_y(a1)
@@ -1965,9 +1972,9 @@ gfx_WritePixel:
         moveq   #0,d0
         rts
 
-; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) (spec graphics-raster-v34 §3): inclusive bounds, pens, draw
-; mode, Mask and the SetAfPt pattern (AreaPtSz = -n: multicolour, 2^n words per plane, consecutive planes) through
-; dr_rect; pattern phase in RastPort coordinates. With a layer: clipped to it. Without: pixels addressed linearly as
+; RectFill(rp a1, xmin d0, ymin d1, xmax d2, ymax d3) (spec graphics-raster-v34 §3): inclusive bounds, stored
+; per-plane minterms, Mask and the SetAfPt pattern (AreaPtSz = -n: multicolour, 2^n words per plane, consecutive
+; planes) through dr_rect_rp; pattern phase in RastPort coordinates. With a layer: clipped to it. Without: pixels addressed linearly as
 ; on 1.3 (x past the right edge continues on the next row, x < 0 on the previous one, rf_wrap), but never outside
 ; the planes (1.3 writes past them); reversed bounds draw nothing (1.3 draws garbage). No RastPort field changes.
 ; AREAOUTLINE: interior (shrunk by one pixel on each side in COMPLEMENT, so as not to invert the edge twice), then
@@ -2003,9 +2010,6 @@ rf_fill:
         move.w  #1,d6
         lsl.w   d7,d6
         subq.w  #1,d6
-        move.b  rp_FgPen(a1),d4
-        move.b  rp_BgPen(a1),d5
-        move.b  rp_DrawMode(a1),d7
         move.l  rp_AreaPtrn(a1),a0
         tst.l   DC_LAYER(a5)
         bne.s   .rf_draw
@@ -2014,7 +2018,7 @@ rf_fill:
         cmp.w   DC_MAXX(a5),d2
         bgt.s   .rf_wrap
 .rf_draw:
-        bsr     dr_rect
+        bsr     dr_rect_rp
         bra.s   .rf_none
 .rf_wrap:
         bsr     rf_wrap
@@ -2095,7 +2099,7 @@ rf_wrap:
         move.w  d0,DC_OY(a5)         ; pattern row = piece row - DC_OY = y
         move.w  d1,d0
         move.w  d3,d1
-        bsr     dr_rect
+        bsr     dr_rect_rp
         clr.w   DC_OY(a5)
         sub.w   d0,d2
         addq.w  #1,d2
@@ -2206,7 +2210,7 @@ cl_go:
         bne.s   .cl_pen
         move.b  rp_BgPen(a1),d0
 .cl_pen:
-        move.b  d0,rp_FgPen(a1)
+        jsr     LVO_SETAPEN(a6)
         bsr     tx_font
         move.l  rp_BitMap(a1),a0
         move.w  bm_BytesPerRow(a0),d2
@@ -2239,7 +2243,9 @@ cl_go:
         bgt.s   .cl_ret
         bsr     gfx_RectFill
 .cl_ret:
-        move.b  (sp)+,rp_FgPen(a1)
+        moveq   #0,d0
+        move.b  (sp)+,d0
+        jsr     LVO_SETAPEN(a6)
         movem.l (sp)+,d2-d6/a2
         rts
 
@@ -5525,6 +5531,7 @@ bb_solid:
         beq.s   .bs_done
         cmp.b   #$a0,d0             ; preserve destination, but still return the selected plane count
         beq.s   .bs_done
+        bsr     gfx_minterms
         move.w  BB_DX(a5),d0
         move.w  BB_DY(a5),d1
         move.w  d0,d2

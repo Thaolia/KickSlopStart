@@ -137,6 +137,15 @@ clean:
 # Native Amiga tests live beneath their component groups.
 COPPERLINE ?= copperline
 COPPERLINE_CTL ?= copperline-ctl
+.PHONY: test-graphics-rectpens
+test-graphics: test-graphics-rectpens
+test-graphics-quick: test-graphics-rectpens
+test-graphics-rectpens: kick-prod $(BUILD)/rectpens
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/rectpens \
+	  --out $(BUILD)/rectpens-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 90 --tag RECTPENS --pass-marker "RECTPENS OK" --workloads
+$(BUILD)/rectpens: tests/rectpens.s $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -o $@ $<
 .PHONY: test test-quick test-graphics test-graphics-quick test-graphics-blitter test-graphics-lifetime test-exec test-exec-quick test-exec-memory-priority test-intuition test-intuition-quick test-intuition-smallwindow
 test: test-graphics test-exec test-intuition
 test-quick: test-graphics-quick test-exec-quick test-intuition-quick

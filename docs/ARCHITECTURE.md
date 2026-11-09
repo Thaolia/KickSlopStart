@@ -28,8 +28,21 @@ return count, then sends modifying operations through the rectangle engine with 
 RastPort. This avoids source-row snapshots, temporary allocation and per-byte Boolean evaluation for layers'
 clear-on-exposure operation. It also accelerates non-DMA destinations through the rectangle engine's CPU
 fallback. Other minterms retain the existing bitmap engine and overlap handling.
-Solid rectangle DMA derives clear/invert/preserve/set from the same per-plane minterm table as the CPU engine,
-including both pen bits and INVERSVID, so upstream raster-mode corrections apply to both paths.
+Solid rectangle DMA and the CPU engine share per-plane minterms. RectFill uses the RastPort's stored values;
+private solid Draw, SetRast and ScrollRaster fills derive their own operations from their explicit pen/mode inputs.
+
+### Client-supplied rectangle minterms (2026-11-09)
+
+RectFill snapshots the eight RastPort minterms before walking the ClipRects. Both solid DMA and CPU solid,
+monochrome-pattern and multicolour-pattern rendering use that snapshot. This preserves application-supplied
+operations that differ from FgPen/BgPen/DrawMode: DPaint III's format chooser selectively XORs one plane while
+leaving another untouched. Recomputing the operations from its pen fields erased selected labels instead.
+SetRast, ScrollRaster's background strips and solid Draw spans retain their explicit pen-derived operations.
+ClearEOL/ClearScreen synchronize their temporary foreground pen through SetAPen. Internal gadget/menu ghost
+drawing synchronizes its temporary pen fields without changing line state, then restores the client's minterms.
+The source-independent BltBitMap fast path also initializes the minterms of its temporary RastPort.
+`test-graphics-rectpens` checks independent expected pixels in CHIP/non-DMA RAM, patterns, masks, guards and state;
+`test-intuition-menufont` also checks disabled gadget/menu rendering.
 
 `make test-graphics` and `make test-graphics-quick` run `tests/drawblit.s` on the production ROM. Full buffer and
 RastPort comparisons cover the hardware paths and fallbacks; five native benchmarks enforce a 1.25x speed gate.
