@@ -14,6 +14,25 @@ phase. Its old per-byte setup dominated playback CPU time. The native `test-grap
 authored pixels and independent complete-buffer fingerprints, then checks that the panel copy fits comfortably
 within a playback update interval. Both CHIP and non-DMA memory are covered.
 
+## Byte-aligned bitmap restores (2026-11-09)
+
+`BltBitMap` and `BltBitMapRastPort` normalize the unused low minterm nibble before choosing CPU
+copy paths: the masked rectangle has A=1, so `$C0` through `$CF` all copy B to D. DPaint III uses
+`$CC` for its five-plane curve-preview restore; dispatching it through the generic Boolean engine made
+each preview wait several seconds. `ClipBlit` inherits the corrected dispatch through its existing calls.
+
+`BltBitMapRastPort` also copies eligible disjoint byte-aligned rectangles with advancing row pointers,
+computed row modulos and register blocks. Every enabled plane is validated before the first write.
+Overlapping ranges, constant planes, shifted edges and unsupported geometry retain the existing engine.
+Odd strides or different source/destination parity use byte copies; equal odd parity starts with one byte
+before aligned transfers. The optimization uses the CPU in both CHIP and non-DMA memory, retains the
+existing pending-blit barrier and layer locking, and preserves RastPort state. No new DMA ownership is added.
+
+Native `test-graphics-copymin`, in both Graphics test groups, checks authored per-pixel fingerprints through
+all three public APIs, all 256 minterms, masks, clipping, aliasing, constant planes, alignment and row tails.
+Its five-plane restore benchmark includes `WaitBlit`, verifies the final pixels, and gates both absolute
+latency and equivalent-minterm timing. The behavioral reference is [the curve-preview report](analysis/dpaint-curve-preview-v34.md).
+
 ## Polled mouse coordinates without move messages (2026-11-09)
 
 Mouse movements wake the Intuition input task whenever screens exist, even when no application subscribes to

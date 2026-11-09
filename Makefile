@@ -157,6 +157,17 @@ $(BUILD)/copyshift_cases.i: tests/mk_copyshift_cases.py | $(BUILD)
 	$(PYTHON) -I $< > $@
 $(BUILD)/copyshift: tests/copyshift.s $(BUILD)/copyshift_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
 	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(BUILD) -o $@ $<
+.PHONY: test-graphics-copymin
+test-graphics: test-graphics-copymin
+test-graphics-quick: test-graphics-copymin
+test-graphics-copymin: kick-prod $(BUILD)/copymin
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/copymin \
+	  --out $(BUILD)/copymin-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 180 --tag COPYMIN --pass-marker "COPYMIN OK" --workloads
+$(BUILD)/copymin_cases.i: tests/mk_copymin_cases.py | $(BUILD)
+	$(PYTHON) -I $< > $@
+$(BUILD)/copymin: tests/copymin.s $(BUILD)/copymin_cases.i $(EXEC_DIR)/exec.i $(GFX_DIR)/graphics.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -I $(GFX_DIR) -I $(BUILD) -o $@ $<
 .PHONY: test-graphics-linepens
 test-graphics: test-graphics-linepens
 test-graphics-quick: test-graphics-linepens

@@ -33,6 +33,24 @@ in the tested song section. This is display-cadence parity, not copy-routine spe
 ClipBlit still takes about 54.6 ms where the original reference measured approximately 9.7 ms. Tempo changes
 within the module can change the requested update interval.
 
+## Native bitmap-minterm and curve-restore regression
+
+`make test-graphics-copymin` (also included through the normal and quick Graphics groups) tests authored
+bitmap patterns through `BltBitMap`, `BltBitMapRastPort` and `ClipBlit` in CHIP and non-DMA memory. The independent
+per-pixel Boolean oracle in `mk_copymin_cases.py` generates whole-buffer fingerprints, including untouched
+rows, columns, masked planes and allocation guards. The 267 cases cover all 256 minterms, constant source
+planes, safe leftward aliasing, negative destination clipping, zero/partial/full masks, shifted bit phases,
+odd strides, odd plane addresses, different source/destination parity and multi-block row tails. The fixture
+also verifies preserved destination RastPort state, the minterm register and the BltBitMap plane count.
+
+A five-plane, 40-byte-stride, 256-row workload restores `(0,11)` to `(0,11)` over 296 by 245 pixels. Four
+`ClipBlit` restores followed by `WaitBlit` are measured for each of `$C0` and `$CC`, first in CHIP and then
+non-DMA memory, with pixel fingerprints checked after each workload. Both four-copy totals must stay below
+4800 PAL scanlines (average below about 77 ms per restore); `$CC` must take no more than 125% of `$C0`.
+Timing excludes buffer generation and fingerprints. The pre-fix production ROM passes pixels but fails this
+latency gate. Success requires `COPYMIN PIXELS OK`, two `COPYMIN RESTORE` timing records (hex scanlines),
+`COPYMIN OK` and `COPYMIN END`. Logs/screenshots are in `build/copymin-results/`.
+
 ## Native line-pen and cursor-erasure regression
 
 `make test-graphics-linepens` (also included through the normal and quick Graphics groups) supplies custom

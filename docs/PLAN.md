@@ -14,6 +14,12 @@ repeating source alignment and mask dispatch for every output byte. This address
 refresh bottleneck. Native `test-graphics-copyshift`, in normal and quick Graphics groups, checks independent
 pixel fingerprints, edge guards, plane masks, odd addresses/strides, aliasing and an emulated-time speed gate.
 
+Graphics performance update (2026-11-09): bitmap copy dispatch ignores the unused low minterm nibble,
+and disjoint byte-aligned RastPort restores use bulk CPU row copies in CHIP and non-DMA memory. This removes
+DPaint III curve-preview stalls from its `$CC` canvas restore. Native `test-graphics-copymin`, registered
+under normal and quick Graphics groups, checks independently generated pixels for all minterms and a timed
+five-plane restore including `WaitBlit`. Shifted, overlapping and constant-plane cases retain their fallbacks.
+
 Graphics compatibility update (2026-11-09): Draw honors stored per-plane minterms in its line-mode DMA
 and CPU paths, restoring DPaint III's rectangle-tool cursor erasure. Pattern inversion is encoded only in those
 operations, and pen-based shortcuts reject incompatible custom operations. Native
