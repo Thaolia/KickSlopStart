@@ -14,6 +14,17 @@ repeating source alignment and mask dispatch for every output byte. This address
 refresh bottleneck. Native `test-graphics-copyshift`, in normal and quick Graphics groups, checks independent
 pixel fingerprints, edge guards, plane masks, odd addresses/strides, aliasing and an emulated-time speed gate.
 
+Graphics compatibility update (2026-11-09): Draw honors stored per-plane minterms in its line-mode DMA
+and CPU paths, restoring DPaint III's rectangle-tool cursor erasure. Pattern inversion is encoded only in those
+operations, and pen-based shortcuts reject incompatible custom operations. Native
+`test-graphics-linepens`, in normal and quick Graphics groups, covers patterns, octants, masks, translated layers,
+odd planes, state preservation and twice-drawn XOR restoration with independently generated expectations.
+
+Intuition compatibility update (2026-11-09): keep polled screen/window mouse fields current independently of
+REPORTMOUSE and IDCMP MOUSEMOVE subscriptions. This restores DPaint III's continuous held-button drawing.
+Native `test-intuition-mousepoll`, in normal and quick Intuition groups, checks held-button motion, active and
+inactive window coordinates, preserved button notifications and unchanged MOUSEMOVE subscription filtering.
+
 Goal: produce an **open-source, strictly 1.3-compatible Kickstart** — a ROM image of **256 KiB
 loaded at `$FC0000`**, 68000 big-endian, drop-in for the real `kick34005.A500`, booting **first in an
 emulator (FS-UAE/WinUAE), then on a real Amiga 500** (EPROM/adapter).

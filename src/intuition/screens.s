@@ -2987,8 +2987,8 @@ intuition_FreeRemember:
 
 ; it_event(d0.w = ie_Code, d2.w = ie_Qualifier): called by the pointer handler (VBlank interrupt) for each RAWMOUSE, after the
 ; update of PTR_X/PTR_Y. A button is dropped into the ring with the pointer position (ring full: lost);
-; a movement is signaled only if the input task is tracking the pointer (gesture or menu in progress) or if the active
-; window asks for movements (REPORTMOUSE and IDCMP MOUSEMOVE). All the processing
+; movements wake the input task while screens exist so programs polling Screen/Window mouse fields see them,
+; independently of REPORTMOUSE/IDCMP MOUSEMOVE. Gesture tracking also requests movements. All the processing
 ; (windows, layers, menus) is done in the task: nothing here may wait. Preserves everything.
 it_event:
         movem.l d0-d1/a0-a1/a6,-(sp)
@@ -3001,12 +3001,7 @@ it_event:
         bne.s   .ev_btn
         tst.b   IB_TRACK(a1)
         bne.s   .ev_mv
-        move.l  IB_ACTIVEWINDOW(a1),d1   ; active window that asks for movements (REPORTMOUSE + MOUSEMOVE)
-        beq.s   .ev_ret
-        move.l  d1,a0
-        btst    #1,WD_FLAGS+2(a0)    ; REPORTMOUSE
-        beq.s   .ev_ret
-        btst    #4,WD_IDCMPFLAGS+3(a0)   ; MOUSEMOVE
+        move.l  IB_FIRSTSCREEN(a1),d1   ; coordinate maintenance is independent of message subscriptions
         beq.s   .ev_ret
 .ev_mv:
         move.l  IE_TIMESTAMP(a3),IB_MVTIME(a1)

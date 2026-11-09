@@ -14,6 +14,30 @@ phase. Its old per-byte setup dominated playback CPU time. The native `test-grap
 authored pixels and independent complete-buffer fingerprints, then checks that the panel copy fits comfortably
 within a playback update interval. Both CHIP and non-DMA memory are covered.
 
+## Polled mouse coordinates without move messages (2026-11-09)
+
+Mouse movements wake the Intuition input task whenever screens exist, even when no application subscribes to
+MOUSEMOVE or sets REPORTMOUSE. The task maintains Screen/Window mouse coordinates before checking message
+subscriptions. Programs such as DPaint III poll those fields while drawing; filtering the movement before this
+maintenance left their stroke position frozen until another button event. Gesture/menu tracking continues to
+request movement handling, and the existing message gates still control which applications receive MOUSEMOVE.
+
+The native `test-intuition-mousepoll` regression injects a held-button rectangle and checks coordinates in the
+screen, active window and an inactive window under all four REPORTMOUSE/MOUSEMOVE combinations. Button
+notifications remain intact, and move messages appear only when both flags are enabled.
+
+## Client-supplied line minterms (2026-11-09)
+
+Draw's line-mode DMA and CPU engines honor stored per-plane minterms rather than regenerating pen operations.
+This makes DPaint III's XOR rectangle-tool crosshair erase itself when drawn again. The CPU engine decodes
+separate operations for original pattern bits one and zero; INVERSVID is encoded in the minterms and is not
+applied to the pattern a second time. Pen-based axis fills and the private solid-line engine are selected only
+when each enabled plane's solid-pattern operation agrees with its foreground pen. Custom operations use the
+general line engines, without depending on the pending RectFill pen fix. Existing cursor, first-dot and phase
+updates remain intact. Native `test-graphics-linepens` checks independent pixel fingerprints in CHIP/non-DMA
+memory, axis directions, all octants, custom operations, patterns, masks, layer translation, odd planes and
+restoration after drawing XOR lines twice.
+
 ## Blitter drawing acceleration (2026-11-04)
 
 `src/graphics/draw.s` accelerates eligible contained solid Draw segments with Agnus line mode in all
