@@ -117,7 +117,11 @@ pointer_input_handler:
                 move.w  d4,IE_Y(a3)
                 bsr     it_ptrmoved          ; pointer sprite + IB_MOUSEX/Y
                 move.w  IE_CODE(a3),d0       ; buttons and movements -> intuition input task
+                move.l  d2,-(sp)
+                moveq   #0,d2
+                move.w  IE_QUALIFIER(a3),d2  ; (Shift-click: the Workbench extends its selection)
                 jsr     it_event
+                move.l  (sp)+,d2
 .pih_next:
                 move.l  IE_NEXTEVENT(a3),a3
                 bra     .pih_loop

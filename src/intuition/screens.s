@@ -2979,7 +2979,7 @@ intuition_FreeRemember:
         movem.l (sp)+,d2/a2-a3/a6
         rts
 
-; it_event(d0.w = ie_Code): called by the pointer handler (VBlank interrupt) for each RAWMOUSE, after the
+; it_event(d0.w = ie_Code, d2.w = ie_Qualifier): called by the pointer handler (VBlank interrupt) for each RAWMOUSE, after the
 ; update of PTR_X/PTR_Y. A button is dropped into the ring with the pointer position (ring full: lost);
 ; a movement is signaled only if the input task is tracking the pointer (gesture or menu in progress) or if the active
 ; window asks for movements (REPORTMOUSE and IDCMP MOUSEMOVE). All the processing
@@ -3385,13 +3385,13 @@ it_intask:
 .in_ring:
         move.w  IB_EVTAIL(a5),d1
         cmp.w   IB_EVHEAD(a5),d1
-        beq.s   .in_move
+        beq     .in_move
         lea     IB_EVRING(a5),a0
         add.w   d1,a0
         move.w  (a0)+,d0             ; code
         move.w  (a0)+,d4             ; x, y (pointer)
         move.w  (a0)+,d5
-        move.l  (a0),d6              ; keys: dead-key history
+        move.l  (a0),d6              ; keys: dead-key history; buttons: qualifier
         add.w   #IB_EVSZ,d1
         cmp.w   #IB_EVN*IB_EVSZ,d1
         blo.s   .in_wrap
@@ -3408,10 +3408,12 @@ it_intask:
         beq.s   .in_mkey
         cmp.w   #IT_KEYCODE,d0
         bhs.s   .in_key
+        move.w  d6,IB_QUAL(a5)
         bsr     it_setmouse
         bsr     it_dobutton
         bra.s   .in_next
 .in_key:
+        move.w  d4,IB_QUAL(a5)
         tst.l   IB_STRGAD(a5)
         beq.s   .in_raw
         btst    #7,d0                ; text gadget: pressed keys only
@@ -3420,10 +3422,10 @@ it_intask:
         bra.s   .in_next
 .in_raw:
         bsr     it_rawkey
-        bra.s   .in_next
+        bra     .in_next
 .in_tick:
         bsr     it_tick
-        bra.s   .in_next
+        bra     .in_next
 .in_disk:
         bsr     it_diskbc
         bra     .in_next
@@ -4567,7 +4569,8 @@ wn_unborder:
 
 ; wn_sendmsg(a3 = window, d0 = IDCMP class, d1.w = code, d2.w/d3.w = relative mouse): if the window asked for
 ; this class, takes a free IntuiMessage from its pool, timestamps it (VBlank counter: 50 Hz) and sends it on its
-; UserPort; pool exhausted: event lost. im_IAddress = the window; wn_sendgad: im_IAddress = a0 (the gadget
+; UserPort; pool exhausted: event lost. im_Qualifier = that of the input event being handled (IB_QUAL); im_IAddress
+; = the window; wn_sendgad: im_IAddress = a0 (the gadget
 ; of GADGETDOWN / GADGETUP); wn_sendkey (RAWKEY, VANILLAKEY): im_Qualifier = d4.w, d6 = dead-key history: RAWKEY's
 ; IAddress points at a copy of it in the message, VANILLAKEY's is its value (intuition-input-menus §2.2-2.3).
 ; DELTAMOVE window: MouseX/MouseY = the event's ie_X/ie_Y instead: the movement's delta, the key history, else 0.
@@ -4575,7 +4578,13 @@ wn_unborder:
 wn_sendmsg:
         move.l  a3,a0
 wn_sendgad:
-        clr.w   -(sp)                ; qualifier
+        move.l  INT_IBASE,d6         ; qualifier: that of the input event being handled
+        beq.s   .sg_noib
+        move.l  d6,a1
+        move.w  IB_QUAL(a1),-(sp)
+        bra.s   wn_post
+.sg_noib:
+        clr.w   -(sp)
         bra.s   wn_post
 wn_sendgadq:                         ; (d4.w = qualifier: the GADGETUP of a text gadget carries its key's)
         move.w  d4,-(sp)

@@ -18,9 +18,11 @@
 ; SYS:System/Format on the selected disk (§10.9). Dropping an icon (§10.2-§10.4): on a drawer, trashcan or disk icon
 ; -> into that directory; on another drawer window -> there, at the drop point; same volume = rename, other volume =
 ; copy; a disk or trashcan never leaves its window. Screen title (spec §6): free memory on the 5 s tick, frozen message
-; (Version, Last Error) until the next click or menu. Scope: a single selected icon (no Shift extended selection or
-; group drag); no icon left out on the backdrop; no DiskCopy by dropping a disk on a disk; Rename and Discard only
-; apply to the icons of a drawer. Failures reported in the screen title like 1.3 (spec
+; (Version, Last Error) until the next click or menu. Selection (§10.7): a click selects one icon, Shift+click adds
+; icons of the same window (flags VE_SEL / DR_SEL, WBS_SELI = the last one); a press with Shift held drags the whole
+; selection; a double-click opens every selected icon. Scope: the selection stays in one window; Discard of several
+; icons is not done (ghosted); no icon left out on the backdrop; no DiskCopy by dropping a disk on a disk; Rename and
+; Discard only apply to the icons of a drawer. Failures reported in the screen title like 1.3 (spec
 ; §6.9): "Error while <action>: <IoErr>" when opening a drawer, on launch, on Rename (and
 ; "Do not use ':' in names"), on Discard and on Snapshot.
 ; IMPLEMENTATION track ("clean"): spec above + exec/dos/workbench AutoDocs (WBStartup, DiskObject).
@@ -258,7 +260,9 @@ WBS_SCRTICK     EQU WBS_SCRGAD+4     ; WORD: arrow held without Shift -> one ste
 WBS_UPDCNT      EQU WBS_SCRTICK+2    ; WORD: nesting of wb_updopen (a single update for the whole WB)
 WBS_LAYBASE     EQU WBS_UPDCNT+2     ; layers.library (WhichLayer: window under a dropped icon) | 0
 WBS_MENUMASK    EQU WBS_LAYBASE+4    ; WORD: menu items enabled (bit = position in wbm_codes)
-WBS_VOLS        EQU WBS_MENUMASK+2   ; WB_MAXVOLS volume records (desktop icons)
+WBS_NSEL        EQU WBS_MENUMASK+2   ; WORD: icons selected (all in window WBS_SELW; WBS_SELI = the last one)
+WBS_GROUP       EQU WBS_NSEL+2       ; BYTE: the drag moves the whole selection (Shift held at the press)
+WBS_VOLS        EQU WBS_NSEL+4       ; WB_MAXVOLS volume records (desktop icons)
 WBS_DRAWERS     EQU WBS_VOLS+WB_MAXVOLS*VE_SIZE ; WB_MAXDRAWERS drawer records
 WBS_MENUS       EQU WBS_DRAWERS+WB_MAXDRAWERS*DR_SIZE ; copy of the menus (intuition writes into it)
 WBS_SIZE        EQU WBS_MENUS+WBM_SIZE
@@ -272,7 +276,8 @@ VE_SEEN         EQU 9                ; BYTE: seen again at the last DosList scan
 VE_X            EQU 10               ; WORD: position of the icon in the backdrop window
 VE_Y            EQU 12
 VE_DATE         EQU 14               ; creation date of the volume (dl_VolumeDate)
-VE_NAME         EQU 26               ; name of the volume (C string)
+VE_SEL          EQU 26               ; BYTE: icon selected
+VE_NAME         EQU 28               ; name of the volume (C string)
 VE_PATH         EQU VE_NAME+WBS_NAMEMAX ; "<name>:"
 VE_DEFO         EQU VE_PATH+36       ; default DiskObject (78 bytes)
 VE_DEFI         EQU VE_DEFO+78       ; its Image (IG_SIZE)
@@ -299,7 +304,8 @@ DR_TOTAL        EQU DR_USED+4
 DR_GADS         EQU DR_TOTAL+4       ; 6 scroll gadgets (spec workbench-task-v34 §8.1)
 DR_PROPS        EQU DR_GADS+6*GG_SIZEOF  ; PropInfo of the vertical then horizontal bars
 DR_KNOBS        EQU DR_PROPS+2*PI_SIZE   ; Images (empty, AUTOKNOB) of their knobs
-DR_SIZE         EQU DR_KNOBS+2*IG_SIZE
+DR_SEL          EQU DR_KNOBS+2*IG_SIZE ; WB_MAXICONS bytes: icon selected
+DR_SIZE         EQU DR_SEL+WB_MAXICONS
 PI_SIZE         EQU 22
 IG_SIZE         EQU 20
 DD_CURRENTX     EQU 48               ; DrawerData: remembered scroll position
@@ -492,6 +498,13 @@ wb_vremove:
         tst.w   WBS_SELW(a5)
         bne.s   .vr_sel
         move.w  #-1,WBS_SELW(a5)     ; the desktop is redrawn afterwards
+        clr.w   WBS_NSEL(a5)
+        moveq   #WB_MAXVOLS-1,d0
+        lea     WBS_VOLS+VE_SEL(a5),a0
+.vr_clr:
+        clr.b   (a0)
+        lea     VE_SIZE(a0),a0
+        dbra    d0,.vr_clr
 .vr_sel:
         move.w  d1,d2
         bsr     wb_volent
@@ -1859,18 +1872,17 @@ wb_drawicon:
         moveq   #JAM1,d0             ; the other drawings of the Workbench expect JAM1
         jsr     LVO_SETDRMD(a6)
 .di_sel:
-        cmp.w   WBS_SELW(a5),d7
-        bne.s   .di_ret
-        cmp.w   WBS_SELI(a5),d6
-        bne.s   .di_ret
+        move.w  d6,d1
+        bsr     wb_issel
+        beq.s   .di_ret
         move.w  d6,d1
         bsr     wb_invert
 .di_ret:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
-; wb_invert(d7.w = window, d1.w = icon, a5): shows the selection state of the icon, just changed in WBS_SELW/WBS_SELI
-; by the caller. Highlighting from do_Gadget.Flags (RKM, Workbench icons): GADGHIMAGE with a SelectRender -> the
+; wb_invert(d7.w = window, d1.w = icon, a5): shows the selection state of the icon, just changed in its flag
+; (wb_selflag) by the caller. Highlighting from do_Gadget.Flags (RKM, Workbench icons): GADGHIMAGE with a SelectRender -> the
 ; alternate image (open drawer) or the normal one, drawn over the cleared rectangle; otherwise the rectangle is
 ; inverted (COMPLEMENT: a toggle). Preserves d2-d7/a2-a5.
 wb_invert:
@@ -1897,10 +1909,9 @@ wb_invert:
         move.l  WD_RPORT(a3),a1
         jsr     LVO_RECTFILL(a6)
         move.l  DO_GADGET+GG_GADGETRENDER(a2),a1
-        cmp.w   WBS_SELW(a5),d7
-        bne.s   .iv_img
-        cmp.w   WBS_SELI(a5),d4
-        bne.s   .iv_img
+        move.w  d4,d1
+        bsr     wb_issel
+        beq.s   .iv_img
         move.l  DO_GADGET+GG_SELECTRENDER(a2),a1
 .iv_img:
         movem.w (sp)+,d0-d3
@@ -1933,6 +1944,26 @@ wb_click:
         bsr     wb_hit
         bmi     .ck_none
         ext.l   d1
+        clr.b   WBS_GROUP(a5)
+        move.w  WBS_MQUAL(a5),d0     ; Shift: adds to the selection of this window, the drag moves all of it
+        and.w   #3,d0
+        beq.s   .ck_plain
+        move.w  WBS_SELW(a5),d0
+        bmi.s   .ck_add
+        cmp.w   d0,d7
+        bne.s   .ck_plain            ; another window: as a plain click
+.ck_add:
+        st      WBS_GROUP(a5)
+        move.l  d1,-(sp)
+        bsr     wb_issel
+        movem.l (sp)+,d1             ; (MOVEM keeps wb_issel's flags)
+        bne.s   .ck_prim
+        bsr     wb_select
+        bra.s   .ck_drag
+.ck_prim:
+        move.w  d1,WBS_SELI(a5)      ; already selected: stays so
+        bra.s   .ck_drag
+.ck_plain:
         cmp.w   WBS_SELW(a5),d7
         bne.s   .ck_select
         cmp.w   WBS_SELI(a5),d1
@@ -1946,16 +1977,18 @@ wb_click:
         jsr     LVO_DOUBLECLICK(a6)
         move.l  (sp)+,d1
         tst.l   d0
-        beq.s   .ck_drag
-        bsr     wb_openicon
+        bne.s   .ck_dbl
+        cmp.w   #1,WBS_NSEL(a5)
+        bls.s   .ck_drag
+        bra.s   .ck_select           ; one of several, pressed without Shift: the others are deselected
+.ck_dbl:
+        bsr     wb_openall           ; a double-click opens every selected icon
         bra.s   .ck_stamp
 .ck_select:
         move.l  d1,-(sp)
         bsr     wb_deselect
         move.l  (sp),d1
-        move.w  d7,WBS_SELW(a5)
-        move.w  d1,WBS_SELI(a5)
-        bsr     wb_invert
+        bsr     wb_select
         move.l  (sp)+,d1
 .ck_drag:
         bsr     wb_dragstart         ; the icon can be dragged as long as the button stays pressed
@@ -2200,18 +2233,37 @@ wb_dragend:
         tst.l   d0
         bne     .de_out
         tst.w   d4                   ; released outside the original window: nothing
-        bmi.s   .de_out
+        bmi     .de_out
         tst.w   d5
-        bmi.s   .de_out
+        bmi     .de_out
         cmp.w   WD_WIDTH(a3),d4
-        bge.s   .de_out
+        bge     .de_out
         cmp.w   WD_HEIGHT(a3),d5
-        bge.s   .de_out
-        move.w  WBS_DRAGI(a5),d1
+        bge     .de_out
+        move.w  WBS_DRAGI(a5),d6     ; repositioned in its window: the icon, or every selected one (group)
+        tst.b   WBS_GROUP(a5)
+        beq.s   .de_one
+        moveq   #0,d6
+.de_lp:
+        move.w  d6,d1
+        bsr     wb_issel
+        beq.s   .de_nx
+        bsr.s   .de_pos
+.de_nx:
+        addq.w  #1,d6
+        cmp.w   #WB_MAXICONS,d6
+        blo.s   .de_lp
+        bra.s   .de_draw
+.de_one:
+        bsr.s   .de_pos
+        bra.s   .de_draw
+.de_pos:                             ; icon d6 moved by d2/d3 (d2/d3/d6/d7 kept)
+        movem.l d2-d3,-(sp)
+        move.w  d6,d1
         movem.w d2-d3,-(sp)
         bsr     wb_iconrect          ; a2 = DiskObject, d0/d1 = current position in the window
         movem.w (sp)+,d2-d3
-        beq.s   .de_out
+        beq.s   .de_pret
         add.w   d2,d0
         add.w   d3,d1
         tst.w   d7
@@ -2237,13 +2289,16 @@ wb_dragend:
         move.l  d0,DO_CURRENTX(a2)
         move.l  d1,DO_CURRENTY(a2)
         tst.w   d7
-        bne.s   .de_draw
+        bne.s   .de_pret
         movem.w d0-d1,-(sp)          ; desktop: new position of the volume
-        move.w  WBS_DRAGI(a5),d1
+        move.w  d6,d1
         bsr     wb_volent
         movem.w (sp)+,d0-d1
         move.w  d0,VE_X(a0)
         move.w  d1,VE_Y(a0)
+.de_pret:
+        movem.l (sp)+,d2-d3
+        rts
 .de_draw:
         bsr     wb_redraw1
 .de_out:
@@ -2252,93 +2307,80 @@ wb_dragend:
         rts
 
 ; wb_drop(d7.w = window of the drag, d4/d5 = pointer in it at the release, d2/d3 = pointer delta, a3 = that window,
-; a5) -> d0 = 0 when the icon is only repositioned in its own window (done by the caller), 1 when the drop was
-; handled here (spec workbench-task-v34 §10.2-§10.4). The target comes from the pointer hot spot: a drawer or trashcan
-; icon -> into its directory, a disk icon -> into the volume's root (position NO_ICON_POSITION); the background of
-; another drawer window -> into its directory at the drop point; a window that is not ours -> refused. On the same
-; volume the object and its .info are renamed, otherwise copied (same name, overwriting); the .info is then written
-; with the new position. A disk or a trashcan never leaves its window. Not done yet: icons left out on the backdrop,
-; DiskCopy by dropping a disk on a disk. Preserves d2-d7/a2-a4.
-DP_SRC          EQU 0                ; path of the dragged object
+; a5) -> d0 = 0 when the icons are only repositioned in their own window (done by the caller), 1 when the drop was
+; handled here (spec workbench-task-v34 §10.2-§10.4, §10.7). The target comes from the pointer hot spot: a drawer or
+; trashcan icon -> into its directory, a disk icon -> into the volume's root (position NO_ICON_POSITION); the
+; background of another drawer window -> into its directory, each icon at its own drop point; a window that is not
+; ours -> refused. The objects are the dragged icon, or every selected one for a group drag (Shift at the press). On
+; the same volume an object and its .info are renamed, otherwise copied (same name, overwriting); its .info is then
+; written with the new position. A disk or a trashcan never leaves its window. The windows are re-read at the end
+; only, so the icon numbers stay valid during the loop. Not done: icons left out on the backdrop, DiskCopy by
+; dropping a disk on a disk. Preserves d2-d7/a2-a4.
+DP_SRC          EQU 0                ; path of the object
 DP_DST          EQU DP_SRC+WB_PATHMAX    ; its path in the target directory
 DP_DIR          EQU DP_DST+WB_PATHMAX    ; target directory
-DP_OBJ          EQU DP_DIR+WB_PATHMAX    ; DiskObject of the dragged icon
+DP_OBJ          EQU DP_DIR+WB_PATHMAX    ; DiskObject of the object
 DP_NAME         EQU DP_OBJ+4         ; its name
 DP_X            EQU DP_NAME+4        ; position written in the .info
 DP_Y            EQU DP_X+4
-DP_SW           EQU DP_Y+4           ; WORD: window of the drag
-DP_SX           EQU DP_SW+2          ; WORD x 2: pointer at the release, screen coordinates
-DP_SY           EQU DP_SX+2
-DP_IX           EQU DP_SY+2          ; WORD x 2: top-left of the dragged image at the release, screen coordinates
-DP_IY           EQU DP_IX+2
-DP_SIZE         EQU DP_IY+2
+DP_SWIN         EQU DP_Y+4           ; source window
+DP_TWIN         EQU DP_SWIN+4        ; target window
+DP_SW           EQU DP_TWIN+4        ; WORD: number of the source window
+DP_TW           EQU DP_SW+2          ; WORD: number of the target window
+DP_TI           EQU DP_TW+2          ; WORD: target icon, -1 for a window background
+DP_DX           EQU DP_TI+2          ; WORD x 2: pointer delta
+DP_DY           EQU DP_DX+2
+DP_ORX          EQU DP_DY+2          ; WORD x 2: origin of the target's icon space (background drop)
+DP_ORY          EQU DP_ORX+2
+DP_MODE         EQU DP_ORY+2         ; WORD: 0 = NO_ICON_POSITION, 1 = at the drop point
+DP_ICON         EQU DP_MODE+2        ; WORD: object being handled
+DP_MOVED        EQU DP_ICON+2        ; WORD: an object was moved (the source is re-read)
+DP_SIZE         EQU DP_MOVED+2
 wb_drop:
         movem.l d2-d7/a2-a4/a6,-(sp)
         lea     -DP_SIZE(sp),sp
         move.w  d7,DP_SW(sp)
-        move.w  WD_LEFTEDGE(a3),d0
-        add.w   d4,d0
-        move.w  d0,DP_SX(sp)
-        move.w  WD_TOPEDGE(a3),d0
-        add.w   d5,d0
-        move.w  d0,DP_SY(sp)
-        move.w  d2,DP_IX(sp)         ; the delta for now
-        move.w  d3,DP_IY(sp)
-        move.w  WBS_DRAGI(a5),d1
-        bsr     wb_iconrect          ; a2 = DiskObject, d0/d1 = image corner in the window
+        move.l  a3,DP_SWIN(sp)
+        move.w  d2,DP_DX(sp)
+        move.w  d3,DP_DY(sp)
+        move.w  #-1,DP_TI(sp)
+        clr.w   DP_MOVED(sp)
+        add.w   WD_LEFTEDGE(a3),d4   ; d4/d5 = pointer on the screen
+        add.w   WD_TOPEDGE(a3),d5
+        move.w  WBS_DRAGI(a5),d1     ; d6 = type of the pressed icon, DP_NAME its name
+        bsr     dp_objinfo
         beq     .dp_back
-        move.l  a2,DP_OBJ(sp)
-        add.w   WD_LEFTEDGE(a3),d0
-        add.w   d0,DP_IX(sp)
-        add.w   WD_TOPEDGE(a3),d1
-        add.w   d1,DP_IY(sp)
-        move.w  WBS_DRAGI(a5),d1
-        tst.w   d7
-        bne.s   .dp_drn
-        bsr     wb_volent
-        lea     VE_NAME(a0),a0
-        move.l  a0,DP_NAME(sp)
-        moveq   #WBDISK,d6           ; d6 = type of the dragged object
-        bra.s   .dp_where
-.dp_drn:
-        bsr     wb_window
-        mulu    #WBS_NAMEMAX,d1
-        lea     DR_NAMES(a4,d1.l),a0
-        move.l  a0,DP_NAME(sp)
-        moveq   #0,d6
-        move.b  DO_TYPE(a2),d6
-.dp_where:
-        move.w  DP_SX(sp),d0
-        move.w  DP_SY(sp),d1
+        move.l  d0,DP_NAME(sp)
+        move.w  d4,d0
+        move.w  d5,d1
         bsr     wb_whichwin          ; d0.w = our window under the pointer, -1 if none
         bmi     .dp_foreign
         move.w  d0,d7
         bsr     wb_window            ; a3 = target window, a4 = its record
         beq     .dp_foreign
-        move.w  DP_SX(sp),d4
+        move.w  d7,DP_TW(sp)
+        move.l  a3,DP_TWIN(sp)
         sub.w   WD_LEFTEDGE(a3),d4
-        move.w  DP_SY(sp),d5
         sub.w   WD_TOPEDGE(a3),d5
         bsr     wb_hit               ; d1 = icon under the pointer | -1
         bmi     .dp_bg
         cmp.w   DP_SW(sp),d7
         bne.s   .dp_icon
         cmp.w   WBS_DRAGI(a5),d1
-        beq.s   .dp_bg               ; on itself: like the background
+        beq     .dp_bg               ; on itself: like the background
 .dp_icon:
         move.w  d1,d5                ; d5 = target icon (wb_iconrect returns its rectangle in d0-d3)
         bsr     wb_iconrect          ; a2 = its DiskObject
-        bsr     wb_window            ; a4 = target record again (wb_iconrect keeps the caller's)
+        bsr     wb_window            ; a4 = target record again
         move.b  DO_TYPE(a2),d0
         cmp.b   #WBDISK,d0
         beq.s   .dp_ondisk
         cmp.b   #WBDRAWER,d0
         beq.s   .dp_ondrawer
         cmp.b   #WBGARBAGE,d0
-        bne.s   .dp_bg               ; a tool or a project: like the background
+        bne     .dp_bg               ; a tool or a project: like the background
 .dp_ondrawer:
-        bsr     dp_stays
-        beq     .dp_cantout
+        move.w  d5,DP_TI(sp)
         move.w  d5,d0
         mulu    #WBS_NAMEMAX,d0
         lea     DR_NAMES(a4,d0.l),a1
@@ -2350,8 +2392,7 @@ wb_drop:
 .dp_ondisk:
         cmp.b   #WBDISK,d6
         beq     .dp_back             ; disk onto a disk: DiskCopy (not done yet), only repositioned
-        bsr     dp_stays
-        beq     .dp_cantout
+        move.w  d5,DP_TI(sp)
         move.w  d5,d1
         bsr     wb_volent
         lea     VE_PATH(a0),a0
@@ -2359,34 +2400,73 @@ wb_drop:
         moveq   #WB_PATHMAX-2,d0
         bsr     wb_strcpy
 .dp_nopos:
-        move.l  #NO_ICON_POSITION,DP_X(sp)
-        move.l  #NO_ICON_POSITION,DP_Y(sp)
-        bra.s   .dp_move
+        clr.w   DP_MODE(sp)
+        bra.s   .dp_objs
 .dp_bg:
         cmp.w   DP_SW(sp),d7
         beq     .dp_back             ; same window: repositioned by the caller
-        bsr     dp_stays
-        beq     .dp_cantout
         tst.w   d7
-        beq     .dp_done             ; backdrop: left-out icons not done yet, the icon goes back
+        bne.s   .dp_bgdr
+        bsr     dp_stays             ; backdrop: left-out icons not done yet, the icon goes back
+        beq     .dp_cantout
+        bra     .dp_done
+.dp_bgdr:
         lea     DR_PATH(a4),a0
         lea     DP_DIR(sp),a1
         moveq   #WB_PATHMAX-2,d0
         bsr     wb_strcpy
         bsr     wb_origin            ; d0/d1 = corner of the target's icon space in its window
-        move.w  DP_IX(sp),d2
-        sub.w   WD_LEFTEDGE(a3),d2
-        sub.w   d0,d2
-        ext.l   d2
-        move.l  d2,DP_X(sp)
-        move.w  DP_IY(sp),d2
-        sub.w   WD_TOPEDGE(a3),d2
-        sub.w   d1,d2
-        ext.l   d2
-        move.l  d2,DP_Y(sp)
-.dp_move:
+        move.w  d0,DP_ORX(sp)
+        move.w  d1,DP_ORY(sp)
+        move.w  #1,DP_MODE(sp)
+.dp_objs:                            ; each object: the dragged icon, or every selected one of a group
+        clr.w   DP_ICON(sp)
+.ob_lp:
         move.w  DP_SW(sp),d7
-        bsr     wb_window            ; a4 = record of the source drawer
+        move.w  DP_ICON(sp),d1
+        tst.b   WBS_GROUP(a5)
+        bne.s   .ob_grp
+        cmp.w   WBS_DRAGI(a5),d1
+        bne     .ob_nx
+        bra.s   .ob_do
+.ob_grp:
+        bsr     wb_issel
+        beq     .ob_nx
+        move.w  DP_ICON(sp),d1
+.ob_do:
+        cmp.w   DP_TW(sp),d7
+        bne.s   .ob_info
+        cmp.w   DP_TI(sp),d1
+        beq     .ob_nx               ; the target drawer itself, part of the group
+.ob_info:
+        bsr     dp_objinfo           ; a2 = DiskObject, d0 = name, d6 = type
+        beq     .ob_nx
+        move.l  a2,DP_OBJ(sp)
+        move.l  d0,DP_NAME(sp)
+        bsr     dp_stays
+        beq     .ob_out
+        move.l  #NO_ICON_POSITION,d0
+        move.l  d0,d1
+        tst.w   DP_MODE(sp)
+        beq.s   .ob_pos
+        move.w  DP_ICON(sp),d1       ; at the drop point: its image moved by the delta, in the target's icon space
+        bsr     wb_iconrect          ; d0/d1 = image corner in the source window
+        move.l  DP_SWIN(sp),a0
+        add.w   WD_LEFTEDGE(a0),d0
+        add.w   WD_TOPEDGE(a0),d1
+        add.w   DP_DX(sp),d0
+        add.w   DP_DY(sp),d1
+        move.l  DP_TWIN(sp),a0
+        sub.w   WD_LEFTEDGE(a0),d0
+        sub.w   WD_TOPEDGE(a0),d1
+        sub.w   DP_ORX(sp),d0
+        sub.w   DP_ORY(sp),d1
+        ext.l   d0
+        ext.l   d1
+.ob_pos:
+        move.l  d0,DP_X(sp)
+        move.l  d1,DP_Y(sp)
+        bsr     wb_window            ; a4 = source record
         lea     DR_PATH(a4),a0
         move.l  DP_NAME(sp),a4
         lea     DP_SRC(sp),a1
@@ -2398,11 +2478,11 @@ wb_drop:
         lea     DP_SRC(sp),a0
         lea     DP_DST(sp),a1
         bsr     wb_streq
-        beq     .dp_done             ; its own directory: nothing to do
+        beq     .ob_nx               ; its own directory: nothing to do
         lea     DP_SRC(sp),a0
         lea     DP_DIR(sp),a1
         bsr     wb_samevol
-        bne.s   .dp_copy
+        bne.s   .ob_copy
         move.l  WBS_DOSBASE(a5),a6   ; same volume: rename the object, then its .info
         lea     DP_SRC(sp),a0
         move.l  a0,d1
@@ -2410,15 +2490,15 @@ wb_drop:
         move.l  a0,d2
         jsr     DOS_LVO_RENAME(a6)
         tst.l   d0
-        bne.s   .dp_rinfo
+        bne.s   .ob_rinfo
         jsr     DOS_LVO_IOERR(a6)
         cmp.l   #ERROR_OBJECT_NOT_FOUND,d0
-        beq.s   .dp_rinfo            ; only the .info exists: tolerated
+        beq.s   .ob_rinfo            ; only the .info exists: tolerated
         moveq   #5,d0                ; "Error while moving <name>: n" (203 when the name exists there)
         move.l  DP_NAME(sp),a0
         bsr     wb_error
-        bra     .dp_done
-.dp_rinfo:
+        bra     .ob_end
+.ob_rinfo:
         lea     DP_SRC(sp),a0
         bsr     wb_strlen
         move.w  d0,d4
@@ -2434,16 +2514,15 @@ wb_drop:
         jsr     DOS_LVO_RENAME(a6)
         clr.b   DP_SRC(sp,d4.w)
         clr.b   DP_DST(sp,d5.w)
-        moveq   #1,d6                ; d6 = 1: moved (the source drawer is re-read)
-        bra.s   .dp_iconw
-.dp_copy:
+        st      DP_MOVED(sp)
+        bra.s   .ob_iconw
+.ob_copy:
         lea     DP_SRC(sp),a0        ; another volume: copy under the same name
         lea     DP_DST(sp),a1
         bsr     wb_cptree
         tst.l   d0
-        beq     .dp_done
-        moveq   #0,d6
-.dp_iconw:
+        beq     .ob_end              ; message already shown: the remaining objects are left alone
+.ob_iconw:
         move.l  DP_OBJ(sp),a2        ; the .info written last, with the new position
         movem.l DO_CURRENTX(a2),d2-d3
         move.l  DP_X(sp),DO_CURRENTX(a2)
@@ -2453,30 +2532,42 @@ wb_drop:
         move.l  WBS_ICONBASE(a5),a6
         jsr     ICON_LVO_PUTDISKOBJECT(a6)
         movem.l d2-d3,DO_CURRENTX(a2) ; in memory the source icon keeps its place
+        bra.s   .ob_nx
+.ob_out:
+        move.l  DP_NAME(sp),-(sp)    ; a disk or a trashcan of the group stays: "'<name>' cannot be moved out..."
+        lea     wb_noout(pc),a0
+        move.l  sp,a1
+        bsr     wb_message
+        addq.l  #4,sp
+.ob_nx:
+        addq.w  #1,DP_ICON(sp)
+        cmp.w   #WB_MAXICONS,DP_ICON(sp)
+        blo     .ob_lp
+.ob_end:
         bsr     wb_deselect
-        tst.w   d6
-        beq.s   .dp_rl0
+        tst.w   DP_MOVED(sp)
+        beq.s   .ob_rl0
         move.w  DP_SW(sp),d7
         bsr     wb_reload
-.dp_rl0:
+.ob_rl0:
         moveq   #1,d7                ; every open drawer showing the target directory is re-read
-.dp_rl:
+.ob_rl:
         bsr     wb_window
-        beq.s   .dp_rn
-        tst.w   d6
-        beq.s   .dp_rcmp
+        beq.s   .ob_rn
+        tst.w   DP_MOVED(sp)
+        beq.s   .ob_rcmp
         cmp.w   DP_SW(sp),d7
-        beq.s   .dp_rn               ; already re-read
-.dp_rcmp:
+        beq.s   .ob_rn               ; already re-read
+.ob_rcmp:
         lea     DR_PATH(a4),a0
         lea     DP_DIR(sp),a1
         bsr     wb_streq
-        bne.s   .dp_rn
+        bne.s   .ob_rn
         bsr     wb_reload
-.dp_rn:
+.ob_rn:
         addq.w  #1,d7
         cmp.w   #WB_MAXDRAWERS,d7
-        bls.s   .dp_rl
+        bls.s   .ob_rl
         bra.s   .dp_done
 .dp_foreign:
         bsr     dp_stays
@@ -2499,6 +2590,31 @@ wb_drop:
 .dp_ret:
         lea     DP_SIZE(sp),sp
         movem.l (sp)+,d2-d7/a2-a4/a6
+        rts
+; dp_objinfo(d7.w = window, d1.w = icon, a5) -> a2 = its DiskObject, d0 = its name, d6.l = its type (a volume of
+; the desktop: WBDISK); Z = 1 if the icon does not exist. Clobbers d1-d3/a0/a1/a4.
+dp_objinfo:
+        move.w  d1,-(sp)
+        bsr     wb_iconrect
+        movem.w (sp)+,d1             ; (MOVEM keeps the flags)
+        beq.s   .oi_ret
+        tst.w   d7
+        bne.s   .oi_dr
+        bsr     wb_volent
+        lea     VE_NAME(a0),a0
+        moveq   #WBDISK,d6
+        bra.s   .oi_ok
+.oi_dr:
+        bsr     wb_window
+        move.w  d1,d0
+        mulu    #WBS_NAMEMAX,d0
+        lea     DR_NAMES(a4,d0.l),a0
+        moveq   #0,d6
+        move.b  DO_TYPE(a2),d6
+.oi_ok:
+        move.l  a0,d0
+        moveq   #1,d1                ; Z = 0
+.oi_ret:
         rts
 ; dp_stays(d6.b = icon type) -> Z = 1 for a disk or a trashcan, which never leave their window. Clobbers nothing.
 dp_stays:
@@ -2587,17 +2703,87 @@ wb_samevol:
         tst.l   d0
         rts
 
-; wb_deselect(a5): no icon selected any more (made normal again if its window exists). Preserves d2-d7/a2-a5.
+; wb_deselect(a5): no icon selected any more (each one made normal again if its window exists). Preserves
+; d2-d7/a2-a5.
 wb_deselect:
-        move.w  WBS_SELW(a5),d0
+        movem.l d6-d7,-(sp)
+        move.w  WBS_SELW(a5),d7
         bmi.s   .ds_ret
-        move.l  d7,-(sp)
-        move.w  d0,d7
-        move.w  WBS_SELI(a5),d1
         move.w  #-1,WBS_SELW(a5)
+        clr.w   WBS_NSEL(a5)
+        moveq   #0,d6
+.ds_lp:
+        move.w  d6,d1
+        bsr     wb_selflag
+        tst.b   (a0)
+        beq.s   .ds_nx
+        clr.b   (a0)
+        move.w  d6,d1
         bsr     wb_invert
-        move.l  (sp)+,d7
+.ds_nx:
+        addq.w  #1,d6
+        cmp.w   #WB_MAXVOLS,d6
+        blo.s   .ds_lp
+        tst.w   d7
+        beq.s   .ds_ret
+        cmp.w   #WB_MAXICONS,d6
+        blo.s   .ds_lp
 .ds_ret:
+        movem.l (sp)+,d6-d7
+        rts
+
+; wb_select(d7.w = window, d1.w = icon, a5): adds the icon to the selection (it becomes WBS_SELI) and shows it.
+; Preserves d2-d7/a2-a5.
+wb_select:
+        move.w  d7,WBS_SELW(a5)
+        move.w  d1,WBS_SELI(a5)
+        move.w  d1,-(sp)
+        bsr     wb_selflag
+        st      (a0)
+        addq.w  #1,WBS_NSEL(a5)
+        move.w  (sp)+,d1
+        bra     wb_invert
+
+; wb_selflag(d7.w = window, d1.w = icon, a5) -> a0 = its "selected" byte (VE_SEL of a volume, DR_SEL[icon] of a
+; drawer). Clobbers d0. wb_issel: same, Z = 0 when the icon is selected.
+wb_selflag:
+        tst.w   d7
+        bne.s   .sf_dr
+        bsr     wb_volent
+        lea     VE_SEL(a0),a0
+        rts
+.sf_dr:
+        move.w  d7,d0
+        subq.w  #1,d0
+        mulu    #DR_SIZE,d0
+        lea     WBS_DRAWERS(a5),a0
+        add.l   d0,a0
+        add.w   d1,a0
+        lea     DR_SEL(a0),a0
+        rts
+wb_issel:
+        bsr.s   wb_selflag
+        tst.b   (a0)
+        rts
+
+; wb_openall(a5): opens every selected icon (Workbench/Open, double-click). Preserves d2-d7/a2-a5.
+wb_openall:
+        movem.l d6-d7,-(sp)
+        move.w  WBS_SELW(a5),d7
+        bmi.s   .oa_ret
+        moveq   #0,d6
+.oa_lp:
+        move.w  d6,d1
+        bsr     wb_issel
+        beq.s   .oa_nx
+        move.w  d6,d1
+        bsr     wb_openicon
+.oa_nx:
+        addq.w  #1,d6
+        cmp.w   #WB_MAXICONS,d6
+        blo.s   .oa_lp
+.oa_ret:
+        movem.l (sp)+,d6-d7
         rts
 
 ; wb_openicon(d7.w = window, d1.w = icon, a5): desktop -> root drawer; drawer / trashcan -> its window; tool ->
@@ -2779,7 +2965,13 @@ wb_closedrawer:
         cmp.w   WBS_SELW(a5),d7
         bne.s   .cd_sel
         move.w  #-1,WBS_SELW(a5)
+        clr.w   WBS_NSEL(a5)
 .cd_sel:
+        lea     DR_SEL(a4),a0        ; the record may be reused by another drawer
+        moveq   #WB_MAXICONS/4-1,d0
+.cd_clr:
+        clr.l   (a0)+
+        dbra    d0,.cd_clr
         clr.l   DR_WIN(a4)
         move.l  WBS_IBASE(a5),a6
         move.l  a3,a0
@@ -3136,14 +3328,7 @@ wb_menupick:
         bne.s   .mp_special
         tst.w   d1
         bne.s   .mp_close
-        move.w  WBS_SELW(a5),d0      ; Open
-        bmi     .mp_ret
-        move.l  d7,-(sp)
-        move.w  d0,d7
-        move.w  WBS_SELI(a5),d1
-        bsr     wb_openicon
-        move.l  (sp)+,d7
-        rts
+        bra     wb_openall           ; Open
 .mp_close:
         cmp.w   #5,d1
         beq     wb_discard
@@ -3170,7 +3355,7 @@ wb_menupick:
         cmp.w   #2,d0
         bne     .mp_ret
         cmp.w   #3,d1
-        beq     wb_snapshot
+        beq     wb_snapall
         tst.w   d1                   ; Clean Up
         beq     wb_cleanup
         cmp.w   #4,d1
@@ -3222,6 +3407,11 @@ wb_menustate:
 .ms_sel:
         move.w  WBS_SELW(a5),d7
         bmi     .ms_apply
+        cmp.w   #1,WBS_NSEL(a5)
+        bls.s   .ms_one
+        or.w    #WBMM_OPEN|WBMM_SNAPSHOT,d6  ; several icons (Discard of several: not done)
+        bra     .ms_apply
+.ms_one:
         or.w    #WBMM_OPEN|WBMM_RENAME|WBMM_INFO|WBMM_SNAPSHOT,d6
         move.w  WBS_SELI(a5),d1
         tst.w   d7
@@ -3786,6 +3976,29 @@ cu_key:
         move.l  #$7FFFFFFF,d0
         move.l  d0,d1
 .ck_ret:
+        rts
+
+; wb_snapall(a5): Special/Snapshot of every selected icon, one after the other through wb_snapshot (which works on
+; WBS_SELI). Preserves d7/a5.
+wb_snapall:
+        movem.l d6-d7,-(sp)
+        move.w  WBS_SELW(a5),d7
+        bmi.s   .sa_ret
+        move.w  WBS_SELI(a5),-(sp)
+        moveq   #0,d6
+.sa_lp:
+        move.w  d6,d1
+        bsr     wb_issel
+        beq.s   .sa_nx
+        move.w  d6,WBS_SELI(a5)
+        bsr     wb_snapshot
+.sa_nx:
+        addq.w  #1,d6
+        cmp.w   #WB_MAXICONS,d6
+        blo.s   .sa_lp
+        move.w  (sp)+,WBS_SELI(a5)
+.sa_ret:
+        movem.l (sp)+,d6-d7
         rts
 
 ; wb_snapshot(a5): Special/Snapshot. The position of the selected icon is put into its DiskObject then written
@@ -4767,6 +4980,11 @@ wb_reload:
         movem.l d2/a2-a4/a6,-(sp)
         bsr     wb_window
         beq.s   .rl_ret
+        cmp.w   WBS_SELW(a5),d7      ; its icons change: a selection there is dropped
+        bne.s   .rl_nsel
+        bsr     wb_deselect
+        bsr     wb_window
+.rl_nsel:
         move.l  DR_NICON(a4),d2
         clr.l   DR_NICON(a4)
         lea     DR_ICONS(a4),a2

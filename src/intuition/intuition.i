@@ -103,7 +103,8 @@ IB_LOCKS         EQU IB_VPY+2          ; 7 SignalSemaphores of LockIBase / Unloc
 IB_NLOCKS        EQU 7
 IB_SSSIZE        EQU 46                ; sizeof(struct SignalSemaphore)
 IB_FEEDER        EQU IB_LOCKS+IB_NLOCKS*IB_SSSIZE ; keyboard feeder state (dos/feeder.s) run by the input task | 0
-INTUITIONBASE_SIZE EQU IB_FEEDER+4
+IB_QUAL          EQU IB_FEEDER+4       ; WORD: qualifier of the input event being handled (IntuiMessage Qualifier)
+INTUITIONBASE_SIZE EQU IB_QUAL+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

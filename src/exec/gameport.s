@@ -858,7 +858,7 @@ gp_poll:
         move.b  #IECLASS_RAWMOUSE,IE_CLASS(a1)
         clr.b   IE_SUBCLASS(a1)
         move.w  d3,IE_CODE(a1)
-        clr.w   IE_QUALIFIER(a1)
+        move.w  KBD_QUAL,IE_QUALIFIER(a1) ; the keyboard's qualifiers, as input.device merges them (Shift-click)
         move.w  d4,IE_X(a1)
         move.w  d5,IE_Y(a1)
         lea     24(sp),a3           ; build the IND_WRITEEVENT IOStdReq

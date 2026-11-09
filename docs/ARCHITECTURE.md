@@ -1945,6 +1945,10 @@ differs.
   the same volume (`wb_samevol`: fl_Volume of two locks), copies with `wb_cptree` otherwise, then writes the .info with
   the new position. `wb_menustate` keeps the 13 menu items in step with the selection (`WBS_MENUMASK`, OnMenu/OffMenu
   of the shared strip on the backdrop window). `wb_emptytrash`, `wb_initialize` for the Disk menu.
+  **Workbench selection flags, IntuiMessage qualifier (2026-11-09)**: one byte per icon (`VE_SEL`, `DR_SEL`) holds the
+  Workbench selection; `wb_drop` works on the whole selection for a Shift drag. `IB_QUAL` (IntuitionBase, private)
+  holds the qualifier of the input event being handled, filled from the ring (buttons) or the key; every IntuiMessage
+  carries it. gameport's VBlank server puts `KBD_QUAL` in the system mouse's RAWMOUSE events.
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).

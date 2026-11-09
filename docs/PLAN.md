@@ -1360,6 +1360,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   trashcan / drawer as in §10.8; Empty Trash deleted Trashcan/Junk at once; Initialize brought up Format's
   "Ok to Initialize volume Workbench1.3" requester (cancelled). Open: backdrop left-out icons, DiskCopy by disk-on-disk
   drop, free-slot placement (§10.5), busy pointer, Shift extended selection and group drag (§10.7).
+  **Workbench extended selection (2026-11-09)**: spec workbench-task-v34 §10.7. One "selected" byte per icon
+  (`VE_SEL` in the volume records, `DR_SEL[16]` in the drawer records), `WBS_NSEL`, `WBS_SELI` = the last one; `wb_select`,
+  `wb_deselect` (all of them), `wb_issel`; `wb_invert` and `wb_drawicon` read the flag. Shift+click adds an icon of the
+  same window and arms a group drag (`WBS_GROUP`); a plain press on one of several deselects the others unless it is
+  the second click of a double-click, which opens them all (`wb_openall`). `wb_dragend` repositions every selected icon
+  by the delta; `wb_drop` resolves the target once, then moves or copies each object and re-reads the windows at the
+  end. Menus with several icons: Open, Snapshot (`wb_snapall`), Redraw, Version. The qualifier had to reach the
+  Workbench: gameport's system mouse events now carry `KBD_QUAL`, the pointer handler passes ie_Qualifier into the
+  input ring, and `wn_sendmsg` puts it (`IB_QUAL`) in every IntuiMessage instead of 0. Checked under Amiberry
+  (production ROM, screenshots looked at): Shell + Shift-click Prefs -> both highlighted, menus with only Open /
+  Redraw / Snapshot / Version; Shift-drag moved both by (+30,+30); Shift-drag into the Data window copied both (Prefs
+  drawer complete: same names and sizes); click System, Shift-click Expansion, quick press -> both windows open.
+  prepush-check FAIL=0. Open: selection across windows, Discard of several icons, button bits of mouse qualifiers.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

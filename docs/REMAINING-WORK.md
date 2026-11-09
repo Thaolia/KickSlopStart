@@ -40,12 +40,14 @@ pointer during the operation.
 Empty Trash empties the selected trashcan (the ".info" icon-list file stays) and Initialize starts SYS:System/Format
 on the selected disk with the 1.3 WBArgs (§10.9). The menu items are enabled or ghosted from the selection (§10.8).
 
-### A3. Workbench 1.3.3: no extended selection — [src], M–L
+### A3. Workbench 1.3.3: extended selection — done 2026-11-09, except two points
 
-Specified now (workbench-task-v34 §10.7): Shift+click adds an icon, a press with Shift held drags the whole
-selection by the same delta, a double-click opens every selected icon, and the menus follow the "several drawers" row
-of §10.8. Our Workbench keeps a single selection (`WBS_SELW`/`WBS_SELI`), used by every menu action, the
-highlighting and the drag: the change touches most of `workbench.s`.
+Shift+click adds an icon, a press with Shift held moves the whole selection (in its window or into another directory,
+each icon by the same delta), a double-click opens every selected icon, and the menus follow the "several icons"
+row of §10.8. Intuition now gives MOUSEBUTTONS (and every IntuiMessage) the qualifier of the input event, and
+gameport's system mouse events carry the keyboard's qualifiers (C9's "MOUSEBUTTONS carries qualifier 0" is fixed).
+Still missing: a selection across several windows (Shift+click in another window starts a new selection), and
+Discard of several icons (ghosted). The "button held" qualifier bits of mouse events are not set yet.
 
 ### A4. Workbench 1.3.3: menu ghosting — done 2026-11-09 (single selection)
 
@@ -202,7 +204,6 @@ would remove this failure mode.
 - IDCMP ports are not in the public port list.
 - A window holds only one REFRESHWINDOW at a time.
 - Each drawer has its own IDCMP port.
-- MOUSEBUTTONS carries qualifier 0.
 - it_scrxy ignores the screen's TopEdge.
 - Menu texts assume 8-pixel characters.
 - Preferences row/column size adjustment.
@@ -347,7 +348,7 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **A1 leftovers and A3**: backdrop left-out icons, DiskCopy by disk-on-disk drop, then extended selection.
+1. **A1 leftovers**: backdrop left-out icons, DiskCopy by disk-on-disk drop; then A3's Discard of several icons.
 2. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
 3. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
 4. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.
