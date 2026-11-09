@@ -116,7 +116,9 @@ IB_KMBTN         EQU IB_KMY+2          ; BYTE: buttons emulated by Amiga + Alt (
 IB_STRPEND       EQU IB_KMBTN+2        ; text gadget recorded by ActivateGadget, activated at the next input event | 0
 IB_STRPWIN       EQU IB_STRPEND+4      ; its window
 IB_OWTIME        EQU IB_STRPWIN+4      ; 2 LONGs: time of the last event handled when OpenWindow was called
-INTUITIONBASE_SIZE EQU IB_OWTIME+8
+IB_MVQUAL        EQU IB_OWTIME+8       ; WORD: ie_Qualifier of the last movement (IB_MOVED), for its MOUSEMOVE
+IB_RCDONE        EQU IB_MVQUAL+2       ; BYTE: Preferences RowSizeChange applied (once, intuition-prefs §3.3)
+INTUITIONBASE_SIZE EQU IB_RCDONE+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -309,6 +311,8 @@ PF_VIEWXOFF     EQU $76                ; signed bytes
 PF_VIEWYOFF     EQU $77
 PF_VIEWINITX    EQU $78
 PF_VIEWINITY    EQU $7A
+PF_ROWCHG       EQU $D8                ; signed byte: RowSizeChange
+PF_WBHEIGHT     EQU $E4                ; word: wb_Height (0: RowSizeChange applies)
 PF_EXTSIZE      EQU $E7
 PF_SIZE         EQU 232
 PF_VIEWEND      EQU PF_VIEWINITY+2     ; minimum size for ViewInitX/Y to be copied
@@ -367,6 +371,10 @@ MU_HEIGHT       EQU 10
 MU_FLAGS        EQU 12
 MU_MENUNAME     EQU 14
 MU_FIRSTITEM    EQU 18
+MU_JAZZX        EQU 22               ; WORD x4: bounds of the item box, set by SetMenuStrip
+MU_JAZZY        EQU 24
+MU_BEATX        EQU 26
+MU_BEATY        EQU 28
 MENUENABLED     EQU $0001
 MI_NEXTITEM     EQU 0
 MI_LEFTEDGE     EQU 4

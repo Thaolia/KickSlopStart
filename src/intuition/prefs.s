@@ -153,6 +153,16 @@ pf_apply:
         lea     SC_RASTPORT(a2),a1
         jsr     LVO_SETFONT(a6)
 .pa_view:
+        tst.b   IB_RCDONE(a3)        ; display rows: once, at the first application (system-configuration), unless
+        bne.s   .pa_vofs             ; the Workbench height is given (intuition-prefs §3.3 point 3). ColumnSizeChange
+        st      IB_RCDONE(a3)        ; is not applied: MakeVPort opens no high-resolution window wider than 640 yet
+        tst.w   IB_PREFS+PF_WBHEIGHT(a3)
+        bne.s   .pa_vofs
+        move.b  IB_PREFS+PF_ROWCHG(a3),d0
+        ext.w   d0
+        add.w   d0,gb_NormalDisplayRows(a6)
+        move.w  gb_NormalDisplayRows(a6),PTR_YLIM ; the pointer's Y bound follows
+.pa_vofs:
         move.b  IB_PREFS+PF_VIEWXOFF(a3),d0
         ext.w   d0
         add.w   IB_VINITX(a3),d0

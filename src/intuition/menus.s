@@ -50,7 +50,6 @@
                 xref    it_title
                 xref    it_box
                 xref    it_scrxy
-                xref    wn_sendmsg
                 xref    wn_sendgad
                 xref    it_alive
                 xref    wn_sendkey
@@ -71,10 +70,131 @@ HIGHITEM        EQU $2000
 MENUTOGGLED     EQU $4000
 COMMSEQ         EQU $0004
 
-; SetMenuStrip(window a0, menu a1) -> d0 = TRUE. ClearMenuStrip(window a0).
+; SetMenuStrip(window a0, menu a1, a6 = IntuitionBase) -> d0 = TRUE. Each menu gets JazzX/JazzY/BeatX/BeatY
+; (intuition-input-menus §3.2, §3.5): the union of its items' rectangles and of the extents of their ItemFill and
+; SelectFill, widened by the active screen's MenuHBorder/MenuVBorder, left at most 0, right at least Width - 1. A
+; menu without items keeps its values. 1.3 raises a dead-end Alert for a box above the items' origin; not here.
+; ClearMenuStrip(window a0).
 intuition_SetMenuStrip:
+        movem.l d2-d7/a2-a4,-(sp)
         move.l  a1,WD_MENUSTRIP(a0)
+        move.l  IB_ACTIVESCREEN(a6),d0
+        bne.s   .sm_scr
+        move.l  WD_WSCREEN(a0),d0
+.sm_scr:
+        move.l  d0,a4                ; a4 = screen of the borders
+        move.l  a1,a2
+.sm_menu:
+        move.l  a2,d0
+        beq     .sm_ret
+        move.l  MU_FIRSTITEM(a2),d0
+        beq     .sm_next
+        move.l  d0,a3
+        move.w  #$7FFF,d4            ; d4..d7 = left, top, right, bottom
+        move.w  d4,d5
+        move.w  #$8000,d6
+        move.w  d6,d7
+.sm_item:
+        move.w  MI_LEFTEDGE(a3),d0
+        move.w  MI_TOPEDGE(a3),d1
+        move.w  d0,d2
+        add.w   MI_WIDTH(a3),d2
+        subq.w  #1,d2
+        move.w  d1,d3
+        add.w   MI_HEIGHT(a3),d3
+        subq.w  #1,d3
+        bsr.s   .sm_union
+        move.l  MI_ITEMFILL(a3),d0
+        bsr.s   .sm_fill
+        move.l  MI_SELECTFILL(a3),d0
+        bsr.s   .sm_fill
+        move.l  MI_NEXTITEM(a3),d0
+        move.l  d0,a3
+        bne.s   .sm_item
+        moveq   #0,d0
+        move.b  SC_MENUHBORDER(a4),d0
+        sub.w   d0,d4
+        add.w   d0,d6
+        move.b  SC_MENUVBORDER(a4),d0
+        sub.w   d0,d5
+        add.w   d0,d7
+        tst.w   d4
+        ble.s   .sm_left
+        moveq   #0,d4
+.sm_left:
+        move.w  MU_WIDTH(a2),d0
+        subq.w  #1,d0
+        cmp.w   d0,d6
+        bge.s   .sm_right
+        move.w  d0,d6
+.sm_right:
+        movem.w d4-d7,MU_JAZZX(a2)
+.sm_next:
+        move.l  MU_NEXTMENU(a2),a2
+        bra.s   .sm_menu
+.sm_ret:
+        movem.l (sp)+,d2-d7/a2-a4
         moveq   #1,d0
+        rts
+.sm_union:                           ; d0..d3 = rectangle into d4..d7
+        cmp.w   d4,d0
+        bge.s   .su_1
+        move.w  d0,d4
+.su_1:
+        cmp.w   d5,d1
+        bge.s   .su_2
+        move.w  d1,d5
+.su_2:
+        cmp.w   d6,d2
+        ble.s   .su_3
+        move.w  d2,d6
+.su_3:
+        cmp.w   d7,d3
+        ble.s   .su_4
+        move.w  d3,d7
+.su_4:
+        rts
+.sm_fill:                            ; d0 = ItemFill | SelectFill of item a3: its extent, offset by the item
+        tst.l   d0
+        beq.s   .sf_ret
+        move.l  d0,a0
+        btst    #1,MI_FLAGS+1(a3)    ; ITEMTEXT
+        bne.s   .sf_text
+        move.w  MI_LEFTEDGE(a3),d0
+        add.w   IG_LEFTEDGE(a0),d0
+        move.w  MI_TOPEDGE(a3),d1
+        add.w   IG_TOPEDGE(a0),d1
+        move.w  d0,d2
+        add.w   IG_WIDTH(a0),d2
+        move.w  d1,d3
+        add.w   IG_HEIGHT(a0),d3
+        bra.s   .sf_go
+.sf_text:                            ; IntuiText: its length; bottom = font height, TopEdge not counted (§3.5)
+        move.l  a0,-(sp)
+        bsr     intuition_IntuiTextLength
+        move.l  (sp)+,a0
+        move.w  d0,d2
+        move.w  MI_LEFTEDGE(a3),d0
+        add.w   IT_LEFTEDGE(a0),d0
+        add.w   d0,d2
+        move.w  MI_TOPEDGE(a3),d1
+        add.w   IT_TOPEDGE(a0),d1
+        move.l  IT_ITEXTFONT(a0),d3  ; height of its font, the default one without
+        bne.s   .sf_ta
+        move.l  IB_GFXBASE(a6),a1
+        move.l  gb_DefaultFont(a1),a1
+        move.w  tf_YSize(a1),d3
+        bra.s   .sf_h
+.sf_ta:
+        move.l  d3,a1
+        move.w  ta_YSize(a1),d3
+.sf_h:
+        add.w   MI_TOPEDGE(a3),d3
+.sf_go:
+        subq.w  #1,d2
+        subq.w  #1,d3
+        bra     .sm_union
+.sf_ret:
         rts
 intuition_ClearMenuStrip:
         clr.l   WD_MENUSTRIP(a0)
@@ -462,7 +582,7 @@ mn_waiting:
         rts
 
 ; mn_menuup(a3 = menu window, a5): at the close of a menu, MOUSEBUTTONS MENUUP to every window of its screen that has
-; MENUVERIFY (the menu window included; wn_sendmsg checks MOUSEBUTTONS). Preserves d2-d7/a2-a5.
+; MENUVERIFY (the menu window included; wn_sendgad checks MOUSEBUTTONS). Preserves d2-d7/a2-a5.
 mn_menuup:
         movem.l d2-d3/d6/a3-a4,-(sp)
         move.l  WD_WSCREEN(a3),a4
@@ -476,7 +596,8 @@ mn_menuup:
         move.w  WD_MOUSEY(a3),d3
         move.l  #MOUSEBUTTONS,d0
         move.w  #MENUUP,d1
-        jsr     wn_sendmsg
+        suba.l  a0,a0                ; IAddress = the event's raw ie_X/ie_Y, 0 for a click (§2.3)
+        jsr     wn_sendgad
 .mu_nx:
         move.l  WD_NEXTWINDOW(a3),d0
         bra.s   .mu_lp
@@ -1805,6 +1926,7 @@ mn_keypick:
         bne     .kp_ret
         movem.l d2-d4/a3,-(sp)
         move.l  d0,a3
+        move.w  d5,IB_QUAL(a5)       ; the messages of the shortcut carry the key's qualifier (§5 step 7)
         move.l  #MENUVERIFY,d0       ; MENUHOT: MENUCANCEL means no selection (intuition-input-menus §3.11)
         moveq   #MENUHOT,d1
         jsr     it_verify
@@ -1826,8 +1948,8 @@ mn_keypick:
         move.w  #MENUNULL,d1
 .kp_send:
         move.l  #MENUPICK,d0
-        moveq   #0,d2
-        moveq   #0,d3
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
         move.w  d5,d4                ; im_Qualifier
         bsr     wn_sendkey
 .kp_out:

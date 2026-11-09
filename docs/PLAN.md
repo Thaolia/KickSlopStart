@@ -1580,6 +1580,12 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   its ghost pattern outside the 7 cleared cells, as the spec's screenshot. `tests/iwin_probe.sh` unchanged but for
   addresses. prepush-check (dev) FAIL=0 twice (one earlier run under heavy host load missed the Lemmings menu, a
   direct rerun and two later runs showed it).
+  **C9: menu messages, Preferences rows (2026-11-10)**: ARCHITECTURE "Menu and verification messages, Preferences
+  rows". `tests/imenu_probe.s` against the 1.3 log of the same probe: identical line by line except real tick times
+  and the addresses of RAWKEY / VANILLAKEY copies (MENU Jazz/Beat lines included). A Workbench 1.3.3 copy whose
+  system-configuration has RowSizeChange +16: NormalDisplayRows 272, Workbench screen 640 × 272, pointer bound at
+  y 543 (gdb). With ColumnSizeChange +32 the screen became 672 wide but the display stayed 640 wide, so the column
+  change is left out. prepush-check (dev) FAIL=0, strg/iwin probes unchanged, Workbench Shell and `dir`.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

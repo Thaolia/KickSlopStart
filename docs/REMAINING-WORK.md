@@ -218,16 +218,15 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
   HIGHITEM after a check change, high-resolution pointer positions, and the time / qualifier / mouse position of
   the activation messages a program causes (OpenWindow, ActivateWindow, CloseWindow: input-menus §1.10, probed
   with `CT` lines and step A2): done 2026-11-09 (`tests/imenu_probe.s`; read its serial log with the "w" wait marks
-  stripped). A full line-by-line comparison with the 1.3 log of the same probe (2026-11-09) still shows:
-  - MENUVERIFY, and the MOUSEBUTTONS MENUUP sent when a menu closes, carry IAddress 0 on 1.3, the window here;
-  - menu shortcut (step 7): 1.3 stamps MENUVERIFY with the previous event's time and qualifier and gives MENUPICK
-    the pointer position, ours uses the key's time and qualifier and MouseX/Y 0;
-  - keyboard mouse (step D): the MOUSEMOVE qualifiers lag one event behind 1.3's ($0040 / $0041 here, $0041 /
-    $0240 there; the extra MOUSEMOVE seen before the first key is gone since PR #32);
-  - SetMenuStrip leaves Menu JazzX/JazzY/BeatX/BeatY at 0, 1.3 computes them (§3.2).
+  stripped). Since 2026-11-10 the whole log matches the 1.3 log of the same probe line by line (IAddress 0 for the
+  verifications and the menu-close MENUUP, menu shortcut time / qualifier / MENUPICK position, keyboard-mouse
+  MOUSEMOVE qualifiers, SetMenuStrip's JazzX/JazzY/BeatX/BeatY), apart from real tick times and the addresses of
+  the RAWKEY / VANILLAKEY copies.
 - it_scrxy's TopEdge and the menu texts' character width: already handled (screen chosen by TopEdge since the stacked
   screens of 2026-11-03; menus in the screen font with the native `test-intuition-menufont` since PR #29).
-- Preferences row/column size adjustment.
+- Preferences: RowSizeChange applied once (system-configuration) to NormalDisplayRows and the pointer bound, done
+  2026-11-10 (Workbench screen 272 lines with +16). Left: ColumnSizeChange, which needs MakeVPort to open a
+  high-resolution window wider than 640 (the Workbench screen and the pointer already take NormalDisplayColumns).
 
 ### C10. graphics leftovers — S each
 
@@ -374,7 +373,7 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
    paths before cutting).
-2. **C9, the other items** (the imenu probe differences listed in C9, Preferences row/column adjustment).
+2. **C9, the last item** (Preferences ColumnSizeChange, with a wider high-resolution MakeVPort window).
 A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine, string gadgets, IDCMP ports,
 REFRESHWINDOW, activation messages) and the ADF sweep are done;
 D1/D3 are specified.

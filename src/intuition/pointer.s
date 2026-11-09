@@ -27,7 +27,7 @@
 
 ; pointer_input_handler(a0 = InputEvent list, a1 = is_Data): input.device handler (pri 50). For each
 ; RAWMOUSE: PTR += signed relative (ie_X, ie_Y), in high-resolution pixels and interlaced lines like ib_MouseX/Y
-; (intuition-input-menus §1.4), clamp [0, PTR_XMAX-1] x [0, 2 x PTR_YLIM-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
+; (intuition-input-menus §1.4), clamp [0, columns-1] x [0, 2 x PTR_YLIM-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
 ; list (pass-through). Preserves d2-d7/a2-a6 (saves d2/d3/d4/a3).
 pointer_input_handler:
                 movem.l d2/d3/d4/a3,-(sp)
@@ -90,9 +90,17 @@ pointer_input_handler:
                 bpl.s   .pih_xlo
                 moveq   #0,d3                ; low clamp (< 0 -> 0)
 .pih_xlo:
-                cmp.w   #PTR_XMAX,d3
+                move.w  #PTR_XMAX,d0         ; high clamp: NormalDisplayColumns once intuition is up (Preferences
+                move.l  INT_IBASE,d1         ; ColumnSizeChange, intuition-prefs §3.3)
+                beq.s   .pih_xmax
+                move.l  d1,a0
+                move.l  IB_GFXBASE(a0),a0
+                move.w  gb_NormalDisplayColumns(a0),d0
+.pih_xmax:
+                cmp.w   d0,d3
                 blt.s   .pih_xhi
-                move.w  #PTR_XMAX-1,d3       ; high clamp (>= XMAX -> XMAX-1)
+                move.w  d0,d3
+                subq.w  #1,d3
 .pih_xhi:
                 endc                         ; RED PTR_NO_CLAMP: no clipping -> off-screen position possible
                 move.l  INT_IBASE,d0

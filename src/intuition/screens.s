@@ -139,8 +139,16 @@ intuition_OpenScreen:
         move.l  d0,a3                ; a3 = Screen
         move.w  NS_LEFTEDGE(a2),SC_LEFTEDGE(a3)
         move.w  NS_TOPEDGE(a2),SC_TOPEDGE(a3)
-        move.w  NS_WIDTH(a2),d4      ; d4 = width (<= 0: 320 or 640 depending on the mode)
-        bgt.s   .os_wok
+        move.w  NS_WIDTH(a2),d4      ; d4 = width (<= 0: 320 or 640 depending on the mode; the Workbench: the
+        bgt.s   .os_wok              ; NormalDisplayColumns the Preferences may have changed, intuition-prefs §3.3)
+        moveq   #$0F,d0
+        and.w   NS_TYPE(a2),d0
+        cmp.w   #WBENCHSCREEN,d0
+        bne.s   .os_wdef
+        move.l  IB_GFXBASE(a5),a0
+        move.w  gb_NormalDisplayColumns(a0),d4
+        bra.s   .os_wok
+.os_wdef:
         move.w  #320,d4
         tst.w   NS_VIEWMODES(a2)
         bpl.s   .os_wok
@@ -3039,6 +3047,7 @@ it_event:
 .ev_mv:
         move.l  IE_TIMESTAMP(a3),IB_MVTIME(a1)
         move.l  IE_TIMESTAMP+4(a3),IB_MVTIME+4(a1)
+        move.w  d2,IB_MVQUAL(a1)     ; a keyboard-mouse move carries its key's qualifier (input-menus §5 step D)
         st      IB_MOVED(a1)
         bra.s   .ev_sig
 .ev_btn:
@@ -3438,8 +3447,15 @@ it_intask:
         move.w  (a0)+,d4             ; x, y (pointer)
         move.w  (a0)+,d5
         move.l  (a0)+,d6             ; keys: dead-key history; buttons: qualifier
+        cmp.w   #IT_MENUKEYCODE,d0   ; a menu shortcut is handled before the time update (§1.3 point 3): its
+        bne.s   .in_stamp            ; messages carry the previous event's time, the key's is set afterwards
+        move.l  (a0)+,-(sp)
+        move.l  (a0),-(sp)
+        bra.s   .in_adv
+.in_stamp:
         move.l  (a0)+,IB_SECONDS(a5) ; the time of the event being handled (intuition-input-menus §1.3 point 4):
         move.l  (a0),IB_MICROS(a5)   ; the messages it causes carry it
+.in_adv:
         add.w   #IB_EVSZ,d1
         cmp.w   #IB_EVN*IB_EVSZ,d1
         blo.s   .in_wrap
@@ -3463,7 +3479,7 @@ it_intask:
         move.w  d6,IB_QUAL(a5)
         bsr     it_setmouse
         bsr     it_dobutton
-        bra.s   .in_next
+        bra     .in_next
 .in_key:
         move.w  d4,IB_QUAL(a5)
         tst.l   IB_STRGAD(a5)
@@ -3483,6 +3499,8 @@ it_intask:
         bra     .in_next
 .in_mkey:
         jsr     mn_keypick           ; d4 = menu code, d5 = qualifier
+        move.l  (sp)+,IB_MICROS(a5)
+        move.l  (sp)+,IB_SECONDS(a5)
         bra     .in_next
 .in_move:
         tst.b   IB_MOVED(a5)
@@ -3490,6 +3508,7 @@ it_intask:
         clr.b   IB_MOVED(a5)
         move.l  IB_MVTIME(a5),IB_SECONDS(a5)
         move.l  IB_MVTIME+4(a5),IB_MICROS(a5)
+        move.w  IB_MVQUAL(a5),IB_QUAL(a5)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         move.w  d4,d0                ; delta since the previous movement, in IntuitionBase units (hires
@@ -3518,7 +3537,8 @@ it_verify:
         move.w  WD_MOUSEY(a3),d3
         move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)       ; the reply port is set before the application can reply
-        bsr     wn_sendmsg
+        suba.l  a0,a0                ; IAddress = the event's ie_EventAddress (§2.5): 0 for a button or a key
+        bsr     wn_sendgad
         tst.l   d6
         beq.s   .vf_none
         move.l  d6,a2
@@ -4791,7 +4811,7 @@ intuition_DoubleClick:
 
 ; Workbench NewScreen
 sc_wbnewscreen:
-        dc.w    0,0,640,-1,2         ; LeftEdge, TopEdge, Width, Height (-1: 256 PAL, 200 NTSC), Depth
+        dc.w    0,0,-1,-1,2          ; LeftEdge, TopEdge, Width (-1: NormalDisplayColumns), Height (-1: 256 PAL, 200 NTSC), Depth
         dc.b    2,1                  ; DetailPen (titles and gadgets: black), BlockPen (bars: white)
         dc.w    V_HIRES              ; ViewModes
         dc.w    WBENCHSCREEN         ; Type

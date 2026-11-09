@@ -2141,6 +2141,16 @@ differs.
   `IB_INTASK`) both messages carry qualifier 0 and the time of the last event handled when the call was made (taken
   under Forbid after sending, so the receiver never sees another value), OpenWindow's taken at its entry
   (`IB_OWTIME`), as 1.3's deferred queue does (intuition-input-menus §1.10, probed with `CT` lines).
+  **Menu and verification messages, Preferences rows (2026-11-10)**: verifications (`it_verify`) and the MENUUP that
+  closes a menu (`mn_menuup`) send IAddress 0, the event's raw value (input-menus §2.3, §2.5). A menu shortcut ring
+  item keeps the previous event's time during `mn_keypick` (handled before the time update, §1.3 point 3), its
+  messages carry the key's qualifier and MENUPICK the pointer relative to the window. A movement keeps its own
+  qualifier (`IB_MVQUAL`), so a keyboard-mouse MOUSEMOVE carries its key's. SetMenuStrip computes each menu's
+  JazzX/JazzY/BeatX/BeatY (§3.2, §3.5: union of item rectangles and ItemFill/SelectFill extents, the active
+  screen's menu borders); the menu box itself is still laid out by `mn_openbox`. `pf_apply` adds RowSizeChange to
+  NormalDisplayRows once (`IB_RCDONE`, unless wb_Height is set) and moves the pointer's Y bound
+  (intuition-prefs §3.3); the Workbench screen takes NormalDisplayColumns as its width and the pointer its X bound,
+  but ColumnSizeChange is not applied while MakeVPort has no wider high-resolution window.
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes
