@@ -214,12 +214,9 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
 - AddGadget on a REQGADGET goes to the window list.
 - IDCMP ports are not in the public port list.
 - IND_WRITEEVENT pointer events, event timestamps, keyboard mouse, background click, empty bar, MENUPICK IAddress,
-  HIGHITEM after a check change: done 2026-11-09 (`tests/imenu_probe.s` against intuition-input-menus §5). Left:
-  - the pointer moves by lores pixels, so MouseX is always even (1.3: hires pixels; step A gets 5 MOUSEMOVEs
-    instead of 6, keyboard-mouse steps +52 instead of +53);
-  - in step E, the ACTIVEWINDOW posted to window A when it is clicked again after the background click does not
-    show in the probe's log (gdb sees it go through wn_sendmsg); not understood;
-  - the first ACTIVEWINDOW (OpenWindow) carries the time of the last event before it, 1.3 shows 0.
+  HIGHITEM after a check change, high-resolution pointer positions: done 2026-11-09 (`tests/imenu_probe.s` against
+  intuition-input-menus §5; read its serial log with the "w" wait marks stripped, they can start a line). Left: the
+  first ACTIVEWINDOW (OpenWindow) carries the time of the last event before it, 1.3 shows 0.
 - A window holds only one REFRESHWINDOW at a time.
 - Each drawer has its own IDCMP port.
 - it_scrxy ignores the screen's TopEdge.
@@ -371,6 +368,7 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
    paths before cutting).
-2. **C9 left: hires pointer positions**, then the other C9 items.
+2. **C9, the other items** (string gadgets, REQGADGET AddGadget, IDCMP ports, REFRESHWINDOW, drawer ports, it_scrxy
+   TopEdge, menu text width, Preferences row/column adjustment).
 A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine) and the ADF sweep are done;
 D1/D3 are specified.

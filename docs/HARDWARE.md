@@ -21,15 +21,19 @@ Not packaged: built from source, installed in `~/.local/bin`.
 
 ```sh
 mkdir -p ~/.cache/amiga-tc && cd ~/.cache/amiga-tc
-curl -fsSLO http://phoenix.owl.de/tags/vasm2_0f.tar.gz
-curl -fsSLO http://phoenix.owl.de/tags/vlink0_18a.tar.gz
-tar xzf vasm2_0f.tar.gz && tar xzf vlink0_18a.tar.gz
+curl -fsSLO https://slackware.uk/sbosrcarch/by-name/development/vasm/vasm2_0f.tar.gz
+echo "c84b2de1cbb87831795fe64a85c5d9a7002a766e3a7c30b0a2d7d5e99d878f49  vasm2_0f.tar.gz" | sha256sum -c -
+tar xzf vasm2_0f.tar.gz
+git init -q vlink && git -C vlink fetch -q --depth 1 https://github.com/AmigaPorts/vlink.git \
+  ce46ccfda0e30eda5b12b9a5d0259d8eaefdefe9 && git -C vlink checkout -q FETCH_HEAD   # vlink 0.18
 make -C vasm CPU=m68k SYNTAX=mot      # -> vasmm68k_mot
 make -C vlink                          # -> vlink
 cp vasm/vasmm68k_mot vlink/vlink ~/.local/bin/
 ```
-Validated versions: vasm **2.0f**, vlink **V0.18a** (the `sun.hasenbraten.de/*/release/` URLs answered 404 on
-2026-11-05; `phoenix.owl.de/tags/` serves the versioned tarballs). Useful vlink option from M2 on: `-kick1` (Kickstart 1.x
+Validated versions: vasm **2.0f**, vlink **V0.18a**, then **V0.18** (2026-11-09: `sun.hasenbraten.de` and
+`phoenix.owl.de` serve no tarball any more; the vasm 2.0f SlackBuilds archive and vlink 0.18 from the AmigaPorts
+mirror give a production ROM and a soft-kick ADF byte-identical to the phoenix 2.0f / 0.18a builds). The vbcc
+binary bundle's vlink 0.17a rejects vasm 2.0f objects ("Relocation type 34 is not supported"). Useful vlink option from M2 on: `-kick1` (Kickstart 1.x
 loader compat) and `rawbin`/`ados` outputs. C alternative (modules in C later): gcc
 **bebbo** `m68k-amigaos-gcc` (KS1.3 runtime: `-mcrt=nix13`).
 

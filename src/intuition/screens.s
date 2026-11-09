@@ -901,8 +901,7 @@ it_remake:
 .rm_laid:
         tst.l   IB_SDRAG(a5)
         bne.s   .rm_merge
-        lsr.w   #1,d4
-        move.w  d4,IB_YMIN(a5)
+        move.w  d4,IB_YMIN(a5)       ; interlaced lines, like the pointer
 .rm_merge:
         move.l  a6,d4
         move.l  ($4).w,a6            ; Forbid: two tasks remaking at once must not take and free the same old lists
@@ -3236,10 +3235,15 @@ it_diskbc:
 .db_win:
         cmpa.w  #0,a3
         beq.s   .db_nscr
-        move.w  PTR_X,d2
+        movem.l d4-d5,-(sp)
+        move.w  PTR_X,d4
+        move.w  PTR_Y,d5
+        bsr     it_scrpos            ; the pointer in this screen
+        move.w  d4,d2
         sub.w   WD_LEFTEDGE(a3),d2
-        move.w  PTR_Y,d3
+        move.w  d5,d3
         sub.w   WD_TOPEDGE(a3),d3
+        movem.l (sp)+,d4-d5
         move.l  d7,d0
         moveq   #0,d1
         bsr     wn_sendmsg           ; only if the window asked for the class
@@ -3456,11 +3460,9 @@ it_intask:
         move.w  PTR_Y,d5
         move.w  d4,d0                ; delta since the previous movement, in IntuitionBase units (hires
         sub.w   IB_LASTPX(a5),d0     ; pixels, interlaced lines), for DELTAMOVE
-        add.w   d0,d0
         move.w  d0,IB_DMX(a5)
         move.w  d5,d0
         sub.w   IB_LASTPY(a5),d0
-        add.w   d0,d0
         move.w  d0,IB_DMY(a5)
         move.w  d4,IB_LASTPX(a5)
         move.w  d5,IB_LASTPY(a5)
@@ -3842,8 +3844,8 @@ it_scrxy:
         bne.s   .sx_nx
         move.w  d5,d0
         btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
-        beq.s   .sx_cmp
-        add.w   d0,d0                ; LACE screen: TopEdge in interlaced lines
+        bne.s   .sx_cmp
+        asr.w   #1,d0                ; TopEdge of a non-LACE screen: non-interlaced lines
 .sx_cmp:
         cmp.w   SC_TOPEDGE(a4),d0
         bge.s   .sx_got
@@ -3859,17 +3861,18 @@ it_scrxy:
 .sx_ret:
         rts
 
-; it_scrpos(a4 = screen, d4.w/d5.w = pointer) -> d4/d5 in this screen's pixels and lines: x doubled if HIRES, y
-; doubled if LACE (the pointer moves in lores pixels and non-interlaced lines), minus TopEdge. Preserves the rest.
+; it_scrpos(a4 = screen, d4.w/d5.w = pointer, hires pixels and interlaced lines like ib_MouseX/Y) -> d4/d5 in this
+; screen's pixels and lines: x halved unless HIRES, y halved unless LACE, minus TopEdge (intuition-input-menus §1.4).
+; Preserves the rest.
 it_scrpos:
         btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
-        beq.s   .sp_y
-        add.w   d5,d5
+        bne.s   .sp_y
+        asr.w   #1,d5
 .sp_y:
         sub.w   SC_TOPEDGE(a4),d5
         tst.w   SC_VIEWPORT+vp_Modes(a4)
-        bpl.s   .sp_x
-        add.w   d4,d4
+        bmi.s   .sp_x
+        asr.w   #1,d4
 .sp_x:
         rts
 
@@ -4096,8 +4099,8 @@ it_sbar:
         move.w  d0,IB_SDRAGY(a5)
         move.w  SC_TOPEDGE(a4),d1
         btst    #2,SC_VIEWPORT+vp_Modes+1(a4)
-        beq.s   .sg_ymin
-        asr.w   #1,d1                ; LACE: TopEdge in interlaced lines
+        bne.s   .sg_ymin
+        add.w   d1,d1                ; non-LACE: TopEdge in non-interlaced lines
 .sg_ymin:
         sub.w   d1,d0
         move.w  d0,IB_YMIN(a5)
@@ -4153,12 +4156,19 @@ it_domove:
         beq.s   .dm_nsd
         move.w  d5,d1
         sub.w   IB_SDRAGY(a5),d1
-        beq.s   .dm_ret
-        move.w  d5,IB_SDRAGY(a5)
         move.l  d0,a0
         btst    #2,SC_VIEWPORT+vp_Modes+1(a0)
-        beq.s   .dm_ms
-        add.w   d1,d1                ; LACE screen: interlaced lines
+        bne.s   .dm_lace
+        asr.w   #1,d1                ; non-LACE screen: whole non-interlaced lines, the odd line stays pending
+        beq.s   .dm_ret
+        move.w  d1,d0
+        add.w   d0,d0
+        add.w   d0,IB_SDRAGY(a5)
+        bra.s   .dm_ms
+.dm_lace:
+        tst.w   d1
+        beq.s   .dm_ret
+        move.w  d5,IB_SDRAGY(a5)
 .dm_ms:
         move.l  a6,-(sp)
         move.l  a5,a6

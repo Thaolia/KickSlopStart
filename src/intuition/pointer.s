@@ -26,7 +26,8 @@
                 xref    it_diskin
 
 ; pointer_input_handler(a0 = InputEvent list, a1 = is_Data): input.device handler (pri 50). For each
-; RAWMOUSE: PTR += signed relative (ie_X, ie_Y), clamp [0, PTR_XMAX-1] x [0, PTR_YLIM-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
+; RAWMOUSE: PTR += signed relative (ie_X, ie_Y), in high-resolution pixels and interlaced lines like ib_MouseX/Y
+; (intuition-input-menus §1.4), clamp [0, PTR_XMAX-1] x [0, 2 x PTR_YLIM-1], rewrites ie_X/ie_Y as absolute. Returns d0 =
 ; list (pass-through). Preserves d2-d7/a2-a6 (saves d2/d3/d4/a3).
 pointer_input_handler:
                 movem.l d2/d3/d4/a3,-(sp)
@@ -109,9 +110,11 @@ pointer_input_handler:
                 bpl.s   .pih_ylo
                 moveq   #0,d4
 .pih_ylo:
-                cmp.w   PTR_YLIM,d4
+                move.w  PTR_YLIM,d0
+                add.w   d0,d0
+                cmp.w   d0,d4
                 blt.s   .pih_yhi
-                move.w  PTR_YLIM,d4
+                move.w  d0,d4
                 subq.w  #1,d4
 .pih_yhi:
                 endc
@@ -276,14 +279,12 @@ ptr_abs:
                 ble.s   .pa_t
                 move.w  d0,d1
 .pa_t:
-                move.w  PTR_X,d0             ; ib_MouseX = 2 x PTR_X (hires), ib_MouseY = 2 x PTR_Y (interlaced)
-                add.w   d0,d0
+                move.w  PTR_X,d0             ; = ib_MouseX / ib_MouseY
                 neg.w   d0
                 add.w   IE_X(a3),d0
                 muls    d1,d0
                 move.w  d0,IE_X(a3)
                 move.w  PTR_Y,d0
-                add.w   d0,d0
                 neg.w   d0
                 add.w   IE_Y(a3),d0
                 muls    d1,d0
@@ -291,18 +292,16 @@ ptr_abs:
 .pa_ret:
                 rts
 
-; ptr_ticks(a3 = RAWMOUSE event): as in intuition 1.3, one mouse count is worth one hires pixel (half a line
-; in Y) divided by the Preferences PointerTicks; since our positions are in lores pixels and lines, each delta is
-; divided by 2 x PointerTicks, the remainder being carried over to the following events (IB_PREMX/Y). Nothing before
-; intuition init. Clobbers d0/d1/a0/a1.
+; ptr_ticks(a3 = RAWMOUSE event): as in intuition 1.3, one mouse count is worth one hires pixel (one interlaced line
+; in Y) divided by the Preferences PointerTicks, the remainder being carried over to the following events
+; (IB_PREMX/Y). Nothing before intuition init. Clobbers d0/d1/a0/a1.
 ptr_ticks:
                 move.l  INT_IBASE,d0
                 beq.s   .pt_ret
                 move.l  d0,a1
                 move.w  IB_PREFS+PF_PTRTICKS(a1),d1
-                ble.s   .pt_ret
-                add.w   d1,d1                ; d1 = divisor
-                lea     IE_X(a3),a0
+                ble.s   .pt_ret              ; d1 = divisor (intuition-prefs-v34 §6: for 1, 2, 4 the 1.3 shift-and-
+                lea     IE_X(a3),a0          ; carry rule is this division with its remainder kept)
                 lea     IB_PREMX(a1),a1
                 bsr.s   .pt_axis
                 lea     IE_Y(a3),a0
@@ -328,17 +327,15 @@ ptr_ticks:
 .pt_ret:
                 rts
 
-; it_ptrmoved(): places the pointer sprite at (PTR_X, PTR_Y) shifted by the XOffset/YOffset of the displayed
-; pointer (the window's own, otherwise the Preferences'), and updates ib_MouseX/Y (HIRES screen coordinates: x
-; doubled). Nothing before intuition init. Preserves everything.
+; it_ptrmoved(): places the pointer sprite at (PTR_X / 2, PTR_Y / 2) shifted by the XOffset/YOffset of the displayed
+; pointer (the window's own, otherwise the Preferences'), and sets ib_MouseX/Y = PTR_X/Y. Nothing before intuition
+; init. Preserves everything.
 it_ptrmoved:
                 movem.l d0-d1/a0-a1/a6,-(sp)
                 move.l  INT_IBASE,d0
                 beq.s   .pm_ret
                 move.l  d0,a1
-                move.w  PTR_X,d0
-                add.w   d0,d0
-                move.w  d0,IB_MOUSEX(a1)
+                move.w  PTR_X,IB_MOUSEX(a1)
                 move.w  PTR_Y,IB_MOUSEY(a1)
                 move.l  IB_GFXBASE(a1),d0
                 beq.s   .pm_ret
@@ -349,12 +346,18 @@ it_ptrmoved:
                 move.l  d0,a0
                 lea     WD_XOFFSET(a0),a0
 .pm_off:
-                move.b  (a0)+,d0
-                ext.w   d0
-                add.w   PTR_X,d0
-                move.b  (a0),d1
+                move.w  PTR_X,d0             ; the sprite moves in lores pixels and non-interlaced lines
+                asr.w   #1,d0
+                move.b  (a0)+,d1
                 ext.w   d1
-                add.w   PTR_Y,d1
+                add.w   d1,d0
+                move.w  PTR_Y,d1
+                asr.w   #1,d1
+                move.l  d2,-(sp)
+                move.b  (a0),d2
+                ext.w   d2
+                add.w   d2,d1
+                move.l  (sp)+,d2
                 lea     IB_PTRSS(a1),a1
                 sub.l   a0,a0                ; ViewPort of the active View
                 jsr     LVO_MOVESPRITE(a6)

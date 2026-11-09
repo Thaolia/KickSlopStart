@@ -3083,11 +3083,11 @@ d2_done:
         move.w  #IND_ADDHANDLER,IO_COMMAND(a1)
         move.l  a3,INP_IO_DATA(a1)
         bsr     .req_bio
-        lea     72(a3),a0              ; RAWMOUSE event INSIDE the gadget (160,112)
+        lea     72(a3),a0              ; RAWMOUSE event INSIDE the gadget (lores 160,112 = pointer 320,224)
         move.b  #IECLASS_RAWMOUSE,IE_CLASS(a0)
         move.w  #IECODE_LBUTTON,IE_CODE(a0)
-        move.w  #160,IE_X(a0)
-        move.w  #112,IE_Y(a0)
+        move.w  #320,IE_X(a0)
+        move.w  #224,IE_Y(a0)
         clr.w   REQ_HIT
         lea     24(a3),a1             ; WRITEEVENT (click inside)
         move.l  a4,IO_DEVICE(a1)
@@ -3097,9 +3097,9 @@ d2_done:
         bsr     .req_bio
         cmp.w   #1,REQ_HIT            ; click INSIDE -> must have set REQ_HIT
         bne.s   .req_cfree
-        lea     72(a3),a0            ; RAWMOUSE event OUTSIDE (5,5)
-        move.w  #5,IE_X(a0)
-        move.w  #5,IE_Y(a0)
+        lea     72(a3),a0            ; RAWMOUSE event OUTSIDE (lores 5,5)
+        move.w  #10,IE_X(a0)
+        move.w  #10,IE_Y(a0)
         clr.w   REQ_HIT
         lea     24(a3),a1
         move.l  a4,IO_DEVICE(a1)
@@ -3253,12 +3253,15 @@ d2_done:
         tst.l   d0
         beq     .m6r_done
         move.l  d0,a4                   ; a4 = input.device base
-        move.l  #120,d0                 ; block: ptr_int(24) + req_int(24@24) + ioreq(48@48) + event(22@96)
-        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  #128,d0                 ; block: ptr_int(24) + req_int(24@24) + ioreq(48@48) + event(22@96) +
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1 ; saved INT_IBASE (@120) and PTR_X/PTR_Y (@124)
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq     .m6r_done
         move.l  d0,a3                   ; a3 = block
+        move.l  INT_IBASE,120(a3)       ; the proof runs without intuition (no PointerTicks scaling, no event to its
+        clr.l   INT_IBASE               ; task) and leaves the pointer where it was
+        move.l  PTR_X,124(a3)
         move.b  #50,LN_PRI(a3)          ; ptr_int: accumulator pri 50 (BEFORE the requester in the chain)
         move.l  #pointer_input_handler,IS_CODE(a3)
         move.b  #0,LN_PRI+24(a3)        ; req_int: requester pri 0
@@ -3283,15 +3286,15 @@ d2_done:
         move.w  #-50,IE_X(a0)
         move.w  #-50,IE_Y(a0)
         bsr     .m6r_write
-        lea     96(a3),a0               ; movement +160,+112 -> (160,112) on the gadget
+        lea     96(a3),a0               ; movement +320,+224 -> (320,224) = lores (160,112) on the gadget
         move.w  #IECODE_NOBUTTON,IE_CODE(a0)
-        move.w  #160,IE_X(a0)
-        move.w  #112,IE_Y(a0)
+        move.w  #320,IE_X(a0)
+        move.w  #224,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
-        cmp.w   #160,PTR_X              ; correct absolute position (RED PTR_NO_CLAMP -> 120: base -40)
+        cmp.w   #320,PTR_X              ; correct absolute position (RED PTR_NO_CLAMP -> 280: base -40)
         bne.s   .m6r_free
-        cmp.w   #112,PTR_Y              ; (RED -> 72)
+        cmp.w   #224,PTR_Y              ; (RED -> 184)
         bne.s   .m6r_free
         clr.w   REQ_HIT                 ; LBUTTON click (null delta) -> pointer rewritten abs (160,112) -> hit-test INSIDE
         lea     96(a3),a0
@@ -3302,9 +3305,9 @@ d2_done:
         bsr     .m6r_write
         cmp.w   #1,REQ_HIT              ; click INSIDE the gadget -> REQ_HIT set
         bne.s   .m6r_free
-        lea     96(a3),a0               ; move OUTSIDE: (160,112) -155 -> (5,112)
+        lea     96(a3),a0               ; move OUTSIDE: (320,224) -310 -> (10,224) = lores (5,112)
         move.w  #IECODE_NOBUTTON,IE_CODE(a0)
-        move.w  #-155,IE_X(a0)
+        move.w  #-310,IE_X(a0)
         move.w  #0,IE_Y(a0)
         clr.l   IE_NEXTEVENT(a0)
         bsr     .m6r_write
@@ -3320,6 +3323,8 @@ d2_done:
         lea     msg_m6r_live_ok(pc),a0
         bsr     ser_puts                ; "M6R LIVE OK"
 .m6r_free:
+        move.l  120(a3),INT_IBASE
+        move.l  124(a3),PTR_X           ; PTR_X and PTR_Y
         lea     48(a3),a1               ; REMHANDLER ptr_int
         move.l  a4,IO_DEVICE(a1)
         move.w  #IND_REMHANDLER,IO_COMMAND(a1)
@@ -3332,7 +3337,7 @@ d2_done:
         move.l  a0,INP_IO_DATA(a1)
         bsr     .m6r_bio
         move.l  a3,a1
-        move.l  #120,d0
+        move.l  #128,d0
         jsr     LVO_FREEMEM(a6)
         bra.s   .m6r_done
 .m6r_write:                             ; IND_WRITEEVENT(event @ 96(a3)); a4=input base, a3=block. Clobbers a0/a1.
@@ -6060,7 +6065,10 @@ m6r_wire_requester:
         lea     -48(sp),sp               ; IOStdReq scratch
         move.l  sp,a2                    ; a2 = ioreq
         lea     REQ_INT,a0               ; ADDHANDLER requester (PERSISTENT)
-        bsr.s   .mw_add
+        bsr     .mw_add
+        jsr     LVO_FORBID(a6)           ; self-check without intuition (no PointerTicks scaling, no click to its task)
+        move.l  INT_IBASE,-(sp)
+        clr.l   INT_IBASE
         clr.w   PTR_X                    ; self-check: do the persistent handlers respond?
         clr.w   PTR_Y
         clr.w   REQ_HIT
@@ -6071,8 +6079,8 @@ m6r_wire_requester:
         clr.w   IE_QUALIFIER(a3)
         clr.l   IE_NEXTEVENT(a3)
         move.w  #IECODE_NOBUTTON,IE_CODE(a3)  ; relative move -> (160,112) on the gadget
-        move.w  #160,IE_X(a3)
-        move.w  #112,IE_Y(a3)
+        move.w  #320,IE_X(a3)            ; pointer units: lores (160,112) on the boot screen
+        move.w  #224,IE_Y(a3)
         bsr.s   .mw_write
         move.w  #IECODE_LBUTTON,IE_CODE(a3)   ; click (null delta) -> hit-test (160,112) -> REQ_HIT
         clr.w   IE_X(a3)
@@ -6080,6 +6088,8 @@ m6r_wire_requester:
         clr.l   IE_NEXTEVENT(a3)
         bsr.s   .mw_write
         lea     24(sp),sp                ; free the scratch event
+        move.l  (sp)+,INT_IBASE
+        jsr     LVO_PERMIT(a6)
         cmp.w   #1,REQ_HIT               ; did the PERSISTENT handlers process the click?
         bne.s   .mw_done
         lea     msg_m6r_wired(pc),a0

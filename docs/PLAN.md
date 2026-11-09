@@ -1523,6 +1523,11 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   boots and the "exec.library" task is gone afterwards. Workbench double-click (disk, Shell), Workbench menus,
   empty bar on the right button in the Shell. prepush-check (dev) FAIL=0, Lemmings menu looked at;
   writeback_probe (DF1 46.7 s, DH0 14.4 s, OFS CHECK OK) and `tests/concmd_probe.sh` unchanged.
+  **Pointer in high-resolution units (2026-11-09)**: ARCHITECTURE "Pointer in high-resolution units". imenu probe at
+  power-on: the positions of intuition-input-menus §5 (0021 / FE7D / 0047 / FEA3, six MOUSEMOVEs 0064..0069, +50 /
+  +53 / +56); pointer speed unchanged (80 counts -> 80 hires pixels with PointerTicks 1, measured with gdb);
+  "M6R LIVE OK" and "M6R WIRED OK" emitted again; Workbench disk and Shell opened by double-click, `dir` typed;
+  prepush-check (dev) FAIL=0.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

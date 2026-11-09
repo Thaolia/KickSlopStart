@@ -95,8 +95,10 @@ req_input_handler:
                 cmp.w   #IECODE_LBUTTON,IE_CODE(a3)   ; left button DOWN
                 bne.s   .rih_next
                 ifeq    REQ_NO_HITTEST
-                move.w  IE_X(a3),d0
+                move.w  IE_X(a3),d0          ; absolute pointer in hires pixels and interlaced lines: the requester
+                asr.w   #1,d0                ; is drawn on the lores boot screen
                 move.w  IE_Y(a3),d1
+                asr.w   #1,d1
                 bsr     req_hittest          ; -> d0 = 1/0 (preserves d2/d3)
                 tst.l   d0
                 beq.s   .rih_next

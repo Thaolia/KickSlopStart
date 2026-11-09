@@ -2035,6 +2035,15 @@ differs.
   window; the right button opens the (empty) bar for a window without menus; MENUPICK chosen with the mouse
   carries IAddress 0; an item whose check mark changes loses HIGHITEM. `tests/imenu_probe.s` (§5) now gives the
   1.3 NextSelect chains (2056, 0052/0056, 415B, 405B, 4153).
+  **Pointer in high-resolution units (2026-11-09)**: PTR_X/PTR_Y hold ib_MouseX/Y themselves, hires pixels and
+  interlaced lines (intuition-input-menus §1.4; bounds `PTR_XMAX` 640 and twice `PTR_YLIM`); `ptr_ticks` divides the
+  counts by PointerTicks (the 1.3 shift-and-carry rule for 1, 2, 4), the sprite goes to PTR / 2, `it_scrpos` halves
+  x unless the screen is HIRES and y unless it is LACE, IB_YMIN and the screen drag count interlaced lines (a
+  non-LACE screen moves by whole lines, the odd one kept). The insert-disk requester halves the absolute position.
+  The boot pointer proofs run without intuition (INT_IBASE set aside, so no PointerTicks scaling) and give the
+  pointer back: "M6R LIVE OK" passes again and the pointer starts at (0, 0) instead of the proof's leftover. The
+  probe now gets the 1.3 positions (step 2: 0021 / FE7D / 0047 / FEA3; step A: six MOUSEMOVEs 0064..0069; step D:
+  +50, +53, +56, then −1 in Y).
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

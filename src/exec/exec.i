@@ -452,8 +452,9 @@ REQ_HIT      EQU $00000682 ; word: requester — gadget hit by a click (set by r
 ; pointer_input_handler (intuition, pri 50) accumulates these RELATIVE deltas into an ABSOLUTE position clamped to
 ; the screen and rewrites ie_X/ie_Y -> the existing req_input_handler (pri 0) hit-tests in absolute, unchanged = the
 ; live wiring.
-PTR_XMAX     EQU 320            ; pointer X bound (lores pixels)
-PTR_YLIM     EQU $0000069E ; word: pointer Y bound = GfxBase NormalDisplayRows (256 PAL, 200 NTSC), set by graphics init
+PTR_XMAX     EQU 640            ; pointer X bound (high-resolution pixels, like ib_MouseX)
+PTR_YLIM     EQU $0000069E ; word: GfxBase NormalDisplayRows (256 PAL, 200 NTSC), set by graphics init: the pointer stays
+                               ; below twice that many interlaced lines
 GP_POLLS_THRESH EQU 25          ; VBlank polls (~0.5 s) before "GP VBLANK LIVE OK" (server lives in the system)
 PTR_X        EQU $00000684 ; word: absolute pointer X (accumulated by pointer_input_handler, clamped)
 PTR_Y        EQU $00000686 ; word: absolute pointer Y
