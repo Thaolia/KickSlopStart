@@ -14,8 +14,8 @@ comfortably below an 80 ms display-update interval. The pre-fix ROM passes the p
 performance gate. Logs and screenshots are in `build/copyshift-results/`; success requires `COPYSHIFT OK` and
 `COPYSHIFT END`. No DSS executable, music or glyph data is part of the fixture.
 
-Measured on the 512 KiB CHIP / 512 KiB slow-RAM fixture, eight large copies take 35,498 PAL scanlines before
-the fix and 6,124 afterward (about 5.8 times faster). In DSS playback, 60 panel-call entries have a median
+Measured on the 512 KiB CHIP / 512 KiB slow-RAM fixture, eight large copies take 35,630 PAL scanlines before
+the fix and 6,105 afterward (about 5.8 times faster). In the initial playback validation, 60 panel-call entries have a median
 interval of 322.49 ms before the fix and 80.00 ms afterward, matching the approximately 80 ms reference cadence
 in the tested song section. This is display-cadence parity, not copy-routine speed parity: an inclusive fixed
 ClipBlit still takes about 54.6 ms where the original reference measured approximately 9.7 ms. Tempo changes
