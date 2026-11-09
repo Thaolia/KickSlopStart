@@ -1,6 +1,6 @@
 # DiskMaster graphics fixes: clean-room audit (2026-11-09)
 
-Verdict: **PASS** for the measured implementation snapshot against upstream `c5074c8`.
+Verdict: **PASS** for the measured implementation snapshot against upstream `572a9b7`.
 The binary comparison ran in a separate analysis context. This report contains only aggregate statistics,
 our symbols and artifact hashes; no reference ROM code, bytes, addresses or artwork.
 
@@ -29,11 +29,14 @@ lists as their builds and checked against the corresponding raw linked binaries.
 
 | Artifact | SHA-256 |
 |---|---|
-| Base production ROM | `b08756489a9573b6e769ee23bcea148ac34eeef71d0c634a0573d959426607fb` |
-| Candidate production ROM | `6070c8a3e1f56ef1953f629ffae9395fc7d718b3d344d5c1a12235fee173ffec` |
-| Candidate raw link | `dbc4a5daf349d060b252630825f3dc8e0bb3a7f3e16464c23ea3f03c081db612` |
+| Base production ROM | `67ec6848f3e37ba13b308baa6985a67f78a11a6ce58cb253140d9d0030fb4e08` |
+| Candidate production ROM | `7392eae553f40d49fb3290a65e8f5d981432a87c25c38e975b3db95a506c91ba` |
+| Candidate raw link | `69b443f53b44c6090af5e6868aea9d7543d83f30f5d16011e3cd6a578eb1273e` |
 
-The audited candidate is the uncommitted implementation snapshot with build ID `v0.2.32-dirty`.
+The audited candidate is committed snapshot `40204d9`, rebased onto upstream `572a9b7`, with build ID
+`v0.2.32-3-g40204d9`. The upstream menu-box refactor is retained; its shared `mn_paintbox` now applies the
+screen-font initialization for both item and submenu boxes. Fresh base/candidate measurements were run after
+this integration rather than reusing the previous audit results.
 Subsequent documentation or commit-ID changes may alter the ROM identification and checksum; the source hashes
 and raw implementation link must remain identical to this audited snapshot.
 
@@ -59,9 +62,10 @@ After the established generated/public-data exclusions:
 | Relocated-fragment self-check | 12/12 | 12/12 |
 
 No code match reaches the established notable thresholds of 40 words or 19 instructions.
-No new code match exceeds the 13-instruction baseline. The only added row in the eight-token listings is an
-8-word RomTag-classified match in an unchanged component; no added code/table row occurs in a changed object.
-The lower-threshold helper and relocated-body rows do not indicate increased code matches.
+No new code match exceeds the 13-instruction baseline, and no added code row appears in the eight-token
+listings. Their sole delta is a classification change for an unchanged 20-word image descriptor at our
+`mn_chk_hi+$0`; source and normalized equality were verified. The lower-threshold helper and relocated-body
+rows do not indicate increased code matches.
 
 **Limit:** the original unrelated `tiers` corpus was unavailable, so its empirical maxima were not recomputed.
 The established fixed thresholds were applied, as in the previous unavailable-corpus audit. The same available
@@ -82,12 +86,12 @@ python3 -I tests/audit_aros_similarity.py <base-or-head-src> <aros-corpus> \
 
 | Exact match coverage against comparable AROS assembler | Base | Candidate |
 |---|---:|---:|
-| k=12, matched tokens | 8,196 | 8,196 |
+| k=12, matched tokens | 8,209 | 8,209 |
 | k=20, matched tokens | 132 | 132 |
 | k=30, matched tokens | 69 | 69 |
 
 Exact matched-token counts are unchanged at all tested lengths, including the unrelated control groups.
-At k=20/30 the comparable coverage remains 0.044% / 0.023%. Reported normalized and structural passages were
+At k=20/30 the comparable coverage remains 0.043% / 0.023%. Reported normalized and structural passages were
 reviewed against the changed-line ranges; none intersects a changed line. Existing BCPL calling-convention,
 copy-loop and register-save idioms remain in the baseline. No new notable source similarity was found.
 
