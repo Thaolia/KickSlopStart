@@ -1126,8 +1126,8 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   nothing. `tests/iwin_probe.sh` matches §8 except deliberate differences: our Move/Size/ToFront/ToBack and the
   close-time activation run at once (1.3 defers them to the next input event), windows are kept on the screen
   (1.3 does not bound them and draws past the BitMap), CloseWindow ends the window's requesters (1.3 leaves them
-  orphaned) and gives an empty screen its DefaultTitle. Open: IDCMP ports are not in the public port list; a
-  window holds one REFRESHWINDOW at a time (1.3 sends one per repair while LAYERREFRESH is pending, deduced).
+  orphaned) and gives an empty screen its DefaultTitle. The two open points (IDCMP ports outside the public port
+  list, one REFRESHWINDOW at a time) are closed since 2026-11-09 ("C9: string gadgets, IDCMP ports" below).
   **Short helper windows (2026-11-09)**: OpenWindow preserves positive heights below 16 pixels. DiskMaster's
   27×10 close-only helper must not become 27×16 and cover six extra rows of its main window. The native
   `test-intuition-smallwindow` checks returned dimensions, layer bounds and untouched pixels below short windows;
@@ -1556,6 +1556,24 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   +53 / +56); pointer speed unchanged (80 counts -> 80 hires pixels with PointerTicks 1, measured with gdb);
   "M6R LIVE OK" and "M6R WIRED OK" emitted again; Workbench disk and Shell opened by double-click, `dir` typed;
   prepush-check (dev) FAIL=0.
+  **C9: string gadgets, IDCMP ports, REFRESHWINDOW, shared Workbench port (2026-11-09)**: ARCHITECTURE "String
+  gadget display" and "IDCMP ports and REFRESHWINDOW". `tests/strg_probe.sh`: tests 1-9 unchanged, the centred and
+  right-aligned gadgets give the DispPos and Buffer bytes of intuition-strgad §4.3-4.4, the GADGHBOX cursor looked at
+  (box.png). `tests/iwin_probe.sh`: step 4 `inl=1` while the port is open and 0 after CloseWindow; the windows that
+  never refresh now receive one REFRESHWINDOW per repair (steps 8 and 9c, as V19). Workbench 1.3.3 (production ROM),
+  port list read with gdb: one "IDCMP" port shared by the desktop, the disk drawer and Utilities; both drawers closed
+  by their close gadget and the disk reopened, the port stays and no other appears; the drawer repaired after
+  `endcli` of a Shell. prepush-check (dev) FAIL=0, Lemmings menu looked at.
+  **C9: deferred ActivateGadget, activation messages (2026-11-09)**: ARCHITECTURE "Deferred ActivateGadget and
+  activation messages". `tests/imenu_probe.s` now prints `CT` (CurrentTime) before the windows open and runs a step
+  A2 (ActivateWindow of B then A); on the real 1.3 (analysis agent, two identical runs) the deferred messages carry
+  the time of the last event handled before the call, qualifier 0 and the pointer relative to each window, and the
+  first ACTIVEWINDOW shows 0 only because no event was handled yet; ours now gives the same values (first message
+  0/0 at (0,−12), A2 stamps equal to the `CT` lines). `tests/strg_probe.sh`: unchanged except the SELECTED bit read
+  right after ActivateGadget, now 0 (1.3: A2-A7 read 0, the spec says not to rely on it); the disabled gadget D keeps
+  its ghost pattern outside the 7 cleared cells, as the spec's screenshot. `tests/iwin_probe.sh` unchanged but for
+  addresses. prepush-check (dev) FAIL=0 twice (one earlier run under heavy host load missed the Lemmings menu, a
+  direct rerun and two later runs showed it).
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

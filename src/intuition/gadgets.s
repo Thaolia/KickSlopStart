@@ -35,6 +35,7 @@
                 xdef    intuition_ActivateGadget
                 xdef    str_key
                 xdef    str_clickout
+                xdef    str_pending
                 xref    kbd_cook
                 xref    intuition_DrawImage
                 xref    intuition_PrintIText
@@ -735,9 +736,16 @@ gad_forget:
         cmp.l   IB_STRWIN(a6),a0
         beq.s   .gf_str
         cmp.l   IB_STRGAD(a6),a0
-        bne.s   .gf_act
+        bne.s   .gf_pchk
 .gf_str:
         clr.l   IB_STRGAD(a6)
+.gf_pchk:
+        cmp.l   IB_STRPWIN(a6),a0    ; recorded by ActivateGadget, not yet active
+        beq.s   .gf_pend
+        cmp.l   IB_STRPEND(a6),a0
+        bne.s   .gf_act
+.gf_pend:
+        clr.l   IB_STRPEND(a6)
 .gf_act:
         cmp.l   IB_GADWIN(a6),a0
         beq.s   .gf_clr
@@ -1548,6 +1556,7 @@ str_text_nc:
         move.l  GG_SPECIALINFO(a2),d0
         beq     .st_ret
         move.l  d0,a4                ; a4 = StringInfo
+        move.l  a3,d7                ; d7 = window (gad_comp draws the cursor in it)
         lea     -8(sp),sp
         move.l  a2,a0
         move.l  sp,a1
@@ -1588,46 +1597,28 @@ str_text_nc:
         ble.s   .st_dok
         clr.w   SI_DISPPOS(a4)
 .st_dok:
+        move.w  SI_NUMCHARS(a4),d1   ; STRINGRIGHT / STRINGCENTER while the text is shorter than the box (§4.4):
+        move.w  SI_DISPCOUNT(a4),d0  ; DispPos := -pad, the pad cells on the left
+        sub.w   d1,d0
+        ble.s   .st_nopad
+        btst    #STRINGRIGHTB-8,GG_ACTIVATION(a2)
+        beq.s   .st_ctr
+        subq.w  #1,d0
+        bra.s   .st_pad
+.st_ctr:
+        btst    #STRINGCENTERB-8,GG_ACTIVATION(a2)
+        beq.s   .st_nopad
+        lsr.w   #1,d0
+.st_pad:
+        neg.w   d0
+        move.w  d0,SI_DISPPOS(a4)
+.st_nopad:
         move.l  IB_GFXBASE(a5),a6
         bsr     gad_rpof
         move.l  a0,a3                ; a3 = RastPort of the gadget from now on
         move.b  rp_FgPen(a3),-(sp)
         move.b  rp_BgPen(a3),-(sp)
         move.b  rp_DrawMode(a3),-(sp)
-        move.l  a3,a1
-        moveq   #0,d0
-        jsr     LVO_SETAPEN(a6)
-        move.l  a3,a1
-        moveq   #JAM1,d0
-        jsr     LVO_SETDRMD(a6)
-        move.w  SI_MAXCHARS(a4),d1
-        subq.w  #1,d1
-        sub.w   SI_DISPPOS(a4),d1   ; padding cannot reach the buffer's final reserved byte
-        ble.s   .st_cleared
-        move.w  SI_DISPCOUNT(a4),d0
-        cmp.w   d1,d0
-        bls.s   .st_cells
-        move.w  d1,d0
-.st_cells:
-        tst.w   d0
-        beq.s   .st_cleared
-        mulu    d6,d0
-        move.w  6(sp),d2           ; partial columns and rows below the font may belong to its border
-        add.w   d0,d2
-        subq.w  #1,d2
-        move.w  rp_TxHeight(a3),d3
-        ble.s   .st_cleared
-        add.w   8(sp),d3
-        subq.w  #1,d3
-        move.w  6(sp),d0
-        move.w  8(sp),d1
-        ext.l   d0
-        ext.l   d1
-        ext.l   d2
-        ext.l   d3
-        move.l  a3,a1
-        jsr     LVO_RECTFILL(a6)
-.st_cleared:
         move.l  a3,a1
         moveq   #1,d0
         jsr     LVO_SETAPEN(a6)
@@ -1637,58 +1628,129 @@ str_text_nc:
         move.l  a3,a1
         moveq   #JAM2,d0
         jsr     LVO_SETDRMD(a6)
-        moveq   #0,d4
-        move.w  SI_NUMCHARS(a4),d4
-        sub.w   SI_DISPPOS(a4),d4    ; d4 = characters to write
-        cmp.w   SI_DISPCOUNT(a4),d4
-        ble.s   .st_n
-        move.w  SI_DISPCOUNT(a4),d4
-.st_n:
+        move.w  SI_DISPPOS(a4),d5    ; d5 = DispPos (negative: pad cells)
+        bpl.s   .st_right
+        move.w  SI_MAXCHARS(a4),d4   ; pad cells cleared with spaces, only as many as the buffer's free room
+        subq.w  #1,d4                ; allows (halved for STRINGCENTER); the leftmost excess ones are skipped
+        sub.w   SI_NUMCHARS(a4),d4
+        ble.s   .st_right
+        btst    #STRINGCENTERB-8,GG_ACTIVATION(a2)
+        beq.s   .st_lroom
+        lsr.w   #1,d4
+.st_lroom:
+        move.w  d5,d0
+        neg.w   d0                   ; d0 = pad
+        cmp.w   d0,d4
+        bls.s   .st_lcnt
+        move.w  d0,d4
+.st_lcnt:
+        tst.w   d4
+        beq.s   .st_right
+        cmp.w   #STR_NSPACES,d4
+        bls.s   .st_lsp
+        move.w  #STR_NSPACES,d4
+.st_lsp:
+        sub.w   d4,d0                ; first cleared cell
+        mulu    d6,d0
+        lea     str_spaces(pc),a0
+        bsr     .st_out
+.st_right:
+        moveq   #0,d2                ; d2 = first buffer index drawn
+        tst.w   d5
+        bmi.s   .st_r0
+        move.w  d5,d2
+.st_r0:
+        move.w  SI_DISPCOUNT(a4),d4  ; cells left from that index's cell, then no byte at MaxChars-1 or beyond
+        add.w   d5,d4                ; (§4.3)
+        sub.w   d2,d4
+        move.w  SI_MAXCHARS(a4),d0
+        subq.w  #1,d0
+        sub.w   d2,d0
+        cmp.w   d0,d4
+        ble.s   .st_rcnt
+        move.w  d0,d4
+.st_rcnt:
         tst.w   d4
         ble.s   .st_cur
-        move.l  a3,a1
-        move.w  6(sp),d0
-        ext.l   d0
-        move.w  8(sp),d1
-        add.w   rp_TxBaseline(a3),d1
-        ext.l   d1
-        jsr     LVO_MOVE(a6)
+        move.l  SI_BUFFER(a4),a0     ; free cells: spaces written into the buffer after the text, drawn with it,
+        move.w  SI_NUMCHARS(a4),d1   ; then the NUL put back: the bytes after it stay spaces (§4.3)
+        move.w  d2,d0
+        add.w   d4,d0                ; d0 = end index
+.st_sp:
+        cmp.w   d0,d1
+        bge.s   .st_spd
+        move.b  #' ',0(a0,d1.w)
+        addq.w  #1,d1
+        bra.s   .st_sp
+.st_spd:
+        move.w  d2,d0
+        sub.w   d5,d0                ; cell of index d2
+        mulu    d6,d0
+        add.w   d2,a0
+        bsr     .st_out
+        move.w  SI_NUMCHARS(a4),d1
+        move.w  d2,d0
+        add.w   d4,d0
+        cmp.w   d0,d1
+        bge.s   .st_cur
         move.l  SI_BUFFER(a4),a0
-        add.w   SI_DISPPOS(a4),a0
-        move.l  d4,d0
-        move.l  a3,a1
-        jsr     LVO_TEXT(a6)
+        clr.b   0(a0,d1.w)
 .st_cur:
         cmp.l   IB_STRGAD(a5),a2
-        bne.s   .st_end
-        moveq   #GADGHIGHBITS,d0     ; the cursor is the gadget's highlight: none with GADGHNONE (§4.3)
+        bne     .st_end
+        moveq   #GADGHIGHBITS,d0     ; the cursor is the gadget's highlight on the cursor cell (§4.3)
         and.w   GG_FLAGS(a2),d0
-        cmp.w   #3,d0
-        beq.s   .st_end
-        move.l  a3,a1
-        moveq   #COMPLEMENT,d0
-        jsr     LVO_SETDRMD(a6)
-        move.w  SI_BUFFERPOS(a4),d0
-        sub.w   SI_DISPPOS(a4),d0
-        mulu    d6,d0
-        add.w   6(sp),d0
-        move.w  d0,d2
-        add.w   d6,d2
-        subq.w  #1,d2
-        move.w  8(sp),d1
-        move.w  d1,d3
-        add.w   rp_TxHeight(a3),d3
-        subq.w  #1,d3
-        cmp.w   12(sp),d3            ; bounded to the bottom of the gadget
+        cmp.w   #GADGHNONE,d0
+        beq     .st_end
+        move.w  SI_BUFFERPOS(a4),d2
+        sub.w   SI_DISPPOS(a4),d2
+        mulu    d6,d2
+        add.w   6(sp),d2             ; d2/d3 = top-left corner of the cursor cell
+        move.w  8(sp),d3
+        cmp.w   #GADGHIMAGE,d0
+        beq.s   .st_img
+        move.w  d3,d0                ; GADGHCOMP: the cell complemented; GADGHBOX: its frame (gad_comp)
+        add.w   rp_TxHeight(a3),d0
+        subq.w  #1,d0
+        cmp.w   12(sp),d0            ; bounded to the bottom of the gadget
         ble.s   .st_cy
-        move.w  12(sp),d3
+        move.w  12(sp),d0
 .st_cy:
+        move.w  d0,-(sp)             ; y1
+        move.w  d2,d0
+        add.w   d6,d0
+        subq.w  #1,d0
+        move.w  d0,-(sp)             ; x1
+        move.w  d3,-(sp)
+        move.w  d2,-(sp)
+        move.l  a3,d5                ; (gad_comp preserves d5)
+        move.l  d7,a3                ; window, for gad_comp
+        bsr     gad_comp
+        move.l  d5,a3
+        addq.l  #8,sp
+        bra.s   .st_end
+.st_img:
+        move.l  GG_SELECTRENDER(a2),d0   ; GADGHIMAGE: the SelectRender (else the GadgetRender) drawn on the cell
+        bne.s   .st_im1
+        move.l  GG_GADGETRENDER(a2),d0
+        beq.s   .st_end
+.st_im1:
+        move.l  d0,a1
+        move.l  a3,a0
+        move.w  d2,d0
         ext.l   d0
+        move.w  d3,d1
         ext.l   d1
-        ext.l   d2
-        ext.l   d3
-        move.l  a3,a1
-        jsr     LVO_RECTFILL(a6)
+        move.l  a6,-(sp)
+        move.l  a5,a6
+        btst    #2,GG_FLAGS+1(a2)    ; GADGIMAGE: an Image, otherwise a Border
+        beq.s   .st_bord
+        jsr     intuition_DrawImage
+        bra.s   .st_imd
+.st_bord:
+        jsr     intuition_DrawBorder
+.st_imd:
+        move.l  (sp)+,a6
 .st_end:
         move.l  a3,a1
         moveq   #0,d0
@@ -1706,6 +1768,24 @@ str_text_nc:
 .st_ret:
         movem.l (sp)+,d2-d7/a2-a6
         rts
+.st_out:                             ; d4 characters at a0 drawn at cell offset d0 (pixels) of the box. The caller's
+        movem.l d0/a0,-(sp)          ; frame: 3 saved pen bytes (6) + return (4) + these 8: the box at 18(sp)
+        move.l  a3,a1
+        add.w   18(sp),d0
+        ext.l   d0
+        move.w  20(sp),d1
+        add.w   rp_TxBaseline(a3),d1
+        ext.l   d1
+        jsr     LVO_MOVE(a6)
+        movem.l (sp)+,d0/a0
+        move.l  d4,d0
+        and.l   #$FFFF,d0
+        move.l  a3,a1
+        jmp     LVO_TEXT(a6)
+STR_NSPACES     EQU 80
+str_spaces:
+        dcb.b   STR_NSPACES,' '
+        even
 
 ; str_activate(a3 = window, a2 = STRGADGET gadget, a5, d2.w = x of the click in the window | -1): the gadget becomes the
 ; active text gadget (the old one is deactivated), its text is copied into the undo buffer, the cursor is placed under
@@ -1778,6 +1858,28 @@ str_activate:
         bsr     gad_send
 .sa_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; str_pending(a5): input task, before an input event is handled - the text gadget recorded by ActivateGadget becomes
+; the edited one if its window is still the active one and nothing else is going on; the event is then handled
+; with it active (a key edits it, a click outside the box ends it, intuition-strgad §1.2). Preserves everything.
+str_pending:
+        movem.l d0-d2/a0-a3,-(sp)
+        move.l  IB_STRPEND(a5),a2
+        move.l  IB_STRPWIN(a5),a3
+        clr.l   IB_STRPEND(a5)
+        cmp.l   IB_ACTIVEWINDOW(a5),a3
+        bne.s   .pd_ret
+        tst.l   IB_STRGAD(a5)
+        bne.s   .pd_ret
+        tst.l   IB_GADACT(a5)
+        bne.s   .pd_ret
+        tst.l   IB_MENUWIN(a5)
+        bne.s   .pd_ret
+        moveq   #-1,d2
+        bsr     str_activate
+.pd_ret:
+        movem.l (sp)+,d0-d2/a0-a3
         rts
 
 ; str_deact(a5): the active text gadget (if any) is no longer active; redrawn without the cursor. Preserves everything.
@@ -2056,8 +2158,9 @@ str_conv:
 ; ActivateGadget(gadget a0, window a1, requester a2) -> d0 = 1 if the text gadget is now edited (cursor kept), 0
 ; otherwise (spec intuition-strgad-v34 §1.1): only a STRGADGET of the active window (never activated here), with the
 ; requester argument equal to Window.FirstRequest, while nothing else is going on (no gadget held or edited, no
-; menu); a requester gadget needs its requester up. GADGDISABLED is not checked; the gadget already edited gives 1.
-; The 1.3 activation waits for the next input event; here it is immediate.
+; menu, no earlier ActivateGadget still waiting); a requester gadget needs its requester up. GADGDISABLED is not
+; checked; the gadget already edited gives 1. The gadget is only recorded: the input task activates it at the next
+; input event and hands that event to the editor (§1.2, str_pending).
 intuition_ActivateGadget:
         movem.l d2/a2-a3/a5,-(sp)
         move.l  a6,a5
@@ -2073,6 +2176,8 @@ intuition_ActivateGadget:
         bne.s   .ag_ret
         cmp.l   IB_STRGAD(a5),a2
         beq.s   .ag_ok
+        tst.l   IB_STRPEND(a5)
+        bne.s   .ag_ret
         cmp.l   IB_ACTIVEWINDOW(a5),a3
         bne.s   .ag_ret
         cmp.l   WD_FIRSTREQUEST(a3),d2
@@ -2093,8 +2198,8 @@ intuition_ActivateGadget:
         tst.l   RQ_REQLAYER(a0)
         beq.s   .ag_ret
 .ag_go:
-        moveq   #-1,d2
-        bsr     str_activate
+        move.l  a3,IB_STRPWIN(a5)    ; window first: the input task reads IB_STRPEND
+        move.l  a2,IB_STRPEND(a5)
 .ag_ok:
         moveq   #1,d0
 .ag_ret:

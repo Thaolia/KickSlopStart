@@ -247,6 +247,25 @@ free, otherwise public AllocMem; failure ⇒ `Alert($8400000E)`) and return.
 - The queue is executed **at the start of each call to Intuition()** (so at the next event: at most
   ≈ 100 ms thanks to IECLASS_TIMER), in deposit order, **before** the events of that call.
   The timestamp of the messages produced is that of the last processed event.
+- **Fields of the ACTIVEWINDOW / INACTIVEWINDOW produced by the queue** [O probe, `tests/imenu_probe.s`
+  step `@T A2`, two identical FS-UAE runs on the real ROM: `CurrentTime` read, `ActivateWindow(B)`, 10
+  frames of draining, `CurrentTime`, `ActivateWindow(A)`, 10 frames, `CurrentTime`]:
+  - **Seconds/Micros** = the value `CurrentTime` returned just **before** the ActivateWindow call (both
+    activations, real tick times such as 43 s + 40425 µs), i.e. the time of the last event processed
+    **before** the Intuition() call that ran the queue — not the time of the event that triggered that
+    call (which is always later: the next `CurrentTime` is ≈ 220 ms further on). It is **not** always 0:
+    the 0 seen for the OpenWindow ACTIVATE at the start of the probe (§5) is simply the `CurrentTime`
+    value at that point (also read as 0/0 just before OpenWindow: no event had been processed yet).
+  - Not separated by the probe: whether the stamp is taken when the node is **executed** or when it
+    is **deposited** (no event is processed between the two in this probe; the two readings coincide).
+  - **Qualifier** = 0 in all four messages (and in the OpenWindow one), whereas the same messages
+    produced by a click carry $8000. Uncertain: either always 0, or the qualifier of the last
+    processed event, which here was a timer tick with no key/button held; the probe cannot tell.
+  - **MouseX/MouseY** = the current pointer position relative to **each message's own target window**
+    (INACTIVEWINDOW(A) at (100, 68) relative to A, ACTIVEWINDOW(B) at (−320, 68) relative to B; same
+    values as the click-produced pair at the end of step `@T F`); at the very start, (0, −12) relative
+    to A = pointer at screen (0, 0).
+  - Order: INACTIVEWINDOW of the old window, then ACTIVEWINDOW of the new one (§1.11), same stamp.
 - During a menu or a held gadget: **activations are dropped** (node freed without effect);
   Move/Size/ToFront/ToBack/requester control concerning the **active screen** stay queued until
   the end of the operation; the others (other screens, REQSET/REQCLEAR, NEWPREFS) are executed. [O]
@@ -734,7 +753,8 @@ MenuHBorder 4, WBorTop 2, WBorLeft 4, WBorRight 4, WBorBottom 2; IB bounds 0..63
 
 ```
 READY
-M A 00040000 0000 0000 =A 0000 FFF4 00000000 00000000   ACTIVEWINDOW from OpenWindow (deferred queue, timestamp 0)
+M A 00040000 0000 0000 =A 0000 FFF4 00000000 00000000   ACTIVEWINDOW from OpenWindow (deferred queue); time 0 =
+                                                       CurrentTime before OpenWindow (CT 0 0), not a constant (§1.10)
 @T 1  click in B then in A
 M A 00080000 0000 8000 =A 01F4 0030 1 2                 INACTIVEWINDOW(A) at SELECTDOWN
 M B 00040000 0000 8000 =B 0050 0030 1 2                 ACTIVEWINDOW(B)
@@ -762,7 +782,9 @@ M A 00000008 00E9 8000 =A 0047 0005 6 4                 MENUUP returned as MOUSE
 M A 00002000 0001 0080 ... 6 4                          MENUVERIFY, timestamp of the PREVIOUS event
 M A 00000100 F820 0080 ... 6 4                          MENUPICK Quitter; no MENUWAITING to B; no RAWKEY $10
 M A 00000400 0090 0080 00C05654 ...                    the release arrives as RAWKEY
-M A 00000100 0860 0080 ...                             'S': sub-item 1 of item 3
+M A 00000100 0860 0080 ...                             'S': sub-item 1 of item 3; its MENUVERIFY/MENUPICK carry a
+                                                       real tick time ($18 = 24 s), not step 7: the previous event
+                                                       processed was an IECLASS_TIMER tick (same for 'D')
 M A 00000100 FFFF 0080 ...                             'D': menu disabled => MENUNULL (after MENUVERIFY)
 M A 00000400 0010 0040 ... / 0090 0040                 left Amiga: ordinary RAWKEYs
 @T 8  sub-menu: MENUPICK 0860 (pointer at 146, 57 screen)
@@ -778,6 +800,14 @@ M A 00000010 00FF 8000 =A 0064 0026 A 1  ... 0069 0029 A 6   6 MOUSEMOVE, no coa
 @T E  click on the screen background: INACTIVEWINDOW(A) alone; key 'a': no message (passed on)
 @T F  B active (without menu bar) + MENUDOWN: MENUVERIFY MENUHOT to B, MENUWAITING to A, empty bar
       (BlockPen background), MOUSEBUTTONS MENUUP to A and B, MENUPICK not requested by B
+@T A2 deferred ActivateWindow(B) then (A), each followed by 10 frames (CT = CurrentTime, hex)
+CT 0000002B 00009DE9
+M A 00080000 0000 0000 =A 0064 0044 0000002B 00009DE9   INACTIVEWINDOW(A): stamp = CT read before the call
+M B 00040000 0000 0000 =B FEC0 0044 0000002B 00009DE9   ACTIVEWINDOW(B), qualifier 0
+CT 0000002B 0003F94B
+M A 00040000 0000 0000 =A 0064 0044 0000002B 0003F94B   ACTIVEWINDOW(A)
+M B 00080000 0000 0000 =B FEC0 0044 0000002B 0003F94B   INACTIVEWINDOW(B)
+CT 0000002B 000754AD
 IDLE
 ```
 

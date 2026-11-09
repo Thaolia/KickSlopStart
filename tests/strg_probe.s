@@ -10,6 +10,9 @@
 ;   "ST B<n> <BufferPos> <DispPos> <NumChars> <LongInt long> <Flags> |<Buffer>| |<UndoBuffer>|"
 ;   "ST A8 ..." twice (boolean gadget, disabled gadget), "ST A9 <D0> <active window = ours: 01>" after a second
 ;   window took the activation, "ST END".
+;   "ST C <DispCount> <DispPos> <Buffer bytes 2..6>" right after OpenWindow for gC (STRINGCENTER) and gR
+;   (STRINGRIGHT), "ab" in a buffer of $AA bytes (intuition-strgad-v34 §4.3-§4.4: DispPos negative, spaces written
+;   after the NUL); test 10: gX (GADGHBOX) activated, the harness takes box.png (the cursor is a frame), Return.
 ; Keys typed by the harness, per test:
 ;   1 S1 "Hello", BufferPos 2: "abc" Return
 ;   2 S2 LONGINT "12", BufferPos 0: "5-x9" Return
@@ -18,6 +21,7 @@
 ;   5 S1: "zz", right Amiga+Q, Return
 ;   6 S3 MaxChars 6 "abcd": "123" Return
 ;   7 S4 24 pixels wide, MaxChars 20, empty: "abcdefgh" Return
+;   10 gX "box" (GADGHBOX): Return, after the harness's box.png
 ; Build: vasmm68k_mot -Fhunkexe -kick1hunks -o strg_probe tests/strg_probe.s
 
 SERDAT   EQU $DFF030
@@ -45,6 +49,7 @@ SI_UNDO  EQU 4
 SI_POS   EQU 8
 SI_DISP  EQU 12
 SI_NUM   EQU 16
+SI_DISPCOUNT EQU 18
 SI_LONG  EQU 28
 GADGETUP EQU $40
 
@@ -67,6 +72,10 @@ start:
         move.l  d0,win
         beq     .out
         bsr     pause
+        lea     gC(pc),a2
+        bsr     padrep
+        lea     gR(pc),a2
+        bsr     padrep
 
         moveq   #1,d7
         lea     gS1(pc),a2
@@ -88,6 +97,10 @@ start:
         bsr     test
         moveq   #7,d7
         lea     gS4(pc),a2
+        bsr     test
+
+        moveq   #10,d7                  ; GADGHBOX cursor (the harness takes a screenshot, then types Return)
+        lea     gX(pc),a2
         bsr     test
 
         moveq   #8,d7                   ; boolean, then disabled string gadget: no keys
@@ -124,6 +137,27 @@ start:
         bsr     lend
 .out:   moveq   #0,d0
         rts
+
+; padrep(a2 = gadget): "ST C <DispCount> <DispPos> <Buffer[2..6]>".
+padrep:
+        bsr     lbeg
+        lea     m_c(pc),a0
+        bsr     puts
+        move.l  GG_SINFO(a2),a4
+        move.w  SI_DISPCOUNT(a4),d0
+        bsr     sword
+        move.w  SI_DISP(a4),d0
+        bsr     sword
+        move.l  (a4),a0                 ; Buffer
+        moveq   #2,d5
+.pr_b:  move.b  0(a0,d5.w),d0
+        move.l  a0,-(sp)
+        bsr     shex
+        move.l  (sp)+,a0
+        addq.w  #1,d5
+        cmp.w   #7,d5
+        bne.s   .pr_b
+        bra     lend
 
 ; pause: Delay(2 s) (activation is asynchronous on 1.3).
 pause:
@@ -328,6 +362,7 @@ m_st:    dc.b   "ST ",0
 m_wait:  dc.b   "ST WAIT",0
 m_a9:    dc.b   "ST A9",0
 m_end:   dc.b   "ST END",0
+m_c:     dc.b   "ST C",0
         even
 
 neww:   dc.w    20,20,400,120
@@ -372,10 +407,26 @@ gB:     dc.l    gD
         dc.l    0,0,0,0,0
         dc.w    5
         dc.l    0
-gD:     dc.l    0
+gD:     dc.l    gC
         dc.w    240,35,80,10, $0100, $0001, 4
         dc.l    0,0,0,0,si5
         dc.w    6
+        dc.l    0
+
+gC:     dc.l    gR                      ; STRINGCENTER $0200
+        dc.w    120,50,80,10, 0, $0201, 4
+        dc.l    0,0,0,0,si6
+        dc.w    7
+        dc.l    0
+gR:     dc.l    gX                      ; STRINGRIGHT $0400
+        dc.w    120,65,80,10, 0, $0401, 4
+        dc.l    0,0,0,0,si7
+        dc.w    8
+        dc.l    0
+gX:     dc.l    0                       ; GADGHBOX highlight
+        dc.w    240,50,80,10, $0001, $0001, 4
+        dc.l    0,0,0,0,si8
+        dc.w    9
         dc.l    0
 
 ; StringInfo (36 bytes): Buffer, UndoBuffer, BufferPos, MaxChars, DispPos, UndoPos, NumChars, DispCount, CLeft, CTop,
@@ -407,3 +458,18 @@ b4:     dcb.b   20,0
 u4:     dcb.b   20,0
 b5:     dcb.b   8,0
 u5:     dcb.b   8,0
+si6:    dc.l    b6,0
+        dc.w    0,20,0,0,2,0,0,0
+        dc.l    0,0,0
+si7:    dc.l    b7,0
+        dc.w    0,20,0,0,2,0,0,0
+        dc.l    0,0,0
+si8:    dc.l    b8,0
+        dc.w    0,10,0,0,3,0,0,0
+        dc.l    0,0,0
+b6:     dc.b    "ab",0
+        dcb.b   17,$AA
+b7:     dc.b    "ab",0
+        dcb.b   17,$AA
+b8:     dc.b    "box"
+        dcb.b   7,0

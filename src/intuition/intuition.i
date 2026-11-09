@@ -113,7 +113,10 @@ IB_MVTIME        EQU IB_SUBH+2         ; 2 LONGs: ie_TimeStamp of the last movem
 IB_KMX           EQU IB_MVTIME+8       ; WORD: keyboard mouse speed in X (Amiga + arrows, intuition-input-menus §1.7)
 IB_KMY           EQU IB_KMX+2          ; WORD: same in Y
 IB_KMBTN         EQU IB_KMY+2          ; BYTE: buttons emulated by Amiga + Alt (bit 0 left, bit 1 right)
-INTUITIONBASE_SIZE EQU IB_KMBTN+2
+IB_STRPEND       EQU IB_KMBTN+2        ; text gadget recorded by ActivateGadget, activated at the next input event | 0
+IB_STRPWIN       EQU IB_STRPEND+4      ; its window
+IB_OWTIME        EQU IB_STRPWIN+4      ; 2 LONGs: time of the last event handled when OpenWindow was called
+INTUITIONBASE_SIZE EQU IB_OWTIME+8
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3
@@ -433,6 +436,9 @@ GADGHIGHBITS  EQU $0003        ; GADGHCOMP 0 / GADGHBOX 1 / GADGHIMAGE 2 / GADGH
 GADGHBOX      EQU $0001
 GADGHIMAGE    EQU $0002
 GADGIMAGE     EQU $0004        ; GadgetRender is an Image (otherwise a Border)
+GADGHNONE     EQU $0003
+STRINGCENTERB EQU 9              ; Activation: string text centred / right-aligned (intuition-strgad-v34 §4.4)
+STRINGRIGHTB  EQU 10
 GRELBOTTOM    EQU $0008
 GRELRIGHT     EQU $0010
 GRELWIDTH     EQU $0020

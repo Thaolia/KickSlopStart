@@ -692,7 +692,8 @@ differs.
   Backspace, Del, arrows (Shift: start / end), Right Amiga + X (clear) / + Q (undo), Return / Enter
   (LONGINT converted into si_LongInt, GADGETUP if RELVERIFY). A click outside the gadget deactivates it without a message;
   closing the window / RemoveGadget forget it. Rendering: text visible from si_DispPos (which follows the cursor),
-  cursor in COMPLEMENT. Scope: left alignment only (STRINGCENTER/RIGHT ignored), no ALTKEYMAP.
+  cursor in COMPLEMENT (since 2026-11-09 also STRINGCENTER/RIGHT and the GADGHBOX/GADGHIMAGE/GADGHNONE cursors, see
+  "String gadget display"). Scope: no ALTKEYMAP.
   (2) **Workbench Rename** (workbench.s, `wb_rename`): "Rename" window with a prefilled and activated text gadget;
   Return renames the object then its ".info" and re-reads the drawer, the close box cancels. Proven under FS-UAE
   (prod ROM, WB disk): drawer Empty renamed "Vide", checked with xdftool (Vide + Vide.info).
@@ -2095,6 +2096,32 @@ differs.
   pointer back: "M6R LIVE OK" passes again and the pointer starts at (0, 0) instead of the proof's leftover. The
   probe now gets the 1.3 positions (step 2: 0021 / FE7D / 0047 / FEA3; step A: six MOUSEMOVEs 0064..0069; step D:
   +50, +53, +56, then −1 in Y).
+  **String gadget display (2026-11-09)**: `str_text_nc` (`src/intuition/gadgets.s`) follows intuition-strgad
+  §4.3-4.4. STRINGCENTER/STRINGRIGHT with NumChars < DispCount set DispPos to minus the pad; the left pad is drawn
+  from a constant row of spaces, at most MaxChars − 1 − NumChars cells (halved for CENTER); the right part is cleared
+  by writing spaces into Buffer from NumChars to the end of the box, drawing them, then putting the NUL back, so the
+  bytes past the NUL stay spaces as on 1.3. Cursor: GADGHNONE none, GADGHIMAGE the SelectRender (else GadgetRender)
+  image or border, otherwise the cell complemented through `gad_comp` (GADGHBOX: its outline). `tests/strg_probe.sh`
+  prints DispCount/DispPos/Buffer for a centred and a right-aligned gadget and saves the GADGHBOX cursor (box.png).
+  **IDCMP ports and REFRESHWINDOW (2026-11-09)**: `wn_mkport` names the port "IDCMP" and AddPorts it,
+  `wn_freeport` RemPorts it when it is linked (intuition-input-menus §2.2, intuition-windows §3). REFRESHWINDOW
+  goes through the window's message pool (`wn_refreshmsg` → `wn_sendmsg`: event time, qualifier, Window.MouseX/Y)
+  instead of one embedded message, so each repair sends one while LAYERREFRESH stays set (§2.4; `WDX_IMSG` removed,
+  the window is one IntuiMessage smaller). Workbench (`src/dos/workbench.s`): drawers open with IDCMP 0, take the
+  desktop window's UserPort and ModifyIDCMP their classes (workbench-task §9: no port of their own); `wb_getmsg`
+  takes the window's first message out of the shared port, and `wb_detach`, before CloseWindow, replies the
+  window's messages still queued (they live in the window), clears UserPort and calls ModifyIDCMP(0)
+  (workbench-task §4.1). A drawer costs 40 bytes less.
+  **Deferred ActivateGadget and activation messages (2026-11-09)**: ActivateGadget only records the gadget and its
+  window (`IB_STRPEND` / `IB_STRPWIN`, a second call meanwhile returns 0); the input task, before the next ring item,
+  activates it if its window is still the active one and nothing else is going on (`str_pending`), then hands that
+  item to the editor; `it_keyin` already routes a key to the ring while a gadget is pending, so the key that
+  triggers the activation edits the gadget (intuition-strgad §1.2). `gad_forget` drops a pending gadget with its
+  window or the gadget. `it_setactive` gives INACTIVEWINDOW / ACTIVEWINDOW the screen's pointer position relative to
+  each window; when a program causes the activation (OpenWindow, ActivateWindow, CloseWindow: FindTask differs from
+  `IB_INTASK`) both messages carry qualifier 0 and the time of the last event handled when the call was made (taken
+  under Forbid after sending, so the receiver never sees another value), OpenWindow's taken at its entry
+  (`IB_OWTIME`), as 1.3's deferred queue does (intuition-input-menus §1.10, probed with `CT` lines).
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

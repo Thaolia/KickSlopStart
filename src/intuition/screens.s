@@ -62,6 +62,7 @@ LVO_WAITBLIT    EQU -228             ; graphics.library public vector
                 xref    gad_up
                 xref    str_key
                 xref    str_clickout
+                xref    str_pending
                 xdef    it_keyin
                 xdef    it_tickin
                 xdef    it_diskin
@@ -110,8 +111,7 @@ SCX_PLANESIZE   EQU SCX_COLORTAB+64  ; size of a plane allocated here (0: BitMap
 SCX_SIZE        EQU SCX_PLANESIZE+4
 SC_MAXCOLORS    EQU 32
 ; window: struct Window + IDCMP messages (same allocation); RastPort and layer come from layers.library
-WDX_IMSG        EQU WD_SIZE          ; REFRESHWINDOW IntuiMessage (reused once replied)
-WDX_EMSG        EQU WDX_IMSG+IM_SIZEOF  ; event IntuiMessages (buttons, close), reused once replied
+WDX_EMSG        EQU WD_SIZE          ; IntuiMessages, reused once replied
 WDX_NEMSG       EQU 4
 WDX_BLAYER      EQU WDX_EMSG+WDX_NEMSG*IM_SIZEOF ; GIMMEZEROZERO: border layer (WD_WLAYER = the interior) | 0
 WDX_CLIPSAVE    EQU WDX_BLAYER+4     ; application ClipRegion removed during an intuition drawing
@@ -1253,6 +1253,8 @@ intuition_GetScreenData:
 intuition_OpenWindow:
         movem.l d2-d7/a2-a5,-(sp)
         move.l  a6,a5                ; a5 = IntuitionBase
+        move.l  IB_SECONDS(a5),IB_OWTIME(a5) ; the request's time: events handled while the window is built do not
+        move.l  IB_MICROS(a5),IB_OWTIME+4(a5) ; change it (1.3 queues the activation, input-menus §1.10)
         move.l  a0,a2                ; a2 = NewWindow
         move.w  NW_TYPE(a2),d0
         and.w   #SCREENTYPE,d0
@@ -1497,7 +1499,8 @@ intuition_OpenWindow:
         tst.l   IB_STRGAD(a5)
         bne.s   .ow_noact
         jsr     LVO_PERMIT(a6)
-        bsr     it_setactive         ; (the new bar is redrawn with the border right after)
+        lea     IB_OWTIME(a5),a0
+        bsr     it_setactat          ; (the new bar is redrawn with the border right after)
         bsr     wn_scrtitle
         bra.s   .ow_linked
 .ow_noact:
@@ -2273,9 +2276,30 @@ it_sysup:
 
 ; it_setactive(a3 = new active window | 0, a5): the old active window loses WINDOWACTIVE, receives INACTIVEWINDOW and
 ; the veil; the new one takes WINDOWACTIVE, its title bar is redrawn (veil cleared) and it receives ACTIVEWINDOW
-; (spec frame §4, input-menus §1.11). Preserves everything.
+; (spec frame §4, input-menus §1.11). Mouse position: the screen's, relative to each window. Called by a program
+; (OpenWindow, ActivateWindow, CloseWindow), where 1.3 goes through its deferred queue: both messages carry the time
+; of the last event handled when the call was made and qualifier 0 (input-menus §1.10). Preserves everything.
+SA_APP          EQU 36                   ; frame below the saved registers: long, non-zero = called by a program
+SA_SECS         EQU 40                   ; time of the last event handled, at the call
+SA_MICS         EQU 44
 it_setactive:
+        lea     -12(sp),sp
         movem.l d0-d3/d6/a0-a1/a3/a6,-(sp)
+        lea     IB_SECONDS(a5),a0
+        bra.s   sa_common
+; it_setactat(a0 = time of the request, 2 LONGs): it_setactive with that time for a program's request.
+it_setactat:
+        lea     -12(sp),sp
+        movem.l d0-d3/d6/a0-a1/a3/a6,-(sp)
+sa_common:
+        move.l  (a0)+,SA_SECS(sp)
+        move.l  (a0),SA_MICS(sp)
+        move.l  ($4).w,a6
+        sub.l   a1,a1
+        jsr     LVO_FINDTASK(a6)
+        sub.l   IB_INTASK(a5),d0
+        move.l  d0,SA_APP(sp)
+        move.l  32(sp),a6
         move.l  IB_ACTIVEWINDOW(a5),d0
         cmp.l   a3,d0
         beq.s   .sa_ret
@@ -2304,12 +2328,31 @@ it_setactive:
         bsr     it_newactive
 .sa_ret:
         movem.l (sp)+,d0-d3/d6/a0-a1/a3/a6
+        lea     12(sp),sp
         rts
 .sa_msg:
         moveq   #0,d1
-        move.w  WD_MOUSEX(a3),d2
-        move.w  WD_MOUSEY(a3),d3
-        bra     wn_sendmsg
+        move.l  WD_WSCREEN(a3),a0
+        move.w  SC_MOUSEX(a0),d2
+        sub.w   WD_LEFTEDGE(a3),d2
+        move.w  SC_MOUSEY(a0),d3
+        sub.w   WD_TOPEDGE(a3),d3
+        tst.l   4+SA_APP(sp)
+        beq     wn_sendmsg
+        move.l  d0,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)       ; stamped before the receiver can read it
+        move.l  (sp)+,d0
+        bsr     wn_sendmsg
+        tst.l   d6
+        beq.s   .sm_perm
+        move.l  d6,a1
+        clr.w   IM_QUALIFIER(a1)
+        move.l  4+SA_SECS(sp),IM_SECONDS(a1)
+        move.l  4+SA_MICS(sp),IM_MICROS(a1)
+.sm_perm:
+        move.l  ($4).w,a6
+        jmp     LVO_PERMIT(a6)
 
 ; it_newactive(a3 = new active window): after an activation, IECLASS_EVENT code 1 (IECODE_NEWACTIVE) with
 ; ie_EventAddress = the window goes down the input.device handler chain (IND_WRITEEVENT, quick, in the caller's
@@ -2741,39 +2784,19 @@ intuition_EndRefresh:
         rts
 
 ; wn_refreshmsg(a3 = window): if it asked for REFRESHWINDOW and its message is not pending, sends it
-; (without a reply port: ReplyMsg marks it replied, it is reused). Preserves d2-d7/a2-a6.
+; (without a ; wn_refreshmsg(a3 = window): REFRESHWINDOW if it asked for it, one per repair even while an earlier one is unread
+; (1.3 sends one at each repair while LAYERREFRESH stays set, intuition-input-menus §2.4). Preserves d2-d7/a2-a6.
 wn_refreshmsg:
-        move.l  WD_USERPORT(a3),d0
-        beq.s   .rf_ret
-        moveq   #REFRESHWINDOW,d1
-        and.l   WD_IDCMPFLAGS(a3),d1
-        beq.s   .rf_ret
-        move.l  a6,-(sp)
-        move.l  ($4).w,a6
-        jsr     LVO_FORBID(a6)       ; tested and claimed in one go (posted from the input task and from applications)
-        lea     WDX_IMSG(a3),a1
-        cmp.b   #NT_MESSAGE,LN_TYPE(a1)
-        beq.s   .rf_busy             ; the previous one has not been read: it is enough
-        move.b  #NT_MESSAGE,LN_TYPE(a1)
-        jsr     LVO_PERMIT(a6)
-        move.l  d0,-(sp)
-        clr.l   MN_REPLYPORT(a1)
-        move.w  #IM_SIZEOF,MN_LENGTH(a1)
-        move.l  #REFRESHWINDOW,IM_CLASS(a1)
-        clr.l   IM_CODE(a1)
-        move.l  a3,IM_IADDRESS(a1)
-        move.l  a3,IM_IDCMPWINDOW(a1)
-        move.l  (sp)+,a0
-        jsr     LVO_PUTMSG(a6)
-        move.l  (sp)+,a6
-.rf_ret:
-        rts
-.rf_busy:
-        jsr     LVO_PERMIT(a6)
-        move.l  (sp)+,a6
+        movem.l d2-d3/d6/a6,-(sp)
+        move.w  WD_MOUSEX(a3),d2
+        move.w  WD_MOUSEY(a3),d3
+        moveq   #REFRESHWINDOW,d0
+        moveq   #0,d1
+        bsr     wn_sendmsg
+        movem.l (sp)+,d2-d3/d6/a6
         rts
 
-; intuition_ModifyIDCMP(window a0, classes d0): new IDCMP classes. 0: the UserPort is closed (its pending messages
+
 ; removed); non-zero without a UserPort: a port signaling the calling task is created. Under Forbid: the input
 ; task does not post during the change.
 intuition_ModifyIDCMP:
@@ -2798,8 +2821,9 @@ intuition_ModifyIDCMP:
         movem.l (sp)+,a3/a6
         rts
 
-; wn_mkport(a3 = window, a6 = SysBase): IDCMP port (WD_USERPORT) signaling the calling task; left at 0 if
-; out of signals or memory. Preserves d2-d7/a2-a6.
+; wn_mkport(a3 = window, a6 = SysBase): IDCMP port (WD_USERPORT) signaling the calling task, named "IDCMP" and
+; added to the public port list (intuition-input-menus §2.2); left at 0 if out of signals or memory. Preserves
+; d2-d7/a2-a6.
 wn_mkport:
         move.l  a2,-(sp)
         moveq   #-1,d0
@@ -2822,14 +2846,18 @@ wn_mkport:
         move.b  #PA_SIGNAL,MP_FLAGS(a2)
         move.b  d1,MP_SIGBIT(a2)
         move.l  EB_THISTASK(a6),MP_SIGTASK(a2)
-        lea     MP_MSGLIST(a2),a0    ; NEWLIST
-        move.l  a0,8(a0)
-        addq.l  #4,a0
-        move.l  a0,-4(a0)
+        lea     wn_portname(pc),a0
+        move.l  a0,LN_NAME(a2)
+        move.l  a2,a1
+        jsr     LVO_ADDPORT(a6)      ; (AddPort empties the message list)
         move.l  a2,WD_USERPORT(a3)
 .mp_ret:
         move.l  (sp)+,a2
         rts
+
+wn_portname:
+        dc.b    "IDCMP",0
+        even
 
 ; wn_freeport(a3 = window, a6 = SysBase): removes any pending message from the port, frees the signal and the port.
 ; Preserves d2-d7/a2-a6.
@@ -2858,6 +2886,11 @@ wn_freeport:
         moveq   #0,d0
         move.b  MP_SIGBIT(a2),d0
         jsr     LVO_FREESIGNAL(a6)
+        tst.l   LN_SUCC(a2)          ; out of the public port list (intuition-windows §3 step 3); a program's own
+        beq.s   .fp_free             ; port that was never added stays out of it
+        move.l  a2,a1
+        jsr     LVO_REMPORT(a6)
+.fp_free:
         move.l  a2,a1
         moveq   #MP_SIZE,d0
         jsr     LVO_FREEMEM(a6)
@@ -3083,12 +3116,14 @@ it_keyin:
         movem.l d0-d2/a0-a1/a6,-(sp)
         move.l  IE_X(a3),d2          ; dead-key history (input.device)
         move.l  INT_IBASE,d1
-        beq.s   .ki_ret
+        beq     .ki_ret
         move.l  d1,a1
         tst.l   IB_INSIG(a1)
         beq.s   .ki_ret
         move.w  IE_CODE(a3),d0
         tst.l   IB_STRGAD(a1)
+        bne.s   .ki_str
+        tst.l   IB_STRPEND(a1)       ; a gadget about to be activated takes the key (intuition-strgad §1.2)
         bne.s   .ki_str
         move.l  IB_ACTIVEWINDOW(a1),d1
         beq.s   .ki_ret
@@ -3411,6 +3446,10 @@ it_intask:
         moveq   #0,d1
 .in_wrap:
         move.w  d1,IB_EVTAIL(a5)
+        tst.l   IB_STRPEND(a5)       ; ActivateGadget: carried out at this event, which the editor then gets
+        beq.s   .in_disp
+        jsr     str_pending
+.in_disp:
         cmp.w   #IT_TICKCODE,d0
         beq.s   .in_tick
         cmp.w   #IT_DISKINCODE,d0
@@ -3430,7 +3469,7 @@ it_intask:
         tst.l   IB_STRGAD(a5)
         beq.s   .in_raw
         btst    #7,d0                ; text gadget: pressed keys only
-        bne.s   .in_next
+        bne     .in_next
         bsr     str_key              ; d0 = key, d4 = qualifier
         bra     .in_next
 .in_raw:

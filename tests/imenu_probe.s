@@ -94,6 +94,7 @@ stage2:
         move.l  d0,v_gfx(a5)
         ; windows
         movea.l v_ib(a5),a6
+        bsr     ctime               ; time of the last event intuition handled, before any window
         lea     nwa(pc),a0
         jsr     -204(a6)            ; OpenWindow
         move.l  d0,v_wa(a5)
@@ -139,6 +140,24 @@ stage2:
         moveq   #50,d7
         bsr     pumpn
         bsr     runscript
+        ; activations through the deferred queue once events have been handled: their timestamp
+        lea     m_tact(pc),a0
+        bsr     puts
+        bsr     flush
+        movea.l v_ib(a5),a6
+        bsr     ctime
+        movea.l v_wb(a5),a0
+        jsr     -450(a6)            ; ActivateWindow
+        moveq   #10,d7
+        bsr     pumpn
+        movea.l v_ib(a5),a6
+        bsr     ctime
+        movea.l v_wa(a5),a0
+        jsr     -450(a6)
+        moveq   #10,d7
+        bsr     pumpn
+        movea.l v_ib(a5),a6
+        bsr     ctime
         lea     m_idle(pc),a0
         bsr     puts
         bsr     flush
@@ -495,6 +514,23 @@ pumpn:  bsr     pump
         movea.l 4.w,a6
         subq.w  #1,d7
         bne.s   pumpn
+        rts
+
+; ctime (a6 = IntuitionBase): "CT <seconds> <micros>" from CurrentTime. Preserves a6.
+ctime:  movem.l d0-d1/a0-a1,-(a7)
+        subq.l  #8,a7
+        movea.l a7,a0
+        lea     4(a7),a1
+        jsr     -84(a6)             ; CurrentTime
+        lea     m_ct(pc),a0
+        bsr     puts
+        move.l  (a7),d0
+        bsr     hex8s
+        move.l  4(a7),d0
+        bsr     hex8s
+        bsr     nl
+        addq.l  #8,a7
+        movem.l (a7)+,d0-d1/a0-a1
         rts
 
 ; drains both ports
@@ -873,6 +909,8 @@ s_d:    dc.b    "Desact",0
 m_hello: dc.b   "IMENU sonde",10,0
 m_ready: dc.b   "READY",10,0
 m_idle: dc.b    "IDLE",10,0
+m_ct:   dc.b    "CT ",0
+m_tact: dc.b    "@T A2  deferred ActivateWindow(B) then (A)",10,0
 m_fail: dc.b    "FAIL",10,0
 m_scr:  dc.b    "SCR w h BarH BarV BarH MenV MenH WT WL WR WB font modes : ",0
 m_ibl:  dc.b    "IB minx maxx miny maxy 378 544 546 : ",0

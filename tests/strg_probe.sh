@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tests/strg_probe.sh - builds tests/strg_probe.s (CLI executable), writes it with a startup-sequence that runs it on a
 # bootable OFS disk, boots the disk in an Amiberry session, types the keys of each test after its "ST WAIT <n>" line,
-# and copies the "ST ..." serial lines to <out_dir>/strg.txt, plus a screenshot.
+# and copies the "ST ..." serial lines to <out_dir>/strg.txt, plus a screenshot (and box.png: the GADGHBOX cursor
+# of test 10).
 #
 # Usage: tests/strg_probe.sh <out_dir> [rom=build/kick13-prod.rom]
 # The Commodore ROM is refused by amiberry-session unless ST_ANALYSIS=1 (analysis agent only, see CLAUDE.md).
@@ -30,7 +31,10 @@ keys 3 'down:60;key:4f;up:60;wait:200;text:Z;wait:200;key:4e;wait:200;key:46;wai
 keys 4 'down:67;key:32;up:67;wait:200;text:Q;wait:300;key:44' &&
 keys 5 'text:zz;wait:200;down:67;key:10;up:67;wait:300;key:44' &&
 keys 6 'text:123;wait:300;key:44' &&
-keys 7 'text:abcdefgh;wait:300;key:44' || RC=1
+keys 7 'text:abcdefgh;wait:300;key:44' &&
+{ "$A" wait-serial "$NAME" "ST WAIT 0A" 120 >/dev/null && sleep 2 && "$A" shot "$NAME" box.png --via ipc >/dev/null &&
+  cp "$DIR/box.png" "$OUT/box.png"; } &&
+keys A 'key:44' || RC=1
 "$A" wait-serial "$NAME" "ST END" 60 >/dev/null || RC=1
 "$A" shot "$NAME" "$OUT/strg.png" --via ipc >/dev/null
 tr -d '\r' < "$DIR/serial.log" | grep '^ST ' > "$OUT/strg.txt"

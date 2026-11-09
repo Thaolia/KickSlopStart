@@ -205,22 +205,28 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
 
 ### C9. intuition leftovers — S each
 
-- String gadgets:
-  - STRINGCENTER/STRINGRIGHT;
-  - GADGHBOX/GADGHIMAGE cursors;
-  - ghost pattern of a disabled gadget being edited;
-  - activation deferred to the next input event;
-  - no spaces written past the NUL.
-- AddGadget on a REQGADGET goes to the window list.
-- IDCMP ports are not in the public port list.
+- String gadgets: STRINGCENTER/STRINGRIGHT padding, GADGHBOX/GADGHIMAGE/GADGHNONE cursors, the spaces left past the
+  NUL (which also leaves the ghost pattern outside the text cells of an edited disabled gadget, checked on the probe
+  screenshot) and ActivateGadget's activation at the next input event: done 2026-11-09 (`tests/strg_probe.sh`,
+  intuition-strgad §1.2, §4.3-4.4).
+- AddGadget of a REQGADGET gadget goes to the window list: kept, the spec leaves this case undefined on 1.3 and
+  allows it (intuition-gadgets §2).
+- IDCMP ports named "IDCMP" in the public port list, REFRESHWINDOW sent at each repair while one is unread, and the
+  Workbench drawers on the desktop's shared IDCMP port: done 2026-11-09 (`tests/iwin_probe.sh` step 4 `inl`; port
+  list read with gdb through Shell and drawer open/close).
 - IND_WRITEEVENT pointer events, event timestamps, keyboard mouse, background click, empty bar, MENUPICK IAddress,
-  HIGHITEM after a check change, high-resolution pointer positions: done 2026-11-09 (`tests/imenu_probe.s` against
-  intuition-input-menus §5; read its serial log with the "w" wait marks stripped, they can start a line). Left: the
-  first ACTIVEWINDOW (OpenWindow) carries the time of the last event before it, 1.3 shows 0.
-- A window holds only one REFRESHWINDOW at a time.
-- Each drawer has its own IDCMP port.
-- it_scrxy ignores the screen's TopEdge.
-- Menu texts assume 8-pixel characters.
+  HIGHITEM after a check change, high-resolution pointer positions, and the time / qualifier / mouse position of
+  the activation messages a program causes (OpenWindow, ActivateWindow, CloseWindow: input-menus §1.10, probed
+  with `CT` lines and step A2): done 2026-11-09 (`tests/imenu_probe.s`; read its serial log with the "w" wait marks
+  stripped). A full line-by-line comparison with the 1.3 log of the same probe (2026-11-09) still shows:
+  - MENUVERIFY, and the MOUSEBUTTONS MENUUP sent when a menu closes, carry IAddress 0 on 1.3, the window here;
+  - menu shortcut (step 7): 1.3 stamps MENUVERIFY with the previous event's time and qualifier and gives MENUPICK
+    the pointer position, ours uses the key's time and qualifier and MouseX/Y 0;
+  - keyboard mouse (step D): the MOUSEMOVE qualifiers lag one event behind 1.3's ($0040 / $0041 here, $0041 /
+    $0240 there; the extra MOUSEMOVE seen before the first key is gone since PR #32);
+  - SetMenuStrip leaves Menu JazzX/JazzY/BeatX/BeatY at 0, 1.3 computes them (§3.2).
+- it_scrxy's TopEdge and the menu texts' character width: already handled (screen chosen by TopEdge since the stacked
+  screens of 2026-11-03; menus in the screen font with the native `test-intuition-menufont` since PR #29).
 - Preferences row/column size adjustment.
 
 ### C10. graphics leftovers — S each
@@ -368,7 +374,7 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
    paths before cutting).
-2. **C9, the other items** (string gadgets, REQGADGET AddGadget, IDCMP ports, REFRESHWINDOW, drawer ports, it_scrxy
-   TopEdge, menu text width, Preferences row/column adjustment).
-A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine) and the ADF sweep are done;
+2. **C9, the other items** (the imenu probe differences listed in C9, Preferences row/column adjustment).
+A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine, string gadgets, IDCMP ports,
+REFRESHWINDOW, activation messages) and the ADF sweep are done;
 D1/D3 are specified.

@@ -1231,15 +1231,27 @@ wb_dispatch:
         rts
 
 ; wb_getmsg(a0 = window, a6 = SysBase) -> Z = 1 if no message; otherwise d2 = class, d3 = code, d4/d5 = mouse,
-; d6 = seconds, a0 = micros, and the message is already replied (it belongs to the window). Clobbers d0/d1/a1.
+; d6 = seconds, a0 = micros, and the message is already replied (it belongs to the window). The drawers share the
+; desktop's port, so the first message of this window is taken out of it. Clobbers d0/d1/a1.
 wb_getmsg:
         move.l  WD_USERPORT(a0),d0
         beq.s   .gm_none
+        move.l  a0,d1
         move.l  d0,a0
-        jsr     LVO_GETMSG(a6)
-        tst.l   d0
-        beq.s   .gm_none
-        move.l  d0,a1
+        jsr     LVO_FORBID(a6)
+        move.l  MP_MSGLIST(a0),a1
+.gm_find:
+        tst.l   (a1)
+        beq.s   .gm_empty
+        cmp.l   IM_IDCMPWINDOW(a1),d1
+        beq.s   .gm_take
+        move.l  (a1),a1
+        bra.s   .gm_find
+.gm_take:
+        move.l  a1,-(sp)
+        jsr     LVO_REMOVE(a6)
+        jsr     LVO_PERMIT(a6)
+        move.l  (sp)+,a1
         move.l  IM_CLASS(a1),d2
         move.w  IM_CODE(a1),d3
         move.w  IM_MOUSEX(a1),d4
@@ -1252,6 +1264,8 @@ wb_getmsg:
         move.l  (sp)+,a0
         moveq   #1,d0                ; Z = 0
         rts
+.gm_empty:
+        jsr     LVO_PERMIT(a6)
 .gm_none:
         moveq   #0,d0
         rts
@@ -3631,7 +3645,6 @@ wb_opendrawer:
         move.w  DD_CURRENTX+2(a1),DR_SX(a4)
         move.w  DD_CURRENTY+2(a1),DR_SY(a4)
 .od_geo:
-        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK|GADGETDOWN|GADGETUP|NEWSIZE,NW_IDCMPFLAGS(a0)
         move.l  #WINDOWDRAG|WINDOWDEPTH|WINDOWCLOSE|WINDOWSIZING|SIZEBRIGHT|SIZEBBOTTOM|REPORTMOUSE|SIMPLE_REFRESH,NW_FLAGS(a0)
         move.l  NW_SIZEOF(sp),NW_FIRSTGADGET(a0)
         lea     DR_TITLE(a4),a1
@@ -3644,7 +3657,15 @@ wb_opendrawer:
         move.l  d0,DR_WIN(a4)
         beq.s   .od_ret
         move.w  d7,DR_ID(a4)
-        move.l  d0,a0
+        move.l  d0,a0                ; the desktop's IDCMP port, shared by every drawer (workbench-task §9: no UserPort
+        move.l  WBS_WIN(a5),d0       ; of its own); without it ModifyIDCMP gives the drawer one
+        beq.s   .od_idcmp
+        move.l  d0,a1
+        move.l  WD_USERPORT(a1),WD_USERPORT(a0)
+.od_idcmp:
+        move.l  #CLOSEWINDOW|REFRESHWINDOW|MOUSEBUTTONS|MOUSEMOVE|MENUPICK|GADGETDOWN|GADGETUP|NEWSIZE,d0
+        jsr     WB_LVO_MODIFYIDCMP(a6)
+        move.l  DR_WIN(a4),a0
         bsr     wb_setmenus
         bsr     wb_titles
         bsr     wb_gaugeinfo
@@ -3656,6 +3677,46 @@ wb_opendrawer:
         movem.l (sp)+,d2-d7/a2-a4
         rts
 
+; wb_detach(a3 = drawer window, a5): under Forbid, its messages still in the shared port are taken out and replied
+; (they live in the window, which CloseWindow frees), then UserPort = 0 and ModifyIDCMP(window, 0), as 1.3 does
+; (workbench-task §4.1): CloseWindow then leaves the shared port alone. Preserves d2-d7/a2-a6.
+wb_detach:
+        movem.l d2/a2/a6,-(sp)
+        move.l  ($4).w,a6
+        jsr     LVO_FORBID(a6)
+        move.l  WD_USERPORT(a3),d0
+        beq.s   .dt_port
+        move.l  WBS_WIN(a5),d1
+        beq.s   .dt_idcmp            ; no desktop: the drawer's own port, freed by CloseWindow
+        move.l  d1,a0
+        cmp.l   WD_USERPORT(a0),d0
+        bne.s   .dt_idcmp
+        move.l  d0,a0
+        move.l  MP_MSGLIST(a0),a2
+.dt_lp:
+        move.l  (a2),d2              ; d2 = next node
+        beq.s   .dt_port
+        cmp.l   IM_IDCMPWINDOW(a2),a3
+        bne.s   .dt_next
+        move.l  a2,a1
+        jsr     LVO_REMOVE(a6)
+        move.l  a2,a1
+        jsr     LVO_REPLYMSG(a6)
+.dt_next:
+        move.l  d2,a2
+        bra.s   .dt_lp
+.dt_port:
+        clr.l   WD_USERPORT(a3)
+.dt_idcmp:
+        move.l  a3,a0
+        moveq   #0,d0
+        move.l  WBS_IBASE(a5),a6
+        jsr     WB_LVO_MODIFYIDCMP(a6)
+        move.l  ($4).w,a6
+        jsr     LVO_PERMIT(a6)
+        movem.l (sp)+,d2/a2/a6
+        rts
+
 ; wb_closedrawer(d7.w = drawer, a5): closes its window, returns its icons, frees the record; the selection that was
 ; there disappears. Preserves d7/a5.
 wb_closedrawer:
@@ -3664,6 +3725,7 @@ wb_closedrawer:
         beq.s   .cd_ret
         bsr     wb_selclr            ; (the record may be reused by another drawer)
         clr.l   DR_WIN(a4)
+        bsr     wb_detach
         move.l  WBS_IBASE(a5),a6
         move.l  a3,a0
         jsr     LVO_CLEARMENUSTRIP(a6)
