@@ -1574,20 +1574,27 @@ g_runcommand:
         move.l  d3,d7                ; args (BPTR)
         move.l  a4,d3                ; d3 = calling frame (a1 is clobbered by AllocMem)
         move.l  ($4).w,a6
+rcm_alloc:
         add.l   #RC_STKEXTRA/4,d6    ; margin: our runtime uses the command's 68000 stack (buffers, packets)
         move.l  d6,d1
         bsr     rt_getvec_raw
         tst.l   d0
-        beq     .rcm_fail
+        beq     rcm_fail
+rcm_have:                            ; d0 = BPTR of the stack vector, 0 = on the caller's stack (rc_here)
         bsr     rt_this              ; a3 = process
         move.l  PR_RETURNADDR(a3),-(sp)   ; restored on return
         move.l  d0,-(sp)             ; stack (BPTR), freed on return
+        beq.s   .rcm_here
         lsl.l   #2,d0
         move.l  d0,a0
         move.l  d6,d1
         addq.l  #1,d1
         lsl.l   #2,d1
         add.l   d1,a0                ; a0 = top of the vector
+        bra.s   .rcm_top
+.rcm_here:
+        move.l  sp,a0                ; the d6 longs below are the command's stack
+.rcm_top:
         lsl.l   #2,d6                ; d6 = size in bytes
         move.l  sp,-(a0)             ; old SP (8(sp) on entry)
         move.l  d6,-(a0)             ; size (4(sp) on entry)
@@ -1613,16 +1620,42 @@ g_runcommand:
         bsr     rt_this
         move.l  (sp)+,PR_RETURNADDR(a3)
         lsl.l   #2,d7
+        beq.s   .rcm_ret             ; it was the caller's
         move.l  d7,a1
         subq.l  #4,a1
         move.l  (a1),d0
         move.l  ($4).w,a6
         jsr     LVO_FREEMEM(a6)
+.rcm_ret:
         move.l  d5,d1
         BLEAVE
-.rcm_fail:
+rcm_fail:
         moveq   #-1,d1
         BLEAVE
+
+; rc_here: runcommand (same arguments) on a stack carved out of the caller's own, below its SP, as 1.3's Execute runs
+; C:Run on the calling process's stack (newshell-memory-v34 §2: no stack block for Run). Run takes about 470 bytes of
+; its 600 longs (measured with a pattern-filled stack, 2026-11-09). A caller with less room than the stack plus
+; RC_HEREROOM, or running on another stack than its process's (a command), gets an allocated stack.
+RC_HEREROOM     EQU 512
+rc_here:
+        BENTER
+        move.l  d1,d5
+        move.l  d2,d6
+        move.l  d3,d7
+        move.l  a4,d3
+        move.l  ($4).w,a6
+        bsr     rt_this
+        cmp.l   TC_SPUPPER(a3),sp
+        bhi     rcm_alloc            ; SP is not on the process stack (a command's own stack): bounds unknown
+        move.l  d6,d0
+        lsl.l   #2,d0
+        add.l   #RC_HEREROOM,d0
+        add.l   TC_SPLOWER(a3),d0
+        cmp.l   sp,d0
+        bhs     rcm_alloc            ; not enough room left below SP
+        moveq   #0,d0
+        bra     rcm_have
 
 ; bcpl_execute: Execute LVO(cmd d1 [C], in d2, out d3) -> d0 = DOSTRUE | DOSFALSE (global 101, spec §8.2): loads
 ; C:Run, selects in/out, pr_Result2 := BSTR of the command, runcommand(Run, 600 longs); Run creates a background CLI
@@ -1733,7 +1766,7 @@ bcpl_execute:
         moveq   #0,d3
         moveq   #0,d4
         lea     .ex_back(pc),a6         ; runcommand's BLEAVE returns through jmp (a6)
-        bra     g_runcommand
+        bra     rc_here
 .ex_back:
         lea     EX_FRAME(sp),sp
         move.l  d1,d2                   ; d2 = return code (-1: stack impossible)

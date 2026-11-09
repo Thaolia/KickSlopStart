@@ -2010,6 +2010,25 @@ differs.
   `hnd_findvol` re-adopts them when a drive sees the disk again (`fl_Task` := its port); FREE_LOCK looks there for a
   lock missing from the handler's list and removes an absent volume's node with its last lock
   (rom-filesystem-v34 §3.4, disk-change-v34 §2.2).
+  **console.device input rings and RastPort state (2026-11-09)**: each ConUnit carries a 255-byte input ring
+  (`CU_RING`, `CRG_*` in `exec.i`), the base one more for the readers without a window (keys typed while no window is
+  active). `console_input_handler` (`src/exec/console.s`) hands each event to `cih_unit` for the active unit, for every
+  unit when the qualifier carries MULTIBROADCAST, or to the window-less ring when no window is active; raw reports
+  and cooked keys (converted into a 127-byte buffer, all or nothing) go into that unit's ring, then
+  `con_servereads` serves every waiting CMD_READ whose ring has bytes, in queue order. CMD_READ with io_Length 0
+  replies −4, −1 reads one byte, CMD_CLEAR empties the unit's ring. `cu_rpwrite` wraps each window write as
+  console-keymap-v34 §2.2: the window RastPort's Mask..AreaPtSz, AreaPtrn, minterms, Font, AlgoStyle..TxSpacing and
+  pen position are saved, the unit's copy (cu_Mask … cu_TxSpacing, taken from the window at open) installed, the
+  write done, the result copied back into the unit (not cu_FgPen/cu_BgPen, which hold the SGR pens) and the
+  RastPort restored. Probe: `tests/concmd_probe.sh` (ZERO, RING, RP lines).
+  **POINTERPOS events (2026-11-09)**: `pointer_input_handler` (`src/intuition/pointer.s`) turns IECLASS_POINTERPOS
+  without RELATIVEMOUSE into a relative RAWMOUSE ((position − ib_MouseX/Y) × PointerTicks, RELATIVEMOUSE set,
+  intuition-prefs-v34 §6), so a program moving the pointer with input.device IND_WRITEEVENT drives intuition.
+  **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
+  `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
+  on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes
+  are left above tc_SPLower; otherwise runcommand's allocated stack. Run uses about 470 bytes of it (pattern-filled
+  stack); a Workbench Shell's System/CLI keeps 1,208 bytes below.
   **Keys of a non-console active window are dropped (2026-11-08)**: `console_input_handler` (`src/exec/console.s`)
   no longer converts a RAWKEY into the shared read buffer when intuition's active window is not a console unit
   (console-keymap-v34 §6.4); before, they waited there for the next console opened (a later AmigaShell showed them).

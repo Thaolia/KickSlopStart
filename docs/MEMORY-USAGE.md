@@ -24,8 +24,8 @@ both ROMs side by side).
 
 **Update (2026-11-09): process stack margin 4096 -> 2048.** A/2 idle, production ROM, sum of the MemHeaders read
 with gdb: **873,352** free (871,304 before; the RAM handler's stack), **12,360 above** 1.3 (860,992). Opening a Shell
-from the Workbench now takes 40,304 bytes (47,152, then 43,096 before; 1.3: 33,480, newshell-memory-v34 §2). docs/PLAN.md
-"Shell stack margin (2026-11-09)" and "Shell memory (2026-11-09)".
+from the Workbench now takes 36,000 bytes (47,152, 43,096, then 40,304 before; 1.3: 33,480, newshell-memory-v34 §2).
+docs/PLAN.md "Shell stack margin (2026-11-09)", "Shell memory (2026-11-09)" and "Run on the caller's stack".
 
 The A/2 gap is smaller only because an empty DF1 costs 1.3 23,432 bytes (MFM buffer and file system buffers) and
 us 5,520. With one drive, 42,752 bytes separate us from 1.3: 36,408 inside the MemHeaders (section 4) and 6,344 of

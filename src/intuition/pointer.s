@@ -53,8 +53,14 @@ pointer_input_handler:
                 jsr     it_diskin            ; DISKINSERTED / DISKREMOVED (input task)
                 bra     .pih_next
 .pih_mouse:
+                cmp.b   #IECLASS_POINTERPOS,IE_CLASS(a3)
+                bne.s   .pih_raw
+                bsr     ptr_abs              ; absolute position -> relative RAWMOUSE
+                bra.s   .pih_move
+.pih_raw:
                 cmp.b   #IECLASS_RAWMOUSE,IE_CLASS(a3)
                 bne     .pih_next
+.pih_move:
                 bsr     ptr_ticks            ; deltas scaled to the Preferences speed
                 move.l  INT_IBASE,d0         ; a verification blocks intuition (input-menus §2.5): the pointer stays,
                 beq.s   .pih_vok             ; its movement is held back and applied afterwards
@@ -128,6 +134,39 @@ pointer_input_handler:
 .pih_done:
                 move.l  d2,d0                ; list (pass-through)
                 movem.l (sp)+,d2/d3/d4/a3
+                rts
+
+; ptr_abs(a3 = IECLASS_POINTERPOS event), intuition-prefs-v34 §6: without IEQUALIFIER_RELATIVEMOUSE, ie_X/ie_Y (an
+; absolute position, hires pixels and interlaced lines like ib_MouseX/Y) become (position - ib_MouseX/Y) x
+; PointerTicks and RELATIVEMOUSE is set; the class becomes RAWMOUSE. IND_WRITEEVENT callers (tests/imenu_probe.s)
+; move the pointer this way. Clobbers d0/d1/a0.
+IEQUALIFIERB_RELATIVEMOUSE EQU 15
+ptr_abs:
+                move.b  #IECLASS_RAWMOUSE,IE_CLASS(a3)
+                btst    #IEQUALIFIERB_RELATIVEMOUSE-8,IE_QUALIFIER(a3)
+                bne.s   .pa_ret
+                bset    #IEQUALIFIERB_RELATIVEMOUSE-8,IE_QUALIFIER(a3)
+                moveq   #1,d1                ; PointerTicks (1 before intuition init)
+                move.l  INT_IBASE,d0
+                beq.s   .pa_t
+                move.l  d0,a0
+                move.w  IB_PREFS+PF_PTRTICKS(a0),d0
+                ble.s   .pa_t
+                move.w  d0,d1
+.pa_t:
+                move.w  PTR_X,d0             ; ib_MouseX = 2 x PTR_X (hires), ib_MouseY = 2 x PTR_Y (interlaced)
+                add.w   d0,d0
+                neg.w   d0
+                add.w   IE_X(a3),d0
+                muls    d1,d0
+                move.w  d0,IE_X(a3)
+                move.w  PTR_Y,d0
+                add.w   d0,d0
+                neg.w   d0
+                add.w   IE_Y(a3),d0
+                muls    d1,d0
+                move.w  d0,IE_Y(a3)
+.pa_ret:
                 rts
 
 ; ptr_ticks(a3 = RAWMOUSE event): as in intuition 1.3, one mouse count is worth one hires pixel (half a line

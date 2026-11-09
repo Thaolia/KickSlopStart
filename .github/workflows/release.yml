@@ -30,7 +30,11 @@ jobs:
       - name: Build vasm and vlink (pinned)
         run: |
           mkdir -p "$RUNNER_TEMP/tc" && cd "$RUNNER_TEMP/tc"
-          curl -fsSL "http://phoenix.owl.de/tags/${VASM_TAG}.tar.gz" | tar xz
+          # phoenix.owl.de stopped serving its tags (404 since 2026-11-09): vasm comes from the SlackBuilds source
+          # archive, checked by hash (it builds a ROM byte-identical to the phoenix vasm 2.0f)
+          curl -fsSL -o vasm.tgz "https://slackware.uk/sbosrcarch/by-name/development/vasm/${VASM_TAG}.tar.gz"
+          echo "c84b2de1cbb87831795fe64a85c5d9a7002a766e3a7c30b0a2d7d5e99d878f49  vasm.tgz" | sha256sum -c -
+          tar xzf vasm.tgz
           curl -fsSL "http://phoenix.owl.de/tags/${VLINK_TAG}.tar.gz" | tar xz
           make -C vasm CPU=m68k SYNTAX=mot -j"$(nproc)"
           make -C vlink -j"$(nproc)"

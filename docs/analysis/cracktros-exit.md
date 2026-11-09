@@ -284,6 +284,37 @@ hangs after RAZOR. On the real ROM, trackdisk, serial and graphics re-enable the
 - **NOMAD, QUARTEX**: no system field. They rely on the COP1LC/COP2LC registers
   left by the OS: copinit in COP1LC, and the VBlank that rewrites COP2LC (NOMAD).
 
+## 7. Shinobi (cracked single-disk release): intro exit and game load timing [O, real KS 1.3, 2026-11-09]
+
+Black box only: the real 1.3 under Amiberry (A500, 512 KB chip + 512 KB slow, cycle-exact), IPC
+screenshots sampled every 0.5-1 s, input through the emulator. Times are wall-clock seconds after
+the input, ±1 s; the emulator runs at real speed.
+
+- **Boot**: the disk boots directly from the bootblock; about 4 s after power-on one garbage
+  frame, then the intro (a rotating vector logo on a starfield, a scroller in a blue band at top
+  and bottom).
+- **Intro exit = left mouse button only.** It stays up indefinitely (watched for over 3 minutes).
+  Joystick fire on port 1, Space, Return and the right mouse button are all ignored. After a left
+  click: fully black screen for about 8.5 s (disk loading), then the game's title screen.
+- **Attract mode** (no input), one cycle about 84 s: title picture with scrolling credits
+  (about 42 s) → short black phase (about 2-3 s, the logo fades out) → high-score table on a grey
+  background (about 10-12 s) → **black for about 20-28 s** → a short gameplay demo (a few seconds,
+  "PLAYER 1 READY" on its first frame; not caught in every cycle at 3 s sampling) → black → title
+  again. Joystick fire during the demo ends it and the title returns about 8-10 s later.
+- **Starting the game: joystick fire on port 1 while the title is shown** (one press, held 400 ms).
+  No key and no second button press is needed. Timeline after the press:
+  - 0 to about 21 s: **completely black screen** (every pixel black), no visible activity;
+  - about 21-23 s: uniformly dark grey screen;
+  - about 24-29.5 s: "MISSION ONE" in red on a light grey screen;
+  - about 30-33 s: black;
+  - about 33.5-40 s: mission briefing card ("File No." with a portrait and a map) on black;
+  - about 40.5 s: black for under a second;
+  - **about 41 s: gameplay** (street level, score line at the top, timer starting at 2:59).
+  Without further input the player character dies within about 10 s; the briefing card is shown
+  again before each new life, and "GAME OVER" appears about 2 minutes after the press.
+- Consequence for an implementation: a black screen of up to about 21 s after fire on the title is
+  normal on 1.3; the "MISSION ONE" screen must appear by about 25 s and gameplay by about 41-42 s.
+
 ---
 
 ## Clean-room review

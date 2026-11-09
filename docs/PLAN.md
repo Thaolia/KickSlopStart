@@ -1498,6 +1498,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   it through the re-adopted lock; ejected again, `cd sys:` -> Spare3 is gone from `info`. prepush-check (dev) FAIL=0,
   Lemmings menu looked at; writeback_probe (DF1 47.0 s, DH0 14.4 s, 66 files identical, OFS CHECK OK) and
   `validate_probe.sh valid` pass.
+  **ADF sweep, console rings, POINTERPOS, Run on the caller's stack (2026-11-09)**: REMAINING-WORK sweep, C8, C9
+  (IND_WRITEEVENT) and A6 (ARCHITECTURE "console.device input rings and RastPort state", "POINTERPOS events", "Run on
+  the caller's stack"). Sweep, production ROM, screenshots looked at: Crazy Cones (title, game started with fire),
+  Hardwired disk 1 (to "insert disk 2"), Shinobi (left click ends the intro, fire on the title: "MISSION ONE" at about
+  24 s, gameplay at about 45 s; the analysis agent measured 24 s and 41 s on the real 1.3, cracktros-exit §7), AROS
+  boot disk: error 121 as on 1.3 (dos-v34-spec §4b). `tests/concmd_probe.sh` (production ROM): every earlier line
+  unchanged, ZERO FC, RING FF, RP 03 02. Workbench Shell: typing, `dir`, `list`, Ed with typed text. imenu probe on
+  our ROM (disk inserted on the insert-disk screen): MENUVERIFY / MOUSEBUTTONS / MENUPICK / MOUSEMOVE / VANILLAKEY
+  messages now arrive; the differences from intuition-input-menus §5 are listed under REMAINING-WORK C9. Stacks read
+  with gdb after a busy Shell session: Run used about 470 of its 4,460 bytes, the Background CLI never touched
+  2,780 of 5,244, NEWCON 4,236 of 6,044. Shell open from the Workbench (memfree.sh, production ROM): 847,136 ->
+  811,136, 36,000 bytes (40,304 before; 1.3: 33,480). prepush-check (dev) FAIL=0, Lemmings menu looked at;
+  writeback_probe (DF1 46.7 s, DH0 14.2 s, 66 files identical, OFS CHECK OK) and `validate_probe.sh valid` pass.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

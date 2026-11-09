@@ -425,6 +425,22 @@ MEMF_PUBLIC).
   audio.device, icon.library (loaded from `LIBS:` by `loadwb`); the file also names `topaz.font`. The program reaches its
   player-selection screen and stays stable for minutes.
 
+**AROS m68k boot disk: rejected with error 121 on the real 1.3 too [O, real KS 1.3, 2026-11-09].**
+Booting an AROS m68k boot floppy on the real 1.3 (A500, 512 KB chip + 512 KB slow, cycle-exact) gives,
+between about 17 and 22 s after power-on, the boot CLI window with the usual three banner lines followed by
+`Unable to load boot/amiga/AROSBootstrap: Error code 121` and a `1>` prompt. The startup-sequence
+stops there (its first line runs that file; none of the later lines prints anything). Typing the
+same path at the prompt gives `Unable to load df0:boot/amiga/AROSBootstrap: Error code 121`, and
+the disk's own `C:List` (also an AROS build) gives `Unable to load list: Error code 121`. The screen
+was unchanged after 90 s.
+Hunk structure (third-party data, read with a hunk lister): `AROSBootstrap` is HEADER, CODE +
+RELOC32, DATA + RELOC32, DATA + **`HUNK_RELRELOC32`** (block id `$3FD`), BSS, each closed by
+`HUNK_END`. The only block outside the classic 1.3 set (§4) is `HUNK_RELRELOC32`, so it is the
+rejected one [D]; the 1.3 loader answers an unknown block type with `ERROR_FILE_NOT_OBJECT` (121)
+and loads nothing. The AROS `C:List` also contains `HUNK_RELRELOC32` (and its hunks are not
+separated by `HUNK_END`), consistent with the same rejection. An error 121 for this disk is
+therefore the expected 1.3 behaviour.
+
 ## 5. Public LVO table of dos.library in V34 (1.3 subset)
 
 **[ABI, `dos_lib.fd` `##bias 30`]** — V34 exposes **only** the functions BEFORE the marker

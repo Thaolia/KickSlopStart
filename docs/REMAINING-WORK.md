@@ -67,14 +67,12 @@ held" qualifier bits of mouse events are not set yet.
 
 ### A6. Memory — [src], M
 
-- **Shell cost:** opening a Shell from the Workbench takes 40,304 bytes here (43,096 before, 47,152 at the start of
-  2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2). Broken down with MEMTRACK (PLAN "Shell memory
-  (2026-11-09)"): the disk programs (System/CLI, Run, Shell-Seg, Newcon-Handler) allocate the same blocks as on 1.3.
-  What is left of the 6.8 KB gap is our runtime:
-  - the 68000 margin of the two BCPL processes, the Background CLI and the NEWCON handler: 2 × 2,048;
-  - Run's command stack under Execute: 4,456 bytes, while 1.3 runs it on the System/CLI tool's process stack.
-  Both come from the BCPL runtime keeping its 68000 stack apart from the BCPL stack. Closing them means running
-  commands on the caller's stack.
+- **Shell cost:** opening a Shell from the Workbench takes 36,000 bytes here (40,304 before, 47,152 at the start of
+  2026-11-09), against 33,480 on 1.3 (newshell-memory-v34 §2). Execute now runs C:Run on the calling process's stack,
+  as 1.3 does (PLAN "Run on the caller's stack"). What is left of the 2.5 KB gap is the 68000 margin of the two BCPL
+  processes, the Background CLI and the NEWCON handler (2 × 2,048): measured after a busy Shell session, the
+  Background CLI never touched 2,780 bytes of its 5,244, so the margin cannot go entirely; its worst paths
+  (requesters raised by the Shell itself) are still to be measured.
 - **Idle desktop:** 873,352 bytes free, **12,360 above** 1.3 (860,992) since the 4-slot track cache and the
   smaller stack margin.
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
@@ -181,12 +179,15 @@ AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
   included).
 - Signal returns nothing in D0 (1.3: the previous tc_SigRecvd, undocumented).
 
-### C6. strap — done 2026-11-09
+### C6. strap — [src], M
 
 A floppy inserted on the insert-disk screen gets a new strap attempt without a reset (the vAmiga fast-RAM memo is
 gone with the reset), and a bootblock returning D0 ≠ 0 gets Alert $30000001 before the insert-disk screen
 (uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: now shows that alert once per soft-kicked boot,
 as 1.3 would.
+
+Left: a bootblock read at power-on runs in the boot context, before the scheduler and in supervisor mode; 1.3 runs
+the strap in a task. A bootblock that waits on another task (an IntuiMessage, a Delay) never gets an answer there.
 
 ### C7. Drives and file system — [src] partly, S
 
@@ -198,12 +199,12 @@ the disk again. Left in the file system:
 - the bitmap block does not move at each write-back (matters only for block-exact image comparisons);
 - an open file whose disk moves to another drive stays with the first drive's handler.
 
-### C8. console.device — [src], S–M
+### C8. console.device — done 2026-11-09
 
-- One 16-byte input ring is shared by every unit (`CON_RBSIZE`); 1.3 has 255 bytes per unit.
-- CMD_READ with io_Length 0 waits instead of replying −4.
-- MULTIBROADCAST raw events go to the active unit only.
-- The RastPort copy in the ConUnit is not kept.
+Each unit has its own 255-byte input ring (one more for the readers without a window), CMD_READ with io_Length 0
+replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit's copy of the RastPort state
+(cu_Mask … cu_TxSpacing) and leaves the window's RastPort as the program set it (console-keymap §2.2, §6).
+`tests/concmd_probe.sh`: ZERO FC, RING FF (255 bytes), RP 03 02.
 
 ### C9. intuition leftovers — S each
 
@@ -215,8 +216,17 @@ the disk again. Left in the file system:
   - no spaces written past the NUL.
 - AddGadget on a REQGADGET goes to the window list.
 - IDCMP ports are not in the public port list.
-- Pointer events written with input.device IND_WRITEEVENT (IECLASS_POINTERPOS, buttons) do not reach intuition:
-  `tests/imenu_probe.s`, which drives the 1.3 menus that way, sees no message on our ROM.
+- IND_WRITEEVENT pointer events: done 2026-11-09 (IECLASS_POINTERPOS converted to RAWMOUSE, intuition-prefs §6).
+  `tests/imenu_probe.s` now drives our menus, but only when its disk is inserted on the insert-disk screen (see C6:
+  a bootblock read at power-on runs before the scheduler). Its log against intuition-input-menus §5 shows:
+  - IntuiMessage Seconds/Micros come from the clock, not from the event's ie_TimeStamp (§1.3 point 4);
+  - the pointer moves by lores pixels, so MouseX is always even (1.3: hires pixels; step A gets 5 MOUSEMOVEs
+    instead of 6);
+  - MENUPICK chosen with the mouse carries the window in IAddress (1.3: ie_X/ie_Y, 0);
+  - an item toggled twice keeps HIGHITEM in the NextSelect chain (P F801 615B, 1.3: 415B);
+  - no mouse from the keyboard (Amiga + cursor keys, Amiga + Alt as buttons): they arrive as RAWKEYs;
+  - a click on the screen background leaves window A active (1.3: INACTIVEWINDOW, keys no longer sent to A);
+  - MENUDOWN with the menu-less window B active gives no MENUVERIFY at all (1.3: MENUHOT to B, MENUWAITING to A).
 - A window holds only one REFRESHWINDOW at a time.
 - Each drawer has its own IDCMP port.
 - it_scrxy ignores the screen's TopEdge.
@@ -357,14 +367,19 @@ How 1.3 runs them: what it deletes or launches, and which requesters it shows.
 - **Scooby-Doo:** reaches its title screen; nothing is documented beyond that.
 - **bootdisk-amiga-m68k:** still "Open" in an old PLAN note, but the C:Assign hang was only a speed effect.
 
-### Never tried on our ROM
+### Swept on 2026-11-09
 
-Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
+Crazy Cones (title, then a game started with fire), Hardwired (disk 1 runs to its "insert disk 2" screen), Shinobi
+(intro, title, game: "MISSION ONE" about 24 s and gameplay about 45 s after fire, 1.3: 24 s and 41 s,
+cracktros-exit §7) work. The AROS m68k boot disk stops on "Unable to load boot/amiga/AROSBootstrap: Error code 121",
+as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untried.
 
 ## Suggested order
 
-1. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-2. **C8, per-unit console input buffers of 255 bytes.**
-3. **C9, IND_WRITEEVENT pointer events.** It would let `tests/imenu_probe.s` check our menus against 1.3 directly.
-4. **A6, commands on the caller's stack** (the last 6.8 KB of the Shell gap). Large: the BCPL runtime's stack layout.
-A5, A6 (first part), C1, C2, C3, C5 (main part), C6 and C7 (main part) are done; D1/D3 are specified.
+1. **C6 left: the power-on bootblock in a task.** 1.3 runs the strap in a task with multitasking on; ours runs a
+   bootblock read at power-on before the scheduler, so a bootblock that waits for intuition (`tests/imenu_probe.s`)
+   gets nothing. The insert-disk retry already runs it from a process.
+2. **C9, the menu and input gaps the imenu probe shows** (list under C9).
+3. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
+   paths before cutting).
+A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8 and the ADF sweep are done; D1/D3 are specified.

@@ -270,26 +270,9 @@ console_beginio:
         bsr     con_putglyph         ; renders one byte (a2 = base; clobbers d0/d1/a0/a1)
         subq.l  #1,d4
         bra.s   .bi_wl
-.bi_read:                            ; #3b: drains the read buffer (ASCII cooked via input.device) into io_Data
-        move.l  IO_DATA2(a3),a4      ; dest
-        move.l  IO_LEN2(a3),d4       ; max
-        moveq   #0,d0                ; count read
-.bi_rl:
-        tst.l   d4
-        beq.s   .bi_rdone
-        move.w  CONB_RHEAD(a2),d1
-        cmp.w   CONB_RTAIL(a2),d1
-        beq.s   .bi_rdone            ; read buffer empty
-        lea     CONB_RBUF(a2),a0
-        move.b  0(a0,d1.w),(a4)+
-        addq.w  #1,d1
-        and.w   #CON_RBMASK,d1
-        move.w  d1,CONB_RHEAD(a2)
-        addq.l  #1,d0
-        subq.l  #1,d4
-        bra.s   .bi_rl
-.bi_rdone:
-        move.l  d0,IO_ACTUAL2(a3)    ; io_Actual = bytes read
+.bi_read:                            ; #3b: drains the window-less ring (ASCII cooked via input.device) into io_Data
+        move.l  a3,a1
+        bsr     con_fillread
 .bi_done:
         move.l  a2,a6                ; a6 = device base (BeginIO convention)
         movem.l (sp)+,d4/a2-a4
@@ -364,7 +347,7 @@ console_beginio:
         beq.s   .bu_wl               ; window without RastPort: shared bitplane
         tst.l   CONB_GFXBASE(a2)
         beq.s   .bu_wl
-        bsr     cu_write
+        bsr     cu_rpwrite
         bra     .bu_reply
 .bu_wl:
         tst.l   d4
@@ -374,16 +357,16 @@ console_beginio:
         subq.l  #1,d4
         bra.s   .bu_wl
 .bu_read:
+        tst.l   IO_LEN2(a3)
+        bne.s   .bu_rlen
+        move.b  #IOERR_BADLENGTH,IO_ERROR(a3) ; 1.3 replies -4 then misbehaves (console-keymap-v34 §6.3)
+        bra     .bu_reply
+.bu_rlen:
         move.l  ($4).w,a6
         jsr     LVO_DISABLE(a6)
         move.l  a3,a1
         bsr     con_stopped
         bne.s   .bu_queue            ; CMD_STOP: reads wait for CMD_START
-        bsr     con_target           ; a console has the active window: only its reads take the keys
-        beq.s   .bu_rany
-        cmp.l   IO_UNIT(a3),d0
-        bne.s   .bu_queue
-.bu_rany:
         move.l  a3,a1
         bsr     con_fillread         ; d0 = bytes copied
         tst.l   d0
@@ -412,7 +395,7 @@ console_beginio:
         move.w  d0,d4
         move.l  IO_UNIT(a3),a4
         cmp.l   #-1,a4               ; SetMap's unit -1: no ConUnit
-        beq.s   .bu_reply
+        beq     .bu_reply
         lea     CU_STOP(a4),a4
         cmp.l   IO_UNIT(a3),a2
         bne.s   .bc_flag
@@ -422,7 +405,9 @@ console_beginio:
         jsr     LVO_DISABLE(a6)
         cmp.w   #CMD_CLEAR,d4
         bne.s   .bc_nclr
-        move.w  CONB_RTAIL(a2),CONB_RHEAD(a2)
+        move.l  IO_UNIT(a3),a0
+        bsr     con_ring
+        move.w  CRG_TAIL(a0),CRG_HEAD(a0)
 .bc_nclr:
         cmp.w   #CMD_STOP,d4
         bne.s   .bc_nstop
@@ -470,59 +455,78 @@ console_beginio:
         jsr     LVO_REPLYMSG(a6)
         bra     .bi_done
 
-; con_push(a0 = bytes, d2.w = count > 0, a2 = base) -> Z = 1 if they do not all fit (nothing pushed). Two producers
-; (the input handler, the window bounds report of a write), the input chain also runs in the VBlank interrupt:
-; bare Disable. Clobbers d0-d2/a0/a1.
+; con_push(a0 = bytes, a1 = ring, d2.w = count > 0) -> Z = 1 if they do not all fit (nothing pushed). Two producers
+; (the input handler, the reports of a write), the input chain also runs in the VBlank interrupt: bare Disable.
+; Clobbers d0-d2/a0.
 con_push:
-        move.l  ($4).w,a1
-        addq.b  #1,EB_IDNEST(a1)
+        move.l  a3,-(sp)
+        move.l  ($4).w,a3
+        addq.b  #1,EB_IDNEST(a3)
         move.w  #INTF_INTEN,INTENA
-        move.w  CONB_RHEAD(a2),d0    ; free room in the ring
-        sub.w   CONB_RTAIL(a2),d0
+        move.w  CRG_HEAD(a1),d0       ; free room in the ring
+        sub.w   CRG_TAIL(a1),d0
         subq.w  #1,d0
-        and.w   #CON_RBMASK,d0
+        and.w   #CRG_MASK,d0
         cmp.w   d2,d0
         blo.s   .ps_full
-        lea     CONB_RBUF(a2),a1
-        move.w  CONB_RTAIL(a2),d0
+        move.w  CRG_TAIL(a1),d0
         subq.w  #1,d2
 .ps_lp:
-        move.b  (a0)+,0(a1,d0.w)
+        move.b  (a0)+,CRG_BUF(a1,d0.w)
         addq.w  #1,d0
-        and.w   #CON_RBMASK,d0
+        and.w   #CRG_MASK,d0
         dbra    d2,.ps_lp
-        move.w  d0,CONB_RTAIL(a2)
+        move.w  d0,CRG_TAIL(a1)
         moveq   #1,d2                ; Z = 0
         bra.s   .ps_on
 .ps_full:
         moveq   #0,d2                ; Z = 1
 .ps_on:
-        move.l  ($4).w,a1
-        subq.b  #1,EB_IDNEST(a1)
+        subq.b  #1,EB_IDNEST(a3)
         bge.s   .ps_ret
         move.w  #$C000,INTENA        ; SETCLR + INTEN
 .ps_ret:
+        move.l  (sp)+,a3
         tst.l   d2
         rts
 
-; con_fillread(a1 = CMD_READ, a2 = base): copies the read buffer into io_Data (max io_Length) -> d0 = bytes copied
-; = io_Actual. Called under Disable. Clobbers d1/a0.
+; con_ring(a0 = io_Unit, a2 = base) -> a0 = read ring of that unit: the ConUnit's, or the base's for the units
+; without a window (the base, -1, none). Preserves everything else.
+con_ring:
+        cmp.l   a2,a0
+        beq.s   .rg_base
+        cmpa.w  #-1,a0
+        beq.s   .rg_base
+        cmpa.w  #0,a0
+        beq.s   .rg_base
+        lea     CU_RING(a0),a0
+        rts
+.rg_base:
+        lea     CONB_RING(a2),a0
+        rts
+
+; con_fillread(a1 = CMD_READ, a2 = base): copies its unit's ring into io_Data (at most io_Length bytes, one for a
+; negative length) -> d0 = bytes copied = io_Actual. Clobbers d1/a0.
 con_fillread:
         movem.l d2/a3,-(sp)
+        move.l  IO_UNIT(a1),a0
+        bsr.s   con_ring
         move.l  IO_DATA2(a1),a3
         move.l  IO_LEN2(a1),d2
+        bpl.s   .cf_go
+        moveq   #1,d2                ; -1: one byte at most (§6.3)
+.cf_go:
         moveq   #0,d0
 .cf_lp:
         tst.l   d2
         beq.s   .cf_done
-        move.w  CONB_RHEAD(a2),d1
-        cmp.w   CONB_RTAIL(a2),d1
+        move.w  CRG_HEAD(a0),d1
+        cmp.w   CRG_TAIL(a0),d1
         beq.s   .cf_done
-        lea     CONB_RBUF(a2),a0
-        move.b  0(a0,d1.w),(a3)+
+        move.b  CRG_BUF(a0,d1.w),(a3)+
         addq.w  #1,d1
-        and.w   #CON_RBMASK,d1
-        move.w  d1,CONB_RHEAD(a2)
+        and.w   #CRG_MASK,d1
+        move.w  d1,CRG_HEAD(a0)
         addq.l  #1,d0
         subq.l  #1,d2
         bra.s   .cf_lp
@@ -635,131 +639,132 @@ console_CDInputHandler:
         rts
 
 ; console_input_handler(a0 = InputEvent list, a1 = is_Data = console base): handler registered on input.device via
-; IND_ADDHANDLER. An event whose class the active unit asked for with CSI n { becomes a raw report (§4)
-; CSI class;subclass;code;qualifier;x;y;seconds;microseconds | in the read buffer, truncated if it does not fit, and is
-; not cooked. Each other RAWKEY is converted through the keymap of the unit whose window is active (the default keymap
-; otherwise); the bytes go into the read buffer only if they all fit, then a waiting CMD_READ is served. Returns
-; d0 = unchanged list (pass-through). Preserves d2-d7/a2-a6.
-CIH_KEYMAP      EQU 16                   ; frame: conversion buffer (16 bytes), copy of the struct KeyMap (32 bytes),
-CIH_RAW         EQU CIH_KEYMAP+32        ; raw report (96 bytes)
+; IND_ADDHANDLER (spec console-keymap-v34 §6.1). Each event goes to the unit whose window is active, or to every unit
+; when its qualifier carries IEQUALIFIER_MULTIBROADCAST; with no window active at all, a key goes to the window-less
+; ring. For a unit that asked for its class with CSI n {, a raw report CSI class;subclass;code;qualifier;x;y;seconds;
+; microseconds | goes into its ring, truncated if it does not fit; any other RAWKEY is converted through the unit's
+; keymap and its bytes go in only if they all fit. Then the waiting CMD_READs are served. Returns d0 = unchanged
+; list (pass-through). Preserves d2-d7/a2-a6.
+CIH_CONV        EQU 0                    ; frame: conversion buffer (128 bytes), raw report (96 bytes)
+CIH_RAW         EQU CIH_CONV+128
 CIH_SIZE        EQU CIH_RAW+96
+IEQUALIFIERB_MULTIBROADCAST EQU 11
 console_input_handler:
-        movem.l d2-d4/a2-a3/a6,-(sp)
+        movem.l d2-d5/a2-a6,-(sp)
         lea     -CIH_SIZE(sp),sp
+        move.l  sp,a5                ; a5 = frame
         move.l  a0,d3                ; d3 = original list (pass-through return)
         move.l  a1,a2                ; a2 = console base
         move.l  a0,a3                ; a3 = current event
         move.l  ($4).w,a6
+        moveq   #0,d5                ; d5 != 0: bytes went into a ring
 .cih_loop:
         move.l  a3,d0
-        beq     .cih_done
-        bsr     con_rawwanted
-        bne     .cih_raw
-        cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
-        bne     .cih_next
-        ; A CON: handler that preempts this task can CloseDevice and free the unit: its keymap is copied with
+        beq.s   .cih_done
+        ; A CON: handler that preempts this task can CloseDevice and free a unit: the units are walked with
         ; interrupts off (bare Disable: the input chain also runs from the VBlank interrupt).
         addq.b  #1,EB_IDNEST(a6)
         move.w  #INTF_INTEN,INTENA
-        ; A key whose active window is not a console belongs to that window only (d4 != 0): 1.3 never keeps it for
-        ; a console opened later (console-keymap-v34 §6.4). With no active window, the window-less readers get it.
-        moveq   #0,d4
-        bsr     con_target           ; keymap of the active console unit, else the default one
-        lea     CONB_DEFKM(a2),a0
-        bne.s   .cih_unit
-        move.l  CONB_IBASE(a2),d0
-        beq.s   .cih_km
-        move.l  d0,a1
-        move.l  52(a1),d4            ; ib_ActiveWindow
-        bra.s   .cih_km
-.cih_unit:
+        move.w  IE_QUALIFIER(a3),d0
+        btst    #IEQUALIFIERB_MULTIBROADCAST,d0
+        bne.s   .cih_all
+        bsr     con_target
+        bne.s   .cih_one
+        move.l  CONB_IBASE(a2),d0    ; a key whose active window is not a console belongs to that window only: 1.3
+        beq.s   .cih_free            ; never keeps it for a console opened later (§6.4)
         move.l  d0,a0
-        lea     CU_KEYMAP(a0),a0
-.cih_km:
-        lea     CIH_KEYMAP(sp),a1
-        moveq   #8-1,d0
-.cih_kmcp:
-        move.l  (a0)+,(a1)+
-        dbra    d0,.cih_kmcp
+        tst.l   52(a0)               ; ib_ActiveWindow
+        bne.s   .cih_en
+.cih_free:
+        suba.l  a4,a4
+        bsr.s   cih_unit
+        bra.s   .cih_en
+.cih_one:
+        move.l  d0,a4
+        bsr.s   cih_unit
+        bra.s   .cih_en
+.cih_all:
+        move.l  CONB_UNITS(a2),d0
+.cih_al:
+        beq.s   .cih_en
+        move.l  d0,a4
+        bsr.s   cih_unit
+        move.l  CU_NEXT(a4),d0
+        bra.s   .cih_al
+.cih_en:
         subq.b  #1,EB_IDNEST(a6)
-        bge.s   .cih_conv
+        bge.s   .cih_next
         move.w  #$C000,INTENA        ; SETCLR + INTEN
-.cih_conv:
-        tst.l   d4
-        bne.s   .cih_next
-        move.l  a2,-(sp)
-        lea     4+CIH_KEYMAP(sp),a2
-        move.l  a3,a0
-        lea     4(sp),a1
-        moveq   #16,d1
-        jsr     km_conv
-        move.l  (sp)+,a2
-        move.l  d0,d2                ; d2 = bytes
-        ble.s   .cih_next
-                ifeq    CON_NO_READBUF
-        lea     (sp),a0
-        bsr     con_push
-        beq.s   .cih_next            ; does not fit: dropped
-        bsr     con_servereads       ; a CMD_READ of an open unit was waiting: served and replied
-                endc                 ; RED CON_NO_READBUF: converts but does not buffer -> empty CMD_READ
 .cih_next:
         move.l  IE_NEXTEVENT(a3),a3
-        bra     .cih_loop
-.cih_raw:
-        lea     CIH_RAW(sp),a0
-        bsr     con_rawreport        ; a0 = end of the report
-        lea     CIH_RAW(sp),a1
-        move.l  a0,d4
-        sub.l   a1,d4                ; d4 = its length
-.cih_rawpush:                        ; byte by byte: what does not fit is lost (truncated report)
-        move.l  a1,-(sp)
-        move.l  a1,a0
-        moveq   #1,d2
-        bsr     con_push
-        move.l  (sp)+,a1
-        beq.s   .cih_rawend
-        addq.l  #1,a1
-        subq.l  #1,d4
-        bne.s   .cih_rawpush
-.cih_rawend:
-        bsr     con_servereads
-        bra.s   .cih_next
+        bra.s   .cih_loop
 .cih_done:
+                ifeq    CON_NO_READBUF
+        tst.l   d5
+        beq.s   .cih_ret
+        bsr     con_servereads       ; waiting CMD_READs served and replied
+                endc                 ; RED CON_NO_READBUF: converts but never serves -> CMD_READ stays empty
+.cih_ret:
         move.l  d3,d0                ; return the original list (pass-through)
         lea     CIH_SIZE(sp),sp
-        movem.l (sp)+,d2-d4/a2-a3/a6
+        movem.l (sp)+,d2-d5/a2-a6
         rts
 
-; con_rawwanted(a3 = event, a2 = base, a6 = SysBase) -> Z = 0 if the active console unit reports its class raw
-; (cu_RawEvents bit, classes 0..18). Clobbers d0/d1/a0.
-con_rawwanted:
+; cih_unit(a3 = event, a4 = ConUnit | 0 = the window-less ring, a5 = frame, a2 = base), under Disable: the event for
+; this unit (raw report or cooked key). Sets d5 when bytes went in. Clobbers d0-d2/d4/a0/a1.
+cih_unit:
+        move.l  a4,d0
+        beq.s   .cu_cook             ; no raw report without a unit
         moveq   #0,d1
         move.b  IE_CLASS(a3),d1
         cmp.w   #18,d1
-        bhi.s   .rw_no
-        addq.b  #1,EB_IDNEST(a6)     ; (the unit can be closed by a preempting task)
-        move.w  #INTF_INTEN,INTENA
-        bsr     con_target
-        beq.s   .rw_off
-        move.l  d0,a0
-        lea     CU_RAWEV(a0),a0
+        bhi.s   .cu_cook
         move.w  d1,d0
         lsr.w   #3,d0
         and.w   #7,d1
+        lea     CU_RAWEV(a4),a0
         btst    d1,0(a0,d0.w)
-        sne     d1
-        bra.s   .rw_on
-.rw_off:
-        moveq   #0,d1
-.rw_on:
-        subq.b  #1,EB_IDNEST(a6)
-        bge.s   .rw_ret
-        move.w  #$C000,INTENA        ; SETCLR + INTEN
-.rw_ret:
-        tst.b   d1
+        beq.s   .cu_cook
+        lea     CIH_RAW(a5),a0
+        bsr     con_rawreport        ; a0 = end of the report
+        move.l  a0,d4
+        lea     CIH_RAW(a5),a0
+        sub.l   a0,d4                ; d4 = its length
+        lea     CU_RING(a4),a1
+.cu_rawpush:                         ; byte by byte: what does not fit is lost (truncated report)
+        moveq   #1,d2
+        bsr     con_push
+        beq.s   .cu_ret
+        st      d5
+        subq.l  #1,d4
+        bne.s   .cu_rawpush
         rts
-.rw_no:
-        moveq   #0,d1
+.cu_cook:
+        cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
+        bne.s   .cu_ret
+        move.l  a2,-(sp)
+        lea     CONB_DEFKM(a2),a2
+        move.l  a4,d0
+        beq.s   .cu_km
+        lea     CU_KEYMAP(a4),a2
+.cu_km:
+        move.l  a3,a0
+        lea     CIH_CONV(a5),a1
+        moveq   #127,d1              ; 1.3 converts into a 127-byte buffer (§6.1)
+        jsr     km_conv
+        move.l  (sp)+,a2
+        move.l  d0,d2                ; d2 = bytes
+        ble.s   .cu_ret
+        lea     CIH_CONV(a5),a0
+        lea     CONB_RING(a2),a1
+        move.l  a4,d0
+        beq.s   .cu_push
+        lea     CU_RING(a4),a1
+.cu_push:
+        bsr     con_push             ; all or nothing
+        beq.s   .cu_ret
+        st      d5
+.cu_ret:
         rts
 
 ; con_rawreport(a3 = event, a0 = buffer) -> a0 = end of CSI class;subclass;code;qualifier;x;y;seconds;microseconds |
@@ -797,15 +802,13 @@ con_rawreport:
         move.b  #';',(a0)+
         rts
 
-; con_servereads(a2 = base): if a CMD_READ is waiting and the read buffer has bytes, fills it, unhooks it
-; and replies to it. If the active window is that of a console, only a read from that unit is served (otherwise the
-; keys wait in the buffer); otherwise the head of the queue. Preserves d2-d7/a2-a6.
+; con_servereads(a2 = base): every waiting CMD_READ whose unit is not stopped and whose ring has bytes is filled,
+; unhooked and replied, in queue order. Preserves d2-d7/a2-a6.
 con_servereads:
         movem.l a3-a4/a6,-(sp)
         move.l  ($4).w,a6
+.sr_again:
         jsr     LVO_DISABLE(a6)
-        bsr     con_target
-        move.l  d0,d1                ; d1 = targeted unit | 0
         lea     CONB_RQ(a2),a4       ; a4 = previous link
 .sr_find:
         move.l  (a4),d0
@@ -814,26 +817,21 @@ con_servereads:
         move.l  a3,a1
         bsr     con_stopped
         bne.s   .sr_next
-        tst.l   d1
-        beq.s   .sr_take
-        cmp.l   IO_UNIT(a3),d1
-        beq.s   .sr_take
+        move.l  a3,a1
+        bsr     con_fillread
+        tst.l   d0
+        bne.s   .sr_take
 .sr_next:
         move.l  a3,a4
         bra.s   .sr_find
 .sr_take:
-        move.l  a3,a1
-        bsr     con_fillread
-        tst.l   d0
-        beq.s   .sr_none
         move.l  (a3),(a4)            ; unhook the served request
         jsr     LVO_ENABLE(a6)
         move.l  a3,a1
         jsr     LVO_REPLYMSG(a6)
-        bra.s   .sr_ret
+        bra.s   .sr_again
 .sr_none:
         jsr     LVO_ENABLE(a6)
-.sr_ret:
         movem.l (sp)+,a3-a4/a6
         rts
 
@@ -901,8 +899,7 @@ console_initfunc:
         move.w  #CON_PXH,CONB_PXROWS(a2)
         clr.w   CONB_CURX(a2)
         clr.w   CONB_CURY(a2)
-        clr.w   CONB_RHEAD(a2)
-        clr.w   CONB_RTAIL(a2)
+        clr.l   CONB_RING+CRG_HEAD(a2) ; head and tail
         move.l  KM_DEFKM,d0          ; default keymap = the KeyMap of keymap.resource's first node
         beq.s   .ci_nokm
         move.l  d0,a0
@@ -1004,7 +1001,13 @@ CU_FIXROW       EQU 366              ; private: page length fixed by CSI t (0 = 
 CU_FIXXO        EQU 368              ; private: XROrigin fixed by CSI x (-1 = from the window)
 CU_FIXYO        EQU 370              ; private: YROrigin fixed by CSI y (-1 = from the window)
 CU_WINW         EQU 372              ; private: window Width and Height (long) when the geometry was last computed
-CU_SIZE         EQU 376
+CU_RING         EQU 376              ; private: read ring of the unit (CRG_*)
+CU_SIZE         EQU CU_RING+CRG_SIZE
+CU_RPMASK       EQU 258              ; cu_Mask, cu_FgPen, cu_BgPen, cu_AOLPen, cu_DrawMode, cu_AreaPtSz: the copy of the
+CU_AREAPTRN     EQU 264              ; window RastPort's state that the unit draws with (console-keymap-v34 §2.2)
+CU_MINTERMS     EQU 268
+CU_FONT         EQU 276
+CU_ALGO         EQU 280              ; cu_AlgoStyle, cu_TxFlags, cu_TxHeight, cu_TxWidth, cu_TxBaseline, cu_TxSpacing
 CU_NTABS        EQU 80
 CU_NPARS        EQU 24
 CU_PDEF         EQU -5               ; absent parameter
@@ -1020,6 +1023,16 @@ cu_init:
         move.l  a5,-(sp)
         move.l  a0,a5
         move.l  a1,CU_WINDOW(a5)
+        move.l  WD_RPORT(a1),d0
+        beq.s   .ci_norp
+        movem.l d0/a3,-(sp)
+        move.l  d0,a3
+        lea     rps_unit(pc),a0
+        move.l  a5,a1
+        moveq   #0,d0
+        bsr     rps_copy             ; the unit starts with the window's RastPort state
+        movem.l (sp)+,d0/a3
+.ci_norp:
         move.b  #$70,CU_MODES+2(a5)
         move.w  #-1,CU_FIXXO(a5)
         move.w  #-1,CU_FIXYO(a5)
@@ -1350,6 +1363,67 @@ cu_write:
         bsr     cu_curon
         movem.l (sp)+,d2-d7/a2-a6
         rts
+
+; cu_rpwrite(a0 = ConUnit, a2 = base, a4 = data, d4 = length): CMD_WRITE into a window as 1.3 does it (console-
+; keymap-v34 §2.2): the window RastPort's state is saved, the unit's copy installed, the write done, the RastPort's
+; state copied back into the unit, the RastPort restored, so the program sharing the window finds its pens, mode,
+; font and pen position intact. Clobbers d0/d1/a0/a1.
+RPS_SIZE        EQU 36
+cu_rpwrite:
+        movem.l a3/a5,-(sp)
+        move.l  a0,a5
+        move.l  CU_WINDOW(a5),a1
+        move.l  WD_RPORT(a1),a3
+        lea     -RPS_SIZE(sp),sp
+        lea     rps_save(pc),a0
+        move.l  sp,a1
+        moveq   #0,d0
+        bsr.s   rps_copy             ; RastPort -> saved block
+        lea     rps_unit(pc),a0
+        move.l  a5,a1
+        moveq   #1,d0
+        bsr.s   rps_copy             ; unit -> RastPort
+        move.l  a5,a0
+        bsr     cu_write
+        lea     rps_unit(pc),a0
+        move.l  a5,a1
+        moveq   #0,d0
+        bsr.s   rps_copy             ; RastPort -> unit
+        lea     rps_save(pc),a0
+        move.l  sp,a1
+        moveq   #1,d0
+        bsr.s   rps_copy             ; saved block -> RastPort
+        lea     RPS_SIZE(sp),sp
+        movem.l (sp)+,a3/a5
+        rts
+; rps_copy(a0 = table, a1 = block, a3 = RastPort, d0 = 0: RastPort to block, otherwise block to RastPort): copies the
+; fields of the table (RastPort offset, block offset, length - 1; -1 ends it). Preserves everything.
+rps_copy:
+        movem.l d1-d3/a0/a2/a4,-(sp)
+.rc_lp:
+        move.w  (a0)+,d1
+        bmi.s   .rc_ret
+        move.w  (a0)+,d2
+        move.w  (a0)+,d3
+        lea     0(a3,d1.w),a2
+        lea     0(a1,d2.w),a4
+        tst.l   d0
+        beq.s   .rc_cp
+        exg     a2,a4
+.rc_cp:
+        move.b  (a2)+,(a4)+
+        dbra    d3,.rc_cp
+        bra.s   .rc_lp
+.rc_ret:
+        movem.l (sp)+,d1-d3/a0/a2/a4
+        rts
+; rp_Mask..rp_AreaPtSz, rp_AreaPtrn, rp_minterms, rp_Font, rp_AlgoStyle..rp_TxSpacing, then rp_cp_x/y (saved only)
+rps_save:
+        dc.w    24,0,6-1, 8,6,4-1, 40,10,8-1, 52,18,4-1, 56,22,10-1, 36,32,4-1, -1
+; the same into the ConUnit, without cu_FgPen / cu_BgPen: they hold the pens the escape sequences chose
+rps_unit:
+        dc.w    24,CU_RPMASK,1-1, 27,CU_RPMASK+3,3-1, 8,CU_AREAPTRN,4-1, 40,CU_MINTERMS,8-1, 52,CU_FONT,4-1
+        dc.w    56,CU_ALGO,10-1, -1
 
 ; cu_isprint(d0.b) -> Z = 1 if printable character ($20..$7F, $A0..$FF). Only touches the condition codes.
 cu_isprint:
@@ -1701,6 +1775,7 @@ cu_reply:
         move.l  CU_BASE(a5),a2
         exg     a0,d2
         sub.l   a0,d2
+        lea     CU_RING(a5),a1
         bsr     con_push
         beq.s   .ry_out
         bsr     con_servereads

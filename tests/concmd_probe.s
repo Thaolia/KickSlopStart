@@ -11,6 +11,9 @@
 ;   "CC FLUSH <err> <read type> <read err> AFTER <read type>"                          expected 00 07 FE 07
 ;   "CC RESET <err> <read type> <read err> AFTER <read type>"                          expected 00 07 FE 07
 ;   "CC UPDATE <err>"                                                                  expected FD
+;   "CC ZERO <err>": CMD_READ with io_Length 0                                         expected FC (§6.3)
+;   "CC RING <actual>": 60 reports of 5 bytes written, one big read                    expected FF (255, §6.3)
+;   "CC RP <FgPen> <DrawMode>": the window RastPort after a write (set to 3 / 2)       expected 03 02 (§2.2)
 ;   "CC END"
 ; Build and run: tests/concmd_probe.sh <out_dir> [rom]
 
@@ -168,6 +171,58 @@ stage2:
         moveq   #4,d0
         bsr     ctl
         bsr     nl
+
+; --- ZERO: a read of length 0 is refused with IOERR_BADLENGTH
+        lea     m_zero(pc),a0
+        bsr     puts
+        lea     ior(pc),a1
+        move.w  #2,IO_CMD(a1)
+        clr.l   IO_LEN(a1)
+        jsr     _DoIO(a6)
+        bsr     rerr
+        bsr     nl
+
+; --- RING: the unit's input buffer keeps 255 bytes, the rest of the reports is lost
+        lea     m_ring(pc),a0
+        bsr     puts
+        moveq   #5,d0                   ; CMD_CLEAR (prints its io_Error)
+        bsr     ctl
+        moveq   #60-1,d5
+.rg:    bsr     cpr
+        dbra    d5,.rg
+        lea     ior(pc),a1
+        move.w  #2,IO_CMD(a1)
+        move.l  #RBIG,IO_LEN(a1)
+        lea     rbig(pc),a0
+        move.l  a0,IO_DATA(a1)
+        jsr     _DoIO(a6)
+        lea     ior(pc),a1
+        move.l  IO_ACT(a1),d0
+        bsr     shex
+        bsr     nl
+
+; --- RP: a write leaves the window's RastPort as the program set it
+        lea     m_rp(pc),a0
+        bsr     puts
+        move.l  d6,a0
+        move.l  50(a0),a0               ; wd_RPort
+        move.b  #3,25(a0)               ; rp_FgPen
+        move.b  #2,28(a0)               ; rp_DrawMode = COMPLEMENT
+        lea     iow(pc),a1
+        move.w  #3,IO_CMD(a1)
+        move.l  #1,IO_LEN(a1)
+        lea     m_x(pc),a0
+        move.l  a0,IO_DATA(a1)
+        jsr     _DoIO(a6)
+        move.l  d6,a0
+        move.l  50(a0),a0
+        move.b  25(a0),d0
+        bsr     shex
+        move.l  d6,a0
+        move.l  50(a0),a0
+        move.b  28(a0),d0
+        bsr     shex
+        bsr     nl
         lea     m_end(pc),a0
         bsr     puts
 hang:   bra.s   hang
@@ -287,9 +342,15 @@ m_reset: dc.b   "CC RESET",0
 m_after: dc.b   " AFTER",0
 m_update: dc.b  "CC UPDATE",0
 m_end:   dc.b   "CC END",10,0
+m_zero:  dc.b   "CC ZERO",0
+m_ring:  dc.b   "CC RING",0
+m_rp:    dc.b   "CC RP",0
+m_x:     dc.b   "x"
         even
 port:   dcb.b   34,0
 ioc:    dcb.b   IOSIZE,0
 ior:    dcb.b   IOSIZE,0
 iow:    dcb.b   IOSIZE,0
 rbuf:   dcb.b   16,0
+RBIG     EQU 400
+rbig:   dcb.b   RBIG,0

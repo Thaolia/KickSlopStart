@@ -399,6 +399,7 @@ IECLASS_NULL    EQU 0            ; ie_Class: neutralised event (ignored by the f
 IECLASS_RAWKEY  EQU 1            ; ie_Class: raw key (keycode + up/down)
 IECLASS_RAWMOUSE EQU 2           ; ie_Class: raw mouse (button + position)
 IECLASS_EVENT   EQU 3            ; ie_Class: intuition event (code 1 IECODE_NEWACTIVE, ie_EventAddress = window)
+IECLASS_POINTERPOS EQU 4         ; ie_Class: absolute pointer position (converted to RAWMOUSE by intuition)
 IECLASS_TIMER   EQU 6            ; ie_Class: input.device tick (10 per second)
 IECLASS_DISKREMOVED EQU 15       ; ie_Class: floppy ejected (emitted by the file system, spec disk-change-v34 §3)
 IECLASS_DISKINSERTED EQU 16      ; ie_Class: floppy inserted and mounted
@@ -553,21 +554,23 @@ CONB_BWIDTH  EQU LIB_SIZE+4    ; UWORD bytes/line (stride)
 CONB_PXROWS  EQU LIB_SIZE+6    ; UWORD height px
 CONB_CURX    EQU LIB_SIZE+8    ; UWORD current char column (0..CON_COLS-1)
 CONB_CURY    EQU LIB_SIZE+10   ; UWORD current pixel line (0,8,16,... multiple of 8)
-; #3b: read buffer (keyboard via input.device) + struct Interrupt of the handler registered on input.device
-CONB_RHEAD   EQU LIB_SIZE+12   ; UWORD read index of the read buffer (consumer = CMD_READ)
-CONB_RTAIL   EQU LIB_SIZE+14   ; UWORD write index (producer = console_input_handler)
-CONB_RBUF    EQU LIB_SIZE+16   ; 16 bytes: ASCII ring cooked from the RAWKEYs received via input.device
-CONB_INT     EQU LIB_SIZE+32   ; struct Interrupt (IS_SIZE=22) of the handler registered via IND_ADDHANDLER
-CONB_ESC     EQU LIB_SIZE+56   ; UBYTE state of the sequence filter: 0 normal, 1 after ESC, 2 inside a CSI
-CONB_STOP    EQU LIB_SIZE+57   ; UBYTE reads of the unit without window held by CMD_STOP
-CONB_RQ      EQU LIB_SIZE+60   ; APTR queue of the pending CMD_READs (linked by LN_SUCC), open units
-CONB_GFXBASE EQU LIB_SIZE+64   ; APTR GfxBase: rendering into the windows' RastPort (ConUnit units)
-CONB_UNITS   EQU LIB_SIZE+68   ; APTR list of the open ConUnits (linked by CU_NEXT): key routing
-CONB_IBASE   EQU LIB_SIZE+72   ; APTR IntuitionBase (looked up on first need: intuition initialises afterwards)
-CONB_DEFKM   EQU LIB_SIZE+76   ; struct KeyMap (32 bytes): default keymap (CD_SETDEFAULTKEYMAP), copied into new units
-CONDEV_SIZE  EQU LIB_SIZE+108
-CON_RBSIZE   EQU 16            ; read buffer size (power of 2)
-CON_RBMASK   EQU 15
+; read ring (console-keymap-v34 §6.3: 255 useful bytes per unit): one in each ConUnit, one in the base
+CRG_HEAD      EQU 0             ; UWORD read index (consumer = CMD_READ)
+CRG_TAIL      EQU 2             ; UWORD write index (producers = the input handler, the reports of a write)
+CRG_BUF       EQU 4             ; 256 bytes
+CRG_MASK      EQU 255
+CRG_SIZE      EQU CRG_BUF+CRG_MASK+1
+; #3b: struct Interrupt of the handler registered on input.device, read rings (keys cooked via input.device)
+CONB_INT     EQU LIB_SIZE+12   ; struct Interrupt (IS_SIZE=22) of the handler registered via IND_ADDHANDLER
+CONB_ESC     EQU LIB_SIZE+34   ; UBYTE state of the sequence filter: 0 normal, 1 after ESC, 2 inside a CSI
+CONB_STOP    EQU LIB_SIZE+35   ; UBYTE reads of the unit without window held by CMD_STOP
+CONB_RQ      EQU LIB_SIZE+36   ; APTR queue of the pending CMD_READs (linked by LN_SUCC), open units
+CONB_GFXBASE EQU LIB_SIZE+40   ; APTR GfxBase: rendering into the windows' RastPort (ConUnit units)
+CONB_UNITS   EQU LIB_SIZE+44   ; APTR list of the open ConUnits (linked by CU_NEXT): key routing
+CONB_IBASE   EQU LIB_SIZE+48   ; APTR IntuitionBase (looked up on first need: intuition initialises afterwards)
+CONB_DEFKM   EQU LIB_SIZE+52   ; struct KeyMap (32 bytes): default keymap (CD_SETDEFAULTKEYMAP), copied into new units
+CONB_RING    EQU LIB_SIZE+84   ; read ring of the readers without a window (keys typed while no window is active)
+CONDEV_SIZE  EQU CONB_RING+CRG_SIZE
 ; M7L_OLD_CONV=1 (RED): restores the old VBLANK conversion (/20000) on the MICROHZ unit -> the 0.5 s
 ; request expires in ~25 interrupts ~= 9 ms < 1 VBLANK tick -> out of band -> "M7L" NOT emitted. The request
 ; value of the task_timer loop is gated in parallel (TT_MICRO_REQ) so that the PERIOD stays ~7 ms
