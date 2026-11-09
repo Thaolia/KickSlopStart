@@ -37,6 +37,9 @@ pointer_input_handler:
                 beq     .pih_done
                 cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
                 bne.s   .pih_tick
+                bsr     ptr_keymouse         ; Amiga + arrows / Alt: the key may become a mouse event
+                cmp.b   #IECLASS_RAWKEY,IE_CLASS(a3)
+                bne     .pih_mouse
                 jsr     it_keyin             ; keyboard of an active text gadget
                 bra     .pih_next
 .pih_tick:
@@ -134,6 +137,125 @@ pointer_input_handler:
 .pih_done:
                 move.l  d2,d0                ; list (pass-through)
                 movem.l (sp)+,d2/d3/d4/a3
+                rts
+
+; ptr_keymouse(a3 = RAWKEY event), intuition-input-menus §1.7: a button emulated by Amiga + Alt is released (its
+; SELECTUP / MENUUP goes to intuition first) at the first key event whose qualifier no longer holds that Alt. A press
+; with an Amiga qualifier then becomes, in place: an arrow, a RAWMOUSE movement (code $FF; speed 1 on a press, +6 in X
+; or +4 in Y per repeat, 100 in X or 75 in Y with Shift; the other axis's speed back to 0); left / right Alt, a
+; SELECTDOWN / MENUDOWN RAWMOUSE if that button is not already emulated. Clobbers d0/d1/a0.
+IEQUALIFIER_SHIFTS EQU $0003
+IEQUALIFIERB_LALT  EQU 4
+IEQUALIFIERB_RALT  EQU 5
+IEQUALIFIER_AMIGAS EQU $00C0
+IEQUALIFIERB_REPEAT EQU 9
+ptr_keymouse:
+                move.l  INT_IBASE,d0
+                beq     .km_ret
+                move.l  d0,a0
+                move.w  IE_QUALIFIER(a3),d1
+                btst    #0,IB_KMBTN(a0)
+                beq.s   .km_r2
+                btst    #IEQUALIFIERB_LALT,d1
+                bne.s   .km_r2
+                bclr    #0,IB_KMBTN(a0)
+                move.w  #IECODE_LBUTTON|IECODE_UP_PREFIX,d0
+                bsr     .km_btn
+.km_r2:
+                btst    #1,IB_KMBTN(a0)
+                beq.s   .km_press
+                btst    #IEQUALIFIERB_RALT,d1
+                bne.s   .km_press
+                bclr    #1,IB_KMBTN(a0)
+                move.w  #IECODE_RBUTTON|IECODE_UP_PREFIX,d0
+                bsr     .km_btn
+.km_press:
+                move.w  IE_CODE(a3),d0
+                btst    #7,d0                ; a release: stays a key
+                bne     .km_ret
+                move.w  d1,-(sp)
+                and.w   #IEQUALIFIER_AMIGAS,(sp)+
+                beq     .km_ret
+                cmp.w   #$4E,d0              ; ->
+                beq.s   .km_x
+                cmp.w   #$4F,d0              ; <-
+                beq.s   .km_x
+                cmp.w   #$4C,d0              ; up
+                beq.s   .km_y
+                cmp.w   #$4D,d0              ; down
+                beq.s   .km_y
+                btst    #IEQUALIFIERB_LALT,d1
+                beq.s   .km_ralt
+                bset    #0,IB_KMBTN(a0)
+                bne.s   .km_ralt
+                move.w  #IECODE_LBUTTON,d0
+                bra.s   .km_toms
+.km_ralt:
+                btst    #IEQUALIFIERB_RALT,d1
+                beq.s   .km_ret
+                bset    #1,IB_KMBTN(a0)
+                bne.s   .km_ret
+                move.w  #IECODE_RBUTTON,d0
+.km_toms:
+                clr.l   IE_X(a3)
+                bra.s   .km_mouse
+.km_x:
+                clr.w   IB_KMY(a0)
+                lea     IB_KMX(a0),a0
+                moveq   #6,d0
+                swap    d0
+                move.w  #100,d0              ; d0 = repeat step : Shift speed
+                bsr.s   .km_speed
+                cmp.w   #$4F,IE_CODE(a3)
+                bne.s   .km_xp
+                neg.w   d0
+.km_xp:
+                move.w  d0,IE_X(a3)
+                clr.w   IE_Y(a3)
+                bra.s   .km_move
+.km_y:
+                clr.w   IB_KMX(a0)
+                lea     IB_KMY(a0),a0
+                moveq   #4,d0
+                swap    d0
+                move.w  #75,d0
+                bsr.s   .km_speed
+                cmp.w   #$4C,IE_CODE(a3)
+                bne.s   .km_yp
+                neg.w   d0
+.km_yp:
+                move.w  d0,IE_Y(a3)
+                clr.w   IE_X(a3)
+.km_move:
+                move.w  #IECODE_NOBUTTON,d0
+.km_mouse:
+                move.b  #IECLASS_RAWMOUSE,IE_CLASS(a3)
+                move.w  d0,IE_CODE(a3)
+.km_ret:
+                rts
+.km_speed:                           ; (a0) = axis speed, d0 = step : Shift speed, d1 = qualifier -> d0.w = speed
+                btst    #0,d1
+                bne.s   .ks_shift
+                btst    #1,d1
+                bne.s   .ks_shift
+                btst    #IEQUALIFIERB_REPEAT,d1
+                bne.s   .ks_rep
+                moveq   #1,d0
+                bra.s   .ks_set
+.ks_shift:
+                and.l   #$FFFF,d0
+                bra.s   .ks_set
+.ks_rep:
+                swap    d0
+                add.w   (a0),d0
+.ks_set:
+                move.w  d0,(a0)
+                rts
+.km_btn:                             ; release of an emulated button: to intuition before the key
+                movem.l d1-d2/a0,-(sp)
+                move.w  d1,d2
+                jsr     it_event
+                movem.l (sp)+,d1-d2/a0
                 rts
 
 ; ptr_abs(a3 = IECLASS_POINTERPOS event), intuition-prefs-v34 §6: without IEQUALIFIER_RELATIVEMOUSE, ie_X/ie_Y (an

@@ -3010,6 +3010,8 @@ it_event:
         btst    #4,WD_IDCMPFLAGS+3(a0)   ; MOUSEMOVE
         beq.s   .ev_ret
 .ev_mv:
+        move.l  IE_TIMESTAMP(a3),IB_MVTIME(a1)
+        move.l  IE_TIMESTAMP+4(a3),IB_MVTIME+4(a1)
         st      IB_MOVED(a1)
         bra.s   .ev_sig
 .ev_btn:
@@ -3024,8 +3026,9 @@ it_event:
         movem.l (sp)+,d0-d1/a0-a1/a6
         rts
 
-; it_push(a1 = IntuitionBase, d0.w = code, d1 = x (high word) : y (low word), d2 = extra long, kept for keys: the
-; dead-key history): slot dropped into the input task's ring, then signal (ring full: lost). Clobbers d0/d1/a0/a6.
+; it_push(a1 = IntuitionBase, a3 = InputEvent, d0.w = code, d1 = x (high word) : y (low word), d2 = extra long, kept
+; for keys: the dead-key history): slot dropped into the input task's ring with the event's ie_TimeStamp, then signal
+; (ring full: lost). Clobbers d0/d1/a0/a6.
 ; Three producers (the input task itself through the keyboard feeder, the DF0: handler, the VBlank interrupt for the
 ; mouse): the head is read, the slot written and the head published with interrupts off (bare Disable, as in PutMsg),
 ; or two of them fill the same slot.
@@ -3049,7 +3052,9 @@ it_push:
         move.w  d1,(a0)+
         swap    d1
         move.w  d1,(a0)+
-        move.l  (sp),(a0)            ; the caller's d2
+        move.l  (sp),(a0)+           ; the caller's d2
+        move.l  IE_TIMESTAMP(a3),(a0)+
+        move.l  IE_TIMESTAMP+4(a3),(a0)
         move.w  d2,IB_EVHEAD(a1)     ; published after the data
         bsr.s   .pu_enable
         move.l  (sp)+,d2
@@ -3398,7 +3403,9 @@ it_intask:
         move.w  (a0)+,d0             ; code
         move.w  (a0)+,d4             ; x, y (pointer)
         move.w  (a0)+,d5
-        move.l  (a0),d6              ; keys: dead-key history; buttons: qualifier
+        move.l  (a0)+,d6             ; keys: dead-key history; buttons: qualifier
+        move.l  (a0)+,IB_SECONDS(a5) ; the time of the event being handled (intuition-input-menus §1.3 point 4):
+        move.l  (a0),IB_MICROS(a5)   ; the messages it causes carry it
         add.w   #IB_EVSZ,d1
         cmp.w   #IB_EVN*IB_EVSZ,d1
         blo.s   .in_wrap
@@ -3426,7 +3433,7 @@ it_intask:
         btst    #7,d0                ; text gadget: pressed keys only
         bne.s   .in_next
         bsr     str_key              ; d0 = key, d4 = qualifier
-        bra.s   .in_next
+        bra     .in_next
 .in_raw:
         bsr     it_rawkey
         bra     .in_next
@@ -3443,6 +3450,8 @@ it_intask:
         tst.b   IB_MOVED(a5)
         beq     .in_wait
         clr.b   IB_MOVED(a5)
+        move.l  IB_MVTIME(a5),IB_SECONDS(a5)
+        move.l  IB_MVTIME+4(a5),IB_MICROS(a5)
         move.w  PTR_X,d4
         move.w  PTR_Y,d5
         move.w  d4,d0                ; delta since the previous movement, in IntuitionBase units (hires
@@ -3532,10 +3541,9 @@ it_dmreq:
 .dq_new:
         move.l  WD_DMREQUEST(a3),d0
         beq     .dq_menu
-        bsr     it_now
         move.l  a3,IB_DMRWIN(a5)
-        move.l  d0,IB_DMRSEC(a5)
-        move.l  d1,IB_DMRMIC(a5)
+        move.l  IB_SECONDS(a5),IB_DMRSEC(a5)
+        move.l  IB_MICROS(a5),IB_DMRMIC(a5)
         move.w  WD_MOUSEX(a3),IB_DMRX(a5)
         move.w  WD_MOUSEY(a3),IB_DMRY(a5)
         move.w  #1,IB_DMRSTATE(a5)
@@ -3611,9 +3619,8 @@ it_dmrnear:
 .dn_ay:
         cmp.w   #5,d0
         bgt.s   .dn_far
-        bsr     it_now
-        move.l  d0,d2
-        move.l  d1,d3
+        move.l  IB_SECONDS(a5),d2
+        move.l  IB_MICROS(a5),d3
         move.l  IB_DMRSEC(a5),d0
         move.l  IB_DMRMIC(a5),d1
         move.l  a5,a6
@@ -3976,7 +3983,10 @@ it_dobutton:
         bsr     it_sbar              ; system gadgets of the screen's title bar
         bne     .db_ret
         move.l  a3,d0
-        beq     .db_ret
+        bne.s   .db_win
+        cmp.w   #IECODE_LBUTTON,d7   ; a click on the screen background: no window is active any more (INACTIVEWINDOW
+        bne     .db_ret              ; alone, keys no longer go to it; intuition-input-menus §5 step E)
+        bra     it_setactive
 .db_win:
         cmp.w   #IECODE_LBUTTON,d7
         bne     .db_mb
@@ -4575,7 +4585,8 @@ wn_unborder:
         rts
 
 ; wn_sendmsg(a3 = window, d0 = IDCMP class, d1.w = code, d2.w/d3.w = relative mouse): if the window asked for
-; this class, takes a free IntuiMessage from its pool, timestamps it (VBlank counter: 50 Hz) and sends it on its
+; this class, takes a free IntuiMessage from its pool, stamps it with the time of the input event being handled
+; (IB_SECONDS/MICROS, intuition-input-menus §1.3 point 4) and sends it on its
 ; UserPort; pool exhausted: event lost. im_Qualifier = that of the input event being handled (IB_QUAL); im_IAddress
 ; = the window; wn_sendgad: im_IAddress = a0 (the gadget
 ; of GADGETDOWN / GADGETUP); wn_sendkey (RAWKEY, VANILLAKEY): im_Qualifier = d4.w, d6 = dead-key history: RAWKEY's
@@ -4678,9 +4689,9 @@ wn_post:
         move.l  INT_IBASE,a0
         move.l  IB_DMX(a0),IM_MOUSEX(a1) ; movement: its delta
 .sm_time:
-        bsr     it_now
-        move.l  d0,IM_SECONDS(a1)
-        move.l  d1,IM_MICROS(a1)
+        move.l  INT_IBASE,a0
+        move.l  IB_SECONDS(a0),IM_SECONDS(a1)
+        move.l  IB_MICROS(a0),IM_MICROS(a1)
         move.l  a3,IM_IDCMPWINDOW(a1)
         move.l  WD_USERPORT(a3),a0
         move.l  a1,d6
@@ -4693,46 +4704,22 @@ wn_post:
         addq.l  #2,sp
         rts
 
-; it_now() -> d0 = seconds, d1 = microseconds since startup (VBlank count GP_POLLS at ExecBase VBlankFrequency, 0
-; counting as 60): the clock of the IntuiMessages.
-it_now:
-        movem.l d2-d4/a6,-(sp)
-        move.l  ($4).w,a6
-        moveq   #0,d3
-        move.b  EB_VBLANKFREQ(a6),d3
-        bne.s   .nw_f
-        moveq   #60,d3
-.nw_f:
-        move.l  d3,d4                ; d4 = frame period in us, rounded
-        lsr.w   #1,d4
-        add.l   #1000000,d4
-        divu    d3,d4
-        move.l  GP_POLLS,d0
-        moveq   #0,d1
-        swap    d0
-        move.w  d0,d1
-        divu    d3,d1                ; long division in two steps (the quotient may exceed 16 bits)
-        move.w  d1,d2
-        swap    d2
-        swap    d0
-        move.w  d0,d1
-        divu    d3,d1
-        move.w  d1,d2                ; d2 = seconds
-        swap    d1
-        mulu    d4,d1                ; remainder (frames) -> microseconds
-        move.l  d2,d0
-        movem.l (sp)+,d2-d4/a6
-        rts
-
-; CurrentTime(seconds a0, micros a1): the current time on the IntuiMessage clock (spec intuition-misc §5 takes the
-; time stamp of the last input event; ours is the same clock as IntuiMessage Seconds/Micros, so that DoubleClick and
-; time comparisons with messages agree).
+; CurrentTime(seconds a0, micros a1): the time stamp of the last input event intuition handled (spec intuition-misc
+; §5), the time of the IntuiMessages it sends.
 intuition_CurrentTime:
+        move.l  INT_IBASE,d0
+        beq.s   .ct_none
         movem.l a0-a1,-(sp)
-        bsr.s   it_now
+        move.l  d0,a0
+        move.l  IB_SECONDS(a0),d0
+        move.l  IB_MICROS(a0),d1
         movem.l (sp)+,a0-a1
         move.l  d0,(a0)
         move.l  d1,(a1)
+        rts
+.ct_none:
+        clr.l   (a0)
+        clr.l   (a1)
         rts
 
 ; DoubleClick(seconds d0, micros d1, seconds d2, micros d3) -> d0 = TRUE if the second click follows the first by less

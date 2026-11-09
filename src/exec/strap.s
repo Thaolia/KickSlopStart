@@ -1,6 +1,6 @@
 ; src/exec/strap.s — strap (romboot): reads, validates and EXECUTES the bootblock of DF0: (milestone C "it boots!").
-; strap_boot(a6=SysBase, d0 = 0 from the boot context in supervisor mode, 1 from a process in user mode) ->
-;                           d0 = 0 if NO bootable volume (the caller displays the insert-disk screen),
+; strap_boot(a6=SysBase), from the strap task in user mode -> d0 = 0 if NO bootable volume (the caller displays the
+;                           insert-disk screen),
 ;                           d0 != 0 if the bootblock was executed successfully, a0 = the entry point it returned
 ;                           (the dos init for a standard bootblock, a game's own entry for a custom loader).
 ;
@@ -54,8 +54,7 @@ strap_boot:
         moveq   #1,d0                ; RED: pretends to have booted -> no insert-disk
         rts
                 endc
-        movem.l d2/d7/a2/a3/a5,-(sp) ; only returns d0/a0; the rest preserved (convention)
-        move.l  d0,d2                ; d2 != 0: user mode, the SR is left alone
+        movem.l d7/a2/a3/a5,-(sp)    ; only returns d0/a0; the rest preserved (convention)
         lea     EB_DEVICELIST(a6),a0
         lea     strap_td_name(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -110,20 +109,11 @@ strap_boot:
                 endc
         ; --- valid bootblock -> execute the boot code at +BB_ENTRY ---
                 ifeq    STRAP_NO_EXEC
-        movem.l d2/a3,-(sp)          ; protect the mode and the ioreq (any boot code may clobber them)
-        lea     BB_ENTRY(a2),a2
+        move.l  a3,-(sp)             ; protect the ioreq (any boot code may clobber a3)
+        lea     BB_ENTRY(a2),a0
         move.l  a3,a1                ; A1 = reusable ioreq; A6 = SysBase (bootblock convention)
-        tst.l   d2
-        bne.s   .bb_user
-        move.w  sr,-(sp)
-        and.w   #$F8FF,sr            ; interrupts on during the boot code: loaders wait on them (1.3: never IPL 7)
-        jsr     (a2)                 ; D0 = bootblock return (0 = success), A0 = entry point to jump to
-        move.w  (sp)+,sr
-        bra.s   .bb_back
-.bb_user:
-        jsr     (a2)
-.bb_back:
-        movem.l (sp)+,d2/a3
+        jsr     (a0)                 ; D0 = bootblock return (0 = success), A0 = entry point to jump to
+        move.l  (sp)+,a3
         move.l  ($4).w,a6            ; reload SysBase (the bootblock may have clobbered a6)
         tst.l   d0
         bne.s   .boot_failed         ; the boot code reported an error: Alert, then insert-disk
@@ -150,7 +140,7 @@ strap_boot:
 .nb_nofree:
         moveq   #0,d0                ; nothing allocated -> nothing to free
 .ret:
-        movem.l (sp)+,d2/d7/a2/a3/a5
+        movem.l (sp)+,d7/a2/a3/a5
         rts
 .free:
         move.l  a3,a1

@@ -3423,63 +3423,18 @@ d2_done:
         move.w  #(INTF_SETCLR|INTF_EXTER),INTENA   ; enables Paula EXTER (INT6, level 6 > VBlank 3)
         bsr     setup_stress_port    ; M7d: shared port + K messages (hammered by task AND interrupt)
         bsr     setup_demo_tasks     ; task_H(10) + task_L(0) + task_S(0) + task_timer(10, M7a) + task_port(0, M7d)
-        ; --- M6r/M6y: strap (romboot) — reads, validates and EXECUTES the bootblock of DF0: (milestone C "it boots!") ---
-        ; strap_boot reads sectors 0+1 (bootblock) of DF0:, validates magic "DOS" + additive checksum, and jumps
-        ; to the boot code at +12. d0=0 = no bootable volume (no disk, or invalid checksum = formatted, not
-        ; installed) -> insert-disk BOOT SCREEN (M6R). d0!=0 = bootblock executed -> NO insert-disk (M6Y);
-        ; the "CBOOT" marker is emitted by the bootblock ITSELF during its execution (proof of the jump).
-        ; Both branches converge towards SCHED_ON (the complete M7 set follows in both cases).
-        ; RED STRAP_FAKE_BOOTDEV: d0!=0 without reading -> M6Y present but CBOOT absent. RED STRAP_NO_EXEC: validates
-        ; but does not jump -> CBOOT absent, M6Y present. RED STRAP_BAD_CSUM: rejects a good block -> M6R.
+        ; --- M6r/M6y: strap (romboot) in the initial task (strap_task): reads, validates and EXECUTES the bootblock
+        ; of DF0:; no bootable volume -> insert-disk BOOT SCREEN (M6R), bootblock executed -> M6Y. The "CBOOT" marker is
+        ; emitted by the bootblock ITSELF (proof of the jump). RED STRAP_FAKE_BOOTDEV: booted without reading (M6Y,
+        ; no CBOOT). RED STRAP_NO_EXEC: validated, not run (M6Y, no CBOOT). RED STRAP_BAD_CSUM: a good block rejected
+        ; (M6R).
         jsr     alert_boothook       ; alert.hook: Guru of a dead-end alert from before the reset, before the strap
-        moveq   #0,d0                ; boot context, supervisor mode
-        jsr     strap_boot
-        tst.l   d0
-        bne.s   .m6r_floppy
-        jsr     strap_romboot        ; DF0: not bootable: BootPoint of the boards (a BootPoint that starts dos jumps to
-                                     ; boot_dos_start and does not return)
-        lea     msg_m6r_ok(pc),a0
-        bsr     ser_puts             ; "M6R STRAP OK (no bootable volume -> insert-disk)"
-        jsr     gfx_display_init     ; M6s: BOOT SCREEN (32-colour kitten image) via the graphics.library ABI
-        move.l  d0,BOOT_SCREEN       ; taken down by disk_watch when an inserted floppy boots
-        lea     msg_m6s_ok(pc),a0
-        bsr     ser_puts             ; "M6S BOOTSCR OK" (screen set up; VISUAL discriminant = colours)
-        bsr     m6r_wire_requester   ; LIVE wiring: PERSISTENT pointer+requester handlers on input.device
-        lea     dw_name(pc),a0       ; DF0: watch: an inserted floppy is booted from there
-        move.l  #disk_watch,a1
-        moveq   #-1,d0
-        move.l  #DW_STK,d1
+        bsr     ptr_wire             ; intuition's mouse input, live before any bootblock (1.3: from its init)
+        lea     st_name(pc),a0       ; the strap runs in the initial task, with multitasking on (coldstart-hardware-v34
+        move.l  #strap_task,a1       ; §4.4: the bootblock runs in user mode, interrupts unmasked)
+        moveq   #0,d0
+        move.l  #ST_STK,d1
         jsr     proc_create
-        bra.s   boot_strap_done
-.m6r_floppy:
-        move.l  a0,-(sp)
-        jsr     dos_df0bootnode      ; DF0: BootNode (pri 5) in eb_MountList, as after a 1.3 bootblock
-        move.l  ($4).w,a6
-        lea     dos_libname,a1
-        jsr     LVO_FINDRESIDENT(a6)
-        move.l  (sp)+,a0             ; entry returned by the bootblock (uae-hd-boot-v34 §3 item 2)
-        cmp.w   #0,a0
-        beq.s   boot_dos_start       ; no entry (RED STRAP_NO_EXEC)
-        tst.l   d0
-        beq.s   .bb_game
-        move.l  d0,a1
-        cmp.l   RT_INIT(a1),a0
-        beq.s   boot_dos_start       ; the dos init: dos starts on DF0: (what dos_rtinit would do)
-.bb_game:
-        move.w  #$2000,sr            ; a game loaded by its own bootblock: it runs in supervisor with the
-        jmp     (a0)                 ; interrupts it relies on enabled (1.3: IPL 3 seen, never 7)
-; boot_dos_start: dos startup (after a DF0: bootblock, or from the rt_Init of dos.library called by the
-; BootPoint of a board): mount list -> boot device, then Initial CLI. Does not return.
-boot_dos_start:
-        move.l  ($4).w,a6
-        jsr     dos_mountlist
-        lea     msg_m6y_ok(pc),a0
-        bsr     ser_puts             ; "M6Y STRAP BOOTED OK" (bootblock executed; CBOOT emitted by the bootblock)
-        bsr     ptr_wire             ; mouse: on-screen pointer (sprite) in the running system
-        ; --- F1: BOOTABLE disk -> create the Initial CLI (shell). GATED on the boot (this is the F vs E line):
-        ; on a non-bootable disk (M6R insert-disk branch), NO Initial CLI is created. The shell first runs
-        ; s:startup-sequence (root) then moves on to the interactive prompt. a6 = SysBase (strap restored it).
-        bsr     initial_cli
 boot_strap_done:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARMS periodic preemption (default)
@@ -5945,14 +5900,30 @@ gp_cap_handler:
         move.l  a0,d0
         rts
 
-; disk_watch: process of the insert-disk screen (pri -1). Every DW_TICKS: td_disk_present; a floppy inserted into
-; the drive previously seen empty gets a new strap attempt from this process, without a reset (uae-hd-boot-v34 §3
-; item 4; romboot is not called again). Not bootable: the screen stays and the watch goes on. Booted: the screen
-; and its requester go, then dos starts on DF0: as after a power-on boot and the process ends, or the bootblock's
-; own entry point takes over this process.
+; strap_task: the initial task (named "exec.library" like 1.3's, 4 KB stack, coldstart-hardware-v34 §4.4,
+; memory-budget-v34). Spec uae-hd-boot-v34 §3: a DF0: attempt (strap_boot in user mode); not bootable: RomBoot once
+; (a BootPoint that starts dos ends this task in boot_dos_start), then a new DF0: attempt; still nothing: the
+; insert-disk screen, and every DW_TICKS a floppy inserted into the drive seen empty gets a new attempt, without
+; RomBoot. Booted: the screen and its requester go (if shown), then dos starts on DF0: and the task ends, or the
+; bootblock's own entry point takes over the task (user mode, as on 1.3).
 DW_TICKS        EQU 25               ; 0.5 s between two polls
-DW_STK          EQU 4096             ; the bootblock runs on this stack
-disk_watch:
+ST_STK          EQU 4096             ; the bootblock runs on this stack
+strap_task:
+        move.l  ($4).w,a6
+        jsr     strap_boot
+        tst.l   d0
+        bne.s   .st_booted
+        jsr     strap_romboot        ; BootPoint of the boards
+        jsr     strap_boot
+        tst.l   d0
+        bne.s   .st_booted
+        lea     msg_m6r_ok(pc),a0
+        bsr     ser_puts             ; "M6R STRAP OK (no bootable volume -> insert-disk)"
+        jsr     gfx_display_init     ; M6s: BOOT SCREEN (kitten image) via the graphics.library ABI
+        move.l  d0,BOOT_SCREEN
+        lea     msg_m6s_ok(pc),a0
+        bsr     ser_puts             ; "M6S BOOTSCR OK" (screen set up; VISUAL discriminant = colours)
+        bsr     m6r_wire_requester   ; pointer + requester handlers on input.device
         moveq   #0,d7                ; d7 != 0: drive seen empty (a non-bootable floppy already present is not
 .dw_lp:                              ; tried again: it must be removed and then another one inserted)
         move.l  DOS_DOSBASE,a6
@@ -5968,36 +5939,44 @@ disk_watch:
         tst.l   d7
         beq.s   .dw_lp
         moveq   #0,d7
-        moveq   #1,d0                ; process, user mode
         jsr     strap_boot
         tst.l   d0
         beq.s   .dw_lp
-        move.l  a0,a2                ; a2 = entry returned by the bootblock
+.st_booted:
+        move.l  a0,a2                ; a2 = entry returned by the bootblock (uae-hd-boot-v34 §3 item 2)
         bsr     dw_teardown
         move.l  a2,d0
-        beq.s   .dw_dos
+        beq.s   .st_dos              ; no entry (RED STRAP_NO_EXEC)
         lea     dos_libname,a1
         jsr     LVO_FINDRESIDENT(a6)
         tst.l   d0
-        beq.s   .dw_game
+        beq.s   .st_game
         move.l  d0,a1
         cmp.l   RT_INIT(a1),a2
-        bne.s   .dw_game
-.dw_dos:
-        jsr     dos_df0bootnode
+        bne.s   .st_game
+.st_dos:
+        jsr     dos_df0bootnode      ; DF0: BootNode (pri 5) in eb_MountList, as after a 1.3 bootblock
+        bra     boot_dos_start
+.st_game:
+        jmp     (a2)
+; boot_dos_start: dos startup in the strap task (after a DF0: bootblock, or from the rt_Init of dos.library called
+; by the BootPoint of a board): mount list -> boot device, pointer, Initial CLI (s:startup-sequence then the prompt),
+; then the task ends. Does not return.
+boot_dos_start:
+        move.l  ($4).w,a6
         jsr     LVO_FORBID(a6)       ; dos_mountlist walks the lists without locking them
         jsr     dos_mountlist
         jsr     LVO_PERMIT(a6)
         lea     msg_m6y_ok(pc),a0
-        bsr     ser_puts
+        bsr     ser_puts             ; "M6Y STRAP BOOTED OK" (bootblock executed; CBOOT emitted by the bootblock)
         bsr     initial_cli
         suba.l  a1,a1
         jsr     LVO_REMTASK(a6)      ; does not return
-.dw_game:
-        jmp     (a2)
 ; dw_teardown(a6 = SysBase): removes the requester handler from input.device and frees the boot screen. The
 ; pointer handler stays (the floppy boot path installs the same one).
 dw_teardown:
+        tst.l   REQ_INT+IS_CODE
+        beq.s   .dt_screen           ; requester handler never installed (booted at the first attempt)
         lea     EB_DEVICELIST(a6),a0
         lea     input_dev_name(pc),a1
         jsr     LVO_FINDNAME(a6)
@@ -6013,6 +5992,7 @@ dw_teardown:
         jsr     -30(a6)
         move.l  ($4).w,a6
         lea     48(sp),sp
+        clr.l   REQ_INT+IS_CODE
 .dt_screen:
         move.l  BOOT_SCREEN,d0
         beq.s   .dt_ret
@@ -6028,12 +6008,12 @@ initial_cli:
         moveq   #2,d0                ; Initial CLI pri 2 (sole consumer of the console)
         move.l  #SH_STK,d1           ; the commands it launches run on this stack
         jmp     proc_create
-dw_name:
-        dc.b    "DF0 watch",0
+st_name:
+        dc.b    "exec.library",0
         even
 
 ; ptr_wire: installs the PERSISTENT pointer handler (PTR_INT, pri 50) on input.device: RAWMOUSE deltas ->
-; absolute position PTR_X/PTR_Y + pointer sprite. Called on both boot branches (insert-disk and floppy).
+; absolute position PTR_X/PTR_Y + pointer sprite, buttons to intuition. Called once at boot, before the strap task.
 ; a6 = SysBase. Preserves d2-d7/a2-a6.
 ptr_wire:
         movem.l a2/a4,-(sp)
@@ -6061,11 +6041,10 @@ ptr_wire:
         movem.l (sp)+,a2/a4
         rts
 
-; m6r_wire_requester: wires the PERSISTENT CONSUMER handlers (pointer pri 50 + requester pri 0) on
-; input.device (NO teardown) -> the gameport -> input.device -> pointer -> requester chain lives in the
-; running system (symmetric of the persistent producer gp_vblank_server). Then SYNCHRONOUS self-check: injects via
-; the persistent handlers a relative move -> gadget then a click -> REQ_HIT -> "M6R WIRED OK". a6 = SysBase.
-; Called once in the M6R insert-disk branch (IRQs masked; IND_WRITEEVENT is synchronous). Preserves a2-a4.
+; m6r_wire_requester: wires the insert-disk requester handler (pri 0, behind the pointer handler pri 50) on
+; input.device; dw_teardown removes it when a floppy boots. Then SYNCHRONOUS self-check: injects a relative move ->
+; gadget then a click -> REQ_HIT -> "M6R WIRED OK". a6 = SysBase. Called by the strap task when it shows the
+; insert-disk screen (IND_WRITEEVENT runs the chain in the caller). Preserves a2-a4.
 m6r_wire_requester:
         movem.l a2-a4,-(sp)
         lea     EB_DEVICELIST(a6),a0
@@ -6074,7 +6053,6 @@ m6r_wire_requester:
         tst.l   d0
         beq     .mw_ret
         move.l  d0,a4                    ; a4 = input.device base
-        bsr     ptr_wire                 ; pointer handler pri 50 (PERSISTENT)
         clr.l   REQ_INT+LN_SUCC          ; requester struct Interrupt (pri 0)
         clr.b   REQ_INT+LN_PRI
         clr.l   REQ_INT+IS_DATA

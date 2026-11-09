@@ -1511,6 +1511,18 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   2,780 of 5,244, NEWCON 4,236 of 6,044. Shell open from the Workbench (memfree.sh, production ROM): 847,136 ->
   811,136, 36,000 bytes (40,304 before; 1.3: 33,480). prepush-check (dev) FAIL=0, Lemmings menu looked at;
   writeback_probe (DF1 46.7 s, DH0 14.2 s, 66 files identical, OFS CHECK OK) and `validate_probe.sh valid` pass.
+  **Strap in the initial task, intuition input against the probe (2026-11-09)**: REMAINING-WORK C6 and C9
+  (ARCHITECTURE "Strap in the initial task", "Intuition input against the 1.3 probe"). `tests/imenu_probe.s` booted
+  at power-on on the production ROM: every step gives messages; timestamps are the injected step/rank; chains P
+  F820 2056, F800 0052 / F820 0056, F800 0052, F801 415B, F801 405B, F821 4153 as in intuition-input-menus §5;
+  step D (Amiga + arrows / Alt) MOUSEMOVEs of +50, +52, +56, MOUSEBUTTONS 0068 qual 0050, 00E8 then RAWKEY 00E4;
+  step E INACTIVEWINDOW alone, no RAWKEY; step F MENUVERIFY MENUHOT to B, MENUWAITING to A, MENUUP to both.
+  25-disk boot sweep (production ROM, screenshots after 80 s): every disk reaches the screen it reached before;
+  the two doubtful ones compared with the ROM before the change, identical. DH0: boot from a bootable hardfile
+  without a floppy (RomBoot from the strap task) reaches the Workbench; a floppy inserted on the kitten screen
+  boots and the "exec.library" task is gone afterwards. Workbench double-click (disk, Shell), Workbench menus,
+  empty bar on the right button in the Shell. prepush-check (dev) FAIL=0, Lemmings menu looked at;
+  writeback_probe (DF1 46.7 s, DH0 14.4 s, OFS CHECK OK) and `tests/concmd_probe.sh` unchanged.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

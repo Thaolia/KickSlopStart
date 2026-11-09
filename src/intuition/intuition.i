@@ -25,7 +25,7 @@ IB_EVHEAD        EQU IB_INSIG+4        ; UWORD: next slot written (interrupt)
 IB_EVTAIL        EQU IB_EVHEAD+2       ; UWORD: next slot read (task)
 IB_EVRING        EQU IB_EVTAIL+2       ; IB_EVN slots of IB_EVSZ bytes: code, x, y (screen)
 IB_EVN           EQU 32                ; (at most the 16 keys of the raw keyboard ring injected in one turn)
-IB_EVSZ          EQU 10                ; code, x, y, then a long (keys: dead-key history)
+IB_EVSZ          EQU 18                ; code, x, y, a long (keys: dead-key history), the event's ie_TimeStamp
 IB_TRACK         EQU IB_EVRING+IB_EVN*IB_EVSZ ; BYTE: the task also wants the movements (drag, menus)
 IB_MOVED         EQU IB_TRACK+1        ; BYTE: movement to process
 IB_DRAGWIN       EQU IB_MOVED+1        ; window being moved / resized | 0
@@ -109,7 +109,11 @@ IB_BOXW          EQU IB_MNDRAG+2       ; WORD: item box width - 1 / height - 1 (
 IB_BOXH          EQU IB_BOXW+2
 IB_SUBW          EQU IB_BOXH+2         ; WORD: same for the sub-item box
 IB_SUBH          EQU IB_SUBW+2
-INTUITIONBASE_SIZE EQU IB_SUBH+2
+IB_MVTIME        EQU IB_SUBH+2         ; 2 LONGs: ie_TimeStamp of the last movement (IB_MOVED), for its MOUSEMOVE
+IB_KMX           EQU IB_MVTIME+8       ; WORD: keyboard mouse speed in X (Amiga + arrows, intuition-input-menus §1.7)
+IB_KMY           EQU IB_KMX+2          ; WORD: same in Y
+IB_KMBTN         EQU IB_KMY+2          ; BYTE: buttons emulated by Amiga + Alt (bit 0 left, bit 1 right)
+INTUITIONBASE_SIZE EQU IB_KMBTN+2
 IT_SYSCLOSE      EQU 1
 IT_SYSBACK       EQU 2
 IT_SYSFRONT      EQU 3

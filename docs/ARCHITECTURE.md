@@ -1992,16 +1992,19 @@ differs.
   InitResident adds an AUTOINIT base through AddLibrary / AddDevice / AddResource (LIBF_SUMUSED bases are summed:
   mathffp initialises its flags to SUMUSED|CHANGED, $04 at rest as on 1.3). WaitIO leaves the reply port's signal
   bit in D1.
-  **Strap retry without a reset (2026-11-09)**: on the insert-disk screen, `disk_watch` (`src/exec/boot.s`, a
-  process) gives a floppy inserted into the drive seen empty a new `strap_boot` attempt (uae-hd-boot-v34 §3 item 4;
-  romboot is not called again). `strap_boot` takes the mode in D0: 0 from the boot context (supervisor, IPL lowered
-  around the boot code), 1 from a process (user mode, SR untouched); the bootblock runs on the process's 4 KB stack.
-  Not bootable: the screen stays. Booted: `dw_teardown` removes the requester handler and `gfx_display_free`
-  (`src/graphics/gfx.s`) takes the boot screen down (LoadView(NULL), copper lists, planes, structures, found
-  through `BOOT_SCREEN` at `$7DC`), then the dos init entry gets the DF0: BootNode, the mount list and the Initial
-  CLI, and the process ends (RemTask); another entry point is jumped to from the process. Same free memory on the
-  Workbench as a power-on boot (858,472 bytes, prod ROM, 512K chip + 512K slow). A bootblock returning D0 ≠ 0 gets
-  the recoverable Alert $30000001, then the insert-disk screen (§3 item 2).
+  **Strap in the initial task (2026-11-09)**: the boot context no longer runs the bootblock. It installs the pointer
+  handler (`ptr_wire`, intuition's mouse input from then on) and creates the initial task `strap_task`
+  (`src/exec/boot.s`, a process named "exec.library", 4 KB stack, coldstart-hardware-v34 §4.4), then starts the
+  scheduler. The task, in user mode with interrupts on as on 1.3: DF0: attempt (`strap_boot`), else RomBoot (a
+  BootPoint that starts dos ends the task in `boot_dos_start`), a second DF0: attempt (uae-hd-boot-v34 §3 item 4),
+  else the insert-disk screen and the watch loop: every 0.5 s a floppy inserted into the drive seen empty gets a new
+  attempt, without RomBoot. Booted: `dw_teardown` removes the requester handler and `gfx_display_free`
+  (`src/graphics/gfx.s`) the boot screen when they exist (LoadView(NULL), copper lists, planes, structures, through
+  `BOOT_SCREEN` at `$7DC`); the dos init entry gets the DF0: BootNode, then `boot_dos_start` (mount list under
+  Forbid, Initial CLI, RemTask); another entry point is jumped to from the task. A bootblock returning D0 ≠ 0 gets
+  the recoverable Alert $30000001, then the insert-disk screen (§3 item 2). Same free memory on the Workbench after
+  a floppy inserted on the kitten screen as after a power-on boot. A bootblock that waits on intuition
+  (`tests/imenu_probe.s`) now works at power-on.
   **Drives and file system (2026-11-09)**: DF1:-DF3: mounted (`mount_dfn` above). ExNext keeps no state (rom-
   filesystem-v34 §4): `ofs_dir_next` takes the next entry from the FIB, the hash-chain successor of `fib_DiskKey`,
   then the slots after the hash of `fib_FileName` (a BSTR on the packet side: `dos_fn_exnext` converts the caller's
@@ -2024,6 +2027,14 @@ differs.
   **POINTERPOS events (2026-11-09)**: `pointer_input_handler` (`src/intuition/pointer.s`) turns IECLASS_POINTERPOS
   without RELATIVEMOUSE into a relative RAWMOUSE ((position − ib_MouseX/Y) × PointerTicks, RELATIVEMOUSE set,
   intuition-prefs-v34 §6), so a program moving the pointer with input.device IND_WRITEEVENT drives intuition.
+  **Intuition input against the 1.3 probe (2026-11-09)**: the input task's ring slots (`IB_EVSZ` 18) carry each
+  event's ie_TimeStamp, which becomes `IB_SECONDS/MICROS` while it is handled (movements: `IB_MVTIME`); IntuiMessages,
+  CurrentTime and the DMRequest double click use it (intuition-input-menus §1.3 point 4), and gameport stamps its
+  mouse events with the system time (`timer_now`), as the keyboard feeder does. Amiga + arrows / Alt drive the
+  pointer and the buttons (`ptr_keymouse`, §1.7). A left click on the screen background deactivates the active
+  window; the right button opens the (empty) bar for a window without menus; MENUPICK chosen with the mouse
+  carries IAddress 0; an item whose check mark changes loses HIGHITEM. `tests/imenu_probe.s` (§5) now gives the
+  1.3 NextSelect chains (2056, 0052/0056, 415B, 405B, 4153).
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

@@ -50,6 +50,7 @@
                 xref    it_box
                 xref    it_scrxy
                 xref    wn_sendmsg
+                xref    wn_sendgad
                 xref    it_alive
                 xref    wn_sendkey
                 xref    it_verify
@@ -347,9 +348,8 @@ it_menubutton:
         move.l  d0,a3
         cmp.l   WD_WSCREEN(a3),a4
         bne     .mb_ret
-        tst.l   WD_MENUSTRIP(a3)
-        beq     .mb_ret
-        btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP: the right button belongs to the application
+        btst    #0,WD_FLAGS+1(a3)    ; RMBTRAP: the right button belongs to the application (a window without menus
+                                     ; gets the empty bar and the verifies: intuition-input-menus §5 step F)
         bne     .mb_ret
         move.l  WD_FIRSTREQUEST(a3),d0   ; requester without NOISYREQ: no menus (spec intuition-requesters-v34 §3.2)
         beq.s   .mb_menus
@@ -1527,6 +1527,10 @@ mn_pick:
 .pk_uncheck:
         bclr    #0,MI_FLAGS(a0)
 .pk_chain:
+        btst    #1,d6
+        beq.s   .pk_hi
+        bclr    #5,MI_FLAGS(a0)      ; its check mark changed: redrawn, the item loses HIGHITEM (§5 step 5: 415B)
+.pk_hi:
         addq.l  #1,d6
         move.w  #MENUNULL,MI_NEXTSELECT(a0)
         move.w  IB_PICK(a5),d3
@@ -1626,7 +1630,9 @@ mn_pickcur:
         rts
 
 ; mn_repaint(a4 = screen, a5): the box of the current code is drawn again (check marks changed), then its
-; highlight put back (§3.8 point 5). The code was accepted, so its menu and item are enabled.
+; highlight put back (§3.8 point 5). The redrawn item does not get HIGHITEM back: 1.3's NextSelect chain shows a
+; CHECKIT item toggled at MENUUP without it (§5 step 5: 415B / 405B). The code was accepted, so its menu and item
+; are enabled.
 mn_repaint:
         tst.l   IB_SUBCUR(a5)
         bne.s   .rp_sub
@@ -1643,7 +1649,10 @@ mn_repaint:
         move.l  MU_FIRSTITEM(a2),a2
         bsr     mn_drawitems
         moveq   #1,d3
-        bra     mn_hilite
+        bsr     mn_hilite
+        move.l  IB_ITEMCUR(a5),a0
+        bclr    #5,MI_FLAGS(a0)      ; HIGHITEM
+        rts
 .rp_sub:
         move.l  IB_SUBBOX(a5),a0
         move.l  IL_RP(a0),a3
@@ -1656,7 +1665,9 @@ mn_repaint:
         move.l  MI_SUBITEM(a2),a2
         bsr     mn_drawitems
         moveq   #1,d3
-        bra     mn_hlsub
+        bsr     mn_hlsub
+        move.l  IB_SUBCUR(a5),a0
+        bclr    #5,MI_FLAGS(a0)
 .rp_ret:
         rts
 
@@ -1845,7 +1856,8 @@ mn_end:
         sub.w   WD_TOPEDGE(a3),d3
         move.l  #MENUPICK,d0
         move.w  d7,d1
-        jsr     wn_sendmsg
+        suba.l  a0,a0                ; IAddress = the button event's ie_X/ie_Y, 0 for a click without movement (§5)
+        jsr     wn_sendgad
         clr.l   IB_MENUWIN(a5)       ; only now: CloseWindow waits for it, and the deletion above may have blocked
 .me_ret:
         rts

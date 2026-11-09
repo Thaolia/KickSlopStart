@@ -179,15 +179,12 @@ AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
   included).
 - Signal returns nothing in D0 (1.3: the previous tc_SigRecvd, undocumented).
 
-### C6. strap — [src], M
+### C6. strap — done 2026-11-09
 
-A floppy inserted on the insert-disk screen gets a new strap attempt without a reset (the vAmiga fast-RAM memo is
-gone with the reset), and a bootblock returning D0 ≠ 0 gets Alert $30000001 before the insert-disk screen
-(uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: now shows that alert once per soft-kicked boot,
-as 1.3 would.
-
-Left: a bootblock read at power-on runs in the boot context, before the scheduler and in supervisor mode; 1.3 runs
-the strap in a task. A bootblock that waits on another task (an IntuiMessage, a Delay) never gets an answer there.
+The strap runs in the initial task, in user mode with multitasking on, as on 1.3; a floppy inserted on the
+insert-disk screen gets a new attempt without a reset; a bootblock returning D0 ≠ 0 gets Alert $30000001 before
+the insert-disk screen (uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: shows that alert once per
+soft-kicked boot, as 1.3 would.
 
 ### C7. Drives and file system — [src] partly, S
 
@@ -216,17 +213,13 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
   - no spaces written past the NUL.
 - AddGadget on a REQGADGET goes to the window list.
 - IDCMP ports are not in the public port list.
-- IND_WRITEEVENT pointer events: done 2026-11-09 (IECLASS_POINTERPOS converted to RAWMOUSE, intuition-prefs §6).
-  `tests/imenu_probe.s` now drives our menus, but only when its disk is inserted on the insert-disk screen (see C6:
-  a bootblock read at power-on runs before the scheduler). Its log against intuition-input-menus §5 shows:
-  - IntuiMessage Seconds/Micros come from the clock, not from the event's ie_TimeStamp (§1.3 point 4);
+- IND_WRITEEVENT pointer events, event timestamps, keyboard mouse, background click, empty bar, MENUPICK IAddress,
+  HIGHITEM after a check change: done 2026-11-09 (`tests/imenu_probe.s` against intuition-input-menus §5). Left:
   - the pointer moves by lores pixels, so MouseX is always even (1.3: hires pixels; step A gets 5 MOUSEMOVEs
-    instead of 6);
-  - MENUPICK chosen with the mouse carries the window in IAddress (1.3: ie_X/ie_Y, 0);
-  - an item toggled twice keeps HIGHITEM in the NextSelect chain (P F801 615B, 1.3: 415B);
-  - no mouse from the keyboard (Amiga + cursor keys, Amiga + Alt as buttons): they arrive as RAWKEYs;
-  - a click on the screen background leaves window A active (1.3: INACTIVEWINDOW, keys no longer sent to A);
-  - MENUDOWN with the menu-less window B active gives no MENUVERIFY at all (1.3: MENUHOT to B, MENUWAITING to A).
+    instead of 6, keyboard-mouse steps +52 instead of +53);
+  - in step E, the ACTIVEWINDOW posted to window A when it is clicked again after the background click does not
+    show in the probe's log (gdb sees it go through wn_sendmsg); not understood;
+  - the first ACTIVEWINDOW (OpenWindow) carries the time of the last event before it, 1.3 shows 0.
 - A window holds only one REFRESHWINDOW at a time.
 - Each drawer has its own IDCMP port.
 - it_scrxy ignores the screen's TopEdge.
@@ -376,10 +369,8 @@ as on the real 1.3 (`HUNK_RELRELOC32`, dos-v34-spec §4b). No ADF is left untrie
 
 ## Suggested order
 
-1. **C6 left: the power-on bootblock in a task.** 1.3 runs the strap in a task with multitasking on; ours runs a
-   bootblock read at power-on before the scheduler, so a bootblock that waits for intuition (`tests/imenu_probe.s`)
-   gets nothing. The insert-disk retry already runs it from a process.
-2. **C9, the menu and input gaps the imenu probe shows** (list under C9).
-3. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
+1. **A6, the last 2.5 KB of the Shell gap** (the 68000 margins of the BCPL processes, to be measured on their worst
    paths before cutting).
-A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8 and the ADF sweep are done; D1/D3 are specified.
+2. **C9 left: hires pointer positions**, then the other C9 items.
+A5, A6 (most), C1, C2, C3, C5 (main part), C6, C7 (main part), C8, C9 (input engine) and the ADF sweep are done;
+D1/D3 are specified.

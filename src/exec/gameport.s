@@ -27,6 +27,7 @@
                 xdef    gp_vblank_server
                 xdef    gp_install
                 xdef    gameport_dev_name
+                xref    timer_now        ; timer.s (system time)
                 xdef    gp_mousesrc
 
 POTGO_W         EQU CUSTOM+$034
@@ -861,6 +862,13 @@ gp_poll:
         move.w  KBD_QUAL,IE_QUALIFIER(a1) ; the keyboard's qualifiers, as input.device merges them (Shift-click)
         move.w  d4,IE_X(a1)
         move.w  d5,IE_Y(a1)
+        move.l  a6,-(sp)            ; input.device stamps its events with the system time: double-clicks and the
+        move.l  ($4).w,a6           ; IntuiMessages' Seconds/Micros come from it
+        jsr     timer_now
+        move.l  (sp)+,a6
+        move.l  sp,a1               ; a1 = the event again (timer_now clobbers it)
+        move.l  d0,IE_TIMESTAMP(a1)
+        move.l  d1,IE_TIMESTAMP+4(a1)
         lea     24(sp),a3           ; build the IND_WRITEEVENT IOStdReq
         move.l  a4,IO_DEVICE(a3)
         move.w  #IND_WRITEEVENT,IO_COMMAND(a3)
