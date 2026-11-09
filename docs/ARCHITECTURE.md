@@ -1949,6 +1949,13 @@ differs.
   Workbench selection; `wb_drop` works on the whole selection for a Shift drag. `IB_QUAL` (IntuitionBase, private)
   holds the qualifier of the input event being handled, filled from the ring (buttons) or the key; every IntuiMessage
   carries it. gameport's VBlank server puts `KBD_QUAL` in the system mouse's RAWMOUSE events.
+  **Workbench left-out icons, DiskCopy drop, Discard of several (2026-11-09)**: icons left out on the backdrop live in
+  `LO_*` records (DiskObject, position, selection byte, name, path; up to `WB_MAXLEFT`), numbered after the volumes
+  (`WB_LEFT0`) in the backdrop window, so `wb_hit`, `wb_iconrect`, `wb_drawwin` and `wb_openicon` treat them as icons
+  of window 0; they are kept in memory only, and `wb_loadicons` skips the objects that are left out. `wb_drop` mode 2
+  leaves an icon out, and a drop back into a window brings it home (`.ob_unleft`). A disk dropped on another disk
+  launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). `wb_discard` runs `dc_one`
+  (requester + `wb_rmtree`) for each selected icon, then deselects and re-reads the window once.
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).

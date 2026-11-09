@@ -1373,6 +1373,16 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   Redraw / Snapshot / Version; Shift-drag moved both by (+30,+30); Shift-drag into the Data window copied both (Prefs
   drawer complete: same names and sizes); click System, Shift-click Expansion, quick press -> both windows open.
   prepush-check FAIL=0. Open: selection across windows, Discard of several icons, button bits of mouse qualifiers.
+  **Workbench left-out icons, DiskCopy drop, Discard of several (2026-11-09)**: spec workbench-task-v34 §10.2 case 4,
+  §10.6 and §10.8. A tool, project or drawer dropped on the backdrop is left out there (`LO_*` records, in memory only:
+  no file moved, no .info written), drawn with the disks, launched or opened by double-click, and put back by a drop
+  into a window. A disk dropped on another disk launches SYS:System/DiskCopy with FROM = the dragged disk and TO = the
+  target. Discard with several icons of a drawer asks for each one ("OK to discard <name>?"), then re-reads the window.
+  Checked under Amiberry (screenshots looked at, disks read back with xdftool): Workbench1.3 dropped on the Data disk ->
+  DiskCopy's "Put Workbench1.3 (FROM disk) in drive DF0:" prompt (cancelled); Shell left out on the backdrop, launched
+  from there (AmigaShell), dropped back into its window; Shell + Diverse selected, Discard -> two requesters, both
+  removed from the disk (Diverse with its contents), the window shows the remaining icons. prepush-check FAIL=0 (Lemmings menu captured).
+  Open: free-slot placement (§10.5), busy pointer, "DFn:BUSY" icons during DiskCopy, selection across windows.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of
