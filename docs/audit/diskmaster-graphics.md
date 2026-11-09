@@ -106,7 +106,8 @@ blitter pixels/state/performance, raster lifetime and allocation-priority tests,
   authored six-pixel font.
 
 The new behavior probes reproduced the corresponding failures on the pre-fix ROMs. Isolated official-ROM
-probes confirmed short-window behavior, the GZZ font exception, string bounds and proportional-knob state.
+probes confirmed short-window behavior, the GZZ font exception, string bounds, proportional-knob state and
+the word-aligned authored menu-font probe (bar, items and submenu).
 Live DiskMaster checks and user verification confirmed the helper height, button labels, path-field lower border,
 horizontal refresh and menu rendering fixes.
 
