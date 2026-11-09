@@ -5030,6 +5030,7 @@ gfx_BltBitMapRastPort:
         lea     -DC_SIZE(sp),sp
         move.l  sp,a5
         move.l  a0,a4                ; a4 = source BitMap
+        and.b   #$f0,d6              ; A is one inside the clipped rectangle; the low nibble is unused
         move.b  d6,DC_MINTERM(a5)
         movem.w d0-d1,-(sp)
         bsr     dr_ctx
@@ -5095,6 +5096,8 @@ gfx_BltBitMapRastPort:
         sub.w   DC_BX(a5),d2         ; coordinates within the ClipRect's BitMap
         sub.w   DC_BY(a5),d3
         move.l  DC_CBM(a5),a3        ; a3 = destination BitMap
+        bsr     br_copy
+        bne     .bb_oret
         moveq   #0,d7                ; d7 = plane
 .bb_plane:
         moveq   #0,d6
@@ -5144,6 +5147,296 @@ gfx_BltBitMapRastPort:
         addq.w  #1,d7
         bra     .bb_plane
 .bb_oret:
+        rts
+
+; Copy a disjoint byte-aligned rectangle without rebuilding row alignment or multiplying row indices.
+; All active planes are validated before writing. Odd strides/parities use byte copies; other cases use
+; register blocks plus long/word/byte tails. Z clear when handled. Preserves registers.
+BR_BYTES        EQU 0
+BR_ROWS         EQU 2
+BR_SOFF         EQU 4
+BR_DOFF         EQU 8
+BR_SMOD         EQU 12
+BR_DMOD         EQU 14
+BR_SRANGE       EQU 16
+BR_DRANGE       EQU 20
+BR_INDEX        EQU 24
+BR_ODD          EQU 26
+BR_LEAD         EQU 28
+BR_BLOCKS       EQU 30
+BR_LONGS        EQU 32
+BR_TAIL         EQU 34
+BR_SIZE         EQU 36
+br_copy:
+        movem.l d0-d7/a0-a4/a6,-(sp)
+        move.l  a4,a2
+        lea     -BR_SIZE(sp),sp
+        move.l  sp,a4
+        cmp.b   #$c0,DC_MINTERM(a5)
+        bne     .bc_no
+        move.w  d0,d6
+        or.w    d1,d6
+        or.w    d2,d6
+        or.w    d3,d6
+        bmi     .bc_no
+        move.w  d0,d6
+        or.w    d2,d6
+        or.w    d4,d6
+        and.w   #7,d6
+        bne     .bc_no
+        tst.w   bm_BytesPerRow(a2)
+        ble     .bc_no
+        tst.w   bm_BytesPerRow(a3)
+        ble     .bc_no
+        moveq   #0,d6
+        move.b  bm_Depth(a3),d6
+        beq     .bc_no
+        cmp.w   #8,d6
+        bhi     .bc_no
+        cmp.b   bm_Depth(a2),d6
+        bhi     .bc_no
+        moveq   #0,d6
+        move.w  d0,d6
+        add.w   d4,d6
+        bcs     .bc_no
+        moveq   #0,d7
+        move.w  bm_BytesPerRow(a2),d7
+        lsl.l   #3,d7
+        cmp.l   d7,d6
+        bhi     .bc_no
+        moveq   #0,d6
+        move.w  d2,d6
+        add.w   d4,d6
+        bcs     .bc_no
+        moveq   #0,d7
+        move.w  bm_BytesPerRow(a3),d7
+        lsl.l   #3,d7
+        cmp.l   d7,d6
+        bhi     .bc_no
+        move.w  d1,d6
+        add.w   d5,d6
+        bcs     .bc_no
+        cmp.w   bm_Rows(a2),d6
+        bhi     .bc_no
+        move.w  d3,d6
+        add.w   d5,d6
+        bcs     .bc_no
+        cmp.w   bm_Rows(a3),d6
+        bhi     .bc_no
+        move.w  d4,d6
+        lsr.w   #3,d6
+        move.w  d6,BR_BYTES(a4)
+        mulu    d5,d6
+        cmp.l   #64,d6
+        blo     .bc_no
+        move.w  d5,BR_ROWS(a4)
+        move.w  bm_BytesPerRow(a2),d6
+        mulu    d1,d6
+        lsr.w   #3,d0
+        and.l   #$ffff,d0
+        add.l   d0,d6
+        move.l  d6,BR_SOFF(a4)
+        move.w  bm_BytesPerRow(a3),d6
+        mulu    d3,d6
+        lsr.w   #3,d2
+        and.l   #$ffff,d2
+        add.l   d2,d6
+        move.l  d6,BR_DOFF(a4)
+        subq.w  #1,d5
+        move.w  d5,d6
+        mulu    bm_BytesPerRow(a2),d6
+        moveq   #0,d7
+        move.w  BR_BYTES(a4),d7
+        add.l   d7,d6
+        move.l  d6,BR_SRANGE(a4)
+        mulu    bm_BytesPerRow(a3),d5
+        add.l   d7,d5
+        move.l  d5,BR_DRANGE(a4)
+        move.w  bm_BytesPerRow(a2),d6
+        sub.w   d7,d6
+        move.w  d6,BR_SMOD(a4)
+        move.w  bm_BytesPerRow(a3),d6
+        sub.w   d7,d6
+        move.w  d6,BR_DMOD(a4)
+        move.w  bm_BytesPerRow(a2),d6
+        or.w    bm_BytesPerRow(a3),d6
+        and.w   #1,d6
+        move.w  d6,BR_ODD(a4)
+        moveq   #0,d0
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d1
+.bc_validate:
+        cmp.b   bm_Depth(a3),d0
+        bhs.s   .bc_valid
+        btst    d0,d1
+        beq.s   .bc_vnext
+        move.w  d0,d7
+        lsl.w   #2,d7
+        move.l  bm_Planes(a2,d7.w),d2
+        beq     .bc_no
+        cmp.l   #-1,d2
+        beq     .bc_no
+        move.l  bm_Planes(a3,d7.w),d3
+        beq     .bc_no
+        cmp.l   #-1,d3
+        beq     .bc_no
+        add.l   BR_SOFF(a4),d2
+        bcs     .bc_no
+        add.l   BR_DOFF(a4),d3
+        bcs     .bc_no
+        move.l  d2,d4
+        add.l   BR_SRANGE(a4),d4
+        bcs     .bc_no
+        move.l  d3,d5
+        add.l   BR_DRANGE(a4),d5
+        bcs     .bc_no
+        cmp.l   d4,d3
+        bhs.s   .bc_vnext
+        cmp.l   d5,d2
+        blo     .bc_no
+.bc_vnext:
+        addq.w  #1,d0
+        bra.s   .bc_validate
+.bc_valid:
+        clr.w   BR_INDEX(a4)
+.bc_plane:
+        moveq   #0,d0
+        move.w  BR_INDEX(a4),d0
+        cmp.b   bm_Depth(a3),d0
+        bhs     .bc_done
+        move.l  DC_RP(a5),a0
+        move.b  rp_Mask(a0),d1
+        btst    d0,d1
+        beq     .bc_next
+        lsl.w   #2,d0
+        move.l  bm_Planes(a2,d0.w),a0
+        move.l  bm_Planes(a3,d0.w),a1
+        adda.l  BR_SOFF(a4),a0
+        adda.l  BR_DOFF(a4),a1
+        move.w  BR_ROWS(a4),d6
+        subq.w  #1,d6
+        tst.w   BR_ODD(a4)
+        bne     .bc_byterow
+        move.l  a0,d0
+        move.l  a1,d1
+        eor.l   d1,d0
+        btst    #0,d0
+        bne     .bc_byterow
+        move.w  a0,d1
+        and.w   #1,d1
+        move.w  d1,BR_LEAD(a4)
+        moveq   #0,d0
+        move.w  BR_BYTES(a4),d0
+        sub.w   d1,d0
+        cmp.w   #32,d0
+        blo.s   .bc_smallrow
+        cmp.w   #64,d0
+        blo     .bc_32setup
+.bc_smallrow:
+        divu    #24,d0
+        move.w  d0,BR_BLOCKS(a4)
+        subq.w  #1,BR_BLOCKS(a4)
+        swap    d0
+        move.w  d0,d1
+        lsr.w   #2,d1
+        subq.w  #1,d1
+        move.w  d1,BR_LONGS(a4)
+        and.w   #3,d0
+        move.w  d0,BR_TAIL(a4)
+        bra     .bc_wordrow
+.bc_32setup:
+        ; One full register block needs no data-register row counter; compare the source pointer to its end.
+        sub.w   #32,d0
+        move.w  d0,d1
+        lsr.w   #2,d1
+        subq.w  #1,d1
+        move.w  d1,BR_LONGS(a4)
+        and.w   #3,d0
+        move.w  d0,BR_TAIL(a4)
+        move.w  BR_ROWS(a4),d0
+        mulu    bm_BytesPerRow(a2),d0
+        move.l  a0,a6
+        adda.l  d0,a6
+.bc_32row:
+        tst.w   BR_LEAD(a4)
+        beq.s   .bc_32block
+        move.b  (a0)+,(a1)+
+.bc_32block:
+        movem.l (a0)+,d0-d7
+        movem.l d0-d7,(a1)
+        lea     32(a1),a1
+        move.w  BR_LONGS(a4),d7
+        bmi.s   .bc_32tail
+.bc_32long:
+        move.l  (a0)+,(a1)+
+        dbra    d7,.bc_32long
+.bc_32tail:
+        move.w  BR_TAIL(a4),d7
+        btst    #1,d7
+        beq.s   .bc_32byte
+        move.w  (a0)+,(a1)+
+.bc_32byte:
+        btst    #0,d7
+        beq.s   .bc_32next
+        move.b  (a0)+,(a1)+
+.bc_32next:
+        adda.w  BR_SMOD(a4),a0
+        adda.w  BR_DMOD(a4),a1
+        cmpa.l  a6,a0
+        bne     .bc_32row
+        bra     .bc_next
+.bc_wordrow:
+        tst.w   BR_LEAD(a4)
+        beq.s   .bc_blocks
+        move.b  (a0)+,(a1)+
+.bc_blocks:
+        move.w  BR_BLOCKS(a4),d7
+        bmi.s   .bc_longs
+.bc_block:
+        movem.l (a0)+,d0-d5
+        movem.l d0-d5,(a1)
+        lea     24(a1),a1
+        dbra    d7,.bc_block
+.bc_longs:
+        move.w  BR_LONGS(a4),d7
+        bmi.s   .bc_tail
+.bc_long:
+        move.l  (a0)+,(a1)+
+        dbra    d7,.bc_long
+.bc_tail:
+        move.w  BR_TAIL(a4),d7
+        btst    #1,d7
+        beq.s   .bc_tailbyte
+        move.w  (a0)+,(a1)+
+.bc_tailbyte:
+        btst    #0,d7
+        beq.s   .bc_wordnext
+        move.b  (a0)+,(a1)+
+.bc_wordnext:
+        adda.w  BR_SMOD(a4),a0
+        adda.w  BR_DMOD(a4),a1
+        dbra    d6,.bc_wordrow
+        bra.s   .bc_next
+.bc_byterow:
+        move.w  BR_BYTES(a4),d7
+        subq.w  #1,d7
+.bc_byte:
+        move.b  (a0)+,(a1)+
+        dbra    d7,.bc_byte
+        adda.w  BR_SMOD(a4),a0
+        adda.w  BR_DMOD(a4),a1
+        dbra    d6,.bc_byterow
+.bc_next:
+        addq.w  #1,BR_INDEX(a4)
+        bra     .bc_plane
+.bc_done:
+        moveq   #1,d0
+        bra.s   .bc_return
+.bc_no:
+        moveq   #0,d0
+.bc_return:
+        lea     BR_SIZE(sp),sp
+        movem.l (sp)+,d0-d7/a0-a4/a6
         rts
 ; dr_bits(a2 = source row | 0 | -1, d0 = source bit, a1 = destination row, d2 = destination bit, d4 = width,
 ; a5 = context: DC_MINTERM): combines d4 bits. For each destination byte: 8 aligned source bits (two bytes
@@ -5431,6 +5724,7 @@ gfx_BltBitMap:
         movem.l d2-d7/a2-a6,-(sp)
         lea     -BB_SIZE(sp),sp
         move.l  sp,a5
+        and.b   #$f0,d6
         move.b  d6,DC_MINTERM(a5)
         move.b  d7,BB_MASK(a5)
         move.l  a0,a4                ; a4 = source, a3 = destination
