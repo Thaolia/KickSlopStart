@@ -1956,6 +1956,12 @@ differs.
   leaves an icon out, and a drop back into a window brings it home (`.ob_unleft`). A disk dropped on another disk
   launches SYS:System/DiskCopy through `wb_launch2` (two project WBArgs: FROM, TO). `wb_discard` runs `dc_one`
   (requester + `wb_rmtree`) for each selected icon, then deselects and re-reads the window once.
+  **Workbench free slots, busy pointer, selection across windows (2026-11-09)**: the selection flags may be set in
+  several windows; `wb_selnext` iterates them (desktop, then drawers), `wb_selclr`/`wb_selfix` repair the counters
+  when a drawer closes or is re-read. `wb_drop` walks the whole selection, records the source windows that lost an
+  object in `DP_MOVED` (one bit each) and re-reads them; mode 3 (`.ob_slot`) picks a free grid cell of the target
+  directory's open window. `wb_busy` sets the hourglass (CHIP copy in `WBS_BUSYD`) on every Workbench window and
+  clears it afterwards.
   **File stream reuses its buffered block (2026-11-09)**: `ofs_stream_read` keeps the number of the data block in
   the handle's buffer (`SS_BUFBLK`, `ofs.i`) and fetches it from trackdisk only when the cursor moves to another
   block; a seek through the block tables clears it. Workbench 1.3.3 boot 71 s -> 61.7 s (1.3: 69 s).

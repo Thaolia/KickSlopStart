@@ -24,7 +24,7 @@ State at `e6d7bcb` (2026-11-08). This page lists what our ROM still lacks **beyo
 
 ## A. Gaps that break or visibly change a known program
 
-### A1. Workbench 1.3.3: dropping an icon into another window — done 2026-11-09, except free-slot placement — [src], S
+### A1. Workbench 1.3.3: dropping an icon into another window — done 2026-11-09
 
 Done (workbench-task-v34 §10.2-§10.4): the target comes from the pointer hot spot; drawer, trashcan or disk icon ->
 into that directory (position NO_ICON_POSITION); background of another drawer window -> there, at the drop point;
@@ -32,24 +32,26 @@ same volume = rename of the object and its .info, other volume = copy under the 
 the drop; "Error while moving <name>: 203" when the name exists on the same volume; a disk or trashcan never leaves
 its window; a window that is not ours refuses the drop. An icon dropped on the backdrop is left out there (kept in
 memory only, as in 1.3: not written to disk) and can be launched from there or dropped back into a window; a disk
-dropped on another disk starts DiskCopy with FROM = the dragged disk and TO = the target (§10.6). Still missing: the
-free-slot placement of a drop on an open disk window (§10.5, rule still unresolved: our icon gets NO_ICON_POSITION),
-the busy pointer during the operation, and the "DFn:BUSY" icons while DiskCopy runs.
+dropped on another disk starts DiskCopy with FROM = the dragged disk and TO = the target (§10.6). A drop on a disk or
+drawer icon whose window is open places the icon in a free slot of that window (§10.5's grid, checked against its
+test vectors; the rule itself is still marked [S] in the spec), and the busy pointer (an hourglass drawn for this
+project) is shown during a drop and Empty Trash. Still missing: the "DFn:BUSY" icons while DiskCopy runs.
 
 ### A2. Workbench 1.3.3: Disk menu — done 2026-11-09
 
 Empty Trash empties the selected trashcan (the ".info" icon-list file stays) and Initialize starts SYS:System/Format
 on the selected disk with the 1.3 WBArgs (§10.9). The menu items are enabled or ghosted from the selection (§10.8).
 
-### A3. Workbench 1.3.3: extended selection — done 2026-11-09, except one point
+### A3. Workbench 1.3.3: extended selection — done 2026-11-09
 
 Shift+click adds an icon, a press with Shift held moves the whole selection (in its window or into another directory,
 each icon by the same delta), a double-click opens every selected icon, and the menus follow the "several icons"
 row of §10.8. Intuition now gives MOUSEBUTTONS (and every IntuiMessage) the qualifier of the input event, and
 gameport's system mouse events carry the keyboard's qualifiers (C9's "MOUSEBUTTONS carries qualifier 0" is fixed).
-Discard of several icons asks for each one in turn, then re-reads the window. Still missing: a selection across
-several windows (Shift+click in another window starts a new selection). The "button held" qualifier bits of mouse
-events are not set yet.
+Discard of several icons asks for each one in turn, then re-reads the windows. Shift+click adds icons of other
+windows too; Open, Snapshot, Discard and a group drag work on the whole selection (§10.7 did not test this case on
+1.3: a group released on the background of the drag's own window only repositions that window's icons). The "button
+held" qualifier bits of mouse events are not set yet.
 
 ### A4. Workbench 1.3.3: menu ghosting — done 2026-11-09 (single selection)
 
@@ -350,7 +352,7 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 
 ## Suggested order
 
-1. **A1/A3 leftovers**: free-slot placement (§10.5), busy pointer, selection across windows.
+1. **A1 leftover**: the "DFn:BUSY" icons while DiskCopy runs.
 2. **C1, requester on ejection with a write-back pending.** It is a data-loss issue.
 3. **C2, persistent trackdisk DMA buffer.** Small, and it removes a chip-RAM failure mode for games.
 4. **A6, the rest of the Shell memory gap** (≈ 9.6 KB: BCPL getvec blocks, the stacks of the two Shell processes). A5 boot time is done.

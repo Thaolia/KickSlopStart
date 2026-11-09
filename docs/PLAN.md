@@ -1383,6 +1383,22 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   from there (AmigaShell), dropped back into its window; Shell + Diverse selected, Discard -> two requesters, both
   removed from the disk (Diverse with its contents), the window shows the remaining icons. prepush-check FAIL=0 (Lemmings menu captured).
   Open: free-slot placement (§10.5), busy pointer, "DFn:BUSY" icons during DiskCopy, selection across windows.
+  **Workbench free slots, busy pointer, selection across windows (2026-11-09)**: spec workbench-task-v34 §10.1,
+  §10.5, §10.7, §10.9. A drop on a disk or drawer icon whose directory is shown in an open window writes a free slot
+  of that window: grid X = 21 + 86i, Y = 29j scanned column by column, first cell whose box (image + name) overlaps no
+  icon and no slot already taken by the same drop and fits in the window height (`.ob_slot` in `wb_drop`). The busy
+  pointer (an hourglass drawn for this project, SetPointer on every Workbench window) is shown while a drop or Empty
+  Trash is processed (`wb_busy`). The selection may span windows: `wb_selnext` walks the selected icons of every
+  window, `wb_selclr`/`wb_selfix` keep `WBS_NSEL`/`WBS_SELW`/`WBS_SELI` right when a drawer closes or is re-read;
+  Shift+click adds icons of any window; `wb_deselect`, `wb_openall`, `wb_snapall`, `wb_discard` (each drawer re-read
+  once) and the group drop (`DP_MOVED` = bit per source window) walk the whole selection. Checked under Amiberry
+  (production ROM, screenshots looked at, disks read back with xdftool): Say dragged from Utilities onto the
+  Workbench1.3 disk icon with the root window open -> `Say.info` = 193, 29 (the cell the rule predicts from the
+  root's icons); hourglass on the screen during the drop, normal pointer after; More (Utilities) + Shift-click
+  Expansion (root window) -> both highlighted, menu Open / Discard enabled, the rest ghosted; Shift-drag onto the Data
+  disk -> both copied; Expansion + More dropped from the Data window onto the Workbench1.3 disk -> 451, 0 and 279, 29,
+  two distinct free cells. prepush-check FAIL=0 (Lemmings menu captured). Not checked live: Discard across windows.
+  Open: "DFn:BUSY" icons during DiskCopy.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of
