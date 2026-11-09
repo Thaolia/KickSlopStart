@@ -12,6 +12,27 @@ that SetRast ignores cached minterms and ClearEOL/ClearScreen select the backgro
 pen state. Logs and screenshots are in `build/rectpens-results/`; success requires `RECTPENS OK` and `RECTPENS END`.
 The selective-XOR test fails on the pre-fix ROM.
 
+## Native shifted-copy regression and speed gate
+
+`make test-graphics-copyshift` (also included through the normal and quick Graphics groups) exercises ClipBlit
+between authored bitmaps. The generator `mk_copyshift_cases.py` creates independent per-pixel expected results,
+reduced to complete-buffer fingerprints. Coverage includes all source/destination byte phases, masked edge
+bits, plane masks, unequal/odd strides, odd addresses, constant planes, a second destination plane, safe
+leftward aliasing and a non-copy minterm. The entire allocation is checked, including guards and source data;
+destination RastPort state must remain unchanged. CHIP and non-DMA allocations run the same cases.
+
+Eight large shifted panel copies are timed in native PAL scanlines. Each must average less than 1,024 lines,
+comfortably below an 80 ms display-update interval. The pre-fix ROM passes the pixel checks but fails this
+performance gate. Logs and screenshots are in `build/copyshift-results/`; success requires `COPYSHIFT OK` and
+`COPYSHIFT END`. No DSS executable, music or glyph data is part of the fixture.
+
+Measured on the 512 KiB CHIP / 512 KiB slow-RAM fixture, eight large copies take 35,630 PAL scanlines before
+the fix and 6,105 afterward (about 5.8 times faster). In the initial playback validation, 60 panel-call entries have a median
+interval of 322.49 ms before the fix and 80.00 ms afterward, matching the approximately 80 ms reference cadence
+in the tested song section. This is display-cadence parity, not copy-routine speed parity: an inclusive fixed
+ClipBlit still takes about 54.6 ms where the original reference measured approximately 9.7 ms. Tempo changes
+within the module can change the requested update interval.
+
 ## Native menu-font regression
 
 `make test-intuition-menufont` (also included through the normal and quick Intuition groups) registers an authored

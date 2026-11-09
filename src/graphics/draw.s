@@ -5130,15 +5130,15 @@ dr_bits:
         moveq   #-1,d2
         lsl.b   d4,d2
         lsr.w   #3,d7                ; d7 = last destination byte
-        cmp.b   #$C0,DC_MINTERM(a5)  ; fast path: copy of a real plane, shift a multiple of 8 (layers
-        bne.s   .bt_byte             ; backups: same bit position modulo 16) -> bytes copied as is
+        cmp.b   #$C0,DC_MINTERM(a5)  ; real-plane copies have separate aligned and shifted streaming paths
+        bne     .bt_byte
         move.l  a2,d4
         beq.s   .bt_byte
         addq.l  #1,d4
         beq.s   .bt_byte
         moveq   #7,d4
         and.w   d0,d4
-        bne.s   .bt_byte
+        bne     .bt_shift
         move.l  a1,-(sp)
         asr.w   #3,d0
         lea     0(a2,d0.w),a0
@@ -5269,6 +5269,102 @@ dr_bits:
         cmp.w   d7,d5
         ble     .bt_byte
         addq.l  #2,sp
+        rts
+
+; A shifted copy of disjoint rows needs no per-byte minterm or edge-mask dispatch. Keep aliasing rows on the
+; original forward walk; prefetching pairs there could change which source bytes a later destination reads.
+.bt_shift:
+        movem.l d0/a1,-(sp)
+        move.w  d5,d3
+        lsl.w   #3,d3
+        add.w   d0,d3
+        move.w  d3,d4
+        asr.w   #3,d4
+        lea     0(a2,d4.w),a0
+        and.w   #7,d3
+        adda.w  d5,a1
+        moveq   #0,d4
+        move.w  d7,d4
+        sub.w   d5,d4
+        addq.w  #1,d4
+        move.l  a0,d6
+        add.l   d4,d6
+        addq.l  #1,d6               ; include the final masked source-byte fetch
+        cmpa.l  d6,a1
+        bhs.s   .bs_disjoint
+        move.l  a1,d6
+        add.l   d4,d6
+        cmp.l   a0,d6
+        bhi     .bs_alias
+.bs_disjoint:
+        cmp.w   d5,d7
+        bne.s   .bs_first
+        and.b   d2,d1
+        bsr     .bs_read
+        and.b   d1,d4
+        not.b   d1
+        and.b   d1,(a1)
+        or.b    d4,(a1)
+        bra     .bs_done
+.bs_first:
+        bsr     .bs_read
+        and.b   d1,d4
+        not.b   d1
+        and.b   d1,(a1)
+        or.b    d4,(a1)+
+        sub.w   d5,d7
+        subq.w  #1,d7               ; complete middle bytes, excluding both masked edges
+        beq.s   .bs_last
+        move.l  a0,d4
+        move.l  a1,d6
+        eor.l   d6,d4
+        btst    #0,d4
+        bne.s   .bs_bytes
+        move.w  a0,d4
+        btst    #0,d4
+        beq.s   .bs_words
+        bsr     .bs_read
+        move.b  d4,(a1)+
+        subq.w  #1,d7
+.bs_words:
+        move.w  d7,d6
+        lsr.w   #1,d6
+        and.w   #1,d7
+        bra.s   .bs_word_test
+.bs_word:
+        move.l  (a0),d4             ; the following edge byte makes the fourth source byte valid
+        lsl.l   d3,d4
+        swap    d4
+        move.w  d4,(a1)+
+        addq.l  #2,a0
+.bs_word_test:
+        dbra    d6,.bs_word
+.bs_bytes:
+        subq.w  #1,d7
+        bmi.s   .bs_last
+.bs_byte:
+        bsr.s   .bs_read
+        move.b  d4,(a1)+
+        dbra    d7,.bs_byte
+.bs_last:
+        bsr.s   .bs_read
+        and.b   d2,d4
+        not.b   d2
+        and.b   d2,(a1)
+        or.b    d4,(a1)
+.bs_done:
+        movem.l (sp)+,d0/a1
+        addq.l  #2,sp
+        rts
+.bs_alias:
+        movem.l (sp)+,d0/a1
+        bra     .bt_byte
+.bs_read:
+        move.b  (a0)+,d4
+        lsl.w   #8,d4
+        move.b  (a0),d4
+        lsl.w   d3,d4
+        lsr.w   #8,d4
         rts
 
 ; BltBitMap(src a0, srcX d0, srcY d1, dest a1, destX d2, destY d3, width d4, height d5, minterm d6, mask d7,
