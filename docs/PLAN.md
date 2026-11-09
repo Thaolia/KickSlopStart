@@ -2,6 +2,13 @@
 
 ## Context
 
+Graphics compatibility update (2026-11-09): RectFill now honors client-supplied per-plane RastPort minterms in
+both CPU and solid blitter paths, restoring selected labels and highlight colours in DPaint III's format
+chooser. Private explicit-pen fills retain their existing behavior; text clearing and Intuition ghost drawing
+keep their temporary pen state coherent. The new `test-graphics-rectpens` regression checks independent pixels,
+patterns, plane masks, guards and state in CHIP and non-DMA memory, through normal and quick Graphics groups.
+The menu-font regression additionally verifies disabled gadget/menu stipples and preserved drawing state.
+
 Goal: produce an **open-source, strictly 1.3-compatible Kickstart** — a ROM image of **256 KiB
 loaded at `$FC0000`**, 68000 big-endian, drop-in for the real `kick34005.A500`, booting **first in an
 emulator (FS-UAE/WinUAE), then on a real Amiga 500** (EPROM/adapter).

@@ -1,6 +1,7 @@
 ; SPDX-License-Identifier: MIT
 ; Native menu-font regression: authored six-pixel solid glyphs distinguish screen and global fonts.
 ; Raw input opens the menu bar, item box and submenu; each must render at the screen font's width.
+; Disabled gadget/menu stipples must use their BlockPen and preserve client drawing state.
                 include "exec.i"
                 include "graphics.i"
                 include "intuition.i"
@@ -35,6 +36,8 @@ _start:
         move.l  d0,a3
         tst.l   d0
         beq     close_screen
+        bsr     check_gadget
+        move.l  intbase(pc),a6
         move.l  a3,a0
         lea     menu(pc),a1
         jsr     -264(a6)           ; SetMenuStrip
@@ -68,6 +71,8 @@ _start:
         moveq   #0,d5
         moveq   #9,d7
         bsr     count_runs
+        bsr     bar_pixels
+        move.w  d3,enabled_pixels
         lea     bar_marker(pc),a0
         bsr     puts
         moveq   #10,d0
@@ -89,6 +94,25 @@ _start:
         bsr     count_runs
         lea     sub_marker(pc),a0
         bsr     puts
+        move.w  #IECODE_RBUTTON|$80,event+IE_CODE
+        clr.l   event+IE_X
+        bsr     inject
+        move.l  intbase(pc),a6
+        move.l  a3,a0
+        move.l  #$ffe0,d0         ; menu 0, NOITEM, NOSUB
+        jsr     -180(a6)          ; OffMenu
+        moveq   #70,d0
+        moveq   #60,d1
+        bsr     position
+        move.w  #IECODE_RBUTTON,event+IE_CODE
+        clr.l   event+IE_X
+        bsr     inject
+        bsr     bar_pixels
+        add.w   #72,d3            ; one quarter of the 36 x 8 solid title is cleared by ghosting
+        cmp.w   enabled_pixels(pc),d3
+        beq.s   .ghost_ok
+        st      bad
+.ghost_ok:
         move.w  #IECODE_RBUTTON|$80,event+IE_CODE
         clr.l   event+IE_X
         bsr     inject
@@ -131,6 +155,100 @@ fail:
         bsr     puts
         movem.l (sp)+,d2-d7/a2-a6
         moveq   #20,d0
+        rts
+check_gadget:
+        move.l  gfxbase(pc),a6
+        move.l  WD_RPORT(a3),a1
+        moveq   #2,d0
+        jsr     LVO_SETAPEN(a6)
+        moveq   #19,d0
+        moveq   #19,d1
+        moveq   #36,d2
+        moveq   #28,d3
+        jsr     LVO_RECTFILL(a6)
+        move.l  WD_RPORT(a3),a0
+        move.l  rp_minterms(a0),saved_mt
+        move.l  rp_minterms+4(a0),saved_mt+4
+        move.l  intbase(pc),a6
+        lea     gadget(pc),a0
+        move.l  a3,a1
+        suba.l  a2,a2
+        jsr     -174(a6)          ; OffGadget
+        move.l  gfxbase(pc),a6
+        jsr     -228(a6)
+        moveq   #0,d6
+        moveq   #19,d5
+.row:
+        moveq   #19,d4
+.pixel:
+        move.w  d4,d0
+        move.w  d5,d1
+        move.l  WD_RPORT(a3),a1
+        jsr     -318(a6)
+        cmp.l   #2,d0
+        beq.s   .kept
+        tst.l   d0
+        bne.s   .bad
+        cmp.w   #20,d4
+        blo.s   .bad
+        cmp.w   #35,d4
+        bhi.s   .bad
+        cmp.w   #20,d5
+        blo.s   .bad
+        cmp.w   #27,d5
+        bls.s   .next
+.bad:
+        st      bad
+        bra.s   .next
+.kept:
+        addq.w  #1,d6
+.next:
+        addq.w  #1,d4
+        cmp.w   #36,d4
+        ble.s   .pixel
+        addq.w  #1,d5
+        cmp.w   #28,d5
+        ble.s   .row
+        cmp.w   #148,d6
+        bne.s   .state_bad
+        move.l  WD_RPORT(a3),a0
+        cmp.b   #2,rp_FgPen(a0)
+        bne.s   .state_bad
+        tst.b   rp_BgPen(a0)
+        bne.s   .state_bad
+        cmp.b   #JAM2,rp_DrawMode(a0)
+        bne.s   .state_bad
+        move.l  saved_mt(pc),d0
+        cmp.l   rp_minterms(a0),d0
+        bne.s   .state_bad
+        move.l  saved_mt+4(pc),d0
+        cmp.l   rp_minterms+4(a0),d0
+        beq.s   .ret
+.state_bad:
+        st      bad
+.ret:   rts
+bar_pixels:
+        move.l  gfxbase(pc),a6
+        jsr     -228(a6)
+        moveq   #0,d3
+        moveq   #0,d5
+.row:
+        moveq   #0,d4
+.pixel:
+        move.w  d4,d0
+        move.w  d5,d1
+        lea     SC_RASTPORT(a4),a1
+        jsr     -318(a6)
+        cmp.l   #1,d0
+        bne.s   .next
+        addq.w  #1,d3
+.next:
+        addq.w  #1,d4
+        cmp.w   #100,d4
+        blo.s   .pixel
+        addq.w  #1,d5
+        cmp.w   #10,d5
+        blo.s   .row
         rts
 ; Count solid runs from the authored glyphs, independent of the menu box's precise frame position.
 count_runs:
@@ -209,8 +327,14 @@ new_screen:
 new_window:
         dc.w    40,30,200,80
         dc.b    1,0
-        dc.l    MENUPICK,BORDERLESS|ACTIVATE,0,0,0,0,0
+        dc.l    MENUPICK,BORDERLESS|ACTIVATE,gadget,0,0,0,0
         dc.w    0,0,0,0,CUSTOMSCREEN
+gadget:
+        dc.l    0
+        dc.w    20,20,16,8,3,0,BOOLGADGET
+        dc.l    0,0,0,0,0
+        dc.w    1
+        dc.l    0
 menu:
         dc.l    0
         dc.w    0,0,64,10,MENUENABLED
@@ -271,6 +395,8 @@ intbase: dc.l   0
 mouse_x: dc.w  0
 mouse_y: dc.w  0
 scan_left: dc.w 0
+enabled_pixels: dc.w 0
+saved_mt: dc.l 0,0
 io:     dcb.b  48,0
 event:  dcb.b  IE_SIZEOF,0
 prefs:  dcb.b  PF_SIZE,0

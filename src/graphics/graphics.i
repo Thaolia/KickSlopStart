@@ -138,6 +138,7 @@ rp_Flags     EQU 32           ; WORD: flags (AREAOUTLINE = $0008)
 rp_LinePtrn  EQU 34
 rp_cp_x      EQU 36
 rp_cp_y      EQU 38
+rp_minterms  EQU 40           ; UBYTE[8]: one blitter minterm per plane
 rp_Font      EQU 52
 rp_TxHeight  EQU 58
 rp_TxWidth   EQU 60

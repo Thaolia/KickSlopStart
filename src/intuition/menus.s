@@ -38,6 +38,7 @@
                 xdef    intuition_OnMenu
                 xdef    intuition_OffMenu
                 xdef    intuition_PrintIText
+                xref    gfx_minterms
                 xdef    intuition_IntuiTextLength
                 xdef    it_menubutton
                 xdef    it_menumove
@@ -557,6 +558,8 @@ mn_screenfont:
 mn_ghost:
         movem.l d4-d7/a2,-(sp)
         move.l  a1,a2
+        move.l  rp_minterms+4(a2),-(sp)
+        move.l  rp_minterms(a2),-(sp)
         move.l  rp_AreaPtrn(a2),-(sp)
         move.b  rp_AreaPtSz(a2),-(sp)
         move.b  rp_FgPen(a2),-(sp)
@@ -588,6 +591,7 @@ mn_ghost:
         bclr    #3,rp_Flags+1(a2)    ; no AREAOUTLINE
         move.l  IB_GFXBASE(a5),a6
         move.l  a2,a1
+        jsr     gfx_minterms
         jsr     LVO_RECTFILL(a6)
         addq.l  #4,sp
         move.w  (sp)+,rp_Flags(a2)
@@ -596,6 +600,8 @@ mn_ghost:
         move.b  (sp)+,rp_FgPen(a2)
         move.b  (sp)+,rp_AreaPtSz(a2)
         move.l  (sp)+,rp_AreaPtrn(a2)
+        move.l  (sp)+,rp_minterms(a2)
+        move.l  (sp)+,rp_minterms+4(a2)
         movem.l (sp)+,d4-d7/a2
         rts
 

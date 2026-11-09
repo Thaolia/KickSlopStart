@@ -38,6 +38,7 @@
                 xref    kbd_cook
                 xref    intuition_DrawImage
                 xref    intuition_PrintIText
+                xref    gfx_minterms
                 xref    wn_sendgad
                 xref    wn_sendgadq
                 xref    intuition_DisplayBeep
@@ -465,9 +466,11 @@ gad_ghost:
         movem.l d0-d3/a0-a1/a6,-(sp)
         movem.w 4+28(sp),d0-d3
         cmp.w   d0,d2
-        blt.s   .gh_ret
+        blt     .gh_ret
         cmp.w   d1,d3
-        blt.s   .gh_ret
+        blt     .gh_ret
+        move.l  rp_minterms+4(a4),-(sp)
+        move.l  rp_minterms(a4),-(sp)
         move.l  rp_AreaPtrn(a4),-(sp)
         move.b  rp_AreaPtSz(a4),-(sp)
         move.b  rp_FgPen(a4),-(sp)
@@ -488,6 +491,7 @@ gad_ghost:
         move.b  #1,rp_AreaPtSz(a4)
         move.l  a4,a1
         move.l  IB_GFXBASE(a5),a6
+        jsr     gfx_minterms
         jsr     LVO_RECTFILL(a6)
         move.w  (sp)+,rp_Flags(a4)
         move.b  (sp)+,rp_DrawMode(a4)
@@ -495,6 +499,8 @@ gad_ghost:
         move.b  (sp)+,rp_FgPen(a4)
         move.b  (sp)+,rp_AreaPtSz(a4)
         move.l  (sp)+,rp_AreaPtrn(a4)
+        move.l  (sp)+,rp_minterms(a4)
+        move.l  (sp)+,rp_minterms+4(a4)
 .gh_ret:
         movem.l (sp)+,d0-d3/a0-a1/a6
         rts
