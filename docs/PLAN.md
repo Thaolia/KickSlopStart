@@ -1465,6 +1465,17 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   DPaint III, Shanghai, Directory Opus, Bubble Bobble, Caesar and the Lemmings demo reach their usual screens.
   writeback_probe on a quiet machine, alternated with the ROM before this change: DF1 46.8 / 47.5 s against 46.6 /
   46.7 s, DH0 14.6 / 14.0 s against 14.4 / 13.9 s (no slowdown); files identical, OFS CHECK OK.
+  **Strap retry, Alert $30000001, DF2:/DF3:, stateless ExNext, dl_LockList (2026-11-09)**: REMAINING-WORK C6 and C7
+  (ARCHITECTURE "Strap retry without a reset", "Drives and file system"). Checked under Amiberry, production ROM,
+  screenshots looked at: empty DF0:, Workbench 1.3.3 inserted on the kitten screen -> boots without a reset (one
+  "M6R" in the serial log) to the Workbench with 858,472 bytes free, as a power-on boot; a test disk whose bootblock
+  returns D0 = 1 -> "Recoverable Alert 30000001", click, kitten screen, disk swapped for the Workbench -> boots;
+  Holiday Lemmings inserted on the kitten screen -> FAIRLIGHT intro. Four drives (`-s nr_floppies=4`): four volume
+  icons. `list sys:c` (66 files) and `dir sys: opt a` (all entries) with the stateless ExNext; the Workbench disk
+  window opens with its drawers. `cd df1:`, eject DF1 -> `info` lists Spare3 as absent; reinserted -> `dir` lists
+  it through the re-adopted lock; ejected again, `cd sys:` -> Spare3 is gone from `info`. prepush-check (dev) FAIL=0,
+  Lemmings menu looked at; writeback_probe (DF1 47.0 s, DH0 14.4 s, 66 files identical, OFS CHECK OK) and
+  `validate_probe.sh valid` pass.
   **Boot time (2026-11-09)**: Workbench 1.3.3 title bar after 61.7 s (two runs, production ROM, 0.5 s polling of the
   title-bar crop), against 68.5-69.0 s on the real 1.3 (memory-budget-v34 §8, same method) and 71.0-71.3 s before
   (61.8-66.2 s with 8 cache slots). A trace of every trackdisk lookup during the boot showed 1,460 block reads, 818 of

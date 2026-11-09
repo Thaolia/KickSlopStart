@@ -22,7 +22,6 @@
                 xref    add_slow_memory  ; memory.s (slow RAM $C00000 at the head of the MemList)
                 xref    add_low_chip     ; memory.s (with slow RAM, low chip below HEAP_LOWER into the chip heap)
                 xref    slow_probe       ; memory.s (end of the slow RAM, before ExecBase is built)
-                xref    exp_memosave     ; expansion.s (reset memo of the RAM boards)
                 xref    init_task        ; tasks.s
                 xref    init_ints        ; interrupts.s
                 xref    dispatch_in      ; interrupts.s (M7c: launch of the 1st task = user-mode transition)
@@ -31,6 +30,7 @@
                 xref    task_alloc
                 xref    cia_server       ; cia.s (PORTS/INT2 server and EXTER/INT6 exclusive vector)
                 xref    gfx_display_init ; graphics/gfx.s (M4a: first Copper-driven display)
+                xref    gfx_display_free
                 xref    exec_RawIOInit   ; exec/execmisc.s (coldstart: SERPER as in 1.3)
                 xref    strap_boot       ; exec/strap.s (M6r: boot decision -> insert-disk if not bootable)
                 xref    alert_boothook   ; exec/execmisc.s (role of alert.hook)
@@ -3432,6 +3432,7 @@ d2_done:
         ; RED STRAP_FAKE_BOOTDEV: d0!=0 without reading -> M6Y present but CBOOT absent. RED STRAP_NO_EXEC: validates
         ; but does not jump -> CBOOT absent, M6Y present. RED STRAP_BAD_CSUM: rejects a good block -> M6R.
         jsr     alert_boothook       ; alert.hook: Guru of a dead-end alert from before the reset, before the strap
+        moveq   #0,d0                ; boot context, supervisor mode
         jsr     strap_boot
         tst.l   d0
         bne.s   .m6r_floppy
@@ -3440,10 +3441,11 @@ d2_done:
         lea     msg_m6r_ok(pc),a0
         bsr     ser_puts             ; "M6R STRAP OK (no bootable volume -> insert-disk)"
         jsr     gfx_display_init     ; M6s: BOOT SCREEN (32-colour kitten image) via the graphics.library ABI
+        move.l  d0,BOOT_SCREEN       ; taken down by disk_watch when an inserted floppy boots
         lea     msg_m6s_ok(pc),a0
         bsr     ser_puts             ; "M6S BOOTSCR OK" (screen set up; VISUAL discriminant = colours)
         bsr     m6r_wire_requester   ; LIVE wiring: PERSISTENT pointer+requester handlers on input.device
-        lea     dw_name(pc),a0       ; DF0: watch: an inserted floppy reboots the machine (boot)
+        lea     dw_name(pc),a0       ; DF0: watch: an inserted floppy is booted from there
         move.l  #disk_watch,a1
         moveq   #-1,d0
         move.l  #DW_STK,d1
@@ -3477,11 +3479,7 @@ boot_dos_start:
         ; --- F1: BOOTABLE disk -> create the Initial CLI (shell). GATED on the boot (this is the F vs E line):
         ; on a non-bootable disk (M6R insert-disk branch), NO Initial CLI is created. The shell first runs
         ; s:startup-sequence (root) then moves on to the interactive prompt. a6 = SysBase (strap restored it).
-        lea     sh_cname(pc),a0
-        move.l  #shell_main,a1       ; absolute: shell.o linked out of 16-bit lea(pc) range
-        moveq   #2,d0                ; Initial CLI pri 2 (sole consumer of the console)
-        move.l  #SH_STK,d1           ; the commands it launches run on this stack
-        jsr     proc_create
+        bsr     initial_cli
 boot_strap_done:
                 ifeq    M7E_COOP
         move.b  #1,SCHED_ON          ; ARMS periodic preemption (default)
@@ -4215,7 +4213,7 @@ setup_demo_tasks:                    ; a6 = SysBase; clobbers scratch + d2/a2-a4
         move.l  a3,d0
         lsr.l   #2,d0                ; BPTR(DeviceNode)
         move.l  d0,DI_DEVINFO(a0)    ; di_DevInfo = BPTR(DeviceNode) -> dos Open resolves DF0: through this node
-        bsr     mount_df1
+        bsr     mount_dfn
         move.l  a3,a0
 .d3c_tail:
         move.l  DN_NEXT(a0),d0
@@ -5289,40 +5287,59 @@ fl_node:
         movem.l (sp)+,d2-d3          ; (movem does not touch the CCR)
         rts
 
-; mount_df1(a3 = DeviceNode of DF0:, a6): if disk.resource identified a 3.5" drive as unit 1 (HRM external-drive
-; protocol, read at its startup), a second file-handler process and its "DF1" DeviceNode, linked after DF0:. The
-; handler takes its unit from the node (dn_Task = its port), linked before it first runs. Preserves everything.
-mount_df1:
-        movem.l d0-d1/a0-a1,-(sp)
+; mount_dfn(a3 = DeviceNode of DF0:, a6): for each unit 1-3 that disk.resource identified as a 3.5" drive (HRM
+; external-drive protocol, read at its startup), a file-handler process and its "DFn" DeviceNode, linked after
+; DF0: in unit order. Each handler takes its unit from the node (dn_Task = its port), linked before it first runs.
+; Preserves everything.
+DFN_NAMELEN     EQU 16                ; "dos.handler.dfN" + NUL
+mount_dfn:
+        movem.l d0-d2/a0-a2,-(sp)
+        lea     -DFN_NAMELEN(sp),sp
+        move.l  a3,a2                ; a2 = last node of the chain
+        moveq   #1,d2                ; d2 = unit
+.mn_lp:
         lea     diskres_test_name(pc),a1
         jsr     LVO_OPENRESOURCE(a6)
         tst.l   d0
-        beq.s   .m1_ret
+        beq.s   .mn_ret
         move.l  a6,-(sp)
         move.l  d0,a6
-        moveq   #1,d0
-        jsr     -30(a6)              ; GetUnitID(1) (disk.resource LVO -30)
+        move.l  d2,d0
+        jsr     -30(a6)              ; GetUnitID(unit) (disk.resource LVO -30)
         move.l  (sp)+,a6
         tst.l   d0                   ; DRT_AMIGA = 0
-        bne.s   .m1_ret
-        lea     df1_hname(pc),a0
+        bne.s   .mn_next
+        lea     dfn_hname(pc),a0
+        move.l  sp,a1
+.mn_cp:
+        move.b  (a0)+,(a1)+
+        bne.s   .mn_cp
+        move.b  d2,-2(a1)
+        add.b   #'0',-2(a1)          ; unit digit in place of the template's last character
+        move.l  sp,a0
         move.l  #dos_handler,a1
         moveq   #6,d0
         move.l  #D3_STK,d1
         jsr     proc_create
         tst.l   d0
-        beq.s   .m1_ret
-        moveq   #1,d1
+        beq.s   .mn_next
+        move.l  d2,d1
         bsr     fl_node
-        beq.s   .m1_ret
+        beq.s   .mn_next
         move.l  a0,d0
         lsr.l   #2,d0
-        move.l  d0,DN_NEXT(a3)
-.m1_ret:
-        movem.l (sp)+,d0-d1/a0-a1
+        move.l  d0,DN_NEXT(a2)
+        move.l  a0,a2
+.mn_next:
+        addq.l  #1,d2
+        cmp.w   #4,d2
+        blo.s   .mn_lp
+.mn_ret:
+        lea     DFN_NAMELEN(sp),sp
+        movem.l (sp)+,d0-d2/a0-a2
         rts
-df1_hname:
-        dc.b    "dos.handler.df1",0
+dfn_hname:
+        dc.b    "dos.handler.dfN",0
         even
 
 ; mk_demo_task: a2 = PC of the body, a3 = name, d2.b = priority -> a4 = created TCB.
@@ -5928,15 +5945,16 @@ gp_cap_handler:
         move.l  a0,d0
         rts
 
-; disk_watch: process of the insert-disk screen (pri -1). Every DW_TICKS: td_disk_present; an inserted
-; floppy (drive previously seen empty) -> cold reboot (Supervisor: RESET then jump to the ROM entry): the boot
-; then finds it as at power-on. Does not return.
+; disk_watch: process of the insert-disk screen (pri -1). Every DW_TICKS: td_disk_present; a floppy inserted into
+; the drive previously seen empty gets a new strap attempt from this process, without a reset (uae-hd-boot-v34 §3
+; item 4; romboot is not called again). Not bootable: the screen stays and the watch goes on. Booted: the screen
+; and its requester go, then dos starts on DF0: as after a power-on boot and the process ends, or the bootblock's
+; own entry point takes over this process.
 DW_TICKS        EQU 25               ; 0.5 s between two polls
-DW_STK          EQU 1024
+DW_STK          EQU 4096             ; the bootblock runs on this stack
 disk_watch:
-        move.l  ($4).w,a6
-        moveq   #0,d7                ; d7 != 0: drive seen empty (a non-bootable floppy already present does not
-.dw_lp:                              ; reboot the machine: it must be removed and then another one inserted)
+        moveq   #0,d7                ; d7 != 0: drive seen empty (a non-bootable floppy already present is not
+.dw_lp:                              ; tried again: it must be removed and then another one inserted)
         move.l  DOS_DOSBASE,a6
         moveq   #DW_TICKS,d1
         jsr     DOS_LVO_DELAY(a6)
@@ -5949,23 +5967,67 @@ disk_watch:
 .dw_in:
         tst.l   d7
         beq.s   .dw_lp
+        moveq   #0,d7
+        moveq   #1,d0                ; process, user mode
+        jsr     strap_boot
+        tst.l   d0
+        beq.s   .dw_lp
+        move.l  a0,a2                ; a2 = entry returned by the bootblock
+        bsr     dw_teardown
+        move.l  a2,d0
+        beq.s   .dw_dos
+        lea     dos_libname,a1
+        jsr     LVO_FINDRESIDENT(a6)
+        tst.l   d0
+        beq.s   .dw_game
+        move.l  d0,a1
+        cmp.l   RT_INIT(a1),a2
+        bne.s   .dw_game
+.dw_dos:
+        jsr     dos_df0bootnode
+        jsr     LVO_FORBID(a6)       ; dos_mountlist walks the lists without locking them
+        jsr     dos_mountlist
+        jsr     LVO_PERMIT(a6)
+        lea     msg_m6y_ok(pc),a0
+        bsr     ser_puts
+        bsr     initial_cli
+        suba.l  a1,a1
+        jsr     LVO_REMTASK(a6)      ; does not return
+.dw_game:
+        jmp     (a2)
+; dw_teardown(a6 = SysBase): removes the requester handler from input.device and frees the boot screen. The
+; pointer handler stays (the floppy boot path installs the same one).
+dw_teardown:
+        lea     EB_DEVICELIST(a6),a0
+        lea     input_dev_name(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        beq.s   .dt_screen
+        lea     -48(sp),sp           ; IOStdReq scratch
+        move.l  sp,a1
+        move.l  d0,IO_DEVICE(a1)
+        move.w  #IND_REMHANDLER,IO_COMMAND(a1)
+        move.l  #REQ_INT,INP_IO_DATA(a1)
+        move.b  #IOF_QUICK,IO_FLAGS(a1)
+        move.l  d0,a6
+        jsr     -30(a6)
         move.l  ($4).w,a6
-        jsr     exp_memosave         ; expansion.s: RAM boards that RESET does not reset in vAmiga
-        lea     dw_reboot(pc),a5
-        jsr     LVO_SUPERVISOR(a6)   ; does not return
-        bra.s   .dw_lp
-; dw_reboot (supervisor): RESET reinitialises the chips (the overlay puts the ROM back at $0); the JMP must be in the
-; same long word as the RESET (already prefetched). Entry = initial PC of our image (long at ROMBASE+4: the ROM,
-; or slow RAM for the soft-kick image, which RESET does not touch).
-        cnop    0,4
-dw_reboot:
-        move.w  #$2700,sr
-        move.l  (ROMBASE+4).l,a0
-        bra.s   dw_rst
-        cnop    0,4
-dw_rst:
-        reset
-        jmp     (a0)
+        lea     48(sp),sp
+.dt_screen:
+        move.l  BOOT_SCREEN,d0
+        beq.s   .dt_ret
+        clr.l   BOOT_SCREEN
+        move.l  d0,a0
+        jsr     gfx_display_free
+.dt_ret:
+        rts
+; initial_cli(a6 = SysBase): creates the Initial CLI, which runs s:startup-sequence then the interactive prompt.
+initial_cli:
+        lea     sh_cname(pc),a0
+        move.l  #shell_main,a1       ; absolute: shell.o linked out of 16-bit lea(pc) range
+        moveq   #2,d0                ; Initial CLI pri 2 (sole consumer of the console)
+        move.l  #SH_STK,d1           ; the commands it launches run on this stack
+        jmp     proc_create
 dw_name:
         dc.b    "DF0 watch",0
         even

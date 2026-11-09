@@ -15,7 +15,6 @@
                 include "dospkt.i"
 
                 xref    newlist          ; lists.s
-                xdef    exp_memosave     ; boot.s (disk_watch, before its RESET)
 
 ; --- expansion.library ROMTag (scanned by build_reslist) ---
                 EVEN
@@ -793,7 +792,6 @@ expansion_coldinit:
         bsr     exp_freeexpmem
         lea     $E80000,a0
         bsr     exp_configchain
-        bsr     exp_memoload
         move.l  a6,d0
 .ci_ret:
         movem.l (sp)+,d2/a2/a6
@@ -815,174 +813,6 @@ expansion_initfunc:
         jsr     newlist
         move.l  a2,d0
         move.l  (sp)+,a2
-        rts
-
-; --- Reset memo (KickSlopStart design, not 1.3) ---
-; A floppy inserted on the insert-disk screen reboots the machine with the RESET instruction (boot.s, disk_watch).
-; RESET puts the Zorro boards back into autoconfig mode on the real hardware and in WinUAE/Amiberry, but vAmiga
-; leaves them configured at their address: the next ConfigChain finds nothing at $E80000 and the fast RAM is lost.
-; exp_memosave, called just before that RESET, records the configured RAM boards at RESET_MEMO; at the next init,
-; if the chain configured no board, each recorded board whose RAM still answers at its address is added back.
-XM_MAGIC        EQU 0
-XM_COUNT        EQU 4
-XM_ENTRIES      EQU 8                ; entries: cd_Rom (16 bytes), cd_BoardAddr, cd_BoardSize (as in the ConfigDev)
-XE_SIZEOF       EQU 24
-XM_MAX          EQU 4
-XM_SUM          EQU XM_ENTRIES+XM_MAX*XE_SIZEOF ; makes the long sum of the memo 0
-XM_MAGICVAL     EQU $5A4D454D        ; 'ZMEM'
-XM_PATTERN      EQU $A55AC33C
-
-; exp_memosave(a6 = ExecBase): memo of the configured, not shut-up RAM boards of eb_BoardList (none: memo cleared).
-; Preserves all registers.
-exp_memosave:
-        movem.l d0-d2/a0-a3,-(sp)
-        lea     RESET_MEMO,a2
-        clr.l   XM_MAGIC(a2)
-        jsr     LVO_FORBID(a6)
-        lea     EB_LIBLIST(a6),a0
-        lea     expansion_name(pc),a1
-        jsr     LVO_FINDNAME(a6)
-        tst.l   d0
-        beq.s   .ms_ret
-        move.l  d0,a0
-        move.l  EB_BOARDLIST(a0),a0  ; lh_Head
-        lea     XM_ENTRIES(a2),a1
-        moveq   #0,d1                ; d1 = entries written
-.ms_lp:
-        tst.l   (a0)                 ; null Succ: tail sentinel
-        beq.s   .ms_end
-        cmp.w   #XM_MAX,d1
-        beq.s   .ms_end
-        btst    #CDB_SHUTUP,CD_FLAGS(a0)
-        bne.s   .ms_next
-        btst    #ERTB_MEMLIST,ER_TYPE(a0)
-        beq.s   .ms_next
-        lea     CD_ROM(a0),a3        ; cd_Rom, cd_BoardAddr, cd_BoardSize are contiguous
-        moveq   #XE_SIZEOF/4-1,d2
-.ms_cp:
-        move.l  (a3)+,(a1)+
-        dbra    d2,.ms_cp
-        addq.w  #1,d1
-.ms_next:
-        move.l  (a0),a0
-        bra.s   .ms_lp
-.ms_end:
-        tst.w   d1
-        beq.s   .ms_ret
-        ext.l   d1
-        move.l  d1,XM_COUNT(a2)
-        move.l  #XM_MAGICVAL,XM_MAGIC(a2)
-        bsr.s   xm_sum
-        neg.l   d0
-        move.l  d0,XM_SUM(a2)
-.ms_ret:
-        jsr     LVO_PERMIT(a6)
-        movem.l (sp)+,d0-d2/a0-a3
-        rts
-; xm_sum(a2 = memo) -> d0 = long sum of the memo before XM_SUM. Clobbers d2/a3.
-xm_sum:
-        move.l  a2,a3
-        moveq   #0,d0
-        moveq   #XM_SUM/4-1,d2
-.xs_lp:
-        add.l   (a3)+,d0
-        dbra    d2,.xs_lp
-        rts
-
-; exp_memoload(a6 = ExpansionBase): a valid memo is consumed (cleared) in every case; its boards are added back only
-; if eb_BoardList is empty. A board is taken if its address and size fit the Zorro II space and its er_Type size,
-; its slots are free, and its first and last longs hold what is written there: then ConfigDev in the list and RAM
-; in the MemList, as after ConfigBoard.
-exp_memoload:
-        movem.l d2-d5/a2-a4,-(sp)
-        lea     RESET_MEMO,a2
-        cmp.l   #XM_MAGICVAL,XM_MAGIC(a2)
-        bne     .ml_ret
-        bsr.s   xm_sum
-        add.l   XM_SUM(a2),d0
-        clr.l   XM_MAGIC(a2)
-        tst.l   d0
-        bne     .ml_ret
-        move.l  EB_BOARDLIST(a6),a0
-        tst.l   (a0)
-        bne     .ml_ret              ; the chain found boards: RESET did reset them
-        move.l  XM_COUNT(a2),d5
-        beq     .ml_ret
-        cmp.l   #XM_MAX,d5
-        bhi     .ml_ret
-        lea     XM_ENTRIES(a2),a4
-        subq.w  #1,d5
-.ml_lp:
-        move.l  16(a4),d3            ; d3 = board address
-        move.l  20(a4),d4            ; d4 = board size
-        moveq   #7,d2
-        and.b   (a4),d2              ; d2 = slotSpec (er_Type)
-        lea     sz_slots(pc),a0
-        moveq   #0,d0
-        move.b  0(a0,d2.w),d0
-        swap    d0                   ; d0 = size given by er_Type
-        cmp.l   d0,d4
-        bne.s   .ml_next
-        tst.w   d3
-        bne.s   .ml_next
-        cmp.l   #$00200000,d3
-        blo.s   .ml_next
-        move.l  d3,d0
-        add.l   d4,d0
-        cmp.l   #$00A00000,d0
-        bhi.s   .ml_next
-        move.l  d3,a0
-        bsr.s   ml_ramok
-        bne.s   .ml_next
-        lea     -4(a0,d4.l),a0
-        bsr.s   ml_ramok
-        bne.s   .ml_next
-        lea     sz_slots(pc),a0
-        moveq   #0,d0
-        move.b  0(a0,d2.w),d0
-        move.l  d2,-(sp)
-        move.l  d0,d2                ; d2 = slots
-        move.l  d3,d4
-        swap    d4                   ; d4 = first slot
-        move.l  d4,d1
-        add.l   d2,d1                ; exclusive end: only this block is a candidate
-        bsr     ae_scan              ; d0 = slot | -1; the slots are marked taken
-        move.l  (sp)+,d2
-        tst.l   d0
-        bmi.s   .ml_next
-        move.l  d0,d3                ; d3 = slot
-        bsr     exp_allocconfigdev
-        tst.l   d0
-        beq.s   .ml_ret
-        move.l  d0,a3
-        move.l  a4,a0
-        lea     CD_ROM(a3),a1
-        moveq   #XE_SIZEOF/4-1,d0
-.ml_cp:
-        move.l  (a0)+,(a1)+
-        dbra    d0,.ml_cp
-        move.l  d3,d0
-        bsr     cb_fill
-        bset    #CDB_CONFIGME,CD_FLAGS(a3)
-        move.l  a3,a0
-        bsr     exp_addconfigdev
-        bsr     cb_post
-.ml_next:
-        lea     XE_SIZEOF(a4),a4
-        dbra    d5,.ml_lp
-.ml_ret:
-        movem.l (sp)+,d2-d5/a2-a4
-        rts
-; ml_ramok(a0 = long address) -> Z set if a pattern and its complement read back there. Clobbers d1.
-ml_ramok:
-        move.l  #XM_PATTERN,d1
-        move.l  d1,(a0)
-        cmp.l   (a0),d1
-        bne.s   .ro_r
-        not.l   d1
-        move.l  d1,(a0)
-        cmp.l   (a0),d1
-.ro_r:
         rts
 
         EVEN

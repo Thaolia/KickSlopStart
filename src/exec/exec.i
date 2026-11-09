@@ -33,7 +33,6 @@ LOWVARS_HI   EQU $00000800
 TST_LIST     EQU $00000420     ; self-test scratch (lists)
 TST_N1       EQU $00000440
 TST_N2       EQU $00000460
-RESET_MEMO   EQU $00000480     ; expansion reset memo (expansion.s, 108 bytes), outside the area zeroed at coldstart
 ; System area in LOW CHIP, just above the low-RAM variables: the top of chip stays free up to
 ; $80000 as on the real 1.3, because programs write there at absolute addresses (intros: stack at $7FFFE, routines
 ; at $7F000, planes at $70000+). ExecBase must not be located there.
@@ -470,6 +469,7 @@ FEED_KTASK   EQU $000007D0 ; long: intuition input task (keyboard feeder), signa
 FEED_KMASK   EQU $000007D4 ; long: its keyboard signal mask
 RAM_LOWMEM   EQU $000007C0 ; byte: exec AllocMem is expunging modules after a failure (ramlib-v34 §6), no recursion
 RAM_LOADS    EQU $000007D8 ; long: chain of the module loads in progress (ramlib-v34 §4), records on the loaders' stacks
+BOOT_SCREEN  EQU $000007DC ; long: structure block of the insert-disk boot screen (gfx_display_init), 0 = none
 HND_REFVOL   EQU $000007C4 ; dos: long — BPTR of the absent volume of the last 218 refusal of a floppy handler ("replace")
 MT_TABLE     EQU $0000079C ; long: allocation tracer table (diagnostic ROM -DMEMTRACK=1 only)
 INT2_BUSY    EQU $000007A0 ; byte: int2_dispatch serves the PORTS chain (read by timer.device VBLANK server recovery)

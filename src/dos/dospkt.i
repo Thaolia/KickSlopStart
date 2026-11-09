@@ -228,9 +228,7 @@ FL_KEY           EQU 4             ; LONG: header block of the locked object
 FL_ACCESS        EQU 8             ; LONG : SHARED_LOCK / EXCLUSIVE_LOCK
 FL_TASK          EQU 12            ; APTR: MsgPort of the handler (source of the port for UnLock/Examine/ExNext)
 FL_VOLUME        EQU 16            ; BPTR: volume node (DosBase DL_VOLUME)
-FLP_BUCKET       EQU 20            ; private LONG: current bucket index in the directory hashtable
-FLP_CHAIN        EQU 24            ; private LONG: current block in the hash chain (0 = move on to the next bucket)
-FL_SIZEOF        EQU 28
+FL_SIZEOF        EQU 20
 
 ; --- FileInfoBlock (dos.i): minimally filled (DiskKey/DirEntryType/FileName/Size) ---
 FIB_DISKKEY      EQU 0             ; LONG: disk key (= header block of the entry)

@@ -1126,6 +1126,12 @@ dos_examine_pkt:
         move.l  a3,d0
         beq.s   .exc_fail
         move.l  ($4).w,a6               ; SysBase
+        cmp.l   #ACTION_EXAMINE_NEXT,d6
+        bne.s   .exc_send
+        move.l  d5,a0                   ; the file system finds the next entry from the name of the last one: it
+        lea     FIB_FILENAME(a0),a0     ; reads it as a BSTR, as Examine left it before our conversion
+        bsr.s   dos_c2bstr_ip
+.exc_send:
         lea     -SP_SIZEOF(sp),sp
         move.l  sp,a0
         move.l  a3,a1
@@ -1136,19 +1142,46 @@ dos_examine_pkt:
         moveq   #0,d3
         jsr     dos_sendpkt             ; d0 = dp_Res1 (DOSTRUE/DOSFALSE)
         lea     SP_SIZEOF(sp),sp
-        tst.l   d0
-        beq.s   .exc_ret
         move.l  d5,a0                   ; the handler returns BSTRs: the C API wants NUL-terminated strings
         lea     FIB_FILENAME(a0),a0
+        tst.l   d0
+        beq.s   .exc_end
         bsr.s   dos_bstr2c
         move.l  d5,a0
         lea     FIB_COMMENT(a0),a0
+        bsr.s   dos_bstr2c
+        bra.s   .exc_ret
+.exc_end:
+        cmp.l   #ACTION_EXAMINE_NEXT,d6 ; end or failure: the FIB name goes back to the caller's C string
+        bne.s   .exc_ret
         bsr.s   dos_bstr2c
         bra.s   .exc_ret
 .exc_fail:
         moveq   #0,d0                   ; DOSFALSE
 .exc_ret:
         movem.l (sp)+,d2-d7/a2-a6
+        rts
+
+; dos_c2bstr_ip(a0 = C string with one spare byte after it): converts in place into a BSTR followed by a NUL.
+; Preserves d0. Clobbers d1/a0/a1.
+dos_c2bstr_ip:
+        movem.l d2/a2,-(sp)
+        move.l  a0,a2
+        move.l  a0,a1
+.c2b_len:
+        tst.b   (a1)+
+        bne.s   .c2b_len
+        move.l  a1,d1
+        sub.l   a0,d1                   ; d1 = length + 1 (the NUL moves too)
+        move.l  d1,d2
+        lea     1(a1),a0
+.c2b_cpy:
+        move.b  -(a1),-(a0)
+        subq.l  #1,d1
+        bne.s   .c2b_cpy
+        subq.l  #1,d2
+        move.b  d2,(a2)
+        movem.l (sp)+,d2/a2
         rts
 
 ; dos_bstr2c(a0 = BSTR): converts in place into a C string (shifts the characters by one byte, final NUL).

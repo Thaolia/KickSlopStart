@@ -74,7 +74,7 @@ the remaining gap are recorded in `tests/README.md`; original-ROM observations a
 | Region | With slow RAM | Chip RAM only |
 |--------|---------------|---------------|
 | `$0`-`$400` | CPU vectors | CPU vectors |
-| `$400`-`$800` | chip MemHeader (`$400`), self-test scratch, expansion reset memo (`$480`), low-RAM variables (`$500`-`$800`, zeroed at coldstart) | same |
+| `$400`-`$800` | chip MemHeader (`$400`), self-test scratch, low-RAM variables (`$500`-`$800`, zeroed at coldstart) | same |
 | `$800`-`$1000` | cushion, in no MemHeader | unused, in no MemHeader |
 | `$1000`-`$14AA` | **chip heap** (`LOWHEAP_LO`) | exec jump table + ExecBase (`$1276`) |
 | `$1500`-`$2500` | chip heap (the multi-header self-test region `FTEST_LO`/`FTEST_HI` until the self-test ends) | self-test region, then a margin below the supervisor stack |
@@ -180,9 +180,9 @@ differs.
    machine) checks with `TypeOfMem` that slow RAM covers the image, reads blocks 2..513 into a chip buffer, checks
    the `$1111` header, the reset PC and the Kickstart sum, then a stub placed after the image copies it to `$C00000`
    with interrupts and DMA off and jumps to its reset PC. Otherwise it boots the disk normally. When the image
-   already runs (ExecBase->ColdCapture points into `$C00000-$C3FFFF`) the boot code fails, so our strap shows the
-   insert-disk screen and `disk_watch` reboots on the next disk inserted; `dw_reboot` jumps to `ROMBASE+4`, i.e.
-   straight back into the image, which RESET leaves in place.
+   already runs (ExecBase->ColdCapture points into `$C00000-$C3FFFF`) the boot code fails (D0 = −1): our strap
+   shows Alert $30000001, as 1.3 does for a bootblock returning D0 ≠ 0, then the insert-disk screen, and boots the
+   next disk inserted without a reset.
    `src/softkick/mkadf.py` writes the ADF: bootblock, image in blocks 2..513, empty OFS volume "KickSlopStart"
    whose bitmap marks the image blocks as used. The release workflow publishes the ADF with the ROM.
 4. **hello-ROM** (`make hello`): single file via `vasmm68k_mot -Fbin` (M0 smoke test).
@@ -753,19 +753,10 @@ differs.
   them. Tests: `tests/hdfs_probe.sh` (Workbench 1.3.3 commands on DH0: under Amiberry, then `tests/ofs_check.py`
   walks the hardfile and compares every bitmap block with the blocks in use), `tests/wbfs_probe.sh` (floppy
   session), `tests/fsuae_run.sh` (FS-UAE run waiting for a serial marker).
-  (7ac) **Fast RAM kept across the insert-disk reboot in vAmiga** (2026-11-04, user report: no fast RAM in SysInfo
-  under vAmigaWeb, A500+ ECS, 2 MB chip + 2 MB fast). A floppy inserted on the insert-disk screen makes `disk_watch`
-  reboot with the RESET instruction (1.3 boots the floppy without a reset). RESET puts Zorro boards back into autoconfig
-  mode on the hardware and in Amiberry, but vAmiga only soft-resets: its board stays configured at $200000, the next
-  ConfigChain finds nothing at $E80000 and the RAM is lost. `exp_memosave` (expansion.s, called by `disk_watch` before
-  RESET) records the configured, not shut-up RAM boards (cd_Rom, address, size; at most 4) at `RESET_MEMO` ($480,
-  magic + long checksum). `exp_memoload`, at the end of the expansion init, consumes a valid memo and, only if the chain
-  configured no board, adds back each board whose size matches its er_Type, which lies in $200000-$9FFFFF, whose slots
-  are free and whose first and last longs read back two patterns (ConfigDev in eb_BoardList, slots taken, "expansion
-  ram"). Proven in vAmiga headless (VAHeadless built from vAmiga HEAD, A500_PLUS_1MB, 2 MB chip + 2 MB fast, SysInfo
-  inserted after boot): the released v0.2.21 ROM loses the fast RAM after the reboot, the fixed ROM keeps it (SysInfo
-  MEMORY page); Amiberry: same scenario reboots, one "expansion ram", memo consumed. Not covered: the dead-end alert
-  reboot and a soft reset requested from the emulator, which lose the board in vAmiga as with the real 1.3.
+  (7ac) **Fast RAM kept across the insert-disk reboot in vAmiga** (2026-11-04): removed on 2026-11-09 with that
+  reboot. A floppy inserted on the insert-disk screen now boots without a reset (strap retry, see "Strap retry"
+  below), so the reset memo at `$480` is gone. The dead-end alert reboot still loses a board in vAmiga, as with the
+  real 1.3.
   (7ab) **ramlib as on 1.3** (2026-11-04, spec `ramlib-v34.md`). `src/exec/ramlib.s`: `ram_loadmodule` (base name,
   ROM resident, LoadSeg in the caller's process, RomTag of the first hunk or first-hunk call, kept only if a node of
   the base name appears) with a chain of loads in progress at `RAM_LOADS` ($7D8, records on the loaders' stacks,
@@ -1889,12 +1880,14 @@ differs.
   FileSysStartupMsg of the DeviceNode whose `dn_Task` is its port, the mounted volume (`HC_VOLUME`, replaces the
   global `DL_VOLUME`) and the write context (`HC_OWCTX`, replaces `DOS_OWCTX`). `ofs_read_block` and ofswrite take
   `io_Unit` from that context (tasks that are not handlers read DF0). (3) **boot** (`src/exec/boot.s`):
-  `fl_node` builds the "DFn" DeviceNodes; `mount_df1` creates the second handler ("dos.handler.df1") and links
-  "DF1" after DF0: only if `GetUnitID(1) == DRT_AMIGA`. `DOS_FSPORT` stays the DF0: port (default handler).
+  `fl_node` builds the "DFn" DeviceNodes; `mount_dfn` creates one handler per further drive ("dos.handler.dfN") and
+  links "DF1"-"DF3" after DF0:, in unit order, for each unit with `GetUnitID(n) == DRT_AMIGA` (2026-11-09; before,
+  DF1 only). `DOS_FSPORT` stays the DF0: port (default handler).
   Proven under Copperline 1.0.1 (A500, 512K chip, prod ROM): WB 1.3.3 in DF0 + Extras in DF1 -> RAM DISK,
   Extras 1.3, Workbench1.3 icons (293624 free); 1 drive -> unchanged desktop (301496 free, baseline 301584); DF1 empty
-  at boot then Extras inserted at 75 s -> icon appears. Not supported: DF2/DF3 DeviceNodes (trackdisk opens them),
-  two disks with the same name and date in two drives.
+  at boot then Extras inserted at 75 s -> icon appears. Not supported:
+  two disks with the same name and date in two drives. DF2:/DF3: checked under Amiberry (`-s nr_floppies=4`): four
+  volumes on the Workbench.
 - **TRACKDISK — FLOPPY READING ×5** (`src/exec/trackdisk.s`, `TD_*` constants from `exec.i`): (1) **motor kept on**: a read leaves the DF0 motor on (`TD_MOTORON`; per unit since DF1: `TDU_MOTOR`); the next one skips the spin-up; a VBlank server (`td_motor_server`, `TD_VBLINT`) turns it off after 2 s of inactivity (`TD_MOTORIDLE`, counter `TD_MOTORCNT`, never during an access: `TD_BUSY`); `td_check_change` preserves the motor state. (2) **seek at the drive's timings**: 3 ms between two steps (`TD_STEPWAIT`), 18 ms of settling after the last one (`TD_SETTLE`), instead of very wide delays. (3) **LRU cache of 8 decoded tracks** (`TD_NCACHE` × 5632 bytes in `MEMF_PUBLIC`, slot per track `TD_CTRK`, age `TD_CAGE`/`TD_CTICK`; fallback to 1 slot if memory is short; flushed on `/CHNG`): replaces the single-track cache — the OFS FAT (root, bitmap, headers, chains) kept coming back to the same tracks. Measurement, complete WB 1.3.3 boot (FS-UAE, real time): SetPatch 78 s → 12 s, end of startup-sequence > 400 s → 87 s; physical reads 222 → 103 (58 distinct tracks; 16 slots: 83 s, marginal gain). Non-regression: complete GREEN with and without slow RAM, AUX:/NEWCON:/PIPE:/handlers, WB boot, Holiday Lemmings up to the menu.
 - **Read-only OFS (D1) DONE** (`src/dos/ofs.s` + `ofs.i`): `ofs_read_file` reads a file by name from DF0: (root → hash → header → data block chain) via trackdisk `CMD_READ`. OFS format locked empirically. Serial marker **D1** (size 1024 + markers @0/@488/@976); RED `OFS_NO_DATACHAIN` (size 488). INTERNAL machinery (no packets).
 - **OFS subdirectories DONE**: `ofs_read_file` now takes a '/'-separated PATH. `ofs_split` splits component by component; `ofs_dir_lookup(dir, comp)` hashes+walks the chain of the CURRENT directory (intermediate USERDIR = sectype 2 → becomes the next directory; last component = file, sectype -3). `ht_size`: read from the block for the root (72), but USERDIRs leave long[3]=0 (measured) → fallback `OFS_HTDEF`=72. The single-component lookups (kickslop/D3DTest/e3cmd) go through the same driver (last=1, root) = non-reg. The shell opens "s/startup-sequence" (the ADF's `s/` subdirectory). Markers **F1BOOTOK**+**E3 CMD RAN OK** now sourced from the subdirectory; RED `OFS_NO_SUBDIR` ('/' = normal char → path looked up in the root → not found → F1BOOTOK/E3 absent, D1/E2 SHELL READY intact).
@@ -1999,6 +1992,24 @@ differs.
   InitResident adds an AUTOINIT base through AddLibrary / AddDevice / AddResource (LIBF_SUMUSED bases are summed:
   mathffp initialises its flags to SUMUSED|CHANGED, $04 at rest as on 1.3). WaitIO leaves the reply port's signal
   bit in D1.
+  **Strap retry without a reset (2026-11-09)**: on the insert-disk screen, `disk_watch` (`src/exec/boot.s`, a
+  process) gives a floppy inserted into the drive seen empty a new `strap_boot` attempt (uae-hd-boot-v34 §3 item 4;
+  romboot is not called again). `strap_boot` takes the mode in D0: 0 from the boot context (supervisor, IPL lowered
+  around the boot code), 1 from a process (user mode, SR untouched); the bootblock runs on the process's 4 KB stack.
+  Not bootable: the screen stays. Booted: `dw_teardown` removes the requester handler and `gfx_display_free`
+  (`src/graphics/gfx.s`) takes the boot screen down (LoadView(NULL), copper lists, planes, structures, found
+  through `BOOT_SCREEN` at `$7DC`), then the dos init entry gets the DF0: BootNode, the mount list and the Initial
+  CLI, and the process ends (RemTask); another entry point is jumped to from the process. Same free memory on the
+  Workbench as a power-on boot (858,472 bytes, prod ROM, 512K chip + 512K slow). A bootblock returning D0 ≠ 0 gets
+  the recoverable Alert $30000001, then the insert-disk screen (§3 item 2).
+  **Drives and file system (2026-11-09)**: DF1:-DF3: mounted (`mount_dfn` above). ExNext keeps no state (rom-
+  filesystem-v34 §4): `ofs_dir_next` takes the next entry from the FIB, the hash-chain successor of `fib_DiskKey`,
+  then the slots after the hash of `fib_FileName` (a BSTR on the packet side: `dos_fn_exnext` converts the caller's
+  C string back with `dos_c2bstr_ip`, and back to C on failure); the lock no longer carries a cursor (FileLock = 20
+  bytes). At an ejection with locks or open files, `hnd_parklocks` moves the volume's locks to `dl_LockList`;
+  `hnd_findvol` re-adopts them when a drive sees the disk again (`fl_Task` := its port); FREE_LOCK looks there for a
+  lock missing from the handler's list and removes an absent volume's node with its last lock
+  (rom-filesystem-v34 §3.4, disk-change-v34 §2.2).
   **Keys of a non-console active window are dropped (2026-11-08)**: `console_input_handler` (`src/exec/console.s`)
   no longer converts a RAWKEY into the shared read buffer when intuition's active window is not a console unit
   (console-keymap-v34 §6.4); before, they waited there for the next console opened (a later AmigaShell showed them).

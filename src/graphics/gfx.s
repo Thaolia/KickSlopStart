@@ -14,13 +14,14 @@
                 include "graphics.i"
 
                 xdef    gfx_display_init
+                xdef    gfx_display_free
                 xref    bootscreen_planes    ; bootscreen_data.s (generated): 4 planar bitplanes, ByteRun1
                 xref    bootscreen_palette   ; bootscreen_data.s (generated): 16 OCS RGB444 colours
 
 ; gfx_display_init(a6 = SysBase): allocates bitplanes + structure block, unpacks the image, sets up View/ViewPort/
 ; BitMap/ColorMap, FindName("graphics.library"), then MakeVPort/MrgCop/LoadView through the GfxBase jump table.
 ; RESTORES a6 = SysBase on exit (the scheduler handoff depends on it). Scratch d0/d1/a0/a1; d2/a2/a4/a5 saved.
-; Not fatal if an alloc or FindName fails (no display, boot continues).
+; -> d0 = structure block (for gfx_display_free), 0 if an alloc or FindName failed (no display, boot continues).
 gfx_display_init:
         movem.l d2/a2/a4/a5,-(sp)
         ; 1. chip bitplanes (4 contiguous planes), the image unpacked into them from the ROM. ByteRun1 (IFF): control
@@ -74,7 +75,7 @@ gfx_display_init:
         move.l  #(MEMF_CHIP|MEMF_CLEAR),d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
-        beq     .gfx_ret
+        beq     .gfx_noview
         move.l  d0,a2                        ; a2 = structure block
         ; BitMap (overscan 352x272)
         move.w  #GFX_BOOT_BYTES,GFX_O_BITMAP+bm_BytesPerRow(a2)
@@ -121,7 +122,7 @@ gfx_display_init:
         lea     gfx_libname(pc),a1
         jsr     LVO_FINDNAME(a6)
         tst.l   d0
-        beq     .gfx_ret                     ; no graphics.library -> no display
+        beq     .gfx_nogfx                   ; no graphics.library -> no display
         move.l  d0,a5                        ; a5 = GfxBase
         ; 4. MakeVPort(view,vp); MrgCop(view); LoadView(view) THROUGH THE JUMP TABLE
         lea     GFX_O_VIEW(a2),a0
@@ -134,9 +135,48 @@ gfx_display_init:
         move.l  a5,a6
         lea     GFX_O_VIEW(a2),a1
         jsr     LVO_LOADVIEW(a6)
+        move.l  a2,d0
 .gfx_ret:
         move.l  ($4).w,a6                    ; restore a6 = SysBase (scheduler handoff)
         movem.l (sp)+,d2/a2/a4/a5
+        rts
+.gfx_nogfx:
+        move.l  a2,a1
+        move.l  #GFX_STRUCT_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+.gfx_noview:
+        move.l  a4,a1
+        move.l  #GFX_BOOT_PLANES_SZ,d0
+        jsr     LVO_FREEMEM(a6)
+        moveq   #0,d0
+        bra.s   .gfx_ret
+
+; gfx_display_free(a0 = structure block from gfx_display_init, a6 = SysBase): takes the boot screen down when a
+; floppy inserted on it boots: LoadView(NULL) first (the copper must leave the lists), then its copper lists, planes
+; and structures go back to the free list: a game booted from there finds the chip RAM of a power-on boot.
+; Preserves d2-d7/a2-a6.
+gfx_display_free:
+        movem.l a2/a5/a6,-(sp)
+        move.l  a0,a2
+        lea     EB_LIBLIST(a6),a0
+        lea     gfx_libname(pc),a1
+        jsr     LVO_FINDNAME(a6)
+        move.l  d0,a5                        ; gfx_display_init succeeded: graphics.library is there
+        move.l  a5,a6
+        suba.l  a1,a1
+        jsr     LVO_LOADVIEW(a6)
+        lea     GFX_O_VP(a2),a0
+        jsr     LVO_FREEVPORTCOPLISTS(a6)
+        move.l  GFX_O_VIEW+v_LOFCprList(a2),a0
+        jsr     LVO_FREECPRLIST(a6)
+        move.l  ($4).w,a6
+        move.l  GFX_O_BITMAP+bm_Planes(a2),a1
+        move.l  #GFX_BOOT_PLANES_SZ,d0
+        jsr     LVO_FREEMEM(a6)
+        move.l  a2,a1
+        move.l  #GFX_STRUCT_SIZE,d0
+        jsr     LVO_FREEMEM(a6)
+        movem.l (sp)+,a2/a5/a6
         rts
 
 gfx_libname:

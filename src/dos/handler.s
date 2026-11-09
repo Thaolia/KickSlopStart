@@ -371,8 +371,6 @@ dos_handler:
                 beq.s   .ex_fail
                 move.l  d0,a0                          ; a0 = FileLock
                 move.l  FL_KEY(a0),d0                 ; block of the locked object
-                clr.l   FLP_BUCKET(a0)                ; reset the enumeration cursor (Examine -> start)
-                clr.l   FLP_CHAIN(a0)
                 move.l  DP_ARG2(a4),d1
                 lsl.l   #2,d1
                 move.l  d1,a1                          ; a1 = fib
@@ -392,16 +390,10 @@ dos_handler:
                 beq.s   .exn_end
                 move.l  d0,a0                          ; a0 = FileLock
                 move.l  FL_KEY(a0),d0                 ; directory block
-                move.l  FLP_BUCKET(a0),d1             ; bucket cursor
-                move.l  FLP_CHAIN(a0),d2              ; chain cursor
-                move.l  DP_ARG2(a4),d3
-                lsl.l   #2,d3
-                move.l  d3,a1                          ; a1 = fib
-                move.l  a0,-(sp)                       ; ofs_dir_next does NOT preserve a0 -> save the lock
-                jsr     ofs_dir_next                   ; d0=found, d1=updated bucket, d2=updated chain (preserves a2-a5)
-                move.l  (sp)+,a0
-                move.l  d1,FLP_BUCKET(a0)             ; write the cursor back into the lock
-                move.l  d2,FLP_CHAIN(a0)
+                move.l  DP_ARG2(a4),d1
+                lsl.l   #2,d1
+                move.l  d1,a1                          ; a1 = fib: the entry it holds says where to go on
+                jsr     ofs_dir_next                   ; d0 = found (preserves a2-a5)
                 tst.l   d0
                 beq.s   .exn_end
                 move.l  #DOSTRUE,DP_RES1(a4)
@@ -1259,7 +1251,8 @@ hnd_mount:
                 rts
 
 ; hnd_findvol(a3 = context (root block at HC_TDIO+IOREQ_SZ), a4 = port, a6) -> d0 = BPTR of the volume node | 0:
-; DLT_VOLUME node with the same name (case-insensitive) and the same creation date (longs 121..123): dl_Task := port;
+; DLT_VOLUME node with the same name (case-insensitive) and the same creation date (longs 121..123): dl_Task := port,
+; the locks of its dl_LockList re-adopted (fl_Task := port, into the handler's list), dl_LockList := 0;
 ; otherwise a new node at the head of the DosList (date, name, dl_Task; dl_Lock, dl_LockList and dl_DiskType at 0).
 ; Under Forbid. Clobbers d0/d1/a0/a1.
 HND_CDATE       EQU 484              ; root block: creation date of the disk (longs 121..123)
@@ -1293,7 +1286,18 @@ hnd_findvol:
                 bra.s   .fv_lp
 .fv_found:
                 move.l  a4,DN_TASK(a2)
+                move.l  DOL_LOCKLIST(a2),d0
+                beq.s   .fv_ret
                 clr.l   DOL_LOCKLIST(a2)
+                move.l  d0,d1                         ; d1 = BPTR of the first one
+.fv_adopt:
+                lsl.l   #2,d0
+                move.l  d0,a0
+                move.l  a4,FL_TASK(a0)
+                move.l  FL_LINK(a0),d0
+                bne.s   .fv_adopt
+                move.l  HC_LOCKS(a3),FL_LINK(a0)
+                move.l  d1,HC_LOCKS(a3)
                 bra.s   .fv_ret
 .fv_new:
                 move.l  #DOL_NODESIZE,d0
@@ -1448,7 +1452,8 @@ hnd_unitmsg:    dc.b    "in unit  0 !!!",0
                 even
 
 ; hnd_eject(d0 = 1: emit DISKREMOVED, a3 = context, a6): current volume detached (spec §2.2.1): with no lock or
-; open file, its node leaves the DosList and is freed; otherwise dl_Task := 0 (the node stays). Bitmap forgotten,
+; open file, its node leaves the DosList and is freed; otherwise dl_Task := 0 (the node stays) and its locks move
+; to dl_LockList (disk-change-v34 §2.2), where the drive that sees the disk again takes them back. Bitmap forgotten,
 ; trackdisk's tracks of the unit dropped (CMD_CLEAR). Preserves d2-d7/a2-a6.
 hnd_eject:
                 movem.l d2/a2,-(sp)
@@ -1468,25 +1473,12 @@ hnd_eject:
                 jsr     LVO_FORBID(a6)
                 tst.l   DOL_USE(a2)
                 bne.s   .ej_keep
-                bsr     hnd_devinfo                   ; removal from the DosList
-.ej_find:
-                move.l  (a0),d0
-                lsl.l   #2,d0
-                beq.s   .ej_free
-                cmp.l   d0,a2
-                beq.s   .ej_unlink
-                move.l  d0,a0                         ; DN_NEXT = 0
-                bra.s   .ej_find
-.ej_unlink:
-                move.l  DN_NEXT(a2),(a0)
-.ej_free:
-                jsr     LVO_PERMIT(a6)
-                move.l  a2,a1
-                move.l  #DOL_NODESIZE,d0
-                jsr     LVO_FREEMEM(a6)
-                bra.s   .ej_ev
+                bsr.s   hnd_volfree
+                bra.s   .ej_perm
 .ej_keep:
                 clr.l   DN_TASK(a2)
+                bsr.s   hnd_parklocks
+.ej_perm:
                 jsr     LVO_PERMIT(a6)
 .ej_ev:
                 tst.l   d2
@@ -1495,6 +1487,59 @@ hnd_eject:
                 bsr     hnd_event
 .ej_ret:
                 movem.l (sp)+,d2/a2
+                rts
+
+; hnd_volfree(a2 = volume node, a6), under Forbid: the node leaves the DosList and is freed. Clobbers d0/d1/a0/a1.
+hnd_volfree:
+                bsr     hnd_devinfo
+.vf_find:
+                move.l  (a0),d0
+                lsl.l   #2,d0
+                beq.s   .vf_free
+                cmp.l   d0,a2
+                beq.s   .vf_unlink
+                move.l  d0,a0                         ; DN_NEXT = 0
+                bra.s   .vf_find
+.vf_unlink:
+                move.l  DN_NEXT(a2),(a0)
+.vf_free:
+                move.l  a2,a1
+                move.l  #DOL_NODESIZE,d0
+                jmp     LVO_FREEMEM(a6)
+
+; hnd_parklocks(a2 = volume node, a3 = context), under Forbid: the locks and open files of that volume leave the
+; handler's list for the end of dl_LockList, in order. Clobbers d0/d1/a0/a1.
+hnd_parklocks:
+                move.l  a2,d1
+                lsr.l   #2,d1                         ; d1 = BPTR of the volume
+                lea     HC_LOCKS(a3),a0               ; a0 = the link to look at (fl_Link is at offset 0)
+.pk_lp:
+                move.l  (a0),d0
+                lsl.l   #2,d0
+                beq.s   .pk_ret
+                move.l  d0,a1
+                cmp.l   FL_VOLUME(a1),d1
+                beq.s   .pk_move
+                move.l  a1,a0
+                bra.s   .pk_lp
+.pk_move:
+                move.l  FL_LINK(a1),(a0)
+                clr.l   FL_LINK(a1)
+                move.l  a0,-(sp)
+                lea     DOL_LOCKLIST(a2),a0
+.pk_tail:
+                move.l  (a0),d0
+                lsl.l   #2,d0
+                beq.s   .pk_put
+                move.l  d0,a0
+                bra.s   .pk_tail
+.pk_put:
+                move.l  a1,d0
+                lsr.l   #2,d0
+                move.l  d0,(a0)
+                move.l  (sp)+,a0
+                bra.s   .pk_lp
+.pk_ret:
                 rts
 
 ; hnd_event(d0.b = ie_Class, a3 = context, a6): null InputEvent of this class written into input.device
@@ -1725,35 +1770,72 @@ hnd_newlock:
 .nl_fail:
                 moveq   #0,d0
                 bra.s   .nl_ret
-; hnd_droplock(a0 = APTR FileLock | 0, a6) -> d0 = -1, or 0 if it is not in the list (nothing freed): unlinked,
-; uncounted on its volume, freed. Preserves d2-d7/a2-a6.
+; hnd_droplock(a0 = APTR FileLock | 0, a6) -> d0 = -1, or 0 if it is in neither list (nothing freed): unlinked,
+; uncounted on its volume, freed. A lock not in the handler's list is looked for in its volume's dl_LockList (a
+; volume out of the drives, rom-filesystem-v34 §3.4); the last one gone, that absent volume's node is removed.
+; Preserves d2-d7/a2-a6.
 hnd_droplock:
-                move.l  a0,-(sp)
+                movem.l a2/a3,-(sp)
+                move.l  a0,a3                  ; a3 = lock
+                suba.l  a2,a2                  ; a2 = volume node of a dl_LockList hit
                 bsr     hnd_ctx
-                move.l  (sp)+,a1               ; a1 = lock (movea: Z still from hnd_ctx)
-                beq.s   .dr_no
+                beq.s   .dr_vol
                 move.l  d0,a0
                 lea     HC_LOCKS(a0),a0         ; a0 = the link that may point to it (fl_Link is at offset 0)
-                move.l  a1,d1
-                lsr.l   #2,d1
-.dr_lp:
-                move.l  (a0),d0
-                beq.s   .dr_no
-                cmp.l   d1,d0
+                bsr.s   .dr_find
                 beq.s   .dr_hit
+.dr_vol:
+                move.l  a3,d0
+                beq.s   .dr_no
+                move.l  FL_VOLUME(a3),d0
                 lsl.l   #2,d0
-                move.l  d0,a0
-                bra.s   .dr_lp
-.dr_hit:
-                move.l  FL_LINK(a1),(a0)
-                move.l  FL_VOLUME(a1),d0
-                bsr     hnd_unusevol
-                move.l  #FL_SIZEOF,d0
-                jsr     LVO_FREEMEM(a6)
-                moveq   #-1,d0
-                rts
+                beq.s   .dr_no
+                move.l  d0,a2
+                jsr     LVO_FORBID(a6)          ; dl_LockList is shared by the handlers of every drive
+                lea     DOL_LOCKLIST(a2),a0
+                bsr.s   .dr_find
+                beq.s   .dr_hit
+                jsr     LVO_PERMIT(a6)
 .dr_no:
                 moveq   #0,d0
+                bra.s   .dr_ret
+.dr_hit:
+                move.l  FL_LINK(a3),(a0)
+                move.l  FL_VOLUME(a3),d0
+                bsr     hnd_unusevol
+                move.l  a3,a1
+                move.l  #FL_SIZEOF,d0
+                jsr     LVO_FREEMEM(a6)
+                move.l  a2,d0
+                beq.s   .dr_ok
+                tst.l   DOL_LOCKLIST(a2)
+                bne.s   .dr_perm
+                tst.l   DN_TASK(a2)
+                bne.s   .dr_perm
+                tst.l   DOL_USE(a2)
+                bne.s   .dr_perm
+                bsr     hnd_volfree
+.dr_perm:
+                jsr     LVO_PERMIT(a6)
+.dr_ok:
+                moveq   #-1,d0
+.dr_ret:
+                movem.l (sp)+,a2/a3
+                rts
+.dr_find:                               ; a0 = head link, a3 = lock -> Z = 1 and a0 = the link pointing to it
+                move.l  a3,d1
+                lsr.l   #2,d1
+.df_lp:
+                move.l  (a0),d0
+                beq.s   .df_no
+                cmp.l   d1,d0
+                beq.s   .df_ret
+                lsl.l   #2,d0
+                move.l  d0,a0
+                bra.s   .df_lp
+.df_no:
+                moveq   #1,d0                   ; Z = 0
+.df_ret:
                 rts
 
 ; hnd_usevol -> d0 = BPTR of the mounted volume (HC_VOLUME) | 0, its use count increased (lock or open file).

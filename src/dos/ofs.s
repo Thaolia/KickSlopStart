@@ -581,22 +581,19 @@ ofs_fill_fib:
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 
-; ofs_dir_next(d0=dirblock, d1=bucket, d2=chain, a1=fib, a6=SysBase) -> d0 = 1 found / 0 end; d1 = updated bucket,
-; d2 = updated chain (cursor to pass back as is on the next call). Walks the current hash chain then advances
-; bucket by bucket through the directory hashtable; fills the FIB of the entry found. Internal trackdisk/ioreq
-; setup. Reuses ofs_read_block / ofs_blk_valid / ofs_fib_fill. Preserves d3-d7/a2-a5; returns in d0/d1/d2
-; (outside the movem). RED OFS_NO_DIRNEXT: returns found=0 straight away (ExNext never finds anything).
+; ofs_dir_next(d0=dirblock, a1=fib, a6=SysBase) -> d0 = 1 found / 0 end. Stateless, as in 1.3 (spec
+; rom-filesystem-v34 §4): the FIB holds the last entry returned (fib_DiskKey, fib_FileName as a BSTR); the next one
+; is the hash-chain successor of that header, then the chains of the following hash slots (the slot comes from the
+; name's hash). A fib_DiskKey equal to the directory itself (just Examined) starts at slot 0. Fills the FIB of the
+; entry found. Internal trackdisk/ioreq setup. Preserves d1-d7/a2-a5. RED OFS_NO_DIRNEXT: returns found=0 straight
+; away (ExNext never finds anything).
 ofs_dir_next:
-                movem.l d3-d7/a2-a5,-(sp)
+                movem.l d1-d7/a2-a5,-(sp)
                 move.l  d0,d4                         ; d4 = dirblock
-                move.l  d1,d5                         ; d5 = bucket
-                move.l  d2,d6                         ; d6 = chain
                 move.l  a1,a5                         ; a5 = fib
                 ifne    OFS_NO_DIRNEXT
                 moveq   #0,d0                         ; RED: immediate end (nothing allocated)
-                move.l  d5,d1
-                move.l  d6,d2
-                movem.l (sp)+,d3-d7/a2-a5
+                movem.l (sp)+,d1-d7/a2-a5
                 rts
                 endc
                 bsr     ofs_dev
@@ -608,6 +605,24 @@ ofs_dir_next:
                 tst.l   d0
                 beq     .dn_noalloc
                 move.l  d0,a3
+                moveq   #0,d5                         ; d5 = next hash slot
+                moveq   #0,d6                         ; d6 = next block of the current chain
+                move.l  FIB_DISKKEY(a5),d2
+                cmp.l   d4,d2
+                beq.s   .dn_loop                      ; the directory itself: from slot 0
+                bsr     ofs_blk_valid
+                beq     .dn_end_notfound
+                move.l  d2,d0
+                bsr     ofs_read_block
+                tst.l   d0
+                beq     .dn_end_notfound
+                lea     IOREQ_SZ(a3),a0
+                move.l  OFSB_HASHCHAIN(a0),d6
+                lea     FIB_FILENAME+1(a5),a4         ; the name's characters, NUL-terminated
+                moveq   #OFS_HTDEF,d3                 ; 512-byte blocks: 72 slots
+                bsr     ofs_hash
+                move.l  d1,d5
+                addq.l  #1,d5
 .dn_loop:
                 tst.l   d6                            ; current chain not empty?
                 beq.s   .dn_advbucket
@@ -661,15 +676,11 @@ ofs_dir_next:
                 move.l  #IOREQ_SZ+OFS_BSIZE,d0
                 jsr     LVO_FREEMEM(a6)
                 move.l  d7,d0                         ; found
-                move.l  d5,d1                         ; updated bucket
-                move.l  d6,d2                         ; updated chain
-                movem.l (sp)+,d3-d7/a2-a5
+                movem.l (sp)+,d1-d7/a2-a5
                 rts
 .dn_noalloc:
                 moveq   #0,d0
-                move.l  d5,d1
-                move.l  d6,d2
-                movem.l (sp)+,d3-d7/a2-a5
+                movem.l (sp)+,d1-d7/a2-a5
                 rts
 
 ; ofs_stream_open(a0=NUL-terminated path, a1=SS_* state, d0=starting directory (0 = root), a6=SysBase) -> d0 = 1 OK /

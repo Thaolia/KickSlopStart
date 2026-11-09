@@ -181,23 +181,22 @@ AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
   included).
 - Signal returns nothing in D0 (1.3: the previous tc_SigRecvd, undocumented).
 
-### C6. strap (partial) — [src], S–M
+### C6. strap — done 2026-11-09
 
-- After the insert-disk screen, inserting a floppy reboots the machine; 1.3 retries DF0: without a reset. This is
-  the root of the vAmiga fast-RAM memo workaround.
-- A bootblock that returns D0 ≠ 0 gets the insert-disk screen instead of Alert $30000001.
-- Source: uae-hd-boot §3.
+A floppy inserted on the insert-disk screen gets a new strap attempt without a reset (the vAmiga fast-RAM memo is
+gone with the reset), and a bootblock returning D0 ≠ 0 gets Alert $30000001 before the insert-disk screen
+(uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: now shows that alert once per soft-kicked boot,
+as 1.3 would.
 
-### C7. Drives and file system — [src] partly, M
+### C7. Drives and file system — [src] partly, S
 
-- DF2: and DF3: are never mounted (only `mount_df1`).
-- Writes to DF1: have not been exercised.
-- File system:
-  - only 512-byte blocks;
-  - files over 65,535 data blocks are not followed;
-  - the bitmap block does not move at each write-back;
-  - ExNext is stateless;
-  - locks of an absent volume are kept in dl_LockList.
+Done 2026-11-09: DF2: and DF3: are mounted, writes to DF1: are exercised by `tests/writeback_probe.sh`, ExNext is
+stateless (rom-filesystem §4), locks of an ejected volume go to `dl_LockList` and come back to the drive that sees
+the disk again. Left in the file system:
+- only 512-byte blocks;
+- files over 65,535 data blocks (about 32 MB) are not followed;
+- the bitmap block does not move at each write-back (matters only for block-exact image comparisons);
+- an open file whose disk moves to another drive stays with the first drive's handler.
 
 ### C8. console.device — [src], S–M
 
@@ -365,8 +364,7 @@ Crazy Cones, Shinobi, Hardwired1 and aros-bootdisk.
 ## Suggested order
 
 1. **Sweep the never-tried ADFs.** It costs little and is the only way to find more class-A gaps.
-2. **C6 and C7, strap retry without a reset, Alert $30000001, DF2:/DF3:.** They finish the two partial residents.
-3. **C8, per-unit console input buffers of 255 bytes.**
-4. **C9, IND_WRITEEVENT pointer events.** It would let `tests/imenu_probe.s` check our menus against 1.3 directly.
-5. **A6, commands on the caller's stack** (the last 6.8 KB of the Shell gap). Large: the BCPL runtime's stack layout.
-A5, A6 (first part), C1, C2, C3 and C5 (main part) are done; D1/D3 are specified.
+2. **C8, per-unit console input buffers of 255 bytes.**
+3. **C9, IND_WRITEEVENT pointer events.** It would let `tests/imenu_probe.s` check our menus against 1.3 directly.
+4. **A6, commands on the caller's stack** (the last 6.8 KB of the Shell gap). Large: the BCPL runtime's stack layout.
+A5, A6 (first part), C1, C2, C3, C5 (main part), C6 and C7 (main part) are done; D1/D3 are specified.
