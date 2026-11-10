@@ -21,6 +21,7 @@
 |---:|---|---|---|
 | 0 | `CMD_INVALID` | unit task | `IOERR_NOCMD` (−3) |
 | 1, 6, 7, 8 | `CMD_RESET`, `CMD_STOP`, `CMD_START`, `CMD_FLUSH` | **immediate** | `IOERR_NOCMD` (−3), no other effect |
+| 9 | `TD_MOTOR` | unit task | `io_Length` 0 = off, any other value = on; `io_Actual` = previous state (`$FF`/0); works without a disk (§13) |
 | 10 | `TD_SEEK` | unit task | head to the track of `io_Offset` (bytes); motor untouched; seek errors **not** reported |
 | 12 | `TD_REMOVE` | unit task | sets the unit's single "remove" Interrupt = `io_Data` (NULL clears it); replied at once |
 | 16 | `TD_RAWREAD` | unit task | motor on, seek to track `io_Offset`, DMA `io_Length` raw MFM bytes into `io_Data` |
@@ -365,8 +366,46 @@ Task, `+$18E` change list.
 - Exact VBLANK poll period with a disk present (depends on what timer.device leaves in `tv_secs`, see
   `timer-v34.md` §7).
 
+## 13. `TD_MOTOR` (9) [O, probe 2026-11-10]
+
+Completes `trackdisk-write-v34.md` §5.1. Method: the author probe `tests/tdwrite.s` run from RAM: on the real ROM
+under Amiberry (cycle-exact A500), with some of its requests rewritten in flight by the debugger (command and
+`io_Length` changed at the probe's own DoIO call; no ROM breakpoint). Unit 0, the DF0: file system idle (its
+write-back had happened before the probe started).
+
+| Request (state before) | `io_Error` | `io_Actual` |
+|---|---:|---:|
+| `io_Length` 1, motor on (after a `CMD_UPDATE`) | 0 | `$000000FF` |
+| `io_Length` `$FFFFFFFF`, motor on | 0 | `$FF`; a following `io_Length` 0 reported `$FF` → −1 means **on** |
+| `io_Length` 0, motor off (after `TD_PROTSTATUS`) | 0 | 0 |
+| `io_Length` 2, motor off | 0 | 0; the next `TD_MOTOR` reported `$FF` → 2 means **on** |
+| `io_Length` 1 after 40 s with the motor left on and no request at all | 0 | `$FF` (still on) |
+| no disk in the drive: `io_Length` 0, 1, 1, 0, 0 in a row | 0 each | 0, 0, `$FF`, `$FF`, 0 |
+
+Rules:
+- `io_Length` = 0 switches the motor off, **any non-zero value** switches it on. `io_Actual` = the state before
+  the request as a long: `$000000FF` if it was on, 0 if off. `io_Error` is always 0 (not a reported command
+  failure, including without a disk: no 29). [O]
+- **No inactivity timer**: trackdisk never switches the motor off by itself (still on after 40 s idle). The
+  motor goes off only through `TD_MOTOR` 0, `TD_PROTSTATUS` (always off at its end), and the last
+  `CloseDevice` of the unit (`trackdisk-write-v34.md` §5.3). In 1.3 it is the file system that sends `TD_MOTOR`
+  0, 2–3 s after its last transfer (`rom-filesystem-v34.md` §8.4). [O]
+- Commands that need the disk switch the motor on and **leave it on**: after a `CMD_UPDATE` that wrote a track
+  the next `TD_MOTOR` reported `$FF` [O]; the same for `CMD_READ`/`CMD_WRITE` that load a track [D: they spin
+  the motor up the same way, `trackdisk-official-timing.md`]. With no disk, `CMD_READ`/`CMD_WRITE` fail with 29 without touching the
+  motor, but a `TD_FORMAT` (rejected with −4 for its length, then a whole-track one rejected with 29) left the
+  motor **on** (the next `TD_MOTOR` 0 reported `$FF`). `TD_PROTSTATUS` without a disk returns 29 with
+  `io_Actual` untouched and does not switch the motor. [O]
+- A motor left on by `TD_MOTOR` 1 read as **off** (0) after the disk had been ejected and 10 s had passed. Who
+  switched it off (trackdisk's change handling, or the DF0: file system reacting to the removal) is not
+  established [?].
+- Queued (not immediate) like every command outside the immediate mask of §1; no ETD form matters for it beyond
+  the generic `iotd_Count` check of §1 point 3. [O for queued, D for the ETD remark]
+
 ## Clean-room review
 
 - [x] No ROM addresses; no instruction listing or pseudo-code transcription; routines described by effects.
 - [x] Kept: command numbers, `io_` fields, error codes, register values, unit/device field offsets (ABI layout),
   per-type parameter values (constants), run-time observations.
+- [x] 2026-11-10 (§0 row 9, §13): black-box probe runs only (author probe, requests rewritten in flight at the
+  probe's own call site); results are `io_Error`/`io_Actual` values, no ROM address or code.

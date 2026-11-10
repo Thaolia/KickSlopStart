@@ -18,16 +18,15 @@
 
 ; MakeFunctions(target a0, funcArray a1, funcDispBase a2) -> d0 = size (bytes).
 ; Places the entries [JMP $4EF9][long address] (6 bytes) below `target`, downwards (LVO -6, -12...).
-; funcArray: 1st word = -1 -> WORD displacements relative to funcDispBase, terminated by word -1;
-; otherwise absolute LONG pointers, terminated by long -1.
+; funcDispBase != 0: WORD displacements relative to it, terminated by word -1 (a leading -1 marker is not skipped:
+; it ends the table at once); funcDispBase = 0: absolute LONG pointers, terminated by long -1 (exec-partial-lvos §6.2).
 exec_MakeFunctions:
                 movem.l d2/a3-a4,-(sp)
                 move.l  a0,d2               ; d2 = original target (for the size)
                 move.l  a0,a3               ; a3 = table cursor (decreasing)
                 move.l  a1,a4               ; a4 = funcArray cursor
-                cmp.w   #-1,(a4)
-                bne.s   .mf_abs
-                addq.l  #2,a4               ; relative: skip the -1 marker
+                cmp.w   #0,a2
+                beq.s   .mf_abs
 .mf_rel:
                 move.w  (a4)+,d0
                 cmp.w   #-1,d0
@@ -77,9 +76,14 @@ exec_MakeLibrary:
                 beq.s   .ml_fail
                 add.l   d4,d0               ; d0 = base = alloc + negSize
                 move.l  d0,d5               ; d5 = base (kept)
-                move.l  d0,a0               ; MakeFunctions(target=base, vectors, dispBase=vectors)
-                move.l  a3,a1
+                move.l  d0,a0               ; MakeFunctions(target=base, ...): word offsets after the -1 marker,
+                move.l  a3,a1               ; relative to the marker; longs with dispBase 0
+                sub.l   a2,a2
+                cmp.w   #-1,(a1)
+                bne.s   .ml_mf
                 move.l  a3,a2
+                addq.l  #2,a1
+.ml_mf:
                 jsr     LVO_MAKEFUNCTIONS(a6)
                 move.l  d5,a2               ; a2 = base
                 move.w  d4,LIB_NEGSIZE(a2)
@@ -129,19 +133,21 @@ count_vectors:
 .cv_done:
                 rts
 
-; InitStruct(initTable a1, memory a2, size d0) (AutoDoc exec): first clears `size` bytes of memory (0 = none), then
-; executes the "ddssnnnn" command stream: dd = 00 copy at the current position, 01 repeat one same value,
-; 10 offset on 1 byte, 11 offset on 3 bytes; ss = 00 long, 01 word, 10 byte; nnnn = number of elements - 1.
-; The stream is realigned on a word after each command (command byte + 8-bit offset + byte data).
-; Null command byte = end.
+; InitStruct(initTable a1, memory a2, size d0) (AutoDoc exec, exec-partial-lvos §6.1): first clears
+; (size & $FFFF) >> 1 words of memory, then executes the "ddssnnnn" command stream: dd = 00 copy at the current
+; position, 01 repeat one same value, 10 offset on 1 byte, 11 offset on 3 bytes; ss = 00 long, 01 word, 10 byte
+; (11: dead-end alert $81000007); nnnn = number of elements - 1. Long and word elements are read at an even table
+; address; the stream is realigned on a word after a byte copy, not after a byte repeat. Null command byte = end.
 exec_InitStruct:
                 movem.l d2-d4/a3,-(sp)
                 move.l  a2,a3               ; a3 = current destination
-                move.l  d0,d1
+                moveq   #0,d1
+                move.w  d0,d1
+                lsr.l   #1,d1
                 beq.s   .is_cmd
                 move.l  a2,a0
 .is_clr:
-                clr.b   (a0)+
+                clr.w   (a0)+
                 subq.l  #1,d1
                 bne.s   .is_clr
 .is_cmd:
@@ -174,6 +180,7 @@ exec_InitStruct:
 .is_data:
                 cmp.w   #2,d4
                 beq.s   .is_bytes
+                bhi.s   .is_bad
                 move.l  a1,d2               ; word/long data: aligned on a word
                 btst    #0,d2
                 beq.s   .is_aligned
@@ -213,6 +220,13 @@ exec_InitStruct:
                 tst.b   d1
                 beq.s   .is_balign
                 addq.l  #1,a1
+                bra     .is_cmd             ; after a byte repeat the stream stays where it is
+.is_bad:
+                move.l  d7,-(sp)
+                move.l  #$81000007,d7       ; AN_InitStruct-style dead end (size code 11)
+                jsr     LVO_ALERT(a6)
+                move.l  (sp)+,d7
+                bra.s   .is_done
 .is_balign:
                 move.l  a1,d2               ; realign the stream on a word
                 btst    #0,d2

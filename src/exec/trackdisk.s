@@ -581,8 +581,9 @@ td_cache_unit:
         movem.l (sp)+,d0-d2/a0-a1
         rts
 
-; td_motor_server (VERTB server, a1 = device base): turns off each motor after TD_MOTORIDLE ticks without access (the
-; original trackdisk also cuts the motor with a timer). Ignored during an access (TD_BUSY). Turn-off = selection with
+; td_motor_server (VERTB server, a1 = device base): turns off each motor after TD_MOTORIDLE ticks without access (1.3's
+; trackdisk has no such timer: its file system sends TD_MOTOR 0, raw-changeint §13; ours only does after a write-back).
+; Ignored during an access (TD_BUSY). Turn-off = selection with
 ; the motor bit high (latch off) then deselection. -> d0 = 0 (Z: the chain continues).
 td_motor_server:
         move.l  a1,-(sp)
@@ -1326,18 +1327,29 @@ td_cmd_prot:
 .pr_rw:
         move.l  d0,IO_ACTUAL(a2)
         rts
-; TD_MOTOR: io_Length 0 = off (modified tracks stay in cache until CMD_UPDATE), 1 = on (the motor
-; starts at the next access); io_Actual = previous state.
+; TD_MOTOR (raw-changeint §13): io_Length 0 = off (modified tracks stay in cache until CMD_UPDATE), any other value =
+; on now; io_Actual = previous state, $FF on / 0 off; io_Error 0, also without a disk. Unlike 1.3, the motor still
+; goes off after TD_MOTORIDLE idle ticks (td_motor_server): our file system only sends TD_MOTOR 0 after a write-back.
 td_cmd_motor:
         move.l  TD_CUNIT,a0
         moveq   #0,d0
         tst.b   TDU_MOTOR(a0)
         beq.s   .mo_was
-        moveq   #1,d0
+        move.w  #$FF,d0
 .mo_was:
         move.l  d0,IO_ACTUAL(a2)
         tst.l   IO_LENGTH(a2)
+        beq.s   .mo_off
+        tst.b   TDU_MOTOR(a0)
         bne.s   .mo_ret
+        bsr     td_getunit
+        bsr     td_motor_on
+        move.b  #PRB_MOTOR_ON,CIAB_PRB ; deselect, motor left on (latched)
+        move.l  TD_CUNIT,a0
+        move.w  #TD_MOTORIDLE,TDU_MCNT(a0)
+        sf      TD_BUSY
+        bra     td_giveunit
+.mo_off:
         tst.b   TDU_MOTOR(a0)
         beq.s   .mo_ret
         jsr     LVO_DISABLE(a6)
@@ -1973,15 +1985,18 @@ td_present:
 
 ; td_decode_track(rawbuf a0, sectorbuf a1) -> d0 = number of DISTINCT sectors decoded+verified (header AND data
 ; checksums OK), a0 = their mask (bit n = sector n), d1 = track of the last valid sector, a1 = read code: 0 for
-; 11 good sectors, else the worst defect seen (25 data sum, 24 header sum, 23 sector id), 26 if the damaged
-; ones were only missing, 21 if no sector was found.
+; 11 good sectors, else the first defect met in rotation order (trackdisk-write §10.3): 27 when the first sector
+; found has a bad header (format, number, checksum), then 22 (preamble or syncs not at the 1088-byte pitch after a
+; good sector, where no gap starts), 24 header sum, 23 sector id, 25 data sum; 26 if the damaged ones were only
+; missing, 21 if no sector was found. Unlike 1.3 the good sectors are still decoded, and kept across retries.
 ; Scans the raw track for the $4489 syncs; for each sector: decodes info (combines odd/even),
 ; checks format=$FF and sector number < 11, checks the header checksum (XOR of the 10 MFM info+label longs & MASK
 ; == stored decoded checksum) and the data checksum (XOR of the 256 MFM data longs & MASK), then decodes the 512
 ; data bytes into sectorbuf + number*512. Format locked by Python round-trip. a6 not used.
 td_decode_track:
         movem.l d2-d7/a2-a5,-(sp)
-        clr.w   -(sp)                ; worst defect seen (read code), 0 = none
+        clr.l   -(sp)                ; (sp).w = first defect (read code) | 0; 2(sp).b = a sector was found;
+                                     ; 3(sp).b = the current sector is the first one found
         move.l  a1,a4                ; a4 = sectorbuf base
         lea     (TD_RAWBYTES-TD_SECBODY)(a0),a2 ; a2 = last possible header start: header + data in the
                                      ; buffer (a long track starting before the gap ends flush with the buffer)
@@ -1999,6 +2014,12 @@ td_decode_track:
         cmp.l   a2,a0
         bhi     .sc_done             ; sector cut by the end of the buffer
         move.l  a0,a3                ; a3 = sector header (info_odd)
+        sf      3(sp)
+        tst.b   2(sp)
+        bne.s   .sc_hdrd
+        st      2(sp)
+        st      3(sp)
+.sc_hdrd:
         ; decode info = combine(info_odd, info_even)
         move.l  (a3),d0
         and.l   #MFM_MASK,d0
@@ -2077,18 +2098,35 @@ td_decode_track:
         swap    d5
         and.l   #$FF,d5            ; d5 = track (seek oracle: must equal the requested track)
         lea     1080(a3),a0        ; skip this sector (header 56 + data 1024) -> scan towards the next sync
-        bra     .sc_loop
+        lea     1088(a3),a5        ; the next sector at the 1088-byte pitch: preamble (zero data) then two
+        cmp.l   a2,a5              ; syncs, unless the gap starts there (encoded zeros)
+        bhi     .sc_loop
+        cmp.l   #$44894489,-4(a5)
+        bne.s   .sc_pre
+        move.l  -8(a5),d0
+        and.l   #MFM_MASK,d0
+        beq     .sc_loop
+.sc_pre:
+        move.l  (a5),d0
+        and.l   #MFM_MASK,d0
+        beq     .sc_loop           ; gap: no sector expected there
+        moveq   #TDERR_BadSecPreamble,d0
+        bra.s   .sc_bad1
 .sc_id:
         moveq   #TDERR_BadSecID,d0
         bra.s   .sc_bad
 .sc_hdr:
         moveq   #TDERR_BadHdrSum,d0
-        bra.s   .sc_bad
+.sc_bad:
+        tst.b   3(sp)              ; the first sector found: its header decides (27)
+        beq.s   .sc_bad1
+        moveq   #TDERR_BadSecHdr,d0
+        bra.s   .sc_bad1
 .sc_dat:
         moveq   #TDERR_BadSecSum,d0
-.sc_bad:
-        cmp.w   (sp),d0              ; keep the highest code: data sum > header sum > sector id
-        bls.s   .sc_adv
+.sc_bad1:
+        tst.w   (sp)               ; the first defect met wins
+        bne.s   .sc_adv
         move.w  d0,(sp)
 .sc_adv:
         addq.l  #2,a0
@@ -2103,8 +2141,9 @@ td_decode_track:
 .sc_cnt0:
         tst.l   d1
         bne.s   .sc_cnt
-        moveq   #0,d3
-        move.w  (sp)+,d3           ; worst defect
+        move.l  (sp)+,d3           ; first defect
+        clr.w   d3
+        swap    d3
         cmp.w   #TD_ALLSECT,d7
         bne.s   .sc_err
         moveq   #0,d3              ; complete track: no error

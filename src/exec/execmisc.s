@@ -647,12 +647,12 @@ exec_SetSR:
         move.l  (sp)+,a5
         rts
 .sr_super:
-        move.w  (sp),a1              ; old SR
+        move.w  (sp),a0              ; old SR (a0 = it, sign-extended, as 1.3 leaves it)
         and.w   d1,d0
         not.w   d1
         and.w   d1,(sp)
         or.w    d0,(sp)
-        move.w  a1,d0
+        move.w  a0,d0
         and.l   #$FFFF,d0
         rte
 
@@ -693,10 +693,11 @@ exec_UserState:
 .us_ret:
         rts
 
-; GetCC() -> d0 = condition codes (68000: MOVE from SR allowed in user mode; 68010+: priv_handler carries it out).
+; GetCC() -> d0 low word = SR & $FF, upper word untouched (exec-partial-lvos §5; 68000: MOVE from SR allowed in
+; user mode; 68010+: priv_handler carries it out).
 exec_GetCC:
         move.w  sr,d0
-        and.l   #$FF,d0
+        and.w   #$FF,d0
         rts
 
 ; RemIntServer(intNum d0, interrupt a1): the server leaves its chain, interrupts masked during the removal. When the
@@ -745,11 +746,14 @@ exec_SetExcept:
         move.l  (sp)+,d2
         rts
 
-; AllocTrap(trapNum d0 | -1 = any) -> d0 = trap number granted to the task | -1. FreeTrap(trapNum d0).
+; AllocTrap(trapNum d0) -> d0 = trap number | -1 (exec-partial-lvos §4.4). The word tc_TrapAlloc is worked on in a
+; 32-bit register whose upper half is the caller's d1: a low byte of $FF asks for any trap (15 down to 0); trap
+; d0 mod 32 otherwise, d0 coming back unchanged, so 16-31 test the caller's d1 and allocate nothing.
+; FreeTrap(trapNum d0): the same 32-bit copy, bit d0 mod 32 cleared, the low word written back.
 exec_AllocTrap:
-        move.l  EB_THISTASK(a6),a0
-        move.w  TC_TRAPALLOC(a0),d1
-        cmp.l   #-1,d0
+        move.l  EB_THISTASK(a6),a1
+        move.w  TC_TRAPALLOC(a1),d1
+        cmp.b   #-1,d0
         bne.s   .at_one
         moveq   #15,d0
 .at_lp:
@@ -758,16 +762,14 @@ exec_AllocTrap:
         dbra    d0,.at_lp
         bra.s   .at_fail
 .at_one:
-        cmp.l   #15,d0
-        bhi.s   .at_fail
         btst    d0,d1
         bne.s   .at_fail
 .at_got:
         bset    d0,d1
-        move.w  d1,TC_TRAPALLOC(a0)
-        ext.l   d0
+        move.w  d1,TC_TRAPALLOC(a1)
         rts
 .at_fail:
+        move.w  d1,TC_TRAPALLOC(a1)
         moveq   #-1,d0
         rts
 exec_FreeTrap:

@@ -2,7 +2,8 @@
 # 11 AmigaDOS sectors + a gap of 532, 700 or 830 bytes (830 = amiga500-esp32 emulator, track of 6,399 words), read
 # of TD_RAWWORDS words started after the first sync of each of the 11 sectors (WORDSYNC). Expected: 11 sectors,
 # correct track, mask $7FF, data identical to the ADF, read code 0 in A1. Then damaged tracks must give the read
-# codes of trackdisk-write-v34 §5.6: 21 (no mark), 24 (header sum), 25 (data sum), 26 (sectors missing).
+# codes of trackdisk-write-v34 §5.6 and §10.3: 21 (no mark), 24 (header sum), 25 (data sum), 26 (sectors missing),
+# 22 (no syncs where the next sector should start), 27 (the first sector found has a bad header).
 # Dependency: Python module unicorn.
 # Usage: python3 tests/td_decode_test.py <rom> <hex address of td_decode_track (vlink -M)> <adf>
 import sys, struct, random
@@ -83,5 +84,9 @@ r = bytearray(rev); r[starts[3] + 4 + 56 + 100] ^= 0x10
 damaged('somme donnees sect 3', bytes(r), starts, 25)
 r = bytearray(rev); r[starts[9]:starts[9] + 2 * 1088] = b'\xAA' * (2 * 1088)
 damaged('secteurs 9-10 absents', bytes(r), starts, 26)
+r = bytearray(rev); r[starts[3]:starts[3] + 4] = b'\xAA' * 4
+damaged('syncs sect 3 absentes', bytes(r), starts, 22)
+r = bytearray(rev); r[starts[0] + 4 + 20] ^= 0x10
+damaged('en-tete 1er secteur', bytes(r), starts, 27)
 print('ÉCHECS :', bad)
 sys.exit(1 if bad else 0)

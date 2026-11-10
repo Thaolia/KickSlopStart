@@ -1600,6 +1600,20 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **S-sized leftovers and real-ROM probes (2026-11-10)**: user request "termines les petits points taille S et lancent
+  les sondes 1.3". Four analysis agents: exec-partial-lvos-v34.md (new; graphics-raster §10, intuition-misc §6b-6c,
+  coverage 390/390), wb12-demos-v34.md (new), memory-budget §9, graphics-gels §13, rom-filesystem §2.5.1-2.5.2 / §5.2
+  / §12, trackdisk-write §10, raw-changeint §13, cluedo-v34.md (new), dos-lvo-partial §1.1a / §1.4, dos-boot-sequence,
+  intuition-input-menus §1.4. Implemented: ARCHITECTURE "S-sized leftovers and the last specified LVOs". New probe
+  `tests/explvo_probe.sh`: EXPLVO OK (the previous ROM crashed in Insert after the tail sentinel); `tests/td_decode_test.py`
+  two new cases, 0 failures; `tests/gels_probe.s` register clobber in `pcop` fixed (found by the analysis track).
+  Checked by hand: bad data-block checksum → "Volume / Badsum / has a read/write error", Copy "Error while Reading";
+  wrong block type read in full; 8 NEWCON open/close lose no memory (186 bytes each before); Retry after `cd df1:`
+  with the disk moved to DF2 lists it; soft-kick hosted by our ROM shows the insert-disk screen without the Guru
+  30000001 the user saw on a real A500. Kept as deviations: no sector labels, write protection checked at
+  CMD_WRITE, the motor-off timer, the bitmap repair under a valid flag, FreeRaster(NULL) ignored. Real-A500 soft-kick
+  reports (SysInfo buttons, keyboard after SPEED/EXPAND, Andromeda window) not reproduced with our ROM as host;
+  an analysis agent tries the real KS 1.3 as host.
   **Last C7/C10 gaps (2026-11-10)**: user request "fais les écarts restants". ARCHITECTURE "Last C7/C10 gaps".
   Oracle by the analysis track: disk-change §2.4.1 point 6 (one requester per dos call; Close raises its own) and
   rom-filesystem §1.4 (partitions started at boot). New `tests/oldwrite_probe.sh`: OLDWRITE OK (the previous ROM

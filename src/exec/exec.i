@@ -670,6 +670,8 @@ EB_RESMODULES EQU $12C          ; APTR: NUL-terminated array of struct Resident*
 EB_TASKTRAPCODE EQU $130        ; APTR: default trap handler of the tasks
 EB_TASKEXCEPTCODE EQU $134      ; APTR: default exception handler of the tasks
 EB_TASKEXITCODE EQU $138        ; APTR: final PC of a task added with finalPC 0
+EB_TASKSIGALLOC EQU $13C        ; ULONG: tc_SigAlloc given by AddTask ($0000FFFF: signals 0-15 for the system)
+EB_TASKTRAPALLOC EQU $140       ; UWORD: tc_TrapAlloc given by AddTask ($8000: trap 15 reserved)
 EB_MEMLIST      EQU $142
 EB_RESOURCELIST EQU $150
 EB_DEVICELIST   EQU $15E

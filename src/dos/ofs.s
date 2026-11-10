@@ -731,7 +731,7 @@ ofs_stream_open:
                 movem.l (sp)+,d2-d7/a2-a5
                 rts
 
-; ofs_stream_read(a1=state, a2=dest, d0=len, a6=SysBase) -> d0 = bytes copied (0 = EOF). Incremental loop: loads
+; ofs_stream_read(a1=state, a2=dest, d0=len, a6=SysBase) -> d0 = bytes copied (0 = EOF) | -1 (a data block failed its checksum). Incremental loop: loads
 ; the current data block (512 bytes), advances block by block via next_data when the block is exhausted, copies
 ; min(rest of block, rest requested, rest up to EOF). Keeps the cursor (POS/CURBLK/BLKBASE) in the state between calls;
 ; the block already in the buffer (SS_BUFBLK) is not fetched again: the file is held by a shared lock, so no writer
@@ -768,11 +768,17 @@ ofs_stream_read:
                 bsr     ofs_read_block
                 tst.l   d0
                 beq     .sr_done
+                lea     IOREQ_SZ(a3),a0               ; checksum: the 128 longs sum to 0 (rom-filesystem §5.2: 1.3
+                moveq   #0,d0                         ; checks it, and ignores the block type)
+                moveq   #OFS_BSIZE/4-1,d1
+.sr_sum:
+                add.l   (a0)+,d0
+                dbra    d1,.sr_sum
+                tst.l   d0
+                bne     .sr_rwerr
                 move.l  SS_CURBLK(a5),SS_BUFBLK(a5)
 .sr_inbuf:
                 lea     IOREQ_SZ(a3),a0
-                cmp.l   #OFS_T_DATA,OFSB_TYPE(a0)
-                bne     .sr_done                      ; not an OFS data block -> end
                 move.l  OFSB_DSIZE(a0),d3             ; data_size of the block
                 cmp.l   #OFS_DMAX,d3
                 bls.s   .sr_dsok
@@ -819,6 +825,8 @@ ofs_stream_read:
                 lea     IOREQ_SZ(a3),a0
                 move.l  OFSB_NEXT(a0),SS_CURBLK(a5)
                 bra     .sr_loop                      ; (loop top also advances after a seek: within >= data_size)
+.sr_rwerr:
+                moveq   #-1,d5                        ; the whole call fails (DOS_ERR_RW in the handler)
 .sr_done:
                 move.l  d5,d0
                 movem.l (sp)+,d2-d7/a2-a5

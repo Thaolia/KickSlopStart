@@ -22,6 +22,9 @@
 > columns (unchanged since 2026-10-27, radare2 not re-run), the device-command tables of §4 (no new page touches
 > them), §5 and §6. §7 (ranks 12, 13, 15 and its state paragraph) was updated separately the same day: all 15 ranks done.
 
+**LVO addendum 2026-11-10** (only the 28 rows that were not "yes", §0 and the end of §7 were touched; the
+"Implemented" column, the sizes and §4–§6 were not recounted): every LVO row is now "yes" (§0).
+
 **File-system addendum 2026-11-05** (no count recomputed): `rom-filesystem-v34` gained §1.4 (device commands,
 rejected TD_* replies), §2.5 (validation failures, requesters, Retry/Cancel), §8.4 (write-back on the third
 tick, measured) and §8.6 (no bitmap extension, 25 bitmap blocks at most); `dos-lvo-partial-v34` §1.4,
@@ -57,10 +60,11 @@ validator requesters at boot, rejected CMD_UPDATE/TD_MOTOR).
 
 - **390 V34 LVOs** inventoried across the 13 modules that expose functions (of which **14 private** in the
   sense of the `.fd`s: 9 exec, 2 graphics, 2 dos, 1 expansion); **376 public**.
-- Coverage by the analysis documentation (recount 2026-11-06): **362 specified** (92.8 %), **11 partial**
-  (2.8 %), **10 only cited** as calls made by an analysed piece of software (2.6 %), **7 absent** from any spec
-  (1.8 %). Useful coverage (specified + partial): **373 / 390 = 95.6 %** (2026-11-04: 242 / 46 / 58 / 44,
-  73.8 %). Counting: one count per row of the §3 tables, by the first word of the "Specified?" column (yes /
+- Coverage by the analysis documentation (update 2026-11-10): **390 specified** (100 %), 0 partial, 0 cited,
+  0 absent. The 28 rows that were still partial (11), cited (10) or absent (7) on 2026-11-06 were specified on
+  2026-11-10 by `exec-partial-lvos-v34.md`, `graphics-raster-v34.md` §10 and `intuition-misc-v34.md` §6b–§6c
+  (REMAINING-WORK D7). Recount 2026-11-06: 362 / 11 / 10 / 7 (useful coverage 95.6 %); 2026-11-04: 242 / 46 /
+  58 / 44 (73.8 %). Counting: one count per row of the §3 tables, by the first word of the "Specified?" column (yes /
   partial / cited / no) and of the "Implemented on our side" column (yes / stub / no); the table below sums them
   per module.
 - Implementation on our side (vector tables of `src/` at `f913aa6`): **386 / 390 = 99.0 %** have a dedicated
@@ -71,19 +75,20 @@ validator requesters at boot, rejected CMD_UPDATE/TD_MOTOR).
   **79 specified, 1 partial** (TD_MOTOR). Implemented: 80 (the 5 console commands CMD_RESET, CMD_CLEAR,
   CMD_STOP, CMD_START, CMD_FLUSH, refused by us at `c4bdddc`, were added on 2026-11-04). Timer (3) and audio (15) are described
   globally in §4: both fully specified and implemented.
-- What is not fully specified (28 LVOs: 11 partial, 10 cited, 7 absent; ≈ 0.9 KB of "own" ROM code in all) is
-  small and scattered: **exec** 18 (≈ 0.7 KB own: `SetSR`/`SuperState`/`UserState`/`GetCC`,
+- The last 28 LVOs (list of 2026-11-06, checked again on 2026-11-10 against the §3 tables: exactly these rows were
+  not "yes") are specified since 2026-11-10: **exec** 18 (`SetSR`/`SuperState`/`UserState`/`GetCC`,
   `AllocTrap`/`FreeTrap`, `AllocSignal`/`FreeSignal`, `FindTask`, `Insert`/`RemHead`/`RemTail`, `SetFunction`,
-  `Supervisor`, and the `InitStruct`/`MakeLibrary`/`MakeFunctions`/`FindResident` details); **graphics** 6
-  (≈ 90 b own: `InitBitMap`, `AllocRaster`/`FreeRaster`, `AttemptLockLayerRom`, the two private ROM stubs);
-  **intuition** 4 (`BeginRefresh`/`EndRefresh` beyond the GZZ vectors, `AllocRemember`/`FreeRemember`; closures
-  ≈ 100–170 b each).
+  `Supervisor`, `InitStruct`/`MakeLibrary`/`MakeFunctions`/`FindResident`) in `exec-partial-lvos-v34.md`;
+  **graphics** 6 (`InitBitMap`, `AllocRaster`/`FreeRaster`, `AttemptLockLayerRom`, `graphicsPrivate1`/`2`) in
+  `graphics-raster-v34.md` §10; **intuition** 4 (`BeginRefresh`/`EndRefresh`, `AllocRemember`/`FreeRemember`) in
+  `intuition-misc-v34.md` §6b–§6c. Mostly from static reading of the ROM; GetCC, InitBitMap and AllocRaster were
+  also called on the real ROM. The probes those pages describe have not been written on our side.
 
 | Module | V34 LVOs | Specified | Partial | Cited | Absent | Implemented (dedicated routine) | ROM bytes reached from the vectors |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| exec | 101 | 83 | 7 | 6 | 5 | 101 | 6,778 |
-| graphics | 105 | 99 | 2 | 2 | 2 | 103 | 48,346 |
-| intuition | 74 | 70 | 2 | 2 | 0 | 74 | 42,590 |
+| exec | 101 | 101 | 0 | 0 | 0 | 101 | 6,778 |
+| graphics | 105 | 105 | 0 | 0 | 0 | 103 | 48,346 |
+| intuition | 74 | 74 | 0 | 0 | 0 | 74 | 42,590 |
 | layers | 25 | 25 | 0 | 0 | 0 | 25 | 12,776 |
 | dos | 33 | 33 | 0 | 0 | 0 | 31 | n/m (BCPL) |
 | expansion | 21 | 21 | 0 | 0 | 0 | 21 | 1,710 |
@@ -94,7 +99,7 @@ validator requesters at boot, rejected CMD_UPDATE/TD_MOTOR).
 | disk.resource | 5 | 5 | 0 | 0 | 0 | 5 | 234 |
 | potgo.resource | 3 | 3 | 0 | 0 | 0 | 3 | 178 |
 | misc.resource | 2 | 2 | 0 | 0 | 0 | 2 | 68 |
-| **Total** | **390** | **362** | **11** | **10** | **7** | **386** | |
+| **Total** | **390** | **390** | **0** | **0** | **0** | **386** | |
 
 The ranked list of the most valuable remaining gaps is in §7.
 
@@ -201,7 +206,7 @@ version.
 
 | LVO | Function | Specified? (file §) | Implemented on our side | ROM size (own / closure) | Priority |
 |---:|---|---|---|---|:-:|
-| -30 | `Supervisor` | partial — exec-scheduling §1 (privilege-violation mechanism) ; setpatch-138 §1.5 | yes | 14 / 14 | P3 |
+| -30 | `Supervisor` | yes — exec-partial-lvos §1.1 ; exec-scheduling §1 | yes | 14 / 14 | — |
 | -36 | `execPrivate1` (= `ExitIntr`) *(private)* | yes — exec-scheduling §2.6 | yes | 124 / 162 | — |
 | -42 | `execPrivate2` (= `Schedule`) *(private)* | yes — exec-scheduling §2.2 | yes | 4 / 4 (ROM stub) | — |
 | -48 | `execPrivate3` (= `Reschedule`) *(private)* | yes — exec-scheduling §2.1 | yes | 48 / 48 | — |
@@ -209,10 +214,10 @@ version.
 | -60 | `execPrivate5` (= `Dispatch`) *(private)* | yes — exec-scheduling §2.5 | yes | 18 / 18 | — |
 | -66 | `execPrivate6` (= `Exception`) *(private)* | yes — exec-scheduling §5 | yes | 108 / 108 | — |
 | -72 | `InitCode` | yes — boot-sequence §Phase 4 | yes | 56 / 56 | — |
-| -78 | `InitStruct` | partial — module-map §Auto-init structures | yes | 74 / 74 | P3 |
-| -84 | `MakeLibrary` | partial — boot-sequence §Phase 4 ; module-map §Auto-init structures | yes | 138 / 192 | P3 |
-| -90 | `MakeFunctions` | partial — module-map §Auto-init structures (table format) | yes | 54 / 54 | P3 |
-| -96 | `FindResident` | partial — dos-boot-sequence §Phase A | yes | 48 / 48 | P3 |
+| -78 | `InitStruct` | yes — exec-partial-lvos §6.1 | yes | 74 / 74 | — |
+| -84 | `MakeLibrary` | yes — exec-partial-lvos §6.3 | yes | 138 / 192 | — |
+| -90 | `MakeFunctions` | yes — exec-partial-lvos §6.2 | yes | 54 / 54 | — |
+| -96 | `FindResident` | yes — exec-partial-lvos §6.4 | yes | 48 / 48 | — |
 | -102 | `InitResident` | yes — boot-sequence §Phase 4 ; uae-hd-boot §5 | yes | 88 / 88 | — |
 | -108 | `Alert` | yes — alert-v34 §1 ; coldstart-hardware §8 ; setpatch-138 §1.3 | yes | 1264 / 1846 | — |
 | -114 | `Debug` | yes — exec-scheduling §9 ; custom-chips §4.3 | yes | 10 / 10 | — |
@@ -220,9 +225,9 @@ version.
 | -126 | `Enable` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 16 / 16 | — |
 | -132 | `Forbid` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 6 / 6 | — |
 | -138 | `Permit` | yes — exec-spec §4 ; exec-scheduling §2.7 | yes | 20 / 20 | — |
-| -144 | `SetSR` | no | yes | 12 / 12 | P3 |
-| -150 | `SuperState` | no | yes | 12 / 12 | P3 |
-| -156 | `UserState` | partial — setpatch-138 §1.5 | yes | 10 / 10 | P3 |
+| -144 | `SetSR` | yes — exec-partial-lvos §1.2 | yes | 12 / 12 | — |
+| -150 | `SuperState` | yes — exec-partial-lvos §1.3 | yes | 12 / 12 | — |
+| -156 | `UserState` | yes — exec-partial-lvos §1.4 ; setpatch-138 §1.5 | yes | 10 / 10 | — |
 | -162 | `SetIntVector` | yes — custom-chips §3.3 ; graphics-blitter §9.3 | yes | 70 / 70 | — |
 | -168 | `AddIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 64 / 102 | — |
 | -174 | `RemIntServer` | yes — custom-chips §3.1, §3.3 ; exec-scheduling §8 | yes | 72 / 86 | — |
@@ -235,26 +240,26 @@ version.
 | -216 | `AvailMem` | yes — exec-memory-semaphores §2.6 (2026-11-05) ; exec-spec §4 Memory management | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 78 / 78 | — |
 | -222 | `AllocEntry` | yes — exec-memory-semaphores §2.8 (2026-11-05) ; setpatch-138 §1.4 ; dos-memory §2 | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 142 / 142 | — |
 | -228 | `FreeEntry` | yes — exec-memory-semaphores §2.9 (2026-11-05) ; setpatch-138 §Requirements | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 62 / 62 | — |
-| -234 | `Insert` | cited — workbench-task §3.6 | yes | 60 / 60 | P3 |
+| -234 | `Insert` | yes — exec-partial-lvos §2.1 | yes | 60 / 60 | — |
 | -240 | `AddHead` | yes — exec-spec §4 Doubly linked lists | yes | 60 / 60 | — |
 | -246 | `AddTail` | yes — exec-spec §4 Doubly linked lists | yes | 24 / 24 | — |
 | -252 | `Remove` | yes — exec-spec §4 Doubly linked lists | yes | 14 / 14 | — |
-| -258 | `RemHead` | cited — uae-hd-boot §4.1 | yes | 16 / 16 | P3 |
-| -264 | `RemTail` | cited — workbench-task §3.1 | yes | 22 / 22 | P3 |
+| -258 | `RemHead` | yes — exec-partial-lvos §2.2 | yes | 16 / 16 | — |
+| -264 | `RemTail` | yes — exec-partial-lvos §2.3 | yes | 22 / 22 | — |
 | -270 | `Enqueue` | yes — exec-spec §4 Doubly linked lists | yes | 38 / 38 | — |
 | -276 | `FindName` | yes — exec-spec §4 Doubly linked lists ; setpatch-138 §1.6 | yes | 40 / 40 | — |
 | -282 | `AddTask` | yes — exec-scheduling §2.7, §4.2 ; workbench-task §1.3 | yes | 164 / 202 | — |
 | -288 | `RemTask` | yes — exec-scheduling §2.7 ; bcpl-runtime §13.7 | yes | 122 / 136 | — |
-| -294 | `FindTask` | cited — loadwb-13 §1 | yes | 84 / 84 | P3 |
+| -294 | `FindTask` | yes — exec-partial-lvos §3 | yes | 84 / 84 | — |
 | -300 | `SetTaskPri` | yes — exec-scheduling §2.7 | yes | 80 / 132 | — |
 | -306 | `SetSignal` | yes — exec-scheduling §2.7 | yes | 8 / 8 | — |
 | -312 | `SetExcept` | yes — exec-scheduling §2.7, §5 | yes | 156 / 194 | — |
 | -318 | `Wait` | yes — exec-scheduling §2.7 | yes | 104 / 104 | — |
 | -324 | `Signal` | yes — exec-scheduling §2.7 | yes | 20 / 20 | — |
-| -330 | `AllocSignal` | cited — workbench-task §3.1 | yes | 56 / 56 | P3 |
-| -336 | `FreeSignal` | cited — intuition-misc §4 | yes | 16 / 16 | P3 |
-| -342 | `AllocTrap` | no | yes | 38 / 38 | P3 |
-| -348 | `FreeTrap` | no | yes | 16 / 16 | P3 |
+| -330 | `AllocSignal` | yes — exec-partial-lvos §4.2 | yes | 56 / 56 | — |
+| -336 | `FreeSignal` | yes — exec-partial-lvos §4.3 | yes | 16 / 16 | — |
+| -342 | `AllocTrap` | yes — exec-partial-lvos §4.4 | yes | 38 / 38 | — |
+| -348 | `FreeTrap` | yes — exec-partial-lvos §4.5 | yes | 16 / 16 | — |
 | -354 | `AddPort` | yes — exec-messages-io §1.5 (2026-11-05) ; preferences-13 §4 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 24 / 24 | — |
 | -360 | `RemPort` | yes — exec-messages-io §1.5 (2026-11-05) ; fastfonts-ff §2 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 4 / 32 | — |
 | -366 | `PutMsg` | yes — exec-messages-io §1.1 (2026-11-05) ; dos-v34-spec §2a | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 6 / 122 | — |
@@ -266,7 +271,7 @@ version.
 | -402 | `RemLibrary` | yes — exec-messages-io §4.2 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 26 / 26 | — |
 | -408 | `OldOpenLibrary` | yes — exec-messages-io §4.1 (2026-11-05) ; fastfonts-ff §Provenance | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 8 / 8 | — |
 | -414 | `CloseLibrary` | yes — exec-messages-io §4.2 (2026-11-05) ; caesar-boot §1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 20 / 20 | — |
-| -420 | `SetFunction` | partial — fastfonts-ff §1, §3 (returned value) ; ramlib §2.1 (chaining; exec marked changed and re-summed) | yes | 30 / 114 | P3 |
+| -420 | `SetFunction` | yes — exec-partial-lvos §5 ; ramlib §2.1 | yes | 30 / 114 | — |
 | -426 | `SumLibrary` | yes — exec-messages-io §4.4 (2026-11-05) ; test-vectors §G | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 84 / 84 | — |
 | -432 | `AddDevice` | yes — exec-messages-io §3.3, §4.4 (2026-11-05) ; timer-v34 §1.1 | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 14 / 64 | — |
 | -438 | `RemDevice` | yes — exec-messages-io §3.3 (2026-11-05) | yes — checked against the spec (rank 12, `tests/exec_msgio_probe.sh`) | 26 / 26 | — |
@@ -284,7 +289,7 @@ version.
 | -510 | `execPrivate8` (= `RawMayGetChar`) *(private)* | yes — custom-chips §4.3 | yes | 32 / 32 | — |
 | -516 | `execPrivate9` (= `RawPutChar`) *(private)* | yes — custom-chips §4.3 | yes | 70 / 120 | — |
 | -522 | `RawDoFmt` | yes — exec-rawdofmt (2026-11-05) ; alert §3 ; workbench-task §3.4, §6.4 | yes — checked against the spec (commit `1309b24`, `tests/rawdofmt_probe.sh`) | 214 / 452 | — |
-| -528 | `GetCC` | no | yes | 8 / 8 | P3 |
+| -528 | `GetCC` | yes — exec-partial-lvos §1.5 | yes | 8 / 8 | — |
 | -534 | `TypeOfMem` | yes — exec-memory-semaphores §2.10 (2026-11-05) ; softkick-real-ks13 §Conclusions | yes — checked against the spec (rank 13, `tests/exec_memsem_probe.sh`) | 38 / 38 | — |
 | -540 | `Procure` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 22 / 22 | — |
 | -546 | `Vacate` | yes — exec-scheduling §6 ; exec-memory-semaphores §4.8 (confirmed [O]) | yes | 34 / 34 | — |
@@ -367,7 +372,7 @@ version.
 | -372 | `CMove` | yes — graphics-display §6 | yes | 76 / 366 | — |
 | -378 | `CWait` | yes — graphics-display §6 | yes | 78 / 368 | — |
 | -384 | `VBeamPos` | yes — graphics-display §7.4 ; custom-chips §3.6 | yes | 16 / 16 | — |
-| -390 | `InitBitMap` | partial — fastfonts-ff §3 (BytesPerRow) | yes | 22 / 22 | P3 |
+| -390 | `InitBitMap` | yes — graphics-raster §10.1 | yes | 22 / 22 | — |
 | -396 | `ScrollRaster` | yes — graphics-raster §5 ; console-keymap §3.7 | yes | 142 / 380 | — |
 | -402 | `WaitBOVP` | yes — graphics-display §7.4 | yes | 6 / 62 | — |
 | -408 | `GetSprite` | yes — custom-chips §4.1 | yes | 136 / 168 | — |
@@ -384,8 +389,8 @@ version.
 | -474 | `AskFont` | yes — graphics-text §4 | yes | 18 / 18 | — |
 | -480 | `AddFont` | yes — graphics-text §4 | yes | 58 / 58 | — |
 | -486 | `RemFont` | yes — graphics-text §4 | yes | 78 / 78 | — |
-| -492 | `AllocRaster` | cited — monkey-startup §2 ; intuition-input-menus §3.5 | yes | 18 / 32 | P3 |
-| -498 | `FreeRaster` | cited — caesar-boot §1 | yes | 20 / 34 | P3 |
+| -492 | `AllocRaster` | yes — graphics-raster §10.2 | yes | 18 / 32 | — |
+| -498 | `FreeRaster` | yes — graphics-raster §10.3 | yes | 20 / 34 | — |
 | -504 | `AndRectRegion` | yes — graphics-regions §4.6 ; layers §1.1 (return value) | yes | 16 / 1510 | — |
 | -510 | `OrRectRegion` | yes — graphics-regions §4.5 ; layers §1.1 (return value) | yes | 16 / 1278 | — |
 | -516 | `NewRegion` | yes — graphics-regions §4.1 | yes | 20 / 42 | — |
@@ -409,9 +414,9 @@ version.
 | -624 | `AndRegionRegion` | yes — graphics-regions §4.11 ; layers §1.1 (return value) | yes | 226 / 2326 | — |
 | -630 | `SetRGB4CM` | yes — graphics-display §3 | yes | 54 / 54 | — |
 | -636 | `BltMaskBitMapRastPort` | yes — graphics-blitter §5.4 | yes | 470 / 3306 | — |
-| -642 | `graphicsPrivate1` *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P3 |
-| -648 | `graphicsPrivate2` *(private)* | no | no (null vector) | 4 / 4 (ROM stub) | P3 |
-| -654 | `AttemptLockLayerRom` | partial — layers §1.1 (return value) | yes | 22 / 22 | P3 |
+| -642 | `graphicsPrivate1` *(private)* | yes — graphics-raster §10.5 (returns A6 in D0) | no (null vector) | 4 / 4 (ROM stub) | — |
+| -648 | `graphicsPrivate2` *(private)* | yes — graphics-raster §10.5 (returns A6 in D0) | no (null vector) | 4 / 4 (ROM stub) | — |
+| -654 | `AttemptLockLayerRom` | yes — graphics-raster §10.4 ; layers §1.1 | yes | 22 / 22 | — |
 
 ### intuition.library (74 LVOs, −30 to −468)
 
@@ -471,16 +476,16 @@ version.
 | -336 | `WBenchToBack` | yes — intuition-screens §7.3 | yes | 6 / 1020 | — |
 | -342 | `WBenchToFront` | yes — intuition-screens §7.3 | yes | 6 / 1030 | — |
 | -348 | `AutoRequest` | yes — intuition-requesters §5.1 | yes | 270 / 20666 | — |
-| -354 | `BeginRefresh` | partial — intuition-gzz §2.5 (test vectors) ; intuition-windows §2.2 (LAYERREFRESH cleared only by Begin/EndRefresh) | yes | 12 / 168 | P3 |
+| -354 | `BeginRefresh` | yes — intuition-misc §6b ; intuition-gzz §2.5 ; intuition-windows §2.2 | yes | 12 / 168 | — |
 | -360 | `BuildSysRequest` | yes — intuition-requesters §5.2 | yes | 20 / 20004 | — |
-| -366 | `EndRefresh` | partial — intuition-gzz §2.5 (test vectors) ; intuition-windows §2.2 (LAYERREFRESH cleared only by Begin/EndRefresh) | yes | 14 / 136 | P3 |
+| -366 | `EndRefresh` | yes — intuition-misc §6b ; intuition-gzz §2.5 ; intuition-windows §2.2 | yes | 14 / 136 | — |
 | -372 | `FreeSysRequest` | yes — intuition-requesters §5.4 | yes | 12 / 2964 | — |
 | -378 | `MakeScreen` | yes — intuition-screens §5.2 | yes | 12 / 322 | — |
 | -384 | `RemakeDisplay` | yes — intuition-screens §5.2 | yes | 6 / 802 | — |
 | -390 | `RethinkDisplay` | yes — intuition-screens §5.2 | yes | 6 / 6 | — |
-| -396 | `AllocRemember` | cited — intuition-screens §2.1 ; intuition-requesters §5.2 | yes | 18 / 164 | P3 |
+| -396 | `AllocRemember` | yes — intuition-misc §6c | yes | 18 / 164 | — |
 | -402 | `AlohaWorkbench` | yes — intuition-misc §4 | yes | 24 / 24 | — |
-| -408 | `FreeRemember` | cited — intuition-requesters §5.4 | yes | 14 / 102 | P3 |
+| -408 | `FreeRemember` | yes — intuition-misc §6c | yes | 14 / 102 | — |
 | -414 | `LockIBase` | yes — intuition-misc §6 ; intuition-screens §9 | yes | 60 / 120 | — |
 | -420 | `UnlockIBase` | yes — intuition-misc §6 | yes | 54 / 114 | — |
 | -426 | `GetScreenData` | yes — intuition-screens §7.5 | yes | 112 / 11840 | — |
@@ -855,11 +860,12 @@ ranks are now done.**
 | 14 | ramlib.library | loading of LIBS:/DEVS: (in the caller's context: 1.3 has no ramlib process), exec patches, expunge on low memory | **specified 2026-11-04** (ramlib-v34) / **yes** (2026-11-04: `tests/ramlib_probe.sh` matches §8; LoadSeg name and ROM-library expunge differ, see PLAN) | Every disk library and device: icon.library, info.library, diskfont, serial/parallel.device. A plain task cannot load from disk on 1.3 either (it crashes there) | done |
 | 15 | mathffp.library | the 12 SP* functions (FFP format, rounding, overflow, condition codes) | **specified 2026-11-05** (mathffp-v34) / **yes** (2026-11-05, merge `6eebda9`: `src/exec/mathffp.s` rewritten, `tests/mathffp_probe.sh` 0 of 264 checks fail, 94 of the 202 vectors before; no result difference, smaller stack depths; open: exponent-0 Add/Sub results, Open and LIBF_DELEXP) | Programs compiled with FFP floating point, AmigaBASIC [no analysed program uses it yet]. ≈ 1 KB in the ROM | done |
 
-Below rank 15: `InitRastPort`/`InitBitMap` beyond the fields already listed; `AllocRaster`/`FreeRaster`;
-`AllocRemember`/`FreeRemember`; `BeginRefresh`/`EndRefresh` beyond the GZZ test vectors; `SetFunction` (return
-value only); `MakeLibrary`/`MakeFunctions`/`InitStruct` edge cases; exec `SetSR`/`SuperState`/`UserState`/`GetCC`,
-`AllocTrap`/`FreeTrap`, `AllocSignal`/`FreeSignal`; the two null dos vectors (no caller known); trackdisk
-`TD_MOTOR` (partial). Analysis open points that are not LVO gaps are listed in each spec's "Open points"
+Below rank 15 (2026-11-10): the LVO leftovers listed here before (`InitBitMap`, `AllocRaster`/`FreeRaster`,
+`AllocRemember`/`FreeRemember`, `BeginRefresh`/`EndRefresh`, `SetFunction`, `MakeLibrary`/`MakeFunctions`/
+`InitStruct`, `SetSR`/`SuperState`/`UserState`/`GetCC`, `AllocTrap`/`FreeTrap`, `AllocSignal`/`FreeSignal`, and the
+other rows of §0) are specified; on our side they remain to be checked against those pages (graphicsPrivate1/2
+are still null vectors where 1.3 returns A6 in D0). Still open: the two null dos vectors (no caller known) and
+trackdisk `TD_MOTOR` (partial). Analysis open points that are not LVO gaps are listed in each spec's "Open points"
 section (e.g. rom-filesystem §11 probes P1–P4 and §12, dos-memory §9, graphics-area and graphics-display open
 points).
 

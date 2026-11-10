@@ -1,4 +1,4 @@
-# intuition-misc-v34.md — intuition 34.3: OpenIntuition, Intuition(), SetPointer/ClearPointer, AlohaWorkbench, CurrentTime, Lock/UnlockIBase
+# intuition-misc-v34.md — intuition 34.3: OpenIntuition, Intuition(), SetPointer/ClearPointer, AlohaWorkbench, CurrentTime, Lock/UnlockIBase, Begin/EndRefresh, Alloc/FreeRemember
 
 > ANALYSIS track ("dirty"). Sources: ROM `kick34005.A500` (read-only, radare2 static reading of the
 > intuition library vectors and the routines they reach). No probe was run for this page. We describe
@@ -35,6 +35,13 @@
 5. **AlohaWorkbench(port)** only stores the port in IB+$3A8 (NULL unregisters); no message is sent by
    it. Messages go out only from OpenWorkBench (WBENCHOPEN) and CloseWorkBench (WBENCHCLOSE). [O]
 6. **LockIBase(n)** (D0) / **UnlockIBase(n)** (**A0**): no range check of n; 7 semaphores exist (0–6). [O]
+7. **BeginRefresh** locks the GZZ outer layer (LockLayerRom, no BeginUpdate) and BeginUpdate's the inner one,
+   whatever the refresh type (on an undamaged SMART window everything drawn is discarded); nesting corrupts the
+   saved ClipRect list. **EndRefresh** tests `complete` as a **word** and clears LAYERREFRESH of the inner layer only
+   (§6b). [O]
+8. **AllocRemember** allocates its 12-byte node with requirements 0 and pushes it at the head; **FreeRemember**
+   tests `reallyForget` as a **word**, frees the nodes in every case (and the blocks only when TRUE) and sets the
+   key to NULL (§6c). [O]
 
 ---
 
@@ -235,6 +242,153 @@ Complement to `intuition-screens-v34.md` §9:
 
 ---
 
+## 6b. BeginRefresh (LVO −354) / EndRefresh (LVO −366)
+
+Added 2026-11-10 (REMAINING-WORK D7). Source: static reading of the two vectors and of the routines they reach
+(radare2), cross-checked with the black-box results already in `intuition-gzz-v34.md` §2.5 and
+`intuition-windows-v34.md` §2.2. Layer behaviour (BeginUpdate/EndUpdate) is in `layers-v34.md` §5.5 and
+`installclipregion-v34.md` §4.1; it is not repeated here.
+
+### 6b.1 Registers [O]
+
+| LVO | Call | Inputs | Result |
+|---:|---|---|---|
+| −354 | BeginRefresh | window A0 | none (D0 = leftover of the last internal call) |
+| −366 | EndRefresh | window A0, complete D0 | none |
+
+- Both are thin register-to-stack relays into compiled code: D0, D1, A0, A1 are scratch; D2–D7 and A2–A6 are
+  preserved. A6 must be IntuitionBase (the bodies reach layers and graphics through IntuitionBase fields).
+  [O, D for the C register convention]
+- **`complete` is tested as a 16-bit word**: only the low word of D0 counts. `EndRefresh(w, $00010000)` behaves as
+  `EndRefresh(w, FALSE)`. The low word is sign-extended before being passed to EndUpdate. [O]
+- No argument is validated: a NULL window, a window without a layer, or a closed window crashes or corrupts. [O]
+
+### 6b.2 BeginRefresh(window): order of effects [O]
+
+1. `LockLayerInfo(&window->WScreen->LayerInfo)` (screen + $E0).
+2. Sets **WINDOWREFRESH** (`$01000000`) in `window->Flags` (+$18).
+3. If `window->BorderRPort` (+$3A) is non-NULL (GIMMEZEROZERO window): **`LockLayerRom` of the outer (border)
+   layer** (`BorderRPort->Layer`). The outer layer is only *locked*, **not** BeginUpdate'd: its ClipRects stay
+   the full visible list, its DamageList is untouched.
+4. `BeginUpdate(window->WLayer)` (+$7C, the inner layer for GZZ): the layer's ClipRect list is reduced to its
+   damage, and BeginUpdate's `LockLayerRom` of that layer is **kept** until EndRefresh (`layers-v34.md` §5.5).
+   BeginUpdate's result (0 on memory failure) is **ignored**: BeginRefresh reports nothing.
+5. `UnlockLayerInfo(...)`.
+
+On return the calling task holds the inner layer's lock (and the outer one for GZZ). Any other task that draws
+in these layers, intuition's input task included (frame, gadgets, menus over the window), blocks until
+EndRefresh. [O for the lock calls, D for the consequence]
+
+**No check of the refresh type.** BeginRefresh does the same on SIMPLE, SMART and SUPER_BITMAP windows and on
+NOCAREREFRESH windows. Consequences, from `layers-v34.md` §5.5 [D]:
+- With an **empty DamageList** (the normal state of a SMART or SUPER layer, and of a SIMPLE layer that was
+  already refreshed) BeginUpdate leaves `ClipRect = NULL`: **everything drawn until EndRefresh is discarded**.
+  This is the observable effect of a BeginRefresh on a SMART window that was not damaged.
+- With damage (a SIMPLE layer after exposure; any layer to which intuition added frame damage after a
+  SizeWindow, `intuition-gzz-v34.md` §2.5) drawing is clipped to the damage, in every refresh type.
+- WINDOWREFRESH is set whatever the type.
+
+**No check of WINDOWREFRESH either: nesting is not supported.** A second BeginRefresh before EndRefresh runs a
+second BeginUpdate on the same layer. That BeginUpdate saves the **current, already reduced** ClipRect list as
+the "normal" list (`_cliprects`, layer +$40, `layers-v34.md` §2), so the normal list saved by the first call is
+lost and the following EndRefresh restores the reduced list. Do not nest; an implementation may either refuse
+the nested call or reproduce the corruption, but must not rely on it. [O for the saving step, D for the
+consequence]
+
+### 6b.3 EndRefresh(window, complete): order of effects [O]
+
+1. `EndUpdate(window->WLayer, (LONG)(WORD)complete)`: with a non-zero word the DamageList is cleared; the normal
+   ClipRect list comes back; the layer lock taken by BeginUpdate is released (`layers-v34.md` §5.5).
+2. If `BorderRPort` is non-NULL: `UnlockLayerRom` of the outer layer.
+3. Clears **WINDOWREFRESH** in `window->Flags`.
+4. Only if the low word of `complete` is non-zero: clears **LAYERREFRESH** (`$0080`) in `WLayer->Flags` (+$1E).
+   The **outer layer's** LAYERREFRESH is never touched by EndRefresh (the screen repair clears it,
+   `intuition-windows-v34.md` §2.2).
+
+- **No LockLayerInfo** in EndRefresh (only BeginRefresh takes it, and only around BeginUpdate).
+- **EndRefresh(w, FALSE)**: the DamageList and LAYERREFRESH are kept, so the next screen repair of any cause sends
+  another REFRESHWINDOW to this window (`intuition-windows-v34.md` §2.2), and the next BeginRefresh is again
+  clipped to the same, possibly larger, damage. This is the intended way to refresh in several passes.
+- EndRefresh without a prior BeginRefresh: EndUpdate on a layer that is not updating, then an UnlockLayerRom that
+  was not locked (unbalanced semaphore). Not protected. [D]
+- EndRefresh repairs nothing by itself: pixels are only what the application drew in between
+  (`intuition-gzz-v34.md` §2.5: SIMPLE and SUPER cases observed). [O there]
+
+### 6b.4 Test vectors
+
+| Case | After BeginRefresh | After EndRefresh |
+|---|---|---|
+| SIMPLE window, damage = whole layer (just opened or resized) | Flags has `$01000000`; WLayer ClipRects = damage ∩ visible; WLayer locked | `complete = 1`: DamageList empty, WLayer Flags lose `$0080`, Flags lose `$01000000` (observed `$0081` → `$0001`, `intuition-gzz-v34.md` §2.5) |
+| Same, `complete = 0` | same | DamageList unchanged, LAYERREFRESH still set, WINDOWREFRESH cleared |
+| Same, `complete = $00010000` | same | same as `complete = 0` |
+| SMART window, no damage, RectFill over the whole window between the two calls | WLayer `ClipRect` = NULL | no pixel changed |
+| GZZ window | outer layer locked, its ClipRects and DamageList unchanged | outer LAYERREFRESH unchanged even with `complete = 1` |
+
+---
+
+## 6c. AllocRemember (LVO −396) / FreeRemember (LVO −408)
+
+Added 2026-11-10 (REMAINING-WORK D7). Source: static reading of the vectors and of their compiled bodies.
+Callers inside intuition are described in `intuition-screens-v34.md` §2.1 and `intuition-requesters-v34.md` §5.
+
+### 6c.1 Registers and layout [O]
+
+| LVO | Call | Inputs | Result |
+|---:|---|---|---|
+| −396 | AllocRemember | rememberKey A0 (address of a `struct Remember *`), size D0, flags D1 | D0 = memory or 0 |
+| −408 | FreeRemember | rememberKey A0, reallyForget D0 | none |
+
+- D0, D1, A0, A1 scratch; D2–D7 and A2–A6 preserved. A6 must be IntuitionBase: exec is reached through the
+  ExecBase pointer kept in IntuitionBase (+$60), not through location 4. [O]
+- `struct Remember` (public layout, 12 bytes): `NextRemember` +0, `RememberSize` +4 (ULONG), `Memory` +8.
+  `*rememberKey` points to the **most recent** node; the list is LIFO, terminated by NULL. [O]
+
+### 6c.2 AllocRemember(key, size, flags) [O]
+
+1. Remembers the old head `*key`.
+2. `AllocMem(12, 0)`: the node itself is allocated with **requirements 0** (any memory, not cleared, not
+   MEMF_PUBLIC), whatever `flags`. The result is written **straight into `*key`**; on failure `*key` is put back
+   to the old head and 0 is returned.
+3. `AllocMem(size, flags)` with the caller's full D0 and D1 (all `MEMF_*` bits honoured, including MEMF_CLEAR,
+   MEMF_CHIP). On failure: `FreeMem(node, 12)`, `*key` = old head, return 0.
+4. `node->RememberSize = size` (the **requested** size, not rounded), `node->NextRemember = old head`,
+   `node->Memory = block`; returns the block.
+
+- Between steps 2 and 4 `*key` points to a node whose fields are not yet written; nothing is locked (no
+  Forbid). A key shared between tasks needs the caller's own locking. [O/D]
+- `size = 0`: AllocMem returns 0 (`exec-memory-semaphores-v34.md` §2.4), so the node is freed and 0 returned;
+  the key is unchanged.
+- The two allocations are separate: the node does not live in the remembered block and is not counted in
+  `RememberSize`.
+
+### 6c.3 FreeRemember(key, reallyForget) [O]
+
+- **`reallyForget` is tested as a 16-bit word** (low word of D0): `$00010000` means FALSE.
+- Walks from `*key` (newest first). For each node: reads `NextRemember` first; if `reallyForget` ≠ 0,
+  `FreeMem(node->Memory, node->RememberSize)`; then **always** `FreeMem(node, 12)`. At the end **`*key = NULL`**
+  (also when the list was already empty).
+- **`reallyForget = FALSE` frees only the 12-byte nodes**: the remembered blocks stay allocated and are no longer
+  tracked (this is how intuition keeps a screen's memory after building it, `intuition-screens-v34.md` §2.1
+  step 23). It is not a no-op.
+- A node whose `Memory`/`RememberSize` were modified by the caller is freed with the modified values (exec
+  FreeMem rules apply: a size 0 frees nothing; an address outside every MemHeader is the dead-end alert
+  `$81000005`).
+- `key` itself is dereferenced without a check (`key = NULL` reads location 0 and then writes NULL to it).
+
+### 6c.4 Test vectors (free memory measured with AvailMem(0) before and after)
+
+| Sequence | Expected |
+|---|---|
+| `k = NULL`; `p1 = AllocRemember(&k, 100, MEMF_CLEAR)` | `p1` ≠ 0 and 100 bytes of 0; `k->RememberSize = 100`, `k->Memory = p1`, `k->NextRemember = NULL` |
+| then `p2 = AllocRemember(&k, 50, 0)` | `k->Memory = p2`, `k->NextRemember` = the first node |
+| then `FreeRemember(&k, TRUE)` | `k = NULL`; free memory back to its value before the first call |
+| same two allocations, then `FreeRemember(&k, FALSE)` | `k = NULL`; free memory = before − 104 − 56 (the two blocks, rounded to 8, stay allocated; the two 16-byte nodes are freed) |
+| same, `FreeRemember(&k, $00010000)` | same as FALSE |
+| `AllocRemember(&k, 0, 0)` with `k = X` | returns 0, `k` still X, free memory unchanged |
+| `AllocRemember(&k, $7FFFFFF0, 0)` with `k = X` | returns 0, `k` still X, free memory unchanged (node allocated then freed) |
+
+---
+
 ## 7. Open points
 
 - First opener of intuition on a normal boot: deduced (dos/initial CLI), not confirmed by a breakpoint.
@@ -250,3 +404,5 @@ Complement to `intuition-screens-v34.md` §9:
   Window/IORequest/Interrupt/IntuiMessage, private IB field offsets already used by the neighbouring
   specs, custom register values (DMACON), alert number, port name, IDCMP class/code values.
 - [x] No ROM data (pointer image) reproduced.
+- [x] §6b/§6c (added 2026-11-10): same rules; the only values are public Window/Layer/Remember offsets, flag bits,
+  library LVOs called and memory flags.

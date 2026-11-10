@@ -46,10 +46,20 @@ exec_AddTail:
         move.l  a1,(a0)              ; old_TailPred.Succ = node
         rts
 
-; Insert(list a0, node a1, pred a2): inserts node AFTER pred; pred NULL -> AddHead
+; Insert(list a0, node a1, pred a2): inserts node AFTER pred; pred NULL -> AddHead. A pred whose Succ is NULL is the
+; list's tail sentinel: the node goes before it, at the tail (exec-partial-lvos §2; the list argument is not used).
 exec_Insert:
         move.l  a2,d0
         beq.s   exec_AddHead         ; pred NULL -> head
+        tst.l   (a2)
+        bne.s   .in_after
+        move.l  LN_PRED(a2),a0       ; a0 = lh_TailPred
+        move.l  a2,(a1)              ; node->Succ = &lh_Tail
+        move.l  a0,LN_PRED(a1)
+        move.l  a1,(a0)
+        move.l  a1,LN_PRED(a2)       ; lh_TailPred = node
+        rts
+.in_after:
         move.l  (a2),d0              ; succ = pred->Succ
         move.l  d0,(a1)              ; node->Succ = succ
         move.l  a2,LN_PRED(a1)       ; node->Pred = pred

@@ -33,7 +33,8 @@
 
 1. **Registers.** Every LVO of this page returns with **D0 = D1 = result**, **A0 = 0**, **A1 = scratch** (a
    pointer into the caller's stack, about 1.5 KB below SP), and **D2–D7/A2–A6 preserved**. Verified on every
-   call made for this page. [O]
+   call made for this page. [O] The same holds for Open, Close, Read, Write, Seek, Lock, UnLock and Examine
+   called by real programs (2026-11-10, §1.1a); Cluedo's `Type` relies on D1 after Seek. [O]
 2. **Result2 has three behaviours** (§1.2). (a) Pure LVOs never touch it: Input, Output, CurrentDir, IoErr,
    IsInteractive, UnLoadSeg, Delay, DupLock(0), Seek/Open on `NIL:`. (b) Every LVO that sends a packet
    **copies `dp_Res2` into `pr_Result2` on success too**; the handlers leave stale values there (seen: 205,
@@ -76,6 +77,45 @@ Observed on return, for every LVO of this page:
 - "No return value" LVOs (UnLoadSeg, Delay, Close, UnLock) still leave **something** in D0: a residue (0, a
   pointer into the stack, the last Result2…). Programs cannot rely on it; a replacement may return anything,
   but returning 0 for UnLoadSeg(0) matches what was seen. [O]
+
+### 1.1a D1 = D0 for the core LVOs, seen in real programs (2026-11-10) [O]
+
+Question: do Open, Close, Read, Write, Seek, Lock, UnLock, Examine (and the others) leave their result in D1 as
+well as in D0, as §1.1 found for the LVOs of this page? A program relying on it exists: the `Type` command on the
+Cluedo (French) boot disk (a 1380-byte command calling the dos LVOs, not the Workbench one), run twice by its
+startup-sequence, takes the file
+length from **D1** after Seek.
+
+Method: real ROM under Amiberry (A500, 512 KB chip + 512 KB slow, cycle-exact). Hardware breakpoints on the
+entry of each dos LVO vector (in the library's jump table, in RAM); at a hit the caller's return address was
+read from the stack and a breakpoint put there; at the return D0, D1, A0 and the calling process's `pr_Result2`
+were read. Callers: the Cluedo boot (its `Type`, the game's own process "BackGround_Process", the Workbench
+process started by its LoadWB, the Initial CLI), and a Workbench 1.3.3 boot (the Workbench process opening a
+drawer, the Initial CLI running commands, the third-party C command `muchmore` of that disk printing its usage).
+No program was written; nothing was patched.
+
+| LVO | Calls seen | D0 on return | D1 on return | A0 |
+|---|---|---|---|---|
+| Open (−30) | 9 (MODE_OLDFILE, files and icons) | FileHandle BPTR | **= D0** | 0 |
+| Close (−36) | 9 | residue: always $57 in these runs | **= D0** | 0 |
+| Read (−42) | 20 (full, short and 0-byte reads) | bytes read (e.g. 40000, 78, 9, 0 at end of file) | **= D0** | 0 |
+| Write (−48) | 2 (to the CLI's output handle) | bytes written (20, 1) | **= D0** | 0 |
+| Seek (−66) | 2, by Cluedo's `Type`: Seek(fh, 0, OFFSET_END) twice on a 315-byte file | 0, then **315** | **0, then 315** | 0 |
+| Lock (−84) | 5 (four successes, one failure) | lock BPTR; 0 on failure (Result2 205) | **= D0** | 0 |
+| UnLock (−90) | 5 | residue: 0, or 205 when `pr_Result2` was 205 | **= D0** | 0 |
+| Examine (−102) | 1 (Workbench, a drawer lock) | −1 (DOSTRUE) | **= D0** | 0 |
+
+- Every call, from ROM code and from programs alike, returned **D1 = D0** and **A0 = 0**: this is the common
+  bridge (`bcpl-runtime-v34.md` §1.4), which returns the BCPL result register in both. IoErr and DeleteFile were
+  already seen doing the same (§1.1, §3 row R). [O] The remaining LVOs of the vector table go through the same
+  bridge [S], so the rule holds for all of them [D].
+- Cluedo's `Type` calls Seek(fh, 0, OFFSET_END) **twice** and uses the second result (the previous position, i.e.
+  the length) from D1; with D1 left unchanged it would read whatever the caller had there (the handle).
+  Result2 after both Seeks was 0. [O]
+- The UnLock residue is the value of `pr_Result2` in every call seen (0 or 205); Close's residue was $57 in all
+  nine calls, from three different callers. Neither is a documented result. [O, meaning not established]
+- **Rule for an implementation**: every dos LVO returns with D1 equal to D0 (for the "no result" LVOs, whatever
+  D0 holds), A0 = 0, D2–D7/A2–A6 preserved.
 
 ### 1.2 `pr_Result2` (IoErr) [O]
 
@@ -141,8 +181,9 @@ error in Result2:
   202/205/209/210/219]
 - **Window**: the requester is an AutoRequest-style "System Request" window opened for the **calling process**:
   `pr_WindowPtr = −1` → no requester, treated as Cancel; `pr_WindowPtr = 0` → on the Workbench screen, top
-  left; otherwise on the screen of that window. Buttons Retry (left) / Cancel (right); left Amiga + B selects
-  Cancel. [O for −1 and 0]
+  left; otherwise on the screen of that window. Buttons Retry (left) / Cancel (right); left Amiga + V selects
+  Retry and left Amiga + B selects Cancel while the requester is the active window (keyboard details below). [O for
+  −1 and 0]
 - **Retry** restarts the whole call (name resolution and packet included); **Cancel** returns the failure value
   with Result2 = the error. [S; O for Cancel, and for Retry below]
 - **A disk inserted while the requester is up answers it as Retry** [O]: with the requester shown for DF1:
@@ -151,7 +192,39 @@ error in Result2:
   disk). Clicking Retry with the faulty disk still in the drive brought the same requester back at once.
 - **Left Amiga + B** did not dismiss the 213/225 requesters in the runs of 2026-11-04 (requester over the boot
   CLI window, keys sent by the emulator, also after clicking inside the requester); a mouse click on Cancel did.
-  Why it differs from the earlier observation above is not established. [O, ?]
+  **Settled 2026-11-10, see the next bullet**: the keys only act while the requester window is the active
+  window; the most likely explanation of the 2026-11-04 runs is that it was not active when the keys came. [D]
+- **Keyboard answers, 2026-11-10** [O]. Real ROM, Amiberry A500 (512 KB chip + 512 KB slow, cycle-exact); keys
+  sent as raw key codes (Amiga key held down, letter pressed and released, Amiga key released), every state
+  looked at on a screenshot. Two setups: (1) **no Workbench**: an xdftool boot floppy with only a `c` directory
+  (no startup-sequence), commands typed in the Initial CLI; (2) **with the Workbench**: a Workbench 1.3.3 copy
+  whose startup-sequence keeps the boot CLI open after LoadWB, a drawer window open, commands typed in the boot
+  CLI. Requesters: "Please insert volume / foo / in any drive" (`dir foo:`, unknown name) and "No disk present /
+  in unit  1" (`dir df1:`, DF1: empty). Both appear at the top left of the Workbench screen, titled
+  "System Request", and **are the active window when they appear** (highlighted title bar; the CLI window's
+  title turns inactive).
+  - **Left Amiga + B = Cancel**, in both setups and on both requesters: the window closes at once and the call
+    fails (`Dir` printed "Could not get information for foo:" then the error, 218 / 226).
+  - **Left Amiga + V = Retry**, in both setups. Proof: with the requester for `foo` up, a background
+    `run wait 12 +` / `assign foo: c:` typed beforehand created the `FOO` assign (checked in the DevInfo list with
+    the debugger; the requester stayed on screen, identical screenshots before and after); Left Amiga + V then
+    closed the requester and `Dir` listed the `c` directory. On "No disk present" with the drive still empty,
+    Left Amiga + V closed the requester and **the same requester was rebuilt at once** (caught half-drawn
+    within 1 s; the first one had taken about 5 s to appear after the command); Left Amiga + B then cancelled
+    it (226).
+  - **Right Amiga + B** and **B alone**: no effect, the requester stays (Retry/Cancel need the left Amiga
+    qualifier, as AutoRequest specifies: `intuition-requesters-v34.md` §5.1).
+  - **Requester not active**: after a click in the CLI window (the requester stays on screen, inactive), Left
+    Amiga + B went to the console: it **typed a `b`** on the CLI's input line and the requester stayed. A click
+    inside the requester's body (not on a gadget) made it active again, and Left Amiga + B then cancelled it.
+  - Side effect seen there [O]: while that `b` sat on the CLI input line, the output of the command (`Dir`'s
+    error message, written after the Cancel) **did not appear** on the console; it appeared as soon as Backspace
+    erased the `b`. The console holds back output while a partly typed line is pending.
+  - After the requester closed, the window that was active before it (the CLI) was active again (debugger read
+    of `ActiveWindow`, Workbench setup). [O]
+  - One unexplained run [?]: in the no-Workbench setup, a sequence Right Amiga + B then B alone, sent 4 s after
+    `dir baz:`, left a `b` on the CLI line although the requester looked active; repeated with each key
+    separately, neither typed anything. Possibly the keys arrived before the activation was complete.
 - Observed [O]: with DF0: reporting "no disk" (the emulator's write-protect switch toggled at run time made
   trackdisk report no disk), `CreateDir("df0:wpdir2")` with `pr_WindowPtr = 0` showed a "System Request"
   window "No disk present / in unit  0" (Retry/Cancel) on the Workbench screen; Cancel → D0 = 0, Result2 = 226.
@@ -486,3 +559,7 @@ Review of 2026-11-04; the two validator bullets of §1.4 updated 2026-11-05 (tex
   screenshots, test disks made with xdftool plus a root-block flag patch; no debugger, no disassembly.
 - [x] No code was written: the probes were debugger register/memory manipulations of the running Workbench
   process; the further probes of §4 are described only.
+- [x] 2026-11-10 additions (§1.1a registers of the core LVOs, §1.4 keyboard answers to the requester): black box.
+  Breakpoints were set only on the library's jump-table entries (in RAM) and on the callers' return addresses;
+  only register values on return are reported (no addresses). The requester tests were commands typed in a CLI
+  and keys sent by the emulator, every state looked at on a screenshot. No disassembly, no code written.

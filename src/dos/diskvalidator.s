@@ -448,7 +448,7 @@ dv_dec:
 dv_key:         dc.b    "Key ",0
 dv_range:       dc.b    " out of range",0
 dv_cks:         dc.b    " checksum error",0
-dv_twice:       dc.b    " already used",0
+dv_twice:       dc.b    " already set",0
 dv_err1:        dc.b    "Error validating disk",0
 dv_corrupt:     dc.b    "Disk structure corrupt",0
 dv_doctor:      dc.b    "Use DISKDOCTOR to correct it",0

@@ -72,7 +72,10 @@
     even when 1.3's own Format made it. [O] §8.6
 15. Validation failures (mount): "Error validating disk" / volume / "Key n …" then "Disk structure corrupt" /
     "Use DISKDOCTOR to correct it"; a bad bitmap checksum on a disk flagged valid ends the same way (no rebuild,
-    no read-only fallback). Texts, Retry/Cancel and who prints what: §2.5. [O]
+    no read-only fallback). Texts, Retry/Cancel and who prints what: §2.5. Any block met a second time during
+    the scan (a header reached through two slots or a looping hash chain, a data pointer to the root, a directory
+    linked twice) gives **"Key n already set"**, n = that block (§2.5.1). At boot the requester is opened all the
+    same, but it can sit hidden behind the Initial CLI window (§2.5.2). [O]
 16. **Only 512-byte blocks work.** Every transfer is 512 bytes at offset key × 512 whatever `de_SizeBlock` and
     `de_SectorPerBlock` say. On a 1024- or 2048-byte-sector partition the first read is refused by the device:
     Info "Unreadable Disk", any access "Not a DOS disk / in unit  0"; with 512-byte sectors and SizeBlock ≠ 128
@@ -275,7 +278,9 @@ system to get the volume node, then showed the requester "Volume / WProt / is wr
 for Open (FINDOUTPUT), DeleteFile, CreateDir, Rename and Relabel; Cancel returned the failure to the command
 ("Can't open df3:x", "Not Deleted - disk write-protected", "Can't create directory", "Can't rename …",
 "Attempt to rename disk failed"). C:Protect and C:SetDate failed without a requester ("Protect failed",
-"SetDate failed"). This is dos's error requester (`bcpl-runtime-v34.md`, global 114); the file system itself
+"SetDate failed"). **SET_COMMENT** likewise (2026-11-10, read-only image in DF1:, Info "Read Only"):
+`FileNote df1:a "hello"` printed "Note failed" with no requester, and `Why` gave "Last command failed because
+disk write-protected" (214) [O]. This is dos's error requester (`bcpl-runtime-v34.md`, global 114); the file system itself
 never opens a requester for 214.
 
 Observed 213 [O] (details and command outputs in `dos-lvo-partial-v34.md` §1.4): a volume whose root bitmap
@@ -346,12 +351,58 @@ Cancel).
 - **Bad bitmap on a disk flagged valid (Q5)**: no rebuild, no fallback to `L:Disk-Validator`, no read-only
   mount — the volume ends "not validated" exactly as above after the two Cancels; the flag and the bitmap stay as
   they were on the disk.
-- **During the boot** the requesters were not seen: the same "no validator" disk present in DF1: at power-on, or
-  a 64 MiB partition failing its bitmap load at boot (§8.6), ended silently in the "Validating" state, while the
-  same failure after boot (insertion, `DiskChange`) showed its requester. Whether a requester is pending
-  invisibly or skipped is not established [?].
+- **During the boot** the requesters were not seen at first: the same "no validator" disk present in DF1: at
+  power-on, or a 64 MiB partition failing its bitmap load at boot (§8.6), looked silent. Settled on 2026-11-10:
+  the requester **is opened and pending, behind the initial CLI window** (§2.5.2).
 - A disk that validates successfully on a writable drive gets its rebuilt bitmap and the flag −1 written back
   (`dos-lvo-partial-v34.md` §1.4).
+
+#### 2.5.1 A block met twice: "Key n already set" [O, 2026-11-10]
+
+Same method (Workbench 1.3.3 copy in DF0:, Initial CLI; test disks inserted into DF1: after boot; each test disk
+with its own volume name so that requesters cannot be confused). Base disk: xdftool OFS disk with files `a`
+(header 866, data 867–871), `b` (header 872), directory `d` (header 882, holding a file) and file `f` (header 886);
+root hash-chain long cleared, bitmap flag 0, then one patch per disk with checksums recomputed.
+
+| Corruption | First requester, third line |
+|---|---|
+| the root slot of `b` holds the header of `a` (two slots, one header; `b`'s own header orphaned) | **Key 866 already set** (866 = `a`'s header) |
+| the hash-chain long of `a`'s header points to itself | **Key 866 already set** |
+| the hash-chain long of `a`'s header points to `f`'s header, which the root also holds in its own slot | **Key 886 already set** (886 = `f`'s header) |
+| a data block pointer of `a` equal to the root block | **Key 880 already set** |
+| the root slot of `f` holds the header of directory `d` (a directory linked twice) | **Key 882 already set** (882 = the directory) |
+| (re-check of the Q5 case) bitmap flag −1, bitmap block checksum wrong | **Key 881 checksum error** |
+
+Rule [O for the cases above, D for the generalisation]: the scan marks every block it accounts for (root,
+headers, extension blocks, directory blocks, the data blocks listed in headers); meeting an already marked block
+stops the validation with "Key <that block> already set". The number is the block met the **second** time, so it
+is always the shared block, whichever of its two references is walked first. A hash chain that loops is caught
+the same way (no endless walk). The rest of the requester sequence is unchanged: Cancel gives "Disk structure
+corrupt" / "Use DISKDOCTOR to correct it"; **Retry on that second requester restarts the validation from the
+beginning** (the first requester came back unchanged, checked again on the "already set" and on the bitmap
+cases); a second Cancel leaves the volume "Validating" (Info), as in the table above.
+
+Timing [O, emulator]: after an insertion the first requester appeared without any command typed, but late:
+about 15–30 s after the insertion on the cycle-exact A500 (the validator file is loaded from DF0: first). A
+screenshot taken 12–20 s after the insertion showed nothing yet in two cases.
+
+#### 2.5.2 Validation requesters during the boot [O, 2026-11-10]
+
+- Boot disk = Workbench 1.3.3 copy **without** `L:Disk-Validator`, DF1: = OFS disk with bitmap flag 0, present
+  at power-on. After the startup-sequence had run, the screen showed only the Initial CLI window, but the exec
+  task list held a **Validator** process waiting (signal bit 31 only, the same wait as a Validator whose
+  requester is on screen after an insertion). Clicking the CLI window's back gadget uncovered the requester
+  **"Error validating disk" / "NoVal" / "Unable to load disk validator"** (Retry / Cancel), at the top left of
+  the Workbench screen. The requester had been opened during the boot, **before the Initial CLI window**, which
+  then opened on top of it. The third line is wider than the requester: it was cut at the window's inner edge
+  ("Unable to load disk validato").
+- Boot disk **with** `L:Disk-Validator`, DF1: = the "two slots, one header" disk present at power-on: the
+  requester "Error validating disk" / "Hdr2" / "Key 866 already set" was visible in front of the CLI window at
+  the first screenshot after the startup-sequence ran (presumably because the full scan with the validator file
+  ends after the CLI window opened [D]).
+- So nothing is skipped at boot: the validation stops on its requester as after an insertion; whether it can be
+  seen depends only on the window order. An implementation that opens the boot CLI window lazily reproduces this
+  naturally; one that wants the requester visible must bring it to front (not 1.3 behaviour).
 
 ---
 
@@ -515,6 +566,18 @@ FINDOUTPUT (MODE_NEWFILE):
   early test) [?].
 - Errors: −1 / 218 for a file on an absent volume. A data block whose header back-pointer or sequence number does
   not match gives an error [D, code not established].
+- Broken data chains [O, 2026-11-10] (valid disk, flag −1, files copied with `Copy df1:x ram:x`; each data block
+  patched with its checksum recomputed unless stated):
+  - a **data block checksum** wrong (first data block of a 2000-byte file): dos's requester **"Volume" /
+    `<name>` / "has a read/write error"** (Retry / Cancel); after Cancel `Copy` printed "Error while Reading" and
+    removed its destination. The file system therefore checks the data block checksum on every READ and fails
+    the request (Res2 not captured; the requester shows it is the "read/write error" family, not 218/226) [O/?].
+  - a data block whose **type long** is 99 instead of 8 (checksum valid): **not detected**, the whole file was
+    copied (2000 bytes).
+  - the **next-data pointer** of the 2nd of 7 data blocks set to 0 (header size 3000): the copy ended silently
+    after **976 bytes** (2 × 488) with no error and no requester: READ follows the chain, and a chain that ends
+    early is a normal end of file even though the header's size is larger.
+  Not tried: a wrong header back-pointer or sequence number with a valid checksum [?].
 
 ### 5.3 WRITE [O / D]
 
@@ -944,6 +1007,12 @@ Run on our ROM with the same commands; "Why" = output of C:Why after the command
 | V33 | all-zero image in DF1:, `MakeDir df1:x`, `Type df1:x`, `Dir df1:`, `Protect df1:a r`, `Info df1:` | each → 225 with the requester "Not a DOS disk / in unit  1" (Protect too); Info: "Not a DOS disk", no requester |
 | V34 | OFS disk in DF1: with root bitmap flag 0, boot disk without `L:Disk-Validator`; `MakeDir df1:x`, `Delete df1:f`, `Protect df1:f r`, `Type df1:f` | MakeDir/Delete → 213 with "Volume / <name> / is not validated"; Protect → 213, no requester; Type works; Info status "Validating" |
 | V35 | same disk, validator present | validated at mount (flag −1 on the disk), MakeDir works; read-only image: Info "Read Only", MakeDir → 214 |
+| V36 | flag-0 disk whose root slot for `b` holds `a`'s header (866), inserted in DF1: | "Error validating disk" / name / "Key 866 already set"; Cancel → "Disk structure corrupt"; Retry there → first requester again |
+| V37 | same with a self-looping hash chain / a data pointer to the root / a directory in two slots | "Key 866 already set" / "Key 880 already set" / "Key 882 already set" |
+| V38 | boot disk without `L:Disk-Validator`, flag-0 disk in DF1: at power-on | no requester visible after boot; Validator waiting; CLI window to back → "Unable to load disk validator" requester behind it |
+| V39 | read-only disk, `FileNote df1:a "x"` | "Note failed", no requester; Why: disk write-protected (214) |
+| V40 | file whose first data block has a bad checksum, `Copy df1:a ram:a` | requester "Volume / <name> / has a read/write error"; Cancel → "Error while Reading" |
+| V41 | file of 3000 bytes whose 2nd data block has next-data 0 | `Copy` succeeds with 976 bytes, no error |
 
 ### 10.1 In-flight rewriting results [O-inj]
 
@@ -995,12 +1064,18 @@ Each line: the command typed, the packet that was rewritten, and the reply.
 
 - END for a file of an absent volume: Res1 0 (static reading) vs −1 (`disk-change-v34.md` §2.4) [?] (P3).
 - Exact start sector of the data search for the first file on a fresh disk (§8.1, w1) [?].
-- READ/SEEK error code for a broken data chain (219 for SEEK; READ not established) [?].
-- SET_COMMENT on a write-protected disk not run (214 expected, same path as SET_PROTECT).
+- READ/SEEK error code for a broken data chain (219 for SEEK; READ not established) [?]. Behaviour now
+  observed (§5.2, 2026-11-10): bad data checksum → "has a read/write error" requester; bad type ignored; early
+  end of chain = silent short read. The Res2 values themselves still need a packet trace.
+- ~~SET_COMMENT on a write-protected disk~~: 214, no requester (§2.3, 2026-11-10).
 - How the bitmap loader consumes table entries 26 and up on a volume larger than 25 bitmap blocks, and whether
   it overruns memory (§8.6) [?].
-- Validator requesters during the boot: pending invisibly or skipped (§2.5) [?].
+- ~~Validator requesters during the boot~~: pending, hidden behind the Initial CLI window (§2.5.2, 2026-11-10).
 - Rejected CMD_UPDATE / TD_MOTOR on a hard-disk driver (§1.4) [?].
+- A device that **really** rejects TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM (rather than a reply rewritten
+  in flight, §1.4): not testable here, the emulated block devices available (trackdisk, Amiberry `uaehf.device`)
+  accept all of them [U]. The [O-inj] results of §1.4 stand: only `io_Actual` is read; TD_CHANGENUM is never
+  sent, so its rejection cannot matter.
 - Boot-time start of hard-disk file systems (§1.4): settled for one `eb_MountList` partition (started by the
   initial CLI's set-up, before the startup-sequence). Not tried: several partitions, a partition with its
   own file system segment, a node added by `AddDosNode` after dos init.
@@ -1032,6 +1107,10 @@ Review of 2026-11-04; §0.1 items 11 and 13–15, §1.4, §2.5, §8.3 (last para
   BeginIO and on exec ReplyMsg; their addresses are not given). Validator texts are quoted as seen on screen;
   the ones not seen are texts of the Workbench `L:Disk-Validator` file, not of the ROM. Timings are frame
   counts of the emulator, block numbers are those of the test images.
+- [x] 2026-11-10b (§0.1 item 15, §2.3, §2.5.1, §2.5.2, §5.2, §10 V36–V41, §12): test disks made with xdftool and
+  patched by a throwaway script in the agent's scratch area (block pointers, hash chains, checksums), described
+  here by their structure only; requester texts as seen on screen; the Validator state read with the
+  emulator's exec task list (no ROM address).
 - [x] 2026-11-10 (§0.1 item 16, §8.7): device requests seen with a breakpoint on the emulator device's BeginIO,
   DosEnvec fields read and patched in RAM with the debugger (no ROM address, no buffer address given); texts as
   seen on screen and in the serial log; test images made with xdftool. The emulator's alignment rule is cited

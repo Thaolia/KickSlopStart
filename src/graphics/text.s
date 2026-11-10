@@ -291,16 +291,18 @@ gfx_SetSoftStyle:
         move.l  (sp)+,d2
         rts
 
-; AllocRaster(width d0, height d1) -> d0 = plane in chip memory (width rounded to a word), 0 if exhausted.
+; AllocRaster(width d0, height d1) -> d0 = plane in chip memory (width rounded to a word, MEMF_CHIP|MEMF_PUBLIC, not
+; cleared), 0 if exhausted (graphics-raster §10.2).
 gfx_AllocRaster:
         bsr.s   tx_rassize
-        move.l  #MEMF_CHIP,d1
+        moveq   #MEMF_CHIP|MEMF_PUBLIC,d1
         move.l  a6,-(sp)
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
         move.l  (sp)+,a6
         rts
-; FreeRaster(plane a0, width d0, height d1): returns a plane from AllocRaster.
+; FreeRaster(plane a0, width d0, height d1): returns a plane from AllocRaster. A NULL plane is ignored, where 1.3
+; ends in exec's dead-end alert $81000005 (graphics-raster §10.3): no working program does it.
 gfx_FreeRaster:
         move.l  a0,a1
         cmpa.w  #0,a1

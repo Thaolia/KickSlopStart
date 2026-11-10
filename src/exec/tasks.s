@@ -68,6 +68,9 @@ exec_AddTask:
         clr.l   TC_SIGWAIT(a1)
         clr.l   TC_SIGRECVD(a1)
         clr.l   TC_SIGEXCEPT(a1)
+        move.l  EB_TASKSIGALLOC(a6),TC_SIGALLOC(a1)   ; preset values are overwritten (exec-partial-lvos §4.1)
+        move.w  EB_TASKTRAPALLOC(a6),TC_TRAPALLOC(a1)
+        clr.w   TC_TRAPABLE(a1)
         tst.l   TC_TRAPCODE(a1)
         bne.s   .at_trap
         move.l  EB_TASKTRAPCODE(a6),TC_TRAPCODE(a1)
@@ -196,7 +199,8 @@ task_alloc:
         movem.l (sp)+,a2-a3
         rts
 
-; FindTask(name a1) -> d0 = task | 0; a1 == NULL -> current task
+; FindTask(name a1) -> d0 = task | 0; a1 == NULL -> current task. Under Disable: TaskReady, then TaskWait (through
+; the FindName vector), then the running task's own name (exec-partial-lvos §3).
 exec_FindTask:
         move.l  a1,d0
         bne.s   .ft_named
@@ -205,6 +209,7 @@ exec_FindTask:
 .ft_named:
         move.l  a2,-(sp)
         move.l  a1,a2                ; keep the name (FindName clobbers a1)
+        jsr     LVO_DISABLE(a6)
         lea     EB_TASKREADY(a6),a0
         move.l  a2,a1
         jsr     LVO_FINDNAME(a6)
@@ -213,26 +218,36 @@ exec_FindTask:
         lea     EB_TASKWAIT(a6),a0
         move.l  a2,a1
         jsr     LVO_FINDNAME(a6)
+        tst.l   d0
+        bne.s   .ft_done
+        move.l  EB_THISTASK(a6),a0
+        move.l  LN_NAME(a0),a0
+        move.l  a2,a1
+.ft_cmp:
+        cmpm.b  (a0)+,(a1)+
+        bne.s   .ft_done
+        tst.b   -1(a0)
+        bne.s   .ft_cmp
+        move.l  EB_THISTASK(a6),d0
 .ft_done:
+        jsr     LVO_ENABLE(a6)
         move.l  (sp)+,a2
         rts
 
-; AllocSignal(signum d0.l) -> d0 = allocated bit number | -1
-; signum == -1: allocates the lowest free bit; otherwise allocates that precise bit.
-; The allocated bit is cleared in SIGWAIT/SIGRECVD/SIGEXCEPT (clean start).
+; AllocSignal(signum d0.l) -> d0 = allocated bit number | -1 (exec-partial-lvos §4.2): a low byte of $FF asks
+; for any bit, searched from 31 down; otherwise bit d0 mod 32, and d0 comes back unchanged. The allocated bit is
+; cleared in SIGWAIT/SIGRECVD/SIGEXCEPT (clean start).
 exec_AllocSignal:
         move.l  d2,-(sp)
         move.l  EB_THISTASK(a6),a0
         move.l  TC_SIGALLOC(a0),d1   ; mask of the allocated bits
-        tst.l   d0
-        bpl.s   .as_spec             ; precise bit requested
-        moveq   #0,d0                ; search for the lowest free bit
+        cmp.b   #-1,d0
+        bne.s   .as_spec             ; precise bit requested
+        moveq   #31,d0               ; search for the highest free bit
 .as_scan:
         btst    d0,d1
         beq.s   .as_got
-        addq.l  #1,d0
-        cmp.l   #32,d0
-        bne.s   .as_scan
+        dbra    d0,.as_scan
         moveq   #-1,d0               ; none free
         move.l  (sp)+,d2
         rts

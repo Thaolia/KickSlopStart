@@ -688,15 +688,132 @@ the call. Dumps: one line per row, planes as hex, plus the guard check.
 
 Run it on the real ROM through an analysis agent (`GT_ANALYSIS=1`-style switch) and on ours; compare the logs.
 
+## 13. CLI probe G9-G11 and VSprites on a real display (2026-11-10)
+
+Runs of the real ROM (Amiberry A500 preset, cycle-exact, 512 KB chip + 512 KB slow). Two programs of the
+implementation track were run **unchanged** as black boxes: `tests/gels_probe.s` (through `tests/gels_probe.sh`
+with `GE_ANALYSIS=1`) and `tests/vsprite_test.s` (six 16 × 12 VSprites on a 320 × 200 × 2 custom screen, rows at
+Y 30 and Y 60, `SortGList`/`DrawGList`/`MrgCop`/`LoadView`/`WaitTOF` per frame for 120 frames). Copper lists were
+read from RAM with the debugger after the calls; screenshots were looked at. For the LACE case the screen's
+`NewScreen.ViewModes` word in the test program's data was set to LACE with the debugger before `OpenScreen`
+(no code change).
+
+### 13.1 Why the CLI probe stopped in G9b [O]
+
+The stop is a **defect of the probe**, not of the ROM: its CopList printer keeps the `CopIns` pointer in a register
+that its own decimal print of `Count` overwrites (the serial character routine uses that register), then walks the
+instructions from the last printed character code. With `Count` 20 the printed pointer is even and the dump shows
+low-memory garbage (`M4EF9,00FC` repeated, as in the G9a log); with `Count` 15 it is odd and the walk takes an
+address error, which ends the run. The lists themselves are correct when read with the debugger (below). The
+probe needs its pointer saved across the count print (implementation side); with the four G9 dumps skipped by the
+debugger, the run completes and prints G10, G11 and the G0 table up to "GEL fin".
+
+### 13.2 G9 results read with the debugger [O]
+
+Sprites 0-1 reserved (`sprRsrvd` $FC unless stated), View DyOffset 44, DxOffset 129, image at a chip address
+ending in `…490`. `W(v,h)` = WAIT, `M(dest,data)` = MOVE as stored in the CopList (destination word as stored).
+
+| Case | SprIns | ClrIns | nextLine | Flags |
+|---|---|---|---|---|
+| G9a (seven VSprites a–g, §12 item 10) | `W(-1,0) M(F128) M(F12A) M(F150,3659) M(F152,3B01)`, `W(-1,0)` + sprite 4 `POS 3672`, `W(-1,0)` + sprite 6 `POS 368B`, `W(17,0)` + sprite 2 `POS 3E5E CTL 4101`: 20 instructions | `W(9,0)` + COLOR21-23, `W(9,0)` + COLOR25-27, `W(9,0)` + COLOR29-31, `W(17,0)` + COLOR21-23: 16 | −1 −1 23 −1 17 −1 17 −1 | a b c f `$0001`, d e g `$0801` |
+| G9b (`sprRsrvd` $0C; Y 10 H 5, then Y 17/18/19 H 2) | sprite 2 `POS 3659 CTL 3B01`; sprite 3 (`M(F12C) M(F12E) M(F158,3D68) M(F15A,3F01)`); `W(17,0)` + sprite 2 `POS 3E77 CTL 4001`: 15 | none (Count 0) | −1 −1 22 21 −1 −1 −1 −1 | a b c `$0001`, d `$0801` |
+| **G9c** HIRES ViewPort, X 101, Y −2, H 6 | `W(-1,0) M(F128) M(F12A, image+8) M(F150,2C59) M(F152,3001)`: 5 | Count 0 | −1 −1 **6** −1 … | `$0001` |
+| **G9d** LACE ViewPort, `vp.DyOffset` 20, X 50, Y 10, H 5 | `W(-1,0) M(F128) M(F12A) M(F150,3659) M(F152,3B01)`: 5, **identical to G9a's first VSprite** | Count 0 | −1 −1 17 −1 … | `$0001` |
+
+- G9c confirms §5.8: the two rows above the BitMap are clipped (pointer + 8 bytes = 2 rows × 2 words), VSTART =
+  0 + View DyOffset = $2C, VSTOP = $30 (4 visible rows), HSTART = 101 / 2 + 129 = 179 (`POS` low byte $59, CTL bit 0
+  = 1). `nextLine` = clipped top 0 + clipped height 4 + 2 = 6.
+- G9d confirms that neither `vp.DyOffset` nor LACE changes what DrawGList writes: same POS/CTL, same WAIT −1, same
+  `nextLine` 17 as the non-LACE ViewPort at DyOffset 0.
+- G10 and G11 printed by the CLI probe agree with §11.7 and §11.8 (all collision cases, the three defect sweeps,
+  Animate 1-4, GetGBuffers 1, FreeGBuffers returning 144 chip + 48 other bytes). The G0 table printed by the probe
+  lists fewer changed registers for AddAnimOb, Animate, GetGBuffers, InitGMasks and FreeGBuffers than §1; the probe
+  calls them with its minimal G0 objects, so §1 (measured with complete objects) is kept.
+
+### 13.3 MrgCop merge of the VSprite lists, non-LACE ViewPort at DyOffset 0 [O]
+
+`tests/vsprite_test.s` after its 120 frames (screen ViewPort DyOffset 0, View DyOffset 44): the six VSprites are
+shown at Y 30 and Y 60 with **their own colours** (red/green/blue frames on the first row, yellow/cyan/magenta on
+the second), exactly as intended. The merged LOF list (no SHF list, View not LACE) contains, in order:
+
+1. `WAIT(43,0)` — the SprIns WAIT −1 merged as View.DyOffset + vp.DyOffset + (−1) = 43 — then the first-row
+   sprite MOVEs: SPR2PTH/L, `SPR2POS $4A86`, `SPR2CTL $5601`, the same for sprites 4 and 6;
+2. the ViewPort's own display instructions (colours, DIWSTRT … BPLxPT), `WAIT(44,0)` + BPLCON0;
+3. `WAIT(73,0)` + COLOR21-23/25-27/29-31 of the first row (ClrIns WAIT 29 + 44);
+4. `WAIT(88,0)` + the second-row sprite MOVEs (`SPRnPOS $68..`, `CTL $7401`) (SprIns WAIT = previous `nextLine` 44,
+   + 44);
+5. `WAIT(103,0)` + the second-row colours (ClrIns WAIT 59 + 44); then the end-of-screen BPLCON0 and the end WAIT.
+
+Rules shown by this list:
+
+- The `$F000`-style destination words are emitted as the plain register (destination & `$1FE`): `$F128` → SPR2PTH,
+  `$F1AA` → COLOR21. They are emitted in the LOF list of a non-LACE View even though their high bits are set; the
+  `$8000`/`$4000` field rule of `graphics-display-v34.md` §5.2 does not drop them [O].
+- SprIns/ClrIns WAITs are ViewPort-relative: line = View.DyOffset + vp.DyOffset + VWaitPos, merged in line order
+  with the ViewPort's own list (graphics-display §5.2) [O].
+- SPRxPOS/CTL are **absolute** (VSTART = Y + View.DyOffset only, §5.8), so the picture is right only while
+  vp.DyOffset is 0 [O, next section].
+
+### 13.4 ViewPort DyOffset ≠ 0 on screen [O]
+
+Same program, then the custom screen dragged down by its title bar (screen ViewPort DyOffset 0 → 25); intuition
+remakes the display with the VSprite lists left by the last DrawGList.
+
+- Merged list: the first-row sprite MOVEs now follow `WAIT(68,0)` (43 + 25) and still hold `SPR2POS $4A86` (VSTART
+  74); the first-row colours wait for line 98; the second-row sprite MOVEs wait for line 113 and still hold VSTART
+  $68 (104).
+- Screen: the **first-row VSprites stay at the same absolute height** (View lines 74-86) while the screen has
+  moved down by 25 lines, so they now sit over the screen's title bar; they are drawn in the **default sprite
+  colours** (greys) because their colour MOVEs come at line 98, after them. The **second-row VSprites are not
+  shown at all**: their pointer/POS/CTL are loaded at line 113, after their VSTART line 104 has passed.
+- So the [S] of open point 3 is confirmed: on 1.3 a ViewPort with DyOffset ≠ 0 shows VSprites at the wrong height,
+  with wrong colours, and sprites reused lower down may vanish.
+
+### 13.5 LACE ViewPort on screen [O]
+
+Same program with the screen opened LACE (320 × 200, so the View becomes LACE and has LOF and SHF lists):
+
+- The SprIns/ClrIns WAIT lines are **halved** like the ViewPort's other WAITs (graphics-display §5.2, vp LACE):
+  first-row sprites at line 43 (−1 stays −1, + 44), first-row colours at 58 (29 / 2 + 44), second-row sprites at 66 (44 / 2 +
+  44), second-row colours at 73 (59 / 2 + 44). The POS/CTL values are **not** halved: VSTART 74 and 104 as in the
+  non-LACE run.
+- Effect: the second-row sprite MOVEs (line 66) reload the same hardware sprites before the first row's VSTART (74)
+  is reached, so **the first-row VSprites never appear**; the second row appears at its non-LACE absolute height
+  (line 104), i.e. at about twice its intended distance from the top of the interlaced picture; in the screenshot
+  it is striped (every other line) and paler than the intended colours, which fits the damaged LOF list described
+  below.
+- The VSprite MOVEs (`$F1xx` destinations) are present in the **SHF** list too: neither high bit of the destination
+  word keeps them out of either field's list [O].
+- Side observation, list sizes [O][?]: the SHF list was a 47-entry block (`MaxCount` 47) while the instruction
+  stream written for the SHF field was 85 entries long; its last 38 entries lay in the first 38 entries of the
+  LOF list's block (`MaxCount` 101), which therefore started at the first-row colour WAIT (line 58) and no longer
+  contained the LOF field's sprite and display set-up (the rest of the LOF block still held the tail of its own
+  set-up). The SHF block seems to have kept the size computed by an earlier MrgCop (before
+  the VSprite lists existed) instead of growing. Whether this is a 1.3 defect of MrgCop's SHF reallocation or an
+  effect of the test calling MrgCop on intuition's View every frame was not settled. An implementation must size
+  both lists from the current instruction count.
+
+### 13.6 Rules for an implementation (VSprites, as 1.3 behaves) [O][D]
+
+1. DrawGList writes sprite POS/CTL from Y + View.DyOffset (and X, halved for HIRES, + View.DxOffset); it ignores
+   vp.DyOffset and LACE (G9c, G9d).
+2. The SprIns/ClrIns WAITs are ViewPort lines: MrgCop adds View.DyOffset + vp.DyOffset and halves VWaitPos for a
+   LACE ViewPort, exactly as for the ViewPort's other lists.
+3. MrgCop emits the `$F000 | register` MOVEs as plain MOVEs to `register & $1FE`, in LOF and (for a LACE View) in
+   SHF.
+4. Consequences to reproduce, not to fix, if strict 1.3 behaviour is wanted: VSprites on a dragged-down screen keep
+   their absolute height and lose their colours/lower reuses; on a LACE screen the first VSprite row of a reused
+   sprite is lost.
+
 ## Open points
 
 1. **Beam synchronisation** (§5.9): QBSBlit vs QBlit chosen from `rp->Flags` DBUFFER is deduced; the effect on
    display timing was not observed.
 2. **SuperBitMap layers**: the SuperClipRect pass of §5.5 is deduced only.
-3. **VSprites on screen**: the copper instructions were read back from `SprIns`/`ClrIns`; how `MrgCop` merges them
-   (the $F000-style destination words, the WAIT lines in ViewPort coordinates, the missing ViewPort DyOffset in
-   VSTART) was not observed on a display. A ViewPort with DyOffset ≠ 0 probably shows VSprites at the wrong
-   height [S].
+3. **VSprites on screen**: answered 2026-11-10 (§13.3-§13.5): MrgCop emits the $F000-style MOVEs as plain register
+   MOVEs in LOF and SHF, adds View + ViewPort DyOffset (halved WAITs for LACE) to the WAITs only, so a ViewPort with
+   DyOffset ≠ 0 or LACE shows VSprites at the wrong height [O]. Still open: the SHF list size seen in the LACE run
+   (§13.5) [?].
 4. **`GfxBase->VBlank` := 1**: who reads and clears it (the vertical-blank server?) was not traced. Observed:
    1 right after the call under the debugger, 0 when the CLI probe printed it after the call (G9a, G9b).
 5. **Collision defect formula** (§7.4): the "one word to the left" description fits all sweeps but was derived
@@ -708,7 +825,9 @@ Run it on the real ROM through an analysis agent (`GT_ANALYSIS=1`-style switch) 
 9. The observations were made with debugger-injected calls in the boot picture's task. The CLI probe (§12) was
    run once on the real ROM (2026-11-04) for the double-buffer question: its G8 rows are in §11.6 and agree with
    §5.6/§5.7; the run stopped printing in G9b (during the `SprIns` dump) and never reached "GEL fin" within
-   300 s, so G10/G11 were not obtained from it (cause not investigated).
+   300 s, so G10/G11 were not obtained from it. Resolved 2026-11-10 (§13.1-§13.2): a defect of the probe's CopList
+   printer (address error on an odd pointer); with those dumps skipped, G9a-G9d (read with the debugger), G10, G11
+   and G0 were obtained and agree with this page.
 
 ## Clean-room review
 
@@ -727,3 +846,7 @@ Review of 2026-11-04.
 - [x] No ROM data (images, tables) is reproduced; no blitter minterm constants are given, only the logical effect
   of each blit.
 - [x] No probe code was written by the analysis track; §12 describes one in words.
+- [x] Review of 2026-11-10 (§13): only outputs of the real ROM on our two test programs (copper instructions
+  built for our VSprites, merged lists read from RAM, screenshots); no ROM instruction or address. The two
+  programs were run unchanged; the LACE variant changed one data word of the test program's NewScreen through the
+  debugger. No code was written by the analysis track.

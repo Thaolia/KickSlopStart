@@ -32,6 +32,14 @@ with 8-pixel columns of pens, partly covered by a second window, is ClipBlitted 
 then the cover window closes and every pixel of the destination is read back (`graphics-blitter-v34.md` §5.3 step
 3). Prints `CB FILL` (the fill, 0 expected) and `CB BAD` (wrong pixels after the copy). Success: `CLIPBLIT OK`.
 
+## The last specified LVOs
+
+`tests/explvo_probe.sh <out_dir> [rom]` runs `tests/explvo_probe.s`: a fresh task made by AddTask (masks preset to
+garbage) plays the signal/trap vectors of `exec-partial-lvos-v34.md` §4.6, then GetCC, Insert after the tail
+sentinel, FindTask of the probe's own name, MakeLibrary with five vectors, the InitStruct vector of §6.1, InitBitMap
+on a `$AA`-filled BitMap, AllocRemember/FreeRemember(FALSE) and graphicsPrivate1. Every `EXP` line is compared with
+the spec's values. Success: `EXPLVO OK`.
+
 ## Large files, moved disks, clipped lines, WaitTOF
 
 - `tests/bigfile_probe.sh <out_dir> [rom]`: a 40 MiB hardfile (DH0:) holding `huge`, 33,600,000 bytes whose long at

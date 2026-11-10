@@ -35,6 +35,7 @@ IO_OFFSET      EQU 44               ; byte offset on the disk
 TD_LVO_BEGINIO EQU -30              ; standard device BeginIO vector
 BB_SIZE        EQU 1024             ; bootblock = 2 sectors of 512 bytes
 AN_BOOTERROR   EQU $30000001        ; the bootblock returned D0 != 0
+KSS_RESIDENT   EQU $4B53534B        ; our soft-kick disk's bootblock: the image already runs (src/softkick)
 BB_ENTRY       EQU 12               ; offset of the boot code in the bootblock (after magic/checksum/rootptr)
 IOREQ_SIZE     EQU 48               ; IOStdReq
 
@@ -127,6 +128,8 @@ strap_boot:
         moveq   #1,d0                ; booted -> the caller does NOT show the insert-disk
         bra.s   .ret
 .boot_failed:
+        cmp.l   #KSS_RESIDENT,d0     ; the soft-kick disk left in the drive after the reset: no Alert
+        beq.s   .reject
         bsr.s   .free
         move.l  #AN_BOOTERROR,d7     ; recoverable (uae-hd-boot-v34 §3 item 2); the insert-disk screen follows
         suba.l  a5,a5

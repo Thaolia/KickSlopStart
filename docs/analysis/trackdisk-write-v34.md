@@ -201,7 +201,7 @@ immediately. Bit 5 (WORDSYNC) is not handled in V34. `io_Actual` is not filled i
 | Seek before write | usual delays: 3 ms/step, **15 ms** of settle after the last step; no delay if the track is already the right one | [O] |
 | Side change only (same cylinder) | `/SIDE` changed, **no settle**; only the 1 ms delay of step 4 precedes the DMA | [O] |
 | Seek error (failed recalibration) | **ignored** by the flush and by `TD_FORMAT`: the write happens anyway (only `TD_RAWWRITE` returns it) | [O] |
-| Protection | read **live** on `/WPRO`, drive selected, just before arming; error 28 at the **flush**, never at the `CMD_WRITE` itself | [O] / [D] |
+| Protection | read **live** on `/WPRO`, drive selected, just before arming; error 28 at the **flush**, never at the `CMD_WRITE` itself | [O] (probe, Amiberry 2026-11-10, §10.1) |
 | Disk absent (unit flag set by the `/CHNG` monitoring) | `CMD_READ`/`CMD_WRITE` → immediate error 29, without motor; `CMD_UPDATE`, `TD_FORMAT` → motor + seek then 29 at step 7 | [O] |
 | Removal during the write | 29 at step 17; the buffer stays dirty | [O] |
 | Keyboard reset | trackdisk installs a keyboard reset handler: a reset announced **during** a write is deferred until it ends; a write requested **after** the announcement fails with 35 | [O] |
@@ -219,7 +219,7 @@ immediately. Bit 5 (WORDSYNC) is not handled in V34. `io_Actual` is not filled i
 | 2 / 3 | `CMD_READ` / `CMD_WRITE` | same engine (§5.2) |
 | 4 | `CMD_UPDATE` | flush of the buffer if it is dirty |
 | 5 | `CMD_CLEAR` | **invalidates the buffer and DISCARDS the dirty data** without writing |
-| 9 | `TD_MOTOR` | `io_Length` 0 = off, non-zero = on; `io_Actual` = previous state: **`$FF` (non-zero) if the motor was on**, 0 if it was off (*Corrected 2026-11-02 by ROM reading, previously "1 = on"; `io_Actual` is the long `$000000FF` or 0, `io_Error` 0. Not covered by trackdisk-raw-changeint-v34.md, which complements this page*) |
+| 9 | `TD_MOTOR` | `io_Length` 0 = off, non-zero = on; `io_Actual` = previous state: **`$FF` (non-zero) if the motor was on**, 0 if it was off (`io_Actual` is the long `$000000FF` or 0, `io_Error` 0). Confirmed by probe 2026-11-10, with the no-disk case and the absence of a motor-off timer: `trackdisk-raw-changeint-v34.md` §13 |
 | 10 | `TD_SEEK` | seek only |
 | 11 | `TD_FORMAT` | §5.4 |
 | 15 | `TD_PROTSTATUS` | §5.5 |
@@ -277,9 +277,10 @@ A disk change does **not** invalidate the buffer: only the head position is forg
 
 ### 5.5 `TD_PROTSTATUS`
 
-Disk absent → 29. Otherwise: **switches the motor on** (500 ms if off), reads `/WPRO`, returns `io_Actual` ≠ 0 if
-protected (`$FF`), 0 otherwise, then **switches the motor off in every case**. [O] (probe M then O: `TD_MOTOR` returns
-"was off")
+Disk absent → 29, `io_Actual` untouched, motor not touched. Otherwise: **switches the motor on** (500 ms if off), reads
+`/WPRO`, returns `io_Actual` ≠ 0 if protected (`$FF`), 0 otherwise, then **switches the motor off in every case**.
+[O] (probe M then O: `TD_MOTOR` returns "was off"; `$FF` seen on a protected disk and 29 without a disk on
+2026-11-10, §10.1)
 
 ### 5.6 Error codes met when writing
 
@@ -287,18 +288,19 @@ protected (`$FF`), 0 otherwise, then **switches the motor off in every case**. [
 |-----:|-----|---------|
 | −3 | `IOERR_NOCMD` | unhandled command |
 | −4 | `IOERR_BADLENGTH` | offset/length not aligned or beyond the disk |
-| 21 | `TDERR_NoSecHdr` | prior read: no mark found |
-| 22 | `TDERR_BadSecPreamble` | preamble or `$4489 $4489` missing at the expected place |
-| 23 | `TDERR_BadSecID` | `$FF`, track or consecutive number wrong |
-| 24 | `TDERR_BadHdrSum` | header checksum |
-| 25 | `TDERR_BadSecSum` | data checksum |
-| 26 | `TDERR_TooFewSecs` | no sector after the gap |
-| 27 | `TDERR_BadSecHdr` | first header found invalid |
+| 21 | `TDERR_NoSecHdr` | prior read: no `$4489 $4489` found in the raw track |
+| 22 | `TDERR_BadSecPreamble` | preamble or `$4489 $4489` missing at the expected place of a later sector |
+| 23 | `TDERR_BadSecID` | later sector: format byte, track or sector number wrong |
+| 24 | `TDERR_BadHdrSum` | later sector: header checksum |
+| 25 | `TDERR_BadSecSum` | data checksum of **any** sector of the track |
+| 26 | `TDERR_TooFewSecs` | fewer than 11 sectors found |
+| 27 | `TDERR_BadSecHdr` | the **first** header found is invalid (checksum or ID) |
 | 28 | `TDERR_WriteProt` | `/WPRO` at the time of the physical write |
 | 29 | `TDERR_DiskChanged` | disk absent, removed during the write, or `iotd_Count` exceeded |
 | 35 | `TDERR_PostReset` | write requested after the announcement of a keyboard reset |
 
-(The assignment of codes 21–27 to the exact decoding cases is [O]; their descriptions reuse the public names.)
+(Codes 21–27 come from the read that precedes a write; which track damage gives which code, and the order of the
+checks, were measured on 2026-11-10 with damaged raw tracks: §10.3.)
 
 ---
 
@@ -379,9 +381,8 @@ writes. [O] (probe)
 
 ## 9. Open points
 
-1. **Write protection not seen running**: the 28 codes (`CMD_UPDATE`, flush, `TD_FORMAT`) and the
-   `io_Actual` ≠ 0 of `TD_PROTSTATUS` rest on reading the ROM, since FS-UAE could not present a
-   protected disk (§6.6). To be confirmed on WinUAE or on the real A500.
+1. ~~Write protection not seen running~~: seen on 2026-11-10 under Amiberry with a read-only image (§10.1).
+   Still not seen on a real A500.
 2. **Exact moment of DSKBLK when writing** on real Paula (last word fetched by the DMA or last bit
    shifted out): the role of the 2 ms delay and of the trailing word is [D].
 3. **Real drive speed**: the +4.4 % / −8.3 % margins of §2.1 are computed for an exact 2 µs
@@ -396,6 +397,168 @@ writes. [O] (probe)
    detail; only the layout (gap at offset 4 of the buffer, read DMA at +1668 from the start of the buffer) is
    established.
 
+## 10. Black-box runs of 2026-11-10 (Amiberry, real ROM)
+
+Method common to this section: the author probe `tests/tdwrite.s` (unchanged; its steps A–O are listed in §8),
+run on the real ROM under Amiberry v8.4.2, cycle-exact A500 preset. Either the probe disk boots and runs it, or
+it is first copied to `RAM:` and started from there, so that a test floppy can be inserted afterwards with the
+emulator's floppy command and the DF0: file system is idle (no transfer for > 15 s) when the probe runs. Some
+requests were rewritten in flight with the debugger at the probe's **own** DoIO call site (command, length,
+`iotd_Count`, `iotd_SecLabel`); no breakpoint was put in the ROM. Raw-track test disks are Amiberry extended
+ADFs (`UAE-1ADF`) whose track 100 is a raw MFM track produced by a throwaway generator, every other track
+being a normal AmigaDOS track.
+
+### 10.1 Write protection [O]
+
+Protected disk = read-only image given to the emulator as `floppy0` (not `--adf`, whose copy is writable).
+Same probe, same order as §8:
+
+| Step | Protected disk | (writable disk, for comparison) |
+|---|---|---|
+| A `CMD_READ` 1100 | 0, 512 | 0, 512 |
+| B `CMD_WRITE` 1100 (into the track buffer) | **0, 512** | 0, 512 |
+| C `CMD_CLEAR`, D `CMD_READ` | 0; 0, 512, old data | same |
+| E `CMD_WRITE`, F **`CMD_UPDATE`** | 0, 512; **28**, `io_Actual` untouched | 0; 0 |
+| g `CMD_CLEAR`, G `CMD_READ` | 0; 0, 512, **old data** (nothing was written) | data of E |
+| H `CMD_WRITE` length 0, h `CMD_UPDATE` | 0, 512; **28** | 0; 0 |
+| J `CMD_WRITE` 220 (another track), j `CMD_UPDATE` | 0, 512; **28** | 0; 0 |
+| P `CMD_READ` 880 (another track) | **28, `io_Actual` 0**, nothing read | 0, 512 |
+| Q `CMD_WRITE` 880, R `CMD_UPDATE` | **28, 0**; 28 | 0; 0 |
+| T, U, V (track 81, same pattern) | 28 each (`io_Actual` 0 for T and U, untouched for V) | 0 each |
+| K `TD_FORMAT` length 512 | **28** (not −4) | −4 |
+| L `TD_FORMAT` track 158 | **28**, `io_Actual` untouched | 0 |
+| l `CMD_READ` track 158 | **0, 512**, old data (track not formatted) | 0, 512, format pattern |
+| M `TD_PROTSTATUS` | 0, **`$FF`** | 0, 0 |
+| N `CMD_WRITE` offset 100 | −4, 0 | −4, 0 |
+
+Rules [O]:
+- `CMD_WRITE` never checks the protection; it only fills the track buffer. The error **28** comes from the
+  physical write: `CMD_UPDATE`, and the implicit flush done before another track is loaded.
+- After a failed flush the buffer **stays dirty**, and every later request that needs another track tries the
+  flush again and fails with **28** before doing anything: `CMD_READ` of another track returns 28 with
+  `io_Actual` 0 and reads nothing, `CMD_WRITE` likewise. The unit is stuck until `CMD_CLEAR` (or a
+  `TD_FORMAT`, below) drops the dirty track.
+- `TD_FORMAT` flushes a dirty buffer **before** checking its arguments: with a dirty buffer on a protected
+  disk, a `TD_FORMAT` of a bad length returned 28, not −4. The dirty data is **lost** at that point (the buffer
+  is marked clean before the flush, §5.3): the next `TD_FORMAT` failed with 28 on its own write, and the next
+  read of another track succeeded without any flush.
+- `TD_PROTSTATUS` returns `$FF` in `io_Actual` on a protected disk, 0 on a writable one; without a disk 29 with
+  `io_Actual` untouched (probe of `trackdisk-raw-changeint-v34.md` §13).
+- File system and dos level on a protected floppy: `rom-filesystem-v34.md` §2.3 (214 for every modifying
+  packet, dos requester "Volume / <name> / is write protected" for some of them, none for SET_PROTECT /
+  SET_DATE / SET_COMMENT).
+- Emulator note [U]: Amiberry's `floppyNwp` option did not protect the disk; a read-only image file does.
+
+### 10.2 Sector labels (`ETD_READ` / `ETD_WRITE`, `iotd_SecLabel`) [O]
+
+Observed by dumping the unit's MFM track buffer (pointer at unit `+$52`, `trackdisk-raw-changeint-v34.md` §10)
+with the debugger after each request and decoding it with the public sector layout (§2.2).
+
+| Request | Label field of the sector in the track buffer afterwards | Caller's label buffer |
+|---|---|---|
+| `ETD_READ` (`$8002`), `iotd_SecLabel` → 16 bytes pre-filled with `$A5` | unchanged (as read from the disk: zeros, or `11223344 55667788 99AABBCC DDEEFF00` from a raw test track) | **not written** (still `$A5…`), both when the track came from the disk and when it was already cached |
+| `ETD_WRITE` (`$8003`), `iotd_SecLabel` → "trackdisk.device", or → `01234567 89ABCDEF FEDCBA98 76543210`, or → 16 zero bytes | **`AAAAAAAA AAAAAAAA AAAAAAAA AAAAAAAA`** in all three cases | — |
+| `ETD_WRITE`, `iotd_SecLabel` = 0 | unchanged (a label `11223344…` read from the disk stayed) | — |
+| `CMD_WRITE` (`3`) over a sector whose buffer label was `AAAAAAAA…` | unchanged | — |
+| `TD_FORMAT` | zeros (§5.4) [O from §5.4; not re-dumped] | — |
+
+- In the MFM image the written label is: odd-bit longs `$55555555` (all data bits 1), even-bit longs all data
+  bits 0, with normal clocks; the header checksum is recomputed over it and is valid (all 11 headers checked).
+  So V34 `ETD_WRITE` with a non-null label pointer writes a **constant** label whose value does not depend on
+  the caller's 16 bytes; with a null pointer it leaves the label that was there. [O for the three sources and
+  the null case; "constant" is the generalisation, D]
+- `ETD_READ` **never returns labels** in V34: with a non-NULL `iotd_SecLabel` the read succeeded and none of the
+  16 bytes was written, even for a sector whose label on the disk was `11223344…` (raw test track). `ETD_READ`
+  with a NULL pointer was not tried [?]; since the pointer is not used on reads, nothing different is expected [D].
+- `CMD_READ` ignores labels: a raw track whose 11 labels are non-zero (header checksums computed over them) reads
+  without error and gives the right data.
+- Labels survive on disk only as far as the medium keeps them: Amiberry writes a standard ADF track as sector
+  data only (labels lost), and an extended-ADF track whose labels are non-zero as a raw MFM track [U, Amiberry
+  `disk.cpp`].
+- An implementation that has no label storage (plain ADF) matches 1.3 for every reader: no 1.3 read path
+  returns a label. To match the written MFM exactly, `ETD_WRITE` with a non-null pointer puts the constant label
+  above in the sector, and `CMD_WRITE` / `ETD_WRITE` with NULL keep the existing one.
+
+### 10.3 Read decoding and error codes 21–27 [O]
+
+Track 100 of the test disk was a raw MFM track built to the layout of §2.2 (correct clocks, 11 sectors, gap of
+`$AAAA` words, 12,668 bytes in all), then damaged in one way per disk. The probe's first step (`CMD_READ` of block
+1100 = sector 0 of track 100) and its later steps on that track (B, D, E, G, H, I, each preceded by a fresh read)
+give 7 results per disk. Each result is the code of the **last** of the driver's 11 read attempts (§5.2 point 4),
+and the read starts at a random rotational position each time, so the "first sector found" varies from one
+result to the next.
+
+| Damage on track 100 (all other sectors intact) | Codes seen (7 results) |
+|---|---|
+| none (control); also with non-zero labels; also a gap of only 20 bytes | 0 |
+| no `$4489` at all | 21 ×7 |
+| every sector with a single `$4489` instead of two | 21 ×6, 27 ×1 |
+| sector 3: single `$4489` | 22 ×7 |
+| sector 3: first preamble word `$4489` / `$5555`, or second preamble word `$5555` | 22 ×7 (each) |
+| 2 extra bytes (`$AAAA`) inserted between sectors 3 and 4 | 22 ×2, 0 ×5 |
+| sector 0: header checksum wrong | 24 ×6, 27 ×1 |
+| sector 5: header checksum wrong | 24 ×7 |
+| every header checksum wrong | 27 ×7 |
+| sector 0: format byte `$FE` | 23 ×6, 27 ×1 |
+| sector 5: format byte `$FE` | 23 ×7 |
+| sector 0: track byte 99 | 27 ×2, 23 ×5 |
+| sector 5: track byte 99 | 23 ×7 |
+| every format byte `$FE`, or every track byte 99 | 27 ×7 |
+| sector 5 numbered 0 (two sectors 0, no sector 5) / numbered 11 | 23 ×7 |
+| sectors 4 and 5 swapped (both valid) | 23 ×7 |
+| sector 5 missing (10 sectors) | 26 ×4, 23 ×3 |
+| "sectors before the gap" byte wrong (sector 0 = 3; all = 5; sector 10 = 3; sector 10 = 0) | 0 |
+| sector 0: data checksum wrong | 25 ×7 |
+| sector 5: data checksum wrong (sector 0 read) | **25 ×7** |
+| every data checksum wrong | 25 ×7 |
+| two defects in different sectors: preamble of 3 + data sum of 0 | 22 ×2, 25 ×5 |
+| header sum of 5 + data sum of 0 | 24 ×3, 25 ×2, 27 ×2 |
+| preamble of 3 + header sum of 5 | 22 ×6, 24 ×1 |
+| format byte of 5 + header sum of 6 | 23 ×7 |
+| header sum of 5 + track byte of 7 | 24 ×4, 23 ×2, 27 ×1 |
+| two defects in the **same** sector 5: format byte + header sum | 24 ×7 |
+| header sum + data sum | 24 ×7 |
+| track byte + data sum | 23 ×7 |
+
+Decoder rules an implementation can follow (they reproduce every row above) [O for the outcomes; the rule is
+the simplest one consistent with them, D]:
+1. The raw track is searched in software for `$4489 $4489` (no hardware sync, `trackdisk-official-timing.md`
+   §3.1). None found → **21**.
+2. The first sector found is checked: header checksum, format byte `$FF`, track = the track read (and, by
+   extension, a sector number < 11 [D]). Any failure → **27** (never 23/24 for the first sector; the order of
+   these checks cannot be seen since they share the code). Its data checksum is checked like the others
+   (rule 3), a failure gives 25, not 27.
+3. The following sectors are taken at the fixed 1088-byte pitch, in rotation order, across the gap after the
+   last sector before it (a 2-byte shift between two sectors gives 22 when the read crosses it, a 20-byte gap
+   is fine). For each one, in this order: the two preamble words must be zero data bytes and be followed by
+   `$4489 $4489`, else **22**; header checksum, else **24**; format byte, track, and sector number = previous
+   sector's number + 1, else **23**; data checksum, else **25**.
+4. Every sector of the track is checked, not only the requested one: a bad data checksum in sector 5 fails a
+   read of sector 0 with 25. The first failure met in rotation order ends the attempt with its code.
+5. Fewer than 11 sectors → **26** (seen with one sector missing, for the rotations where the numbering check
+   did not fire first) [O for the outcome, ? for the exact boundary between 26 and 23].
+6. The "sectors before the gap" byte is not checked (0, 3 and 5 instead of the right value were accepted); the
+   labels are covered only by the header checksum.
+
+Exact rotation-dependent mixes (which code wins in a given attempt) cannot be reproduced on an emulator that
+serves the track from its start; what matters is the set of codes and the per-sector order of checks. The
+26-versus-23 rule for a missing sector and the handling of a damaged **first** preamble are not settled [?].
+
+### 10.4 Test vectors (2026-11-10)
+
+| Setup | Expected (real 1.3) |
+|---|---|
+| read-only image, `CMD_WRITE` then `CMD_UPDATE` | 0, then 28; `CMD_CLEAR` + `CMD_READ` → old data |
+| same, then `CMD_READ` of another track without `CMD_CLEAR` | 28, `io_Actual` 0 |
+| same, `TD_FORMAT` length 512 with a dirty buffer | 28 (−4 on a writable disk) |
+| read-only image, `TD_PROTSTATUS` | 0, `io_Actual` `$FF` |
+| `ETD_READ` with `iotd_SecLabel` → buffer | buffer untouched, data read |
+| `ETD_WRITE` with `iotd_SecLabel` → any 16 bytes, then dump the MFM sector | label longs `$AAAAAAAA` ×4, header checksum valid |
+| raw track: sector 5 data checksum wrong, `CMD_READ` of sector 0 | 25 |
+| raw track: sectors 4 and 5 swapped | 23 |
+| raw track: every header checksum wrong | 27 |
+| raw track: sector 3 preamble or sync damaged | 22 |
+
 ## Clean-room review
 
 Review of 2026-10-29.
@@ -409,3 +572,7 @@ Review of 2026-10-29.
   clocks) is the **public Amiga floppy format**, observable on any written disk; precompensation
   thresholds and drive identifiers are behavioural constants.
 - [x] The probe cited (`tests/tdwrite.s`) is author code.
+- [x] 2026-11-10 (§4, §5.1, §5.5, §5.6, §9, §10): black-box runs of the author probe on the real ROM, requests
+  rewritten in flight at the probe's own call site; MFM buffer contents decoded with the public format; damaged
+  test tracks built by a throwaway generator from the public format. Results are codes, `io_Actual` values and
+  label longs; no ROM address, no transcribed code. The decoder rules of §10.3 are inferred from outcomes only.

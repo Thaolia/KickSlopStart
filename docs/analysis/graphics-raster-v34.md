@@ -552,6 +552,72 @@ non-zero guard offsets where stated. Always WaitBlit before reading.
     DamageList.
 12. **R11 sizes**: §6 rows (1280 × 2 and 16 × 1100 BitMaps), printing the pixel counts.
 
+## 10. InitBitMap, AllocRaster, FreeRaster and the small leftovers
+
+Added 2026-11-10 (REMAINING-WORK D7). **Different provenance from the rest of this page**: the ROM code of these
+vectors was read (radare2, static), and InitBitMap/AllocRaster/FreeRaster were also called on the real ROM from the
+debugger in a task context (same method as the header, values below marked [O]). **[R]** = read in the ROM code.
+
+### 10.1 InitBitMap (−390) — `InitBitMap(bm A0, depth D0, width D1, height D2)`
+
+- Writes exactly three fields, nothing else: **`BytesPerRow` (+0, word) = ((width + 15) >> 4) × 2**, computed in
+  16-bit signed arithmetic on the low word of D1; **`Rows` (+2, word) = low word of D2**; **`Depth` (+5, byte) = low
+  byte of D0**. [R][O]
+- **`Flags` (+4), `pad` (+6) and `Planes[0..7]` (+8..+$27) are not touched**: a BitMap on the stack or in
+  uncleared memory keeps garbage there (observed: a buffer filled with `$AA` keeps `$AA` in Flags, pad and every
+  plane pointer). The caller must fill `Planes`. [O]
+- Registers: **D1 = the BytesPerRow value** on return; D0, D2, A0 and everything else preserved. No result. Does
+  not use A6. [R][O]
+- Edge cases [R]: width 0 → BytesPerRow 0; widths 1–16 → 2; the computation overflows for widths ≥ 32753
+  (`width + 15` passes `$7FFF`, the arithmetic shift makes the result negative, e.g. BytesPerRow `$F000`).
+  No validation of depth (any byte, > 8 included) or height.
+- Test vectors: (depth 3, width 100, height `$55550032`) → BytesPerRow 14, Rows 50 (only the low word of D2), D1
+  = 14 [O], Depth 3 [R]; (1, 321, 7) → BytesPerRow 42, Rows 7, D1 = 42 [O]; (2, 64, 16) → 8, 16, 2 [R].
+
+### 10.2 AllocRaster (−492) — `planePtr = AllocRaster(width D0, height D1)`
+
+- Size = **(((width + 15) >> 3) & $FFFE) × height**: the row size is the same as InitBitMap's BytesPerRow
+  (word-rounded), computed on the low word of D0 with a signed shift, multiplied **unsigned 16 × 16** by the low
+  word of D1 (no overflow beyond `$FFFE × $FFFF`). [R]
+- `AllocMem(size, MEMF_CHIP|MEMF_PUBLIC)` (`$3`), **not cleared**; exec rounds the size up to 8
+  (`exec-memory-semaphores-v34.md` §2.4). Failure ⇒ D0 = 0, no alert. Size 0 (width 0 or height 0) ⇒ 0. [R]
+- Uses location 4 for ExecBase, not GfxBase: A6 is saved and restored. [R]
+- Registers [O]: D0 = block or 0; **D1 = 3** (AllocMem preserves D1, which held the requirements); A0 = the
+  MemHeader used; A1 = the block; A6 and D2–D7/A2–A5 preserved.
+- Test vectors: (320, 200), (1, 1) and (17, 3) each returned a chip RAM block [O]; the sizes asked are 8000, 2 and
+  12 bytes (8000, 8 and 16 taken after exec's rounding) [R/D].
+
+### 10.3 FreeRaster (−498) — `FreeRaster(planePtr A0, width D0, height D1)`
+
+- Recomputes the same size and calls `FreeMem(planePtr, size)` (pointer moved to A1). [R]
+- **No NULL test**: `FreeRaster(NULL, w, h)` with a non-zero size is exec's dead-end alert `$81000005` (FreeMem of
+  an address outside every MemHeader, `exec-memory-semaphores-v34.md` §2.5); with width or height 0 nothing
+  happens. A width/height different from the allocation frees a different size (exec rules apply). [R/D]
+- Registers: D0, D1, A0, A1 scratch (FreeMem's leftovers); A6 and D2–D7/A2–A5 preserved. [O]
+
+### 10.4 AttemptLockLayerRom (−654) — `success = AttemptLockLayerRom(layer A5)` [R]
+
+- The layer is in **A5** (as LockLayerRom/UnlockLayerRom, `.fd`), not A0/A1.
+- `AttemptSemaphore(&layer->Lock)` (the SignalSemaphore at layer +$48): **D0 = 1** if obtained (free or already
+  owned by this task, nesting count +1), **0** if another task owns it (nothing changed)
+  (`exec-memory-semaphores-v34.md` §4.3; observed `$00000001` in `layers-v34.md` §1.1).
+- Registers: D0 = result; A1 = ThisTask (from AttemptSemaphore); A0, A6, D1 and the rest preserved.
+- Success must be balanced by UnlockLayerRom(A5).
+
+### 10.5 graphicsPrivate1 (−642) / graphicsPrivate2 (−648) [R]
+
+- Both vectors lead to the same two-instruction body: **D0 = A6** (the base the caller passed, GfxBase in a normal
+  call), nothing else changed, no side effect.
+- An implementation can give both vectors that body instead of a null vector; no 1.3 caller is known.
+
+### 10.6 Notes for a clone
+
+- InitBitMap must **not** clear `Planes`/`Flags` (a clone that clears them is compatible with correct programs, but
+  differs from 1.3 for programs that set Planes before InitBitMap, which then keep their pointers on 1.3).
+- AllocRaster memory is **not cleared** and is CHIP|PUBLIC; programs that need zeroed planes clear them
+  (BltClear/SetRast).
+- Keep D1 = BytesPerRow after InitBitMap if cheap; no program relying on it is known.
+
 ## Open points
 
 1. **SuperBitMap layers and Scroll_X/Scroll_Y ≠ 0**: not observed for any of the three functions (in particular
@@ -581,3 +647,6 @@ Review of 2026-11-04.
   A/B/C reading is our interpretation of the published blitter minterm convention.
 - [x] The diagrams and tables are **outputs** of the real ROM on test inputs (test vectors), not ROM data.
 - [x] No probe code was written by the analysis track; §9 describes one in words.
+- [x] Addendum 2026-11-10 (§10): for these vectors the ROM code **was** read (static, radare2) in addition to
+  black-box calls; §10 still gives only registers, fields, sizes, memory flags and alert numbers, with no
+  instruction sequence, no transcription and no ROM address.

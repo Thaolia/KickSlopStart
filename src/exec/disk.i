@@ -73,10 +73,12 @@ IO_OFFSET     EQU 44           ; byte offset on the disk (logical sector * 512)
 TDERR_NotSpec EQU 20           ; generic trackdisk error (trackdisk.i: TDERR_NotSpecified)
 TDERR_WriteProt EQU 28         ; write-protected floppy
 TDERR_NoSecHdr EQU 21          ; read codes (trackdisk-write-v34 §5.6): no sector mark on the track
+TDERR_BadSecPreamble EQU 22    ; preamble or syncs missing where the next sector should start
 TDERR_BadSecID EQU 23          ; format byte, sector number or track of a sector wrong
 TDERR_BadHdrSum EQU 24         ; header checksum
 TDERR_BadSecSum EQU 25         ; data checksum
 TDERR_TooFewSecs EQU 26        ; good sectors only, but not all of them
+TDERR_BadSecHdr EQU 27         ; the first sector found has a bad header
 TDERR_NoMem   EQU 31
 TDF_EXTCOM    EQU $8000        ; io_Command bit 15: ETD variant (iotd_Count checked against the change counter)
 IOTD_COUNT    EQU 48           ; struct IOExtTD: change count the request is valid for

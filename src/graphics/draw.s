@@ -2039,16 +2039,15 @@ gfx_InitRastPort:
         lea     topaz8_font,a0
         bra.s   gfx_SetFont
 
-; InitBitMap(bm a0, depth d0, width d1, height d2): BytesPerRow = width rounded to a word; planes not touched.
+; InitBitMap(bm a0, depth d0, width d1, height d2): BytesPerRow = width rounded to a word, Rows, Depth; Flags, pad
+; and Planes are not touched, d1 = BytesPerRow on return (graphics-raster §10.1).
 gfx_InitBitMap:
         add.w   #15,d1
-        lsr.w   #4,d1
+        asr.w   #4,d1
         add.w   d1,d1
         move.w  d1,bm_BytesPerRow(a0)
         move.w  d2,bm_Rows(a0)
-        clr.b   4(a0)                ; bm_Flags
         move.b  d0,bm_Depth(a0)
-        clr.w   6(a0)                ; bm_Pad
         rts
 
 ; WritePixel(rp a1, x d0, y d1) -> 0: one pixel in pen A.

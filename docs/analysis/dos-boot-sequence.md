@@ -79,8 +79,39 @@ Observed on the real Kickstart 1.3 under Amiberry (512 KB chip + 512 KB slow, 68
   lookup. A system that omits the assign when the directory is missing turns `C:` into an unknown
   volume name and raises *"Please insert volume C in any drive"*; the real 1.3 never does on these
   disks.
-- Not checked: whether `S` and `SYS` also get lock 0 when missing (`S` existed on both disks), and
-  whether the lock-0 node follows a disk change (it names the handler, not a volume).
+- Not checked: whether the lock-0 node follows a disk change (it names the handler, not a volume).
+  `S` and `SYS`: see the next subsection.
+
+### `S` and `SYS` when the boot disk lacks `s` (2026-11-10) [O, real KS 1.3]
+
+Setup: a boot floppy made with xdftool (OFS, the standard 1.3 boot block written by `boot install`),
+holding **only a `c` directory** with eleven Workbench 1.3.3 commands (Assign, CD, Dir, Echo, EndCLI,
+Info, List, NewCLI, Run, Wait, Why): no `s`, `l`, `devs`, `libs` or `fonts` directory, hence no
+startup-sequence. Real ROM under Amiberry (A500, 512 KB chip + 512 KB slow, cycle-exact), black box:
+commands typed in the boot CLI, screenshots, `di_DevInfo` walked with the debugger.
+
+- [O] Boot without `s/startup-sequence`: **no message at all**. The Initial CLI window shows the
+  usual banner (copyright lines and "Release 1.3") and the `1>` prompt; nothing says the script is
+  missing.
+- [O] `C:Assign` printed: under "Volumes:" the boot volume "[Mounted]"; under "Directories:" `S`,
+  `L` (no target), `C` → `<volume>:c`, `FONTS`, `DEVS`, `LIBS` (no target), `SYS` → `<volume>:`;
+  under "Devices:" `DF1 PRT PAR SER RAW CON RAM DF0`. An assign with lock 0 is listed with an empty
+  target column.
+- [O] DevInfo walk: the same **seven `DLT_DIRECTORY` nodes in the same order** as in the previous
+  subsection (`S`, `L`, `C`, `FONTS`, `DEVS`, `LIBS`, `SYS`), each with `dl_Task` = the DF0: handler
+  port. **`S` has `dl_Lock` = 0** like `L`, `FONTS`, `DEVS`, `LIBS`. `C` holds a shared lock on the
+  `c` directory; **`SYS` holds a shared lock (`fl_Access` = −2) on the root block** (key 880 on a
+  floppy).
+- [O] `dir s:` lists the **root of the boot volume** (it printed `c (dir)`): the lock-0 rule of the
+  previous subsection applies to `S` too.
+- [D] **Rule**: at boot, dos creates the seven assigns unconditionally; each of `S L C FONTS DEVS LIBS`
+  gets a lock on the directory of that name in the boot volume's root if `Lock()` succeeds, else
+  lock 0 (no requester, no message). `SYS` is a lock on the root itself, which always exists, so it
+  is never 0 on a floppy boot. No `SYS` with lock 0 was ever seen. [?] A boot from a device whose root
+  lock fails was not tried.
+- [O] Side observations from the same runs: the `DF1` device node already has a `dl_Task` (its
+  handler is running) while DF1: is empty and only `assign` had been typed; a typed `dir foo:` (unknown
+  name) raises "Please insert volume / foo / in any drive", see `dos-lvo-partial-v34.md` §1.4.
 
 ## Phase C — First process ("Initial CLI") and startup script ([ROM] + [inferred])
 
@@ -185,3 +216,6 @@ Review of 2026-10-29.
 - [x] Remaining ROM data (short, inventoried in `docs/audit/specs-review.md`): BSTR
   templates `DFX`/`File System`/`CON:0/0/640/200/AmigaDOS`, requester and CLI messages. The
   copyright text is not reproduced.
+- [x] 2026-11-10 addition (`S` and `SYS`): black-box only (commands typed in the boot CLI of the real
+  ROM, screenshots, a debugger walk of the public `DevInfo` structures). No ROM address, no code;
+  the only figures are public structure fields and the root block key of a floppy (880).

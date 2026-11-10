@@ -183,6 +183,10 @@ dos_sendpkt:
                 jsr     dos_pktretry         ; volume ejected: "Please replace volume", Retry -> resend
                 tst.l   d0
                 beq.s   .sp_done
+                cmp.l   #-1,d0
+                beq.s   .sp_same
+                move.l  d0,a3                ; the handler that has the volume now
+.sp_same:
                 clr.l   DP_RES1(a4)
                 clr.l   DP_RES2(a4)
                 move.l  a5,DP_PORT(a4)

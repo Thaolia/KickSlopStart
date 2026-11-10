@@ -97,67 +97,112 @@ dos_vectors:
         dc.l    dos_expunge              ; 3: LVO -18
         dc.l    dos_null                 ; 4: LVO -24 (reserved)
                 ifd     DOSTRACE
-        dc.l    dtr_open                 ; 5: LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
+        dc.l    rl_dtr_open                 ; 5: LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
                 else
-        dc.l    dos_fn_open              ; 5: LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
+        dc.l    rl_dos_fn_open              ; 5: LVO -30 Open(name d1, mode d2) -> BPTR FileHandle
                 endc
                 ifd     DOSTRACE
-        dc.l    dtr_close               ; 6: LVO -36 Close(fh d1)
+        dc.l    rl_dtr_close               ; 6: LVO -36 Close(fh d1)
                 else
-        dc.l    dos_fn_close             ; 6: LVO -36 Close(fh d1)
+        dc.l    rl_dos_fn_close             ; 6: LVO -36 Close(fh d1)
                 endc
                 ifd     DOSTRACE
-        dc.l    dtr_read                 ; 7: LVO -42 Read(fh d1, buf d2, len d3) -> bytes
+        dc.l    rl_dtr_read                 ; 7: LVO -42 Read(fh d1, buf d2, len d3) -> bytes
                 else
-        dc.l    dos_fn_read              ; 7: LVO -42 Read(fh d1, buf d2, len d3) -> bytes
+        dc.l    rl_dos_fn_read              ; 7: LVO -42 Read(fh d1, buf d2, len d3) -> bytes
                 endc
                 ifd     DOSTRACE
-        dc.l    dtr_write               ; 8 : LVO -48 Write(fh d1, buf d2, len d3) -> bytes written
+        dc.l    rl_dtr_write               ; 8 : LVO -48 Write(fh d1, buf d2, len d3) -> bytes written
                 else
-        dc.l    dos_fn_write             ; 8 : LVO -48 Write(fh d1, buf d2, len d3) -> bytes written
+        dc.l    rl_dos_fn_write             ; 8 : LVO -48 Write(fh d1, buf d2, len d3) -> bytes written
                 endc
-        dc.l    dos_fn_input             ; 9 : LVO -54 Input() -> BPTR pr_CIS
-        dc.l    dos_fn_output            ; 10: LVO -60 Output() -> BPTR pr_COS
+        dc.l    rl_dos_fn_input             ; 9 : LVO -54 Input() -> BPTR pr_CIS
+        dc.l    rl_dos_fn_output            ; 10: LVO -60 Output() -> BPTR pr_COS
                 ifd     DOSTRACE
-        dc.l    dtr_seek                 ; 11: LVO -66 Seek(fh d1, position d2, mode d3)
+        dc.l    rl_dtr_seek                 ; 11: LVO -66 Seek(fh d1, position d2, mode d3)
                 else
-        dc.l    dos_fn_seek              ; 11: LVO -66 Seek(fh d1, position d2, mode d3)
+        dc.l    rl_dos_fn_seek              ; 11: LVO -66 Seek(fh d1, position d2, mode d3)
                 endc
-        dc.l    dos_fn_deletefile        ; 12: LVO -72  DeleteFile(name d1)
-        dc.l    dos_fn_rename            ; 13: LVO -78  Rename(old d1, new d2)
+        dc.l    rl_dos_fn_deletefile        ; 12: LVO -72  DeleteFile(name d1)
+        dc.l    rl_dos_fn_rename            ; 13: LVO -78  Rename(old d1, new d2)
                 ifd     DOSTRACE
-        dc.l    dtr_lock                 ; 14: LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
+        dc.l    rl_dtr_lock                 ; 14: LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
                 else
-        dc.l    dos_fn_lock              ; 14: LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
+        dc.l    rl_dos_fn_lock              ; 14: LVO -84  Lock(name d1, mode d2) -> BPTR FileLock
                 endc
-        dc.l    dos_fn_unlock            ; 15: LVO -90  UnLock(lock d1)
-        dc.l    dos_fn_duplock           ; 16: LVO -96  DupLock(lock d1) -> new lock
-        dc.l    dos_fn_examine           ; 17: LVO -102 Examine(lock d1, fib d2)
-        dc.l    dos_fn_exnext            ; 18: LVO -108 ExNext(lock d1, fib d2)
-        dc.l    dos_fn_info              ; 19: LVO -114 Info(lock d1, infodata d2)
-        dc.l    dos_fn_createdir         ; 20: LVO -120 CreateDir(name d1) -> BPTR lock
-        dc.l    dos_fn_currentdir        ; 21: LVO -126 CurrentDir(lock d1) -> old lock
-        dc.l    dos_fn_ioerr             ; 22: LVO -132 IoErr() -> pr_Result2
-        dc.l    dos_fn_createproc        ; 23: LVO -138 CreateProc(name d1, pri d2, seglist d3, stack d4)
+        dc.l    rl_dos_fn_unlock            ; 15: LVO -90  UnLock(lock d1)
+        dc.l    rl_dos_fn_duplock           ; 16: LVO -96  DupLock(lock d1) -> new lock
+        dc.l    rl_dos_fn_examine           ; 17: LVO -102 Examine(lock d1, fib d2)
+        dc.l    rl_dos_fn_exnext            ; 18: LVO -108 ExNext(lock d1, fib d2)
+        dc.l    rl_dos_fn_info              ; 19: LVO -114 Info(lock d1, infodata d2)
+        dc.l    rl_dos_fn_createdir         ; 20: LVO -120 CreateDir(name d1) -> BPTR lock
+        dc.l    rl_dos_fn_currentdir        ; 21: LVO -126 CurrentDir(lock d1) -> old lock
+        dc.l    rl_dos_fn_ioerr             ; 22: LVO -132 IoErr() -> pr_Result2
+        dc.l    rl_dos_fn_createproc        ; 23: LVO -138 CreateProc(name d1, pri d2, seglist d3, stack d4)
         dc.l    dos_fn_exit              ; 24: LVO -144 Exit(code d1): back to pr_ReturnAddr-4, never returns
                 ifeq    LOADSEG_LVO_UNWIRED
-        dc.l    dos_fn_loadseg           ; 25: LVO -150 LoadSeg(name d1) -> BPTR seglist
+        dc.l    rl_dos_fn_loadseg           ; 25: LVO -150 LoadSeg(name d1) -> BPTR seglist
                 endc
                 ifne    LOADSEG_LVO_UNWIRED
         dc.l    dos_null                 ; RED LOADSEG_LVO_UNWIRED: LoadSeg not wired -> jsr -150 returns 0
                 endc
-        dc.l    dos_fn_unloadseg         ; 26: LVO -156 UnLoadSeg(seglist d1)
+        dc.l    rl_dos_fn_unloadseg         ; 26: LVO -156 UnLoadSeg(seglist d1)
         dcb.l   2,dos_null               ; 27..28: LVO -162/-168 GetPacket/QueuePacket: no V34 packet function, -> 0
-        dc.l    dos_fn_deviceproc        ; 29: LVO -174 DeviceProc(name d1) -> handler port
-        dc.l    dos_fn_setcomment        ; 30: LVO -180 SetComment(name d1, comment d2)
-        dc.l    dos_fn_setprotection     ; 31: LVO -186 SetProtection(name d1, mask d2)
+        dc.l    rl_dos_fn_deviceproc        ; 29: LVO -174 DeviceProc(name d1) -> handler port
+        dc.l    rl_dos_fn_setcomment        ; 30: LVO -180 SetComment(name d1, comment d2)
+        dc.l    rl_dos_fn_setprotection     ; 31: LVO -186 SetProtection(name d1, mask d2)
         dc.l    dos_DateStamp            ; 32: LVO -192
-        dc.l    dos_fn_delay             ; 33: LVO -198 Delay(ticks d1)
-        dc.l    dos_fn_waitforchar       ; 34: LVO -204 WaitForChar(fh d1, us d2)
-        dc.l    dos_fn_parentdir         ; 35: LVO -210 ParentDir(lock d1)
-        dc.l    dos_fn_isinteractive     ; 36: LVO -216 IsInteractive(fh d1)
+        dc.l    rl_dos_fn_delay             ; 33: LVO -198 Delay(ticks d1)
+        dc.l    rl_dos_fn_waitforchar       ; 34: LVO -204 WaitForChar(fh d1, us d2)
+        dc.l    rl_dos_fn_parentdir         ; 35: LVO -210 ParentDir(lock d1)
+        dc.l    rl_dos_fn_isinteractive     ; 36: LVO -216 IsInteractive(fh d1)
         dc.l    bcpl_execute             ; 37: LVO -222 Execute(cmd d1, in d2, out d3) - last V34 LVO (bcpl.s)
         dc.l    -1
+; LVO relays (dos-lvo-partial §1.1a): every dos LVO returns with D1 = D0 and A0 = 0. Not for Exit (never returns),
+; Execute (works on the caller's stack) and DateStamp (the table's canary vector).
+DOS_RL          macro
+rl_\1:
+        jsr     \1
+        move.l  d0,d1
+        sub.l   a0,a0
+        rts
+                endm
+        DOS_RL  dos_fn_open
+        DOS_RL  dos_fn_close
+        DOS_RL  dos_fn_read
+        DOS_RL  dos_fn_write
+        DOS_RL  dos_fn_input
+        DOS_RL  dos_fn_output
+        DOS_RL  dos_fn_seek
+        DOS_RL  dos_fn_deletefile
+        DOS_RL  dos_fn_rename
+        DOS_RL  dos_fn_lock
+        DOS_RL  dos_fn_unlock
+        DOS_RL  dos_fn_duplock
+        DOS_RL  dos_fn_examine
+        DOS_RL  dos_fn_exnext
+        DOS_RL  dos_fn_info
+        DOS_RL  dos_fn_createdir
+        DOS_RL  dos_fn_currentdir
+        DOS_RL  dos_fn_ioerr
+        DOS_RL  dos_fn_createproc
+        DOS_RL  dos_fn_loadseg
+        DOS_RL  dos_fn_unloadseg
+        DOS_RL  dos_fn_deviceproc
+        DOS_RL  dos_fn_setcomment
+        DOS_RL  dos_fn_setprotection
+        DOS_RL  dos_fn_delay
+        DOS_RL  dos_fn_waitforchar
+        DOS_RL  dos_fn_parentdir
+        DOS_RL  dos_fn_isinteractive
+                ifd     DOSTRACE
+        DOS_RL  dtr_open
+        DOS_RL  dtr_close
+        DOS_RL  dtr_read
+        DOS_RL  dtr_write
+        DOS_RL  dtr_seek
+        DOS_RL  dtr_lock
+                endc
 dos_datatab:
         dc.w    $E000,LN_TYPE,(NT_LIBRARY<<8)   ; INITBYTE(LN_TYPE, NT_LIBRARY)
         dc.w    $D000,LIB_VERSION,34            ; INITWORD(LIB_VERSION, 34)
@@ -1716,17 +1761,20 @@ dos_volreq:
         bsr     vr_req
         movem.l (sp)+,a0-a1
         rts
-; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket) -> d0 = true if it must be resent: 218 refusal
-; from a floppy handler for a lock or file of an ejected volume (HND_REFVOL) -> "Please replace volume / <name> /
-; ..." requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry.
-; A lock: third line "in any drive", no requester once the volume is mounted again. A FileHandle (READ, WRITE,
-; SEEK, END) stays bound to the handler that opened it (§2.4.1): third line "in unit  n" of that handler, and the
-; requester comes back until the volume is mounted in that drive, even while another drive holds it. One
-; requester per Cancel (§2.4.1 point 6); a cancelled END is resent with Arg2 = -1 so that the handler frees the
-; handle with nothing written. Other failures go to dos_errreq. Preserves d1-d7/a0-a6.
+; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket) -> d0 = 0: done; -1: resend to the same handler;
+; otherwise the port of the handler to resend to. 218 refusal from a floppy handler for a lock or file of an ejected
+; volume (HND_REFVOL) -> "Please replace volume / <name> / ..." requester (spec disk-change-v34 §2.4); Retry or the
+; insertion of a disk (DISKINSERTED) retry.
+; A lock: third line "in any drive"; once the volume is mounted again, in any drive, the packet goes to the handler
+; that has it now (its locks were handed over to it), without a requester if that happened meanwhile: 1.3 restarts
+; the whole call on Retry (dos-lvo-partial §1.4). A FileHandle (READ, WRITE, SEEK, END) stays bound to the handler
+; that opened it (§2.4.1): third line "in unit  n" of that handler, and the requester comes back until the volume is
+; mounted in that drive, even while another drive holds it. One requester per Cancel (§2.4.1 point 6); a cancelled
+; END is resent with Arg2 = -1 so that the handler frees the handle with nothing written. Other failures go to
+; dos_errreq (Retry: -1). Preserves d1-d7/a0-a6.
 dos_pktretry:
         cmp.l   #ERROR_DEVICE_NOT_MOUNTED,d1
-        bne     dos_errreq
+        bne     .pr_eq
         movem.l d1-d3/a0-a2/a4,-(sp)
         move.l  DP_TYPE(a4),d2       ; d2 = file action (its refusal has Res1 = -1, 0 would read as EOF) | 0
         cmp.l   #ACTION_READ,d2
@@ -1740,7 +1788,7 @@ dos_pktretry:
         moveq   #0,d2
 .pr_end:
         tst.l   d0
-        bne.s   .pr_err
+        bne     .pr_err
         bra.s   .pr_vol
 .pr_res:
         addq.l  #1,d0
@@ -1753,11 +1801,15 @@ dos_pktretry:
         move.l  d0,a2                ; a2 = volume node
         tst.l   d2
         bne.s   .pr_fh
-        moveq   #0,d0
-        tst.l   DN_TASK(a2)          ; volume mounted again in the meantime: no requester
+        move.l  DN_TASK(a2),d0       ; mounted again in the meantime: to its handler, no requester
         bne.s   .pr_pop
         lea     vr_l3(pc),a1
         bsr.s   .pr_ask
+        tst.l   d0
+        beq.s   .pr_pop
+        move.l  DN_TASK(a2),d0       ; Retry: the handler that has the volume now, else the same one
+        bne.s   .pr_pop
+        moveq   #-1,d0
         bra.s   .pr_pop
 .pr_fh:
         moveq   #-1,d0
@@ -1779,6 +1831,9 @@ dos_pktretry:
         move.l  (sp)+,a4
         lea     12(sp),sp
         tst.l   d0
+        sne     d0
+        ext.w   d0
+        ext.l   d0
         bne.s   .pr_pop
         cmp.l   #ACTION_END,DP_TYPE(a4)
         bne.s   .pr_pop
@@ -1790,7 +1845,13 @@ dos_pktretry:
 .pr_err:
         movem.l (sp)+,d1-d3/a0-a2/a4
         move.l  DP_RES1(a4),d0
-        bra     dos_errreq
+.pr_eq:
+        bsr     dos_errreq
+        tst.l   d0
+        sne     d0
+        ext.w   d0
+        ext.l   d0
+        rts
 ; .pr_ask(a2 = volume node, a1 = third line) -> d0 = vr_req answer
 .pr_ask:
         move.l  DN_NAME(a2),d0
@@ -1827,7 +1888,13 @@ dos_errreq:
         lea     vr_wprot(pc),a2         ; a2 = the line of the error, d5 = IDCMP classes counting as Retry
         moveq   #0,d5
         cmp.l   #ERROR_DISK_WRITE_PROTECTED,d1
-        beq.s   .er_wp
+        beq     .er_wp
+        lea     vr_rwerr(pc),a2
+        cmp.l   #DOS_ERR_RW,d1
+        bne.s   .er_nrw
+        lea     er_rwtab(pc),a0         ; READ / WRITE: "Volume / <name> / has a read/write error"
+        bra     .er_wl
+.er_nrw:
         lea     vr_notval(pc),a2
         move.l  #VR_DISKINSERTED,d5     ; an inserted disk closes the next three (dos-lvo-partial §1.4)
         cmp.l   #ERROR_DISK_NOT_VALIDATED,d1
@@ -1931,6 +1998,8 @@ er_curvol:
         rts
 er_wptab:
         dc.w    ACTION_FINDOUTPUT,ACTION_DELETE_OBJECT,ACTION_CREATE_DIR,ACTION_RENAME_OBJECT,ACTION_RENAME_DISK,0
+er_rwtab:
+        dc.w    ACTION_READ,ACTION_WRITE,0
 er_nodtab:
         dc.w    ACTION_COPY_DIR,ACTION_FREE_LOCK,ACTION_END,ACTION_CURRENT_VOLUME,0
 ; vr_req(a4 = name, d3 = its length, a0 = 1st line, a1 = 3rd line, d0 = IDCMP classes counting as Retry) -> d0 = true if
@@ -2030,6 +2099,7 @@ vr_v1:          dc.b    "Volume",0
 vr_v3:          dc.b    "is full",0
 vr_wprot:       dc.b    "is write protected",0
 vr_notval:      dc.b    "is not validated",0
+vr_rwerr:       dc.b    "has a read/write error",0
 vr_notdos:      dc.b    "Not a DOS disk",0
 vr_nodisk:      dc.b    "No disk present",0
 vr_unit:        dc.b    "in unit  0",0

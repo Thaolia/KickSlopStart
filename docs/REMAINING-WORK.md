@@ -76,26 +76,35 @@ held" qualifier bits of mouse events are not set yet.
 - **Idle desktop:** 1,024 bytes more than before (the RAM handler's stack): about 13,384 above 1.3 (860,992).
 - **Reduction candidates:** listed in `docs/MEMORY-USAGE.md`.
 
-### A7. Workbench 1.2 Lines and Clock — [doc], S–M
+### A7. Workbench 1.2 Lines and Clock — [src], S–M (specified 2026-11-10)
 
-- After a shrink, Clock can leave a sliver drawn at its old size.
-- Lines draws slowly into its 1008 × 512 SuperBitMap.
-- The frame of a non-GZZ SUPER_BITMAP window is not copied into the SuperBitMap.
-- Source: ARCHITECTURE (7h).
+`docs/analysis/wb12-demos-v34.md`, probed on the real 1.3:
+- Clock (SIMPLE_REFRESH) leaves nothing at its old size: about 40 ms after the size gadget is released the whole new
+  window is blank and fully damaged, then Clock redraws everything inside BeginRefresh/EndRefresh (twice after each
+  SizeWindow). Ours can leave a sliver: the resized SIMPLE layer must be cleared and wholly damaged before Clock's
+  refresh.
+- Lines draws 431 lines per second on 1.3 (Draw calls counted over 995 frames); ours about 37, 11 times slower.
+  Measure by Draw count, not by watching the 78 × 30 window.
+- Lines is GIMMEZEROZERO | SUPER_BITMAP, so it cannot show the frame-copy case: only programs with non-GZZ
+  SUPER_BITMAP windows meet our missing frame copy (intuition-gzz §2.5).
 
 ### A8. Real A500 with Workbench 1.2: right button flicker and frozen pointer — [doc], unknown size
 
 A badly seated mouse is suspected. Retest first; if it persists, try the same mouse on the real 1.3. Source: PLAN
 "First run on real hardware".
 
-### A9. Bubble Bobble: two allocations missing — [doc], unknown size
+### A9. Bubble Bobble: not a gap (2026-11-10)
 
-1.3 makes two allocations (9,876 and 177,152 bytes) that our ROM does not; the cause is unknown. The game runs.
+memory-budget §9: the 177,152-byte block is the game's own MEMF_CHIP allocation and is made on our ROM too (the old
+measurement lost it); the 9,876 bytes are 1.3 LoadSeg's short-lived getvec buffer for a 2,467-offset RELOC32 group,
+which our LoadSeg does not need (it relocates while reading).
 
-### A10. Cluedo — analysis probe needed
+### A10. Cluedo — done 2026-11-10
 
-Cluedo reaches player selection. Two points must be confirmed on 1.3: whether dos LVOs also return their result in
-D1, and how trackdisk recovers after a program moved the head.
+`docs/analysis/cluedo-v34.md`, dos-lvo-partial §1.1a: every dos LVO returns D1 = D0 and A0 = 0 (now applied to all of
+them through relays in the vector table, Exit, Execute and DateStamp excepted); after the game steps the head itself
+(35 outward pulses on DF0), 1.3's trackdisk seeks from the cylinder it remembers, reads the wrong track four times,
+then recalibrates and succeeds, silently. Ours recalibrates after the first wrong track (TDU_CYLOK), same outcome.
 
 ## B. Deliberate deviations
 
@@ -279,22 +288,33 @@ task exists; moving it into the initial task in user mode is larger than S.
 INTEN test at entry, 1.3 service order, 22-byte chain headers (custom-chips §3.3). We still serve every pending
 source of a level per entry where 1.3 serves one and is re-interrupted, and acknowledge VERTB before its chain.
 
-### C13. trackdisk — S
+### C13. trackdisk — done 2026-11-10 but one point
 
-TD_FORMAT without a floppy: done 2026-11-10 (29 before anything is cached). Left:
-- ETD sector labels.
-- Error codes 22/27.
-- No unit task for change polling (larger than S).
-- TD_MOTOR, whose spec is partial.
+TD_FORMAT without a floppy: 29 before anything is cached. Later the same day, from the analysis track's probes
+(trackdisk-write §10, raw-changeint §13):
+- TD_MOTOR: io_Length 0 off, any other value on at once; io_Actual = previous state $FF / 0; io_Error always 0.
+- Read codes: the first defect met in rotation order wins; 27 when the first sector found has a bad header, 22 when
+  the preamble or syncs are missing at the 1088-byte pitch after a good sector (`tests/td_decode_test.py`: two new
+  cases, 0 failures). Our decoder still keeps the good sectors across retries, where 1.3 fails the whole read.
+Kept deliberately:
+- Sector labels: none are stored; ETD_READ never fills iotd_SecLabel, as on 1.3, but ETD_WRITE writes zero labels where
+  1.3 writes the constant $AAAAAAAA ×4 (only a raw read of the track can see it).
+- Write protection is checked at CMD_WRITE (28 at once); 1.3 fills its single track buffer and fails at the flush,
+  then every other track fails with 28 until CMD_CLEAR. Our multi-track cache has no such stuck state.
+- The motor-off timer: 1.3's trackdisk has none, its file system sends TD_MOTOR 0; ours only does after a write-back.
+Left: no unit task for change polling (larger than S).
 
-### C14. dos — S
+### C14. dos — done 2026-11-10
 
-- Retry resends the packet; 1.3 restarts the whole call, name resolution included (dos-lvo-partial §1.4). It only
-  differs when the volume moved meanwhile; every name-based LVO would have to loop on its resolution.
-- On a CLI-only boot, the mouse does not move the pointer while a dos requester is up.
-- The GV of a makeglobvec handler is not freed: 1.3 frees pr_GlobVec when it differs from dl_GV, but our createproc
-  gives a child its creator's GV (Execute needs it), so that rule would free a parent's GV; ownership has to be
-  recorded first.
+- Retry after a 218 refusal of a lock: once the volume is mounted again, in any drive, the packet goes to the handler
+  that has it now (its locks were handed over), without a requester when that happened meanwhile; until then it went
+  back to the refusing handler, which refused again. 1.3 restarts the whole call (dos-lvo-partial §1.4); with a
+  lock argument that reaches the same handler. A FileHandle stays with its own handler (§2.4.1).
+- The mouse moves the pointer while a dos requester is up on a CLI-only boot (checked 2026-11-10 with Cancel clicks
+  on "Please replace volume" over the boot CLI).
+- The GV that bcpl_starthandler makes for a handler goes into the handler process's tc_MemEntry, so RemTask frees it
+  when the handler ends (1.3's endtask frees a pr_GlobVec other than dl_GV); a shared or inherited GV is never
+  freed. Eight `echo >newcon:…` opening and closing NEWCON windows: no loss (the previous ROM lost 186 bytes each).
 
 ### C15. CPU — M–L, optional
 
@@ -313,47 +333,61 @@ Neither is in workbench-task-v34:
 - extended selection (Shift-click);
 - the 1.3 rule for enabling or ghosting Workbench menu items when nothing is selected.
 
-### D2. VSprite allocation by band in DrawGList
+### D2. VSprite allocation by band in DrawGList — specified 2026-11-10
 
-graphics-gels open points 3 and 9; the CLI probe stopped at G9b.
+graphics-gels §13: the CLI probe stopped at G9b because of its own register clobber (fixed in `tests/gels_probe.s`);
+G9c/G9d on 1.3 match ours; MrgCop already emits the `$F000|reg` MOVEs as `reg & $1FE` and halves the VSprite WAITs of a
+LACE ViewPort. Left [?]: 1.3's SHF list seemed not to grow when the VSprite lists appeared (§13.5).
 
 ### D3. Empty Trash and Initialize
 
 How 1.3 runs them: what it deletes or launches, and which requesters it shows.
 
-### D4. File system
+### D4. File system — specified 2026-11-10
 
-- The validator's requester text for "key met twice", and Retry on "Disk structure corrupt".
-- 1.3's handling of a bad bitmap checksum under a valid flag.
-- TD_CHANGESTATE / PROTSTATUS / CHANGENUM on a device that rejects them.
-- rom-filesystem §12.
-- The text of the requester for an ejection with a write-back pending.
+rom-filesystem §2.5.1-§2.5.2, §5.2, §12. Applied: "Key n already set" for a block met twice (was "already used");
+Retry on "Disk structure corrupt" already restarted the validation; READ checks each data block's checksum and fails
+with Res2 296, which dos shows as "Volume / <name> / has a read/write error" (Copy then prints "Error while Reading"),
+and no longer stops at a block whose type is not DATA (1.3 ignores the type). Kept: a bad bitmap checksum under a
+valid flag is repaired here, where 1.3 stops with "Key n checksum error" and leaves the volume "Validating". Not
+testable: a device rejecting TD_CHANGESTATE/PROTSTATUS/CHANGENUM. An ejection with a write-back pending loses it
+silently on 1.3 (disk-change §2.2.1); ours asks "You MUST replace volume" instead (C1, maintainer decision).
 
-### D5. trackdisk
+### D5. trackdisk — specified 2026-11-10
 
-- Decoder cases for error codes 22/27.
-- trackdisk-write §9: write protection was never seen running.
+Decoder rules for codes 21-27 and write protection running: trackdisk-write §10 (see C13).
 
-### D6. Smaller questions
+### D6. Smaller questions — done 2026-11-10
 
-- The Cluedo items (A10).
-- Whether S: and SYS: get a lock-0 assign when missing.
-- Whether Left Amiga + B closes a dos requester on 1.3.
-- Whether every window of a screen gets MouseX/Y updates.
+- Cluedo: A10.
+- S:, L:, FONTS:, DEVS:, LIBS: get a lock-0 assign when the directory is missing, SYS: is always a root lock, in the
+  order S L C FONTS DEVS LIBS SYS (dos-boot-sequence.md): already so here.
+- Left Amiga + B = Cancel and Left Amiga + V = Retry on dos requesters, only while the requester window is active
+  (dos-lvo-partial §1.4): already so here (sysreq.s).
+- MouseX/MouseY of every window of the screen follow the pointer, and GZZMouseX/Y = MouseX/Y − BorderLeft/BorderTop
+  for every window, not only GIMMEZEROZERO ones (intuition-input-menus §1.4): the latter fixed here.
 
-### D7. 28 LVOs still only partly specified (all P3)
+### D7. The 28 partly specified LVOs — done 2026-11-10
 
-- exec: SetSR/SuperState/UserState/GetCC, AllocTrap/FreeTrap, AllocSignal/FreeSignal, SetFunction,
-  InitStruct/MakeLibrary details.
-- graphics: AllocRaster/FreeRaster, InitBitMap.
-- intuition: Begin/EndRefresh, Alloc/FreeRemember.
-- TD_MOTOR is partial too.
+All specified (exec-partial-lvos-v34.md, graphics-raster §10, intuition-misc §6b-6c; coverage-v34 390/390) and
+aligned here: AllocSignal(-1) from bit 31 down and a low byte of $FF meaning "any", AllocTrap's 32-bit register (14
+first, 16-31 testing the caller's d1), AddTask setting tc_SigAlloc/tc_TrapAlloc from ExecBase TaskSigAlloc
+($0000FFFF) / TaskTrapAlloc ($8000) and clearing tc_TrapAble, GetCC keeping d0's upper word, SetSR leaving the old SR
+in a0, Insert after a list's tail sentinel (it wrote to location 4 before), FindTask also matching the running task,
+MakeFunctions choosing its format from funcDispBase, InitStruct clearing (size & $FFFF) / 2 words and not realigning
+after a byte repeat (size code 11: alert $81000007), InitBitMap leaving Flags/pad/Planes, AllocRaster
+CHIP|PUBLIC, graphicsPrivate1/2 returning a6, BeginRefresh under LockLayerInfo with WINDOWREFRESH and the GZZ border
+layer locked, EndRefresh's word `complete` and LAYERREFRESH, AllocRemember nodes with requirements 0 and
+FreeRemember's word `reallyForget`. `tests/explvo_probe.sh`: EXPLVO OK (the previous ROM crashed in Insert).
+Kept: FreeRaster(NULL) is ignored (1.3: dead-end alert); SetFunction keeps its Forbid.
 
 ### D8. Probes described but never written
 
 - dos-lvo-partial §4. Item 4, overlay UnLoadSeg, is now useful to check PR #28.
 - dos-memory §8, P1–P6.
 - The exec-messages-io, exec-rawdofmt and mathffp probes were never run on the real ROM.
+- Done 2026-11-10: the exec-partial-lvos §8 probe, as `tests/explvo_probe.sh` (with the graphics §10 and intuition
+  §6c vectors).
 
 ### D9. Real-hardware points
 

@@ -3881,20 +3881,20 @@ selftest:
         jsr     LVO_FINDTASK(a6)
         cmp.l   EB_THISTASK(a6),d0
         bne.w   .bad
-        ; AllocSignal(-1) -> 16 (bits 0-15 pre-allocated via SYS_SIGALLOC)
+        ; AllocSignal(-1) -> 31, then 30: searched from the top (exec-partial-lvos §4.2)
         moveq   #-1,d0
         jsr     LVO_ALLOCSIGNAL(a6)
-        cmp.l   #16,d0
+        cmp.l   #31,d0
         bne.w   .bad
         moveq   #-1,d0
         jsr     LVO_ALLOCSIGNAL(a6)
-        cmp.l   #17,d0
+        cmp.l   #30,d0
         bne.w   .bad
-        moveq   #16,d0               ; free 16 -> becomes the lowest free one again
+        moveq   #31,d0               ; free 31 -> becomes the highest free one again
         jsr     LVO_FREESIGNAL(a6)
         moveq   #-1,d0
         jsr     LVO_ALLOCSIGNAL(a6)
-        cmp.l   #16,d0
+        cmp.l   #31,d0
         bne.w   .bad
         ; AllocSignal clears a leftover SIGRECVD on the allocated bit
         move.l  EB_THISTASK(a6),a2
@@ -3931,9 +3931,9 @@ selftest:
         move.l  a2,a1
         moveq   #0,d0
         jsr     LVO_SETTASKPRI(a6)
-        moveq   #16,d0               ; clean up the test signals (16,17,20)
+        moveq   #31,d0               ; clean up the test signals (31,30,20)
         jsr     LVO_FREESIGNAL(a6)
-        moveq   #17,d0
+        moveq   #30,d0
         jsr     LVO_FREESIGNAL(a6)
         moveq   #20,d0
         jsr     LVO_FREESIGNAL(a6)

@@ -819,6 +819,8 @@ TRAPVEC_T0      EQU 32               ; TRAP #0
 TRAPVEC_T15     EQU 47               ; TRAP #15
 init_traps:
         move.l  #exc_default,EB_TASKTRAPCODE(a6)
+        move.l  #SYS_SIGALLOC,EB_TASKSIGALLOC(a6)   ; AddTask's defaults (exec-partial-lvos §4.1)
+        move.w  #$8000,EB_TASKTRAPALLOC(a6)
         moveq   #TRAPVEC_FIRST,d0
 .it_cpu:
         bsr.s   .it_set

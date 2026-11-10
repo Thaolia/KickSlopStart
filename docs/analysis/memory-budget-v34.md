@@ -270,3 +270,48 @@ What the screen shows over time:
 
 Uncertain: wall-clock figures assume Amiberry runs at real-time speed (no warp); the host was otherwise idle of
 emulators but not of other processes.
+
+## 9. Bubble Bobble (Firebird release): the 9,876 and 177,152-byte allocations (2026-11-10)
+
+Question (REMAINING-WORK A9): 1.3 was reported to make two allocations, 9,876 and 177,152 bytes, that our ROM does
+not make. Method: the disk (a writable copy, titled "Bubble Bobble", Firebird 1989 release) booted on the real ROM
+and on our production ROM under Amiberry (A500, cycle-exact), 512 KB chip only and 512 KB chip + 512 KB slow; a
+debugger breakpoint on the routine the `AllocMem` vector leads to, stopping only for these sizes; at each stop the
+size, flags, current task, whether the return address is in ROM or RAM, then the returned address. The game's own
+code around its call was read (third-party program). No ROM code is described here.
+
+How the disk starts [O]: its startup-sequence runs a small program that `LoadSeg`s the main executable (one code
+hunk of 14,208 longs, followed by **one HUNK_RELOC32 group of 2,467 offsets**) and starts it with `CreateProc`
+(stack 2,000). The main program opens intuition.library, calls `CloseWorkBench()` in a loop until it returns TRUE,
+closes the library, saves the level 2 and 3 autovectors, then makes a fixed series of `MEMF_CHIP` allocations
+with no test in between: 177,152, 44,288, 41,600, 41,600, 21,000, 16,896, 14,080 bytes, …
+
+### 9.1 The 9,876 bytes: dos LoadSeg's relocation buffer [O]
+
+- Made by the **Initial CLI** process, return address in the ROM (dos), `MEMF_PUBLIC`, while the program loader is
+  loading the main executable.
+- 9,876 = (2,467 + 2) × 4: the **getvec(count)** temporary of a HUNK_RELOC32 group described in
+  `dos-memory-v34.md` §3.1 point 4, for the 2,467 offsets of the main executable. It is freed after the group is
+  applied (same section); on the chip-only machine it was placed in chip RAM (the only memory), at an address just
+  below where the game's 177,152-byte block then landed.
+- Our ROM's LoadSeg does not allocate a per-group buffer (it relocates while reading), so this allocation is
+  absent there. It is a transient peak of count × 4 + 8 bytes during LoadSeg, not a lasting difference. An
+  implementation that wants the same peak (e.g. for programs loaded when memory is almost full) allocates
+  getvec(count) per RELOC32 group; otherwise nothing depends on it [D].
+
+### 9.2 The 177,152 bytes: the game itself, on both ROMs [O]
+
+- Made by the game's process (task name "bubble"), return address in the game's code, `MEMF_CHIP`, as the first
+  of the fixed series above. 177,152 = 176,896 + 256, the size of the game's sprite file on the disk plus 256
+  bytes (the use is inferred from the size [D]).
+- **Our ROM makes it too**: the same breakpoint on our production ROM (chip-only and chip + slow) stops on
+  `AllocMem(177152, MEMF_CHIP)` from the "bubble" task, then on `AllocMem(44288, MEMF_CHIP)`, and both succeed
+  (chip addresses returned on both ROMs). The call is unconditional in the game, so no ROM difference can skip it.
+- So the earlier comparison that listed it as missing on our ROM must have lost that line on our side (spy no
+  longer installed, filtered or truncated output, or a different start path in that run) [?]; it is not a
+  behaviour difference.
+
+### 9.3 Rule for the implementation
+
+Nothing to add for 177,152. For 9,876 see §9.1 (optional getvec per RELOC32 group). With 512 KB chip only, both
+ROMs satisfied the game's first two chip allocations in this run.

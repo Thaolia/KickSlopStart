@@ -2266,6 +2266,34 @@ differs.
   the disk type is "BAD" ("Unreadable Disk" in Info, "Not a DOS disk / in unit  n" on access) as on 1.3, where the
   old refusal left the device closed and the partition looked empty ("No disk present"). de_SizeBlock ≠ 128 on a
   512-byte device sets the byte `HC_BADBS`, and `hnd_mount` then never accepts the root (type "NDOS").
+  **S-sized leftovers and the last specified LVOs (2026-11-10)**: REMAINING-WORK C13, C14, D4-D7, A10.
+  - exec (`tasks.s`, `execmisc.s`, `lists.s`, `libinit.s`, `interrupts.s`): ExecBase TaskSigAlloc ($0000FFFF) and
+    TaskTrapAlloc ($8000), set by `init_traps`, are copied by AddTask, which also clears tc_TrapAble; AllocSignal
+    takes a low byte of $FF as "any" and searches from bit 31 down; AllocTrap works in a 32-bit register whose upper
+    half is the caller's d1; GetCC keeps d0's upper word; SetSR leaves the old SR in a0; Insert after a pred whose
+    Succ is NULL inserts before it (the tail sentinel); FindTask, under Disable, ends with the running task's own
+    name; MakeFunctions takes word offsets when funcDispBase is non-zero, and MakeLibrary passes the array after the
+    -1 marker with the marker as base; InitStruct clears (size & $FFFF) / 2 words, does not realign after a byte
+    repeat, and raises $81000007 for size code 11. The coldstart self-test expects AllocSignal(-1) = 31, then 30.
+  - graphics: InitBitMap writes BytesPerRow, Rows and Depth only (d1 = BytesPerRow); AllocRaster is CHIP|PUBLIC;
+    graphicsPrivate1/2 (`graphics_private`) return a6.
+  - intuition (`screens.s`): BeginRefresh takes the screen's LockLayerInfo around BeginUpdate, sets WINDOWREFRESH
+    (now in `intuition.i`) and locks the border layer of a GZZ window; EndRefresh tests `complete` as a word, unlocks
+    the border layer, clears WINDOWREFRESH and, when complete, the window layer's LAYERREFRESH; AllocRemember's node
+    has requirements 0, FreeRemember tests `reallyForget` as a word; `it_setmouse` sets GZZMouseX/Y = MouseX/Y −
+    borders for every window.
+  - dos: `dos_pktretry` returns 0 / −1 / a port; after a lock's 218 the packet is resent to the handler that now
+    has the volume (`process.s`, `bcpl.s` resend to it). `bcpl_starthandler` puts a GV made by makeglobvec into the
+    handler process's tc_MemEntry (`.sh_gvown`), so RemTask frees it. Every dos LVO but Exit, Execute and DateStamp
+    goes through a relay `rl_<routine>` (macro `DOS_RL`, after `dos_vectors`) that returns D1 = D0 and A0 = 0.
+    `ofs_stream_read` checks each newly read data block's checksum and returns −1 on a bad one, which the handler
+    answers with Res2 `DOS_ERR_RW` (296); `dos_errreq` shows "Volume / <name> / has a read/write error" for 296
+    after READ/WRITE; the data block's type is no longer checked. The validator's "met twice" text is "already set".
+  - trackdisk: TD_MOTOR returns $FF / 0 and switches the motor on at once (td_getunit, td_motor_on); the decoder
+    keeps the first defect met, gives 27 when the first sector found has a bad header and 22 when a good sector is
+    not followed by a preamble and syncs at the 1088-byte pitch where no gap starts (codes in `disk.i`).
+  - strap / soft-kick: the soft-kick bootblock returns `KSS_RESIDENT` ("KSSK") when the image already runs, and the
+    strap treats that value as "not bootable" without the AN_BootError alert.
   **Last C7/C10 gaps (2026-11-10)**:
   - Writes through a FINDINPUT handle (`.write`, `src/dos/handler.s`): a read state (`SS_*`) gets a write state at
     its first WRITE (`ws_openold` on SS_HEADER, `ws_seek` to SS_POS, the shared lock and the volume kept), stored in

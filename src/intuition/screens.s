@@ -2778,20 +2778,59 @@ intuition_MoveWindow:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; BeginRefresh(window a0) / EndRefresh(window a0, complete d0): BeginUpdate / EndUpdate of its layer.
+; BeginRefresh(window a0) (intuition-misc §6b.2): under the screen's LockLayerInfo, WINDOWREFRESH set, the border
+; layer of a GZZ window locked, BeginUpdate of the window layer (its lock kept until EndRefresh; no refresh type or
+; nesting check). EndRefresh(window a0, complete d0, tested as a word, §6b.3): EndUpdate, border layer unlocked,
+; WINDOWREFRESH cleared, and LAYERREFRESH of the window layer cleared when complete.
+LY_LOCKLAYERINFO  EQU -120
+LY_UNLOCKLAYERINFO EQU -138
 intuition_BeginRefresh:
-        move.l  a6,-(sp)
-        move.l  WD_WLAYER(a0),a0
-        move.l  IB_LAYERSBASE(a6),a6
+        movem.l a2-a3/a5-a6,-(sp)
+        move.l  a0,a2
+        move.l  a6,a3                ; a3 = IntuitionBase
+        move.l  IB_LAYERSBASE(a3),a6
+        move.l  WD_WSCREEN(a2),a0
+        lea     SC_LAYERINFO(a0),a0
+        jsr     LY_LOCKLAYERINFO(a6)
+        or.l    #WINDOWREFRESH,WD_FLAGS(a2)
+        move.l  WD_BORDERRPORT(a2),d0
+        beq.s   .br_upd
+        move.l  d0,a0
+        move.l  rp_Layer(a0),a5
+        move.l  IB_GFXBASE(a3),a6
+        jsr     LVO_LOCKLAYERROM(a6)
+        move.l  IB_LAYERSBASE(a3),a6
+.br_upd:
+        move.l  WD_WLAYER(a2),a0
         jsr     LVO_BEGINUPDATE(a6)
-        move.l  (sp)+,a6
+        move.l  WD_WSCREEN(a2),a0
+        lea     SC_LAYERINFO(a0),a0
+        jsr     LY_UNLOCKLAYERINFO(a6)
+        movem.l (sp)+,a2-a3/a5-a6
         rts
 intuition_EndRefresh:
-        move.l  a6,-(sp)
-        move.l  WD_WLAYER(a0),a0
-        move.l  IB_LAYERSBASE(a6),a6
+        movem.l d2/a2-a3/a5-a6,-(sp)
+        move.l  a0,a2
+        move.l  a6,a3
+        move.w  d0,d2                ; complete: its low word only
+        ext.l   d0
+        move.l  WD_WLAYER(a2),a0
+        move.l  IB_LAYERSBASE(a3),a6
         jsr     LVO_ENDUPDATE(a6)
-        move.l  (sp)+,a6
+        move.l  WD_BORDERRPORT(a2),d0
+        beq.s   .er_flags
+        move.l  d0,a0
+        move.l  rp_Layer(a0),a5
+        move.l  IB_GFXBASE(a3),a6
+        jsr     LVO_UNLOCKLAYERROM(a6)
+.er_flags:
+        and.l   #~WINDOWREFRESH,WD_FLAGS(a2)
+        tst.w   d2
+        beq.s   .er_ret
+        move.l  WD_WLAYER(a2),a0
+        bclr    #ILB_REFRESH,IL_FLAGS+1(a0)
+.er_ret:
+        movem.l (sp)+,d2/a2-a3/a5-a6
         rts
 
 ; wn_refreshmsg(a3 = window): if it asked for REFRESHWINDOW and its message is not pending, sends it
@@ -2972,8 +3011,9 @@ intuition_DrawImage:
         movem.l (sp)+,d2-d7/a2-a6
         rts
 
-; AllocRemember(key a0, size d0, flags d1) -> d0 = memory | 0: allocates and links a Remember node at the head of
-; *key. FreeRemember(key a0, forget d0): frees the nodes (and their memory if forget != 0), *key := 0.
+; AllocRemember(key a0, size d0, flags d1) -> d0 = memory | 0: allocates and links a Remember node (requirements 0)
+; at the head of *key. FreeRemember(key a0, forget d0 tested as a word): frees the nodes, their memory too if forget,
+; and *key := 0 (intuition-misc §6c).
 intuition_AllocRemember:
         movem.l d2-d3/a2/a6,-(sp)
         move.l  a0,a2
@@ -2981,7 +3021,7 @@ intuition_AllocRemember:
         move.l  d1,d3
         move.l  ($4).w,a6
         moveq   #RM_SIZEOF,d0
-        moveq   #MEMF_PUBLIC,d1
+        moveq   #0,d1
         jsr     LVO_ALLOCMEM(a6)
         tst.l   d0
         beq.s   .ar_ret
@@ -3013,7 +3053,7 @@ intuition_FreeRemember:
 .fr_lp:
         move.l  a3,d0
         beq.s   .fr_done
-        tst.l   d2
+        tst.w   d2
         beq.s   .fr_node
         move.l  RM_MEMORY(a3),a1
         move.l  RM_REMEMBERSIZE(a3),d0
@@ -3746,8 +3786,9 @@ it_vcancel:
         rts
 
 ; it_setmouse(a5, d4.w/d5.w = pointer): MouseX/MouseY of the screen under the pointer and of each of its windows, and
-; GZZMouseX/GZZMouseY (interior of a GIMMEZEROZERO window), follow the pointer. Programs read them instead of the
-; IntuiMessage (Directory Opus computes the clicked list row from Window->MouseY). Preserves everything.
+; GZZMouseX/GZZMouseY = MouseX/MouseY - BorderLeft/BorderTop of every window, GIMMEZEROZERO or not, follow the pointer
+; (intuition-input-menus §1.4). Programs read them instead of the IntuiMessage (Directory Opus computes the clicked list
+; row from Window->MouseY). Preserves everything.
 it_setmouse:
         movem.l d0/d4-d5/a0/a4,-(sp)
         bsr     it_scrxy
@@ -3766,14 +3807,11 @@ it_setmouse:
         sub.w   WD_TOPEDGE(a0),d0
         move.w  d0,WD_MOUSEY(a0)
         move.w  d0,WD_GZZMOUSEY(a0)
-        btst    #2,WD_FLAGS+2(a0)    ; GIMMEZEROZERO
-        beq.s   .smo_nxt
         moveq   #0,d0
         move.b  WD_BORDERLEFT(a0),d0
         sub.w   d0,WD_GZZMOUSEX(a0)
         move.b  WD_BORDERTOP(a0),d0
         sub.w   d0,WD_GZZMOUSEY(a0)
-.smo_nxt:
         move.l  WD_NEXTWINDOW(a0),a0
         bra.s   .smo_lp
 .smo_ret:

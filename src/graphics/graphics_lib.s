@@ -217,7 +217,7 @@ graphics_vectors:                    ; ABSOLUTE table, vector N -> LVO -6*N, com
         dc.l    gfx_AndRegionRegion      ; 104: LVO -624
         dc.l    gfx_SetRGB4CM            ; 105: LVO -630 SetRGB4CM(colormap a0, n d0, r d1, g d2, b d3)
         dc.l    gfx_BltMaskBitMapRastPort ; 106: LVO -636 BltMaskBitMapRastPort(..., minterm d6, mask a2)
-        dcb.l   2,graphics_null          ; 107..108: LVO -642/-648 (private)
+        dcb.l   2,graphics_private       ; 107..108: LVO -642/-648 (private)
         dc.l    gfx_AttemptLockLayerRom  ; 109: LVO -654 AttemptLockLayerRom(layer a5) -> d0
         dc.l    -1
 graphics_datatab:
@@ -240,6 +240,10 @@ graphics_expunge:
         rts
 graphics_null:
         moveq   #0,d0
+        rts
+; graphicsPrivate1/2: d0 = a6, nothing else (graphics-raster §10.5).
+graphics_private:
+        move.l  a6,d0
         rts
 
 ; initFunc (D0=base, A0=segList, A6=ExecBase) -> D0=base. Sets the name (V34 quirk) and allocates the empty sprite.

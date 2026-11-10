@@ -120,6 +120,19 @@
   LACE) − Screen.TopEdge. For **all** windows of each screen: Window.MouseX/Y =
   Screen.MouseX/Y − LeftEdge/TopEdge; GZZMouseX/Y = Window.MouseX/Y − BorderLeft/BorderTop (see
   `intuition-gzz-v34.md` §3).
+- **Black-box confirmation, 2026-11-10** [O]: real ROM 34.5 under Amiberry (A500, cycle-exact), Workbench 1.3.3
+  with the boot CLI kept open and the boot disk's drawer window open: four windows on the Workbench screen (the
+  drawer "Workbench1.3", **two** backdrop windows titled "Workbench" at (0,11) 640×245 — one of them active —,
+  and the CLI window "AmigaDOS"). Window structures read with the debugger before and after a mouse move of
+  (−100, +60) counts (PointerTicks 1 under the Workbench preferences):
+  - IB MouseX/MouseY went from (592, 93) to (492, 153): X in hires pixels, Y in interlaced lines; Screen.MouseX/Y
+    from (592, 46) to (492, 76) (non-LACE screen: IB Y / 2).
+  - **Every** window, active or not, and whether the pointer was inside it or not, had MouseX/MouseY =
+    Screen.MouseX/Y − LeftEdge/TopEdge **after the move**, negative values included (CLI window at TopEdge 56:
+    MouseY −10 then 20; drawer at (3,70): (589,−24) then (489,6)). GZZMouseX/Y = MouseX/Y − BorderLeft/BorderTop
+    for every window too (drawer: BorderLeft 4, BorderTop 11; CLI window: 4, 11; backdrops: 0, 0).
+  - So the update covers all windows of the screen, not only the active one; no IDCMP flag (REPORTMOUSE,
+    MOUSEMOVE) is needed for the fields to follow the pointer.
 
 ### 1.5 Pointer bounds [O]
 
@@ -858,3 +871,5 @@ IDLE
 - [x] The patterns of the internal images (checkmark, Amiga symbol) are visual data observable on
   screen, reproduced for pixel-identical rendering.
 - [x] The cited probes are author code (`tests/`, header "ASSET DE TEST, PAS du code ROM").
+- [x] 2026-11-10 addition (§1.4, MouseX/MouseY of every window): black box only, public `Window`/`Screen`
+  fields and the IB MouseX/MouseY fields read with the debugger while the mouse was moved; no ROM address, no code.

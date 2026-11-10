@@ -1007,7 +1007,7 @@ pcop:           movem.l d0-d4/a0-a2,-(sp)
                 bhi     .raw
                 PRS     " n="
                 move.w  d2,d0
-                bsr     pdec
+                bsr     pdecs                ; keeps d1, the CopIns pointer
                 move.l  d1,a0
                 moveq   #80,d3
                 subq.w  #1,d2

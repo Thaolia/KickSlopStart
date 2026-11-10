@@ -270,8 +270,11 @@ dos_handler:
                 move.l  DP_ARG1(a4),a1                ; a1 = streaming state
                 move.l  DP_ARG2(a4),a2                ; a2 = dest
                 move.l  DP_ARG3(a4),d0                ; d0 = len requested
-                jsr     ofs_stream_read                ; d0 = bytes read (0 = EOF); cursor advanced in the state
+                jsr     ofs_stream_read                ; d0 = bytes read (0 = EOF) | -1 (bad data block checksum)
                 move.l  d0,DP_RES1(a4)
+                bpl.s   .rd_ok
+                move.l  #DOS_ERR_RW,DP_RES2(a4)
+.rd_ok:
                 move.l  (sp)+,a2                       ; restore the handler port
                 bra     .reply
 

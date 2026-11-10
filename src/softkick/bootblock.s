@@ -31,15 +31,18 @@ INTENA      EQU $DFF09A
 INTREQ      EQU $DFF09C
 DMACON      EQU $DFF096
 BUF_SIZE    EQU IMG_SIZE+(stub_end-stub)
+KSS_RESIDENT EQU $4B53534B       ; "KSSK": the image already runs (src/exec/strap.s: no alert for it)
 
 boot:
         movem.l d2/a2-a5,-(sp)
         move.l  a1,a4                ; a4 = IOStdReq
         move.l  EB_COLDCAPTURE(a6),d0 ; KickSlopStart already runs from slow RAM (its ColdCapture points into the
-        cmp.l   #IMG_BASE,d0          ; image): fail, so that its strap shows the insert-disk screen and boots
-        blo.s   .load                 ; the next disk inserted
+        cmp.l   #IMG_BASE,d0          ; image): fail with KSS_RESIDENT, which its strap takes for "not bootable"
+        blo.s   .load                 ; without the boot-error alert, so that it shows the insert-disk screen
         cmp.l   #IMG_BASE+IMG_SIZE,d0
-        blo     .fail
+        bhs.s   .load
+        move.l  #KSS_RESIDENT,d0
+        bra     .ret
 .load:
         lea     IMG_BASE+IMG_SIZE/2,a1 ; slow RAM must cover the image (the MemHeader at $C00000 is not
         jsr     LVO_TypeOfMem(a6)    ; inside its own [mh_Lower, mh_Upper) range)

@@ -344,11 +344,18 @@ bcpl_starthandler:
         bsr     rt_makeglobvec
         tst.l   d0
         beq     .sh_freename
+        move.l  d0,d2                ; d2 = Res2 of the packet = BPTR of the GV
         move.l  d0,d1
         lsl.l   #2,d1
+        move.l  DN_NAME(a2),d4
+        bsr     rt_createproc        ; d0 = port | 0
+        bsr     .sh_gvown            ; a GV made for this handler is its own (freed with it), or freed now
+        tst.l   d0
+        beq     .sh_freename
+        bra.s   .sh_started
 .sh_gv:
         move.l  d1,d2
-        lsr.l   #2,d2                ; d2 = Res2 of the packet = BPTR of the GV
+        lsr.l   #2,d2                ; d2 = Res2 of the packet = BPTR of the (shared) GV
         move.l  DN_NAME(a2),d4
         bsr     rt_createproc        ; d0 = port | 0
         tst.l   d0
@@ -417,15 +424,15 @@ bcpl_starthandler:
         move.l  d2,DP_RES2(a0)
         move.l  a3,a0
         jsr     LVO_PUTMSG(a6)       ; PutMsg(port a0, message a1)
-        bsr.s   .sh_msg
+        bsr     .sh_msg
         move.l  d6,a0
         jsr     dos_waitreply        ; other messages of the port are put back, not dropped
-        bsr.s   .sh_msg
+        bsr     .sh_msg
         move.l  a1,a0
         move.l  SP_PKT+DP_RES1(a0),d7
         move.l  SP_PKT+DP_RES2(a0),d2
         lea     SP_SIZEOF+2(sp),sp
-        bsr.s   .sh_free_a4
+        bsr     .sh_free_a4
         tst.l   d7
         beq.s   .sh_refused
         move.l  DN_LOCK(a2),d0
@@ -462,6 +469,43 @@ bcpl_starthandler:
         moveq   #0,d0
 .sh_ret:
         movem.l (sp)+,d1-d7/a0-a6
+        rts
+; .sh_gvown(d0 = port of the new handler process | 0, d2 = BPTR of the GV made for it): its getvec block goes into
+; the process's tc_MemEntry, so that RemTask frees it when the handler ends (1.3's endtask frees a pr_GlobVec other
+; than dl_GV, bcpl-runtime §8: here a child may run on its creator's GV, so only a GV made for the process is its
+; own); no process: the GV is freed at once. Preserves everything.
+.sh_gvown:
+        movem.l d0-d2/a0-a1,-(sp)
+        move.l  d2,d1
+        sub.l   #GV_NEGSLOTS,d1
+        lsl.l   #2,d1
+        subq.l  #4,d1
+        move.l  d1,a0                ; a0 = the getvec block (its size at the head)
+        tst.l   d0
+        beq.s   .go_free
+        moveq   #ML_ME+8,d0          ; MemList with one entry
+        move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1
+        move.l  a0,-(sp)
+        jsr     LVO_ALLOCMEM(a6)
+        move.l  (sp)+,a0
+        tst.l   d0
+        beq.s   .go_ret              ; no memory for it: the GV stays allocated, as before
+        move.l  d0,a1
+        move.w  #1,ML_NUMENTRIES(a1)
+        move.l  a0,ML_ME+ME_ADDR(a1)
+        move.l  (a0),ML_ME+ME_LENGTH(a1)
+        move.l  (sp),a0
+        lea     -PR_MSGPORT+TC_MEMENTRY(a0),a0
+        jsr     LVO_FORBID(a6)
+        jsr     LVO_ADDTAIL(a6)
+        jsr     LVO_PERMIT(a6)
+        bra.s   .go_ret
+.go_free:
+        move.l  a0,a1
+        move.l  (a1),d0
+        jsr     LVO_FREEMEM(a6)
+.go_ret:
+        movem.l (sp)+,d0-d2/a0-a1
         rts
 .sh_msg:                             ; a1 = our message (long-aligned in the caller's frame, above this return address)
         lea     4(sp),a1
@@ -1475,8 +1519,9 @@ g_endtask:
         bra     rt_endproc
 
 ; rt_endproc: end of a process created by createproc (endtask, spec §13.7.3): freevec of its segarray, then
-; RemTask(0). Every segarray handed to createproc is a getvec block; it is only read by globin at startup. The GV
-; is kept: ours are shared (parent's, dn_GlobalVec) or not getvec blocks. Does not return.
+; RemTask(0). Every segarray handed to createproc is a getvec block; it is only read by globin at startup. A GV
+; made for a handler is in its tc_MemEntry (bcpl_starthandler), so RemTask frees it; any other is shared (the
+; creator's, dn_GlobalVec, dl_GV) and kept. Does not return.
 rt_endproc:
         move.l  ($4).w,a6
         move.l  EB_THISTASK(a6),a0
@@ -2072,6 +2117,10 @@ g_sendpkt:
         jsr     dos_pktretry         ; volume ejected: "Please replace volume", Retry -> resend
         tst.l   d0
         beq.s   .sk_done
+        cmp.l   #-1,d0
+        beq.s   .sk_same
+        move.l  d0,MN_SIZE(sp)       ; the handler that has the volume now
+.sk_same:
         clr.l   DP_RES1(a4)
         clr.l   DP_RES2(a4)
         bra.s   .sk_send
