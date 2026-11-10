@@ -1876,6 +1876,16 @@ wb_gauge:
         move.l  DR_TOTAL(a4),d1
         beq.s   .ga_fill
         move.l  DR_USED(a4),d0
+        cmp.l   d1,d0
+        bls.s   .ga_scale
+        move.l  d1,d0
+.ga_scale:                           ; mulu/divu are 16-bit: halve both until 2 x total fits a word
+        cmp.l   #$7FFF,d1
+        bls.s   .ga_mul
+        lsr.l   #1,d1
+        lsr.l   #1,d0
+        bra.s   .ga_scale
+.ga_mul:
         mulu    d7,d0
         add.l   d0,d0
         add.l   d1,d0
