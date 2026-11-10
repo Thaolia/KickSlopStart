@@ -45,10 +45,11 @@ A few things look different from the original Kickstart 1.3 on purpose. Please d
 - **Colours**: the Workbench screen uses a CDE-like palette (Sun/Solaris purple background, cream, black text, slate
   blue) instead of the 1.3 blue, as suggested in [issue #24](https://github.com/Thaolia/KickSlopStart/issues/24).
   It shows at a glance which Kickstart is running.
-- **Boot screen**: instead of the hand holding a floppy, a kitten holds a "KickSlopStart" disk, because I love cats.
-  This is the image as the ROM draws it (the photo at the top of this page is the original artwork):
+- **Insert-disk screen**: instead of the hand holding a floppy, the KSS kitten logo, because I love cats, with
+  "Insert disk in DF0:" and the build number of the ROM beside it. This is a capture of the screen as the ROM draws
+  it (generated from `assets/boot_screen/kss_logo.svg` by `src/graphics/mk_bootscreen.py`):
 
-  <p align="center"><img src="assets/boot_screen/cat_boot_ref.png" alt="KickSlopStart boot screen, as rendered by the ROM" width="352"></p>
+  <p align="center"><img src="assets/boot_screen/insert_disk.png" alt="KickSlopStart insert-disk screen, as rendered by the ROM" width="704"></p>
 
 - **Menus**: the check mark is a cat's paw print, and the Amiga-key symbol of keyboard shortcuts is a small cat.
 - **Startup window**: the boot CLI window is called "AmigaSlopDOS".

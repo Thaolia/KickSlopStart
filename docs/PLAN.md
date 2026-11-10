@@ -1580,6 +1580,13 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   its ghost pattern outside the 7 cleared cells, as the spec's screenshot. `tests/iwin_probe.sh` unchanged but for
   addresses. prepush-check (dev) FAIL=0 twice (one earlier run under heavy host load missed the Lemmings menu, a
   direct rerun and two later runs showed it).
+  **Insert-disk screen (2026-11-10)**: ARCHITECTURE "Insert-disk screen: KSS logo and build number" (user request:
+  their SVG logo, "Insert disk in DF0:", the build number). Production ROM without a disk under Amiberry: markers M6R
+  STRAP OK / M6S BOOTSCR OK, logo, text and `v0.2.37-dirty` on screen (looked at); a 24-character version wraps onto
+  a second line; inserting the Workbench 1.3.3 disk then boots it to the desktop; the ID field is filled in the prod
+  ROM and the soft-kick image; prepush-check (dev) FAIL=0, Lemmings menu looked at. The dev ROM without any disk does
+  not reach the insert-disk screen, before this change as well (HEAD dev ROM tested the same way): its self-tests
+  expect a disk; open.
   **C9: menu messages, Preferences rows (2026-11-10)**: ARCHITECTURE "Menu and verification messages, Preferences
   rows". `tests/imenu_probe.s` against the 1.3 log of the same probe: identical line by line except real tick times
   and the addresses of RAWKEY / VANILLAKEY copies (MENU Jazz/Beat lines included). A Workbench 1.3.3 copy whose

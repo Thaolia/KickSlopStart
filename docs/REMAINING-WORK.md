@@ -184,7 +184,9 @@ AddLibrary/AddDevice/AddResource, WaitIO returns the signal bit in D1. Left:
 The strap runs in the initial task, in user mode with multitasking on, as on 1.3; a floppy inserted on the
 insert-disk screen gets a new attempt without a reset; a bootblock returning D0 ≠ 0 gets Alert $30000001 before
 the insert-disk screen (uae-hd-boot §3). Side effect: the soft-kick disk left in DF0: shows that alert once per
-soft-kicked boot, as 1.3 would.
+soft-kicked boot, as 1.3 would. Left (seen 2026-11-10): the dev ROM booted with no disk at all never reaches the
+insert-disk screen (no M6S marker, garbled serial output; the production ROM does), already before the new screen;
+its boot self-tests seem to expect a disk.
 
 ### C7. Drives and file system — [src] partly, S
 

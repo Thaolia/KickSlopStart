@@ -70,6 +70,7 @@
 
                 xref    exec_softint_init
                 xdef    ser_puts         ; serial output (diagnostics of the BCPL runtime)
+                xdef    kss_idstr        ; graphics/gfx.s: build number on the insert-disk screen
                 xdef    ser_puthex
                 xdef    ser_lock         ; atomic serial output (Forbid gated by SCHED_ON) — used by conhandler/feeder/shell
                 xdef    ser_unlock
@@ -172,6 +173,7 @@ hdr_start:
         ; +18 KickSlopStart ID block, a stable format for emulators (README "Identifying the ROM"): the magic, then a
         ; NUL-terminated ASCII version string that mkrom.py --id writes into the zeroed field at build time.
         dc.b    "KSS!"           ; +18
+kss_idstr:
         dcb.b   KSS_ID_LEN,0     ; +1C version string field
         dcb.b   $D0-(*-hdr_start),0
         dc.w    $4E70            ; $FC00D0 RESET (magic_reset)

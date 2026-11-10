@@ -48,11 +48,12 @@ Certaines choses diffèrent volontairement du Kickstart 1.3 d'origine. Merci de 
 - **Couleurs** : l'écran du Workbench prend une palette à la CDE (fond violet Sun/Solaris, crème, texte noir, bleu
   ardoise) au lieu du bleu de la 1.3, comme proposé dans l'[issue #24](https://github.com/Thaolia/KickSlopStart/issues/24).
   Elle montre d'un coup d'œil quel Kickstart tourne.
-- **Écran de démarrage** : à la place de la main qui tient une disquette, un chaton tient une disquette
-  « KickSlopStart », parce que j'aime les chats. Voici l'image telle que la ROM la dessine (la photo en haut de cette
-  page est l'illustration d'origine) :
+- **Écran « insérez une disquette »** : à la place de la main qui tient une disquette, le logo chaton de KSS, parce
+  que j'aime les chats, avec « Insert disk in DF0: » et le numéro de build de la ROM à côté. Voici une capture de
+  l'écran tel que la ROM le dessine (généré depuis `assets/boot_screen/kss_logo.svg` par
+  `src/graphics/mk_bootscreen.py`) :
 
-  <p align="center"><img src="assets/boot_screen/cat_boot_ref.png" alt="Écran de démarrage de KickSlopStart, tel que la ROM le dessine" width="352"></p>
+  <p align="center"><img src="assets/boot_screen/insert_disk.png" alt="Écran « insérez une disquette » de KickSlopStart, tel que la ROM le dessine" width="704"></p>
 
 - **Menus** : la coche est une empreinte de patte de chat, et le symbole de la touche Amiga des raccourcis clavier est
   un petit chat.

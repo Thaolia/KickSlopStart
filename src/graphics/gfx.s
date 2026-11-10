@@ -17,6 +17,8 @@
                 xdef    gfx_display_free
                 xref    bootscreen_planes    ; bootscreen_data.s (generated): 4 planar bitplanes, ByteRun1
                 xref    bootscreen_palette   ; bootscreen_data.s (generated): 16 OCS RGB444 colours
+                xref    topaz8_font          ; text.s: the hand-authored topaz 8
+                xref    kss_idstr            ; exec/boot.s: "KickSlopStart <version>" written by mkrom.py --id
 
 ; gfx_display_init(a6 = SysBase): allocates bitplanes + structure block, unpacks the image, sets up View/ViewPort/
 ; BitMap/ColorMap, FindName("graphics.library"), then MakeVPort/MrgCop/LoadView through the GfxBase jump table.
@@ -124,6 +126,8 @@ gfx_display_init:
         tst.l   d0
         beq     .gfx_nogfx                   ; no graphics.library -> no display
         move.l  d0,a5                        ; a5 = GfxBase
+        move.l  a5,a6
+        bsr     gfx_boottext
         ; 4. MakeVPort(view,vp); MrgCop(view); LoadView(view) THROUGH THE JUMP TABLE
         lea     GFX_O_VIEW(a2),a0
         lea     GFX_O_VP(a2),a1
@@ -179,6 +183,99 @@ gfx_display_free:
         movem.l (sp)+,a2/a5/a6
         rts
 
+; gfx_boottext(a2 = structure block, a6 = GfxBase): the text of the insert-disk screen, drawn in colour 1 (black) in the
+; column right of the logo: the request, then "KickSlopStart" and the build number of the ROM ID block, cut into
+; lines of GFX_TXT_COLS characters (a long local `git describe` takes two lines). Preserves d2-d7/a2-a6.
+GFX_TXT_X       EQU 228                      ; first column (the logo ends at 216)
+GFX_TXT_Y       EQU 112                      ; baseline of the first line
+GFX_TXT_LINE    EQU 10                       ; line spacing
+GFX_TXT_COLS    EQU (GFX_BOOT_W-GFX_TXT_X)/8 ; characters of 8 pixels left on a line
+gfx_boottext:
+        movem.l d2-d4/a2-a4,-(sp)
+        lea     -rp_SIZEOF(sp),sp
+        move.l  sp,a1
+        jsr     LVO_INITRASTPORT(a6)
+        lea     GFX_O_BITMAP(a2),a0
+        move.l  a0,rp_BitMap(sp)
+        move.l  sp,a1
+        lea     topaz8_font,a0
+        jsr     LVO_SETFONT(a6)
+        move.l  sp,a1
+        moveq   #1,d0
+        jsr     LVO_SETAPEN(a6)
+        move.l  sp,a1
+        moveq   #JAM1,d0
+        jsr     LVO_SETDRMD(a6)
+        move.w  #GFX_TXT_Y,d4                ; d4 = baseline of the next line
+        lea     gfx_txt_lines(pc),a3         ; fixed lines, an empty one leaves a gap, a double NUL ends them
+.bt_fixed:
+        tst.b   (a3)
+        bne.s   .bt_line
+        tst.b   1(a3)
+        beq.s   .bt_id
+        addq.l  #1,a3
+        add.w   #GFX_TXT_LINE,d4
+        bra.s   .bt_fixed
+.bt_line:
+        move.l  a3,a0
+        bsr.s   .bt_put
+        move.l  a0,a3
+        addq.l  #1,a3                        ; past its NUL
+        bra.s   .bt_fixed
+.bt_id:
+        lea     kss_idstr,a3                 ; the version, without the "KickSlopStart " already shown
+        lea     gfx_txt_kss(pc),a0
+        move.l  a3,a1
+.bt_pre:
+        tst.b   (a0)
+        beq.s   .bt_sp
+        cmpm.b  (a0)+,(a1)+
+        beq.s   .bt_pre
+        bra.s   .bt_ver                      ; another string: shown whole
+.bt_sp:
+        cmp.b   #' ',(a1)+
+        bne.s   .bt_ver
+        move.l  a1,a3
+.bt_ver:
+        tst.b   (a3)
+        beq.s   .bt_ret
+        move.l  a3,a0
+        bsr.s   .bt_put
+        move.l  a0,a3
+        bra.s   .bt_ver
+.bt_ret:
+        lea     rp_SIZEOF(sp),sp
+        movem.l (sp)+,d2-d4/a2-a4
+        rts
+.bt_put:                                     ; a0 = text: at most GFX_TXT_COLS characters of it on the line d4, then
+        move.l  a0,a4                        ; the next line; -> a0 = first character not shown
+        moveq   #0,d2
+.bp_len:
+        tst.b   (a4)
+        beq.s   .bp_go
+        cmp.w   #GFX_TXT_COLS,d2
+        beq.s   .bp_go
+        addq.l  #1,a4
+        addq.w  #1,d2
+        bra.s   .bp_len
+.bp_go:
+        move.l  a0,d3
+        lea     4(sp),a1                     ; the RastPort (under the return address)
+        move.w  #GFX_TXT_X,d0
+        move.w  d4,d1
+        jsr     LVO_MOVE(a6)
+        lea     4(sp),a1
+        move.l  d3,a0
+        move.w  d2,d0
+        jsr     LVO_TEXT(a6)
+        add.w   #GFX_TXT_LINE,d4
+        move.l  a4,a0
+        rts
+
+gfx_txt_lines:                               ; each line ends with its NUL; one more NUL: an empty line; two: the end
+        dc.b    "Insert disk",0,"in DF0:",0,0
+gfx_txt_kss:                                 ; also the prefix taken off the ID string
+        dc.b    "KickSlopStart",0,0,0
 gfx_libname:
         dc.b    "graphics.library",0
         EVEN
