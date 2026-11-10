@@ -15,6 +15,7 @@
                 include "dospkt.i"
 
                 xref    newlist          ; lists.s
+                xref    bcpl_starthandler ; dos/bcpl.s (ADNF_STARTPROC)
 
 ; --- expansion.library ROMTag (scanned by build_reslist) ---
                 EVEN
@@ -708,12 +709,14 @@ md_bstr:
         rts
 
 ; AddDosNode(bootPri d0, flags d1, dosNode a0) -> d0 = 1 | 0. dos.library present: the DeviceNode enters the list
-; of DOS devices (DosInfo->di_DevInfo, under Forbid). Otherwise: BootNode (ln_Pri = bootPri, bn_Flags = flags,
-; bn_DeviceNode, ln_Name = name of the DeviceNode) inserted by priority into eb_MountList, mounted later.
+; of DOS devices (DosInfo->di_DevInfo, under Forbid) and, with ADNF_STARTPROC from a process, its handler is started
+; (spec uae-hd-boot-v34 §4.2). In every case a BootNode (ln_Pri = bootPri, bn_Flags = flags, bn_DeviceNode,
+; ln_Name = name of the DeviceNode) is then inserted by priority into eb_MountList: dos mounts it at its init, and
+; the Initial CLI starts the ADNF_STARTPROC handlers left there (a call at cold start has no process to wait in).
 exp_adddosnode:
         movem.l d2-d3/a2-a3/a6,-(sp)
         move.l  a0,d2
-        beq.s   .ad_fail
+        beq     .ad_fail
         move.l  a0,a2
         move.l  d0,d2
         move.l  d1,d3
@@ -738,7 +741,18 @@ exp_adddosnode:
         jsr     LVO_PERMIT(a6)
         move.l  (sp)+,a1
         jsr     LVO_CLOSELIBRARY(a6)
-        bra.s   .ad_ok
+        btst    #ADNB_STARTPROC,d3
+        beq.s   .ad_boot
+        tst.l   DN_TASK(a2)
+        bne.s   .ad_boot
+        move.l  EB_THISTASK(a6),a0
+        cmp.b   #NT_PROCESS,LN_TYPE(a0)
+        bne.s   .ad_boot
+        move.l  DN_NAME(a2),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        addq.l  #1,a0                ; C name (the BSTR of a DeviceNode ends with a NUL)
+        jsr     bcpl_starthandler
 .ad_boot:
         moveq   #BN_SIZEOF,d0
         move.l  #(MEMF_PUBLIC|MEMF_CLEAR),d1

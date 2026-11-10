@@ -1067,6 +1067,17 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   65535 data blocks (32 MiB) are not followed (16-bit block index); the bitmap block does not move at each flush
   (rom-filesystem §8.3); what 1.3 does with TD_CHANGESTATE / TD_PROTSTATUS / TD_CHANGENUM on a device that rejects
   them (ours: present, writable, count 0) is not specified.
+  **Handlers started at mount time (2026-11-10)** (uae-hd-boot-v34 §4, §9.2-§9.4): a board that mounts a volume
+  with `AddDosNode(pri, ADNF_STARTPROC, dn)` (Copperline `[[filesys]]` host directory, non-boot) now gets its
+  handler running before the startup-sequence, so the volume is on the Workbench without any access (on the real
+  1.3 the Initial CLI starts it about 9 s into the boot). AddDosNode with dos present also enqueues the BootNode,
+  and a process caller with ADNF_STARTPROC gets its handler started at once; a cold-start call (no process) is
+  covered by `dos_startmounts` (Initial CLI), which starts every device node whose dn_Startup is a
+  FileSysStartupMsg, the Copperline node included. Proven under Copperline (WB 1.3.3, unmodified startup-sequence, nothing typed: `hd` icon on the desktop, the
+  handler started once). Open: which nodes the real 1.3 starts at boot (only the ADNF_STARTPROC one was seen);
+  the startup packet of 1.3 carries dp_Arg3 = NULL and dos writes dn_Task after the reply (spec §4.4, handlers
+  §3.1-§3.5), ours still sends the DeviceNode in dp_Arg3 and leaves dn_Task to the handler (CON: sharing to be
+  settled first).
   **Write-back as on 1.3 (2026-11-05)**: root bitmap flag cleared (and disk date set) on the first change, bitmap
   and root (flag valid) written 2-3 s after the last disk access with CMD_UPDATE and motor off, ACTION_FLUSH held
   until then and returned unchanged, INHIBIT writes back first. Copy of C: to a floppy 159.0 s -> 43.7 s

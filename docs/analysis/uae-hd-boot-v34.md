@@ -131,6 +131,12 @@ In the assembler part of the init, before the initial CLI is started:
    `N.bn_DeviceNode ≠ 0`, `N.bn_DeviceNode->dn_Next == 0` and `(N+1).bn_DeviceNode ≠ 0`:
    `N.bn_DeviceNode->dn_Next = BPTR((N+1).bn_DeviceNode)`. The DeviceNodes of **all** nodes (whatever
    `ln_Type`) thus form a chain in list order.
+   **`bn_Flags` is never read** during this walk: `ADNF_STARTPROC` and any other flag bit are
+   ignored by dos init. **No handler process is started here.** **[R; S]** (ROM disassembly
+   confirmed: the chain-walk loop only tests `ln_Succ`, `bn_DeviceNode` and `dn_Next`; there is no
+   access to offset `$0E` = `bn_Flags`. Black-box probe: at 5 emulated seconds — after dos init and
+   before the initial CLI's startup-sequence has executed any commands — all DeviceNodes in
+   `di_DevInfo` including the Copperline `HOSTFS0` node have `dn_Task = 0`; see §4.4 and §9.)
 3. **`RemHead(eb_MountList)`**: the **first** node is removed (not freed); its `bn_DeviceNode` (APTR) is
    passed to the BCPL part of the init (stored temporarily in `RootNode+$1C`, which later takes back its
    normal value `rn_FileHandlerSegment`). This DeviceNode is the **boot device** (SYS:) and the chain
@@ -149,16 +155,85 @@ In the assembler part of the init, before the initial CLI is started:
 - if `dn_Task`, `dn_Handler` and `dn_SegList` are all zero: `dn_SegList = rn_FileHandlerSegment` (the
   ROM's OFS handler);
 - under Forbid, **insertion at the head** of `di_DevInfo` (`dn_Next = old head`);
-- if `flags & 1`: internal dos call (private entry, D1 = BPTR of the DeviceNode) — not probed;
+- if `flags & 1` (ADNF_STARTPROC): **starts the handler synchronously** via BCPL global 112
+  (`starthandler`), the same routine called by DeviceProc on first access. `starthandler` creates
+  the handler process (C handler: `dn_StackSize` in bytes; BCPL handler: `dn_StackSize` in longs),
+  sends the startup packet to the new process's `pr_MsgPort`, and **blocks** (synchronous) until
+  the handler replies with `dp_Res1 ≠ 0` (success) or `dp_Res1 = 0` (failure). If the handler
+  never replies the calling task deadlocks (no timeout). On a **successful** reply, `starthandler`
+  writes `dn_Task` with the handler's `pr_MsgPort` before returning (black-box probe: the write to
+  `dn_Task` originates from ROM code in the Initial CLI context, not from the handler process
+  itself). Full startup packet contents: §4.4. **[R; S]**
 - CloseLibrary(dos); since dos's CloseLibrary returns 0, the function **additionally enqueues** a BootNode in
-  `eb_MountList` (`ln_Pri = bootPri`, `ln_Name` = C name of the device) and returns **1**. This extra BootNode is
-  harmless (dos only re-reads `eb_MountList` at its init). **[R+S]** (vector ADN)
+  `eb_MountList` (`ln_Pri = bootPri`, `bn_Flags = flags`, `ln_Name` = C name of the device) and returns **1**.
+  This extra BootNode is harmless: dos only re-reads `eb_MountList` at its init, and the remaining
+  BootNodes in `eb_MountList` are never re-processed by any V34 component after dos init. **[R+S]** (vector ADN)
 
 ### 4.3 Before dos init
 
 `AddDosNode` ⇒ uncleared 20-byte BootNode enqueued in `eb_MountList` (`autoconfig-v34.md` §7); it will be
 chained and mounted by §4.1, and may even become SYS: if it is at the head; it is not bootable by romboot
 (§2.2), lacking `ln_Type = NT_BOOTNODE` and a ConfigDev.
+
+If `flags & 1` (ADNF_STARTPROC): `bn_Flags` is set to 1 in the BootNode, but **dos init ignores `bn_Flags`**
+(§4.1). The handler is **not** started at dos init time. It starts on **first access** via `deviceproc`
+(global 102) → `starthandler` (global 112), with the same synchronous protocol and startup packet as §4.4.
+The DeviceNode remains in `di_DevInfo` with `dn_Task = 0` until `starthandler` writes it on the
+first successful handler reply.
+
+**Timing relative to the initial CLI**: dos init runs before the initial CLI. After dos init the CLI
+starts, runs `S:CLI-Startup`, then `S:Startup-Sequence`. The handler is started the first time any
+process calls `deviceproc` for the device. **[S]** (probe on a full WB 1.3.3 ADF: at 5 emulated
+seconds all device handlers including the Copperline board's HOSTFS0 node had `dn_Task = 0`; the
+HOSTFS0 handler started at ~9.44s, triggered by the Initial CLI during the final phase of the
+startup-sequence — `LoadWB delay` or `endcli` — before the Workbench task was started; see §9.3.)
+The calling process blocks synchronously until the handler replies. The Workbench task therefore
+finds the handler already running (dn_Task ≠ 0) when it starts its device scan and shows the
+volume icon without having to trigger a handler start itself. **[S]** (§9.3)
+
+**Practical case — Copperline-style board (`AddDosNode(-128, ADNF_STARTPROC, dn)` from an `rt_Init`
+during romboot, pri −40):** dos does not exist yet, so the before-dos path is taken and `bn_Flags = 1` is
+stored. After dos starts and chains the DeviceNodes, the first `deviceproc` call for the device triggers
+`starthandler`. For a C handler with `dn_GlobalVec = −1` and `dn_SegList = BPTR of the handler code`: the
+handler process is created with `dn_StackSize` bytes of stack; the startup packet is sent (§4.4);
+the calling process blocks synchronously until the reply; on success `starthandler` writes `dn_Task`.
+
+**Uncertain**: whether a boot path exists in which dos init starts handlers directly (not via global 112)
+with a different packet format (some third-party board documentation describes this case; the probe did
+not reproduce it). **[Uncertain]** See §8.
+
+### 4.4 Startup packet sent by starthandler (global 112) **[R; S]** (see `handlers-v34.md` §3.1–§3.5)
+
+This applies to **both** the after-dos `ADNF_STARTPROC` path and the on-demand `deviceproc` path.
+The same global 112 is used in both cases.
+
+| Field | Value |
+|---|---|
+| `dp_Type` | **0** (ACTION\_STARTUP; zero both for V34 deferred/ADNF path) |
+| `dp_Port` | reply port = `pr_MsgPort` of the calling process (set by `qpkt`) |
+| `dp_Res2` | BPTR of the handler's GV (BCPL branch); **uninitialized residue** in the C branch (`dn_GlobalVec = −1`) |
+| `dp_Arg1` | **Garbage** — a residue from the BCPL calling convention, not a device name. Two independent probes observed a 1-character BSTR `'S'` from a ROM constant table (not "HOSTFS0" or any device name). **A handler must not use dp_Arg1; use dp_Arg2 instead. [S]** |
+| `dp_Arg2` | `dn_Startup` (BPTR to `FileSysStartupMsg`) |
+| `dp_Arg3` | **NULL (0)** — confirmed by `last_writer` on the field: the most recent write set it to 0 from within the BCPL dispatch prologue; no subsequent write set it to a DeviceNode BPTR **[S]** |
+| `dp_Link`, `dp_Res1` | stack-frame residues until the handler fills `dp_Res1` with its reply |
+
+The handler must reply with `dp_Res1 ≠ 0` (conventionally `−1` = `DOSTRUE`) for success, or
+`dp_Res1 = 0` for failure. On a successful reply, `starthandler` **writes `dn_Task`** with the
+handler's `pr_MsgPort`, then sets `Result2 := dn_Lock` and returns the port. On failure, returns 0;
+`Result2` = the handler's `dp_Res2`. `dn_Task` is not written on failure.
+
+**A handler designed for V34 must locate its unit via `dp_Arg2`** (the `FileSysStartupMsg`): `dp_Arg3`
+is NULL, so `dp_Arg2 → FileSysStartupMsg` is the only reliable path to the mount's configuration.
+
+Note on the "boot path" distinct from global 112: some third-party documentation describes a dos-init
+startup path where `dp_Type` = seglist BPTR, `dp_Res1` = stack size, and `dp_Arg3` = NULL — matching
+the BCPL `createproc` calling convention rather than ACTION\_STARTUP. That path was not reproduced by
+the probe (the probe used a C handler with a Copperline board, and the handler was always started via
+global 112 on first `deviceproc` access). It may apply only when dos init starts the handler itself in
+some configurations; this remains uncertain. **[Uncertain]**
+
+Note on V36: AmigaDOS 2.0+ revised the protocol (`dp_Arg3` = BPTR DeviceNode). A V34-compatible
+handler must not rely on `dp_Arg3`; use `dp_Arg2 → FileSysStartupMsg` instead.
 
 ---
 
@@ -251,7 +326,6 @@ ConfigDev `$F00000` present).
   RemHead and passed to the BCPL) and confirmed by the five vectors, but the BCPL code was not followed.
 - "Priority board + bootable floppy" case: the floppy's bootblock is executed (strap) before dos
   starts on DH0; a non-standard bootblock (that does not return the dos init) would short-circuit everything — not probed.
-- `AddDosNode` with `flags & 1` (internal dos call): ROM only, not probed.
 - BootPoint of a DiagArea with `da_BootPoint = 0`: ROM only (jump to the start of the copy).
 - A **BYTEWIDE/NIBBLEWIDE** DiagArea board with a ROMTag: romboot scans the RAM copy, so it makes no difference;
   not probed.
@@ -260,6 +334,15 @@ ConfigDev `$F00000` present).
 - The "uninitialised" ln_Type of AddDosNode's BootNodes was 0 in the probes (AllocMem without CLEAR); a
   residual value of 16 would make the node eligible for RomBoot with an ln_Name that is not a ConfigDev — not
   reproduced.
+- **Boot path with BCPL `createproc` packet format**: some third-party board documentation describes a
+  startup packet with `dp_Type` = seglist BPTR, `dp_Res1` = stack size, `dp_Arg3` = NULL — matching
+  the BCPL `createproc` register convention rather than `ACTION_STARTUP` = 0. This path was not
+  reproduced in the Copperline probe: the board's C handler was always started via global 112 on first
+  `deviceproc` access with `dp_Type` = 0 and `dp_Arg3` = NULL. Whether a distinct dos-init-driven
+  startup path exists for certain board configurations is uncertain.
+- **Exact trigger** for the first `deviceproc` call to a before-dos BootNode device: observed at ~9s
+  emulated time in a boot from WB 1.3.3 ADF with startup-sequence `echo X >SER: / wait 60`; the
+  specific call chain was not traced.
 
 ---
 
@@ -286,10 +369,143 @@ breakpoints on `uaehf.device` BeginIO and exec ReplyMsg, IPC watch on the DiagPo
 - Test-harness trap: Amiberry caches hardfile writes on the host; a hardfile read while the emulator runs can
   lag far behind what the Amiga wrote. Read images after stopping the session.
 
-## Clean-room review
+## 9.2 Copperline CCP probe (2026-11-10) **[S]**
+
+Real KS 1.3 (kick34005.A500) under Copperline (headless, control protocol), 512 KB chip + 2 MB fast,
+Copperline services board with 1 `[[filesys]]` HOSTFS0 mount (bootpri −128, C handler in board window,
+`dn_GlobalVec = −1`), modified WB 1.3.3 ADF (`s/startup-sequence` = `echo X >SER: / wait 60`).
+Memory read with `mem.read`; write timing with write watchpoints and `last_writer`.
+
+```
+ExecBase = $676  (chip RAM, 512 KB chip + 2 MB fast: exec base in low chip RAM)
+DosBase  = $203538  (fast RAM)
+HOSTFS0 DeviceNode = $202F80  (RAM), dn_SegList = BPTR to board window, dn_GlobalVec = −1
+HOSTFS0 dn_Task:
+  at  5.0s emulated (before CLI startup-sequence): 0x00000000  (handler not started)
+  at  9.258s                                       0x0020611C  (handler started)
+Write at 9.258s: PC in KS ROM, CurrentTask = 'Initial CLI'  → deferred/DeviceProc path
+dp_Arg3 (last write before 9.258s, via last_writer): $0000FFFF → $00000000 from BCPL dispatch prologue
+dp_Type (starthandler's send): 0x00000000  (ACTION_STARTUP = 0)
+dp_Arg2 (FileSysStartupMsg BPTR): 0x003A9E00  ✓
+dp_Arg3 at moment of handler reply: 0x00000000  (NULL)
+eb_MountList at 9.258s: BootNode for HOSTFS0 still present (pri=−128, bn_Flags=0x0001)
+```
+
+Conclusions confirmed: (1) `dn_Task = 0` before the Initial CLI ran any startup-sequence command →
+dos init does not start handlers. (2) `dp_Arg3 = NULL` via `last_writer` on the field → the BCPL
+dispatch (global 112) never writes a DeviceNode BPTR there. (3) The write to `dn_Task` came from ROM
+code in the Initial CLI context → `starthandler` writes `dn_Task` (before the handler process gets
+its first scheduled instruction, under Forbid during the CreateProc/PutMsg sequence).
+
+## 9.3 Who triggers the first HOSTFS0 start — CCP probe, full WB 1.3.3 ADF (2026-11-10) **[S]**
+
+Same Copperline configuration as §9.2, but with the **unmodified Workbench 1.3.3 ADF**
+(`build/copperline-ppaint/wb133-official.adf`, original `s/startup-sequence`). The dn_Task watchpoint
+was armed from cold start. The board's AddDosNode calls were also logged via breakpoints.
+
+```
+AddDosNode calls logged before dn_Task write:
+  t=2.88s  AddDosNode(pri=0,  flags=0, dn=board) task='exec.library'  → before-dos path
+  t=3.92s  AddDosNode(pri=0,  flags=0, dn=board) task='exec.library'  → before-dos path
+  (no AddDosNode with ADNF_STARTPROC in CLI context observed)
+dn_Task write:
+  t=9.44s  CurrentTask='Initial CLI'  cli_Module=0 (no external cmd)  Workbench task: absent
+Handler process entry (0xEA0008):
+  t=9.48s  CurrentTask='HOSTFS0'  (0.04s after dn_Task write)
+```
+
+**Conclusions**:
+- The two before-dos AddDosNode calls (exec.library context, t=2.88s, t=3.92s) are the board's
+  `rt_Init` during romboot — both before dos; no ADNF_STARTPROC after-dos call was observed.
+- The handler was started by the **deferred DeviceProc path** (access watchpoint only fired at the
+  *write* to `dn_Task`, not at any prior *read*; see §8 note).
+- The Workbench task **does not exist** at the moment `dn_Task` is written. The handler is started
+  while the **Initial CLI** is running and no external command is loaded, before the Workbench
+  task is ever scheduled. The exact cause is **open** (see §9.4).
+- Workbench therefore **sees the volume as already mounted** (dn_Task ≠ 0) when it first scans the
+  DosList, and shows the icon without triggering a handler start itself. This confirms
+  `workbench-task-v34.md` §3.3 is correct: Workbench only displays devices that are already live.
+- The dn_Task write happens under Forbid (before the handler process gets its first instruction
+  0.04s later), consistent with starthandler writing dn_Task under Forbid as part of the
+  CreateProc+Permit+PutMsg sequence (the handler process runs and calls WaitPort before PutMsg).
+
+## 9.4 dp_Arg1, device-sweep check, and trigger identification (2026-11-10) **[S]**
+
+Additional probes on the same real KS 1.3 + WB 1.3.3 configuration. Three experiments:
+
+**Startup packet dp_Arg1:**
+
+```
+dp_Arg1: BPTR that points into the Kickstart ROM image — a constant 1-character BSTR ('S'),
+         not related to "HOSTFS0" or any device name.  Garbage for the handler.
+dp_Arg2: dn_Startup = FileSysStartupMsg BPTR  (the only reliable field)
+dp_Arg3: NULL (0)   (confirmed again)
+```
+
+dp_Arg1 is **not a device name**: it is a residue from the BCPL calling convention — a pointer
+into the ROM that happened to hold a constant BSTR when the BCPL dispatcher saved the function
+arguments into the packet. Its content ('S') is not related to "HOSTFS0" or the deviceproc
+argument. **A V34 handler must not interpret dp_Arg1 and must use dp_Arg2 (FileSysStartupMsg)
+to locate its unit. [S]**
+
+**Device-sweep check:**
+
+Write watchpoints were placed on the dn_Task of **all 7 DLT_DEVICE nodes with dn_Task = 0**
+at the time of the trigger (PRT, PAR, SER, RAW, CON, RAM, HOSTFS0):
+
+| Device | dn_Task written at first trigger (~9.4s) | Later start |
+|---|---|---|
+| HOSTFS0 | YES (Initial CLI context) | — |
+| CON | No | Yes (~58s, Workbench opening its console) |
+| RAW | No | Yes (~58s, Workbench) |
+| SER | No | Yes (~58s, via Workbench/user) |
+| PAR | No | Yes (~58s) |
+| PRT | No | Yes (~58s) |
+| RAM | No | Yes (~46s, first RAM: access) |
+
+This confirms: the initial trigger is **not a sweep over all zero-task devices** but a targeted
+DeviceProc call for HOSTFS0 specifically. CON, RAW, SER, PAR, PRT, RAM are started later on
+their respective first accesses (RAM by user/Workbench at ~46s, the others by Workbench at ~58s).
+
+The selection criterion that distinguishes HOSTFS0 from the other zero-task devices is **unknown
+from this probe alone**. Possible candidates: HOSTFS0 has dn_Startup ≠ 0 (FileSysStartupMsg)
+while RAM does not; HOSTFS0 has dn_SegList ≠ 0 while PRT/PAR/SER have dn_SegList = 0 (they
+use a shared GV, not a loadable SegList). **[Uncertain]**
+
+**Timing: LoadWB vs endcli vs neither:**
+
+Three startup-sequence variants were run:
+```
+Variant A: echo * >SER: / LoadWB delay          → dn_Task written at t=9.23s
+Variant B: echo * >SER: / endcli >NIL:          → dn_Task written at t=9.23s
+Variant C: echo * >SER: / wait 60              → dn_Task written at t=9.25s (from §9.2)
+```
+
+All three fire at effectively the same emulated time (~9.2–9.4s), with CurrentTask = 'Initial
+CLI' and no external command loaded. The trigger is therefore **independent of both
+`LoadWB delay` and `endcli >NIL:`** and precedes both. It also cannot be `echo * >SER:`
+itself: in the same boot, SER:'s handler is not started until ~58s (via Workbench), so the
+SER: open at ~2s does not lead to HOSTFS0 being started at ~9.2s. The cause of the ~9.2s
+start is **not established by these probes**: the CLI's command-name buffer was freed at that
+time and the call chain was not traced. **[S — observation confirmed; cause open]**
 
 - [x] No instruction sequence transcribed or paraphrased; no ROM routine address (only
   offsets of public/private structures, ABI constants and hardware ranges).
 - [x] The probes cited are author code (`tests/`, header "ASSET DE TEST, PAS du code ROM").
 - [x] §9 (2026-11-05): debugger observations of list contents and device calls; breakpoint addresses not
   given; emulator RAM addresses only.
+- [x] §4.1 addition (2026-11-10): ROM disassembly observation that the chain walk does not read `bn_Flags`
+  — no instruction sequence given, only the structural fact that offset `$0E` of the BootNode is not
+  accessed in the loop.
+- [x] §4.2–§4.4 addition (2026-11-10): expansion.library AddDosNode: BCPL dispatch mechanics described as
+  observable ABI (function number 112, D1 = BPTR DeviceNode); no instruction sequences from the BCPL
+  code body; no ROM addresses. §4.4 startup packet from §3.1 of handlers-v34.md (now itself corrected
+  by probe).
+- [x] §9.2 (2026-11-10): Copperline CCP probe — only RAM addresses from guest memory, no ROM content.
+  dp_Arg3 observation via `last_writer` reports a write value and writing address in the guest address
+  space; the PC of the last write (a ROM address) is not given in the spec.
+- [x] §9.3 (2026-11-10): same probe constraints; timing figures, task names, and "absent Workbench
+  task" are observable state, not ROM analysis.
+- [x] §9.4 (2026-11-10): dp_Arg1 described as "points into the Kickstart ROM image, 1-char BSTR,
+  garbage" — no ROM address cited, no instruction sequences. Device-sweep and timing tables from
+  watchpoint/breakpoint stops; cause of ~9.2s trigger left open.
