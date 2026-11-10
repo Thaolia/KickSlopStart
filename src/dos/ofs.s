@@ -26,6 +26,8 @@
                 xdef    ofs_hash             ; OFS writing (ofswrite.s): hash index of a name
                 xdef    ofs_read_block       ; reading of a block (handler.s: hnd_bootclock)
                 xdef    ofs_namecmp          ; OFS writing: case-insensitive name comparison
+                xdef    ofs_div488           ; position -> data block index, beyond 65535 blocks
+                xdef    ofs_mul488
                 xdef    ofs_geo              ; geometry of the caller's partition
                 xdef    ofs_blk_valid        ; key inside the partition
 
@@ -404,8 +406,7 @@ ofs_fib_fill:
                 move.l  OFSB_FILESIZE(a0),d0
                 move.l  d0,FIB_SIZE(a1)
                 add.l   #OFS_DMAX-1,d0               ; data blocks = ceil(size / 488)
-                divu    #OFS_DMAX,d0
-                and.l   #$0000FFFF,d0
+                bsr     ofs_div488
                 move.l  d0,FIB_NUMBLOCKS(a1)
 .ff_name:
                 lea     OFSB_NAME(a0),a0
@@ -838,9 +839,8 @@ ofs_stream_seek:
                 cmp.l   #OFS_DMAX,d1
                 blo.s   .sk_ret                       ; within the current block
 .sk_direct:                                           ; block number k = pos / 488: header then extensions, 72 per block
-                move.l  d0,d4
-                divu    #OFS_DMAX,d4
-                and.l   #$FFFF,d4                     ; d4 = k
+                bsr     ofs_div488
+                move.l  d0,d4                         ; d4 = k
                 move.l  d4,d2
                 move.l  SS_TRACKDISK(a5),a2
                 lea     SS_IOREQ(a5),a3
@@ -865,8 +865,9 @@ ofs_stream_seek:
                 move.l  OFSB_HASHTAB(a0,d0.l),d1
                 beq.s   .sk_chain
                 move.l  d1,SS_CURBLK(a5)
-                mulu    #OFS_DMAX,d4
-                move.l  d4,SS_BLKBASE(a5)
+                move.l  d4,d0
+                bsr     ofs_mul488
+                move.l  d0,SS_BLKBASE(a5)
                 bra.s   .sk_ret
 .sk_chain:                                            ; unreadable table (end of file...): walk the chain
                 move.l  SS_POS(a5),d0
@@ -878,6 +879,35 @@ ofs_stream_seek:
                 movem.l (sp)+,d2-d4/a2-a3/a5
                 rts
 OFS_TABLE       EQU 72                        ; data block numbers per header / extension
+
+; ofs_div488(d0 = n) -> d0 = n / 488, d1 = n mod 488, in two divu steps so that the quotient may pass 65535 (a file
+; of more than 65535 data blocks on a hard disk partition). Preserves the rest.
+ofs_div488:
+                move.l  d2,-(sp)
+                move.l  d0,d1
+                clr.w   d1
+                swap    d1                            ; d1 = high word of n
+                divu    #OFS_DMAX,d1                  ; remainder : high word of the quotient
+                move.w  d1,d2
+                move.w  d0,d1                         ; remainder : low word of n (< 488 * 65536)
+                divu    #OFS_DMAX,d1
+                swap    d2
+                move.w  d1,d2                         ; d2 = quotient
+                clr.w   d1
+                swap    d1                            ; d1 = remainder
+                move.l  d2,d0
+                move.l  (sp)+,d2
+                rts
+; ofs_mul488(d0 = k) -> d0 = k * 488 (= k * 512 - k * 16 - k * 8) on 32 bits. Clobbers d1.
+ofs_mul488:
+                move.l  d0,d1
+                lsl.l   #3,d1                         ; k * 8
+                lsl.l   #8,d0
+                add.l   d0,d0                         ; k * 512
+                sub.l   d1,d0
+                add.l   d1,d1
+                sub.l   d1,d0                         ; - k * 16
+                rts
 
 ofs_td_name:
                 dc.b    "trackdisk.device",0

@@ -32,6 +32,23 @@ with 8-pixel columns of pens, partly covered by a second window, is ClipBlitted 
 then the cover window closes and every pixel of the destination is read back (`graphics-blitter-v34.md` §5.3 step
 3). Prints `CB FILL` (the fill, 0 expected) and `CB BAD` (wrong pixels after the copy). Success: `CLIPBLIT OK`.
 
+## Large files, moved disks, clipped lines, WaitTOF
+
+- `tests/bigfile_probe.sh <out_dir> [rom]`: a 40 MiB hardfile (DH0:) holding `huge`, 33,600,000 bytes whose long at
+  byte offset 4n is n, written on the host; `tests/bigfile_probe.s` prints Examine's size and block count, reads 8
+  bytes after Seek at five offsets (four past 65,535 data blocks), then writes 8 bytes in place (MODE_READWRITE). The
+  host checks the values, the written bytes and the partition with `ofs_check`. Success: `BIGFILE OK`.
+- `tests/fhmove_probe.sh <out_dir> [rom]`: three drives; `tests/fhmove_probe.s` reads DF1:longfile by 2 KB blocks,
+  then writes DF1:w in two lines 20 s apart, while the harness moves the data disk DF1 -> DF2 -> DF1 through IPC
+  during each part (`docs/analysis/disk-change-v34.md` §2.4.1). Screenshots `read_in_df2.png` / `write_in_df2.png`
+  must show "Please replace volume / Data3 / in unit  1"; the host checks the byte count and sum of the read and the
+  file w. Success: `FHMOVE OK`.
+- `tests/lineclip_probe.sh <out_dir> [rom]`: 1,000 pseudo-random lines in five modes (patterns, JAM2, COMPLEMENT,
+  ONE_DOT) in a window covered by two others; prints the drawing time (`LC TICKS`) and the plane fingerprints after
+  the covers close (`LC CKS`), to compare between two ROMs.
+- `tests/waittof_probe.sh <out_dir> [rom]`: runs `tests/waittof_probe.s` (WaitTOF return lines, VERTB chain cost;
+  `graphics-display-v34.md` §7.2/§7.4) and keeps its `WT` lines.
+
 ## trackdisk error codes
 
 `tests/tdcode_probe.sh <out_dir> [rom]` runs `tests/tdcode_probe.s` from the boot disk and ejects it through

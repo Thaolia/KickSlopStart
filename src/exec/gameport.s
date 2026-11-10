@@ -536,6 +536,23 @@ gp_unit_frame:
 .uf_mot:
         bsr     gp_readjoy           ; motion -> d4 = X, d5 = Y
         move.w  d0,d2
+        cmp.b   #GPCT_MOUSE,GU_TYPE(a3) ; a still mouse, the same buttons, nothing accumulated: no trigger but the
+        bne.s   .uf_slow             ; timeout (the usual frame, same result as the full path below)
+        cmp.w   GU_REF(a3),d2
+        bne.s   .uf_slow
+        cmp.w   GU_BTN(a3),d7
+        bne.s   .uf_slow
+        btst    #GUF_REL,GU_FLAGS(a3)
+        beq.s   .uf_slow
+        tst.w   GU_X(a3)
+        bne.s   .uf_slow
+        tst.w   GU_Y(a3)
+        bne.s   .uf_slow
+        move.w  GU_TRIG+2(a3),d0
+        beq     .uf_ret
+        cmp.w   GU_CNT(a3),d0
+        bhi     .uf_ret
+.uf_slow:
         cmp.b   #GPCT_MOUSE,GU_TYPE(a3)
         bne.s   .uf_joy
         move.w  GU_REF(a3),d3
@@ -762,7 +779,31 @@ gp_delta8:
 ; InputEvent (ie_Code = $68/$69/$6A down, | $80 up, $FF movement; ie_X=dx
 ; ie_Y=dy) and injects it into input.device (GP_INPUTBASE) via IND_WRITEEVENT. Updates GP_PREV_JOY/GP_PREV_BTN.
 ; a6 = SysBase on entry (reloaded via ($4).w), a6 = SysBase on exit. Preserves d2-d7/a2-a4 (VERTB server convention).
+; Same reading and the same three buttons as the last poll: nothing to emit, nothing to update (the usual frame).
 gp_poll:
+        cmp.w   GP_PREV_JOY,d0
+        bne.s   .gp_full
+        move.l  d2,-(sp)
+        btst    #6,d1               ; left: pressed when the PRA bit is 0
+        seq     d2
+        neg.b   d2
+        cmp.b   GP_PREV_BTN,d2
+        bne.s   .gp_full2
+        btst    #8,d1
+        sne     d2
+        neg.b   d2
+        cmp.b   GP_PREV_RBTN,d2
+        bne.s   .gp_full2
+        btst    #9,d1
+        sne     d2
+        neg.b   d2
+        cmp.b   GP_PREV_MBTN,d2
+        bne.s   .gp_full2
+        move.l  (sp)+,d2
+        rts
+.gp_full2:
+        move.l  (sp)+,d2
+.gp_full:
         movem.l d2-d7/a2-a4,-(sp)
         moveq   #0,d6
         move.w  d1,d6               ; d6 = CIAA_PRA + right button (saved before the gp_delta8 calls clobber d1)

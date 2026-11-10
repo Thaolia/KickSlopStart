@@ -1589,6 +1589,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **C7 and C10 leftovers (2026-11-10)**: REMAINING-WORK C7, C10; ARCHITECTURE "File system and graphics
+  leftovers". New probes: `tests/bigfile_probe.sh` (33.6 MB file on a 40 MiB hardfile: Examine, Seek+Read past
+  65,535 blocks, in-place write; BIGFILE OK, the previous ROM failed), `tests/fhmove_probe.sh` (three drives, data
+  disk moved DF1 -> DF2 -> DF1 during a read and a write: "Please replace volume / Data3 / in unit  1" on both
+  screenshots, read complete with the host's sum, file "line one\nline two\n"; FHMOVE OK, the previous ROM failed
+  the read with 218 at once), `tests/lineclip_probe.sh` (fingerprints equal to HEAD's, 1,348 ticks against 1,767),
+  `tests/waittof_probe.sh` (harness for the existing probe: VERTB chain end $0E, WaitTOF min $10), gels G9c (POS
+  $2C59 CTL $3001, image + 8, nextLine 6). 1.3 oracle by an analysis agent: disk-change §2.4.1. Unchanged:
+  writeback_probe DF1 bitmap moved 881 -> 1429, DH0, OFS CHECK OK, 66 identical files; hdfs_probe 40 MiB OK;
+  clipblit_probe 0; gtext_probe identical to HEAD; gline_probe identical to HEAD apart from lost serial
+  characters and L7 DMACONR $43F0 (BBUSY still set on return, which §8 expects; HEAD gave $03F0). prepush-check
+  (dev) FAIL=0, Lemmings menu looked at. Left: 512-byte blocks only, FINDINPUT handles read-only, Cancel on the
+  unit requester, vp_DyOffset in VSprite VSTART, patterned lines by the CPU.
   **Caesar title glitches, seek masking (2026-11-10)**: user report after v0.2.40 ("video glitches after the language
   choice" in Caesar). Reproduced under Amiberry with 50 captures at 1 Hz after the language click: about a third
   garbled on v0.2.40, 3-5 on v0.2.39; the analysis track's probe of the real 1.3 shows none

@@ -1677,6 +1677,82 @@ ln_draw:
         moveq   #0,d3
         moveq   #0,d6
         moveq   #0,d7                ; d7 = inside the ClipRect already
+        tst.b   LN_CLIP(a4)          ; a clipped piece starts where the major coordinate enters the ClipRect: after
+        beq     .sk_done             ; k steps the minor axis moved j = (2m.k + M) / 2M times and the error is
+        move.w  LN_M(a4),d4          ; e0 + 2m.k - 2M.j (it stays within [2m - 2M, 2m)), so the walk jumps there
+        beq     .sk_done
+        cmp.w   #$4000,d4            ; 2M must fit a divu divisor
+        bhs     .sk_done
+        tst.b   LN_XMAJ(a4)
+        beq.s   .sk_ym
+        move.w  d0,d4                ; d4 = major coordinate, d5/d6 = ClipRect range, d7 = major step
+        move.w  LN_MINX(a4),d5
+        move.w  LN_MAXX(a4),d6
+        move.w  LN_SX(a4),d7
+        bra.s   .sk_k
+.sk_ym:
+        move.w  d1,d4
+        move.w  LN_MINY(a4),d5
+        move.w  LN_MAXY(a4),d6
+        move.w  LN_SY(a4),d7
+.sk_k:
+        tst.w   d7
+        bmi.s   .sk_neg
+        sub.w   d4,d5                ; k = lo - c0
+        ble.s   .sk_none
+        bra.s   .sk_have
+.sk_neg:
+        move.w  d4,d5
+        sub.w   d6,d5                ; k = c0 - hi
+        ble.s   .sk_none
+.sk_have:
+        cmp.w   LN_NPIX(a4),d5
+        bhs     .ld_ret              ; the whole line is before the ClipRect
+        move.w  LN_M2(a4),d6
+        mulu    d5,d6                ; 2m.k
+        moveq   #0,d7
+        move.w  LN_M(a4),d7
+        add.l   d7,d6
+        add.w   d7,d7                ; 2M
+        divu    d7,d6                ; d6.w = j
+        ext.l   d2
+        move.w  LN_M2(a4),d4
+        mulu    d5,d4
+        add.l   d4,d2
+        move.w  d6,d4
+        mulu    d7,d4
+        sub.l   d4,d2                ; e
+        move.w  d5,d3                ; k
+        move.w  d5,d4                ; d4 = |dx|, d6 = |dy|
+        tst.b   LN_XMAJ(a4)
+        bne.s   .sk_xm
+        exg     d4,d6
+.sk_xm:
+        tst.w   LN_SX(a4)
+        bpl.s   .sk_dx
+        neg.w   d4
+.sk_dx:
+        add.w   d4,d0
+        tst.w   LN_SY(a4)
+        bpl.s   .sk_dy
+        neg.w   d6
+.sk_dy:
+        add.w   d6,d1
+        muls    LN_BPR(a4),d6
+        adda.l  d6,a3
+        moveq   #0,d7
+        moveq   #0,d6                ; the step into point k was minor if e < 4m - 2M (ONE_DOT)
+        move.w  LN_M2(a4),d4
+        add.w   LN_MM2(a4),d4
+        cmp.w   d4,d2
+        bge.s   .sk_mj
+        st      d6
+.sk_mj:
+        bra     .ld_pt               ; the start pixel lay before the ClipRect: no LN_PRE inversion
+.sk_none:
+        moveq   #0,d6
+        moveq   #0,d7
+.sk_done:
         tst.b   LN_PRE(a4)
         beq.s   .ld_pt
         bsr     ln_in
@@ -3569,7 +3645,8 @@ TL_GMAX         EQU 30               ; WORD: right edge of the glyph images
 TL_GW           EQU 32               ; WORD: width of the current glyph
 TL_STY          EQU 34               ; WORD: algorithmic styles
 TL_ROW          EQU 36               ; WORD: current row
-TL_FRAME        EQU 38
+TL_OWN          EQU 38               ; BYTE: the buffer was allocated here (not the RastPort's TmpRas)
+TL_FRAME        EQU 40
 tx_line:
         movem.l d2-d7/a1-a4/a6,-(sp)
         lea     -TL_FRAME(sp),sp
@@ -3689,12 +3766,31 @@ tx_line:
         mulu    tf_YSize(a2),d1
         move.l  d1,TL_SIZE(a3)
         beq     .tl_ret
+        sf      TL_OWN(a3)
+        move.l  rp_TmpRas(a1),d0     ; the RastPort's TmpRas when it is big enough (graphics-text §7.3), cleared
+        beq.s   .tl_alloc
+        move.l  d0,a0
+        move.l  tr_RasPtr(a0),d0
+        beq.s   .tl_alloc
+        cmp.l   tr_Size(a0),d1
+        bhi.s   .tl_alloc
+        move.l  d0,TL_BUF(a3)
+        move.l  d0,a0
+        lsr.l   #1,d1                ; even size: rows of whole words
+.tl_clr:
+        clr.w   (a0)+
+        subq.l  #1,d1
+        bne.s   .tl_clr
+        bra.s   .tl_have
+.tl_alloc:
+        st      TL_OWN(a3)
         move.l  d1,d0
         move.l  #MEMF_PUBLIC|MEMF_CLEAR,d1
         move.l  ($4).w,a6
         jsr     LVO_ALLOCMEM(a6)
         move.l  d0,TL_BUF(a3)
         beq     .tl_ret
+.tl_have:
         moveq   #0,d2                ; pass 2: glyphs
         moveq   #0,d5
 .p2:
@@ -3828,6 +3924,8 @@ tx_line:
         sub.w   TL_X0(a3),d4         ; xSize
         move.w  tf_YSize(a2),d5      ; ySize
         bsr     gfx_BltTemplate
+        tst.b   TL_OWN(a3)
+        beq.s   .tl_ret
         move.l  TL_BUF(a3),a1
         move.l  TL_SIZE(a3),d0
         move.l  ($4).w,a6

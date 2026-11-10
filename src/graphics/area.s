@@ -39,8 +39,6 @@ ai_Count        EQU 16
 ai_MaxCount     EQU 18
 ai_FirstX       EQU 20
 ai_FirstY       EQU 22
-tr_RasPtr       EQU 0
-tr_Size         EQU 4
 LY_BOUNDS       EQU 16               ; Layer.bounds: MinX, MinY, MaxX, MaxY
 LY_LOCK         EQU 72               ; Layer.Lock (SignalSemaphore)
 LVO_READPIXEL   EQU -318

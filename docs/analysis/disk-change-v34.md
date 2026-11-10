@@ -278,6 +278,70 @@ DISKINSERTED seen at boot after `LoadWB delay` / MountMF.) [O probe for the boot
   `Copy` **never returned** (still waiting for its packet reply 65 s later; the file systems and the CLI all
   waiting, no CPU activity). Reproduced in a fresh session. [O; cause not analysed]
 
+#### 2.4.1 Open FileHandle whose disk moves to another drive (probe 2026-11-10)
+
+Method: real ROM, headless Amiberry (`amiberry-session start --analysis`, cycle-exact A500, 512 KB chip +
+512 KB slow), **three drives** (`-s nr_floppies=3 -s floppy2type=0`: without `floppy2type` the third drive
+is not seen and `DF2:` is not mounted). DF0 = copy of the Workbench 1.3.3 boot disk whose startup-sequence
+only runs SetPatch and leaves the boot CLI open; DF1 = blank OFS disk made with `xdftool`, volume `Data3`,
+holding a 200,025-byte text file `longfile` (3,175 numbered lines); DF2 = a scratch disk ejected after boot,
+so DF2 is mounted and empty. Floppies moved with IPC `EJECT_FLOPPY` / `INSERTFLOPPY`, the **same image** being
+inserted in the other drive about 2 s after the ejection. Screens read on IPC screenshots; the DosList
+(volume node `dl_Task`, `dl_LockList`) read through IPC memory reads; disk contents read with `xdftool`
+after the run. Times are wall-clock at normal emulator speed. Four fresh sessions, a fresh copy of the data
+disk each.
+
+**Main result**: the open FileHandle **stays bound to the file system of the drive it was opened on**
+(DF1, unit 1). It does **not** follow the volume to DF2, although the DF2 file system **takes over the volume
+node** (see below). Every access through that FileHandle waits behind a "Please replace volume" requester
+naming the **original unit**, which closes on its own only when the disk is back in **that** drive.
+
+1. **Volume node** [O, three sessions]: while the disk is out, the `Data3` node stays in the DosList with
+   `dl_Task = 0` and a non-zero `dl_LockList` (the open file keeps a lock, §2.2.1 point 3). When the disk
+   is inserted in DF2, the DF2 file system's validator finds that node (same name and date) and **reuses
+   it**: `dl_Task` = DF2's handler port, `dl_LockList = 0` (locks re-adopted by DF2's file system, as in
+   §2.2.2). `Info` then lists "DF2: … Data3", "DF1: No disk present"; a path through the volume name
+   (`List Data3:`) is served by DF2 normally. Moving the disk back to DF1 flips the node again: out of
+   DF2 → `dl_Task = 0` with a lock list; in DF1 → `dl_Task` = DF1's port, `dl_LockList = 0`.
+2. **Writing** (`Copy * DF1:w`, "line one" + Return, 5 s idle so that the write-back is done, ejection,
+   insertion in DF2, then "line two" + Return): no requester at the ejection or at the insertion (the file
+   was idle). The next write gives **"Please replace volume / Data3 / in unit  1"** (same text, spacing and
+   320 × 72 "System Request" frame at (0, 0) as §2.4; unit **1**, not 2), Retry / Cancel.
+   - With the disk sitting in DF2 it **does not close on its own** (still up after > 40 s). **Retry**: the
+     requester disappears and reappears at once (screenshots 0.15 s apart).
+   - **Disk moved back to DF1** while the requester is up: it **closes on its own** 4 to 6 s after the
+     insertion (the revalidation time), without a click, and the write completes. After Ctrl-\ (the console
+     window must be made active again: keys typed while the requester was up went to the requester window),
+     `Copy` returned normally. File `w` = "line one\nline two\n" (18 bytes), root bitmap flag valid (−1). [O]
+   - **Cancel** with the disk in DF2 (second session): the requester comes back once; a second Cancel makes
+     `Copy` print **"Error while Writing"**, then a **"No disk present / in unit  1"** requester (two text
+     lines, Retry / Cancel) appears; Cancel on it returns to the prompt. Afterwards the disk holds the file `w` whose header says **size 0**
+     but whose data table lists **one data block containing "line one\n"** (written by DF1's write-back before the
+     ejection [D]); "line two" is lost. Bitmap flag valid (−1). The 1.3 `List Data3:`
+     shows `w` as "empty"; `xdftool` reports a block-count mismatch for it. Which call raised the
+     "No disk present" requester (the close of the FileHandle, or `Copy`'s next access) was not
+     established [S: the close, answered by the DF1 file system with no disk in its drive].
+3. **Reading** (`type DF1:longfile`, ejection about 6 s after the start, at line 52, insertion in DF2):
+   the requester **"Please replace volume / Data3 / in unit  1"** appears within 2 s of the ejection (no
+   "You MUST replace" requester: the ejection fell between reads, §2.2.1 point 2); output stops.
+   - With the disk in DF2: the requester stays (> 25 s).
+   - **Disk moved back to DF1**: the requester closes on its own 6 to 8 s after the insertion and `Type`
+     **resumes exactly where it stopped** (line 52 followed by line 53, no gap, no repeat) and runs to the
+     last line (03174) and the prompt. [O]
+   - **Cancel** with the disk in DF2 (separate session): the output first advances to the middle of
+     line 53 (3,400 bytes into the file) and the requester comes back; a second Cancel ends `Type` **without any error message**, back to the prompt. [O]
+4. **Consequence for an implementation** [D]: the file system keeps owning its FileHandles (and the locks
+   inside them) per drive; there is no hand-over of an open file between file system instances. A packet
+   on a FileHandle whose volume is not mounted in **its** drive is refused (Res2 = 218, §2.4) even when the
+   volume is mounted elsewhere, and dos turns that into the "replace volume … in unit N" requester with
+   the FileHandle's own unit. The volume node, in contrast, is shared: the validator of whichever drive
+   gets the disk re-adopts the node and its lock list.
+5. Not probed: a **lock** (not a FileHandle) kept across the move, e.g. `Examine` on a `Lock("Data3:")`
+   taken while the disk was in DF1 and used while it sits in DF2 [S: refused by DF1's file system like a
+   FileHandle, giving "in any drive" as in the `Examine` case above, since the lock list was handed to
+   DF2 but the lock's `fl_Task` still names DF1; not verified]; the "You MUST replace volume" case
+   (ejection during a transfer) followed by insertion in another drive.
+
 ### 2.5 Revalidation on insertion (A5) [O ROM + O probe]
 
 - **Every** insertion relaunches the **Validator** process (segarray entry 7, `boot-clock-v34.md` §1):

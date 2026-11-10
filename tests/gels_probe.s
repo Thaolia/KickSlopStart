@@ -118,6 +118,7 @@ VP_SPRINS  EQU $0C
 VP_CLRINS  EQU $10
 VP_DWIDTH  EQU $18
 VP_DHEIGHT EQU $1A
+VP_MODES   EQU $20
 GB_ACTIVIEW EQU $22
 GB_VBLANK  EQU $A0
 GB_SPRRES  EQU $A6
@@ -849,6 +850,32 @@ g9:             movem.l d2-d7/a2-a3,-(sp)
                 DRAW
                 PRS     "G9b sprRsrvd=0C"
                 moveq   #3,d7
+                bsr     g9pr
+                ; G9c: HIRES ViewPort, a VSprite partly above the BitMap (X 101, Y -2, H 6): the two rows above are
+                ; clipped (graphics-gels §5.8: POS $2C59, CTL $3001, SPRxPT = ImageData + 8 bytes)
+                bsr     newgels
+                moveq   #24,d0
+                bsr     newblk
+                move.l  a0,vimg-vars(a4)
+                lea     nline-vars(a4),a0
+                moveq   #11,d0
+.nl9c:          move.l  #$55555555,(a0)+
+                dbra    d0,.nl9c
+                move.b  #$FC,gi+GI_RSRVD-vars(a4)
+                move.w  #$8000,vp+VP_MODES-vars(a4)
+                moveq   #-2,d0
+                moveq   #101,d1
+                moveq   #6,d2
+                sub.l   a0,a0
+                bsr     mkvsp
+                move.l  a2,a0
+                moveq   #'a',d0
+                bsr     regn
+                move.l  a2,vsl-vars(a4)
+                DRAW
+                clr.w   vp+VP_MODES-vars(a4)
+                PRS     "G9c hires y=-2"
+                moveq   #0,d7
                 bsr     g9pr
                 movem.l (sp)+,d2-d7/a2-a3
                 rts

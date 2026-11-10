@@ -124,7 +124,9 @@ bm_SIZEOF    EQU 40
 rp_Layer     EQU 0            ; RastPort (graphics/rastport.i, V34)
 rp_BitMap    EQU 4
 rp_AreaPtrn  EQU 8            ; APTR: fill pattern (SetAfPt) | 0
-rp_TmpRas    EQU 12           ; APTR: TmpRas (AreaEnd, Flood) | 0
+rp_TmpRas    EQU 12           ; APTR: TmpRas (AreaEnd, Flood, Text's line buffer) | 0
+tr_RasPtr    EQU 0            ; struct TmpRas: the buffer, its size
+tr_Size      EQU 4
 rp_AreaInfo  EQU 16           ; APTR: AreaInfo (AreaMove/AreaDraw/AreaEnd)
 rp_Mask      EQU 24
 rp_FgPen     EQU 25

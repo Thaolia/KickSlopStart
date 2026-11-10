@@ -159,7 +159,7 @@ graphics_vectors:                    ; ABSOLUTE table, vector N -> LVO -6*N, com
         dc.l    gfx_QBlit                ; 46: LVO -276 QBlit(bltnode a1)
         dc.l    gfx_InitArea             ; 47: LVO -282 InitArea(areaInfo a0, buffer a1, maxVectors d0)
         dc.l    gfx_SetRGB4              ; 48: LVO -288 SetRGB4(vp a0, n d0, r d1, g d2, b d3)
-        dc.l    gfx_QBlit                ; 49: LVO -294 QBSBlit(bltnode a1): like QBlit (spec §9.4, gb_VBlank = 0)
+        dc.l    gfx_QBSBlit              ; 49: LVO -294 QBSBlit(bltnode a1)
         dc.l    gfx_BltClear             ; 50: LVO -300 BltClear(memory a1, size d0, flags d1)
         dc.l    gfx_RectFill             ; 51: LVO -306
         dc.l    gfx_BltPattern           ; 52: LVO -312 BltPattern(rp a1, mask a0, xl d0, yl d1, maxX d2, maxY d3, bpr d4)
@@ -1892,11 +1892,26 @@ gfx_WaitBlit:
 ; QBlit(bltnode a1) / QBSBlit(bltnode a1) (spec graphics-blitter-v34 §9): the node's function is called right
 ; away, in the caller's context (A0 = $DFF000, A1 = node, A6 = GfxBase), and called again with the blitter idle as
 ; long as it returns Z = 0; then, blitter idle, cleanup if stat & CLEANUP. Deviation: a blit in progress is awaited
-; instead of being relayed by the BLIT interrupt, and QBSBlit does not wait for the beam (like 1.3 outside GELs).
+; instead of being relayed by the BLIT interrupt.
 BN_FUNCTION     EQU 4
 BN_STAT         EQU 8
 BN_CLEANUP      EQU $E
 BNB_CLEANUP     EQU 6
+; QBSBlit waits, in the caller, for the beam to reach the node's beamsync line while gb_VBlank says that DrawGList
+; ran in this frame; a new frame (gb_VBlank cleared by the VBlank server) ends the wait, as 1.3's synchronised queue
+; is then run without waiting. Without GELs it is QBlit (spec §9.4). Line 0 counts as MaxDisplayRow + 1.
+BN_BEAMSYNC     EQU $C
+gfx_QBSBlit:
+        tst.b   gb_VBlank(a6)
+        beq.s   gfx_QBlit
+        bsr     gfx_VBeamPos
+        tst.w   d0
+        bne.s   .qs_line
+        move.w  gb_MaxDisplayRow(a6),d0
+        addq.w  #1,d0
+.qs_line:
+        cmp.w   BN_BEAMSYNC(a1),d0
+        blo.s   gfx_QBSBlit
 gfx_QBlit:
         movem.l a2/a5-a6,-(sp)
         move.l  a1,a2                ; a2 = node
@@ -1930,7 +1945,7 @@ gfx_OwnBlitter:
         move.l  ($4).w,a6
         jsr     LVO_OBTAINSEMAPHORE(a6)
         move.l  (sp)+,a6
-        bra.s   gfx_WaitBlit
+        bra     gfx_WaitBlit
 
 ; gfx_DisownBlitter(): releases the blitter. No effect if the current task does not own it.
 gfx_DisownBlitter:

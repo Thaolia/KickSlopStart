@@ -73,6 +73,7 @@ OW_SIZE         EQU OW_RB+OFS_BSIZE
 ; one bitmap block in memory
 BME_KEY         EQU 0             ; LONG: its block
 BME_DIRTY       EQU 4             ; BYTE: modified since written
+BME_MOVED       EQU 5             ; BYTE: already given a new block for the coming write-back (ow_bmmove)
 BME_DATA        EQU 8             ; the 512-byte block (checksum at long 0)
 BME_SIZE        EQU BME_DATA+OFS_BSIZE
 

@@ -193,11 +193,20 @@ soft-kicked boot, as 1.3 would. The dev ROM booted with no disk at all reaches t
 
 Done 2026-11-09: DF2: and DF3: are mounted, writes to DF1: are exercised by `tests/writeback_probe.sh`, ExNext is
 stateless (rom-filesystem §4), locks of an ejected volume go to `dl_LockList` and come back to the drive that sees
-the disk again. Left in the file system:
-- only 512-byte blocks;
-- files over 65,535 data blocks (about 32 MB) are not followed;
-- the bitmap block does not move at each write-back (matters only for block-exact image comparisons);
-- an open file whose disk moves to another drive stays with the first drive's handler.
+the disk again.
+Done 2026-11-10: files over 65,535 data blocks (block counts and positions divided in two steps,
+`tests/bigfile_probe.sh`: a 33.6 MB file on a 40 MiB partition read, sought and rewritten in place); each modified
+bitmap block moves to a newly allocated block at the write-back, the old one freed and the root's entry updated
+(`tests/writeback_probe.sh`: DF1 bitmap 881 -> 1429); an open FileHandle whose disk moves to another drive stays with
+the handler that opened it, as on 1.3 (disk-change §2.4.1): every access waits behind "Please replace volume /
+<name> / in unit  n" naming that handler's unit, even while another drive holds the volume, and resumes once the disk
+is back in that drive (`tests/fhmove_probe.sh`). Until then a refused READ/WRITE/SEEK (Res1 = -1) never reached the
+requester and failed at once with 218. Left in the file system:
+- only 512-byte blocks (1.3 reads `de_SizeBlock`; every OFS offset, buffer and table size here assumes 128 longs);
+- a FINDINPUT (MODE_OLDFILE) handle is read-only (WRITE -> 212), while rom-filesystem §5.1 says 1.3 accepts writes
+  on it;
+- Cancel on the "in unit  n" requester fails the access at once; 1.3 shows the requester once more first, and a
+  cancelled `Copy` then meets "No disk present / in unit  n" (§2.4.1 point 2).
 
 ### C8. console.device — done 2026-11-09
 
@@ -236,12 +245,17 @@ replies −4, MULTIBROADCAST events go to every unit, and a write keeps the unit
 
 Done 2026-11-10: GfxBase BlitLock, CloseFont of a removed font (replied once, at 0 accessors, NT_FREEMSG without a
 port), ClipBlit's ClipRect order and same-BitMap pieces (`tests/clipblit_probe.sh`). rp_minterms are read by
-RectFill and the line engines since PRs #30/#32. Left:
-- QBSBlit is the same as QBlit.
-- TmpRas is not used as Text's line buffer.
-- VSprites go through our own SprIns stream, and one partly above its ViewPort is not clipped.
-- The VERTB chain costs about 19 lines.
-- Patterned lines and clipped line pieces are not accelerated.
+RectFill and the line engines since PRs #30/#32.
+Done the same day: QBSBlit waits (busy, as long as the VBlank server runs) until the beam reaches `bn_BeamSync` before
+it queues like QBlit; Text takes its line buffer from `rp_TmpRas` when it is large enough, and allocates one
+otherwise; a VSprite partly above its ViewPort was already clipped (`tests/gels_probe.sh` vector G9c, gels §5.8);
+the gameport VERTB server returns at once when nothing moved, which brings the end of the VERTB chain from line 19 to
+line 14 and WaitTOF's earliest return from line 18 to 16 (1.3: 12; `tests/waittof_probe.sh`); a clipped line piece
+starts at the first point whose major coordinate is inside its ClipRect instead of walking from the line's start
+(`tests/lineclip_probe.sh`: same pixels, 24 % less time for 1,000 patterned lines in a covered window). Left:
+- VSTART of a VSprite includes `vp_DyOffset`, which gels §5.8 says 1.3 does not add.
+- The rest of the VERTB cost is gameport's input injection and unit emulation, which 1.3 does not run there.
+- Patterned lines are walked by the CPU; only solid lines use the blitter's line mode.
 
 ### C11. Coldstart — done 2026-11-10 but one point
 

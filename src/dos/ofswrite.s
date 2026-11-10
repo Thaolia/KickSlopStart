@@ -34,6 +34,7 @@
                 xref    ofs_name_to_block
                 xref    ofs_hash
                 xref    ofs_namecmp
+                xref    ofs_div488
                 xref    ofs_geo              ; ofs.s: geometry of the handler's partition
                 xref    dv_rebuild           ; diskvalidator.s: bitmap rebuilt from the directory tree
                 xdef    ow_mount
@@ -300,6 +301,7 @@ ow_bmwrite:
         tst.l   d0
         beq.s   .sy_ret              ; not written (no floppy): still to write at the next write-back
         sf      BME_DIRTY(a2)
+        sf      BME_MOVED(a2)
 .sy_next:
         lea     BME_SIZE(a2),a2
 .sy_nx:
@@ -421,6 +423,7 @@ ow_bmload:
 ow_writeback:
         move.l  a2,-(sp)
         move.l  a0,a2                ; a2 = the root block
+        bsr     ow_bmmove
         bsr     ow_bmwrite
         tst.l   d0
         beq.s   .wb_ret
@@ -439,6 +442,54 @@ ow_writeback:
         bsr     ow_io
 .wb_ret:
         move.l  (sp)+,a2
+        rts
+
+; ow_bmmove(a2 = root block, a5, a6): as on 1.3 (rom-filesystem §8.3), each modified bitmap block among the 25 of
+; the root's table moves to a newly allocated block (upward search from the root, like a header), its old block is
+; freed and the root's entry follows. An allocation or a freeing that modifies another bitmap block moves that one
+; too (another pass). No free block: it stays where it is. Preserves d2-d7/a2-a6.
+ow_bmmove:
+        movem.l d2-d4/a3,-(sp)
+        move.l  OW_ERR(a5),-(sp)     ; a full disk here is not an error of the current packet
+        tst.l   OW_BMST(a5)
+        ble.s   .mv_ret
+.mv_pass:
+        moveq   #0,d4                ; d4 = a block moved in this pass
+        move.l  OW_BMTAB(a5),a3
+        move.l  OW_BMN(a5),d2
+        moveq   #25,d0
+        cmp.l   d0,d2
+        bls.s   .mv_cnt
+        move.l  d0,d2                ; entries past the root's table (extension blocks) stay in place
+.mv_cnt:
+        moveq   #0,d3                ; d3 = offset of the root's entry
+        bra.s   .mv_nx
+.mv_lp:
+        tst.b   BME_DIRTY(a3)
+        beq.s   .mv_next
+        tst.b   BME_MOVED(a3)
+        bne.s   .mv_next
+        st      BME_MOVED(a3)
+        bsr     ow_alloc
+        tst.l   d0
+        beq.s   .mv_next
+        lea     OFSB_BMPAGES(a2),a0
+        move.l  d0,0(a0,d3.l)
+        move.l  BME_KEY(a3),d1
+        move.l  d0,BME_KEY(a3)
+        move.l  d1,d0
+        bsr     ow_free
+        moveq   #1,d4
+.mv_next:
+        lea     BME_SIZE(a3),a3
+        addq.l  #4,d3
+.mv_nx:
+        dbra    d2,.mv_lp
+        tst.l   d4
+        bne.s   .mv_pass
+.mv_ret:
+        move.l  (sp)+,OW_ERR(a5)
+        movem.l (sp)+,d2-d4/a3
         rts
 
 ; ow_bmalloc(a5, root block in B1) -> d0 = 1 / 0 (OW_ERR: 103 no memory, 213 a key outside the partition): the
@@ -1428,14 +1479,11 @@ ws_openold:
         cmp.l   #OFS_ST_FILE,OFSB_SECTYPE(a0)
         bne     ws_ofail
         move.l  OFSB_FILESIZE(a0),d0
-        cmp.l   #$FFFF*OFS_DMAX,d0
-        bhi     ws_ofail             ; more data blocks than a 16-bit block index: not a header we can follow
         move.l  d6,WS_HDR(a3)
         move.l  OFSB_FIRSTDATA(a0),WS_FIRST(a3)
         move.l  d0,WS_SIZE(a3)
         add.l   #OFS_DMAX-1,d0
-        divu    #OFS_DMAX,d0
-        and.l   #$FFFF,d0
+        bsr     ofs_div488
         move.l  d0,WS_NBLK(a3)       ; full blocks but the last
         moveq   #0,d1
         tst.l   d0
@@ -1715,12 +1763,8 @@ ws_write:
         bra     .ww_ok
 .ww_lp:
         move.l  WS_POS(a3),d0
-        divu    #OFS_DMAX,d0
-        moveq   #0,d5
-        swap    d0
-        move.w  d0,d5                ; d5 = offset in the block
-        clr.w   d0
-        swap    d0                   ; d0 = block index
+        bsr     ofs_div488           ; d0 = block index
+        move.l  d1,d5                ; d5 = offset in the block
         cmp.l   WS_NBLK(a3),d0
         blo     .ww_have
         bsr     ws_append
@@ -1802,12 +1846,8 @@ ws_read:
         beq     ws_rwerr
 .wr_lp:
         move.l  WS_POS(a3),d0
-        divu    #OFS_DMAX,d0
-        moveq   #0,d5
-        swap    d0
-        move.w  d0,d5                ; d5 = offset in the block
-        clr.w   d0
-        swap    d0                   ; d0 = block index
+        bsr     ofs_div488           ; d0 = block index
+        move.l  d1,d5                ; d5 = offset in the block
         bsr     ws_dload
         tst.l   d0
         beq     ws_rwerr

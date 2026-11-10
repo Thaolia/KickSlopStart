@@ -2233,6 +2233,30 @@ differs.
   language choice) and Amiberry watches on the custom registers (BPLxPT written by the game's handler every
   frame, copper idle). The real 1.3 shows the title clean apart from a one-second palette ramp
   (docs/analysis/caesar-boot.md §4); ours now does the same.
+  **File system and graphics leftovers (2026-11-10)**: REMAINING-WORK C7, C10.
+  - Large files (`ofs.s`, `ofswrite.s`): `ofs_div488` divides a 32-bit byte count or position by 488 in two `divu`
+    steps (32-bit quotient, remainder in d1) and `ofs_mul488` multiplies by shifts; fib_NumBlocks, Seek, Read and
+    Write use them, and the 65,535-block guard of an old file opened for writing is gone.
+  - Bitmap moves (`ow_bmmove`, start of `ow_writeback`): each modified bitmap block among the root's 25 gets a newly
+    allocated block before it is written, the old one is freed and the root entry updated, repeated until no
+    allocation moved another bitmap block (`BME_MOVED`, cleared by `ow_bmwrite`); OW_ERR is kept across it.
+  - Moved disks (`dos_pktretry`, `src/dos/dos_lib.s`): a 218 refusal of READ/WRITE/SEEK (Res1 −1) now reaches the
+    requester, which names the refusing handler's unit ("in unit  n", from ACTION_CURRENT_VOLUME) and comes back
+    after each Retry or disk insertion until the volume is mounted by **that** handler (its port in `dl_Task`);
+    a lock keeps "in any drive" and no requester once the volume is mounted anywhere (disk-change §2.4, §2.4.1).
+  - QBSBlit (`gfx_QBSBlit`, `graphics_lib.s`): while the VBlank server runs it busy-waits until VBeamPos (0 up to
+    MaxDisplayRow + 1) reaches `bn_BeamSync`, then queues like QBlit. Text (`draw.s`) uses `rp_TmpRas` as its line
+    buffer when its size is at least the line's, clearing it word by word, and frees only a buffer it allocated.
+  - gameport VERTB server (`src/exec/gameport.s`): `gp_poll` returns at once when JOY0DAT and the three buttons are
+    unchanged, and a still relative mouse with nothing accumulated and its timeout not reached skips the unit
+    work. `tests/waittof_probe.sh`: end of the VERTB chain line 14 (was 19), WaitTOF's earliest return line 16 (18;
+    1.3: 12).
+  - Clipped lines (`ln_draw`, `draw.s`): a piece of a clipped line jumps to the first point whose major
+    coordinate enters its ClipRect: after k major steps the minor axis moved j = (2m.k + M) / 2M times and the
+    error term is e0 + 2m.k − 2M.j, which stays in [2m − 2M, 2m) as in the step-by-step walk; the step into that
+    point was minor when e < 4m − 2M (ONE_DOT), and the start pixel's COMPLEMENT pre-inversion is skipped since
+    it lies before the ClipRect. Lines with M ≥ $4000 keep the walk. `tests/lineclip_probe.sh`: same plane
+    fingerprints as the previous ROM, 1,348 ticks against 1,767.
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

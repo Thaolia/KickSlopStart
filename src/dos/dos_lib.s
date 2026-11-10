@@ -1715,40 +1715,79 @@ dos_volreq:
         bsr     vr_req
         movem.l (sp)+,a0-a1
         rts
-; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2 of a replied packet) -> d0 = true if it must be resent: 218 refusal from the
-; DF0: handler for a lock or file of an ejected volume (HND_REFVOL) -> "Please replace volume / <name> /
-; in any drive" requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry. Other
-; failures go to dos_errreq (a4 = the packet). Preserves d1-d7/a0-a6.
+; dos_pktretry(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket) -> d0 = true if it must be resent: 218 refusal
+; from a floppy handler for a lock or file of an ejected volume (HND_REFVOL) -> "Please replace volume / <name> /
+; ..." requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry.
+; A lock: third line "in any drive", no requester once the volume is mounted again. A FileHandle (READ, WRITE,
+; SEEK) stays bound to the handler that opened it (§2.4.1): third line "in unit  n" of that handler, and the
+; requester comes back until the volume is mounted in that drive, even while another drive holds it.
+; Other failures go to dos_errreq. Preserves d1-d7/a0-a6.
 dos_pktretry:
-        tst.l   d0
-        bne.s   .pr_no
         cmp.l   #ERROR_DEVICE_NOT_MOUNTED,d1
-        bne.s   .pr_no
+        bne     dos_errreq
+        movem.l d1-d3/a0-a2/a4,-(sp)
+        move.l  DP_TYPE(a4),d2       ; d2 = file action (its refusal has Res1 = -1, 0 would read as EOF) | 0
+        cmp.l   #ACTION_READ,d2
+        beq.s   .pr_res
+        cmp.l   #ACTION_WRITE,d2
+        beq.s   .pr_res
+        cmp.l   #ACTION_SEEK,d2
+        beq.s   .pr_res
+        moveq   #0,d2
+        tst.l   d0
+        bne.s   .pr_err
+        bra.s   .pr_vol
+.pr_res:
+        addq.l  #1,d0
+        bne.s   .pr_err
+.pr_vol:
         move.l  HND_REFVOL,d0
         clr.l   HND_REFVOL
         lsl.l   #2,d0
-        beq.s   .pr_ret
-        movem.l d3/a0-a1/a4,-(sp)
-        move.l  d0,a4
+        beq.s   .pr_pop
+        move.l  d0,a2                ; a2 = volume node
+        tst.l   d2
+        bne.s   .pr_fh
         moveq   #0,d0
-        tst.l   DN_TASK(a4)          ; volume mounted again in the meantime: no requester
+        tst.l   DN_TASK(a2)          ; volume mounted again in the meantime: no requester
         bne.s   .pr_pop
-        move.l  DN_NAME(a4),d0
+        lea     vr_l3(pc),a1
+        bsr.s   .pr_ask
+        bra.s   .pr_pop
+.pr_fh:
+        moveq   #-1,d0
+        move.l  DP_PORT(a4),d2       ; the handler that refused
+        cmp.l   DN_TASK(a2),d2
+        beq.s   .pr_pop              ; back in its drive in the meantime: resend
+        bsr     er_curvol            ; d1 = its unit
+        lea     -12(sp),sp           ; "in unit  n"
+        move.l  sp,a1
+        lea     vr_unit(pc),a0
+.pr_uc:
+        move.b  (a0)+,(a1)+
+        bne.s   .pr_uc
+        add.b   #'0',d1
+        move.b  d1,-2(a1)            ; the digit replaces the final '0'
+        move.l  sp,a1
+        bsr.s   .pr_ask
+        lea     12(sp),sp
+.pr_pop:
+        movem.l (sp)+,d1-d3/a0-a2/a4
+        rts
+.pr_err:
+        movem.l (sp)+,d1-d3/a0-a2/a4
+        move.l  DP_RES1(a4),d0
+        bra     dos_errreq
+; .pr_ask(a2 = volume node, a1 = third line) -> d0 = vr_req answer
+.pr_ask:
+        move.l  DN_NAME(a2),d0
         lsl.l   #2,d0
         move.l  d0,a4
         moveq   #0,d3
         move.b  (a4)+,d3             ; BSTR: length then characters
         lea     vr_r1(pc),a0
-        lea     vr_l3(pc),a1
         move.l  #VR_DISKINSERTED,d0
-        bsr     vr_req
-.pr_pop:
-        movem.l (sp)+,d3/a0-a1/a4
-        rts
-.pr_no:
-        bra     dos_errreq
-.pr_ret:
-        rts
+        bra     vr_req
 ; dos_errreq(d0 = dp_Res1, d1 = dp_Res2, a4 = replied DosPacket, a6 = SysBase) -> d0 = true if Retry:
 ; dos's disk error requester as seen on the real ROM (spec dos-lvo-partial §1.4, rom-filesystem §2.3):
 ;   214 "Volume / <name> / is write protected" and 213 "Volume / <name> / is not validated" after FINDOUTPUT,
