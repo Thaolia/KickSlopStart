@@ -201,18 +201,22 @@ bitmap block moves to a newly allocated block at the write-back, the old one fre
 the handler that opened it, as on 1.3 (disk-change §2.4.1): every access waits behind "Please replace volume /
 <name> / in unit  n" naming that handler's unit, even while another drive holds the volume, and resumes once the disk
 is back in that drive (`tests/fhmove_probe.sh`). Until then a refused READ/WRITE/SEEK (Res1 = -1) never reached the
-requester and failed at once with 218. Block sizes: 1.3 only ever transfers 512 bytes at key × 512 (rom-filesystem
+requester and failed at once with 218. Writes through a FINDINPUT (MODE_OLDFILE) handle are accepted as on 1.3
+(§5.1): the first WRITE opens the file in place at the read position and that write state serves the handle from
+then on (`tests/oldwrite_probe.sh`); they used to fail with 212. Block sizes: 1.3 only ever transfers 512 bytes at key × 512 (rom-filesystem
 §8.7, probed 2026-11-10), so a partition of 1024- or 2048-byte sectors is "Unreadable Disk" / "Not a DOS disk" there
 and here; until then this handler refused to open such a device and the partition looked empty ("No disk present").
-Left in the file system:
+Cancel on the "in unit  n" requester already ended the call at once, which a single-call probe of 1.3 confirms
+(disk-change §2.4.1 point 6: the second requester seen with `Type`/`Copy` is the program's next call); what differed
+was the close: an END on a file whose volume is out of its drive is now refused like READ/WRITE, so Close shows
+"Please replace volume … in unit  n" and, after a Retry with the disk back, writes the file; a Cancel resends the END
+marked as given up and the handle is freed with nothing written. The handler of every partition mounted by its
+driver now starts during the Initial CLI set-up, as on 1.3 (rom-filesystem §1.4): the first `Info` lists
+"DH0: 10M 7 20471 0% 0 Read/Write Work", or "DH0: Unreadable Disk" with no requester at boot. Left in the file
+system:
 - de_SizeBlock other than 128 on a 512-byte device: the root is refused as not a DOS disk, while 1.3 reports
   "Error validating disk / Key n checksum error" (§8.7, only reachable with a patched environment);
-- the handler of a hard-disk partition starts on first use, so the first `Info` after boot leaves DH0: out; on 1.3
-  the partition is examined at boot (§8.6 "at boot: Info Validating") [to confirm with a probe];
-- a FINDINPUT (MODE_OLDFILE) handle is read-only (WRITE -> 212), while rom-filesystem §5.1 says 1.3 accepts writes
-  on it;
-- Cancel on the "in unit  n" requester fails the access at once; 1.3 shows the requester once more first, and a
-  cancelled `Copy` then meets "No disk present / in unit  n" (§2.4.1 point 2).
+- IoErr 286 after Cancel on "You MUST replace volume" (§2.4.1 point 6) is not reproduced (its meaning is unknown).
 
 ### C8. console.device — done 2026-11-09
 
@@ -258,8 +262,9 @@ otherwise; a VSprite partly above its ViewPort was already clipped (`tests/gels_
 the gameport VERTB server returns at once when nothing moved, which brings the end of the VERTB chain from line 19 to
 line 14 and WaitTOF's earliest return from line 18 to 16 (1.3: 12; `tests/waittof_probe.sh`); a clipped line piece
 starts at the first point whose major coordinate is inside its ClipRect instead of walking from the line's start
-(`tests/lineclip_probe.sh`: same pixels, 24 % less time for 1,000 patterned lines in a covered window). Left:
-- VSTART of a VSprite includes `vp_DyOffset`, which gels §5.8 says 1.3 does not add.
+(`tests/lineclip_probe.sh`: same pixels, 24 % less time for 1,000 patterned lines in a covered window). Later the
+same day: a VSprite's VSTART is its clipped top plus the View's DyOffset only, without the ViewPort's DyOffset or a
+LACE halving (gels §5.8; vector G9d: LACE ViewPort with DyOffset 20 gives POS $3659 / CTL $3B01 as G9a). Left:
 - The rest of the VERTB cost is gameport's input injection and unit emulation, which 1.3 does not run there.
 - Patterned lines are walked by the CPU; only solid lines use the blitter's line mode.
 

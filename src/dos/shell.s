@@ -21,6 +21,7 @@
                 xref    ser_lock             ; exec/boot.s (atomic serial output)
                 xref    ser_unlock
                 xref    dos_boot_assigns     ; dos/dos_lib.s (assigns + volume + current directory)
+                xref    dos_startmounts      ; dos/dos_lib.s (handlers of the mounted partitions)
                 xref    bcpl_call            ; dos/bcpl.s (A5/A6 of BCPL commands)
                 xref    bcpl_ret
                 xref    rt_fault             ; bcpl.s: text of a dos error (C:FAULT)
@@ -47,6 +48,7 @@ shell_main:
                 beq.s   .noassign
                 move.l  d0,a6
                 jsr     dos_boot_assigns
+                jsr     dos_startmounts
                 bsr     sh_sysconfig         ; DEVS: has just been assigned
                 move.l  a6,a1
                 move.l  ($4).w,a6

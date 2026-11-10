@@ -2263,6 +2263,19 @@ differs.
   the disk type is "BAD" ("Unreadable Disk" in Info, "Not a DOS disk / in unit  n" on access) as on 1.3, where the
   old refusal left the device closed and the partition looked empty ("No disk present"). de_SizeBlock ≠ 128 on a
   512-byte device sets the byte `HC_BADBS`, and `hnd_mount` then never accepts the root (type "NDOS").
+  **Last C7/C10 gaps (2026-11-10)**:
+  - Writes through a FINDINPUT handle (`.write`, `src/dos/handler.s`): a read state (`SS_*`) gets a write state at
+    its first WRITE (`ws_openold` on SS_HEADER, `ws_seek` to SS_POS, the shared lock and the volume kept), stored in
+    `SS_WS`; READ, SEEK and END of that handle then go to the write state, and END closes it (`hnd_wsend`, shared
+    with the END of a write state) before freeing the read state.
+  - Close of a file whose volume is out of its drive: `hnd_gtab` gates END like READ/WRITE/SEEK (218), and
+    `dos_pktretry` treats END as a FileHandle action ("in unit  n", Res1 0); on Cancel it rewrites Arg2 to −1 and
+    resends, and `hnd_gate` lets such an END through so the handle is freed with nothing written (disk-change
+    §2.4.1 point 6). Retry with the disk back closes the file normally.
+  - `dos_startmounts` (`src/dos/dos_lib.s`, called by the Initial CLI after `dos_boot_assigns`): every DLT_DEVICE
+    node without a task whose dn_Startup is a FileSysStartupMsg (above 255; SER:, PAR:, CON: … hold 0..2) gets its
+    handler through `bcpl_starthandler`, under DOS_HSEM like `dos_resolve` (rom-filesystem §1.4).
+  - VSprite VSTART (`src/graphics/gels.s`) = clipped top + View DyOffset, no ViewPort DyOffset, no LACE halving.
   **Run on the caller's stack (2026-11-09)**: Execute (`bcpl_execute`, `src/dos/bcpl.s`) starts C:Run through
   `rc_here`: the 600-long command stack is carved out below the caller's SP instead of a getvec block, as 1.3 runs Run
   on the calling process's stack. Only when SP is on the process's own stack and at least the stack plus 512 bytes

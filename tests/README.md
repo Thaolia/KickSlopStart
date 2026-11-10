@@ -43,6 +43,10 @@ then the cover window closes and every pixel of the destination is read back (`g
   during each part (`docs/analysis/disk-change-v34.md` §2.4.1). Screenshots `read_in_df2.png` / `write_in_df2.png`
   must show "Please replace volume / Data3 / in unit  1"; the host checks the byte count and sum of the read and the
   file w. Success: `FHMOVE OK`.
+- `tests/oldwrite_probe.sh <out_dir> [rom]`: `tests/oldwrite_probe.s` opens DF0:t (37 bytes) with MODE_OLDFILE three
+  times: read 5 bytes then write 200, seek back and read; seek to the end and append; write at once
+  (`rom-filesystem-v34.md` §5.1). The host checks the `OW` lines and the 209-byte file in the session's copy of the
+  disk. Success: `OLDWRITE OK`.
 - `tests/lineclip_probe.sh <out_dir> [rom]`: 1,000 pseudo-random lines in five modes (patterns, JAM2, COMPLEMENT,
   ONE_DOT) in a window covered by two others; prints the drawing time (`LC TICKS`) and the plane fingerprints after
   the covers close (`LC CKS`), to compare between two ROMs.

@@ -118,6 +118,7 @@ VP_SPRINS  EQU $0C
 VP_CLRINS  EQU $10
 VP_DWIDTH  EQU $18
 VP_DHEIGHT EQU $1A
+VP_DYOFS   EQU $1E
 VP_MODES   EQU $20
 GB_ACTIVIEW EQU $22
 GB_VBLANK  EQU $A0
@@ -875,6 +876,28 @@ g9:             movem.l d2-d7/a2-a3,-(sp)
                 DRAW
                 clr.w   vp+VP_MODES-vars(a4)
                 PRS     "G9c hires y=-2"
+                moveq   #0,d7
+                bsr     g9pr
+                ; G9d: LACE ViewPort with DyOffset 20, VSprite X 50, Y 10, H 5: VSTART = Y + View DyOffset, neither
+                ; the ViewPort's DyOffset nor LACE added (graphics-gels §5.8: POS $3659, CTL $3B01 as in G9a)
+                bsr     newgels
+                bsr     g9pre
+                move.b  #$FC,gi+GI_RSRVD-vars(a4)
+                move.w  #$0004,vp+VP_MODES-vars(a4)
+                move.w  #20,vp+VP_DYOFS-vars(a4)
+                moveq   #10,d0
+                moveq   #50,d1
+                moveq   #5,d2
+                sub.l   a0,a0
+                bsr     mkvsp
+                move.l  a2,a0
+                moveq   #'a',d0
+                bsr     regn
+                move.l  a2,vsl-vars(a4)
+                DRAW
+                clr.w   vp+VP_MODES-vars(a4)
+                clr.w   vp+VP_DYOFS-vars(a4)
+                PRS     "G9d lace dy=20"
                 moveq   #0,d7
                 bsr     g9pr
                 movem.l (sp)+,d2-d7/a2-a3

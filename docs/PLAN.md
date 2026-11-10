@@ -1589,6 +1589,18 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Last C7/C10 gaps (2026-11-10)**: user request "fais les écarts restants". ARCHITECTURE "Last C7/C10 gaps".
+  Oracle by the analysis track: disk-change §2.4.1 point 6 (one requester per dos call; Close raises its own) and
+  rom-filesystem §1.4 (partitions started at boot). New `tests/oldwrite_probe.sh`: OLDWRITE OK (the previous ROM
+  answered 212); gels G9d (LACE ViewPort, DyOffset 20): POS $3659 / CTL $3B01 (was $3B59 / $4001), the rest of
+  gels_probe as HEAD apart from lost serial characters and allocation addresses. Cancel by hand on fhmove_probe with
+  the disk in DF2: one requester for the Write (FM WREND −1), one for the Close, back to the CLI (screenshots looked
+  at). First Info with a 10 MiB DH0: "DH0: 10M 7 20471 0% 0 Read/Write Work" as on 1.3; a 1024-byte-block DH0:
+  "Unreadable Disk", no requester at boot, image unchanged. hdfs_probe 40 MiB OFS CHECK OK; writeback_probe DF1/DH0
+  OFS CHECK OK, 66 identical files each; bigfile_probe OK (one run in parallel with two other sessions stopped
+  before the write-back, flag 0; alone twice OK); fhmove_probe FHMOVE OK four times, but one of the four
+  `write_in_df2.png` showed no requester (not explained; the three others did); prepush-check FAIL=0 with the
+  Lemmings menu.
   **Block sizes other than 512 bytes (2026-11-10)**: the analysis track's probe of the real 1.3 (rom-filesystem
   §8.7) shows that it never mounts a 1024- or 2048-byte-block partition: every transfer is 512 bytes at key × 512.
   So no variable block size here: the handler now opens the device anyway and gives the same failure (ARCHITECTURE

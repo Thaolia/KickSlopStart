@@ -6,7 +6,7 @@
 ;                                   65535 * 488 bytes and one before
 ;   "BF WR <result> <ioerr>"        Seek(32000000) then Write of the 8 bytes "KSSWRITE" (bytes written, IoErr)
 ;   "BF END"
-; The file is opened with MODE_READWRITE (FINDUPDATE): our FINDINPUT handles are read-only.
+; The file is opened with MODE_READWRITE (FINDUPDATE).
 ; Run by tests/bigfile_probe.sh as a CLI command from a startup-sequence.
 
 SERDAT   EQU $DFF030

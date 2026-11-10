@@ -37,6 +37,7 @@
                 xdef    dos_boot_assigns ; called by the initial CLI (shell.s) once the boot disk is readable
                 xdef    dos_resolve      ; BCPL runtime (deviceproc)
                 xdef    dos_mountlist    ; exec/boot.s: mount list, boot device
+                xdef    dos_startmounts  ; shell.s: handlers of the mounted partitions started at boot
                 xdef    vr_req           ; diskvalidator.s: validation requesters
                 xdef    dos_df0bootnode  ; exec/boot.s: DF0: BootNode after a bootblock
                 xref    boot_dos_start   ; exec/boot.s: rest of the startup (Initial CLI), does not return
@@ -1719,9 +1720,10 @@ dos_volreq:
 ; from a floppy handler for a lock or file of an ejected volume (HND_REFVOL) -> "Please replace volume / <name> /
 ; ..." requester (spec disk-change-v34 §2.4); Retry or the insertion of a disk (DISKINSERTED) retry.
 ; A lock: third line "in any drive", no requester once the volume is mounted again. A FileHandle (READ, WRITE,
-; SEEK) stays bound to the handler that opened it (§2.4.1): third line "in unit  n" of that handler, and the
-; requester comes back until the volume is mounted in that drive, even while another drive holds it.
-; Other failures go to dos_errreq. Preserves d1-d7/a0-a6.
+; SEEK, END) stays bound to the handler that opened it (§2.4.1): third line "in unit  n" of that handler, and the
+; requester comes back until the volume is mounted in that drive, even while another drive holds it. One
+; requester per Cancel (§2.4.1 point 6); a cancelled END is resent with Arg2 = -1 so that the handler frees the
+; handle with nothing written. Other failures go to dos_errreq. Preserves d1-d7/a0-a6.
 dos_pktretry:
         cmp.l   #ERROR_DEVICE_NOT_MOUNTED,d1
         bne     dos_errreq
@@ -1733,7 +1735,10 @@ dos_pktretry:
         beq.s   .pr_res
         cmp.l   #ACTION_SEEK,d2
         beq.s   .pr_res
+        cmp.l   #ACTION_END,d2
+        beq.s   .pr_end
         moveq   #0,d2
+.pr_end:
         tst.l   d0
         bne.s   .pr_err
         bra.s   .pr_vol
@@ -1769,8 +1774,16 @@ dos_pktretry:
         add.b   #'0',d1
         move.b  d1,-2(a1)            ; the digit replaces the final '0'
         move.l  sp,a1
+        move.l  a4,-(sp)
         bsr.s   .pr_ask
+        move.l  (sp)+,a4
         lea     12(sp),sp
+        tst.l   d0
+        bne.s   .pr_pop
+        cmp.l   #ACTION_END,DP_TYPE(a4)
+        bne.s   .pr_pop
+        moveq   #-1,d0               ; Cancel on a close: given up, resent as such
+        move.l  d0,DP_ARG2(a4)
 .pr_pop:
         movem.l (sp)+,d1-d3/a0-a2/a4
         rts
@@ -2268,6 +2281,63 @@ dos_mountlist:
         lsr.l   #2,d0
         move.l  d0,(a2)
 .ad_ret:
+        rts
+
+; dos_startmounts(): from the Initial CLI process, before the startup-sequence, starts the handler of every device
+; node that has no task yet and whose dn_Startup is a FileSysStartupMsg (a partition mounted by its driver through
+; eb_MountList; the other device nodes hold 0..2 there or a handler loaded on first access), as 1.3 does during its
+; initial CLI set-up (rom-filesystem §1.4 "When the process starts"): a failed partition then shows its state in the
+; first Info. Preserves everything.
+dos_startmounts:
+        movem.l d0-d1/a0-a2/a6,-(sp)
+        move.l  ($4).w,a6
+        move.l  DOS_DOSBASE,a0
+        move.l  DL_ROOT(a0),a0
+        move.l  RN_INFO(a0),d0
+        lsl.l   #2,d0
+        move.l  d0,a0
+        move.l  DI_DEVINFO(a0),d0
+.sm_lp:
+        lsl.l   #2,d0
+        beq.s   .sm_ret
+        move.l  d0,a2
+        tst.l   DN_TYPE(a2)             ; DLT_DEVICE
+        bne.s   .sm_nx
+        cmp.l   #255,DN_STARTUP(a2)
+        bls.s   .sm_nx
+        lea     DOS_HSEM,a0             ; as dos_resolve: one startup at a time
+        jsr     LVO_OBTAINSEMAPHORE(a6)
+        tst.l   DN_TASK(a2)
+        bne.s   .sm_rel
+        lea     -36(sp),sp              ; "<name>:" as a C string
+        move.l  DN_NAME(a2),d0
+        lsl.l   #2,d0
+        beq.s   .sm_free
+        move.l  d0,a0
+        moveq   #0,d1
+        move.b  (a0)+,d1
+        cmp.w   #30,d1
+        bhi.s   .sm_free
+        move.l  sp,a1
+        bra.s   .sm_cn
+.sm_cc:
+        move.b  (a0)+,(a1)+
+.sm_cn:
+        dbra    d1,.sm_cc
+        move.b  #':',(a1)+
+        clr.b   (a1)
+        move.l  sp,a0
+        jsr     bcpl_starthandler
+.sm_free:
+        lea     36(sp),sp
+.sm_rel:
+        lea     DOS_HSEM,a0
+        jsr     LVO_RELEASESEMAPHORE(a6)
+.sm_nx:
+        move.l  DN_NEXT(a2),d0
+        bra.s   .sm_lp
+.sm_ret:
+        movem.l (sp)+,d0-d1/a0-a2/a6
         rts
 
 ; ba_ramnode(a5 = DosBase): "RAM" device node (BCPL handler L:RAM-HANDLER loaded on first access, stack 300 longs,

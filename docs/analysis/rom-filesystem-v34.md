@@ -174,10 +174,36 @@ validator process opens the unit with a third request of its own and only reads 
 
 | When | Commands, in order |
 |---|---|
-| Process start (first use of the unit) | TD_REMOVE (12, `io_Data` = the file system's Interrupt), TD_CHANGESTATE (14), then the validator's reads, TD_PROTSTATUS (15) once the validator has answered (stage 1 of `disk-change-v34.md` §2.5), then CMD_UPDATE (4) + TD_MOTOR (9, length 0) at the first write-back point |
+| Process start (at boot for a partition mounted through `eb_MountList`, see below) | TD_REMOVE (12, `io_Data` = the file system's Interrupt), TD_CHANGESTATE (14), then the validator's reads, TD_PROTSTATUS (15) once the validator has answered (stage 1 of `disk-change-v34.md` §2.5), then CMD_UPDATE (4) + TD_MOTOR (9, length 0) at the first write-back point |
 | Remount (`DiskChange`, i.e. INHIBIT on/off) | CMD_UPDATE, TD_MOTOR off, **CMD_CLEAR (5)**, TD_CHANGESTATE, validator reads, TD_PROTSTATUS, … |
 | Work | CMD_READ / CMD_WRITE, 512 bytes each (one block per request, even for consecutive blocks) |
 | Write-back point (§8.4) | CMD_WRITE of the changed bitmap block(s) and of the root, then CMD_UPDATE, TD_MOTOR off; only CMD_UPDATE + TD_MOTOR off when nothing was modified |
+
+**When the process starts [O, 2026-11-10].** A hard-disk partition's file system is started **at boot**,
+before the startup-sequence runs, not at the first command that names the unit. Setup: Amiberry,
+`hardfile2=rw,DH0:<hdf>,32,1,2,512,<pri>,,uae0` (no RDB, so dos runs the ROM file system), a blank 10 MiB
+OFS hardfile (`xdftool … create size=10Mi + format Work ofs`), DF0 = Workbench 1.3.3 copy whose
+startup-sequence is only `info >SER:` then an `echo`. Observed with the debugger, no breakpoint in the ROM:
+- a data watchpoint on the DH0 DeviceNode's `dn_Task`: its **first** write (non-zero, the port of a new
+  "File System" process) is made while the **Initial CLI** process is running and its CLI structure is not
+  yet initialised (standard/current input 0, command and set names still uninitialised memory), i.e. during
+  dos's boot-time set-up of the initial CLI, after the boot floppy's DF0 file system process exists (DF0's
+  validator was still listed at that moment in one run). Same result with boot priority −128 and 0;
+- exec task lists sampled every ~0.3 s from power-on: DF0's "File System" (and its Validator) first, the
+  DH0 "File System" ~5 s later followed by a Validator, then DF1's "File System" with the second
+  trackdisk task (DF1 is also started at boot, empty drive); all three exist when the first command
+  (`Info`) is entered, and by then the DH0 volume node (`Work`, type volume) is already in the DosList
+  with its `dl_Task` set;
+- the first `Info` lists **"DH0: 10M 7 20471 0% 0 Read/Write Work"**, and `Work [Mounted]` under
+  "Volumes available". Priority 0 instead of −128: identical (DF0 still boots, being bootable).
+- Emulator check [U, Amiberry `filesys.asm`]: for these units the UAE boot code only enqueues the node
+  (AddDosNode with flags 0 before dos exists); it calls DeviceProc itself only for units added on the fly
+  (hot-mount), so the boot-time start observed here is the ROM's.
+Consequence: a partition mounted through `eb_MountList` is mounted and validated (or found unreadable /
+"Validating", §8.6, §8.7) silently at boot; `Info` then shows its real state without any command having
+touched it. An implementation should start the handler of every DeviceNode chained from `eb_MountList`
+(and of DF1:–DF3: present drives) during dos's boot set-up, before the startup-sequence [D for the "every
+node" generalisation: one partition was tried].
 
 **TD_CHANGENUM (13) is never sent** by the file system (nor by its validator) in any of these runs. TD_CHANGESTATE
 is sent only when the "disk changed" flag is set (start, INHIBIT off, the TD_REMOVE interrupt), never per tick
@@ -975,6 +1001,9 @@ Each line: the command typed, the packet that was rewritten, and the reply.
   it overruns memory (§8.6) [?].
 - Validator requesters during the boot: pending invisibly or skipped (§2.5) [?].
 - Rejected CMD_UPDATE / TD_MOTOR on a hard-disk driver (§1.4) [?].
+- Boot-time start of hard-disk file systems (§1.4): settled for one `eb_MountList` partition (started by the
+  initial CLI's set-up, before the startup-sequence). Not tried: several partitions, a partition with its
+  own file system segment, a node added by `AddDosNode` after dos init.
 - Which in-memory check uses `de_SizeBlock` when it is not 128 (checksum span over SizeBlock longs, or the
   position of the block's last fields) (§8.7) [?].
 

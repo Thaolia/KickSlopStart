@@ -1878,17 +1878,12 @@ gel_vsprites:
 .vs_cl:
         add.w   d4,d0
         move.w  d0,VL_CL(a4)
-        move.w  VS_X(a2),d0          ; d0 = HSTART, d1 = VSTART (as MoveSprite)
+        move.w  VS_X(a2),d0          ; d0 = HSTART, d1 = VSTART
         tst.w   vp_Modes(a3)
         bpl.s   .vs_lx
         asr.w   #1,d0
 .vs_lx:
-        move.w  d4,d1
-        add.w   vp_DyOffset(a3),d1
-        btst    #2,vp_Modes+1(a3)
-        beq.s   .vs_ly
-        asr.w   #1,d1
-.vs_ly:
+        move.w  d4,d1                ; VSTART: neither the ViewPort's DyOffset nor LACE enter it (gels §5.8)
         move.l  gb_ActiView(a6),d7
         beq.s   .vs_pos
         move.l  d7,a0

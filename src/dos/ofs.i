@@ -119,7 +119,9 @@ SS_HEADER       EQU 24            ; LONG: header block of the file (block tables
 SS_VOL          EQU 28            ; BPTR: volume node of the disk on which the file was opened (handler)
 SS_LOCK         EQU 32            ; APTR: shared FileLock held while the file is open (handler)
 SS_BUFBLK       EQU 36            ; LONG: data block held in the block buffer (0 = none): READ does not fetch it again
-SS_IOREQ        EQU 40            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
+SS_WS           EQU 40            ; APTR: write state (ofswrite.s) taken at the first WRITE, which serves the file from
+                                  ; then on (rom-filesystem §5.1: a FINDINPUT handle accepts writes) | 0
+SS_IOREQ        EQU 44            ; IOStdReq (IOREQ_SZ bytes); the block buffer follows at +IOREQ_SZ (OFS_BSIZE bytes)
 WS_HDR          EQU 4             ; LONG: header block of a write state (ofswrite.s)
 WS_VOL          EQU 36            ; BPTR: volume node of a write state (ofswrite.s), like SS_VOL
 WS_LOCK         EQU 64            ; APTR: exclusive FileLock held while a write state is open (handler)

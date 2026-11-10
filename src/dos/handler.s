@@ -261,6 +261,11 @@ dos_handler:
                 move.l  DP_ARG1(a4),a1
                 cmp.l   #WS_MAGICV,(a1)
                 beq     .read_w                       ; file open for writing (MODE_READWRITE, new file)
+                tst.l   SS_WS(a1)
+                beq.s   .rd_ss
+                move.l  SS_WS(a1),a1                  ; written through: its write state serves it
+                bra     .read_w
+.rd_ss:
                 move.l  a2,-(sp)                       ; a2 = handler port: saved (ofs_stream_read takes dest in a2)
                 move.l  DP_ARG1(a4),a1                ; a1 = streaming state
                 move.l  DP_ARG2(a4),a2                ; a2 = dest
@@ -279,6 +284,11 @@ dos_handler:
                 move.l  DP_ARG1(a4),a1                ; a1 = state
                 cmp.l   #WS_MAGICV,(a1)
                 beq     .seek_w
+                tst.l   SS_WS(a1)
+                beq.s   .sk_ss
+                move.l  SS_WS(a1),a1
+                bra     .seek_w
+.sk_ss:
                 move.l  SS_POS(a1),d3                 ; d3 = old position (return value)
                 move.l  DP_ARG2(a4),d1                ; position (signed)
                 move.l  DP_ARG3(a4),d2                ; mode (OFFSET_BEGINNING -1 / CURRENT 0 / END 1)
@@ -486,6 +496,14 @@ dos_handler:
                 move.l  DP_ARG1(a4),a1                ; a1 = streaming state (a single AllocMem)
                 cmp.l   #WS_MAGICV,(a1)
                 beq.s   .end_w
+                move.l  #DOSTRUE,DP_RES1(a4)
+                move.l  SS_WS(a1),d0
+                beq.s   .end_ss
+                move.l  a1,-(sp)
+                move.l  d0,a1
+                bsr     hnd_wsend
+                move.l  (sp)+,a1
+.end_ss:
                 move.l  SS_VOL(a1),d0
                 bsr     hnd_unusevol
                 move.l  a1,-(sp)
@@ -494,7 +512,6 @@ dos_handler:
                 move.l  (sp)+,a1
                 move.l  #SS_ALLOC,d0
                 jsr     LVO_FREEMEM(a6)               ; free the state (ioreq + block buffer included)
-                move.l  #DOSTRUE,DP_RES1(a4)
 .reply:                                              ; returnpkt: to dp_Port (mn_ReplyPort may
                 move.l  DP_PORT(a4),a0                ; not be filled in: DiskCopy), which receives
                 move.l  a2,DP_PORT(a4)                ; the handler port in return
@@ -508,27 +525,8 @@ dos_handler:
                 move.l  WS_LOCK(a1),a0
                 bsr     hnd_droplock
                 move.l  (sp)+,a1
-                move.l  a1,-(sp)
-                bsr     hnd_ctx
-                move.l  (sp)+,a1
-                beq.s   .end_gone
-                move.l  d0,a0
-                move.l  HC_VOLUME(a0),d0
-                cmp.l   WS_VOL(a1),d0
-                bne.s   .end_gone
-                jsr     ws_close                       ; data, extension, header, bitmap written; state freed
-                move.l  d0,DP_RES1(a4)
-                bne.s   .reply
-                move.l  #ERROR_DISK_WRITE_PROTECTED,DP_RES2(a4)
-                bra.s   .reply
-.end_gone:                                            ; its volume is not in the drive: nothing written to
-                jsr     ws_discard                    ; the disk that is there (disk-change spec: Res1 -1)
-                move.l  #DOSTRUE,DP_RES1(a4)
+                bsr     hnd_wsend
                 bra     .reply
-.rw_wrong:
-                move.l  #-1,DP_RES1(a4)
-                move.l  #ERROR_OBJECT_WRONG_TYPE,DP_RES2(a4)
-                bra.s   .reply
 
 ; --- writing (ofswrite.s) ---
 .findupdate:                                         ; existing file opened in place; a missing one is
@@ -585,11 +583,34 @@ dos_handler:
 .write:                                              ; (ARG1 state, ARG2 data, ARG3 length) -> RES1 = length | -1
                 move.l  DP_ARG1(a4),a1
                 cmp.l   #WS_MAGICV,(a1)
-                bne     .rw_wrong                     ; file open for reading
+                beq.s   .wr_go
+                move.l  SS_WS(a1),d0
+                bne.s   .wr_ws
+                move.l  a1,-(sp)                      ; first write through a FINDINPUT handle: the file is opened
+                move.l  SS_HEADER(a1),d0              ; in place at the read position, its shared lock kept
+                jsr     ws_openold
+                move.l  (sp)+,a1
+                tst.l   d0
+                beq.s   .wr_fail
+                move.l  d0,SS_WS(a1)
+                move.l  d0,a0
+                move.l  SS_VOL(a1),WS_VOL(a0)
+                move.l  SS_POS(a1),d1                 ; inside [0, size]: always accepted
+                moveq   #-1,d2
+                move.l  a0,a1
+                jsr     ws_seek
+                move.l  a1,d0
+.wr_ws:
+                move.l  d0,a1
+.wr_go:
                 move.l  DP_ARG2(a4),a0
                 move.l  DP_ARG3(a4),d0
                 jsr     ws_write
                 move.l  d0,DP_RES1(a4)
+                move.l  d1,DP_RES2(a4)
+                bra     .reply
+.wr_fail:
+                move.l  #-1,DP_RES1(a4)
                 move.l  d1,DP_RES2(a4)
                 bra     .reply
 .delete:                                             ; (ARG1 lock, ARG2 BSTR name)
@@ -1027,6 +1048,28 @@ hnd_open:
 .op_ret:
                 lea     HND_DEVNAME(sp),sp
                 movem.l (sp)+,d2-d5/a4
+                rts
+; hnd_wsend(a1 = write state, a4 = END packet, a6): the file closed (data, extension and header written) when its
+; volume is in the drive, otherwise dropped with nothing written to the disk that is there (disk-change spec: Res1
+; -1); the state is freed and Res1/Res2 set. Clobbers d0/d1/a0/a1.
+hnd_wsend:
+                move.l  a1,-(sp)
+                bsr     hnd_ctx
+                move.l  (sp)+,a1
+                beq.s   .we_gone
+                move.l  d0,a0
+                move.l  HC_VOLUME(a0),d0
+                cmp.l   WS_VOL(a1),d0
+                bne.s   .we_gone
+                jsr     ws_close
+                move.l  d0,DP_RES1(a4)
+                bne.s   .we_ret
+                move.l  #ERROR_DISK_WRITE_PROTECTED,DP_RES2(a4)
+.we_ret:
+                rts
+.we_gone:
+                jsr     ws_discard
+                move.l  #DOSTRUE,DP_RES1(a4)
                 rts
 ; hnd_mul(d0, d1) -> d0 = d0 * d1 (low 32 bits, unsigned). Clobbers d1.
 hnd_mul:
@@ -1565,8 +1608,9 @@ hnd_event:
 
 ; hnd_gate(a4 = DosPacket) -> d0 = 0 if the packet can be served, otherwise the error code (spec §2.4): a lock or
 ; a file of a volume other than the mounted disk -> 218 (ERROR_DEVICE_NOT_MOUNTED); an action on the root
-; without a disk -> 226 (ERROR_NO_DISK), non-DOS disk -> 225. Closes, UnLock, disk Info and inhibit always
-; pass. Clobbers d1/a0/a1.
+; without a disk -> 226 (ERROR_NO_DISK), non-DOS disk -> 225. A close (END) is refused like READ/WRITE, so dos asks
+; for the volume (disk-change §2.4.1 point 6), unless dos gives the handle up after a Cancel (Arg2 = -1). UnLock, disk
+; Info and inhibit always pass. Clobbers d1/a0/a1.
 hnd_gate:
                 move.l  DP_TYPE(a4),d0
                 lea     hnd_gtab(pc),a0
@@ -1596,7 +1640,12 @@ hnd_gate:
                 moveq   #0,d0
 .gt_ret:
                 rts
-.gt_state:                                            ; READ/WRITE/SEEK: ARG1 = state of an open file
+.gt_state:                                            ; READ/WRITE/SEEK/END: ARG1 = state of an open file
+                cmp.l   #ACTION_END,DP_TYPE(a4)
+                bne.s   .gs_vol
+                cmp.l   #-1,DP_ARG2(a4)
+                beq.s   .gt_ok                        ; abandoned: freed whatever disk is there
+.gs_vol:
                 move.l  DP_ARG1(a4),a0
                 move.l  SS_VOL(a0),d0
                 cmp.l   #WS_MAGICV,(a0)
@@ -1668,6 +1717,7 @@ hnd_gtab:
                 dc.w    ACTION_READ,$80
                 dc.w    ACTION_WRITE,$80
                 dc.w    ACTION_SEEK,$80
+                dc.w    ACTION_END,$80
                 dc.w    0
 
 ; hnd_modok(a4 = DosPacket, a6) -> d0 = 0, or the error of a modification refused before any name is looked at

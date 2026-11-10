@@ -313,14 +313,15 @@ naming the **original unit**, which closes on its own only when the disk is back
      insertion (the revalidation time), without a click, and the write completes. After Ctrl-\ (the console
      window must be made active again: keys typed while the requester was up went to the requester window),
      `Copy` returned normally. File `w` = "line one\nline two\n" (18 bytes), root bitmap flag valid (−1). [O]
-   - **Cancel** with the disk in DF2 (second session): the requester comes back once; a second Cancel makes
+   - **Cancel** with the disk in DF2 (second session; the two requesters come from two calls, point 6): the requester comes back once; a second Cancel makes
      `Copy` print **"Error while Writing"**, then a **"No disk present / in unit  1"** requester (two text
      lines, Retry / Cancel) appears; Cancel on it returns to the prompt. Afterwards the disk holds the file `w` whose header says **size 0**
      but whose data table lists **one data block containing "line one\n"** (written by DF1's write-back before the
      ejection [D]); "line two" is lost. Bitmap flag valid (−1). The 1.3 `List Data3:`
      shows `w` as "empty"; `xdftool` reports a block-count mismatch for it. Which call raised the
      "No disk present" requester (the close of the FileHandle, or `Copy`'s next access) was not
-     established [S: the close, answered by the DF1 file system with no disk in its drive].
+     established by this run; the single-call probe (point 6) shows that `Close` does **not** raise it, so it
+     is a later call of `Copy` [S: deletion of the incomplete destination].
 3. **Reading** (`type DF1:longfile`, ejection about 6 s after the start, at line 52, insertion in DF2):
    the requester **"Please replace volume / Data3 / in unit  1"** appears within 2 s of the ejection (no
    "You MUST replace" requester: the ejection fell between reads, §2.2.1 point 2); output stops.
@@ -340,7 +341,55 @@ naming the **original unit**, which closes on its own only when the disk is back
    taken while the disk was in DF1 and used while it sits in DF2 [S: refused by DF1's file system like a
    FileHandle, giving "in any drive" as in the `Examine` case above, since the lock list was handed to
    DF2 but the lock's `fl_Task` still names DF1; not verified]; the "You MUST replace volume" case
-   (ejection during a transfer) followed by insertion in another drive.
+   (ejection during a transfer) followed by insertion in another drive (now seen, point 6).
+6. **Single-call probe (2026-11-10)** [O]. Question: in points 2 and 3, does the requester that "comes back
+   once" belong to the same dos call (dos asking again after a Cancel) or to a new call of the program?
+   Method: real ROM, same three-drive Amiberry setup as above; the project probe `tests/fhmove_probe.s`
+   (assembled unchanged) run from the startup-sequence of a non-Workbench boot floppy. It makes one dos
+   call at a time and prints on the serial line: one line per 2,048-byte `Read` of `DF1:longfile` (0.5 s
+   `Delay` after each), then the result of the last `Read` and `IoErr()`, then `Close`; then
+   `Open("DF1:w", MODE_NEWFILE)`, a first 9-byte `Write`, a 20 s `Delay`, a second 9-byte `Write`, `Close`,
+   and the second `Write`'s result. To tie each requester to one call, hardware breakpoints were set
+   **in the probe's own code** on the instruction following each dos call (the probe's load address was
+   found by searching RAM for its strings); a hit gives the call's D0 and, read from the calling process,
+   `pr_Result2` (= `IoErr()`). Requesters were answered with the keyboard (Left-Amiga + V = Retry,
+   Left-Amiga + B = Cancel), every state looked at on a screenshot. Seven sessions, a fresh data disk copy
+   each; disk moved DF1 → DF2 with IPC `EJECT_FLOPPY 1`, 2 s, `INSERTFLOPPY … 2`.
+   - **Read** (ejection after the 3rd to 8th block, six sessions): with this probe's 0.5 s cadence the
+     ejection always (6 of 6) caught an operation with device I/O outstanding, so the requester was
+     **"You MUST replace volume / Data3 / in unit  1 !!!"** (§2.2.1 point 2), not "Please replace".
+     **Retry** with the disk in DF2: the same requester again at once (four screenshots over 4 s), the
+     `Read` does not return. **One Cancel**: the pending `Read` returns at once with **Res1 = −1**,
+     **IoErr = 286** (two sessions, identical) [the meaning of 286 is not established; it is not one of the
+     documented dos codes, and may be 256 + a device error code ?]. No requester came back for that call;
+     the program's next call (`Close`) raised the next requester. Bytes delivered before the failing call
+     were correct (count and sum checked).
+   - **Close** of that read FileHandle (disk in DF2, the FS having detached the volume): **one**
+     "Please replace volume / Data3 / in unit  1" requester (dos's, §2.4); one Cancel and `Close` returns
+     (D0 on return held 218, which is not a defined result of `Close` in 1.3). The next requester,
+     **"No disk present / in unit  1"** (two lines, Retry / Cancel), belonged to the **next call**,
+     `Open("DF1:w", MODE_NEWFILE)` with DF1 empty; one Cancel and `Open` returned **0**.
+   - **Write** (read left to finish, disk moved 7 s into the 20 s `Delay`, so the FS was idle at the
+     ejection and had detached the volume before the call): the second `Write` raised **one** "Please
+     replace volume / Data3 / in unit  1" requester. **Retry** with the disk in DF2: the requester vanished
+     (one screenshot without it) and came back within 0.2 s, the call still pending. **One Cancel**: `Write`
+     returns **Res1 = −1, IoErr = 218** (two sessions, identical). Then `Close`: **one** "Please replace"
+     requester; one Cancel, `Close` returns (D0 and IoErr 218), and **no further requester** (no "No disk
+     present"). The disk then holds `w` with a header of size 0 and one data block "line one\n", as in
+     point 2.
+   - **Reading of points 2 and 3**: each requester belongs to a **different call**. `Copy`: the first
+     "Please replace" is its `Write`, the one that "comes back once" is its `Close` (or a further `Write`),
+     and the final "No disk present / in unit  1" is a third call made after "Error while Writing" with DF1
+     empty — most likely `Copy` deleting its incomplete destination [S: `Close` was shown not to raise it].
+     `Type`: two calls as well (consistent with the small advance of the output between the two requesters,
+     data delivered by the first, failing, call or by `Type`'s buffering) [S].
+   - **Rule for an implementation** [O for the cases above, D for the generalisation]: dos shows **at most
+     one** volume requester per dos call on Cancel. **Retry** re-sends the request; if the file system
+     refuses it again, the same requester is shown again within the same call. **Cancel** ends the call at
+     once with the failure: `Read`/`Write` Res1 = −1 with IoErr = the code the file system gave (218 for a
+     packet refused because the volume is not in the FileHandle's drive; 286 after Cancel on the "You MUST
+     replace" requester); `Open` returns 0; `Close` returns normally (the handle is gone for the program).
+     dos never re-asks after a Cancel; any second requester comes from the program's next call.
 
 ### 2.5 Revalidation on insertion (A5) [O ROM + O probe]
 
@@ -531,6 +580,11 @@ DISKREMOVED (≈ 0.2 s). The "free memory" title text is refreshed by the same t
   device request inside the operation (indistinguishable from outside). Split "replace" / "insert" and
   "in any drive" / "in unit  n" between dos and the FS (§2.4). The `Copy` hang of §2.4 (header never
   written back) is not explained.
+- §2.4.1 point 6: IoErr **286** after Cancel on "You MUST replace" is unexplained (not a documented dos
+  code). A `Read` reaching the dos "Please replace" requester (volume already detached when the call
+  starts) was not produced: the probe's 0.5 s cadence always caught I/O in flight. Probe wanted: open a
+  file, `Delay` 20 s (disk moved meanwhile), then one `Read`, printing Res1 and IoErr per Cancel/Retry
+  [expected as for `Write`: one requester, Res1 −1, IoErr 218].
 - What happens to the node when the **last lock of an absent volume** is freed (ACTION_FREE_LOCK
   on a lock of `dl_LockList`): is the node then removed? [not analysed]
 - Exact vertical step between stacked icons: rule h + tf_YSize + 3 (code) versus ≈ 28 lines measured
