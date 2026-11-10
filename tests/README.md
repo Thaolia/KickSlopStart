@@ -50,7 +50,9 @@ the spec's values. Success: `EXPLVO OK`.
   then writes DF1:w in two lines 20 s apart, while the harness moves the data disk DF1 -> DF2 -> DF1 through IPC
   during each part (`docs/analysis/disk-change-v34.md` §2.4.1). Screenshots `read_in_df2.png` / `write_in_df2.png`
   must show "Please replace volume / Data3 / in unit  1"; the host checks the byte count and sum of the read and the
-  file w. Success: `FHMOVE OK`.
+  file w. Success: `FHMOVE OK`. An ejection that falls while a write-back is pending or a transfer is under way (a
+  loaded machine) gives "You MUST replace volume" instead, which waits for a click as on 1.3: when the serial output
+  stalls after the disk is back, the harness answers Retry (left Amiga + V) and prints "retry sent".
 - `tests/oldwrite_probe.sh <out_dir> [rom]`: `tests/oldwrite_probe.s` opens DF0:t (37 bytes) with MODE_OLDFILE three
   times: read 5 bytes then write 200, seek back and read; seek to the end and append; write at once
   (`rom-filesystem-v34.md` §5.1). The host checks the `OW` lines and the 209-byte file in the session's copy of the

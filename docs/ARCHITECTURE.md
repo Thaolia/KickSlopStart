@@ -2266,6 +2266,10 @@ differs.
   the disk type is "BAD" ("Unreadable Disk" in Info, "Not a DOS disk / in unit  n" on access) as on 1.3, where the
   old refusal left the device closed and the partition looked empty ("No disk present"). de_SizeBlock ≠ 128 on a
   512-byte device sets the byte `HC_BADBS`, and `hnd_mount` then never accepts the root (type "NDOS").
+  **CIA interrupt state at start (2026-11-10)**: `cia_init` (`src/exec/cia.s`) writes $7F to both ICRs, reads them
+  (which clears their flags) and clears INTREQ PORTS/EXTER before creating ciaa/ciab: the soft-kick image starts
+  without a reset on whatever the Kickstart in ROM left (softkick-real-ks13.md: CIA-B index pulse and TOD alarm
+  enabled, flags pending).
   **S-sized leftovers and the last specified LVOs (2026-11-10)**: REMAINING-WORK C13, C14, D4-D7, A10.
   - exec (`tasks.s`, `execmisc.s`, `lists.s`, `libinit.s`, `interrupts.s`): ExecBase TaskSigAlloc ($0000FFFF) and
     TaskTrapAlloc ($8000), set by `init_traps`, are copied by AddTask, which also clears tc_TrapAble; AllocSignal

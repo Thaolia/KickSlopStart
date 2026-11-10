@@ -1600,6 +1600,19 @@ bytes: **ROM-ID word (`0x1111`) + `4EF9` (JMP) + coldstart address** (our dump: 
   wait, the next one had it). With RowSizeChange +16 / ColumnSizeChange +32: screen 672 × 272, pointer bounds 671 ×
   543, 640 pixels fetched (HIRES DDFSTOP cap); an analysis probe of the real 1.3 with the same disk gave the same
   screen, pointer bounds and copper values (DIWSTOP $40D1, DDFSTOP $D4, modulo 4) and the same 640-column picture.
+  **Real-A500 soft-kick report, CIA state, "You MUST replace" in fhmove (2026-11-10)**: user report on v0.2.44 (real
+  A500, KS 1.3, 512 KB chip + 512 KB slow): Guru 30000001 before the insert-disk screen, SysInfo MEMORY/BOARDS dead,
+  keys dead after SPEED + EXPAND, no window in Andromeda D.O.S. The Guru was the strap's AN_BootError for our own
+  bootblock (fixed in v0.2.45). The analysis track ran the soft-kick with the real KS 1.3 as host
+  (`docs/analysis/softkick-real-ks13.md`): neither SysInfo nor Andromeda reproduces (MEMORY, BOARDS, SPEED, EXPAND,
+  keys, Andromeda's window all fine; two "dead" clicks were the pointer tip 1-3 lines above the gadget). One state
+  difference: the image starts without a reset, on CIA-B ICR $94 and INTREQ EXTER left by the host; `cia_init` now
+  masks both ICRs, reads their flags away and clears INTREQ PORTS/EXTER. `tests/fhmove_probe.sh` hung when, on a
+  loaded machine, the ejection fell inside a pending write-back: "You MUST replace volume" waits for a click as on 1.3
+  (the same with v0.2.44); the harness now waits 12 s before the write-phase ejection and answers Retry (left Amiga +
+  V) when the serial output stalls. Checked: prepush-check FAIL=0 with the Lemmings menu, fhmove OK (also with the
+  ejection forced 1 s after the first write: one Retry, file complete), explvo, writeback OFS CHECK OK, soft-kick
+  hosted by our ROM: insert-disk screen without alert, Workbench 1.3.3 from DF0 and keys typed in its CLI.
   **S-sized leftovers and real-ROM probes (2026-11-10)**: user request "termines les petits points taille S et lancent
   les sondes 1.3". Four analysis agents: exec-partial-lvos-v34.md (new; graphics-raster §10, intuition-misc §6b-6c,
   coverage 390/390), wb12-demos-v34.md (new), memory-budget §9, graphics-gels §13, rom-filesystem §2.5.1-2.5.2 / §5.2

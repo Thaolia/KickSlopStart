@@ -44,8 +44,15 @@ cia_vectors:                         ; ABSOLUTE table, terminated by -1
         dc.l    cia_SetICR           ; LVO -24
         dc.l    -1
 
-; cia_init: direct-init (D0=0, A0=segList, A6=ExecBase) -> D0=0. Creates ciaa then ciab.
+; cia_init: direct-init (D0=0, A0=segList, A6=ExecBase) -> D0=0. Both ICRs masked and their flags read away, then
+; INTREQ PORTS/EXTER cleared, before ciaa then ciab are created: the soft-kick image starts without a reset, on the
+; CIA state the Kickstart in ROM left (index pulse and TOD alarm enabled, flags pending; softkick-real-ks13.md).
 cia_init:
+        move.b  #$7F,CIAA_HW+$D00    ; ICR: every source disabled
+        move.b  #$7F,CIAB_HW+$D00
+        tst.b   CIAA_HW+$D00         ; reading the ICR clears its flags
+        tst.b   CIAB_HW+$D00
+        move.w  #(INTF_PORTS|INTF_EXTER),INTREQ
         movem.l d2/a2,-(sp)
         move.l  #CIAA_HW,d2
         lea     ciaa_name(pc),a2

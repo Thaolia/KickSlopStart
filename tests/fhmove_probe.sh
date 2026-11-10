@@ -27,6 +27,21 @@ NAME="fmp$$"; DIR="$ROOT/build/amiberry/sessions/$NAME"
 move() {  # move the data disk from drive $1 to drive $2
   "$A" ipc "$NAME" EJECT_FLOPPY "$1" >/dev/null; sleep 2; "$A" ipc "$NAME" INSERTFLOPPY "$DATA" "$2" >/dev/null
 }
+# back() <marker>: wait for the marker once the disk is back in DF1. An ejection that fell while the file system still
+# had a write pending or a transfer under way leaves "You MUST replace volume", which reinsertion does not close (as on
+# 1.3, disk-change §2.2.1 point 2): when the serial output stalls, answer it with Retry (left Amiga + V) as a user
+# would, then wait again.
+back() {
+  local i n0
+  for i in $(seq 16); do
+    n0=$(stat -c %s "$DIR/serial.log")
+    "$A" wait-serial "$NAME" "$1" 15 >/dev/null && return 0
+    [ "$(stat -c %s "$DIR/serial.log")" = "$n0" ] || continue   # still progressing (a long read): keep waiting
+    printf 'down:66 wait:100 key:34 wait:100 up:66\n' | "$A" input "$NAME" - >/dev/null
+    echo "retry sent while waiting for $1"
+  done
+  return 1
+}
 RC=0
 "$A" wait-serial "$NAME" "FM RD 00000003" 120 || RC=1
 if [ $RC = 0 ]; then
@@ -34,12 +49,12 @@ if [ $RC = 0 ]; then
   N1=$(grep -c "^FM RD " "$DIR/serial.log"); sleep 3; N2=$(grep -c "^FM RD " "$DIR/serial.log")
   echo "read blocks while in DF2: $N1 then $N2"
   move 2 1
-  "$A" wait-serial "$NAME" "FM WR1" 180 || RC=1
+  back "FM WR1" || RC=1
 fi
 if [ $RC = 0 ]; then
-  sleep 7; move 1 2; sleep 20; "$A" shot "$NAME" "$OUT/write_in_df2.png" --via ipc >/dev/null
+  sleep 12; move 1 2; sleep 20; "$A" shot "$NAME" "$OUT/write_in_df2.png" --via ipc >/dev/null
   move 2 1
-  "$A" wait-serial "$NAME" "FM END" 120 || RC=1
+  back "FM END" || RC=1
   sleep 8   # the file system writes the closed file back a few seconds later
 fi
 tr -d '\r' < "$DIR/serial.log" | sed -n '/^FM BEGIN/,/^FM END/p' | grep -v "^FM RD " > "$OUT/fhmove.txt"
