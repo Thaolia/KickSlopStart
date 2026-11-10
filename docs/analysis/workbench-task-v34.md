@@ -248,7 +248,13 @@ ExecBase's `TDNestCnt`, then Permit). Two phases:
 1. **Devices** (dn_Type 0) having `dn_Task ≠ 0`: the Workbench itself sends a packet
    **ACTION_INHIBIT (31), Arg1 = 0**; if Res1 ≠ 0, and if `dn_Startup ≠ 0` and
    `fssm_Device ≠ 0` and **FindName(SysBase->DeviceList, name of the exec device)** succeeds, the
-   device is kept ("device" state, 4).
+   device is kept ("device" state, 4). Devices with `dn_Task = 0` are silently skipped: **the
+   Workbench scan never starts a handler process**. For a board that called `AddDosNode` before dos
+   (before-dos path, `dn_Task = 0` after dos init), the handler must already be running by the time
+   the first Workbench scan runs. In a standard WB 1.3.3 boot, this happens during the
+   startup-sequence CLI commands executed before `LoadWB` starts Workbench (probe: HOSTFS0 handler
+   started by the Initial CLI at ~9.4s, the Workbench task did not exist at that time — see
+   `uae-hd-boot-v34.md` §9.3). **[S]**
 2. **Full rescan** (also invoked on each 5 s tick, on DISKINSERTED/DISKREMOVED and on
    WBENCHOPEN):
    - for each **volume** (dn_Type 2): unknown entry ⇒ new (state 2 "new");

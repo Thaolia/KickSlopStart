@@ -68,6 +68,7 @@ DAC_CONFIGTIME EQU $10
 BN_FLAGS       EQU 14             ; UWORD
 BN_DEVICENODE  EQU 16
 BN_SIZEOF      EQU 20
+ADNB_STARTPROC EQU 0              ; AddDosNode flag: start the handler at mount time
 NT_BOOTNODE    EQU 16             ; ln_Type of a bootable BootNode (ln_Name = ConfigDev of the board)
 
 ; --- expansion.library LVOs ---

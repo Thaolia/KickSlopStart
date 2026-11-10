@@ -166,30 +166,45 @@ Local routine of cliinit, arguments: node, base segarray, ROM segarray.
 
 ## 3. Q3 — Contract of the startup packet on the BCPL handler side
 
-### 3.1 What dos sends (global 112) [O ROM]
+### 3.1 What dos sends (global 112) [O ROM; S 2026-11-10]
 
 | DosPacket field | Value |
 |---|---|
-| dp_Link, dp_Type, dp_Res1 | **not initialised** (frame residues) — do not interpret |
-| dp_Port | reply port (the calling process, set by qpkt) |
-| dp_Res2 | **BPTR of the handler's GV** (BCPL branch); residue in the C branch |
-| dp_Arg1 | **complete** BSTR of the name given to deviceproc |
-| dp_Arg2 | dn_Startup |
-| dp_Arg3 | BPTR of the DeviceNode |
+| `dp_Type` | **0** (ACTION\_STARTUP; not initialised before the packet is built, but set to 0 by the BCPL dispatch) |
+| `dp_Port` | reply port (the calling process, set by qpkt) |
+| `dp_Res1` | not initialised until the handler fills it |
+| `dp_Res2` | **BPTR of the handler's GV** (BCPL branch); residue in the C branch |
+| `dp_Arg1` | **Garbage** — a residue from the BCPL calling convention, not the device name. Two probes observed a 1-char BSTR `'S'` from a ROM constant table. **Do not interpret dp_Arg1. [S]** |
+| `dp_Arg2` | `dn_Startup` |
+| `dp_Arg3` | **NULL (0)** — `last_writer` probe on a Copperline C-handler startup packet: the most recent write to dp_Arg3 set it to 0 from the BCPL dispatch prologue; no subsequent write set a DeviceNode BPTR. **[S]** The earlier entry "BPTR of the DeviceNode" was incorrect and is now retracted. A handler written for V34 must use `dp_Arg2 → FileSysStartupMsg` to locate its mount, not `dp_Arg3`. |
 
 ### 3.2 What the handler must do [O ROM + WB]
 - Reply by **returnpkt** (global 49): **Res1 ≠ 0** = success (all the observed handlers
   return **−1**); **Res1 = 0** = failure, Res2 = error code (console 206, Port-Handler 202).
-- On success, starthandler does **Result2 := dn_Lock** and returns the port; on failure returns 0
-  and Result2 = the handler's Res2 (set by sendpkt). The Res2 of a success is **not** read.
-- **dn_Task is never written by starthandler.** A handler that wants to be shared writes it
-  itself via Arg3:
-  - **Ram-Handler**: dn_Task := taskid(), then **clears `!4..!9`** (dn_Handler, dn_StackSize,
+- On success, starthandler **writes `dn_Task`** with the handler's `pr_MsgPort` before
+  returning, then sets `Result2 := dn_Lock` and returns the port. On failure returns 0 and
+  `Result2` = the handler's `dp_Res2`. **[S 2026-11-10]** (Copperline CCP probe: the write to
+  `dn_Task` originated from ROM code (starthandler's context), not from the handler process.
+  The earlier entry "dn_Task is never written by starthandler" was based on observation of
+  handlers that also write dn_Task themselves; `starthandler` writes it on success too.)
+- **A handler that wants to be replaced** (a port used exclusively once) need not write dn_Task
+  itself; `starthandler` already set it. A handler that wants to be **shared** may write it
+  again (same value) or leave it as set.
+  - **Ram-Handler**: writes dn_Task := taskid(), then **clears `!4..!9`** (dn_Handler, dn_StackSize,
     dn_Priority, dn_Startup, dn_SegList, dn_GlobalVec) of its node. [O WB]
-  - **Port-Handler** (SER/PAR/PRT): dn_Task := taskid() **after** a successful opendevice, and resets it
-    to **0** when no stream is open any more (then terminates [S]). Arg2 chooses the device:
+  - **Port-Handler** (SER/PAR/PRT): writes dn_Task := taskid() **after** a successful opendevice,
+    and resets it to **0** when no stream is open (then terminates [S]). Arg2 chooses the device:
     0 `"serial.device"`, 1 `"parallel.device"`, other `"printer.device"`. [O WB]
   - ROM console-handler, Newcon, Aux: do not write it (one process per Open). [O]
+
+**Open point — CON:/RAW: reuse after close**: if starthandler writes `dn_Task` on every
+successful start and the console-handler does not reset it, `dn_Task` would remain set after
+the window closes. A subsequent `deviceproc("CON:")` would then find `dn_Task ≠ 0` and send
+directly to the closed handler's port, which no longer exists (or belongs to a re-used Process
+slot). Whether the probe observed `dn_Task ≠ 0` on the CON: or RAW: node after Workbench
+opened its console (~58s) and whether that value is later reset to 0 when the window is closed
+is **not probed**. The CON: device node was started at ~58s (Workbench opening its console
+window) but the dn_Task state after window close was not checked. **[Not probed]**
 
 ### 3.3 Globals received by the handler [O ROM]
 - **dn_GlobalVec > 0** (neither 0 nor −1): the indicated GV is **shared** (CON/RAW/SER/PAR/PRT, mounted
@@ -206,13 +221,17 @@ Local routine of cliinit, arguments: node, base segarray, ROM segarray.
 - Slot 0 = start + 50 longs; **GV[0] := max**; no other slot written (neither positive nor negative).
 - Returns the **BPTR of slot 0**.
 
-### 3.5 starthandler — global 112: clarifications [O ROM]
+### 3.5 starthandler — global 112: clarifications [O ROM; S 2026-11-10]
 Complements §13.3 of the spec (which remains exact):
 - the segarray is built from the `findsegarray()` **of the calling process** (entries 1 and 2);
 - C branch: CreateProc(C name = BADDR(dn_Name)+1, dn_Priority, dn_SegList, **dn_StackSize bytes**);
   no segarray is allocated (its freeing on failure concerns 0);
 - BCPL branch: if makeglobvec fails ⇒ no createproc ⇒ failure;
-- Result2 := dn_Lock is set **before** sending the packet and again after a reply Res1 ≠ 0.
+- Result2 := dn_Lock is set **before** sending the packet and again after a reply Res1 ≠ 0;
+- on a successful reply (`dp_Res1 ≠ 0`): **`dn_Task` := handler's `pr_MsgPort`** (confirmed by
+  CCP probe: write to dn_Task originated from ROM code in starthandler's context, not from the
+  handler process). **[S]** `dp_Arg3` (the DeviceNode BPTR) is NOT set; the value is NULL (0)
+  — confirmed by `last_writer` on that field. **[S]**
 
 ### 3.6 Other runtime globals used by the handlers
 | Gl. | Name | Observed contract | Cert. |
@@ -336,7 +355,9 @@ I certify, after a full re-reading of this document, that:
   needed for compatibility;
 - the ROM was neither modified nor copied; the Workbench disk files were only extracted
   into the session scratch directory.
-- **correction of 2026-10-29**: removed the 21 ROM addresses (dos `rt_Init`, `cliinit`, local
-  routines, environment table, console-handler, makeglobvec, starthandler, deviceproc, "object"
-  routine, "Address" column of the globals table); global numbers and contracts
-  kept.
+- **correction of 2026-10-29**: removed the 21 ROM addresses; global numbers and contracts kept.
+- **correction of 2026-11-10**: §3.1 `dp_Arg3` corrected from "BPTR DeviceNode" to NULL — confirmed by
+  `last_writer` probe on the real ROM under Copperline. §3.2 "`dn_Task` is never written by starthandler"
+  corrected: starthandler **does** write `dn_Task` after a successful reply (probe confirmed). §3.5 updated.
+  Probe method: Copperline CCP `mem.read` / watchpoint / `last_writer` on the real `kick34005.A500`;
+  no ROM code reproduced, no ROM addresses given.

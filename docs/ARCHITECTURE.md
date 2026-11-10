@@ -1840,7 +1840,10 @@ differs.
   ROMTag now has an rt_Init in code (no longer AUTOINIT): on the first call (InitCode) it builds the library, on the
   following ones (UAE BootPoint, which does FindResident then calls rt_Init) it jumps to `boot_dos_start` (rest of the startup,
   no return). `dos_mountlist`: the head of eb_MountList is removed and its DeviceNode becomes the boot
-  device (DL_BOOTDEV); the DeviceNodes of the BootNodes are added at the end of di_DevInfo. `dos_boot_assigns`: SYS:,
+  device (DL_BOOTDEV); the DeviceNodes of the BootNodes are added at the end of di_DevInfo. AddDosNode always
+  enqueues its BootNode (also when dos is present, spec §4.2) and, with ADNF_STARTPROC from a process, starts the
+  handler at once; nodes added at cold start get theirs from `dos_startmounts` (below), which brings Copperline
+  `[[filesys]]` volumes onto the Workbench at boot (2026-11-10). `dos_boot_assigns`: SYS:,
   C:, S:, L:, DEVS:, LIBS:, FONTS: and the current directory on this device; volume node of the DF0: floppy
   created in all cases (our handler does not do it). M7B proof: CIA-A timer A in one-shot (running continuously at
   360 µs, it saturated level 2 as soon as the UAE DiagPoint added its PORTS server; the real 1.3 never arms it
