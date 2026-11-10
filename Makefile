@@ -137,6 +137,24 @@ clean:
 # Native Amiga tests live beneath their component groups.
 COPPERLINE ?= copperline
 COPPERLINE_CTL ?= copperline-ctl
+.PHONY: test-exec-taskargs
+test-exec: test-exec-taskargs
+test-exec-quick: test-exec-taskargs
+test-exec-taskargs: kick-prod $(BUILD)/taskargs
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/taskargs \
+	  --out $(BUILD)/taskargs-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 20 --tag TASKARGS --pass-marker "TASKARGS OK" --workloads
+$(BUILD)/taskargs: tests/taskargs.s $(EXEC_DIR)/exec.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -o $@ $<
+.PHONY: test-exec-clipri
+test-exec: test-exec-clipri
+test-exec-quick: test-exec-clipri
+test-exec-clipri: kick-prod $(BUILD)/clipri
+	$(PYTHON) -I tests/drawblit_test.py --rom build/kick13-prod.rom --exe $(BUILD)/clipri \
+	  --out $(BUILD)/clipri-results --copperline "$(COPPERLINE)" --ctl "$(COPPERLINE_CTL)" \
+	  --seconds 20 --tag CLIPRI --pass-marker "CLIPRI OK" --workloads
+$(BUILD)/clipri: tests/clipri.s $(EXEC_DIR)/exec.i | $(BUILD)
+	$(VASM) -Fhunkexe -kick1hunks -m68000 -nosym -I $(EXEC_DIR) -o $@ $<
 .PHONY: test-graphics-rectpens
 test-graphics: test-graphics-rectpens
 test-graphics-quick: test-graphics-rectpens
